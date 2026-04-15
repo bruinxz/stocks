@@ -1,0 +1,68 @@
+{
+  "timestamp": "2026-04-11T07:45:54.952Z",
+  "dateRange": {
+    "startDate": "2020-01-01",
+    "endDate": "2026-04-10"
+  },
+  "expectedTradingDays": 1575,
+  "stats": {
+    "totalStocks": 5501,
+    "processedStocks": 5501,
+    "stocksWithData": 5,
+    "stocksWithoutData": 5496,
+    "completenessLevels": [
+      {
+        "label": "90%-100%",
+        "count": 0,
+        "percentage": "0.0"
+      },
+      {
+        "label": "70%-89%",
+        "count": 0,
+        "percentage": "0.0"
+      },
+      {
+        "label": "50%-69%",
+        "count": 0,
+        "percentage": "0.0"
+      },
+      {
+        "label": "30%-49%",
+        "count": 0,
+        "percentage": "0.0"
+      },
+      {
+        "label": "10%-29%",
+        "count": 4,
+        "percentage": "0.1"
+      },
+      {
+        "label": "0%-9%",
+        "count": 5497,
+        "percentage": "99.9"
+      }
+    ],
+    "marketStats": {
+      "SH": {
+        "total": 2309,
+        "completeCount": 0
+      },
+      "SZ": {
+        "total": 2887,
+        "completeCount": 0
+      },
+      "BJ": {
+        "total": 305,
+        "completeCount": 0
+      },
+      "UNKNOWN": {
+        "total": 0,
+        "completeCount": 0
+      }
+    },
+    "avgCompleteness": 0.00012869233011025412,
+    "medianCompleteness": 0,
+    "highQualityStocks": 0,
+    "lowQualityStocks": 5501
+  }
+}

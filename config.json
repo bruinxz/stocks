@@ -1,0 +1,20 @@
+{
+  "ports": {
+    "backend": 3003,
+    "frontend": 4001,
+    "postgres": 5432,
+    "redis": 6379
+  },
+  "api": {
+    "baseUrl": "http://localhost:3003/api"
+  },
+  "database": {
+    "host": "localhost",
+    "name": "stock_backtest",
+    "user": "postgres",
+    "password": "postgres"
+  },
+  "redis": {
+    "host": "localhost"
+  }
+}

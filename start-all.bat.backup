@@ -1,0 +1,49 @@
+@echo off
+echo === A股股票回测系统启动脚本 ===
+echo.
+
+echo 1. 检查端口占用...
+netstat -ano | findstr ":3003" > nul
+if %errorlevel% equ 0 (
+    echo 错误：端口3003已被占用，请检查是否有其他后端进程运行
+    echo 执行 taskkill /F /PID [PID] 终止进程
+    netstat -ano | findstr ":3003"
+    pause
+    exit /b 1
+)
+
+netstat -ano | findstr ":4001" > nul
+if %errorlevel% equ 0 (
+    echo 警告：端口4001已被占用，可能是之前的前端进程
+    echo 尝试终止占用4001端口的进程...
+    for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":4001" ^| findstr "LISTENING"') do (
+        taskkill /F /PID %%a > nul 2>&1
+        echo 已终止进程PID: %%a
+    )
+)
+
+echo.
+echo 2. 启动后端服务 (端口3003)...
+cd backend
+start "Stock Backend" cmd /c "npm run dev"
+cd ..
+
+echo 等待后端启动... (5秒)
+timeout /t 5 /nobreak > nul
+
+echo.
+echo 3. 启动前端服务 (端口4001)...
+cd frontend
+start "Stock Frontend" cmd /c "npm start"
+cd ..
+
+echo.
+echo 4. 系统启动完成！
+echo.
+echo 后端API: http://localhost:3003
+echo 前端界面: http://localhost:4001
+echo 投资组合模拟: http://localhost:4001/portfolio
+echo.
+echo 按任意键打开前端界面...
+pause > nul
+start http://localhost:4001/portfolio
