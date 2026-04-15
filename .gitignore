@@ -123,3 +123,12 @@ frontend/.env
 
 # Shared
 shared/dist/
+
+# Local Claude memory
+.claude/
+
+# Local configuration
+config.json
+
+# Data reports
+data_completeness_report.json
