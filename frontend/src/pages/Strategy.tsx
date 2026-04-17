@@ -1,6 +1,6 @@
 import React from 'react';
-import { Table, Button, Space } from 'antd';
-import { EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import { Table, Button, Space, Tag } from 'antd';
+import { EditOutlined, DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 
 const Strategy: React.FC = () => {
   const columns = [
@@ -13,6 +13,7 @@ const Strategy: React.FC = () => {
       title: '策略类型',
       dataIndex: 'type',
       key: 'type',
+      render: (text: string) => <Tag color="blue">{text}</Tag>,
     },
     {
       title: '创建时间',
@@ -56,20 +57,47 @@ const Strategy: React.FC = () => {
     },
   ];
 
-  return (
-    <div>
-      <div
+  const renderEmptyState = () => (
+    <div style={{ padding: '60px 0', textAlign: 'center' }}>
+      <h3 style={{ fontSize: 16, fontWeight: 600, color: '#374151', marginBottom: 8 }}>暂无策略</h3>
+      <p
         style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: '16px',
+          color: '#9ca3af',
+          fontSize: 14,
+          marginBottom: 24,
+          maxWidth: 400,
+          margin: '0 auto 24px',
         }}
       >
-        <h2>策略管理</h2>
-        <Button type="primary">新建策略</Button>
+        策略是回测系统的核心。您可以基于均线、RSI、MACD等指标创建您的交易策略。
+      </p>
+      <Button type="primary" icon={<PlusOutlined />}>
+        创建策略
+      </Button>
+    </div>
+  );
+
+  return (
+    <div className="fade-in-up">
+      <div className="page-header-modern">
+        <div>
+          <h1 className="page-title-modern">策略中心</h1>
+          <p className="page-subtitle-modern">管理和配置您的量化交易策略</p>
+        </div>
+        <Button type="primary" icon={<PlusOutlined />} style={{ borderRadius: 6 }}>
+          新建策略
+        </Button>
       </div>
-      <Table columns={columns} dataSource={data} />
+
+      <Table
+        className="modern-card"
+        columns={columns}
+        dataSource={data}
+        rowKey="id"
+        locale={{ emptyText: renderEmptyState() }}
+        scroll={{ x: 'max-content' }}
+        style={{ borderRadius: 'var(--border-radius-lg)', overflow: 'hidden' }}
+      />
     </div>
   );
 };

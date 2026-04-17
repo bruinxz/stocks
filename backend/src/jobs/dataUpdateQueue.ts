@@ -14,6 +14,8 @@ export interface DataUpdateJobData {
   endDate?: string; // 同步结束日期 YYYY-MM-DD
   dataSource?: 'akshare'; // 数据源，目前只支持akshare
   concurrency?: number; // 并发数量（批次大小）
+  completedSymbols?: string[]; // 记录已完成的股票列表（用于断点续传）
+  totalInserted?: number; // 记录已插入的条数（用于断点续传）
 }
 
 // 创建数据更新队列实例
@@ -30,7 +32,7 @@ const dataUpdateQueue = new Bull<DataUpdateJobData>('data-update', {
       type: 'exponential', // 指数退避
       delay: 5000, // 5秒
     },
-    timeout: 30 * 60 * 1000, // 30分钟超时（数据更新可能较慢）
+    timeout: 24 * 60 * 60 * 1000, // 24小时超时（全量同步可能耗时很长，防止触发重复重试）
     removeOnComplete: 100, // 保留最近100个完成的任务
     removeOnFail: 50, // 保留最近50个失败的任务
   },

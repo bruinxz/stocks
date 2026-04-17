@@ -9,6 +9,13 @@ export interface StockBasicInfo {
   outDate?: string;       // 退市日期
   type: number;           // 类型：1-股票，2-指数，3-其他
   status: number;         // 状态：1-上市，0-退市
+  totalMarketCap?: number; // 总市值
+  circulatingMarketCap?: number; // 流通市值
+  peDynamic?: number;      // 动态市盈率
+  pb?: number;             // 市净率
+  turnoverRate?: number;   // 换手率
+  price?: number;          // 最新价
+  changePercent?: number;  // 涨跌幅
 }
 
 export interface DailyBar {
@@ -26,8 +33,8 @@ export interface DailyBar {
   pctChg: number;        // 涨跌幅
   peTTM: number;         // 市盈率TTM
   psTTM: number;         // 市销率TTM
-  pcfNcfTTM: number;     // 市现率TTM
   pbMRQ: number;         // 市净率MRQ
+  totalMarketCap?: number; // 总市值(历史)
 }
 
 export interface QueryParams {
@@ -44,7 +51,8 @@ export class AKShareClient {
   private scriptPath: string;
 
   constructor(pythonPath?: string) {
-    this.pythonPath = pythonPath || 'python';
+    // 如果设置了环境变量 PYTHON_PATH，则使用它；否则优先尝试 python3
+    this.pythonPath = pythonPath || process.env.PYTHON_PATH || 'python3';
     this.scriptPath = path.join(__dirname, '../../../python/akshare_helper.py');
     logger.info(`AKShareClient initialized with python path: ${this.pythonPath}, script: ${this.scriptPath}`);
   }
@@ -61,12 +69,12 @@ export class AKShareClient {
       let stdout = '';
       let stderr = '';
 
-      // 设置超时（30秒）
+      // 设置超时（5分钟）
       const timeout = setTimeout(() => {
         logger.error(`Python script timeout for command: ${command}`);
         child.kill('SIGTERM');
-        reject(new Error('Python script timeout (30s)'));
-      }, 30000);
+        reject(new Error('Python script timeout (5m)'));
+      }, 300000);
 
       child.stdout.on('data', (data) => {
         stdout += data.toString();

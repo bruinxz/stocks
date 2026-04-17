@@ -116,7 +116,9 @@ export interface RecommendedConfigResponse {
 /**
  * 运行投资组合收益模拟
  */
-export const simulatePortfolio = async (request: PortfolioSimulationRequest): Promise<PortfolioSimulationResponse> => {
+export const simulatePortfolio = async (
+  request: PortfolioSimulationRequest
+): Promise<PortfolioSimulationResponse> => {
   const response = await api.post('/portfolio/simulate', request);
   return response.data;
 };

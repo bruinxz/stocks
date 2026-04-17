@@ -53,7 +53,13 @@ export const authenticate = (
   try {
     const secret = process.env.JWT_SECRET || 'dev-secret-change-in-production';
     const decoded = jwt.verify(token, secret) as any;
-    req.user = decoded.user;
+    // decoded 可能是 { userId: 1, username: 'xz', role: 'admin', iat: ..., exp: ... } 或者嵌套在 user 中
+    req.user = decoded.user || {
+      id: decoded.userId,
+      username: decoded.username,
+      email: decoded.email || '',
+      role: decoded.role,
+    };
     next();
   } catch (error) {
     logger.error('JWT验证失败:', error);

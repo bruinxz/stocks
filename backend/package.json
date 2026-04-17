@@ -40,6 +40,8 @@
     "bull-board": "*",
     "commander": "^11.0.0",
     "cors": "^2.8.5",
+    "csv-parser": "^3.2.0",
+    "csv-writer": "^1.6.0",
     "dotenv": "^16.0.3",
     "express": "^4.18.2",
     "express-validator": "^6.14.0",

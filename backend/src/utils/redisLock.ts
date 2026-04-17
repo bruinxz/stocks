@@ -2,8 +2,12 @@ import { createClient, RedisClientType } from 'redis';
 import { logger } from './logger';
 
 // Redis客户端实例
+const redisUrl = process.env.REDIS_PASSWORD
+  ? `redis://:${process.env.REDIS_PASSWORD}@${process.env.REDIS_HOST || '127.0.0.1'}:${process.env.REDIS_PORT || '6379'}`
+  : `redis://${process.env.REDIS_HOST || '127.0.0.1'}:${process.env.REDIS_PORT || '6379'}`;
+
 const redisClient: RedisClientType = createClient({
-  url: `redis://${process.env.REDIS_PASSWORD ? `:${process.env.REDIS_PASSWORD}@` : ''}${process.env.REDIS_HOST || 'localhost'}:${process.env.REDIS_PORT || '6379'}`,
+  url: redisUrl,
   database: parseInt(process.env.REDIS_DB || '0'),
 });
 
@@ -204,6 +208,7 @@ export const LockKeys = {
   STOCK_SYNC: (symbol: string) => `${LOCK_PREFIX}data:stock:sync:${symbol}`, // 单只股票同步锁
   DAILY_UPDATE: (date: string) => `${LOCK_PREFIX}data:daily:update:${date}`, // 每日更新锁
   NEW_STOCKS_SYNC: `${LOCK_PREFIX}data:new:stocks:sync`, // 新股同步锁
+  BULK_SYNC: `${LOCK_PREFIX}data:bulk:sync`, // 批量同步锁
 };
 
 // 导出单例

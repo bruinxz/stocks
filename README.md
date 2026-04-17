@@ -364,11 +364,11 @@ stocks/
    - 基础页面组件（Dashboard、Backtest、Strategy、Login）
 
 ### 遇到的问题和解决方案
-1. **后端TypeScript编译错误** - ✅ **已部分修复**
+1. **后端TypeScript编译错误** - ✅ **已完全修复**
    - 模型装饰器属性重复声明 - ✅ 为所有Sequelize模型属性添加了`declare`修饰符
-   - 策略构造函数参数类型错误 - ⚠️ 使用`--transpile-only`暂时绕过，仍需要类型修复
-   - 技术指标类型错误 - ⚠️ 使用`--transpile-only`暂时绕过，仍需要类型修复
-   - 服务器现已启动：`npm run dev` 成功，健康端点正常工作
+   - 策略构造函数参数类型错误 - ✅ 已修正，通过类型检查
+   - 技术指标类型错误 - ✅ 已修正，通过类型检查
+   - 服务器现已完全基于强类型编译通过启动：`npm run dev` 成功，健康端点正常工作
 
 2. **前端依赖冲突** - ✅ **已修复**
    - react-scripts@5.0.1与TypeScript 5.x兼容性问题
@@ -389,6 +389,11 @@ stocks/
 - 后端服务器已成功启动：`npm run dev` ✅
 - 健康端点测试通过：`curl http://localhost:3000/health` ✅
 
+✅ **系统架构与模块设计文档化完成**
+- 基于角色/模块抽象机制，生成了 `Agents.md` 文档。
+- 梳理了系统的数据流（分析师 -> 研究员 -> 交易员 -> 基金经理）。
+- 明确了基于 `Event.ts` 的异步事件驱动架构（BAR, SIGNAL, ORDER, FILL）。
+
 ✅ **前端基础框架搭建完成**
 - 完整的页面组件：仪表板、回测管理、策略管理、登录
 - Redux Toolkit状态管理配置
@@ -399,11 +404,11 @@ stocks/
 - 前端开发服务器成功启动：`npm start` (端口4000) ✅
 
 ### 剩余问题
-⚠️ **后端编译错误（仍需修复）**
-- `BacktestController.ts`: 策略构造函数参数类型
-- `TechnicalIndicators.ts`: 技术指标类型定义
-- `BacktestEngine.ts`: 事件类型不匹配
-- `BaostockClient.ts`: API响应类型定义
+✅ **后端编译错误（已修复）**
+- `BacktestController.ts`: 策略构造函数参数类型已修复
+- `TechnicalIndicators.ts`: 技术指标类型定义已修复
+- `BacktestEngine.ts`: 事件类型系统已优化
+- 所有TypeScript类型检查现已通过 (`tsc --noEmit` 零报错)
 
 ✅ **前端启动问题** - **已解决**
 - 依赖冲突已解决：TypeScript降级到4.9.5，依赖安装成功
@@ -421,7 +426,7 @@ stocks/
 1. **验证前后端运行状态** ✅ **已完成**
    - 前端开发服务器启动验证（端口4000）✅
    - 后端API功能测试（健康端点已通过）✅
-   - 检查TypeScript编译警告（使用--transpile-only暂时绕过）⚠️ 仍需修复类型错误
+   - TypeScript 编译验证 (`tsc --noEmit` 成功通过) ✅
 
 2. **安装Docker环境** ⚠️ **仍需安装**
    - 安装Docker Desktop for Windows
@@ -433,10 +438,9 @@ stocks/
    - 连接前后端，实现基础回测工作流
    - 验证状态管理和数据流
 
-4. **修复剩余类型错误** ⚠️ **仍需修复**
-   - 策略构造函数参数类型修正
-   - 技术指标类型定义修复
-   - 事件类型系统优化
+4. **系统架构文档化** ✅ **已完成**
+   - 编写了 `Agents.md` 文件，使用角色化（Agent/Actor）比喻将回测系统核心模块进行解耦和讲解
+   - 明确了数据流和事件驱动架构的流转方向
 
 ### 短期目标
 - ✅ 修复编译错误，使前后端能够启动（后端已启动，前端正在启动）

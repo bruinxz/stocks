@@ -26,7 +26,34 @@ export class AuthController {
     this.refreshToken = this.refreshToken.bind(this);
     this.logout = this.logout.bind(this);
     this.getProfile = this.getProfile.bind(this);
-    // authenticate已经是箭头函数，不需要绑定
+    
+    // 初始化默认用户
+    this.initDefaultUsers();
+  }
+
+  private async initDefaultUsers() {
+    try {
+      const defaultUsers = [
+        { username: 'xz', passwordHash: '666', email: 'xz@example.com' },
+        { username: 'lym', passwordHash: '666', email: 'lym@example.com' }
+      ];
+
+      for (const u of defaultUsers) {
+        const existingUser = await User.findOne({ where: { username: u.username } });
+        if (!existingUser) {
+          await User.create({
+            username: u.username,
+            email: u.email,
+            passwordHash: u.passwordHash,
+            role: 'admin',
+            isActive: true,
+          });
+          logger.info(`Default user ${u.username} created.`);
+        }
+      }
+    } catch (err) {
+      logger.error('Failed to init default users:', err);
+    }
   }
 
   /**

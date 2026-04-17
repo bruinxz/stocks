@@ -893,6 +893,17 @@ export class MarketController {
         });
       }
 
+      // 检查是否有同类型任务正在运行，避免重复发送
+      const activeJobs = await dataUpdateQueue.getJobs(['active', 'waiting']);
+      const isJobRunning = activeJobs.some(job => job.name === type);
+
+      if (isJobRunning) {
+        return res.status(400).json({
+          success: false,
+          error: '该类型的同步任务正在运行或等待中，请勿重复触发',
+        });
+      }
+
       // 添加任务到队列
       const job = await dataUpdateQueue.add(type, {
         type: type as any,
@@ -1329,7 +1340,7 @@ export class MarketController {
       const jobData = job.data;
 
       // 创建新任务（重试）
-      const newJob = await dataUpdateQueue.add(jobData, {
+      const newJob = await dataUpdateQueue.add(job.name, jobData, {
         attempts: 3, // 重置重试次数
         backoff: {
           type: 'exponential',

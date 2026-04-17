@@ -247,6 +247,13 @@ export class DataSyncService {
             isListed: stockData.status === 1,
             type: this.mapStockType(stockData.type),
             market: extractMarketFromSymbol(symbol),
+            totalMarketCap: stockData.totalMarketCap,
+            circulatingMarketCap: stockData.circulatingMarketCap,
+            peDynamic: stockData.peDynamic,
+            pb: stockData.pb,
+            turnoverRate: stockData.turnoverRate,
+            price: stockData.price,
+            changePercent: stockData.changePercent,
           }, {
             conflictFields: ['symbol'],
           });
@@ -354,6 +361,7 @@ export class DataSyncService {
               pe: Number(barData.peTTM) || 0,
               pb: Number(barData.pbMRQ) || 0,
               ps: Number(barData.psTTM) || 0,
+              marketCap: Number(barData.totalMarketCap) || 0,
               isTradingDay: barData.tradestatus === 1,
               isSuspended: barData.tradestatus === 0,
             };
@@ -412,12 +420,14 @@ export class DataSyncService {
     symbols: string[],
     startDate: string,
     endDate: string,
-    batchSize: number = 10
+    batchSize: number = 10,
+    progressCallback?: (processedCount: number, totalCount: number, currentBatchInserted: number, completedBatchSymbols: string[]) => void | Promise<void>
   ): Promise<{ [symbol: string]: number }> {
     const normalizedSymbols = normalizeSymbols(symbols);
     const results: { [symbol: string]: number } = {};
+    const totalCount = normalizedSymbols.length;
 
-    for (let i = 0; i < normalizedSymbols.length; i += batchSize) {
+    for (let i = 0; i < totalCount; i += batchSize) {
       const batch = normalizedSymbols.slice(i, i + batchSize);
       const promises = batch.map(symbol =>
         this.syncStockHistory(symbol, startDate, endDate)
@@ -436,8 +446,16 @@ export class DataSyncService {
           })
       );
 
-      await Promise.all(promises);
-      logger.info(`Completed batch ${i / batchSize + 1}/${Math.ceil(normalizedSymbols.length / batchSize)}`);
+      const batchResults = await Promise.all(promises);
+      const currentBatchInserted = batchResults.reduce((sum, res) => res.count > 0 ? sum + res.count : sum, 0);
+      const completedBatchSymbols = batchResults.filter(res => res.count !== -1).map(res => res.symbol);
+      
+      const processedCount = Math.min(i + batchSize, totalCount);
+      logger.info(`Completed batch ${i / batchSize + 1}/${Math.ceil(totalCount / batchSize)}`);
+
+      if (progressCallback) {
+        await progressCallback(processedCount, totalCount, currentBatchInserted, completedBatchSymbols);
+      }
 
       // 批次间延迟，避免请求过于频繁
       await new Promise(resolve => setTimeout(resolve, 1000));

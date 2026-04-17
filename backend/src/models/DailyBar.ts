@@ -131,6 +131,13 @@ export class DailyBar extends Model {
   declare ps?: number;
 
   @Column({
+    type: DataType.DECIMAL(20, 4),
+    allowNull: true,
+    comment: '总市值(元)',
+  })
+  declare marketCap?: number;
+
+  @Column({
     type: DataType.BOOLEAN,
     defaultValue: true,
     comment: '是否交易日',

@@ -56,6 +56,7 @@ export class Stock extends Model {
   @Column({
     type: DataType.DATEONLY,
     allowNull: true,
+    field: 'listing_date',
     comment: '上市日期',
   })
   declare listingDate?: Date;
@@ -88,10 +89,61 @@ export class Stock extends Model {
   })
   declare dataStatus?: string;
 
+  @Column({
+    type: DataType.DECIMAL(20, 4),
+    allowNull: true,
+    comment: '最新总市值(元)',
+  })
+  declare totalMarketCap?: number;
+
+  @Column({
+    type: DataType.DECIMAL(20, 4),
+    allowNull: true,
+    comment: '最新流通市值(元)',
+  })
+  declare circulatingMarketCap?: number;
+
+  @Column({
+    type: DataType.DECIMAL(10, 4),
+    allowNull: true,
+    comment: '最新动态市盈率',
+  })
+  declare peDynamic?: number;
+
+  @Column({
+    type: DataType.DECIMAL(10, 4),
+    allowNull: true,
+    comment: '最新市净率',
+  })
+  declare pb?: number;
+
+  @Column({
+    type: DataType.DECIMAL(10, 4),
+    allowNull: true,
+    comment: '最新换手率(%)',
+  })
+  declare turnoverRate?: number;
+
+  @Column({
+    type: DataType.DECIMAL(12, 4),
+    allowNull: true,
+    comment: '最新价',
+  })
+  declare price?: number;
+
+  @Column({
+    type: DataType.DECIMAL(10, 4),
+    allowNull: true,
+    comment: '最新涨跌幅(%)',
+  })
+  declare changePercent?: number;
+
   @CreatedAt
+  @Column({ field: 'created_at' })
   declare createdAt: Date;
 
   @UpdatedAt
+  @Column({ field: 'updated_at' })
   declare updatedAt: Date;
 
   // 关联关系

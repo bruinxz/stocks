@@ -1,0 +1,22 @@
+[
+  {
+    "id": 1,
+    "username": "xz",
+    "email": "xz@example.com",
+    "passwordHash": "666",
+    "role": "admin",
+    "isActive": true,
+    "createdAt": "2026-04-16T05:25:53.244Z",
+    "updatedAt": "2026-04-16T05:25:53.244Z"
+  },
+  {
+    "id": 2,
+    "username": "lym",
+    "email": "lym@example.com",
+    "passwordHash": "666",
+    "role": "admin",
+    "isActive": true,
+    "createdAt": "2026-04-16T05:25:53.248Z",
+    "updatedAt": "2026-04-16T05:25:53.248Z"
+  }
+]

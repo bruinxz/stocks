@@ -2,22 +2,22 @@
 
 import { Command } from 'commander';
 import { logger } from '../utils/logger';
-import dotenv from 'dotenv';
-
-dotenv.config();
+import sequelize from '../config/database';
+import '../models';
 
 const program = new Command();
 
 program
-  .name('stock-data-cli')
-  .description('A股数据管理命令行工具')
-  .version('1.0.0');
+  .version('1.0.0')
+  .description('A股数据管理命令行工具');
 
 program
   .command('sync-stocks')
   .description('同步所有股票列表')
   .action(async () => {
     try {
+      await sequelize.authenticate();
+      await sequelize.sync();
       // 动态导入DataSyncService，确保环境变量已设置
       const { DataSyncService } = await import('../data/services/DataSyncService');
       const dataSyncService = new DataSyncService();
@@ -39,6 +39,8 @@ program
   .option('-e, --end <date>', '结束日期 (YYYY-MM-DD)', new Date().toISOString().split('T')[0])
   .action(async (symbol, options) => {
     try {
+      await sequelize.authenticate();
+      await sequelize.sync();
       // 动态导入DataSyncService，确保环境变量已设置
       const { DataSyncService } = await import('../data/services/DataSyncService');
       const dataSyncService = new DataSyncService();
@@ -65,6 +67,8 @@ program
   .option('-b, --batch-size <number>', '批次大小', '10')
   .action(async (symbols, options) => {
     try {
+      await sequelize.authenticate();
+      await sequelize.sync();
       // 动态导入DataSyncService，确保环境变量已设置
       const { DataSyncService } = await import('../data/services/DataSyncService');
       const dataSyncService = new DataSyncService();
@@ -94,6 +98,8 @@ program
   .description('同步指数成分股')
   .action(async (indexCode) => {
     try {
+      await sequelize.authenticate();
+      await sequelize.sync();
       // 动态导入DataSyncService，确保环境变量已设置
       const { DataSyncService } = await import('../data/services/DataSyncService');
       const dataSyncService = new DataSyncService();
@@ -113,6 +119,8 @@ program
   .description('执行每日数据更新')
   .action(async () => {
     try {
+      await sequelize.authenticate();
+      await sequelize.sync();
       // 动态导入DataSyncService，确保环境变量已设置
       const { DataSyncService } = await import('../data/services/DataSyncService');
       const dataSyncService = new DataSyncService();
@@ -138,6 +146,8 @@ program
   .option('-d, --days <number>', '天数阈值', '7')
   .action(async (options) => {
     try {
+      await sequelize.authenticate();
+      await sequelize.sync();
       // 动态导入DataSyncService，确保环境变量已设置
       const { DataSyncService } = await import('../data/services/DataSyncService');
       const dataSyncService = new DataSyncService();
@@ -159,6 +169,8 @@ program
   .description('查看数据服务状态')
   .action(async () => {
     try {
+      await sequelize.authenticate();
+      await sequelize.sync();
       // 动态导入DataSyncService，确保环境变量已设置
       const { DataSyncService } = await import('../data/services/DataSyncService');
       const dataSyncService = new DataSyncService();

@@ -52,8 +52,8 @@ async function initializeApp() {
     if (process.env.NODE_ENV === 'development') {
       console.log('Syncing database models...');
       try {
-        await sequelize.sync(); // 只创建缺失的表，不修改现有表结构
-        console.log('Database models synced successfully');
+        await sequelize.sync({ alter: true }); // 创建缺失的表并修改现有表结构
+        console.log('Database models synced successfully with alter: true');
       } catch (error) {
         console.warn('Database sync failed, continuing with existing schema:', error.message);
         console.warn('Error details:', error);
@@ -72,7 +72,7 @@ async function initializeApp() {
       }
     }
 
-    app.listen(PORT, () => {
+    app.listen(Number(PORT), '0.0.0.0', () => {
       console.log(`Server is running on port ${PORT}`);
       console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
     });
@@ -81,7 +81,7 @@ async function initializeApp() {
     console.warn('Starting server without database connection. Some features may be limited.');
 
     // Start server even without database connection
-    app.listen(PORT, () => {
+    app.listen(Number(PORT), '0.0.0.0', () => {
       console.log(`Server is running on port ${PORT} (without database connection)`);
       console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
     });
