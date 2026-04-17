@@ -35,15 +35,15 @@ const backtestQueue = new Bull<BacktestJobData>('backtest', {
 });
 
 // 队列事件监听
-backtestQueue.on('error', (error) => {
+backtestQueue.on('error', error => {
   logger.error('队列错误:', error);
 });
 
-backtestQueue.on('waiting', (jobId) => {
+backtestQueue.on('waiting', jobId => {
   logger.info(`任务 ${jobId} 等待中`);
 });
 
-backtestQueue.on('active', (job) => {
+backtestQueue.on('active', job => {
   logger.info(`任务 ${job.id} 开始处理`);
 });
 
@@ -55,7 +55,7 @@ backtestQueue.on('failed', (job, error) => {
   logger.error(`任务 ${job?.id} 处理失败:`, error);
 });
 
-backtestQueue.on('stalled', (job) => {
+backtestQueue.on('stalled', job => {
   logger.warn(`任务 ${job.id} 处理停滞`);
 });
 

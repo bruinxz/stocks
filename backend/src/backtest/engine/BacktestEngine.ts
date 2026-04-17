@@ -1,4 +1,13 @@
-import { Event, EventType, BarEvent, SignalEvent, OrderEvent, StartEvent, EndEvent, TimerEvent } from './Event';
+import {
+  Event,
+  EventType,
+  BarEvent,
+  SignalEvent,
+  OrderEvent,
+  StartEvent,
+  EndEvent,
+  TimerEvent,
+} from './Event';
 import { Portfolio } from './Portfolio';
 import { OrderManager, Order, FixedSlippageModel, FixedCommissionModel } from './OrderManager';
 import { Strategy } from '../strategies/Strategy';
@@ -49,9 +58,10 @@ export class BacktestEngine {
   private dataService: DataService;
   private events: Event[] = [];
   private currentDate: Date;
-  private isRunning: boolean = false;
+  private isRunning = false;
   private eventQueue: Event[] = [];
   private eventHandlers: Map<EventType, ((event: Event) => void)[]> = new Map();
+  private totalEventsCount: number = 0;
 
   constructor(config: BacktestConfig) {
     this.config = config;
@@ -93,7 +103,7 @@ export class BacktestEngine {
    * 触发事件
    */
   private emit(event: Event): void {
-    this.events.push(event);
+    this.totalEventsCount++;
     this.eventQueue.push(event);
 
     const handlers = this.eventHandlers.get(event.type) || [];
@@ -275,7 +285,7 @@ export class BacktestEngine {
     }
 
     this.isRunning = true;
-    this.events = [];
+    this.totalEventsCount = 0;
     this.eventQueue = [];
     this.portfolio.clear();
     this.orderManager.clear();
@@ -355,11 +365,13 @@ export class BacktestEngine {
 
     for (const symbol of symbols) {
       const bars = await this.dataService.getDailyBars(symbol, startDate, endDate);
-      data.push(...bars.map(bar => ({
-        ...bar,
-        symbol,
-        timestamp: bar.time,
-      })));
+      data.push(
+        ...bars.map(bar => ({
+          ...bar,
+          symbol,
+          timestamp: bar.time,
+        }))
+      );
     }
 
     return data;
@@ -396,12 +408,11 @@ export class BacktestEngine {
     const profitLossRatio = averageLoss !== 0 ? averageProfit / averageLoss : 0;
 
     // 计算持有天数
-    const holdingDays = trades
-      .filter(t => t.holdingDays)
-      .map(t => t.holdingDays || 0);
-    const averageHoldingDays = holdingDays.length > 0
-      ? holdingDays.reduce((sum, days) => sum + days, 0) / holdingDays.length
-      : 0;
+    const holdingDays = trades.filter(t => t.holdingDays).map(t => t.holdingDays || 0);
+    const averageHoldingDays =
+      holdingDays.length > 0
+        ? holdingDays.reduce((sum, days) => sum + days, 0) / holdingDays.length
+        : 0;
 
     // 计算夏普比率（简化版）
     const sharpeRatio = this.calculateSharpeRatio(dailyReturns);
@@ -443,11 +454,12 @@ export class BacktestEngine {
   /**
    * 计算夏普比率
    */
-  private calculateSharpeRatio(dailyReturns: number[], riskFreeRate: number = 0.03): number {
+  private calculateSharpeRatio(dailyReturns: number[], riskFreeRate = 0.03): number {
     if (dailyReturns.length === 0) return 0;
 
     const avgReturn = dailyReturns.reduce((sum, r) => sum + r, 0) / dailyReturns.length;
-    const variance = dailyReturns.reduce((sum, r) => sum + Math.pow(r - avgReturn, 2), 0) / dailyReturns.length;
+    const variance =
+      dailyReturns.reduce((sum, r) => sum + Math.pow(r - avgReturn, 2), 0) / dailyReturns.length;
     const stdDev = Math.sqrt(variance);
 
     if (stdDev === 0) return 0;
@@ -462,7 +474,7 @@ export class BacktestEngine {
   /**
    * 计算索提诺比率
    */
-  private calculateSortinoRatio(dailyReturns: number[], riskFreeRate: number = 0.03): number {
+  private calculateSortinoRatio(dailyReturns: number[], riskFreeRate = 0.03): number {
     if (dailyReturns.length === 0) return 0;
 
     const avgReturn = dailyReturns.reduce((sum, r) => sum + r, 0) / dailyReturns.length;
@@ -470,7 +482,8 @@ export class BacktestEngine {
 
     if (downsideReturns.length === 0) return 0;
 
-    const downsideVariance = downsideReturns.reduce((sum, r) => sum + Math.pow(r, 2), 0) / downsideReturns.length;
+    const downsideVariance =
+      downsideReturns.reduce((sum, r) => sum + Math.pow(r, 2), 0) / downsideReturns.length;
     const downsideStdDev = Math.sqrt(downsideVariance);
 
     if (downsideStdDev === 0) return 0;
@@ -495,7 +508,7 @@ export class BacktestEngine {
       if (point.value > peak) {
         peak = point.value;
       }
-      const drawdown = (peak - point.value) / peak * 100;
+      const drawdown = ((peak - point.value) / peak) * 100;
       if (drawdown > maxDrawdown) {
         maxDrawdown = drawdown;
       }
@@ -527,7 +540,7 @@ export class BacktestEngine {
    * 获取事件记录
    */
   getEvents(): Event[] {
-    return [...this.events];
+    return []; // 已移除 events 存储以节省内存
   }
 
   /**
@@ -538,7 +551,7 @@ export class BacktestEngine {
       isRunning: this.isRunning,
       currentDate: this.currentDate,
       portfolioMetrics: this.portfolio.getMetrics(),
-      totalEvents: this.events.length,
+      totalEvents: this.totalEventsCount,
       pendingOrders: this.orderManager.getOrders().length,
     };
   }

@@ -7,7 +7,9 @@ import { BacktestResult, BacktestStatus } from '../models/BacktestResult';
 import { Trade } from '../models/Trade';
 import { logger } from '../utils/logger';
 
-export async function processBacktestJob(jobData: BacktestJobData): Promise<{ backtestResultId: string }> {
+export async function processBacktestJob(
+  jobData: BacktestJobData
+): Promise<{ backtestResultId: string }> {
   const {
     userId,
     name,

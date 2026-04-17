@@ -1,4 +1,14 @@
-import { Table, Column, Model, DataType, ForeignKey, BelongsTo, Index, CreatedAt, UpdatedAt } from 'sequelize-typescript';
+import {
+  Table,
+  Column,
+  Model,
+  DataType,
+  ForeignKey,
+  BelongsTo,
+  Index,
+  CreatedAt,
+  UpdatedAt,
+} from 'sequelize-typescript';
 import { Stock } from './Stock';
 
 @Table({
@@ -129,6 +139,13 @@ export class DailyBar extends Model {
     comment: '市销率(PS)',
   })
   declare ps?: number;
+
+  @Column({
+    type: DataType.DECIMAL(20, 4),
+    allowNull: true,
+    comment: '总市值(元)',
+  })
+  declare marketCap?: number;
 
   @Column({
     type: DataType.BOOLEAN,

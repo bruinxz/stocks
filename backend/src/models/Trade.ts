@@ -1,4 +1,14 @@
-import { Table, Column, Model, DataType, ForeignKey, BelongsTo, Index, CreatedAt, UpdatedAt } from 'sequelize-typescript';
+import {
+  Table,
+  Column,
+  Model,
+  DataType,
+  ForeignKey,
+  BelongsTo,
+  Index,
+  CreatedAt,
+  UpdatedAt,
+} from 'sequelize-typescript';
 import { BacktestResult } from './BacktestResult';
 import { Stock } from './Stock';
 
@@ -13,7 +23,7 @@ export enum TradeDirection {
   indexes: [
     {
       name: 'idx_trades_backtest_id',
-      fields: ['backtestId'],
+      fields: ['backtest_id'],
     },
     {
       name: 'idx_trades_entry_date',
@@ -25,7 +35,7 @@ export enum TradeDirection {
     },
     {
       name: 'idx_trades_stock_id',
-      fields: ['stockId'],
+      fields: ['stock_id'],
     },
   ],
 })
@@ -41,6 +51,7 @@ export class Trade extends Model {
   @Column({
     type: DataType.UUID,
     allowNull: false,
+    field: 'backtest_id',
     comment: '回测ID',
   })
   declare backtestId: string;
@@ -65,72 +76,79 @@ export class Trade extends Model {
   @Column({
     type: DataType.INTEGER,
     allowNull: false,
+    field: 'stock_id',
     comment: '股票ID',
   })
-  stockId!: number;
+  declare stockId: number;
 
   @Column({
     type: DataType.ENUM(...Object.values(TradeDirection)),
     allowNull: false,
     comment: '交易方向',
   })
-  direction!: TradeDirection;
+  declare direction: TradeDirection;
 
   @Column({
     type: DataType.DECIMAL(12, 4),
     allowNull: false,
+    field: 'entry_price',
     comment: '入场价格',
   })
-  entryPrice!: number;
+  declare entryPrice: number;
 
   @Column({
     type: DataType.DECIMAL(12, 4),
     allowNull: false,
+    field: 'exit_price',
     comment: '出场价格',
   })
-  exitPrice!: number;
+  declare exitPrice: number;
 
   @Column({
     type: DataType.INTEGER,
     allowNull: false,
     comment: '交易数量',
   })
-  quantity!: number;
+  declare quantity: number;
 
   @Column({
     type: DataType.DECIMAL(12, 4),
     allowNull: false,
     comment: '盈亏金额',
   })
-  pnl!: number;
+  declare pnl: number;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
     allowNull: false,
+    field: 'pnl_percent',
     comment: '盈亏比例(%)',
   })
-  pnlPercent!: number;
+  declare pnlPercent: number;
 
   @Column({
     type: DataType.INTEGER,
     allowNull: false,
+    field: 'holding_days',
     comment: '持有天数',
   })
-  holdingDays!: number;
+  declare holdingDays: number;
 
   @Column({
     type: DataType.DECIMAL(12, 4),
     allowNull: false,
+    field: 'entry_value',
     comment: '入场市值',
   })
-  entryValue!: number;
+  declare entryValue: number;
 
   @Column({
     type: DataType.DECIMAL(12, 4),
     allowNull: false,
+    field: 'exit_value',
     comment: '出场市值',
   })
-  exitValue!: number;
+  declare exitValue: number;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
@@ -142,6 +160,7 @@ export class Trade extends Model {
   @Column({
     type: DataType.DECIMAL(10, 4),
     allowNull: true,
+    field: 'stamp_duty',
     comment: '印花税',
   })
   stampDuty?: number;
@@ -149,6 +168,7 @@ export class Trade extends Model {
   @Column({
     type: DataType.DECIMAL(10, 4),
     allowNull: true,
+    field: 'transfer_fee',
     comment: '过户费',
   })
   transferFee?: number;
@@ -156,6 +176,7 @@ export class Trade extends Model {
   @Column({
     type: DataType.DECIMAL(10, 4),
     allowNull: true,
+    field: 'total_fee',
     comment: '总费用',
   })
   totalFee?: number;
@@ -163,6 +184,7 @@ export class Trade extends Model {
   @Column({
     type: DataType.DECIMAL(10, 4),
     allowNull: true,
+    field: 'net_pnl',
     comment: '净盈亏',
   })
   netPnl?: number;
@@ -170,6 +192,7 @@ export class Trade extends Model {
   @Column({
     type: DataType.STRING(50),
     allowNull: true,
+    field: 'entry_signal',
     comment: '入场信号',
   })
   entrySignal?: string;
@@ -177,6 +200,7 @@ export class Trade extends Model {
   @Column({
     type: DataType.STRING(50),
     allowNull: true,
+    field: 'exit_signal',
     comment: '出场信号',
   })
   exitSignal?: string;
@@ -189,6 +213,7 @@ export class Trade extends Model {
   notes?: string;
 
   @CreatedAt
+  @Column({ field: 'created_at' })
   declare createdAt: Date;
 
   // 关联关系

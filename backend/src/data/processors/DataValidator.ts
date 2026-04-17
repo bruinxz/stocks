@@ -182,7 +182,10 @@ export class DataValidator {
   /**
    * 检测异常值（使用统计方法）
    */
-  detectOutliers(bars: DailyBar[], field: keyof DailyBar): {
+  detectOutliers(
+    bars: DailyBar[],
+    field: keyof DailyBar
+  ): {
     outliers: DailyBar[];
     stats: {
       mean: number;
@@ -282,7 +285,10 @@ export class DataValidator {
   /**
    * 生成数据质量报告
    */
-  generateQualityReport(bars: DailyBar[], stock?: Stock): {
+  generateQualityReport(
+    bars: DailyBar[],
+    stock?: Stock
+  ): {
     summary: {
       totalBars: number;
       validBars: number;

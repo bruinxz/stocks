@@ -10,14 +10,7 @@ export class StockController {
    */
   async getStockList(req: Request, res: Response, next: NextFunction) {
     try {
-      const {
-        page = '1',
-        limit = '20',
-        market,
-        industry,
-        search,
-        listedOnly = 'true',
-      } = req.query;
+      const { page = '1', limit = '20', market, industry, search, listedOnly = 'true' } = req.query;
 
       const pageNum = parseInt(page as string, 10);
       const limitNum = parseInt(limit as string, 10);
@@ -150,10 +143,7 @@ export class StockController {
   async getMarketStats(req: Request, res: Response, next: NextFunction) {
     try {
       const marketStats = await Stock.findAll({
-        attributes: [
-          'market',
-          [Stock.sequelize!.fn('COUNT', Stock.sequelize!.col('id')), 'count'],
-        ],
+        attributes: ['market', [Stock.sequelize!.fn('COUNT', Stock.sequelize!.col('id')), 'count']],
         where: { isListed: true },
         group: ['market'],
       });
@@ -200,10 +190,7 @@ export class StockController {
 
       const suggestions = await Stock.findAll({
         where: {
-          [Op.or]: [
-            { symbol: { [Op.iLike]: `%${q}%` } },
-            { name: { [Op.iLike]: `%${q}%` } },
-          ],
+          [Op.or]: [{ symbol: { [Op.iLike]: `%${q}%` } }, { name: { [Op.iLike]: `%${q}%` } }],
           isListed: true,
         },
         attributes: ['symbol', 'name', 'market', 'industry'],

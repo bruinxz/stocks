@@ -140,7 +140,8 @@ export class DataUpdateWorker {
           await Promise.all(batchPromises);
 
           // 更新进度
-          const progress = 30 + Math.min(60, Math.floor((i + batchSize) / stocksNeedingUpdate.length * 60));
+          const progress =
+            30 + Math.min(60, Math.floor(((i + batchSize) / stocksNeedingUpdate.length) * 60));
           await job.progress(progress);
 
           // 批次间延迟，避免请求过于频繁
@@ -151,7 +152,8 @@ export class DataUpdateWorker {
         const successCount = Object.values(results).filter(count => count > 0).length;
         const failCount = Object.values(results).filter(count => count === -1).length;
         const skipCount = Object.values(results).filter(count => count === 0).length;
-        const totalInserted = Object.values(results).filter(count => count > 0)
+        const totalInserted = Object.values(results)
+          .filter(count => count > 0)
           .reduce((sum, count) => sum + count, 0);
 
         resultDetails.dailyUpdate = {
@@ -194,7 +196,9 @@ export class DataUpdateWorker {
         result: resultDetails,
       });
 
-      logger.info(`每日数据更新完成。影响股票: ${totalAffectedStocks}, 插入记录: ${totalInsertedRecords}`);
+      logger.info(
+        `每日数据更新完成。影响股票: ${totalAffectedStocks}, 插入记录: ${totalInsertedRecords}`
+      );
 
       return {
         success: true,
@@ -228,13 +232,15 @@ export class DataUpdateWorker {
   /**
    * 获取需要增量更新的股票列表
    */
-  private async getStocksNeedingIncrementalUpdate(startDate: string, endDate: string): Promise<string[]> {
+  private async getStocksNeedingIncrementalUpdate(
+    startDate: string,
+    endDate: string
+  ): Promise<string[]> {
     try {
       // 获取所有已上市股票
       const stocks = await Stock.findAll({
         where: { isListed: true },
         attributes: ['id', 'symbol'],
-        limit: 1000, // 限制数量，避免过大查询
       });
 
       const needsUpdate: string[] = [];
@@ -248,15 +254,11 @@ export class DataUpdateWorker {
               [Op.between]: [new Date(startDate), new Date(endDate)],
             },
           },
+          attributes: ['id'],
         });
 
         if (!hasRecentData) {
           needsUpdate.push(stock.symbol);
-        }
-
-        // 分批处理，避免内存溢出
-        if (needsUpdate.length >= 50) {
-          break; // 限制每次更新的数量
         }
       }
 
@@ -270,7 +272,11 @@ export class DataUpdateWorker {
   /**
    * 带锁的股票数据同步
    */
-  private async syncStockWithLock(symbol: string, startDate: string, endDate: string): Promise<number> {
+  private async syncStockWithLock(
+    symbol: string,
+    startDate: string,
+    endDate: string
+  ): Promise<number> {
     const lockKey = LockKeys.STOCK_SYNC(symbol);
     const lockValue = await redisLock.acquire(lockKey, 5 * 60 * 1000); // 5分钟锁
 
@@ -421,7 +427,6 @@ export class DataUpdateWorker {
     const stocks = await Stock.findAll({
       where: { isListed: true },
       attributes: ['id', 'symbol'],
-      limit: 500, // 限制数量
     });
 
     const completenessResult = {
@@ -430,7 +435,7 @@ export class DataUpdateWorker {
         startDate: sevenDaysAgo.toISOString().split('T')[0],
         endDate: today.toISOString().split('T')[0],
       },
-      missingDataStocks: [] as Array<{ symbol: string, missingDays: number }>,
+      missingDataStocks: [] as Array<{ symbol: string; missingDays: number }>,
       missingDataCount: 0,
     };
 
@@ -502,13 +507,22 @@ export class DataUpdateWorker {
       startDate,
       endDate,
       dataSource = 'akshare',
-      concurrency = 10,
+      concurrency = 2, // 默认将并发数降为 2，避免同时启动过多 Python 进程导致小服务器 CPU/内存 爆满
       userId,
     } = job.data;
+
+    const lockKey = LockKeys.BULK_SYNC;
+    let lockValue: string | null = null;
 
     try {
       // 报告进度
       await job.progress(5);
+
+      // 获取分布式锁，防止批量同步并发（锁24小时，或执行完毕后释放）
+      lockValue = await redisLock.acquire(lockKey, 24 * 60 * 60 * 1000);
+      if (!lockValue) {
+        throw new Error('无法获取分布式锁，已有批量同步任务正在运行');
+      }
 
       // 创建更新记录
       const updateLog = await DataUpdateLog.create({
@@ -559,46 +573,104 @@ export class DataUpdateWorker {
         stocksToSync = stocks.map(s => s.symbol);
       }
 
-      logger.info(`批量同步任务开始，共 ${stocksToSync.length} 只股票`);
-      logger.info(`日期范围: ${startDate} 到 ${endDate}, 并发数: ${concurrency}`);
+      // 检查是否为重试任务，实现断点续传
+      let processedStocksSet = new Set<string>();
+      if (job.attemptsMade > 0 && job.data.completedSymbols) {
+        processedStocksSet = new Set(job.data.completedSymbols);
+        logger.info(`任务重试检测到已完成 ${processedStocksSet.size} 只股票，将从断点处继续执行`);
+        stocksToSync = stocksToSync.filter(s => !processedStocksSet.has(s));
+      }
+
+      // 初始化任务数据中的 completedSymbols
+      if (!job.data.completedSymbols) {
+        job.data.completedSymbols = [];
+        await job.update(job.data);
+      }
+
+      // 如果未指定开始日期，提供一个合理的默认值
+      const actualStartDate = startDate || '2020-01-01';
+      const actualEndDate = endDate || new Date().toISOString().split('T')[0];
+
+      logger.info(`批量同步任务开始，本次需要处理 ${stocksToSync.length} 只股票`);
+      logger.info(`日期范围: ${actualStartDate} 到 ${actualEndDate}, 并发数: ${concurrency}`);
 
       // 更新日志记录
       await updateLog.update({
         result: {
           ...updateLog.result,
-          totalStocks: stocksToSync.length,
-          processedStocks: 0,
-          currentProgress: 0,
+          totalStocks: stocksToSync.length + processedStocksSet.size,
+          processedStocks: processedStocksSet.size,
+          currentProgress:
+            processedStocksSet.size > 0
+              ? Math.floor(
+                  (processedStocksSet.size / (stocksToSync.length + processedStocksSet.size)) * 100
+                )
+              : 0,
         },
       });
 
       await job.progress(20);
 
       // 执行批量同步
+      let currentTotalInserted = job.data.totalInserted || 0;
+      const totalCountForProgress = stocksToSync.length + processedStocksSet.size;
+
       const syncResults = await this.dataSyncService.syncMultipleStocksHistory(
         stocksToSync,
-        startDate || '2020-01-01',
-        endDate || new Date().toISOString().split('T')[0],
-        concurrency
+        actualStartDate,
+        actualEndDate,
+        concurrency,
+        async (processedCount, totalCount, currentBatchInserted, completedBatchSymbols) => {
+          currentTotalInserted += currentBatchInserted;
+
+          // 更新 job.data 实现断点续传状态保存
+          if (completedBatchSymbols && completedBatchSymbols.length > 0) {
+            job.data.completedSymbols.push(...completedBatchSymbols);
+            job.data.totalInserted = currentTotalInserted;
+            await job.update(job.data);
+          }
+
+          const overallProcessedCount = processedCount + processedStocksSet.size;
+
+          // 更新日志进度
+          await updateLog.update({
+            affectedStocks: overallProcessedCount,
+            insertedRecords: currentTotalInserted,
+            result: {
+              ...updateLog.result,
+              processedStocks: overallProcessedCount,
+              currentProgress: Math.floor((overallProcessedCount / totalCountForProgress) * 100),
+            },
+          });
+
+          // 报告 Bull 队列进度 (在20%到99%之间)
+          const bullProgress =
+            20 + Math.floor((overallProcessedCount / totalCountForProgress) * 79);
+          await job.progress(bullProgress);
+        }
       );
 
       // 统计结果
       const successfulSyncs = Object.values(syncResults).filter(count => count > 0).length;
       const failedSyncs = Object.values(syncResults).filter(count => count === -1).length;
-      const totalRecordsInserted = Object.values(syncResults).reduce((sum, count) => count > 0 ? sum + count : sum, 0);
+      const skippedSyncs = Object.values(syncResults).filter(count => count === 0).length;
+      const totalRecordsInserted = Object.values(syncResults).reduce(
+        (sum, count) => (count > 0 ? sum + count : sum),
+        0
+      );
 
       // 更新日志记录
       await updateLog.update({
         status: UpdateStatus.COMPLETED,
         completedAt: new Date(),
-        affectedStocks: stocksToSync.length,
-        insertedRecords: totalRecordsInserted,
+        affectedStocks: stocksToSync.length + processedStocksSet.size,
+        insertedRecords: currentTotalInserted,
         result: {
           ...updateLog.result,
           successfulSyncs,
           failedSyncs,
-          totalRecordsInserted,
-          syncResults,
+          skippedSyncs,
+          totalRecordsInserted: currentTotalInserted,
         },
       });
 
@@ -606,35 +678,40 @@ export class DataUpdateWorker {
 
       return {
         success: true,
-        message: `批量同步完成，共处理 ${stocksToSync.length} 只股票，插入 ${totalRecordsInserted} 条记录`,
+        message: `批量同步完成，共处理 ${
+          stocksToSync.length + processedStocksSet.size
+        } 只股票，插入 ${currentTotalInserted} 条记录`,
         logId: updateLog.id,
-        totalStocks: stocksToSync.length,
+        totalStocks: stocksToSync.length + processedStocksSet.size,
         successfulSyncs,
         failedSyncs,
-        totalRecordsInserted,
+        skippedSyncs,
+        totalRecordsInserted: currentTotalInserted,
       };
-    } catch (error) {
-      logger.error('处理批量同步任务失败:', error);
+    } catch (error: any) {
+      logger.error('批量同步任务执行失败:', error);
 
-      // 更新日志记录为失败
-      const updateLog = await DataUpdateLog.findOne({
-        where: {
-          date,
-          type: UpdateType.BULK_SYNC_CUSTOM,
-          status: UpdateStatus.IN_PROGRESS,
-        },
-        order: [['id', 'DESC']],
-      });
-
-      if (updateLog) {
-        await updateLog.update({
+      // 更新日志状态
+      await DataUpdateLog.update(
+        {
           status: UpdateStatus.FAILED,
-          completedAt: new Date(),
           error: error.message,
-        });
-      }
+          completedAt: new Date(),
+        },
+        {
+          where: {
+            date,
+            type: UpdateType.BULK_SYNC_CUSTOM,
+            status: UpdateStatus.IN_PROGRESS,
+          },
+        }
+      );
 
       throw error;
+    } finally {
+      if (lockValue) {
+        await redisLock.release(lockKey, lockValue);
+      }
     }
   }
 

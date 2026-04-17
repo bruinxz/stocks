@@ -3,38 +3,45 @@ import { logger } from '../../utils/logger';
 import path from 'path';
 
 export interface StockBasicInfo {
-  code: string;           // 股票代码，如 'sh.600000'
-  code_name: string;      // 股票名称，如 '浦发银行'
-  ipoDate: string;        // 上市日期
-  outDate?: string;       // 退市日期
-  type: number;           // 类型：1-股票，2-指数，3-其他
-  status: number;         // 状态：1-上市，0-退市
+  code: string; // 股票代码，如 'sh.600000'
+  code_name: string; // 股票名称，如 '浦发银行'
+  ipoDate: string; // 上市日期
+  outDate?: string; // 退市日期
+  type: number; // 类型：1-股票，2-指数，3-其他
+  status: number; // 状态：1-上市，0-退市
+  totalMarketCap?: number; // 总市值
+  circulatingMarketCap?: number; // 流通市值
+  peDynamic?: number; // 动态市盈率
+  pb?: number; // 市净率
+  turnoverRate?: number; // 换手率
+  price?: number; // 最新价
+  changePercent?: number; // 涨跌幅
 }
 
 export interface DailyBar {
-  date: string;           // 交易日期，格式：'2023-06-01'
-  code: string;           // 股票代码
-  open: number;          // 开盘价
-  high: number;          // 最高价
-  low: number;           // 最低价
-  close: number;         // 收盘价
-  volume: number;        // 成交量（股）
-  amount: number;        // 成交额（元）
-  adjustflag: number;    // 复权类型：1-后复权，2-前复权，3-不复权
-  turn: number;          // 换手率
-  tradestatus: number;   // 交易状态：1-正常，0-停牌
-  pctChg: number;        // 涨跌幅
-  peTTM: number;         // 市盈率TTM
-  psTTM: number;         // 市销率TTM
-  pcfNcfTTM: number;     // 市现率TTM
-  pbMRQ: number;         // 市净率MRQ
+  date: string; // 交易日期，格式：'2023-06-01'
+  code: string; // 股票代码
+  open: number; // 开盘价
+  high: number; // 最高价
+  low: number; // 最低价
+  close: number; // 收盘价
+  volume: number; // 成交量（股）
+  amount: number; // 成交额（元）
+  adjustflag: number; // 复权类型：1-后复权，2-前复权，3-不复权
+  turn: number; // 换手率
+  tradestatus: number; // 交易状态：1-正常，0-停牌
+  pctChg: number; // 涨跌幅
+  peTTM: number; // 市盈率TTM
+  psTTM: number; // 市销率TTM
+  pbMRQ: number; // 市净率MRQ
+  totalMarketCap?: number; // 总市值(历史)
 }
 
 export interface QueryParams {
-  code?: string;         // 股票代码
-  start_date?: string;   // 开始日期
-  end_date?: string;     // 结束日期
-  fields?: string;       // 返回字段
+  code?: string; // 股票代码
+  start_date?: string; // 开始日期
+  end_date?: string; // 结束日期
+  fields?: string; // 返回字段
   frequency?: 'd' | 'w' | 'm'; // 频率：日、周、月
   adjustflag?: '1' | '2' | '3'; // 复权类型
 }
@@ -44,9 +51,12 @@ export class AKShareClient {
   private scriptPath: string;
 
   constructor(pythonPath?: string) {
-    this.pythonPath = pythonPath || 'python';
+    // 如果设置了环境变量 PYTHON_PATH，则使用它；否则优先尝试 python3
+    this.pythonPath = pythonPath || process.env.PYTHON_PATH || 'python3';
     this.scriptPath = path.join(__dirname, '../../../python/akshare_helper.py');
-    logger.info(`AKShareClient initialized with python path: ${this.pythonPath}, script: ${this.scriptPath}`);
+    logger.info(
+      `AKShareClient initialized with python path: ${this.pythonPath}, script: ${this.scriptPath}`
+    );
   }
 
   /**
@@ -61,22 +71,22 @@ export class AKShareClient {
       let stdout = '';
       let stderr = '';
 
-      // 设置超时（30秒）
+      // 设置超时（5分钟）
       const timeout = setTimeout(() => {
         logger.error(`Python script timeout for command: ${command}`);
         child.kill('SIGTERM');
-        reject(new Error('Python script timeout (30s)'));
-      }, 30000);
+        reject(new Error('Python script timeout (5m)'));
+      }, 300000);
 
-      child.stdout.on('data', (data) => {
+      child.stdout.on('data', data => {
         stdout += data.toString();
       });
 
-      child.stderr.on('data', (data) => {
+      child.stderr.on('data', data => {
         stderr += data.toString();
       });
 
-      child.on('close', (code) => {
+      child.on('close', code => {
         clearTimeout(timeout);
         if (code !== 0) {
           logger.error(`Python script failed with code ${code}: ${stderr}`);
@@ -97,7 +107,7 @@ export class AKShareClient {
         }
       });
 
-      child.on('error', (error) => {
+      child.on('error', error => {
         clearTimeout(timeout);
         logger.error(`Failed to spawn Python process: ${error.message}`);
         reject(error);
@@ -144,7 +154,13 @@ export class AKShareClient {
         return [];
       }
 
-      const bars = await this.callPythonScript('get_daily_data', code, startDate, endDate, adjustflag);
+      const bars = await this.callPythonScript(
+        'get_daily_data',
+        code,
+        startDate,
+        endDate,
+        adjustflag
+      );
       logger.info(`Fetched ${bars.length} daily bars for ${code} from AKShare`);
       return bars;
     } catch (error) {
@@ -171,7 +187,9 @@ export class AKShareClient {
    * 获取指数成分股（暂不支持）
    */
   async getIndexStocks(indexCode: string): Promise<StockBasicInfo[]> {
-    logger.warn(`AKShareClient.getIndexStocks not implemented for ${indexCode}, returning empty array`);
+    logger.warn(
+      `AKShareClient.getIndexStocks not implemented for ${indexCode}, returning empty array`
+    );
     return [];
   }
 

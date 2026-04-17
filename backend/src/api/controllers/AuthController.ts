@@ -18,7 +18,8 @@ export class AuthController {
 
   constructor() {
     this.jwtSecret = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
-    this.refreshTokenSecret = process.env.JWT_REFRESH_SECRET || 'your-refresh-secret-key-change-in-production';
+    this.refreshTokenSecret =
+      process.env.JWT_REFRESH_SECRET || 'your-refresh-secret-key-change-in-production';
 
     // 绑定方法以确保正确的this上下文
     this.register = this.register.bind(this);
@@ -26,7 +27,36 @@ export class AuthController {
     this.refreshToken = this.refreshToken.bind(this);
     this.logout = this.logout.bind(this);
     this.getProfile = this.getProfile.bind(this);
-    // authenticate已经是箭头函数，不需要绑定
+    this.updateProfile = this.updateProfile.bind(this);
+    this.uploadAvatar = this.uploadAvatar.bind(this);
+
+    // 初始化默认用户
+    this.initDefaultUsers();
+  }
+
+  private async initDefaultUsers() {
+    try {
+      const defaultUsers = [
+        { username: 'xz', passwordHash: '666', email: 'xz@example.com' },
+        { username: 'lym', passwordHash: '666', email: 'lym@example.com' },
+      ];
+
+      for (const u of defaultUsers) {
+        const existingUser = await User.findOne({ where: { username: u.username } });
+        if (!existingUser) {
+          await User.create({
+            username: u.username,
+            email: u.email,
+            passwordHash: u.passwordHash,
+            role: 'admin',
+            isActive: true,
+          });
+          logger.info(`Default user ${u.username} created.`);
+        }
+      }
+    } catch (err) {
+      logger.error('Failed to init default users:', err);
+    }
   }
 
   /**
@@ -213,6 +243,67 @@ export class AuthController {
       });
     } catch (error) {
       logger.error('获取用户资料失败:', error);
+      next(error);
+    }
+  }
+
+  /**
+   * 更新用户资料
+   */
+  async updateProfile(req: Request, res: Response, next: NextFunction) {
+    try {
+      const user = (req as any).user as User;
+      const { nickname, phone, avatarUrl } = req.body;
+
+      if (nickname !== undefined) user.nickname = nickname;
+      if (phone !== undefined) user.phone = phone;
+      if (avatarUrl !== undefined) user.avatarUrl = avatarUrl;
+
+      await user.save();
+
+      res.json({
+        success: true,
+        message: '个人资料更新成功',
+        data: {
+          user: user.toJSON(),
+        },
+      });
+    } catch (error) {
+      logger.error('更新用户资料失败:', error);
+      next(error);
+    }
+  }
+
+  /**
+   * 上传头像
+   */
+  async uploadAvatar(req: Request, res: Response, next: NextFunction) {
+    try {
+      const user = (req as any).user as User;
+      const file = (req as any).file;
+
+      if (!file) {
+        return res.status(400).json({
+          success: false,
+          message: '未找到上传的文件',
+        });
+      }
+
+      // 获取文件路径
+      const avatarUrl = `/uploads/avatars/${file.filename}`;
+      user.avatarUrl = avatarUrl;
+      await user.save();
+
+      res.json({
+        success: true,
+        message: '头像上传成功',
+        data: {
+          avatarUrl,
+          user: user.toJSON(),
+        },
+      });
+    } catch (error) {
+      logger.error('上传头像失败:', error);
       next(error);
     }
   }

@@ -38,7 +38,6 @@ export interface BacktestDetailResponse {
   data: BacktestResponse;
 }
 
-
 export const backtestService = {
   async createBacktest(backtestData: BacktestRequest): Promise<BacktestResponse> {
     // 尝试使用真实API，失败时返回模拟数据
@@ -69,12 +68,23 @@ export const backtestService = {
         endDate: formatDate(backendBacktest.endDate) || backtestData.endDate,
         strategyType,
         initialCapital: parseFloat(backendBacktest.initialCapital) || backtestData.initialCapital,
-        totalReturn: backendBacktest.totalReturn !== undefined ? parseFloat(backendBacktest.totalReturn) : undefined,
-        sharpeRatio: backendBacktest.sharpeRatio !== undefined ? parseFloat(backendBacktest.sharpeRatio) : undefined,
-        maxDrawdown: backendBacktest.maxDrawdown !== undefined ? parseFloat(backendBacktest.maxDrawdown) : undefined,
-        createdAt: backendBacktest.createdAt ?
-          (typeof backendBacktest.createdAt === 'string' ? backendBacktest.createdAt : backendBacktest.createdAt.toISOString()) :
-          new Date().toISOString(),
+        totalReturn:
+          backendBacktest.totalReturn !== undefined
+            ? parseFloat(backendBacktest.totalReturn)
+            : undefined,
+        sharpeRatio:
+          backendBacktest.sharpeRatio !== undefined
+            ? parseFloat(backendBacktest.sharpeRatio)
+            : undefined,
+        maxDrawdown:
+          backendBacktest.maxDrawdown !== undefined
+            ? parseFloat(backendBacktest.maxDrawdown)
+            : undefined,
+        createdAt: backendBacktest.createdAt
+          ? typeof backendBacktest.createdAt === 'string'
+            ? backendBacktest.createdAt
+            : backendBacktest.createdAt.toISOString()
+          : new Date().toISOString(),
       };
     } catch (error) {
       console.error('创建回测失败:', error);
@@ -118,12 +128,17 @@ export const backtestService = {
           endDate: formatDate(backendItem.endDate),
           strategyType,
           initialCapital: parseFloat(backendItem.initialCapital) || 100000,
-          totalReturn: backendItem.totalReturn !== undefined ? parseFloat(backendItem.totalReturn) : undefined,
-          sharpeRatio: backendItem.sharpeRatio !== undefined ? parseFloat(backendItem.sharpeRatio) : undefined,
-          maxDrawdown: backendItem.maxDrawdown !== undefined ? parseFloat(backendItem.maxDrawdown) : undefined,
-          createdAt: backendItem.createdAt ?
-            (typeof backendItem.createdAt === 'string' ? backendItem.createdAt : backendItem.createdAt.toISOString()) :
-            new Date().toISOString(),
+          totalReturn:
+            backendItem.totalReturn !== undefined ? parseFloat(backendItem.totalReturn) : undefined,
+          sharpeRatio:
+            backendItem.sharpeRatio !== undefined ? parseFloat(backendItem.sharpeRatio) : undefined,
+          maxDrawdown:
+            backendItem.maxDrawdown !== undefined ? parseFloat(backendItem.maxDrawdown) : undefined,
+          createdAt: backendItem.createdAt
+            ? typeof backendItem.createdAt === 'string'
+              ? backendItem.createdAt
+              : backendItem.createdAt.toISOString()
+            : new Date().toISOString(),
         };
       });
 
@@ -169,12 +184,23 @@ export const backtestService = {
         endDate: formatDate(backendBacktest.endDate),
         strategyType,
         initialCapital: parseFloat(backendBacktest.initialCapital) || 100000,
-        totalReturn: backendBacktest.totalReturn !== undefined ? parseFloat(backendBacktest.totalReturn) : undefined,
-        sharpeRatio: backendBacktest.sharpeRatio !== undefined ? parseFloat(backendBacktest.sharpeRatio) : undefined,
-        maxDrawdown: backendBacktest.maxDrawdown !== undefined ? parseFloat(backendBacktest.maxDrawdown) : undefined,
-        createdAt: backendBacktest.createdAt ?
-          (typeof backendBacktest.createdAt === 'string' ? backendBacktest.createdAt : backendBacktest.createdAt.toISOString()) :
-          new Date().toISOString(),
+        totalReturn:
+          backendBacktest.totalReturn !== undefined
+            ? parseFloat(backendBacktest.totalReturn)
+            : undefined,
+        sharpeRatio:
+          backendBacktest.sharpeRatio !== undefined
+            ? parseFloat(backendBacktest.sharpeRatio)
+            : undefined,
+        maxDrawdown:
+          backendBacktest.maxDrawdown !== undefined
+            ? parseFloat(backendBacktest.maxDrawdown)
+            : undefined,
+        createdAt: backendBacktest.createdAt
+          ? typeof backendBacktest.createdAt === 'string'
+            ? backendBacktest.createdAt
+            : backendBacktest.createdAt.toISOString()
+          : new Date().toISOString(),
       };
     } catch (error) {
       console.error('获取回测详情失败:', error);

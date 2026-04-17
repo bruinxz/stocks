@@ -1,11 +1,11 @@
 import { Table, Column, Model, DataType, CreatedAt, UpdatedAt } from 'sequelize-typescript';
 
 export enum UpdateType {
-  DAILY_UPDATE = 'daily_update',          // 每日数据更新
-  NEW_STOCKS_SYNC = 'new_stocks_sync',    // 新股同步
+  DAILY_UPDATE = 'daily_update', // 每日数据更新
+  NEW_STOCKS_SYNC = 'new_stocks_sync', // 新股同步
   WEEKLY_COMPLETENESS_CHECK = 'weekly_completeness_check', // 周数据完整性检查
-  MANUAL_SYNC = 'manual_sync',            // 手动同步
-  BULK_SYNC_CUSTOM = 'bulk_sync_custom',  // 批量同步自定义任务
+  MANUAL_SYNC = 'manual_sync', // 手动同步
+  BULK_SYNC_CUSTOM = 'bulk_sync_custom', // 批量同步自定义任务
 }
 
 export enum UpdateStatus {
@@ -43,7 +43,7 @@ export class DataUpdateLog extends Model {
     allowNull: false,
     comment: '更新类型',
   })
-  type!: string;
+  declare type: string;
 
   @Column({
     type: DataType.STRING(50),
@@ -51,14 +51,14 @@ export class DataUpdateLog extends Model {
     defaultValue: UpdateStatus.PENDING,
     comment: '更新状态',
   })
-  status!: string;
+  declare status: string;
 
   @Column({
     type: DataType.DATEONLY,
     allowNull: false,
     comment: '更新日期（用于检查当天是否已更新）',
   })
-  date!: string;
+  declare date: string;
 
   @Column({
     type: DataType.JSONB,

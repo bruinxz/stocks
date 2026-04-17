@@ -15,11 +15,7 @@ export interface AuthenticatedRequest extends Request {
  * 简单的JWT认证中间件
  * 在开发环境中，如果未提供token，会创建一个模拟用户
  */
-export const authenticate = (
-  req: AuthenticatedRequest,
-  res: Response,
-  next: NextFunction
-) => {
+export const authenticate = (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const authHeader = req.headers.authorization;
 
   // 开发环境：如果没有token，使用模拟用户
@@ -51,9 +47,15 @@ export const authenticate = (
   }
 
   try {
-    const secret = process.env.JWT_SECRET || 'dev-secret-change-in-production';
+    const secret = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
     const decoded = jwt.verify(token, secret) as any;
-    req.user = decoded.user;
+    // decoded 可能是 { userId: 1, username: 'xz', role: 'admin', iat: ..., exp: ... } 或者嵌套在 user 中
+    req.user = decoded.user || {
+      id: decoded.userId,
+      username: decoded.username,
+      email: decoded.email || '',
+      role: decoded.role,
+    };
     next();
   } catch (error) {
     logger.error('JWT验证失败:', error);

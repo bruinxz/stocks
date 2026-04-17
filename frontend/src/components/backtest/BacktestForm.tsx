@@ -2,20 +2,19 @@ import React, { useState } from 'react';
 import {
   Form,
   Input,
-  InputNumber,
   Select,
   DatePicker,
+  InputNumber,
   Button,
   Card,
   Row,
   Col,
-  Space,
   message,
+  Radio,
 } from 'antd';
 import { backtestService } from '../../services/backtestService';
 import dayjs from 'dayjs';
 
-const { Option } = Select;
 const { RangePicker } = DatePicker;
 
 interface BacktestFormProps {
@@ -168,7 +167,7 @@ const BacktestForm: React.FC<BacktestFormProps> = ({ onSuccess }) => {
   };
 
   return (
-    <Card title="新建回测">
+    <Card className="modern-card" bordered={false} title="新建回测">
       <Form
         form={form}
         layout="vertical"
@@ -245,29 +244,49 @@ const BacktestForm: React.FC<BacktestFormProps> = ({ onSuccess }) => {
         </Row>
 
         <Row gutter={24}>
-          <Col span={12}>
+          <Col span={24}>
             <Form.Item
               label="策略类型"
               name="strategyType"
               rules={[{ required: true, message: '请选择策略类型' }]}
             >
-              <Select options={strategyOptions} onChange={value => setStrategyType(value)} />
+              <Radio.Group
+                optionType="button"
+                buttonStyle="solid"
+                options={strategyOptions}
+                onChange={e => setStrategyType(e.target.value)}
+              />
             </Form.Item>
           </Col>
         </Row>
 
-        <Card type="inner" title="策略参数" style={{ marginBottom: 24 }}>
+        <Card
+          className="modern-card"
+          bordered={false}
+          type="inner"
+          title={<span style={{ fontSize: 13, fontWeight: 600, color: '#6b7280' }}>策略参数</span>}
+          style={{ marginBottom: 24, background: '#f9fafb', border: '1px solid #f3f4f6' }}
+          headStyle={{ minHeight: 38, borderBottom: '1px solid #f3f4f6' }}
+        >
           {renderStrategyParams()}
         </Card>
 
-        <Form.Item>
-          <Space>
-            <Button type="primary" htmlType="submit" loading={loading}>
-              创建回测
-            </Button>
-            <Button onClick={() => form.resetFields()}>重置</Button>
-          </Space>
-        </Form.Item>
+        <div
+          style={{
+            marginTop: 32,
+            paddingTop: 24,
+            borderTop: '1px solid #f3f4f6',
+            display: 'flex',
+            gap: 12,
+          }}
+        >
+          <Button type="primary" htmlType="submit" loading={loading} style={{ padding: '0 32px' }}>
+            创建回测
+          </Button>
+          <Button type="text" onClick={() => form.resetFields()}>
+            重置
+          </Button>
+        </div>
       </Form>
     </Card>
   );

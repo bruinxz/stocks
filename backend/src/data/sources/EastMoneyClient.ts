@@ -2,38 +2,38 @@ import axios, { AxiosInstance } from 'axios';
 import { logger } from '../../utils/logger';
 
 export interface StockBasicInfo {
-  code: string;           // 股票代码，如 'sh.600000'
-  code_name: string;      // 股票名称，如 '浦发银行'
-  ipoDate: string;        // 上市日期
-  outDate?: string;       // 退市日期
-  type: number;           // 类型：1-股票，2-指数，3-其他
-  status: number;         // 状态：1-上市，0-退市
+  code: string; // 股票代码，如 'sh.600000'
+  code_name: string; // 股票名称，如 '浦发银行'
+  ipoDate: string; // 上市日期
+  outDate?: string; // 退市日期
+  type: number; // 类型：1-股票，2-指数，3-其他
+  status: number; // 状态：1-上市，0-退市
 }
 
 export interface DailyBar {
-  date: string;           // 交易日期，格式：'2023-06-01'
-  code: string;           // 股票代码
-  open: number;          // 开盘价
-  high: number;          // 最高价
-  low: number;           // 最低价
-  close: number;         // 收盘价
-  volume: number;        // 成交量（股）
-  amount: number;        // 成交额（元）
-  adjustflag: number;    // 复权类型：1-后复权，2-前复权，3-不复权
-  turn: number;          // 换手率
-  tradestatus: number;   // 交易状态：1-正常，0-停牌
-  pctChg: number;        // 涨跌幅
-  peTTM: number;         // 市盈率TTM
-  psTTM: number;         // 市销率TTM
-  pcfNcfTTM: number;     // 市现率TTM
-  pbMRQ: number;         // 市净率MRQ
+  date: string; // 交易日期，格式：'2023-06-01'
+  code: string; // 股票代码
+  open: number; // 开盘价
+  high: number; // 最高价
+  low: number; // 最低价
+  close: number; // 收盘价
+  volume: number; // 成交量（股）
+  amount: number; // 成交额（元）
+  adjustflag: number; // 复权类型：1-后复权，2-前复权，3-不复权
+  turn: number; // 换手率
+  tradestatus: number; // 交易状态：1-正常，0-停牌
+  pctChg: number; // 涨跌幅
+  peTTM: number; // 市盈率TTM
+  psTTM: number; // 市销率TTM
+  pcfNcfTTM: number; // 市现率TTM
+  pbMRQ: number; // 市净率MRQ
 }
 
 export interface QueryParams {
-  code?: string;         // 股票代码
-  start_date?: string;   // 开始日期
-  end_date?: string;     // 结束日期
-  fields?: string;       // 返回字段
+  code?: string; // 股票代码
+  start_date?: string; // 开始日期
+  end_date?: string; // 结束日期
+  fields?: string; // 返回字段
   frequency?: 'd' | 'w' | 'm'; // 频率：日、周、月
   adjustflag?: '1' | '2' | '3'; // 复权类型
 }
@@ -48,25 +48,26 @@ export class EastMoneyClient {
       baseURL: this.baseURL,
       timeout: 60000,
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Referer': 'https://quote.eastmoney.com/',
-        'Accept': 'application/json, text/plain, */*',
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        Referer: 'https://quote.eastmoney.com/',
+        Accept: 'application/json, text/plain, */*',
         'Accept-Encoding': 'gzip, deflate, br',
         'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-        'Connection': 'keep-alive',
+        Connection: 'keep-alive',
       },
     });
 
     // 添加响应拦截器处理错误
     this.client.interceptors.response.use(
-      (response) => {
+      response => {
         const data = response.data;
         if (data.rc !== 0) {
           throw new Error(`EastMoney API error: rc=${data.rc}`);
         }
         return data;
       },
-      (error) => {
+      error => {
         logger.error('EastMoney API request failed:', error.message);
         throw error;
       }
@@ -79,28 +80,13 @@ export class EastMoneyClient {
   async getAllStocks(): Promise<StockBasicInfo[]> {
     try {
       // 东方财富股票列表接口，分页获取所有A股
-      // fs参数: m:1+t:2 上海A股, m:0+t:2 深圳A股
-      const shResponse = await this.client.get('/api/qt/clist/get', {
-        params: {
-          pn: 1,
-          pz: 10000, // 每页数量，足够大以获取所有股票
-          po: 1,
-          np: 1,
-          fs: 'm:1+t:2', // 上海A股
-          fields: 'f12,f13,f14,f118,f26',
-        },
-      });
+      // fs参数: m:1+t:2,m:1+t:23 上海A股+科创板, m:0+t:6,m:0+t:80 深圳A股+创业板
+      // 使用字符串拼接避免 axios 将 + 号进行 URL 编码 (%2B) 导致 rc=102 错误
+      const shUrl = `/api/qt/clist/get?pn=1&pz=10000&po=1&np=1&fs=m:1+t:2,m:1+t:23&fields=f12,f13,f14,f118,f26`;
+      const shResponse = await this.client.get(shUrl);
 
-      const szResponse = await this.client.get('/api/qt/clist/get', {
-        params: {
-          pn: 1,
-          pz: 10000,
-          po: 1,
-          np: 1,
-          fs: 'm:0+t:2', // 深圳A股
-          fields: 'f12,f13,f14,f118,f26',
-        },
-      });
+      const szUrl = `/api/qt/clist/get?pn=1&pz=10000&po=1&np=1&fs=m:0+t:6,m:0+t:80&fields=f12,f13,f14,f118,f26`;
+      const szResponse = await this.client.get(szUrl);
 
       const stocks: StockBasicInfo[] = [];
 

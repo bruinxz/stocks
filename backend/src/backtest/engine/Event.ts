@@ -1,13 +1,13 @@
 export enum EventType {
-  BAR = 'bar',           // K线数据事件
-  SIGNAL = 'signal',     // 信号事件
-  ORDER = 'order',       // 订单事件
-  FILL = 'fill',         // 成交事件
+  BAR = 'bar', // K线数据事件
+  SIGNAL = 'signal', // 信号事件
+  ORDER = 'order', // 订单事件
+  FILL = 'fill', // 成交事件
   SLIPPAGE = 'slippage', // 滑点事件
   COMMISSION = 'commission', // 佣金事件
-  TIMER = 'timer',       // 定时器事件
-  START = 'start',       // 回测开始事件
-  END = 'end',           // 回测结束事件
+  TIMER = 'timer', // 定时器事件
+  START = 'start', // 回测开始事件
+  END = 'end', // 回测结束事件
 }
 
 export interface BaseEvent {

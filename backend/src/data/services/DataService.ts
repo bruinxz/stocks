@@ -9,12 +9,22 @@ export interface IDataService {
    * 获取股票日线数据
    * @param fastMode 快速模式：如果为true，只返回数据库已有数据，不尝试数据源补充
    */
-  getDailyBars(symbol: string, startDate: Date, endDate: Date, fastMode?: boolean): Promise<DailyBar[]>;
+  getDailyBars(
+    symbol: string,
+    startDate: Date,
+    endDate: Date,
+    fastMode?: boolean
+  ): Promise<DailyBar[]>;
 
   /**
    * 获取多只股票日线数据
    */
-  getMultipleDailyBars(symbols: string[], startDate: Date, endDate: Date, fastMode?: boolean): Promise<Map<string, DailyBar[]>>;
+  getMultipleDailyBars(
+    symbols: string[],
+    startDate: Date,
+    endDate: Date,
+    fastMode?: boolean
+  ): Promise<Map<string, DailyBar[]>>;
 
   /**
    * 获取股票基本信息
@@ -46,7 +56,7 @@ export class DataService implements IDataService {
   private EMPTY_RESULT_CACHE_MS = 5 * 60 * 1000; // 5分钟缓存空结果
   private SOURCE_ERROR_CACHE_MS = 10 * 60 * 1000; // 10分钟缓存数据源错误
   // 数据源错误计数，连续错误达到阈值时临时禁用数据源
-  private consecutiveSourceErrors: number = 0;
+  private consecutiveSourceErrors = 0;
   private MAX_CONSECUTIVE_ERRORS = 5;
 
   constructor() {
@@ -65,14 +75,14 @@ export class DataService implements IDataService {
 
     // 检查特定股票的错误缓存
     const symbolErrorTime = this.sourceErrorCache.get(key);
-    if (symbolErrorTime && (now - symbolErrorTime) < this.SOURCE_ERROR_CACHE_MS) {
+    if (symbolErrorTime && now - symbolErrorTime < this.SOURCE_ERROR_CACHE_MS) {
       logger.warn(`数据源对于股票 ${symbol} 暂时不可用（错误缓存期内）`);
       return false;
     }
 
     // 检查全局错误缓存
     const globalErrorTime = this.sourceErrorCache.get(globalKey);
-    if (globalErrorTime && (now - globalErrorTime) < this.SOURCE_ERROR_CACHE_MS) {
+    if (globalErrorTime && now - globalErrorTime < this.SOURCE_ERROR_CACHE_MS) {
       logger.warn(`数据源全局暂时不可用（错误缓存期内）`);
       return false;
     }
@@ -120,7 +130,7 @@ export class DataService implements IDataService {
 
     // 检查是否在空结果缓存期内
     const now = Date.now();
-    return (now - lastEmptyResult) < this.EMPTY_RESULT_CACHE_MS;
+    return now - lastEmptyResult < this.EMPTY_RESULT_CACHE_MS;
   }
 
   /**
@@ -143,14 +153,18 @@ export class DataService implements IDataService {
   /**
    * 查找缺失的日期范围
    */
-  private findMissingDateRanges(existingBars: DailyBar[], startDate: Date, endDate: Date): { startDate: Date, endDate: Date }[] {
+  private findMissingDateRanges(
+    existingBars: DailyBar[],
+    startDate: Date,
+    endDate: Date
+  ): { startDate: Date; endDate: Date }[] {
     if (existingBars.length === 0) {
       return [{ startDate, endDate }];
     }
 
     // 按时间排序
     const sortedBars = [...existingBars].sort((a, b) => a.time.getTime() - b.time.getTime());
-    const missingRanges: { startDate: Date, endDate: Date }[] = [];
+    const missingRanges: { startDate: Date; endDate: Date }[] = [];
 
     // 检查开始日期到第一个数据点之间的缺失
     const firstBarTime = sortedBars[0].time.getTime();
@@ -188,14 +202,16 @@ export class DataService implements IDataService {
   /**
    * 合并相邻的缺失日期范围，减少数据源调用次数
    */
-  private mergeMissingRanges(ranges: { startDate: Date, endDate: Date }[]): { startDate: Date, endDate: Date }[] {
+  private mergeMissingRanges(
+    ranges: { startDate: Date; endDate: Date }[]
+  ): { startDate: Date; endDate: Date }[] {
     if (ranges.length <= 1) {
       return ranges;
     }
 
     // 按开始日期排序
     const sortedRanges = [...ranges].sort((a, b) => a.startDate.getTime() - b.startDate.getTime());
-    const merged: { startDate: Date, endDate: Date }[] = [];
+    const merged: { startDate: Date; endDate: Date }[] = [];
     let currentRange = sortedRanges[0];
 
     for (let i = 1; i < sortedRanges.length; i++) {
@@ -209,9 +225,10 @@ export class DataService implements IDataService {
         // 合并范围，取最晚的结束日期
         currentRange = {
           startDate: currentRange.startDate,
-          endDate: currentRange.endDate.getTime() > nextRange.endDate.getTime()
-            ? currentRange.endDate
-            : nextRange.endDate
+          endDate:
+            currentRange.endDate.getTime() > nextRange.endDate.getTime()
+              ? currentRange.endDate
+              : nextRange.endDate,
         };
       } else {
         merged.push(currentRange);
@@ -235,7 +252,7 @@ export class DataService implements IDataService {
    * 获取缺失日期的数据并插入数据库
    */
   private async fetchAndInsertMissingData(
-    missingRanges: { startDate: Date, endDate: Date }[],
+    missingRanges: { startDate: Date; endDate: Date }[],
     symbol: string
   ): Promise<number> {
     // 检查数据源是否可用
@@ -252,7 +269,9 @@ export class DataService implements IDataService {
       const endDateStr = range.endDate.toISOString().split('T')[0];
 
       if (this.shouldSkipDueToEmptyResult(symbol, startDateStr, endDateStr)) {
-        logger.info(`跳过股票 ${symbol} 的缺失范围 ${startDateStr} 到 ${endDateStr}（最近返回过空结果）`);
+        logger.info(
+          `跳过股票 ${symbol} 的缺失范围 ${startDateStr} 到 ${endDateStr}（最近返回过空结果）`
+        );
         continue;
       }
 
@@ -266,17 +285,24 @@ export class DataService implements IDataService {
         );
 
         if (syncCount > 0) {
-          logger.info(`成功插入 ${syncCount} 条缺失数据 for ${symbol} (${startDateStr} to ${endDateStr})`);
+          logger.info(
+            `成功插入 ${syncCount} 条缺失数据 for ${symbol} (${startDateStr} to ${endDateStr})`
+          );
           totalInserted += syncCount;
           // 成功时重置错误计数
           this.consecutiveSourceErrors = 0;
         } else {
           // 数据源返回0条数据，可能是这个时间段没有数据（如停牌期间）
-          logger.info(`数据源返回 0 条数据 for ${symbol} (${startDateStr} to ${endDateStr})，可能是停牌或无数据`);
+          logger.info(
+            `数据源返回 0 条数据 for ${symbol} (${startDateStr} to ${endDateStr})，可能是停牌或无数据`
+          );
           this.recordEmptyResult(symbol, startDateStr, endDateStr);
         }
       } catch (syncError) {
-        logger.error(`获取股票 ${symbol} 缺失数据失败 (${startDateStr} 到 ${endDateStr}):`, syncError);
+        logger.error(
+          `获取股票 ${symbol} 缺失数据失败 (${startDateStr} 到 ${endDateStr}):`,
+          syncError
+        );
         // 记录数据源错误
         this.recordDataSourceError(symbol);
         this.consecutiveSourceErrors++;
@@ -293,9 +319,16 @@ export class DataService implements IDataService {
     return totalInserted;
   }
 
-  async getDailyBars(symbol: string, startDate: Date, endDate: Date, fastMode: boolean = false): Promise<DailyBar[]> {
+  async getDailyBars(
+    symbol: string,
+    startDate: Date,
+    endDate: Date,
+    fastMode = false
+  ): Promise<DailyBar[]> {
     try {
-      logger.info(`DataService.getDailyBars: symbol=${symbol}, startDate=${startDate}, endDate=${endDate}, fastMode=${fastMode}`);
+      logger.info(
+        `DataService.getDailyBars: symbol=${symbol}, startDate=${startDate}, endDate=${endDate}, fastMode=${fastMode}`
+      );
 
       // 通过symbol查找股票
       const stock = await Stock.findOne({ where: { symbol } });
@@ -376,7 +409,7 @@ export class DataService implements IDataService {
           this.fetchAndInsertMissingData(missingRanges, symbol),
           new Promise((_, reject) =>
             setTimeout(() => reject(new Error('数据补充超时 (60s)')), 60000)
-          )
+          ),
         ]);
         logger.info(`股票 ${symbol} 异步数据补充完成`);
       } catch (syncError) {
@@ -384,15 +417,19 @@ export class DataService implements IDataService {
         // 记录数据源错误
         this.recordDataSourceError(symbol);
       }
-
     } catch (error) {
       logger.error(`异步补充股票 ${symbol} 数据过程出错:`, error);
     }
   }
 
-  async getMultipleDailyBars(symbols: string[], startDate: Date, endDate: Date, fastMode: boolean = false): Promise<Map<string, DailyBar[]>> {
+  async getMultipleDailyBars(
+    symbols: string[],
+    startDate: Date,
+    endDate: Date,
+    fastMode = false
+  ): Promise<Map<string, DailyBar[]>> {
     const result = new Map<string, DailyBar[]>();
-    const promises = symbols.map(async (symbol) => {
+    const promises = symbols.map(async symbol => {
       const bars = await this.getDailyBars(symbol, startDate, endDate, fastMode);
       result.set(symbol, bars);
     });
@@ -440,5 +477,4 @@ export class DataService implements IDataService {
       return [];
     }
   }
-
 }

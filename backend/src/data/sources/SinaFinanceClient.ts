@@ -2,38 +2,38 @@ import axios, { AxiosInstance } from 'axios';
 import { logger } from '../../utils/logger';
 
 export interface StockBasicInfo {
-  code: string;           // 股票代码，如 'sh.600000'
-  code_name: string;      // 股票名称，如 '浦发银行'
-  ipoDate: string;        // 上市日期
-  outDate?: string;       // 退市日期
-  type: number;           // 类型：1-股票，2-指数，3-其他
-  status: number;         // 状态：1-上市，0-退市
+  code: string; // 股票代码，如 'sh.600000'
+  code_name: string; // 股票名称，如 '浦发银行'
+  ipoDate: string; // 上市日期
+  outDate?: string; // 退市日期
+  type: number; // 类型：1-股票，2-指数，3-其他
+  status: number; // 状态：1-上市，0-退市
 }
 
 export interface DailyBar {
-  date: string;           // 交易日期，格式：'2023-06-01'
-  code: string;           // 股票代码
-  open: number;          // 开盘价
-  high: number;          // 最高价
-  low: number;           // 最低价
-  close: number;         // 收盘价
-  volume: number;        // 成交量（股）
-  amount: number;        // 成交额（元）
-  adjustflag: number;    // 复权类型：1-后复权，2-前复权，3-不复权
-  turn: number;          // 换手率
-  tradestatus: number;   // 交易状态：1-正常，0-停牌
-  pctChg: number;        // 涨跌幅
-  peTTM: number;         // 市盈率TTM
-  psTTM: number;         // 市销率TTM
-  pcfNcfTTM: number;     // 市现率TTM
-  pbMRQ: number;         // 市净率MRQ
+  date: string; // 交易日期，格式：'2023-06-01'
+  code: string; // 股票代码
+  open: number; // 开盘价
+  high: number; // 最高价
+  low: number; // 最低价
+  close: number; // 收盘价
+  volume: number; // 成交量（股）
+  amount: number; // 成交额（元）
+  adjustflag: number; // 复权类型：1-后复权，2-前复权，3-不复权
+  turn: number; // 换手率
+  tradestatus: number; // 交易状态：1-正常，0-停牌
+  pctChg: number; // 涨跌幅
+  peTTM: number; // 市盈率TTM
+  psTTM: number; // 市销率TTM
+  pcfNcfTTM: number; // 市现率TTM
+  pbMRQ: number; // 市净率MRQ
 }
 
 export interface QueryParams {
-  code?: string;         // 股票代码
-  start_date?: string;   // 开始日期
-  end_date?: string;     // 结束日期
-  fields?: string;       // 返回字段
+  code?: string; // 股票代码
+  start_date?: string; // 开始日期
+  end_date?: string; // 结束日期
+  fields?: string; // 返回字段
   frequency?: 'd' | 'w' | 'm'; // 频率：日、周、月
   adjustflag?: '1' | '2' | '3'; // 复权类型
 }
@@ -49,13 +49,13 @@ export class SinaFinanceClient {
       timeout: 30000,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Referer': 'http://finance.sina.com.cn/',
+        Referer: 'http://finance.sina.com.cn/',
       },
     });
 
     // 添加响应拦截器处理错误
     this.client.interceptors.response.use(
-      (response) => {
+      response => {
         // 新浪API返回JSON数组或错误字符串
         const data = response.data;
         if (typeof data === 'string' && data.includes('error')) {
@@ -63,7 +63,7 @@ export class SinaFinanceClient {
         }
         return data;
       },
-      (error) => {
+      error => {
         logger.error('Sina Finance API request failed:', error.message);
         throw error;
       }
@@ -123,13 +123,13 @@ export class SinaFinanceClient {
 
       logger.info(`Fetching history data for ${code} from ${startDate} to ${endDate}`);
 
-      const response = await this.client.get(
+      const responseData = await this.client.get(
         '/quotes_service/api/json_v2.php/CN_MarketData.getKLineData',
         { params }
       );
 
       const bars: DailyBar[] = [];
-      const data = response.data;
+      const data = responseData;
 
       if (Array.isArray(data)) {
         for (const item of data) {
@@ -180,11 +180,101 @@ export class SinaFinanceClient {
   }
 
   /**
-   * 获取所有股票列表（新浪不支持，返回空数组）
+   * 获取所有股票列表
    */
   async getAllStocks(): Promise<StockBasicInfo[]> {
-    logger.warn('SinaFinanceClient.getAllStocks not implemented');
-    return [];
+    logger.info('Fetching all stocks from Sina Finance...');
+    const stocks: StockBasicInfo[] = [];
+    const maxRetries = 3;
+    let page = 1;
+    const num = 100;
+    
+    while (true) {
+      let success = false;
+      let data: any = null;
+      
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          const responseData = await this.client.get(
+            '/quotes_service/api/json_v2.php/Market_Center.getHQNodeData',
+            {
+              params: {
+                page,
+                num,
+                sort: 'symbol',
+                asc: 1,
+                node: 'hs_a', // 沪深A股
+                symbol: '',
+                _s_r_a: 'page'
+              }
+            }
+          );
+          
+          // SinaFinanceClient has a response interceptor that returns response.data directly
+          data = responseData;
+          
+          // Sina API might return string "null" when page is out of bounds
+          if (data === 'null' || data === null) {
+            data = [];
+          }
+          
+          // Try to parse if it's a string
+          if (typeof data === 'string') {
+            try {
+              data = JSON.parse(data);
+            } catch (e) {
+              logger.warn(`Failed to parse Sina JSON string: ${e.message}`);
+              data = [];
+            }
+          }
+          
+          success = true;
+          break;
+        } catch (error) {
+          logger.warn(`Sina getAllStocks page ${page} attempt ${attempt} failed: ${error.message}`);
+          if (attempt === maxRetries) {
+            throw error;
+          }
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+      
+      if (!success || !Array.isArray(data) || data.length === 0) {
+        break; // No more data
+      }
+      
+      for (const item of data) {
+        // symbol format: "sh600000" or "sz000001" or "bj832000"
+        const symbol = item.symbol;
+        if (!symbol || symbol.length < 6) continue;
+        
+        let prefix = symbol.substring(0, 2).toLowerCase();
+        let stockCode = symbol.substring(2);
+        
+        // Map to our standard format: "sh.600000"
+        let standardCode = `${prefix}.${stockCode}`;
+        
+        stocks.push({
+          code: standardCode,
+          code_name: item.name || '',
+          ipoDate: '', // Sina doesn't provide IPO date in this endpoint
+          type: 1,
+          status: 1
+        });
+      }
+      
+      if (data.length < num) {
+        break; // Last page
+      }
+      
+      page++;
+      
+      // Add a tiny delay to avoid rate limiting
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    
+    logger.info(`Fetched ${stocks.length} stocks from Sina Finance`);
+    return stocks;
   }
 
   /**

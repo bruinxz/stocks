@@ -34,9 +34,7 @@ router.get(
  */
 router.get(
   '/search/suggestions',
-  [
-    query('q').isString().isLength({ min: 2 }),
-  ],
+  [query('q').isString().isLength({ min: 2 })],
   validateRequest,
   stockController.getSearchSuggestions
 );
@@ -46,20 +44,14 @@ router.get(
  * @desc 获取市场统计信息
  * @access Public
  */
-router.get(
-  '/market-stats',
-  stockController.getMarketStats
-);
+router.get('/market-stats', stockController.getMarketStats);
 
 /**
  * @route GET /api/stocks/:symbol
  * @desc 获取股票详情
  * @access Public
  */
-router.get(
-  '/:symbol',
-  stockController.getStockDetail
-);
+router.get('/:symbol', stockController.getStockDetail);
 
 /**
  * @route GET /api/stocks/:symbol/daily-bars

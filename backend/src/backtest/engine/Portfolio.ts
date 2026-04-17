@@ -44,9 +44,9 @@ export class Portfolio {
   private cash: number;
   private positions: Map<string, Position> = new Map();
   private trades: Trade[] = [];
-  private tradeCounter: number = 1;
-  private realizedPnl: number = 0;
-  private dailyPnl: number = 0;
+  private tradeCounter = 1;
+  private realizedPnl = 0;
+  private dailyPnl = 0;
   private dailyReturns: number[] = [];
   private equityCurve: { date: Date; value: number }[] = [];
 
@@ -188,10 +188,13 @@ export class Portfolio {
     const totalPnl = this.realizedPnl + totalUnrealizedPnl;
 
     // 计算当日收益率
-    const dailyReturn = this.equityCurve.length >= 2
-      ? ((this.equityCurve[this.equityCurve.length - 1].value /
-          this.equityCurve[this.equityCurve.length - 2].value) - 1) * 100
-      : 0;
+    const dailyReturn =
+      this.equityCurve.length >= 2
+        ? (this.equityCurve[this.equityCurve.length - 1].value /
+            this.equityCurve[this.equityCurve.length - 2].value -
+            1) *
+          100
+        : 0;
 
     return {
       totalValue,
@@ -254,7 +257,7 @@ export class Portfolio {
   /**
    * 检查是否可以买入
    */
-  canBuy(symbol: string, price: number, quantity: number, commission: number = 0): boolean {
+  canBuy(symbol: string, price: number, quantity: number, commission = 0): boolean {
     const cost = price * quantity + commission;
     return this.cash >= cost;
   }
@@ -270,7 +273,7 @@ export class Portfolio {
   /**
    * 计算最大可买数量
    */
-  maxBuyQuantity(symbol: string, price: number, commissionRate: number = 0.0003): number {
+  maxBuyQuantity(symbol: string, price: number, commissionRate = 0.0003): number {
     const maxCost = this.cash;
     const commissionPerShare = price * commissionRate;
     const effectivePrice = price + commissionPerShare;

@@ -1,4 +1,13 @@
-import { Table, Column, Model, DataType, ForeignKey, BelongsTo, CreatedAt, UpdatedAt } from 'sequelize-typescript';
+import {
+  Table,
+  Column,
+  Model,
+  DataType,
+  ForeignKey,
+  BelongsTo,
+  CreatedAt,
+  UpdatedAt,
+} from 'sequelize-typescript';
 import { User } from './User';
 import { Stock } from './Stock';
 
@@ -36,7 +45,7 @@ export class FavoriteStock extends Model {
     allowNull: false,
     comment: '用户ID',
   })
-  userId!: number;
+  declare userId: number;
 
   @ForeignKey(() => Stock)
   @Column({
@@ -44,7 +53,7 @@ export class FavoriteStock extends Model {
     allowNull: false,
     comment: '股票ID',
   })
-  stockId!: number;
+  declare stockId: number;
 
   @Column({
     type: DataType.STRING(50),
@@ -83,8 +92,8 @@ export class FavoriteStock extends Model {
 
   // 关联关系
   @BelongsTo(() => User)
-  user!: User;
+  declare user: User;
 
   @BelongsTo(() => Stock)
-  stock!: Stock;
+  declare stock: Stock;
 }

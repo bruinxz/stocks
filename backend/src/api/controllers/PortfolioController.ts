@@ -1,5 +1,8 @@
-import { Request, Response, NextFunction } from 'express';
-import { PortfolioReturnSimulator, PortfolioSimulationConfig } from '../../portfolio/PortfolioReturnSimulator';
+import { Request, Response } from 'express';
+import {
+  PortfolioReturnSimulator,
+  PortfolioSimulationConfig,
+} from '../../portfolio/PortfolioReturnSimulator';
 import { logger } from '../../utils/logger';
 
 export class PortfolioController {
@@ -18,7 +21,7 @@ export class PortfolioController {
    * 运行投资组合收益模拟
    * POST /api/portfolio/simulate
    */
-  async simulatePortfolio(req: Request, res: Response, next: NextFunction) {
+  async simulatePortfolio(req: Request, res: Response) {
     try {
       logger.info('收到投资组合模拟请求 - 完整body:', JSON.stringify(req.body));
       logger.info('收到投资组合模拟请求详情:', {
@@ -27,7 +30,7 @@ export class PortfolioController {
         buyDate: req.body.buyDate,
         days: req.body.days,
         initialCapital: req.body.initialCapital,
-        allocationStrategy: req.body.allocationStrategy
+        allocationStrategy: req.body.allocationStrategy,
       });
       const userId = (req as any).user?.id || 1; // 暂时使用默认用户ID
       const {
@@ -164,15 +167,9 @@ export class PortfolioController {
    * 获取模拟历史记录
    * GET /api/portfolio/history
    */
-  async getSimulationHistory(req: Request, res: Response, next: NextFunction) {
+  async getSimulationHistory(req: Request, res: Response) {
     try {
-      const userId = (req as any).user?.id || 1;
-      const {
-        page = '1',
-        limit = '20',
-        startDate,
-        endDate,
-      } = req.query;
+      const { page = '1', limit = '20' } = req.query;
 
       // TODO: 从数据库获取历史记录
       // 暂时返回空列表
@@ -190,7 +187,10 @@ export class PortfolioController {
       });
     } catch (error) {
       logger.error('获取模拟历史失败:', error);
-      next(error);
+      res.status(500).json({
+        success: false,
+        message: '获取推荐配置失败',
+      });
     }
   }
 
@@ -198,9 +198,9 @@ export class PortfolioController {
    * 获取模拟详情
    * GET /api/portfolio/:id
    */
-  async getSimulationDetail(req: Request, res: Response, next: NextFunction) {
+  async getSimulationDetail(req: Request, res: Response) {
     try {
-      const { id } = req.params;
+      // const { id } = req.params;
 
       // TODO: 从数据库获取模拟详情
       // 暂时返回404
@@ -210,7 +210,10 @@ export class PortfolioController {
       });
     } catch (error) {
       logger.error('获取模拟详情失败:', error);
-      next(error);
+      res.status(500).json({
+        success: false,
+        message: '获取模拟详情失败',
+      });
     }
   }
 
@@ -218,7 +221,7 @@ export class PortfolioController {
    * 批量验证股票
    * POST /api/portfolio/validate-stocks
    */
-  async validateStocks(req: Request, res: Response, next: NextFunction) {
+  async validateStocks(req: Request, res: Response) {
     try {
       const { symbols } = req.body;
 
@@ -248,7 +251,10 @@ export class PortfolioController {
       });
     } catch (error) {
       logger.error('验证股票失败:', error);
-      next(error);
+      res.status(500).json({
+        success: false,
+        message: '验证股票失败',
+      });
     }
   }
 
@@ -256,12 +262,14 @@ export class PortfolioController {
    * 获取推荐配置
    * GET /api/portfolio/recommended-config
    */
-  async getRecommendedConfig(req: Request, res: Response, next: NextFunction) {
+  async getRecommendedConfig(req: Request, res: Response) {
     try {
       // 返回推荐的默认配置
       const recommendedConfig = {
         symbols: ['sh.600000', 'sz.000001', 'sh.600036'],
-        buyDate: new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split('T')[0],
+        buyDate: new Date(new Date().setDate(new Date().getDate() - 30))
+          .toISOString()
+          .split('T')[0],
         days: 30,
         initialCapital: 100000,
         allocationStrategy: 'equal',
@@ -297,7 +305,10 @@ export class PortfolioController {
       });
     } catch (error) {
       logger.error('获取推荐配置失败:', error);
-      next(error);
+      res.status(500).json({
+        success: false,
+        message: '获取推荐配置失败',
+      });
     }
   }
 }

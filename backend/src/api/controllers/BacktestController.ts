@@ -153,13 +153,7 @@ export class BacktestController {
   async getBacktestList(req: Request, res: Response, next: NextFunction) {
     try {
       const userId = (req as any).user?.id || 1;
-      const {
-        page = '1',
-        limit = '20',
-        status,
-        startDate,
-        endDate,
-      } = req.query;
+      const { page = '1', limit = '20', status, startDate, endDate } = req.query;
 
       const pageNum = parseInt(page as string, 10);
       const limitNum = parseInt(limit as string, 10);
@@ -298,9 +292,10 @@ export class BacktestController {
         order: [['createdAt', 'DESC']],
       });
 
-      const avgReturn = recentBacktests.length > 0
-        ? recentBacktests.reduce((sum, bt) => sum + bt.totalReturn, 0) / recentBacktests.length
-        : 0;
+      const avgReturn =
+        recentBacktests.length > 0
+          ? recentBacktests.reduce((sum, bt) => sum + bt.totalReturn, 0) / recentBacktests.length
+          : 0;
 
       res.json({
         success: true,

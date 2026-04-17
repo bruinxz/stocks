@@ -9,9 +9,8 @@ import { dataUpdateQueue } from '../../jobs/dataUpdateQueue';
 import { dataUpdateWorker } from '../../jobs/dataUpdateWorker';
 import { redisLock, LockKeys } from '../../utils/redisLock';
 import { logger } from '../../utils/logger';
-import { Op, Sequelize } from 'sequelize';
+import { Op } from 'sequelize';
 import { sequelize } from '../../config/database';
-import { parse } from 'date-fns';
 
 interface SearchStocksQuery {
   q?: string;
@@ -65,7 +64,15 @@ export class MarketController {
   /**
    * 搜索股票
    */
-  searchStocks = async (req: Request<{}, {}, {}, SearchStocksQuery>, res: Response) => {
+  searchStocks = async (
+    req: Request<
+      Record<string, never>,
+      Record<string, never>,
+      Record<string, never>,
+      SearchStocksQuery
+    >,
+    res: Response
+  ) => {
     try {
       const { q, page = '1', limit = '20', market, industry } = req.query;
       const pageNum = parseInt(page, 10);
@@ -164,7 +171,7 @@ export class MarketController {
    * 获取股票历史走势
    */
   getStockHistory = async (
-    req: Request<GetHistoryParams, {}, {}, GetHistoryQuery>,
+    req: Request<GetHistoryParams, Record<string, never>, Record<string, never>, GetHistoryQuery>,
     res: Response
   ) => {
     try {
@@ -197,16 +204,23 @@ export class MarketController {
       }
 
       // 获取历史数据（使用快速模式，优先返回数据库已有数据）
-      const bars = await this.dataService.getDailyBars(symbol, new Date(start), new Date(end), true);
+      const bars = await this.dataService.getDailyBars(
+        symbol,
+        new Date(start),
+        new Date(end),
+        true
+      );
 
       // 获取股票基本信息
       const stock = await Stock.findOne({ where: { symbol } });
-      const stockInfo = stock ? {
-        symbol: stock.symbol,
-        name: stock.name,
-        market: stock.market,
-        industry: stock.industry,
-      } : null;
+      const stockInfo = stock
+        ? {
+            symbol: stock.symbol,
+            name: stock.name,
+            market: stock.market,
+            industry: stock.industry,
+          }
+        : null;
 
       if (bars.length === 0) {
         // 返回空数组而不是404错误
@@ -249,8 +263,9 @@ export class MarketController {
       });
 
       // 转换为数组并按日期排序
-      const uniqueBars = Array.from(dateMap.values())
-        .sort((a, b) => a.time.getTime() - b.time.getTime());
+      const uniqueBars = Array.from(dateMap.values()).sort(
+        (a, b) => a.time.getTime() - b.time.getTime()
+      );
 
       const historyData = uniqueBars.map(bar => ({
         date: bar.time.toISOString().split('T')[0], // 格式化为YYYY-MM-DD
@@ -273,8 +288,14 @@ export class MarketController {
             startDate: historyData[0].date,
             endDate: historyData[historyData.length - 1].date,
             totalDays: historyData.length,
-            priceChange: historyData.length > 0 ?
-              ((historyData[historyData.length - 1].close - historyData[0].open) / historyData[0].open * 100).toFixed(2) + '%' : '0%',
+            priceChange:
+              historyData.length > 0
+                ? (
+                    ((historyData[historyData.length - 1].close - historyData[0].open) /
+                      historyData[0].open) *
+                    100
+                  ).toFixed(2) + '%'
+                : '0%',
           },
         },
       });
@@ -292,7 +313,7 @@ export class MarketController {
    * 收藏股票
    */
   addFavorite = async (
-    req: Request<FavoriteParams, {}, FavoriteBody>,
+    req: Request<FavoriteParams, Record<string, never>, FavoriteBody>,
     res: Response
   ) => {
     try {
@@ -342,10 +363,12 @@ export class MarketController {
         success: true,
         data: {
           favorite: await favorite.reload({
-            include: [{
-              model: Stock,
-              attributes: ['symbol', 'name', 'market', 'industry'],
-            }],
+            include: [
+              {
+                model: Stock,
+                attributes: ['symbol', 'name', 'market', 'industry'],
+              },
+            ],
           }),
         },
       });
@@ -362,10 +385,7 @@ export class MarketController {
   /**
    * 取消收藏
    */
-  removeFavorite = async (
-    req: Request<FavoriteParams>,
-    res: Response
-  ) => {
+  removeFavorite = async (req: Request<FavoriteParams>, res: Response) => {
     try {
       const userId = (req as any).user?.id;
       if (!userId) {
@@ -434,10 +454,12 @@ export class MarketController {
 
       const favorites = await FavoriteStock.findAll({
         where,
-        include: [{
-          model: Stock,
-          attributes: ['symbol', 'name', 'market', 'industry', 'listingDate', 'isListed'],
-        }],
+        include: [
+          {
+            model: Stock,
+            attributes: ['symbol', 'name', 'market', 'industry', 'listingDate', 'isListed'],
+          },
+        ],
         order: [
           ['sortOrder', 'DESC'],
           ['createdAt', 'DESC'],
@@ -474,10 +496,7 @@ export class MarketController {
   /**
    * 检查股票是否已收藏
    */
-  checkFavorite = async (
-    req: Request<FavoriteParams>,
-    res: Response
-  ) => {
+  checkFavorite = async (req: Request<FavoriteParams>, res: Response) => {
     try {
       const userId = (req as any).user?.id;
       if (!userId) {
@@ -524,7 +543,7 @@ export class MarketController {
    * 更新收藏信息
    */
   updateFavorite = async (
-    req: Request<FavoriteParams, {}, Partial<FavoriteBody>>,
+    req: Request<FavoriteParams, Record<string, never>, Partial<FavoriteBody>>,
     res: Response
   ) => {
     try {
@@ -572,10 +591,12 @@ export class MarketController {
         success: true,
         data: {
           favorite: await favorite.reload({
-            include: [{
-              model: Stock,
-              attributes: ['symbol', 'name', 'market', 'industry'],
-            }],
+            include: [
+              {
+                model: Stock,
+                attributes: ['symbol', 'name', 'market', 'industry'],
+              },
+            ],
           }),
         },
       });
@@ -617,8 +638,8 @@ export class MarketController {
           dataUpdateQueue.getJobs(['active']),
         ]);
 
-        const hasPendingUpdate = [...waitingJobs, ...activeJobs].some(job =>
-          job.data.type === 'daily_update' && job.data.date === today
+        const hasPendingUpdate = [...waitingJobs, ...activeJobs].some(
+          job => job.data.type === 'daily_update' && job.data.date === today
         );
 
         if (hasPendingUpdate && !forceUpdate) {
@@ -656,14 +677,18 @@ export class MarketController {
         }
 
         // 4. 添加任务到队列
-        const job = await dataUpdateQueue.add('daily_update', {
-          type: 'daily_update',
-          date: today,
-          forceUpdate,
-        }, {
-          jobId: `daily-update-${today}-${Date.now()}`,
-          priority: 1, // 较高优先级
-        });
+        const job = await dataUpdateQueue.add(
+          'daily_update',
+          {
+            type: 'daily_update',
+            date: today,
+            forceUpdate,
+          },
+          {
+            jobId: `daily-update-${today}-${Date.now()}`,
+            priority: 1, // 较高优先级
+          }
+        );
 
         logger.info(`数据更新任务已添加到队列，Job ID: ${job.id}`);
 
@@ -699,15 +724,15 @@ export class MarketController {
       const { jobId, date, startDate, endDate } = req.query;
       // type可以是单个值或数组（多个type参数）
       const typeParam = req.query.type;
-      const types = Array.isArray(typeParam) ? typeParam : (typeParam ? [typeParam] : []);
+      const types = Array.isArray(typeParam) ? typeParam : typeParam ? [typeParam] : [];
 
-      let statusData: any = {
+      const statusData: any = {
         job: null,
-        jobs: [],  // 新增：所有活动任务列表
+        jobs: [], // 新增：所有活动任务列表
         logs: [],
         queue: { waiting: 0, active: 0, completed: 0, failed: 0, delayed: 0, total: 0 },
         locks: { global: false, daily: false, newStocks: false },
-        errors: {}
+        errors: {},
       };
 
       // 1. 如果提供了jobId，查询特定任务
@@ -733,7 +758,7 @@ export class MarketController {
                 id: job.id,
                 data: job.data,
                 state: 'unknown',
-                progress: 0
+                progress: 0,
               };
             }
           }
@@ -749,7 +774,8 @@ export class MarketController {
 
         // 获取每个任务的状态和详细信息
         const jobsWithDetails = await Promise.all(
-          activeJobs.slice(0, 50).map(async (job) => {  // 限制最多50个任务
+          activeJobs.slice(0, 50).map(async job => {
+            // 限制最多50个任务
             try {
               const state = await job.getState();
               return {
@@ -847,8 +873,10 @@ export class MarketController {
       }
 
       // 如果没有致命错误，返回成功
-      const hasFatalError = Object.keys(statusData.errors).length > 0 &&
-        statusData.errors.dbQuery && statusData.errors.dbQuery.includes('relation') &&
+      const hasFatalError =
+        Object.keys(statusData.errors).length > 0 &&
+        statusData.errors.dbQuery &&
+        statusData.errors.dbQuery.includes('relation') &&
         statusData.errors.dbQuery.includes('does not exist');
 
       if (!hasFatalError) {
@@ -885,7 +913,12 @@ export class MarketController {
       const today = new Date().toISOString().split('T')[0];
 
       // 验证类型
-      const validTypes = ['daily_update', 'new_stocks_sync', 'weekly_completeness_check', 'manual_sync'];
+      const validTypes = [
+        'daily_update',
+        'new_stocks_sync',
+        'weekly_completeness_check',
+        'manual_sync',
+      ];
       if (!validTypes.includes(type)) {
         return res.status(400).json({
           success: false,
@@ -893,16 +926,31 @@ export class MarketController {
         });
       }
 
+      // 检查是否有同类型任务正在运行，避免重复发送
+      const activeJobs = await dataUpdateQueue.getJobs(['active', 'waiting']);
+      const isJobRunning = activeJobs.some(job => job.name === type);
+
+      if (isJobRunning) {
+        return res.status(400).json({
+          success: false,
+          error: '该类型的同步任务正在运行或等待中，请勿重复触发',
+        });
+      }
+
       // 添加任务到队列
-      const job = await dataUpdateQueue.add(type, {
-        type: type as any,
-        date: today,
-        forceUpdate: force,
-        userId: (req as any).user?.id,
-      }, {
-        jobId: `${type}-${today}-${Date.now()}`,
-        priority: 2, // 手动同步优先级更高
-      });
+      const job = await dataUpdateQueue.add(
+        type,
+        {
+          type: type as any,
+          date: today,
+          forceUpdate: force,
+          userId: (req as any).user?.id,
+        },
+        {
+          jobId: `${type}-${today}-${Date.now()}`,
+          priority: 2, // 手动同步优先级更高
+        }
+      );
 
       logger.info(`手动同步任务已添加到队列，类型: ${type}, Job ID: ${job.id}`);
 
@@ -973,21 +1021,25 @@ export class MarketController {
       }
 
       // 添加任务到队列
-      const job = await dataUpdateQueue.add('bulk_sync_custom', {
-        type: 'bulk_sync_custom' as any,
-        date: today,
-        symbols,
-        marketFilters,
-        syncAllStocks,
-        startDate,
-        endDate,
-        dataSource,
-        concurrency,
-        userId: (req as any).user?.id,
-      }, {
-        jobId: `bulk-sync-${today}-${Date.now()}`,
-        priority: 1, // 批量同步优先级较高
-      });
+      const job = await dataUpdateQueue.add(
+        'bulk_sync_custom',
+        {
+          type: 'bulk_sync_custom' as any,
+          date: today,
+          symbols,
+          marketFilters,
+          syncAllStocks,
+          startDate,
+          endDate,
+          dataSource,
+          concurrency,
+          userId: (req as any).user?.id,
+        },
+        {
+          jobId: `bulk-sync-${today}-${Date.now()}`,
+          priority: 1, // 批量同步优先级较高
+        }
+      );
 
       logger.info(`批量同步任务已添加到队列，Job ID: ${job.id}`);
 
@@ -1110,8 +1162,9 @@ export class MarketController {
       }
 
       // 转换为数组并排序
-      stats.dailyBreakdown = Object.values(stats.dailyBreakdown)
-        .sort((a: any, b: any) => b.date.localeCompare(a.date));
+      stats.dailyBreakdown = Object.values(stats.dailyBreakdown).sort((a: any, b: any) =>
+        b.date.localeCompare(a.date)
+      );
 
       res.json({
         success: true,
@@ -1142,7 +1195,7 @@ export class MarketController {
       const healthInfo: any = {
         status: 'healthy',
         timestamp: new Date().toISOString(),
-        services: {}
+        services: {},
       };
 
       // 检查数据库连接
@@ -1151,14 +1204,14 @@ export class MarketController {
         healthInfo.services.database = {
           status: 'healthy',
           type: 'PostgreSQL',
-          connected: true
+          connected: true,
         };
       } catch (dbError) {
         healthInfo.services.database = {
           status: 'unhealthy',
           type: 'PostgreSQL',
           connected: false,
-          error: dbError.message
+          error: dbError.message,
         };
         healthInfo.status = 'degraded';
       }
@@ -1169,7 +1222,7 @@ export class MarketController {
         healthInfo.services.redisLock = {
           status: redisHealthy ? 'healthy' : 'unhealthy',
           type: 'Redis',
-          connected: redisHealthy
+          connected: redisHealthy,
         };
         if (!redisHealthy) {
           healthInfo.status = 'degraded';
@@ -1179,7 +1232,7 @@ export class MarketController {
           status: 'unhealthy',
           type: 'Redis',
           connected: false,
-          error: redisError.message
+          error: redisError.message,
         };
         healthInfo.status = 'degraded';
       }
@@ -1190,21 +1243,21 @@ export class MarketController {
         healthInfo.services.dataUpdateQueue = {
           status: 'healthy',
           type: 'Bull Queue',
-          stats: queueStats
+          stats: queueStats,
         };
       } catch (queueError) {
         healthInfo.services.dataUpdateQueue = {
           status: 'unhealthy',
           type: 'Bull Queue',
           connected: false,
-          error: queueError.message
+          error: queueError.message,
         };
         healthInfo.status = 'degraded';
       }
 
       // 根据服务状态确定整体状态
-      const unhealthyServices = Object.values(healthInfo.services).filter((service: any) =>
-        service.status === 'unhealthy'
+      const unhealthyServices = Object.values(healthInfo.services).filter(
+        (service: any) => service.status === 'unhealthy'
       );
       if (unhealthyServices.length > 0) {
         healthInfo.status = 'unhealthy';
@@ -1212,14 +1265,14 @@ export class MarketController {
 
       res.json({
         success: true,
-        data: healthInfo
+        data: healthInfo,
       });
     } catch (error) {
       logger.error('系统健康检查错误:', error);
       res.status(500).json({
         success: false,
         error: '健康检查失败',
-        details: error.message
+        details: error.message,
       });
     }
   };
@@ -1234,7 +1287,7 @@ export class MarketController {
       if (!jobId) {
         res.status(400).json({
           success: false,
-          error: '任务ID不能为空'
+          error: '任务ID不能为空',
         });
         return;
       }
@@ -1244,7 +1297,7 @@ export class MarketController {
       if (!job) {
         res.status(404).json({
           success: false,
-          error: '任务不存在'
+          error: '任务不存在',
         });
         return;
       }
@@ -1256,7 +1309,7 @@ export class MarketController {
       if (!cancellableStates.includes(state)) {
         res.status(400).json({
           success: false,
-          error: `任务状态为${state}，无法取消`
+          error: `任务状态为${state}，无法取消`,
         });
         return;
       }
@@ -1267,7 +1320,7 @@ export class MarketController {
       logger.info(`数据更新任务 ${jobId} 已取消`, {
         type: job.data.type,
         date: job.data.date,
-        state
+        state,
       });
 
       res.json({
@@ -1276,15 +1329,15 @@ export class MarketController {
           message: '任务已取消',
           jobId,
           state,
-          cancelledAt: new Date().toISOString()
-        }
+          cancelledAt: new Date().toISOString(),
+        },
       });
     } catch (error) {
       logger.error('取消数据更新任务错误:', error);
       res.status(500).json({
         success: false,
         error: '取消任务失败',
-        details: error.message
+        details: error.message,
       });
     }
   };
@@ -1299,7 +1352,7 @@ export class MarketController {
       if (!jobId) {
         res.status(400).json({
           success: false,
-          error: '任务ID不能为空'
+          error: '任务ID不能为空',
         });
         return;
       }
@@ -1309,7 +1362,7 @@ export class MarketController {
       if (!job) {
         res.status(404).json({
           success: false,
-          error: '任务不存在'
+          error: '任务不存在',
         });
         return;
       }
@@ -1320,7 +1373,7 @@ export class MarketController {
       if (state !== 'failed') {
         res.status(400).json({
           success: false,
-          error: `任务状态为${state}，无法重试（仅支持失败的任务）`
+          error: `任务状态为${state}，无法重试（仅支持失败的任务）`,
         });
         return;
       }
@@ -1329,7 +1382,7 @@ export class MarketController {
       const jobData = job.data;
 
       // 创建新任务（重试）
-      const newJob = await dataUpdateQueue.add(jobData, {
+      const newJob = await dataUpdateQueue.add(job.name, jobData, {
         attempts: 3, // 重置重试次数
         backoff: {
           type: 'exponential',
@@ -1341,7 +1394,7 @@ export class MarketController {
       logger.info(`数据更新任务 ${jobId} 已重试，新任务ID: ${newJob.id}`, {
         type: jobData.type,
         date: jobData.date,
-        originalState: state
+        originalState: state,
       });
 
       res.json({
@@ -1352,15 +1405,15 @@ export class MarketController {
           newJobId: newJob.id,
           type: jobData.type,
           date: jobData.date,
-          retriedAt: new Date().toISOString()
-        }
+          retriedAt: new Date().toISOString(),
+        },
       });
     } catch (error) {
       logger.error('重试数据更新任务错误:', error);
       res.status(500).json({
         success: false,
         error: '重试任务失败',
-        details: error.message
+        details: error.message,
       });
     }
   };
@@ -1380,15 +1433,17 @@ export class MarketController {
       if (!dateRegex.test(startDate as string) || !dateRegex.test(endDate as string)) {
         res.status(400).json({
           success: false,
-          error: '日期格式应为 YYYY-MM-DD'
+          error: '日期格式应为 YYYY-MM-DD',
         });
         return;
       }
 
       // 检查缓存
       const now = Date.now();
-      if (this.dataCompletenessCache &&
-          now - this.dataCompletenessCache.timestamp < this.CACHE_TTL) {
+      if (
+        this.dataCompletenessCache &&
+        now - this.dataCompletenessCache.timestamp < this.CACHE_TTL
+      ) {
         logger.info('使用缓存的数据完整性统计');
         res.json({
           success: true,
@@ -1398,9 +1453,9 @@ export class MarketController {
               ...this.dataCompletenessCache.data.summary,
               timestamp: new Date().toISOString(), // 更新返回的时间戳
               cached: true, // 标记为缓存数据
-              cacheTimestamp: new Date(this.dataCompletenessCache.timestamp).toISOString()
-            }
-          }
+              cacheTimestamp: new Date(this.dataCompletenessCache.timestamp).toISOString(),
+            },
+          },
         });
         return;
       }
@@ -1416,7 +1471,10 @@ export class MarketController {
       const allStocks = await Stock.findAll({
         attributes: ['id', 'symbol', 'name', 'market', 'isListed'],
         where: { isListed: true },
-        order: [['market', 'ASC'], ['symbol', 'ASC']]
+        order: [
+          ['market', 'ASC'],
+          ['symbol', 'ASC'],
+        ],
       });
 
       // 统计阶梯
@@ -1426,15 +1484,15 @@ export class MarketController {
         { min: 0.5, max: 0.7, label: '50%-69%', count: 0 },
         { min: 0.3, max: 0.5, label: '30%-49%', count: 0 },
         { min: 0.1, max: 0.3, label: '10%-29%', count: 0 },
-        { min: 0.0, max: 0.1, label: '0%-9%', count: 0 }
+        { min: 0.0, max: 0.1, label: '0%-9%', count: 0 },
       ];
 
       // 按市场统计
-      const marketStats: Record<string, { total: number, completeCount: number }> = {
+      const marketStats: Record<string, { total: number; completeCount: number }> = {
         SH: { total: 0, completeCount: 0 },
         SZ: { total: 0, completeCount: 0 },
         BJ: { total: 0, completeCount: 0 },
-        UNKNOWN: { total: 0, completeCount: 0 }
+        UNKNOWN: { total: 0, completeCount: 0 },
       };
 
       const stockStats = [];
@@ -1451,9 +1509,9 @@ export class MarketController {
               where: {
                 stockId: stock.id,
                 time: {
-                  [Op.between]: [new Date(startDate as string), new Date(endDate as string)]
-                }
-              }
+                  [Op.between]: [new Date(startDate as string), new Date(endDate as string)],
+                },
+              },
             });
 
             // 计算完整性比例
@@ -1486,7 +1544,7 @@ export class MarketController {
               barCount,
               completeness: Math.min(1.0, completeness),
               completenessLabel,
-              listingDate: stock.listingDate
+              listingDate: stock.listingDate,
             });
 
             processed++;
@@ -1500,9 +1558,8 @@ export class MarketController {
 
       // 汇总指标
       const avgCompleteness = stockStats.reduce((sum, s) => sum + s.completeness, 0) / processed;
-      const medianCompleteness = stockStats
-        .map(s => s.completeness)
-        .sort((a, b) => a - b)[Math.floor(processed / 2)] || 0;
+      const medianCompleteness =
+        stockStats.map(s => s.completeness).sort((a, b) => a - b)[Math.floor(processed / 2)] || 0;
 
       const highQualityStocks = stockStats.filter(s => s.completeness >= 0.9).length;
       const lowQualityStocks = stockStats.filter(s => s.completeness < 0.3).length;
@@ -1525,26 +1582,27 @@ export class MarketController {
           expectedTradingDays,
           dateRange: { startDate, endDate },
           timestamp: new Date().toISOString(),
-          cached: false // 标记为非缓存数据
+          cached: false, // 标记为非缓存数据
         },
         completenessLevels: completenessLevels.map(level => ({
           label: level.label,
           count: level.count,
-          percentage: (level.count / processed * 100).toFixed(1)
+          percentage: ((level.count / processed) * 100).toFixed(1),
         })),
         marketStats: Object.entries(marketStats).map(([market, stats]) => ({
           market,
           total: stats.total,
           completeCount: stats.completeCount,
-          completeRate: stats.total > 0 ? (stats.completeCount / stats.total * 100).toFixed(1) : '0.0'
+          completeRate:
+            stats.total > 0 ? ((stats.completeCount / stats.total) * 100).toFixed(1) : '0.0',
         })),
         metrics: {
           avgCompleteness: (avgCompleteness * 100).toFixed(2),
           medianCompleteness: (medianCompleteness * 100).toFixed(2),
           highQualityStocks,
-          highQualityPercentage: (highQualityStocks / processed * 100).toFixed(1),
+          highQualityPercentage: ((highQualityStocks / processed) * 100).toFixed(1),
           lowQualityStocks,
-          lowQualityPercentage: (lowQualityStocks / processed * 100).toFixed(1)
+          lowQualityPercentage: ((lowQualityStocks / processed) * 100).toFixed(1),
         },
         qualityAssessment,
         // 数据质量问题标记
@@ -1552,28 +1610,28 @@ export class MarketController {
           hasUndefinedSymbols: allStocks.some(s => !s.symbol || s.symbol === 'undefined'),
           undefinedSymbolCount: allStocks.filter(s => !s.symbol || s.symbol === 'undefined').length,
           hasEmptyNames: allStocks.some(s => !s.name || s.name === 'undefined'),
-          emptyNameCount: allStocks.filter(s => !s.name || s.name === 'undefined').length
-        }
+          emptyNameCount: allStocks.filter(s => !s.name || s.name === 'undefined').length,
+        },
       };
 
       // 保存到缓存
       this.dataCompletenessCache = {
         data: responseData,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       };
 
       logger.info('数据完整性统计已缓存');
 
       res.json({
         success: true,
-        data: responseData
+        data: responseData,
       });
     } catch (error) {
       logger.error('获取数据完整性统计错误:', error);
       res.status(500).json({
         success: false,
         error: '获取数据完整性统计失败',
-        details: error.message
+        details: error.message,
       });
     }
   };
@@ -1590,7 +1648,7 @@ export class MarketController {
       if (!dateRegex.test(startDate as string) || !dateRegex.test(endDate as string)) {
         res.status(400).json({
           success: false,
-          error: '日期格式应为 YYYY-MM-DD'
+          error: '日期格式应为 YYYY-MM-DD',
         });
         return;
       }
@@ -1603,15 +1661,15 @@ export class MarketController {
         success: true,
         data: {
           message: '数据完整性统计缓存已清除，下次请求将重新计算',
-          timestamp: new Date().toISOString()
-        }
+          timestamp: new Date().toISOString(),
+        },
       });
     } catch (error) {
       logger.error('刷新数据完整性统计缓存错误:', error);
       res.status(500).json({
         success: false,
         error: '刷新缓存失败',
-        details: error.message
+        details: error.message,
       });
     }
   };

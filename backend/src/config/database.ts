@@ -6,6 +6,12 @@ import { Trade } from '../models/Trade';
 import { User } from '../models/User';
 import { FavoriteStock } from '../models/FavoriteStock';
 import { DataUpdateLog } from '../models/DataUpdateLog';
+import { ScheduledTask } from '../models/ScheduledTask';
+import { DailyScreener } from '../models/DailyScreener';
+import { PaperTradingPortfolio } from '../models/PaperTradingPortfolio';
+import { PaperTradingPosition } from '../models/PaperTradingPosition';
+import { RiskAlert } from '../models/RiskAlert';
+import { TradingJournal } from '../models/TradingJournal';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -18,12 +24,29 @@ const sequelize = new Sequelize({
   port: parseInt(process.env.DB_PORT || '5432'),
   dialect: 'postgres',
   dialectOptions: {
-    ssl: process.env.DB_SSL === 'true' ? {
-      require: true,
-      rejectUnauthorized: false,
-    } : false,
+    ssl:
+      process.env.DB_SSL === 'true'
+        ? {
+            require: true,
+            rejectUnauthorized: false,
+          }
+        : false,
   },
-  models: [Stock, DailyBar, BacktestResult, Trade, User, FavoriteStock, DataUpdateLog],
+  models: [
+    Stock,
+    DailyBar,
+    BacktestResult,
+    Trade,
+    User,
+    FavoriteStock,
+    DataUpdateLog,
+    ScheduledTask,
+    DailyScreener,
+    PaperTradingPortfolio,
+    PaperTradingPosition,
+    RiskAlert,
+    TradingJournal,
+  ],
   logging: process.env.NODE_ENV === 'development' ? console.log : false,
   pool: {
     max: 10,

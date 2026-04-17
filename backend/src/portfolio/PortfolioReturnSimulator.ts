@@ -204,7 +204,11 @@ export class PortfolioReturnSimulator {
           shares,
         });
 
-        logger.info(`股票 ${symbol} 分配: 金额=${actualAmount.toFixed(2)}, 股数=${shares}, 买入价=${buyPrice.toFixed(2)}`);
+        logger.info(
+          `股票 ${symbol} 分配: 金额=${actualAmount.toFixed(
+            2
+          )}, 股数=${shares}, 买入价=${buyPrice.toFixed(2)}`
+        );
       }
     } else {
       // 加权分配（这里简化为等权重，可扩展）
@@ -237,7 +241,7 @@ export class PortfolioReturnSimulator {
         const price = parseFloat(String(bar.close));
         const prevPrice = index === 0 ? price : parseFloat(String(bars[index - 1].close));
         const value = allocInfo.shares * price;
-        const dailyReturn = index === 0 ? 0 : (price / prevPrice - 1);
+        const dailyReturn = index === 0 ? 0 : price / prevPrice - 1;
         const cumulativeReturn = price / allocInfo.buyPrice - 1;
 
         return {
@@ -300,8 +304,8 @@ export class PortfolioReturnSimulator {
 
       // 计算当日总市值
       for (const stockReturn of stockReturns) {
-        const dailyReturn = stockReturn.dailyReturns.find(dr =>
-          dr.date.getTime() === date.getTime()
+        const dailyReturn = stockReturn.dailyReturns.find(
+          dr => dr.date.getTime() === date.getTime()
         );
         if (dailyReturn) {
           totalValue += dailyReturn.value;
@@ -313,12 +317,12 @@ export class PortfolioReturnSimulator {
       if (i > 0) {
         const prevReturn = portfolioReturns[i - 1];
         const previousTotalValue = prevReturn.totalValue;
-        dailyReturn = previousTotalValue > 0 ? (totalValue / previousTotalValue - 1) : 0;
+        dailyReturn = previousTotalValue > 0 ? totalValue / previousTotalValue - 1 : 0;
       }
 
       // 计算累计收益率（相对于第一日）
       const firstDayValue = i === 0 ? totalValue : portfolioReturns[0].totalValue;
-      const cumulativeReturn = firstDayValue > 0 ? (totalValue / firstDayValue - 1) : 0;
+      const cumulativeReturn = firstDayValue > 0 ? totalValue / firstDayValue - 1 : 0;
 
       portfolioReturns.push({
         date,
@@ -334,12 +338,14 @@ export class PortfolioReturnSimulator {
   /**
    * 计算性能指标
    */
-  private calculatePerformanceMetrics(portfolioReturns: Array<{
-    date: Date;
-    totalValue: number;
-    dailyReturn: number;
-    cumulativeReturn: number;
-  }>): PortfolioSimulationResult['performanceMetrics'] {
+  private calculatePerformanceMetrics(
+    portfolioReturns: Array<{
+      date: Date;
+      totalValue: number;
+      dailyReturn: number;
+      cumulativeReturn: number;
+    }>
+  ): PortfolioSimulationResult['performanceMetrics'] {
     if (portfolioReturns.length < 2) {
       return {
         sharpeRatio: 0,
@@ -360,17 +366,20 @@ export class PortfolioReturnSimulator {
     const avgDailyReturn = dailyReturns.reduce((sum, r) => sum + r, 0) / dailyReturns.length;
 
     // 计算波动率（标准差）
-    const variance = dailyReturns.reduce((sum, r) => sum + Math.pow(r - avgDailyReturn, 2), 0) / dailyReturns.length;
+    const variance =
+      dailyReturns.reduce((sum, r) => sum + Math.pow(r - avgDailyReturn, 2), 0) /
+      dailyReturns.length;
     const volatility = Math.sqrt(variance);
 
     // 计算夏普比率（假设无风险利率3%，年化）
     const riskFreeRate = 0.03 / 252; // 日无风险利率
-    const sharpeRatio = volatility > 0 ? (avgDailyReturn - riskFreeRate) / volatility * Math.sqrt(252) : 0;
+    const sharpeRatio =
+      volatility > 0 ? ((avgDailyReturn - riskFreeRate) / volatility) * Math.sqrt(252) : 0;
 
     // 计算最大回撤
     let peak = portfolioReturns[0].totalValue;
     let maxDrawdown = 0;
-    let maxDrawdownStart = portfolioReturns[0].date;
+    const maxDrawdownStart = portfolioReturns[0].date;
     let maxDrawdownEnd = portfolioReturns[0].date;
 
     for (const ret of portfolioReturns) {
@@ -431,7 +440,7 @@ export class PortfolioReturnSimulator {
 
     const initialCapital = config.initialCapital;
     const finalCapital = portfolioReturns[portfolioReturns.length - 1].totalValue;
-    const totalReturn = (finalCapital - initialCapital) / initialCapital * 100;
+    const totalReturn = ((finalCapital - initialCapital) / initialCapital) * 100;
 
     const startDate = portfolioReturns[0].date;
     const endDate = portfolioReturns[portfolioReturns.length - 1].date;

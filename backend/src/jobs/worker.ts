@@ -3,7 +3,7 @@ import { processBacktestJob } from './backtestJob';
 import { logger } from '../utils/logger';
 
 // 设置队列处理器
-backtestQueue.process(async (job) => {
+backtestQueue.process(async job => {
   logger.info(`开始处理回测任务 ${job.id}`);
   try {
     const result = await processBacktestJob(job.data);

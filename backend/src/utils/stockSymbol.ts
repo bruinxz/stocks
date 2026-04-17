@@ -257,7 +257,5 @@ export function isValidSymbol(symbol: string): boolean {
  * @returns 标准化后的股票代码数组
  */
 export function normalizeSymbols(symbols: string[]): string[] {
-  return symbols
-    .map(symbol => normalizeSymbol(symbol))
-    .filter(symbol => isValidSymbol(symbol));
+  return symbols.map(symbol => normalizeSymbol(symbol)).filter(symbol => isValidSymbol(symbol));
 }

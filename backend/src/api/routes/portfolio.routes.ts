@@ -15,20 +15,16 @@ const authController = new AuthController();
  */
 router.post(
   '/simulate',
-  // authController.authenticate,
+  authController.authenticate,
   [
     body('name').optional().isString().isLength({ max: 100 }),
     body('description').optional().isString().isLength({ max: 500 }),
-    body('symbols')
-      .isArray({ min: 1, max: 10 })
-      .withMessage('请选择1-10只股票'),
+    body('symbols').isArray({ min: 1, max: 10 }).withMessage('请选择1-10只股票'),
     body('symbols.*')
       .isString()
       .matches(/^(sh\.|sz\.|bj\.)\d{6}$/)
       .withMessage('股票代码格式不正确，应为 sh.600000 或 sz.000001 格式'),
-    body('buyDate')
-      .isISO8601()
-      .withMessage('买入日期格式不正确，应为 YYYY-MM-DD 格式'),
+    body('buyDate').isISO8601().withMessage('买入日期格式不正确，应为 YYYY-MM-DD 格式'),
     body('days')
       .isInt({ min: 1, max: 365 * 5 })
       .withMessage('持有天数应在1-1825天范围内'),
@@ -40,14 +36,8 @@ router.post(
       .optional()
       .isIn(['equal', 'weighted'])
       .withMessage('资金分配策略应为 equal 或 weighted'),
-    body('includeDividends')
-      .optional()
-      .isBoolean()
-      .withMessage('是否包含分红应为布尔值'),
-    body('reinvest')
-      .optional()
-      .isBoolean()
-      .withMessage('是否再投资应为布尔值'),
+    body('includeDividends').optional().isBoolean().withMessage('是否包含分红应为布尔值'),
+    body('reinvest').optional().isBoolean().withMessage('是否再投资应为布尔值'),
   ],
   validateRequest,
   portfolioController.simulatePortfolio
@@ -60,7 +50,7 @@ router.post(
  */
 router.get(
   '/history',
-  // authController.authenticate,
+  authController.authenticate,
   [
     query('page').optional().isInt({ min: 1 }),
     query('limit').optional().isInt({ min: 1, max: 100 }),
@@ -76,10 +66,7 @@ router.get(
  * @desc 获取推荐配置
  * @access Public
  */
-router.get(
-  '/recommended-config',
-  portfolioController.getRecommendedConfig
-);
+router.get('/recommended-config', portfolioController.getRecommendedConfig);
 
 /**
  * @route GET /api/portfolio/:id
@@ -88,7 +75,7 @@ router.get(
  */
 router.get(
   '/:id',
-  // authController.authenticate,
+  authController.authenticate,
   portfolioController.getSimulationDetail
 );
 
@@ -99,11 +86,9 @@ router.get(
  */
 router.post(
   '/validate-stocks',
-  // authController.authenticate,
+  authController.authenticate,
   [
-    body('symbols')
-      .isArray({ min: 1, max: 20 })
-      .withMessage('请选择1-20只股票'),
+    body('symbols').isArray({ min: 1, max: 20 }).withMessage('请选择1-20只股票'),
     body('symbols.*')
       .isString()
       .matches(/^(sh\.|sz\.|bj\.)\d{6}$/)

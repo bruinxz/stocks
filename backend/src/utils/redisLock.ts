@@ -2,8 +2,14 @@ import { createClient, RedisClientType } from 'redis';
 import { logger } from './logger';
 
 // Redis客户端实例
+const redisUrl = process.env.REDIS_PASSWORD
+  ? `redis://:${process.env.REDIS_PASSWORD}@${process.env.REDIS_HOST || '127.0.0.1'}:${
+      process.env.REDIS_PORT || '6379'
+    }`
+  : `redis://${process.env.REDIS_HOST || '127.0.0.1'}:${process.env.REDIS_PORT || '6379'}`;
+
 const redisClient: RedisClientType = createClient({
-  url: `redis://${process.env.REDIS_PASSWORD ? `:${process.env.REDIS_PASSWORD}@` : ''}${process.env.REDIS_HOST || 'localhost'}:${process.env.REDIS_PORT || '6379'}`,
+  url: redisUrl,
   database: parseInt(process.env.REDIS_DB || '0'),
 });
 
@@ -12,7 +18,7 @@ redisClient.on('connect', () => {
   logger.debug('Redis锁客户端已连接');
 });
 
-redisClient.on('error', (error) => {
+redisClient.on('error', error => {
   logger.error('Redis锁客户端错误:', error);
 });
 
@@ -47,8 +53,8 @@ export class RedisLock {
   async acquire(
     key: string,
     ttl: number = 30 * 60 * 1000, // 30分钟
-    retryDelay: number = 500,
-    maxRetries: number = 3
+    retryDelay = 500,
+    maxRetries = 3
   ): Promise<string | null> {
     const lockValue = `lock:${Date.now()}:${Math.random().toString(36).substr(2, 9)}`;
     let retries = 0;
@@ -61,15 +67,17 @@ export class RedisLock {
           PX: ttl,
         });
 
-        // @ts-ignore - redis client may return 'OK' or true
-        if (result === 'OK' || result === true) {
+        // redis client may return 'OK' or true
+        if (result === 'OK' || (result as any) === true) {
           logger.debug(`成功获取锁: ${key}, value: ${lockValue}, ttl: ${ttl}ms`);
           return lockValue;
         }
 
         // 锁已被其他进程持有
         if (retries < maxRetries) {
-          logger.debug(`锁 ${key} 被占用，等待 ${retryDelay}ms 后重试 (${retries + 1}/${maxRetries})`);
+          logger.debug(
+            `锁 ${key} 被占用，等待 ${retryDelay}ms 后重试 (${retries + 1}/${maxRetries})`
+          );
           await this.sleep(retryDelay);
           retryDelay *= 2; // 指数退避
         }
@@ -103,7 +111,7 @@ export class RedisLock {
 
       const result = await this.client.eval(luaScript, {
         keys: [key],
-        arguments: [lockValue]
+        arguments: [lockValue],
       });
 
       if (result === 1) {
@@ -167,7 +175,7 @@ export class RedisLock {
 
       const result = await this.client.eval(luaScript, {
         keys: [key],
-        arguments: [lockValue, newTtl.toString()]
+        arguments: [lockValue, newTtl.toString()],
       });
       return result === 1;
     } catch (error) {
@@ -204,6 +212,7 @@ export const LockKeys = {
   STOCK_SYNC: (symbol: string) => `${LOCK_PREFIX}data:stock:sync:${symbol}`, // 单只股票同步锁
   DAILY_UPDATE: (date: string) => `${LOCK_PREFIX}data:daily:update:${date}`, // 每日更新锁
   NEW_STOCKS_SYNC: `${LOCK_PREFIX}data:new:stocks:sync`, // 新股同步锁
+  BULK_SYNC: `${LOCK_PREFIX}data:bulk:sync`, // 批量同步锁
 };
 
 // 导出单例

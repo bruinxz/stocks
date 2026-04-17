@@ -1,9 +1,14 @@
 import { Router } from 'express';
 import { MarketController } from '../controllers/MarketController';
-import { authenticate } from '../../middlewares/auth';
+import { AuthController } from '../controllers/AuthController';
+import { body, query } from 'express-validator';
+import { validateRequest } from '../../middlewares/validateRequest';
 
 const router = Router();
 const marketController = new MarketController();
+const authController = new AuthController();
+
+// Market routes
 
 /**
  * @swagger
@@ -227,7 +232,7 @@ router.get('/history/:symbol', marketController.getStockHistory);
  *       500:
  *         description: 服务器错误
  */
-router.get('/favorites', authenticate, marketController.getFavorites);
+router.get('/favorites', authController.authenticate, marketController.getFavorites);
 
 /**
  * @swagger
@@ -272,7 +277,7 @@ router.get('/favorites', authenticate, marketController.getFavorites);
  *       500:
  *         description: 服务器错误
  */
-router.post('/favorites/:symbol', authenticate, marketController.addFavorite as any);
+router.post('/favorites/:symbol', authController.authenticate, marketController.addFavorite as any);
 
 /**
  * @swagger
@@ -300,7 +305,7 @@ router.post('/favorites/:symbol', authenticate, marketController.addFavorite as 
  *       500:
  *         description: 服务器错误
  */
-router.delete('/favorites/:symbol', authenticate, marketController.removeFavorite as any);
+router.delete('/favorites/:symbol', authController.authenticate, marketController.removeFavorite as any);
 
 /**
  * @swagger
@@ -341,7 +346,7 @@ router.delete('/favorites/:symbol', authenticate, marketController.removeFavorit
  *       500:
  *         description: 服务器错误
  */
-router.get('/favorites/:symbol', authenticate, marketController.checkFavorite as any);
+router.get('/favorites/:symbol', authController.authenticate, marketController.checkFavorite as any);
 
 /**
  * @swagger
@@ -384,7 +389,7 @@ router.get('/favorites/:symbol', authenticate, marketController.checkFavorite as
  *       500:
  *         description: 服务器错误
  */
-router.patch('/favorites/:symbol', authenticate, marketController.updateFavorite as any);
+router.patch('/favorites/:symbol', authController.authenticate, marketController.updateFavorite as any);
 
 /**
  * @swagger
@@ -1010,5 +1015,6 @@ router.get('/data-completeness', marketController.getDataCompletenessStats as an
  *         description: 服务器错误
  */
 router.post('/data-completeness/refresh', marketController.refreshDataCompletenessCache as any);
+
 
 export default router;

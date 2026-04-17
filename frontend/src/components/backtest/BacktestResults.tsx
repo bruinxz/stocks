@@ -1,15 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Card } from 'antd';
-import { Row } from 'antd';
-import { Col } from 'antd';
-import { Statistic } from 'antd';
-import { Table } from 'antd';
-import { Tabs } from 'antd';
-import { Button } from 'antd';
-import { Space } from 'antd';
-import { Progress } from 'antd';
-import { Tag } from 'antd';
-import { Descriptions } from 'antd';
+import { Card, Table, Tabs, Tag, Descriptions, Button } from 'antd';
 import {
   LineChart,
   Line,
@@ -28,6 +18,7 @@ import {
   DollarOutlined,
   RiseOutlined,
   FallOutlined,
+  ArrowLeftOutlined,
 } from '@ant-design/icons';
 import { backtestService } from '../../services/backtestService';
 
@@ -35,6 +26,7 @@ const { TabPane } = Tabs;
 
 interface BacktestResultsProps {
   backtestId: string;
+  onBack?: () => void;
 }
 
 interface MetricData {
@@ -43,9 +35,11 @@ interface MetricData {
   formattedValue: string;
   icon: React.ReactNode;
   color: string;
+  cardClass: string;
+  iconClass: string;
 }
 
-const BacktestResults: React.FC<BacktestResultsProps> = ({ backtestId }) => {
+const BacktestResults: React.FC<BacktestResultsProps> = ({ backtestId, onBack }) => {
   const [results, setResults] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [backtestInfo, setBacktestInfo] = useState<any>(null);
@@ -53,7 +47,8 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtestId }) => {
   useEffect(() => {
     loadResults();
     loadBacktestInfo();
-  }, [backtestId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [backtestId]); // eslint-disable-next-line react-hooks/exhaustive-deps
 
   const loadResults = async () => {
     setLoading(true);
@@ -77,11 +72,15 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtestId }) => {
   };
 
   if (loading) {
-    return <Card loading={true}></Card>;
+    return <Card className="modern-card" bordered={false} loading={true}></Card>;
   }
 
   if (!results) {
-    return <Card>无法加载回测结果</Card>;
+    return (
+      <Card className="modern-card" bordered={false}>
+        无法加载回测结果
+      </Card>
+    );
   }
 
   const { metrics, equityCurve, trades, dailyReturns } = results;
@@ -94,6 +93,8 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtestId }) => {
       formattedValue: `${(metrics.totalReturn * 100).toFixed(2)}%`,
       icon: metrics.totalReturn >= 0 ? <ArrowUpOutlined /> : <ArrowDownOutlined />,
       color: metrics.totalReturn >= 0 ? '#3f8600' : '#cf1322',
+      cardClass: metrics.totalReturn >= 0 ? 'stat-card stat-card-green' : 'stat-card stat-card-red',
+      iconClass: metrics.totalReturn >= 0 ? 'icon-green' : 'icon-red',
     },
     {
       name: '年化收益率',
@@ -101,6 +102,8 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtestId }) => {
       formattedValue: `${(metrics.annualizedReturn * 100).toFixed(2)}%`,
       icon: <RiseOutlined />,
       color: metrics.annualizedReturn >= 0 ? '#3f8600' : '#cf1322',
+      cardClass: 'stat-card stat-card-blue',
+      iconClass: metrics.annualizedReturn >= 0 ? 'icon-green' : 'icon-red',
     },
     {
       name: '夏普比率',
@@ -109,6 +112,14 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtestId }) => {
       icon: <DollarOutlined />,
       color:
         metrics.sharpeRatio >= 1 ? '#3f8600' : metrics.sharpeRatio >= 0.5 ? '#faad14' : '#cf1322',
+      cardClass:
+        metrics.sharpeRatio >= 1 ? 'stat-card stat-card-purple' : 'stat-card stat-card-orange',
+      iconClass:
+        metrics.sharpeRatio >= 1
+          ? 'icon-green'
+          : metrics.sharpeRatio >= 0.5
+          ? 'icon-orange'
+          : 'icon-red',
     },
     {
       name: '最大回撤',
@@ -116,6 +127,8 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtestId }) => {
       formattedValue: `${(metrics.maxDrawdown * 100).toFixed(2)}%`,
       icon: <FallOutlined />,
       color: '#cf1322',
+      cardClass: 'stat-card stat-card-red',
+      iconClass: 'icon-red',
     },
     {
       name: '胜率',
@@ -123,6 +136,9 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtestId }) => {
       formattedValue: `${(metrics.winRate * 100).toFixed(1)}%`,
       icon: <ArrowUpOutlined />,
       color: metrics.winRate >= 0.6 ? '#3f8600' : metrics.winRate >= 0.5 ? '#faad14' : '#cf1322',
+      cardClass: metrics.winRate >= 0.6 ? 'stat-card stat-card-cyan' : 'stat-card stat-card-orange',
+      iconClass:
+        metrics.winRate >= 0.6 ? 'icon-green' : metrics.winRate >= 0.5 ? 'icon-orange' : 'icon-red',
     },
     {
       name: '盈亏比',
@@ -135,6 +151,14 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtestId }) => {
           : metrics.profitLossRatio >= 1
           ? '#faad14'
           : '#cf1322',
+      cardClass:
+        metrics.profitLossRatio >= 1.5 ? 'stat-card stat-card-green' : 'stat-card stat-card-orange',
+      iconClass:
+        metrics.profitLossRatio >= 1.5
+          ? 'icon-green'
+          : metrics.profitLossRatio >= 1
+          ? 'icon-orange'
+          : 'icon-red',
     },
   ];
 
@@ -209,56 +233,91 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtestId }) => {
   }));
 
   return (
-    <div>
-      {backtestInfo && (
-        <Card style={{ marginBottom: 24 }}>
-          <Descriptions title="回测基本信息" bordered>
-            <Descriptions.Item label="回测名称">{backtestInfo.name}</Descriptions.Item>
-            <Descriptions.Item label="股票代码">{backtestInfo.symbol}</Descriptions.Item>
-            <Descriptions.Item label="策略类型">
-              {backtestInfo.strategyType === 'moving_average_crossover'
-                ? '均线交叉'
-                : backtestInfo.strategyType === 'rsi'
-                ? 'RSI策略'
-                : backtestInfo.strategyType === 'macd'
-                ? 'MACD策略'
-                : backtestInfo.strategyType === 'bollinger_bands'
-                ? '布林带策略'
-                : backtestInfo.strategyType}
-            </Descriptions.Item>
-            <Descriptions.Item label="初始资金">
-              ¥{backtestInfo.initialCapital.toLocaleString()}
-            </Descriptions.Item>
-            <Descriptions.Item label="开始日期">{backtestInfo.startDate}</Descriptions.Item>
-            <Descriptions.Item label="结束日期">{backtestInfo.endDate}</Descriptions.Item>
-          </Descriptions>
-        </Card>
-      )}
-
+    <div className="fade-in-up">
+      <div
+        className="page-header-modern"
+        style={{
+          position: 'sticky',
+          top: 0,
+          zIndex: 10,
+          background: 'var(--bg-base)',
+          paddingBottom: 16,
+          paddingTop: 16,
+          marginBottom: 24,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          {onBack && (
+            <Button
+              type="text"
+              icon={<ArrowLeftOutlined />}
+              onClick={onBack}
+              style={{ padding: 0 }}
+            />
+          )}
+          <div>
+            <h1 className="page-title-modern" style={{ margin: 0 }}>
+              回测结果
+            </h1>
+            <p className="page-subtitle-modern" style={{ margin: 0 }}>
+              {backtestInfo
+                ? `${backtestInfo.name} (${backtestInfo.symbol})`
+                : '查看详细指标与收益曲线'}
+            </p>
+          </div>
+        </div>
+      </div>
       {/* 关键指标卡片 */}
-      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+          gap: 12,
+          marginBottom: 24,
+        }}
+      >
         {metricCards.map((metric, index) => (
-          <Col xs={24} sm={12} md={8} lg={4} key={index}>
-            <Card>
-              <Statistic
-                title={metric.name}
-                value={metric.formattedValue}
-                valueStyle={{ color: metric.color }}
-                prefix={metric.icon}
-              />
-            </Card>
-          </Col>
+          <div
+            key={index}
+            style={{
+              padding: '16px',
+              background: 'var(--bg-card)',
+              borderRadius: 'var(--border-radius-lg)',
+              border: '1px solid var(--border-color)',
+            }}
+          >
+            <div
+              style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 4, fontWeight: 500 }}
+            >
+              {metric.name}
+            </div>
+            <div
+              style={{
+                fontSize: 24,
+                fontWeight: 700,
+                color: metric.color || 'var(--text-main)',
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              {metric.formattedValue}
+            </div>
+          </div>
         ))}
-      </Row>
+      </div>
 
       <Tabs defaultActiveKey="1">
         <TabPane tab="资金曲线" key="1">
-          <Card>
+          <Card className="modern-card chart-card" bordered={false}>
             <ResponsiveContainer width="100%" height={400}>
               <LineChart data={equityData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="date" />
-                <YAxis tickFormatter={value => `¥${value.toLocaleString()}`} />
+                <CartesianGrid vertical={false} stroke="#f0f0f0" />
+                <XAxis dataKey="date" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                <YAxis
+                  tickFormatter={value => `¥${value.toLocaleString()}`}
+                  tick={{ fontSize: 11 }}
+                  axisLine={false}
+                  tickLine={false}
+                />
                 <Tooltip
                   formatter={value => [`¥${Number(value).toLocaleString()}`, '资金']}
                   labelFormatter={label => `日期: ${label}`}
@@ -278,7 +337,7 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtestId }) => {
         </TabPane>
 
         <TabPane tab="交易记录" key="2">
-          <Card>
+          <Card className="modern-card" bordered={false}>
             <Table
               columns={tradeColumns}
               dataSource={trades}
@@ -309,12 +368,17 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtestId }) => {
         </TabPane>
 
         <TabPane tab="每日收益" key="3">
-          <Card>
+          <Card className="modern-card chart-card" bordered={false}>
             <ResponsiveContainer width="100%" height={400}>
               <BarChart data={returnsData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="day" />
-                <YAxis tickFormatter={value => `${value.toFixed(2)}%`} />
+                <CartesianGrid vertical={false} stroke="#f0f0f0" />
+                <XAxis dataKey="day" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                <YAxis
+                  tickFormatter={value => `${value.toFixed(2)}%`}
+                  tick={{ fontSize: 11 }}
+                  axisLine={false}
+                  tickLine={false}
+                />
                 <Tooltip formatter={value => [`${Number(value).toFixed(2)}%`, '日收益率']} />
                 <Legend />
                 <Bar dataKey="return" fill="#52c41a" name="日收益率" radius={[2, 2, 0, 0]} />
@@ -324,7 +388,7 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtestId }) => {
         </TabPane>
 
         <TabPane tab="详细指标" key="4">
-          <Card>
+          <Card className="modern-card" bordered={false}>
             <Descriptions title="回测详细指标" bordered column={2}>
               <Descriptions.Item label="初始资金">
                 ¥{metrics.initialCapital.toLocaleString()}
@@ -367,6 +431,33 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtestId }) => {
               </Descriptions.Item>
             </Descriptions>
           </Card>
+        </TabPane>
+
+        <TabPane tab="回测参数" key="5">
+          {backtestInfo && (
+            <Card className="modern-card" bordered={false}>
+              <Descriptions title="回测基本信息" bordered>
+                <Descriptions.Item label="回测名称">{backtestInfo.name}</Descriptions.Item>
+                <Descriptions.Item label="股票代码">{backtestInfo.symbol}</Descriptions.Item>
+                <Descriptions.Item label="策略类型">
+                  {backtestInfo.strategyType === 'moving_average_crossover'
+                    ? '均线交叉'
+                    : backtestInfo.strategyType === 'rsi'
+                    ? 'RSI策略'
+                    : backtestInfo.strategyType === 'macd'
+                    ? 'MACD策略'
+                    : backtestInfo.strategyType === 'bollinger_bands'
+                    ? '布林带策略'
+                    : backtestInfo.strategyType}
+                </Descriptions.Item>
+                <Descriptions.Item label="初始资金">
+                  ¥{backtestInfo.initialCapital.toLocaleString()}
+                </Descriptions.Item>
+                <Descriptions.Item label="开始日期">{backtestInfo.startDate}</Descriptions.Item>
+                <Descriptions.Item label="结束日期">{backtestInfo.endDate}</Descriptions.Item>
+              </Descriptions>
+            </Card>
+          )}
         </TabPane>
       </Tabs>
     </div>

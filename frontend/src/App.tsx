@@ -1,6 +1,14 @@
 import React from 'react';
-import { Layout, ConfigProvider, Menu } from 'antd';
-import { BrowserRouter as Router, Routes, Route, Link, Navigate } from 'react-router-dom';
+import { Layout, ConfigProvider, Menu, Avatar, Dropdown } from 'antd';
+import {
+  BrowserRouter as Router,
+  Routes,
+  Route,
+  Link,
+  Navigate,
+  useLocation,
+  useNavigate,
+} from 'react-router-dom';
 import {
   DashboardOutlined,
   LineChartOutlined,
@@ -9,8 +17,13 @@ import {
   PieChartOutlined,
   AreaChartOutlined,
   SyncOutlined,
+  LogoutOutlined,
+  BarChartOutlined,
 } from '@ant-design/icons';
 import zhCN from 'antd/locale/zh_CN';
+import { useSelector } from 'react-redux';
+import { RootState } from './store/rootReducer';
+import { API_DOMAIN_URL } from './services/api';
 
 import Dashboard from './pages/Dashboard';
 import Backtest from './pages/Backtest';
@@ -19,86 +32,366 @@ import Login from './pages/Login';
 import Portfolio from './pages/Portfolio';
 import Market from './pages/Market';
 import DataUpdateStatus from './pages/DataUpdateStatus';
+import Profile from './pages/Profile';
+import AIAdvisor from './pages/AIAdvisor';
+import TaskScheduler from './pages/TaskScheduler';
+import Screener from './pages/Screener';
+import PaperTrading from './pages/PaperTrading';
+import RiskAlerts from './pages/RiskAlerts';
+import TradingJournal from './pages/TradingJournal';
+import {
+  RobotOutlined,
+  ClockCircleOutlined,
+  RocketOutlined,
+  AccountBookOutlined,
+  AlertOutlined,
+  BookOutlined,
+} from '@ant-design/icons';
 
-const { Header, Content, Footer, Sider } = Layout;
+import type { MenuProps } from 'antd';
 
-const App: React.FC = () => {
-  // 简单认证状态（实际项目中应使用状态管理）
-  const isAuthenticated = true;
+const { Header, Content, Sider } = Layout;
 
-  const menuItems = [
+const ProtectedRoute = ({ children }: { children: JSX.Element }) => {
+  const token = localStorage.getItem('token');
+  const location = useLocation();
+  if (!token) return <Navigate to="/login" state={{ from: location }} replace />;
+  return children;
+};
+
+const AppContent: React.FC = () => {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const token = localStorage.getItem('token');
+  const { user } = useSelector((state: RootState) => state.auth);
+
+  const displayUsername =
+    user?.nickname || user?.username || localStorage.getItem('username') || 'Admin';
+  const avatarSrc = user?.avatarUrl
+    ? user.avatarUrl.startsWith('http')
+      ? user.avatarUrl
+      : `${API_DOMAIN_URL}${user.avatarUrl}`
+    : undefined;
+
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('refreshToken');
+    localStorage.removeItem('username');
+    navigate('/login');
+  };
+
+  const mainMenuItems: MenuProps['items'] = [
     {
-      key: '/dashboard',
-      icon: <DashboardOutlined />,
-      label: <Link to="/dashboard">仪表板</Link>,
+      type: 'group',
+      label: '核心概览',
+      children: [
+        {
+          key: '/dashboard',
+          icon: <DashboardOutlined />,
+          label: <Link to="/dashboard">仪表盘</Link>,
+        },
+        { key: '/market', icon: <AreaChartOutlined />, label: <Link to="/market">市场大盘</Link> },
+      ],
     },
     {
-      key: '/portfolio',
-      icon: <PieChartOutlined />,
-      label: <Link to="/portfolio">组合收益模拟</Link>,
+      type: 'group',
+      label: 'AI 投顾',
+      children: [
+        {
+          key: '/ai-advisor',
+          icon: <RobotOutlined />,
+          label: <Link to="/ai-advisor">AI 深度研报</Link>,
+        },
+        {
+          key: '/screener',
+          icon: <RocketOutlined />,
+          label: <Link to="/screener">AI 每日优选</Link>,
+        },
+      ],
     },
     {
-      key: '/market',
-      icon: <AreaChartOutlined />,
-      label: <Link to="/market">大盘视图</Link>,
+      type: 'group',
+      label: '量化交易',
+      children: [
+        { key: '/strategy', icon: <StockOutlined />, label: <Link to="/strategy">策略中心</Link> },
+        {
+          key: '/backtest',
+          icon: <LineChartOutlined />,
+          label: <Link to="/backtest">回测分析</Link>,
+        },
+        {
+          key: '/paper-trading',
+          icon: <AccountBookOutlined />,
+          label: <Link to="/paper-trading">模拟交易</Link>,
+        },
+        {
+          key: '/risk-alerts',
+          icon: <AlertOutlined />,
+          label: <Link to="/risk-alerts">风控告警</Link>,
+        },
+      ],
     },
     {
-      key: '/data-update',
-      icon: <SyncOutlined />,
-      label: <Link to="/data-update">数据更新监控</Link>,
-    },
-    {
-      key: '/backtest',
-      icon: <LineChartOutlined />,
-      label: <Link to="/backtest">回测管理</Link>,
-    },
-    {
-      key: '/strategy',
-      icon: <StockOutlined />,
-      label: <Link to="/strategy">策略管理</Link>,
-    },
-    {
-      key: '/login',
-      icon: <UserOutlined />,
-      label: <Link to="/login">登录</Link>,
+      type: 'group',
+      label: '系统与设置',
+      children: [
+        { key: '/journals', icon: <BookOutlined />, label: <Link to="/journals">交易日记</Link> },
+        { key: '/tasks', icon: <ClockCircleOutlined />, label: <Link to="/tasks">定时调度</Link> },
+        {
+          key: '/data-update',
+          icon: <SyncOutlined />,
+          label: <Link to="/data-update">系统监控</Link>,
+        },
+        { key: '/profile', icon: <UserOutlined />, label: <Link to="/profile">个人中心</Link> },
+      ],
     },
   ];
 
+  const extractKeys = (items: any[]): any[] => {
+    let keys: any[] = [];
+    items.forEach(item => {
+      if (item.children) {
+        keys = keys.concat(item.children);
+      } else {
+        keys.push(item);
+      }
+    });
+    return keys;
+  };
+
+  const selectedKey =
+    extractKeys(mainMenuItems).find((item: any) => location.pathname.startsWith(item.key))?.key ||
+    '/dashboard';
+
+  const userMenuProps: MenuProps = {
+    items: [
+      {
+        key: 'profile',
+        icon: <UserOutlined />,
+        label: <Link to="/profile">个人中心</Link>,
+      },
+      {
+        type: 'divider',
+      },
+      {
+        key: 'logout',
+        icon: <LogoutOutlined />,
+        label: '退出登录',
+        danger: true,
+        onClick: handleLogout,
+      },
+    ],
+  };
+
+  if (location.pathname === '/login') {
+    return (
+      <Routes>
+        <Route path="/login" element={<Login />} />
+      </Routes>
+    );
+  }
+
   return (
-    <ConfigProvider locale={zhCN}>
+    <Layout className="modern-layout">
+      <Sider width={240} className="modern-sider">
+        <div className="modern-sider-inner">
+          <div>
+            <div className="modern-logo">
+              <BarChartOutlined className="logo-icon" />
+              <span>QuantX</span>
+            </div>
+            <Menu
+              mode="inline"
+              selectedKeys={[selectedKey]}
+              className="modern-menu"
+              items={mainMenuItems}
+            />
+          </div>
+        </div>
+      </Sider>
+      <Layout style={{ background: 'transparent' }}>
+        <Header
+          className="modern-header"
+          style={{
+            display: 'flex',
+            justifyContent: 'flex-end',
+            alignItems: 'center',
+            padding: '0 24px',
+            background: 'var(--bg-card)',
+            borderBottom: '1px solid var(--border-color)',
+            position: 'sticky',
+            top: 0,
+            zIndex: 10,
+            height: 64,
+          }}
+        >
+          {token && (
+            <Dropdown menu={userMenuProps} placement="bottomRight" trigger={['click']}>
+              <div
+                className="header-user-dropdown"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  cursor: 'pointer',
+                  padding: '4px 12px',
+                  borderRadius: 8,
+                  transition: 'background 0.2s',
+                }}
+              >
+                <Avatar
+                  size={32}
+                  style={{ backgroundColor: '#4f46e5', fontSize: 14, marginRight: 12 }}
+                  icon={<UserOutlined />}
+                  src={avatarSrc}
+                />
+                <span style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-main)' }}>
+                  {displayUsername}
+                </span>
+              </div>
+            </Dropdown>
+          )}
+        </Header>
+        <Content className="modern-layout-content">
+          <Routes>
+            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route
+              path="/dashboard"
+              element={
+                <ProtectedRoute>
+                  <Dashboard />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/paper-trading"
+              element={
+                <ProtectedRoute>
+                  <PaperTrading />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/market"
+              element={
+                <ProtectedRoute>
+                  <Market />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/ai-advisor"
+              element={
+                <ProtectedRoute>
+                  <AIAdvisor />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/tasks"
+              element={
+                <ProtectedRoute>
+                  <TaskScheduler />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/data-update"
+              element={
+                <ProtectedRoute>
+                  <DataUpdateStatus />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/backtest"
+              element={
+                <ProtectedRoute>
+                  <Backtest />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/screener"
+              element={
+                <ProtectedRoute>
+                  <Screener />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/risk-alerts"
+              element={
+                <ProtectedRoute>
+                  <RiskAlerts />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/journals"
+              element={
+                <ProtectedRoute>
+                  <TradingJournal />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/strategy"
+              element={
+                <ProtectedRoute>
+                  <Strategy />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/profile"
+              element={
+                <ProtectedRoute>
+                  <Profile />
+                </ProtectedRoute>
+              }
+            />
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          </Routes>
+        </Content>
+      </Layout>
+    </Layout>
+  );
+};
+
+const App: React.FC = () => {
+  return (
+    <ConfigProvider
+      locale={zhCN}
+      theme={{
+        token: {
+          colorPrimary: '#4f46e5',
+          colorInfo: '#4f46e5',
+          colorSuccess: '#10b981',
+          colorWarning: '#f59e0b',
+          colorError: '#ef4444',
+          borderRadius: 8,
+          fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif",
+          colorBgContainer: '#ffffff',
+          colorText: '#1a1a1a',
+          colorTextSecondary: '#888',
+        },
+        components: {
+          Button: { borderRadius: 6, controlHeight: 36, fontWeight: 500 },
+          Card: { borderRadiusLG: 10 },
+          Table: {
+            borderRadius: 8,
+            headerBg: '#fafafa',
+            headerColor: '#888',
+            rowHoverBg: '#fafafa',
+          },
+          Input: { borderRadius: 8, controlHeight: 36 },
+          Select: { borderRadius: 8, controlHeight: 36 },
+          DatePicker: { borderRadius: 8, controlHeight: 36 },
+        },
+      }}
+    >
       <Router>
-        <Layout style={{ minHeight: '100vh' }}>
-          <Header style={{ color: 'white', fontSize: '20px', fontWeight: 'bold' }}>
-            A股股票回测系统
-          </Header>
-          <Layout>
-            <Sider width={200} theme="light">
-              <Menu
-                mode="inline"
-                defaultSelectedKeys={['/dashboard']}
-                style={{ height: '100%', borderRight: 0 }}
-                items={menuItems}
-              />
-            </Sider>
-            <Layout style={{ padding: '0 24px 24px' }}>
-              <Content style={{ padding: '24px', margin: 0, minHeight: 280 }}>
-                <Routes>
-                  <Route path="/" element={<Navigate to="/dashboard" replace />} />
-                  <Route path="/dashboard" element={<Dashboard />} />
-                  <Route path="/portfolio" element={<Portfolio />} />
-                  <Route path="/market" element={<Market />} />
-                  <Route path="/data-update" element={<DataUpdateStatus />} />
-                  <Route path="/backtest" element={<Backtest />} />
-                  <Route path="/strategy" element={<Strategy />} />
-                  <Route path="/login" element={<Login />} />
-                </Routes>
-              </Content>
-              <Footer style={{ textAlign: 'center' }}>
-                A-Share Stock Backtesting System ©2023
-              </Footer>
-            </Layout>
-          </Layout>
-        </Layout>
+        <AppContent />
       </Router>
     </ConfigProvider>
   );

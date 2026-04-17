@@ -1,6 +1,19 @@
-import { Table, Column, Model, DataType, CreatedAt, UpdatedAt, BeforeCreate, BeforeUpdate, HasMany } from 'sequelize-typescript';
+import {
+  Table,
+  Column,
+  Model,
+  DataType,
+  CreatedAt,
+  UpdatedAt,
+  BeforeCreate,
+  BeforeUpdate,
+  HasMany,
+} from 'sequelize-typescript';
 import bcrypt from 'bcrypt';
 import { BacktestResult } from './BacktestResult';
+import { PaperTradingPortfolio } from './PaperTradingPortfolio';
+import { RiskAlert } from './RiskAlert';
+import { TradingJournal } from './TradingJournal';
 
 @Table({
   tableName: 'users',
@@ -43,6 +56,24 @@ export class User extends Model {
 
   @Column({
     type: DataType.STRING(255),
+    allowNull: true,
+  })
+  declare avatarUrl: string;
+
+  @Column({
+    type: DataType.STRING(50),
+    allowNull: true,
+  })
+  declare nickname: string;
+
+  @Column({
+    type: DataType.STRING(20),
+    allowNull: true,
+  })
+  declare phone: string;
+
+  @Column({
+    type: DataType.STRING(255),
     allowNull: false,
   })
   declare passwordHash: string;
@@ -51,13 +82,13 @@ export class User extends Model {
     type: DataType.STRING(50),
     defaultValue: 'user',
   })
-  role!: string;
+  declare role: string;
 
   @Column({
     type: DataType.BOOLEAN,
     defaultValue: true,
   })
-  isActive!: boolean;
+  declare isActive: boolean;
 
   @CreatedAt
   declare createdAt: Date;
@@ -67,6 +98,15 @@ export class User extends Model {
 
   @HasMany(() => BacktestResult)
   declare backtestResults: BacktestResult[];
+
+  @HasMany(() => PaperTradingPortfolio)
+  declare portfolios: PaperTradingPortfolio[];
+
+  @HasMany(() => RiskAlert)
+  declare riskAlerts: RiskAlert[];
+
+  @HasMany(() => TradingJournal)
+  declare tradingJournals: TradingJournal[];
 
   @BeforeCreate
   @BeforeUpdate

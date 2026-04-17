@@ -1,5 +1,18 @@
-import { EastMoneyClient, StockBasicInfo as EastMoneyStockBasicInfo, DailyBar as EastMoneyDailyBar } from './EastMoneyClient';
-import { AKShareClient, StockBasicInfo as AKShareStockBasicInfo, DailyBar as AKShareDailyBar } from './AKShareClient';
+import {
+  EastMoneyClient,
+  StockBasicInfo as EastMoneyStockBasicInfo,
+  DailyBar as EastMoneyDailyBar,
+} from './EastMoneyClient';
+import {
+  AKShareClient,
+  StockBasicInfo as AKShareStockBasicInfo,
+  DailyBar as AKShareDailyBar,
+} from './AKShareClient';
+import {
+  SinaFinanceClient,
+  StockBasicInfo as SinaStockBasicInfo,
+  DailyBar as SinaDailyBar,
+} from './SinaFinanceClient';
 import { logger } from '../../utils/logger';
 import { toAKSharePureCode, toEastMoneyFormat, normalizeSymbol } from '../../utils/stockSymbol';
 
@@ -18,10 +31,12 @@ export type QueryParams = {
 export class CombinedDataSource {
   private eastMoneyClient: EastMoneyClient;
   private akshareClient: AKShareClient;
+  private sinaFinanceClient: SinaFinanceClient;
 
   constructor() {
     this.eastMoneyClient = new EastMoneyClient();
     this.akshareClient = new AKShareClient();
+    this.sinaFinanceClient = new SinaFinanceClient();
   }
 
   /**
@@ -35,9 +50,9 @@ export class CombinedDataSource {
   private async retryWithBackoff<T>(
     operation: () => Promise<T>,
     operationName: string,
-    maxRetries: number = 3,
-    initialDelay: number = 1000,
-    maxDelay: number = 10000
+    maxRetries = 3,
+    initialDelay = 1000,
+    maxDelay = 10000
   ): Promise<T> {
     let lastError: Error | null = null;
 
@@ -81,14 +96,16 @@ export class CombinedDataSource {
       const stocks = await this.retryWithBackoff(
         () => this.akshareClient.getAllStocks(),
         'getAllStocks from AKShare',
-        3, 1000, 10000
+        3,
+        1000,
+        10000
       );
       if (stocks && stocks.length > 0) {
         logger.info(`Using ${stocks.length} real stocks from AKShare`);
         // AKShare返回的代码已经是标准化格式，但确保一下
         return stocks.map(stock => ({
           ...stock,
-          code: normalizeSymbol(stock.code)
+          code: normalizeSymbol(stock.code),
         }));
       }
       logger.info('AKShare returned empty stock list, trying EastMoney');
@@ -101,14 +118,38 @@ export class CombinedDataSource {
       const stocks = await this.retryWithBackoff(
         () => this.eastMoneyClient.getAllStocks(),
         'getAllStocks from EastMoney',
-        3, 1000, 10000
+        3,
+        1000,
+        10000
       );
       if (stocks && stocks.length > 0) {
         logger.info(`Using ${stocks.length} real stocks from EastMoney`);
         // 标准化返回的股票代码
         return stocks.map(stock => ({
           ...stock,
-          code: normalizeSymbol(stock.code)
+          code: normalizeSymbol(stock.code),
+        }));
+      }
+      logger.info('EastMoney returned empty stock list, trying Sina Finance');
+    } catch (error) {
+      logger.warn('Failed to fetch stocks from EastMoney, trying Sina Finance:', error.message);
+    }
+
+    // 最终回退到新浪财经
+    try {
+      const stocks = await this.retryWithBackoff(
+        () => this.sinaFinanceClient.getAllStocks(),
+        'getAllStocks from Sina Finance',
+        3,
+        1000,
+        10000
+      );
+      if (stocks && stocks.length > 0) {
+        logger.info(`Using ${stocks.length} real stocks from Sina Finance`);
+        // 标准化返回的股票代码
+        return stocks.map(stock => ({
+          ...stock,
+          code: normalizeSymbol(stock.code),
         }));
       }
       // 如果返回空数组，抛出错误
@@ -136,42 +177,69 @@ export class CombinedDataSource {
     const akshareCode = normalizedCode; // AKShare客户端期望标准化格式
     const eastMoneyCode = toEastMoneyFormat(normalizedCode);
 
-    logger.info(`Querying history data for ${normalizedCode} (AKShare: ${akshareCode}, EastMoney: ${eastMoneyCode})`);
+    logger.info(
+      `Querying history data for ${normalizedCode} (AKShare: ${akshareCode}, EastMoney: ${eastMoneyCode})`
+    );
 
     // 优先使用AKShare
     try {
       const akshareBars = await this.retryWithBackoff(
-        () => this.akshareClient.queryHistoryKData(akshareCode, startDate, endDate, frequency, adjustflag),
+        () =>
+          this.akshareClient.queryHistoryKData(
+            akshareCode,
+            startDate,
+            endDate,
+            frequency,
+            adjustflag
+          ),
         `queryHistoryKData from AKShare for ${normalizedCode}`,
-        3, 1000, 10000
+        3,
+        1000,
+        10000
       );
 
       // 如果AKShare返回了数据，使用它
       if (akshareBars && akshareBars.length > 0) {
-        logger.info(`Using ${akshareBars.length} real data bars from AKShare for ${normalizedCode}`);
+        logger.info(
+          `Using ${akshareBars.length} real data bars from AKShare for ${normalizedCode}`
+        );
         return akshareBars;
       }
 
       // 否则尝试东方财富
       logger.info(`AKShare returned empty data for ${normalizedCode}, trying EastMoney`);
     } catch (error) {
-      logger.warn(`Failed to fetch data from AKShare for ${normalizedCode}, trying EastMoney:`, error.message);
+      logger.warn(
+        `Failed to fetch data from AKShare for ${normalizedCode}, trying EastMoney:`,
+        error.message
+      );
     }
 
     // 回退到东方财富
     try {
       const eastMoneyBars = await this.retryWithBackoff(
-        () => this.eastMoneyClient.queryHistoryKData(eastMoneyCode, startDate, endDate, frequency, adjustflag),
+        () =>
+          this.eastMoneyClient.queryHistoryKData(
+            eastMoneyCode,
+            startDate,
+            endDate,
+            frequency,
+            adjustflag
+          ),
         `queryHistoryKData from EastMoney for ${normalizedCode}`,
-        3, 1000, 10000
+        3,
+        1000,
+        10000
       );
 
       if (eastMoneyBars && eastMoneyBars.length > 0) {
-        logger.info(`Using ${eastMoneyBars.length} real data bars from EastMoney for ${normalizedCode}`);
+        logger.info(
+          `Using ${eastMoneyBars.length} real data bars from EastMoney for ${normalizedCode}`
+        );
         // 将东方财富返回的数据中的代码转换为标准化格式
         return eastMoneyBars.map(bar => ({
           ...bar,
-          code: normalizedCode
+          code: normalizedCode,
         }));
       }
 
@@ -180,7 +248,10 @@ export class CombinedDataSource {
       throw new Error(`无法获取股票 ${normalizedCode} 的历史数据`);
     } catch (error) {
       // 如果所有数据源接口都出错，抛出错误
-      logger.error(`Failed to fetch data for ${normalizedCode} from all data sources:`, error.message);
+      logger.error(
+        `Failed to fetch data for ${normalizedCode} from all data sources:`,
+        error.message
+      );
       throw new Error(`无法获取股票 ${normalizedCode} 的历史数据: ${error.message}`);
     }
   }
@@ -194,14 +265,18 @@ export class CombinedDataSource {
     const akshareCode = normalizedCode; // AKShare客户端期望标准化格式
     const eastMoneyCode = toEastMoneyFormat(normalizedCode);
 
-    logger.info(`Querying stock basic info for ${normalizedCode} (AKShare: ${akshareCode}, EastMoney: ${eastMoneyCode})`);
+    logger.info(
+      `Querying stock basic info for ${normalizedCode} (AKShare: ${akshareCode}, EastMoney: ${eastMoneyCode})`
+    );
 
     // 优先使用AKShare
     try {
       const stockInfo = await this.retryWithBackoff(
         () => this.akshareClient.queryStockBasic(akshareCode),
         `queryStockBasic from AKShare for ${normalizedCode}`,
-        3, 1000, 10000
+        3,
+        1000,
+        10000
       );
       if (stockInfo) {
         logger.info(`Using stock basic info from AKShare for ${normalizedCode}`);
@@ -209,21 +284,26 @@ export class CombinedDataSource {
       }
       logger.info(`AKShare returned no stock basic info for ${normalizedCode}, trying EastMoney`);
     } catch (error) {
-      logger.warn(`Failed to fetch stock basic info from AKShare for ${normalizedCode}, trying EastMoney:`, error.message);
+      logger.warn(
+        `Failed to fetch stock basic info from AKShare for ${normalizedCode}, trying EastMoney:`,
+        error.message
+      );
     }
 
     // 回退到东方财富
     const eastMoneyInfo = await this.retryWithBackoff(
       () => this.eastMoneyClient.queryStockBasic(eastMoneyCode),
       `queryStockBasic from EastMoney for ${normalizedCode}`,
-      3, 1000, 10000
+      3,
+      1000,
+      10000
     );
 
     if (eastMoneyInfo) {
       // 将东方财富返回的数据中的代码转换为标准化格式
       return {
         ...eastMoneyInfo,
-        code: normalizedCode
+        code: normalizedCode,
       };
     }
 
@@ -242,21 +322,28 @@ export class CombinedDataSource {
       const stocks = await this.retryWithBackoff(
         () => this.eastMoneyClient.getIndexStocks(normalizedIndexCode),
         `getIndexStocks from EastMoney for ${normalizedIndexCode}`,
-        3, 1000, 10000
+        3,
+        1000,
+        10000
       );
       if (stocks && stocks.length > 0) {
-        logger.info(`Using ${stocks.length} real index stocks from EastMoney for ${normalizedIndexCode}`);
+        logger.info(
+          `Using ${stocks.length} real index stocks from EastMoney for ${normalizedIndexCode}`
+        );
         // 标准化返回的股票代码
         return stocks.map(stock => ({
           ...stock,
-          code: normalizeSymbol(stock.code)
+          code: normalizeSymbol(stock.code),
         }));
       }
       // 如果返回空数组，抛出错误
       logger.error(`All data sources returned empty index stocks for ${normalizedIndexCode}`);
       throw new Error(`无法从任何数据源获取指数 ${normalizedIndexCode} 的成分股`);
     } catch (error) {
-      logger.error(`Failed to fetch index stocks for ${normalizedIndexCode} from all data sources:`, error.message);
+      logger.error(
+        `Failed to fetch index stocks for ${normalizedIndexCode} from all data sources:`,
+        error.message
+      );
       throw new Error(`无法获取指数 ${normalizedIndexCode} 的成分股: ${error.message}`);
     }
   }

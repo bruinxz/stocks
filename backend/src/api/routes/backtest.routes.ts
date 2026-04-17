@@ -15,14 +15,14 @@ const authController = new AuthController();
  */
 router.post(
   '/',
-  // authController.authenticate,
+  authController.authenticate,
   [
     body('name').isString().isLength({ min: 1, max: 100 }),
     body('description').optional().isString().isLength({ max: 500 }),
     body('symbols')
-      .custom((value) => {
+      .custom(value => {
         if (Array.isArray(value)) {
-          return value.every((s) => typeof s === 'string' && s.length > 0);
+          return value.every(s => typeof s === 'string' && s.length > 0);
         }
         return typeof value === 'string' && value.length > 0;
       })
@@ -47,7 +47,7 @@ router.post(
  */
 router.get(
   '/',
-  // authController.authenticate,
+  authController.authenticate,
   [
     query('page').optional().isInt({ min: 1 }),
     query('limit').optional().isInt({ min: 1, max: 100 }),
@@ -66,7 +66,7 @@ router.get(
  */
 router.get(
   '/stats',
-  // authController.authenticate,
+  authController.authenticate,
   backtestController.getBacktestStats
 );
 
@@ -77,7 +77,7 @@ router.get(
  */
 router.get(
   '/:id',
-  // authController.authenticate,
+  authController.authenticate,
   backtestController.getBacktestDetail
 );
 
@@ -88,7 +88,7 @@ router.get(
  */
 router.delete(
   '/:id',
-  // authController.authenticate,
+  authController.authenticate,
   backtestController.deleteBacktest
 );
 

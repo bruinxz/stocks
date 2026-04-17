@@ -64,14 +64,13 @@ export class PerformanceCalculator {
 
     const winRate = (profitTrades.length / trades.length) * 100;
     const profitFactor = totalLoss !== 0 ? totalProfit / totalLoss : 0;
-    const expectancy = (winRate / 100 * averageProfit) - ((100 - winRate) / 100 * averageLoss);
+    const expectancy = (winRate / 100) * averageProfit - ((100 - winRate) / 100) * averageLoss;
 
-    const holdingDays = trades
-      .filter(t => t.holdingDays)
-      .map(t => t.holdingDays || 0);
-    const averageHoldingDays = holdingDays.length > 0
-      ? holdingDays.reduce((sum, days) => sum + days, 0) / holdingDays.length
-      : 0;
+    const holdingDays = trades.filter(t => t.holdingDays).map(t => t.holdingDays || 0);
+    const averageHoldingDays =
+      holdingDays.length > 0
+        ? holdingDays.reduce((sum, days) => sum + days, 0) / holdingDays.length
+        : 0;
 
     return {
       totalTrades: trades.length,
@@ -92,7 +91,7 @@ export class PerformanceCalculator {
   static calculatePortfolioMetrics(
     equityCurve: { date: Date; value: number }[],
     initialCapital: number,
-    riskFreeRate: number = 0.03,
+    riskFreeRate = 0.03,
     benchmarkReturns?: number[]
   ): PortfolioMetrics {
     if (equityCurve.length < 2) {
@@ -174,7 +173,7 @@ export class PerformanceCalculator {
   static calculateRiskMetrics(
     portfolioReturns: number[],
     benchmarkReturns: number[],
-    riskFreeRate: number = 0.03
+    riskFreeRate = 0.03
   ): RiskMetrics {
     if (portfolioReturns.length !== benchmarkReturns.length || portfolioReturns.length === 0) {
       return {
@@ -188,8 +187,10 @@ export class PerformanceCalculator {
     }
 
     // 计算协方差和方差
-    const avgPortfolioReturn = portfolioReturns.reduce((sum, r) => sum + r, 0) / portfolioReturns.length;
-    const avgBenchmarkReturn = benchmarkReturns.reduce((sum, r) => sum + r, 0) / benchmarkReturns.length;
+    const avgPortfolioReturn =
+      portfolioReturns.reduce((sum, r) => sum + r, 0) / portfolioReturns.length;
+    const avgBenchmarkReturn =
+      benchmarkReturns.reduce((sum, r) => sum + r, 0) / benchmarkReturns.length;
 
     let covariance = 0;
     let benchmarkVariance = 0;
@@ -226,7 +227,8 @@ export class PerformanceCalculator {
     );
 
     // 信息比率
-    const informationRatio = trackingError !== 0 ? (avgPortfolioReturn - avgBenchmarkReturn) / trackingError : 0;
+    const informationRatio =
+      trackingError !== 0 ? (avgPortfolioReturn - avgBenchmarkReturn) / trackingError : 0;
 
     // 特雷诺比率
     const treynorRatio = beta !== 0 ? (avgPortfolioReturn - riskFreeRate) / beta : 0;
@@ -253,7 +255,8 @@ export class PerformanceCalculator {
     if (returns.length === 0) return 0;
 
     const avgReturn = returns.reduce((sum, r) => sum + r, 0) / returns.length;
-    const variance = returns.reduce((sum, r) => sum + Math.pow(r - avgReturn, 2), 0) / returns.length;
+    const variance =
+      returns.reduce((sum, r) => sum + Math.pow(r - avgReturn, 2), 0) / returns.length;
     const dailyStd = Math.sqrt(variance);
 
     // 年化波动率（假设252个交易日）
@@ -269,8 +272,11 @@ export class PerformanceCalculator {
     const downsideReturns = returns.filter(r => r < 0);
     if (downsideReturns.length === 0) return 0;
 
-    const avgDownsideReturn = downsideReturns.reduce((sum, r) => sum + r, 0) / downsideReturns.length;
-    const variance = downsideReturns.reduce((sum, r) => sum + Math.pow(r - avgDownsideReturn, 2), 0) / downsideReturns.length;
+    const avgDownsideReturn =
+      downsideReturns.reduce((sum, r) => sum + r, 0) / downsideReturns.length;
+    const variance =
+      downsideReturns.reduce((sum, r) => sum + Math.pow(r - avgDownsideReturn, 2), 0) /
+      downsideReturns.length;
     const dailyDownsideStd = Math.sqrt(variance);
 
     // 年化下行波动率
@@ -280,7 +286,7 @@ export class PerformanceCalculator {
   /**
    * 计算夏普比率
    */
-  static calculateSharpeRatio(returns: number[], riskFreeRate: number = 0.03): number {
+  static calculateSharpeRatio(returns: number[], riskFreeRate = 0.03): number {
     if (returns.length === 0) return 0;
 
     const avgReturn = returns.reduce((sum, r) => sum + r, 0) / returns.length;
@@ -297,7 +303,7 @@ export class PerformanceCalculator {
   /**
    * 计算索提诺比率
    */
-  static calculateSortinoRatio(returns: number[], riskFreeRate: number = 0.03): number {
+  static calculateSortinoRatio(returns: number[], riskFreeRate = 0.03): number {
     if (returns.length === 0) return 0;
 
     const avgReturn = returns.reduce((sum, r) => sum + r, 0) / returns.length;
@@ -324,7 +330,7 @@ export class PerformanceCalculator {
       if (point.value > peak) {
         peak = point.value;
       }
-      const drawdown = (peak - point.value) / peak * 100;
+      const drawdown = ((peak - point.value) / peak) * 100;
       if (drawdown > maxDrawdown) {
         maxDrawdown = drawdown;
       }
@@ -336,7 +342,7 @@ export class PerformanceCalculator {
   /**
    * 计算风险价值 (VaR)
    */
-  static calculateValueAtRisk(returns: number[], confidenceLevel: number = 0.95): number {
+  static calculateValueAtRisk(returns: number[], confidenceLevel = 0.95): number {
     if (returns.length === 0) return 0;
 
     const sortedReturns = [...returns].sort((a, b) => a - b);
@@ -347,7 +353,7 @@ export class PerformanceCalculator {
   /**
    * 计算条件风险价值 (CVaR)
    */
-  static calculateConditionalValueAtRisk(returns: number[], confidenceLevel: number = 0.95): number {
+  static calculateConditionalValueAtRisk(returns: number[], confidenceLevel = 0.95): number {
     if (returns.length === 0) return 0;
 
     const sortedReturns = [...returns].sort((a, b) => a - b);

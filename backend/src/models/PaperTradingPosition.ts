@@ -1,0 +1,94 @@
+import {
+  Table,
+  Column,
+  Model,
+  DataType,
+  CreatedAt,
+  UpdatedAt,
+  ForeignKey,
+  BelongsTo,
+} from 'sequelize-typescript';
+import { PaperTradingPortfolio } from './PaperTradingPortfolio';
+
+@Table({
+  tableName: 'paper_trading_positions',
+  timestamps: true,
+})
+export class PaperTradingPosition extends Model {
+  @Column({
+    type: DataType.INTEGER,
+    primaryKey: true,
+    autoIncrement: true,
+  })
+  declare id: number;
+
+  @ForeignKey(() => PaperTradingPortfolio)
+  @Column({
+    type: DataType.INTEGER,
+    allowNull: false,
+  })
+  declare portfolioId: number;
+
+  @BelongsTo(() => PaperTradingPortfolio)
+  declare portfolio: PaperTradingPortfolio;
+
+  @Column({
+    type: DataType.STRING(20),
+    allowNull: false,
+    comment: '股票代码',
+  })
+  declare symbol: string;
+
+  @Column({
+    type: DataType.STRING(100),
+    allowNull: true,
+    comment: '股票名称',
+  })
+  declare name: string;
+
+  @Column({
+    type: DataType.INTEGER,
+    allowNull: false,
+    defaultValue: 0,
+    comment: '持有股数 (股)',
+  })
+  declare quantity: number;
+
+  @Column({
+    type: DataType.DECIMAL(10, 3),
+    allowNull: false,
+    defaultValue: 0,
+    comment: '平均建仓成本价',
+  })
+  declare avgCost: number;
+
+  @Column({
+    type: DataType.DECIMAL(10, 3),
+    allowNull: false,
+    defaultValue: 0,
+    comment: '最新价格',
+  })
+  declare currentPrice: number;
+
+  @Column({
+    type: DataType.DECIMAL(15, 2),
+    allowNull: false,
+    defaultValue: 0,
+    comment: '当前持仓市值',
+  })
+  declare marketValue: number;
+
+  @Column({
+    type: DataType.DECIMAL(15, 2),
+    allowNull: false,
+    defaultValue: 0,
+    comment: '浮动盈亏',
+  })
+  declare unrealizedPnl: number;
+
+  @CreatedAt
+  declare createdAt: Date;
+
+  @UpdatedAt
+  declare updatedAt: Date;
+}
