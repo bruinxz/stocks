@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Card,
   Table,
@@ -34,6 +34,9 @@ import {
   DashboardOutlined,
   DatabaseOutlined,
   ApiOutlined,
+  CloudSyncOutlined,
+  CodeOutlined,
+  FileTextOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import {
@@ -153,6 +156,22 @@ const DataUpdateStatus: React.FC = () => {
   });
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [refreshInterval, setRefreshInterval] = useState(10); // 秒
+  const [triggerLoading, setTriggerLoading] = useState(false);
+
+  const handleManualTrigger = async (type: string) => {
+    setTriggerLoading(true);
+    try {
+      const response = await api.post('/market/manual-sync', { type, force: true });
+      if (response.data.success) {
+        message.success(response.data.data.message || '操作成功');
+        fetchAllData();
+      }
+    } catch (error: any) {
+      message.error(error.response?.data?.error || '操作失败');
+    } finally {
+      setTriggerLoading(false);
+    }
+  };
 
   // 批量同步相关状态
   const [bulkSyncModalVisible, setBulkSyncModalVisible] = useState(false);
@@ -1174,11 +1193,31 @@ const DataUpdateStatus: React.FC = () => {
 
   return (
     <div className="fade-in-up">
-      <div className="page-header-modern">
-        <h1 className="page-title-modern">数据更新监控</h1>
-        <p className="page-subtitle-modern">
-          监控股票数据更新状态、队列情况与系统健康状态 · 最后更新: {dayjs().format('HH:mm:ss')}
-        </p>
+      <div
+        className="page-header-modern"
+        style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+      >
+        <div>
+          <h1 className="page-title-modern">系统状态与数据同步</h1>
+          <p className="page-subtitle-modern">实时监控 A 股数据同步状态，确保量化回测的准确性</p>
+        </div>
+        <Space>
+          <Button
+            icon={<PlayCircleOutlined />}
+            onClick={() => handleManualTrigger('health_check')}
+            loading={triggerLoading}
+          >
+            健康检查
+          </Button>
+          <Button
+            type="primary"
+            icon={<SyncOutlined />}
+            onClick={() => handleManualTrigger('daily_update')}
+            loading={triggerLoading}
+          >
+            手动同步今日数据
+          </Button>
+        </Space>
       </div>
 
       <Row gutter={[16, 16]}>

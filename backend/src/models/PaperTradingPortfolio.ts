@@ -11,6 +11,8 @@ import {
 } from 'sequelize-typescript';
 import { User } from './User';
 import { PaperTradingPosition } from './PaperTradingPosition';
+import { PaperTradingTrade } from './PaperTradingTrade';
+import { PaperTradingSnapshot } from './PaperTradingSnapshot';
 
 @Table({
   tableName: 'paper_trading_portfolios',
@@ -80,4 +82,10 @@ export class PaperTradingPortfolio extends Model {
 
   @HasMany(() => PaperTradingPosition)
   declare positions: PaperTradingPosition[];
+
+  @HasMany(() => PaperTradingTrade)
+  declare trades: PaperTradingTrade[];
+
+  @HasMany(() => PaperTradingSnapshot)
+  declare snapshots: PaperTradingSnapshot[];
 }

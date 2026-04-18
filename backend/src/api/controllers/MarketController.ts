@@ -61,6 +61,71 @@ export class MarketController {
     this.dataSyncService = new DataSyncService();
   }
 
+  // 获取市场大盘概览 (沪深300等核心指数的最新状态和近期走势)
+  getMarketOverview = async (req: Request, res: Response) => {
+    try {
+      // 定义我们需要获取走势的代表性指数/股票
+      const indices = [
+        { symbol: 'sh.000300', name: '沪深300' },
+        { symbol: 'sh.000001', name: '上证指数' },
+        { symbol: 'sz.399001', name: '深证成指' },
+        { symbol: 'sz.399006', name: '创业板指' }
+      ];
+
+      const overviewData = await Promise.all(
+        indices.map(async (index) => {
+          try {
+            // 获取最近 30 个交易日的数据用于绘制迷你走势图
+            const bars = await this.dataService.getDailyBars(
+              index.symbol,
+              new Date(Date.now() - 45 * 24 * 60 * 60 * 1000), // 往前推 45 天确保有足够的交易日
+              new Date()
+            );
+
+            if (!bars || bars.length === 0) {
+              return { ...index, currentPrice: 0, change: 0, changePercent: 0, trend: [] };
+            }
+
+            const latestBar = bars[bars.length - 1];
+            const previousBar = bars.length > 1 ? bars[bars.length - 2] : latestBar;
+
+            const change = latestBar.close - previousBar.close;
+            const changePercent = (change / previousBar.close) * 100;
+
+            return {
+              ...index,
+              currentPrice: latestBar.close,
+              change,
+              changePercent,
+              trend: bars.slice(-30).map(b => ({ time: b.time, close: b.close })) // 只取最近 30 天画图
+            };
+          } catch (e) {
+            logger.error(`Failed to fetch overview for ${index.symbol}`, e);
+            return { ...index, currentPrice: 0, change: 0, changePercent: 0, trend: [] };
+          }
+        })
+      );
+
+      // 简单模拟一个市场情绪得分 (0-100)，实际项目中可以根据涨跌家数比、连板高度等计算
+      const upCount = overviewData.filter(d => d.changePercent > 0).length;
+      const sentimentScore = 40 + (upCount * 15) + (Math.random() * 10 - 5); // 基础分 + 涨的指数加分 + 随机波动
+
+      res.json({
+        success: true,
+        data: {
+          indices: overviewData,
+          sentiment: {
+            score: Math.min(100, Math.max(0, Math.round(sentimentScore))),
+            label: sentimentScore > 70 ? '贪婪' : sentimentScore < 30 ? '恐惧' : '中性'
+          }
+        }
+      });
+    } catch (error: any) {
+      logger.error('获取大盘概览失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
   /**
    * 搜索股票
    */
@@ -918,11 +983,27 @@ export class MarketController {
         'new_stocks_sync',
         'weekly_completeness_check',
         'manual_sync',
+        'health_check'
       ];
       if (!validTypes.includes(type)) {
         return res.status(400).json({
           success: false,
           error: `无效的类型，可选值: ${validTypes.join(', ')}`,
+        });
+      }
+
+      // 特殊处理完整性检查任务
+      if (type === 'health_check') {
+        // 强制清除完整性缓存
+        this.dataCompletenessCache = null;
+        logger.info('触发了健康检查，已清除数据完整性缓存');
+        return res.json({
+          success: true,
+          data: {
+            message: `健康检查已触发，缓存已清除`,
+            type,
+            date: today,
+          },
         });
       }
 
@@ -1477,6 +1558,28 @@ export class MarketController {
         ],
       });
 
+      // 获取每个股票在指定时间段内的日线数据数量
+      // 使用一次性聚合查询，而不是循环执行 5000+ 次 COUNT 查询，这能将耗时从几十秒缩短到几百毫秒
+      const barCounts = await DailyBar.findAll({
+        attributes: [
+          'stockId',
+          [sequelize.fn('COUNT', sequelize.col('id')), 'count']
+        ],
+        where: {
+          time: {
+            [Op.between]: [new Date(startDate as string), new Date(endDate as string)],
+          }
+        },
+        group: ['stockId'],
+        raw: true
+      });
+
+      // 建立 stockId -> count 的映射，O(1) 复杂度查找
+      const barCountMap = new Map<number, number>();
+      (barCounts as any[]).forEach(item => {
+        barCountMap.set(item.stockId, parseInt(item.count, 10));
+      });
+
       // 统计阶梯
       const completenessLevels = [
         { min: 0.9, max: 1.0, label: '90%-100%', count: 0 },
@@ -1504,15 +1607,8 @@ export class MarketController {
 
         for (const stock of batch) {
           try {
-            // 获取该股票的日线数据数量
-            const barCount = await DailyBar.count({
-              where: {
-                stockId: stock.id,
-                time: {
-                  [Op.between]: [new Date(startDate as string), new Date(endDate as string)],
-                },
-              },
-            });
+            // 获取该股票的日线数据数量，直接从预先加载的 map 中获取，O(1) 复杂度
+            const barCount = barCountMap.get(stock.id) || 0;
 
             // 计算完整性比例
             const completeness = barCount / expectedTradingDays;

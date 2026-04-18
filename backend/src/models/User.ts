@@ -90,6 +90,19 @@ export class User extends Model {
   })
   declare isActive: boolean;
 
+  @Column({
+    type: DataType.JSONB,
+    allowNull: true,
+    defaultValue: {
+      stopLossPercent: 5,
+      takeProfitPercent: 10,
+      enableVolumeAlert: true,
+      enableTechnicalAlert: true,
+    },
+    comment: '用户自定义的风控阈值配置',
+  })
+  declare riskConfig: any;
+
   @CreatedAt
   declare createdAt: Date;
 

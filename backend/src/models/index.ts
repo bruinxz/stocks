@@ -11,5 +11,7 @@ export * from './ScheduledTask';
 export * from './DailyScreener';
 export * from './PaperTradingPortfolio';
 export * from './PaperTradingPosition';
+export * from './PaperTradingTrade';
+export * from './PaperTradingSnapshot';
 export * from './RiskAlert';
 export * from './TradingJournal';

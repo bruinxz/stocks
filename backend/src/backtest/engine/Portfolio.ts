@@ -57,7 +57,7 @@ export class Portfolio {
   /**
    * 处理成交事件
    */
-  handleFillEvent(event: FillEvent): void {
+  handleFillEvent(event: FillEvent, effectiveTime: Date): void {
     const { symbol, direction, filledQuantity, filledPrice, commission } = event.data;
     const tradeValue = filledQuantity * filledPrice;
 
@@ -83,7 +83,7 @@ export class Portfolio {
           quantity: filledQuantity,
           entryPrice: filledPrice,
           currentPrice: filledPrice,
-          entryDate: new Date(),
+          entryDate: effectiveTime,
           entryValue: tradeValue,
           currentValue: tradeValue,
           unrealizedPnl: 0,
@@ -96,7 +96,7 @@ export class Portfolio {
       this.trades.push({
         id: `trade_${this.tradeCounter++}`,
         symbol,
-        entryDate: new Date(),
+        entryDate: effectiveTime,
         entryPrice: filledPrice,
         quantity: filledQuantity,
         direction: 'long',
@@ -135,7 +135,7 @@ export class Portfolio {
         t => t.symbol === symbol && t.status === 'open' && t.direction === 'long'
       );
       if (openTrade) {
-        openTrade.exitDate = new Date();
+        openTrade.exitDate = effectiveTime;
         openTrade.exitPrice = filledPrice;
         openTrade.pnl = realizedPnl;
         openTrade.pnlPercent = (realizedPnl / (openTrade.entryPrice * openTrade.quantity)) * 100;
@@ -151,7 +151,7 @@ export class Portfolio {
   /**
    * 更新仓位市值
    */
-  updatePositions(prices: Map<string, number>): void {
+  updatePositions(prices: Map<string, number>, date: Date): void {
     let totalPositionsValue = 0;
 
     for (const [symbol, position] of this.positions.entries()) {
@@ -167,7 +167,7 @@ export class Portfolio {
     // 更新资金曲线
     const totalValue = this.cash + totalPositionsValue;
     this.equityCurve.push({
-      date: new Date(),
+      date: date,
       value: totalValue,
     });
   }

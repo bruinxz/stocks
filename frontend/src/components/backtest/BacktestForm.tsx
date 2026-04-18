@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Form,
   Input,
@@ -11,8 +11,10 @@ import {
   Col,
   message,
   Radio,
+  Spin,
 } from 'antd';
 import { backtestService } from '../../services/backtestService';
+import { marketService, Stock } from '../../services/marketService';
 import dayjs from 'dayjs';
 
 const { RangePicker } = DatePicker;
@@ -25,6 +27,36 @@ const BacktestForm: React.FC<BacktestFormProps> = ({ onSuccess }) => {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
   const [strategyType, setStrategyType] = useState('moving_average_crossover');
+
+  // 股票搜索状态
+  const [stocks, setStocks] = useState<Stock[]>([]);
+  const [fetchingStocks, setFetchingStocks] = useState(false);
+
+  // 初始化加载股票列表
+  useEffect(() => {
+    fetchStocks('');
+  }, []);
+
+  const fetchStocks = async (query: string) => {
+    setFetchingStocks(true);
+    try {
+      const response = await marketService.searchStocks(query, 100);
+      setStocks(response.data.stocks);
+    } catch (error) {
+      console.error('获取股票列表失败:', error);
+      message.error('获取股票列表失败');
+    } finally {
+      setFetchingStocks(false);
+    }
+  };
+
+  const handleSearch = (value: string) => {
+    if (value) {
+      fetchStocks(value);
+    } else {
+      fetchStocks('');
+    }
+  };
 
   const handleSubmit = async (values: any) => {
     setLoading(true);
@@ -52,16 +84,6 @@ const BacktestForm: React.FC<BacktestFormProps> = ({ onSuccess }) => {
       setLoading(false);
     }
   };
-
-  // 股票代码选项（模拟数据）
-  const symbolOptions = [
-    { value: '000001.SZ', label: '平安银行 (000001.SZ)' },
-    { value: '000002.SZ', label: '万科A (000002.SZ)' },
-    { value: '000858.SZ', label: '五粮液 (000858.SZ)' },
-    { value: '600519.SH', label: '贵州茅台 (600519.SH)' },
-    { value: '000333.SZ', label: '美的集团 (000333.SZ)' },
-    { value: '300750.SZ', label: '宁德时代 (300750.SZ)' },
-  ];
 
   // 策略类型选项
   const strategyOptions = [
@@ -196,10 +218,18 @@ const BacktestForm: React.FC<BacktestFormProps> = ({ onSuccess }) => {
             >
               <Select
                 showSearch
-                placeholder="请选择股票"
-                optionFilterProp="label"
-                options={symbolOptions}
-              />
+                placeholder="搜索并选择股票"
+                optionFilterProp="children"
+                onSearch={handleSearch}
+                filterOption={false}
+                notFoundContent={fetchingStocks ? <Spin size="small" /> : '未找到股票'}
+              >
+                {stocks.map(stock => (
+                  <Select.Option key={stock.symbol} value={stock.symbol}>
+                    {stock.name} ({stock.symbol})
+                  </Select.Option>
+                ))}
+              </Select>
             </Form.Item>
           </Col>
         </Row>

@@ -60,6 +60,20 @@ export class TradingJournal extends Model {
   })
   declare actionPlan: string;
 
+  @Column({
+    type: DataType.JSONB,
+    allowNull: true,
+    comment: '标签(如: 止损、追高、打板)',
+  })
+  declare tags: string[];
+
+  @Column({
+    type: DataType.STRING(20),
+    allowNull: true,
+    comment: '情绪状态(如: 平静、焦虑、兴奋)',
+  })
+  declare mood: string;
+
   @CreatedAt
   declare createdAt: Date;
 

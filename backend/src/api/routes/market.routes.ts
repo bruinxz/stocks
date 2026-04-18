@@ -19,6 +19,16 @@ const authController = new AuthController();
 
 /**
  * @swagger
+ * /api/market/overview:
+ *   get:
+ *     tags: [Market]
+ *     summary: 获取市场大盘概览
+ *     description: 获取沪深300等核心指数的最新状态和近期走势
+ */
+router.get('/overview', authController.authenticate, marketController.getMarketOverview);
+
+/**
+ * @swagger
  * /api/market/search:
  *   get:
  *     tags: [Market]
@@ -523,7 +533,7 @@ router.get('/update-status', marketController.getUpdateStatus);
  *             properties:
  *               type:
  *                 type: string
- *                 enum: [daily_update, new_stocks_sync, weekly_completeness_check, manual_sync]
+ *                 enum: [daily_update, new_stocks_sync, weekly_completeness_check, manual_sync, health_check]
  *                 default: new_stocks_sync
  *                 description: 同步类型
  *               force:

@@ -99,3 +99,18 @@ api.interceptors.response.use(
 );
 
 export default api;
+
+// Market
+export const getMarketOverview = () => api.get('/market/overview');
+export const searchStocks = (query = '', limit = 100) =>
+  api.get('/market/search', { params: { q: query, limit } });
+
+// Favorites
+export const getFavorites = () => api.get('/market/favorites');
+export const addFavorite = (symbol: string, data: any) =>
+  api.post(`/market/favorites/${symbol}`, data);
+export const removeFavorite = (symbol: string) => api.delete(`/market/favorites/${symbol}`);
+export const checkFavorite = (symbol: string) => api.get(`/market/favorites/${symbol}`);
+export const getPaperTradingSnapshots = () => api.get('/paper-trading/snapshots');
+export const updateFavorite = (symbol: string, data: any) =>
+  api.patch(`/market/favorites/${symbol}`, data);

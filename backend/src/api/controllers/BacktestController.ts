@@ -6,6 +6,9 @@ import { User } from '../../models/User';
 import { BacktestEngine, BacktestConfig } from '../../backtest/engine/BacktestEngine';
 import { DataService } from '../../data/services/DataService';
 import { MovingAverageCrossoverStrategy } from '../../backtest/strategies/MovingAverageCrossoverStrategy';
+import { RSIStrategy } from '../../backtest/strategies/RSIStrategy';
+import { MACDStrategy } from '../../backtest/strategies/MACDStrategy';
+import { BollingerBandsStrategy } from '../../backtest/strategies/BollingerBandsStrategy';
 import { Strategy } from '../../backtest/strategies/Strategy';
 import { logger } from '../../utils/logger';
 
@@ -60,6 +63,41 @@ export class BacktestController {
           };
           strategy = new MovingAverageCrossoverStrategy(strategyConfig, symbol);
           break;
+        case 'rsi':
+          const rsiConfig = {
+            id: `strategy_${Date.now()}`,
+            name: 'RSI Strategy',
+            parameters: {
+              period: strategyParams?.period || 14,
+              overbought: strategyParams?.overbought || 70,
+              oversold: strategyParams?.oversold || 30,
+            },
+          };
+          strategy = new RSIStrategy(rsiConfig, symbol);
+          break;
+        case 'macd':
+          const macdConfig = {
+            id: `strategy_${Date.now()}`,
+            name: 'MACD Strategy',
+            parameters: {
+              fastPeriod: strategyParams?.fastPeriod || 12,
+              slowPeriod: strategyParams?.slowPeriod || 26,
+              signalPeriod: strategyParams?.signalPeriod || 9,
+            },
+          };
+          strategy = new MACDStrategy(macdConfig, symbol);
+          break;
+        case 'bollinger_bands':
+          const bbConfig = {
+            id: `strategy_${Date.now()}`,
+            name: 'Bollinger Bands Strategy',
+            parameters: {
+              period: strategyParams?.period || 20,
+              stdDev: strategyParams?.stdDev || 2,
+            },
+          };
+          strategy = new BollingerBandsStrategy(bbConfig, symbol);
+          break;
         // 可以扩展其他策略类型
         default:
           return res.status(400).json({
@@ -111,6 +149,9 @@ export class BacktestController {
         profitTrades: result.metrics.profitTrades || 0,
         lossTrades: result.metrics.lossTrades || 0,
         status: BacktestStatus.COMPLETED,
+        equityCurve: result.equityCurve,
+        dailyReturns: result.dailyReturns,
+        detailedMetrics: result.metrics,
       });
 
       // 保存交易记录
@@ -227,7 +268,26 @@ export class BacktestController {
 
       res.json({
         success: true,
-        data: { backtest },
+        data: {
+          backtest,
+          metrics: backtest.detailedMetrics || {
+            initialCapital: backtest.initialCapital,
+            finalCapital: backtest.finalCapital,
+            totalReturn: backtest.totalReturn,
+            annualizedReturn: backtest.annualizedReturn,
+            sharpeRatio: backtest.sharpeRatio,
+            sortinoRatio: backtest.sortinoRatio,
+            maxDrawdown: backtest.maxDrawdown,
+            winRate: backtest.winRate,
+            profitLossRatio: backtest.profitLossRatio,
+            totalTrades: backtest.totalTrades,
+            profitTrades: backtest.profitTrades,
+            lossTrades: backtest.lossTrades,
+          },
+          equityCurve: backtest.equityCurve || [],
+          dailyReturns: backtest.dailyReturns || [],
+          trades: backtest.trades || [],
+        },
       });
     } catch (error) {
       logger.error('获取回测详情失败:', error);

@@ -10,6 +10,8 @@ import { ScheduledTask } from '../models/ScheduledTask';
 import { DailyScreener } from '../models/DailyScreener';
 import { PaperTradingPortfolio } from '../models/PaperTradingPortfolio';
 import { PaperTradingPosition } from '../models/PaperTradingPosition';
+import { PaperTradingTrade } from '../models/PaperTradingTrade';
+import { PaperTradingSnapshot } from '../models/PaperTradingSnapshot';
 import { RiskAlert } from '../models/RiskAlert';
 import { TradingJournal } from '../models/TradingJournal';
 import dotenv from 'dotenv';
@@ -44,6 +46,8 @@ const sequelize = new Sequelize({
     DailyScreener,
     PaperTradingPortfolio,
     PaperTradingPosition,
+    PaperTradingTrade,
+    PaperTradingSnapshot,
     RiskAlert,
     TradingJournal,
   ],

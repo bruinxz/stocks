@@ -1,6 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { Card, Typography, Table, Tag, Button, Space, message, Modal, Descriptions } from 'antd';
 import { RocketOutlined, EyeOutlined, SyncOutlined } from '@ant-design/icons';
+import {
+  AreaChart,
+  Area,
+  ResponsiveContainer,
+  Radar,
+  RadarChart,
+  PolarGrid,
+  PolarAngleAxis,
+  PolarRadiusAxis,
+} from 'recharts';
 import api from '../services/api';
 import { Link } from 'react-router-dom';
 
@@ -15,6 +25,7 @@ interface ScreenerRecord {
   rationale: string;
   score: number;
   scores: any;
+  recentTrend?: { time: string; close: number }[];
 }
 
 const Screener: React.FC = () => {
@@ -101,6 +112,47 @@ const Screener: React.FC = () => {
       key: 'date',
     },
     {
+      title: '近期趋势 (30天)',
+      key: 'trend',
+      width: 150,
+      render: (_: any, record: ScreenerRecord) => {
+        if (!record.recentTrend || record.recentTrend.length === 0) {
+          return (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              暂无数据
+            </Text>
+          );
+        }
+
+        const isUp =
+          record.recentTrend[record.recentTrend.length - 1].close >= record.recentTrend[0].close;
+        const color = isUp ? '#cf1322' : '#3f8600'; // 红色涨，绿色跌
+
+        return (
+          <div style={{ height: 40, width: '100%' }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={record.recentTrend}>
+                <defs>
+                  <linearGradient id={`color-${record.id}`} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={color} stopOpacity={0.3} />
+                    <stop offset="95%" stopColor={color} stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <Area
+                  type="monotone"
+                  dataKey="close"
+                  stroke={color}
+                  strokeWidth={1.5}
+                  fill={`url(#color-${record.id})`}
+                  isAnimationActive={false}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        );
+      },
+    },
+    {
       title: '操作',
       key: 'action',
       render: (_: any, record: ScreenerRecord) => (
@@ -179,6 +231,7 @@ const Screener: React.FC = () => {
           </Link>,
         ]}
         width={700}
+        destroyOnClose={false}
       >
         <div style={{ marginTop: 24 }}>
           <Descriptions bordered column={1} size="small">
@@ -194,6 +247,61 @@ const Screener: React.FC = () => {
               </Paragraph>
             </Descriptions.Item>
           </Descriptions>
+
+          {selectedRecord?.scores && (
+            <div
+              style={{
+                marginTop: 24,
+                height: 250,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+              }}
+            >
+              <Text strong style={{ marginBottom: 8 }}>
+                多维度智能评分
+              </Text>
+              <ResponsiveContainer width="100%" height="100%">
+                <RadarChart
+                  cx="50%"
+                  cy="50%"
+                  outerRadius="70%"
+                  data={[
+                    {
+                      subject: '技术面 (Technical)',
+                      score: selectedRecord.scores.technical || 0,
+                      fullMark: 100,
+                    },
+                    {
+                      subject: '基本面 (Fundamental)',
+                      score: selectedRecord.scores.fundamental || 0,
+                      fullMark: 100,
+                    },
+                    {
+                      subject: '情绪面 (Sentiment)',
+                      score: selectedRecord.scores.sentiment || 0,
+                      fullMark: 100,
+                    },
+                  ]}
+                >
+                  <PolarGrid />
+                  <PolarAngleAxis
+                    dataKey="subject"
+                    tick={{ fill: '#475569', fontSize: 12, fontWeight: 500 }}
+                  />
+                  <PolarRadiusAxis angle={30} domain={[0, 100]} tick={false} axisLine={false} />
+                  <Radar
+                    name="AI 综合评分"
+                    dataKey="score"
+                    stroke="#8b5cf6"
+                    strokeWidth={2}
+                    fill="#8b5cf6"
+                    fillOpacity={0.5}
+                  />
+                </RadarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
         </div>
       </Modal>
     </div>

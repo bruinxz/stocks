@@ -27,10 +27,15 @@ export interface BacktestResponse {
 
 export interface BacktestListResponse {
   success: boolean;
-  data: BacktestResponse[];
-  total: number;
-  page: number;
-  pageSize: number;
+  data: {
+    backtests: BacktestResponse[];
+    pagination: {
+      total: number;
+      page: number;
+      limit: number;
+      totalPages: number;
+    };
+  };
 }
 
 export interface BacktestDetailResponse {
@@ -93,10 +98,10 @@ export const backtestService = {
     }
   },
 
-  async getBacktests(page = 1, pageSize = 10): Promise<BacktestListResponse> {
+  async getBacktestList(page = 1, pageSize = 10): Promise<BacktestListResponse> {
     try {
       const response = await api.get<any>('/backtests', {
-        params: { page, pageSize },
+        params: { page, limit: pageSize },
       });
 
       // 后端响应结构: { success: true, data: { backtests: [], pagination: { total, page, limit, totalPages } } }
@@ -144,10 +149,15 @@ export const backtestService = {
 
       return {
         success: true,
-        data: mappedBacktests,
-        total: pagination.total || 0,
-        page: pagination.page || page,
-        pageSize: pagination.limit || pageSize,
+        data: {
+          backtests: mappedBacktests,
+          pagination: {
+            total: pagination.total || mappedBacktests.length,
+            page: pagination.page || page,
+            limit: pagination.limit || pageSize,
+            totalPages: pagination.totalPages || 1,
+          },
+        },
       };
     } catch (error) {
       console.error('获取回测列表失败:', error);
@@ -238,6 +248,17 @@ export const backtestService = {
       console.error('获取回测交易数据失败:', error);
       const errorMessage = error instanceof Error ? error.message : String(error);
       throw new Error(`获取回测交易数据失败: ${errorMessage || '未知错误'}`);
+    }
+  },
+
+  async getBacktestStats(): Promise<any> {
+    try {
+      const response = await api.get('/backtests/stats');
+      return response.data;
+    } catch (error) {
+      console.error('获取回测统计失败:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new Error(`获取回测统计失败: ${errorMessage || '未知错误'}`);
     }
   },
 };

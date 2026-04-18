@@ -6,8 +6,6 @@ import { backtestService, BacktestResponse } from '../services/backtestService';
 import BacktestForm from '../components/backtest/BacktestForm';
 import BacktestResults from '../components/backtest/BacktestResults';
 
-const { TabPane } = Tabs;
-
 const Backtest: React.FC = () => {
   const [backtests, setBacktests] = useState<BacktestResponse[]>([]);
   const [loading, setLoading] = useState(false);
@@ -21,8 +19,8 @@ const Backtest: React.FC = () => {
   const loadBacktests = async () => {
     setLoading(true);
     try {
-      const response = await backtestService.getBacktests(1, 10);
-      setBacktests(response.data);
+      const response = await backtestService.getBacktestList(1, 10);
+      setBacktests(response.data.backtests);
     } catch (error) {
       console.error('加载回测列表失败:', error);
     } finally {
@@ -209,41 +207,51 @@ const Backtest: React.FC = () => {
         </Button>
       </div>
 
-      <Tabs activeKey={activeTab} onChange={setActiveTab}>
-        <TabPane tab="回测列表" key="1">
-          <Table
-            className="modern-card"
-            columns={columns}
-            dataSource={backtests}
-            rowKey="id"
-            loading={loading}
-            locale={{ emptyText: renderEmptyState() }}
-            pagination={{
-              pageSize: 10,
-              showTotal: total => `共 ${total} 条记录`,
-            }}
-            scroll={{ x: 'max-content' }}
-            style={{ borderRadius: 'var(--border-radius-lg)', overflow: 'hidden' }}
-          />
-        </TabPane>
-
-        <TabPane tab="新建回测" key="2">
-          <BacktestForm onSuccess={handleBacktestCreated} />
-        </TabPane>
-
-        <TabPane tab="结果分析" key="3">
-          {selectedBacktestId ? (
-            <BacktestResults backtestId={selectedBacktestId} />
-          ) : (
-            <Card className="modern-card" bordered={false}>
-              <p>请从回测列表中选择一个回测来查看结果</p>
-              <Button type="primary" onClick={() => setActiveTab('1')}>
-                返回回测列表
-              </Button>
-            </Card>
-          )}
-        </TabPane>
-      </Tabs>
+      <Tabs
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        items={[
+          {
+            key: '1',
+            label: '回测列表',
+            children: (
+              <Table
+                className="modern-card"
+                columns={columns}
+                dataSource={backtests}
+                rowKey="id"
+                loading={loading}
+                locale={{ emptyText: renderEmptyState() }}
+                pagination={{
+                  pageSize: 10,
+                  showTotal: total => `共 ${total} 条记录`,
+                }}
+                scroll={{ x: 'max-content' }}
+                style={{ borderRadius: 'var(--border-radius-lg)', overflow: 'hidden' }}
+              />
+            ),
+          },
+          {
+            key: '2',
+            label: '新建回测',
+            children: <BacktestForm onSuccess={handleBacktestCreated} />,
+          },
+          {
+            key: '3',
+            label: '结果分析',
+            children: selectedBacktestId ? (
+              <BacktestResults backtestId={selectedBacktestId} />
+            ) : (
+              <Card className="modern-card" bordered={false}>
+                <p>请从回测列表中选择一个回测来查看结果</p>
+                <Button type="primary" onClick={() => setActiveTab('1')}>
+                  返回回测列表
+                </Button>
+              </Card>
+            ),
+          },
+        ]}
+      />
     </div>
   );
 };

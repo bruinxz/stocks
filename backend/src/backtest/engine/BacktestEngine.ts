@@ -128,7 +128,7 @@ export class BacktestEngine {
     // 更新投资组合市值
     const prices = new Map<string, number>();
     prices.set(symbol, event.data.close);
-    this.portfolio.updatePositions(prices);
+    this.portfolio.updatePositions(prices, effectiveTime);
 
     // 处理订单
     const orderResults = this.orderManager.processBarEvent(event, this.portfolio);
@@ -223,7 +223,7 @@ export class BacktestEngine {
    */
   private handleFillEvent(event: Event): void {
     if (event.type === EventType.FILL) {
-      this.portfolio.handleFillEvent(event);
+      this.portfolio.handleFillEvent(event, this.currentDate);
     }
   }
 

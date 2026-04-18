@@ -19,4 +19,25 @@ router.get('/', authController.authenticate, journalController.getJournals);
  */
 router.get('/:date', authController.authenticate, journalController.getJournalDetail);
 
+/**
+ * @route POST /api/journals
+ * @desc 创建复盘日记
+ * @access Private
+ */
+router.post('/', authController.authenticate, journalController.createJournal);
+
+/**
+ * @route PUT /api/journals/:date
+ * @desc 更新复盘日记
+ * @access Private
+ */
+router.put('/:date', authController.authenticate, journalController.updateJournal);
+
+/**
+ * @route DELETE /api/journals/:date
+ * @desc 删除复盘日记
+ * @access Private
+ */
+router.delete('/:date', authController.authenticate, journalController.deleteJournal);
+
 export default router;

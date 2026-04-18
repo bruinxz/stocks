@@ -40,10 +40,19 @@ import {
   ResponsiveContainer,
   BarChart,
   Bar,
+  AreaChart,
+  Area,
+  Tooltip as RechartsTooltip,
 } from 'recharts';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
-import api from '../services/api';
+import api, {
+  getFavorites,
+  addFavorite,
+  removeFavorite,
+  checkFavorite,
+  updateFavorite,
+} from '../services/api';
 
 const { Text } = Typography;
 const { RangePicker } = DatePicker;
@@ -234,12 +243,13 @@ const Market: React.FC = () => {
   };
 
   // 添加收藏
-  const addFavorite = async (symbol: string, values?: any) => {
+  const handleAddFavoriteCall = async (symbol: string, values?: any) => {
     try {
-      const response = await api.post(`/market/favorites/${symbol}`, values || {});
+      const response = await addFavorite(symbol, values || {});
       if (response.data.success) {
         message.success('收藏成功');
         fetchFavorites();
+        setIsFavoriteModalOpen(false);
         return true;
       } else {
         message.error('收藏失败：' + response.data.error);
@@ -252,9 +262,9 @@ const Market: React.FC = () => {
   };
 
   // 移除收藏
-  const removeFavorite = async (symbol: string) => {
+  const handleRemoveFavoriteCall = async (symbol: string) => {
     try {
-      const response = await api.delete(`/market/favorites/${symbol}`);
+      const response = await removeFavorite(symbol);
       if (response.data.success) {
         message.success('已取消收藏');
         fetchFavorites();
@@ -272,7 +282,7 @@ const Market: React.FC = () => {
   // 检查是否已收藏
   const checkIsFavorite = async (symbol: string): Promise<boolean> => {
     try {
-      const response = await api.get(`/market/favorites/${symbol}`);
+      const response = await checkFavorite(symbol);
       return response.data.success && response.data.data.isFavorite;
     } catch {
       return false;
@@ -325,7 +335,7 @@ const Market: React.FC = () => {
 
     const handleFavoriteClick = async () => {
       if (isFavorite) {
-        await removeFavorite(record.symbol);
+        await handleRemoveFavoriteCall(record.symbol);
         setIsFavorite(false);
       } else {
         setIsFavoriteModalOpen(true);
@@ -507,11 +517,11 @@ const Market: React.FC = () => {
     }
   };
 
-  const handleAddFavorite = async () => {
+  const handleAddFavoriteSubmit = async () => {
     try {
       const values = await favoriteForm.validateFields();
       const symbol = favoriteForm.getFieldValue('symbol');
-      const success = await addFavorite(symbol, values);
+      const success = await handleAddFavoriteCall(symbol, values);
       if (success) {
         setIsFavoriteModalOpen(false);
         favoriteForm.resetFields();
@@ -531,32 +541,28 @@ const Market: React.FC = () => {
       <Row gutter={[16, 16]}>
         {/* 左侧：搜索和股票列表 */}
         <Col xs={24} lg={10} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <Card className="modern-card" bordered={false} bodyStyle={{ padding: 0 }}>
+          <Card className="modern-card" bordered={false} styles={{ body: { padding: '0 16px' } }}>
             <Tabs
               defaultActiveKey="all"
-              style={{ padding: '0 24px' }}
               items={[
                 {
                   key: 'all',
                   label: '全部股票',
                   children: (
                     <div style={{ paddingBottom: 24 }}>
-                      <Space direction="vertical" style={{ width: '100%', marginBottom: 16 }}>
-                        <Input.Search
-                          placeholder="输入股票代码或名称"
-                          value={searchQuery}
-                          onChange={e => setSearchQuery(e.target.value)}
-                          onSearch={handleSearch}
-                          enterButton={
-                            <Button type="primary" icon={<SearchOutlined />}>
-                              搜索
-                            </Button>
-                          }
-                          size="middle"
-                          style={{ marginBottom: 12 }}
-                        />
+                      <Space direction="vertical" style={{ width: '100%' }}>
+                        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                          <Input.Search
+                            placeholder="输入股票代码或名称"
+                            value={searchQuery}
+                            onChange={e => setSearchQuery(e.target.value)}
+                            onSearch={handleSearch}
+                            allowClear
+                            style={{ flex: 1 }}
+                          />
+                        </div>
 
-                        <Row gutter={8} style={{ marginBottom: 12 }}>
+                        <Row gutter={[8, 8]} style={{ marginBottom: 12 }}>
                           <Col span={8}>
                             <Select
                               placeholder="选择市场"
@@ -622,8 +628,8 @@ const Market: React.FC = () => {
                             pageSize: searchParams.limit,
                             total,
                             onChange: handlePageChange,
-                            showSizeChanger: true,
-                            showQuickJumper: true,
+                            showSizeChanger: false,
+                            size: 'small',
                             showTotal: total => `共 ${total} 条`,
                           }}
                           size="small"
@@ -731,7 +737,7 @@ const Market: React.FC = () => {
                                   style={{
                                     textAlign: 'center',
                                     padding: '8px 0',
-                                    background: 'var(--bg-hover)',
+                                    background: '#f8fafc',
                                     borderRadius: 8,
                                   }}
                                 >
@@ -791,20 +797,27 @@ const Market: React.FC = () => {
             extra={
               selectedStock && (
                 <Space>
-                  <RangePicker
-                    value={dateRange}
-                    onChange={handleDateRangeChange}
-                    style={{ width: 300 }}
-                  />
                   <Button
-                    type="primary"
-                    icon={<PlusOutlined />}
+                    type="text"
+                    icon={
+                      favorites.some(f => f.stock.symbol === selectedStock.symbol) ? (
+                        <StarFilled style={{ color: '#faad14' }} />
+                      ) : (
+                        <StarOutlined />
+                      )
+                    }
                     onClick={() => {
-                      setIsFavoriteModalOpen(true);
-                      favoriteForm.setFieldsValue({ symbol: selectedStock.symbol });
+                      if (favorites.some(f => f.stock.symbol === selectedStock.symbol)) {
+                        handleRemoveFavoriteCall(selectedStock.symbol);
+                      } else {
+                        setIsFavoriteModalOpen(true);
+                        favoriteForm.setFieldsValue({ symbol: selectedStock.symbol });
+                      }
                     }}
                   >
-                    添加到收藏
+                    {favorites.some(f => f.stock.symbol === selectedStock.symbol)
+                      ? '已收藏'
+                      : '加入收藏'}
                   </Button>
                 </Space>
               )
@@ -870,21 +883,30 @@ const Market: React.FC = () => {
                 >
                   {stockHistory.length > 0 ? (
                     <ResponsiveContainer width="100%" height={350}>
-                      <LineChart data={stockHistory}>
-                        <CartesianGrid vertical={false} stroke="#f0f0f0" />
+                      <AreaChart data={stockHistory}>
+                        <defs>
+                          <linearGradient id="colorClose" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
+                            <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
                         <XAxis
                           dataKey="date"
                           tickFormatter={date => dayjs(date).format('MM-DD')}
+                          tick={{ fill: '#9ca3af', fontSize: 12 }}
                           axisLine={false}
                           tickLine={false}
+                          minTickGap={30}
                         />
                         <YAxis
                           tickFormatter={value => `¥${value.toFixed(2)}`}
-                          domain={['dataMin', 'dataMax']}
+                          domain={['auto', 'auto']}
+                          tick={{ fill: '#9ca3af', fontSize: 12 }}
                           axisLine={false}
                           tickLine={false}
                         />
-                        <Tooltip
+                        <RechartsTooltip
                           formatter={(value: number) => [`¥${value.toFixed(2)}`, '收盘价']}
                           labelFormatter={label => dayjs(label).format('YYYY-MM-DD')}
                           contentStyle={{
@@ -892,18 +914,19 @@ const Market: React.FC = () => {
                             border: 'none',
                             boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
                           }}
+                          labelStyle={{ fontWeight: 'bold', color: '#1f2937', marginBottom: 8 }}
                         />
                         <Legend />
-                        <Line
+                        <Area
                           type="monotone"
                           dataKey="close"
-                          stroke="#1677ff"
-                          strokeWidth={3}
-                          dot={false}
-                          activeDot={{ r: 6, strokeWidth: 0 }}
+                          stroke="#3b82f6"
+                          strokeWidth={2}
+                          fillOpacity={1}
+                          fill="url(#colorClose)"
                           name="收盘价"
                         />
-                      </LineChart>
+                      </AreaChart>
                     </ResponsiveContainer>
                   ) : (
                     <Empty description={historyLoading ? '加载中...' : '暂无数据'} />
@@ -1031,13 +1054,14 @@ const Market: React.FC = () => {
       <Modal
         title="添加到收藏夹"
         open={isFavoriteModalOpen}
-        onOk={handleAddFavorite}
+        onOk={handleAddFavoriteSubmit}
         onCancel={() => {
           setIsFavoriteModalOpen(false);
           favoriteForm.resetFields();
         }}
         okText="收藏"
         cancelText="取消"
+        destroyOnClose={false}
       >
         <Form form={favoriteForm} layout="vertical">
           <Form.Item name="symbol" label="股票代码" hidden>

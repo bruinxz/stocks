@@ -241,6 +241,22 @@ export class BacktestResult extends Model {
   })
   declare calmarRatio: number;
 
+  @Column({
+    type: DataType.JSONB,
+    allowNull: true,
+    field: 'equity_curve',
+    comment: '资金曲线',
+  })
+  declare equityCurve: any;
+
+  @Column({
+    type: DataType.JSONB,
+    allowNull: true,
+    field: 'daily_returns',
+    comment: '每日收益率',
+  })
+  declare dailyReturns: any;
+
   @CreatedAt
   @Column({ field: 'created_at' })
   declare createdAt: Date;
