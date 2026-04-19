@@ -50,8 +50,11 @@
 - **事件驱动引擎 (`BacktestEngine.ts`)**: 
   - 支持 `BAR` (K线), `SIGNAL` (信号), `ORDER` (订单), `FILL` (成交), `TIMER` (定时) 等标准事件生命周期管理。
 - **数据层与持久化 (`backend/src/models/`)**:
-  - 采用 **PostgreSQL + TimescaleDB** (需Docker环境支持) 处理海量时序K线数据。
-  - 使用 **Redis + Bull** 队列处理耗时较长的异步回测任务，保证主线程的响应速度。
+  - 采用 **PostgreSQL** 处理海量时序K线数据、股票档案和回测记录。
+  - 使用 **Redis + Bull** 队列处理耗时较长的数据同步和异步回测任务，保证主线程的响应速度。
+- **安全与鉴权机制 (`backend/src/middlewares/auth.ts`)**:
+  - 采用 **双令牌 (Access + Refresh Token)** 机制，结合 HttpOnly Cookie 防止 XSS 窃取。
+  - 前端 Axios 拦截器实现无感刷新，CORS 动态匹配实现跨设备访问支持。
 - **前后端交互 (RESTful API & React)**:
   - 后端通过 Express 框架提供 `/api/backtest`、`/api/market` 等接口。
   - 前端使用 React + Redux Toolkit + Ant Design + Recharts，支持策略的可视化配置及收益曲线的实时渲染。
