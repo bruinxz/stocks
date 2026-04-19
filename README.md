@@ -270,42 +270,73 @@
 - [ ] 测试和部署（阶段8-9）
 - [ ] 文档和优化（阶段10）
 
-## 快速开始
+## 快速开始 (安装与启动指南)
 
-### 环境要求
-- Node.js 18+
-- Docker & Docker Compose
-- PostgreSQL 14+ (通过Docker提供)
-- Redis 6+ (通过Docker提供)
+### 1. 环境要求
+在开始之前，请确保您的计算机上已安装以下软件：
+- **Node.js** (推荐 v18 或更高版本)
+- **Docker** & **Docker Compose** (用于运行 PostgreSQL 和 Redis)
+- **Git**
 
-### 启动开发环境
+### 2. 克隆项目
 ```bash
-# 1. 启动数据库和Redis
-docker-compose up -d
-
-# 2. 安装后端依赖
-cd backend
-npm install
-
-# 3. 安装前端依赖
-cd ../frontend
-npm install
-
-# 4. 启动后端开发服务器
-cd ../backend
-npm run dev
-
-# 5. 启动前端开发服务器
-cd ../frontend
-npm start
+git clone <your-repo-url>
+cd stocks
 ```
 
-### 环境配置
-1. 复制环境变量模板：
-   ```bash
-   cp backend/.env.example backend/.env
-   ```
-2. 根据需要修改`.env`文件中的配置
+### 3. 启动基础设施 (数据库与缓存)
+项目依赖 PostgreSQL (TimescaleDB) 和 Redis。通过 Docker 可以一键启动：
+```bash
+docker-compose up -d
+```
+*提示：这会在后台启动数据库(端口5432)和Redis(端口6379)。首次启动可能需要拉取镜像。*
+
+### 4. 后端配置与启动
+```bash
+# 进入后端目录
+cd backend
+
+# 安装依赖
+npm install
+
+# 配置环境变量 (使用默认的开发环境配置即可)
+cp .env.example .env
+
+# 启动后端开发服务器 (默认运行在 3000 端口)
+npm run dev
+```
+*提示：后端首次启动时，Sequelize 会自动同步并在 PostgreSQL 中创建所有必需的数据表。*
+
+### 5. 前端配置与启动
+打开一个**新的终端窗口**：
+```bash
+# 从项目根目录进入前端目录
+cd frontend
+
+# 安装依赖 (如遇依赖冲突，可加上 --legacy-peer-deps)
+npm install
+
+# 配置环境变量
+cp .env.example .env
+
+# 启动前端开发服务器 (默认运行在 3001 端口)
+PORT=3001 npm start
+```
+
+### 6. 访问系统
+一切就绪后，在浏览器中访问：
+👉 **http://localhost:3001**
+
+- **默认测试账号**：目前系统支持自由注册，您可以直接在登录页点击“注册账号”创建一个新用户进行体验。
+
+---
+
+## 数据初始化说明
+系统启动后，大盘指数和股票数据默认为空。您可以按照以下步骤初始化数据：
+1. 登录系统后，点击左侧菜单的 **“系统状态 / 数据更新”**。
+2. 在“数据同步中心”，首先点击 **“同步基础档案”** 获取股票列表。
+3. 随后可以点击 **“触发今日更新”** 或进行指定股票的历史 K 线数据同步。
+*(系统已内置代理防封机制，后台会自动通过队列进行下载和入库)*
 
 ## 项目结构
 ```
