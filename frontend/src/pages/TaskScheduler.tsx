@@ -13,6 +13,7 @@ import {
   Select,
   message,
   Tooltip,
+  Empty,
 } from 'antd';
 import {
   PlusOutlined,
@@ -210,6 +211,7 @@ const TaskScheduler: React.FC = () => {
           rowKey="id"
           loading={loading}
           pagination={{ pageSize: 10 }}
+          locale={{ emptyText: <Empty description="暂无定时任务，请点击右上角新建任务" /> }}
         />
       </Card>
 

@@ -1,5 +1,17 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Row, Col, Table, Button, Tag, Space, Skeleton, Typography, Progress } from 'antd';
+import {
+  Card,
+  Row,
+  Col,
+  Table,
+  Button,
+  Tag,
+  Space,
+  Skeleton,
+  Typography,
+  Progress,
+  Empty,
+} from 'antd';
 import {
   PlusOutlined,
   EyeOutlined,
@@ -375,8 +387,10 @@ const Dashboard: React.FC = () => {
                   </Text>
                 </div>
               </div>
-            ) : (
+            ) : loading ? (
               <Skeleton active />
+            ) : (
+              <Empty description="暂无情绪数据" />
             )}
           </Card>
         </Col>
@@ -402,6 +416,7 @@ const Dashboard: React.FC = () => {
               loading={loading}
               pagination={false}
               size="middle"
+              locale={{ emptyText: <Empty description="暂无最近回测记录" /> }}
             />
           </Card>
         </Col>

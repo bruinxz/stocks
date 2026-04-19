@@ -1,5 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Typography, Table, Tag, Button, Space, message, Modal, Descriptions } from 'antd';
+import {
+  Card,
+  Typography,
+  Table,
+  Tag,
+  Button,
+  Space,
+  message,
+  Modal,
+  Descriptions,
+  Empty,
+} from 'antd';
 import { RocketOutlined, EyeOutlined, SyncOutlined } from '@ant-design/icons';
 import {
   AreaChart,
@@ -203,6 +214,7 @@ const Screener: React.FC = () => {
           rowKey="id"
           loading={loading}
           pagination={{ pageSize: 10 }}
+          locale={{ emptyText: <Empty description="今日暂无 AI 推荐股票，请稍后再试或手动刷新" /> }}
         />
       </Card>
 

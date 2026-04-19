@@ -1250,18 +1250,15 @@ const DataUpdateStatus: React.FC = () => {
               </Button>
             }
           >
-            {jobs.length > 0 ? (
-              <Table
-                columns={jobColumns}
-                dataSource={jobs}
-                rowKey="id"
-                size="small"
-                pagination={false}
-                loading={loading.queue}
-              />
-            ) : (
-              <Empty description="暂无活跃任务" />
-            )}
+            <Table
+              columns={jobColumns}
+              dataSource={jobs}
+              rowKey="id"
+              size="small"
+              pagination={false}
+              loading={loading.queue}
+              locale={{ emptyText: <Empty description="暂无活跃任务" /> }}
+            />
           </Card>
 
           <Card
@@ -1356,6 +1353,7 @@ const DataUpdateStatus: React.FC = () => {
               pagination={{ pageSize: 10, showSizeChanger: true }}
               loading={loading.logs}
               scroll={{ y: 400 }}
+              locale={{ emptyText: <Empty description="暂无更新日志" /> }}
             />
           </Card>
         </Col>

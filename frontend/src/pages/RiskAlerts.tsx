@@ -111,83 +111,82 @@ const RiskAlerts: React.FC = () => {
   return (
     <div className="fade-in-up">
       <div className="page-header-modern">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div>
-            <h1 className="page-title-modern">风控告警</h1>
-            <p className="page-subtitle-modern">
-              实时监控自选股与模拟盘，当出现卖出信号或跌破支撑时触发告警
-            </p>
-          </div>
-          {alerts.some(a => !a.isRead) && (
-            <Button type="primary" onClick={handleMarkAllAsRead}>
-              一键已读
-            </Button>
-          )}
+        <div>
+          <h1 className="page-title-modern">风控告警</h1>
+          <p className="page-subtitle-modern">
+            实时监控自选股与模拟盘，当出现卖出信号或跌破支撑时触发告警
+          </p>
         </div>
+        {alerts.some(a => !a.isRead) && (
+          <Button type="primary" onClick={handleMarkAllAsRead}>
+            一键已读
+          </Button>
+        )}
       </div>
 
       <Row gutter={[24, 24]}>
         <Col xs={24} lg={16}>
           <Card className="modern-card" bordered={false} title="未读告警">
-            {alerts.length > 0 ? (
-              <List
-                loading={loading}
-                itemLayout="horizontal"
-                dataSource={alerts}
-                renderItem={item => (
-                  <List.Item
-                    style={{
-                      opacity: item.isRead ? 0.6 : 1,
-                      backgroundColor: item.isRead ? 'transparent' : '#fff1f0',
-                      padding: '16px',
-                      borderRadius: '8px',
-                      marginBottom: '8px',
-                    }}
-                    actions={[
-                      !item.isRead && (
-                        <Button
-                          type="link"
-                          icon={<CheckOutlined />}
-                          onClick={() => handleMarkAsRead(item.id)}
-                        >
-                          标为已读
-                        </Button>
-                      ),
-                    ]}
-                  >
-                    <List.Item.Meta
-                      title={
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <Text strong>
-                            {item.name} ({item.symbol})
-                          </Text>
-                          <Tag color={getLevelColor(item.level)}>{item.level}</Tag>
-                          <Text type="secondary" style={{ fontSize: '12px', marginLeft: 'auto' }}>
-                            {new Date(item.createdAt).toLocaleString()}
-                          </Text>
-                        </div>
-                      }
-                      description={
-                        <Text
-                          style={{
-                            color: item.isRead ? '#888' : '#cf1322',
-                            marginTop: '8px',
-                            display: 'block',
-                          }}
-                        >
-                          {item.message}
+            <List
+              loading={loading}
+              itemLayout="horizontal"
+              dataSource={alerts}
+              locale={{
+                emptyText: (
+                  <Empty
+                    image={Empty.PRESENTED_IMAGE_SIMPLE}
+                    description="当前没有任何风控告警，市场风平浪静！"
+                  />
+                ),
+              }}
+              renderItem={item => (
+                <List.Item
+                  style={{
+                    opacity: item.isRead ? 0.6 : 1,
+                    backgroundColor: item.isRead ? 'transparent' : '#fff1f0',
+                    padding: '16px',
+                    borderRadius: '8px',
+                    marginBottom: '8px',
+                  }}
+                  actions={[
+                    !item.isRead && (
+                      <Button
+                        type="link"
+                        icon={<CheckOutlined />}
+                        onClick={() => handleMarkAsRead(item.id)}
+                      >
+                        标为已读
+                      </Button>
+                    ),
+                  ]}
+                >
+                  <List.Item.Meta
+                    title={
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Text strong>
+                          {item.name} ({item.symbol})
                         </Text>
-                      }
-                    />
-                  </List.Item>
-                )}
-              />
-            ) : (
-              <Empty
-                image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description="当前没有任何风控告警，市场风平浪静！"
-              />
-            )}
+                        <Tag color={getLevelColor(item.level)}>{item.level}</Tag>
+                        <Text type="secondary" style={{ fontSize: '12px', marginLeft: 'auto' }}>
+                          {new Date(item.createdAt).toLocaleString()}
+                        </Text>
+                      </div>
+                    }
+                    description={
+                      <Text
+                        style={{
+                          color: item.isRead ? '#888' : '#cf1322',
+                          marginTop: '8px',
+                          display: 'block',
+                        }}
+                      >
+                        {item.message}
+                      </Text>
+                    }
+                  />
+                </List.Item>
+              )}
+            />
           </Card>
         </Col>
 

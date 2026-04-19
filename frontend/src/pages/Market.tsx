@@ -101,7 +101,7 @@ const Market: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useState<SearchParams>({
     page: 1,
-    limit: 20,
+    limit: 50,
   });
   const [searchQuery, setSearchQuery] = useState('');
   const [stocks, setStocks] = useState<Stock[]>([]);
@@ -540,17 +540,38 @@ const Market: React.FC = () => {
 
       <Row gutter={[16, 16]}>
         {/* 左侧：搜索和股票列表 */}
-        <Col xs={24} lg={10} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <Card className="modern-card" bordered={false} styles={{ body: { padding: '0 16px' } }}>
+        <Col xs={24} lg={9} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <Card
+            className="modern-card"
+            bordered={false}
+            styles={{
+              body: {
+                padding: '0 16px',
+                display: 'flex',
+                flexDirection: 'column',
+                height: 'calc(100vh - 130px)',
+              },
+            }}
+          >
             <Tabs
               defaultActiveKey="all"
+              style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
               items={[
                 {
                   key: 'all',
                   label: '全部股票',
                   children: (
-                    <div style={{ paddingBottom: 24 }}>
-                      <Space direction="vertical" style={{ width: '100%' }}>
+                    <div
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        height: '100%',
+                        paddingBottom: 16,
+                      }}
+                    >
+                      <div
+                        style={{ width: '100%', flex: 1, display: 'flex', flexDirection: 'column' }}
+                      >
                         <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
                           <Input.Search
                             placeholder="输入股票代码或名称"
@@ -598,7 +619,7 @@ const Market: React.FC = () => {
                             <Button
                               style={{ width: '100%' }}
                               onClick={() => {
-                                setSearchParams({ page: 1, limit: 20 });
+                                setSearchParams({ page: 1, limit: 50 });
                                 setSearchQuery('');
                               }}
                             >
@@ -607,35 +628,38 @@ const Market: React.FC = () => {
                           </Col>
                         </Row>
 
-                        <Table
-                          bordered={false}
-                          columns={stockColumns}
-                          dataSource={stocks}
-                          rowKey="id"
-                          loading={loading}
-                          rowClassName={record =>
-                            selectedStock?.symbol === record.symbol ? 'active-row' : ''
-                          }
-                          onRow={record => ({
-                            onClick: () => {
-                              setSelectedStock(record);
-                              fetchStockHistory(record.symbol);
-                            },
-                            style: { cursor: 'pointer' },
-                          })}
-                          pagination={{
-                            current: searchParams.page,
-                            pageSize: searchParams.limit,
-                            total,
-                            onChange: handlePageChange,
-                            showSizeChanger: false,
-                            size: 'small',
-                            showTotal: total => `共 ${total} 条`,
-                          }}
-                          size="small"
-                          scroll={{ y: 'calc(100vh - 420px)' }}
-                        />
-                      </Space>
+                        <div style={{ flex: 1, overflow: 'hidden' }}>
+                          <Table
+                            bordered={false}
+                            columns={stockColumns}
+                            dataSource={stocks}
+                            rowKey="id"
+                            loading={loading}
+                            rowClassName={record =>
+                              selectedStock?.symbol === record.symbol ? 'active-row' : ''
+                            }
+                            onRow={record => ({
+                              onClick: () => {
+                                setSelectedStock(record);
+                                fetchStockHistory(record.symbol);
+                              },
+                              style: { cursor: 'pointer' },
+                            })}
+                            pagination={{
+                              current: searchParams.page,
+                              pageSize: searchParams.limit,
+                              total,
+                              onChange: handlePageChange,
+                              showSizeChanger: false,
+                              size: 'small',
+                              showTotal: total => `共 ${total} 条`,
+                            }}
+                            size="small"
+                            scroll={{ y: 'calc(100vh - 350px)' }}
+                            locale={{ emptyText: <Empty description="没有找到匹配的股票" /> }}
+                          />
+                        </div>
+                      </div>
                     </div>
                   ),
                 },
@@ -643,28 +667,40 @@ const Market: React.FC = () => {
                   key: 'favorites',
                   label: '我的收藏',
                   children: (
-                    <div style={{ paddingBottom: 24 }}>
-                      <Spin spinning={favoritesLoading}>
+                    <div
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        height: '100%',
+                        paddingBottom: 16,
+                      }}
+                    >
+                      <Spin
+                        spinning={favoritesLoading}
+                        style={{ flex: 1, display: 'flex', flexDirection: 'column' }}
+                      >
                         {favorites.length > 0 ? (
-                          <Table
-                            bordered={false}
-                            columns={favoriteColumns}
-                            dataSource={favorites}
-                            rowKey="id"
-                            size="small"
-                            pagination={false}
-                            scroll={{ y: 'calc(100vh - 320px)' }}
-                            rowClassName={record =>
-                              selectedStock?.symbol === record.stock.symbol ? 'active-row' : ''
-                            }
-                            onRow={record => ({
-                              onClick: () => {
-                                setSelectedStock(record.stock);
-                                fetchStockHistory(record.stock.symbol);
-                              },
-                              style: { cursor: 'pointer' },
-                            })}
-                          />
+                          <div style={{ flex: 1, overflow: 'hidden' }}>
+                            <Table
+                              bordered={false}
+                              columns={favoriteColumns}
+                              dataSource={favorites}
+                              rowKey="id"
+                              size="small"
+                              pagination={false}
+                              scroll={{ y: 'calc(100vh - 280px)' }}
+                              rowClassName={record =>
+                                selectedStock?.symbol === record.stock.symbol ? 'active-row' : ''
+                              }
+                              onRow={record => ({
+                                onClick: () => {
+                                  setSelectedStock(record.stock);
+                                  fetchStockHistory(record.stock.symbol);
+                                },
+                                style: { cursor: 'pointer' },
+                              })}
+                            />
+                          </div>
                         ) : (
                           <Empty description="暂无收藏股票" />
                         )}
@@ -789,14 +825,25 @@ const Market: React.FC = () => {
         </Col>
 
         {/* 右侧：股票走势图 */}
-        <Col xs={24} lg={14}>
-          <Card
-            className="modern-card"
-            bordered={false}
-            title={selectedStock ? `${selectedStock.name} (${selectedStock.symbol})` : '股票走势'}
-            extra={
-              selectedStock && (
-                <Space>
+        <Col
+          xs={24}
+          lg={15}
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 16,
+            height: 'calc(100vh - 130px)',
+            overflowY: 'auto',
+          }}
+        >
+          {selectedStock ? (
+            <>
+              {/* 顶部：当前股票摘要与指标 */}
+              <Card
+                className="modern-card"
+                bordered={false}
+                title={`${selectedStock.name} (${selectedStock.symbol})`}
+                extra={
                   <Button
                     type="text"
                     icon={
@@ -819,42 +866,38 @@ const Market: React.FC = () => {
                       ? '已收藏'
                       : '加入收藏'}
                   </Button>
-                </Space>
-              )
-            }
-          >
-            {selectedStock ? (
-              <>
+                }
+              >
                 <div
                   style={{
                     display: 'grid',
-                    gridTemplateColumns: '1fr 1fr 1fr',
-                    gap: 12,
-                    marginBottom: 16,
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
+                    gap: 16,
+                    marginBottom: 24,
                   }}
                 >
-                  <div style={{ padding: '10px 14px', background: '#fafafa', borderRadius: 8 }}>
-                    <div style={{ fontSize: 11, color: '#999', marginBottom: 2 }}>当前价格</div>
-                    <div style={{ fontSize: 20, fontWeight: 700, color: '#1a1a1a' }}>
+                  <div style={{ padding: '12px 16px', background: '#f8fafc', borderRadius: 8 }}>
+                    <div style={{ fontSize: 12, color: '#64748b', marginBottom: 4 }}>当前价格</div>
+                    <div style={{ fontSize: 24, fontWeight: 700, color: '#0f172a' }}>
                       {stockHistory.length > 0
                         ? `¥${stockHistory[stockHistory.length - 1].close.toFixed(2)}`
                         : '--'}
                     </div>
                   </div>
-                  <div style={{ padding: '10px 14px', background: '#fafafa', borderRadius: 8 }}>
-                    <div style={{ fontSize: 11, color: '#999', marginBottom: 2 }}>涨跌幅</div>
+                  <div style={{ padding: '12px 16px', background: '#f8fafc', borderRadius: 8 }}>
+                    <div style={{ fontSize: 12, color: '#64748b', marginBottom: 4 }}>涨跌幅</div>
                     <div
                       style={{
-                        fontSize: 20,
+                        fontSize: 24,
                         fontWeight: 700,
                         color:
                           stockHistory.length > 0 &&
                           stockHistory[stockHistory.length - 1].pctChg > 0
-                            ? '#cf1322'
+                            ? '#ef4444'
                             : stockHistory.length > 0 &&
                               stockHistory[stockHistory.length - 1].pctChg < 0
-                            ? '#3f8600'
-                            : '#1a1a1a',
+                            ? '#10b981'
+                            : '#0f172a',
                       }}
                     >
                       {stockHistory.length > 0
@@ -864,9 +907,9 @@ const Market: React.FC = () => {
                         : '--'}
                     </div>
                   </div>
-                  <div style={{ padding: '10px 14px', background: '#fafafa', borderRadius: 8 }}>
-                    <div style={{ fontSize: 11, color: '#999', marginBottom: 2 }}>成交量</div>
-                    <div style={{ fontSize: 20, fontWeight: 700, color: '#1a1a1a' }}>
+                  <div style={{ padding: '12px 16px', background: '#f8fafc', borderRadius: 8 }}>
+                    <div style={{ fontSize: 12, color: '#64748b', marginBottom: 4 }}>成交量</div>
+                    <div style={{ fontSize: 24, fontWeight: 700, color: '#0f172a' }}>
                       {stockHistory.length > 0
                         ? `${(stockHistory[stockHistory.length - 1].volume / 10000).toFixed(0)}万手`
                         : '--'}
@@ -874,177 +917,197 @@ const Market: React.FC = () => {
                   </div>
                 </div>
 
-                <Card
-                  className="modern-card chart-card"
-                  bordered={false}
-                  title="价格走势"
-                  size="small"
-                  style={{ marginBottom: 16 }}
-                >
-                  {stockHistory.length > 0 ? (
-                    <ResponsiveContainer width="100%" height={350}>
-                      <AreaChart data={stockHistory}>
-                        <defs>
-                          <linearGradient id="colorClose" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
-                            <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
-                        <XAxis
-                          dataKey="date"
-                          tickFormatter={date => dayjs(date).format('MM-DD')}
-                          tick={{ fill: '#9ca3af', fontSize: 12 }}
-                          axisLine={false}
-                          tickLine={false}
-                          minTickGap={30}
-                        />
-                        <YAxis
-                          tickFormatter={value => `¥${value.toFixed(2)}`}
-                          domain={['auto', 'auto']}
-                          tick={{ fill: '#9ca3af', fontSize: 12 }}
-                          axisLine={false}
-                          tickLine={false}
-                        />
-                        <RechartsTooltip
-                          formatter={(value: number) => [`¥${value.toFixed(2)}`, '收盘价']}
-                          labelFormatter={label => dayjs(label).format('YYYY-MM-DD')}
-                          contentStyle={{
-                            borderRadius: '8px',
-                            border: 'none',
-                            boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
-                          }}
-                          labelStyle={{ fontWeight: 'bold', color: '#1f2937', marginBottom: 8 }}
-                        />
-                        <Legend />
-                        <Area
-                          type="monotone"
-                          dataKey="close"
-                          stroke="#3b82f6"
-                          strokeWidth={2}
-                          fillOpacity={1}
-                          fill="url(#colorClose)"
-                          name="收盘价"
-                        />
-                      </AreaChart>
-                    </ResponsiveContainer>
-                  ) : (
-                    <Empty description={historyLoading ? '加载中...' : '暂无数据'} />
-                  )}
-                </Card>
+                <Row gutter={[16, 12]}>
+                  <Col span={6}>
+                    <Text type="secondary">市场：</Text>
+                    <Text strong style={{ marginLeft: 8 }}>
+                      {selectedStock.market === 'SH'
+                        ? '上海'
+                        : selectedStock.market === 'SZ'
+                        ? '深圳'
+                        : selectedStock.market === 'BJ'
+                        ? '北京'
+                        : selectedStock.market}
+                    </Text>
+                  </Col>
+                  <Col span={6}>
+                    <Text type="secondary">行业：</Text>
+                    <Text strong style={{ marginLeft: 8 }}>
+                      {selectedStock.industry || '--'}
+                    </Text>
+                  </Col>
+                  <Col span={6}>
+                    <Text type="secondary">上市日期：</Text>
+                    <Text strong style={{ marginLeft: 8 }}>
+                      {selectedStock.listingDate || '--'}
+                    </Text>
+                  </Col>
+                  <Col span={6}>
+                    <Text type="secondary">状态：</Text>
+                    <Tag color={selectedStock.isListed ? 'green' : 'red'} style={{ marginLeft: 8 }}>
+                      {selectedStock.isListed ? '上市' : '退市'}
+                    </Tag>
+                  </Col>
+                </Row>
+              </Card>
 
-                <Card
-                  className="modern-card chart-card"
-                  bordered={false}
-                  title="成交量"
-                  size="small"
-                >
-                  {stockHistory.length > 0 ? (
-                    <ResponsiveContainer width="100%" height={250}>
-                      <BarChart data={stockHistory}>
-                        <CartesianGrid vertical={false} stroke="#f0f0f0" />
-                        <XAxis
-                          dataKey="date"
-                          tickFormatter={date => dayjs(date).format('MM-DD')}
-                          axisLine={false}
-                          tickLine={false}
-                        />
-                        <YAxis
-                          tickFormatter={value => {
-                            const num = Number(value);
-                            if (num >= 100000000) return `${(num / 100000000).toFixed(1)}亿`;
-                            if (num >= 10000) return `${(num / 10000).toFixed(1)}万`;
-                            return num.toString();
-                          }}
-                          axisLine={false}
-                          tickLine={false}
-                        />
-                        <Tooltip
-                          formatter={(value: number) => [
-                            `${(value / 10000).toFixed(0)}万手`,
-                            '成交量',
-                          ]}
-                          labelFormatter={label => dayjs(label).format('YYYY-MM-DD')}
-                          contentStyle={{
-                            borderRadius: '8px',
-                            border: 'none',
-                            boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
-                          }}
-                          cursor={{ fill: 'rgba(0,0,0,0.05)' }}
-                        />
-                        <Legend />
-                        <Bar dataKey="volume" fill="#faad14" name="成交量" radius={[4, 4, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  ) : (
-                    <Empty description={historyLoading ? '加载中...' : '暂无数据'} />
-                  )}
-                </Card>
-              </>
-            ) : (
-              <div
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  padding: '60px 0',
-                  color: '#bbb',
+              {/* 中部：图表区域 (使用 Tabs 切换) */}
+              <Card
+                className="modern-card chart-card"
+                bordered={false}
+                style={{ flex: 1, display: 'flex', flexDirection: 'column' }}
+                styles={{
+                  body: { flex: 1, display: 'flex', flexDirection: 'column', padding: '16px' },
                 }}
               >
-                <LineChartOutlined style={{ fontSize: 48, marginBottom: 12, opacity: 0.3 }} />
-                <div style={{ fontSize: 14, fontWeight: 500, color: '#999' }}>选择一只股票</div>
-                <div style={{ fontSize: 12, color: '#bbb', marginTop: 4 }}>
-                  从左侧列表中选择股票以查看走势详情
-                </div>
-              </div>
-            )}
-          </Card>
-
-          {/* 股票基本信息 */}
-          {selectedStock && (
+                <Tabs
+                  defaultActiveKey="price"
+                  style={{ flex: 1, display: 'flex', flexDirection: 'column' }}
+                  items={[
+                    {
+                      key: 'price',
+                      label: '价格走势',
+                      children: (
+                        <div style={{ height: 400, marginTop: 16 }}>
+                          {stockHistory.length > 0 ? (
+                            <ResponsiveContainer width="100%" height={400}>
+                              <AreaChart data={stockHistory}>
+                                <defs>
+                                  <linearGradient id="colorClose" x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
+                                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                                  </linearGradient>
+                                </defs>
+                                <CartesianGrid
+                                  strokeDasharray="3 3"
+                                  vertical={false}
+                                  stroke="#f0f0f0"
+                                />
+                                <XAxis
+                                  dataKey="date"
+                                  tickFormatter={date => dayjs(date).format('MM-DD')}
+                                  tick={{ fill: '#9ca3af', fontSize: 12 }}
+                                  axisLine={false}
+                                  tickLine={false}
+                                  minTickGap={30}
+                                />
+                                <YAxis
+                                  tickFormatter={value => `¥${value.toFixed(2)}`}
+                                  domain={['auto', 'auto']}
+                                  tick={{ fill: '#9ca3af', fontSize: 12 }}
+                                  axisLine={false}
+                                  tickLine={false}
+                                />
+                                <RechartsTooltip
+                                  formatter={(value: number) => [`¥${value.toFixed(2)}`, '收盘价']}
+                                  labelFormatter={label => dayjs(label).format('YYYY-MM-DD')}
+                                  contentStyle={{
+                                    borderRadius: '8px',
+                                    border: 'none',
+                                    boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                                  }}
+                                  labelStyle={{
+                                    fontWeight: 'bold',
+                                    color: '#1f2937',
+                                    marginBottom: 8,
+                                  }}
+                                />
+                                <Legend />
+                                <Area
+                                  type="monotone"
+                                  dataKey="close"
+                                  stroke="#3b82f6"
+                                  strokeWidth={2}
+                                  fillOpacity={1}
+                                  fill="url(#colorClose)"
+                                  name="收盘价"
+                                />
+                              </AreaChart>
+                            </ResponsiveContainer>
+                          ) : (
+                            <Empty description={historyLoading ? '加载中...' : '暂无数据'} />
+                          )}
+                        </div>
+                      ),
+                    },
+                    {
+                      key: 'volume',
+                      label: '成交量',
+                      children: (
+                        <div style={{ height: 400, marginTop: 16 }}>
+                          {stockHistory.length > 0 ? (
+                            <ResponsiveContainer width="100%" height={400}>
+                              <BarChart data={stockHistory}>
+                                <CartesianGrid vertical={false} stroke="#f0f0f0" />
+                                <XAxis
+                                  dataKey="date"
+                                  tickFormatter={date => dayjs(date).format('MM-DD')}
+                                  axisLine={false}
+                                  tickLine={false}
+                                  minTickGap={30}
+                                />
+                                <YAxis
+                                  tickFormatter={value => {
+                                    const num = Number(value);
+                                    if (num >= 100000000)
+                                      return `${(num / 100000000).toFixed(1)}亿`;
+                                    if (num >= 10000) return `${(num / 10000).toFixed(1)}万`;
+                                    return num.toString();
+                                  }}
+                                  axisLine={false}
+                                  tickLine={false}
+                                />
+                                <RechartsTooltip
+                                  formatter={(value: number) => [
+                                    `${(value / 10000).toFixed(0)}万手`,
+                                    '成交量',
+                                  ]}
+                                  labelFormatter={label => dayjs(label).format('YYYY-MM-DD')}
+                                  contentStyle={{
+                                    borderRadius: '8px',
+                                    border: 'none',
+                                    boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                                  }}
+                                  cursor={{ fill: 'rgba(0,0,0,0.05)' }}
+                                />
+                                <Legend />
+                                <Bar
+                                  dataKey="volume"
+                                  fill="#faad14"
+                                  name="成交量"
+                                  radius={[4, 4, 0, 0]}
+                                />
+                              </BarChart>
+                            </ResponsiveContainer>
+                          ) : (
+                            <Empty description={historyLoading ? '加载中...' : '暂无数据'} />
+                          )}
+                        </div>
+                      ),
+                    },
+                  ]}
+                />
+              </Card>
+            </>
+          ) : (
             <Card
               className="modern-card"
               bordered={false}
-              title="股票信息"
-              style={{ marginTop: 12 }}
+              style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
             >
-              <Row gutter={[16, 8]}>
-                <Col span={8}>
-                  <Text strong>股票代码：</Text>
-                  <Text>{selectedStock.symbol}</Text>
-                </Col>
-                <Col span={8}>
-                  <Text strong>股票名称：</Text>
-                  <Text>{selectedStock.name}</Text>
-                </Col>
-                <Col span={8}>
-                  <Text strong>市场：</Text>
-                  <Text>
-                    {selectedStock.market === 'SH'
-                      ? '上海'
-                      : selectedStock.market === 'SZ'
-                      ? '深圳'
-                      : selectedStock.market === 'BJ'
-                      ? '北京'
-                      : selectedStock.market}
-                  </Text>
-                </Col>
-                <Col span={8}>
-                  <Text strong>行业：</Text>
-                  <Text>{selectedStock.industry || '--'}</Text>
-                </Col>
-                <Col span={8}>
-                  <Text strong>上市日期：</Text>
-                  <Text>{selectedStock.listingDate || '--'}</Text>
-                </Col>
-                <Col span={8}>
-                  <Text strong>上市状态：</Text>
-                  <Tag color={selectedStock.isListed ? 'green' : 'red'}>
-                    {selectedStock.isListed ? '上市' : '退市'}
-                  </Tag>
-                </Col>
-              </Row>
+              <Empty
+                image={<LineChartOutlined style={{ fontSize: 64, color: '#bfbfbf' }} />}
+                description={
+                  <Space direction="vertical" size="small">
+                    <Typography.Text strong style={{ fontSize: 16, color: '#374151' }}>
+                      选择一只股票
+                    </Typography.Text>
+                    <Typography.Text type="secondary" style={{ fontSize: 14 }}>
+                      从左侧列表中选择股票以查看走势详情
+                    </Typography.Text>
+                  </Space>
+                }
+              />
             </Card>
           )}
         </Col>
