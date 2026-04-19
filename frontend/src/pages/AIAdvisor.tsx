@@ -10,6 +10,9 @@ import {
   Spin,
   Timeline,
   message,
+  Empty,
+  Row,
+  Col,
 } from 'antd';
 import {
   RobotOutlined,
@@ -118,41 +121,56 @@ const AIAdvisor: React.FC = () => {
         </div>
       </div>
 
-      <Card className="modern-card" bordered={false}>
-        <Space.Compact style={{ width: '100%', marginBottom: 24 }}>
-          <Input
-            size="large"
-            placeholder="请输入股票代码 (例如: 600519 或 000001)"
-            value={ticker}
-            onChange={e => setTicker(e.target.value)}
-            onPressEnter={handleAnalyze}
-            disabled={analyzing}
-            prefix={<SearchOutlined />}
-            style={{ width: 'calc(100% - 120px)' }}
-          />
-          <Button
-            type="primary"
-            size="large"
-            onClick={handleAnalyze}
-            loading={analyzing}
-            style={{ width: 120 }}
-          >
-            开始推演
-          </Button>
-        </Space.Compact>
+      <Card
+        className="modern-card"
+        bordered={false}
+        style={{ minHeight: '600px', display: 'flex', flexDirection: 'column' }}
+      >
+        <Row justify="center" style={{ marginBottom: 32 }}>
+          <Col xs={24} md={16} lg={12}>
+            <Space.Compact style={{ width: '100%' }}>
+              <Input
+                size="large"
+                placeholder="请输入股票代码 (例如: 600519 或 000001)"
+                value={ticker}
+                onChange={e => setTicker(e.target.value)}
+                onPressEnter={handleAnalyze}
+                disabled={analyzing}
+                prefix={<SearchOutlined style={{ color: '#bfbfbf' }} />}
+              />
+              <Button
+                type="primary"
+                size="large"
+                onClick={handleAnalyze}
+                loading={analyzing}
+                icon={<RobotOutlined />}
+                style={{ width: 140 }}
+              >
+                开始推演
+              </Button>
+            </Space.Compact>
+          </Col>
+        </Row>
 
         {events.length > 0 && (
           <div
             style={{
               background: '#f8fafc',
-              padding: 24,
-              borderRadius: 8,
+              padding: '24px 32px',
+              borderRadius: 12,
               border: '1px solid #e2e8f0',
-              minHeight: 400,
-              maxHeight: 600,
+              flex: 1,
               overflowY: 'auto',
+              boxShadow: 'inset 0 2px 4px 0 rgb(0 0 0 / 0.05)',
             }}
           >
+            <Title
+              level={4}
+              style={{ marginBottom: 24, display: 'flex', alignItems: 'center', gap: 8 }}
+            >
+              <RobotOutlined style={{ color: '#1677ff' }} />
+              智能推演进程
+            </Title>
             <Timeline>
               {events.map((evt, index) => {
                 if (evt.type === 'system') {
@@ -242,9 +260,20 @@ const AIAdvisor: React.FC = () => {
         )}
 
         {!analyzing && events.length === 0 && (
-          <div style={{ textAlign: 'center', padding: '60px 0', color: '#94a3b8' }}>
-            <RobotOutlined style={{ fontSize: 48, marginBottom: 16, opacity: 0.5 }} />
-            <div>输入股票代码，体验多智能体深度博弈研报</div>
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Empty
+              image={<RobotOutlined style={{ fontSize: 64, color: '#bfbfbf' }} />}
+              description={
+                <Space direction="vertical" size="small">
+                  <Text type="secondary" style={{ fontSize: 16 }}>
+                    输入股票代码，体验多智能体深度博弈研报
+                  </Text>
+                  <Text type="secondary" style={{ fontSize: 14 }}>
+                    基于 TradingAgents 模型，提供全方位的决策分析
+                  </Text>
+                </Space>
+              }
+            />
           </div>
         )}
       </Card>

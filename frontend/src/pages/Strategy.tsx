@@ -1,5 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Table, Button, Space, Tag, Typography, Row, Col, Statistic, Tooltip } from 'antd';
+import {
+  Card,
+  Table,
+  Button,
+  Space,
+  Tag,
+  Typography,
+  Row,
+  Col,
+  Statistic,
+  Tooltip,
+  Empty,
+} from 'antd';
 import {
   RocketOutlined,
   BarChartOutlined,
@@ -213,6 +225,7 @@ const Strategy: React.FC = () => {
           loading={loading}
           pagination={{ pageSize: 15 }}
           scroll={{ x: 'max-content' }}
+          locale={{ emptyText: <Empty description="暂无策略回测记录，点击右上角新建回测" /> }}
         />
       </Card>
     </div>

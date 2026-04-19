@@ -445,20 +445,21 @@ const PaperTrading: React.FC = () => {
       </Row>
 
       <Card className="modern-card" bordered={false} title="当前持仓">
-        {positions.length > 0 ? (
-          <Table
-            columns={columns}
-            dataSource={positions}
-            rowKey="id"
-            pagination={false}
-            scroll={{ x: 'max-content' }}
-          />
-        ) : (
-          <Empty
-            image={Empty.PRESENTED_IMAGE_SIMPLE}
-            description="当前模拟盘空空如也，快去 AI 每日优选看看有什么好票吧！"
-          />
-        )}
+        <Table
+          columns={columns}
+          dataSource={positions}
+          rowKey="id"
+          pagination={false}
+          scroll={{ x: 'max-content' }}
+          locale={{
+            emptyText: (
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description="当前模拟盘空空如也，快去 AI 每日优选看看有什么好票吧！"
+              />
+            ),
+          }}
+        />
       </Card>
 
       <Modal
@@ -531,6 +532,7 @@ const PaperTrading: React.FC = () => {
           loading={loadingHistory}
           pagination={{ pageSize: 10 }}
           scroll={{ x: 'max-content' }}
+          locale={{ emptyText: <Empty description="暂无交易记录" /> }}
         />
       </Modal>
     </div>

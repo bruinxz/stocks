@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Tabs, Table, Button, Space, Tag, Card } from 'antd';
+import { Tabs, Table, Button, Space, Tag, Card, Empty, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { PlusOutlined } from '@ant-design/icons';
+import { PlusOutlined, BarChartOutlined } from '@ant-design/icons';
 import { backtestService, BacktestResponse } from '../services/backtestService';
 import BacktestForm from '../components/backtest/BacktestForm';
 import BacktestResults from '../components/backtest/BacktestResults';
@@ -172,23 +172,28 @@ const Backtest: React.FC = () => {
 
   const renderEmptyState = () => (
     <div style={{ padding: '60px 0', textAlign: 'center' }}>
-      <h3 style={{ fontSize: 16, fontWeight: 600, color: '#374151', marginBottom: 8 }}>
-        暂无回测记录
-      </h3>
-      <p
-        style={{
-          color: '#9ca3af',
-          fontSize: 14,
-          marginBottom: 24,
-          maxWidth: 400,
-          margin: '0 auto 24px',
-        }}
+      <Empty
+        image={<BarChartOutlined style={{ fontSize: 64, color: '#bfbfbf' }} />}
+        description={
+          <Space direction="vertical" size="small">
+            <Typography.Text strong style={{ fontSize: 16, color: '#374151' }}>
+              暂无回测记录
+            </Typography.Text>
+            <Typography.Text type="secondary" style={{ fontSize: 14 }}>
+              通过回测历史数据，您可以验证量化策略的有效性并优化参数。点击下方按钮开始您的第一次回测。
+            </Typography.Text>
+          </Space>
+        }
       >
-        通过回测历史数据，您可以验证量化策略的有效性并优化参数。点击下方按钮开始您的第一次回测。
-      </p>
-      <Button type="primary" icon={<PlusOutlined />} onClick={handleCreateBacktest}>
-        创建新回测
-      </Button>
+        <Button
+          type="primary"
+          icon={<PlusOutlined />}
+          onClick={handleCreateBacktest}
+          style={{ marginTop: 16 }}
+        >
+          创建新回测
+        </Button>
+      </Empty>
     </div>
   );
 
@@ -242,11 +247,27 @@ const Backtest: React.FC = () => {
             children: selectedBacktestId ? (
               <BacktestResults backtestId={selectedBacktestId} />
             ) : (
-              <Card className="modern-card" bordered={false}>
-                <p>请从回测列表中选择一个回测来查看结果</p>
-                <Button type="primary" onClick={() => setActiveTab('1')}>
-                  返回回测列表
-                </Button>
+              <Card
+                className="modern-card"
+                bordered={false}
+                style={{
+                  minHeight: 400,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Empty
+                  description={
+                    <Typography.Text type="secondary">
+                      请从回测列表中选择一个回测来查看结果
+                    </Typography.Text>
+                  }
+                >
+                  <Button type="primary" onClick={() => setActiveTab('1')}>
+                    返回回测列表
+                  </Button>
+                </Empty>
               </Card>
             ),
           },

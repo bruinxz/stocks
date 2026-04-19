@@ -1222,7 +1222,7 @@ const Portfolio: React.FC = () => {
           <div style={{ textAlign: 'center', padding: '40px' }}>
             <Spin />
           </div>
-        ) : favorites.length > 0 ? (
+        ) : (
           <Table
             dataSource={favorites}
             rowKey={record => record.stock.symbol}
@@ -1285,9 +1285,8 @@ const Portfolio: React.FC = () => {
             ]}
             pagination={false}
             scroll={{ x: 'max-content', y: 300 }}
+            locale={{ emptyText: <Empty description="暂无收藏股票，请先在大盘视图页面收藏股票" /> }}
           />
-        ) : (
-          <Empty description="暂无收藏股票，请先在大盘视图页面收藏股票" />
         )}
       </Modal>
     </div>
