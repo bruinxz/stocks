@@ -249,7 +249,7 @@ export class PaperTradingController {
     }
   };
 
-  // 获取快照历史(资金曲线)
+      // 获取快照历史(资金曲线)
   getSnapshots = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const user = (req as any).user;
@@ -262,25 +262,17 @@ export class PaperTradingController {
         return res.status(404).json({ success: false, message: '未找到模拟盘' });
       }
 
-      // 如果没有任何快照，生成一些模拟的近期历史数据以便前端展示折线图
+      // 为了确保图表至少有一个数据点（即初始状态），如果完全没有快照，就插入一条当前状态的真实快照
       const count = await PaperTradingSnapshot.count({ where: { portfolioId: portfolio.id } });
       if (count === 0) {
-        const snapshotsToCreate = [];
-        let baseValue = portfolio.initialCapital;
-        for (let i = 30; i >= 0; i--) {
-          const date = new Date(Date.now() - i * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-          // 模拟一些波动 (-1% ~ +1%)
-          const change = baseValue * (Math.random() * 0.02 - 0.01);
-          baseValue += change;
-          snapshotsToCreate.push({
-            portfolioId: portfolio.id,
-            date,
-            totalValue: i === 0 ? portfolio.totalValue : baseValue,
-            currentCash: i === 0 ? portfolio.currentCash : baseValue * 0.5,
-            positionValue: i === 0 ? portfolio.totalValue - portfolio.currentCash : baseValue * 0.5,
-          });
-        }
-        await PaperTradingSnapshot.bulkCreate(snapshotsToCreate);
+        const todayStr = new Date().toISOString().split('T')[0];
+        await PaperTradingSnapshot.create({
+          portfolioId: portfolio.id,
+          date: todayStr,
+          totalValue: Number(portfolio.totalValue) || 1000000,
+          currentCash: Number(portfolio.currentCash) || 1000000,
+          positionValue: (Number(portfolio.totalValue) || 1000000) - (Number(portfolio.currentCash) || 1000000),
+        });
       }
 
       const snapshots = await PaperTradingSnapshot.findAll({

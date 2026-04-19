@@ -95,6 +95,14 @@ export class AuthController {
       const accessToken = this.generateAccessToken(user);
       const refreshToken = this.generateRefreshToken(user);
 
+      // 设置HttpOnly cookie
+      res.cookie('refreshToken', refreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      });
+
       res.status(201).json({
         success: true,
         message: '用户注册成功',
@@ -102,7 +110,6 @@ export class AuthController {
           user: user.toJSON(),
           tokens: {
             accessToken,
-            refreshToken,
           },
         },
       });
@@ -144,6 +151,14 @@ export class AuthController {
       const accessToken = this.generateAccessToken(user);
       const refreshToken = this.generateRefreshToken(user);
 
+      // 设置HttpOnly cookie
+      res.cookie('refreshToken', refreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      });
+
       res.json({
         success: true,
         message: '登录成功',
@@ -151,7 +166,6 @@ export class AuthController {
           user: user.toJSON(),
           tokens: {
             accessToken,
-            refreshToken,
           },
         },
       });
@@ -166,7 +180,8 @@ export class AuthController {
    */
   async refreshToken(req: Request, res: Response, next: NextFunction) {
     try {
-      const { refreshToken } = req.body;
+      // 优先从cookie中获取，也可作为向后兼容从body获取
+      const refreshToken = req.cookies?.refreshToken || req.body.refreshToken;
 
       if (!refreshToken) {
         return res.status(400).json({
@@ -195,15 +210,23 @@ export class AuthController {
         });
       }
 
-      // 生成新的访问令牌
+      // 令牌轮转机制：生成新的访问令牌和刷新令牌
       const newAccessToken = this.generateAccessToken(user);
+      const newRefreshToken = this.generateRefreshToken(user);
+
+      // 设置新的HttpOnly cookie
+      res.cookie('refreshToken', newRefreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      });
 
       res.json({
         success: true,
         message: '令牌刷新成功',
         data: {
           accessToken: newAccessToken,
-          refreshToken, // 返回相同的刷新令牌（可考虑刷新刷新令牌）
         },
       });
     } catch (error) {
@@ -217,8 +240,13 @@ export class AuthController {
    */
   async logout(req: Request, res: Response, next: NextFunction) {
     try {
-      // 在实际应用中，可以将令牌加入黑名单
-      // 这里只是简单返回成功
+      // 清除HttpOnly cookie中的refreshToken
+      res.clearCookie('refreshToken', {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+      });
+
       res.json({
         success: true,
         message: '登出成功',

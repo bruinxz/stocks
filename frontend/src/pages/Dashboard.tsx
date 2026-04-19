@@ -222,7 +222,7 @@ const Dashboard: React.FC = () => {
                           color: 'var(--text-main)',
                         }}
                       >
-                        {index.currentPrice.toFixed(2)}
+                        {Number(index.currentPrice).toFixed(2)}
                       </div>
                       <div style={{ height: 60, width: '100%' }}>
                         <ResponsiveContainer width="100%" height="100%">

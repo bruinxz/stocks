@@ -40,12 +40,7 @@ router.post(
  * @desc 刷新访问令牌
  * @access Public
  */
-router.post(
-  '/refresh',
-  [body('refreshToken').isString()],
-  validateRequest,
-  authController.refreshToken
-);
+router.post('/refresh', authController.refreshToken);
 
 /**
  * @route POST /api/auth/logout

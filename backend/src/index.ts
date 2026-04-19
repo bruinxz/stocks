@@ -6,6 +6,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import path from 'path';
+import cookieParser from 'cookie-parser';
 import { sequelize } from './config/database';
 import authRoutes from './api/routes/auth.routes';
 import stockRoutes from './api/routes/stock.routes';
@@ -25,10 +26,17 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: function (origin, callback) {
+    // 允许任何来源访问，配合 credentials: true 会动态反射 Origin
+    callback(null, true);
+  },
+  credentials: true, // Allow cookies to be sent
+}));
 app.use(helmet({ crossOriginResourcePolicy: false })); // Allow cross-origin for static files
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
 
 // Serve static files (like avatars)
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
