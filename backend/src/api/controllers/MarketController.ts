@@ -108,7 +108,9 @@ export class MarketController {
 
       // 简单模拟一个市场情绪得分 (0-100)，实际项目中可以根据涨跌家数比、连板高度等计算
       const upCount = overviewData.filter(d => d.changePercent > 0).length;
-      const sentimentScore = 40 + (upCount * 15) + (Math.random() * 10 - 5); // 基础分 + 涨的指数加分 + 随机波动
+      const downCount = overviewData.filter(d => d.changePercent < 0).length;
+      // 基于真实指数的涨跌来计算一个确定性的情绪分，不再使用 Math.random()
+      const sentimentScore = 50 + (upCount * 10) - (downCount * 10); 
 
       res.json({
         success: true,
@@ -1560,10 +1562,11 @@ export class MarketController {
 
       // 获取每个股票在指定时间段内的日线数据数量
       // 使用一次性聚合查询，而不是循环执行 5000+ 次 COUNT 查询，这能将耗时从几十秒缩短到几百毫秒
+      // DailyBar 只有复合主键 time 和 stockId，没有 id 列
       const barCounts = await DailyBar.findAll({
         attributes: [
           'stockId',
-          [sequelize.fn('COUNT', sequelize.col('id')), 'count']
+          [sequelize.fn('COUNT', sequelize.col('stock_id')), 'count']
         ],
         where: {
           time: {

@@ -25,7 +25,7 @@ export interface AuthResponse {
     };
     tokens?: {
       accessToken: string;
-      refreshToken: string;
+      refreshToken?: string; // Optional for backwards compatibility
     };
     token?: string; // 兼容旧逻辑
   };
@@ -39,7 +39,6 @@ export const authService = {
     if (response.data.success && data) {
       if (data.tokens) {
         localStorage.setItem('token', data.tokens.accessToken);
-        localStorage.setItem('refreshToken', data.tokens.refreshToken);
       } else if (data.token) {
         localStorage.setItem('token', data.token);
       }
@@ -50,14 +49,28 @@ export const authService = {
 
   async register(userData: RegisterRequest): Promise<AuthResponse> {
     const response = await api.post<AuthResponse>('/auth/register', userData);
+    const data = response.data.data;
+    if (response.data.success && data) {
+      if (data.tokens) {
+        localStorage.setItem('token', data.tokens.accessToken);
+      } else if (data.token) {
+        localStorage.setItem('token', data.token);
+      }
+      localStorage.setItem('user', JSON.stringify(data.user));
+    }
     return response.data;
   },
 
   async logout(): Promise<void> {
-    localStorage.removeItem('token');
-    localStorage.removeItem('refreshToken');
-    localStorage.removeItem('user');
-    localStorage.removeItem('username');
+    try {
+      await api.post('/auth/logout');
+    } catch (error) {
+      console.error('Logout API failed', error);
+    } finally {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      localStorage.removeItem('username');
+    }
   },
 
   async getCurrentUser() {
