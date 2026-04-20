@@ -19,6 +19,8 @@ import taskRoutes from './api/routes/task.routes';
 import paperTradingRoutes from './api/routes/paperTrading.routes';
 import riskAlertRoutes from './api/routes/riskAlert.routes';
 import journalRoutes from './api/routes/journal.routes';
+import userRoutes from './api/routes/user.routes';
+import logRoutes from './api/routes/log.routes';
 import './jobs/dataUpdateWorker'; // 初始化数据更新队列处理器
 import { schedulerService } from './services/SchedulerService';
 
@@ -63,6 +65,8 @@ app.use('/api/tasks', taskRoutes);
 app.use('/api/paper-trading', paperTradingRoutes);
 app.use('/api/risk-alerts', riskAlertRoutes);
 app.use('/api/journals', journalRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/logs', logRoutes);
 
 import { User } from './models/User';
 import bcrypt from 'bcrypt';

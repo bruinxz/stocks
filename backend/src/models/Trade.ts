@@ -155,7 +155,7 @@ export class Trade extends Model {
     allowNull: true,
     comment: '佣金费用',
   })
-  commission?: number;
+  declare commission?: number;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
@@ -163,7 +163,7 @@ export class Trade extends Model {
     field: 'stamp_duty',
     comment: '印花税',
   })
-  stampDuty?: number;
+  declare stampDuty?: number;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
@@ -171,7 +171,7 @@ export class Trade extends Model {
     field: 'transfer_fee',
     comment: '过户费',
   })
-  transferFee?: number;
+  declare transferFee?: number;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
@@ -179,7 +179,7 @@ export class Trade extends Model {
     field: 'total_fee',
     comment: '总费用',
   })
-  totalFee?: number;
+  declare totalFee?: number;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
@@ -187,7 +187,7 @@ export class Trade extends Model {
     field: 'net_pnl',
     comment: '净盈亏',
   })
-  netPnl?: number;
+  declare netPnl?: number;
 
   @Column({
     type: DataType.STRING(50),
@@ -195,7 +195,7 @@ export class Trade extends Model {
     field: 'entry_signal',
     comment: '入场信号',
   })
-  entrySignal?: string;
+  declare entrySignal?: string;
 
   @Column({
     type: DataType.STRING(50),
@@ -203,14 +203,14 @@ export class Trade extends Model {
     field: 'exit_signal',
     comment: '出场信号',
   })
-  exitSignal?: string;
+  declare exitSignal?: string;
 
   @Column({
     type: DataType.TEXT,
     allowNull: true,
     comment: '备注',
   })
-  notes?: string;
+  declare notes?: string;
 
   @CreatedAt
   @Column({ field: 'created_at' })

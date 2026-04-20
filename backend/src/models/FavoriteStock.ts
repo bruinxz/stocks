@@ -17,17 +17,17 @@ import { Stock } from './Stock';
   indexes: [
     {
       unique: true,
-      fields: ['userId', 'stockId'],
+      fields: ['user_id', 'stock_id'],
       name: 'user_stock_unique',
     },
     {
-      fields: ['userId'],
+      fields: ['user_id'],
     },
     {
-      fields: ['stockId'],
+      fields: ['stock_id'],
     },
     {
-      fields: ['groupId'],
+      fields: ['group_id'],
     },
   ],
 })
@@ -43,6 +43,7 @@ export class FavoriteStock extends Model {
   @Column({
     type: DataType.INTEGER,
     allowNull: false,
+    field: 'user_id',
     comment: '用户ID',
   })
   declare userId: number;
@@ -51,6 +52,7 @@ export class FavoriteStock extends Model {
   @Column({
     type: DataType.INTEGER,
     allowNull: false,
+    field: 'stock_id',
     comment: '股票ID',
   })
   declare stockId: number;
@@ -58,36 +60,40 @@ export class FavoriteStock extends Model {
   @Column({
     type: DataType.STRING(50),
     allowNull: true,
+    field: 'group_id',
     comment: '自定义分组，如 "科技股"、"蓝筹股" 等',
   })
-  groupId?: string;
+  declare groupId?: string;
 
   @Column({
     type: DataType.STRING(100),
     allowNull: true,
     comment: '自定义标签',
   })
-  tags?: string;
+  declare tags?: string;
 
   @Column({
     type: DataType.TEXT,
     allowNull: true,
     comment: '备注',
   })
-  notes?: string;
+  declare notes?: string;
 
   @Column({
     type: DataType.INTEGER,
     allowNull: true,
     defaultValue: 0,
+    field: 'sort_order',
     comment: '排序权重，越大越靠前',
   })
-  sortOrder?: number;
+  declare sortOrder?: number;
 
   @CreatedAt
+  @Column({ field: 'created_at' })
   declare createdAt: Date;
 
   @UpdatedAt
+  @Column({ field: 'updated_at' })
   declare updatedAt: Date;
 
   // 关联关系

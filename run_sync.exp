@@ -1,0 +1,24 @@
+#!/usr/bin/expect -f
+set timeout -1
+set password [lindex $argv 0]
+
+spawn ssh -o StrictHostKeyChecking=no -p 14126 root@103.242.3.87 "cat << 'INNER_EOF' > /opt/stocks/backend/src/scripts/sync_db.ts
+import { sequelize } from '../config/database';
+import '../models';
+
+async function sync() {
+  await sequelize.authenticate();
+  console.log('Syncing database...');
+  await sequelize.sync({ alter: true });
+  console.log('Database synced!');
+  process.exit(0);
+}
+
+sync().catch(console.error);
+INNER_EOF
+cd /opt/stocks/backend && npx ts-node src/scripts/sync_db.ts"
+expect {
+    "*yes/no*" { send "yes\r"; exp_continue }
+    "*assword:*" { send "$password\r"; exp_continue }
+    eof
+}

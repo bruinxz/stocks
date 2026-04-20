@@ -89,7 +89,7 @@ class QingguoProxyManager:
                 print(f"Removed dead proxy: {proxy}. Remaining: {len(self.proxies)}", file=sys.stderr)
 
 # 初始化青果代理管理器
-QINGGUO_API_URL = "https://share.proxy.qg.net/get?key=686FA4E2&num=10&area=110000&isp=0&format=txt&seq=\\r\\n&distinct=false"
+QINGGUO_API_URL = "https://share.proxy.qg.net/get?key=AB85550D&num=15&area=&isp=0&format=txt&seq=\\r\\n&distinct=false"
 proxy_manager = QingguoProxyManager(QINGGUO_API_URL)
 
 # 当前正在使用的代理

@@ -43,8 +43,8 @@ api.interceptors.response.use(
   async (error: AxiosError) => {
     const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
 
-    // 如果是 401 且不是刷新 token 的接口，说明 AccessToken 可能过期了
-    if (error.response?.status === 401 && !originalRequest.url?.includes('/auth/refresh')) {
+    // 如果是 401 且不是刷新 token 和 登录的接口，说明 AccessToken 可能过期了
+    if (error.response?.status === 401 && !originalRequest.url?.includes('/auth/refresh') && !originalRequest.url?.includes('/auth/login')) {
       if (!originalRequest._retry) {
         originalRequest._retry = true;
 

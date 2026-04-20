@@ -596,15 +596,15 @@ export class DataSyncService {
 
       // 优化内存占用：不使用 LEFT JOIN 和 include，而是先查出最近有更新的股票ID
       const recentBars = await DailyBar.findAll({
-        attributes: ['stockId'],
+        attributes: ['stock_id'],
         where: {
           time: { [Op.gte]: cutoffDate },
         },
-        group: ['stockId'],
+        group: ['stock_id'],
         raw: true, // 使用 raw 查询进一步减少内存占用
       });
 
-      const recentlyUpdatedStockIds = new Set(recentBars.map((b: any) => b.stockId));
+      const recentlyUpdatedStockIds = new Set(recentBars.map((b: any) => b.stock_id));
 
       const allStocks = await Stock.findAll({
         attributes: ['id', 'symbol'],

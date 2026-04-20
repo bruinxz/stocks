@@ -39,7 +39,7 @@ export class ScreenerController {
             const stock = await Stock.findOne({ where: { symbol: screener.symbol } });
             if (stock) {
               const bars = await DailyBar.findAll({
-                where: { stockId: stock.id },
+                where: { stock_id: stock.id },
                 order: [['time', 'DESC']],
                 limit: 30,
                 attributes: ['time', 'close'],

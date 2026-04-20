@@ -4,12 +4,16 @@ import { UserOutlined, LockOutlined, BarChartOutlined } from '@ant-design/icons'
 import { useNavigate, useLocation } from 'react-router-dom';
 import api from '../services/api';
 
+import { useDispatch } from 'react-redux';
+import { loginSuccess } from '../store/authSlice';
+
 const { Text } = Typography;
 
 const Login: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
+  const dispatch = useDispatch();
 
   const onFinish = async (values: any) => {
     setLoading(true);
@@ -24,8 +28,11 @@ const Login: React.FC = () => {
         const { tokens, user } = response.data.data;
 
         localStorage.setItem('token', tokens.accessToken);
-        localStorage.setItem('refreshToken', tokens.refreshToken);
+        // Refresh token is now stored in HttpOnly cookie automatically by backend
         localStorage.setItem('username', user.username);
+        
+        // 更新 Redux 状态
+        dispatch(loginSuccess({ user, token: tokens.accessToken }));
 
         message.success('登录成功！');
 

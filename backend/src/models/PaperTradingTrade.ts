@@ -26,6 +26,7 @@ export class PaperTradingTrade extends Model {
   @Column({
     type: DataType.INTEGER,
     allowNull: false,
+    field: 'portfolio_id',
   })
   declare portfolioId: number;
 
@@ -53,6 +54,7 @@ export class PaperTradingTrade extends Model {
   @Column({
     type: DataType.DECIMAL(15, 2),
     allowNull: false,
+    field: 'execute_price',
   })
   declare executePrice: number;
 
@@ -79,13 +81,16 @@ export class PaperTradingTrade extends Model {
   @Column({
     type: DataType.DECIMAL(15, 2),
     allowNull: true,
+    field: 'realized_pnl',
     comment: '如果是卖出，记录本次交易的实现盈亏',
   })
   declare realizedPnl: number;
 
   @CreatedAt
+  @Column({ field: 'created_at' })
   declare createdAt: Date;
 
   @UpdatedAt
+  @Column({ field: 'updated_at' })
   declare updatedAt: Date;
 }

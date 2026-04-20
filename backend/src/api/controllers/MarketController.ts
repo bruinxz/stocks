@@ -406,7 +406,7 @@ export class MarketController {
 
       // 检查是否已收藏
       const existingFavorite = await FavoriteStock.findOne({
-        where: { userId, stockId: stock.id },
+        where: { user_id: userId, stock_id: stock.id },
       });
 
       if (existingFavorite) {
@@ -418,8 +418,8 @@ export class MarketController {
 
       // 创建收藏记录
       const favorite = await FavoriteStock.create({
-        userId,
-        stockId: stock.id,
+        user_id: userId,
+        stock_id: stock.id,
         groupId,
         tags,
         notes,
@@ -475,7 +475,7 @@ export class MarketController {
 
       // 删除收藏记录
       const deletedCount = await FavoriteStock.destroy({
-        where: { userId, stockId: stock.id },
+        where: { user_id: userId, stock_id: stock.id },
       });
 
       if (deletedCount === 0) {
@@ -514,7 +514,7 @@ export class MarketController {
 
       const { groupId } = req.query;
 
-      const where: any = { userId };
+      const where: any = { user_id: userId };
       if (groupId) {
         where.groupId = groupId;
       }
@@ -524,12 +524,12 @@ export class MarketController {
         include: [
           {
             model: Stock,
-            attributes: ['symbol', 'name', 'market', 'industry', 'listingDate', 'isListed'],
+            attributes: ['symbol', 'name', 'market', 'industry', 'listing_date', 'is_listed'],
           },
         ],
         order: [
           ['sortOrder', 'DESC'],
-          ['createdAt', 'DESC'],
+          ['created_at', 'DESC'],
         ],
       });
 
@@ -586,7 +586,7 @@ export class MarketController {
 
       // 检查收藏状态
       const favorite = await FavoriteStock.findOne({
-        where: { userId, stockId: stock.id },
+        where: { user_id: userId, stock_id: stock.id },
       });
 
       res.json({
@@ -636,7 +636,7 @@ export class MarketController {
 
       // 查找收藏记录
       const favorite = await FavoriteStock.findOne({
-        where: { userId, stockId: stock.id },
+        where: { user_id: userId, stock_id: stock.id },
       });
 
       if (!favorite) {
@@ -898,12 +898,12 @@ export class MarketController {
             endDateTime.setHours(23, 59, 59, 999);
             createdAtFilter[Op.lte] = endDateTime;
           }
-          where.createdAt = createdAtFilter;
+          where.created_at = createdAtFilter;
         }
 
         const updateLogs = await DataUpdateLog.findAll({
           where,
-          order: [['createdAt', 'DESC']],
+          order: [['created_at', 'DESC']],
           limit: 50, // 增加返回数量，显示更多历史记录
         });
 
@@ -1195,7 +1195,7 @@ export class MarketController {
       // 查询更新日志
       const updateLogs = await DataUpdateLog.findAll({
         where: {
-          createdAt: {
+          created_at: {
             [Op.between]: [startDate, endDate],
           },
           type: UpdateType.DAILY_UPDATE,
@@ -1398,7 +1398,20 @@ export class MarketController {
       }
 
       // 取消任务
-      await job.remove();
+      if (state === 'active') {
+        // 正在运行的任务不能直接 remove，而是使用 discard 或将进度设置为取消标志
+        // 这里尝试 discard 它，或者标记为失败
+        try {
+          await job.moveToFailed({ message: 'User manually cancelled the task' }, true);
+        } catch (e) {
+          // Fallback if moveToFailed throws
+          await job.discard();
+          await job.remove();
+        }
+      } else {
+        // waiting / delayed 的任务可以直接 remove
+        await job.remove();
+      }
 
       logger.info(`数据更新任务 ${jobId} 已取消`, {
         type: job.data.type,

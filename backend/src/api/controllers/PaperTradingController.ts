@@ -20,7 +20,7 @@ export class PaperTradingController {
       const user = (req as any).user;
 
       let portfolio = await PaperTradingPortfolio.findOne({
-        where: { userId: user.id },
+        where: { user_id: user.id },
       });
 
       // 如果用户没有模拟盘，自动创建一个默认的 100W 模拟盘
@@ -37,7 +37,7 @@ export class PaperTradingController {
       }
 
       const positions = await PaperTradingPosition.findAll({
-        where: { portfolioId: portfolio.id },
+        where: { portfolio_id: portfolio.id },
       });
 
       // 更新持仓的当前价格和浮动盈亏
@@ -97,7 +97,7 @@ export class PaperTradingController {
       }
 
       const portfolio = await PaperTradingPortfolio.findOne({
-        where: { userId: user.id },
+        where: { user_id: user.id },
       });
 
       if (!portfolio) {
@@ -129,7 +129,7 @@ export class PaperTradingController {
         }
 
         let position = await PaperTradingPosition.findOne({
-          where: { portfolioId: portfolio.id, symbol },
+          where: { portfolio_id: portfolio.id, symbol },
         });
 
         if (position) {
@@ -142,7 +142,7 @@ export class PaperTradingController {
           await position.save();
         } else {
           await PaperTradingPosition.create({
-            portfolioId: portfolio.id,
+            portfolio_id: portfolio.id,
             symbol,
             name: stockName,
             quantity,
@@ -158,7 +158,7 @@ export class PaperTradingController {
 
         // 记录交易流水
         await PaperTradingTrade.create({
-          portfolioId: portfolio.id,
+          portfolio_id: portfolio.id,
           symbol,
           name: stockName,
           direction: 'BUY',
@@ -170,7 +170,7 @@ export class PaperTradingController {
 
       } else if (direction === 'SELL') {
         let position = await PaperTradingPosition.findOne({
-          where: { portfolioId: portfolio.id, symbol },
+          where: { portfolio_id: portfolio.id, symbol },
         });
 
         if (!position || position.quantity < quantity) {
@@ -198,7 +198,7 @@ export class PaperTradingController {
         // 记录交易流水
         const realizedPnl = revenue - (position.avgCost * quantity) - commission;
         await PaperTradingTrade.create({
-          portfolioId: portfolio.id,
+          portfolio_id: portfolio.id,
           symbol,
           name: stockName,
           direction: 'SELL',
@@ -226,7 +226,7 @@ export class PaperTradingController {
       const user = (req as any).user;
       
       const portfolio = await PaperTradingPortfolio.findOne({
-        where: { userId: user.id },
+        where: { user_id: user.id },
       });
 
       if (!portfolio) {
@@ -234,8 +234,8 @@ export class PaperTradingController {
       }
 
       const trades = await PaperTradingTrade.findAll({
-        where: { portfolioId: portfolio.id },
-        order: [['createdAt', 'DESC']],
+        where: { portfolio_id: portfolio.id },
+        order: [['created_at', 'DESC']],
         limit: 100, // 暂定取最近100条
       });
 
@@ -255,7 +255,7 @@ export class PaperTradingController {
       const user = (req as any).user;
       
       const portfolio = await PaperTradingPortfolio.findOne({
-        where: { userId: user.id },
+        where: { user_id: user.id },
       });
 
       if (!portfolio) {
@@ -263,11 +263,11 @@ export class PaperTradingController {
       }
 
       // 为了确保图表至少有一个数据点（即初始状态），如果完全没有快照，就插入一条当前状态的真实快照
-      const count = await PaperTradingSnapshot.count({ where: { portfolioId: portfolio.id } });
+      const count = await PaperTradingSnapshot.count({ where: { portfolio_id: portfolio.id } });
       if (count === 0) {
         const todayStr = new Date().toISOString().split('T')[0];
         await PaperTradingSnapshot.create({
-          portfolioId: portfolio.id,
+          portfolio_id: portfolio.id,
           date: todayStr,
           totalValue: Number(portfolio.totalValue) || 1000000,
           currentCash: Number(portfolio.currentCash) || 1000000,
@@ -276,7 +276,7 @@ export class PaperTradingController {
       }
 
       const snapshots = await PaperTradingSnapshot.findAll({
-        where: { portfolioId: portfolio.id },
+        where: { portfolio_id: portfolio.id },
         order: [['date', 'ASC']],
       });
 

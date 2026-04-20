@@ -125,7 +125,7 @@ export class BacktestController {
 
       // 保存回测结果到数据库
       const backtestResult = await BacktestResult.create({
-        userId,
+        user_id: userId,
         name,
         description,
         strategyConfig: {
@@ -157,7 +157,7 @@ export class BacktestController {
       // 保存交易记录
       if (result.trades && result.trades.length > 0) {
         const tradesData = result.trades.map((trade: any) => ({
-          backtestId: backtestResult.id,
+          backtest_id: backtestResult.id,
           symbol: trade.symbol,
           direction: trade.direction,
           entryPrice: trade.entryPrice,
@@ -200,25 +200,25 @@ export class BacktestController {
       const limitNum = parseInt(limit as string, 10);
       const offset = (pageNum - 1) * limitNum;
 
-      const where: any = { userId };
+      const where: any = { user_id: userId };
 
       if (status) {
         where.status = status;
       }
 
       if (startDate) {
-        where.createdAt = { ...where.createdAt, [Op.gte]: new Date(startDate as string) };
+        where.created_at = { ...where.created_at, [Op.gte]: new Date(startDate as string) };
       }
 
       if (endDate) {
-        where.createdAt = { ...where.createdAt, [Op.lte]: new Date(endDate as string) };
+        where.created_at = { ...where.created_at, [Op.lte]: new Date(endDate as string) };
       }
 
       const { count, rows } = await BacktestResult.findAndCountAll({
         where,
         limit: limitNum,
         offset,
-        order: [['createdAt', 'DESC']],
+        order: [['created_at', 'DESC']],
         include: [
           {
             model: Trade,
@@ -255,7 +255,7 @@ export class BacktestController {
       const { id } = req.params;
 
       const backtest = await BacktestResult.findOne({
-        where: { id, userId },
+        where: { id, user_id: userId },
         include: [Trade],
       });
 
@@ -304,7 +304,7 @@ export class BacktestController {
       const { id } = req.params;
 
       const backtest = await BacktestResult.findOne({
-        where: { id, userId },
+        where: { id, user_id: userId },
       });
 
       if (!backtest) {
@@ -315,7 +315,7 @@ export class BacktestController {
       }
 
       // 删除关联的交易记录
-      await Trade.destroy({ where: { backtestId: id } });
+      await Trade.destroy({ where: { backtest_id: id } });
 
       // 删除回测记录
       await backtest.destroy();
@@ -337,19 +337,19 @@ export class BacktestController {
     try {
       const userId = (req as any).user?.id || 1;
 
-      const totalBacktests = await BacktestResult.count({ where: { userId } });
+      const totalBacktests = await BacktestResult.count({ where: { user_id: userId } });
       const completedBacktests = await BacktestResult.count({
-        where: { userId, status: BacktestStatus.COMPLETED },
+        where: { user_id: userId, status: BacktestStatus.COMPLETED },
       });
       const failedBacktests = await BacktestResult.count({
-        where: { userId, status: BacktestStatus.FAILED },
+        where: { user_id: userId, status: BacktestStatus.FAILED },
       });
 
       const recentBacktests = await BacktestResult.findAll({
-        where: { userId },
-        attributes: ['totalReturn', 'annualizedReturn', 'sharpeRatio', 'maxDrawdown'],
+        where: { user_id: userId },
+        attributes: ['total_return', 'annualized_return', 'sharpe_ratio', 'max_drawdown'],
         limit: 10,
-        order: [['createdAt', 'DESC']],
+        order: [['created_at', 'DESC']],
       });
 
       const avgReturn =

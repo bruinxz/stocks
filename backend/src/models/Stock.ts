@@ -72,6 +72,7 @@ export class Stock extends Model {
   @Column({
     type: DataType.DATEONLY,
     allowNull: true,
+    field: 'delisting_date',
     comment: '退市日期',
   })
   declare delistingDate?: Date;
@@ -79,6 +80,7 @@ export class Stock extends Model {
   @Column({
     type: DataType.BOOLEAN,
     defaultValue: true,
+    field: 'is_listed',
     comment: '是否上市',
   })
   declare isListed: boolean;
@@ -93,6 +95,7 @@ export class Stock extends Model {
   @Column({
     type: DataType.STRING(20),
     allowNull: true,
+    field: 'data_status',
     comment: '数据状态：complete, incomplete, no_data, conflict',
   })
   declare dataStatus?: string;
@@ -100,6 +103,7 @@ export class Stock extends Model {
   @Column({
     type: DataType.DECIMAL(20, 4),
     allowNull: true,
+    field: 'total_market_cap',
     comment: '最新总市值(元)',
   })
   declare totalMarketCap?: number;
@@ -107,6 +111,7 @@ export class Stock extends Model {
   @Column({
     type: DataType.DECIMAL(20, 4),
     allowNull: true,
+    field: 'circulating_market_cap',
     comment: '最新流通市值(元)',
   })
   declare circulatingMarketCap?: number;
@@ -114,6 +119,7 @@ export class Stock extends Model {
   @Column({
     type: DataType.DECIMAL(10, 4),
     allowNull: true,
+    field: 'pe_dynamic',
     comment: '最新动态市盈率',
   })
   declare peDynamic?: number;
@@ -128,6 +134,7 @@ export class Stock extends Model {
   @Column({
     type: DataType.DECIMAL(10, 4),
     allowNull: true,
+    field: 'turnover_rate',
     comment: '最新换手率(%)',
   })
   declare turnoverRate?: number;
@@ -142,6 +149,7 @@ export class Stock extends Model {
   @Column({
     type: DataType.DECIMAL(10, 4),
     allowNull: true,
+    field: 'change_percent',
     comment: '最新涨跌幅(%)',
   })
   declare changePercent?: number;

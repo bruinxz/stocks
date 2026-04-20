@@ -1,0 +1,10 @@
+#!/usr/bin/expect -f
+set timeout -1
+set password [lindex $argv 0]
+
+spawn ./sync_files.sh
+expect {
+    "*yes/no*" { send "yes\r"; exp_continue }
+    "*assword:*" { send "$password\r"; exp_continue }
+    eof
+}
