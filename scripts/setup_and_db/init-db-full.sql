@@ -2,10 +2,8 @@
 -- PostgreSQL database dump
 --
 
-\restrict xbqIeVxwDr7WagVvaDxsaU6jhWSzQ1szbPjDXPBqzLM5FkKmshPQPaWjOc0owjs
-
--- Dumped from database version 14.22 (Homebrew)
--- Dumped by pg_dump version 14.22 (Homebrew)
+-- Dumped from database version 14.17
+-- Dumped by pg_dump version 14.17
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -17,6 +15,20 @@ SET check_function_bodies = false;
 SET xmloption = content;
 SET client_min_messages = warning;
 SET row_security = off;
+
+--
+-- Name: timescaledb; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS timescaledb WITH SCHEMA public;
+
+
+--
+-- Name: EXTENSION timescaledb; Type: COMMENT; Schema: -; Owner: 
+--
+
+COMMENT ON EXTENSION timescaledb IS 'Enables scalable inserts and complex queries for time-series data (Community Edition)';
+
 
 --
 -- Name: enum_paper_trading_trades_direction; Type: TYPE; Schema: public; Owner: postgres
@@ -42,6 +54,22 @@ CREATE TYPE public.enum_trades_direction AS ENUM (
 
 ALTER TYPE public.enum_trades_direction OWNER TO postgres;
 
+--
+-- Name: update_updated_at_column(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.update_updated_at_column() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.update_updated_at_column() OWNER TO postgres;
+
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
@@ -51,10 +79,9 @@ SET default_table_access_method = heap;
 --
 
 CREATE TABLE public.backtest_results (
-    id uuid NOT NULL,
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
     name character varying(200) NOT NULL,
     description text,
-    user_id integer NOT NULL,
     strategy_config jsonb NOT NULL,
     start_date date NOT NULL,
     end_date date NOT NULL,
@@ -63,21 +90,22 @@ CREATE TABLE public.backtest_results (
     total_return numeric(10,4) NOT NULL,
     annualized_return numeric(10,4),
     sharpe_ratio numeric(10,4),
-    sortino_ratio numeric(10,4),
     max_drawdown numeric(10,4),
     win_rate numeric(10,4),
-    profit_loss_ratio numeric(10,4),
     total_trades integer DEFAULT 0 NOT NULL,
     profit_trades integer DEFAULT 0 NOT NULL,
     loss_trades integer DEFAULT 0 NOT NULL,
     status character varying(20) DEFAULT 'pending'::character varying,
+    created_at timestamp with time zone,
+    updated_at timestamp with time zone,
+    user_id integer NOT NULL,
+    sortino_ratio numeric(10,4),
+    profit_loss_ratio numeric(10,4),
     error_message text,
     detailed_metrics jsonb,
     annualized_volatility numeric(10,4),
     information_ratio numeric(10,4),
     calmar_ratio numeric(10,4),
-    created_at timestamp with time zone,
-    updated_at timestamp with time zone,
     equity_curve jsonb,
     daily_returns jsonb
 );
@@ -97,13 +125,6 @@ COMMENT ON COLUMN public.backtest_results.name IS '回测名称';
 --
 
 COMMENT ON COLUMN public.backtest_results.description IS '回测描述';
-
-
---
--- Name: COLUMN backtest_results.user_id; Type: COMMENT; Schema: public; Owner: postgres
---
-
-COMMENT ON COLUMN public.backtest_results.user_id IS '用户ID';
 
 
 --
@@ -163,13 +184,6 @@ COMMENT ON COLUMN public.backtest_results.sharpe_ratio IS '夏普比率';
 
 
 --
--- Name: COLUMN backtest_results.sortino_ratio; Type: COMMENT; Schema: public; Owner: postgres
---
-
-COMMENT ON COLUMN public.backtest_results.sortino_ratio IS '索提诺比率';
-
-
---
 -- Name: COLUMN backtest_results.max_drawdown; Type: COMMENT; Schema: public; Owner: postgres
 --
 
@@ -181,13 +195,6 @@ COMMENT ON COLUMN public.backtest_results.max_drawdown IS '最大回撤(%)';
 --
 
 COMMENT ON COLUMN public.backtest_results.win_rate IS '胜率(%)';
-
-
---
--- Name: COLUMN backtest_results.profit_loss_ratio; Type: COMMENT; Schema: public; Owner: postgres
---
-
-COMMENT ON COLUMN public.backtest_results.profit_loss_ratio IS '盈亏比';
 
 
 --
@@ -216,6 +223,27 @@ COMMENT ON COLUMN public.backtest_results.loss_trades IS '亏损交易次数';
 --
 
 COMMENT ON COLUMN public.backtest_results.status IS '回测状态';
+
+
+--
+-- Name: COLUMN backtest_results.user_id; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.backtest_results.user_id IS '用户ID';
+
+
+--
+-- Name: COLUMN backtest_results.sortino_ratio; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.backtest_results.sortino_ratio IS '索提诺比率';
+
+
+--
+-- Name: COLUMN backtest_results.profit_loss_ratio; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.backtest_results.profit_loss_ratio IS '盈亏比';
 
 
 --
@@ -272,7 +300,7 @@ COMMENT ON COLUMN public.backtest_results.daily_returns IS '每日收益率';
 --
 
 CREATE TABLE public.daily_bars (
-    "time" timestamp with time zone NOT NULL,
+    "time" timestamp without time zone NOT NULL,
     stock_id integer NOT NULL,
     open numeric(12,4) NOT NULL,
     high numeric(12,4) NOT NULL,
@@ -281,6 +309,7 @@ CREATE TABLE public.daily_bars (
     volume bigint NOT NULL,
     turnover numeric(20,4),
     adj_close numeric(12,4),
+    created_at timestamp with time zone,
     turnover_rate numeric(10,4),
     change_percent numeric(10,4),
     amplitude numeric(10,4),
@@ -290,8 +319,7 @@ CREATE TABLE public.daily_bars (
     market_cap numeric(20,4),
     is_trading_day boolean DEFAULT true,
     is_suspended boolean DEFAULT false,
-    created_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone NOT NULL
+    updated_at timestamp with time zone
 );
 
 
@@ -412,7 +440,7 @@ COMMENT ON COLUMN public.daily_bars.market_cap IS '总市值(元)';
 --
 -- Name: COLUMN daily_bars.is_trading_day; Type: COMMENT; Schema: public; Owner: postgres
 --
-
+
 COMMENT ON COLUMN public.daily_bars.is_trading_day IS '是否交易日';
 
 
@@ -436,8 +464,8 @@ CREATE TABLE public.daily_screeners (
     rationale text,
     scores jsonb,
     score numeric(10,2),
-    "createdAt" timestamp with time zone NOT NULL,
-    "updatedAt" timestamp with time zone NOT NULL
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL
 );
 
 
@@ -525,12 +553,12 @@ CREATE TABLE public.data_update_logs (
     date date NOT NULL,
     result jsonb,
     error text,
-    "affectedStocks" integer,
-    "insertedRecords" integer,
-    "startedAt" timestamp with time zone,
-    "completedAt" timestamp with time zone,
-    "createdAt" timestamp with time zone NOT NULL,
-    "updatedAt" timestamp with time zone NOT NULL
+    affected_stocks integer,
+    inserted_records integer,
+    started_at timestamp with time zone,
+    completed_at timestamp with time zone,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL
 );
 
 
@@ -572,31 +600,31 @@ COMMENT ON COLUMN public.data_update_logs.error IS '错误信息';
 
 
 --
--- Name: COLUMN data_update_logs."affectedStocks"; Type: COMMENT; Schema: public; Owner: postgres
+-- Name: COLUMN data_update_logs.affected_stocks; Type: COMMENT; Schema: public; Owner: postgres
 --
 
-COMMENT ON COLUMN public.data_update_logs."affectedStocks" IS '影响的股票数量';
-
-
---
--- Name: COLUMN data_update_logs."insertedRecords"; Type: COMMENT; Schema: public; Owner: postgres
---
-
-COMMENT ON COLUMN public.data_update_logs."insertedRecords" IS '插入的数据条数';
+COMMENT ON COLUMN public.data_update_logs.affected_stocks IS '影响的股票数量';
 
 
 --
--- Name: COLUMN data_update_logs."startedAt"; Type: COMMENT; Schema: public; Owner: postgres
+-- Name: COLUMN data_update_logs.inserted_records; Type: COMMENT; Schema: public; Owner: postgres
 --
 
-COMMENT ON COLUMN public.data_update_logs."startedAt" IS '开始时间';
+COMMENT ON COLUMN public.data_update_logs.inserted_records IS '插入的数据条数';
 
 
 --
--- Name: COLUMN data_update_logs."completedAt"; Type: COMMENT; Schema: public; Owner: postgres
+-- Name: COLUMN data_update_logs.started_at; Type: COMMENT; Schema: public; Owner: postgres
 --
 
-COMMENT ON COLUMN public.data_update_logs."completedAt" IS '完成时间';
+COMMENT ON COLUMN public.data_update_logs.started_at IS '开始时间';
+
+
+--
+-- Name: COLUMN data_update_logs.completed_at; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.data_update_logs.completed_at IS '完成时间';
 
 
 --
@@ -627,38 +655,38 @@ ALTER SEQUENCE public.data_update_logs_id_seq OWNED BY public.data_update_logs.i
 
 CREATE TABLE public.favorite_stocks (
     id integer NOT NULL,
-    "userId" integer NOT NULL,
-    "stockId" integer NOT NULL,
-    "groupId" character varying(50),
+    user_id integer NOT NULL,
+    stock_id integer NOT NULL,
+    group_id character varying(50),
     tags character varying(100),
     notes text,
-    "sortOrder" integer DEFAULT 0,
-    "createdAt" timestamp with time zone NOT NULL,
-    "updatedAt" timestamp with time zone NOT NULL
+    sort_order integer DEFAULT 0,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL
 );
 
 
 ALTER TABLE public.favorite_stocks OWNER TO postgres;
 
 --
--- Name: COLUMN favorite_stocks."userId"; Type: COMMENT; Schema: public; Owner: postgres
+-- Name: COLUMN favorite_stocks.user_id; Type: COMMENT; Schema: public; Owner: postgres
 --
 
-COMMENT ON COLUMN public.favorite_stocks."userId" IS '用户ID';
-
-
---
--- Name: COLUMN favorite_stocks."stockId"; Type: COMMENT; Schema: public; Owner: postgres
---
-
-COMMENT ON COLUMN public.favorite_stocks."stockId" IS '股票ID';
+COMMENT ON COLUMN public.favorite_stocks.user_id IS '用户ID';
 
 
 --
--- Name: COLUMN favorite_stocks."groupId"; Type: COMMENT; Schema: public; Owner: postgres
+-- Name: COLUMN favorite_stocks.stock_id; Type: COMMENT; Schema: public; Owner: postgres
 --
 
-COMMENT ON COLUMN public.favorite_stocks."groupId" IS '自定义分组，如 "科技股"、"蓝筹股" 等';
+COMMENT ON COLUMN public.favorite_stocks.stock_id IS '股票ID';
+
+
+--
+-- Name: COLUMN favorite_stocks.group_id; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.favorite_stocks.group_id IS '自定义分组，如 "科技股"、"蓝筹股" 等';
 
 
 --
@@ -676,10 +704,10 @@ COMMENT ON COLUMN public.favorite_stocks.notes IS '备注';
 
 
 --
--- Name: COLUMN favorite_stocks."sortOrder"; Type: COMMENT; Schema: public; Owner: postgres
+-- Name: COLUMN favorite_stocks.sort_order; Type: COMMENT; Schema: public; Owner: postgres
 --
 
-COMMENT ON COLUMN public.favorite_stocks."sortOrder" IS '排序权重，越大越靠前';
+COMMENT ON COLUMN public.favorite_stocks.sort_order IS '排序权重，越大越靠前';
 
 
 --
@@ -710,14 +738,14 @@ ALTER SEQUENCE public.favorite_stocks_id_seq OWNED BY public.favorite_stocks.id;
 
 CREATE TABLE public.paper_trading_portfolios (
     id integer NOT NULL,
-    "userId" integer NOT NULL,
+    user_id integer NOT NULL,
     name character varying(100) NOT NULL,
-    "initialCapital" numeric(15,2) DEFAULT 1000000 NOT NULL,
-    "currentCash" numeric(15,2) DEFAULT 1000000 NOT NULL,
-    "totalValue" numeric(15,2) DEFAULT 1000000 NOT NULL,
-    "isActive" boolean DEFAULT true,
-    "createdAt" timestamp with time zone NOT NULL,
-    "updatedAt" timestamp with time zone NOT NULL
+    initial_capital numeric(15,2) DEFAULT 1000000 NOT NULL,
+    current_cash numeric(15,2) DEFAULT 1000000 NOT NULL,
+    total_value numeric(15,2) DEFAULT 1000000 NOT NULL,
+    is_active boolean DEFAULT true,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL
 );
 
 
@@ -731,31 +759,31 @@ COMMENT ON COLUMN public.paper_trading_portfolios.name IS '模拟盘名称';
 
 
 --
--- Name: COLUMN paper_trading_portfolios."initialCapital"; Type: COMMENT; Schema: public; Owner: postgres
+-- Name: COLUMN paper_trading_portfolios.initial_capital; Type: COMMENT; Schema: public; Owner: postgres
 --
 
-COMMENT ON COLUMN public.paper_trading_portfolios."initialCapital" IS '初始资金';
-
-
---
--- Name: COLUMN paper_trading_portfolios."currentCash"; Type: COMMENT; Schema: public; Owner: postgres
---
-
-COMMENT ON COLUMN public.paper_trading_portfolios."currentCash" IS '当前可用资金';
+COMMENT ON COLUMN public.paper_trading_portfolios.initial_capital IS '初始资金';
 
 
 --
--- Name: COLUMN paper_trading_portfolios."totalValue"; Type: COMMENT; Schema: public; Owner: postgres
+-- Name: COLUMN paper_trading_portfolios.current_cash; Type: COMMENT; Schema: public; Owner: postgres
 --
 
-COMMENT ON COLUMN public.paper_trading_portfolios."totalValue" IS '当前总资产 (资金 + 持仓市值)';
+COMMENT ON COLUMN public.paper_trading_portfolios.current_cash IS '当前可用资金';
 
 
 --
--- Name: COLUMN paper_trading_portfolios."isActive"; Type: COMMENT; Schema: public; Owner: postgres
+-- Name: COLUMN paper_trading_portfolios.total_value; Type: COMMENT; Schema: public; Owner: postgres
 --
 
-COMMENT ON COLUMN public.paper_trading_portfolios."isActive" IS '是否处于激活状态';
+COMMENT ON COLUMN public.paper_trading_portfolios.total_value IS '当前总资产 (资金 + 持仓市值)';
+
+
+--
+-- Name: COLUMN paper_trading_portfolios.is_active; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.paper_trading_portfolios.is_active IS '是否处于激活状态';
 
 
 --
@@ -786,16 +814,16 @@ ALTER SEQUENCE public.paper_trading_portfolios_id_seq OWNED BY public.paper_trad
 
 CREATE TABLE public.paper_trading_positions (
     id integer NOT NULL,
-    "portfolioId" integer NOT NULL,
+    portfolio_id integer NOT NULL,
     symbol character varying(20) NOT NULL,
     name character varying(100),
     quantity integer DEFAULT 0 NOT NULL,
-    "avgCost" numeric(10,3) DEFAULT 0 NOT NULL,
-    "currentPrice" numeric(10,3) DEFAULT 0 NOT NULL,
-    "marketValue" numeric(15,2) DEFAULT 0 NOT NULL,
-    "unrealizedPnl" numeric(15,2) DEFAULT 0 NOT NULL,
-    "createdAt" timestamp with time zone NOT NULL,
-    "updatedAt" timestamp with time zone NOT NULL
+    avg_cost numeric(10,3) DEFAULT 0 NOT NULL,
+    current_price numeric(10,3) DEFAULT 0 NOT NULL,
+    market_value numeric(15,2) DEFAULT 0 NOT NULL,
+    unrealized_pnl numeric(15,2) DEFAULT 0 NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL
 );
 
 
@@ -823,31 +851,31 @@ COMMENT ON COLUMN public.paper_trading_positions.quantity IS '持有股数 (股)
 
 
 --
--- Name: COLUMN paper_trading_positions."avgCost"; Type: COMMENT; Schema: public; Owner: postgres
+-- Name: COLUMN paper_trading_positions.avg_cost; Type: COMMENT; Schema: public; Owner: postgres
 --
 
-COMMENT ON COLUMN public.paper_trading_positions."avgCost" IS '平均建仓成本价';
-
-
---
--- Name: COLUMN paper_trading_positions."currentPrice"; Type: COMMENT; Schema: public; Owner: postgres
---
-
-COMMENT ON COLUMN public.paper_trading_positions."currentPrice" IS '最新价格';
+COMMENT ON COLUMN public.paper_trading_positions.avg_cost IS '平均建仓成本价';
 
 
 --
--- Name: COLUMN paper_trading_positions."marketValue"; Type: COMMENT; Schema: public; Owner: postgres
+-- Name: COLUMN paper_trading_positions.current_price; Type: COMMENT; Schema: public; Owner: postgres
 --
 
-COMMENT ON COLUMN public.paper_trading_positions."marketValue" IS '当前持仓市值';
+COMMENT ON COLUMN public.paper_trading_positions.current_price IS '最新价格';
 
 
 --
--- Name: COLUMN paper_trading_positions."unrealizedPnl"; Type: COMMENT; Schema: public; Owner: postgres
+-- Name: COLUMN paper_trading_positions.market_value; Type: COMMENT; Schema: public; Owner: postgres
 --
 
-COMMENT ON COLUMN public.paper_trading_positions."unrealizedPnl" IS '浮动盈亏';
+COMMENT ON COLUMN public.paper_trading_positions.market_value IS '当前持仓市值';
+
+
+--
+-- Name: COLUMN paper_trading_positions.unrealized_pnl; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.paper_trading_positions.unrealized_pnl IS '浮动盈亏';
 
 
 --
@@ -869,7 +897,7 @@ ALTER TABLE public.paper_trading_positions_id_seq OWNER TO postgres;
 -- Name: paper_trading_positions_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
 --
 
-ALTER SEQUENCE public.paper_trading_positions_id_seq OWNED BY public.paper_trading_positions.id;
+ALTER SEQUENCE public.paper_trading_positions_id_seq OWNED BY public.paper_trading_positions.id;
 
 
 --
@@ -878,13 +906,13 @@ ALTER SEQUENCE public.paper_trading_positions_id_seq OWNED BY public.paper_tradi
 
 CREATE TABLE public.paper_trading_snapshots (
     id integer NOT NULL,
-    "portfolioId" integer NOT NULL,
+    portfolio_id integer NOT NULL,
     date date NOT NULL,
-    "totalValue" numeric(15,2) NOT NULL,
-    "currentCash" numeric(15,2) NOT NULL,
-    "positionValue" numeric(15,2) NOT NULL,
-    "createdAt" timestamp with time zone NOT NULL,
-    "updatedAt" timestamp with time zone NOT NULL
+    total_value numeric(15,2) NOT NULL,
+    current_cash numeric(15,2) NOT NULL,
+    position_value numeric(15,2) NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL
 );
 
 
@@ -925,17 +953,17 @@ ALTER SEQUENCE public.paper_trading_snapshots_id_seq OWNED BY public.paper_tradi
 
 CREATE TABLE public.paper_trading_trades (
     id integer NOT NULL,
-    "portfolioId" integer NOT NULL,
+    portfolio_id integer NOT NULL,
     symbol character varying(20) NOT NULL,
     name character varying(100) NOT NULL,
     direction public.enum_paper_trading_trades_direction NOT NULL,
-    "executePrice" numeric(15,2) NOT NULL,
+    execute_price numeric(15,2) NOT NULL,
     quantity integer NOT NULL,
     amount numeric(15,2) NOT NULL,
     commission numeric(15,2) NOT NULL,
-    "realizedPnl" numeric(15,2),
-    "createdAt" timestamp with time zone NOT NULL,
-    "updatedAt" timestamp with time zone NOT NULL
+    realized_pnl numeric(15,2),
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL
 );
 
 
@@ -956,10 +984,10 @@ COMMENT ON COLUMN public.paper_trading_trades.commission IS '手续费';
 
 
 --
--- Name: COLUMN paper_trading_trades."realizedPnl"; Type: COMMENT; Schema: public; Owner: postgres
+-- Name: COLUMN paper_trading_trades.realized_pnl; Type: COMMENT; Schema: public; Owner: postgres
 --
 
-COMMENT ON COLUMN public.paper_trading_trades."realizedPnl" IS '如果是卖出，记录本次交易的实现盈亏';
+COMMENT ON COLUMN public.paper_trading_trades.realized_pnl IS '如果是卖出，记录本次交易的实现盈亏';
 
 
 --
@@ -990,14 +1018,14 @@ ALTER SEQUENCE public.paper_trading_trades_id_seq OWNED BY public.paper_trading_
 
 CREATE TABLE public.risk_alerts (
     id integer NOT NULL,
-    "userId" integer NOT NULL,
+    user_id integer NOT NULL,
     symbol character varying(20) NOT NULL,
     name character varying(100) NOT NULL,
     level character varying(50) NOT NULL,
     message text NOT NULL,
-    "isRead" boolean DEFAULT false,
-    "createdAt" timestamp with time zone NOT NULL,
-    "updatedAt" timestamp with time zone NOT NULL
+    is_read boolean DEFAULT false,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL
 );
 
 
@@ -1032,10 +1060,10 @@ COMMENT ON COLUMN public.risk_alerts.message IS '告警详细内容，如 AI 建
 
 
 --
--- Name: COLUMN risk_alerts."isRead"; Type: COMMENT; Schema: public; Owner: postgres
+-- Name: COLUMN risk_alerts.is_read; Type: COMMENT; Schema: public; Owner: postgres
 --
 
-COMMENT ON COLUMN public.risk_alerts."isRead" IS '是否已读';
+COMMENT ON COLUMN public.risk_alerts.is_read IS '是否已读';
 
 
 --
@@ -1067,24 +1095,24 @@ ALTER SEQUENCE public.risk_alerts_id_seq OWNED BY public.risk_alerts.id;
 CREATE TABLE public.scheduled_tasks (
     id integer NOT NULL,
     name character varying(100) NOT NULL,
-    "cronExpression" character varying(100) NOT NULL,
+    cron_expression character varying(100) NOT NULL,
     type character varying(50) NOT NULL,
     parameters jsonb,
-    "isActive" boolean DEFAULT true,
-    "lastRunAt" timestamp with time zone,
-    "lastRunStatus" character varying(50),
-    "createdAt" timestamp with time zone NOT NULL,
-    "updatedAt" timestamp with time zone NOT NULL
+    is_active boolean DEFAULT true,
+    last_run_at timestamp with time zone,
+    last_run_status character varying(50),
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL
 );
 
 
 ALTER TABLE public.scheduled_tasks OWNER TO postgres;
 
 --
--- Name: COLUMN scheduled_tasks."cronExpression"; Type: COMMENT; Schema: public; Owner: postgres
+-- Name: COLUMN scheduled_tasks.cron_expression; Type: COMMENT; Schema: public; Owner: postgres
 --
 
-COMMENT ON COLUMN public.scheduled_tasks."cronExpression" IS 'cron表达式';
+COMMENT ON COLUMN public.scheduled_tasks.cron_expression IS 'cron表达式';
 
 
 --
@@ -1102,10 +1130,10 @@ COMMENT ON COLUMN public.scheduled_tasks.parameters IS '任务执行参数';
 
 
 --
--- Name: COLUMN scheduled_tasks."lastRunStatus"; Type: COMMENT; Schema: public; Owner: postgres
+-- Name: COLUMN scheduled_tasks.last_run_status; Type: COMMENT; Schema: public; Owner: postgres
 --
 
-COMMENT ON COLUMN public.scheduled_tasks."lastRunStatus" IS 'SUCCESS, FAILED, RUNNING';
+COMMENT ON COLUMN public.scheduled_tasks.last_run_status IS 'SUCCESS, FAILED, RUNNING';
 
 
 --
@@ -1141,19 +1169,19 @@ CREATE TABLE public.stocks (
     market character varying(10),
     industry character varying(100),
     listing_date date,
-    "delistingDate" date,
-    "isListed" boolean DEFAULT true,
-    type character varying(50),
-    "dataStatus" character varying(20),
-    "totalMarketCap" numeric(20,4),
-    "circulatingMarketCap" numeric(20,4),
-    "peDynamic" numeric(10,4),
-    pb numeric(10,4),
-    "turnoverRate" numeric(10,4),
-    price numeric(12,4),
-    "changePercent" numeric(10,4),
     created_at timestamp with time zone,
-    updated_at timestamp with time zone
+    updated_at timestamp with time zone,
+    delisting_date date,
+    is_listed boolean DEFAULT true,
+    type character varying(50),
+    data_status character varying(20),
+    total_market_cap numeric(20,4),
+    circulating_market_cap numeric(20,4),
+    pe_dynamic numeric(10,4),
+    pb numeric(10,4),
+    turnover_rate numeric(10,4),
+    price numeric(12,4),
+    change_percent numeric(10,4)
 );
 
 
@@ -1195,17 +1223,17 @@ COMMENT ON COLUMN public.stocks.listing_date IS '上市日期';
 
 
 --
--- Name: COLUMN stocks."delistingDate"; Type: COMMENT; Schema: public; Owner: postgres
+-- Name: COLUMN stocks.delisting_date; Type: COMMENT; Schema: public; Owner: postgres
 --
 
-COMMENT ON COLUMN public.stocks."delistingDate" IS '退市日期';
+COMMENT ON COLUMN public.stocks.delisting_date IS '退市日期';
 
 
 --
--- Name: COLUMN stocks."isListed"; Type: COMMENT; Schema: public; Owner: postgres
+-- Name: COLUMN stocks.is_listed; Type: COMMENT; Schema: public; Owner: postgres
 --
 
-COMMENT ON COLUMN public.stocks."isListed" IS '是否上市';
+COMMENT ON COLUMN public.stocks.is_listed IS '是否上市';
 
 
 --
@@ -1216,31 +1244,31 @@ COMMENT ON COLUMN public.stocks.type IS '股票类型：stock, index, fund, bond
 
 
 --
--- Name: COLUMN stocks."dataStatus"; Type: COMMENT; Schema: public; Owner: postgres
+-- Name: COLUMN stocks.data_status; Type: COMMENT; Schema: public; Owner: postgres
 --
 
-COMMENT ON COLUMN public.stocks."dataStatus" IS '数据状态：complete, incomplete, no_data, conflict';
-
-
---
--- Name: COLUMN stocks."totalMarketCap"; Type: COMMENT; Schema: public; Owner: postgres
---
-
-COMMENT ON COLUMN public.stocks."totalMarketCap" IS '最新总市值(元)';
+COMMENT ON COLUMN public.stocks.data_status IS '数据状态：complete, incomplete, no_data, conflict';
 
 
 --
--- Name: COLUMN stocks."circulatingMarketCap"; Type: COMMENT; Schema: public; Owner: postgres
+-- Name: COLUMN stocks.total_market_cap; Type: COMMENT; Schema: public; Owner: postgres
 --
 
-COMMENT ON COLUMN public.stocks."circulatingMarketCap" IS '最新流通市值(元)';
+COMMENT ON COLUMN public.stocks.total_market_cap IS '最新总市值(元)';
 
 
 --
--- Name: COLUMN stocks."peDynamic"; Type: COMMENT; Schema: public; Owner: postgres
+-- Name: COLUMN stocks.circulating_market_cap; Type: COMMENT; Schema: public; Owner: postgres
 --
 
-COMMENT ON COLUMN public.stocks."peDynamic" IS '最新动态市盈率';
+COMMENT ON COLUMN public.stocks.circulating_market_cap IS '最新流通市值(元)';
+
+
+--
+-- Name: COLUMN stocks.pe_dynamic; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.stocks.pe_dynamic IS '最新动态市盈率';
 
 
 --
@@ -1251,10 +1279,10 @@ COMMENT ON COLUMN public.stocks.pb IS '最新市净率';
 
 
 --
--- Name: COLUMN stocks."turnoverRate"; Type: COMMENT; Schema: public; Owner: postgres
+-- Name: COLUMN stocks.turnover_rate; Type: COMMENT; Schema: public; Owner: postgres
 --
 
-COMMENT ON COLUMN public.stocks."turnoverRate" IS '最新换手率(%)';
+COMMENT ON COLUMN public.stocks.turnover_rate IS '最新换手率(%)';
 
 
 --
@@ -1265,10 +1293,10 @@ COMMENT ON COLUMN public.stocks.price IS '最新价';
 
 
 --
--- Name: COLUMN stocks."changePercent"; Type: COMMENT; Schema: public; Owner: postgres
+-- Name: COLUMN stocks.change_percent; Type: COMMENT; Schema: public; Owner: postgres
 --
 
-COMMENT ON COLUMN public.stocks."changePercent" IS '最新涨跌幅(%)';
+COMMENT ON COLUMN public.stocks.change_percent IS '最新涨跌幅(%)';
 
 
 --
@@ -1298,18 +1326,19 @@ ALTER SEQUENCE public.stocks_id_seq OWNED BY public.stocks.id;
 --
 
 CREATE TABLE public.trades (
-    id uuid NOT NULL,
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
     backtest_id uuid NOT NULL,
-    entry_date timestamp with time zone NOT NULL,
-    exit_date timestamp with time zone NOT NULL,
     stock_id integer NOT NULL,
-    direction public.enum_trades_direction NOT NULL,
+    direction character varying(10) NOT NULL,
     entry_price numeric(12,4) NOT NULL,
     exit_price numeric(12,4) NOT NULL,
     quantity integer NOT NULL,
     pnl numeric(12,4) NOT NULL,
     pnl_percent numeric(10,4) NOT NULL,
     holding_days integer NOT NULL,
+    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
+    entry_date timestamp with time zone NOT NULL,
+    exit_date timestamp with time zone NOT NULL,
     entry_value numeric(12,4) NOT NULL,
     exit_value numeric(12,4) NOT NULL,
     commission numeric(10,4),
@@ -1320,7 +1349,6 @@ CREATE TABLE public.trades (
     entry_signal character varying(50),
     exit_signal character varying(50),
     notes text,
-    created_at timestamp with time zone,
     "updatedAt" timestamp with time zone NOT NULL
 );
 
@@ -1335,24 +1363,10 @@ COMMENT ON COLUMN public.trades.backtest_id IS '回测ID';
 
 
 --
--- Name: COLUMN trades.entry_date; Type: COMMENT; Schema: public; Owner: postgres
---
-
-COMMENT ON COLUMN public.trades.entry_date IS '入场日期';
-
-
---
--- Name: COLUMN trades.exit_date; Type: COMMENT; Schema: public; Owner: postgres
---
-
-COMMENT ON COLUMN public.trades.exit_date IS '出场日期';
-
-
---
 -- Name: COLUMN trades.stock_id; Type: COMMENT; Schema: public; Owner: postgres
 --
 
-COMMENT ON COLUMN public.trades.stock_id IS '股票ID';
+COMMENT ON COLUMN public.trades.stock_id IS '股票ID';
 
 
 --
@@ -1402,6 +1416,20 @@ COMMENT ON COLUMN public.trades.pnl_percent IS '盈亏比例(%)';
 --
 
 COMMENT ON COLUMN public.trades.holding_days IS '持有天数';
+
+
+--
+-- Name: COLUMN trades.entry_date; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.trades.entry_date IS '入场日期';
+
+
+--
+-- Name: COLUMN trades.exit_date; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.trades.exit_date IS '出场日期';
 
 
 --
@@ -1480,13 +1508,13 @@ COMMENT ON COLUMN public.trades.notes IS '备注';
 
 CREATE TABLE public.trading_journals (
     id integer NOT NULL,
-    "userId" integer NOT NULL,
+    user_id integer NOT NULL,
     date date NOT NULL,
-    "marketSummary" text NOT NULL,
-    "portfolioAnalysis" text NOT NULL,
-    "actionPlan" text,
-    "createdAt" timestamp with time zone NOT NULL,
-    "updatedAt" timestamp with time zone NOT NULL,
+    market_summary text NOT NULL,
+    portfolio_analysis text NOT NULL,
+    action_plan text,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
     tags jsonb,
     mood character varying(20)
 );
@@ -1502,24 +1530,24 @@ COMMENT ON COLUMN public.trading_journals.date IS '复盘日期';
 
 
 --
--- Name: COLUMN trading_journals."marketSummary"; Type: COMMENT; Schema: public; Owner: postgres
+-- Name: COLUMN trading_journals.market_summary; Type: COMMENT; Schema: public; Owner: postgres
 --
 
-COMMENT ON COLUMN public.trading_journals."marketSummary" IS '大盘整体表现总结 (由 AI 生成)';
-
-
---
--- Name: COLUMN trading_journals."portfolioAnalysis"; Type: COMMENT; Schema: public; Owner: postgres
---
-
-COMMENT ON COLUMN public.trading_journals."portfolioAnalysis" IS '个人持仓/模拟盘表现分析 (由 AI 结合用户持仓生成)';
+COMMENT ON COLUMN public.trading_journals.market_summary IS '大盘整体表现总结 (由 AI 生成)';
 
 
 --
--- Name: COLUMN trading_journals."actionPlan"; Type: COMMENT; Schema: public; Owner: postgres
+-- Name: COLUMN trading_journals.portfolio_analysis; Type: COMMENT; Schema: public; Owner: postgres
 --
 
-COMMENT ON COLUMN public.trading_journals."actionPlan" IS 'AI 明日交易建议或注意事项';
+COMMENT ON COLUMN public.trading_journals.portfolio_analysis IS '个人持仓/模拟盘表现分析 (由 AI 结合用户持仓生成)';
+
+
+--
+-- Name: COLUMN trading_journals.action_plan; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON COLUMN public.trading_journals.action_plan IS 'AI 明日交易建议或注意事项';
 
 
 --
@@ -1566,25 +1594,25 @@ CREATE TABLE public.users (
     id integer NOT NULL,
     username character varying(50) NOT NULL,
     email character varying(100) NOT NULL,
-    "avatarUrl" character varying(255),
+    avatar_url character varying(255),
     nickname character varying(50),
     phone character varying(20),
-    "passwordHash" character varying(255) NOT NULL,
+    password_hash character varying(255) NOT NULL,
     role character varying(50) DEFAULT 'user'::character varying,
-    "isActive" boolean DEFAULT true,
-    "createdAt" timestamp with time zone NOT NULL,
-    "updatedAt" timestamp with time zone NOT NULL,
-    "riskConfig" jsonb DEFAULT '{"stopLossPercent": 5, "enableVolumeAlert": true, "takeProfitPercent": 10, "enableTechnicalAlert": true}'::jsonb
+    is_active boolean DEFAULT true,
+    created_at timestamp with time zone,
+    updated_at timestamp with time zone,
+    risk_config jsonb DEFAULT '{"stopLossPercent": 5, "enableVolumeAlert": true, "takeProfitPercent": 10, "enableTechnicalAlert": true}'::jsonb
 );
 
 
 ALTER TABLE public.users OWNER TO postgres;
 
 --
--- Name: COLUMN users."riskConfig"; Type: COMMENT; Schema: public; Owner: postgres
+-- Name: COLUMN users.risk_config; Type: COMMENT; Schema: public; Owner: postgres
 --
 
-COMMENT ON COLUMN public.users."riskConfig" IS '用户自定义的风控阈值配置';
+COMMENT ON COLUMN public.users.risk_config IS '用户自定义的风控阈值配置';
 
 
 --
@@ -1795,6 +1823,14 @@ ALTER TABLE ONLY public.scheduled_tasks
 
 ALTER TABLE ONLY public.stocks
     ADD CONSTRAINT stocks_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: stocks stocks_symbol_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.stocks
+    ADD CONSTRAINT stocks_symbol_key UNIQUE (symbol);
 
 
 --
@@ -2020,7 +2056,7 @@ ALTER TABLE ONLY public.users
 ALTER TABLE ONLY public.users
     ADD CONSTRAINT users_email_key31 UNIQUE (email);
 
-
+
 --
 -- Name: users users_email_key32; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
@@ -2147,6 +2183,14 @@ ALTER TABLE ONLY public.users
 
 ALTER TABLE ONLY public.users
     ADD CONSTRAINT users_email_key46 UNIQUE (email);
+
+
+--
+-- Name: users users_email_key47; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key47 UNIQUE (email);
 
 
 --
@@ -2534,6 +2578,14 @@ ALTER TABLE ONLY public.users
 
 
 --
+-- Name: users users_username_key47; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_username_key47 UNIQUE (username);
+
+
+--
 -- Name: users users_username_key5; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -2574,10 +2626,17 @@ ALTER TABLE ONLY public.users
 
 
 --
+-- Name: daily_bars_time_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX daily_bars_time_idx ON public.daily_bars USING btree ("time" DESC);
+
+
+--
 -- Name: data_update_logs_created_at; Type: INDEX; Schema: public; Owner: postgres
 --
 
-CREATE INDEX data_update_logs_created_at ON public.data_update_logs USING btree ("createdAt");
+CREATE INDEX data_update_logs_created_at ON public.data_update_logs USING btree (created_at);
 
 
 --
@@ -2598,28 +2657,28 @@ CREATE INDEX data_update_logs_type_status ON public.data_update_logs USING btree
 -- Name: favorite_stocks_group_id; Type: INDEX; Schema: public; Owner: postgres
 --
 
-CREATE INDEX favorite_stocks_group_id ON public.favorite_stocks USING btree ("groupId");
+CREATE INDEX favorite_stocks_group_id ON public.favorite_stocks USING btree (group_id);
 
 
 --
 -- Name: favorite_stocks_stock_id; Type: INDEX; Schema: public; Owner: postgres
 --
 
-CREATE INDEX favorite_stocks_stock_id ON public.favorite_stocks USING btree ("stockId");
+CREATE INDEX favorite_stocks_stock_id ON public.favorite_stocks USING btree (stock_id);
 
 
 --
 -- Name: favorite_stocks_user_id; Type: INDEX; Schema: public; Owner: postgres
 --
 
-CREATE INDEX favorite_stocks_user_id ON public.favorite_stocks USING btree ("userId");
+CREATE INDEX favorite_stocks_user_id ON public.favorite_stocks USING btree (user_id);
 
 
 --
 -- Name: idx_backtest_results_created_at; Type: INDEX; Schema: public; Owner: postgres
 --
 
-CREATE INDEX idx_backtest_results_created_at ON public.backtest_results USING btree (created_at);
+CREATE INDEX idx_backtest_results_created_at ON public.backtest_results USING btree (created_at DESC);
 
 
 --
@@ -2647,7 +2706,7 @@ CREATE UNIQUE INDEX idx_daily_bars_stock_time ON public.daily_bars USING btree (
 -- Name: idx_daily_bars_time_desc; Type: INDEX; Schema: public; Owner: postgres
 --
 
-CREATE INDEX idx_daily_bars_time_desc ON public.daily_bars USING btree ("time");
+CREATE INDEX idx_daily_bars_time_desc ON public.daily_bars USING btree ("time" DESC);
 
 
 --
@@ -2655,20 +2714,6 @@ CREATE INDEX idx_daily_bars_time_desc ON public.daily_bars USING btree ("time");
 --
 
 CREATE INDEX idx_trades_backtest_id ON public.trades USING btree (backtest_id);
-
-
---
--- Name: idx_trades_entry_date; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_trades_entry_date ON public.trades USING btree (entry_date);
-
-
---
--- Name: idx_trades_exit_date; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE INDEX idx_trades_exit_date ON public.trades USING btree (exit_date);
 
 
 --
@@ -2703,7 +2748,7 @@ CREATE UNIQUE INDEX stocks_symbol ON public.stocks USING btree (symbol);
 -- Name: user_stock_unique; Type: INDEX; Schema: public; Owner: postgres
 --
 
-CREATE UNIQUE INDEX user_stock_unique ON public.favorite_stocks USING btree ("userId", "stockId");
+CREATE UNIQUE INDEX user_stock_unique ON public.favorite_stocks USING btree (user_id, stock_id);
 
 
 --
@@ -2721,6 +2766,27 @@ CREATE UNIQUE INDEX users_username ON public.users USING btree (username);
 
 
 --
+-- Name: daily_bars ts_insert_blocker; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER ts_insert_blocker BEFORE INSERT ON public.daily_bars FOR EACH ROW EXECUTE FUNCTION _timescaledb_functions.insert_blocker();
+
+
+--
+-- Name: backtest_results update_backtest_results_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER update_backtest_results_updated_at BEFORE UPDATE ON public.backtest_results FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+--
+-- Name: stocks update_stocks_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER update_stocks_updated_at BEFORE UPDATE ON public.stocks FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+--
 -- Name: backtest_results backtest_results_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -2733,7 +2799,7 @@ ALTER TABLE ONLY public.backtest_results
 --
 
 ALTER TABLE ONLY public.daily_bars
-    ADD CONSTRAINT daily_bars_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id) ON UPDATE CASCADE ON DELETE CASCADE;
+    ADD CONSTRAINT daily_bars_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id) ON DELETE CASCADE;
 
 
 --
@@ -2741,7 +2807,7 @@ ALTER TABLE ONLY public.daily_bars
 --
 
 ALTER TABLE ONLY public.favorite_stocks
-    ADD CONSTRAINT "favorite_stocks_stockId_fkey" FOREIGN KEY ("stockId") REFERENCES public.stocks(id) ON UPDATE CASCADE;
+    ADD CONSTRAINT "favorite_stocks_stockId_fkey" FOREIGN KEY (stock_id) REFERENCES public.stocks(id) ON UPDATE CASCADE;
 
 
 --
@@ -2749,7 +2815,7 @@ ALTER TABLE ONLY public.favorite_stocks
 --
 
 ALTER TABLE ONLY public.favorite_stocks
-    ADD CONSTRAINT "favorite_stocks_userId_fkey" FOREIGN KEY ("userId") REFERENCES public.users(id) ON UPDATE CASCADE;
+    ADD CONSTRAINT "favorite_stocks_userId_fkey" FOREIGN KEY (user_id) REFERENCES public.users(id) ON UPDATE CASCADE;
 
 
 --
@@ -2757,7 +2823,7 @@ ALTER TABLE ONLY public.favorite_stocks
 --
 
 ALTER TABLE ONLY public.paper_trading_portfolios
-    ADD CONSTRAINT "paper_trading_portfolios_userId_fkey" FOREIGN KEY ("userId") REFERENCES public.users(id) ON UPDATE CASCADE ON DELETE CASCADE;
+    ADD CONSTRAINT "paper_trading_portfolios_userId_fkey" FOREIGN KEY (user_id) REFERENCES public.users(id) ON UPDATE CASCADE ON DELETE CASCADE;
 
 
 --
@@ -2765,7 +2831,7 @@ ALTER TABLE ONLY public.paper_trading_portfolios
 --
 
 ALTER TABLE ONLY public.paper_trading_positions
-    ADD CONSTRAINT "paper_trading_positions_portfolioId_fkey" FOREIGN KEY ("portfolioId") REFERENCES public.paper_trading_portfolios(id) ON UPDATE CASCADE ON DELETE CASCADE;
+    ADD CONSTRAINT "paper_trading_positions_portfolioId_fkey" FOREIGN KEY (portfolio_id) REFERENCES public.paper_trading_portfolios(id) ON UPDATE CASCADE ON DELETE CASCADE;
 
 
 --
@@ -2773,7 +2839,7 @@ ALTER TABLE ONLY public.paper_trading_positions
 --
 
 ALTER TABLE ONLY public.paper_trading_snapshots
-    ADD CONSTRAINT "paper_trading_snapshots_portfolioId_fkey" FOREIGN KEY ("portfolioId") REFERENCES public.paper_trading_portfolios(id) ON UPDATE CASCADE ON DELETE CASCADE;
+    ADD CONSTRAINT "paper_trading_snapshots_portfolioId_fkey" FOREIGN KEY (portfolio_id) REFERENCES public.paper_trading_portfolios(id) ON UPDATE CASCADE ON DELETE CASCADE;
 
 
 --
@@ -2781,7 +2847,7 @@ ALTER TABLE ONLY public.paper_trading_snapshots
 --
 
 ALTER TABLE ONLY public.paper_trading_trades
-    ADD CONSTRAINT "paper_trading_trades_portfolioId_fkey" FOREIGN KEY ("portfolioId") REFERENCES public.paper_trading_portfolios(id) ON UPDATE CASCADE ON DELETE CASCADE;
+    ADD CONSTRAINT "paper_trading_trades_portfolioId_fkey" FOREIGN KEY (portfolio_id) REFERENCES public.paper_trading_portfolios(id) ON UPDATE CASCADE ON DELETE CASCADE;
 
 
 --
@@ -2789,7 +2855,7 @@ ALTER TABLE ONLY public.paper_trading_trades
 --
 
 ALTER TABLE ONLY public.risk_alerts
-    ADD CONSTRAINT "risk_alerts_userId_fkey" FOREIGN KEY ("userId") REFERENCES public.users(id) ON UPDATE CASCADE ON DELETE CASCADE;
+    ADD CONSTRAINT "risk_alerts_userId_fkey" FOREIGN KEY (user_id) REFERENCES public.users(id) ON UPDATE CASCADE ON DELETE CASCADE;
 
 
 --
@@ -2813,12 +2879,10 @@ ALTER TABLE ONLY public.trades
 --
 
 ALTER TABLE ONLY public.trading_journals
-    ADD CONSTRAINT "trading_journals_userId_fkey" FOREIGN KEY ("userId") REFERENCES public.users(id) ON UPDATE CASCADE ON DELETE CASCADE;
+    ADD CONSTRAINT "trading_journals_userId_fkey" FOREIGN KEY (user_id) REFERENCES public.users(id) ON UPDATE CASCADE ON DELETE CASCADE;
 
 
 --
 -- PostgreSQL database dump complete
 --
-
-\unrestrict xbqIeVxwDr7WagVvaDxsaU6jhWSzQ1szbPjDXPBqzLM5FkKmshPQPaWjOc0owjs
 

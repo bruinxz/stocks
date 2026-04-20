@@ -1,0 +1,10 @@
+#!/usr/bin/expect -f
+set timeout -1
+set password [lindex $argv 0]
+
+spawn ssh -o StrictHostKeyChecking=no -p 14126 root@103.242.3.87 "cat /opt/stocks/rename_columns.sql | docker exec -i stock_postgres psql -U postgres -d stock_backtest"
+expect {
+    "*yes/no*" { send "yes\r"; exp_continue }
+    "*assword:*" { send "$password\r"; exp_continue }
+    eof
+}

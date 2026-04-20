@@ -62,8 +62,10 @@ export class DailyScreener extends Model {
   declare score: number;
 
   @CreatedAt
+  @Column({ field: 'created_at' })
   declare createdAt: Date;
 
   @UpdatedAt
+  @Column({ field: 'updated_at' })
   declare updatedAt: Date;
 }

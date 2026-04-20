@@ -26,6 +26,7 @@ export class PaperTradingSnapshot extends Model {
   @Column({
     type: DataType.INTEGER,
     allowNull: false,
+    field: 'portfolio_id',
   })
   declare portfolioId: number;
 
@@ -42,24 +43,29 @@ export class PaperTradingSnapshot extends Model {
   @Column({
     type: DataType.DECIMAL(15, 2),
     allowNull: false,
+    field: 'total_value',
   })
   declare totalValue: number;
 
   @Column({
     type: DataType.DECIMAL(15, 2),
     allowNull: false,
+    field: 'current_cash',
   })
   declare currentCash: number;
 
   @Column({
     type: DataType.DECIMAL(15, 2),
     allowNull: false,
+    field: 'position_value',
   })
   declare positionValue: number;
 
   @CreatedAt
+  @Column({ field: 'created_at' })
   declare createdAt: Date;
 
   @UpdatedAt
+  @Column({ field: 'updated_at' })
   declare updatedAt: Date;
 }

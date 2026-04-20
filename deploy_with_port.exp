@@ -1,0 +1,12 @@
+#!/usr/bin/expect -f
+set timeout -1
+set password [lindex $argv 0]
+set src [lindex $argv 1]
+set dest [lindex $argv 2]
+
+spawn rsync -avz -e "ssh -p 14126 -o StrictHostKeyChecking=no" --exclude 'node_modules' --exclude '.git' --exclude 'data' $src $dest
+expect {
+    "*yes/no*" { send "yes\r"; exp_continue }
+    "*assword:*" { send "$password\r"; exp_continue }
+    eof
+}

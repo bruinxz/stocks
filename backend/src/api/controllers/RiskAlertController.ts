@@ -11,8 +11,8 @@ export class RiskAlertController {
 
       const user = await User.findByPk(userId);
       const alerts = await RiskAlert.findAll({
-        where: { userId },
-        order: [['createdAt', 'DESC']],
+        where: { user_id: userId },
+        order: [['created_at', 'DESC']],
         limit: 50, // 只返回最近的50条
       });
 
@@ -72,7 +72,7 @@ export class RiskAlertController {
       const { id } = req.params;
       const user = (req as any).user;
 
-      const alert = await RiskAlert.findOne({ where: { id, userId: user.id } });
+      const alert = await RiskAlert.findOne({ where: { id, user_id: user.id } });
       if (alert) {
         alert.isRead = true;
         await alert.save();
@@ -92,7 +92,7 @@ export class RiskAlertController {
 
       await RiskAlert.update(
         { isRead: true },
-        { where: { userId: user.id, isRead: false } }
+        { where: { user_id: user.id, is_read: false } }
       );
 
       res.json({ success: true, message: '所有告警已标记为已读' });

@@ -37,8 +37,8 @@ export class AuthController {
   private async initDefaultUsers() {
     try {
       const defaultUsers = [
-        { username: 'xz', passwordHash: '666', email: 'xz@example.com' },
-        { username: 'lym', passwordHash: '666', email: 'lym@example.com' },
+        { username: 'xz', password_hash: '666', email: 'xz@example.com' },
+        { username: 'lym', password_hash: '666', email: 'lym@example.com' },
       ];
 
       for (const u of defaultUsers) {
@@ -47,7 +47,7 @@ export class AuthController {
           await User.create({
             username: u.username,
             email: u.email,
-            passwordHash: u.passwordHash,
+            passwordHash: u.password_hash,
             role: 'admin',
             isActive: true,
           });
@@ -128,7 +128,7 @@ export class AuthController {
 
       // 查找用户
       const user = await User.findOne({
-        where: { username, isActive: true },
+        where: { username, is_active: true },
       });
 
       if (!user) {

@@ -26,6 +26,7 @@ export class PaperTradingPosition extends Model {
   @Column({
     type: DataType.INTEGER,
     allowNull: false,
+    field: 'portfolio_id',
   })
   declare portfolioId: number;
 
@@ -58,6 +59,7 @@ export class PaperTradingPosition extends Model {
     type: DataType.DECIMAL(10, 3),
     allowNull: false,
     defaultValue: 0,
+    field: 'avg_cost',
     comment: '平均建仓成本价',
   })
   declare avgCost: number;
@@ -66,6 +68,7 @@ export class PaperTradingPosition extends Model {
     type: DataType.DECIMAL(10, 3),
     allowNull: false,
     defaultValue: 0,
+    field: 'current_price',
     comment: '最新价格',
   })
   declare currentPrice: number;
@@ -74,6 +77,7 @@ export class PaperTradingPosition extends Model {
     type: DataType.DECIMAL(15, 2),
     allowNull: false,
     defaultValue: 0,
+    field: 'market_value',
     comment: '当前持仓市值',
   })
   declare marketValue: number;
@@ -82,13 +86,16 @@ export class PaperTradingPosition extends Model {
     type: DataType.DECIMAL(15, 2),
     allowNull: false,
     defaultValue: 0,
+    field: 'unrealized_pnl',
     comment: '浮动盈亏',
   })
   declare unrealizedPnl: number;
 
   @CreatedAt
+  @Column({ field: 'created_at' })
   declare createdAt: Date;
 
   @UpdatedAt
+  @Column({ field: 'updated_at' })
   declare updatedAt: Date;
 }

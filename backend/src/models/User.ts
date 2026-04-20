@@ -57,6 +57,7 @@ export class User extends Model {
   @Column({
     type: DataType.STRING(255),
     allowNull: true,
+    field: 'avatar_url',
   })
   declare avatarUrl: string;
 
@@ -75,6 +76,7 @@ export class User extends Model {
   @Column({
     type: DataType.STRING(255),
     allowNull: false,
+    field: 'password_hash',
   })
   declare passwordHash: string;
 
@@ -87,6 +89,7 @@ export class User extends Model {
   @Column({
     type: DataType.BOOLEAN,
     defaultValue: true,
+    field: 'is_active',
   })
   declare isActive: boolean;
 
@@ -99,14 +102,17 @@ export class User extends Model {
       enableVolumeAlert: true,
       enableTechnicalAlert: true,
     },
+    field: 'risk_config',
     comment: '用户自定义的风控阈值配置',
   })
   declare riskConfig: any;
 
   @CreatedAt
+  @Column({ field: 'created_at' })
   declare createdAt: Date;
 
   @UpdatedAt
+  @Column({ field: 'updated_at' })
   declare updatedAt: Date;
 
   @HasMany(() => BacktestResult)

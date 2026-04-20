@@ -22,6 +22,7 @@ export class ScheduledTask extends Model {
   @Column({
     type: DataType.STRING(100),
     allowNull: false,
+    field: 'cron_expression',
     comment: 'cron表达式',
   })
   declare cronExpression: string;
@@ -43,25 +44,30 @@ export class ScheduledTask extends Model {
   @Column({
     type: DataType.BOOLEAN,
     defaultValue: true,
+    field: 'is_active',
   })
   declare isActive: boolean;
 
   @Column({
     type: DataType.DATE,
     allowNull: true,
+    field: 'last_run_at',
   })
   declare lastRunAt: Date;
 
   @Column({
     type: DataType.STRING(50),
     allowNull: true,
+    field: 'last_run_status',
     comment: 'SUCCESS, FAILED, RUNNING',
   })
   declare lastRunStatus: string;
 
   @CreatedAt
+  @Column({ field: 'created_at' })
   declare createdAt: Date;
 
   @UpdatedAt
+  @Column({ field: 'updated_at' })
   declare updatedAt: Date;
 }

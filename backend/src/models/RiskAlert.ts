@@ -26,6 +26,7 @@ export class RiskAlert extends Model {
   @Column({
     type: DataType.INTEGER,
     allowNull: false,
+    field: 'user_id',
   })
   declare userId: number;
 
@@ -63,13 +64,16 @@ export class RiskAlert extends Model {
   @Column({
     type: DataType.BOOLEAN,
     defaultValue: false,
+    field: 'is_read',
     comment: '是否已读',
   })
   declare isRead: boolean;
 
   @CreatedAt
+  @Column({ field: 'created_at' })
   declare createdAt: Date;
 
   @UpdatedAt
+  @Column({ field: 'updated_at' })
   declare updatedAt: Date;
 }

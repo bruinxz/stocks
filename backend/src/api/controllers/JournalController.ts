@@ -9,7 +9,7 @@ export class JournalController {
       const user = (req as any).user;
 
       const journals = await TradingJournal.findAll({
-        where: { userId: user.id },
+        where: { user_id: user.id },
         order: [['date', 'DESC']],
       });
 
@@ -30,7 +30,7 @@ export class JournalController {
       const user = (req as any).user;
 
       const journal = await TradingJournal.findOne({
-        where: { date, userId: user.id },
+        where: { date, user_id: user.id },
       });
 
       if (!journal) {
@@ -56,7 +56,7 @@ export class JournalController {
 
       // 检查该日期是否已经有记录
       const existing = await TradingJournal.findOne({
-        where: { date, userId: user.id }
+        where: { date, user_id: user.id }
       });
 
       if (existing) {
@@ -64,7 +64,7 @@ export class JournalController {
       }
 
       const newJournal = await TradingJournal.create({
-        userId: user.id,
+        user_id: user.id,
         date,
         marketSummary,
         portfolioAnalysis,
@@ -88,7 +88,7 @@ export class JournalController {
       const { marketSummary, portfolioAnalysis, actionPlan, tags, mood } = req.body;
 
       const journal = await TradingJournal.findOne({
-        where: { date, userId: user.id },
+        where: { date, user_id: user.id },
       });
 
       if (!journal) {
@@ -117,7 +117,7 @@ export class JournalController {
       const user = (req as any).user;
 
       const journal = await TradingJournal.findOne({
-        where: { date, userId: user.id },
+        where: { date, user_id: user.id },
       });
 
       if (!journal) {

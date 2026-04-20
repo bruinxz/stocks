@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Layout, ConfigProvider, Menu, Avatar, Dropdown } from 'antd';
 import {
   BrowserRouter as Router,
@@ -21,8 +21,10 @@ import {
   BarChartOutlined,
 } from '@ant-design/icons';
 import zhCN from 'antd/locale/zh_CN';
-import { useSelector } from 'react-redux';
+import { useSelector, useDispatch } from 'react-redux';
 import { RootState } from './store/rootReducer';
+import { loginSuccess, logout } from './store/authSlice';
+import { authService } from './services/authService';
 import { API_DOMAIN_URL } from './services/api';
 
 import Dashboard from './pages/Dashboard';
@@ -33,12 +35,14 @@ import Portfolio from './pages/Portfolio';
 import Market from './pages/Market';
 import DataUpdateStatus from './pages/DataUpdateStatus';
 import Profile from './pages/Profile';
+import UserManagement from './pages/UserManagement';
 import AIAdvisor from './pages/AIAdvisor';
 import TaskScheduler from './pages/TaskScheduler';
 import Screener from './pages/Screener';
 import PaperTrading from './pages/PaperTrading';
 import RiskAlerts from './pages/RiskAlerts';
 import TradingJournal from './pages/TradingJournal';
+import SystemLogs from './pages/SystemLogs';
 import {
   RobotOutlined,
   ClockCircleOutlined,
@@ -62,8 +66,29 @@ const ProtectedRoute = ({ children }: { children: JSX.Element }) => {
 const AppContent: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const dispatch = useDispatch();
   const token = localStorage.getItem('token');
   const { user } = useSelector((state: RootState) => state.auth);
+
+  useEffect(() => {
+    // Fetch profile on initial load if token exists but user state is missing
+    const fetchProfile = async () => {
+      if (token && !user) {
+        try {
+          const res = await authService.getCurrentUser();
+          if (res && res.success) {
+            dispatch(loginSuccess({ user: res.data.user, token }));
+          } else {
+            dispatch(logout());
+            localStorage.removeItem('token');
+          }
+        } catch (error) {
+          console.error('Failed to fetch user profile on load', error);
+        }
+      }
+    };
+    fetchProfile();
+  }, [token, user, dispatch]);
 
   const displayUsername =
     user?.nickname || user?.username || localStorage.getItem('username') || 'Admin';
@@ -135,12 +160,20 @@ const AppContent: React.FC = () => {
       type: 'group',
       label: '系统与设置',
       children: [
+        ...(user?.role === 'admin'
+          ? [{ key: '/users', icon: <UserOutlined />, label: <Link to="/users">用户管理</Link> }]
+          : []),
         { key: '/journals', icon: <BookOutlined />, label: <Link to="/journals">交易日记</Link> },
         { key: '/tasks', icon: <ClockCircleOutlined />, label: <Link to="/tasks">定时调度</Link> },
         {
           key: '/data-update',
           icon: <SyncOutlined />,
           label: <Link to="/data-update">系统监控</Link>,
+        },
+        {
+          key: '/logs',
+          icon: <BookOutlined />,
+          label: <Link to="/logs">系统日志</Link>,
         },
         { key: '/profile', icon: <UserOutlined />, label: <Link to="/profile">个人中心</Link> },
       ],
@@ -303,6 +336,14 @@ const AppContent: React.FC = () => {
               }
             />
             <Route
+              path="/logs"
+              element={
+                <ProtectedRoute>
+                  <SystemLogs />
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="/backtest"
               element={
                 <ProtectedRoute>
@@ -347,6 +388,14 @@ const AppContent: React.FC = () => {
               element={
                 <ProtectedRoute>
                   <Profile />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/users"
+              element={
+                <ProtectedRoute>
+                  <UserManagement />
                 </ProtectedRoute>
               }
             />

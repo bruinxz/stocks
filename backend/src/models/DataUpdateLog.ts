@@ -23,7 +23,7 @@ export enum UpdateStatus {
       fields: ['type', 'status'],
     },
     {
-      fields: ['createdAt'],
+      fields: ['created_at'],
     },
     {
       fields: ['date'],
@@ -65,46 +65,52 @@ export class DataUpdateLog extends Model {
     allowNull: true,
     comment: '更新结果详情',
   })
-  result?: any;
+  declare result?: any;
 
   @Column({
     type: DataType.TEXT,
     allowNull: true,
     comment: '错误信息',
   })
-  error?: string;
+  declare error?: string;
 
   @Column({
     type: DataType.INTEGER,
     allowNull: true,
+    field: 'affected_stocks',
     comment: '影响的股票数量',
   })
-  affectedStocks?: number;
+  declare affectedStocks?: number;
 
   @Column({
     type: DataType.INTEGER,
     allowNull: true,
+    field: 'inserted_records',
     comment: '插入的数据条数',
   })
-  insertedRecords?: number;
+  declare insertedRecords?: number;
 
   @Column({
     type: DataType.DATE,
     allowNull: true,
+    field: 'started_at',
     comment: '开始时间',
   })
-  startedAt?: Date;
+  declare startedAt?: Date;
 
   @Column({
     type: DataType.DATE,
     allowNull: true,
+    field: 'completed_at',
     comment: '完成时间',
   })
-  completedAt?: Date;
+  declare completedAt?: Date;
 
   @CreatedAt
+  @Column({ field: 'created_at' })
   declare createdAt: Date;
 
   @UpdatedAt
+  @Column({ field: 'updated_at' })
   declare updatedAt: Date;
 }
