@@ -4,9 +4,9 @@
   "description": "A-share stock backtesting backend",
   "main": "dist/index.js",
   "scripts": {
-    "dev": "nodemon --exec \"ts-node --transpile-only src/index.ts\"",
+    "dev": "NODE_ENV=development nodemon --exec \"ts-node --transpile-only src/index.ts\"",
     "build": "tsc",
-    "start": "node dist/index.js",
+    "start": "NODE_ENV=production node dist/index.js",
     "test": "jest",
     "test:watch": "jest --watch",
     "lint": "eslint src --ext .ts",
