@@ -371,11 +371,14 @@ stocks/
 │   ├── public/             # 静态资源
 │   ├── package.json        # 依赖配置
 │   └── tsconfig.json       # TypeScript配置
-├── shared/                 # 共享代码
-│   └── types/              # TypeScript类型定义
 ├── scripts/                # 工具脚本
-│   └── init-db.sql         # 数据库初始化脚本
+│   ├── data_analysis/      # 数据分析与校验脚本
+│   ├── deployment/         # 部署与自动化运行脚本
+│   ├── setup_and_db/       # 数据库初始化与环境设置脚本
+│   └── tests/              # 各种功能验证与测试脚本
+├── docs/                   # 项目相关文档
 ├── docker-compose.yml      # 容器编排配置
+├── AGENTS.md               # 核心架构与角色说明文档
 └── README.md               # 项目文档
 ```
 
