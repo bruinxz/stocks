@@ -1583,7 +1583,7 @@ export class MarketController {
         ],
         where: {
           time: {
-            [Op.between]: [new Date(start_date as string), new Date(end_date as string)],
+            [Op.between]: [start_date, end_date], // 直接使用字符串格式的日期 YYYY-MM-DD
           }
         },
         group: ['stock_id'],
@@ -1593,7 +1593,9 @@ export class MarketController {
       // 建立 stock_id -> count 的映射，O(1) 复杂度查找
       const barCountMap = new Map<number, number>();
       (barCounts as any[]).forEach(item => {
-        barCountMap.set(item.stock_id, parseInt(item.count, 10));
+        // Handle different ORM/DB return formats where the count might be a string or number
+        const countVal = typeof item.count === 'string' ? parseInt(item.count, 10) : item.count;
+        barCountMap.set(Number(item.stock_id), countVal);
       });
 
       // 统计阶梯

@@ -1,19 +1,63 @@
 import { Request, Response, NextFunction } from 'express';
 import { aiAdvisorService } from '../../services/AIAdvisorService';
 import { logger } from '../../utils/logger';
+import { Stock } from '../../models/Stock';
+import { Op } from 'sequelize';
 import axios from 'axios';
 
 const TRADING_AGENTS_URL = process.env.TRADING_AGENTS_URL || 'http://47.93.224.109:8000';
 
 export class AIAdvisorController {
+  constructor() {
+    this.streamAnalyze = this.streamAnalyze.bind(this);
+    this.analyze = this.analyze.bind(this);
+    this.getTask = this.getTask.bind(this);
+    this.resolveTicker = this.resolveTicker.bind(this);
+  }
+
+  /**
+   * 将用户输入的代码或名称解析为实际的股票代码 (ticker)
+   */
+  private async resolveTicker(input: string): Promise<string | null> {
+    if (!input) return null;
+    
+    // 如果看起来已经是合法的 ticker 格式 (例如 sh.600000 或 sz.000001)
+    if (/^(sh\.|sz\.|bj\.)?\d{6}$/.test(input.toLowerCase())) {
+      // 如果只有6位数字，尝试补全
+      if (/^\d{6}$/.test(input)) {
+        const stock = await Stock.findOne({ where: { symbol: { [Op.like]: `%${input}%` } } });
+        if (stock) return stock.symbol;
+      }
+      return input.toLowerCase();
+    }
+
+    // 否则当做股票名称去数据库查询
+    const stock = await Stock.findOne({
+      where: {
+        name: { [Op.like]: `%${input}%` }
+      }
+    });
+
+    if (stock) {
+      return stock.symbol;
+    }
+
+    return null;
+  }
+
   async analyze(req: Request, res: Response, next: NextFunction) {
     try {
       const { ticker, targetDate, isAsync } = req.body;
       if (!ticker) {
-        return res.status(400).json({ success: false, message: '股票代码 (ticker) 不能为空' });
+        return res.status(400).json({ success: false, message: '股票代码或名称 (ticker) 不能为空' });
       }
 
-      const result = await aiAdvisorService.analyzeStock(ticker, targetDate, isAsync);
+      const resolvedTicker = await this.resolveTicker(ticker);
+      if (!resolvedTicker) {
+        return res.status(404).json({ success: false, message: `无法识别股票: ${ticker}` });
+      }
+
+      const result = await aiAdvisorService.analyzeStock(resolvedTicker, targetDate, isAsync);
       res.json({
         success: true,
         data: result,
@@ -47,23 +91,32 @@ export class AIAdvisorController {
    */
   async streamAnalyze(req: Request, res: Response, next: NextFunction) {
     try {
-      const { ticker, target_date } = req.query;
-      if (!ticker) {
-        return res.status(400).json({ success: false, message: '股票代码 (ticker) 不能为空' });
+      const tickerInput = req.query.ticker as string;
+      if (!tickerInput) {
+        return res.status(400).json({ success: false, message: '股票代码或名称 (ticker) 不能为空' });
       }
+
+      const resolvedTicker = await this.resolveTicker(tickerInput);
+      if (!resolvedTicker) {
+        return res.status(404).json({ success: false, message: `无法识别股票: ${tickerInput}` });
+      }
+
+      const target_date = req.query.target_date as string;
 
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
       res.setHeader('Connection', 'keep-alive');
 
-      let url = `${TRADING_AGENTS_URL}/api/analyze/stream?ticker=${ticker}`;
+      let url = `${TRADING_AGENTS_URL}/api/analyze/stream?ticker=${resolvedTicker}`;
       if (target_date) {
         url += `&target_date=${target_date}`;
       }
+      
+      logger.info(`Forwarding SSE request to TradingAgent: ${url}`);
 
       const streamResponse = await axios.get(url, {
         responseType: 'stream',
-        timeout: 60000, // 增加 60 秒超时，防止下游服务挂起导致内存泄漏
+        timeout: 1200000, // 将超时时间增加到 20 分钟 (1,200,000 毫秒)
         headers: {
           Accept: 'text/event-stream',
         },

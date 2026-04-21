@@ -13,6 +13,7 @@ import {
   Empty,
   Row,
   Col,
+  Descriptions,
 } from 'antd';
 import {
   RobotOutlined,
@@ -34,13 +35,88 @@ interface AIEvent {
   analyst?: string;
 }
 
+const parseDecision = (decisionStr: string) => {
+  let rating = 'HOLD';
+  let summary = '';
+  let thesis = '';
+
+  if (!decisionStr) return { rating, summary, thesis };
+
+  // Try to parse structured markdown
+  const ratingMatch = decisionStr.match(/### 1\. \*\*Rating\*\*:\s*([^\n]+)/i);
+  if (ratingMatch) {
+    rating = ratingMatch[1].trim();
+  } else {
+    // Fallback simple search
+    if (decisionStr.toUpperCase().includes('BUY')) rating = 'BUY';
+    else if (decisionStr.toUpperCase().includes('SELL')) rating = 'SELL';
+  }
+
+  const summaryMatch = decisionStr.match(
+    /### 2\. \*\*Executive Summary\*\*\n([\s\S]*?)(?=### 3\.|\n\n###|$)/i
+  );
+  if (summaryMatch) {
+    summary = summaryMatch[1].trim();
+  }
+
+  const thesisMatch = decisionStr.match(/### 3\. \*\*Investment Thesis\*\*\n([\s\S]*)$/i);
+  if (thesisMatch) {
+    thesis = thesisMatch[1].trim();
+  } else if (!summaryMatch && !ratingMatch) {
+    // If it doesn't match the new structure at all, just dump it in thesis
+    thesis = decisionStr;
+  }
+
+  return { rating, summary, thesis };
+};
+
 const AIAdvisor: React.FC = () => {
-  const [ticker, setTicker] = useState<string>('');
-  const [analyzing, setAnalyzing] = useState<boolean>(false);
-  const [events, setEvents] = useState<AIEvent[]>([]);
-  const [decision, setDecision] = useState<string | null>(null);
+  // 从 localStorage 恢复初始状态
+  const [ticker, setTicker] = useState<string>(() => {
+    return localStorage.getItem('aiAdvisor_ticker') || '';
+  });
+  const [analyzing, setAnalyzing] = useState<boolean>(() => {
+    return localStorage.getItem('aiAdvisor_analyzing') === 'true';
+  });
+  const [events, setEvents] = useState<AIEvent[]>(() => {
+    const savedEvents = localStorage.getItem('aiAdvisor_events');
+    return savedEvents ? JSON.parse(savedEvents) : [];
+  });
+  const [decision, setDecision] = useState<string | null>(() => {
+    return localStorage.getItem('aiAdvisor_decision') || null;
+  });
+
   const eventSourceRef = useRef<EventSource | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // 状态发生变化时，保存到 localStorage
+  useEffect(() => {
+    localStorage.setItem('aiAdvisor_ticker', ticker);
+  }, [ticker]);
+
+  useEffect(() => {
+    localStorage.setItem('aiAdvisor_analyzing', String(analyzing));
+  }, [analyzing]);
+
+  useEffect(() => {
+    localStorage.setItem('aiAdvisor_events', JSON.stringify(events));
+  }, [events]);
+
+  useEffect(() => {
+    if (decision) {
+      localStorage.setItem('aiAdvisor_decision', decision);
+    } else {
+      localStorage.removeItem('aiAdvisor_decision');
+    }
+  }, [decision]);
+
+  // 如果刷新页面时状态是 analyzing，强制重置，因为 EventSource 无法跨页面保存
+  useEffect(() => {
+    if (analyzing) {
+      setAnalyzing(false);
+      localStorage.setItem('aiAdvisor_analyzing', 'false');
+    }
+  }, []);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -110,14 +186,42 @@ const AIAdvisor: React.FC = () => {
     return 'gold';
   };
 
+  const handleClear = () => {
+    setEvents([]);
+    setDecision(null);
+    setTicker('');
+    localStorage.removeItem('aiAdvisor_events');
+    localStorage.removeItem('aiAdvisor_decision');
+    localStorage.removeItem('aiAdvisor_ticker');
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      setAnalyzing(false);
+      localStorage.setItem('aiAdvisor_analyzing', 'false');
+    }
+  };
+
   return (
     <div className="fade-in-up">
       <div className="page-header-modern">
-        <div>
-          <h1 className="page-title-modern">AI 深度研报</h1>
-          <p className="page-subtitle-modern">
-            基于多智能体(TradingAgents)大模型框架的实时推演与决策建议
-          </p>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            width: '100%',
+          }}
+        >
+          <div>
+            <h1 className="page-title-modern">AI 深度研报</h1>
+            <p className="page-subtitle-modern">
+              基于多智能体(TradingAgents)大模型框架的实时推演与决策建议
+            </p>
+          </div>
+          {(events.length > 0 || ticker) && (
+            <Button onClick={handleClear} disabled={analyzing}>
+              清空历史记录
+            </Button>
+          )}
         </div>
       </div>
 
@@ -174,11 +278,19 @@ const AIAdvisor: React.FC = () => {
             <Timeline>
               {events.map((evt, index) => {
                 if (evt.type === 'system') {
+                  // 如果推演已经完成，就不再显示转圈了
+                  const isDone = events.some(e => e.type === 'completed' || e.type === 'error');
                   return (
                     <Timeline.Item
                       key={index}
-                      color="gray"
-                      dot={<Spin indicator={<LoadingOutlined style={{ fontSize: 14 }} spin />} />}
+                      color={isDone ? 'blue' : 'gray'}
+                      dot={
+                        isDone ? (
+                          <CheckCircleOutlined style={{ fontSize: 14 }} />
+                        ) : (
+                          <Spin indicator={<LoadingOutlined style={{ fontSize: 14 }} spin />} />
+                        )
+                      }
                     >
                       <Text type="secondary">{evt.message}</Text>
                     </Timeline.Item>
@@ -218,6 +330,8 @@ const AIAdvisor: React.FC = () => {
                 }
 
                 if (evt.type === 'completed') {
+                  const { rating, summary, thesis } = parseDecision(evt.decision || '');
+
                   return (
                     <Timeline.Item
                       key={index}
@@ -227,15 +341,57 @@ const AIAdvisor: React.FC = () => {
                       <Text strong style={{ fontSize: 16 }}>
                         推演完成！
                       </Text>
-                      <div style={{ marginTop: 8 }}>
-                        <Text>AI 最终决策建议: </Text>
-                        <Tag
-                          color={getDecisionColor(evt.decision || '')}
-                          style={{ fontSize: 16, padding: '4px 12px' }}
-                        >
-                          {evt.decision}
-                        </Tag>
-                      </div>
+
+                      <Card
+                        size="small"
+                        title={
+                          <>
+                            <RobotOutlined /> 最终决策报告
+                          </>
+                        }
+                        style={{ marginTop: 12, borderColor: '#b7eb8f', background: '#f6ffed' }}
+                        headStyle={{ background: '#e6f7ff', borderBottom: '1px solid #b7eb8f' }}
+                      >
+                        <Descriptions column={1} layout="vertical" size="small">
+                          <Descriptions.Item label={<Text strong>投资评级 (Rating)</Text>}>
+                            <Tag
+                              color={getDecisionColor(rating)}
+                              style={{ fontSize: 16, padding: '4px 12px', fontWeight: 'bold' }}
+                            >
+                              {rating.toUpperCase()}
+                            </Tag>
+                          </Descriptions.Item>
+
+                          {summary && (
+                            <Descriptions.Item
+                              label={<Text strong>执行摘要 (Executive Summary)</Text>}
+                            >
+                              <Paragraph style={{ whiteSpace: 'pre-wrap', marginBottom: 0 }}>
+                                {summary}
+                              </Paragraph>
+                            </Descriptions.Item>
+                          )}
+
+                          {thesis && (
+                            <Descriptions.Item
+                              label={<Text strong>投资论点 (Investment Thesis)</Text>}
+                            >
+                              <div
+                                style={{
+                                  background: '#fff',
+                                  padding: '12px',
+                                  borderRadius: '6px',
+                                  border: '1px dashed #d9d9d9',
+                                }}
+                              >
+                                <Paragraph style={{ whiteSpace: 'pre-wrap', marginBottom: 0 }}>
+                                  {thesis.replace(/#### /g, '\n• ').replace(/- /g, '  - ')}
+                                </Paragraph>
+                              </div>
+                            </Descriptions.Item>
+                          )}
+                        </Descriptions>
+                      </Card>
                     </Timeline.Item>
                   );
                 }
