@@ -79,16 +79,16 @@ export class DataValidator {
     }
 
     // 涨跌幅验证（如果存在）
-    if (bar.changePercent !== undefined) {
-      if (Math.abs(bar.changePercent) > 50) {
-        warnings.push(`涨跌幅异常: ${bar.changePercent}%`);
+    if (bar.change_percent !== undefined) {
+      if (Math.abs(bar.change_percent) > 50) {
+        warnings.push(`涨跌幅异常: ${bar.change_percent}%`);
       }
     }
 
     // 换手率验证
-    if (bar.turnoverRate !== undefined) {
-      if (bar.turnoverRate < 0 || bar.turnoverRate > 100) {
-        warnings.push(`换手率异常: ${bar.turnoverRate}%`);
+    if (bar.turnover_rate !== undefined) {
+      if (bar.turnover_rate < 0 || bar.turnover_rate > 100) {
+        warnings.push(`换手率异常: ${bar.turnover_rate}%`);
       }
     }
 
@@ -129,18 +129,18 @@ export class DataValidator {
       warnings.push('股票名称缺失');
     }
 
-    if (stock.listingDate) {
-      const listingDate = new Date(stock.listingDate);
+    if (stock.listing_date) {
+      const listing_date = new Date(stock.listing_date);
       const today = new Date();
-      if (listingDate > today) {
+      if (listing_date > today) {
         warnings.push('上市日期在未来');
       }
     }
 
-    if (stock.delistingDate && stock.listingDate) {
-      const delistingDate = new Date(stock.delistingDate);
-      const listingDate = new Date(stock.listingDate);
-      if (delistingDate < listingDate) {
+    if (stock.delisting_date && stock.listing_date) {
+      const delisting_date = new Date(stock.delisting_date);
+      const listing_date = new Date(stock.listing_date);
+      if (delisting_date < listing_date) {
         errors.push('退市日期早于上市日期');
       }
     }
@@ -309,7 +309,7 @@ export class DataValidator {
     const continuityResult = this.checkContinuity(bars);
 
     // 检测关键字段的异常值
-    const outlierFields: (keyof DailyBar)[] = ['close', 'volume', 'changePercent', 'turnoverRate'];
+    const outlierFields: (keyof DailyBar)[] = ['close', 'volume', 'change_percent', 'turnover_rate'];
     const outliers: any = {};
 
     for (const field of outlierFields) {
@@ -346,13 +346,13 @@ export class DataValidator {
     fixed.low = Math.min(fixed.open, fixed.high, fixed.close, fixed.low);
 
     // 如果涨跌幅缺失但前后价格存在，则计算
-    if (fixed.changePercent === undefined && bar.open && bar.close) {
-      fixed.changePercent = ((bar.close - bar.open) / bar.open) * 100;
+    if (fixed.change_percent === undefined && bar.open && bar.close) {
+      fixed.change_percent = ((bar.close - bar.open) / bar.open) * 100;
     }
 
     // 如果换手率异常，设为null
-    if (fixed.turnoverRate !== undefined && (fixed.turnoverRate < 0 || fixed.turnoverRate > 100)) {
-      fixed.turnoverRate = null as any;
+    if (fixed.turnover_rate !== undefined && (fixed.turnover_rate < 0 || fixed.turnover_rate > 100)) {
+      fixed.turnover_rate = null as any;
     }
 
     // 如果PE/PB异常，设为null

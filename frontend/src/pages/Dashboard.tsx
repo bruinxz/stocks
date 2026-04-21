@@ -31,7 +31,7 @@ const Dashboard: React.FC = () => {
     totalBacktests: 0,
     avgReturn: 0,
     avgSharpeRatio: 0,
-    winRate: 0,
+    win_rate: 0,
   });
   const [recentBacktests, setRecentBacktests] = useState<BacktestResponse[]>([]);
   const [loading, setLoading] = useState(false);
@@ -62,42 +62,44 @@ const Dashboard: React.FC = () => {
 
       // 计算统计数据
       const completedBacktests = backtests.filter(
-        (b: any) => b.status === 'completed' && b.totalReturn !== undefined
+        (b: any) => b.status === 'completed' && b.total_return !== undefined
       );
       const totalCompleted = completedBacktests.length;
 
       let avgReturn = 0;
       let avgSharpeRatio = 0;
-      let winRate = 0;
+      let win_rate = 0;
 
       if (totalCompleted > 0) {
         const totalReturnSum = completedBacktests.reduce(
-          (sum: number, b: any) => sum + (b.totalReturn || 0),
+          (sum: number, b: any) => sum + (b.total_return || 0),
           0
         );
         const sharpeSum = completedBacktests.reduce(
-          (sum: number, b: any) => sum + (b.sharpeRatio || 0),
+          (sum: number, b: any) => sum + (b.sharpe_ratio || 0),
           0
         );
         const winningTrades = completedBacktests.filter(
-          (b: any) => (b.totalReturn || 0) > 0
+          (b: any) => (b.total_return || 0) > 0
         ).length;
 
         avgReturn = (totalReturnSum / totalCompleted) * 100;
         avgSharpeRatio = sharpeSum / totalCompleted;
-        winRate = (winningTrades / totalCompleted) * 100;
+        win_rate = (winningTrades / totalCompleted) * 100;
       }
 
       setStats({
         totalBacktests: response.data.pagination?.total || backtests.length,
         avgReturn,
         avgSharpeRatio,
-        winRate,
+        win_rate,
       });
 
       // 最近回测（按创建时间排序，取前5个）
       const sorted = [...backtests]
-        .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        .sort(
+          (a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        )
         .slice(0, 5);
       setRecentBacktests(sorted);
     } catch (error) {
@@ -131,8 +133,8 @@ const Dashboard: React.FC = () => {
     },
     {
       title: '收益率',
-      dataIndex: 'totalReturn',
-      key: 'totalReturn',
+      dataIndex: 'total_return',
+      key: 'total_return',
       render: (returnRate: number | undefined) => {
         if (returnRate === undefined) return <span style={{ color: '#bfbfbf' }}>--</span>;
         const color = returnRate >= 0 ? '#52c41a' : '#ff4d4f';
@@ -211,7 +213,7 @@ const Dashboard: React.FC = () => {
                         <Text strong>{index.name}</Text>
                         <Text style={{ color, fontWeight: 600 }}>
                           {isUp ? '+' : ''}
-                          {index.changePercent.toFixed(2)}%
+                          {index.change_percent.toFixed(2)}%
                         </Text>
                       </div>
                       <div
@@ -222,7 +224,7 @@ const Dashboard: React.FC = () => {
                           color: 'var(--text-main)',
                         }}
                       >
-                        {Number(index.currentPrice).toFixed(2)}
+                        {Number(index.current_price).toFixed(2)}
                       </div>
                       <div style={{ height: 60, width: '100%' }}>
                         <ResponsiveContainer width="100%" height="100%">
@@ -330,7 +332,7 @@ const Dashboard: React.FC = () => {
                       胜率
                     </div>
                     <div className="metric-value" style={{ fontSize: 24 }}>
-                      {stats.winRate.toFixed(1)}%
+                      {stats.win_rate.toFixed(1)}%
                     </div>
                   </Skeleton>
                 </Card>

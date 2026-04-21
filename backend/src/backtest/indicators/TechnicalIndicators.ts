@@ -276,13 +276,13 @@ export class BollingerBands extends TechnicalIndicator {
     // 生成信号（价格触及布林带边界）
     let signal: 'buy' | 'sell' | 'neutral' = 'neutral';
     if (data.length > period && middleBand.length > 0) {
-      const currentPrice = data[data.length - 1];
+      const current_price = data[data.length - 1];
       const currentUpper = upperBand[upperBand.length - 1];
       const currentLower = lowerBand[lowerBand.length - 1];
 
-      if (currentPrice <= currentLower) {
+      if (current_price <= currentLower) {
         signal = 'buy';
-      } else if (currentPrice >= currentUpper) {
+      } else if (current_price >= currentUpper) {
         signal = 'sell';
       }
     }

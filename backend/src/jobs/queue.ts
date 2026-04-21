@@ -2,13 +2,13 @@ import Bull from 'bull';
 import { logger } from '../utils/logger';
 
 export interface BacktestJobData {
-  userId: number;
+  user_id: number;
   name: string;
   description?: string;
   symbols: string[];
-  startDate: Date;
-  endDate: Date;
-  initialCapital: number;
+  start_date: Date;
+  end_date: Date;
+  initial_capital: number;
   strategyType: string;
   strategyParams: any;
   slippage: number;

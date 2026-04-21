@@ -7,7 +7,7 @@ export interface PortfolioSimulationConfig {
   symbols: string[];
   buyDate: Date;
   days: number; // 持有天数
-  initialCapital: number;
+  initial_capital: number;
   allocationStrategy: 'equal' | 'weighted'; // 资金分配策略
   includeDividends?: boolean; // 是否包含分红（暂不支持）
   reinvest?: boolean; // 是否再投资（暂不支持）
@@ -19,7 +19,7 @@ export interface StockReturnData {
   buyPrice: number; // 买入价格（买入日收盘价）
   allocationAmount: number; // 分配的金额
   shares: number; // 买入股数
-  dailyReturns: Array<{
+  daily_returns: Array<{
     date: Date;
     price: number;
     value: number; // 当日市值
@@ -30,24 +30,24 @@ export interface StockReturnData {
 
 export interface PortfolioSimulationResult {
   summary: {
-    initialCapital: number;
-    finalCapital: number;
-    totalReturn: number;
-    annualizedReturn: number;
+    initial_capital: number;
+    final_capital: number;
+    total_return: number;
+    annualized_return: number;
     totalDays: number;
-    startDate: Date;
-    endDate: Date;
+    start_date: Date;
+    end_date: Date;
   };
-  dailyReturns: Array<{
+  daily_returns: Array<{
     date: Date;
-    totalValue: number;
+    total_value: number;
     dailyReturn: number; // 组合当日收益率
     cumulativeReturn: number; // 组合累计收益率
   }>;
   stockReturns: StockReturnData[];
   performanceMetrics: {
-    sharpeRatio: number;
-    maxDrawdown: number;
+    sharpe_ratio: number;
+    max_drawdown: number;
     volatility: number;
     winDays: number;
     lossDays: number;
@@ -77,17 +77,17 @@ export class PortfolioReturnSimulator {
         symbols: config.symbols,
         buyDate: config.buyDate,
         days: config.days,
-        initialCapital: config.initialCapital,
+        initial_capital: config.initial_capital,
       });
 
       // 计算结束日期
-      const endDate = this.calculateEndDate(config.buyDate, config.days);
+      const end_date = this.calculateEndDate(config.buyDate, config.days);
 
       // 验证股票存在并获取基本信息
       const stockInfos = await this.validateAndGetStockInfo(config.symbols);
 
       // 获取每只股票的日线数据
-      const stockData = await this.fetchStockData(config.symbols, config.buyDate, endDate);
+      const stockData = await this.fetchStockData(config.symbols, config.buyDate, end_date);
 
       // 计算买入价格和分配金额
       const allocation = this.calculateAllocation(config, stockData);
@@ -106,13 +106,13 @@ export class PortfolioReturnSimulator {
 
       logger.info('Portfolio simulation completed successfully', {
         totalDays: portfolioReturns.length,
-        finalCapital: summary.finalCapital,
-        totalReturn: summary.totalReturn,
+        final_capital: summary.final_capital,
+        total_return: summary.total_return,
       });
 
       return {
         summary,
-        dailyReturns: portfolioReturns,
+        daily_returns: portfolioReturns,
         stockReturns,
         performanceMetrics,
       };
@@ -126,9 +126,9 @@ export class PortfolioReturnSimulator {
    * 计算结束日期
    */
   private calculateEndDate(buyDate: Date, days: number): Date {
-    const endDate = new Date(buyDate);
-    endDate.setDate(endDate.getDate() + days);
-    return endDate;
+    const end_date = new Date(buyDate);
+    end_date.setDate(end_date.getDate() + days);
+    return end_date;
   }
 
   /**
@@ -153,13 +153,13 @@ export class PortfolioReturnSimulator {
    */
   private async fetchStockData(
     symbols: string[],
-    startDate: Date,
-    endDate: Date
+    start_date: Date,
+    end_date: Date
   ): Promise<Map<string, DailyBar[]>> {
     const stockData = new Map<string, DailyBar[]>();
 
     for (const symbol of symbols) {
-      const bars = await this.dataService.getDailyBars(symbol, startDate, endDate);
+      const bars = await this.dataService.getDailyBars(symbol, start_date, end_date);
       if (bars.length === 0) {
         logger.warn(`股票 ${symbol} 在指定日期范围内没有数据`);
       }
@@ -180,7 +180,7 @@ export class PortfolioReturnSimulator {
 
     if (config.allocationStrategy === 'equal') {
       // 等权重分配
-      const perStockAmount = config.initialCapital / config.symbols.length;
+      const perStockAmount = config.initial_capital / config.symbols.length;
 
       for (const symbol of config.symbols) {
         const bars = stockData.get(symbol);
@@ -237,7 +237,7 @@ export class PortfolioReturnSimulator {
       // 按日期排序
       bars.sort((a, b) => a.time.getTime() - b.time.getTime());
 
-      const dailyReturns = bars.map((bar, index) => {
+      const daily_returns = bars.map((bar, index) => {
         const price = parseFloat(String(bar.close));
         const prevPrice = index === 0 ? price : parseFloat(String(bars[index - 1].close));
         const value = allocInfo.shares * price;
@@ -259,7 +259,7 @@ export class PortfolioReturnSimulator {
         buyPrice: allocInfo.buyPrice,
         allocationAmount: allocInfo.allocationAmount,
         shares: allocInfo.shares,
-        dailyReturns,
+        daily_returns,
       });
     }
 
@@ -271,7 +271,7 @@ export class PortfolioReturnSimulator {
    */
   private calculatePortfolioReturns(stockReturns: StockReturnData[]): Array<{
     date: Date;
-    totalValue: number;
+    total_value: number;
     dailyReturn: number;
     cumulativeReturn: number;
   }> {
@@ -282,7 +282,7 @@ export class PortfolioReturnSimulator {
     // 收集所有日期
     const allDates = new Set<Date>();
     for (const stockReturn of stockReturns) {
-      for (const dailyReturn of stockReturn.dailyReturns) {
+      for (const dailyReturn of stockReturn.daily_returns) {
         allDates.add(dailyReturn.date);
       }
     }
@@ -293,22 +293,22 @@ export class PortfolioReturnSimulator {
     // 按日期汇总（使用普通循环避免引用未完全构建的数组）
     const portfolioReturns: Array<{
       date: Date;
-      totalValue: number;
+      total_value: number;
       dailyReturn: number;
       cumulativeReturn: number;
     }> = [];
 
     for (let i = 0; i < sortedDates.length; i++) {
       const date = sortedDates[i];
-      let totalValue = 0;
+      let total_value = 0;
 
       // 计算当日总市值
       for (const stockReturn of stockReturns) {
-        const dailyReturn = stockReturn.dailyReturns.find(
+        const dailyReturn = stockReturn.daily_returns.find(
           dr => dr.date.getTime() === date.getTime()
         );
         if (dailyReturn) {
-          totalValue += dailyReturn.value;
+          total_value += dailyReturn.value;
         }
       }
 
@@ -316,17 +316,17 @@ export class PortfolioReturnSimulator {
       let dailyReturn = 0;
       if (i > 0) {
         const prevReturn = portfolioReturns[i - 1];
-        const previousTotalValue = prevReturn.totalValue;
-        dailyReturn = previousTotalValue > 0 ? totalValue / previousTotalValue - 1 : 0;
+        const previousTotalValue = prevReturn.total_value;
+        dailyReturn = previousTotalValue > 0 ? total_value / previousTotalValue - 1 : 0;
       }
 
       // 计算累计收益率（相对于第一日）
-      const firstDayValue = i === 0 ? totalValue : portfolioReturns[0].totalValue;
-      const cumulativeReturn = firstDayValue > 0 ? totalValue / firstDayValue - 1 : 0;
+      const firstDayValue = i === 0 ? total_value : portfolioReturns[0].total_value;
+      const cumulativeReturn = firstDayValue > 0 ? total_value / firstDayValue - 1 : 0;
 
       portfolioReturns.push({
         date,
-        totalValue,
+        total_value,
         dailyReturn,
         cumulativeReturn,
       });
@@ -341,15 +341,15 @@ export class PortfolioReturnSimulator {
   private calculatePerformanceMetrics(
     portfolioReturns: Array<{
       date: Date;
-      totalValue: number;
+      total_value: number;
       dailyReturn: number;
       cumulativeReturn: number;
     }>
   ): PortfolioSimulationResult['performanceMetrics'] {
     if (portfolioReturns.length < 2) {
       return {
-        sharpeRatio: 0,
-        maxDrawdown: 0,
+        sharpe_ratio: 0,
+        max_drawdown: 0,
         volatility: 0,
         winDays: 0,
         lossDays: 0,
@@ -360,61 +360,61 @@ export class PortfolioReturnSimulator {
     }
 
     // 提取日收益率（跳过第一日）
-    const dailyReturns = portfolioReturns.slice(1).map(r => r.dailyReturn);
+    const daily_returns = portfolioReturns.slice(1).map(r => r.dailyReturn);
 
     // 计算平均日收益率
-    const avgDailyReturn = dailyReturns.reduce((sum, r) => sum + r, 0) / dailyReturns.length;
+    const avgDailyReturn = daily_returns.reduce((sum, r) => sum + r, 0) / daily_returns.length;
 
     // 计算波动率（标准差）
     const variance =
-      dailyReturns.reduce((sum, r) => sum + Math.pow(r - avgDailyReturn, 2), 0) /
-      dailyReturns.length;
+      daily_returns.reduce((sum, r) => sum + Math.pow(r - avgDailyReturn, 2), 0) /
+      daily_returns.length;
     const volatility = Math.sqrt(variance);
 
     // 计算夏普比率（假设无风险利率3%，年化）
     const riskFreeRate = 0.03 / 252; // 日无风险利率
-    const sharpeRatio =
+    const sharpe_ratio =
       volatility > 0 ? ((avgDailyReturn - riskFreeRate) / volatility) * Math.sqrt(252) : 0;
 
     // 计算最大回撤
-    let peak = portfolioReturns[0].totalValue;
-    let maxDrawdown = 0;
+    let peak = portfolioReturns[0].total_value;
+    let max_drawdown = 0;
     const maxDrawdownStart = portfolioReturns[0].date;
     let maxDrawdownEnd = portfolioReturns[0].date;
 
     for (const ret of portfolioReturns) {
-      if (ret.totalValue > peak) {
-        peak = ret.totalValue;
+      if (ret.total_value > peak) {
+        peak = ret.total_value;
       }
-      const drawdown = (peak - ret.totalValue) / peak;
-      if (drawdown > maxDrawdown) {
-        maxDrawdown = drawdown;
+      const drawdown = (peak - ret.total_value) / peak;
+      if (drawdown > max_drawdown) {
+        max_drawdown = drawdown;
         maxDrawdownEnd = ret.date;
       }
     }
 
     // 计算盈利/亏损天数
-    const winDays = dailyReturns.filter(r => r > 0).length;
-    const lossDays = dailyReturns.filter(r => r < 0).length;
+    const winDays = daily_returns.filter(r => r > 0).length;
+    const lossDays = daily_returns.filter(r => r < 0).length;
 
     // 找出最好和最差交易日
-    const bestDayIndex = dailyReturns.indexOf(Math.max(...dailyReturns));
-    const worstDayIndex = dailyReturns.indexOf(Math.min(...dailyReturns));
+    const bestDayIndex = daily_returns.indexOf(Math.max(...daily_returns));
+    const worstDayIndex = daily_returns.indexOf(Math.min(...daily_returns));
 
     return {
-      sharpeRatio,
-      maxDrawdown: maxDrawdown * 100, // 转换为百分比
+      sharpe_ratio,
+      max_drawdown: max_drawdown * 100, // 转换为百分比
       volatility: volatility * 100, // 转换为百分比
       winDays,
       lossDays,
       avgDailyReturn: avgDailyReturn * 100, // 转换为百分比
       bestDay: {
         date: portfolioReturns[bestDayIndex + 1]?.date || new Date(),
-        return: dailyReturns[bestDayIndex] * 100,
+        return: daily_returns[bestDayIndex] * 100,
       },
       worstDay: {
         date: portfolioReturns[worstDayIndex + 1]?.date || new Date(),
-        return: dailyReturns[worstDayIndex] * 100,
+        return: daily_returns[worstDayIndex] * 100,
       },
     };
   }
@@ -424,41 +424,41 @@ export class PortfolioReturnSimulator {
    */
   private generateSummary(
     config: PortfolioSimulationConfig,
-    portfolioReturns: Array<{ date: Date; totalValue: number; cumulativeReturn: number }>
+    portfolioReturns: Array<{ date: Date; total_value: number; cumulativeReturn: number }>
   ): PortfolioSimulationResult['summary'] {
     if (portfolioReturns.length === 0) {
       return {
-        initialCapital: config.initialCapital,
-        finalCapital: config.initialCapital,
-        totalReturn: 0,
-        annualizedReturn: 0,
+        initial_capital: config.initial_capital,
+        final_capital: config.initial_capital,
+        total_return: 0,
+        annualized_return: 0,
         totalDays: 0,
-        startDate: config.buyDate,
-        endDate: config.buyDate,
+        start_date: config.buyDate,
+        end_date: config.buyDate,
       };
     }
 
-    const initialCapital = config.initialCapital;
-    const finalCapital = portfolioReturns[portfolioReturns.length - 1].totalValue;
-    const totalReturn = ((finalCapital - initialCapital) / initialCapital) * 100;
+    const initial_capital = config.initial_capital;
+    const final_capital = portfolioReturns[portfolioReturns.length - 1].total_value;
+    const total_return = ((final_capital - initial_capital) / initial_capital) * 100;
 
-    const startDate = portfolioReturns[0].date;
-    const endDate = portfolioReturns[portfolioReturns.length - 1].date;
+    const start_date = portfolioReturns[0].date;
+    const end_date = portfolioReturns[portfolioReturns.length - 1].date;
     const totalDays = portfolioReturns.length;
 
     // 计算年化收益率
-    const daysDiff = (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24);
+    const daysDiff = (end_date.getTime() - start_date.getTime()) / (1000 * 60 * 60 * 24);
     const years = daysDiff / 365.25;
-    const annualizedReturn = years > 0 ? (Math.pow(1 + totalReturn / 100, 1 / years) - 1) * 100 : 0;
+    const annualized_return = years > 0 ? (Math.pow(1 + total_return / 100, 1 / years) - 1) * 100 : 0;
 
     return {
-      initialCapital,
-      finalCapital,
-      totalReturn,
-      annualizedReturn,
+      initial_capital,
+      final_capital,
+      total_return,
+      annualized_return,
       totalDays,
-      startDate,
-      endDate,
+      start_date,
+      end_date,
     };
   }
 }

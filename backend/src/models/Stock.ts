@@ -67,7 +67,7 @@ export class Stock extends Model {
     field: 'listing_date',
     comment: '上市日期',
   })
-  declare listingDate?: Date;
+  declare listing_date?: Date;
 
   @Column({
     type: DataType.DATEONLY,
@@ -75,7 +75,7 @@ export class Stock extends Model {
     field: 'delisting_date',
     comment: '退市日期',
   })
-  declare delistingDate?: Date;
+  declare delisting_date?: Date;
 
   @Column({
     type: DataType.BOOLEAN,
@@ -83,7 +83,7 @@ export class Stock extends Model {
     field: 'is_listed',
     comment: '是否上市',
   })
-  declare isListed: boolean;
+  declare is_listed: boolean;
 
   @Column({
     type: DataType.STRING(50),
@@ -98,7 +98,7 @@ export class Stock extends Model {
     field: 'data_status',
     comment: '数据状态：complete, incomplete, no_data, conflict',
   })
-  declare dataStatus?: string;
+  declare data_status?: string;
 
   @Column({
     type: DataType.DECIMAL(20, 4),
@@ -106,7 +106,7 @@ export class Stock extends Model {
     field: 'total_market_cap',
     comment: '最新总市值(元)',
   })
-  declare totalMarketCap?: number;
+  declare total_market_cap?: number;
 
   @Column({
     type: DataType.DECIMAL(20, 4),
@@ -114,7 +114,7 @@ export class Stock extends Model {
     field: 'circulating_market_cap',
     comment: '最新流通市值(元)',
   })
-  declare circulatingMarketCap?: number;
+  declare circulating_market_cap?: number;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
@@ -122,7 +122,7 @@ export class Stock extends Model {
     field: 'pe_dynamic',
     comment: '最新动态市盈率',
   })
-  declare peDynamic?: number;
+  declare pe_dynamic?: number;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
@@ -137,7 +137,7 @@ export class Stock extends Model {
     field: 'turnover_rate',
     comment: '最新换手率(%)',
   })
-  declare turnoverRate?: number;
+  declare turnover_rate?: number;
 
   @Column({
     type: DataType.DECIMAL(12, 4),
@@ -152,17 +152,17 @@ export class Stock extends Model {
     field: 'change_percent',
     comment: '最新涨跌幅(%)',
   })
-  declare changePercent?: number;
+  declare change_percent?: number;
 
   @CreatedAt
   @Column({ field: 'created_at' })
-  declare createdAt: Date;
+  declare created_at: Date;
 
   @UpdatedAt
   @Column({ field: 'updated_at' })
-  declare updatedAt: Date;
+  declare updated_at: Date;
 
   // 关联关系
   @HasMany(() => DailyBar)
-  declare dailyBars: DailyBar[];
+  declare daily_bars: DailyBar[];
 }

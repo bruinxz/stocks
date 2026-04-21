@@ -7,11 +7,11 @@ export class RiskAlertController {
   // 获取当前用户的未读告警及风控配置
   async getAlerts(req: Request, res: Response, next: NextFunction) {
     try {
-      const userId = (req as any).user.id;
+      const user_id = (req as any).user.id;
 
-      const user = await User.findByPk(userId);
+      const user = await User.findByPk(user_id);
       const alerts = await RiskAlert.findAll({
-        where: { user_id: userId },
+        where: { user_id: user_id },
         order: [['created_at', 'DESC']],
         limit: 50, // 只返回最近的50条
       });
@@ -20,9 +20,9 @@ export class RiskAlertController {
         success: true,
         data: {
           alerts,
-          riskConfig: user?.riskConfig || {
-            stopLossPercent: 5,
-            takeProfitPercent: 10,
+          risk_config: user?.risk_config || {
+            stop_loss_percent: 5,
+            take_profit_percent: 10,
             enableVolumeAlert: true,
             enableTechnicalAlert: true,
           }
@@ -37,27 +37,27 @@ export class RiskAlertController {
   // 更新风控配置
   async updateRiskConfig(req: Request, res: Response, next: NextFunction) {
     try {
-      const userId = (req as any).user.id;
-      const { stopLossPercent, takeProfitPercent, enableVolumeAlert, enableTechnicalAlert } = req.body;
+      const user_id = (req as any).user.id;
+      const { stop_loss_percent, take_profit_percent, enableVolumeAlert, enableTechnicalAlert } = req.body;
 
-      const user = await User.findByPk(userId);
+      const user = await User.findByPk(user_id);
       if (!user) {
         return res.status(404).json({ success: false, message: '用户不存在' });
       }
 
-      user.riskConfig = {
-        ...user.riskConfig,
-        stopLossPercent: stopLossPercent !== undefined ? stopLossPercent : user.riskConfig?.stopLossPercent,
-        takeProfitPercent: takeProfitPercent !== undefined ? takeProfitPercent : user.riskConfig?.takeProfitPercent,
-        enableVolumeAlert: enableVolumeAlert !== undefined ? enableVolumeAlert : user.riskConfig?.enableVolumeAlert,
-        enableTechnicalAlert: enableTechnicalAlert !== undefined ? enableTechnicalAlert : user.riskConfig?.enableTechnicalAlert,
+      user.risk_config = {
+        ...user.risk_config,
+        stop_loss_percent: stop_loss_percent !== undefined ? stop_loss_percent : user.risk_config?.stop_loss_percent,
+        take_profit_percent: take_profit_percent !== undefined ? take_profit_percent : user.risk_config?.take_profit_percent,
+        enableVolumeAlert: enableVolumeAlert !== undefined ? enableVolumeAlert : user.risk_config?.enableVolumeAlert,
+        enableTechnicalAlert: enableTechnicalAlert !== undefined ? enableTechnicalAlert : user.risk_config?.enableTechnicalAlert,
       };
 
       await user.save();
 
       res.json({
         success: true,
-        data: user.riskConfig,
+        data: user.risk_config,
         message: '风控配置已保存'
       });
     } catch (error: any) {
@@ -74,7 +74,7 @@ export class RiskAlertController {
 
       const alert = await RiskAlert.findOne({ where: { id, user_id: user.id } });
       if (alert) {
-        alert.isRead = true;
+        alert.is_read = true;
         await alert.save();
       }
 
@@ -91,7 +91,7 @@ export class RiskAlertController {
       const user = (req as any).user;
 
       await RiskAlert.update(
-        { isRead: true },
+        { is_read: true },
         { where: { user_id: user.id, is_read: false } }
       );
 

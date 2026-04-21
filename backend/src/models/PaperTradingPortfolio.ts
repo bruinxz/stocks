@@ -32,7 +32,7 @@ export class PaperTradingPortfolio extends Model {
     allowNull: false,
     field: 'user_id',
   })
-  declare userId: number;
+  declare user_id: number;
 
   @BelongsTo(() => User)
   declare user: User;
@@ -51,7 +51,7 @@ export class PaperTradingPortfolio extends Model {
     field: 'initial_capital',
     comment: '初始资金',
   })
-  declare initialCapital: number;
+  declare initial_capital: number;
 
   @Column({
     type: DataType.DECIMAL(15, 2),
@@ -60,7 +60,7 @@ export class PaperTradingPortfolio extends Model {
     field: 'current_cash',
     comment: '当前可用资金',
   })
-  declare currentCash: number;
+  declare current_cash: number;
 
   @Column({
     type: DataType.DECIMAL(15, 2),
@@ -69,7 +69,7 @@ export class PaperTradingPortfolio extends Model {
     field: 'total_value',
     comment: '当前总资产 (资金 + 持仓市值)',
   })
-  declare totalValue: number;
+  declare total_value: number;
 
   @Column({
     type: DataType.BOOLEAN,
@@ -77,15 +77,15 @@ export class PaperTradingPortfolio extends Model {
     field: 'is_active',
     comment: '是否处于激活状态',
   })
-  declare isActive: boolean;
+  declare is_active: boolean;
 
   @CreatedAt
   @Column({ field: 'created_at' })
-  declare createdAt: Date;
+  declare created_at: Date;
 
   @UpdatedAt
   @Column({ field: 'updated_at' })
-  declare updatedAt: Date;
+  declare updated_at: Date;
 
   @HasMany(() => PaperTradingPosition)
   declare positions: PaperTradingPosition[];

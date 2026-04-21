@@ -29,17 +29,17 @@ export class PortfolioController {
         symbols: req.body.symbols,
         buyDate: req.body.buyDate,
         days: req.body.days,
-        initialCapital: req.body.initialCapital,
+        initial_capital: req.body.initial_capital,
         allocationStrategy: req.body.allocationStrategy,
       });
-      const userId = (req as any).user?.id || 1; // 暂时使用默认用户ID
+      const user_id = (req as any).user?.id || 1; // 暂时使用默认用户ID
       const {
         name,
         description,
         symbols,
         buyDate,
         days,
-        initialCapital = 100000,
+        initial_capital = 100000,
         allocationStrategy = 'equal',
         includeDividends = false,
         reinvest = false,
@@ -67,7 +67,7 @@ export class PortfolioController {
         });
       }
 
-      if (initialCapital <= 0) {
+      if (initial_capital <= 0) {
         return res.status(400).json({
           success: false,
           message: '初始资金必须大于0',
@@ -87,14 +87,14 @@ export class PortfolioController {
         symbols,
         buyDate: new Date(buyDate),
         days: parseInt(days, 10),
-        initialCapital: parseFloat(initialCapital),
+        initial_capital: parseFloat(initial_capital),
         allocationStrategy,
         includeDividends,
         reinvest,
       };
 
       logger.info('Starting portfolio simulation', {
-        userId,
+        user_id,
         symbols: config.symbols,
         buyDate: config.buyDate,
         days: config.days,
@@ -113,15 +113,15 @@ export class PortfolioController {
               symbols: config.symbols,
               buyDate: config.buyDate,
               days: config.days,
-              initialCapital: config.initialCapital,
+              initial_capital: config.initial_capital,
               allocationStrategy: config.allocationStrategy,
             },
             summary: result.summary,
             performanceMetrics: result.performanceMetrics,
             // 简化返回数据，避免响应过大
-            dailyReturns: result.dailyReturns.map(r => ({
+            daily_returns: result.daily_returns.map(r => ({
               date: r.date,
-              totalValue: r.totalValue,
+              total_value: r.total_value,
               dailyReturn: r.dailyReturn * 100, // 转换为百分比
               cumulativeReturn: r.cumulativeReturn * 100, // 转换为百分比
             })),
@@ -132,8 +132,8 @@ export class PortfolioController {
               allocationAmount: sr.allocationAmount,
               shares: sr.shares,
               // 只返回最后一天的收益
-              finalValue: sr.dailyReturns[sr.dailyReturns.length - 1]?.value || 0,
-              totalReturn: sr.dailyReturns[sr.dailyReturns.length - 1]?.cumulativeReturn * 100 || 0,
+              finalValue: sr.daily_returns[sr.daily_returns.length - 1]?.value || 0,
+              total_return: sr.daily_returns[sr.daily_returns.length - 1]?.cumulativeReturn * 100 || 0,
             })),
           },
         },
@@ -146,18 +146,18 @@ export class PortfolioController {
       logger.error('投资组合收益模拟失败:', error);
 
       // 提供更友好的错误信息
-      let errorMessage = '模拟失败';
+      let error_message = '模拟失败';
       if (error.message.includes('股票') && error.message.includes('不存在')) {
-        errorMessage = error.message;
+        error_message = error.message;
       } else if (error.message.includes('没有买入日数据')) {
-        errorMessage = '部分股票在买入日期没有数据';
+        error_message = '部分股票在买入日期没有数据';
       } else if (error.message.includes('买入价格无效')) {
-        errorMessage = '部分股票买入价格无效';
+        error_message = '部分股票买入价格无效';
       }
 
       res.status(400).json({
         success: false,
-        message: errorMessage,
+        message: error_message,
         error: process.env.NODE_ENV === 'development' ? error.message : undefined,
       });
     }
@@ -271,7 +271,7 @@ export class PortfolioController {
           .toISOString()
           .split('T')[0],
         days: 30,
-        initialCapital: 100000,
+        initial_capital: 100000,
         allocationStrategy: 'equal',
         maxStocks: 10,
         minDays: 1,

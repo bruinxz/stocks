@@ -73,15 +73,15 @@ export class SinaFinanceClient {
   /**
    * 查询股票日线数据
    * @param code 股票代码，格式如 'sh.600000' 或 'sz.000001'
-   * @param startDate 开始日期，格式：'2023-01-01'
-   * @param endDate 结束日期，格式：'2023-12-31'
+   * @param start_date 开始日期，格式：'2023-01-01'
+   * @param end_date 结束日期，格式：'2023-12-31'
    * @param frequency 频率：'d'日线，'w'周线，'m'月线
    * @param adjustflag 复权类型：'1'后复权，'2'前复权，'3'不复权
    */
   async queryHistoryKData(
     code: string,
-    startDate: string,
-    endDate: string,
+    start_date: string,
+    end_date: string,
     frequency: 'd' | 'w' | 'm' = 'd',
     adjustflag: '1' | '2' | '3' = '3'
   ): Promise<DailyBar[]> {
@@ -105,8 +105,8 @@ export class SinaFinanceClient {
 
       // 计算需要的数据条数（保守估计）
       // 新浪API最多可能返回1000条数据，我们分页获取
-      const start = new Date(startDate);
-      const end = new Date(endDate);
+      const start = new Date(start_date);
+      const end = new Date(end_date);
       const daysDiff = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
       const maxBars = Math.min(daysDiff + 100, 1000); // 最多1000条
 
@@ -115,13 +115,13 @@ export class SinaFinanceClient {
         scale,
         ma: 'no',
         datalen: maxBars,
-        end: endDate,
+        end: end_date,
       };
 
       // 尝试添加begin参数，但新浪API可能不支持
-      // params.begin = startDate;
+      // params.begin = start_date;
 
-      logger.info(`Fetching history data for ${code} from ${startDate} to ${endDate}`);
+      logger.info(`Fetching history data for ${code} from ${start_date} to ${end_date}`);
 
       const responseData = await this.client.get(
         '/quotes_service/api/json_v2.php/CN_MarketData.getKLineData',
@@ -135,10 +135,10 @@ export class SinaFinanceClient {
         for (const item of data) {
           const barDate = item.day;
           // 过滤在开始日期之前的数据
-          if (barDate < startDate) {
+          if (barDate < start_date) {
             continue;
           }
-          if (barDate > endDate) {
+          if (barDate > end_date) {
             continue;
           }
 
@@ -317,7 +317,7 @@ export class SinaFinanceClient {
   /**
    * 查询交易日历（暂不支持）
    */
-  async queryTradeDates(startDate: string, endDate: string): Promise<string[]> {
+  async queryTradeDates(start_date: string, end_date: string): Promise<string[]> {
     logger.warn('SinaFinanceClient.queryTradeDates not implemented');
     return [];
   }

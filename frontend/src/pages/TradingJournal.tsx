@@ -30,12 +30,12 @@ const { Title, Text, Paragraph } = Typography;
 interface Journal {
   id: number;
   date: string;
-  marketSummary: string;
-  portfolioAnalysis: string;
-  actionPlan: string;
+  market_summary: string;
+  portfolio_analysis: string;
+  action_plan: string;
   tags?: string[];
   mood?: string;
-  createdAt: string;
+  created_at: string;
 }
 
 const TradingJournal: React.FC = () => {
@@ -168,7 +168,7 @@ const TradingJournal: React.FC = () => {
                     <Text strong>大盘总结</Text>
                   </Space>
                   <Paragraph style={{ whiteSpace: 'pre-wrap', color: '#555' }}>
-                    {selectedJournal.marketSummary}
+                    {selectedJournal.market_summary}
                   </Paragraph>
                 </div>
 
@@ -177,11 +177,11 @@ const TradingJournal: React.FC = () => {
                     <Tag color="cyan">持仓分析</Tag>
                   </Space>
                   <Paragraph style={{ whiteSpace: 'pre-wrap', color: '#555' }}>
-                    {selectedJournal.portfolioAnalysis}
+                    {selectedJournal.portfolio_analysis}
                   </Paragraph>
                 </div>
 
-                {selectedJournal.actionPlan && (
+                {selectedJournal.action_plan && (
                   <div style={{ background: '#e6f7ff', padding: '16px', borderRadius: '8px' }}>
                     <Space style={{ marginBottom: '8px' }}>
                       <BulbOutlined style={{ color: '#faad14' }} />
@@ -195,7 +195,7 @@ const TradingJournal: React.FC = () => {
                         fontWeight: 500,
                       }}
                     >
-                      {selectedJournal.actionPlan}
+                      {selectedJournal.action_plan}
                     </Paragraph>
                   </div>
                 )}

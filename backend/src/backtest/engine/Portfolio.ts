@@ -3,12 +3,12 @@ import { EventType, FillEvent } from './Event';
 export interface Position {
   symbol: string;
   quantity: number;
-  entryPrice: number;
-  currentPrice: number;
-  entryDate: Date;
-  entryValue: number;
+  entry_price: number;
+  current_price: number;
+  entry_date: Date;
+  entry_value: number;
   currentValue: number;
-  unrealizedPnl: number;
+  unrealized_pnl: number;
   unrealizedPnlPercent: number;
   direction: 'long' | 'short';
 }
@@ -16,25 +16,25 @@ export interface Position {
 export interface Trade {
   id: string;
   symbol: string;
-  entryDate: Date;
-  exitDate?: Date;
-  entryPrice: number;
-  exitPrice?: number;
+  entry_date: Date;
+  exit_date?: Date;
+  entry_price: number;
+  exit_price?: number;
   quantity: number;
   direction: 'long' | 'short';
   pnl?: number;
-  pnlPercent?: number;
-  holdingDays?: number;
+  pnl_percent?: number;
+  holding_days?: number;
   status: 'open' | 'closed';
   commission?: number;
 }
 
 export interface PortfolioMetrics {
-  totalValue: number;
+  total_value: number;
   cash: number;
   positionsValue: number;
-  unrealizedPnl: number;
-  realizedPnl: number;
+  unrealized_pnl: number;
+  realized_pnl: number;
   totalPnl: number;
   dailyPnl: number;
   dailyReturn: number;
@@ -45,13 +45,13 @@ export class Portfolio {
   private positions: Map<string, Position> = new Map();
   private trades: Trade[] = [];
   private tradeCounter = 1;
-  private realizedPnl = 0;
+  private realized_pnl = 0;
   private dailyPnl = 0;
-  private dailyReturns: number[] = [];
-  private equityCurve: { date: Date; value: number }[] = [];
+  private daily_returns: number[] = [];
+  private equity_curve: { date: Date; value: number }[] = [];
 
-  constructor(initialCapital: number) {
-    this.cash = initialCapital;
+  constructor(initial_capital: number) {
+    this.cash = initial_capital;
   }
 
   /**
@@ -70,23 +70,23 @@ export class Portfolio {
       if (existingPosition) {
         // 加仓
         const totalQuantity = existingPosition.quantity + filledQuantity;
-        const totalCost = existingPosition.entryValue + tradeValue;
+        const totalCost = existingPosition.entry_value + tradeValue;
         const averagePrice = totalCost / totalQuantity;
 
         existingPosition.quantity = totalQuantity;
-        existingPosition.entryPrice = averagePrice;
-        existingPosition.entryValue = totalCost;
+        existingPosition.entry_price = averagePrice;
+        existingPosition.entry_value = totalCost;
       } else {
         // 新开仓
         this.positions.set(symbol, {
           symbol,
           quantity: filledQuantity,
-          entryPrice: filledPrice,
-          currentPrice: filledPrice,
-          entryDate: effectiveTime,
-          entryValue: tradeValue,
+          entry_price: filledPrice,
+          current_price: filledPrice,
+          entry_date: effectiveTime,
+          entry_value: tradeValue,
           currentValue: tradeValue,
-          unrealizedPnl: 0,
+          unrealized_pnl: 0,
           unrealizedPnlPercent: 0,
           direction: 'long',
         });
@@ -96,8 +96,8 @@ export class Portfolio {
       this.trades.push({
         id: `trade_${this.tradeCounter++}`,
         symbol,
-        entryDate: effectiveTime,
-        entryPrice: filledPrice,
+        entry_date: effectiveTime,
+        entry_price: filledPrice,
         quantity: filledQuantity,
         direction: 'long',
         status: 'open',
@@ -121,9 +121,9 @@ export class Portfolio {
       this.cash -= commission;
 
       // 计算已实现盈亏
-      const realizedPnl = (filledPrice - existingPosition.entryPrice) * filledQuantity;
-      this.realizedPnl += realizedPnl;
-      this.dailyPnl += realizedPnl;
+      const realized_pnl = (filledPrice - existingPosition.entry_price) * filledQuantity;
+      this.realized_pnl += realized_pnl;
+      this.dailyPnl += realized_pnl;
 
       // 如果仓位为0，移除
       if (existingPosition.quantity === 0) {
@@ -135,12 +135,12 @@ export class Portfolio {
         t => t.symbol === symbol && t.status === 'open' && t.direction === 'long'
       );
       if (openTrade) {
-        openTrade.exitDate = effectiveTime;
-        openTrade.exitPrice = filledPrice;
-        openTrade.pnl = realizedPnl;
-        openTrade.pnlPercent = (realizedPnl / (openTrade.entryPrice * openTrade.quantity)) * 100;
-        openTrade.holdingDays = Math.floor(
-          (openTrade.exitDate.getTime() - openTrade.entryDate.getTime()) / (1000 * 60 * 60 * 24)
+        openTrade.exit_date = effectiveTime;
+        openTrade.exit_price = filledPrice;
+        openTrade.pnl = realized_pnl;
+        openTrade.pnl_percent = (realized_pnl / (openTrade.entry_price * openTrade.quantity)) * 100;
+        openTrade.holding_days = Math.floor(
+          (openTrade.exit_date.getTime() - openTrade.entry_date.getTime()) / (1000 * 60 * 60 * 24)
         );
         openTrade.status = 'closed';
         openTrade.commission = commission;
@@ -155,20 +155,20 @@ export class Portfolio {
     let totalPositionsValue = 0;
 
     for (const [symbol, position] of this.positions.entries()) {
-      const currentPrice = prices.get(symbol) || position.currentPrice;
-      position.currentPrice = currentPrice;
-      position.currentValue = position.quantity * currentPrice;
-      position.unrealizedPnl = position.currentValue - position.entryValue;
-      position.unrealizedPnlPercent = (position.unrealizedPnl / position.entryValue) * 100;
+      const current_price = prices.get(symbol) || position.current_price;
+      position.current_price = current_price;
+      position.currentValue = position.quantity * current_price;
+      position.unrealized_pnl = position.currentValue - position.entry_value;
+      position.unrealizedPnlPercent = (position.unrealized_pnl / position.entry_value) * 100;
 
       totalPositionsValue += position.currentValue;
     }
 
     // 更新资金曲线
-    const totalValue = this.cash + totalPositionsValue;
-    this.equityCurve.push({
+    const total_value = this.cash + totalPositionsValue;
+    this.equity_curve.push({
       date: date,
-      value: totalValue,
+      value: total_value,
     });
   }
 
@@ -181,27 +181,27 @@ export class Portfolio {
 
     for (const position of this.positions.values()) {
       totalPositionsValue += position.currentValue;
-      totalUnrealizedPnl += position.unrealizedPnl;
+      totalUnrealizedPnl += position.unrealized_pnl;
     }
 
-    const totalValue = this.cash + totalPositionsValue;
-    const totalPnl = this.realizedPnl + totalUnrealizedPnl;
+    const total_value = this.cash + totalPositionsValue;
+    const totalPnl = this.realized_pnl + totalUnrealizedPnl;
 
     // 计算当日收益率
     const dailyReturn =
-      this.equityCurve.length >= 2
-        ? (this.equityCurve[this.equityCurve.length - 1].value /
-            this.equityCurve[this.equityCurve.length - 2].value -
+      this.equity_curve.length >= 2
+        ? (this.equity_curve[this.equity_curve.length - 1].value /
+            this.equity_curve[this.equity_curve.length - 2].value -
             1) *
           100
         : 0;
 
     return {
-      totalValue,
+      total_value,
       cash: this.cash,
       positionsValue: totalPositionsValue,
-      unrealizedPnl: totalUnrealizedPnl,
-      realizedPnl: this.realizedPnl,
+      unrealized_pnl: totalUnrealizedPnl,
+      realized_pnl: this.realized_pnl,
       totalPnl,
       dailyPnl: this.dailyPnl,
       dailyReturn,
@@ -214,7 +214,7 @@ export class Portfolio {
   resetDailyPnl(): void {
     const metrics = this.getMetrics();
     if (metrics.dailyReturn !== 0) {
-      this.dailyReturns.push(metrics.dailyReturn);
+      this.daily_returns.push(metrics.dailyReturn);
     }
     this.dailyPnl = 0;
   }
@@ -237,14 +237,14 @@ export class Portfolio {
    * 获取资金曲线
    */
   getEquityCurve(): { date: Date; value: number }[] {
-    return [...this.equityCurve];
+    return [...this.equity_curve];
   }
 
   /**
    * 获取每日收益率序列
    */
   getDailyReturns(): number[] {
-    return [...this.dailyReturns];
+    return [...this.daily_returns];
   }
 
   /**
@@ -294,9 +294,9 @@ export class Portfolio {
     this.positions.clear();
     this.trades = [];
     this.tradeCounter = 1;
-    this.realizedPnl = 0;
+    this.realized_pnl = 0;
     this.dailyPnl = 0;
-    this.dailyReturns = [];
-    this.equityCurve = [];
+    this.daily_returns = [];
+    this.equity_curve = [];
   }
 }

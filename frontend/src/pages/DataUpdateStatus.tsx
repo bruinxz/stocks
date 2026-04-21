@@ -71,7 +71,7 @@ interface JobInfo {
     type: string;
     date: string;
     forceUpdate?: boolean;
-    userId?: number;
+    user_id?: number;
   };
   state: string;
   progress: number;
@@ -86,14 +86,14 @@ interface UpdateLog {
   type: string;
   status: string;
   date: string;
-  affectedStocks?: number;
-  insertedRecords?: number;
+  affected_stocks?: number;
+  inserted_records?: number;
   error?: string;
   result?: any;
-  startedAt?: string;
-  completedAt?: string;
-  createdAt: string;
-  updatedAt: string;
+  started_at?: string;
+  completed_at?: string;
+  created_at: string;
+  updated_at: string;
 }
 
 interface UpdateStats {
@@ -105,8 +105,8 @@ interface UpdateStats {
   avgInsertedRecords: number;
   dailyBreakdown: Array<{
     date: string;
-    affectedStocks: number;
-    insertedRecords: number;
+    affected_stocks: number;
+    inserted_records: number;
     status: string;
   }>;
 }
@@ -180,8 +180,8 @@ const DataUpdateStatus: React.FC = () => {
     symbols: [] as string[],
     marketFilters: [] as ('SH' | 'SZ' | 'BJ')[],
     syncAllStocks: false,
-    startDate: '',
-    endDate: '',
+    start_date: '',
+    end_date: '',
     dataSource: 'akshare',
     concurrency: 10,
   });
@@ -191,8 +191,8 @@ const DataUpdateStatus: React.FC = () => {
   // 日志筛选状态
   const [logFilters, setLogFilters] = useState({
     types: [] as string[], // 任务类型筛选
-    startDate: '', // 开始日期 YYYY-MM-DD
-    endDate: '', // 结束日期 YYYY-MM-DD
+    start_date: '', // 开始日期 YYYY-MM-DD
+    end_date: '', // 结束日期 YYYY-MM-DD
   });
 
   // 获取所有数据
@@ -205,11 +205,11 @@ const DataUpdateStatus: React.FC = () => {
       if (logFilters.types.length > 0) {
         logFilters.types.forEach(type => queryParams.append('type', type));
       }
-      if (logFilters.startDate) {
-        queryParams.append('startDate', logFilters.startDate);
+      if (logFilters.start_date) {
+        queryParams.append('start_date', logFilters.start_date);
       }
-      if (logFilters.endDate) {
-        queryParams.append('endDate', logFilters.endDate);
+      if (logFilters.end_date) {
+        queryParams.append('end_date', logFilters.end_date);
       }
 
       const queryString = queryParams.toString();
@@ -269,8 +269,8 @@ const DataUpdateStatus: React.FC = () => {
   const handleResetFilters = () => {
     setLogFilters({
       types: [],
-      startDate: '',
-      endDate: '',
+      start_date: '',
+      end_date: '',
     });
     setTimeout(() => fetchAllData(), 100);
     message.success('筛选条件已重置');
@@ -323,11 +323,11 @@ const DataUpdateStatus: React.FC = () => {
         payload.marketFilters = bulkSyncForm.marketFilters;
       }
 
-      if (bulkSyncForm.startDate) {
-        payload.startDate = bulkSyncForm.startDate;
+      if (bulkSyncForm.start_date) {
+        payload.start_date = bulkSyncForm.start_date;
       }
-      if (bulkSyncForm.endDate) {
-        payload.endDate = bulkSyncForm.endDate;
+      if (bulkSyncForm.end_date) {
+        payload.end_date = bulkSyncForm.end_date;
       }
       if (bulkSyncForm.concurrency) {
         payload.concurrency = bulkSyncForm.concurrency;
@@ -342,8 +342,8 @@ const DataUpdateStatus: React.FC = () => {
           symbols: [],
           marketFilters: [],
           syncAllStocks: false,
-          startDate: '',
-          endDate: '',
+          start_date: '',
+          end_date: '',
           dataSource: 'akshare',
           concurrency: 10,
         });
@@ -638,15 +638,15 @@ const DataUpdateStatus: React.FC = () => {
     },
     {
       title: '影响股票',
-      dataIndex: 'affectedStocks',
-      key: 'affectedStocks',
+      dataIndex: 'affected_stocks',
+      key: 'affected_stocks',
       width: 100,
       render: count => count || '--',
     },
     {
       title: '插入记录',
-      dataIndex: 'insertedRecords',
-      key: 'insertedRecords',
+      dataIndex: 'inserted_records',
+      key: 'inserted_records',
       width: 100,
       render: count => count || '--',
     },
@@ -669,15 +669,15 @@ const DataUpdateStatus: React.FC = () => {
     },
     {
       title: '开始时间',
-      dataIndex: 'startedAt',
-      key: 'startedAt',
+      dataIndex: 'started_at',
+      key: 'started_at',
       width: 180,
       render: time => (time ? dayjs(time).format('YYYY-MM-DD HH:mm:ss') : '--'),
     },
     {
       title: '完成时间',
-      dataIndex: 'completedAt',
-      key: 'completedAt',
+      dataIndex: 'completed_at',
+      key: 'completed_at',
       width: 180,
       render: time => (time ? dayjs(time).format('YYYY-MM-DD HH:mm:ss') : '--'),
     },
@@ -686,9 +686,9 @@ const DataUpdateStatus: React.FC = () => {
       key: 'duration',
       width: 120,
       render: (_, record) => {
-        if (!record.startedAt || !record.completedAt) return '--';
-        const start = dayjs(record.startedAt);
-        const end = dayjs(record.completedAt);
+        if (!record.started_at || !record.completed_at) return '--';
+        const start = dayjs(record.started_at);
+        const end = dayjs(record.completed_at);
         const durationMs = end.diff(start);
         const seconds = Math.floor(durationMs / 1000);
         if (seconds < 60) {
@@ -1033,9 +1033,9 @@ const DataUpdateStatus: React.FC = () => {
             <Col span={12}>
               <Text strong>开始日期：</Text>
               <DatePicker
-                value={bulkSyncForm.startDate ? dayjs(bulkSyncForm.startDate) : null}
+                value={bulkSyncForm.start_date ? dayjs(bulkSyncForm.start_date) : null}
                 onChange={date =>
-                  handleBulkSyncFormChange('startDate', date ? date.format('YYYY-MM-DD') : '')
+                  handleBulkSyncFormChange('start_date', date ? date.format('YYYY-MM-DD') : '')
                 }
                 style={{ width: '100%', marginTop: 8 }}
                 placeholder="选择开始日期（留空则从2020-01-01开始）"
@@ -1044,9 +1044,9 @@ const DataUpdateStatus: React.FC = () => {
             <Col span={12}>
               <Text strong>结束日期：</Text>
               <DatePicker
-                value={bulkSyncForm.endDate ? dayjs(bulkSyncForm.endDate) : null}
+                value={bulkSyncForm.end_date ? dayjs(bulkSyncForm.end_date) : null}
                 onChange={date =>
-                  handleBulkSyncFormChange('endDate', date ? date.format('YYYY-MM-DD') : '')
+                  handleBulkSyncFormChange('end_date', date ? date.format('YYYY-MM-DD') : '')
                 }
                 style={{ width: '100%', marginTop: 8 }}
                 placeholder="选择结束日期（留空则到今天）"
@@ -1176,7 +1176,7 @@ const DataUpdateStatus: React.FC = () => {
                   <RechartsTooltip />
                   <Line
                     type="monotone"
-                    dataKey="affectedStocks"
+                    dataKey="affected_stocks"
                     stroke="#4f46e5"
                     strokeWidth={2}
                     dot={false}
@@ -1305,9 +1305,9 @@ const DataUpdateStatus: React.FC = () => {
                   <Col span={12}>
                     <Text strong>开始日期：</Text>
                     <DatePicker
-                      value={logFilters.startDate ? dayjs(logFilters.startDate) : null}
+                      value={logFilters.start_date ? dayjs(logFilters.start_date) : null}
                       onChange={date =>
-                        handleFilterChange('startDate', date ? date.format('YYYY-MM-DD') : '')
+                        handleFilterChange('start_date', date ? date.format('YYYY-MM-DD') : '')
                       }
                       style={{ width: '100%', marginTop: 8 }}
                       placeholder="选择开始日期"
@@ -1316,9 +1316,9 @@ const DataUpdateStatus: React.FC = () => {
                   <Col span={12}>
                     <Text strong>结束日期：</Text>
                     <DatePicker
-                      value={logFilters.endDate ? dayjs(logFilters.endDate) : null}
+                      value={logFilters.end_date ? dayjs(logFilters.end_date) : null}
                       onChange={date =>
-                        handleFilterChange('endDate', date ? date.format('YYYY-MM-DD') : '')
+                        handleFilterChange('end_date', date ? date.format('YYYY-MM-DD') : '')
                       }
                       style={{ width: '100%', marginTop: 8 }}
                       placeholder="选择结束日期"
@@ -1331,7 +1331,7 @@ const DataUpdateStatus: React.FC = () => {
                       <Button
                         onClick={handleResetFilters}
                         disabled={
-                          !logFilters.types.length && !logFilters.startDate && !logFilters.endDate
+                          !logFilters.types.length && !logFilters.start_date && !logFilters.end_date
                         }
                       >
                         重置筛选

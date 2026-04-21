@@ -43,10 +43,10 @@ const { Title, Text } = Typography;
 interface PortfolioInfo {
   id: number;
   name: string;
-  initialCapital: number;
-  currentCash: number;
-  totalValue: number;
-  isActive: boolean;
+  initial_capital: number;
+  current_cash: number;
+  total_value: number;
+  is_active: boolean;
 }
 
 interface Position {
@@ -54,10 +54,10 @@ interface Position {
   symbol: string;
   name: string;
   quantity: number;
-  avgCost: number;
-  currentPrice: number;
-  marketValue: number;
-  unrealizedPnl: number;
+  avg_cost: number;
+  current_price: number;
+  market_value: number;
+  unrealized_pnl: number;
 }
 
 interface TradeHistory {
@@ -65,19 +65,19 @@ interface TradeHistory {
   symbol: string;
   name: string;
   direction: 'BUY' | 'SELL';
-  executePrice: number;
+  execute_price: number;
   quantity: number;
   amount: number;
   commission: number;
-  realizedPnl: number | null;
-  createdAt: string;
+  realized_pnl: number | null;
+  created_at: string;
 }
 
 interface PortfolioSnapshot {
   date: string;
-  totalValue: number;
-  currentCash: number;
-  positionValue: number;
+  total_value: number;
+  current_cash: number;
+  position_value: number;
 }
 
 const PaperTrading: React.FC = () => {
@@ -192,10 +192,10 @@ const PaperTrading: React.FC = () => {
     }
   };
 
-  const totalReturn = portfolio
-    ? ((portfolio.totalValue - portfolio.initialCapital) / portfolio.initialCapital) * 100
+  const total_return = portfolio
+    ? ((portfolio.total_value - portfolio.initial_capital) / portfolio.initial_capital) * 100
     : 0;
-  const isPositive = totalReturn >= 0;
+  const isPositive = total_return >= 0;
 
   const columns = [
     {
@@ -217,8 +217,8 @@ const PaperTrading: React.FC = () => {
     },
     {
       title: '持仓成本',
-      dataIndex: 'avgCost',
-      key: 'avgCost',
+      dataIndex: 'avg_cost',
+      key: 'avg_cost',
       render: (val: number) => (
         <Text>
           ¥ {val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -227,8 +227,8 @@ const PaperTrading: React.FC = () => {
     },
     {
       title: '现价',
-      dataIndex: 'currentPrice',
-      key: 'currentPrice',
+      dataIndex: 'current_price',
+      key: 'current_price',
       render: (val: number) => (
         <Text>
           ¥ {val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -237,8 +237,8 @@ const PaperTrading: React.FC = () => {
     },
     {
       title: '持仓市值',
-      dataIndex: 'marketValue',
-      key: 'marketValue',
+      dataIndex: 'market_value',
+      key: 'market_value',
       render: (val: number) => (
         <Text>
           ¥ {val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -247,8 +247,8 @@ const PaperTrading: React.FC = () => {
     },
     {
       title: '浮动盈亏',
-      dataIndex: 'unrealizedPnl',
-      key: 'unrealizedPnl',
+      dataIndex: 'unrealized_pnl',
+      key: 'unrealized_pnl',
       render: (val: number) => {
         const color = val >= 0 ? '#cf1322' : '#3f8600';
         return (
@@ -278,8 +278,8 @@ const PaperTrading: React.FC = () => {
   const historyColumns = [
     {
       title: '时间',
-      dataIndex: 'createdAt',
-      key: 'createdAt',
+      dataIndex: 'created_at',
+      key: 'created_at',
       render: (val: string) => new Date(val).toLocaleString(),
     },
     {
@@ -302,8 +302,8 @@ const PaperTrading: React.FC = () => {
     },
     {
       title: '成交价',
-      dataIndex: 'executePrice',
-      key: 'executePrice',
+      dataIndex: 'execute_price',
+      key: 'execute_price',
       render: (val: number) => `¥ ${val.toFixed(2)}`,
     },
     {
@@ -320,8 +320,8 @@ const PaperTrading: React.FC = () => {
     },
     {
       title: '实现盈亏',
-      dataIndex: 'realizedPnl',
-      key: 'realizedPnl',
+      dataIndex: 'realized_pnl',
+      key: 'realized_pnl',
       render: (val: number | null) => {
         if (val === null) return '-';
         const color = val >= 0 ? '#cf1322' : '#3f8600';
@@ -361,7 +361,7 @@ const PaperTrading: React.FC = () => {
             <Card className="modern-card" bordered={false} loading={loading}>
               <Statistic
                 title="当前总资产"
-                value={portfolio?.totalValue || 0}
+                value={portfolio?.total_value || 0}
                 precision={2}
                 prefix="¥"
                 valueStyle={{ color: '#1890ff', fontWeight: 'bold' }}
@@ -370,7 +370,7 @@ const PaperTrading: React.FC = () => {
             <Card className="modern-card" bordered={false} loading={loading}>
               <Statistic
                 title="可用资金"
-                value={portfolio?.currentCash || 0}
+                value={portfolio?.current_cash || 0}
                 precision={2}
                 prefix={<WalletOutlined />}
               />
@@ -378,7 +378,7 @@ const PaperTrading: React.FC = () => {
             <Card className="modern-card" bordered={false} loading={loading}>
               <Statistic
                 title="累计收益率"
-                value={Math.abs(totalReturn)}
+                value={Math.abs(total_return)}
                 precision={2}
                 prefix={isPositive ? <RiseOutlined /> : <FallOutlined />}
                 suffix="%"
@@ -431,7 +431,7 @@ const PaperTrading: React.FC = () => {
                   />
                   <Area
                     type="monotone"
-                    dataKey="totalValue"
+                    dataKey="total_value"
                     stroke="#3b82f6"
                     strokeWidth={2}
                     fillOpacity={1}

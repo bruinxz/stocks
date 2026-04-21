@@ -110,13 +110,13 @@ router.get('/search', marketController.searchStocks);
  *           type: string
  *         description: 股票代码（如 600000.SH）
  *       - in: query
- *         name: startDate
+ *         name: start_date
  *         schema:
  *           type: string
  *           format: date
  *         description: 开始日期（YYYY-MM-DD），默认一年前
  *       - in: query
- *         name: endDate
+ *         name: end_date
  *         schema:
  *           type: string
  *           format: date
@@ -169,9 +169,9 @@ router.get('/search', marketController.searchStocks);
  *                     summary:
  *                       type: object
  *                       properties:
- *                         startDate:
+ *                         start_date:
  *                           type: string
- *                         endDate:
+ *                         end_date:
  *                           type: string
  *                         totalDays:
  *                           type: integer
@@ -197,7 +197,7 @@ router.get('/history/:symbol', marketController.getStockHistory);
  *       - bearerAuth: []
  *     parameters:
  *       - in: query
- *         name: groupId
+ *         name: group_id
  *         schema:
  *           type: string
  *         description: 按分组筛选
@@ -221,13 +221,13 @@ router.get('/history/:symbol', marketController.getStockHistory);
  *                         properties:
  *                           id:
  *                             type: integer
- *                           groupId:
+ *                           group_id:
  *                             type: string
  *                           tags:
  *                             type: string
  *                           notes:
  *                             type: string
- *                           sortOrder:
+ *                           sort_order:
  *                             type: integer
  *                           stock:
  *                             $ref: '#/components/schemas/Stock'
@@ -267,13 +267,13 @@ router.get('/favorites', authController.authenticate, marketController.getFavori
  *           schema:
  *             type: object
  *             properties:
- *               groupId:
+ *               group_id:
  *                 type: string
  *               tags:
  *                 type: string
  *               notes:
  *                 type: string
- *               sortOrder:
+ *               sort_order:
  *                 type: integer
  *     responses:
  *       200:
@@ -381,13 +381,13 @@ router.get('/favorites/:symbol', authController.authenticate, marketController.c
  *           schema:
  *             type: object
  *             properties:
- *               groupId:
+ *               group_id:
  *                 type: string
  *               tags:
  *                 type: string
  *               notes:
  *                 type: string
- *               sortOrder:
+ *               sort_order:
  *                 type: integer
  *     responses:
  *       200:
@@ -439,7 +439,7 @@ router.patch('/favorites/:symbol', authController.authenticate, marketController
  *                       type: string
  *                       enum: [pending, in_progress, completed, failed]
  *                       description: 更新状态
- *                     startedAt:
+ *                     started_at:
  *                       type: string
  *                       format: date-time
  *       500:
@@ -467,13 +467,13 @@ router.post('/update-data', marketController.updateData);
  *           format: date
  *         description: 日期 YYYY-MM-DD（可选）
  *       - in: query
- *         name: startDate
+ *         name: start_date
  *         schema:
  *           type: string
  *           format: date
  *         description: 开始日期 YYYY-MM-DD（可选），筛选创建时间
  *       - in: query
- *         name: endDate
+ *         name: end_date
  *         schema:
  *           type: string
  *           format: date
@@ -604,11 +604,11 @@ router.post('/manual-sync', marketController.triggerManualSync);
  *                 type: boolean
  *                 default: false
  *                 description: 是否同步所有股票（如果为true，忽略symbols和marketFilters）
- *               startDate:
+ *               start_date:
  *                 type: string
  *                 format: date
  *                 description: 同步开始日期（YYYY-MM-DD），默认一年前
- *               endDate:
+ *               end_date:
  *                 type: string
  *                 format: date
  *                 description: 同步结束日期（YYYY-MM-DD），默认今天
@@ -871,14 +871,14 @@ router.get('/health', marketController.healthCheck as any);
  *     description: 统计数据库里股票的只数和数据完整性（从指定开始日期到结束日期）
  *     parameters:
  *       - in: query
- *         name: startDate
+ *         name: start_date
  *         schema:
  *           type: string
  *           format: date
  *           default: 2020-01-01
  *         description: 开始日期（YYYY-MM-DD）
  *       - in: query
- *         name: endDate
+ *         name: end_date
  *         schema:
  *           type: string
  *           format: date
@@ -913,9 +913,9 @@ router.get('/health', marketController.healthCheck as any);
  *                         dateRange:
  *                           type: object
  *                           properties:
- *                             startDate:
+ *                             start_date:
  *                               type: string
- *                             endDate:
+ *                             end_date:
  *                               type: string
  *                         timestamp:
  *                           type: string
@@ -988,14 +988,14 @@ router.get('/data-completeness', marketController.getDataCompletenessStats as an
  *     description: 强制清除数据完整性统计的缓存，使下次请求重新计算
  *     parameters:
  *       - in: query
- *         name: startDate
+ *         name: start_date
  *         schema:
  *           type: string
  *           format: date
  *           default: 2020-01-01
  *         description: 开始日期（YYYY-MM-DD）
  *       - in: query
- *         name: endDate
+ *         name: end_date
  *         schema:
  *           type: string
  *           format: date

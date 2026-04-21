@@ -28,7 +28,7 @@ export class RiskAlert extends Model {
     allowNull: false,
     field: 'user_id',
   })
-  declare userId: number;
+  declare user_id: number;
 
   @BelongsTo(() => User)
   declare user: User;
@@ -67,13 +67,13 @@ export class RiskAlert extends Model {
     field: 'is_read',
     comment: '是否已读',
   })
-  declare isRead: boolean;
+  declare is_read: boolean;
 
   @CreatedAt
   @Column({ field: 'created_at' })
-  declare createdAt: Date;
+  declare created_at: Date;
 
   @UpdatedAt
   @Column({ field: 'updated_at' })
-  declare updatedAt: Date;
+  declare updated_at: Date;
 }

@@ -4,7 +4,7 @@ import path from 'path';
 
 async function addUserIdColumn() {
   try {
-    console.log('正在添加userId列到backtest_results表...');
+    console.log('正在添加user_id列到backtest_results表...');
 
     // 读取SQL文件
     const sqlPath = path.join(__dirname, 'add-user-id-to-backtest.sql');
@@ -13,9 +13,9 @@ async function addUserIdColumn() {
     // 执行SQL
     await sequelize.query(sql);
 
-    console.log('✅ userId列添加成功');
+    console.log('✅ user_id列添加成功');
   } catch (error) {
-    console.error('❌ 添加userId列失败:', error);
+    console.error('❌ 添加user_id列失败:', error);
   } finally {
     await sequelize.close();
   }

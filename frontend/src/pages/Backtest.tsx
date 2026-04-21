@@ -106,15 +106,15 @@ const Backtest: React.FC = () => {
     },
     {
       title: '初始资金',
-      dataIndex: 'initialCapital',
-      key: 'initialCapital',
+      dataIndex: 'initial_capital',
+      key: 'initial_capital',
       align: 'right',
       render: (capital: number) => `¥${capital.toLocaleString()}`,
     },
     {
       title: '总收益率',
-      dataIndex: 'totalReturn',
-      key: 'totalReturn',
+      dataIndex: 'total_return',
+      key: 'total_return',
       align: 'right',
       render: (returnRate: number | undefined) => {
         if (returnRate === undefined) return '-';
@@ -124,16 +124,16 @@ const Backtest: React.FC = () => {
     },
     {
       title: '夏普比率',
-      dataIndex: 'sharpeRatio',
-      key: 'sharpeRatio',
+      dataIndex: 'sharpe_ratio',
+      key: 'sharpe_ratio',
       align: 'right',
       render: (sharpe: number | undefined) =>
         sharpe ? <span style={{ fontWeight: 500 }}>{sharpe.toFixed(2)}</span> : '-',
     },
     {
       title: '最大回撤',
-      dataIndex: 'maxDrawdown',
-      key: 'maxDrawdown',
+      dataIndex: 'max_drawdown',
+      key: 'max_drawdown',
       align: 'right',
       render: (drawdown: number | undefined) => {
         if (drawdown === undefined) return '-';
@@ -144,8 +144,8 @@ const Backtest: React.FC = () => {
     },
     {
       title: '创建时间',
-      dataIndex: 'createdAt',
-      key: 'createdAt',
+      dataIndex: 'created_at',
+      key: 'created_at',
       align: 'right',
       render: (date: string) => (
         <span style={{ color: '#8c8c8c' }}>{new Date(date).toLocaleDateString()}</span>
@@ -245,7 +245,7 @@ const Backtest: React.FC = () => {
             key: '3',
             label: '结果分析',
             children: selectedBacktestId ? (
-              <BacktestResults backtestId={selectedBacktestId} />
+              <BacktestResults backtest_id={selectedBacktestId} />
             ) : (
               <Card
                 className="modern-card"

@@ -70,4 +70,57 @@ router.get('/data/history', internalDataController.getHistoricalData);
  */
 router.post('/data/batch-history', internalDataController.getBatchHistoricalData);
 
+/**
+ * @swagger
+ * /api/internal/data/quotes:
+ *   get:
+ *     tags: [Internal]
+ *     summary: 获取多只股票实时切片数据
+ *     description: 提供极速的股票当前实时价格、涨跌幅等快照数据 (缓存 3 秒)
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: symbols
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 股票代码列表，逗号分隔 (e.g. sh.600000,sz.000001)
+ */
+router.get('/data/quotes', internalDataController.getRealtimeQuotes);
+
+/**
+ * @swagger
+ * /api/internal/data/intraday:
+ *   get:
+ *     tags: [Internal]
+ *     summary: 获取单只股票日内分时K线
+ *     description: 提供股票的分钟级别K线数据，用于分析日内走势 (缓存 60 秒)
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: symbol
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 股票代码 (e.g. sh.600000)
+ *       - in: query
+ *         name: period
+ *         required: false
+ *         schema:
+ *           type: string
+ *           enum: [1m, 5m, 15m, 30m, 60m]
+ *           default: 1m
+ *         description: K线周期
+ *       - in: query
+ *         name: limit
+ *         required: false
+ *         schema:
+ *           type: integer
+ *           default: 240
+ *         description: 返回的K线数量
+ */
+router.get('/data/intraday', internalDataController.getIntradayBars);
+
 export default router;

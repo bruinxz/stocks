@@ -64,8 +64,8 @@ interface Stock {
   name: string;
   market?: string;
   industry?: string;
-  listingDate?: string;
-  isListed: boolean;
+  listing_date?: string;
+  is_listed: boolean;
 }
 
 interface StockHistory {
@@ -82,10 +82,10 @@ interface StockHistory {
 
 interface FavoriteStock {
   id: number;
-  groupId?: string;
+  group_id?: string;
   tags?: string;
   notes?: string;
-  sortOrder?: number;
+  sort_order?: number;
   stock: Stock;
 }
 
@@ -152,10 +152,10 @@ const Market: React.FC = () => {
 
       setHistoryLoading(true);
       try {
-        const [startDate, endDate] = dateRange;
+        const [start_date, end_date] = dateRange;
         const params = {
-          startDate: startDate.format('YYYY-MM-DD'),
-          endDate: endDate.format('YYYY-MM-DD'),
+          start_date: start_date.format('YYYY-MM-DD'),
+          end_date: end_date.format('YYYY-MM-DD'),
           frequency: 'd',
         };
         const response = await api.get(`/market/history/${symbol}`, { params });
@@ -209,7 +209,7 @@ const Market: React.FC = () => {
     setStatsLoading(true);
     try {
       const response = await api.get('/market/data-completeness', {
-        params: { startDate: '2020-01-01', endDate: '2026-04-10' },
+        params: { start_date: '2020-01-01', end_date: '2026-04-10' },
       });
       if (response.data.success) {
         setDataCompletenessStats(response.data.data);
@@ -227,9 +227,13 @@ const Market: React.FC = () => {
   const refreshDataCompletenessStats = async () => {
     try {
       // 先调用刷新缓存API，传递参数作为查询参数
-      const refreshResponse = await api.post('/market/data-completeness/refresh', null, {
-        params: { startDate: '2020-01-01', endDate: '2026-04-10' },
-      });
+      const refreshResponse = await api.post(
+        '/market/data-completeness/refresh',
+        {},
+        {
+          params: { start_date: '2020-01-01', end_date: '2026-04-10' },
+        }
+      );
       if (refreshResponse.data.success) {
         message.success('缓存已刷新，正在重新计算...');
         // 重新获取数据
@@ -353,11 +357,11 @@ const Market: React.FC = () => {
     },
     {
       title: '上市状态',
-      dataIndex: 'isListed',
-      key: 'isListed',
+      dataIndex: 'is_listed',
+      key: 'is_listed',
       width: 100,
-      render: isListed => (
-        <Tag color={isListed ? 'green' : 'red'}>{isListed ? '上市' : '退市'}</Tag>
+      render: is_listed => (
+        <Tag color={is_listed ? 'green' : 'red'}>{is_listed ? '上市' : '退市'}</Tag>
       ),
     },
     {
@@ -365,8 +369,8 @@ const Market: React.FC = () => {
       key: 'action',
       width: 200,
       render: (_, record) => {
-        const isFavorite = favorites.some((f) => f.stock.symbol === record.symbol);
-        
+        const isFavorite = favorites.some(f => f.stock.symbol === record.symbol);
+
         return (
           <Space size="small">
             <Button
@@ -434,10 +438,10 @@ const Market: React.FC = () => {
     },
     {
       title: '分组',
-      dataIndex: 'groupId',
-      key: 'groupId',
+      dataIndex: 'group_id',
+      key: 'group_id',
       width: 100,
-      render: groupId => groupId || '默认',
+      render: group_id => group_id || '默认',
     },
     {
       title: '备注',
@@ -918,13 +922,16 @@ const Market: React.FC = () => {
                   <Col span={6}>
                     <Text type="secondary">上市日期：</Text>
                     <Text strong style={{ marginLeft: 8 }}>
-                      {selectedStock.listingDate || '--'}
+                      {selectedStock.listing_date || '--'}
                     </Text>
                   </Col>
                   <Col span={6}>
                     <Text type="secondary">状态：</Text>
-                    <Tag color={selectedStock.isListed ? 'green' : 'red'} style={{ marginLeft: 8 }}>
-                      {selectedStock.isListed ? '上市' : '退市'}
+                    <Tag
+                      color={selectedStock.is_listed ? 'green' : 'red'}
+                      style={{ marginLeft: 8 }}
+                    >
+                      {selectedStock.is_listed ? '上市' : '退市'}
                     </Tag>
                   </Col>
                 </Row>
@@ -1110,7 +1117,7 @@ const Market: React.FC = () => {
             <Input />
           </Form.Item>
           <Form.Item
-            name="groupId"
+            name="group_id"
             label="分组"
             rules={[{ required: false, message: '请选择分组' }]}
           >
@@ -1129,7 +1136,7 @@ const Market: React.FC = () => {
           <Form.Item name="notes" label="备注">
             <Input.TextArea rows={3} placeholder="输入备注信息" />
           </Form.Item>
-          <Form.Item name="sortOrder" label="排序权重" initialValue={0}>
+          <Form.Item name="sort_order" label="排序权重" initialValue={0}>
             <Input type="number" min={0} max={100} />
           </Form.Item>
         </Form>

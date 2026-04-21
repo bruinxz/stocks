@@ -28,7 +28,7 @@ router.post(
     body('days')
       .isInt({ min: 1, max: 365 * 5 })
       .withMessage('持有天数应在1-1825天范围内'),
-    body('initialCapital')
+    body('initial_capital')
       .optional()
       .isFloat({ min: 1000, max: 10000000 })
       .withMessage('初始资金应在1000-10000000范围内'),
@@ -54,8 +54,8 @@ router.get(
   [
     query('page').optional().isInt({ min: 1 }),
     query('limit').optional().isInt({ min: 1, max: 100 }),
-    query('startDate').optional().isISO8601(),
-    query('endDate').optional().isISO8601(),
+    query('start_date').optional().isISO8601(),
+    query('end_date').optional().isISO8601(),
   ],
   validateRequest,
   portfolioController.getSimulationHistory

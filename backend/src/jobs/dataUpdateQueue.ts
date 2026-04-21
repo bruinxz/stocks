@@ -10,13 +10,13 @@ export interface DataUpdateJobData {
     | 'bulk_sync_custom';
   date: string; // 更新日期 YYYY-MM-DD
   forceUpdate?: boolean; // 是否强制更新（忽略当日检查）
-  userId?: number; // 触发用户ID（可选）
+  user_id?: number; // 触发用户ID（可选）
   // 批量同步自定义参数
   symbols?: string[]; // 指定股票代码列表
   marketFilters?: ('SH' | 'SZ' | 'BJ')[]; // 按市场筛选
   syncAllStocks?: boolean; // 同步所有股票
-  startDate?: string; // 同步开始日期 YYYY-MM-DD
-  endDate?: string; // 同步结束日期 YYYY-MM-DD
+  start_date?: string; // 同步开始日期 YYYY-MM-DD
+  end_date?: string; // 同步结束日期 YYYY-MM-DD
   dataSource?: 'akshare'; // 数据源，目前只支持akshare
   concurrency?: number; // 并发数量（批次大小）
   completedSymbols?: string[]; // 记录已完成的股票列表（用于断点续传）

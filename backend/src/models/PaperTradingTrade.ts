@@ -28,7 +28,7 @@ export class PaperTradingTrade extends Model {
     allowNull: false,
     field: 'portfolio_id',
   })
-  declare portfolioId: number;
+  declare portfolio_id: number;
 
   @BelongsTo(() => PaperTradingPortfolio)
   declare portfolio: PaperTradingPortfolio;
@@ -56,7 +56,7 @@ export class PaperTradingTrade extends Model {
     allowNull: false,
     field: 'execute_price',
   })
-  declare executePrice: number;
+  declare execute_price: number;
 
   @Column({
     type: DataType.INTEGER,
@@ -84,13 +84,13 @@ export class PaperTradingTrade extends Model {
     field: 'realized_pnl',
     comment: '如果是卖出，记录本次交易的实现盈亏',
   })
-  declare realizedPnl: number;
+  declare realized_pnl: number;
 
   @CreatedAt
   @Column({ field: 'created_at' })
-  declare createdAt: Date;
+  declare created_at: Date;
 
   @UpdatedAt
   @Column({ field: 'updated_at' })
-  declare updatedAt: Date;
+  declare updated_at: Date;
 }

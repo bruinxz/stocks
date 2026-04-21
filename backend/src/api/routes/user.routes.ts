@@ -28,7 +28,7 @@ router.post(
     body('email').isEmail(),
     body('password').isString().isLength({ min: 6 }),
     body('role').optional().isIn(['admin', 'user']),
-    body('isActive').optional().isBoolean(),
+    body('is_active').optional().isBoolean(),
   ],
   validateRequest,
   userController.createUser
@@ -43,7 +43,7 @@ router.put(
   [
     body('email').optional().isEmail(),
     body('role').optional().isIn(['admin', 'user']),
-    body('isActive').optional().isBoolean(),
+    body('is_active').optional().isBoolean(),
   ],
   validateRequest,
   userController.updateUser

@@ -10,95 +10,95 @@ export interface LocalStock {
   name: string;
   market?: string;
   industry?: string;
-  listingDate?: Date | null;
-  delistingDate?: Date | null;
-  isListed?: boolean;
+  listing_date?: Date | null;
+  delisting_date?: Date | null;
+  is_listed?: boolean;
   type?: string;
 }
 
 export interface LocalDailyBar {
   time: Date;
-  stockId?: number;
+  stock_id?: number;
   open: number;
   high: number;
   low: number;
   close: number;
   volume: number;
   turnover?: number;
-  adjClose?: number;
-  turnoverRate?: number;
-  changePercent?: number;
+  adj_close?: number;
+  turnover_rate?: number;
+  change_percent?: number;
   amplitude?: number;
   pe?: number;
   pb?: number;
   ps?: number;
-  isTradingDay?: boolean;
-  isSuspended?: boolean;
+  is_trading_day?: boolean;
+  is_suspended?: boolean;
 }
 
 export interface LocalBacktestResult {
   id: string;
-  userId: number;
+  user_id: number;
   name: string;
   description?: string;
-  strategyConfig: any;
-  startDate: Date;
-  endDate: Date;
-  initialCapital: number;
-  finalCapital: number;
-  totalReturn: number;
-  annualizedReturn?: number;
-  sharpeRatio?: number;
-  sortinoRatio?: number;
-  maxDrawdown?: number;
-  winRate?: number;
-  profitLossRatio?: number;
-  totalTrades: number;
-  profitTrades: number;
-  lossTrades: number;
+  strategy_config: any;
+  start_date: Date;
+  end_date: Date;
+  initial_capital: number;
+  final_capital: number;
+  total_return: number;
+  annualized_return?: number;
+  sharpe_ratio?: number;
+  sortino_ratio?: number;
+  max_drawdown?: number;
+  win_rate?: number;
+  profit_loss_ratio?: number;
+  total_trades: number;
+  profit_trades: number;
+  loss_trades: number;
   status: string;
-  errorMessage?: string;
-  createdAt: Date;
-  updatedAt: Date;
+  error_message?: string;
+  created_at: Date;
+  updated_at: Date;
 }
 
 export interface LocalTrade {
   id: string;
-  backtestId: string;
+  backtest_id: string;
   symbol: string;
-  entryDate: Date;
-  exitDate?: Date;
+  entry_date: Date;
+  exit_date?: Date;
   direction: string;
-  entryPrice: number;
-  exitPrice?: number;
+  entry_price: number;
+  exit_price?: number;
   quantity: number;
   pnl?: number;
-  pnlPercent?: number;
-  holdingDays?: number;
-  createdAt: Date;
+  pnl_percent?: number;
+  holding_days?: number;
+  created_at: Date;
 }
 
 export interface LocalFavorite {
   id: string;
-  userId: number;
+  user_id: number;
   symbol: string;
-  groupId?: string;
+  group_id?: string;
   tags?: string;
   notes?: string;
-  sortOrder?: number;
-  createdAt: Date;
-  updatedAt: Date;
+  sort_order?: number;
+  created_at: Date;
+  updated_at: Date;
 }
 
 export interface LocalUser {
   id: number;
   username: string;
   email: string;
-  passwordHash: string;
+  password_hash: string;
   role: string;
-  isActive: boolean;
-  createdAt: Date;
-  updatedAt: Date;
+  is_active: boolean;
+  created_at: Date;
+  updated_at: Date;
 }
 
 export class LocalDataStore {
@@ -156,8 +156,8 @@ export class LocalDataStore {
       // Convert string dates to Date objects
       return stocks.map(s => ({
         ...s,
-        listingDate: s.listingDate ? new Date(s.listingDate) : null,
-        delistingDate: s.delistingDate ? new Date(s.delistingDate) : null,
+        listing_date: s.listing_date ? new Date(s.listing_date) : null,
+        delisting_date: s.delisting_date ? new Date(s.delisting_date) : null,
       }));
     } catch (error) {
       logger.error('Error reading stocks file:', error);
@@ -189,8 +189,8 @@ export class LocalDataStore {
 
   public async getDailyBars(
     symbol: string,
-    startDate?: Date,
-    endDate?: Date
+    start_date?: Date,
+    end_date?: Date
   ): Promise<LocalDailyBar[]> {
     const filePath = this.getStockCsvPath(symbol);
     if (!fs.existsSync(filePath)) {
@@ -205,8 +205,8 @@ export class LocalDataStore {
           const time = new Date(data.time);
 
           // Filter by date range if provided
-          if (startDate && time < startDate) return;
-          if (endDate && time > endDate) return;
+          if (start_date && time < start_date) return;
+          if (end_date && time > end_date) return;
 
           results.push({
             time,
@@ -216,15 +216,15 @@ export class LocalDataStore {
             close: parseFloat(data.close),
             volume: parseFloat(data.volume),
             turnover: data.turnover ? parseFloat(data.turnover) : undefined,
-            adjClose: data.adjClose ? parseFloat(data.adjClose) : undefined,
-            turnoverRate: data.turnoverRate ? parseFloat(data.turnoverRate) : undefined,
-            changePercent: data.changePercent ? parseFloat(data.changePercent) : undefined,
+            adj_close: data.adj_close ? parseFloat(data.adj_close) : undefined,
+            turnover_rate: data.turnover_rate ? parseFloat(data.turnover_rate) : undefined,
+            change_percent: data.change_percent ? parseFloat(data.change_percent) : undefined,
             amplitude: data.amplitude ? parseFloat(data.amplitude) : undefined,
             pe: data.pe ? parseFloat(data.pe) : undefined,
             pb: data.pb ? parseFloat(data.pb) : undefined,
             ps: data.ps ? parseFloat(data.ps) : undefined,
-            isTradingDay: data.isTradingDay === 'true',
-            isSuspended: data.isSuspended === 'true',
+            is_trading_day: data.is_trading_day === 'true',
+            is_suspended: data.is_suspended === 'true',
           });
         })
         .on('end', () => {
@@ -272,43 +272,43 @@ export class LocalDataStore {
         { id: 'close', title: 'close' },
         { id: 'volume', title: 'volume' },
         { id: 'turnover', title: 'turnover' },
-        { id: 'adjClose', title: 'adjClose' },
-        { id: 'turnoverRate', title: 'turnoverRate' },
-        { id: 'changePercent', title: 'changePercent' },
+        { id: 'adj_close', title: 'adj_close' },
+        { id: 'turnover_rate', title: 'turnover_rate' },
+        { id: 'change_percent', title: 'change_percent' },
         { id: 'amplitude', title: 'amplitude' },
         { id: 'pe', title: 'pe' },
         { id: 'pb', title: 'pb' },
         { id: 'ps', title: 'ps' },
-        { id: 'isTradingDay', title: 'isTradingDay' },
-        { id: 'isSuspended', title: 'isSuspended' },
+        { id: 'is_trading_day', title: 'is_trading_day' },
+        { id: 'is_suspended', title: 'is_suspended' },
       ],
     });
 
     const records = mergedBars.map(bar => ({
       ...bar,
       time: bar.time.toISOString(),
-      isTradingDay: bar.isTradingDay ? 'true' : 'false',
-      isSuspended: bar.isSuspended ? 'true' : 'false',
+      is_trading_day: bar.is_trading_day ? 'true' : 'false',
+      is_suspended: bar.is_suspended ? 'true' : 'false',
     }));
 
     await csvWriter.writeRecords(records);
   }
 
   // --- Backtests Management ---
-  public async getBacktests(userId?: number): Promise<LocalBacktestResult[]> {
+  public async getBacktests(user_id?: number): Promise<LocalBacktestResult[]> {
     let backtests = this.readJson<LocalBacktestResult>(this.backtestsFile);
 
     // Parse dates back
     backtests = backtests.map(b => ({
       ...b,
-      startDate: new Date(b.startDate),
-      endDate: new Date(b.endDate),
-      createdAt: new Date(b.createdAt),
-      updatedAt: new Date(b.updatedAt),
+      start_date: new Date(b.start_date),
+      end_date: new Date(b.end_date),
+      created_at: new Date(b.created_at),
+      updated_at: new Date(b.updated_at),
     }));
 
-    if (userId !== undefined) {
-      return backtests.filter(b => b.userId === userId);
+    if (user_id !== undefined) {
+      return backtests.filter(b => b.user_id === user_id);
     }
     return backtests;
   }
@@ -322,7 +322,7 @@ export class LocalDataStore {
     const backtests = await this.getBacktests();
     const index = backtests.findIndex(b => b.id === backtest.id);
     if (index >= 0) {
-      backtests[index] = { ...backtest, updatedAt: new Date() };
+      backtests[index] = { ...backtest, updated_at: new Date() };
     } else {
       backtests.push(backtest);
     }
@@ -340,7 +340,7 @@ export class LocalDataStore {
       const trades = await this.getTrades(id);
       if (trades.length > 0) {
         const allTrades = this.readJson<LocalTrade>(this.tradesFile);
-        const filteredTrades = allTrades.filter(t => t.backtestId !== id);
+        const filteredTrades = allTrades.filter(t => t.backtest_id !== id);
         this.writeJson(this.tradesFile, filteredTrades);
       }
       return true;
@@ -349,15 +349,15 @@ export class LocalDataStore {
   }
 
   // --- Trades Management ---
-  public async getTrades(backtestId: string): Promise<LocalTrade[]> {
+  public async getTrades(backtest_id: string): Promise<LocalTrade[]> {
     let trades = this.readJson<LocalTrade>(this.tradesFile);
-    trades = trades.filter(t => t.backtestId === backtestId);
+    trades = trades.filter(t => t.backtest_id === backtest_id);
 
     return trades.map(t => ({
       ...t,
-      entryDate: new Date(t.entryDate),
-      exitDate: t.exitDate ? new Date(t.exitDate) : undefined,
-      createdAt: new Date(t.createdAt),
+      entry_date: new Date(t.entry_date),
+      exit_date: t.exit_date ? new Date(t.exit_date) : undefined,
+      created_at: new Date(t.created_at),
     }));
   }
 
@@ -369,25 +369,25 @@ export class LocalDataStore {
   }
 
   // --- Favorites Management ---
-  public async getFavorites(userId: number): Promise<LocalFavorite[]> {
+  public async getFavorites(user_id: number): Promise<LocalFavorite[]> {
     let favorites = this.readJson<LocalFavorite>(this.favoritesFile);
-    favorites = favorites.filter(f => f.userId === userId);
+    favorites = favorites.filter(f => f.user_id === user_id);
 
     return favorites.map(f => ({
       ...f,
-      createdAt: new Date(f.createdAt),
-      updatedAt: new Date(f.updatedAt),
+      created_at: new Date(f.created_at),
+      updated_at: new Date(f.updated_at),
     }));
   }
 
   public async addFavorite(
-    favorite: Omit<LocalFavorite, 'id' | 'createdAt' | 'updatedAt'>
+    favorite: Omit<LocalFavorite, 'id' | 'created_at' | 'updated_at'>
   ): Promise<LocalFavorite> {
     const allFavorites = this.readJson<LocalFavorite>(this.favoritesFile);
 
     // Check if exists
     const existing = allFavorites.find(
-      f => f.userId === favorite.userId && f.symbol === favorite.symbol
+      f => f.user_id === favorite.user_id && f.symbol === favorite.symbol
     );
     if (existing) {
       throw new Error('Already favorited');
@@ -396,8 +396,8 @@ export class LocalDataStore {
     const newFavorite: LocalFavorite = {
       ...favorite,
       id: Math.random().toString(36).substring(2, 15),
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      created_at: new Date(),
+      updated_at: new Date(),
     };
 
     allFavorites.push(newFavorite);
@@ -405,10 +405,10 @@ export class LocalDataStore {
     return newFavorite;
   }
 
-  public async removeFavorite(userId: number, symbol: string): Promise<boolean> {
+  public async removeFavorite(user_id: number, symbol: string): Promise<boolean> {
     const allFavorites = this.readJson<LocalFavorite>(this.favoritesFile);
     const initialLen = allFavorites.length;
-    const filtered = allFavorites.filter(f => !(f.userId === userId && f.symbol === symbol));
+    const filtered = allFavorites.filter(f => !(f.user_id === user_id && f.symbol === symbol));
 
     if (filtered.length < initialLen) {
       this.writeJson(this.favoritesFile, filtered);
@@ -436,7 +436,7 @@ export class LocalDataStore {
     const users = await this.getUsers();
     const index = users.findIndex(u => u.id === user.id);
     if (index >= 0) {
-      users[index] = { ...user, updatedAt: new Date() };
+      users[index] = { ...user, updated_at: new Date() };
     } else {
       users.push({ ...user, id: users.length > 0 ? Math.max(...users.map(u => u.id)) + 1 : 1 });
     }

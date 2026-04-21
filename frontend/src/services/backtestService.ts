@@ -3,11 +3,11 @@ import api from './api';
 export interface BacktestRequest {
   name: string;
   symbol: string;
-  startDate: string;
-  endDate: string;
+  start_date: string;
+  end_date: string;
   strategyType: string;
   strategyParams: Record<string, any>;
-  initialCapital: number;
+  initial_capital: number;
 }
 
 export interface BacktestResponse {
@@ -15,14 +15,14 @@ export interface BacktestResponse {
   name: string;
   status: 'pending' | 'running' | 'completed' | 'failed';
   symbol: string;
-  startDate: string;
-  endDate: string;
+  start_date: string;
+  end_date: string;
   strategyType: string;
-  initialCapital: number;
-  totalReturn?: number;
-  sharpeRatio?: number;
-  maxDrawdown?: number;
-  createdAt: string;
+  initial_capital: number;
+  total_return?: number;
+  sharpe_ratio?: number;
+  max_drawdown?: number;
+  created_at: string;
 }
 
 export interface BacktestListResponse {
@@ -52,10 +52,10 @@ export const backtestService = {
       const backendBacktest = response.data.data.backtest;
 
       // 映射后端BacktestResult到前端BacktestResponse
-      const strategyConfig = backendBacktest.strategyConfig || {};
-      const symbols = strategyConfig.symbols || [];
+      const strategy_config = backendBacktest.strategy_config || {};
+      const symbols = strategy_config.symbols || [];
       const symbol = symbols.length > 0 ? symbols[0] : backtestData.symbol;
-      const strategyType = strategyConfig.strategyType || backtestData.strategyType;
+      const strategyType = strategy_config.strategyType || backtestData.strategyType;
 
       const formatDate = (date: any) => {
         if (!date) return '';
@@ -69,32 +69,33 @@ export const backtestService = {
         name: backendBacktest.name || backtestData.name,
         status: backendBacktest.status || 'pending',
         symbol,
-        startDate: formatDate(backendBacktest.startDate) || backtestData.startDate,
-        endDate: formatDate(backendBacktest.endDate) || backtestData.endDate,
+        start_date: formatDate(backendBacktest.start_date) || backtestData.start_date,
+        end_date: formatDate(backendBacktest.end_date) || backtestData.end_date,
         strategyType,
-        initialCapital: parseFloat(backendBacktest.initialCapital) || backtestData.initialCapital,
-        totalReturn:
-          backendBacktest.totalReturn !== undefined
-            ? parseFloat(backendBacktest.totalReturn)
+        initial_capital:
+          parseFloat(backendBacktest.initial_capital) || backtestData.initial_capital,
+        total_return:
+          backendBacktest.total_return !== undefined
+            ? parseFloat(backendBacktest.total_return)
             : undefined,
-        sharpeRatio:
-          backendBacktest.sharpeRatio !== undefined
-            ? parseFloat(backendBacktest.sharpeRatio)
+        sharpe_ratio:
+          backendBacktest.sharpe_ratio !== undefined
+            ? parseFloat(backendBacktest.sharpe_ratio)
             : undefined,
-        maxDrawdown:
-          backendBacktest.maxDrawdown !== undefined
-            ? parseFloat(backendBacktest.maxDrawdown)
+        max_drawdown:
+          backendBacktest.max_drawdown !== undefined
+            ? parseFloat(backendBacktest.max_drawdown)
             : undefined,
-        createdAt: backendBacktest.createdAt
-          ? typeof backendBacktest.createdAt === 'string'
-            ? backendBacktest.createdAt
-            : backendBacktest.createdAt.toISOString()
+        created_at: backendBacktest.created_at
+          ? typeof backendBacktest.created_at === 'string'
+            ? backendBacktest.created_at
+            : backendBacktest.created_at.toISOString()
           : new Date().toISOString(),
       };
     } catch (error) {
       console.error('创建回测失败:', error);
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      throw new Error(`创建回测失败: ${errorMessage || '未知错误'}`);
+      const error_message = error instanceof Error ? error.message : String(error);
+      throw new Error(`创建回测失败: ${error_message || '未知错误'}`);
     }
   },
 
@@ -111,10 +112,10 @@ export const backtestService = {
 
       // 映射后端BacktestResult到前端BacktestResponse
       const mappedBacktests: BacktestResponse[] = backendBacktests.map((backendItem: any) => {
-        const strategyConfig = backendItem.strategyConfig || {};
-        const symbols = strategyConfig.symbols || [];
+        const strategy_config = backendItem.strategy_config || {};
+        const symbols = strategy_config.symbols || [];
         const symbol = symbols.length > 0 ? symbols[0] : '未知';
-        const strategyType = strategyConfig.strategyType || 'moving_average_crossover';
+        const strategyType = strategy_config.strategyType || 'moving_average_crossover';
 
         // 格式化日期
         const formatDate = (date: any) => {
@@ -129,20 +130,26 @@ export const backtestService = {
           name: backendItem.name || '未命名回测',
           status: backendItem.status || 'pending',
           symbol,
-          startDate: formatDate(backendItem.startDate),
-          endDate: formatDate(backendItem.endDate),
+          start_date: formatDate(backendItem.start_date),
+          end_date: formatDate(backendItem.end_date),
           strategyType,
-          initialCapital: parseFloat(backendItem.initialCapital) || 100000,
-          totalReturn:
-            backendItem.totalReturn !== undefined ? parseFloat(backendItem.totalReturn) : undefined,
-          sharpeRatio:
-            backendItem.sharpeRatio !== undefined ? parseFloat(backendItem.sharpeRatio) : undefined,
-          maxDrawdown:
-            backendItem.maxDrawdown !== undefined ? parseFloat(backendItem.maxDrawdown) : undefined,
-          createdAt: backendItem.createdAt
-            ? typeof backendItem.createdAt === 'string'
-              ? backendItem.createdAt
-              : backendItem.createdAt.toISOString()
+          initial_capital: parseFloat(backendItem.initial_capital) || 100000,
+          total_return:
+            backendItem.total_return !== undefined
+              ? parseFloat(backendItem.total_return)
+              : undefined,
+          sharpe_ratio:
+            backendItem.sharpe_ratio !== undefined
+              ? parseFloat(backendItem.sharpe_ratio)
+              : undefined,
+          max_drawdown:
+            backendItem.max_drawdown !== undefined
+              ? parseFloat(backendItem.max_drawdown)
+              : undefined,
+          created_at: backendItem.created_at
+            ? typeof backendItem.created_at === 'string'
+              ? backendItem.created_at
+              : backendItem.created_at.toISOString()
             : new Date().toISOString(),
         };
       });
@@ -161,8 +168,8 @@ export const backtestService = {
       };
     } catch (error) {
       console.error('获取回测列表失败:', error);
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      throw new Error(`获取回测列表失败: ${errorMessage || '未知错误'}`);
+      const error_message = error instanceof Error ? error.message : String(error);
+      throw new Error(`获取回测列表失败: ${error_message || '未知错误'}`);
     }
   },
 
@@ -173,10 +180,10 @@ export const backtestService = {
       const backendBacktest = response.data.data.backtest;
 
       // 映射后端BacktestResult到前端BacktestResponse
-      const strategyConfig = backendBacktest.strategyConfig || {};
-      const symbols = strategyConfig.symbols || [];
+      const strategy_config = backendBacktest.strategy_config || {};
+      const symbols = strategy_config.symbols || [];
       const symbol = symbols.length > 0 ? symbols[0] : '未知';
-      const strategyType = strategyConfig.strategyType || 'moving_average_crossover';
+      const strategyType = strategy_config.strategyType || 'moving_average_crossover';
 
       const formatDate = (date: any) => {
         if (!date) return '';
@@ -190,32 +197,32 @@ export const backtestService = {
         name: backendBacktest.name || '未命名回测',
         status: backendBacktest.status || 'pending',
         symbol,
-        startDate: formatDate(backendBacktest.startDate),
-        endDate: formatDate(backendBacktest.endDate),
+        start_date: formatDate(backendBacktest.start_date),
+        end_date: formatDate(backendBacktest.end_date),
         strategyType,
-        initialCapital: parseFloat(backendBacktest.initialCapital) || 100000,
-        totalReturn:
-          backendBacktest.totalReturn !== undefined
-            ? parseFloat(backendBacktest.totalReturn)
+        initial_capital: parseFloat(backendBacktest.initial_capital) || 100000,
+        total_return:
+          backendBacktest.total_return !== undefined
+            ? parseFloat(backendBacktest.total_return)
             : undefined,
-        sharpeRatio:
-          backendBacktest.sharpeRatio !== undefined
-            ? parseFloat(backendBacktest.sharpeRatio)
+        sharpe_ratio:
+          backendBacktest.sharpe_ratio !== undefined
+            ? parseFloat(backendBacktest.sharpe_ratio)
             : undefined,
-        maxDrawdown:
-          backendBacktest.maxDrawdown !== undefined
-            ? parseFloat(backendBacktest.maxDrawdown)
+        max_drawdown:
+          backendBacktest.max_drawdown !== undefined
+            ? parseFloat(backendBacktest.max_drawdown)
             : undefined,
-        createdAt: backendBacktest.createdAt
-          ? typeof backendBacktest.createdAt === 'string'
-            ? backendBacktest.createdAt
-            : backendBacktest.createdAt.toISOString()
+        created_at: backendBacktest.created_at
+          ? typeof backendBacktest.created_at === 'string'
+            ? backendBacktest.created_at
+            : backendBacktest.created_at.toISOString()
           : new Date().toISOString(),
       };
     } catch (error) {
       console.error('获取回测详情失败:', error);
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      throw new Error(`获取回测详情失败: ${errorMessage || '未知错误'}`);
+      const error_message = error instanceof Error ? error.message : String(error);
+      throw new Error(`获取回测详情失败: ${error_message || '未知错误'}`);
     }
   },
 
@@ -224,8 +231,8 @@ export const backtestService = {
       await api.delete(`/backtests/${id}`);
     } catch (error) {
       console.error('删除回测失败:', error);
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      throw new Error(`删除回测失败: ${errorMessage || '未知错误'}`);
+      const error_message = error instanceof Error ? error.message : String(error);
+      throw new Error(`删除回测失败: ${error_message || '未知错误'}`);
     }
   },
 
@@ -235,8 +242,8 @@ export const backtestService = {
       return response.data;
     } catch (error) {
       console.error('获取回测结果失败:', error);
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      throw new Error(`获取回测结果失败: ${errorMessage || '未知错误'}`);
+      const error_message = error instanceof Error ? error.message : String(error);
+      throw new Error(`获取回测结果失败: ${error_message || '未知错误'}`);
     }
   },
 
@@ -246,8 +253,8 @@ export const backtestService = {
       return response.data;
     } catch (error) {
       console.error('获取回测交易数据失败:', error);
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      throw new Error(`获取回测交易数据失败: ${errorMessage || '未知错误'}`);
+      const error_message = error instanceof Error ? error.message : String(error);
+      throw new Error(`获取回测交易数据失败: ${error_message || '未知错误'}`);
     }
   },
 
@@ -257,8 +264,8 @@ export const backtestService = {
       return response.data;
     } catch (error) {
       console.error('获取回测统计失败:', error);
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      throw new Error(`获取回测统计失败: ${errorMessage || '未知错误'}`);
+      const error_message = error instanceof Error ? error.message : String(error);
+      throw new Error(`获取回测统计失败: ${error_message || '未知错误'}`);
     }
   },
 };
