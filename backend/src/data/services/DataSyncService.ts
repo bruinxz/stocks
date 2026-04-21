@@ -343,11 +343,16 @@ export class DataSyncService {
         throw error;
       }
 
+      // 提取股票市场信息，记录在日志中
+      const market = stock.market || 'UNKNOWN';
+
       // 从数据源获取指定日期范围的数据
       const bars = await this.dataSource.queryHistoryKData(
         normalizedSymbol,
         validStartDate,
-        validEndDate
+        validEndDate,
+        'd',
+        '2' // 默认使用前复权
       );
 
       logger.info(
@@ -446,7 +451,17 @@ export class DataSyncService {
       );
       this.recordSyncResult(true, insertedCount);
       return insertedCount;
-    } catch (error) {
+    } catch (error: any) {
+      // 提取股票市场信息，如果在 catch 中拿不到 stock 对象，重新查一下
+      let market = 'UNKNOWN';
+      try {
+        const stock = await Stock.findOne({ where: { symbol: normalizedSymbol } });
+        if (stock && stock.market) market = stock.market;
+      } catch (e) {
+        // ignore
+      }
+      
+      logger.error(`[${market}] 无法获取股票 ${normalizedSymbol} 的历史数据:`, error.message || error);
       this.recordError(ErrorCategory.DATA_SOURCE_FETCH, error, {
         symbol: normalizedSymbol,
         startDate,

@@ -2,7 +2,7 @@
 set timeout -1
 set password [lindex $argv 0]
 
-spawn ssh -o StrictHostKeyChecking=no -p 14126 root@103.242.3.87 "cat /opt/stocks/rename_columns.sql | docker exec -i stock_postgres psql -U postgres -d stock_backtest"
+spawn ssh -o StrictHostKeyChecking=no -p 14126 root@103.242.3.87 "docker exec -e PGPASSWORD='x8Vq\$9pL2#mK7@nW1cF5^jY3!bH4*gD' stock_postgres psql -U stock_admin -d stock_backtest -c \\\"SELECT id, symbol, name FROM stocks WHERE symbol NOT LIKE 'sh.%' AND symbol NOT LIKE 'sz.%' AND symbol NOT LIKE 'bj.%';\\\""
 expect {
     "*yes/no*" { send "yes\r"; exp_continue }
     "*assword:*" { send "$password\r"; exp_continue }

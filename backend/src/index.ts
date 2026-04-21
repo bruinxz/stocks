@@ -21,6 +21,7 @@ import riskAlertRoutes from './api/routes/riskAlert.routes';
 import journalRoutes from './api/routes/journal.routes';
 import userRoutes from './api/routes/user.routes';
 import logRoutes from './api/routes/log.routes';
+import internalRoutes from './api/routes/internal.routes';
 import './jobs/dataUpdateWorker'; // 初始化数据更新队列处理器
 import { schedulerService } from './services/SchedulerService';
 
@@ -67,6 +68,7 @@ app.use('/api/risk-alerts', riskAlertRoutes);
 app.use('/api/journals', journalRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/logs', logRoutes);
+app.use('/api/internal', internalRoutes); // 给TradingAgents预留的安全数据接口
 
 import { User } from './models/User';
 import bcrypt from 'bcrypt';
@@ -87,21 +89,6 @@ async function initializeApp() {
       try {
         await sequelize.sync({ alter: true }); // 创建缺失的表并修改现有表结构
         console.log('Database models synced successfully with alter: true');
-        
-        // 插入初始管理员用户
-        const adminCount = await User.count({ where: { username: 'xz' } });
-        if (adminCount === 0) {
-          // 由于 User.ts 中有 @BeforeCreate 钩子，它会自动 hash passwordHash
-          // 所以我们在这里直接传入明文密码即可，不需要手动 bcrypt.hash
-          await User.create({
-            username: 'xz',
-            passwordHash: '666',
-            email: 'xz@example.com',
-            role: 'admin',
-            isActive: true,
-          });
-          console.log('Default admin user "xz" created successfully');
-        }
         
         const lymCount = await User.count({ where: { username: 'lym' } });
         if (lymCount === 0) {

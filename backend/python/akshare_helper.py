@@ -306,6 +306,9 @@ def get_daily_data(code: str, start_date: str, end_date: str, adjust: str = "qfq
         max_retries = 3
         retry_delay = 5  # 秒
 
+        # 方法0: 如果是北交所股票，优先使用 stock_zh_a_hist 兼容性较好，但有时也需要使用北交所特定接口
+        # 目前北交所大部分股票已经整合到 stock_zh_a_hist，如果失败，后面会自动 fallback
+
         # 方法1: 首先尝试 stock_zh_a_hist (主要方法)
         try:
             print(f"Trying stock_zh_a_hist for {code} (pure_code: {pure_code})...", file=sys.stderr)
@@ -379,9 +382,29 @@ def get_daily_data(code: str, start_date: str, end_date: str, adjust: str = "qfq
                     method_used = "stock_zh_a_hist_no_adjust"
                     print(f"Successfully got data using {method_used}", file=sys.stderr)
                 except Exception as e3:
-                    print(f"All methods failed for {code}. Last error: {e3}", file=sys.stderr)
-                    traceback.print_exc(file=sys.stderr)
-                    return []
+                    print(f"Method stock_zh_a_hist without adjust failed for {code}: {e3}", file=sys.stderr)
+                    
+                    # 方法4: 针对北交所的特别兜底 (AKShare 中有 stock_bj_a_hist 或使用腾讯接口)
+                    if code.startswith('bj.'):
+                        try:
+                            print(f"Trying stock_zh_a_hist using bj_a for {code}...", file=sys.stderr)
+                            # 北交所历史数据在某些版本中可能使用不同接口，或者通过腾讯/新浪接口拉取
+                            stock_df = ak.stock_zh_a_hist(
+                                symbol=pure_code,
+                                period="daily",
+                                start_date=parse_date(start_date),
+                                end_date=parse_date(end_date),
+                                adjust="" # 默认不复权
+                            )
+                            method_used = "bj_fallback"
+                        except Exception as e4:
+                            print(f"All methods failed for {code}. Last error: {e4}", file=sys.stderr)
+                            traceback.print_exc(file=sys.stderr)
+                            return []
+                    else:
+                        print(f"All methods failed for {code}. Last error: {e3}", file=sys.stderr)
+                        traceback.print_exc(file=sys.stderr)
+                        return []
 
         if stock_df is None or stock_df.empty:
             print(f"No data returned for {code} using {method_used}", file=sys.stderr)

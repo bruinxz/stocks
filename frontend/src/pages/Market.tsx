@@ -317,61 +317,6 @@ const Market: React.FC = () => {
     triggerDataUpdate();
   }, []);
 
-  // 自定义操作列组件
-  const ActionColumn: React.FC<{ record: Stock }> = ({ record }) => {
-    const [isFavorite, setIsFavorite] = useState(false);
-    const [checkingFavorite, setCheckingFavorite] = useState(false);
-
-    useEffect(() => {
-      const checkFavorite = async () => {
-        setCheckingFavorite(true);
-        const result = await checkIsFavorite(record.symbol);
-        setIsFavorite(result);
-        setCheckingFavorite(false);
-      };
-      checkFavorite();
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [record.symbol, favorites]);
-
-    const handleFavoriteClick = async () => {
-      if (isFavorite) {
-        await handleRemoveFavoriteCall(record.symbol);
-        setIsFavorite(false);
-      } else {
-        setIsFavoriteModalOpen(true);
-        favoriteForm.setFieldsValue({ symbol: record.symbol });
-      }
-    };
-
-    return (
-      <Space size="small">
-        <Button
-          type="text"
-          size="small"
-          onClick={e => {
-            e.stopPropagation();
-            setSelectedStock(record);
-            fetchStockHistory(record.symbol);
-          }}
-        >
-          查看走势
-        </Button>
-        <Button
-          type="text"
-          size="small"
-          icon={isFavorite ? <StarFilled style={{ color: '#f59e0b' }} /> : <StarOutlined />}
-          loading={checkingFavorite}
-          onClick={e => {
-            e.stopPropagation();
-            handleFavoriteClick();
-          }}
-        >
-          {isFavorite ? '取消' : '收藏'}
-        </Button>
-      </Space>
-    );
-  };
-
   // 股票表格列定义
   const stockColumns: ColumnsType<Stock> = [
     {
@@ -419,7 +364,41 @@ const Market: React.FC = () => {
       title: '操作',
       key: 'action',
       width: 200,
-      render: (_, record) => <ActionColumn record={record} />,
+      render: (_, record) => {
+        const isFavorite = favorites.some((f) => f.stock.symbol === record.symbol);
+        
+        return (
+          <Space size="small">
+            <Button
+              type="text"
+              size="small"
+              onClick={e => {
+                e.stopPropagation();
+                setSelectedStock(record);
+                fetchStockHistory(record.symbol);
+              }}
+            >
+              查看走势
+            </Button>
+            <Button
+              type="text"
+              size="small"
+              icon={isFavorite ? <StarFilled style={{ color: '#f59e0b' }} /> : <StarOutlined />}
+              onClick={e => {
+                e.stopPropagation();
+                if (isFavorite) {
+                  handleRemoveFavoriteCall(record.symbol);
+                } else {
+                  setIsFavoriteModalOpen(true);
+                  favoriteForm.setFieldsValue({ symbol: record.symbol });
+                }
+              }}
+            >
+              {isFavorite ? '取消' : '收藏'}
+            </Button>
+          </Space>
+        );
+      },
     },
   ];
 

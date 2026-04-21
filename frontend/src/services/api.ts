@@ -1,9 +1,10 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
 
 // 如果没有环境变量，则根据当前页面的 hostname 动态推断后端地址（解决局域网访问时 localhost 连接失败的问题）
-const defaultApiUrl = typeof window !== 'undefined' 
-  ? `http://${window.location.hostname}:3000/api` 
-  : 'http://localhost:3000/api';
+const defaultApiUrl =
+  typeof window !== 'undefined'
+    ? `http://${window.location.hostname}:3000/api`
+    : 'http://localhost:3000/api';
 
 export const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || defaultApiUrl;
 // 提取后端的域名部分，用于静态资源（如头像）的拼接
@@ -44,7 +45,11 @@ api.interceptors.response.use(
     const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
 
     // 如果是 401 且不是刷新 token 和 登录的接口，说明 AccessToken 可能过期了
-    if (error.response?.status === 401 && !originalRequest.url?.includes('/auth/refresh') && !originalRequest.url?.includes('/auth/login')) {
+    if (
+      error.response?.status === 401 &&
+      !originalRequest.url?.includes('/auth/refresh') &&
+      !originalRequest.url?.includes('/auth/login')
+    ) {
       if (!originalRequest._retry) {
         originalRequest._retry = true;
 
@@ -53,7 +58,11 @@ api.interceptors.response.use(
           try {
             // 调用刷新接口 (原代码写的 /auth/refresh-token，但路由定义是 /auth/refresh)
             // 请求中会自动带上包含 refreshToken 的 Cookie
-            const res = await axios.post(`${API_BASE_URL}/auth/refresh`, {}, { withCredentials: true });
+            const res = await axios.post(
+              `${API_BASE_URL}/auth/refresh`,
+              {},
+              { withCredentials: true }
+            );
             const { accessToken } = res.data.data;
 
             // 存入新的 Token

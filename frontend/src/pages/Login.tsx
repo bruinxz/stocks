@@ -30,7 +30,7 @@ const Login: React.FC = () => {
         localStorage.setItem('token', tokens.accessToken);
         // Refresh token is now stored in HttpOnly cookie automatically by backend
         localStorage.setItem('username', user.username);
-        
+
         // 更新 Redux 状态
         dispatch(loginSuccess({ user, token: tokens.accessToken }));
 

@@ -1,7 +1,32 @@
 import React, { useState, useEffect } from 'react';
-import { Table, Button, Modal, Form, Input, Select, Switch, Space, Popconfirm, message, Tag, Typography } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, KeyOutlined, UserOutlined } from '@ant-design/icons';
-import { getUsers, createUser, updateUser, changePassword, deleteUser } from '../services/userService';
+import {
+  Table,
+  Button,
+  Modal,
+  Form,
+  Input,
+  Select,
+  Switch,
+  Space,
+  Popconfirm,
+  message,
+  Tag,
+  Typography,
+} from 'antd';
+import {
+  PlusOutlined,
+  EditOutlined,
+  DeleteOutlined,
+  KeyOutlined,
+  UserOutlined,
+} from '@ant-design/icons';
+import {
+  getUsers,
+  createUser,
+  updateUser,
+  changePassword,
+  deleteUser,
+} from '../services/userService';
 import dayjs from 'dayjs';
 
 const { Title } = Typography;
@@ -23,7 +48,7 @@ const UserManagement: React.FC = () => {
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [isPasswordModalVisible, setIsPasswordModalVisible] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
-  
+
   const [form] = Form.useForm();
   const [passwordForm] = Form.useForm();
 
@@ -73,37 +98,40 @@ const UserManagement: React.FC = () => {
   };
 
   const handleModalOk = () => {
-    form.validateFields().then(async (values) => {
-      try {
-        if (editingUser) {
-          // 编辑时不提交用户名和密码
-          const updateData = {
-            email: values.email,
-            role: values.role,
-            isActive: values.isActive
-          };
-          const res = await updateUser(editingUser.id, updateData);
-          if (res.data.success) {
-            message.success('更新成功');
-            setIsModalVisible(false);
-            fetchUsers();
+    form
+      .validateFields()
+      .then(async values => {
+        try {
+          if (editingUser) {
+            // 编辑时不提交用户名和密码
+            const updateData = {
+              email: values.email,
+              role: values.role,
+              isActive: values.isActive,
+            };
+            const res = await updateUser(editingUser.id, updateData);
+            if (res.data.success) {
+              message.success('更新成功');
+              setIsModalVisible(false);
+              fetchUsers();
+            }
+          } else {
+            // 新增
+            const res = await createUser(values);
+            if (res.data.success) {
+              message.success('创建成功');
+              setIsModalVisible(false);
+              fetchUsers();
+            }
           }
-        } else {
-          // 新增
-          const res = await createUser(values);
-          if (res.data.success) {
-            message.success('创建成功');
-            setIsModalVisible(false);
-            fetchUsers();
-          }
+        } catch (error: any) {
+          const errorMsg = error.response?.data?.message || '操作失败';
+          message.error(errorMsg);
         }
-      } catch (error: any) {
-        const errorMsg = error.response?.data?.message || '操作失败';
-        message.error(errorMsg);
-      }
-    }).catch(info => {
-      console.log('Validate Failed:', info);
-    });
+      })
+      .catch(info => {
+        console.log('Validate Failed:', info);
+      });
   };
 
   const handlePasswordChange = (record: User) => {
@@ -113,7 +141,7 @@ const UserManagement: React.FC = () => {
   };
 
   const handlePasswordModalOk = () => {
-    passwordForm.validateFields().then(async (values) => {
+    passwordForm.validateFields().then(async values => {
       if (!editingUser) return;
       try {
         const res = await changePassword(editingUser.id, { newPassword: values.newPassword });
@@ -139,7 +167,12 @@ const UserManagement: React.FC = () => {
       title: '用户名',
       dataIndex: 'username',
       key: 'username',
-      render: (text: string) => <><UserOutlined style={{ marginRight: 8 }}/>{text}</>
+      render: (text: string) => (
+        <>
+          <UserOutlined style={{ marginRight: 8 }} />
+          {text}
+        </>
+      ),
     },
     {
       title: '邮箱',
@@ -160,23 +193,21 @@ const UserManagement: React.FC = () => {
       title: '密码',
       dataIndex: 'password',
       key: 'password',
-      render: (pwd: string) => <Tag>{pwd || '******'}</Tag>
+      render: (pwd: string) => <Tag>{pwd || '******'}</Tag>,
     },
     {
       title: '状态',
       dataIndex: 'isActive',
       key: 'isActive',
       render: (isActive: boolean) => (
-        <Tag color={isActive ? 'green' : 'red'}>
-          {isActive ? '启用' : '禁用'}
-        </Tag>
+        <Tag color={isActive ? 'green' : 'red'}>{isActive ? '启用' : '禁用'}</Tag>
       ),
     },
     {
       title: '创建时间',
       dataIndex: 'createdAt',
       key: 'createdAt',
-      render: (date: string) => dayjs(date).format('YYYY-MM-DD HH:mm:ss')
+      render: (date: string) => dayjs(date).format('YYYY-MM-DD HH:mm:ss'),
     },
     {
       title: '操作',
@@ -207,10 +238,10 @@ const UserManagement: React.FC = () => {
         </Button>
       </div>
 
-      <Table 
-        columns={columns} 
-        dataSource={users} 
-        rowKey="id" 
+      <Table
+        columns={columns}
+        dataSource={users}
+        rowKey="id"
         loading={loading}
         pagination={{ defaultPageSize: 10 }}
       />
@@ -230,7 +261,7 @@ const UserManagement: React.FC = () => {
                 label="用户名"
                 rules={[
                   { required: true, message: '请输入用户名' },
-                  { min: 3, message: '至少3个字符' }
+                  { min: 3, message: '至少3个字符' },
                 ]}
               >
                 <Input />
@@ -240,41 +271,33 @@ const UserManagement: React.FC = () => {
                 label="密码"
                 rules={[
                   { required: true, message: '请输入密码' },
-                  { min: 6, message: '至少6个字符' }
+                  { min: 6, message: '至少6个字符' },
                 ]}
               >
                 <Input.Password />
               </Form.Item>
             </>
           )}
-          
+
           <Form.Item
             name="email"
             label="邮箱"
             rules={[
               { required: true, message: '请输入邮箱' },
-              { type: 'email', message: '请输入有效的邮箱地址' }
+              { type: 'email', message: '请输入有效的邮箱地址' },
             ]}
           >
             <Input />
           </Form.Item>
-          
-          <Form.Item
-            name="role"
-            label="角色"
-            rules={[{ required: true }]}
-          >
+
+          <Form.Item name="role" label="角色" rules={[{ required: true }]}>
             <Select>
               <Option value="user">普通用户</Option>
               <Option value="admin">管理员</Option>
             </Select>
           </Form.Item>
-          
-          <Form.Item
-            name="isActive"
-            label="状态"
-            valuePropName="checked"
-          >
+
+          <Form.Item name="isActive" label="状态" valuePropName="checked">
             <Switch checkedChildren="启用" unCheckedChildren="禁用" />
           </Form.Item>
         </Form>
@@ -293,7 +316,7 @@ const UserManagement: React.FC = () => {
             label="新密码"
             rules={[
               { required: true, message: '请输入新密码' },
-              { min: 6, message: '至少6个字符' }
+              { min: 6, message: '至少6个字符' },
             ]}
           >
             <Input.Password />
