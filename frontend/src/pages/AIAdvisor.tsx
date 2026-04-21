@@ -35,12 +35,52 @@ interface AIEvent {
 }
 
 const AIAdvisor: React.FC = () => {
-  const [ticker, setTicker] = useState<string>('');
-  const [analyzing, setAnalyzing] = useState<boolean>(false);
-  const [events, setEvents] = useState<AIEvent[]>([]);
-  const [decision, setDecision] = useState<string | null>(null);
+  // 从 localStorage 恢复初始状态
+  const [ticker, setTicker] = useState<string>(() => {
+    return localStorage.getItem('aiAdvisor_ticker') || '';
+  });
+  const [analyzing, setAnalyzing] = useState<boolean>(() => {
+    return localStorage.getItem('aiAdvisor_analyzing') === 'true';
+  });
+  const [events, setEvents] = useState<AIEvent[]>(() => {
+    const savedEvents = localStorage.getItem('aiAdvisor_events');
+    return savedEvents ? JSON.parse(savedEvents) : [];
+  });
+  const [decision, setDecision] = useState<string | null>(() => {
+    return localStorage.getItem('aiAdvisor_decision') || null;
+  });
+
   const eventSourceRef = useRef<EventSource | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // 状态发生变化时，保存到 localStorage
+  useEffect(() => {
+    localStorage.setItem('aiAdvisor_ticker', ticker);
+  }, [ticker]);
+
+  useEffect(() => {
+    localStorage.setItem('aiAdvisor_analyzing', String(analyzing));
+  }, [analyzing]);
+
+  useEffect(() => {
+    localStorage.setItem('aiAdvisor_events', JSON.stringify(events));
+  }, [events]);
+
+  useEffect(() => {
+    if (decision) {
+      localStorage.setItem('aiAdvisor_decision', decision);
+    } else {
+      localStorage.removeItem('aiAdvisor_decision');
+    }
+  }, [decision]);
+
+  // 如果刷新页面时状态是 analyzing，强制重置，因为 EventSource 无法跨页面保存
+  useEffect(() => {
+    if (analyzing) {
+      setAnalyzing(false);
+      localStorage.setItem('aiAdvisor_analyzing', 'false');
+    }
+  }, []);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -110,14 +150,35 @@ const AIAdvisor: React.FC = () => {
     return 'gold';
   };
 
+  const handleClear = () => {
+    setEvents([]);
+    setDecision(null);
+    setTicker('');
+    localStorage.removeItem('aiAdvisor_events');
+    localStorage.removeItem('aiAdvisor_decision');
+    localStorage.removeItem('aiAdvisor_ticker');
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      setAnalyzing(false);
+      localStorage.setItem('aiAdvisor_analyzing', 'false');
+    }
+  };
+
   return (
     <div className="fade-in-up">
       <div className="page-header-modern">
-        <div>
-          <h1 className="page-title-modern">AI 深度研报</h1>
-          <p className="page-subtitle-modern">
-            基于多智能体(TradingAgents)大模型框架的实时推演与决策建议
-          </p>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+          <div>
+            <h1 className="page-title-modern">AI 深度研报</h1>
+            <p className="page-subtitle-modern">
+              基于多智能体(TradingAgents)大模型框架的实时推演与决策建议
+            </p>
+          </div>
+          {(events.length > 0 || ticker) && (
+            <Button onClick={handleClear} disabled={analyzing}>
+              清空历史记录
+            </Button>
+          )}
         </div>
       </div>
 
