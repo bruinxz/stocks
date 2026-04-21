@@ -50,6 +50,7 @@
     "joi": "^17.9.2",
     "jsonwebtoken": "^9.0.0",
     "moment": "^2.29.4",
+    "moment-timezone": "^0.6.1",
     "multer": "^2.1.1",
     "node-cron": "^4.2.1",
     "pg": "^8.11.0",
