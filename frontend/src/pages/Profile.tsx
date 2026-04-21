@@ -104,10 +104,10 @@ const Profile: React.FC = () => {
     },
   };
 
-  const avatarSrc = user?.avatarUrl
-    ? user.avatarUrl.startsWith('http')
-      ? user.avatarUrl
-      : `${API_DOMAIN_URL}${user.avatarUrl}`
+  const avatarSrc = user?.avatar_url
+    ? user.avatar_url.startsWith('http')
+      ? user.avatar_url
+      : `${API_DOMAIN_URL}${user.avatar_url}`
     : undefined;
 
   return (

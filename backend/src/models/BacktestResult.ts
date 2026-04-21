@@ -63,7 +63,7 @@ export class BacktestResult extends Model {
     comment: '用户ID',
     field: 'user_id',
   })
-  declare userId: number;
+  declare user_id: number;
 
   @BelongsTo(() => User)
   declare user: User;
@@ -74,7 +74,7 @@ export class BacktestResult extends Model {
     field: 'strategy_config',
     comment: '策略配置',
   })
-  declare strategyConfig: any;
+  declare strategy_config: any;
 
   @Column({
     type: DataType.DATEONLY,
@@ -82,7 +82,7 @@ export class BacktestResult extends Model {
     field: 'start_date',
     comment: '开始日期',
   })
-  declare startDate: Date;
+  declare start_date: Date;
 
   @Column({
     type: DataType.DATEONLY,
@@ -90,7 +90,7 @@ export class BacktestResult extends Model {
     field: 'end_date',
     comment: '结束日期',
   })
-  declare endDate: Date;
+  declare end_date: Date;
 
   @Column({
     type: DataType.DECIMAL(20, 4),
@@ -98,7 +98,7 @@ export class BacktestResult extends Model {
     field: 'initial_capital',
     comment: '初始资金',
   })
-  declare initialCapital: number;
+  declare initial_capital: number;
 
   @Column({
     type: DataType.DECIMAL(20, 4),
@@ -106,7 +106,7 @@ export class BacktestResult extends Model {
     field: 'final_capital',
     comment: '最终资金',
   })
-  declare finalCapital: number;
+  declare final_capital: number;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
@@ -114,7 +114,7 @@ export class BacktestResult extends Model {
     field: 'total_return',
     comment: '总收益率(%)',
   })
-  declare totalReturn: number;
+  declare total_return: number;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
@@ -122,7 +122,7 @@ export class BacktestResult extends Model {
     field: 'annualized_return',
     comment: '年化收益率(%)',
   })
-  declare annualizedReturn: number;
+  declare annualized_return: number;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
@@ -130,7 +130,7 @@ export class BacktestResult extends Model {
     field: 'sharpe_ratio',
     comment: '夏普比率',
   })
-  declare sharpeRatio: number;
+  declare sharpe_ratio: number;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
@@ -138,7 +138,7 @@ export class BacktestResult extends Model {
     field: 'sortino_ratio',
     comment: '索提诺比率',
   })
-  declare sortinoRatio: number;
+  declare sortino_ratio: number;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
@@ -146,7 +146,7 @@ export class BacktestResult extends Model {
     field: 'max_drawdown',
     comment: '最大回撤(%)',
   })
-  declare maxDrawdown: number;
+  declare max_drawdown: number;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
@@ -154,7 +154,7 @@ export class BacktestResult extends Model {
     field: 'win_rate',
     comment: '胜率(%)',
   })
-  declare winRate: number;
+  declare win_rate: number;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
@@ -162,7 +162,7 @@ export class BacktestResult extends Model {
     field: 'profit_loss_ratio',
     comment: '盈亏比',
   })
-  declare profitLossRatio: number;
+  declare profit_loss_ratio: number;
 
   @Column({
     type: DataType.INTEGER,
@@ -171,7 +171,7 @@ export class BacktestResult extends Model {
     defaultValue: 0,
     comment: '总交易次数',
   })
-  declare totalTrades: number;
+  declare total_trades: number;
 
   @Column({
     type: DataType.INTEGER,
@@ -180,7 +180,7 @@ export class BacktestResult extends Model {
     defaultValue: 0,
     comment: '盈利交易次数',
   })
-  declare profitTrades: number;
+  declare profit_trades: number;
 
   @Column({
     type: DataType.INTEGER,
@@ -189,7 +189,7 @@ export class BacktestResult extends Model {
     defaultValue: 0,
     comment: '亏损交易次数',
   })
-  declare lossTrades: number;
+  declare loss_trades: number;
 
   @Column({
     type: DataType.STRING(20),
@@ -207,7 +207,7 @@ export class BacktestResult extends Model {
     field: 'error_message',
     comment: '错误信息',
   })
-  declare errorMessage: string;
+  declare error_message: string;
 
   @Column({
     type: DataType.JSONB,
@@ -215,7 +215,7 @@ export class BacktestResult extends Model {
     field: 'detailed_metrics',
     comment: '详细指标',
   })
-  declare detailedMetrics: any;
+  declare detailed_metrics: any;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
@@ -223,7 +223,7 @@ export class BacktestResult extends Model {
     field: 'annualized_volatility',
     comment: '年化波动率',
   })
-  declare annualizedVolatility: number;
+  declare annualized_volatility: number;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
@@ -231,7 +231,7 @@ export class BacktestResult extends Model {
     field: 'information_ratio',
     comment: '信息比率',
   })
-  declare informationRatio: number;
+  declare information_ratio: number;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
@@ -239,7 +239,7 @@ export class BacktestResult extends Model {
     field: 'calmar_ratio',
     comment: '卡玛比率',
   })
-  declare calmarRatio: number;
+  declare calmar_ratio: number;
 
   @Column({
     type: DataType.JSONB,
@@ -247,7 +247,7 @@ export class BacktestResult extends Model {
     field: 'equity_curve',
     comment: '资金曲线',
   })
-  declare equityCurve: any;
+  declare equity_curve: any;
 
   @Column({
     type: DataType.JSONB,
@@ -255,15 +255,15 @@ export class BacktestResult extends Model {
     field: 'daily_returns',
     comment: '每日收益率',
   })
-  declare dailyReturns: any;
+  declare daily_returns: any;
 
   @CreatedAt
   @Column({ field: 'created_at' })
-  declare createdAt: Date;
+  declare created_at: Date;
 
   @UpdatedAt
   @Column({ field: 'updated_at' })
-  declare updatedAt: Date;
+  declare updated_at: Date;
 
   // 关联关系
   @HasMany(() => Trade)

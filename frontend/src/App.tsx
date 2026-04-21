@@ -92,10 +92,10 @@ const AppContent: React.FC = () => {
 
   const displayUsername =
     user?.nickname || user?.username || localStorage.getItem('username') || 'Admin';
-  const avatarSrc = user?.avatarUrl
-    ? user.avatarUrl.startsWith('http')
-      ? user.avatarUrl
-      : `${API_DOMAIN_URL}${user.avatarUrl}`
+  const avatarSrc = user?.avatar_url
+    ? user.avatar_url.startsWith('http')
+      ? user.avatar_url
+      : `${API_DOMAIN_URL}${user.avatar_url}`
     : undefined;
 
   const handleLogout = () => {

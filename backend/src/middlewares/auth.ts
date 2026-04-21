@@ -49,9 +49,9 @@ export const authenticate = (req: AuthenticatedRequest, res: Response, next: Nex
   try {
     const secret = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
     const decoded = jwt.verify(token, secret) as any;
-    // decoded 可能是 { userId: 1, username: 'xz', role: 'admin', iat: ..., exp: ... } 或者嵌套在 user 中
+    // decoded 可能是 { user_id: 1, username: 'xz', role: 'admin', iat: ..., exp: ... } 或者嵌套在 user 中
     req.user = decoded.user || {
-      id: decoded.userId,
+      id: decoded.user_id,
       username: decoded.username,
       email: decoded.email || '',
       role: decoded.role,

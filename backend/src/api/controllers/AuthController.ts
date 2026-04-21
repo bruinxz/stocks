@@ -5,7 +5,7 @@ import { Op } from 'sequelize';
 import { logger } from '../../utils/logger';
 
 export interface JwtPayload {
-  userId: number;
+  user_id: number;
   username: string;
   role: string;
 }
@@ -47,9 +47,9 @@ export class AuthController {
           await User.create({
             username: u.username,
             email: u.email,
-            passwordHash: u.password_hash,
+            password_hash: u.password_hash,
             role: 'admin',
-            isActive: true,
+            is_active: true,
           });
           logger.info(`Default user ${u.username} created.`);
         }
@@ -84,9 +84,9 @@ export class AuthController {
       const user = await User.create({
         username,
         email,
-        passwordHash: password, // 将在beforeCreate钩子中哈希
+        password_hash: password, // 将在beforeCreate钩子中哈希
         role: 'user',
-        isActive: true,
+        is_active: true,
       });
 
       // 生成访问令牌和刷新令牌
@@ -202,8 +202,8 @@ export class AuthController {
       }
 
       // 查找用户
-      const user = await User.findByPk(payload.userId);
-      if (!user || !user.isActive) {
+      const user = await User.findByPk(payload.user_id);
+      if (!user || !user.is_active) {
         return res.status(401).json({
           success: false,
           message: '用户不存在或已被禁用',
@@ -281,11 +281,11 @@ export class AuthController {
   async updateProfile(req: Request, res: Response, next: NextFunction) {
     try {
       const user = (req as any).user as User;
-      const { nickname, phone, avatarUrl } = req.body;
+      const { nickname, phone, avatar_url } = req.body;
 
       if (nickname !== undefined) user.nickname = nickname;
       if (phone !== undefined) user.phone = phone;
-      if (avatarUrl !== undefined) user.avatarUrl = avatarUrl;
+      if (avatar_url !== undefined) user.avatar_url = avatar_url;
 
       await user.save();
 
@@ -318,15 +318,15 @@ export class AuthController {
       }
 
       // 获取文件路径
-      const avatarUrl = `/uploads/avatars/${file.filename}`;
-      user.avatarUrl = avatarUrl;
+      const avatar_url = `/uploads/avatars/${file.filename}`;
+      user.avatar_url = avatar_url;
       await user.save();
 
       res.json({
         success: true,
         message: '头像上传成功',
         data: {
-          avatarUrl,
+          avatar_url,
           user: user.toJSON(),
         },
       });
@@ -361,8 +361,8 @@ export class AuthController {
       const payload = jwt.verify(token, this.jwtSecret) as JwtPayload;
 
       // 查找用户
-      const user = await User.findByPk(payload.userId);
-      if (!user || !user.isActive) {
+      const user = await User.findByPk(payload.user_id);
+      if (!user || !user.is_active) {
         return res.status(401).json({
           success: false,
           message: '用户不存在或已被禁用',
@@ -389,7 +389,7 @@ export class AuthController {
    */
   private generateAccessToken = (user: User): string => {
     const payload: JwtPayload = {
-      userId: user.id,
+      user_id: user.id,
       username: user.username,
       role: user.role,
     };
@@ -403,7 +403,7 @@ export class AuthController {
    */
   private generateRefreshToken = (user: User): string => {
     const payload: JwtPayload = {
-      userId: user.id,
+      user_id: user.id,
       username: user.username,
       role: user.role,
     };

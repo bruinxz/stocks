@@ -80,7 +80,7 @@ export class DataSyncService {
    * 记录错误
    */
   private recordError(category: ErrorCategory, error: Error | string, context?: any): void {
-    const errorMessage = typeof error === 'string' ? error : error.message;
+    const error_message = typeof error === 'string' ? error : error.message;
     const timestamp = getEast8TimeString();
 
     if (!this.errorStats[category]) {
@@ -94,12 +94,12 @@ export class DataSyncService {
 
     const categoryStats = this.errorStats[category];
     categoryStats.count++;
-    categoryStats.lastError = errorMessage;
+    categoryStats.lastError = error_message;
     categoryStats.lastTimestamp = timestamp;
 
     // 保留最近10个错误样本
     categoryStats.samples.push({
-      error: errorMessage,
+      error: error_message,
       timestamp,
       context,
     });
@@ -108,7 +108,7 @@ export class DataSyncService {
       categoryStats.samples = categoryStats.samples.slice(-10);
     }
 
-    logger.error(`[${category}] ${errorMessage}`, { context });
+    logger.error(`[${category}] ${error_message}`, { context });
   }
 
   /**
@@ -266,18 +266,18 @@ export class DataSyncService {
             {
               symbol: symbol,
               name: stockData.code_name,
-              listingDate: this.safeParseDate(stockData.ipoDate),
-              delistingDate: this.safeParseDate(stockData.outDate),
-              isListed: stockData.status === 1,
+              listing_date: this.safeParseDate(stockData.ipoDate),
+              delisting_date: this.safeParseDate(stockData.outDate),
+              is_listed: stockData.status === 1,
               type: this.mapStockType(stockData.type),
               market: extractMarketFromSymbol(symbol),
-              totalMarketCap: stockData.totalMarketCap,
-              circulatingMarketCap: stockData.circulatingMarketCap,
-              peDynamic: stockData.peDynamic,
+              total_market_cap: stockData.total_market_cap,
+              circulating_market_cap: stockData.circulating_market_cap,
+              pe_dynamic: stockData.pe_dynamic,
               pb: stockData.pb,
-              turnoverRate: stockData.turnoverRate,
+              turnover_rate: stockData.turnover_rate,
               price: stockData.price,
-              changePercent: stockData.changePercent,
+              change_percent: stockData.change_percent,
             },
             {
               conflictFields: ['symbol'],
@@ -314,21 +314,21 @@ export class DataSyncService {
   /**
    * 同步单只股票的历史数据
    * @param symbol 股票代码
-   * @param startDate 开始日期，格式：'2020-01-01'
-   * @param endDate 结束日期，格式：'2023-12-31'
+   * @param start_date 开始日期，格式：'2020-01-01'
+   * @param end_date 结束日期，格式：'2023-12-31'
    */
-  async syncStockHistory(symbol: string, startDate: string, endDate: string): Promise<number> {
+  async syncStockHistory(symbol: string, start_date: string, end_date: string): Promise<number> {
     const normalizedSymbol = normalizeSymbol(symbol);
     try {
       logger.info(
-        `Syncing history for ${normalizedSymbol} (original: ${symbol}) from ${startDate} to ${endDate}`
+        `Syncing history for ${normalizedSymbol} (original: ${symbol}) from ${start_date} to ${end_date}`
       );
 
       // 验证日期范围
-      const { validStartDate, validEndDate } = this.validateDateRange(startDate, endDate);
-      if (validStartDate !== startDate || validEndDate !== endDate) {
+      const { validStartDate, validEndDate } = this.validateDateRange(start_date, end_date);
+      if (validStartDate !== start_date || validEndDate !== end_date) {
         logger.info(
-          `日期范围已调整: ${validStartDate} 到 ${validEndDate} (原始: ${startDate} 到 ${endDate})`
+          `日期范围已调整: ${validStartDate} 到 ${validEndDate} (原始: ${start_date} 到 ${end_date})`
         );
       }
 
@@ -369,7 +369,7 @@ export class DataSyncService {
         for (const barData of bars) {
           try {
             const barToInsert = {
-              stockId: stock.id,
+              stock_id: stock.id,
               time: new Date(barData.date + 'T00:00:00.000Z'),
               open: Number(barData.open) || 0,
               high: Number(barData.high) || 0,
@@ -377,15 +377,15 @@ export class DataSyncService {
               close: Number(barData.close) || 0,
               volume: Math.round(Number(barData.volume) || 0), // 确保是整数
               turnover: Number(barData.amount) || 0,
-              adjClose: Number(barData.close) || 0,
-              turnoverRate: Number(barData.turn) || 0,
-              changePercent: Number(barData.pctChg) || 0,
+              adj_close: Number(barData.close) || 0,
+              turnover_rate: Number(barData.turn) || 0,
+              change_percent: Number(barData.pctChg) || 0,
               pe: Number(barData.peTTM) || 0,
               pb: Number(barData.pbMRQ) || 0,
               ps: Number(barData.psTTM) || 0,
-              marketCap: Number(barData.totalMarketCap) || 0,
-              isTradingDay: barData.tradestatus === 1,
-              isSuspended: barData.tradestatus === 0,
+              market_cap: Number(barData.total_market_cap) || 0,
+              is_trading_day: barData.tradestatus === 1,
+              is_suspended: barData.tradestatus === 0,
             };
 
             // 验证关键字段
@@ -464,8 +464,8 @@ export class DataSyncService {
       logger.error(`[${market}] 无法获取股票 ${normalizedSymbol} 的历史数据:`, error.message || error);
       this.recordError(ErrorCategory.DATA_SOURCE_FETCH, error, {
         symbol: normalizedSymbol,
-        startDate,
-        endDate,
+        start_date,
+        end_date,
       });
       this.recordSyncResult(false);
       throw error;
@@ -475,14 +475,14 @@ export class DataSyncService {
   /**
    * 批量同步多只股票的历史数据
    * @param symbols 股票代码数组
-   * @param startDate 开始日期
-   * @param endDate 结束日期
+   * @param start_date 开始日期
+   * @param end_date 结束日期
    * @param batchSize 批次大小
    */
   async syncMultipleStocksHistory(
     symbols: string[],
-    startDate: string,
-    endDate: string,
+    start_date: string,
+    end_date: string,
     batchSize = 2, // 默认批次调低为 2，防爆内存
     progressCallback?: (
       processedCount: number,
@@ -498,7 +498,7 @@ export class DataSyncService {
     for (let i = 0; i < totalCount; i += batchSize) {
       const batch = normalizedSymbols.slice(i, i + batchSize);
       const promises = batch.map(symbol =>
-        this.syncStockHistory(symbol, startDate, endDate)
+        this.syncStockHistory(symbol, start_date, end_date)
           .then(count => {
             results[symbol] = count;
             return { symbol, count };
@@ -506,8 +506,8 @@ export class DataSyncService {
           .catch(error => {
             this.recordError(ErrorCategory.UNKNOWN, error, {
               symbol,
-              startDate,
-              endDate,
+              start_date,
+              end_date,
               batchIndex: i / batchSize,
             });
             results[symbol] = -1;
@@ -564,7 +564,7 @@ export class DataSyncService {
               symbol: symbol,
               name: stockData.code_name,
               market: extractMarketFromSymbol(symbol),
-              isListed: true,
+              is_listed: true,
               type: 'stock',
             },
             {
@@ -647,12 +647,12 @@ export class DataSyncService {
       // 计算东八区7天前的日期
       const nowEast8 = getEast8Time();
       const sevenDaysAgo = new Date(nowEast8.getTime() - 7 * 24 * 60 * 60 * 1000);
-      const startDate = sevenDaysAgo.toISOString().split('T')[0];
+      const start_date = sevenDaysAgo.toISOString().split('T')[0];
 
       // 验证日期范围
-      const { validStartDate, validEndDate } = this.validateDateRange(startDate, lastTradingDay);
+      const { validStartDate, validEndDate } = this.validateDateRange(start_date, lastTradingDay);
       logger.info(
-        `使用日期范围: ${validStartDate} 到 ${validEndDate} (原始: ${startDate} 到 ${lastTradingDay})`
+        `使用日期范围: ${validStartDate} 到 ${validEndDate} (原始: ${start_date} 到 ${lastTradingDay})`
       );
 
       // 检查是否需要更新（如果结束日期早于最后一个交易日）
@@ -664,7 +664,7 @@ export class DataSyncService {
 
       // 获取所有已上市的股票
       const stocks = await Stock.findAll({
-        where: { isListed: true },
+        where: { is_listed: true },
         attributes: ['symbol'],
       });
 
@@ -759,22 +759,22 @@ export class DataSyncService {
    * 验证日期范围，确保不请求未来日期
    */
   private validateDateRange(
-    startDate: string,
-    endDate: string
+    start_date: string,
+    end_date: string
   ): { validStartDate: string; validEndDate: string } {
     const today = getEast8DateString();
 
     // 如果结束日期晚于今天，调整为今天
-    let validEndDate = endDate;
-    if (endDate > today) {
-      logger.warn(`结束日期 ${endDate} 晚于今天 ${today}，调整为今天`);
+    let validEndDate = end_date;
+    if (end_date > today) {
+      logger.warn(`结束日期 ${end_date} 晚于今天 ${today}，调整为今天`);
       validEndDate = today;
     }
 
     // 如果开始日期晚于有效结束日期，调整开始日期
-    let validStartDate = startDate;
-    if (startDate > validEndDate) {
-      logger.warn(`开始日期 ${startDate} 晚于结束日期 ${validEndDate}，调整为结束日期前30天`);
+    let validStartDate = start_date;
+    if (start_date > validEndDate) {
+      logger.warn(`开始日期 ${start_date} 晚于结束日期 ${validEndDate}，调整为结束日期前30天`);
       const start = new Date(validEndDate);
       start.setDate(start.getDate() - 30);
       validStartDate = start.toISOString().split('T')[0];
@@ -784,7 +784,7 @@ export class DataSyncService {
     const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
     if (!dateRegex.test(validStartDate) || !dateRegex.test(validEndDate)) {
       throw new Error(
-        `日期格式无效: startDate=${validStartDate}, endDate=${validEndDate}，必须为YYYY-MM-DD格式`
+        `日期格式无效: start_date=${validStartDate}, end_date=${validEndDate}，必须为YYYY-MM-DD格式`
       );
     }
 
@@ -827,7 +827,7 @@ export class DataSyncService {
    * 检查是否为交易日（简单实现：周一至周五）
    * 未来可扩展为查询交易日历
    */
-  private isTradingDay(date: string): boolean {
+  private is_trading_day(date: string): boolean {
     const dateObj = new Date(date + 'T00:00:00.000Z');
     const dayOfWeek = dateObj.getDay();
     return dayOfWeek >= 1 && dayOfWeek <= 5; // 周一至周五

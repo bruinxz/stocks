@@ -77,6 +77,11 @@
 
 ### 5.3 模块独立性与类型安全
 - 所有的外部API调用必须封装在 `data/sources/` 中，策略模块仅通过 `DataService` 暴露的纯函数获取数据。
+
+### 5.4 命名规范：全局强制使用下划线命名法 (Snake Case)
+- **数据库字段**：所有数据表的列名必须使用 `snake_case`（如 `user_id`, `created_at`）。
+- **Sequelize 模型**：所有 Model 的类属性声明也必须强制使用 `snake_case`，以保持与数据库字段的完全一致（如 `declare user_id: number;`）。
+- **代码交互**：在所有前后端接口交互、控制器逻辑、服务层代码中，凡是涉及到上述数据库字段的数据传递和处理，都必须统一使用 `snake_case`，严禁使用 `camelCase`（驼峰命名法）。
 ---
 
 ## 6. 开发环境备忘录 (Agent Context)

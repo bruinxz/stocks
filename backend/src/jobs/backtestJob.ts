@@ -11,13 +11,13 @@ export async function processBacktestJob(
   jobData: BacktestJobData
 ): Promise<{ backtestResultId: string }> {
   const {
-    userId,
+    user_id,
     name,
     description,
     symbols,
-    startDate,
-    endDate,
-    initialCapital,
+    start_date,
+    end_date,
+    initial_capital,
     strategyType,
     strategyParams,
     slippage,
@@ -25,7 +25,7 @@ export async function processBacktestJob(
     frequency,
   } = jobData;
 
-  logger.info('开始处理回测任务', { userId, name, symbols });
+  logger.info('开始处理回测任务', { user_id, name, symbols });
 
   try {
     // 创建策略实例
@@ -34,7 +34,7 @@ export async function processBacktestJob(
 
     switch (strategyType) {
       case 'moving_average_crossover':
-        const strategyConfig = {
+        const strategy_config = {
           id: `strategy_${Date.now()}`,
           name: 'Moving Average Crossover',
           parameters: {
@@ -43,7 +43,7 @@ export async function processBacktestJob(
             threshold: strategyParams?.threshold || 0,
           },
         };
-        strategy = new MovingAverageCrossoverStrategy(strategyConfig, symbol);
+        strategy = new MovingAverageCrossoverStrategy(strategy_config, symbol);
         break;
       default:
         throw new Error(`不支持的策略类型: ${strategyType}`);
@@ -54,9 +54,9 @@ export async function processBacktestJob(
 
     // 创建回测配置
     const config: BacktestConfig = {
-      startDate: new Date(startDate),
-      endDate: new Date(endDate),
-      initialCapital,
+      start_date: new Date(start_date),
+      end_date: new Date(end_date),
+      initial_capital,
       symbols: Array.isArray(symbols) ? symbols : [symbols],
       strategy,
       dataService,
@@ -71,20 +71,20 @@ export async function processBacktestJob(
 
     // 保存回测结果到数据库
     const backtestResult = await BacktestResult.create({
-      userId,
+      user_id,
       name,
       description,
       symbols: config.symbols,
-      startDate: config.startDate,
-      endDate: config.endDate,
-      initialCapital: config.initialCapital,
-      finalCapital: result.metrics.finalCapital,
-      totalReturn: result.metrics.totalReturn,
-      annualizedReturn: result.metrics.annualizedReturn,
-      sharpeRatio: result.metrics.sharpeRatio,
-      maxDrawdown: result.metrics.maxDrawdown,
-      winRate: result.metrics.winRate,
-      totalTrades: result.metrics.totalTrades,
+      start_date: config.start_date,
+      end_date: config.end_date,
+      initial_capital: config.initial_capital,
+      final_capital: result.metrics.final_capital,
+      total_return: result.metrics.total_return,
+      annualized_return: result.metrics.annualized_return,
+      sharpe_ratio: result.metrics.sharpe_ratio,
+      max_drawdown: result.metrics.max_drawdown,
+      win_rate: result.metrics.win_rate,
+      total_trades: result.metrics.total_trades,
       status: BacktestStatus.COMPLETED,
       config: {
         strategyType,
@@ -98,17 +98,17 @@ export async function processBacktestJob(
     // 保存交易记录
     if (result.trades && result.trades.length > 0) {
       const tradesData = result.trades.map((trade: any) => ({
-        backtestId: backtestResult.id,
+        backtest_id: backtestResult.id,
         symbol: trade.symbol,
         direction: trade.direction,
-        entryPrice: trade.entryPrice,
-        exitPrice: trade.exitPrice,
+        entry_price: trade.entry_price,
+        exit_price: trade.exit_price,
         quantity: trade.quantity,
-        entryDate: trade.entryDate,
-        exitDate: trade.exitDate,
+        entry_date: trade.entry_date,
+        exit_date: trade.exit_date,
         pnl: trade.pnl,
-        pnlPercent: trade.pnlPercent,
-        holdingDays: trade.holdingDays,
+        pnl_percent: trade.pnl_percent,
+        holding_days: trade.holding_days,
       }));
       await Trade.bulkCreate(tradesData);
     }

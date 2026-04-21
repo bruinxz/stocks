@@ -46,7 +46,7 @@ export class FavoriteStock extends Model {
     field: 'user_id',
     comment: '用户ID',
   })
-  declare userId: number;
+  declare user_id: number;
 
   @ForeignKey(() => Stock)
   @Column({
@@ -55,7 +55,7 @@ export class FavoriteStock extends Model {
     field: 'stock_id',
     comment: '股票ID',
   })
-  declare stockId: number;
+  declare stock_id: number;
 
   @Column({
     type: DataType.STRING(50),
@@ -63,7 +63,7 @@ export class FavoriteStock extends Model {
     field: 'group_id',
     comment: '自定义分组，如 "科技股"、"蓝筹股" 等',
   })
-  declare groupId?: string;
+  declare group_id?: string;
 
   @Column({
     type: DataType.STRING(100),
@@ -86,15 +86,15 @@ export class FavoriteStock extends Model {
     field: 'sort_order',
     comment: '排序权重，越大越靠前',
   })
-  declare sortOrder?: number;
+  declare sort_order?: number;
 
   @CreatedAt
   @Column({ field: 'created_at' })
-  declare createdAt: Date;
+  declare created_at: Date;
 
   @UpdatedAt
   @Column({ field: 'updated_at' })
-  declare updatedAt: Date;
+  declare updated_at: Date;
 
   // 关联关系
   @BelongsTo(() => User)

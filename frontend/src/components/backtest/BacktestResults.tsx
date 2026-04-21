@@ -25,7 +25,7 @@ import { backtestService } from '../../services/backtestService';
 const { TabPane } = Tabs;
 
 interface BacktestResultsProps {
-  backtestId: string;
+  backtest_id: string;
   onBack?: () => void;
 }
 
@@ -39,7 +39,7 @@ interface MetricData {
   iconClass: string;
 }
 
-const BacktestResults: React.FC<BacktestResultsProps> = ({ backtestId, onBack }) => {
+const BacktestResults: React.FC<BacktestResultsProps> = ({ backtest_id, onBack }) => {
   const [results, setResults] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [backtestInfo, setBacktestInfo] = useState<any>(null);
@@ -48,12 +48,12 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtestId, onBack })
     loadResults();
     loadBacktestInfo();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [backtestId]); // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [backtest_id]); // eslint-disable-next-line react-hooks/exhaustive-deps
 
   const loadResults = async () => {
     setLoading(true);
     try {
-      const data = await backtestService.getBacktestResults(backtestId);
+      const data = await backtestService.getBacktestResults(backtest_id);
       setResults(data.data);
     } catch (error) {
       console.error('加载回测结果失败:', error);
@@ -64,7 +64,7 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtestId, onBack })
 
   const loadBacktestInfo = async () => {
     try {
-      const info = await backtestService.getBacktestById(backtestId);
+      const info = await backtestService.getBacktestById(backtest_id);
       setBacktestInfo(info);
     } catch (error) {
       console.error('加载回测信息失败:', error);
@@ -83,48 +83,49 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtestId, onBack })
     );
   }
 
-  const { metrics, equityCurve, trades, dailyReturns } = results;
+  const { metrics, equity_curve, trades, daily_returns } = results;
 
   // 格式化指标数据
   const metricCards: MetricData[] = [
     {
       name: '总收益率',
-      value: metrics.totalReturn,
-      formattedValue: `${(metrics.totalReturn * 100).toFixed(2)}%`,
-      icon: metrics.totalReturn >= 0 ? <ArrowUpOutlined /> : <ArrowDownOutlined />,
-      color: metrics.totalReturn >= 0 ? '#3f8600' : '#cf1322',
-      cardClass: metrics.totalReturn >= 0 ? 'stat-card stat-card-green' : 'stat-card stat-card-red',
-      iconClass: metrics.totalReturn >= 0 ? 'icon-green' : 'icon-red',
+      value: metrics.total_return,
+      formattedValue: `${(metrics.total_return * 100).toFixed(2)}%`,
+      icon: metrics.total_return >= 0 ? <ArrowUpOutlined /> : <ArrowDownOutlined />,
+      color: metrics.total_return >= 0 ? '#3f8600' : '#cf1322',
+      cardClass:
+        metrics.total_return >= 0 ? 'stat-card stat-card-green' : 'stat-card stat-card-red',
+      iconClass: metrics.total_return >= 0 ? 'icon-green' : 'icon-red',
     },
     {
       name: '年化收益率',
-      value: metrics.annualizedReturn,
-      formattedValue: `${(metrics.annualizedReturn * 100).toFixed(2)}%`,
+      value: metrics.annualized_return,
+      formattedValue: `${(metrics.annualized_return * 100).toFixed(2)}%`,
       icon: <RiseOutlined />,
-      color: metrics.annualizedReturn >= 0 ? '#3f8600' : '#cf1322',
+      color: metrics.annualized_return >= 0 ? '#3f8600' : '#cf1322',
       cardClass: 'stat-card stat-card-blue',
-      iconClass: metrics.annualizedReturn >= 0 ? 'icon-green' : 'icon-red',
+      iconClass: metrics.annualized_return >= 0 ? 'icon-green' : 'icon-red',
     },
     {
       name: '夏普比率',
-      value: metrics.sharpeRatio,
-      formattedValue: metrics.sharpeRatio.toFixed(2),
+      value: metrics.sharpe_ratio,
+      formattedValue: metrics.sharpe_ratio.toFixed(2),
       icon: <DollarOutlined />,
       color:
-        metrics.sharpeRatio >= 1 ? '#3f8600' : metrics.sharpeRatio >= 0.5 ? '#faad14' : '#cf1322',
+        metrics.sharpe_ratio >= 1 ? '#3f8600' : metrics.sharpe_ratio >= 0.5 ? '#faad14' : '#cf1322',
       cardClass:
-        metrics.sharpeRatio >= 1 ? 'stat-card stat-card-purple' : 'stat-card stat-card-orange',
+        metrics.sharpe_ratio >= 1 ? 'stat-card stat-card-purple' : 'stat-card stat-card-orange',
       iconClass:
-        metrics.sharpeRatio >= 1
+        metrics.sharpe_ratio >= 1
           ? 'icon-green'
-          : metrics.sharpeRatio >= 0.5
+          : metrics.sharpe_ratio >= 0.5
           ? 'icon-orange'
           : 'icon-red',
     },
     {
       name: '最大回撤',
-      value: metrics.maxDrawdown,
-      formattedValue: `${(metrics.maxDrawdown * 100).toFixed(2)}%`,
+      value: metrics.max_drawdown,
+      formattedValue: `${(metrics.max_drawdown * 100).toFixed(2)}%`,
       icon: <FallOutlined />,
       color: '#cf1322',
       cardClass: 'stat-card stat-card-red',
@@ -132,31 +133,38 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtestId, onBack })
     },
     {
       name: '胜率',
-      value: metrics.winRate,
-      formattedValue: `${(metrics.winRate * 100).toFixed(1)}%`,
+      value: metrics.win_rate,
+      formattedValue: `${(metrics.win_rate * 100).toFixed(1)}%`,
       icon: <ArrowUpOutlined />,
-      color: metrics.winRate >= 0.6 ? '#3f8600' : metrics.winRate >= 0.5 ? '#faad14' : '#cf1322',
-      cardClass: metrics.winRate >= 0.6 ? 'stat-card stat-card-cyan' : 'stat-card stat-card-orange',
+      color: metrics.win_rate >= 0.6 ? '#3f8600' : metrics.win_rate >= 0.5 ? '#faad14' : '#cf1322',
+      cardClass:
+        metrics.win_rate >= 0.6 ? 'stat-card stat-card-cyan' : 'stat-card stat-card-orange',
       iconClass:
-        metrics.winRate >= 0.6 ? 'icon-green' : metrics.winRate >= 0.5 ? 'icon-orange' : 'icon-red',
+        metrics.win_rate >= 0.6
+          ? 'icon-green'
+          : metrics.win_rate >= 0.5
+          ? 'icon-orange'
+          : 'icon-red',
     },
     {
       name: '盈亏比',
-      value: metrics.profitLossRatio,
-      formattedValue: metrics.profitLossRatio.toFixed(2),
+      value: metrics.profit_loss_ratio,
+      formattedValue: metrics.profit_loss_ratio.toFixed(2),
       icon: <DollarOutlined />,
       color:
-        metrics.profitLossRatio >= 1.5
+        metrics.profit_loss_ratio >= 1.5
           ? '#3f8600'
-          : metrics.profitLossRatio >= 1
+          : metrics.profit_loss_ratio >= 1
           ? '#faad14'
           : '#cf1322',
       cardClass:
-        metrics.profitLossRatio >= 1.5 ? 'stat-card stat-card-green' : 'stat-card stat-card-orange',
+        metrics.profit_loss_ratio >= 1.5
+          ? 'stat-card stat-card-green'
+          : 'stat-card stat-card-orange',
       iconClass:
-        metrics.profitLossRatio >= 1.5
+        metrics.profit_loss_ratio >= 1.5
           ? 'icon-green'
-          : metrics.profitLossRatio >= 1
+          : metrics.profit_loss_ratio >= 1
           ? 'icon-orange'
           : 'icon-red',
     },
@@ -181,14 +189,14 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtestId, onBack })
     },
     {
       title: '入场价格',
-      dataIndex: 'entryPrice',
-      key: 'entryPrice',
+      dataIndex: 'entry_price',
+      key: 'entry_price',
       render: (price: number) => `¥${price.toFixed(2)}`,
     },
     {
       title: '出场价格',
-      dataIndex: 'exitPrice',
-      key: 'exitPrice',
+      dataIndex: 'exit_price',
+      key: 'exit_price',
       render: (price: number) => `¥${price.toFixed(2)}`,
     },
     {
@@ -208,26 +216,26 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtestId, onBack })
     },
     {
       title: '入场日期',
-      dataIndex: 'entryDate',
-      key: 'entryDate',
+      dataIndex: 'entry_date',
+      key: 'entry_date',
       render: (date: string) => new Date(date).toLocaleDateString(),
     },
     {
       title: '出场日期',
-      dataIndex: 'exitDate',
-      key: 'exitDate',
+      dataIndex: 'exit_date',
+      key: 'exit_date',
       render: (date: string) => new Date(date).toLocaleDateString(),
     },
   ];
 
   // 准备图表数据
-  const equityData = equityCurve.map((point: any, index: number) => ({
+  const equityData = equity_curve.map((point: any, index: number) => ({
     date: new Date(point.date).toLocaleDateString(),
     value: Math.round(point.value),
     day: index + 1,
   }));
 
-  const returnsData = dailyReturns.map((ret: number, index: number) => ({
+  const returnsData = daily_returns.map((ret: number, index: number) => ({
     day: index + 1,
     return: ret * 100,
   }));
@@ -350,7 +358,7 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtestId, onBack })
                       <strong>总计</strong>
                     </Table.Summary.Cell>
                     <Table.Summary.Cell index={5}>
-                      <strong style={{ color: metrics.totalReturn >= 0 ? '#3f8600' : '#cf1322' }}>
+                      <strong style={{ color: metrics.total_return >= 0 ? '#3f8600' : '#cf1322' }}>
                         ¥
                         {trades
                           .reduce((sum: number, trade: any) => sum + trade.profit, 0)
@@ -358,7 +366,7 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtestId, onBack })
                       </strong>
                     </Table.Summary.Cell>
                     <Table.Summary.Cell index={6} colSpan={2}>
-                      <strong>总交易数: {metrics.totalTrades}</strong>
+                      <strong>总交易数: {metrics.total_trades}</strong>
                     </Table.Summary.Cell>
                   </Table.Summary.Row>
                 </Table.Summary>
@@ -391,35 +399,35 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtestId, onBack })
           <Card className="modern-card" bordered={false}>
             <Descriptions title="回测详细指标" bordered column={2}>
               <Descriptions.Item label="初始资金">
-                ¥{metrics.initialCapital.toLocaleString()}
+                ¥{metrics.initial_capital.toLocaleString()}
               </Descriptions.Item>
               <Descriptions.Item label="最终资金">
-                ¥{metrics.finalCapital.toLocaleString()}
+                ¥{metrics.final_capital.toLocaleString()}
               </Descriptions.Item>
               <Descriptions.Item label="总收益率">
-                {(metrics.totalReturn * 100).toFixed(2)}%
+                {(metrics.total_return * 100).toFixed(2)}%
               </Descriptions.Item>
               <Descriptions.Item label="年化收益率">
-                {(metrics.annualizedReturn * 100).toFixed(2)}%
+                {(metrics.annualized_return * 100).toFixed(2)}%
               </Descriptions.Item>
               <Descriptions.Item label="夏普比率">
-                {metrics.sharpeRatio.toFixed(2)}
+                {metrics.sharpe_ratio.toFixed(2)}
               </Descriptions.Item>
               <Descriptions.Item label="索提诺比率">
-                {metrics.sortinoRatio.toFixed(2)}
+                {metrics.sortino_ratio.toFixed(2)}
               </Descriptions.Item>
               <Descriptions.Item label="最大回撤">
-                {(metrics.maxDrawdown * 100).toFixed(2)}%
+                {(metrics.max_drawdown * 100).toFixed(2)}%
               </Descriptions.Item>
               <Descriptions.Item label="胜率">
-                {(metrics.winRate * 100).toFixed(1)}%
+                {(metrics.win_rate * 100).toFixed(1)}%
               </Descriptions.Item>
               <Descriptions.Item label="盈亏比">
-                {metrics.profitLossRatio.toFixed(2)}
+                {metrics.profit_loss_ratio.toFixed(2)}
               </Descriptions.Item>
-              <Descriptions.Item label="总交易数">{metrics.totalTrades}</Descriptions.Item>
-              <Descriptions.Item label="盈利交易数">{metrics.profitTrades}</Descriptions.Item>
-              <Descriptions.Item label="亏损交易数">{metrics.lossTrades}</Descriptions.Item>
+              <Descriptions.Item label="总交易数">{metrics.total_trades}</Descriptions.Item>
+              <Descriptions.Item label="盈利交易数">{metrics.profit_trades}</Descriptions.Item>
+              <Descriptions.Item label="亏损交易数">{metrics.loss_trades}</Descriptions.Item>
               <Descriptions.Item label="平均持仓天数">
                 {metrics.averageHoldingDays.toFixed(1)}天
               </Descriptions.Item>
@@ -451,10 +459,10 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtestId, onBack })
                     : backtestInfo.strategyType}
                 </Descriptions.Item>
                 <Descriptions.Item label="初始资金">
-                  ¥{backtestInfo.initialCapital.toLocaleString()}
+                  ¥{backtestInfo.initial_capital.toLocaleString()}
                 </Descriptions.Item>
-                <Descriptions.Item label="开始日期">{backtestInfo.startDate}</Descriptions.Item>
-                <Descriptions.Item label="结束日期">{backtestInfo.endDate}</Descriptions.Item>
+                <Descriptions.Item label="开始日期">{backtestInfo.start_date}</Descriptions.Item>
+                <Descriptions.Item label="结束日期">{backtestInfo.end_date}</Descriptions.Item>
               </Descriptions>
             </Card>
           )}

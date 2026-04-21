@@ -21,7 +21,7 @@ export interface AuthResponse {
       role: string;
       nickname?: string;
       phone?: string;
-      avatarUrl?: string;
+      avatar_url?: string;
     };
     tokens?: {
       accessToken: string;
@@ -84,7 +84,7 @@ export const authService = {
     }
   },
 
-  async updateProfile(profileData: { nickname?: string; phone?: string; avatarUrl?: string }) {
+  async updateProfile(profileData: { nickname?: string; phone?: string; avatar_url?: string }) {
     const response = await api.put('/auth/profile', profileData);
     if (response.data.success) {
       const user = JSON.parse(localStorage.getItem('user') || '{}');

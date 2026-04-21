@@ -3,12 +3,12 @@ import api from './api';
 export interface ScheduledTask {
   id?: number;
   name: string;
-  cronExpression: string;
+  cron_expression: string;
   type: string;
   parameters?: any;
-  isActive: boolean;
-  lastRunAt?: string;
-  lastRunStatus?: string;
+  is_active: boolean;
+  last_run_at?: string;
+  last_run_status?: string;
 }
 
 export const taskService = {

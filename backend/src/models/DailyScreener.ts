@@ -63,9 +63,9 @@ export class DailyScreener extends Model {
 
   @CreatedAt
   @Column({ field: 'created_at' })
-  declare createdAt: Date;
+  declare created_at: Date;
 
   @UpdatedAt
   @Column({ field: 'updated_at' })
-  declare updatedAt: Date;
+  declare updated_at: Date;
 }

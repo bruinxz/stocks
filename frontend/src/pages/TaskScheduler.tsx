@@ -83,7 +83,7 @@ const TaskScheduler: React.FC = () => {
 
   const handleToggleActive = async (id: number, checked: boolean) => {
     try {
-      await taskService.updateTask(id, { isActive: checked });
+      await taskService.updateTask(id, { is_active: checked });
       message.success(checked ? '任务已启用' : '任务已禁用');
       fetchTasks();
     } catch (error) {
@@ -136,16 +136,16 @@ const TaskScheduler: React.FC = () => {
     },
     {
       title: 'Cron 表达式',
-      dataIndex: 'cronExpression',
-      key: 'cronExpression',
+      dataIndex: 'cron_expression',
+      key: 'cron_expression',
       render: (text: string) => <Text code>{text}</Text>,
     },
     {
       title: '状态',
-      key: 'isActive',
+      key: 'is_active',
       render: (_: any, record: ScheduledTask) => (
         <Switch
-          checked={record.isActive}
+          checked={record.is_active}
           onChange={checked => handleToggleActive(record.id!, checked)}
         />
       ),
@@ -155,18 +155,18 @@ const TaskScheduler: React.FC = () => {
       key: 'lastRun',
       render: (_: any, record: ScheduledTask) => (
         <Space direction="vertical" size={0}>
-          {record.lastRunAt ? new Date(record.lastRunAt).toLocaleString() : '-'}
-          {record.lastRunStatus && (
+          {record.last_run_at ? new Date(record.last_run_at).toLocaleString() : '-'}
+          {record.last_run_status && (
             <Tag
               color={
-                record.lastRunStatus === 'SUCCESS'
+                record.last_run_status === 'SUCCESS'
                   ? 'success'
-                  : record.lastRunStatus === 'FAILED'
+                  : record.last_run_status === 'FAILED'
                   ? 'error'
                   : 'processing'
               }
             >
-              {record.lastRunStatus}
+              {record.last_run_status}
             </Tag>
           )}
         </Space>
@@ -222,7 +222,7 @@ const TaskScheduler: React.FC = () => {
         onCancel={() => setIsModalVisible(false)}
         width={600}
       >
-        <Form form={form} layout="vertical" initialValues={{ isActive: true }}>
+        <Form form={form} layout="vertical" initialValues={{ is_active: true }}>
           <Form.Item
             name="name"
             label="任务名称"
@@ -244,7 +244,7 @@ const TaskScheduler: React.FC = () => {
           </Form.Item>
 
           <Form.Item
-            name="cronExpression"
+            name="cron_expression"
             label={
               <Space>
                 Cron 表达式
@@ -262,7 +262,7 @@ const TaskScheduler: React.FC = () => {
             <Input.TextArea rows={4} placeholder='{"symbols": ["600519", "000001"]}' />
           </Form.Item>
 
-          <Form.Item name="isActive" label="启用状态" valuePropName="checked">
+          <Form.Item name="is_active" label="启用状态" valuePropName="checked">
             <Switch />
           </Form.Item>
         </Form>

@@ -207,7 +207,7 @@ export class StrategyController {
       const stats = {
         totalBacktests: 0,
         avgReturn: 0,
-        winRate: 0,
+        win_rate: 0,
         bestReturn: 0,
         worstReturn: 0,
       };

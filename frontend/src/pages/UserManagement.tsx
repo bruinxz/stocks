@@ -37,9 +37,9 @@ interface User {
   username: string;
   email: string;
   role: string;
-  isActive: boolean;
+  is_active: boolean;
   password?: string;
-  createdAt: string;
+  created_at: string;
 }
 
 const UserManagement: React.FC = () => {
@@ -74,7 +74,7 @@ const UserManagement: React.FC = () => {
   const handleAdd = () => {
     setEditingUser(null);
     form.resetFields();
-    form.setFieldsValue({ role: 'user', isActive: true });
+    form.setFieldsValue({ role: 'user', is_active: true });
     setIsModalVisible(true);
   };
 
@@ -107,7 +107,7 @@ const UserManagement: React.FC = () => {
             const updateData = {
               email: values.email,
               role: values.role,
-              isActive: values.isActive,
+              is_active: values.is_active,
             };
             const res = await updateUser(editingUser.id, updateData);
             if (res.data.success) {
@@ -197,16 +197,16 @@ const UserManagement: React.FC = () => {
     },
     {
       title: '状态',
-      dataIndex: 'isActive',
-      key: 'isActive',
-      render: (isActive: boolean) => (
-        <Tag color={isActive ? 'green' : 'red'}>{isActive ? '启用' : '禁用'}</Tag>
+      dataIndex: 'is_active',
+      key: 'is_active',
+      render: (is_active: boolean) => (
+        <Tag color={is_active ? 'green' : 'red'}>{is_active ? '启用' : '禁用'}</Tag>
       ),
     },
     {
       title: '创建时间',
-      dataIndex: 'createdAt',
-      key: 'createdAt',
+      dataIndex: 'created_at',
+      key: 'created_at',
       render: (date: string) => dayjs(date).format('YYYY-MM-DD HH:mm:ss'),
     },
     {
@@ -297,7 +297,7 @@ const UserManagement: React.FC = () => {
             </Select>
           </Form.Item>
 
-          <Form.Item name="isActive" label="状态" valuePropName="checked">
+          <Form.Item name="is_active" label="状态" valuePropName="checked">
             <Switch checkedChildren="启用" unCheckedChildren="禁用" />
           </Form.Item>
         </Form>

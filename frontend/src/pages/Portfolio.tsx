@@ -42,21 +42,21 @@ interface StockReturnData {
   allocationAmount: number;
   shares: number;
   finalValue: number;
-  totalReturn: number;
+  total_return: number;
 }
 
 // 每日收益数据接口
 interface DailyReturnData {
   date: string;
-  totalValue: number;
+  total_value: number;
   dailyReturn: number;
   cumulativeReturn: number;
 }
 
 // 性能指标接口
 interface PerformanceMetrics {
-  sharpeRatio: number;
-  maxDrawdown: number;
+  sharpe_ratio: number;
+  max_drawdown: number;
   volatility: number;
   winDays: number;
   lossDays: number;
@@ -71,20 +71,20 @@ interface SimulationResult {
     symbols: string[];
     buyDate: string;
     days: number;
-    initialCapital: number;
+    initial_capital: number;
     allocationStrategy: string;
   };
   summary: {
-    initialCapital: number;
-    finalCapital: number;
-    totalReturn: number;
-    annualizedReturn: number;
+    initial_capital: number;
+    final_capital: number;
+    total_return: number;
+    annualized_return: number;
     totalDays: number;
-    startDate: string;
-    endDate: string;
+    start_date: string;
+    end_date: string;
   };
   performanceMetrics: PerformanceMetrics;
-  dailyReturns: DailyReturnData[];
+  daily_returns: DailyReturnData[];
   stockReturns: StockReturnData[];
 }
 
@@ -150,7 +150,7 @@ const Portfolio: React.FC = () => {
         symbols: values.symbols,
         buyDate: values.buyDate ? values.buyDate.format('YYYY-MM-DD') : null,
         days: parseInt(values.days, 10),
-        initialCapital: parseFloat(values.initialCapital) || 100000,
+        initial_capital: parseFloat(values.initial_capital) || 100000,
         allocationStrategy: values.allocationStrategy || 'equal',
         includeDividends: false,
         reinvest: false,
@@ -199,20 +199,20 @@ const Portfolio: React.FC = () => {
     } catch (error: any) {
       console.error('模拟失败:', error);
       console.error('错误详情:', error.response?.data);
-      let errorMessage = error.message || '模拟失败，请检查配置';
+      let error_message = error.message || '模拟失败，请检查配置';
 
       if (error.response?.data?.errors) {
-        errorMessage = error.response.data.errors.map((err: any) => err.msg).join(', ');
+        error_message = error.response.data.errors.map((err: any) => err.msg).join(', ');
       } else if (error.response?.data?.message) {
-        errorMessage = error.response.data.message;
+        error_message = error.response.data.message;
       }
 
       // 针对特定错误提供更友好的提示
-      if (errorMessage.includes('没有买入日数据') || errorMessage.includes('没有数据')) {
-        errorMessage = '选择的买入日期没有股票数据。请选择更早的历史日期（如2024-01-01）';
+      if (error_message.includes('没有买入日数据') || error_message.includes('没有数据')) {
+        error_message = '选择的买入日期没有股票数据。请选择更早的历史日期（如2024-01-01）';
       }
 
-      message.error(errorMessage);
+      message.error(error_message);
     } finally {
       setLoading(false);
     }
@@ -285,7 +285,7 @@ const Portfolio: React.FC = () => {
       symbols: combination.symbols,
       buyDate: dayjs().subtract(1, 'year'), // 设置为一年前，使用新生成的两年数据
       days: 30,
-      initialCapital: 100000,
+      initial_capital: 100000,
     });
     // 触发验证
     try {
@@ -302,7 +302,7 @@ const Portfolio: React.FC = () => {
       symbols: history.symbols || history.config?.symbols || [],
       buyDate: history.buyDate ? dayjs(history.buyDate) : dayjs().subtract(1, 'year'),
       days: history.days || history.config?.days || 30,
-      initialCapital: history.initialCapital || history.config?.initialCapital || 100000,
+      initial_capital: history.initial_capital || history.config?.initial_capital || 100000,
       allocationStrategy:
         history.allocationStrategy || history.config?.allocationStrategy || 'equal',
     });
@@ -393,8 +393,8 @@ const Portfolio: React.FC = () => {
     },
     {
       title: '总收益率',
-      dataIndex: 'totalReturn',
-      key: 'totalReturn',
+      dataIndex: 'total_return',
+      key: 'total_return',
       render: value => (
         <span
           style={{
@@ -421,8 +421,8 @@ const Portfolio: React.FC = () => {
     },
     {
       title: '总市值',
-      dataIndex: 'totalValue',
-      key: 'totalValue',
+      dataIndex: 'total_value',
+      key: 'total_value',
       render: value => `¥${value.toFixed(2)}`,
       align: 'right',
     },
@@ -515,7 +515,7 @@ const Portfolio: React.FC = () => {
                     symbols: [],
                     buyDate: dayjs().subtract(1, 'year'), // 默认设置为一年前，使用新生成的两年数据
                     days: 30,
-                    initialCapital: 100000,
+                    initial_capital: 100000,
                     allocationStrategy: 'equal',
                   }}
                 >
@@ -610,7 +610,7 @@ const Portfolio: React.FC = () => {
                     <Col span={12}>
                       <Form.Item
                         label="初始资金"
-                        name="initialCapital"
+                        name="initial_capital"
                         rules={[{ required: true, message: '请输入初始资金' }]}
                       >
                         <Input
@@ -732,25 +732,26 @@ const Portfolio: React.FC = () => {
                     >
                       <p>
                         <strong>日期:</strong>{' '}
-                        {dayjs(history.createdAt || history.config?.createdAt || new Date()).format(
-                          'YYYY-MM-DD HH:mm'
-                        )}
+                        {dayjs(
+                          history.created_at || history.config?.created_at || new Date()
+                        ).format('YYYY-MM-DD HH:mm')}
                       </p>
                       <p>
                         <strong>收益率:</strong>
                         <span
                           style={{
                             color:
-                              (history.totalReturn || history.summary?.totalReturn || 0) >= 0
+                              (history.total_return || history.summary?.total_return || 0) >= 0
                                 ? '#3f8600'
                                 : '#cf1322',
                           }}
                         >
-                          {(history.totalReturn || history.summary?.totalReturn || 0) >= 0
+                          {(history.total_return || history.summary?.total_return || 0) >= 0
                             ? '+'
                             : ''}
-                          {(history.totalReturn || history.summary?.totalReturn || 0)?.toFixed(2) ||
-                            '0.00'}
+                          {(history.total_return || history.summary?.total_return || 0)?.toFixed(
+                            2
+                          ) || '0.00'}
                           %
                         </span>
                       </p>
@@ -811,7 +812,7 @@ const Portfolio: React.FC = () => {
                       <div>
                         <div className="metric-title">初始资金</div>
                         <div className="metric-value">
-                          ¥{result.summary.initialCapital.toLocaleString()}
+                          ¥{result.summary.initial_capital.toLocaleString()}
                         </div>
                       </div>
                       <div className="icon-wrapper icon-blue">
@@ -823,7 +824,7 @@ const Portfolio: React.FC = () => {
                 <Col span={6}>
                   <Card
                     className={`stat-card ${
-                      result.summary.finalCapital >= result.summary.initialCapital
+                      result.summary.final_capital >= result.summary.initial_capital
                         ? 'stat-card-green'
                         : 'stat-card-red'
                     } modern-card`}
@@ -839,12 +840,12 @@ const Portfolio: React.FC = () => {
                       <div>
                         <div className="metric-title">最终资金</div>
                         <div className="metric-value">
-                          ¥{result.summary.finalCapital.toLocaleString()}
+                          ¥{result.summary.final_capital.toLocaleString()}
                         </div>
                       </div>
                       <div
                         className={`icon-wrapper ${
-                          result.summary.finalCapital >= result.summary.initialCapital
+                          result.summary.final_capital >= result.summary.initial_capital
                             ? 'icon-green'
                             : 'icon-red'
                         }`}
@@ -857,7 +858,7 @@ const Portfolio: React.FC = () => {
                 <Col span={6}>
                   <Card
                     className={`stat-card ${
-                      result.summary.totalReturn >= 0 ? 'stat-card-green' : 'stat-card-red'
+                      result.summary.total_return >= 0 ? 'stat-card-green' : 'stat-card-red'
                     } modern-card`}
                     bordered={false}
                   >
@@ -870,14 +871,16 @@ const Portfolio: React.FC = () => {
                     >
                       <div>
                         <div className="metric-title">总收益率</div>
-                        <div className="metric-value">{result.summary.totalReturn.toFixed(2)}%</div>
+                        <div className="metric-value">
+                          {result.summary.total_return.toFixed(2)}%
+                        </div>
                       </div>
                       <div
                         className={`icon-wrapper ${
-                          result.summary.totalReturn >= 0 ? 'icon-green' : 'icon-red'
+                          result.summary.total_return >= 0 ? 'icon-green' : 'icon-red'
                         }`}
                       >
-                        {result.summary.totalReturn >= 0 ? (
+                        {result.summary.total_return >= 0 ? (
                           <ArrowUpOutlined />
                         ) : (
                           <ArrowDownOutlined />
@@ -889,7 +892,9 @@ const Portfolio: React.FC = () => {
                 <Col span={6}>
                   <Card
                     className={`stat-card ${
-                      result.summary.annualizedReturn >= 0 ? 'stat-card-purple' : 'stat-card-orange'
+                      result.summary.annualized_return >= 0
+                        ? 'stat-card-purple'
+                        : 'stat-card-orange'
                     } modern-card`}
                     bordered={false}
                   >
@@ -903,12 +908,12 @@ const Portfolio: React.FC = () => {
                       <div>
                         <div className="metric-title">年化收益率</div>
                         <div className="metric-value">
-                          {result.summary.annualizedReturn.toFixed(2)}%
+                          {result.summary.annualized_return.toFixed(2)}%
                         </div>
                       </div>
                       <div
                         className={`icon-wrapper ${
-                          result.summary.annualizedReturn >= 0 ? 'icon-purple' : 'icon-orange'
+                          result.summary.annualized_return >= 0 ? 'icon-purple' : 'icon-orange'
                         }`}
                       >
                         <StockOutlined />
@@ -949,7 +954,7 @@ const Portfolio: React.FC = () => {
                       <div>
                         <div className="metric-title">开始日期</div>
                         <div className="metric-value" style={{ fontSize: '18px' }}>
-                          {dayjs(result.summary.startDate).format('YYYY-MM-DD')}
+                          {dayjs(result.summary.start_date).format('YYYY-MM-DD')}
                         </div>
                       </div>
                       <div className="icon-wrapper icon-blue">
@@ -970,7 +975,7 @@ const Portfolio: React.FC = () => {
                       <div>
                         <div className="metric-title">结束日期</div>
                         <div className="metric-value" style={{ fontSize: '18px' }}>
-                          {dayjs(result.summary.endDate).format('YYYY-MM-DD')}
+                          {dayjs(result.summary.end_date).format('YYYY-MM-DD')}
                         </div>
                       </div>
                       <div className="icon-wrapper icon-purple">
@@ -1015,7 +1020,7 @@ const Portfolio: React.FC = () => {
                           <div>
                             <div className="metric-title">夏普比率</div>
                             <div className="metric-value">
-                              {result.performanceMetrics.sharpeRatio.toFixed(2)}
+                              {result.performanceMetrics.sharpe_ratio.toFixed(2)}
                             </div>
                           </div>
                           <div className="icon-wrapper icon-blue">
@@ -1034,7 +1039,7 @@ const Portfolio: React.FC = () => {
                           <div>
                             <div className="metric-title">最大回撤</div>
                             <div className="metric-value">
-                              {result.performanceMetrics.maxDrawdown.toFixed(2)}%
+                              {result.performanceMetrics.max_drawdown.toFixed(2)}%
                             </div>
                           </div>
                           <div className="icon-wrapper icon-red">
@@ -1184,7 +1189,7 @@ const Portfolio: React.FC = () => {
               <Card className="chart-card modern-card" title="每日收益走势" bordered={false}>
                 <Table
                   columns={dailyReturnColumns}
-                  dataSource={result.dailyReturns}
+                  dataSource={result.daily_returns}
                   rowKey="date"
                   pagination={{ pageSize: 10 }}
                   scroll={{ x: 'max-content' }}
@@ -1255,9 +1260,9 @@ const Portfolio: React.FC = () => {
               },
               {
                 title: '分组',
-                dataIndex: 'groupId',
-                key: 'groupId',
-                render: groupId => groupId || '默认',
+                dataIndex: 'group_id',
+                key: 'group_id',
+                render: group_id => group_id || '默认',
               },
               {
                 title: '操作',

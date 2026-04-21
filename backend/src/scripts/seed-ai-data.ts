@@ -63,51 +63,51 @@ async function seedData() {
     logger.info('Seeded DailyScreener data.');
 
     // 3. 生成 风控告警数据
-    await RiskAlert.destroy({ where: { userId: user.id } });
+    await RiskAlert.destroy({ where: { user_id: user.id } });
     await RiskAlert.bulkCreate([
       {
-        userId: user.id,
+        user_id: user.id,
         symbol: 'sz.000001',
         name: '平安银行',
         level: 'HIGH',
         message: '股价单日下跌超过5%，触发止损预警，请注意风险！',
-        isRead: false,
+        is_read: false,
       },
       {
-        userId: user.id,
+        user_id: user.id,
         symbol: 'sh.600036',
         name: '招商银行',
         level: 'MEDIUM',
         message: '成交量异常放大，超过过去10日平均成交量的300%。',
-        isRead: false,
+        is_read: false,
       },
       {
-        userId: user.id,
+        user_id: user.id,
         symbol: 'sz.000002',
         name: '万科A',
         level: 'HIGH',
         message: '跌破重要支撑位(MA60)，短期趋势可能转弱。',
-        isRead: false,
+        is_read: false,
       }
     ]);
     logger.info('Seeded RiskAlert data.');
 
     // 4. 生成 交易日记数据
-    await TradingJournal.destroy({ where: { userId: user.id } });
+    await TradingJournal.destroy({ where: { user_id: user.id } });
     await TradingJournal.bulkCreate([
       {
-        userId: user.id,
+        user_id: user.id,
         date: todayStr,
-        marketSummary: '今天大盘整体震荡，上证指数微跌0.1%，深证成指上涨0.2%。新能源板块表现活跃，白酒板块出现调整。',
-        portfolioAnalysis: '持仓的消费股表现一般，贵州茅台小幅回撤。加仓的比亚迪带来了一定收益。平安银行触发了止损告警，建议关注明日走势，如继续跌破支撑位建议减仓。',
-        actionPlan: '1. 密切关注平安银行的走势，跌破10元果断止损；\n2. 观察新能源板块的持续性，寻找加仓机会；\n3. 整体保持5成仓位，控制风险。'
+        market_summary: '今天大盘整体震荡，上证指数微跌0.1%，深证成指上涨0.2%。新能源板块表现活跃，白酒板块出现调整。',
+        portfolio_analysis: '持仓的消费股表现一般，贵州茅台小幅回撤。加仓的比亚迪带来了一定收益。平安银行触发了止损告警，建议关注明日走势，如继续跌破支撑位建议减仓。',
+        action_plan: '1. 密切关注平安银行的走势，跌破10元果断止损；\n2. 观察新能源板块的持续性，寻找加仓机会；\n3. 整体保持5成仓位，控制风险。'
       },
       {
-        userId: user.id,
+        user_id: user.id,
         date: new Date(today.getTime() - 24 * 60 * 60 * 1000).toISOString().split('T')[0], // 昨天
-        marketSummary: '市场情绪有所回暖，北向资金净流入超过50亿。大金融板块护盘，科技股冲高回落。',
-        portfolioAnalysis: '按照计划加仓了贵州茅台，成本控制在合理区间。招商银行出现放量上涨，持仓浮盈增加。',
-        actionPlan: '1. 贵州茅台继续持有，观察能否突破前期高点；\n2. 部分科技股短期涨幅过大，可能面临回调风险，暂时不碰；\n3. 留意明日宏观经济数据的发布。'
+        market_summary: '市场情绪有所回暖，北向资金净流入超过50亿。大金融板块护盘，科技股冲高回落。',
+        portfolio_analysis: '按照计划加仓了贵州茅台，成本控制在合理区间。招商银行出现放量上涨，持仓浮盈增加。',
+        action_plan: '1. 贵州茅台继续持有，观察能否突破前期高点；\n2. 部分科技股短期涨幅过大，可能面临回调风险，暂时不碰；\n3. 留意明日宏观经济数据的发布。'
       }
     ]);
     logger.info('Seeded TradingJournal data.');

@@ -27,9 +27,9 @@ router.post(
         return typeof value === 'string' && value.length > 0;
       })
       .withMessage('symbols必须是字符串或字符串数组'),
-    body('startDate').isISO8601(),
-    body('endDate').isISO8601(),
-    body('initialCapital').isFloat({ min: 1000 }),
+    body('start_date').isISO8601(),
+    body('end_date').isISO8601(),
+    body('initial_capital').isFloat({ min: 1000 }),
     body('strategyType').optional().isString(),
     body('strategyParams').optional().isObject(),
     body('slippage').optional().isFloat({ min: 0, max: 0.1 }),
@@ -52,8 +52,8 @@ router.get(
     query('page').optional().isInt({ min: 1 }),
     query('limit').optional().isInt({ min: 1, max: 100 }),
     query('status').optional().isString(),
-    query('startDate').optional().isISO8601(),
-    query('endDate').optional().isISO8601(),
+    query('start_date').optional().isISO8601(),
+    query('end_date').optional().isISO8601(),
   ],
   validateRequest,
   backtestController.getBacktestList

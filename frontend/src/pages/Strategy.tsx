@@ -80,7 +80,7 @@ const Strategy: React.FC = () => {
         <Space direction="vertical" size={0}>
           <Text strong>{text}</Text>
           <Text type="secondary" style={{ fontSize: 12 }}>
-            {getStrategyTypeName(record.strategyConfig?.strategyType)}
+            {getStrategyTypeName(record.strategy_config?.strategyType)}
           </Text>
         </Space>
       ),
@@ -89,7 +89,7 @@ const Strategy: React.FC = () => {
       title: '测试标的',
       key: 'symbols',
       render: (_: any, record: any) => {
-        const symbols = record.strategyConfig?.symbols || [];
+        const symbols = record.strategy_config?.symbols || [];
         return symbols.map((s: string) => <Tag key={s}>{s}</Tag>);
       },
     },
@@ -98,15 +98,15 @@ const Strategy: React.FC = () => {
       key: 'period',
       render: (_: any, record: any) => (
         <Text style={{ fontSize: 12 }}>
-          {dayjs(record.startDate).format('YYYY-MM-DD')} ~{' '}
-          {dayjs(record.endDate).format('YYYY-MM-DD')}
+          {dayjs(record.start_date).format('YYYY-MM-DD')} ~{' '}
+          {dayjs(record.end_date).format('YYYY-MM-DD')}
         </Text>
       ),
     },
     {
       title: '总收益率',
-      dataIndex: 'totalReturn',
-      key: 'totalReturn',
+      dataIndex: 'total_return',
+      key: 'total_return',
       render: (val: number) => {
         const color = val >= 0 ? '#cf1322' : '#3f8600';
         return (
@@ -116,12 +116,12 @@ const Strategy: React.FC = () => {
           </Text>
         );
       },
-      sorter: (a: any, b: any) => (a.totalReturn || 0) - (b.totalReturn || 0),
+      sorter: (a: any, b: any) => (a.total_return || 0) - (b.total_return || 0),
     },
     {
       title: '年化收益',
-      dataIndex: 'annualizedReturn',
-      key: 'annualizedReturn',
+      dataIndex: 'annualized_return',
+      key: 'annualized_return',
       render: (val: number) => {
         const color = val >= 0 ? '#cf1322' : '#3f8600';
         return (
@@ -131,26 +131,26 @@ const Strategy: React.FC = () => {
           </Text>
         );
       },
-      sorter: (a: any, b: any) => (a.annualizedReturn || 0) - (b.annualizedReturn || 0),
+      sorter: (a: any, b: any) => (a.annualized_return || 0) - (b.annualized_return || 0),
     },
     {
       title: '最大回撤',
-      dataIndex: 'maxDrawdown',
-      key: 'maxDrawdown',
+      dataIndex: 'max_drawdown',
+      key: 'max_drawdown',
       render: (val: number) => <Text style={{ color: '#3f8600' }}>{(val * 100).toFixed(2)}%</Text>,
-      sorter: (a: any, b: any) => (a.maxDrawdown || 0) - (b.maxDrawdown || 0),
+      sorter: (a: any, b: any) => (a.max_drawdown || 0) - (b.max_drawdown || 0),
     },
     {
       title: '夏普比率',
-      dataIndex: 'sharpeRatio',
-      key: 'sharpeRatio',
+      dataIndex: 'sharpe_ratio',
+      key: 'sharpe_ratio',
       render: (val: number) => <Text>{val.toFixed(2)}</Text>,
-      sorter: (a: any, b: any) => (a.sharpeRatio || 0) - (b.sharpeRatio || 0),
+      sorter: (a: any, b: any) => (a.sharpe_ratio || 0) - (b.sharpe_ratio || 0),
     },
     {
       title: '胜率',
-      dataIndex: 'winRate',
-      key: 'winRate',
+      dataIndex: 'win_rate',
+      key: 'win_rate',
       render: (val: number) => <Text>{(val * 100).toFixed(2)}%</Text>,
     },
     {

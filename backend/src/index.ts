@@ -94,10 +94,10 @@ async function initializeApp() {
         if (lymCount === 0) {
           await User.create({
             username: 'lym',
-            passwordHash: '666',
+            password_hash: '666',
             email: 'lym@example.com',
             role: 'admin',
-            isActive: true,
+            is_active: true,
           });
           console.log('Default admin user "lym" created successfully');
         }

@@ -46,7 +46,7 @@ export class UserController {
         return res.status(403).json({ success: false, message: '权限不足，需要管理员权限' });
       }
 
-      const { username, email, password, role, isActive } = req.body;
+      const { username, email, password, role, is_active } = req.body;
 
       const existingUser = await User.findOne({ where: { username } });
       if (existingUser) {
@@ -61,9 +61,9 @@ export class UserController {
       const newUser = await User.create({
         username,
         email,
-        passwordHash: password, // 将被 @BeforeCreate 钩子自动加密
+        password_hash: password, // 将被 @BeforeCreate 钩子自动加密
         role: role || 'user',
-        isActive: isActive !== undefined ? isActive : true,
+        is_active: is_active !== undefined ? is_active : true,
       });
 
       const json = newUser.toJSON() as any;
@@ -92,7 +92,7 @@ export class UserController {
       }
 
       const { id } = req.params;
-      const { email, role, isActive } = req.body;
+      const { email, role, is_active } = req.body;
 
       const user = await User.findByPk(id);
       if (!user) {
@@ -111,8 +111,8 @@ export class UserController {
       if (role) {
         user.role = role;
       }
-      if (isActive !== undefined) {
-        user.isActive = isActive;
+      if (is_active !== undefined) {
+        user.is_active = is_active;
       }
 
       await user.save();
@@ -154,8 +154,8 @@ export class UserController {
         return res.status(404).json({ success: false, message: '用户不存在' });
       }
 
-      // 修改 passwordHash 字段会触发 Sequelize 的 @BeforeUpdate 钩子，自动进行 bcrypt hash
-      user.passwordHash = newPassword;
+      // 修改 password_hash 字段会触发 Sequelize 的 @BeforeUpdate 钩子，自动进行 bcrypt hash
+      user.password_hash = newPassword;
       await user.save();
 
       res.json({
@@ -176,7 +176,7 @@ export class UserController {
       // @ts-ignore
       const currentUserRole = req.user?.role;
       // @ts-ignore
-      const currentUserId = req.user?.userId;
+      const currentUserId = req.user?.user_id;
       
       if (currentUserRole !== 'admin') {
         return res.status(403).json({ success: false, message: '权限不足，需要管理员权限' });

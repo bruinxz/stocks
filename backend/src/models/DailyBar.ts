@@ -48,7 +48,7 @@ export class DailyBar extends Model {
     field: 'stock_id',
     comment: '股票ID',
   })
-  declare stockId: number;
+  declare stock_id: number;
 
   @Column({
     type: DataType.DECIMAL(12, 4),
@@ -98,7 +98,7 @@ export class DailyBar extends Model {
     field: 'adj_close',
     comment: '复权收盘价',
   })
-  declare adjClose?: number;
+  declare adj_close?: number;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
@@ -106,7 +106,7 @@ export class DailyBar extends Model {
     field: 'turnover_rate',
     comment: '换手率(%)',
   })
-  declare turnoverRate?: number;
+  declare turnover_rate?: number;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
@@ -114,7 +114,7 @@ export class DailyBar extends Model {
     field: 'change_percent',
     comment: '涨跌幅(%)',
   })
-  declare changePercent?: number;
+  declare change_percent?: number;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
@@ -150,7 +150,7 @@ export class DailyBar extends Model {
     field: 'market_cap',
     comment: '总市值(元)',
   })
-  declare marketCap?: number;
+  declare market_cap?: number;
 
   @Column({
     type: DataType.BOOLEAN,
@@ -158,7 +158,7 @@ export class DailyBar extends Model {
     field: 'is_trading_day',
     comment: '是否交易日',
   })
-  declare isTradingDay: boolean;
+  declare is_trading_day: boolean;
 
   @Column({
     type: DataType.BOOLEAN,
@@ -166,15 +166,15 @@ export class DailyBar extends Model {
     field: 'is_suspended',
     comment: '是否停牌',
   })
-  declare isSuspended: boolean;
+  declare is_suspended: boolean;
 
   @CreatedAt
   @Column({ field: 'created_at' })
-  declare createdAt: Date;
+  declare created_at: Date;
 
   @UpdatedAt
   @Column({ field: 'updated_at' })
-  declare updatedAt: Date;
+  declare updated_at: Date;
 
   // 关联关系
   @BelongsTo(() => Stock)

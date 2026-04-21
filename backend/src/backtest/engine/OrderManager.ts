@@ -23,7 +23,7 @@ export interface Order {
 }
 
 export interface SlippageModel {
-  calculateSlippage(order: Order, currentPrice: number): number;
+  calculateSlippage(order: Order, current_price: number): number;
 }
 
 export interface CommissionModel {
@@ -33,8 +33,8 @@ export interface CommissionModel {
 export class FixedSlippageModel implements SlippageModel {
   constructor(private slippage: number = 0.001) {}
 
-  calculateSlippage(order: Order, currentPrice: number): number {
-    return currentPrice * this.slippage;
+  calculateSlippage(order: Order, current_price: number): number {
+    return current_price * this.slippage;
   }
 }
 
@@ -225,8 +225,8 @@ export class OrderManager {
             commission,
             details: {
               brokerage: commission * 0.7, // 假设70%是佣金
-              stampDuty: order.direction === 'sell' ? commission * 0.2 : 0, // 卖出时收取印花税
-              transferFee: commission * 0.1,
+              stamp_duty: order.direction === 'sell' ? commission * 0.2 : 0, // 卖出时收取印花税
+              transfer_fee: commission * 0.1,
               otherFees: 0,
             },
           },

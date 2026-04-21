@@ -25,8 +25,8 @@ interface RiskAlert {
   name: string;
   level: string;
   message: string;
-  isRead: boolean;
-  createdAt: string;
+  is_read: boolean;
+  created_at: string;
 }
 
 const RiskAlerts: React.FC = () => {
@@ -41,7 +41,7 @@ const RiskAlerts: React.FC = () => {
       const response = await api.get('/risk-alerts');
       if (response.data.success) {
         setAlerts(response.data.data.alerts || []);
-        configForm.setFieldsValue(response.data.data.riskConfig);
+        configForm.setFieldsValue(response.data.data.risk_config);
       }
     } catch (error) {
       console.error('Failed to fetch risk alerts');
@@ -74,7 +74,7 @@ const RiskAlerts: React.FC = () => {
       const response = await api.put(`/risk-alerts/${id}/read`);
       if (response.data.success) {
         setAlerts(prev =>
-          prev.map(alert => (alert.id === id ? { ...alert, isRead: true } : alert))
+          prev.map(alert => (alert.id === id ? { ...alert, is_read: true } : alert))
         );
         message.success('已标记为已读');
       }
@@ -87,7 +87,7 @@ const RiskAlerts: React.FC = () => {
     try {
       const response = await api.put('/risk-alerts/read-all');
       if (response.data.success) {
-        setAlerts(prev => prev.map(alert => ({ ...alert, isRead: true })));
+        setAlerts(prev => prev.map(alert => ({ ...alert, is_read: true })));
         message.success('所有告警已标记为已读');
       }
     } catch (error) {
@@ -117,7 +117,7 @@ const RiskAlerts: React.FC = () => {
             实时监控自选股与模拟盘，当出现卖出信号或跌破支撑时触发告警
           </p>
         </div>
-        {alerts.some(a => !a.isRead) && (
+        {alerts.some(a => !a.is_read) && (
           <Button type="primary" onClick={handleMarkAllAsRead}>
             一键已读
           </Button>
@@ -142,14 +142,14 @@ const RiskAlerts: React.FC = () => {
               renderItem={item => (
                 <List.Item
                   style={{
-                    opacity: item.isRead ? 0.6 : 1,
-                    backgroundColor: item.isRead ? 'transparent' : '#fff1f0',
+                    opacity: item.is_read ? 0.6 : 1,
+                    backgroundColor: item.is_read ? 'transparent' : '#fff1f0',
                     padding: '16px',
                     borderRadius: '8px',
                     marginBottom: '8px',
                   }}
                   actions={[
-                    !item.isRead && (
+                    !item.is_read && (
                       <Button
                         type="link"
                         icon={<CheckOutlined />}
@@ -168,14 +168,14 @@ const RiskAlerts: React.FC = () => {
                         </Text>
                         <Tag color={getLevelColor(item.level)}>{item.level}</Tag>
                         <Text type="secondary" style={{ fontSize: '12px', marginLeft: 'auto' }}>
-                          {new Date(item.createdAt).toLocaleString()}
+                          {new Date(item.created_at).toLocaleString()}
                         </Text>
                       </div>
                     }
                     description={
                       <Text
                         style={{
-                          color: item.isRead ? '#888' : '#cf1322',
+                          color: item.is_read ? '#888' : '#cf1322',
                           marginTop: '8px',
                           display: 'block',
                         }}
@@ -203,7 +203,7 @@ const RiskAlerts: React.FC = () => {
             <Form form={configForm} layout="vertical" onFinish={handleSaveConfig}>
               <Form.Item
                 label="默认止损线 (%)"
-                name="stopLossPercent"
+                name="stop_loss_percent"
                 tooltip="持仓股票跌幅达到此数值时触发高危告警"
               >
                 <InputNumber min={1} max={50} style={{ width: '100%' }} />
@@ -211,7 +211,7 @@ const RiskAlerts: React.FC = () => {
 
               <Form.Item
                 label="默认止盈线 (%)"
-                name="takeProfitPercent"
+                name="take_profit_percent"
                 tooltip="持仓股票涨幅达到此数值时触发提醒"
               >
                 <InputNumber min={1} max={200} style={{ width: '100%' }} />

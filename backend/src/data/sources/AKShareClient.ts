@@ -9,13 +9,13 @@ export interface StockBasicInfo {
   outDate?: string; // 退市日期
   type: number; // 类型：1-股票，2-指数，3-其他
   status: number; // 状态：1-上市，0-退市
-  totalMarketCap?: number; // 总市值
-  circulatingMarketCap?: number; // 流通市值
-  peDynamic?: number; // 动态市盈率
+  total_market_cap?: number; // 总市值
+  circulating_market_cap?: number; // 流通市值
+  pe_dynamic?: number; // 动态市盈率
   pb?: number; // 市净率
-  turnoverRate?: number; // 换手率
+  turnover_rate?: number; // 换手率
   price?: number; // 最新价
-  changePercent?: number; // 涨跌幅
+  change_percent?: number; // 涨跌幅
 }
 
 export interface DailyBar {
@@ -34,7 +34,7 @@ export interface DailyBar {
   peTTM: number; // 市盈率TTM
   psTTM: number; // 市销率TTM
   pbMRQ: number; // 市净率MRQ
-  totalMarketCap?: number; // 总市值(历史)
+  total_market_cap?: number; // 总市值(历史)
 }
 
 export interface QueryParams {
@@ -133,20 +133,20 @@ export class AKShareClient {
   /**
    * 查询股票日线数据
    * @param code 股票代码，格式如 'sh.600000' 或 'sz.000001'
-   * @param startDate 开始日期，格式：'2023-01-01'
-   * @param endDate 结束日期，格式：'2023-12-31'
+   * @param start_date 开始日期，格式：'2023-01-01'
+   * @param end_date 结束日期，格式：'2023-12-31'
    * @param frequency 频率：'d'日线，'w'周线，'m'月线
    * @param adjustflag 复权类型：'1'后复权，'2'前复权，'3'不复权
    */
   async queryHistoryKData(
     code: string,
-    startDate: string,
-    endDate: string,
+    start_date: string,
+    end_date: string,
     frequency: 'd' | 'w' | 'm' = 'd',
     adjustflag: '1' | '2' | '3' = '3'
   ): Promise<DailyBar[]> {
     try {
-      logger.info(`Fetching history data for ${code} from ${startDate} to ${endDate} via AKShare`);
+      logger.info(`Fetching history data for ${code} from ${start_date} to ${end_date} via AKShare`);
 
       // AKShare目前只支持日线数据
       if (frequency !== 'd') {
@@ -157,8 +157,8 @@ export class AKShareClient {
       const bars = await this.callPythonScript(
         'get_daily_data',
         code,
-        startDate,
-        endDate,
+        start_date,
+        end_date,
         adjustflag
       );
       logger.info(`Fetched ${bars.length} daily bars for ${code} from AKShare`);
@@ -217,7 +217,7 @@ export class AKShareClient {
   /**
    * 查询交易日历（暂不支持）
    */
-  async queryTradeDates(startDate: string, endDate: string): Promise<string[]> {
+  async queryTradeDates(start_date: string, end_date: string): Promise<string[]> {
     logger.warn('AKShareClient.queryTradeDates not implemented');
     return [];
   }
@@ -234,6 +234,38 @@ export class AKShareClient {
    */
   async logout(): Promise<boolean> {
     return true;
+  }
+
+  /**
+   * 获取多只股票的实时切片数据
+   * @param symbols 股票代码列表（如 'sh.600000,sz.000001'）
+   */
+  async getRealtimeQuotes(symbols: string): Promise<Record<string, any>> {
+    try {
+      logger.info(`Fetching real-time quotes for ${symbols} from AKShare`);
+      const quotes = await this.callPythonScript('get_realtime_quotes', symbols);
+      return quotes;
+    } catch (error) {
+      logger.error(`Failed to fetch real-time quotes from AKShare:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * 获取单只股票日内分时K线数据
+   * @param code 股票代码（如 'sh.600000'）
+   * @param period K线周期（如 '1m', '5m', '15m'）
+   * @param limit 获取的K线数量（默认 240）
+   */
+  async getIntradayBars(code: string, period: string = '1m', limit: number = 240): Promise<any[]> {
+    try {
+      logger.info(`Fetching intraday bars for ${code} (${period}) from AKShare`);
+      const bars = await this.callPythonScript('get_intraday_bars', code, period, limit.toString());
+      return bars;
+    } catch (error) {
+      logger.error(`Failed to fetch intraday bars for ${code} from AKShare:`, error);
+      throw error;
+    }
   }
 
   /**

@@ -54,7 +54,7 @@ export class Trade extends Model {
     field: 'backtest_id',
     comment: '回测ID',
   })
-  declare backtestId: string;
+  declare backtest_id: string;
 
   @Column({
     type: DataType.DATE,
@@ -62,7 +62,7 @@ export class Trade extends Model {
     comment: '入场日期',
     field: 'entry_date',
   })
-  declare entryDate: Date;
+  declare entry_date: Date;
 
   @Column({
     type: DataType.DATE,
@@ -70,7 +70,7 @@ export class Trade extends Model {
     comment: '出场日期',
     field: 'exit_date',
   })
-  declare exitDate: Date;
+  declare exit_date: Date;
 
   @ForeignKey(() => Stock)
   @Column({
@@ -79,7 +79,7 @@ export class Trade extends Model {
     field: 'stock_id',
     comment: '股票ID',
   })
-  declare stockId: number;
+  declare stock_id: number;
 
   @Column({
     type: DataType.ENUM(...Object.values(TradeDirection)),
@@ -94,7 +94,7 @@ export class Trade extends Model {
     field: 'entry_price',
     comment: '入场价格',
   })
-  declare entryPrice: number;
+  declare entry_price: number;
 
   @Column({
     type: DataType.DECIMAL(12, 4),
@@ -102,7 +102,7 @@ export class Trade extends Model {
     field: 'exit_price',
     comment: '出场价格',
   })
-  declare exitPrice: number;
+  declare exit_price: number;
 
   @Column({
     type: DataType.INTEGER,
@@ -124,7 +124,7 @@ export class Trade extends Model {
     field: 'pnl_percent',
     comment: '盈亏比例(%)',
   })
-  declare pnlPercent: number;
+  declare pnl_percent: number;
 
   @Column({
     type: DataType.INTEGER,
@@ -132,7 +132,7 @@ export class Trade extends Model {
     field: 'holding_days',
     comment: '持有天数',
   })
-  declare holdingDays: number;
+  declare holding_days: number;
 
   @Column({
     type: DataType.DECIMAL(12, 4),
@@ -140,7 +140,7 @@ export class Trade extends Model {
     field: 'entry_value',
     comment: '入场市值',
   })
-  declare entryValue: number;
+  declare entry_value: number;
 
   @Column({
     type: DataType.DECIMAL(12, 4),
@@ -148,7 +148,7 @@ export class Trade extends Model {
     field: 'exit_value',
     comment: '出场市值',
   })
-  declare exitValue: number;
+  declare exit_value: number;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
@@ -163,7 +163,7 @@ export class Trade extends Model {
     field: 'stamp_duty',
     comment: '印花税',
   })
-  declare stampDuty?: number;
+  declare stamp_duty?: number;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
@@ -171,7 +171,7 @@ export class Trade extends Model {
     field: 'transfer_fee',
     comment: '过户费',
   })
-  declare transferFee?: number;
+  declare transfer_fee?: number;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
@@ -179,7 +179,7 @@ export class Trade extends Model {
     field: 'total_fee',
     comment: '总费用',
   })
-  declare totalFee?: number;
+  declare total_fee?: number;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
@@ -187,7 +187,7 @@ export class Trade extends Model {
     field: 'net_pnl',
     comment: '净盈亏',
   })
-  declare netPnl?: number;
+  declare net_pnl?: number;
 
   @Column({
     type: DataType.STRING(50),
@@ -195,7 +195,7 @@ export class Trade extends Model {
     field: 'entry_signal',
     comment: '入场信号',
   })
-  declare entrySignal?: string;
+  declare entry_signal?: string;
 
   @Column({
     type: DataType.STRING(50),
@@ -203,7 +203,7 @@ export class Trade extends Model {
     field: 'exit_signal',
     comment: '出场信号',
   })
-  declare exitSignal?: string;
+  declare exit_signal?: string;
 
   @Column({
     type: DataType.TEXT,
@@ -214,7 +214,7 @@ export class Trade extends Model {
 
   @CreatedAt
   @Column({ field: 'created_at' })
-  declare createdAt: Date;
+  declare created_at: Date;
 
   // 关联关系
   @BelongsTo(() => BacktestResult)

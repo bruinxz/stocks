@@ -67,7 +67,7 @@ router.put(
   [
     body('nickname').optional().isString().isLength({ max: 50 }),
     body('phone').optional().isString().isLength({ max: 20 }),
-    body('avatarUrl').optional().isString().isLength({ max: 255 }),
+    body('avatar_url').optional().isString().isLength({ max: 255 }),
   ],
   validateRequest,
   authController.updateProfile

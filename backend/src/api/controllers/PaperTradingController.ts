@@ -27,12 +27,12 @@ export class PaperTradingController {
       if (!portfolio) {
         const username = user.nickname || user.username || 'User';
         portfolio = await PaperTradingPortfolio.create({
-          userId: user.id,
+          user_id: user.id,
           name: `${username}的模拟盘`,
-          initialCapital: 1000000,
-          currentCash: 1000000,
-          totalValue: 1000000,
-          isActive: true,
+          initial_capital: 1000000,
+          current_cash: 1000000,
+          total_value: 1000000,
+          is_active: true,
         });
       }
 
@@ -46,27 +46,27 @@ export class PaperTradingController {
         try {
           const bars = await this.dataService.getDailyBars(pos.symbol, new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), new Date());
           if (bars && bars.length > 0) {
-            const currentPrice = bars[bars.length - 1].close;
-            const marketValue = currentPrice * pos.quantity;
-            const unrealizedPnl = marketValue - (pos.avgCost * pos.quantity);
+            const current_price = bars[bars.length - 1].close;
+            const market_value = current_price * pos.quantity;
+            const unrealized_pnl = market_value - (pos.avg_cost * pos.quantity);
             
             // 更新数据库
-            pos.currentPrice = currentPrice;
-            pos.marketValue = marketValue;
-            pos.unrealizedPnl = unrealizedPnl;
+            pos.current_price = current_price;
+            pos.market_value = market_value;
+            pos.unrealized_pnl = unrealized_pnl;
             await pos.save();
           }
-          totalMarketValue += pos.marketValue;
+          totalMarketValue += pos.market_value;
           return pos;
         } catch (e) {
           logger.error(`获取股票 ${pos.symbol} 价格失败`, e);
-          totalMarketValue += pos.marketValue;
+          totalMarketValue += pos.market_value;
           return pos;
         }
       }));
 
       // 更新总资产
-      portfolio.totalValue = portfolio.currentCash + totalMarketValue;
+      portfolio.total_value = portfolio.current_cash + totalMarketValue;
       await portfolio.save();
 
       res.json({
@@ -109,7 +109,7 @@ export class PaperTradingController {
       if (!bars || bars.length === 0) {
         return res.status(400).json({ success: false, message: '无法获取该股票的当前价格' });
       }
-      const currentPrice = bars[bars.length - 1].close;
+      const current_price = bars[bars.length - 1].close;
 
       const stockInfo = await Stock.findOne({ where: { symbol } });
       const stockName = stockInfo ? stockInfo.name : symbol;
@@ -119,12 +119,12 @@ export class PaperTradingController {
       const slippage = 0.001;
 
       if (direction === 'BUY') {
-        const executePrice = currentPrice * (1 + slippage);
-        const cost = executePrice * quantity;
+        const execute_price = current_price * (1 + slippage);
+        const cost = execute_price * quantity;
         const commission = cost * commissionRate;
         const totalCost = cost + commission;
 
-        if (portfolio.currentCash < totalCost) {
+        if (portfolio.current_cash < totalCost) {
           return res.status(400).json({ success: false, message: '可用资金不足' });
         }
 
@@ -133,12 +133,12 @@ export class PaperTradingController {
         });
 
         if (position) {
-          const totalCostBasis = (position.avgCost * position.quantity) + cost;
+          const totalCostBasis = (position.avg_cost * position.quantity) + cost;
           position.quantity += quantity;
-          position.avgCost = totalCostBasis / position.quantity;
-          position.currentPrice = currentPrice;
-          position.marketValue = position.quantity * currentPrice;
-          position.unrealizedPnl = position.marketValue - (position.avgCost * position.quantity);
+          position.avg_cost = totalCostBasis / position.quantity;
+          position.current_price = current_price;
+          position.market_value = position.quantity * current_price;
+          position.unrealized_pnl = position.market_value - (position.avg_cost * position.quantity);
           await position.save();
         } else {
           await PaperTradingPosition.create({
@@ -146,14 +146,14 @@ export class PaperTradingController {
             symbol,
             name: stockName,
             quantity,
-            avgCost: executePrice,
-            currentPrice,
-            marketValue: quantity * currentPrice,
-            unrealizedPnl: (quantity * currentPrice) - cost,
+            avg_cost: execute_price,
+            current_price,
+            market_value: quantity * current_price,
+            unrealized_pnl: (quantity * current_price) - cost,
           });
         }
 
-        portfolio.currentCash -= totalCost;
+        portfolio.current_cash -= totalCost;
         await portfolio.save();
 
         // 记录交易流水
@@ -162,7 +162,7 @@ export class PaperTradingController {
           symbol,
           name: stockName,
           direction: 'BUY',
-          executePrice,
+          execute_price,
           quantity,
           amount: cost,
           commission,
@@ -177,8 +177,8 @@ export class PaperTradingController {
           return res.status(400).json({ success: false, message: '持仓不足，无法卖出' });
         }
 
-        const executePrice = currentPrice * (1 - slippage);
-        const revenue = executePrice * quantity;
+        const execute_price = current_price * (1 - slippage);
+        const revenue = execute_price * quantity;
         const commission = revenue * commissionRate;
         const netRevenue = revenue - commission;
 
@@ -186,27 +186,27 @@ export class PaperTradingController {
           await position.destroy();
         } else {
           position.quantity -= quantity;
-          position.currentPrice = currentPrice;
-          position.marketValue = position.quantity * currentPrice;
-          position.unrealizedPnl = position.marketValue - (position.avgCost * position.quantity);
+          position.current_price = current_price;
+          position.market_value = position.quantity * current_price;
+          position.unrealized_pnl = position.market_value - (position.avg_cost * position.quantity);
           await position.save();
         }
 
-        portfolio.currentCash += netRevenue;
+        portfolio.current_cash += netRevenue;
         await portfolio.save();
 
         // 记录交易流水
-        const realizedPnl = revenue - (position.avgCost * quantity) - commission;
+        const realized_pnl = revenue - (position.avg_cost * quantity) - commission;
         await PaperTradingTrade.create({
           portfolio_id: portfolio.id,
           symbol,
           name: stockName,
           direction: 'SELL',
-          executePrice,
+          execute_price,
           quantity,
           amount: revenue,
           commission,
-          realizedPnl,
+          realized_pnl,
         });
       }
 
@@ -269,9 +269,9 @@ export class PaperTradingController {
         await PaperTradingSnapshot.create({
           portfolio_id: portfolio.id,
           date: todayStr,
-          totalValue: Number(portfolio.totalValue) || 1000000,
-          currentCash: Number(portfolio.currentCash) || 1000000,
-          positionValue: (Number(portfolio.totalValue) || 1000000) - (Number(portfolio.currentCash) || 1000000),
+          total_value: Number(portfolio.total_value) || 1000000,
+          current_cash: Number(portfolio.current_cash) || 1000000,
+          position_value: (Number(portfolio.total_value) || 1000000) - (Number(portfolio.current_cash) || 1000000),
         });
       }
 

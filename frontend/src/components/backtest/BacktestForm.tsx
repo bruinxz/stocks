@@ -61,16 +61,16 @@ const BacktestForm: React.FC<BacktestFormProps> = ({ onSuccess }) => {
   const handleSubmit = async (values: any) => {
     setLoading(true);
     try {
-      const [startDate, endDate] = values.dateRange;
+      const [start_date, end_date] = values.dateRange;
 
       const backtestData = {
         name: values.name,
         symbol: values.symbol,
-        startDate: startDate.format('YYYY-MM-DD'),
-        endDate: endDate.format('YYYY-MM-DD'),
+        start_date: start_date.format('YYYY-MM-DD'),
+        end_date: end_date.format('YYYY-MM-DD'),
         strategyType: values.strategyType,
         strategyParams: values.strategyParams || {},
-        initialCapital: values.initialCapital,
+        initial_capital: values.initial_capital,
       };
 
       await backtestService.createBacktest(backtestData);
@@ -196,7 +196,7 @@ const BacktestForm: React.FC<BacktestFormProps> = ({ onSuccess }) => {
         onFinish={handleSubmit}
         initialValues={{
           strategyType: 'moving_average_crossover',
-          initialCapital: 100000,
+          initial_capital: 100000,
         }}
       >
         <Row gutter={24}>
@@ -256,7 +256,7 @@ const BacktestForm: React.FC<BacktestFormProps> = ({ onSuccess }) => {
           <Col span={12}>
             <Form.Item
               label="初始资金"
-              name="initialCapital"
+              name="initial_capital"
               rules={[{ required: true, message: '请输入初始资金' }]}
             >
               <InputNumber

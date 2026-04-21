@@ -28,7 +28,7 @@ export class PaperTradingSnapshot extends Model {
     allowNull: false,
     field: 'portfolio_id',
   })
-  declare portfolioId: number;
+  declare portfolio_id: number;
 
   @BelongsTo(() => PaperTradingPortfolio)
   declare portfolio: PaperTradingPortfolio;
@@ -45,27 +45,27 @@ export class PaperTradingSnapshot extends Model {
     allowNull: false,
     field: 'total_value',
   })
-  declare totalValue: number;
+  declare total_value: number;
 
   @Column({
     type: DataType.DECIMAL(15, 2),
     allowNull: false,
     field: 'current_cash',
   })
-  declare currentCash: number;
+  declare current_cash: number;
 
   @Column({
     type: DataType.DECIMAL(15, 2),
     allowNull: false,
     field: 'position_value',
   })
-  declare positionValue: number;
+  declare position_value: number;
 
   @CreatedAt
   @Column({ field: 'created_at' })
-  declare createdAt: Date;
+  declare created_at: Date;
 
   @UpdatedAt
   @Column({ field: 'updated_at' })
-  declare updatedAt: Date;
+  declare updated_at: Date;
 }

@@ -25,8 +25,8 @@ interface GetHistoryParams {
 }
 
 interface GetHistoryQuery {
-  startDate?: string;
-  endDate?: string;
+  start_date?: string;
+  end_date?: string;
   frequency?: 'd' | 'w' | 'm';
 }
 
@@ -35,10 +35,10 @@ interface FavoriteParams {
 }
 
 interface FavoriteBody {
-  groupId?: string;
+  group_id?: string;
   tags?: string;
   notes?: string;
-  sortOrder?: number;
+  sort_order?: number;
 }
 
 /**
@@ -83,32 +83,32 @@ export class MarketController {
             );
 
             if (!bars || bars.length === 0) {
-              return { ...index, currentPrice: 0, change: 0, changePercent: 0, trend: [] };
+              return { ...index, current_price: 0, change: 0, change_percent: 0, trend: [] };
             }
 
             const latestBar = bars[bars.length - 1];
             const previousBar = bars.length > 1 ? bars[bars.length - 2] : latestBar;
 
             const change = latestBar.close - previousBar.close;
-            const changePercent = (change / previousBar.close) * 100;
+            const change_percent = (change / previousBar.close) * 100;
 
             return {
               ...index,
-              currentPrice: latestBar.close,
+              current_price: latestBar.close,
               change,
-              changePercent,
+              change_percent,
               trend: bars.slice(-30).map(b => ({ time: b.time, close: b.close })) // 只取最近 30 天画图
             };
           } catch (e) {
             logger.error(`Failed to fetch overview for ${index.symbol}`, e);
-            return { ...index, currentPrice: 0, change: 0, changePercent: 0, trend: [] };
+            return { ...index, current_price: 0, change: 0, change_percent: 0, trend: [] };
           }
         })
       );
 
       // 简单模拟一个市场情绪得分 (0-100)，实际项目中可以根据涨跌家数比、连板高度等计算
-      const upCount = overviewData.filter(d => d.changePercent > 0).length;
-      const downCount = overviewData.filter(d => d.changePercent < 0).length;
+      const upCount = overviewData.filter(d => d.change_percent > 0).length;
+      const downCount = overviewData.filter(d => d.change_percent < 0).length;
       // 基于真实指数的涨跌来计算一个确定性的情绪分，不再使用 Math.random()
       const sentimentScore = 50 + (upCount * 10) - (downCount * 10); 
 
@@ -243,7 +243,7 @@ export class MarketController {
   ) => {
     try {
       const { symbol } = req.params;
-      const { startDate, endDate, frequency = 'd' } = req.query;
+      const { start_date, end_date, frequency = 'd' } = req.query;
 
       // 验证参数
       if (!symbol) {
@@ -258,8 +258,8 @@ export class MarketController {
       const defaultStartDate = new Date();
       defaultStartDate.setFullYear(defaultStartDate.getFullYear() - 1);
 
-      const start = startDate || defaultStartDate.toISOString().split('T')[0];
-      const end = endDate || defaultEndDate.toISOString().split('T')[0];
+      const start = start_date || defaultStartDate.toISOString().split('T')[0];
+      const end = end_date || defaultEndDate.toISOString().split('T')[0];
 
       // 验证日期格式
       const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
@@ -297,8 +297,8 @@ export class MarketController {
             stock: stockInfo,
             history: [],
             summary: {
-              startDate: '',
-              endDate: '',
+              start_date: '',
+              end_date: '',
               totalDays: 0,
               priceChange: '0%',
             },
@@ -342,7 +342,7 @@ export class MarketController {
         close: parseFloat(String(bar.close)),
         volume: parseFloat(String(bar.volume)),
         amount: parseFloat(String(bar.turnover || 0)),
-        pctChg: parseFloat(String(bar.changePercent || 0)),
+        pctChg: parseFloat(String(bar.change_percent || 0)),
         adjustflag: 3, // 默认不复权
       }));
 
@@ -352,8 +352,8 @@ export class MarketController {
           stock: stockInfo,
           history: historyData,
           summary: {
-            startDate: historyData[0].date,
-            endDate: historyData[historyData.length - 1].date,
+            start_date: historyData[0].date,
+            end_date: historyData[historyData.length - 1].date,
             totalDays: historyData.length,
             priceChange:
               historyData.length > 0
@@ -384,8 +384,8 @@ export class MarketController {
     res: Response
   ) => {
     try {
-      const userId = (req as any).user?.id;
-      if (!userId) {
+      const user_id = (req as any).user?.id;
+      if (!user_id) {
         return res.status(401).json({
           success: false,
           error: '用户未登录',
@@ -393,7 +393,7 @@ export class MarketController {
       }
 
       const { symbol } = req.params;
-      const { groupId, tags, notes, sortOrder } = req.body;
+      const { group_id, tags, notes, sort_order } = req.body;
 
       // 查找股票
       const stock = await Stock.findOne({ where: { symbol } });
@@ -406,7 +406,7 @@ export class MarketController {
 
       // 检查是否已收藏
       const existingFavorite = await FavoriteStock.findOne({
-        where: { user_id: userId, stock_id: stock.id },
+        where: { user_id, stock_id: stock.id },
       });
 
       if (existingFavorite) {
@@ -418,12 +418,12 @@ export class MarketController {
 
       // 创建收藏记录
       const favorite = await FavoriteStock.create({
-        user_id: userId,
+        user_id,
         stock_id: stock.id,
-        groupId,
+        group_id,
         tags,
         notes,
-        sortOrder: sortOrder || 0,
+        sort_order: sort_order || 0,
       });
 
       res.json({
@@ -454,8 +454,8 @@ export class MarketController {
    */
   removeFavorite = async (req: Request<FavoriteParams>, res: Response) => {
     try {
-      const userId = (req as any).user?.id;
-      if (!userId) {
+      const user_id = (req as any).user?.id;
+      if (!user_id) {
         return res.status(401).json({
           success: false,
           error: '用户未登录',
@@ -475,7 +475,7 @@ export class MarketController {
 
       // 删除收藏记录
       const deletedCount = await FavoriteStock.destroy({
-        where: { user_id: userId, stock_id: stock.id },
+        where: { user_id, stock_id: stock.id },
       });
 
       if (deletedCount === 0) {
@@ -504,19 +504,19 @@ export class MarketController {
    */
   getFavorites = async (req: Request, res: Response) => {
     try {
-      const userId = (req as any).user?.id;
-      if (!userId) {
+      const user_id = (req as any).user?.id;
+      if (!user_id) {
         return res.status(401).json({
           success: false,
           error: '用户未登录',
         });
       }
 
-      const { groupId } = req.query;
+      const { group_id } = req.query;
 
-      const where: any = { user_id: userId };
-      if (groupId) {
-        where.groupId = groupId;
+      const where: any = { user_id };
+      if (group_id) {
+        where.group_id = group_id;
       }
 
       const favorites = await FavoriteStock.findAll({
@@ -528,14 +528,14 @@ export class MarketController {
           },
         ],
         order: [
-          ['sortOrder', 'DESC'],
+          ['sort_order', 'DESC'],
           ['created_at', 'DESC'],
         ],
       });
 
       // 按分组组织
       const groupedFavorites = favorites.reduce((acc, favorite) => {
-        const group = favorite.groupId || '默认';
+        const group = favorite.group_id || '默认';
         if (!acc[group]) {
           acc[group] = [];
         }
@@ -565,8 +565,8 @@ export class MarketController {
    */
   checkFavorite = async (req: Request<FavoriteParams>, res: Response) => {
     try {
-      const userId = (req as any).user?.id;
-      if (!userId) {
+      const user_id = (req as any).user?.id;
+      if (!user_id) {
         return res.status(401).json({
           success: false,
           error: '用户未登录',
@@ -586,7 +586,7 @@ export class MarketController {
 
       // 检查收藏状态
       const favorite = await FavoriteStock.findOne({
-        where: { user_id: userId, stock_id: stock.id },
+        where: { user_id, stock_id: stock.id },
       });
 
       res.json({
@@ -614,8 +614,8 @@ export class MarketController {
     res: Response
   ) => {
     try {
-      const userId = (req as any).user?.id;
-      if (!userId) {
+      const user_id = (req as any).user?.id;
+      if (!user_id) {
         return res.status(401).json({
           success: false,
           error: '用户未登录',
@@ -623,7 +623,7 @@ export class MarketController {
       }
 
       const { symbol } = req.params;
-      const { groupId, tags, notes, sortOrder } = req.body;
+      const { group_id, tags, notes, sort_order } = req.body;
 
       // 查找股票
       const stock = await Stock.findOne({ where: { symbol } });
@@ -636,7 +636,7 @@ export class MarketController {
 
       // 查找收藏记录
       const favorite = await FavoriteStock.findOne({
-        where: { user_id: userId, stock_id: stock.id },
+        where: { user_id, stock_id: stock.id },
       });
 
       if (!favorite) {
@@ -647,10 +647,10 @@ export class MarketController {
       }
 
       // 更新字段
-      if (groupId !== undefined) favorite.groupId = groupId;
+      if (group_id !== undefined) favorite.group_id = group_id;
       if (tags !== undefined) favorite.tags = tags;
       if (notes !== undefined) favorite.notes = notes;
-      if (sortOrder !== undefined) favorite.sortOrder = sortOrder;
+      if (sort_order !== undefined) favorite.sort_order = sort_order;
 
       await favorite.save();
 
@@ -788,7 +788,7 @@ export class MarketController {
    */
   getUpdateStatus = async (req: Request, res: Response) => {
     try {
-      const { jobId, date, startDate, endDate } = req.query;
+      const { jobId, date, start_date, end_date } = req.query;
       // type可以是单个值或数组（多个type参数）
       const typeParam = req.query.type;
       const types = Array.isArray(typeParam) ? typeParam : typeParam ? [typeParam] : [];
@@ -887,14 +887,14 @@ export class MarketController {
         }
 
         // 按创建日期范围筛选
-        if (startDate || endDate) {
+        if (start_date || end_date) {
           const createdAtFilter: any = {};
-          if (startDate) {
-            createdAtFilter[Op.gte] = new Date(startDate as string);
+          if (start_date) {
+            createdAtFilter[Op.gte] = new Date(start_date as string);
           }
-          if (endDate) {
+          if (end_date) {
             // 结束日期包括当天，所以设置为当天的23:59:59
-            const endDateTime = new Date(endDate as string);
+            const endDateTime = new Date(end_date as string);
             endDateTime.setHours(23, 59, 59, 999);
             createdAtFilter[Op.lte] = endDateTime;
           }
@@ -1027,7 +1027,7 @@ export class MarketController {
           type: type as any,
           date: today,
           forceUpdate: force,
-          userId: (req as any).user?.id,
+          user_id: (req as any).user?.id,
         },
         {
           jobId: `${type}-${today}-${Date.now()}`,
@@ -1066,8 +1066,8 @@ export class MarketController {
         symbols,
         marketFilters,
         syncAllStocks = false,
-        startDate,
-        endDate,
+        start_date,
+        end_date,
         dataSource = 'akshare',
         concurrency = 10,
       } = req.body;
@@ -1112,11 +1112,11 @@ export class MarketController {
           symbols,
           marketFilters,
           syncAllStocks,
-          startDate,
-          endDate,
+          start_date,
+          end_date,
           dataSource,
           concurrency,
-          userId: (req as any).user?.id,
+          user_id: (req as any).user?.id,
         },
         {
           jobId: `bulk-sync-${today}-${Date.now()}`,
@@ -1188,15 +1188,15 @@ export class MarketController {
       const daysNum = parseInt(days.toString(), 10);
 
       // 计算日期范围
-      const endDate = new Date();
-      const startDate = new Date();
-      startDate.setDate(startDate.getDate() - daysNum);
+      const end_date = new Date();
+      const start_date = new Date();
+      start_date.setDate(start_date.getDate() - daysNum);
 
       // 查询更新日志
       const updateLogs = await DataUpdateLog.findAll({
         where: {
           created_at: {
-            [Op.between]: [startDate, endDate],
+            [Op.between]: [start_date, end_date],
           },
           type: UpdateType.DAILY_UPDATE,
         },
@@ -1220,8 +1220,8 @@ export class MarketController {
 
       updateLogs.forEach(log => {
         if (log.status === UpdateStatus.COMPLETED && log.result) {
-          totalAffectedStocks += log.affectedStocks || 0;
-          totalInsertedRecords += log.insertedRecords || 0;
+          totalAffectedStocks += log.affected_stocks || 0;
+          totalInsertedRecords += log.inserted_records || 0;
           successfulCount++;
 
           // 按日统计
@@ -1229,13 +1229,13 @@ export class MarketController {
           if (!stats.dailyBreakdown[dateStr]) {
             stats.dailyBreakdown[dateStr] = {
               date: dateStr,
-              affectedStocks: 0,
-              insertedRecords: 0,
+              affected_stocks: 0,
+              inserted_records: 0,
               status: log.status,
             };
           }
-          stats.dailyBreakdown[dateStr].affectedStocks += log.affectedStocks || 0;
-          stats.dailyBreakdown[dateStr].insertedRecords += log.insertedRecords || 0;
+          stats.dailyBreakdown[dateStr].affected_stocks += log.affected_stocks || 0;
+          stats.dailyBreakdown[dateStr].inserted_records += log.inserted_records || 0;
         }
       });
 
@@ -1255,8 +1255,8 @@ export class MarketController {
           stats,
           period: {
             days: daysNum,
-            startDate: startDate.toISOString().split('T')[0],
-            endDate: endDate.toISOString().split('T')[0],
+            start_date: start_date.toISOString().split('T')[0],
+            end_date: end_date.toISOString().split('T')[0],
           },
         },
       });
@@ -1522,11 +1522,11 @@ export class MarketController {
    */
   getDataCompletenessStats = async (req: Request, res: Response): Promise<void> => {
     try {
-      const { startDate = '2020-01-01', endDate = '2026-04-10' } = req.query;
+      const { start_date = '2020-01-01', end_date = '2026-04-10' } = req.query;
 
       // 验证日期格式
       const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-      if (!dateRegex.test(startDate as string) || !dateRegex.test(endDate as string)) {
+      if (!dateRegex.test(start_date as string) || !dateRegex.test(end_date as string)) {
         res.status(400).json({
           success: false,
           error: '日期格式应为 YYYY-MM-DD',
@@ -1565,8 +1565,8 @@ export class MarketController {
 
       // 获取所有上市股票
       const allStocks = await Stock.findAll({
-        attributes: ['id', 'symbol', 'name', 'market', 'isListed'],
-        where: { isListed: true },
+        attributes: ['id', 'symbol', 'name', 'market', 'is_listed'],
+        where: { is_listed: true },
         order: [
           ['market', 'ASC'],
           ['symbol', 'ASC'],
@@ -1575,25 +1575,25 @@ export class MarketController {
 
       // 获取每个股票在指定时间段内的日线数据数量
       // 使用一次性聚合查询，而不是循环执行 5000+ 次 COUNT 查询，这能将耗时从几十秒缩短到几百毫秒
-      // DailyBar 只有复合主键 time 和 stockId，没有 id 列
+      // DailyBar 只有复合主键 time 和 stock_id，没有 id 列
       const barCounts = await DailyBar.findAll({
         attributes: [
-          'stockId',
+          'stock_id',
           [sequelize.fn('COUNT', sequelize.col('stock_id')), 'count']
         ],
         where: {
           time: {
-            [Op.between]: [new Date(startDate as string), new Date(endDate as string)],
+            [Op.between]: [new Date(start_date as string), new Date(end_date as string)],
           }
         },
-        group: ['stockId'],
+        group: ['stock_id'],
         raw: true
       });
 
-      // 建立 stockId -> count 的映射，O(1) 复杂度查找
+      // 建立 stock_id -> count 的映射，O(1) 复杂度查找
       const barCountMap = new Map<number, number>();
       (barCounts as any[]).forEach(item => {
-        barCountMap.set(item.stockId, parseInt(item.count, 10));
+        barCountMap.set(item.stock_id, parseInt(item.count, 10));
       });
 
       // 统计阶梯
@@ -1656,7 +1656,7 @@ export class MarketController {
               barCount,
               completeness: Math.min(1.0, completeness),
               completenessLabel,
-              listingDate: stock.listingDate,
+              listing_date: stock.listing_date,
             });
 
             processed++;
@@ -1692,7 +1692,7 @@ export class MarketController {
           stocksWithData,
           stocksWithoutData: processed - stocksWithData,
           expectedTradingDays,
-          dateRange: { startDate, endDate },
+          dateRange: { start_date, end_date },
           timestamp: new Date().toISOString(),
           cached: false, // 标记为非缓存数据
         },
@@ -1753,11 +1753,11 @@ export class MarketController {
    */
   refreshDataCompletenessCache = async (req: Request, res: Response): Promise<void> => {
     try {
-      const { startDate = '2020-01-01', endDate = '2026-04-10' } = req.query;
+      const { start_date = '2020-01-01', end_date = '2026-04-10' } = req.query;
 
       // 验证日期格式
       const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-      if (!dateRegex.test(startDate as string) || !dateRegex.test(endDate as string)) {
+      if (!dateRegex.test(start_date as string) || !dateRegex.test(end_date as string)) {
         res.status(400).json({
           success: false,
           error: '日期格式应为 YYYY-MM-DD',

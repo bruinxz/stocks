@@ -8,7 +8,7 @@ class SchedulerService {
 
   async initialize() {
     try {
-      const tasks = await ScheduledTask.findAll({ where: { isActive: true } });
+      const tasks = await ScheduledTask.findAll({ where: { is_active: true } });
       logger.info(`Found ${tasks.length} active scheduled tasks`);
 
       for (const task of tasks) {
@@ -26,15 +26,15 @@ class SchedulerService {
       this.activeTasks.delete(task.id);
     }
 
-    if (!cron.validate(task.cronExpression)) {
-      logger.error(`Invalid cron expression for task ${task.id}: ${task.cronExpression}`);
+    if (!cron.validate(task.cron_expression)) {
+      logger.error(`Invalid cron expression for task ${task.id}: ${task.cron_expression}`);
       return;
     }
 
-    const scheduledJob = cron.schedule(task.cronExpression, async () => {
+    const scheduledJob = cron.schedule(task.cron_expression, async () => {
       logger.info(`Executing scheduled task: ${task.name} (${task.type})`);
       try {
-        await task.update({ lastRunAt: new Date(), lastRunStatus: 'RUNNING' });
+        await task.update({ last_run_at: new Date(), last_run_status: 'RUNNING' });
 
         // 调度具体的任务
         if (task.type === 'SYNC_ALL_STOCKS') {
@@ -72,16 +72,16 @@ class SchedulerService {
           logger.info('AI_DAILY_SCREENER executed');
         }
 
-        await task.update({ lastRunStatus: 'SUCCESS' });
+        await task.update({ last_run_status: 'SUCCESS' });
       } catch (error: any) {
         logger.error(`Error executing scheduled task ${task.name}:`, error);
-        await task.update({ lastRunStatus: 'FAILED' });
+        await task.update({ last_run_status: 'FAILED' });
       }
     });
 
     this.activeTasks.set(task.id, scheduledJob);
     logger.info(
-      `Scheduled task ${task.id} (${task.name}) registered with cron: ${task.cronExpression}`
+      `Scheduled task ${task.id} (${task.name}) registered with cron: ${task.cron_expression}`
     );
   }
 
@@ -89,7 +89,7 @@ class SchedulerService {
     const task = await ScheduledTask.findByPk(taskId);
     if (!task) return;
 
-    if (task.isActive) {
+    if (task.is_active) {
       this.scheduleTask(task);
     } else {
       if (this.activeTasks.has(task.id)) {
@@ -106,7 +106,7 @@ class SchedulerService {
 
   async createTask(data: any) {
     const task = await ScheduledTask.create(data);
-    if (task.isActive) {
+    if (task.is_active) {
       this.scheduleTask(task);
     }
     return task;

@@ -48,9 +48,9 @@ export class JournalController {
   async createJournal(req: Request, res: Response, next: NextFunction) {
     try {
       const user = (req as any).user;
-      const { date, marketSummary, portfolioAnalysis, actionPlan, tags, mood } = req.body;
+      const { date, market_summary, portfolio_analysis, action_plan, tags, mood } = req.body;
 
-      if (!date || !marketSummary || !portfolioAnalysis) {
+      if (!date || !market_summary || !portfolio_analysis) {
         return res.status(400).json({ success: false, message: '请填写完整的必填项(日期、大盘总结、持仓分析)' });
       }
 
@@ -66,9 +66,9 @@ export class JournalController {
       const newJournal = await TradingJournal.create({
         user_id: user.id,
         date,
-        marketSummary,
-        portfolioAnalysis,
-        actionPlan,
+        market_summary,
+        portfolio_analysis,
+        action_plan,
         tags: tags || [],
         mood: mood || '平静',
       });
@@ -85,7 +85,7 @@ export class JournalController {
     try {
       const { date } = req.params;
       const user = (req as any).user;
-      const { marketSummary, portfolioAnalysis, actionPlan, tags, mood } = req.body;
+      const { market_summary, portfolio_analysis, action_plan, tags, mood } = req.body;
 
       const journal = await TradingJournal.findOne({
         where: { date, user_id: user.id },
@@ -95,9 +95,9 @@ export class JournalController {
         return res.status(404).json({ success: false, message: '未找到该日期的复盘记录' });
       }
 
-      if (marketSummary !== undefined) journal.marketSummary = marketSummary;
-      if (portfolioAnalysis !== undefined) journal.portfolioAnalysis = portfolioAnalysis;
-      if (actionPlan !== undefined) journal.actionPlan = actionPlan;
+      if (market_summary !== undefined) journal.market_summary = market_summary;
+      if (portfolio_analysis !== undefined) journal.portfolio_analysis = portfolio_analysis;
+      if (action_plan !== undefined) journal.action_plan = action_plan;
       if (tags !== undefined) journal.tags = tags;
       if (mood !== undefined) journal.mood = mood;
 

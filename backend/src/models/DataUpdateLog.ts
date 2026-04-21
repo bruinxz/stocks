@@ -80,7 +80,7 @@ export class DataUpdateLog extends Model {
     field: 'affected_stocks',
     comment: '影响的股票数量',
   })
-  declare affectedStocks?: number;
+  declare affected_stocks?: number;
 
   @Column({
     type: DataType.INTEGER,
@@ -88,7 +88,7 @@ export class DataUpdateLog extends Model {
     field: 'inserted_records',
     comment: '插入的数据条数',
   })
-  declare insertedRecords?: number;
+  declare inserted_records?: number;
 
   @Column({
     type: DataType.DATE,
@@ -96,7 +96,7 @@ export class DataUpdateLog extends Model {
     field: 'started_at',
     comment: '开始时间',
   })
-  declare startedAt?: Date;
+  declare started_at?: Date;
 
   @Column({
     type: DataType.DATE,
@@ -104,13 +104,13 @@ export class DataUpdateLog extends Model {
     field: 'completed_at',
     comment: '完成时间',
   })
-  declare completedAt?: Date;
+  declare completed_at?: Date;
 
   @CreatedAt
   @Column({ field: 'created_at' })
-  declare createdAt: Date;
+  declare created_at: Date;
 
   @UpdatedAt
   @Column({ field: 'updated_at' })
-  declare updatedAt: Date;
+  declare updated_at: Date;
 }

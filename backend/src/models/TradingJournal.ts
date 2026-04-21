@@ -28,7 +28,7 @@ export class TradingJournal extends Model {
     allowNull: false,
     field: 'user_id',
   })
-  declare userId: number;
+  declare user_id: number;
 
   @BelongsTo(() => User)
   declare user: User;
@@ -46,7 +46,7 @@ export class TradingJournal extends Model {
     field: 'market_summary',
     comment: '大盘整体表现总结 (由 AI 生成)',
   })
-  declare marketSummary: string;
+  declare market_summary: string;
 
   @Column({
     type: DataType.TEXT,
@@ -54,7 +54,7 @@ export class TradingJournal extends Model {
     field: 'portfolio_analysis',
     comment: '个人持仓/模拟盘表现分析 (由 AI 结合用户持仓生成)',
   })
-  declare portfolioAnalysis: string;
+  declare portfolio_analysis: string;
 
   @Column({
     type: DataType.TEXT,
@@ -62,7 +62,7 @@ export class TradingJournal extends Model {
     field: 'action_plan',
     comment: 'AI 明日交易建议或注意事项',
   })
-  declare actionPlan: string;
+  declare action_plan: string;
 
   @Column({
     type: DataType.JSONB,
@@ -80,9 +80,9 @@ export class TradingJournal extends Model {
 
   @CreatedAt
   @Column({ field: 'created_at' })
-  declare createdAt: Date;
+  declare created_at: Date;
 
   @UpdatedAt
   @Column({ field: 'updated_at' })
-  declare updatedAt: Date;
+  declare updated_at: Date;
 }

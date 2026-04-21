@@ -95,7 +95,7 @@ export class DataUpdateWorker {
         type: UpdateType.DAILY_UPDATE,
         status: UpdateStatus.IN_PROGRESS,
         date,
-        startedAt: new Date(),
+        started_at: new Date(),
       });
 
       const resultDetails: any = {};
@@ -109,10 +109,10 @@ export class DataUpdateWorker {
       const today = new Date().toISOString().split('T')[0];
       const sevenDaysAgo = new Date();
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-      const startDate = sevenDaysAgo.toISOString().split('T')[0];
+      const start_date = sevenDaysAgo.toISOString().split('T')[0];
 
       // 获取最近7天没有数据的股票
-      const stocksNeedingUpdate = await this.getStocksNeedingIncrementalUpdate(startDate, today);
+      const stocksNeedingUpdate = await this.getStocksNeedingIncrementalUpdate(start_date, today);
       logger.info(`有 ${stocksNeedingUpdate.length} 只股票需要增量更新`);
 
       await job.progress(30);
@@ -125,7 +125,7 @@ export class DataUpdateWorker {
         for (let i = 0; i < stocksNeedingUpdate.length; i += batchSize) {
           const batch = stocksNeedingUpdate.slice(i, i + batchSize);
           const batchPromises = batch.map(symbol =>
-            this.syncStockWithLock(symbol, startDate, today)
+            this.syncStockWithLock(symbol, start_date, today)
               .then(count => {
                 results[symbol] = count;
                 return { symbol, count };
@@ -190,9 +190,9 @@ export class DataUpdateWorker {
       // 3. 更新更新记录状态
       await updateLog.update({
         status: UpdateStatus.COMPLETED,
-        completedAt: new Date(),
-        affectedStocks: totalAffectedStocks,
-        insertedRecords: totalInsertedRecords,
+        completed_at: new Date(),
+        affected_stocks: totalAffectedStocks,
+        inserted_records: totalInsertedRecords,
         result: resultDetails,
       });
 
@@ -202,8 +202,8 @@ export class DataUpdateWorker {
 
       return {
         success: true,
-        affectedStocks: totalAffectedStocks,
-        insertedRecords: totalInsertedRecords,
+        affected_stocks: totalAffectedStocks,
+        inserted_records: totalInsertedRecords,
         details: resultDetails,
         logId: updateLog.id,
       };
@@ -216,8 +216,8 @@ export class DataUpdateWorker {
         status: UpdateStatus.FAILED,
         date,
         error: error.message,
-        startedAt: new Date(),
-        completedAt: new Date(),
+        started_at: new Date(),
+        completed_at: new Date(),
       });
 
       throw error;
@@ -233,13 +233,13 @@ export class DataUpdateWorker {
    * 获取需要增量更新的股票列表
    */
   private async getStocksNeedingIncrementalUpdate(
-    startDate: string,
-    endDate: string
+    start_date: string,
+    end_date: string
   ): Promise<string[]> {
     try {
       // 获取所有已上市股票
       const stocks = await Stock.findAll({
-        where: { isListed: true },
+        where: { is_listed: true },
         attributes: ['id', 'symbol'],
       });
 
@@ -249,9 +249,9 @@ export class DataUpdateWorker {
       for (const stock of stocks) {
         const hasRecentData = await DailyBar.findOne({
           where: {
-            stockId: stock.id,
+            stock_id: stock.id,
             time: {
-              [Op.between]: [new Date(startDate), new Date(endDate)],
+              [Op.between]: [new Date(start_date), new Date(end_date)],
             },
           },
           attributes: ['id'],
@@ -274,8 +274,8 @@ export class DataUpdateWorker {
    */
   private async syncStockWithLock(
     symbol: string,
-    startDate: string,
-    endDate: string
+    start_date: string,
+    end_date: string
   ): Promise<number> {
     const lockKey = LockKeys.STOCK_SYNC(symbol);
     const lockValue = await redisLock.acquire(lockKey, 5 * 60 * 1000); // 5分钟锁
@@ -286,7 +286,7 @@ export class DataUpdateWorker {
     }
 
     try {
-      return await this.dataSyncService.syncStockHistory(symbol, startDate, endDate);
+      return await this.dataSyncService.syncStockHistory(symbol, start_date, end_date);
     } finally {
       await redisLock.release(lockKey, lockValue);
     }
@@ -316,7 +316,7 @@ export class DataUpdateWorker {
         type: UpdateType.NEW_STOCKS_SYNC,
         status: UpdateStatus.IN_PROGRESS,
         date,
-        startedAt: new Date(),
+        started_at: new Date(),
       });
 
       await job.progress(50);
@@ -329,8 +329,8 @@ export class DataUpdateWorker {
       // 更新记录
       await updateLog.update({
         status: UpdateStatus.COMPLETED,
-        completedAt: new Date(),
-        affectedStocks: syncedCount,
+        completed_at: new Date(),
+        affected_stocks: syncedCount,
         result: { syncedCount },
       });
 
@@ -349,8 +349,8 @@ export class DataUpdateWorker {
         status: UpdateStatus.FAILED,
         date,
         error: error.message,
-        startedAt: new Date(),
-        completedAt: new Date(),
+        started_at: new Date(),
+        completed_at: new Date(),
       });
 
       throw error;
@@ -375,7 +375,7 @@ export class DataUpdateWorker {
         type: UpdateType.WEEKLY_COMPLETENESS_CHECK,
         status: UpdateStatus.IN_PROGRESS,
         date,
-        startedAt: new Date(),
+        started_at: new Date(),
       });
 
       await job.progress(30);
@@ -388,7 +388,7 @@ export class DataUpdateWorker {
       // 更新记录
       await updateLog.update({
         status: UpdateStatus.COMPLETED,
-        completedAt: new Date(),
+        completed_at: new Date(),
         result: completenessResult,
       });
 
@@ -407,8 +407,8 @@ export class DataUpdateWorker {
         status: UpdateStatus.FAILED,
         date,
         error: error.message,
-        startedAt: new Date(),
-        completedAt: new Date(),
+        started_at: new Date(),
+        completed_at: new Date(),
       });
 
       throw error;
@@ -425,15 +425,15 @@ export class DataUpdateWorker {
 
     // 获取所有已上市股票
     const stocks = await Stock.findAll({
-      where: { isListed: true },
+      where: { is_listed: true },
       attributes: ['id', 'symbol'],
     });
 
     const completenessResult = {
       totalStocks: stocks.length,
       checkedDateRange: {
-        startDate: sevenDaysAgo.toISOString().split('T')[0],
-        endDate: today.toISOString().split('T')[0],
+        start_date: sevenDaysAgo.toISOString().split('T')[0],
+        end_date: today.toISOString().split('T')[0],
       },
       missingDataStocks: [] as Array<{ symbol: string; missingDays: number }>,
       missingDataCount: 0,
@@ -443,7 +443,7 @@ export class DataUpdateWorker {
     for (const stock of stocks) {
       const dataCount = await DailyBar.count({
         where: {
-          stockId: stock.id,
+          stock_id: stock.id,
           time: {
             [Op.between]: [sevenDaysAgo, today],
           },
@@ -469,7 +469,7 @@ export class DataUpdateWorker {
    */
   private async processManualSync(job: Job<DataUpdateJobData>) {
     // 手动同步可以支持更多自定义参数
-    const { date, userId } = job.data;
+    const { date, user_id } = job.data;
 
     try {
       // 这里可以实现自定义的手动同步逻辑
@@ -479,9 +479,9 @@ export class DataUpdateWorker {
         type: UpdateType.MANUAL_SYNC,
         status: UpdateStatus.COMPLETED,
         date,
-        result: { manual: true, userId },
-        startedAt: new Date(),
-        completedAt: new Date(),
+        result: { manual: true, user_id },
+        started_at: new Date(),
+        completed_at: new Date(),
       });
 
       return {
@@ -504,11 +504,11 @@ export class DataUpdateWorker {
       symbols,
       marketFilters,
       syncAllStocks,
-      startDate,
-      endDate,
+      start_date,
+      end_date,
       dataSource = 'akshare',
       concurrency = 2, // 默认将并发数降为 2，避免同时启动过多 Python 进程导致小服务器 CPU/内存 爆满
-      userId,
+      user_id,
     } = job.data;
 
     const lockKey = LockKeys.BULK_SYNC;
@@ -534,13 +534,13 @@ export class DataUpdateWorker {
           symbols,
           marketFilters,
           syncAllStocks,
-          startDate,
-          endDate,
+          start_date,
+          end_date,
           dataSource,
           concurrency,
-          userId,
+          user_id,
         },
-        startedAt: new Date(),
+        started_at: new Date(),
       });
 
       await job.progress(10);
@@ -588,8 +588,8 @@ export class DataUpdateWorker {
       }
 
       // 如果未指定开始日期，提供一个合理的默认值
-      const actualStartDate = startDate || '2020-01-01';
-      const actualEndDate = endDate || new Date().toISOString().split('T')[0];
+      const actualStartDate = start_date || '2020-01-01';
+      const actualEndDate = end_date || new Date().toISOString().split('T')[0];
 
       logger.info(`批量同步任务开始，本次需要处理 ${stocksToSync.length} 只股票`);
       logger.info(`日期范围: ${actualStartDate} 到 ${actualEndDate}, 并发数: ${concurrency}`);
@@ -634,8 +634,8 @@ export class DataUpdateWorker {
 
           // 更新日志进度
           await updateLog.update({
-            affectedStocks: overallProcessedCount,
-            insertedRecords: currentTotalInserted,
+            affected_stocks: overallProcessedCount,
+            inserted_records: currentTotalInserted,
             result: {
               ...updateLog.result,
               processedStocks: overallProcessedCount,
@@ -662,9 +662,9 @@ export class DataUpdateWorker {
       // 更新日志记录
       await updateLog.update({
         status: UpdateStatus.COMPLETED,
-        completedAt: new Date(),
-        affectedStocks: stocksToSync.length + processedStocksSet.size,
-        insertedRecords: currentTotalInserted,
+        completed_at: new Date(),
+        affected_stocks: stocksToSync.length + processedStocksSet.size,
+        inserted_records: currentTotalInserted,
         result: {
           ...updateLog.result,
           successfulSyncs,
@@ -696,7 +696,7 @@ export class DataUpdateWorker {
         {
           status: UpdateStatus.FAILED,
           error: error.message,
-          completedAt: new Date(),
+          completed_at: new Date(),
         },
         {
           where: {

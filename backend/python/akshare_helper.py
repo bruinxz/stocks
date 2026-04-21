@@ -306,105 +306,135 @@ def get_daily_data(code: str, start_date: str, end_date: str, adjust: str = "qfq
         max_retries = 3
         retry_delay = 5  # 秒
 
-        # 方法0: 如果是北交所股票，优先使用 stock_zh_a_hist 兼容性较好，但有时也需要使用北交所特定接口
-        # 目前北交所大部分股票已经整合到 stock_zh_a_hist，如果失败，后面会自动 fallback
-
-        # 方法1: 首先尝试 stock_zh_a_hist (主要方法)
-        try:
-            print(f"Trying stock_zh_a_hist for {code} (pure_code: {pure_code})...", file=sys.stderr)
-            stock_df = ak.stock_zh_a_hist(
-                symbol=pure_code,
-                period="daily",
-                start_date=parse_date(start_date),
-                end_date=parse_date(end_date),
-                adjust=adjust_flag
-            )
-            method_used = "stock_zh_a_hist"
-            print(f"Successfully got data using {method_used}", file=sys.stderr)
-            
-            # 尝试获取历史估值指标 (市盈率、市净率、总市值、流通市值)
+        # 方法0: 如果是指数，使用专用指数接口
+        index_symbols = ['sh.000001', 'sh.000300', 'sz.399001', 'sz.399006']
+        if code in index_symbols:
             try:
-                print(f"Trying to fetch historical indicators for {code}...", file=sys.stderr)
-                indicator_df = ak.stock_a_indicator_lg(symbol=pure_code)
-                if indicator_df is not None and not indicator_df.empty:
-                    # 确保日期列类型一致以便合并
-                    if 'trade_date' in indicator_df.columns:
-                        indicator_df['trade_date'] = pd.to_datetime(indicator_df['trade_date'])
-                        # 重命名以便稍后使用
-                        indicator_dict = indicator_df.set_index('trade_date').to_dict('index')
-                        print(f"Successfully got indicators for {code}", file=sys.stderr)
-                    else:
-                        indicator_dict = {}
-                else:
-                    indicator_dict = {}
-            except Exception as ind_err:
-                print(f"Warning: Failed to fetch indicators for {code}: {ind_err}", file=sys.stderr)
+                print(f"Fetching index data for {code} using stock_zh_index_daily...", file=sys.stderr)
+                # 使用 ak.stock_zh_index_daily 获取指数日线
+                stock_df = ak.stock_zh_index_daily(symbol=ak_code)
+                
+                # 过滤日期范围
+                start_dt = pd.to_datetime(parse_date(start_date))
+                end_dt = pd.to_datetime(parse_date(end_date))
+                
+                # 确保有日期列，如果返回的是 datetime index，可以重置
+                if 'date' in stock_df.columns:
+                    stock_df['date'] = pd.to_datetime(stock_df['date'])
+                    stock_df = stock_df[(stock_df['date'] >= start_dt) & (stock_df['date'] <= end_dt)]
+                
+                # 指数没有换手率、复权等，构造缺少的列以便兼容
+                if not stock_df.empty:
+                    # 指数的数据结构可能需要对齐
+                    if 'volume' in stock_df.columns:
+                        # 假装这是成交量
+                        pass
+                
+                method_used = "stock_zh_index_daily"
+                print(f"Successfully got index data using {method_used}", file=sys.stderr)
                 indicator_dict = {}
                 
-        except Exception as e1:
-            print(f"Method stock_zh_a_hist failed for {code}: {e1}", file=sys.stderr)
-            report_proxy_failure()
-            # 添加延迟再尝试下一个方法
-            time.sleep(2)
-
-            # 方法2: 尝试 stock_zh_a_daily 作为兜底
+                # 跳过后面的股票方法尝试
+            except Exception as e0:
+                print(f"Method stock_zh_index_daily failed for index {code}: {e0}", file=sys.stderr)
+                return []
+        else:
+                # 方法1: 首先尝试 stock_zh_a_hist (主要方法)
             try:
-                print(f"Trying stock_zh_a_daily for {code} (ak_code: {ak_code})...", file=sys.stderr)
-                # stock_zh_a_daily 需要 adjust 参数: "qfq"=前复权, "hfq"=后复权, ""=不复权
-                # 映射我们的 adjust 参数
-                adjust_map_daily = {"1": "hfq", "2": "qfq", "3": ""}
-                adjust_flag_daily = adjust_map_daily.get(adjust, "")
-
-                stock_df = ak.stock_zh_a_daily(
-                    symbol=ak_code,  # 使用转换后的代码格式
+                print(f"Trying stock_zh_a_hist for {code} (pure_code: {pure_code})...", file=sys.stderr)
+                stock_df = ak.stock_zh_a_hist(
+                    symbol=pure_code,
+                    period="daily",
                     start_date=parse_date(start_date),
                     end_date=parse_date(end_date),
-                    adjust=adjust_flag_daily
+                    adjust=adjust_flag
                 )
-                method_used = "stock_zh_a_daily"
+                method_used = "stock_zh_a_hist"
                 print(f"Successfully got data using {method_used}", file=sys.stderr)
-            except Exception as e2:
-                print(f"Method stock_zh_a_daily also failed for {code}: {e2}", file=sys.stderr)
+                
+                # 尝试获取历史估值指标 (市盈率、市净率、总市值、流通市值)
+                try:
+                    print(f"Trying to fetch historical indicators for {code}...", file=sys.stderr)
+                    indicator_df = ak.stock_a_indicator_lg(symbol=pure_code)
+                    if indicator_df is not None and not indicator_df.empty:
+                        # 确保日期列类型一致以便合并
+                        if 'trade_date' in indicator_df.columns:
+                            indicator_df['trade_date'] = pd.to_datetime(indicator_df['trade_date'])
+                            # 重命名以便稍后使用
+                            indicator_dict = indicator_df.set_index('trade_date').to_dict('index')
+                            print(f"Successfully got indicators for {code}", file=sys.stderr)
+                        else:
+                            indicator_dict = {}
+                    else:
+                        indicator_dict = {}
+                except Exception as ind_err:
+                    print(f"Warning: Failed to fetch indicators for {code}: {ind_err}", file=sys.stderr)
+                    indicator_dict = {}
+                    
+            except Exception as e1:
+                print(f"Method stock_zh_a_hist failed for {code}: {e1}", file=sys.stderr)
                 report_proxy_failure()
                 # 添加延迟再尝试下一个方法
                 time.sleep(2)
-
-                # 方法3: 尝试 stock_zh_a_hist 不带 adjust 参数
+    
+                # 方法2: 尝试 stock_zh_a_daily 作为兜底
                 try:
-                    print(f"Trying stock_zh_a_hist without adjust for {code}...", file=sys.stderr)
-                    stock_df = ak.stock_zh_a_hist(
-                        symbol=pure_code,
-                        period="daily",
+                    print(f"Trying stock_zh_a_daily for {code} (ak_code: {ak_code})...", file=sys.stderr)
+                    # stock_zh_a_daily 需要 adjust 参数: "qfq"=前复权, "hfq"=后复权, ""=不复权
+                    # 映射我们的 adjust 参数
+                    adjust_map_daily = {"1": "hfq", "2": "qfq", "3": ""}
+                    adjust_flag_daily = adjust_map_daily.get(adjust, "")
+    
+                    stock_df = ak.stock_zh_a_daily(
+                        symbol=ak_code,  # 使用转换后的代码格式
                         start_date=parse_date(start_date),
-                        end_date=parse_date(end_date)
-                        # 不传 adjust 参数
+                        end_date=parse_date(end_date),
+                        adjust=adjust_flag_daily
                     )
-                    method_used = "stock_zh_a_hist_no_adjust"
+                    method_used = "stock_zh_a_daily"
                     print(f"Successfully got data using {method_used}", file=sys.stderr)
-                except Exception as e3:
-                    print(f"Method stock_zh_a_hist without adjust failed for {code}: {e3}", file=sys.stderr)
-                    
-                    # 方法4: 针对北交所的特别兜底 (AKShare 中有 stock_bj_a_hist 或使用腾讯接口)
-                    if code.startswith('bj.'):
-                        try:
-                            print(f"Trying stock_zh_a_hist using bj_a for {code}...", file=sys.stderr)
-                            # 北交所历史数据在某些版本中可能使用不同接口，或者通过腾讯/新浪接口拉取
-                            stock_df = ak.stock_zh_a_hist(
-                                symbol=pure_code,
-                                period="daily",
-                                start_date=parse_date(start_date),
-                                end_date=parse_date(end_date),
-                                adjust="" # 默认不复权
-                            )
-                            method_used = "bj_fallback"
-                        except Exception as e4:
-                            print(f"All methods failed for {code}. Last error: {e4}", file=sys.stderr)
+                except Exception as e2:
+                    print(f"Method stock_zh_a_daily also failed for {code}: {e2}", file=sys.stderr)
+                    report_proxy_failure()
+                    # 添加延迟再尝试下一个方法
+                    time.sleep(2)
+    
+                    # 方法3: 尝试 stock_zh_a_hist 不带 adjust 参数
+                    try:
+                        print(f"Trying stock_zh_a_hist without adjust for {code}...", file=sys.stderr)
+                        stock_df = ak.stock_zh_a_hist(
+                            symbol=pure_code,
+                            period="daily",
+                            start_date=parse_date(start_date),
+                            end_date=parse_date(end_date)
+                            # 不传 adjust 参数
+                        )
+                        method_used = "stock_zh_a_hist_no_adjust"
+                        print(f"Successfully got data using {method_used}", file=sys.stderr)
+                    except Exception as e3:
+                        print(f"Method stock_zh_a_hist without adjust failed for {code}: {e3}", file=sys.stderr)
+                        
+                        # 方法4: 针对北交所的特别兜底 (AKShare 中有 stock_bj_a_hist 或使用腾讯接口)
+                        if code.startswith('bj.'):
+                            try:
+                                print(f"Trying stock_zh_a_hist using bj_a for {code}...", file=sys.stderr)
+                                # 北交所历史数据在某些版本中可能使用不同接口，或者通过腾讯/新浪接口拉取
+                                stock_df = ak.stock_zh_a_hist(
+                                    symbol=pure_code,
+                                    period="daily",
+                                    start_date=parse_date(start_date),
+                                    end_date=parse_date(end_date),
+                                    adjust="" # 默认不复权
+                                )
+                                method_used = "bj_fallback"
+                            except Exception as e4:
+                                print(f"All methods failed for {code}. Last error: {e4}", file=sys.stderr)
+                                traceback.print_exc(file=sys.stderr)
+                                return []
+                        else:
+                            print(f"All methods failed for {code}. Last error: {e3}", file=sys.stderr)
                             traceback.print_exc(file=sys.stderr)
                             return []
-                    else:
-                        print(f"All methods failed for {code}. Last error: {e3}", file=sys.stderr)
-                        traceback.print_exc(file=sys.stderr)
-                        return []
 
         if stock_df is None or stock_df.empty:
             print(f"No data returned for {code} using {method_used}", file=sys.stderr)
@@ -600,6 +630,74 @@ def get_stock_basic(code: str) -> Optional[Dict[str, Any]]:
         print(f"Error getting stock basic for {code}: {e}", file=sys.stderr)
         return None
 
+def get_realtime_quotes(symbols: str) -> Dict[str, Any]:
+    """Get real-time quotes for multiple symbols"""
+    try:
+        symbol_list = symbols.split(',')
+        pure_symbols = []
+        for code in symbol_list:
+            pure_code = code
+            if code.startswith('sh.') or code.startswith('sz.') or code.startswith('bj.'):
+                pure_code = code.split('.')[1]
+            pure_symbols.append(pure_code)
+            
+        stock_df = ak.stock_zh_a_spot_em()
+        
+        result = {}
+        for idx, pure_code in enumerate(pure_symbols):
+            stock_row = stock_df[stock_df['代码'] == pure_code]
+            if not stock_row.empty:
+                row = stock_row.iloc[0]
+                result[symbol_list[idx]] = {
+                    "current_price": float(row['最新价']) if pd.notna(row['最新价']) else 0.0,
+                    "change_percent": float(row['涨跌幅']) if pd.notna(row['涨跌幅']) else 0.0,
+                    "turnover": float(row['成交额']) if pd.notna(row['成交额']) else 0.0,
+                    "high": float(row['最高']) if pd.notna(row['最高']) else 0.0,
+                    "low": float(row['最低']) if pd.notna(row['最低']) else 0.0,
+                    "open": float(row['今开']) if pd.notna(row['今开']) else 0.0,
+                    "volume": float(row['成交量']) if pd.notna(row['成交量']) else 0.0,
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                }
+        return result
+    except Exception as e:
+        print(f"Error getting real-time quotes: {e}", file=sys.stderr)
+        return {}
+
+def get_intraday_bars(code: str, period: str = '1', limit: int = 240) -> List[Dict[str, Any]]:
+    """Get intraday minute bars"""
+    try:
+        pure_code = code
+        if code.startswith('sh.') or code.startswith('sz.') or code.startswith('bj.'):
+            pure_code = code.split('.')[1]
+            
+        # period mapping: 1, 5, 15, 30, 60
+        period_map = {'1m': '1', '5m': '5', '15m': '15', '30m': '30', '60m': '60'}
+        mapped_period = period_map.get(period, '1')
+        
+        df = ak.stock_zh_a_hist_min_em(symbol=pure_code, period=mapped_period, adjust="qfq")
+        
+        if df.empty:
+            return []
+            
+        # Get the latest N bars
+        df = df.tail(limit)
+        
+        result = []
+        for _, row in df.iterrows():
+            result.append({
+                "time": str(row['时间']),
+                "open": float(row['开盘']) if pd.notna(row['开盘']) else 0.0,
+                "high": float(row['最高']) if pd.notna(row['最高']) else 0.0,
+                "low": float(row['最低']) if pd.notna(row['最低']) else 0.0,
+                "close": float(row['收盘']) if pd.notna(row['收盘']) else 0.0,
+                "volume": float(row['成交量']) if pd.notna(row['成交量']) else 0.0,
+                "turnover": float(row['成交额']) if pd.notna(row['成交额']) else 0.0
+            })
+        return result
+    except Exception as e:
+        print(f"Error getting intraday bars for {code}: {e}", file=sys.stderr)
+        return []
+
 def main():
     """Main entry point for command line calls"""
     if len(sys.argv) < 2:
@@ -632,6 +730,25 @@ def main():
 
             code = sys.argv[2]
             result = get_stock_basic(code)
+
+        elif command == "get_realtime_quotes":
+            if len(sys.argv) < 3:
+                print(json.dumps({"error": "Missing symbols for get_realtime_quotes"}), file=sys.stderr)
+                sys.exit(1)
+            
+            symbols = sys.argv[2]
+            result = get_realtime_quotes(symbols)
+            
+        elif command == "get_intraday_bars":
+            if len(sys.argv) < 3:
+                print(json.dumps({"error": "Missing code for get_intraday_bars"}), file=sys.stderr)
+                sys.exit(1)
+                
+            code = sys.argv[2]
+            period = sys.argv[3] if len(sys.argv) > 3 else "1m"
+            limit = int(sys.argv[4]) if len(sys.argv) > 4 else 240
+            
+            result = get_intraday_bars(code, period, limit)
 
         else:
             print(json.dumps({"error": f"Unknown command: {command}"}), file=sys.stderr)

@@ -9,7 +9,7 @@ export interface AuthState {
     role: string | null;
     nickname?: string | null;
     phone?: string | null;
-    avatarUrl?: string | null;
+    avatar_url?: string | null;
   } | null;
   token: string | null;
   loading: boolean;

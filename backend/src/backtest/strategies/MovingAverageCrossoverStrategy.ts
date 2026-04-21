@@ -98,7 +98,7 @@ export class MovingAverageCrossoverStrategy extends MovingAverageStrategy {
       pricesLength: this.prices.length,
       shortMALength: this.shortMA.length,
       longMALength: this.longMA.length,
-      currentPrice: this.prices.length > 0 ? this.prices[this.prices.length - 1] : null,
+      current_price: this.prices.length > 0 ? this.prices[this.prices.length - 1] : null,
       currentShortMA: this.shortMA.length > 0 ? this.shortMA[this.shortMA.length - 1] : null,
       currentLongMA: this.longMA.length > 0 ? this.longMA[this.longMA.length - 1] : null,
     };

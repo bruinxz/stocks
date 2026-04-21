@@ -131,8 +131,8 @@ export class EastMoneyClient {
    */
   async queryHistoryKData(
     code: string,
-    startDate: string,
-    endDate: string,
+    start_date: string,
+    end_date: string,
     frequency: 'd' | 'w' | 'm' = 'd',
     adjustflag: '1' | '2' | '3' = '3'
   ): Promise<DailyBar[]> {
@@ -216,7 +216,7 @@ export class EastMoneyClient {
   /**
    * 查询交易日历（暂不支持）
    */
-  async queryTradeDates(startDate: string, endDate: string): Promise<string[]> {
+  async queryTradeDates(start_date: string, end_date: string): Promise<string[]> {
     logger.warn('EastMoneyClient.queryTradeDates not implemented');
     return [];
   }
