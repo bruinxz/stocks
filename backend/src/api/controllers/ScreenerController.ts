@@ -28,7 +28,7 @@ export class ScreenerController {
 
       const screeners = await DailyScreener.findAll({
         where: whereClause,
-        order: [['score', 'DESC']],
+        order: [['created_at', 'DESC'], ['score', 'DESC']],
         raw: true,
       });
 

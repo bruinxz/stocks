@@ -21,8 +21,10 @@ import {
   DeleteOutlined,
   ClockCircleOutlined,
   InfoCircleOutlined,
+  PlayCircleOutlined,
 } from '@ant-design/icons';
-import { taskService, ScheduledTask } from '../services/taskService';
+import { taskService, ScheduledTask, TaskExecutionLog } from '../services/taskService';
+import dayjs from 'dayjs';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -32,6 +34,10 @@ const TaskScheduler: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [editingTask, setEditingTask] = useState<ScheduledTask | null>(null);
+  const [isLogModalVisible, setIsLogModalVisible] = useState(false);
+  const [logLoading, setLogLoading] = useState(false);
+  const [currentLogs, setCurrentLogs] = useState<TaskExecutionLog[]>([]);
+  const [activeTaskName, setActiveTaskName] = useState<string>('');
   const [form] = Form.useForm();
 
   const fetchTasks = async () => {
@@ -81,6 +87,22 @@ const TaskScheduler: React.FC = () => {
     });
   };
 
+  const handleExecute = (id: number) => {
+    Modal.confirm({
+      title: '确认立即执行',
+      content: '确定要忽略定时配置，立刻在后台触发一次该任务吗？',
+      onOk: async () => {
+        try {
+          await taskService.executeTask(id);
+          message.success('任务已在后台触发执行');
+          fetchTasks();
+        } catch (error) {
+          message.error('触发执行失败');
+        }
+      },
+    });
+  };
+
   const handleToggleActive = async (id: number, checked: boolean) => {
     try {
       await taskService.updateTask(id, { is_active: checked });
@@ -92,7 +114,7 @@ const TaskScheduler: React.FC = () => {
   };
 
   const handleModalOk = () => {
-    form.validateFields().then(async values => {
+    form.validateFields().then(async (values: any) => {
       try {
         let parameters = null;
         if (values.parameters) {
@@ -120,6 +142,20 @@ const TaskScheduler: React.FC = () => {
         message.error('操作失败');
       }
     });
+  };
+
+  const handleViewLogs = async (record: ScheduledTask) => {
+    setActiveTaskName(record.name);
+    setIsLogModalVisible(true);
+    setLogLoading(true);
+    try {
+      const logs = await taskService.getTaskLogs(record.id!);
+      setCurrentLogs(logs);
+    } catch (error) {
+      message.error('获取日志失败');
+    } finally {
+      setLogLoading(false);
+    }
   };
 
   const columns = [
@@ -177,13 +213,23 @@ const TaskScheduler: React.FC = () => {
       key: 'action',
       render: (_: any, record: ScheduledTask) => (
         <Space size="middle">
-          <Button type="text" icon={<EditOutlined />} onClick={() => handleEdit(record)} />
           <Button
-            type="text"
-            danger
-            icon={<DeleteOutlined />}
-            onClick={() => handleDelete(record.id!)}
-          />
+            type="link"
+            icon={<PlayCircleOutlined />}
+            onClick={() => handleExecute(record.id!)}
+            style={{ color: '#52c41a' }}
+          >
+            执行
+          </Button>
+          <Button type="link" onClick={() => handleViewLogs(record)}>
+            历史记录
+          </Button>
+          <Button type="link" icon={<EditOutlined />} onClick={() => handleEdit(record)}>
+            编辑
+          </Button>
+          <Button type="link" danger icon={<DeleteOutlined />} onClick={() => handleDelete(record.id!)}>
+            删除
+          </Button>
         </Space>
       ),
     },
@@ -266,6 +312,60 @@ const TaskScheduler: React.FC = () => {
             <Switch />
           </Form.Item>
         </Form>
+      </Modal>
+
+      <Modal
+        title={`[${activeTaskName}] - 历史执行记录`}
+        open={isLogModalVisible}
+        onCancel={() => setIsLogModalVisible(false)}
+        footer={null}
+        width={900}
+      >
+        <Table
+          dataSource={currentLogs}
+          rowKey="id"
+          loading={logLoading}
+          pagination={{ pageSize: 10 }}
+          size="small"
+          columns={[
+            {
+              title: '状态',
+              dataIndex: 'status',
+              key: 'status',
+              render: (status: string) => {
+                const color = status === 'COMPLETED' ? 'green' : status === 'FAILED' ? 'red' : 'blue';
+                return <Tag color={color}>{status}</Tag>;
+              }
+            },
+            {
+              title: '开始时间',
+              dataIndex: 'started_at',
+              key: 'started_at',
+              render: (text: string) => dayjs(text).format('MM-DD HH:mm:ss')
+            },
+            {
+              title: '结束时间',
+              dataIndex: 'completed_at',
+              key: 'completed_at',
+              render: (text: string) => text ? dayjs(text).format('MM-DD HH:mm:ss') : '-'
+            },
+            {
+              title: '进度 (完成/失败/总计)',
+              key: 'progress',
+              render: (_: any, record: TaskExecutionLog) => (
+                <Text>
+                  {record.completed_items} / <Text type="danger">{record.failed_items}</Text> / {record.total_items}
+                </Text>
+              )
+            },
+            {
+              title: '异常信息',
+              dataIndex: 'error_message',
+              key: 'error_message',
+              render: (text: string) => text ? <Text type="danger" ellipsis={{ tooltip: text }} style={{ maxWidth: 200 }}>{text}</Text> : '-'
+            }
+          ]}
+        />
       </Modal>
     </div>
   );

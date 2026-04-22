@@ -23,6 +23,7 @@ import userRoutes from './api/routes/user.routes';
 import logRoutes from './api/routes/log.routes';
 import internalRoutes from './api/routes/internal.routes';
 import './jobs/dataUpdateWorker'; // 初始化数据更新队列处理器
+import './jobs/aiPollingWorker'; // 初始化 AI 分析轮询队列处理器
 import { schedulerService } from './services/SchedulerService';
 
 const app = express();
@@ -100,6 +101,22 @@ async function initializeApp() {
             is_active: true,
           });
           console.log('Default admin user "lym" created successfully');
+        }
+
+        // Initialize AI Screener tasks if not exist
+        const aiTaskCount = await sequelize.models.ScheduledTask.count({ where: { type: 'AI_DAILY_SCREENER' } });
+        if (aiTaskCount === 0) {
+          const defaultTasks = [
+            { name: 'AI优选-早盘分析', type: 'AI_DAILY_SCREENER', cron_expression: '0 9 * * 1-5', is_active: true },
+            { name: 'AI优选-午盘分析', type: 'AI_DAILY_SCREENER', cron_expression: '30 12 * * 1-5', is_active: true },
+            { name: 'AI优选-收盘分析', type: 'AI_DAILY_SCREENER', cron_expression: '30 14 * * 1-5', is_active: true },
+          ];
+          for (const taskData of defaultTasks) {
+            await sequelize.models.ScheduledTask.create(taskData);
+          }
+          console.log('Default AI_DAILY_SCREENER tasks created successfully');
+          // Refresh scheduler
+          await schedulerService.initialize();
         }
       } catch (error: any) {
         console.warn('Database sync failed, continuing with existing schema:', error.message);

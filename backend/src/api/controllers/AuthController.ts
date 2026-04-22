@@ -98,7 +98,7 @@ export class AuthController {
       // 设置HttpOnly cookie
       res.cookie('refreshToken', refreshToken, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
+        secure: false, // 因为目前部署在 HTTP 下，如果是 true 会导致浏览器静默拦截 Cookie
         sameSite: 'strict',
         path: '/',
         maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
@@ -155,7 +155,7 @@ export class AuthController {
       // 设置HttpOnly cookie
       res.cookie('refreshToken', refreshToken, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
+        secure: false, // 因为目前部署在 HTTP 下，如果是 true 会导致浏览器静默拦截 Cookie
         sameSite: 'strict',
         path: '/',
         maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
@@ -219,7 +219,7 @@ export class AuthController {
       // 设置新的HttpOnly cookie
       res.cookie('refreshToken', newRefreshToken, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
+        secure: false, // 禁用 secure 使得 HTTP 也能收发 Cookie
         sameSite: 'strict',
         path: '/',
         maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
@@ -246,7 +246,7 @@ export class AuthController {
       // 清除HttpOnly cookie中的refreshToken
       res.clearCookie('refreshToken', {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
+        secure: false, // 必须和 setCookie 时的配置保持一致才能清除成功
         sameSite: 'strict',
         path: '/',
       });

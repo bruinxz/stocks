@@ -242,10 +242,12 @@ def get_all_stocks() -> List[Dict[str, Any]]:
                 full_code = f"sh.{code}"
             elif code.startswith('0') or code.startswith('3'):
                 full_code = f"sz.{code}"
-            elif code.startswith('8') or code.startswith('4'):
+            elif code.startswith('8') or code.startswith('4') or code.startswith('9'):
                 full_code = f"bj.{code}"
             else:
-                full_code = code
+                # 兜底逻辑：如果实在判断不出，也不应该裸存代码，根据名称或者其他特征猜测，或者至少打印警告
+                print(f"Warning: Unknown prefix for code {code}, mapping to sh.{code} as fallback", file=sys.stderr)
+                full_code = f"sh.{code}"
 
             # 提取实时维度 (可能存在 '-' 或 nan，需要做安全转换)
             def safe_float(val):

@@ -10,18 +10,17 @@ import {
   Modal,
   Descriptions,
   Empty,
+  Drawer,
 } from 'antd';
 import { RocketOutlined, EyeOutlined, SyncOutlined } from '@ant-design/icons';
 import {
   AreaChart,
   Area,
   ResponsiveContainer,
-  Radar,
-  RadarChart,
-  PolarGrid,
-  PolarAngleAxis,
-  PolarRadiusAxis,
 } from 'recharts';
+import dayjs from 'dayjs';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import api from '../services/api';
 import { Link } from 'react-router-dom';
 
@@ -34,8 +33,12 @@ interface ScreenerRecord {
   name: string;
   decision: string;
   rationale: string;
+  detail: string;
   score: number;
   scores: any;
+  current_price?: number;
+  price_change_pct?: number;
+  created_at?: string;
   recentTrend?: { time: string; close: number }[];
 }
 
@@ -118,9 +121,32 @@ const Screener: React.FC = () => {
       ),
     },
     {
-      title: '评估日期',
-      dataIndex: 'date',
-      key: 'date',
+      title: '评估时间',
+      dataIndex: 'created_at',
+      key: 'created_at',
+      render: (text: string) => dayjs(text).format('YYYY-MM-DD HH:mm:ss'),
+    },
+    {
+      title: '当前价 / 涨跌',
+      key: 'price',
+      render: (_: any, record: ScreenerRecord) => {
+        const price = record.current_price !== undefined && record.current_price !== null ? record.current_price : '-';
+        const change = record.price_change_pct !== undefined && record.price_change_pct !== null ? record.price_change_pct : '-';
+        const isUp = typeof change === 'number' && change > 0;
+        const isDown = typeof change === 'number' && change < 0;
+        const color = isUp ? '#cf1322' : isDown ? '#3f8600' : 'inherit';
+
+        return (
+          <Space direction="vertical" size={0}>
+            <Text strong style={{ color }}>
+              {price}
+            </Text>
+            <Text style={{ color, fontSize: 12 }}>
+              {change !== '-' ? `${change}%` : '-'}
+            </Text>
+          </Space>
+        );
+      },
     },
     {
       title: '近期趋势 (30天)',
@@ -167,155 +193,126 @@ const Screener: React.FC = () => {
       title: '操作',
       key: 'action',
       render: (_: any, record: ScreenerRecord) => (
-        <Space size="middle">
-          <Button
-            type="primary"
-            ghost
-            size="small"
-            icon={<EyeOutlined />}
-            onClick={() => {
-              setSelectedRecord(record);
-              setDetailVisible(true);
-            }}
-          >
-            查看详情
-          </Button>
-          <Link to={`/ai-advisor?ticker=${record.symbol}`}>
-            <Button size="small" type="dashed">
-              深度研报
-            </Button>
-          </Link>
-        </Space>
+        <Button
+          type="link"
+          icon={<EyeOutlined />}
+          onClick={() => {
+            setSelectedRecord(record);
+            setDetailVisible(true);
+          }}
+        >
+          查看详情
+        </Button>
       ),
     },
   ];
 
   return (
     <div className="fade-in-up">
-      <div
-        className="page-header-modern"
-        style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}
-      >
-        <div>
-          <h1 className="page-title-modern">AI 每日优选</h1>
-          <p className="page-subtitle-modern">
-            结合技术面海选与多智能体深度研报，每天自动生成 A 股强推榜单
-          </p>
+      <div className="page-header-modern">
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            width: '100%',
+          }}
+        >
+          <div>
+            <h1 className="page-title-modern">AI 每日优选</h1>
+            <p className="page-subtitle-modern">基于多智能体深度分析的每日自选股研报汇总</p>
+          </div>
+          <Space>
+            <Button icon={<SyncOutlined />} onClick={fetchScreenerData} loading={loading}>
+              刷新数据
+            </Button>
+            <Link to="/ai">
+              <Button type="primary" icon={<RocketOutlined />}>
+                发起实时推演
+              </Button>
+            </Link>
+          </Space>
         </div>
-        <Button icon={<SyncOutlined />} onClick={fetchScreenerData} loading={loading}>
-          刷新榜单
-        </Button>
       </div>
 
-      <Card className="modern-card" bordered={false}>
+      <Card className="card-modern" bodyStyle={{ padding: 0 }}>
         <Table
           columns={columns}
           dataSource={data}
           rowKey="id"
           loading={loading}
-          pagination={{ pageSize: 10 }}
-          locale={{ emptyText: <Empty description="今日暂无 AI 推荐股票，请稍后再试或手动刷新" /> }}
+          pagination={{ pageSize: 10, showSizeChanger: false }}
+          locale={{
+            emptyText: <Empty description="今日暂无 AI 优选数据，请等待定时任务执行" />,
+          }}
         />
       </Card>
 
-      <Modal
+      <Drawer
         title={
-          <Space>
-            <Text strong style={{ fontSize: 18 }}>
-              {selectedRecord?.name}
-            </Text>
-            <Text type="secondary">({selectedRecord?.symbol})</Text>
-            <Tag color={getDecisionColor(selectedRecord?.decision || '')}>
-              {selectedRecord?.decision}
-            </Tag>
-          </Space>
+          selectedRecord ? (
+            <Space>
+              <RocketOutlined style={{ color: '#1677ff' }} />
+              <span>{selectedRecord.name} ({selectedRecord.symbol}) - 完整推理过程</span>
+            </Space>
+          ) : (
+            '推理详情'
+          )
         }
+        width={800}
+        placement="right"
+        onClose={() => setDetailVisible(false)}
         open={detailVisible}
-        onCancel={() => setDetailVisible(false)}
-        footer={[
-          <Button key="close" onClick={() => setDetailVisible(false)}>
-            关闭
-          </Button>,
-          <Link key="deep" to={`/ai-advisor?ticker=${selectedRecord?.symbol}`}>
-            <Button type="primary" style={{ marginLeft: 8 }}>
-              重新进行实时深度推演
-            </Button>
-          </Link>,
-        ]}
-        width={700}
-        destroyOnClose={false}
       >
-        <div style={{ marginTop: 24 }}>
-          <Descriptions bordered column={1} size="small">
-            <Descriptions.Item label="评估日期">{selectedRecord?.date}</Descriptions.Item>
-            <Descriptions.Item label="综合得分">
-              <Text strong style={{ color: '#f5222d', fontSize: 18 }}>
-                {selectedRecord?.score}
-              </Text>
-            </Descriptions.Item>
-            <Descriptions.Item label="核心看点">
-              <Paragraph style={{ whiteSpace: 'pre-wrap', marginBottom: 0 }}>
-                {selectedRecord?.rationale}
-              </Paragraph>
-            </Descriptions.Item>
-          </Descriptions>
+        {selectedRecord && (
+          <div>
+            <Descriptions column={2} bordered size="small" style={{ marginBottom: 24 }}>
+              <Descriptions.Item label="评估时间">{dayjs(selectedRecord.created_at).format('YYYY-MM-DD HH:mm:ss')}</Descriptions.Item>
+              <Descriptions.Item label="当时股价">
+                <Text strong>{selectedRecord.current_price || '-'}</Text> 
+                <Text type="secondary" style={{ marginLeft: 8 }}>({selectedRecord.price_change_pct !== undefined ? `${selectedRecord.price_change_pct}%` : '-'})</Text>
+              </Descriptions.Item>
+              <Descriptions.Item label="综合评分">
+                <Text strong style={{ color: selectedRecord.score >= 80 ? '#f5222d' : '#faad14' }}>
+                  {selectedRecord.score}
+                </Text>
+              </Descriptions.Item>
+              <Descriptions.Item label="投资建议">
+                <Tag color={getDecisionColor(selectedRecord.decision)}>
+                  {selectedRecord.decision}
+                </Tag>
+              </Descriptions.Item>
+            </Descriptions>
 
-          {selectedRecord?.scores && (
+            <Title level={5}>完整研报 (TradingAgent)</Title>
             <div
               style={{
-                marginTop: 24,
-                height: 250,
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
+                background: '#f8fafc',
+                padding: '24px',
+                borderRadius: '8px',
+                border: '1px solid #e2e8f0',
               }}
             >
-              <Text strong style={{ marginBottom: 8 }}>
-                多维度智能评分
-              </Text>
-              <ResponsiveContainer width="100%" height="100%">
-                <RadarChart
-                  cx="50%"
-                  cy="50%"
-                  outerRadius="70%"
-                  data={[
-                    {
-                      subject: '技术面 (Technical)',
-                      score: selectedRecord.scores.technical || 0,
-                      fullMark: 100,
-                    },
-                    {
-                      subject: '基本面 (Fundamental)',
-                      score: selectedRecord.scores.fundamental || 0,
-                      fullMark: 100,
-                    },
-                    {
-                      subject: '情绪面 (Sentiment)',
-                      score: selectedRecord.scores.sentiment || 0,
-                      fullMark: 100,
-                    },
-                  ]}
+              {selectedRecord.detail ? (
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    h1: ({node, ...props}) => <Title level={2} {...props} />,
+                    h2: ({node, ...props}) => <Title level={3} {...props} />,
+                    h3: ({node, ...props}) => <Title level={4} {...props} />,
+                    h4: ({node, ...props}) => <Title level={5} {...props} />,
+                    p: ({node, ...props}) => <Paragraph {...props} />,
+                  }}
                 >
-                  <PolarGrid />
-                  <PolarAngleAxis
-                    dataKey="subject"
-                    tick={{ fill: '#475569', fontSize: 12, fontWeight: 500 }}
-                  />
-                  <PolarRadiusAxis angle={30} domain={[0, 100]} tick={false} axisLine={false} />
-                  <Radar
-                    name="AI 综合评分"
-                    dataKey="score"
-                    stroke="#8b5cf6"
-                    strokeWidth={2}
-                    fill="#8b5cf6"
-                    fillOpacity={0.5}
-                  />
-                </RadarChart>
-              </ResponsiveContainer>
+                  {selectedRecord.detail}
+                </ReactMarkdown>
+              ) : (
+                <Empty description="该条记录暂无完整的推演明细" />
+              )}
             </div>
-          )}
-        </div>
-      </Modal>
+          </div>
+        )}
+      </Drawer>
     </div>
   );
 };

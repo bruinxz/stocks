@@ -7,6 +7,7 @@ import { User } from '../models/User';
 import { FavoriteStock } from '../models/FavoriteStock';
 import { DataUpdateLog } from '../models/DataUpdateLog';
 import { ScheduledTask } from '../models/ScheduledTask';
+import { TaskExecutionLog } from '../models/TaskExecutionLog';
 import { DailyScreener } from '../models/DailyScreener';
 import { PaperTradingPortfolio } from '../models/PaperTradingPortfolio';
 import { PaperTradingPosition } from '../models/PaperTradingPosition';
@@ -43,6 +44,7 @@ const sequelize = new Sequelize({
     FavoriteStock,
     DataUpdateLog,
     ScheduledTask,
+    TaskExecutionLog,
     DailyScreener,
     PaperTradingPortfolio,
     PaperTradingPosition,

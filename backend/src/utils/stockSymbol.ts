@@ -70,8 +70,10 @@ export function normalizeSymbol(symbol: string): string {
       return `sh.${trimmed}`;
     } else if (firstChar === '0' || firstChar === '3') {
       return `sz.${trimmed}`;
-    } else if (firstChar === '8' || firstChar === '4') {
+    } else if (firstChar === '8' || firstChar === '4' || firstChar === '9') {
       return `bj.${trimmed}`;
+    } else {
+      return `sh.${trimmed}`; // 兜底给 sh，防止产生无前缀的孤儿数据
     }
   }
 
@@ -112,7 +114,7 @@ export function toAKShareDailyCode(symbol: string): string {
     return `sh${normalized}`;
   } else if (normalized.startsWith('0') || normalized.startsWith('3')) {
     return `sz${normalized}`;
-  } else if (normalized.startsWith('8') || normalized.startsWith('4')) {
+  } else if (normalized.startsWith('8') || normalized.startsWith('4') || normalized.startsWith('9')) {
     return `bj${normalized}`;
   }
 
@@ -146,11 +148,11 @@ export function toTushareFormat(symbol: string): string {
     return `${normalized}.SH`;
   } else if (normalized.startsWith('0') || normalized.startsWith('3')) {
     return `${normalized}.SZ`;
-  } else if (normalized.startsWith('8') || normalized.startsWith('4')) {
+  } else if (normalized.startsWith('8') || normalized.startsWith('4') || normalized.startsWith('9')) {
     return `${normalized}.BJ`;
+  } else {
+    return `${normalized}.SH`;
   }
-
-  return normalized;
 }
 
 /**

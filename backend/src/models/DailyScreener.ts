@@ -61,6 +61,27 @@ export class DailyScreener extends Model {
   })
   declare score: number;
 
+  @Column({
+    type: DataType.TEXT,
+    allowNull: true,
+    comment: 'AI 完整推理过程 (Markdown 格式)',
+  })
+  declare detail: string;
+
+  @Column({
+    type: DataType.DECIMAL(10, 2),
+    allowNull: true,
+    comment: '评估时的最新价',
+  })
+  declare current_price: number;
+
+  @Column({
+    type: DataType.DECIMAL(10, 2),
+    allowNull: true,
+    comment: '评估时的涨跌幅(%)',
+  })
+  declare price_change_pct: number;
+
   @CreatedAt
   @Column({ field: 'created_at' })
   declare created_at: Date;
