@@ -39,6 +39,8 @@ class SchedulerService {
     const scheduledJob = cron.schedule(task.cron_expression, async () => {
       logger.info(`Executing scheduled task: ${task.name} (${task.type})`);
       await this._executeTaskLogic(task, false);
+    }, {
+      timezone: 'Asia/Shanghai'
     });
 
     this.activeTasks.set(task.id, scheduledJob);
