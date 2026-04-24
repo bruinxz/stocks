@@ -7,11 +7,10 @@ import { logger } from '../utils/logger';
  * 核心接口：
  *  - POST https://www.pushplus.plus/send  发送消息（支持 text/markdown/html）
  *
- * 集成模式：
- *  - 每个用户自行到 PushPlus 官网（微信扫码登录）获取自己的 user token
- *  - 用户把 token 填入我们的个人中心完成绑定
- *  - 推送时用用户自己的 token 作为接收凭证，一对一送达其微信公众号
- *  - 系统主 Token（PUSHPLUS_TOKEN 环境变量）保留用于管理员推送/兜底
+ * 集成模式：一对多群组推送 (Topic)
+ *  - 管理员在官网创建一个群组，获得群组编码 (topic) 和二维码
+ *  - 用户微信扫码关注公众号即加入群组，无需实名和注册
+ *  - 系统通过系统 Token + topic 群发给所有已扫码的用户
  */
 
 export interface SendMessageResult {
@@ -22,14 +21,21 @@ export interface SendMessageResult {
 
 class PushPlusService {
   private readonly systemToken: string;
+  private readonly topic: string;
   private readonly baseUrl = 'https://www.pushplus.plus';
   private readonly http: AxiosInstance;
 
   constructor() {
     this.systemToken = process.env.PUSHPLUS_TOKEN || '';
+    this.topic = process.env.PUSHPLUS_TOPIC || '';
+    
     if (!this.systemToken) {
-      logger.warn('PUSHPLUS_TOKEN 未配置，系统主 Token 推送功能将不可用');
+      logger.warn('PUSHPLUS_TOKEN 未配置，推送功能将不可用');
     }
+    if (!this.topic) {
+      logger.warn('PUSHPLUS_TOPIC 未配置，群组推送功能将不可用');
+    }
+    
     this.http = axios.create({
       baseURL: this.baseUrl,
       timeout: 10000,
@@ -37,31 +43,22 @@ class PushPlusService {
   }
 
   /**
-   * 校验 token 格式（PushPlus token 通常为 32 位十六进制字符串）
-   */
-  isValidTokenFormat(token: string): boolean {
-    return /^[a-f0-9]{32}$/i.test((token || '').trim());
-  }
-
-  /**
-   * 发送 Markdown 消息给指定用户（使用其自己的 PushPlus token）
-   * @param userToken 接收者的 PushPlus user token
-   * @param title 消息标题（微信推送列表显示）
+   * 发送 Markdown 消息给整个群组（一对多）
+   * @param title 消息标题
    * @param content 消息正文（支持 Markdown）
    */
-  async sendMarkdownToUser(
-    userToken: string,
-    title: string,
-    content: string
-  ): Promise<SendMessageResult> {
-    if (!userToken) {
-      return { success: false, message: '接收者 token 为空' };
+  async sendMarkdownToTopic(title: string, content: string): Promise<SendMessageResult> {
+    if (!this.systemToken) {
+      return { success: false, message: 'PUSHPLUS_TOKEN 未配置' };
     }
-    return this._send(userToken, title, content, 'markdown');
+    if (!this.topic) {
+      return { success: false, message: 'PUSHPLUS_TOPIC 未配置' };
+    }
+    return this._send(this.systemToken, title, content, 'markdown', this.topic);
   }
 
   /**
-   * 使用系统主 Token 发送消息（管理员通知 / 兜底场景）
+   * 使用系统主 Token 发送消息给管理员自己（测试用）
    */
   async sendMarkdownBySystem(title: string, content: string): Promise<SendMessageResult> {
     if (!this.systemToken) {
@@ -74,17 +71,26 @@ class PushPlusService {
     token: string,
     title: string,
     content: string,
-    template: 'html' | 'txt' | 'markdown' | 'json' = 'markdown'
+    template: 'html' | 'txt' | 'markdown' | 'json' = 'markdown',
+    topic?: string
   ): Promise<SendMessageResult> {
     try {
-      const resp = await this.http.post('/send', {
+      const payload: any = {
         token,
         title,
         content,
         template,
-      });
+      };
+      
+      // 如果指定了群组编码，则附加 topic 参数实现一对多群发
+      if (topic) {
+        payload.topic = topic;
+      }
+      
+      const resp = await this.http.post('/send', payload);
       const { code, msg, data } = resp.data || {};
       logger.info(`PushPlus 返回: code=${code}, msg=${msg}, data=${JSON.stringify(data)}`);
+      
       if (code === 200) {
         return { success: true, data };
       }

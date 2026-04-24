@@ -1,6 +1,3 @@
-import { User } from '../models/User';
-import { Stock } from '../models/Stock';
-import { FavoriteStock } from '../models/FavoriteStock';
 import { pushPlusService } from './PushPlusService';
 import { logger } from '../utils/logger';
 
@@ -8,12 +5,7 @@ import { logger } from '../utils/logger';
  * 通知服务：负责把业务事件转化成用户能收到的微信推送（PushPlus）
  *
  * 核心能力：
- *  - 单只股票 AI 分析完成 → 精准推送给「开启通知 && 收藏了该股票 && 已绑定 PushPlus」的用户
- *
- * 精准性保证：
- *  - 用户必须开启 wechat_notify_enabled
- *  - 用户必须已绑定 pushplus_token
- *  - 用户必须收藏了这只股票
+ *  - 单只股票 AI 分析完成 → 推送到 PushPlus 群组
  */
 
 export interface StockAnalysisPayload {
@@ -46,56 +38,21 @@ const DECISION_LABEL: Record<string, string> = {
 
 class NotificationService {
   /**
-   * 推送单只股票的 AI 分析结果给所有订阅用户
-   * 每个用户使用自己的 PushPlus token 独立发送
+   * 推送单只股票的 AI 分析结果到 PushPlus 群组
+   * 采用全局群发模式，关注了该群组的所有人都会收到
    */
   async notifyStockAnalysis(payload: StockAnalysisPayload): Promise<void> {
     try {
-      // 1. 找到这只股票的 id
-      const stock = await Stock.findOne({ where: { symbol: payload.symbol } });
-      if (!stock) {
-        logger.warn(`通知推送跳过：股票 ${payload.symbol} 不存在`);
-        return;
-      }
-
-      // 2. 找到所有收藏了该股票的用户
-      const favs = await FavoriteStock.findAll({
-        where: { stock_id: stock.id },
-        attributes: ['user_id'],
-      });
-      if (favs.length === 0) return;
-
-      const userIds = favs.map(f => f.user_id);
-
-      // 3. 筛选出「开启通知 && 已绑定 PushPlus」的用户
-      const users = await User.findAll({
-        where: {
-          id: userIds,
-          is_active: true,
-          wechat_notify_enabled: true,
-        },
-      });
-      const subscribers = users.filter(u => !!u.pushplus_token);
-
-      if (subscribers.length === 0) {
-        logger.info(`股票 ${payload.symbol} 的分析无需推送（没有符合条件的用户）`);
-        return;
-      }
-
       const { title, content } = this._buildMarkdown(payload);
 
-      // 4. 每个用户用自己的 token 独立发送（并发）
-      const results = await Promise.allSettled(
-        subscribers.map(u =>
-          pushPlusService.sendMarkdownToUser(u.pushplus_token!, title, content)
-        )
-      );
-      const okCount = results.filter(
-        r => r.status === 'fulfilled' && (r.value as any).success
-      ).length;
-      logger.info(
-        `已向 ${okCount}/${subscribers.length} 位用户推送 ${payload.symbol} (${payload.name}) 的 AI 分析结果`
-      );
+      // 发送到 PushPlus 群组
+      const result = await pushPlusService.sendMarkdownToTopic(title, content);
+
+      if (result.success) {
+        logger.info(`已成功向 PushPlus 群组推送 ${payload.symbol} (${payload.name}) 的 AI 分析结果`);
+      } else {
+        logger.error(`向 PushPlus 群组推送失败: ${result.message}`);
+      }
     } catch (err) {
       logger.error('notifyStockAnalysis 失败:', err);
     }

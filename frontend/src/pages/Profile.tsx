@@ -317,105 +317,30 @@ const Profile: React.FC = () => {
             }
           >
             <div style={{ lineHeight: 2 }}>
-              <div>
-                <Text>绑定状态：</Text>
-                {pushplusToken ? (
-                  <Tag color="green">已绑定</Tag>
-                ) : (
-                  <Tag color="default">未绑定</Tag>
-                )}
-                {pushplusToken && (
-                  <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
-                    Token: {maskToken(pushplusToken)}
-                  </Text>
-                )}
-              </div>
-              <div>
-                <BellOutlined /> <Text>接收 AI 定时任务结果推送：</Text>
-                <Switch
-                  checked={notifyEnabled}
-                  disabled={!pushplusToken}
-                  onChange={handleToggleNotify}
-                  style={{ marginLeft: 8 }}
-                />
-              </div>
-              <div style={{ marginTop: 8, color: '#999', fontSize: 12 }}>
-                定时任务（早盘/午盘/收盘分析）完成后，AI 对您收藏股票的评级会通过
-                <b style={{ color: '#07c160', margin: '0 4px' }}>PushPlus 公众号</b>
-                自动推送到微信
-              </div>
-              <div style={{ marginTop: 16 }}>
-                <Space>
-                  {pushplusToken ? (
-                    <>
-                      <Button
-                        type="primary"
-                        icon={<SendOutlined />}
-                        loading={testLoading}
-                        onClick={handleTestPush}
-                      >
-                        发送测试推送
-                      </Button>
-                      <Button danger onClick={handleUnbind}>
-                        解绑
-                      </Button>
-                    </>
-                  ) : (
-                    <Button type="primary" icon={<WechatOutlined />} onClick={openBindModal}>
-                      绑定 PushPlus
-                    </Button>
-                  )}
-                </Space>
+              <div style={{ marginTop: 8 }}>
+                <Text type="secondary">
+                  我们使用 PushPlus (推送加) 的「群组通知」功能提供服务。
+                  <br />
+                  您只需要使用微信扫描下方二维码，关注公众号并加入群组，即可每天接收 AI 选股分析报告。
+                  <br />
+                  <span style={{ color: '#ff4d4f' }}>* 无需注册，无需实名，随时可退订</span>
+                </Text>
+                
+                <div style={{ marginTop: 24, textAlign: 'center' }}>
+                  <img 
+                    src={process.env.REACT_APP_PUSHPLUS_QRCODE_URL || 'https://www.pushplus.plus/api/common/qrcode/group/261ae301eaf34c8ba4e0c67c8cd5ca78'} 
+                    alt="PushPlus 群组二维码" 
+                    style={{ width: 200, height: 200, border: '1px solid #f0f0f0', borderRadius: 8, padding: 8 }}
+                  />
+                  <div style={{ marginTop: 12 }}>
+                    <Text strong>微信扫一扫，加入通知群组</Text>
+                  </div>
+                </div>
               </div>
             </div>
           </Card>
         </Col>
       </Row>
-
-      <Modal
-        open={bindModalOpen}
-        title="绑定 PushPlus（微信推送）"
-        onCancel={() => setBindModalOpen(false)}
-        onOk={handleBindSubmit}
-        confirmLoading={bindLoading}
-        okText="验证并绑定"
-        cancelText="取消"
-        destroyOnClose
-      >
-        <Alert
-          type="info"
-          showIcon
-          style={{ marginBottom: 16 }}
-          message="如何获取 PushPlus Token？"
-          description={
-            <ol style={{ paddingLeft: 20, marginBottom: 0 }}>
-              <li>
-                打开{' '}
-                <a href={PUSHPLUS_TOKEN_URL} target="_blank" rel="noopener noreferrer">
-                  PushPlus 官网 <LinkOutlined />
-                </a>{' '}
-                并使用微信扫码登录
-              </li>
-              <li>首次登录会自动关注「pushplus推送加」公众号</li>
-              <li>在页面顶部即可看到您的 Token，点击复制</li>
-              <li>回到本页面粘贴到下方输入框，点击「验证并绑定」</li>
-            </ol>
-          }
-        />
-        <Paragraph style={{ marginBottom: 8 }}>
-          <Text strong>粘贴您的 PushPlus Token：</Text>
-        </Paragraph>
-        <Input.TextArea
-          rows={2}
-          placeholder="例如：abcd1234... （32 位十六进制字符串）"
-          value={bindInput}
-          onChange={e => setBindInput(e.target.value)}
-          autoFocus
-        />
-        <div style={{ marginTop: 8, color: '#999', fontSize: 12 }}>
-          提交后系统会先发送一条测试消息到您的微信，确认 Token 有效后再保存绑定关系
-        </div>
-      </Modal>
     </div>
   );
 };
