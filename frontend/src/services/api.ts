@@ -12,7 +12,7 @@ export const API_DOMAIN_URL = API_BASE_URL.replace(/\/api\/?$/, '');
 
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 10000,
+  timeout: 30000,
   withCredentials: true, // 允许携带 Cookie
   headers: {
     'Content-Type': 'application/json',

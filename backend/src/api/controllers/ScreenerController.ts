@@ -8,7 +8,7 @@ import { logger } from '../../utils/logger';
 export class ScreenerController {
   async getDailyScreener(req: Request, res: Response, next: NextFunction) {
     try {
-      const { date } = req.query;
+      const { date, include_detail } = req.query;
 
       let whereClause = {};
       let limit: number | undefined = undefined;
@@ -22,11 +22,24 @@ export class ScreenerController {
         // 限制返回的最大条数，防止数据量过大导致接口缓慢
         limit = 50;
       }
-      
+
+      // 列表默认不返回 detail 大字段（占超过 90% 的体积），显著提升响应速度
+      // 如果前端需要（如用户点详情），可以传 ?include_detail=1
+      const includeDetail = include_detail === '1' || include_detail === 'true';
+      const attributes: any = includeDetail
+        ? undefined
+        : {
+            exclude: ['detail'],
+          };
+
       const screeners = await DailyScreener.findAll({
         where: whereClause,
-        order: [['created_at', 'DESC'], ['score', 'DESC']],
+        order: [
+          ['created_at', 'DESC'],
+          ['score', 'DESC'],
+        ],
         limit: limit,
+        attributes,
         raw: true,
       });
 
@@ -78,6 +91,23 @@ export class ScreenerController {
       });
     } catch (error: any) {
       logger.error('获取 AI 每日优选失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * 查询单条 AI 优选详情（包含 detail 大字段）
+   */
+  async getDailyScreenerDetail(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { id } = req.params;
+      const record = await DailyScreener.findByPk(id);
+      if (!record) {
+        return res.status(404).json({ success: false, message: '记录不存在' });
+      }
+      res.json({ success: true, data: record });
+    } catch (error: any) {
+      logger.error('获取 AI 优选详情失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   }

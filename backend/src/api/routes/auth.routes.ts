@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { body } from 'express-validator';
 import { AuthController } from '../controllers/AuthController';
+import { wechatAuthController } from '../controllers/WechatAuthController';
 import { validateRequest } from '../../middlewares/validateRequest';
 import { uploadAvatarMiddleware } from '../../middlewares/upload';
 
@@ -90,6 +91,52 @@ router.post(
     });
   },
   authController.uploadAvatar
+);
+
+/**
+ * ------------------ 微信推送绑定相关（PushPlus） ------------------
+ */
+
+/**
+ * @route POST /api/auth/wechat/bind
+ * @desc  绑定 PushPlus Token
+ */
+router.post(
+  '/wechat/bind',
+  authController.authenticate,
+  [body('token').isString().isLength({ min: 32, max: 32 })],
+  validateRequest,
+  wechatAuthController.bindPushPlusToken
+);
+
+/**
+ * @route POST /api/auth/wechat/test
+ * @desc  发送测试推送
+ */
+router.post(
+  '/wechat/test',
+  authController.authenticate,
+  wechatAuthController.sendTestPush
+);
+
+/**
+ * @route POST /api/auth/wechat/unbind
+ * @desc  解绑微信
+ */
+router.post(
+  '/wechat/unbind',
+  authController.authenticate,
+  wechatAuthController.unbindWechat
+);
+
+/**
+ * @route PUT /api/auth/wechat/notify
+ * @desc  开关微信通知
+ */
+router.put(
+  '/wechat/notify',
+  authController.authenticate,
+  wechatAuthController.updateNotifyEnabled
 );
 
 export default router;

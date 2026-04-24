@@ -38,4 +38,15 @@ router.get(
  */
 router.get('/screener', authController.authenticate, screenerController.getDailyScreener);
 
+/**
+ * @route GET /api/ai/screener/:id
+ * @desc 获取单条 AI 优选详情（包含 detail 大字段）
+ * @access Private
+ */
+router.get(
+  '/screener/:id',
+  authController.authenticate,
+  screenerController.getDailyScreenerDetail
+);
+
 export default router;

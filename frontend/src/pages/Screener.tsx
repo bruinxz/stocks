@@ -196,9 +196,20 @@ const Screener: React.FC = () => {
         <Button
           type="link"
           icon={<EyeOutlined />}
-          onClick={() => {
+          onClick={async () => {
+            // 列表接口为性能优化不再返回 detail 大字段，点详情时按需拉取
             setSelectedRecord(record);
             setDetailVisible(true);
+            if (!record.detail) {
+              try {
+                const resp = await api.get(`/ai/screener/${record.id}`);
+                if (resp.data?.success && resp.data.data) {
+                  setSelectedRecord({ ...record, detail: resp.data.data.detail });
+                }
+              } catch {
+                // 忽略，Drawer 里会有 fallback 提示
+              }
+            }
           }}
         >
           查看详情

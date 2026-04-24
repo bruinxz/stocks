@@ -4,6 +4,7 @@ import { aiAdvisorService } from '../services/AIAdvisorService';
 import { DailyScreener } from '../models/DailyScreener';
 import { TaskExecutionLog } from '../models/TaskExecutionLog';
 import { AKShareClient } from '../data/sources/AKShareClient';
+import { notificationService } from '../services/NotificationService';
 import { logger } from '../utils/logger';
 import moment from 'moment-timezone';
 
@@ -35,7 +36,7 @@ const updateLogProgress = async (logId: number | undefined, isSuccess: boolean) 
 };
 
 aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
-  const { taskId, symbol, name, executionLogId } = job.data;
+  const { taskId, symbol, name, executionLogId, taskLabel } = job.data;
   
   try {
     const response = await aiAdvisorService.getTaskStatus(taskId);
@@ -126,6 +127,22 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
       
       logger.info(`AI 分析任务 ${taskId} 对于股票 ${symbol} 已完成并保存入库 (增量)`);
       await updateLogProgress(executionLogId, true);
+
+      // 异步推送微信通知（失败也不影响主流程）
+      notificationService
+        .notifyStockAnalysis({
+          symbol,
+          name,
+          decision: rating,
+          rationale: summary,
+          detail: decisionStr,
+          score,
+          current_price: currentPrice,
+          price_change_pct: priceChangePct,
+          task_label: taskLabel,
+        })
+        .catch(err => logger.error('推送微信通知失败（不影响主流程）:', err));
+
       return { success: true };
     } else if (status === 'FAILED' || status === 'ERROR') {
       logger.error(`AI 分析任务 ${taskId} 对于股票 ${symbol} 失败: ${response.error || 'Unknown error'}`);

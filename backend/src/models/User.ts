@@ -107,6 +107,24 @@ export class User extends Model {
   })
   declare risk_config: any;
 
+  @Column({
+    type: DataType.STRING(100),
+    allowNull: true,
+    unique: false,
+    field: 'pushplus_token',
+    comment: 'PushPlus 用户 token，用于微信公众号推送',
+  })
+  declare pushplus_token: string | null;
+
+  @Column({
+    type: DataType.BOOLEAN,
+    allowNull: false,
+    defaultValue: true,
+    field: 'wechat_notify_enabled',
+    comment: '是否开启微信通知',
+  })
+  declare wechat_notify_enabled: boolean;
+
   @CreatedAt
   @Column({ field: 'created_at' })
   declare created_at: Date;

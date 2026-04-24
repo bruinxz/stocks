@@ -6,6 +6,7 @@ export interface AIPollingJobData {
   symbol: string;
   name: string;
   executionLogId?: number;
+  taskLabel?: string; // 任务标签，如 "AI优选-早盘分析"
 }
 
 const aiPollingQueue = new Bull<AIPollingJobData>('ai_polling', {

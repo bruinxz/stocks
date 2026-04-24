@@ -126,6 +126,7 @@ class SchedulerService {
                     symbol: stock.symbol,
                     name: stock.name,
                     executionLogId: executionLog.id,
+                    taskLabel: task.name,
                   },
                   {
                     jobId: `ai-poll-${isManual ? 'manual-' : ''}${res.task_id}`,

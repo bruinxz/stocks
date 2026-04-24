@@ -20,23 +20,18 @@ const Login: React.FC = () => {
     try {
       const { username, password } = values;
 
-      // 发送真实登录请求到后端
       const response = await api.post('/auth/login', { username, password });
 
       if (response.data.success) {
-        // 从响应中获取 token 和 用户名
         const { tokens, user } = response.data.data;
 
         localStorage.setItem('token', tokens.accessToken);
-        // Refresh token is now stored in HttpOnly cookie automatically by backend
         localStorage.setItem('username', user.username);
 
-        // 更新 Redux 状态
         dispatch(loginSuccess({ user, token: tokens.accessToken }));
 
         message.success('登录成功！');
 
-        // 获取之前想访问的页面，或者默认跳到 dashboard
         const from = (location.state as any)?.from?.pathname || '/dashboard';
         navigate(from, { replace: true });
       }
@@ -72,7 +67,7 @@ const Login: React.FC = () => {
       </div>
       <div className="login-right">
         <div className="login-box">
-          <div style={{ textAlign: 'center', marginBottom: 28 }}>
+          <div style={{ textAlign: 'center', marginBottom: 20 }}>
             <h2 style={{ fontSize: 20, fontWeight: 600, marginBottom: 6, color: '#1a1a1a' }}>
               欢迎回来
             </h2>
