@@ -6,6 +6,7 @@ export interface DataUpdateJobData {
     | 'daily_update'
     | 'new_stocks_sync'
     | 'weekly_completeness_check'
+    | 'data_quality_scan'
     | 'manual_sync'
     | 'bulk_sync_custom';
   date: string; // 更新日期 YYYY-MM-DD
@@ -19,6 +20,9 @@ export interface DataUpdateJobData {
   end_date?: string; // 同步结束日期 YYYY-MM-DD
   dataSource?: 'auto' | 'tushare' | 'baostock' | 'akshare' | 'eastmoney' | 'sina'; // 数据源选择，默认auto自动fallback
   concurrency?: number; // 并发数量（批次大小）
+  scope?: 'favorites' | 'market' | 'all'; // 数据质量扫描范围
+  lookback_days?: number; // 数据质量扫描窗口
+  limit?: number; // 数据质量扫描数量
   completedSymbols?: string[]; // 记录已完成的股票列表（用于断点续传）
   totalInserted?: number; // 记录已插入的条数（用于断点续传）
 }

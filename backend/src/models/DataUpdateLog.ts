@@ -4,6 +4,7 @@ export enum UpdateType {
   DAILY_UPDATE = 'daily_update', // 每日数据更新
   NEW_STOCKS_SYNC = 'new_stocks_sync', // 新股同步
   WEEKLY_COMPLETENESS_CHECK = 'weekly_completeness_check', // 周数据完整性检查
+  DATA_QUALITY_SCAN = 'data_quality_scan', // 数据质量画像扫描
   MANUAL_SYNC = 'manual_sync', // 手动同步
   BULK_SYNC_CUSTOM = 'bulk_sync_custom', // 批量同步自定义任务
 }

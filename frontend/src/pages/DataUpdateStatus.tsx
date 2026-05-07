@@ -36,6 +36,7 @@ import {
   DatabaseOutlined,
   ApiOutlined,
   ThunderboltOutlined,
+  ToolOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import {
@@ -158,6 +159,49 @@ interface DataSourceHealthResponse {
   providers: DataSourceProviderHealth[];
 }
 
+interface DataQualityItem {
+  symbol: string;
+  name: string;
+  market?: string;
+  industry?: string;
+  data_status?: string;
+  quality_score: number;
+  grade: 'excellent' | 'good' | 'fair' | 'poor' | 'empty' | string;
+  bar_count: number;
+  coverage_rate: number;
+  first_date?: string;
+  latest_date?: string;
+  issues: Record<string, number>;
+  sample_issues: Array<{ date: string; type: string; detail: string }>;
+  recommended_action: string;
+}
+
+interface DataQualityResponse {
+  as_of: string;
+  scope: string;
+  lookback_days: number;
+  summary: {
+    scanned_stocks: number;
+    avg_quality_score: number;
+    low_quality_count: number;
+    low_quality_rate: number;
+    stale_count: number;
+    issue_totals: Record<string, number>;
+    grade_distribution: Record<string, number>;
+  };
+  repair_suggestions: {
+    target_count: number;
+    top_symbols: string[];
+    recommended_payload?: {
+      symbols: string[];
+      start_date?: string;
+      dataSource: string;
+      concurrency: number;
+    } | null;
+  };
+  items: DataQualityItem[];
+}
+
 const DataUpdateStatus: React.FC = () => {
   const [queueStatus, setQueueStatus] = useState<QueueStatus>({
     waiting: 0,
@@ -183,12 +227,14 @@ const DataUpdateStatus: React.FC = () => {
   });
 
   const [dataSourceHealth, setDataSourceHealth] = useState<DataSourceHealthResponse | null>(null);
+  const [dataQuality, setDataQuality] = useState<DataQualityResponse | null>(null);
 
   const [loading, setLoading] = useState({
     queue: false,
     logs: false,
     stats: false,
     health: false,
+    quality: false,
   });
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [refreshInterval, setRefreshInterval] = useState(10); // 秒
@@ -234,7 +280,14 @@ const DataUpdateStatus: React.FC = () => {
   // 获取所有数据
   const fetchAllData = useCallback(async () => {
     try {
-      setLoading(prev => ({ ...prev, queue: true, logs: true, stats: true, health: true }));
+      setLoading(prev => ({
+        ...prev,
+        queue: true,
+        logs: true,
+        stats: true,
+        health: true,
+        quality: true,
+      }));
 
       // 获取队列状态（带筛选参数）
       const queryParams = new URLSearchParams();
@@ -267,9 +320,12 @@ const DataUpdateStatus: React.FC = () => {
       }
 
       // 获取系统健康状态
-      const [healthResponse, dataSourceHealthResponse] = await Promise.all([
+      const [healthResponse, dataSourceHealthResponse, dataQualityResponse] = await Promise.all([
         api.get('/market/health'),
         api.get('/market/data-sources/health'),
+        api.get('/market/data-quality', {
+          params: { scope: 'favorites', lookback_days: 180, limit: 50 },
+        }),
       ]);
       const nextSystemHealth = {
         redis: true,
@@ -292,11 +348,22 @@ const DataUpdateStatus: React.FC = () => {
         nextSystemHealth.dataSource = healthData.status !== 'unhealthy';
       }
 
+      if (dataQualityResponse.data.success) {
+        setDataQuality(dataQualityResponse.data.data as DataQualityResponse);
+      }
+
       setSystemHealth(nextSystemHealth);
     } catch (error: any) {
       message.error('获取数据失败: ' + error.message);
     } finally {
-      setLoading(prev => ({ ...prev, queue: false, logs: false, stats: false, health: false }));
+      setLoading(prev => ({
+        ...prev,
+        queue: false,
+        logs: false,
+        stats: false,
+        health: false,
+        quality: false,
+      }));
     }
   }, [logFilters]);
 
@@ -305,6 +372,7 @@ const DataUpdateStatus: React.FC = () => {
     { label: '每日更新', value: 'daily_update' },
     { label: '新股同步', value: 'new_stocks_sync' },
     { label: '周完整性检查', value: 'weekly_completeness_check' },
+    { label: '数据质量扫描', value: 'data_quality_scan' },
     { label: '手动同步', value: 'manual_sync' },
     { label: '批量同步', value: 'bulk_sync_custom' },
   ];
@@ -561,6 +629,7 @@ const DataUpdateStatus: React.FC = () => {
           daily_update: { label: '每日更新', color: 'blue' },
           new_stocks_sync: { label: '新股同步', color: 'green' },
           weekly_completeness_check: { label: '完整性检查', color: 'orange' },
+          data_quality_scan: { label: '质量扫描', color: 'volcano' },
           manual_sync: { label: '手动同步', color: 'purple' },
           bulk_sync_custom: { label: '批量同步', color: 'cyan' },
         };
@@ -665,6 +734,7 @@ const DataUpdateStatus: React.FC = () => {
           daily_update: { label: '每日更新', color: 'blue' },
           new_stocks_sync: { label: '新股同步', color: 'green' },
           weekly_completeness_check: { label: '完整性检查', color: 'orange' },
+          data_quality_scan: { label: '质量扫描', color: 'volcano' },
           manual_sync: { label: '手动同步', color: 'purple' },
           bulk_sync_custom: { label: '批量同步', color: 'cyan' },
         };
@@ -807,6 +877,14 @@ const DataUpdateStatus: React.FC = () => {
                 </div>
               );
             }
+            if (result.summary?.avg_quality_score !== undefined) {
+              return (
+                <div>
+                  <div>扫描股票: {result.scanned || result.summary.scanned_stocks}</div>
+                  <div>均分: {Number(result.summary.avg_quality_score).toFixed(1)}</div>
+                </div>
+              );
+            }
             return JSON.stringify(result).substring(0, 50) + '...';
           }
           return String(result).substring(0, 50);
@@ -837,6 +915,26 @@ const DataUpdateStatus: React.FC = () => {
     realtime_quote: '实时行情',
     intraday_bar: '日内K线',
     health_probe: '健康探测',
+  };
+
+  const getQualityGradeConfig = (grade: string) => {
+    const gradeMap: Record<string, { label: string; color: string; tagClass: string }> = {
+      excellent: { label: '优秀', color: '#16a34a', tagClass: 'tag-success' },
+      good: { label: '良好', color: '#22c55e', tagClass: 'tag-success' },
+      fair: { label: '一般', color: '#ea580c', tagClass: 'tag-warning' },
+      poor: { label: '较差', color: '#dc2626', tagClass: 'tag-error' },
+      empty: { label: '无数据', color: '#64748b', tagClass: 'tag-default' },
+    };
+    return gradeMap[grade] || { label: grade, color: '#64748b', tagClass: 'tag-default' };
+  };
+
+  const issueLabelMap: Record<string, string> = {
+    ohlc_anomaly: 'OHLC异常',
+    extreme_return: '异常涨跌',
+    duplicate_day: '重复日',
+    missing_business_day: '缺口',
+    stale_days: '滞后',
+    zero_volume: '零成交',
   };
 
   const renderHealthCard = () => (
@@ -1033,6 +1131,201 @@ const DataUpdateStatus: React.FC = () => {
     );
   };
 
+  const renderDataQualityCard = () => {
+    const summary = dataQuality?.summary;
+    const repairPayload = dataQuality?.repair_suggestions?.recommended_payload;
+    const issueTotals = summary?.issue_totals || {};
+
+    const qualityColumns: ColumnsType<DataQualityItem> = [
+      {
+        title: '标的',
+        key: 'stock',
+        width: 160,
+        render: (_, record) => (
+          <div>
+            <Text strong>{record.name}</Text>
+            <div>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {record.symbol} · {record.industry || record.market || '未分类'}
+              </Text>
+            </div>
+          </div>
+        ),
+      },
+      {
+        title: '质量分',
+        dataIndex: 'quality_score',
+        key: 'quality_score',
+        width: 150,
+        render: (score, record) => {
+          const config = getQualityGradeConfig(record.grade);
+          return (
+            <Space direction="vertical" size={2} style={{ width: 120 }}>
+              <Space>
+                <Text strong style={{ color: config.color }}>
+                  {Number(score || 0).toFixed(1)}
+                </Text>
+                <Tag className={`modern-tag ${config.tagClass}`}>{config.label}</Tag>
+              </Space>
+              <Progress
+                percent={Math.round(Number(score || 0))}
+                size="small"
+                showInfo={false}
+                strokeColor={config.color}
+              />
+            </Space>
+          );
+        },
+      },
+      {
+        title: '覆盖 / 最新',
+        key: 'coverage',
+        width: 140,
+        render: (_, record) => (
+          <Space direction="vertical" size={0}>
+            <Text>{Number(record.coverage_rate || 0).toFixed(1)}%</Text>
+            <Text type="secondary">{record.latest_date || '--'}</Text>
+          </Space>
+        ),
+      },
+      {
+        title: '问题',
+        key: 'issues',
+        render: (_, record) => (
+          <Space size={[4, 4]} wrap>
+            {Object.entries(record.issues || {})
+              .filter(([, value]) => Number(value || 0) > 0)
+              .slice(0, 4)
+              .map(([key, value]) => (
+                <Tag
+                  key={key}
+                  color={key === 'stale_days' ? 'orange' : 'red'}
+                  style={{ margin: 0 }}
+                >
+                  {issueLabelMap[key] || key} {value}
+                </Tag>
+              ))}
+            {Object.values(record.issues || {}).every(value => Number(value || 0) === 0) && (
+              <Tag color="green" style={{ margin: 0 }}>
+                暂无异常
+              </Tag>
+            )}
+          </Space>
+        ),
+      },
+      {
+        title: '修复建议',
+        dataIndex: 'recommended_action',
+        key: 'recommended_action',
+        ellipsis: true,
+        render: text => (
+          <Tooltip title={text}>
+            <Text>{text}</Text>
+          </Tooltip>
+        ),
+      },
+    ];
+
+    const triggerQualityScan = () => handleManualSync('data_quality_scan');
+
+    const repairTopQualityIssues = async () => {
+      if (!repairPayload?.symbols?.length) {
+        message.info('当前没有需要批量补数的低质量标的');
+        return;
+      }
+
+      try {
+        const response = await api.post('/market/bulk-sync', {
+          symbols: repairPayload.symbols,
+          start_date: repairPayload.start_date,
+          dataSource: repairPayload.dataSource || 'auto',
+          concurrency: repairPayload.concurrency || 2,
+        });
+        if (response.data.success) {
+          message.success(`已提交 ${repairPayload.symbols.length} 只低质量标的补数任务`);
+          fetchAllData();
+        }
+      } catch (error: any) {
+        message.error(error.response?.data?.error || '提交补数任务失败');
+      }
+    };
+
+    return (
+      <Card
+        className="modern-card"
+        variant="borderless"
+        title="数据质量画像"
+        style={{ marginTop: 12 }}
+        extra={
+          <Space>
+            <Button size="small" icon={<ToolOutlined />} onClick={triggerQualityScan}>
+              后台扫描
+            </Button>
+            <Button size="small" onClick={repairTopQualityIssues} disabled={!repairPayload}>
+              修复Top缺口
+            </Button>
+            <Button
+              size="small"
+              icon={<ReloadOutlined />}
+              onClick={handleRefresh}
+              loading={loading.quality}
+            >
+              刷新
+            </Button>
+          </Space>
+        }
+      >
+        <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
+          <Col xs={12} md={6}>
+            <Statistic title="扫描标的" value={summary?.scanned_stocks || 0} />
+          </Col>
+          <Col xs={12} md={6}>
+            <Statistic title="平均质量分" value={summary?.avg_quality_score || 0} precision={1} />
+          </Col>
+          <Col xs={12} md={6}>
+            <Statistic
+              title="低质量占比"
+              value={summary?.low_quality_rate || 0}
+              precision={1}
+              suffix="%"
+              valueStyle={{
+                color: Number(summary?.low_quality_rate || 0) > 30 ? '#dc2626' : '#16a34a',
+              }}
+            />
+          </Col>
+          <Col xs={12} md={6}>
+            <Statistic title="滞后标的" value={summary?.stale_count || 0} />
+          </Col>
+        </Row>
+
+        <Alert
+          type={Number(summary?.low_quality_count || 0) > 0 ? 'warning' : 'success'}
+          showIcon
+          message="质量口径"
+          description={`按近 ${
+            dataQuality?.lookback_days || 180
+          } 天K线覆盖率、OHLC逻辑、异常涨跌幅、重复交易日、交易日缺口和最新日期滞后综合评分。累计问题：OHLC ${
+            issueTotals.ohlc_anomaly || 0
+          }，异常涨跌 ${issueTotals.extreme_return || 0}，缺口 ${
+            issueTotals.missing_business_day || 0
+          }，滞后 ${issueTotals.stale_days || 0}。`}
+          style={{ marginBottom: 12 }}
+        />
+
+        <Table
+          columns={qualityColumns}
+          dataSource={dataQuality?.items || []}
+          rowKey="symbol"
+          size="small"
+          loading={loading.quality}
+          pagination={{ pageSize: 5, showSizeChanger: false }}
+          scroll={{ x: 900 }}
+          locale={{ emptyText: <Empty description="暂无数据质量画像" /> }}
+        />
+      </Card>
+    );
+  };
+
   const renderQueueCard = () => (
     <Card className="modern-card" variant="borderless" title="队列状态">
       <div
@@ -1128,6 +1421,13 @@ const DataUpdateStatus: React.FC = () => {
               onClick={() => handleManualSync('weekly_completeness_check')}
             >
               完整性检查
+            </Button>
+            <Button
+              size="small"
+              type="dashed"
+              onClick={() => handleManualSync('data_quality_scan')}
+            >
+              质量扫描
             </Button>
             <Button size="small" type="dashed" icon={<SyncOutlined />} onClick={openBulkSyncModal}>
               批量补数
@@ -1473,6 +1773,7 @@ const DataUpdateStatus: React.FC = () => {
         <Col xs={24} md={14} lg={17}>
           {renderStatsCard()}
           {renderDataSourceCard()}
+          {renderDataQualityCard()}
 
           <Card
             className="modern-card"

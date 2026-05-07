@@ -4,6 +4,7 @@ import { DataSyncService } from '../data/services/DataSyncService';
 import { DataUpdateLog, UpdateType, UpdateStatus } from '../models/DataUpdateLog';
 import { Stock } from '../models/Stock';
 import { DailyBar } from '../models/DailyBar';
+import { dataQualityService } from '../services/DataQualityService';
 import { redisLock, LockKeys } from '../utils/redisLock';
 import { logger } from '../utils/logger';
 import { Op } from 'sequelize';
@@ -33,6 +34,11 @@ export class DataUpdateWorker {
     // 周完整性检查处理器
     dataUpdateQueue.process('weekly_completeness_check', 1, async (job: Job<DataUpdateJobData>) => {
       return await this.processWeeklyCompletenessCheck(job);
+    });
+
+    // 数据质量画像扫描处理器
+    dataUpdateQueue.process('data_quality_scan', 1, async (job: Job<DataUpdateJobData>) => {
+      return await this.processDataQualityScan(job);
     });
 
     // 手动同步处理器
@@ -462,6 +468,63 @@ export class DataUpdateWorker {
     }
 
     return completenessResult;
+  }
+
+  /**
+   * 扫描并更新股票数据质量状态
+   */
+  private async processDataQualityScan(job: Job<DataUpdateJobData>) {
+    const { date, user_id, scope = 'market', lookback_days = 180, limit = 200 } = job.data;
+
+    try {
+      await job.progress(10);
+
+      const updateLog = await DataUpdateLog.create({
+        type: UpdateType.DATA_QUALITY_SCAN,
+        status: UpdateStatus.IN_PROGRESS,
+        date,
+        started_at: new Date(),
+        result: { scope, lookback_days, limit, user_id },
+      });
+
+      await job.progress(40);
+      const result = await dataQualityService.updateStockQualityStatuses({
+        user_id,
+        scope,
+        lookback_days,
+        limit,
+      });
+
+      await job.progress(90);
+      await updateLog.update({
+        status: UpdateStatus.COMPLETED,
+        completed_at: new Date(),
+        affected_stocks: result.updated,
+        result,
+      });
+
+      await job.progress(100);
+      logger.info(`数据质量扫描完成。扫描 ${result.scanned}，更新 ${result.updated}`);
+
+      return {
+        success: true,
+        ...result,
+        logId: updateLog.id,
+      };
+    } catch (error) {
+      logger.error('处理数据质量扫描失败:', error);
+
+      await DataUpdateLog.create({
+        type: UpdateType.DATA_QUALITY_SCAN,
+        status: UpdateStatus.FAILED,
+        date,
+        error: error.message,
+        started_at: new Date(),
+        completed_at: new Date(),
+      });
+
+      throw error;
+    }
   }
 
   /**

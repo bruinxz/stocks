@@ -315,7 +315,11 @@ router.post('/favorites/:symbol', authController.authenticate, marketController.
  *       500:
  *         description: 服务器错误
  */
-router.delete('/favorites/:symbol', authController.authenticate, marketController.removeFavorite as any);
+router.delete(
+  '/favorites/:symbol',
+  authController.authenticate,
+  marketController.removeFavorite as any
+);
 
 /**
  * @swagger
@@ -356,7 +360,11 @@ router.delete('/favorites/:symbol', authController.authenticate, marketControlle
  *       500:
  *         description: 服务器错误
  */
-router.get('/favorites/:symbol', authController.authenticate, marketController.checkFavorite as any);
+router.get(
+  '/favorites/:symbol',
+  authController.authenticate,
+  marketController.checkFavorite as any
+);
 
 /**
  * @swagger
@@ -399,7 +407,11 @@ router.get('/favorites/:symbol', authController.authenticate, marketController.c
  *       500:
  *         description: 服务器错误
  */
-router.patch('/favorites/:symbol', authController.authenticate, marketController.updateFavorite as any);
+router.patch(
+  '/favorites/:symbol',
+  authController.authenticate,
+  marketController.updateFavorite as any
+);
 
 /**
  * @swagger
@@ -862,6 +874,7 @@ router.post('/queue/:jobId/retry', marketController.retryJob as any);
  */
 router.get('/health', marketController.healthCheck as any);
 router.get('/data-sources/health', marketController.getDataSourceHealth as any);
+router.get('/data-quality', authController.authenticate, marketController.getDataQuality as any);
 
 /**
  * @swagger
@@ -1026,6 +1039,5 @@ router.get('/data-completeness', marketController.getDataCompletenessStats as an
  *         description: 服务器错误
  */
 router.post('/data-completeness/refresh', marketController.refreshDataCompletenessCache as any);
-
 
 export default router;

@@ -6,6 +6,7 @@ import { DataUpdateLog, UpdateType, UpdateStatus } from '../../models/DataUpdate
 import { DataService } from '../../data/services/DataService';
 import { DataSyncService } from '../../data/services/DataSyncService';
 import { DataSourceHealthService } from '../../data/services/DataSourceHealthService';
+import { dataQualityService } from '../../services/DataQualityService';
 import { dataUpdateQueue } from '../../jobs/dataUpdateQueue';
 import { dataUpdateWorker } from '../../jobs/dataUpdateWorker';
 import { redisLock, LockKeys } from '../../utils/redisLock';
@@ -70,11 +71,11 @@ export class MarketController {
         { symbol: 'sh.000300', name: '沪深300' },
         { symbol: 'sh.000001', name: '上证指数' },
         { symbol: 'sz.399001', name: '深证成指' },
-        { symbol: 'sz.399006', name: '创业板指' }
+        { symbol: 'sz.399006', name: '创业板指' },
       ];
 
       const overviewData = await Promise.all(
-        indices.map(async (index) => {
+        indices.map(async index => {
           try {
             // 获取最近 30 个交易日的数据用于绘制迷你走势图
             const bars = await this.dataService.getDailyBars(
@@ -98,7 +99,7 @@ export class MarketController {
               current_price: latestBar.close,
               change,
               change_percent,
-              trend: bars.slice(-30).map(b => ({ time: b.time, close: b.close })) // 只取最近 30 天画图
+              trend: bars.slice(-30).map(b => ({ time: b.time, close: b.close })), // 只取最近 30 天画图
             };
           } catch (e) {
             logger.error(`Failed to fetch overview for ${index.symbol}`, e);
@@ -111,7 +112,7 @@ export class MarketController {
       const upCount = overviewData.filter(d => d.change_percent > 0).length;
       const downCount = overviewData.filter(d => d.change_percent < 0).length;
       // 基于真实指数的涨跌来计算一个确定性的情绪分，不再使用 Math.random()
-      const sentimentScore = 50 + (upCount * 10) - (downCount * 10); 
+      const sentimentScore = 50 + upCount * 10 - downCount * 10;
 
       res.json({
         success: true,
@@ -119,9 +120,9 @@ export class MarketController {
           indices: overviewData,
           sentiment: {
             score: Math.min(100, Math.max(0, Math.round(sentimentScore))),
-            label: sentimentScore > 70 ? '贪婪' : sentimentScore < 30 ? '恐惧' : '中性'
-          }
-        }
+            label: sentimentScore > 70 ? '贪婪' : sentimentScore < 30 ? '恐惧' : '中性',
+          },
+        },
       });
     } catch (error: any) {
       logger.error('获取大盘概览失败:', error);
@@ -535,14 +536,17 @@ export class MarketController {
       });
 
       // 按分组组织
-      const groupedFavorites = favorites.reduce((acc, favorite) => {
-        const group = favorite.group_id || '默认';
-        if (!acc[group]) {
-          acc[group] = [];
-        }
-        acc[group].push(favorite);
-        return acc;
-      }, {} as Record<string, any[]>);
+      const groupedFavorites = favorites.reduce(
+        (acc, favorite) => {
+          const group = favorite.group_id || '默认';
+          if (!acc[group]) {
+            acc[group] = [];
+          }
+          acc[group].push(favorite);
+          return acc;
+        },
+        {} as Record<string, any[]>
+      );
 
       res.json({
         success: true,
@@ -985,8 +989,9 @@ export class MarketController {
         'daily_update',
         'new_stocks_sync',
         'weekly_completeness_check',
+        'data_quality_scan',
         'manual_sync',
-        'health_check'
+        'health_check',
       ];
       if (!validTypes.includes(type)) {
         return res.status(400).json({
@@ -1290,20 +1295,37 @@ export class MarketController {
 
       const providers = await DataSourceHealthService.getHealthSnapshots();
       const enabledProviders = providers.filter((provider: any) => provider.is_enabled);
-      const healthyProviders = enabledProviders.filter((provider: any) => provider.status === 'healthy');
-      const degradedProviders = enabledProviders.filter((provider: any) => provider.status === 'degraded');
-      const unhealthyProviders = enabledProviders.filter((provider: any) => provider.status === 'unhealthy');
-      const disabledProviders = providers.filter((provider: any) => !provider.is_enabled || provider.status === 'disabled');
+      const healthyProviders = enabledProviders.filter(
+        (provider: any) => provider.status === 'healthy'
+      );
+      const degradedProviders = enabledProviders.filter(
+        (provider: any) => provider.status === 'degraded'
+      );
+      const unhealthyProviders = enabledProviders.filter(
+        (provider: any) => provider.status === 'unhealthy'
+      );
+      const disabledProviders = providers.filter(
+        (provider: any) => !provider.is_enabled || provider.status === 'disabled'
+      );
 
-      const avgHealthScore = enabledProviders.length > 0
-        ? Number((enabledProviders.reduce((sum: number, provider: any) => sum + Number(provider.health_score || 0), 0) / enabledProviders.length).toFixed(2))
-        : 0;
+      const avgHealthScore =
+        enabledProviders.length > 0
+          ? Number(
+              (
+                enabledProviders.reduce(
+                  (sum: number, provider: any) => sum + Number(provider.health_score || 0),
+                  0
+                ) / enabledProviders.length
+              ).toFixed(2)
+            )
+          : 0;
 
-      const status = unhealthyProviders.length > 0
-        ? 'unhealthy'
-        : degradedProviders.length > 0 || healthyProviders.length === 0
-          ? 'degraded'
-          : 'healthy';
+      const status =
+        unhealthyProviders.length > 0
+          ? 'unhealthy'
+          : degradedProviders.length > 0 || healthyProviders.length === 0
+            ? 'degraded'
+            : 'healthy';
 
       res.json({
         success: true,
@@ -1327,6 +1349,55 @@ export class MarketController {
       res.status(500).json({
         success: false,
         error: '获取数据源健康状态失败',
+        details: error.message,
+      });
+    }
+  };
+
+  /**
+   * 获取行情数据质量画像
+   */
+  getDataQuality = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const user_id = (req as any).user?.id;
+      const {
+        scope = 'market',
+        symbols,
+        lookback_days = '180',
+        limit = '80',
+        update_status = 'false',
+      } = req.query;
+
+      const symbolList =
+        typeof symbols === 'string'
+          ? symbols
+              .split(',')
+              .map(symbol => symbol.trim())
+              .filter(Boolean)
+          : undefined;
+
+      const options = {
+        user_id,
+        scope: ['favorites', 'market', 'all'].includes(scope as string) ? (scope as any) : 'market',
+        symbols: symbolList,
+        lookback_days: parseInt(lookback_days as string, 10),
+        limit: parseInt(limit as string, 10),
+      };
+
+      const data =
+        update_status === 'true'
+          ? await dataQualityService.updateStockQualityStatuses(options)
+          : await dataQualityService.scanMarketDataQuality(options);
+
+      res.json({
+        success: true,
+        data,
+      });
+    } catch (error: any) {
+      logger.error('获取数据质量画像错误:', error);
+      res.status(500).json({
+        success: false,
+        error: '获取数据质量画像失败',
         details: error.message,
       });
     }
@@ -1404,14 +1475,27 @@ export class MarketController {
       try {
         const dataSourceHealth = await DataSourceHealthService.getHealthSnapshots();
         const enabledProviders = dataSourceHealth.filter((provider: any) => provider.is_enabled);
-        const unhealthyCount = enabledProviders.filter((provider: any) => provider.status === 'unhealthy').length;
-        const degradedCount = enabledProviders.filter((provider: any) => provider.status === 'degraded').length;
-        const avgScore = enabledProviders.length > 0
-          ? enabledProviders.reduce((sum: number, provider: any) => sum + Number(provider.health_score || 0), 0) / enabledProviders.length
-          : 0;
+        const unhealthyCount = enabledProviders.filter(
+          (provider: any) => provider.status === 'unhealthy'
+        ).length;
+        const degradedCount = enabledProviders.filter(
+          (provider: any) => provider.status === 'degraded'
+        ).length;
+        const avgScore =
+          enabledProviders.length > 0
+            ? enabledProviders.reduce(
+                (sum: number, provider: any) => sum + Number(provider.health_score || 0),
+                0
+              ) / enabledProviders.length
+            : 0;
 
         healthInfo.services.dataSource = {
-          status: unhealthyCount > 0 ? 'unhealthy' : degradedCount > 0 || avgScore < 50 ? 'degraded' : 'healthy',
+          status:
+            unhealthyCount > 0
+              ? 'unhealthy'
+              : degradedCount > 0 || avgScore < 50
+                ? 'degraded'
+                : 'healthy',
           type: 'Market Data Providers',
           provider_count: dataSourceHealth.length,
           enabled_count: enabledProviders.length,
@@ -1671,17 +1755,14 @@ export class MarketController {
       // 使用一次性聚合查询，而不是循环执行 5000+ 次 COUNT 查询，这能将耗时从几十秒缩短到几百毫秒
       // DailyBar 只有复合主键 time 和 stock_id，没有 id 列
       const barCounts = await DailyBar.findAll({
-        attributes: [
-          'stock_id',
-          [sequelize.fn('COUNT', sequelize.col('stock_id')), 'count']
-        ],
+        attributes: ['stock_id', [sequelize.fn('COUNT', sequelize.col('stock_id')), 'count']],
         where: {
           time: {
             [Op.between]: [start_date, end_date], // 直接使用字符串格式的日期 YYYY-MM-DD
-          }
+          },
         },
         group: ['stock_id'],
-        raw: true
+        raw: true,
       });
 
       // 建立 stock_id -> count 的映射，O(1) 复杂度查找
