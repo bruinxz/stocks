@@ -15,6 +15,7 @@ import {
   Descriptions,
   Alert,
   Statistic,
+  Divider,
 } from 'antd';
 import {
   RobotOutlined,
@@ -24,6 +25,9 @@ import {
   CloseCircleOutlined,
   ApiOutlined,
   ReloadOutlined,
+  DatabaseOutlined,
+  ArrowUpOutlined,
+  ArrowDownOutlined,
 } from '@ant-design/icons';
 import api, { API_BASE_URL } from '../services/api';
 import { useLocation } from 'react-router-dom';
@@ -37,6 +41,30 @@ interface AIEvent {
   content?: string;
   decision?: string;
   analyst?: string;
+}
+
+interface ArchivedSignal {
+  id: number;
+  symbol: string;
+  name?: string;
+  signal_date: string;
+  normalized_decision: string;
+  confidence_score?: number;
+  risk_level?: string;
+  rationale?: string;
+  current_price?: number;
+  forward_returns?: any;
+  metadata?: {
+    structured_decision?: {
+      rating?: string;
+      summary?: string;
+      thesis?: string;
+      confidence_score?: number;
+      risk_level?: string;
+      action_tags?: string[];
+      key_levels?: { stop_loss?: number; take_profit?: number; entry?: number };
+    };
+  };
 }
 
 interface TradingAgentsHealth {
@@ -105,9 +133,27 @@ const AIAdvisor: React.FC = () => {
   });
   const [serviceHealth, setServiceHealth] = useState<TradingAgentsHealth | null>(null);
   const [healthLoading, setHealthLoading] = useState(false);
+  const [recentSignals, setRecentSignals] = useState<ArchivedSignal[]>([]);
+  const [signalsLoading, setSignalsLoading] = useState(false);
 
   const eventSourceRef = useRef<EventSource | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const fetchRecentSignals = async () => {
+    setSignalsLoading(true);
+    try {
+      const response = await api.get('/ai/signals', {
+        params: { source_type: 'tradingagents', limit: 5 },
+      });
+      if (response.data.success) {
+        setRecentSignals(response.data.data?.signals || []);
+      }
+    } catch (error: any) {
+      message.warning(error.response?.data?.message || '获取历史 AI 研报信号失败');
+    } finally {
+      setSignalsLoading(false);
+    }
+  };
 
   const fetchServiceHealth = async (refresh = false) => {
     setHealthLoading(true);
@@ -162,6 +208,7 @@ const AIAdvisor: React.FC = () => {
 
   useEffect(() => {
     fetchServiceHealth(false);
+    fetchRecentSignals();
   }, []);
 
   const scrollToBottom = () => {
@@ -200,6 +247,7 @@ const AIAdvisor: React.FC = () => {
           setDecision(data.decision || 'HOLD');
           setAnalyzing(false);
           eventSource.close();
+          setTimeout(fetchRecentSignals, 1200);
         } else if (data.type === 'error') {
           setAnalyzing(false);
           eventSource.close();
@@ -225,6 +273,33 @@ const AIAdvisor: React.FC = () => {
       }
     };
   }, []);
+
+  const getActionTagLabel = (tag: string) => {
+    const map: Record<string, string> = {
+      stop_loss: '止损',
+      take_profit: '止盈',
+      position_sizing: '仓位',
+      avoid_entry: '避免介入',
+      watchlist: '观察池',
+    };
+    return map[tag] || tag;
+  };
+
+  const renderForwardReturn = (signal: ArchivedSignal) => {
+    const horizons = signal.forward_returns?.horizons || {};
+    const completed = Object.entries<any>(horizons).find(
+      ([, value]) => value.status === 'completed'
+    );
+    if (!completed) return <Text type="secondary">待验证</Text>;
+    const [horizon, value] = completed;
+    const returnPct = Number(value.return_pct || 0);
+    return (
+      <Tag color={returnPct >= 0 ? 'red' : 'green'}>
+        {returnPct >= 0 ? <ArrowUpOutlined /> : <ArrowDownOutlined />} {horizon}{' '}
+        {returnPct.toFixed(2)}%
+      </Tag>
+    );
+  };
 
   const getDecisionColor = (dec: string) => {
     if (dec.toUpperCase().includes('BUY')) return 'green';
@@ -282,6 +357,72 @@ const AIAdvisor: React.FC = () => {
           )}
         </div>
       </div>
+
+      <Card
+        className="modern-card"
+        variant="borderless"
+        title={
+          <Space>
+            <DatabaseOutlined />
+            <span>最近归档研报信号</span>
+          </Space>
+        }
+        extra={
+          <Button size="small" onClick={fetchRecentSignals} loading={signalsLoading}>
+            刷新
+          </Button>
+        }
+        style={{ marginBottom: 16 }}
+      >
+        {recentSignals.length > 0 ? (
+          <Row gutter={[12, 12]}>
+            {recentSignals.map(signal => {
+              const structured = signal.metadata?.structured_decision || {};
+              const actionTags = structured.action_tags || [];
+              const keyLevels = structured.key_levels || {};
+              return (
+                <Col xs={24} md={12} xl={8} key={signal.id}>
+                  <Card size="small" style={{ height: '100%', background: '#f8fafc' }}>
+                    <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                      <Space wrap>
+                        <Text strong>{signal.name || signal.symbol}</Text>
+                        <Tag color={getDecisionColor(signal.normalized_decision)}>
+                          {(
+                            structured.rating ||
+                            signal.normalized_decision ||
+                            'UNKNOWN'
+                          ).toUpperCase()}
+                        </Tag>
+                      </Space>
+                      <Text type="secondary">
+                        {signal.symbol} · {signal.signal_date} · 置信{' '}
+                        {signal.confidence_score ?? '--'}
+                      </Text>
+                      <Paragraph ellipsis={{ rows: 2 }} style={{ marginBottom: 0 }}>
+                        {structured.summary || signal.rationale || '暂无结构化摘要'}
+                      </Paragraph>
+                      <Space wrap size={[4, 4]}>
+                        {actionTags.slice(0, 4).map(tag => (
+                          <Tag key={tag} color="blue">
+                            {getActionTagLabel(tag)}
+                          </Tag>
+                        ))}
+                        {keyLevels.stop_loss && <Tag color="red">止损 {keyLevels.stop_loss}</Tag>}
+                        {keyLevels.take_profit && (
+                          <Tag color="green">止盈 {keyLevels.take_profit}</Tag>
+                        )}
+                        {renderForwardReturn(signal)}
+                      </Space>
+                    </Space>
+                  </Card>
+                </Col>
+              );
+            })}
+          </Row>
+        ) : (
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无已归档 TradingAgents 信号" />
+        )}
+      </Card>
 
       <Card
         className="modern-card"
@@ -504,6 +645,10 @@ const AIAdvisor: React.FC = () => {
                             </Descriptions.Item>
                           )}
                         </Descriptions>
+                        <Divider style={{ margin: '12px 0' }} />
+                        <Text type="secondary">
+                          分析完成后会自动归档为 AI 投研信号，并持续生成 1/3/5/10/20 日后验收益。
+                        </Text>
                       </Card>
                     </Timeline.Item>
                   );
