@@ -34,29 +34,49 @@ router.get(
   aiAdvisorController.streamAnalyze
 );
 
-
-
 /**
  * @route GET /api/ai/recommendations
  * @desc 获取本地多因子候选推荐
  * @access Private
  */
-router.get('/recommendations', authController.authenticate, quantRecommendationController.listRecommendations);
+router.get(
+  '/recommendations',
+  authController.authenticate,
+  quantRecommendationController.listRecommendations
+);
 
 /**
  * @route POST /api/ai/recommendations/analyze
  * @desc 将多因子候选批量提交 TradingAgents 深度研报
  * @access Private
  */
-router.post('/recommendations/analyze', authController.authenticate, quantRecommendationController.submitToTradingAgents);
+router.post(
+  '/recommendations/analyze',
+  authController.authenticate,
+  quantRecommendationController.submitToTradingAgents
+);
 
+/**
+ * @route POST /api/ai/recommendations/archive
+ * @desc 将多因子候选归档为可后验验证的投研信号
+ * @access Private
+ */
+router.post(
+  '/recommendations/archive',
+  authController.authenticate,
+  quantRecommendationController.archiveRecommendations
+);
 
 /**
  * @route POST /api/ai/recommendations/sync-profiles
  * @desc 为候选推荐批量补全股票画像/估值快照
  * @access Private
  */
-router.post('/recommendations/sync-profiles', authController.authenticate, stockProfileController.syncProfiles);
+router.post(
+  '/recommendations/sync-profiles',
+  authController.authenticate,
+  stockProfileController.syncProfiles
+);
 
 /**
  * @route GET /api/ai/signals
@@ -77,7 +97,11 @@ router.get('/signals/stats', authController.authenticate, aiSignalController.get
  * @desc 从 AI 每日优选同步为可验证信号
  * @access Private
  */
-router.post('/signals/sync-screeners', authController.authenticate, aiSignalController.syncFromScreeners);
+router.post(
+  '/signals/sync-screeners',
+  authController.authenticate,
+  aiSignalController.syncFromScreeners
+);
 
 /**
  * @route POST /api/ai/signals/verify
@@ -98,10 +122,6 @@ router.get('/screener', authController.authenticate, screenerController.getDaily
  * @desc 获取单条 AI 优选详情（包含 detail 大字段）
  * @access Private
  */
-router.get(
-  '/screener/:id',
-  authController.authenticate,
-  screenerController.getDailyScreenerDetail
-);
+router.get('/screener/:id', authController.authenticate, screenerController.getDailyScreenerDetail);
 
 export default router;

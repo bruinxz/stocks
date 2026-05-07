@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import { quantRecommendationService } from '../../services/QuantRecommendationService';
 import { aiAdvisorService } from '../../services/AIAdvisorService';
+import { aiInvestmentSignalService } from '../../services/AIInvestmentSignalService';
+import { AISignalSourceType } from '../../models/AIInvestmentSignal';
 import { aiPollingQueue } from '../../jobs/aiPollingQueue';
 import { logger } from '../../utils/logger';
 
@@ -8,7 +10,12 @@ export class QuantRecommendationController {
   listRecommendations = async (req: Request, res: Response) => {
     try {
       const user_id = (req as any).user?.id;
-      const { universe = 'favorites', style = 'balanced', limit = '20', lookback_days = '120' } = req.query;
+      const {
+        universe = 'favorites',
+        style = 'balanced',
+        limit = '20',
+        lookback_days = '120',
+      } = req.query;
 
       const result = await quantRecommendationService.generateRecommendations({
         user_id,
@@ -56,8 +63,10 @@ export class QuantRecommendationController {
                 quant_factors: typeof item === 'string' ? undefined : item.factors,
                 quant_reasons: typeof item === 'string' ? undefined : item.reasons,
                 quant_warnings: typeof item === 'string' ? undefined : item.warnings,
-                recommendation_style: typeof item === 'string' ? undefined : item.recommendation_style,
-                recommendation_source: typeof item === 'string' ? 'manual_recommendation' : item.source,
+                recommendation_style:
+                  typeof item === 'string' ? undefined : item.recommendation_style,
+                recommendation_source:
+                  typeof item === 'string' ? 'manual_recommendation' : item.source,
               },
               {
                 jobId: `ai-recommend-${result.task_id}`,
@@ -77,6 +86,85 @@ export class QuantRecommendationController {
       res.json({ success: true, data: { submitted, failed } });
     } catch (error: any) {
       logger.error('提交多因子候选至 TradingAgents 失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
+  archiveRecommendations = async (req: Request, res: Response) => {
+    try {
+      const user_id = (req as any).user?.id;
+      const {
+        candidates,
+        universe = 'favorites',
+        style = 'balanced',
+        limit = 20,
+        lookback_days = 120,
+        signal_date,
+        verify = true,
+      } = req.body || {};
+
+      const normalizedUniverse = universe === 'market' ? 'market' : 'favorites';
+      const normalizedStyle = ['balanced', 'momentum', 'value', 'low_risk'].includes(style)
+        ? style
+        : 'balanced';
+
+      let payloadCandidates = Array.isArray(candidates) ? candidates : [];
+      let as_of = req.body?.as_of;
+      let generated: any = null;
+
+      if (payloadCandidates.length === 0) {
+        generated = await quantRecommendationService.generateRecommendations({
+          user_id,
+          universe: normalizedUniverse,
+          style: normalizedStyle,
+          limit: Number(limit) || 20,
+          lookback_days: Number(lookback_days) || 120,
+          include_trend: true,
+        });
+        payloadCandidates = generated.recommendations || [];
+        as_of = generated.as_of;
+      }
+
+      if (payloadCandidates.length === 0) {
+        return res.status(400).json({ success: false, message: '没有可归档的候选推荐' });
+      }
+
+      const sync = await aiInvestmentSignalService.archiveQuantRecommendations({
+        candidates: payloadCandidates,
+        universe: normalizedUniverse,
+        style: normalizedStyle,
+        as_of,
+        signal_date,
+      });
+
+      const verification =
+        verify === false
+          ? null
+          : await aiInvestmentSignalService.verifySignals({
+              source_type: AISignalSourceType.QUANT_RECOMMENDATION,
+              limit: Math.max(sync.total, 20),
+            });
+      const stats = await aiInvestmentSignalService.getSignalStats({
+        source_type: AISignalSourceType.QUANT_RECOMMENDATION,
+      });
+
+      res.json({
+        success: true,
+        data: {
+          sync,
+          verification,
+          stats,
+          generated: generated
+            ? {
+                as_of: generated.as_of,
+                total_candidates: generated.total_candidates,
+                analyzed_candidates: generated.analyzed_candidates,
+              }
+            : null,
+        },
+      });
+    } catch (error: any) {
+      logger.error('归档量化候选信号失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   };

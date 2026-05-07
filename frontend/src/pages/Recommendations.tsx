@@ -17,6 +17,7 @@ import {
 } from 'antd';
 import {
   BarChartOutlined,
+  DatabaseOutlined,
   ExperimentOutlined,
   ReloadOutlined,
   RobotOutlined,
@@ -64,6 +65,20 @@ interface RecommendationResponse {
   recommendations: RecommendationItem[];
 }
 
+interface SignalStats {
+  total_signals: number;
+  by_decision: Record<string, { count: number; avg_confidence_score: number }>;
+  horizon_summary: Record<
+    string,
+    {
+      count: number;
+      avg_return_pct: number;
+      positive_count: number;
+      positive_rate?: number;
+    }
+  >;
+}
+
 const riskColorMap: Record<string, string> = {
   low: 'green',
   medium: 'gold',
@@ -88,6 +103,9 @@ const Recommendations: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [analyzeLoading, setAnalyzeLoading] = useState(false);
   const [profileLoading, setProfileLoading] = useState(false);
+  const [archiveLoading, setArchiveLoading] = useState(false);
+  const [statsLoading, setStatsLoading] = useState(false);
+  const [signalStats, setSignalStats] = useState<SignalStats | null>(null);
   const [style, setStyle] = useState('balanced');
   const [universe, setUniverse] = useState('favorites');
   const [limit, setLimit] = useState(20);
@@ -108,10 +126,30 @@ const Recommendations: React.FC = () => {
     }
   };
 
+  const fetchSignalStats = async () => {
+    setStatsLoading(true);
+    try {
+      const response = await api.get('/ai/signals/stats', {
+        params: { source_type: 'quant_recommendation' },
+      });
+      if (response.data.success) {
+        setSignalStats(response.data.data);
+      }
+    } catch (error: any) {
+      message.warning(error.response?.data?.message || '获取推荐后验统计失败');
+    } finally {
+      setStatsLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchRecommendations();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [style, universe, limit]);
+
+  useEffect(() => {
+    fetchSignalStats();
+  }, []);
 
   const topItems = useMemo(() => data?.recommendations?.slice(0, 5) || [], [data]);
   const avgScore = useMemo(() => {
@@ -184,6 +222,39 @@ const Recommendations: React.FC = () => {
     }
   };
 
+  const archiveCurrentRecommendations = async () => {
+    const candidates = data?.recommendations || [];
+    if (candidates.length === 0) {
+      message.warning('暂无候选标的可归档');
+      return;
+    }
+
+    setArchiveLoading(true);
+    try {
+      const response = await api.post('/ai/recommendations/archive', {
+        candidates,
+        universe,
+        style,
+        as_of: data?.as_of,
+        verify: true,
+      });
+      const result = response.data.data;
+      const sync = result?.sync || {};
+      message.success(
+        `已归档 ${sync.total || 0} 条候选信号，新增 ${sync.created || 0}，更新 ${sync.updated || 0}`
+      );
+      if (result?.stats) {
+        setSignalStats(result.stats);
+      } else {
+        await fetchSignalStats();
+      }
+    } catch (error: any) {
+      message.error(error.response?.data?.message || '归档候选后验信号失败');
+    } finally {
+      setArchiveLoading(false);
+    }
+  };
+
   const openAIAdvisor = (symbol: string) => {
     localStorage.setItem('aiAdvisor_ticker', symbol);
     navigate(`/ai-advisor?ticker=${encodeURIComponent(symbol)}`);
@@ -194,6 +265,14 @@ const Recommendations: React.FC = () => {
     const color = value > 0 ? '#cf1322' : value < 0 ? '#3f8600' : '#64748b';
     return <Text style={{ color, fontWeight: 700 }}>{value.toFixed(2)}%</Text>;
   };
+
+  const horizonStats = useMemo(
+    () =>
+      Object.entries(signalStats?.horizon_summary || {}).sort(
+        ([a], [b]) => Number(a.replace('d', '')) - Number(b.replace('d', ''))
+      ),
+    [signalStats]
+  );
 
   const columns = [
     {
@@ -370,6 +449,13 @@ const Recommendations: React.FC = () => {
               补全画像
             </Button>
             <Button
+              icon={<DatabaseOutlined />}
+              onClick={archiveCurrentRecommendations}
+              loading={archiveLoading}
+            >
+              归档后验
+            </Button>
+            <Button
               type="primary"
               icon={<ThunderboltOutlined />}
               onClick={submitTopToTradingAgents}
@@ -436,6 +522,61 @@ const Recommendations: React.FC = () => {
           </Card>
         </Col>
       </Row>
+
+      <Card
+        className="modern-card"
+        variant="borderless"
+        title="量化初筛后验表现"
+        extra={
+          <Button size="small" onClick={fetchSignalStats} loading={statsLoading}>
+            刷新统计
+          </Button>
+        }
+        style={{ marginBottom: 16 }}
+      >
+        <Row gutter={[16, 16]} align="middle">
+          <Col xs={24} md={5}>
+            <Statistic
+              title="已归档量化信号"
+              value={signalStats?.total_signals || 0}
+              prefix={<DatabaseOutlined />}
+            />
+          </Col>
+          <Col xs={24} md={5}>
+            <Statistic
+              title="买入/强买信号"
+              value={
+                (signalStats?.by_decision?.buy?.count || 0) +
+                (signalStats?.by_decision?.strong_buy?.count || 0)
+              }
+            />
+          </Col>
+          <Col xs={24} md={14}>
+            {horizonStats.length > 0 ? (
+              <Space wrap size={[12, 8]}>
+                {horizonStats.map(([horizon, stats]) => (
+                  <Card key={horizon} size="small" style={{ minWidth: 132 }}>
+                    <Statistic
+                      title={`${horizon} 平均收益`}
+                      value={stats.avg_return_pct}
+                      precision={2}
+                      suffix="%"
+                      valueStyle={{ color: stats.avg_return_pct >= 0 ? '#cf1322' : '#3f8600' }}
+                    />
+                    <Text type="secondary">
+                      胜率 {stats.positive_rate ?? 0}% · 样本 {stats.count}
+                    </Text>
+                  </Card>
+                ))}
+              </Space>
+            ) : (
+              <Text type="secondary">
+                暂无完成的后验样本。点击“归档后验”后，系统会按 1/3/5/10/20 交易日持续验证收益。
+              </Text>
+            )}
+          </Col>
+        </Row>
+      </Card>
 
       <Card
         className="modern-card"

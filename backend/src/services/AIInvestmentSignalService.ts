@@ -1,10 +1,15 @@
 import { Op } from 'sequelize';
-import { AIInvestmentSignal, AISignalDecision, AISignalSourceType } from '../models/AIInvestmentSignal';
+import {
+  AIInvestmentSignal,
+  AISignalDecision,
+  AISignalSourceType,
+} from '../models/AIInvestmentSignal';
 import { DailyScreener } from '../models/DailyScreener';
 import { DailyBar } from '../models/DailyBar';
 import { Stock } from '../models/Stock';
 import { normalizeSymbol } from '../utils/stockSymbol';
 import { logger } from '../utils/logger';
+import type { QuantRecommendationItem } from './QuantRecommendationService';
 
 const DEFAULT_HORIZONS = [1, 3, 5, 10, 20];
 
@@ -18,10 +23,51 @@ export interface SignalQueryOptions {
   offset?: number;
 }
 
+export interface QuantRecommendationArchiveOptions {
+  candidates: QuantRecommendationItem[];
+  universe?: string;
+  style?: string;
+  as_of?: string;
+  signal_date?: string;
+}
+
 function toNumber(value: any): number | undefined {
   if (value === undefined || value === null || value === '') return undefined;
   const num = Number(value);
   return Number.isFinite(num) ? num : undefined;
+}
+
+function getChinaToday(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
+
+function resolveSignalDate(
+  options: Pick<QuantRecommendationArchiveOptions, 'as_of' | 'signal_date'> = {}
+): string {
+  if (options.signal_date) return String(options.signal_date).slice(0, 10);
+  if (options.as_of) {
+    const datePart = String(options.as_of).slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(datePart)) return datePart;
+  }
+  return getChinaToday();
+}
+
+function buildSignalWhere(options: SignalQueryOptions = {}) {
+  const where: any = {};
+  if (options.symbol) where.symbol = normalizeSymbol(options.symbol);
+  if (options.decision) where.normalized_decision = options.decision;
+  if (options.source_type) where.source_type = options.source_type;
+  if (options.start_date || options.end_date) {
+    where.signal_date = {};
+    if (options.start_date) where.signal_date[Op.gte] = options.start_date;
+    if (options.end_date) where.signal_date[Op.lte] = options.end_date;
+  }
+  return where;
 }
 
 export class AIInvestmentSignalService {
@@ -39,10 +85,21 @@ export class AIInvestmentSignalService {
     if (text.includes('SELL') || text.includes('卖出') || text.includes('看空')) {
       return AISignalDecision.SELL;
     }
-    if (text.includes('HOLD') || text.includes('观望') || text.includes('中性') || text.includes('持有')) {
+    if (
+      text.includes('HOLD') ||
+      text.includes('观望') ||
+      text.includes('中性') ||
+      text.includes('持有')
+    ) {
       return AISignalDecision.HOLD;
     }
     return AISignalDecision.UNKNOWN;
+  }
+
+  decisionFromQuantScore(score: number): string {
+    if (score >= 82) return AISignalDecision.STRONG_BUY;
+    if (score >= 70) return AISignalDecision.BUY;
+    return AISignalDecision.HOLD;
   }
 
   inferRiskLevel(record: any): string {
@@ -121,7 +178,11 @@ export class AIInvestmentSignalService {
     const source_id = params.task_id || `${symbol}_${signal_date}_${Date.now()}`;
     const stock = await Stock.findOne({ where: { symbol } });
     const detailText =
-      typeof params.detail === 'string' ? params.detail : params.detail ? JSON.stringify(params.detail) : undefined;
+      typeof params.detail === 'string'
+        ? params.detail
+        : params.detail
+        ? JSON.stringify(params.detail)
+        : undefined;
 
     const payload = {
       source_type,
@@ -154,7 +215,94 @@ export class AIInvestmentSignalService {
     return record;
   }
 
-  async verifySignalReturns(signal: AIInvestmentSignal, horizons = DEFAULT_HORIZONS): Promise<AIInvestmentSignal> {
+  async archiveQuantRecommendations(options: QuantRecommendationArchiveOptions): Promise<{
+    created: number;
+    updated: number;
+    total: number;
+    signal_ids: number[];
+  }> {
+    const candidates = Array.isArray(options.candidates) ? options.candidates : [];
+    const universe = options.universe || 'favorites';
+    const style = options.style || 'balanced';
+    let created = 0;
+    let updated = 0;
+    const signal_ids: number[] = [];
+
+    for (const candidate of candidates) {
+      if (!candidate?.symbol) continue;
+
+      const symbol = normalizeSymbol(candidate.symbol);
+      const latestTrendDate = candidate.trend?.[candidate.trend.length - 1]?.time;
+      const signal_date = resolveSignalDate({
+        signal_date: options.signal_date,
+        as_of: latestTrendDate || options.as_of,
+      });
+      const decision = this.decisionFromQuantScore(Number(candidate.score || 0));
+      const source_id = `${symbol}_${signal_date}_${style}_${universe}`;
+      const stock = await Stock.findOne({ where: { symbol } });
+      const payload = {
+        source_type: AISignalSourceType.QUANT_RECOMMENDATION,
+        source_id,
+        symbol,
+        name: candidate.name || stock?.name,
+        signal_date,
+        decision,
+        normalized_decision: decision,
+        confidence_score: toNumber(candidate.score),
+        risk_level:
+          candidate.risk_level || this.inferRiskLevel({ score: candidate.score, decision }),
+        rationale:
+          (candidate.reasons || []).join('；') ||
+          `${candidate.rating || '量化候选'}：多因子综合评分居前`,
+        detail: JSON.stringify({
+          rating: candidate.rating,
+          confidence: candidate.confidence,
+          factors: candidate.factors || [],
+          metrics: candidate.metrics || {},
+          warnings: candidate.warnings || [],
+          trend: candidate.trend || [],
+        }),
+        current_price: toNumber(candidate.current_price),
+        price_change_pct: toNumber(candidate.change_percent),
+        metadata: {
+          quant_candidate: true,
+          universe,
+          style,
+          as_of: options.as_of,
+          source: candidate.source,
+          rating: candidate.rating,
+          confidence: candidate.confidence,
+          factors: candidate.factors || [],
+          metrics: candidate.metrics || {},
+          reasons: candidate.reasons || [],
+          warnings: candidate.warnings || [],
+        },
+      };
+
+      const [record, isCreated] = await AIInvestmentSignal.findOrCreate({
+        where: {
+          source_type: AISignalSourceType.QUANT_RECOMMENDATION,
+          source_id,
+        },
+        defaults: payload,
+      });
+
+      if (isCreated) {
+        created++;
+      } else {
+        await record.update(payload);
+        updated++;
+      }
+      signal_ids.push(record.id);
+    }
+
+    return { created, updated, total: candidates.length, signal_ids };
+  }
+
+  async verifySignalReturns(
+    signal: AIInvestmentSignal,
+    horizons = DEFAULT_HORIZONS
+  ): Promise<AIInvestmentSignal> {
     const stock = await Stock.findOne({ where: { symbol: signal.symbol } });
     if (!stock) {
       await signal.update({ verification_status: 'no_data', verified_at: new Date() });
@@ -177,7 +325,8 @@ export class AIInvestmentSignalService {
       return signal;
     }
 
-    const baseBar = bars.find(bar => bar.time.toISOString().split('T')[0] >= signal.signal_date) || bars[0];
+    const baseBar =
+      bars.find(bar => bar.time.toISOString().split('T')[0] >= signal.signal_date) || bars[0];
     const baseIndex = bars.findIndex(bar => bar.time.getTime() === baseBar.time.getTime());
     const entryPrice = Number(baseBar.close);
     const forward_returns: Record<string, any> = {
@@ -211,20 +360,24 @@ export class AIInvestmentSignalService {
 
     await signal.update({
       forward_returns,
-      verification_status: completed === 0 ? 'pending' : completed === horizons.length ? 'completed' : 'partial',
+      verification_status:
+        completed === 0 ? 'pending' : completed === horizons.length ? 'completed' : 'partial',
       verified_at: new Date(),
     });
 
     return signal.reload();
   }
 
-  async verifySignals(options: { limit?: number; horizons?: number[] } = {}): Promise<{
+  async verifySignals(
+    options: { limit?: number; horizons?: number[] } & SignalQueryOptions = {}
+  ): Promise<{
     total: number;
     verified: number;
     no_data: number;
   }> {
     const limit = options.limit || 200;
     const signals = await AIInvestmentSignal.findAll({
+      where: buildSignalWhere(options),
       order: [['signal_date', 'DESC']],
       limit,
     });
@@ -234,14 +387,19 @@ export class AIInvestmentSignalService {
 
     for (const signal of signals) {
       try {
-        const updated = await this.verifySignalReturns(signal, options.horizons || DEFAULT_HORIZONS);
+        const updated = await this.verifySignalReturns(
+          signal,
+          options.horizons || DEFAULT_HORIZONS
+        );
         if (updated.verification_status === 'no_data') {
           no_data++;
         } else {
           verified++;
         }
       } catch (error: any) {
-        logger.warn(`AI signal verification failed for ${signal.symbol}#${signal.id}: ${error.message}`);
+        logger.warn(
+          `AI signal verification failed for ${signal.symbol}#${signal.id}: ${error.message}`
+        );
       }
     }
 
@@ -249,15 +407,7 @@ export class AIInvestmentSignalService {
   }
 
   async listSignals(options: SignalQueryOptions = {}) {
-    const where: any = {};
-    if (options.symbol) where.symbol = normalizeSymbol(options.symbol);
-    if (options.decision) where.normalized_decision = options.decision;
-    if (options.source_type) where.source_type = options.source_type;
-    if (options.start_date || options.end_date) {
-      where.signal_date = {};
-      if (options.start_date) where.signal_date[Op.gte] = options.start_date;
-      if (options.end_date) where.signal_date[Op.lte] = options.end_date;
-    }
+    const where = buildSignalWhere(options);
 
     const limit = Math.min(options.limit || 50, 200);
     const offset = options.offset || 0;
@@ -276,10 +426,16 @@ export class AIInvestmentSignalService {
     return { rows, count, limit, offset };
   }
 
-  async getSignalStats() {
-    const signals = await AIInvestmentSignal.findAll({ raw: true });
+  async getSignalStats(options: SignalQueryOptions = {}) {
+    const signals = await AIInvestmentSignal.findAll({
+      where: buildSignalWhere(options),
+      raw: true,
+    });
     const byDecision: Record<string, any> = {};
-    const horizonSummary: Record<string, { count: number; avg_return_pct: number; positive_count: number }> = {};
+    const horizonSummary: Record<
+      string,
+      { count: number; avg_return_pct: number; positive_count: number }
+    > = {};
 
     for (const signal of signals as any[]) {
       const decision = signal.normalized_decision || 'unknown';
@@ -306,13 +462,16 @@ export class AIInvestmentSignalService {
     }
 
     Object.values(byDecision).forEach((item: any) => {
-      item.avg_confidence_score = item.count > 0 ? Number((item.confidence_total / item.count).toFixed(2)) : 0;
+      item.avg_confidence_score =
+        item.count > 0 ? Number((item.confidence_total / item.count).toFixed(2)) : 0;
       delete item.confidence_total;
     });
 
     Object.values(horizonSummary).forEach(item => {
-      item.avg_return_pct = item.count > 0 ? Number((item.avg_return_pct / item.count).toFixed(4)) : 0;
-      (item as any).positive_rate = item.count > 0 ? Number(((item.positive_count / item.count) * 100).toFixed(2)) : 0;
+      item.avg_return_pct =
+        item.count > 0 ? Number((item.avg_return_pct / item.count).toFixed(4)) : 0;
+      (item as any).positive_rate =
+        item.count > 0 ? Number(((item.positive_count / item.count) * 100).toFixed(2)) : 0;
     });
 
     return {

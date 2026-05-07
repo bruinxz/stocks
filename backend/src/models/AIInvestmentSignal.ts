@@ -3,6 +3,7 @@ import { Table, Column, Model, DataType, CreatedAt, UpdatedAt } from 'sequelize-
 export enum AISignalSourceType {
   DAILY_SCREENER = 'daily_screener',
   TRADING_AGENTS = 'tradingagents',
+  QUANT_RECOMMENDATION = 'quant_recommendation',
   MANUAL_ANALYSIS = 'manual_analysis',
 }
 
@@ -47,7 +48,8 @@ export class AIInvestmentSignal extends Model {
     type: DataType.STRING(50),
     allowNull: false,
     field: 'source_type',
-    comment: '信号来源类型：daily_screener / tradingagents / manual_analysis',
+    comment:
+      '信号来源类型：daily_screener / tradingagents / quant_recommendation / manual_analysis',
   })
   declare source_type: string;
 
