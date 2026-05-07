@@ -317,7 +317,7 @@ export class DataSyncService {
    * @param start_date 开始日期，格式：'2020-01-01'
    * @param end_date 结束日期，格式：'2023-12-31'
    */
-  async syncStockHistory(symbol: string, start_date: string, end_date: string): Promise<number> {
+  async syncStockHistory(symbol: string, start_date: string, end_date: string, dataSource = 'auto'): Promise<number> {
     const normalizedSymbol = normalizeSymbol(symbol);
     try {
       logger.info(
@@ -352,7 +352,8 @@ export class DataSyncService {
         validStartDate,
         validEndDate,
         'd',
-        '2' // 默认使用前复权
+        '2', // 默认使用前复权
+        dataSource
       );
 
       logger.info(
@@ -489,7 +490,8 @@ export class DataSyncService {
       totalCount: number,
       currentBatchInserted: number,
       completedBatchSymbols: string[]
-    ) => void | Promise<void>
+    ) => void | Promise<void>,
+    dataSource = 'auto'
   ): Promise<{ [symbol: string]: number }> {
     const normalizedSymbols = normalizeSymbols(symbols);
     const results: { [symbol: string]: number } = {};
@@ -498,7 +500,7 @@ export class DataSyncService {
     for (let i = 0; i < totalCount; i += batchSize) {
       const batch = normalizedSymbols.slice(i, i + batchSize);
       const promises = batch.map(symbol =>
-        this.syncStockHistory(symbol, start_date, end_date)
+        this.syncStockHistory(symbol, start_date, end_date, dataSource)
           .then(count => {
             results[symbol] = count;
             return { symbol, count };

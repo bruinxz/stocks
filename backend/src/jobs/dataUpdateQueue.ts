@@ -17,7 +17,7 @@ export interface DataUpdateJobData {
   syncAllStocks?: boolean; // 同步所有股票
   start_date?: string; // 同步开始日期 YYYY-MM-DD
   end_date?: string; // 同步结束日期 YYYY-MM-DD
-  dataSource?: 'akshare'; // 数据源，目前只支持akshare
+  dataSource?: 'auto' | 'tushare' | 'baostock' | 'akshare' | 'eastmoney' | 'sina'; // 数据源选择，默认auto自动fallback
   concurrency?: number; // 并发数量（批次大小）
   completedSymbols?: string[]; // 记录已完成的股票列表（用于断点续传）
   totalInserted?: number; // 记录已插入的条数（用于断点续传）

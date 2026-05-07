@@ -5,6 +5,7 @@ import { DailyBar } from '../../models/DailyBar';
 import { DataUpdateLog, UpdateType, UpdateStatus } from '../../models/DataUpdateLog';
 import { DataService } from '../../data/services/DataService';
 import { DataSyncService } from '../../data/services/DataSyncService';
+import { DataSourceHealthService } from '../../data/services/DataSourceHealthService';
 import { dataUpdateQueue } from '../../jobs/dataUpdateQueue';
 import { dataUpdateWorker } from '../../jobs/dataUpdateWorker';
 import { redisLock, LockKeys } from '../../utils/redisLock';
@@ -1103,6 +1104,14 @@ export class MarketController {
         });
       }
 
+      const validDataSources = ['auto', 'tushare', 'baostock', 'akshare', 'eastmoney', 'sina'];
+      if (dataSource && !validDataSources.includes(dataSource)) {
+        return res.status(400).json({
+          success: false,
+          error: `dataSource必须是以下值之一: ${validDataSources.join(', ')}`,
+        });
+      }
+
       // 添加任务到队列
       const job = await dataUpdateQueue.add(
         'bulk_sync_custom',
@@ -1271,6 +1280,59 @@ export class MarketController {
   };
 
   /**
+   * 获取数据源健康状态
+   */
+  getDataSourceHealth = async (req: Request, res: Response): Promise<void> => {
+    try {
+      if (req.query.refresh === 'true') {
+        await DataSourceHealthService.refreshExternalProviderHealth();
+      }
+
+      const providers = await DataSourceHealthService.getHealthSnapshots();
+      const enabledProviders = providers.filter((provider: any) => provider.is_enabled);
+      const healthyProviders = enabledProviders.filter((provider: any) => provider.status === 'healthy');
+      const degradedProviders = enabledProviders.filter((provider: any) => provider.status === 'degraded');
+      const unhealthyProviders = enabledProviders.filter((provider: any) => provider.status === 'unhealthy');
+      const disabledProviders = providers.filter((provider: any) => !provider.is_enabled || provider.status === 'disabled');
+
+      const avgHealthScore = enabledProviders.length > 0
+        ? Number((enabledProviders.reduce((sum: number, provider: any) => sum + Number(provider.health_score || 0), 0) / enabledProviders.length).toFixed(2))
+        : 0;
+
+      const status = unhealthyProviders.length > 0
+        ? 'unhealthy'
+        : degradedProviders.length > 0 || healthyProviders.length === 0
+          ? 'degraded'
+          : 'healthy';
+
+      res.json({
+        success: true,
+        data: {
+          status,
+          timestamp: new Date().toISOString(),
+          summary: {
+            total_providers: providers.length,
+            enabled_providers: enabledProviders.length,
+            healthy_providers: healthyProviders.length,
+            degraded_providers: degradedProviders.length,
+            unhealthy_providers: unhealthyProviders.length,
+            disabled_providers: disabledProviders.length,
+            avg_health_score: avgHealthScore,
+          },
+          providers,
+        },
+      });
+    } catch (error: any) {
+      logger.error('获取数据源健康状态错误:', error);
+      res.status(500).json({
+        success: false,
+        error: '获取数据源健康状态失败',
+        details: error.message,
+      });
+    }
+  };
+
+  /**
    * 系统健康检查
    */
   healthCheck = async (req: Request, res: Response): Promise<void> => {
@@ -1334,6 +1396,38 @@ export class MarketController {
           type: 'Bull Queue',
           connected: false,
           error: queueError.message,
+        };
+        healthInfo.status = 'degraded';
+      }
+
+      // 检查数据源健康状态
+      try {
+        const dataSourceHealth = await DataSourceHealthService.getHealthSnapshots();
+        const enabledProviders = dataSourceHealth.filter((provider: any) => provider.is_enabled);
+        const unhealthyCount = enabledProviders.filter((provider: any) => provider.status === 'unhealthy').length;
+        const degradedCount = enabledProviders.filter((provider: any) => provider.status === 'degraded').length;
+        const avgScore = enabledProviders.length > 0
+          ? enabledProviders.reduce((sum: number, provider: any) => sum + Number(provider.health_score || 0), 0) / enabledProviders.length
+          : 0;
+
+        healthInfo.services.dataSource = {
+          status: unhealthyCount > 0 ? 'unhealthy' : degradedCount > 0 || avgScore < 50 ? 'degraded' : 'healthy',
+          type: 'Market Data Providers',
+          provider_count: dataSourceHealth.length,
+          enabled_count: enabledProviders.length,
+          unhealthy_count: unhealthyCount,
+          degraded_count: degradedCount,
+          avg_health_score: Number(avgScore.toFixed(2)),
+        };
+
+        if (healthInfo.services.dataSource.status !== 'healthy') {
+          healthInfo.status = 'degraded';
+        }
+      } catch (dataSourceError: any) {
+        healthInfo.services.dataSource = {
+          status: 'unhealthy',
+          type: 'Market Data Providers',
+          error: dataSourceError.message,
         };
         healthInfo.status = 'degraded';
       }

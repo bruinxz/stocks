@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Card,
   Table,
   Button,
+  Statistic,
   Space,
   Tag,
   Row,
@@ -34,9 +35,7 @@ import {
   DashboardOutlined,
   DatabaseOutlined,
   ApiOutlined,
-  CloudSyncOutlined,
-  CodeOutlined,
-  FileTextOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import {
@@ -124,6 +123,41 @@ interface SystemHealth {
   dataSource: boolean;
 }
 
+interface DataSourceProviderHealth {
+  id?: number | null;
+  provider_name: string;
+  provider_label: string;
+  provider_type: string;
+  status: 'healthy' | 'degraded' | 'unhealthy' | 'disabled' | 'unknown' | string;
+  priority: number;
+  is_enabled: boolean;
+  supported_features: string[];
+  health_score: number;
+  success_count: number;
+  failure_count: number;
+  consecutive_failures: number;
+  last_success_at?: string | null;
+  last_failure_at?: string | null;
+  last_latency_ms?: number | null;
+  last_checked_at?: string | null;
+  last_error?: string | null;
+  metadata?: Record<string, any>;
+}
+
+interface DataSourceHealthResponse {
+  status: string;
+  summary: {
+    total_providers: number;
+    enabled_providers: number;
+    healthy_providers: number;
+    degraded_providers: number;
+    unhealthy_providers: number;
+    disabled_providers: number;
+    avg_health_score: number;
+  };
+  providers: DataSourceProviderHealth[];
+}
+
 const DataUpdateStatus: React.FC = () => {
   const [queueStatus, setQueueStatus] = useState<QueueStatus>({
     waiting: 0,
@@ -147,6 +181,8 @@ const DataUpdateStatus: React.FC = () => {
     queue: true,
     dataSource: true,
   });
+
+  const [dataSourceHealth, setDataSourceHealth] = useState<DataSourceHealthResponse | null>(null);
 
   const [loading, setLoading] = useState({
     queue: false,
@@ -182,7 +218,7 @@ const DataUpdateStatus: React.FC = () => {
     syncAllStocks: false,
     start_date: '',
     end_date: '',
-    dataSource: 'akshare',
+    dataSource: 'auto',
     concurrency: 10,
   });
   const [stockOptions, setStockOptions] = useState<{ label: string; value: string }[]>([]);
@@ -231,16 +267,32 @@ const DataUpdateStatus: React.FC = () => {
       }
 
       // 获取系统健康状态
-      const healthResponse = await api.get('/market/health');
+      const [healthResponse, dataSourceHealthResponse] = await Promise.all([
+        api.get('/market/health'),
+        api.get('/market/data-sources/health'),
+      ]);
+      const nextSystemHealth = {
+        redis: true,
+        database: true,
+        queue: true,
+        dataSource: true,
+      };
+
       if (healthResponse.data.success) {
         const healthData = healthResponse.data.data;
-        setSystemHealth({
-          redis: healthData.services.redisLock?.status === 'healthy',
-          database: healthData.services.database?.status === 'healthy',
-          queue: healthData.services.dataUpdateQueue?.status === 'healthy',
-          dataSource: true, // 数据源健康状态需要单独检查
-        });
+        nextSystemHealth.redis = healthData.services.redisLock?.status === 'healthy';
+        nextSystemHealth.database = healthData.services.database?.status === 'healthy';
+        nextSystemHealth.queue = healthData.services.dataUpdateQueue?.status === 'healthy';
+        nextSystemHealth.dataSource = healthData.services.dataSource?.status !== 'unhealthy';
       }
+
+      if (dataSourceHealthResponse.data.success) {
+        const healthData = dataSourceHealthResponse.data.data as DataSourceHealthResponse;
+        setDataSourceHealth(healthData);
+        nextSystemHealth.dataSource = healthData.status !== 'unhealthy';
+      }
+
+      setSystemHealth(nextSystemHealth);
     } catch (error: any) {
       message.error('获取数据失败: ' + error.message);
     } finally {
@@ -344,7 +396,7 @@ const DataUpdateStatus: React.FC = () => {
           syncAllStocks: false,
           start_date: '',
           end_date: '',
-          dataSource: 'akshare',
+          dataSource: 'auto',
           concurrency: 10,
         });
         fetchAllData();
@@ -765,6 +817,28 @@ const DataUpdateStatus: React.FC = () => {
     },
   ];
 
+  const getProviderStatusConfig = (status: string) => {
+    const statusMap: Record<string, { label: string; color: string; tagClass: string }> = {
+      healthy: { label: '健康', color: '#16a34a', tagClass: 'tag-success' },
+      degraded: { label: '降级', color: '#ea580c', tagClass: 'tag-warning' },
+      unhealthy: { label: '异常', color: '#dc2626', tagClass: 'tag-error' },
+      disabled: { label: '未启用', color: '#64748b', tagClass: 'tag-default' },
+      unknown: { label: '未知', color: '#7c3aed', tagClass: 'tag-default' },
+    };
+    return statusMap[status] || { label: status, color: '#64748b', tagClass: 'tag-default' };
+  };
+
+  const featureLabelMap: Record<string, string> = {
+    stock_list: '股票列表',
+    history_k: '历史K线',
+    stock_basic: '个股基础',
+    index_constituents: '指数成分',
+    trade_calendar: '交易日历',
+    realtime_quote: '实时行情',
+    intraday_bar: '日内K线',
+    health_probe: '健康探测',
+  };
+
   const renderHealthCard = () => (
     <Card className="modern-card" variant="borderless" title="系统健康">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -800,6 +874,164 @@ const DataUpdateStatus: React.FC = () => {
       </div>
     </Card>
   );
+
+  const renderDataSourceCard = () => {
+    const providers = dataSourceHealth?.providers || [];
+    const activeProviders = providers.filter(provider => provider.is_enabled);
+    const bestProvider = [...activeProviders].sort(
+      (a, b) => Number(b.health_score || 0) - Number(a.health_score || 0)
+    )[0];
+    const summary = dataSourceHealth?.summary;
+
+    const sourceColumns: ColumnsType<DataSourceProviderHealth> = [
+      {
+        title: '数据源',
+        dataIndex: 'provider_label',
+        key: 'provider_label',
+        width: 130,
+        render: (_, record) => (
+          <div>
+            <div style={{ fontWeight: 700, color: '#111827' }}>{record.provider_label}</div>
+            <Text type="secondary" style={{ fontSize: 11 }}>
+              {record.provider_name} · P{record.priority}
+            </Text>
+          </div>
+        ),
+      },
+      {
+        title: '状态',
+        dataIndex: 'status',
+        key: 'status',
+        width: 92,
+        render: status => {
+          const config = getProviderStatusConfig(status);
+          return <Tag className={`modern-tag ${config.tagClass}`}>{config.label}</Tag>;
+        },
+      },
+      {
+        title: '健康分',
+        dataIndex: 'health_score',
+        key: 'health_score',
+        width: 130,
+        render: score => (
+          <Progress
+            percent={Math.round(Number(score || 0))}
+            size="small"
+            strokeColor={
+              Number(score || 0) >= 75
+                ? '#16a34a'
+                : Number(score || 0) >= 45
+                ? '#ea580c'
+                : '#dc2626'
+            }
+          />
+        ),
+      },
+      {
+        title: '能力',
+        dataIndex: 'supported_features',
+        key: 'supported_features',
+        ellipsis: true,
+        render: features => (
+          <Space size={[4, 4]} wrap>
+            {(features || []).slice(0, 3).map((feature: string) => (
+              <Tag key={feature} style={{ margin: 0, fontSize: 11 }}>
+                {featureLabelMap[feature] || feature}
+              </Tag>
+            ))}
+            {(features || []).length > 3 && (
+              <Tag style={{ margin: 0, fontSize: 11 }}>+{features.length - 3}</Tag>
+            )}
+          </Space>
+        ),
+      },
+      {
+        title: '最近检查',
+        dataIndex: 'last_checked_at',
+        key: 'last_checked_at',
+        width: 150,
+        render: time => (time ? dayjs(time).format('MM-DD HH:mm:ss') : '--'),
+      },
+      {
+        title: '错误',
+        dataIndex: 'last_error',
+        key: 'last_error',
+        width: 180,
+        ellipsis: true,
+        render: error =>
+          error ? (
+            <Tooltip title={error}>
+              <Text type="danger" style={{ fontSize: 12 }}>
+                {String(error).substring(0, 24)}...
+              </Text>
+            </Tooltip>
+          ) : (
+            <Text type="secondary">--</Text>
+          ),
+      },
+    ];
+
+    return (
+      <Card
+        className="modern-card"
+        variant="borderless"
+        title="数据源韧性"
+        style={{ marginTop: 12 }}
+        extra={
+          <Button
+            size="small"
+            icon={<ReloadOutlined />}
+            onClick={handleRefresh}
+            loading={loading.health}
+          >
+            刷新
+          </Button>
+        }
+      >
+        <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
+          <Col xs={12} md={6}>
+            <Statistic
+              title="综合状态"
+              value={getProviderStatusConfig(dataSourceHealth?.status || 'unknown').label}
+            />
+          </Col>
+          <Col xs={12} md={6}>
+            <Statistic
+              title="启用源"
+              value={summary?.enabled_providers || 0}
+              suffix={`/ ${summary?.total_providers || 0}`}
+            />
+          </Col>
+          <Col xs={12} md={6}>
+            <Statistic title="平均健康分" value={summary?.avg_health_score || 0} precision={1} />
+          </Col>
+          <Col xs={12} md={6}>
+            <Statistic title="优先可用" value={bestProvider?.provider_label || '--'} />
+          </Col>
+        </Row>
+
+        <Alert
+          type={dataSourceHealth?.status === 'healthy' ? 'success' : 'warning'}
+          showIcon
+          icon={<ThunderboltOutlined />}
+          message="自动 fallback 已启用"
+          description="历史K线会按 Tushare/Baostock/AKShare/东方财富/新浪 的可用状态自动降级；未配置 token 或未安装 Python 包的数据源会显示为未启用，不会阻断同步任务。"
+          style={{ marginBottom: 12 }}
+        />
+
+        <Table
+          columns={sourceColumns}
+          dataSource={providers}
+          rowKey="provider_name"
+          size="small"
+          pagination={false}
+          loading={loading.health}
+          scroll={{ x: 900 }}
+          locale={{ emptyText: <Empty description="暂无数据源健康记录" /> }}
+        />
+      </Card>
+    );
+  };
 
   const renderQueueCard = () => (
     <Card className="modern-card" variant="borderless" title="队列状态">
@@ -951,7 +1183,14 @@ const DataUpdateStatus: React.FC = () => {
       { label: '北京交易所 (BJ)', value: 'BJ' },
     ];
 
-    const dataSourceOptions = [{ label: 'AKShare (推荐)', value: 'akshare' }];
+    const dataSourceOptions = [
+      { label: '自动 fallback (推荐)', value: 'auto' },
+      { label: 'Tushare Pro', value: 'tushare' },
+      { label: 'Baostock', value: 'baostock' },
+      { label: 'AKShare', value: 'akshare' },
+      { label: '东方财富', value: 'eastmoney' },
+      { label: '新浪财经', value: 'sina' },
+    ];
 
     return (
       <Modal
@@ -1065,7 +1304,7 @@ const DataUpdateStatus: React.FC = () => {
                 options={dataSourceOptions}
                 value={bulkSyncForm.dataSource}
                 onChange={e => handleBulkSyncFormChange('dataSource', e.target.value)}
-                style={{ marginLeft: 16 }}
+                style={{ marginLeft: 16, display: 'flex', flexDirection: 'column', gap: 8 }}
               />
             </Col>
             <Col span={12}>
@@ -1233,6 +1472,7 @@ const DataUpdateStatus: React.FC = () => {
         {/* 右侧：详细信息和图表 */}
         <Col xs={24} md={14} lg={17}>
           {renderStatsCard()}
+          {renderDataSourceCard()}
 
           <Card
             className="modern-card"

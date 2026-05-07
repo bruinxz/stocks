@@ -162,6 +162,18 @@ async function initializeApp() {
         } catch (portfolioSyncError) {
           console.warn('Failed to sync PortfolioSimulation table:', portfolioSyncError.message);
         }
+
+        // 确保数据源健康状态表可独立创建。
+        try {
+          console.log('Attempting to sync DataSourceHealth table separately...');
+          const DataSourceHealthModel = sequelize.models.DataSourceHealth;
+          if (DataSourceHealthModel) {
+            await DataSourceHealthModel.sync();
+            console.log('DataSourceHealth table synced successfully');
+          }
+        } catch (dataSourceHealthSyncError) {
+          console.warn('Failed to sync DataSourceHealth table:', dataSourceHealthSyncError.message);
+        }
       }
     }
 

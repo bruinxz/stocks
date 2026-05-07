@@ -614,7 +614,7 @@ router.post('/manual-sync', marketController.triggerManualSync);
  *                 description: 同步结束日期（YYYY-MM-DD），默认今天
  *               dataSource:
  *                 type: string
- *                 enum: [akshare]
+ *                 enum: [auto, tushare, baostock, akshare, eastmoney, sina]
  *                 default: akshare
  *                 description: 数据源（目前只支持akshare）
  *               concurrency:
@@ -861,6 +861,7 @@ router.post('/queue/:jobId/retry', marketController.retryJob as any);
  *         description: 健康检查失败
  */
 router.get('/health', marketController.healthCheck as any);
+router.get('/data-sources/health', marketController.getDataSourceHealth as any);
 
 /**
  * @swagger

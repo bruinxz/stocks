@@ -506,7 +506,7 @@ export class DataUpdateWorker {
       syncAllStocks,
       start_date,
       end_date,
-      dataSource = 'akshare',
+      dataSource = 'auto',
       concurrency = 2, // 默认将并发数降为 2，避免同时启动过多 Python 进程导致小服务器 CPU/内存 爆满
       user_id,
     } = job.data;
@@ -647,7 +647,8 @@ export class DataUpdateWorker {
           const bullProgress =
             20 + Math.floor((overallProcessedCount / totalCountForProgress) * 79);
           await job.progress(bullProgress);
-        }
+        },
+        dataSource
       );
 
       // 统计结果

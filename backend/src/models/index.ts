@@ -16,3 +16,4 @@ export * from './PaperTradingSnapshot';
 export * from './RiskAlert';
 export * from './TradingJournal';
 export * from './PortfolioSimulation';
+export * from './DataSourceHealth';

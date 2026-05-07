@@ -15,6 +15,19 @@ export interface ValidationResult {
 }
 
 export class DataValidator {
+  private toNumber(value: any): number | undefined {
+    if (value === undefined || value === null || value === '') {
+      return undefined;
+    }
+
+    const num = Number(value);
+    return Number.isFinite(num) ? num : undefined;
+  }
+
+  private toDateKey(date: Date): string {
+    return date.toISOString().split('T')[0];
+  }
+
   /**
    * 验证单条日线数据
    */
@@ -27,78 +40,82 @@ export class DataValidator {
       errors.push('时间字段缺失');
     }
 
-    if (bar.open === undefined || bar.open === null) {
-      errors.push('开盘价缺失');
-    } else if (bar.open <= 0) {
+    const open = this.toNumber(bar.open);
+    const high = this.toNumber(bar.high);
+    const low = this.toNumber(bar.low);
+    const close = this.toNumber(bar.close);
+    const volume = this.toNumber(bar.volume);
+
+    if (open === undefined) {
+      errors.push('开盘价缺失或非数字');
+    } else if (open <= 0) {
       warnings.push('开盘价为非正数');
     }
 
-    if (bar.high === undefined || bar.high === null) {
-      errors.push('最高价缺失');
-    } else if (bar.high <= 0) {
+    if (high === undefined) {
+      errors.push('最高价缺失或非数字');
+    } else if (high <= 0) {
       warnings.push('最高价为非正数');
     }
 
-    if (bar.low === undefined || bar.low === null) {
-      errors.push('最低价缺失');
-    } else if (bar.low <= 0) {
+    if (low === undefined) {
+      errors.push('最低价缺失或非数字');
+    } else if (low <= 0) {
       warnings.push('最低价为非正数');
     }
 
-    if (bar.close === undefined || bar.close === null) {
-      errors.push('收盘价缺失');
-    } else if (bar.close <= 0) {
+    if (close === undefined) {
+      errors.push('收盘价缺失或非数字');
+    } else if (close <= 0) {
       warnings.push('收盘价为非正数');
     }
 
-    if (bar.volume === undefined || bar.volume === null) {
-      errors.push('成交量缺失');
-    } else if (bar.volume < 0) {
+    if (volume === undefined) {
+      errors.push('成交量缺失或非数字');
+    } else if (volume < 0) {
       warnings.push('成交量为负数');
     }
 
     // 价格逻辑验证
-    if (bar.high !== undefined && bar.low !== undefined && bar.high < bar.low) {
+    if (high !== undefined && low !== undefined && high < low) {
       errors.push('最高价低于最低价');
     }
 
-    if (bar.high !== undefined && bar.open !== undefined && bar.high < bar.open) {
+    if (high !== undefined && open !== undefined && high < open) {
       errors.push('最高价低于开盘价');
     }
 
-    if (bar.low !== undefined && bar.open !== undefined && bar.low > bar.open) {
+    if (low !== undefined && open !== undefined && low > open) {
       errors.push('最低价高于开盘价');
     }
 
-    if (bar.high !== undefined && bar.close !== undefined && bar.high < bar.close) {
+    if (high !== undefined && close !== undefined && high < close) {
       errors.push('最高价低于收盘价');
     }
 
-    if (bar.low !== undefined && bar.close !== undefined && bar.low > bar.close) {
+    if (low !== undefined && close !== undefined && low > close) {
       errors.push('最低价高于收盘价');
     }
 
-    // 涨跌幅验证（如果存在）
-    if (bar.change_percent !== undefined) {
-      if (Math.abs(bar.change_percent) > 50) {
-        warnings.push(`涨跌幅异常: ${bar.change_percent}%`);
-      }
+    // A股日涨跌幅通常在 10%-30% 内，超过 40% 极可能是复权/数据源异常。
+    const changePercent = this.toNumber(bar.change_percent);
+    if (changePercent !== undefined && Math.abs(changePercent) > 40) {
+      warnings.push(`涨跌幅异常: ${changePercent}%`);
     }
 
-    // 换手率验证
-    if (bar.turnover_rate !== undefined) {
-      if (bar.turnover_rate < 0 || bar.turnover_rate > 100) {
-        warnings.push(`换手率异常: ${bar.turnover_rate}%`);
-      }
+    const turnoverRate = this.toNumber(bar.turnover_rate);
+    if (turnoverRate !== undefined && (turnoverRate < 0 || turnoverRate > 100)) {
+      warnings.push(`换手率异常: ${turnoverRate}%`);
     }
 
-    // PE/PB验证
-    if (bar.pe !== undefined && (bar.pe < 0 || bar.pe > 1000)) {
-      warnings.push(`市盈率异常: ${bar.pe}`);
+    const pe = this.toNumber(bar.pe);
+    if (pe !== undefined && (pe < 0 || pe > 1000)) {
+      warnings.push(`市盈率异常: ${pe}`);
     }
 
-    if (bar.pb !== undefined && (bar.pb < 0 || bar.pb > 100)) {
-      warnings.push(`市净率异常: ${bar.pb}`);
+    const pb = this.toNumber(bar.pb);
+    if (pb !== undefined && (pb < 0 || pb > 100)) {
+      warnings.push(`市净率异常: ${pb}`);
     }
 
     return {
@@ -164,8 +181,18 @@ export class DataValidator {
     const invalid: { bar: Partial<DailyBar>; errors: string[] }[] = [];
     const warnings: { bar: Partial<DailyBar>; warnings: string[] }[] = [];
 
+    const seenDates = new Set<string>();
+
     for (const bar of bars) {
       const result = this.validateDailyBar(bar);
+      const barDate = bar.time ? this.toDateKey(new Date(bar.time)) : '';
+
+      if (barDate && seenDates.has(barDate)) {
+        result.warnings.push(`重复交易日数据: ${barDate}`);
+      } else if (barDate) {
+        seenDates.add(barDate);
+      }
+
       if (result.isValid) {
         valid.push(bar);
         if (result.warnings.length > 0) {
@@ -245,13 +272,14 @@ export class DataValidator {
     const duplicates: Date[] = [];
 
     let missingDays = 0;
+    dateSet.add(this.toDateKey(sortedBars[0].time));
 
     for (let i = 1; i < sortedBars.length; i++) {
       const prevDate = sortedBars[i - 1].time;
       const currDate = sortedBars[i].time;
 
       // 检查重复
-      const dateStr = currDate.toISOString().split('T')[0];
+      const dateStr = this.toDateKey(currDate);
       if (dateSet.has(dateStr)) {
         duplicates.push(currDate);
       } else {
@@ -262,8 +290,8 @@ export class DataValidator {
       const diffTime = currDate.getTime() - prevDate.getTime();
       const diffDays = diffTime / (1000 * 60 * 60 * 24);
 
-      // 如果差大于1天，则有间隔
-      if (diffDays > 1) {
+      // A股日线允许周末/法定节假日造成 2-3 天间隔，超过 3 天再标记为疑似缺口。
+      if (diffDays > 3) {
         const gapStart = new Date(prevDate);
         gapStart.setDate(gapStart.getDate() + 1);
         const gapEnd = new Date(currDate);

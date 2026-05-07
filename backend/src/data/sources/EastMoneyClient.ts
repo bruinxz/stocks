@@ -1,5 +1,6 @@
 import axios, { AxiosInstance } from 'axios';
 import { logger } from '../../utils/logger';
+import { normalizeSymbol } from '../../utils/stockSymbol';
 
 export interface StockBasicInfo {
   code: string; // 股票代码，如 'sh.600000'
@@ -74,6 +75,10 @@ export class EastMoneyClient {
     );
   }
 
+  private unwrapResponse(response: any): any {
+    return response?.data?.rc !== undefined ? response.data : response;
+  }
+
   /**
    * 获取所有股票列表
    */
@@ -84,15 +89,17 @@ export class EastMoneyClient {
       // 使用字符串拼接避免 axios 将 + 号进行 URL 编码 (%2B) 导致 rc=102 错误
       const shUrl = `/api/qt/clist/get?pn=1&pz=10000&po=1&np=1&fs=m:1+t:2,m:1+t:23&fields=f12,f13,f14,f118,f26`;
       const shResponse = await this.client.get(shUrl);
+      const shData = this.unwrapResponse(shResponse);
 
       const szUrl = `/api/qt/clist/get?pn=1&pz=10000&po=1&np=1&fs=m:0+t:6,m:0+t:80&fields=f12,f13,f14,f118,f26`;
       const szResponse = await this.client.get(szUrl);
+      const szData = this.unwrapResponse(szResponse);
 
       const stocks: StockBasicInfo[] = [];
 
       // 处理上海股票
-      if (shResponse.data.data && shResponse.data.data.diff) {
-        for (const item of shResponse.data.data.diff) {
+      if (shData.data && shData.data.diff) {
+        for (const item of shData.data.diff) {
           stocks.push({
             code: `sh.${item.f12}`,
             code_name: item.f14,
@@ -104,8 +111,8 @@ export class EastMoneyClient {
       }
 
       // 处理深圳股票
-      if (szResponse.data.data && szResponse.data.data.diff) {
-        for (const item of szResponse.data.data.diff) {
+      if (szData.data && szData.data.diff) {
+        for (const item of szData.data.diff) {
           stocks.push({
             code: `sz.${item.f12}`,
             code_name: item.f14,
@@ -125,9 +132,8 @@ export class EastMoneyClient {
   }
 
   /**
-   * 查询股票日线数据（通过新浪财经接口）
-   * 注意：东方财富的历史K线接口较复杂，这里暂不实现
-   * 实际使用时可以组合SinaFinanceClient
+   * 查询股票历史K线数据
+   * 东方财富接口返回格式：日期,开盘,收盘,最高,最低,成交量,成交额,振幅,涨跌幅,涨跌额,换手率
    */
   async queryHistoryKData(
     code: string,
@@ -136,10 +142,83 @@ export class EastMoneyClient {
     frequency: 'd' | 'w' | 'm' = 'd',
     adjustflag: '1' | '2' | '3' = '3'
   ): Promise<DailyBar[]> {
-    // 东方财富的历史K线接口参数复杂，这里返回空数组
-    // 实际实现应该使用SinaFinanceClient
-    logger.warn('EastMoneyClient.queryHistoryKData not implemented, use SinaFinanceClient instead');
-    return [];
+    try {
+      const normalizedCode = normalizeSymbol(code);
+      const { market, stockCode } = this.parseSecId(normalizedCode);
+      const kltMap: Record<string, number> = { d: 101, w: 102, m: 103 };
+      // 东方财富 fqt: 0=不复权, 1=前复权, 2=后复权；项目 adjustflag: 1=后复权, 2=前复权, 3=不复权
+      const fqtMap: Record<string, number> = { '1': 2, '2': 1, '3': 0 };
+
+      const response = await this.client.get('/api/qt/stock/kline/get', {
+        baseURL: 'https://push2his.eastmoney.com',
+        params: {
+          secid: `${market}.${stockCode}`,
+          klt: kltMap[frequency] || 101,
+          fqt: fqtMap[adjustflag] ?? 0,
+          beg: start_date.replace(/-/g, ''),
+          end: end_date.replace(/-/g, ''),
+          fields1: 'f1,f2,f3,f4,f5,f6',
+          fields2: 'f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61',
+        },
+      });
+
+      const responseData = this.unwrapResponse(response);
+      const klines = responseData.data?.klines || [];
+      if (!Array.isArray(klines) || klines.length === 0) {
+        return [];
+      }
+
+      const bars: DailyBar[] = klines
+        .map((line: string) => {
+          const [date, open, close, high, low, volume, amount, _amplitude, pctChg, _change, turn] =
+            String(line).split(',');
+          return {
+            date,
+            code: normalizedCode,
+            open: parseFloat(open) || 0,
+            high: parseFloat(high) || 0,
+            low: parseFloat(low) || 0,
+            close: parseFloat(close) || 0,
+            volume: parseFloat(volume) * 100 || 0, // 东方财富成交量单位为手，统一转换成股
+            amount: parseFloat(amount) || 0,
+            adjustflag: adjustflag === '1' ? 1 : adjustflag === '2' ? 2 : 3,
+            turn: parseFloat(turn) || 0,
+            tradestatus: 1,
+            pctChg: parseFloat(pctChg) || 0,
+            peTTM: 0,
+            psTTM: 0,
+            pcfNcfTTM: 0,
+            pbMRQ: 0,
+          };
+        })
+        .filter(bar => bar.date >= start_date && bar.date <= end_date)
+        .sort((a, b) => a.date.localeCompare(b.date));
+
+      logger.info(`Fetched ${bars.length} daily bars for ${normalizedCode} from EastMoney`);
+      return bars;
+    } catch (error) {
+      logger.error(`Failed to fetch history k data for ${code} from EastMoney:`, error);
+      throw error;
+    }
+  }
+
+  private parseSecId(code: string): { market: string; stockCode: string } {
+    const normalizedCode = normalizeSymbol(code);
+    if (normalizedCode.includes('.')) {
+      const [marketPrefix, stockCode] = normalizedCode.split('.');
+      if (marketPrefix.toLowerCase() === 'sh') {
+        return { market: '1', stockCode };
+      }
+      if (marketPrefix.toLowerCase() === 'bj') {
+        return { market: '0', stockCode };
+      }
+      return { market: '0', stockCode };
+    }
+
+    if (normalizedCode.startsWith('6')) {
+      return { market: '1', stockCode: normalizedCode };
+    }
+    return { market: '0', stockCode: normalizedCode };
   }
 
   /**
@@ -147,16 +226,8 @@ export class EastMoneyClient {
    */
   async queryStockBasic(code: string): Promise<StockBasicInfo | null> {
     try {
-      // 解析市场前缀
-      let market = '1'; // 默认上海
-      let stockCode = code;
-      if (code.startsWith('sh.')) {
-        market = '1';
-        stockCode = code.substring(3);
-      } else if (code.startsWith('sz.')) {
-        market = '0';
-        stockCode = code.substring(3);
-      }
+      const normalizedCode = normalizeSymbol(code);
+      const { market, stockCode } = this.parseSecId(normalizedCode);
 
       const response = await this.client.get('/api/qt/stock/get', {
         params: {
@@ -165,10 +236,11 @@ export class EastMoneyClient {
         },
       });
 
-      if (response.data.data) {
-        const item = response.data.data;
+      const responseData = this.unwrapResponse(response);
+      if (responseData.data) {
+        const item = responseData.data;
         return {
-          code,
+          code: normalizedCode,
           code_name: item.f14 || '',
           ipoDate: item.f26 || '',
           type: 1,
