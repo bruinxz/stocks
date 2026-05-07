@@ -173,6 +173,17 @@ def _patched_request(self, method, url, **kwargs):
 requests.Session.request = _patched_request
 # --------------------------------------------------
 
+
+
+def safe_float_value(val):
+    """Convert pandas/numpy scalar to float, tolerate '-' and nan."""
+    try:
+        if pd.isna(val) or val == '-':
+            return 0.0
+        return float(val)
+    except Exception:
+        return 0.0
+
 def parse_date(date_str: str) -> str:
     """Parse date from YYYY-MM-DD to YYYYMMDD for AKShare"""
     try:
@@ -249,28 +260,19 @@ def get_all_stocks() -> List[Dict[str, Any]]:
                 print(f"Warning: Unknown prefix for code {code}, mapping to sh.{code} as fallback", file=sys.stderr)
                 full_code = f"sh.{code}"
 
-            # 提取实时维度 (可能存在 '-' 或 nan，需要做安全转换)
-            def safe_float(val):
-                try:
-                    if pd.isna(val) or val == '-':
-                        return 0.0
-                    return float(val)
-                except:
-                    return 0.0
-
             stocks.append({
                 "code": full_code,
                 "code_name": name,
                 "ipoDate": ipo_date,
                 "type": 1,  # stock
                 "status": 1,  # listed
-                "totalMarketCap": safe_float(row.get('总市值')),
-                "circulatingMarketCap": safe_float(row.get('流通市值')),
-                "peDynamic": safe_float(row.get('市盈率-动态')),
-                "pb": safe_float(row.get('市净率')),
-                "turnoverRate": safe_float(row.get('换手率')),
-                "price": safe_float(row.get('最新价')),
-                "changePercent": safe_float(row.get('涨跌幅')),
+                "totalMarketCap": safe_float_value(row.get('总市值')),
+                "circulatingMarketCap": safe_float_value(row.get('流通市值')),
+                "peDynamic": safe_float_value(row.get('市盈率-动态')),
+                "pb": safe_float_value(row.get('市净率')),
+                "turnoverRate": safe_float_value(row.get('换手率')),
+                "price": safe_float_value(row.get('最新价')),
+                "changePercent": safe_float_value(row.get('涨跌幅')),
             })
 
         return stocks
@@ -602,31 +604,57 @@ def get_daily_data(code: str, start_date: str, end_date: str, adjust: str = "qfq
         return []
 
 def get_stock_basic(code: str) -> Optional[Dict[str, Any]]:
-    """Get basic information for a stock"""
+    """Get basic information and valuation snapshot for a stock"""
     try:
-        # Extract pure code
         pure_code = code
         if code.startswith('sh.') or code.startswith('sz.') or code.startswith('bj.'):
             pure_code = code.split('.')[1]
 
-        # Get stock basic info
-        # AKShare doesn't have a direct basic info API for single stock
-        # We'll use spot data as fallback
-        stock_df = ak.stock_zh_a_spot()
+        full_code = code
+        if not (code.startswith('sh.') or code.startswith('sz.') or code.startswith('bj.')):
+            if pure_code.startswith('6'):
+                full_code = f"sh.{pure_code}"
+            elif pure_code.startswith(('0', '3')):
+                full_code = f"sz.{pure_code}"
+            elif pure_code.startswith(('8', '4', '9')):
+                full_code = f"bj.{pure_code}"
+            else:
+                full_code = f"sh.{pure_code}"
 
-        # Find the stock
-        stock_row = stock_df[stock_df['代码'] == pure_code]
+        # Prefer EastMoney spot snapshot; it contains price, valuation and market cap fields.
+        stock_df = ak.stock_zh_a_spot_em()
+        stock_row = stock_df[stock_df['代码'].astype(str) == pure_code]
         if stock_row.empty:
             return None
 
         row = stock_row.iloc[0]
+        industry = None
+        try:
+            info_df = ak.stock_individual_info_em(symbol=pure_code)
+            if info_df is not None and not info_df.empty:
+                for _, info_row in info_df.iterrows():
+                    item = str(info_row.get('item', info_row.get('项目', '')))
+                    value = info_row.get('value', info_row.get('值', None))
+                    if item in ['行业', '所属行业'] and pd.notna(value):
+                        industry = str(value)
+                        break
+        except Exception as info_err:
+            print(f"Warning: stock_individual_info_em failed for {pure_code}: {info_err}", file=sys.stderr)
 
         return {
-            "code": code,
-            "code_name": row['名称'],
-            "ipoDate": "2000-01-01",  # Default
+            "code": full_code,
+            "code_name": str(row.get('名称', '')),
+            "ipoDate": "2000-01-01",
             "type": 1,
-            "status": 1
+            "status": 1,
+            "industry": industry,
+            "totalMarketCap": safe_float_value(row.get('总市值')),
+            "circulatingMarketCap": safe_float_value(row.get('流通市值')),
+            "peDynamic": safe_float_value(row.get('市盈率-动态')),
+            "pb": safe_float_value(row.get('市净率')),
+            "turnoverRate": safe_float_value(row.get('换手率')),
+            "price": safe_float_value(row.get('最新价')),
+            "changePercent": safe_float_value(row.get('涨跌幅')),
         }
     except Exception as e:
         print(f"Error getting stock basic for {code}: {e}", file=sys.stderr)

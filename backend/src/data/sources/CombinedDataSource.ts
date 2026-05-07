@@ -197,6 +197,7 @@ export class CombinedDataSource {
       total_market_cap: (stock as any).total_market_cap ?? (stock as any).totalMarketCap,
       circulating_market_cap:
         (stock as any).circulating_market_cap ?? (stock as any).circulatingMarketCap,
+      industry: (stock as any).industry,
       pe_dynamic: (stock as any).pe_dynamic ?? (stock as any).peDynamic,
       turnover_rate: (stock as any).turnover_rate ?? (stock as any).turnoverRate,
       change_percent: (stock as any).change_percent ?? (stock as any).changePercent,
@@ -434,10 +435,10 @@ export class CombinedDataSource {
         )
       );
       if (stockInfo) {
-        return {
+        return this.normalizeStockList([{
           ...stockInfo,
           code: normalizedCode,
-        };
+        }])[0];
       }
       return null;
     } catch (error: any) {

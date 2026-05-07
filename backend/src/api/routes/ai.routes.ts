@@ -3,6 +3,7 @@ import { aiAdvisorController } from '../controllers/AIAdvisorController';
 import { screenerController } from '../controllers/ScreenerController';
 import { aiSignalController } from '../controllers/AISignalController';
 import { quantRecommendationController } from '../controllers/QuantRecommendationController';
+import { stockProfileController } from '../controllers/StockProfileController';
 import { AuthController } from '../controllers/AuthController';
 
 const router = Router();
@@ -48,6 +49,14 @@ router.get('/recommendations', authController.authenticate, quantRecommendationC
  * @access Private
  */
 router.post('/recommendations/analyze', authController.authenticate, quantRecommendationController.submitToTradingAgents);
+
+
+/**
+ * @route POST /api/ai/recommendations/sync-profiles
+ * @desc 为候选推荐批量补全股票画像/估值快照
+ * @access Private
+ */
+router.post('/recommendations/sync-profiles', authController.authenticate, stockProfileController.syncProfiles);
 
 /**
  * @route GET /api/ai/signals

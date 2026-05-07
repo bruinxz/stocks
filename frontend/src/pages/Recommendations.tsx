@@ -87,6 +87,7 @@ const Recommendations: React.FC = () => {
   const [data, setData] = useState<RecommendationResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [analyzeLoading, setAnalyzeLoading] = useState(false);
+  const [profileLoading, setProfileLoading] = useState(false);
   const [style, setStyle] = useState('balanced');
   const [universe, setUniverse] = useState('favorites');
   const [limit, setLimit] = useState(20);
@@ -118,6 +119,44 @@ const Recommendations: React.FC = () => {
     if (list.length === 0) return 0;
     return list.reduce((sum, item) => sum + item.score, 0) / list.length;
   }, [data]);
+
+  const profileQuality = useMemo(() => {
+    const list = data?.recommendations || [];
+    const missingValuation = list.filter(
+      item => !item.metrics?.pe_dynamic && !item.metrics?.pb && !item.metrics?.total_market_cap_yi
+    ).length;
+    const missingIndustry = list.filter(item => !item.industry).length;
+    const total = list.length || 1;
+    return {
+      missingValuation,
+      missingIndustry,
+      valuationCompleteness: ((total - missingValuation) / total) * 100,
+      industryCompleteness: ((total - missingIndustry) / total) * 100,
+    };
+  }, [data]);
+
+  const syncCandidateProfiles = async () => {
+    const candidates = data?.recommendations || [];
+    if (candidates.length === 0) {
+      message.warning('暂无候选标的可补全');
+      return;
+    }
+
+    setProfileLoading(true);
+    try {
+      const response = await api.post('/ai/recommendations/sync-profiles', {
+        symbols: candidates.map(item => item.symbol),
+        limit: candidates.length,
+      });
+      const result = response.data.data;
+      message.success(`画像补全完成：成功 ${result.success}，失败 ${result.failed}`);
+      await fetchRecommendations();
+    } catch (error: any) {
+      message.error(error.response?.data?.message || '补全股票画像失败');
+    } finally {
+      setProfileLoading(false);
+    }
+  };
 
   const submitTopToTradingAgents = async () => {
     if (topItems.length === 0) {
@@ -327,6 +366,9 @@ const Recommendations: React.FC = () => {
             <Button icon={<ReloadOutlined />} onClick={fetchRecommendations} loading={loading}>
               刷新
             </Button>
+            <Button onClick={syncCandidateProfiles} loading={profileLoading}>
+              补全画像
+            </Button>
             <Button
               type="primary"
               icon={<ThunderboltOutlined />}
@@ -344,7 +386,11 @@ const Recommendations: React.FC = () => {
         showIcon
         style={{ marginBottom: 16 }}
         message="推荐逻辑说明"
-        description="该页面使用趋势动量、量能活跃、基础质量、估值安全、风险约束五类因子进行可解释排序。它不是最终买卖建议，而是为 TradingAgents 多智能体深度研报提供更高质量的候选输入。"
+        description={`该页面使用趋势动量、量能活跃、基础质量、估值安全、风险约束五类因子进行可解释排序。当前候选估值完整度 ${profileQuality.valuationCompleteness.toFixed(
+          0
+        )}%，行业完整度 ${profileQuality.industryCompleteness.toFixed(
+          0
+        )}%；如缺失较多，可点击“补全画像”从数据源刷新估值/市值/行业字段。`}
       />
 
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
@@ -376,6 +422,16 @@ const Recommendations: React.FC = () => {
             <Statistic
               title="高分候选"
               value={(data?.recommendations || []).filter(item => item.score >= 70).length}
+            />
+          </Card>
+        </Col>
+        <Col xs={12} md={6}>
+          <Card className="modern-card" variant="borderless">
+            <Statistic
+              title="估值完整度"
+              value={profileQuality.valuationCompleteness}
+              precision={0}
+              suffix="%"
             />
           </Card>
         </Col>

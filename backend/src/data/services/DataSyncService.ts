@@ -312,6 +312,110 @@ export class DataSyncService {
   }
 
   /**
+   * 补全单只股票画像/估值快照，用于推荐因子质量提升。
+   */
+  async syncStockProfile(symbolInput: string): Promise<{ symbol: string; updated: boolean; data: any }> {
+    const symbol = normalizeSymbol(symbolInput);
+    const existingStock = await Stock.findOne({ where: { symbol } });
+    let stockData = await this.dataSource.queryStockBasic(symbol);
+    let source = 'external_profile';
+
+    // 外部画像源偶发不可用时，使用本地最新 K 线兜底刷新价格/涨跌/估值快照。
+    if (!stockData) {
+      const latestBar = existingStock
+        ? await DailyBar.findOne({
+            where: { stock_id: existingStock.id },
+            order: [['time', 'DESC']],
+          })
+        : null;
+
+      if (!existingStock && !latestBar) {
+        throw new Error(`未获取到 ${symbol} 的股票画像数据`);
+      }
+
+      source = 'local_daily_bar_fallback';
+      stockData = {
+        code: symbol,
+        code_name: existingStock?.name || symbol,
+        ipoDate: existingStock?.listing_date
+          ? new Date(existingStock.listing_date).toISOString().split('T')[0]
+          : '2000-01-01',
+        outDate: existingStock?.delisting_date
+          ? new Date(existingStock.delisting_date).toISOString().split('T')[0]
+          : undefined,
+        type: 1,
+        status: existingStock?.is_listed === false ? 0 : 1,
+        industry: existingStock?.industry,
+        total_market_cap: latestBar?.market_cap || existingStock?.total_market_cap,
+        circulating_market_cap: existingStock?.circulating_market_cap,
+        pe_dynamic: latestBar?.pe || existingStock?.pe_dynamic,
+        pb: latestBar?.pb || existingStock?.pb,
+        turnover_rate: latestBar?.turnover_rate || existingStock?.turnover_rate,
+        price: latestBar?.close || existingStock?.price,
+        change_percent: latestBar?.change_percent || existingStock?.change_percent,
+      } as any;
+    }
+
+    const payload: any = {
+      symbol,
+      name: stockData.code_name,
+      listing_date: this.safeParseDate(stockData.ipoDate),
+      delisting_date: this.safeParseDate(stockData.outDate),
+      is_listed: stockData.status === 1,
+      type: this.mapStockType(stockData.type),
+      market: extractMarketFromSymbol(symbol),
+      industry: stockData.industry,
+      total_market_cap: stockData.total_market_cap,
+      circulating_market_cap: stockData.circulating_market_cap,
+      pe_dynamic: stockData.pe_dynamic,
+      pb: stockData.pb,
+      turnover_rate: stockData.turnover_rate,
+      price: stockData.price,
+      change_percent: stockData.change_percent,
+    };
+
+    Object.keys(payload).forEach(key => {
+      if (payload[key] === undefined || payload[key] === null || payload[key] === '') {
+        delete payload[key];
+      }
+    });
+
+    const [, created] = await Stock.upsert(payload, { conflictFields: ['symbol'] });
+    this.recordSyncResult(true, 1);
+    return { symbol, updated: !created, data: { ...stockData, source } };
+  }
+
+  /**
+   * 批量补全股票画像。
+   */
+  async syncStockProfiles(symbols: string[], limit = 30): Promise<{
+    total: number;
+    success: number;
+    failed: number;
+    results: Array<{ symbol: string; success: boolean; error?: string }>;
+  }> {
+    const uniqueSymbols = Array.from(new Set(normalizeSymbols(symbols))).filter(Boolean).slice(0, limit);
+    const results: Array<{ symbol: string; success: boolean; error?: string }> = [];
+
+    for (const symbol of uniqueSymbols) {
+      try {
+        await this.syncStockProfile(symbol);
+        results.push({ symbol, success: true });
+      } catch (error: any) {
+        this.recordError(ErrorCategory.DATA_SOURCE_FETCH, error, { symbol });
+        results.push({ symbol, success: false, error: error.message });
+      }
+    }
+
+    return {
+      total: uniqueSymbols.length,
+      success: results.filter(item => item.success).length,
+      failed: results.filter(item => !item.success).length,
+      results,
+    };
+  }
+
+  /**
    * 同步单只股票的历史数据
    * @param symbol 股票代码
    * @param start_date 开始日期，格式：'2020-01-01'

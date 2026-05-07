@@ -6,6 +6,7 @@ export interface StockBasicInfo {
   code: string; // 股票代码，如 'sh.600000'
   code_name: string; // 股票名称，如 '浦发银行'
   ipoDate: string; // 上市日期
+  industry?: string; // 行业
   outDate?: string; // 退市日期
   type: number; // 类型：1-股票，2-指数，3-其他
   status: number; // 状态：1-上市，0-退市
