@@ -4,6 +4,7 @@ import { logger } from '../../utils/logger';
 import { Stock } from '../../models/Stock';
 import { Op } from 'sequelize';
 import axios from 'axios';
+import { aiInvestmentSignalService } from '../../services/AIInvestmentSignalService';
 
 const TRADING_AGENTS_URL = process.env.TRADING_AGENTS_URL || 'http://47.93.224.109:8000';
 
@@ -58,6 +59,25 @@ export class AIAdvisorController {
       }
 
       const result = await aiAdvisorService.analyzeStock(resolvedTicker, targetDate, isAsync);
+
+      // 同步分析完成后自动归档为可后验验证的 AI 投研信号；异步任务仍由轮询结果后续归档。
+      if (!isAsync && result?.status === 'COMPLETED' && result?.data) {
+        try {
+          const archivedSignal = await aiInvestmentSignalService.archiveTradingAgentsResult({
+            task_id: result.task_id,
+            symbol: resolvedTicker,
+            signal_date: result.target_date,
+            decision: result.data.decision,
+            rationale: result.data.rationale,
+            detail: result.data.detail,
+            source_type: 'tradingagents',
+          });
+          await aiInvestmentSignalService.verifySignalReturns(archivedSignal);
+        } catch (archiveError: any) {
+          logger.warn(`AI 分析结果归档失败: ${archiveError.message}`);
+        }
+      }
+
       res.json({
         success: true,
         data: result,
@@ -76,6 +96,24 @@ export class AIAdvisorController {
       }
 
       const result = await aiAdvisorService.getTaskStatus(taskId);
+
+      if (result?.status === 'COMPLETED' && result?.data) {
+        try {
+          const archivedSignal = await aiInvestmentSignalService.archiveTradingAgentsResult({
+            task_id: result.task_id,
+            symbol: result.ticker,
+            signal_date: result.target_date,
+            decision: result.data.decision,
+            rationale: result.data.rationale,
+            detail: result.data.detail,
+            source_type: 'tradingagents',
+          });
+          await aiInvestmentSignalService.verifySignalReturns(archivedSignal);
+        } catch (archiveError: any) {
+          logger.warn(`AI 异步任务结果归档失败: ${archiveError.message}`);
+        }
+      }
+
       res.json({
         success: true,
         data: result,

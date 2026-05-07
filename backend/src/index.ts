@@ -174,6 +174,18 @@ async function initializeApp() {
         } catch (dataSourceHealthSyncError) {
           console.warn('Failed to sync DataSourceHealth table:', dataSourceHealthSyncError.message);
         }
+
+        // 确保 AI 投研信号归档表可独立创建。
+        try {
+          console.log('Attempting to sync AIInvestmentSignal table separately...');
+          const AIInvestmentSignalModel = sequelize.models.AIInvestmentSignal;
+          if (AIInvestmentSignalModel) {
+            await AIInvestmentSignalModel.sync();
+            console.log('AIInvestmentSignal table synced successfully');
+          }
+        } catch (aiSignalSyncError) {
+          console.warn('Failed to sync AIInvestmentSignal table:', aiSignalSyncError.message);
+        }
       }
     }
 

@@ -7,12 +7,14 @@ import {
   Button,
   Space,
   message,
-  Modal,
   Descriptions,
   Empty,
   Drawer,
+  Statistic,
+  Row,
+  Col,
 } from 'antd';
-import { RocketOutlined, EyeOutlined, SyncOutlined } from '@ant-design/icons';
+import { RocketOutlined, EyeOutlined, SyncOutlined, BarChartOutlined } from '@ant-design/icons';
 import { AreaChart, Area, ResponsiveContainer } from 'recharts';
 import dayjs from 'dayjs';
 import ReactMarkdown from 'react-markdown';
@@ -38,11 +40,43 @@ interface ScreenerRecord {
   recentTrend?: { time: string; close: number }[];
 }
 
+interface AISignalRecord {
+  id: number;
+  source_type: string;
+  source_id: string;
+  symbol: string;
+  name?: string;
+  signal_date: string;
+  decision: string;
+  normalized_decision: string;
+  confidence_score?: number;
+  risk_level?: string;
+  rationale?: string;
+  forward_returns?: {
+    entry_date?: string;
+    entry_price?: number;
+    horizons?: Record<string, { status: string; return_pct?: number; exit_date?: string }>;
+  };
+  verification_status: string;
+}
+
+interface AISignalStats {
+  total_signals: number;
+  by_decision: Record<string, { count: number; avg_confidence_score: number }>;
+  horizon_summary: Record<
+    string,
+    { count: number; avg_return_pct: number; positive_count: number; positive_rate: number }
+  >;
+}
+
 const Screener: React.FC = () => {
   const [data, setData] = useState<ScreenerRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [detailVisible, setDetailVisible] = useState(false);
   const [selectedRecord, setSelectedRecord] = useState<ScreenerRecord | null>(null);
+  const [signals, setSignals] = useState<AISignalRecord[]>([]);
+  const [signalStats, setSignalStats] = useState<AISignalStats | null>(null);
+  const [signalLoading, setSignalLoading] = useState(false);
 
   const fetchScreenerData = async () => {
     setLoading(true);
@@ -58,8 +92,42 @@ const Screener: React.FC = () => {
     }
   };
 
+  const fetchSignalData = async () => {
+    setSignalLoading(true);
+    try {
+      const [signalsResp, statsResp] = await Promise.all([
+        api.get('/ai/signals', { params: { limit: 20 } }),
+        api.get('/ai/signals/stats'),
+      ]);
+      if (signalsResp.data.success) {
+        setSignals(signalsResp.data.data.signals || []);
+      }
+      if (statsResp.data.success) {
+        setSignalStats(statsResp.data.data);
+      }
+    } catch (error) {
+      message.warning('AI 信号表现暂不可用，请先同步信号');
+    } finally {
+      setSignalLoading(false);
+    }
+  };
+
+  const handleSyncSignals = async () => {
+    setSignalLoading(true);
+    try {
+      await api.post('/ai/signals/sync-screeners');
+      message.success('AI 信号已同步并完成收益验证');
+      await fetchSignalData();
+    } catch (error: any) {
+      message.error(error.response?.data?.message || '同步 AI 信号失败');
+    } finally {
+      setSignalLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchScreenerData();
+    fetchSignalData();
   }, []);
 
   const getDecisionColor = (dec: string) => {
@@ -68,6 +136,69 @@ const Screener: React.FC = () => {
     if (dec.toUpperCase().includes('SELL')) return 'red';
     return 'gold';
   };
+
+  const renderReturn = (value?: number) => {
+    if (value === undefined || value === null) return <Text type="secondary">--</Text>;
+    const color = value > 0 ? '#cf1322' : value < 0 ? '#3f8600' : '#64748b';
+    return <Text style={{ color, fontWeight: 700 }}>{value.toFixed(2)}%</Text>;
+  };
+
+  const getHorizonReturn = (signal: AISignalRecord, key: string) => {
+    const item = signal.forward_returns?.horizons?.[key];
+    return item?.status === 'completed' ? Number(item.return_pct) : undefined;
+  };
+
+  const signalColumns = [
+    {
+      title: '信号',
+      key: 'signal',
+      render: (_: any, record: AISignalRecord) => (
+        <Space direction="vertical" size={0}>
+          <Text strong>{record.name || record.symbol}</Text>
+          <Text type="secondary">
+            {record.symbol} · {record.signal_date}
+          </Text>
+        </Space>
+      ),
+    },
+    {
+      title: '建议',
+      dataIndex: 'decision',
+      key: 'decision',
+      render: (text: string) => <Tag color={getDecisionColor(text)}>{text}</Tag>,
+    },
+    {
+      title: '1日',
+      key: 'r1',
+      render: (_: any, record: AISignalRecord) => renderReturn(getHorizonReturn(record, '1d')),
+    },
+    {
+      title: '3日',
+      key: 'r3',
+      render: (_: any, record: AISignalRecord) => renderReturn(getHorizonReturn(record, '3d')),
+    },
+    {
+      title: '5日',
+      key: 'r5',
+      render: (_: any, record: AISignalRecord) => renderReturn(getHorizonReturn(record, '5d')),
+    },
+    {
+      title: '10日',
+      key: 'r10',
+      render: (_: any, record: AISignalRecord) => renderReturn(getHorizonReturn(record, '10d')),
+    },
+    {
+      title: '20日',
+      key: 'r20',
+      render: (_: any, record: AISignalRecord) => renderReturn(getHorizonReturn(record, '20d')),
+    },
+    {
+      title: '验证',
+      dataIndex: 'verification_status',
+      key: 'verification_status',
+      render: (status: string) => <Tag>{status}</Tag>,
+    },
+  ];
 
   const columns = [
     {
@@ -234,7 +365,17 @@ const Screener: React.FC = () => {
             <p className="page-subtitle-modern">基于多智能体深度分析的每日自选股研报汇总</p>
           </div>
           <Space>
-            <Button icon={<SyncOutlined />} onClick={fetchScreenerData} loading={loading}>
+            <Button icon={<BarChartOutlined />} onClick={handleSyncSignals} loading={signalLoading}>
+              同步信号表现
+            </Button>
+            <Button
+              icon={<SyncOutlined />}
+              onClick={() => {
+                fetchScreenerData();
+                fetchSignalData();
+              }}
+              loading={loading || signalLoading}
+            >
               刷新数据
             </Button>
             <Link to="/ai-advisor">
@@ -245,6 +386,67 @@ const Screener: React.FC = () => {
           </Space>
         </div>
       </div>
+
+      <Card className="modern-card" variant="borderless" style={{ marginBottom: 16 }}>
+        <Row gutter={[16, 16]} align="middle">
+          <Col xs={12} md={6}>
+            <Statistic title="归档信号" value={signalStats?.total_signals || 0} />
+          </Col>
+          <Col xs={12} md={6}>
+            <Statistic
+              title="5日平均收益"
+              value={signalStats?.horizon_summary?.['5d']?.avg_return_pct || 0}
+              precision={2}
+              suffix="%"
+              valueStyle={{
+                color:
+                  (signalStats?.horizon_summary?.['5d']?.avg_return_pct || 0) >= 0
+                    ? '#cf1322'
+                    : '#3f8600',
+              }}
+            />
+          </Col>
+          <Col xs={12} md={6}>
+            <Statistic
+              title="10日胜率"
+              value={signalStats?.horizon_summary?.['10d']?.positive_rate || 0}
+              precision={1}
+              suffix="%"
+            />
+          </Col>
+          <Col xs={12} md={6}>
+            <Statistic
+              title="BUY信号数"
+              value={
+                (signalStats?.by_decision?.buy?.count || 0) +
+                (signalStats?.by_decision?.strong_buy?.count || 0)
+              }
+            />
+          </Col>
+        </Row>
+      </Card>
+
+      <Card
+        className="modern-card"
+        variant="borderless"
+        title="AI 建议后验表现"
+        style={{ marginBottom: 16 }}
+        extra={
+          <Button size="small" onClick={fetchSignalData} loading={signalLoading}>
+            刷新表现
+          </Button>
+        }
+      >
+        <Table
+          columns={signalColumns}
+          dataSource={signals}
+          rowKey="id"
+          size="small"
+          loading={signalLoading}
+          pagination={false}
+          locale={{ emptyText: <Empty description="暂无归档信号，点击“同步信号表现”生成" /> }}
+        />
+      </Card>
 
       <Card className="card-modern" bodyStyle={{ padding: 0 }}>
         <Table
@@ -318,11 +520,11 @@ const Screener: React.FC = () => {
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm]}
                   components={{
-                    h1: ({ node, ...props }) => <Title level={2} {...props} />,
-                    h2: ({ node, ...props }) => <Title level={3} {...props} />,
-                    h3: ({ node, ...props }) => <Title level={4} {...props} />,
-                    h4: ({ node, ...props }) => <Title level={5} {...props} />,
-                    p: ({ node, ...props }) => <Paragraph {...props} />,
+                    h1: ({ node: _node, ...props }) => <Title level={2} {...props} />,
+                    h2: ({ node: _node, ...props }) => <Title level={3} {...props} />,
+                    h3: ({ node: _node, ...props }) => <Title level={4} {...props} />,
+                    h4: ({ node: _node, ...props }) => <Title level={5} {...props} />,
+                    p: ({ node: _node, ...props }) => <Paragraph {...props} />,
                   }}
                 >
                   {selectedRecord.detail}

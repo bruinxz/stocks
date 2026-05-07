@@ -4,6 +4,7 @@ import { DailyScreener } from '../../models/DailyScreener';
 import { DailyBar } from '../../models/DailyBar';
 import { Stock } from '../../models/Stock';
 import { logger } from '../../utils/logger';
+import { aiInvestmentSignalService } from '../../services/AIInvestmentSignalService';
 
 export class ScreenerController {
   async getDailyScreener(req: Request, res: Response, next: NextFunction) {
@@ -84,6 +85,13 @@ export class ScreenerController {
           return screener;
         })
       );
+
+      // 轻量同步：列表接口不强制验证收益，避免拖慢页面；前端可调用 /api/ai/signals/sync-screeners 触发完整同步。
+      if (req.query.sync_signals === 'true') {
+        aiInvestmentSignalService.syncFromDailyScreeners().catch(error => {
+          logger.warn(`后台同步 AI 信号失败: ${error.message}`);
+        });
+      }
 
       res.json({
         success: true,

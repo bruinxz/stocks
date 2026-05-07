@@ -17,6 +17,7 @@ import { RiskAlert } from '../models/RiskAlert';
 import { TradingJournal } from '../models/TradingJournal';
 import { PortfolioSimulation } from '../models/PortfolioSimulation';
 import { DataSourceHealth } from '../models/DataSourceHealth';
+import { AIInvestmentSignal } from '../models/AIInvestmentSignal';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -56,6 +57,7 @@ const sequelize = new Sequelize({
     TradingJournal,
     PortfolioSimulation,
     DataSourceHealth,
+    AIInvestmentSignal,
   ],
   logging: process.env.NODE_ENV === 'development' ? console.log : false,
   pool: {

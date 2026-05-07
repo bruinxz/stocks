@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { aiAdvisorController } from '../controllers/AIAdvisorController';
 import { screenerController } from '../controllers/ScreenerController';
+import { aiSignalController } from '../controllers/AISignalController';
 import { AuthController } from '../controllers/AuthController';
 
 const router = Router();
@@ -30,6 +31,35 @@ router.get(
   // authController.authenticate, // EventSource 无法方便传递 Bearer Header，可能需要通过 URL token 验证或者放开
   aiAdvisorController.streamAnalyze
 );
+
+
+/**
+ * @route GET /api/ai/signals
+ * @desc 获取已归档 AI 投研信号及后验收益
+ * @access Private
+ */
+router.get('/signals', authController.authenticate, aiSignalController.listSignals);
+
+/**
+ * @route GET /api/ai/signals/stats
+ * @desc 获取 AI 投研信号统计表现
+ * @access Private
+ */
+router.get('/signals/stats', authController.authenticate, aiSignalController.getSignalStats);
+
+/**
+ * @route POST /api/ai/signals/sync-screeners
+ * @desc 从 AI 每日优选同步为可验证信号
+ * @access Private
+ */
+router.post('/signals/sync-screeners', authController.authenticate, aiSignalController.syncFromScreeners);
+
+/**
+ * @route POST /api/ai/signals/verify
+ * @desc 刷新 AI 信号后验收益验证
+ * @access Private
+ */
+router.post('/signals/verify', authController.authenticate, aiSignalController.verifySignals);
 
 /**
  * @route GET /api/ai/screener
