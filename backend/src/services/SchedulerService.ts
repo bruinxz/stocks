@@ -7,6 +7,7 @@ import { logger } from '../utils/logger';
 import { dataUpdateQueue } from '../jobs/dataUpdateQueue';
 import { aiPollingQueue } from '../jobs/aiPollingQueue';
 import { aiAdvisorService } from './AIAdvisorService';
+import { quantRecommendationService } from './QuantRecommendationService';
 import moment from 'moment-timezone';
 
 class SchedulerService {
@@ -101,50 +102,67 @@ class SchedulerService {
           completed_items: 1
         });
       } else if (task.type === 'AI_DAILY_SCREENER') {
-        logger.info('触发 AI_DAILY_SCREENER 任务，获取全站用户收藏的股票进行分析...');
-        
-        const favorites = await FavoriteStock.findAll({
-          attributes: ['stock_id'],
-          group: ['stock_id'],
-        });
-        
+        logger.info('触发 AI_DAILY_SCREENER 任务，使用多因子候选池进行 TradingAgents 深度分析...');
+
         const today = moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
+        const parameters = task.parameters || {};
+        const candidateLimit = Math.min(Number(parameters.candidate_limit || parameters.limit || 10), 30);
+        const universe = parameters.universe === 'market' ? 'market' : 'favorites';
+        const style = ['balanced', 'momentum', 'value', 'low_risk'].includes(parameters.style)
+          ? parameters.style
+          : 'balanced';
+        const targetDate = parameters.target_date || today;
+
+        const candidateResult = await quantRecommendationService.generateRecommendations({
+          universe,
+          style,
+          limit: candidateLimit,
+          lookback_days: Number(parameters.lookback_days || 120),
+          include_trend: false,
+        });
+
+        const candidates = candidateResult.recommendations;
         let count = 0;
         let failed = 0;
-        
-        await executionLog.update({ total_items: favorites.length });
-        
-        for (const fav of favorites) {
-          const stock = await Stock.findByPk(fav.stock_id);
-          if (stock) {
-            try {
-              const res = await aiAdvisorService.analyzeStock(stock.symbol, today, true);
-              if (res && res.task_id) {
-                await aiPollingQueue.add(
-                  {
-                    taskId: res.task_id,
-                    symbol: stock.symbol,
-                    name: stock.name,
-                    executionLogId: executionLog.id,
-                    taskLabel: task.name,
-                  },
-                  {
-                    jobId: `ai-poll-${isManual ? 'manual-' : ''}${res.task_id}`,
-                    attempts: 10,
-                    backoff: { type: 'fixed', delay: 3 * 60 * 1000 },
-                  }
-                );
-                count++;
-              }
-            } catch (err: any) {
-              logger.error(`提交股票 ${stock.symbol} 的 AI 分析任务失败:`, err);
-              failed++;
+
+        await executionLog.update({ total_items: candidates.length });
+
+        for (const candidate of candidates) {
+          try {
+            const res = await aiAdvisorService.analyzeStock(candidate.symbol, targetDate, true);
+            if (res && res.task_id) {
+              await aiPollingQueue.add(
+                {
+                  taskId: res.task_id,
+                  symbol: candidate.symbol,
+                  name: candidate.name,
+                  executionLogId: executionLog.id,
+                  taskLabel: task.name,
+                  quant_score: candidate.score,
+                  quant_factors: candidate.factors,
+                  quant_reasons: candidate.reasons,
+                  quant_warnings: candidate.warnings,
+                  recommendation_style: style,
+                  recommendation_source: universe,
+                },
+                {
+                  jobId: `ai-poll-${isManual ? 'manual-' : ''}${res.task_id}`,
+                  attempts: 10,
+                  backoff: { type: 'fixed', delay: 3 * 60 * 1000 },
+                }
+              );
+              count++;
             }
+          } catch (err: any) {
+            logger.error(`提交股票 ${candidate.symbol} 的 AI 分析任务失败:`, err);
+            failed++;
           }
         }
-        
-        logger.info(`AI_DAILY_SCREENER 任务提交完成，共提交了 ${count} 个异步分析任务`);
-        
+
+        logger.info(
+          `AI_DAILY_SCREENER 候选任务提交完成，候选池 ${candidateResult.analyzed_candidates}/${candidateResult.total_candidates}，成功提交 ${count} 个异步分析任务`
+        );
+
         // 状态保留为 IN_PROGRESS，由 bull worker 来更新为 COMPLETED 或 FAILED
         await executionLog.update({ failed_items: failed });
         // 如果没有成功提交的任务，说明已经结束了

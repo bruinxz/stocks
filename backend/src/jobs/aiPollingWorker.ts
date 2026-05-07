@@ -36,7 +36,19 @@ const updateLogProgress = async (logId: number | undefined, isSuccess: boolean) 
 };
 
 aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
-  const { taskId, symbol, name, executionLogId, taskLabel } = job.data;
+  const {
+    taskId,
+    symbol,
+    name,
+    executionLogId,
+    taskLabel,
+    quant_score,
+    quant_factors,
+    quant_reasons,
+    quant_warnings,
+    recommendation_style,
+    recommendation_source,
+  } = job.data;
   
   try {
     const response = await aiAdvisorService.getTaskStatus(taskId);
@@ -95,6 +107,12 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
       if (rating.toUpperCase().includes('STRONG_BUY')) score = 90;
       else if (rating.toUpperCase().includes('BUY')) score = 75;
       else if (rating.toUpperCase().includes('SELL')) score = 30;
+
+      // 如果该任务来自本地多因子候选池，则把量化初筛分与 TradingAgents 决策做融合，
+      // 既保留智能体最终评级，也避免每日优选排序完全依赖 LLM 文本关键字。
+      if (typeof quant_score === 'number' && Number.isFinite(quant_score)) {
+        score = Math.round((score * 0.65 + quant_score * 0.35) * 100) / 100;
+      }
       
       const today = moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
       
@@ -120,7 +138,14 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
         rationale: summary,
         detail: decisionStr,
         score,
-        scores: {},
+        scores: {
+          quant_score,
+          quant_factors: quant_factors || [],
+          quant_reasons: quant_reasons || [],
+          quant_warnings: quant_warnings || [],
+          recommendation_style,
+          recommendation_source,
+        },
         current_price: currentPrice,
         price_change_pct: priceChangePct,
       });

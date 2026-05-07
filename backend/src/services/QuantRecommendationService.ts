@@ -169,19 +169,37 @@ export class QuantRecommendationService {
     universe: RecommendationUniverse;
     limit: number;
   }): Promise<Stock[]> {
-    if (options.universe === 'favorites' && options.user_id) {
-      const favorites = await FavoriteStock.findAll({
-        where: { user_id: options.user_id },
-        include: [{ model: Stock }],
-        order: [
-          ['sort_order', 'DESC'],
-          ['created_at', 'DESC'],
-        ],
-        limit: options.limit,
-      });
+    if (options.universe === 'favorites') {
+      if (options.user_id) {
+        const favorites = await FavoriteStock.findAll({
+          where: { user_id: options.user_id },
+          include: [{ model: Stock }],
+          order: [
+            ['sort_order', 'DESC'],
+            ['created_at', 'DESC'],
+          ],
+          limit: options.limit,
+        });
 
-      const stocks = favorites.map(favorite => favorite.stock).filter(Boolean) as Stock[];
-      if (stocks.length > 0) return stocks;
+        const stocks = favorites.map(favorite => favorite.stock).filter(Boolean) as Stock[];
+        if (stocks.length > 0) return stocks;
+      }
+
+      // 定时任务没有具体 user_id 时，使用全站自选股交集作为候选池。
+      const globalFavorites = (await FavoriteStock.findAll({
+        attributes: ['stock_id'],
+        group: ['stock_id'],
+        limit: options.limit,
+        raw: true,
+      })) as any[];
+      const stockIds = globalFavorites.map(item => item.stock_id).filter(Boolean);
+      if (stockIds.length > 0) {
+        const stocks = await Stock.findAll({
+          where: { id: { [Op.in]: stockIds } },
+          limit: options.limit,
+        });
+        if (stocks.length > 0) return stocks;
+      }
     }
 
     return Stock.findAll({

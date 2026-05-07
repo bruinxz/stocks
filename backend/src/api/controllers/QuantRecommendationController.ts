@@ -52,6 +52,12 @@ export class QuantRecommendationController {
                 symbol,
                 name,
                 taskLabel: '多因子候选深度研报',
+                quant_score: typeof item === 'string' ? undefined : item.score,
+                quant_factors: typeof item === 'string' ? undefined : item.factors,
+                quant_reasons: typeof item === 'string' ? undefined : item.reasons,
+                quant_warnings: typeof item === 'string' ? undefined : item.warnings,
+                recommendation_style: typeof item === 'string' ? undefined : item.recommendation_style,
+                recommendation_source: typeof item === 'string' ? 'manual_recommendation' : item.source,
               },
               {
                 jobId: `ai-recommend-${result.task_id}`,

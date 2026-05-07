@@ -128,7 +128,7 @@ const Recommendations: React.FC = () => {
     setAnalyzeLoading(true);
     try {
       const response = await api.post('/ai/recommendations/analyze', {
-        symbols: topItems.map(item => ({ symbol: item.symbol, name: item.name })),
+        symbols: topItems,
         max_count: topItems.length,
       });
       const submitted = response.data.data?.submitted || [];

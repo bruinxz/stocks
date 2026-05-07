@@ -7,6 +7,12 @@ export interface AIPollingJobData {
   name: string;
   executionLogId?: number;
   taskLabel?: string; // 任务标签，如 "AI优选-早盘分析"
+  quant_score?: number;
+  quant_factors?: any[];
+  quant_reasons?: string[];
+  quant_warnings?: string[];
+  recommendation_style?: string;
+  recommendation_source?: string;
 }
 
 const aiPollingQueue = new Bull<AIPollingJobData>('ai_polling', {

@@ -227,7 +227,12 @@ const TaskScheduler: React.FC = () => {
           <Button type="link" icon={<EditOutlined />} onClick={() => handleEdit(record)}>
             编辑
           </Button>
-          <Button type="link" danger icon={<DeleteOutlined />} onClick={() => handleDelete(record.id!)}>
+          <Button
+            type="link"
+            danger
+            icon={<DeleteOutlined />}
+            onClick={() => handleDelete(record.id!)}
+          >
             删除
           </Button>
         </Space>
@@ -243,7 +248,9 @@ const TaskScheduler: React.FC = () => {
       >
         <div>
           <h1 className="page-title-modern">定时任务调度</h1>
-          <p className="page-subtitle-modern">配置并管理系统的自动化任务，如数据拉取、定时巡检等</p>
+          <p className="page-subtitle-modern">
+            配置并管理系统自动化任务：行情同步、多因子候选池、TradingAgents 每日优选
+          </p>
         </div>
         <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
           新建任务
@@ -268,7 +275,15 @@ const TaskScheduler: React.FC = () => {
         onCancel={() => setIsModalVisible(false)}
         width={600}
       >
-        <Form form={form} layout="vertical" initialValues={{ is_active: true }}>
+        <Form
+          form={form}
+          layout="vertical"
+          initialValues={{
+            is_active: true,
+            parameters:
+              '{\n  "universe": "favorites",\n  "style": "balanced",\n  "candidate_limit": 10,\n  "lookback_days": 120\n}',
+          }}
+        >
           <Form.Item
             name="name"
             label="任务名称"
@@ -305,7 +320,12 @@ const TaskScheduler: React.FC = () => {
           </Form.Item>
 
           <Form.Item name="parameters" label="任务参数 (JSON 格式)">
-            <Input.TextArea rows={4} placeholder='{"symbols": ["600519", "000001"]}' />
+            <Input.TextArea
+              rows={7}
+              placeholder={
+                '{\n  "universe": "favorites",\n  "style": "balanced",\n  "candidate_limit": 10,\n  "lookback_days": 120\n}'
+              }
+            />
           </Form.Item>
 
           <Form.Item name="is_active" label="启用状态" valuePropName="checked">
@@ -333,37 +353,46 @@ const TaskScheduler: React.FC = () => {
               dataIndex: 'status',
               key: 'status',
               render: (status: string) => {
-                const color = status === 'COMPLETED' ? 'green' : status === 'FAILED' ? 'red' : 'blue';
+                const color =
+                  status === 'COMPLETED' ? 'green' : status === 'FAILED' ? 'red' : 'blue';
                 return <Tag color={color}>{status}</Tag>;
-              }
+              },
             },
             {
               title: '开始时间',
               dataIndex: 'started_at',
               key: 'started_at',
-              render: (text: string) => dayjs(text).format('MM-DD HH:mm:ss')
+              render: (text: string) => dayjs(text).format('MM-DD HH:mm:ss'),
             },
             {
               title: '结束时间',
               dataIndex: 'completed_at',
               key: 'completed_at',
-              render: (text: string) => text ? dayjs(text).format('MM-DD HH:mm:ss') : '-'
+              render: (text: string) => (text ? dayjs(text).format('MM-DD HH:mm:ss') : '-'),
             },
             {
               title: '进度 (完成/失败/总计)',
               key: 'progress',
               render: (_: any, record: TaskExecutionLog) => (
                 <Text>
-                  {record.completed_items} / <Text type="danger">{record.failed_items}</Text> / {record.total_items}
+                  {record.completed_items} / <Text type="danger">{record.failed_items}</Text> /{' '}
+                  {record.total_items}
                 </Text>
-              )
+              ),
             },
             {
               title: '异常信息',
               dataIndex: 'error_message',
               key: 'error_message',
-              render: (text: string) => text ? <Text type="danger" ellipsis={{ tooltip: text }} style={{ maxWidth: 200 }}>{text}</Text> : '-'
-            }
+              render: (text: string) =>
+                text ? (
+                  <Text type="danger" ellipsis={{ tooltip: text }} style={{ maxWidth: 200 }}>
+                    {text}
+                  </Text>
+                ) : (
+                  '-'
+                ),
+            },
           ]}
         />
       </Modal>
