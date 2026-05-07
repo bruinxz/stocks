@@ -6,7 +6,6 @@ import {
   Typography,
   Space,
   Tag,
-  Divider,
   Spin,
   Timeline,
   message,
@@ -22,7 +21,8 @@ import {
   LoadingOutlined,
   CloseCircleOutlined,
 } from '@ant-design/icons';
-import api, { API_BASE_URL } from '../services/api';
+import { API_BASE_URL } from '../services/api';
+import { useLocation } from 'react-router-dom';
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -71,9 +71,12 @@ const parseDecision = (decisionStr: string) => {
 };
 
 const AIAdvisor: React.FC = () => {
-  // 从 localStorage 恢复初始状态
+  const location = useLocation();
+
+  // 从 URL / localStorage 恢复初始状态
   const [ticker, setTicker] = useState<string>(() => {
-    return localStorage.getItem('aiAdvisor_ticker') || '';
+    const params = new URLSearchParams(window.location.search);
+    return params.get('ticker') || localStorage.getItem('aiAdvisor_ticker') || '';
   });
   const [analyzing, setAnalyzing] = useState<boolean>(() => {
     return localStorage.getItem('aiAdvisor_analyzing') === 'true';
@@ -90,6 +93,14 @@ const AIAdvisor: React.FC = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // 状态发生变化时，保存到 localStorage
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const nextTicker = params.get('ticker');
+    if (nextTicker && nextTicker !== ticker) {
+      setTicker(nextTicker);
+    }
+  }, [location.search, ticker]);
+
   useEffect(() => {
     localStorage.setItem('aiAdvisor_ticker', ticker);
   }, [ticker]);
@@ -112,7 +123,7 @@ const AIAdvisor: React.FC = () => {
 
   // 如果刷新页面时状态是 analyzing，强制重置，因为 EventSource 无法跨页面保存
   useEffect(() => {
-    if (analyzing) {
+    if (localStorage.getItem('aiAdvisor_analyzing') === 'true') {
       setAnalyzing(false);
       localStorage.setItem('aiAdvisor_analyzing', 'false');
     }

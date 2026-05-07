@@ -1,0 +1,419 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  Alert,
+  Button,
+  Card,
+  Col,
+  Empty,
+  Progress,
+  Row,
+  Select,
+  Space,
+  Statistic,
+  Table,
+  Tag,
+  Typography,
+  message,
+} from 'antd';
+import {
+  BarChartOutlined,
+  ExperimentOutlined,
+  ReloadOutlined,
+  RobotOutlined,
+  ThunderboltOutlined,
+} from '@ant-design/icons';
+import { Area, AreaChart, ResponsiveContainer } from 'recharts';
+import { useNavigate } from 'react-router-dom';
+import api from '../services/api';
+
+const { Text, Paragraph } = Typography;
+
+interface FactorScore {
+  name: string;
+  label: string;
+  score: number;
+  weight: number;
+  value?: number | string;
+  reason: string;
+}
+
+interface RecommendationItem {
+  symbol: string;
+  name: string;
+  market?: string;
+  industry?: string;
+  score: number;
+  rating: string;
+  risk_level: 'low' | 'medium' | 'high';
+  confidence: number;
+  current_price: number;
+  change_percent?: number;
+  factors: FactorScore[];
+  reasons: string[];
+  warnings: string[];
+  metrics: Record<string, number | null>;
+  trend?: Array<{ time: string; close: number }>;
+}
+
+interface RecommendationResponse {
+  as_of: string;
+  universe: string;
+  style: string;
+  total_candidates: number;
+  analyzed_candidates: number;
+  recommendations: RecommendationItem[];
+}
+
+const riskColorMap: Record<string, string> = {
+  low: 'green',
+  medium: 'gold',
+  high: 'red',
+};
+
+const styleOptions = [
+  { label: '均衡推荐', value: 'balanced' },
+  { label: '趋势动量', value: 'momentum' },
+  { label: '价值安全', value: 'value' },
+  { label: '低波稳健', value: 'low_risk' },
+];
+
+const universeOptions = [
+  { label: '我的自选池优先', value: 'favorites' },
+  { label: '全市场样本', value: 'market' },
+];
+
+const Recommendations: React.FC = () => {
+  const navigate = useNavigate();
+  const [data, setData] = useState<RecommendationResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [analyzeLoading, setAnalyzeLoading] = useState(false);
+  const [style, setStyle] = useState('balanced');
+  const [universe, setUniverse] = useState('favorites');
+  const [limit, setLimit] = useState(20);
+
+  const fetchRecommendations = async () => {
+    setLoading(true);
+    try {
+      const response = await api.get('/ai/recommendations', {
+        params: { style, universe, limit },
+      });
+      if (response.data.success) {
+        setData(response.data.data);
+      }
+    } catch (error: any) {
+      message.error(error.response?.data?.message || '获取多因子候选推荐失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchRecommendations();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [style, universe, limit]);
+
+  const topItems = useMemo(() => data?.recommendations?.slice(0, 5) || [], [data]);
+  const avgScore = useMemo(() => {
+    const list = data?.recommendations || [];
+    if (list.length === 0) return 0;
+    return list.reduce((sum, item) => sum + item.score, 0) / list.length;
+  }, [data]);
+
+  const submitTopToTradingAgents = async () => {
+    if (topItems.length === 0) {
+      message.warning('暂无可提交的候选标的');
+      return;
+    }
+
+    setAnalyzeLoading(true);
+    try {
+      const response = await api.post('/ai/recommendations/analyze', {
+        symbols: topItems.map(item => ({ symbol: item.symbol, name: item.name })),
+        max_count: topItems.length,
+      });
+      const submitted = response.data.data?.submitted || [];
+      const failed = response.data.data?.failed || [];
+      message.success(
+        `已提交 ${submitted.length} 个深度研报任务${
+          failed.length ? `，失败 ${failed.length} 个` : ''
+        }`
+      );
+    } catch (error: any) {
+      message.error(error.response?.data?.message || '提交 TradingAgents 深度研报失败');
+    } finally {
+      setAnalyzeLoading(false);
+    }
+  };
+
+  const openAIAdvisor = (symbol: string) => {
+    localStorage.setItem('aiAdvisor_ticker', symbol);
+    navigate(`/ai-advisor?ticker=${encodeURIComponent(symbol)}`);
+  };
+
+  const renderReturn = (value?: number | null) => {
+    if (value === undefined || value === null) return <Text type="secondary">--</Text>;
+    const color = value > 0 ? '#cf1322' : value < 0 ? '#3f8600' : '#64748b';
+    return <Text style={{ color, fontWeight: 700 }}>{value.toFixed(2)}%</Text>;
+  };
+
+  const columns = [
+    {
+      title: '候选标的',
+      key: 'stock',
+      width: 220,
+      render: (_: any, record: RecommendationItem) => (
+        <Space direction="vertical" size={2}>
+          <Space>
+            <Text strong>{record.name}</Text>
+            <Tag color="blue">{record.rating}</Tag>
+          </Space>
+          <Text type="secondary">
+            {record.symbol} · {record.industry || record.market || '未分类'}
+          </Text>
+        </Space>
+      ),
+    },
+    {
+      title: '综合分',
+      dataIndex: 'score',
+      key: 'score',
+      width: 150,
+      sorter: (a: RecommendationItem, b: RecommendationItem) => a.score - b.score,
+      render: (score: number) => (
+        <Space direction="vertical" size={0} style={{ width: 120 }}>
+          <Text strong style={{ color: score >= 75 ? '#cf1322' : '#faad14', fontSize: 18 }}>
+            {score.toFixed(1)}
+          </Text>
+          <Progress percent={Math.round(score)} size="small" showInfo={false} />
+        </Space>
+      ),
+    },
+    {
+      title: '价格 / 20日',
+      key: 'price',
+      width: 140,
+      render: (_: any, record: RecommendationItem) => (
+        <Space direction="vertical" size={0}>
+          <Text strong>{record.current_price}</Text>
+          {renderReturn(record.metrics?.return_20d)}
+        </Space>
+      ),
+    },
+    {
+      title: '风险',
+      key: 'risk',
+      width: 100,
+      render: (_: any, record: RecommendationItem) => (
+        <Tag color={riskColorMap[record.risk_level]}>{record.risk_level.toUpperCase()}</Tag>
+      ),
+    },
+    {
+      title: '近期趋势',
+      key: 'trend',
+      width: 170,
+      render: (_: any, record: RecommendationItem) => {
+        const trend = record.trend || [];
+        if (trend.length === 0) return <Text type="secondary">暂无</Text>;
+        const isUp = trend[trend.length - 1].close >= trend[0].close;
+        const color = isUp ? '#cf1322' : '#3f8600';
+        return (
+          <div style={{ height: 42, width: 150 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={trend}>
+                <defs>
+                  <linearGradient id={`recommend-${record.symbol}`} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={color} stopOpacity={0.28} />
+                    <stop offset="95%" stopColor={color} stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <Area
+                  type="monotone"
+                  dataKey="close"
+                  stroke={color}
+                  strokeWidth={1.6}
+                  fill={`url(#recommend-${record.symbol})`}
+                  isAnimationActive={false}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        );
+      },
+    },
+    {
+      title: '解释',
+      key: 'reasons',
+      render: (_: any, record: RecommendationItem) => (
+        <Space direction="vertical" size={4} style={{ maxWidth: 520 }}>
+          {record.reasons.slice(0, 2).map(reason => (
+            <Text key={reason}>{reason}</Text>
+          ))}
+          {record.warnings.slice(0, 2).map(warning => (
+            <Tag key={warning} color="orange">
+              {warning}
+            </Tag>
+          ))}
+          <Space wrap size={[4, 4]}>
+            {record.factors.slice(0, 5).map(factor => (
+              <Tag
+                key={factor.name}
+                color={factor.score >= 70 ? 'green' : factor.score >= 55 ? 'blue' : 'default'}
+              >
+                {factor.label} {factor.score.toFixed(0)}
+              </Tag>
+            ))}
+          </Space>
+        </Space>
+      ),
+    },
+    {
+      title: '操作',
+      key: 'action',
+      width: 150,
+      render: (_: any, record: RecommendationItem) => (
+        <Space direction="vertical" size="small">
+          <Button
+            type="primary"
+            size="small"
+            icon={<RobotOutlined />}
+            onClick={() => openAIAdvisor(record.symbol)}
+          >
+            深度推演
+          </Button>
+          <Button size="small" onClick={() => navigator.clipboard?.writeText(record.symbol)}>
+            复制代码
+          </Button>
+        </Space>
+      ),
+    },
+  ];
+
+  return (
+    <div className="fade-in-up">
+      <div className="page-header-modern">
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            width: '100%',
+          }}
+        >
+          <div>
+            <h1 className="page-title-modern">智能候选推荐</h1>
+            <p className="page-subtitle-modern">
+              本地行情多因子初筛 + TradingAgents 深度研报，先筛候选池，再做智能体复核
+            </p>
+          </div>
+          <Space wrap>
+            <Select
+              value={universe}
+              onChange={setUniverse}
+              options={universeOptions}
+              style={{ width: 150 }}
+            />
+            <Select
+              value={style}
+              onChange={setStyle}
+              options={styleOptions}
+              style={{ width: 130 }}
+            />
+            <Select
+              value={limit}
+              onChange={setLimit}
+              options={[10, 20, 30, 50].map(value => ({ label: `${value}只`, value }))}
+              style={{ width: 90 }}
+            />
+            <Button icon={<ReloadOutlined />} onClick={fetchRecommendations} loading={loading}>
+              刷新
+            </Button>
+            <Button
+              type="primary"
+              icon={<ThunderboltOutlined />}
+              onClick={submitTopToTradingAgents}
+              loading={analyzeLoading}
+            >
+              Top5 深度研报
+            </Button>
+          </Space>
+        </div>
+      </div>
+
+      <Alert
+        type="info"
+        showIcon
+        style={{ marginBottom: 16 }}
+        message="推荐逻辑说明"
+        description="该页面使用趋势动量、量能活跃、基础质量、估值安全、风险约束五类因子进行可解释排序。它不是最终买卖建议，而是为 TradingAgents 多智能体深度研报提供更高质量的候选输入。"
+      />
+
+      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+        <Col xs={12} md={6}>
+          <Card className="modern-card" variant="borderless">
+            <Statistic
+              title="候选样本"
+              value={data?.total_candidates || 0}
+              prefix={<ExperimentOutlined />}
+            />
+          </Card>
+        </Col>
+        <Col xs={12} md={6}>
+          <Card className="modern-card" variant="borderless">
+            <Statistic
+              title="有效评分"
+              value={data?.analyzed_candidates || 0}
+              prefix={<BarChartOutlined />}
+            />
+          </Card>
+        </Col>
+        <Col xs={12} md={6}>
+          <Card className="modern-card" variant="borderless">
+            <Statistic title="平均得分" value={avgScore} precision={1} />
+          </Card>
+        </Col>
+        <Col xs={12} md={6}>
+          <Card className="modern-card" variant="borderless">
+            <Statistic
+              title="高分候选"
+              value={(data?.recommendations || []).filter(item => item.score >= 70).length}
+            />
+          </Card>
+        </Col>
+      </Row>
+
+      <Card
+        className="modern-card"
+        variant="borderless"
+        title="多因子候选池"
+        extra={<Text type="secondary">更新时间：{data?.as_of || '--'}</Text>}
+      >
+        <Table
+          columns={columns}
+          dataSource={data?.recommendations || []}
+          rowKey="symbol"
+          loading={loading}
+          pagination={{ pageSize: 10, showSizeChanger: false }}
+          expandable={{
+            expandedRowRender: record => (
+              <Row gutter={[16, 16]}>
+                {record.factors.map(factor => (
+                  <Col xs={24} md={8} lg={6} key={factor.name}>
+                    <Card size="small" title={factor.label}>
+                      <Progress percent={Math.round(factor.score)} size="small" />
+                      <Paragraph style={{ marginBottom: 0, marginTop: 8 }}>
+                        {factor.reason}
+                      </Paragraph>
+                    </Card>
+                  </Col>
+                ))}
+              </Row>
+            ),
+          }}
+          locale={{ emptyText: <Empty description="暂无候选结果，请先同步行情或添加自选股" /> }}
+        />
+      </Card>
+    </div>
+  );
+};
+
+export default Recommendations;

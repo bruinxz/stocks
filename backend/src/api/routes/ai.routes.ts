@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { aiAdvisorController } from '../controllers/AIAdvisorController';
 import { screenerController } from '../controllers/ScreenerController';
 import { aiSignalController } from '../controllers/AISignalController';
+import { quantRecommendationController } from '../controllers/QuantRecommendationController';
 import { AuthController } from '../controllers/AuthController';
 
 const router = Router();
@@ -32,6 +33,21 @@ router.get(
   aiAdvisorController.streamAnalyze
 );
 
+
+
+/**
+ * @route GET /api/ai/recommendations
+ * @desc 获取本地多因子候选推荐
+ * @access Private
+ */
+router.get('/recommendations', authController.authenticate, quantRecommendationController.listRecommendations);
+
+/**
+ * @route POST /api/ai/recommendations/analyze
+ * @desc 将多因子候选批量提交 TradingAgents 深度研报
+ * @access Private
+ */
+router.post('/recommendations/analyze', authController.authenticate, quantRecommendationController.submitToTradingAgents);
 
 /**
  * @route GET /api/ai/signals

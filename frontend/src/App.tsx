@@ -41,6 +41,7 @@ import UserManagement from './pages/UserManagement';
 import AIAdvisor from './pages/AIAdvisor';
 import TaskScheduler from './pages/TaskScheduler';
 import Screener from './pages/Screener';
+import Recommendations from './pages/Recommendations';
 import PaperTrading from './pages/PaperTrading';
 import RiskAlerts from './pages/RiskAlerts';
 import TradingJournal from './pages/TradingJournal';
@@ -52,6 +53,7 @@ import {
   AccountBookOutlined,
   AlertOutlined,
   BookOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons';
 
 import type { MenuProps } from 'antd';
@@ -138,6 +140,11 @@ const AppContent: React.FC = () => {
           key: '/ai-advisor',
           icon: <RobotOutlined />,
           label: <Link to="/ai-advisor">AI 深度研报</Link>,
+        },
+        {
+          key: '/recommendations',
+          icon: <ThunderboltOutlined />,
+          label: <Link to="/recommendations">智能候选推荐</Link>,
         },
         {
           key: '/screener',
@@ -367,6 +374,14 @@ const AppContent: React.FC = () => {
               element={
                 <ProtectedRoute>
                   <BacktestDetailRoute />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/recommendations"
+              element={
+                <ProtectedRoute>
+                  <Recommendations />
                 </ProtectedRoute>
               }
             />
