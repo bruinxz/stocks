@@ -3,6 +3,7 @@ import moment from 'moment-timezone';
 import { Stock } from '../models/Stock';
 import { DailyBar } from '../models/DailyBar';
 import { FavoriteStock } from '../models/FavoriteStock';
+import { AIInvestmentSignal, AISignalSourceType } from '../models/AIInvestmentSignal';
 import { normalizeSymbol } from '../utils/stockSymbol';
 import { logger } from '../utils/logger';
 
@@ -54,7 +55,19 @@ export interface QuantRecommendationItem {
   reasons: string[];
   warnings: string[];
   metrics: Record<string, number | null>;
+  feedback?: RecommendationFeedback;
   trend?: Array<{ time: string; close: number }>;
+}
+
+export interface RecommendationFeedback {
+  signal_count: number;
+  completed_count: number;
+  avg_return_pct: number | null;
+  positive_rate: number | null;
+  best_horizon?: string;
+  score_adjustment: number;
+  confidence_boost: number;
+  latest_signal_date?: string;
 }
 
 function clamp(value: number, min = 0, max = 100): number {
@@ -98,6 +111,17 @@ function maxDrawdown(closes: number[]): number {
   return maxDd;
 }
 
+function buildEmptyFeedback(): RecommendationFeedback {
+  return {
+    signal_count: 0,
+    completed_count: 0,
+    avg_return_pct: null,
+    positive_rate: null,
+    score_adjustment: 0,
+    confidence_boost: 0,
+  };
+}
+
 function scoreToRating(score: number): QuantRecommendationItem['rating'] {
   if (score >= 82) return '强烈关注';
   if (score >= 70) return '积极关注';
@@ -134,7 +158,14 @@ export class QuantRecommendationService {
     const lookback_days = Math.min(Math.max(options.lookback_days || 120, 45), 360);
     const min_bars = Math.min(Math.max(options.min_bars || 35, 20), lookback_days);
 
-    const stocks = await this.getCandidateStocks({ ...options, universe, limit: Math.max(limit * 6, 60) });
+    const stocks = await this.getCandidateStocks({
+      ...options,
+      universe,
+      limit: Math.max(limit * 6, 60),
+    });
+    const feedbackMap = await this.getRecommendationFeedbackMap(
+      stocks.map(stock => stock.symbol).filter(Boolean)
+    );
     const recommendations: QuantRecommendationItem[] = [];
 
     for (const stock of stocks) {
@@ -145,6 +176,7 @@ export class QuantRecommendationService {
           lookback_days,
           min_bars,
           include_trend: options.include_trend !== false,
+          feedback: feedbackMap.get(normalizeSymbol(stock.symbol)) || buildEmptyFeedback(),
         });
         if (item) recommendations.push(item);
       } catch (error: any) {
@@ -225,13 +257,17 @@ export class QuantRecommendationService {
       lookback_days: number;
       min_bars: number;
       include_trend: boolean;
+      feedback: RecommendationFeedback;
     }
   ): Promise<QuantRecommendationItem | null> {
     const bars = await DailyBar.findAll({
       where: {
         stock_id: stock.id,
         time: {
-          [Op.gte]: moment().tz('Asia/Shanghai').subtract(options.lookback_days * 1.6, 'days').toDate(),
+          [Op.gte]: moment()
+            .tz('Asia/Shanghai')
+            .subtract(options.lookback_days * 1.6, 'days')
+            .toDate(),
         },
       },
       order: [['time', 'DESC']],
@@ -245,11 +281,16 @@ export class QuantRecommendationService {
       time: new Date(bar.time),
       close: Number(bar.close),
       volume: Number(bar.volume || 0),
-      turnover: bar.turnover === null || bar.turnover === undefined ? undefined : Number(bar.turnover),
+      turnover:
+        bar.turnover === null || bar.turnover === undefined ? undefined : Number(bar.turnover),
       turnover_rate:
-        bar.turnover_rate === null || bar.turnover_rate === undefined ? undefined : Number(bar.turnover_rate),
+        bar.turnover_rate === null || bar.turnover_rate === undefined
+          ? undefined
+          : Number(bar.turnover_rate),
       change_percent:
-        bar.change_percent === null || bar.change_percent === undefined ? undefined : Number(bar.change_percent),
+        bar.change_percent === null || bar.change_percent === undefined
+          ? undefined
+          : Number(bar.change_percent),
     }));
 
     const closes = normalizedBars.map(bar => bar.close).filter(value => value > 0);
@@ -284,6 +325,7 @@ export class QuantRecommendationService {
     const changePercent = latest.change_percent ?? pct(latest.close, prev.close);
 
     const weights = getStyleWeights(options.style);
+    const feedback = options.feedback || buildEmptyFeedback();
     const factors: FactorScore[] = [];
     const reasons: string[] = [];
     const warnings: string[] = [];
@@ -336,8 +378,12 @@ export class QuantRecommendationService {
       value: stock.pe_dynamic ? round(Number(stock.pe_dynamic), 1) : undefined,
       reason:
         valuationScore >= 70
-          ? `估值处于可接受区间，PE ${round(Number(stock.pe_dynamic), 1) ?? '--'} / PB ${round(Number(stock.pb), 1) ?? '--'}`
-          : `估值或财务数据不充分，PE ${round(Number(stock.pe_dynamic), 1) ?? '--'} / PB ${round(Number(stock.pb), 1) ?? '--'}`,
+          ? `估值处于可接受区间，PE ${round(Number(stock.pe_dynamic), 1) ?? '--'} / PB ${
+              round(Number(stock.pb), 1) ?? '--'
+            }`
+          : `估值或财务数据不充分，PE ${round(Number(stock.pe_dynamic), 1) ?? '--'} / PB ${
+              round(Number(stock.pb), 1) ?? '--'
+            }`,
     });
 
     const riskScore = this.scoreRisk({ drawdown, volatility20d, return5d });
@@ -353,23 +399,51 @@ export class QuantRecommendationService {
           : `近60日最大回撤约 ${round(drawdown) ?? '--'}%，短线风险偏高`,
     });
 
-    const score = clamp(
+    if (feedback.signal_count > 0) {
+      const feedbackScore = this.scoreFeedback(feedback);
+      factors.push({
+        name: 'feedback',
+        label: '后验反馈',
+        score: feedbackScore,
+        weight: 0.12,
+        value: feedback.avg_return_pct ?? undefined,
+        reason:
+          feedback.completed_count > 0
+            ? `历史推荐 ${feedback.completed_count} 个完成样本，平均收益 ${
+                round(feedback.avg_return_pct, 2) ?? '--'
+              }%，胜率 ${round(feedback.positive_rate, 1) ?? '--'}%`
+            : `历史已有 ${feedback.signal_count} 次推荐记录，后验收益仍在跟踪`,
+      });
+    }
+
+    const baseScore = clamp(
       factors.reduce((sum, factor) => sum + factor.score * factor.weight, 0) /
         factors.reduce((sum, factor) => sum + factor.weight, 0)
     );
+    const score = clamp(baseScore + feedback.score_adjustment);
 
     factors
       .filter(factor => factor.score >= 68)
       .slice(0, 3)
       .forEach(factor => reasons.push(factor.reason));
 
-    if (return5d !== undefined && return5d > 16) warnings.push(`近5日涨幅 ${round(return5d)}%，存在追高风险`);
+    if (return5d !== undefined && return5d > 16)
+      warnings.push(`近5日涨幅 ${round(return5d)}%，存在追高风险`);
     if (drawdown < -18) warnings.push(`近60日最大回撤 ${round(drawdown)}%，趋势波动较大`);
-    if (volumeRatio !== undefined && volumeRatio > 3) warnings.push(`短期量能急剧放大，需警惕冲高回落`);
-    if (!stock.pe_dynamic && !stock.pb) warnings.push('估值字段缺失，建议以 TradingAgents 深度研报复核');
+    if (volumeRatio !== undefined && volumeRatio > 3)
+      warnings.push(`短期量能急剧放大，需警惕冲高回落`);
+    if (!stock.pe_dynamic && !stock.pb)
+      warnings.push('估值字段缺失，建议以 TradingAgents 深度研报复核');
+    if (feedback.completed_count > 0 && Number(feedback.avg_return_pct || 0) < -3) {
+      warnings.push(`历史后验平均收益 ${round(feedback.avg_return_pct, 2)}%，需降低仓位或等待确认`);
+    }
 
     const risk_level: QuantRecommendationItem['risk_level'] =
-      warnings.length >= 2 || riskScore < 45 ? 'high' : warnings.length === 1 || riskScore < 65 ? 'medium' : 'low';
+      warnings.length >= 2 || riskScore < 45
+        ? 'high'
+        : warnings.length === 1 || riskScore < 65
+        ? 'medium'
+        : 'low';
 
     return {
       symbol: normalizeSymbol(stock.symbol),
@@ -380,7 +454,11 @@ export class QuantRecommendationService {
       score: Number(score.toFixed(2)),
       rating: scoreToRating(score),
       risk_level,
-      confidence: clamp(50 + factors.filter(f => f.value !== undefined && f.value !== null).length * 8),
+      confidence: clamp(
+        50 +
+          factors.filter(f => f.value !== undefined && f.value !== null).length * 8 +
+          feedback.confidence_boost
+      ),
       current_price: Number(price.toFixed(4)),
       change_percent: round(changePercent, 2) ?? undefined,
       factors: factors.map(factor => ({ ...factor, score: Number(factor.score.toFixed(2)) })),
@@ -400,7 +478,10 @@ export class QuantRecommendationService {
         pe_dynamic: round(Number(stock.pe_dynamic), 2),
         pb: round(Number(stock.pb), 2),
         total_market_cap_yi: round(Number(stock.total_market_cap || 0) / 100000000, 2),
+        base_score: round(baseScore, 2),
+        feedback_score_adjustment: round(feedback.score_adjustment, 2),
       },
+      feedback,
       trend: options.include_trend
         ? normalizedBars.slice(-30).map(bar => ({
             time: bar.time.toISOString().split('T')[0],
@@ -408,6 +489,102 @@ export class QuantRecommendationService {
           }))
         : undefined,
     };
+  }
+
+  private async getRecommendationFeedbackMap(
+    symbols: string[]
+  ): Promise<Map<string, RecommendationFeedback>> {
+    const normalizedSymbols = [
+      ...new Set(symbols.map(symbol => normalizeSymbol(symbol)).filter(Boolean)),
+    ];
+    const feedbackMap = new Map<string, RecommendationFeedback>();
+    if (normalizedSymbols.length === 0) return feedbackMap;
+
+    const signals = (await AIInvestmentSignal.findAll({
+      where: {
+        source_type: AISignalSourceType.QUANT_RECOMMENDATION,
+        symbol: { [Op.in]: normalizedSymbols },
+      },
+      attributes: ['symbol', 'signal_date', 'forward_returns', 'verification_status'],
+      order: [['signal_date', 'DESC']],
+      raw: true,
+    })) as any[];
+
+    const grouped = new Map<string, any[]>();
+    for (const signal of signals) {
+      const symbol = normalizeSymbol(signal.symbol);
+      if (!grouped.has(symbol)) grouped.set(symbol, []);
+      grouped.get(symbol)!.push(signal);
+    }
+
+    for (const [symbol, records] of grouped.entries()) {
+      const returns: number[] = [];
+      let completed_count = 0;
+      let positive_count = 0;
+      const horizonBuckets: Record<string, number[]> = {};
+
+      for (const record of records) {
+        const horizons = record.forward_returns?.horizons || {};
+        for (const [horizon, value] of Object.entries<any>(horizons)) {
+          if (value?.status !== 'completed') continue;
+          const returnPct = Number(value.return_pct || 0);
+          if (!Number.isFinite(returnPct)) continue;
+          returns.push(returnPct);
+          completed_count++;
+          if (returnPct > 0) positive_count++;
+          if (!horizonBuckets[horizon]) horizonBuckets[horizon] = [];
+          horizonBuckets[horizon].push(returnPct);
+        }
+      }
+
+      const avg_return_pct =
+        returns.length > 0
+          ? Number((returns.reduce((s, v) => s + v, 0) / returns.length).toFixed(4))
+          : null;
+      const positive_rate =
+        completed_count > 0 ? Number(((positive_count / completed_count) * 100).toFixed(2)) : null;
+      const best_horizon = Object.entries(horizonBuckets)
+        .map(([horizon, values]) => ({
+          horizon,
+          avg: values.reduce((sum, value) => sum + value, 0) / values.length,
+        }))
+        .sort((a, b) => b.avg - a.avg)[0]?.horizon;
+
+      const positiveBonus = positive_rate === null ? 0 : (positive_rate - 50) * 0.08;
+      const returnBonus =
+        avg_return_pct === null ? 0 : Math.max(-12, Math.min(12, avg_return_pct)) * 0.75;
+      const samplePenalty = completed_count > 0 && completed_count < 3 ? -1.5 : 0;
+      const score_adjustment = Math.max(
+        -8,
+        Math.min(8, returnBonus + positiveBonus + samplePenalty)
+      );
+      const confidence_boost = Math.min(8, Math.max(0, Math.log10(records.length + 1) * 5));
+
+      feedbackMap.set(symbol, {
+        signal_count: records.length,
+        completed_count,
+        avg_return_pct,
+        positive_rate,
+        best_horizon,
+        score_adjustment: Number(score_adjustment.toFixed(2)),
+        confidence_boost: Number(confidence_boost.toFixed(2)),
+        latest_signal_date: records[0]?.signal_date,
+      });
+    }
+
+    return feedbackMap;
+  }
+
+  private scoreFeedback(feedback: RecommendationFeedback): number {
+    if (!feedback || feedback.signal_count === 0) return 55;
+    let score = 55;
+    if (feedback.avg_return_pct !== null) {
+      score += Math.max(-15, Math.min(18, feedback.avg_return_pct)) * 1.1;
+    }
+    if (feedback.positive_rate !== null) score += (feedback.positive_rate - 50) * 0.32;
+    if (feedback.completed_count >= 5) score += 6;
+    else if (feedback.completed_count > 0 && feedback.completed_count < 3) score -= 4;
+    return clamp(score);
   }
 
   private scoreTrend(params: {
@@ -449,7 +626,8 @@ export class QuantRecommendationService {
 
   private scoreQuality(stock: Stock): number {
     let score = 52;
-    const marketCapYi = Number(stock.total_market_cap || stock.circulating_market_cap || 0) / 100000000;
+    const marketCapYi =
+      Number(stock.total_market_cap || stock.circulating_market_cap || 0) / 100000000;
     if (marketCapYi >= 800) score += 20;
     else if (marketCapYi >= 200) score += 14;
     else if (marketCapYi >= 80) score += 8;
@@ -480,7 +658,11 @@ export class QuantRecommendationService {
     return clamp(score);
   }
 
-  private scoreRisk(params: { drawdown: number; volatility20d?: number; return5d?: number }): number {
+  private scoreRisk(params: {
+    drawdown: number;
+    volatility20d?: number;
+    return5d?: number;
+  }): number {
     let score = 78;
     if (params.drawdown < -30) score -= 30;
     else if (params.drawdown < -20) score -= 20;

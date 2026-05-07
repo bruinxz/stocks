@@ -38,6 +38,17 @@ interface FactorScore {
   reason: string;
 }
 
+interface RecommendationFeedback {
+  signal_count: number;
+  completed_count: number;
+  avg_return_pct: number | null;
+  positive_rate: number | null;
+  best_horizon?: string;
+  score_adjustment: number;
+  confidence_boost: number;
+  latest_signal_date?: string;
+}
+
 interface RecommendationItem {
   symbol: string;
   name: string;
@@ -53,6 +64,7 @@ interface RecommendationItem {
   reasons: string[];
   warnings: string[];
   metrics: Record<string, number | null>;
+  feedback?: RecommendationFeedback;
   trend?: Array<{ time: string; close: number }>;
 }
 
@@ -156,6 +168,28 @@ const Recommendations: React.FC = () => {
     const list = data?.recommendations || [];
     if (list.length === 0) return 0;
     return list.reduce((sum, item) => sum + item.score, 0) / list.length;
+  }, [data]);
+
+  const feedbackOverview = useMemo(() => {
+    const list = data?.recommendations || [];
+    const tracked = list.filter(item => Number(item.feedback?.signal_count || 0) > 0);
+    const completed = tracked.filter(item => Number(item.feedback?.completed_count || 0) > 0);
+    const avgAdjustment =
+      tracked.length > 0
+        ? tracked.reduce((sum, item) => sum + Number(item.feedback?.score_adjustment || 0), 0) /
+          tracked.length
+        : 0;
+    const avgReturn =
+      completed.length > 0
+        ? completed.reduce((sum, item) => sum + Number(item.feedback?.avg_return_pct || 0), 0) /
+          completed.length
+        : 0;
+    return {
+      tracked: tracked.length,
+      completed: completed.length,
+      avgAdjustment,
+      avgReturn,
+    };
   }, [data]);
 
   const profileQuality = useMemo(() => {
@@ -318,6 +352,30 @@ const Recommendations: React.FC = () => {
       ),
     },
     {
+      title: '后验反馈',
+      key: 'feedback',
+      width: 150,
+      render: (_: any, record: RecommendationItem) => {
+        const feedback = record.feedback;
+        if (!feedback || feedback.signal_count === 0) {
+          return <Text type="secondary">暂无样本</Text>;
+        }
+        const adjustment = Number(feedback.score_adjustment || 0);
+        return (
+          <Space direction="vertical" size={2}>
+            <Text strong style={{ color: adjustment >= 0 ? '#cf1322' : '#3f8600' }}>
+              {adjustment >= 0 ? '+' : ''}
+              {adjustment.toFixed(1)} 分
+            </Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {feedback.completed_count}样本 · 胜率 {feedback.positive_rate ?? '--'}%
+            </Text>
+            {feedback.avg_return_pct !== null && renderReturn(feedback.avg_return_pct)}
+          </Space>
+        );
+      },
+    },
+    {
       title: '风险',
       key: 'risk',
       width: 100,
@@ -472,11 +530,11 @@ const Recommendations: React.FC = () => {
         showIcon
         style={{ marginBottom: 16 }}
         message="推荐逻辑说明"
-        description={`该页面使用趋势动量、量能活跃、基础质量、估值安全、风险约束五类因子进行可解释排序。当前候选估值完整度 ${profileQuality.valuationCompleteness.toFixed(
+        description={`该页面使用趋势动量、量能活跃、基础质量、估值安全、风险约束和历史后验反馈进行可解释排序。当前候选估值完整度 ${profileQuality.valuationCompleteness.toFixed(
           0
-        )}%，行业完整度 ${profileQuality.industryCompleteness.toFixed(
-          0
-        )}%；如缺失较多，可点击“补全画像”从数据源刷新估值/市值/行业字段。`}
+        )}%，行业完整度 ${profileQuality.industryCompleteness.toFixed(0)}%；已有 ${
+          feedbackOverview.tracked
+        } 只候选具备历史推荐反馈，平均反馈调分 ${feedbackOverview.avgAdjustment.toFixed(1)}。`}
       />
 
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
@@ -518,6 +576,21 @@ const Recommendations: React.FC = () => {
               value={profileQuality.valuationCompleteness}
               precision={0}
               suffix="%"
+            />
+          </Card>
+        </Col>
+        <Col xs={12} md={6}>
+          <Card className="modern-card" variant="borderless">
+            <Statistic title="后验覆盖" value={feedbackOverview.tracked} suffix="只" />
+          </Card>
+        </Col>
+        <Col xs={12} md={6}>
+          <Card className="modern-card" variant="borderless">
+            <Statistic
+              title="反馈调分"
+              value={feedbackOverview.avgAdjustment}
+              precision={1}
+              valueStyle={{ color: feedbackOverview.avgAdjustment >= 0 ? '#cf1322' : '#3f8600' }}
             />
           </Card>
         </Col>
@@ -593,6 +666,26 @@ const Recommendations: React.FC = () => {
           expandable={{
             expandedRowRender: record => (
               <Row gutter={[16, 16]}>
+                {record.feedback && record.feedback.signal_count > 0 && (
+                  <Col xs={24} md={8} lg={6} key="feedback-summary">
+                    <Card size="small" title="历史后验反馈">
+                      <Statistic
+                        title="综合调分"
+                        value={record.feedback.score_adjustment}
+                        precision={1}
+                        valueStyle={{
+                          color: record.feedback.score_adjustment >= 0 ? '#cf1322' : '#3f8600',
+                        }}
+                      />
+                      <Paragraph style={{ marginBottom: 0, marginTop: 8 }}>
+                        历史信号 {record.feedback.signal_count} 次，完成样本{' '}
+                        {record.feedback.completed_count} 个，平均收益{' '}
+                        {record.feedback.avg_return_pct ?? '--'}%，胜率{' '}
+                        {record.feedback.positive_rate ?? '--'}%。
+                      </Paragraph>
+                    </Card>
+                  </Col>
+                )}
                 {record.factors.map(factor => (
                   <Col xs={24} md={8} lg={6} key={factor.name}>
                     <Card size="small" title={factor.label}>
