@@ -59,13 +59,16 @@ export class CombinedDataSource {
     return Boolean(provider?.is_enabled);
   }
 
-  private getPreferredProviders(feature: MarketDataFeature, preferred_provider?: string): string[] | null {
-    const configured = preferred_provider && preferred_provider !== 'auto'
-      ? [preferred_provider]
-      : process.env.DATA_SOURCE_PREFERENCE
-        ?.split(',')
-        .map(item => item.trim().toLowerCase())
-        .filter(Boolean);
+  private getPreferredProviders(
+    feature: MarketDataFeature,
+    preferred_provider?: string
+  ): string[] | null {
+    const configured =
+      preferred_provider && preferred_provider !== 'auto'
+        ? [preferred_provider]
+        : process.env.DATA_SOURCE_PREFERENCE?.split(',')
+            .map(item => item.trim().toLowerCase())
+            .filter(Boolean);
 
     if (!configured || configured.length === 0 || configured.includes('auto')) {
       return null;
@@ -77,14 +80,19 @@ export class CombinedDataSource {
     });
   }
 
-  private applyProviderPreference<T>(
+  private async buildProviderChain<T>(
     providerChain: Array<[string, () => Promise<T>]>,
     feature: MarketDataFeature,
     preferred_provider?: string
-  ): Array<[string, () => Promise<T>]> {
+  ): Promise<Array<[string, () => Promise<T>]>> {
     const preferredProviders = this.getPreferredProviders(feature, preferred_provider);
     if (!preferredProviders || preferredProviders.length === 0) {
-      return providerChain;
+      try {
+        return this.applyDynamicProviderRouting(providerChain, feature);
+      } catch (error: any) {
+        logger.warn(`动态数据源排序失败，回退默认顺序 (${feature}): ${error.message}`);
+        return providerChain;
+      }
     }
 
     const preferredSet = new Set(preferredProviders);
@@ -93,6 +101,38 @@ export class CombinedDataSource {
       .filter(Boolean) as Array<[string, () => Promise<T>]>;
     const fallback = providerChain.filter(([provider_name]) => !preferredSet.has(provider_name));
     return [...preferred, ...fallback];
+  }
+
+  private async applyDynamicProviderRouting<T>(
+    providerChain: Array<[string, () => Promise<T>]>,
+    feature: MarketDataFeature
+  ): Promise<Array<[string, () => Promise<T>]>> {
+    if (process.env.DATA_SOURCE_DYNAMIC_ROUTING === 'false') {
+      return providerChain;
+    }
+
+    const chainMap = new Map(providerChain);
+    const plan = await DataSourceHealthService.getRankedProviders(
+      feature,
+      providerChain.map(([provider_name]) => provider_name)
+    );
+    const ranked = plan
+      .map(item => {
+        const fetcher = chainMap.get(item.provider_name);
+        return fetcher ? ([item.provider_name, fetcher] as [string, () => Promise<T>]) : null;
+      })
+      .filter(Boolean) as Array<[string, () => Promise<T>]>;
+    const rankedSet = new Set(ranked.map(([provider_name]) => provider_name));
+    const missing = providerChain.filter(([provider_name]) => !rankedSet.has(provider_name));
+    const finalChain = [...ranked, ...missing];
+
+    logger.info(
+      `数据源动态路由(${feature}): ${plan
+        .map(item => `${item.rank}.${item.provider_name}:${item.status}/${item.route_score}`)
+        .join(' -> ')}`
+    );
+
+    return finalChain;
   }
 
   /**
@@ -107,7 +147,8 @@ export class CombinedDataSource {
   ): Promise<T> {
     const options: ProviderExecutionOptions | null =
       typeof optionsOrName === 'string' ? null : optionsOrName;
-    const operationName = typeof optionsOrName === 'string' ? optionsOrName : optionsOrName.operation_name;
+    const operationName =
+      typeof optionsOrName === 'string' ? optionsOrName : optionsOrName.operation_name;
     const retries = options?.max_retries ?? maxRetries;
     const initialDelayMs = options?.initial_delay_ms ?? initialDelay;
     const maxDelayMs = options?.max_delay_ms ?? maxDelay;
@@ -179,7 +220,9 @@ export class CombinedDataSource {
     provider_name: string,
     feature: MarketDataFeature,
     operation_name: string,
-    retryOverrides: Partial<Pick<ProviderExecutionOptions, 'max_retries' | 'initial_delay_ms' | 'max_delay_ms'>> = {}
+    retryOverrides: Partial<
+      Pick<ProviderExecutionOptions, 'max_retries' | 'initial_delay_ms' | 'max_delay_ms'>
+    > = {}
   ): ProviderExecutionOptions {
     const provider = this.getProvider(provider_name);
     return {
@@ -255,9 +298,14 @@ export class CombinedDataSource {
     try {
       const stocks = await this.retryWithBackoff(
         fetcher,
-        this.buildProviderOptions(provider_name, 'stock_list', `getAllStocks from ${provider.provider_label}`, {
-          max_retries: provider_name === 'akshare' ? 2 : 1,
-        })
+        this.buildProviderOptions(
+          provider_name,
+          'stock_list',
+          `getAllStocks from ${provider.provider_label}`,
+          {
+            max_retries: provider_name === 'akshare' ? 2 : 1,
+          }
+        )
       );
 
       if (stocks && stocks.length > 0) {
@@ -285,7 +333,10 @@ export class CombinedDataSource {
       ['sina', () => this.sinaFinanceClient.getAllStocks()],
     ];
 
-    for (const [provider_name, fetcher] of this.applyProviderPreference(providerChain, 'stock_list')) {
+    for (const [provider_name, fetcher] of await this.buildProviderChain(
+      providerChain,
+      'stock_list'
+    )) {
       const result = await this.tryStockListProvider(provider_name, fetcher);
       if (result && result.length > 0) {
         return result;
@@ -371,27 +422,66 @@ export class CombinedDataSource {
     const providerChain: Array<[string, () => Promise<DailyBar[]>]> = [
       [
         'tushare',
-        () => this.tushareClient.queryHistoryKData(normalizedCode, start_date, end_date, frequency, adjustflag),
+        () =>
+          this.tushareClient.queryHistoryKData(
+            normalizedCode,
+            start_date,
+            end_date,
+            frequency,
+            adjustflag
+          ),
       ],
       [
         'baostock',
-        () => this.baostockClient.queryHistoryKData(normalizedCode, start_date, end_date, frequency, adjustflag),
+        () =>
+          this.baostockClient.queryHistoryKData(
+            normalizedCode,
+            start_date,
+            end_date,
+            frequency,
+            adjustflag
+          ),
       ],
       [
         'akshare',
-        () => this.akshareClient.queryHistoryKData(normalizedCode, start_date, end_date, frequency, adjustflag),
+        () =>
+          this.akshareClient.queryHistoryKData(
+            normalizedCode,
+            start_date,
+            end_date,
+            frequency,
+            adjustflag
+          ),
       ],
       [
         'eastmoney',
-        () => this.eastMoneyClient.queryHistoryKData(eastMoneyCode, start_date, end_date, frequency, adjustflag),
+        () =>
+          this.eastMoneyClient.queryHistoryKData(
+            eastMoneyCode,
+            start_date,
+            end_date,
+            frequency,
+            adjustflag
+          ),
       ],
       [
         'sina',
-        () => this.sinaFinanceClient.queryHistoryKData(normalizedCode, start_date, end_date, frequency, adjustflag),
+        () =>
+          this.sinaFinanceClient.queryHistoryKData(
+            normalizedCode,
+            start_date,
+            end_date,
+            frequency,
+            adjustflag
+          ),
       ],
     ];
 
-    for (const [provider_name, fetcher] of this.applyProviderPreference(providerChain, 'history_k', preferred_provider)) {
+    for (const [provider_name, fetcher] of await this.buildProviderChain(
+      providerChain,
+      'history_k',
+      preferred_provider
+    )) {
       const result = await this.tryHistoryProvider(
         provider_name,
         normalizedCode,
@@ -435,10 +525,12 @@ export class CombinedDataSource {
         )
       );
       if (stockInfo) {
-        return this.normalizeStockList([{
-          ...stockInfo,
-          code: normalizedCode,
-        }])[0];
+        return this.normalizeStockList([
+          {
+            ...stockInfo,
+            code: normalizedCode,
+          },
+        ])[0];
       }
       return null;
     } catch (error: any) {
@@ -464,10 +556,15 @@ export class CombinedDataSource {
       ['eastmoney', () => this.eastMoneyClient.queryStockBasic(eastMoneyCode)],
     ];
 
-    for (const [provider_name, fetcher] of this.applyProviderPreference(providerChain, 'stock_basic')) {
+    for (const [provider_name, fetcher] of await this.buildProviderChain(
+      providerChain,
+      'stock_basic'
+    )) {
       const result = await this.tryStockBasicProvider(provider_name, normalizedCode, fetcher);
       if (result) {
-        logger.info(`Using stock basic info from ${this.getProvider(provider_name).provider_label}`);
+        logger.info(
+          `Using stock basic info from ${this.getProvider(provider_name).provider_label}`
+        );
         return result;
       }
     }

@@ -39,7 +39,13 @@ export const DEFAULT_DATA_PROVIDERS: MarketDataProviderDefinition[] = [
     provider_type: 'python',
     priority: 30,
     is_enabled: true,
-    supported_features: ['stock_list', 'history_k', 'stock_basic', 'realtime_quote', 'intraday_bar'],
+    supported_features: [
+      'stock_list',
+      'history_k',
+      'stock_basic',
+      'realtime_quote',
+      'intraday_bar',
+    ],
     metadata: {
       python_package: 'akshare',
       role: 'primary_free_source',
@@ -99,6 +105,44 @@ function toPlainRecord(record: DataSourceHealth): any {
         ? null
         : Number(json.last_latency_ms),
   };
+}
+
+function toNumber(value: any, fallback = 0): number {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
+}
+
+function parsePreference(value?: string): string[] {
+  return String(value || '')
+    .split(',')
+    .map(item => item.trim().toLowerCase())
+    .filter(item => item && item !== 'auto');
+}
+
+function statusScore(status?: string): number {
+  switch (status) {
+    case DataSourceStatus.HEALTHY:
+      return 40;
+    case DataSourceStatus.UNKNOWN:
+      return 8;
+    case DataSourceStatus.DEGRADED:
+      return -18;
+    case DataSourceStatus.UNHEALTHY:
+      return -70;
+    case DataSourceStatus.DISABLED:
+      return -999;
+    default:
+      return 0;
+  }
+}
+
+function latencyScore(latency_ms?: number | null): number {
+  if (latency_ms === null || latency_ms === undefined) return 0;
+  if (latency_ms <= 1000) return 6;
+  if (latency_ms <= 5000) return 3;
+  if (latency_ms <= 15000) return -2;
+  if (latency_ms <= 30000) return -8;
+  return -15;
 }
 
 export class DataSourceHealthService {
@@ -280,7 +324,8 @@ export class DataSourceHealthService {
       const record = await this.getOrCreateProvider(provider);
       const currentScore = Number(record.health_score ?? 60);
       const consecutiveFailures = Number(record.consecutive_failures || 0) + 1;
-      const nextStatus = consecutiveFailures >= 3 ? DataSourceStatus.UNHEALTHY : DataSourceStatus.DEGRADED;
+      const nextStatus =
+        consecutiveFailures >= 3 ? DataSourceStatus.UNHEALTHY : DataSourceStatus.DEGRADED;
       const errorMessage = typeof error === 'string' ? error : error.message;
       const existingMetadata = (record.metadata || {}) as Record<string, any>;
 
@@ -367,6 +412,149 @@ export class DataSourceHealthService {
 
   static async refreshExternalProviderHealth(): Promise<void> {
     await Promise.allSettled([this.probeTradingAgents()]);
+  }
+
+  /**
+   * 根据健康分、近期错误、延迟和显式偏好为某个数据能力生成动态路由计划。
+   * 该方法不会禁用任何 fallback，只是将近期成功率更高的源前置，将异常源后置。
+   */
+  static async getRankedProviders(
+    feature: MarketDataFeature,
+    provider_names?: string[],
+    options: {
+      preferred_provider?: string;
+      configured_preference?: string[];
+      include_disabled?: boolean;
+    } = {}
+  ): Promise<any[]> {
+    const snapshots = await this.getHealthSnapshots();
+    const snapshotMap = new Map<string, any>(
+      snapshots.map(item => [String(item.provider_name).toLowerCase(), item])
+    );
+    const defaultMap = new Map<string, MarketDataProviderDefinition>(
+      DEFAULT_DATA_PROVIDERS.map(provider => [provider.provider_name, provider])
+    );
+    const candidateNames =
+      provider_names && provider_names.length > 0
+        ? provider_names.map(item => item.toLowerCase())
+        : DEFAULT_DATA_PROVIDERS.filter(provider =>
+            provider.supported_features.includes(feature)
+          ).map(provider => provider.provider_name);
+
+    const envPreference = parsePreference(process.env.DATA_SOURCE_PREFERENCE);
+    const configuredPreference = options.configured_preference?.length
+      ? options.configured_preference.map(item => item.toLowerCase())
+      : envPreference;
+    const preferredProvider =
+      options.preferred_provider && options.preferred_provider !== 'auto'
+        ? options.preferred_provider.toLowerCase()
+        : '';
+
+    const ranked = candidateNames
+      .map(provider_name => {
+        const defaultProvider = defaultMap.get(provider_name);
+        const snapshot = snapshotMap.get(provider_name);
+        const supported_features =
+          snapshot?.supported_features || defaultProvider?.supported_features || [];
+        const is_supported = supported_features.includes(feature);
+        const is_enabled = snapshot?.is_enabled ?? defaultProvider?.is_enabled ?? false;
+        const status =
+          snapshot?.status || (is_enabled ? DataSourceStatus.UNKNOWN : DataSourceStatus.DISABLED);
+        const priority = toNumber(snapshot?.priority ?? defaultProvider?.priority, 100);
+        const health_score = toNumber(snapshot?.health_score, is_enabled ? 60 : 0);
+        const consecutive_failures = toNumber(snapshot?.consecutive_failures, 0);
+        const success_count = toNumber(snapshot?.success_count, 0);
+        const failure_count = toNumber(snapshot?.failure_count, 0);
+        const last_latency_ms =
+          snapshot?.last_latency_ms === null || snapshot?.last_latency_ms === undefined
+            ? null
+            : toNumber(snapshot.last_latency_ms, 0);
+        const preferenceIndex = configuredPreference.indexOf(provider_name);
+        const manualPreferenceScore = preferredProvider === provider_name ? 500 : 0;
+        const envPreferenceScore =
+          preferenceIndex >= 0 ? Math.max(20, 90 - preferenceIndex * 12) : 0;
+        const priorityScore = Math.max(0, 70 - priority) * 0.25;
+        const recentReliabilityScore = Math.min(success_count, 20) * 0.8 - failure_count * 0.6;
+        const route_score = Number(
+          (
+            health_score +
+            statusScore(status) +
+            latencyScore(last_latency_ms) +
+            priorityScore +
+            recentReliabilityScore +
+            manualPreferenceScore +
+            envPreferenceScore -
+            consecutive_failures * 8
+          ).toFixed(2)
+        );
+
+        return {
+          provider_name,
+          provider_label:
+            snapshot?.provider_label || defaultProvider?.provider_label || provider_name,
+          provider_type: snapshot?.provider_type || defaultProvider?.provider_type || 'api',
+          feature,
+          status,
+          priority,
+          is_enabled,
+          is_supported,
+          health_score,
+          route_score,
+          success_count,
+          failure_count,
+          consecutive_failures,
+          last_latency_ms,
+          last_checked_at: snapshot?.last_checked_at || null,
+          last_error: snapshot?.last_error || null,
+          preference_rank: preferenceIndex >= 0 ? preferenceIndex + 1 : null,
+          is_preferred: preferredProvider === provider_name,
+        };
+      })
+      .filter(item => item.is_supported)
+      .filter(item => options.include_disabled || item.is_enabled);
+
+    ranked.sort((a, b) => {
+      if (a.is_enabled !== b.is_enabled) return a.is_enabled ? -1 : 1;
+      if (a.status === DataSourceStatus.DISABLED && b.status !== DataSourceStatus.DISABLED)
+        return 1;
+      if (b.status === DataSourceStatus.DISABLED && a.status !== DataSourceStatus.DISABLED)
+        return -1;
+      if (a.route_score !== b.route_score) return b.route_score - a.route_score;
+      if (a.priority !== b.priority) return a.priority - b.priority;
+      return a.provider_name.localeCompare(b.provider_name);
+    });
+
+    return ranked.map((item, index) => ({
+      ...item,
+      rank: index + 1,
+      route_reason: this.buildRoutingReason(item),
+    }));
+  }
+
+  static buildRoutingReason(item: any): string {
+    if (!item.is_enabled) return '数据源未启用，仅保留为可配置备选';
+    if (item.is_preferred) return '用户显式指定优先源，失败后仍会自动 fallback';
+    if (item.status === DataSourceStatus.HEALTHY) {
+      return item.last_latency_ms
+        ? `近期成功且延迟 ${item.last_latency_ms}ms，优先使用`
+        : '近期成功，优先使用';
+    }
+    if (item.status === DataSourceStatus.UNKNOWN) return '尚无近期探测结果，作为中性备选';
+    if (item.status === DataSourceStatus.DEGRADED) return '近期存在空结果或失败，降级为后备';
+    if (item.status === DataSourceStatus.UNHEALTHY) return '连续失败较多，仅在其他源不可用时兜底';
+    return '按默认优先级参与 fallback';
+  }
+
+  static async getRoutingPlans(
+    features: MarketDataFeature[] = ['stock_list', 'history_k', 'stock_basic']
+  ): Promise<Record<string, any[]>> {
+    const plans: Record<string, any[]> = {};
+    for (const feature of features) {
+      plans[feature] = await this.getRankedProviders(feature, undefined, {
+        include_disabled: true,
+      });
+    }
+    return plans;
   }
 
   static async getHealthSnapshots(): Promise<any[]> {

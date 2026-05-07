@@ -536,17 +536,14 @@ export class MarketController {
       });
 
       // 按分组组织
-      const groupedFavorites = favorites.reduce(
-        (acc, favorite) => {
-          const group = favorite.group_id || '默认';
-          if (!acc[group]) {
-            acc[group] = [];
-          }
-          acc[group].push(favorite);
-          return acc;
-        },
-        {} as Record<string, any[]>
-      );
+      const groupedFavorites = favorites.reduce((acc, favorite) => {
+        const group = favorite.group_id || '默认';
+        if (!acc[group]) {
+          acc[group] = [];
+        }
+        acc[group].push(favorite);
+        return acc;
+      }, {} as Record<string, any[]>);
 
       res.json({
         success: true,
@@ -1319,13 +1316,18 @@ export class MarketController {
               ).toFixed(2)
             )
           : 0;
+      const routingPlans = await DataSourceHealthService.getRoutingPlans([
+        'stock_list',
+        'history_k',
+        'stock_basic',
+      ]);
 
       const status =
         unhealthyProviders.length > 0
           ? 'unhealthy'
           : degradedProviders.length > 0 || healthyProviders.length === 0
-            ? 'degraded'
-            : 'healthy';
+          ? 'degraded'
+          : 'healthy';
 
       res.json({
         success: true,
@@ -1342,6 +1344,7 @@ export class MarketController {
             avg_health_score: avgHealthScore,
           },
           providers,
+          routing_plans: routingPlans,
         },
       });
     } catch (error: any) {
@@ -1494,8 +1497,8 @@ export class MarketController {
             unhealthyCount > 0
               ? 'unhealthy'
               : degradedCount > 0 || avgScore < 50
-                ? 'degraded'
-                : 'healthy',
+              ? 'degraded'
+              : 'healthy',
           type: 'Market Data Providers',
           provider_count: dataSourceHealth.length,
           enabled_count: enabledProviders.length,

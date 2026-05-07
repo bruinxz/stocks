@@ -145,6 +145,15 @@ interface DataSourceProviderHealth {
   metadata?: Record<string, any>;
 }
 
+interface DataSourceRoutingItem extends DataSourceProviderHealth {
+  rank: number;
+  feature: string;
+  route_score: number;
+  route_reason?: string;
+  preference_rank?: number | null;
+  is_preferred?: boolean;
+}
+
 interface DataSourceHealthResponse {
   status: string;
   summary: {
@@ -157,6 +166,7 @@ interface DataSourceHealthResponse {
     avg_health_score: number;
   };
   providers: DataSourceProviderHealth[];
+  routing_plans?: Record<string, DataSourceRoutingItem[]>;
 }
 
 interface DataQualityItem {
@@ -976,9 +986,13 @@ const DataUpdateStatus: React.FC = () => {
   const renderDataSourceCard = () => {
     const providers = dataSourceHealth?.providers || [];
     const activeProviders = providers.filter(provider => provider.is_enabled);
-    const bestProvider = [...activeProviders].sort(
-      (a, b) => Number(b.health_score || 0) - Number(a.health_score || 0)
-    )[0];
+    const historyPlan = dataSourceHealth?.routing_plans?.history_k || [];
+    const stockBasicPlan = dataSourceHealth?.routing_plans?.stock_basic || [];
+    const stockListPlan = dataSourceHealth?.routing_plans?.stock_list || [];
+    const bestProvider = (historyPlan.find(provider => provider.is_enabled) ||
+      [...activeProviders].sort(
+        (a, b) => Number(b.health_score || 0) - Number(a.health_score || 0)
+      )[0]) as (DataSourceRoutingItem & DataSourceProviderHealth) | undefined;
     const summary = dataSourceHealth?.summary;
 
     const sourceColumns: ColumnsType<DataSourceProviderHealth> = [
@@ -1069,6 +1083,58 @@ const DataUpdateStatus: React.FC = () => {
       },
     ];
 
+    const routeColumns: ColumnsType<DataSourceRoutingItem> = [
+      {
+        title: '顺位',
+        dataIndex: 'rank',
+        key: 'rank',
+        width: 70,
+        render: rank => <Tag color={rank === 1 ? 'blue' : 'default'}>#{rank}</Tag>,
+      },
+      {
+        title: '数据源',
+        dataIndex: 'provider_label',
+        key: 'provider_label',
+        width: 140,
+        render: (_, record) => (
+          <div>
+            <Text strong>{record.provider_label}</Text>
+            <div>
+              <Text type="secondary" style={{ fontSize: 11 }}>
+                {record.provider_name}
+              </Text>
+            </div>
+          </div>
+        ),
+      },
+      {
+        title: '状态 / 路由分',
+        key: 'score',
+        width: 150,
+        render: (_, record) => {
+          const config = getProviderStatusConfig(record.status);
+          return (
+            <Space direction="vertical" size={2}>
+              <Tag className={`modern-tag ${config.tagClass}`}>{config.label}</Tag>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {Number(record.route_score || 0).toFixed(1)}
+              </Text>
+            </Space>
+          );
+        },
+      },
+      {
+        title: '原因',
+        dataIndex: 'route_reason',
+        key: 'route_reason',
+        render: reason => (
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            {reason || '--'}
+          </Text>
+        ),
+      },
+    ];
+
     return (
       <Card
         className="modern-card"
@@ -1104,7 +1170,13 @@ const DataUpdateStatus: React.FC = () => {
             <Statistic title="平均健康分" value={summary?.avg_health_score || 0} precision={1} />
           </Col>
           <Col xs={12} md={6}>
-            <Statistic title="优先可用" value={bestProvider?.provider_label || '--'} />
+            <Statistic
+              title="K线首选源"
+              value={bestProvider?.provider_label || '--'}
+              suffix={
+                bestProvider?.route_score ? ` / ${Number(bestProvider.route_score).toFixed(0)}` : ''
+              }
+            />
           </Col>
         </Row>
 
@@ -1112,12 +1184,67 @@ const DataUpdateStatus: React.FC = () => {
           type={dataSourceHealth?.status === 'healthy' ? 'success' : 'warning'}
           showIcon
           icon={<ThunderboltOutlined />}
-          message="自动 fallback 已启用"
-          description="历史K线会按 Tushare/Baostock/AKShare/东方财富/新浪 的可用状态自动降级；未配置 token 或未安装 Python 包的数据源会显示为未启用，不会阻断同步任务。"
+          message="智能择源与自动 fallback 已启用"
+          description="系统会根据健康分、近期失败、延迟和显式偏好动态调整股票列表、历史K线、基础资料的调用顺位；异常源只会降级为兜底，不会阻断同步任务。"
           style={{ marginBottom: 12 }}
         />
 
+        {historyPlan.length > 0 && (
+          <Row gutter={[12, 12]} style={{ marginBottom: 12 }}>
+            <Col xs={24} lg={8}>
+              <Card size="small" variant="borderless" style={{ background: '#f8fafc' }}>
+                <Statistic
+                  title="历史K线优先链路"
+                  value={historyPlan
+                    .slice(0, 3)
+                    .map(item => item.provider_label)
+                    .join(' → ')}
+                  valueStyle={{ fontSize: 14, fontWeight: 700 }}
+                />
+              </Card>
+            </Col>
+            <Col xs={24} lg={8}>
+              <Card size="small" variant="borderless" style={{ background: '#f8fafc' }}>
+                <Statistic
+                  title="股票列表链路"
+                  value={stockListPlan
+                    .slice(0, 3)
+                    .map(item => item.provider_label)
+                    .join(' → ')}
+                  valueStyle={{ fontSize: 14, fontWeight: 700 }}
+                />
+              </Card>
+            </Col>
+            <Col xs={24} lg={8}>
+              <Card size="small" variant="borderless" style={{ background: '#f8fafc' }}>
+                <Statistic
+                  title="基础资料链路"
+                  value={stockBasicPlan
+                    .slice(0, 3)
+                    .map(item => item.provider_label)
+                    .join(' → ')}
+                  valueStyle={{ fontSize: 14, fontWeight: 700 }}
+                />
+              </Card>
+            </Col>
+          </Row>
+        )}
+
         <Table
+          style={{ marginBottom: 12 }}
+          title={() => <Text strong>历史K线动态路由计划</Text>}
+          columns={routeColumns}
+          dataSource={historyPlan}
+          rowKey={record => `${record.feature}-${record.provider_name}`}
+          size="small"
+          pagination={false}
+          loading={loading.health}
+          scroll={{ x: 720 }}
+          locale={{ emptyText: <Empty description="暂无动态路由计划" /> }}
+        />
+
+        <Table
+          title={() => <Text strong>数据源健康明细</Text>}
           columns={sourceColumns}
           dataSource={providers}
           rowKey="provider_name"
