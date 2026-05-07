@@ -66,6 +66,7 @@
 html,
 body,
 #root {
+  height: 100%;
   min-height: 100%;
 }
 
@@ -77,6 +78,8 @@ body {
   background: var(--gradient-page);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 a {
@@ -113,6 +116,10 @@ a {
   position: relative;
 }
 
+.modern-layout > .ant-layout {
+  min-width: 0;
+}
+
 .modern-layout::before {
   content: '';
   position: fixed;
@@ -127,12 +134,14 @@ a {
   background: transparent !important;
   padding: 18px 0 18px 18px;
   border-right: none !important;
-  overflow: visible;
+  height: 100vh;
+  position: sticky !important;
+  top: 0;
+  align-self: flex-start;
+  overflow: hidden;
 }
 
 .modern-sider-inner {
-  position: sticky;
-  top: 18px;
   height: calc(100vh - 36px);
   display: flex;
   flex-direction: column;
@@ -144,6 +153,13 @@ a {
   box-shadow: var(--shadow-floating);
   border: 1px solid rgba(255, 255, 255, 0.08);
   z-index: 2;
+}
+
+.modern-sider-inner > div {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .modern-logo {
@@ -184,12 +200,16 @@ a {
 }
 
 .modern-menu {
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 0;
   background: transparent !important;
   color: rgba(246, 243, 237, 0.86) !important;
   border-inline-end: none !important;
   padding: 16px 14px 20px;
   overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
 .modern-menu.ant-menu-inline .ant-menu-item-group-title {
@@ -283,8 +303,10 @@ a {
   position: relative;
   z-index: 1;
   width: min(var(--content-width), 100%);
+  min-height: calc(100vh - var(--header-height));
   margin: 0 auto;
   padding: 26px 30px 38px;
+  overflow: visible;
 }
 
 .page-actions-modern {
