@@ -43,11 +43,11 @@ export class EastMoneyClient {
   private client: AxiosInstance;
   private baseURL: string;
 
-  constructor(baseURL?: string) {
+  constructor(baseURL?: string, timeoutMs = 60000) {
     this.baseURL = baseURL || 'https://push2.eastmoney.com';
     this.client = axios.create({
       baseURL: this.baseURL,
-      timeout: 60000,
+      timeout: timeoutMs,
       headers: {
         'User-Agent':
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',

@@ -1324,14 +1324,14 @@ export class MarketController {
       ]);
 
       const status =
-        healthyProviders.length > 0 && degradedProviders.length === 0
+        healthyProviders.length > 0 &&
+        degradedProviders.length === 0 &&
+        unhealthyProviders.length === 0
           ? 'healthy'
-          : healthyProviders.length > 0
+          : healthyProviders.length > 0 || degradedProviders.length > 0
           ? 'degraded'
           : unhealthyProviders.length > 0
           ? 'unhealthy'
-          : degradedProviders.length > 0 || healthyProviders.length === 0
-          ? 'degraded'
           : 'healthy';
 
       res.json({
@@ -1500,15 +1500,11 @@ export class MarketController {
 
         healthInfo.services.dataSource = {
           status:
-            enabledProviders.length > 0 &&
-            unhealthyCount < enabledProviders.length &&
-            avgScore >= 35
-              ? degradedCount > 0 || avgScore < 70
-                ? 'degraded'
-                : 'healthy'
-              : unhealthyCount > 0
+            unhealthyCount === 0 && degradedCount === 0 && avgScore >= 70
+              ? 'healthy'
+              : unhealthyCount > 0 && unhealthyCount >= enabledProviders.length
               ? 'unhealthy'
-              : degradedCount > 0 || avgScore < 50
+              : unhealthyCount > 0 || degradedCount > 0 || avgScore < 70
               ? 'degraded'
               : 'healthy',
           type: 'Market Data Providers',

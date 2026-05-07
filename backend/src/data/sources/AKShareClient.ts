@@ -63,21 +63,34 @@ export class AKShareClient {
   /**
    * 调用Python助手脚本
    */
-  private async callPythonScript(command: string, ...args: string[]): Promise<any> {
+  private async callPythonScript(
+    command: string,
+    ...args: Array<string | { timeoutMs?: number }>
+  ): Promise<any> {
     return new Promise((resolve, reject) => {
-      const processArgs = [this.scriptPath, command, ...args];
+      const lastArg = args[args.length - 1];
+      const options =
+        typeof lastArg === 'object' && lastArg !== null && !Array.isArray(lastArg)
+          ? (args.pop() as { timeoutMs?: number })
+          : {};
+      const processArgs = [this.scriptPath, command, ...(args as string[])];
       logger.debug(`Executing Python: ${this.pythonPath} ${processArgs.join(' ')}`);
 
       const child = spawn(this.pythonPath, processArgs);
       let stdout = '';
       let stderr = '';
 
-      // 设置超时（5分钟）
+      const timeoutMs = options.timeoutMs || 300000;
       const timeout = setTimeout(() => {
         logger.error(`Python script timeout for command: ${command}`);
         child.kill('SIGTERM');
-        reject(new Error('Python script timeout (5m)'));
-      }, 300000);
+        setTimeout(() => {
+          if (!child.killed) {
+            child.kill('SIGKILL');
+          }
+        }, 1000);
+        reject(new Error(`Python script timeout (${Math.round(timeoutMs / 1000)}s)`));
+      }, timeoutMs);
 
       child.stdout.on('data', data => {
         stdout += data.toString();
@@ -197,7 +210,9 @@ export class AKShareClient {
     const end = end_date || new Date().toISOString().split('T')[0];
     const start =
       start_date || new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-    const bars = await this.callPythonScript('health_check', code, start, end);
+    const bars = await this.callPythonScript('health_check', code, start, end, {
+      timeoutMs: Number(process.env.AKSHARE_HEALTH_TIMEOUT_MS || 12000),
+    });
     return {
       ok: Number(bars?.bar_count || 0) > 0,
       bar_count: Number(bars?.bar_count || 0),

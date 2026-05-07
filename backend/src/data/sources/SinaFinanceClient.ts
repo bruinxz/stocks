@@ -42,11 +42,11 @@ export class SinaFinanceClient {
   private client: AxiosInstance;
   private baseURL: string;
 
-  constructor(baseURL?: string) {
+  constructor(baseURL?: string, timeoutMs = 30000) {
     this.baseURL = baseURL || 'http://money.finance.sina.com.cn';
     this.client = axios.create({
       baseURL: this.baseURL,
-      timeout: 30000,
+      timeout: timeoutMs,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         Referer: 'http://finance.sina.com.cn/',
@@ -188,11 +188,11 @@ export class SinaFinanceClient {
     const maxRetries = 3;
     let page = 1;
     const num = 100;
-    
+
     while (true) {
       let success = false;
       let data: any = null;
-      
+
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
           const responseData = await this.client.get(
@@ -205,19 +205,19 @@ export class SinaFinanceClient {
                 asc: 1,
                 node: 'hs_a', // 沪深A股
                 symbol: '',
-                _s_r_a: 'page'
-              }
+                _s_r_a: 'page',
+              },
             }
           );
-          
+
           // SinaFinanceClient has a response interceptor that returns response.data directly
           data = responseData;
-          
+
           // Sina API might return string "null" when page is out of bounds
           if (data === 'null' || data === null) {
             data = [];
           }
-          
+
           // Try to parse if it's a string
           if (typeof data === 'string') {
             try {
@@ -227,7 +227,7 @@ export class SinaFinanceClient {
               data = [];
             }
           }
-          
+
           success = true;
           break;
         } catch (error) {
@@ -238,41 +238,41 @@ export class SinaFinanceClient {
           await new Promise(resolve => setTimeout(resolve, 1000));
         }
       }
-      
+
       if (!success || !Array.isArray(data) || data.length === 0) {
         break; // No more data
       }
-      
+
       for (const item of data) {
         // symbol format: "sh600000" or "sz000001" or "bj832000"
         const symbol = item.symbol;
         if (!symbol || symbol.length < 6) continue;
-        
+
         let prefix = symbol.substring(0, 2).toLowerCase();
         let stockCode = symbol.substring(2);
-        
+
         // Map to our standard format: "sh.600000"
         let standardCode = `${prefix}.${stockCode}`;
-        
+
         stocks.push({
           code: standardCode,
           code_name: item.name || '',
           ipoDate: '', // Sina doesn't provide IPO date in this endpoint
           type: 1,
-          status: 1
+          status: 1,
         });
       }
-      
+
       if (data.length < num) {
         break; // Last page
       }
-      
+
       page++;
-      
+
       // Add a tiny delay to avoid rate limiting
       await new Promise(resolve => setTimeout(resolve, 50));
     }
-    
+
     logger.info(`Fetched ${stocks.length} stocks from Sina Finance`);
     return stocks;
   }

@@ -503,7 +503,7 @@ export class DataSourceHealthService {
         probeDetail = result || {};
       } else if (provider.provider_name === 'eastmoney') {
         const bars = await this.withTimeout(
-          new EastMoneyClient().queryHistoryKData(
+          new EastMoneyClient(undefined, options.timeout_ms).queryHistoryKData(
             options.sample_symbol,
             options.start_date,
             options.end_date,
@@ -517,7 +517,7 @@ export class DataSourceHealthService {
         latestDate = bars?.[bars.length - 1]?.date;
       } else if (provider.provider_name === 'sina') {
         const bars = await this.withTimeout(
-          new SinaFinanceClient().queryHistoryKData(
+          new SinaFinanceClient(undefined, options.timeout_ms).queryHistoryKData(
             options.sample_symbol,
             options.start_date,
             options.end_date,
