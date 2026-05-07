@@ -187,7 +187,7 @@ const Dashboard: React.FC = () => {
         <Col span={24}>
           <Card
             className="modern-card"
-            bordered={false}
+            variant="borderless"
             title={<span style={{ fontSize: 16, fontWeight: 600 }}>大盘核心指数 (近30天)</span>}
           >
             <Row gutter={[16, 16]}>
@@ -199,7 +199,7 @@ const Dashboard: React.FC = () => {
                   <Col xs={24} sm={12} lg={6} key={index.symbol}>
                     <Card
                       size="small"
-                      bordered={false}
+                      variant="borderless"
                       style={{ background: '#f8fafc', borderRadius: 8 }}
                     >
                       <div
@@ -268,14 +268,14 @@ const Dashboard: React.FC = () => {
         <Col xs={24} lg={18}>
           <Card
             className="modern-card"
-            bordered={false}
+            variant="borderless"
             title={<span style={{ fontSize: 16, fontWeight: 600 }}>回测数据概览</span>}
             style={{ height: '100%' }}
           >
             <Row gutter={[16, 16]}>
               <Col xs={12} sm={6}>
                 <Card
-                  bordered={false}
+                  variant="borderless"
                   bodyStyle={{ padding: '16px 20px', background: '#f8fafc', borderRadius: 8 }}
                 >
                   <Skeleton loading={loading} active paragraph={{ rows: 1 }} title={false}>
@@ -290,7 +290,7 @@ const Dashboard: React.FC = () => {
               </Col>
               <Col xs={12} sm={6}>
                 <Card
-                  bordered={false}
+                  variant="borderless"
                   bodyStyle={{ padding: '16px 20px', background: '#f8fafc', borderRadius: 8 }}
                 >
                   <Skeleton loading={loading} active paragraph={{ rows: 1 }} title={false}>
@@ -309,7 +309,7 @@ const Dashboard: React.FC = () => {
               </Col>
               <Col xs={12} sm={6}>
                 <Card
-                  bordered={false}
+                  variant="borderless"
                   bodyStyle={{ padding: '16px 20px', background: '#f8fafc', borderRadius: 8 }}
                 >
                   <Skeleton loading={loading} active paragraph={{ rows: 1 }} title={false}>
@@ -324,7 +324,7 @@ const Dashboard: React.FC = () => {
               </Col>
               <Col xs={12} sm={6}>
                 <Card
-                  bordered={false}
+                  variant="borderless"
                   bodyStyle={{ padding: '16px 20px', background: '#f8fafc', borderRadius: 8 }}
                 >
                   <Skeleton loading={loading} active paragraph={{ rows: 1 }} title={false}>
@@ -345,7 +345,7 @@ const Dashboard: React.FC = () => {
         <Col xs={24} lg={6}>
           <Card
             className="modern-card"
-            bordered={false}
+            variant="borderless"
             title={<span style={{ fontSize: 16, fontWeight: 600 }}>市场情绪雷达</span>}
             style={{ height: '100%', display: 'flex', flexDirection: 'column' }}
             bodyStyle={{
@@ -402,7 +402,7 @@ const Dashboard: React.FC = () => {
         <Col xs={24} lg={16}>
           <Card
             className="modern-card"
-            bordered={false}
+            variant="borderless"
             title={<span style={{ fontSize: 16, fontWeight: 600 }}>最近回测</span>}
             extra={
               <Button type="link" size="small" onClick={() => navigate('/backtest')}>
@@ -425,7 +425,7 @@ const Dashboard: React.FC = () => {
         <Col xs={24} lg={8}>
           <Card
             className="modern-card"
-            bordered={false}
+            variant="borderless"
             title={<span style={{ fontSize: 16, fontWeight: 600 }}>系统状态</span>}
           >
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>

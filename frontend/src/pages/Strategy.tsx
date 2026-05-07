@@ -188,7 +188,7 @@ const Strategy: React.FC = () => {
 
       <Row gutter={[24, 24]} style={{ marginBottom: 24 }}>
         <Col xs={24} sm={8}>
-          <Card className="modern-card" bordered={false} loading={loading}>
+          <Card className="modern-card" variant="borderless" loading={loading}>
             <Statistic
               title="已运行回测总数"
               value={stats?.totalBacktests || 0}
@@ -197,7 +197,7 @@ const Strategy: React.FC = () => {
           </Card>
         </Col>
         <Col xs={24} sm={8}>
-          <Card className="modern-card" bordered={false} loading={loading}>
+          <Card className="modern-card" variant="borderless" loading={loading}>
             <Statistic
               title="平均总收益率"
               value={stats?.avgReturn ? (stats.avgReturn * 100).toFixed(2) : 0}
@@ -207,7 +207,7 @@ const Strategy: React.FC = () => {
           </Card>
         </Col>
         <Col xs={24} sm={8}>
-          <Card className="modern-card" bordered={false} loading={loading}>
+          <Card className="modern-card" variant="borderless" loading={loading}>
             <Statistic
               title="成功运行"
               value={stats?.completedBacktests || 0}
@@ -217,7 +217,7 @@ const Strategy: React.FC = () => {
         </Col>
       </Row>
 
-      <Card className="modern-card" bordered={false} title="策略收益排行榜">
+      <Card className="modern-card" variant="borderless" title="策略收益排行榜">
         <Table
           columns={columns}
           dataSource={backtests}

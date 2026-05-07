@@ -766,7 +766,7 @@ const DataUpdateStatus: React.FC = () => {
   ];
 
   const renderHealthCard = () => (
-    <Card className="modern-card" bordered={false} title="系统健康">
+    <Card className="modern-card" variant="borderless" title="系统健康">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {[
           { label: 'Redis', ok: systemHealth.redis, icon: <CheckCircleOutlined /> },
@@ -802,7 +802,7 @@ const DataUpdateStatus: React.FC = () => {
   );
 
   const renderQueueCard = () => (
-    <Card className="modern-card" bordered={false} title="队列状态">
+    <Card className="modern-card" variant="borderless" title="队列状态">
       <div
         style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 12 }}
       >
@@ -853,7 +853,7 @@ const DataUpdateStatus: React.FC = () => {
   );
 
   const renderControlPanel = () => (
-    <Card className="modern-card" bordered={false} title="操作">
+    <Card className="modern-card" variant="borderless" title="操作">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         {/* 数据更新核心操作 */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
@@ -1112,7 +1112,7 @@ const DataUpdateStatus: React.FC = () => {
         : '0';
 
     return (
-      <Card className="modern-card" bordered={false} title="统计 (最近7天)">
+      <Card className="modern-card" variant="borderless" title="统计 (最近7天)">
         <div
           style={{
             display: 'grid',
@@ -1144,7 +1144,7 @@ const DataUpdateStatus: React.FC = () => {
 
         <Row gutter={[12, 12]}>
           <Col span={12}>
-            <Card className="modern-card" bordered={false} title="成功率分布" size="small">
+            <Card className="modern-card" variant="borderless" title="成功率分布" size="small">
               <ResponsiveContainer width="100%" height={180}>
                 <PieChart>
                   <Pie
@@ -1167,7 +1167,7 @@ const DataUpdateStatus: React.FC = () => {
             </Card>
           </Col>
           <Col span={12}>
-            <Card className="modern-card" bordered={false} title="更新趋势" size="small">
+            <Card className="modern-card" variant="borderless" title="更新趋势" size="small">
               <ResponsiveContainer width="100%" height={180}>
                 <LineChart data={updateStats.dailyBreakdown}>
                   <CartesianGrid vertical={false} stroke="#f0f0f0" />
@@ -1198,7 +1198,7 @@ const DataUpdateStatus: React.FC = () => {
         style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
       >
         <div>
-          <h1 className="page-title-modern">系统状态与数据同步</h1>
+          <h1 className="page-title-modern">数据更新与系统监控</h1>
           <p className="page-subtitle-modern">实时监控 A 股数据同步状态，确保量化回测的准确性</p>
         </div>
         <Space>
@@ -1236,7 +1236,7 @@ const DataUpdateStatus: React.FC = () => {
 
           <Card
             className="modern-card"
-            bordered={false}
+            variant="borderless"
             title="任务队列"
             style={{ marginTop: 12 }}
             extra={
@@ -1263,7 +1263,7 @@ const DataUpdateStatus: React.FC = () => {
 
           <Card
             className="modern-card"
-            bordered={false}
+            variant="borderless"
             title="更新日志"
             style={{ marginTop: 12 }}
             extra={

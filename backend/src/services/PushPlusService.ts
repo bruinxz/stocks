@@ -28,14 +28,14 @@ class PushPlusService {
   constructor() {
     this.systemToken = process.env.PUSHPLUS_TOKEN || '';
     this.topic = process.env.PUSHPLUS_TOPIC || '';
-    
+
     if (!this.systemToken) {
       logger.warn('PUSHPLUS_TOKEN 未配置，推送功能将不可用');
     }
     if (!this.topic) {
       logger.warn('PUSHPLUS_TOPIC 未配置，群组推送功能将不可用');
     }
-    
+
     this.http = axios.create({
       baseURL: this.baseUrl,
       timeout: 10000,
@@ -67,6 +67,30 @@ class PushPlusService {
     return this._send(this.systemToken, title, content, 'markdown');
   }
 
+  /**
+   * 校验用户 PushPlus Token 的基础格式。
+   * PushPlus 的 user token 通常为 32 位十六进制字符串。
+   */
+  isValidTokenFormat(token: string): boolean {
+    return /^[a-f0-9]{32}$/i.test((token || '').trim());
+  }
+
+  /**
+   * 使用用户自己的 PushPlus Token 发送 Markdown 消息。
+   * 用于个人中心绑定校验与单用户测试推送。
+   */
+  async sendMarkdownToUser(
+    token: string,
+    title: string,
+    content: string
+  ): Promise<SendMessageResult> {
+    const normalizedToken = (token || '').trim();
+    if (!this.isValidTokenFormat(normalizedToken)) {
+      return { success: false, message: 'Token 格式不正确' };
+    }
+    return this._send(normalizedToken, title, content, 'markdown');
+  }
+
   private async _send(
     token: string,
     title: string,
@@ -81,16 +105,16 @@ class PushPlusService {
         content,
         template,
       };
-      
+
       // 如果指定了群组编码，则附加 topic 参数实现一对多群发
       if (topic) {
         payload.topic = topic;
       }
-      
+
       const resp = await this.http.post('/send', payload);
       const { code, msg, data } = resp.data || {};
       logger.info(`PushPlus 返回: code=${code}, msg=${msg}, data=${JSON.stringify(data)}`);
-      
+
       if (code === 200) {
         return { success: true, data };
       }

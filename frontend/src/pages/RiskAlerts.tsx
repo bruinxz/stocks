@@ -126,7 +126,7 @@ const RiskAlerts: React.FC = () => {
 
       <Row gutter={[24, 24]}>
         <Col xs={24} lg={16}>
-          <Card className="modern-card" bordered={false} title="未读告警">
+          <Card className="modern-card" variant="borderless" title="未读告警">
             <List
               loading={loading}
               itemLayout="horizontal"
@@ -193,7 +193,7 @@ const RiskAlerts: React.FC = () => {
         <Col xs={24} lg={8}>
           <Card
             className="modern-card"
-            bordered={false}
+            variant="borderless"
             title={
               <>
                 <SettingOutlined /> 风控阈值配置

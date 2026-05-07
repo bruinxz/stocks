@@ -189,7 +189,7 @@ const BacktestForm: React.FC<BacktestFormProps> = ({ onSuccess }) => {
   };
 
   return (
-    <Card className="modern-card" bordered={false} title="新建回测">
+    <Card className="modern-card" variant="borderless" title="新建回测">
       <Form
         form={form}
         layout="vertical"
@@ -292,7 +292,7 @@ const BacktestForm: React.FC<BacktestFormProps> = ({ onSuccess }) => {
 
         <Card
           className="modern-card"
-          bordered={false}
+          variant="borderless"
           type="inner"
           title={<span style={{ fontSize: 13, fontWeight: 600, color: '#6b7280' }}>策略参数</span>}
           style={{ marginBottom: 24, background: '#f9fafb', border: '1px solid #f3f4f6' }}

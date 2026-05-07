@@ -250,7 +250,7 @@ const TaskScheduler: React.FC = () => {
         </Button>
       </div>
 
-      <Card className="modern-card" bordered={false}>
+      <Card className="modern-card" variant="borderless">
         <Table
           columns={columns}
           dataSource={tasks}

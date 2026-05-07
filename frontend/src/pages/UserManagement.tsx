@@ -11,7 +11,9 @@ import {
   Popconfirm,
   message,
   Tag,
-  Typography,
+  Card,
+  Row,
+  Col,
 } from 'antd';
 import {
   PlusOutlined,
@@ -19,6 +21,10 @@ import {
   DeleteOutlined,
   KeyOutlined,
   UserOutlined,
+  TeamOutlined,
+  SafetyCertificateOutlined,
+  CheckCircleOutlined,
+  StopOutlined,
 } from '@ant-design/icons';
 import {
   getUsers,
@@ -29,7 +35,6 @@ import {
 } from '../services/userService';
 import dayjs from 'dayjs';
 
-const { Title } = Typography;
 const { Option } = Select;
 
 interface User {
@@ -51,6 +56,10 @@ const UserManagement: React.FC = () => {
 
   const [form] = Form.useForm();
   const [passwordForm] = Form.useForm();
+
+  const activeUserCount = users.filter(user => user.is_active).length;
+  const adminUserCount = users.filter(user => user.role === 'admin').length;
+  const disabledUserCount = users.length - activeUserCount;
 
   const fetchUsers = async () => {
     setLoading(true);
@@ -184,7 +193,7 @@ const UserManagement: React.FC = () => {
       dataIndex: 'role',
       key: 'role',
       render: (role: string) => (
-        <Tag color={role === 'admin' ? 'gold' : 'blue'}>
+        <Tag className={`modern-tag ${role === 'admin' ? 'tag-warning' : 'tag-info'}`}>
           {role === 'admin' ? '管理员' : '普通用户'}
         </Tag>
       ),
@@ -193,14 +202,16 @@ const UserManagement: React.FC = () => {
       title: '密码',
       dataIndex: 'password',
       key: 'password',
-      render: (pwd: string) => <Tag>{pwd || '******'}</Tag>,
+      render: (pwd: string) => <Tag className="modern-tag tag-default">{pwd || '已加密'}</Tag>,
     },
     {
       title: '状态',
       dataIndex: 'is_active',
       key: 'is_active',
       render: (is_active: boolean) => (
-        <Tag color={is_active ? 'green' : 'red'}>{is_active ? '启用' : '禁用'}</Tag>
+        <Tag className={`modern-tag ${is_active ? 'tag-success' : 'tag-error'}`}>
+          {is_active ? '启用' : '禁用'}
+        </Tag>
       ),
     },
     {
@@ -230,28 +241,108 @@ const UserManagement: React.FC = () => {
   ];
 
   return (
-    <div style={{ padding: '24px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <Title level={4}>用户管理</Title>
-        <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
-          新增用户
-        </Button>
+    <div className="fade-in-up">
+      <div className="page-header-modern">
+        <div>
+          <h1 className="page-title-modern">
+            <UserOutlined /> 用户管理
+          </h1>
+          <p className="page-subtitle-modern">
+            统一维护系统账号、角色权限与登录状态，确保量化平台访问安全可控。
+          </p>
+        </div>
+        <div className="page-actions-modern">
+          <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
+            新增用户
+          </Button>
+        </div>
       </div>
 
-      <Table
-        columns={columns}
-        dataSource={users}
-        rowKey="id"
-        loading={loading}
-        pagination={{ defaultPageSize: 10 }}
-      />
+      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+        <Col xs={24} sm={12} lg={6}>
+          <Card className="stat-card stat-card-blue modern-card" variant="borderless">
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <div className="metric-title">账号总数</div>
+                <div className="metric-value">{users.length}</div>
+              </div>
+              <div className="icon-wrapper icon-blue">
+                <TeamOutlined />
+              </div>
+            </div>
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} lg={6}>
+          <Card className="stat-card stat-card-green modern-card" variant="borderless">
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <div className="metric-title">启用账号</div>
+                <div className="metric-value">{activeUserCount}</div>
+              </div>
+              <div className="icon-wrapper icon-green">
+                <CheckCircleOutlined />
+              </div>
+            </div>
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} lg={6}>
+          <Card className="stat-card stat-card-orange modern-card" variant="borderless">
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <div className="metric-title">管理员</div>
+                <div className="metric-value">{adminUserCount}</div>
+              </div>
+              <div className="icon-wrapper icon-orange">
+                <SafetyCertificateOutlined />
+              </div>
+            </div>
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} lg={6}>
+          <Card className="stat-card stat-card-red modern-card" variant="borderless">
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <div className="metric-title">禁用账号</div>
+                <div className="metric-value">{disabledUserCount}</div>
+              </div>
+              <div className="icon-wrapper icon-red">
+                <StopOutlined />
+              </div>
+            </div>
+          </Card>
+        </Col>
+      </Row>
+
+      <Card
+        title="账号列表"
+        className="modern-card table-card-no-padding"
+        variant="borderless"
+        extra={
+          <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>
+            最近创建优先 · 共 {users.length} 个账号
+          </span>
+        }
+      >
+        <Table
+          columns={columns}
+          dataSource={users}
+          rowKey="id"
+          loading={loading}
+          pagination={{
+            defaultPageSize: 10,
+            showSizeChanger: true,
+            showTotal: total => `共 ${total} 个账号`,
+          }}
+          scroll={{ x: 'max-content' }}
+        />
+      </Card>
 
       <Modal
         title={editingUser ? '编辑用户' : '新增用户'}
-        visible={isModalVisible}
+        open={isModalVisible}
         onOk={handleModalOk}
         onCancel={() => setIsModalVisible(false)}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={form} layout="vertical" preserve={false}>
           {!editingUser && (
@@ -264,7 +355,7 @@ const UserManagement: React.FC = () => {
                   { min: 3, message: '至少3个字符' },
                 ]}
               >
-                <Input />
+                <Input prefix={<UserOutlined />} placeholder="请输入用户名" />
               </Form.Item>
               <Form.Item
                 name="password"
@@ -274,7 +365,7 @@ const UserManagement: React.FC = () => {
                   { min: 6, message: '至少6个字符' },
                 ]}
               >
-                <Input.Password />
+                <Input.Password placeholder="请输入初始密码" />
               </Form.Item>
             </>
           )}
@@ -287,7 +378,7 @@ const UserManagement: React.FC = () => {
               { type: 'email', message: '请输入有效的邮箱地址' },
             ]}
           >
-            <Input />
+            <Input placeholder="name@example.com" />
           </Form.Item>
 
           <Form.Item name="role" label="角色" rules={[{ required: true }]}>
@@ -305,10 +396,10 @@ const UserManagement: React.FC = () => {
 
       <Modal
         title={`修改密码 - ${editingUser?.username}`}
-        visible={isPasswordModalVisible}
+        open={isPasswordModalVisible}
         onOk={handlePasswordModalOk}
         onCancel={() => setIsPasswordModalVisible(false)}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={passwordForm} layout="vertical" preserve={false}>
           <Form.Item

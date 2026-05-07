@@ -176,14 +176,14 @@ export class UserController {
       // @ts-ignore
       const currentUserRole = req.user?.role;
       // @ts-ignore
-      const currentUserId = req.user?.user_id;
-      
+      const currentUserId = req.user?.id;
+
       if (currentUserRole !== 'admin') {
         return res.status(403).json({ success: false, message: '权限不足，需要管理员权限' });
       }
 
       const { id } = req.params;
-      
+
       // 不能删除自己
       if (Number(id) === currentUserId) {
         return res.status(400).json({ success: false, message: '不能删除当前登录的账号' });

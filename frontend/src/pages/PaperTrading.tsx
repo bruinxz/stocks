@@ -358,7 +358,7 @@ const PaperTrading: React.FC = () => {
       <Row gutter={[24, 24]} style={{ marginBottom: 24 }}>
         <Col span={8}>
           <Space direction="vertical" size="large" style={{ width: '100%' }}>
-            <Card className="modern-card" bordered={false} loading={loading}>
+            <Card className="modern-card" variant="borderless" loading={loading}>
               <Statistic
                 title="当前总资产"
                 value={portfolio?.total_value || 0}
@@ -367,7 +367,7 @@ const PaperTrading: React.FC = () => {
                 valueStyle={{ color: '#1890ff', fontWeight: 'bold' }}
               />
             </Card>
-            <Card className="modern-card" bordered={false} loading={loading}>
+            <Card className="modern-card" variant="borderless" loading={loading}>
               <Statistic
                 title="可用资金"
                 value={portfolio?.current_cash || 0}
@@ -375,7 +375,7 @@ const PaperTrading: React.FC = () => {
                 prefix={<WalletOutlined />}
               />
             </Card>
-            <Card className="modern-card" bordered={false} loading={loading}>
+            <Card className="modern-card" variant="borderless" loading={loading}>
               <Statistic
                 title="累计收益率"
                 value={Math.abs(total_return)}
@@ -391,7 +391,7 @@ const PaperTrading: React.FC = () => {
         <Col span={16}>
           <Card
             className="modern-card"
-            bordered={false}
+            variant="borderless"
             title="资产走势"
             style={{ height: '100%' }}
           >
@@ -444,7 +444,7 @@ const PaperTrading: React.FC = () => {
         </Col>
       </Row>
 
-      <Card className="modern-card" bordered={false} title="当前持仓">
+      <Card className="modern-card" variant="borderless" title="当前持仓">
         <Table
           columns={columns}
           dataSource={positions}
@@ -468,7 +468,7 @@ const PaperTrading: React.FC = () => {
         onOk={handleTradeSubmit}
         onCancel={() => setIsTradeModalVisible(false)}
         confirmLoading={submittingTrade}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={tradeForm} layout="vertical">
           <Form.Item

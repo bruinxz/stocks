@@ -22,8 +22,8 @@ router.post(
     body('symbols').isArray({ min: 1, max: 10 }).withMessage('请选择1-10只股票'),
     body('symbols.*')
       .isString()
-      .matches(/^(sh\.|sz\.|bj\.)\d{6}$/)
-      .withMessage('股票代码格式不正确，应为 sh.600000 或 sz.000001 格式'),
+      .matches(/^((sh|sz|bj)\.)?\d{6}$|^(sh|sz|bj)\d{6}$|^\d{6}\.(SH|SZ|BJ)$/i)
+      .withMessage('股票代码格式不正确，应为 sh.600000、600000 或 600000.SH 格式'),
     body('buyDate').isISO8601().withMessage('买入日期格式不正确，应为 YYYY-MM-DD 格式'),
     body('days')
       .isInt({ min: 1, max: 365 * 5 })
@@ -73,11 +73,7 @@ router.get('/recommended-config', portfolioController.getRecommendedConfig);
  * @desc 获取投资组合模拟详情
  * @access Private
  */
-router.get(
-  '/:id',
-  authController.authenticate,
-  portfolioController.getSimulationDetail
-);
+router.get('/:id', authController.authenticate, portfolioController.getSimulationDetail);
 
 /**
  * @route POST /api/portfolio/validate-stocks
@@ -91,8 +87,8 @@ router.post(
     body('symbols').isArray({ min: 1, max: 20 }).withMessage('请选择1-20只股票'),
     body('symbols.*')
       .isString()
-      .matches(/^(sh\.|sz\.|bj\.)\d{6}$/)
-      .withMessage('股票代码格式不正确，应为 sh.600000 或 sz.000001 格式'),
+      .matches(/^((sh|sz|bj)\.)?\d{6}$|^(sh|sz|bj)\d{6}$|^\d{6}\.(SH|SZ|BJ)$/i)
+      .withMessage('股票代码格式不正确，应为 sh.600000、600000 或 600000.SH 格式'),
   ],
   validateRequest,
   portfolioController.validateStocks

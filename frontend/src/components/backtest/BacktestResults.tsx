@@ -72,12 +72,12 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtest_id, onBack }
   };
 
   if (loading) {
-    return <Card className="modern-card" bordered={false} loading={true}></Card>;
+    return <Card className="modern-card" variant="borderless" loading={true}></Card>;
   }
 
   if (!results) {
     return (
-      <Card className="modern-card" bordered={false}>
+      <Card className="modern-card" variant="borderless">
         无法加载回测结果
       </Card>
     );
@@ -246,9 +246,9 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtest_id, onBack }
         className="page-header-modern"
         style={{
           position: 'sticky',
-          top: 0,
+          top: 64,
           zIndex: 10,
-          background: 'var(--bg-base)',
+          background: 'rgba(246, 241, 232, 0.88)',
           paddingBottom: 16,
           paddingTop: 16,
           marginBottom: 24,
@@ -315,7 +315,7 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtest_id, onBack }
 
       <Tabs defaultActiveKey="1">
         <TabPane tab="资金曲线" key="1">
-          <Card className="modern-card chart-card" bordered={false}>
+          <Card className="modern-card chart-card" variant="borderless">
             <ResponsiveContainer width="100%" height={400}>
               <LineChart data={equityData}>
                 <CartesianGrid vertical={false} stroke="#f0f0f0" />
@@ -345,7 +345,7 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtest_id, onBack }
         </TabPane>
 
         <TabPane tab="交易记录" key="2">
-          <Card className="modern-card" bordered={false}>
+          <Card className="modern-card" variant="borderless">
             <Table
               columns={tradeColumns}
               dataSource={trades}
@@ -376,7 +376,7 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtest_id, onBack }
         </TabPane>
 
         <TabPane tab="每日收益" key="3">
-          <Card className="modern-card chart-card" bordered={false}>
+          <Card className="modern-card chart-card" variant="borderless">
             <ResponsiveContainer width="100%" height={400}>
               <BarChart data={returnsData}>
                 <CartesianGrid vertical={false} stroke="#f0f0f0" />
@@ -396,7 +396,7 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtest_id, onBack }
         </TabPane>
 
         <TabPane tab="详细指标" key="4">
-          <Card className="modern-card" bordered={false}>
+          <Card className="modern-card" variant="borderless">
             <Descriptions title="回测详细指标" bordered column={2}>
               <Descriptions.Item label="初始资金">
                 ¥{metrics.initial_capital.toLocaleString()}
@@ -443,7 +443,7 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtest_id, onBack }
 
         <TabPane tab="回测参数" key="5">
           {backtestInfo && (
-            <Card className="modern-card" bordered={false}>
+            <Card className="modern-card" variant="borderless">
               <Descriptions title="回测基本信息" bordered>
                 <Descriptions.Item label="回测名称">{backtestInfo.name}</Descriptions.Item>
                 <Descriptions.Item label="股票代码">{backtestInfo.symbol}</Descriptions.Item>

@@ -239,7 +239,7 @@ const Profile: React.FC = () => {
         <Col xs={24} md={8}>
           <Card
             className="modern-card"
-            bordered={false}
+            variant="borderless"
             style={{ textAlign: 'center', height: '100%' }}
           >
             <div style={{ marginBottom: 24 }}>
@@ -266,7 +266,7 @@ const Profile: React.FC = () => {
         <Col xs={24} md={16}>
           <Card
             className="modern-card"
-            bordered={false}
+            variant="borderless"
             title={
               <>
                 <EditOutlined /> 基本资料
@@ -309,7 +309,7 @@ const Profile: React.FC = () => {
 
           <Card
             className="modern-card"
-            bordered={false}
+            variant="borderless"
             title={
               <>
                 <WechatOutlined style={{ color: '#07c160' }} /> 微信通知（PushPlus）

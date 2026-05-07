@@ -249,7 +249,7 @@ const Backtest: React.FC = () => {
             ) : (
               <Card
                 className="modern-card"
-                bordered={false}
+                variant="borderless"
                 style={{
                   minHeight: 400,
                   display: 'flex',

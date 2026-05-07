@@ -8,6 +8,7 @@ import {
   Navigate,
   useLocation,
   useNavigate,
+  useParams,
 } from 'react-router-dom';
 import {
   DashboardOutlined,
@@ -34,6 +35,7 @@ import Login from './pages/Login';
 import Portfolio from './pages/Portfolio';
 import Market from './pages/Market';
 import DataUpdateStatus from './pages/DataUpdateStatus';
+import BacktestResults from './components/backtest/BacktestResults';
 import Profile from './pages/Profile';
 import UserManagement from './pages/UserManagement';
 import AIAdvisor from './pages/AIAdvisor';
@@ -61,6 +63,16 @@ const ProtectedRoute = ({ children }: { children: JSX.Element }) => {
   const location = useLocation();
   if (!token) return <Navigate to="/login" state={{ from: location }} replace />;
   return children;
+};
+
+const BacktestDetailRoute: React.FC = () => {
+  const { id } = useParams();
+
+  if (!id) {
+    return <Navigate to="/backtest" replace />;
+  }
+
+  return <BacktestResults backtest_id={id} />;
 };
 
 const AppContent: React.FC = () => {
@@ -139,6 +151,11 @@ const AppContent: React.FC = () => {
       label: '量化交易',
       children: [
         { key: '/strategy', icon: <StockOutlined />, label: <Link to="/strategy">策略中心</Link> },
+        {
+          key: '/portfolio',
+          icon: <PieChartOutlined />,
+          label: <Link to="/portfolio">组合收益</Link>,
+        },
         {
           key: '/backtest',
           icon: <LineChartOutlined />,
@@ -243,21 +260,7 @@ const AppContent: React.FC = () => {
         </div>
       </Sider>
       <Layout style={{ background: 'transparent' }}>
-        <Header
-          className="modern-header"
-          style={{
-            display: 'flex',
-            justifyContent: 'flex-end',
-            alignItems: 'center',
-            padding: '0 24px',
-            background: 'var(--bg-card)',
-            borderBottom: '1px solid var(--border-color)',
-            position: 'sticky',
-            top: 0,
-            zIndex: 10,
-            height: 64,
-          }}
-        >
+        <Header className="modern-header">
           {token && (
             <Dropdown menu={userMenuProps} placement="bottomRight" trigger={['click']}>
               <div
@@ -273,7 +276,7 @@ const AppContent: React.FC = () => {
               >
                 <Avatar
                   size={32}
-                  style={{ backgroundColor: '#4f46e5', fontSize: 14, marginRight: 12 }}
+                  style={{ backgroundColor: '#1f3a5f', fontSize: 14, marginRight: 12 }}
                   icon={<UserOutlined />}
                   src={avatarSrc}
                 />
@@ -344,10 +347,26 @@ const AppContent: React.FC = () => {
               }
             />
             <Route
+              path="/portfolio"
+              element={
+                <ProtectedRoute>
+                  <Portfolio />
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="/backtest"
               element={
                 <ProtectedRoute>
                   <Backtest />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/backtest/:id"
+              element={
+                <ProtectedRoute>
+                  <BacktestDetailRoute />
                 </ProtectedRoute>
               }
             />
@@ -413,29 +432,29 @@ const App: React.FC = () => {
       locale={zhCN}
       theme={{
         token: {
-          colorPrimary: '#4f46e5',
-          colorInfo: '#4f46e5',
-          colorSuccess: '#10b981',
-          colorWarning: '#f59e0b',
-          colorError: '#ef4444',
-          borderRadius: 8,
+          colorPrimary: '#1f3a5f',
+          colorInfo: '#2f6f73',
+          colorSuccess: '#1f8a70',
+          colorWarning: '#c9822b',
+          colorError: '#c94b4b',
+          borderRadius: 12,
           fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif",
-          colorBgContainer: '#ffffff',
-          colorText: '#1a1a1a',
-          colorTextSecondary: '#888',
+          colorBgContainer: '#fffdf8',
+          colorText: '#1e252b',
+          colorTextSecondary: '#65727e',
         },
         components: {
-          Button: { borderRadius: 6, controlHeight: 36, fontWeight: 500 },
-          Card: { borderRadiusLG: 10 },
+          Button: { borderRadius: 10, controlHeight: 36, fontWeight: 600 },
+          Card: { borderRadiusLG: 16 },
           Table: {
-            borderRadius: 8,
-            headerBg: '#fafafa',
-            headerColor: '#888',
-            rowHoverBg: '#fafafa',
+            borderRadius: 14,
+            headerBg: '#f7f1e7',
+            headerColor: '#55616c',
+            rowHoverBg: '#fbf7ef',
           },
-          Input: { borderRadius: 8, controlHeight: 36 },
-          Select: { borderRadius: 8, controlHeight: 36 },
-          DatePicker: { borderRadius: 8, controlHeight: 36 },
+          Input: { borderRadius: 10, controlHeight: 36 },
+          Select: { borderRadius: 10, controlHeight: 36 },
+          DatePicker: { borderRadius: 10, controlHeight: 36 },
         },
       }}
     >

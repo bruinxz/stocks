@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Card,
-  Typography,
   Input,
   Select,
   Button,
@@ -12,6 +11,7 @@ import {
   Tooltip,
   Row,
   Col,
+  Empty,
 } from 'antd';
 import {
   SyncOutlined,
@@ -21,7 +21,6 @@ import {
 } from '@ant-design/icons';
 import { logService, LogEntry } from '../services/logService';
 
-const { Title, Text } = Typography;
 const { Option } = Select;
 
 const SystemLogs: React.FC = () => {
@@ -91,15 +90,13 @@ const SystemLogs: React.FC = () => {
   useEffect(() => {
     if (autoRefresh) {
       timerRef.current = setInterval(() => {
-        // If auto-refreshing, force page 1 and don't show loading spinner
         setPage(1);
         fetchLogs(1, level, searchKeyword, logType, false);
       }, 3000);
-    } else {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-      }
+    } else if (timerRef.current) {
+      clearInterval(timerRef.current);
     }
+
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
@@ -116,14 +113,62 @@ const SystemLogs: React.FC = () => {
     }
   };
 
-  return (
-    <div style={{ padding: '24px', height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <Title level={4} style={{ marginBottom: '24px' }}>
-        系统日志监控
-      </Title>
+  const getLevelColor = (logLevel: string) => {
+    if (logLevel === 'error') return '#ff7a7a';
+    if (logLevel === 'warn') return '#f5b85b';
+    if (logLevel === 'info') return '#7dd3a7';
+    return '#8bd3ff';
+  };
 
-      {/* Top Control Panel */}
-      <Card bordered={false} style={{ marginBottom: '16px' }} bodyStyle={{ padding: '16px 24px' }}>
+  return (
+    <div className="fade-in-up">
+      <div className="page-header-modern">
+        <div>
+          <h1 className="page-title-modern">系统日志</h1>
+          <p className="page-subtitle-modern">按级别、关键字和日志文件实时追踪系统运行状态</p>
+        </div>
+        <div className="page-actions-modern">
+          <Tooltip title={autoRefresh ? '停止实时刷新' : '开启实时刷新 (3秒)'}>
+            <Button
+              type={autoRefresh ? 'default' : 'primary'}
+              danger={autoRefresh}
+              icon={autoRefresh ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
+              onClick={() => setAutoRefresh(!autoRefresh)}
+            >
+              {autoRefresh ? '停止实时监控' : '实时监控'}
+            </Button>
+          </Tooltip>
+          <Tooltip title="手动刷新">
+            <Button
+              icon={<SyncOutlined />}
+              onClick={() => fetchLogs(page, level, searchKeyword, logType)}
+            >
+              刷新
+            </Button>
+          </Tooltip>
+        </div>
+      </div>
+
+      <div className="stats-grid-modern" style={{ marginBottom: 16 }}>
+        <Card className="stat-card stat-card-green modern-card" variant="borderless">
+          <div className="metric-title">Info</div>
+          <div className="metric-value">{stats.info || 0}</div>
+        </Card>
+        <Card className="stat-card stat-card-orange modern-card" variant="borderless">
+          <div className="metric-title">Warn</div>
+          <div className="metric-value">{stats.warn || 0}</div>
+        </Card>
+        <Card className="stat-card stat-card-red modern-card" variant="borderless">
+          <div className="metric-title">Error</div>
+          <div className="metric-value">{stats.error || 0}</div>
+        </Card>
+        <Card className="stat-card stat-card-blue modern-card" variant="borderless">
+          <div className="metric-title">当前页</div>
+          <div className="metric-value">{page}</div>
+        </Card>
+      </div>
+
+      <Card className="modern-card" variant="borderless" style={{ marginBottom: 16 }}>
         <Row gutter={[16, 16]} align="middle" justify="space-between">
           <Col flex="auto">
             <Space wrap size="middle">
@@ -135,13 +180,13 @@ const SystemLogs: React.FC = () => {
                   setPage(1);
                 }}
               >
-                <Option value="combined">综合日志 (combined.log)</Option>
-                <Option value="error">错误日志 (error.log)</Option>
+                <Option value="combined">综合日志</Option>
+                <Option value="error">错误日志</Option>
               </Select>
 
               <Select
                 value={level}
-                style={{ width: 120 }}
+                style={{ width: 132 }}
                 onChange={val => {
                   setLevel(val);
                   setPage(1);
@@ -159,8 +204,8 @@ const SystemLogs: React.FC = () => {
                 value={keyword}
                 onChange={e => setKeyword(e.target.value)}
                 onKeyDown={handleKeyDown}
-                style={{ width: 300 }}
-                prefix={<SearchOutlined style={{ color: '#bfbfbf' }} />}
+                style={{ width: 320 }}
+                prefix={<SearchOutlined style={{ color: '#8c98a5' }} />}
                 allowClear
               />
 
@@ -169,138 +214,77 @@ const SystemLogs: React.FC = () => {
               </Button>
             </Space>
           </Col>
-          <Col>
-            <Space size="middle">
-              <Tooltip title={autoRefresh ? '停止实时刷新' : '开启实时刷新 (3秒)'}>
-                <Button
-                  type={autoRefresh ? 'default' : 'primary'}
-                  danger={autoRefresh}
-                  icon={autoRefresh ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
-                  onClick={() => setAutoRefresh(!autoRefresh)}
-                >
-                  {autoRefresh ? '停止 tail -f' : '实时监控'}
-                </Button>
-              </Tooltip>
-
-              <Tooltip title="手动刷新">
-                <Button
-                  icon={<SyncOutlined />}
-                  onClick={() => fetchLogs(page, level, searchKeyword, logType)}
-                />
-              </Tooltip>
-            </Space>
-          </Col>
         </Row>
       </Card>
 
-      {/* Stats Chips */}
-      <div style={{ marginBottom: '16px' }}>
-        <Space size="small">
-          <Tag color="success">Total Info: {stats.info || 0}</Tag>
-          <Tag color="warning">Total Warn: {stats.warn || 0}</Tag>
-          <Tag color="error">Total Error: {stats.error || 0}</Tag>
-        </Space>
-      </div>
-
-      {/* Terminal View */}
-      <div
-        style={{
-          flexGrow: 1,
-          backgroundColor: '#1e1e1e',
-          color: '#d4d4d4',
-          padding: '16px',
-          overflowY: 'auto',
-          fontFamily: '"Fira Code", Consolas, Monaco, "Courier New", monospace',
-          fontSize: '14px',
-          lineHeight: '1.6',
-          borderRadius: '8px',
-          position: 'relative',
-          minHeight: '400px',
-          boxShadow: 'inset 0 0 10px rgba(0,0,0,0.5)',
-        }}
-      >
-        {loading && !autoRefresh && (
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'center',
-              alignItems: 'center',
-              height: '100%',
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              backgroundColor: 'rgba(30, 30, 30, 0.7)',
-              zIndex: 10,
-            }}
-          >
-            <Spin size="large" />
+      <Card className="modern-card table-card-no-padding" variant="borderless">
+        <div
+          className="terminal-surface"
+          style={{ position: 'relative', minHeight: 520, padding: 18 }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 14 }}>
+            <span className="terminal-title">{logType}.log</span>
+            <Space size={8}>
+              {level && <Tag className="modern-tag tag-info">{level.toUpperCase()}</Tag>}
+              {searchKeyword && <Tag className="modern-tag tag-warning">{searchKeyword}</Tag>}
+            </Space>
           </div>
-        )}
 
-        {logs.length === 0 && !loading ? (
-          <div style={{ textAlign: 'center', color: '#666', marginTop: '40px' }}>
-            暂无匹配的日志
-          </div>
-        ) : (
-          logs.map((log, index) => (
+          {loading && !autoRefresh && (
             <div
-              key={index}
-              style={{ marginBottom: '4px', display: 'flex', wordBreak: 'break-all' }}
+              style={{
+                position: 'absolute',
+                inset: 0,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                background: 'rgba(10, 14, 23, 0.58)',
+                zIndex: 10,
+                borderRadius: 18,
+              }}
             >
-              {log.timestamp && (
-                <span style={{ color: '#569cd6', marginRight: '16px', whiteSpace: 'nowrap' }}>
-                  [{log.timestamp}]
-                </span>
-              )}
-              {log.level !== 'unknown' && (
+              <Spin size="large" />
+            </div>
+          )}
+
+          {logs.length === 0 && !loading ? (
+            <Empty description="暂无匹配的日志" style={{ paddingTop: 120 }} />
+          ) : (
+            logs.map((log, index) => (
+              <div key={index} className="terminal-log-line">
+                {log.timestamp && <span className="terminal-timestamp">[{log.timestamp}]</span>}
+                {log.level !== 'unknown' && (
+                  <span className="terminal-level" style={{ color: getLevelColor(log.level) }}>
+                    {log.level.toUpperCase()}
+                  </span>
+                )}
                 <span
+                  className="terminal-message"
                   style={{
                     color:
                       log.level === 'error'
-                        ? '#f44336'
+                        ? '#ffb4b4'
                         : log.level === 'warn'
-                        ? '#ff9800'
-                        : log.level === 'info'
-                        ? '#4caf50'
-                        : '#9cdcfe',
-                    marginRight: '16px',
-                    fontWeight: 'bold',
-                    whiteSpace: 'nowrap',
-                    width: '50px',
-                    display: 'inline-block',
+                        ? '#ffd18a'
+                        : '#dbe7f5',
                   }}
                 >
-                  {log.level.toUpperCase()}
+                  {log.message}
                 </span>
-              )}
-              <span
-                style={{
-                  color:
-                    log.level === 'error'
-                      ? '#f44336'
-                      : log.level === 'warn'
-                      ? '#ffb74d'
-                      : '#d4d4d4',
-                }}
-              >
-                {log.message}
-              </span>
-            </div>
-          ))
-        )}
-      </div>
+              </div>
+            ))
+          )}
+        </div>
+      </Card>
 
-      {/* Pagination */}
-      <div style={{ display: 'flex', justifyContent: 'center', marginTop: '24px' }}>
+      <div style={{ display: 'flex', justifyContent: 'center', marginTop: 24 }}>
         <Pagination
           current={page}
-          total={totalPages * 100} // AntD Pagination uses total items, assuming 100 per page limit
+          total={totalPages * 100}
           pageSize={100}
           showSizeChanger={false}
           onChange={newPage => {
-            setAutoRefresh(false); // Stop auto-refresh when manually paginating
+            setAutoRefresh(false);
             setPage(newPage);
           }}
         />

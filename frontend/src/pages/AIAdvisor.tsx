@@ -227,7 +227,7 @@ const AIAdvisor: React.FC = () => {
 
       <Card
         className="modern-card"
-        bordered={false}
+        variant="borderless"
         style={{ minHeight: '600px', display: 'flex', flexDirection: 'column' }}
       >
         <Row justify="center" style={{ marginBottom: 32 }}>

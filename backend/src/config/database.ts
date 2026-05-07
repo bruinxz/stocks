@@ -15,6 +15,7 @@ import { PaperTradingTrade } from '../models/PaperTradingTrade';
 import { PaperTradingSnapshot } from '../models/PaperTradingSnapshot';
 import { RiskAlert } from '../models/RiskAlert';
 import { TradingJournal } from '../models/TradingJournal';
+import { PortfolioSimulation } from '../models/PortfolioSimulation';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -52,6 +53,7 @@ const sequelize = new Sequelize({
     PaperTradingSnapshot,
     RiskAlert,
     TradingJournal,
+    PortfolioSimulation,
   ],
   logging: process.env.NODE_ENV === 'development' ? console.log : false,
   pool: {

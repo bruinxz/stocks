@@ -2,6 +2,7 @@ import { DataService } from '../data/services/DataService';
 import { Stock } from '../models/Stock';
 import { DailyBar } from '../models/DailyBar';
 import { logger } from '../utils/logger';
+import { normalizeSymbol } from '../utils/stockSymbol';
 
 export interface PortfolioSimulationConfig {
   symbols: string[];
@@ -63,6 +64,7 @@ export interface PortfolioSimulationResult {
  */
 export class PortfolioReturnSimulator {
   private dataService: DataService;
+  private stockInfoMap: Map<string, Stock> = new Map();
 
   constructor() {
     this.dataService = new DataService();
@@ -85,18 +87,20 @@ export class PortfolioReturnSimulator {
 
       // 验证股票存在并获取基本信息
       const stockInfos = await this.validateAndGetStockInfo(config.symbols);
+      this.stockInfoMap = stockInfos;
 
       // 获取每只股票的日线数据
       const stockData = await this.fetchStockData(config.symbols, config.buyDate, end_date);
 
       // 计算买入价格和分配金额
       const allocation = this.calculateAllocation(config, stockData);
+      const remainingCash = this.calculateRemainingCash(config, allocation);
 
       // 计算每日收益
       const stockReturns = this.calculateStockReturns(allocation, stockData);
 
       // 计算组合每日收益
-      const portfolioReturns = this.calculatePortfolioReturns(stockReturns);
+      const portfolioReturns = this.calculatePortfolioReturns(stockReturns, remainingCash);
 
       // 计算性能指标
       const performanceMetrics = this.calculatePerformanceMetrics(portfolioReturns);
@@ -137,7 +141,8 @@ export class PortfolioReturnSimulator {
   private async validateAndGetStockInfo(symbols: string[]): Promise<Map<string, Stock>> {
     const stockInfos = new Map<string, Stock>();
 
-    for (const symbol of symbols) {
+    for (const rawSymbol of symbols) {
+      const symbol = normalizeSymbol(rawSymbol);
       const stock = await Stock.findOne({ where: { symbol } });
       if (!stock) {
         throw new Error(`股票 ${symbol} 不存在`);
@@ -158,7 +163,8 @@ export class PortfolioReturnSimulator {
   ): Promise<Map<string, DailyBar[]>> {
     const stockData = new Map<string, DailyBar[]>();
 
-    for (const symbol of symbols) {
+    for (const rawSymbol of symbols) {
+      const symbol = normalizeSymbol(rawSymbol);
       const bars = await this.dataService.getDailyBars(symbol, start_date, end_date);
       if (bars.length === 0) {
         logger.warn(`股票 ${symbol} 在指定日期范围内没有数据`);
@@ -180,9 +186,10 @@ export class PortfolioReturnSimulator {
 
     if (config.allocationStrategy === 'equal') {
       // 等权重分配
-      const perStockAmount = config.initial_capital / config.symbols.length;
+      const symbols = config.symbols.map(symbol => normalizeSymbol(symbol));
+      const perStockAmount = config.initial_capital / symbols.length;
 
-      for (const symbol of config.symbols) {
+      for (const symbol of symbols) {
         const bars = stockData.get(symbol);
         if (!bars || bars.length === 0) {
           throw new Error(`股票 ${symbol} 没有买入日数据`);
@@ -255,7 +262,7 @@ export class PortfolioReturnSimulator {
 
       stockReturns.push({
         symbol,
-        name: symbol, // 实际应从数据库获取名称
+        name: this.stockInfoMap.get(symbol)?.name || symbol,
         buyPrice: allocInfo.buyPrice,
         allocationAmount: allocInfo.allocationAmount,
         shares: allocInfo.shares,
@@ -267,9 +274,28 @@ export class PortfolioReturnSimulator {
   }
 
   /**
+   * 计算未使用现金。
+   * 等权分配下因为股数向下取整，通常会有少量剩余现金，需要计入组合总资产。
+   */
+  private calculateRemainingCash(
+    config: PortfolioSimulationConfig,
+    allocation: Map<string, { allocationAmount: number; buyPrice: number; shares: number }>
+  ): number {
+    const investedAmount = Array.from(allocation.values()).reduce(
+      (sum, item) => sum + item.allocationAmount,
+      0
+    );
+
+    return Number((config.initial_capital - investedAmount).toFixed(4));
+  }
+
+  /**
    * 计算组合每日收益
    */
-  private calculatePortfolioReturns(stockReturns: StockReturnData[]): Array<{
+  private calculatePortfolioReturns(
+    stockReturns: StockReturnData[],
+    remainingCash = 0
+  ): Array<{
     date: Date;
     total_value: number;
     dailyReturn: number;
@@ -279,16 +305,29 @@ export class PortfolioReturnSimulator {
       return [];
     }
 
-    // 收集所有日期
-    const allDates = new Set<Date>();
+    // 收集所有日期（按时间戳去重，不能直接用 Date 对象引用）
+    const allTimestamps = new Set<number>();
     for (const stockReturn of stockReturns) {
       for (const dailyReturn of stockReturn.daily_returns) {
-        allDates.add(dailyReturn.date);
+        allTimestamps.add(dailyReturn.date.getTime());
       }
     }
 
     // 按日期排序
-    const sortedDates = Array.from(allDates).sort((a, b) => a.getTime() - b.getTime());
+    const sortedDates = Array.from(allTimestamps)
+      .sort((a, b) => a - b)
+      .map(timestamp => new Date(timestamp));
+
+    const stockValueMaps = stockReturns.map(stockReturn => ({
+      symbol: stockReturn.symbol,
+      valueMap: new Map(
+        stockReturn.daily_returns.map(dailyReturn => [
+          dailyReturn.date.getTime(),
+          dailyReturn.value,
+        ])
+      ),
+    }));
+    const lastKnownValues = new Map<string, number>();
 
     // 按日期汇总（使用普通循环避免引用未完全构建的数组）
     const portfolioReturns: Array<{
@@ -300,15 +339,19 @@ export class PortfolioReturnSimulator {
 
     for (let i = 0; i < sortedDates.length; i++) {
       const date = sortedDates[i];
-      let total_value = 0;
+      const currentTimestamp = date.getTime();
+      let total_value = remainingCash;
 
       // 计算当日总市值
-      for (const stockReturn of stockReturns) {
-        const dailyReturn = stockReturn.daily_returns.find(
-          dr => dr.date.getTime() === date.getTime()
-        );
-        if (dailyReturn) {
-          total_value += dailyReturn.value;
+      for (const stockValueMap of stockValueMaps) {
+        const exactValue = stockValueMap.valueMap.get(currentTimestamp);
+        if (exactValue !== undefined) {
+          lastKnownValues.set(stockValueMap.symbol, exactValue);
+        }
+
+        const carriedValue = lastKnownValues.get(stockValueMap.symbol);
+        if (carriedValue !== undefined) {
+          total_value += carriedValue;
         }
       }
 
@@ -326,7 +369,7 @@ export class PortfolioReturnSimulator {
 
       portfolioReturns.push({
         date,
-        total_value,
+        total_value: Number(total_value.toFixed(4)),
         dailyReturn,
         cumulativeReturn,
       });
@@ -449,7 +492,8 @@ export class PortfolioReturnSimulator {
     // 计算年化收益率
     const daysDiff = (end_date.getTime() - start_date.getTime()) / (1000 * 60 * 60 * 24);
     const years = daysDiff / 365.25;
-    const annualized_return = years > 0 ? (Math.pow(1 + total_return / 100, 1 / years) - 1) * 100 : 0;
+    const annualized_return =
+      years > 0 ? (Math.pow(1 + total_return / 100, 1 / years) - 1) * 100 : 0;
 
     return {
       initial_capital,

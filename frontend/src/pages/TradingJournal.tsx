@@ -97,7 +97,7 @@ const TradingJournal: React.FC = () => {
 
       <Row gutter={[24, 24]}>
         <Col xs={24} lg={10}>
-          <Card className="modern-card" bordered={false} title="复盘日历">
+          <Card className="modern-card" variant="borderless" title="复盘日历">
             <Calendar
               fullscreen={false}
               value={selectedDate}
@@ -110,7 +110,7 @@ const TradingJournal: React.FC = () => {
         <Col xs={24} lg={14}>
           <Card
             className="modern-card"
-            bordered={false}
+            variant="borderless"
             title={`${selectedDate.format('YYYY年MM月DD日')} 日记`}
             extra={
               selectedJournal && (

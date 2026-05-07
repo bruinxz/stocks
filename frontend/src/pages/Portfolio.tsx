@@ -300,7 +300,13 @@ const Portfolio: React.FC = () => {
   const applyHistoryCombination = async (history: any) => {
     form.setFieldsValue({
       symbols: history.symbols || history.config?.symbols || [],
-      buyDate: history.buyDate ? dayjs(history.buyDate) : dayjs().subtract(1, 'year'),
+      buyDate: history.buy_date
+        ? dayjs(history.buy_date)
+        : history.buyDate
+        ? dayjs(history.buyDate)
+        : history.config?.buyDate
+        ? dayjs(history.config.buyDate)
+        : dayjs().subtract(1, 'year'),
       days: history.days || history.config?.days || 30,
       initial_capital: history.initial_capital || history.config?.initial_capital || 100000,
       allocationStrategy:
@@ -504,7 +510,7 @@ const Portfolio: React.FC = () => {
               <Card
                 title="模拟配置"
                 className="modern-card"
-                bordered={false}
+                variant="borderless"
                 style={{ marginBottom: 24 }}
               >
                 <Form
@@ -658,7 +664,7 @@ const Portfolio: React.FC = () => {
               <Card
                 title="热门组合推荐"
                 className="modern-card"
-                bordered={false}
+                variant="borderless"
                 style={{ marginBottom: 24 }}
               >
                 {popularCombinations.map((combo, index) => (
@@ -667,7 +673,7 @@ const Portfolio: React.FC = () => {
                     type="inner"
                     title={combo.name}
                     className="modern-card"
-                    bordered={false}
+                    variant="borderless"
                     style={{ marginBottom: index < popularCombinations.length - 1 ? 16 : 0 }}
                     extra={
                       <Button
@@ -702,7 +708,7 @@ const Portfolio: React.FC = () => {
               <Card
                 title="历史组合记录"
                 className="modern-card"
-                bordered={false}
+                variant="borderless"
                 style={{ marginBottom: 24 }}
               >
                 {historyLoading ? (
@@ -710,73 +716,71 @@ const Portfolio: React.FC = () => {
                     <Spin />
                   </div>
                 ) : simulationHistory.length > 0 ? (
-                  simulationHistory.map((history, index) => (
-                    <Card
-                      key={index}
-                      type="inner"
-                      title={`模拟 ${
-                        history.name || history.config?.name || `#${history.id || index}`
-                      }`}
-                      className="modern-card"
-                      bordered={false}
-                      style={{ marginBottom: 12 }}
-                      extra={
-                        <Button
-                          size="small"
-                          type="link"
-                          onClick={() => applyHistoryCombination(history)}
-                        >
-                          应用
-                        </Button>
-                      }
-                    >
-                      <p>
-                        <strong>日期:</strong>{' '}
-                        {dayjs(
-                          history.created_at || history.config?.created_at || new Date()
-                        ).format('YYYY-MM-DD HH:mm')}
-                      </p>
-                      <p>
-                        <strong>收益率:</strong>
-                        <span
-                          style={{
-                            color:
-                              (history.total_return || history.summary?.total_return || 0) >= 0
-                                ? '#3f8600'
-                                : '#cf1322',
-                          }}
-                        >
-                          {(history.total_return || history.summary?.total_return || 0) >= 0
-                            ? '+'
-                            : ''}
-                          {(history.total_return || history.summary?.total_return || 0)?.toFixed(
-                            2
-                          ) || '0.00'}
-                          %
-                        </span>
-                      </p>
-                      <div>
-                        {(history.symbols || history.config?.symbols || []).map(
-                          (symbol: string) => (
-                            <Tag
-                              key={symbol}
-                              className="modern-tag"
-                              color="green"
-                              style={{ marginRight: 4 }}
-                            >
-                              {symbol}
-                            </Tag>
-                          )
-                        )}
-                      </div>
-                    </Card>
-                  ))
+                  simulationHistory.map((history, index) => {
+                    const historyReturn = Number(
+                      history.total_return ?? history.summary?.total_return ?? 0
+                    );
+
+                    return (
+                      <Card
+                        key={history.id || index}
+                        type="inner"
+                        title={`模拟 ${
+                          history.name || history.config?.name || `#${history.id || index}`
+                        }`}
+                        className="modern-card"
+                        variant="borderless"
+                        style={{ marginBottom: 12 }}
+                        extra={
+                          <Button
+                            size="small"
+                            type="link"
+                            onClick={() => applyHistoryCombination(history)}
+                          >
+                            应用
+                          </Button>
+                        }
+                      >
+                        <p>
+                          <strong>日期:</strong>{' '}
+                          {dayjs(
+                            history.created_at || history.config?.created_at || new Date()
+                          ).format('YYYY-MM-DD HH:mm')}
+                        </p>
+                        <p>
+                          <strong>收益率:</strong>
+                          <span
+                            style={{
+                              color: historyReturn >= 0 ? '#3f8600' : '#cf1322',
+                            }}
+                          >
+                            {historyReturn >= 0 ? '+' : ''}
+                            {historyReturn.toFixed(2)}%
+                          </span>
+                        </p>
+                        <div>
+                          {(history.symbols || history.config?.symbols || []).map(
+                            (symbol: string) => (
+                              <Tag
+                                key={symbol}
+                                className="modern-tag"
+                                color="green"
+                                style={{ marginRight: 4 }}
+                              >
+                                {symbol}
+                              </Tag>
+                            )
+                          )}
+                        </div>
+                      </Card>
+                    );
+                  })
                 ) : (
                   <Empty description="暂无历史模拟记录" />
                 )}
               </Card>
 
-              <Card title="使用说明" className="modern-card" bordered={false}>
+              <Card title="使用说明" className="modern-card" variant="borderless">
                 <ul style={{ paddingLeft: 20, margin: 0 }}>
                   <li>选择1-10只A股股票进行模拟</li>
                   <li>
@@ -801,7 +805,7 @@ const Portfolio: React.FC = () => {
             <div>
               <Row gutter={16} style={{ marginBottom: 24 }}>
                 <Col span={6}>
-                  <Card className="stat-card stat-card-blue modern-card" bordered={false}>
+                  <Card className="stat-card stat-card-blue modern-card" variant="borderless">
                     <div
                       style={{
                         display: 'flex',
@@ -828,7 +832,7 @@ const Portfolio: React.FC = () => {
                         ? 'stat-card-green'
                         : 'stat-card-red'
                     } modern-card`}
-                    bordered={false}
+                    variant="borderless"
                   >
                     <div
                       style={{
@@ -860,7 +864,7 @@ const Portfolio: React.FC = () => {
                     className={`stat-card ${
                       result.summary.total_return >= 0 ? 'stat-card-green' : 'stat-card-red'
                     } modern-card`}
-                    bordered={false}
+                    variant="borderless"
                   >
                     <div
                       style={{
@@ -896,7 +900,7 @@ const Portfolio: React.FC = () => {
                         ? 'stat-card-purple'
                         : 'stat-card-orange'
                     } modern-card`}
-                    bordered={false}
+                    variant="borderless"
                   >
                     <div
                       style={{
@@ -924,7 +928,7 @@ const Portfolio: React.FC = () => {
               </Row>
               <Row gutter={16} style={{ marginBottom: 24 }}>
                 <Col span={6}>
-                  <Card className="modern-card" bordered={false}>
+                  <Card className="modern-card" variant="borderless">
                     <div
                       style={{
                         display: 'flex',
@@ -943,7 +947,7 @@ const Portfolio: React.FC = () => {
                   </Card>
                 </Col>
                 <Col span={6}>
-                  <Card className="modern-card" bordered={false}>
+                  <Card className="modern-card" variant="borderless">
                     <div
                       style={{
                         display: 'flex',
@@ -964,7 +968,7 @@ const Portfolio: React.FC = () => {
                   </Card>
                 </Col>
                 <Col span={6}>
-                  <Card className="modern-card" bordered={false}>
+                  <Card className="modern-card" variant="borderless">
                     <div
                       style={{
                         display: 'flex',
@@ -985,7 +989,7 @@ const Portfolio: React.FC = () => {
                   </Card>
                 </Col>
                 <Col span={6}>
-                  <Card className="modern-card" bordered={false}>
+                  <Card className="modern-card" variant="borderless">
                     <div
                       style={{
                         display: 'flex',
@@ -1007,7 +1011,7 @@ const Portfolio: React.FC = () => {
 
               <Row gutter={24} style={{ marginBottom: 24 }}>
                 <Col span={12}>
-                  <Card title="性能指标" className="modern-card" bordered={false}>
+                  <Card title="性能指标" className="modern-card" variant="borderless">
                     <Row gutter={16}>
                       <Col span={12} style={{ marginBottom: 16 }}>
                         <div
@@ -1140,7 +1144,7 @@ const Portfolio: React.FC = () => {
                 </Col>
 
                 <Col span={12}>
-                  <Card title="配置详情" className="modern-card" bordered={false}>
+                  <Card title="配置详情" className="modern-card" variant="borderless">
                     <p>
                       <strong>股票列表：</strong>
                       {result.config.symbols.map(symbol => (
@@ -1173,7 +1177,7 @@ const Portfolio: React.FC = () => {
               <Card
                 className="chart-card modern-card"
                 title="股票收益详情"
-                bordered={false}
+                variant="borderless"
                 style={{ marginBottom: 24 }}
               >
                 <Table
@@ -1186,7 +1190,7 @@ const Portfolio: React.FC = () => {
                 />
               </Card>
 
-              <Card className="chart-card modern-card" title="每日收益走势" bordered={false}>
+              <Card className="chart-card modern-card" title="每日收益走势" variant="borderless">
                 <Table
                   columns={dailyReturnColumns}
                   dataSource={result.daily_returns}

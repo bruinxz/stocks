@@ -526,7 +526,7 @@ const Market: React.FC = () => {
         <Col xs={24} lg={9} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <Card
             className="modern-card"
-            bordered={false}
+            variant="borderless"
             styles={{
               body: {
                 padding: '0 16px',
@@ -613,7 +613,6 @@ const Market: React.FC = () => {
 
                         <div style={{ flex: 1, overflow: 'hidden' }}>
                           <Table
-                            bordered={false}
                             columns={stockColumns}
                             dataSource={stocks}
                             rowKey="id"
@@ -665,7 +664,6 @@ const Market: React.FC = () => {
                         {favorites.length > 0 ? (
                           <div style={{ flex: 1, overflow: 'hidden' }}>
                             <Table
-                              bordered={false}
                               columns={favoriteColumns}
                               dataSource={favorites}
                               rowKey="id"
@@ -705,7 +703,7 @@ const Market: React.FC = () => {
                           >
                             刷新
                           </Button>
-                          <Button size="small" onClick={() => navigate('/data-update-status')}>
+                          <Button size="small" onClick={() => navigate('/data-update')}>
                             更新监控
                           </Button>
                         </Space>
@@ -824,7 +822,7 @@ const Market: React.FC = () => {
               {/* 顶部：当前股票摘要与指标 */}
               <Card
                 className="modern-card"
-                bordered={false}
+                variant="borderless"
                 title={`${selectedStock.name} (${selectedStock.symbol})`}
                 extra={
                   <Button
@@ -940,7 +938,7 @@ const Market: React.FC = () => {
               {/* 中部：图表区域 (使用 Tabs 切换) */}
               <Card
                 className="modern-card chart-card"
-                bordered={false}
+                variant="borderless"
                 style={{ flex: 1, display: 'flex', flexDirection: 'column' }}
                 styles={{
                   body: { flex: 1, display: 'flex', flexDirection: 'column', padding: '16px' },
@@ -1078,7 +1076,7 @@ const Market: React.FC = () => {
           ) : (
             <Card
               className="modern-card"
-              bordered={false}
+              variant="borderless"
               style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
             >
               <Empty
@@ -1110,7 +1108,7 @@ const Market: React.FC = () => {
         }}
         okText="收藏"
         cancelText="取消"
-        destroyOnClose={false}
+        destroyOnHidden={false}
       >
         <Form form={favoriteForm} layout="vertical">
           <Form.Item name="symbol" label="股票代码" hidden>

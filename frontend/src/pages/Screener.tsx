@@ -13,11 +13,7 @@ import {
   Drawer,
 } from 'antd';
 import { RocketOutlined, EyeOutlined, SyncOutlined } from '@ant-design/icons';
-import {
-  AreaChart,
-  Area,
-  ResponsiveContainer,
-} from 'recharts';
+import { AreaChart, Area, ResponsiveContainer } from 'recharts';
 import dayjs from 'dayjs';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -130,8 +126,14 @@ const Screener: React.FC = () => {
       title: '当前价 / 涨跌',
       key: 'price',
       render: (_: any, record: ScreenerRecord) => {
-        const price = record.current_price !== undefined && record.current_price !== null ? record.current_price : '-';
-        const change = record.price_change_pct !== undefined && record.price_change_pct !== null ? record.price_change_pct : '-';
+        const price =
+          record.current_price !== undefined && record.current_price !== null
+            ? record.current_price
+            : '-';
+        const change =
+          record.price_change_pct !== undefined && record.price_change_pct !== null
+            ? record.price_change_pct
+            : '-';
         const isUp = typeof change === 'number' && change > 0;
         const isDown = typeof change === 'number' && change < 0;
         const color = isUp ? '#cf1322' : isDown ? '#3f8600' : 'inherit';
@@ -141,9 +143,7 @@ const Screener: React.FC = () => {
             <Text strong style={{ color }}>
               {price}
             </Text>
-            <Text style={{ color, fontSize: 12 }}>
-              {change !== '-' ? `${change}%` : '-'}
-            </Text>
+            <Text style={{ color, fontSize: 12 }}>{change !== '-' ? `${change}%` : '-'}</Text>
           </Space>
         );
       },
@@ -237,7 +237,7 @@ const Screener: React.FC = () => {
             <Button icon={<SyncOutlined />} onClick={fetchScreenerData} loading={loading}>
               刷新数据
             </Button>
-            <Link to="/ai">
+            <Link to="/ai-advisor">
               <Button type="primary" icon={<RocketOutlined />}>
                 发起实时推演
               </Button>
@@ -264,7 +264,9 @@ const Screener: React.FC = () => {
           selectedRecord ? (
             <Space>
               <RocketOutlined style={{ color: '#1677ff' }} />
-              <span>{selectedRecord.name} ({selectedRecord.symbol}) - 完整推理过程</span>
+              <span>
+                {selectedRecord.name} ({selectedRecord.symbol}) - 完整推理过程
+              </span>
             </Space>
           ) : (
             '推理详情'
@@ -278,10 +280,18 @@ const Screener: React.FC = () => {
         {selectedRecord && (
           <div>
             <Descriptions column={2} bordered size="small" style={{ marginBottom: 24 }}>
-              <Descriptions.Item label="评估时间">{dayjs(selectedRecord.created_at).format('YYYY-MM-DD HH:mm:ss')}</Descriptions.Item>
+              <Descriptions.Item label="评估时间">
+                {dayjs(selectedRecord.created_at).format('YYYY-MM-DD HH:mm:ss')}
+              </Descriptions.Item>
               <Descriptions.Item label="当时股价">
-                <Text strong>{selectedRecord.current_price || '-'}</Text> 
-                <Text type="secondary" style={{ marginLeft: 8 }}>({selectedRecord.price_change_pct !== undefined ? `${selectedRecord.price_change_pct}%` : '-'})</Text>
+                <Text strong>{selectedRecord.current_price || '-'}</Text>
+                <Text type="secondary" style={{ marginLeft: 8 }}>
+                  (
+                  {selectedRecord.price_change_pct !== undefined
+                    ? `${selectedRecord.price_change_pct}%`
+                    : '-'}
+                  )
+                </Text>
               </Descriptions.Item>
               <Descriptions.Item label="综合评分">
                 <Text strong style={{ color: selectedRecord.score >= 80 ? '#f5222d' : '#faad14' }}>
@@ -308,11 +318,11 @@ const Screener: React.FC = () => {
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm]}
                   components={{
-                    h1: ({node, ...props}) => <Title level={2} {...props} />,
-                    h2: ({node, ...props}) => <Title level={3} {...props} />,
-                    h3: ({node, ...props}) => <Title level={4} {...props} />,
-                    h4: ({node, ...props}) => <Title level={5} {...props} />,
-                    p: ({node, ...props}) => <Paragraph {...props} />,
+                    h1: ({ node, ...props }) => <Title level={2} {...props} />,
+                    h2: ({ node, ...props }) => <Title level={3} {...props} />,
+                    h3: ({ node, ...props }) => <Title level={4} {...props} />,
+                    h4: ({ node, ...props }) => <Title level={5} {...props} />,
+                    p: ({ node, ...props }) => <Paragraph {...props} />,
                   }}
                 >
                   {selectedRecord.detail}

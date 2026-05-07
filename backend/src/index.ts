@@ -25,18 +25,21 @@ import internalRoutes from './api/routes/internal.routes';
 import './jobs/dataUpdateWorker'; // 初始化数据更新队列处理器
 import './jobs/aiPollingWorker'; // 初始化 AI 分析轮询队列处理器
 import { schedulerService } from './services/SchedulerService';
+import { repairLegacyDevelopmentSchema } from './utils/developmentSchemaRepair';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware
-app.use(cors({
-  origin: function (origin, callback) {
-    // 允许任何来源访问，配合 credentials: true 会动态反射 Origin
-    callback(null, true);
-  },
-  credentials: true, // Allow cookies to be sent
-}));
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      // 允许任何来源访问，配合 credentials: true 会动态反射 Origin
+      callback(null, true);
+    },
+    credentials: true, // Allow cookies to be sent
+  })
+);
 app.use(helmet({ crossOriginResourcePolicy: false })); // Allow cross-origin for static files
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -81,8 +84,7 @@ async function initializeApp() {
     await sequelize.authenticate();
     console.log('Database connection has been established successfully.');
 
-    // Initialize scheduler
-    await schedulerService.initialize();
+    await repairLegacyDevelopmentSchema();
 
     // Sync models in development environment
     if (process.env.NODE_ENV === 'development') {
@@ -90,7 +92,7 @@ async function initializeApp() {
       try {
         await sequelize.sync({ alter: true }); // 创建缺失的表并修改现有表结构
         console.log('Database models synced successfully with alter: true');
-        
+
         const lymCount = await User.count({ where: { username: 'lym' } });
         if (lymCount === 0) {
           await User.create({
@@ -104,19 +106,34 @@ async function initializeApp() {
         }
 
         // Initialize AI Screener tasks if not exist
-        const aiTaskCount = await sequelize.models.ScheduledTask.count({ where: { type: 'AI_DAILY_SCREENER' } });
+        const aiTaskCount = await sequelize.models.ScheduledTask.count({
+          where: { type: 'AI_DAILY_SCREENER' },
+        });
         if (aiTaskCount === 0) {
           const defaultTasks = [
-            { name: 'AI优选-早盘分析', type: 'AI_DAILY_SCREENER', cron_expression: '0 9 * * 1-5', is_active: true },
-            { name: 'AI优选-午盘分析', type: 'AI_DAILY_SCREENER', cron_expression: '30 12 * * 1-5', is_active: true },
-            { name: 'AI优选-收盘分析', type: 'AI_DAILY_SCREENER', cron_expression: '30 14 * * 1-5', is_active: true },
+            {
+              name: 'AI优选-早盘分析',
+              type: 'AI_DAILY_SCREENER',
+              cron_expression: '0 9 * * 1-5',
+              is_active: true,
+            },
+            {
+              name: 'AI优选-午盘分析',
+              type: 'AI_DAILY_SCREENER',
+              cron_expression: '30 12 * * 1-5',
+              is_active: true,
+            },
+            {
+              name: 'AI优选-收盘分析',
+              type: 'AI_DAILY_SCREENER',
+              cron_expression: '30 14 * * 1-5',
+              is_active: true,
+            },
           ];
           for (const taskData of defaultTasks) {
             await sequelize.models.ScheduledTask.create(taskData);
           }
           console.log('Default AI_DAILY_SCREENER tasks created successfully');
-          // Refresh scheduler
-          await schedulerService.initialize();
         }
       } catch (error: any) {
         console.warn('Database sync failed, continuing with existing schema:', error.message);
@@ -133,8 +150,24 @@ async function initializeApp() {
         } catch (logSyncError) {
           console.warn('Failed to sync DataUpdateLog table:', logSyncError.message);
         }
+
+        // 全量 alter 可能被旧表结构阻断；确保组合收益模拟核心表仍可独立创建。
+        try {
+          console.log('Attempting to sync PortfolioSimulation table separately...');
+          const PortfolioSimulationModel = sequelize.models.PortfolioSimulation;
+          if (PortfolioSimulationModel) {
+            await PortfolioSimulationModel.sync();
+            console.log('PortfolioSimulation table synced successfully');
+          }
+        } catch (portfolioSyncError) {
+          console.warn('Failed to sync PortfolioSimulation table:', portfolioSyncError.message);
+        }
       }
     }
+
+    // Initialize scheduler after development schema repair/sync to avoid stale local schemas
+    // blocking server startup or task listing APIs.
+    await schedulerService.initialize();
 
     app.listen(Number(PORT), '0.0.0.0', () => {
       console.log(`Server is running on port ${PORT}`);
