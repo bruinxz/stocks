@@ -12,19 +12,19 @@ import {
   Progress,
   Empty,
 } from 'antd';
-import {
-  PlusOutlined,
-  EyeOutlined,
-  RocketOutlined,
-  FallOutlined,
-  RiseOutlined,
-} from '@ant-design/icons';
+import { PlusOutlined, EyeOutlined, RocketOutlined } from '@ant-design/icons';
 import { AreaChart, Area, ResponsiveContainer, XAxis, YAxis } from 'recharts';
 import { backtestService, BacktestResponse } from '../services/backtestService';
 import { getMarketOverview } from '../services/api';
 import { useNavigate } from 'react-router-dom';
 
 const { Text } = Typography;
+
+const getSentimentColor = (score: number) => {
+  if (score > 70) return '#cf1322';
+  if (score < 30) return '#3f8600';
+  return '#faad14';
+};
 
 const Dashboard: React.FC = () => {
   const [stats, setStats] = useState({
@@ -376,12 +376,7 @@ const Dashboard: React.FC = () => {
                   当前状态：
                   <Text
                     style={{
-                      color:
-                        marketOverview.sentiment.score > 70
-                          ? '#cf1322'
-                          : marketOverview.sentiment.score < 30
-                          ? '#3f8600'
-                          : '#faad14',
+                      color: getSentimentColor(marketOverview.sentiment.score),
                       marginLeft: 8,
                     }}
                   >

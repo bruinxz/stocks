@@ -10,7 +10,6 @@ import {
   Row,
   Col,
   Typography,
-  DatePicker,
   Select,
   message,
   Modal,
@@ -20,22 +19,11 @@ import {
   Tabs,
   Spin,
 } from 'antd';
+import { StarOutlined, StarFilled, LineChartOutlined, ReloadOutlined } from '@ant-design/icons';
 import {
-  SearchOutlined,
-  StarOutlined,
-  StarFilled,
-  LineChartOutlined,
-  PlusOutlined,
-  FilterOutlined,
-  ReloadOutlined,
-} from '@ant-design/icons';
-import {
-  LineChart,
-  Line,
   XAxis,
   YAxis,
   CartesianGrid,
-  Tooltip,
   Legend,
   ResponsiveContainer,
   BarChart,
@@ -46,17 +34,24 @@ import {
 } from 'recharts';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
-import api, {
-  getFavorites,
-  addFavorite,
-  removeFavorite,
-  checkFavorite,
-  updateFavorite,
-} from '../services/api';
+import api, { addFavorite, removeFavorite } from '../services/api';
 
 const { Text } = Typography;
-const { RangePicker } = DatePicker;
 const { Option } = Select;
+
+const getPriceChangeColor = (change?: number) => {
+  if (!change) return '#0f172a';
+  return change > 0 ? '#ef4444' : '#10b981';
+};
+
+const getMarketLabel = (market?: string) => {
+  const marketMap: Record<string, string> = {
+    SH: '上海',
+    SZ: '深圳',
+    BJ: '北京',
+  };
+  return marketMap[market || ''] || market || '--';
+};
 
 interface Stock {
   id: number;
@@ -110,10 +105,7 @@ const Market: React.FC = () => {
   const [selectedStock, setSelectedStock] = useState<Stock | null>(null);
   const [stockHistory, setStockHistory] = useState<StockHistory[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
-  const [dateRange, setDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs]>([
-    dayjs().subtract(1, 'year'),
-    dayjs(),
-  ]);
+  const [dateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs]>([dayjs().subtract(1, 'year'), dayjs()]);
   const [favorites, setFavorites] = useState<FavoriteStock[]>([]);
   const [favoritesLoading, setFavoritesLoading] = useState(false);
   const [isFavoriteModalOpen, setIsFavoriteModalOpen] = useState(false);
@@ -279,16 +271,6 @@ const Market: React.FC = () => {
       }
     } catch (error: any) {
       message.error('取消收藏失败：' + error.message);
-      return false;
-    }
-  };
-
-  // 检查是否已收藏
-  const checkIsFavorite = async (symbol: string): Promise<boolean> => {
-    try {
-      const response = await checkFavorite(symbol);
-      return response.data.success && response.data.data.isFavorite;
-    } catch {
       return false;
     }
   };
@@ -489,15 +471,6 @@ const Market: React.FC = () => {
 
   const handlePageChange = (page: number, pageSize: number) => {
     setSearchParams(prev => ({ ...prev, page, limit: pageSize }));
-  };
-
-  const handleDateRangeChange = (dates: any) => {
-    if (dates && dates.length === 2) {
-      setDateRange([dates[0], dates[1]]);
-      if (selectedStock) {
-        fetchStockHistory(selectedStock.symbol);
-      }
-    }
   };
 
   const handleAddFavoriteSubmit = async () => {
@@ -871,14 +844,11 @@ const Market: React.FC = () => {
                       style={{
                         fontSize: 24,
                         fontWeight: 700,
-                        color:
-                          stockHistory.length > 0 &&
-                          stockHistory[stockHistory.length - 1].pctChg > 0
-                            ? '#ef4444'
-                            : stockHistory.length > 0 &&
-                              stockHistory[stockHistory.length - 1].pctChg < 0
-                            ? '#10b981'
-                            : '#0f172a',
+                        color: getPriceChangeColor(
+                          stockHistory.length > 0
+                            ? stockHistory[stockHistory.length - 1].pctChg
+                            : undefined
+                        ),
                       }}
                     >
                       {stockHistory.length > 0
@@ -902,13 +872,7 @@ const Market: React.FC = () => {
                   <Col span={6}>
                     <Text type="secondary">市场：</Text>
                     <Text strong style={{ marginLeft: 8 }}>
-                      {selectedStock.market === 'SH'
-                        ? '上海'
-                        : selectedStock.market === 'SZ'
-                        ? '深圳'
-                        : selectedStock.market === 'BJ'
-                        ? '北京'
-                        : selectedStock.market}
+                      {getMarketLabel(selectedStock.market)}
                     </Text>
                   </Col>
                   <Col span={6}>

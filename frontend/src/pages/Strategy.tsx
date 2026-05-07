@@ -1,29 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import {
-  Card,
-  Table,
-  Button,
-  Space,
-  Tag,
-  Typography,
-  Row,
-  Col,
-  Statistic,
-  Tooltip,
-  Empty,
-} from 'antd';
-import {
-  RocketOutlined,
-  BarChartOutlined,
-  CheckCircleOutlined,
-  DeleteOutlined,
-  InfoCircleOutlined,
-} from '@ant-design/icons';
+import { Card, Table, Button, Space, Tag, Typography, Row, Col, Statistic, Empty } from 'antd';
+import { RocketOutlined, BarChartOutlined, CheckCircleOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { backtestService, BacktestResponse } from '../services/backtestService';
 import dayjs from 'dayjs';
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 const Strategy: React.FC = () => {
   const [backtests, setBacktests] = useState<BacktestResponse[]>([]);

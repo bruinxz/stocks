@@ -19,15 +19,20 @@ import {
   PlusOutlined,
   EditOutlined,
   DeleteOutlined,
-  ClockCircleOutlined,
   InfoCircleOutlined,
   PlayCircleOutlined,
 } from '@ant-design/icons';
 import { taskService, ScheduledTask, TaskExecutionLog } from '../services/taskService';
 import dayjs from 'dayjs';
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 const { Option } = Select;
+
+const getLastRunStatusColor = (status?: string) => {
+  if (status === 'SUCCESS') return 'success';
+  if (status === 'FAILED') return 'error';
+  return 'processing';
+};
 
 const TaskScheduler: React.FC = () => {
   const [tasks, setTasks] = useState<ScheduledTask[]>([]);
@@ -149,7 +154,8 @@ const TaskScheduler: React.FC = () => {
     setIsLogModalVisible(true);
     setLogLoading(true);
     try {
-      const logs = await taskService.getTaskLogs(record.id!);
+      if (!record.id) return;
+      const logs = await taskService.getTaskLogs(record.id);
       setCurrentLogs(logs);
     } catch (error) {
       message.error('获取日志失败');
@@ -182,7 +188,7 @@ const TaskScheduler: React.FC = () => {
       render: (_: any, record: ScheduledTask) => (
         <Switch
           checked={record.is_active}
-          onChange={checked => handleToggleActive(record.id!, checked)}
+          onChange={checked => record.id && handleToggleActive(record.id, checked)}
         />
       ),
     },
@@ -193,15 +199,7 @@ const TaskScheduler: React.FC = () => {
         <Space direction="vertical" size={0}>
           {record.last_run_at ? new Date(record.last_run_at).toLocaleString() : '-'}
           {record.last_run_status && (
-            <Tag
-              color={
-                record.last_run_status === 'SUCCESS'
-                  ? 'success'
-                  : record.last_run_status === 'FAILED'
-                  ? 'error'
-                  : 'processing'
-              }
-            >
+            <Tag color={getLastRunStatusColor(record.last_run_status)}>
               {record.last_run_status}
             </Tag>
           )}
@@ -216,7 +214,7 @@ const TaskScheduler: React.FC = () => {
           <Button
             type="link"
             icon={<PlayCircleOutlined />}
-            onClick={() => handleExecute(record.id!)}
+            onClick={() => record.id && handleExecute(record.id)}
             style={{ color: '#52c41a' }}
           >
             执行
@@ -231,7 +229,7 @@ const TaskScheduler: React.FC = () => {
             type="link"
             danger
             icon={<DeleteOutlined />}
-            onClick={() => handleDelete(record.id!)}
+            onClick={() => record.id && handleDelete(record.id)}
           >
             删除
           </Button>

@@ -11,11 +11,6 @@ import {
   Row,
   Col,
   Divider,
-  Switch,
-  Modal,
-  Tag,
-  Alert,
-  Space,
 } from 'antd';
 import {
   UserOutlined,
@@ -24,9 +19,6 @@ import {
   MailOutlined,
   EditOutlined,
   WechatOutlined,
-  BellOutlined,
-  SendOutlined,
-  LinkOutlined,
 } from '@ant-design/icons';
 import type { UploadProps } from 'antd';
 import { useSelector, useDispatch } from 'react-redux';
@@ -34,11 +26,8 @@ import { RootState } from '../store/rootReducer';
 import { updateUser } from '../store/authSlice';
 import { authService } from '../services/authService';
 import { API_DOMAIN_URL } from '../services/api';
-import api from '../services/api';
 
-const { Title, Text, Paragraph } = Typography;
-
-const PUSHPLUS_TOKEN_URL = 'https://www.pushplus.plus/push1.html';
+const { Title, Text } = Typography;
 
 const Profile: React.FC = () => {
   const { user } = useSelector((state: RootState) => state.auth);
@@ -48,12 +37,6 @@ const Profile: React.FC = () => {
   const [uploading, setUploading] = useState(false);
 
   // 微信通知相关
-  const [notifyEnabled, setNotifyEnabled] = useState<boolean>(false);
-  const [pushplusToken, setPushplusToken] = useState<string | null>(null);
-  const [bindModalOpen, setBindModalOpen] = useState(false);
-  const [bindInput, setBindInput] = useState('');
-  const [bindLoading, setBindLoading] = useState(false);
-  const [testLoading, setTestLoading] = useState(false);
 
   React.useEffect(() => {
     if (user) {
@@ -63,8 +46,6 @@ const Profile: React.FC = () => {
         nickname: user.nickname,
         phone: user.phone,
       });
-      setNotifyEnabled(!!(user as any).wechat_notify_enabled);
-      setPushplusToken((user as any).pushplus_token || null);
     }
   }, [user, form]);
 
@@ -130,101 +111,6 @@ const Profile: React.FC = () => {
       ? user.avatar_url
       : `${API_DOMAIN_URL}${user.avatar_url}`
     : undefined;
-
-  const handleToggleNotify = async (checked: boolean) => {
-    try {
-      const resp = await api.put('/auth/wechat/notify', { enabled: checked });
-      if (resp.data.success) {
-        setNotifyEnabled(checked);
-        message.success(checked ? '已开启微信通知' : '已关闭微信通知');
-        dispatch(updateUser({ ...user, wechat_notify_enabled: checked } as any));
-      }
-    } catch {
-      message.error('更新失败');
-    }
-  };
-
-  const handleUnbind = async () => {
-    Modal.confirm({
-      title: '确认解绑微信？',
-      content: '解绑后将不再收到任务完成的微信推送',
-      onOk: async () => {
-        try {
-          await api.post('/auth/wechat/unbind');
-          setPushplusToken(null);
-          setNotifyEnabled(false);
-          dispatch(
-            updateUser({
-              ...user,
-              pushplus_token: null,
-              wechat_notify_enabled: false,
-            } as any)
-          );
-          message.success('已解绑微信');
-        } catch {
-          message.error('解绑失败');
-        }
-      },
-    });
-  };
-
-  const openBindModal = () => {
-    setBindInput('');
-    setBindModalOpen(true);
-  };
-
-  const handleBindSubmit = async () => {
-    const token = bindInput.trim();
-    if (!token) {
-      message.warning('请先粘贴您的 PushPlus Token');
-      return;
-    }
-    if (!/^[a-f0-9]{32}$/i.test(token)) {
-      message.warning('Token 格式不正确（应为 32 位十六进制字符串）');
-      return;
-    }
-    setBindLoading(true);
-    try {
-      const resp = await api.post('/auth/wechat/bind', { token });
-      if (resp.data.success) {
-        setPushplusToken(token);
-        setNotifyEnabled(true);
-        dispatch(
-          updateUser({
-            ...user,
-            pushplus_token: token,
-            wechat_notify_enabled: true,
-          } as any)
-        );
-        message.success('绑定成功，请到微信查收测试推送');
-        setBindModalOpen(false);
-      } else {
-        message.error(resp.data.message || '绑定失败');
-      }
-    } catch (err: any) {
-      message.error(err.response?.data?.message || '绑定失败');
-    } finally {
-      setBindLoading(false);
-    }
-  };
-
-  const handleTestPush = async () => {
-    setTestLoading(true);
-    try {
-      const resp = await api.post('/auth/wechat/test');
-      if (resp.data.success) {
-        message.success('测试推送已发送，请在微信查收');
-      } else {
-        message.error(resp.data.message || '发送失败');
-      }
-    } catch (err: any) {
-      message.error(err.response?.data?.message || '发送失败');
-    } finally {
-      setTestLoading(false);
-    }
-  };
-
-  const maskToken = (t: string) => (t.length > 8 ? `${t.slice(0, 4)}****${t.slice(-4)}` : t);
 
   return (
     <div className="fade-in-up">
@@ -321,16 +207,26 @@ const Profile: React.FC = () => {
                 <Text type="secondary">
                   我们使用 PushPlus (推送加) 的「群组通知」功能提供服务。
                   <br />
-                  您只需要使用微信扫描下方二维码，关注公众号并加入群组，即可每天接收 AI 选股分析报告。
+                  您只需要使用微信扫描下方二维码，关注公众号并加入群组，即可每天接收 AI
+                  选股分析报告。
                   <br />
                   <span style={{ color: '#ff4d4f' }}>* 无需注册，无需实名，随时可退订</span>
                 </Text>
-                
+
                 <div style={{ marginTop: 24, textAlign: 'center' }}>
-                  <img 
-                    src={process.env.REACT_APP_PUSHPLUS_QRCODE_URL || 'https://www.pushplus.plus/api/common/qrcode/group/261ae301eaf34c8ba4e0c67c8cd5ca78'} 
-                    alt="PushPlus 群组二维码" 
-                    style={{ width: 200, height: 200, border: '1px solid #f0f0f0', borderRadius: 8, padding: 8 }}
+                  <img
+                    src={
+                      process.env.REACT_APP_PUSHPLUS_QRCODE_URL ||
+                      'https://www.pushplus.plus/api/common/qrcode/group/261ae301eaf34c8ba4e0c67c8cd5ca78'
+                    }
+                    alt="PushPlus 群组二维码"
+                    style={{
+                      width: 200,
+                      height: 200,
+                      border: '1px solid #f0f0f0',
+                      borderRadius: 8,
+                      padding: 8,
+                    }}
                   />
                   <div style={{ marginTop: 12 }}>
                     <Text strong>微信扫一扫，加入通知群组</Text>

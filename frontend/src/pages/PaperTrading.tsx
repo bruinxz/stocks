@@ -19,7 +19,6 @@ import {
   Spin,
 } from 'antd';
 import {
-  AccountBookOutlined,
   WalletOutlined,
   RiseOutlined,
   FallOutlined,
@@ -38,7 +37,7 @@ import {
 import api, { getPaperTradingSnapshots } from '../services/api';
 import { marketService, Stock } from '../services/marketService';
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 interface PortfolioInfo {
   id: number;

@@ -14,10 +14,10 @@ import {
   Switch,
   Divider,
 } from 'antd';
-import { AlertOutlined, CheckOutlined, SettingOutlined, SaveOutlined } from '@ant-design/icons';
+import { CheckOutlined, SettingOutlined, SaveOutlined } from '@ant-design/icons';
 import api from '../services/api';
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 interface RiskAlert {
   id: number;
