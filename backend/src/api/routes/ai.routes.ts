@@ -10,6 +10,13 @@ const router = Router();
 const authController = new AuthController();
 
 /**
+ * @route GET /api/ai/health
+ * @desc 获取 TradingAgents 服务健康与能力信息
+ * @access Private
+ */
+router.get('/health', authController.authenticate, aiAdvisorController.getHealth);
+
+/**
  * @route POST /api/ai/analyze
  * @desc 提交 AI 同步或异步分析任务
  * @access Private

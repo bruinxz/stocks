@@ -13,6 +13,8 @@ import {
   Row,
   Col,
   Descriptions,
+  Alert,
+  Statistic,
 } from 'antd';
 import {
   RobotOutlined,
@@ -20,8 +22,10 @@ import {
   CheckCircleOutlined,
   LoadingOutlined,
   CloseCircleOutlined,
+  ApiOutlined,
+  ReloadOutlined,
 } from '@ant-design/icons';
-import { API_BASE_URL } from '../services/api';
+import api, { API_BASE_URL } from '../services/api';
 import { useLocation } from 'react-router-dom';
 
 const { Title, Text, Paragraph } = Typography;
@@ -33,6 +37,17 @@ interface AIEvent {
   content?: string;
   decision?: string;
   analyst?: string;
+}
+
+interface TradingAgentsHealth {
+  provider_label?: string;
+  status: string;
+  health_score?: number;
+  base_url?: string;
+  last_latency_ms?: number;
+  last_checked_at?: string;
+  last_error?: string;
+  metadata?: Record<string, any>;
 }
 
 const parseDecision = (decisionStr: string) => {
@@ -88,9 +103,25 @@ const AIAdvisor: React.FC = () => {
   const [decision, setDecision] = useState<string | null>(() => {
     return localStorage.getItem('aiAdvisor_decision') || null;
   });
+  const [serviceHealth, setServiceHealth] = useState<TradingAgentsHealth | null>(null);
+  const [healthLoading, setHealthLoading] = useState(false);
 
   const eventSourceRef = useRef<EventSource | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const fetchServiceHealth = async (refresh = false) => {
+    setHealthLoading(true);
+    try {
+      const response = await api.get('/ai/health', { params: { refresh } });
+      if (response.data.success) {
+        setServiceHealth(response.data.data);
+      }
+    } catch (error: any) {
+      message.warning(error.response?.data?.message || '获取 TradingAgents 状态失败');
+    } finally {
+      setHealthLoading(false);
+    }
+  };
 
   // 状态发生变化时，保存到 localStorage
   useEffect(() => {
@@ -127,6 +158,10 @@ const AIAdvisor: React.FC = () => {
       setAnalyzing(false);
       localStorage.setItem('aiAdvisor_analyzing', 'false');
     }
+  }, []);
+
+  useEffect(() => {
+    fetchServiceHealth(false);
   }, []);
 
   const scrollToBottom = () => {
@@ -197,6 +232,18 @@ const AIAdvisor: React.FC = () => {
     return 'gold';
   };
 
+  const getStatusTagColor = (status?: string) => {
+    if (status === 'healthy') return 'green';
+    if (status === 'degraded' || status === 'unknown') return 'gold';
+    return 'red';
+  };
+
+  const getHealthColor = (status?: string) => {
+    if (status === 'healthy') return 'success';
+    if (status === 'degraded' || status === 'unknown') return 'warning';
+    return 'error';
+  };
+
   const handleClear = () => {
     setEvents([]);
     setDecision(null);
@@ -241,6 +288,61 @@ const AIAdvisor: React.FC = () => {
         variant="borderless"
         style={{ minHeight: '600px', display: 'flex', flexDirection: 'column' }}
       >
+        <Alert
+          type={getHealthColor(serviceHealth?.status) as any}
+          showIcon
+          icon={<ApiOutlined />}
+          style={{ marginBottom: 24 }}
+          message={
+            <Space wrap>
+              <Text strong>TradingAgents 服务</Text>
+              <Tag color={getStatusTagColor(serviceHealth?.status)}>
+                {(serviceHealth?.status || 'unknown').toUpperCase()}
+              </Tag>
+              <Text type="secondary">{serviceHealth?.base_url || '未探测'}</Text>
+            </Space>
+          }
+          description={
+            <Row gutter={[16, 8]} align="middle">
+              <Col xs={12} md={6}>
+                <Statistic
+                  title="健康分"
+                  value={serviceHealth?.health_score || 0}
+                  precision={0}
+                  suffix="/100"
+                />
+              </Col>
+              <Col xs={12} md={6}>
+                <Statistic
+                  title="最近延迟"
+                  value={serviceHealth?.last_latency_ms || 0}
+                  suffix="ms"
+                />
+              </Col>
+              <Col xs={24} md={8}>
+                <Text type="secondary">
+                  {serviceHealth?.last_error
+                    ? `最近错误：${serviceHealth.last_error}`
+                    : `能力：${
+                        (serviceHealth?.metadata?.exposed_paths || []).slice(0, 3).join(' / ') ||
+                        'analyze / stream / tasks'
+                      }`}
+                </Text>
+              </Col>
+              <Col xs={24} md={4} style={{ textAlign: 'right' }}>
+                <Button
+                  size="small"
+                  icon={<ReloadOutlined />}
+                  loading={healthLoading}
+                  onClick={() => fetchServiceHealth(true)}
+                >
+                  重新探测
+                </Button>
+              </Col>
+            </Row>
+          }
+        />
+
         <Row justify="center" style={{ marginBottom: 32 }}>
           <Col xs={24} md={16} lg={12}>
             <Space.Compact style={{ width: '100%' }}>

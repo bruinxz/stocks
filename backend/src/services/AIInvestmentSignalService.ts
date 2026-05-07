@@ -31,9 +31,38 @@ export interface QuantRecommendationArchiveOptions {
   signal_date?: string;
 }
 
+export interface TradingAgentsStructuredDecision {
+  rating: string;
+  normalized_decision: string;
+  summary?: string;
+  thesis?: string;
+  confidence_score?: number;
+  risk_level?: string;
+  action_tags: string[];
+  key_levels: {
+    stop_loss?: number;
+    take_profit?: number;
+    entry?: number;
+  };
+}
+
 function toNumber(value: any): number | undefined {
   if (value === undefined || value === null || value === '') return undefined;
   const num = Number(value);
+  return Number.isFinite(num) ? num : undefined;
+}
+
+function stripMarkdown(value: string): string {
+  return String(value || '')
+    .replace(/\*\*/g, '')
+    .replace(/#+\s*/g, '')
+    .replace(/\r/g, '')
+    .trim();
+}
+
+function firstNumber(match?: RegExpMatchArray | null): number | undefined {
+  if (!match?.[1]) return undefined;
+  const num = Number(match[1].replace(/,/g, ''));
   return Number.isFinite(num) ? num : undefined;
 }
 
@@ -71,6 +100,88 @@ function buildSignalWhere(options: SignalQueryOptions = {}) {
 }
 
 export class AIInvestmentSignalService {
+  parseTradingAgentsDecision(decision: string, detail?: any): TradingAgentsStructuredDecision {
+    const text = typeof decision === 'string' ? decision : JSON.stringify(decision || '');
+    const detailText =
+      typeof detail === 'string'
+        ? detail
+        : detail?.text
+        ? String(detail.text)
+        : detail
+        ? JSON.stringify(detail)
+        : '';
+    const combined = `${text}\n${detailText}`;
+
+    const ratingMatch =
+      combined.match(/(?:\*\*)?Rating(?:\*\*)?\s*[:：]\s*([^\n]+)/i) ||
+      combined.match(/评级\s*[:：]\s*([^\n]+)/i);
+    const rawRating = stripMarkdown(ratingMatch?.[1] || text.split('\n')[0] || 'UNKNOWN');
+    const normalized_decision = this.normalizeDecision(rawRating || combined);
+
+    const summaryMatch =
+      combined.match(
+        /(?:\*\*)?Executive Summary(?:\*\*)?\s*[:：]?\s*([\s\S]*?)(?=\n\s*(?:\d+\.\s*)?(?:\*\*)?(?:Investment Thesis|Risk|风险|投资论点)|$)/i
+      ) || combined.match(/执行摘要\s*[:：]?\s*([\s\S]*?)(?=\n\s*(?:投资论点|风险|$))/i);
+    const thesisMatch =
+      combined.match(
+        /(?:\*\*)?Investment Thesis(?:\*\*)?\s*[:：]?\s*([\s\S]*?)(?=\n\s*(?:\d+\.\s*)?(?:\*\*)?(?:Risk|风险|$))/i
+      ) || combined.match(/投资论点\s*[:：]?\s*([\s\S]*?)(?=\n\s*(?:风险|$))/i);
+
+    const upper = combined.toUpperCase();
+    const action_tags: string[] = [];
+    const actionTagRules: Array<[string, RegExp]> = [
+      ['stop_loss', /止损|STOP[-\s]?LOSS/i],
+      ['take_profit', /止盈|TAKE[-\s]?PROFIT/i],
+      ['position_sizing', /仓位|POSITION/i],
+      ['avoid_entry', /禁止介入|避免介入|AVOID/i],
+      ['watchlist', /观察|WATCH/i],
+    ];
+    actionTagRules.forEach(([tag, regex]) => {
+      if (regex.test(combined)) action_tags.push(tag);
+    });
+
+    const confidence_score =
+      normalized_decision === AISignalDecision.STRONG_BUY
+        ? 88
+        : normalized_decision === AISignalDecision.BUY
+        ? 78
+        : normalized_decision === AISignalDecision.HOLD
+        ? 58
+        : normalized_decision === AISignalDecision.SELL
+        ? 35
+        : normalized_decision === AISignalDecision.STRONG_SELL
+        ? 20
+        : undefined;
+
+    const risk_level =
+      upper.includes('SELL') || /高风险|严格止损|禁止介入|清仓|HIGH RISK/i.test(combined)
+        ? 'high'
+        : /低风险|LOW RISK|稳健/i.test(combined)
+        ? 'low'
+        : 'medium';
+
+    return {
+      rating: rawRating,
+      normalized_decision,
+      summary: summaryMatch?.[1] ? stripMarkdown(summaryMatch[1]).slice(0, 1500) : undefined,
+      thesis: thesisMatch?.[1] ? stripMarkdown(thesisMatch[1]).slice(0, 3000) : undefined,
+      confidence_score,
+      risk_level,
+      action_tags,
+      key_levels: {
+        stop_loss: firstNumber(
+          combined.match(/(?:止损(?:线|位)?|stop[-\s]?loss)[^0-9]{0,12}([0-9]+(?:\.[0-9]+)?)/i)
+        ),
+        take_profit: firstNumber(
+          combined.match(/(?:止盈(?:线|位)?|take[-\s]?profit)[^0-9]{0,12}([0-9]+(?:\.[0-9]+)?)/i)
+        ),
+        entry: firstNumber(
+          combined.match(/(?:买入|介入|entry|布局)[^0-9]{0,12}([0-9]+(?:\.[0-9]+)?)/i)
+        ),
+      },
+    };
+  }
+
   normalizeDecision(decision: string): string {
     const text = String(decision || '').toUpperCase();
     if (text.includes('STRONG_BUY') || text.includes('强烈买入') || text.includes('强买')) {
@@ -183,6 +294,10 @@ export class AIInvestmentSignalService {
         : params.detail
         ? JSON.stringify(params.detail)
         : undefined;
+    const structured = this.parseTradingAgentsDecision(
+      params.decision || params.rationale || '',
+      params.detail
+    );
 
     const payload = {
       source_type,
@@ -191,15 +306,16 @@ export class AIInvestmentSignalService {
       name: stock?.name,
       signal_date,
       decision: params.decision || 'UNKNOWN',
-      normalized_decision: this.normalizeDecision(params.decision || ''),
-      confidence_score: params.confidence_score,
-      risk_level: this.inferRiskLevel(params),
-      rationale: params.rationale,
+      normalized_decision: structured.normalized_decision,
+      confidence_score: params.confidence_score ?? structured.confidence_score,
+      risk_level: structured.risk_level || this.inferRiskLevel(params),
+      rationale: params.rationale || structured.summary,
       detail: detailText,
       current_price: params.current_price,
       price_change_pct: params.price_change_pct,
       metadata: {
         task_id: params.task_id,
+        structured_decision: structured,
       },
     };
 

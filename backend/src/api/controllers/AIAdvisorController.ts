@@ -13,6 +13,7 @@ export class AIAdvisorController {
     this.streamAnalyze = this.streamAnalyze.bind(this);
     this.analyze = this.analyze.bind(this);
     this.getTask = this.getTask.bind(this);
+    this.getHealth = this.getHealth.bind(this);
     this.resolveTicker = this.resolveTicker.bind(this);
   }
 
@@ -21,7 +22,7 @@ export class AIAdvisorController {
    */
   private async resolveTicker(input: string): Promise<string | null> {
     if (!input) return null;
-    
+
     // 如果看起来已经是合法的 ticker 格式 (例如 sh.600000 或 sz.000001)
     if (/^(sh\.|sz\.|bj\.)?\d{6}$/.test(input.toLowerCase())) {
       // 如果只有6位数字，尝试补全
@@ -35,8 +36,8 @@ export class AIAdvisorController {
     // 否则当做股票名称去数据库查询
     const stock = await Stock.findOne({
       where: {
-        name: { [Op.like]: `%${input}%` }
-      }
+        name: { [Op.like]: `%${input}%` },
+      },
     });
 
     if (stock) {
@@ -46,11 +47,23 @@ export class AIAdvisorController {
     return null;
   }
 
+  async getHealth(req: Request, res: Response, next: NextFunction) {
+    try {
+      const health = await aiAdvisorService.getHealth(req.query.refresh === 'true');
+      res.json({ success: true, data: health });
+    } catch (error: any) {
+      logger.error('获取 TradingAgents 健康状态失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
   async analyze(req: Request, res: Response, next: NextFunction) {
     try {
       const { ticker, targetDate, isAsync } = req.body;
       if (!ticker) {
-        return res.status(400).json({ success: false, message: '股票代码或名称 (ticker) 不能为空' });
+        return res
+          .status(400)
+          .json({ success: false, message: '股票代码或名称 (ticker) 不能为空' });
       }
 
       const resolvedTicker = await this.resolveTicker(ticker);
@@ -131,7 +144,9 @@ export class AIAdvisorController {
     try {
       const tickerInput = req.query.ticker as string;
       if (!tickerInput) {
-        return res.status(400).json({ success: false, message: '股票代码或名称 (ticker) 不能为空' });
+        return res
+          .status(400)
+          .json({ success: false, message: '股票代码或名称 (ticker) 不能为空' });
       }
 
       const resolvedTicker = await this.resolveTicker(tickerInput);
@@ -149,7 +164,7 @@ export class AIAdvisorController {
       if (target_date) {
         url += `&target_date=${target_date}`;
       }
-      
+
       logger.info(`Forwarding SSE request to TradingAgent: ${url}`);
 
       const streamResponse = await axios.get(url, {
@@ -160,7 +175,47 @@ export class AIAdvisorController {
         },
       });
 
+      let finalDecision = '';
+      let streamBuffer = '';
+
+      streamResponse.data.on('data', (chunk: Buffer) => {
+        const text = chunk.toString('utf8');
+        streamBuffer += text;
+        const events = streamBuffer.split('\n\n');
+        streamBuffer = events.pop() || '';
+
+        for (const rawEvent of events) {
+          const dataLine = rawEvent.split('\n').find(line => line.startsWith('data:'));
+          if (!dataLine) continue;
+          try {
+            const payload = JSON.parse(dataLine.replace(/^data:\s*/, ''));
+            if (payload.type === 'completed' && payload.decision) {
+              finalDecision = payload.decision;
+            }
+          } catch {
+            // 忽略非标准 SSE 片段，继续透传给前端。
+          }
+        }
+      });
+
       streamResponse.data.pipe(res);
+
+      streamResponse.data.on('end', async () => {
+        if (!finalDecision) return;
+        try {
+          const archivedSignal = await aiInvestmentSignalService.archiveTradingAgentsResult({
+            symbol: resolvedTicker,
+            signal_date: target_date,
+            decision: finalDecision,
+            rationale: finalDecision,
+            detail: { text: finalDecision, stream: true },
+            source_type: 'tradingagents',
+          });
+          await aiInvestmentSignalService.verifySignalReturns(archivedSignal);
+        } catch (archiveError: any) {
+          logger.warn(`AI SSE 结果归档失败: ${archiveError.message}`);
+        }
+      });
 
       streamResponse.data.on('error', (err: any) => {
         logger.error('AI SSE stream error:', err);

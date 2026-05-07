@@ -5,6 +5,7 @@ import { DailyScreener } from '../models/DailyScreener';
 import { TaskExecutionLog } from '../models/TaskExecutionLog';
 import { AKShareClient } from '../data/sources/AKShareClient';
 import { notificationService } from '../services/NotificationService';
+import { aiInvestmentSignalService } from '../services/AIInvestmentSignalService';
 import { logger } from '../utils/logger';
 import moment from 'moment-timezone';
 
@@ -15,15 +16,15 @@ const updateLogProgress = async (logId: number | undefined, isSuccess: boolean) 
   try {
     const log = await TaskExecutionLog.findByPk(logId);
     if (!log) return;
-    
+
     if (isSuccess) {
       await log.increment('completed_items');
     } else {
       await log.increment('failed_items');
     }
-    
+
     await log.reload();
-    
+
     if (log.completed_items + log.failed_items >= log.total_items) {
       await log.update({
         status: 'COMPLETED',
@@ -49,60 +50,72 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
     recommendation_style,
     recommendation_source,
   } = job.data;
-  
+
   try {
     const response = await aiAdvisorService.getTaskStatus(taskId);
     const status = response.status?.toUpperCase();
 
     if (status === 'COMPLETED') {
       let decisionStr = response.data || '';
-      
+
       // 如果大模型接口返回的 data 字段不是纯字符串，而是 JSON 对象或数组，强制将其序列化为字符串，防止 .match() 方法报错
       if (typeof decisionStr !== 'string') {
         decisionStr = JSON.stringify(decisionStr, null, 2);
       }
-      
+
       let rating = 'HOLD';
       let summary = '';
-      
+
       // Attempt to parse standard markdown format first
       const ratingMatch = decisionStr.match(/### 1\. \*\*Rating\*\*:\s*([^\n]+)/i);
       if (ratingMatch) rating = ratingMatch[1].trim();
       else {
         // Fallback: Try to parse as JSON if it's a JSON string
         try {
-          const jsonObj = typeof response.data === 'string' ? JSON.parse(response.data) : response.data;
+          const jsonObj =
+            typeof response.data === 'string' ? JSON.parse(response.data) : response.data;
           if (jsonObj && typeof jsonObj.decision === 'string') {
-             rating = jsonObj.decision.toUpperCase();
+            rating = jsonObj.decision.toUpperCase();
           } else {
-             // Blind fallback, but carefully check word boundaries to avoid matching "BUY" inside a larger word
-             if (decisionStr.toUpperCase().includes('STRONG_BUY') || decisionStr.toUpperCase().includes('STRONG BUY')) rating = 'STRONG_BUY';
-             else if (decisionStr.toUpperCase().match(/\bBUY\b/)) rating = 'BUY';
-             else if (decisionStr.toUpperCase().match(/\bSELL\b/)) rating = 'SELL';
+            // Blind fallback, but carefully check word boundaries to avoid matching "BUY" inside a larger word
+            if (
+              decisionStr.toUpperCase().includes('STRONG_BUY') ||
+              decisionStr.toUpperCase().includes('STRONG BUY')
+            )
+              rating = 'STRONG_BUY';
+            else if (decisionStr.toUpperCase().match(/\bBUY\b/)) rating = 'BUY';
+            else if (decisionStr.toUpperCase().match(/\bSELL\b/)) rating = 'SELL';
           }
-        } catch(e) {
+        } catch (e) {
           // Blind fallback if it's not JSON
-          if (decisionStr.toUpperCase().includes('STRONG_BUY') || decisionStr.toUpperCase().includes('STRONG BUY')) rating = 'STRONG_BUY';
+          if (
+            decisionStr.toUpperCase().includes('STRONG_BUY') ||
+            decisionStr.toUpperCase().includes('STRONG BUY')
+          )
+            rating = 'STRONG_BUY';
           else if (decisionStr.toUpperCase().match(/\bBUY\b/)) rating = 'BUY';
           else if (decisionStr.toUpperCase().match(/\bSELL\b/)) rating = 'SELL';
         }
       }
-      
-      const summaryMatch = decisionStr.match(/### 2\. \*\*Executive Summary\*\*\n([\s\S]*?)(?=### 3\.|\n\n###|$)/i);
+
+      const summaryMatch = decisionStr.match(
+        /### 2\. \*\*Executive Summary\*\*\n([\s\S]*?)(?=### 3\.|\n\n###|$)/i
+      );
       if (summaryMatch) summary = summaryMatch[1].trim();
       else {
         try {
-          const jsonObj = typeof response.data === 'string' ? JSON.parse(response.data) : response.data;
+          const jsonObj =
+            typeof response.data === 'string' ? JSON.parse(response.data) : response.data;
           if (jsonObj && jsonObj.summary) {
             summary = jsonObj.summary;
           } else {
             summary = decisionStr.substring(0, 200) + '...';
           }
-        } catch(e) {
+        } catch (e) {
           summary = decisionStr.substring(0, 200) + '...';
         }
       }
-      
+
       let score = 50;
       if (rating.toUpperCase().includes('STRONG_BUY')) score = 90;
       else if (rating.toUpperCase().includes('BUY')) score = 75;
@@ -113,9 +126,9 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
       if (typeof quant_score === 'number' && Number.isFinite(quant_score)) {
         score = Math.round((score * 0.65 + quant_score * 0.35) * 100) / 100;
       }
-      
+
       const today = moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
-      
+
       // Fetch real-time price
       let currentPrice = null;
       let priceChangePct = null;
@@ -128,7 +141,7 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
       } catch (err) {
         logger.warn(`Failed to fetch real-time quote for ${symbol} when saving screener:`, err);
       }
-      
+
       // Always create a new record (append) instead of updating existing ones for the same day
       await DailyScreener.create({
         date: today,
@@ -149,8 +162,27 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
         current_price: currentPrice,
         price_change_pct: priceChangePct,
       });
-      
+
       logger.info(`AI 分析任务 ${taskId} 对于股票 ${symbol} 已完成并保存入库 (增量)`);
+
+      try {
+        const archivedSignal = await aiInvestmentSignalService.archiveTradingAgentsResult({
+          task_id: taskId,
+          symbol,
+          signal_date: response.target_date || today,
+          decision: rating,
+          rationale: summary,
+          detail: response.data,
+          confidence_score: score,
+          current_price: currentPrice || undefined,
+          price_change_pct: priceChangePct || undefined,
+          source_type: 'tradingagents',
+        });
+        await aiInvestmentSignalService.verifySignalReturns(archivedSignal);
+      } catch (archiveError: any) {
+        logger.warn(`AI 轮询任务结果归档失败 ${taskId}: ${archiveError.message}`);
+      }
+
       await updateLogProgress(executionLogId, true);
 
       // 异步推送微信通知（失败也不影响主流程）
@@ -170,7 +202,9 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
 
       return { success: true };
     } else if (status === 'FAILED' || status === 'ERROR') {
-      logger.error(`AI 分析任务 ${taskId} 对于股票 ${symbol} 失败: ${response.error || 'Unknown error'}`);
+      logger.error(
+        `AI 分析任务 ${taskId} 对于股票 ${symbol} 失败: ${response.error || 'Unknown error'}`
+      );
       await updateLogProgress(executionLogId, false);
       // Return so it doesn't retry
       return { success: false, error: response.error };
