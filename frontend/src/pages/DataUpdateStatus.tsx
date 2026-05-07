@@ -498,6 +498,26 @@ const DataUpdateStatus: React.FC = () => {
     message.success('数据已刷新');
   };
 
+  const handleProbeDataSources = async () => {
+    setLoading(prev => ({ ...prev, health: true }));
+    try {
+      const response = await api.get('/market/data-sources/health', {
+        params: { refresh: true },
+        timeout: 60000,
+      });
+      if (response.data.success) {
+        setDataSourceHealth(response.data.data as DataSourceHealthResponse);
+        message.success('数据源主动探测完成，动态路由已刷新');
+      } else {
+        message.warning(response.data.message || response.data.error || '数据源探测未完成');
+      }
+    } catch (error: any) {
+      message.error('数据源主动探测失败: ' + (error.response?.data?.error || error.message));
+    } finally {
+      setLoading(prev => ({ ...prev, health: false }));
+    }
+  };
+
   const handleTriggerUpdate = async (force = false) => {
     try {
       const url = force ? '/market/update-data?force=true' : '/market/update-data';
@@ -1145,10 +1165,10 @@ const DataUpdateStatus: React.FC = () => {
           <Button
             size="small"
             icon={<ReloadOutlined />}
-            onClick={handleRefresh}
+            onClick={handleProbeDataSources}
             loading={loading.health}
           >
-            刷新
+            主动探测
           </Button>
         }
       >

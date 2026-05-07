@@ -693,6 +693,59 @@ def get_realtime_quotes(symbols: str) -> Dict[str, Any]:
         print(f"Error getting real-time quotes: {e}", file=sys.stderr)
         return {}
 
+def health_check(code: str, start_date: str, end_date: str) -> Dict[str, Any]:
+    """Lightweight health probe for AKShare. Avoids full-market and indicator endpoints."""
+    pure_code = code
+    if code.startswith('sh.') or code.startswith('sz.') or code.startswith('bj.'):
+        pure_code = code.split('.')[1]
+
+    ak_code = code
+    if code.startswith('sh.'):
+        ak_code = code.replace('sh.', 'sh')
+    elif code.startswith('sz.'):
+        ak_code = code.replace('sz.', 'sz')
+    elif code.startswith('bj.'):
+        ak_code = code.replace('bj.', 'bj')
+
+    index_symbols = ['sh.000001', 'sh.000300', 'sz.399001', 'sz.399006']
+    if code in index_symbols:
+        df = ak.stock_zh_index_daily(symbol=ak_code)
+        date_column = 'date' if 'date' in df.columns else None
+    else:
+        df = ak.stock_zh_a_hist(
+            symbol=pure_code,
+            period="daily",
+            start_date=parse_date(start_date),
+            end_date=parse_date(end_date),
+            adjust=""
+        )
+        date_column = '日期' if '日期' in df.columns else ('date' if 'date' in df.columns else None)
+
+    if df is None or df.empty:
+        return {
+            "ok": False,
+            "bar_count": 0,
+            "latest_date": None,
+            "sample_symbol": code,
+            "start_date": start_date,
+            "end_date": end_date,
+        }
+
+    latest_date = None
+    if date_column:
+        dates = pd.to_datetime(df[date_column], errors='coerce').dropna()
+        if not dates.empty:
+            latest_date = dates.max().strftime('%Y-%m-%d')
+
+    return {
+        "ok": True,
+        "bar_count": int(len(df)),
+        "latest_date": latest_date,
+        "sample_symbol": code,
+        "start_date": start_date,
+        "end_date": end_date,
+    }
+
 def get_intraday_bars(code: str, period: str = '1', limit: int = 240) -> List[Dict[str, Any]]:
     """Get intraday minute bars"""
     try:
@@ -779,6 +832,16 @@ def main():
             limit = int(sys.argv[4]) if len(sys.argv) > 4 else 240
             
             result = get_intraday_bars(code, period, limit)
+
+        elif command == "health_check":
+            if len(sys.argv) < 5:
+                print(json.dumps({"error": "Missing parameters for health_check"}), file=sys.stderr)
+                sys.exit(1)
+
+            code = sys.argv[2]
+            start_date = sys.argv[3]
+            end_date = sys.argv[4]
+            result = health_check(code, start_date, end_date)
 
         else:
             print(json.dumps({"error": f"Unknown command: {command}"}), file=sys.stderr)

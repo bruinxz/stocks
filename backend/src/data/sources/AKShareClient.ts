@@ -147,7 +147,9 @@ export class AKShareClient {
     adjustflag: '1' | '2' | '3' = '3'
   ): Promise<DailyBar[]> {
     try {
-      logger.info(`Fetching history data for ${code} from ${start_date} to ${end_date} via AKShare`);
+      logger.info(
+        `Fetching history data for ${code} from ${start_date} to ${end_date} via AKShare`
+      );
 
       // AKShare目前只支持日线数据
       if (frequency !== 'd') {
@@ -182,6 +184,25 @@ export class AKShareClient {
       logger.error(`Failed to fetch stock basic for ${code} from AKShare:`, error);
       return null;
     }
+  }
+
+  /**
+   * 轻量健康探测：优先使用历史K线，不调用全市场列表，避免刷新数据源状态时过重。
+   */
+  async healthCheck(
+    code: string = 'sh.600000',
+    start_date?: string,
+    end_date?: string
+  ): Promise<{ ok: boolean; bar_count: number; latest_date?: string }> {
+    const end = end_date || new Date().toISOString().split('T')[0];
+    const start =
+      start_date || new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const bars = await this.callPythonScript('health_check', code, start, end);
+    return {
+      ok: Number(bars?.bar_count || 0) > 0,
+      bar_count: Number(bars?.bar_count || 0),
+      latest_date: bars?.latest_date,
+    };
   }
 
   /**

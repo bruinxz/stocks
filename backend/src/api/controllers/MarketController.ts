@@ -1286,8 +1286,9 @@ export class MarketController {
    */
   getDataSourceHealth = async (req: Request, res: Response): Promise<void> => {
     try {
+      let probeResult: any = null;
       if (req.query.refresh === 'true') {
-        await DataSourceHealthService.refreshExternalProviderHealth();
+        probeResult = await DataSourceHealthService.refreshExternalProviderHealth();
       }
 
       const providers = await DataSourceHealthService.getHealthSnapshots();
@@ -1323,7 +1324,11 @@ export class MarketController {
       ]);
 
       const status =
-        unhealthyProviders.length > 0
+        healthyProviders.length > 0 && degradedProviders.length === 0
+          ? 'healthy'
+          : healthyProviders.length > 0
+          ? 'degraded'
+          : unhealthyProviders.length > 0
           ? 'unhealthy'
           : degradedProviders.length > 0 || healthyProviders.length === 0
           ? 'degraded'
@@ -1345,6 +1350,7 @@ export class MarketController {
           },
           providers,
           routing_plans: routingPlans,
+          probe_result: probeResult,
         },
       });
     } catch (error: any) {
@@ -1494,7 +1500,13 @@ export class MarketController {
 
         healthInfo.services.dataSource = {
           status:
-            unhealthyCount > 0
+            enabledProviders.length > 0 &&
+            unhealthyCount < enabledProviders.length &&
+            avgScore >= 35
+              ? degradedCount > 0 || avgScore < 70
+                ? 'degraded'
+                : 'healthy'
+              : unhealthyCount > 0
               ? 'unhealthy'
               : degradedCount > 0 || avgScore < 50
               ? 'degraded'

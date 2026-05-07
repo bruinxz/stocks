@@ -2,6 +2,11 @@ import { DataSourceHealth, DataSourceStatus } from '../../models/DataSourceHealt
 import { logger } from '../../utils/logger';
 import axios from 'axios';
 import { MarketDataProviderDefinition, MarketDataFeature } from '../sources/MarketDataProvider';
+import { AKShareClient } from '../sources/AKShareClient';
+import { EastMoneyClient } from '../sources/EastMoneyClient';
+import { SinaFinanceClient } from '../sources/SinaFinanceClient';
+import { BaostockClient } from '../sources/BaostockClient';
+import { TushareClient } from '../sources/TushareClient';
 
 const hasTushareToken = Boolean(process.env.TUSHARE_TOKEN || process.env.TUSHARE_PRO_TOKEN);
 const tushareEnabled = process.env.TUSHARE_ENABLED === 'true' && hasTushareToken;
@@ -143,6 +148,20 @@ function latencyScore(latency_ms?: number | null): number {
   if (latency_ms <= 15000) return -2;
   if (latency_ms <= 30000) return -8;
   return -15;
+}
+
+function formatDate(date: Date): string {
+  return date.toISOString().split('T')[0];
+}
+
+function getProbeDateRange(): { start_date: string; end_date: string } {
+  const end = new Date();
+  const start = new Date();
+  start.setDate(start.getDate() - 45);
+  return {
+    start_date: formatDate(start),
+    end_date: formatDate(end),
+  };
 }
 
 export class DataSourceHealthService {
@@ -385,10 +404,31 @@ export class DataSourceHealthService {
     }
   }
 
-  static async probeTradingAgents(): Promise<void> {
+  private static async withTimeout<T>(
+    promise: Promise<T>,
+    timeout_ms: number,
+    label: string
+  ): Promise<T> {
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<T>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error(`${label} timeout after ${timeout_ms}ms`)),
+            timeout_ms
+          );
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  static async probeTradingAgents(): Promise<Record<string, any>> {
     const provider = DEFAULT_DATA_PROVIDERS.find(item => item.provider_name === 'tradingagents');
     if (!provider) {
-      return;
+      return { provider_name: 'tradingagents', status: DataSourceStatus.DISABLED };
     }
 
     const startedAt = Date.now();
@@ -403,15 +443,233 @@ export class DataSourceHealthService {
         api_title: response.data?.info?.title,
         api_version: response.data?.info?.version,
       });
+      return {
+        provider_name: provider.provider_name,
+        status: DataSourceStatus.HEALTHY,
+        latency_ms: Date.now() - startedAt,
+        exposed_paths: paths.slice(0, 20),
+      };
     } catch (error: any) {
       await this.recordFailure(provider, 'health_probe', error, Date.now() - startedAt, {
         base_url: baseUrl,
       });
+      return {
+        provider_name: provider.provider_name,
+        status: DataSourceStatus.UNHEALTHY,
+        latency_ms: Date.now() - startedAt,
+        error: error.message,
+      };
     }
   }
 
-  static async refreshExternalProviderHealth(): Promise<void> {
-    await Promise.allSettled([this.probeTradingAgents()]);
+  private static async probeSingleMarketProvider(
+    provider: MarketDataProviderDefinition,
+    options: { sample_symbol: string; timeout_ms: number; start_date: string; end_date: string }
+  ): Promise<Record<string, any>> {
+    const startedAt = Date.now();
+    const feature: MarketDataFeature = provider.supported_features.includes('history_k')
+      ? 'history_k'
+      : provider.supported_features[0];
+
+    if (!provider.is_enabled) {
+      const reason = `${provider.provider_label} 未启用或缺少配置`;
+      await this.recordDisabled(provider, feature, reason);
+      return {
+        provider_name: provider.provider_name,
+        provider_label: provider.provider_label,
+        status: DataSourceStatus.DISABLED,
+        sample_symbol: options.sample_symbol,
+        error: reason,
+      };
+    }
+
+    try {
+      let sampleSize = 0;
+      let latestDate: string | undefined;
+      let probeDetail: Record<string, any> = {};
+
+      if (provider.provider_name === 'akshare') {
+        const result = await this.withTimeout(
+          new AKShareClient().healthCheck(
+            options.sample_symbol,
+            options.start_date,
+            options.end_date
+          ),
+          options.timeout_ms,
+          'AKShare health probe'
+        );
+        sampleSize = Number(result?.bar_count || 0);
+        latestDate = result?.latest_date;
+        probeDetail = result || {};
+      } else if (provider.provider_name === 'eastmoney') {
+        const bars = await this.withTimeout(
+          new EastMoneyClient().queryHistoryKData(
+            options.sample_symbol,
+            options.start_date,
+            options.end_date,
+            'd',
+            '3'
+          ),
+          options.timeout_ms,
+          'EastMoney health probe'
+        );
+        sampleSize = Array.isArray(bars) ? bars.length : 0;
+        latestDate = bars?.[bars.length - 1]?.date;
+      } else if (provider.provider_name === 'sina') {
+        const bars = await this.withTimeout(
+          new SinaFinanceClient().queryHistoryKData(
+            options.sample_symbol,
+            options.start_date,
+            options.end_date,
+            'd',
+            '3'
+          ),
+          options.timeout_ms,
+          'Sina health probe'
+        );
+        sampleSize = Array.isArray(bars) ? bars.length : 0;
+        latestDate = bars?.[bars.length - 1]?.date;
+      } else if (provider.provider_name === 'baostock') {
+        const bars = await this.withTimeout(
+          new BaostockClient().queryHistoryKData(
+            options.sample_symbol,
+            options.start_date,
+            options.end_date,
+            'd',
+            '3'
+          ),
+          options.timeout_ms,
+          'Baostock health probe'
+        );
+        sampleSize = Array.isArray(bars) ? bars.length : 0;
+        latestDate = bars?.[bars.length - 1]?.date;
+      } else if (provider.provider_name === 'tushare') {
+        const bars = await this.withTimeout(
+          new TushareClient().queryHistoryKData(
+            options.sample_symbol,
+            options.start_date,
+            options.end_date,
+            'd',
+            '3'
+          ),
+          options.timeout_ms,
+          'Tushare health probe'
+        );
+        sampleSize = Array.isArray(bars) ? bars.length : 0;
+        latestDate = bars?.[bars.length - 1]?.date;
+      } else {
+        throw new Error(`Unsupported market provider probe: ${provider.provider_name}`);
+      }
+
+      const latencyMs = Date.now() - startedAt;
+      const metadata = {
+        probe_kind: 'active_history_probe',
+        sample_symbol: options.sample_symbol,
+        probe_start_date: options.start_date,
+        probe_end_date: options.end_date,
+        sample_size: sampleSize,
+        latest_date: latestDate,
+        ...probeDetail,
+      };
+
+      if (sampleSize > 0) {
+        await this.recordSuccess(provider, feature, latencyMs, metadata);
+        return {
+          provider_name: provider.provider_name,
+          provider_label: provider.provider_label,
+          status: DataSourceStatus.HEALTHY,
+          latency_ms: latencyMs,
+          sample_symbol: options.sample_symbol,
+          sample_size: sampleSize,
+          latest_date: latestDate,
+        };
+      }
+
+      await this.recordEmptyResult(provider, feature, latencyMs, metadata);
+      return {
+        provider_name: provider.provider_name,
+        provider_label: provider.provider_label,
+        status: DataSourceStatus.DEGRADED,
+        latency_ms: latencyMs,
+        sample_symbol: options.sample_symbol,
+        sample_size: 0,
+        error: '探测样本返回空结果',
+      };
+    } catch (error: any) {
+      const latencyMs = Date.now() - startedAt;
+      await this.recordFailure(provider, feature, error, latencyMs, {
+        probe_kind: 'active_history_probe',
+        sample_symbol: options.sample_symbol,
+        probe_start_date: options.start_date,
+        probe_end_date: options.end_date,
+      });
+      return {
+        provider_name: provider.provider_name,
+        provider_label: provider.provider_label,
+        status: DataSourceStatus.UNHEALTHY,
+        latency_ms: latencyMs,
+        sample_symbol: options.sample_symbol,
+        error: error.message,
+      };
+    }
+  }
+
+  static async probeMarketDataProviders(
+    options: { sample_symbol?: string; timeout_ms?: number } = {}
+  ): Promise<Record<string, any>[]> {
+    const { start_date, end_date } = getProbeDateRange();
+    const sample_symbol =
+      options.sample_symbol || process.env.DATA_SOURCE_PROBE_SYMBOL || 'sh.600000';
+    const timeout_ms = Math.min(Math.max(options.timeout_ms || 12000, 3000), 30000);
+    const marketProviders = DEFAULT_DATA_PROVIDERS.filter(
+      provider => provider.provider_type !== 'analysis'
+    );
+
+    const results = await Promise.allSettled(
+      marketProviders.map(provider =>
+        this.probeSingleMarketProvider(provider, {
+          sample_symbol,
+          timeout_ms,
+          start_date,
+          end_date,
+        })
+      )
+    );
+
+    return results.map((result, index) => {
+      if (result.status === 'fulfilled') return result.value;
+      const provider = marketProviders[index];
+      return {
+        provider_name: provider.provider_name,
+        provider_label: provider.provider_label,
+        status: DataSourceStatus.UNHEALTHY,
+        error: result.reason?.message || '探测失败',
+      };
+    });
+  }
+
+  static async refreshExternalProviderHealth(): Promise<Record<string, any>> {
+    const [marketProviders, tradingAgents] = await Promise.allSettled([
+      this.probeMarketDataProviders(),
+      this.probeTradingAgents(),
+    ]);
+
+    return {
+      market_providers:
+        marketProviders.status === 'fulfilled'
+          ? marketProviders.value
+          : [{ status: DataSourceStatus.UNHEALTHY, error: marketProviders.reason?.message }],
+      analysis_providers:
+        tradingAgents.status === 'fulfilled'
+          ? [tradingAgents.value]
+          : [
+              {
+                provider_name: 'tradingagents',
+                status: DataSourceStatus.UNHEALTHY,
+                error: tradingAgents.reason?.message,
+              },
+            ],
+    };
   }
 
   /**
