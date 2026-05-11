@@ -7,6 +7,7 @@ import { AKShareClient } from '../data/sources/AKShareClient';
 import { notificationService } from '../services/NotificationService';
 import { aiInvestmentSignalService } from '../services/AIInvestmentSignalService';
 import { feishuTaskReportService } from '../services/FeishuTaskReportService';
+import { ScheduledTask } from '../models/ScheduledTask';
 import { logger } from '../utils/logger';
 import moment from 'moment-timezone';
 
@@ -18,6 +19,11 @@ const updateLogProgress = async (logId: number | undefined, isSuccess: boolean) 
     const log = await TaskExecutionLog.findByPk(logId);
     if (!log) return;
 
+    if (log.status !== 'IN_PROGRESS') {
+      logger.info(`AI 任务日志 ${logId} 已结束(${log.status})，跳过重复进度更新`);
+      return;
+    }
+
     if (isSuccess) {
       await log.increment('completed_items');
     } else {
@@ -26,14 +32,30 @@ const updateLogProgress = async (logId: number | undefined, isSuccess: boolean) 
 
     await log.reload();
 
-    if (log.status !== 'COMPLETED' && log.completed_items + log.failed_items >= log.total_items) {
+    if (log.completed_items + log.failed_items >= log.total_items) {
+      const allFailed = Number(log.total_items) > 0 && Number(log.completed_items) === 0;
+      const finalStatus = allFailed ? 'FAILED' : 'COMPLETED';
+      const errorMessage = allFailed
+        ? 'AI_DAILY_SCREENER 所有候选股分析均失败，请查看关联队列任务失败原因'
+        : log.failed_items > 0
+        ? `AI_DAILY_SCREENER 部分候选股分析失败：${log.failed_items}/${log.total_items}`
+        : null;
+
       await log.update({
-        status: 'COMPLETED',
+        status: finalStatus,
         completed_at: new Date(),
+        error_message: errorMessage,
       });
+
+      await ScheduledTask.update(
+        { last_run_status: allFailed ? 'FAILED' : 'SUCCESS' },
+        { where: { id: log.task_id } }
+      );
+
       await feishuTaskReportService.reportTaskExecutionLog(log, {
-        record_type: 'AI定时任务完成',
+        record_type: allFailed ? 'AI定时任务失败' : 'AI定时任务完成',
         task_type: 'AI_DAILY_SCREENER',
+        error: allFailed ? new Error(errorMessage || 'AI_DAILY_SCREENER failed') : undefined,
       });
     }
   } catch (error) {
