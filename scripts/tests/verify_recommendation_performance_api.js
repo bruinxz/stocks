@@ -44,7 +44,9 @@ if (!token) {
 }
 
 async function requestJson(path, options = {}) {
-  const url = new URL(path, apiBaseUrl).toString();
+  const normalizedBaseUrl = apiBaseUrl.endsWith('/') ? apiBaseUrl : `${apiBaseUrl}/`;
+  const normalizedPath = String(path || '').replace(/^\/+/, '');
+  const url = new URL(normalizedPath, normalizedBaseUrl).toString();
   const response = await fetch(url, {
     ...options,
     headers: {
