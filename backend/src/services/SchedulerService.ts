@@ -6,6 +6,7 @@ import { dataUpdateQueue } from '../jobs/dataUpdateQueue';
 import { aiPollingQueue } from '../jobs/aiPollingQueue';
 import { aiAdvisorService } from './AIAdvisorService';
 import { quantRecommendationService } from './QuantRecommendationService';
+import { aiInvestmentSignalService } from './AIInvestmentSignalService';
 import { feishuTaskReportService } from './FeishuTaskReportService';
 import moment from 'moment-timezone';
 import { Op } from 'sequelize';
@@ -238,6 +239,34 @@ class SchedulerService {
           'dataQualityScan',
           isManual
         );
+      } else if (task.type === 'SIGNAL_PERFORMANCE_REFRESH') {
+        const result = await aiInvestmentSignalService.refreshPerformance({
+          source_type: parameters.source_type || parameters.sourceType,
+          symbol: parameters.symbol,
+          decision: parameters.decision,
+          start_date: parameters.start_date || parameters.startDate,
+          end_date: parameters.end_date || parameters.endDate,
+          limit: this.toPositiveInt(parameters.limit, 500, 5000),
+          report_to_feishu:
+            parameters.report_to_feishu !== undefined
+              ? Boolean(parameters.report_to_feishu)
+              : parameters.reportToFeishu !== undefined
+              ? Boolean(parameters.reportToFeishu)
+              : true,
+        });
+
+        await executionLog.update({
+          total_items: result.verification.total,
+          completed_items: result.verification.verified,
+          failed_items: result.verification.no_data,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: null,
+        });
+
+        logger.info(
+          `推荐绩效刷新完成。扫描 ${result.verification.total}，验证 ${result.verification.verified}，无数据 ${result.verification.no_data}`
+        );
       } else if (task.type === 'AI_DAILY_SCREENER') {
         logger.info('触发 AI_DAILY_SCREENER 任务，使用多因子候选池进行 TradingAgents 深度分析...');
 
@@ -447,6 +476,16 @@ class SchedulerService {
           style: 'balanced',
           candidate_limit: 10,
           lookback_days: 120,
+        },
+      },
+      {
+        name: '推荐绩效后验刷新',
+        type: 'SIGNAL_PERFORMANCE_REFRESH',
+        cron_expression: '20 15 * * 1-5',
+        is_active: true,
+        parameters: {
+          limit: 500,
+          report_to_feishu: true,
         },
       },
     ];

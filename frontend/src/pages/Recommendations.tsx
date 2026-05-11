@@ -19,6 +19,7 @@ import {
   BarChartOutlined,
   DatabaseOutlined,
   ExperimentOutlined,
+  FundProjectionScreenOutlined,
   ReloadOutlined,
   RobotOutlined,
   ThunderboltOutlined,
@@ -512,6 +513,12 @@ const Recommendations: React.FC = () => {
               loading={archiveLoading}
             >
               归档后验
+            </Button>
+            <Button
+              icon={<FundProjectionScreenOutlined />}
+              onClick={() => navigate('/recommendation-performance')}
+            >
+              绩效实验室
             </Button>
             <Button
               type="primary"

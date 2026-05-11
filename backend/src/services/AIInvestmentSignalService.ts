@@ -1,4 +1,5 @@
 import { Op } from 'sequelize';
+import moment from 'moment-timezone';
 import {
   AIInvestmentSignal,
   AISignalDecision,
@@ -12,6 +13,7 @@ import { logger } from '../utils/logger';
 import type { QuantRecommendationItem } from './QuantRecommendationService';
 
 const DEFAULT_HORIZONS = [1, 3, 5, 10, 20];
+const DEFAULT_PERFORMANCE_HORIZON = '5d';
 
 export interface SignalQueryOptions {
   symbol?: string;
@@ -21,6 +23,10 @@ export interface SignalQueryOptions {
   end_date?: string;
   limit?: number;
   offset?: number;
+}
+
+export interface SignalPerformanceOptions extends SignalQueryOptions {
+  horizon?: string;
 }
 
 export interface QuantRecommendationArchiveOptions {
@@ -97,6 +103,168 @@ function buildSignalWhere(options: SignalQueryOptions = {}) {
     if (options.end_date) where.signal_date[Op.lte] = options.end_date;
   }
   return where;
+}
+
+function roundNumber(value: any, digits = 4): number | null {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return null;
+  const base = 10 ** digits;
+  return Math.round(num * base) / base;
+}
+
+function averageNumbers(values: number[]): number | null {
+  const valid = values.filter(value => Number.isFinite(value));
+  if (valid.length === 0) return null;
+  return valid.reduce((sum, value) => sum + value, 0) / valid.length;
+}
+
+function medianNumber(values: number[]): number | null {
+  const valid = values.filter(value => Number.isFinite(value)).sort((a, b) => a - b);
+  if (valid.length === 0) return null;
+  const mid = Math.floor(valid.length / 2);
+  return valid.length % 2 === 0 ? (valid[mid - 1] + valid[mid]) / 2 : valid[mid];
+}
+
+function dateOnly(value: Date | string): string {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).slice(0, 10);
+  return date.toISOString().split('T')[0];
+}
+
+function getSignalSide(decision?: string): 'long' | 'short' | 'neutral' {
+  const normalized = String(decision || '').toLowerCase();
+  if (
+    normalized === AISignalDecision.SELL ||
+    normalized === AISignalDecision.STRONG_SELL ||
+    normalized.includes('sell') ||
+    normalized.includes('卖')
+  ) {
+    return 'short';
+  }
+  if (
+    normalized === AISignalDecision.BUY ||
+    normalized === AISignalDecision.STRONG_BUY ||
+    normalized.includes('buy') ||
+    normalized.includes('买')
+  ) {
+    return 'long';
+  }
+  return 'neutral';
+}
+
+function directionalReturn(returnPct: number, decision?: string): number {
+  const side = getSignalSide(decision);
+  if (side === 'short') return -returnPct;
+  if (side === 'neutral') return -Math.abs(returnPct);
+  return returnPct;
+}
+
+function summarizeReturnSamples(samples: any[]) {
+  const completedSamples = samples.filter(sample => Number.isFinite(Number(sample.return_pct)));
+  const returns = completedSamples.map(sample => Number(sample.return_pct));
+  const directionalReturns = completedSamples.map(sample =>
+    Number.isFinite(Number(sample.directional_return_pct))
+      ? Number(sample.directional_return_pct)
+      : directionalReturn(Number(sample.return_pct), sample.normalized_decision)
+  );
+  const wins = returns.filter(value => value > 0);
+  const losses = returns.filter(value => value < 0);
+  const directionalWins = directionalReturns.filter(value => value > 0);
+  const mfeValues = completedSamples
+    .map(sample => Number(sample.max_favorable_excursion_pct))
+    .filter(Number.isFinite);
+  const maeValues = completedSamples
+    .map(sample => Number(sample.max_adverse_excursion_pct))
+    .filter(Number.isFinite);
+
+  const avgReturn = averageNumbers(returns);
+  const avgWin = averageNumbers(wins);
+  const avgLoss = averageNumbers(losses);
+  const sumWins = wins.reduce((sum, value) => sum + value, 0);
+  const sumLosses = Math.abs(losses.reduce((sum, value) => sum + value, 0));
+  const avgMfe = averageNumbers(mfeValues);
+  const avgMae = averageNumbers(maeValues);
+
+  return {
+    count: completedSamples.length,
+    avg_return_pct: roundNumber(avgReturn, 4) ?? 0,
+    median_return_pct: roundNumber(medianNumber(returns), 4) ?? 0,
+    positive_count: wins.length,
+    positive_rate:
+      completedSamples.length > 0
+        ? roundNumber((wins.length / completedSamples.length) * 100, 2) ?? 0
+        : 0,
+    directional_success_count: directionalWins.length,
+    directional_success_rate:
+      completedSamples.length > 0
+        ? roundNumber((directionalWins.length / completedSamples.length) * 100, 2) ?? 0
+        : 0,
+    avg_win_pct: roundNumber(avgWin, 4) ?? 0,
+    avg_loss_pct: roundNumber(avgLoss, 4) ?? 0,
+    payoff_ratio:
+      avgWin !== null && avgLoss !== null && avgLoss !== 0
+        ? roundNumber(avgWin / Math.abs(avgLoss), 4) ?? 0
+        : wins.length > 0 && losses.length === 0
+        ? 999
+        : 0,
+    profit_factor:
+      sumLosses > 0 ? roundNumber(sumWins / sumLosses, 4) ?? 0 : wins.length > 0 ? 999 : 0,
+    expectancy_pct: roundNumber(avgReturn, 4) ?? 0,
+    max_return_pct: returns.length > 0 ? roundNumber(Math.max(...returns), 4) ?? 0 : 0,
+    min_return_pct: returns.length > 0 ? roundNumber(Math.min(...returns), 4) ?? 0 : 0,
+    avg_mfe_pct: roundNumber(avgMfe, 4) ?? 0,
+    avg_mae_pct: roundNumber(avgMae, 4) ?? 0,
+    risk_reward_ratio:
+      avgMfe !== null && avgMae !== null && avgMae !== 0
+        ? roundNumber(avgMfe / Math.abs(avgMae), 4) ?? 0
+        : 0,
+  };
+}
+
+function extractCompletedReturnSamples(signals: any[], horizonFilter?: string) {
+  const samples: any[] = [];
+
+  for (const signal of signals) {
+    const horizons = signal.forward_returns?.horizons || {};
+    for (const [horizon, value] of Object.entries<any>(horizons)) {
+      if (horizonFilter && horizon !== horizonFilter) continue;
+      if (value?.status !== 'completed') continue;
+      const returnPct = Number(value.return_pct);
+      if (!Number.isFinite(returnPct)) continue;
+      const normalizedDecision = signal.normalized_decision || 'unknown';
+      samples.push({
+        signal_id: signal.id,
+        source_type: signal.source_type,
+        symbol: signal.symbol,
+        name: signal.name,
+        signal_date: signal.signal_date,
+        normalized_decision: normalizedDecision,
+        confidence_score: toNumber(signal.confidence_score),
+        risk_level: signal.risk_level,
+        horizon,
+        horizon_days: Number(String(horizon).replace('d', '')),
+        entry_date: signal.forward_returns?.entry_date,
+        entry_price: Number(signal.forward_returns?.entry_price),
+        exit_date: value.exit_date,
+        exit_price: Number(value.exit_price),
+        return_pct: returnPct,
+        directional_return_pct:
+          value.directional_return_pct !== undefined
+            ? Number(value.directional_return_pct)
+            : directionalReturn(returnPct, normalizedDecision),
+        max_favorable_excursion_pct:
+          value.max_favorable_excursion_pct !== undefined
+            ? Number(value.max_favorable_excursion_pct)
+            : undefined,
+        max_adverse_excursion_pct:
+          value.max_adverse_excursion_pct !== undefined
+            ? Number(value.max_adverse_excursion_pct)
+            : undefined,
+      });
+    }
+  }
+
+  return samples;
 }
 
 export class AIInvestmentSignalService {
@@ -441,13 +609,14 @@ export class AIInvestmentSignalService {
       return signal;
     }
 
-    const baseBar =
-      bars.find(bar => bar.time.toISOString().split('T')[0] >= signal.signal_date) || bars[0];
+    const baseBar = bars.find(bar => dateOnly(bar.time) >= signal.signal_date) || bars[0];
     const baseIndex = bars.findIndex(bar => bar.time.getTime() === baseBar.time.getTime());
     const entryPrice = Number(baseBar.close);
+    const signalSide = getSignalSide(signal.normalized_decision || signal.decision);
     const forward_returns: Record<string, any> = {
-      entry_date: baseBar.time.toISOString().split('T')[0],
+      entry_date: dateOnly(baseBar.time),
       entry_price: entryPrice,
+      decision_side: signalSide,
       horizons: {},
     };
 
@@ -464,12 +633,32 @@ export class AIInvestmentSignalService {
 
       const exitPrice = Number(target.close);
       const returnPct = entryPrice ? ((exitPrice - entryPrice) / entryPrice) * 100 : 0;
+      const windowBars = bars.slice(baseIndex, baseIndex + horizon + 1);
+      const highPrices = windowBars.map(bar => Number(bar.high)).filter(Number.isFinite);
+      const lowPrices = windowBars.map(bar => Number(bar.low)).filter(Number.isFinite);
+      const maxHigh = highPrices.length > 0 ? Math.max(...highPrices) : exitPrice;
+      const minLow = lowPrices.length > 0 ? Math.min(...lowPrices) : exitPrice;
+      const longMfe = entryPrice ? ((maxHigh - entryPrice) / entryPrice) * 100 : 0;
+      const longMae = entryPrice ? ((minLow - entryPrice) / entryPrice) * 100 : 0;
+      const directionalReturnPct = directionalReturn(
+        returnPct,
+        signal.normalized_decision || signal.decision
+      );
       forward_returns.horizons[`${horizon}d`] = {
         status: 'completed',
         horizon,
-        exit_date: target.time.toISOString().split('T')[0],
+        exit_date: dateOnly(target.time),
         exit_price: Number(exitPrice.toFixed(4)),
         return_pct: Number(returnPct.toFixed(4)),
+        directional_return_pct: Number(directionalReturnPct.toFixed(4)),
+        max_favorable_excursion_pct: Number(
+          (signalSide === 'short' ? -longMae : longMfe).toFixed(4)
+        ),
+        max_adverse_excursion_pct: Number(
+          (signalSide === 'short' ? -longMfe : longMae).toFixed(4)
+        ),
+        window_high: Number(maxHigh.toFixed(4)),
+        window_low: Number(minLow.toFixed(4)),
       };
       completed++;
     }
@@ -485,7 +674,7 @@ export class AIInvestmentSignalService {
   }
 
   async verifySignals(
-    options: { limit?: number; horizons?: number[] } & SignalQueryOptions = {}
+    options: { limit?: number; horizons?: number[]; report_to_feishu?: boolean } & SignalQueryOptions = {}
   ): Promise<{
     total: number;
     verified: number;
@@ -519,7 +708,26 @@ export class AIInvestmentSignalService {
       }
     }
 
-    return { total: signals.length, verified, no_data };
+    const result = { total: signals.length, verified, no_data };
+
+    if (options.report_to_feishu) {
+      const stats = await this.getSignalStats({
+        symbol: options.symbol,
+        decision: options.decision,
+        source_type: options.source_type,
+        start_date: options.start_date,
+        end_date: options.end_date,
+      });
+      const { feishuTaskReportService } = await import('./FeishuTaskReportService');
+      await feishuTaskReportService.reportRecommendationPerformance({
+        record_type: '推荐绩效刷新',
+        source_type: options.source_type,
+        result,
+        stats,
+      });
+    }
+
+    return result;
   }
 
   async listSignals(options: SignalQueryOptions = {}) {
@@ -595,6 +803,168 @@ export class AIInvestmentSignalService {
       by_decision: byDecision,
       horizon_summary: horizonSummary,
     };
+  }
+
+  async getPerformanceDashboard(options: SignalPerformanceOptions = {}) {
+    const horizon = options.horizon || DEFAULT_PERFORMANCE_HORIZON;
+    const signals = (await AIInvestmentSignal.findAll({
+      where: buildSignalWhere(options),
+      order: [
+        ['signal_date', 'DESC'],
+        ['created_at', 'DESC'],
+      ],
+      raw: true,
+    })) as any[];
+
+    const completedSamples = extractCompletedReturnSamples(signals, horizon);
+    const allCompletedSamples = extractCompletedReturnSamples(signals);
+    const pending_signals = signals.filter(signal =>
+      ['pending', 'partial'].includes(signal.verification_status || '')
+    ).length;
+    const no_data_signals = signals.filter(
+      signal => signal.verification_status === 'no_data'
+    ).length;
+
+    const overview = {
+      total_signals: signals.length,
+      pending_signals,
+      no_data_signals,
+      completed_samples: completedSamples.length,
+      horizon,
+      ...summarizeReturnSamples(completedSamples),
+    };
+
+    const groupedSummary = (keySelector: (sample: any) => string | undefined | null) => {
+      const grouped = new Map<string, any[]>();
+      for (const sample of completedSamples) {
+        const key = keySelector(sample) || 'unknown';
+        if (!grouped.has(key)) grouped.set(key, []);
+        grouped.get(key)!.push(sample);
+      }
+      return [...grouped.entries()]
+        .map(([key, samples]) => ({
+          key,
+          ...summarizeReturnSamples(samples),
+        }))
+        .sort((a, b) => b.count - a.count);
+    };
+
+    const horizon_summary = Object.entries(
+      allCompletedSamples.reduce((acc: Record<string, any[]>, sample) => {
+        if (!acc[sample.horizon]) acc[sample.horizon] = [];
+        acc[sample.horizon].push(sample);
+        return acc;
+      }, {})
+    )
+      .map(([key, samples]) => ({
+        horizon: key,
+        horizon_days: Number(key.replace('d', '')),
+        ...summarizeReturnSamples(samples as any[]),
+      }))
+      .sort((a, b) => a.horizon_days - b.horizon_days);
+
+    const symbolMap = new Map<string, any[]>();
+    for (const sample of completedSamples) {
+      if (!symbolMap.has(sample.symbol)) symbolMap.set(sample.symbol, []);
+      symbolMap.get(sample.symbol)!.push(sample);
+    }
+
+    const top_symbols = [...symbolMap.entries()]
+      .map(([symbol, samples]) => {
+        const first = samples[0];
+        return {
+          symbol,
+          name: first?.name,
+          latest_signal_date: samples
+            .map(sample => sample.signal_date)
+            .sort()
+            .reverse()[0],
+          ...summarizeReturnSamples(samples),
+        };
+      })
+      .sort((a, b) => {
+        if (b.avg_return_pct !== a.avg_return_pct) return b.avg_return_pct - a.avg_return_pct;
+        return b.count - a.count;
+      })
+      .slice(0, 20);
+
+    const recent_signals = completedSamples
+      .sort((a, b) => String(b.signal_date).localeCompare(String(a.signal_date)))
+      .slice(0, 30);
+
+    const equitySamples = [...completedSamples].sort((a, b) => {
+      const dateCompare = String(a.exit_date || a.signal_date).localeCompare(
+        String(b.exit_date || b.signal_date)
+      );
+      if (dateCompare !== 0) return dateCompare;
+      return Number(a.signal_id) - Number(b.signal_id);
+    });
+    let cumulative = 0;
+    let peak = 0;
+    const equity_curve = equitySamples.map(sample => {
+      cumulative += Number(sample.return_pct || 0);
+      peak = Math.max(peak, cumulative);
+      return {
+        date: sample.exit_date || sample.signal_date,
+        signal_id: sample.signal_id,
+        symbol: sample.symbol,
+        return_pct: roundNumber(sample.return_pct, 4) ?? 0,
+        cumulative_return_pct: roundNumber(cumulative, 4) ?? 0,
+        drawdown_pct: roundNumber(cumulative - peak, 4) ?? 0,
+      };
+    });
+
+    const generated_at = moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm:ss');
+
+    return {
+      generated_at,
+      filters: {
+        symbol: options.symbol,
+        decision: options.decision,
+        source_type: options.source_type,
+        start_date: options.start_date,
+        end_date: options.end_date,
+        horizon,
+      },
+      overview,
+      by_decision: groupedSummary(sample => sample.normalized_decision),
+      by_source_type: groupedSummary(sample => sample.source_type),
+      by_risk_level: groupedSummary(sample => sample.risk_level),
+      horizon_summary,
+      top_symbols,
+      recent_signals,
+      equity_curve,
+    };
+  }
+
+  async refreshPerformance(options: {
+    limit?: number;
+    horizons?: number[];
+    report_to_feishu?: boolean;
+  } & SignalQueryOptions = {}) {
+    const verification = await this.verifySignals({
+      ...options,
+      report_to_feishu: false,
+    });
+    const dashboard = await this.getPerformanceDashboard({
+      symbol: options.symbol,
+      decision: options.decision,
+      source_type: options.source_type,
+      start_date: options.start_date,
+      end_date: options.end_date,
+    });
+
+    if (options.report_to_feishu) {
+      const { feishuTaskReportService } = await import('./FeishuTaskReportService');
+      await feishuTaskReportService.reportRecommendationPerformance({
+        record_type: '推荐绩效刷新',
+        source_type: options.source_type,
+        result: verification,
+        dashboard,
+      });
+    }
+
+    return { verification, dashboard };
   }
 }
 

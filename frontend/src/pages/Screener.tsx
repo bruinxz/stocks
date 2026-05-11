@@ -14,7 +14,13 @@ import {
   Row,
   Col,
 } from 'antd';
-import { RocketOutlined, EyeOutlined, SyncOutlined, BarChartOutlined } from '@ant-design/icons';
+import {
+  RocketOutlined,
+  EyeOutlined,
+  SyncOutlined,
+  BarChartOutlined,
+  FundProjectionScreenOutlined,
+} from '@ant-design/icons';
 import { AreaChart, Area, ResponsiveContainer } from 'recharts';
 import dayjs from 'dayjs';
 import ReactMarkdown from 'react-markdown';
@@ -368,6 +374,9 @@ const Screener: React.FC = () => {
             <Button icon={<BarChartOutlined />} onClick={handleSyncSignals} loading={signalLoading}>
               同步信号表现
             </Button>
+            <Link to="/recommendation-performance">
+              <Button icon={<FundProjectionScreenOutlined />}>绩效实验室</Button>
+            </Link>
             <Button
               icon={<SyncOutlined />}
               onClick={() => {

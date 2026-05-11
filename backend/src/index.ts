@@ -167,6 +167,15 @@ async function initializeApp() {
       }
     }
 
+    // 生产环境不执行 sequelize.sync，但默认任务仍需要随版本演进做幂等补齐。
+    // ensureDefaultTasks 只会 findOrCreate / 补缺省字段，不会覆盖用户已有 cron 配置。
+    try {
+      await schedulerService.ensureDefaultTasks();
+      console.log('Default scheduled tasks checked successfully');
+    } catch (taskSeedError: any) {
+      console.warn('Failed to check default scheduled tasks:', taskSeedError.message);
+    }
+
     // Initialize scheduler after development schema repair/sync to avoid stale local schemas
     // blocking server startup or task listing APIs.
     await schedulerService.initialize();

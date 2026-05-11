@@ -18,6 +18,14 @@ export interface StockAnalysisReportPayload {
   task_label?: string;
 }
 
+export interface RecommendationPerformanceReportPayload {
+  record_type?: string;
+  source_type?: string;
+  result?: any;
+  stats?: any;
+  dashboard?: any;
+}
+
 type TaskLogLike = TaskExecutionLog | Record<string, any> | null | undefined;
 
 class FeishuTaskReportService {
@@ -133,6 +141,65 @@ class FeishuTaskReportService {
     });
   }
 
+  async reportRecommendationPerformance(payload: RecommendationPerformanceReportPayload) {
+    const dashboard = payload.dashboard || {};
+    const stats = payload.stats || {};
+    const overview = dashboard.overview || {};
+    const horizonSummary = dashboard.horizon_summary || [];
+    const result = payload.result || {};
+    const targetHorizon =
+      overview.horizon ||
+      (Array.isArray(horizonSummary)
+        ? horizonSummary.find((item: any) => item.horizon === '5d')?.horizon
+        : '') ||
+      '5d';
+    const targetStats = Array.isArray(horizonSummary)
+      ? horizonSummary.find((item: any) => item.horizon === targetHorizon) || horizonSummary[0]
+      : stats.horizon_summary?.[targetHorizon] || {};
+    const bestSymbol = Array.isArray(dashboard.top_symbols) ? dashboard.top_symbols[0] : null;
+
+    return this.safeAppend({
+      文本: `${payload.record_type || '推荐绩效刷新'} - ${targetHorizon} 胜率 ${
+        targetStats?.positive_rate ?? overview.positive_rate ?? '--'
+      }% / 均收 ${targetStats?.avg_return_pct ?? overview.avg_return_pct ?? '--'}%`,
+      记录类型: payload.record_type || '推荐绩效刷新',
+      任务名称: '推荐后验绩效追踪',
+      任务类型: 'SIGNAL_PERFORMANCE_REFRESH',
+      运行状态: 'COMPLETED',
+      信号来源: payload.source_type || dashboard.filters?.source_type || 'all',
+      绩效周期: targetHorizon,
+      信号总数: overview.total_signals ?? stats.total_signals,
+      完成样本: overview.completed_samples ?? targetStats?.count,
+      待验证信号: overview.pending_signals,
+      无数据信号: overview.no_data_signals ?? result.no_data,
+      平均收益: this.formatPercent(targetStats?.avg_return_pct ?? overview.avg_return_pct),
+      中位收益: this.formatPercent(targetStats?.median_return_pct ?? overview.median_return_pct),
+      胜率: this.formatPercent(targetStats?.positive_rate ?? overview.positive_rate),
+      方向成功率: this.formatPercent(
+        targetStats?.directional_success_rate ?? overview.directional_success_rate
+      ),
+      盈亏比: targetStats?.payoff_ratio ?? overview.payoff_ratio,
+      ProfitFactor: targetStats?.profit_factor ?? overview.profit_factor,
+      平均MFE: this.formatPercent(targetStats?.avg_mfe_pct ?? overview.avg_mfe_pct),
+      平均MAE: this.formatPercent(targetStats?.avg_mae_pct ?? overview.avg_mae_pct),
+      最佳标的: bestSymbol
+        ? `${bestSymbol.name || bestSymbol.symbol}(${bestSymbol.symbol}) ${bestSymbol.avg_return_pct}%`
+        : '',
+      结果摘要: this.safeJson(
+        {
+          result,
+          overview,
+          horizon_summary: horizonSummary,
+          top_symbols: Array.isArray(dashboard.top_symbols)
+            ? dashboard.top_symbols.slice(0, 5)
+            : undefined,
+        },
+        10000
+      ),
+      创建时间: this.formatDate(new Date()),
+    });
+  }
+
   private async safeAppend(fields: Record<string, any>) {
     try {
       const result = await feishuBitableClient.createRecord(fields);
@@ -186,6 +253,12 @@ class FeishuTaskReportService {
     if (!error) return '';
     if (typeof error === 'string') return this.safeText(error, 5000);
     return this.safeText(error?.message || error, 5000);
+  }
+
+  private formatPercent(value: any): string {
+    if (value === undefined || value === null || value === '') return '';
+    const num = Number(value);
+    return Number.isFinite(num) ? `${num.toFixed(2)}%` : String(value);
   }
 }
 

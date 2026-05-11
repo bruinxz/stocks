@@ -43,6 +43,7 @@ const taskTypeLabels: Record<string, string> = {
   SYNC_HISTORY: '股票历史行情同步',
   DATA_QUALITY_SCAN: '数据质量扫描',
   AI_DAILY_SCREENER: 'AI 每日优选评估',
+  SIGNAL_PERFORMANCE_REFRESH: '推荐绩效后验刷新',
 };
 
 const defaultParametersByType: Record<string, any> = {
@@ -66,6 +67,10 @@ const defaultParametersByType: Record<string, any> = {
     style: 'balanced',
     candidate_limit: 10,
     lookback_days: 120,
+  },
+  SIGNAL_PERFORMANCE_REFRESH: {
+    limit: 500,
+    report_to_feishu: true,
   },
 };
 
@@ -408,6 +413,7 @@ const TaskScheduler: React.FC = () => {
               <Option value="SYNC_HISTORY">股票历史行情同步</Option>
               <Option value="DATA_QUALITY_SCAN">数据质量扫描</Option>
               <Option value="AI_DAILY_SCREENER">AI 每日优选评估</Option>
+              <Option value="SIGNAL_PERFORMANCE_REFRESH">推荐绩效后验刷新</Option>
             </Select>
           </Form.Item>
 

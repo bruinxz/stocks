@@ -20,6 +20,7 @@ import {
   SyncOutlined,
   LogoutOutlined,
   BarChartOutlined,
+  FundProjectionScreenOutlined,
 } from '@ant-design/icons';
 import zhCN from 'antd/locale/zh_CN';
 import { useSelector, useDispatch } from 'react-redux';
@@ -42,6 +43,7 @@ import AIAdvisor from './pages/AIAdvisor';
 import TaskScheduler from './pages/TaskScheduler';
 import Screener from './pages/Screener';
 import Recommendations from './pages/Recommendations';
+import RecommendationPerformance from './pages/RecommendationPerformance';
 import PaperTrading from './pages/PaperTrading';
 import RiskAlerts from './pages/RiskAlerts';
 import TradingJournal from './pages/TradingJournal';
@@ -145,6 +147,11 @@ const AppContent: React.FC = () => {
           key: '/recommendations',
           icon: <ThunderboltOutlined />,
           label: <Link to="/recommendations">智能候选推荐</Link>,
+        },
+        {
+          key: '/recommendation-performance',
+          icon: <FundProjectionScreenOutlined />,
+          label: <Link to="/recommendation-performance">推荐绩效实验室</Link>,
         },
         {
           key: '/screener',
@@ -382,6 +389,14 @@ const AppContent: React.FC = () => {
               element={
                 <ProtectedRoute>
                   <Recommendations />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/recommendation-performance"
+              element={
+                <ProtectedRoute>
+                  <RecommendationPerformance />
                 </ProtectedRoute>
               }
             />

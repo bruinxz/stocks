@@ -100,6 +100,17 @@ router.get('/signals', authController.authenticate, aiSignalController.listSigna
 router.get('/signals/stats', authController.authenticate, aiSignalController.getSignalStats);
 
 /**
+ * @route GET /api/ai/signals/performance
+ * @desc 获取 AI/量化推荐后验绩效看板
+ * @access Private
+ */
+router.get(
+  '/signals/performance',
+  authController.authenticate,
+  aiSignalController.getPerformanceDashboard
+);
+
+/**
  * @route POST /api/ai/signals/sync-screeners
  * @desc 从 AI 每日优选同步为可验证信号
  * @access Private
@@ -116,6 +127,17 @@ router.post(
  * @access Private
  */
 router.post('/signals/verify', authController.authenticate, aiSignalController.verifySignals);
+
+/**
+ * @route POST /api/ai/signals/performance/refresh
+ * @desc 刷新 AI/量化推荐后验绩效并上报飞书
+ * @access Private
+ */
+router.post(
+  '/signals/performance/refresh',
+  authController.authenticate,
+  aiSignalController.refreshPerformance
+);
 
 /**
  * @route GET /api/ai/screener
