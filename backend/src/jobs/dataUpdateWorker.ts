@@ -8,6 +8,7 @@ import { dataQualityService } from '../services/DataQualityService';
 import { redisLock, LockKeys } from '../utils/redisLock';
 import { logger } from '../utils/logger';
 import { Op } from 'sequelize';
+import moment from 'moment-timezone';
 
 export class DataUpdateWorker {
   private dataSyncService: DataSyncService;
@@ -112,13 +113,15 @@ export class DataUpdateWorker {
       await job.progress(20);
       logger.info('开始增量数据更新...');
 
-      const today = new Date().toISOString().split('T')[0];
-      const sevenDaysAgo = new Date();
-      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-      const start_date = sevenDaysAgo.toISOString().split('T')[0];
+      const target_date = date || moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
+      const sevenDaysAgo = moment
+        .tz(target_date, 'Asia/Shanghai')
+        .subtract(7, 'days')
+        .format('YYYY-MM-DD');
 
-      // 获取最近7天没有数据的股票
-      const stocksNeedingUpdate = await this.getStocksNeedingIncrementalUpdate(start_date, today);
+      // 获取最新K线早于目标日期的股票。旧逻辑只判断“最近7天是否有任意数据”，
+      // 会导致已同步到上一个交易日的股票在新交易日被错误跳过。
+      const stocksNeedingUpdate = await this.getStocksNeedingIncrementalUpdate(target_date);
       logger.info(`有 ${stocksNeedingUpdate.length} 只股票需要增量更新`);
 
       await job.progress(30);
@@ -131,7 +134,7 @@ export class DataUpdateWorker {
         for (let i = 0; i < stocksNeedingUpdate.length; i += batchSize) {
           const batch = stocksNeedingUpdate.slice(i, i + batchSize);
           const batchPromises = batch.map(symbol =>
-            this.syncStockWithLock(symbol, start_date, today)
+            this.syncStockWithLock(symbol, sevenDaysAgo, target_date)
               .then(count => {
                 results[symbol] = count;
                 return { symbol, count };
@@ -238,32 +241,27 @@ export class DataUpdateWorker {
   /**
    * 获取需要增量更新的股票列表
    */
-  private async getStocksNeedingIncrementalUpdate(
-    start_date: string,
-    end_date: string
-  ): Promise<string[]> {
+  private async getStocksNeedingIncrementalUpdate(target_date: string): Promise<string[]> {
     try {
-      // 获取所有已上市股票
       const stocks = await Stock.findAll({
         where: { is_listed: true },
         attributes: ['id', 'symbol'],
       });
 
       const needsUpdate: string[] = [];
+      const targetStart = moment
+        .tz(target_date, 'Asia/Shanghai')
+        .startOf('day')
+        .toDate();
 
-      // 检查每只股票在指定日期范围内是否有数据
       for (const stock of stocks) {
-        const hasRecentData = await DailyBar.findOne({
-          where: {
-            stock_id: stock.id,
-            time: {
-              [Op.between]: [new Date(start_date), new Date(end_date)],
-            },
-          },
-          attributes: ['id'],
+        const latestBar = await DailyBar.findOne({
+          where: { stock_id: stock.id },
+          attributes: ['time'],
+          order: [['time', 'DESC']],
         });
 
-        if (!hasRecentData) {
+        if (!latestBar || new Date(latestBar.time) < targetStart) {
           needsUpdate.push(stock.symbol);
         }
       }
