@@ -66,9 +66,12 @@ export class CombinedDataSource {
     feature: MarketDataFeature,
     preferred_provider?: string
   ): string[] | null {
+    const normalizedPreferredProvider = preferred_provider?.endsWith('_only')
+      ? preferred_provider.replace(/_only$/, '')
+      : preferred_provider;
     const configured =
-      preferred_provider && preferred_provider !== 'auto'
-        ? [preferred_provider]
+      normalizedPreferredProvider && normalizedPreferredProvider !== 'auto'
+        ? [normalizedPreferredProvider]
         : process.env.DATA_SOURCE_PREFERENCE?.split(',')
             .map(item => item.trim().toLowerCase())
             .filter(Boolean);
@@ -88,6 +91,12 @@ export class CombinedDataSource {
     feature: MarketDataFeature,
     preferred_provider?: string
   ): Promise<Array<[string, () => Promise<T>]>> {
+    if (preferred_provider?.endsWith('_only')) {
+      const provider_name = preferred_provider.replace(/_only$/, '');
+      const strictProvider = providerChain.find(([name]) => name === provider_name);
+      return strictProvider ? [strictProvider] : [];
+    }
+
     const preferredProviders = this.getPreferredProviders(feature, preferred_provider);
     if (!preferredProviders || preferredProviders.length === 0) {
       try {
@@ -417,6 +426,7 @@ export class CombinedDataSource {
   ): Promise<DailyBar[]> {
     const normalizedCode = normalizeSymbol(code);
     const eastMoneyCode = toEastMoneyFormat(normalizedCode);
+    const strictProviderOnly = preferred_provider.endsWith('_only');
 
     logger.info(
       `Querying history data for ${normalizedCode} (EastMoney: ${eastMoneyCode}, frequency=${frequency}, adjustflag=${adjustflag})`
@@ -508,6 +518,13 @@ export class CombinedDataSource {
       if (result && result.length > 0) {
         return result;
       }
+    }
+
+    if (strictProviderOnly) {
+      logger.info(
+        `Strict history provider ${preferred_provider} returned no data for ${normalizedCode}, treating as empty result`
+      );
+      return [];
     }
 
     throw new Error(`无法获取股票 ${normalizedCode} 的历史数据：所有数据源均无可用结果`);

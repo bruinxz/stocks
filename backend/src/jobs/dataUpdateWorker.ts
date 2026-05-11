@@ -182,7 +182,7 @@ export class DataUpdateWorker {
         for (let i = 0; i < stocksNeedingUpdate.length; i += batchSize) {
           const batch = stocksNeedingUpdate.slice(i, i + batchSize);
           const batchPromises = batch.map(symbol =>
-            this.syncStockWithLock(symbol, sevenDaysAgo, target_date, 'tencent')
+            this.syncStockWithLock(symbol, sevenDaysAgo, target_date, 'tencent_only')
               .then(count => {
                 results[symbol] = count;
                 return { symbol, count };
