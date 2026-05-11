@@ -326,6 +326,62 @@ class FeishuTaskReportService {
     });
   }
 
+  async reportPaperTradingRiskCheck(
+    result: any,
+    options: {
+      record_type?: string;
+      task_type?: string;
+      error?: any;
+    } = {}
+  ) {
+    const recordType =
+      options.record_type || (result?.dry_run ? '模拟盘风控预演' : '模拟盘风控退出');
+    const exits = Array.isArray(result?.exits) ? result.exits : [];
+    const heldItems = Array.isArray(result?.held_items) ? result.held_items : [];
+    const skippedItems = Array.isArray(result?.skipped_items) ? result.skipped_items : [];
+    const snapshot = result?.snapshot || {};
+    const firstExit = exits[0] || {};
+    const markdownMessage = this.buildPaperTradingRiskMarkdown(result, options, recordType);
+
+    return this.safeAppend({
+      文本: `${recordType} - 退出/计划 ${exits.length} 笔 - ${this.formatDate(new Date())}`,
+      message: markdownMessage,
+      记录类型: recordType,
+      任务名称: '模拟盘自动风控退出',
+      任务类型: options.task_type || 'PAPER_TRADING_RISK_CHECK',
+      运行状态: options.error ? 'FAILED' : 'COMPLETED',
+      模拟盘ID: result?.portfolio_id,
+      用户ID: result?.user_id,
+      是否预演: result?.dry_run ? '是' : '否',
+      检查持仓数: result?.checked,
+      退出候选数: result?.exit_candidates,
+      自动退出数: result?.exited,
+      计划退出数: result?.planned,
+      继续持有数: result?.held,
+      跳过数: result?.skipped,
+      总资产: snapshot?.total_value,
+      可用资金: snapshot?.current_cash,
+      持仓市值: snapshot?.position_value,
+      股票代码: firstExit?.symbol,
+      股票名称: firstExit?.name,
+      退出原因: firstExit?.reason_label,
+      成交数量: firstExit?.quantity,
+      成交价格: firstExit?.execute_price,
+      实现盈亏: firstExit?.realized_pnl,
+      结果摘要: this.safeJson(
+        {
+          exits,
+          held_items: heldItems.slice(0, 10),
+          skipped_items: skippedItems.slice(0, 10),
+          snapshot,
+        },
+        10000
+      ),
+      错误信息: this.errorMessage(options.error),
+      创建时间: this.formatDate(new Date()),
+    });
+  }
+
   private async safeAppend(fields: Record<string, any>) {
     try {
       const result = await feishuBitableClient.createRecord(fields);
@@ -580,6 +636,109 @@ class FeishuTaskReportService {
     lines.push(
       '',
       '> 说明：该记录为模拟盘验证闭环，不代表真实账户交易建议；真实交易前仍需人工复核仓位、流动性和风险。'
+    );
+
+    return this.safeText(lines.filter(Boolean).join('\n'), 10000);
+  }
+
+  private buildPaperTradingRiskMarkdown(
+    result: any,
+    options: { error?: any },
+    recordType: string
+  ): string {
+    const exits = Array.isArray(result?.exits) ? result.exits : [];
+    const heldItems = Array.isArray(result?.held_items) ? result.held_items : [];
+    const skippedItems = Array.isArray(result?.skipped_items) ? result.skipped_items : [];
+    const snapshot = result?.snapshot || {};
+    const dryRun = Boolean(result?.dry_run);
+    const status = options.error ? 'FAILED' : 'COMPLETED';
+    const exitAction = dryRun ? '计划退出' : '已模拟卖出';
+
+    const lines = [
+      `## ${recordType}`,
+      '',
+      `- **运行状态**：${status}`,
+      `- **执行模式**：${dryRun ? '预演，不落地交易' : '正式模拟盘卖出'}`,
+      result?.portfolio_id ? `- **模拟盘ID**：${result.portfolio_id}` : '',
+      result?.user_id ? `- **用户ID**：${result.user_id}` : '',
+      '',
+      '### 风控检查概览',
+      `- **检查持仓**：${result?.checked ?? 0}`,
+      `- **触发退出**：${result?.exit_candidates ?? exits.length}`,
+      `- **${dryRun ? '计划退出' : '自动退出'}**：${
+        dryRun ? result?.planned ?? exits.length : result?.exited ?? exits.length
+      }`,
+      `- **继续持有**：${result?.held ?? heldItems.length}`,
+      `- **跳过持仓**：${result?.skipped ?? skippedItems.length}`,
+      '',
+      '### 模拟盘资产',
+      snapshot?.total_value !== undefined
+        ? `- **总资产**：¥${this.formatMoney(snapshot.total_value)}`
+        : '',
+      snapshot?.current_cash !== undefined
+        ? `- **可用资金**：¥${this.formatMoney(snapshot.current_cash)}`
+        : '',
+      snapshot?.position_value !== undefined
+        ? `- **持仓市值**：¥${this.formatMoney(snapshot.position_value)}`
+        : '',
+    ];
+
+    if (exits.length > 0) {
+      lines.push('', `### ${exitAction}明细`);
+      exits.slice(0, 10).forEach((item: any, index: number) => {
+        const pnlPrefix = Number(item.realized_pnl || 0) >= 0 ? '+' : '';
+        lines.push(
+          `${index + 1}. **${item.name || item.symbol}（${item.symbol}）** - ${
+            item.reason_label || item.reason || '风控退出'
+          }`,
+          `   - 数量：${item.quantity ?? '-'} 股；卖出价：¥${this.formatMoney(
+            item.execute_price
+          )}；净回款：¥${this.formatMoney(item.net_revenue)}`,
+          `   - 盈亏：${pnlPrefix}¥${this.formatMoney(item.realized_pnl)}（${
+            item.pnl_pct ?? '--'
+          }%）；持有 ${item.holding_days ?? '--'} 天`,
+          `   - 纪律：止损 ${item.stop_loss_pct ?? '--'}%，止盈 ${item.take_profit_pct ?? '--'}%${
+            item.sell_signal_id
+              ? `；卖出信号 #${item.sell_signal_id}（${item.sell_signal_score ?? '--'}分）`
+              : ''
+          }`
+        );
+      });
+      if (exits.length > 10) {
+        lines.push(`- 其余 ${exits.length - 10} 笔退出已省略，请查看结果摘要。`);
+      }
+    } else {
+      lines.push('', '### 退出明细', '- 本轮没有持仓触发退出纪律。');
+    }
+
+    if (heldItems.length > 0) {
+      lines.push('', '### 继续持有观察');
+      heldItems.slice(0, 8).forEach((item: any) => {
+        lines.push(
+          `- **${item.name || item.symbol}（${item.symbol}）**：当前 ${item.pnl_pct ?? '--'}%，${
+            item.message || '未触发退出'
+          }`
+        );
+      });
+    }
+
+    if (skippedItems.length > 0) {
+      lines.push('', '### 跳过项');
+      skippedItems.slice(0, 6).forEach((item: any) => {
+        lines.push(
+          `- **${item.name || item.symbol}（${item.symbol}）**：${item.message || '已跳过'}`
+        );
+      });
+    }
+
+    const errorText = this.errorMessage(options.error);
+    if (errorText) {
+      lines.push('', '### 错误信息', errorText);
+    }
+
+    lines.push(
+      '',
+      '> 说明：风控退出基于模拟盘持仓、最新本地行情和已归档信号自动执行；真实交易前仍需人工复核。'
     );
 
     return this.safeText(lines.filter(Boolean).join('\n'), 10000);

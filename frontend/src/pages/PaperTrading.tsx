@@ -19,11 +19,15 @@ import {
   Spin,
 } from 'antd';
 import {
-  WalletOutlined,
-  RiseOutlined,
   FallOutlined,
-  PlusOutlined,
+  FieldTimeOutlined,
   HistoryOutlined,
+  PlusOutlined,
+  RadarChartOutlined,
+  RiseOutlined,
+  SafetyCertificateOutlined,
+  ThunderboltOutlined,
+  WalletOutlined,
 } from '@ant-design/icons';
 import {
   AreaChart,
@@ -79,6 +83,31 @@ interface PortfolioSnapshot {
   position_value: number;
 }
 
+interface RiskExitItem {
+  symbol: string;
+  name?: string;
+  reason_label?: string;
+  quantity?: number;
+  execute_price?: number;
+  realized_pnl?: number;
+  pnl_pct?: number;
+  holding_days?: number;
+  message?: string;
+}
+
+interface RiskCheckResult {
+  dry_run: boolean;
+  checked: number;
+  exit_candidates: number;
+  exited: number;
+  planned: number;
+  held: number;
+  skipped: number;
+  exits: RiskExitItem[];
+  held_items: RiskExitItem[];
+  skipped_items: RiskExitItem[];
+}
+
 const PaperTrading: React.FC = () => {
   const [portfolio, setPortfolio] = useState<PortfolioInfo | null>(null);
   const [positions, setPositions] = useState<Position[]>([]);
@@ -100,6 +129,9 @@ const PaperTrading: React.FC = () => {
 
   // 资金曲线快照状态
   const [snapshots, setSnapshots] = useState<PortfolioSnapshot[]>([]);
+  const [riskCheckLoading, setRiskCheckLoading] = useState(false);
+  const [riskPreviewLoading, setRiskPreviewLoading] = useState(false);
+  const [riskResult, setRiskResult] = useState<RiskCheckResult | null>(null);
 
   const fetchPortfolio = async () => {
     setLoading(true);
@@ -188,6 +220,39 @@ const PaperTrading: React.FC = () => {
       message.error('获取交易历史记录失败');
     } finally {
       setLoadingHistory(false);
+    }
+  };
+
+  const runRiskCheck = async (dryRun: boolean) => {
+    const setRunning = dryRun ? setRiskPreviewLoading : setRiskCheckLoading;
+    setRunning(true);
+    try {
+      const response = await api.post('/paper-trading/risk-check', {
+        dry_run: dryRun,
+        report_to_feishu: !dryRun,
+        enable_stop_loss: true,
+        enable_take_profit: true,
+        enable_sell_signals: true,
+        default_stop_loss_pct: 7,
+        default_take_profit_pct: 14,
+        max_hold_days: 20,
+        min_sell_signal_score: 60,
+        sell_signal_source_type: 'all',
+      });
+      const result = response.data.data as RiskCheckResult;
+      setRiskResult(result);
+      message.success(
+        dryRun
+          ? `风控预演完成：计划退出 ${result.planned || 0} 笔，继续持有 ${result.held || 0} 笔`
+          : `风控检查完成：模拟卖出 ${result.exited || 0} 笔，继续持有 ${result.held || 0} 笔`
+      );
+      if (!dryRun) {
+        await Promise.all([fetchPortfolio(), fetchSnapshots()]);
+      }
+    } catch (error: any) {
+      message.error(error.response?.data?.message || '风控检查失败');
+    } finally {
+      setRunning(false);
     }
   };
 
@@ -345,6 +410,20 @@ const PaperTrading: React.FC = () => {
           <p className="page-subtitle-modern">实时跟踪您的模拟交易与持仓盈亏</p>
         </div>
         <Space>
+          <Button
+            icon={<RadarChartOutlined />}
+            onClick={() => runRiskCheck(true)}
+            loading={riskPreviewLoading}
+          >
+            风控预演
+          </Button>
+          <Button
+            icon={<SafetyCertificateOutlined />}
+            onClick={() => runRiskCheck(false)}
+            loading={riskCheckLoading}
+          >
+            自动风控
+          </Button>
           <Button icon={<HistoryOutlined />} onClick={showHistoryModal}>
             交易流水
           </Button>
@@ -353,6 +432,72 @@ const PaperTrading: React.FC = () => {
           </Button>
         </Space>
       </div>
+
+      {riskResult && (
+        <Card
+          className="modern-card"
+          variant="borderless"
+          style={{
+            marginBottom: 24,
+            overflow: 'hidden',
+            background:
+              'radial-gradient(circle at 12% 18%, rgba(248,113,113,0.28), transparent 28%), linear-gradient(135deg, #111827 0%, #1f2937 46%, #431407 100%)',
+            border: '1px solid rgba(251,191,36,0.18)',
+            boxShadow: '0 24px 60px rgba(15,23,42,0.22)',
+          }}
+        >
+          <Row gutter={[18, 18]} align="middle">
+            <Col xs={24} lg={7}>
+              <Space direction="vertical" size={6}>
+                <Tag color={riskResult.dry_run ? 'blue' : 'volcano'}>
+                  {riskResult.dry_run ? '纸面风控预演' : '已执行模拟风控'}
+                </Tag>
+                <Text style={{ color: '#fff7ed', fontSize: 20, fontWeight: 900 }}>
+                  风控交易台回执
+                </Text>
+                <Text style={{ color: 'rgba(255,247,237,0.72)' }}>
+                  检查 {riskResult.checked} 个持仓，触发 {riskResult.exit_candidates} 个退出条件
+                </Text>
+              </Space>
+            </Col>
+            <Col xs={12} md={5} lg={4}>
+              <Statistic
+                title={<span style={{ color: 'rgba(255,247,237,0.72)' }}>退出/计划</span>}
+                value={riskResult.dry_run ? riskResult.planned : riskResult.exited}
+                suffix="笔"
+                prefix={<ThunderboltOutlined />}
+                valueStyle={{ color: '#fed7aa' }}
+              />
+            </Col>
+            <Col xs={12} md={5} lg={4}>
+              <Statistic
+                title={<span style={{ color: 'rgba(255,247,237,0.72)' }}>继续持有</span>}
+                value={riskResult.held}
+                suffix="只"
+                prefix={<FieldTimeOutlined />}
+                valueStyle={{ color: '#bfdbfe' }}
+              />
+            </Col>
+            <Col xs={24} lg={9}>
+              {riskResult.exits?.length > 0 ? (
+                <Space wrap>
+                  {riskResult.exits.slice(0, 4).map(item => (
+                    <Tag key={`${item.symbol}-${item.reason_label}`} color="orange">
+                      {item.name || item.symbol} · {item.reason_label || '退出'} ·{' '}
+                      {item.pnl_pct ?? '--'}%
+                    </Tag>
+                  ))}
+                </Space>
+              ) : (
+                <Text style={{ color: 'rgba(255,247,237,0.75)' }}>
+                  暂无触发退出条件：
+                  {riskResult.held_items?.[0]?.message || '持仓仍在止损/止盈纪律范围内'}
+                </Text>
+              )}
+            </Col>
+          </Row>
+        </Card>
+      )}
 
       <Row gutter={[24, 24]} style={{ marginBottom: 24 }}>
         <Col span={8}>

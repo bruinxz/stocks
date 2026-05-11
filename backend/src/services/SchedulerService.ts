@@ -380,6 +380,66 @@ class SchedulerService {
         logger.info(
           `模拟盘自动跟单完成。扫描 ${result.scanned}，成交 ${result.executed}，预演 ${result.planned}，跳过 ${result.skipped}`
         );
+      } else if (task.type === 'PAPER_TRADING_RISK_CHECK') {
+        const result = await paperTradingAutomationService.runRiskCheck({
+          username: parameters.username,
+          dry_run:
+            parameters.dry_run !== undefined
+              ? Boolean(parameters.dry_run)
+              : parameters.dryRun !== undefined
+              ? Boolean(parameters.dryRun)
+              : false,
+          report_to_feishu:
+            parameters.report_to_feishu !== undefined
+              ? Boolean(parameters.report_to_feishu)
+              : parameters.reportToFeishu !== undefined
+              ? Boolean(parameters.reportToFeishu)
+              : true,
+          limit: this.toPositiveInt(parameters.limit, 20, 100),
+          enable_stop_loss:
+            parameters.enable_stop_loss !== undefined
+              ? Boolean(parameters.enable_stop_loss)
+              : parameters.enableStopLoss !== undefined
+              ? Boolean(parameters.enableStopLoss)
+              : true,
+          enable_take_profit:
+            parameters.enable_take_profit !== undefined
+              ? Boolean(parameters.enable_take_profit)
+              : parameters.enableTakeProfit !== undefined
+              ? Boolean(parameters.enableTakeProfit)
+              : true,
+          enable_sell_signals:
+            parameters.enable_sell_signals !== undefined
+              ? Boolean(parameters.enable_sell_signals)
+              : parameters.enableSellSignals !== undefined
+              ? Boolean(parameters.enableSellSignals)
+              : true,
+          default_stop_loss_pct: Number(
+            parameters.default_stop_loss_pct || parameters.defaultStopLossPct || 7
+          ),
+          default_take_profit_pct: Number(
+            parameters.default_take_profit_pct || parameters.defaultTakeProfitPct || 14
+          ),
+          max_hold_days: Number(parameters.max_hold_days || parameters.maxHoldDays || 0),
+          min_sell_signal_score: Number(
+            parameters.min_sell_signal_score || parameters.minSellSignalScore || 60
+          ),
+          sell_signal_source_type:
+            parameters.sell_signal_source_type || parameters.sellSignalSourceType || 'all',
+        });
+
+        await executionLog.update({
+          total_items: result.checked,
+          completed_items: result.exited || result.planned,
+          failed_items: result.skipped,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: null,
+        });
+
+        logger.info(
+          `模拟盘风控检查完成。检查 ${result.checked}，退出 ${result.exited}，预演 ${result.planned}，继续持有 ${result.held}`
+        );
       } else if (task.type === 'AI_DAILY_SCREENER') {
         logger.info('触发 AI_DAILY_SCREENER 任务，使用多因子候选池进行 TradingAgents 深度分析...');
 
@@ -628,6 +688,26 @@ class SchedulerService {
           min_trade_amount: 3000,
           allowed_risk_levels: ['low', 'medium'],
           require_action_buy: true,
+          dry_run: false,
+          report_to_feishu: true,
+        },
+      },
+      {
+        name: '模拟盘风控退出检查',
+        type: 'PAPER_TRADING_RISK_CHECK',
+        cron_expression: '50 15 * * 1-5',
+        is_active: true,
+        parameters: {
+          username: 'lym',
+          limit: 30,
+          enable_stop_loss: true,
+          enable_take_profit: true,
+          enable_sell_signals: true,
+          default_stop_loss_pct: 7,
+          default_take_profit_pct: 14,
+          max_hold_days: 20,
+          min_sell_signal_score: 60,
+          sell_signal_source_type: 'all',
           dry_run: false,
           report_to_feishu: true,
         },

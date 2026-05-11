@@ -373,6 +373,28 @@ export class PaperTradingController {
       res.status(500).json({ success: false, message: error.message });
     }
   };
+
+  // 按止损/止盈/卖出信号/最长持有期检查并自动退出
+  runRiskCheck = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const user = (req as any).user;
+      const result = await paperTradingAutomationService.runRiskCheck({
+        ...req.body,
+        user_id: user.id,
+      });
+
+      res.json({
+        success: true,
+        data: result,
+        message: result.dry_run
+          ? `风控预演完成，计划退出 ${result.planned} 笔`
+          : `风控检查完成，模拟卖出 ${result.exited} 笔`,
+      });
+    } catch (error: any) {
+      logger.error('模拟盘自动风控检查失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
 }
 
 export const paperTradingController = new PaperTradingController();

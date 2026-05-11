@@ -53,6 +53,13 @@ router.post(
 );
 
 /**
+ * @route POST /api/paper-trading/risk-check
+ * @desc 按止损/止盈/卖出信号/最长持有期检查并自动退出
+ * @access Private
+ */
+router.post('/risk-check', authController.authenticate, paperTradingController.runRiskCheck);
+
+/**
  * @route GET /api/paper-trading/history
  * @desc 获取模拟盘的交易流水
  * @access Private

@@ -19,6 +19,8 @@ import { normalizeSymbol } from '../utils/stockSymbol';
 import { logger } from '../utils/logger';
 
 type AutoTradeStatus = 'executed' | 'planned' | 'skipped';
+type RiskExitStatus = 'exited' | 'planned' | 'held' | 'skipped';
+type RiskExitReason = 'stop_loss' | 'take_profit' | 'sell_signal' | 'max_hold_days';
 
 export interface PaperTradingAutoOptions {
   user_id?: number;
@@ -108,6 +110,65 @@ export interface PaperTradingAutoResult {
   archive?: any;
 }
 
+export interface PaperTradingRiskCheckOptions {
+  user_id?: number;
+  username?: string;
+  dry_run?: boolean;
+  report_to_feishu?: boolean;
+  limit?: number;
+  enable_stop_loss?: boolean;
+  enable_take_profit?: boolean;
+  enable_sell_signals?: boolean;
+  default_stop_loss_pct?: number;
+  default_take_profit_pct?: number;
+  max_hold_days?: number;
+  min_sell_signal_score?: number;
+  sell_signal_source_type?: string;
+}
+
+export interface PaperTradingRiskExitItem {
+  status: RiskExitStatus;
+  reason?: RiskExitReason;
+  reason_label?: string;
+  symbol: string;
+  name?: string;
+  quantity: number;
+  avg_cost: number;
+  latest_price: number;
+  execute_price?: number;
+  amount?: number;
+  commission?: number;
+  net_revenue?: number;
+  realized_pnl?: number;
+  pnl_pct: number;
+  holding_days: number;
+  stop_loss_pct?: number;
+  take_profit_pct?: number;
+  signal_id?: number;
+  source_signal_id?: number;
+  sell_signal_id?: number;
+  sell_signal_date?: string;
+  sell_signal_score?: number;
+  trade_id?: number;
+  message?: string;
+}
+
+export interface PaperTradingRiskCheckResult {
+  portfolio_id: number;
+  user_id: number;
+  dry_run: boolean;
+  checked: number;
+  exit_candidates: number;
+  exited: number;
+  planned: number;
+  held: number;
+  skipped: number;
+  exits: PaperTradingRiskExitItem[];
+  held_items: PaperTradingRiskExitItem[];
+  skipped_items: PaperTradingRiskExitItem[];
+  snapshot?: PaperTradingSnapshotResult;
+}
+
 function toNumber(value: any, fallback = 0): number {
   const num = Number(value);
   return Number.isFinite(num) ? num : fallback;
@@ -158,6 +219,23 @@ function normalizeRiskLevel(value: any): string {
 
 function getChinaToday(): string {
   return moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
+}
+
+function dateOnly(value?: Date | string | null): string {
+  if (!value) return getChinaToday();
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).slice(0, 10);
+  return moment(date).tz('Asia/Shanghai').format('YYYY-MM-DD');
+}
+
+function riskReasonLabel(reason: RiskExitReason): string {
+  const labels: Record<RiskExitReason, string> = {
+    stop_loss: '触发止损',
+    take_profit: '触发止盈',
+    sell_signal: '出现卖出信号',
+    max_hold_days: '达到最长持有期',
+  };
+  return labels[reason] || reason;
 }
 
 class PaperTradingAutomationService {
@@ -591,6 +669,212 @@ class PaperTradingAutomationService {
     };
   }
 
+  async runRiskCheck(
+    options: PaperTradingRiskCheckOptions = {}
+  ): Promise<PaperTradingRiskCheckResult> {
+    const dry_run = toBoolean(options.dry_run, false);
+    const report_to_feishu = toBoolean(options.report_to_feishu, true);
+    const limit = toPositiveInt(options.limit, 20, 100);
+    const enableStopLoss = toBoolean(options.enable_stop_loss, true);
+    const enableTakeProfit = toBoolean(options.enable_take_profit, true);
+    const enableSellSignals = toBoolean(options.enable_sell_signals, true);
+    const defaultStopLossPct = Math.abs(toNumber(options.default_stop_loss_pct, 7));
+    const defaultTakeProfitPct = Math.abs(toNumber(options.default_take_profit_pct, 14));
+    const maxHoldDays = toNumber(options.max_hold_days, 0);
+    const minSellSignalScore = toNumber(options.min_sell_signal_score, 60);
+    const sellSignalSourceType = options.sell_signal_source_type || 'all';
+
+    const portfolio = await this.ensurePortfolio({
+      user_id: options.user_id,
+      username: options.username,
+    });
+    await this.syncLatestPricesAndSnapshot(portfolio.id);
+    await portfolio.reload();
+
+    const positions = await PaperTradingPosition.findAll({
+      where: { portfolio_id: portfolio.id },
+      order: [['created_at', 'ASC']],
+    });
+
+    const exits: PaperTradingRiskExitItem[] = [];
+    const heldItems: PaperTradingRiskExitItem[] = [];
+    const skippedItems: PaperTradingRiskExitItem[] = [];
+
+    for (const position of positions) {
+      const symbol = normalizeSymbol(position.symbol);
+      const quantity = Math.floor(toNumber(position.quantity, 0));
+      const avgCost = toNumber(position.avg_cost, 0);
+      const sourceSignal = await this.findExecutionSignalForPosition(portfolio.id, symbol);
+      const signalMeta = asPlainObject(sourceSignal?.metadata);
+      const paperTradingMeta = asPlainObject(signalMeta.paper_trading);
+      const entryDate = paperTradingMeta.executed_at || position.created_at;
+      const holdingDays = Math.max(0, moment().tz('Asia/Shanghai').diff(moment(entryDate), 'days'));
+      const stopLossPct = Math.abs(
+        toNumber(paperTradingMeta.stop_loss_pct ?? signalMeta.stop_loss_pct, defaultStopLossPct)
+      );
+      const takeProfitPct = Math.abs(
+        toNumber(
+          paperTradingMeta.take_profit_pct ?? signalMeta.take_profit_pct,
+          defaultTakeProfitPct
+        )
+      );
+      const quote = await this.getLatestPrice(symbol, toNumber(position.current_price, 0));
+      const latestPrice = quote.price || toNumber(position.current_price, 0);
+      const pnlPct = avgCost > 0 ? roundNumber(((latestPrice - avgCost) / avgCost) * 100, 4) : 0;
+
+      const baseItem: PaperTradingRiskExitItem = {
+        status: 'held',
+        symbol,
+        name: position.name || quote.name || symbol,
+        quantity,
+        avg_cost: avgCost,
+        latest_price: latestPrice,
+        pnl_pct: pnlPct,
+        holding_days: holdingDays,
+        stop_loss_pct: stopLossPct,
+        take_profit_pct: takeProfitPct,
+        source_signal_id: sourceSignal?.id,
+      };
+
+      const skip = (message: string) => {
+        skippedItems.push({ ...baseItem, status: 'skipped', message });
+      };
+
+      if (exits.length >= limit) {
+        break;
+      }
+
+      if (!quantity || quantity <= 0) {
+        skip('持仓数量无效，跳过');
+        continue;
+      }
+
+      if (!latestPrice || latestPrice <= 0 || !avgCost || avgCost <= 0) {
+        skip('无法获取有效价格或成本，跳过');
+        continue;
+      }
+
+      let exitReason: RiskExitReason | undefined;
+      let sellSignal: AIInvestmentSignal | null = null;
+
+      if (enableStopLoss && stopLossPct > 0 && pnlPct <= -stopLossPct) {
+        exitReason = 'stop_loss';
+      } else if (enableTakeProfit && takeProfitPct > 0 && pnlPct >= takeProfitPct) {
+        exitReason = 'take_profit';
+      } else if (enableSellSignals) {
+        sellSignal = await this.findLatestSellSignal({
+          symbol,
+          since_date: dateOnly(entryDate),
+          min_score: minSellSignalScore,
+          source_type: sellSignalSourceType,
+        });
+        if (sellSignal) {
+          exitReason = 'sell_signal';
+        }
+      }
+
+      if (!exitReason && maxHoldDays > 0 && holdingDays >= maxHoldDays) {
+        exitReason = 'max_hold_days';
+      }
+
+      if (!exitReason) {
+        heldItems.push({
+          ...baseItem,
+          status: 'held',
+          message:
+            pnlPct < 0
+              ? `距离止损线还有 ${roundNumber(stopLossPct + pnlPct, 2)} 个百分点`
+              : `距离止盈线还有 ${roundNumber(takeProfitPct - pnlPct, 2)} 个百分点`,
+        });
+        continue;
+      }
+
+      const execute_price = roundNumber(latestPrice * (1 - this.slippageRate), 3);
+      const amount = roundNumber(execute_price * quantity, 2);
+      const commission = roundNumber(amount * this.commissionRate, 2);
+      const net_revenue = roundNumber(amount - commission, 2);
+      const realized_pnl = roundNumber(amount - avgCost * quantity - commission, 2);
+
+      const exitItem: PaperTradingRiskExitItem = {
+        ...baseItem,
+        status: dry_run ? 'planned' : 'exited',
+        reason: exitReason,
+        reason_label: riskReasonLabel(exitReason),
+        execute_price,
+        amount,
+        commission,
+        net_revenue,
+        realized_pnl,
+        sell_signal_id: sellSignal?.id,
+        sell_signal_date: sellSignal?.signal_date,
+        sell_signal_score: toOptionalNumber(sellSignal?.confidence_score),
+      };
+
+      if (!dry_run) {
+        const trade = await this.createSellTrade({
+          portfolio,
+          position,
+          symbol,
+          name: exitItem.name || symbol,
+          execute_price,
+          quantity,
+          amount,
+          commission,
+          net_revenue,
+          realized_pnl,
+        });
+        exitItem.trade_id = trade.id;
+
+        if (sourceSignal) {
+          await this.markSignalClosed(sourceSignal, {
+            portfolio_id: portfolio.id,
+            sell_trade_id: trade.id,
+            sell_signal_id: sellSignal?.id,
+            exit_reason: exitReason,
+            exit_reason_label: riskReasonLabel(exitReason),
+            exit_price: execute_price,
+            exit_quantity: quantity,
+            exit_amount: amount,
+            exit_commission: commission,
+            realized_pnl,
+            realized_pnl_pct: pnlPct,
+            holding_days: holdingDays,
+          });
+        }
+      }
+
+      exits.push(exitItem);
+    }
+
+    const snapshot = dry_run
+      ? await this.syncLatestPricesAndSnapshot(portfolio.id)
+      : await this.syncLatestPricesAndSnapshot(portfolio.id);
+
+    const result: PaperTradingRiskCheckResult = {
+      portfolio_id: portfolio.id,
+      user_id: portfolio.user_id,
+      dry_run,
+      checked: positions.length,
+      exit_candidates: exits.length,
+      exited: dry_run ? 0 : exits.length,
+      planned: dry_run ? exits.length : 0,
+      held: heldItems.length,
+      skipped: skippedItems.length,
+      exits,
+      held_items: heldItems.slice(0, 30),
+      skipped_items: skippedItems.slice(0, 30),
+      snapshot,
+    };
+
+    if (report_to_feishu) {
+      await feishuTaskReportService.reportPaperTradingRiskCheck(result, {
+        record_type: dry_run ? '模拟盘风控预演' : '模拟盘风控退出',
+      });
+    }
+
+    return result;
+  }
+
   private async resolveUser(user_id?: number, username?: string): Promise<User> {
     if (user_id) {
       const user = await User.findByPk(user_id);
@@ -639,6 +923,58 @@ class PaperTradingAutomationService {
       name: stock.name,
       date: latestBar?.time ? moment(latestBar.time).tz('Asia/Shanghai').format('YYYY-MM-DD') : '',
     };
+  }
+
+  private async findExecutionSignalForPosition(
+    portfolio_id: number,
+    symbol: string
+  ): Promise<AIInvestmentSignal | null> {
+    const signals = await AIInvestmentSignal.findAll({
+      where: { symbol },
+      order: [
+        ['updated_at', 'DESC'],
+        ['created_at', 'DESC'],
+      ],
+      limit: 200,
+    });
+
+    return (
+      signals.find(signal => {
+        const paperTrading = asPlainObject(asPlainObject(signal.metadata).paper_trading);
+        return (
+          Number(paperTrading.portfolio_id) === Number(portfolio_id) &&
+          ['executed', 'closing', 'closed'].includes(String(paperTrading.status || ''))
+        );
+      }) || null
+    );
+  }
+
+  private async findLatestSellSignal(options: {
+    symbol: string;
+    since_date: string;
+    min_score: number;
+    source_type: string;
+  }): Promise<AIInvestmentSignal | null> {
+    const where: any = {
+      symbol: options.symbol,
+      signal_date: { [Op.gte]: options.since_date },
+      normalized_decision: {
+        [Op.in]: [AISignalDecision.SELL, AISignalDecision.STRONG_SELL],
+      },
+      confidence_score: { [Op.gte]: options.min_score },
+    };
+    if (options.source_type && options.source_type !== 'all') {
+      where.source_type = options.source_type;
+    }
+
+    return AIInvestmentSignal.findOne({
+      where,
+      order: [
+        ['signal_date', 'DESC'],
+        ['confidence_score', 'DESC'],
+        ['created_at', 'DESC'],
+      ],
+    });
   }
 
   private buildTradeItemBase(signal: AIInvestmentSignal): PaperTradingAutoTradeItem {
@@ -719,6 +1055,63 @@ class PaperTradingAutomationService {
     });
   }
 
+  private async createSellTrade(params: {
+    portfolio: PaperTradingPortfolio;
+    position: PaperTradingPosition;
+    symbol: string;
+    name: string;
+    execute_price: number;
+    quantity: number;
+    amount: number;
+    commission: number;
+    net_revenue: number;
+    realized_pnl: number;
+  }): Promise<PaperTradingTrade> {
+    const {
+      portfolio,
+      position,
+      symbol,
+      name,
+      execute_price,
+      quantity,
+      amount,
+      commission,
+      net_revenue,
+      realized_pnl,
+    } = params;
+
+    if (toNumber(position.quantity, 0) <= quantity) {
+      await position.destroy();
+    } else {
+      const remainingQuantity = toNumber(position.quantity, 0) - quantity;
+      await position.update({
+        quantity: remainingQuantity,
+        current_price: execute_price,
+        market_value: roundNumber(remainingQuantity * execute_price, 2),
+        unrealized_pnl: roundNumber(
+          remainingQuantity * execute_price - toNumber(position.avg_cost, 0) * remainingQuantity,
+          2
+        ),
+      });
+    }
+
+    await portfolio.update({
+      current_cash: roundNumber(toNumber(portfolio.current_cash, 0) + net_revenue, 2),
+    });
+
+    return PaperTradingTrade.create({
+      portfolio_id: portfolio.id,
+      symbol,
+      name,
+      direction: 'SELL',
+      execute_price,
+      quantity,
+      amount,
+      commission,
+      realized_pnl,
+    });
+  }
+
   private async markSignalExecuted(signal: AIInvestmentSignal, execution: Record<string, any>) {
     const metadata = asPlainObject(signal.metadata);
     await signal.update({
@@ -730,6 +1123,22 @@ class PaperTradingAutomationService {
           status: 'executed',
           executed_at: new Date().toISOString(),
           execution_source: 'paper_trading_auto_sync',
+        },
+      },
+    });
+  }
+
+  private async markSignalClosed(signal: AIInvestmentSignal, exit: Record<string, any>) {
+    const metadata = asPlainObject(signal.metadata);
+    await signal.update({
+      metadata: {
+        ...metadata,
+        paper_trading: {
+          ...(metadata.paper_trading || {}),
+          ...exit,
+          status: 'closed',
+          closed_at: new Date().toISOString(),
+          close_source: 'paper_trading_risk_check',
         },
       },
     });
