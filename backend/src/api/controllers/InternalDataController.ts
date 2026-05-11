@@ -5,6 +5,7 @@ import { Op } from 'sequelize';
 import { logger } from '../../utils/logger';
 import { createClient, RedisClientType } from 'redis';
 import { AKShareClient } from '../../data/sources/AKShareClient';
+import { normalizeSymbol } from '../../utils/stockSymbol';
 
 const redisUrl = process.env.REDIS_PASSWORD
   ? `redis://:${process.env.REDIS_PASSWORD}@${process.env.REDIS_HOST || '127.0.0.1'}:${
@@ -25,8 +26,94 @@ redisClient.connect().catch(error => {
   logger.error('Internal API Redis Connection Failed:', error);
 });
 
+const normalizeDateInput = (value?: string): string | undefined => {
+  if (!value) return undefined;
+  const raw = String(value).trim();
+  if (/^\d{8}$/.test(raw)) {
+    return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
+  }
+  const match = raw.match(/^\d{4}-\d{2}-\d{2}/);
+  return match ? match[0] : undefined;
+};
+
+const toDayStart = (value?: string): Date | undefined => {
+  const normalized = normalizeDateInput(value);
+  return normalized ? new Date(`${normalized}T00:00:00.000Z`) : undefined;
+};
+
+const toDayEnd = (value?: string): Date | undefined => {
+  const normalized = normalizeDateInput(value);
+  return normalized ? new Date(`${normalized}T23:59:59.999Z`) : undefined;
+};
+
+const formatTradeDate = (value: Date | string): string =>
+  new Date(value).toISOString().slice(0, 10);
+
+const toNumber = (value: any): number | null => {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const normalizeRequestedSymbol = (symbol: string): string =>
+  normalizeSymbol(String(symbol || '').trim());
+
+const mapDailyBarForAgent = (barLike: any, includeStockId = false): Record<string, any> => {
+  const bar = typeof barLike?.toJSON === 'function' ? barLike.toJSON() : barLike;
+  const trade_date = formatTradeDate(bar.time);
+  const turnover = toNumber(bar.turnover);
+  const changePercent = toNumber(bar.change_percent);
+  const volume = toNumber(bar.volume);
+
+  return {
+    ...(includeStockId ? { stock_id: bar.stock_id } : {}),
+    trade_date,
+    date: trade_date,
+    open: toNumber(bar.open),
+    high: toNumber(bar.high),
+    low: toNumber(bar.low),
+    close: toNumber(bar.close),
+    volume,
+    vol: volume,
+    turnover,
+    amount: turnover,
+    adj_close: toNumber(bar.adj_close) ?? toNumber(bar.close),
+    turnover_rate: toNumber(bar.turnover_rate),
+    change_percent: changePercent,
+    pct_chg: changePercent,
+    amplitude: toNumber(bar.amplitude),
+    pe: toNumber(bar.pe),
+    pb: toNumber(bar.pb),
+    ps: toNumber(bar.ps),
+    market_cap: toNumber(bar.market_cap),
+    is_trading_day: Boolean(bar.is_trading_day),
+    is_suspended: Boolean(bar.is_suspended),
+  };
+};
+
 export class InternalDataController {
   private akshareClient = new AKShareClient();
+
+  private buildDailyBarWhere(
+    stockIdOrIds: number | number[],
+    start_date?: string,
+    end_date?: string
+  ) {
+    const whereClause: any = Array.isArray(stockIdOrIds)
+      ? { stock_id: { [Op.in]: stockIdOrIds } }
+      : { stock_id: stockIdOrIds };
+
+    const start = toDayStart(start_date);
+    const end = toDayEnd(end_date);
+    if (start || end) {
+      whereClause.time = {};
+      if (start) whereClause.time[Op.gte] = start;
+      if (end) whereClause.time[Op.lte] = end;
+    }
+
+    return whereClause;
+  }
+
   /**
    * @desc 获取全市场所有上市股票的基础信息列表
    */
@@ -36,7 +123,15 @@ export class InternalDataController {
         where: {
           is_listed: true, // 只返回正常上市的
         },
-        attributes: ['symbol', 'name', 'market', 'industry', 'listing_date', 'price', 'change_percent'],
+        attributes: [
+          'symbol',
+          'name',
+          'market',
+          'industry',
+          'listing_date',
+          'price',
+          'change_percent',
+        ],
       });
 
       res.json({
@@ -67,9 +162,10 @@ export class InternalDataController {
         return;
       }
 
-      // Find the stock id first
+      // Find the stock id first. 兼容 sh.600000 / 600000.SH / 600000 等常见写法。
+      const normalizedSymbol = normalizeRequestedSymbol(symbol);
       const stock = await Stock.findOne({
-        where: { symbol },
+        where: { symbol: normalizedSymbol },
         attributes: ['id', 'symbol', 'name'],
       });
 
@@ -78,20 +174,15 @@ export class InternalDataController {
         return;
       }
 
-      // Build date filter
-      const whereClause: any = { stock_id: stock.id };
-      if (start_date || end_date) {
-        whereClause.trade_date = {};
-        if (start_date) whereClause.trade_date[Op.gte] = start_date;
-        if (end_date) whereClause.trade_date[Op.lte] = end_date;
-      }
+      const whereClause = this.buildDailyBarWhere(stock.id, start_date, end_date);
 
-      // Fetch daily bars, ordered by date ascending
+      // Fetch daily bars, ordered by date ascending. daily_bars 实际日期字段是 time；
+      // 对 TradingAgents 仍输出 trade_date，保持 Python 侧兼容。
       const bars = await DailyBar.findAll({
         where: whereClause,
-        order: [['trade_date', 'ASC']],
+        order: [['time', 'ASC']],
         attributes: [
-          'trade_date',
+          'time',
           'open',
           'high',
           'low',
@@ -100,9 +191,18 @@ export class InternalDataController {
           'turnover',
           'adj_close',
           'turnover_rate',
+          'change_percent',
+          'amplitude',
+          'pe',
+          'pb',
+          'ps',
+          'market_cap',
+          'is_trading_day',
           'is_suspended',
         ],
       });
+
+      const normalizedBars = bars.map(bar => mapDailyBarForAgent(bar));
 
       // 为了在传输大数据时降低 JSON 序列化和网络带宽开销，可以考虑使用更紧凑的数据结构，或者让 Python Agent 更好用 Pandas 解析
       // 这里直接返回标准 JSON 对象数组，配合 Pandas pd.DataFrame(data) 最为丝滑
@@ -110,8 +210,10 @@ export class InternalDataController {
         success: true,
         symbol: stock.symbol,
         name: stock.name,
-        count: bars.length,
-        data: bars,
+        count: normalizedBars.length,
+        start_date: normalizedBars[0]?.trade_date || null,
+        end_date: normalizedBars[normalizedBars.length - 1]?.trade_date || null,
+        data: normalizedBars,
       });
     } catch (error: any) {
       logger.error(`Failed to fetch historical data for internal API:`, error);
@@ -136,31 +238,45 @@ export class InternalDataController {
 
       // 为了防止内存溢出，限制一次性查询的数量
       if (symbols.length > 50) {
-        res.status(400).json({ success: false, message: 'Maximum 50 symbols allowed per batch request' });
+        res
+          .status(400)
+          .json({ success: false, message: 'Maximum 50 symbols allowed per batch request' });
         return;
       }
 
+      const requestedSymbols = symbols.map(symbol => String(symbol).trim()).filter(Boolean);
+      const normalizedSymbolByRequested = new Map<string, string>(
+        requestedSymbols.map(symbol => [symbol, normalizeRequestedSymbol(symbol)])
+      );
+      const normalizedSymbols = Array.from(new Set(normalizedSymbolByRequested.values())).filter(
+        Boolean
+      );
+
       const stocks = await Stock.findAll({
-        where: { symbol: { [Op.in]: symbols } },
+        where: { symbol: { [Op.in]: normalizedSymbols } },
         attributes: ['id', 'symbol'],
       });
 
-      const stockIds = stocks.map((s) => s.id);
-      const idToSymbolMap = new Map(stocks.map((s) => [s.id, s.symbol]));
-
-      const whereClause: any = { stock_id: { [Op.in]: stockIds } };
-      if (start_date || end_date) {
-        whereClause.trade_date = {};
-        if (start_date) whereClause.trade_date[Op.gte] = start_date;
-        if (end_date) whereClause.trade_date[Op.lte] = end_date;
+      const stockIds = stocks.map(s => s.id);
+      const idToSymbolMap = new Map(stocks.map(s => [s.id, s.symbol]));
+      const canonicalToRequestedSymbol = new Map<string, string>();
+      for (const requested of requestedSymbols) {
+        canonicalToRequestedSymbol.set(
+          normalizedSymbolByRequested.get(requested) || requested,
+          requested
+        );
       }
+      const whereClause = this.buildDailyBarWhere(stockIds, start_date, end_date);
 
       const bars = await DailyBar.findAll({
         where: whereClause,
-        order: [['trade_date', 'ASC']],
+        order: [
+          ['stock_id', 'ASC'],
+          ['time', 'ASC'],
+        ],
         attributes: [
           'stock_id',
-          'trade_date',
+          'time',
           'open',
           'high',
           'low',
@@ -169,20 +285,33 @@ export class InternalDataController {
           'turnover',
           'adj_close',
           'turnover_rate',
+          'change_percent',
+          'amplitude',
+          'pe',
+          'pb',
+          'ps',
+          'market_cap',
+          'is_trading_day',
+          'is_suspended',
         ],
       });
 
       // 将结果按 symbol 分组
       const groupedData: Record<string, any[]> = {};
-      symbols.forEach((sym) => { groupedData[sym] = []; });
+      requestedSymbols.forEach(sym => {
+        groupedData[sym] = [];
+      });
 
       bars.forEach((bar: any) => {
         const stockIdStr = bar.stock_id as number;
-        const symbol = idToSymbolMap.get(stockIdStr);
-        if (symbol) {
+        const canonicalSymbol = idToSymbolMap.get(stockIdStr);
+        const requestedSymbol = canonicalSymbol
+          ? canonicalToRequestedSymbol.get(canonicalSymbol)
+          : undefined;
+        if (requestedSymbol) {
           // Exclude stock_id from final output to save bandwidth
-          const { stock_id, ...barData } = bar.toJSON();
-          groupedData[symbol].push(barData);
+          const { stock_id, ...barData } = mapDailyBarForAgent(bar, true);
+          groupedData[requestedSymbol].push(barData);
         }
       });
 
@@ -243,7 +372,7 @@ export class InternalDataController {
         const missingSymbolsStr = missingSymbols.join(',');
         try {
           const quotes = await this.akshareClient.getRealtimeQuotes(missingSymbolsStr);
-          
+
           // Add to result and set cache
           for (const sym of missingSymbols) {
             if (quotes[sym]) {
@@ -291,7 +420,10 @@ export class InternalDataController {
 
       const validPeriods = ['1m', '5m', '15m', '30m', '60m'];
       if (!validPeriods.includes(period)) {
-        res.status(400).json({ success: false, message: `invalid period. valid values: ${validPeriods.join(', ')}` });
+        res.status(400).json({
+          success: false,
+          message: `invalid period. valid values: ${validPeriods.join(', ')}`,
+        });
         return;
       }
 
