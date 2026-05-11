@@ -536,7 +536,12 @@ export class AIInvestmentSignalService {
         signal_date: options.signal_date,
         as_of: latestTrendDate || options.as_of,
       });
-      const decision = this.decisionFromQuantScore(Number(candidate.score || 0));
+      const decision =
+        candidate.action === 'buy'
+          ? AISignalDecision.BUY
+          : candidate.action === 'avoid'
+          ? AISignalDecision.HOLD
+          : this.decisionFromQuantScore(Number(candidate.score || 0));
       const source_id = `${symbol}_${signal_date}_${style}_${universe}`;
       const stock = await Stock.findOne({ where: { symbol } });
       const payload = {
@@ -556,6 +561,11 @@ export class AIInvestmentSignalService {
         detail: JSON.stringify({
           rating: candidate.rating,
           confidence: candidate.confidence,
+          action: candidate.action,
+          action_label: candidate.action_label,
+          suggested_position_pct: candidate.suggested_position_pct,
+          stop_loss_pct: candidate.stop_loss_pct,
+          take_profit_pct: candidate.take_profit_pct,
           factors: candidate.factors || [],
           metrics: candidate.metrics || {},
           warnings: candidate.warnings || [],
@@ -571,6 +581,11 @@ export class AIInvestmentSignalService {
           source: candidate.source,
           rating: candidate.rating,
           confidence: candidate.confidence,
+          action: candidate.action,
+          action_label: candidate.action_label,
+          suggested_position_pct: candidate.suggested_position_pct,
+          stop_loss_pct: candidate.stop_loss_pct,
+          take_profit_pct: candidate.take_profit_pct,
           factors: candidate.factors || [],
           metrics: candidate.metrics || {},
           reasons: candidate.reasons || [],

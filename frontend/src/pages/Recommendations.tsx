@@ -64,6 +64,11 @@ interface RecommendationItem {
   factors: FactorScore[];
   reasons: string[];
   warnings: string[];
+  action?: 'buy' | 'watch' | 'hold' | 'avoid';
+  action_label?: string;
+  suggested_position_pct?: number;
+  stop_loss_pct?: number;
+  take_profit_pct?: number;
   metrics: Record<string, number | null>;
   feedback?: RecommendationFeedback;
   trend?: Array<{ time: string; close: number }>;
@@ -96,6 +101,13 @@ const riskColorMap: Record<string, string> = {
   low: 'green',
   medium: 'gold',
   high: 'red',
+};
+
+const actionColorMap: Record<string, string> = {
+  buy: 'red',
+  watch: 'blue',
+  hold: 'gold',
+  avoid: 'default',
 };
 
 const styleOptions = [
@@ -379,9 +391,27 @@ const Recommendations: React.FC = () => {
     {
       title: '风险',
       key: 'risk',
-      width: 100,
+      width: 150,
       render: (_: any, record: RecommendationItem) => (
-        <Tag color={riskColorMap[record.risk_level]}>{record.risk_level.toUpperCase()}</Tag>
+        <Space direction="vertical" size={4}>
+          <Tag color={riskColorMap[record.risk_level]}>{record.risk_level.toUpperCase()}</Tag>
+          {record.action_label && (
+            <Tag color={actionColorMap[record.action || 'hold']}>{record.action_label}</Tag>
+          )}
+        </Space>
+      ),
+    },
+    {
+      title: '仓位纪律',
+      key: 'position_plan',
+      width: 150,
+      render: (_: any, record: RecommendationItem) => (
+        <Space direction="vertical" size={2}>
+          <Text strong>{record.suggested_position_pct ?? 0}%</Text>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            止损 {record.stop_loss_pct ?? '--'}% · 止盈 {record.take_profit_pct ?? '--'}%
+          </Text>
+        </Space>
       ),
     },
     {
@@ -693,6 +723,21 @@ const Recommendations: React.FC = () => {
                     </Card>
                   </Col>
                 )}
+                <Col xs={24} md={8} lg={6} key="action-plan">
+                  <Card size="small" title="交易纪律">
+                    <Space direction="vertical" size={8}>
+                      <Tag color={actionColorMap[record.action || 'hold']}>
+                        {record.action_label || '继续观察'}
+                      </Tag>
+                      <Text>建议单票仓位：{record.suggested_position_pct ?? 0}%</Text>
+                      <Text type="secondary">
+                        {`止损 ${record.stop_loss_pct ?? '--'}% / 止盈 ${
+                          record.take_profit_pct ?? '--'
+                        }%`}
+                      </Text>
+                    </Space>
+                  </Card>
+                </Col>
                 {record.factors.map(factor => (
                   <Col xs={24} md={8} lg={6} key={factor.name}>
                     <Card size="small" title={factor.label}>

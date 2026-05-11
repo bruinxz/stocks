@@ -421,7 +421,12 @@ export class DataSyncService {
    * @param start_date 开始日期，格式：'2020-01-01'
    * @param end_date 结束日期，格式：'2023-12-31'
    */
-  async syncStockHistory(symbol: string, start_date: string, end_date: string, dataSource = 'auto'): Promise<number> {
+  async syncStockHistory(
+    symbol: string,
+    start_date: string,
+    end_date: string,
+    dataSource = 'auto'
+  ): Promise<number> {
     const normalizedSymbol = normalizeSymbol(symbol);
     try {
       logger.info(

@@ -18,6 +18,30 @@ export class DataUpdateWorker {
     this.setupWorkers();
   }
 
+  private isLockBusyError(error: any): boolean {
+    const message = error?.message || String(error || '');
+    return message.includes('无法获取分布式锁') || message.includes('正在更新');
+  }
+
+  private startLockRenewal(
+    lockKey: string,
+    lockValue: string,
+    ttlMs: number,
+    label: string
+  ): NodeJS.Timeout {
+    const intervalMs = Math.max(30_000, Math.floor(ttlMs / 3));
+    return setInterval(async () => {
+      try {
+        const renewed = await redisLock.renew(lockKey, lockValue, ttlMs);
+        if (!renewed) {
+          logger.warn(`${label} 锁续期失败，锁可能已过期或被其他进程接管`, { lockKey });
+        }
+      } catch (error) {
+        logger.warn(`${label} 锁续期异常`, error);
+      }
+    }, intervalMs);
+  }
+
   /**
    * 设置队列处理器
    */
@@ -62,16 +86,28 @@ export class DataUpdateWorker {
     const { date, forceUpdate = false, max_stocks = 300 } = job.data;
     const lockKey = LockKeys.DAILY_UPDATE(date);
     let lockValue: string | null = null;
+    let renewTimer: NodeJS.Timeout | null = null;
 
     try {
       // 报告进度
       await job.progress(5);
 
       // 获取分布式锁，防止并发更新
-      lockValue = await redisLock.acquire(lockKey, 15 * 60 * 1000); // 15分钟锁
+      lockValue = await redisLock.acquire(lockKey, 2 * 60 * 60 * 1000); // 日更可能受外部源限速，锁续期兜底
       if (!lockValue) {
-        throw new Error('无法获取分布式锁，可能有其他进程正在更新');
+        logger.warn(`日期 ${date} 的每日数据更新已在运行，当前任务跳过`);
+        await job.progress(100);
+        return {
+          success: true,
+          skipped: true,
+          reason: 'lock_busy',
+          message: '已有每日数据更新任务正在运行，当前任务已跳过',
+          totalStocks: 1,
+          affected_stocks: 0,
+          failed: 0,
+        };
       }
+      renewTimer = this.startLockRenewal(lockKey, lockValue, 2 * 60 * 60 * 1000, '每日更新');
 
       await job.progress(10);
 
@@ -87,9 +123,15 @@ export class DataUpdateWorker {
 
         if (existingUpdate) {
           logger.info(`日期 ${date} 的每日数据已更新，跳过`);
+          await job.progress(100);
           return {
+            success: true,
             skipped: true,
             reason: 'already_updated',
+            message: '当日每日行情增量同步已存在完成记录，当前任务已跳过',
+            totalStocks: 0,
+            affected_stocks: 0,
+            failed: 0,
             logId: existingUpdate.id,
           };
         }
@@ -108,6 +150,9 @@ export class DataUpdateWorker {
       const resultDetails: any = {};
       let totalAffectedStocks = 0;
       let totalInsertedRecords = 0;
+      let dailySuccessCount = 0;
+      let dailyFailCount = 0;
+      let dailySkipCount = 0;
 
       // 1. 增量更新：只获取需要更新的股票
       await job.progress(20);
@@ -137,7 +182,7 @@ export class DataUpdateWorker {
         for (let i = 0; i < stocksNeedingUpdate.length; i += batchSize) {
           const batch = stocksNeedingUpdate.slice(i, i + batchSize);
           const batchPromises = batch.map(symbol =>
-            this.syncStockWithLock(symbol, sevenDaysAgo, target_date)
+            this.syncStockWithLock(symbol, sevenDaysAgo, target_date, 'tencent')
               .then(count => {
                 results[symbol] = count;
                 return { symbol, count };
@@ -167,6 +212,9 @@ export class DataUpdateWorker {
         const totalInserted = Object.values(results)
           .filter(count => count > 0)
           .reduce((sum, count) => sum + count, 0);
+        dailySuccessCount = successCount;
+        dailyFailCount = failCount;
+        dailySkipCount = skipCount;
 
         resultDetails.dailyUpdate = {
           stocksNeedingUpdate: stocksNeedingUpdate.length,
@@ -219,11 +267,28 @@ export class DataUpdateWorker {
         success: true,
         affected_stocks: totalAffectedStocks,
         inserted_records: totalInsertedRecords,
+        totalStocks: stocksNeedingUpdate.length,
+        successfulSyncs: dailySuccessCount,
+        failedSyncs: dailyFailCount,
+        skippedSyncs: dailySkipCount,
+        totalRecordsInserted: totalInsertedRecords,
         details: resultDetails,
         logId: updateLog.id,
       };
     } catch (error) {
       logger.error('处理每日数据更新失败:', error);
+
+      if (this.isLockBusyError(error)) {
+        return {
+          success: true,
+          skipped: true,
+          reason: 'lock_busy',
+          message: error.message,
+          totalStocks: 1,
+          affected_stocks: 0,
+          failed: 0,
+        };
+      }
 
       // 更新失败记录
       await DataUpdateLog.create({
@@ -237,6 +302,9 @@ export class DataUpdateWorker {
 
       throw error;
     } finally {
+      if (renewTimer) {
+        clearInterval(renewTimer);
+      }
       // 释放锁
       if (lockValue) {
         await redisLock.release(lockKey, lockValue);
@@ -296,10 +364,11 @@ export class DataUpdateWorker {
   private async syncStockWithLock(
     symbol: string,
     start_date: string,
-    end_date: string
+    end_date: string,
+    dataSource = 'auto'
   ): Promise<number> {
     const lockKey = LockKeys.STOCK_SYNC(symbol);
-    const lockValue = await redisLock.acquire(lockKey, 5 * 60 * 1000); // 5分钟锁
+    const lockValue = await redisLock.acquire(lockKey, 30 * 60 * 1000); // 单股同步可能遇到外部源限速
 
     if (!lockValue) {
       logger.warn(`股票 ${symbol} 正在被其他进程同步，跳过`);
@@ -307,7 +376,7 @@ export class DataUpdateWorker {
     }
 
     try {
-      return await this.dataSyncService.syncStockHistory(symbol, start_date, end_date);
+      return await this.dataSyncService.syncStockHistory(symbol, start_date, end_date, dataSource);
     } finally {
       await redisLock.release(lockKey, lockValue);
     }
@@ -667,7 +736,7 @@ export class DataUpdateWorker {
 
       // 如果未指定开始日期，提供一个合理的默认值
       const actualStartDate = start_date || '2020-01-01';
-      const actualEndDate = end_date || new Date().toISOString().split('T')[0];
+      const actualEndDate = end_date || moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
 
       logger.info(`批量同步任务开始，本次需要处理 ${stocksToSync.length} 只股票`);
       logger.info(`日期范围: ${actualStartDate} 到 ${actualEndDate}, 并发数: ${concurrency}`);

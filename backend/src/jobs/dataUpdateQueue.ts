@@ -21,7 +21,7 @@ export interface DataUpdateJobData {
   syncAllStocks?: boolean; // 同步所有股票
   start_date?: string; // 同步开始日期 YYYY-MM-DD
   end_date?: string; // 同步结束日期 YYYY-MM-DD
-  dataSource?: 'auto' | 'tushare' | 'baostock' | 'akshare' | 'eastmoney' | 'sina'; // 数据源选择，默认auto自动fallback
+  dataSource?: 'auto' | 'tushare' | 'baostock' | 'akshare' | 'eastmoney' | 'tencent' | 'sina'; // 数据源选择，默认auto自动fallback
   concurrency?: number; // 并发数量（批次大小）
   execution_log_id?: number; // 关联 task_execution_logs.id，便于前端查看定时任务投递后的队列明细
   scheduled_task_id?: number; // 关联 scheduled_tasks.id
@@ -79,11 +79,14 @@ dataUpdateQueue.on('completed', (job, result) => {
   if (job.data.execution_log_id) {
     (async () => {
       const totalItems = Number(
-        result?.totalStocks || result?.affected_stocks || result?.affectedStocks || 1
+        result?.totalStocks ?? result?.affected_stocks ?? result?.affectedStocks ?? 1
       );
-      const failedItems = Number(result?.failedSyncs || result?.failed || 0);
+      const failedItems = Number(result?.failedSyncs ?? result?.failed ?? 0);
+      const isSkipped = Boolean(result?.skipped);
       const completedItems =
-        result?.successfulSyncs !== undefined
+        isSkipped
+          ? 0
+          : result?.successfulSyncs !== undefined
           ? Number(result.successfulSyncs)
           : failedItems > 0 && totalItems > 0
           ? Math.max(totalItems - failedItems, 0)
@@ -91,20 +94,29 @@ dataUpdateQueue.on('completed', (job, result) => {
 
       const log = await TaskExecutionLog.findByPk(job.data.execution_log_id);
       if (log) {
+        const finalStatus =
+          failedItems >= totalItems && totalItems > 0 && !isSkipped ? 'FAILED' : 'COMPLETED';
         await log.update({
-          status: failedItems >= totalItems && totalItems > 0 ? 'FAILED' : 'COMPLETED',
-          total_items: totalItems,
+          status: finalStatus,
+          total_items: isSkipped ? 0 : totalItems,
           completed_items: completedItems,
           failed_items: failedItems,
           error_message:
-            failedItems > 0 ? `数据更新队列部分失败：${failedItems}/${totalItems}` : null,
+            isSkipped
+              ? result?.message || result?.reason || '队列任务已跳过'
+              : failedItems > 0
+              ? `数据更新队列部分失败：${failedItems}/${totalItems}`
+              : null,
           completed_at: new Date(),
         });
       }
 
       if (job.data.scheduled_task_id) {
         await ScheduledTask.update(
-          { last_run_status: failedItems >= totalItems && totalItems > 0 ? 'FAILED' : 'SUCCESS' },
+          {
+            last_run_status:
+              failedItems >= totalItems && totalItems > 0 && !isSkipped ? 'FAILED' : 'SUCCESS',
+          },
           { where: { id: job.data.scheduled_task_id } }
         );
       }

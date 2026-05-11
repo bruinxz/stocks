@@ -10,6 +10,7 @@ import { logger } from '../utils/logger';
 export type RecommendationUniverse = 'favorites' | 'market';
 export type RecommendationStyle = 'balanced' | 'momentum' | 'value' | 'low_risk';
 export type RecommendationSource = 'favorites' | 'market' | 'mixed';
+export type RecommendationAction = 'buy' | 'watch' | 'hold' | 'avoid';
 
 export interface QuantRecommendationOptions {
   user_id?: number;
@@ -54,6 +55,11 @@ export interface QuantRecommendationItem {
   factors: FactorScore[];
   reasons: string[];
   warnings: string[];
+  action: RecommendationAction;
+  action_label: '可小仓试买' | '等待确认' | '继续持有观察' | '暂不参与';
+  suggested_position_pct: number;
+  stop_loss_pct: number;
+  take_profit_pct: number;
   metrics: Record<string, number | null>;
   feedback?: RecommendationFeedback;
   trend?: Array<{ time: string; close: number }>;
@@ -127,6 +133,50 @@ function scoreToRating(score: number): QuantRecommendationItem['rating'] {
   if (score >= 70) return '积极关注';
   if (score >= 58) return '观察';
   return '谨慎';
+}
+
+function resolveAction(params: {
+  score: number;
+  risk_level: QuantRecommendationItem['risk_level'];
+  warnings: string[];
+  feedback: RecommendationFeedback;
+}): {
+  action: RecommendationAction;
+  action_label: QuantRecommendationItem['action_label'];
+  suggested_position_pct: number;
+} {
+  const negativeFeedback =
+    params.feedback.completed_count >= 3 && Number(params.feedback.avg_return_pct || 0) < -2;
+
+  if (params.score < 58 || params.risk_level === 'high' || negativeFeedback) {
+    return {
+      action: 'avoid',
+      action_label: '暂不参与',
+      suggested_position_pct: 0,
+    };
+  }
+
+  if (params.score >= 76 && params.risk_level === 'low' && params.warnings.length === 0) {
+    return {
+      action: 'buy',
+      action_label: '可小仓试买',
+      suggested_position_pct: Math.min(12, Math.max(5, Math.round((params.score - 66) / 2))),
+    };
+  }
+
+  if (params.score >= 66) {
+    return {
+      action: 'watch',
+      action_label: '等待确认',
+      suggested_position_pct: params.risk_level === 'medium' ? 3 : 5,
+    };
+  }
+
+  return {
+    action: 'hold',
+    action_label: '继续持有观察',
+    suggested_position_pct: params.risk_level === 'low' ? 4 : 2,
+  };
 }
 
 function getStyleWeights(style: RecommendationStyle): Record<string, number> {
@@ -444,6 +494,11 @@ export class QuantRecommendationService {
         : warnings.length === 1 || riskScore < 65
         ? 'medium'
         : 'low';
+    const actionPlan = resolveAction({ score, risk_level, warnings, feedback });
+    const stop_loss_pct =
+      risk_level === 'low' ? 6 : risk_level === 'medium' ? 4.5 : 3;
+    const take_profit_pct =
+      actionPlan.action === 'buy' ? 14 : actionPlan.action === 'watch' ? 10 : 8;
 
     return {
       symbol: normalizeSymbol(stock.symbol),
@@ -464,6 +519,11 @@ export class QuantRecommendationService {
       factors: factors.map(factor => ({ ...factor, score: Number(factor.score.toFixed(2)) })),
       reasons: reasons.length > 0 ? reasons : ['多因子评分居前，建议进入 TradingAgents 深度复核'],
       warnings,
+      action: actionPlan.action,
+      action_label: actionPlan.action_label,
+      suggested_position_pct: actionPlan.suggested_position_pct,
+      stop_loss_pct,
+      take_profit_pct,
       metrics: {
         ma5: round(ma5, 2),
         ma20: round(ma20, 2),

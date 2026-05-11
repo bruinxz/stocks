@@ -7,6 +7,7 @@ import { EastMoneyClient } from '../sources/EastMoneyClient';
 import { SinaFinanceClient } from '../sources/SinaFinanceClient';
 import { BaostockClient } from '../sources/BaostockClient';
 import { TushareClient } from '../sources/TushareClient';
+import { TencentFinanceClient } from '../sources/TencentFinanceClient';
 
 const hasTushareToken = Boolean(process.env.TUSHARE_TOKEN || process.env.TUSHARE_PRO_TOKEN);
 const tushareEnabled = process.env.TUSHARE_ENABLED === 'true' && hasTushareToken;
@@ -65,6 +66,17 @@ export const DEFAULT_DATA_PROVIDERS: MarketDataProviderDefinition[] = [
     supported_features: ['stock_list', 'history_k', 'stock_basic'],
     metadata: {
       role: 'fast_http_fallback',
+    },
+  },
+  {
+    provider_name: 'tencent',
+    provider_label: '腾讯行情',
+    provider_type: 'api',
+    priority: 45,
+    is_enabled: true,
+    supported_features: ['history_k'],
+    metadata: {
+      role: 'fast_incremental_history_source',
     },
   },
   {
@@ -526,6 +538,20 @@ export class DataSourceHealthService {
           ),
           options.timeout_ms,
           'Sina health probe'
+        );
+        sampleSize = Array.isArray(bars) ? bars.length : 0;
+        latestDate = bars?.[bars.length - 1]?.date;
+      } else if (provider.provider_name === 'tencent') {
+        const bars = await this.withTimeout(
+          new TencentFinanceClient(options.timeout_ms).queryHistoryKData(
+            options.sample_symbol,
+            options.start_date,
+            options.end_date,
+            'd',
+            '3'
+          ),
+          options.timeout_ms,
+          'Tencent Finance health probe'
         );
         sampleSize = Array.isArray(bars) ? bars.length : 0;
         latestDate = bars?.[bars.length - 1]?.date;

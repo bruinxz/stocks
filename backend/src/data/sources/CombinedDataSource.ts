@@ -7,6 +7,7 @@ import {
 import { SinaFinanceClient } from './SinaFinanceClient';
 import { BaostockClient } from './BaostockClient';
 import { TushareClient } from './TushareClient';
+import { TencentFinanceClient } from './TencentFinanceClient';
 import { logger } from '../../utils/logger';
 import { toEastMoneyFormat, normalizeSymbol } from '../../utils/stockSymbol';
 import {
@@ -37,6 +38,7 @@ export class CombinedDataSource {
   private sinaFinanceClient: SinaFinanceClient;
   private baostockClient: BaostockClient;
   private tushareClient: TushareClient;
+  private tencentFinanceClient: TencentFinanceClient;
   private providers: Record<string, MarketDataProviderDefinition>;
 
   constructor() {
@@ -45,6 +47,7 @@ export class CombinedDataSource {
     this.sinaFinanceClient = new SinaFinanceClient();
     this.baostockClient = new BaostockClient();
     this.tushareClient = new TushareClient();
+    this.tencentFinanceClient = new TencentFinanceClient();
     this.providers = Object.fromEntries(
       DEFAULT_DATA_PROVIDERS.map(provider => [provider.provider_name, provider])
     );
@@ -458,6 +461,17 @@ export class CombinedDataSource {
         () =>
           this.eastMoneyClient.queryHistoryKData(
             eastMoneyCode,
+            start_date,
+            end_date,
+            frequency,
+            adjustflag
+          ),
+      ],
+      [
+        'tencent',
+        () =>
+          this.tencentFinanceClient.queryHistoryKData(
+            normalizedCode,
             start_date,
             end_date,
             frequency,
