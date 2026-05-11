@@ -28,6 +28,7 @@ export interface DataUpdateJobData {
   scope?: 'favorites' | 'market' | 'all'; // 数据质量扫描范围
   lookback_days?: number; // 数据质量扫描窗口
   limit?: number; // 数据质量扫描数量
+  max_stocks?: number; // 每日增量同步最多处理股票数，避免一次性压垮小服务器
   completedSymbols?: string[]; // 记录已完成的股票列表（用于断点续传）
   totalInserted?: number; // 记录已插入的条数（用于断点续传）
 }

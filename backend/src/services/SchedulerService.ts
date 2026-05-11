@@ -165,6 +165,7 @@ class SchedulerService {
             type: 'daily_update',
             date: today,
             forceUpdate: Boolean(parameters.force_update || parameters.forceUpdate || isManual),
+            max_stocks: this.toPositiveInt(parameters.max_stocks || parameters.maxStocks, 300, 2000),
             execution_log_id: executionLog.id,
             scheduled_task_id: task.id,
           },
@@ -428,6 +429,7 @@ class SchedulerService {
         is_active: true,
         parameters: {
           force_update: false,
+          max_stocks: 300,
         },
       },
       {

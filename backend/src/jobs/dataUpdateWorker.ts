@@ -59,7 +59,7 @@ export class DataUpdateWorker {
    * 处理每日数据更新
    */
   private async processDailyUpdate(job: Job<DataUpdateJobData>) {
-    const { date, forceUpdate = false } = job.data;
+    const { date, forceUpdate = false, max_stocks = 300 } = job.data;
     const lockKey = LockKeys.DAILY_UPDATE(date);
     let lockValue: string | null = null;
 
@@ -121,7 +121,10 @@ export class DataUpdateWorker {
 
       // 获取最新K线早于目标日期的股票。旧逻辑只判断“最近7天是否有任意数据”，
       // 会导致已同步到上一个交易日的股票在新交易日被错误跳过。
-      const stocksNeedingUpdate = await this.getStocksNeedingIncrementalUpdate(target_date);
+      const stocksNeedingUpdate = await this.getStocksNeedingIncrementalUpdate(
+        target_date,
+        max_stocks
+      );
       logger.info(`有 ${stocksNeedingUpdate.length} 只股票需要增量更新`);
 
       await job.progress(30);
@@ -167,6 +170,9 @@ export class DataUpdateWorker {
 
         resultDetails.dailyUpdate = {
           stocksNeedingUpdate: stocksNeedingUpdate.length,
+          maxStocks: max_stocks,
+          targetDate: target_date,
+          startDate: sevenDaysAgo,
           successCount,
           failCount,
           skipCount,
@@ -241,32 +247,43 @@ export class DataUpdateWorker {
   /**
    * 获取需要增量更新的股票列表
    */
-  private async getStocksNeedingIncrementalUpdate(target_date: string): Promise<string[]> {
+  private async getStocksNeedingIncrementalUpdate(
+    target_date: string,
+    limit = 300
+  ): Promise<string[]> {
     try {
-      const stocks = await Stock.findAll({
-        where: { is_listed: true },
-        attributes: ['id', 'symbol'],
-      });
-
-      const needsUpdate: string[] = [];
       const targetStart = moment
         .tz(target_date, 'Asia/Shanghai')
         .startOf('day')
         .toDate();
+      const rows = (await Stock.findAll({
+        where: { is_listed: true },
+        attributes: [
+          'id',
+          'symbol',
+          [DailyBar.sequelize!.fn('MAX', DailyBar.sequelize!.col('daily_bars.time')), 'latest_time'],
+        ],
+        include: [
+          {
+            model: DailyBar,
+            attributes: [],
+            required: false,
+          },
+        ],
+        group: ['Stock.id', 'Stock.symbol'],
+        having: DailyBar.sequelize!.literal(
+          `MAX("daily_bars"."time") IS NULL OR MAX("daily_bars"."time") < '${targetStart.toISOString()}'`
+        ),
+        order: [
+          DailyBar.sequelize!.literal('MAX("daily_bars"."time") ASC NULLS FIRST') as any,
+          ['id', 'ASC'],
+        ],
+        limit,
+        raw: true,
+        subQuery: false,
+      })) as any[];
 
-      for (const stock of stocks) {
-        const latestBar = await DailyBar.findOne({
-          where: { stock_id: stock.id },
-          attributes: ['time'],
-          order: [['time', 'DESC']],
-        });
-
-        if (!latestBar || new Date(latestBar.time) < targetStart) {
-          needsUpdate.push(stock.symbol);
-        }
-      }
-
-      return needsUpdate;
+      return rows.map(row => row.symbol);
     } catch (error) {
       logger.error('获取增量更新股票列表失败:', error);
       return [];
