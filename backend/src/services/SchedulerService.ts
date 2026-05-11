@@ -1,20 +1,23 @@
 import cron, { ScheduledTask as CronScheduledTask } from 'node-cron';
 import { ScheduledTask } from '../models/ScheduledTask';
 import { TaskExecutionLog } from '../models/TaskExecutionLog';
-import { FavoriteStock } from '../models/FavoriteStock';
-import { Stock } from '../models/Stock';
 import { logger } from '../utils/logger';
 import { dataUpdateQueue } from '../jobs/dataUpdateQueue';
 import { aiPollingQueue } from '../jobs/aiPollingQueue';
 import { aiAdvisorService } from './AIAdvisorService';
 import { quantRecommendationService } from './QuantRecommendationService';
 import moment from 'moment-timezone';
+import { Op } from 'sequelize';
+
+type TaskRunStatus = 'SUCCESS' | 'FAILED' | 'RUNNING';
 
 class SchedulerService {
   private activeTasks: Map<number, CronScheduledTask> = new Map();
 
   async initialize() {
     try {
+      await this.reconcileStaleRunningTasks();
+
       const tasks = await ScheduledTask.findAll({ where: { is_active: true } });
       logger.info(`Found ${tasks.length} active scheduled tasks`);
 
@@ -37,21 +40,100 @@ class SchedulerService {
       return;
     }
 
-    const scheduledJob = cron.schedule(task.cron_expression, async () => {
-      logger.info(`Executing scheduled task: ${task.name} (${task.type})`);
-      await this._executeTaskLogic(task, false);
-    }, {
-      timezone: 'Asia/Shanghai'
-    });
+    const scheduledJob = cron.schedule(
+      task.cron_expression,
+      async () => {
+        logger.info(`Executing scheduled task: ${task.name} (${task.type})`);
+        try {
+          await this._executeTaskLogic(task, false);
+        } catch (error) {
+          logger.error(`Scheduled task ${task.id} (${task.name}) execution failed:`, error);
+        }
+      },
+      {
+        timezone: 'Asia/Shanghai',
+      }
+    );
 
     this.activeTasks.set(task.id, scheduledJob);
-    logger.info(`Scheduled task ${task.id} (${task.name}) registered with cron: ${task.cron_expression}`);
+    logger.info(
+      `Scheduled task ${task.id} (${task.name}) registered with cron: ${task.cron_expression}`
+    );
+  }
+
+  private getChinaDate(): string {
+    return moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
+  }
+
+  private getDateDaysAgo(days: number): string {
+    return moment().tz('Asia/Shanghai').subtract(days, 'days').format('YYYY-MM-DD');
+  }
+
+  private toPositiveInt(value: any, fallback: number, max?: number): number {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+    const normalized = Math.floor(parsed);
+    return max ? Math.min(normalized, max) : normalized;
+  }
+
+  private async markTaskFinished(
+    task: ScheduledTask,
+    status: TaskRunStatus,
+    executionLog?: TaskExecutionLog,
+    error?: any
+  ) {
+    const error_message = error?.message || (error ? String(error) : undefined);
+    await task.update({ last_run_status: status });
+
+    if (!executionLog) return;
+
+    const patch: any = {
+      status: status === 'SUCCESS' ? 'COMPLETED' : status === 'FAILED' ? 'FAILED' : 'IN_PROGRESS',
+    };
+
+    if (status !== 'RUNNING') {
+      patch.completed_at = new Date();
+    }
+    if (error_message) {
+      patch.error_message = error_message;
+    }
+
+    await executionLog.update(patch);
+  }
+
+  private async enqueueDataUpdateJob(
+    task: ScheduledTask,
+    executionLog: TaskExecutionLog,
+    queueName: 'daily_update' | 'new_stocks_sync' | 'bulk_sync_custom' | 'data_quality_scan',
+    data: any,
+    jobPrefix: string,
+    isManual: boolean
+  ) {
+    const job = await dataUpdateQueue.add(queueName, data, {
+      jobId: `${jobPrefix}-${isManual ? 'manual-' : ''}${task.id}-${Date.now()}`,
+    });
+
+    await executionLog.update({
+      status: 'COMPLETED',
+      completed_at: new Date(),
+      total_items: 1,
+      completed_items: 1,
+      error_message: null,
+    });
+
+    logger.info(`定时任务 ${task.id} (${task.name}) 已投递到 data-update 队列`, {
+      queueName,
+      jobId: job.id,
+      data,
+    });
+
+    return job;
   }
 
   private async _executeTaskLogic(task: ScheduledTask, isManual: boolean = false) {
     const timestamp = new Date();
     await task.update({ last_run_at: timestamp, last_run_status: 'RUNNING' });
-    
+
     const executionLog = await TaskExecutionLog.create({
       task_id: task.id,
       task_name: task.name + (isManual ? ' (手动执行)' : ''),
@@ -60,53 +142,91 @@ class SchedulerService {
     });
 
     try {
-      if (task.type === 'SYNC_ALL_STOCKS') {
-        await dataUpdateQueue.add(
+      const parameters = task.parameters || {};
+      const today = this.getChinaDate();
+
+      if (task.type === 'DAILY_UPDATE') {
+        await this.enqueueDataUpdateJob(
+          task,
+          executionLog,
+          'daily_update',
+          {
+            type: 'daily_update',
+            date: today,
+            forceUpdate: Boolean(parameters.force_update || parameters.forceUpdate || isManual),
+          },
+          'dailyUpdate',
+          isManual
+        );
+      } else if (task.type === 'SYNC_ALL_STOCKS') {
+        await this.enqueueDataUpdateJob(
+          task,
+          executionLog,
           'new_stocks_sync',
           {
             type: 'new_stocks_sync',
-            date: new Date().toISOString().split('T')[0],
-            syncAllStocks: true,
-            concurrency: 2,
+            date: today,
           },
-          {
-            jobId: `syncAllStocks-${isManual ? 'manual-' : ''}${Date.now()}`,
-          }
+          'syncAllStocks',
+          isManual
         );
-        
-        await executionLog.update({ 
-          status: 'COMPLETED', 
-          completed_at: new Date(),
-          total_items: 1,
-          completed_items: 1
-        });
       } else if (task.type === 'SYNC_HISTORY') {
-        const symbols = task.parameters?.symbols || [];
-        await dataUpdateQueue.add(
+        const symbols = Array.isArray(parameters.symbols) ? parameters.symbols : undefined;
+        const marketFilters = Array.isArray(parameters.marketFilters)
+          ? parameters.marketFilters
+          : Array.isArray(parameters.market_filters)
+          ? parameters.market_filters
+          : undefined;
+        const syncAllStocks =
+          parameters.syncAllStocks !== undefined
+            ? Boolean(parameters.syncAllStocks)
+            : parameters.sync_all_stocks !== undefined
+            ? Boolean(parameters.sync_all_stocks)
+            : !symbols?.length && !marketFilters?.length;
+
+        await this.enqueueDataUpdateJob(
+          task,
+          executionLog,
           'bulk_sync_custom',
           {
             type: 'bulk_sync_custom',
-            date: new Date().toISOString().split('T')[0],
-            symbols: symbols,
-            concurrency: 2,
+            date: today,
+            symbols,
+            marketFilters,
+            syncAllStocks,
+            start_date:
+              parameters.start_date ||
+              parameters.startDate ||
+              this.getDateDaysAgo(this.toPositiveInt(parameters.lookback_days, 10, 3650)),
+            end_date: parameters.end_date || parameters.endDate || today,
+            dataSource: parameters.dataSource || parameters.data_source || 'auto',
+            concurrency: this.toPositiveInt(parameters.concurrency, 2, 10),
           },
-          {
-            jobId: `syncHistory-${isManual ? 'manual-' : ''}${Date.now()}`,
-          }
+          'syncHistory',
+          isManual
         );
-        
-        await executionLog.update({ 
-          status: 'COMPLETED', 
-          completed_at: new Date(),
-          total_items: 1,
-          completed_items: 1
-        });
+      } else if (task.type === 'DATA_QUALITY_SCAN') {
+        await this.enqueueDataUpdateJob(
+          task,
+          executionLog,
+          'data_quality_scan',
+          {
+            type: 'data_quality_scan',
+            date: today,
+            scope: parameters.scope || 'market',
+            lookback_days: this.toPositiveInt(parameters.lookback_days, 180, 3650),
+            limit: this.toPositiveInt(parameters.limit, 200, 2000),
+          },
+          'dataQualityScan',
+          isManual
+        );
       } else if (task.type === 'AI_DAILY_SCREENER') {
         logger.info('触发 AI_DAILY_SCREENER 任务，使用多因子候选池进行 TradingAgents 深度分析...');
 
-        const today = moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
-        const parameters = task.parameters || {};
-        const candidateLimit = Math.min(Number(parameters.candidate_limit || parameters.limit || 10), 30);
+        const candidateLimit = Math.min(
+          Number(parameters.candidate_limit || parameters.limit || 10),
+          30
+        );
         const universe = parameters.universe === 'market' ? 'market' : 'favorites';
         const style = ['balanced', 'momentum', 'value', 'low_risk'].includes(parameters.style)
           ? parameters.style
@@ -169,18 +289,15 @@ class SchedulerService {
         if (count === 0) {
           await executionLog.update({ status: 'COMPLETED', completed_at: new Date() });
         }
+      } else {
+        throw new Error(`Unsupported task type: ${task.type}`);
       }
 
-      await task.update({ last_run_status: 'SUCCESS' });
+      await this.markTaskFinished(task, 'SUCCESS');
       return { success: true, message: 'Task executed successfully' };
     } catch (error: any) {
       logger.error(`Error executing task ${task.name}:`, error);
-      await task.update({ last_run_status: 'FAILED' });
-      await executionLog.update({ 
-        status: 'FAILED', 
-        completed_at: new Date(),
-        error_message: error.message 
-      });
+      await this.markTaskFinished(task, 'FAILED', executionLog, error);
       throw error;
     }
   }
@@ -188,7 +305,7 @@ class SchedulerService {
   async executeTask(id: number) {
     const task = await ScheduledTask.findByPk(id);
     if (!task) throw new Error('Task not found');
-    
+
     logger.info(`Manually triggering task ${task.id} (${task.name})`);
     return await this._executeTaskLogic(task, true);
   }
@@ -210,6 +327,139 @@ class SchedulerService {
 
   async getAllTasks() {
     return await ScheduledTask.findAll({ order: [['id', 'ASC']] });
+  }
+
+  async reconcileStaleRunningTasks() {
+    const staleBefore = moment().subtract(6, 'hours').toDate();
+    const [taskCount, logCount] = await Promise.all([
+      ScheduledTask.update(
+        { last_run_status: 'FAILED' },
+        {
+          where: {
+            last_run_status: 'RUNNING',
+            last_run_at: { [Op.lt]: staleBefore },
+          },
+        }
+      ),
+      TaskExecutionLog.update(
+        {
+          status: 'FAILED',
+          completed_at: new Date(),
+          error_message: '任务长时间处于运行中，系统启动时自动标记为失败',
+        },
+        {
+          where: {
+            status: 'IN_PROGRESS',
+            started_at: { [Op.lt]: staleBefore },
+          },
+        }
+      ),
+    ]);
+
+    const updatedTasks = Array.isArray(taskCount) ? taskCount[0] : taskCount;
+    const updatedLogs = Array.isArray(logCount) ? logCount[0] : logCount;
+    if (updatedTasks || updatedLogs) {
+      logger.warn(
+        `Reconciled stale scheduler states. tasks=${updatedTasks || 0}, logs=${updatedLogs || 0}`
+      );
+    }
+  }
+
+  async ensureDefaultTasks() {
+    const defaultTasks = [
+      {
+        name: '每日行情增量同步',
+        type: 'DAILY_UPDATE',
+        cron_expression: '10 17 * * 1-5',
+        is_active: true,
+        parameters: {
+          force_update: false,
+        },
+      },
+      {
+        name: '全量股票日线同步',
+        type: 'SYNC_HISTORY',
+        cron_expression: '0 18 * * 1-5',
+        is_active: true,
+        parameters: {
+          syncAllStocks: true,
+          lookback_days: 10,
+          dataSource: 'auto',
+          concurrency: 2,
+        },
+      },
+      {
+        name: 'AI优选-早盘分析',
+        type: 'AI_DAILY_SCREENER',
+        cron_expression: '0 9 * * 1-5',
+        is_active: true,
+        parameters: {
+          universe: 'favorites',
+          style: 'balanced',
+          candidate_limit: 10,
+          lookback_days: 120,
+        },
+      },
+      {
+        name: 'AI优选-午盘分析',
+        type: 'AI_DAILY_SCREENER',
+        cron_expression: '30 12 * * 1-5',
+        is_active: true,
+        parameters: {
+          universe: 'favorites',
+          style: 'balanced',
+          candidate_limit: 10,
+          lookback_days: 120,
+        },
+      },
+      {
+        name: 'AI优选-收盘分析',
+        type: 'AI_DAILY_SCREENER',
+        cron_expression: '30 14 * * 1-5',
+        is_active: true,
+        parameters: {
+          universe: 'favorites',
+          style: 'balanced',
+          candidate_limit: 10,
+          lookback_days: 120,
+        },
+      },
+    ];
+
+    for (const taskData of defaultTasks) {
+      const [task, created] = await ScheduledTask.findOrCreate({
+        where: { name: taskData.name },
+        defaults: taskData,
+      });
+
+      const patch: any = {};
+      if (!task.cron_expression) patch.cron_expression = taskData.cron_expression;
+      if (!task.type) patch.type = taskData.type;
+      if (!task.parameters && taskData.parameters) patch.parameters = taskData.parameters;
+      if (task.is_active === null || task.is_active === undefined)
+        patch.is_active = taskData.is_active;
+
+      if (taskData.name === '全量股票日线同步') {
+        const params = task.parameters || {};
+        const hasExplicitScope =
+          Array.isArray(params.symbols) ||
+          Array.isArray(params.marketFilters) ||
+          Array.isArray(params.market_filters) ||
+          params.syncAllStocks !== undefined ||
+          params.sync_all_stocks !== undefined;
+        if (!hasExplicitScope) {
+          patch.parameters = { ...taskData.parameters, ...params, syncAllStocks: true };
+        }
+      }
+
+      if (Object.keys(patch).length > 0) {
+        await task.update(patch);
+      }
+
+      if (created) {
+        logger.info(`Default scheduled task created: ${taskData.name}`);
+      }
+    }
   }
 
   async createTask(data: any) {

@@ -75,7 +75,6 @@ app.use('/api/logs', logRoutes);
 app.use('/api/internal', internalRoutes); // 给TradingAgents预留的安全数据接口
 
 import { User } from './models/User';
-import bcrypt from 'bcrypt';
 
 // Initialize database connection and start server
 async function initializeApp() {
@@ -105,36 +104,8 @@ async function initializeApp() {
           console.log('Default admin user "lym" created successfully');
         }
 
-        // Initialize AI Screener tasks if not exist
-        const aiTaskCount = await sequelize.models.ScheduledTask.count({
-          where: { type: 'AI_DAILY_SCREENER' },
-        });
-        if (aiTaskCount === 0) {
-          const defaultTasks = [
-            {
-              name: 'AI优选-早盘分析',
-              type: 'AI_DAILY_SCREENER',
-              cron_expression: '0 9 * * 1-5',
-              is_active: true,
-            },
-            {
-              name: 'AI优选-午盘分析',
-              type: 'AI_DAILY_SCREENER',
-              cron_expression: '30 12 * * 1-5',
-              is_active: true,
-            },
-            {
-              name: 'AI优选-收盘分析',
-              type: 'AI_DAILY_SCREENER',
-              cron_expression: '30 14 * * 1-5',
-              is_active: true,
-            },
-          ];
-          for (const taskData of defaultTasks) {
-            await sequelize.models.ScheduledTask.create(taskData);
-          }
-          console.log('Default AI_DAILY_SCREENER tasks created successfully');
-        }
+        await schedulerService.ensureDefaultTasks();
+        console.log('Default scheduled tasks checked successfully');
       } catch (error: any) {
         console.warn('Database sync failed, continuing with existing schema:', error.message);
         console.warn('Error details:', error);
@@ -185,6 +156,13 @@ async function initializeApp() {
           }
         } catch (aiSignalSyncError) {
           console.warn('Failed to sync AIInvestmentSignal table:', aiSignalSyncError.message);
+        }
+
+        try {
+          await schedulerService.ensureDefaultTasks();
+          console.log('Default scheduled tasks checked successfully after partial sync');
+        } catch (taskSeedError: any) {
+          console.warn('Failed to check default scheduled tasks:', taskSeedError.message);
         }
       }
     }

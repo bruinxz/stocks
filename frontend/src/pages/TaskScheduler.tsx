@@ -28,6 +28,38 @@ import dayjs from 'dayjs';
 const { Text } = Typography;
 const { Option } = Select;
 
+const taskTypeLabels: Record<string, string> = {
+  DAILY_UPDATE: '每日行情增量同步',
+  SYNC_ALL_STOCKS: '全市场股票列表同步',
+  SYNC_HISTORY: '股票历史行情同步',
+  DATA_QUALITY_SCAN: '数据质量扫描',
+  AI_DAILY_SCREENER: 'AI 每日优选评估',
+};
+
+const defaultParametersByType: Record<string, any> = {
+  DAILY_UPDATE: {
+    force_update: false,
+  },
+  SYNC_ALL_STOCKS: {},
+  SYNC_HISTORY: {
+    syncAllStocks: true,
+    lookback_days: 10,
+    dataSource: 'auto',
+    concurrency: 2,
+  },
+  DATA_QUALITY_SCAN: {
+    scope: 'market',
+    lookback_days: 180,
+    limit: 200,
+  },
+  AI_DAILY_SCREENER: {
+    universe: 'favorites',
+    style: 'balanced',
+    candidate_limit: 10,
+    lookback_days: 120,
+  },
+};
+
 const getLastRunStatusColor = (status?: string) => {
   if (status === 'SUCCESS') return 'success';
   if (status === 'FAILED') return 'error';
@@ -64,6 +96,12 @@ const TaskScheduler: React.FC = () => {
   const handleAdd = () => {
     setEditingTask(null);
     form.resetFields();
+    form.setFieldsValue({
+      is_active: true,
+      type: 'DAILY_UPDATE',
+      cron_expression: '10 17 * * 1-5',
+      parameters: JSON.stringify(defaultParametersByType.DAILY_UPDATE, null, 2),
+    });
     setIsModalVisible(true);
   };
 
@@ -153,12 +191,15 @@ const TaskScheduler: React.FC = () => {
     setActiveTaskName(record.name);
     setIsLogModalVisible(true);
     setLogLoading(true);
+    setCurrentLogs([]);
     try {
       if (!record.id) return;
       const logs = await taskService.getTaskLogs(record.id);
       setCurrentLogs(logs);
-    } catch (error) {
-      message.error('获取日志失败');
+    } catch (error: any) {
+      const detail =
+        error?.response?.data?.details || error?.response?.data?.message || error?.message || '';
+      message.error(`获取日志失败${detail ? `：${detail}` : ''}`);
     } finally {
       setLogLoading(false);
     }
@@ -174,7 +215,14 @@ const TaskScheduler: React.FC = () => {
       title: '任务类型',
       dataIndex: 'type',
       key: 'type',
-      render: (text: string) => <Tag color="blue">{text}</Tag>,
+      render: (text: string) => (
+        <Space direction="vertical" size={0}>
+          <Tag color="blue">{text}</Tag>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            {taskTypeLabels[text] || text}
+          </Text>
+        </Space>
+      ),
     },
     {
       title: 'Cron 表达式',
@@ -295,9 +343,21 @@ const TaskScheduler: React.FC = () => {
             label="任务类型"
             rules={[{ required: true, message: '请选择任务类型' }]}
           >
-            <Select placeholder="选择要执行的任务类型">
+            <Select
+              placeholder="选择要执行的任务类型"
+              onChange={(type: string) => {
+                if (defaultParametersByType[type]) {
+                  form.setFieldValue(
+                    'parameters',
+                    JSON.stringify(defaultParametersByType[type], null, 2)
+                  );
+                }
+              }}
+            >
+              <Option value="DAILY_UPDATE">每日行情增量同步</Option>
               <Option value="SYNC_ALL_STOCKS">全市场股票列表同步</Option>
               <Option value="SYNC_HISTORY">股票历史行情同步</Option>
+              <Option value="DATA_QUALITY_SCAN">数据质量扫描</Option>
               <Option value="AI_DAILY_SCREENER">AI 每日优选评估</Option>
             </Select>
           </Form.Item>
@@ -320,8 +380,18 @@ const TaskScheduler: React.FC = () => {
           <Form.Item name="parameters" label="任务参数 (JSON 格式)">
             <Input.TextArea
               rows={7}
+              onFocus={() => {
+                const type = form.getFieldValue('type');
+                const current = form.getFieldValue('parameters');
+                if (!current && defaultParametersByType[type]) {
+                  form.setFieldValue(
+                    'parameters',
+                    JSON.stringify(defaultParametersByType[type], null, 2)
+                  );
+                }
+              }}
               placeholder={
-                '{\n  "universe": "favorites",\n  "style": "balanced",\n  "candidate_limit": 10,\n  "lookback_days": 120\n}'
+                '{\n  "syncAllStocks": true,\n  "lookback_days": 10,\n  "dataSource": "auto",\n  "concurrency": 2\n}'
               }
             />
           </Form.Item>

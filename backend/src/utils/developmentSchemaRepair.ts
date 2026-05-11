@@ -10,6 +10,7 @@ import { PaperTradingSnapshot } from '../models/PaperTradingSnapshot';
 import { RiskAlert } from '../models/RiskAlert';
 import { TradingJournal } from '../models/TradingJournal';
 import { FavoriteStock } from '../models/FavoriteStock';
+import { AIInvestmentSignal } from '../models/AIInvestmentSignal';
 
 type ColumnRename = {
   table: string;
@@ -225,6 +226,7 @@ export async function repairLegacyDevelopmentSchema(): Promise<void> {
       PaperTradingSnapshot.sync(),
       RiskAlert.sync(),
       TradingJournal.sync(),
+      AIInvestmentSignal.sync(),
     ]);
 
     for (const rename of LEGACY_COLUMN_RENAMES) {
