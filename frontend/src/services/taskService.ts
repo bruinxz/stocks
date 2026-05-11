@@ -11,6 +11,21 @@ export interface ScheduledTask {
   last_run_status?: string;
 }
 
+export interface QueueJobSummary {
+  id: string | number;
+  queue_name: string;
+  name?: string;
+  state: string;
+  progress?: any;
+  failed_reason?: string;
+  attempts_made?: number;
+  timestamp?: number;
+  processed_on?: number;
+  finished_on?: number;
+  data?: any;
+  return_value?: any;
+}
+
 export interface TaskExecutionLog {
   id: number;
   task_id: number;
@@ -22,6 +37,16 @@ export interface TaskExecutionLog {
   error_message: string;
   started_at: string;
   completed_at: string;
+  queue_jobs?: QueueJobSummary[];
+  queue_summary?: {
+    total: number;
+    completed: number;
+    failed: number;
+    active: number;
+    waiting: number;
+    delayed: number;
+  };
+  queue_error?: string;
 }
 
 export const taskService = {

@@ -110,7 +110,9 @@ class SchedulerService {
     isManual: boolean
   ) {
     const job = await dataUpdateQueue.add(queueName, data, {
-      jobId: `${jobPrefix}-${isManual ? 'manual-' : ''}${task.id}-${Date.now()}`,
+      jobId: `${jobPrefix}-${isManual ? 'manual-' : ''}task-${task.id}-log-${
+        executionLog.id
+      }-${Date.now()}`,
     });
 
     await executionLog.update({
@@ -154,6 +156,8 @@ class SchedulerService {
             type: 'daily_update',
             date: today,
             forceUpdate: Boolean(parameters.force_update || parameters.forceUpdate || isManual),
+            execution_log_id: executionLog.id,
+            scheduled_task_id: task.id,
           },
           'dailyUpdate',
           isManual
@@ -166,6 +170,8 @@ class SchedulerService {
           {
             type: 'new_stocks_sync',
             date: today,
+            execution_log_id: executionLog.id,
+            scheduled_task_id: task.id,
           },
           'syncAllStocks',
           isManual
@@ -201,6 +207,8 @@ class SchedulerService {
             end_date: parameters.end_date || parameters.endDate || today,
             dataSource: parameters.dataSource || parameters.data_source || 'auto',
             concurrency: this.toPositiveInt(parameters.concurrency, 2, 10),
+            execution_log_id: executionLog.id,
+            scheduled_task_id: task.id,
           },
           'syncHistory',
           isManual
@@ -216,6 +224,8 @@ class SchedulerService {
             scope: parameters.scope || 'market',
             lookback_days: this.toPositiveInt(parameters.lookback_days, 180, 3650),
             limit: this.toPositiveInt(parameters.limit, 200, 2000),
+            execution_log_id: executionLog.id,
+            scheduled_task_id: task.id,
           },
           'dataQualityScan',
           isManual
@@ -266,7 +276,9 @@ class SchedulerService {
                   recommendation_source: universe,
                 },
                 {
-                  jobId: `ai-poll-${isManual ? 'manual-' : ''}${res.task_id}`,
+                  jobId: `ai-poll-${isManual ? 'manual-' : ''}log-${executionLog.id}-${
+                    res.task_id
+                  }`,
                   attempts: 10,
                   backoff: { type: 'fixed', delay: 3 * 60 * 1000 },
                 }

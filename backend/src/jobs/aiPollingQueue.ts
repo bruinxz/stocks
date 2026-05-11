@@ -28,12 +28,14 @@ const aiPollingQueue = new Bull<AIPollingJobData>('ai_polling', {
       type: 'fixed',
       delay: 3 * 60 * 1000, // 3 minutes
     },
-    removeOnComplete: true,
+    removeOnComplete: 200,
     removeOnFail: false,
   },
 });
 
 aiPollingQueue.on('error', error => logger.error('aiPollingQueue 错误:', error));
-aiPollingQueue.on('failed', (job, error) => logger.error(`AI 分析轮询任务 ${job?.id} 失败:`, error));
+aiPollingQueue.on('failed', (job, error) =>
+  logger.error(`AI 分析轮询任务 ${job?.id} 失败:`, error)
+);
 
 export { aiPollingQueue };

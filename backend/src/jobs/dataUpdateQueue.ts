@@ -20,6 +20,8 @@ export interface DataUpdateJobData {
   end_date?: string; // 同步结束日期 YYYY-MM-DD
   dataSource?: 'auto' | 'tushare' | 'baostock' | 'akshare' | 'eastmoney' | 'sina'; // 数据源选择，默认auto自动fallback
   concurrency?: number; // 并发数量（批次大小）
+  execution_log_id?: number; // 关联 task_execution_logs.id，便于前端查看定时任务投递后的队列明细
+  scheduled_task_id?: number; // 关联 scheduled_tasks.id
   scope?: 'favorites' | 'market' | 'all'; // 数据质量扫描范围
   lookback_days?: number; // 数据质量扫描窗口
   limit?: number; // 数据质量扫描数量

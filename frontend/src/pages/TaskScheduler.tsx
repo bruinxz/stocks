@@ -11,9 +11,11 @@ import {
   Form,
   Input,
   Select,
+  Descriptions,
   message,
   Tooltip,
   Empty,
+  Divider,
 } from 'antd';
 import {
   PlusOutlined,
@@ -21,11 +23,18 @@ import {
   DeleteOutlined,
   InfoCircleOutlined,
   PlayCircleOutlined,
+  DatabaseOutlined,
+  EyeOutlined,
 } from '@ant-design/icons';
-import { taskService, ScheduledTask, TaskExecutionLog } from '../services/taskService';
+import {
+  taskService,
+  ScheduledTask,
+  TaskExecutionLog,
+  QueueJobSummary,
+} from '../services/taskService';
 import dayjs from 'dayjs';
 
-const { Text } = Typography;
+const { Text, Title } = Typography;
 const { Option } = Select;
 
 const taskTypeLabels: Record<string, string> = {
@@ -66,6 +75,43 @@ const getLastRunStatusColor = (status?: string) => {
   return 'processing';
 };
 
+const queueStateLabels: Record<string, string> = {
+  completed: '已完成',
+  failed: '失败',
+  active: '执行中',
+  waiting: '等待中',
+  delayed: '延迟中',
+  paused: '已暂停',
+  unknown: '未知',
+};
+
+const getQueueStateColor = (state?: string) => {
+  if (state === 'completed') return 'success';
+  if (state === 'failed') return 'error';
+  if (state === 'active') return 'processing';
+  if (state === 'waiting' || state === 'delayed') return 'warning';
+  return 'default';
+};
+
+const formatQueueTime = (timestamp?: number) =>
+  timestamp ? dayjs(timestamp).format('YYYY-MM-DD HH:mm:ss') : '-';
+
+const formatQueueProgress = (progress: any) => {
+  if (progress === null || progress === undefined || progress === '') return '-';
+  if (typeof progress === 'number') return `${progress}%`;
+  if (typeof progress === 'object') return JSON.stringify(progress);
+  return String(progress);
+};
+
+const stringifyJson = (value: any) => {
+  if (value === null || value === undefined || value === '') return '-';
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch (error) {
+    return String(value);
+  }
+};
+
 const TaskScheduler: React.FC = () => {
   const [tasks, setTasks] = useState<ScheduledTask[]>([]);
   const [loading, setLoading] = useState(false);
@@ -75,6 +121,8 @@ const TaskScheduler: React.FC = () => {
   const [logLoading, setLogLoading] = useState(false);
   const [currentLogs, setCurrentLogs] = useState<TaskExecutionLog[]>([]);
   const [activeTaskName, setActiveTaskName] = useState<string>('');
+  const [queueDetail, setQueueDetail] = useState<QueueJobSummary | null>(null);
+  const [isQueueDetailVisible, setIsQueueDetailVisible] = useState(false);
   const [form] = Form.useForm();
 
   const fetchTasks = async () => {
@@ -310,6 +358,7 @@ const TaskScheduler: React.FC = () => {
           rowKey="id"
           loading={loading}
           pagination={{ pageSize: 10 }}
+          scroll={{ x: 960 }}
           locale={{ emptyText: <Empty description="暂无定时任务，请点击右上角新建任务" /> }}
         />
       </Card>
@@ -415,6 +464,7 @@ const TaskScheduler: React.FC = () => {
           loading={logLoading}
           pagination={{ pageSize: 10 }}
           size="small"
+          scroll={{ x: 1080 }}
           columns={[
             {
               title: '状态',
@@ -449,6 +499,51 @@ const TaskScheduler: React.FC = () => {
               ),
             },
             {
+              title: '队列任务',
+              key: 'queue_jobs',
+              width: 260,
+              render: (_: any, record: TaskExecutionLog) => {
+                const jobs = record.queue_jobs || [];
+                if (!jobs.length) {
+                  return record.queue_error ? (
+                    <Text type="warning" ellipsis={{ tooltip: record.queue_error }}>
+                      队列详情暂不可用
+                    </Text>
+                  ) : (
+                    <Text type="secondary">暂无关联</Text>
+                  );
+                }
+
+                return (
+                  <Space direction="vertical" size={6}>
+                    {jobs.map(job => (
+                      <Space key={`${job.queue_name}-${job.id}`} size={6} wrap>
+                        <Tag
+                          color={getQueueStateColor(job.state)}
+                          icon={<DatabaseOutlined />}
+                          style={{ marginRight: 0 }}
+                        >
+                          {job.queue_name} · {queueStateLabels[job.state] || job.state}
+                        </Tag>
+                        <Button
+                          type="link"
+                          size="small"
+                          icon={<EyeOutlined />}
+                          onClick={() => {
+                            setQueueDetail(job);
+                            setIsQueueDetailVisible(true);
+                          }}
+                          style={{ paddingInline: 0 }}
+                        >
+                          详情
+                        </Button>
+                      </Space>
+                    ))}
+                  </Space>
+                );
+              },
+            },
+            {
               title: '异常信息',
               dataIndex: 'error_message',
               key: 'error_message',
@@ -463,6 +558,118 @@ const TaskScheduler: React.FC = () => {
             },
           ]}
         />
+      </Modal>
+
+      <Modal
+        title={
+          <Space>
+            <DatabaseOutlined />
+            队列任务详情
+          </Space>
+        }
+        open={isQueueDetailVisible}
+        onCancel={() => setIsQueueDetailVisible(false)}
+        footer={null}
+        width={780}
+      >
+        {queueDetail && (
+          <div
+            style={{
+              background:
+                'linear-gradient(135deg, rgba(15, 23, 42, 0.04), rgba(14, 165, 233, 0.06))',
+              border: '1px solid rgba(15, 23, 42, 0.08)',
+              borderRadius: 18,
+              padding: 16,
+            }}
+          >
+            <Space direction="vertical" size={14} style={{ width: '100%' }}>
+              <Space wrap>
+                <Tag color="geekblue">{queueDetail.queue_name}</Tag>
+                <Tag color={getQueueStateColor(queueDetail.state)}>
+                  {queueStateLabels[queueDetail.state] || queueDetail.state}
+                </Tag>
+                <Text code copyable>
+                  {String(queueDetail.id)}
+                </Text>
+              </Space>
+
+              <Descriptions bordered size="small" column={1}>
+                <Descriptions.Item label="任务名称">{queueDetail.name || '-'}</Descriptions.Item>
+                <Descriptions.Item label="状态">
+                  <Tag color={getQueueStateColor(queueDetail.state)}>
+                    {queueStateLabels[queueDetail.state] || queueDetail.state}
+                  </Tag>
+                </Descriptions.Item>
+                <Descriptions.Item label="进度">
+                  {formatQueueProgress(queueDetail.progress)}
+                </Descriptions.Item>
+                <Descriptions.Item label="尝试次数">
+                  {queueDetail.attempts_made ?? '-'}
+                </Descriptions.Item>
+                <Descriptions.Item label="创建时间">
+                  {formatQueueTime(queueDetail.timestamp)}
+                </Descriptions.Item>
+                <Descriptions.Item label="开始处理">
+                  {formatQueueTime(queueDetail.processed_on)}
+                </Descriptions.Item>
+                <Descriptions.Item label="结束时间">
+                  {formatQueueTime(queueDetail.finished_on)}
+                </Descriptions.Item>
+                <Descriptions.Item label="失败原因">
+                  {queueDetail.failed_reason || '-'}
+                </Descriptions.Item>
+              </Descriptions>
+
+              <Divider style={{ margin: '4px 0' }} />
+
+              <div>
+                <Title level={5} style={{ marginBottom: 8 }}>
+                  投递数据
+                </Title>
+                <pre
+                  style={{
+                    maxHeight: 260,
+                    overflow: 'auto',
+                    margin: 0,
+                    padding: 14,
+                    borderRadius: 14,
+                    background: '#0f172a',
+                    color: '#dbeafe',
+                    border: '1px solid rgba(148, 163, 184, 0.24)',
+                    fontSize: 12,
+                    lineHeight: 1.6,
+                  }}
+                >
+                  {stringifyJson(queueDetail.data)}
+                </pre>
+              </div>
+
+              {queueDetail.return_value !== undefined && queueDetail.return_value !== null && (
+                <div>
+                  <Title level={5} style={{ marginBottom: 8 }}>
+                    执行返回
+                  </Title>
+                  <pre
+                    style={{
+                      maxHeight: 220,
+                      overflow: 'auto',
+                      margin: 0,
+                      padding: 14,
+                      borderRadius: 14,
+                      background: '#111827',
+                      color: '#dcfce7',
+                      border: '1px solid rgba(34, 197, 94, 0.24)',
+                      fontSize: 12,
+                      lineHeight: 1.6,
+                    }}
+                  >
+                    {stringifyJson(queueDetail.return_value)}
+                  </pre>
+                </div>
+              )}
+            </Space>
+          </div>
+        )}
       </Modal>
     </div>
   );
