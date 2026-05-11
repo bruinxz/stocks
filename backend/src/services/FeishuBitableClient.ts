@@ -117,7 +117,7 @@ class FeishuBitableClient {
       );
       const items = data?.items || data?.fields || [];
       allFields.push(...items);
-      pageToken = data?.page_token || '';
+      pageToken = data?.has_more ? data?.page_token || '' : '';
     } while (pageToken);
 
     return allFields;
