@@ -20,6 +20,39 @@ router.get('/', authController.authenticate, paperTradingController.getPortfolio
 router.post('/trade', authController.authenticate, paperTradingController.placeTrade);
 
 /**
+ * @route POST /api/paper-trading/auto-from-signals
+ * @desc 从已归档 AI/量化推荐信号自动生成模拟盘交易
+ * @access Private
+ */
+router.post(
+  '/auto-from-signals',
+  authController.authenticate,
+  paperTradingController.autoTradeFromSignals
+);
+
+/**
+ * @route POST /api/paper-trading/auto-sync-recommendations
+ * @desc 刷新候选推荐、归档为投研信号，并自动进入模拟盘
+ * @access Private
+ */
+router.post(
+  '/auto-sync-recommendations',
+  authController.authenticate,
+  paperTradingController.autoSyncFromRecommendations
+);
+
+/**
+ * @route POST /api/paper-trading/refresh-snapshot
+ * @desc 刷新模拟盘最新价格与资金快照
+ * @access Private
+ */
+router.post(
+  '/refresh-snapshot',
+  authController.authenticate,
+  paperTradingController.refreshSnapshot
+);
+
+/**
  * @route GET /api/paper-trading/history
  * @desc 获取模拟盘的交易流水
  * @access Private

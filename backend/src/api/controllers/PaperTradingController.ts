@@ -5,6 +5,7 @@ import { PaperTradingTrade } from '../../models/PaperTradingTrade';
 import { PaperTradingSnapshot } from '../../models/PaperTradingSnapshot';
 import { Stock } from '../../models/Stock';
 import { DataService } from '../../data/services/DataService';
+import { paperTradingAutomationService } from '../../services/PaperTradingAutomationService';
 import { logger } from '../../utils/logger';
 
 export class PaperTradingController {
@@ -42,28 +43,34 @@ export class PaperTradingController {
 
       // 更新持仓的当前价格和浮动盈亏
       let totalMarketValue = 0;
-      const updatedPositions = await Promise.all(positions.map(async (pos) => {
-        try {
-          const bars = await this.dataService.getDailyBars(pos.symbol, new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), new Date());
-          if (bars && bars.length > 0) {
-            const current_price = bars[bars.length - 1].close;
-            const market_value = current_price * pos.quantity;
-            const unrealized_pnl = market_value - (pos.avg_cost * pos.quantity);
-            
-            // 更新数据库
-            pos.current_price = current_price;
-            pos.market_value = market_value;
-            pos.unrealized_pnl = unrealized_pnl;
-            await pos.save();
+      const updatedPositions = await Promise.all(
+        positions.map(async pos => {
+          try {
+            const bars = await this.dataService.getDailyBars(
+              pos.symbol,
+              new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+              new Date()
+            );
+            if (bars && bars.length > 0) {
+              const current_price = bars[bars.length - 1].close;
+              const market_value = current_price * pos.quantity;
+              const unrealized_pnl = market_value - pos.avg_cost * pos.quantity;
+
+              // 更新数据库
+              pos.current_price = current_price;
+              pos.market_value = market_value;
+              pos.unrealized_pnl = unrealized_pnl;
+              await pos.save();
+            }
+            totalMarketValue += pos.market_value;
+            return pos;
+          } catch (e) {
+            logger.error(`获取股票 ${pos.symbol} 价格失败`, e);
+            totalMarketValue += pos.market_value;
+            return pos;
           }
-          totalMarketValue += pos.market_value;
-          return pos;
-        } catch (e) {
-          logger.error(`获取股票 ${pos.symbol} 价格失败`, e);
-          totalMarketValue += pos.market_value;
-          return pos;
-        }
-      }));
+        })
+      );
 
       // 更新总资产
       portfolio.total_value = portfolio.current_cash + totalMarketValue;
@@ -105,7 +112,11 @@ export class PaperTradingController {
       }
 
       // 获取当前股票价格
-      const bars = await this.dataService.getDailyBars(symbol, new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), new Date());
+      const bars = await this.dataService.getDailyBars(
+        symbol,
+        new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+        new Date()
+      );
       if (!bars || bars.length === 0) {
         return res.status(400).json({ success: false, message: '无法获取该股票的当前价格' });
       }
@@ -133,12 +144,12 @@ export class PaperTradingController {
         });
 
         if (position) {
-          const totalCostBasis = (position.avg_cost * position.quantity) + cost;
+          const totalCostBasis = position.avg_cost * position.quantity + cost;
           position.quantity += quantity;
           position.avg_cost = totalCostBasis / position.quantity;
           position.current_price = current_price;
           position.market_value = position.quantity * current_price;
-          position.unrealized_pnl = position.market_value - (position.avg_cost * position.quantity);
+          position.unrealized_pnl = position.market_value - position.avg_cost * position.quantity;
           await position.save();
         } else {
           await PaperTradingPosition.create({
@@ -149,7 +160,7 @@ export class PaperTradingController {
             avg_cost: execute_price,
             current_price,
             market_value: quantity * current_price,
-            unrealized_pnl: (quantity * current_price) - cost,
+            unrealized_pnl: quantity * current_price - cost,
           });
         }
 
@@ -167,7 +178,6 @@ export class PaperTradingController {
           amount: cost,
           commission,
         });
-
       } else if (direction === 'SELL') {
         let position = await PaperTradingPosition.findOne({
           where: { portfolio_id: portfolio.id, symbol },
@@ -188,7 +198,7 @@ export class PaperTradingController {
           position.quantity -= quantity;
           position.current_price = current_price;
           position.market_value = position.quantity * current_price;
-          position.unrealized_pnl = position.market_value - (position.avg_cost * position.quantity);
+          position.unrealized_pnl = position.market_value - position.avg_cost * position.quantity;
           await position.save();
         }
 
@@ -196,7 +206,7 @@ export class PaperTradingController {
         await portfolio.save();
 
         // 记录交易流水
-        const realized_pnl = revenue - (position.avg_cost * quantity) - commission;
+        const realized_pnl = revenue - position.avg_cost * quantity - commission;
         await PaperTradingTrade.create({
           portfolio_id: portfolio.id,
           symbol,
@@ -224,7 +234,7 @@ export class PaperTradingController {
   getTradeHistory = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const user = (req as any).user;
-      
+
       const portfolio = await PaperTradingPortfolio.findOne({
         where: { user_id: user.id },
       });
@@ -249,11 +259,11 @@ export class PaperTradingController {
     }
   };
 
-      // 获取快照历史(资金曲线)
+  // 获取快照历史(资金曲线)
   getSnapshots = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const user = (req as any).user;
-      
+
       const portfolio = await PaperTradingPortfolio.findOne({
         where: { user_id: user.id },
       });
@@ -271,7 +281,9 @@ export class PaperTradingController {
           date: todayStr,
           total_value: Number(portfolio.total_value) || 1000000,
           current_cash: Number(portfolio.current_cash) || 1000000,
-          position_value: (Number(portfolio.total_value) || 1000000) - (Number(portfolio.current_cash) || 1000000),
+          position_value:
+            (Number(portfolio.total_value) || 1000000) -
+            (Number(portfolio.current_cash) || 1000000),
         });
       }
 
@@ -286,6 +298,78 @@ export class PaperTradingController {
       });
     } catch (error: any) {
       logger.error('获取资金曲线快照失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
+  // 从已归档的 AI/量化推荐信号自动生成模拟盘交易
+  autoTradeFromSignals = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const user = (req as any).user;
+      const result = await paperTradingAutomationService.autoBuyFromSignals({
+        ...req.body,
+        user_id: user.id,
+      });
+
+      res.json({
+        success: true,
+        data: result,
+        message: result.dry_run
+          ? `预演完成，计划交易 ${result.planned} 笔`
+          : `自动跟单完成，成交 ${result.executed} 笔`,
+      });
+    } catch (error: any) {
+      logger.error('推荐信号自动进入模拟盘失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
+  // 刷新推荐候选、归档信号，并自动执行模拟盘跟单闭环
+  autoSyncFromRecommendations = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const user = (req as any).user;
+      const result = await paperTradingAutomationService.runAutoSync({
+        ...req.body,
+        user_id: user.id,
+        refresh_recommendations: req.body?.refresh_recommendations ?? true,
+      });
+
+      res.json({
+        success: true,
+        data: result,
+        message: result.dry_run
+          ? `推荐闭环预演完成，计划交易 ${result.planned} 笔`
+          : `推荐闭环完成，模拟成交 ${result.executed} 笔`,
+      });
+    } catch (error: any) {
+      logger.error('推荐候选自动归档并进入模拟盘失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
+  // 刷新价格并写入当日资产快照
+  refreshSnapshot = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const user = (req as any).user;
+      const portfolio = await PaperTradingPortfolio.findOne({
+        where: { user_id: user.id },
+      });
+
+      if (!portfolio) {
+        return res.status(404).json({ success: false, message: '未找到模拟盘' });
+      }
+
+      const snapshot = await paperTradingAutomationService.syncLatestPricesAndSnapshot(
+        portfolio.id
+      );
+
+      res.json({
+        success: true,
+        data: snapshot,
+        message: '模拟盘快照已刷新',
+      });
+    } catch (error: any) {
+      logger.error('刷新模拟盘快照失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   };

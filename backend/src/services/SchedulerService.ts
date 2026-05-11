@@ -8,6 +8,7 @@ import { aiAdvisorService } from './AIAdvisorService';
 import { quantRecommendationService } from './QuantRecommendationService';
 import { aiInvestmentSignalService } from './AIInvestmentSignalService';
 import { feishuTaskReportService } from './FeishuTaskReportService';
+import { paperTradingAutomationService } from './PaperTradingAutomationService';
 import moment from 'moment-timezone';
 import { Op } from 'sequelize';
 
@@ -171,7 +172,11 @@ class SchedulerService {
             type: 'daily_update',
             date: today,
             forceUpdate: Boolean(parameters.force_update || parameters.forceUpdate || isManual),
-            max_stocks: this.toPositiveInt(parameters.max_stocks || parameters.maxStocks, 300, 2000),
+            max_stocks: this.toPositiveInt(
+              parameters.max_stocks || parameters.maxStocks,
+              300,
+              2000
+            ),
             execution_log_id: executionLog.id,
             scheduled_task_id: task.id,
           },
@@ -291,6 +296,89 @@ class SchedulerService {
 
         logger.info(
           `推荐绩效刷新完成。扫描 ${result.verification.total}，验证 ${result.verification.verified}，无数据 ${result.verification.no_data}`
+        );
+      } else if (task.type === 'PAPER_TRADING_AUTO_SYNC') {
+        const result = await paperTradingAutomationService.runAutoSync({
+          username: parameters.username,
+          source_type: parameters.source_type || parameters.sourceType,
+          limit: this.toPositiveInt(parameters.limit, 5, 20),
+          scan_limit: this.toPositiveInt(
+            this.getParameterValue(parameters, 'scan_limit', 'scanLimit'),
+            80,
+            500
+          ),
+          min_score: Number(parameters.min_score || parameters.minScore || 72),
+          max_positions: this.toPositiveInt(
+            this.getParameterValue(parameters, 'max_positions', 'maxPositions'),
+            8,
+            30
+          ),
+          default_position_pct: Number(
+            parameters.default_position_pct || parameters.defaultPositionPct || 5
+          ),
+          max_position_pct: Number(parameters.max_position_pct || parameters.maxPositionPct || 12),
+          min_trade_amount: Number(
+            parameters.min_trade_amount || parameters.minTradeAmount || 3000
+          ),
+          allowed_risk_levels: parameters.allowed_risk_levels ||
+            parameters.allowedRiskLevels || ['low', 'medium'],
+          require_action_buy:
+            parameters.require_action_buy !== undefined
+              ? Boolean(parameters.require_action_buy)
+              : parameters.requireActionBuy !== undefined
+              ? Boolean(parameters.requireActionBuy)
+              : true,
+          dry_run:
+            parameters.dry_run !== undefined
+              ? Boolean(parameters.dry_run)
+              : parameters.dryRun !== undefined
+              ? Boolean(parameters.dryRun)
+              : false,
+          report_to_feishu:
+            parameters.report_to_feishu !== undefined
+              ? Boolean(parameters.report_to_feishu)
+              : parameters.reportToFeishu !== undefined
+              ? Boolean(parameters.reportToFeishu)
+              : true,
+          refresh_recommendations:
+            parameters.refresh_recommendations !== undefined
+              ? Boolean(parameters.refresh_recommendations)
+              : parameters.refreshRecommendations !== undefined
+              ? Boolean(parameters.refreshRecommendations)
+              : true,
+          universe: parameters.universe === 'market' ? 'market' : 'favorites',
+          style: ['balanced', 'momentum', 'value', 'low_risk'].includes(parameters.style)
+            ? parameters.style
+            : 'balanced',
+          candidate_limit: this.toPositiveInt(
+            parameters.candidate_limit || parameters.candidateLimit,
+            20,
+            50
+          ),
+          lookback_days: this.toPositiveInt(
+            parameters.lookback_days || parameters.lookbackDays,
+            120,
+            3650
+          ),
+          verify_signals:
+            parameters.verify_signals !== undefined
+              ? Boolean(parameters.verify_signals)
+              : parameters.verifySignals !== undefined
+              ? Boolean(parameters.verifySignals)
+              : false,
+        });
+
+        await executionLog.update({
+          total_items: result.scanned,
+          completed_items: result.executed || result.planned,
+          failed_items: result.skipped,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: null,
+        });
+
+        logger.info(
+          `模拟盘自动跟单完成。扫描 ${result.scanned}，成交 ${result.executed}，预演 ${result.planned}，跳过 ${result.skipped}`
         );
       } else if (task.type === 'AI_DAILY_SCREENER') {
         logger.info('触发 AI_DAILY_SCREENER 任务，使用多因子候选池进行 TradingAgents 深度分析...');
@@ -515,6 +603,32 @@ class SchedulerService {
         is_active: true,
         parameters: {
           limit: 500,
+          report_to_feishu: true,
+        },
+      },
+      {
+        name: '推荐信号模拟盘跟单',
+        type: 'PAPER_TRADING_AUTO_SYNC',
+        cron_expression: '40 15 * * 1-5',
+        is_active: true,
+        parameters: {
+          username: 'lym',
+          refresh_recommendations: true,
+          universe: 'favorites',
+          style: 'balanced',
+          candidate_limit: 20,
+          lookback_days: 120,
+          source_type: 'quant_recommendation',
+          limit: 3,
+          scan_limit: 100,
+          min_score: 72,
+          max_positions: 8,
+          default_position_pct: 5,
+          max_position_pct: 10,
+          min_trade_amount: 3000,
+          allowed_risk_levels: ['low', 'medium'],
+          require_action_buy: true,
+          dry_run: false,
           report_to_feishu: true,
         },
       },

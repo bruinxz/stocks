@@ -20,8 +20,10 @@ import {
   DatabaseOutlined,
   ExperimentOutlined,
   FundProjectionScreenOutlined,
+  PlayCircleOutlined,
   ReloadOutlined,
   RobotOutlined,
+  RocketOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons';
 import { Area, AreaChart, ResponsiveContainer } from 'recharts';
@@ -97,6 +99,34 @@ interface SignalStats {
   >;
 }
 
+interface AutoTradeItem {
+  symbol: string;
+  name?: string;
+  quantity?: number;
+  execute_price?: number;
+  amount?: number;
+  target_position_pct?: number;
+  stop_loss_pct?: number;
+  take_profit_pct?: number;
+  reason?: string;
+}
+
+interface AutoTradeResult {
+  dry_run: boolean;
+  scanned: number;
+  eligible: number;
+  executed: number;
+  planned: number;
+  skipped: number;
+  trades: AutoTradeItem[];
+  skipped_items: AutoTradeItem[];
+  snapshot?: {
+    total_value: number;
+    current_cash: number;
+    position_value: number;
+  };
+}
+
 const riskColorMap: Record<string, string> = {
   low: 'green',
   medium: 'gold',
@@ -129,6 +159,9 @@ const Recommendations: React.FC = () => {
   const [analyzeLoading, setAnalyzeLoading] = useState(false);
   const [profileLoading, setProfileLoading] = useState(false);
   const [archiveLoading, setArchiveLoading] = useState(false);
+  const [autoTradeLoading, setAutoTradeLoading] = useState(false);
+  const [autoTradePreviewLoading, setAutoTradePreviewLoading] = useState(false);
+  const [autoTradeResult, setAutoTradeResult] = useState<AutoTradeResult | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
   const [signalStats, setSignalStats] = useState<SignalStats | null>(null);
   const [style, setStyle] = useState('balanced');
@@ -299,6 +332,47 @@ const Recommendations: React.FC = () => {
       message.error(error.response?.data?.message || '归档候选后验信号失败');
     } finally {
       setArchiveLoading(false);
+    }
+  };
+
+  const runPaperTradingSync = async (dryRun: boolean) => {
+    const setRunning = dryRun ? setAutoTradePreviewLoading : setAutoTradeLoading;
+    setRunning(true);
+    try {
+      const response = await api.post('/paper-trading/auto-sync-recommendations', {
+        refresh_recommendations: true,
+        universe,
+        style,
+        candidate_limit: Math.max(limit, 10),
+        lookback_days: 120,
+        source_type: 'quant_recommendation',
+        limit: 3,
+        scan_limit: 100,
+        min_score: 72,
+        max_positions: 8,
+        default_position_pct: 5,
+        max_position_pct: 10,
+        min_trade_amount: 3000,
+        require_action_buy: true,
+        dry_run: dryRun,
+        report_to_feishu: !dryRun,
+      });
+      const result = response.data.data as AutoTradeResult;
+      setAutoTradeResult(result);
+      message.success(
+        dryRun
+          ? `预演完成：计划 ${result.planned || result.trades?.length || 0} 笔，跳过 ${
+              result.skipped || 0
+            } 条`
+          : `模拟跟单完成：成交 ${result.executed || 0} 笔，跳过 ${result.skipped || 0} 条`
+      );
+      if (!dryRun) {
+        await fetchSignalStats();
+      }
+    } catch (error: any) {
+      message.error(error.response?.data?.message || '模拟盘跟单执行失败');
+    } finally {
+      setRunning(false);
     }
   };
 
@@ -551,6 +625,20 @@ const Recommendations: React.FC = () => {
               绩效实验室
             </Button>
             <Button
+              icon={<PlayCircleOutlined />}
+              onClick={() => runPaperTradingSync(true)}
+              loading={autoTradePreviewLoading}
+            >
+              预演跟单
+            </Button>
+            <Button
+              icon={<RocketOutlined />}
+              onClick={() => runPaperTradingSync(false)}
+              loading={autoTradeLoading}
+            >
+              一键模拟跟单
+            </Button>
+            <Button
               type="primary"
               icon={<ThunderboltOutlined />}
               onClick={submitTopToTradingAgents}
@@ -573,6 +661,71 @@ const Recommendations: React.FC = () => {
           feedbackOverview.tracked
         } 只候选具备历史推荐反馈，平均反馈调分 ${feedbackOverview.avgAdjustment.toFixed(1)}。`}
       />
+
+      {autoTradeResult && (
+        <Card
+          className="modern-card"
+          variant="borderless"
+          style={{
+            marginBottom: 16,
+            background:
+              'linear-gradient(135deg, rgba(15,23,42,0.96), rgba(30,41,59,0.94) 48%, rgba(127,29,29,0.88))',
+            border: '1px solid rgba(248,250,252,0.12)',
+            boxShadow: '0 18px 46px rgba(15,23,42,0.18)',
+          }}
+        >
+          <Row gutter={[16, 16]} align="middle">
+            <Col xs={24} md={7}>
+              <Space direction="vertical" size={4}>
+                <Tag color={autoTradeResult.dry_run ? 'blue' : 'red'}>
+                  {autoTradeResult.dry_run ? '纸面预演' : '已写入模拟盘'}
+                </Tag>
+                <Text style={{ color: '#f8fafc', fontSize: 18, fontWeight: 800 }}>
+                  推荐信号 → 模拟盘闭环回执
+                </Text>
+                <Text style={{ color: 'rgba(248,250,252,0.68)' }}>
+                  扫描 {autoTradeResult.scanned} 条，符合 {autoTradeResult.eligible} 条，跳过{' '}
+                  {autoTradeResult.skipped} 条
+                </Text>
+              </Space>
+            </Col>
+            <Col xs={12} md={4}>
+              <Statistic
+                title={<span style={{ color: 'rgba(248,250,252,0.7)' }}>成交/计划</span>}
+                value={autoTradeResult.dry_run ? autoTradeResult.planned : autoTradeResult.executed}
+                suffix="笔"
+                valueStyle={{ color: '#fecaca' }}
+              />
+            </Col>
+            <Col xs={12} md={4}>
+              <Statistic
+                title={<span style={{ color: 'rgba(248,250,252,0.7)' }}>总资产</span>}
+                value={autoTradeResult.snapshot?.total_value || 0}
+                precision={0}
+                prefix="¥"
+                valueStyle={{ color: '#f8fafc' }}
+              />
+            </Col>
+            <Col xs={24} md={9}>
+              {autoTradeResult.trades?.length > 0 ? (
+                <Space wrap>
+                  {autoTradeResult.trades.slice(0, 4).map(item => (
+                    <Tag key={item.symbol} color="volcano">
+                      {item.name || item.symbol} · {item.quantity}股 · {item.target_position_pct}%
+                    </Tag>
+                  ))}
+                </Space>
+              ) : (
+                <Text style={{ color: 'rgba(248,250,252,0.72)' }}>
+                  本轮没有可执行标的：
+                  {autoTradeResult.skipped_items?.[0]?.reason ||
+                    '可能是持仓已满、风险过滤或资金不足'}
+                </Text>
+              )}
+            </Col>
+          </Row>
+        </Card>
+      )}
 
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
         <Col xs={12} md={6}>

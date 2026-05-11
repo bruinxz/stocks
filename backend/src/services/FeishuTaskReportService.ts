@@ -271,6 +271,61 @@ class FeishuTaskReportService {
     });
   }
 
+  async reportPaperTradingAutomation(
+    result: any,
+    options: {
+      record_type?: string;
+      task_type?: string;
+      error?: any;
+    } = {}
+  ) {
+    const recordType =
+      options.record_type || (result?.dry_run ? '模拟盘跟单预演' : '模拟盘自动跟单');
+    const trades = Array.isArray(result?.trades) ? result.trades : [];
+    const skippedItems = Array.isArray(result?.skipped_items) ? result.skipped_items : [];
+    const snapshot = result?.snapshot || {};
+    const firstTrade = trades[0] || {};
+    const markdownMessage = this.buildPaperTradingAutomationMarkdown(result, options, recordType);
+
+    return this.safeAppend({
+      文本: `${recordType} - 成交/计划 ${trades.length} 笔 - ${this.formatDate(new Date())}`,
+      message: markdownMessage,
+      记录类型: recordType,
+      任务名称: '推荐信号自动进入模拟盘',
+      任务类型: options.task_type || 'PAPER_TRADING_AUTO_SYNC',
+      运行状态: options.error ? 'FAILED' : 'COMPLETED',
+      模拟盘ID: result?.portfolio_id,
+      用户ID: result?.user_id,
+      信号来源: result?.source_type,
+      是否预演: result?.dry_run ? '是' : '否',
+      扫描信号数: result?.scanned,
+      符合条件数: result?.eligible,
+      自动成交数: result?.executed,
+      计划交易数: result?.planned,
+      跳过数: result?.skipped,
+      总资产: snapshot?.total_value,
+      可用资金: snapshot?.current_cash,
+      持仓市值: snapshot?.position_value,
+      股票代码: firstTrade?.symbol,
+      股票名称: firstTrade?.name,
+      成交数量: firstTrade?.quantity,
+      成交价格: firstTrade?.execute_price,
+      交易金额: firstTrade?.amount,
+      结果摘要: this.safeJson(
+        {
+          trades,
+          skipped_items: skippedItems.slice(0, 10),
+          snapshot,
+          generated: result?.generated,
+          archive: result?.archive,
+        },
+        10000
+      ),
+      错误信息: this.errorMessage(options.error),
+      创建时间: this.formatDate(new Date()),
+    });
+  }
+
   private async safeAppend(fields: Record<string, any>) {
     try {
       const result = await feishuBitableClient.createRecord(fields);
@@ -432,6 +487,104 @@ class FeishuTaskReportService {
     return lines;
   }
 
+  private buildPaperTradingAutomationMarkdown(
+    result: any,
+    options: { error?: any },
+    recordType: string
+  ): string {
+    const trades = Array.isArray(result?.trades) ? result.trades : [];
+    const skippedItems = Array.isArray(result?.skipped_items) ? result.skipped_items : [];
+    const snapshot = result?.snapshot || {};
+    const generated = result?.generated || {};
+    const archive = result?.archive || {};
+    const dryRun = Boolean(result?.dry_run);
+    const status = options.error ? 'FAILED' : 'COMPLETED';
+    const tradeAction = dryRun ? '计划买入' : '已模拟买入';
+
+    const lines = [
+      `## ${recordType}`,
+      '',
+      `- **运行状态**：${status}`,
+      `- **执行模式**：${dryRun ? '预演，不落地交易' : '正式模拟盘交易'}`,
+      result?.portfolio_id ? `- **模拟盘ID**：${result.portfolio_id}` : '',
+      result?.user_id ? `- **用户ID**：${result.user_id}` : '',
+      result?.source_type ? `- **信号来源**：${result.source_type}` : '',
+      '',
+      '### 信号处理概览',
+      `- **扫描信号**：${result?.scanned ?? 0}`,
+      `- **符合交易条件**：${result?.eligible ?? 0}`,
+      `- **${dryRun ? '计划交易' : '自动成交'}**：${
+        dryRun ? result?.planned ?? trades.length : result?.executed ?? trades.length
+      }`,
+      `- **跳过信号**：${result?.skipped ?? skippedItems.length}`,
+      generated?.total_candidates !== undefined
+        ? `- **本轮候选池**：${generated.analyzed_candidates ?? '-'} / ${
+            generated.total_candidates
+          } 只完成评分`
+        : '',
+      archive?.total !== undefined
+        ? `- **归档信号**：${archive.total} 条（新增 ${archive.created ?? 0} / 更新 ${
+            archive.updated ?? 0
+          }）`
+        : '',
+      '',
+      '### 模拟盘资产',
+      snapshot?.total_value !== undefined
+        ? `- **总资产**：¥${this.formatMoney(snapshot.total_value)}`
+        : '',
+      snapshot?.current_cash !== undefined
+        ? `- **可用资金**：¥${this.formatMoney(snapshot.current_cash)}`
+        : '',
+      snapshot?.position_value !== undefined
+        ? `- **持仓市值**：¥${this.formatMoney(snapshot.position_value)}`
+        : '',
+    ];
+
+    if (trades.length > 0) {
+      lines.push('', `### ${tradeAction}明细`);
+      trades.slice(0, 10).forEach((trade: any, index: number) => {
+        lines.push(
+          `${index + 1}. **${trade.name || trade.symbol}（${trade.symbol}）**`,
+          `   - 数量：${trade.quantity ?? '-'} 股；成交价：¥${this.formatMoney(
+            trade.execute_price
+          )}；交易金额：¥${this.formatMoney(trade.amount)}`,
+          `   - 仓位纪律：目标 ${trade.target_position_pct ?? '--'}%，止损 ${
+            trade.stop_loss_pct ?? '--'
+          }%，止盈 ${trade.take_profit_pct ?? '--'}%`,
+          `   - 信号：${trade.decision || '-'} / 评分 ${trade.score ?? '--'} / 风险 ${
+            trade.risk_level || '--'
+          } / 日期 ${trade.signal_date || '--'}`
+        );
+      });
+      if (trades.length > 10) {
+        lines.push(`- 其余 ${trades.length - 10} 笔交易已省略，请查看结果摘要。`);
+      }
+    } else {
+      lines.push('', '### 交易明细', '- 本轮没有产生可执行交易。');
+    }
+
+    if (skippedItems.length > 0) {
+      lines.push('', '### 主要跳过原因');
+      skippedItems.slice(0, 8).forEach((item: any) => {
+        lines.push(
+          `- **${item.name || item.symbol}（${item.symbol}）**：${item.reason || '未给出原因'}`
+        );
+      });
+    }
+
+    const errorText = this.errorMessage(options.error);
+    if (errorText) {
+      lines.push('', '### 错误信息', errorText);
+    }
+
+    lines.push(
+      '',
+      '> 说明：该记录为模拟盘验证闭环，不代表真实账户交易建议；真实交易前仍需人工复核仓位、流动性和风险。'
+    );
+
+    return this.safeText(lines.filter(Boolean).join('\n'), 10000);
+  }
+
   private firstDefined(...values: any[]): any {
     return values.find(value => value !== undefined && value !== null && value !== '');
   }
@@ -446,6 +599,16 @@ class FeishuTaskReportService {
     if (value === undefined || value === null || value === '') return '';
     const num = Number(value);
     return Number.isFinite(num) ? `${num.toFixed(2)}%` : String(value);
+  }
+
+  private formatMoney(value: any): string {
+    if (value === undefined || value === null || value === '') return '--';
+    const num = Number(value);
+    if (!Number.isFinite(num)) return String(value);
+    return num.toLocaleString('zh-CN', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
   }
 }
 
