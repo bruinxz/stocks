@@ -37,6 +37,10 @@ export interface DataUpdateJobData {
   lookback_days?: number; // 数据质量扫描窗口
   limit?: number; // 数据质量扫描数量
   max_stocks?: number; // 每日增量同步最多处理股票数，避免一次性压垮小服务器
+  batch_limit?: number; // 历史同步每次最多处理股票数，用于持续分片追赶
+  lag_days_threshold?: number; // 仅处理最新K线落后该天数以上的股票
+  stale_first?: boolean; // 历史同步是否按最新K线最旧优先
+  include_no_data?: boolean; // 历史同步是否包含从未入库K线的股票，默认不包含，避免长期空结果阻塞追赶
   completedSymbols?: string[]; // 记录已完成的股票列表（用于断点续传）
   totalInserted?: number; // 记录已插入的条数（用于断点续传）
 }
@@ -95,7 +99,7 @@ dataUpdateQueue.on('completed', (job, result) => {
         isSkipped
           ? 0
           : result?.successfulSyncs !== undefined
-          ? Number(result.successfulSyncs)
+          ? Number(result.successfulSyncs) + Number(result?.skippedSyncs || 0)
           : failedItems > 0 && totalItems > 0
           ? Math.max(totalItems - failedItems, 0)
           : totalItems;

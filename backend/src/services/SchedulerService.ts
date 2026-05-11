@@ -78,6 +78,12 @@ class SchedulerService {
     return max ? Math.min(normalized, max) : normalized;
   }
 
+  private getParameterValue(parameters: any, snakeKey: string, camelKey?: string) {
+    if (parameters?.[snakeKey] !== undefined) return parameters[snakeKey];
+    if (camelKey && parameters?.[camelKey] !== undefined) return parameters[camelKey];
+    return undefined;
+  }
+
   private async markTaskFinished(
     task: ScheduledTask,
     status: TaskRunStatus,
@@ -217,6 +223,24 @@ class SchedulerService {
             end_date: parameters.end_date || parameters.endDate || today,
             dataSource: parameters.dataSource || parameters.data_source || 'auto',
             concurrency: this.toPositiveInt(parameters.concurrency, 2, 10),
+            batch_limit: this.toPositiveInt(
+              this.getParameterValue(parameters, 'batch_limit', 'batchLimit'),
+              200,
+              2000
+            ),
+            lag_days_threshold: this.toPositiveInt(
+              this.getParameterValue(parameters, 'lag_days_threshold', 'lagDaysThreshold'),
+              0,
+              3650
+            ),
+            stale_first:
+              this.getParameterValue(parameters, 'stale_first', 'staleFirst') !== undefined
+                ? Boolean(this.getParameterValue(parameters, 'stale_first', 'staleFirst'))
+                : true,
+            include_no_data:
+              this.getParameterValue(parameters, 'include_no_data', 'includeNoData') !== undefined
+                ? Boolean(this.getParameterValue(parameters, 'include_no_data', 'includeNoData'))
+                : false,
             execution_log_id: executionLog.id,
             scheduled_task_id: task.id,
           },
@@ -440,8 +464,12 @@ class SchedulerService {
         parameters: {
           syncAllStocks: true,
           lookback_days: 10,
-          dataSource: 'auto',
-          concurrency: 2,
+          dataSource: 'tencent_only',
+          concurrency: 5,
+          batch_limit: 300,
+          lag_days_threshold: 0,
+          stale_first: true,
+          include_no_data: false,
         },
       },
       {
@@ -507,6 +535,7 @@ class SchedulerService {
 
       if (taskData.name === '全量股票日线同步') {
         const params = task.parameters || {};
+        const nextParams = { ...taskData.parameters, ...params };
         const hasExplicitScope =
           Array.isArray(params.symbols) ||
           Array.isArray(params.marketFilters) ||
@@ -514,7 +543,22 @@ class SchedulerService {
           params.syncAllStocks !== undefined ||
           params.sync_all_stocks !== undefined;
         if (!hasExplicitScope) {
-          patch.parameters = { ...taskData.parameters, ...params, syncAllStocks: true };
+          nextParams.syncAllStocks = true;
+        }
+        for (const key of [
+          'batch_limit',
+          'lag_days_threshold',
+          'stale_first',
+          'include_no_data',
+          'dataSource',
+          'concurrency',
+        ]) {
+          if (nextParams[key] === undefined && (taskData.parameters as any)[key] !== undefined) {
+            nextParams[key] = (taskData.parameters as any)[key];
+          }
+        }
+        if (JSON.stringify(nextParams) !== JSON.stringify(params)) {
+          patch.parameters = nextParams;
         }
       }
 

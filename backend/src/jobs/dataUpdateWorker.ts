@@ -656,6 +656,10 @@ export class DataUpdateWorker {
       dataSource = 'auto',
       concurrency = 2, // 默认将并发数降为 2，避免同时启动过多 Python 进程导致小服务器 CPU/内存 爆满
       user_id,
+      batch_limit,
+      lag_days_threshold = 0,
+      stale_first = true,
+      include_no_data = false,
     } = job.data;
 
     const lockKey = LockKeys.BULK_SYNC;
@@ -686,11 +690,19 @@ export class DataUpdateWorker {
           dataSource,
           concurrency,
           user_id,
+          batch_limit,
+          lag_days_threshold,
+          stale_first,
+          include_no_data,
         },
         started_at: new Date(),
       });
 
       await job.progress(10);
+
+      // 如果未指定开始日期，提供一个合理的默认值
+      const actualStartDate = start_date || '2020-01-01';
+      const actualEndDate = end_date || moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
 
       // 确定要同步的股票列表
       let stocksToSync: string[] = [];
@@ -707,17 +719,21 @@ export class DataUpdateWorker {
         });
         stocksToSync = stocks.map(s => s.symbol);
       } else if (syncAllStocks) {
-        // 同步所有股票
-        const stocks = await Stock.findAll({
-          attributes: ['symbol'],
+        stocksToSync = await this.getStocksForHistorySync({
+          batch_limit,
+          lag_days_threshold,
+          stale_first,
+          include_no_data,
+          end_date: actualEndDate,
         });
-        stocksToSync = stocks.map(s => s.symbol);
       } else {
-        // 默认同步所有股票
-        const stocks = await Stock.findAll({
-          attributes: ['symbol'],
+        stocksToSync = await this.getStocksForHistorySync({
+          batch_limit,
+          lag_days_threshold,
+          stale_first,
+          include_no_data,
+          end_date: actualEndDate,
         });
-        stocksToSync = stocks.map(s => s.symbol);
       }
 
       // 检查是否为重试任务，实现断点续传
@@ -734,9 +750,32 @@ export class DataUpdateWorker {
         await job.update(job.data);
       }
 
-      // 如果未指定开始日期，提供一个合理的默认值
-      const actualStartDate = start_date || '2020-01-01';
-      const actualEndDate = end_date || moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
+      if (stocksToSync.length === 0) {
+        await updateLog.update({
+          status: UpdateStatus.COMPLETED,
+          completed_at: new Date(),
+          result: {
+            ...updateLog.result,
+            totalStocks: 0,
+            processedStocks: 0,
+            currentProgress: 100,
+            skipped: true,
+            reason: 'no_stocks_to_sync',
+          },
+        });
+        await job.progress(100);
+        return {
+          success: true,
+          skipped: true,
+          reason: 'no_stocks_to_sync',
+          totalStocks: 0,
+          successfulSyncs: 0,
+          failedSyncs: 0,
+          skippedSyncs: 0,
+          totalRecordsInserted: 0,
+          logId: updateLog.id,
+        };
+      }
 
       logger.info(`批量同步任务开始，本次需要处理 ${stocksToSync.length} 只股票`);
       logger.info(`日期范围: ${actualStartDate} 到 ${actualEndDate}, 并发数: ${concurrency}`);
@@ -861,6 +900,55 @@ export class DataUpdateWorker {
         await redisLock.release(lockKey, lockValue);
       }
     }
+  }
+
+  private async getStocksForHistorySync(options: {
+    batch_limit?: number;
+    lag_days_threshold?: number;
+    stale_first?: boolean;
+    include_no_data?: boolean;
+    end_date: string;
+  }): Promise<string[]> {
+    const limit = Math.min(Math.max(Number(options.batch_limit || 200), 1), 2000);
+    const lagDaysThreshold = Math.max(Number(options.lag_days_threshold || 0), 0);
+    const targetDate = moment.tz(options.end_date, 'Asia/Shanghai').endOf('day').toDate();
+    const rows = (await Stock.findAll({
+      where: { is_listed: true },
+      attributes: [
+        'id',
+        'symbol',
+        [DailyBar.sequelize!.fn('MAX', DailyBar.sequelize!.col('daily_bars.time')), 'latest_time'],
+      ],
+      include: [
+        {
+          model: DailyBar,
+          attributes: [],
+          required: false,
+        },
+      ],
+      group: ['Stock.id', 'Stock.symbol'],
+      order: [
+        DailyBar.sequelize!.literal(
+          options.stale_first === false
+            ? 'MAX("daily_bars"."time") DESC NULLS LAST'
+            : 'MAX("daily_bars"."time") ASC NULLS FIRST'
+        ) as any,
+        ['id', 'ASC'],
+      ],
+      raw: true,
+      subQuery: false,
+      limit: limit * 6,
+    })) as any[];
+
+    return rows
+      .filter(row => {
+        if (!row.latest_time) return Boolean(options.include_no_data);
+        const latest = new Date(row.latest_time);
+        const lagDays = moment(targetDate).diff(moment(latest), 'days');
+        return lagDays > lagDaysThreshold;
+      })
+      .slice(0, limit)
+      .map(row => row.symbol);
   }
 
   /**
