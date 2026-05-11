@@ -60,6 +60,24 @@ router.post(
 router.post('/risk-check', authController.authenticate, paperTradingController.runRiskCheck);
 
 /**
+ * @route GET /api/paper-trading/attribution
+ * @desc 获取模拟盘信号收益归因与策略反哺
+ * @access Private
+ */
+router.get('/attribution', authController.authenticate, paperTradingController.getAttribution);
+
+/**
+ * @route POST /api/paper-trading/attribution/report
+ * @desc 生成模拟盘收益归因并写入飞书多维表格
+ * @access Private
+ */
+router.post(
+  '/attribution/report',
+  authController.authenticate,
+  paperTradingController.reportAttribution
+);
+
+/**
  * @route GET /api/paper-trading/history
  * @desc 获取模拟盘的交易流水
  * @access Private

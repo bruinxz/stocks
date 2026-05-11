@@ -9,6 +9,7 @@ import { quantRecommendationService } from './QuantRecommendationService';
 import { aiInvestmentSignalService } from './AIInvestmentSignalService';
 import { feishuTaskReportService } from './FeishuTaskReportService';
 import { paperTradingAutomationService } from './PaperTradingAutomationService';
+import { paperTradingAttributionService } from './PaperTradingAttributionService';
 import moment from 'moment-timezone';
 import { Op } from 'sequelize';
 
@@ -202,14 +203,14 @@ class SchedulerService {
         const marketFilters = Array.isArray(parameters.marketFilters)
           ? parameters.marketFilters
           : Array.isArray(parameters.market_filters)
-          ? parameters.market_filters
-          : undefined;
+            ? parameters.market_filters
+            : undefined;
         const syncAllStocks =
           parameters.syncAllStocks !== undefined
             ? Boolean(parameters.syncAllStocks)
             : parameters.sync_all_stocks !== undefined
-            ? Boolean(parameters.sync_all_stocks)
-            : !symbols?.length && !marketFilters?.length;
+              ? Boolean(parameters.sync_all_stocks)
+              : !symbols?.length && !marketFilters?.length;
 
         await this.enqueueDataUpdateJob(
           task,
@@ -281,8 +282,8 @@ class SchedulerService {
             parameters.report_to_feishu !== undefined
               ? Boolean(parameters.report_to_feishu)
               : parameters.reportToFeishu !== undefined
-              ? Boolean(parameters.reportToFeishu)
-              : true,
+                ? Boolean(parameters.reportToFeishu)
+                : true,
         });
 
         await executionLog.update({
@@ -326,26 +327,26 @@ class SchedulerService {
             parameters.require_action_buy !== undefined
               ? Boolean(parameters.require_action_buy)
               : parameters.requireActionBuy !== undefined
-              ? Boolean(parameters.requireActionBuy)
-              : true,
+                ? Boolean(parameters.requireActionBuy)
+                : true,
           dry_run:
             parameters.dry_run !== undefined
               ? Boolean(parameters.dry_run)
               : parameters.dryRun !== undefined
-              ? Boolean(parameters.dryRun)
-              : false,
+                ? Boolean(parameters.dryRun)
+                : false,
           report_to_feishu:
             parameters.report_to_feishu !== undefined
               ? Boolean(parameters.report_to_feishu)
               : parameters.reportToFeishu !== undefined
-              ? Boolean(parameters.reportToFeishu)
-              : true,
+                ? Boolean(parameters.reportToFeishu)
+                : true,
           refresh_recommendations:
             parameters.refresh_recommendations !== undefined
               ? Boolean(parameters.refresh_recommendations)
               : parameters.refreshRecommendations !== undefined
-              ? Boolean(parameters.refreshRecommendations)
-              : true,
+                ? Boolean(parameters.refreshRecommendations)
+                : true,
           universe: parameters.universe === 'market' ? 'market' : 'favorites',
           style: ['balanced', 'momentum', 'value', 'low_risk'].includes(parameters.style)
             ? parameters.style
@@ -364,8 +365,14 @@ class SchedulerService {
             parameters.verify_signals !== undefined
               ? Boolean(parameters.verify_signals)
               : parameters.verifySignals !== undefined
-              ? Boolean(parameters.verifySignals)
-              : false,
+                ? Boolean(parameters.verifySignals)
+                : false,
+          use_attribution_feedback:
+            parameters.use_attribution_feedback !== undefined
+              ? Boolean(parameters.use_attribution_feedback)
+              : parameters.useAttributionFeedback !== undefined
+                ? Boolean(parameters.useAttributionFeedback)
+                : true,
         });
 
         await executionLog.update({
@@ -387,33 +394,33 @@ class SchedulerService {
             parameters.dry_run !== undefined
               ? Boolean(parameters.dry_run)
               : parameters.dryRun !== undefined
-              ? Boolean(parameters.dryRun)
-              : false,
+                ? Boolean(parameters.dryRun)
+                : false,
           report_to_feishu:
             parameters.report_to_feishu !== undefined
               ? Boolean(parameters.report_to_feishu)
               : parameters.reportToFeishu !== undefined
-              ? Boolean(parameters.reportToFeishu)
-              : true,
+                ? Boolean(parameters.reportToFeishu)
+                : true,
           limit: this.toPositiveInt(parameters.limit, 20, 100),
           enable_stop_loss:
             parameters.enable_stop_loss !== undefined
               ? Boolean(parameters.enable_stop_loss)
               : parameters.enableStopLoss !== undefined
-              ? Boolean(parameters.enableStopLoss)
-              : true,
+                ? Boolean(parameters.enableStopLoss)
+                : true,
           enable_take_profit:
             parameters.enable_take_profit !== undefined
               ? Boolean(parameters.enable_take_profit)
               : parameters.enableTakeProfit !== undefined
-              ? Boolean(parameters.enableTakeProfit)
-              : true,
+                ? Boolean(parameters.enableTakeProfit)
+                : true,
           enable_sell_signals:
             parameters.enable_sell_signals !== undefined
               ? Boolean(parameters.enable_sell_signals)
               : parameters.enableSellSignals !== undefined
-              ? Boolean(parameters.enableSellSignals)
-              : true,
+                ? Boolean(parameters.enableSellSignals)
+                : true,
           default_stop_loss_pct: Number(
             parameters.default_stop_loss_pct || parameters.defaultStopLossPct || 7
           ),
@@ -439,6 +446,39 @@ class SchedulerService {
 
         logger.info(
           `模拟盘风控检查完成。检查 ${result.checked}，退出 ${result.exited}，预演 ${result.planned}，继续持有 ${result.held}`
+        );
+      } else if (task.type === 'PAPER_TRADING_ATTRIBUTION_REPORT') {
+        const result = await paperTradingAttributionService.getAttribution({
+          username: parameters.username,
+          include_open:
+            parameters.include_open !== undefined
+              ? Boolean(parameters.include_open)
+              : parameters.includeOpen !== undefined
+                ? Boolean(parameters.includeOpen)
+                : true,
+          source_type: parameters.source_type || parameters.sourceType,
+          start_date: parameters.start_date || parameters.startDate,
+          end_date: parameters.end_date || parameters.endDate,
+          limit: this.toPositiveInt(parameters.limit, 2000, 10000),
+          report_to_feishu:
+            parameters.report_to_feishu !== undefined
+              ? Boolean(parameters.report_to_feishu)
+              : parameters.reportToFeishu !== undefined
+                ? Boolean(parameters.reportToFeishu)
+                : true,
+        });
+
+        await executionLog.update({
+          total_items: result.summary.executed_signals,
+          completed_items: result.summary.closed_count,
+          failed_items: result.summary.near_stop_loss_count,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: null,
+        });
+
+        logger.info(
+          `模拟盘收益归因完成。闭环 ${result.summary.closed_count}，持仓 ${result.summary.open_count}，胜率 ${result.summary.win_rate}%`
         );
       } else if (task.type === 'AI_DAILY_SCREENER') {
         logger.info('触发 AI_DAILY_SCREENER 任务，使用多因子候选池进行 TradingAgents 深度分析...');
@@ -688,6 +728,7 @@ class SchedulerService {
           min_trade_amount: 3000,
           allowed_risk_levels: ['low', 'medium'],
           require_action_buy: true,
+          use_attribution_feedback: true,
           dry_run: false,
           report_to_feishu: true,
         },
@@ -709,6 +750,18 @@ class SchedulerService {
           min_sell_signal_score: 60,
           sell_signal_source_type: 'all',
           dry_run: false,
+          report_to_feishu: true,
+        },
+      },
+      {
+        name: '模拟盘收益归因报告',
+        type: 'PAPER_TRADING_ATTRIBUTION_REPORT',
+        cron_expression: '5 16 * * 1-5',
+        is_active: true,
+        parameters: {
+          username: 'lym',
+          include_open: true,
+          limit: 2000,
           report_to_feishu: true,
         },
       },

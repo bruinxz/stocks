@@ -17,16 +17,21 @@ import {
   Radio,
   message,
   Spin,
+  Progress,
 } from 'antd';
 import {
+  BulbOutlined,
+  CloudUploadOutlined,
   FallOutlined,
   FieldTimeOutlined,
   HistoryOutlined,
   PlusOutlined,
   RadarChartOutlined,
+  ReloadOutlined,
   RiseOutlined,
   SafetyCertificateOutlined,
   ThunderboltOutlined,
+  TrophyOutlined,
   WalletOutlined,
 } from '@ant-design/icons';
 import {
@@ -108,6 +113,105 @@ interface RiskCheckResult {
   skipped_items: RiskExitItem[];
 }
 
+interface AttributionBucket {
+  key: string;
+  label: string;
+  count: number;
+  closed_count: number;
+  open_count: number;
+  total_realized_pnl: number;
+  total_unrealized_pnl: number;
+  avg_return_pct: number;
+  win_rate: number;
+}
+
+interface AttributionClosedTrade {
+  signal_id: number;
+  symbol: string;
+  name?: string;
+  realized_pnl: number;
+  realized_pnl_pct: number;
+  holding_days: number;
+  exit_reason_label?: string;
+}
+
+interface AttributionOpenPosition {
+  signal_id?: number;
+  symbol: string;
+  name?: string;
+  market_value: number;
+  unrealized_pnl: number;
+  unrealized_pnl_pct: number;
+  holding_days: number;
+  distance_to_stop_loss_pct?: number;
+  risk_state: string;
+}
+
+interface PaperTradingAttribution {
+  generated_at: string;
+  summary: {
+    executed_signals: number;
+    closed_count: number;
+    open_count: number;
+    orphan_open_count: number;
+    win_count: number;
+    loss_count: number;
+    total_realized_pnl: number;
+    total_unrealized_pnl: number;
+    total_pnl: number;
+    avg_return_pct: number;
+    win_rate: number;
+    avg_holding_days: number;
+    payoff_ratio: number;
+    profit_factor: number;
+    open_exposure: number;
+    open_exposure_pct: number;
+    near_stop_loss_count: number;
+    best_trade?: AttributionClosedTrade;
+    worst_trade?: AttributionClosedTrade;
+    largest_open_loss?: AttributionOpenPosition;
+    closest_stop_loss?: AttributionOpenPosition;
+  };
+  groups: {
+    by_source_type: AttributionBucket[];
+    by_risk_level: AttributionBucket[];
+    by_action: AttributionBucket[];
+    by_rating: AttributionBucket[];
+    by_exit_reason: AttributionBucket[];
+    by_score_bucket: AttributionBucket[];
+  };
+  closed_trades: AttributionClosedTrade[];
+  open_positions: AttributionOpenPosition[];
+  feedback: {
+    recommended_min_score: number;
+    recommended_allowed_risk_levels: string[];
+    preferred_source_type?: string;
+    strongest_bucket?: string;
+    weakest_bucket?: string;
+    insights: string[];
+    next_actions: string[];
+  };
+}
+
+const formatMoney = (value?: number | null) =>
+  `¥${Number(value || 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+
+const formatSignedMoney = (value?: number | null) => {
+  const num = Number(value || 0);
+  const prefix = num > 0 ? '+¥' : num < 0 ? '-¥' : '¥';
+  return `${prefix}${Math.abs(num).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+};
+
+const formatPercent = (value?: number | null) => `${Number(value || 0).toFixed(2)}%`;
+const pnlColor = (value?: number | null) => (Number(value || 0) >= 0 ? '#cf1322' : '#16a34a');
+const clampPercent = (value?: number | null) => Math.max(0, Math.min(100, Number(value || 0)));
+
 const PaperTrading: React.FC = () => {
   const [portfolio, setPortfolio] = useState<PortfolioInfo | null>(null);
   const [positions, setPositions] = useState<Position[]>([]);
@@ -132,6 +236,9 @@ const PaperTrading: React.FC = () => {
   const [riskCheckLoading, setRiskCheckLoading] = useState(false);
   const [riskPreviewLoading, setRiskPreviewLoading] = useState(false);
   const [riskResult, setRiskResult] = useState<RiskCheckResult | null>(null);
+  const [attribution, setAttribution] = useState<PaperTradingAttribution | null>(null);
+  const [attributionLoading, setAttributionLoading] = useState(false);
+  const [attributionReportLoading, setAttributionReportLoading] = useState(false);
 
   const fetchPortfolio = async () => {
     setLoading(true);
@@ -152,6 +259,7 @@ const PaperTrading: React.FC = () => {
     fetchPortfolio();
     fetchStocks(''); // 初始加载股票
     fetchSnapshots();
+    fetchAttribution(true);
   }, []);
 
   const fetchSnapshots = async () => {
@@ -223,6 +331,40 @@ const PaperTrading: React.FC = () => {
     }
   };
 
+  const fetchAttribution = async (silent = false) => {
+    setAttributionLoading(true);
+    try {
+      const response = await api.get('/paper-trading/attribution', {
+        params: { include_open: true },
+      });
+      if (response.data.success) {
+        setAttribution(response.data.data);
+        if (!silent) message.success('收益归因已刷新');
+      }
+    } catch (error: any) {
+      if (!silent) message.error(error.response?.data?.message || '获取收益归因失败');
+    } finally {
+      setAttributionLoading(false);
+    }
+  };
+
+  const reportAttribution = async () => {
+    setAttributionReportLoading(true);
+    try {
+      const response = await api.post('/paper-trading/attribution/report', {
+        include_open: true,
+      });
+      if (response.data.success) {
+        setAttribution(response.data.data);
+        message.success('收益归因已写入飞书多维表格');
+      }
+    } catch (error: any) {
+      message.error(error.response?.data?.message || '收益归因上报失败');
+    } finally {
+      setAttributionReportLoading(false);
+    }
+  };
+
   const runRiskCheck = async (dryRun: boolean) => {
     const setRunning = dryRun ? setRiskPreviewLoading : setRiskCheckLoading;
     setRunning(true);
@@ -247,7 +389,7 @@ const PaperTrading: React.FC = () => {
           : `风控检查完成：模拟卖出 ${result.exited || 0} 笔，继续持有 ${result.held || 0} 笔`
       );
       if (!dryRun) {
-        await Promise.all([fetchPortfolio(), fetchSnapshots()]);
+        await Promise.all([fetchPortfolio(), fetchSnapshots(), fetchAttribution(true)]);
       }
     } catch (error: any) {
       message.error(error.response?.data?.message || '风控检查失败');
@@ -260,6 +402,8 @@ const PaperTrading: React.FC = () => {
     ? ((portfolio.total_value - portfolio.initial_capital) / portfolio.initial_capital) * 100
     : 0;
   const isPositive = total_return >= 0;
+  const attributionSummary = attribution?.summary;
+  const attributionFeedback = attribution?.feedback;
 
   const columns = [
     {
@@ -500,7 +644,7 @@ const PaperTrading: React.FC = () => {
       )}
 
       <Row gutter={[24, 24]} style={{ marginBottom: 24 }}>
-        <Col span={8}>
+        <Col xs={24} lg={8}>
           <Space direction="vertical" size="large" style={{ width: '100%' }}>
             <Card className="modern-card" variant="borderless" loading={loading}>
               <Statistic
@@ -532,7 +676,7 @@ const PaperTrading: React.FC = () => {
           </Space>
         </Col>
 
-        <Col span={16}>
+        <Col xs={24} lg={16}>
           <Card
             className="modern-card"
             variant="borderless"
@@ -587,6 +731,181 @@ const PaperTrading: React.FC = () => {
           </Card>
         </Col>
       </Row>
+
+      <Card
+        className="modern-card paper-attribution-card"
+        variant="borderless"
+        loading={attributionLoading && !attribution}
+        style={{ marginBottom: 24 }}
+      >
+        <div className="paper-attribution-header">
+          <div>
+            <Tag color="gold" icon={<TrophyOutlined />}>
+              Signal P&L Attribution
+            </Tag>
+            <h2>信号收益归因与策略反哺</h2>
+            <p>把推荐信号、模拟买卖、风控退出和真实盈亏串成闭环，用结果倒逼下一轮选股阈值。</p>
+          </div>
+          <Space wrap>
+            <Button
+              icon={<ReloadOutlined />}
+              onClick={() => fetchAttribution(false)}
+              loading={attributionLoading}
+            >
+              刷新归因
+            </Button>
+            <Button
+              type="primary"
+              icon={<CloudUploadOutlined />}
+              onClick={reportAttribution}
+              loading={attributionReportLoading}
+            >
+              上报飞书
+            </Button>
+          </Space>
+        </div>
+
+        <Row gutter={[16, 16]} className="paper-attribution-metrics">
+          <Col xs={12} md={6}>
+            <div className="attribution-metric-tile">
+              <span>闭环交易</span>
+              <strong>{attributionSummary?.closed_count || 0}</strong>
+              <em>当前持仓 {attributionSummary?.open_count || 0} 只</em>
+            </div>
+          </Col>
+          <Col xs={12} md={6}>
+            <div className="attribution-metric-tile">
+              <span>综合盈亏</span>
+              <strong style={{ color: pnlColor(attributionSummary?.total_pnl) }}>
+                {formatSignedMoney(attributionSummary?.total_pnl)}
+              </strong>
+              <em>浮盈亏 {formatSignedMoney(attributionSummary?.total_unrealized_pnl)}</em>
+            </div>
+          </Col>
+          <Col xs={12} md={6}>
+            <div className="attribution-metric-tile">
+              <span>胜率 / 均收</span>
+              <strong>{formatPercent(attributionSummary?.win_rate)}</strong>
+              <em>平均 {formatPercent(attributionSummary?.avg_return_pct)}</em>
+            </div>
+          </Col>
+          <Col xs={12} md={6}>
+            <div className="attribution-metric-tile">
+              <span>反哺阈值</span>
+              <strong>{attributionFeedback?.recommended_min_score || 72}</strong>
+              <em>
+                {attributionFeedback?.recommended_allowed_risk_levels?.join(' / ') ||
+                  'low / medium'}
+              </em>
+            </div>
+          </Col>
+        </Row>
+
+        <Row gutter={[18, 18]} style={{ marginTop: 18 }}>
+          <Col xs={24} lg={8}>
+            <div className="attribution-panel">
+              <div className="attribution-panel-title">
+                <BulbOutlined /> 策略反哺
+              </div>
+              {(attributionFeedback?.insights || []).slice(0, 4).map((item, index) => (
+                <div className="feedback-note" key={`insight-${index}`}>
+                  {item}
+                </div>
+              ))}
+              {(!attributionFeedback?.insights || attributionFeedback.insights.length === 0) && (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无归因洞察" />
+              )}
+            </div>
+          </Col>
+          <Col xs={24} lg={8}>
+            <div className="attribution-panel">
+              <div className="attribution-panel-title">
+                <RadarChartOutlined /> 维度表现
+              </div>
+              {(attribution?.groups?.by_source_type || []).slice(0, 4).map(group => (
+                <div className="bucket-strip" key={group.key}>
+                  <div>
+                    <strong>{group.label}</strong>
+                    <span>
+                      闭环 {group.closed_count} / 持仓 {group.open_count}
+                    </span>
+                  </div>
+                  <div className="bucket-strip-value">
+                    <Text style={{ color: pnlColor(group.avg_return_pct), fontWeight: 800 }}>
+                      {formatPercent(group.avg_return_pct)}
+                    </Text>
+                    <Progress
+                      percent={clampPercent(group.win_rate)}
+                      size="small"
+                      showInfo={false}
+                      strokeColor={group.avg_return_pct >= 0 ? '#ef4444' : '#16a34a'}
+                    />
+                  </div>
+                </div>
+              ))}
+              {(!attribution?.groups?.by_source_type ||
+                attribution.groups.by_source_type.length === 0) && (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无维度样本" />
+              )}
+            </div>
+          </Col>
+          <Col xs={24} lg={8}>
+            <div className="attribution-panel">
+              <div className="attribution-panel-title">
+                <SafetyCertificateOutlined /> 当前风险暴露
+              </div>
+              {(attribution?.open_positions || []).slice(0, 4).map(item => (
+                <div className="bucket-strip" key={`${item.symbol}-${item.signal_id || 'manual'}`}>
+                  <div>
+                    <strong>
+                      {item.name || item.symbol}（{item.symbol}）
+                    </strong>
+                    <span>
+                      持有 {item.holding_days} 天 · {formatMoney(item.market_value)}
+                    </span>
+                  </div>
+                  <div className="bucket-strip-value">
+                    <Text style={{ color: pnlColor(item.unrealized_pnl), fontWeight: 800 }}>
+                      {formatPercent(item.unrealized_pnl_pct)}
+                    </Text>
+                    <Tag
+                      className="modern-tag"
+                      color={item.risk_state === 'near_stop_loss' ? 'volcano' : 'blue'}
+                    >
+                      距止损 {item.distance_to_stop_loss_pct ?? '--'}pct
+                    </Tag>
+                  </div>
+                </div>
+              ))}
+              {(!attribution?.open_positions || attribution.open_positions.length === 0) && (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无持仓风险暴露" />
+              )}
+            </div>
+          </Col>
+        </Row>
+
+        <div className="attribution-next-actions">
+          {(attributionFeedback?.next_actions || []).slice(0, 4).map((item, index) => (
+            <Tag className="attribution-chip" key={`next-${index}`}>
+              {item}
+            </Tag>
+          ))}
+          {attributionSummary?.best_trade && (
+            <Tag className="attribution-chip attribution-chip-hot">
+              最佳：{attributionSummary.best_trade.name || attributionSummary.best_trade.symbol}{' '}
+              {formatPercent(attributionSummary.best_trade.realized_pnl_pct)}
+            </Tag>
+          )}
+          {attributionSummary?.worst_trade &&
+            attributionSummary.worst_trade.realized_pnl_pct < 0 && (
+              <Tag className="attribution-chip attribution-chip-risk">
+                待复盘：
+                {attributionSummary.worst_trade.name || attributionSummary.worst_trade.symbol}{' '}
+                {formatPercent(attributionSummary.worst_trade.realized_pnl_pct)}
+              </Tag>
+            )}
+        </div>
+      </Card>
 
       <Card className="modern-card" variant="borderless" title="当前持仓">
         <Table

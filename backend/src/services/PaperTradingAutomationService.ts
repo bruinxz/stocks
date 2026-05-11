@@ -39,6 +39,7 @@ export interface PaperTradingAutoOptions {
   report_to_feishu?: boolean;
   signal_date_start?: string;
   signal_date_end?: string;
+  use_attribution_feedback?: boolean;
 }
 
 export interface PaperTradingAutoSyncOptions extends PaperTradingAutoOptions {
@@ -108,6 +109,17 @@ export interface PaperTradingAutoResult {
   snapshot?: PaperTradingSnapshotResult;
   generated?: any;
   archive?: any;
+  feedback_policy?: {
+    enabled: boolean;
+    closed_samples: number;
+    recommended_min_score?: number;
+    effective_min_score: number;
+    recommended_allowed_risk_levels?: string[];
+    effective_allowed_risk_levels: string[];
+    preferred_source_type?: string;
+    preferred_action?: string;
+    strongest_bucket?: string;
+  };
 }
 
 export interface PaperTradingRiskCheckOptions {
@@ -355,7 +367,7 @@ class PaperTradingAutomationService {
     const report_to_feishu = toBoolean(options.report_to_feishu, true);
     const limit = toPositiveInt(options.limit, 5, 20);
     const scan_limit = toPositiveInt(options.scan_limit, Math.max(limit * 8, 40), 300);
-    const min_score = toNumber(options.min_score, 72);
+    let min_score = toNumber(options.min_score, 72);
     const max_positions = toPositiveInt(options.max_positions, 8, 30);
     const default_position_pct = toNumber(options.default_position_pct, 5);
     const max_position_pct = toNumber(options.max_position_pct, 12);
@@ -365,17 +377,25 @@ class PaperTradingAutomationService {
       options.require_action_buy,
       source_type === AISignalSourceType.QUANT_RECOMMENDATION
     );
-    const allowedRiskLevels = new Set(
-      (options.allowed_risk_levels?.length
-        ? options.allowed_risk_levels
-        : ['low', 'medium', '']
-      ).map(normalizeRiskLevel)
-    );
+    let allowedRiskLevelList = options.allowed_risk_levels?.length
+      ? options.allowed_risk_levels
+      : ['low', 'medium', ''];
 
     const portfolio = await this.ensurePortfolio({
       user_id: options.user_id,
       username: options.username,
     });
+    const feedbackPolicy = await this.resolveAttributionFeedbackPolicy({
+      portfolio_id: portfolio.id,
+      user_id: portfolio.user_id,
+      enabled: toBoolean(options.use_attribution_feedback, true),
+      requested_min_score: min_score,
+      requested_allowed_risk_levels: allowedRiskLevelList,
+    });
+    min_score = feedbackPolicy.effective_min_score;
+    allowedRiskLevelList = feedbackPolicy.effective_allowed_risk_levels;
+    const allowedRiskLevels = new Set(allowedRiskLevelList.map(normalizeRiskLevel));
+
     const preSnapshot = await this.syncLatestPricesAndSnapshot(portfolio.id);
     await portfolio.reload();
 
@@ -585,6 +605,7 @@ class PaperTradingAutomationService {
       trades,
       skipped_items: skipped_items.slice(0, 30),
       snapshot,
+      feedback_policy: feedbackPolicy,
     };
 
     if (report_to_feishu) {
@@ -975,6 +996,89 @@ class PaperTradingAutomationService {
         ['created_at', 'DESC'],
       ],
     });
+  }
+
+  private async resolveAttributionFeedbackPolicy(options: {
+    portfolio_id: number;
+    user_id: number;
+    enabled: boolean;
+    requested_min_score: number;
+    requested_allowed_risk_levels: string[];
+  }): Promise<NonNullable<PaperTradingAutoResult['feedback_policy']>> {
+    const fallbackLevels = options.requested_allowed_risk_levels?.length
+      ? options.requested_allowed_risk_levels
+      : ['low', 'medium', ''];
+    const basePolicy = {
+      enabled: options.enabled,
+      closed_samples: 0,
+      effective_min_score: options.requested_min_score,
+      effective_allowed_risk_levels: fallbackLevels,
+    };
+
+    if (!options.enabled) {
+      return basePolicy;
+    }
+
+    try {
+      const { paperTradingAttributionService } = await import('./PaperTradingAttributionService');
+      const attribution = await paperTradingAttributionService.getAttribution({
+        user_id: options.user_id,
+        include_open: false,
+        report_to_feishu: false,
+      });
+      const feedback: any = attribution.feedback || {};
+      const closedSamples = attribution.summary?.closed_count || 0;
+
+      if (closedSamples < 3) {
+        return {
+          ...basePolicy,
+          closed_samples: closedSamples,
+          recommended_min_score: feedback.recommended_min_score,
+          recommended_allowed_risk_levels: feedback.recommended_allowed_risk_levels,
+          preferred_source_type: feedback.preferred_source_type,
+          preferred_action: feedback.preferred_action,
+          strongest_bucket: feedback.strongest_bucket,
+        };
+      }
+
+      const recommendedMinScore = toNumber(
+        feedback.recommended_min_score,
+        options.requested_min_score
+      );
+      const effectiveMinScore = clamp(
+        Math.max(options.requested_min_score, recommendedMinScore),
+        55,
+        92
+      );
+      const recommendedLevels = Array.isArray(feedback.recommended_allowed_risk_levels)
+        ? feedback.recommended_allowed_risk_levels.map(normalizeRiskLevel).filter(Boolean)
+        : [];
+      const requestedLevelSet = new Set(fallbackLevels.map(normalizeRiskLevel));
+      const intersectedLevels = recommendedLevels.filter(level => requestedLevelSet.has(level));
+      const effectiveLevels = (intersectedLevels.length > 0
+        ? intersectedLevels
+        : fallbackLevels
+      ).includes('')
+        ? intersectedLevels.length > 0
+          ? intersectedLevels
+          : fallbackLevels
+        : [...(intersectedLevels.length > 0 ? intersectedLevels : fallbackLevels), ''];
+
+      return {
+        enabled: true,
+        closed_samples: closedSamples,
+        recommended_min_score: recommendedMinScore,
+        effective_min_score: effectiveMinScore,
+        recommended_allowed_risk_levels: recommendedLevels,
+        effective_allowed_risk_levels: effectiveLevels,
+        preferred_source_type: feedback.preferred_source_type,
+        preferred_action: feedback.preferred_action,
+        strongest_bucket: feedback.strongest_bucket,
+      };
+    } catch (error: any) {
+      logger.warn(`读取模拟盘归因反馈失败，自动跟单沿用原始参数: ${error?.message || error}`);
+      return basePolicy;
+    }
   }
 
   private buildTradeItemBase(signal: AIInvestmentSignal): PaperTradingAutoTradeItem {

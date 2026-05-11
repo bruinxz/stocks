@@ -6,6 +6,7 @@ import { PaperTradingSnapshot } from '../../models/PaperTradingSnapshot';
 import { Stock } from '../../models/Stock';
 import { DataService } from '../../data/services/DataService';
 import { paperTradingAutomationService } from '../../services/PaperTradingAutomationService';
+import { paperTradingAttributionService } from '../../services/PaperTradingAttributionService';
 import { logger } from '../../utils/logger';
 
 export class PaperTradingController {
@@ -392,6 +393,46 @@ export class PaperTradingController {
       });
     } catch (error: any) {
       logger.error('模拟盘自动风控检查失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
+  // 获取模拟盘收益归因与策略反哺结果
+  getAttribution = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const user = (req as any).user;
+      const result = await paperTradingAttributionService.getAttribution({
+        ...req.query,
+        user_id: user.id,
+      });
+
+      res.json({
+        success: true,
+        data: result,
+        message: `收益归因完成：闭环 ${result.summary.closed_count} 笔，当前持仓 ${result.summary.open_count} 只`,
+      });
+    } catch (error: any) {
+      logger.error('获取模拟盘收益归因失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
+  // 生成收益归因并写入飞书多维表格
+  reportAttribution = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const user = (req as any).user;
+      const result = await paperTradingAttributionService.reportAttribution({
+        ...req.body,
+        user_id: user.id,
+      });
+
+      res.json({
+        success: true,
+        data: result,
+        message: `收益归因已上报飞书：闭环 ${result.summary.closed_count} 笔，胜率 ${result.summary.win_rate}%`,
+      });
+    } catch (error: any) {
+      logger.error('上报模拟盘收益归因失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   };

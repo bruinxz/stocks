@@ -382,6 +382,73 @@ class FeishuTaskReportService {
     });
   }
 
+  async reportPaperTradingAttribution(
+    result: any,
+    options: {
+      record_type?: string;
+      task_type?: string;
+      error?: any;
+    } = {}
+  ) {
+    const recordType = options.record_type || '模拟盘收益归因';
+    const summary = result?.summary || {};
+    const feedback = result?.feedback || {};
+    const closedTrades = Array.isArray(result?.closed_trades) ? result.closed_trades : [];
+    const openPositions = Array.isArray(result?.open_positions) ? result.open_positions : [];
+    const markdownMessage = this.buildPaperTradingAttributionMarkdown(result, options, recordType);
+
+    return this.safeAppend({
+      文本: `${recordType} - 闭环 ${summary.closed_count ?? 0} 笔 / 胜率 ${
+        summary.win_rate ?? 0
+      }% / 总盈亏 ${this.formatSignedMoney(summary.total_pnl)} - ${this.formatDate(new Date())}`,
+      message: markdownMessage,
+      记录类型: recordType,
+      任务名称: '模拟盘收益归因与策略反哺',
+      任务类型: options.task_type || 'PAPER_TRADING_ATTRIBUTION_REPORT',
+      运行状态: options.error ? 'FAILED' : 'COMPLETED',
+      模拟盘ID: result?.portfolio_id,
+      用户ID: result?.user_id,
+      生成时间: result?.generated_at,
+      已执行信号数: summary.executed_signals,
+      已闭环交易数: summary.closed_count,
+      当前持仓数: summary.open_count,
+      胜率: this.formatPercent(summary.win_rate),
+      平均收益: this.formatPercent(summary.avg_return_pct),
+      总实现盈亏: this.formatSignedMoney(summary.total_realized_pnl),
+      总浮动盈亏: this.formatSignedMoney(summary.total_unrealized_pnl),
+      总盈亏: this.formatSignedMoney(summary.total_pnl),
+      平均持有天数: summary.avg_holding_days,
+      盈亏比: summary.payoff_ratio,
+      ProfitFactor: summary.profit_factor,
+      建议最低评分: feedback.recommended_min_score,
+      建议风险等级: Array.isArray(feedback.recommended_allowed_risk_levels)
+        ? feedback.recommended_allowed_risk_levels.join(',')
+        : '',
+      最佳标的: summary.best_trade
+        ? `${summary.best_trade.name || summary.best_trade.symbol}(${summary.best_trade.symbol}) ${
+            summary.best_trade.realized_pnl_pct
+          }%`
+        : '',
+      最差标的: summary.worst_trade
+        ? `${summary.worst_trade.name || summary.worst_trade.symbol}(${
+            summary.worst_trade.symbol
+          }) ${summary.worst_trade.realized_pnl_pct}%`
+        : '',
+      结果摘要: this.safeJson(
+        {
+          summary,
+          feedback,
+          groups: result?.groups,
+          closed_trades: closedTrades.slice(0, 20),
+          open_positions: openPositions.slice(0, 20),
+        },
+        10000
+      ),
+      错误信息: this.errorMessage(options.error),
+      创建时间: this.formatDate(new Date()),
+    });
+  }
+
   private async safeAppend(fields: Record<string, any>) {
     try {
       const result = await feishuBitableClient.createRecord(fields);
@@ -551,6 +618,7 @@ class FeishuTaskReportService {
     const trades = Array.isArray(result?.trades) ? result.trades : [];
     const skippedItems = Array.isArray(result?.skipped_items) ? result.skipped_items : [];
     const snapshot = result?.snapshot || {};
+    const feedbackPolicy = result?.feedback_policy || {};
     const generated = result?.generated || {};
     const archive = result?.archive || {};
     const dryRun = Boolean(result?.dry_run);
@@ -566,11 +634,28 @@ class FeishuTaskReportService {
       result?.user_id ? `- **用户ID**：${result.user_id}` : '',
       result?.source_type ? `- **信号来源**：${result.source_type}` : '',
       '',
+      '### 策略反哺参数',
+      `- **归因反哺**：${feedbackPolicy?.enabled ? '已启用' : '未启用'}`,
+      `- **闭环样本**：${feedbackPolicy?.closed_samples ?? 0}`,
+      `- **有效最低评分**：${feedbackPolicy?.effective_min_score ?? '--'}${
+        feedbackPolicy?.recommended_min_score !== undefined
+          ? `（建议 ${feedbackPolicy.recommended_min_score}）`
+          : ''
+      }`,
+      `- **有效风险等级**：${
+        Array.isArray(feedbackPolicy?.effective_allowed_risk_levels)
+          ? feedbackPolicy.effective_allowed_risk_levels.filter(Boolean).join('、') || '未限制'
+          : '--'
+      }`,
+      feedbackPolicy?.strongest_bucket
+        ? `- **当前强势评分桶**：${feedbackPolicy.strongest_bucket}`
+        : '',
+      '',
       '### 信号处理概览',
       `- **扫描信号**：${result?.scanned ?? 0}`,
       `- **符合交易条件**：${result?.eligible ?? 0}`,
       `- **${dryRun ? '计划交易' : '自动成交'}**：${
-        dryRun ? result?.planned ?? trades.length : result?.executed ?? trades.length
+        dryRun ? (result?.planned ?? trades.length) : (result?.executed ?? trades.length)
       }`,
       `- **跳过信号**：${result?.skipped ?? skippedItems.length}`,
       generated?.total_candidates !== undefined
@@ -666,7 +751,7 @@ class FeishuTaskReportService {
       `- **检查持仓**：${result?.checked ?? 0}`,
       `- **触发退出**：${result?.exit_candidates ?? exits.length}`,
       `- **${dryRun ? '计划退出' : '自动退出'}**：${
-        dryRun ? result?.planned ?? exits.length : result?.exited ?? exits.length
+        dryRun ? (result?.planned ?? exits.length) : (result?.exited ?? exits.length)
       }`,
       `- **继续持有**：${result?.held ?? heldItems.length}`,
       `- **跳过持仓**：${result?.skipped ?? skippedItems.length}`,
@@ -744,6 +829,159 @@ class FeishuTaskReportService {
     return this.safeText(lines.filter(Boolean).join('\n'), 10000);
   }
 
+  private buildPaperTradingAttributionMarkdown(
+    result: any,
+    options: { error?: any },
+    recordType: string
+  ): string {
+    const summary = result?.summary || {};
+    const feedback = result?.feedback || {};
+    const groups = result?.groups || {};
+    const closedTrades = Array.isArray(result?.closed_trades) ? result.closed_trades : [];
+    const openPositions = Array.isArray(result?.open_positions) ? result.open_positions : [];
+    const sourceGroups = Array.isArray(groups.by_source_type) ? groups.by_source_type : [];
+    const riskGroups = Array.isArray(groups.by_risk_level) ? groups.by_risk_level : [];
+    const actionGroups = Array.isArray(groups.by_action) ? groups.by_action : [];
+    const exitGroups = Array.isArray(groups.by_exit_reason) ? groups.by_exit_reason : [];
+    const scoreGroups = Array.isArray(groups.by_score_bucket) ? groups.by_score_bucket : [];
+    const status = options.error ? 'FAILED' : 'COMPLETED';
+
+    const lines = [
+      `## ${recordType}`,
+      '',
+      `- **运行状态**：${status}`,
+      result?.portfolio_id ? `- **模拟盘ID**：${result.portfolio_id}` : '',
+      result?.user_id ? `- **用户ID**：${result.user_id}` : '',
+      result?.generated_at ? `- **生成时间**：${result.generated_at}` : '',
+      '',
+      '### 交易闭环总览',
+      `- **已执行信号**：${summary.executed_signals ?? 0}`,
+      `- **已闭环交易**：${summary.closed_count ?? 0} 笔；**当前持仓**：${
+        summary.open_count ?? 0
+      } 只`,
+      `- **胜率**：${this.formatPercent(summary.win_rate) || '0.00%'}`,
+      `- **平均收益**：${this.formatPercent(summary.avg_return_pct) || '0.00%'}`,
+      `- **平均持有**：${summary.avg_holding_days ?? 0} 天`,
+      `- **盈亏比 / Profit Factor**：${summary.payoff_ratio ?? 0} / ${summary.profit_factor ?? 0}`,
+      '',
+      '### 钱包结果',
+      `- **实现盈亏**：${this.formatSignedMoney(summary.total_realized_pnl)}`,
+      `- **浮动盈亏**：${this.formatSignedMoney(summary.total_unrealized_pnl)}`,
+      `- **综合盈亏**：${this.formatSignedMoney(summary.total_pnl)}`,
+      `- **当前持仓敞口**：¥${this.formatMoney(summary.open_exposure)}（${
+        summary.open_exposure_pct ?? 0
+      }%）`,
+    ];
+
+    if (summary.best_trade || summary.worst_trade) {
+      lines.push('', '### 最佳 / 最差样本');
+      if (summary.best_trade) {
+        lines.push(
+          `- **最佳**：${summary.best_trade.name || summary.best_trade.symbol}（${
+            summary.best_trade.symbol
+          }），收益 ${this.formatPercent(summary.best_trade.realized_pnl_pct)}，实现盈亏 ${this.formatSignedMoney(
+            summary.best_trade.realized_pnl
+          )}，持有 ${summary.best_trade.holding_days ?? '--'} 天`
+        );
+      }
+      if (summary.worst_trade) {
+        lines.push(
+          `- **最差**：${summary.worst_trade.name || summary.worst_trade.symbol}（${
+            summary.worst_trade.symbol
+          }），收益 ${this.formatPercent(summary.worst_trade.realized_pnl_pct)}，实现盈亏 ${this.formatSignedMoney(
+            summary.worst_trade.realized_pnl
+          )}，退出原因：${summary.worst_trade.exit_reason_label || summary.worst_trade.exit_reason || '-'}`
+        );
+      }
+    }
+
+    if (Array.isArray(feedback.insights) && feedback.insights.length > 0) {
+      lines.push('', '### 策略反哺洞察');
+      feedback.insights.slice(0, 8).forEach((text: string) => {
+        lines.push(`- ${this.safeText(text, 500)}`);
+      });
+    }
+
+    if (Array.isArray(feedback.next_actions) && feedback.next_actions.length > 0) {
+      lines.push('', '### 下一步执行建议');
+      feedback.next_actions.slice(0, 8).forEach((text: string) => {
+        lines.push(`- ${this.safeText(text, 500)}`);
+      });
+      lines.push(
+        `- **推荐最低评分**：${feedback.recommended_min_score ?? 72}`,
+        `- **推荐风险等级**：${
+          Array.isArray(feedback.recommended_allowed_risk_levels)
+            ? feedback.recommended_allowed_risk_levels.join('、')
+            : 'low、medium'
+        }`
+      );
+    }
+
+    this.appendAttributionGroupLines(lines, '来源维度', sourceGroups);
+    this.appendAttributionGroupLines(lines, '风险维度', riskGroups);
+    this.appendAttributionGroupLines(lines, '动作维度', actionGroups);
+    this.appendAttributionGroupLines(lines, '评分桶维度', scoreGroups);
+    this.appendAttributionGroupLines(lines, '退出原因维度', exitGroups);
+
+    if (openPositions.length > 0) {
+      lines.push('', '### 当前持仓风险暴露');
+      openPositions.slice(0, 8).forEach((item: any) => {
+        lines.push(
+          `- **${item.name || item.symbol}（${item.symbol}）**：浮盈亏 ${this.formatSignedMoney(
+            item.unrealized_pnl
+          )}（${this.formatPercent(item.unrealized_pnl_pct)}），持有 ${
+            item.holding_days ?? '--'
+          } 天，距止损 ${
+            item.distance_to_stop_loss_pct !== undefined
+              ? `${item.distance_to_stop_loss_pct}pct`
+              : '--'
+          }`
+        );
+      });
+    }
+
+    if (closedTrades.length > 0) {
+      lines.push('', '### 最近闭环交易');
+      closedTrades.slice(0, 8).forEach((item: any, index: number) => {
+        lines.push(
+          `${index + 1}. **${item.name || item.symbol}（${item.symbol}）**：收益 ${this.formatPercent(
+            item.realized_pnl_pct
+          )}，实现盈亏 ${this.formatSignedMoney(item.realized_pnl)}，退出：${
+            item.exit_reason_label || item.exit_reason || '-'
+          }`
+        );
+      });
+    } else {
+      lines.push('', '### 最近闭环交易', '- 暂无已平仓闭环样本，先积累模拟盘交易结果。');
+    }
+
+    const errorText = this.errorMessage(options.error);
+    if (errorText) {
+      lines.push('', '### 错误信息', errorText);
+    }
+
+    lines.push(
+      '',
+      '> 说明：本报告用于把推荐信号、模拟盘买卖和真实收益结果连接起来，帮助自动调优选股阈值；不代表真实账户交易指令。'
+    );
+
+    return this.safeText(lines.filter(Boolean).join('\n'), 10000);
+  }
+
+  private appendAttributionGroupLines(lines: string[], title: string, groups: any[]): void {
+    if (!Array.isArray(groups) || groups.length === 0) return;
+    lines.push('', `### ${title}`);
+    groups.slice(0, 6).forEach(group => {
+      lines.push(
+        `- **${group.label || group.key}**：闭环 ${group.closed_count ?? 0} / 持仓 ${
+          group.open_count ?? 0
+        }，均收 ${this.formatPercent(group.avg_return_pct) || '0.00%'}，胜率 ${
+          this.formatPercent(group.win_rate) || '0.00%'
+        }，实现盈亏 ${this.formatSignedMoney(group.total_realized_pnl)}`
+      );
+    });
+  }
+
   private firstDefined(...values: any[]): any {
     return values.find(value => value !== undefined && value !== null && value !== '');
   }
@@ -768,6 +1006,17 @@ class FeishuTaskReportService {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     });
+  }
+
+  private formatSignedMoney(value: any): string {
+    if (value === undefined || value === null || value === '') return '¥0.00';
+    const num = Number(value);
+    if (!Number.isFinite(num)) return String(value);
+    const prefix = num > 0 ? '+¥' : num < 0 ? '-¥' : '¥';
+    return `${prefix}${Math.abs(num).toLocaleString('zh-CN', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
   }
 }
 
