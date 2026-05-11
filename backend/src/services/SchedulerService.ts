@@ -6,6 +6,7 @@ import { dataUpdateQueue } from '../jobs/dataUpdateQueue';
 import { aiPollingQueue } from '../jobs/aiPollingQueue';
 import { aiAdvisorService } from './AIAdvisorService';
 import { quantRecommendationService } from './QuantRecommendationService';
+import { feishuTaskReportService } from './FeishuTaskReportService';
 import moment from 'moment-timezone';
 import { Op } from 'sequelize';
 
@@ -99,6 +100,13 @@ class SchedulerService {
     }
 
     await executionLog.update(patch);
+
+    if (status !== 'RUNNING') {
+      await feishuTaskReportService.reportTaskExecutionLog(executionLog, {
+        record_type: status === 'FAILED' ? '定时任务失败' : '定时任务完成',
+        error,
+      });
+    }
   }
 
   private async enqueueDataUpdateJob(
@@ -300,6 +308,11 @@ class SchedulerService {
         // 如果没有成功提交的任务，说明已经结束了
         if (count === 0) {
           await executionLog.update({ status: 'COMPLETED', completed_at: new Date() });
+          await feishuTaskReportService.reportTaskExecutionLog(executionLog, {
+            record_type: 'AI定时任务完成',
+            task_type: 'AI_DAILY_SCREENER',
+            result: { message: '无候选股票成功提交 AI 分析任务', submitted: count, failed },
+          });
         }
       } else {
         throw new Error(`Unsupported task type: ${task.type}`);

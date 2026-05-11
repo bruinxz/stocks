@@ -1,5 +1,6 @@
 import Bull from 'bull';
 import { logger } from '../utils/logger';
+import { feishuTaskReportService } from '../services/FeishuTaskReportService';
 
 export interface DataUpdateJobData {
   type:
@@ -71,6 +72,12 @@ dataUpdateQueue.on('completed', (job, result) => {
     date: job.data.date,
     result,
   });
+
+  if (job.data.execution_log_id) {
+    feishuTaskReportService
+      .reportQueueJobCompletion('data-update', job, result)
+      .catch(error => logger.error('飞书上报数据更新队列完成失败:', error));
+  }
 });
 
 dataUpdateQueue.on('failed', (job, error) => {
@@ -79,6 +86,13 @@ dataUpdateQueue.on('failed', (job, error) => {
     date: job?.data.date,
     error: error.message,
   });
+
+  const maxAttempts = Number(job?.opts?.attempts || 1);
+  if (job?.data?.execution_log_id && job.attemptsMade >= maxAttempts) {
+    feishuTaskReportService
+      .reportQueueJobCompletion('data-update', job, undefined, error)
+      .catch(reportError => logger.error('飞书上报数据更新队列失败失败:', reportError));
+  }
 });
 
 dataUpdateQueue.on('stalled', job => {

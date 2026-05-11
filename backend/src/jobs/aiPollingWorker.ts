@@ -6,6 +6,7 @@ import { TaskExecutionLog } from '../models/TaskExecutionLog';
 import { AKShareClient } from '../data/sources/AKShareClient';
 import { notificationService } from '../services/NotificationService';
 import { aiInvestmentSignalService } from '../services/AIInvestmentSignalService';
+import { feishuTaskReportService } from '../services/FeishuTaskReportService';
 import { logger } from '../utils/logger';
 import moment from 'moment-timezone';
 
@@ -25,10 +26,14 @@ const updateLogProgress = async (logId: number | undefined, isSuccess: boolean) 
 
     await log.reload();
 
-    if (log.completed_items + log.failed_items >= log.total_items) {
+    if (log.status !== 'COMPLETED' && log.completed_items + log.failed_items >= log.total_items) {
       await log.update({
         status: 'COMPLETED',
         completed_at: new Date(),
+      });
+      await feishuTaskReportService.reportTaskExecutionLog(log, {
+        record_type: 'AI定时任务完成',
+        task_type: 'AI_DAILY_SCREENER',
       });
     }
   } catch (error) {
@@ -185,7 +190,7 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
 
       await updateLogProgress(executionLogId, true);
 
-      // 异步推送微信通知（失败也不影响主流程）
+      // 异步写入飞书多维表格（失败也不影响主流程）
       notificationService
         .notifyStockAnalysis({
           symbol,
@@ -198,7 +203,7 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
           price_change_pct: priceChangePct,
           task_label: taskLabel,
         })
-        .catch(err => logger.error('推送微信通知失败（不影响主流程）:', err));
+        .catch(err => logger.error('写入飞书 AI 分析结果失败（不影响主流程）:', err));
 
       return { success: true };
     } else if (status === 'FAILED' || status === 'ERROR') {
@@ -226,5 +231,6 @@ aiPollingQueue.on('failed', async (job, err) => {
   if (job && job.attemptsMade >= job.opts.attempts!) {
     logger.error(`AI轮询任务最终失败(重试耗尽) ${job.id}: ${err.message}`);
     await updateLogProgress(job.data.executionLogId, false);
+    await feishuTaskReportService.reportAiPollingFailure(job.data, err, job.id);
   }
 });

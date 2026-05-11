@@ -18,7 +18,7 @@ import {
   PhoneOutlined,
   MailOutlined,
   EditOutlined,
-  WechatOutlined,
+  CloudSyncOutlined,
 } from '@ant-design/icons';
 import type { UploadProps } from 'antd';
 import { useSelector, useDispatch } from 'react-redux';
@@ -35,8 +35,6 @@ const Profile: React.FC = () => {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
-
-  // 微信通知相关
 
   React.useEffect(() => {
     if (user) {
@@ -198,38 +196,40 @@ const Profile: React.FC = () => {
             variant="borderless"
             title={
               <>
-                <WechatOutlined style={{ color: '#07c160' }} /> 微信通知（PushPlus）
+                <CloudSyncOutlined style={{ color: '#1677ff' }} /> 飞书开放平台同步
               </>
             }
           >
             <div style={{ lineHeight: 2 }}>
               <div style={{ marginTop: 8 }}>
                 <Text type="secondary">
-                  我们使用 PushPlus (推送加) 的「群组通知」功能提供服务。
+                  系统已切换为飞书开放平台：AI
+                  分析结果和定时任务执行结果会自动写入指定飞书多维表格。
                   <br />
-                  您只需要使用微信扫描下方二维码，关注公众号并加入群组，即可每天接收 AI
-                  选股分析报告。
+                  你可以在飞书 Base 中查看任务日志、队列状态、个股评级、评分和核心理由。
                   <br />
-                  <span style={{ color: '#ff4d4f' }}>* 无需注册，无需实名，随时可退订</span>
+                  <span style={{ color: '#1677ff' }}>* 无需个人绑定，应用凭证由后端统一托管。</span>
                 </Text>
 
-                <div style={{ marginTop: 24, textAlign: 'center' }}>
-                  <img
-                    src={
-                      process.env.REACT_APP_PUSHPLUS_QRCODE_URL ||
-                      'https://www.pushplus.plus/api/common/qrcode/group/261ae301eaf34c8ba4e0c67c8cd5ca78'
-                    }
-                    alt="PushPlus 群组二维码"
-                    style={{
-                      width: 200,
-                      height: 200,
-                      border: '1px solid #f0f0f0',
-                      borderRadius: 8,
-                      padding: 8,
-                    }}
-                  />
+                <div
+                  style={{
+                    marginTop: 24,
+                    padding: 18,
+                    borderRadius: 16,
+                    background:
+                      'linear-gradient(135deg, rgba(22,119,255,0.08), rgba(20,184,166,0.08))',
+                    border: '1px solid rgba(22,119,255,0.16)',
+                  }}
+                >
+                  <Text strong>写入目标</Text>
                   <div style={{ marginTop: 12 }}>
-                    <Text strong>微信扫一扫，加入通知群组</Text>
+                    <a
+                      href="https://my.feishu.cn/base/FOT8bXz5daxZQqszBqecrCAKnbc?table=tblxGh9uXavoj9zR&view=vewaYpA1L3"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      打开飞书任务结果表
+                    </a>
                   </div>
                 </div>
               </div>
