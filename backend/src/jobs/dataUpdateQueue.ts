@@ -1,6 +1,8 @@
 import Bull from 'bull';
 import { logger } from '../utils/logger';
 import { feishuTaskReportService } from '../services/FeishuTaskReportService';
+import { TaskExecutionLog } from '../models/TaskExecutionLog';
+import { ScheduledTask } from '../models/ScheduledTask';
 
 export interface DataUpdateJobData {
   type:
@@ -74,9 +76,40 @@ dataUpdateQueue.on('completed', (job, result) => {
   });
 
   if (job.data.execution_log_id) {
-    feishuTaskReportService
-      .reportQueueJobCompletion('data-update', job, result)
-      .catch(error => logger.error('飞书上报数据更新队列完成失败:', error));
+    (async () => {
+      const totalItems = Number(
+        result?.totalStocks || result?.affected_stocks || result?.affectedStocks || 1
+      );
+      const failedItems = Number(result?.failedSyncs || result?.failed || 0);
+      const completedItems =
+        result?.successfulSyncs !== undefined
+          ? Number(result.successfulSyncs)
+          : failedItems > 0 && totalItems > 0
+          ? Math.max(totalItems - failedItems, 0)
+          : totalItems;
+
+      const log = await TaskExecutionLog.findByPk(job.data.execution_log_id);
+      if (log) {
+        await log.update({
+          status: failedItems >= totalItems && totalItems > 0 ? 'FAILED' : 'COMPLETED',
+          total_items: totalItems,
+          completed_items: completedItems,
+          failed_items: failedItems,
+          error_message:
+            failedItems > 0 ? `数据更新队列部分失败：${failedItems}/${totalItems}` : null,
+          completed_at: new Date(),
+        });
+      }
+
+      if (job.data.scheduled_task_id) {
+        await ScheduledTask.update(
+          { last_run_status: failedItems >= totalItems && totalItems > 0 ? 'FAILED' : 'SUCCESS' },
+          { where: { id: job.data.scheduled_task_id } }
+        );
+      }
+
+      await feishuTaskReportService.reportQueueJobCompletion('data-update', job, result);
+    })().catch(error => logger.error('更新/上报数据更新队列完成状态失败:', error));
   }
 });
 
@@ -89,9 +122,26 @@ dataUpdateQueue.on('failed', (job, error) => {
 
   const maxAttempts = Number(job?.opts?.attempts || 1);
   if (job?.data?.execution_log_id && job.attemptsMade >= maxAttempts) {
-    feishuTaskReportService
-      .reportQueueJobCompletion('data-update', job, undefined, error)
-      .catch(reportError => logger.error('飞书上报数据更新队列失败失败:', reportError));
+    (async () => {
+      const log = await TaskExecutionLog.findByPk(job.data.execution_log_id);
+      if (log) {
+        await log.update({
+          status: 'FAILED',
+          failed_items: Math.max(Number(log.failed_items || 0), 1),
+          error_message: error.message,
+          completed_at: new Date(),
+        });
+      }
+
+      if (job.data.scheduled_task_id) {
+        await ScheduledTask.update(
+          { last_run_status: 'FAILED' },
+          { where: { id: job.data.scheduled_task_id } }
+        );
+      }
+
+      await feishuTaskReportService.reportQueueJobCompletion('data-update', job, undefined, error);
+    })().catch(reportError => logger.error('飞书上报数据更新队列失败失败:', reportError));
   }
 });
 

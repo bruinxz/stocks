@@ -125,10 +125,10 @@ class SchedulerService {
     });
 
     await executionLog.update({
-      status: 'COMPLETED',
-      completed_at: new Date(),
+      status: 'IN_PROGRESS',
       total_items: 1,
-      completed_items: 1,
+      completed_items: 0,
+      failed_items: 0,
       error_message: null,
     });
 
