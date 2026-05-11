@@ -280,11 +280,26 @@ export class AIInvestmentSignalService {
         : '';
     const combined = `${text}\n${detailText}`;
 
+    const explicitDecision = this.normalizeDecision(text);
+    const finalDecisionMatch =
+      combined.match(
+        /Final\s+Decision\s+(?:for\s+[^:：\n]+)?\s*[:：]\s*([A-Z_\-\s]+|强烈买入|买入|持有|观望|中性|卖出|强烈卖出|看多|看空)/i
+      ) ||
+      combined.match(
+        /最终(?:交易)?(?:决策|提案|建议)\s*[:：]?\s*(?:\*\*)?\s*([A-Z_\-\s]+|强烈买入|买入|持有|观望|中性|卖出|强烈卖出|看多|看空)/i
+      );
     const ratingMatch =
       combined.match(/(?:\*\*)?Rating(?:\*\*)?\s*[:：]\s*([^\n]+)/i) ||
       combined.match(/评级\s*[:：]\s*([^\n]+)/i);
-    const rawRating = stripMarkdown(ratingMatch?.[1] || text.split('\n')[0] || 'UNKNOWN');
-    const normalized_decision = this.normalizeDecision(rawRating || combined);
+    const rawRating = stripMarkdown(
+      explicitDecision !== AISignalDecision.UNKNOWN
+        ? text
+        : finalDecisionMatch?.[1] || ratingMatch?.[1] || text.split('\n')[0] || 'UNKNOWN'
+    );
+    const normalized_decision =
+      explicitDecision !== AISignalDecision.UNKNOWN
+        ? explicitDecision
+        : this.normalizeDecision(rawRating);
 
     const summaryMatch =
       combined.match(
@@ -355,14 +370,14 @@ export class AIInvestmentSignalService {
     if (text.includes('STRONG_BUY') || text.includes('强烈买入') || text.includes('强买')) {
       return AISignalDecision.STRONG_BUY;
     }
-    if (text.includes('BUY') || text.includes('买入') || text.includes('看多')) {
-      return AISignalDecision.BUY;
-    }
     if (text.includes('STRONG_SELL') || text.includes('强烈卖出') || text.includes('强卖')) {
       return AISignalDecision.STRONG_SELL;
     }
     if (text.includes('SELL') || text.includes('卖出') || text.includes('看空')) {
       return AISignalDecision.SELL;
+    }
+    if (text.includes('BUY') || text.includes('买入') || text.includes('看多')) {
+      return AISignalDecision.BUY;
     }
     if (
       text.includes('HOLD') ||
