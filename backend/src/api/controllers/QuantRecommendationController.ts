@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { quantRecommendationService } from '../../services/QuantRecommendationService';
 import { aiAdvisorService } from '../../services/AIAdvisorService';
 import { aiInvestmentSignalService } from '../../services/AIInvestmentSignalService';
+import { automatedRecommendationLoopService } from '../../services/AutomatedRecommendationLoopService';
 import { AISignalSourceType } from '../../models/AIInvestmentSignal';
 import { aiPollingQueue } from '../../jobs/aiPollingQueue';
 import { logger } from '../../utils/logger';
@@ -172,6 +173,69 @@ export class QuantRecommendationController {
       });
     } catch (error: any) {
       logger.error('归档量化候选信号失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
+  runAutomatedLoop = async (req: Request, res: Response) => {
+    try {
+      const result = await automatedRecommendationLoopService.run({
+        username: req.body?.username || 'lym',
+        universe: req.body?.universe === 'favorites' ? 'favorites' : 'market',
+        style: ['balanced', 'momentum', 'value', 'low_risk'].includes(req.body?.style)
+          ? req.body.style
+          : 'balanced',
+        candidate_limit: req.body?.candidate_limit ? Number(req.body.candidate_limit) : 30,
+        candidate_pool_limit: req.body?.candidate_pool_limit
+          ? Number(req.body.candidate_pool_limit)
+          : undefined,
+        lookback_days: req.body?.lookback_days ? Number(req.body.lookback_days) : 120,
+        min_bars: req.body?.min_bars ? Number(req.body.min_bars) : undefined,
+        exclude_st: req.body?.exclude_st !== false,
+        min_market_cap_yi:
+          req.body?.min_market_cap_yi !== undefined ? Number(req.body.min_market_cap_yi) : 30,
+        archive_limit: req.body?.archive_limit ? Number(req.body.archive_limit) : undefined,
+        verify_signals: req.body?.verify_signals !== false,
+        run_paper_trading: req.body?.run_paper_trading === true,
+        dry_run: req.body?.dry_run === true,
+        paper_trade_limit: req.body?.paper_trade_limit
+          ? Number(req.body.paper_trade_limit)
+          : undefined,
+        paper_trade_scan_limit: req.body?.paper_trade_scan_limit
+          ? Number(req.body.paper_trade_scan_limit)
+          : undefined,
+        min_score: req.body?.min_score ? Number(req.body.min_score) : 72,
+        max_positions: req.body?.max_positions ? Number(req.body.max_positions) : undefined,
+        default_position_pct: req.body?.default_position_pct
+          ? Number(req.body.default_position_pct)
+          : undefined,
+        max_position_pct: req.body?.max_position_pct
+          ? Number(req.body.max_position_pct)
+          : undefined,
+        min_trade_amount: req.body?.min_trade_amount
+          ? Number(req.body.min_trade_amount)
+          : undefined,
+        use_profit_gate: req.body?.use_profit_gate !== false,
+        profit_gate_horizon: req.body?.profit_gate_horizon || '5d',
+        profit_gate_min_samples: req.body?.profit_gate_min_samples
+          ? Number(req.body.profit_gate_min_samples)
+          : 5,
+        profit_gate_min_quality_score: req.body?.profit_gate_min_quality_score
+          ? Number(req.body.profit_gate_min_quality_score)
+          : 45,
+        submit_agent_analysis: req.body?.submit_agent_analysis !== false,
+        agent_max_count: req.body?.agent_max_count ? Number(req.body.agent_max_count) : 5,
+        agent_min_score: req.body?.agent_min_score ? Number(req.body.agent_min_score) : 72,
+        agent_session: req.body?.agent_session || 'close',
+        target_date: req.body?.target_date,
+        task_label: req.body?.task_label || '手动全市场荐股闭环',
+        report_to_feishu: req.body?.report_to_feishu === true,
+        record_type: req.body?.record_type || '手动全市场荐股闭环',
+      });
+
+      res.json({ success: true, data: result, message: '全市场荐股闭环已执行' });
+    } catch (error: any) {
+      logger.error('执行全市场荐股闭环失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   };

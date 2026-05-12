@@ -144,6 +144,31 @@ interface AutoTradeResult {
   };
 }
 
+interface AutoLoopResult {
+  generated?: RecommendationResponse;
+  archive?: {
+    total?: number;
+    created?: number;
+    updated?: number;
+    verification?: any;
+  };
+  agent_analysis?: {
+    enabled?: boolean;
+    submitted?: Array<{ symbol: string; name?: string; task_id?: string; score?: number }>;
+    failed?: Array<{ symbol: string; name?: string; error?: string }>;
+  };
+  verification?: {
+    total?: number;
+    verified?: number;
+    pending?: number;
+    no_data?: number;
+  };
+  paper_trading?: AutoTradeResult;
+  quality_report?: {
+    overview?: any;
+  };
+}
+
 const riskColorMap: Record<string, string> = {
   low: 'green',
   medium: 'gold',
@@ -176,6 +201,8 @@ const Recommendations: React.FC = () => {
   const [analyzeLoading, setAnalyzeLoading] = useState(false);
   const [profileLoading, setProfileLoading] = useState(false);
   const [archiveLoading, setArchiveLoading] = useState(false);
+  const [autoLoopLoading, setAutoLoopLoading] = useState(false);
+  const [autoLoopResult, setAutoLoopResult] = useState<AutoLoopResult | null>(null);
   const [autoTradeLoading, setAutoTradeLoading] = useState(false);
   const [autoTradePreviewLoading, setAutoTradePreviewLoading] = useState(false);
   const [autoTradeResult, setAutoTradeResult] = useState<AutoTradeResult | null>(null);
@@ -402,6 +429,47 @@ const Recommendations: React.FC = () => {
       message.error(error.response?.data?.message || '模拟盘跟单执行失败');
     } finally {
       setRunning(false);
+    }
+  };
+
+  const runAutomatedLoop = async () => {
+    setAutoLoopLoading(true);
+    try {
+      const response = await api.post('/ai/recommendations/auto-loop', {
+        universe,
+        style,
+        candidate_limit: Math.max(limit, 20),
+        candidate_pool_limit: universe === 'market' ? Math.max(limit * 12, 240) : undefined,
+        lookback_days: 120,
+        archive_limit: Math.max(limit, 20),
+        verify_signals: true,
+        submit_agent_analysis: true,
+        agent_max_count: 5,
+        agent_min_score: 72,
+        agent_session: 'close',
+        run_paper_trading: true,
+        dry_run: true,
+        paper_trade_limit: 3,
+        use_profit_gate: true,
+        profit_gate_horizon: '5d',
+        profit_gate_min_samples: 5,
+        profit_gate_min_quality_score: 45,
+        report_to_feishu: false,
+      });
+      const result = response.data.data as AutoLoopResult;
+      setAutoLoopResult(result);
+      if (result.generated) setData(result.generated);
+      if (result.paper_trading) setAutoTradeResult(result.paper_trading);
+      await fetchSignalStats();
+      message.success(
+        `闭环完成：归档 ${result.archive?.total || 0} 条，Agent 提交 ${
+          result.agent_analysis?.submitted?.length || 0
+        } 个，模拟盘预演 ${result.paper_trading?.planned || 0} 笔`
+      );
+    } catch (error: any) {
+      message.error(error.response?.data?.message || '全市场荐股闭环执行失败');
+    } finally {
+      setAutoLoopLoading(false);
     }
   };
 
@@ -654,6 +722,15 @@ const Recommendations: React.FC = () => {
               绩效实验室
             </Button>
             <Button
+              type="primary"
+              ghost
+              icon={<GlobalOutlined />}
+              onClick={runAutomatedLoop}
+              loading={autoLoopLoading}
+            >
+              跑全市场闭环
+            </Button>
+            <Button
               icon={<PlayCircleOutlined />}
               onClick={() => runPaperTradingSync(true)}
               loading={autoTradePreviewLoading}
@@ -759,6 +836,74 @@ const Recommendations: React.FC = () => {
                   本轮没有可执行标的：
                   {autoTradeResult.skipped_items?.[0]?.reason ||
                     '可能是持仓已满、风险过滤或资金不足'}
+                </Text>
+              )}
+            </Col>
+          </Row>
+        </Card>
+      )}
+
+      {autoLoopResult && (
+        <Card
+          className="modern-card"
+          variant="borderless"
+          style={{
+            marginBottom: 16,
+            background:
+              'linear-gradient(135deg, rgba(2,44,34,0.96), rgba(6,78,59,0.9) 42%, rgba(15,23,42,0.96))',
+            border: '1px solid rgba(167,243,208,0.18)',
+            boxShadow: '0 18px 46px rgba(6,78,59,0.16)',
+          }}
+        >
+          <Row gutter={[16, 16]} align="middle">
+            <Col xs={24} md={7}>
+              <Space direction="vertical" size={4}>
+                <Tag color="green">自动荐股闭环</Tag>
+                <Text style={{ color: '#f0fdf4', fontSize: 18, fontWeight: 800 }}>
+                  全市场扫描 → 归档验证 → Agent复核 → 模拟盘预演
+                </Text>
+                <Text style={{ color: 'rgba(220,252,231,0.72)' }}>
+                  候选 {autoLoopResult.generated?.analyzed_candidates || 0}/
+                  {autoLoopResult.generated?.total_candidates || 0}，归档{' '}
+                  {autoLoopResult.archive?.total || 0} 条
+                </Text>
+              </Space>
+            </Col>
+            <Col xs={12} md={4}>
+              <Statistic
+                title={<span style={{ color: 'rgba(220,252,231,0.7)' }}>Agent提交</span>}
+                value={autoLoopResult.agent_analysis?.submitted?.length || 0}
+                suffix="个"
+                valueStyle={{ color: '#bbf7d0' }}
+              />
+            </Col>
+            <Col xs={12} md={4}>
+              <Statistic
+                title={<span style={{ color: 'rgba(220,252,231,0.7)' }}>验证完成</span>}
+                value={autoLoopResult.verification?.verified || 0}
+                suffix="条"
+                valueStyle={{ color: '#f0fdf4' }}
+              />
+            </Col>
+            <Col xs={12} md={4}>
+              <Statistic
+                title={<span style={{ color: 'rgba(220,252,231,0.7)' }}>质量分</span>}
+                value={autoLoopResult.quality_report?.overview?.quality_score || 0}
+                valueStyle={{ color: '#fde68a' }}
+              />
+            </Col>
+            <Col xs={24} md={9}>
+              {autoLoopResult.agent_analysis?.submitted?.length ? (
+                <Space wrap>
+                  {autoLoopResult.agent_analysis.submitted.slice(0, 5).map(item => (
+                    <Tag key={item.task_id || item.symbol} color="green">
+                      {item.name || item.symbol} · {item.score ?? '--'}分
+                    </Tag>
+                  ))}
+                </Space>
+              ) : (
+                <Text style={{ color: 'rgba(220,252,231,0.72)' }}>
+                  本轮没有达到 Agent 复核阈值的候选，系统仍会保留归档后验。
                 </Text>
               )}
             </Col>

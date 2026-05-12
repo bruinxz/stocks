@@ -42,8 +42,15 @@ const taskTypeLabels: Record<string, string> = {
   SYNC_ALL_STOCKS: '全市场股票列表同步',
   SYNC_HISTORY: '股票历史行情同步',
   DATA_QUALITY_SCAN: '数据质量扫描',
+  BENCHMARK_INDEX_SYNC: '基准指数行情同步',
   AI_DAILY_SCREENER: 'AI 每日优选评估',
+  AUTO_RECOMMENDATION_LOOP: '全市场荐股闭环',
   SIGNAL_PERFORMANCE_REFRESH: '推荐绩效后验刷新',
+  SIGNAL_QUALITY_DAILY_REPORT: '信号质量日报',
+  PAPER_TRADING_AUTO_SYNC: '推荐信号模拟盘跟单',
+  PAPER_TRADING_RISK_CHECK: '模拟盘风控退出检查',
+  PAPER_TRADING_ATTRIBUTION_REPORT: '模拟盘收益归因报告',
+  PAPER_TRADING_DAILY_PLAN: '模拟盘交易计划报告',
 };
 
 const defaultParametersByType: Record<string, any> = {
@@ -68,8 +75,66 @@ const defaultParametersByType: Record<string, any> = {
     candidate_limit: 10,
     lookback_days: 120,
   },
+  AUTO_RECOMMENDATION_LOOP: {
+    username: 'lym',
+    universe: 'market',
+    style: 'balanced',
+    candidate_limit: 30,
+    candidate_pool_limit: 360,
+    archive_limit: 30,
+    verify_signals: true,
+    submit_agent_analysis: true,
+    agent_max_count: 5,
+    agent_min_score: 72,
+    run_paper_trading: true,
+    dry_run: false,
+    use_profit_gate: true,
+    report_to_feishu: true,
+  },
+  BENCHMARK_INDEX_SYNC: {
+    lookback_days: 180,
+    data_source: 'tencent_only',
+    concurrency: 2,
+    report_to_feishu: true,
+  },
   SIGNAL_PERFORMANCE_REFRESH: {
     limit: 500,
+    report_to_feishu: true,
+  },
+  SIGNAL_QUALITY_DAILY_REPORT: {
+    horizon: '5d',
+    lookback_days: 30,
+    min_samples: 5,
+    auto_repair_missing_data: true,
+    report_to_feishu: true,
+  },
+  PAPER_TRADING_AUTO_SYNC: {
+    username: 'lym',
+    refresh_recommendations: true,
+    universe: 'market',
+    style: 'balanced',
+    candidate_limit: 30,
+    use_profit_gate: true,
+    dry_run: false,
+    report_to_feishu: true,
+  },
+  PAPER_TRADING_RISK_CHECK: {
+    username: 'lym',
+    enable_stop_loss: true,
+    enable_take_profit: true,
+    enable_sell_signals: true,
+    report_to_feishu: true,
+  },
+  PAPER_TRADING_ATTRIBUTION_REPORT: {
+    username: 'lym',
+    include_open: true,
+    report_to_feishu: true,
+  },
+  PAPER_TRADING_DAILY_PLAN: {
+    username: 'lym',
+    include_entries: true,
+    include_exits: true,
+    include_monitor: true,
     report_to_feishu: true,
   },
 };
@@ -412,8 +477,15 @@ const TaskScheduler: React.FC = () => {
               <Option value="SYNC_ALL_STOCKS">全市场股票列表同步</Option>
               <Option value="SYNC_HISTORY">股票历史行情同步</Option>
               <Option value="DATA_QUALITY_SCAN">数据质量扫描</Option>
+              <Option value="BENCHMARK_INDEX_SYNC">基准指数行情同步</Option>
               <Option value="AI_DAILY_SCREENER">AI 每日优选评估</Option>
+              <Option value="AUTO_RECOMMENDATION_LOOP">全市场荐股闭环</Option>
               <Option value="SIGNAL_PERFORMANCE_REFRESH">推荐绩效后验刷新</Option>
+              <Option value="SIGNAL_QUALITY_DAILY_REPORT">信号质量日报</Option>
+              <Option value="PAPER_TRADING_AUTO_SYNC">推荐信号模拟盘跟单</Option>
+              <Option value="PAPER_TRADING_RISK_CHECK">模拟盘风控退出检查</Option>
+              <Option value="PAPER_TRADING_ATTRIBUTION_REPORT">模拟盘收益归因报告</Option>
+              <Option value="PAPER_TRADING_DAILY_PLAN">模拟盘交易计划报告</Option>
             </Select>
           </Form.Item>
 

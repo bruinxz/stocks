@@ -474,6 +474,7 @@ class FeishuTaskReportService {
       ? generated.recommendations
       : [];
     const archive = result?.archive || {};
+    const agentAnalysis = result?.agent_analysis || {};
     const verification = result?.verification || archive?.verification || {};
     const paper = result?.paper_trading || {};
     const qualityOverview = result?.quality_report?.overview || {};
@@ -489,6 +490,11 @@ class FeishuTaskReportService {
       `- **评分覆盖**：${generated.analyzed_candidates ?? 0}/${
         generated.total_candidates ?? 0
       }；归档 ${archive.total ?? 0} 条；验证完成 ${verification.verified ?? 0} 条`,
+      agentAnalysis?.enabled
+        ? `- **Agent 深度复核**：已提交 ${
+            Array.isArray(agentAnalysis.submitted) ? agentAnalysis.submitted.length : 0
+          } 个；失败 ${Array.isArray(agentAnalysis.failed) ? agentAnalysis.failed.length : 0} 个`
+        : '- **Agent 深度复核**：未启用',
       `- **模拟盘动作**：${
         paper?.dry_run ? '预演' : paper?.portfolio_id ? '已执行' : '未执行'
       }；成交/计划 ${paper?.executed ?? paper?.planned ?? 0} 笔；跳过 ${paper?.skipped ?? 0} 条`,
@@ -519,6 +525,7 @@ class FeishuTaskReportService {
       '',
       '### 闭环说明',
       '- 系统已从全市场候选池自动筛选、归档为可后验验证信号，并可接入 Profit Gate 后进入模拟盘。',
+      '- Top 候选会提交 TradingAgents 深度复核；复核结果回写后进入尾盘/场次收益跟踪。',
       '- 下一轮会使用信号后验超额收益继续反哺候选评分，连续跑输市场的标的会被自动降权。',
     ]
       .filter(Boolean)
@@ -540,6 +547,8 @@ class FeishuTaskReportService {
       归档信号数: archive.total,
       新增信号数: archive.created,
       更新信号数: archive.updated,
+      Agent提交数: Array.isArray(agentAnalysis.submitted) ? agentAnalysis.submitted.length : '',
+      Agent失败数: Array.isArray(agentAnalysis.failed) ? agentAnalysis.failed.length : '',
       验证完成数: verification.verified,
       等待验证数: verification.pending,
       无数据信号数: verification.no_data,
@@ -565,6 +574,7 @@ class FeishuTaskReportService {
             recommendations: topPicks,
           },
           archive,
+          agent_analysis: agentAnalysis,
           verification,
           paper_trading: {
             portfolio_id: paper?.portfolio_id,

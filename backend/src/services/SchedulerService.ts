@@ -828,6 +828,18 @@ class SchedulerService {
           profit_gate_min_quality_score: Number(
             parameters.profit_gate_min_quality_score || parameters.profitGateMinQualityScore || 45
           ),
+          submit_agent_analysis:
+            parameters.submit_agent_analysis !== undefined
+              ? Boolean(parameters.submit_agent_analysis)
+              : parameters.submitAgentAnalysis !== undefined
+              ? Boolean(parameters.submitAgentAnalysis)
+              : true,
+          agent_max_count: this.toPositiveInt(parameters.agent_max_count, 5, 10),
+          agent_min_score: Number(parameters.agent_min_score || parameters.agentMinScore || 72),
+          agent_session: parameters.agent_session || parameters.agentSession || 'close',
+          target_date: parameters.target_date || parameters.targetDate || today,
+          task_label: task.name,
+          execution_log_id: executionLog.id,
           report_to_feishu:
             parameters.report_to_feishu !== undefined
               ? Boolean(parameters.report_to_feishu)
@@ -1135,6 +1147,10 @@ class SchedulerService {
           profit_gate_horizon: '5d',
           profit_gate_min_samples: 5,
           profit_gate_min_quality_score: 45,
+          submit_agent_analysis: true,
+          agent_max_count: 5,
+          agent_min_score: 72,
+          agent_session: 'close',
           report_to_feishu: true,
           record_type: '全市场荐股闭环',
         },
@@ -1208,6 +1224,35 @@ class SchedulerService {
           min_trade_amount: 3000,
           allowed_risk_levels: ['low', 'medium'],
           require_action_buy: true,
+          use_attribution_feedback: true,
+          use_profit_gate: true,
+          profit_gate_horizon: '5d',
+          profit_gate_min_samples: 5,
+          profit_gate_min_quality_score: 45,
+          profit_gate_allow_deprioritized: false,
+          dry_run: false,
+          report_to_feishu: true,
+        },
+      },
+      {
+        name: 'Agent尾盘建议模拟盘跟单',
+        type: 'PAPER_TRADING_AUTO_SYNC',
+        cron_expression: '42 15 * * 1-5',
+        is_active: true,
+        parameters: {
+          username: 'lym',
+          refresh_recommendations: false,
+          source_type: 'tradingagents',
+          agent_session: 'close',
+          limit: 2,
+          scan_limit: 80,
+          min_score: 72,
+          max_positions: 8,
+          default_position_pct: 4,
+          max_position_pct: 8,
+          min_trade_amount: 3000,
+          allowed_risk_levels: ['low', 'medium'],
+          require_action_buy: false,
           use_attribution_feedback: true,
           use_profit_gate: true,
           profit_gate_horizon: '5d',
@@ -1393,6 +1438,10 @@ class SchedulerService {
           'profit_gate_horizon',
           'profit_gate_min_samples',
           'profit_gate_min_quality_score',
+          'submit_agent_analysis',
+          'agent_max_count',
+          'agent_min_score',
+          'agent_session',
           'report_to_feishu',
           'record_type',
         ]) {

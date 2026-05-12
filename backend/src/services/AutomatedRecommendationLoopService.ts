@@ -3,8 +3,10 @@ import { quantRecommendationService } from './QuantRecommendationService';
 import { aiInvestmentSignalService } from './AIInvestmentSignalService';
 import { paperTradingAutomationService } from './PaperTradingAutomationService';
 import { feishuTaskReportService } from './FeishuTaskReportService';
+import { aiAdvisorService } from './AIAdvisorService';
 import { logger } from '../utils/logger';
 import { AISignalSourceType } from '../models/AIInvestmentSignal';
+import { aiPollingQueue } from '../jobs/aiPollingQueue';
 
 export interface AutomatedRecommendationLoopOptions {
   username?: string;
@@ -31,6 +33,13 @@ export interface AutomatedRecommendationLoopOptions {
   profit_gate_horizon?: string;
   profit_gate_min_samples?: number;
   profit_gate_min_quality_score?: number;
+  submit_agent_analysis?: boolean;
+  agent_max_count?: number;
+  agent_min_score?: number;
+  agent_session?: string;
+  target_date?: string;
+  task_label?: string;
+  execution_log_id?: number;
   report_to_feishu?: boolean;
   record_type?: string;
 }
@@ -75,6 +84,25 @@ class AutomatedRecommendationLoopService {
       style,
       as_of: generated.as_of,
     });
+
+    const agent_analysis =
+      options.submit_agent_analysis === false
+        ? { enabled: false, submitted: [], failed: [], skipped: [] }
+        : await this.submitAgentAnalysis({
+            candidates: archiveCandidates,
+            max_count: toPositiveInt(options.agent_max_count, universe === 'market' ? 5 : 3, 10),
+            min_score: Number(options.agent_min_score || options.min_score || 72),
+            target_date:
+              options.target_date ||
+              moment(generated.as_of || undefined)
+                .tz('Asia/Shanghai')
+                .format('YYYY-MM-DD'),
+            task_label: options.task_label || options.record_type || '全市场荐股闭环',
+            agent_session: options.agent_session || 'close',
+            execution_log_id: options.execution_log_id,
+            universe,
+            style,
+          });
 
     let verification: any = null;
     if (options.verify_signals !== false) {
@@ -128,6 +156,7 @@ class AutomatedRecommendationLoopService {
       style,
       generated,
       archive,
+      agent_analysis,
       verification,
       paper_trading,
       quality_report: {
@@ -146,10 +175,115 @@ class AutomatedRecommendationLoopService {
     logger.info(
       `荐股闭环完成：${universe}/${style} 候选 ${generated.analyzed_candidates}/${generated.total_candidates}，归档 ${archive.total}，模拟盘 ${
         paper_trading?.executed ?? paper_trading?.planned ?? 0
-      }`
+      }，Agent提交 ${agent_analysis.submitted?.length || 0}`
     );
 
     return result;
+  }
+
+  private async submitAgentAnalysis(options: {
+    candidates: any[];
+    max_count: number;
+    min_score: number;
+    target_date: string;
+    task_label: string;
+    agent_session: string;
+    execution_log_id?: number;
+    universe: string;
+    style: string;
+  }) {
+    const candidates = (options.candidates || [])
+      .filter(candidate => {
+        const score = Number(candidate?.score || 0);
+        return (
+          candidate?.symbol &&
+          score >= options.min_score &&
+          ['buy', 'watch'].includes(String(candidate.action || '').toLowerCase())
+        );
+      })
+      .slice(0, options.max_count);
+    const submitted: any[] = [];
+    const failed: any[] = [];
+    const skipped = (options.candidates || [])
+      .filter(candidate => !candidates.some(item => item.symbol === candidate.symbol))
+      .slice(0, 20)
+      .map(candidate => ({
+        symbol: candidate.symbol,
+        name: candidate.name,
+        score: candidate.score,
+        action: candidate.action,
+        reason:
+          Number(candidate?.score || 0) < options.min_score
+            ? `评分低于 ${options.min_score}`
+            : `动作 ${candidate.action || '-'} 不需要深度复核`,
+      }));
+
+    for (const candidate of candidates) {
+      try {
+        const response = await aiAdvisorService.analyzeStock(
+          candidate.symbol,
+          options.target_date,
+          true
+        );
+        if (!response?.task_id) {
+          failed.push({
+            symbol: candidate.symbol,
+            name: candidate.name,
+            error: 'TradingAgents 未返回 task_id',
+          });
+          continue;
+        }
+
+        await aiPollingQueue.add(
+          {
+            taskId: response.task_id,
+            symbol: candidate.symbol,
+            name: candidate.name,
+            executionLogId: options.execution_log_id,
+            taskLabel: options.task_label,
+            quant_score: candidate.score,
+            quant_factors: candidate.factors,
+            quant_reasons: candidate.reasons,
+            quant_warnings: candidate.warnings,
+            recommendation_style: options.style,
+            recommendation_source: options.universe,
+            agent_session: options.agent_session,
+          },
+          {
+            jobId: `auto-loop-ai-${options.execution_log_id || 'manual'}-${response.task_id}`,
+            attempts: 10,
+            backoff: { type: 'fixed', delay: 3 * 60 * 1000 },
+          }
+        );
+
+        submitted.push({
+          symbol: candidate.symbol,
+          name: candidate.name,
+          score: candidate.score,
+          action: candidate.action,
+          task_id: response.task_id,
+          status: response.status,
+        });
+      } catch (error: any) {
+        failed.push({
+          symbol: candidate.symbol,
+          name: candidate.name,
+          error: error.message,
+        });
+      }
+    }
+
+    return {
+      enabled: true,
+      target_date: options.target_date,
+      task_label: options.task_label,
+      agent_session: options.agent_session,
+      min_score: options.min_score,
+      max_count: options.max_count,
+      submitted,
+      failed,
+      skipped,
+    };
   }
 }
 

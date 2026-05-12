@@ -75,6 +75,17 @@ router.post(
 );
 
 /**
+ * @route POST /api/ai/recommendations/auto-loop
+ * @desc 执行全市场自动荐股闭环：量化初筛、归档、Agent复核、后验验证与模拟盘预演/跟单
+ * @access Private
+ */
+router.post(
+  '/recommendations/auto-loop',
+  authController.authenticate,
+  quantRecommendationController.runAutomatedLoop
+);
+
+/**
  * @route POST /api/ai/recommendations/sync-profiles
  * @desc 为候选推荐批量补全股票画像/估值快照
  * @access Private
