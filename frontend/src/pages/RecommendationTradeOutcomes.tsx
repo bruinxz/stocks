@@ -305,6 +305,51 @@ const RecommendationTradeOutcomes: React.FC = () => {
       .slice(0, 8);
   }, [dashboard]);
 
+  const adaptivePolicy = useMemo(() => {
+    const closed = Number(summary?.closed_count || 0);
+    const minSamples = 5;
+    const bestStyle = (dashboard?.groups?.by_style || [])
+      .filter(item => item.closed_count >= 2)
+      .sort((a, b) => b.avg_excess_return_pct - a.avg_excess_return_pct)[0];
+    const weakStyle = (dashboard?.groups?.by_style || [])
+      .filter(item => item.closed_count >= 2)
+      .sort((a, b) => a.avg_excess_return_pct - b.avg_excess_return_pct)[0];
+    const avgExcess = Number(summary?.avg_excess_return_pct || 0);
+    const excessWinRate = Number(summary?.excess_win_rate || 0);
+    const positionMultiplier = Number(
+      feedback?.position_multiplier || (closed < minSamples ? 0.65 : 0.85)
+    );
+    const style =
+      bestStyle?.key && bestStyle.avg_excess_return_pct > Math.max(1, avgExcess)
+        ? bestStyle.label
+        : 'balanced';
+    let tradeLimit = 3;
+    if (closed < minSamples || avgExcess < -1 || excessWinRate < 45) {
+      tradeLimit = 2;
+    } else if (avgExcess > 2 && excessWinRate >= 55) {
+      tradeLimit = 4;
+    }
+
+    return {
+      closed,
+      minSamples,
+      style,
+      score: feedback?.recommended_min_score || 72,
+      positionMultiplier,
+      defaultPositionPct: Number((5 * Math.min(positionMultiplier, 1.2)).toFixed(2)),
+      maxPositionPct: Number((10 * Math.max(0.45, Math.min(positionMultiplier, 1.2))).toFixed(2)),
+      tradeLimit,
+      bestStyle,
+      weakStyle,
+      reason:
+        closed < minSamples
+          ? `闭环样本 ${closed}/${minSamples}，下一轮以低倍率小仓采样为主。`
+          : `闭环样本 ${closed}，平均超额 ${avgExcess.toFixed(
+              2
+            )}%，系统将自动调整评分、风格和仓位。`,
+    };
+  }, [dashboard, feedback, summary]);
+
   const columns = [
     {
       title: '标的 / 来源',
@@ -443,6 +488,11 @@ const RecommendationTradeOutcomes: React.FC = () => {
             超额胜率 {formatPercent(summary?.excess_win_rate)} · Profit Factor{' '}
             {summary?.profit_factor || 0}
           </Text>
+          <div className="command-mini-grid">
+            <span>风格 {adaptivePolicy.style}</span>
+            <span>试单 {adaptivePolicy.tradeLimit} 笔</span>
+            <span>仓位 {adaptivePolicy.defaultPositionPct}%</span>
+          </div>
         </div>
       </div>
 
@@ -659,6 +709,37 @@ const RecommendationTradeOutcomes: React.FC = () => {
       </Row>
 
       <Row gutter={[18, 18]} style={{ marginBottom: 18 }}>
+        <Col xs={24}>
+          <Card className="modern-card adaptive-policy-card" variant="borderless">
+            <div className="adaptive-policy-shell">
+              <div>
+                <div className="outcome-panel-title">
+                  <NodeIndexOutlined /> 全市场荐股自适应策略
+                </div>
+                <p>{adaptivePolicy.reason}</p>
+                <div className="adaptive-policy-tags">
+                  <Tag color="gold">最低评分 ≥ {adaptivePolicy.score}</Tag>
+                  <Tag color="cyan">推荐风格 {adaptivePolicy.style}</Tag>
+                  <Tag color="blue">默认仓位 {adaptivePolicy.defaultPositionPct}%</Tag>
+                  <Tag color="purple">最大仓位 {adaptivePolicy.maxPositionPct}%</Tag>
+                  <Tag>自动跟单 {adaptivePolicy.tradeLimit} 笔</Tag>
+                </div>
+              </div>
+              <div className="adaptive-policy-route">
+                <div>
+                  <span>Best segment</span>
+                  <strong>{adaptivePolicy.bestStyle?.label || '等待样本'}</strong>
+                  <em>超额 {formatPercent(adaptivePolicy.bestStyle?.avg_excess_return_pct)}</em>
+                </div>
+                <div>
+                  <span>Reduce</span>
+                  <strong>{adaptivePolicy.weakStyle?.label || '暂无'}</strong>
+                  <em>超额 {formatPercent(adaptivePolicy.weakStyle?.avg_excess_return_pct)}</em>
+                </div>
+              </div>
+            </div>
+          </Card>
+        </Col>
         <Col xs={24} lg={8}>
           <div className="outcome-intel-panel">
             <div className="outcome-panel-title">
