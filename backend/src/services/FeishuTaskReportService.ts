@@ -699,6 +699,7 @@ class FeishuTaskReportService {
     const snapshot = result?.snapshot || {};
     const firstTrade = trades[0] || {};
     const profitGate = result?.profit_gate_policy || {};
+    const outcomeFeedback = result?.outcome_feedback_policy || {};
     const markdownMessage = this.buildPaperTradingAutomationMarkdown(result, options, recordType);
 
     return this.safeAppend({
@@ -723,6 +724,11 @@ class FeishuTaskReportService {
       收益闸门: profitGate?.gate_label,
       收益闸门质量分: profitGate?.quality_score,
       收益闸门仓位倍率: profitGate?.effective_position_multiplier,
+      收益闭环样本数: outcomeFeedback?.closed_samples,
+      收益闭环平均超额: this.formatPercent(outcomeFeedback?.avg_excess_return_pct),
+      收益闭环超额胜率: this.formatPercent(outcomeFeedback?.excess_win_rate),
+      收益闭环仓位倍率: outcomeFeedback?.effective_position_multiplier,
+      收益闭环结论: outcomeFeedback?.reason,
       股票代码: firstTrade?.symbol,
       股票名称: firstTrade?.name,
       成交数量: firstTrade?.quantity,
@@ -736,6 +742,7 @@ class FeishuTaskReportService {
           generated: result?.generated,
           archive: result?.archive,
           profit_gate_policy: result?.profit_gate_policy,
+          outcome_feedback_policy: result?.outcome_feedback_policy,
         },
         10000
       ),
@@ -982,6 +989,11 @@ class FeishuTaskReportService {
       计划后现金: summary.projected_cash_after_plan,
       建议最低评分: summary.recommended_min_score,
       实际最低评分: summary.effective_min_score,
+      收益闭环样本数: summary.outcome_closed_samples,
+      收益闭环平均超额: this.formatPercent(summary.outcome_avg_excess_return_pct),
+      收益闭环超额胜率: this.formatPercent(summary.outcome_excess_win_rate),
+      收益闭环仓位倍率: summary.outcome_position_multiplier,
+      收益闭环结论: summary.outcome_reason,
       推荐风险等级: Array.isArray(summary.recommended_allowed_risk_levels)
         ? summary.recommended_allowed_risk_levels.join(',')
         : '',
@@ -994,6 +1006,7 @@ class FeishuTaskReportService {
           actions: actions.slice(0, 20),
           attribution_summary: result?.attribution?.summary,
           entry_feedback_policy: result?.entry_preview?.feedback_policy,
+          outcome_feedback_policy: result?.entry_preview?.outcome_feedback_policy,
         },
         10000
       ),
@@ -1394,6 +1407,7 @@ class FeishuTaskReportService {
     const snapshot = result?.snapshot || {};
     const feedbackPolicy = result?.feedback_policy || {};
     const profitGate = result?.profit_gate_policy || {};
+    const outcomeFeedback = result?.outcome_feedback_policy || {};
     const generated = result?.generated || {};
     const archive = result?.archive || {};
     const dryRun = Boolean(result?.dry_run);
@@ -1435,6 +1449,31 @@ class FeishuTaskReportService {
         profitGate?.min_samples ?? '--'
       }；仓位倍率 ${profitGate?.effective_position_multiplier ?? '--'}x`,
       profitGate?.reason ? `- **核心理由**：${profitGate.reason}` : '',
+      '',
+      '### 交易收益闭环反哺',
+      `- **闭环反哺**：${outcomeFeedback?.enabled ? '已启用' : '未启用'}`,
+      `- **样本/阈值**：${outcomeFeedback?.closed_samples ?? 0}/${
+        outcomeFeedback?.min_closed_samples ?? '--'
+      }；平均超额 ${this.formatPercent(outcomeFeedback?.avg_excess_return_pct)}；超额胜率 ${this.formatPercent(
+        outcomeFeedback?.excess_win_rate
+      )}`,
+      `- **执行参数**：最低评分 ${outcomeFeedback?.effective_min_score ?? '--'}；风险等级 ${
+        Array.isArray(outcomeFeedback?.effective_allowed_risk_levels)
+          ? outcomeFeedback.effective_allowed_risk_levels.join('、') || '--'
+          : '--'
+      }；仓位倍率 ${outcomeFeedback?.effective_position_multiplier ?? '--'}x`,
+      outcomeFeedback?.reason ? `- **核心理由**：${outcomeFeedback.reason}` : '',
+      Array.isArray(outcomeFeedback?.blocked_segments) && outcomeFeedback.blocked_segments.length
+        ? `- **暂停片段**：${outcomeFeedback.blocked_segments
+            .slice(0, 3)
+            .map(
+              (item: any) =>
+                `${item.label || item.key}(${this.formatPercent(item.avg_excess_return_pct)}/${
+                  item.closed_count
+                }样本)`
+            )
+            .join('、')}`
+        : '',
       '',
       '### 信号处理概览',
       `- **扫描信号**：${result?.scanned ?? 0}`,
@@ -1872,6 +1911,7 @@ class FeishuTaskReportService {
     const actions = Array.isArray(result?.actions) ? result.actions : [];
     const attribution = result?.attribution || {};
     const feedback = attribution?.feedback || {};
+    const outcomePolicy = result?.entry_preview?.outcome_feedback_policy || {};
     const status = options.error ? 'FAILED' : 'COMPLETED';
 
     const lines = [
@@ -1909,6 +1949,29 @@ class FeishuTaskReportService {
       `- **当前结论**：${summary.profit_gate_label || '--'}`,
       `- **质量分**：${summary.profit_gate_quality_score ?? '--'}`,
       `- **计划仓位倍率**：${summary.profit_gate_position_multiplier ?? '--'}x`,
+      '',
+      '### 交易收益闭环反哺',
+      `- **样本/阈值**：${summary.outcome_closed_samples ?? 0}/${
+        summary.outcome_min_closed_samples ?? '--'
+      }`,
+      `- **平均超额 / 超额胜率**：${this.formatPercent(
+        summary.outcome_avg_excess_return_pct
+      )} / ${this.formatPercent(summary.outcome_excess_win_rate)}`,
+      `- **执行最低评分 / 仓位倍率**：${
+        summary.outcome_effective_min_score ?? '--'
+      } / ${summary.outcome_position_multiplier ?? '--'}x`,
+      summary.outcome_reason ? `- **核心理由**：${summary.outcome_reason}` : '',
+      Array.isArray(outcomePolicy.blocked_segments) && outcomePolicy.blocked_segments.length
+        ? `- **暂停片段**：${outcomePolicy.blocked_segments
+            .slice(0, 3)
+            .map(
+              (item: any) =>
+                `${item.label || item.key}(${this.formatPercent(item.avg_excess_return_pct)}/${
+                  item.closed_count
+                }样本)`
+            )
+            .join('、')}`
+        : '',
     ];
 
     if (Array.isArray(feedback.insights) && feedback.insights.length > 0) {

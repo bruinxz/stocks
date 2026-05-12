@@ -531,6 +531,28 @@ class SchedulerService {
               : parameters.profitGateAllowDeprioritized !== undefined
                 ? Boolean(parameters.profitGateAllowDeprioritized)
                 : false,
+          use_outcome_feedback:
+            parameters.use_outcome_feedback !== undefined
+              ? Boolean(parameters.use_outcome_feedback)
+              : parameters.useOutcomeFeedback !== undefined
+                ? Boolean(parameters.useOutcomeFeedback)
+                : true,
+          outcome_feedback_min_closed_samples: this.toPositiveInt(
+            parameters.outcome_feedback_min_closed_samples ||
+              parameters.outcomeFeedbackMinClosedSamples,
+            5,
+            100
+          ),
+          outcome_feedback_lookback_days: this.toPositiveInt(
+            parameters.outcome_feedback_lookback_days || parameters.outcomeFeedbackLookbackDays,
+            365,
+            3650
+          ),
+          outcome_feedback_limit: this.toPositiveInt(
+            parameters.outcome_feedback_limit || parameters.outcomeFeedbackLimit,
+            2000,
+            10000
+          ),
         });
 
         await executionLog.update({
@@ -753,6 +775,28 @@ class SchedulerService {
               : parameters.profitGateAllowDeprioritized !== undefined
                 ? Boolean(parameters.profitGateAllowDeprioritized)
                 : false,
+          use_outcome_feedback:
+            parameters.use_outcome_feedback !== undefined
+              ? Boolean(parameters.use_outcome_feedback)
+              : parameters.useOutcomeFeedback !== undefined
+                ? Boolean(parameters.useOutcomeFeedback)
+                : true,
+          outcome_feedback_min_closed_samples: this.toPositiveInt(
+            parameters.outcome_feedback_min_closed_samples ||
+              parameters.outcomeFeedbackMinClosedSamples,
+            5,
+            100
+          ),
+          outcome_feedback_lookback_days: this.toPositiveInt(
+            parameters.outcome_feedback_lookback_days || parameters.outcomeFeedbackLookbackDays,
+            365,
+            3650
+          ),
+          outcome_feedback_limit: this.toPositiveInt(
+            parameters.outcome_feedback_limit || parameters.outcomeFeedbackLimit,
+            2000,
+            10000
+          ),
           enable_stop_loss:
             parameters.enable_stop_loss !== undefined
               ? Boolean(parameters.enable_stop_loss)
@@ -1268,6 +1312,10 @@ class SchedulerService {
           profit_gate_min_samples: 5,
           profit_gate_min_quality_score: 45,
           profit_gate_allow_deprioritized: false,
+          use_outcome_feedback: true,
+          outcome_feedback_min_closed_samples: 5,
+          outcome_feedback_lookback_days: 365,
+          outcome_feedback_limit: 2000,
           dry_run: false,
           report_to_feishu: true,
         },
@@ -1297,6 +1345,10 @@ class SchedulerService {
           profit_gate_min_samples: 5,
           profit_gate_min_quality_score: 45,
           profit_gate_allow_deprioritized: false,
+          use_outcome_feedback: true,
+          outcome_feedback_min_closed_samples: 5,
+          outcome_feedback_lookback_days: 365,
+          outcome_feedback_limit: 2000,
           dry_run: false,
           report_to_feishu: true,
         },
@@ -1372,6 +1424,10 @@ class SchedulerService {
           profit_gate_min_samples: 5,
           profit_gate_min_quality_score: 45,
           profit_gate_allow_deprioritized: false,
+          use_outcome_feedback: true,
+          outcome_feedback_min_closed_samples: 5,
+          outcome_feedback_lookback_days: 365,
+          outcome_feedback_limit: 2000,
           enable_stop_loss: true,
           enable_take_profit: true,
           enable_sell_signals: true,

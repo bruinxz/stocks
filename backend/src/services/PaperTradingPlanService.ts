@@ -36,6 +36,10 @@ export interface PaperTradingPlanOptions {
   profit_gate_min_samples?: number;
   profit_gate_min_quality_score?: number;
   profit_gate_allow_deprioritized?: boolean;
+  use_outcome_feedback?: boolean;
+  outcome_feedback_min_closed_samples?: number;
+  outcome_feedback_lookback_days?: number;
+  outcome_feedback_limit?: number;
   enable_stop_loss?: boolean;
   enable_take_profit?: boolean;
   enable_sell_signals?: boolean;
@@ -95,6 +99,16 @@ export interface PaperTradingPlanResult {
     profit_gate_label?: string;
     profit_gate_quality_score?: number;
     profit_gate_position_multiplier?: number;
+    outcome_feedback_enabled?: boolean;
+    outcome_closed_samples?: number;
+    outcome_min_closed_samples?: number;
+    outcome_avg_excess_return_pct?: number;
+    outcome_excess_win_rate?: number;
+    outcome_recommended_min_score?: number;
+    outcome_effective_min_score?: number;
+    outcome_position_multiplier?: number;
+    outcome_reason?: string;
+    outcome_blocked_segments?: any[];
   };
   actions: TradingPlanAction[];
   attribution: PaperTradingAttributionResult;
@@ -198,6 +212,10 @@ class PaperTradingPlanService {
         profit_gate_min_samples: options.profit_gate_min_samples,
         profit_gate_min_quality_score: options.profit_gate_min_quality_score,
         profit_gate_allow_deprioritized: options.profit_gate_allow_deprioritized,
+        use_outcome_feedback: options.use_outcome_feedback,
+        outcome_feedback_min_closed_samples: options.outcome_feedback_min_closed_samples,
+        outcome_feedback_lookback_days: options.outcome_feedback_lookback_days,
+        outcome_feedback_limit: options.outcome_feedback_limit,
       });
     }
 
@@ -327,6 +345,41 @@ class PaperTradingPlanService {
       });
     }
 
+    const outcomePolicy = entryPreview?.outcome_feedback_policy;
+    for (const nextAction of outcomePolicy?.next_actions?.slice(0, 4) || []) {
+      actions.push({
+        action_type: 'review',
+        priority: 'medium',
+        action_label: '收益闭环反哺',
+        reason: nextAction,
+        instructions: [
+          `下一轮自动跟单将采用最低评分 ${outcomePolicy?.effective_min_score ?? '--'}、仓位倍率 ${
+            outcomePolicy?.effective_position_multiplier ?? '--'
+          }x。`,
+          '优先观察该参数组合是否改善超额胜率，样本不足前不放大仓位。',
+        ],
+        tags: ['outcome_feedback'],
+        metadata: outcomePolicy,
+      });
+    }
+
+    for (const segment of outcomePolicy?.blocked_segments?.slice(0, 3) || []) {
+      actions.push({
+        action_type: 'review',
+        priority: 'high',
+        action_label: '暂停弱势片段',
+        reason: `${segment.label || segment.key} 片段平均超额 ${
+          segment.avg_excess_return_pct ?? '--'
+        }%，样本 ${segment.closed_count ?? 0}，自动跟单已降权/拦截。`,
+        instructions: [
+          '复盘该片段的入场时点、止损纪律和信号来源质量。',
+          '在连续改善前，避免手动绕过自动跟单的降权规则。',
+        ],
+        tags: ['outcome_feedback', 'blocked_segment'],
+        metadata: segment,
+      });
+    }
+
     actions.sort((a, b) => {
       const priorityDiff = priorityWeight(b.priority) - priorityWeight(a.priority);
       if (priorityDiff !== 0) return priorityDiff;
@@ -378,6 +431,16 @@ class PaperTradingPlanService {
       profit_gate_quality_score: entryPreview?.profit_gate_policy?.quality_score,
       profit_gate_position_multiplier:
         entryPreview?.profit_gate_policy?.effective_position_multiplier,
+      outcome_feedback_enabled: outcomePolicy?.enabled,
+      outcome_closed_samples: outcomePolicy?.closed_samples,
+      outcome_min_closed_samples: outcomePolicy?.min_closed_samples,
+      outcome_avg_excess_return_pct: outcomePolicy?.avg_excess_return_pct,
+      outcome_excess_win_rate: outcomePolicy?.excess_win_rate,
+      outcome_recommended_min_score: outcomePolicy?.recommended_min_score,
+      outcome_effective_min_score: outcomePolicy?.effective_min_score,
+      outcome_position_multiplier: outcomePolicy?.effective_position_multiplier,
+      outcome_reason: outcomePolicy?.reason,
+      outcome_blocked_segments: outcomePolicy?.blocked_segments,
     };
 
     const result: PaperTradingPlanResult = {

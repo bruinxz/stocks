@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
+  Alert,
   Card,
   Row,
   Col,
@@ -232,6 +233,25 @@ interface PaperTradingPlan {
     effective_min_score?: number;
     recommended_allowed_risk_levels?: string[];
     generated_from_closed_samples: number;
+    profit_gate_label?: string;
+    profit_gate_quality_score?: number;
+    profit_gate_position_multiplier?: number;
+    outcome_feedback_enabled?: boolean;
+    outcome_closed_samples?: number;
+    outcome_min_closed_samples?: number;
+    outcome_avg_excess_return_pct?: number;
+    outcome_excess_win_rate?: number;
+    outcome_recommended_min_score?: number;
+    outcome_effective_min_score?: number;
+    outcome_position_multiplier?: number;
+    outcome_reason?: string;
+    outcome_blocked_segments?: Array<{
+      key: string;
+      label: string;
+      closed_count: number;
+      avg_excess_return_pct: number;
+      excess_win_rate?: number;
+    }>;
   };
   actions: TradingPlanAction[];
 }
@@ -449,6 +469,10 @@ const PaperTrading: React.FC = () => {
           profit_gate_horizon: '5d',
           profit_gate_min_samples: 5,
           profit_gate_min_quality_score: 45,
+          use_outcome_feedback: true,
+          outcome_feedback_min_closed_samples: 5,
+          outcome_feedback_lookback_days: 365,
+          outcome_feedback_limit: 2000,
         },
       });
       if (response.data.success) {
@@ -480,6 +504,10 @@ const PaperTrading: React.FC = () => {
         profit_gate_horizon: '5d',
         profit_gate_min_samples: 5,
         profit_gate_min_quality_score: 45,
+        use_outcome_feedback: true,
+        outcome_feedback_min_closed_samples: 5,
+        outcome_feedback_lookback_days: 365,
+        outcome_feedback_limit: 2000,
       });
       if (response.data.success) {
         setTradingPlan(response.data.data);
@@ -537,6 +565,7 @@ const PaperTrading: React.FC = () => {
   const attributionSummary = attribution?.summary;
   const attributionFeedback = attribution?.feedback;
   const tradingPlanSummary = tradingPlan?.summary;
+  const outcomeBlockedSegments = tradingPlanSummary?.outcome_blocked_segments || [];
   const urgentPlanActions = (tradingPlan?.actions || []).filter(action =>
     ['critical', 'high'].includes(action.priority)
   );
@@ -938,10 +967,66 @@ const PaperTrading: React.FC = () => {
           <Col xs={12} md={4}>
             <div className="plan-score">
               <span>有效评分</span>
-              <strong>{tradingPlanSummary?.effective_min_score || 72}</strong>
+              <strong>
+                {tradingPlanSummary?.outcome_effective_min_score ||
+                  tradingPlanSummary?.effective_min_score ||
+                  72}
+              </strong>
             </div>
           </Col>
         </Row>
+
+        <div className="outcome-feedback-ribbon">
+          <div className="outcome-feedback-orb">
+            <span>α</span>
+          </div>
+          <div className="outcome-feedback-main">
+            <div className="outcome-feedback-title">交易收益闭环正在反哺下一轮自动跟单</div>
+            <p>
+              {tradingPlanSummary?.outcome_reason ||
+                '等待更多平仓样本，当前以保守仓位继续收集可验证交易结果。'}
+            </p>
+            <Space wrap>
+              <Tag color="gold">
+                样本 {tradingPlanSummary?.outcome_closed_samples || 0}/
+                {tradingPlanSummary?.outcome_min_closed_samples || 5}
+              </Tag>
+              <Tag color="cyan">
+                平均超额 {formatPercent(tradingPlanSummary?.outcome_avg_excess_return_pct)}
+              </Tag>
+              <Tag color="blue">
+                超额胜率 {formatPercent(tradingPlanSummary?.outcome_excess_win_rate)}
+              </Tag>
+              <Tag color="purple">
+                仓位倍率 {tradingPlanSummary?.outcome_position_multiplier ?? '--'}x
+              </Tag>
+            </Space>
+          </div>
+          <div className="outcome-feedback-gate">
+            <span>自动参数</span>
+            <strong>{tradingPlanSummary?.outcome_effective_min_score || '--'}</strong>
+            <em>min score</em>
+          </div>
+        </div>
+
+        {outcomeBlockedSegments.length > 0 && (
+          <Alert
+            className="outcome-feedback-alert"
+            type="warning"
+            showIcon
+            message="已根据真实模拟交易收益暂停弱势片段"
+            description={
+              <Space wrap>
+                {outcomeBlockedSegments.slice(0, 4).map(segment => (
+                  <Tag key={`${segment.key}-${segment.label}`} color="volcano">
+                    {segment.label || segment.key} · 超额{' '}
+                    {formatPercent(segment.avg_excess_return_pct)} · {segment.closed_count}样本
+                  </Tag>
+                ))}
+              </Space>
+            }
+          />
+        )}
 
         <Row gutter={[18, 18]} style={{ marginTop: 18 }}>
           <Col xs={24} lg={12}>

@@ -47,6 +47,10 @@ export interface PaperTradingAutoOptions {
   profit_gate_min_samples?: number;
   profit_gate_min_quality_score?: number;
   profit_gate_allow_deprioritized?: boolean;
+  use_outcome_feedback?: boolean;
+  outcome_feedback_min_closed_samples?: number;
+  outcome_feedback_lookback_days?: number;
+  outcome_feedback_limit?: number;
 }
 
 export interface PaperTradingAutoSyncOptions extends PaperTradingAutoOptions {
@@ -145,6 +149,28 @@ export interface PaperTradingAutoResult {
     effective_position_multiplier: number;
     reason?: string;
     risk_notes?: string[];
+  };
+  outcome_feedback_policy?: {
+    enabled: boolean;
+    closed_samples: number;
+    min_closed_samples: number;
+    lookback_days: number;
+    recommended_min_score?: number;
+    effective_min_score: number;
+    recommended_allowed_risk_levels?: string[];
+    effective_allowed_risk_levels: string[];
+    position_multiplier: number;
+    effective_position_multiplier: number;
+    avg_excess_return_pct?: number;
+    excess_win_rate?: number;
+    allow_entries: boolean;
+    preferred_segments?: any[];
+    blocked_segments?: any[];
+    best_segments?: any[];
+    weak_segments?: any[];
+    reason?: string;
+    insights?: string[];
+    next_actions?: string[];
   };
 }
 
@@ -431,6 +457,21 @@ class PaperTradingAutomationService {
       allow_deprioritized: toBoolean(options.profit_gate_allow_deprioritized, false),
       limit: scan_limit,
     });
+    const outcomeFeedbackPolicy = await this.resolveOutcomeFeedbackPolicy({
+      portfolio_id: portfolio.id,
+      user_id: portfolio.user_id,
+      username: options.username,
+      enabled: toBoolean(options.use_outcome_feedback, true),
+      requested_min_score: min_score,
+      requested_allowed_risk_levels: allowedRiskLevelList,
+      source_type,
+      agent_session: options.agent_session,
+      min_closed_samples: toPositiveInt(options.outcome_feedback_min_closed_samples, 5, 100),
+      lookback_days: toPositiveInt(options.outcome_feedback_lookback_days, 365, 3650),
+      limit: toPositiveInt(options.outcome_feedback_limit, 2000, 10000),
+    });
+    min_score = outcomeFeedbackPolicy.effective_min_score;
+    allowedRiskLevelList = outcomeFeedbackPolicy.effective_allowed_risk_levels;
     const allowedRiskLevels = new Set(allowedRiskLevelList.map(normalizeRiskLevel).filter(Boolean));
 
     const preSnapshot = await this.syncLatestPricesAndSnapshot(portfolio.id);
@@ -511,6 +552,19 @@ class PaperTradingAutomationService {
       });
     }
 
+    if (!outcomeFeedbackPolicy.allow_entries) {
+      skipped_items.push({
+        status: 'skipped',
+        signal_id: 0,
+        source_type,
+        source_id: '',
+        signal_date: getChinaToday(),
+        symbol: '',
+        decision: '',
+        reason: `收益闭环反哺未放行：${outcomeFeedbackPolicy.reason || '闭环样本质量不足'}`,
+      });
+    }
+
     for (const signal of signals) {
       const itemBase = this.buildTradeItemBase(signal);
       const symbol = normalizeSymbol(signal.symbol);
@@ -532,6 +586,11 @@ class PaperTradingAutomationService {
 
       if (!profitGatePolicy.allow_entries) {
         skip(`收益闸门未放行：${profitGatePolicy.reason || profitGatePolicy.gate_label}`);
+        continue;
+      }
+
+      if (!outcomeFeedbackPolicy.allow_entries) {
+        skip(`收益闭环反哺未放行：${outcomeFeedbackPolicy.reason || '闭环样本质量不足'}`);
         continue;
       }
 
@@ -569,6 +628,16 @@ class PaperTradingAutomationService {
         continue;
       }
 
+      const blockedSegment = this.matchOutcomeBlockedSegment(signal, outcomeFeedbackPolicy);
+      if (blockedSegment) {
+        skip(
+          `收益闭环降权片段 ${blockedSegment.label || blockedSegment.key} 暂停自动买入：平均超额 ${
+            blockedSegment.avg_excess_return_pct ?? '--'
+          }% / 样本 ${blockedSegment.closed_count ?? '--'}`
+        );
+        continue;
+      }
+
       const quote = await this.getLatestPrice(symbol, toNumber(signal.current_price, 0));
       if (!quote.price || quote.price <= 0) {
         skip('无法获取有效最新价格');
@@ -580,8 +649,13 @@ class PaperTradingAutomationService {
         1,
         max_position_pct
       );
+      const outcomePositionMultiplier = Number.isFinite(
+        Number(outcomeFeedbackPolicy.effective_position_multiplier)
+      )
+        ? Number(outcomeFeedbackPolicy.effective_position_multiplier)
+        : 1;
       const gatedSuggestedPct = clamp(
-        suggestedPct * profitGatePolicy.effective_position_multiplier,
+        suggestedPct * profitGatePolicy.effective_position_multiplier * outcomePositionMultiplier,
         0,
         max_position_pct
       );
@@ -628,10 +702,16 @@ class PaperTradingAutomationService {
         target_position_pct: roundNumber(gatedSuggestedPct, 2),
         stop_loss_pct: toOptionalNumber(metadata.stop_loss_pct),
         take_profit_pct: toOptionalNumber(metadata.take_profit_pct),
-        reason:
+        reason: [
           profitGatePolicy.enabled && profitGatePolicy.gate_label
             ? `收益闸门：${profitGatePolicy.gate_label}，倍率 ${profitGatePolicy.effective_position_multiplier}x`
-            : undefined,
+            : '',
+          outcomeFeedbackPolicy.enabled
+            ? `交易收益闭环：样本 ${outcomeFeedbackPolicy.closed_samples}，仓位倍率 ${outcomeFeedbackPolicy.effective_position_multiplier}x`
+            : '',
+        ]
+          .filter(Boolean)
+          .join('；'),
       };
 
       if (!dry_run) {
@@ -660,6 +740,7 @@ class PaperTradingAutomationService {
           stop_loss_pct: tradePayload.stop_loss_pct,
           take_profit_pct: tradePayload.take_profit_pct,
           profit_gate: profitGatePolicy,
+          outcome_feedback: outcomeFeedbackPolicy,
         });
         await this.refreshRecommendationTradeOutcome(signal.id);
       }
@@ -685,6 +766,7 @@ class PaperTradingAutomationService {
       snapshot,
       feedback_policy: feedbackPolicy,
       profit_gate_policy: profitGatePolicy,
+      outcome_feedback_policy: outcomeFeedbackPolicy,
     };
 
     if (report_to_feishu) {
@@ -1253,6 +1335,177 @@ class PaperTradingAutomationService {
         reason: `读取收益闸门失败：${error?.message || error}`,
       };
     }
+  }
+
+  private async resolveOutcomeFeedbackPolicy(options: {
+    portfolio_id: number;
+    user_id: number;
+    username?: string;
+    enabled: boolean;
+    requested_min_score: number;
+    requested_allowed_risk_levels: string[];
+    source_type?: string;
+    agent_session?: string;
+    min_closed_samples: number;
+    lookback_days: number;
+    limit: number;
+  }): Promise<NonNullable<PaperTradingAutoResult['outcome_feedback_policy']>> {
+    const fallbackLevels = (
+      options.requested_allowed_risk_levels?.length
+        ? options.requested_allowed_risk_levels
+        : ['low', 'medium']
+    )
+      .map(normalizeRiskLevel)
+      .filter(Boolean);
+    const basePolicy: NonNullable<PaperTradingAutoResult['outcome_feedback_policy']> = {
+      enabled: options.enabled,
+      closed_samples: 0,
+      min_closed_samples: options.min_closed_samples,
+      lookback_days: options.lookback_days,
+      effective_min_score: options.requested_min_score,
+      effective_allowed_risk_levels: fallbackLevels,
+      position_multiplier: 1,
+      effective_position_multiplier: 1,
+      allow_entries: true,
+      preferred_segments: [],
+      blocked_segments: [],
+      best_segments: [],
+      weak_segments: [],
+      reason: options.enabled ? '交易收益闭环样本不足，暂不改变交易参数' : '交易收益闭环反哺未启用',
+      insights: [],
+      next_actions: [],
+    };
+
+    if (!options.enabled) return basePolicy;
+
+    try {
+      const { recommendationTradeOutcomeService } =
+        await import('./RecommendationTradeOutcomeService');
+      const dashboard = await recommendationTradeOutcomeService.getDashboard({
+        portfolio_id: options.portfolio_id,
+        user_id: options.user_id,
+        username: options.username,
+        include_open: true,
+        source_type: options.source_type,
+        agent_session: options.agent_session,
+        lookback_days: options.lookback_days,
+        limit: options.limit,
+        report_to_feishu: false,
+      });
+      const summary: any = dashboard.summary || {};
+      const feedback: any = dashboard.feedback || {};
+      const closedSamples = Number(summary.closed_count || 0);
+      const recommendedMinScore = toNumber(
+        feedback.recommended_min_score,
+        options.requested_min_score
+      );
+      const recommendedLevels = Array.isArray(feedback.allowed_risk_levels)
+        ? feedback.allowed_risk_levels.map(normalizeRiskLevel).filter(Boolean)
+        : [];
+      const requestedLevelSet = new Set(fallbackLevels.map(normalizeRiskLevel).filter(Boolean));
+      const intersectedLevels = recommendedLevels.filter(level => requestedLevelSet.has(level));
+      const effectiveLevels = (intersectedLevels.length > 0 ? intersectedLevels : fallbackLevels)
+        .map(normalizeRiskLevel)
+        .filter(Boolean);
+      const avgExcess = toNumber(summary.avg_excess_return_pct, 0);
+      const excessWinRate = toNumber(summary.excess_win_rate, 0);
+      const rawPositionMultiplier = toNumber(feedback.position_multiplier, 1);
+      const allowEntries =
+        closedSamples < options.min_closed_samples ||
+        avgExcess >= -3 ||
+        excessWinRate >= 35 ||
+        toNumber(summary.profit_factor, 0) >= 0.8;
+      const effectivePositionMultiplier =
+        closedSamples < options.min_closed_samples
+          ? clamp(Math.min(rawPositionMultiplier, 0.75), 0.35, 0.9)
+          : allowEntries
+            ? clamp(rawPositionMultiplier, 0.25, 1.25)
+            : 0;
+      const effectiveMinScore =
+        closedSamples < options.min_closed_samples
+          ? options.requested_min_score
+          : clamp(Math.max(options.requested_min_score, recommendedMinScore), 55, 94);
+      const weakSegments = Array.isArray(feedback.weak_segments) ? feedback.weak_segments : [];
+      const bestSegments = Array.isArray(feedback.best_segments) ? feedback.best_segments : [];
+      const blockedSegments =
+        closedSamples >= options.min_closed_samples
+          ? weakSegments
+              .filter(
+                (segment: any) =>
+                  Number(segment.closed_count || 0) >= 2 &&
+                  (Number(segment.avg_excess_return_pct || 0) <= -2 ||
+                    Number(segment.excess_win_rate || 0) < 35)
+              )
+              .slice(0, 8)
+          : [];
+      const reason =
+        closedSamples < options.min_closed_samples
+          ? `闭环样本 ${closedSamples}/${options.min_closed_samples}，先小仓位积累样本`
+          : allowEntries
+            ? `闭环样本 ${closedSamples}，平均超额 ${roundNumber(avgExcess, 2)}%，仓位倍率 ${roundNumber(
+                effectivePositionMultiplier,
+                2
+              )}x`
+            : `闭环样本 ${closedSamples}，平均超额 ${roundNumber(
+                avgExcess,
+                2
+              )}%、超额胜率 ${roundNumber(excessWinRate, 2)}%，暂停自动入场`;
+
+      return {
+        enabled: true,
+        closed_samples: closedSamples,
+        min_closed_samples: options.min_closed_samples,
+        lookback_days: options.lookback_days,
+        recommended_min_score: recommendedMinScore,
+        effective_min_score: effectiveMinScore,
+        recommended_allowed_risk_levels: recommendedLevels,
+        effective_allowed_risk_levels: effectiveLevels.length ? effectiveLevels : fallbackLevels,
+        position_multiplier: roundNumber(rawPositionMultiplier, 2),
+        effective_position_multiplier: roundNumber(effectivePositionMultiplier, 2),
+        avg_excess_return_pct: roundNumber(avgExcess, 4),
+        excess_win_rate: roundNumber(excessWinRate, 2),
+        allow_entries: allowEntries,
+        preferred_segments: bestSegments.slice(0, 5),
+        blocked_segments: blockedSegments,
+        best_segments: bestSegments,
+        weak_segments: weakSegments,
+        reason,
+        insights: Array.isArray(feedback.insights) ? feedback.insights.slice(0, 5) : [],
+        next_actions: Array.isArray(feedback.next_actions) ? feedback.next_actions.slice(0, 5) : [],
+      };
+    } catch (error: any) {
+      logger.warn(`读取推荐交易收益闭环反哺失败，自动跟单沿用原始参数: ${error?.message || error}`);
+      return {
+        ...basePolicy,
+        enabled: true,
+        reason: `收益闭环反哺读取失败，沿用原始参数：${error?.message || error}`,
+      };
+    }
+  }
+
+  private matchOutcomeBlockedSegment(
+    signal: AIInvestmentSignal,
+    policy?: PaperTradingAutoResult['outcome_feedback_policy']
+  ): any | null {
+    if (!policy?.enabled || !Array.isArray(policy.blocked_segments)) return null;
+    const metadata = asPlainObject(signal.metadata);
+    const candidates = [
+      signal.source_type,
+      metadata.agent_session,
+      metadata.style || metadata.recommendation_style,
+      metadata.action_label || metadata.action,
+      signal.risk_level,
+    ]
+      .map(value => String(value || '').trim().toLowerCase())
+      .filter(Boolean);
+
+    return (
+      policy.blocked_segments.find((segment: any) => {
+        const key = String(segment?.key || '').trim().toLowerCase();
+        if (!key || key === 'unknown') return false;
+        return candidates.includes(key);
+      }) || null
+    );
   }
 
   private buildTradeItemBase(signal: AIInvestmentSignal): PaperTradingAutoTradeItem {
