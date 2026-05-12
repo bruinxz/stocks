@@ -313,14 +313,14 @@ class SchedulerService {
         await executionLog.update({
           total_items: result.verification.total,
           completed_items: result.verification.verified,
-          failed_items: result.verification.no_data,
+          failed_items: Number(result.verification.no_data || 0),
           status: 'COMPLETED',
           completed_at: new Date(),
           error_message: null,
         });
 
         logger.info(
-          `推荐绩效刷新完成。扫描 ${result.verification.total}，验证 ${result.verification.verified}，无数据 ${result.verification.no_data}`
+          `推荐绩效刷新完成。扫描 ${result.verification.total}，已完成 ${result.verification.verified}，等待 ${result.verification.pending}，无数据 ${result.verification.no_data}`
         );
       } else if (task.type === 'PAPER_TRADING_AUTO_SYNC') {
         const result = await paperTradingAutomationService.runAutoSync({

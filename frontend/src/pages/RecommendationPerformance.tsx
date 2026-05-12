@@ -207,7 +207,8 @@ const RecommendationPerformance: React.FC = () => {
       if (response.data.success) {
         setData(response.data.data.dashboard);
         const verified = response.data.data.verification?.verified || 0;
-        message.success(`绩效刷新完成：验证 ${verified} 条信号，并已写入飞书`);
+        const pending = response.data.data.verification?.pending || 0;
+        message.success(`绩效刷新完成：完成 ${verified} 条，等待 ${pending} 条，并已写入飞书`);
       }
     } catch (error: any) {
       message.error(error.response?.data?.message || '刷新推荐绩效失败');

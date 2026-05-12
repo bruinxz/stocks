@@ -1026,6 +1026,7 @@ export class AIInvestmentSignalService {
   ): Promise<{
     total: number;
     verified: number;
+    pending: number;
     no_data: number;
   }> {
     const limit = options.limit || 200;
@@ -1036,6 +1037,7 @@ export class AIInvestmentSignalService {
     });
 
     let verified = 0;
+    let pending = 0;
     let no_data = 0;
 
     for (const signal of signals) {
@@ -1046,6 +1048,8 @@ export class AIInvestmentSignalService {
         );
         if (updated.verification_status === 'no_data') {
           no_data++;
+        } else if (updated.verification_status === 'pending') {
+          pending++;
         } else {
           verified++;
         }
@@ -1056,7 +1060,7 @@ export class AIInvestmentSignalService {
       }
     }
 
-    const result = { total: signals.length, verified, no_data };
+    const result = { total: signals.length, verified, pending, no_data };
 
     if (options.report_to_feishu) {
       const stats = await this.getSignalStats({

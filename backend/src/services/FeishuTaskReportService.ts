@@ -307,7 +307,9 @@ class FeishuTaskReportService {
       '### 结论',
       `- **初始缺行情/不可验证**：${initial.no_data_signals ?? 0} 条`,
       `- **补行情股票**：${syncedSymbols.length} 只；新增/尝试写入K线 ${inserted} 条`,
-      `- **重新验证**：${result?.verification?.verified ?? 0} 条；仍无数据 ${
+      `- **重新验证完成**：${result?.verification?.verified ?? 0} 条；等待周期 ${
+        result?.verification?.pending ?? 0
+      } 条；仍无数据 ${
         result?.verification?.no_data ?? 0
       } 条`,
       `- **最终可验证**：${final.ready_for_verification ?? 0} 条；周期未完成 ${
@@ -326,9 +328,9 @@ class FeishuTaskReportService {
       .join('\n');
 
     return this.safeAppend({
-      文本: `${recordType} - 补行情 ${syncedSymbols.length} 只 / 验证 ${
+      文本: `${recordType} - 补行情 ${syncedSymbols.length} 只 / 完成 ${
         result?.verification?.verified ?? 0
-      } 条`,
+      } 条 / 等待 ${result?.verification?.pending ?? 0} 条`,
       message: markdownMessage,
       记录类型: recordType,
       任务名称: 'AI信号收益验证修复',
@@ -336,6 +338,7 @@ class FeishuTaskReportService {
       运行状态: 'COMPLETED',
       总数: initial.total_signals,
       完成数: result?.verification?.verified,
+      等待数: result?.verification?.pending,
       失败数: result?.verification?.no_data,
       补行情股票数: syncedSymbols.length,
       插入记录数: inserted,
