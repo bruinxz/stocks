@@ -1620,7 +1620,11 @@ class SchedulerService {
         }
       }
 
-      if (taskData.name === '推荐信号模拟盘跟单' || taskData.name === '模拟盘交易计划报告') {
+      if (
+        taskData.name === '推荐信号模拟盘跟单' ||
+        taskData.name === 'Agent尾盘建议模拟盘跟单' ||
+        taskData.name === '模拟盘交易计划报告'
+      ) {
         const params = task.parameters || {};
         const nextParams = { ...taskData.parameters, ...params };
         for (const key of [

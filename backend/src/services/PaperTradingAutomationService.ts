@@ -1325,7 +1325,6 @@ class PaperTradingAutomationService {
       const samplingMode =
         options.allow_sampling &&
         blockedBySamples &&
-        !blockedByQuality &&
         ['wait_for_samples', 'collect_more_samples', ''].includes(gateAction);
       const allowEntries = samplingMode || !(blockedBySamples || blockedByQuality || blockedByGate);
       const effectivePositionMultiplier = samplingMode
