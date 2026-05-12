@@ -81,7 +81,8 @@ export class MarketController {
             const bars = await this.dataService.getDailyBars(
               index.symbol,
               new Date(Date.now() - 45 * 24 * 60 * 60 * 1000), // 往前推 45 天确保有足够的交易日
-              new Date()
+              new Date(),
+              true
             );
 
             if (!bars || bars.length === 0) {

@@ -27,6 +27,7 @@ export interface SignalQueryOptions {
 
 export interface SignalPerformanceOptions extends SignalQueryOptions {
   horizon?: string;
+  limit?: number;
 }
 
 export interface QuantRecommendationArchiveOptions {
@@ -837,12 +838,14 @@ export class AIInvestmentSignalService {
 
   async getPerformanceDashboard(options: SignalPerformanceOptions = {}) {
     const horizon = options.horizon || DEFAULT_PERFORMANCE_HORIZON;
+    const limit = Math.min(Math.max(Number(options.limit || 1000), 1), 5000);
     const signals = (await AIInvestmentSignal.findAll({
       where: buildSignalWhere(options),
       order: [
         ['signal_date', 'DESC'],
         ['created_at', 'DESC'],
       ],
+      limit,
       raw: true,
     })) as any[];
 
@@ -955,6 +958,7 @@ export class AIInvestmentSignalService {
         start_date: options.start_date,
         end_date: options.end_date,
         horizon,
+        limit,
       },
       overview,
       by_decision: groupedSummary(sample => sample.normalized_decision),
@@ -982,6 +986,7 @@ export class AIInvestmentSignalService {
       source_type: options.source_type,
       start_date: options.start_date,
       end_date: options.end_date,
+      limit: options.limit || 1000,
     });
 
     if (options.report_to_feishu) {

@@ -73,7 +73,15 @@ export class AISignalController {
 
   getPerformanceDashboard = async (req: Request, res: Response) => {
     try {
-      const { symbol, decision, source_type, start_date, end_date, horizon = '5d' } = req.query;
+      const {
+        symbol,
+        decision,
+        source_type,
+        start_date,
+        end_date,
+        horizon = '5d',
+        limit = '1000',
+      } = req.query;
       const dashboard = await aiInvestmentSignalService.getPerformanceDashboard({
         symbol: symbol as string,
         decision: decision as string,
@@ -81,6 +89,7 @@ export class AISignalController {
         start_date: start_date as string,
         end_date: end_date as string,
         horizon: horizon as string,
+        limit: Number(limit),
       });
       res.json({ success: true, data: dashboard });
     } catch (error: any) {

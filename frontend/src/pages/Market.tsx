@@ -110,6 +110,7 @@ const Market: React.FC = () => {
   const [favoritesLoading, setFavoritesLoading] = useState(false);
   const [isFavoriteModalOpen, setIsFavoriteModalOpen] = useState(false);
   const [favoriteForm] = Form.useForm();
+  const [activeTab, setActiveTab] = useState('all');
 
   // 数据完整性统计状态
   const [dataCompletenessStats, setDataCompletenessStats] = useState<any>(null);
@@ -279,8 +280,15 @@ const Market: React.FC = () => {
   useEffect(() => {
     searchStocks();
     fetchFavorites();
-    fetchDataCompletenessStats();
-  }, [searchStocks, fetchFavorites, fetchDataCompletenessStats]);
+  }, [searchStocks, fetchFavorites]);
+
+  // 数据完整性统计是全市场聚合查询，冷缓存时可能较重；仅在用户打开对应页签时加载，
+  // 避免大盘页首屏和股票搜索被后台统计请求拖慢。
+  useEffect(() => {
+    if (activeTab === 'stats' && !dataCompletenessStats && !statsLoading) {
+      fetchDataCompletenessStats();
+    }
+  }, [activeTab, dataCompletenessStats, fetchDataCompletenessStats, statsLoading]);
 
   // 数据更新检查（进入大盘页面时触发）
   useEffect(() => {
@@ -511,6 +519,8 @@ const Market: React.FC = () => {
           >
             <Tabs
               defaultActiveKey="all"
+              activeKey={activeTab}
+              onChange={setActiveTab}
               style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
               items={[
                 {

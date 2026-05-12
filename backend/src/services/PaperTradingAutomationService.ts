@@ -378,8 +378,8 @@ class PaperTradingAutomationService {
       source_type === AISignalSourceType.QUANT_RECOMMENDATION
     );
     let allowedRiskLevelList = options.allowed_risk_levels?.length
-      ? options.allowed_risk_levels
-      : ['low', 'medium', ''];
+      ? options.allowed_risk_levels.map(normalizeRiskLevel).filter(Boolean)
+      : ['low', 'medium'];
 
     const portfolio = await this.ensurePortfolio({
       user_id: options.user_id,
@@ -394,7 +394,7 @@ class PaperTradingAutomationService {
     });
     min_score = feedbackPolicy.effective_min_score;
     allowedRiskLevelList = feedbackPolicy.effective_allowed_risk_levels;
-    const allowedRiskLevels = new Set(allowedRiskLevelList.map(normalizeRiskLevel));
+    const allowedRiskLevels = new Set(allowedRiskLevelList.map(normalizeRiskLevel).filter(Boolean));
 
     const preSnapshot = await this.syncLatestPricesAndSnapshot(portfolio.id);
     await portfolio.reload();
@@ -1005,9 +1005,13 @@ class PaperTradingAutomationService {
     requested_min_score: number;
     requested_allowed_risk_levels: string[];
   }): Promise<NonNullable<PaperTradingAutoResult['feedback_policy']>> {
-    const fallbackLevels = options.requested_allowed_risk_levels?.length
-      ? options.requested_allowed_risk_levels
-      : ['low', 'medium', ''];
+    const fallbackLevels = (
+      options.requested_allowed_risk_levels?.length
+        ? options.requested_allowed_risk_levels
+        : ['low', 'medium']
+    )
+      .map(normalizeRiskLevel)
+      .filter(Boolean);
     const basePolicy = {
       enabled: options.enabled,
       closed_samples: 0,
@@ -1053,16 +1057,11 @@ class PaperTradingAutomationService {
       const recommendedLevels = Array.isArray(feedback.recommended_allowed_risk_levels)
         ? feedback.recommended_allowed_risk_levels.map(normalizeRiskLevel).filter(Boolean)
         : [];
-      const requestedLevelSet = new Set(fallbackLevels.map(normalizeRiskLevel));
+      const requestedLevelSet = new Set(fallbackLevels.map(normalizeRiskLevel).filter(Boolean));
       const intersectedLevels = recommendedLevels.filter(level => requestedLevelSet.has(level));
-      const effectiveLevels = (intersectedLevels.length > 0
-        ? intersectedLevels
-        : fallbackLevels
-      ).includes('')
-        ? intersectedLevels.length > 0
-          ? intersectedLevels
-          : fallbackLevels
-        : [...(intersectedLevels.length > 0 ? intersectedLevels : fallbackLevels), ''];
+      const effectiveLevels = (intersectedLevels.length > 0 ? intersectedLevels : fallbackLevels)
+        .map(normalizeRiskLevel)
+        .filter(Boolean);
 
       return {
         enabled: true,
