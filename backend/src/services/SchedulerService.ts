@@ -531,6 +531,17 @@ class SchedulerService {
               : parameters.profitGateAllowDeprioritized !== undefined
                 ? Boolean(parameters.profitGateAllowDeprioritized)
                 : false,
+          profit_gate_allow_sampling:
+            parameters.profit_gate_allow_sampling !== undefined
+              ? Boolean(parameters.profit_gate_allow_sampling)
+              : parameters.profitGateAllowSampling !== undefined
+                ? Boolean(parameters.profitGateAllowSampling)
+                : true,
+          profit_gate_sampling_multiplier: Number(
+            parameters.profit_gate_sampling_multiplier ||
+              parameters.profitGateSamplingMultiplier ||
+              0.35
+          ),
           use_outcome_feedback:
             parameters.use_outcome_feedback !== undefined
               ? Boolean(parameters.use_outcome_feedback)
@@ -775,6 +786,17 @@ class SchedulerService {
               : parameters.profitGateAllowDeprioritized !== undefined
                 ? Boolean(parameters.profitGateAllowDeprioritized)
                 : false,
+          profit_gate_allow_sampling:
+            parameters.profit_gate_allow_sampling !== undefined
+              ? Boolean(parameters.profit_gate_allow_sampling)
+              : parameters.profitGateAllowSampling !== undefined
+                ? Boolean(parameters.profitGateAllowSampling)
+                : true,
+          profit_gate_sampling_multiplier: Number(
+            parameters.profit_gate_sampling_multiplier ||
+              parameters.profitGateSamplingMultiplier ||
+              0.35
+          ),
           use_outcome_feedback:
             parameters.use_outcome_feedback !== undefined
               ? Boolean(parameters.use_outcome_feedback)
@@ -910,6 +932,12 @@ class SchedulerService {
           profit_gate_min_quality_score: Number(
             parameters.profit_gate_min_quality_score || parameters.profitGateMinQualityScore || 45
           ),
+          agent_auto_paper_trade:
+            parameters.agent_auto_paper_trade !== undefined
+              ? Boolean(parameters.agent_auto_paper_trade)
+              : parameters.agentAutoPaperTrade !== undefined
+                ? Boolean(parameters.agentAutoPaperTrade)
+                : true,
           submit_agent_analysis:
             parameters.submit_agent_analysis !== undefined
               ? Boolean(parameters.submit_agent_analysis)
@@ -1229,6 +1257,7 @@ class SchedulerService {
           profit_gate_horizon: '5d',
           profit_gate_min_samples: 5,
           profit_gate_min_quality_score: 45,
+          agent_auto_paper_trade: true,
           submit_agent_analysis: true,
           agent_max_count: 5,
           agent_min_score: 72,
@@ -1312,6 +1341,8 @@ class SchedulerService {
           profit_gate_min_samples: 5,
           profit_gate_min_quality_score: 45,
           profit_gate_allow_deprioritized: false,
+          profit_gate_allow_sampling: true,
+          profit_gate_sampling_multiplier: 0.35,
           use_outcome_feedback: true,
           outcome_feedback_min_closed_samples: 5,
           outcome_feedback_lookback_days: 365,
@@ -1345,6 +1376,8 @@ class SchedulerService {
           profit_gate_min_samples: 5,
           profit_gate_min_quality_score: 45,
           profit_gate_allow_deprioritized: false,
+          profit_gate_allow_sampling: true,
+          profit_gate_sampling_multiplier: 0.35,
           use_outcome_feedback: true,
           outcome_feedback_min_closed_samples: 5,
           outcome_feedback_lookback_days: 365,
@@ -1424,6 +1457,8 @@ class SchedulerService {
           profit_gate_min_samples: 5,
           profit_gate_min_quality_score: 45,
           profit_gate_allow_deprioritized: false,
+          profit_gate_allow_sampling: true,
+          profit_gate_sampling_multiplier: 0.35,
           use_outcome_feedback: true,
           outcome_feedback_min_closed_samples: 5,
           outcome_feedback_lookback_days: 365,
@@ -1545,6 +1580,7 @@ class SchedulerService {
           'profit_gate_horizon',
           'profit_gate_min_samples',
           'profit_gate_min_quality_score',
+          'agent_auto_paper_trade',
           'submit_agent_analysis',
           'agent_max_count',
           'agent_min_score',
@@ -1570,6 +1606,12 @@ class SchedulerService {
           'profit_gate_min_samples',
           'profit_gate_min_quality_score',
           'profit_gate_allow_deprioritized',
+          'profit_gate_allow_sampling',
+          'profit_gate_sampling_multiplier',
+          'use_outcome_feedback',
+          'outcome_feedback_min_closed_samples',
+          'outcome_feedback_lookback_days',
+          'outcome_feedback_limit',
         ]) {
           if (nextParams[key] === undefined && (taskData.parameters as any)[key] !== undefined) {
             nextParams[key] = (taskData.parameters as any)[key];

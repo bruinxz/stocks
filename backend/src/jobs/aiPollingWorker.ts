@@ -14,6 +14,7 @@ import { feishuTaskReportService } from '../services/FeishuTaskReportService';
 import { ScheduledTask } from '../models/ScheduledTask';
 import { logger } from '../utils/logger';
 import moment from 'moment-timezone';
+import { paperTradingAutomationService } from '../services/PaperTradingAutomationService';
 
 const akshareClient = new AKShareClient();
 
@@ -81,6 +82,13 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
     recommendation_style,
     recommendation_source,
     agent_session,
+    auto_paper_trade,
+    paper_trade_username,
+    paper_trade_min_score,
+    paper_trade_max_positions,
+    paper_trade_default_position_pct,
+    paper_trade_max_position_pct,
+    paper_trade_min_trade_amount,
   } = job.data;
 
   try {
@@ -160,8 +168,9 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
 
       logger.info(`AI 分析任务 ${taskId} 对于股票 ${symbol} 已完成并保存入库 (增量)`);
 
+      let archivedSignal: any = null;
       try {
-        const archivedSignal = await aiInvestmentSignalService.archiveTradingAgentsResult({
+        archivedSignal = await aiInvestmentSignalService.archiveTradingAgentsResult({
           task_id: taskId,
           symbol,
           signal_date: response.target_date || today,
@@ -178,6 +187,46 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
         await aiInvestmentSignalService.verifySignalReturns(archivedSignal);
       } catch (archiveError: any) {
         logger.warn(`AI 轮询任务结果归档失败 ${taskId}: ${archiveError.message}`);
+      }
+
+      let paperTradingResult: any = null;
+      if (
+        auto_paper_trade &&
+        archivedSignal &&
+        [AISignalDecision.BUY, AISignalDecision.STRONG_BUY].includes(
+          archivedSignal.normalized_decision as any
+        ) &&
+        Number(archivedSignal.confidence_score || 0) >= Number(paper_trade_min_score || 72)
+      ) {
+        try {
+          paperTradingResult = await paperTradingAutomationService.autoBuyFromSignals({
+            username: paper_trade_username,
+            source_type: 'tradingagents',
+            agent_session: agentSession,
+            signal_ids: [archivedSignal.id],
+            limit: 1,
+            scan_limit: 1,
+            min_score: Number(paper_trade_min_score || 72),
+            max_positions: Number(paper_trade_max_positions || 8),
+            default_position_pct: Number(paper_trade_default_position_pct || 4),
+            max_position_pct: Number(paper_trade_max_position_pct || 8),
+            min_trade_amount: Number(paper_trade_min_trade_amount || 3000),
+            allowed_risk_levels: ['low', 'medium'],
+            require_action_buy: false,
+            ignore_profit_gate_for_forced_signals: true,
+            use_attribution_feedback: true,
+            use_profit_gate: true,
+            profit_gate_allow_sampling: true,
+            use_outcome_feedback: true,
+            dry_run: false,
+            report_to_feishu: true,
+          });
+          logger.info(
+            `TradingAgents 结果自动进入模拟盘完成 ${symbol}: 成交 ${paperTradingResult.executed}，跳过 ${paperTradingResult.skipped}`
+          );
+        } catch (tradeError: any) {
+          logger.warn(`TradingAgents 结果自动进入模拟盘失败 ${symbol}: ${tradeError.message}`);
+        }
       }
 
       await updateLogProgress(executionLogId, true);
@@ -197,7 +246,20 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
         })
         .catch(err => logger.error('写入飞书 AI 分析结果失败（不影响主流程）:', err));
 
-      return { success: true };
+      return {
+        success: true,
+        signal_id: archivedSignal?.id,
+        auto_paper_trade: Boolean(auto_paper_trade),
+        paper_trading: paperTradingResult
+          ? {
+              portfolio_id: paperTradingResult.portfolio_id,
+              executed: paperTradingResult.executed,
+              planned: paperTradingResult.planned,
+              skipped: paperTradingResult.skipped,
+              trades: paperTradingResult.trades,
+            }
+          : undefined,
+      };
     } else if (status === 'FAILED' || status === 'ERROR') {
       const errorMessage = response.error || 'Unknown error';
       logger.error(

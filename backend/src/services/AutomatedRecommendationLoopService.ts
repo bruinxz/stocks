@@ -38,6 +38,7 @@ export interface AutomatedRecommendationLoopOptions {
   agent_max_count?: number;
   agent_min_score?: number;
   agent_session?: string;
+  agent_auto_paper_trade?: boolean;
   target_date?: string;
   task_label?: string;
   execution_log_id?: number;
@@ -106,6 +107,13 @@ class AutomatedRecommendationLoopService {
                 .format('YYYY-MM-DD'),
             task_label: options.task_label || options.record_type || '全市场荐股闭环',
             agent_session: options.agent_session || 'close',
+            auto_paper_trade: options.agent_auto_paper_trade !== false && Boolean(options.run_paper_trading),
+            paper_trade_username: options.username,
+            paper_trade_min_score: Number(options.min_score || 72),
+            paper_trade_max_positions: toPositiveInt(options.max_positions, 8, 30),
+            paper_trade_default_position_pct: Number(options.default_position_pct || 5),
+            paper_trade_max_position_pct: Number(options.max_position_pct || 10),
+            paper_trade_min_trade_amount: Number(options.min_trade_amount || 3000),
             execution_log_id: options.execution_log_id,
             universe,
             style,
@@ -217,6 +225,13 @@ class AutomatedRecommendationLoopService {
     target_date: string;
     task_label: string;
     agent_session: string;
+    auto_paper_trade?: boolean;
+    paper_trade_username?: string;
+    paper_trade_min_score?: number;
+    paper_trade_max_positions?: number;
+    paper_trade_default_position_pct?: number;
+    paper_trade_max_position_pct?: number;
+    paper_trade_min_trade_amount?: number;
     execution_log_id?: number;
     universe: string;
     style: string;
@@ -277,6 +292,13 @@ class AutomatedRecommendationLoopService {
             recommendation_style: options.style,
             recommendation_source: options.universe,
             agent_session: options.agent_session,
+            auto_paper_trade: options.auto_paper_trade,
+            paper_trade_username: options.paper_trade_username,
+            paper_trade_min_score: options.paper_trade_min_score,
+            paper_trade_max_positions: options.paper_trade_max_positions,
+            paper_trade_default_position_pct: options.paper_trade_default_position_pct,
+            paper_trade_max_position_pct: options.paper_trade_max_position_pct,
+            paper_trade_min_trade_amount: options.paper_trade_min_trade_amount,
           },
           {
             jobId: `auto-loop-ai-${options.execution_log_id || 'manual'}-${response.task_id}`,
@@ -292,6 +314,7 @@ class AutomatedRecommendationLoopService {
           action: candidate.action,
           task_id: response.task_id,
           status: response.status,
+          auto_paper_trade: Boolean(options.auto_paper_trade),
         });
       } catch (error: any) {
         failed.push({
@@ -307,6 +330,7 @@ class AutomatedRecommendationLoopService {
       target_date: options.target_date,
       task_label: options.task_label,
       agent_session: options.agent_session,
+      auto_paper_trade: Boolean(options.auto_paper_trade),
       min_score: options.min_score,
       max_count: options.max_count,
       submitted,

@@ -14,6 +14,13 @@ export interface AIPollingJobData {
   recommendation_style?: string;
   recommendation_source?: string;
   agent_session?: string;
+  auto_paper_trade?: boolean;
+  paper_trade_username?: string;
+  paper_trade_min_score?: number;
+  paper_trade_max_positions?: number;
+  paper_trade_default_position_pct?: number;
+  paper_trade_max_position_pct?: number;
+  paper_trade_min_trade_amount?: number;
 }
 
 const aiPollingQueue = new Bull<AIPollingJobData>('ai_polling', {

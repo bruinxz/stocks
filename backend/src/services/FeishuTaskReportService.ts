@@ -495,7 +495,9 @@ class FeishuTaskReportService {
       agentAnalysis?.enabled
         ? `- **Agent 深度复核**：已提交 ${
             Array.isArray(agentAnalysis.submitted) ? agentAnalysis.submitted.length : 0
-          } 个；失败 ${Array.isArray(agentAnalysis.failed) ? agentAnalysis.failed.length : 0} 个`
+          } 个；失败 ${Array.isArray(agentAnalysis.failed) ? agentAnalysis.failed.length : 0} 个；完成后${
+            agentAnalysis.auto_paper_trade ? '会自动进入模拟盘' : '仅归档跟踪'
+          }`
         : '- **Agent 深度复核**：未启用',
       `- **模拟盘动作**：${
         paper?.dry_run ? '预演' : paper?.portfolio_id ? '已执行' : '未执行'
@@ -600,6 +602,7 @@ class FeishuTaskReportService {
             skipped: paper?.skipped,
             trades: Array.isArray(paper?.trades) ? paper.trades.slice(0, 10) : [],
             profit_gate_policy: paper?.profit_gate_policy,
+            outcome_feedback_policy: paper?.outcome_feedback_policy,
           },
           trade_outcomes: tradeOutcomes,
           quality_report: result?.quality_report,
@@ -1448,6 +1451,7 @@ class FeishuTaskReportService {
       `- **完成样本**：${profitGate?.completed_samples ?? 0}/${
         profitGate?.min_samples ?? '--'
       }；仓位倍率 ${profitGate?.effective_position_multiplier ?? '--'}x`,
+      profitGate?.sampling_mode ? '- **冷启动采样**：已启用小仓试单，用于积累真实模拟交易样本' : '',
       profitGate?.reason ? `- **核心理由**：${profitGate.reason}` : '',
       '',
       '### 交易收益闭环反哺',

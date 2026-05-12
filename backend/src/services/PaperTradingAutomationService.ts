@@ -41,12 +41,16 @@ export interface PaperTradingAutoOptions {
   report_to_feishu?: boolean;
   signal_date_start?: string;
   signal_date_end?: string;
+  signal_ids?: number[];
+  ignore_profit_gate_for_forced_signals?: boolean;
   use_attribution_feedback?: boolean;
   use_profit_gate?: boolean;
   profit_gate_horizon?: string;
   profit_gate_min_samples?: number;
   profit_gate_min_quality_score?: number;
   profit_gate_allow_deprioritized?: boolean;
+  profit_gate_allow_sampling?: boolean;
+  profit_gate_sampling_multiplier?: number;
   use_outcome_feedback?: boolean;
   outcome_feedback_min_closed_samples?: number;
   outcome_feedback_lookback_days?: number;
@@ -142,11 +146,12 @@ export interface PaperTradingAutoResult {
     min_quality_score: number;
     completed_samples: number;
     quality_score: number;
-    gate_action?: string;
     gate_label?: string;
     gate_severity?: string;
+    gate_action?: string;
     position_multiplier: number;
     effective_position_multiplier: number;
+    sampling_mode?: boolean;
     reason?: string;
     risk_notes?: string[];
   };
@@ -455,8 +460,17 @@ class PaperTradingAutomationService {
       min_samples: toPositiveInt(options.profit_gate_min_samples, 5, 100),
       min_quality_score: toNumber(options.profit_gate_min_quality_score, 45),
       allow_deprioritized: toBoolean(options.profit_gate_allow_deprioritized, false),
+      allow_sampling: toBoolean(options.profit_gate_allow_sampling, true),
+      sampling_multiplier: toNumber(options.profit_gate_sampling_multiplier, 0.35),
       limit: scan_limit,
     });
+    const signalIds = Array.isArray(options.signal_ids)
+      ? options.signal_ids
+          .map(value => Number(value))
+          .filter(value => Number.isFinite(value) && value > 0)
+      : [];
+    const ignoreProfitGateForForcedSignals =
+      signalIds.length > 0 ? toBoolean(options.ignore_profit_gate_for_forced_signals, true) : false;
     const outcomeFeedbackPolicy = await this.resolveOutcomeFeedbackPolicy({
       portfolio_id: portfolio.id,
       user_id: portfolio.user_id,
@@ -507,6 +521,10 @@ class PaperTradingAutomationService {
       if (options.signal_date_start) where.signal_date[Op.gte] = options.signal_date_start;
       if (options.signal_date_end) where.signal_date[Op.lte] = options.signal_date_end;
     }
+    if (signalIds.length > 0) {
+      where.id = { [Op.in]: signalIds };
+      delete where.confidence_score;
+    }
 
     const signals = await AIInvestmentSignal.findAll({
       where,
@@ -537,7 +555,7 @@ class PaperTradingAutomationService {
       });
     }
 
-    if (!profitGatePolicy.allow_entries) {
+    if (!profitGatePolicy.allow_entries && !ignoreProfitGateForForcedSignals) {
       skipped_items.push({
         status: 'skipped',
         signal_id: 0,
@@ -584,7 +602,7 @@ class PaperTradingAutomationService {
         break;
       }
 
-      if (!profitGatePolicy.allow_entries) {
+      if (!profitGatePolicy.allow_entries && !ignoreProfitGateForForcedSignals) {
         skip(`收益闸门未放行：${profitGatePolicy.reason || profitGatePolicy.gate_label}`);
         continue;
       }
@@ -1260,6 +1278,8 @@ class PaperTradingAutomationService {
     min_samples: number;
     min_quality_score: number;
     allow_deprioritized: boolean;
+    allow_sampling: boolean;
+    sampling_multiplier: number;
     limit: number;
   }): Promise<NonNullable<PaperTradingAutoResult['profit_gate_policy']>> {
     const basePolicy = {
@@ -1274,6 +1294,7 @@ class PaperTradingAutomationService {
       quality_score: 0,
       position_multiplier: 1,
       effective_position_multiplier: 1,
+      sampling_mode: false,
       reason: '收益闸门未启用，沿用原始仓位规则',
       risk_notes: [],
     };
@@ -1301,10 +1322,17 @@ class PaperTradingAutomationService {
       const blockedByGate =
         ['wait_for_samples', 'collect_more_samples'].includes(gateAction) ||
         (!options.allow_deprioritized && gateAction === 'deprioritize');
-      const allowEntries = !(blockedBySamples || blockedByQuality || blockedByGate);
-      const effectivePositionMultiplier = allowEntries
-        ? clamp(positionMultiplier || 1, 0.1, 1.5)
-        : 0;
+      const samplingMode =
+        options.allow_sampling &&
+        blockedBySamples &&
+        !blockedByQuality &&
+        ['wait_for_samples', 'collect_more_samples', ''].includes(gateAction);
+      const allowEntries = samplingMode || !(blockedBySamples || blockedByQuality || blockedByGate);
+      const effectivePositionMultiplier = samplingMode
+        ? clamp(options.sampling_multiplier, 0.1, 0.6)
+        : allowEntries
+          ? clamp(positionMultiplier || 1, 0.1, 1.5)
+          : 0;
 
       return {
         enabled: true,
@@ -1321,9 +1349,18 @@ class PaperTradingAutomationService {
         gate_severity: gate.severity,
         position_multiplier: positionMultiplier,
         effective_position_multiplier: effectivePositionMultiplier,
+        sampling_mode: samplingMode,
         reason:
-          gate.reason || (allowEntries ? '收益闸门已放行' : '后验样本或质量分未达到自动跟单阈值'),
-        risk_notes: dashboard.playbook?.risk_notes || [],
+          samplingMode
+            ? `Profit Gate 样本 ${completedSamples}/${options.min_samples}，进入小仓采样模式`
+            : gate.reason ||
+              (allowEntries ? '收益闸门已放行' : '后验样本或质量分未达到自动跟单阈值'),
+        risk_notes: samplingMode
+          ? [
+              ...(dashboard.playbook?.risk_notes || []),
+              '样本不足时仅允许低倍率试单，目的是为后续闭环积累真实模拟交易样本。',
+            ]
+          : dashboard.playbook?.risk_notes || [],
       };
     } catch (error: any) {
       logger.warn(`读取收益闸门失败，自动跟单默认不放大信号: ${error?.message || error}`);

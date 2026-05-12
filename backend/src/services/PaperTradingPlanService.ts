@@ -36,6 +36,8 @@ export interface PaperTradingPlanOptions {
   profit_gate_min_samples?: number;
   profit_gate_min_quality_score?: number;
   profit_gate_allow_deprioritized?: boolean;
+  profit_gate_allow_sampling?: boolean;
+  profit_gate_sampling_multiplier?: number;
   use_outcome_feedback?: boolean;
   outcome_feedback_min_closed_samples?: number;
   outcome_feedback_lookback_days?: number;
@@ -212,6 +214,8 @@ class PaperTradingPlanService {
         profit_gate_min_samples: options.profit_gate_min_samples,
         profit_gate_min_quality_score: options.profit_gate_min_quality_score,
         profit_gate_allow_deprioritized: options.profit_gate_allow_deprioritized,
+        profit_gate_allow_sampling: options.profit_gate_allow_sampling,
+        profit_gate_sampling_multiplier: options.profit_gate_sampling_multiplier,
         use_outcome_feedback: options.use_outcome_feedback,
         outcome_feedback_min_closed_samples: options.outcome_feedback_min_closed_samples,
         outcome_feedback_lookback_days: options.outcome_feedback_lookback_days,
