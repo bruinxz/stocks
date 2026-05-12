@@ -31,6 +31,11 @@ export interface PaperTradingPlanOptions {
   min_trade_amount?: number;
   allowed_risk_levels?: string[];
   use_attribution_feedback?: boolean;
+  use_profit_gate?: boolean;
+  profit_gate_horizon?: string;
+  profit_gate_min_samples?: number;
+  profit_gate_min_quality_score?: number;
+  profit_gate_allow_deprioritized?: boolean;
   enable_stop_loss?: boolean;
   enable_take_profit?: boolean;
   enable_sell_signals?: boolean;
@@ -87,6 +92,9 @@ export interface PaperTradingPlanResult {
     effective_min_score?: number;
     recommended_allowed_risk_levels?: string[];
     generated_from_closed_samples: number;
+    profit_gate_label?: string;
+    profit_gate_quality_score?: number;
+    profit_gate_position_multiplier?: number;
   };
   actions: TradingPlanAction[];
   attribution: PaperTradingAttributionResult;
@@ -185,6 +193,11 @@ class PaperTradingPlanService {
         dry_run: true,
         report_to_feishu: false,
         use_attribution_feedback: options.use_attribution_feedback,
+        use_profit_gate: options.use_profit_gate,
+        profit_gate_horizon: options.profit_gate_horizon,
+        profit_gate_min_samples: options.profit_gate_min_samples,
+        profit_gate_min_quality_score: options.profit_gate_min_quality_score,
+        profit_gate_allow_deprioritized: options.profit_gate_allow_deprioritized,
       });
     }
 
@@ -241,8 +254,8 @@ class PaperTradingPlanService {
             item.risk_state === 'near_stop_loss'
               ? '临近止损'
               : item.risk_state === 'approaching_take_profit'
-                ? '接近止盈'
-                : '继续观察',
+              ? '接近止盈'
+              : '继续观察',
           reason: `当前浮动盈亏 ${item.unrealized_pnl_pct}% ，距止损 ${
             item.distance_to_stop_loss_pct ?? '--'
           }pct，持有 ${item.holding_days} 天`,
@@ -279,9 +292,9 @@ class PaperTradingPlanService {
           symbol: item.symbol,
           name: item.name,
           action_label: item.action_label || '计划买入',
-          reason: `候选评分 ${item.score ?? '--'}，风险等级 ${
-            item.risk_level || '--'
-          }，目标仓位 ${item.target_position_pct ?? '--'}%`,
+          reason: `候选评分 ${item.score ?? '--'}，风险等级 ${item.risk_level || '--'}，目标仓位 ${
+            item.target_position_pct ?? '--'
+          }%`,
           instructions: [
             `计划买入 ${item.quantity} 股，预估成交价 ¥${roundNumber(item.execute_price, 3)}。`,
             `预计占用资金 ¥${roundNumber(item.total_cost, 2)}，止损 ${
@@ -361,6 +374,10 @@ class PaperTradingPlanService {
       effective_min_score: entryPreview?.feedback_policy?.effective_min_score,
       recommended_allowed_risk_levels: attribution.feedback?.recommended_allowed_risk_levels,
       generated_from_closed_samples: attribution.summary.closed_count,
+      profit_gate_label: entryPreview?.profit_gate_policy?.gate_label,
+      profit_gate_quality_score: entryPreview?.profit_gate_policy?.quality_score,
+      profit_gate_position_multiplier:
+        entryPreview?.profit_gate_policy?.effective_position_multiplier,
     };
 
     const result: PaperTradingPlanResult = {

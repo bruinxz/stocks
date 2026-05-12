@@ -125,6 +125,18 @@ interface AutoTradeResult {
     current_cash: number;
     position_value: number;
   };
+  profit_gate_policy?: {
+    enabled: boolean;
+    allow_entries: boolean;
+    horizon: string;
+    min_samples: number;
+    min_quality_score: number;
+    completed_samples: number;
+    quality_score: number;
+    gate_label?: string;
+    effective_position_multiplier: number;
+    reason?: string;
+  };
 }
 
 const riskColorMap: Record<string, string> = {
@@ -354,6 +366,10 @@ const Recommendations: React.FC = () => {
         max_position_pct: 10,
         min_trade_amount: 3000,
         require_action_buy: true,
+        use_profit_gate: true,
+        profit_gate_horizon: '5d',
+        profit_gate_min_samples: 5,
+        profit_gate_min_quality_score: 45,
         dry_run: dryRun,
         report_to_feishu: !dryRun,
       });
@@ -687,6 +703,14 @@ const Recommendations: React.FC = () => {
                   扫描 {autoTradeResult.scanned} 条，符合 {autoTradeResult.eligible} 条，跳过{' '}
                   {autoTradeResult.skipped} 条
                 </Text>
+                {autoTradeResult.profit_gate_policy?.enabled && (
+                  <Text style={{ color: 'rgba(254,226,226,0.86)' }}>
+                    Profit Gate：{autoTradeResult.profit_gate_policy.gate_label || '--'} · 质量分{' '}
+                    {autoTradeResult.profit_gate_policy.quality_score}/
+                    {autoTradeResult.profit_gate_policy.min_quality_score} · 仓位倍率{' '}
+                    {autoTradeResult.profit_gate_policy.effective_position_multiplier}x
+                  </Text>
+                )}
               </Space>
             </Col>
             <Col xs={12} md={4}>

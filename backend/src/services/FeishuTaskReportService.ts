@@ -410,6 +410,7 @@ class FeishuTaskReportService {
     const skippedItems = Array.isArray(result?.skipped_items) ? result.skipped_items : [];
     const snapshot = result?.snapshot || {};
     const firstTrade = trades[0] || {};
+    const profitGate = result?.profit_gate_policy || {};
     const markdownMessage = this.buildPaperTradingAutomationMarkdown(result, options, recordType);
 
     return this.safeAppend({
@@ -431,6 +432,9 @@ class FeishuTaskReportService {
       总资产: snapshot?.total_value,
       可用资金: snapshot?.current_cash,
       持仓市值: snapshot?.position_value,
+      收益闸门: profitGate?.gate_label,
+      收益闸门质量分: profitGate?.quality_score,
+      收益闸门仓位倍率: profitGate?.effective_position_multiplier,
       股票代码: firstTrade?.symbol,
       股票名称: firstTrade?.name,
       成交数量: firstTrade?.quantity,
@@ -443,6 +447,7 @@ class FeishuTaskReportService {
           snapshot,
           generated: result?.generated,
           archive: result?.archive,
+          profit_gate_policy: result?.profit_gate_policy,
         },
         10000
       ),
@@ -1016,6 +1021,7 @@ class FeishuTaskReportService {
     const skippedItems = Array.isArray(result?.skipped_items) ? result.skipped_items : [];
     const snapshot = result?.snapshot || {};
     const feedbackPolicy = result?.feedback_policy || {};
+    const profitGate = result?.profit_gate_policy || {};
     const generated = result?.generated || {};
     const archive = result?.archive || {};
     const dryRun = Boolean(result?.dry_run);
@@ -1047,6 +1053,16 @@ class FeishuTaskReportService {
       feedbackPolicy?.strongest_bucket
         ? `- **当前强势评分桶**：${feedbackPolicy.strongest_bucket}`
         : '',
+      '',
+      '### 收益闸门',
+      `- **Profit Gate**：${profitGate?.enabled ? '已启用' : '未启用'}`,
+      `- **当前结论**：${profitGate?.gate_label || '--'}；质量分 ${
+        profitGate?.quality_score ?? 0
+      }/${profitGate?.min_quality_score ?? '--'}`,
+      `- **完成样本**：${profitGate?.completed_samples ?? 0}/${
+        profitGate?.min_samples ?? '--'
+      }；仓位倍率 ${profitGate?.effective_position_multiplier ?? '--'}x`,
+      profitGate?.reason ? `- **核心理由**：${profitGate.reason}` : '',
       '',
       '### 信号处理概览',
       `- **扫描信号**：${result?.scanned ?? 0}`,
@@ -1412,6 +1428,11 @@ class FeishuTaskReportService {
           ? summary.recommended_allowed_risk_levels.join('、')
           : '--'
       }`,
+      '',
+      '### 收益闸门',
+      `- **当前结论**：${summary.profit_gate_label || '--'}`,
+      `- **质量分**：${summary.profit_gate_quality_score ?? '--'}`,
+      `- **计划仓位倍率**：${summary.profit_gate_position_multiplier ?? '--'}x`,
     ];
 
     if (Array.isArray(feedback.insights) && feedback.insights.length > 0) {

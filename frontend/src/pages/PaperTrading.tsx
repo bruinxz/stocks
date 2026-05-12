@@ -445,6 +445,10 @@ const PaperTrading: React.FC = () => {
           min_score: 72,
           max_positions: 8,
           use_attribution_feedback: true,
+          use_profit_gate: true,
+          profit_gate_horizon: '5d',
+          profit_gate_min_samples: 5,
+          profit_gate_min_quality_score: 45,
         },
       });
       if (response.data.success) {
@@ -472,6 +476,10 @@ const PaperTrading: React.FC = () => {
         min_score: 72,
         max_positions: 8,
         use_attribution_feedback: true,
+        use_profit_gate: true,
+        profit_gate_horizon: '5d',
+        profit_gate_min_samples: 5,
+        profit_gate_min_quality_score: 45,
       });
       if (response.data.success) {
         setTradingPlan(response.data.data);

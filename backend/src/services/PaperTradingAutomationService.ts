@@ -26,6 +26,8 @@ export interface PaperTradingAutoOptions {
   user_id?: number;
   username?: string;
   source_type?: string;
+  agent_session?: string;
+  task_label?: string;
   limit?: number;
   scan_limit?: number;
   min_score?: number;
@@ -40,6 +42,11 @@ export interface PaperTradingAutoOptions {
   signal_date_start?: string;
   signal_date_end?: string;
   use_attribution_feedback?: boolean;
+  use_profit_gate?: boolean;
+  profit_gate_horizon?: string;
+  profit_gate_min_samples?: number;
+  profit_gate_min_quality_score?: number;
+  profit_gate_allow_deprioritized?: boolean;
 }
 
 export interface PaperTradingAutoSyncOptions extends PaperTradingAutoOptions {
@@ -119,6 +126,24 @@ export interface PaperTradingAutoResult {
     preferred_source_type?: string;
     preferred_action?: string;
     strongest_bucket?: string;
+  };
+  profit_gate_policy?: {
+    enabled: boolean;
+    allow_entries: boolean;
+    source_type?: string;
+    agent_session?: string;
+    horizon: string;
+    min_samples: number;
+    min_quality_score: number;
+    completed_samples: number;
+    quality_score: number;
+    gate_action?: string;
+    gate_label?: string;
+    gate_severity?: string;
+    position_multiplier: number;
+    effective_position_multiplier: number;
+    reason?: string;
+    risk_notes?: string[];
   };
 }
 
@@ -394,6 +419,17 @@ class PaperTradingAutomationService {
     });
     min_score = feedbackPolicy.effective_min_score;
     allowedRiskLevelList = feedbackPolicy.effective_allowed_risk_levels;
+    const profitGatePolicy = await this.resolveProfitGatePolicy({
+      enabled: toBoolean(options.use_profit_gate, true),
+      source_type,
+      agent_session: options.agent_session,
+      task_label: options.task_label,
+      horizon: options.profit_gate_horizon || '5d',
+      min_samples: toPositiveInt(options.profit_gate_min_samples, 5, 100),
+      min_quality_score: toNumber(options.profit_gate_min_quality_score, 45),
+      allow_deprioritized: toBoolean(options.profit_gate_allow_deprioritized, false),
+      limit: scan_limit,
+    });
     const allowedRiskLevels = new Set(allowedRiskLevelList.map(normalizeRiskLevel).filter(Boolean));
 
     const preSnapshot = await this.syncLatestPricesAndSnapshot(portfolio.id);
@@ -417,6 +453,12 @@ class PaperTradingAutomationService {
     };
     if (source_type && source_type !== 'all') {
       where.source_type = source_type;
+    }
+    if (options.agent_session || options.task_label) {
+      const metadataFilters: Record<string, any> = {};
+      if (options.agent_session) metadataFilters.agent_session = options.agent_session;
+      if (options.task_label) metadataFilters.task_label = options.task_label;
+      where.metadata = { [Op.contains]: metadataFilters };
     }
     if (options.signal_date_start || options.signal_date_end) {
       where.signal_date = {};
@@ -453,6 +495,21 @@ class PaperTradingAutomationService {
       });
     }
 
+    if (!profitGatePolicy.allow_entries) {
+      skipped_items.push({
+        status: 'skipped',
+        signal_id: 0,
+        source_type,
+        source_id: '',
+        signal_date: getChinaToday(),
+        symbol: '',
+        decision: '',
+        reason: `收益闸门未放行：${profitGatePolicy.gate_label || '等待样本'}；${
+          profitGatePolicy.reason || '后验质量不足'
+        }`,
+      });
+    }
+
     for (const signal of signals) {
       const itemBase = this.buildTradeItemBase(signal);
       const symbol = normalizeSymbol(signal.symbol);
@@ -470,6 +527,11 @@ class PaperTradingAutomationService {
 
       if (remainingSlots <= 0) {
         break;
+      }
+
+      if (!profitGatePolicy.allow_entries) {
+        skip(`收益闸门未放行：${profitGatePolicy.reason || profitGatePolicy.gate_label}`);
+        continue;
       }
 
       if (seenSymbols.has(symbol)) {
@@ -517,7 +579,16 @@ class PaperTradingAutomationService {
         1,
         max_position_pct
       );
-      const targetAmount = Math.min(totalValue * (suggestedPct / 100), availableCash * 0.98);
+      const gatedSuggestedPct = clamp(
+        suggestedPct * profitGatePolicy.effective_position_multiplier,
+        0,
+        max_position_pct
+      );
+      if (gatedSuggestedPct <= 0) {
+        skip(`收益闸门仓位倍率为 ${profitGatePolicy.effective_position_multiplier}，不执行买入`);
+        continue;
+      }
+      const targetAmount = Math.min(totalValue * (gatedSuggestedPct / 100), availableCash * 0.98);
       if (targetAmount < min_trade_amount) {
         skip(`目标交易金额低于最小阈值 ${min_trade_amount}`);
         continue;
@@ -553,9 +624,13 @@ class PaperTradingAutomationService {
         amount,
         commission,
         total_cost,
-        target_position_pct: suggestedPct,
+        target_position_pct: roundNumber(gatedSuggestedPct, 2),
         stop_loss_pct: toOptionalNumber(metadata.stop_loss_pct),
         take_profit_pct: toOptionalNumber(metadata.take_profit_pct),
+        reason:
+          profitGatePolicy.enabled && profitGatePolicy.gate_label
+            ? `收益闸门：${profitGatePolicy.gate_label}，倍率 ${profitGatePolicy.effective_position_multiplier}x`
+            : undefined,
       };
 
       if (!dry_run) {
@@ -580,9 +655,10 @@ class PaperTradingAutomationService {
           amount,
           commission,
           total_cost,
-          target_position_pct: suggestedPct,
+          target_position_pct: tradePayload.target_position_pct,
           stop_loss_pct: tradePayload.stop_loss_pct,
           take_profit_pct: tradePayload.take_profit_pct,
+          profit_gate: profitGatePolicy,
         });
       }
 
@@ -606,6 +682,7 @@ class PaperTradingAutomationService {
       skipped_items: skipped_items.slice(0, 30),
       snapshot,
       feedback_policy: feedbackPolicy,
+      profit_gate_policy: profitGatePolicy,
     };
 
     if (report_to_feishu) {
@@ -1077,6 +1154,92 @@ class PaperTradingAutomationService {
     } catch (error: any) {
       logger.warn(`读取模拟盘归因反馈失败，自动跟单沿用原始参数: ${error?.message || error}`);
       return basePolicy;
+    }
+  }
+
+  private async resolveProfitGatePolicy(options: {
+    enabled: boolean;
+    source_type?: string;
+    agent_session?: string;
+    task_label?: string;
+    horizon: string;
+    min_samples: number;
+    min_quality_score: number;
+    allow_deprioritized: boolean;
+    limit: number;
+  }): Promise<NonNullable<PaperTradingAutoResult['profit_gate_policy']>> {
+    const basePolicy = {
+      enabled: options.enabled,
+      allow_entries: true,
+      source_type: options.source_type,
+      agent_session: options.agent_session,
+      horizon: options.horizon,
+      min_samples: options.min_samples,
+      min_quality_score: options.min_quality_score,
+      completed_samples: 0,
+      quality_score: 0,
+      position_multiplier: 1,
+      effective_position_multiplier: 1,
+      reason: '收益闸门未启用，沿用原始仓位规则',
+      risk_notes: [],
+    };
+
+    if (!options.enabled) return basePolicy;
+
+    try {
+      const dashboard = await aiInvestmentSignalService.getPerformanceDashboard({
+        source_type: options.source_type === 'all' ? undefined : options.source_type,
+        agent_session: options.agent_session,
+        task_label: options.task_label,
+        horizon: options.horizon,
+        min_samples: options.min_samples,
+        limit: Math.max(options.limit, 200),
+      });
+      const gate: any = dashboard.playbook?.overall?.gate || {};
+      const qualityScore = Number(dashboard.playbook?.overall?.quality_score || 0);
+      const completedSamples = Number(dashboard.playbook?.overall?.count || 0);
+      const gateAction = String(gate.action || '');
+      const positionMultiplier = Number.isFinite(Number(gate.position_multiplier))
+        ? Number(gate.position_multiplier)
+        : 0;
+      const blockedBySamples = completedSamples < options.min_samples;
+      const blockedByQuality = qualityScore < options.min_quality_score;
+      const blockedByGate =
+        ['wait_for_samples', 'collect_more_samples'].includes(gateAction) ||
+        (!options.allow_deprioritized && gateAction === 'deprioritize');
+      const allowEntries = !(blockedBySamples || blockedByQuality || blockedByGate);
+      const effectivePositionMultiplier = allowEntries
+        ? clamp(positionMultiplier || 1, 0.1, 1.5)
+        : 0;
+
+      return {
+        enabled: true,
+        allow_entries: allowEntries,
+        source_type: options.source_type,
+        agent_session: options.agent_session,
+        horizon: options.horizon,
+        min_samples: options.min_samples,
+        min_quality_score: options.min_quality_score,
+        completed_samples: completedSamples,
+        quality_score: qualityScore,
+        gate_action: gateAction,
+        gate_label: gate.label,
+        gate_severity: gate.severity,
+        position_multiplier: positionMultiplier,
+        effective_position_multiplier: effectivePositionMultiplier,
+        reason:
+          gate.reason || (allowEntries ? '收益闸门已放行' : '后验样本或质量分未达到自动跟单阈值'),
+        risk_notes: dashboard.playbook?.risk_notes || [],
+      };
+    } catch (error: any) {
+      logger.warn(`读取收益闸门失败，自动跟单默认不放大信号: ${error?.message || error}`);
+      return {
+        ...basePolicy,
+        allow_entries: false,
+        enabled: true,
+        effective_position_multiplier: 0,
+        reason: `读取收益闸门失败：${error?.message || error}`,
+      };
     }
   }
 
