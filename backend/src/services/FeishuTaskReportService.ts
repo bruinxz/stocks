@@ -287,6 +287,75 @@ class FeishuTaskReportService {
     });
   }
 
+  async reportSignalVerificationRepair(result: any, options: { record_type?: string } = {}) {
+    const recordType = options.record_type || '信号收益验证修复';
+    const initial = result?.initial_diagnosis?.summary || {};
+    const final = result?.final_diagnosis?.summary || {};
+    const syncResult = result?.sync_result || {};
+    const syncedSymbols = Object.entries(syncResult);
+    const inserted = syncedSymbols.reduce(
+      (sum, [, count]) => (Number(count) > 0 ? sum + Number(count) : sum),
+      0
+    );
+    const failedSymbols = syncedSymbols
+      .filter(([, count]) => Number(count) < 0)
+      .map(([symbol]) => symbol);
+
+    const markdownMessage = [
+      `## ${recordType}`,
+      '',
+      '### 结论',
+      `- **初始缺行情/不可验证**：${initial.no_data_signals ?? 0} 条`,
+      `- **补行情股票**：${syncedSymbols.length} 只；新增/尝试写入K线 ${inserted} 条`,
+      `- **重新验证**：${result?.verification?.verified ?? 0} 条；仍无数据 ${
+        result?.verification?.no_data ?? 0
+      } 条`,
+      `- **最终可验证**：${final.ready_for_verification ?? 0} 条；周期未完成 ${
+        final.insufficient_horizon_bars ?? 0
+      } 条；缺行情 ${final.missing_bars ?? 0} 条`,
+      '',
+      '### 核心理由',
+      final.no_data_signals > 0 || final.insufficient_horizon_bars > 0
+        ? '仍存在不可验证样本，主要由行情缺失、股票映射缺失或后验周期尚未走完导致。系统已尽量补齐缺失行情，后续每日同步后会继续滚动验证。'
+        : '缺失行情已补齐，当前样本具备后验验证条件，可以进入收益统计与策略反哺。',
+      failedSymbols.length
+        ? `\n### 同步失败股票\n${failedSymbols.slice(0, 20).map(symbol => `- ${symbol}`).join('\n')}`
+        : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    return this.safeAppend({
+      文本: `${recordType} - 补行情 ${syncedSymbols.length} 只 / 验证 ${
+        result?.verification?.verified ?? 0
+      } 条`,
+      message: markdownMessage,
+      记录类型: recordType,
+      任务名称: 'AI信号收益验证修复',
+      任务类型: 'SIGNAL_VERIFICATION_REPAIR',
+      运行状态: 'COMPLETED',
+      总数: initial.total_signals,
+      完成数: result?.verification?.verified,
+      失败数: result?.verification?.no_data,
+      补行情股票数: syncedSymbols.length,
+      插入记录数: inserted,
+      错误信息: failedSymbols.length ? `同步失败：${failedSymbols.join(',')}` : '',
+      结果摘要: this.safeJson(
+        {
+          sync_window: result?.sync_window,
+          initial_summary: initial,
+          final_summary: final,
+          sync_result: syncResult,
+          sample_issues: Array.isArray(result?.final_diagnosis?.details)
+            ? result.final_diagnosis.details.slice(0, 20)
+            : [],
+        },
+        10000
+      ),
+      创建时间: this.formatDate(new Date()),
+    });
+  }
+
   async reportPaperTradingAutomation(
     result: any,
     options: {

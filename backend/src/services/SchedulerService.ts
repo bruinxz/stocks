@@ -272,7 +272,7 @@ class SchedulerService {
           isManual
         );
       } else if (task.type === 'SIGNAL_PERFORMANCE_REFRESH') {
-        const result = await aiInvestmentSignalService.refreshPerformance({
+        const commonPerformanceParams = {
           source_type: parameters.source_type || parameters.sourceType,
           agent_session: parameters.agent_session || parameters.agentSession,
           task_label: parameters.task_label || parameters.taskLabel,
@@ -283,6 +283,24 @@ class SchedulerService {
           horizon: parameters.horizon,
           record_type: parameters.record_type || parameters.recordType,
           limit: this.toPositiveInt(parameters.limit, 500, 5000),
+        };
+        let repairResult: any = null;
+        if (parameters.auto_repair_missing_data || parameters.autoRepairMissingData) {
+          repairResult = await aiInvestmentSignalService.repairAndVerifySignals({
+            ...commonPerformanceParams,
+            data_source: parameters.data_source || parameters.dataSource || 'tencent_only',
+            lookback_days: this.toPositiveInt(parameters.lookback_days, 15, 3650),
+            sync_concurrency: this.toPositiveInt(parameters.sync_concurrency, 2, 5),
+          });
+          if (parameters.report_repair_to_feishu !== false) {
+            await feishuTaskReportService.reportSignalVerificationRepair(repairResult, {
+              record_type: `${parameters.record_type || parameters.recordType || '推荐绩效'}数据修复`,
+            });
+          }
+        }
+
+        const result = await aiInvestmentSignalService.refreshPerformance({
+          ...commonPerformanceParams,
           report_to_feishu:
             parameters.report_to_feishu !== undefined
               ? Boolean(parameters.report_to_feishu)
@@ -290,6 +308,7 @@ class SchedulerService {
                 ? Boolean(parameters.reportToFeishu)
                 : true,
         });
+        (result as any).repair = repairResult;
 
         await executionLog.update({
           total_items: result.verification.total,
@@ -823,6 +842,10 @@ class SchedulerService {
           horizon: '5d',
           limit: 1000,
           record_type: 'Agent尾盘建议收益追踪',
+          auto_repair_missing_data: true,
+          data_source: 'tencent_only',
+          lookback_days: 15,
+          sync_concurrency: 2,
           report_to_feishu: true,
         },
       },
@@ -951,6 +974,28 @@ class SchedulerService {
           'include_no_data',
           'dataSource',
           'concurrency',
+        ]) {
+          if (nextParams[key] === undefined && (taskData.parameters as any)[key] !== undefined) {
+            nextParams[key] = (taskData.parameters as any)[key];
+          }
+        }
+        if (JSON.stringify(nextParams) !== JSON.stringify(params)) {
+          patch.parameters = nextParams;
+        }
+      }
+
+      if (taskData.name === 'Agent尾盘建议收益追踪') {
+        const params = task.parameters || {};
+        const nextParams = { ...taskData.parameters, ...params };
+        for (const key of [
+          'auto_repair_missing_data',
+          'data_source',
+          'lookback_days',
+          'sync_concurrency',
+          'agent_session',
+          'source_type',
+          'horizon',
+          'record_type',
         ]) {
           if (nextParams[key] === undefined && (taskData.parameters as any)[key] !== undefined) {
             nextParams[key] = (taskData.parameters as any)[key];

@@ -129,6 +129,28 @@ router.post(
 router.post('/signals/verify', authController.authenticate, aiSignalController.verifySignals);
 
 /**
+ * @route GET /api/ai/signals/verification/diagnose
+ * @desc 诊断 AI 信号收益验证缺口（缺股票/缺行情/周期未完成）
+ * @access Private
+ */
+router.get(
+  '/signals/verification/diagnose',
+  authController.authenticate,
+  aiSignalController.diagnoseVerification
+);
+
+/**
+ * @route POST /api/ai/signals/verification/repair
+ * @desc 自动补齐缺失行情并重新验证 AI 信号收益
+ * @access Private
+ */
+router.post(
+  '/signals/verification/repair',
+  authController.authenticate,
+  aiSignalController.repairAndVerifySignals
+);
+
+/**
  * @route POST /api/ai/signals/performance/refresh
  * @desc 刷新 AI/量化推荐后验绩效并上报飞书
  * @access Private

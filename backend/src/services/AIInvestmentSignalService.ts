@@ -10,6 +10,7 @@ import { DailyBar } from '../models/DailyBar';
 import { Stock } from '../models/Stock';
 import { normalizeSymbol } from '../utils/stockSymbol';
 import { logger } from '../utils/logger';
+import { DataSyncService } from '../data/services/DataSyncService';
 import type { QuantRecommendationItem } from './QuantRecommendationService';
 
 const DEFAULT_HORIZONS = [1, 3, 5, 10, 20];
@@ -30,6 +31,15 @@ export interface SignalQueryOptions {
 export interface SignalPerformanceOptions extends SignalQueryOptions {
   horizon?: string;
   limit?: number;
+}
+
+export interface SignalVerificationDiagnosisOptions extends SignalQueryOptions {
+  horizons?: number[];
+  limit?: number;
+  auto_sync_missing?: boolean;
+  data_source?: string;
+  lookback_days?: number;
+  sync_concurrency?: number;
 }
 
 export interface QuantRecommendationArchiveOptions {
@@ -163,6 +173,10 @@ function dateOnly(value: Date | string): string {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return String(value).slice(0, 10);
   return date.toISOString().split('T')[0];
+}
+
+function subtractCalendarDays(date: string, days: number): string {
+  return moment(date).subtract(days, 'days').format('YYYY-MM-DD');
 }
 
 function getSignalSide(decision?: string): 'long' | 'short' | 'neutral' {
@@ -789,6 +803,182 @@ export class AIInvestmentSignalService {
     });
 
     return signal.reload();
+  }
+
+  async diagnoseSignalVerification(options: SignalVerificationDiagnosisOptions = {}) {
+    const horizons = options.horizons || DEFAULT_HORIZONS;
+    const limit = Math.min(Math.max(Number(options.limit || 200), 1), 2000);
+    const signals = await AIInvestmentSignal.findAll({
+      where: buildSignalWhere(options),
+      order: [
+        ['signal_date', 'DESC'],
+        ['created_at', 'DESC'],
+      ],
+      limit,
+    });
+
+    const maxHorizon = Math.max(...horizons);
+    const details: any[] = [];
+    const missingSymbols = new Set<string>();
+    const summary = {
+      total_signals: signals.length,
+      verified_signals: 0,
+      pending_signals: 0,
+      no_data_signals: 0,
+      missing_stock: 0,
+      missing_bars: 0,
+      insufficient_horizon_bars: 0,
+      invalid_entry_price: 0,
+      ready_for_verification: 0,
+      symbols_need_sync: 0,
+    };
+
+    for (const signal of signals) {
+      const symbol = normalizeSymbol(signal.symbol);
+      const stock = await Stock.findOne({ where: { symbol } });
+      const item: any = {
+        signal_id: signal.id,
+        symbol,
+        name: signal.name,
+        signal_date: signal.signal_date,
+        source_type: signal.source_type,
+        normalized_decision: signal.normalized_decision,
+        verification_status: signal.verification_status,
+        agent_session: signal.metadata?.agent_session,
+      };
+
+      if (!stock) {
+        item.issue = 'missing_stock';
+        item.message = '股票基础信息不存在，需先同步股票列表';
+        summary.missing_stock++;
+        summary.no_data_signals++;
+        details.push(item);
+        continue;
+      }
+
+      item.stock_id = stock.id;
+      const bars = await DailyBar.findAll({
+        where: {
+          stock_id: stock.id,
+          time: { [Op.gte]: new Date(`${signal.signal_date}T00:00:00.000Z`) },
+        },
+        order: [['time', 'ASC']],
+        limit: maxHorizon + 5,
+      });
+
+      item.bar_count_after_signal = bars.length;
+      if (bars.length === 0) {
+        item.issue = 'missing_bars';
+        item.message = '信号日之后没有任何日线行情，需补齐历史行情';
+        summary.missing_bars++;
+        summary.no_data_signals++;
+        missingSymbols.add(symbol);
+        details.push(item);
+        continue;
+      }
+
+      const baseBar = bars.find(bar => dateOnly(bar.time) >= signal.signal_date) || bars[0];
+      const baseIndex = bars.findIndex(bar => bar.time.getTime() === baseBar.time.getTime());
+      const entryPrice = Number(baseBar.close);
+      item.entry_date = dateOnly(baseBar.time);
+      item.entry_price = entryPrice;
+      item.latest_bar_date = dateOnly(bars[bars.length - 1].time);
+      item.required_bars = maxHorizon + 1;
+      item.available_forward_bars = Math.max(0, bars.length - baseIndex - 1);
+
+      if (!entryPrice || !Number.isFinite(entryPrice)) {
+        item.issue = 'invalid_entry_price';
+        item.message = '入场日收盘价无效，需要重拉行情';
+        summary.invalid_entry_price++;
+        summary.no_data_signals++;
+        missingSymbols.add(symbol);
+      } else if (item.available_forward_bars < maxHorizon) {
+        item.issue = 'insufficient_horizon_bars';
+        item.message = `后验周期未完成或行情不足：需要 ${maxHorizon} 根后续K线，当前 ${item.available_forward_bars} 根`;
+        summary.insufficient_horizon_bars++;
+        summary.pending_signals++;
+        missingSymbols.add(symbol);
+      } else {
+        item.issue = 'ready';
+        item.message = '行情已满足验证条件';
+        summary.ready_for_verification++;
+        if (['completed', 'partial'].includes(signal.verification_status || '')) {
+          summary.verified_signals++;
+        }
+      }
+
+      details.push(item);
+    }
+
+    summary.symbols_need_sync = missingSymbols.size;
+
+    return {
+      generated_at: moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm:ss'),
+      filters: {
+        symbol: options.symbol,
+        decision: options.decision,
+        source_type: options.source_type,
+        agent_session: options.agent_session,
+        task_label: options.task_label,
+        start_date: options.start_date,
+        end_date: options.end_date,
+        limit,
+        horizons,
+      },
+      summary,
+      symbols_need_sync: Array.from(missingSymbols),
+      details,
+    };
+  }
+
+  async repairAndVerifySignals(options: SignalVerificationDiagnosisOptions = {}) {
+    const horizons = options.horizons || DEFAULT_HORIZONS;
+    const initialDiagnosis = await this.diagnoseSignalVerification({ ...options, horizons });
+    const symbols = initialDiagnosis.symbols_need_sync.slice(
+      0,
+      Math.min(Math.max(Number(options.limit || 200), 1), 2000)
+    );
+    const endDate = getChinaToday();
+    const earliestSignalDate = initialDiagnosis.details
+      .map(item => item.signal_date)
+      .filter(Boolean)
+      .sort()[0];
+    const startDate = earliestSignalDate
+      ? subtractCalendarDays(earliestSignalDate, Number(options.lookback_days || 15))
+      : subtractCalendarDays(endDate, Number(options.lookback_days || 180));
+
+    let syncResult: Record<string, number> = {};
+    if (options.auto_sync_missing !== false && symbols.length > 0) {
+      const dataSyncService = new DataSyncService();
+      syncResult = await dataSyncService.syncMultipleStocksHistory(
+        symbols,
+        startDate,
+        endDate,
+        Math.min(Math.max(Number(options.sync_concurrency || 2), 1), 5),
+        undefined,
+        options.data_source || 'tencent_only'
+      );
+    }
+
+    const verification = await this.verifySignals({
+      ...options,
+      horizons,
+      report_to_feishu: false,
+    });
+    const finalDiagnosis = await this.diagnoseSignalVerification({ ...options, horizons });
+
+    return {
+      generated_at: moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm:ss'),
+      sync_window: {
+        start_date: startDate,
+        end_date: endDate,
+        data_source: options.data_source || 'tencent_only',
+      },
+      initial_diagnosis: initialDiagnosis,
+      sync_result: syncResult,
+      verification,
+      final_diagnosis: finalDiagnosis,
+    };
   }
 
   async verifySignals(

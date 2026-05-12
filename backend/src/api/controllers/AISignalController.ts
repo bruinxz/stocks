@@ -1,8 +1,35 @@
 import { Request, Response } from 'express';
 import { aiInvestmentSignalService } from '../../services/AIInvestmentSignalService';
+import { feishuTaskReportService } from '../../services/FeishuTaskReportService';
 import { logger } from '../../utils/logger';
 
 export class AISignalController {
+  private parseHorizons(value: any): number[] | undefined {
+    if (!value) return undefined;
+    const raw = Array.isArray(value) ? value : String(value).split(',');
+    const horizons = raw
+      .map(item => Number(String(item).replace(/[^\d]/g, '')))
+      .filter(item => Number.isFinite(item) && item > 0);
+    return horizons.length > 0 ? horizons : undefined;
+  }
+
+  private buildDiagnosisOptions(source: any) {
+    return {
+      limit: source?.limit ? Number(source.limit) : 200,
+      source_type: source?.source_type,
+      agent_session: source?.agent_session,
+      task_label: source?.task_label,
+      symbol: source?.symbol,
+      decision: source?.decision,
+      start_date: source?.start_date,
+      end_date: source?.end_date,
+      horizons: this.parseHorizons(source?.horizons),
+      data_source: source?.data_source,
+      lookback_days: source?.lookback_days ? Number(source.lookback_days) : undefined,
+      sync_concurrency: source?.sync_concurrency ? Number(source.sync_concurrency) : undefined,
+    };
+  }
+
   syncFromScreeners = async (req: Request, res: Response) => {
     try {
       const result = await aiInvestmentSignalService.syncFromDailyScreeners();
@@ -119,6 +146,36 @@ export class AISignalController {
       res.json({ success: true, data: result });
     } catch (error: any) {
       logger.error('验证 AI 信号收益失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
+  diagnoseVerification = async (req: Request, res: Response) => {
+    try {
+      const result = await aiInvestmentSignalService.diagnoseSignalVerification(
+        this.buildDiagnosisOptions(req.query)
+      );
+      res.json({ success: true, data: result });
+    } catch (error: any) {
+      logger.error('诊断 AI 信号收益验证失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
+  repairAndVerifySignals = async (req: Request, res: Response) => {
+    try {
+      const result = await aiInvestmentSignalService.repairAndVerifySignals({
+        ...this.buildDiagnosisOptions(req.body),
+        auto_sync_missing: req.body?.auto_sync_missing !== false,
+      });
+      if (req.body?.report_to_feishu === true) {
+        await feishuTaskReportService.reportSignalVerificationRepair(result, {
+          record_type: req.body?.record_type || '信号收益验证修复',
+        });
+      }
+      res.json({ success: true, data: result });
+    } catch (error: any) {
+      logger.error('修复并验证 AI 信号收益失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   };
