@@ -5,7 +5,10 @@ import { DailyScreener } from '../models/DailyScreener';
 import { TaskExecutionLog } from '../models/TaskExecutionLog';
 import { AKShareClient } from '../data/sources/AKShareClient';
 import { notificationService } from '../services/NotificationService';
-import { aiInvestmentSignalService } from '../services/AIInvestmentSignalService';
+import {
+  aiInvestmentSignalService,
+  inferAgentSession,
+} from '../services/AIInvestmentSignalService';
 import { AISignalDecision } from '../models/AIInvestmentSignal';
 import { feishuTaskReportService } from '../services/FeishuTaskReportService';
 import { ScheduledTask } from '../models/ScheduledTask';
@@ -131,6 +134,7 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
       }
 
       // Always create a new record (append) instead of updating existing ones for the same day
+      const agentSession = inferAgentSession(taskLabel, new Date());
       await DailyScreener.create({
         date: today,
         symbol,
@@ -146,6 +150,8 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
           quant_warnings: quant_warnings || [],
           recommendation_style,
           recommendation_source,
+          task_label: taskLabel,
+          agent_session: agentSession,
         },
         current_price: currentPrice,
         price_change_pct: priceChangePct,
@@ -165,6 +171,8 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
           current_price: currentPrice || undefined,
           price_change_pct: priceChangePct || undefined,
           source_type: 'tradingagents',
+          task_label: taskLabel,
+          agent_session: agentSession,
         });
         await aiInvestmentSignalService.verifySignalReturns(archivedSignal);
       } catch (archiveError: any) {

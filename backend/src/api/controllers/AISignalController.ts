@@ -77,6 +77,8 @@ export class AISignalController {
         symbol,
         decision,
         source_type,
+        agent_session,
+        task_label,
         start_date,
         end_date,
         horizon = '5d',
@@ -86,6 +88,8 @@ export class AISignalController {
         symbol: symbol as string,
         decision: decision as string,
         source_type: source_type as string,
+        agent_session: agent_session as string,
+        task_label: task_label as string,
         start_date: start_date as string,
         end_date: end_date as string,
         horizon: horizon as string,
@@ -104,6 +108,8 @@ export class AISignalController {
       const result = await aiInvestmentSignalService.verifySignals({
         limit,
         source_type: req.body?.source_type,
+        agent_session: req.body?.agent_session,
+        task_label: req.body?.task_label,
         symbol: req.body?.symbol,
         decision: req.body?.decision,
         start_date: req.body?.start_date,
@@ -123,10 +129,14 @@ export class AISignalController {
       const result = await aiInvestmentSignalService.refreshPerformance({
         limit,
         source_type: req.body?.source_type,
+        agent_session: req.body?.agent_session,
+        task_label: req.body?.task_label,
         symbol: req.body?.symbol,
         decision: req.body?.decision,
         start_date: req.body?.start_date,
         end_date: req.body?.end_date,
+        horizon: req.body?.horizon,
+        record_type: req.body?.record_type,
         report_to_feishu: req.body?.report_to_feishu !== false,
       });
       res.json({ success: true, data: result });

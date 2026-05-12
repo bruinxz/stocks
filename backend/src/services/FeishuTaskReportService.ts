@@ -21,6 +21,7 @@ export interface StockAnalysisReportPayload {
 export interface RecommendationPerformanceReportPayload {
   record_type?: string;
   source_type?: string;
+  agent_session?: string;
   result?: any;
   stats?: any;
   dashboard?: any;
@@ -204,10 +205,12 @@ class FeishuTaskReportService {
       ? horizonSummary.find((item: any) => item.horizon === targetHorizon) || horizonSummary[0]
       : stats.horizon_summary?.[targetHorizon] || {};
     const bestSymbol = Array.isArray(dashboard.top_symbols) ? dashboard.top_symbols[0] : null;
+    const agentSession = payload.agent_session || dashboard.filters?.agent_session || '';
     const markdownMessage = [
       `## ${payload.record_type || '推荐绩效刷新'}`,
       '',
       `- **信号来源**：${payload.source_type || dashboard.filters?.source_type || 'all'}`,
+      agentSession ? `- **Agent 场次**：${this.agentSessionLabel(agentSession)}` : '',
       `- **绩效周期**：${targetHorizon}`,
       `- **信号总数**：${overview.total_signals ?? stats.total_signals ?? '-'}`,
       `- **完成样本**：${overview.completed_samples ?? targetStats?.count ?? '-'}`,
@@ -248,6 +251,7 @@ class FeishuTaskReportService {
       任务类型: 'SIGNAL_PERFORMANCE_REFRESH',
       运行状态: 'COMPLETED',
       信号来源: payload.source_type || dashboard.filters?.source_type || 'all',
+      Agent场次: agentSession ? this.agentSessionLabel(agentSession) : '',
       绩效周期: targetHorizon,
       信号总数: overview.total_signals ?? stats.total_signals,
       完成样本: overview.completed_samples ?? targetStats?.count,
@@ -1381,6 +1385,14 @@ class FeishuTaskReportService {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     })}`;
+  }
+
+  private agentSessionLabel(value: string): string {
+    const normalized = String(value || '').toLowerCase();
+    if (normalized === 'close') return '尾盘/收盘';
+    if (normalized === 'midday') return '午盘';
+    if (normalized === 'morning') return '早盘';
+    return value || '';
   }
 }
 

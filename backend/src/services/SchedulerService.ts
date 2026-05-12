@@ -274,10 +274,14 @@ class SchedulerService {
       } else if (task.type === 'SIGNAL_PERFORMANCE_REFRESH') {
         const result = await aiInvestmentSignalService.refreshPerformance({
           source_type: parameters.source_type || parameters.sourceType,
+          agent_session: parameters.agent_session || parameters.agentSession,
+          task_label: parameters.task_label || parameters.taskLabel,
           symbol: parameters.symbol,
           decision: parameters.decision,
           start_date: parameters.start_date || parameters.startDate,
           end_date: parameters.end_date || parameters.endDate,
+          horizon: parameters.horizon,
+          record_type: parameters.record_type || parameters.recordType,
           limit: this.toPositiveInt(parameters.limit, 500, 5000),
           report_to_feishu:
             parameters.report_to_feishu !== undefined
@@ -795,6 +799,7 @@ class SchedulerService {
           style: 'balanced',
           candidate_limit: 10,
           lookback_days: 120,
+          agent_session: 'close',
         },
       },
       {
@@ -804,6 +809,20 @@ class SchedulerService {
         is_active: true,
         parameters: {
           limit: 500,
+          report_to_feishu: true,
+        },
+      },
+      {
+        name: 'Agent尾盘建议收益追踪',
+        type: 'SIGNAL_PERFORMANCE_REFRESH',
+        cron_expression: '25 15 * * 1-5',
+        is_active: true,
+        parameters: {
+          source_type: 'tradingagents',
+          agent_session: 'close',
+          horizon: '5d',
+          limit: 1000,
+          record_type: 'Agent尾盘建议收益追踪',
           report_to_feishu: true,
         },
       },

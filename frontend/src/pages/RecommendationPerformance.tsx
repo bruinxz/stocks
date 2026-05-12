@@ -117,6 +117,12 @@ const decisionOptions = [
   { label: '卖出', value: 'sell' },
   { label: '强卖', value: 'strong_sell' },
 ];
+const agentSessionOptions = [
+  { label: '全部场次', value: '' },
+  { label: '尾盘建议', value: 'close' },
+  { label: '午盘建议', value: 'midday' },
+  { label: '早盘建议', value: 'morning' },
+];
 
 const decisionColorMap: Record<string, string> = {
   strong_buy: 'magenta',
@@ -132,6 +138,12 @@ const sourceLabelMap: Record<string, string> = {
   tradingagents: 'TradingAgents',
   daily_screener: '每日优选',
   manual_analysis: '人工分析',
+};
+
+const agentSessionLabelMap: Record<string, string> = {
+  close: '尾盘',
+  midday: '午盘',
+  morning: '早盘',
 };
 
 const formatPct = (value?: number | null, digits = 2) => {
@@ -157,6 +169,7 @@ const RecommendationPerformance: React.FC = () => {
   const [horizon, setHorizon] = useState('5d');
   const [sourceType, setSourceType] = useState('');
   const [decision, setDecision] = useState('');
+  const [agentSession, setAgentSession] = useState('');
 
   const fetchDashboard = async () => {
     setLoading(true);
@@ -166,6 +179,7 @@ const RecommendationPerformance: React.FC = () => {
           horizon,
           source_type: sourceType || undefined,
           decision: decision || undefined,
+          agent_session: agentSession || undefined,
         },
       });
       if (response.data.success) {
@@ -185,6 +199,9 @@ const RecommendationPerformance: React.FC = () => {
         limit: 800,
         source_type: sourceType || undefined,
         decision: decision || undefined,
+        agent_session: agentSession || undefined,
+        horizon,
+        record_type: agentSession === 'close' ? 'Agent尾盘建议收益追踪' : undefined,
         report_to_feishu: true,
       });
       if (response.data.success) {
@@ -202,7 +219,7 @@ const RecommendationPerformance: React.FC = () => {
   useEffect(() => {
     fetchDashboard();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [horizon, sourceType, decision]);
+  }, [horizon, sourceType, decision, agentSession]);
 
   const overview = data?.overview;
   const selectedHorizonStats = useMemo(
@@ -347,6 +364,14 @@ const RecommendationPerformance: React.FC = () => {
           <p className="page-subtitle-modern">
             用真实后验收益淘汰无效推荐：跟踪胜率、盈亏比、MFE/MAE 与标的贡献，形成可赚钱的投研闭环。
           </p>
+          <div className="tail-agent-strip">
+            <span>Tail Agent Ledger</span>
+            <strong>
+              {agentSession ? agentSessionLabelMap[agentSession] || agentSession : '全场次'} ·{' '}
+              {selectedHorizonStats?.count || 0} 个已完成样本 · 均收{' '}
+              {formatPct(selectedHorizonStats?.avg_return_pct)}
+            </strong>
+          </div>
         </div>
         <Space wrap>
           <Select
@@ -360,6 +385,12 @@ const RecommendationPerformance: React.FC = () => {
             onChange={setSourceType}
             options={sourceOptions}
             style={{ width: 150 }}
+          />
+          <Select
+            value={agentSession}
+            onChange={setAgentSession}
+            options={agentSessionOptions}
+            style={{ width: 130 }}
           />
           <Select
             value={decision}
@@ -382,11 +413,17 @@ const RecommendationPerformance: React.FC = () => {
       </div>
 
       <Alert
-        type="info"
+        type={agentSession === 'close' ? 'success' : 'info'}
         showIcon
         style={{ marginBottom: 16 }}
-        message="如何使用这张看板赚钱"
-        description="只放大在目标周期胜率、期望收益和盈亏比同时为正的信号来源/风格；对平均 MAE 过大的方向降仓，对连续跑输的标的从候选池降权。"
+        message={
+          agentSession === 'close' ? '尾盘 Agent 建议收益追踪已开启' : '如何使用这张看板赚钱'
+        }
+        description={
+          agentSession === 'close'
+            ? '收盘/尾盘 TradingAgents 建议会带 close 场次标签归档；每日 15:25 自动验证 1/3/5/10/20 日收益并写入飞书，用于判断 Agent 尾盘建议是否具备稳定 alpha。'
+            : '只放大在目标周期胜率、期望收益和盈亏比同时为正的信号来源/风格；对平均 MAE 过大的方向降仓，对连续跑输的标的从候选池降权。'
+        }
       />
 
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>

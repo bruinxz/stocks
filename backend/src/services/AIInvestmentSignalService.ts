@@ -19,6 +19,8 @@ export interface SignalQueryOptions {
   symbol?: string;
   decision?: string;
   source_type?: string;
+  agent_session?: string;
+  task_label?: string;
   start_date?: string;
   end_date?: string;
   limit?: number;
@@ -93,17 +95,48 @@ function resolveSignalDate(
   return getChinaToday();
 }
 
+export function inferAgentSession(taskLabel?: string, fallbackTime?: Date | string): string | undefined {
+  const label = String(taskLabel || '').toLowerCase();
+  if (/尾盘|收盘|close|closing|eod|end[-_\s]?of[-_\s]?day/.test(label)) return 'close';
+  if (/午盘|midday|noon/.test(label)) return 'midday';
+  if (/早盘|morning|open|opening/.test(label)) return 'morning';
+
+  if (fallbackTime) {
+    const hour = moment(fallbackTime).tz('Asia/Shanghai').hour();
+    if (hour >= 14 && hour <= 16) return 'close';
+    if (hour >= 11 && hour <= 13) return 'midday';
+    if (hour >= 8 && hour <= 10) return 'morning';
+  }
+
+  return undefined;
+}
+
 function buildSignalWhere(options: SignalQueryOptions = {}) {
   const where: any = {};
   if (options.symbol) where.symbol = normalizeSymbol(options.symbol);
   if (options.decision) where.normalized_decision = options.decision;
   if (options.source_type) where.source_type = options.source_type;
+  const metadataFilters: Record<string, any> = {};
+  if (options.agent_session) metadataFilters.agent_session = options.agent_session;
+  if (options.task_label) metadataFilters.task_label = options.task_label;
+  if (Object.keys(metadataFilters).length > 0) {
+    where.metadata = { [Op.contains]: metadataFilters };
+  }
   if (options.start_date || options.end_date) {
     where.signal_date = {};
     if (options.start_date) where.signal_date[Op.gte] = options.start_date;
     if (options.end_date) where.signal_date[Op.lte] = options.end_date;
   }
   return where;
+}
+
+function mergeMetadata(metadata: any, patch: Record<string, any>) {
+  return {
+    ...(metadata && typeof metadata === 'object' ? metadata : {}),
+    ...Object.fromEntries(
+      Object.entries(patch).filter(([, value]) => value !== undefined && value !== null)
+    ),
+  };
 }
 
 function roundNumber(value: any, digits = 4): number | null {
@@ -415,6 +448,11 @@ export class AIInvestmentSignalService {
 
     for (const screener of screeners) {
       const source_id = String(screener.id);
+      const taskLabel = screener.scores?.task_label || screener.scores?.taskLabel;
+      const agentSession =
+        screener.scores?.agent_session ||
+        screener.scores?.agentSession ||
+        inferAgentSession(taskLabel, screener.created_at);
       const payload = {
         source_type: AISignalSourceType.DAILY_SCREENER,
         source_id,
@@ -432,6 +470,9 @@ export class AIInvestmentSignalService {
         metadata: {
           scores: screener.scores || {},
           daily_screener_id: screener.id,
+          task_label: taskLabel,
+          agent_session: agentSession,
+          is_tail_session: agentSession === 'close',
           created_at: screener.created_at,
         },
       };
@@ -466,6 +507,8 @@ export class AIInvestmentSignalService {
     current_price?: number;
     price_change_pct?: number;
     source_type?: string;
+    task_label?: string;
+    agent_session?: string;
   }): Promise<AIInvestmentSignal> {
     const symbol = normalizeSymbol(params.symbol);
     const signal_date = params.signal_date || new Date().toISOString().split('T')[0];
@@ -482,6 +525,13 @@ export class AIInvestmentSignalService {
       params.decision || params.rationale || '',
       params.detail
     );
+    const agent_session = params.agent_session || inferAgentSession(params.task_label);
+    const normalizedDecision = structured.normalized_decision || AISignalDecision.UNKNOWN;
+    const decisionText = String(
+      normalizedDecision !== AISignalDecision.UNKNOWN
+        ? normalizedDecision
+        : params.decision || normalizedDecision || 'UNKNOWN'
+    );
 
     const payload = {
       source_type,
@@ -489,18 +539,21 @@ export class AIInvestmentSignalService {
       symbol,
       name: stock?.name,
       signal_date,
-      decision: params.decision || 'UNKNOWN',
-      normalized_decision: structured.normalized_decision,
+      decision: decisionText.slice(0, 100),
+      normalized_decision: normalizedDecision,
       confidence_score: params.confidence_score ?? structured.confidence_score,
       risk_level: structured.risk_level || this.inferRiskLevel(params),
       rationale: params.rationale || structured.summary,
       detail: detailText,
       current_price: params.current_price,
       price_change_pct: params.price_change_pct,
-      metadata: {
+      metadata: mergeMetadata(undefined, {
         task_id: params.task_id,
+        task_label: params.task_label,
+        agent_session,
+        is_tail_session: agent_session === 'close',
         structured_decision: structured,
-      },
+      }),
     };
 
     const [record, created] = await AIInvestmentSignal.findOrCreate({
@@ -513,6 +566,40 @@ export class AIInvestmentSignalService {
     }
 
     return record;
+  }
+
+  async backfillAgentSessionMetadata(options: { limit?: number; source_type?: string } = {}) {
+    const limit = Math.min(Math.max(Number(options.limit || 2000), 1), 10000);
+    const signals = await AIInvestmentSignal.findAll({
+      where: options.source_type ? { source_type: options.source_type } : {},
+      order: [['created_at', 'DESC']],
+      limit,
+    });
+
+    let updated = 0;
+    for (const signal of signals) {
+      const metadata = signal.metadata || {};
+      if (metadata.agent_session) continue;
+
+      const taskLabel =
+        metadata.task_label ||
+        metadata.taskLabel ||
+        metadata.scores?.task_label ||
+        metadata.scores?.taskLabel;
+      const agentSession = inferAgentSession(taskLabel, signal.created_at);
+      if (!agentSession) continue;
+
+      await signal.update({
+        metadata: mergeMetadata(metadata, {
+          task_label: taskLabel,
+          agent_session: agentSession,
+          is_tail_session: agentSession === 'close',
+        }),
+      });
+      updated++;
+    }
+
+    return { total: signals.length, updated };
   }
 
   async archiveQuantRecommendations(options: QuantRecommendationArchiveOptions): Promise<{
@@ -746,6 +833,8 @@ export class AIInvestmentSignalService {
         symbol: options.symbol,
         decision: options.decision,
         source_type: options.source_type,
+        agent_session: options.agent_session,
+        task_label: options.task_label,
         start_date: options.start_date,
         end_date: options.end_date,
       });
@@ -955,6 +1044,8 @@ export class AIInvestmentSignalService {
         symbol: options.symbol,
         decision: options.decision,
         source_type: options.source_type,
+        agent_session: options.agent_session,
+        task_label: options.task_label,
         start_date: options.start_date,
         end_date: options.end_date,
         horizon,
@@ -974,8 +1065,14 @@ export class AIInvestmentSignalService {
   async refreshPerformance(options: {
     limit?: number;
     horizons?: number[];
+    horizon?: string;
     report_to_feishu?: boolean;
+    record_type?: string;
   } & SignalQueryOptions = {}) {
+    const metadataBackfill = await this.backfillAgentSessionMetadata({
+      limit: options.limit || 1000,
+      source_type: options.source_type,
+    });
     const verification = await this.verifySignals({
       ...options,
       report_to_feishu: false,
@@ -984,22 +1081,26 @@ export class AIInvestmentSignalService {
       symbol: options.symbol,
       decision: options.decision,
       source_type: options.source_type,
+      agent_session: options.agent_session,
+      task_label: options.task_label,
       start_date: options.start_date,
       end_date: options.end_date,
+      horizon: options.horizon,
       limit: options.limit || 1000,
     });
 
     if (options.report_to_feishu) {
       const { feishuTaskReportService } = await import('./FeishuTaskReportService');
       await feishuTaskReportService.reportRecommendationPerformance({
-        record_type: '推荐绩效刷新',
+        record_type: options.record_type || '推荐绩效刷新',
         source_type: options.source_type,
+        agent_session: options.agent_session,
         result: verification,
         dashboard,
       });
     }
 
-    return { verification, dashboard };
+    return { verification, dashboard, metadata_backfill: metadataBackfill };
   }
 }
 

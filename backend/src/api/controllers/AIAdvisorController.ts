@@ -4,7 +4,10 @@ import { logger } from '../../utils/logger';
 import { Stock } from '../../models/Stock';
 import { Op } from 'sequelize';
 import axios from 'axios';
-import { aiInvestmentSignalService } from '../../services/AIInvestmentSignalService';
+import {
+  aiInvestmentSignalService,
+  inferAgentSession,
+} from '../../services/AIInvestmentSignalService';
 
 const TRADING_AGENTS_URL = process.env.TRADING_AGENTS_URL || 'http://47.93.224.109:8000';
 
@@ -59,7 +62,7 @@ export class AIAdvisorController {
 
   async analyze(req: Request, res: Response, next: NextFunction) {
     try {
-      const { ticker, targetDate, isAsync } = req.body;
+      const { ticker, targetDate, isAsync, task_label, agent_session } = req.body;
       if (!ticker) {
         return res
           .status(400)
@@ -84,6 +87,8 @@ export class AIAdvisorController {
             rationale: result.data.rationale,
             detail: result.data.detail,
             source_type: 'tradingagents',
+            task_label,
+            agent_session: agent_session || inferAgentSession(task_label),
           });
           await aiInvestmentSignalService.verifySignalReturns(archivedSignal);
         } catch (archiveError: any) {
@@ -120,6 +125,8 @@ export class AIAdvisorController {
             rationale: result.data.rationale,
             detail: result.data.detail,
             source_type: 'tradingagents',
+            task_label: result.task_label,
+            agent_session: inferAgentSession(result.task_label),
           });
           await aiInvestmentSignalService.verifySignalReturns(archivedSignal);
         } catch (archiveError: any) {
@@ -155,6 +162,9 @@ export class AIAdvisorController {
       }
 
       const target_date = req.query.target_date as string;
+      const task_label = req.query.task_label as string;
+      const agent_session =
+        (req.query.agent_session as string) || inferAgentSession(task_label, new Date());
 
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
@@ -210,6 +220,8 @@ export class AIAdvisorController {
             rationale: finalDecision,
             detail: { text: finalDecision, stream: true },
             source_type: 'tradingagents',
+            task_label,
+            agent_session,
           });
           await aiInvestmentSignalService.verifySignalReturns(archivedSignal);
         } catch (archiveError: any) {
