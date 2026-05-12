@@ -94,6 +94,27 @@ type RecentSignal = {
   max_adverse_excursion_pct?: number;
 };
 
+type QualityReportData = {
+  generated_at: string;
+  filters: Record<string, any>;
+  overview: QualityBucket & {
+    total_signals: number;
+    pending_signals: number;
+    no_data_signals: number;
+    completed_samples: number;
+  };
+  rankings: {
+    by_source_type: QualityBucket[];
+    by_agent_session: QualityBucket[];
+    by_decision: QualityBucket[];
+    by_risk_level: QualityBucket[];
+    by_symbol: QualityBucket[];
+  };
+  best_segments: QualityBucket[];
+  worst_segments: QualityBucket[];
+  action_items: string[];
+};
+
 type DashboardData = {
   generated_at: string;
   filters: Record<string, any>;
@@ -206,8 +227,10 @@ const renderReturn = (value?: number | null) => (
 
 const RecommendationPerformance: React.FC = () => {
   const [data, setData] = useState<DashboardData | null>(null);
+  const [qualityReport, setQualityReport] = useState<QualityReportData | null>(null);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [reporting, setReporting] = useState(false);
   const [horizon, setHorizon] = useState('5d');
   const [sourceType, setSourceType] = useState('');
   const [decision, setDecision] = useState('');
@@ -231,6 +254,51 @@ const RecommendationPerformance: React.FC = () => {
       message.error(error.response?.data?.message || '获取推荐绩效看板失败');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchQualityReport = async () => {
+    try {
+      const response = await api.get('/ai/signals/quality-report', {
+        params: {
+          horizon,
+          source_type: sourceType || undefined,
+          decision: decision || undefined,
+          agent_session: agentSession || undefined,
+          lookback_days: 30,
+          min_samples: 5,
+        },
+      });
+      if (response.data.success) {
+        setQualityReport(response.data.data);
+      }
+    } catch (error) {
+      // 日报失败不阻塞主看板
+    }
+  };
+
+  const reportQualityDaily = async () => {
+    setReporting(true);
+    try {
+      const response = await api.post('/ai/signals/quality-report', {
+        horizon,
+        source_type: sourceType || undefined,
+        decision: decision || undefined,
+        agent_session: agentSession || undefined,
+        lookback_days: 30,
+        min_samples: 5,
+        verify_before_report: true,
+        report_to_feishu: true,
+        record_type: agentSession === 'close' ? '尾盘Agent信号质量日报' : '信号质量日报',
+      });
+      if (response.data.success) {
+        setQualityReport(response.data.data);
+        message.success('信号质量日报已生成并写入飞书');
+      }
+    } catch (error: any) {
+      message.error(error.response?.data?.message || '生成信号质量日报失败');
+    } finally {
+      setReporting(false);
     }
   };
 
@@ -261,6 +329,7 @@ const RecommendationPerformance: React.FC = () => {
 
   useEffect(() => {
     fetchDashboard();
+    fetchQualityReport();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [horizon, sourceType, decision, agentSession]);
 
@@ -505,6 +574,9 @@ const RecommendationPerformance: React.FC = () => {
           >
             重新验证并写飞书
           </Button>
+          <Button icon={<TrophyOutlined />} onClick={reportQualityDaily} loading={reporting}>
+            生成质量日报
+          </Button>
         </Space>
       </div>
 
@@ -521,6 +593,56 @@ const RecommendationPerformance: React.FC = () => {
             : '只放大在目标周期胜率、期望收益和盈亏比同时为正的信号来源/风格；对平均 MAE 过大的方向降仓，对连续跑输的标的从候选池降权。'
         }
       />
+
+      <Card
+        className="modern-card quality-daily-card"
+        variant="borderless"
+        title="信号来源质量日报"
+        extra={<Text type="secondary">30日窗口 · {horizon}</Text>}
+        style={{ marginBottom: 16 }}
+      >
+        <Row gutter={[16, 16]} align="middle">
+          <Col xs={24} lg={7}>
+            <div className="quality-daily-score">
+              <span>Quality Ledger</span>
+              <strong>{qualityReport?.overview?.quality_score ?? 0}</strong>
+              <em>{qualityReport?.overview?.gate?.label || '等待样本'}</em>
+            </div>
+          </Col>
+          <Col xs={24} lg={9}>
+            <Space direction="vertical" size={8} style={{ width: '100%' }}>
+              {(qualityReport?.action_items || []).slice(0, 4).map((item, index) => (
+                <div className="quality-action-line" key={`action-${index}`}>
+                  {item}
+                </div>
+              ))}
+              {!qualityReport?.action_items?.length && (
+                <Text type="secondary">等待完成样本形成后，系统会自动给出放大/降权动作。</Text>
+              )}
+            </Space>
+          </Col>
+          <Col xs={24} lg={8}>
+            <Row gutter={[8, 8]}>
+              {(qualityReport?.best_segments || []).slice(0, 3).map(item => (
+                <Col span={24} key={`${item.dimension}-${item.key}`}>
+                  <div className="quality-rank-line">
+                    <Text strong>{item.label || item.key}</Text>
+                    <Tag color="red">{item.quality_score}分</Tag>
+                    <Text style={{ color: returnColor(item.avg_return_pct), fontWeight: 800 }}>
+                      {formatPct(item.avg_return_pct)}
+                    </Text>
+                  </div>
+                </Col>
+              ))}
+              {!qualityReport?.best_segments?.length && (
+                <Col span={24}>
+                  <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无排行榜样本" />
+                </Col>
+              )}
+            </Row>
+          </Col>
+        </Row>
+      </Card>
 
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
         <Col xs={24} xl={9}>

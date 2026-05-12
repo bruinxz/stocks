@@ -34,6 +34,13 @@ export interface SignalPerformanceOptions extends SignalQueryOptions {
   min_samples?: number;
 }
 
+export interface SignalQualityReportOptions extends SignalPerformanceOptions {
+  lookback_days?: number;
+  report_to_feishu?: boolean;
+  record_type?: string;
+  verify_before_report?: boolean;
+}
+
 export interface SignalVerificationDiagnosisOptions extends SignalQueryOptions {
   horizons?: number[];
   limit?: number;
@@ -320,6 +327,8 @@ function extractCompletedReturnSamples(signals: any[], horizonFilter?: string) {
         name: signal.name,
         signal_date: signal.signal_date,
         normalized_decision: normalizedDecision,
+        agent_session: signal.metadata?.agent_session,
+        task_label: signal.metadata?.task_label,
         confidence_score: toNumber(signal.confidence_score),
         risk_level: signal.risk_level,
         horizon,
@@ -1515,6 +1524,209 @@ export class AIInvestmentSignalService {
     }
 
     return { verification, dashboard, metadata_backfill: metadataBackfill };
+  }
+
+  async getSignalQualityReport(options: SignalQualityReportOptions = {}) {
+    const lookbackDays = Math.min(Math.max(Number(options.lookback_days || 30), 1), 3650);
+    const endDate = options.end_date || getChinaToday();
+    const startDate =
+      options.start_date || moment(endDate).subtract(lookbackDays, 'days').format('YYYY-MM-DD');
+    const horizon = options.horizon || DEFAULT_PERFORMANCE_HORIZON;
+    const minSamples = Math.min(Math.max(Number(options.min_samples || 5), 1), 100);
+    const limit = Math.min(Math.max(Number(options.limit || 5000), 1), 10000);
+
+    if (options.verify_before_report) {
+      await this.verifySignals({
+        source_type: options.source_type,
+        agent_session: options.agent_session,
+        task_label: options.task_label,
+        decision: options.decision,
+        start_date: startDate,
+        end_date: endDate,
+        limit,
+        report_to_feishu: false,
+      });
+    }
+
+    const signals = (await AIInvestmentSignal.findAll({
+      where: buildSignalWhere({
+        source_type: options.source_type,
+        agent_session: options.agent_session,
+        task_label: options.task_label,
+        decision: options.decision,
+        symbol: options.symbol,
+        start_date: startDate,
+        end_date: endDate,
+      }),
+      order: [
+        ['signal_date', 'DESC'],
+        ['created_at', 'DESC'],
+      ],
+      limit,
+      raw: true,
+    })) as any[];
+
+    const completedSamples = extractCompletedReturnSamples(signals, horizon);
+    const allCompletedSamples = extractCompletedReturnSamples(signals);
+    const pendingSignals = signals.filter(signal =>
+      ['pending', 'partial'].includes(signal.verification_status || '')
+    ).length;
+    const noDataSignals = signals.filter(signal => signal.verification_status === 'no_data').length;
+
+    const rankBuckets = (
+      dimension: string,
+      labeler: (key: string) => string,
+      keySelector: (sample: any) => string | undefined | null
+    ) => {
+      const grouped = new Map<string, any[]>();
+      for (const sample of completedSamples) {
+        const key = keySelector(sample) || 'unknown';
+        if (!grouped.has(key)) grouped.set(key, []);
+        grouped.get(key)!.push(sample);
+      }
+      return [...grouped.entries()]
+        .map(([key, samples]) => {
+          const summary = summarizeReturnSamples(samples);
+          return {
+            dimension,
+            key,
+            label: labeler(key),
+            ...summary,
+            quality_score: calculateQualityScore(summary, minSamples),
+            gate: classifyQualityGate(summary, minSamples),
+          };
+        })
+        .sort((a, b) => {
+          if (b.quality_score !== a.quality_score) return b.quality_score - a.quality_score;
+          if (b.avg_return_pct !== a.avg_return_pct) return b.avg_return_pct - a.avg_return_pct;
+          return b.count - a.count;
+        });
+    };
+
+    const rankings = {
+      by_source_type: rankBuckets(
+        'source_type',
+        sourceLabelForPerformance,
+        sample => sample.source_type
+      ),
+      by_agent_session: rankBuckets(
+        'agent_session',
+        value => {
+          const labels: Record<string, string> = { close: '尾盘', midday: '午盘', morning: '早盘' };
+          return labels[value] || value || 'unknown';
+        },
+        sample => sample.agent_session
+      ),
+      by_decision: rankBuckets(
+        'decision',
+        decisionLabelForPerformance,
+        sample => sample.normalized_decision
+      ),
+      by_risk_level: rankBuckets(
+        'risk_level',
+        value => value || 'unknown',
+        sample => sample.risk_level
+      ),
+      by_symbol: rankBuckets(
+        'symbol',
+        value => {
+          const sample = completedSamples.find(item => item.symbol === value);
+          return sample?.name ? `${sample.name}(${value})` : value;
+        },
+        sample => sample.symbol
+      ).slice(0, 20),
+    };
+
+    const allRanked = [
+      ...rankings.by_source_type,
+      ...rankings.by_agent_session,
+      ...rankings.by_decision,
+      ...rankings.by_risk_level,
+    ].filter(item => item.count > 0);
+    const bestSegments = [...allRanked]
+      .sort((a, b) => b.quality_score - a.quality_score)
+      .slice(0, 8);
+    const worstSegments = [...allRanked]
+      .filter(item => item.count >= Math.min(minSamples, 3))
+      .sort((a, b) => {
+        if (a.quality_score !== b.quality_score) return a.quality_score - b.quality_score;
+        return a.avg_return_pct - b.avg_return_pct;
+      })
+      .slice(0, 8);
+
+    const horizonSummary = Object.entries(
+      allCompletedSamples.reduce((acc: Record<string, any[]>, sample) => {
+        if (!acc[sample.horizon]) acc[sample.horizon] = [];
+        acc[sample.horizon].push(sample);
+        return acc;
+      }, {})
+    )
+      .map(([key, samples]) => ({
+        horizon: key,
+        horizon_days: Number(key.replace('d', '')),
+        ...summarizeReturnSamples(samples as any[]),
+      }))
+      .sort((a, b) => a.horizon_days - b.horizon_days);
+
+    const overall = summarizeReturnSamples(completedSamples);
+    const overallBucket = {
+      key: 'overall',
+      label: '整体信号',
+      ...overall,
+      quality_score: calculateQualityScore(overall, minSamples),
+      gate: classifyQualityGate(overall, minSamples),
+    };
+
+    const actionItems = [
+      overallBucket.count < minSamples
+        ? `完成样本 ${overallBucket.count}/${minSamples}，日报仅用于观察，不建议放大自动跟单。`
+        : '',
+      bestSegments[0]
+        ? `优先关注 ${bestSegments[0].label}：质量分 ${bestSegments[0].quality_score}，均收 ${bestSegments[0].avg_return_pct}%。`
+        : '',
+      worstSegments[0]
+        ? `降权复盘 ${worstSegments[0].label}：质量分 ${worstSegments[0].quality_score}，均收 ${worstSegments[0].avg_return_pct}%。`
+        : '',
+      pendingSignals > 0 ? `${pendingSignals} 条信号仍在等待后验周期，避免过早下结论。` : '',
+      noDataSignals > 0 ? `${noDataSignals} 条信号缺行情，需优先修复数据。` : '',
+    ].filter(Boolean);
+
+    const report = {
+      generated_at: moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm:ss'),
+      filters: {
+        start_date: startDate,
+        end_date: endDate,
+        lookback_days: lookbackDays,
+        horizon,
+        min_samples: minSamples,
+        limit,
+        source_type: options.source_type,
+        agent_session: options.agent_session,
+        task_label: options.task_label,
+        decision: options.decision,
+      },
+      overview: {
+        total_signals: signals.length,
+        pending_signals: pendingSignals,
+        no_data_signals: noDataSignals,
+        completed_samples: completedSamples.length,
+        ...overallBucket,
+      },
+      rankings,
+      best_segments: bestSegments,
+      worst_segments: worstSegments,
+      horizon_summary: horizonSummary,
+      action_items: actionItems,
+    };
+
+    if (options.report_to_feishu) {
+      const { feishuTaskReportService } = await import('./FeishuTaskReportService');
+      await feishuTaskReportService.reportSignalQualityDaily(report, {
+        record_type: options.record_type || '信号质量日报',
+      });
+    }
+
+    return report;
   }
 }
 

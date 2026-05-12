@@ -27,6 +27,10 @@ export interface RecommendationPerformanceReportPayload {
   dashboard?: any;
 }
 
+export interface SignalQualityDailyReportPayload {
+  record_type?: string;
+}
+
 export interface PaperTradingPlanReportPayload {
   record_type?: string;
   task_type?: string;
@@ -316,6 +320,114 @@ class FeishuTaskReportService {
           top_symbols: Array.isArray(dashboard.top_symbols)
             ? dashboard.top_symbols.slice(0, 5)
             : undefined,
+        },
+        10000
+      ),
+      创建时间: this.formatDate(new Date()),
+    });
+  }
+
+  async reportSignalQualityDaily(report: any, options: SignalQualityDailyReportPayload = {}) {
+    const recordType = options.record_type || '信号质量日报';
+    const overview = report?.overview || {};
+    const filters = report?.filters || {};
+    const bestSegments = Array.isArray(report?.best_segments) ? report.best_segments : [];
+    const worstSegments = Array.isArray(report?.worst_segments) ? report.worst_segments : [];
+    const actionItems = Array.isArray(report?.action_items) ? report.action_items : [];
+    const topSource = report?.rankings?.by_source_type?.[0];
+    const topSession = report?.rankings?.by_agent_session?.[0];
+
+    const renderSegments = (segments: any[]) =>
+      segments
+        .slice(0, 5)
+        .map(
+          (item: any, index: number) =>
+            `${index + 1}. **${item.label || item.key}**：质量分 ${item.quality_score ?? 0}，样本 ${
+              item.count ?? 0
+            }，均收 ${this.formatPercent(item.avg_return_pct)}，方向胜率 ${this.formatPercent(
+              item.directional_success_rate
+            )}`
+        )
+        .join('\n');
+
+    const markdownMessage = [
+      `## ${recordType}`,
+      '',
+      '### 结论',
+      `- **统计窗口**：${filters.start_date || '-'} ~ ${filters.end_date || '-'}；周期 ${
+        filters.horizon || '5d'
+      }`,
+      `- **信号总数**：${overview.total_signals ?? 0}；完成样本 ${
+        overview.completed_samples ?? overview.count ?? 0
+      }；等待 ${overview.pending_signals ?? 0}；无数据 ${overview.no_data_signals ?? 0}`,
+      `- **整体质量分**：${overview.quality_score ?? 0}；闸门：${overview.gate?.label || '-'}`,
+      `- **整体均收/胜率/方向胜率**：${this.formatPercent(
+        overview.avg_return_pct
+      )} / ${this.formatPercent(overview.positive_rate)} / ${this.formatPercent(
+        overview.directional_success_rate
+      )}`,
+      topSource
+        ? `- **最佳来源**：${topSource.label}，质量分 ${
+            topSource.quality_score
+          }，均收 ${this.formatPercent(topSource.avg_return_pct)}`
+        : '',
+      topSession
+        ? `- **最佳场次**：${topSession.label}，质量分 ${
+            topSession.quality_score
+          }，均收 ${this.formatPercent(topSession.avg_return_pct)}`
+        : '',
+      '',
+      '### 最强片段',
+      renderSegments(bestSegments) || '- 暂无完成样本',
+      '',
+      '### 需要降权/复盘',
+      renderSegments(worstSegments) || '- 暂无需要降权的片段',
+      actionItems.length ? '\n### 今日动作建议' : '',
+      actionItems.map((item: string) => `- ${item}`).join('\n'),
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    return this.safeAppend({
+      文本: `${recordType} - ${filters.horizon || '5d'} 质量分 ${
+        overview.quality_score ?? 0
+      } / 完成 ${overview.completed_samples ?? overview.count ?? 0} 样本`,
+      message: markdownMessage,
+      记录类型: recordType,
+      任务名称: '信号来源质量排行榜',
+      任务类型: 'SIGNAL_QUALITY_DAILY_REPORT',
+      运行状态: 'COMPLETED',
+      绩效周期: filters.horizon || '5d',
+      开始时间: filters.start_date,
+      完成时间: filters.end_date,
+      信号总数: overview.total_signals,
+      完成样本: overview.completed_samples ?? overview.count,
+      待验证信号: overview.pending_signals,
+      无数据信号: overview.no_data_signals,
+      质量分: overview.quality_score,
+      收益闸门: overview.gate?.label,
+      平均收益: this.formatPercent(overview.avg_return_pct),
+      胜率: this.formatPercent(overview.positive_rate),
+      方向成功率: this.formatPercent(overview.directional_success_rate),
+      最佳来源: topSource
+        ? `${topSource.label} / ${topSource.quality_score} / ${this.formatPercent(
+            topSource.avg_return_pct
+          )}`
+        : '',
+      最佳场次: topSession
+        ? `${topSession.label} / ${topSession.quality_score} / ${this.formatPercent(
+            topSession.avg_return_pct
+          )}`
+        : '',
+      结果摘要: this.safeJson(
+        {
+          filters,
+          overview,
+          best_segments: bestSegments.slice(0, 8),
+          worst_segments: worstSegments.slice(0, 8),
+          rankings: report?.rankings,
+          horizon_summary: report?.horizon_summary,
+          action_items: actionItems,
         },
         10000
       ),

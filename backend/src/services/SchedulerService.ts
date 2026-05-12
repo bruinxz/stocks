@@ -324,6 +324,46 @@ class SchedulerService {
         logger.info(
           `推荐绩效刷新完成。扫描 ${result.verification.total}，已完成 ${result.verification.verified}，等待 ${result.verification.pending}，无数据 ${result.verification.no_data}`
         );
+      } else if (task.type === 'SIGNAL_QUALITY_DAILY_REPORT') {
+        const result = await aiInvestmentSignalService.getSignalQualityReport({
+          source_type: parameters.source_type || parameters.sourceType,
+          agent_session: parameters.agent_session || parameters.agentSession,
+          task_label: parameters.task_label || parameters.taskLabel,
+          symbol: parameters.symbol,
+          decision: parameters.decision,
+          start_date: parameters.start_date || parameters.startDate,
+          end_date: parameters.end_date || parameters.endDate,
+          horizon: parameters.horizon || '5d',
+          lookback_days: this.toPositiveInt(parameters.lookback_days, 30, 3650),
+          min_samples: this.toPositiveInt(parameters.min_samples, 5, 100),
+          limit: this.toPositiveInt(parameters.limit, 5000, 10000),
+          verify_before_report:
+            parameters.verify_before_report !== undefined
+              ? Boolean(parameters.verify_before_report)
+              : parameters.verifyBeforeReport !== undefined
+              ? Boolean(parameters.verifyBeforeReport)
+              : true,
+          report_to_feishu:
+            parameters.report_to_feishu !== undefined
+              ? Boolean(parameters.report_to_feishu)
+              : parameters.reportToFeishu !== undefined
+              ? Boolean(parameters.reportToFeishu)
+              : true,
+          record_type: parameters.record_type || parameters.recordType || '信号质量日报',
+        });
+
+        await executionLog.update({
+          total_items: result.overview.total_signals,
+          completed_items: result.overview.completed_samples,
+          failed_items: Number(result.overview.no_data_signals || 0),
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: null,
+        });
+
+        logger.info(
+          `信号质量日报完成。信号 ${result.overview.total_signals}，完成样本 ${result.overview.completed_samples}，质量分 ${result.overview.quality_score}`
+        );
       } else if (task.type === 'PAPER_TRADING_AUTO_SYNC') {
         const result = await paperTradingAutomationService.runAutoSync({
           username: parameters.username,
@@ -896,6 +936,21 @@ class SchedulerService {
         },
       },
       {
+        name: '信号质量日报',
+        type: 'SIGNAL_QUALITY_DAILY_REPORT',
+        cron_expression: '30 16 * * 1-5',
+        is_active: true,
+        parameters: {
+          horizon: '5d',
+          lookback_days: 30,
+          min_samples: 5,
+          limit: 5000,
+          verify_before_report: true,
+          report_to_feishu: true,
+          record_type: '信号质量日报',
+        },
+      },
+      {
         name: '推荐信号模拟盘跟单',
         type: 'PAPER_TRADING_AUTO_SYNC',
         cron_expression: '40 15 * * 1-5',
@@ -1051,6 +1106,27 @@ class SchedulerService {
           'agent_session',
           'source_type',
           'horizon',
+          'record_type',
+        ]) {
+          if (nextParams[key] === undefined && (taskData.parameters as any)[key] !== undefined) {
+            nextParams[key] = (taskData.parameters as any)[key];
+          }
+        }
+        if (JSON.stringify(nextParams) !== JSON.stringify(params)) {
+          patch.parameters = nextParams;
+        }
+      }
+
+      if (taskData.name === '信号质量日报') {
+        const params = task.parameters || {};
+        const nextParams = { ...taskData.parameters, ...params };
+        for (const key of [
+          'horizon',
+          'lookback_days',
+          'min_samples',
+          'limit',
+          'verify_before_report',
+          'report_to_feishu',
           'record_type',
         ]) {
           if (nextParams[key] === undefined && (taskData.parameters as any)[key] !== undefined) {

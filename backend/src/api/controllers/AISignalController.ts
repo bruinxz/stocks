@@ -202,6 +202,53 @@ export class AISignalController {
       res.status(500).json({ success: false, message: error.message });
     }
   };
+
+  getSignalQualityReport = async (req: Request, res: Response) => {
+    try {
+      const report = await aiInvestmentSignalService.getSignalQualityReport({
+        source_type: req.query?.source_type as string,
+        agent_session: req.query?.agent_session as string,
+        task_label: req.query?.task_label as string,
+        symbol: req.query?.symbol as string,
+        decision: req.query?.decision as string,
+        start_date: req.query?.start_date as string,
+        end_date: req.query?.end_date as string,
+        horizon: (req.query?.horizon as string) || '5d',
+        lookback_days: req.query?.lookback_days ? Number(req.query.lookback_days) : 30,
+        min_samples: req.query?.min_samples ? Number(req.query.min_samples) : 5,
+        limit: req.query?.limit ? Number(req.query.limit) : 5000,
+      });
+      res.json({ success: true, data: report });
+    } catch (error: any) {
+      logger.error('获取信号质量日报失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
+  reportSignalQualityDaily = async (req: Request, res: Response) => {
+    try {
+      const report = await aiInvestmentSignalService.getSignalQualityReport({
+        source_type: req.body?.source_type,
+        agent_session: req.body?.agent_session,
+        task_label: req.body?.task_label,
+        symbol: req.body?.symbol,
+        decision: req.body?.decision,
+        start_date: req.body?.start_date,
+        end_date: req.body?.end_date,
+        horizon: req.body?.horizon || '5d',
+        lookback_days: req.body?.lookback_days ? Number(req.body.lookback_days) : 30,
+        min_samples: req.body?.min_samples ? Number(req.body.min_samples) : 5,
+        limit: req.body?.limit ? Number(req.body.limit) : 5000,
+        verify_before_report: req.body?.verify_before_report === true,
+        report_to_feishu: req.body?.report_to_feishu !== false,
+        record_type: req.body?.record_type || '信号质量日报',
+      });
+      res.json({ success: true, data: report, message: '信号质量日报已生成' });
+    } catch (error: any) {
+      logger.error('生成信号质量日报失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
 }
 
 export const aiSignalController = new AISignalController();

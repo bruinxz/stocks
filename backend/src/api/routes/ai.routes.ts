@@ -111,6 +111,17 @@ router.get(
 );
 
 /**
+ * @route GET /api/ai/signals/quality-report
+ * @desc 获取信号来源质量排行榜日报
+ * @access Private
+ */
+router.get(
+  '/signals/quality-report',
+  authController.authenticate,
+  aiSignalController.getSignalQualityReport
+);
+
+/**
  * @route POST /api/ai/signals/sync-screeners
  * @desc 从 AI 每日优选同步为可验证信号
  * @access Private
@@ -159,6 +170,17 @@ router.post(
   '/signals/performance/refresh',
   authController.authenticate,
   aiSignalController.refreshPerformance
+);
+
+/**
+ * @route POST /api/ai/signals/quality-report
+ * @desc 生成信号来源质量排行榜并上报飞书
+ * @access Private
+ */
+router.post(
+  '/signals/quality-report',
+  authController.authenticate,
+  aiSignalController.reportSignalQualityDaily
 );
 
 /**
