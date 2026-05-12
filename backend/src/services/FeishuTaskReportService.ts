@@ -39,10 +39,13 @@ class FeishuTaskReportService {
 
   async reportStockAnalysis(payload: StockAnalysisReportPayload) {
     const readable = this.normalizeStockAnalysisPayload(payload);
+    const decision = readable.decision || payload.decision || 'UNKNOWN';
+    const coreRationale = this.safeText(readable.rationale || payload.rationale || '暂无核心理由', 2200);
     const markdownMessage = [
       `## AI分析结果：${payload.name || payload.symbol}（${payload.symbol}）`,
       '',
-      `- **投资评级**：${readable.decision || payload.decision || 'UNKNOWN'}`,
+      '### 结论',
+      `- **投资评级**：${decision}`,
       payload.score != null ? `- **综合评分**：${Number(payload.score).toFixed(2)}` : '',
       payload.current_price != null ? `- **最新价**：${payload.current_price}` : '',
       payload.price_change_pct != null
@@ -51,19 +54,13 @@ class FeishuTaskReportService {
       payload.task_label ? `- **任务来源**：${payload.task_label}` : '',
       '',
       '### 核心理由',
-      readable.rationale || '暂无核心理由',
-      readable.detail && readable.detail !== readable.rationale
-        ? ['', '### 完整分析', readable.detail]
-        : '',
+      coreRationale,
     ]
       .filter(Boolean)
-      .flat()
       .join('\n');
 
     return this.safeAppend({
-      文本: `AI分析结果 - ${payload.name}(${payload.symbol}) - ${
-        readable.decision || payload.decision
-      }`,
+      文本: `AI分析结果 - ${payload.name}(${payload.symbol}) - ${decision}`,
       message: this.safeMarkdownMessage(markdownMessage),
       记录类型: 'AI分析结果',
       任务名称: payload.task_label || 'AI 每日优选评估',
@@ -71,7 +68,7 @@ class FeishuTaskReportService {
       运行状态: 'COMPLETED',
       股票代码: payload.symbol,
       股票名称: payload.name,
-      投资评级: readable.decision || payload.decision,
+      投资评级: decision,
       评分: payload.score != null ? Number(payload.score).toFixed(2) : '',
       最新价: payload.current_price != null ? String(payload.current_price) : '',
       涨跌幅:
