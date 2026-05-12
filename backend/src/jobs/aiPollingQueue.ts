@@ -13,6 +13,7 @@ export interface AIPollingJobData {
   quant_warnings?: string[];
   recommendation_style?: string;
   recommendation_source?: string;
+  agent_session?: string;
 }
 
 const aiPollingQueue = new Bull<AIPollingJobData>('ai_polling', {

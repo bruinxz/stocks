@@ -80,6 +80,7 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
     quant_warnings,
     recommendation_style,
     recommendation_source,
+    agent_session,
   } = job.data;
 
   try {
@@ -134,7 +135,7 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
       }
 
       // Always create a new record (append) instead of updating existing ones for the same day
-      const agentSession = inferAgentSession(taskLabel, new Date());
+      const agentSession = agent_session || inferAgentSession(taskLabel, new Date());
       await DailyScreener.create({
         date: today,
         symbol,

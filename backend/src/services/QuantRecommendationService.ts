@@ -6,6 +6,7 @@ import { FavoriteStock } from '../models/FavoriteStock';
 import { AIInvestmentSignal, AISignalSourceType } from '../models/AIInvestmentSignal';
 import { normalizeSymbol } from '../utils/stockSymbol';
 import { logger } from '../utils/logger';
+import { DEFAULT_BENCHMARK_INDICES } from './BenchmarkIndexService';
 
 export type RecommendationUniverse = 'favorites' | 'market';
 export type RecommendationStyle = 'balanced' | 'momentum' | 'value' | 'low_risk';
@@ -20,6 +21,9 @@ export interface QuantRecommendationOptions {
   lookback_days?: number;
   min_bars?: number;
   include_trend?: boolean;
+  candidate_pool_limit?: number;
+  exclude_st?: boolean;
+  min_market_cap_yi?: number;
 }
 
 interface FactorScore {
@@ -69,7 +73,9 @@ export interface RecommendationFeedback {
   signal_count: number;
   completed_count: number;
   avg_return_pct: number | null;
+  avg_excess_return_pct?: number | null;
   positive_rate: number | null;
+  excess_positive_rate?: number | null;
   best_horizon?: string;
   score_adjustment: number;
   confidence_boost: number;
@@ -121,10 +127,12 @@ function buildEmptyFeedback(): RecommendationFeedback {
   return {
     signal_count: 0,
     completed_count: 0,
-    avg_return_pct: null,
-    positive_rate: null,
-    score_adjustment: 0,
-    confidence_boost: 0,
+      avg_return_pct: null,
+      avg_excess_return_pct: null,
+      positive_rate: null,
+      excess_positive_rate: null,
+      score_adjustment: 0,
+      confidence_boost: 0,
   };
 }
 
@@ -208,10 +216,17 @@ export class QuantRecommendationService {
     const lookback_days = Math.min(Math.max(options.lookback_days || 120, 45), 360);
     const min_bars = Math.min(Math.max(options.min_bars || 35, 20), lookback_days);
 
+    const candidatePoolLimit =
+      universe === 'market'
+        ? Math.min(
+            Math.max(Number(options.candidate_pool_limit || 0) || limit * 12, limit * 6, 120),
+            1000
+          )
+        : Math.max(limit * 6, 60);
     const stocks = await this.getCandidateStocks({
       ...options,
       universe,
-      limit: Math.max(limit * 6, 60),
+      limit: candidatePoolLimit,
     });
     const feedbackMap = await this.getRecommendationFeedbackMap(
       stocks.map(stock => stock.symbol).filter(Boolean)
@@ -250,6 +265,8 @@ export class QuantRecommendationService {
     user_id?: number;
     universe: RecommendationUniverse;
     limit: number;
+    exclude_st?: boolean;
+    min_market_cap_yi?: number;
   }): Promise<Stock[]> {
     if (options.universe === 'favorites') {
       if (options.user_id) {
@@ -284,16 +301,58 @@ export class QuantRecommendationService {
       }
     }
 
+    const excludedSymbols = DEFAULT_BENCHMARK_INDICES.map(index => index.symbol);
+    const minMarketCapYi =
+      options.min_market_cap_yi === undefined ? 30 : Number(options.min_market_cap_yi || 0);
+    const marketWhere: any = {
+      is_listed: true,
+      [Op.or]: [{ type: 'stock' }, { type: null }],
+      symbol: { [Op.notIn]: excludedSymbols },
+    };
+    if (options.exclude_st !== false) {
+      marketWhere.name = {
+        [Op.and]: [{ [Op.notILike]: '%ST%' }, { [Op.notILike]: '%退%' }],
+      };
+    }
+    if (minMarketCapYi > 0) {
+      marketWhere[Op.and] = [
+        ...(marketWhere[Op.and] || []),
+        {
+          [Op.or]: [
+            { total_market_cap: { [Op.gte]: minMarketCapYi * 100000000 } },
+            { total_market_cap: null },
+          ],
+        },
+      ];
+    }
+
     return Stock.findAll({
+      attributes: [
+        'id',
+        'symbol',
+        'name',
+        'market',
+        'industry',
+        'data_status',
+        'total_market_cap',
+        'circulating_market_cap',
+        'pe_dynamic',
+        'pb',
+        'turnover_rate',
+        'price',
+        'change_percent',
+        'type',
+        'is_listed',
+        'updated_at',
+      ],
       where: {
-        is_listed: true,
-        [Op.or]: [{ type: 'stock' }, { type: null }],
-        symbol: { [Op.notIn]: ['sh.000001', 'sh.000300', 'sz.399001', 'sz.399006'] },
+        ...marketWhere,
       },
       order: [
-        ['data_status', 'ASC'],
-        ['total_market_cap', 'DESC NULLS LAST'],
+        ['change_percent', 'DESC NULLS LAST'],
+        ['turnover_rate', 'DESC NULLS LAST'],
         ['updated_at', 'DESC'],
+        ['total_market_cap', 'DESC NULLS LAST'],
       ] as any,
       limit: options.limit,
     });
@@ -579,8 +638,10 @@ export class QuantRecommendationService {
 
     for (const [symbol, records] of grouped.entries()) {
       const returns: number[] = [];
+      const excessReturns: number[] = [];
       let completed_count = 0;
       let positive_count = 0;
+      let excess_positive_count = 0;
       const horizonBuckets: Record<string, number[]> = {};
 
       for (const record of records) {
@@ -589,11 +650,15 @@ export class QuantRecommendationService {
           if (value?.status !== 'completed') continue;
           const returnPct = Number(value.return_pct || 0);
           if (!Number.isFinite(returnPct)) continue;
+          const excessReturnPct = Number(value.excess_return_pct);
+          const feedbackReturn = Number.isFinite(excessReturnPct) ? excessReturnPct : returnPct;
           returns.push(returnPct);
+          if (Number.isFinite(excessReturnPct)) excessReturns.push(excessReturnPct);
           completed_count++;
           if (returnPct > 0) positive_count++;
+          if (feedbackReturn > 0) excess_positive_count++;
           if (!horizonBuckets[horizon]) horizonBuckets[horizon] = [];
-          horizonBuckets[horizon].push(returnPct);
+          horizonBuckets[horizon].push(feedbackReturn);
         }
       }
 
@@ -601,8 +666,16 @@ export class QuantRecommendationService {
         returns.length > 0
           ? Number((returns.reduce((s, v) => s + v, 0) / returns.length).toFixed(4))
           : null;
+      const avg_excess_return_pct =
+        excessReturns.length > 0
+          ? Number((excessReturns.reduce((s, v) => s + v, 0) / excessReturns.length).toFixed(4))
+          : null;
       const positive_rate =
         completed_count > 0 ? Number(((positive_count / completed_count) * 100).toFixed(2)) : null;
+      const excess_positive_rate =
+        completed_count > 0
+          ? Number(((excess_positive_count / completed_count) * 100).toFixed(2))
+          : null;
       const best_horizon = Object.entries(horizonBuckets)
         .map(([horizon, values]) => ({
           horizon,
@@ -610,9 +683,16 @@ export class QuantRecommendationService {
         }))
         .sort((a, b) => b.avg - a.avg)[0]?.horizon;
 
-      const positiveBonus = positive_rate === null ? 0 : (positive_rate - 50) * 0.08;
+      const primaryPositiveRate = excess_positive_rate ?? positive_rate;
+      const primaryAvgReturn = avg_excess_return_pct ?? avg_return_pct;
+      const positiveBonus =
+        primaryPositiveRate === null || primaryPositiveRate === undefined
+          ? 0
+          : (primaryPositiveRate - 50) * 0.08;
       const returnBonus =
-        avg_return_pct === null ? 0 : Math.max(-12, Math.min(12, avg_return_pct)) * 0.75;
+        primaryAvgReturn === null || primaryAvgReturn === undefined
+          ? 0
+          : Math.max(-12, Math.min(12, primaryAvgReturn)) * 0.75;
       const samplePenalty = completed_count > 0 && completed_count < 3 ? -1.5 : 0;
       const score_adjustment = Math.max(
         -8,
@@ -624,7 +704,9 @@ export class QuantRecommendationService {
         signal_count: records.length,
         completed_count,
         avg_return_pct,
+        avg_excess_return_pct,
         positive_rate,
+        excess_positive_rate,
         best_horizon,
         score_adjustment: Number(score_adjustment.toFixed(2)),
         confidence_boost: Number(confidence_boost.toFixed(2)),
@@ -638,10 +720,14 @@ export class QuantRecommendationService {
   private scoreFeedback(feedback: RecommendationFeedback): number {
     if (!feedback || feedback.signal_count === 0) return 55;
     let score = 55;
-    if (feedback.avg_return_pct !== null) {
-      score += Math.max(-15, Math.min(18, feedback.avg_return_pct)) * 1.1;
+    const primaryReturn = feedback.avg_excess_return_pct ?? feedback.avg_return_pct;
+    const primaryPositiveRate = feedback.excess_positive_rate ?? feedback.positive_rate;
+    if (primaryReturn !== null && primaryReturn !== undefined) {
+      score += Math.max(-15, Math.min(18, primaryReturn)) * 1.1;
     }
-    if (feedback.positive_rate !== null) score += (feedback.positive_rate - 50) * 0.32;
+    if (primaryPositiveRate !== null && primaryPositiveRate !== undefined) {
+      score += (primaryPositiveRate - 50) * 0.32;
+    }
     if (feedback.completed_count >= 5) score += 6;
     else if (feedback.completed_count > 0 && feedback.completed_count < 3) score -= 4;
     return clamp(score);

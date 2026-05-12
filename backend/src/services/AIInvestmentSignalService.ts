@@ -11,6 +11,7 @@ import { Stock } from '../models/Stock';
 import { normalizeSymbol } from '../utils/stockSymbol';
 import { logger } from '../utils/logger';
 import { DataSyncService } from '../data/services/DataSyncService';
+import { benchmarkIndexService } from './BenchmarkIndexService';
 import type { QuantRecommendationItem } from './QuantRecommendationService';
 
 const DEFAULT_HORIZONS = [1, 3, 5, 10, 20];
@@ -254,14 +255,22 @@ function directionalReturn(returnPct: number, decision?: string): number {
 function summarizeReturnSamples(samples: any[]) {
   const completedSamples = samples.filter(sample => Number.isFinite(Number(sample.return_pct)));
   const returns = completedSamples.map(sample => Number(sample.return_pct));
+  const excessReturns = completedSamples
+    .map(sample => Number(sample.excess_return_pct))
+    .filter(Number.isFinite);
   const directionalReturns = completedSamples.map(sample =>
     Number.isFinite(Number(sample.directional_return_pct))
       ? Number(sample.directional_return_pct)
       : directionalReturn(Number(sample.return_pct), sample.normalized_decision)
   );
+  const directionalExcessReturns = completedSamples
+    .map(sample => Number(sample.directional_excess_return_pct))
+    .filter(Number.isFinite);
   const wins = returns.filter(value => value > 0);
   const losses = returns.filter(value => value < 0);
+  const excessWins = excessReturns.filter(value => value > 0);
   const directionalWins = directionalReturns.filter(value => value > 0);
+  const directionalExcessWins = directionalExcessReturns.filter(value => value > 0);
   const mfeValues = completedSamples
     .map(sample => Number(sample.max_favorable_excursion_pct))
     .filter(Number.isFinite);
@@ -281,6 +290,14 @@ function summarizeReturnSamples(samples: any[]) {
     count: completedSamples.length,
     avg_return_pct: roundNumber(avgReturn, 4) ?? 0,
     median_return_pct: roundNumber(medianNumber(returns), 4) ?? 0,
+    excess_sample_count: excessReturns.length,
+    avg_excess_return_pct: roundNumber(averageNumbers(excessReturns), 4) ?? 0,
+    median_excess_return_pct: roundNumber(medianNumber(excessReturns), 4) ?? 0,
+    excess_positive_count: excessWins.length,
+    excess_positive_rate:
+      excessReturns.length > 0
+        ? roundNumber((excessWins.length / excessReturns.length) * 100, 2) ?? 0
+        : 0,
     positive_count: wins.length,
     positive_rate:
       completedSamples.length > 0
@@ -290,6 +307,13 @@ function summarizeReturnSamples(samples: any[]) {
     directional_success_rate:
       completedSamples.length > 0
         ? roundNumber((directionalWins.length / completedSamples.length) * 100, 2) ?? 0
+        : 0,
+    directional_excess_sample_count: directionalExcessReturns.length,
+    directional_excess_success_count: directionalExcessWins.length,
+    directional_excess_success_rate:
+      directionalExcessReturns.length > 0
+        ? roundNumber((directionalExcessWins.length / directionalExcessReturns.length) * 100, 2) ??
+          0
         : 0,
     avg_win_pct: roundNumber(avgWin, 4) ?? 0,
     avg_loss_pct: roundNumber(avgLoss, 4) ?? 0,
@@ -354,6 +378,16 @@ function extractCompletedReturnSamples(signals: any[], horizonFilter?: string) {
           value.max_adverse_excursion_pct !== undefined
             ? Number(value.max_adverse_excursion_pct)
             : undefined,
+        benchmark_code: value.benchmark_code,
+        benchmark_name: value.benchmark_name,
+        benchmark_return_pct:
+          value.benchmark_return_pct !== undefined ? Number(value.benchmark_return_pct) : undefined,
+        excess_return_pct:
+          value.excess_return_pct !== undefined ? Number(value.excess_return_pct) : undefined,
+        directional_excess_return_pct:
+          value.directional_excess_return_pct !== undefined
+            ? Number(value.directional_excess_return_pct)
+            : undefined,
       });
     }
   }
@@ -363,9 +397,18 @@ function extractCompletedReturnSamples(signals: any[], horizonFilter?: string) {
 
 function calculateQualityScore(summary: any, minSamples = 5): number {
   if (!summary || !summary.count) return 0;
-  const avgReturnScore = Math.max(-20, Math.min(35, Number(summary.avg_return_pct || 0) * 5));
-  const directionalScore =
-    (Math.max(0, Math.min(100, Number(summary.directional_success_rate || 0))) - 50) * 0.45;
+  const primaryAvgReturn = Number(
+    Number(summary.excess_sample_count || 0) > 0 && summary.avg_excess_return_pct !== undefined
+      ? summary.avg_excess_return_pct
+      : summary.avg_return_pct || 0
+  );
+  const primaryDirectionalRate = Number(
+    Number(summary.directional_excess_sample_count || 0) > 0
+      ? summary.directional_excess_success_rate || 0
+      : summary.directional_success_rate || 0
+  );
+  const avgReturnScore = Math.max(-20, Math.min(35, primaryAvgReturn * 5));
+  const directionalScore = (Math.max(0, Math.min(100, primaryDirectionalRate)) - 50) * 0.45;
   const payoffScore = Math.min(20, Math.max(0, Number(summary.payoff_ratio || 0) * 6));
   const riskRewardScore = Math.min(12, Math.max(-8, Number(summary.risk_reward_ratio || 0) * 4));
   const sampleScore = Math.min(18, (Number(summary.count || 0) / Math.max(minSamples, 1)) * 18);
@@ -382,8 +425,16 @@ function calculateQualityScore(summary: any, minSamples = 5): number {
 
 function classifyQualityGate(summary: any, minSamples = 5) {
   const count = Number(summary?.count || 0);
-  const avgReturn = Number(summary?.avg_return_pct || 0);
-  const directionalSuccessRate = Number(summary?.directional_success_rate || 0);
+  const avgReturn = Number(
+    Number(summary?.excess_sample_count || 0) > 0 && summary?.avg_excess_return_pct !== undefined
+      ? summary.avg_excess_return_pct
+      : summary?.avg_return_pct || 0
+  );
+  const directionalSuccessRate = Number(
+    Number(summary?.directional_excess_sample_count || 0) > 0
+      ? summary?.directional_excess_success_rate || 0
+      : summary?.directional_success_rate || 0
+  );
   const payoffRatio = Number(summary?.payoff_ratio || 0);
   const mae = Math.abs(Number(summary?.avg_mae_pct || 0));
 
@@ -922,6 +973,25 @@ export class AIInvestmentSignalService {
       horizons: {},
     };
 
+    const completedTargets = horizons
+      .map(horizon => bars[baseIndex + horizon])
+      .filter(Boolean);
+    if (completedTargets.length > 0) {
+      try {
+        const benchmark = await benchmarkIndexService.resolveBenchmarkForStock(signal.symbol, stock);
+        await benchmarkIndexService.ensureBenchmarkCoverage(
+          dateOnly(baseBar.time),
+          dateOnly(completedTargets[completedTargets.length - 1].time),
+          {
+            symbols: [benchmark.symbol],
+            data_source: 'tencent_only',
+          }
+        );
+      } catch (error: any) {
+        logger.warn(`基准指数行情预同步失败 ${signal.symbol}#${signal.id}: ${error.message}`);
+      }
+    }
+
     let completed = 0;
     for (const horizon of horizons) {
       const target = bars[baseIndex + horizon];
@@ -960,6 +1030,38 @@ export class AIInvestmentSignalService {
         window_high: Number(maxHigh.toFixed(4)),
         window_low: Number(minLow.toFixed(4)),
       };
+
+      try {
+        const benchmarkReturn = await benchmarkIndexService.getBenchmarkReturnForStock(
+          signal.symbol,
+          dateOnly(baseBar.time),
+          dateOnly(target.time),
+          {
+            stock,
+            data_source: 'tencent_only',
+            auto_sync: false,
+          }
+        );
+
+        if (benchmarkReturn) {
+          const excessReturnPct = returnPct - benchmarkReturn.benchmark_return_pct;
+          forward_returns.horizons[`${horizon}d`] = {
+            ...forward_returns.horizons[`${horizon}d`],
+            ...benchmarkReturn,
+            excess_return_pct: Number(excessReturnPct.toFixed(4)),
+            directional_excess_return_pct: Number(
+              directionalReturn(
+                excessReturnPct,
+                signal.normalized_decision || signal.decision
+              ).toFixed(4)
+            ),
+          };
+        }
+      } catch (error: any) {
+        logger.warn(
+          `基准收益计算失败 ${signal.symbol}#${signal.id}/${horizon}d: ${error.message}`
+        );
+      }
       completed++;
     }
 
@@ -1269,12 +1371,25 @@ export class AIInvestmentSignalService {
       for (const [key, value] of Object.entries<any>(horizons)) {
         if (value.status !== 'completed') continue;
         if (!horizonSummary[key]) {
-          horizonSummary[key] = { count: 0, avg_return_pct: 0, positive_count: 0 };
+          horizonSummary[key] = {
+            count: 0,
+            avg_return_pct: 0,
+            positive_count: 0,
+            avg_excess_return_pct: 0,
+            excess_count: 0,
+            excess_positive_count: 0,
+          } as any;
         }
         horizonSummary[key].count++;
         horizonSummary[key].avg_return_pct += Number(value.return_pct || 0);
         if (Number(value.return_pct || 0) > 0) {
           horizonSummary[key].positive_count++;
+        }
+        const excessReturn = Number(value.excess_return_pct);
+        if (Number.isFinite(excessReturn)) {
+          (horizonSummary[key] as any).excess_count++;
+          (horizonSummary[key] as any).avg_excess_return_pct += excessReturn;
+          if (excessReturn > 0) (horizonSummary[key] as any).excess_positive_count++;
         }
       }
     }
@@ -1290,6 +1405,15 @@ export class AIInvestmentSignalService {
         item.count > 0 ? Number((item.avg_return_pct / item.count).toFixed(4)) : 0;
       (item as any).positive_rate =
         item.count > 0 ? Number(((item.positive_count / item.count) * 100).toFixed(2)) : 0;
+      const excessCount = Number((item as any).excess_count || 0);
+      (item as any).avg_excess_return_pct =
+        excessCount > 0
+          ? Number((Number((item as any).avg_excess_return_pct || 0) / excessCount).toFixed(4))
+          : 0;
+      (item as any).excess_positive_rate =
+        excessCount > 0
+          ? Number(((Number((item as any).excess_positive_count || 0) / excessCount) * 100).toFixed(2))
+          : 0;
     });
 
     return {

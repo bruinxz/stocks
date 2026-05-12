@@ -11,6 +11,8 @@ import { feishuTaskReportService } from './FeishuTaskReportService';
 import { paperTradingAutomationService } from './PaperTradingAutomationService';
 import { paperTradingAttributionService } from './PaperTradingAttributionService';
 import { paperTradingPlanService } from './PaperTradingPlanService';
+import { benchmarkIndexService } from './BenchmarkIndexService';
+import { automatedRecommendationLoopService } from './AutomatedRecommendationLoopService';
 import moment from 'moment-timezone';
 import { Op } from 'sequelize';
 
@@ -270,6 +272,56 @@ class SchedulerService {
           },
           'dataQualityScan',
           isManual
+        );
+      } else if (task.type === 'BENCHMARK_INDEX_SYNC') {
+        const lookbackDays = this.toPositiveInt(
+          parameters.lookback_days || parameters.lookbackDays,
+          180,
+          3650
+        );
+        const startDate =
+          parameters.start_date ||
+          parameters.startDate ||
+          moment(today).subtract(lookbackDays, 'days').format('YYYY-MM-DD');
+        const endDate = parameters.end_date || parameters.endDate || today;
+        const result = await benchmarkIndexService.syncBenchmarkIndices(startDate, endDate, {
+          symbols: Array.isArray(parameters.symbols) ? parameters.symbols : undefined,
+          data_source: parameters.data_source || parameters.dataSource || 'tencent_only',
+          concurrency: this.toPositiveInt(parameters.concurrency, 2, 5),
+        });
+        const entries = Object.entries(result);
+        const inserted = entries.reduce(
+          (sum, [, count]) => (Number(count) > 0 ? sum + Number(count) : sum),
+          0
+        );
+        const failed = entries.filter(([, count]) => Number(count) < 0).length;
+
+        await executionLog.update({
+          total_items: entries.length,
+          completed_items: entries.length - failed,
+          failed_items: failed,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: failed > 0 ? `${failed} 个基准指数同步失败，详见结果摘要` : null,
+        });
+
+        if (parameters.report_to_feishu !== false && parameters.reportToFeishu !== false) {
+          await feishuTaskReportService.reportTaskExecutionLog(executionLog, {
+            record_type: '基准指数行情同步',
+            task_type: 'BENCHMARK_INDEX_SYNC',
+            result: {
+              sync_window: { start_date: startDate, end_date: endDate },
+              data_source: parameters.data_source || parameters.dataSource || 'tencent_only',
+              inserted_records: inserted,
+              total: entries.length,
+              failed,
+              details: result,
+            },
+          });
+        }
+
+        logger.info(
+          `基准指数行情同步完成。指数 ${entries.length}，失败 ${failed}，写入/尝试 ${inserted} 条`
         );
       } else if (task.type === 'SIGNAL_PERFORMANCE_REFRESH') {
         const commonPerformanceParams = {
@@ -707,6 +759,96 @@ class SchedulerService {
         logger.info(
           `模拟盘交易计划完成。动作 ${result.summary.action_count}，紧急 ${result.summary.urgent_count}，入场 ${result.summary.entry_count}，退出 ${result.summary.exit_count}`
         );
+      } else if (task.type === 'AUTO_RECOMMENDATION_LOOP') {
+        const result = await automatedRecommendationLoopService.run({
+          username: parameters.username || 'lym',
+          universe: parameters.universe === 'favorites' ? 'favorites' : 'market',
+          style: ['balanced', 'momentum', 'value', 'low_risk'].includes(parameters.style)
+            ? parameters.style
+            : 'balanced',
+          candidate_limit: this.toPositiveInt(parameters.candidate_limit, 30, 100),
+          candidate_pool_limit: this.toPositiveInt(parameters.candidate_pool_limit, 360, 1000),
+          lookback_days: this.toPositiveInt(parameters.lookback_days, 120, 360),
+          min_bars: this.toPositiveInt(parameters.min_bars, 35, 120),
+          exclude_st:
+            parameters.exclude_st !== undefined
+              ? Boolean(parameters.exclude_st)
+              : parameters.excludeSt !== undefined
+              ? Boolean(parameters.excludeSt)
+              : true,
+          min_market_cap_yi:
+            parameters.min_market_cap_yi !== undefined
+              ? Number(parameters.min_market_cap_yi)
+              : parameters.minMarketCapYi !== undefined
+              ? Number(parameters.minMarketCapYi)
+              : 30,
+          archive_limit: this.toPositiveInt(parameters.archive_limit, 30, 100),
+          verify_signals:
+            parameters.verify_signals !== undefined
+              ? Boolean(parameters.verify_signals)
+              : parameters.verifySignals !== undefined
+              ? Boolean(parameters.verifySignals)
+              : true,
+          run_paper_trading:
+            parameters.run_paper_trading !== undefined
+              ? Boolean(parameters.run_paper_trading)
+              : parameters.runPaperTrading !== undefined
+              ? Boolean(parameters.runPaperTrading)
+              : true,
+          dry_run:
+            parameters.dry_run !== undefined
+              ? Boolean(parameters.dry_run)
+              : parameters.dryRun !== undefined
+              ? Boolean(parameters.dryRun)
+              : false,
+          paper_trade_limit: this.toPositiveInt(parameters.paper_trade_limit, 3, 20),
+          paper_trade_scan_limit: this.toPositiveInt(parameters.paper_trade_scan_limit, 150, 500),
+          min_score: Number(parameters.min_score || parameters.minScore || 72),
+          max_positions: this.toPositiveInt(parameters.max_positions, 8, 30),
+          default_position_pct: Number(
+            parameters.default_position_pct || parameters.defaultPositionPct || 5
+          ),
+          max_position_pct: Number(parameters.max_position_pct || parameters.maxPositionPct || 10),
+          min_trade_amount: Number(
+            parameters.min_trade_amount || parameters.minTradeAmount || 3000
+          ),
+          use_profit_gate:
+            parameters.use_profit_gate !== undefined
+              ? Boolean(parameters.use_profit_gate)
+              : parameters.useProfitGate !== undefined
+              ? Boolean(parameters.useProfitGate)
+              : true,
+          profit_gate_horizon:
+            parameters.profit_gate_horizon || parameters.profitGateHorizon || '5d',
+          profit_gate_min_samples: this.toPositiveInt(
+            parameters.profit_gate_min_samples || parameters.profitGateMinSamples,
+            5,
+            100
+          ),
+          profit_gate_min_quality_score: Number(
+            parameters.profit_gate_min_quality_score || parameters.profitGateMinQualityScore || 45
+          ),
+          report_to_feishu:
+            parameters.report_to_feishu !== undefined
+              ? Boolean(parameters.report_to_feishu)
+              : parameters.reportToFeishu !== undefined
+              ? Boolean(parameters.reportToFeishu)
+              : true,
+          record_type: parameters.record_type || parameters.recordType || '全市场荐股闭环',
+        });
+
+        await executionLog.update({
+          total_items: result.generated?.total_candidates || 0,
+          completed_items: result.generated?.analyzed_candidates || 0,
+          failed_items: result.paper_trading?.skipped || 0,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: null,
+        });
+
+        logger.info(
+          `全市场荐股闭环完成。候选 ${result.generated?.analyzed_candidates}/${result.generated?.total_candidates}，归档 ${result.archive?.total}，模拟盘 ${result.paper_trading?.executed ?? result.paper_trading?.planned ?? 0}`
+        );
       } else if (task.type === 'AI_DAILY_SCREENER') {
         logger.info('触发 AI_DAILY_SCREENER 任务，使用多因子候选池进行 TradingAgents 深度分析...');
 
@@ -725,6 +867,19 @@ class SchedulerService {
           style,
           limit: candidateLimit,
           lookback_days: Number(parameters.lookback_days || 120),
+          candidate_pool_limit: this.toPositiveInt(parameters.candidate_pool_limit, 240, 1000),
+          exclude_st:
+            parameters.exclude_st !== undefined
+              ? Boolean(parameters.exclude_st)
+              : parameters.excludeSt !== undefined
+              ? Boolean(parameters.excludeSt)
+              : true,
+          min_market_cap_yi:
+            parameters.min_market_cap_yi !== undefined
+              ? Number(parameters.min_market_cap_yi)
+              : parameters.minMarketCapYi !== undefined
+              ? Number(parameters.minMarketCapYi)
+              : 30,
           include_trend: false,
         });
 
@@ -751,6 +906,7 @@ class SchedulerService {
                   quant_warnings: candidate.warnings,
                   recommendation_style: style,
                   recommendation_source: universe,
+                  agent_session: parameters.agent_session,
                 },
                 {
                   jobId: `ai-poll-${isManual ? 'manual-' : ''}log-${executionLog.id}-${
@@ -888,6 +1044,18 @@ class SchedulerService {
         },
       },
       {
+        name: '基准指数行情同步',
+        type: 'BENCHMARK_INDEX_SYNC',
+        cron_expression: '5 15 * * 1-5',
+        is_active: true,
+        parameters: {
+          lookback_days: 180,
+          data_source: 'tencent_only',
+          concurrency: 2,
+          report_to_feishu: true,
+        },
+      },
+      {
         name: 'AI优选-早盘分析',
         type: 'AI_DAILY_SCREENER',
         cron_expression: '0 9 * * 1-5',
@@ -922,6 +1090,53 @@ class SchedulerService {
           candidate_limit: 10,
           lookback_days: 120,
           agent_session: 'close',
+        },
+      },
+      {
+        name: '全市场AI机会扫描',
+        type: 'AI_DAILY_SCREENER',
+        cron_expression: '35 14 * * 1-5',
+        is_active: true,
+        parameters: {
+          universe: 'market',
+          style: 'balanced',
+          candidate_limit: 8,
+          lookback_days: 120,
+          agent_session: 'close',
+        },
+      },
+      {
+        name: '全市场荐股闭环',
+        type: 'AUTO_RECOMMENDATION_LOOP',
+        cron_expression: '45 15 * * 1-5',
+        is_active: true,
+        parameters: {
+          username: 'lym',
+          universe: 'market',
+          style: 'balanced',
+          candidate_limit: 30,
+          candidate_pool_limit: 360,
+          lookback_days: 120,
+          min_bars: 35,
+          exclude_st: true,
+          min_market_cap_yi: 30,
+          archive_limit: 30,
+          verify_signals: true,
+          run_paper_trading: true,
+          dry_run: false,
+          paper_trade_limit: 3,
+          paper_trade_scan_limit: 150,
+          min_score: 72,
+          max_positions: 8,
+          default_position_pct: 5,
+          max_position_pct: 10,
+          min_trade_amount: 3000,
+          use_profit_gate: true,
+          profit_gate_horizon: '5d',
+          profit_gate_min_samples: 5,
+          profit_gate_min_quality_score: 45,
+          report_to_feishu: true,
+          record_type: '全市场荐股闭环',
         },
       },
       {
@@ -1151,6 +1366,33 @@ class SchedulerService {
           'repair_lookback_days',
           'sync_concurrency',
           'verify_before_report',
+          'report_to_feishu',
+          'record_type',
+        ]) {
+          if (nextParams[key] === undefined && (taskData.parameters as any)[key] !== undefined) {
+            nextParams[key] = (taskData.parameters as any)[key];
+          }
+        }
+        if (JSON.stringify(nextParams) !== JSON.stringify(params)) {
+          patch.parameters = nextParams;
+        }
+      }
+
+      if (taskData.name === '全市场荐股闭环') {
+        const params = task.parameters || {};
+        const nextParams = { ...taskData.parameters, ...params };
+        for (const key of [
+          'universe',
+          'style',
+          'candidate_limit',
+          'candidate_pool_limit',
+          'archive_limit',
+          'verify_signals',
+          'run_paper_trading',
+          'use_profit_gate',
+          'profit_gate_horizon',
+          'profit_gate_min_samples',
+          'profit_gate_min_quality_score',
           'report_to_feishu',
           'record_type',
         ]) {

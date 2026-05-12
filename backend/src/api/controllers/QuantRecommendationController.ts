@@ -25,6 +25,13 @@ export class QuantRecommendationController {
           : 'balanced',
         limit: parseInt(limit as string, 10),
         lookback_days: parseInt(lookback_days as string, 10),
+        candidate_pool_limit: req.query?.candidate_pool_limit
+          ? parseInt(req.query.candidate_pool_limit as string, 10)
+          : undefined,
+        exclude_st: req.query?.exclude_st === undefined ? true : req.query.exclude_st !== 'false',
+        min_market_cap_yi: req.query?.min_market_cap_yi
+          ? Number(req.query.min_market_cap_yi)
+          : undefined,
       });
 
       res.json({ success: true, data: result });

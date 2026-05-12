@@ -54,6 +54,7 @@ export interface PaperTradingAutoSyncOptions extends PaperTradingAutoOptions {
   universe?: 'favorites' | 'market';
   style?: 'balanced' | 'momentum' | 'value' | 'low_risk';
   candidate_limit?: number;
+  candidate_pool_limit?: number;
   lookback_days?: number;
   verify_signals?: boolean;
 }
@@ -720,6 +721,13 @@ class PaperTradingAutomationService {
         style,
         limit: candidateLimit,
         lookback_days: toPositiveInt(options.lookback_days, 120, 3650),
+        candidate_pool_limit: toPositiveInt(
+          options.candidate_pool_limit,
+          universe === 'market' ? Math.max(candidateLimit * 12, 240) : Math.max(candidateLimit * 6, 60),
+          1000
+        ),
+        exclude_st: true,
+        min_market_cap_yi: 30,
         include_trend: true,
       });
 

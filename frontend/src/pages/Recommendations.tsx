@@ -20,6 +20,7 @@ import {
   DatabaseOutlined,
   ExperimentOutlined,
   FundProjectionScreenOutlined,
+  GlobalOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
   RobotOutlined,
@@ -45,7 +46,9 @@ interface RecommendationFeedback {
   signal_count: number;
   completed_count: number;
   avg_return_pct: number | null;
+  avg_excess_return_pct?: number | null;
   positive_rate: number | null;
+  excess_positive_rate?: number | null;
   best_horizon?: string;
   score_adjustment: number;
   confidence_boost: number;
@@ -93,8 +96,10 @@ interface SignalStats {
     {
       count: number;
       avg_return_pct: number;
+      avg_excess_return_pct?: number;
       positive_count: number;
       positive_rate?: number;
+      excess_positive_rate?: number;
     }
   >;
 }
@@ -177,14 +182,21 @@ const Recommendations: React.FC = () => {
   const [statsLoading, setStatsLoading] = useState(false);
   const [signalStats, setSignalStats] = useState<SignalStats | null>(null);
   const [style, setStyle] = useState('balanced');
-  const [universe, setUniverse] = useState('favorites');
+  const [universe, setUniverse] = useState('market');
   const [limit, setLimit] = useState(20);
 
   const fetchRecommendations = async () => {
     setLoading(true);
     try {
       const response = await api.get('/ai/recommendations', {
-        params: { style, universe, limit },
+        params: {
+          style,
+          universe,
+          limit,
+          candidate_pool_limit: universe === 'market' ? Math.max(limit * 12, 240) : undefined,
+          min_market_cap_yi: universe === 'market' ? 30 : undefined,
+          exclude_st: true,
+        },
       });
       if (response.data.success) {
         setData(response.data.data);
@@ -356,6 +368,7 @@ const Recommendations: React.FC = () => {
         universe,
         style,
         candidate_limit: Math.max(limit, 10),
+        candidate_pool_limit: universe === 'market' ? Math.max(limit * 12, 240) : undefined,
         lookback_days: 120,
         source_type: 'quant_recommendation',
         limit: 3,
@@ -599,7 +612,7 @@ const Recommendations: React.FC = () => {
           <div>
             <h1 className="page-title-modern">智能候选推荐</h1>
             <p className="page-subtitle-modern">
-              本地行情多因子初筛 + TradingAgents 深度研报，先筛候选池，再做智能体复核
+              全市场机会雷达 + 可解释多因子初筛 + 后验超额收益反哺，形成自动荐股闭环
             </p>
           </div>
           <Space wrap>
@@ -670,12 +683,14 @@ const Recommendations: React.FC = () => {
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
-        message="推荐逻辑说明"
-        description={`该页面使用趋势动量、量能活跃、基础质量、估值安全、风险约束和历史后验反馈进行可解释排序。当前候选估值完整度 ${profileQuality.valuationCompleteness.toFixed(
+        message={universe === 'market' ? '全市场自动发现模式已开启' : '自选池优先模式'}
+        description={`系统会先用趋势动量、量能活跃、基础质量、估值安全、风险约束做初筛，再用历史后验反馈和基准超额收益给候选降权/加权。当前候选估值完整度 ${profileQuality.valuationCompleteness.toFixed(
           0
         )}%，行业完整度 ${profileQuality.industryCompleteness.toFixed(0)}%；已有 ${
           feedbackOverview.tracked
-        } 只候选具备历史推荐反馈，平均反馈调分 ${feedbackOverview.avgAdjustment.toFixed(1)}。`}
+        } 只候选具备历史推荐反馈，平均反馈调分 ${feedbackOverview.avgAdjustment.toFixed(
+          1
+        )}。每日“全市场荐股闭环”会自动归档、验证并接入模拟盘。`}
       />
 
       {autoTradeResult && (
@@ -757,7 +772,7 @@ const Recommendations: React.FC = () => {
             <Statistic
               title="候选样本"
               value={data?.total_candidates || 0}
-              prefix={<ExperimentOutlined />}
+              prefix={universe === 'market' ? <GlobalOutlined /> : <ExperimentOutlined />}
             />
           </Card>
         </Col>
@@ -844,14 +859,20 @@ const Recommendations: React.FC = () => {
                 {horizonStats.map(([horizon, stats]) => (
                   <Card key={horizon} size="small" style={{ minWidth: 132 }}>
                     <Statistic
-                      title={`${horizon} 平均收益`}
-                      value={stats.avg_return_pct}
+                      title={`${horizon} 平均超额`}
+                      value={stats.avg_excess_return_pct ?? stats.avg_return_pct}
                       precision={2}
                       suffix="%"
-                      valueStyle={{ color: stats.avg_return_pct >= 0 ? '#cf1322' : '#3f8600' }}
+                      valueStyle={{
+                        color:
+                          (stats.avg_excess_return_pct ?? stats.avg_return_pct) >= 0
+                            ? '#cf1322'
+                            : '#3f8600',
+                      }}
                     />
                     <Text type="secondary">
-                      胜率 {stats.positive_rate ?? 0}% · 样本 {stats.count}
+                      超额胜率 {stats.excess_positive_rate ?? stats.positive_rate ?? 0}% · 样本{' '}
+                      {stats.count}
                     </Text>
                   </Card>
                 ))}
@@ -893,9 +914,15 @@ const Recommendations: React.FC = () => {
                       />
                       <Paragraph style={{ marginBottom: 0, marginTop: 8 }}>
                         历史信号 {record.feedback.signal_count} 次，完成样本{' '}
-                        {record.feedback.completed_count} 个，平均收益{' '}
-                        {record.feedback.avg_return_pct ?? '--'}%，胜率{' '}
-                        {record.feedback.positive_rate ?? '--'}%。
+                        {record.feedback.completed_count} 个，平均超额{' '}
+                        {record.feedback.avg_excess_return_pct ??
+                          record.feedback.avg_return_pct ??
+                          '--'}
+                        %，超额胜率{' '}
+                        {record.feedback.excess_positive_rate ??
+                          record.feedback.positive_rate ??
+                          '--'}
+                        %。
                       </Paragraph>
                     </Card>
                   </Col>

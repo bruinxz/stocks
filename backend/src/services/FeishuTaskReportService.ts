@@ -37,6 +37,12 @@ export interface PaperTradingPlanReportPayload {
   error?: any;
 }
 
+export interface AutomatedRecommendationLoopReportPayload {
+  record_type?: string;
+  task_type?: string;
+  error?: any;
+}
+
 type TaskLogLike = TaskExecutionLog | Record<string, any> | null | undefined;
 
 class FeishuTaskReportService {
@@ -454,6 +460,128 @@ class FeishuTaskReportService {
         },
         10000
       ),
+      创建时间: this.formatDate(new Date()),
+    });
+  }
+
+  async reportAutomatedRecommendationLoop(
+    result: any,
+    options: AutomatedRecommendationLoopReportPayload = {}
+  ) {
+    const recordType = options.record_type || '全市场荐股闭环';
+    const generated = result?.generated || {};
+    const recommendations = Array.isArray(generated.recommendations)
+      ? generated.recommendations
+      : [];
+    const archive = result?.archive || {};
+    const verification = result?.verification || archive?.verification || {};
+    const paper = result?.paper_trading || {};
+    const qualityOverview = result?.quality_report?.overview || {};
+    const topPicks = recommendations.slice(0, 5);
+    const bestPick = topPicks[0];
+    const markdownMessage = [
+      `## ${recordType}`,
+      '',
+      '### 结论',
+      `- **候选范围**：${result?.universe === 'market' ? '全市场自动扫描' : '自选池'} / ${
+        result?.style || generated.style || 'balanced'
+      }`,
+      `- **评分覆盖**：${generated.analyzed_candidates ?? 0}/${
+        generated.total_candidates ?? 0
+      }；归档 ${archive.total ?? 0} 条；验证完成 ${verification.verified ?? 0} 条`,
+      `- **模拟盘动作**：${
+        paper?.dry_run ? '预演' : paper?.portfolio_id ? '已执行' : '未执行'
+      }；成交/计划 ${paper?.executed ?? paper?.planned ?? 0} 笔；跳过 ${paper?.skipped ?? 0} 条`,
+      qualityOverview?.quality_score !== undefined
+        ? `- **当前量化信号质量**：${qualityOverview.quality_score} 分；闸门 ${
+            qualityOverview.gate?.label || '-'
+          }；5日均超额 ${this.formatPercent(qualityOverview.avg_excess_return_pct)}`
+        : '',
+      bestPick
+        ? `- **首选标的**：${bestPick.name || bestPick.symbol}（${bestPick.symbol}），评分 ${
+            bestPick.score
+          }，动作 ${bestPick.action_label || bestPick.action || '-'}`
+        : '',
+      '',
+      '### 核心候选',
+      topPicks.length
+        ? topPicks
+            .map(
+              (item: any, index: number) =>
+                `${index + 1}. **${item.name || item.symbol}（${item.symbol}）**：评分 ${
+                  item.score
+                }，${item.action_label || item.action || '-'}，风险 ${item.risk_level || '-'}，20日 ${
+                  item.metrics?.return_20d ?? '--'
+                }%，理由：${this.safeText((item.reasons || []).slice(0, 2).join('；'), 260)}`
+            )
+            .join('\n')
+        : '- 暂无候选',
+      '',
+      '### 闭环说明',
+      '- 系统已从全市场候选池自动筛选、归档为可后验验证信号，并可接入 Profit Gate 后进入模拟盘。',
+      '- 下一轮会使用信号后验超额收益继续反哺候选评分，连续跑输市场的标的会被自动降权。',
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    return this.safeAppend({
+      文本: `${recordType} - 候选 ${generated.analyzed_candidates ?? 0}/${
+        generated.total_candidates ?? 0
+      } - 归档 ${archive.total ?? 0} - 模拟盘 ${paper?.executed ?? paper?.planned ?? 0}`,
+      message: markdownMessage,
+      记录类型: recordType,
+      任务名称: '全市场自动荐股闭环',
+      任务类型: options.task_type || 'AUTO_RECOMMENDATION_LOOP',
+      运行状态: options.error ? 'FAILED' : 'COMPLETED',
+      候选范围: result?.universe,
+      推荐风格: result?.style,
+      候选总数: generated.total_candidates,
+      有效评分数: generated.analyzed_candidates,
+      归档信号数: archive.total,
+      新增信号数: archive.created,
+      更新信号数: archive.updated,
+      验证完成数: verification.verified,
+      等待验证数: verification.pending,
+      无数据信号数: verification.no_data,
+      模拟盘成交数: paper?.executed,
+      模拟盘计划数: paper?.planned,
+      模拟盘跳过数: paper?.skipped,
+      质量分: qualityOverview.quality_score,
+      平均收益: this.formatPercent(qualityOverview.avg_return_pct),
+      平均超额收益: this.formatPercent(qualityOverview.avg_excess_return_pct),
+      胜率: this.formatPercent(qualityOverview.positive_rate),
+      超额胜率: this.formatPercent(qualityOverview.excess_positive_rate),
+      最佳标的: bestPick
+        ? `${bestPick.name || bestPick.symbol}(${bestPick.symbol}) ${bestPick.score}`
+        : '',
+      结果摘要: this.safeJson(
+        {
+          generated: {
+            as_of: generated.as_of,
+            universe: generated.universe,
+            style: generated.style,
+            total_candidates: generated.total_candidates,
+            analyzed_candidates: generated.analyzed_candidates,
+            recommendations: topPicks,
+          },
+          archive,
+          verification,
+          paper_trading: {
+            portfolio_id: paper?.portfolio_id,
+            dry_run: paper?.dry_run,
+            scanned: paper?.scanned,
+            eligible: paper?.eligible,
+            executed: paper?.executed,
+            planned: paper?.planned,
+            skipped: paper?.skipped,
+            trades: Array.isArray(paper?.trades) ? paper.trades.slice(0, 10) : [],
+            profit_gate_policy: paper?.profit_gate_policy,
+          },
+          quality_report: result?.quality_report,
+        },
+        10000
+      ),
+      错误信息: this.errorMessage(options.error),
       创建时间: this.formatDate(new Date()),
     });
   }
