@@ -179,6 +179,31 @@ function subtractCalendarDays(date: string, days: number): string {
   return moment(date).subtract(days, 'days').format('YYYY-MM-DD');
 }
 
+function isVerificationMature(signalDate: string, maxHorizon: number): boolean {
+  const elapsedCalendarDays = moment(getChinaToday()).diff(moment(signalDate), 'days');
+  // A股交易日大致占自然日 5/7。给停牌/节假日留缓冲，避免刚生成的信号被误判为 no_data。
+  const matureCalendarDays = Math.ceil(maxHorizon * 1.8) + 3;
+  return elapsedCalendarDays >= matureCalendarDays;
+}
+
+function buildPendingForwardReturns(signal: AIInvestmentSignal, horizons: number[], reason: string) {
+  const signalSide = getSignalSide(signal.normalized_decision || signal.decision);
+  return {
+    decision_side: signalSide,
+    reason,
+    horizons: Object.fromEntries(
+      horizons.map(horizon => [
+        `${horizon}d`,
+        {
+          status: 'pending',
+          horizon,
+          reason,
+        },
+      ])
+    ),
+  };
+}
+
 function getSignalSide(decision?: string): 'long' | 'short' | 'neutral' {
   const normalized = String(decision || '').toLowerCase();
   if (
@@ -737,7 +762,14 @@ export class AIInvestmentSignalService {
     });
 
     if (bars.length === 0) {
-      await signal.update({ verification_status: 'no_data', verified_at: new Date() });
+      const mature = isVerificationMature(signal.signal_date, Math.max(...horizons));
+      await signal.update({
+        forward_returns: mature
+          ? signal.forward_returns
+          : buildPendingForwardReturns(signal, horizons, 'waiting_for_market_data'),
+        verification_status: mature ? 'no_data' : 'pending',
+        verified_at: new Date(),
+      });
       return signal;
     }
 
@@ -869,10 +901,18 @@ export class AIInvestmentSignalService {
       item.bar_count_after_signal = bars.length;
       if (bars.length === 0) {
         item.issue = 'missing_bars';
-        item.message = '信号日之后没有任何日线行情，需补齐历史行情';
+        const mature = isVerificationMature(signal.signal_date, maxHorizon);
+        item.issue = mature ? 'missing_bars' : 'waiting_for_market_data';
+        item.message = mature
+          ? '信号日之后没有任何日线行情，需补齐历史行情'
+          : '信号刚生成或后验周期未成熟，等待行情同步后再验证';
         summary.missing_bars++;
-        summary.no_data_signals++;
-        missingSymbols.add(symbol);
+        if (mature) {
+          summary.no_data_signals++;
+          missingSymbols.add(symbol);
+        } else {
+          summary.pending_signals++;
+        }
         details.push(item);
         continue;
       }
