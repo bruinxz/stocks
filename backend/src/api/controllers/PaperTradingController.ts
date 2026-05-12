@@ -7,6 +7,7 @@ import { Stock } from '../../models/Stock';
 import { DataService } from '../../data/services/DataService';
 import { paperTradingAutomationService } from '../../services/PaperTradingAutomationService';
 import { paperTradingAttributionService } from '../../services/PaperTradingAttributionService';
+import { paperTradingPlanService } from '../../services/PaperTradingPlanService';
 import { logger } from '../../utils/logger';
 
 export class PaperTradingController {
@@ -433,6 +434,47 @@ export class PaperTradingController {
       });
     } catch (error: any) {
       logger.error('上报模拟盘收益归因失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
+  // 生成模拟盘盘前/盘后交易计划
+  getTradingPlan = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const user = (req as any).user;
+      const result = await paperTradingPlanService.generatePlan({
+        ...req.query,
+        user_id: user.id,
+      });
+
+      res.json({
+        success: true,
+        data: result,
+        message: `交易计划生成完成：动作 ${result.summary.action_count} 条，紧急 ${result.summary.urgent_count} 条`,
+      });
+    } catch (error: any) {
+      logger.error('生成模拟盘交易计划失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
+  // 生成交易计划并写入飞书多维表格
+  reportTradingPlan = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const user = (req as any).user;
+      const result = await paperTradingPlanService.generatePlan({
+        ...req.body,
+        user_id: user.id,
+        report_to_feishu: true,
+      });
+
+      res.json({
+        success: true,
+        data: result,
+        message: `交易计划已上报飞书：动作 ${result.summary.action_count} 条，紧急 ${result.summary.urgent_count} 条`,
+      });
+    } catch (error: any) {
+      logger.error('上报模拟盘交易计划失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   };

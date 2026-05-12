@@ -26,9 +26,17 @@ export interface RecommendationPerformanceReportPayload {
   dashboard?: any;
 }
 
+export interface PaperTradingPlanReportPayload {
+  record_type?: string;
+  task_type?: string;
+  error?: any;
+}
+
 type TaskLogLike = TaskExecutionLog | Record<string, any> | null | undefined;
 
 class FeishuTaskReportService {
+  private readonly defaultMessageMaxLength = 90000;
+
   async reportStockAnalysis(payload: StockAnalysisReportPayload) {
     const markdownMessage = [
       `## AI分析结果：${payload.name || payload.symbol}（${payload.symbol}）`,
@@ -449,6 +457,57 @@ class FeishuTaskReportService {
     });
   }
 
+  async reportPaperTradingPlan(result: any, options: PaperTradingPlanReportPayload = {}) {
+    const recordType = options.record_type || '模拟盘交易计划';
+    const summary = result?.summary || {};
+    const actions = Array.isArray(result?.actions) ? result.actions : [];
+    const firstAction = actions[0] || {};
+    const markdownMessage = this.buildPaperTradingPlanMarkdown(result, options, recordType);
+
+    return this.safeAppend({
+      文本: `${recordType} - 动作 ${summary.action_count ?? actions.length} 条 / 紧急 ${
+        summary.urgent_count ?? 0
+      } 条 - ${this.formatDate(new Date())}`,
+      message: markdownMessage,
+      记录类型: recordType,
+      任务名称: '模拟盘盘前盘后交易计划',
+      任务类型: options.task_type || 'PAPER_TRADING_DAILY_PLAN',
+      运行状态: options.error ? 'FAILED' : 'COMPLETED',
+      模拟盘ID: result?.portfolio_id,
+      用户ID: result?.user_id,
+      动作总数: summary.action_count,
+      紧急动作数: summary.urgent_count,
+      退出动作数: summary.exit_count,
+      入场动作数: summary.entry_count,
+      观察动作数: summary.monitor_count,
+      复盘动作数: summary.review_count,
+      当前现金: summary.current_cash,
+      当前总资产: summary.total_value,
+      卖出回款计划: summary.planned_sell_cash_inflow,
+      买入用资计划: summary.planned_buy_cash_outflow,
+      计划后现金: summary.projected_cash_after_plan,
+      建议最低评分: summary.recommended_min_score,
+      实际最低评分: summary.effective_min_score,
+      推荐风险等级: Array.isArray(summary.recommended_allowed_risk_levels)
+        ? summary.recommended_allowed_risk_levels.join(',')
+        : '',
+      股票代码: firstAction?.symbol,
+      股票名称: firstAction?.name,
+      动作标签: firstAction?.action_label,
+      结果摘要: this.safeJson(
+        {
+          summary,
+          actions: actions.slice(0, 20),
+          attribution_summary: result?.attribution?.summary,
+          entry_feedback_policy: result?.entry_preview?.feedback_policy,
+        },
+        10000
+      ),
+      错误信息: this.errorMessage(options.error),
+      创建时间: this.formatDate(new Date()),
+    });
+  }
+
   private async safeAppend(fields: Record<string, any>) {
     try {
       const result = await feishuBitableClient.createRecord(fields);
@@ -496,6 +555,33 @@ class FeishuTaskReportService {
       }
     }
     return text.length > maxLength ? `${text.substring(0, maxLength)}...` : text;
+  }
+
+  private getMessageMaxLength(): number {
+    const configured = Number(process.env.FEISHU_MESSAGE_MAX_LENGTH);
+    if (Number.isFinite(configured) && configured > 10000) {
+      return Math.min(Math.floor(configured), 200000);
+    }
+    return this.defaultMessageMaxLength;
+  }
+
+  private safeMarkdownMessage(value: any): string {
+    if (value === undefined || value === null) return '';
+    const text =
+      typeof value === 'string'
+        ? value
+        : (() => {
+            try {
+              return JSON.stringify(value, null, 2);
+            } catch (error) {
+              return String(value);
+            }
+          })();
+    const maxLength = this.getMessageMaxLength();
+    if (text.length <= maxLength) return text;
+
+    const notice = `\n\n> ⚠️ message 原始长度 ${text.length} 字符，超过当前 FEISHU_MESSAGE_MAX_LENGTH=${maxLength}。为避免飞书单元格写入失败，已保留前 ${maxLength} 字符；如需完整超长明细，请调高 FEISHU_MESSAGE_MAX_LENGTH 或查看“结果摘要/日志”。`;
+    return `${text.substring(0, Math.max(0, maxLength - notice.length))}${notice}`;
   }
 
   private buildTaskMarkdownMessage(log: any, options: any, recordType: string): string {
@@ -577,7 +663,7 @@ class FeishuTaskReportService {
       lines.push('', '### 错误信息', errorText);
     }
 
-    return this.safeText(lines.filter(Boolean).join('\n'), 10000);
+    return this.safeMarkdownMessage(lines.filter(Boolean).join('\n'));
   }
 
   private buildResultDetailLines(result: any): string[] {
@@ -723,7 +809,7 @@ class FeishuTaskReportService {
       '> 说明：该记录为模拟盘验证闭环，不代表真实账户交易建议；真实交易前仍需人工复核仓位、流动性和风险。'
     );
 
-    return this.safeText(lines.filter(Boolean).join('\n'), 10000);
+    return this.safeMarkdownMessage(lines.filter(Boolean).join('\n'));
   }
 
   private buildPaperTradingRiskMarkdown(
@@ -826,7 +912,7 @@ class FeishuTaskReportService {
       '> 说明：风控退出基于模拟盘持仓、最新本地行情和已归档信号自动执行；真实交易前仍需人工复核。'
     );
 
-    return this.safeText(lines.filter(Boolean).join('\n'), 10000);
+    return this.safeMarkdownMessage(lines.filter(Boolean).join('\n'));
   }
 
   private buildPaperTradingAttributionMarkdown(
@@ -965,7 +1051,103 @@ class FeishuTaskReportService {
       '> 说明：本报告用于把推荐信号、模拟盘买卖和真实收益结果连接起来，帮助自动调优选股阈值；不代表真实账户交易指令。'
     );
 
-    return this.safeText(lines.filter(Boolean).join('\n'), 10000);
+    return this.safeMarkdownMessage(lines.filter(Boolean).join('\n'));
+  }
+
+  private buildPaperTradingPlanMarkdown(
+    result: any,
+    options: { error?: any },
+    recordType: string
+  ): string {
+    const summary = result?.summary || {};
+    const actions = Array.isArray(result?.actions) ? result.actions : [];
+    const attribution = result?.attribution || {};
+    const feedback = attribution?.feedback || {};
+    const status = options.error ? 'FAILED' : 'COMPLETED';
+
+    const lines = [
+      `## ${recordType}`,
+      '',
+      `- **运行状态**：${status}`,
+      result?.portfolio_id ? `- **模拟盘ID**：${result.portfolio_id}` : '',
+      result?.user_id ? `- **用户ID**：${result.user_id}` : '',
+      result?.generated_at ? `- **生成时间**：${result.generated_at}` : '',
+      '',
+      '### 今日执行总览',
+      `- **动作总数**：${summary.action_count ?? actions.length}`,
+      `- **紧急动作**：${summary.urgent_count ?? 0}`,
+      `- **退出 / 入场 / 观察 / 复盘**：${summary.exit_count ?? 0} / ${
+        summary.entry_count ?? 0
+      } / ${summary.monitor_count ?? 0} / ${summary.review_count ?? 0}`,
+      `- **当前现金**：¥${this.formatMoney(summary.current_cash)}`,
+      `- **计划卖出回款**：${this.formatSignedMoney(summary.planned_sell_cash_inflow)}`,
+      `- **计划买入用资**：${this.formatSignedMoney(-Number(summary.planned_buy_cash_outflow || 0))}`,
+      `- **计划后现金**：¥${this.formatMoney(summary.projected_cash_after_plan)}`,
+      '',
+      '### 归因反馈参数',
+      `- **闭环样本数**：${summary.generated_from_closed_samples ?? 0}`,
+      `- **建议最低评分**：${summary.recommended_min_score ?? '--'}`,
+      `- **实际最低评分**：${summary.effective_min_score ?? '--'}`,
+      `- **建议风险等级**：${
+        Array.isArray(summary.recommended_allowed_risk_levels)
+          ? summary.recommended_allowed_risk_levels.join('、')
+          : '--'
+      }`,
+    ];
+
+    if (Array.isArray(feedback.insights) && feedback.insights.length > 0) {
+      lines.push('', '### 计划依据');
+      feedback.insights.slice(0, 6).forEach((item: string) => {
+        lines.push(`- ${this.safeText(item, 600)}`);
+      });
+    }
+
+    const grouped = {
+      critical: actions.filter((action: any) => action.priority === 'critical'),
+      high: actions.filter((action: any) => action.priority === 'high'),
+      medium: actions.filter((action: any) => action.priority === 'medium'),
+      low: actions.filter((action: any) => action.priority === 'low'),
+    };
+
+    const renderActionGroup = (title: string, list: any[]) => {
+      if (!list.length) return;
+      lines.push('', `### ${title}`);
+      list.slice(0, 8).forEach((item: any, index: number) => {
+        lines.push(
+          `${index + 1}. **${item.action_label || item.action_type}**${
+            item.symbol ? ` - ${item.name || item.symbol}（${item.symbol}）` : ''
+          }`,
+          `   - 原因：${item.reason || '-'}`,
+          item.reference_price !== undefined
+            ? `   - 参考价：¥${this.formatMoney(item.reference_price)}${
+                item.quantity ? `；数量：${item.quantity} 股` : ''
+              }`
+            : '',
+          item.estimated_cash_change !== undefined
+            ? `   - 现金影响：${this.formatSignedMoney(item.estimated_cash_change)}`
+            : '',
+          ...(Array.isArray(item.instructions)
+            ? item.instructions.slice(0, 3).map((text: string) => `   - ${text}`)
+            : [])
+        );
+      });
+    };
+
+    renderActionGroup('紧急动作', [...grouped.critical, ...grouped.high]);
+    renderActionGroup('一般动作', grouped.medium);
+    renderActionGroup('低优先级复盘', grouped.low);
+
+    const errorText = this.errorMessage(options.error);
+    if (errorText) {
+      lines.push('', '### 错误信息', errorText);
+    }
+
+    lines.push(
+      '',
+      '> 说明：该计划用于把风控退出、候选入场和收益归因合成一张执行清单，便于盘前/盘后人工复核。'
+    );
+
+    return this.safeMarkdownMessage(lines.filter(Boolean).join('\n'));
   }
 
   private appendAttributionGroupLines(lines: string[], title: string, groups: any[]): void {

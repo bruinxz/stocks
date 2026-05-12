@@ -193,6 +193,49 @@ interface PaperTradingAttribution {
   };
 }
 
+interface TradingPlanAction {
+  action_type: 'exit' | 'entry' | 'monitor' | 'review';
+  priority: 'critical' | 'high' | 'medium' | 'low';
+  symbol?: string;
+  name?: string;
+  action_label: string;
+  reason: string;
+  instructions: string[];
+  quantity?: number;
+  reference_price?: number;
+  estimated_amount?: number;
+  estimated_cash_change?: number;
+  estimated_pnl?: number;
+  estimated_pnl_pct?: number;
+  holding_days?: number;
+  score?: number;
+  risk_level?: string;
+  tags?: string[];
+}
+
+interface PaperTradingPlan {
+  generated_at: string;
+  summary: {
+    action_count: number;
+    urgent_count: number;
+    exit_count: number;
+    entry_count: number;
+    monitor_count: number;
+    review_count: number;
+    current_cash: number;
+    total_value: number;
+    position_value: number;
+    planned_sell_cash_inflow: number;
+    planned_buy_cash_outflow: number;
+    projected_cash_after_plan: number;
+    recommended_min_score?: number;
+    effective_min_score?: number;
+    recommended_allowed_risk_levels?: string[];
+    generated_from_closed_samples: number;
+  };
+  actions: TradingPlanAction[];
+}
+
 const formatMoney = (value?: number | null) =>
   `¥${Number(value || 0).toLocaleString(undefined, {
     minimumFractionDigits: 2,
@@ -211,6 +254,24 @@ const formatSignedMoney = (value?: number | null) => {
 const formatPercent = (value?: number | null) => `${Number(value || 0).toFixed(2)}%`;
 const pnlColor = (value?: number | null) => (Number(value || 0) >= 0 ? '#cf1322' : '#16a34a');
 const clampPercent = (value?: number | null) => Math.max(0, Math.min(100, Number(value || 0)));
+const priorityLabelMap: Record<TradingPlanAction['priority'], string> = {
+  critical: '紧急',
+  high: '高',
+  medium: '中',
+  low: '低',
+};
+const priorityColorMap: Record<TradingPlanAction['priority'], string> = {
+  critical: 'red',
+  high: 'volcano',
+  medium: 'gold',
+  low: 'blue',
+};
+const actionTypeLabelMap: Record<TradingPlanAction['action_type'], string> = {
+  exit: '退出',
+  entry: '入场',
+  monitor: '观察',
+  review: '复盘',
+};
 
 const PaperTrading: React.FC = () => {
   const [portfolio, setPortfolio] = useState<PortfolioInfo | null>(null);
@@ -239,6 +300,9 @@ const PaperTrading: React.FC = () => {
   const [attribution, setAttribution] = useState<PaperTradingAttribution | null>(null);
   const [attributionLoading, setAttributionLoading] = useState(false);
   const [attributionReportLoading, setAttributionReportLoading] = useState(false);
+  const [tradingPlan, setTradingPlan] = useState<PaperTradingPlan | null>(null);
+  const [tradingPlanLoading, setTradingPlanLoading] = useState(false);
+  const [tradingPlanReportLoading, setTradingPlanReportLoading] = useState(false);
 
   const fetchPortfolio = async () => {
     setLoading(true);
@@ -260,6 +324,7 @@ const PaperTrading: React.FC = () => {
     fetchStocks(''); // 初始加载股票
     fetchSnapshots();
     fetchAttribution(true);
+    fetchTradingPlan(true);
   }, []);
 
   const fetchSnapshots = async () => {
@@ -365,6 +430,60 @@ const PaperTrading: React.FC = () => {
     }
   };
 
+  const fetchTradingPlan = async (silent = false) => {
+    setTradingPlanLoading(true);
+    try {
+      const response = await api.get('/paper-trading/plan', {
+        params: {
+          include_entries: true,
+          include_exits: true,
+          include_monitor: true,
+          source_type: 'quant_recommendation',
+          limit: 30,
+          entry_limit: 3,
+          scan_limit: 100,
+          min_score: 72,
+          max_positions: 8,
+          use_attribution_feedback: true,
+        },
+      });
+      if (response.data.success) {
+        setTradingPlan(response.data.data);
+        if (!silent) message.success('交易计划已刷新');
+      }
+    } catch (error: any) {
+      if (!silent) message.error(error.response?.data?.message || '获取交易计划失败');
+    } finally {
+      setTradingPlanLoading(false);
+    }
+  };
+
+  const reportTradingPlan = async () => {
+    setTradingPlanReportLoading(true);
+    try {
+      const response = await api.post('/paper-trading/plan/report', {
+        include_entries: true,
+        include_exits: true,
+        include_monitor: true,
+        source_type: 'quant_recommendation',
+        limit: 30,
+        entry_limit: 3,
+        scan_limit: 100,
+        min_score: 72,
+        max_positions: 8,
+        use_attribution_feedback: true,
+      });
+      if (response.data.success) {
+        setTradingPlan(response.data.data);
+        message.success('交易计划已写入飞书多维表格');
+      }
+    } catch (error: any) {
+      message.error(error.response?.data?.message || '交易计划上报失败');
+    } finally {
+      setTradingPlanReportLoading(false);
+    }
+  };
+
   const runRiskCheck = async (dryRun: boolean) => {
     const setRunning = dryRun ? setRiskPreviewLoading : setRiskCheckLoading;
     setRunning(true);
@@ -389,7 +508,12 @@ const PaperTrading: React.FC = () => {
           : `风控检查完成：模拟卖出 ${result.exited || 0} 笔，继续持有 ${result.held || 0} 笔`
       );
       if (!dryRun) {
-        await Promise.all([fetchPortfolio(), fetchSnapshots(), fetchAttribution(true)]);
+        await Promise.all([
+          fetchPortfolio(),
+          fetchSnapshots(),
+          fetchAttribution(true),
+          fetchTradingPlan(true),
+        ]);
       }
     } catch (error: any) {
       message.error(error.response?.data?.message || '风控检查失败');
@@ -404,6 +528,13 @@ const PaperTrading: React.FC = () => {
   const isPositive = total_return >= 0;
   const attributionSummary = attribution?.summary;
   const attributionFeedback = attribution?.feedback;
+  const tradingPlanSummary = tradingPlan?.summary;
+  const urgentPlanActions = (tradingPlan?.actions || []).filter(action =>
+    ['critical', 'high'].includes(action.priority)
+  );
+  const normalPlanActions = (tradingPlan?.actions || []).filter(action =>
+    ['medium', 'low'].includes(action.priority)
+  );
 
   const columns = [
     {
@@ -731,6 +862,161 @@ const PaperTrading: React.FC = () => {
           </Card>
         </Col>
       </Row>
+
+      <Card
+        className="modern-card paper-plan-card"
+        variant="borderless"
+        loading={tradingPlanLoading && !tradingPlan}
+        style={{ marginBottom: 24 }}
+      >
+        <div className="paper-plan-header">
+          <div>
+            <Tag color="cyan" icon={<ThunderboltOutlined />}>
+              Execution Plan
+            </Tag>
+            <h2>今日交易计划</h2>
+            <p>自动合并风控退出、候选入场、持仓观察和归因反馈，输出可执行的盘前/盘后清单。</p>
+          </div>
+          <Space wrap>
+            <Button
+              icon={<ReloadOutlined />}
+              onClick={() => fetchTradingPlan(false)}
+              loading={tradingPlanLoading}
+            >
+              刷新计划
+            </Button>
+            <Button
+              type="primary"
+              icon={<CloudUploadOutlined />}
+              onClick={reportTradingPlan}
+              loading={tradingPlanReportLoading}
+            >
+              上报飞书
+            </Button>
+          </Space>
+        </div>
+
+        <Row gutter={[14, 14]} className="paper-plan-scoreboard">
+          <Col xs={12} md={4}>
+            <div className="plan-score">
+              <span>动作</span>
+              <strong>{tradingPlanSummary?.action_count || 0}</strong>
+            </div>
+          </Col>
+          <Col xs={12} md={4}>
+            <div className="plan-score danger">
+              <span>紧急</span>
+              <strong>{tradingPlanSummary?.urgent_count || 0}</strong>
+            </div>
+          </Col>
+          <Col xs={12} md={4}>
+            <div className="plan-score">
+              <span>退出</span>
+              <strong>{tradingPlanSummary?.exit_count || 0}</strong>
+            </div>
+          </Col>
+          <Col xs={12} md={4}>
+            <div className="plan-score">
+              <span>入场</span>
+              <strong>{tradingPlanSummary?.entry_count || 0}</strong>
+            </div>
+          </Col>
+          <Col xs={12} md={4}>
+            <div className="plan-score">
+              <span>计划后现金</span>
+              <strong>{formatMoney(tradingPlanSummary?.projected_cash_after_plan)}</strong>
+            </div>
+          </Col>
+          <Col xs={12} md={4}>
+            <div className="plan-score">
+              <span>有效评分</span>
+              <strong>{tradingPlanSummary?.effective_min_score || 72}</strong>
+            </div>
+          </Col>
+        </Row>
+
+        <Row gutter={[18, 18]} style={{ marginTop: 18 }}>
+          <Col xs={24} lg={12}>
+            <div className="plan-lane plan-lane-hot">
+              <div className="plan-lane-title">优先执行</div>
+              {urgentPlanActions.length > 0 ? (
+                urgentPlanActions.slice(0, 6).map((action, index) => (
+                  <div className="plan-action-card" key={`urgent-${index}-${action.symbol || ''}`}>
+                    <div className="plan-action-topline">
+                      <Space wrap>
+                        <Tag color={priorityColorMap[action.priority]}>
+                          {priorityLabelMap[action.priority]}
+                        </Tag>
+                        <Tag>{actionTypeLabelMap[action.action_type]}</Tag>
+                        {action.symbol && (
+                          <Text strong>
+                            {action.name || action.symbol}（{action.symbol}）
+                          </Text>
+                        )}
+                      </Space>
+                      {action.estimated_cash_change !== undefined && (
+                        <Text style={{ color: pnlColor(action.estimated_cash_change) }}>
+                          {formatSignedMoney(action.estimated_cash_change)}
+                        </Text>
+                      )}
+                    </div>
+                    <div className="plan-action-title">{action.action_label}</div>
+                    <p>{action.reason}</p>
+                    <ul>
+                      {(action.instructions || []).slice(0, 3).map((text, itemIndex) => (
+                        <li key={itemIndex}>{text}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ))
+              ) : (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无紧急动作" />
+              )}
+            </div>
+          </Col>
+          <Col xs={24} lg={12}>
+            <div className="plan-lane">
+              <div className="plan-lane-title">观察与复盘</div>
+              {normalPlanActions.length > 0 ? (
+                normalPlanActions.slice(0, 6).map((action, index) => (
+                  <div
+                    className="plan-action-card calm"
+                    key={`normal-${index}-${action.symbol || ''}`}
+                  >
+                    <div className="plan-action-topline">
+                      <Space wrap>
+                        <Tag color={priorityColorMap[action.priority]}>
+                          {priorityLabelMap[action.priority]}
+                        </Tag>
+                        <Tag>{actionTypeLabelMap[action.action_type]}</Tag>
+                        {action.symbol && (
+                          <Text strong>
+                            {action.name || action.symbol}（{action.symbol}）
+                          </Text>
+                        )}
+                      </Space>
+                      {action.estimated_pnl_pct !== undefined && (
+                        <Text style={{ color: pnlColor(action.estimated_pnl_pct) }}>
+                          {formatPercent(action.estimated_pnl_pct)}
+                        </Text>
+                      )}
+                    </div>
+                    <div className="plan-action-title">{action.action_label}</div>
+                    <p>{action.reason}</p>
+                    <ul>
+                      {(action.instructions || []).slice(0, 2).map((text, itemIndex) => (
+                        <li key={itemIndex}>{text}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ))
+              ) : (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无观察/复盘动作" />
+              )}
+            </div>
+          </Col>
+        </Row>
+      </Card>
 
       <Card
         className="modern-card paper-attribution-card"

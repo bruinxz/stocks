@@ -10,6 +10,7 @@ import { aiInvestmentSignalService } from './AIInvestmentSignalService';
 import { feishuTaskReportService } from './FeishuTaskReportService';
 import { paperTradingAutomationService } from './PaperTradingAutomationService';
 import { paperTradingAttributionService } from './PaperTradingAttributionService';
+import { paperTradingPlanService } from './PaperTradingPlanService';
 import moment from 'moment-timezone';
 import { Op } from 'sequelize';
 
@@ -480,6 +481,106 @@ class SchedulerService {
         logger.info(
           `模拟盘收益归因完成。闭环 ${result.summary.closed_count}，持仓 ${result.summary.open_count}，胜率 ${result.summary.win_rate}%`
         );
+      } else if (task.type === 'PAPER_TRADING_DAILY_PLAN') {
+        const result = await paperTradingPlanService.generatePlan({
+          username: parameters.username,
+          include_entries:
+            parameters.include_entries !== undefined
+              ? Boolean(parameters.include_entries)
+              : parameters.includeEntries !== undefined
+                ? Boolean(parameters.includeEntries)
+                : true,
+          include_exits:
+            parameters.include_exits !== undefined
+              ? Boolean(parameters.include_exits)
+              : parameters.includeExits !== undefined
+                ? Boolean(parameters.includeExits)
+                : true,
+          include_monitor:
+            parameters.include_monitor !== undefined
+              ? Boolean(parameters.include_monitor)
+              : parameters.includeMonitor !== undefined
+                ? Boolean(parameters.includeMonitor)
+                : true,
+          report_to_feishu:
+            parameters.report_to_feishu !== undefined
+              ? Boolean(parameters.report_to_feishu)
+              : parameters.reportToFeishu !== undefined
+                ? Boolean(parameters.reportToFeishu)
+                : true,
+          source_type: parameters.source_type || parameters.sourceType,
+          limit: this.toPositiveInt(parameters.limit, 30, 100),
+          entry_limit: this.toPositiveInt(parameters.entry_limit || parameters.entryLimit, 3, 20),
+          scan_limit: this.toPositiveInt(
+            this.getParameterValue(parameters, 'scan_limit', 'scanLimit'),
+            80,
+            500
+          ),
+          min_score: Number(parameters.min_score || parameters.minScore || 72),
+          max_positions: this.toPositiveInt(
+            this.getParameterValue(parameters, 'max_positions', 'maxPositions'),
+            8,
+            30
+          ),
+          default_position_pct: Number(
+            parameters.default_position_pct || parameters.defaultPositionPct || 5
+          ),
+          max_position_pct: Number(parameters.max_position_pct || parameters.maxPositionPct || 10),
+          min_trade_amount: Number(
+            parameters.min_trade_amount || parameters.minTradeAmount || 3000
+          ),
+          allowed_risk_levels: parameters.allowed_risk_levels ||
+            parameters.allowedRiskLevels || ['low', 'medium'],
+          use_attribution_feedback:
+            parameters.use_attribution_feedback !== undefined
+              ? Boolean(parameters.use_attribution_feedback)
+              : parameters.useAttributionFeedback !== undefined
+                ? Boolean(parameters.useAttributionFeedback)
+                : true,
+          enable_stop_loss:
+            parameters.enable_stop_loss !== undefined
+              ? Boolean(parameters.enable_stop_loss)
+              : parameters.enableStopLoss !== undefined
+                ? Boolean(parameters.enableStopLoss)
+                : true,
+          enable_take_profit:
+            parameters.enable_take_profit !== undefined
+              ? Boolean(parameters.enable_take_profit)
+              : parameters.enableTakeProfit !== undefined
+                ? Boolean(parameters.enableTakeProfit)
+                : true,
+          enable_sell_signals:
+            parameters.enable_sell_signals !== undefined
+              ? Boolean(parameters.enable_sell_signals)
+              : parameters.enableSellSignals !== undefined
+                ? Boolean(parameters.enableSellSignals)
+                : true,
+          default_stop_loss_pct: Number(
+            parameters.default_stop_loss_pct || parameters.defaultStopLossPct || 7
+          ),
+          default_take_profit_pct: Number(
+            parameters.default_take_profit_pct || parameters.defaultTakeProfitPct || 14
+          ),
+          max_hold_days: Number(parameters.max_hold_days || parameters.maxHoldDays || 20),
+          min_sell_signal_score: Number(
+            parameters.min_sell_signal_score || parameters.minSellSignalScore || 60
+          ),
+          sell_signal_source_type:
+            parameters.sell_signal_source_type || parameters.sellSignalSourceType || 'all',
+        });
+
+        await executionLog.update({
+          total_items: result.summary.action_count,
+          completed_items: result.summary.action_count,
+          failed_items: result.summary.urgent_count,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: null,
+        });
+
+        logger.info(
+          `模拟盘交易计划完成。动作 ${result.summary.action_count}，紧急 ${result.summary.urgent_count}，入场 ${result.summary.entry_count}，退出 ${result.summary.exit_count}`
+        );
       } else if (task.type === 'AI_DAILY_SCREENER') {
         logger.info('触发 AI_DAILY_SCREENER 任务，使用多因子候选池进行 TradingAgents 深度分析...');
 
@@ -762,6 +863,38 @@ class SchedulerService {
           username: 'lym',
           include_open: true,
           limit: 2000,
+          report_to_feishu: true,
+        },
+      },
+      {
+        name: '模拟盘交易计划报告',
+        type: 'PAPER_TRADING_DAILY_PLAN',
+        cron_expression: '10 16 * * 1-5',
+        is_active: true,
+        parameters: {
+          username: 'lym',
+          include_entries: true,
+          include_exits: true,
+          include_monitor: true,
+          source_type: 'quant_recommendation',
+          limit: 30,
+          entry_limit: 3,
+          scan_limit: 100,
+          min_score: 72,
+          max_positions: 8,
+          default_position_pct: 5,
+          max_position_pct: 10,
+          min_trade_amount: 3000,
+          allowed_risk_levels: ['low', 'medium'],
+          use_attribution_feedback: true,
+          enable_stop_loss: true,
+          enable_take_profit: true,
+          enable_sell_signals: true,
+          default_stop_loss_pct: 7,
+          default_take_profit_pct: 14,
+          max_hold_days: 20,
+          min_sell_signal_score: 60,
+          sell_signal_source_type: 'all',
           report_to_feishu: true,
         },
       },

@@ -78,6 +78,20 @@ router.post(
 );
 
 /**
+ * @route GET /api/paper-trading/plan
+ * @desc 生成模拟盘盘前/盘后交易计划
+ * @access Private
+ */
+router.get('/plan', authController.authenticate, paperTradingController.getTradingPlan);
+
+/**
+ * @route POST /api/paper-trading/plan/report
+ * @desc 生成模拟盘交易计划并写入飞书多维表格
+ * @access Private
+ */
+router.post('/plan/report', authController.authenticate, paperTradingController.reportTradingPlan);
+
+/**
  * @route GET /api/paper-trading/history
  * @desc 获取模拟盘的交易流水
  * @access Private

@@ -943,6 +943,159 @@ a {
   background: rgba(220, 252, 231, 0.86) !important;
 }
 
+.paper-plan-card {
+  background:
+    radial-gradient(circle at 4% 8%, rgba(0, 167, 194, 0.2), transparent 30%),
+    radial-gradient(circle at 92% 0%, rgba(29, 95, 208, 0.18), transparent 34%),
+    linear-gradient(145deg, rgba(7, 17, 31, 0.97), rgba(12, 27, 46, 0.94)) !important;
+  border-color: rgba(141, 214, 228, 0.16) !important;
+  color: #e8f3ff;
+}
+
+.paper-plan-card::before {
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 30px 30px;
+  opacity: 0.5;
+}
+
+.paper-plan-header {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 18px;
+}
+
+.paper-plan-header h2 {
+  margin: 10px 0 6px;
+  color: #f8fbff;
+  font-family: var(--font-display);
+  font-size: 25px;
+  line-height: 1.1;
+  letter-spacing: -0.04em;
+}
+
+.paper-plan-header p {
+  max-width: 780px;
+  margin: 0;
+  color: rgba(226, 236, 247, 0.74);
+  line-height: 1.7;
+}
+
+.paper-plan-scoreboard {
+  position: relative;
+  z-index: 1;
+}
+
+.plan-score {
+  min-height: 98px;
+  padding: 15px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.075);
+  border: 1px solid rgba(255, 255, 255, 0.105);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.plan-score.danger {
+  background: rgba(239, 68, 68, 0.13);
+  border-color: rgba(248, 113, 113, 0.24);
+}
+
+.plan-score span {
+  display: block;
+  margin-bottom: 10px;
+  color: rgba(226, 236, 247, 0.62);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.plan-score strong {
+  display: block;
+  color: #ffffff;
+  font-family: var(--font-display);
+  font-size: 24px;
+  line-height: 1.05;
+  letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums;
+}
+
+.plan-lane {
+  position: relative;
+  z-index: 1;
+  min-height: 280px;
+  height: 100%;
+  padding: 16px;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.075);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.plan-lane-hot {
+  background:
+    radial-gradient(circle at 100% 0%, rgba(248, 113, 113, 0.15), transparent 34%),
+    rgba(255, 255, 255, 0.075);
+}
+
+.plan-lane-title {
+  margin-bottom: 12px;
+  color: #f8fbff;
+  font-weight: 900;
+  letter-spacing: -0.01em;
+}
+
+.plan-action-card {
+  margin-bottom: 12px;
+  padding: 14px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: var(--text-main);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.14);
+}
+
+.plan-action-card.calm {
+  background: rgba(248, 250, 252, 0.9);
+  box-shadow: none;
+}
+
+.plan-action-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.plan-action-title {
+  margin-bottom: 6px;
+  color: var(--text-main);
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.plan-action-card p {
+  margin: 0 0 8px;
+  color: var(--text-secondary);
+  line-height: 1.58;
+}
+
+.plan-action-card ul {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-secondary);
+}
+
+.plan-action-card li {
+  margin: 4px 0;
+  line-height: 1.52;
+}
+
 .ant-btn {
   font-weight: 600;
   box-shadow: none;
