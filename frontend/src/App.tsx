@@ -44,6 +44,7 @@ import TaskScheduler from './pages/TaskScheduler';
 import Screener from './pages/Screener';
 import Recommendations from './pages/Recommendations';
 import RecommendationPerformance from './pages/RecommendationPerformance';
+import RecommendationTradeOutcomes from './pages/RecommendationTradeOutcomes';
 import PaperTrading from './pages/PaperTrading';
 import RiskAlerts from './pages/RiskAlerts';
 import TradingJournal from './pages/TradingJournal';
@@ -56,6 +57,7 @@ import {
   AlertOutlined,
   BookOutlined,
   ThunderboltOutlined,
+  NodeIndexOutlined,
 } from '@ant-design/icons';
 
 import type { MenuProps } from 'antd';
@@ -152,6 +154,11 @@ const AppContent: React.FC = () => {
           key: '/recommendation-performance',
           icon: <FundProjectionScreenOutlined />,
           label: <Link to="/recommendation-performance">推荐绩效实验室</Link>,
+        },
+        {
+          key: '/recommendation-trade-outcomes',
+          icon: <NodeIndexOutlined />,
+          label: <Link to="/recommendation-trade-outcomes">交易收益闭环</Link>,
         },
         {
           key: '/screener',
@@ -397,6 +404,14 @@ const AppContent: React.FC = () => {
               element={
                 <ProtectedRoute>
                   <RecommendationPerformance />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/recommendation-trade-outcomes"
+              element={
+                <ProtectedRoute>
+                  <RecommendationTradeOutcomes />
                 </ProtectedRoute>
               }
             />

@@ -67,6 +67,39 @@ router.post('/risk-check', authController.authenticate, paperTradingController.r
 router.get('/attribution', authController.authenticate, paperTradingController.getAttribution);
 
 /**
+ * @route GET /api/paper-trading/recommendation-outcomes
+ * @desc 获取推荐信号到模拟交易收益的闭环看板
+ * @access Private
+ */
+router.get(
+  '/recommendation-outcomes',
+  authController.authenticate,
+  paperTradingController.getRecommendationOutcomes
+);
+
+/**
+ * @route POST /api/paper-trading/recommendation-outcomes/refresh
+ * @desc 刷新推荐信号到模拟交易收益的闭环结果
+ * @access Private
+ */
+router.post(
+  '/recommendation-outcomes/refresh',
+  authController.authenticate,
+  paperTradingController.refreshRecommendationOutcomes
+);
+
+/**
+ * @route POST /api/paper-trading/recommendation-outcomes/report
+ * @desc 将推荐交易收益闭环报告写入飞书多维表格
+ * @access Private
+ */
+router.post(
+  '/recommendation-outcomes/report',
+  authController.authenticate,
+  paperTradingController.reportRecommendationOutcomes
+);
+
+/**
  * @route POST /api/paper-trading/attribution/report
  * @desc 生成模拟盘收益归因并写入飞书多维表格
  * @access Private

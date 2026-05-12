@@ -661,6 +661,7 @@ class PaperTradingAutomationService {
           take_profit_pct: tradePayload.take_profit_pct,
           profit_gate: profitGatePolicy,
         });
+        await this.refreshRecommendationTradeOutcome(signal.id);
       }
 
       availableCash = roundNumber(availableCash - total_cost, 2);
@@ -723,7 +724,9 @@ class PaperTradingAutomationService {
         lookback_days: toPositiveInt(options.lookback_days, 120, 3650),
         candidate_pool_limit: toPositiveInt(
           options.candidate_pool_limit,
-          universe === 'market' ? Math.max(candidateLimit * 12, 240) : Math.max(candidateLimit * 6, 60),
+          universe === 'market'
+            ? Math.max(candidateLimit * 12, 240)
+            : Math.max(candidateLimit * 6, 60),
           1000
         ),
         exclude_st: true,
@@ -946,6 +949,7 @@ class PaperTradingAutomationService {
             realized_pnl_pct: pnlPct,
             holding_days: holdingDays,
           });
+          await this.refreshRecommendationTradeOutcome(sourceSignal.id);
         }
       }
 
@@ -1416,6 +1420,16 @@ class PaperTradingAutomationService {
         },
       },
     });
+  }
+
+  private async refreshRecommendationTradeOutcome(signal_id: number) {
+    try {
+      const { recommendationTradeOutcomeService } =
+        await import('./RecommendationTradeOutcomeService');
+      await recommendationTradeOutcomeService.refreshOutcomeBySignal(signal_id);
+    } catch (error: any) {
+      logger.warn(`推荐交易收益闭环刷新失败 signal#${signal_id}: ${error?.message || error}`);
+    }
   }
 }
 

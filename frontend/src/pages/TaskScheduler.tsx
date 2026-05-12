@@ -50,6 +50,7 @@ const taskTypeLabels: Record<string, string> = {
   PAPER_TRADING_AUTO_SYNC: '推荐信号模拟盘跟单',
   PAPER_TRADING_RISK_CHECK: '模拟盘风控退出检查',
   PAPER_TRADING_ATTRIBUTION_REPORT: '模拟盘收益归因报告',
+  RECOMMENDATION_TRADE_OUTCOME_REFRESH: '推荐交易收益闭环刷新',
   PAPER_TRADING_DAILY_PLAN: '模拟盘交易计划报告',
 };
 
@@ -128,6 +129,13 @@ const defaultParametersByType: Record<string, any> = {
   PAPER_TRADING_ATTRIBUTION_REPORT: {
     username: 'lym',
     include_open: true,
+    report_to_feishu: true,
+  },
+  RECOMMENDATION_TRADE_OUTCOME_REFRESH: {
+    username: 'lym',
+    include_open: true,
+    lookback_days: 180,
+    limit: 2000,
     report_to_feishu: true,
   },
   PAPER_TRADING_DAILY_PLAN: {
@@ -485,6 +493,7 @@ const TaskScheduler: React.FC = () => {
               <Option value="PAPER_TRADING_AUTO_SYNC">推荐信号模拟盘跟单</Option>
               <Option value="PAPER_TRADING_RISK_CHECK">模拟盘风控退出检查</Option>
               <Option value="PAPER_TRADING_ATTRIBUTION_REPORT">模拟盘收益归因报告</Option>
+              <Option value="RECOMMENDATION_TRADE_OUTCOME_REFRESH">推荐交易收益闭环刷新</Option>
               <Option value="PAPER_TRADING_DAILY_PLAN">模拟盘交易计划报告</Option>
             </Select>
           </Form.Item>

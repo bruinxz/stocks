@@ -8,6 +8,7 @@ import { DataService } from '../../data/services/DataService';
 import { paperTradingAutomationService } from '../../services/PaperTradingAutomationService';
 import { paperTradingAttributionService } from '../../services/PaperTradingAttributionService';
 import { paperTradingPlanService } from '../../services/PaperTradingPlanService';
+import { recommendationTradeOutcomeService } from '../../services/RecommendationTradeOutcomeService';
 import { logger } from '../../utils/logger';
 
 export class PaperTradingController {
@@ -414,6 +415,67 @@ export class PaperTradingController {
       });
     } catch (error: any) {
       logger.error('获取模拟盘收益归因失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
+  // 获取推荐信号→模拟交易→收益结果闭环看板
+  getRecommendationOutcomes = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const user = (req as any).user;
+      const result = await recommendationTradeOutcomeService.getDashboard({
+        ...req.query,
+        user_id: user.id,
+      });
+
+      res.json({
+        success: true,
+        data: result,
+        message: `推荐交易收益闭环：跟踪 ${result.summary.total_count} 笔，已闭环 ${result.summary.closed_count} 笔`,
+      });
+    } catch (error: any) {
+      logger.error('获取推荐交易收益闭环失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
+  // 刷新推荐信号→模拟交易→收益结果闭环
+  refreshRecommendationOutcomes = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const user = (req as any).user;
+      const result = await recommendationTradeOutcomeService.refreshPortfolioOutcomes({
+        ...req.body,
+        user_id: user.id,
+      });
+
+      res.json({
+        success: true,
+        data: result,
+        message: `收益闭环刷新完成：刷新 ${result.refreshed} 条，写入 ${result.created_or_updated} 条`,
+      });
+    } catch (error: any) {
+      logger.error('刷新推荐交易收益闭环失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
+  // 推荐交易收益闭环报告写入飞书
+  reportRecommendationOutcomes = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const user = (req as any).user;
+      const result = await recommendationTradeOutcomeService.getDashboard({
+        ...req.body,
+        user_id: user.id,
+        report_to_feishu: true,
+      });
+
+      res.json({
+        success: true,
+        data: result,
+        message: `收益闭环已上报飞书：闭环 ${result.summary.closed_count} 笔，超额胜率 ${result.summary.excess_win_rate}%`,
+      });
+    } catch (error: any) {
+      logger.error('上报推荐交易收益闭环失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   };

@@ -7,6 +7,7 @@ import { aiAdvisorService } from './AIAdvisorService';
 import { logger } from '../utils/logger';
 import { AISignalSourceType } from '../models/AIInvestmentSignal';
 import { aiPollingQueue } from '../jobs/aiPollingQueue';
+import { recommendationTradeOutcomeService } from './RecommendationTradeOutcomeService';
 
 export interface AutomatedRecommendationLoopOptions {
   username?: string;
@@ -57,7 +58,11 @@ class AutomatedRecommendationLoopService {
     const style = ['balanced', 'momentum', 'value', 'low_risk'].includes(options.style || '')
       ? options.style!
       : 'balanced';
-    const candidateLimit = toPositiveInt(options.candidate_limit, universe === 'market' ? 30 : 20, 100);
+    const candidateLimit = toPositiveInt(
+      options.candidate_limit,
+      universe === 'market' ? 30 : 20,
+      100
+    );
     const archiveLimit = toPositiveInt(options.archive_limit, candidateLimit, 100);
     const lookbackDays = toPositiveInt(options.lookback_days, 120, 360);
     const generated = await quantRecommendationService.generateRecommendations({
@@ -69,7 +74,9 @@ class AutomatedRecommendationLoopService {
       include_trend: true,
       candidate_pool_limit: toPositiveInt(
         options.candidate_pool_limit,
-        universe === 'market' ? Math.max(candidateLimit * 12, 240) : Math.max(candidateLimit * 6, 60),
+        universe === 'market'
+          ? Math.max(candidateLimit * 12, 240)
+          : Math.max(candidateLimit * 6, 60),
         1000
       ),
       exclude_st: options.exclude_st !== false,
@@ -114,13 +121,18 @@ class AutomatedRecommendationLoopService {
     }
 
     let paper_trading: any = null;
+    let trade_outcomes: any = null;
     if (options.run_paper_trading) {
       paper_trading = await paperTradingAutomationService.runAutoSync({
         username: options.username,
         refresh_recommendations: false,
         source_type: AISignalSourceType.QUANT_RECOMMENDATION,
         limit: toPositiveInt(options.paper_trade_limit, 3, 20),
-        scan_limit: toPositiveInt(options.paper_trade_scan_limit, Math.max(archive.total, 100), 500),
+        scan_limit: toPositiveInt(
+          options.paper_trade_scan_limit,
+          Math.max(archive.total, 100),
+          500
+        ),
         min_score: Number(options.min_score || 72),
         max_positions: toPositiveInt(options.max_positions, 8, 30),
         default_position_pct: Number(options.default_position_pct || 5),
@@ -135,6 +147,14 @@ class AutomatedRecommendationLoopService {
         profit_gate_min_quality_score: Number(options.profit_gate_min_quality_score || 45),
         profit_gate_allow_deprioritized: false,
         dry_run: Boolean(options.dry_run),
+        report_to_feishu: false,
+      });
+
+      trade_outcomes = await recommendationTradeOutcomeService.refreshPortfolioOutcomes({
+        username: options.username,
+        include_open: true,
+        lookback_days: 180,
+        source_type: AISignalSourceType.QUANT_RECOMMENDATION,
         report_to_feishu: false,
       });
     }
@@ -159,6 +179,15 @@ class AutomatedRecommendationLoopService {
       agent_analysis,
       verification,
       paper_trading,
+      trade_outcomes: trade_outcomes
+        ? {
+            refreshed: trade_outcomes.refreshed,
+            created_or_updated: trade_outcomes.created_or_updated,
+            failed: trade_outcomes.failed,
+            summary: trade_outcomes.dashboard?.summary,
+            feedback: trade_outcomes.dashboard?.feedback,
+          }
+        : undefined,
       quality_report: {
         overview: quality_report.overview,
         best_segments: quality_report.best_segments,

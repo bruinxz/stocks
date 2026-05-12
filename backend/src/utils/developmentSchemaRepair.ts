@@ -11,6 +11,7 @@ import { RiskAlert } from '../models/RiskAlert';
 import { TradingJournal } from '../models/TradingJournal';
 import { FavoriteStock } from '../models/FavoriteStock';
 import { AIInvestmentSignal } from '../models/AIInvestmentSignal';
+import { RecommendationTradeOutcome } from '../models/RecommendationTradeOutcome';
 
 type ColumnRename = {
   table: string;
@@ -227,6 +228,7 @@ export async function repairLegacyDevelopmentSchema(): Promise<void> {
       RiskAlert.sync(),
       TradingJournal.sync(),
       AIInvestmentSignal.sync(),
+      RecommendationTradeOutcome.sync(),
     ]);
 
     for (const rename of LEGACY_COLUMN_RENAMES) {

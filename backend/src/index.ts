@@ -75,6 +75,7 @@ app.use('/api/logs', logRoutes);
 app.use('/api/internal', internalRoutes); // 给TradingAgents预留的安全数据接口
 
 import { User } from './models/User';
+import { RecommendationTradeOutcome } from './models/RecommendationTradeOutcome';
 
 // Initialize database connection and start server
 async function initializeApp() {
@@ -84,6 +85,18 @@ async function initializeApp() {
     console.log('Database connection has been established successfully.');
 
     await repairLegacyDevelopmentSchema();
+
+    // 生产环境当前没有独立 migration runner；新闭环收益表必须在启动时幂等创建，
+    // 以免定时任务先于开发环境 alter 同步执行导致接口 500。
+    try {
+      await RecommendationTradeOutcome.sync();
+      console.log('RecommendationTradeOutcome table checked successfully');
+    } catch (schemaError: any) {
+      console.warn(
+        'Failed to sync RecommendationTradeOutcome table:',
+        schemaError?.message || schemaError
+      );
+    }
 
     // Sync models in development environment
     if (process.env.NODE_ENV === 'development') {

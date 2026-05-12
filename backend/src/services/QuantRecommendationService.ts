@@ -4,6 +4,7 @@ import { Stock } from '../models/Stock';
 import { DailyBar } from '../models/DailyBar';
 import { FavoriteStock } from '../models/FavoriteStock';
 import { AIInvestmentSignal, AISignalSourceType } from '../models/AIInvestmentSignal';
+import { RecommendationTradeOutcome } from '../models/RecommendationTradeOutcome';
 import { normalizeSymbol } from '../utils/stockSymbol';
 import { logger } from '../utils/logger';
 import { DEFAULT_BENCHMARK_INDICES } from './BenchmarkIndexService';
@@ -72,10 +73,16 @@ export interface QuantRecommendationItem {
 export interface RecommendationFeedback {
   signal_count: number;
   completed_count: number;
+  trade_outcome_count?: number;
+  closed_trade_count?: number;
   avg_return_pct: number | null;
   avg_excess_return_pct?: number | null;
+  avg_trade_return_pct?: number | null;
+  avg_trade_excess_return_pct?: number | null;
   positive_rate: number | null;
   excess_positive_rate?: number | null;
+  trade_win_rate?: number | null;
+  trade_excess_win_rate?: number | null;
   best_horizon?: string;
   score_adjustment: number;
   confidence_boost: number;
@@ -127,12 +134,18 @@ function buildEmptyFeedback(): RecommendationFeedback {
   return {
     signal_count: 0,
     completed_count: 0,
-      avg_return_pct: null,
-      avg_excess_return_pct: null,
-      positive_rate: null,
-      excess_positive_rate: null,
-      score_adjustment: 0,
-      confidence_boost: 0,
+    trade_outcome_count: 0,
+    closed_trade_count: 0,
+    avg_return_pct: null,
+    avg_excess_return_pct: null,
+    avg_trade_return_pct: null,
+    avg_trade_excess_return_pct: null,
+    positive_rate: null,
+    excess_positive_rate: null,
+    trade_win_rate: null,
+    trade_excess_win_rate: null,
+    score_adjustment: 0,
+    confidence_boost: 0,
   };
 }
 
@@ -508,20 +521,28 @@ export class QuantRecommendationService {
           : `近60日最大回撤约 ${round(drawdown) ?? '--'}%，短线风险偏高`,
     });
 
-    if (feedback.signal_count > 0) {
+    if (feedback.signal_count > 0 || Number(feedback.trade_outcome_count || 0) > 0) {
       const feedbackScore = this.scoreFeedback(feedback);
       factors.push({
         name: 'feedback',
         label: '后验反馈',
         score: feedbackScore,
         weight: 0.12,
-        value: feedback.avg_return_pct ?? undefined,
+        value:
+          feedback.avg_trade_excess_return_pct ??
+          feedback.avg_excess_return_pct ??
+          feedback.avg_return_pct ??
+          undefined,
         reason:
-          feedback.completed_count > 0
-            ? `历史推荐 ${feedback.completed_count} 个完成样本，平均收益 ${
-                round(feedback.avg_return_pct, 2) ?? '--'
-              }%，胜率 ${round(feedback.positive_rate, 1) ?? '--'}%`
-            : `历史已有 ${feedback.signal_count} 次推荐记录，后验收益仍在跟踪`,
+          (feedback.closed_trade_count || 0) > 0
+            ? `模拟盘闭环 ${feedback.closed_trade_count} 笔，平均超额 ${
+                round(feedback.avg_trade_excess_return_pct, 2) ?? '--'
+              }%，超额胜率 ${round(feedback.trade_excess_win_rate, 1) ?? '--'}%`
+            : feedback.completed_count > 0
+              ? `历史推荐 ${feedback.completed_count} 个完成样本，平均收益 ${
+                  round(feedback.avg_return_pct, 2) ?? '--'
+                }%，胜率 ${round(feedback.positive_rate, 1) ?? '--'}%`
+              : `历史已有 ${feedback.signal_count || feedback.trade_outcome_count || 0} 次推荐/跟单记录，后验收益仍在跟踪`,
       });
     }
 
@@ -543,19 +564,28 @@ export class QuantRecommendationService {
       warnings.push(`短期量能急剧放大，需警惕冲高回落`);
     if (!stock.pe_dynamic && !stock.pb)
       warnings.push('估值字段缺失，建议以 TradingAgents 深度研报复核');
-    if (feedback.completed_count > 0 && Number(feedback.avg_return_pct || 0) < -3) {
-      warnings.push(`历史后验平均收益 ${round(feedback.avg_return_pct, 2)}%，需降低仓位或等待确认`);
+    const primaryFeedbackReturn =
+      feedback.avg_trade_excess_return_pct ??
+      feedback.avg_trade_return_pct ??
+      feedback.avg_excess_return_pct ??
+      feedback.avg_return_pct;
+    if (
+      (Number(feedback.closed_trade_count || 0) > 0 || feedback.completed_count > 0) &&
+      Number(primaryFeedbackReturn || 0) < -3
+    ) {
+      warnings.push(
+        `历史/模拟盘后验收益 ${round(primaryFeedbackReturn, 2)}%，需降低仓位或等待确认`
+      );
     }
 
     const risk_level: QuantRecommendationItem['risk_level'] =
       warnings.length >= 2 || riskScore < 45
         ? 'high'
         : warnings.length === 1 || riskScore < 65
-        ? 'medium'
-        : 'low';
+          ? 'medium'
+          : 'low';
     const actionPlan = resolveAction({ score, risk_level, warnings, feedback });
-    const stop_loss_pct =
-      risk_level === 'low' ? 6 : risk_level === 'medium' ? 4.5 : 3;
+    const stop_loss_pct = risk_level === 'low' ? 6 : risk_level === 'medium' ? 4.5 : 3;
     const take_profit_pct =
       actionPlan.action === 'buy' ? 14 : actionPlan.action === 'watch' ? 10 : 8;
 
@@ -619,26 +649,55 @@ export class QuantRecommendationService {
     const feedbackMap = new Map<string, RecommendationFeedback>();
     if (normalizedSymbols.length === 0) return feedbackMap;
 
-    const signals = (await AIInvestmentSignal.findAll({
-      where: {
-        source_type: AISignalSourceType.QUANT_RECOMMENDATION,
-        symbol: { [Op.in]: normalizedSymbols },
-      },
-      attributes: ['symbol', 'signal_date', 'forward_returns', 'verification_status'],
-      order: [['signal_date', 'DESC']],
-      raw: true,
-    })) as any[];
+    const [signals, outcomes] = await Promise.all([
+      AIInvestmentSignal.findAll({
+        where: {
+          source_type: AISignalSourceType.QUANT_RECOMMENDATION,
+          symbol: { [Op.in]: normalizedSymbols },
+        },
+        attributes: ['symbol', 'signal_date', 'forward_returns', 'verification_status'],
+        order: [['signal_date', 'DESC']],
+        raw: true,
+      }) as any,
+      RecommendationTradeOutcome.findAll({
+        where: {
+          symbol: { [Op.in]: normalizedSymbols },
+        },
+        attributes: [
+          'symbol',
+          'trade_status',
+          'entry_date',
+          'realized_pnl_pct',
+          'total_pnl_pct',
+          'excess_return_pct',
+        ],
+        order: [['updated_at', 'DESC']],
+        raw: true,
+      }) as any,
+    ]);
 
     const grouped = new Map<string, any[]>();
-    for (const signal of signals) {
+    for (const signal of signals as any[]) {
       const symbol = normalizeSymbol(signal.symbol);
       if (!grouped.has(symbol)) grouped.set(symbol, []);
       grouped.get(symbol)!.push(signal);
     }
 
-    for (const [symbol, records] of grouped.entries()) {
+    const outcomeGrouped = new Map<string, any[]>();
+    for (const outcome of outcomes as any[]) {
+      const symbol = normalizeSymbol(outcome.symbol);
+      if (!outcomeGrouped.has(symbol)) outcomeGrouped.set(symbol, []);
+      outcomeGrouped.get(symbol)!.push(outcome);
+    }
+
+    const allSymbols = new Set([...grouped.keys(), ...outcomeGrouped.keys()]);
+    for (const symbol of allSymbols) {
+      const records = grouped.get(symbol) || [];
+      const tradeOutcomes = outcomeGrouped.get(symbol) || [];
       const returns: number[] = [];
       const excessReturns: number[] = [];
+      const tradeReturns: number[] = [];
+      const tradeExcessReturns: number[] = [];
       let completed_count = 0;
       let positive_count = 0;
       let excess_positive_count = 0;
@@ -662,6 +721,25 @@ export class QuantRecommendationService {
         }
       }
 
+      let closed_trade_count = 0;
+      let trade_positive_count = 0;
+      let trade_excess_positive_count = 0;
+      for (const outcome of tradeOutcomes) {
+        if (outcome.trade_status !== 'closed') continue;
+        const tradeReturn = Number(outcome.realized_pnl_pct ?? outcome.total_pnl_pct);
+        if (!Number.isFinite(tradeReturn)) continue;
+        const tradeExcess = Number(outcome.excess_return_pct);
+        closed_trade_count++;
+        tradeReturns.push(tradeReturn);
+        if (tradeReturn > 0) trade_positive_count++;
+        if (Number.isFinite(tradeExcess)) {
+          tradeExcessReturns.push(tradeExcess);
+          if (tradeExcess > 0) trade_excess_positive_count++;
+        } else if (tradeReturn > 0) {
+          trade_excess_positive_count++;
+        }
+      }
+
       const avg_return_pct =
         returns.length > 0
           ? Number((returns.reduce((s, v) => s + v, 0) / returns.length).toFixed(4))
@@ -676,6 +754,24 @@ export class QuantRecommendationService {
         completed_count > 0
           ? Number(((excess_positive_count / completed_count) * 100).toFixed(2))
           : null;
+      const avg_trade_return_pct =
+        tradeReturns.length > 0
+          ? Number((tradeReturns.reduce((s, v) => s + v, 0) / tradeReturns.length).toFixed(4))
+          : null;
+      const avg_trade_excess_return_pct =
+        tradeExcessReturns.length > 0
+          ? Number(
+              (tradeExcessReturns.reduce((s, v) => s + v, 0) / tradeExcessReturns.length).toFixed(4)
+            )
+          : null;
+      const trade_win_rate =
+        closed_trade_count > 0
+          ? Number(((trade_positive_count / closed_trade_count) * 100).toFixed(2))
+          : null;
+      const trade_excess_win_rate =
+        closed_trade_count > 0
+          ? Number(((trade_excess_positive_count / closed_trade_count) * 100).toFixed(2))
+          : null;
       const best_horizon = Object.entries(horizonBuckets)
         .map(([horizon, values]) => ({
           horizon,
@@ -683,8 +779,12 @@ export class QuantRecommendationService {
         }))
         .sort((a, b) => b.avg - a.avg)[0]?.horizon;
 
-      const primaryPositiveRate = excess_positive_rate ?? positive_rate;
-      const primaryAvgReturn = avg_excess_return_pct ?? avg_return_pct;
+      const primaryPositiveRate = trade_excess_win_rate ?? excess_positive_rate ?? positive_rate;
+      const primaryAvgReturn =
+        avg_trade_excess_return_pct ??
+        avg_trade_return_pct ??
+        avg_excess_return_pct ??
+        avg_return_pct;
       const positiveBonus =
         primaryPositiveRate === null || primaryPositiveRate === undefined
           ? 0
@@ -693,7 +793,8 @@ export class QuantRecommendationService {
         primaryAvgReturn === null || primaryAvgReturn === undefined
           ? 0
           : Math.max(-12, Math.min(12, primaryAvgReturn)) * 0.75;
-      const samplePenalty = completed_count > 0 && completed_count < 3 ? -1.5 : 0;
+      const effectiveCompleted = closed_trade_count || completed_count;
+      const samplePenalty = effectiveCompleted > 0 && effectiveCompleted < 3 ? -1.5 : 0;
       const score_adjustment = Math.max(
         -8,
         Math.min(8, returnBonus + positiveBonus + samplePenalty)
@@ -703,10 +804,16 @@ export class QuantRecommendationService {
       feedbackMap.set(symbol, {
         signal_count: records.length,
         completed_count,
+        trade_outcome_count: tradeOutcomes.length,
+        closed_trade_count,
         avg_return_pct,
         avg_excess_return_pct,
+        avg_trade_return_pct,
+        avg_trade_excess_return_pct,
         positive_rate,
         excess_positive_rate,
+        trade_win_rate,
+        trade_excess_win_rate,
         best_horizon,
         score_adjustment: Number(score_adjustment.toFixed(2)),
         confidence_boost: Number(confidence_boost.toFixed(2)),
@@ -718,18 +825,31 @@ export class QuantRecommendationService {
   }
 
   private scoreFeedback(feedback: RecommendationFeedback): number {
-    if (!feedback || feedback.signal_count === 0) return 55;
+    if (
+      !feedback ||
+      (feedback.signal_count === 0 && Number(feedback.trade_outcome_count || 0) === 0)
+    )
+      return 55;
     let score = 55;
-    const primaryReturn = feedback.avg_excess_return_pct ?? feedback.avg_return_pct;
-    const primaryPositiveRate = feedback.excess_positive_rate ?? feedback.positive_rate;
+    const primaryReturn =
+      feedback.avg_trade_excess_return_pct ??
+      feedback.avg_trade_return_pct ??
+      feedback.avg_excess_return_pct ??
+      feedback.avg_return_pct;
+    const primaryPositiveRate =
+      feedback.trade_excess_win_rate ??
+      feedback.trade_win_rate ??
+      feedback.excess_positive_rate ??
+      feedback.positive_rate;
     if (primaryReturn !== null && primaryReturn !== undefined) {
       score += Math.max(-15, Math.min(18, primaryReturn)) * 1.1;
     }
     if (primaryPositiveRate !== null && primaryPositiveRate !== undefined) {
       score += (primaryPositiveRate - 50) * 0.32;
     }
-    if (feedback.completed_count >= 5) score += 6;
-    else if (feedback.completed_count > 0 && feedback.completed_count < 3) score -= 4;
+    const effectiveCompleted = Number(feedback.closed_trade_count || 0) || feedback.completed_count;
+    if (effectiveCompleted >= 5) score += 6;
+    else if (effectiveCompleted > 0 && effectiveCompleted < 3) score -= 4;
     return clamp(score);
   }
 
