@@ -217,6 +217,14 @@ export class AISignalController {
         lookback_days: req.query?.lookback_days ? Number(req.query.lookback_days) : 30,
         min_samples: req.query?.min_samples ? Number(req.query.min_samples) : 5,
         limit: req.query?.limit ? Number(req.query.limit) : 5000,
+        auto_repair_missing_data: req.query?.auto_repair_missing_data === 'true',
+        data_source: req.query?.data_source as string,
+        repair_lookback_days: req.query?.repair_lookback_days
+          ? Number(req.query.repair_lookback_days)
+          : undefined,
+        sync_concurrency: req.query?.sync_concurrency
+          ? Number(req.query.sync_concurrency)
+          : undefined,
       });
       res.json({ success: true, data: report });
     } catch (error: any) {
@@ -240,6 +248,14 @@ export class AISignalController {
         min_samples: req.body?.min_samples ? Number(req.body.min_samples) : 5,
         limit: req.body?.limit ? Number(req.body.limit) : 5000,
         verify_before_report: req.body?.verify_before_report === true,
+        auto_repair_missing_data: req.body?.auto_repair_missing_data === true,
+        data_source: req.body?.data_source,
+        repair_lookback_days: req.body?.repair_lookback_days
+          ? Number(req.body.repair_lookback_days)
+          : undefined,
+        sync_concurrency: req.body?.sync_concurrency
+          ? Number(req.body.sync_concurrency)
+          : undefined,
         report_to_feishu: req.body?.report_to_feishu !== false,
         record_type: req.body?.record_type || '信号质量日报',
       });

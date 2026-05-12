@@ -337,6 +337,23 @@ class SchedulerService {
           lookback_days: this.toPositiveInt(parameters.lookback_days, 30, 3650),
           min_samples: this.toPositiveInt(parameters.min_samples, 5, 100),
           limit: this.toPositiveInt(parameters.limit, 5000, 10000),
+          auto_repair_missing_data:
+            parameters.auto_repair_missing_data !== undefined
+              ? Boolean(parameters.auto_repair_missing_data)
+              : parameters.autoRepairMissingData !== undefined
+              ? Boolean(parameters.autoRepairMissingData)
+              : true,
+          data_source: parameters.data_source || parameters.dataSource || 'tencent_only',
+          repair_lookback_days: this.toPositiveInt(
+            parameters.repair_lookback_days || parameters.repairLookbackDays,
+            this.toPositiveInt(parameters.lookback_days, 30, 3650),
+            3650
+          ),
+          sync_concurrency: this.toPositiveInt(
+            parameters.sync_concurrency || parameters.syncConcurrency,
+            2,
+            5
+          ),
           verify_before_report:
             parameters.verify_before_report !== undefined
               ? Boolean(parameters.verify_before_report)
@@ -945,6 +962,10 @@ class SchedulerService {
           lookback_days: 30,
           min_samples: 5,
           limit: 5000,
+          auto_repair_missing_data: true,
+          data_source: 'tencent_only',
+          repair_lookback_days: 30,
+          sync_concurrency: 2,
           verify_before_report: true,
           report_to_feishu: true,
           record_type: '信号质量日报',
@@ -1125,6 +1146,10 @@ class SchedulerService {
           'lookback_days',
           'min_samples',
           'limit',
+          'auto_repair_missing_data',
+          'data_source',
+          'repair_lookback_days',
+          'sync_concurrency',
           'verify_before_report',
           'report_to_feishu',
           'record_type',

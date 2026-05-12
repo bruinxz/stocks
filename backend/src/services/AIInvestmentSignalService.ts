@@ -39,6 +39,10 @@ export interface SignalQualityReportOptions extends SignalPerformanceOptions {
   report_to_feishu?: boolean;
   record_type?: string;
   verify_before_report?: boolean;
+  auto_repair_missing_data?: boolean;
+  data_source?: string;
+  repair_lookback_days?: number;
+  sync_concurrency?: number;
 }
 
 export interface SignalVerificationDiagnosisOptions extends SignalQueryOptions {
@@ -1534,6 +1538,32 @@ export class AIInvestmentSignalService {
     const horizon = options.horizon || DEFAULT_PERFORMANCE_HORIZON;
     const minSamples = Math.min(Math.max(Number(options.min_samples || 5), 1), 100);
     const limit = Math.min(Math.max(Number(options.limit || 5000), 1), 10000);
+    const horizonDays = Number(String(horizon).replace(/[^\d]/g, '')) || 5;
+    const diagnosisOptions = {
+      source_type: options.source_type,
+      agent_session: options.agent_session,
+      task_label: options.task_label,
+      decision: options.decision,
+      symbol: options.symbol,
+      start_date: startDate,
+      end_date: endDate,
+      limit,
+      horizons: [horizonDays],
+    };
+
+    let repairResult: any = null;
+    let diagnosis = await this.diagnoseSignalVerification(diagnosisOptions);
+
+    if (options.auto_repair_missing_data) {
+      repairResult = await this.repairAndVerifySignals({
+        ...diagnosisOptions,
+        auto_sync_missing: true,
+        data_source: options.data_source || 'tencent_only',
+        lookback_days: Number(options.repair_lookback_days || options.lookback_days || 30),
+        sync_concurrency: Number(options.sync_concurrency || 2),
+      });
+      diagnosis = repairResult.final_diagnosis || diagnosis;
+    }
 
     if (options.verify_before_report) {
       await this.verifySignals({
@@ -1546,6 +1576,7 @@ export class AIInvestmentSignalService {
         limit,
         report_to_feishu: false,
       });
+      diagnosis = await this.diagnoseSignalVerification(diagnosisOptions);
     }
 
     const signals = (await AIInvestmentSignal.findAll({
@@ -1572,6 +1603,44 @@ export class AIInvestmentSignalService {
       ['pending', 'partial'].includes(signal.verification_status || '')
     ).length;
     const noDataSignals = signals.filter(signal => signal.verification_status === 'no_data').length;
+    const diagnosisSummary: any = diagnosis?.summary || {};
+    const syncResult = repairResult?.sync_result || {};
+    const syncedSymbols = Object.entries(syncResult);
+    const insertedBars = syncedSymbols.reduce(
+      (sum, [, count]) => (Number(count) > 0 ? sum + Number(count) : sum),
+      0
+    );
+    const dataHealth = {
+      total_signals: diagnosisSummary.total_signals ?? signals.length,
+      verified_signals: diagnosisSummary.verified_signals ?? 0,
+      pending_signals: diagnosisSummary.pending_signals ?? pendingSignals,
+      no_data_signals: diagnosisSummary.no_data_signals ?? noDataSignals,
+      missing_stock: diagnosisSummary.missing_stock ?? 0,
+      missing_bars: diagnosisSummary.missing_bars ?? 0,
+      waiting_for_market_data: Array.isArray(diagnosis?.details)
+        ? diagnosis.details.filter((item: any) => item.issue === 'waiting_for_market_data').length
+        : 0,
+      insufficient_horizon_bars: diagnosisSummary.insufficient_horizon_bars ?? 0,
+      invalid_entry_price: diagnosisSummary.invalid_entry_price ?? 0,
+      ready_for_verification: diagnosisSummary.ready_for_verification ?? 0,
+      symbols_need_sync: diagnosisSummary.symbols_need_sync ?? 0,
+    };
+    const repairSummary = repairResult
+      ? {
+          enabled: true,
+          sync_window: repairResult.sync_window,
+          synced_symbols: syncedSymbols.length,
+          inserted_bars: insertedBars,
+          verification: repairResult.verification,
+          before: repairResult.initial_diagnosis?.summary,
+          after: repairResult.final_diagnosis?.summary,
+          remaining_symbols_need_sync: repairResult.final_diagnosis?.symbols_need_sync || [],
+        }
+      : {
+          enabled: Boolean(options.auto_repair_missing_data),
+          synced_symbols: 0,
+          inserted_bars: 0,
+        };
 
     const rankBuckets = (
       dimension: string,
@@ -1689,6 +1758,13 @@ export class AIInvestmentSignalService {
         : '',
       pendingSignals > 0 ? `${pendingSignals} 条信号仍在等待后验周期，避免过早下结论。` : '',
       noDataSignals > 0 ? `${noDataSignals} 条信号缺行情，需优先修复数据。` : '',
+      repairResult
+        ? `本次自动修复同步 ${
+            syncedSymbols.length
+          } 只股票，新增/尝试写入 ${insertedBars} 条K线，修复后 no_data ${
+            repairResult.final_diagnosis?.summary?.no_data_signals ?? 0
+          } 条。`
+        : '',
     ].filter(Boolean);
 
     const report = {
@@ -1704,6 +1780,8 @@ export class AIInvestmentSignalService {
         agent_session: options.agent_session,
         task_label: options.task_label,
         decision: options.decision,
+        auto_repair_missing_data: Boolean(options.auto_repair_missing_data),
+        data_source: options.data_source,
       },
       overview: {
         total_signals: signals.length,
@@ -1712,6 +1790,9 @@ export class AIInvestmentSignalService {
         completed_samples: completedSamples.length,
         ...overallBucket,
       },
+      data_health: dataHealth,
+      repair_summary: repairSummary,
+      diagnosis,
       rankings,
       best_segments: bestSegments,
       worst_segments: worstSegments,

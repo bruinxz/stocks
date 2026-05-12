@@ -1777,3 +1777,33 @@ a {
   background: rgba(255, 255, 255, 0.72);
   border: 1px solid rgba(15, 23, 42, 0.06);
 }
+
+.quality-health-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.quality-health-grid > div {
+  padding: 12px;
+  border-radius: 16px;
+  background: radial-gradient(circle at top right, rgba(159, 107, 37, 0.12), transparent 40%),
+    rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(159, 107, 37, 0.12);
+}
+
+.quality-health-grid span {
+  display: block;
+  color: #7a6750;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.quality-health-grid strong {
+  display: block;
+  margin-top: 3px;
+  color: #1f2937;
+  font-family: var(--font-display);
+  font-size: 24px;
+  line-height: 1;
+}

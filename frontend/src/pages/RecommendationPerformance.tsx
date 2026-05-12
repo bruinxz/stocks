@@ -103,6 +103,25 @@ type QualityReportData = {
     no_data_signals: number;
     completed_samples: number;
   };
+  data_health?: {
+    pending_signals: number;
+    no_data_signals: number;
+    missing_bars: number;
+    waiting_for_market_data: number;
+    insufficient_horizon_bars: number;
+    symbols_need_sync: number;
+  };
+  repair_summary?: {
+    enabled: boolean;
+    synced_symbols: number;
+    inserted_bars: number;
+    after?: {
+      no_data_signals?: number;
+      pending_signals?: number;
+      missing_bars?: number;
+      insufficient_horizon_bars?: number;
+    };
+  };
   rankings: {
     by_source_type: QualityBucket[];
     by_agent_session: QualityBucket[];
@@ -267,6 +286,7 @@ const RecommendationPerformance: React.FC = () => {
           agent_session: agentSession || undefined,
           lookback_days: 30,
           min_samples: 5,
+          auto_repair_missing_data: false,
         },
       });
       if (response.data.success) {
@@ -287,6 +307,10 @@ const RecommendationPerformance: React.FC = () => {
         agent_session: agentSession || undefined,
         lookback_days: 30,
         min_samples: 5,
+        auto_repair_missing_data: true,
+        data_source: 'tencent_only',
+        repair_lookback_days: 30,
+        sync_concurrency: 2,
         verify_before_report: true,
         report_to_feishu: true,
         record_type: agentSession === 'close' ? '尾盘Agent信号质量日报' : '信号质量日报',
@@ -609,7 +633,27 @@ const RecommendationPerformance: React.FC = () => {
               <em>{qualityReport?.overview?.gate?.label || '等待样本'}</em>
             </div>
           </Col>
-          <Col xs={24} lg={9}>
+          <Col xs={24} lg={5}>
+            <div className="quality-health-grid">
+              <div>
+                <span>no_data</span>
+                <strong>{qualityReport?.data_health?.no_data_signals ?? 0}</strong>
+              </div>
+              <div>
+                <span>缺行情</span>
+                <strong>{qualityReport?.data_health?.missing_bars ?? 0}</strong>
+              </div>
+              <div>
+                <span>周期未完</span>
+                <strong>{qualityReport?.data_health?.insufficient_horizon_bars ?? 0}</strong>
+              </div>
+              <div>
+                <span>已修复</span>
+                <strong>{qualityReport?.repair_summary?.inserted_bars ?? 0}</strong>
+              </div>
+            </div>
+          </Col>
+          <Col xs={24} lg={7}>
             <Space direction="vertical" size={8} style={{ width: '100%' }}>
               {(qualityReport?.action_items || []).slice(0, 4).map((item, index) => (
                 <div className="quality-action-line" key={`action-${index}`}>
@@ -621,7 +665,7 @@ const RecommendationPerformance: React.FC = () => {
               )}
             </Space>
           </Col>
-          <Col xs={24} lg={8}>
+          <Col xs={24} lg={5}>
             <Row gutter={[8, 8]}>
               {(qualityReport?.best_segments || []).slice(0, 3).map(item => (
                 <Col span={24} key={`${item.dimension}-${item.key}`}>

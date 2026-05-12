@@ -334,6 +334,8 @@ class FeishuTaskReportService {
     const bestSegments = Array.isArray(report?.best_segments) ? report.best_segments : [];
     const worstSegments = Array.isArray(report?.worst_segments) ? report.worst_segments : [];
     const actionItems = Array.isArray(report?.action_items) ? report.action_items : [];
+    const dataHealth = report?.data_health || {};
+    const repairSummary = report?.repair_summary || {};
     const topSource = report?.rankings?.by_source_type?.[0];
     const topSession = report?.rankings?.by_agent_session?.[0];
 
@@ -377,6 +379,20 @@ class FeishuTaskReportService {
           }，均收 ${this.formatPercent(topSession.avg_return_pct)}`
         : '',
       '',
+      '### 数据健康 / 自动修复',
+      `- **健康拆解**：pending ${dataHealth.pending_signals ?? 0}；no_data ${
+        dataHealth.no_data_signals ?? 0
+      }；缺行情 ${dataHealth.missing_bars ?? 0}；周期未完成 ${
+        dataHealth.insufficient_horizon_bars ?? 0
+      }；等待行情 ${dataHealth.waiting_for_market_data ?? 0}`,
+      repairSummary?.enabled
+        ? `- **自动修复**：同步 ${repairSummary.synced_symbols ?? 0} 只股票；新增/尝试写入 ${
+            repairSummary.inserted_bars ?? 0
+          } 条K线；修复后 no_data ${
+            repairSummary.after?.no_data_signals ?? dataHealth.no_data_signals ?? 0
+          }`
+        : '- **自动修复**：未启用',
+      '',
       '### 最强片段',
       renderSegments(bestSegments) || '- 暂无完成样本',
       '',
@@ -404,6 +420,11 @@ class FeishuTaskReportService {
       完成样本: overview.completed_samples ?? overview.count,
       待验证信号: overview.pending_signals,
       无数据信号: overview.no_data_signals,
+      缺行情信号: dataHealth.missing_bars,
+      周期未完成信号: dataHealth.insufficient_horizon_bars,
+      等待行情信号: dataHealth.waiting_for_market_data,
+      自动修复股票数: repairSummary.synced_symbols,
+      自动修复K线数: repairSummary.inserted_bars,
       质量分: overview.quality_score,
       收益闸门: overview.gate?.label,
       平均收益: this.formatPercent(overview.avg_return_pct),
@@ -425,6 +446,8 @@ class FeishuTaskReportService {
           overview,
           best_segments: bestSegments.slice(0, 8),
           worst_segments: worstSegments.slice(0, 8),
+          data_health: dataHealth,
+          repair_summary: repairSummary,
           rankings: report?.rankings,
           horizon_summary: report?.horizon_summary,
           action_items: actionItems,
