@@ -916,6 +916,23 @@ class SchedulerService {
           min_trade_amount: Number(
             parameters.min_trade_amount || parameters.minTradeAmount || 3000
           ),
+          use_outcome_feedback:
+            parameters.use_outcome_feedback !== undefined
+              ? Boolean(parameters.use_outcome_feedback)
+              : parameters.useOutcomeFeedback !== undefined
+                ? Boolean(parameters.useOutcomeFeedback)
+                : true,
+          outcome_feedback_lookback_days: this.toPositiveInt(
+            parameters.outcome_feedback_lookback_days || parameters.outcomeFeedbackLookbackDays,
+            365,
+            3650
+          ),
+          outcome_feedback_min_closed_samples: this.toPositiveInt(
+            parameters.outcome_feedback_min_closed_samples ||
+              parameters.outcomeFeedbackMinClosedSamples,
+            5,
+            100
+          ),
           use_profit_gate:
             parameters.use_profit_gate !== undefined
               ? Boolean(parameters.use_profit_gate)
@@ -1253,6 +1270,9 @@ class SchedulerService {
           default_position_pct: 5,
           max_position_pct: 10,
           min_trade_amount: 3000,
+          use_outcome_feedback: true,
+          outcome_feedback_lookback_days: 365,
+          outcome_feedback_min_closed_samples: 5,
           use_profit_gate: true,
           profit_gate_horizon: '5d',
           profit_gate_min_samples: 5,
@@ -1576,6 +1596,9 @@ class SchedulerService {
           'archive_limit',
           'verify_signals',
           'run_paper_trading',
+          'use_outcome_feedback',
+          'outcome_feedback_lookback_days',
+          'outcome_feedback_min_closed_samples',
           'use_profit_gate',
           'profit_gate_horizon',
           'profit_gate_min_samples',

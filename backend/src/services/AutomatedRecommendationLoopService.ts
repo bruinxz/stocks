@@ -30,6 +30,9 @@ export interface AutomatedRecommendationLoopOptions {
   default_position_pct?: number;
   max_position_pct?: number;
   min_trade_amount?: number;
+  use_outcome_feedback?: boolean;
+  outcome_feedback_lookback_days?: number;
+  outcome_feedback_min_closed_samples?: number;
   use_profit_gate?: boolean;
   profit_gate_horizon?: string;
   profit_gate_min_samples?: number;
@@ -54,11 +57,147 @@ function toPositiveInt(value: any, fallback: number, max?: number): number {
 }
 
 class AutomatedRecommendationLoopService {
+  private async resolveLoopPolicy(options: {
+    username?: string;
+    enabled: boolean;
+    base_style: 'balanced' | 'momentum' | 'value' | 'low_risk';
+    base_min_score: number;
+    base_default_position_pct: number;
+    base_max_position_pct: number;
+    base_paper_trade_limit: number;
+    lookback_days: number;
+    min_closed_samples: number;
+  }) {
+    const basePolicy = {
+      enabled: options.enabled,
+      closed_samples: 0,
+      min_closed_samples: options.min_closed_samples,
+      lookback_days: options.lookback_days,
+      base_style: options.base_style,
+      effective_style: options.base_style,
+      base_min_score: options.base_min_score,
+      effective_min_score: options.base_min_score,
+      base_default_position_pct: options.base_default_position_pct,
+      effective_default_position_pct: options.base_default_position_pct,
+      base_max_position_pct: options.base_max_position_pct,
+      effective_max_position_pct: options.base_max_position_pct,
+      base_paper_trade_limit: options.base_paper_trade_limit,
+      effective_paper_trade_limit: options.base_paper_trade_limit,
+      avg_excess_return_pct: 0,
+      excess_win_rate: 0,
+      position_multiplier: 1,
+      reason: options.enabled ? '收益闭环样本不足，沿用基础扫描策略' : '未启用收益闭环自适应',
+      best_segments: [] as any[],
+      weak_segments: [] as any[],
+      next_actions: [] as string[],
+    };
+
+    if (!options.enabled) return basePolicy;
+
+    try {
+      const dashboard = await recommendationTradeOutcomeService.getDashboard({
+        username: options.username,
+        include_open: true,
+        lookback_days: options.lookback_days,
+        limit: 2000,
+        report_to_feishu: false,
+      });
+      const summary: any = dashboard.summary || {};
+      const feedback: any = dashboard.feedback || {};
+      const closedSamples = Number(summary.closed_count || 0);
+      const avgExcess = Number(summary.avg_excess_return_pct || 0);
+      const excessWinRate = Number(summary.excess_win_rate || 0);
+      const feedbackMinScore = Number(feedback.recommended_min_score || options.base_min_score);
+      const positionMultiplier = Number(feedback.position_multiplier || 1);
+      const bestSegments = Array.isArray(feedback.best_segments) ? feedback.best_segments : [];
+      const weakSegments = Array.isArray(feedback.weak_segments) ? feedback.weak_segments : [];
+      const bestStyle = bestSegments.find((segment: any) =>
+        ['balanced', 'momentum', 'value', 'low_risk'].includes(String(segment.key || ''))
+      );
+      const weakStyle = weakSegments.find((segment: any) =>
+        ['balanced', 'momentum', 'value', 'low_risk'].includes(String(segment.key || ''))
+      );
+      const shouldUseBestStyle =
+        closedSamples >= options.min_closed_samples &&
+        bestStyle &&
+        Number(bestStyle.closed_count || 0) >= 2 &&
+        Number(bestStyle.avg_excess_return_pct || 0) > Math.max(1, avgExcess);
+      const shouldAvoidBaseStyle =
+        closedSamples >= options.min_closed_samples &&
+        weakStyle &&
+        String(weakStyle.key) === options.base_style &&
+        Number(weakStyle.closed_count || 0) >= 2 &&
+        Number(weakStyle.avg_excess_return_pct || 0) < -1;
+      const effectiveStyle =
+        shouldUseBestStyle || shouldAvoidBaseStyle ? String(bestStyle?.key || 'low_risk') : options.base_style;
+      const coldStart = closedSamples < options.min_closed_samples;
+      const effectiveMinScore = coldStart
+        ? options.base_min_score
+        : Math.min(94, Math.max(options.base_min_score, feedbackMinScore));
+      const boundedMultiplier = coldStart
+        ? Math.min(positionMultiplier || 1, 0.75)
+        : Math.min(1.2, Math.max(0.35, positionMultiplier || 1));
+      const effectiveDefaultPositionPct = Math.max(
+        1,
+        Math.min(options.base_max_position_pct, options.base_default_position_pct * boundedMultiplier)
+      );
+      const effectiveMaxPositionPct = Math.max(
+        effectiveDefaultPositionPct,
+        Math.min(options.base_max_position_pct, options.base_max_position_pct * Math.max(0.45, boundedMultiplier))
+      );
+      const effectivePaperTradeLimit =
+        coldStart || avgExcess < -1 || excessWinRate < 45
+          ? Math.max(1, Math.min(options.base_paper_trade_limit, 2))
+          : avgExcess > 2 && excessWinRate >= 55
+            ? Math.min(5, options.base_paper_trade_limit + 1)
+            : options.base_paper_trade_limit;
+
+      return {
+        ...basePolicy,
+        closed_samples: closedSamples,
+        effective_style: effectiveStyle as typeof basePolicy.effective_style,
+        effective_min_score: Math.round(effectiveMinScore * 100) / 100,
+        effective_default_position_pct: Math.round(effectiveDefaultPositionPct * 100) / 100,
+        effective_max_position_pct: Math.round(effectiveMaxPositionPct * 100) / 100,
+        effective_paper_trade_limit: effectivePaperTradeLimit,
+        avg_excess_return_pct: Math.round(avgExcess * 10000) / 10000,
+        excess_win_rate: Math.round(excessWinRate * 100) / 100,
+        position_multiplier: Math.round(boundedMultiplier * 100) / 100,
+        reason: coldStart
+          ? `闭环样本 ${closedSamples}/${options.min_closed_samples}，使用保守小仓采样`
+          : `闭环样本 ${closedSamples}，平均超额 ${Math.round(avgExcess * 100) / 100}%、超额胜率 ${
+              Math.round(excessWinRate * 100) / 100
+            }%，自动调整扫描风格/评分/仓位`,
+        best_segments: bestSegments.slice(0, 5),
+        weak_segments: weakSegments.slice(0, 5),
+        next_actions: Array.isArray(feedback.next_actions) ? feedback.next_actions.slice(0, 5) : [],
+      };
+    } catch (error: any) {
+      logger.warn(`读取全市场荐股闭环自适应策略失败，沿用基础参数: ${error?.message || error}`);
+      return {
+        ...basePolicy,
+        reason: `收益闭环自适应读取失败，沿用基础参数：${error?.message || error}`,
+      };
+    }
+  }
+
   async run(options: AutomatedRecommendationLoopOptions = {}) {
     const universe = options.universe === 'favorites' ? 'favorites' : 'market';
-    const style = ['balanced', 'momentum', 'value', 'low_risk'].includes(options.style || '')
+    const baseStyle = ['balanced', 'momentum', 'value', 'low_risk'].includes(options.style || '')
       ? options.style!
       : 'balanced';
+    const loop_policy = await this.resolveLoopPolicy({
+      username: options.username,
+      enabled: options.use_outcome_feedback !== false,
+      base_style: baseStyle,
+      base_min_score: Number(options.min_score || 72),
+      base_default_position_pct: Number(options.default_position_pct || 5),
+      base_max_position_pct: Number(options.max_position_pct || 10),
+      base_paper_trade_limit: toPositiveInt(options.paper_trade_limit, 3, 20),
+      lookback_days: toPositiveInt(options.outcome_feedback_lookback_days, 365, 3650),
+      min_closed_samples: toPositiveInt(options.outcome_feedback_min_closed_samples, 5, 100),
+    });
+    const style = loop_policy.effective_style;
     const candidateLimit = toPositiveInt(
       options.candidate_limit,
       universe === 'market' ? 30 : 20,
@@ -99,7 +238,10 @@ class AutomatedRecommendationLoopService {
         : await this.submitAgentAnalysis({
             candidates: archiveCandidates,
             max_count: toPositiveInt(options.agent_max_count, universe === 'market' ? 5 : 3, 10),
-            min_score: Number(options.agent_min_score || options.min_score || 72),
+            min_score: Math.max(
+              Number(options.agent_min_score || options.min_score || 72),
+              loop_policy.effective_min_score
+            ),
             target_date:
               options.target_date ||
               moment(generated.as_of || undefined)
@@ -109,10 +251,10 @@ class AutomatedRecommendationLoopService {
             agent_session: options.agent_session || 'close',
             auto_paper_trade: options.agent_auto_paper_trade !== false && Boolean(options.run_paper_trading),
             paper_trade_username: options.username,
-            paper_trade_min_score: Number(options.min_score || 72),
+            paper_trade_min_score: loop_policy.effective_min_score,
             paper_trade_max_positions: toPositiveInt(options.max_positions, 8, 30),
-            paper_trade_default_position_pct: Number(options.default_position_pct || 5),
-            paper_trade_max_position_pct: Number(options.max_position_pct || 10),
+            paper_trade_default_position_pct: loop_policy.effective_default_position_pct,
+            paper_trade_max_position_pct: loop_policy.effective_max_position_pct,
             paper_trade_min_trade_amount: Number(options.min_trade_amount || 3000),
             execution_log_id: options.execution_log_id,
             universe,
@@ -135,16 +277,16 @@ class AutomatedRecommendationLoopService {
         username: options.username,
         refresh_recommendations: false,
         source_type: AISignalSourceType.QUANT_RECOMMENDATION,
-        limit: toPositiveInt(options.paper_trade_limit, 3, 20),
+        limit: loop_policy.effective_paper_trade_limit,
         scan_limit: toPositiveInt(
           options.paper_trade_scan_limit,
           Math.max(archive.total, 100),
           500
         ),
-        min_score: Number(options.min_score || 72),
+        min_score: loop_policy.effective_min_score,
         max_positions: toPositiveInt(options.max_positions, 8, 30),
-        default_position_pct: Number(options.default_position_pct || 5),
-        max_position_pct: Number(options.max_position_pct || 10),
+        default_position_pct: loop_policy.effective_default_position_pct,
+        max_position_pct: loop_policy.effective_max_position_pct,
         min_trade_amount: Number(options.min_trade_amount || 3000),
         allowed_risk_levels: ['low', 'medium'],
         require_action_buy: true,
@@ -182,6 +324,7 @@ class AutomatedRecommendationLoopService {
       generated_at: moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm:ss'),
       universe,
       style,
+      loop_policy,
       generated,
       archive,
       agent_analysis,

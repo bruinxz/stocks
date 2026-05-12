@@ -479,6 +479,7 @@ class FeishuTaskReportService {
     const paper = result?.paper_trading || {};
     const tradeOutcomes = result?.trade_outcomes || {};
     const outcomeSummary = tradeOutcomes?.summary || {};
+    const loopPolicy = result?.loop_policy || {};
     const qualityOverview = result?.quality_report?.overview || {};
     const topPicks = recommendations.slice(0, 5);
     const bestPick = topPicks[0];
@@ -489,6 +490,17 @@ class FeishuTaskReportService {
       `- **候选范围**：${result?.universe === 'market' ? '全市场自动扫描' : '自选池'} / ${
         result?.style || generated.style || 'balanced'
       }`,
+      loopPolicy?.enabled !== undefined
+        ? `- **闭环自适应**：${loopPolicy.enabled ? '已启用' : '未启用'}；样本 ${
+            loopPolicy.closed_samples ?? 0
+          }/${loopPolicy.min_closed_samples ?? '-'}；风格 ${
+            loopPolicy.base_style || '-'
+          } → ${loopPolicy.effective_style || '-'}；最低评分 ${
+            loopPolicy.effective_min_score ?? '-'
+          }；仓位 ${loopPolicy.effective_default_position_pct ?? '-'}%/${
+            loopPolicy.effective_max_position_pct ?? '-'
+          }%`
+        : '',
       `- **评分覆盖**：${generated.analyzed_candidates ?? 0}/${
         generated.total_candidates ?? 0
       }；归档 ${archive.total ?? 0} 条；验证完成 ${verification.verified ?? 0} 条`,
@@ -537,7 +549,7 @@ class FeishuTaskReportService {
       '### 闭环说明',
       '- 系统已从全市场候选池自动筛选、归档为可后验验证信号，并可接入 Profit Gate 后进入模拟盘。',
       '- Top 候选会提交 TradingAgents 深度复核；复核结果回写后进入尾盘/场次收益跟踪。',
-      '- 下一轮会使用信号后验超额收益继续反哺候选评分，连续跑输市场的标的会被自动降权。',
+      `- 当前自适应原因：${loopPolicy.reason || '下一轮会使用信号后验超额收益继续反哺候选评分，连续跑输市场的标的会被自动降权。'}`,
     ]
       .filter(Boolean)
       .join('\n');
@@ -553,6 +565,14 @@ class FeishuTaskReportService {
       运行状态: options.error ? 'FAILED' : 'COMPLETED',
       候选范围: result?.universe,
       推荐风格: result?.style,
+      闭环自适应: loopPolicy?.enabled ? '已启用' : '未启用',
+      闭环样本数: loopPolicy?.closed_samples,
+      自适应最低评分: loopPolicy?.effective_min_score,
+      自适应仓位倍率: loopPolicy?.position_multiplier,
+      自适应默认仓位: loopPolicy?.effective_default_position_pct,
+      自适应最大仓位: loopPolicy?.effective_max_position_pct,
+      自适应跟单数量: loopPolicy?.effective_paper_trade_limit,
+      自适应原因: loopPolicy?.reason,
       候选总数: generated.total_candidates,
       有效评分数: generated.analyzed_candidates,
       归档信号数: archive.total,
@@ -590,6 +610,7 @@ class FeishuTaskReportService {
             recommendations: topPicks,
           },
           archive,
+          loop_policy: loopPolicy,
           agent_analysis: agentAnalysis,
           verification,
           paper_trading: {
