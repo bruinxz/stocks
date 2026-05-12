@@ -35,13 +35,14 @@ export interface PaperTradingPlanReportPayload {
 type TaskLogLike = TaskExecutionLog | Record<string, any> | null | undefined;
 
 class FeishuTaskReportService {
-  private readonly defaultMessageMaxLength = 90000;
+  private readonly defaultMessageMaxLength = 12000;
 
   async reportStockAnalysis(payload: StockAnalysisReportPayload) {
+    const readable = this.normalizeStockAnalysisPayload(payload);
     const markdownMessage = [
       `## AI分析结果：${payload.name || payload.symbol}（${payload.symbol}）`,
       '',
-      `- **投资评级**：${payload.decision || 'UNKNOWN'}`,
+      `- **投资评级**：${readable.decision || payload.decision || 'UNKNOWN'}`,
       payload.score != null ? `- **综合评分**：${Number(payload.score).toFixed(2)}` : '',
       payload.current_price != null ? `- **最新价**：${payload.current_price}` : '',
       payload.price_change_pct != null
@@ -50,27 +51,33 @@ class FeishuTaskReportService {
       payload.task_label ? `- **任务来源**：${payload.task_label}` : '',
       '',
       '### 核心理由',
-      this.safeText(payload.rationale || '暂无核心理由', 3000),
+      readable.rationale || '暂无核心理由',
+      readable.detail && readable.detail !== readable.rationale
+        ? ['', '### 完整分析', readable.detail]
+        : '',
     ]
       .filter(Boolean)
+      .flat()
       .join('\n');
 
     return this.safeAppend({
-      文本: `AI分析结果 - ${payload.name}(${payload.symbol}) - ${payload.decision}`,
-      message: markdownMessage,
+      文本: `AI分析结果 - ${payload.name}(${payload.symbol}) - ${
+        readable.decision || payload.decision
+      }`,
+      message: this.safeMarkdownMessage(markdownMessage),
       记录类型: 'AI分析结果',
       任务名称: payload.task_label || 'AI 每日优选评估',
       任务类型: 'AI_DAILY_SCREENER',
       运行状态: 'COMPLETED',
       股票代码: payload.symbol,
       股票名称: payload.name,
-      投资评级: payload.decision,
+      投资评级: readable.decision || payload.decision,
       评分: payload.score != null ? Number(payload.score).toFixed(2) : '',
       最新价: payload.current_price != null ? String(payload.current_price) : '',
       涨跌幅:
         payload.price_change_pct != null ? `${Number(payload.price_change_pct).toFixed(2)}%` : '',
-      核心理由: this.safeText(payload.rationale, 5000),
-      详情: this.safeText(payload.detail || '', 10000),
+      核心理由: this.safeText(readable.rationale || payload.rationale, 5000),
+      详情: this.safeText(readable.detail || payload.detail || '', 10000),
       创建时间: this.formatDate(new Date()),
     });
   }
@@ -510,15 +517,53 @@ class FeishuTaskReportService {
 
   private async safeAppend(fields: Record<string, any>) {
     try {
-      const result = await feishuBitableClient.createRecord(fields);
-      if (result.success) {
-        logger.info('飞书多维表格写入成功');
-      } else if (result.skipped) {
-        logger.warn(`飞书多维表格写入跳过: ${result.message}`);
-      } else {
-        logger.error(`飞书多维表格写入失败: ${result.message}`);
+      const records = this.expandLongMessageRecords(fields);
+      const results = [];
+
+      for (const recordFields of records) {
+        const result = await feishuBitableClient.createRecord(recordFields);
+        results.push(result);
+
+        if (result.success) {
+          logger.info(
+            records.length > 1
+              ? `飞书多维表格写入成功 (${results.length}/${records.length})`
+              : '飞书多维表格写入成功'
+          );
+        } else if (result.skipped) {
+          logger.warn(`飞书多维表格写入跳过: ${result.message}`);
+        } else {
+          logger.error(`飞书多维表格写入失败: ${result.message}`);
+        }
       }
-      return result;
+
+      const failed = results.filter(result => !result.success && !result.skipped);
+      const skipped = results.filter(result => result.skipped);
+      if (failed.length > 0) {
+        return {
+          success: false,
+          message: failed.map(item => item.message).filter(Boolean).join('; ') || '写入失败',
+          segments: records.length,
+          results,
+        };
+      }
+
+      if (skipped.length === results.length) {
+        return {
+          success: false,
+          skipped: true,
+          message: skipped.map(item => item.message).filter(Boolean).join('; ') || '已跳过写入',
+          segments: records.length,
+          results,
+        };
+      }
+
+      return {
+        success: true,
+        message: records.length > 1 ? `已分段写入 ${records.length} 条记录` : '写入成功',
+        segments: records.length,
+        results,
+      };
     } catch (error: any) {
       logger.error('飞书多维表格写入异常:', error?.message || error);
       return { success: false, message: error?.message || '写入异常' };
@@ -559,7 +604,7 @@ class FeishuTaskReportService {
 
   private getMessageMaxLength(): number {
     const configured = Number(process.env.FEISHU_MESSAGE_MAX_LENGTH);
-    if (Number.isFinite(configured) && configured > 10000) {
+    if (Number.isFinite(configured) && configured >= 2000) {
       return Math.min(Math.floor(configured), 200000);
     }
     return this.defaultMessageMaxLength;
@@ -577,11 +622,151 @@ class FeishuTaskReportService {
               return String(value);
             }
           })();
-    const maxLength = this.getMessageMaxLength();
-    if (text.length <= maxLength) return text;
+    return text;
+  }
 
-    const notice = `\n\n> ⚠️ message 原始长度 ${text.length} 字符，超过当前 FEISHU_MESSAGE_MAX_LENGTH=${maxLength}。为避免飞书单元格写入失败，已保留前 ${maxLength} 字符；如需完整超长明细，请调高 FEISHU_MESSAGE_MAX_LENGTH 或查看“结果摘要/日志”。`;
-    return `${text.substring(0, Math.max(0, maxLength - notice.length))}${notice}`;
+  private expandLongMessageRecords(fields: Record<string, any>): Record<string, any>[] {
+    if (fields.message === undefined || fields.message === null) return [fields];
+
+    const message = this.safeMarkdownMessage(fields.message);
+    const maxLength = this.getMessageMaxLength();
+    if (message.length <= maxLength) {
+      return [{ ...fields, message }];
+    }
+
+    const chunkBudget = Math.max(1000, maxLength - 600);
+    const chunks = this.splitMarkdownMessage(message, chunkBudget);
+    const total = chunks.length;
+    const baseText = String(fields.文本 || fields['任务名称'] || fields['记录类型'] || '飞书报告');
+    const baseRecordType = String(fields['记录类型'] || '报告');
+    const originalLength = String(message.length);
+
+    return chunks.map((chunk, index) => {
+      const segmentNo = index + 1;
+      const header = [
+        `## ${baseRecordType}（第 ${segmentNo}/${total} 段）`,
+        '',
+        `> 原始 message 共 ${message.length} 字符，已自动拆成 ${total} 条多维表格记录，避免飞书单元格或后续消息转发截断。`,
+        '',
+      ].join('\n');
+      const remainingBudget = Math.max(1000, maxLength - header.length);
+      const segmentMessage = `${header}${chunk.slice(0, remainingBudget)}`;
+
+      return {
+        ...fields,
+        文本: `${baseText} - 分段 ${segmentNo}/${total}`,
+        记录类型: fields['记录类型'] || baseRecordType,
+        message: segmentMessage,
+        message_segment: `${segmentNo}/${total}`,
+        message_original_length: originalLength,
+      };
+    });
+  }
+
+  private splitMarkdownMessage(message: string, maxLength: number): string[] {
+    const chunks: string[] = [];
+    let remaining = message;
+
+    while (remaining.length > maxLength) {
+      let splitAt = remaining.lastIndexOf('\n', maxLength);
+      if (splitAt < Math.floor(maxLength * 0.5)) {
+        splitAt = remaining.lastIndexOf('。', maxLength);
+      }
+      if (splitAt < Math.floor(maxLength * 0.5)) {
+        splitAt = remaining.lastIndexOf('；', maxLength);
+      }
+      if (splitAt < Math.floor(maxLength * 0.5)) {
+        splitAt = maxLength;
+      }
+
+      chunks.push(remaining.slice(0, splitAt).trimEnd());
+      remaining = remaining.slice(splitAt).trimStart();
+    }
+
+    if (remaining.length > 0) chunks.push(remaining);
+    return chunks;
+  }
+
+  private normalizeStockAnalysisPayload(payload: StockAnalysisReportPayload): {
+    decision: string;
+    rationale: string;
+    detail: string;
+  } {
+    const parsedRationale = this.tryParseJson(payload.rationale);
+    const parsedDetail = this.tryParseJson(payload.detail);
+    const rationaleSource = this.firstDefined(
+      this.pickReadableField(parsedRationale, ['rationale', 'summary', 'executive_summary', 'reason']),
+      this.pickReadableField(parsedDetail, ['rationale', 'summary', 'executive_summary', 'reason']),
+      payload.rationale
+    );
+    const detailSource = this.firstDefined(
+      this.pickReadableField(parsedDetail, [
+        'detail',
+        'report',
+        'analysis',
+        'rationale',
+        'summary',
+        'executive_summary',
+        'message',
+      ]),
+      payload.detail
+    );
+
+    const decision = String(
+      this.firstDefined(
+        this.pickReadableField(parsedRationale, ['decision', 'rating']),
+        this.pickReadableField(parsedDetail, ['decision', 'rating']),
+        payload.decision,
+        'UNKNOWN'
+      )
+    );
+
+    return {
+      decision,
+      rationale: this.toReadableText(rationaleSource),
+      detail: this.toReadableText(detailSource),
+    };
+  }
+
+  private pickReadableField(value: any, keys: string[]): any {
+    if (!value || typeof value !== 'object') return undefined;
+    for (const key of keys) {
+      if (value[key] !== undefined && value[key] !== null && value[key] !== '') {
+        return value[key];
+      }
+    }
+    return undefined;
+  }
+
+  private tryParseJson(value: any): any {
+    if (!value) return undefined;
+    if (typeof value === 'object') return value;
+    if (typeof value !== 'string') return undefined;
+    const text = value.trim();
+    if (!text || !/^[\[{]/.test(text)) return undefined;
+    try {
+      return JSON.parse(text);
+    } catch (error) {
+      return undefined;
+    }
+  }
+
+  private toReadableText(value: any): string {
+    if (value === undefined || value === null) return '';
+    if (typeof value === 'string') return value;
+    if (Array.isArray(value)) {
+      return value.map(item => this.toReadableText(item)).filter(Boolean).join('\n');
+    }
+    if (typeof value === 'object') {
+      return Object.entries(value)
+        .map(([key, item]) => {
+          const text = this.toReadableText(item);
+          return text ? `- **${key}**：${text}` : '';
+        })
+        .filter(Boolean)
+        .join('\n');
+    }
+    return String(value);
   }
 
   private buildTaskMarkdownMessage(log: any, options: any, recordType: string): string {

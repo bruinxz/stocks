@@ -6,6 +6,7 @@ import { TaskExecutionLog } from '../models/TaskExecutionLog';
 import { AKShareClient } from '../data/sources/AKShareClient';
 import { notificationService } from '../services/NotificationService';
 import { aiInvestmentSignalService } from '../services/AIInvestmentSignalService';
+import { AISignalDecision } from '../models/AIInvestmentSignal';
 import { feishuTaskReportService } from '../services/FeishuTaskReportService';
 import { ScheduledTask } from '../models/ScheduledTask';
 import { logger } from '../utils/logger';
@@ -90,58 +91,18 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
         decisionStr = JSON.stringify(decisionStr, null, 2);
       }
 
-      let rating = 'HOLD';
-      let summary = '';
-
-      // Attempt to parse standard markdown format first
-      const ratingMatch = decisionStr.match(/### 1\. \*\*Rating\*\*:\s*([^\n]+)/i);
-      if (ratingMatch) rating = ratingMatch[1].trim();
-      else {
-        // Fallback: Try to parse as JSON if it's a JSON string
-        try {
-          const jsonObj =
-            typeof response.data === 'string' ? JSON.parse(response.data) : response.data;
-          if (jsonObj && typeof jsonObj.decision === 'string') {
-            rating = jsonObj.decision.toUpperCase();
-          } else {
-            // Blind fallback, but carefully check word boundaries to avoid matching "BUY" inside a larger word
-            if (
-              decisionStr.toUpperCase().includes('STRONG_BUY') ||
-              decisionStr.toUpperCase().includes('STRONG BUY')
-            )
-              rating = 'STRONG_BUY';
-            else if (decisionStr.toUpperCase().match(/\bBUY\b/)) rating = 'BUY';
-            else if (decisionStr.toUpperCase().match(/\bSELL\b/)) rating = 'SELL';
-          }
-        } catch (e) {
-          // Blind fallback if it's not JSON
-          if (
-            decisionStr.toUpperCase().includes('STRONG_BUY') ||
-            decisionStr.toUpperCase().includes('STRONG BUY')
-          )
-            rating = 'STRONG_BUY';
-          else if (decisionStr.toUpperCase().match(/\bBUY\b/)) rating = 'BUY';
-          else if (decisionStr.toUpperCase().match(/\bSELL\b/)) rating = 'SELL';
-        }
-      }
-
-      const summaryMatch = decisionStr.match(
-        /### 2\. \*\*Executive Summary\*\*\n([\s\S]*?)(?=### 3\.|\n\n###|$)/i
+      const structured = aiInvestmentSignalService.parseTradingAgentsDecision(
+        decisionStr,
+        response.data
       );
-      if (summaryMatch) summary = summaryMatch[1].trim();
-      else {
-        try {
-          const jsonObj =
-            typeof response.data === 'string' ? JSON.parse(response.data) : response.data;
-          if (jsonObj && jsonObj.summary) {
-            summary = jsonObj.summary;
-          } else {
-            summary = decisionStr.substring(0, 200) + '...';
-          }
-        } catch (e) {
-          summary = decisionStr.substring(0, 200) + '...';
-        }
-      }
+      const normalizedDecision = structured.normalized_decision || AISignalDecision.UNKNOWN;
+      const rating = normalizedDecision.toUpperCase();
+      const summary =
+        structured.summary ||
+        (typeof response.data === 'object' && response.data?.rationale
+          ? String(response.data.rationale)
+          : '') ||
+        decisionStr.substring(0, 1200);
 
       let score = 50;
       if (rating.toUpperCase().includes('STRONG_BUY')) score = 90;
