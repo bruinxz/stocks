@@ -31,6 +31,7 @@ export interface SignalQueryOptions {
 export interface SignalPerformanceOptions extends SignalQueryOptions {
   horizon?: string;
   limit?: number;
+  min_samples?: number;
 }
 
 export interface SignalVerificationDiagnosisOptions extends SignalQueryOptions {
@@ -105,7 +106,10 @@ function resolveSignalDate(
   return getChinaToday();
 }
 
-export function inferAgentSession(taskLabel?: string, fallbackTime?: Date | string): string | undefined {
+export function inferAgentSession(
+  taskLabel?: string,
+  fallbackTime?: Date | string
+): string | undefined {
   const label = String(taskLabel || '').toLowerCase();
   if (/尾盘|收盘|close|closing|eod|end[-_\s]?of[-_\s]?day/.test(label)) return 'close';
   if (/午盘|midday|noon/.test(label)) return 'midday';
@@ -186,7 +190,11 @@ function isVerificationMature(signalDate: string, maxHorizon: number): boolean {
   return elapsedCalendarDays >= matureCalendarDays;
 }
 
-function buildPendingForwardReturns(signal: AIInvestmentSignal, horizons: number[], reason: string) {
+function buildPendingForwardReturns(
+  signal: AIInvestmentSignal,
+  horizons: number[],
+  reason: string
+) {
   const signalSide = getSignalSide(signal.normalized_decision || signal.decision);
   return {
     decision_side: signalSide,
@@ -338,6 +346,123 @@ function extractCompletedReturnSamples(signals: any[], horizonFilter?: string) {
   }
 
   return samples;
+}
+
+function calculateQualityScore(summary: any, minSamples = 5): number {
+  if (!summary || !summary.count) return 0;
+  const avgReturnScore = Math.max(-20, Math.min(35, Number(summary.avg_return_pct || 0) * 5));
+  const directionalScore =
+    (Math.max(0, Math.min(100, Number(summary.directional_success_rate || 0))) - 50) * 0.45;
+  const payoffScore = Math.min(20, Math.max(0, Number(summary.payoff_ratio || 0) * 6));
+  const riskRewardScore = Math.min(12, Math.max(-8, Number(summary.risk_reward_ratio || 0) * 4));
+  const sampleScore = Math.min(18, (Number(summary.count || 0) / Math.max(minSamples, 1)) * 18);
+  return Math.max(
+    0,
+    Math.min(
+      100,
+      Math.round(
+        35 + avgReturnScore + directionalScore + payoffScore + riskRewardScore + sampleScore
+      )
+    )
+  );
+}
+
+function classifyQualityGate(summary: any, minSamples = 5) {
+  const count = Number(summary?.count || 0);
+  const avgReturn = Number(summary?.avg_return_pct || 0);
+  const directionalSuccessRate = Number(summary?.directional_success_rate || 0);
+  const payoffRatio = Number(summary?.payoff_ratio || 0);
+  const mae = Math.abs(Number(summary?.avg_mae_pct || 0));
+
+  if (count === 0) {
+    return {
+      action: 'wait_for_samples',
+      label: '等待样本',
+      severity: 'watch',
+      position_multiplier: 0,
+      reason: '暂无完成样本，不能用于仓位放大',
+    };
+  }
+
+  if (count < minSamples) {
+    return {
+      action: 'collect_more_samples',
+      label: '继续观察',
+      severity: 'watch',
+      position_multiplier: 0.5,
+      reason: `完成样本 ${count}/${minSamples}，仅适合小仓验证`,
+    };
+  }
+
+  if (avgReturn > 1.5 && directionalSuccessRate >= 58 && payoffRatio >= 1.15) {
+    return {
+      action: 'scale_up',
+      label: '可放大',
+      severity: 'good',
+      position_multiplier: mae > 6 ? 1.1 : 1.25,
+      reason: `均收 ${roundNumber(avgReturn, 2)}%，方向胜率 ${roundNumber(
+        directionalSuccessRate,
+        1
+      )}%，盈亏比 ${roundNumber(payoffRatio, 2)}`,
+    };
+  }
+
+  if (avgReturn < -1.2 || directionalSuccessRate < 42) {
+    return {
+      action: 'deprioritize',
+      label: '降权/暂避',
+      severity: 'bad',
+      position_multiplier: 0.25,
+      reason: `均收 ${roundNumber(avgReturn, 2)}%，方向胜率 ${roundNumber(
+        directionalSuccessRate,
+        1
+      )}%，不具备正期望`,
+    };
+  }
+
+  return {
+    action: 'normal_watch',
+    label: '正常跟踪',
+    severity: 'neutral',
+    position_multiplier: 0.75,
+    reason: `均收 ${roundNumber(avgReturn, 2)}%，方向胜率 ${roundNumber(
+      directionalSuccessRate,
+      1
+    )}%，仍需等待更清晰优势`,
+  };
+}
+
+function buildQualityBucket(key: string, label: string, samples: any[], minSamples = 5) {
+  const summary = summarizeReturnSamples(samples);
+  return {
+    key,
+    label,
+    ...summary,
+    quality_score: calculateQualityScore(summary, minSamples),
+    gate: classifyQualityGate(summary, minSamples),
+  };
+}
+
+function sourceLabelForPerformance(value?: string) {
+  const labels: Record<string, string> = {
+    quant_recommendation: '量化候选',
+    tradingagents: 'TradingAgents',
+    daily_screener: '每日优选',
+    manual_analysis: '人工分析',
+  };
+  return labels[String(value || '')] || value || 'unknown';
+}
+
+function decisionLabelForPerformance(value?: string) {
+  const labels: Record<string, string> = {
+    strong_buy: '强买',
+    buy: '买入',
+    hold: '持有',
+    sell: '卖出',
+    strong_sell: '强卖',
+    unknown: '未知',
+  };
+  return labels[String(value || '')] || value || 'unknown';
 }
 
 export class AIInvestmentSignalService {
@@ -818,9 +943,7 @@ export class AIInvestmentSignalService {
         max_favorable_excursion_pct: Number(
           (signalSide === 'short' ? -longMae : longMfe).toFixed(4)
         ),
-        max_adverse_excursion_pct: Number(
-          (signalSide === 'short' ? -longMfe : longMae).toFixed(4)
-        ),
+        max_adverse_excursion_pct: Number((signalSide === 'short' ? -longMfe : longMae).toFixed(4)),
         window_high: Number(maxHigh.toFixed(4)),
         window_low: Number(minLow.toFixed(4)),
       };
@@ -1022,7 +1145,11 @@ export class AIInvestmentSignalService {
   }
 
   async verifySignals(
-    options: { limit?: number; horizons?: number[]; report_to_feishu?: boolean } & SignalQueryOptions = {}
+    options: {
+      limit?: number;
+      horizons?: number[];
+      report_to_feishu?: boolean;
+    } & SignalQueryOptions = {}
   ): Promise<{
     total: number;
     verified: number;
@@ -1162,6 +1289,7 @@ export class AIInvestmentSignalService {
   async getPerformanceDashboard(options: SignalPerformanceOptions = {}) {
     const horizon = options.horizon || DEFAULT_PERFORMANCE_HORIZON;
     const limit = Math.min(Math.max(Number(options.limit || 1000), 1), 5000);
+    const minSamples = Math.min(Math.max(Number(options.min_samples || 5), 1), 100);
     const signals = (await AIInvestmentSignal.findAll({
       where: buildSignalWhere(options),
       order: [
@@ -1270,6 +1398,54 @@ export class AIInvestmentSignalService {
       };
     });
 
+    const buildBucketSummary = (
+      bucketKey: string,
+      label: string,
+      filter: (sample: any) => boolean
+    ) => buildQualityBucket(bucketKey, label, completedSamples.filter(filter), minSamples);
+
+    const playbook = {
+      horizon,
+      min_samples: minSamples,
+      overall: buildQualityBucket('overall', '整体信号', completedSamples, minSamples),
+      buy_side: buildBucketSummary('buy_side', '买入侧建议', sample =>
+        ['buy', 'strong_buy'].includes(sample.normalized_decision)
+      ),
+      sell_side: buildBucketSummary('sell_side', '卖出侧建议', sample =>
+        ['sell', 'strong_sell'].includes(sample.normalized_decision)
+      ),
+      best_segments: [
+        ...groupedSummary(sample => sample.source_type).map(item => ({
+          dimension: 'source_type',
+          label: sourceLabelForPerformance(item.key),
+          ...item,
+          quality_score: calculateQualityScore(item, minSamples),
+          gate: classifyQualityGate(item, minSamples),
+        })),
+        ...groupedSummary(sample => sample.normalized_decision).map(item => ({
+          dimension: 'decision',
+          label: decisionLabelForPerformance(item.key),
+          ...item,
+          quality_score: calculateQualityScore(item, minSamples),
+          gate: classifyQualityGate(item, minSamples),
+        })),
+      ]
+        .filter(item => item.count > 0)
+        .sort((a, b) => b.quality_score - a.quality_score)
+        .slice(0, 8),
+      risk_notes: [
+        overview.pending_signals > 0
+          ? `${overview.pending_signals} 条信号仍在等待后验周期，避免过早评判 Agent 优劣`
+          : '',
+        overview.no_data_signals > 0
+          ? `${overview.no_data_signals} 条信号缺行情数据，需先修复数据再纳入决策`
+          : '',
+        completedSamples.length > 0 && Math.abs(Number(overview.avg_mae_pct || 0)) > 6
+          ? `平均 MAE ${roundNumber(overview.avg_mae_pct, 2)}%，建议降低单笔仓位或收紧止损`
+          : '',
+      ].filter(Boolean),
+    };
+
     const generated_at = moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm:ss');
 
     return {
@@ -1284,8 +1460,10 @@ export class AIInvestmentSignalService {
         end_date: options.end_date,
         horizon,
         limit,
+        min_samples: minSamples,
       },
       overview,
+      playbook,
       by_decision: groupedSummary(sample => sample.normalized_decision),
       by_source_type: groupedSummary(sample => sample.source_type),
       by_risk_level: groupedSummary(sample => sample.risk_level),
@@ -1296,13 +1474,15 @@ export class AIInvestmentSignalService {
     };
   }
 
-  async refreshPerformance(options: {
-    limit?: number;
-    horizons?: number[];
-    horizon?: string;
-    report_to_feishu?: boolean;
-    record_type?: string;
-  } & SignalQueryOptions = {}) {
+  async refreshPerformance(
+    options: {
+      limit?: number;
+      horizons?: number[];
+      horizon?: string;
+      report_to_feishu?: boolean;
+      record_type?: string;
+    } & SignalQueryOptions = {}
+  ) {
     const metadataBackfill = await this.backfillAgentSessionMetadata({
       limit: options.limit || 1000,
       source_type: options.source_type,

@@ -41,7 +41,10 @@ class FeishuTaskReportService {
   async reportStockAnalysis(payload: StockAnalysisReportPayload) {
     const readable = this.normalizeStockAnalysisPayload(payload);
     const decision = readable.decision || payload.decision || 'UNKNOWN';
-    const coreRationale = this.safeText(readable.rationale || payload.rationale || '暂无核心理由', 2200);
+    const coreRationale = this.safeText(
+      readable.rationale || payload.rationale || '暂无核心理由',
+      2200
+    );
     const markdownMessage = [
       `## AI分析结果：${payload.name || payload.symbol}（${payload.symbol}）`,
       '',
@@ -205,6 +208,9 @@ class FeishuTaskReportService {
       ? horizonSummary.find((item: any) => item.horizon === targetHorizon) || horizonSummary[0]
       : stats.horizon_summary?.[targetHorizon] || {};
     const bestSymbol = Array.isArray(dashboard.top_symbols) ? dashboard.top_symbols[0] : null;
+    const playbook = dashboard.playbook || {};
+    const gate = playbook.overall?.gate || {};
+    const bestSegments = Array.isArray(playbook.best_segments) ? playbook.best_segments : [];
     const agentSession = payload.agent_session || dashboard.filters?.agent_session || '';
     const markdownMessage = [
       `## ${payload.record_type || '推荐绩效刷新'}`,
@@ -216,6 +222,23 @@ class FeishuTaskReportService {
       `- **完成样本**：${overview.completed_samples ?? targetStats?.count ?? '-'}`,
       `- **待验证信号**：${overview.pending_signals ?? '-'}`,
       `- **无数据信号**：${overview.no_data_signals ?? result.no_data ?? '-'}`,
+      '',
+      '### 结论闸门',
+      `- **当前建议**：${gate.label || '等待样本'}；仓位倍率 ${
+        gate.position_multiplier !== undefined
+          ? `${Number(gate.position_multiplier).toFixed(2)}x`
+          : '--'
+      }`,
+      gate.reason ? `- **核心理由**：${gate.reason}` : '',
+      bestSegments.length
+        ? `- **最强片段**：${bestSegments
+            .slice(0, 3)
+            .map(
+              (item: any) =>
+                `${item.label || item.key}(${item.quality_score || 0}分/${item.count}样本)`
+            )
+            .join('、')}`
+        : '',
       '',
       '### 核心收益',
       `- **平均收益**：${
@@ -263,6 +286,14 @@ class FeishuTaskReportService {
       方向成功率: this.formatPercent(
         targetStats?.directional_success_rate ?? overview.directional_success_rate
       ),
+      收益闸门: gate.label || '',
+      建议仓位倍率:
+        gate.position_multiplier !== undefined ? Number(gate.position_multiplier).toFixed(2) : '',
+      闸门理由: gate.reason || '',
+      最强片段: bestSegments
+        .slice(0, 3)
+        .map((item: any) => `${item.label || item.key}:${item.quality_score || 0}`)
+        .join(', '),
       盈亏比: targetStats?.payoff_ratio ?? overview.payoff_ratio,
       ProfitFactor: targetStats?.profit_factor ?? overview.profit_factor,
       平均MFE: this.formatPercent(targetStats?.avg_mfe_pct ?? overview.avg_mfe_pct),
@@ -277,6 +308,11 @@ class FeishuTaskReportService {
           result,
           overview,
           horizon_summary: horizonSummary,
+          playbook: {
+            overall: playbook.overall,
+            best_segments: bestSegments.slice(0, 5),
+            risk_notes: playbook.risk_notes,
+          },
           top_symbols: Array.isArray(dashboard.top_symbols)
             ? dashboard.top_symbols.slice(0, 5)
             : undefined,
@@ -309,9 +345,7 @@ class FeishuTaskReportService {
       `- **补行情股票**：${syncedSymbols.length} 只；新增/尝试写入K线 ${inserted} 条`,
       `- **重新验证完成**：${result?.verification?.verified ?? 0} 条；等待周期 ${
         result?.verification?.pending ?? 0
-      } 条；仍无数据 ${
-        result?.verification?.no_data ?? 0
-      } 条`,
+      } 条；仍无数据 ${result?.verification?.no_data ?? 0} 条`,
       `- **最终可验证**：${final.ready_for_verification ?? 0} 条；周期未完成 ${
         final.insufficient_horizon_bars ?? 0
       } 条；缺行情 ${final.missing_bars ?? 0} 条`,
@@ -321,7 +355,10 @@ class FeishuTaskReportService {
         ? '仍存在不可验证样本，主要由行情缺失、股票映射缺失或后验周期尚未走完导致。系统已尽量补齐缺失行情，后续每日同步后会继续滚动验证。'
         : '缺失行情已补齐，当前样本具备后验验证条件，可以进入收益统计与策略反哺。',
       failedSymbols.length
-        ? `\n### 同步失败股票\n${failedSymbols.slice(0, 20).map(symbol => `- ${symbol}`).join('\n')}`
+        ? `\n### 同步失败股票\n${failedSymbols
+            .slice(0, 20)
+            .map(symbol => `- ${symbol}`)
+            .join('\n')}`
         : '',
     ]
       .filter(Boolean)
@@ -615,7 +652,11 @@ class FeishuTaskReportService {
       if (failed.length > 0) {
         return {
           success: false,
-          message: failed.map(item => item.message).filter(Boolean).join('; ') || '写入失败',
+          message:
+            failed
+              .map(item => item.message)
+              .filter(Boolean)
+              .join('; ') || '写入失败',
           segments: records.length,
           results,
         };
@@ -625,7 +666,11 @@ class FeishuTaskReportService {
         return {
           success: false,
           skipped: true,
-          message: skipped.map(item => item.message).filter(Boolean).join('; ') || '已跳过写入',
+          message:
+            skipped
+              .map(item => item.message)
+              .filter(Boolean)
+              .join('; ') || '已跳过写入',
           segments: records.length,
           results,
         };
@@ -768,7 +813,12 @@ class FeishuTaskReportService {
     const parsedRationale = this.tryParseJson(payload.rationale);
     const parsedDetail = this.tryParseJson(payload.detail);
     const rationaleSource = this.firstDefined(
-      this.pickReadableField(parsedRationale, ['rationale', 'summary', 'executive_summary', 'reason']),
+      this.pickReadableField(parsedRationale, [
+        'rationale',
+        'summary',
+        'executive_summary',
+        'reason',
+      ]),
       this.pickReadableField(parsedDetail, ['rationale', 'summary', 'executive_summary', 'reason']),
       payload.rationale
     );
@@ -828,7 +878,10 @@ class FeishuTaskReportService {
     if (value === undefined || value === null) return '';
     if (typeof value === 'string') return value;
     if (Array.isArray(value)) {
-      return value.map(item => this.toReadableText(item)).filter(Boolean).join('\n');
+      return value
+        .map(item => this.toReadableText(item))
+        .filter(Boolean)
+        .join('\n');
     }
     if (typeof value === 'object') {
       return Object.entries(value)
@@ -999,7 +1052,7 @@ class FeishuTaskReportService {
       `- **扫描信号**：${result?.scanned ?? 0}`,
       `- **符合交易条件**：${result?.eligible ?? 0}`,
       `- **${dryRun ? '计划交易' : '自动成交'}**：${
-        dryRun ? (result?.planned ?? trades.length) : (result?.executed ?? trades.length)
+        dryRun ? result?.planned ?? trades.length : result?.executed ?? trades.length
       }`,
       `- **跳过信号**：${result?.skipped ?? skippedItems.length}`,
       generated?.total_candidates !== undefined
@@ -1095,7 +1148,7 @@ class FeishuTaskReportService {
       `- **检查持仓**：${result?.checked ?? 0}`,
       `- **触发退出**：${result?.exit_candidates ?? exits.length}`,
       `- **${dryRun ? '计划退出' : '自动退出'}**：${
-        dryRun ? (result?.planned ?? exits.length) : (result?.exited ?? exits.length)
+        dryRun ? result?.planned ?? exits.length : result?.exited ?? exits.length
       }`,
       `- **继续持有**：${result?.held ?? heldItems.length}`,
       `- **跳过持仓**：${result?.skipped ?? skippedItems.length}`,
@@ -1223,18 +1276,22 @@ class FeishuTaskReportService {
         lines.push(
           `- **最佳**：${summary.best_trade.name || summary.best_trade.symbol}（${
             summary.best_trade.symbol
-          }），收益 ${this.formatPercent(summary.best_trade.realized_pnl_pct)}，实现盈亏 ${this.formatSignedMoney(
-            summary.best_trade.realized_pnl
-          )}，持有 ${summary.best_trade.holding_days ?? '--'} 天`
+          }），收益 ${this.formatPercent(
+            summary.best_trade.realized_pnl_pct
+          )}，实现盈亏 ${this.formatSignedMoney(summary.best_trade.realized_pnl)}，持有 ${
+            summary.best_trade.holding_days ?? '--'
+          } 天`
         );
       }
       if (summary.worst_trade) {
         lines.push(
           `- **最差**：${summary.worst_trade.name || summary.worst_trade.symbol}（${
             summary.worst_trade.symbol
-          }），收益 ${this.formatPercent(summary.worst_trade.realized_pnl_pct)}，实现盈亏 ${this.formatSignedMoney(
-            summary.worst_trade.realized_pnl
-          )}，退出原因：${summary.worst_trade.exit_reason_label || summary.worst_trade.exit_reason || '-'}`
+          }），收益 ${this.formatPercent(
+            summary.worst_trade.realized_pnl_pct
+          )}，实现盈亏 ${this.formatSignedMoney(summary.worst_trade.realized_pnl)}，退出原因：${
+            summary.worst_trade.exit_reason_label || summary.worst_trade.exit_reason || '-'
+          }`
         );
       }
     }
@@ -1288,7 +1345,9 @@ class FeishuTaskReportService {
       lines.push('', '### 最近闭环交易');
       closedTrades.slice(0, 8).forEach((item: any, index: number) => {
         lines.push(
-          `${index + 1}. **${item.name || item.symbol}（${item.symbol}）**：收益 ${this.formatPercent(
+          `${index + 1}. **${item.name || item.symbol}（${
+            item.symbol
+          }）**：收益 ${this.formatPercent(
             item.realized_pnl_pct
           )}，实现盈亏 ${this.formatSignedMoney(item.realized_pnl)}，退出：${
             item.exit_reason_label || item.exit_reason || '-'
@@ -1339,7 +1398,9 @@ class FeishuTaskReportService {
       } / ${summary.monitor_count ?? 0} / ${summary.review_count ?? 0}`,
       `- **当前现金**：¥${this.formatMoney(summary.current_cash)}`,
       `- **计划卖出回款**：${this.formatSignedMoney(summary.planned_sell_cash_inflow)}`,
-      `- **计划买入用资**：${this.formatSignedMoney(-Number(summary.planned_buy_cash_outflow || 0))}`,
+      `- **计划买入用资**：${this.formatSignedMoney(
+        -Number(summary.planned_buy_cash_outflow || 0)
+      )}`,
       `- **计划后现金**：¥${this.formatMoney(summary.projected_cash_after_plan)}`,
       '',
       '### 归因反馈参数',

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
+  Badge,
   Button,
   Card,
   Col,
@@ -42,6 +43,21 @@ import api from '../services/api';
 
 const { Text, Paragraph } = Typography;
 
+type QualityGate = {
+  action: string;
+  label: string;
+  severity: 'good' | 'bad' | 'watch' | 'neutral' | string;
+  position_multiplier: number;
+  reason: string;
+};
+
+type QualityBucket = SummaryRow & {
+  label?: string;
+  dimension?: string;
+  quality_score: number;
+  gate: QualityGate;
+};
+
 type SummaryRow = {
   key?: string;
   horizon?: string;
@@ -55,6 +71,8 @@ type SummaryRow = {
   profit_factor?: number;
   avg_mfe_pct?: number;
   avg_mae_pct?: number;
+  quality_score?: number;
+  gate?: QualityGate;
 };
 
 type RecentSignal = {
@@ -85,6 +103,15 @@ type DashboardData = {
     no_data_signals: number;
     completed_samples: number;
     horizon: string;
+  };
+  playbook?: {
+    horizon: string;
+    min_samples: number;
+    overall: QualityBucket;
+    buy_side: QualityBucket;
+    sell_side: QualityBucket;
+    best_segments: QualityBucket[];
+    risk_notes: string[];
   };
   by_decision: SummaryRow[];
   by_source_type: SummaryRow[];
@@ -144,6 +171,21 @@ const agentSessionLabelMap: Record<string, string> = {
   close: '尾盘',
   midday: '午盘',
   morning: '早盘',
+};
+
+const gateToneMap: Record<
+  string,
+  { color: string; badge: 'success' | 'error' | 'warning' | 'default' | 'processing' }
+> = {
+  good: { color: 'red', badge: 'success' },
+  bad: { color: 'green', badge: 'error' },
+  watch: { color: 'gold', badge: 'warning' },
+  neutral: { color: 'blue', badge: 'processing' },
+};
+
+const formatMultiplier = (value?: number | null) => {
+  if (value === undefined || value === null || Number.isNaN(Number(value))) return '--';
+  return `${Number(value).toFixed(2)}x`;
 };
 
 const formatPct = (value?: number | null, digits = 2) => {
@@ -227,6 +269,9 @@ const RecommendationPerformance: React.FC = () => {
     () => data?.horizon_summary?.find(item => item.horizon === horizon) || overview,
     [data, horizon, overview]
   );
+  const playbook = data?.playbook;
+  const playbookGate = playbook?.overall?.gate;
+  const gateTone = gateToneMap[playbookGate?.severity || 'neutral'] || gateToneMap.neutral;
 
   const edgeScore = useMemo(() => {
     const stats = selectedHorizonStats;
@@ -317,6 +362,56 @@ const RecommendationPerformance: React.FC = () => {
             {record.entry_price ?? '--'} → {record.exit_price ?? '--'}
           </Text>
         </Space>
+      ),
+    },
+  ];
+
+  const playbookColumns = [
+    {
+      title: '片段',
+      key: 'segment',
+      render: (_: any, record: QualityBucket) => (
+        <Space direction="vertical" size={2}>
+          <Text strong>{record.label || record.key}</Text>
+          <Text type="secondary">
+            {record.dimension || 'quality'} · {record.count} 样本
+          </Text>
+        </Space>
+      ),
+    },
+    {
+      title: '质量分',
+      dataIndex: 'quality_score',
+      key: 'quality_score',
+      width: 110,
+      render: (value: number) => (
+        <Progress percent={value || 0} size="small" strokeColor="#9f6b25" />
+      ),
+      sorter: (a: QualityBucket, b: QualityBucket) =>
+        (a.quality_score || 0) - (b.quality_score || 0),
+    },
+    {
+      title: '闸门',
+      key: 'gate',
+      width: 130,
+      render: (_: any, record: QualityBucket) => {
+        const tone = gateToneMap[record.gate?.severity || 'neutral'] || gateToneMap.neutral;
+        return <Tag color={tone.color}>{record.gate?.label || '--'}</Tag>;
+      },
+    },
+    {
+      title: '仓位倍率',
+      key: 'position_multiplier',
+      width: 110,
+      render: (_: any, record: QualityBucket) => (
+        <Text strong>{formatMultiplier(record.gate?.position_multiplier)}</Text>
+      ),
+    },
+    {
+      title: '核心理由',
+      key: 'reason',
+      render: (_: any, record: QualityBucket) => (
+        <Text type="secondary">{record.gate?.reason || '--'}</Text>
       ),
     },
   ];
@@ -426,6 +521,63 @@ const RecommendationPerformance: React.FC = () => {
             : '只放大在目标周期胜率、期望收益和盈亏比同时为正的信号来源/风格；对平均 MAE 过大的方向降仓，对连续跑输的标的从候选池降权。'
         }
       />
+
+      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+        <Col xs={24} xl={9}>
+          <Card className="modern-card playbook-command-card" variant="borderless">
+            <div className="playbook-command-head">
+              <div>
+                <Text type="secondary">Profit Gate</Text>
+                <div className="playbook-command-title">收益闸门建议</div>
+              </div>
+              <Badge status={gateTone.badge} text={playbookGate?.label || '等待样本'} />
+            </div>
+            <div className="playbook-command-score">
+              {playbook?.overall?.quality_score ?? 0}
+              <span>/100</span>
+            </div>
+            <Paragraph className="playbook-command-reason">
+              {playbookGate?.reason || '暂无完成后验样本，先保持观察，不放大仓位。'}
+            </Paragraph>
+            <Space wrap>
+              <Tag color="volcano">
+                建议仓位倍率 {formatMultiplier(playbookGate?.position_multiplier)}
+              </Tag>
+              <Tag>{horizon} 持有周期</Tag>
+              <Tag>{playbook?.min_samples || 5} 样本后启用放大</Tag>
+            </Space>
+          </Card>
+        </Col>
+        <Col xs={24} xl={15}>
+          <Card
+            className="modern-card playbook-segment-card"
+            variant="borderless"
+            title="可赚钱片段排行"
+            extra={<Text type="secondary">按质量分排序</Text>}
+          >
+            <Table
+              columns={playbookColumns}
+              dataSource={playbook?.best_segments || []}
+              rowKey={record => `${record.dimension}-${record.key}`}
+              size="small"
+              pagination={false}
+              locale={{
+                emptyText: <Empty description="等待 5d/10d 样本形成后自动给出放大/降权建议" />,
+              }}
+            />
+          </Card>
+        </Col>
+        {Boolean(playbook?.risk_notes?.length) && (
+          <Col span={24}>
+            <Alert
+              type="warning"
+              showIcon
+              message="当前执行提醒"
+              description={(playbook?.risk_notes || []).join('；')}
+            />
+          </Col>
+        )}
+      </Row>
 
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
         <Col xs={24} md={8} xl={5}>
