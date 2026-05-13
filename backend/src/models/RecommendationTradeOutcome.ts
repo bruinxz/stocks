@@ -1,12 +1,4 @@
-import {
-  Table,
-  Column,
-  Model,
-  DataType,
-  CreatedAt,
-  UpdatedAt,
-  Index,
-} from 'sequelize-typescript';
+import { Table, Column, Model, DataType, CreatedAt, UpdatedAt, Index } from 'sequelize-typescript';
 
 @Table({
   tableName: 'recommendation_trade_outcomes',
@@ -30,6 +22,10 @@ import {
       fields: ['trade_status'],
     },
     {
+      name: 'idx_recommendation_trade_outcomes_loop_run',
+      fields: ['loop_run_id'],
+    },
+    {
       name: 'uniq_recommendation_trade_outcomes_portfolio_signal',
       unique: true,
       fields: ['portfolio_id', 'signal_id'],
@@ -51,6 +47,10 @@ export class RecommendationTradeOutcome extends Model {
   @Index
   @Column({ type: DataType.INTEGER, allowNull: false, field: 'signal_id' })
   declare signal_id: number;
+
+  @Index
+  @Column({ type: DataType.STRING(80), allowNull: true, field: 'loop_run_id' })
+  declare loop_run_id?: string;
 
   @Column({ type: DataType.STRING(50), allowNull: false, field: 'source_type' })
   declare source_type: string;

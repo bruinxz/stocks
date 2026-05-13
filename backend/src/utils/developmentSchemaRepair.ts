@@ -114,6 +114,14 @@ const COMPATIBILITY_COLUMNS: ColumnDefinition[] = [
   { table: 'scheduled_tasks', column: 'is_active', definition: 'BOOLEAN DEFAULT TRUE' },
   { table: 'scheduled_tasks', column: 'last_run_at', definition: 'TIMESTAMP WITH TIME ZONE' },
   { table: 'scheduled_tasks', column: 'last_run_status', definition: 'VARCHAR(50)' },
+
+  { table: 'ai_investment_signals', column: 'loop_run_id', definition: 'VARCHAR(80)' },
+  { table: 'recommendation_trade_outcomes', column: 'loop_run_id', definition: 'VARCHAR(80)' },
+  {
+    table: 'recommendation_loop_policy_snapshots',
+    column: 'loop_run_id',
+    definition: 'VARCHAR(80)',
+  },
 ];
 
 const TABLES_WITH_TIMESTAMPS = [

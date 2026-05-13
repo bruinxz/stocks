@@ -18,6 +18,7 @@ export interface RecommendationTradeOutcomeRefreshOptions {
   user_id?: number;
   username?: string;
   portfolio_id?: number;
+  loop_run_id?: string;
   include_open?: boolean;
   lookback_days?: number;
   source_type?: string;
@@ -421,6 +422,7 @@ export class RecommendationTradeOutcomeService {
         include_open: includeOpen,
         source_type: options.source_type || 'all',
         agent_session: options.agent_session || '',
+        loop_run_id: options.loop_run_id || '',
         trade_status: options.trade_status || '',
         start_date: options.start_date || '',
         end_date: options.end_date || '',
@@ -571,6 +573,7 @@ export class RecommendationTradeOutcomeService {
     const payload: Record<string, any> = {
       portfolio_id,
       signal_id: signal.id,
+      loop_run_id: signal.loop_run_id || metadata.loop_run_id || paperTrading.loop_run_id,
       source_type: signal.source_type,
       source_id: signal.source_id,
       symbol: normalizeSymbol(signal.symbol),
@@ -752,6 +755,7 @@ export class RecommendationTradeOutcomeService {
     const where: any = { portfolio_id: options.portfolio_id };
     if (options.trade_status && options.trade_status !== 'all')
       where.trade_status = options.trade_status;
+    if (options.loop_run_id) where.loop_run_id = options.loop_run_id;
     if (options.source_type && options.source_type !== 'all')
       where.source_type = options.source_type;
     if (options.agent_session) where.agent_session = options.agent_session;

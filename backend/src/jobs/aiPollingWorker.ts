@@ -15,6 +15,7 @@ import { ScheduledTask } from '../models/ScheduledTask';
 import { logger } from '../utils/logger';
 import moment from 'moment-timezone';
 import { paperTradingAutomationService } from '../services/PaperTradingAutomationService';
+import { RecommendationLoopPolicySnapshot } from '../models/RecommendationLoopPolicySnapshot';
 
 const akshareClient = new AKShareClient();
 
@@ -43,8 +44,8 @@ const updateLogProgress = async (logId: number | undefined, isSuccess: boolean) 
       const errorMessage = allFailed
         ? 'AI_DAILY_SCREENER 所有候选股分析均失败，请查看关联队列任务失败原因'
         : log.failed_items > 0
-        ? `AI_DAILY_SCREENER 部分候选股分析失败：${log.failed_items}/${log.total_items}`
-        : null;
+          ? `AI_DAILY_SCREENER 部分候选股分析失败：${log.failed_items}/${log.total_items}`
+          : null;
 
       await log.update({
         status: finalStatus,
@@ -74,6 +75,8 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
     symbol,
     name,
     executionLogId,
+    loopRunId,
+    loopPolicySnapshotId,
     taskLabel,
     quant_score,
     quant_factors,
@@ -161,6 +164,8 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
           recommendation_source,
           task_label: taskLabel,
           agent_session: agentSession,
+          loop_run_id: loopRunId,
+          loop_policy_snapshot_id: loopPolicySnapshotId,
         },
         current_price: currentPrice,
         price_change_pct: priceChangePct,
@@ -170,6 +175,14 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
 
       let archivedSignal: any = null;
       try {
+        const resolvedPolicySnapshotId =
+          loopPolicySnapshotId ||
+          (
+            await RecommendationLoopPolicySnapshot.findOne({
+              where: { loop_run_id: loopRunId },
+              order: [['generated_at', 'DESC']],
+            })
+          )?.id;
         archivedSignal = await aiInvestmentSignalService.archiveTradingAgentsResult({
           task_id: taskId,
           symbol,
@@ -183,6 +196,8 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
           source_type: 'tradingagents',
           task_label: taskLabel,
           agent_session: agentSession,
+          loop_run_id: loopRunId,
+          loop_policy_snapshot_id: resolvedPolicySnapshotId,
         });
         await aiInvestmentSignalService.verifySignalReturns(archivedSignal);
       } catch (archiveError: any) {
@@ -262,9 +277,7 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
       };
     } else if (status === 'FAILED' || status === 'ERROR') {
       const errorMessage = response.error || 'Unknown error';
-      logger.error(
-        `AI 分析任务 ${taskId} 对于股票 ${symbol} 失败: ${errorMessage}`
-      );
+      logger.error(`AI 分析任务 ${taskId} 对于股票 ${symbol} 失败: ${errorMessage}`);
       await updateLogProgress(executionLogId, false);
       // 远端任务已给出终态失败，不需要继续重试轮询；但应让 Bull job 呈现 failed，
       // 这样“队列任务详情”页面不会把实际失败误显示为 completed。

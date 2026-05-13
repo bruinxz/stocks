@@ -523,7 +523,6 @@ class PaperTradingAutomationService {
     }
     if (signalIds.length > 0) {
       where.id = { [Op.in]: signalIds };
-      delete where.confidence_score;
     }
 
     const signals = await AIInvestmentSignal.findAll({
@@ -1349,11 +1348,9 @@ class PaperTradingAutomationService {
         position_multiplier: positionMultiplier,
         effective_position_multiplier: effectivePositionMultiplier,
         sampling_mode: samplingMode,
-        reason:
-          samplingMode
-            ? `Profit Gate 样本 ${completedSamples}/${options.min_samples}，进入小仓采样模式`
-            : gate.reason ||
-              (allowEntries ? '收益闸门已放行' : '后验样本或质量分未达到自动跟单阈值'),
+        reason: samplingMode
+          ? `Profit Gate 样本 ${completedSamples}/${options.min_samples}，进入小仓采样模式`
+          : gate.reason || (allowEntries ? '收益闸门已放行' : '后验样本或质量分未达到自动跟单阈值'),
         risk_notes: samplingMode
           ? [
               ...(dashboard.playbook?.risk_notes || []),
@@ -1532,12 +1529,18 @@ class PaperTradingAutomationService {
       metadata.action_label || metadata.action,
       signal.risk_level,
     ]
-      .map(value => String(value || '').trim().toLowerCase())
+      .map(value =>
+        String(value || '')
+          .trim()
+          .toLowerCase()
+      )
       .filter(Boolean);
 
     return (
       policy.blocked_segments.find((segment: any) => {
-        const key = String(segment?.key || '').trim().toLowerCase();
+        const key = String(segment?.key || '')
+          .trim()
+          .toLowerCase();
         if (!key || key === 'unknown') return false;
         return candidates.includes(key);
       }) || null
@@ -1681,12 +1684,14 @@ class PaperTradingAutomationService {
 
   private async markSignalExecuted(signal: AIInvestmentSignal, execution: Record<string, any>) {
     const metadata = asPlainObject(signal.metadata);
+    const loop_run_id = signal.loop_run_id || metadata.loop_run_id || execution.loop_run_id;
     await signal.update({
       metadata: {
         ...metadata,
         paper_trading: {
           ...(metadata.paper_trading || {}),
           ...execution,
+          loop_run_id,
           status: 'executed',
           executed_at: new Date().toISOString(),
           execution_source: 'paper_trading_auto_sync',
@@ -1697,12 +1702,17 @@ class PaperTradingAutomationService {
 
   private async markSignalClosed(signal: AIInvestmentSignal, exit: Record<string, any>) {
     const metadata = asPlainObject(signal.metadata);
+    const loop_run_id =
+      signal.loop_run_id ||
+      metadata.loop_run_id ||
+      asPlainObject(metadata.paper_trading).loop_run_id;
     await signal.update({
       metadata: {
         ...metadata,
         paper_trading: {
           ...(metadata.paper_trading || {}),
           ...exit,
+          loop_run_id,
           status: 'closed',
           closed_at: new Date().toISOString(),
           close_source: 'paper_trading_risk_check',

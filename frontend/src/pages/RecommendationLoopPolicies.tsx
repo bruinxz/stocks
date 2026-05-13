@@ -51,6 +51,7 @@ interface PolicyBucket {
 interface PolicySnapshot {
   id: number;
   generated_at: string;
+  loop_run_id?: string;
   record_type?: string;
   username?: string;
   universe: string;
@@ -162,10 +163,15 @@ const RecommendationLoopPolicies: React.FC = () => {
       title: '版本 / 时间',
       key: 'version',
       fixed: 'left' as const,
-      width: 190,
+      width: 230,
       render: (_: any, record: PolicySnapshot) => (
         <Space direction="vertical" size={2}>
           <Text strong>#{record.id}</Text>
+          {record.loop_run_id && (
+            <Text code copyable style={{ fontSize: 11 }}>
+              {record.loop_run_id}
+            </Text>
+          )}
           <Text type="secondary">
             {String(record.generated_at || '')
               .slice(0, 19)

@@ -75,8 +75,51 @@ app.use('/api/logs', logRoutes);
 app.use('/api/internal', internalRoutes); // 给TradingAgents预留的安全数据接口
 
 import { User } from './models/User';
+import { AIInvestmentSignal } from './models/AIInvestmentSignal';
 import { RecommendationTradeOutcome } from './models/RecommendationTradeOutcome';
 import { RecommendationLoopPolicySnapshot } from './models/RecommendationLoopPolicySnapshot';
+
+async function ensureRecommendationLoopRuntimeSchema() {
+  const additions = [
+    {
+      table: 'ai_investment_signals',
+      column: 'loop_run_id',
+      index: 'idx_ai_investment_signals_loop_run_id',
+    },
+    {
+      table: 'recommendation_trade_outcomes',
+      column: 'loop_run_id',
+      index: 'idx_recommendation_trade_outcomes_loop_run_id',
+    },
+    {
+      table: 'recommendation_loop_policy_snapshots',
+      column: 'loop_run_id',
+      index: 'idx_loop_policy_snapshots_loop_run_id',
+    },
+  ];
+
+  for (const item of additions) {
+    const [tables] = await sequelize.query(
+      `
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = :table
+        LIMIT 1
+      `,
+      { replacements: { table: item.table } }
+    );
+    if ((tables as any[]).length === 0) {
+      continue;
+    }
+
+    await sequelize.query(
+      `ALTER TABLE "${item.table}" ADD COLUMN IF NOT EXISTS "${item.column}" VARCHAR(80)`
+    );
+    await sequelize.query(
+      `CREATE INDEX IF NOT EXISTS "${item.index}" ON "${item.table}" ("${item.column}")`
+    );
+  }
+}
 
 // Initialize database connection and start server
 async function initializeApp() {
@@ -90,8 +133,12 @@ async function initializeApp() {
     // 生产环境当前没有独立 migration runner；新闭环收益表必须在启动时幂等创建，
     // 以免定时任务先于开发环境 alter 同步执行导致接口 500。
     try {
+      await ensureRecommendationLoopRuntimeSchema();
+      await AIInvestmentSignal.sync();
       await RecommendationTradeOutcome.sync();
       await RecommendationLoopPolicySnapshot.sync();
+      await ensureRecommendationLoopRuntimeSchema();
+      console.log('AIInvestmentSignal table checked successfully');
       console.log('RecommendationTradeOutcome table checked successfully');
       console.log('RecommendationLoopPolicySnapshot table checked successfully');
     } catch (schemaError: any) {

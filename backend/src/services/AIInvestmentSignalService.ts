@@ -23,6 +23,7 @@ export interface SignalQueryOptions {
   source_type?: string;
   agent_session?: string;
   task_label?: string;
+  loop_run_id?: string;
   start_date?: string;
   end_date?: string;
   limit?: number;
@@ -61,6 +62,8 @@ export interface QuantRecommendationArchiveOptions {
   style?: string;
   as_of?: string;
   signal_date?: string;
+  loop_run_id?: string;
+  loop_policy_snapshot_id?: number;
 }
 
 export interface TradingAgentsStructuredDecision {
@@ -142,6 +145,7 @@ function buildSignalWhere(options: SignalQueryOptions = {}) {
   if (options.symbol) where.symbol = normalizeSymbol(options.symbol);
   if (options.decision) where.normalized_decision = options.decision;
   if (options.source_type) where.source_type = options.source_type;
+  if (options.loop_run_id) where.loop_run_id = options.loop_run_id;
   const metadataFilters: Record<string, any> = {};
   if (options.agent_session) metadataFilters.agent_session = options.agent_session;
   if (options.task_label) metadataFilters.task_label = options.task_label;
@@ -296,43 +300,43 @@ function summarizeReturnSamples(samples: any[]) {
     excess_positive_count: excessWins.length,
     excess_positive_rate:
       excessReturns.length > 0
-        ? roundNumber((excessWins.length / excessReturns.length) * 100, 2) ?? 0
+        ? (roundNumber((excessWins.length / excessReturns.length) * 100, 2) ?? 0)
         : 0,
     positive_count: wins.length,
     positive_rate:
       completedSamples.length > 0
-        ? roundNumber((wins.length / completedSamples.length) * 100, 2) ?? 0
+        ? (roundNumber((wins.length / completedSamples.length) * 100, 2) ?? 0)
         : 0,
     directional_success_count: directionalWins.length,
     directional_success_rate:
       completedSamples.length > 0
-        ? roundNumber((directionalWins.length / completedSamples.length) * 100, 2) ?? 0
+        ? (roundNumber((directionalWins.length / completedSamples.length) * 100, 2) ?? 0)
         : 0,
     directional_excess_sample_count: directionalExcessReturns.length,
     directional_excess_success_count: directionalExcessWins.length,
     directional_excess_success_rate:
       directionalExcessReturns.length > 0
-        ? roundNumber((directionalExcessWins.length / directionalExcessReturns.length) * 100, 2) ??
-          0
+        ? (roundNumber((directionalExcessWins.length / directionalExcessReturns.length) * 100, 2) ??
+          0)
         : 0,
     avg_win_pct: roundNumber(avgWin, 4) ?? 0,
     avg_loss_pct: roundNumber(avgLoss, 4) ?? 0,
     payoff_ratio:
       avgWin !== null && avgLoss !== null && avgLoss !== 0
-        ? roundNumber(avgWin / Math.abs(avgLoss), 4) ?? 0
+        ? (roundNumber(avgWin / Math.abs(avgLoss), 4) ?? 0)
         : wins.length > 0 && losses.length === 0
-        ? 999
-        : 0,
+          ? 999
+          : 0,
     profit_factor:
-      sumLosses > 0 ? roundNumber(sumWins / sumLosses, 4) ?? 0 : wins.length > 0 ? 999 : 0,
+      sumLosses > 0 ? (roundNumber(sumWins / sumLosses, 4) ?? 0) : wins.length > 0 ? 999 : 0,
     expectancy_pct: roundNumber(avgReturn, 4) ?? 0,
-    max_return_pct: returns.length > 0 ? roundNumber(Math.max(...returns), 4) ?? 0 : 0,
-    min_return_pct: returns.length > 0 ? roundNumber(Math.min(...returns), 4) ?? 0 : 0,
+    max_return_pct: returns.length > 0 ? (roundNumber(Math.max(...returns), 4) ?? 0) : 0,
+    min_return_pct: returns.length > 0 ? (roundNumber(Math.min(...returns), 4) ?? 0) : 0,
     avg_mfe_pct: roundNumber(avgMfe, 4) ?? 0,
     avg_mae_pct: roundNumber(avgMae, 4) ?? 0,
     risk_reward_ratio:
       avgMfe !== null && avgMae !== null && avgMae !== 0
-        ? roundNumber(avgMfe / Math.abs(avgMae), 4) ?? 0
+        ? (roundNumber(avgMfe / Math.abs(avgMae), 4) ?? 0)
         : 0,
   };
 }
@@ -536,10 +540,10 @@ export class AIInvestmentSignalService {
       typeof detail === 'string'
         ? detail
         : detail?.text
-        ? String(detail.text)
-        : detail
-        ? JSON.stringify(detail)
-        : '';
+          ? String(detail.text)
+          : detail
+            ? JSON.stringify(detail)
+            : '';
     const combined = `${text}\n${detailText}`;
 
     const explicitDecision = this.normalizeDecision(text);
@@ -589,21 +593,21 @@ export class AIInvestmentSignalService {
       normalized_decision === AISignalDecision.STRONG_BUY
         ? 88
         : normalized_decision === AISignalDecision.BUY
-        ? 78
-        : normalized_decision === AISignalDecision.HOLD
-        ? 58
-        : normalized_decision === AISignalDecision.SELL
-        ? 35
-        : normalized_decision === AISignalDecision.STRONG_SELL
-        ? 20
-        : undefined;
+          ? 78
+          : normalized_decision === AISignalDecision.HOLD
+            ? 58
+            : normalized_decision === AISignalDecision.SELL
+              ? 35
+              : normalized_decision === AISignalDecision.STRONG_SELL
+                ? 20
+                : undefined;
 
     const risk_level =
       upper.includes('SELL') || /高风险|严格止损|禁止介入|清仓|HIGH RISK/i.test(combined)
         ? 'high'
         : /低风险|LOW RISK|稳健/i.test(combined)
-        ? 'low'
-        : 'medium';
+          ? 'low'
+          : 'medium';
 
     return {
       rating: rawRating,
@@ -737,6 +741,8 @@ export class AIInvestmentSignalService {
     source_type?: string;
     task_label?: string;
     agent_session?: string;
+    loop_run_id?: string;
+    loop_policy_snapshot_id?: number;
   }): Promise<AIInvestmentSignal> {
     const symbol = normalizeSymbol(params.symbol);
     const signal_date = params.signal_date || new Date().toISOString().split('T')[0];
@@ -747,8 +753,8 @@ export class AIInvestmentSignalService {
       typeof params.detail === 'string'
         ? params.detail
         : params.detail
-        ? JSON.stringify(params.detail)
-        : undefined;
+          ? JSON.stringify(params.detail)
+          : undefined;
     const structured = this.parseTradingAgentsDecision(
       params.decision || params.rationale || '',
       params.detail
@@ -764,6 +770,7 @@ export class AIInvestmentSignalService {
     const payload = {
       source_type,
       source_id,
+      loop_run_id: params.loop_run_id,
       symbol,
       name: stock?.name,
       signal_date,
@@ -780,6 +787,8 @@ export class AIInvestmentSignalService {
         task_label: params.task_label,
         agent_session,
         is_tail_session: agent_session === 'close',
+        loop_run_id: params.loop_run_id,
+        loop_policy_snapshot_id: params.loop_policy_snapshot_id,
         structured_decision: structured,
       }),
     };
@@ -796,10 +805,15 @@ export class AIInvestmentSignalService {
     return record;
   }
 
-  async backfillAgentSessionMetadata(options: { limit?: number; source_type?: string } = {}) {
+  async backfillAgentSessionMetadata(
+    options: { limit?: number; source_type?: string; loop_run_id?: string } = {}
+  ) {
     const limit = Math.min(Math.max(Number(options.limit || 2000), 1), 10000);
+    const where: any = {};
+    if (options.source_type) where.source_type = options.source_type;
+    if (options.loop_run_id) where.loop_run_id = options.loop_run_id;
     const signals = await AIInvestmentSignal.findAll({
-      where: options.source_type ? { source_type: options.source_type } : {},
+      where,
       order: [['created_at', 'DESC']],
       limit,
     });
@@ -839,6 +853,7 @@ export class AIInvestmentSignalService {
     const candidates = Array.isArray(options.candidates) ? options.candidates : [];
     const universe = options.universe || 'favorites';
     const style = options.style || 'balanced';
+    const loop_run_id = options.loop_run_id;
     let created = 0;
     let updated = 0;
     const signal_ids: number[] = [];
@@ -856,13 +871,14 @@ export class AIInvestmentSignalService {
         candidate.action === 'buy'
           ? AISignalDecision.BUY
           : candidate.action === 'avoid'
-          ? AISignalDecision.HOLD
-          : this.decisionFromQuantScore(Number(candidate.score || 0));
+            ? AISignalDecision.HOLD
+            : this.decisionFromQuantScore(Number(candidate.score || 0));
       const source_id = `${symbol}_${signal_date}_${style}_${universe}`;
       const stock = await Stock.findOne({ where: { symbol } });
       const payload = {
         source_type: AISignalSourceType.QUANT_RECOMMENDATION,
         source_id,
+        loop_run_id,
         symbol,
         name: candidate.name || stock?.name,
         signal_date,
@@ -894,6 +910,8 @@ export class AIInvestmentSignalService {
           universe,
           style,
           as_of: options.as_of,
+          loop_run_id,
+          loop_policy_snapshot_id: options.loop_policy_snapshot_id,
           source: candidate.source,
           rating: candidate.rating,
           confidence: candidate.confidence,
@@ -973,12 +991,13 @@ export class AIInvestmentSignalService {
       horizons: {},
     };
 
-    const completedTargets = horizons
-      .map(horizon => bars[baseIndex + horizon])
-      .filter(Boolean);
+    const completedTargets = horizons.map(horizon => bars[baseIndex + horizon]).filter(Boolean);
     if (completedTargets.length > 0) {
       try {
-        const benchmark = await benchmarkIndexService.resolveBenchmarkForStock(signal.symbol, stock);
+        const benchmark = await benchmarkIndexService.resolveBenchmarkForStock(
+          signal.symbol,
+          stock
+        );
         await benchmarkIndexService.ensureBenchmarkCoverage(
           dateOnly(baseBar.time),
           dateOnly(completedTargets[completedTargets.length - 1].time),
@@ -1058,9 +1077,7 @@ export class AIInvestmentSignalService {
           };
         }
       } catch (error: any) {
-        logger.warn(
-          `基准收益计算失败 ${signal.symbol}#${signal.id}/${horizon}d: ${error.message}`
-        );
+        logger.warn(`基准收益计算失败 ${signal.symbol}#${signal.id}/${horizon}d: ${error.message}`);
       }
       completed++;
     }
@@ -1198,6 +1215,7 @@ export class AIInvestmentSignalService {
         source_type: options.source_type,
         agent_session: options.agent_session,
         task_label: options.task_label,
+        loop_run_id: options.loop_run_id,
         start_date: options.start_date,
         end_date: options.end_date,
         limit,
@@ -1412,7 +1430,9 @@ export class AIInvestmentSignalService {
           : 0;
       (item as any).excess_positive_rate =
         excessCount > 0
-          ? Number(((Number((item as any).excess_positive_count || 0) / excessCount) * 100).toFixed(2))
+          ? Number(
+              ((Number((item as any).excess_positive_count || 0) / excessCount) * 100).toFixed(2)
+            )
           : 0;
     });
 
@@ -1623,6 +1643,7 @@ export class AIInvestmentSignalService {
     const metadataBackfill = await this.backfillAgentSessionMetadata({
       limit: options.limit || 1000,
       source_type: options.source_type,
+      loop_run_id: options.loop_run_id,
     });
     const verification = await this.verifySignals({
       ...options,
@@ -1634,6 +1655,7 @@ export class AIInvestmentSignalService {
       source_type: options.source_type,
       agent_session: options.agent_session,
       task_label: options.task_label,
+      loop_run_id: options.loop_run_id,
       start_date: options.start_date,
       end_date: options.end_date,
       horizon: options.horizon,
@@ -1667,6 +1689,7 @@ export class AIInvestmentSignalService {
       source_type: options.source_type,
       agent_session: options.agent_session,
       task_label: options.task_label,
+      loop_run_id: options.loop_run_id,
       decision: options.decision,
       symbol: options.symbol,
       start_date: startDate,
@@ -1694,6 +1717,7 @@ export class AIInvestmentSignalService {
         source_type: options.source_type,
         agent_session: options.agent_session,
         task_label: options.task_label,
+        loop_run_id: options.loop_run_id,
         decision: options.decision,
         start_date: startDate,
         end_date: endDate,
@@ -1708,6 +1732,7 @@ export class AIInvestmentSignalService {
         source_type: options.source_type,
         agent_session: options.agent_session,
         task_label: options.task_label,
+        loop_run_id: options.loop_run_id,
         decision: options.decision,
         symbol: options.symbol,
         start_date: startDate,

@@ -57,6 +57,12 @@ function toPositiveInt(value: any, fallback: number, max?: number): number {
   return max ? Math.min(normalized, max) : normalized;
 }
 
+function buildLoopRunId(prefix = 'loop'): string {
+  const stamp = moment().tz('Asia/Shanghai').format('YYYYMMDDHHmmss');
+  const suffix = Math.random().toString(36).slice(2, 8);
+  return `${prefix}_${stamp}_${suffix}`;
+}
+
 class AutomatedRecommendationLoopService {
   private async resolveLoopPolicy(options: {
     username?: string;
@@ -130,7 +136,9 @@ class AutomatedRecommendationLoopService {
         Number(weakStyle.closed_count || 0) >= 2 &&
         Number(weakStyle.avg_excess_return_pct || 0) < -1;
       const effectiveStyle =
-        shouldUseBestStyle || shouldAvoidBaseStyle ? String(bestStyle?.key || 'low_risk') : options.base_style;
+        shouldUseBestStyle || shouldAvoidBaseStyle
+          ? String(bestStyle?.key || 'low_risk')
+          : options.base_style;
       const coldStart = closedSamples < options.min_closed_samples;
       const effectiveMinScore = coldStart
         ? options.base_min_score
@@ -140,11 +148,17 @@ class AutomatedRecommendationLoopService {
         : Math.min(1.2, Math.max(0.35, positionMultiplier || 1));
       const effectiveDefaultPositionPct = Math.max(
         1,
-        Math.min(options.base_max_position_pct, options.base_default_position_pct * boundedMultiplier)
+        Math.min(
+          options.base_max_position_pct,
+          options.base_default_position_pct * boundedMultiplier
+        )
       );
       const effectiveMaxPositionPct = Math.max(
         effectiveDefaultPositionPct,
-        Math.min(options.base_max_position_pct, options.base_max_position_pct * Math.max(0.45, boundedMultiplier))
+        Math.min(
+          options.base_max_position_pct,
+          options.base_max_position_pct * Math.max(0.45, boundedMultiplier)
+        )
       );
       const effectivePaperTradeLimit =
         coldStart || avgExcess < -1 || excessWinRate < 45
@@ -183,6 +197,7 @@ class AutomatedRecommendationLoopService {
   }
 
   async run(options: AutomatedRecommendationLoopOptions = {}) {
+    const loop_run_id = buildLoopRunId(options.record_type ? 'auto_loop' : 'loop');
     const universe = options.universe === 'favorites' ? 'favorites' : 'market';
     const baseStyle = ['balanced', 'momentum', 'value', 'low_risk'].includes(options.style || '')
       ? options.style!
@@ -231,6 +246,7 @@ class AutomatedRecommendationLoopService {
       universe,
       style,
       as_of: generated.as_of,
+      loop_run_id,
     });
 
     const agent_analysis =
@@ -250,7 +266,8 @@ class AutomatedRecommendationLoopService {
                 .format('YYYY-MM-DD'),
             task_label: options.task_label || options.record_type || '全市场荐股闭环',
             agent_session: options.agent_session || 'close',
-            auto_paper_trade: options.agent_auto_paper_trade !== false && Boolean(options.run_paper_trading),
+            auto_paper_trade:
+              options.agent_auto_paper_trade !== false && Boolean(options.run_paper_trading),
             paper_trade_username: options.username,
             paper_trade_min_score: loop_policy.effective_min_score,
             paper_trade_max_positions: toPositiveInt(options.max_positions, 8, 30),
@@ -258,6 +275,7 @@ class AutomatedRecommendationLoopService {
             paper_trade_max_position_pct: loop_policy.effective_max_position_pct,
             paper_trade_min_trade_amount: Number(options.min_trade_amount || 3000),
             execution_log_id: options.execution_log_id,
+            loop_run_id,
             universe,
             style,
           });
@@ -297,6 +315,7 @@ class AutomatedRecommendationLoopService {
         profit_gate_min_samples: toPositiveInt(options.profit_gate_min_samples, 5, 100),
         profit_gate_min_quality_score: Number(options.profit_gate_min_quality_score || 45),
         profit_gate_allow_deprioritized: false,
+        signal_ids: archive.signal_ids,
         dry_run: Boolean(options.dry_run),
         report_to_feishu: false,
       });
@@ -306,6 +325,7 @@ class AutomatedRecommendationLoopService {
         include_open: true,
         lookback_days: 180,
         source_type: AISignalSourceType.QUANT_RECOMMENDATION,
+        loop_run_id,
         report_to_feishu: false,
       });
     }
@@ -322,6 +342,7 @@ class AutomatedRecommendationLoopService {
     });
 
     const result = {
+      loop_run_id,
       generated_at: moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm:ss'),
       universe,
       style,
@@ -347,14 +368,18 @@ class AutomatedRecommendationLoopService {
       },
     };
 
-    const policy_snapshot = await recommendationLoopPolicySnapshotService.recordFromLoopResult(result, {
-      username: options.username,
-      execution_log_id: options.execution_log_id,
-      record_type: options.record_type || '全市场荐股闭环',
-    });
+    const policy_snapshot = await recommendationLoopPolicySnapshotService.recordFromLoopResult(
+      result,
+      {
+        username: options.username,
+        execution_log_id: options.execution_log_id,
+        record_type: options.record_type || '全市场荐股闭环',
+      }
+    );
     (result as any).policy_snapshot = policy_snapshot
       ? {
           id: policy_snapshot.id,
+          loop_run_id: policy_snapshot.loop_run_id,
           generated_at: policy_snapshot.generated_at,
           effective_style: policy_snapshot.effective_style,
           effective_min_score: policy_snapshot.effective_min_score,
@@ -392,6 +417,7 @@ class AutomatedRecommendationLoopService {
     paper_trade_max_position_pct?: number;
     paper_trade_min_trade_amount?: number;
     execution_log_id?: number;
+    loop_run_id?: string;
     universe: string;
     style: string;
   }) {
@@ -443,6 +469,7 @@ class AutomatedRecommendationLoopService {
             symbol: candidate.symbol,
             name: candidate.name,
             executionLogId: options.execution_log_id,
+            loopRunId: options.loop_run_id,
             taskLabel: options.task_label,
             quant_score: candidate.score,
             quant_factors: candidate.factors,

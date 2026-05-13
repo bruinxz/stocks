@@ -183,6 +183,7 @@ export class QuantRecommendationController {
       const result = await recommendationLoopPolicySnapshotService.getDashboard({
         universe: req.query?.universe as string,
         style: req.query?.style as string,
+        loop_run_id: req.query?.loop_run_id as string,
         start_date: req.query?.start_date as string,
         end_date: req.query?.end_date as string,
         limit: req.query?.limit ? Number(req.query.limit) : 100,

@@ -488,6 +488,7 @@ class FeishuTaskReportService {
       `## ${recordType}`,
       '',
       '### 结论',
+      result?.loop_run_id ? `- **闭环运行ID**：${result.loop_run_id}` : '',
       `- **候选范围**：${result?.universe === 'market' ? '全市场自动扫描' : '自选池'} / ${
         result?.style || generated.style || 'balanced'
       }`,
@@ -574,6 +575,7 @@ class FeishuTaskReportService {
       自适应最大仓位: loopPolicy?.effective_max_position_pct,
       自适应跟单数量: loopPolicy?.effective_paper_trade_limit,
       自适应原因: loopPolicy?.reason,
+      闭环运行ID: result?.loop_run_id,
       策略快照ID: policySnapshot?.id,
       候选总数: generated.total_candidates,
       有效评分数: generated.analyzed_candidates,
@@ -604,6 +606,7 @@ class FeishuTaskReportService {
       结果摘要: this.safeJson(
         {
           generated: {
+            loop_run_id: result?.loop_run_id,
             as_of: generated.as_of,
             universe: generated.universe,
             style: generated.style,

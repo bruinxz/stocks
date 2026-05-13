@@ -34,6 +34,9 @@ export enum AISignalDecision {
     {
       fields: ['verification_status'],
     },
+    {
+      fields: ['loop_run_id'],
+    },
   ],
 })
 export class AIInvestmentSignal extends Model {
@@ -60,6 +63,14 @@ export class AIInvestmentSignal extends Model {
     comment: '来源记录ID或任务ID',
   })
   declare source_id: string;
+
+  @Column({
+    type: DataType.STRING(80),
+    allowNull: true,
+    field: 'loop_run_id',
+    comment: '自动荐股闭环运行ID，用于把推荐参数版本、信号、模拟交易收益串起来',
+  })
+  declare loop_run_id?: string;
 
   @Column({
     type: DataType.STRING(20),

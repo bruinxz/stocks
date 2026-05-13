@@ -35,6 +35,7 @@ function modelToPlain<T = any>(record: any): T {
 export interface LoopPolicySnapshotQueryOptions {
   limit?: number;
   offset?: number;
+  loop_run_id?: string;
   universe?: string;
   style?: string;
   start_date?: string;
@@ -42,7 +43,10 @@ export interface LoopPolicySnapshotQueryOptions {
 }
 
 export class RecommendationLoopPolicySnapshotService {
-  async recordFromLoopResult(result: any, options: { username?: string; execution_log_id?: number; record_type?: string } = {}) {
+  async recordFromLoopResult(
+    result: any,
+    options: { username?: string; execution_log_id?: number; record_type?: string } = {}
+  ) {
     try {
       const loopPolicy = result?.loop_policy || {};
       const generated = result?.generated || {};
@@ -52,15 +56,19 @@ export class RecommendationLoopPolicySnapshotService {
       const tradeOutcomes = result?.trade_outcomes || {};
       const outcomeSummary = tradeOutcomes?.summary || {};
 
-      return RecommendationLoopPolicySnapshot.create({
+      const archiveSignalIds = Array.isArray(archive.signal_ids) ? archive.signal_ids : [];
+
+      const snapshot = await RecommendationLoopPolicySnapshot.create({
         generated_at: new Date(),
+        loop_run_id: result?.loop_run_id,
         execution_log_id: options.execution_log_id,
         record_type: options.record_type,
         username: options.username,
         universe: result?.universe || generated?.universe || 'market',
         base_style: loopPolicy.base_style,
         effective_style: loopPolicy.effective_style || result?.style,
-        candidate_limit: toOptionalNumber(generated.limit) || toOptionalNumber(result?.candidate_limit),
+        candidate_limit:
+          toOptionalNumber(generated.limit) || toOptionalNumber(result?.candidate_limit),
         candidate_pool_limit: toOptionalNumber(result?.candidate_pool_limit),
         archive_limit: toOptionalNumber(result?.archive_limit),
         lookback_days: toOptionalNumber(loopPolicy.lookback_days),
@@ -80,7 +88,9 @@ export class RecommendationLoopPolicySnapshotService {
         generated_total_candidates: toOptionalNumber(generated.total_candidates),
         analyzed_candidates: toOptionalNumber(generated.analyzed_candidates),
         archive_total: toOptionalNumber(archive.total),
-        agent_submitted: Array.isArray(agentAnalysis.submitted) ? agentAnalysis.submitted.length : undefined,
+        agent_submitted: Array.isArray(agentAnalysis.submitted)
+          ? agentAnalysis.submitted.length
+          : undefined,
         paper_executed: toOptionalNumber(paper.executed),
         paper_planned: toOptionalNumber(paper.planned),
         paper_skipped: toOptionalNumber(paper.skipped),
@@ -101,7 +111,9 @@ export class RecommendationLoopPolicySnapshotService {
             target_date: agentAnalysis.target_date,
             agent_session: agentAnalysis.agent_session,
             auto_paper_trade: agentAnalysis.auto_paper_trade,
-            submitted_count: Array.isArray(agentAnalysis.submitted) ? agentAnalysis.submitted.length : 0,
+            submitted_count: Array.isArray(agentAnalysis.submitted)
+              ? agentAnalysis.submitted.length
+              : 0,
             failed_count: Array.isArray(agentAnalysis.failed) ? agentAnalysis.failed.length : 0,
           },
           paper_trading: paper
@@ -125,9 +137,38 @@ export class RecommendationLoopPolicySnapshotService {
           recorded_at: new Date().toISOString(),
         },
       } as any);
+      if (snapshot?.id && archiveSignalIds.length > 0) {
+        await this.attachSnapshotToSignals(archiveSignalIds, snapshot.id, result?.loop_run_id);
+      }
+      return snapshot;
     } catch (error: any) {
       logger.warn(`记录荐股闭环策略快照失败: ${error?.message || error}`);
       return null;
+    }
+  }
+
+  private async attachSnapshotToSignals(
+    signalIds: number[],
+    snapshotId: number,
+    loopRunId?: string
+  ) {
+    try {
+      const { AIInvestmentSignal } = await import('../models/AIInvestmentSignal');
+      const signals = await AIInvestmentSignal.findAll({ where: { id: { [Op.in]: signalIds } } });
+      for (const signal of signals) {
+        const metadata =
+          signal.metadata && typeof signal.metadata === 'object' ? signal.metadata : {};
+        await signal.update({
+          loop_run_id: signal.loop_run_id || loopRunId,
+          metadata: {
+            ...metadata,
+            loop_run_id: metadata.loop_run_id || loopRunId,
+            loop_policy_snapshot_id: snapshotId,
+          },
+        });
+      }
+    } catch (error: any) {
+      logger.warn(`回填荐股闭环快照ID到信号失败: ${error?.message || error}`);
     }
   }
 
@@ -135,12 +176,15 @@ export class RecommendationLoopPolicySnapshotService {
     const limit = toPositiveInt(options.limit, 100, 1000);
     const offset = Math.max(0, Number(options.offset || 0));
     const where: any = {};
+    if (options.loop_run_id) where.loop_run_id = options.loop_run_id;
     if (options.universe && options.universe !== 'all') where.universe = options.universe;
     if (options.style && options.style !== 'all') where.effective_style = options.style;
     if (options.start_date || options.end_date) {
       where.generated_at = {};
-      if (options.start_date) where.generated_at[Op.gte] = new Date(`${options.start_date}T00:00:00.000Z`);
-      if (options.end_date) where.generated_at[Op.lte] = new Date(`${options.end_date}T23:59:59.999Z`);
+      if (options.start_date)
+        where.generated_at[Op.gte] = new Date(`${options.start_date}T00:00:00.000Z`);
+      if (options.end_date)
+        where.generated_at[Op.lte] = new Date(`${options.end_date}T23:59:59.999Z`);
     }
 
     const { rows, count } = await RecommendationLoopPolicySnapshot.findAndCountAll({
@@ -155,7 +199,9 @@ export class RecommendationLoopPolicySnapshotService {
       by_style: this.buildBuckets(plain, item => item.effective_style || 'unknown'),
       by_universe: this.buildBuckets(plain, item => item.universe || 'unknown'),
       by_score_bucket: this.buildBuckets(plain, item => this.scoreBucket(item.effective_min_score)),
-      by_position_bucket: this.buildBuckets(plain, item => this.positionBucket(item.effective_default_position_pct)),
+      by_position_bucket: this.buildBuckets(plain, item =>
+        this.positionBucket(item.effective_default_position_pct)
+      ),
     };
 
     return {
@@ -174,13 +220,26 @@ export class RecommendationLoopPolicySnapshotService {
   private buildSummary(records: any[]) {
     const latest = records[0];
     const runs = records.length;
-    const executedRuns = records.filter(item => toNumber(item.paper_executed) > 0 || toNumber(item.paper_planned) > 0);
+    const executedRuns = records.filter(
+      item => toNumber(item.paper_executed) > 0 || toNumber(item.paper_planned) > 0
+    );
     const totalExecuted = records.reduce((sum, item) => sum + toNumber(item.paper_executed), 0);
     const totalPlanned = records.reduce((sum, item) => sum + toNumber(item.paper_planned), 0);
-    const avgMinScore = records.length ? records.reduce((sum, item) => sum + toNumber(item.effective_min_score), 0) / records.length : 0;
-    const avgPosition = records.length ? records.reduce((sum, item) => sum + toNumber(item.effective_default_position_pct), 0) / records.length : 0;
-    const avgPolicyExcess = records.length ? records.reduce((sum, item) => sum + toNumber(item.policy_avg_excess_return_pct), 0) / records.length : 0;
-    const avgOutcomeExcess = records.length ? records.reduce((sum, item) => sum + toNumber(item.avg_excess_return_pct), 0) / records.length : 0;
+    const avgMinScore = records.length
+      ? records.reduce((sum, item) => sum + toNumber(item.effective_min_score), 0) / records.length
+      : 0;
+    const avgPosition = records.length
+      ? records.reduce((sum, item) => sum + toNumber(item.effective_default_position_pct), 0) /
+        records.length
+      : 0;
+    const avgPolicyExcess = records.length
+      ? records.reduce((sum, item) => sum + toNumber(item.policy_avg_excess_return_pct), 0) /
+        records.length
+      : 0;
+    const avgOutcomeExcess = records.length
+      ? records.reduce((sum, item) => sum + toNumber(item.avg_excess_return_pct), 0) /
+        records.length
+      : 0;
 
     return {
       run_count: runs,
@@ -192,8 +251,12 @@ export class RecommendationLoopPolicySnapshotService {
       avg_policy_excess_return_pct: roundNumber(avgPolicyExcess, 4),
       avg_outcome_excess_return_pct: roundNumber(avgOutcomeExcess, 4),
       latest_policy: latest,
-      best_snapshot: [...records].sort((a, b) => toNumber(b.avg_excess_return_pct) - toNumber(a.avg_excess_return_pct))[0],
-      most_active_snapshot: [...records].sort((a, b) => toNumber(b.paper_executed) - toNumber(a.paper_executed))[0],
+      best_snapshot: [...records].sort(
+        (a, b) => toNumber(b.avg_excess_return_pct) - toNumber(a.avg_excess_return_pct)
+      )[0],
+      most_active_snapshot: [...records].sort(
+        (a, b) => toNumber(b.paper_executed) - toNumber(a.paper_executed)
+      )[0],
     };
   }
 
@@ -212,13 +275,33 @@ export class RecommendationLoopPolicySnapshotService {
         count: items.length,
         executed: items.reduce((sum, item) => sum + toNumber(item.paper_executed), 0),
         planned: items.reduce((sum, item) => sum + toNumber(item.paper_planned), 0),
-        avg_min_score: roundNumber(items.reduce((sum, item) => sum + toNumber(item.effective_min_score), 0) / items.length, 2),
-        avg_position_pct: roundNumber(items.reduce((sum, item) => sum + toNumber(item.effective_default_position_pct), 0) / items.length, 2),
-        avg_policy_excess_return_pct: roundNumber(items.reduce((sum, item) => sum + toNumber(item.policy_avg_excess_return_pct), 0) / items.length, 4),
-        avg_outcome_excess_return_pct: roundNumber(items.reduce((sum, item) => sum + toNumber(item.avg_excess_return_pct), 0) / items.length, 4),
-        latest_generated_at: items.map(item => item.generated_at).sort().reverse()[0],
+        avg_min_score: roundNumber(
+          items.reduce((sum, item) => sum + toNumber(item.effective_min_score), 0) / items.length,
+          2
+        ),
+        avg_position_pct: roundNumber(
+          items.reduce((sum, item) => sum + toNumber(item.effective_default_position_pct), 0) /
+            items.length,
+          2
+        ),
+        avg_policy_excess_return_pct: roundNumber(
+          items.reduce((sum, item) => sum + toNumber(item.policy_avg_excess_return_pct), 0) /
+            items.length,
+          4
+        ),
+        avg_outcome_excess_return_pct: roundNumber(
+          items.reduce((sum, item) => sum + toNumber(item.avg_excess_return_pct), 0) / items.length,
+          4
+        ),
+        latest_generated_at: items
+          .map(item => item.generated_at)
+          .sort()
+          .reverse()[0],
       }))
-      .sort((a, b) => b.avg_outcome_excess_return_pct - a.avg_outcome_excess_return_pct || b.count - a.count);
+      .sort(
+        (a, b) =>
+          b.avg_outcome_excess_return_pct - a.avg_outcome_excess_return_pct || b.count - a.count
+      );
   }
 
   private buildInsights(summary: any, groups: any, records: any[]) {
@@ -226,9 +309,13 @@ export class RecommendationLoopPolicySnapshotService {
     if (!records.length) {
       return ['暂无策略参数快照。下一次全市场荐股闭环执行后会自动生成快照。'];
     }
-    insights.push(`已沉淀 ${summary.run_count} 次策略参数快照，累计自动成交 ${summary.total_executed} 笔。`);
+    insights.push(
+      `已沉淀 ${summary.run_count} 次策略参数快照，累计自动成交 ${summary.total_executed} 笔。`
+    );
     if (groups.by_style?.[0]) {
-      insights.push(`当前表现最好的风格是 ${groups.by_style[0].label}，平均闭环超额 ${groups.by_style[0].avg_outcome_excess_return_pct}%。`);
+      insights.push(
+        `当前表现最好的风格是 ${groups.by_style[0].label}，平均闭环超额 ${groups.by_style[0].avg_outcome_excess_return_pct}%。`
+      );
     }
     if (summary.latest_policy?.policy_reason) {
       insights.push(`最近一次参数原因：${summary.latest_policy.policy_reason}`);
@@ -273,4 +360,5 @@ export class RecommendationLoopPolicySnapshotService {
   }
 }
 
-export const recommendationLoopPolicySnapshotService = new RecommendationLoopPolicySnapshotService();
+export const recommendationLoopPolicySnapshotService =
+  new RecommendationLoopPolicySnapshotService();

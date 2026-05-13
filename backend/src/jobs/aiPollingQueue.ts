@@ -6,6 +6,8 @@ export interface AIPollingJobData {
   symbol: string;
   name: string;
   executionLogId?: number;
+  loopRunId?: string;
+  loopPolicySnapshotId?: number;
   taskLabel?: string; // 任务标签，如 "AI优选-早盘分析"
   quant_score?: number;
   quant_factors?: any[];

@@ -1,12 +1,4 @@
-import {
-  Table,
-  Column,
-  Model,
-  DataType,
-  CreatedAt,
-  UpdatedAt,
-  Index,
-} from 'sequelize-typescript';
+import { Table, Column, Model, DataType, CreatedAt, UpdatedAt, Index } from 'sequelize-typescript';
 
 @Table({
   tableName: 'recommendation_loop_policy_snapshots',
@@ -25,6 +17,10 @@ import {
       name: 'idx_loop_policy_snapshots_task_log',
       fields: ['execution_log_id'],
     },
+    {
+      name: 'idx_loop_policy_snapshots_loop_run',
+      fields: ['loop_run_id'],
+    },
   ],
 })
 export class RecommendationLoopPolicySnapshot extends Model {
@@ -34,6 +30,10 @@ export class RecommendationLoopPolicySnapshot extends Model {
   @Index
   @Column({ type: DataType.DATE, allowNull: false, field: 'generated_at' })
   declare generated_at: Date;
+
+  @Index
+  @Column({ type: DataType.STRING(80), allowNull: true, field: 'loop_run_id' })
+  declare loop_run_id?: string;
 
   @Column({ type: DataType.INTEGER, allowNull: true, field: 'execution_log_id' })
   declare execution_log_id?: number;
@@ -76,7 +76,11 @@ export class RecommendationLoopPolicySnapshot extends Model {
   @Column({ type: DataType.DECIMAL(10, 4), allowNull: true, field: 'base_default_position_pct' })
   declare base_default_position_pct?: number;
 
-  @Column({ type: DataType.DECIMAL(10, 4), allowNull: true, field: 'effective_default_position_pct' })
+  @Column({
+    type: DataType.DECIMAL(10, 4),
+    allowNull: true,
+    field: 'effective_default_position_pct',
+  })
   declare effective_default_position_pct?: number;
 
   @Column({ type: DataType.DECIMAL(10, 4), allowNull: true, field: 'base_max_position_pct' })
