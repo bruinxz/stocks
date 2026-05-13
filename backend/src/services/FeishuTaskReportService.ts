@@ -480,6 +480,7 @@ class FeishuTaskReportService {
     const tradeOutcomes = result?.trade_outcomes || {};
     const outcomeSummary = tradeOutcomes?.summary || {};
     const loopPolicy = result?.loop_policy || {};
+    const policySnapshot = result?.policy_snapshot || {};
     const qualityOverview = result?.quality_report?.overview || {};
     const topPicks = recommendations.slice(0, 5);
     const bestPick = topPicks[0];
@@ -573,6 +574,7 @@ class FeishuTaskReportService {
       自适应最大仓位: loopPolicy?.effective_max_position_pct,
       自适应跟单数量: loopPolicy?.effective_paper_trade_limit,
       自适应原因: loopPolicy?.reason,
+      策略快照ID: policySnapshot?.id,
       候选总数: generated.total_candidates,
       有效评分数: generated.analyzed_candidates,
       归档信号数: archive.total,
@@ -611,6 +613,7 @@ class FeishuTaskReportService {
           },
           archive,
           loop_policy: loopPolicy,
+          policy_snapshot: policySnapshot,
           agent_analysis: agentAnalysis,
           verification,
           paper_trading: {

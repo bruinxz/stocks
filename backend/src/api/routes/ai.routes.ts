@@ -75,6 +75,17 @@ router.post(
 );
 
 /**
+ * @route GET /api/ai/recommendations/loop-policy-snapshots
+ * @desc 获取全市场荐股闭环策略参数快照与版本表现
+ * @access Private
+ */
+router.get(
+  '/recommendations/loop-policy-snapshots',
+  authController.authenticate,
+  quantRecommendationController.getLoopPolicySnapshots
+);
+
+/**
  * @route POST /api/ai/recommendations/auto-loop
  * @desc 执行全市场自动荐股闭环：量化初筛、归档、Agent复核、后验验证与模拟盘预演/跟单
  * @access Private

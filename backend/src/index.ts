@@ -76,6 +76,7 @@ app.use('/api/internal', internalRoutes); // 给TradingAgents预留的安全数�
 
 import { User } from './models/User';
 import { RecommendationTradeOutcome } from './models/RecommendationTradeOutcome';
+import { RecommendationLoopPolicySnapshot } from './models/RecommendationLoopPolicySnapshot';
 
 // Initialize database connection and start server
 async function initializeApp() {
@@ -90,10 +91,12 @@ async function initializeApp() {
     // 以免定时任务先于开发环境 alter 同步执行导致接口 500。
     try {
       await RecommendationTradeOutcome.sync();
+      await RecommendationLoopPolicySnapshot.sync();
       console.log('RecommendationTradeOutcome table checked successfully');
+      console.log('RecommendationLoopPolicySnapshot table checked successfully');
     } catch (schemaError: any) {
       console.warn(
-        'Failed to sync RecommendationTradeOutcome table:',
+        'Failed to sync recommendation loop tables:',
         schemaError?.message || schemaError
       );
     }

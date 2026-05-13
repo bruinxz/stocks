@@ -3,6 +3,7 @@ import { quantRecommendationService } from '../../services/QuantRecommendationSe
 import { aiAdvisorService } from '../../services/AIAdvisorService';
 import { aiInvestmentSignalService } from '../../services/AIInvestmentSignalService';
 import { automatedRecommendationLoopService } from '../../services/AutomatedRecommendationLoopService';
+import { recommendationLoopPolicySnapshotService } from '../../services/RecommendationLoopPolicySnapshotService';
 import { AISignalSourceType } from '../../models/AIInvestmentSignal';
 import { aiPollingQueue } from '../../jobs/aiPollingQueue';
 import { logger } from '../../utils/logger';
@@ -173,6 +174,24 @@ export class QuantRecommendationController {
       });
     } catch (error: any) {
       logger.error('归档量化候选信号失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
+  getLoopPolicySnapshots = async (req: Request, res: Response) => {
+    try {
+      const result = await recommendationLoopPolicySnapshotService.getDashboard({
+        universe: req.query?.universe as string,
+        style: req.query?.style as string,
+        start_date: req.query?.start_date as string,
+        end_date: req.query?.end_date as string,
+        limit: req.query?.limit ? Number(req.query.limit) : 100,
+        offset: req.query?.offset ? Number(req.query.offset) : 0,
+      });
+
+      res.json({ success: true, data: result });
+    } catch (error: any) {
+      logger.error('获取荐股闭环策略快照失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   };

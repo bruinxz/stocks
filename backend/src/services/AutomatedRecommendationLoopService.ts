@@ -8,6 +8,7 @@ import { logger } from '../utils/logger';
 import { AISignalSourceType } from '../models/AIInvestmentSignal';
 import { aiPollingQueue } from '../jobs/aiPollingQueue';
 import { recommendationTradeOutcomeService } from './RecommendationTradeOutcomeService';
+import { recommendationLoopPolicySnapshotService } from './RecommendationLoopPolicySnapshotService';
 
 export interface AutomatedRecommendationLoopOptions {
   username?: string;
@@ -345,6 +346,21 @@ class AutomatedRecommendationLoopService {
         worst_segments: quality_report.worst_segments,
       },
     };
+
+    const policy_snapshot = await recommendationLoopPolicySnapshotService.recordFromLoopResult(result, {
+      username: options.username,
+      execution_log_id: options.execution_log_id,
+      record_type: options.record_type || '全市场荐股闭环',
+    });
+    (result as any).policy_snapshot = policy_snapshot
+      ? {
+          id: policy_snapshot.id,
+          generated_at: policy_snapshot.generated_at,
+          effective_style: policy_snapshot.effective_style,
+          effective_min_score: policy_snapshot.effective_min_score,
+          effective_default_position_pct: policy_snapshot.effective_default_position_pct,
+        }
+      : null;
 
     if (options.report_to_feishu !== false) {
       await feishuTaskReportService.reportAutomatedRecommendationLoop(result, {
