@@ -95,6 +95,48 @@ function buildLoopRunId(prefix = 'loop'): string {
   return `${prefix}_${stamp}_${suffix}`;
 }
 
+function normalizeConsensusSymbol(value: any): string {
+  return String(value || '').trim();
+}
+
+function rankConsensusCandidates(candidates: any[], loopPolicy: any): any[] {
+  const overlaps = Array.isArray(loopPolicy?.strategy_experiment?.overlaps)
+    ? loopPolicy.strategy_experiment.overlaps
+    : [];
+  const consensusMap = new Map<string, any>();
+  for (const item of overlaps) {
+    const symbol = normalizeConsensusSymbol(item.symbol);
+    if (!symbol) continue;
+    consensusMap.set(symbol, item);
+  }
+  if (consensusMap.size === 0) return candidates;
+
+  return [...candidates]
+    .map((candidate, index) => {
+      const consensus = consensusMap.get(normalizeConsensusSymbol(candidate.symbol));
+      const consensus_count = Number(consensus?.variant_count || 0);
+      const consensus_bonus = consensus_count > 1 ? Math.min(6, (consensus_count - 1) * 2) : 0;
+      return {
+        ...candidate,
+        score: Number(candidate.score || 0) + consensus_bonus,
+        original_score: candidate.original_score ?? candidate.score,
+        consensus_count,
+        consensus_variants: consensus?.variants || [],
+        consensus_bonus,
+        tier_reason: consensus_bonus
+          ? `${candidate.tier_reason || ''}；策略实验 ${consensus_count} 个策略共识，优先复核`
+          : candidate.tier_reason,
+        metadata_rank_index: index,
+      };
+    })
+    .sort(
+      (a, b) =>
+        Number(b.consensus_count || 0) - Number(a.consensus_count || 0) ||
+        Number(b.score || 0) - Number(a.score || 0) ||
+        Number(a.metadata_rank_index || 0) - Number(b.metadata_rank_index || 0)
+    );
+}
+
 class AutomatedRecommendationLoopService {
   private async applyPolicyVersionPromotion(
     policy: any,
@@ -514,6 +556,7 @@ class AutomatedRecommendationLoopService {
           : null,
         quality_delta: roundNumber(qualityDelta, 2),
         overlap_count: Array.isArray(experiment.overlaps) ? experiment.overlaps.length : 0,
+        overlaps: Array.isArray(experiment.overlaps) ? experiment.overlaps.slice(0, 20) : [],
         insights: Array.isArray(experiment.insights) ? experiment.insights.slice(0, 3) : [],
       };
 
@@ -626,7 +669,11 @@ class AutomatedRecommendationLoopService {
         options.min_market_cap_yi === undefined ? 30 : Number(options.min_market_cap_yi),
     });
 
-    const archiveCandidates = (generated.recommendations || []).slice(0, archiveLimit);
+    const rankedRecommendations = rankConsensusCandidates(generated.recommendations || [], loop_policy);
+    (generated as any).recommendations = rankedRecommendations;
+    (generated as any).consensus_ranked = true;
+    (generated as any).consensus_overlap_count = loop_policy.strategy_experiment?.overlap_count || 0;
+    const archiveCandidates = rankedRecommendations.slice(0, archiveLimit);
     const archive = await aiInvestmentSignalService.archiveQuantRecommendations({
       candidates: archiveCandidates,
       universe,
