@@ -80,6 +80,10 @@ interface RecommendationItem {
   recommendation_tier_label?: string;
   tier_reason?: string;
   tier_rank?: number;
+  original_score?: number;
+  consensus_count?: number;
+  consensus_bonus?: number;
+  consensus_variants?: string[];
   trend?: Array<{ time: string; close: number }>;
 }
 
@@ -89,6 +93,8 @@ interface RecommendationResponse {
   style: string;
   total_candidates: number;
   analyzed_candidates: number;
+  consensus_ranked?: boolean;
+  consensus_overlap_count?: number;
   recommendations: RecommendationItem[];
 }
 
@@ -186,6 +192,13 @@ const actionColorMap: Record<string, string> = {
   avoid: 'default',
 };
 
+const strategyVariantLabelMap: Record<string, string> = {
+  balanced_core: '均衡核心',
+  momentum_breakout: '动量突破',
+  value_reversal: '价值反转',
+  low_volatility: '低波稳健',
+};
+
 const tierColorMap: Record<string, string> = {
   strong_recommend: 'volcano',
   trial_position: 'gold',
@@ -227,6 +240,8 @@ const universeOptions = [
   { label: '我的自选池优先', value: 'favorites' },
   { label: '全市场样本', value: 'market' },
 ];
+
+const formatVariantLabel = (variant: string) => strategyVariantLabelMap[variant] || variant;
 
 const Recommendations: React.FC = () => {
   const navigate = useNavigate();
@@ -335,6 +350,24 @@ const Recommendations: React.FC = () => {
       missingIndustry,
       valuationCompleteness: ((total - missingValuation) / total) * 100,
       industryCompleteness: ((total - missingIndustry) / total) * 100,
+    };
+  }, [data]);
+
+  const consensusOverview = useMemo(() => {
+    const list = data?.recommendations || [];
+    const consensusItems = list.filter(
+      item => Number(item.consensus_count || 0) > 1 || Number(item.consensus_bonus || 0) > 0
+    );
+    const avgBonus =
+      consensusItems.length > 0
+        ? consensusItems.reduce((sum, item) => sum + Number(item.consensus_bonus || 0), 0) /
+          consensusItems.length
+        : 0;
+    return {
+      ranked: Boolean(data?.consensus_ranked),
+      overlap_count: data?.consensus_overlap_count ?? consensusItems.length,
+      items: consensusItems,
+      avg_bonus: avgBonus,
     };
   }, [data]);
 
@@ -562,6 +595,9 @@ const Recommendations: React.FC = () => {
             <Tag color={tierColorMap[record.recommendation_tier || 'watchlist']}>
               {record.recommendation_tier_label || '观察池'}
             </Tag>
+            {Number(record.consensus_count || 0) > 1 && (
+              <Tag color="purple">共识{record.consensus_count}</Tag>
+            )}
           </Space>
           <Text type="secondary">
             {record.symbol} · {record.industry || record.market || '未分类'}
@@ -575,11 +611,16 @@ const Recommendations: React.FC = () => {
       key: 'score',
       width: 150,
       sorter: (a: RecommendationItem, b: RecommendationItem) => a.score - b.score,
-      render: (score: number) => (
+      render: (score: number, record: RecommendationItem) => (
         <Space direction="vertical" size={0} style={{ width: 120 }}>
           <Text strong style={{ color: score >= 75 ? '#cf1322' : '#faad14', fontSize: 18 }}>
             {score.toFixed(1)}
           </Text>
+          {Number(record.consensus_bonus || 0) > 0 && (
+            <Text type="secondary" style={{ fontSize: 11, fontWeight: 700 }}>
+              原始 {Number(record.original_score ?? score).toFixed(1)} +{record.consensus_bonus}
+            </Text>
+          )}
           <Progress percent={Math.round(score)} size="small" showInfo={false} />
         </Space>
       ),
@@ -632,6 +673,12 @@ const Recommendations: React.FC = () => {
           {record.tier_reason && (
             <Text type="secondary" style={{ fontSize: 12 }}>
               {record.tier_reason}
+            </Text>
+          )}
+          {Number(record.consensus_count || 0) > 1 && (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              共识来源：
+              {(record.consensus_variants || []).slice(0, 3).map(formatVariantLabel).join(' / ')}
             </Text>
           )}
         </Space>
@@ -697,6 +744,9 @@ const Recommendations: React.FC = () => {
             </Tag>
           ))}
           <Space wrap size={[4, 4]}>
+            {Number(record.consensus_count || 0) > 1 && (
+              <Tag color="purple">策略共识加权 +{record.consensus_bonus || 0}</Tag>
+            )}
             {record.factors.slice(0, 5).map(factor => (
               <Tag
                 key={factor.name}
@@ -834,6 +884,30 @@ const Recommendations: React.FC = () => {
           1
         )}。每日“全市场荐股闭环”会自动归档、验证并接入模拟盘。`}
       />
+
+      {consensusOverview.ranked && (
+        <div className="recommendation-consensus-strip">
+          <div>
+            <span>STRATEGY CONSENSUS</span>
+            <strong>多策略共识优先排序已接入</strong>
+            <p>
+              当前候选池识别到 {consensusOverview.overlap_count} 个跨策略重叠标的，其中{' '}
+              {consensusOverview.items.length} 个已经获得显式共识加权，平均加分{' '}
+              {consensusOverview.avg_bonus.toFixed(1)}。这些标的会优先进入归档、Agent
+              复核与模拟盘预演。
+            </p>
+          </div>
+          <Space wrap size={[8, 8]}>
+            {consensusOverview.items.slice(0, 6).map(item => (
+              <Tag key={item.symbol} color="purple">
+                {item.name || item.symbol} · 共识{item.consensus_count} · +
+                {item.consensus_bonus || 0}
+              </Tag>
+            ))}
+            {consensusOverview.items.length === 0 && <Tag>等待策略实验共识样本</Tag>}
+          </Space>
+        </div>
+      )}
 
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
         {tierBuckets.map(bucket => (
@@ -986,20 +1060,43 @@ const Recommendations: React.FC = () => {
                 valueStyle={{ color: '#fde68a' }}
               />
             </Col>
+            <Col xs={12} md={4}>
+              <Statistic
+                title={<span style={{ color: 'rgba(220,252,231,0.7)' }}>策略共识</span>}
+                value={autoLoopResult.generated?.consensus_overlap_count || 0}
+                suffix="个"
+                valueStyle={{ color: '#e9d5ff' }}
+              />
+            </Col>
             <Col xs={24} md={9}>
-              {autoLoopResult.agent_analysis?.submitted?.length ? (
-                <Space wrap>
-                  {autoLoopResult.agent_analysis.submitted.slice(0, 5).map(item => (
-                    <Tag key={item.task_id || item.symbol} color="green">
-                      {item.name || item.symbol} · {item.score ?? '--'}分
-                    </Tag>
-                  ))}
-                </Space>
-              ) : (
-                <Text style={{ color: 'rgba(220,252,231,0.72)' }}>
-                  本轮没有达到 Agent 复核阈值的候选，系统仍会保留归档后验。
-                </Text>
-              )}
+              <Space direction="vertical" size={8}>
+                {autoLoopResult.generated?.consensus_ranked && (
+                  <Space wrap>
+                    {(autoLoopResult.generated?.recommendations || [])
+                      .filter(item => Number(item.consensus_count || 0) > 1)
+                      .slice(0, 4)
+                      .map(item => (
+                        <Tag key={item.symbol} color="purple">
+                          {item.name || item.symbol} · 共识{item.consensus_count} · +
+                          {item.consensus_bonus || 0}
+                        </Tag>
+                      ))}
+                  </Space>
+                )}
+                {autoLoopResult.agent_analysis?.submitted?.length ? (
+                  <Space wrap>
+                    {autoLoopResult.agent_analysis.submitted.slice(0, 5).map(item => (
+                      <Tag key={item.task_id || item.symbol} color="green">
+                        {item.name || item.symbol} · {item.score ?? '--'}分
+                      </Tag>
+                    ))}
+                  </Space>
+                ) : (
+                  <Text style={{ color: 'rgba(220,252,231,0.72)' }}>
+                    本轮没有达到 Agent 复核阈值的候选，系统仍会保留归档后验。
+                  </Text>
+                )}
+              </Space>
             </Col>
           </Row>
         </Card>
@@ -1162,6 +1259,26 @@ const Recommendations: React.FC = () => {
                           record.feedback.positive_rate ??
                           '--'}
                         %。
+                      </Paragraph>
+                    </Card>
+                  </Col>
+                )}
+                {Number(record.consensus_count || 0) > 1 && (
+                  <Col xs={24} md={8} lg={6} key="consensus-summary">
+                    <Card size="small" title="多策略共识">
+                      <Statistic
+                        title="共识策略数"
+                        value={record.consensus_count}
+                        suffix="组"
+                        valueStyle={{ color: '#722ed1' }}
+                      />
+                      <Paragraph style={{ marginBottom: 0, marginTop: 8 }}>
+                        原始评分 {Number(record.original_score ?? record.score).toFixed(1)}
+                        ，共识加分 +{record.consensus_bonus || 0} 后为 {record.score.toFixed(1)}
+                        。来源：
+                        {(record.consensus_variants || []).map(formatVariantLabel).join(' / ') ||
+                          '策略实验重叠池'}
+                        。
                       </Paragraph>
                     </Card>
                   </Col>

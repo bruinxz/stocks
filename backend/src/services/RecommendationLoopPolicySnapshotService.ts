@@ -67,6 +67,37 @@ export class RecommendationLoopPolicySnapshotService {
       const outcomeSummary = tradeOutcomes?.summary || {};
 
       const archiveSignalIds = Array.isArray(archive.signal_ids) ? archive.signal_ids : [];
+      const strategyExperiment = loopPolicy?.strategy_experiment || null;
+      const consensusOverlapCount =
+        toOptionalNumber(generated.consensus_overlap_count) ??
+        toOptionalNumber(strategyExperiment?.overlap_count);
+      const consensusTopSymbols = Array.isArray(generated.recommendations)
+        ? generated.recommendations
+            .filter(
+              (item: any) =>
+                Number(item?.consensus_count || 0) > 1 || Number(item?.consensus_bonus || 0) > 0
+            )
+            .slice(0, 10)
+            .map((item: any) => ({
+              symbol: item.symbol,
+              name: item.name,
+              score: roundNumber(item.score, 2),
+              original_score:
+                item.original_score !== undefined ? roundNumber(item.original_score, 2) : undefined,
+              consensus_count: toOptionalNumber(item.consensus_count),
+              consensus_bonus: toOptionalNumber(item.consensus_bonus),
+              consensus_variants: Array.isArray(item.consensus_variants)
+                ? item.consensus_variants.slice(0, 8)
+                : [],
+              recommendation_tier: item.recommendation_tier,
+              recommendation_tier_label: item.recommendation_tier_label,
+            }))
+        : [];
+      const consensusSummary = {
+        ranked: Boolean(generated.consensus_ranked),
+        overlap_count: consensusOverlapCount,
+        top_symbols: consensusTopSymbols,
+      };
 
       const snapshot = await RecommendationLoopPolicySnapshot.create({
         generated_at: new Date(),
@@ -115,6 +146,8 @@ export class RecommendationLoopPolicySnapshotService {
         weak_segments: Array.isArray(loopPolicy.weak_segments) ? loopPolicy.weak_segments : [],
         run_metrics: {
           generated,
+          strategy_experiment: strategyExperiment,
+          consensus: consensusSummary,
           archive,
           agent_analysis: {
             enabled: agentAnalysis.enabled,
@@ -145,6 +178,8 @@ export class RecommendationLoopPolicySnapshotService {
         metadata: {
           result_generated_at: result?.generated_at,
           recorded_at: new Date().toISOString(),
+          consensus_ranked: consensusSummary.ranked,
+          consensus_overlap_count: consensusSummary.overlap_count,
         },
       } as any);
       if (snapshot?.id && archiveSignalIds.length > 0) {
@@ -525,19 +560,19 @@ export class RecommendationLoopPolicySnapshotService {
       closedSamples >= 5 && avgExcess > 1.5
         ? Math.min(6, Math.max(3, latestTradeLimit + 1))
         : avgExcess < -1
-          ? Math.max(1, Math.min(2, latestTradeLimit))
-          : Math.max(1, Math.min(4, latestTradeLimit || 3));
+        ? Math.max(1, Math.min(2, latestTradeLimit))
+        : Math.max(1, Math.min(4, latestTradeLimit || 3));
 
     const action =
       records.length === 0
         ? 'wait_for_snapshots'
         : closedSamples < 3
-          ? 'collect_samples'
-          : avgExcess > 1.5
-            ? 'scale_up'
-            : avgExcess < -1
-              ? 'tighten'
-              : 'hold_and_compare';
+        ? 'collect_samples'
+        : avgExcess > 1.5
+        ? 'scale_up'
+        : avgExcess < -1
+        ? 'tighten'
+        : 'hold_and_compare';
 
     const reasons = [
       records.length === 0 ? '暂无策略版本样本，等待下一次全市场闭环自动生成。' : '',
@@ -545,7 +580,9 @@ export class RecommendationLoopPolicySnapshotService {
         ? `当前最高晋级分版本 #${best.id}，平均超额 ${best.avg_excess_return_pct}%、闭环样本 ${best.closed_trade_count}。`
         : '',
       bestStyle
-        ? `风格排名第一：${this.bucketLabel(bestStyle.key)}，平均超额 ${bestStyle.avg_outcome_excess_return_pct}%。`
+        ? `风格排名第一：${this.bucketLabel(bestStyle.key)}，平均超额 ${
+            bestStyle.avg_outcome_excess_return_pct
+          }%。`
         : '',
       closedSamples < 3 ? '闭环平仓样本仍不足，建议小仓继续采样，避免过早放大。' : '',
       avgExcess < -1 ? '版本平均超额为负，下一轮应提高评分阈值并降低仓位。' : '',
@@ -594,7 +631,9 @@ export class RecommendationLoopPolicySnapshotService {
       insights.push(
         `下一轮建议：${actionLabels[promotion.action] || promotion.action}，风格 ${this.bucketLabel(
           promotion.recommended_style
-        )}，评分≥${promotion.recommended_min_score}，默认仓位 ${promotion.recommended_default_position_pct}%。`
+        )}，评分≥${promotion.recommended_min_score}，默认仓位 ${
+          promotion.recommended_default_position_pct
+        }%。`
       );
     }
     if (summary.latest_policy?.policy_reason) {

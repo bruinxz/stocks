@@ -484,6 +484,31 @@ class FeishuTaskReportService {
     const qualityOverview = result?.quality_report?.overview || {};
     const topPicks = recommendations.slice(0, 5);
     const bestPick = topPicks[0];
+    const strategyExperiment = loopPolicy?.strategy_experiment || null;
+    const champion = strategyExperiment?.champion;
+    const baseVariant = strategyExperiment?.base_variant;
+    const consensusOverlapCount =
+      generated.consensus_overlap_count ?? strategyExperiment?.overlap_count ?? 0;
+    const consensusRanked = Boolean(generated.consensus_ranked);
+    const consensusTopPicks = topPicks.filter(
+      (item: any) =>
+        Number(item?.consensus_count || 0) > 1 || Number(item?.consensus_bonus || 0) > 0
+    );
+    const formatConsensus = (item: any) => {
+      const count = Number(item?.consensus_count || 0);
+      const bonus = Number(item?.consensus_bonus || 0);
+      if (count <= 1 && bonus <= 0) return '';
+      const variants = Array.isArray(item?.consensus_variants)
+        ? item.consensus_variants.slice(0, 3).join('/')
+        : '';
+      const originalScore =
+        item?.original_score !== undefined && item?.original_score !== null
+          ? `，原始 ${Number(item.original_score).toFixed(1)}→${Number(item.score || 0).toFixed(1)}`
+          : '';
+      return `；策略共识 ${count} 组${bonus ? `，加分 +${bonus}` : ''}${originalScore}${
+        variants ? `（${variants}）` : ''
+      }`;
+    };
     const markdownMessage = [
       `## ${recordType}`,
       '',
@@ -495,13 +520,11 @@ class FeishuTaskReportService {
       loopPolicy?.enabled !== undefined
         ? `- **闭环自适应**：${loopPolicy.enabled ? '已启用' : '未启用'}；样本 ${
             loopPolicy.closed_samples ?? 0
-          }/${loopPolicy.min_closed_samples ?? '-'}；风格 ${
-            loopPolicy.base_style || '-'
-          } → ${loopPolicy.effective_style || '-'}；最低评分 ${
-            loopPolicy.effective_min_score ?? '-'
-          }；仓位 ${loopPolicy.effective_default_position_pct ?? '-'}%/${
-            loopPolicy.effective_max_position_pct ?? '-'
-          }%`
+          }/${loopPolicy.min_closed_samples ?? '-'}；风格 ${loopPolicy.base_style || '-'} → ${
+            loopPolicy.effective_style || '-'
+          }；最低评分 ${loopPolicy.effective_min_score ?? '-'}；仓位 ${
+            loopPolicy.effective_default_position_pct ?? '-'
+          }%/${loopPolicy.effective_max_position_pct ?? '-'}%`
         : '',
       `- **评分覆盖**：${generated.analyzed_candidates ?? 0}/${
         generated.total_candidates ?? 0
@@ -509,9 +532,9 @@ class FeishuTaskReportService {
       agentAnalysis?.enabled
         ? `- **Agent 深度复核**：已提交 ${
             Array.isArray(agentAnalysis.submitted) ? agentAnalysis.submitted.length : 0
-          } 个；失败 ${Array.isArray(agentAnalysis.failed) ? agentAnalysis.failed.length : 0} 个；完成后${
-            agentAnalysis.auto_paper_trade ? '会自动进入模拟盘' : '仅归档跟踪'
-          }`
+          } 个；失败 ${
+            Array.isArray(agentAnalysis.failed) ? agentAnalysis.failed.length : 0
+          } 个；完成后${agentAnalysis.auto_paper_trade ? '会自动进入模拟盘' : '仅归档跟踪'}`
         : '- **Agent 深度复核**：未启用',
       `- **模拟盘动作**：${
         paper?.dry_run ? '预演' : paper?.portfolio_id ? '已执行' : '未执行'
@@ -519,19 +542,30 @@ class FeishuTaskReportService {
       tradeOutcomes?.summary
         ? `- **交易收益闭环**：跟踪 ${outcomeSummary.total_count ?? 0} 笔；闭环 ${
             outcomeSummary.closed_count ?? 0
-          } 笔；超额胜率 ${this.formatPercent(outcomeSummary.excess_win_rate)}；总盈亏 ${this.formatSignedMoney(
-            outcomeSummary.total_pnl
-          )}`
+          } 笔；超额胜率 ${this.formatPercent(
+            outcomeSummary.excess_win_rate
+          )}；总盈亏 ${this.formatSignedMoney(outcomeSummary.total_pnl)}`
         : '',
       qualityOverview?.quality_score !== undefined
         ? `- **当前量化信号质量**：${qualityOverview.quality_score} 分；闸门 ${
             qualityOverview.gate?.label || '-'
           }；5日均超额 ${this.formatPercent(qualityOverview.avg_excess_return_pct)}`
         : '',
+      strategyExperiment
+        ? `- **策略实验反馈**：冠军 ${champion?.label || '-'}（质量分 ${
+            champion?.quality_score ?? '-'
+          }），基线 ${baseVariant?.label || loopPolicy.effective_style || '-'}（${
+            baseVariant?.quality_score ?? '-'
+          }），质量差 ${
+            strategyExperiment?.quality_delta ?? '-'
+          }；共识标的 ${consensusOverlapCount} 个；${
+            consensusRanked ? '本轮已按多策略共识优先排序' : '本轮未触发共识排序'
+          }`
+        : '',
       bestPick
         ? `- **首选标的**：${bestPick.name || bestPick.symbol}（${bestPick.symbol}），评分 ${
             bestPick.score
-          }，动作 ${bestPick.action_label || bestPick.action || '-'}`
+          }，动作 ${bestPick.action_label || bestPick.action || '-'}${formatConsensus(bestPick)}`
         : '',
       '',
       '### 核心候选',
@@ -541,7 +575,9 @@ class FeishuTaskReportService {
               (item: any, index: number) =>
                 `${index + 1}. **${item.name || item.symbol}（${item.symbol}）**：评分 ${
                   item.score
-                }，${item.action_label || item.action || '-'}，风险 ${item.risk_level || '-'}，20日 ${
+                }，${item.action_label || item.action || '-'}，风险 ${
+                  item.risk_level || '-'
+                }${formatConsensus(item)}，20日 ${
                   item.metrics?.return_20d ?? '--'
                 }%，理由：${this.safeText((item.reasons || []).slice(0, 2).join('；'), 260)}`
             )
@@ -551,7 +587,10 @@ class FeishuTaskReportService {
       '### 闭环说明',
       '- 系统已从全市场候选池自动筛选、归档为可后验验证信号，并可接入 Profit Gate 后进入模拟盘。',
       '- Top 候选会提交 TradingAgents 深度复核；复核结果回写后进入尾盘/场次收益跟踪。',
-      `- 当前自适应原因：${loopPolicy.reason || '下一轮会使用信号后验超额收益继续反哺候选评分，连续跑输市场的标的会被自动降权。'}`,
+      `- 当前自适应原因：${
+        loopPolicy.reason ||
+        '下一轮会使用信号后验超额收益继续反哺候选评分，连续跑输市场的标的会被自动降权。'
+      }`,
     ]
       .filter(Boolean)
       .join('\n');
@@ -600,6 +639,12 @@ class FeishuTaskReportService {
       平均超额收益: this.formatPercent(qualityOverview.avg_excess_return_pct),
       胜率: this.formatPercent(qualityOverview.positive_rate),
       超额胜率: this.formatPercent(qualityOverview.excess_positive_rate),
+      策略实验冠军: champion?.label,
+      策略实验质量差: strategyExperiment?.quality_delta,
+      策略实验是否切换: loopPolicy?.strategy_experiment_feedback_applied ? '是' : '否',
+      策略实验原因: loopPolicy?.strategy_experiment_feedback_reason,
+      共识排序: consensusRanked ? '是' : '否',
+      共识标的数: consensusOverlapCount,
       最佳标的: bestPick
         ? `${bestPick.name || bestPick.symbol}(${bestPick.symbol}) ${bestPick.score}`
         : '',
@@ -612,10 +657,14 @@ class FeishuTaskReportService {
             style: generated.style,
             total_candidates: generated.total_candidates,
             analyzed_candidates: generated.analyzed_candidates,
+            consensus_ranked: consensusRanked,
+            consensus_overlap_count: consensusOverlapCount,
+            consensus_top_picks: consensusTopPicks,
             recommendations: topPicks,
           },
           archive,
           loop_policy: loopPolicy,
+          strategy_experiment: strategyExperiment,
           policy_snapshot: policySnapshot,
           agent_analysis: agentAnalysis,
           verification,
@@ -1485,9 +1534,9 @@ class FeishuTaskReportService {
       `- **闭环反哺**：${outcomeFeedback?.enabled ? '已启用' : '未启用'}`,
       `- **样本/阈值**：${outcomeFeedback?.closed_samples ?? 0}/${
         outcomeFeedback?.min_closed_samples ?? '--'
-      }；平均超额 ${this.formatPercent(outcomeFeedback?.avg_excess_return_pct)}；超额胜率 ${this.formatPercent(
-        outcomeFeedback?.excess_win_rate
-      )}`,
+      }；平均超额 ${this.formatPercent(
+        outcomeFeedback?.avg_excess_return_pct
+      )}；超额胜率 ${this.formatPercent(outcomeFeedback?.excess_win_rate)}`,
       `- **执行参数**：最低评分 ${outcomeFeedback?.effective_min_score ?? '--'}；风险等级 ${
         Array.isArray(outcomeFeedback?.effective_allowed_risk_levels)
           ? outcomeFeedback.effective_allowed_risk_levels.join('、') || '--'
@@ -1510,7 +1559,7 @@ class FeishuTaskReportService {
       `- **扫描信号**：${result?.scanned ?? 0}`,
       `- **符合交易条件**：${result?.eligible ?? 0}`,
       `- **${dryRun ? '计划交易' : '自动成交'}**：${
-        dryRun ? (result?.planned ?? trades.length) : (result?.executed ?? trades.length)
+        dryRun ? result?.planned ?? trades.length : result?.executed ?? trades.length
       }`,
       `- **跳过信号**：${result?.skipped ?? skippedItems.length}`,
       generated?.total_candidates !== undefined
@@ -1606,7 +1655,7 @@ class FeishuTaskReportService {
       `- **检查持仓**：${result?.checked ?? 0}`,
       `- **触发退出**：${result?.exit_candidates ?? exits.length}`,
       `- **${dryRun ? '计划退出' : '自动退出'}**：${
-        dryRun ? (result?.planned ?? exits.length) : (result?.exited ?? exits.length)
+        dryRun ? result?.planned ?? exits.length : result?.exited ?? exits.length
       }`,
       `- **继续持有**：${result?.held ?? heldItems.length}`,
       `- **跳过持仓**：${result?.skipped ?? skippedItems.length}`,
@@ -1904,9 +1953,11 @@ class FeishuTaskReportService {
             )
             .join('、')}`
         : '',
-      `- **过程风险**：平均 MFE ${this.formatPercent(summary.avg_mfe_pct)}，平均 MAE ${this.formatPercent(
-        summary.avg_mae_pct
-      )}，Profit Factor ${summary.profit_factor ?? 0}`,
+      `- **过程风险**：平均 MFE ${this.formatPercent(
+        summary.avg_mfe_pct
+      )}，平均 MAE ${this.formatPercent(summary.avg_mae_pct)}，Profit Factor ${
+        summary.profit_factor ?? 0
+      }`,
     ];
 
     if (Array.isArray(feedback.insights) && feedback.insights.length > 0) {
@@ -1988,9 +2039,9 @@ class FeishuTaskReportService {
       `- **平均超额 / 超额胜率**：${this.formatPercent(
         summary.outcome_avg_excess_return_pct
       )} / ${this.formatPercent(summary.outcome_excess_win_rate)}`,
-      `- **执行最低评分 / 仓位倍率**：${
-        summary.outcome_effective_min_score ?? '--'
-      } / ${summary.outcome_position_multiplier ?? '--'}x`,
+      `- **执行最低评分 / 仓位倍率**：${summary.outcome_effective_min_score ?? '--'} / ${
+        summary.outcome_position_multiplier ?? '--'
+      }x`,
       summary.outcome_reason ? `- **核心理由**：${summary.outcome_reason}` : '',
       Array.isArray(outcomePolicy.blocked_segments) && outcomePolicy.blocked_segments.length
         ? `- **暂停片段**：${outcomePolicy.blocked_segments

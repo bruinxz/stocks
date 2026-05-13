@@ -2911,6 +2911,63 @@ a {
   font-weight: 800;
 }
 
+.recommendation-consensus-strip {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: center;
+  margin: 0 0 16px;
+  padding: 18px 20px;
+  overflow: hidden;
+  border: 1px solid rgba(88, 28, 135, 0.16);
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at 8% 20%, rgba(216, 180, 254, 0.26), transparent 30%),
+    radial-gradient(circle at 92% 18%, rgba(124, 58, 237, 0.18), transparent 34%),
+    linear-gradient(135deg, rgba(253, 250, 255, 0.96), rgba(244, 241, 255, 0.9));
+  box-shadow: 0 18px 46px rgba(76, 29, 149, 0.1);
+}
+
+.recommendation-consensus-strip::before {
+  position: absolute;
+  inset: 9px;
+  pointer-events: none;
+  content: '';
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 18px;
+}
+
+.recommendation-consensus-strip > * {
+  position: relative;
+  z-index: 1;
+}
+
+.recommendation-consensus-strip span {
+  display: block;
+  margin-bottom: 4px;
+  color: #7e22ce;
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.16em;
+}
+
+.recommendation-consensus-strip strong {
+  display: block;
+  color: #241333;
+  font-family: var(--font-display);
+  font-size: 20px;
+  letter-spacing: -0.03em;
+}
+
+.recommendation-consensus-strip p {
+  max-width: 760px;
+  margin: 6px 0 0;
+  color: #5b4b68;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
 .strategy-experiment-page {
   --experiment-ink: #101827;
   --experiment-gold: #d6a64f;
