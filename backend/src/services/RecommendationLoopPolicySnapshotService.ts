@@ -213,6 +213,9 @@ export class RecommendationLoopPolicySnapshotService {
       ),
     };
 
+    const rankings = this.buildPolicyRankings(plain, groups);
+    const promotion = this.buildPromotionAdvice(summary, rankings, plain);
+
     return {
       generated_at: moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm:ss'),
       filters: options,
@@ -221,8 +224,10 @@ export class RecommendationLoopPolicySnapshotService {
       offset,
       summary,
       groups,
+      rankings,
+      promotion,
       snapshots: plain,
-      insights: this.buildInsights(summary, groups, plain),
+      insights: this.buildInsights(summary, groups, plain, promotion),
     };
   }
 
@@ -398,7 +403,172 @@ export class RecommendationLoopPolicySnapshotService {
       );
   }
 
-  private buildInsights(summary: any, groups: any, records: any[]) {
+  private buildPolicyRankings(records: any[], groups: any) {
+    const scoreSnapshot = (item: any) => {
+      const closed = toNumber(item.closed_trade_count);
+      const tracked = toNumber(item.tracked_trade_count);
+      const avgExcess = toNumber(item.avg_excess_return_pct);
+      const winRate = toNumber(item.excess_win_rate);
+      const totalPnl = toNumber(item.total_pnl);
+      const activity = Math.log1p(Math.max(closed, tracked));
+      const samplePenalty = closed < 3 ? (3 - closed) * 4 : 0;
+      return roundNumber(
+        avgExcess * 7 + (winRate - 50) * 0.18 + activity * 2 + totalPnl / 15000 - samplePenalty,
+        2
+      );
+    };
+
+    const snapshots = [...records]
+      .map(item => ({
+        id: item.id,
+        loop_run_id: item.loop_run_id,
+        generated_at: item.generated_at,
+        universe: item.universe,
+        effective_style: item.effective_style,
+        effective_min_score: toNumber(item.effective_min_score),
+        effective_default_position_pct: toNumber(item.effective_default_position_pct),
+        effective_max_position_pct: toNumber(item.effective_max_position_pct),
+        effective_paper_trade_limit: toNumber(item.effective_paper_trade_limit),
+        tracked_trade_count: toNumber(item.tracked_trade_count),
+        closed_trade_count: toNumber(item.closed_trade_count),
+        total_pnl: roundNumber(item.total_pnl, 2),
+        avg_excess_return_pct: roundNumber(item.avg_excess_return_pct, 4),
+        excess_win_rate: roundNumber(item.excess_win_rate, 2),
+        promotion_score: scoreSnapshot(item),
+      }))
+      .sort(
+        (a, b) =>
+          b.promotion_score - a.promotion_score || b.closed_trade_count - a.closed_trade_count
+      )
+      .slice(0, 12);
+
+    const rankBucket = (items: any[]) =>
+      [...(items || [])]
+        .map(item => ({
+          ...item,
+          promotion_score: roundNumber(
+            toNumber(item.avg_outcome_excess_return_pct) * 7 +
+              (toNumber(item.executed) + toNumber(item.planned)) * 0.8 +
+              Math.log1p(toNumber(item.count)) * 2,
+            2
+          ),
+        }))
+        .sort((a, b) => b.promotion_score - a.promotion_score)
+        .slice(0, 8);
+
+    return {
+      snapshots,
+      by_style: rankBucket(groups.by_style),
+      by_score_bucket: rankBucket(groups.by_score_bucket),
+      by_position_bucket: rankBucket(groups.by_position_bucket),
+      by_universe: rankBucket(groups.by_universe),
+    };
+  }
+
+  private buildPromotionAdvice(summary: any, rankings: any, records: any[]) {
+    const latest = summary.latest_policy || {};
+    const best = rankings.snapshots?.[0];
+    const bestStyle = rankings.by_style?.find((item: any) => item.key && item.key !== 'unknown');
+    const bestScoreBucket = rankings.by_score_bucket?.[0];
+    const bestPositionBucket = rankings.by_position_bucket?.[0];
+    const latestScore = toNumber(latest.effective_min_score, 72);
+    const latestDefaultPosition = toNumber(latest.effective_default_position_pct, 5);
+    const latestMaxPosition = toNumber(latest.effective_max_position_pct, 10);
+    const latestTradeLimit = toNumber(latest.effective_paper_trade_limit, 3);
+    const closedSamples = toNumber(summary.best_snapshot?.closed_trade_count);
+    const avgExcess = toNumber(summary.avg_outcome_excess_return_pct);
+
+    let recommendedStyle = latest.effective_style || bestStyle?.key || 'balanced';
+    if (
+      bestStyle &&
+      toNumber(bestStyle.avg_outcome_excess_return_pct) > Math.max(0.8, avgExcess + 0.5)
+    ) {
+      recommendedStyle = bestStyle.key;
+    }
+
+    let recommendedMinScore = latestScore || 72;
+    if (bestScoreBucket?.key === 'score_85_plus')
+      recommendedMinScore = Math.max(recommendedMinScore, 85);
+    else if (bestScoreBucket?.key === 'score_78_84')
+      recommendedMinScore = Math.max(78, Math.min(recommendedMinScore, 84));
+    else if (bestScoreBucket?.key === 'score_72_77')
+      recommendedMinScore = Math.max(72, Math.min(recommendedMinScore, 77));
+    if (avgExcess < -1) recommendedMinScore += 3;
+    if (avgExcess > 2 && toNumber(summary.total_executed) >= 3) recommendedMinScore -= 1;
+    recommendedMinScore = Math.max(62, Math.min(94, Math.round(recommendedMinScore)));
+
+    let positionMultiplier = 0.65;
+    if (closedSamples >= 3 && avgExcess > 1.5) positionMultiplier = 1.1;
+    else if (closedSamples >= 3 && avgExcess >= 0) positionMultiplier = 0.9;
+    else if (closedSamples < 3) positionMultiplier = 0.55;
+    if (bestPositionBucket?.key === 'position_8_plus' && avgExcess > 1.5) {
+      positionMultiplier = Math.max(positionMultiplier, 1.05);
+    }
+    if (bestPositionBucket?.key === 'position_below_3') {
+      positionMultiplier = Math.min(positionMultiplier, 0.65);
+    }
+
+    const recommendedDefaultPositionPct = roundNumber(
+      Math.max(1, Math.min(12, latestDefaultPosition * positionMultiplier)),
+      2
+    );
+    const recommendedMaxPositionPct = roundNumber(
+      Math.max(
+        recommendedDefaultPositionPct,
+        Math.min(15, latestMaxPosition * Math.max(positionMultiplier, 0.6))
+      ),
+      2
+    );
+    const recommendedPaperTradeLimit =
+      closedSamples >= 5 && avgExcess > 1.5
+        ? Math.min(6, Math.max(3, latestTradeLimit + 1))
+        : avgExcess < -1
+          ? Math.max(1, Math.min(2, latestTradeLimit))
+          : Math.max(1, Math.min(4, latestTradeLimit || 3));
+
+    const action =
+      records.length === 0
+        ? 'wait_for_snapshots'
+        : closedSamples < 3
+          ? 'collect_samples'
+          : avgExcess > 1.5
+            ? 'scale_up'
+            : avgExcess < -1
+              ? 'tighten'
+              : 'hold_and_compare';
+
+    const reasons = [
+      records.length === 0 ? '暂无策略版本样本，等待下一次全市场闭环自动生成。' : '',
+      best
+        ? `当前最高晋级分版本 #${best.id}，平均超额 ${best.avg_excess_return_pct}%、闭环样本 ${best.closed_trade_count}。`
+        : '',
+      bestStyle
+        ? `风格排名第一：${this.bucketLabel(bestStyle.key)}，平均超额 ${bestStyle.avg_outcome_excess_return_pct}%。`
+        : '',
+      closedSamples < 3 ? '闭环平仓样本仍不足，建议小仓继续采样，避免过早放大。' : '',
+      avgExcess < -1 ? '版本平均超额为负，下一轮应提高评分阈值并降低仓位。' : '',
+      avgExcess > 1.5 ? '版本平均超额为正且具备放量验证条件，可小幅放大跟单数量。' : '',
+    ].filter(Boolean);
+
+    return {
+      action,
+      confidence:
+        records.length === 0 ? 0 : closedSamples >= 5 ? 0.72 : closedSamples >= 3 ? 0.58 : 0.35,
+      recommended_style: recommendedStyle,
+      recommended_min_score: recommendedMinScore,
+      recommended_default_position_pct: recommendedDefaultPositionPct,
+      recommended_max_position_pct: recommendedMaxPositionPct,
+      recommended_paper_trade_limit: recommendedPaperTradeLimit,
+      position_multiplier: roundNumber(positionMultiplier, 2),
+      best_snapshot: best || null,
+      best_style: bestStyle || null,
+      best_score_bucket: bestScoreBucket || null,
+      best_position_bucket: bestPositionBucket || null,
+      reasons,
+    };
+  }
+
+  private buildInsights(summary: any, groups: any, records: any[], promotion?: any) {
     const insights: string[] = [];
     if (!records.length) {
       return ['暂无策略参数快照。下一次全市场荐股闭环执行后会自动生成快照。'];
@@ -409,6 +579,20 @@ export class RecommendationLoopPolicySnapshotService {
     if (groups.by_style?.[0]) {
       insights.push(
         `当前表现最好的风格是 ${groups.by_style[0].label}，平均闭环超额 ${groups.by_style[0].avg_outcome_excess_return_pct}%。`
+      );
+    }
+    if (promotion?.action) {
+      const actionLabels: Record<string, string> = {
+        wait_for_snapshots: '等待版本样本',
+        collect_samples: '继续小仓采样',
+        scale_up: '小幅放大验证',
+        tighten: '收紧评分/仓位',
+        hold_and_compare: '保持参数继续对比',
+      };
+      insights.push(
+        `下一轮建议：${actionLabels[promotion.action] || promotion.action}，风格 ${this.bucketLabel(
+          promotion.recommended_style
+        )}，评分≥${promotion.recommended_min_score}，默认仓位 ${promotion.recommended_default_position_pct}%。`
       );
     }
     if (summary.latest_policy?.policy_reason) {
