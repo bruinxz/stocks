@@ -3386,3 +3386,27 @@ a {
     border-radius: 24px;
   }
 }
+
+.consensus-maturity-panel {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(124, 58, 237, 0.08), rgba(214, 166, 79, 0.08));
+  border: 1px solid rgba(124, 58, 237, 0.14);
+}
+
+.consensus-maturity-panel > div:first-child {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.consensus-maturity-panel strong {
+  color: #5b21b6;
+  font-family: var(--font-display);
+  font-size: 26px;
+  line-height: 1;
+  letter-spacing: -0.04em;
+}

@@ -434,6 +434,94 @@ function extractCompletedReturnSamples(signals: any[], horizonFilter?: string) {
   return samples;
 }
 
+function getHorizonStatus(signal: any, horizon: string): string {
+  const horizons = signal.forward_returns?.horizons || {};
+  const status = horizons?.[horizon]?.status;
+  if (status) return String(status);
+  if (signal.verification_status === 'no_data') return 'no_data';
+  if (signal.verification_status === 'completed') return 'completed';
+  if (signal.verification_status === 'partial') return 'pending';
+  return signal.verification_status || 'pending';
+}
+
+function buildConsensusMaturity(signals: any[], horizon: string) {
+  const bucketMap = new Map<
+    string,
+    {
+      key: string;
+      label: string;
+      total: number;
+      completed: number;
+      pending: number;
+      no_data: number;
+      partial: number;
+      latest_signal_date?: string;
+    }
+  >();
+  const ensureBucket = (key: string) => {
+    if (!bucketMap.has(key)) {
+      bucketMap.set(key, {
+        key,
+        label: consensusSignalBucketLabel(key),
+        total: 0,
+        completed: 0,
+        pending: 0,
+        no_data: 0,
+        partial: 0,
+      });
+    }
+    return bucketMap.get(key)!;
+  };
+
+  for (const signal of signals) {
+    const key = consensusSignalBucketKey(signal.metadata?.consensus_count);
+    const bucket = ensureBucket(key);
+    const status = getHorizonStatus(signal, horizon);
+    bucket.total += 1;
+    if (status === 'completed') bucket.completed += 1;
+    else if (status === 'no_data') bucket.no_data += 1;
+    else if (status === 'partial') bucket.partial += 1;
+    else bucket.pending += 1;
+    if (
+      signal.signal_date &&
+      (!bucket.latest_signal_date || String(signal.signal_date) > bucket.latest_signal_date)
+    ) {
+      bucket.latest_signal_date = String(signal.signal_date);
+    }
+  }
+
+  const buckets = Array.from(bucketMap.values())
+    .map(bucket => ({
+      ...bucket,
+      mature_rate:
+        bucket.total > 0 ? roundNumber((bucket.completed / bucket.total) * 100, 2) ?? 0 : 0,
+      waiting: bucket.pending + bucket.partial,
+    }))
+    .sort((a, b) => {
+      const order = ['consensus_4_plus', 'consensus_3', 'consensus_2', 'no_consensus'];
+      return order.indexOf(a.key) - order.indexOf(b.key);
+    });
+
+  const consensusBuckets = buckets.filter(bucket => bucket.key !== 'no_consensus');
+  const consensusTotal = consensusBuckets.reduce((sum, bucket) => sum + bucket.total, 0);
+  const consensusCompleted = consensusBuckets.reduce((sum, bucket) => sum + bucket.completed, 0);
+  const consensusPending = consensusBuckets.reduce(
+    (sum, bucket) => sum + bucket.pending + bucket.partial,
+    0
+  );
+  const consensusNoData = consensusBuckets.reduce((sum, bucket) => sum + bucket.no_data, 0);
+  return {
+    horizon,
+    buckets,
+    consensus_total: consensusTotal,
+    consensus_completed: consensusCompleted,
+    consensus_pending: consensusPending,
+    consensus_no_data: consensusNoData,
+    consensus_mature_rate:
+      consensusTotal > 0 ? roundNumber((consensusCompleted / consensusTotal) * 100, 2) ?? 0 : 0,
+  };
+}
+
 function calculateQualityScore(summary: any, minSamples = 5): number {
   if (!summary || !summary.count) return 0;
   const primaryAvgReturn = Number(
@@ -1559,6 +1647,7 @@ export class AIInvestmentSignalService {
     const no_data_signals = signals.filter(
       signal => signal.verification_status === 'no_data'
     ).length;
+    const consensus_maturity = buildConsensusMaturity(signals, horizon);
 
     const overview = {
       total_signals: signals.length,
@@ -1731,6 +1820,7 @@ export class AIInvestmentSignalService {
         quality_score: calculateQualityScore(item, minSamples),
         gate: classifyQualityGate(item, minSamples),
       })),
+      consensus_maturity,
       horizon_summary,
       top_symbols,
       recent_signals,

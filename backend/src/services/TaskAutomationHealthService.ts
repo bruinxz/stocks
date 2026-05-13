@@ -16,6 +16,25 @@ interface AutomationHealthIssue {
   code?: string;
 }
 
+type QueueHealthSummary = {
+  queue_name: string;
+  waiting: number;
+  active: number;
+  delayed: number;
+  completed: number;
+  failed: number;
+  paused: number;
+  recent_failed: number;
+  recent_failed_jobs: Array<{
+    id: string | number;
+    name?: string;
+    failed_reason?: string;
+    finished_on?: number;
+  }>;
+  historical_failed_retained: number;
+  error?: string;
+};
+
 interface HealthTaskSummary {
   id?: number;
   name: string;
@@ -236,8 +255,8 @@ export class TaskAutomationHealthService {
       ScheduledTask.findAll({ order: [['id', 'ASC']] }),
       TaskExecutionLog.findAll({ order: [['started_at', 'DESC']], limit: 300 }),
       RecommendationLoopPolicySnapshot.findOne({ order: [['generated_at', 'DESC']] }),
-      this.getQueueCounts('data-update', dataUpdateQueue),
-      this.getQueueCounts('ai_polling', aiPollingQueue),
+      this.getQueueHealth('data-update', dataUpdateQueue),
+      this.getQueueHealth('ai_polling', aiPollingQueue),
     ]);
 
     const plainTasks = tasks.map(task => toPlain<any>(task));
@@ -293,7 +312,7 @@ export class TaskAutomationHealthService {
     };
   }
 
-  private async getQueueCounts(queueName: string, queue: any) {
+  private async getQueueHealth(queueName: string, queue: any): Promise<QueueHealthSummary> {
     try {
       const counts = await queue.getJobCounts(
         'waiting',
@@ -303,6 +322,17 @@ export class TaskAutomationHealthService {
         'failed',
         'paused'
       );
+      const recentFailedJobs = await queue.getFailed(0, 19);
+      const recentThreshold = Date.now() - 24 * 60 * 60 * 1000;
+      const normalizedRecentFailedJobs = recentFailedJobs
+        .map((job: any) => ({
+          id: job.id,
+          name: job.name,
+          failed_reason: job.failedReason,
+          finished_on: job.finishedOn,
+        }))
+        .filter((job: any) => Number(job.finished_on || 0) >= recentThreshold);
+
       return {
         queue_name: queueName,
         waiting: Number(counts.waiting || 0),
@@ -311,6 +341,12 @@ export class TaskAutomationHealthService {
         completed: Number(counts.completed || 0),
         failed: Number(counts.failed || 0),
         paused: Number(counts.paused || 0),
+        recent_failed: normalizedRecentFailedJobs.length,
+        recent_failed_jobs: normalizedRecentFailedJobs.slice(0, 5),
+        historical_failed_retained: Math.max(
+          Number(counts.failed || 0) - normalizedRecentFailedJobs.length,
+          0
+        ),
       };
     } catch (error: any) {
       logger.warn(`读取队列健康状态失败 ${queueName}: ${error?.message || error}`);
@@ -322,6 +358,9 @@ export class TaskAutomationHealthService {
         completed: 0,
         failed: 0,
         paused: 0,
+        recent_failed: 0,
+        recent_failed_jobs: [],
+        historical_failed_retained: 0,
         error: error?.message || String(error),
       };
     }
@@ -486,7 +525,7 @@ export class TaskAutomationHealthService {
     };
   }
 
-  private buildQueuePressureIssues(...queueCounts: any[]): AutomationHealthIssue[] {
+  private buildQueuePressureIssues(...queueCounts: QueueHealthSummary[]): AutomationHealthIssue[] {
     const issues: AutomationHealthIssue[] = [];
     for (const queue of queueCounts) {
       if (queue.error) {
@@ -496,11 +535,11 @@ export class TaskAutomationHealthService {
           code: 'queue_unavailable',
         });
       }
-      if (Number(queue.failed || 0) >= 10) {
+      if (Number(queue.recent_failed || 0) >= 3) {
         issues.push({
           level: 'warning',
-          message: `${queue.queue_name} 队列失败任务较多：${queue.failed}`,
-          code: 'queue_failed_jobs',
+          message: `${queue.queue_name} 队列近24小时失败任务较多：${queue.recent_failed}`,
+          code: 'queue_recent_failed_jobs',
         });
       }
       if (Number(queue.waiting || 0) + Number(queue.delayed || 0) >= 30) {

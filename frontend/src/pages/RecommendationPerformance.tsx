@@ -161,6 +161,26 @@ type DashboardData = {
   by_source_type: SummaryRow[];
   by_risk_level: SummaryRow[];
   by_consensus?: Array<SummaryRow & { label?: string; quality_score?: number; gate?: QualityGate }>;
+  consensus_maturity?: {
+    horizon: string;
+    consensus_total: number;
+    consensus_completed: number;
+    consensus_pending: number;
+    consensus_no_data: number;
+    consensus_mature_rate: number;
+    buckets: Array<{
+      key: string;
+      label: string;
+      total: number;
+      completed: number;
+      pending: number;
+      partial: number;
+      no_data: number;
+      waiting: number;
+      mature_rate: number;
+      latest_signal_date?: string;
+    }>;
+  };
   horizon_summary: SummaryRow[];
   top_symbols: Array<SummaryRow & { symbol: string; name?: string; latest_signal_date?: string }>;
   recent_signals: RecentSignal[];
@@ -378,6 +398,7 @@ const RecommendationPerformance: React.FC = () => {
   const playbookGate = playbook?.overall?.gate;
   const gateTone = gateToneMap[playbookGate?.severity || 'neutral'] || gateToneMap.neutral;
   const consensusBuckets = useMemo(() => data?.by_consensus || [], [data?.by_consensus]);
+  const consensusMaturity = data?.consensus_maturity;
   const consensusEdge = useMemo(() => {
     const consensus = consensusBuckets.filter(item => item.key !== 'no_consensus');
     const noConsensus = consensusBuckets.find(item => item.key === 'no_consensus');
@@ -823,24 +844,57 @@ const RecommendationPerformance: React.FC = () => {
               </Text>
             </Col>
             <Col xs={24} lg={10}>
-              <Space wrap>
-                {consensusBuckets.map(bucket => (
-                  <Tag
-                    key={bucket.key}
-                    color={
-                      bucket.key === 'no_consensus'
-                        ? 'default'
-                        : Number(bucket.avg_return_pct || 0) >= 0
-                        ? 'purple'
-                        : 'orange'
-                    }
-                  >
-                    {(bucket as any).label || consensusLabelMap[bucket.key || ''] || bucket.key}：
-                    {bucket.count}样本 / 均收 {formatPct(bucket.avg_return_pct)} / 胜率{' '}
-                    {formatPct(bucket.positive_rate)}
-                  </Tag>
-                ))}
-                {!consensusBuckets.length && <Text type="secondary">等待共识信号后验样本</Text>}
+              <Space direction="vertical" size={10} style={{ width: '100%' }}>
+                <div className="consensus-maturity-panel">
+                  <div>
+                    <Text type="secondary">共识样本成熟度</Text>
+                    <strong>{consensusMaturity?.consensus_mature_rate || 0}%</strong>
+                  </div>
+                  <Progress
+                    percent={consensusMaturity?.consensus_mature_rate || 0}
+                    showInfo={false}
+                    strokeColor="#7c3aed"
+                    trailColor="rgba(124, 58, 237, 0.12)"
+                  />
+                  <Text type="secondary">
+                    共识总数 {consensusMaturity?.consensus_total || 0} · 已完成{' '}
+                    {consensusMaturity?.consensus_completed || 0} · 等待{' '}
+                    {consensusMaturity?.consensus_pending || 0} · 缺行情{' '}
+                    {consensusMaturity?.consensus_no_data || 0}
+                  </Text>
+                </div>
+                <Space wrap>
+                  {(consensusMaturity?.buckets || []).map(bucket => (
+                    <Tag
+                      key={bucket.key}
+                      color={bucket.key === 'no_consensus' ? 'default' : 'purple'}
+                    >
+                      {bucket.label}：{bucket.completed}/{bucket.total} 成熟 · 等待 {bucket.waiting}
+                    </Tag>
+                  ))}
+                  {!consensusMaturity?.buckets?.length && (
+                    <Text type="secondary">等待共识信号后验样本</Text>
+                  )}
+                </Space>
+                <Space wrap>
+                  {consensusBuckets.map(bucket => (
+                    <Tag
+                      key={bucket.key}
+                      color={
+                        bucket.key === 'no_consensus'
+                          ? 'default'
+                          : Number(bucket.avg_return_pct || 0) >= 0
+                          ? 'purple'
+                          : 'orange'
+                      }
+                    >
+                      {(bucket as any).label || consensusLabelMap[bucket.key || ''] || bucket.key}：
+                      {bucket.count}样本 / 均收 {formatPct(bucket.avg_return_pct)} / 胜率{' '}
+                      {formatPct(bucket.positive_rate)}
+                    </Tag>
+                  ))}
+                  {!consensusBuckets.length && <Text type="secondary">等待已完成后验样本</Text>}
+                </Space>
               </Space>
             </Col>
           </Row>
