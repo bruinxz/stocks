@@ -19,6 +19,8 @@ import { feishuTaskReportService } from './FeishuTaskReportService';
 import { normalizeSymbol } from '../utils/stockSymbol';
 import { logger } from '../utils/logger';
 
+export const DEFAULT_PAPER_TRADING_INITIAL_CAPITAL = 200000;
+
 type AutoTradeStatus = 'executed' | 'planned' | 'skipped';
 type RiskExitStatus = 'exited' | 'planned' | 'held' | 'skipped';
 type RiskExitReason = 'stop_loss' | 'take_profit' | 'sell_signal' | 'max_hold_days';
@@ -491,7 +493,10 @@ class PaperTradingAutomationService {
     }
 
     if (!portfolio) {
-      const initial_capital = toNumber(options.initial_capital, 1000000);
+      const initial_capital = toNumber(
+        options.initial_capital,
+        DEFAULT_PAPER_TRADING_INITIAL_CAPITAL
+      );
       const displayName = user.nickname || user.username || '系统';
       portfolio = await PaperTradingPortfolio.create({
         user_id,

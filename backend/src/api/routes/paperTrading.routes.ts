@@ -60,6 +60,28 @@ router.post(
 router.post('/risk-check', authController.authenticate, paperTradingController.runRiskCheck);
 
 /**
+ * @route GET /api/paper-trading/autonomous-dashboard
+ * @desc 获取自主荐股模拟盘收益驾驶舱
+ * @access Private
+ */
+router.get(
+  '/autonomous-dashboard',
+  authController.authenticate,
+  paperTradingController.getAutonomousDashboard
+);
+
+/**
+ * @route GET /api/paper-trading/recommendation-tracking
+ * @desc 获取每日推荐股票追踪与模拟收益
+ * @access Private
+ */
+router.get(
+  '/recommendation-tracking',
+  authController.authenticate,
+  paperTradingController.getRecommendationTracking
+);
+
+/**
  * @route GET /api/paper-trading/attribution
  * @desc 获取模拟盘信号收益归因与策略反哺
  * @access Private

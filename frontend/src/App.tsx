@@ -49,6 +49,8 @@ import RecommendationLoopPolicies from './pages/RecommendationLoopPolicies';
 import AgentTailAlphaLedger from './pages/AgentTailAlphaLedger';
 import StrategyExperimentLab from './pages/StrategyExperimentLab';
 import PaperTrading from './pages/PaperTrading';
+import AutonomousTradingOverview from './pages/AutonomousTradingOverview';
+import AutonomousRecommendationTracker from './pages/AutonomousRecommendationTracker';
 import RiskAlerts from './pages/RiskAlerts';
 import TradingJournal from './pages/TradingJournal';
 import SystemLogs from './pages/SystemLogs';
@@ -190,6 +192,27 @@ const AppContent: React.FC = () => {
     },
     {
       type: 'group',
+      label: '自主交易闭环',
+      children: [
+        {
+          key: '/autonomous-trading/overview',
+          icon: <FundProjectionScreenOutlined />,
+          label: <Link to="/autonomous-trading/overview">自主收益驾驶舱</Link>,
+        },
+        {
+          key: '/autonomous-trading/recommendations',
+          icon: <NodeIndexOutlined />,
+          label: <Link to="/autonomous-trading/recommendations">每日推荐追踪</Link>,
+        },
+        {
+          key: '/paper-trading',
+          icon: <AccountBookOutlined />,
+          label: <Link to="/paper-trading">模拟交易台</Link>,
+        },
+      ],
+    },
+    {
+      type: 'group',
       label: '量化交易',
       children: [
         { key: '/strategy', icon: <StockOutlined />, label: <Link to="/strategy">策略中心</Link> },
@@ -202,11 +225,6 @@ const AppContent: React.FC = () => {
           key: '/backtest',
           icon: <LineChartOutlined />,
           label: <Link to="/backtest">回测分析</Link>,
-        },
-        {
-          key: '/paper-trading',
-          icon: <AccountBookOutlined />,
-          label: <Link to="/paper-trading">模拟交易</Link>,
         },
         {
           key: '/risk-alerts',
@@ -345,6 +363,22 @@ const AppContent: React.FC = () => {
               element={
                 <ProtectedRoute>
                   <PaperTrading />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/autonomous-trading/overview"
+              element={
+                <ProtectedRoute>
+                  <AutonomousTradingOverview />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/autonomous-trading/recommendations"
+              element={
+                <ProtectedRoute>
+                  <AutonomousRecommendationTracker />
                 </ProtectedRoute>
               }
             />

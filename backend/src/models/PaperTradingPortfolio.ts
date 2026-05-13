@@ -47,7 +47,7 @@ export class PaperTradingPortfolio extends Model {
   @Column({
     type: DataType.DECIMAL(15, 2),
     allowNull: false,
-    defaultValue: 1000000.0,
+    defaultValue: 200000.0,
     field: 'initial_capital',
     comment: '初始资金',
   })
@@ -56,7 +56,7 @@ export class PaperTradingPortfolio extends Model {
   @Column({
     type: DataType.DECIMAL(15, 2),
     allowNull: false,
-    defaultValue: 1000000.0,
+    defaultValue: 200000.0,
     field: 'current_cash',
     comment: '当前可用资金',
   })
@@ -65,7 +65,7 @@ export class PaperTradingPortfolio extends Model {
   @Column({
     type: DataType.DECIMAL(15, 2),
     allowNull: false,
-    defaultValue: 1000000.0,
+    defaultValue: 200000.0,
     field: 'total_value',
     comment: '当前总资产 (资金 + 持仓市值)',
   })

@@ -5,8 +5,12 @@ import { PaperTradingTrade } from '../../models/PaperTradingTrade';
 import { PaperTradingSnapshot } from '../../models/PaperTradingSnapshot';
 import { Stock } from '../../models/Stock';
 import { DataService } from '../../data/services/DataService';
-import { paperTradingAutomationService } from '../../services/PaperTradingAutomationService';
+import {
+  DEFAULT_PAPER_TRADING_INITIAL_CAPITAL,
+  paperTradingAutomationService,
+} from '../../services/PaperTradingAutomationService';
 import { paperTradingAttributionService } from '../../services/PaperTradingAttributionService';
+import { paperTradingDashboardService } from '../../services/PaperTradingDashboardService';
 import { paperTradingPlanService } from '../../services/PaperTradingPlanService';
 import { recommendationTradeOutcomeService } from '../../services/RecommendationTradeOutcomeService';
 import { logger } from '../../utils/logger';
@@ -27,15 +31,15 @@ export class PaperTradingController {
         where: { user_id: user.id },
       });
 
-      // 如果用户没有模拟盘，自动创建一个默认的 100W 模拟盘
+      // 如果用户没有模拟盘，自动创建一个默认的 20W 模拟盘
       if (!portfolio) {
         const username = user.nickname || user.username || 'User';
         portfolio = await PaperTradingPortfolio.create({
           user_id: user.id,
           name: `${username}的模拟盘`,
-          initial_capital: 1000000,
-          current_cash: 1000000,
-          total_value: 1000000,
+          initial_capital: DEFAULT_PAPER_TRADING_INITIAL_CAPITAL,
+          current_cash: DEFAULT_PAPER_TRADING_INITIAL_CAPITAL,
+          total_value: DEFAULT_PAPER_TRADING_INITIAL_CAPITAL,
           is_active: true,
         });
       }
@@ -282,11 +286,21 @@ export class PaperTradingController {
         await PaperTradingSnapshot.create({
           portfolio_id: portfolio.id,
           date: todayStr,
-          total_value: Number(portfolio.total_value) || 1000000,
-          current_cash: Number(portfolio.current_cash) || 1000000,
+          total_value:
+            Number(portfolio.total_value) ||
+            Number(portfolio.initial_capital) ||
+            DEFAULT_PAPER_TRADING_INITIAL_CAPITAL,
+          current_cash:
+            Number(portfolio.current_cash) ||
+            Number(portfolio.initial_capital) ||
+            DEFAULT_PAPER_TRADING_INITIAL_CAPITAL,
           position_value:
-            (Number(portfolio.total_value) || 1000000) -
-            (Number(portfolio.current_cash) || 1000000),
+            (Number(portfolio.total_value) ||
+              Number(portfolio.initial_capital) ||
+              DEFAULT_PAPER_TRADING_INITIAL_CAPITAL) -
+            (Number(portfolio.current_cash) ||
+              Number(portfolio.initial_capital) ||
+              DEFAULT_PAPER_TRADING_INITIAL_CAPITAL),
         });
       }
 
@@ -395,6 +409,48 @@ export class PaperTradingController {
       });
     } catch (error: any) {
       logger.error('模拟盘自动风控检查失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
+  // 获取自主荐股模拟盘总览（20W 初始资金、持仓、收益曲线、推荐闭环）
+  getAutonomousDashboard = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const user = (req as any).user;
+      const result = await paperTradingDashboardService.getAutonomousDashboard({
+        ...req.query,
+        user_id: user.id,
+        username: user.username || user.nickname,
+      } as any);
+
+      res.json({
+        success: true,
+        data: result,
+        message: `自主模拟盘总览已刷新：总资产 ${result.summary.total_value}，持仓 ${result.summary.open_position_count} 只`,
+      });
+    } catch (error: any) {
+      logger.error('获取自主荐股模拟盘总览失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
+  // 获取每日推荐股票追踪页：推荐→模拟持仓→卖出结算→收益
+  getRecommendationTracking = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const user = (req as any).user;
+      const result = await paperTradingDashboardService.getRecommendationTracking({
+        ...req.query,
+        user_id: user.id,
+        username: user.username || user.nickname,
+      } as any);
+
+      res.json({
+        success: true,
+        data: result,
+        message: `每日推荐追踪已刷新：信号 ${result.summary.total_signals} 条，持仓 ${result.summary.open_count} 条，闭环 ${result.summary.closed_count} 条`,
+      });
+    } catch (error: any) {
+      logger.error('获取每日推荐追踪失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   };

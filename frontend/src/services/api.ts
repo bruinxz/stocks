@@ -119,3 +119,10 @@ export const checkFavorite = (symbol: string) => api.get(`/market/favorites/${sy
 export const getPaperTradingSnapshots = () => api.get('/paper-trading/snapshots');
 export const updateFavorite = (symbol: string, data: any) =>
   api.patch(`/market/favorites/${symbol}`, data);
+
+// Autonomous paper trading loop
+export const getAutonomousTradingDashboard = (params?: any) =>
+  api.get('/paper-trading/autonomous-dashboard', { params });
+export const getRecommendationTracking = (params?: any) =>
+  api.get('/paper-trading/recommendation-tracking', { params });
+export const runPaperTradingRiskCheck = (data?: any) => api.post('/paper-trading/risk-check', data);
