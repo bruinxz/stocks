@@ -222,6 +222,13 @@ function hoursSince(value?: Date | string | null): number | null {
   return moment().diff(moment(date), 'hours', true);
 }
 
+function isStaleReconcileFailure(log: any): boolean {
+  return (
+    log?.status === 'FAILED' &&
+    /长时间处于运行中|自动标记为失败|stale/i.test(String(log?.error_message || ''))
+  );
+}
+
 function summarizeParameters(task: any): Record<string, any> {
   const params = task?.parameters && typeof task.parameters === 'object' ? task.parameters : {};
   const keys = [
@@ -423,11 +430,14 @@ export class TaskAutomationHealthService {
       const runHours = hoursSince(task.last_run_at);
       const lastLogHours = hoursSince(latestLog?.started_at);
       if (task.last_run_status === 'FAILED' || latestLog?.status === 'FAILED') {
+        const staleReconciled = isStaleReconcileFailure(latestLog);
         issues.push({
-          level: 'critical',
-          message: `最近一次执行失败：${taskName}`,
+          level: staleReconciled ? 'warning' : 'critical',
+          message: staleReconciled
+            ? `最近一次执行被重启恢复标记为失败：${taskName}`
+            : `最近一次执行失败：${taskName}`,
           task_name: taskName,
-          code: 'last_run_failed',
+          code: staleReconciled ? 'stale_reconciled_failed' : 'last_run_failed',
         });
       }
       if (
