@@ -43,6 +43,31 @@ export class QuantRecommendationController {
     }
   };
 
+  runStrategyExperiment = async (req: Request, res: Response) => {
+    try {
+      const user_id = (req as any).user?.id;
+      const result = await quantRecommendationService.runStrategyExperiment({
+        user_id,
+        universe: req.query?.universe === 'favorites' ? 'favorites' : 'market',
+        limit: req.query?.limit ? Number(req.query.limit) : 12,
+        candidate_pool_limit: req.query?.candidate_pool_limit
+          ? Number(req.query.candidate_pool_limit)
+          : undefined,
+        lookback_days: req.query?.lookback_days ? Number(req.query.lookback_days) : 120,
+        min_bars: req.query?.min_bars ? Number(req.query.min_bars) : undefined,
+        exclude_st: req.query?.exclude_st === undefined ? true : req.query.exclude_st !== 'false',
+        min_market_cap_yi: req.query?.min_market_cap_yi
+          ? Number(req.query.min_market_cap_yi)
+          : undefined,
+      });
+
+      res.json({ success: true, data: result });
+    } catch (error: any) {
+      logger.error('运行推荐策略实验失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
   submitToTradingAgents = async (req: Request, res: Response) => {
     try {
       const { symbols, target_date, max_count = 5 } = req.body || {};

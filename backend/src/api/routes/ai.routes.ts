@@ -53,6 +53,17 @@ router.get(
 );
 
 /**
+ * @route GET /api/ai/recommendations/strategy-experiment
+ * @desc 并行比较多种荐股策略风格与参数组合
+ * @access Private
+ */
+router.get(
+  '/recommendations/strategy-experiment',
+  authController.authenticate,
+  quantRecommendationController.runStrategyExperiment
+);
+
+/**
  * @route POST /api/ai/recommendations/analyze
  * @desc 将多因子候选批量提交 TradingAgents 深度研报
  * @access Private

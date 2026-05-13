@@ -28,6 +28,31 @@ export interface QuantRecommendationOptions {
   min_market_cap_yi?: number;
 }
 
+export interface QuantRecommendationExperimentVariant {
+  key?: string;
+  label?: string;
+  universe?: RecommendationUniverse;
+  style?: RecommendationStyle;
+  limit?: number;
+  candidate_pool_limit?: number;
+  lookback_days?: number;
+  min_bars?: number;
+  exclude_st?: boolean;
+  min_market_cap_yi?: number;
+}
+
+export interface QuantRecommendationExperimentOptions {
+  user_id?: number;
+  universe?: RecommendationUniverse;
+  limit?: number;
+  candidate_pool_limit?: number;
+  lookback_days?: number;
+  min_bars?: number;
+  exclude_st?: boolean;
+  min_market_cap_yi?: number;
+  variants?: QuantRecommendationExperimentVariant[];
+}
+
 interface FactorScore {
   name: string;
   label: string;
@@ -309,6 +334,165 @@ function getStyleWeights(style: RecommendationStyle): Record<string, number> {
 }
 
 export class QuantRecommendationService {
+  async runStrategyExperiment(options: QuantRecommendationExperimentOptions = {}) {
+    const baseUniverse = options.universe || 'market';
+    const baseLimit = Math.min(Math.max(options.limit || 12, 3), 50);
+    const basePoolLimit = Math.min(
+      Math.max(Number(options.candidate_pool_limit || 0) || baseLimit * 10, 80),
+      1000
+    );
+    const defaultVariants: QuantRecommendationExperimentVariant[] = [
+      { key: 'balanced_core', label: '均衡核心', style: 'balanced' },
+      { key: 'momentum_breakout', label: '动量突破', style: 'momentum' },
+      { key: 'value_reversal', label: '价值反转', style: 'value' },
+      { key: 'low_risk_steady', label: '低波稳健', style: 'low_risk' },
+    ];
+    const variants = (options.variants?.length ? options.variants : defaultVariants).slice(0, 8);
+    const results: any[] = [];
+    const symbolToVariants = new Map<string, Set<string>>();
+
+    for (const variant of variants) {
+      const style = ['balanced', 'momentum', 'value', 'low_risk'].includes(variant.style || '')
+        ? variant.style!
+        : 'balanced';
+      const universe = variant.universe || baseUniverse;
+      const generated = await this.generateRecommendations({
+        user_id: options.user_id,
+        universe,
+        style,
+        limit: Math.min(Math.max(variant.limit || baseLimit, 3), 80),
+        candidate_pool_limit: Math.min(
+          Math.max(Number(variant.candidate_pool_limit || 0) || basePoolLimit, 80),
+          1000
+        ),
+        lookback_days: Math.min(Math.max(variant.lookback_days || options.lookback_days || 120, 45), 360),
+        min_bars: variant.min_bars || options.min_bars,
+        include_trend: false,
+        exclude_st: variant.exclude_st ?? options.exclude_st ?? true,
+        min_market_cap_yi:
+          variant.min_market_cap_yi ?? options.min_market_cap_yi ?? (universe === 'market' ? 30 : undefined),
+      });
+      const recommendations = generated.recommendations || [];
+      const tierCounts = recommendations.reduce((acc: Record<string, number>, item) => {
+        const tier = item.recommendation_tier || 'watchlist';
+        acc[tier] = (acc[tier] || 0) + 1;
+        return acc;
+      }, {});
+      const riskCounts = recommendations.reduce((acc: Record<string, number>, item) => {
+        const risk = item.risk_level || 'unknown';
+        acc[risk] = (acc[risk] || 0) + 1;
+        return acc;
+      }, {});
+      const avgScore =
+        recommendations.length > 0
+          ? recommendations.reduce((sum, item) => sum + Number(item.score || 0), 0) /
+            recommendations.length
+          : 0;
+      const avgPosition =
+        recommendations.length > 0
+          ? recommendations.reduce(
+              (sum, item) => sum + Number(item.suggested_position_pct || 0),
+              0
+            ) / recommendations.length
+          : 0;
+      const feedbackAdjusted = recommendations.filter(
+        item => Number(item.feedback?.signal_count || 0) > 0
+      ).length;
+      const topSymbols = recommendations.slice(0, 5).map(item => {
+        const key = variant.key || `${style}_${universe}`;
+        if (!symbolToVariants.has(item.symbol)) symbolToVariants.set(item.symbol, new Set());
+        symbolToVariants.get(item.symbol)!.add(key);
+        return {
+          symbol: item.symbol,
+          name: item.name,
+          score: item.score,
+          tier: item.recommendation_tier,
+          tier_label: item.recommendation_tier_label,
+          risk_level: item.risk_level,
+          action: item.action,
+          suggested_position_pct: item.suggested_position_pct,
+        };
+      });
+      const qualityScore = round(
+        avgScore * 0.58 +
+          Number(tierCounts.strong_recommend || 0) * 5 +
+          Number(tierCounts.trial_position || 0) * 2.4 -
+          Number(tierCounts.avoid || 0) * 3 -
+          Number(riskCounts.high || 0) * 4 +
+          Math.min(8, feedbackAdjusted * 0.8),
+        2
+      );
+
+      results.push({
+        key: variant.key || `${style}_${universe}`,
+        label: variant.label || style,
+        universe,
+        style,
+        params: {
+          limit: generated.recommendations.length,
+          candidate_pool_limit: variant.candidate_pool_limit || basePoolLimit,
+          lookback_days: variant.lookback_days || options.lookback_days || 120,
+          min_market_cap_yi:
+            variant.min_market_cap_yi ?? options.min_market_cap_yi ?? (universe === 'market' ? 30 : undefined),
+        },
+        generated: {
+          total_candidates: generated.total_candidates,
+          analyzed_candidates: generated.analyzed_candidates,
+        },
+        metrics: {
+          avg_score: round(avgScore, 2),
+          avg_position_pct: round(avgPosition, 2),
+          strong_count: tierCounts.strong_recommend || 0,
+          trial_count: tierCounts.trial_position || 0,
+          watch_count: tierCounts.watchlist || 0,
+          avoid_count: tierCounts.avoid || 0,
+          low_risk_count: riskCounts.low || 0,
+          medium_risk_count: riskCounts.medium || 0,
+          high_risk_count: riskCounts.high || 0,
+          feedback_adjusted_count: feedbackAdjusted,
+          quality_score: qualityScore || 0,
+        },
+        tier_counts: tierCounts,
+        risk_counts: riskCounts,
+        top_symbols: topSymbols,
+      });
+    }
+
+    const overlaps = [...symbolToVariants.entries()]
+      .map(([symbol, variantSet]) => ({ symbol, variant_count: variantSet.size, variants: [...variantSet] }))
+      .filter(item => item.variant_count > 1)
+      .sort((a, b) => b.variant_count - a.variant_count || a.symbol.localeCompare(b.symbol))
+      .slice(0, 20);
+    const champion = [...results].sort(
+      (a, b) =>
+        Number(b.metrics.quality_score || 0) - Number(a.metrics.quality_score || 0) ||
+        Number(b.metrics.strong_count || 0) - Number(a.metrics.strong_count || 0) ||
+        Number(b.metrics.avg_score || 0) - Number(a.metrics.avg_score || 0)
+    )[0];
+
+    return {
+      generated_at: moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm:ss'),
+      filters: {
+        universe: baseUniverse,
+        limit: baseLimit,
+        candidate_pool_limit: basePoolLimit,
+        lookback_days: options.lookback_days || 120,
+        variant_count: variants.length,
+      },
+      champion,
+      variants: results,
+      overlaps,
+      insights: [
+        champion
+          ? `当前候选质量最高策略：${champion.label}，质量分 ${champion.metrics.quality_score}，强推荐 ${champion.metrics.strong_count}、轻仓 ${champion.metrics.trial_count}。`
+          : '暂无可比较策略结果。',
+        overlaps.length
+          ? `${overlaps.length} 个标的被多个策略同时选中，可作为共识观察池优先复核。`
+          : '不同策略暂未形成明显共识标的，建议继续扩大候选池或等待行情确认。',
+      ],
+    };
+  }
+
   async generateRecommendations(options: QuantRecommendationOptions = {}): Promise<{
     as_of: string;
     universe: RecommendationUniverse;

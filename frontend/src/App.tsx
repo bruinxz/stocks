@@ -47,6 +47,7 @@ import RecommendationPerformance from './pages/RecommendationPerformance';
 import RecommendationTradeOutcomes from './pages/RecommendationTradeOutcomes';
 import RecommendationLoopPolicies from './pages/RecommendationLoopPolicies';
 import AgentTailAlphaLedger from './pages/AgentTailAlphaLedger';
+import StrategyExperimentLab from './pages/StrategyExperimentLab';
 import PaperTrading from './pages/PaperTrading';
 import RiskAlerts from './pages/RiskAlerts';
 import TradingJournal from './pages/TradingJournal';
@@ -62,6 +63,7 @@ import {
   NodeIndexOutlined,
   BranchesOutlined,
   RadarChartOutlined,
+  ExperimentOutlined,
 } from '@ant-design/icons';
 
 import type { MenuProps } from 'antd';
@@ -173,6 +175,11 @@ const AppContent: React.FC = () => {
           key: '/recommendation-loop-policies',
           icon: <BranchesOutlined />,
           label: <Link to="/recommendation-loop-policies">策略版本实验室</Link>,
+        },
+        {
+          key: '/strategy-experiment-lab',
+          icon: <ExperimentOutlined />,
+          label: <Link to="/strategy-experiment-lab">策略实验室</Link>,
         },
         {
           key: '/screener',
@@ -442,6 +449,14 @@ const AppContent: React.FC = () => {
               element={
                 <ProtectedRoute>
                   <RecommendationLoopPolicies />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/strategy-experiment-lab"
+              element={
+                <ProtectedRoute>
+                  <StrategyExperimentLab />
                 </ProtectedRoute>
               }
             />
