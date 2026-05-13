@@ -1,36 +1,54 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Card,
-  Table,
+  Alert,
   Button,
-  Space,
-  Typography,
-  Tag,
-  Switch,
-  Modal,
+  Card,
+  Col,
+  Descriptions,
+  Divider,
+  Empty,
   Form,
   Input,
+  Modal,
+  Row,
   Select,
-  Descriptions,
-  message,
+  Space,
+  Statistic,
+  Switch,
+  Table,
+  Tag,
+  Timeline,
   Tooltip,
-  Empty,
-  Divider,
+  Typography,
+  message,
 } from 'antd';
 import {
-  PlusOutlined,
-  EditOutlined,
-  DeleteOutlined,
-  InfoCircleOutlined,
-  PlayCircleOutlined,
+  ApiOutlined,
+  CheckCircleOutlined,
+  ClockCircleOutlined,
+  CloseCircleOutlined,
   DatabaseOutlined,
+  DeleteOutlined,
+  EditOutlined,
   EyeOutlined,
+  FireOutlined,
+  InfoCircleOutlined,
+  NodeIndexOutlined,
+  PlusOutlined,
+  PlayCircleOutlined,
+  RadarChartOutlined,
+  ReloadOutlined,
+  SafetyCertificateOutlined,
+  ThunderboltOutlined,
+  WarningOutlined,
 } from '@ant-design/icons';
 import {
-  taskService,
+  AutomationHealth,
+  AutomationHealthChain,
+  QueueJobSummary,
   ScheduledTask,
   TaskExecutionLog,
-  QueueJobSummary,
+  taskService,
 } from '../services/taskService';
 import dayjs from 'dayjs';
 
@@ -90,6 +108,8 @@ const defaultParametersByType: Record<string, any> = {
     run_paper_trading: true,
     dry_run: false,
     use_profit_gate: true,
+    use_entry_risk_guard: true,
+    use_strategy_experiment_feedback: true,
     report_to_feishu: true,
   },
   BENCHMARK_INDEX_SYNC: {
@@ -124,6 +144,7 @@ const defaultParametersByType: Record<string, any> = {
     enable_stop_loss: true,
     enable_take_profit: true,
     enable_sell_signals: true,
+    dry_run: false,
     report_to_feishu: true,
   },
   PAPER_TRADING_ATTRIBUTION_REPORT: {
@@ -147,12 +168,6 @@ const defaultParametersByType: Record<string, any> = {
   },
 };
 
-const getLastRunStatusColor = (status?: string) => {
-  if (status === 'SUCCESS') return 'success';
-  if (status === 'FAILED') return 'error';
-  return 'processing';
-};
-
 const queueStateLabels: Record<string, string> = {
   completed: '已完成',
   failed: '失败',
@@ -161,6 +176,24 @@ const queueStateLabels: Record<string, string> = {
   delayed: '延迟中',
   paused: '已暂停',
   unknown: '未知',
+};
+
+const healthLabelMap: Record<string, string> = {
+  healthy: '链路健康',
+  warning: '需要关注',
+  critical: '需要修复',
+};
+
+const healthColorMap: Record<string, string> = {
+  healthy: 'success',
+  warning: 'warning',
+  critical: 'error',
+};
+
+const getLastRunStatusColor = (status?: string) => {
+  if (status === 'SUCCESS') return 'success';
+  if (status === 'FAILED') return 'error';
+  return 'processing';
 };
 
 const getQueueStateColor = (state?: string) => {
@@ -173,6 +206,9 @@ const getQueueStateColor = (state?: string) => {
 
 const formatQueueTime = (timestamp?: number) =>
   timestamp ? dayjs(timestamp).format('YYYY-MM-DD HH:mm:ss') : '-';
+
+const formatDateTime = (value?: string | null) =>
+  value ? dayjs(value).format('YYYY-MM-DD HH:mm') : '-';
 
 const formatQueueProgress = (progress: any) => {
   if (progress === null || progress === undefined || progress === '') return '-';
@@ -190,9 +226,20 @@ const stringifyJson = (value: any) => {
   }
 };
 
+const getChainIcon = (key: string) => {
+  if (key === 'market_data') return <DatabaseOutlined />;
+  if (key === 'auto_recommendation_loop') return <ThunderboltOutlined />;
+  if (key === 'signal_feedback') return <RadarChartOutlined />;
+  if (key === 'paper_trading') return <SafetyCertificateOutlined />;
+  if (key === 'trade_outcome_loop') return <NodeIndexOutlined />;
+  return <ApiOutlined />;
+};
+
 const TaskScheduler: React.FC = () => {
   const [tasks, setTasks] = useState<ScheduledTask[]>([]);
+  const [health, setHealth] = useState<AutomationHealth | null>(null);
   const [loading, setLoading] = useState(false);
+  const [healthLoading, setHealthLoading] = useState(false);
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [editingTask, setEditingTask] = useState<ScheduledTask | null>(null);
   const [isLogModalVisible, setIsLogModalVisible] = useState(false);
@@ -203,7 +250,7 @@ const TaskScheduler: React.FC = () => {
   const [isQueueDetailVisible, setIsQueueDetailVisible] = useState(false);
   const [form] = Form.useForm();
 
-  const fetchTasks = async () => {
+  const fetchTasks = useCallback(async () => {
     setLoading(true);
     try {
       const data = await taskService.getTasks();
@@ -213,11 +260,38 @@ const TaskScheduler: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  const fetchHealth = useCallback(async () => {
+    setHealthLoading(true);
+    try {
+      const data = await taskService.getAutomationHealth();
+      setHealth(data);
+    } catch (error) {
+      message.error('获取自动化健康状态失败');
+    } finally {
+      setHealthLoading(false);
+    }
+  }, []);
+
+  const refreshAll = useCallback(async () => {
+    await Promise.all([fetchTasks(), fetchHealth()]);
+  }, [fetchHealth, fetchTasks]);
 
   useEffect(() => {
-    fetchTasks();
-  }, []);
+    refreshAll();
+  }, [refreshAll]);
+
+  const healthTone = health?.status || 'warning';
+  const latestLoop = health?.latest_loop;
+  const topSkipReasons = latestLoop?.paper_trading?.skip_reason_summary?.top_reasons || [];
+
+  const taskStats = useMemo(() => {
+    const active = tasks.filter(item => item.is_active).length;
+    const failed = tasks.filter(item => item.last_run_status === 'FAILED').length;
+    const running = tasks.filter(item => item.last_run_status === 'RUNNING').length;
+    return { active, failed, running };
+  }, [tasks]);
 
   const handleAdd = () => {
     setEditingTask(null);
@@ -248,7 +322,7 @@ const TaskScheduler: React.FC = () => {
         try {
           await taskService.deleteTask(id);
           message.success('删除成功');
-          fetchTasks();
+          refreshAll();
         } catch (error) {
           message.error('删除失败');
         }
@@ -264,7 +338,7 @@ const TaskScheduler: React.FC = () => {
         try {
           await taskService.executeTask(id);
           message.success('任务已在后台触发执行');
-          fetchTasks();
+          refreshAll();
         } catch (error) {
           message.error('触发执行失败');
         }
@@ -276,7 +350,7 @@ const TaskScheduler: React.FC = () => {
     try {
       await taskService.updateTask(id, { is_active: checked });
       message.success(checked ? '任务已启用' : '任务已禁用');
-      fetchTasks();
+      refreshAll();
     } catch (error) {
       message.error('状态更新失败');
     }
@@ -306,7 +380,7 @@ const TaskScheduler: React.FC = () => {
         }
 
         setIsModalVisible(false);
-        fetchTasks();
+        refreshAll();
       } catch (error) {
         message.error('操作失败');
       }
@@ -331,24 +405,98 @@ const TaskScheduler: React.FC = () => {
     }
   };
 
+  const renderHealthChain = (chain: AutomationHealthChain) => (
+    <div className={`automation-chain-card automation-chain-card--${chain.status}`} key={chain.key}>
+      <div className="automation-chain-card__head">
+        <span className="automation-chain-card__icon">{getChainIcon(chain.key)}</span>
+        <div>
+          <div className="automation-chain-card__title">{chain.title}</div>
+          <Text type="secondary">{chain.subtitle}</Text>
+        </div>
+        <Tag color={healthColorMap[chain.status]}>{healthLabelMap[chain.status]}</Tag>
+      </div>
+
+      <div className="automation-chain-card__meta">
+        <span>
+          启用 {chain.active_count}/{chain.task_count}
+        </span>
+        <span>问题 {chain.issues.length}</span>
+      </div>
+
+      <Timeline
+        className="automation-chain-timeline"
+        items={chain.tasks.map(task => {
+          const isMissing = task.type === 'MISSING';
+          const statusColor = isMissing
+            ? 'red'
+            : task.last_run_status === 'FAILED'
+            ? 'red'
+            : task.last_run_status === 'RUNNING'
+            ? 'blue'
+            : task.is_active
+            ? 'green'
+            : 'gray';
+          return {
+            color: statusColor,
+            children: (
+              <div className="automation-chain-task">
+                <Space size={6} wrap>
+                  <Text strong>{task.name}</Text>
+                  {!isMissing && (
+                    <Tag color={task.is_active ? 'green' : 'default'}>
+                      {task.is_active ? 'ON' : 'OFF'}
+                    </Tag>
+                  )}
+                  {task.last_run_status && (
+                    <Tag color={getLastRunStatusColor(task.last_run_status)}>
+                      {task.last_run_status}
+                    </Tag>
+                  )}
+                </Space>
+                <div className="automation-chain-task__sub">
+                  {task.cron_expression ? <Text code>{task.cron_expression}</Text> : '-'} · 最近{' '}
+                  {formatDateTime(task.last_run_at || task.last_log_started_at)}
+                </div>
+              </div>
+            ),
+          };
+        })}
+      />
+
+      {chain.issues.length > 0 && (
+        <Space direction="vertical" size={6} style={{ width: '100%' }}>
+          {chain.issues.slice(0, 3).map((issue, index) => (
+            <Alert
+              key={`${issue.code}-${index}`}
+              type={issue.level === 'critical' ? 'error' : 'warning'}
+              message={issue.message}
+              showIcon
+            />
+          ))}
+        </Space>
+      )}
+    </div>
+  );
+
   const columns = [
     {
       title: '任务名称',
       dataIndex: 'name',
       key: 'name',
+      render: (text: string, record: ScheduledTask) => (
+        <Space direction="vertical" size={0}>
+          <Text strong>{text}</Text>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            {taskTypeLabels[record.type] || record.type}
+          </Text>
+        </Space>
+      ),
     },
     {
       title: '任务类型',
       dataIndex: 'type',
       key: 'type',
-      render: (text: string) => (
-        <Space direction="vertical" size={0}>
-          <Tag color="blue">{text}</Tag>
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            {taskTypeLabels[text] || text}
-          </Text>
-        </Space>
-      ),
+      render: (text: string) => <Tag color="blue">{text}</Tag>,
     },
     {
       title: 'Cron 表达式',
@@ -384,12 +532,12 @@ const TaskScheduler: React.FC = () => {
       title: '操作',
       key: 'action',
       render: (_: any, record: ScheduledTask) => (
-        <Space size="middle">
+        <Space size="small" wrap>
           <Button
             type="link"
             icon={<PlayCircleOutlined />}
             onClick={() => record.id && handleExecute(record.id)}
-            style={{ color: '#52c41a' }}
+            style={{ color: '#008f6b' }}
           >
             执行
           </Button>
@@ -413,23 +561,171 @@ const TaskScheduler: React.FC = () => {
   ];
 
   return (
-    <div className="fade-in-up">
-      <div
-        className="page-header-modern"
-        style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}
-      >
-        <div>
-          <h1 className="page-title-modern">定时任务调度</h1>
-          <p className="page-subtitle-modern">
-            配置并管理系统自动化任务：行情同步、多因子候选池、TradingAgents 每日优选
+    <div className="task-ops-page fade-in-up">
+      <div className={`task-ops-hero task-ops-hero--${healthTone}`}>
+        <div className="task-ops-hero__content">
+          <Tag
+            color={healthColorMap[healthTone]}
+            icon={healthTone === 'healthy' ? <CheckCircleOutlined /> : <WarningOutlined />}
+          >
+            {healthLabelMap[healthTone] || '健康检查'}
+          </Tag>
+          <h1>自动荐股作战室</h1>
+          <p>
+            这里监控从行情同步、全市场扫描、Agent
+            复核、模拟盘交易到收益反哺的整条链路。目标不是盲目多交易，而是让每一次推荐都有样本、有复盘、有风控。
           </p>
+          <Space wrap>
+            <Button
+              type="primary"
+              icon={<ReloadOutlined />}
+              loading={loading || healthLoading}
+              onClick={refreshAll}
+            >
+              刷新链路状态
+            </Button>
+            <Button icon={<PlusOutlined />} onClick={handleAdd}>
+              新建任务
+            </Button>
+          </Space>
         </div>
-        <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
-          新建任务
-        </Button>
+        <div className="task-ops-hero__panel">
+          <div className="task-ops-orbit">
+            <span />
+            <span />
+            <span />
+            <ThunderboltOutlined />
+          </div>
+          <div className="task-ops-hero__stamp">
+            <Text type="secondary">最近健康扫描</Text>
+            <strong>{health?.generated_at || '-'}</strong>
+          </div>
+        </div>
       </div>
 
-      <Card className="modern-card" variant="borderless">
+      <Row gutter={[16, 16]} className="task-ops-metrics">
+        <Col xs={24} sm={12} lg={6}>
+          <Card className="modern-card task-ops-metric" variant="borderless">
+            <Statistic
+              title="关键任务启用"
+              value={taskStats.active}
+              suffix={`/ ${tasks.length || 0}`}
+              prefix={<ClockCircleOutlined />}
+            />
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} lg={6}>
+          <Card className="modern-card task-ops-metric" variant="borderless">
+            <Statistic
+              title="严重问题"
+              value={health?.summary.critical_issues || 0}
+              prefix={<CloseCircleOutlined />}
+              valueStyle={{
+                color: (health?.summary.critical_issues || 0) > 0 ? '#d14343' : '#008f6b',
+              }}
+            />
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} lg={6}>
+          <Card className="modern-card task-ops-metric" variant="borderless">
+            <Statistic
+              title="队列等待/延迟"
+              value={health?.summary.queue_waiting || 0}
+              prefix={<DatabaseOutlined />}
+            />
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} lg={6}>
+          <Card className="modern-card task-ops-metric" variant="borderless">
+            <Statistic
+              title="最近闭环交易/跳过"
+              value={health?.summary.latest_loop_trade_action || '-'}
+              prefix={<FireOutlined />}
+            />
+          </Card>
+        </Col>
+      </Row>
+
+      <Row gutter={[16, 16]}>
+        <Col xs={24} xl={16}>
+          <Card
+            className="modern-card task-ops-section"
+            variant="borderless"
+            title="自动化链路健康图"
+            extra={<Tag color={healthColorMap[healthTone]}>{healthLabelMap[healthTone]}</Tag>}
+            loading={healthLoading && !health}
+          >
+            <div className="automation-chain-grid">
+              {(health?.chains || []).map(renderHealthChain)}
+            </div>
+          </Card>
+        </Col>
+        <Col xs={24} xl={8}>
+          <Space direction="vertical" size={16} style={{ width: '100%' }}>
+            <Card className="modern-card task-ops-section" variant="borderless" title="下一步建议">
+              <Space direction="vertical" size={10} style={{ width: '100%' }}>
+                {(health?.next_actions || ['正在加载链路建议...']).map((item, index) => (
+                  <div className="task-ops-action" key={index}>
+                    <span>{index + 1}</span>
+                    <Text>{item}</Text>
+                  </div>
+                ))}
+              </Space>
+            </Card>
+
+            <Card
+              className="modern-card task-ops-section"
+              variant="borderless"
+              title="最近荐股闭环"
+            >
+              {latestLoop ? (
+                <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                  <Descriptions column={1} size="small">
+                    <Descriptions.Item label="运行ID">
+                      <Text code copyable>
+                        {latestLoop.loop_run_id || '-'}
+                      </Text>
+                    </Descriptions.Item>
+                    <Descriptions.Item label="时间">
+                      {formatDateTime(latestLoop.generated_at)}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="风格/评分">
+                      {latestLoop.effective_style || '-'} / ≥{latestLoop.effective_min_score || '-'}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="共识排序">
+                      <Tag color={latestLoop.consensus?.ranked ? 'purple' : 'default'}>
+                        {latestLoop.consensus?.ranked ? '已启用' : '未启用'} ·{' '}
+                        {latestLoop.consensus?.overlap_count || 0} 个共识
+                      </Tag>
+                    </Descriptions.Item>
+                    <Descriptions.Item label="模拟盘">
+                      成交 {latestLoop.paper_trading?.executed || 0} / 计划{' '}
+                      {latestLoop.paper_trading?.planned || 0} / 跳过{' '}
+                      {latestLoop.paper_trading?.skipped || 0}
+                    </Descriptions.Item>
+                  </Descriptions>
+
+                  {topSkipReasons.length > 0 && (
+                    <div className="task-ops-skip-box">
+                      <Text strong>主要阻断原因</Text>
+                      {topSkipReasons.slice(0, 4).map((item: any, index: number) => (
+                        <div className="task-ops-skip-row" key={`${item.reason}-${index}`}>
+                          <Text ellipsis={{ tooltip: item.reason }}>{item.reason}</Text>
+                          <Tag color="orange">×{item.count}</Tag>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </Space>
+              ) : (
+                <Empty description="暂无闭环快照" />
+              )}
+            </Card>
+          </Space>
+        </Col>
+      </Row>
+
+      <Card className="modern-card task-ops-table" variant="borderless" title="任务编排清单">
         <Table
           columns={columns}
           dataSource={tasks}
@@ -446,7 +742,7 @@ const TaskScheduler: React.FC = () => {
         open={isModalVisible}
         onOk={handleModalOk}
         onCancel={() => setIsModalVisible(false)}
-        width={600}
+        width={640}
       >
         <Form
           form={form}
@@ -515,7 +811,7 @@ const TaskScheduler: React.FC = () => {
 
           <Form.Item name="parameters" label="任务参数 (JSON 格式)">
             <Input.TextArea
-              rows={7}
+              rows={8}
               onFocus={() => {
                 const type = form.getFieldValue('type');
                 const current = form.getFieldValue('parameters');
@@ -543,7 +839,7 @@ const TaskScheduler: React.FC = () => {
         open={isLogModalVisible}
         onCancel={() => setIsLogModalVisible(false)}
         footer={null}
-        width={900}
+        width={960}
       >
         <Table
           dataSource={currentLogs}
@@ -660,15 +956,7 @@ const TaskScheduler: React.FC = () => {
         width={780}
       >
         {queueDetail && (
-          <div
-            style={{
-              background:
-                'linear-gradient(135deg, rgba(15, 23, 42, 0.04), rgba(14, 165, 233, 0.06))',
-              border: '1px solid rgba(15, 23, 42, 0.08)',
-              borderRadius: 18,
-              padding: 16,
-            }}
-          >
+          <div className="queue-detail-panel">
             <Space direction="vertical" size={14} style={{ width: '100%' }}>
               <Space wrap>
                 <Tag color="geekblue">{queueDetail.queue_name}</Tag>
@@ -713,22 +1001,7 @@ const TaskScheduler: React.FC = () => {
                 <Title level={5} style={{ marginBottom: 8 }}>
                   投递数据
                 </Title>
-                <pre
-                  style={{
-                    maxHeight: 260,
-                    overflow: 'auto',
-                    margin: 0,
-                    padding: 14,
-                    borderRadius: 14,
-                    background: '#0f172a',
-                    color: '#dbeafe',
-                    border: '1px solid rgba(148, 163, 184, 0.24)',
-                    fontSize: 12,
-                    lineHeight: 1.6,
-                  }}
-                >
-                  {stringifyJson(queueDetail.data)}
-                </pre>
+                <pre className="task-ops-codeblock">{stringifyJson(queueDetail.data)}</pre>
               </div>
 
               {queueDetail.return_value !== undefined && queueDetail.return_value !== null && (
@@ -736,20 +1009,7 @@ const TaskScheduler: React.FC = () => {
                   <Title level={5} style={{ marginBottom: 8 }}>
                     执行返回
                   </Title>
-                  <pre
-                    style={{
-                      maxHeight: 220,
-                      overflow: 'auto',
-                      margin: 0,
-                      padding: 14,
-                      borderRadius: 14,
-                      background: '#111827',
-                      color: '#dcfce7',
-                      border: '1px solid rgba(34, 197, 94, 0.24)',
-                      fontSize: 12,
-                      lineHeight: 1.6,
-                    }}
-                  >
+                  <pre className="task-ops-codeblock task-ops-codeblock--green">
                     {stringifyJson(queueDetail.return_value)}
                   </pre>
                 </div>

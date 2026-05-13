@@ -788,6 +788,11 @@ class AutomatedRecommendationLoopService {
               status: item.status,
             }))
         : [];
+      (paper_trading as any).skip_reason_summary = paper_trading.skip_reason_summary || {
+        total: paper_trading.skipped || 0,
+        top_reasons: [],
+        categories: {},
+      };
 
       trade_outcomes = await recommendationTradeOutcomeService.refreshPortfolioOutcomes({
         username: options.username,

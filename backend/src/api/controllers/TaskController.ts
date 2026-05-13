@@ -4,6 +4,7 @@ import { TaskExecutionLog } from '../../models/TaskExecutionLog';
 import { logger } from '../../utils/logger';
 import { dataUpdateQueue } from '../../jobs/dataUpdateQueue';
 import { aiPollingQueue } from '../../jobs/aiPollingQueue';
+import { taskAutomationHealthService } from '../../services/TaskAutomationHealthService';
 
 type QueueJobSummary = {
   id: string | number;
@@ -126,6 +127,16 @@ export class TaskController {
       res.json({ success: true, data: tasks });
     } catch (error: any) {
       logger.error('获取定时任务列表失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  async getAutomationHealth(req: Request, res: Response, next: NextFunction) {
+    try {
+      const health = await taskAutomationHealthService.getHealth();
+      res.json({ success: true, data: health });
+    } catch (error: any) {
+      logger.error('获取自动化闭环健康状态失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   }

@@ -49,9 +49,64 @@ export interface TaskExecutionLog {
   queue_error?: string;
 }
 
+export interface AutomationHealthIssue {
+  level: 'warning' | 'critical';
+  message: string;
+  task_name?: string;
+  code?: string;
+}
+
+export interface AutomationHealthChain {
+  key: string;
+  title: string;
+  subtitle: string;
+  status: 'healthy' | 'warning' | 'critical';
+  active_count: number;
+  task_count: number;
+  tasks: Array<{
+    id?: number;
+    name: string;
+    type: string;
+    cron_expression?: string;
+    is_active?: boolean;
+    last_run_at?: string;
+    last_run_status?: string;
+    last_log_status?: string;
+    last_log_started_at?: string;
+    last_log_completed_at?: string;
+    parameters?: Record<string, any>;
+  }>;
+  issues: AutomationHealthIssue[];
+}
+
+export interface AutomationHealth {
+  generated_at: string;
+  status: 'healthy' | 'warning' | 'critical';
+  summary: {
+    total_tasks: number;
+    active_tasks: number;
+    critical_issues: number;
+    warnings: number;
+    queue_waiting: number;
+    latest_loop_run_at?: string | null;
+    latest_loop_run_id?: string | null;
+    latest_loop_trade_action?: string | null;
+  };
+  queues: Record<string, any>;
+  chains: AutomationHealthChain[];
+  latest_loop?: any;
+  issues: AutomationHealthIssue[];
+  next_actions: string[];
+}
+
 export const taskService = {
   async getTasks(): Promise<ScheduledTask[]> {
     const response = await api.get('/tasks');
+    return response.data.data;
+  },
+
+  async getAutomationHealth(): Promise<AutomationHealth> {
+    const response = await api.get('/tasks/automation-health');
     return response.data.data;
   },
 

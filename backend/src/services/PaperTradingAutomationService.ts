@@ -214,6 +214,20 @@ export interface PaperTradingAutoResult {
     remaining_daily_new_exposure_pct: number;
     risk_notes: string[];
   };
+  skip_reason_summary?: {
+    total: number;
+    top_reasons: Array<{
+      reason: string;
+      count: number;
+      examples: Array<{
+        symbol: string;
+        name?: string;
+        score?: number;
+        consensus_count?: number;
+      }>;
+    }>;
+    categories: Record<string, number>;
+  };
 }
 
 interface EntryRiskGuardState {
@@ -357,6 +371,69 @@ function clamp(value: number, min: number, max: number): number {
 function asPlainObject(value: any): Record<string, any> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   return value;
+}
+
+function normalizeSkipReasonCategory(reason?: string): string {
+  const text = String(reason || '').trim();
+  if (!text) return 'unknown';
+  if (text.includes('已持有') || text.includes('重复加仓') || text.includes('执行过')) {
+    return 'duplicate_or_existing_position';
+  }
+  if (text.includes('收益闸门') || text.includes('Profit')) return 'profit_gate';
+  if (text.includes('收益闭环') || text.includes('降权片段')) return 'outcome_feedback';
+  if (text.includes('入场风控')) return 'entry_risk_guard';
+  if (text.includes('风险等级')) return 'risk_level';
+  if (text.includes('暂不参与') || text.includes('不是买入')) return 'trade_discipline';
+  if (text.includes('资金') || text.includes('最小阈值') || text.includes('一手')) {
+    return 'capital_or_lot_size';
+  }
+  if (text.includes('最新价格') || text.includes('数据')) return 'market_data';
+  if (text.includes('持仓数量') || text.includes('上限')) return 'position_limit';
+  if (text.includes('旧信号')) return 'stale_signal';
+  return 'other';
+}
+
+function summarizeSkippedItems(items: PaperTradingAutoTradeItem[]) {
+  const reasonMap = new Map<
+    string,
+    {
+      reason: string;
+      count: number;
+      examples: Array<{
+        symbol: string;
+        name?: string;
+        score?: number;
+        consensus_count?: number;
+      }>;
+    }
+  >();
+  const categories: Record<string, number> = {};
+
+  for (const item of items) {
+    const reason = String(item.reason || '未说明原因');
+    const category = normalizeSkipReasonCategory(reason);
+    categories[category] = (categories[category] || 0) + 1;
+
+    const bucket = reasonMap.get(reason) || { reason, count: 0, examples: [] };
+    bucket.count += 1;
+    if (item.symbol && bucket.examples.length < 3) {
+      bucket.examples.push({
+        symbol: item.symbol,
+        name: item.name,
+        score: item.score,
+        consensus_count: item.consensus_count,
+      });
+    }
+    reasonMap.set(reason, bucket);
+  }
+
+  return {
+    total: items.length,
+    top_reasons: Array.from(reasonMap.values())
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 8),
+    categories,
+  };
 }
 
 function normalizeRiskLevel(value: any): string {
@@ -926,6 +1003,7 @@ class PaperTradingAutomationService {
       profit_gate_policy: profitGatePolicy,
       outcome_feedback_policy: outcomeFeedbackPolicy,
       entry_risk_guard_policy: this.buildEntryRiskGuardPolicy(entryRiskGuard),
+      skip_reason_summary: summarizeSkippedItems(skipped_items),
     };
 
     if (report_to_feishu) {

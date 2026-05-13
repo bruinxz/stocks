@@ -484,6 +484,10 @@ class FeishuTaskReportService {
     const qualityOverview = result?.quality_report?.overview || {};
     const topPicks = recommendations.slice(0, 5);
     const bestPick = topPicks[0];
+    const skipReasonSummary = paper?.skip_reason_summary || {};
+    const topSkipReasons = Array.isArray(skipReasonSummary.top_reasons)
+      ? skipReasonSummary.top_reasons.slice(0, 3)
+      : [];
     const strategyExperiment = loopPolicy?.strategy_experiment || null;
     const champion = strategyExperiment?.champion;
     const baseVariant = strategyExperiment?.base_variant;
@@ -541,6 +545,11 @@ class FeishuTaskReportService {
       }；成交/计划 ${paper?.executed ?? paper?.planned ?? 0} 笔；跳过 ${
         paper?.skipped ?? 0
       } 条；共识成交/计划 ${paper?.consensus_executed ?? 0}/${paper?.consensus_planned ?? 0} 笔`,
+      topSkipReasons.length
+        ? `- **主要阻断**：${topSkipReasons
+            .map((item: any) => `${this.safeText(item.reason, 60)} ×${item.count}`)
+            .join('；')}`
+        : '',
       tradeOutcomes?.summary
         ? `- **交易收益闭环**：跟踪 ${outcomeSummary.total_count ?? 0} 笔；闭环 ${
             outcomeSummary.closed_count ?? 0
@@ -683,6 +692,7 @@ class FeishuTaskReportService {
             consensus_executed: paper?.consensus_executed,
             consensus_planned: paper?.consensus_planned,
             consensus_top_trades: paper?.consensus_top_trades,
+            skip_reason_summary: paper?.skip_reason_summary,
             trades: Array.isArray(paper?.trades) ? paper.trades.slice(0, 10) : [],
             profit_gate_policy: paper?.profit_gate_policy,
             outcome_feedback_policy: paper?.outcome_feedback_policy,

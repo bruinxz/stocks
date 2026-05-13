@@ -173,6 +173,11 @@ export class RecommendationLoopPolicySnapshotService {
                 consensus_top_trades: Array.isArray(paper.consensus_top_trades)
                   ? paper.consensus_top_trades
                   : [],
+                skip_reason_summary: paper.skip_reason_summary || {
+                  total: paper.skipped || 0,
+                  top_reasons: [],
+                  categories: {},
+                },
                 profit_gate_policy: paper.profit_gate_policy,
                 outcome_feedback_policy: paper.outcome_feedback_policy,
               }

@@ -13,6 +13,13 @@ const authController = new AuthController();
 router.get('/', authController.authenticate, taskController.getTasks);
 
 /**
+ * @route GET /api/tasks/automation-health
+ * @desc 获取自动荐股闭环/定时任务链路健康状态
+ * @access Private
+ */
+router.get('/automation-health', authController.authenticate, taskController.getAutomationHealth);
+
+/**
  * @route GET /api/tasks/:id/logs
  * @desc 获取定时任务执行日志
  * @access Private
