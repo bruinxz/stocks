@@ -10,11 +10,7 @@ import {
   paperTradingAutomationService,
 } from '../../services/PaperTradingAutomationService';
 import { paperTradingAttributionService } from '../../services/PaperTradingAttributionService';
-import {
-  AUTONOMOUS_PORTFOLIO_NAME,
-  DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
-  paperTradingDashboardService,
-} from '../../services/PaperTradingDashboardService';
+import { paperTradingDashboardService } from '../../services/PaperTradingDashboardService';
 import { paperTradingPlanService } from '../../services/PaperTradingPlanService';
 import { recommendationTradeOutcomeService } from '../../services/RecommendationTradeOutcomeService';
 import { logger } from '../../utils/logger';
@@ -328,8 +324,6 @@ export class PaperTradingController {
     try {
       const user = (req as any).user;
       const result = await paperTradingAutomationService.autoBuyFromSignals({
-        portfolio_name: AUTONOMOUS_PORTFOLIO_NAME,
-        initial_capital: DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
         ...req.body,
         user_id: user.id,
       });
@@ -352,8 +346,6 @@ export class PaperTradingController {
     try {
       const user = (req as any).user;
       const result = await paperTradingAutomationService.runAutoSync({
-        portfolio_name: AUTONOMOUS_PORTFOLIO_NAME,
-        initial_capital: DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
         ...req.body,
         user_id: user.id,
         refresh_recommendations: req.body?.refresh_recommendations ?? true,
@@ -404,8 +396,6 @@ export class PaperTradingController {
     try {
       const user = (req as any).user;
       const result = await paperTradingAutomationService.runRiskCheck({
-        portfolio_name: AUTONOMOUS_PORTFOLIO_NAME,
-        initial_capital: DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
         ...req.body,
         user_id: user.id,
       });

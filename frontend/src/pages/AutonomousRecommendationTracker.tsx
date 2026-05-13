@@ -223,6 +223,8 @@ const AutonomousRecommendationTracker: React.FC = () => {
       const response = await runPaperTradingRiskCheck({
         dry_run: false,
         report_to_feishu: true,
+        portfolio_name: 'Codex自主荐股模拟盘（20W）',
+        initial_capital: 200000,
         enable_stop_loss: true,
         enable_take_profit: true,
         enable_sell_signals: true,
