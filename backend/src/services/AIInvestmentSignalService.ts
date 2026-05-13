@@ -76,13 +76,38 @@ export interface TradingAgentsStructuredDecision {
   normalized_decision: string;
   summary?: string;
   thesis?: string;
+  raw_confidence_score?: number;
   confidence_score?: number;
   risk_level?: string;
   action_tags: string[];
+  data_quality: AgentDataQualityAssessment;
   key_levels: {
     stop_loss?: number;
     take_profit?: number;
     entry?: number;
+  };
+}
+
+export interface AgentDataQualityAssessment {
+  score: number;
+  bucket: 'high' | 'medium' | 'low' | 'critical';
+  confidence_multiplier: number;
+  auto_trade_allowed: boolean;
+  recommendation:
+    | 'allow_auto_trade'
+    | 'allow_small_sample'
+    | 'manual_review_required'
+    | 'block_auto_trade';
+  missing_sections: string[];
+  warning_count: number;
+  warnings: string[];
+  coverage: {
+    market_data: 'ok' | 'partial' | 'missing';
+    technical_indicators: 'ok' | 'partial' | 'missing';
+    fundamentals: 'ok' | 'partial' | 'missing';
+    financial_statements: 'ok' | 'partial' | 'missing';
+    news: 'ok' | 'partial' | 'missing';
+    realtime_quote: 'ok' | 'partial' | 'missing';
   };
 }
 
@@ -396,6 +421,8 @@ function extractCompletedReturnSamples(signals: any[], horizonFilter?: string) {
         consensus_bucket: consensusSignalBucketKey(signal.metadata?.consensus_count),
         recommendation_tier: signal.metadata?.recommendation_tier,
         recommendation_tier_label: signal.metadata?.recommendation_tier_label,
+        data_quality_bucket: signal.metadata?.data_quality_bucket || 'unknown',
+        data_quality_score: toNumber(signal.metadata?.data_quality_score),
         confidence_score: toNumber(signal.confidence_score),
         risk_level: signal.risk_level,
         horizon,
@@ -683,6 +710,135 @@ function confidenceBucketLabel(value?: string) {
   return labels[String(value || '')] || value || 'unknown';
 }
 
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function dataQualityBucket(score: number): AgentDataQualityAssessment['bucket'] {
+  if (score >= 80) return 'high';
+  if (score >= 60) return 'medium';
+  if (score >= 40) return 'low';
+  return 'critical';
+}
+
+function dataQualityBucketLabel(value?: string) {
+  const labels: Record<string, string> = {
+    high: '数据高可信',
+    medium: '数据基本可用',
+    low: '数据缺口较多',
+    critical: '数据严重不足',
+    unknown: '未标注数据质量',
+  };
+  return labels[String(value || '')] || value || 'unknown';
+}
+
+function assessTradingAgentsDataQuality(combined: string): AgentDataQualityAssessment {
+  const text = String(combined || '');
+  const warnings: string[] = [];
+  const missingSections = new Set<string>();
+  const coverage: AgentDataQualityAssessment['coverage'] = {
+    market_data: /no data found for symbol|missing historical data|无法获取.*行情|缺失.*行情/i.test(text)
+      ? 'missing'
+      : /Technical indicators|历史|K线|OHLCV|Date,|收盘|成交量/i.test(text)
+        ? 'ok'
+        : 'partial',
+    technical_indicators: /Cannot calculate indicators|missing valid OHLCV|Unsupported indicators|技术指标.*失败|无法计算.*指标/i.test(
+      text
+    )
+      ? 'missing'
+      : /Technical indicators|MACD|RSI|BOLL|SMA|EMA|技术指标/i.test(text)
+        ? 'ok'
+        : 'partial',
+    fundamentals: /No fundamental data|无法获取.*基本面|无.*基本面|fundamental data unavailable|Data unavailable due to network issues/i.test(
+      text
+    )
+      ? 'missing'
+      : /fundamental|基本面|公司概况|PE|PB|市盈率|市净率/i.test(text)
+        ? 'ok'
+        : 'partial',
+    financial_statements: /No balance sheet data|No cash flow data|No income statement data|无法获取.*资产负债|无法获取.*现金流|无法获取.*利润表|财务报表.*无|无可用数据/i.test(
+      text
+    )
+      ? 'missing'
+      : /balance sheet|cash flow|income statement|资产负债|现金流|利润表|财务报表/i.test(text)
+        ? 'ok'
+        : 'partial',
+    news: /No news|未检索到.*新闻|未发现.*资讯|无相关新闻|新闻.*缺失/i.test(text)
+      ? 'missing'
+      : /新闻|舆情|公告|宏观|news/i.test(text)
+        ? 'ok'
+        : 'partial',
+    realtime_quote: /Failed to get real-time quote|实时.*失败|无法获取.*实时/i.test(text)
+      ? 'missing'
+      : /Real-time Quote|最新价|实时|涨跌幅|current price/i.test(text)
+        ? 'ok'
+        : 'partial',
+  };
+
+  let score = 100;
+  const penalize = (section: keyof AgentDataQualityAssessment['coverage'], points: number, msg: string) => {
+    const status = coverage[section];
+    if (status === 'missing') {
+      score -= points;
+      missingSections.add(section);
+      warnings.push(msg);
+    } else if (status === 'partial') {
+      score -= Math.round(points * 0.35);
+    }
+  };
+
+  penalize('market_data', 45, '行情/K线数据缺失，价格与技术判断不可靠');
+  penalize('technical_indicators', 28, '技术指标不可用，趋势/动量判断可信度下降');
+  penalize('fundamentals', 18, '基本面数据缺失，无法验证估值与经营质量');
+  penalize('financial_statements', 18, '核心财务报表缺失，需人工复核财务风险');
+  penalize('news', 8, '新闻/舆情覆盖不足，事件驱动判断可能漏项');
+  penalize('realtime_quote', 8, '实时行情缺失，入场价格与当日走势需复核');
+
+  if (/Data unavailable due to network issues|network issues|NoneType|接口请求失败|触发限流|max retries/i.test(text)) {
+    score -= 10;
+    warnings.push('外部数据源存在网络/限流异常，建议稍后重跑 Agent');
+  }
+  if (/无法形成具体的交易决策支持|无法出具最终交易提案|无法提供完整|无法获取核心基本面数据/i.test(text)) {
+    score -= 12;
+    warnings.push('Agent 明确提示关键数据不足，不能直接作为自动买入依据');
+  }
+  if (/(^|[\s（(【\[])(?:\*?ST)(?=[\s）)】\]股票股风险])|退市|披星戴帽|面值退市/i.test(text)) {
+    score -= 5;
+    warnings.push('标的存在 ST/退市相关风险，需要强制人工复核或小仓位观察');
+  }
+
+  const normalizedScore = clampNumber(Math.round(score), 0, 100);
+  const bucket = dataQualityBucket(normalizedScore);
+  const confidenceMultiplier =
+    bucket === 'high' ? 1 : bucket === 'medium' ? 0.88 : bucket === 'low' ? 0.65 : 0.45;
+  const recommendation: AgentDataQualityAssessment['recommendation'] =
+    bucket === 'high'
+      ? 'allow_auto_trade'
+      : bucket === 'medium'
+        ? 'allow_small_sample'
+        : bucket === 'low'
+          ? 'manual_review_required'
+          : 'block_auto_trade';
+
+  return {
+    score: normalizedScore,
+    bucket,
+    confidence_multiplier: confidenceMultiplier,
+    auto_trade_allowed: ['high', 'medium'].includes(bucket),
+    recommendation,
+    missing_sections: Array.from(missingSections),
+    warning_count: warnings.length,
+    warnings: Array.from(new Set(warnings)).slice(0, 8),
+    coverage,
+  };
+}
+
+function applyAgentDataQualityToScore(score: number | undefined, dataQuality: AgentDataQualityAssessment) {
+  if (score === undefined) return undefined;
+  const adjusted = score * dataQuality.confidence_multiplier;
+  return roundNumber(adjusted, 2) ?? score;
+}
+
 function normalizeHorizonList(
   value?: string[] | string,
   fallback = ['1d', '3d', '5d', '10d', '20d']
@@ -753,7 +909,7 @@ export class AIInvestmentSignalService {
       if (regex.test(combined)) action_tags.push(tag);
     });
 
-    const confidence_score =
+    const baseConfidenceScore =
       normalized_decision === AISignalDecision.STRONG_BUY
         ? 88
         : normalized_decision === AISignalDecision.BUY
@@ -765,6 +921,8 @@ export class AIInvestmentSignalService {
         : normalized_decision === AISignalDecision.STRONG_SELL
         ? 20
         : undefined;
+    const data_quality = assessTradingAgentsDataQuality(combined);
+    const confidence_score = applyAgentDataQualityToScore(baseConfidenceScore, data_quality);
 
     const risk_level =
       upper.includes('SELL') || /高风险|严格止损|禁止介入|清仓|HIGH RISK/i.test(combined)
@@ -778,9 +936,11 @@ export class AIInvestmentSignalService {
       normalized_decision,
       summary: summaryMatch?.[1] ? stripMarkdown(summaryMatch[1]).slice(0, 1500) : undefined,
       thesis: thesisMatch?.[1] ? stripMarkdown(thesisMatch[1]).slice(0, 3000) : undefined,
+      raw_confidence_score: baseConfidenceScore,
       confidence_score,
       risk_level,
       action_tags,
+      data_quality,
       key_levels: {
         stop_loss: firstNumber(
           combined.match(/(?:止损(?:线|位)?|stop[-\s]?loss)[^0-9]{0,12}([0-9]+(?:\.[0-9]+)?)/i)
@@ -930,6 +1090,17 @@ export class AIInvestmentSignalService {
         ? normalizedDecision
         : params.decision || normalizedDecision || 'UNKNOWN'
     );
+    const rawConfidenceScore = params.confidence_score ?? structured.raw_confidence_score;
+    const dataQualityAdjustedScore = applyAgentDataQualityToScore(
+      rawConfidenceScore,
+      structured.data_quality
+    );
+    const effectiveRiskLevel =
+      structured.data_quality.bucket === 'critical'
+        ? 'high'
+        : structured.data_quality.bucket === 'low' && normalizedDecision !== AISignalDecision.SELL
+          ? 'medium'
+          : structured.risk_level || this.inferRiskLevel(params);
 
     const payload = {
       source_type,
@@ -940,8 +1111,8 @@ export class AIInvestmentSignalService {
       signal_date,
       decision: decisionText.slice(0, 100),
       normalized_decision: normalizedDecision,
-      confidence_score: params.confidence_score ?? structured.confidence_score,
-      risk_level: structured.risk_level || this.inferRiskLevel(params),
+      confidence_score: dataQualityAdjustedScore,
+      risk_level: effectiveRiskLevel,
       rationale: params.rationale || structured.summary,
       detail: detailText,
       current_price: params.current_price,
@@ -954,6 +1125,12 @@ export class AIInvestmentSignalService {
         loop_run_id: params.loop_run_id,
         loop_policy_snapshot_id: params.loop_policy_snapshot_id,
         structured_decision: structured,
+        data_quality: structured.data_quality,
+        data_quality_score: structured.data_quality.score,
+        data_quality_bucket: structured.data_quality.bucket,
+        data_quality_adjusted_score: dataQualityAdjustedScore,
+        raw_confidence_score: rawConfidenceScore,
+        auto_trade_allowed_by_data_quality: structured.data_quality.auto_trade_allowed,
       }),
     };
 
@@ -1787,6 +1964,9 @@ export class AIInvestmentSignalService {
         overview.no_data_signals > 0
           ? `${overview.no_data_signals} 条信号缺行情数据，需先修复数据再纳入决策`
           : '',
+        signals.some(signal => ['low', 'critical'].includes(signal.metadata?.data_quality_bucket))
+          ? '存在数据质量偏低的 Agent 研报，自动跟单前需降权或人工复核'
+          : '',
         completedSamples.length > 0 && Math.abs(Number(overview.avg_mae_pct || 0)) > 6
           ? `平均 MAE ${roundNumber(overview.avg_mae_pct, 2)}%，建议降低单笔仓位或收紧止损`
           : '',
@@ -1814,6 +1994,12 @@ export class AIInvestmentSignalService {
       by_decision: groupedSummary(sample => sample.normalized_decision),
       by_source_type: groupedSummary(sample => sample.source_type),
       by_risk_level: groupedSummary(sample => sample.risk_level),
+      by_data_quality: groupedSummary(sample => sample.data_quality_bucket).map(item => ({
+        ...item,
+        label: dataQualityBucketLabel(item.key),
+        quality_score: calculateQualityScore(item, minSamples),
+        gate: classifyQualityGate(item, minSamples),
+      })),
       by_consensus: groupedSummary(sample => sample.consensus_bucket).map(item => ({
         ...item,
         label: consensusSignalBucketLabel(item.key),
@@ -2326,6 +2512,11 @@ export class AIInvestmentSignalService {
         value => value || 'unknown',
         sample => sample.risk_level
       ),
+      by_data_quality: rankBuckets(
+        'data_quality',
+        dataQualityBucketLabel,
+        sample => sample.data_quality_bucket
+      ),
       by_symbol: rankBuckets(
         'symbol',
         value => {
@@ -2341,6 +2532,7 @@ export class AIInvestmentSignalService {
       ...rankings.by_agent_session,
       ...rankings.by_decision,
       ...rankings.by_risk_level,
+      ...rankings.by_data_quality,
     ].filter(item => item.count > 0);
     const bestSegments = [...allRanked]
       .sort((a, b) => b.quality_score - a.quality_score)
@@ -2388,6 +2580,9 @@ export class AIInvestmentSignalService {
         : '',
       pendingSignals > 0 ? `${pendingSignals} 条信号仍在等待后验周期，避免过早下结论。` : '',
       noDataSignals > 0 ? `${noDataSignals} 条信号缺行情，需优先修复数据。` : '',
+      rankings.by_data_quality.some(item => ['low', 'critical'].includes(item.key))
+        ? '发现低可信 Agent 研报，自动跟单应保持降权，优先复核数据缺口。'
+        : '',
       repairResult
         ? `本次自动修复同步 ${
             syncedSymbols.length

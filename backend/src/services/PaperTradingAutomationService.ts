@@ -777,6 +777,11 @@ class PaperTradingAutomationService {
       const metadata = asPlainObject(signal.metadata);
       const paperTradingMeta = asPlainObject(metadata.paper_trading);
       const action = String(metadata.action || '').toLowerCase();
+      const dataQuality = asPlainObject(metadata.data_quality);
+      const dataQualityBucket = String(
+        metadata.data_quality_bucket || dataQuality.bucket || 'unknown'
+      ).toLowerCase();
+      const dataQualityScore = Number(metadata.data_quality_score ?? dataQuality.score ?? 100);
 
       const skip = (reason: string) => {
         skipped_items.push({ ...itemBase, status: 'skipped', reason });
@@ -792,6 +797,20 @@ class PaperTradingAutomationService {
 
       if (!profitGatePolicy.allow_entries && !ignoreProfitGateForForcedSignals) {
         skip(`收益闸门未放行：${profitGatePolicy.reason || profitGatePolicy.gate_label}`);
+        continue;
+      }
+
+      if (['critical'].includes(dataQualityBucket)) {
+        skip(
+          `Agent 数据质量严重不足（${Number.isFinite(dataQualityScore) ? dataQualityScore : '--'}分），禁止自动买入`
+        );
+        continue;
+      }
+
+      if (dataQualityBucket === 'low' && !signalIds.includes(signal.id)) {
+        skip(
+          `Agent 数据质量偏低（${Number.isFinite(dataQualityScore) ? dataQualityScore : '--'}分），需人工复核后再跟单`
+        );
         continue;
       }
 
@@ -873,8 +892,17 @@ class PaperTradingAutomationService {
       )
         ? Number(outcomeFeedbackPolicy.effective_position_multiplier)
         : 1;
+      const dataQualityPositionMultiplier =
+        dataQualityBucket === 'high' || dataQualityBucket === 'unknown'
+          ? 1
+          : dataQualityBucket === 'medium'
+            ? 0.75
+            : 0.5;
       const gatedSuggestedPct = clamp(
-        suggestedPct * profitGatePolicy.effective_position_multiplier * outcomePositionMultiplier,
+        suggestedPct *
+          profitGatePolicy.effective_position_multiplier *
+          outcomePositionMultiplier *
+          dataQualityPositionMultiplier,
         0,
         max_position_pct
       );
@@ -936,6 +964,9 @@ class PaperTradingAutomationService {
             : '',
           outcomeFeedbackPolicy.enabled
             ? `交易收益闭环：样本 ${outcomeFeedbackPolicy.closed_samples}，仓位倍率 ${outcomeFeedbackPolicy.effective_position_multiplier}x`
+            : '',
+          dataQualityBucket && !['high', 'unknown'].includes(dataQualityBucket)
+            ? `Agent数据质量：${dataQualityBucket}，仓位倍率 ${dataQualityPositionMultiplier}x`
             : '',
         ]
           .filter(Boolean)
