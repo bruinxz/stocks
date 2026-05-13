@@ -5,6 +5,7 @@ import type { DataUpdateJobData } from '../jobs/dataUpdateQueue';
 import type { AIPollingJobData } from '../jobs/aiPollingQueue';
 import { logger } from '../utils/logger';
 import { feishuBitableClient } from './FeishuBitableClient';
+import { normalizeTradingAgentsError } from './AIAdvisorService';
 
 export interface StockAnalysisReportPayload {
   symbol: string;
@@ -171,16 +172,20 @@ class FeishuTaskReportService {
   }
 
   async reportAiPollingFailure(jobData: AIPollingJobData, error: any, jobId?: string | number) {
+    const readableError = normalizeTradingAgentsError(this.errorMessage(error));
     const markdownMessage = [
       `## AI轮询失败：${jobData?.name || jobData?.symbol || '未知股票'}`,
       '',
+      '### 结论',
+      '- **结果**：本次 TradingAgents 深度复核失败，未生成可入库交易信号。',
+      `- **原因**：${readableError || '远端智能体服务未返回明确错误。'}`,
+      '- **下一步**：已记录队列失败；修复/重启 TradingAgents 后可重新触发该股票分析。',
+      '',
+      '### 任务信息',
       `- **股票代码**：${jobData?.symbol || '-'}`,
       `- **股票名称**：${jobData?.name || '-'}`,
       `- **任务名称**：${jobData?.taskLabel || 'AI 每日优选评估'}`,
       jobId ? `- **队列任务ID**：${jobId}` : '',
-      '',
-      '### 错误信息',
-      this.errorMessage(error) || '-',
     ]
       .filter(Boolean)
       .join('\n');
@@ -197,7 +202,7 @@ class FeishuTaskReportService {
       队列任务ID: jobId,
       股票代码: jobData?.symbol,
       股票名称: jobData?.name,
-      错误信息: this.errorMessage(error),
+      错误信息: readableError,
       创建时间: this.formatDate(new Date()),
     });
   }

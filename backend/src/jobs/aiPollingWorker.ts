@@ -1,6 +1,6 @@
 import { Job } from 'bull';
 import { aiPollingQueue, AIPollingJobData } from './aiPollingQueue';
-import { aiAdvisorService } from '../services/AIAdvisorService';
+import { aiAdvisorService, normalizeTradingAgentsError } from '../services/AIAdvisorService';
 import { DailyScreener } from '../models/DailyScreener';
 import { TaskExecutionLog } from '../models/TaskExecutionLog';
 import { AKShareClient } from '../data/sources/AKShareClient';
@@ -276,13 +276,13 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
           : undefined,
       };
     } else if (status === 'FAILED' || status === 'ERROR') {
-      const errorMessage = response.error || 'Unknown error';
+      const errorMessage = normalizeTradingAgentsError(response.error || 'Unknown error');
       logger.error(`AI 分析任务 ${taskId} 对于股票 ${symbol} 失败: ${errorMessage}`);
       await updateLogProgress(executionLogId, false);
       // 远端任务已给出终态失败，不需要继续重试轮询；但应让 Bull job 呈现 failed，
       // 这样“队列任务详情”页面不会把实际失败误显示为 completed。
       job.discard();
-      throw new Error(`Remote AI task failed: ${errorMessage}`);
+      throw new Error(`TradingAgents 远端任务失败: ${errorMessage}`);
     } else {
       logger.info(`AI 分析任务 ${taskId} 对于股票 ${symbol} 仍在进行中，等待下次轮询...`);
       throw new Error('Task is still processing, need retry');
