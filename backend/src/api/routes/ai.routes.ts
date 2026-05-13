@@ -155,6 +155,17 @@ router.get(
 );
 
 /**
+ * @route GET /api/ai/signals/agent-tail-ledger
+ * @desc 获取 TradingAgents 尾盘建议收益账本与 Alpha 归因
+ * @access Private
+ */
+router.get(
+  '/signals/agent-tail-ledger',
+  authController.authenticate,
+  aiSignalController.getAgentTailAlphaLedger
+);
+
+/**
  * @route POST /api/ai/signals/sync-screeners
  * @desc 从 AI 每日优选同步为可验证信号
  * @access Private

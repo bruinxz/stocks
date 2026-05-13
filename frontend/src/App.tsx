@@ -46,6 +46,7 @@ import Recommendations from './pages/Recommendations';
 import RecommendationPerformance from './pages/RecommendationPerformance';
 import RecommendationTradeOutcomes from './pages/RecommendationTradeOutcomes';
 import RecommendationLoopPolicies from './pages/RecommendationLoopPolicies';
+import AgentTailAlphaLedger from './pages/AgentTailAlphaLedger';
 import PaperTrading from './pages/PaperTrading';
 import RiskAlerts from './pages/RiskAlerts';
 import TradingJournal from './pages/TradingJournal';
@@ -60,6 +61,7 @@ import {
   ThunderboltOutlined,
   NodeIndexOutlined,
   BranchesOutlined,
+  RadarChartOutlined,
 } from '@ant-design/icons';
 
 import type { MenuProps } from 'antd';
@@ -156,6 +158,11 @@ const AppContent: React.FC = () => {
           key: '/recommendation-performance',
           icon: <FundProjectionScreenOutlined />,
           label: <Link to="/recommendation-performance">推荐绩效实验室</Link>,
+        },
+        {
+          key: '/agent-tail-alpha',
+          icon: <RadarChartOutlined />,
+          label: <Link to="/agent-tail-alpha">尾盘Agent账本</Link>,
         },
         {
           key: '/recommendation-trade-outcomes',
@@ -411,6 +418,14 @@ const AppContent: React.FC = () => {
               element={
                 <ProtectedRoute>
                   <RecommendationPerformance />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/agent-tail-alpha"
+              element={
+                <ProtectedRoute>
+                  <AgentTailAlphaLedger />
                 </ProtectedRoute>
               }
             />

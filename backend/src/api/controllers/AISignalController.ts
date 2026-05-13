@@ -239,6 +239,30 @@ export class AISignalController {
     }
   };
 
+  getAgentTailAlphaLedger = async (req: Request, res: Response) => {
+    try {
+      const ledger = await aiInvestmentSignalService.getAgentTailAlphaLedger({
+        source_type: (req.query?.source_type as string) || 'tradingagents',
+        agent_session: (req.query?.agent_session as string) || 'close',
+        horizon: (req.query?.horizon as string) || '5d',
+        horizons: req.query?.horizons as any,
+        lookback_days: req.query?.lookback_days ? Number(req.query.lookback_days) : 180,
+        min_samples: req.query?.min_samples ? Number(req.query.min_samples) : 5,
+        limit: req.query?.limit ? Number(req.query.limit) : 5000,
+        decision: req.query?.decision as string,
+        symbol: req.query?.symbol as string,
+        task_label: req.query?.task_label as string,
+        loop_run_id: req.query?.loop_run_id as string,
+        start_date: req.query?.start_date as string,
+        end_date: req.query?.end_date as string,
+      });
+      res.json({ success: true, data: ledger });
+    } catch (error: any) {
+      logger.error('获取 Agent 尾盘 Alpha 账本失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
   reportSignalQualityDaily = async (req: Request, res: Response) => {
     try {
       const report = await aiInvestmentSignalService.getSignalQualityReport({

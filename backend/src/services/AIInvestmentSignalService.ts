@@ -36,6 +36,11 @@ export interface SignalPerformanceOptions extends SignalQueryOptions {
   min_samples?: number;
 }
 
+export interface AgentTailAlphaLedgerOptions extends SignalPerformanceOptions {
+  lookback_days?: number;
+  horizons?: string[] | string;
+}
+
 export interface SignalQualityReportOptions extends SignalPerformanceOptions {
   lookback_days?: number;
   report_to_feishu?: boolean;
@@ -531,6 +536,44 @@ function decisionLabelForPerformance(value?: string) {
     unknown: '未知',
   };
   return labels[String(value || '')] || value || 'unknown';
+}
+
+function agentSessionLabelForPerformance(value?: string) {
+  const labels: Record<string, string> = {
+    close: '尾盘/收盘',
+    midday: '午盘',
+    morning: '早盘',
+  };
+  return labels[String(value || '')] || value || 'unknown';
+}
+
+function confidenceBucket(value?: number) {
+  const score = Number(value || 0);
+  if (score >= 85) return 'score_85_plus';
+  if (score >= 75) return 'score_75_84';
+  if (score >= 60) return 'score_60_74';
+  return 'score_below_60';
+}
+
+function confidenceBucketLabel(value?: string) {
+  const labels: Record<string, string> = {
+    score_85_plus: '置信≥85',
+    score_75_84: '置信75-84',
+    score_60_74: '置信60-74',
+    score_below_60: '置信<60',
+  };
+  return labels[String(value || '')] || value || 'unknown';
+}
+
+function normalizeHorizonList(value?: string[] | string, fallback = ['1d', '3d', '5d', '10d', '20d']) {
+  const raw = Array.isArray(value) ? value : value ? String(value).split(',') : fallback;
+  const normalized = raw
+    .map(item => {
+      const days = Number(String(item).replace(/[^\d]/g, ''));
+      return Number.isFinite(days) && days > 0 ? `${days}d` : '';
+    })
+    .filter(Boolean);
+  return normalized.length > 0 ? Array.from(new Set(normalized)) : fallback;
 }
 
 export class AIInvestmentSignalService {
@@ -1628,6 +1671,278 @@ export class AIInvestmentSignalService {
       top_symbols,
       recent_signals,
       equity_curve,
+    };
+  }
+
+  async getAgentTailAlphaLedger(options: AgentTailAlphaLedgerOptions = {}) {
+    const primaryHorizon = options.horizon || DEFAULT_PERFORMANCE_HORIZON;
+    const horizons = normalizeHorizonList(options.horizons);
+    const lookbackDays = Math.min(Math.max(Number(options.lookback_days || 180), 1), 3650);
+    const endDate = options.end_date || getChinaToday();
+    const startDate =
+      options.start_date || moment(endDate).subtract(lookbackDays, 'days').format('YYYY-MM-DD');
+    const limit = Math.min(Math.max(Number(options.limit || 5000), 1), 10000);
+    const minSamples = Math.min(Math.max(Number(options.min_samples || 5), 1), 100);
+    const sourceType = options.source_type || AISignalSourceType.TRADING_AGENTS;
+    const agentSession = options.agent_session || 'close';
+
+    const signals = (await AIInvestmentSignal.findAll({
+      where: buildSignalWhere({
+        source_type: sourceType,
+        agent_session: agentSession,
+        decision: options.decision,
+        symbol: options.symbol,
+        task_label: options.task_label,
+        loop_run_id: options.loop_run_id,
+        start_date: startDate,
+        end_date: endDate,
+      }),
+      order: [
+        ['signal_date', 'DESC'],
+        ['confidence_score', 'DESC'],
+        ['created_at', 'DESC'],
+      ],
+      limit,
+      raw: true,
+    })) as any[];
+
+    const allCompletedSamples = extractCompletedReturnSamples(signals);
+    const primarySamples = allCompletedSamples.filter(sample => sample.horizon === primaryHorizon);
+    const pendingSignals = signals.filter(signal =>
+      ['pending', 'partial'].includes(signal.verification_status || '')
+    ).length;
+    const noDataSignals = signals.filter(signal => signal.verification_status === 'no_data').length;
+    const completedSignalIds = new Set(primarySamples.map(sample => sample.signal_id));
+    const overall = buildQualityBucket(
+      'tail_agent_overall',
+      `${agentSessionLabelForPerformance(agentSession)} Agent`,
+      primarySamples,
+      minSamples
+    );
+
+    const groupSamples = (
+      samples: any[],
+      keySelector: (sample: any) => string | undefined | null,
+      labelSelector: (key: string) => string = value => value || 'unknown'
+    ) => {
+      const grouped = new Map<string, any[]>();
+      for (const sample of samples) {
+        const key = keySelector(sample) || 'unknown';
+        if (!grouped.has(key)) grouped.set(key, []);
+        grouped.get(key)!.push(sample);
+      }
+      return [...grouped.entries()]
+        .map(([key, bucketSamples]) => {
+          const summary = summarizeReturnSamples(bucketSamples);
+          return {
+            key,
+            label: labelSelector(key),
+            ...summary,
+            quality_score: calculateQualityScore(summary, minSamples),
+            gate: classifyQualityGate(summary, minSamples),
+          };
+        })
+        .sort(
+          (a, b) =>
+            b.quality_score - a.quality_score ||
+            b.avg_excess_return_pct - a.avg_excess_return_pct ||
+            b.count - a.count
+        );
+    };
+
+    const horizonSummary = horizons.map(horizon => {
+      const samples = allCompletedSamples.filter(sample => sample.horizon === horizon);
+      const summary = summarizeReturnSamples(samples);
+      return {
+        horizon,
+        horizon_days: Number(horizon.replace('d', '')),
+        ...summary,
+        quality_score: calculateQualityScore(summary, minSamples),
+        gate: classifyQualityGate(summary, minSamples),
+      };
+    });
+
+    const byDecision = groupSamples(
+      primarySamples,
+      sample => sample.normalized_decision,
+      decisionLabelForPerformance
+    );
+    const byRiskLevel = groupSamples(primarySamples, sample => sample.risk_level, value => {
+      const labels: Record<string, string> = { low: '低风险', medium: '中风险', high: '高风险' };
+      return labels[value] || value || 'unknown';
+    });
+    const byConfidence = groupSamples(
+      primarySamples,
+      sample => confidenceBucket(sample.confidence_score),
+      confidenceBucketLabel
+    );
+    const byMonth = groupSamples(
+      primarySamples,
+      sample => moment(sample.exit_date || sample.signal_date).format('YYYY-MM'),
+      value => value
+    ).sort((a, b) => String(a.key).localeCompare(String(b.key)));
+    const bySymbol = groupSamples(primarySamples, sample => sample.symbol, value => {
+      const found = primarySamples.find(sample => sample.symbol === value);
+      return found?.name ? `${found.name}(${value})` : value || 'unknown';
+    });
+
+    const portfolioSamples = [...primarySamples].sort((a, b) => {
+      const dateCompare = String(a.exit_date || a.signal_date).localeCompare(
+        String(b.exit_date || b.signal_date)
+      );
+      if (dateCompare !== 0) return dateCompare;
+      return Number(a.signal_id) - Number(b.signal_id);
+    });
+    let cumulativeReturn = 0;
+    let cumulativeExcess = 0;
+    let peakReturn = 0;
+    const portfolioCurve = portfolioSamples.map(sample => {
+      const returnPct = Number(sample.directional_return_pct ?? sample.return_pct ?? 0);
+      const excessPct = Number.isFinite(Number(sample.directional_excess_return_pct))
+        ? Number(sample.directional_excess_return_pct)
+        : Number.isFinite(Number(sample.excess_return_pct))
+          ? Number(sample.excess_return_pct)
+          : returnPct;
+      cumulativeReturn += returnPct;
+      cumulativeExcess += excessPct;
+      peakReturn = Math.max(peakReturn, cumulativeReturn);
+      return {
+        date: sample.exit_date || sample.signal_date,
+        signal_id: sample.signal_id,
+        symbol: sample.symbol,
+        name: sample.name,
+        return_pct: roundNumber(returnPct, 4) ?? 0,
+        excess_return_pct: roundNumber(excessPct, 4) ?? 0,
+        cumulative_return_pct: roundNumber(cumulativeReturn, 4) ?? 0,
+        cumulative_excess_return_pct: roundNumber(cumulativeExcess, 4) ?? 0,
+        drawdown_pct: roundNumber(cumulativeReturn - peakReturn, 4) ?? 0,
+      };
+    });
+
+    const latestRecommendations = signals.slice(0, 30).map(signal => {
+      const horizonStatus = Object.fromEntries(
+        horizons.map(horizon => {
+          const item = signal.forward_returns?.horizons?.[horizon] || {};
+          return [
+            horizon,
+            {
+              status: item.status || 'pending',
+              return_pct: item.return_pct,
+              excess_return_pct: item.excess_return_pct,
+              directional_return_pct: item.directional_return_pct,
+              exit_date: item.exit_date,
+            },
+          ];
+        })
+      );
+      return {
+        signal_id: signal.id,
+        symbol: signal.symbol,
+        name: signal.name,
+        signal_date: signal.signal_date,
+        decision: signal.normalized_decision || signal.decision,
+        confidence_score: toNumber(signal.confidence_score),
+        risk_level: signal.risk_level,
+        rationale: String(signal.rationale || '').slice(0, 260),
+        verification_status: signal.verification_status,
+        completed_for_primary_horizon: completedSignalIds.has(signal.id),
+        horizons: horizonStatus,
+      };
+    });
+
+    const bestSymbols = bySymbol.filter(item => item.count > 0).slice(0, 8);
+    const weakSymbols = [...bySymbol]
+      .filter(item => item.count > 0)
+      .sort(
+        (a, b) =>
+          a.quality_score - b.quality_score ||
+          a.avg_excess_return_pct - b.avg_excess_return_pct ||
+          b.count - a.count
+      )
+      .slice(0, 8);
+    const bestHorizon = [...horizonSummary]
+      .filter(item => item.count > 0)
+      .sort((a, b) => b.quality_score - a.quality_score || b.count - a.count)[0];
+    const gate = overall.gate;
+    const action =
+      gate.action === 'scale_up'
+        ? 'agent_tail_scale_up'
+        : gate.action === 'deprioritize'
+          ? 'agent_tail_deprioritize'
+          : gate.action === 'collect_more_samples'
+            ? 'agent_tail_collect_samples'
+            : 'agent_tail_watch';
+    const insights = [
+      `尾盘 Agent 在 ${primaryHorizon} 周期已完成 ${overall.count}/${signals.length} 个样本，平均收益 ${roundNumber(
+        overall.avg_return_pct,
+        2
+      )}%、平均超额 ${roundNumber(overall.avg_excess_return_pct, 2)}%。`,
+      `当前收益闸门：${gate.label}，建议仓位倍率 ${gate.position_multiplier}x，原因：${gate.reason}。`,
+      bestHorizon
+        ? `当前相对最优持有周期是 ${bestHorizon.horizon}，质量分 ${bestHorizon.quality_score}、平均超额 ${roundNumber(
+            bestHorizon.avg_excess_return_pct,
+            2
+          )}%。`
+        : '尚无完成样本，先继续沉淀尾盘建议。',
+      bestSymbols[0]
+        ? `当前表现最好标的片段：${bestSymbols[0].label}，样本 ${bestSymbols[0].count}，平均超额 ${roundNumber(
+            bestSymbols[0].avg_excess_return_pct,
+            2
+          )}%。`
+        : '',
+      pendingSignals > 0
+        ? `${pendingSignals} 条尾盘建议仍在后验周期内，不纳入最终收益评判。`
+        : '',
+      noDataSignals > 0 ? `${noDataSignals} 条尾盘建议缺行情数据，建议先执行刷新/修复。` : '',
+    ].filter(Boolean);
+
+    return {
+      generated_at: moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm:ss'),
+      filters: {
+        source_type: sourceType,
+        agent_session: agentSession,
+        primary_horizon: primaryHorizon,
+        horizons,
+        lookback_days: lookbackDays,
+        start_date: startDate,
+        end_date: endDate,
+        limit,
+        min_samples: minSamples,
+      },
+      summary: {
+        total_signals: signals.length,
+        pending_signals: pendingSignals,
+        no_data_signals: noDataSignals,
+        completed_primary_samples: primarySamples.length,
+        completed_all_samples: allCompletedSamples.length,
+        overall,
+        best_horizon: bestHorizon || null,
+        action,
+        gate,
+      },
+      horizon_summary: horizonSummary,
+      by_decision: byDecision,
+      by_risk_level: byRiskLevel,
+      by_confidence: byConfidence,
+      by_month: byMonth,
+      best_symbols: bestSymbols,
+      weak_symbols: weakSymbols,
+      portfolio_curve: portfolioCurve,
+      latest_recommendations: latestRecommendations,
+      insights,
+      next_actions: [
+        gate.action === 'scale_up'
+          ? '尾盘 Agent 当前具备正期望，可仅对 BUY/STRONG_BUY 且风控通过的样本小幅放大模拟跟单。'
+          : '',
+        gate.action === 'deprioritize'
+          ? '尾盘 Agent 当前跑输，应暂停自动放大，仅保留观察与数据收集。'
+          : '',
+        overall.count < minSamples
+          ? `继续收集至少 ${minSamples - overall.count} 个完成样本后再评估是否放大。`
+          : '',
+        noDataSignals > 0 ? '执行尾盘账本刷新，先补齐缺失行情并重新验证收益。' : '',
+        '持续对比 1/3/5/10/20 日持有收益，后续把最佳周期反哺给自动模拟盘持有期参数。',
+      ].filter(Boolean),
     };
   }
 
