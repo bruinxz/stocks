@@ -50,6 +50,8 @@ export interface SignalQualityReportOptions extends SignalPerformanceOptions {
   data_source?: string;
   repair_lookback_days?: number;
   sync_concurrency?: number;
+  include_diagnosis_details?: boolean;
+  diagnosis_detail_limit?: number;
 }
 
 export interface SignalVerificationDiagnosisOptions extends SignalQueryOptions {
@@ -59,6 +61,8 @@ export interface SignalVerificationDiagnosisOptions extends SignalQueryOptions {
   data_source?: string;
   lookback_days?: number;
   sync_concurrency?: number;
+  include_details?: boolean;
+  detail_limit?: number;
 }
 
 export interface QuantRecommendationArchiveOptions {
@@ -1454,6 +1458,8 @@ export class AIInvestmentSignalService {
   async diagnoseSignalVerification(options: SignalVerificationDiagnosisOptions = {}) {
     const horizons = options.horizons || DEFAULT_HORIZONS;
     const limit = Math.min(Math.max(Number(options.limit || 200), 1), 2000);
+    const includeDetails = options.include_details !== false;
+    const detailLimit = Math.min(Math.max(Number(options.detail_limit ?? 200), 0), 2000);
     const signals = await AIInvestmentSignal.findAll({
       where: buildSignalWhere(options),
       order: [
@@ -1465,6 +1471,11 @@ export class AIInvestmentSignalService {
 
     const maxHorizon = Math.max(...horizons);
     const details: any[] = [];
+    const pushDetail = (item: any) => {
+      if (!includeDetails) return;
+      if (details.length >= detailLimit) return;
+      details.push(item);
+    };
     const missingSymbols = new Set<string>();
     const summary = {
       total_signals: signals.length,
@@ -1473,6 +1484,7 @@ export class AIInvestmentSignalService {
       no_data_signals: 0,
       missing_stock: 0,
       missing_bars: 0,
+      waiting_for_market_data: 0,
       insufficient_horizon_bars: 0,
       invalid_entry_price: 0,
       ready_for_verification: 0,
@@ -1498,7 +1510,7 @@ export class AIInvestmentSignalService {
         item.message = '股票基础信息不存在，需先同步股票列表';
         summary.missing_stock++;
         summary.no_data_signals++;
-        details.push(item);
+        pushDetail(item);
         continue;
       }
 
@@ -1526,8 +1538,9 @@ export class AIInvestmentSignalService {
           missingSymbols.add(symbol);
         } else {
           summary.pending_signals++;
+          summary.waiting_for_market_data++;
         }
-        details.push(item);
+        pushDetail(item);
         continue;
       }
 
@@ -1561,7 +1574,7 @@ export class AIInvestmentSignalService {
         }
       }
 
-      details.push(item);
+      pushDetail(item);
     }
 
     summary.symbols_need_sync = missingSymbols.size;
@@ -1582,6 +1595,7 @@ export class AIInvestmentSignalService {
       },
       summary,
       symbols_need_sync: Array.from(missingSymbols),
+      details_truncated: includeDetails && details.length < signals.length,
       details,
     };
   }
@@ -2352,6 +2366,11 @@ export class AIInvestmentSignalService {
     const minSamples = Math.min(Math.max(Number(options.min_samples || 5), 1), 100);
     const limit = Math.min(Math.max(Number(options.limit || 5000), 1), 10000);
     const horizonDays = Number(String(horizon).replace(/[^\d]/g, '')) || 5;
+    const includeDiagnosisDetails = Boolean(options.include_diagnosis_details);
+    const diagnosisDetailLimit = Math.min(
+      Math.max(Number(options.diagnosis_detail_limit ?? (includeDiagnosisDetails ? 100 : 0)), 0),
+      500
+    );
     const diagnosisOptions = {
       source_type: options.source_type,
       agent_session: options.agent_session,
@@ -2363,6 +2382,8 @@ export class AIInvestmentSignalService {
       end_date: endDate,
       limit,
       horizons: [horizonDays],
+      include_details: includeDiagnosisDetails,
+      detail_limit: diagnosisDetailLimit,
     };
 
     let repairResult: any = null;
@@ -2433,9 +2454,7 @@ export class AIInvestmentSignalService {
       no_data_signals: diagnosisSummary.no_data_signals ?? noDataSignals,
       missing_stock: diagnosisSummary.missing_stock ?? 0,
       missing_bars: diagnosisSummary.missing_bars ?? 0,
-      waiting_for_market_data: Array.isArray(diagnosis?.details)
-        ? diagnosis.details.filter((item: any) => item.issue === 'waiting_for_market_data').length
-        : 0,
+      waiting_for_market_data: diagnosisSummary.waiting_for_market_data ?? 0,
       insufficient_horizon_bars: diagnosisSummary.insufficient_horizon_bars ?? 0,
       invalid_entry_price: diagnosisSummary.invalid_entry_price ?? 0,
       ready_for_verification: diagnosisSummary.ready_for_verification ?? 0,
@@ -2617,7 +2636,12 @@ export class AIInvestmentSignalService {
       },
       data_health: dataHealth,
       repair_summary: repairSummary,
-      diagnosis,
+      diagnosis: {
+        ...diagnosis,
+        details: includeDiagnosisDetails
+          ? (diagnosis?.details || []).slice(0, diagnosisDetailLimit)
+          : [],
+      },
       rankings,
       best_segments: bestSegments,
       worst_segments: worstSegments,

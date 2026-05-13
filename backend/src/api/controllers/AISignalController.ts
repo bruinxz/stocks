@@ -28,6 +28,8 @@ export class AISignalController {
       data_source: source?.data_source,
       lookback_days: source?.lookback_days ? Number(source.lookback_days) : undefined,
       sync_concurrency: source?.sync_concurrency ? Number(source.sync_concurrency) : undefined,
+      include_details: source?.include_details === 'true' || source?.include_details === true,
+      detail_limit: source?.detail_limit ? Number(source.detail_limit) : undefined,
     };
   }
 
@@ -231,6 +233,10 @@ export class AISignalController {
         sync_concurrency: req.query?.sync_concurrency
           ? Number(req.query.sync_concurrency)
           : undefined,
+        include_diagnosis_details: req.query?.include_diagnosis_details === 'true',
+        diagnosis_detail_limit: req.query?.diagnosis_detail_limit
+          ? Number(req.query.diagnosis_detail_limit)
+          : undefined,
       });
       res.json({ success: true, data: report });
     } catch (error: any) {
@@ -286,6 +292,10 @@ export class AISignalController {
           : undefined,
         sync_concurrency: req.body?.sync_concurrency
           ? Number(req.body.sync_concurrency)
+          : undefined,
+        include_diagnosis_details: req.body?.include_diagnosis_details === true,
+        diagnosis_detail_limit: req.body?.diagnosis_detail_limit
+          ? Number(req.body.diagnosis_detail_limit)
           : undefined,
         report_to_feishu: req.body?.report_to_feishu !== false,
         record_type: req.body?.record_type || '信号质量日报',

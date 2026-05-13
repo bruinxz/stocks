@@ -18,6 +18,7 @@ import moment from 'moment-timezone';
 import { Op } from 'sequelize';
 
 type TaskRunStatus = 'SUCCESS' | 'FAILED' | 'RUNNING';
+type TaskExecutionLogLike = TaskExecutionLog | null;
 
 class SchedulerService {
   private activeTasks: Map<number, CronScheduledTask> = new Map();
@@ -93,7 +94,7 @@ class SchedulerService {
   private async markTaskFinished(
     task: ScheduledTask,
     status: TaskRunStatus,
-    executionLog?: TaskExecutionLog,
+    executionLog?: TaskExecutionLogLike,
     error?: any
   ) {
     const error_message = error?.message || (error ? String(error) : undefined);
@@ -122,21 +123,54 @@ class SchedulerService {
     }
   }
 
+  private async safeUpdateExecutionLog(
+    executionLog: TaskExecutionLogLike,
+    patch: Record<string, any>
+  ) {
+    if (!executionLog) return;
+    try {
+      await executionLog.update(patch);
+    } catch (error: any) {
+      logger.warn(`更新定时任务执行日志失败，已降级继续执行: ${error.message}`);
+    }
+  }
+
+  private async createExecutionLog(
+    task: ScheduledTask,
+    timestamp: Date,
+    isManual: boolean
+  ): Promise<TaskExecutionLogLike> {
+    try {
+      return await TaskExecutionLog.create({
+        task_id: task.id,
+        task_name: task.name + (isManual ? ' (手动执行)' : ''),
+        status: 'IN_PROGRESS',
+        started_at: timestamp,
+      });
+    } catch (error: any) {
+      logger.error(
+        `创建定时任务执行日志失败，任务仍将继续执行: ${task.id} (${task.name})`,
+        error
+      );
+      return null;
+    }
+  }
+
   private async enqueueDataUpdateJob(
     task: ScheduledTask,
-    executionLog: TaskExecutionLog,
+    executionLog: TaskExecutionLogLike,
     queueName: 'daily_update' | 'new_stocks_sync' | 'bulk_sync_custom' | 'data_quality_scan',
     data: any,
     jobPrefix: string,
     isManual: boolean
   ) {
     const job = await dataUpdateQueue.add(queueName, data, {
-      jobId: `${jobPrefix}-${isManual ? 'manual-' : ''}task-${task.id}-log-${
-        executionLog.id
+      jobId: `${jobPrefix}-${isManual ? 'manual-' : ''}task-${task.id}${
+        executionLog?.id ? `-log-${executionLog.id}` : '-no-log'
       }-${Date.now()}`,
     });
 
-    await executionLog.update({
+    await this.safeUpdateExecutionLog(executionLog, {
       status: 'IN_PROGRESS',
       total_items: 1,
       completed_items: 0,
@@ -157,12 +191,7 @@ class SchedulerService {
     const timestamp = new Date();
     await task.update({ last_run_at: timestamp, last_run_status: 'RUNNING' });
 
-    const executionLog = await TaskExecutionLog.create({
-      task_id: task.id,
-      task_name: task.name + (isManual ? ' (手动执行)' : ''),
-      status: 'IN_PROGRESS',
-      started_at: timestamp,
-    });
+    const executionLog = await this.createExecutionLog(task, timestamp, isManual);
 
     try {
       const parameters = task.parameters || {};
@@ -182,7 +211,7 @@ class SchedulerService {
               300,
               2000
             ),
-            execution_log_id: executionLog.id,
+            execution_log_id: executionLog?.id,
             scheduled_task_id: task.id,
           },
           'dailyUpdate',
@@ -196,7 +225,7 @@ class SchedulerService {
           {
             type: 'new_stocks_sync',
             date: today,
-            execution_log_id: executionLog.id,
+            execution_log_id: executionLog?.id,
             scheduled_task_id: task.id,
           },
           'syncAllStocks',
@@ -251,7 +280,7 @@ class SchedulerService {
               this.getParameterValue(parameters, 'include_no_data', 'includeNoData') !== undefined
                 ? Boolean(this.getParameterValue(parameters, 'include_no_data', 'includeNoData'))
                 : false,
-            execution_log_id: executionLog.id,
+            execution_log_id: executionLog?.id,
             scheduled_task_id: task.id,
           },
           'syncHistory',
@@ -268,7 +297,7 @@ class SchedulerService {
             scope: parameters.scope || 'market',
             lookback_days: this.toPositiveInt(parameters.lookback_days, 180, 3650),
             limit: this.toPositiveInt(parameters.limit, 200, 2000),
-            execution_log_id: executionLog.id,
+            execution_log_id: executionLog?.id,
             scheduled_task_id: task.id,
           },
           'dataQualityScan',
@@ -297,7 +326,7 @@ class SchedulerService {
         );
         const failed = entries.filter(([, count]) => Number(count) < 0).length;
 
-        await executionLog.update({
+        await this.safeUpdateExecutionLog(executionLog, {
           total_items: entries.length,
           completed_items: entries.length - failed,
           failed_items: failed,
@@ -365,7 +394,7 @@ class SchedulerService {
         });
         (result as any).repair = repairResult;
 
-        await executionLog.update({
+        await this.safeUpdateExecutionLog(executionLog, {
           total_items: result.verification.total,
           completed_items: result.verification.verified,
           failed_items: Number(result.verification.no_data || 0),
@@ -422,7 +451,7 @@ class SchedulerService {
           record_type: parameters.record_type || parameters.recordType || '信号质量日报',
         });
 
-        await executionLog.update({
+        await this.safeUpdateExecutionLog(executionLog, {
           total_items: result.overview.total_signals,
           completed_items: result.overview.completed_samples,
           failed_items: Number(result.overview.no_data_signals || 0),
@@ -566,7 +595,7 @@ class SchedulerService {
           ),
         });
 
-        await executionLog.update({
+        await this.safeUpdateExecutionLog(executionLog, {
           total_items: result.scanned,
           completed_items: result.executed || result.planned,
           failed_items: result.skipped,
@@ -626,7 +655,7 @@ class SchedulerService {
             parameters.sell_signal_source_type || parameters.sellSignalSourceType || 'all',
         });
 
-        await executionLog.update({
+        await this.safeUpdateExecutionLog(executionLog, {
           total_items: result.checked,
           completed_items: result.exited || result.planned,
           failed_items: result.skipped,
@@ -659,7 +688,7 @@ class SchedulerService {
                 : true,
         });
 
-        await executionLog.update({
+        await this.safeUpdateExecutionLog(executionLog, {
           total_items: result.summary.executed_signals,
           completed_items: result.summary.closed_count,
           failed_items: result.summary.near_stop_loss_count,
@@ -696,7 +725,7 @@ class SchedulerService {
                 : true,
         });
 
-        await executionLog.update({
+        await this.safeUpdateExecutionLog(executionLog, {
           total_items: result.refreshed,
           completed_items: result.created_or_updated,
           failed_items: result.failed,
@@ -851,7 +880,7 @@ class SchedulerService {
             parameters.sell_signal_source_type || parameters.sellSignalSourceType || 'all',
         });
 
-        await executionLog.update({
+        await this.safeUpdateExecutionLog(executionLog, {
           total_items: result.summary.action_count,
           completed_items: result.summary.action_count,
           failed_items: result.summary.urgent_count,
@@ -1044,7 +1073,7 @@ class SchedulerService {
           agent_session: parameters.agent_session || parameters.agentSession || 'close',
           target_date: parameters.target_date || parameters.targetDate || today,
           task_label: task.name,
-          execution_log_id: executionLog.id,
+          execution_log_id: executionLog?.id,
           report_to_feishu:
             parameters.report_to_feishu !== undefined
               ? Boolean(parameters.report_to_feishu)
@@ -1054,7 +1083,7 @@ class SchedulerService {
           record_type: parameters.record_type || parameters.recordType || '全市场荐股闭环',
         });
 
-        await executionLog.update({
+        await this.safeUpdateExecutionLog(executionLog, {
           total_items: result.generated?.total_candidates || 0,
           completed_items: result.generated?.analyzed_candidates || 0,
           failed_items: result.paper_trading?.skipped || 0,
@@ -1104,7 +1133,7 @@ class SchedulerService {
         let count = 0;
         let failed = 0;
 
-        await executionLog.update({ total_items: candidates.length });
+        await this.safeUpdateExecutionLog(executionLog, { total_items: candidates.length });
 
         for (const candidate of candidates) {
           try {
@@ -1115,7 +1144,7 @@ class SchedulerService {
                   taskId: res.task_id,
                   symbol: candidate.symbol,
                   name: candidate.name,
-                  executionLogId: executionLog.id,
+                  executionLogId: executionLog?.id,
                   taskLabel: task.name,
                   quant_score: candidate.score,
                   quant_factors: candidate.factors,
@@ -1126,9 +1155,9 @@ class SchedulerService {
                   agent_session: parameters.agent_session,
                 },
                 {
-                  jobId: `ai-poll-${isManual ? 'manual-' : ''}log-${executionLog.id}-${
-                    res.task_id
-                  }`,
+                  jobId: `ai-poll-${isManual ? 'manual-' : ''}${
+                    executionLog?.id ? `log-${executionLog.id}` : `task-${task.id}-no-log`
+                  }-${res.task_id}`,
                   attempts: 10,
                   backoff: { type: 'fixed', delay: 3 * 60 * 1000 },
                 }
@@ -1146,10 +1175,13 @@ class SchedulerService {
         );
 
         // 状态保留为 IN_PROGRESS，由 bull worker 来更新为 COMPLETED 或 FAILED
-        await executionLog.update({ failed_items: failed });
+        await this.safeUpdateExecutionLog(executionLog, { failed_items: failed });
         // 如果没有成功提交的任务，说明已经结束了
         if (count === 0) {
-          await executionLog.update({ status: 'COMPLETED', completed_at: new Date() });
+          await this.safeUpdateExecutionLog(executionLog, {
+            status: 'COMPLETED',
+            completed_at: new Date(),
+          });
           await feishuTaskReportService.reportTaskExecutionLog(executionLog, {
             record_type: 'AI定时任务完成',
             task_type: 'AI_DAILY_SCREENER',
