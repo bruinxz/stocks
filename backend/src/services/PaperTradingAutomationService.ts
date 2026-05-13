@@ -28,6 +28,9 @@ type RiskExitReason = 'stop_loss' | 'take_profit' | 'sell_signal' | 'max_hold_da
 export interface PaperTradingAutoOptions {
   user_id?: number;
   username?: string;
+  portfolio_name?: string;
+  initial_capital?: number;
+  force_new_portfolio?: boolean;
   source_type?: string;
   agent_session?: string;
   task_label?: string;
@@ -277,6 +280,9 @@ interface EntryMarketProfile {
 export interface PaperTradingRiskCheckOptions {
   user_id?: number;
   username?: string;
+  portfolio_name?: string;
+  initial_capital?: number;
+  force_new_portfolio?: boolean;
   dry_run?: boolean;
   report_to_feishu?: boolean;
   limit?: number;
@@ -475,21 +481,33 @@ class PaperTradingAutomationService {
       username?: string;
       name?: string;
       initial_capital?: number;
+      force_new?: boolean;
     } = {}
   ): Promise<PaperTradingPortfolio> {
     const user = await this.resolveUser(options.user_id, options.username);
     const user_id = user.id;
 
-    let portfolio = await PaperTradingPortfolio.findOne({
-      where: { user_id, is_active: true },
-      order: [['id', 'ASC']],
-    });
+    let portfolio: PaperTradingPortfolio | null = null;
 
-    if (!portfolio) {
+    if (options.name) {
       portfolio = await PaperTradingPortfolio.findOne({
-        where: { user_id },
+        where: { user_id, name: options.name },
         order: [['id', 'ASC']],
       });
+    }
+
+    if (!portfolio && !options.force_new) {
+      portfolio = await PaperTradingPortfolio.findOne({
+        where: { user_id, is_active: true },
+        order: [['id', 'ASC']],
+      });
+
+      if (!portfolio) {
+        portfolio = await PaperTradingPortfolio.findOne({
+          where: { user_id },
+          order: [['id', 'ASC']],
+        });
+      }
     }
 
     if (!portfolio) {
@@ -617,6 +635,9 @@ class PaperTradingAutomationService {
     const portfolio = await this.ensurePortfolio({
       user_id: options.user_id,
       username: options.username,
+      name: options.portfolio_name,
+      initial_capital: options.initial_capital,
+      force_new: options.force_new_portfolio,
     });
     const feedbackPolicy = await this.resolveAttributionFeedbackPolicy({
       portfolio_id: portfolio.id,
@@ -1055,6 +1076,9 @@ class PaperTradingAutomationService {
     const portfolio = await this.ensurePortfolio({
       user_id: options.user_id,
       username: options.username,
+      name: options.portfolio_name,
+      initial_capital: options.initial_capital,
+      force_new: options.force_new_portfolio,
     });
     const refreshRecommendations = toBoolean(options.refresh_recommendations, false);
     let generated: any = null;
@@ -1151,6 +1175,9 @@ class PaperTradingAutomationService {
     const portfolio = await this.ensurePortfolio({
       user_id: options.user_id,
       username: options.username,
+      name: options.portfolio_name,
+      initial_capital: options.initial_capital,
+      force_new: options.force_new_portfolio,
     });
     await this.syncLatestPricesAndSnapshot(portfolio.id);
     await portfolio.reload();
@@ -1585,8 +1612,8 @@ class PaperTradingAutomationService {
       const effectivePositionMultiplier = samplingMode
         ? clamp(options.sampling_multiplier, 0.1, 0.6)
         : allowEntries
-        ? clamp(positionMultiplier || 1, 0.1, 1.5)
-        : 0;
+          ? clamp(positionMultiplier || 1, 0.1, 1.5)
+          : 0;
 
       return {
         enabled: true,
@@ -1668,9 +1695,8 @@ class PaperTradingAutomationService {
     if (!options.enabled) return basePolicy;
 
     try {
-      const { recommendationTradeOutcomeService } = await import(
-        './RecommendationTradeOutcomeService'
-      );
+      const { recommendationTradeOutcomeService } =
+        await import('./RecommendationTradeOutcomeService');
       const dashboard = await recommendationTradeOutcomeService.getDashboard({
         portfolio_id: options.portfolio_id,
         user_id: options.user_id,
@@ -1709,8 +1735,8 @@ class PaperTradingAutomationService {
         closedSamples < options.min_closed_samples
           ? clamp(Math.min(rawPositionMultiplier, 0.75), 0.35, 0.9)
           : allowEntries
-          ? clamp(rawPositionMultiplier, 0.25, 1.25)
-          : 0;
+            ? clamp(rawPositionMultiplier, 0.25, 1.25)
+            : 0;
       const effectiveMinScore =
         closedSamples < options.min_closed_samples
           ? options.requested_min_score
@@ -1732,14 +1758,14 @@ class PaperTradingAutomationService {
         closedSamples < options.min_closed_samples
           ? `闭环样本 ${closedSamples}/${options.min_closed_samples}，先小仓位积累样本`
           : allowEntries
-          ? `闭环样本 ${closedSamples}，平均超额 ${roundNumber(
-              avgExcess,
-              2
-            )}%，仓位倍率 ${roundNumber(effectivePositionMultiplier, 2)}x`
-          : `闭环样本 ${closedSamples}，平均超额 ${roundNumber(
-              avgExcess,
-              2
-            )}%、超额胜率 ${roundNumber(excessWinRate, 2)}%，暂停自动入场`;
+            ? `闭环样本 ${closedSamples}，平均超额 ${roundNumber(
+                avgExcess,
+                2
+              )}%，仓位倍率 ${roundNumber(effectivePositionMultiplier, 2)}x`
+            : `闭环样本 ${closedSamples}，平均超额 ${roundNumber(
+                avgExcess,
+                2
+              )}%、超额胜率 ${roundNumber(excessWinRate, 2)}%，暂停自动入场`;
 
       return {
         enabled: true,
@@ -2280,9 +2306,8 @@ class PaperTradingAutomationService {
 
   private async refreshRecommendationTradeOutcome(signal_id: number) {
     try {
-      const { recommendationTradeOutcomeService } = await import(
-        './RecommendationTradeOutcomeService'
-      );
+      const { recommendationTradeOutcomeService } =
+        await import('./RecommendationTradeOutcomeService');
       await recommendationTradeOutcomeService.refreshOutcomeBySignal(signal_id);
     } catch (error: any) {
       logger.warn(`推荐交易收益闭环刷新失败 signal#${signal_id}: ${error?.message || error}`);

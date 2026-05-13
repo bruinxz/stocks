@@ -16,6 +16,7 @@ import { normalizeSymbol } from '../utils/stockSymbol';
 import { logger } from '../utils/logger';
 
 export const DEFAULT_AUTONOMOUS_INITIAL_CAPITAL = 200000;
+export const AUTONOMOUS_PORTFOLIO_NAME = 'Codex自主荐股模拟盘（20W）';
 
 type TrackingStatus =
   | 'candidate'
@@ -27,6 +28,7 @@ type TrackingStatus =
   | 'not_traded';
 
 export interface PaperTradingDashboardOptions {
+  portfolio_id?: number;
   user_id?: number;
   username?: string;
   lookback_days?: number;
@@ -94,10 +96,19 @@ function commandFromSignal(signal: AIInvestmentSignal, metadata: Record<string, 
   const decision = signal.normalized_decision || signal.decision;
   const action = String(metadata.action || '').toLowerCase();
   if ([AISignalDecision.SELL, AISignalDecision.STRONG_SELL].includes(decision as any)) {
-    return { command: 'sell', command_label: decision === AISignalDecision.STRONG_SELL ? '强制卖出' : '卖出/退出' };
+    return {
+      command: 'sell',
+      command_label: decision === AISignalDecision.STRONG_SELL ? '强制卖出' : '卖出/退出',
+    };
   }
-  if ([AISignalDecision.BUY, AISignalDecision.STRONG_BUY].includes(decision as any) || action === 'buy') {
-    return { command: 'buy', command_label: decision === AISignalDecision.STRONG_BUY ? '强买/建仓' : '买入/试仓' };
+  if (
+    [AISignalDecision.BUY, AISignalDecision.STRONG_BUY].includes(decision as any) ||
+    action === 'buy'
+  ) {
+    return {
+      command: 'buy',
+      command_label: decision === AISignalDecision.STRONG_BUY ? '强买/建仓' : '买入/试仓',
+    };
   }
   if (action === 'avoid') return { command: 'avoid', command_label: '回避' };
   return { command: 'watch', command_label: '观察' };
@@ -139,7 +150,10 @@ function trackingStatus(params: {
     return 'sell_signal';
   }
   const action = String(metadata.action || '').toLowerCase();
-  if (action === 'buy' || [AISignalDecision.BUY, AISignalDecision.STRONG_BUY].includes(decision as any)) {
+  if (
+    action === 'buy' ||
+    [AISignalDecision.BUY, AISignalDecision.STRONG_BUY].includes(decision as any)
+  ) {
     return 'candidate';
   }
   if (action === 'watch' || decision === AISignalDecision.HOLD) return 'watch';
@@ -164,6 +178,13 @@ export class PaperTradingDashboardService {
     const portfolio = await this.ensureAutonomousPortfolio(options);
     const snapshot = await this.safeSyncSnapshot(portfolio.id);
     await portfolio.reload();
+
+    const trackingOptions = {
+      ...options,
+      portfolio_id: portfolio.id,
+      limit: Math.min(toPositiveInt(options.limit, 30, 200), 80),
+      lookback_days: toPositiveInt(options.lookback_days, 30, 3650),
+    };
 
     const [positions, recentTrades, allSellTrades, snapshots, outcomeDashboard, tracking] =
       await Promise.all([
@@ -191,11 +212,7 @@ export class PaperTradingDashboardService {
             logger.warn(`自主模拟盘收益闭环看板读取失败: ${error?.message || error}`);
             return null;
           }),
-        this.getRecommendationTracking({
-          ...options,
-          limit: Math.min(toPositiveInt(options.limit, 30, 200), 80),
-          lookback_days: toPositiveInt(options.lookback_days, 30, 3650),
-        }).catch(error => {
+        this.getRecommendationTracking(trackingOptions).catch(error => {
           logger.warn(`自主模拟盘推荐追踪读取失败: ${error?.message || error}`);
           return null;
         }),
@@ -233,7 +250,8 @@ export class PaperTradingDashboardService {
         current_price: currentPrice,
         market_value: roundNumber(marketValue, 2),
         unrealized_pnl: roundNumber(unrealized, 2),
-        unrealized_pnl_pct: avgCost > 0 ? roundNumber(((currentPrice - avgCost) / avgCost) * 100, 4) : 0,
+        unrealized_pnl_pct:
+          avgCost > 0 ? roundNumber(((currentPrice - avgCost) / avgCost) * 100, 4) : 0,
         weight_pct: totalValue > 0 ? roundNumber((marketValue / totalValue) * 100, 2) : 0,
       };
     });
@@ -249,7 +267,8 @@ export class PaperTradingDashboardService {
         cash_pct: totalValue > 0 ? roundNumber((currentCash / totalValue) * 100, 2) : 0,
         exposure_pct: totalValue > 0 ? roundNumber((positionValue / totalValue) * 100, 2) : 0,
         total_pnl: roundNumber(totalPnl, 2),
-        total_return_pct: initialCapital > 0 ? roundNumber((totalPnl / initialCapital) * 100, 4) : 0,
+        total_return_pct:
+          initialCapital > 0 ? roundNumber((totalPnl / initialCapital) * 100, 4) : 0,
         realized_pnl: roundNumber(realizedPnl, 2),
         unrealized_pnl: roundNumber(unrealizedPnl, 2),
         open_position_count: positions.length,
@@ -276,7 +295,10 @@ export class PaperTradingDashboardService {
           total_value: roundNumber(total, 2),
           current_cash: roundNumber(item.current_cash, 2),
           position_value: roundNumber(item.position_value, 2),
-          total_return_pct: initialCapital > 0 ? roundNumber(((total - initialCapital) / initialCapital) * 100, 4) : 0,
+          total_return_pct:
+            initialCapital > 0
+              ? roundNumber(((total - initialCapital) / initialCapital) * 100, 4)
+              : 0,
         };
       }),
       recommendation_tracking: tracking
@@ -303,10 +325,16 @@ export class PaperTradingDashboardService {
   }
 
   async getRecommendationTracking(options: PaperTradingDashboardOptions = {}) {
-    const portfolio = await this.ensureAutonomousPortfolio(options);
+    const portfolio = options.portfolio_id
+      ? await PaperTradingPortfolio.findByPk(options.portfolio_id)
+      : await this.ensureAutonomousPortfolio(options);
+    if (!portfolio) throw new Error(`自主模拟盘不存在: ${options.portfolio_id}`);
     const limit = toPositiveInt(options.limit, 200, 1000);
     const lookbackDays = toPositiveInt(options.lookback_days, 60, 3650);
-    const startDate = moment().tz('Asia/Shanghai').subtract(lookbackDays, 'days').format('YYYY-MM-DD');
+    const startDate = moment()
+      .tz('Asia/Shanghai')
+      .subtract(lookbackDays, 'days')
+      .format('YYYY-MM-DD');
 
     const where: any = {
       signal_date: { [Op.gte]: startDate, [Op.lte]: getChinaToday() },
@@ -381,12 +409,21 @@ export class PaperTradingDashboardService {
           outcome,
           entry_date: outcome?.entry_date || paperTrading.executed_at?.slice?.(0, 10),
           exit_date: outcome?.exit_date || paperTrading.closed_at?.slice?.(0, 10),
-          entry_price: toNumber(outcome?.entry_price ?? paperTrading.execute_price ?? signal.current_price),
-          exit_price: outcome?.exit_price ? toNumber(outcome.exit_price) : toNumber(paperTrading.exit_price, 0) || undefined,
-          latest_price: toNumber(outcome?.latest_price ?? paperTrading.latest_price ?? signal.current_price),
+          entry_price: toNumber(
+            outcome?.entry_price ?? paperTrading.execute_price ?? signal.current_price
+          ),
+          exit_price: outcome?.exit_price
+            ? toNumber(outcome.exit_price)
+            : toNumber(paperTrading.exit_price, 0) || undefined,
+          latest_price: toNumber(
+            outcome?.latest_price ?? paperTrading.latest_price ?? signal.current_price
+          ),
           quantity: toNumber(outcome?.quantity ?? paperTrading.quantity),
           simulated_pnl: roundNumber(outcome?.total_pnl ?? paperTrading.realized_pnl ?? 0, 2),
-          simulated_pnl_pct: roundNumber(outcome?.total_pnl_pct ?? paperTrading.realized_pnl_pct ?? 0, 4),
+          simulated_pnl_pct: roundNumber(
+            outcome?.total_pnl_pct ?? paperTrading.realized_pnl_pct ?? 0,
+            4
+          ),
           realized_pnl: roundNumber(outcome?.realized_pnl ?? paperTrading.realized_pnl ?? 0, 2),
           unrealized_pnl: roundNumber(outcome?.unrealized_pnl ?? 0, 2),
           holding_days: toNumber(outcome?.holding_days ?? paperTrading.holding_days),
@@ -399,7 +436,9 @@ export class PaperTradingDashboardService {
           created_at: signal.created_at,
         };
       })
-      .filter(item => !options.status || options.status === 'all' || item.status === options.status);
+      .filter(
+        item => !options.status || options.status === 'all' || item.status === options.status
+      );
 
     const dailyMap = new Map<string, any[]>();
     for (const item of items) {
@@ -413,7 +452,10 @@ export class PaperTradingDashboardService {
       sell_count: records.filter(item => item.command === 'sell').length,
       open_count: records.filter(item => item.status === 'open').length,
       closed_count: records.filter(item => item.status === 'closed').length,
-      simulated_pnl: roundNumber(records.reduce((sum, item) => sum + toNumber(item.simulated_pnl), 0), 2),
+      simulated_pnl: roundNumber(
+        records.reduce((sum, item) => sum + toNumber(item.simulated_pnl), 0),
+        2
+      ),
       top_symbols: records.slice(0, 5).map(item => ({
         symbol: item.symbol,
         name: item.name,
@@ -448,9 +490,16 @@ export class PaperTradingDashboardService {
         closed_count: closed.length,
         watch_count: items.filter(item => item.status === 'watch').length,
         candidate_count: items.filter(item => item.status === 'candidate').length,
-        total_simulated_pnl: roundNumber(items.reduce((sum, item) => sum + toNumber(item.simulated_pnl), 0), 2),
+        total_simulated_pnl: roundNumber(
+          items.reduce((sum, item) => sum + toNumber(item.simulated_pnl), 0),
+          2
+        ),
         avg_simulated_pnl_pct: closed.length
-          ? roundNumber(closed.reduce((sum, item) => sum + toNumber(item.simulated_pnl_pct), 0) / closed.length, 4)
+          ? roundNumber(
+              closed.reduce((sum, item) => sum + toNumber(item.simulated_pnl_pct), 0) /
+                closed.length,
+              4
+            )
           : 0,
         win_rate: closed.length ? roundNumber((wins.length / closed.length) * 100, 2) : 0,
       },
@@ -460,11 +509,21 @@ export class PaperTradingDashboardService {
   }
 
   private async ensureAutonomousPortfolio(options: PaperTradingDashboardOptions) {
+    const existing = await PaperTradingPortfolio.findOne({
+      where: {
+        name: AUTONOMOUS_PORTFOLIO_NAME,
+        ...(options.user_id ? { user_id: options.user_id } : {}),
+      },
+      order: [['id', 'ASC']],
+    });
+    if (existing) return existing;
+
     return paperTradingAutomationService.ensurePortfolio({
       user_id: options.user_id,
       username: options.username,
       initial_capital: DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
-      name: 'Codex自主荐股模拟盘（20W）',
+      name: AUTONOMOUS_PORTFOLIO_NAME,
+      force_new: true,
     });
   }
 
