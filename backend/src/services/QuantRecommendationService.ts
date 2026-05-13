@@ -13,6 +13,7 @@ export type RecommendationUniverse = 'favorites' | 'market';
 export type RecommendationStyle = 'balanced' | 'momentum' | 'value' | 'low_risk';
 export type RecommendationSource = 'favorites' | 'market' | 'mixed';
 export type RecommendationAction = 'buy' | 'watch' | 'hold' | 'avoid';
+export type RecommendationTier = 'strong_recommend' | 'trial_position' | 'watchlist' | 'avoid';
 
 export interface QuantRecommendationOptions {
   user_id?: number;
@@ -67,6 +68,10 @@ export interface QuantRecommendationItem {
   take_profit_pct: number;
   metrics: Record<string, number | null>;
   feedback?: RecommendationFeedback;
+  recommendation_tier: RecommendationTier;
+  recommendation_tier_label: '强推荐池' | '轻仓试错池' | '观察池' | '回避池';
+  tier_reason: string;
+  tier_rank: number;
   trend?: Array<{ time: string; close: number }>;
 }
 
@@ -197,6 +202,95 @@ function resolveAction(params: {
     action: 'hold',
     action_label: '继续持有观察',
     suggested_position_pct: params.risk_level === 'low' ? 4 : 2,
+  };
+}
+
+function resolveRecommendationTier(params: {
+  score: number;
+  risk_level: QuantRecommendationItem['risk_level'];
+  action: RecommendationAction;
+  warnings: string[];
+  feedback: RecommendationFeedback;
+  factors: FactorScore[];
+}): {
+  recommendation_tier: RecommendationTier;
+  recommendation_tier_label: QuantRecommendationItem['recommendation_tier_label'];
+  tier_reason: string;
+  tier_rank: number;
+} {
+  const primaryFeedbackReturn =
+    params.feedback.avg_trade_excess_return_pct ??
+    params.feedback.avg_trade_return_pct ??
+    params.feedback.avg_excess_return_pct ??
+    params.feedback.avg_return_pct;
+  const primaryWinRate =
+    params.feedback.trade_excess_win_rate ??
+    params.feedback.trade_win_rate ??
+    params.feedback.excess_positive_rate ??
+    params.feedback.positive_rate;
+  const hasClosedFeedback =
+    Number(params.feedback.closed_trade_count || 0) > 0 || params.feedback.completed_count > 0;
+  const positiveFeedback =
+    hasClosedFeedback &&
+    Number(primaryFeedbackReturn || 0) >= -0.5 &&
+    (primaryWinRate === null || primaryWinRate === undefined || Number(primaryWinRate) >= 45);
+  const negativeFeedback =
+    hasClosedFeedback &&
+    (Number(primaryFeedbackReturn || 0) < -2 ||
+      (primaryWinRate !== null && primaryWinRate !== undefined && Number(primaryWinRate) < 38));
+  const factorPassCount = params.factors.filter(factor => factor.score >= 68).length;
+  const hasCriticalWarning = params.warnings.some(warning =>
+    /追高|回撤|缺失|急剧放大|后验收益/.test(warning)
+  );
+
+  if (params.action === 'avoid' || params.risk_level === 'high' || negativeFeedback) {
+    return {
+      recommendation_tier: 'avoid',
+      recommendation_tier_label: '回避池',
+      tier_rank: 4,
+      tier_reason: negativeFeedback
+        ? `历史后验偏弱，平均收益/超额 ${round(primaryFeedbackReturn, 2) ?? '--'}%，先降权回避`
+        : '风险等级偏高或交易纪律为暂不参与，禁止自动买入',
+    };
+  }
+
+  if (
+    params.action === 'buy' &&
+    params.score >= 82 &&
+    params.risk_level === 'low' &&
+    params.warnings.length === 0 &&
+    factorPassCount >= 3 &&
+    (!hasClosedFeedback || positiveFeedback)
+  ) {
+    return {
+      recommendation_tier: 'strong_recommend',
+      recommendation_tier_label: '强推荐池',
+      tier_rank: 1,
+      tier_reason: `评分 ${round(params.score, 1)}，低风险、无硬警告，${factorPassCount} 个核心因子达标，可进入强推荐复核`,
+    };
+  }
+
+  if (
+    ['buy', 'watch'].includes(params.action) &&
+    params.score >= 72 &&
+    !hasCriticalWarning
+  ) {
+    return {
+      recommendation_tier: 'trial_position',
+      recommendation_tier_label: '轻仓试错池',
+      tier_rank: 2,
+      tier_reason: `评分 ${round(params.score, 1)}，具备交易候选价值，但仍需小仓试错或等待 Agent 复核`,
+    };
+  }
+
+  return {
+    recommendation_tier: 'watchlist',
+    recommendation_tier_label: '观察池',
+    tier_rank: 3,
+    tier_reason:
+      params.score >= 62
+        ? '趋势或量能有迹象，但评分/风险/警告尚不足以进入自动交易'
+        : '综合得分仍偏低，仅保留观察，不进入自动跟单',
   };
 }
 
@@ -585,6 +679,14 @@ export class QuantRecommendationService {
           ? 'medium'
           : 'low';
     const actionPlan = resolveAction({ score, risk_level, warnings, feedback });
+    const tierPlan = resolveRecommendationTier({
+      score,
+      risk_level,
+      action: actionPlan.action,
+      warnings,
+      feedback,
+      factors,
+    });
     const stop_loss_pct = risk_level === 'low' ? 6 : risk_level === 'medium' ? 4.5 : 3;
     const take_profit_pct =
       actionPlan.action === 'buy' ? 14 : actionPlan.action === 'watch' ? 10 : 8;
@@ -631,6 +733,7 @@ export class QuantRecommendationService {
         feedback_score_adjustment: round(feedback.score_adjustment, 2),
       },
       feedback,
+      ...tierPlan,
       trend: options.include_trend
         ? normalizedBars.slice(-30).map(bar => ({
             time: bar.time.toISOString().split('T')[0],

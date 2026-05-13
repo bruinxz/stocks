@@ -76,6 +76,10 @@ interface RecommendationItem {
   take_profit_pct?: number;
   metrics: Record<string, number | null>;
   feedback?: RecommendationFeedback;
+  recommendation_tier?: 'strong_recommend' | 'trial_position' | 'watchlist' | 'avoid';
+  recommendation_tier_label?: string;
+  tier_reason?: string;
+  tier_rank?: number;
   trend?: Array<{ time: string; close: number }>;
 }
 
@@ -180,6 +184,36 @@ const actionColorMap: Record<string, string> = {
   watch: 'blue',
   hold: 'gold',
   avoid: 'default',
+};
+
+const tierColorMap: Record<string, string> = {
+  strong_recommend: 'volcano',
+  trial_position: 'gold',
+  watchlist: 'blue',
+  avoid: 'default',
+};
+
+const tierToneMap: Record<string, { title: string; subtitle: string; className: string }> = {
+  strong_recommend: {
+    title: '强推荐池',
+    subtitle: '高分、低风险、无硬警告，优先提交 Agent 复核',
+    className: 'strong',
+  },
+  trial_position: {
+    title: '轻仓试错池',
+    subtitle: '具备交易候选价值，仅适合小仓或 dry-run 验证',
+    className: 'trial',
+  },
+  watchlist: {
+    title: '观察池',
+    subtitle: '有机会但条件未完全共振，先跟踪不买入',
+    className: 'watch',
+  },
+  avoid: {
+    title: '回避池',
+    subtitle: '风险或后验表现不满足自动交易要求',
+    className: 'avoid',
+  },
 };
 
 const styleOptions = [
@@ -492,6 +526,29 @@ const Recommendations: React.FC = () => {
     [signalStats]
   );
 
+  const tierBuckets = useMemo(() => {
+    const list = data?.recommendations || [];
+    const buckets = ['strong_recommend', 'trial_position', 'watchlist', 'avoid'].map(key => {
+      const items = list.filter(item => (item.recommendation_tier || 'watchlist') === key);
+      const avg =
+        items.length > 0
+          ? items.reduce((sum, item) => sum + Number(item.score || 0), 0) / items.length
+          : 0;
+      const maxPosition = items.reduce(
+        (sum, item) => sum + Number(item.suggested_position_pct || 0),
+        0
+      );
+      return {
+        key,
+        items,
+        avg_score: avg,
+        planned_position_pct: maxPosition,
+        ...(tierToneMap[key] || tierToneMap.watchlist),
+      };
+    });
+    return buckets;
+  }, [data]);
+
   const columns = [
     {
       title: '候选标的',
@@ -502,6 +559,9 @@ const Recommendations: React.FC = () => {
           <Space>
             <Text strong>{record.name}</Text>
             <Tag color="blue">{record.rating}</Tag>
+            <Tag color={tierColorMap[record.recommendation_tier || 'watchlist']}>
+              {record.recommendation_tier_label || '观察池'}
+            </Tag>
           </Space>
           <Text type="secondary">
             {record.symbol} · {record.industry || record.market || '未分类'}
@@ -568,6 +628,11 @@ const Recommendations: React.FC = () => {
           <Tag color={riskColorMap[record.risk_level]}>{record.risk_level.toUpperCase()}</Tag>
           {record.action_label && (
             <Tag color={actionColorMap[record.action || 'hold']}>{record.action_label}</Tag>
+          )}
+          {record.tier_reason && (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {record.tier_reason}
+            </Text>
           )}
         </Space>
       ),
@@ -769,6 +834,35 @@ const Recommendations: React.FC = () => {
           1
         )}。每日“全市场荐股闭环”会自动归档、验证并接入模拟盘。`}
       />
+
+      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+        {tierBuckets.map(bucket => (
+          <Col xs={24} sm={12} xl={6} key={bucket.key}>
+            <div className={`recommendation-tier-card ${bucket.className}`}>
+              <div className="recommendation-tier-head">
+                <div>
+                  <span>{bucket.title}</span>
+                  <strong>{bucket.items.length}</strong>
+                </div>
+                <Tag color={tierColorMap[bucket.key]}>{bucket.avg_score.toFixed(1)}均分</Tag>
+              </div>
+              <p>{bucket.subtitle}</p>
+              <div className="recommendation-tier-meta">
+                <em>计划仓位 {bucket.planned_position_pct.toFixed(1)}%</em>
+                <em>Top {bucket.items[0]?.name || '--'}</em>
+              </div>
+              <Space wrap size={[6, 6]} style={{ marginTop: 12 }}>
+                {bucket.items.slice(0, 4).map(item => (
+                  <Tag key={item.symbol} color={tierColorMap[bucket.key]}>
+                    {item.name || item.symbol} {item.score.toFixed(0)}
+                  </Tag>
+                ))}
+                {bucket.items.length === 0 && <Text type="secondary">暂无标的</Text>}
+              </Space>
+            </div>
+          </Col>
+        ))}
+      </Row>
 
       {autoTradeResult && (
         <Card

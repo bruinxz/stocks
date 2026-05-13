@@ -2813,3 +2813,100 @@ a {
     grid-template-columns: 1fr;
   }
 }
+
+.recommendation-tier-card {
+  position: relative;
+  height: 100%;
+  min-height: 174px;
+  padding: 18px;
+  overflow: hidden;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at 88% 10%, rgba(29, 95, 208, 0.1), transparent 38%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.94), rgba(248, 250, 252, 0.88));
+  box-shadow: 0 16px 38px rgba(18, 36, 63, 0.07);
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.recommendation-tier-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 24px 52px rgba(18, 36, 63, 0.11);
+}
+
+.recommendation-tier-card.strong {
+  border-color: rgba(207, 19, 34, 0.16);
+  background:
+    radial-gradient(circle at 88% 8%, rgba(207, 19, 34, 0.15), transparent 40%),
+    linear-gradient(145deg, rgba(255, 250, 246, 0.96), rgba(255, 255, 255, 0.9));
+}
+
+.recommendation-tier-card.trial {
+  border-color: rgba(214, 166, 79, 0.2);
+  background:
+    radial-gradient(circle at 88% 8%, rgba(214, 166, 79, 0.18), transparent 40%),
+    linear-gradient(145deg, rgba(255, 252, 244, 0.96), rgba(255, 255, 255, 0.9));
+}
+
+.recommendation-tier-card.watch {
+  border-color: rgba(29, 95, 208, 0.14);
+}
+
+.recommendation-tier-card.avoid {
+  border-color: rgba(100, 116, 139, 0.16);
+  background:
+    radial-gradient(circle at 88% 8%, rgba(100, 116, 139, 0.12), transparent 40%),
+    linear-gradient(145deg, rgba(248, 250, 252, 0.96), rgba(255, 255, 255, 0.9));
+}
+
+.recommendation-tier-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.recommendation-tier-head span {
+  display: block;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
+.recommendation-tier-head strong {
+  display: block;
+  margin-top: 4px;
+  color: #111827;
+  font-family: var(--font-display);
+  font-size: 38px;
+  line-height: 0.95;
+  letter-spacing: -0.07em;
+}
+
+.recommendation-tier-card p {
+  min-height: 42px;
+  margin: 12px 0 0;
+  color: #53616f;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.recommendation-tier-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(15, 23, 42, 0.07);
+}
+
+.recommendation-tier-meta em {
+  color: #64748b;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+}
