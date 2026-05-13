@@ -32,6 +32,8 @@ export interface AutomatedRecommendationLoopOptions {
   max_position_pct?: number;
   min_trade_amount?: number;
   use_outcome_feedback?: boolean;
+  use_policy_version_feedback?: boolean;
+  policy_version_lookback_limit?: number;
   outcome_feedback_lookback_days?: number;
   outcome_feedback_min_closed_samples?: number;
   use_profit_gate?: boolean;
@@ -48,6 +50,21 @@ export interface AutomatedRecommendationLoopOptions {
   execution_log_id?: number;
   report_to_feishu?: boolean;
   record_type?: string;
+  use_entry_risk_guard?: boolean;
+  max_daily_new_positions?: number;
+  max_daily_new_exposure_pct?: number;
+  max_total_exposure_pct?: number;
+  max_industry_exposure_pct?: number;
+  min_avg_turnover_yuan?: number;
+  cooldown_days_after_loss?: number;
+  block_limit_up?: boolean;
+  block_limit_down?: boolean;
+  block_suspended?: boolean;
+}
+
+function toNumber(value: any, fallback = 0): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 function toPositiveInt(value: any, fallback: number, max?: number): number {
@@ -57,6 +74,17 @@ function toPositiveInt(value: any, fallback: number, max?: number): number {
   return max ? Math.min(normalized, max) : normalized;
 }
 
+function clampNumber(value: any, min: number, max: number): number {
+  const parsed = toNumber(value, min);
+  return Math.min(max, Math.max(min, parsed));
+}
+
+function roundNumber(value: any, digits = 2): number {
+  const parsed = toNumber(value, 0);
+  const base = 10 ** digits;
+  return Math.round(parsed * base) / base;
+}
+
 function buildLoopRunId(prefix = 'loop'): string {
   const stamp = moment().tz('Asia/Shanghai').format('YYYYMMDDHHmmss');
   const suffix = Math.random().toString(36).slice(2, 8);
@@ -64,9 +92,188 @@ function buildLoopRunId(prefix = 'loop'): string {
 }
 
 class AutomatedRecommendationLoopService {
+  private async applyPolicyVersionPromotion(
+    policy: any,
+    options: {
+      enabled: boolean;
+      username?: string;
+      universe?: 'favorites' | 'market';
+      lookback_limit: number;
+      min_closed_samples: number;
+      base_min_score: number;
+      base_max_position_pct: number;
+    }
+  ) {
+    const enrichedPolicy = {
+      ...policy,
+      policy_version_feedback_enabled: options.enabled,
+      policy_version_feedback_applied: false,
+      policy_version_feedback_reason: options.enabled
+        ? '策略版本晋级反馈已读取，等待足够样本后接管下一轮参数'
+        : '策略版本晋级反馈未启用',
+      policy_promotion: null as any,
+    };
+
+    if (!options.enabled) return enrichedPolicy;
+
+    try {
+      const dashboard = await recommendationLoopPolicySnapshotService.getDashboard({
+        username: options.username,
+        universe: options.universe || 'all',
+        limit: options.lookback_limit,
+      } as any);
+      const promotion: any = dashboard?.promotion || {};
+      const summary: any = dashboard?.summary || {};
+      const runCount = toNumber(summary.run_count, 0);
+      const action = String(promotion.action || '');
+      const confidence = toNumber(promotion.confidence, 0);
+      const closedSamples = Math.max(
+        toNumber(promotion.best_snapshot?.closed_trade_count, 0),
+        toNumber(summary.best_snapshot?.closed_trade_count, 0),
+        toNumber(summary.latest_policy?.closed_trade_count, 0)
+      );
+      const enoughSamples = closedSamples >= Math.min(Math.max(options.min_closed_samples, 3), 5);
+      const promotableAction = ['scale_up', 'tighten', 'hold_and_compare'].includes(action);
+      const compactPromotion = {
+        action,
+        confidence: roundNumber(confidence, 4),
+        recommended_style: promotion.recommended_style,
+        recommended_min_score: promotion.recommended_min_score,
+        recommended_default_position_pct: promotion.recommended_default_position_pct,
+        recommended_max_position_pct: promotion.recommended_max_position_pct,
+        recommended_paper_trade_limit: promotion.recommended_paper_trade_limit,
+        position_multiplier: promotion.position_multiplier,
+        best_snapshot_id: promotion.best_snapshot?.id,
+        best_snapshot_closed_trade_count: promotion.best_snapshot?.closed_trade_count,
+        best_snapshot_avg_excess_return_pct: promotion.best_snapshot?.avg_excess_return_pct,
+        reasons: Array.isArray(promotion.reasons) ? promotion.reasons.slice(0, 4) : [],
+      };
+
+      const shouldApply = runCount > 0 && promotableAction && confidence >= 0.5 && enoughSamples;
+      if (!shouldApply) {
+        return {
+          ...enrichedPolicy,
+          policy_promotion: compactPromotion,
+          policy_version_feedback_reason:
+            runCount === 0
+              ? '暂无策略版本样本，先执行小样本闭环生成可比较快照'
+              : `策略版本样本 ${closedSamples}/${Math.min(
+                  Math.max(options.min_closed_samples, 3),
+                  5
+                )}、置信度 ${Math.round(confidence * 100)}%，暂不自动接管参数`,
+        };
+      }
+
+      const allowedStyles = ['balanced', 'momentum', 'value', 'low_risk'];
+      const recommendedStyle = allowedStyles.includes(String(promotion.recommended_style || ''))
+        ? String(promotion.recommended_style)
+        : policy.effective_style;
+      const currentMinScore = toNumber(policy.effective_min_score, options.base_min_score);
+      const recommendedMinScore = toNumber(promotion.recommended_min_score, currentMinScore);
+      const currentDefaultPosition = toNumber(policy.effective_default_position_pct, 3);
+      const recommendedDefaultPosition = toNumber(
+        promotion.recommended_default_position_pct,
+        currentDefaultPosition
+      );
+      const currentMaxPosition = toNumber(
+        policy.effective_max_position_pct,
+        options.base_max_position_pct
+      );
+      const recommendedMaxPosition = toNumber(
+        promotion.recommended_max_position_pct,
+        currentMaxPosition
+      );
+      const currentTradeLimit = toPositiveInt(policy.effective_paper_trade_limit, 2, 20);
+      const recommendedTradeLimit = toPositiveInt(
+        promotion.recommended_paper_trade_limit,
+        currentTradeLimit,
+        20
+      );
+
+      let effectiveMinScore = currentMinScore;
+      let effectiveDefaultPositionPct = currentDefaultPosition;
+      let effectiveMaxPositionPct = currentMaxPosition;
+      let effectivePaperTradeLimit = currentTradeLimit;
+
+      if (action === 'tighten') {
+        effectiveMinScore = Math.max(currentMinScore, recommendedMinScore);
+        effectiveDefaultPositionPct = Math.min(currentDefaultPosition, recommendedDefaultPosition);
+        effectiveMaxPositionPct = Math.min(currentMaxPosition, recommendedMaxPosition);
+        effectivePaperTradeLimit = Math.min(currentTradeLimit, recommendedTradeLimit);
+      } else if (action === 'scale_up') {
+        effectiveMinScore = Math.max(
+          Math.min(currentMinScore, recommendedMinScore),
+          options.base_min_score - 2
+        );
+        effectiveDefaultPositionPct = Math.max(
+          currentDefaultPosition,
+          recommendedDefaultPosition
+        );
+        effectiveMaxPositionPct = Math.max(currentMaxPosition, recommendedMaxPosition);
+        effectivePaperTradeLimit = Math.max(currentTradeLimit, recommendedTradeLimit);
+      } else {
+        effectiveMinScore = Math.max(currentMinScore, recommendedMinScore);
+        effectiveDefaultPositionPct =
+          recommendedDefaultPosition < currentDefaultPosition
+            ? recommendedDefaultPosition
+            : (currentDefaultPosition + recommendedDefaultPosition) / 2;
+        effectiveMaxPositionPct =
+          recommendedMaxPosition < currentMaxPosition
+            ? recommendedMaxPosition
+            : (currentMaxPosition + recommendedMaxPosition) / 2;
+        effectivePaperTradeLimit = Math.min(
+          Math.max(currentTradeLimit, 1),
+          Math.max(recommendedTradeLimit, 1)
+        );
+      }
+
+      effectiveDefaultPositionPct = clampNumber(
+        effectiveDefaultPositionPct,
+        1,
+        Math.max(1, options.base_max_position_pct)
+      );
+      effectiveMaxPositionPct = clampNumber(
+        Math.max(effectiveMaxPositionPct, effectiveDefaultPositionPct),
+        effectiveDefaultPositionPct,
+        Math.max(effectiveDefaultPositionPct, options.base_max_position_pct)
+      );
+
+      return {
+        ...enrichedPolicy,
+        effective_style: recommendedStyle,
+        effective_min_score: roundNumber(clampNumber(effectiveMinScore, 62, 94), 2),
+        effective_default_position_pct: roundNumber(effectiveDefaultPositionPct, 2),
+        effective_max_position_pct: roundNumber(effectiveMaxPositionPct, 2),
+        effective_paper_trade_limit: Math.max(1, Math.min(8, effectivePaperTradeLimit)),
+        policy_version_feedback_applied: true,
+        policy_promotion: compactPromotion,
+        policy_version_feedback_reason: `已应用策略版本晋级建议：${action}，置信度 ${Math.round(
+          confidence * 100
+        )}%、平仓样本 ${closedSamples}，下一轮采用 ${recommendedStyle}/评分≥${roundNumber(
+          effectiveMinScore,
+          2
+        )}/仓位 ${roundNumber(effectiveDefaultPositionPct, 2)}%`,
+        reason: `${policy.reason}；策略版本反馈：${action} / ${Math.round(
+          confidence * 100
+        )}% 置信度，已调整下一轮扫描参数`,
+      };
+    } catch (error: any) {
+      logger.warn(`读取策略版本晋级建议失败，沿用当前闭环参数: ${error?.message || error}`);
+      return {
+        ...enrichedPolicy,
+        policy_version_feedback_reason: `策略版本晋级建议读取失败，沿用当前参数：${
+          error?.message || error
+        }`,
+      };
+    }
+  }
+
   private async resolveLoopPolicy(options: {
     username?: string;
     enabled: boolean;
+    use_policy_version_feedback?: boolean;
+    policy_version_lookback_limit?: number;
+    universe?: 'favorites' | 'market';
     base_style: 'balanced' | 'momentum' | 'value' | 'low_risk';
     base_min_score: number;
     base_default_position_pct: number;
@@ -97,9 +304,20 @@ class AutomatedRecommendationLoopService {
       best_segments: [] as any[],
       weak_segments: [] as any[],
       next_actions: [] as string[],
+      outcome_feedback_enabled: options.enabled,
     };
 
-    if (!options.enabled) return basePolicy;
+    if (!options.enabled) {
+      return this.applyPolicyVersionPromotion(basePolicy, {
+        enabled: options.use_policy_version_feedback !== false,
+        username: options.username,
+        universe: options.universe,
+        lookback_limit: toPositiveInt(options.policy_version_lookback_limit, 120, 1000),
+        min_closed_samples: options.min_closed_samples,
+        base_min_score: options.base_min_score,
+        base_max_position_pct: options.base_max_position_pct,
+      });
+    }
 
     try {
       const dashboard = await recommendationTradeOutcomeService.getDashboard({
@@ -167,7 +385,7 @@ class AutomatedRecommendationLoopService {
             ? Math.min(5, options.base_paper_trade_limit + 1)
             : options.base_paper_trade_limit;
 
-      return {
+      const outcomePolicy = {
         ...basePolicy,
         closed_samples: closedSamples,
         effective_style: effectiveStyle as typeof basePolicy.effective_style,
@@ -187,12 +405,32 @@ class AutomatedRecommendationLoopService {
         weak_segments: weakSegments.slice(0, 5),
         next_actions: Array.isArray(feedback.next_actions) ? feedback.next_actions.slice(0, 5) : [],
       };
+      return this.applyPolicyVersionPromotion(outcomePolicy, {
+        enabled: options.use_policy_version_feedback !== false,
+        username: options.username,
+        universe: options.universe,
+        lookback_limit: toPositiveInt(options.policy_version_lookback_limit, 120, 1000),
+        min_closed_samples: options.min_closed_samples,
+        base_min_score: options.base_min_score,
+        base_max_position_pct: options.base_max_position_pct,
+      });
     } catch (error: any) {
       logger.warn(`读取全市场荐股闭环自适应策略失败，沿用基础参数: ${error?.message || error}`);
-      return {
+      return this.applyPolicyVersionPromotion(
+        {
         ...basePolicy,
         reason: `收益闭环自适应读取失败，沿用基础参数：${error?.message || error}`,
-      };
+        },
+        {
+          enabled: options.use_policy_version_feedback !== false,
+          username: options.username,
+          universe: options.universe,
+          lookback_limit: toPositiveInt(options.policy_version_lookback_limit, 120, 1000),
+          min_closed_samples: options.min_closed_samples,
+          base_min_score: options.base_min_score,
+          base_max_position_pct: options.base_max_position_pct,
+        }
+      );
     }
   }
 
@@ -205,6 +443,9 @@ class AutomatedRecommendationLoopService {
     const loop_policy = await this.resolveLoopPolicy({
       username: options.username,
       enabled: options.use_outcome_feedback !== false,
+      use_policy_version_feedback: options.use_policy_version_feedback !== false,
+      policy_version_lookback_limit: toPositiveInt(options.policy_version_lookback_limit, 120, 1000),
+      universe,
       base_style: baseStyle,
       base_min_score: Number(options.min_score || 72),
       base_default_position_pct: Number(options.default_position_pct || 5),
@@ -315,6 +556,16 @@ class AutomatedRecommendationLoopService {
         profit_gate_min_samples: toPositiveInt(options.profit_gate_min_samples, 5, 100),
         profit_gate_min_quality_score: Number(options.profit_gate_min_quality_score || 45),
         profit_gate_allow_deprioritized: false,
+        use_entry_risk_guard: options.use_entry_risk_guard !== false,
+        max_daily_new_positions: toPositiveInt(options.max_daily_new_positions, 3, 20),
+        max_daily_new_exposure_pct: Number(options.max_daily_new_exposure_pct || 12),
+        max_total_exposure_pct: Number(options.max_total_exposure_pct || 60),
+        max_industry_exposure_pct: Number(options.max_industry_exposure_pct || 25),
+        min_avg_turnover_yuan: Number(options.min_avg_turnover_yuan || 30000000),
+        cooldown_days_after_loss: toPositiveInt(options.cooldown_days_after_loss, 12, 120),
+        block_limit_up: options.block_limit_up !== false,
+        block_limit_down: options.block_limit_down !== false,
+        block_suspended: options.block_suspended !== false,
         signal_ids: archive.signal_ids,
         dry_run: Boolean(options.dry_run),
         report_to_feishu: false,

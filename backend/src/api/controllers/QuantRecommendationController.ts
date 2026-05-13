@@ -183,6 +183,7 @@ export class QuantRecommendationController {
       const result = await recommendationLoopPolicySnapshotService.getDashboard({
         universe: req.query?.universe as string,
         style: req.query?.style as string,
+        username: req.query?.username as string,
         loop_run_id: req.query?.loop_run_id as string,
         start_date: req.query?.start_date as string,
         end_date: req.query?.end_date as string,
@@ -260,6 +261,10 @@ export class QuantRecommendationController {
           ? Number(req.body.min_trade_amount)
           : undefined,
         use_profit_gate: req.body?.use_profit_gate !== false,
+        use_policy_version_feedback: req.body?.use_policy_version_feedback !== false,
+        policy_version_lookback_limit: req.body?.policy_version_lookback_limit
+          ? Number(req.body.policy_version_lookback_limit)
+          : 120,
         profit_gate_horizon: req.body?.profit_gate_horizon || '5d',
         profit_gate_min_samples: req.body?.profit_gate_min_samples
           ? Number(req.body.profit_gate_min_samples)
@@ -275,6 +280,28 @@ export class QuantRecommendationController {
         task_label: req.body?.task_label || '手动全市场荐股闭环',
         report_to_feishu: req.body?.report_to_feishu === true,
         record_type: req.body?.record_type || '手动全市场荐股闭环',
+        use_entry_risk_guard: req.body?.use_entry_risk_guard !== false,
+        max_daily_new_positions: req.body?.max_daily_new_positions
+          ? Number(req.body.max_daily_new_positions)
+          : 3,
+        max_daily_new_exposure_pct: req.body?.max_daily_new_exposure_pct
+          ? Number(req.body.max_daily_new_exposure_pct)
+          : 12,
+        max_total_exposure_pct: req.body?.max_total_exposure_pct
+          ? Number(req.body.max_total_exposure_pct)
+          : 60,
+        max_industry_exposure_pct: req.body?.max_industry_exposure_pct
+          ? Number(req.body.max_industry_exposure_pct)
+          : 25,
+        min_avg_turnover_yuan: req.body?.min_avg_turnover_yuan
+          ? Number(req.body.min_avg_turnover_yuan)
+          : 30000000,
+        cooldown_days_after_loss: req.body?.cooldown_days_after_loss
+          ? Number(req.body.cooldown_days_after_loss)
+          : 12,
+        block_limit_up: req.body?.block_limit_up !== false,
+        block_limit_down: req.body?.block_limit_down !== false,
+        block_suspended: req.body?.block_suspended !== false,
       });
 
       res.json({ success: true, data: result, message: '全市场荐股闭环已执行' });

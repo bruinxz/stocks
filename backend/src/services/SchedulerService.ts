@@ -922,6 +922,17 @@ class SchedulerService {
               : parameters.useOutcomeFeedback !== undefined
                 ? Boolean(parameters.useOutcomeFeedback)
                 : true,
+          use_policy_version_feedback:
+            parameters.use_policy_version_feedback !== undefined
+              ? Boolean(parameters.use_policy_version_feedback)
+              : parameters.usePolicyVersionFeedback !== undefined
+                ? Boolean(parameters.usePolicyVersionFeedback)
+                : true,
+          policy_version_lookback_limit: this.toPositiveInt(
+            parameters.policy_version_lookback_limit || parameters.policyVersionLookbackLimit,
+            120,
+            1000
+          ),
           outcome_feedback_lookback_days: this.toPositiveInt(
             parameters.outcome_feedback_lookback_days || parameters.outcomeFeedbackLookbackDays,
             365,
@@ -949,6 +960,52 @@ class SchedulerService {
           profit_gate_min_quality_score: Number(
             parameters.profit_gate_min_quality_score || parameters.profitGateMinQualityScore || 45
           ),
+          use_entry_risk_guard:
+            parameters.use_entry_risk_guard !== undefined
+              ? Boolean(parameters.use_entry_risk_guard)
+              : parameters.useEntryRiskGuard !== undefined
+                ? Boolean(parameters.useEntryRiskGuard)
+                : true,
+          max_daily_new_positions: this.toPositiveInt(
+            parameters.max_daily_new_positions || parameters.maxDailyNewPositions,
+            3,
+            20
+          ),
+          max_daily_new_exposure_pct: Number(
+            parameters.max_daily_new_exposure_pct || parameters.maxDailyNewExposurePct || 12
+          ),
+          max_total_exposure_pct: Number(
+            parameters.max_total_exposure_pct || parameters.maxTotalExposurePct || 60
+          ),
+          max_industry_exposure_pct: Number(
+            parameters.max_industry_exposure_pct || parameters.maxIndustryExposurePct || 25
+          ),
+          min_avg_turnover_yuan: Number(
+            parameters.min_avg_turnover_yuan || parameters.minAvgTurnoverYuan || 30000000
+          ),
+          cooldown_days_after_loss: this.toPositiveInt(
+            parameters.cooldown_days_after_loss || parameters.cooldownDaysAfterLoss,
+            12,
+            120
+          ),
+          block_limit_up:
+            parameters.block_limit_up !== undefined
+              ? Boolean(parameters.block_limit_up)
+              : parameters.blockLimitUp !== undefined
+                ? Boolean(parameters.blockLimitUp)
+                : true,
+          block_limit_down:
+            parameters.block_limit_down !== undefined
+              ? Boolean(parameters.block_limit_down)
+              : parameters.blockLimitDown !== undefined
+                ? Boolean(parameters.blockLimitDown)
+                : true,
+          block_suspended:
+            parameters.block_suspended !== undefined
+              ? Boolean(parameters.block_suspended)
+              : parameters.blockSuspended !== undefined
+                ? Boolean(parameters.blockSuspended)
+                : true,
           agent_auto_paper_trade:
             parameters.agent_auto_paper_trade !== undefined
               ? Boolean(parameters.agent_auto_paper_trade)
@@ -1271,12 +1328,24 @@ class SchedulerService {
           max_position_pct: 10,
           min_trade_amount: 3000,
           use_outcome_feedback: true,
+          use_policy_version_feedback: true,
+          policy_version_lookback_limit: 120,
           outcome_feedback_lookback_days: 365,
           outcome_feedback_min_closed_samples: 5,
           use_profit_gate: true,
           profit_gate_horizon: '5d',
           profit_gate_min_samples: 5,
           profit_gate_min_quality_score: 45,
+          use_entry_risk_guard: true,
+          max_daily_new_positions: 3,
+          max_daily_new_exposure_pct: 12,
+          max_total_exposure_pct: 60,
+          max_industry_exposure_pct: 25,
+          min_avg_turnover_yuan: 30000000,
+          cooldown_days_after_loss: 12,
+          block_limit_up: true,
+          block_limit_down: true,
+          block_suspended: true,
           agent_auto_paper_trade: true,
           submit_agent_analysis: true,
           agent_max_count: 5,

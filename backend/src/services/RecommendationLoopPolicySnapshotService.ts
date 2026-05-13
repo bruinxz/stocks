@@ -36,6 +36,7 @@ function modelToPlain<T = any>(record: any): T {
 export interface LoopPolicySnapshotQueryOptions {
   limit?: number;
   offset?: number;
+  username?: string;
   loop_run_id?: string;
   loop_run_ids?: string[];
   universe?: string;
@@ -185,6 +186,7 @@ export class RecommendationLoopPolicySnapshotService {
     const limit = toPositiveInt(options.limit, 100, 1000);
     const offset = Math.max(0, Number(options.offset || 0));
     const where: any = {};
+    if (options.username) where.username = options.username;
     if (options.loop_run_id) where.loop_run_id = options.loop_run_id;
     if (options.universe && options.universe !== 'all') where.universe = options.universe;
     if (options.style && options.style !== 'all') where.effective_style = options.style;

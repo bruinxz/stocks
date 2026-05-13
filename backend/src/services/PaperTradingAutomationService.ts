@@ -12,6 +12,7 @@ import { PaperTradingSnapshot } from '../models/PaperTradingSnapshot';
 import { DailyBar } from '../models/DailyBar';
 import { Stock } from '../models/Stock';
 import { User } from '../models/User';
+import { RecommendationTradeOutcome } from '../models/RecommendationTradeOutcome';
 import { quantRecommendationService } from './QuantRecommendationService';
 import { aiInvestmentSignalService } from './AIInvestmentSignalService';
 import { feishuTaskReportService } from './FeishuTaskReportService';
@@ -55,6 +56,17 @@ export interface PaperTradingAutoOptions {
   outcome_feedback_min_closed_samples?: number;
   outcome_feedback_lookback_days?: number;
   outcome_feedback_limit?: number;
+  use_entry_risk_guard?: boolean;
+  max_daily_new_positions?: number;
+  max_daily_new_exposure_pct?: number;
+  max_total_exposure_pct?: number;
+  max_industry_exposure_pct?: number;
+  min_avg_turnover_yuan?: number;
+  cooldown_days_after_loss?: number;
+  block_st?: boolean;
+  block_limit_up?: boolean;
+  block_limit_down?: boolean;
+  block_suspended?: boolean;
 }
 
 export interface PaperTradingAutoSyncOptions extends PaperTradingAutoOptions {
@@ -177,6 +189,67 @@ export interface PaperTradingAutoResult {
     insights?: string[];
     next_actions?: string[];
   };
+  entry_risk_guard_policy?: {
+    enabled: boolean;
+    max_daily_new_positions: number;
+    max_daily_new_exposure_pct: number;
+    max_total_exposure_pct: number;
+    max_industry_exposure_pct: number;
+    min_avg_turnover_yuan: number;
+    cooldown_days_after_loss: number;
+    block_st: boolean;
+    block_limit_up: boolean;
+    block_limit_down: boolean;
+    block_suspended: boolean;
+    current_exposure_pct: number;
+    today_buy_count: number;
+    today_new_exposure_pct: number;
+    remaining_daily_new_positions: number;
+    remaining_daily_new_exposure_pct: number;
+    risk_notes: string[];
+  };
+}
+
+interface EntryRiskGuardState {
+  enabled: boolean;
+  max_daily_new_positions: number;
+  max_daily_new_exposure_pct: number;
+  max_total_exposure_pct: number;
+  max_industry_exposure_pct: number;
+  min_avg_turnover_yuan: number;
+  cooldown_days_after_loss: number;
+  block_st: boolean;
+  block_limit_up: boolean;
+  block_limit_down: boolean;
+  block_suspended: boolean;
+  total_value: number;
+  current_exposure_pct: number;
+  today_buy_count: number;
+  today_new_exposure_pct: number;
+  staged_count: number;
+  staged_exposure_pct: number;
+  industry_exposure_amount: Map<string, number>;
+  risk_notes: string[];
+}
+
+interface EntryMarketProfile {
+  symbol: string;
+  name?: string;
+  industry?: string;
+  market?: string;
+  data_status?: string;
+  is_st: boolean;
+  is_suspended: boolean;
+  is_limit_up: boolean;
+  is_limit_down: boolean;
+  latest_change_percent?: number;
+  avg_turnover_yuan: number;
+  latest_date?: string;
+  cooldown_hit?: {
+    exit_date?: string;
+    total_pnl_pct?: number;
+    realized_pnl_pct?: number;
+  } | null;
 }
 
 export interface PaperTradingRiskCheckOptions {
@@ -429,6 +502,21 @@ class PaperTradingAutomationService {
     const default_position_pct = toNumber(options.default_position_pct, 5);
     const max_position_pct = toNumber(options.max_position_pct, 12);
     const min_trade_amount = toNumber(options.min_trade_amount, 3000);
+    const entryRiskGuard = await this.resolveEntryRiskGuardPolicy({
+      enabled: toBoolean(options.use_entry_risk_guard, true),
+      portfolio_id: 0,
+      total_value: 0,
+      max_daily_new_positions: toPositiveInt(options.max_daily_new_positions, 3, 20),
+      max_daily_new_exposure_pct: toNumber(options.max_daily_new_exposure_pct, 12),
+      max_total_exposure_pct: toNumber(options.max_total_exposure_pct, 60),
+      max_industry_exposure_pct: toNumber(options.max_industry_exposure_pct, 25),
+      min_avg_turnover_yuan: toNumber(options.min_avg_turnover_yuan, 30000000),
+      cooldown_days_after_loss: toPositiveInt(options.cooldown_days_after_loss, 12, 120),
+      block_st: toBoolean(options.block_st, true),
+      block_limit_up: toBoolean(options.block_limit_up, true),
+      block_limit_down: toBoolean(options.block_limit_down, true),
+      block_suspended: toBoolean(options.block_suspended, true),
+    });
     const source_type = options.source_type || AISignalSourceType.QUANT_RECOMMENDATION;
     const require_action_buy = toBoolean(
       options.require_action_buy,
@@ -498,6 +586,24 @@ class PaperTradingAutomationService {
     const remainingSlots = Math.max(0, max_positions - existingPositions.length);
     let availableCash = toNumber(portfolio.current_cash, 0);
     const totalValue = Math.max(toNumber(portfolio.total_value, 0), preSnapshot.total_value);
+    Object.assign(
+      entryRiskGuard,
+      await this.resolveEntryRiskGuardPolicy({
+        enabled: toBoolean(options.use_entry_risk_guard, true),
+        portfolio_id: portfolio.id,
+        total_value: totalValue,
+        max_daily_new_positions: toPositiveInt(options.max_daily_new_positions, 3, 20),
+        max_daily_new_exposure_pct: toNumber(options.max_daily_new_exposure_pct, 12),
+        max_total_exposure_pct: toNumber(options.max_total_exposure_pct, 60),
+        max_industry_exposure_pct: toNumber(options.max_industry_exposure_pct, 25),
+        min_avg_turnover_yuan: toNumber(options.min_avg_turnover_yuan, 30000000),
+        cooldown_days_after_loss: toPositiveInt(options.cooldown_days_after_loss, 12, 120),
+        block_st: toBoolean(options.block_st, true),
+        block_limit_up: toBoolean(options.block_limit_up, true),
+        block_limit_down: toBoolean(options.block_limit_down, true),
+        block_suspended: toBoolean(options.block_suspended, true),
+      })
+    );
 
     const where: any = {
       normalized_decision: {
@@ -655,6 +761,19 @@ class PaperTradingAutomationService {
         continue;
       }
 
+      const marketProfile = await this.getEntryMarketProfile(symbol, {
+        cooldown_days_after_loss: entryRiskGuard.cooldown_days_after_loss,
+      });
+      const preTradeRisk = this.evaluateEntryRiskGuard({
+        guard: entryRiskGuard,
+        profile: marketProfile,
+        candidate_position_pct: 0,
+      });
+      if (!preTradeRisk.allowed) {
+        skip(preTradeRisk.reasons.join('；'));
+        continue;
+      }
+
       const quote = await this.getLatestPrice(symbol, toNumber(signal.current_price, 0));
       if (!quote.price || quote.price <= 0) {
         skip('无法获取有效最新价格');
@@ -676,6 +795,15 @@ class PaperTradingAutomationService {
         0,
         max_position_pct
       );
+      const tradeRisk = this.evaluateEntryRiskGuard({
+        guard: entryRiskGuard,
+        profile: marketProfile,
+        candidate_position_pct: gatedSuggestedPct,
+      });
+      if (!tradeRisk.allowed) {
+        skip(tradeRisk.reasons.join('；'));
+        continue;
+      }
       if (gatedSuggestedPct <= 0) {
         skip(`收益闸门仓位倍率为 ${profitGatePolicy.effective_position_multiplier}，不执行买入`);
         continue;
@@ -758,11 +886,18 @@ class PaperTradingAutomationService {
           take_profit_pct: tradePayload.take_profit_pct,
           profit_gate: profitGatePolicy,
           outcome_feedback: outcomeFeedbackPolicy,
+          entry_risk_guard: this.buildEntryRiskGuardPolicy(entryRiskGuard),
+          entry_market_profile: marketProfile,
         });
         await this.refreshRecommendationTradeOutcome(signal.id);
       }
 
       availableCash = roundNumber(availableCash - total_cost, 2);
+      this.commitEntryRiskGuardTrade(entryRiskGuard, {
+        profile: marketProfile,
+        target_position_pct: tradePayload.target_position_pct || 0,
+        amount,
+      });
       trades.push(tradePayload);
     }
 
@@ -784,6 +919,7 @@ class PaperTradingAutomationService {
       feedback_policy: feedbackPolicy,
       profit_gate_policy: profitGatePolicy,
       outcome_feedback_policy: outcomeFeedbackPolicy,
+      entry_risk_guard_policy: this.buildEntryRiskGuardPolicy(entryRiskGuard),
     };
 
     if (report_to_feishu) {
@@ -1514,6 +1650,297 @@ class PaperTradingAutomationService {
         reason: `收益闭环反哺读取失败，沿用原始参数：${error?.message || error}`,
       };
     }
+  }
+
+  private async resolveEntryRiskGuardPolicy(options: {
+    enabled: boolean;
+    portfolio_id: number;
+    total_value: number;
+    max_daily_new_positions: number;
+    max_daily_new_exposure_pct: number;
+    max_total_exposure_pct: number;
+    max_industry_exposure_pct: number;
+    min_avg_turnover_yuan: number;
+    cooldown_days_after_loss: number;
+    block_st: boolean;
+    block_limit_up: boolean;
+    block_limit_down: boolean;
+    block_suspended: boolean;
+  }): Promise<EntryRiskGuardState> {
+    const totalValue = Math.max(toNumber(options.total_value, 0), 1);
+    const state: EntryRiskGuardState = {
+      enabled: options.enabled,
+      max_daily_new_positions: Math.max(1, options.max_daily_new_positions),
+      max_daily_new_exposure_pct: clamp(options.max_daily_new_exposure_pct, 1, 100),
+      max_total_exposure_pct: clamp(options.max_total_exposure_pct, 1, 100),
+      max_industry_exposure_pct: clamp(options.max_industry_exposure_pct, 1, 100),
+      min_avg_turnover_yuan: Math.max(0, options.min_avg_turnover_yuan),
+      cooldown_days_after_loss: Math.max(0, options.cooldown_days_after_loss),
+      block_st: options.block_st,
+      block_limit_up: options.block_limit_up,
+      block_limit_down: options.block_limit_down,
+      block_suspended: options.block_suspended,
+      total_value: totalValue,
+      current_exposure_pct: 0,
+      today_buy_count: 0,
+      today_new_exposure_pct: 0,
+      staged_count: 0,
+      staged_exposure_pct: 0,
+      industry_exposure_amount: new Map<string, number>(),
+      risk_notes: options.enabled
+        ? ['已启用入场风控：流动性、涨跌停、行业集中度、日内新增仓位与亏损冷却均会被检查。']
+        : ['入场风控未启用。'],
+    };
+
+    if (!options.enabled || !options.portfolio_id) return state;
+
+    const [positions, todayTrades] = await Promise.all([
+      PaperTradingPosition.findAll({ where: { portfolio_id: options.portfolio_id } }),
+      PaperTradingTrade.findAll({
+        where: {
+          portfolio_id: options.portfolio_id,
+          direction: 'BUY',
+          created_at: {
+            [Op.gte]: moment().tz('Asia/Shanghai').startOf('day').toDate(),
+          },
+        },
+      }),
+    ]);
+
+    const symbols = [...new Set(positions.map(position => normalizeSymbol(position.symbol)))];
+    const stocks = symbols.length
+      ? await Stock.findAll({ where: { symbol: { [Op.in]: symbols } }, raw: true })
+      : [];
+    const stockMap = new Map<string, any>(
+      (stocks as any[]).map(stock => [normalizeSymbol(stock.symbol), stock])
+    );
+
+    const positionValue = positions.reduce(
+      (sum, position) => sum + toNumber(position.market_value, 0),
+      0
+    );
+    state.current_exposure_pct = roundNumber((positionValue / totalValue) * 100, 2);
+    state.today_buy_count = todayTrades.length;
+    const todayAmount = todayTrades.reduce((sum, trade) => sum + toNumber(trade.amount, 0), 0);
+    state.today_new_exposure_pct = roundNumber((todayAmount / totalValue) * 100, 2);
+
+    for (const position of positions) {
+      const symbol = normalizeSymbol(position.symbol);
+      const stock = stockMap.get(symbol);
+      const industry = stock?.industry || '未分类';
+      state.industry_exposure_amount.set(
+        industry,
+        toNumber(state.industry_exposure_amount.get(industry), 0) +
+          toNumber(position.market_value, 0)
+      );
+    }
+
+    return state;
+  }
+
+  private buildEntryRiskGuardPolicy(
+    guard: EntryRiskGuardState
+  ): NonNullable<PaperTradingAutoResult['entry_risk_guard_policy']> {
+    return {
+      enabled: guard.enabled,
+      max_daily_new_positions: guard.max_daily_new_positions,
+      max_daily_new_exposure_pct: roundNumber(guard.max_daily_new_exposure_pct, 2),
+      max_total_exposure_pct: roundNumber(guard.max_total_exposure_pct, 2),
+      max_industry_exposure_pct: roundNumber(guard.max_industry_exposure_pct, 2),
+      min_avg_turnover_yuan: roundNumber(guard.min_avg_turnover_yuan, 2),
+      cooldown_days_after_loss: guard.cooldown_days_after_loss,
+      block_st: guard.block_st,
+      block_limit_up: guard.block_limit_up,
+      block_limit_down: guard.block_limit_down,
+      block_suspended: guard.block_suspended,
+      current_exposure_pct: roundNumber(guard.current_exposure_pct, 2),
+      today_buy_count: guard.today_buy_count + guard.staged_count,
+      today_new_exposure_pct: roundNumber(
+        guard.today_new_exposure_pct + guard.staged_exposure_pct,
+        2
+      ),
+      remaining_daily_new_positions: Math.max(
+        0,
+        guard.max_daily_new_positions - guard.today_buy_count - guard.staged_count
+      ),
+      remaining_daily_new_exposure_pct: roundNumber(
+        Math.max(
+          0,
+          guard.max_daily_new_exposure_pct - guard.today_new_exposure_pct - guard.staged_exposure_pct
+        ),
+        2
+      ),
+      risk_notes: guard.risk_notes.slice(0, 8),
+    };
+  }
+
+  private async getEntryMarketProfile(
+    symbol: string,
+    options: { cooldown_days_after_loss: number }
+  ): Promise<EntryMarketProfile> {
+    const normalizedSymbol = normalizeSymbol(symbol);
+    const stock = await Stock.findOne({ where: { symbol: normalizedSymbol } });
+    const bars = stock
+      ? await DailyBar.findAll({
+          where: { stock_id: stock.id },
+          order: [['time', 'DESC']],
+          limit: 20,
+          raw: true,
+        })
+      : [];
+    const latest: any = bars[0] || null;
+    const validTurnovers = (bars as any[])
+      .slice(0, 20)
+      .map(bar => toNumber(bar.turnover, 0))
+      .filter(value => value > 0);
+    const avgTurnover =
+      validTurnovers.length > 0
+        ? validTurnovers.reduce((sum, value) => sum + value, 0) / validTurnovers.length
+        : 0;
+    const name = stock?.name || normalizedSymbol;
+    const latestChangePercent = toOptionalNumber(
+      latest?.change_percent ?? stock?.change_percent
+    );
+    const cooldownHit =
+      options.cooldown_days_after_loss > 0
+        ? await RecommendationTradeOutcome.findOne({
+            where: {
+              symbol: normalizedSymbol,
+              trade_status: 'closed',
+              [Op.or]: [
+                { total_pnl_pct: { [Op.lt]: 0 } },
+                { realized_pnl_pct: { [Op.lt]: 0 } },
+              ],
+              exit_date: {
+                [Op.gte]: moment()
+                  .tz('Asia/Shanghai')
+                  .subtract(options.cooldown_days_after_loss, 'days')
+                  .format('YYYY-MM-DD'),
+              },
+            },
+            order: [['exit_date', 'DESC']],
+          })
+        : null;
+
+    return {
+      symbol: normalizedSymbol,
+      name,
+      industry: stock?.industry || '未分类',
+      market: stock?.market,
+      data_status: stock?.data_status,
+      is_st: /(^|\*)ST|退/i.test(name),
+      is_suspended: Boolean(latest?.is_suspended),
+      is_limit_up: Number.isFinite(Number(latestChangePercent)) && Number(latestChangePercent) >= 9.7,
+      is_limit_down:
+        Number.isFinite(Number(latestChangePercent)) && Number(latestChangePercent) <= -9.7,
+      latest_change_percent: latestChangePercent,
+      avg_turnover_yuan: roundNumber(avgTurnover, 2),
+      latest_date: latest?.time ? moment(latest.time).tz('Asia/Shanghai').format('YYYY-MM-DD') : '',
+      cooldown_hit: cooldownHit
+        ? {
+            exit_date: cooldownHit.exit_date,
+            total_pnl_pct: toOptionalNumber(cooldownHit.total_pnl_pct),
+            realized_pnl_pct: toOptionalNumber(cooldownHit.realized_pnl_pct),
+          }
+        : null,
+    };
+  }
+
+  private evaluateEntryRiskGuard(options: {
+    guard: EntryRiskGuardState;
+    profile: EntryMarketProfile;
+    candidate_position_pct: number;
+  }): { allowed: boolean; reasons: string[] } {
+    const { guard, profile } = options;
+    if (!guard.enabled) return { allowed: true, reasons: [] };
+
+    const candidatePct = Math.max(0, toNumber(options.candidate_position_pct, 0));
+    const reasons: string[] = [];
+    if (guard.block_st && profile.is_st) {
+      reasons.push('入场风控：ST/退市风险标的禁止自动买入');
+    }
+    if (guard.block_suspended && profile.is_suspended) {
+      reasons.push('入场风控：最新交易日停牌，禁止自动买入');
+    }
+    if (guard.block_limit_up && profile.is_limit_up) {
+      reasons.push(`入场风控：最新涨幅 ${profile.latest_change_percent ?? '--'}%，疑似涨停追高`);
+    }
+    if (guard.block_limit_down && profile.is_limit_down) {
+      reasons.push(`入场风控：最新跌幅 ${profile.latest_change_percent ?? '--'}%，疑似跌停流动性风险`);
+    }
+    if (profile.data_status && ['no_data', 'conflict', 'incomplete'].includes(profile.data_status)) {
+      reasons.push(`入场风控：数据状态 ${profile.data_status}，等待数据质量修复`);
+    }
+    if (guard.min_avg_turnover_yuan > 0 && profile.avg_turnover_yuan > 0) {
+      if (profile.avg_turnover_yuan < guard.min_avg_turnover_yuan) {
+        reasons.push(
+          `入场风控：20日均成交额 ${Math.round(
+            profile.avg_turnover_yuan / 10000
+          )} 万，低于阈值 ${Math.round(guard.min_avg_turnover_yuan / 10000)} 万`
+        );
+      }
+    }
+    if (guard.cooldown_days_after_loss > 0 && profile.cooldown_hit) {
+      reasons.push(
+        `入场风控：${guard.cooldown_days_after_loss}日亏损冷却中，最近退出收益 ${
+          profile.cooldown_hit.total_pnl_pct ?? profile.cooldown_hit.realized_pnl_pct ?? '--'
+        }%`
+      );
+    }
+    if (guard.today_buy_count + guard.staged_count >= guard.max_daily_new_positions) {
+      reasons.push(`入场风控：今日新增持仓数已达 ${guard.max_daily_new_positions} 笔上限`);
+    }
+
+    if (candidatePct > 0) {
+      const nextDailyExposure =
+        guard.today_new_exposure_pct + guard.staged_exposure_pct + candidatePct;
+      if (nextDailyExposure > guard.max_daily_new_exposure_pct + 0.01) {
+        reasons.push(
+          `入场风控：今日新增仓位 ${roundNumber(
+            nextDailyExposure,
+            2
+          )}% 将超过 ${guard.max_daily_new_exposure_pct}%`
+        );
+      }
+      const nextTotalExposure =
+        guard.current_exposure_pct + guard.staged_exposure_pct + candidatePct;
+      if (nextTotalExposure > guard.max_total_exposure_pct + 0.01) {
+        reasons.push(
+          `入场风控：总风险暴露 ${roundNumber(
+            nextTotalExposure,
+            2
+          )}% 将超过 ${guard.max_total_exposure_pct}%`
+        );
+      }
+      const industry = profile.industry || '未分类';
+      const currentIndustryPct =
+        (toNumber(guard.industry_exposure_amount.get(industry), 0) / guard.total_value) * 100;
+      if (currentIndustryPct + candidatePct > guard.max_industry_exposure_pct + 0.01) {
+        reasons.push(
+          `入场风控：${industry} 行业暴露 ${roundNumber(
+            currentIndustryPct + candidatePct,
+            2
+          )}% 将超过 ${guard.max_industry_exposure_pct}%`
+        );
+      }
+    }
+
+    return { allowed: reasons.length === 0, reasons };
+  }
+
+  private commitEntryRiskGuardTrade(
+    guard: EntryRiskGuardState,
+    options: { profile: EntryMarketProfile; target_position_pct: number; amount: number }
+  ) {
+    if (!guard.enabled) return;
+    const pct = Math.max(0, toNumber(options.target_position_pct, 0));
+    guard.staged_count += 1;
+    guard.staged_exposure_pct = roundNumber(guard.staged_exposure_pct + pct, 4);
+    const industry = options.profile.industry || '未分类';
+    guard.industry_exposure_amount.set(
+      industry,
+      toNumber(guard.industry_exposure_amount.get(industry), 0) + toNumber(options.amount, 0)
+    );
   }
 
   private matchOutcomeBlockedSegment(

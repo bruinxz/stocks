@@ -12,6 +12,7 @@ import {
   Tag,
   Typography,
   message,
+  Modal,
 } from 'antd';
 import {
   ExperimentOutlined,
@@ -166,6 +167,7 @@ const RecommendationLoopPolicies: React.FC = () => {
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [loading, setLoading] = useState(false);
   const [refreshingOutcomes, setRefreshingOutcomes] = useState(false);
+  const [runningLoop, setRunningLoop] = useState(false);
   const [style, setStyle] = useState('all');
   const [universe, setUniverse] = useState('all');
 
@@ -204,6 +206,83 @@ const RecommendationLoopPolicies: React.FC = () => {
     } finally {
       setRefreshingOutcomes(false);
     }
+  };
+
+  const runSafeLoop = async (mode: 'smoke' | 'promotion') => {
+    const advice = dashboard?.promotion;
+    const basePayload = {
+      username: 'lym',
+      universe: 'market',
+      candidate_limit: mode === 'smoke' ? 5 : 12,
+      candidate_pool_limit: mode === 'smoke' ? 80 : 180,
+      archive_limit: mode === 'smoke' ? 5 : 12,
+      run_paper_trading: mode !== 'smoke',
+      dry_run: true,
+      submit_agent_analysis: false,
+      verify_signals: false,
+      report_to_feishu: false,
+      use_outcome_feedback: true,
+      use_policy_version_feedback: true,
+      use_entry_risk_guard: true,
+      max_daily_new_positions: mode === 'smoke' ? 1 : 2,
+      max_daily_new_exposure_pct: mode === 'smoke' ? 4 : 8,
+      max_total_exposure_pct: 45,
+      max_industry_exposure_pct: 20,
+      min_avg_turnover_yuan: 30000000,
+      cooldown_days_after_loss: 12,
+      record_type: mode === 'smoke' ? '闭环安全烟测' : '策略晋级预演',
+      task_label: mode === 'smoke' ? '闭环安全烟测' : '策略晋级预演',
+    };
+    const payload =
+      mode === 'promotion' && advice
+        ? {
+            ...basePayload,
+            style: advice.recommended_style || 'balanced',
+            min_score: advice.recommended_min_score || 72,
+            default_position_pct: advice.recommended_default_position_pct || 3,
+            max_position_pct: advice.recommended_max_position_pct || 6,
+            paper_trade_limit: advice.recommended_paper_trade_limit || 2,
+          }
+        : {
+            ...basePayload,
+            style: 'balanced',
+            min_score: 72,
+            default_position_pct: 3,
+            max_position_pct: 6,
+            paper_trade_limit: 1,
+          };
+
+    const title = mode === 'smoke' ? '执行闭环安全烟测？' : '用晋级建议执行小仓预演？';
+    const content =
+      mode === 'smoke'
+        ? '本次只扫描小样本并生成策略快照，不提交 TradingAgents、不真实模拟买入，用于验证闭环链路。'
+        : '本次会使用当前策略晋级建议进行模拟盘 dry-run 预演，并启用入场风控，不会真实成交。';
+
+    Modal.confirm({
+      title,
+      content,
+      okText: '开始执行',
+      cancelText: '取消',
+      onOk: async () => {
+        setRunningLoop(true);
+        try {
+          const response = await api.post('/ai/recommendations/auto-loop', payload);
+          if (response.data.success) {
+            const data = response.data.data || {};
+            message.success(
+              `${basePayload.record_type}完成：归档 ${data.archive?.total || 0}，计划 ${
+                data.paper_trading?.planned || 0
+              }，快照 #${data.policy_snapshot?.id || '--'}`
+            );
+            await fetchDashboard(true);
+          }
+        } catch (error: any) {
+          message.error(error.response?.data?.message || '执行自动荐股闭环失败');
+        } finally {
+          setRunningLoop(false);
+        }
+      },
+    });
   };
 
   useEffect(() => {
@@ -370,6 +449,21 @@ const RecommendationLoopPolicies: React.FC = () => {
             loading={refreshingOutcomes}
           >
             回填收益
+          </Button>
+          <Button
+            icon={<ExperimentOutlined />}
+            onClick={() => runSafeLoop('smoke')}
+            loading={runningLoop}
+          >
+            闭环烟测
+          </Button>
+          <Button
+            type="primary"
+            icon={<SlidersOutlined />}
+            onClick={() => runSafeLoop('promotion')}
+            loading={runningLoop}
+          >
+            晋级预演
           </Button>
           <Text type="secondary">最后生成：{dashboard?.generated_at || '--'}</Text>
         </Space>
