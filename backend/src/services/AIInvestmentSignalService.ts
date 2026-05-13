@@ -254,6 +254,24 @@ function getSignalSide(decision?: string): 'long' | 'short' | 'neutral' {
   return 'neutral';
 }
 
+function consensusSignalBucketKey(value: any): string {
+  const count = Number(value);
+  if (Number.isFinite(count) && count >= 4) return 'consensus_4_plus';
+  if (count === 3) return 'consensus_3';
+  if (count === 2) return 'consensus_2';
+  return 'no_consensus';
+}
+
+function consensusSignalBucketLabel(key: string): string {
+  const labels: Record<string, string> = {
+    consensus_4_plus: '4组以上共识',
+    consensus_3: '3组共识',
+    consensus_2: '2组共识',
+    no_consensus: '无显式共识',
+  };
+  return labels[key] || key || 'unknown';
+}
+
 function directionalReturn(returnPct: number, decision?: string): number {
   const side = getSignalSide(decision);
   if (side === 'short') return -returnPct;
@@ -305,43 +323,43 @@ function summarizeReturnSamples(samples: any[]) {
     excess_positive_count: excessWins.length,
     excess_positive_rate:
       excessReturns.length > 0
-        ? (roundNumber((excessWins.length / excessReturns.length) * 100, 2) ?? 0)
+        ? roundNumber((excessWins.length / excessReturns.length) * 100, 2) ?? 0
         : 0,
     positive_count: wins.length,
     positive_rate:
       completedSamples.length > 0
-        ? (roundNumber((wins.length / completedSamples.length) * 100, 2) ?? 0)
+        ? roundNumber((wins.length / completedSamples.length) * 100, 2) ?? 0
         : 0,
     directional_success_count: directionalWins.length,
     directional_success_rate:
       completedSamples.length > 0
-        ? (roundNumber((directionalWins.length / completedSamples.length) * 100, 2) ?? 0)
+        ? roundNumber((directionalWins.length / completedSamples.length) * 100, 2) ?? 0
         : 0,
     directional_excess_sample_count: directionalExcessReturns.length,
     directional_excess_success_count: directionalExcessWins.length,
     directional_excess_success_rate:
       directionalExcessReturns.length > 0
-        ? (roundNumber((directionalExcessWins.length / directionalExcessReturns.length) * 100, 2) ??
-          0)
+        ? roundNumber((directionalExcessWins.length / directionalExcessReturns.length) * 100, 2) ??
+          0
         : 0,
     avg_win_pct: roundNumber(avgWin, 4) ?? 0,
     avg_loss_pct: roundNumber(avgLoss, 4) ?? 0,
     payoff_ratio:
       avgWin !== null && avgLoss !== null && avgLoss !== 0
-        ? (roundNumber(avgWin / Math.abs(avgLoss), 4) ?? 0)
+        ? roundNumber(avgWin / Math.abs(avgLoss), 4) ?? 0
         : wins.length > 0 && losses.length === 0
-          ? 999
-          : 0,
+        ? 999
+        : 0,
     profit_factor:
-      sumLosses > 0 ? (roundNumber(sumWins / sumLosses, 4) ?? 0) : wins.length > 0 ? 999 : 0,
+      sumLosses > 0 ? roundNumber(sumWins / sumLosses, 4) ?? 0 : wins.length > 0 ? 999 : 0,
     expectancy_pct: roundNumber(avgReturn, 4) ?? 0,
-    max_return_pct: returns.length > 0 ? (roundNumber(Math.max(...returns), 4) ?? 0) : 0,
-    min_return_pct: returns.length > 0 ? (roundNumber(Math.min(...returns), 4) ?? 0) : 0,
+    max_return_pct: returns.length > 0 ? roundNumber(Math.max(...returns), 4) ?? 0 : 0,
+    min_return_pct: returns.length > 0 ? roundNumber(Math.min(...returns), 4) ?? 0 : 0,
     avg_mfe_pct: roundNumber(avgMfe, 4) ?? 0,
     avg_mae_pct: roundNumber(avgMae, 4) ?? 0,
     risk_reward_ratio:
       avgMfe !== null && avgMae !== null && avgMae !== 0
-        ? (roundNumber(avgMfe / Math.abs(avgMae), 4) ?? 0)
+        ? roundNumber(avgMfe / Math.abs(avgMae), 4) ?? 0
         : 0,
   };
 }
@@ -366,6 +384,18 @@ function extractCompletedReturnSamples(signals: any[], horizonFilter?: string) {
         normalized_decision: normalizedDecision,
         agent_session: signal.metadata?.agent_session,
         task_label: signal.metadata?.task_label,
+        consensus_count: Number(signal.metadata?.consensus_count || 0),
+        consensus_bonus: Number(signal.metadata?.consensus_bonus || 0),
+        original_score:
+          signal.metadata?.original_score !== undefined
+            ? Number(signal.metadata.original_score)
+            : undefined,
+        consensus_variants: Array.isArray(signal.metadata?.consensus_variants)
+          ? signal.metadata.consensus_variants
+          : [],
+        consensus_bucket: consensusSignalBucketKey(signal.metadata?.consensus_count),
+        recommendation_tier: signal.metadata?.recommendation_tier,
+        recommendation_tier_label: signal.metadata?.recommendation_tier_label,
         confidence_score: toNumber(signal.confidence_score),
         risk_level: signal.risk_level,
         horizon,
@@ -565,7 +595,10 @@ function confidenceBucketLabel(value?: string) {
   return labels[String(value || '')] || value || 'unknown';
 }
 
-function normalizeHorizonList(value?: string[] | string, fallback = ['1d', '3d', '5d', '10d', '20d']) {
+function normalizeHorizonList(
+  value?: string[] | string,
+  fallback = ['1d', '3d', '5d', '10d', '20d']
+) {
   const raw = Array.isArray(value) ? value : value ? String(value).split(',') : fallback;
   const normalized = raw
     .map(item => {
@@ -583,10 +616,10 @@ export class AIInvestmentSignalService {
       typeof detail === 'string'
         ? detail
         : detail?.text
-          ? String(detail.text)
-          : detail
-            ? JSON.stringify(detail)
-            : '';
+        ? String(detail.text)
+        : detail
+        ? JSON.stringify(detail)
+        : '';
     const combined = `${text}\n${detailText}`;
 
     const explicitDecision = this.normalizeDecision(text);
@@ -636,21 +669,21 @@ export class AIInvestmentSignalService {
       normalized_decision === AISignalDecision.STRONG_BUY
         ? 88
         : normalized_decision === AISignalDecision.BUY
-          ? 78
-          : normalized_decision === AISignalDecision.HOLD
-            ? 58
-            : normalized_decision === AISignalDecision.SELL
-              ? 35
-              : normalized_decision === AISignalDecision.STRONG_SELL
-                ? 20
-                : undefined;
+        ? 78
+        : normalized_decision === AISignalDecision.HOLD
+        ? 58
+        : normalized_decision === AISignalDecision.SELL
+        ? 35
+        : normalized_decision === AISignalDecision.STRONG_SELL
+        ? 20
+        : undefined;
 
     const risk_level =
       upper.includes('SELL') || /高风险|严格止损|禁止介入|清仓|HIGH RISK/i.test(combined)
         ? 'high'
         : /低风险|LOW RISK|稳健/i.test(combined)
-          ? 'low'
-          : 'medium';
+        ? 'low'
+        : 'medium';
 
     return {
       rating: rawRating,
@@ -796,8 +829,8 @@ export class AIInvestmentSignalService {
       typeof params.detail === 'string'
         ? params.detail
         : params.detail
-          ? JSON.stringify(params.detail)
-          : undefined;
+        ? JSON.stringify(params.detail)
+        : undefined;
     const structured = this.parseTradingAgentsDecision(
       params.decision || params.rationale || '',
       params.detail
@@ -914,8 +947,8 @@ export class AIInvestmentSignalService {
         candidate.action === 'buy'
           ? AISignalDecision.BUY
           : candidate.action === 'avoid'
-            ? AISignalDecision.HOLD
-            : this.decisionFromQuantScore(Number(candidate.score || 0));
+          ? AISignalDecision.HOLD
+          : this.decisionFromQuantScore(Number(candidate.score || 0));
       const source_id = `${symbol}_${signal_date}_${style}_${universe}`;
       const stock = await Stock.findOne({ where: { symbol } });
       const payload = {
@@ -1647,6 +1680,13 @@ export class AIInvestmentSignalService {
           quality_score: calculateQualityScore(item, minSamples),
           gate: classifyQualityGate(item, minSamples),
         })),
+        ...groupedSummary(sample => sample.consensus_bucket).map(item => ({
+          dimension: 'consensus',
+          label: consensusSignalBucketLabel(item.key),
+          ...item,
+          quality_score: calculateQualityScore(item, minSamples),
+          gate: classifyQualityGate(item, minSamples),
+        })),
       ]
         .filter(item => item.count > 0)
         .sort((a, b) => b.quality_score - a.quality_score)
@@ -1685,6 +1725,12 @@ export class AIInvestmentSignalService {
       by_decision: groupedSummary(sample => sample.normalized_decision),
       by_source_type: groupedSummary(sample => sample.source_type),
       by_risk_level: groupedSummary(sample => sample.risk_level),
+      by_consensus: groupedSummary(sample => sample.consensus_bucket).map(item => ({
+        ...item,
+        label: consensusSignalBucketLabel(item.key),
+        quality_score: calculateQualityScore(item, minSamples),
+        gate: classifyQualityGate(item, minSamples),
+      })),
       horizon_summary,
       top_symbols,
       recent_signals,
@@ -1785,10 +1831,14 @@ export class AIInvestmentSignalService {
       sample => sample.normalized_decision,
       decisionLabelForPerformance
     );
-    const byRiskLevel = groupSamples(primarySamples, sample => sample.risk_level, value => {
-      const labels: Record<string, string> = { low: '低风险', medium: '中风险', high: '高风险' };
-      return labels[value] || value || 'unknown';
-    });
+    const byRiskLevel = groupSamples(
+      primarySamples,
+      sample => sample.risk_level,
+      value => {
+        const labels: Record<string, string> = { low: '低风险', medium: '中风险', high: '高风险' };
+        return labels[value] || value || 'unknown';
+      }
+    );
     const byConfidence = groupSamples(
       primarySamples,
       sample => confidenceBucket(sample.confidence_score),
@@ -1799,10 +1849,14 @@ export class AIInvestmentSignalService {
       sample => moment(sample.exit_date || sample.signal_date).format('YYYY-MM'),
       value => value
     ).sort((a, b) => String(a.key).localeCompare(String(b.key)));
-    const bySymbol = groupSamples(primarySamples, sample => sample.symbol, value => {
-      const found = primarySamples.find(sample => sample.symbol === value);
-      return found?.name ? `${found.name}(${value})` : value || 'unknown';
-    });
+    const bySymbol = groupSamples(
+      primarySamples,
+      sample => sample.symbol,
+      value => {
+        const found = primarySamples.find(sample => sample.symbol === value);
+        return found?.name ? `${found.name}(${value})` : value || 'unknown';
+      }
+    );
 
     const portfolioSamples = [...primarySamples].sort((a, b) => {
       const dateCompare = String(a.exit_date || a.signal_date).localeCompare(
@@ -1819,8 +1873,8 @@ export class AIInvestmentSignalService {
       const excessPct = Number.isFinite(Number(sample.directional_excess_return_pct))
         ? Number(sample.directional_excess_return_pct)
         : Number.isFinite(Number(sample.excess_return_pct))
-          ? Number(sample.excess_return_pct)
-          : returnPct;
+        ? Number(sample.excess_return_pct)
+        : returnPct;
       cumulativeReturn += returnPct;
       cumulativeExcess += excessPct;
       peakReturn = Math.max(peakReturn, cumulativeReturn);
@@ -1861,6 +1915,12 @@ export class AIInvestmentSignalService {
         decision: signal.normalized_decision || signal.decision,
         confidence_score: toNumber(signal.confidence_score),
         risk_level: signal.risk_level,
+        consensus_count: Number(signal.metadata?.consensus_count || 0),
+        consensus_bonus: Number(signal.metadata?.consensus_bonus || 0),
+        consensus_variants: Array.isArray(signal.metadata?.consensus_variants)
+          ? signal.metadata.consensus_variants
+          : [],
+        recommendation_tier_label: signal.metadata?.recommendation_tier_label,
         rationale: String(signal.rationale || '').slice(0, 260),
         verification_status: signal.verification_status,
         completed_for_primary_horizon: completedSignalIds.has(signal.id),
@@ -1886,31 +1946,29 @@ export class AIInvestmentSignalService {
       gate.action === 'scale_up'
         ? 'agent_tail_scale_up'
         : gate.action === 'deprioritize'
-          ? 'agent_tail_deprioritize'
-          : gate.action === 'collect_more_samples'
-            ? 'agent_tail_collect_samples'
-            : 'agent_tail_watch';
+        ? 'agent_tail_deprioritize'
+        : gate.action === 'collect_more_samples'
+        ? 'agent_tail_collect_samples'
+        : 'agent_tail_watch';
     const insights = [
-      `尾盘 Agent 在 ${primaryHorizon} 周期已完成 ${overall.count}/${signals.length} 个样本，平均收益 ${roundNumber(
-        overall.avg_return_pct,
+      `尾盘 Agent 在 ${primaryHorizon} 周期已完成 ${overall.count}/${
+        signals.length
+      } 个样本，平均收益 ${roundNumber(overall.avg_return_pct, 2)}%、平均超额 ${roundNumber(
+        overall.avg_excess_return_pct,
         2
-      )}%、平均超额 ${roundNumber(overall.avg_excess_return_pct, 2)}%。`,
+      )}%。`,
       `当前收益闸门：${gate.label}，建议仓位倍率 ${gate.position_multiplier}x，原因：${gate.reason}。`,
       bestHorizon
-        ? `当前相对最优持有周期是 ${bestHorizon.horizon}，质量分 ${bestHorizon.quality_score}、平均超额 ${roundNumber(
-            bestHorizon.avg_excess_return_pct,
-            2
-          )}%。`
+        ? `当前相对最优持有周期是 ${bestHorizon.horizon}，质量分 ${
+            bestHorizon.quality_score
+          }、平均超额 ${roundNumber(bestHorizon.avg_excess_return_pct, 2)}%。`
         : '尚无完成样本，先继续沉淀尾盘建议。',
       bestSymbols[0]
-        ? `当前表现最好标的片段：${bestSymbols[0].label}，样本 ${bestSymbols[0].count}，平均超额 ${roundNumber(
-            bestSymbols[0].avg_excess_return_pct,
-            2
-          )}%。`
+        ? `当前表现最好标的片段：${bestSymbols[0].label}，样本 ${
+            bestSymbols[0].count
+          }，平均超额 ${roundNumber(bestSymbols[0].avg_excess_return_pct, 2)}%。`
         : '',
-      pendingSignals > 0
-        ? `${pendingSignals} 条尾盘建议仍在后验周期内，不纳入最终收益评判。`
-        : '',
+      pendingSignals > 0 ? `${pendingSignals} 条尾盘建议仍在后验周期内，不纳入最终收益评判。` : '',
       noDataSignals > 0 ? `${noDataSignals} 条尾盘建议缺行情数据，建议先执行刷新/修复。` : '',
     ].filter(Boolean);
 

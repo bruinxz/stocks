@@ -92,6 +92,10 @@ type RecentSignal = {
   directional_return_pct?: number;
   max_favorable_excursion_pct?: number;
   max_adverse_excursion_pct?: number;
+  consensus_count?: number;
+  consensus_bonus?: number;
+  consensus_variants?: string[];
+  recommendation_tier_label?: string;
 };
 
 type QualityReportData = {
@@ -156,6 +160,7 @@ type DashboardData = {
   by_decision: SummaryRow[];
   by_source_type: SummaryRow[];
   by_risk_level: SummaryRow[];
+  by_consensus?: Array<SummaryRow & { label?: string; quality_score?: number; gate?: QualityGate }>;
   horizon_summary: SummaryRow[];
   top_symbols: Array<SummaryRow & { symbol: string; name?: string; latest_signal_date?: string }>;
   recent_signals: RecentSignal[];
@@ -211,6 +216,13 @@ const agentSessionLabelMap: Record<string, string> = {
   close: '尾盘',
   midday: '午盘',
   morning: '早盘',
+};
+
+const consensusLabelMap: Record<string, string> = {
+  consensus_4_plus: '4组以上共识',
+  consensus_3: '3组共识',
+  consensus_2: '2组共识',
+  no_consensus: '无显式共识',
 };
 
 const gateToneMap: Record<
@@ -365,6 +377,29 @@ const RecommendationPerformance: React.FC = () => {
   const playbook = data?.playbook;
   const playbookGate = playbook?.overall?.gate;
   const gateTone = gateToneMap[playbookGate?.severity || 'neutral'] || gateToneMap.neutral;
+  const consensusBuckets = useMemo(() => data?.by_consensus || [], [data?.by_consensus]);
+  const consensusEdge = useMemo(() => {
+    const consensus = consensusBuckets.filter(item => item.key !== 'no_consensus');
+    const noConsensus = consensusBuckets.find(item => item.key === 'no_consensus');
+    const total = consensus.reduce((sum, item) => sum + Number(item.count || 0), 0);
+    const avg =
+      total > 0
+        ? consensus.reduce(
+            (sum, item) => sum + Number(item.avg_return_pct || 0) * Number(item.count || 0),
+            0
+          ) / total
+        : 0;
+    const noAvg = Number(noConsensus?.avg_return_pct || 0);
+    return {
+      total,
+      avg_return_pct: avg,
+      no_consensus_avg_return_pct: noAvg,
+      edge: Number((avg - noAvg).toFixed(2)),
+      best: [...consensus].sort(
+        (a, b) => Number(b.avg_return_pct || 0) - Number(a.avg_return_pct || 0)
+      )[0],
+    };
+  }, [consensusBuckets]);
 
   const edgeScore = useMemo(() => {
     const stats = selectedHorizonStats;
@@ -403,6 +438,9 @@ const RecommendationPerformance: React.FC = () => {
             <Tag color={decisionColorMap[record.normalized_decision] || 'default'}>
               {record.normalized_decision}
             </Tag>
+            {Number(record.consensus_count || 0) > 1 && (
+              <Tag color="purple">共识{record.consensus_count}</Tag>
+            )}
           </Space>
           <Text type="secondary">
             {record.symbol} · {record.signal_date} ·{' '}
@@ -744,6 +782,70 @@ const RecommendationPerformance: React.FC = () => {
           </Col>
         )}
       </Row>
+
+      {sourceType === 'quant_recommendation' && (
+        <Card
+          className="modern-card consensus-signal-card"
+          variant="borderless"
+          title="多策略共识信号前瞻收益"
+          extra={<Text type="secondary">{horizon} 后验 · 共识 vs 非共识</Text>}
+          style={{ marginBottom: 16 }}
+        >
+          <Row gutter={[16, 16]} align="middle">
+            <Col xs={24} lg={7}>
+              <Statistic
+                title="共识样本均收"
+                value={consensusEdge.avg_return_pct}
+                precision={2}
+                suffix="%"
+                valueStyle={{ color: returnColor(consensusEdge.avg_return_pct) }}
+              />
+              <Text type="secondary">
+                共识完成样本 {consensusEdge.total} 个；相对无共识{' '}
+                <Text strong style={{ color: returnColor(consensusEdge.edge) }}>
+                  {consensusEdge.edge >= 0 ? '+' : ''}
+                  {consensusEdge.edge.toFixed(2)}%
+                </Text>
+              </Text>
+            </Col>
+            <Col xs={24} lg={7}>
+              <Statistic
+                title="最强共识层"
+                value={consensusEdge.best?.avg_return_pct || 0}
+                precision={2}
+                suffix="%"
+                valueStyle={{ color: returnColor(consensusEdge.best?.avg_return_pct) }}
+              />
+              <Text type="secondary">
+                {(consensusEdge.best as any)?.label ||
+                  consensusLabelMap[consensusEdge.best?.key || ''] ||
+                  '等待样本'}
+              </Text>
+            </Col>
+            <Col xs={24} lg={10}>
+              <Space wrap>
+                {consensusBuckets.map(bucket => (
+                  <Tag
+                    key={bucket.key}
+                    color={
+                      bucket.key === 'no_consensus'
+                        ? 'default'
+                        : Number(bucket.avg_return_pct || 0) >= 0
+                        ? 'purple'
+                        : 'orange'
+                    }
+                  >
+                    {(bucket as any).label || consensusLabelMap[bucket.key || ''] || bucket.key}：
+                    {bucket.count}样本 / 均收 {formatPct(bucket.avg_return_pct)} / 胜率{' '}
+                    {formatPct(bucket.positive_rate)}
+                  </Tag>
+                ))}
+                {!consensusBuckets.length && <Text type="secondary">等待共识信号后验样本</Text>}
+              </Space>
+            </Col>
+          </Row>
+        </Card>
+      )}
 
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
         <Col xs={24} md={8} xl={5}>
