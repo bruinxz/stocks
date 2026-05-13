@@ -129,6 +129,7 @@ const pnlColor = (value?: number | null) => (Number(value || 0) >= 0 ? '#d14343'
 const RecommendationLoopPolicies: React.FC = () => {
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [loading, setLoading] = useState(false);
+  const [refreshingOutcomes, setRefreshingOutcomes] = useState(false);
   const [style, setStyle] = useState('all');
   const [universe, setUniverse] = useState('all');
 
@@ -146,6 +147,26 @@ const RecommendationLoopPolicies: React.FC = () => {
       message.error(error.response?.data?.message || '获取策略参数快照失败');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const refreshOutcomeMetrics = async () => {
+    setRefreshingOutcomes(true);
+    try {
+      const response = await api.post(
+        '/ai/recommendations/loop-policy-snapshots/refresh-outcomes',
+        {
+          limit: 200,
+        }
+      );
+      if (response.data.success) {
+        message.success(response.data.message || '策略版本收益已回填');
+        await fetchDashboard(true);
+      }
+    } catch (error: any) {
+      message.error(error.response?.data?.message || '刷新策略版本收益失败');
+    } finally {
+      setRefreshingOutcomes(false);
     }
   };
 
@@ -301,6 +322,13 @@ const RecommendationLoopPolicies: React.FC = () => {
           </Select>
           <Button icon={<ReloadOutlined />} onClick={() => fetchDashboard(false)} loading={loading}>
             刷新
+          </Button>
+          <Button
+            icon={<NodeIndexOutlined />}
+            onClick={refreshOutcomeMetrics}
+            loading={refreshingOutcomes}
+          >
+            回填收益
           </Button>
           <Text type="secondary">最后生成：{dashboard?.generated_at || '--'}</Text>
         </Space>

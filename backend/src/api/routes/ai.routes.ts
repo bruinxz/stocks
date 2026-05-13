@@ -86,6 +86,17 @@ router.get(
 );
 
 /**
+ * @route POST /api/ai/recommendations/loop-policy-snapshots/refresh-outcomes
+ * @desc 用最新推荐交易收益回填策略参数版本表现
+ * @access Private
+ */
+router.post(
+  '/recommendations/loop-policy-snapshots/refresh-outcomes',
+  authController.authenticate,
+  quantRecommendationController.refreshLoopPolicySnapshotOutcomes
+);
+
+/**
  * @route POST /api/ai/recommendations/auto-loop
  * @desc 执行全市场自动荐股闭环：量化初筛、归档、Agent复核、后验验证与模拟盘预演/跟单
  * @access Private

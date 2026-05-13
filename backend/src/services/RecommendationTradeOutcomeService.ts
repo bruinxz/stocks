@@ -11,6 +11,7 @@ import { User } from '../models/User';
 import { benchmarkIndexService } from './BenchmarkIndexService';
 import { paperTradingAutomationService } from './PaperTradingAutomationService';
 import { feishuTaskReportService } from './FeishuTaskReportService';
+import { recommendationLoopPolicySnapshotService } from './RecommendationLoopPolicySnapshotService';
 import { normalizeSymbol, extractMarket } from '../utils/stockSymbol';
 import { logger } from '../utils/logger';
 
@@ -328,6 +329,20 @@ export class RecommendationTradeOutcomeService {
     if (toBoolean(options.report_to_feishu, false)) {
       await feishuTaskReportService.reportRecommendationTradeOutcomes(dashboard, {
         record_type: '推荐交易收益闭环刷新',
+      });
+    }
+
+    const loopRunIds = Array.from(
+      new Set(
+        outcomes
+          .map(outcome => outcome.loop_run_id)
+          .filter((value): value is string => Boolean(value))
+      )
+    );
+    if (loopRunIds.length > 0) {
+      await recommendationLoopPolicySnapshotService.refreshOutcomeMetrics({
+        loop_run_ids: loopRunIds,
+        limit: Math.max(loopRunIds.length, 1),
       });
     }
 

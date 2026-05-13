@@ -1,6 +1,7 @@
 import { Op } from 'sequelize';
 import moment from 'moment-timezone';
 import { RecommendationLoopPolicySnapshot } from '../models/RecommendationLoopPolicySnapshot';
+import { RecommendationTradeOutcome } from '../models/RecommendationTradeOutcome';
 import { logger } from '../utils/logger';
 
 function toNumber(value: any, fallback = 0): number {
@@ -36,10 +37,18 @@ export interface LoopPolicySnapshotQueryOptions {
   limit?: number;
   offset?: number;
   loop_run_id?: string;
+  loop_run_ids?: string[];
   universe?: string;
   style?: string;
   start_date?: string;
   end_date?: string;
+}
+
+export interface LoopPolicySnapshotRefreshOptions {
+  limit?: number;
+  loop_run_id?: string;
+  loop_run_ids?: string[];
+  lookback_days?: number;
 }
 
 export class RecommendationLoopPolicySnapshotService {
@@ -217,6 +226,91 @@ export class RecommendationLoopPolicySnapshotService {
     };
   }
 
+  async refreshOutcomeMetrics(options: LoopPolicySnapshotRefreshOptions = {}) {
+    const limit = toPositiveInt(options.limit, 200, 1000);
+    const loopRunIds = Array.isArray(options.loop_run_ids)
+      ? options.loop_run_ids.map(item => String(item || '').trim()).filter(Boolean)
+      : [];
+    const where: any = { loop_run_id: { [Op.ne]: null } };
+    if (options.loop_run_id) {
+      where.loop_run_id = options.loop_run_id;
+    } else if (loopRunIds.length > 0) {
+      where.loop_run_id = { [Op.in]: loopRunIds };
+    }
+    if (options.lookback_days) {
+      where.generated_at = {
+        [Op.gte]: moment()
+          .tz('Asia/Shanghai')
+          .subtract(toPositiveInt(options.lookback_days, 365, 3650), 'days')
+          .toDate(),
+      };
+    }
+
+    const snapshots = await RecommendationLoopPolicySnapshot.findAll({
+      where,
+      order: [['generated_at', 'DESC']],
+      limit,
+    });
+
+    const refreshed: any[] = [];
+    for (const snapshot of snapshots) {
+      if (!snapshot.loop_run_id) continue;
+      const outcomes = await RecommendationTradeOutcome.findAll({
+        where: { loop_run_id: snapshot.loop_run_id },
+        raw: true,
+      });
+      const summary = this.summarizeOutcomes(outcomes);
+      const runMetrics =
+        snapshot.run_metrics && typeof snapshot.run_metrics === 'object'
+          ? snapshot.run_metrics
+          : {};
+      const metadata =
+        snapshot.metadata && typeof snapshot.metadata === 'object' ? snapshot.metadata : {};
+      const refreshedAt = new Date().toISOString();
+
+      await snapshot.update({
+        tracked_trade_count: summary.tracked_trade_count,
+        closed_trade_count: summary.closed_trade_count,
+        total_pnl: summary.total_pnl,
+        avg_excess_return_pct: summary.avg_excess_return_pct,
+        excess_win_rate: summary.excess_win_rate,
+        run_metrics: {
+          ...runMetrics,
+          outcome_refresh: {
+            ...summary,
+            refreshed_at: refreshedAt,
+          },
+        },
+        metadata: {
+          ...metadata,
+          outcome_refreshed_at: refreshedAt,
+        },
+      } as any);
+
+      refreshed.push({
+        id: snapshot.id,
+        loop_run_id: snapshot.loop_run_id,
+        generated_at: snapshot.generated_at,
+        effective_style: snapshot.effective_style,
+        ...summary,
+      });
+    }
+
+    return {
+      generated_at: moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm:ss'),
+      requested: {
+        loop_run_id: options.loop_run_id,
+        loop_run_ids: loopRunIds,
+        limit,
+        lookback_days: options.lookback_days,
+      },
+      matched_snapshots: snapshots.length,
+      refreshed_count: refreshed.length,
+      summary: this.summarizeOutcomeRefresh(refreshed),
+      refreshed,
+    };
+  }
+
   private buildSummary(records: any[]) {
     const latest = records[0];
     const runs = records.length;
@@ -321,6 +415,56 @@ export class RecommendationLoopPolicySnapshotService {
       insights.push(`最近一次参数原因：${summary.latest_policy.policy_reason}`);
     }
     return insights;
+  }
+
+  private summarizeOutcomes(outcomes: any[]) {
+    const closed = outcomes.filter(item => item.trade_status === 'closed');
+    const open = outcomes.filter(item => item.trade_status !== 'closed');
+    const excessValues = closed.map(item => Number(item.excess_return_pct)).filter(Number.isFinite);
+    const totalPnl = outcomes.reduce((sum, item) => sum + toNumber(item.total_pnl), 0);
+    const excessWins = excessValues.filter(value => value > 0);
+
+    return {
+      tracked_trade_count: outcomes.length,
+      open_trade_count: open.length,
+      closed_trade_count: closed.length,
+      total_pnl: roundNumber(totalPnl, 2),
+      avg_excess_return_pct: roundNumber(
+        excessValues.length
+          ? excessValues.reduce((sum, value) => sum + value, 0) / excessValues.length
+          : 0,
+        4
+      ),
+      excess_win_rate: excessValues.length
+        ? roundNumber((excessWins.length / excessValues.length) * 100, 2)
+        : 0,
+    };
+  }
+
+  private summarizeOutcomeRefresh(refreshed: any[]) {
+    const totalTracked = refreshed.reduce(
+      (sum, item) => sum + toNumber(item.tracked_trade_count),
+      0
+    );
+    const totalClosed = refreshed.reduce((sum, item) => sum + toNumber(item.closed_trade_count), 0);
+    const totalPnl = refreshed.reduce((sum, item) => sum + toNumber(item.total_pnl), 0);
+    const avgExcessValues = refreshed
+      .filter(item => toNumber(item.closed_trade_count) > 0)
+      .map(item => Number(item.avg_excess_return_pct))
+      .filter(Number.isFinite);
+
+    return {
+      snapshot_count: refreshed.length,
+      tracked_trade_count: totalTracked,
+      closed_trade_count: totalClosed,
+      total_pnl: roundNumber(totalPnl, 2),
+      avg_excess_return_pct: roundNumber(
+        avgExcessValues.length
+          ? avgExcessValues.reduce((sum, value) => sum + value, 0) / avgExcessValues.length
+          : 0,
+        4
+      ),
+    };
   }
 
   private scoreBucket(value: any) {

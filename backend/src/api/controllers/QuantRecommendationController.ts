@@ -197,6 +197,30 @@ export class QuantRecommendationController {
     }
   };
 
+  refreshLoopPolicySnapshotOutcomes = async (req: Request, res: Response) => {
+    try {
+      const result = await recommendationLoopPolicySnapshotService.refreshOutcomeMetrics({
+        loop_run_id: req.body?.loop_run_id || req.query?.loop_run_id,
+        loop_run_ids: Array.isArray(req.body?.loop_run_ids)
+          ? req.body.loop_run_ids
+          : req.body?.loop_run_ids
+            ? String(req.body.loop_run_ids).split(',')
+            : undefined,
+        lookback_days: req.body?.lookback_days ? Number(req.body.lookback_days) : undefined,
+        limit: req.body?.limit ? Number(req.body.limit) : 200,
+      });
+
+      res.json({
+        success: true,
+        data: result,
+        message: `策略版本收益刷新完成：更新 ${result.refreshed_count} 个版本`,
+      });
+    } catch (error: any) {
+      logger.error('刷新荐股闭环策略快照收益失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
   runAutomatedLoop = async (req: Request, res: Response) => {
     try {
       const result = await automatedRecommendationLoopService.run({
