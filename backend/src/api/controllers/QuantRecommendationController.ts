@@ -290,6 +290,16 @@ export class QuantRecommendationController {
         policy_version_lookback_limit: req.body?.policy_version_lookback_limit
           ? Number(req.body.policy_version_lookback_limit)
           : 120,
+        use_strategy_experiment_feedback: req.body?.use_strategy_experiment_feedback !== false,
+        strategy_experiment_min_quality_delta: req.body?.strategy_experiment_min_quality_delta
+          ? Number(req.body.strategy_experiment_min_quality_delta)
+          : 4,
+        strategy_experiment_limit: req.body?.strategy_experiment_limit
+          ? Number(req.body.strategy_experiment_limit)
+          : undefined,
+        strategy_experiment_pool_limit: req.body?.strategy_experiment_pool_limit
+          ? Number(req.body.strategy_experiment_pool_limit)
+          : undefined,
         profit_gate_horizon: req.body?.profit_gate_horizon || '5d',
         profit_gate_min_samples: req.body?.profit_gate_min_samples
           ? Number(req.body.profit_gate_min_samples)

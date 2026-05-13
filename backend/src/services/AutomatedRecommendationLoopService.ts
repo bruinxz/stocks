@@ -34,6 +34,10 @@ export interface AutomatedRecommendationLoopOptions {
   use_outcome_feedback?: boolean;
   use_policy_version_feedback?: boolean;
   policy_version_lookback_limit?: number;
+  use_strategy_experiment_feedback?: boolean;
+  strategy_experiment_min_quality_delta?: number;
+  strategy_experiment_limit?: number;
+  strategy_experiment_pool_limit?: number;
   outcome_feedback_lookback_days?: number;
   outcome_feedback_min_closed_samples?: number;
   use_profit_gate?: boolean;
@@ -434,6 +438,120 @@ class AutomatedRecommendationLoopService {
     }
   }
 
+  private async applyStrategyExperimentFeedback(
+    policy: any,
+    options: {
+      enabled: boolean;
+      username?: string;
+      universe: 'favorites' | 'market';
+      candidate_limit: number;
+      candidate_pool_limit: number;
+      lookback_days: number;
+      min_bars?: number;
+      exclude_st: boolean;
+      min_market_cap_yi?: number;
+      min_quality_delta: number;
+    }
+  ) {
+    const enrichedPolicy = {
+      ...policy,
+      strategy_experiment_feedback_enabled: options.enabled,
+      strategy_experiment_feedback_applied: false,
+      strategy_experiment_feedback_reason: options.enabled
+        ? '策略实验反馈已启用，等待实验结果确认是否切换风格'
+        : '策略实验反馈未启用',
+      strategy_experiment: null as any,
+    };
+
+    if (!options.enabled) return enrichedPolicy;
+
+    try {
+      const experiment = await quantRecommendationService.runStrategyExperiment({
+        universe: options.universe,
+        limit: Math.min(Math.max(options.candidate_limit, 6), 20),
+        candidate_pool_limit: options.candidate_pool_limit,
+        lookback_days: options.lookback_days,
+        min_bars: options.min_bars,
+        exclude_st: options.exclude_st,
+        min_market_cap_yi: options.min_market_cap_yi,
+      });
+      const champion = experiment.champion;
+      const baseVariant = (experiment.variants || []).find(
+        (item: any) => item.style === policy.effective_style
+      );
+      const championQuality = toNumber(champion?.metrics?.quality_score, 0);
+      const baseQuality = toNumber(baseVariant?.metrics?.quality_score, 0);
+      const qualityDelta = championQuality - baseQuality;
+      const championTrialCount = toNumber(champion?.metrics?.trial_count, 0);
+      const championStrongCount = toNumber(champion?.metrics?.strong_count, 0);
+      const canSwitch =
+        champion &&
+        champion.style &&
+        champion.style !== policy.effective_style &&
+        qualityDelta >= options.min_quality_delta &&
+        championQuality >= 55 &&
+        championTrialCount + championStrongCount >= 2;
+      const compactExperiment = {
+        generated_at: experiment.generated_at,
+        champion: champion
+          ? {
+              key: champion.key,
+              label: champion.label,
+              style: champion.style,
+              quality_score: championQuality,
+              strong_count: championStrongCount,
+              trial_count: championTrialCount,
+              avg_score: champion.metrics?.avg_score,
+            }
+          : null,
+        base_variant: baseVariant
+          ? {
+              key: baseVariant.key,
+              label: baseVariant.label,
+              style: baseVariant.style,
+              quality_score: baseQuality,
+            }
+          : null,
+        quality_delta: roundNumber(qualityDelta, 2),
+        overlap_count: Array.isArray(experiment.overlaps) ? experiment.overlaps.length : 0,
+        insights: Array.isArray(experiment.insights) ? experiment.insights.slice(0, 3) : [],
+      };
+
+      if (!canSwitch) {
+        return {
+          ...enrichedPolicy,
+          strategy_experiment: compactExperiment,
+          strategy_experiment_feedback_reason: champion
+            ? `策略实验冠军 ${champion.label} 质量分 ${championQuality}，相对当前 ${roundNumber(
+                qualityDelta,
+                2
+              )}，未达到自动切换阈值 ${options.min_quality_delta}`
+            : '策略实验未产生冠军，沿用当前风格',
+        };
+      }
+
+      return {
+        ...enrichedPolicy,
+        effective_style: champion.style,
+        strategy_experiment_feedback_applied: true,
+        strategy_experiment: compactExperiment,
+        strategy_experiment_feedback_reason: `策略实验冠军 ${champion.label} 明显优于当前风格，质量分差 ${roundNumber(
+          qualityDelta,
+          2
+        )}，本轮主扫描切换为 ${champion.style}`,
+        reason: `${policy.reason}；策略实验反馈：${champion.label} 胜出，自动切换扫描风格`,
+      };
+    } catch (error: any) {
+      logger.warn(`读取策略实验反馈失败，沿用当前扫描风格: ${error?.message || error}`);
+      return {
+        ...enrichedPolicy,
+        strategy_experiment_feedback_reason: `策略实验反馈读取失败，沿用当前风格：${
+          error?.message || error
+        }`,
+      };
+    }
+  }
+
   async run(options: AutomatedRecommendationLoopOptions = {}) {
     const loop_run_id = buildLoopRunId(options.record_type ? 'auto_loop' : 'loop');
     const universe = options.universe === 'favorites' ? 'favorites' : 'market';
@@ -444,7 +562,11 @@ class AutomatedRecommendationLoopService {
       username: options.username,
       enabled: options.use_outcome_feedback !== false,
       use_policy_version_feedback: options.use_policy_version_feedback !== false,
-      policy_version_lookback_limit: toPositiveInt(options.policy_version_lookback_limit, 120, 1000),
+      policy_version_lookback_limit: toPositiveInt(
+        options.policy_version_lookback_limit,
+        120,
+        1000
+      ),
       universe,
       base_style: baseStyle,
       base_min_score: Number(options.min_score || 72),
@@ -454,14 +576,43 @@ class AutomatedRecommendationLoopService {
       lookback_days: toPositiveInt(options.outcome_feedback_lookback_days, 365, 3650),
       min_closed_samples: toPositiveInt(options.outcome_feedback_min_closed_samples, 5, 100),
     });
-    const style = loop_policy.effective_style;
     const candidateLimit = toPositiveInt(
       options.candidate_limit,
       universe === 'market' ? 30 : 20,
       100
     );
-    const archiveLimit = toPositiveInt(options.archive_limit, candidateLimit, 100);
     const lookbackDays = toPositiveInt(options.lookback_days, 120, 360);
+    const candidatePoolLimit = toPositiveInt(
+      options.candidate_pool_limit,
+      universe === 'market'
+        ? Math.max(candidateLimit * 12, 240)
+        : Math.max(candidateLimit * 6, 60),
+      1000
+    );
+    const experiment_policy = await this.applyStrategyExperimentFeedback(loop_policy, {
+      enabled: options.use_strategy_experiment_feedback !== false,
+      username: options.username,
+      universe,
+      candidate_limit: toPositiveInt(
+        options.strategy_experiment_limit,
+        Math.min(candidateLimit, 12),
+        50
+      ),
+      candidate_pool_limit: toPositiveInt(
+        options.strategy_experiment_pool_limit,
+        Math.min(candidatePoolLimit, 240),
+        1000
+      ),
+      lookback_days: lookbackDays,
+      min_bars: toPositiveInt(options.min_bars, 35, lookbackDays),
+      exclude_st: options.exclude_st !== false,
+      min_market_cap_yi:
+        options.min_market_cap_yi === undefined ? 30 : Number(options.min_market_cap_yi),
+      min_quality_delta: Number(options.strategy_experiment_min_quality_delta || 4),
+    });
+    Object.assign(loop_policy, experiment_policy);
+    const style = loop_policy.effective_style;
+    const archiveLimit = toPositiveInt(options.archive_limit, candidateLimit, 100);
     const generated = await quantRecommendationService.generateRecommendations({
       universe,
       style,
@@ -469,13 +620,7 @@ class AutomatedRecommendationLoopService {
       lookback_days: lookbackDays,
       min_bars: toPositiveInt(options.min_bars, 35, lookbackDays),
       include_trend: true,
-      candidate_pool_limit: toPositiveInt(
-        options.candidate_pool_limit,
-        universe === 'market'
-          ? Math.max(candidateLimit * 12, 240)
-          : Math.max(candidateLimit * 6, 60),
-        1000
-      ),
+      candidate_pool_limit: candidatePoolLimit,
       exclude_st: options.exclude_st !== false,
       min_market_cap_yi:
         options.min_market_cap_yi === undefined ? 30 : Number(options.min_market_cap_yi),

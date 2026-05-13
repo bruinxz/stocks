@@ -933,6 +933,27 @@ class SchedulerService {
             120,
             1000
           ),
+          use_strategy_experiment_feedback:
+            parameters.use_strategy_experiment_feedback !== undefined
+              ? Boolean(parameters.use_strategy_experiment_feedback)
+              : parameters.useStrategyExperimentFeedback !== undefined
+                ? Boolean(parameters.useStrategyExperimentFeedback)
+                : true,
+          strategy_experiment_min_quality_delta: Number(
+            parameters.strategy_experiment_min_quality_delta ||
+              parameters.strategyExperimentMinQualityDelta ||
+              4
+          ),
+          strategy_experiment_limit: this.toPositiveInt(
+            parameters.strategy_experiment_limit || parameters.strategyExperimentLimit,
+            12,
+            50
+          ),
+          strategy_experiment_pool_limit: this.toPositiveInt(
+            parameters.strategy_experiment_pool_limit || parameters.strategyExperimentPoolLimit,
+            240,
+            1000
+          ),
           outcome_feedback_lookback_days: this.toPositiveInt(
             parameters.outcome_feedback_lookback_days || parameters.outcomeFeedbackLookbackDays,
             365,
@@ -1330,6 +1351,10 @@ class SchedulerService {
           use_outcome_feedback: true,
           use_policy_version_feedback: true,
           policy_version_lookback_limit: 120,
+          use_strategy_experiment_feedback: true,
+          strategy_experiment_min_quality_delta: 4,
+          strategy_experiment_limit: 12,
+          strategy_experiment_pool_limit: 240,
           outcome_feedback_lookback_days: 365,
           outcome_feedback_min_closed_samples: 5,
           use_profit_gate: true,
