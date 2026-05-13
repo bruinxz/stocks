@@ -1507,6 +1507,27 @@ class FeishuTaskReportService {
     return lines;
   }
 
+  private buildCompactSkipReasonLines(result: any, skippedItems: any[], limit = 3): string[] {
+    const topReasons = Array.isArray(result?.skip_reason_summary?.top_reasons)
+      ? result.skip_reason_summary.top_reasons
+      : [];
+    if (topReasons.length > 0) {
+      return topReasons
+        .slice(0, limit)
+        .map((item: any) => `- ${this.safeText(item.reason || '未说明原因', 120)} ×${item.count}`);
+    }
+
+    const reasonMap = new Map<string, number>();
+    for (const item of skippedItems || []) {
+      const reason = this.safeText(item?.reason || item?.message || '未说明原因', 120);
+      reasonMap.set(reason, (reasonMap.get(reason) || 0) + 1);
+    }
+    return [...reasonMap.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, limit)
+      .map(([reason, count]) => `- ${reason} ×${count}`);
+  }
+
   private buildPaperTradingAutomationMarkdown(
     result: any,
     options: { error?: any },
@@ -1515,137 +1536,68 @@ class FeishuTaskReportService {
     const trades = Array.isArray(result?.trades) ? result.trades : [];
     const skippedItems = Array.isArray(result?.skipped_items) ? result.skipped_items : [];
     const snapshot = result?.snapshot || {};
-    const feedbackPolicy = result?.feedback_policy || {};
     const profitGate = result?.profit_gate_policy || {};
     const outcomeFeedback = result?.outcome_feedback_policy || {};
-    const generated = result?.generated || {};
-    const archive = result?.archive || {};
     const dryRun = Boolean(result?.dry_run);
     const status = options.error ? 'FAILED' : 'COMPLETED';
-    const tradeAction = dryRun ? '计划买入' : '已模拟买入';
+    const actionCount = dryRun
+      ? result?.planned ?? trades.length
+      : result?.executed ?? trades.length;
+    const skipReasonLines = this.buildCompactSkipReasonLines(result, skippedItems, 3);
 
     const lines = [
       `## ${recordType}`,
       '',
+      '### 结果',
       `- **运行状态**：${status}`,
-      `- **执行模式**：${dryRun ? '预演，不落地交易' : '正式模拟盘交易'}`,
-      result?.portfolio_id ? `- **模拟盘ID**：${result.portfolio_id}` : '',
-      result?.user_id ? `- **用户ID**：${result.user_id}` : '',
-      result?.source_type ? `- **信号来源**：${result.source_type}` : '',
-      '',
-      '### 策略反哺参数',
-      `- **归因反哺**：${feedbackPolicy?.enabled ? '已启用' : '未启用'}`,
-      `- **闭环样本**：${feedbackPolicy?.closed_samples ?? 0}`,
-      `- **有效最低评分**：${feedbackPolicy?.effective_min_score ?? '--'}${
-        feedbackPolicy?.recommended_min_score !== undefined
-          ? `（建议 ${feedbackPolicy.recommended_min_score}）`
-          : ''
-      }`,
-      `- **有效风险等级**：${
-        Array.isArray(feedbackPolicy?.effective_allowed_risk_levels)
-          ? feedbackPolicy.effective_allowed_risk_levels.filter(Boolean).join('、') || '未限制'
-          : '--'
-      }`,
-      feedbackPolicy?.strongest_bucket
-        ? `- **当前强势评分桶**：${feedbackPolicy.strongest_bucket}`
-        : '',
-      '',
-      '### 收益闸门',
-      `- **Profit Gate**：${profitGate?.enabled ? '已启用' : '未启用'}`,
-      `- **当前结论**：${profitGate?.gate_label || '--'}；质量分 ${
-        profitGate?.quality_score ?? 0
-      }/${profitGate?.min_quality_score ?? '--'}`,
-      `- **完成样本**：${profitGate?.completed_samples ?? 0}/${
-        profitGate?.min_samples ?? '--'
-      }；仓位倍率 ${profitGate?.effective_position_multiplier ?? '--'}x`,
-      profitGate?.sampling_mode ? '- **冷启动采样**：已启用小仓试单，用于积累真实模拟交易样本' : '',
-      profitGate?.reason ? `- **核心理由**：${profitGate.reason}` : '',
-      '',
-      '### 交易收益闭环反哺',
-      `- **闭环反哺**：${outcomeFeedback?.enabled ? '已启用' : '未启用'}`,
-      `- **样本/阈值**：${outcomeFeedback?.closed_samples ?? 0}/${
-        outcomeFeedback?.min_closed_samples ?? '--'
-      }；平均超额 ${this.formatPercent(
-        outcomeFeedback?.avg_excess_return_pct
-      )}；超额胜率 ${this.formatPercent(outcomeFeedback?.excess_win_rate)}`,
-      `- **执行参数**：最低评分 ${outcomeFeedback?.effective_min_score ?? '--'}；风险等级 ${
-        Array.isArray(outcomeFeedback?.effective_allowed_risk_levels)
-          ? outcomeFeedback.effective_allowed_risk_levels.join('、') || '--'
-          : '--'
-      }；仓位倍率 ${outcomeFeedback?.effective_position_multiplier ?? '--'}x`,
-      outcomeFeedback?.reason ? `- **核心理由**：${outcomeFeedback.reason}` : '',
-      Array.isArray(outcomeFeedback?.blocked_segments) && outcomeFeedback.blocked_segments.length
-        ? `- **暂停片段**：${outcomeFeedback.blocked_segments
-            .slice(0, 3)
-            .map(
-              (item: any) =>
-                `${item.label || item.key}(${this.formatPercent(item.avg_excess_return_pct)}/${
-                  item.closed_count
-                }样本)`
-            )
-            .join('、')}`
-        : '',
-      '',
-      '### 信号处理概览',
-      `- **扫描信号**：${result?.scanned ?? 0}`,
-      `- **符合交易条件**：${result?.eligible ?? 0}`,
-      `- **${dryRun ? '计划交易' : '自动成交'}**：${
-        dryRun ? result?.planned ?? trades.length : result?.executed ?? trades.length
-      }`,
-      `- **跳过信号**：${result?.skipped ?? skippedItems.length}`,
-      generated?.total_candidates !== undefined
-        ? `- **本轮候选池**：${generated.analyzed_candidates ?? '-'} / ${
-            generated.total_candidates
-          } 只完成评分`
-        : '',
-      archive?.total !== undefined
-        ? `- **归档信号**：${archive.total} 条（新增 ${archive.created ?? 0} / 更新 ${
-            archive.updated ?? 0
-          }）`
-        : '',
-      '',
-      '### 模拟盘资产',
+      `- **本次${dryRun ? '计划买入' : '模拟买入'}**：${actionCount} 笔；跳过 ${
+        result?.skipped ?? skippedItems.length
+      } 条`,
+      `- **处理信号**：扫描 ${result?.scanned ?? 0} 条，符合条件 ${result?.eligible ?? 0} 条`,
       snapshot?.total_value !== undefined
-        ? `- **总资产**：¥${this.formatMoney(snapshot.total_value)}`
+        ? `- **模拟盘资产**：总资产 ¥${this.formatMoney(
+            snapshot.total_value
+          )}，现金 ¥${this.formatMoney(snapshot.current_cash)}，持仓 ¥${this.formatMoney(
+            snapshot.position_value
+          )}`
         : '',
-      snapshot?.current_cash !== undefined
-        ? `- **可用资金**：¥${this.formatMoney(snapshot.current_cash)}`
+      profitGate?.gate_label
+        ? `- **收益闸门**：${profitGate.gate_label}，仓位倍率 ${
+            profitGate.effective_position_multiplier ?? '--'
+          }x`
         : '',
-      snapshot?.position_value !== undefined
-        ? `- **持仓市值**：¥${this.formatMoney(snapshot.position_value)}`
+      outcomeFeedback?.reason
+        ? `- **闭环判断**：${this.safeText(outcomeFeedback.reason, 180)}`
         : '',
     ];
 
     if (trades.length > 0) {
-      lines.push('', `### ${tradeAction}明细`);
-      trades.slice(0, 10).forEach((trade: any, index: number) => {
+      lines.push('', `### ${dryRun ? '计划买入' : '买入明细'}`);
+      trades.slice(0, 5).forEach((trade: any, index: number) => {
         lines.push(
-          `${index + 1}. **${trade.name || trade.symbol}（${trade.symbol}）**`,
-          `   - 数量：${trade.quantity ?? '-'} 股；成交价：¥${this.formatMoney(
-            trade.execute_price
-          )}；交易金额：¥${this.formatMoney(trade.amount)}`,
-          `   - 仓位纪律：目标 ${trade.target_position_pct ?? '--'}%，止损 ${
-            trade.stop_loss_pct ?? '--'
-          }%，止盈 ${trade.take_profit_pct ?? '--'}%`,
-          `   - 信号：${trade.decision || '-'} / 评分 ${trade.score ?? '--'} / 风险 ${
-            trade.risk_level || '--'
-          } / 日期 ${trade.signal_date || '--'}`
+          `${index + 1}. **${trade.name || trade.symbol}（${trade.symbol}）**：${
+            trade.quantity ?? '-'
+          }股，¥${this.formatMoney(trade.execute_price)}，金额 ¥${this.formatMoney(
+            trade.amount
+          )}，目标仓位 ${trade.target_position_pct ?? '--'}%`,
+          `   - 评分 ${trade.score ?? '--'}；止损 ${trade.stop_loss_pct ?? '--'}%；止盈 ${
+            trade.take_profit_pct ?? '--'
+          }%`
         );
       });
-      if (trades.length > 10) {
-        lines.push(`- 其余 ${trades.length - 10} 笔交易已省略，请查看结果摘要。`);
+      if (trades.length > 5) {
+        lines.push(`- 其余 ${trades.length - 5} 笔已省略，请在页面查看。`);
       }
     } else {
-      lines.push('', '### 交易明细', '- 本轮没有产生可执行交易。');
+      lines.push('', '### 本次没有买入');
+      lines.push(
+        skipReasonLines.length ? '主要原因：' : '- 没有符合评分、风控、收益闸门和仓位纪律的标的。'
+      );
     }
 
-    if (skippedItems.length > 0) {
+    if (skipReasonLines.length > 0) {
       lines.push('', '### 主要跳过原因');
-      skippedItems.slice(0, 8).forEach((item: any) => {
-        lines.push(
-          `- **${item.name || item.symbol}（${item.symbol}）**：${item.reason || '未给出原因'}`
-        );
-      });
+      lines.push(...skipReasonLines);
     }
 
     const errorText = this.errorMessage(options.error);
@@ -1653,10 +1605,7 @@ class FeishuTaskReportService {
       lines.push('', '### 错误信息', errorText);
     }
 
-    lines.push(
-      '',
-      '> 说明：该记录为模拟盘验证闭环，不代表真实账户交易建议；真实交易前仍需人工复核仓位、流动性和风险。'
-    );
+    lines.push('', '> 说明：以上为模拟盘结果，只保留结论和关键原因，不代表真实账户交易指令。');
 
     return this.safeMarkdownMessage(lines.filter(Boolean).join('\n'));
   }
@@ -1672,68 +1621,55 @@ class FeishuTaskReportService {
     const snapshot = result?.snapshot || {};
     const dryRun = Boolean(result?.dry_run);
     const status = options.error ? 'FAILED' : 'COMPLETED';
-    const exitAction = dryRun ? '计划退出' : '已模拟卖出';
+    const exitCount = dryRun ? result?.planned ?? exits.length : result?.exited ?? exits.length;
 
     const lines = [
       `## ${recordType}`,
       '',
+      '### 结果',
       `- **运行状态**：${status}`,
-      `- **执行模式**：${dryRun ? '预演，不落地交易' : '正式模拟盘卖出'}`,
-      result?.portfolio_id ? `- **模拟盘ID**：${result.portfolio_id}` : '',
-      result?.user_id ? `- **用户ID**：${result.user_id}` : '',
-      '',
-      '### 风控检查概览',
-      `- **检查持仓**：${result?.checked ?? 0}`,
-      `- **触发退出**：${result?.exit_candidates ?? exits.length}`,
-      `- **${dryRun ? '计划退出' : '自动退出'}**：${
-        dryRun ? result?.planned ?? exits.length : result?.exited ?? exits.length
-      }`,
-      `- **继续持有**：${result?.held ?? heldItems.length}`,
-      `- **跳过持仓**：${result?.skipped ?? skippedItems.length}`,
-      '',
-      '### 模拟盘资产',
+      `- **本次${dryRun ? '计划退出' : '模拟卖出'}**：${exitCount} 笔；继续持有 ${
+        result?.held ?? heldItems.length
+      } 笔`,
+      `- **检查持仓**：${result?.checked ?? 0} 笔；触发退出 ${
+        result?.exit_candidates ?? exits.length
+      } 笔；跳过 ${result?.skipped ?? skippedItems.length} 笔`,
       snapshot?.total_value !== undefined
-        ? `- **总资产**：¥${this.formatMoney(snapshot.total_value)}`
-        : '',
-      snapshot?.current_cash !== undefined
-        ? `- **可用资金**：¥${this.formatMoney(snapshot.current_cash)}`
-        : '',
-      snapshot?.position_value !== undefined
-        ? `- **持仓市值**：¥${this.formatMoney(snapshot.position_value)}`
+        ? `- **模拟盘资产**：总资产 ¥${this.formatMoney(
+            snapshot.total_value
+          )}，现金 ¥${this.formatMoney(snapshot.current_cash)}，持仓 ¥${this.formatMoney(
+            snapshot.position_value
+          )}`
         : '',
     ];
 
     if (exits.length > 0) {
-      lines.push('', `### ${exitAction}明细`);
-      exits.slice(0, 10).forEach((item: any, index: number) => {
+      lines.push('', `### ${dryRun ? '计划退出' : '卖出明细'}`);
+      exits.slice(0, 5).forEach((item: any, index: number) => {
         const pnlPrefix = Number(item.realized_pnl || 0) >= 0 ? '+' : '';
         lines.push(
           `${index + 1}. **${item.name || item.symbol}（${item.symbol}）** - ${
             item.reason_label || item.reason || '风控退出'
-          }`,
-          `   - 数量：${item.quantity ?? '-'} 股；卖出价：¥${this.formatMoney(
-            item.execute_price
-          )}；净回款：¥${this.formatMoney(item.net_revenue)}`,
-          `   - 盈亏：${pnlPrefix}¥${this.formatMoney(item.realized_pnl)}（${
+          }：${item.quantity ?? '-'}股，¥${this.formatMoney(item.execute_price)}`,
+          `   - 盈亏 ${pnlPrefix}¥${this.formatMoney(item.realized_pnl)}（${
             item.pnl_pct ?? '--'
-          }%）；持有 ${item.holding_days ?? '--'} 天`,
-          `   - 纪律：止损 ${item.stop_loss_pct ?? '--'}%，止盈 ${item.take_profit_pct ?? '--'}%${
+          }%），持有 ${item.holding_days ?? '--'} 天${
             item.sell_signal_id
               ? `；卖出信号 #${item.sell_signal_id}（${item.sell_signal_score ?? '--'}分）`
               : ''
           }`
         );
       });
-      if (exits.length > 10) {
-        lines.push(`- 其余 ${exits.length - 10} 笔退出已省略，请查看结果摘要。`);
+      if (exits.length > 5) {
+        lines.push(`- 其余 ${exits.length - 5} 笔退出已省略，请在页面查看。`);
       }
     } else {
-      lines.push('', '### 退出明细', '- 本轮没有持仓触发退出纪律。');
+      lines.push('', '### 本次没有卖出', '- 当前持仓未触发止损、止盈、卖出信号或最大持有期规则。');
     }
 
     if (heldItems.length > 0) {
-      lines.push('', '### 继续持有观察');
-      heldItems.slice(0, 8).forEach((item: any) => {
+      lines.push('', '### 继续观察');
+      heldItems.slice(0, 5).forEach((item: any) => {
         lines.push(
           `- **${item.name || item.symbol}（${item.symbol}）**：当前 ${item.pnl_pct ?? '--'}%，${
             item.message || '未触发退出'
@@ -1744,7 +1680,7 @@ class FeishuTaskReportService {
 
     if (skippedItems.length > 0) {
       lines.push('', '### 跳过项');
-      skippedItems.slice(0, 6).forEach((item: any) => {
+      skippedItems.slice(0, 3).forEach((item: any) => {
         lines.push(
           `- **${item.name || item.symbol}（${item.symbol}）**：${item.message || '已跳过'}`
         );
@@ -1756,10 +1692,7 @@ class FeishuTaskReportService {
       lines.push('', '### 错误信息', errorText);
     }
 
-    lines.push(
-      '',
-      '> 说明：风控退出基于模拟盘持仓、最新本地行情和已归档信号自动执行；真实交易前仍需人工复核。'
-    );
+    lines.push('', '> 说明：以上为模拟盘风控结果，只保留结论和关键原因，不代表真实账户交易指令。');
 
     return this.safeMarkdownMessage(lines.filter(Boolean).join('\n'));
   }
@@ -1771,52 +1704,38 @@ class FeishuTaskReportService {
   ): string {
     const summary = result?.summary || {};
     const feedback = result?.feedback || {};
-    const groups = result?.groups || {};
     const closedTrades = Array.isArray(result?.closed_trades) ? result.closed_trades : [];
     const openPositions = Array.isArray(result?.open_positions) ? result.open_positions : [];
-    const sourceGroups = Array.isArray(groups.by_source_type) ? groups.by_source_type : [];
-    const riskGroups = Array.isArray(groups.by_risk_level) ? groups.by_risk_level : [];
-    const actionGroups = Array.isArray(groups.by_action) ? groups.by_action : [];
-    const exitGroups = Array.isArray(groups.by_exit_reason) ? groups.by_exit_reason : [];
-    const scoreGroups = Array.isArray(groups.by_score_bucket) ? groups.by_score_bucket : [];
     const status = options.error ? 'FAILED' : 'COMPLETED';
 
     const lines = [
       `## ${recordType}`,
       '',
+      '### 结果',
       `- **运行状态**：${status}`,
-      result?.portfolio_id ? `- **模拟盘ID**：${result.portfolio_id}` : '',
-      result?.user_id ? `- **用户ID**：${result.user_id}` : '',
-      result?.generated_at ? `- **生成时间**：${result.generated_at}` : '',
-      '',
-      '### 交易闭环总览',
-      `- **已执行信号**：${summary.executed_signals ?? 0}`,
-      `- **已闭环交易**：${summary.closed_count ?? 0} 笔；**当前持仓**：${
-        summary.open_count ?? 0
-      } 只`,
-      `- **胜率**：${this.formatPercent(summary.win_rate) || '0.00%'}`,
-      `- **平均收益**：${this.formatPercent(summary.avg_return_pct) || '0.00%'}`,
-      `- **平均持有**：${summary.avg_holding_days ?? 0} 天`,
-      `- **盈亏比 / Profit Factor**：${summary.payoff_ratio ?? 0} / ${summary.profit_factor ?? 0}`,
-      '',
-      '### 钱包结果',
-      `- **实现盈亏**：${this.formatSignedMoney(summary.total_realized_pnl)}`,
-      `- **浮动盈亏**：${this.formatSignedMoney(summary.total_unrealized_pnl)}`,
-      `- **综合盈亏**：${this.formatSignedMoney(summary.total_pnl)}`,
-      `- **当前持仓敞口**：¥${this.formatMoney(summary.open_exposure)}（${
+      `- **已闭环交易**：${summary.closed_count ?? 0} 笔；当前持仓 ${summary.open_count ?? 0} 只`,
+      `- **综合盈亏**：${this.formatSignedMoney(
+        summary.total_pnl
+      )}（已实现 ${this.formatSignedMoney(
+        summary.total_realized_pnl
+      )} / 浮动 ${this.formatSignedMoney(summary.total_unrealized_pnl)}）`,
+      `- **胜率 / 平均收益**：${this.formatPercent(summary.win_rate) || '0.00%'} / ${
+        this.formatPercent(summary.avg_return_pct) || '0.00%'
+      }`,
+      `- **当前敞口**：¥${this.formatMoney(summary.open_exposure)}（${
         summary.open_exposure_pct ?? 0
-      }%）`,
+      }%）；平均持有 ${summary.avg_holding_days ?? 0} 天`,
     ];
 
     if (summary.best_trade || summary.worst_trade) {
-      lines.push('', '### 最佳 / 最差样本');
+      lines.push('', '### 最关键样本');
       if (summary.best_trade) {
         lines.push(
           `- **最佳**：${summary.best_trade.name || summary.best_trade.symbol}（${
             summary.best_trade.symbol
-          }），收益 ${this.formatPercent(
+          }）收益 ${this.formatPercent(
             summary.best_trade.realized_pnl_pct
-          )}，实现盈亏 ${this.formatSignedMoney(summary.best_trade.realized_pnl)}，持有 ${
+          )}，盈亏 ${this.formatSignedMoney(summary.best_trade.realized_pnl)}，持有 ${
             summary.best_trade.holding_days ?? '--'
           } 天`
         );
@@ -1825,63 +1744,47 @@ class FeishuTaskReportService {
         lines.push(
           `- **最差**：${summary.worst_trade.name || summary.worst_trade.symbol}（${
             summary.worst_trade.symbol
-          }），收益 ${this.formatPercent(
+          }）收益 ${this.formatPercent(
             summary.worst_trade.realized_pnl_pct
-          )}，实现盈亏 ${this.formatSignedMoney(summary.worst_trade.realized_pnl)}，退出原因：${
+          )}，盈亏 ${this.formatSignedMoney(summary.worst_trade.realized_pnl)}，原因：${
             summary.worst_trade.exit_reason_label || summary.worst_trade.exit_reason || '-'
           }`
         );
       }
     }
 
-    if (Array.isArray(feedback.insights) && feedback.insights.length > 0) {
-      lines.push('', '### 策略反哺洞察');
-      feedback.insights.slice(0, 8).forEach((text: string) => {
-        lines.push(`- ${this.safeText(text, 500)}`);
-      });
-    }
-
+    lines.push('', '### 下一步');
     if (Array.isArray(feedback.next_actions) && feedback.next_actions.length > 0) {
-      lines.push('', '### 下一步执行建议');
-      feedback.next_actions.slice(0, 8).forEach((text: string) => {
-        lines.push(`- ${this.safeText(text, 500)}`);
+      feedback.next_actions.slice(0, 3).forEach((text: string) => {
+        lines.push(`- ${this.safeText(text, 180)}`);
       });
-      lines.push(
-        `- **推荐最低评分**：${feedback.recommended_min_score ?? 72}`,
-        `- **推荐风险等级**：${
-          Array.isArray(feedback.recommended_allowed_risk_levels)
-            ? feedback.recommended_allowed_risk_levels.join('、')
-            : 'low、medium'
-        }`
-      );
+    } else {
+      lines.push('- 继续积累模拟盘闭环样本，等待更多平仓结果后再放大或降权。');
     }
-
-    this.appendAttributionGroupLines(lines, '来源维度', sourceGroups);
-    this.appendAttributionGroupLines(lines, '风险维度', riskGroups);
-    this.appendAttributionGroupLines(lines, '动作维度', actionGroups);
-    this.appendAttributionGroupLines(lines, '评分桶维度', scoreGroups);
-    this.appendAttributionGroupLines(lines, '退出原因维度', exitGroups);
+    lines.push(
+      `- **下一轮信号门槛**：最低评分 ${feedback.recommended_min_score ?? 72}；风险等级 ${
+        Array.isArray(feedback.recommended_allowed_risk_levels)
+          ? feedback.recommended_allowed_risk_levels.join('、')
+          : 'low、medium'
+      }`
+    );
 
     if (openPositions.length > 0) {
-      lines.push('', '### 当前持仓风险暴露');
-      openPositions.slice(0, 8).forEach((item: any) => {
+      lines.push('', '### 当前重点持仓');
+      openPositions.slice(0, 5).forEach((item: any) => {
         lines.push(
           `- **${item.name || item.symbol}（${item.symbol}）**：浮盈亏 ${this.formatSignedMoney(
             item.unrealized_pnl
           )}（${this.formatPercent(item.unrealized_pnl_pct)}），持有 ${
             item.holding_days ?? '--'
-          } 天，距止损 ${
-            item.distance_to_stop_loss_pct !== undefined
-              ? `${item.distance_to_stop_loss_pct}pct`
-              : '--'
-          }`
+          } 天`
         );
       });
     }
 
     if (closedTrades.length > 0) {
       lines.push('', '### 最近闭环交易');
-      closedTrades.slice(0, 8).forEach((item: any, index: number) => {
+      closedTrades.slice(0, 5).forEach((item: any, index: number) => {
         lines.push(
           `${index + 1}. **${item.name || item.symbol}（${
             item.symbol
@@ -1901,10 +1804,7 @@ class FeishuTaskReportService {
       lines.push('', '### 错误信息', errorText);
     }
 
-    lines.push(
-      '',
-      '> 说明：本报告用于把推荐信号、模拟盘买卖和真实收益结果连接起来，帮助自动调优选股阈值；不代表真实账户交易指令。'
-    );
+    lines.push('', '> 说明：以上为模拟盘收益复盘，只保留结论和下一步，不代表真实账户收益承诺。');
 
     return this.safeMarkdownMessage(lines.filter(Boolean).join('\n'));
   }
@@ -2039,58 +1939,38 @@ class FeishuTaskReportService {
   ): string {
     const summary = result?.summary || {};
     const actions = Array.isArray(result?.actions) ? result.actions : [];
-    const attribution = result?.attribution || {};
-    const feedback = attribution?.feedback || {};
     const outcomePolicy = result?.entry_preview?.outcome_feedback_policy || {};
     const status = options.error ? 'FAILED' : 'COMPLETED';
+    const urgentActions = actions.filter((action: any) =>
+      ['critical', 'high'].includes(action.priority)
+    );
+    const entryActions = actions.filter((action: any) => action.action_type === 'entry');
+    const exitActions = actions.filter((action: any) => action.action_type === 'exit');
+    const monitorActions = actions.filter((action: any) => action.action_type === 'monitor');
 
     const lines = [
       `## ${recordType}`,
       '',
+      '### 结果',
       `- **运行状态**：${status}`,
-      result?.portfolio_id ? `- **模拟盘ID**：${result.portfolio_id}` : '',
-      result?.user_id ? `- **用户ID**：${result.user_id}` : '',
-      result?.generated_at ? `- **生成时间**：${result.generated_at}` : '',
-      '',
-      '### 今日执行总览',
-      `- **动作总数**：${summary.action_count ?? actions.length}`,
-      `- **紧急动作**：${summary.urgent_count ?? 0}`,
-      `- **退出 / 入场 / 观察 / 复盘**：${summary.exit_count ?? 0} / ${
+      `- **今日动作**：共 ${summary.action_count ?? actions.length} 条；紧急 ${
+        summary.urgent_count ?? urgentActions.length
+      } 条`,
+      `- **卖出 / 买入 / 观察 / 复盘**：${summary.exit_count ?? 0} / ${
         summary.entry_count ?? 0
       } / ${summary.monitor_count ?? 0} / ${summary.review_count ?? 0}`,
-      `- **当前现金**：¥${this.formatMoney(summary.current_cash)}`,
-      `- **计划卖出回款**：${this.formatSignedMoney(summary.planned_sell_cash_inflow)}`,
-      `- **计划买入用资**：${this.formatSignedMoney(
-        -Number(summary.planned_buy_cash_outflow || 0)
-      )}`,
+      `- **资金变化**：当前现金 ¥${this.formatMoney(
+        summary.current_cash
+      )}；卖出回款 ${this.formatSignedMoney(
+        summary.planned_sell_cash_inflow
+      )}；买入用资 ${this.formatSignedMoney(-Number(summary.planned_buy_cash_outflow || 0))}`,
       `- **计划后现金**：¥${this.formatMoney(summary.projected_cash_after_plan)}`,
-      '',
-      '### 归因反馈参数',
-      `- **闭环样本数**：${summary.generated_from_closed_samples ?? 0}`,
-      `- **建议最低评分**：${summary.recommended_min_score ?? '--'}`,
-      `- **实际最低评分**：${summary.effective_min_score ?? '--'}`,
-      `- **建议风险等级**：${
-        Array.isArray(summary.recommended_allowed_risk_levels)
-          ? summary.recommended_allowed_risk_levels.join('、')
-          : '--'
-      }`,
-      '',
-      '### 收益闸门',
-      `- **当前结论**：${summary.profit_gate_label || '--'}`,
-      `- **质量分**：${summary.profit_gate_quality_score ?? '--'}`,
-      `- **计划仓位倍率**：${summary.profit_gate_position_multiplier ?? '--'}x`,
-      '',
-      '### 交易收益闭环反哺',
-      `- **样本/阈值**：${summary.outcome_closed_samples ?? 0}/${
-        summary.outcome_min_closed_samples ?? '--'
-      }`,
-      `- **平均超额 / 超额胜率**：${this.formatPercent(
-        summary.outcome_avg_excess_return_pct
-      )} / ${this.formatPercent(summary.outcome_excess_win_rate)}`,
-      `- **执行最低评分 / 仓位倍率**：${summary.outcome_effective_min_score ?? '--'} / ${
-        summary.outcome_position_multiplier ?? '--'
-      }x`,
-      summary.outcome_reason ? `- **核心理由**：${summary.outcome_reason}` : '',
+      summary.profit_gate_label
+        ? `- **收益闸门**：${summary.profit_gate_label}，仓位倍率 ${
+            summary.profit_gate_position_multiplier ?? '--'
+          }x`
+        : '',
+      summary.outcome_reason ? `- **闭环判断**：${this.safeText(summary.outcome_reason, 180)}` : '',
       Array.isArray(outcomePolicy.blocked_segments) && outcomePolicy.blocked_segments.length
         ? `- **暂停片段**：${outcomePolicy.blocked_segments
             .slice(0, 3)
@@ -2104,24 +1984,10 @@ class FeishuTaskReportService {
         : '',
     ];
 
-    if (Array.isArray(feedback.insights) && feedback.insights.length > 0) {
-      lines.push('', '### 计划依据');
-      feedback.insights.slice(0, 6).forEach((item: string) => {
-        lines.push(`- ${this.safeText(item, 600)}`);
-      });
-    }
-
-    const grouped = {
-      critical: actions.filter((action: any) => action.priority === 'critical'),
-      high: actions.filter((action: any) => action.priority === 'high'),
-      medium: actions.filter((action: any) => action.priority === 'medium'),
-      low: actions.filter((action: any) => action.priority === 'low'),
-    };
-
-    const renderActionGroup = (title: string, list: any[]) => {
+    const renderActionGroup = (title: string, list: any[], limit = 5) => {
       if (!list.length) return;
       lines.push('', `### ${title}`);
-      list.slice(0, 8).forEach((item: any, index: number) => {
+      list.slice(0, limit).forEach((item: any, index: number) => {
         lines.push(
           `${index + 1}. **${item.action_label || item.action_type}**${
             item.symbol ? ` - ${item.name || item.symbol}（${item.symbol}）` : ''
@@ -2136,15 +2002,16 @@ class FeishuTaskReportService {
             ? `   - 现金影响：${this.formatSignedMoney(item.estimated_cash_change)}`
             : '',
           ...(Array.isArray(item.instructions)
-            ? item.instructions.slice(0, 3).map((text: string) => `   - ${text}`)
+            ? item.instructions.slice(0, 2).map((text: string) => `   - ${text}`)
             : [])
         );
       });
     };
 
-    renderActionGroup('紧急动作', [...grouped.critical, ...grouped.high]);
-    renderActionGroup('一般动作', grouped.medium);
-    renderActionGroup('低优先级复盘', grouped.low);
+    renderActionGroup('优先处理', urgentActions);
+    renderActionGroup('计划卖出', exitActions);
+    renderActionGroup('计划买入', entryActions);
+    renderActionGroup('继续观察', monitorActions, 3);
 
     const errorText = this.errorMessage(options.error);
     if (errorText) {
@@ -2153,7 +2020,7 @@ class FeishuTaskReportService {
 
     lines.push(
       '',
-      '> 说明：该计划用于把风控退出、候选入场和收益归因合成一张执行清单，便于盘前/盘后人工复核。'
+      '> 说明：以上为模拟盘执行计划，只保留今日该做什么和为什么，不代表真实账户交易指令。'
     );
 
     return this.safeMarkdownMessage(lines.filter(Boolean).join('\n'));
