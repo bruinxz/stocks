@@ -101,6 +101,12 @@ export interface PaperTradingAutoTradeItem {
   target_position_pct?: number;
   stop_loss_pct?: number;
   take_profit_pct?: number;
+  original_score?: number;
+  consensus_count?: number;
+  consensus_bonus?: number;
+  consensus_variants?: string[];
+  recommendation_tier?: string;
+  recommendation_tier_label?: string;
   trade_id?: number;
   reason?: string;
 }
@@ -1465,8 +1471,8 @@ class PaperTradingAutomationService {
       const effectivePositionMultiplier = samplingMode
         ? clamp(options.sampling_multiplier, 0.1, 0.6)
         : allowEntries
-          ? clamp(positionMultiplier || 1, 0.1, 1.5)
-          : 0;
+        ? clamp(positionMultiplier || 1, 0.1, 1.5)
+        : 0;
 
       return {
         enabled: true,
@@ -1548,8 +1554,9 @@ class PaperTradingAutomationService {
     if (!options.enabled) return basePolicy;
 
     try {
-      const { recommendationTradeOutcomeService } =
-        await import('./RecommendationTradeOutcomeService');
+      const { recommendationTradeOutcomeService } = await import(
+        './RecommendationTradeOutcomeService'
+      );
       const dashboard = await recommendationTradeOutcomeService.getDashboard({
         portfolio_id: options.portfolio_id,
         user_id: options.user_id,
@@ -1588,8 +1595,8 @@ class PaperTradingAutomationService {
         closedSamples < options.min_closed_samples
           ? clamp(Math.min(rawPositionMultiplier, 0.75), 0.35, 0.9)
           : allowEntries
-            ? clamp(rawPositionMultiplier, 0.25, 1.25)
-            : 0;
+          ? clamp(rawPositionMultiplier, 0.25, 1.25)
+          : 0;
       const effectiveMinScore =
         closedSamples < options.min_closed_samples
           ? options.requested_min_score
@@ -1611,14 +1618,14 @@ class PaperTradingAutomationService {
         closedSamples < options.min_closed_samples
           ? `闭环样本 ${closedSamples}/${options.min_closed_samples}，先小仓位积累样本`
           : allowEntries
-            ? `闭环样本 ${closedSamples}，平均超额 ${roundNumber(avgExcess, 2)}%，仓位倍率 ${roundNumber(
-                effectivePositionMultiplier,
-                2
-              )}x`
-            : `闭环样本 ${closedSamples}，平均超额 ${roundNumber(
-                avgExcess,
-                2
-              )}%、超额胜率 ${roundNumber(excessWinRate, 2)}%，暂停自动入场`;
+          ? `闭环样本 ${closedSamples}，平均超额 ${roundNumber(
+              avgExcess,
+              2
+            )}%，仓位倍率 ${roundNumber(effectivePositionMultiplier, 2)}x`
+          : `闭环样本 ${closedSamples}，平均超额 ${roundNumber(
+              avgExcess,
+              2
+            )}%、超额胜率 ${roundNumber(excessWinRate, 2)}%，暂停自动入场`;
 
       return {
         enabled: true,
@@ -1766,7 +1773,9 @@ class PaperTradingAutomationService {
       remaining_daily_new_exposure_pct: roundNumber(
         Math.max(
           0,
-          guard.max_daily_new_exposure_pct - guard.today_new_exposure_pct - guard.staged_exposure_pct
+          guard.max_daily_new_exposure_pct -
+            guard.today_new_exposure_pct -
+            guard.staged_exposure_pct
         ),
         2
       ),
@@ -1798,19 +1807,14 @@ class PaperTradingAutomationService {
         ? validTurnovers.reduce((sum, value) => sum + value, 0) / validTurnovers.length
         : 0;
     const name = stock?.name || normalizedSymbol;
-    const latestChangePercent = toOptionalNumber(
-      latest?.change_percent ?? stock?.change_percent
-    );
+    const latestChangePercent = toOptionalNumber(latest?.change_percent ?? stock?.change_percent);
     const cooldownHit =
       options.cooldown_days_after_loss > 0
         ? await RecommendationTradeOutcome.findOne({
             where: {
               symbol: normalizedSymbol,
               trade_status: 'closed',
-              [Op.or]: [
-                { total_pnl_pct: { [Op.lt]: 0 } },
-                { realized_pnl_pct: { [Op.lt]: 0 } },
-              ],
+              [Op.or]: [{ total_pnl_pct: { [Op.lt]: 0 } }, { realized_pnl_pct: { [Op.lt]: 0 } }],
               exit_date: {
                 [Op.gte]: moment()
                   .tz('Asia/Shanghai')
@@ -1830,7 +1834,8 @@ class PaperTradingAutomationService {
       data_status: stock?.data_status,
       is_st: /(^|\*)ST|退/i.test(name),
       is_suspended: Boolean(latest?.is_suspended),
-      is_limit_up: Number.isFinite(Number(latestChangePercent)) && Number(latestChangePercent) >= 9.7,
+      is_limit_up:
+        Number.isFinite(Number(latestChangePercent)) && Number(latestChangePercent) >= 9.7,
       is_limit_down:
         Number.isFinite(Number(latestChangePercent)) && Number(latestChangePercent) <= -9.7,
       latest_change_percent: latestChangePercent,
@@ -1866,9 +1871,14 @@ class PaperTradingAutomationService {
       reasons.push(`入场风控：最新涨幅 ${profile.latest_change_percent ?? '--'}%，疑似涨停追高`);
     }
     if (guard.block_limit_down && profile.is_limit_down) {
-      reasons.push(`入场风控：最新跌幅 ${profile.latest_change_percent ?? '--'}%，疑似跌停流动性风险`);
+      reasons.push(
+        `入场风控：最新跌幅 ${profile.latest_change_percent ?? '--'}%，疑似跌停流动性风险`
+      );
     }
-    if (profile.data_status && ['no_data', 'conflict', 'incomplete'].includes(profile.data_status)) {
+    if (
+      profile.data_status &&
+      ['no_data', 'conflict', 'incomplete'].includes(profile.data_status)
+    ) {
       reasons.push(`入场风控：数据状态 ${profile.data_status}，等待数据质量修复`);
     }
     if (guard.min_avg_turnover_yuan > 0 && profile.avg_turnover_yuan > 0) {
@@ -1896,20 +1906,18 @@ class PaperTradingAutomationService {
         guard.today_new_exposure_pct + guard.staged_exposure_pct + candidatePct;
       if (nextDailyExposure > guard.max_daily_new_exposure_pct + 0.01) {
         reasons.push(
-          `入场风控：今日新增仓位 ${roundNumber(
-            nextDailyExposure,
-            2
-          )}% 将超过 ${guard.max_daily_new_exposure_pct}%`
+          `入场风控：今日新增仓位 ${roundNumber(nextDailyExposure, 2)}% 将超过 ${
+            guard.max_daily_new_exposure_pct
+          }%`
         );
       }
       const nextTotalExposure =
         guard.current_exposure_pct + guard.staged_exposure_pct + candidatePct;
       if (nextTotalExposure > guard.max_total_exposure_pct + 0.01) {
         reasons.push(
-          `入场风控：总风险暴露 ${roundNumber(
-            nextTotalExposure,
-            2
-          )}% 将超过 ${guard.max_total_exposure_pct}%`
+          `入场风控：总风险暴露 ${roundNumber(nextTotalExposure, 2)}% 将超过 ${
+            guard.max_total_exposure_pct
+          }%`
         );
       }
       const industry = profile.industry || '未分类';
@@ -1992,6 +2000,14 @@ class PaperTradingAutomationService {
       stop_loss_pct: toOptionalNumber(metadata.stop_loss_pct),
       take_profit_pct: toOptionalNumber(metadata.take_profit_pct),
       target_position_pct: toOptionalNumber(metadata.suggested_position_pct),
+      original_score: toOptionalNumber(metadata.original_score),
+      consensus_count: toOptionalNumber(metadata.consensus_count),
+      consensus_bonus: toOptionalNumber(metadata.consensus_bonus),
+      consensus_variants: Array.isArray(metadata.consensus_variants)
+        ? metadata.consensus_variants
+        : [],
+      recommendation_tier: metadata.recommendation_tier,
+      recommendation_tier_label: metadata.recommendation_tier_label,
     };
   }
 
@@ -2150,8 +2166,9 @@ class PaperTradingAutomationService {
 
   private async refreshRecommendationTradeOutcome(signal_id: number) {
     try {
-      const { recommendationTradeOutcomeService } =
-        await import('./RecommendationTradeOutcomeService');
+      const { recommendationTradeOutcomeService } = await import(
+        './RecommendationTradeOutcomeService'
+      );
       await recommendationTradeOutcomeService.refreshOutcomeBySignal(signal_id);
     } catch (error: any) {
       logger.warn(`推荐交易收益闭环刷新失败 signal#${signal_id}: ${error?.message || error}`);

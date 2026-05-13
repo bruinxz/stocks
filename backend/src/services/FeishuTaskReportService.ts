@@ -538,7 +538,9 @@ class FeishuTaskReportService {
         : '- **Agent 深度复核**：未启用',
       `- **模拟盘动作**：${
         paper?.dry_run ? '预演' : paper?.portfolio_id ? '已执行' : '未执行'
-      }；成交/计划 ${paper?.executed ?? paper?.planned ?? 0} 笔；跳过 ${paper?.skipped ?? 0} 条`,
+      }；成交/计划 ${paper?.executed ?? paper?.planned ?? 0} 笔；跳过 ${
+        paper?.skipped ?? 0
+      } 条；共识成交/计划 ${paper?.consensus_executed ?? 0}/${paper?.consensus_planned ?? 0} 笔`,
       tradeOutcomes?.summary
         ? `- **交易收益闭环**：跟踪 ${outcomeSummary.total_count ?? 0} 笔；闭环 ${
             outcomeSummary.closed_count ?? 0
@@ -629,6 +631,8 @@ class FeishuTaskReportService {
       模拟盘成交数: paper?.executed,
       模拟盘计划数: paper?.planned,
       模拟盘跳过数: paper?.skipped,
+      共识模拟盘成交数: paper?.consensus_executed,
+      共识模拟盘计划数: paper?.consensus_planned,
       跟踪交易数: outcomeSummary.total_count,
       已闭环交易数: outcomeSummary.closed_count,
       当前持仓数: outcomeSummary.open_count,
@@ -676,6 +680,9 @@ class FeishuTaskReportService {
             executed: paper?.executed,
             planned: paper?.planned,
             skipped: paper?.skipped,
+            consensus_executed: paper?.consensus_executed,
+            consensus_planned: paper?.consensus_planned,
+            consensus_top_trades: paper?.consensus_top_trades,
             trades: Array.isArray(paper?.trades) ? paper.trades.slice(0, 10) : [],
             profit_gate_policy: paper?.profit_gate_policy,
             outcome_feedback_policy: paper?.outcome_feedback_policy,

@@ -168,6 +168,11 @@ export class RecommendationLoopPolicySnapshotService {
                 executed: paper.executed,
                 planned: paper.planned,
                 skipped: paper.skipped,
+                consensus_executed: paper.consensus_executed,
+                consensus_planned: paper.consensus_planned,
+                consensus_top_trades: Array.isArray(paper.consensus_top_trades)
+                  ? paper.consensus_top_trades
+                  : [],
                 profit_gate_policy: paper.profit_gate_policy,
                 outcome_feedback_policy: paper.outcome_feedback_policy,
               }

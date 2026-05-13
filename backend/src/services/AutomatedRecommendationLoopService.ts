@@ -251,10 +251,7 @@ class AutomatedRecommendationLoopService {
           Math.min(currentMinScore, recommendedMinScore),
           options.base_min_score - 2
         );
-        effectiveDefaultPositionPct = Math.max(
-          currentDefaultPosition,
-          recommendedDefaultPosition
-        );
+        effectiveDefaultPositionPct = Math.max(currentDefaultPosition, recommendedDefaultPosition);
         effectiveMaxPositionPct = Math.max(currentMaxPosition, recommendedMaxPosition);
         effectivePaperTradeLimit = Math.max(currentTradeLimit, recommendedTradeLimit);
       } else {
@@ -428,8 +425,8 @@ class AutomatedRecommendationLoopService {
         coldStart || avgExcess < -1 || excessWinRate < 45
           ? Math.max(1, Math.min(options.base_paper_trade_limit, 2))
           : avgExcess > 2 && excessWinRate >= 55
-            ? Math.min(5, options.base_paper_trade_limit + 1)
-            : options.base_paper_trade_limit;
+          ? Math.min(5, options.base_paper_trade_limit + 1)
+          : options.base_paper_trade_limit;
 
       const outcomePolicy = {
         ...basePolicy,
@@ -464,8 +461,8 @@ class AutomatedRecommendationLoopService {
       logger.warn(`读取全市场荐股闭环自适应策略失败，沿用基础参数: ${error?.message || error}`);
       return this.applyPolicyVersionPromotion(
         {
-        ...basePolicy,
-        reason: `收益闭环自适应读取失败，沿用基础参数：${error?.message || error}`,
+          ...basePolicy,
+          reason: `收益闭环自适应读取失败，沿用基础参数：${error?.message || error}`,
         },
         {
           enabled: options.use_policy_version_feedback !== false,
@@ -578,10 +575,11 @@ class AutomatedRecommendationLoopService {
         effective_style: champion.style,
         strategy_experiment_feedback_applied: true,
         strategy_experiment: compactExperiment,
-        strategy_experiment_feedback_reason: `策略实验冠军 ${champion.label} 明显优于当前风格，质量分差 ${roundNumber(
-          qualityDelta,
-          2
-        )}，本轮主扫描切换为 ${champion.style}`,
+        strategy_experiment_feedback_reason: `策略实验冠军 ${
+          champion.label
+        } 明显优于当前风格，质量分差 ${roundNumber(qualityDelta, 2)}，本轮主扫描切换为 ${
+          champion.style
+        }`,
         reason: `${policy.reason}；策略实验反馈：${champion.label} 胜出，自动切换扫描风格`,
       };
     } catch (error: any) {
@@ -627,9 +625,7 @@ class AutomatedRecommendationLoopService {
     const lookbackDays = toPositiveInt(options.lookback_days, 120, 360);
     const candidatePoolLimit = toPositiveInt(
       options.candidate_pool_limit,
-      universe === 'market'
-        ? Math.max(candidateLimit * 12, 240)
-        : Math.max(candidateLimit * 6, 60),
+      universe === 'market' ? Math.max(candidateLimit * 12, 240) : Math.max(candidateLimit * 6, 60),
       1000
     );
     const experiment_policy = await this.applyStrategyExperimentFeedback(loop_policy, {
@@ -669,10 +665,14 @@ class AutomatedRecommendationLoopService {
         options.min_market_cap_yi === undefined ? 30 : Number(options.min_market_cap_yi),
     });
 
-    const rankedRecommendations = rankConsensusCandidates(generated.recommendations || [], loop_policy);
+    const rankedRecommendations = rankConsensusCandidates(
+      generated.recommendations || [],
+      loop_policy
+    );
     (generated as any).recommendations = rankedRecommendations;
     (generated as any).consensus_ranked = true;
-    (generated as any).consensus_overlap_count = loop_policy.strategy_experiment?.overlap_count || 0;
+    (generated as any).consensus_overlap_count =
+      loop_policy.strategy_experiment?.overlap_count || 0;
     const archiveCandidates = rankedRecommendations.slice(0, archiveLimit);
     const archive = await aiInvestmentSignalService.archiveQuantRecommendations({
       candidates: archiveCandidates,
@@ -762,6 +762,32 @@ class AutomatedRecommendationLoopService {
         dry_run: Boolean(options.dry_run),
         report_to_feishu: false,
       });
+      (paper_trading as any).consensus_executed = Array.isArray(paper_trading.trades)
+        ? paper_trading.trades.filter(
+            (item: any) => item.status === 'executed' && Number(item.consensus_count || 0) > 1
+          ).length
+        : 0;
+      (paper_trading as any).consensus_planned = Array.isArray(paper_trading.trades)
+        ? paper_trading.trades.filter(
+            (item: any) => item.status === 'planned' && Number(item.consensus_count || 0) > 1
+          ).length
+        : 0;
+      (paper_trading as any).consensus_top_trades = Array.isArray(paper_trading.trades)
+        ? paper_trading.trades
+            .filter((item: any) => Number(item.consensus_count || 0) > 1)
+            .slice(0, 5)
+            .map((item: any) => ({
+              symbol: item.symbol,
+              name: item.name,
+              score: item.score,
+              original_score: item.original_score,
+              consensus_count: item.consensus_count,
+              consensus_bonus: item.consensus_bonus,
+              target_position_pct: item.target_position_pct,
+              amount: item.amount,
+              status: item.status,
+            }))
+        : [];
 
       trade_outcomes = await recommendationTradeOutcomeService.refreshPortfolioOutcomes({
         username: options.username,
@@ -802,6 +828,7 @@ class AutomatedRecommendationLoopService {
             failed: trade_outcomes.failed,
             summary: trade_outcomes.dashboard?.summary,
             feedback: trade_outcomes.dashboard?.feedback,
+            consensus_groups: trade_outcomes.dashboard?.groups?.by_consensus,
           }
         : undefined,
       quality_report: {
@@ -837,7 +864,9 @@ class AutomatedRecommendationLoopService {
     }
 
     logger.info(
-      `荐股闭环完成：${universe}/${style} 候选 ${generated.analyzed_candidates}/${generated.total_candidates}，归档 ${archive.total}，模拟盘 ${
+      `荐股闭环完成：${universe}/${style} 候选 ${generated.analyzed_candidates}/${
+        generated.total_candidates
+      }，归档 ${archive.total}，模拟盘 ${
         paper_trading?.executed ?? paper_trading?.planned ?? 0
       }，Agent提交 ${agent_analysis.submitted?.length || 0}`
     );

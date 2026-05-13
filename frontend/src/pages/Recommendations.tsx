@@ -124,6 +124,10 @@ interface AutoTradeItem {
   stop_loss_pct?: number;
   take_profit_pct?: number;
   reason?: string;
+  original_score?: number;
+  consensus_count?: number;
+  consensus_bonus?: number;
+  consensus_variants?: string[];
 }
 
 interface AutoTradeResult {
@@ -133,6 +137,9 @@ interface AutoTradeResult {
   executed: number;
   planned: number;
   skipped: number;
+  consensus_executed?: number;
+  consensus_planned?: number;
+  consensus_top_trades?: AutoTradeItem[];
   trades: AutoTradeItem[];
   skipped_items: AutoTradeItem[];
   snapshot?: {
@@ -990,12 +997,30 @@ const Recommendations: React.FC = () => {
                 valueStyle={{ color: '#f8fafc' }}
               />
             </Col>
+            <Col xs={12} md={4}>
+              <Statistic
+                title={<span style={{ color: 'rgba(248,250,252,0.7)' }}>共识入场</span>}
+                value={
+                  autoTradeResult.dry_run
+                    ? autoTradeResult.consensus_planned || 0
+                    : autoTradeResult.consensus_executed || 0
+                }
+                suffix="笔"
+                valueStyle={{ color: '#e9d5ff' }}
+              />
+            </Col>
             <Col xs={24} md={9}>
               {autoTradeResult.trades?.length > 0 ? (
                 <Space wrap>
                   {autoTradeResult.trades.slice(0, 4).map(item => (
-                    <Tag key={item.symbol} color="volcano">
+                    <Tag
+                      key={item.symbol}
+                      color={Number(item.consensus_count || 0) > 1 ? 'purple' : 'volcano'}
+                    >
                       {item.name || item.symbol} · {item.quantity}股 · {item.target_position_pct}%
+                      {Number(item.consensus_count || 0) > 1
+                        ? ` · 共识${item.consensus_count}`
+                        : ''}
                     </Tag>
                   ))}
                 </Space>
