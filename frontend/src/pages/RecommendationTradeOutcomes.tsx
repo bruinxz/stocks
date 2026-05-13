@@ -64,6 +64,8 @@ interface OutcomeBucket {
   worst_symbol?: string;
   worst_name?: string;
   worst_return_pct?: number;
+  avg_consensus_count?: number;
+  avg_consensus_bonus?: number;
 }
 
 interface TradeOutcome {
@@ -107,6 +109,22 @@ interface TradeOutcome {
   benchmark_return_pct?: number;
   excess_return_pct?: number;
   exit_reason_label?: string;
+  metadata?: {
+    signal_metadata?: {
+      consensus_count?: number;
+      consensus_bonus?: number;
+      original_score?: number;
+      consensus_variants?: string[];
+      recommendation_tier_label?: string;
+    };
+    consensus?: {
+      consensus_count?: number;
+      consensus_bonus?: number;
+      original_score?: number;
+      consensus_variants?: string[];
+      recommendation_tier_label?: string;
+    };
+  };
   updated_at?: string;
 }
 
@@ -146,6 +164,7 @@ interface OutcomeDashboard {
     by_action: OutcomeBucket[];
     by_risk_level: OutcomeBucket[];
     by_industry: OutcomeBucket[];
+    by_consensus?: OutcomeBucket[];
   };
   outcomes: TradeOutcome[];
   feedback: {
@@ -193,6 +212,9 @@ const sessionLabel = (value?: string) => {
   const labels: Record<string, string> = { close: '尾盘', midday: '午盘', morning: '早盘' };
   return labels[value || ''] || value || '未标注';
 };
+
+const getConsensusMeta = (record: TradeOutcome) =>
+  record.metadata?.consensus || record.metadata?.signal_metadata || {};
 
 const RecommendationTradeOutcomes: React.FC = () => {
   const [dashboard, setDashboard] = useState<OutcomeDashboard | null>(null);
@@ -305,6 +327,37 @@ const RecommendationTradeOutcomes: React.FC = () => {
       .slice(0, 8);
   }, [dashboard]);
 
+  const consensusBuckets = useMemo(() => dashboard?.groups?.by_consensus || [], [dashboard]);
+
+  const consensusAttribution = useMemo(() => {
+    const buckets = consensusBuckets.filter(item => item.key !== 'no_consensus');
+    const noConsensus = consensusBuckets.find(item => item.key === 'no_consensus');
+    const best = [...buckets].sort((a, b) => b.avg_excess_return_pct - a.avg_excess_return_pct)[0];
+    const totalConsensusClosed = buckets.reduce(
+      (sum, item) => sum + Number(item.closed_count || 0),
+      0
+    );
+    const avgConsensusExcess =
+      totalConsensusClosed > 0
+        ? buckets.reduce(
+            (sum, item) =>
+              sum + Number(item.avg_excess_return_pct || 0) * Number(item.closed_count || 0),
+            0
+          ) / totalConsensusClosed
+        : 0;
+    const edge = Number(
+      (avgConsensusExcess - Number(noConsensus?.avg_excess_return_pct || 0)).toFixed(2)
+    );
+    return {
+      buckets,
+      no_consensus: noConsensus,
+      best,
+      closed_count: totalConsensusClosed,
+      avg_excess_return_pct: avgConsensusExcess,
+      edge,
+    };
+  }, [consensusBuckets]);
+
   const adaptivePolicy = useMemo(() => {
     const closed = Number(summary?.closed_count || 0);
     const minSamples = 5;
@@ -384,6 +437,29 @@ const RecommendationTradeOutcomes: React.FC = () => {
           <Text type="secondary">{record.risk_level || '--'}</Text>
         </Space>
       ),
+    },
+    {
+      title: '策略共识',
+      width: 130,
+      render: (_: any, record: TradeOutcome) => {
+        const consensus = getConsensusMeta(record);
+        const count = Number(consensus.consensus_count || 0);
+        return (
+          <Space direction="vertical" size={2}>
+            {count > 1 ? (
+              <Tag color="purple">共识{count}组</Tag>
+            ) : (
+              <Tag color="default">无显式共识</Tag>
+            )}
+            {Number(consensus.consensus_bonus || 0) > 0 && (
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                原始 {Number(consensus.original_score || record.score || 0).toFixed(1)} · +
+                {consensus.consensus_bonus}
+              </Text>
+            )}
+          </Space>
+        );
+      },
     },
     {
       title: '买入/最新',
@@ -707,6 +783,66 @@ const RecommendationTradeOutcomes: React.FC = () => {
           </Card>
         </Col>
       </Row>
+
+      <Card className="modern-card consensus-attribution-card" variant="borderless">
+        <Row gutter={[18, 18]} align="middle">
+          <Col xs={24} lg={7}>
+            <div className="outcome-panel-title">
+              <NodeIndexOutlined /> 多策略共识收益归因
+            </div>
+            <p>
+              将“策略实验共识加权”的标的单独抽出来，与无显式共识样本比较，验证共识排序是否真的转化为模拟交易超额收益。
+            </p>
+            <Space wrap>
+              <Tag color="purple">共识闭环 {consensusAttribution.closed_count} 笔</Tag>
+              <Tag color={consensusAttribution.edge >= 0 ? 'red' : 'green'}>
+                相对无共识 {consensusAttribution.edge >= 0 ? '+' : ''}
+                {consensusAttribution.edge.toFixed(2)}%
+              </Tag>
+            </Space>
+          </Col>
+          <Col xs={12} lg={4}>
+            <Statistic
+              title="共识组平均超额"
+              value={consensusAttribution.avg_excess_return_pct}
+              precision={2}
+              suffix="%"
+              valueStyle={{ color: pnlColor(consensusAttribution.avg_excess_return_pct) }}
+            />
+          </Col>
+          <Col xs={12} lg={4}>
+            <Statistic
+              title="最强共识层"
+              value={consensusAttribution.best?.avg_excess_return_pct || 0}
+              precision={2}
+              suffix="%"
+              valueStyle={{ color: pnlColor(consensusAttribution.best?.avg_excess_return_pct) }}
+            />
+            <Text type="secondary">{consensusAttribution.best?.label || '等待样本'}</Text>
+          </Col>
+          <Col xs={24} lg={9}>
+            <Space wrap size={[8, 8]}>
+              {consensusBuckets.map(bucket => (
+                <Tag
+                  key={bucket.key}
+                  color={
+                    bucket.key === 'no_consensus'
+                      ? 'default'
+                      : bucket.avg_excess_return_pct >= 0
+                      ? 'purple'
+                      : 'orange'
+                  }
+                >
+                  {bucket.label}：{bucket.closed_count}闭环 / 超额{' '}
+                  {formatPercent(bucket.avg_excess_return_pct)} / 胜率{' '}
+                  {formatPercent(bucket.excess_win_rate)}
+                </Tag>
+              ))}
+              {consensusBuckets.length === 0 && <Text type="secondary">暂无共识归因样本</Text>}
+            </Space>
+          </Col>
+        </Row>
+      </Card>
 
       <Row gutter={[18, 18]} style={{ marginBottom: 18 }}>
         <Col xs={24}>

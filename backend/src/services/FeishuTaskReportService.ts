@@ -966,6 +966,15 @@ class FeishuTaskReportService {
     const feedback = result?.feedback || {};
     const bestSegments = Array.isArray(feedback.best_segments) ? feedback.best_segments : [];
     const weakSegments = Array.isArray(feedback.weak_segments) ? feedback.weak_segments : [];
+    const consensusSegments = Array.isArray(result?.groups?.by_consensus)
+      ? result.groups.by_consensus
+      : [];
+    const bestConsensusSegment = consensusSegments
+      .filter((item: any) => item.key !== 'no_consensus' && Number(item.closed_count || 0) > 0)
+      .sort(
+        (a: any, b: any) =>
+          Number(b.avg_excess_return_pct || 0) - Number(a.avg_excess_return_pct || 0)
+      )[0];
     const bestTrade = summary.best_trade || {};
     const worstTrade = summary.worst_trade || {};
     const markdownMessage = this.buildRecommendationTradeOutcomesMarkdown(
@@ -1023,6 +1032,11 @@ class FeishuTaskReportService {
         .slice(0, 3)
         .map((item: any) => `${item.label}:${this.formatPercent(item.avg_excess_return_pct)}`)
         .join(', '),
+      最强共识片段: bestConsensusSegment
+        ? `${bestConsensusSegment.label}:${this.formatPercent(
+            bestConsensusSegment.avg_excess_return_pct
+          )}/${bestConsensusSegment.closed_count}样本`
+        : '',
       结果摘要: this.safeJson(
         {
           summary,
@@ -1887,6 +1901,16 @@ class FeishuTaskReportService {
     const feedback = result?.feedback || {};
     const bestSegments = Array.isArray(feedback.best_segments) ? feedback.best_segments : [];
     const weakSegments = Array.isArray(feedback.weak_segments) ? feedback.weak_segments : [];
+    const consensusSegments = Array.isArray(result?.groups?.by_consensus)
+      ? result.groups.by_consensus
+      : [];
+    const bestConsensusSegment = consensusSegments
+      .filter((item: any) => item.key !== 'no_consensus' && Number(item.closed_count || 0) > 0)
+      .sort(
+        (a: any, b: any) =>
+          Number(b.avg_excess_return_pct || 0) - Number(a.avg_excess_return_pct || 0)
+      )[0];
+    const noConsensusSegment = consensusSegments.find((item: any) => item.key === 'no_consensus');
     const bestTrade = summary.best_trade || {};
     const worstTrade = summary.worst_trade || {};
     const status = options.error ? 'FAILED' : 'COMPLETED';
@@ -1952,6 +1976,13 @@ class FeishuTaskReportService {
                 }样本）`
             )
             .join('、')}`
+        : '',
+      bestConsensusSegment
+        ? `- **多策略共识验证**：${bestConsensusSegment.label} 平均超额 ${this.formatPercent(
+            bestConsensusSegment.avg_excess_return_pct
+          )} / ${bestConsensusSegment.closed_count}样本；无显式共识 ${this.formatPercent(
+            noConsensusSegment?.avg_excess_return_pct
+          )}`
         : '',
       `- **过程风险**：平均 MFE ${this.formatPercent(
         summary.avg_mfe_pct

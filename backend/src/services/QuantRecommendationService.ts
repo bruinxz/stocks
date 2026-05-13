@@ -97,6 +97,10 @@ export interface QuantRecommendationItem {
   recommendation_tier_label: '强推荐池' | '轻仓试错池' | '观察池' | '回避池';
   tier_reason: string;
   tier_rank: number;
+  original_score?: number;
+  consensus_count?: number;
+  consensus_bonus?: number;
+  consensus_variants?: string[];
   trend?: Array<{ time: string; close: number }>;
 }
 

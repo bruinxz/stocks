@@ -29,7 +29,8 @@ export interface RecommendationTradeOutcomeRefreshOptions {
   report_to_feishu?: boolean;
 }
 
-export interface RecommendationTradeOutcomeQueryOptions extends RecommendationTradeOutcomeRefreshOptions {
+export interface RecommendationTradeOutcomeQueryOptions
+  extends RecommendationTradeOutcomeRefreshOptions {
   trade_status?: string;
   start_date?: string;
   end_date?: string;
@@ -74,6 +75,7 @@ export interface RecommendationTradeOutcomeDashboard {
     by_action: RecommendationTradeOutcomeBucket[];
     by_risk_level: RecommendationTradeOutcomeBucket[];
     by_industry: RecommendationTradeOutcomeBucket[];
+    by_consensus: RecommendationTradeOutcomeBucket[];
   };
   outcomes: RecommendationTradeOutcome[];
   feedback: {
@@ -106,6 +108,8 @@ export interface RecommendationTradeOutcomeBucket {
   worst_symbol?: string;
   worst_name?: string;
   worst_return_pct?: number;
+  avg_consensus_count?: number;
+  avg_consensus_bonus?: number;
 }
 
 function toNumber(value: any, fallback = 0): number {
@@ -148,6 +152,26 @@ function asPlainObject(value: any): Record<string, any> {
 
 function getChinaToday(): string {
   return moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
+}
+
+function consensusGroupKey(record: RecommendationTradeOutcome): string {
+  const metadata = asPlainObject(record.metadata);
+  const signalMetadata = asPlainObject(metadata.signal_metadata);
+  const consensusCount = toNumber(signalMetadata.consensus_count, 0);
+  if (consensusCount >= 4) return 'consensus_4_plus';
+  if (consensusCount === 3) return 'consensus_3';
+  if (consensusCount === 2) return 'consensus_2';
+  return 'no_consensus';
+}
+
+function consensusGroupLabel(key: string): string {
+  const labels: Record<string, string> = {
+    consensus_4_plus: '4组以上共识',
+    consensus_3: '3组共识',
+    consensus_2: '2组共识',
+    no_consensus: '无显式共识',
+  };
+  return labels[key] || key;
 }
 
 function dateOnly(value?: Date | string | null): string {
@@ -303,7 +327,9 @@ export class RecommendationTradeOutcomeService {
       } catch (error: any) {
         failed++;
         logger.warn(
-          `刷新推荐交易收益闭环失败 signal#${signal.id} ${signal.symbol}: ${error?.message || error}`
+          `刷新推荐交易收益闭环失败 signal#${signal.id} ${signal.symbol}: ${
+            error?.message || error
+          }`
         );
       }
     }
@@ -426,6 +452,11 @@ export class RecommendationTradeOutcomeService {
         outcomes,
         item => item.industry,
         value => value || '未分类'
+      ),
+      by_consensus: this.buildBuckets(
+        outcomes,
+        item => consensusGroupKey(item),
+        consensusGroupLabel
       ),
     };
 
@@ -641,6 +672,16 @@ export class RecommendationTradeOutcomeService {
         signal_metadata: metadata,
         paper_trading: paperTrading,
         benchmark,
+        consensus: {
+          consensus_count: toOptionalNumber(metadata.consensus_count),
+          consensus_bonus: toOptionalNumber(metadata.consensus_bonus),
+          original_score: toOptionalNumber(metadata.original_score),
+          consensus_variants: Array.isArray(metadata.consensus_variants)
+            ? metadata.consensus_variants
+            : [],
+          recommendation_tier: metadata.recommendation_tier,
+          recommendation_tier_label: metadata.recommendation_tier_label,
+        },
         refreshed_at: new Date().toISOString(),
         latest_position_id: position?.id,
         stock_id: stock?.id,
@@ -843,8 +884,8 @@ export class RecommendationTradeOutcomeService {
         avgWinPct && avgLossPct
           ? roundNumber(avgWinPct / Math.abs(avgLossPct), 4)
           : wins.length > 0 && losses.length === 0
-            ? 999
-            : 0,
+          ? 999
+          : 0,
       profit_factor: lossSum > 0 ? roundNumber(winSum / lossSum, 4) : wins.length > 0 ? 999 : 0,
       avg_holding_days: roundNumber(average(plain.map(item => toNumber(item.holding_days))), 2),
       avg_mfe_pct: roundNumber(
@@ -883,6 +924,12 @@ export class RecommendationTradeOutcomeService {
         const open = plain.filter(item => item.trade_status !== 'closed');
         const wins = closed.filter(item => toNumber(item.realized_pnl) > 0);
         const excessWins = closed.filter(item => toNumber(item.excess_return_pct) > 0);
+        const consensusCounts = plain.map(item =>
+          toNumber(asPlainObject(asPlainObject(item.metadata).signal_metadata).consensus_count, 0)
+        );
+        const consensusBonuses = plain.map(item =>
+          toNumber(asPlainObject(asPlainObject(item.metadata).signal_metadata).consensus_bonus, 0)
+        );
         const best = [...plain].sort(
           (a, b) => toNumber(b.total_pnl_pct) - toNumber(a.total_pnl_pct)
         )[0];
@@ -927,6 +974,8 @@ export class RecommendationTradeOutcomeService {
           worst_symbol: worst?.symbol,
           worst_name: worst?.name,
           worst_return_pct: worst?.total_pnl_pct,
+          avg_consensus_count: roundNumber(average(consensusCounts), 2),
+          avg_consensus_bonus: roundNumber(average(consensusBonuses), 2),
         };
       })
       .sort((a, b) => {
@@ -956,10 +1005,10 @@ export class RecommendationTradeOutcomeService {
       summary.closed_count < 5
         ? 0.65
         : summary.avg_excess_return_pct > 2 && summary.excess_win_rate >= 55
-          ? 1.15
-          : summary.avg_excess_return_pct < -1 || summary.excess_win_rate < 45
-            ? 0.55
-            : 0.85;
+        ? 1.15
+        : summary.avg_excess_return_pct < -1 || summary.excess_win_rate < 45
+        ? 0.55
+        : 0.85;
 
     const riskGroups = groups.by_risk_level.filter(group =>
       ['low', 'medium', 'high'].includes(group.key)
@@ -976,6 +1025,7 @@ export class RecommendationTradeOutcomeService {
       ...groups.by_agent_session,
       ...groups.by_style,
       ...groups.by_action,
+      ...groups.by_consensus,
       ...groups.by_industry,
     ];
     const bestSegments = allGroups
@@ -1015,6 +1065,27 @@ export class RecommendationTradeOutcomeService {
     if (weakSegments[0] && weakSegments[0].avg_excess_return_pct < 0) {
       nextActions.push(
         `降低 ${weakSegments[0].label} 片段权重，平均超额 ${weakSegments[0].avg_excess_return_pct}%。`
+      );
+    }
+    const consensusGroups = groups.by_consensus || [];
+    const strongConsensus = consensusGroups
+      .filter(group => group.key !== 'no_consensus' && group.closed_count > 0)
+      .sort((a, b) => b.avg_excess_return_pct - a.avg_excess_return_pct)[0];
+    const noConsensus = consensusGroups.find(group => group.key === 'no_consensus');
+    if (strongConsensus) {
+      const edge = roundNumber(
+        strongConsensus.avg_excess_return_pct - toNumber(noConsensus?.avg_excess_return_pct),
+        2
+      );
+      insights.push(
+        `多策略共识组 ${strongConsensus.label} 平均超额 ${
+          strongConsensus.avg_excess_return_pct
+        }%，相对无显式共识 ${edge >= 0 ? '+' : ''}${edge} 个百分点。`
+      );
+      nextActions.push(
+        edge >= 0
+          ? `继续优先复核 ${strongConsensus.label} 标的，并保留共识加权进入模拟盘。`
+          : `共识组尚未跑赢无共识样本，下一轮保持小仓验证，避免单纯因共识放大仓位。`
       );
     }
     nextActions.push(

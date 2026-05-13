@@ -941,6 +941,12 @@ export class AIInvestmentSignalService {
           recommendation_tier: candidate.recommendation_tier,
           recommendation_tier_label: candidate.recommendation_tier_label,
           tier_reason: candidate.tier_reason,
+          original_score: candidate.original_score,
+          consensus_count: candidate.consensus_count,
+          consensus_bonus: candidate.consensus_bonus,
+          consensus_variants: Array.isArray(candidate.consensus_variants)
+            ? candidate.consensus_variants
+            : [],
           suggested_position_pct: candidate.suggested_position_pct,
           stop_loss_pct: candidate.stop_loss_pct,
           take_profit_pct: candidate.take_profit_pct,
@@ -966,6 +972,12 @@ export class AIInvestmentSignalService {
           recommendation_tier: candidate.recommendation_tier,
           recommendation_tier_label: candidate.recommendation_tier_label,
           tier_reason: candidate.tier_reason,
+          original_score: candidate.original_score,
+          consensus_count: candidate.consensus_count,
+          consensus_bonus: candidate.consensus_bonus,
+          consensus_variants: Array.isArray(candidate.consensus_variants)
+            ? candidate.consensus_variants
+            : [],
           suggested_position_pct: candidate.suggested_position_pct,
           stop_loss_pct: candidate.stop_loss_pct,
           take_profit_pct: candidate.take_profit_pct,
