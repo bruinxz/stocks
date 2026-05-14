@@ -96,6 +96,7 @@ export interface RecommendationTradeOutcomeDashboard {
     by_environment_policy_version: RecommendationTradeOutcomeBucket[];
     by_environment_strategy_combo: RecommendationTradeOutcomeBucket[];
     by_resample: RecommendationTradeOutcomeBucket[];
+    by_candidate_tuning: RecommendationTradeOutcomeBucket[];
   };
   outcomes: RecommendationTradeOutcome[];
   feedback: {
@@ -354,6 +355,28 @@ function resampleGroupKey(record: RecommendationTradeOutcome): string {
 
 function resampleGroupLabel(key: string): string {
   return key === 'resample' ? '冷却复采样' : '常规推荐';
+}
+
+function candidateTuningKey(record: RecommendationTradeOutcome): string {
+  const metadata = asPlainObject(record.metadata);
+  const signalMetadata = asPlainObject(metadata.signal_metadata);
+  const paperTrading = asPlainObject(metadata.paper_trading);
+  return String(
+    metadata.environment_strategy_policy_action ||
+      signalMetadata.environment_strategy_policy_action ||
+      paperTrading.environment_strategy_policy_action ||
+      'no_tuning'
+  );
+}
+
+function candidateTuningLabel(key: string): string {
+  const labels: Record<string, string> = {
+    recovered: '源头恢复优先',
+    extended_cooldown: '源头延长冷却',
+    resample: '源头复采样',
+    no_tuning: '未调权候选',
+  };
+  return labels[key] || key || '未调权候选';
 }
 
 function dateOnly(value?: Date | string | null): string {
@@ -719,6 +742,12 @@ export class RecommendationTradeOutcomeService {
         resampleGroupLabel,
         'resample'
       ),
+      by_candidate_tuning: this.buildBuckets(
+        outcomes,
+        item => candidateTuningKey(item),
+        candidateTuningLabel,
+        'candidate_tuning'
+      ),
     };
 
     const dashboard: RecommendationTradeOutcomeDashboard = {
@@ -1065,6 +1094,7 @@ export class RecommendationTradeOutcomeService {
           )
           .slice(0, 10),
         resample_summary: outcomeDashboard.groups.by_resample,
+        candidate_tuning_rankings: outcomeDashboard.groups.by_candidate_tuning,
         resample_combo_rankings: environmentStrategyComboGroups
           .filter(item => toNumber(item.resample_closed_count, 0) > 0 || item.resample_decision)
           .sort(
@@ -1441,6 +1471,9 @@ export class RecommendationTradeOutcomeService {
         market_environment: metadata.market_environment || environmentPolicy.market_environment,
         environment_policy: environmentPolicy,
         environment_policy_snapshot_id: environmentPolicySnapshotId,
+        environment_strategy_adjustment: metadata.environment_strategy_adjustment,
+        environment_strategy_policy_label: metadata.environment_strategy_policy_label,
+        environment_strategy_policy_action: metadata.environment_strategy_policy_action,
         signal_metadata: metadata,
         paper_trading: paperTrading,
         benchmark,

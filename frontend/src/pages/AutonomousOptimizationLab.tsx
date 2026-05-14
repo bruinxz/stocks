@@ -242,6 +242,7 @@ interface OptimizationData {
     version_rankings?: EnvironmentRanking[];
     strategy_combo_rankings?: EnvironmentStrategyComboRanking[];
     resample_summary?: EnvironmentRanking[];
+    candidate_tuning_rankings?: EnvironmentRanking[];
     resample_combo_rankings?: EnvironmentStrategyComboRanking[];
     policy?: EnvironmentLoopPolicy;
   };
@@ -376,6 +377,13 @@ const AutonomousOptimizationLab: React.FC = () => {
     () =>
       (data?.market_environment?.resample_combo_rankings || []).filter(
         item => Number(item.resample_closed_count || 0) > 0 || item.resample_decision
+      ),
+    [data]
+  );
+  const candidateTuningRankings = useMemo(
+    () =>
+      (data?.market_environment?.candidate_tuning_rankings || []).filter(
+        item => item.key !== 'no_tuning'
       ),
     [data]
   );
@@ -671,6 +679,22 @@ const AutonomousOptimizationLab: React.FC = () => {
                   </div>
                 ))}
               </div>
+              {!!candidateTuningRankings.length && (
+                <div className="optimization-tuning-ledger">
+                  {candidateTuningRankings.slice(0, 3).map(item => (
+                    <div key={item.key}>
+                      <span>{item.label}</span>
+                      <strong style={{ color: pnlColor(item.avg_excess_return_pct) }}>
+                        {formatPercent(item.avg_excess_return_pct)}
+                      </strong>
+                      <em>
+                        闭环 {item.closed_count || 0} · 超额胜率{' '}
+                        {formatPercent(item.excess_win_rate)}
+                      </em>
+                    </div>
+                  ))}
+                </div>
+              )}
             </Card>
           </Col>
         </Row>

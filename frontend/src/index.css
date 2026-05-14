@@ -4438,6 +4438,47 @@ a {
   color: rgba(226, 236, 247, 0.7);
 }
 
+.optimization-tuning-ledger {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.optimization-tuning-ledger > div {
+  padding: 14px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.11);
+}
+
+.optimization-tuning-ledger span,
+.optimization-tuning-ledger strong,
+.optimization-tuning-ledger em {
+  display: block;
+}
+
+.optimization-tuning-ledger span {
+  color: var(--auto-muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.optimization-tuning-ledger strong {
+  margin-top: 6px;
+  font-family: var(--font-display);
+  font-size: 28px;
+  line-height: 1;
+  letter-spacing: -0.055em;
+}
+
+.optimization-tuning-ledger em {
+  margin-top: 6px;
+  color: rgba(226, 236, 247, 0.68);
+  font-style: normal;
+  font-size: 12px;
+}
+
 .optimization-env-combo-stats {
   display: flex;
   flex-wrap: wrap;
@@ -4935,6 +4976,10 @@ a {
   }
 
   .optimization-resample-board {
+    grid-template-columns: 1fr;
+  }
+
+  .optimization-tuning-ledger {
     grid-template-columns: 1fr;
   }
 
