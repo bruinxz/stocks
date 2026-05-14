@@ -138,6 +138,10 @@ interface AutoTradeItem {
   consensus_count?: number;
   consensus_bonus?: number;
   consensus_variants?: string[];
+  environment_multiplier?: number;
+  environment_reason?: string;
+  market_regime_label?: string;
+  industry_label?: string;
 }
 
 interface AutoTradeResult {
@@ -168,6 +172,10 @@ interface AutoTradeResult {
     gate_label?: string;
     effective_position_multiplier: number;
     reason?: string;
+  };
+  environment_guard_policy?: {
+    enabled: boolean;
+    description: string;
   };
 }
 
@@ -1024,6 +1032,11 @@ const Recommendations: React.FC = () => {
                     {autoTradeResult.profit_gate_policy.effective_position_multiplier}x
                   </Text>
                 )}
+                {autoTradeResult.environment_guard_policy?.enabled && (
+                  <Text style={{ color: 'rgba(219,234,254,0.86)' }}>
+                    环境风控：已根据大盘/行业状态动态调仓
+                  </Text>
+                )}
               </Space>
             </Col>
             <Col xs={12} md={4}>
@@ -1064,6 +1077,10 @@ const Recommendations: React.FC = () => {
                       color={Number(item.consensus_count || 0) > 1 ? 'purple' : 'volcano'}
                     >
                       {item.name || item.symbol} · {item.quantity}股 · {item.target_position_pct}%
+                      {item.environment_multiplier !== undefined
+                        ? ` · 环境${item.environment_multiplier}x`
+                        : ''}
+                      {item.market_regime_label ? ` · ${item.market_regime_label}` : ''}
                       {Number(item.consensus_count || 0) > 1
                         ? ` · 共识${item.consensus_count}`
                         : ''}
