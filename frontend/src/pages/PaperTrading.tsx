@@ -479,6 +479,10 @@ const PaperTrading: React.FC = () => {
           outcome_feedback_min_closed_samples: 5,
           outcome_feedback_lookback_days: 365,
           outcome_feedback_limit: 2000,
+          use_adaptive_risk_policy: true,
+          adaptive_risk_lookback_days: 180,
+          adaptive_risk_min_closed_samples: 5,
+          adaptive_risk_override_signal_params: false,
         },
       });
       if (response.data.success) {
@@ -516,6 +520,10 @@ const PaperTrading: React.FC = () => {
         outcome_feedback_min_closed_samples: 5,
         outcome_feedback_lookback_days: 365,
         outcome_feedback_limit: 2000,
+        use_adaptive_risk_policy: true,
+        adaptive_risk_lookback_days: 180,
+        adaptive_risk_min_closed_samples: 5,
+        adaptive_risk_override_signal_params: false,
       });
       if (response.data.success) {
         setTradingPlan(response.data.data);
@@ -539,6 +547,10 @@ const PaperTrading: React.FC = () => {
         enable_take_profit: true,
         enable_trailing_take_profit: true,
         enable_sell_signals: true,
+        use_adaptive_risk_policy: true,
+        adaptive_risk_lookback_days: 180,
+        adaptive_risk_min_closed_samples: 5,
+        adaptive_risk_override_signal_params: false,
         default_stop_loss_pct: 7,
         default_take_profit_pct: 14,
         trailing_activation_pct: 8,

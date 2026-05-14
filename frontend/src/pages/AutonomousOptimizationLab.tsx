@@ -97,8 +97,14 @@ interface OptimizationData {
     recommended_max_hold_days: number;
     recommended_stop_loss_pct: number;
     recommended_take_profit_pct: number;
+    recommended_trailing_activation_pct?: number;
+    recommended_trailing_drawdown_pct?: number;
     current_open_avg_holding_days: number;
     closed_avg_holding_days: number;
+    sample_count?: number;
+    confidence?: number;
+    mode?: string;
+    reason?: string;
     best_horizon?: HorizonPath | null;
   };
   next_policy: {
@@ -317,7 +323,9 @@ const AutonomousOptimizationLab: React.FC = () => {
             <strong>{data?.adaptive_risk.recommended_max_hold_days || 20} 天</strong>
             <em>
               止损 {formatPercent(data?.adaptive_risk.recommended_stop_loss_pct)} / 止盈{' '}
-              {formatPercent(data?.adaptive_risk.recommended_take_profit_pct)}
+              {formatPercent(data?.adaptive_risk.recommended_take_profit_pct)} / 移动{' '}
+              {formatPercent(data?.adaptive_risk.recommended_trailing_activation_pct)}/
+              {formatPercent(data?.adaptive_risk.recommended_trailing_drawdown_pct)}
             </em>
           </Card>
         </Col>

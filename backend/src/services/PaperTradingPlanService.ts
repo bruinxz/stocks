@@ -50,6 +50,10 @@ export interface PaperTradingPlanOptions {
   enable_take_profit?: boolean;
   enable_trailing_take_profit?: boolean;
   enable_sell_signals?: boolean;
+  use_adaptive_risk_policy?: boolean;
+  adaptive_risk_lookback_days?: number;
+  adaptive_risk_min_closed_samples?: number;
+  adaptive_risk_override_signal_params?: boolean;
   default_stop_loss_pct?: number;
   default_take_profit_pct?: number;
   trailing_activation_pct?: number;
@@ -199,6 +203,10 @@ class PaperTradingPlanService {
         enable_take_profit: options.enable_take_profit,
         enable_trailing_take_profit: options.enable_trailing_take_profit,
         enable_sell_signals: options.enable_sell_signals,
+        use_adaptive_risk_policy: options.use_adaptive_risk_policy,
+        adaptive_risk_lookback_days: options.adaptive_risk_lookback_days,
+        adaptive_risk_min_closed_samples: options.adaptive_risk_min_closed_samples,
+        adaptive_risk_override_signal_params: options.adaptive_risk_override_signal_params,
         default_stop_loss_pct: options.default_stop_loss_pct,
         default_take_profit_pct: options.default_take_profit_pct,
         trailing_activation_pct: options.trailing_activation_pct,
@@ -259,7 +267,9 @@ class PaperTradingPlanService {
             item.pnl_pct ?? '--'
           }%，持有 ${item.holding_days ?? '--'} 天${
             item.reason === 'trailing_take_profit'
-              ? `，峰值收益 ${item.max_profit_pct ?? '--'}%，峰值回撤 ${item.drawdown_from_peak_pct ?? '--'}%`
+              ? `，峰值收益 ${item.max_profit_pct ?? '--'}%，峰值回撤 ${
+                  item.drawdown_from_peak_pct ?? '--'
+                }%`
               : ''
           }`,
           instructions: [
@@ -308,8 +318,8 @@ class PaperTradingPlanService {
             item.risk_state === 'near_stop_loss'
               ? '临近止损'
               : item.risk_state === 'approaching_take_profit'
-                ? '接近止盈'
-                : '继续观察',
+              ? '接近止盈'
+              : '继续观察',
           reason: `当前浮动盈亏 ${item.unrealized_pnl_pct}% ，距止损 ${
             item.distance_to_stop_loss_pct ?? '--'
           }pct，持有 ${item.holding_days} 天`,
@@ -477,6 +487,7 @@ class PaperTradingPlanService {
       outcome_position_multiplier: outcomePolicy?.effective_position_multiplier,
       outcome_reason: outcomePolicy?.reason,
       outcome_blocked_segments: outcomePolicy?.blocked_segments,
+      adaptive_risk_policy: riskCheck?.adaptive_risk_policy,
     };
 
     const result: PaperTradingPlanResult = {

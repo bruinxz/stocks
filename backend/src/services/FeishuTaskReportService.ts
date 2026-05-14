@@ -605,9 +605,7 @@ class FeishuTaskReportService {
                   item.score
                 }，${this.buildInlinePriceText(item) || '当前股价 --'}，${
                   item.action_label || item.action || '-'
-                }，风险 ${
-                  item.risk_level || '-'
-                }${formatConsensus(item)}，20日 ${
+                }，风险 ${item.risk_level || '-'}${formatConsensus(item)}，20日 ${
                   item.metrics?.return_20d ?? '--'
                 }%，理由：${this.safeText((item.reasons || []).slice(0, 2).join('；'), 260)}`
             )
@@ -1092,6 +1090,8 @@ class FeishuTaskReportService {
     const summary = result?.summary || {};
     const actions = Array.isArray(result?.actions) ? result.actions : [];
     const firstAction = actions[0] || {};
+    const adaptiveRisk =
+      summary.adaptive_risk_policy || result?.risk_check?.adaptive_risk_policy || {};
     const markdownMessage = this.buildPaperTradingPlanMarkdown(result, options, recordType);
 
     return this.safeAppend({
@@ -1123,6 +1123,15 @@ class FeishuTaskReportService {
       收益闭环超额胜率: this.formatPercent(summary.outcome_excess_win_rate),
       收益闭环仓位倍率: summary.outcome_position_multiplier,
       收益闭环结论: summary.outcome_reason,
+      自适应风控状态: adaptiveRisk?.enabled ? (adaptiveRisk.applied ? '已应用' : '观察中') : '',
+      自适应风控结论: adaptiveRisk?.reason,
+      自适应止损: this.formatPercent(adaptiveRisk?.effective_stop_loss_pct),
+      自适应止盈: this.formatPercent(adaptiveRisk?.effective_take_profit_pct),
+      自适应移动止盈: adaptiveRisk?.enabled
+        ? `${this.formatPercent(
+            adaptiveRisk?.effective_trailing_activation_pct
+          )}/${this.formatPercent(adaptiveRisk?.effective_trailing_drawdown_pct)}`
+        : '',
       推荐风险等级: Array.isArray(summary.recommended_allowed_risk_levels)
         ? summary.recommended_allowed_risk_levels.join(',')
         : '',
@@ -1643,6 +1652,7 @@ class FeishuTaskReportService {
     const heldItems = Array.isArray(result?.held_items) ? result.held_items : [];
     const skippedItems = Array.isArray(result?.skipped_items) ? result.skipped_items : [];
     const snapshot = result?.snapshot || {};
+    const adaptiveRisk = result?.adaptive_risk_policy || {};
     const dryRun = Boolean(result?.dry_run);
     const status = options.error ? 'FAILED' : 'COMPLETED';
     const exitCount = dryRun ? result?.planned ?? exits.length : result?.exited ?? exits.length;
@@ -1664,6 +1674,19 @@ class FeishuTaskReportService {
           )}，现金 ¥${this.formatMoney(snapshot.current_cash)}，持仓 ¥${this.formatMoney(
             snapshot.position_value
           )}`
+        : '',
+      adaptiveRisk?.enabled
+        ? `- **自适应风控**：${
+            adaptiveRisk.applied ? '已应用' : '观察中'
+          }；止损 ${this.formatPercent(
+            adaptiveRisk.effective_stop_loss_pct
+          )}，止盈 ${this.formatPercent(
+            adaptiveRisk.effective_take_profit_pct
+          )}，移动止盈 ${this.formatPercent(
+            adaptiveRisk.effective_trailing_activation_pct
+          )}/${this.formatPercent(adaptiveRisk.effective_trailing_drawdown_pct)}；${
+            adaptiveRisk.reason || ''
+          }`
         : '',
     ];
 
@@ -1713,9 +1736,7 @@ class FeishuTaskReportService {
         lines.push(
           `- **${item.name || item.symbol}（${item.symbol}）**：${quoteText}${
             costText ? `；${costText}` : ''
-          }；当前收益 ${item.pnl_pct ?? '--'}%，${
-            item.message || '未触发退出'
-          }`
+          }；当前收益 ${item.pnl_pct ?? '--'}%，${item.message || '未触发退出'}`
         );
       });
     }
@@ -1820,11 +1841,9 @@ class FeishuTaskReportService {
         lines.push(
           `- **${item.name || item.symbol}（${item.symbol}）**：${this.buildTradePriceRangeText(
             item
-          )}；浮盈亏 ${this.formatSignedMoney(
-            item.unrealized_pnl
-          )}（${this.formatPercent(item.unrealized_pnl_pct)}），持有 ${
-            item.holding_days ?? '--'
-          } 天`
+          )}；浮盈亏 ${this.formatSignedMoney(item.unrealized_pnl)}（${this.formatPercent(
+            item.unrealized_pnl_pct
+          )}），持有 ${item.holding_days ?? '--'} 天`
         );
       });
     }
@@ -1910,18 +1929,14 @@ class FeishuTaskReportService {
             bestTrade.symbol
           }）${this.buildTradePriceRangeText(bestTrade)}；收益 ${this.formatPercent(
             bestTrade.total_pnl_pct
-          )}，超额 ${this.formatPercent(
-            bestTrade.excess_return_pct
-          )}`
+          )}，超额 ${this.formatPercent(bestTrade.excess_return_pct)}`
         : '- **最佳样本**：暂无',
       worstTrade?.symbol
         ? `- **最弱样本**：${worstTrade.name || worstTrade.symbol}（${
             worstTrade.symbol
           }）${this.buildTradePriceRangeText(worstTrade)}；收益 ${this.formatPercent(
             worstTrade.total_pnl_pct
-          )}，超额 ${this.formatPercent(
-            worstTrade.excess_return_pct
-          )}`
+          )}，超额 ${this.formatPercent(worstTrade.excess_return_pct)}`
         : '',
       bestSegments.length
         ? `- **优先保留片段**：${bestSegments
@@ -1991,6 +2006,8 @@ class FeishuTaskReportService {
     const summary = result?.summary || {};
     const actions = Array.isArray(result?.actions) ? result.actions : [];
     const outcomePolicy = result?.entry_preview?.outcome_feedback_policy || {};
+    const adaptiveRisk =
+      summary.adaptive_risk_policy || result?.risk_check?.adaptive_risk_policy || {};
     const status = options.error ? 'FAILED' : 'COMPLETED';
     const urgentActions = actions.filter((action: any) =>
       ['critical', 'high'].includes(action.priority)
@@ -2022,6 +2039,17 @@ class FeishuTaskReportService {
           }x`
         : '',
       summary.outcome_reason ? `- **闭环判断**：${this.safeText(summary.outcome_reason, 180)}` : '',
+      adaptiveRisk?.enabled
+        ? `- **自适应风控**：${
+            adaptiveRisk.applied ? '已应用' : '观察中'
+          }；止损 ${this.formatPercent(
+            adaptiveRisk.effective_stop_loss_pct
+          )}，止盈 ${this.formatPercent(
+            adaptiveRisk.effective_take_profit_pct
+          )}，移动止盈 ${this.formatPercent(
+            adaptiveRisk.effective_trailing_activation_pct
+          )}/${this.formatPercent(adaptiveRisk.effective_trailing_drawdown_pct)}`
+        : '',
       Array.isArray(outcomePolicy.blocked_segments) && outcomePolicy.blocked_segments.length
         ? `- **暂停片段**：${outcomePolicy.blocked_segments
             .slice(0, 3)
@@ -2095,9 +2123,7 @@ class FeishuTaskReportService {
     if (value === undefined || value === null || value === '') return '';
     const num = Number(value);
     if (!Number.isFinite(num) || num <= 0) return '';
-    return num
-      .toFixed(num >= 100 ? 2 : 3)
-      .replace(/\.?0+$/, '');
+    return num.toFixed(num >= 100 ? 2 : 3).replace(/\.?0+$/, '');
   }
 
   private resolveStockPriceValue(item: any): any {

@@ -32,7 +32,8 @@ export interface RecommendationTradeOutcomeRefreshOptions {
   report_to_feishu?: boolean;
 }
 
-export interface RecommendationTradeOutcomeQueryOptions extends RecommendationTradeOutcomeRefreshOptions {
+export interface RecommendationTradeOutcomeQueryOptions
+  extends RecommendationTradeOutcomeRefreshOptions {
   trade_status?: string;
   start_date?: string;
   end_date?: string;
@@ -214,6 +215,10 @@ function average(values: number[]): number {
   const valid = values.filter(Number.isFinite);
   if (valid.length === 0) return 0;
   return valid.reduce((sum, value) => sum + value, 0) / valid.length;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 function safeDateWindow(startDate: string, endDate: string): { start: Date; end: Date } {
@@ -603,19 +608,55 @@ export class RecommendationTradeOutcomeService {
     const takeProfitCandidates = closedOutcomes
       .map(item => toNumber(item.max_favorable_excursion_pct))
       .filter(value => Number.isFinite(value) && value > 0);
+    const avgMfePct = average(takeProfitCandidates);
+    const avgMaeAbsPct = average(stopLossCandidates);
+    const weakOutcome =
+      outcomeDashboard.summary.avg_closed_return_pct < 0 ||
+      outcomeDashboard.summary.avg_excess_return_pct < -1 ||
+      outcomeDashboard.summary.win_rate < 45 ||
+      outcomeDashboard.summary.profit_factor < 0.9;
+    const strongOutcome =
+      outcomeDashboard.summary.avg_closed_return_pct > 2 &&
+      outcomeDashboard.summary.avg_excess_return_pct > 0.8 &&
+      outcomeDashboard.summary.win_rate >= 55 &&
+      outcomeDashboard.summary.profit_factor >= 1.2;
+    const adaptiveStopLoss = roundNumber(
+      clamp(avgMaeAbsPct ? avgMaeAbsPct * (weakOutcome ? 0.85 : 1.1) : 7, 4, 10),
+      2
+    );
+    const adaptiveTakeProfit = roundNumber(
+      clamp(avgMfePct ? avgMfePct * (weakOutcome ? 0.72 : strongOutcome ? 0.9 : 0.82) : 14, 9, 22),
+      2
+    );
+    const adaptiveTrailingActivation = roundNumber(
+      clamp(avgMfePct ? avgMfePct * (weakOutcome ? 0.48 : strongOutcome ? 0.62 : 0.55) : 8, 5, 14),
+      2
+    );
+    const adaptiveTrailingDrawdown = roundNumber(
+      clamp(
+        avgMaeAbsPct ? avgMaeAbsPct * (weakOutcome ? 0.55 : strongOutcome ? 0.75 : 0.65) : 4,
+        2.5,
+        7
+      ),
+      2
+    );
     const adaptiveRisk = {
       recommended_max_hold_days: recommendedMaxHoldDays,
-      recommended_stop_loss_pct: roundNumber(
-        Math.max(5, Math.min(10, average(stopLossCandidates) || 7)),
-        2
-      ),
-      recommended_take_profit_pct: roundNumber(
-        Math.max(10, Math.min(20, average(takeProfitCandidates) || 14)),
-        2
-      ),
+      recommended_stop_loss_pct: adaptiveStopLoss,
+      recommended_take_profit_pct: adaptiveTakeProfit,
+      recommended_trailing_activation_pct: adaptiveTrailingActivation,
+      recommended_trailing_drawdown_pct: adaptiveTrailingDrawdown,
       current_open_avg_holding_days: currentHoldDays,
       closed_avg_holding_days: closedAvgHoldDays,
       best_horizon: bestHorizon || null,
+      sample_count: closedOutcomes.length,
+      confidence: roundNumber(clamp(closedOutcomes.length / 10, 0, 1), 2),
+      mode: weakOutcome ? 'defensive' : strongOutcome ? 'growth' : 'balanced',
+      reason: weakOutcome
+        ? '闭环收益偏弱，建议收紧止损/止盈与移动止盈触发'
+        : strongOutcome
+        ? '闭环收益偏强，建议给强势标的更多收益空间'
+        : '闭环收益中性，按 MFE/MAE 小幅校准风控参数',
     };
 
     const policyDashboard = await recommendationLoopPolicySnapshotService
@@ -665,11 +706,17 @@ export class RecommendationTradeOutcomeService {
       }));
 
     const insights = [
-      `自主模拟盘当前总盈亏 ${roundNumber(outcomeDashboard.summary.total_pnl, 2)}，闭环 ${outcomeDashboard.summary.closed_count}/${outcomeDashboard.summary.total_count} 笔，胜率 ${outcomeDashboard.summary.win_rate}%。`,
+      `自主模拟盘当前总盈亏 ${roundNumber(outcomeDashboard.summary.total_pnl, 2)}，闭环 ${
+        outcomeDashboard.summary.closed_count
+      }/${outcomeDashboard.summary.total_count} 笔，胜率 ${outcomeDashboard.summary.win_rate}%。`,
       bestHorizon
         ? `后验收益路径显示 ${bestHorizon.horizon} 当前更优，平均方向收益 ${bestHorizon.avg_directional_return_pct}%、超额胜率 ${bestHorizon.excess_win_rate}%。`
         : '收益路径样本不足，先继续让推荐进入小仓模拟盘沉淀样本。',
-      `下一轮建议：${styleLabel(nextPolicy.recommended_style)} / 评分≥${nextPolicy.recommended_min_score} / 默认仓位 ${nextPolicy.recommended_default_position_pct}% / 跟单 ${nextPolicy.recommended_paper_trade_limit} 笔。`,
+      `下一轮建议：${styleLabel(nextPolicy.recommended_style)} / 评分≥${
+        nextPolicy.recommended_min_score
+      } / 默认仓位 ${nextPolicy.recommended_default_position_pct}% / 跟单 ${
+        nextPolicy.recommended_paper_trade_limit
+      } 笔。`,
       killList[0]
         ? `需降权片段：${killList[0].label}，平均超额 ${killList[0].avg_excess_return_pct}%。`
         : '暂无明确需要永久剔除的片段，继续以收益闸门控制仓位。',
@@ -1093,8 +1140,8 @@ export class RecommendationTradeOutcomeService {
           item.directional_return_pct !== undefined
             ? toNumber(item.directional_return_pct)
             : ['sell', 'strong_sell'].includes(String(decision || '').toLowerCase())
-              ? -returnPct
-              : returnPct;
+            ? -returnPct
+            : returnPct;
         samples.push({
           outcome_id: outcome.id,
           signal_id: outcome.signal_id,
@@ -1114,10 +1161,7 @@ export class RecommendationTradeOutcomeService {
           return_pct: roundNumber(returnPct, 4),
           directional_return_pct: roundNumber(directionalReturn, 4),
           excess_return_pct: roundNumber(toNumber(item.excess_return_pct, directionalReturn), 4),
-          max_favorable_excursion_pct: roundNumber(
-            toNumber(item.max_favorable_excursion_pct),
-            4
-          ),
+          max_favorable_excursion_pct: roundNumber(toNumber(item.max_favorable_excursion_pct), 4),
           max_adverse_excursion_pct: roundNumber(toNumber(item.max_adverse_excursion_pct), 4),
           trade_status: outcome.trade_status,
           total_pnl_pct: toNumber(outcome.total_pnl_pct),
@@ -1235,8 +1279,8 @@ export class RecommendationTradeOutcomeService {
         avgWinPct && avgLossPct
           ? roundNumber(avgWinPct / Math.abs(avgLossPct), 4)
           : wins.length > 0 && losses.length === 0
-            ? 999
-            : 0,
+          ? 999
+          : 0,
       profit_factor: lossSum > 0 ? roundNumber(winSum / lossSum, 4) : wins.length > 0 ? 999 : 0,
       avg_holding_days: roundNumber(average(plain.map(item => toNumber(item.holding_days))), 2),
       avg_mfe_pct: roundNumber(
@@ -1356,10 +1400,10 @@ export class RecommendationTradeOutcomeService {
       summary.closed_count < 5
         ? 0.65
         : summary.avg_excess_return_pct > 2 && summary.excess_win_rate >= 55
-          ? 1.15
-          : summary.avg_excess_return_pct < -1 || summary.excess_win_rate < 45
-            ? 0.55
-            : 0.85;
+        ? 1.15
+        : summary.avg_excess_return_pct < -1 || summary.excess_win_rate < 45
+        ? 0.55
+        : 0.85;
 
     const riskGroups = groups.by_risk_level.filter(group =>
       ['low', 'medium', 'high'].includes(group.key)

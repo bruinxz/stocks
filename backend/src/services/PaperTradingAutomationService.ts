@@ -295,6 +295,10 @@ export interface PaperTradingRiskCheckOptions {
   enable_take_profit?: boolean;
   enable_trailing_take_profit?: boolean;
   enable_sell_signals?: boolean;
+  use_adaptive_risk_policy?: boolean;
+  adaptive_risk_lookback_days?: number;
+  adaptive_risk_min_closed_samples?: number;
+  adaptive_risk_override_signal_params?: boolean;
   default_stop_loss_pct?: number;
   default_take_profit_pct?: number;
   trailing_activation_pct?: number;
@@ -337,6 +341,36 @@ export interface PaperTradingRiskExitItem {
   message?: string;
 }
 
+export interface PaperTradingAdaptiveRiskPolicy {
+  enabled: boolean;
+  applied: boolean;
+  closed_samples: number;
+  min_closed_samples: number;
+  lookback_days: number;
+  confidence: number;
+  reason: string;
+  requested_stop_loss_pct: number;
+  requested_take_profit_pct: number;
+  requested_trailing_activation_pct: number;
+  requested_trailing_drawdown_pct: number;
+  requested_max_hold_days: number;
+  effective_stop_loss_pct: number;
+  effective_take_profit_pct: number;
+  effective_trailing_activation_pct: number;
+  effective_trailing_drawdown_pct: number;
+  effective_max_hold_days: number;
+  override_signal_params: boolean;
+  avg_mfe_pct?: number;
+  avg_mae_pct?: number;
+  avg_closed_return_pct?: number;
+  avg_excess_return_pct?: number;
+  win_rate?: number;
+  excess_win_rate?: number;
+  profit_factor?: number;
+  avg_holding_days?: number;
+  notes: string[];
+}
+
 export interface PaperTradingRiskCheckResult {
   portfolio_id: number;
   user_id: number;
@@ -350,6 +384,7 @@ export interface PaperTradingRiskCheckResult {
   exits: PaperTradingRiskExitItem[];
   held_items: PaperTradingRiskExitItem[];
   skipped_items: PaperTradingRiskExitItem[];
+  adaptive_risk_policy?: PaperTradingAdaptiveRiskPolicy;
   snapshot?: PaperTradingSnapshotResult;
 }
 
@@ -832,13 +867,13 @@ class PaperTradingAutomationService {
         metadata.auto_trade_allowed_by_data_quality !== undefined
           ? Boolean(metadata.auto_trade_allowed_by_data_quality)
           : dataQuality.auto_trade_allowed !== undefined
-            ? Boolean(dataQuality.auto_trade_allowed)
-            : !['low', 'critical'].includes(dataQualityBucket);
+          ? Boolean(dataQuality.auto_trade_allowed)
+          : !['low', 'critical'].includes(dataQualityBucket);
       const dataQualityIssues = Array.isArray(dataQuality.issues)
         ? dataQuality.issues
         : Array.isArray(dataQuality.warnings)
-          ? dataQuality.warnings
-          : [];
+        ? dataQuality.warnings
+        : [];
 
       const skip = (reason: string) => {
         skipped_items.push({ ...itemBase, status: 'skipped', reason });
@@ -859,16 +894,18 @@ class PaperTradingAutomationService {
 
       if (['critical'].includes(dataQualityBucket) || !dataQualityAutoTradeAllowed) {
         skip(
-          `数据质量未达自动跟单标准（${Number.isFinite(dataQualityScore) ? dataQualityScore : '--'}分/${dataQualityBucket}），${
-            dataQualityIssues.slice(0, 2).join('；') || '禁止自动买入'
-          }`
+          `数据质量未达自动跟单标准（${
+            Number.isFinite(dataQualityScore) ? dataQualityScore : '--'
+          }分/${dataQualityBucket}），${dataQualityIssues.slice(0, 2).join('；') || '禁止自动买入'}`
         );
         continue;
       }
 
       if (dataQualityBucket === 'low' && !signalIds.includes(signal.id)) {
         skip(
-          `Agent 数据质量偏低（${Number.isFinite(dataQualityScore) ? dataQualityScore : '--'}分），需人工复核后再跟单`
+          `Agent 数据质量偏低（${
+            Number.isFinite(dataQualityScore) ? dataQualityScore : '--'
+          }分），需人工复核后再跟单`
         );
         continue;
       }
@@ -955,8 +992,8 @@ class PaperTradingAutomationService {
         dataQualityBucket === 'high' || dataQualityBucket === 'unknown'
           ? 1
           : dataQualityBucket === 'medium'
-            ? toNumber(dataQuality.position_multiplier, 0.75)
-            : toNumber(dataQuality.position_multiplier, 0.35);
+          ? toNumber(dataQuality.position_multiplier, 0.75)
+          : toNumber(dataQuality.position_multiplier, 0.35);
       const gatedSuggestedPct = clamp(
         suggestedPct *
           profitGatePolicy.effective_position_multiplier *
@@ -1025,7 +1062,9 @@ class PaperTradingAutomationService {
             ? `交易收益闭环：样本 ${outcomeFeedbackPolicy.closed_samples}，仓位倍率 ${outcomeFeedbackPolicy.effective_position_multiplier}x`
             : '',
           dataQualityBucket && !['high', 'unknown'].includes(dataQualityBucket)
-            ? `数据质量：${dataQualityScore || '--'}分/${dataQualityBucket}，仓位倍率 ${dataQualityPositionMultiplier}x`
+            ? `数据质量：${
+                dataQualityScore || '--'
+              }分/${dataQualityBucket}，仓位倍率 ${dataQualityPositionMultiplier}x`
             : '',
         ]
           .filter(Boolean)
@@ -1220,6 +1259,21 @@ class PaperTradingAutomationService {
     await this.syncLatestPricesAndSnapshot(portfolio.id);
     await portfolio.reload();
 
+    const adaptiveRiskPolicy = await this.resolveAdaptiveRiskPolicy({
+      enabled: toBoolean(options.use_adaptive_risk_policy, true),
+      portfolio_id: portfolio.id,
+      user_id: portfolio.user_id,
+      username: options.username,
+      min_closed_samples: toPositiveInt(options.adaptive_risk_min_closed_samples, 5, 100),
+      lookback_days: toPositiveInt(options.adaptive_risk_lookback_days, 180, 3650),
+      override_signal_params: toBoolean(options.adaptive_risk_override_signal_params, false),
+      requested_stop_loss_pct: defaultStopLossPct,
+      requested_take_profit_pct: defaultTakeProfitPct,
+      requested_trailing_activation_pct: trailingActivationPct,
+      requested_trailing_drawdown_pct: trailingDrawdownPct,
+      requested_max_hold_days: maxHoldDays,
+    });
+
     const positions = await PaperTradingPosition.findAll({
       where: { portfolio_id: portfolio.id },
       order: [['created_at', 'ASC']],
@@ -1238,15 +1292,26 @@ class PaperTradingAutomationService {
       const paperTradingMeta = asPlainObject(signalMeta.paper_trading);
       const entryDate = paperTradingMeta.executed_at || position.created_at;
       const holdingDays = Math.max(0, moment().tz('Asia/Shanghai').diff(moment(entryDate), 'days'));
+      const useAdaptiveDefaults =
+        adaptiveRiskPolicy.applied && adaptiveRiskPolicy.override_signal_params;
       const stopLossPct = Math.abs(
-        toNumber(paperTradingMeta.stop_loss_pct ?? signalMeta.stop_loss_pct, defaultStopLossPct)
+        toNumber(
+          useAdaptiveDefaults
+            ? adaptiveRiskPolicy.effective_stop_loss_pct
+            : paperTradingMeta.stop_loss_pct ?? signalMeta.stop_loss_pct,
+          adaptiveRiskPolicy.effective_stop_loss_pct
+        )
       );
       const takeProfitPct = Math.abs(
         toNumber(
-          paperTradingMeta.take_profit_pct ?? signalMeta.take_profit_pct,
-          defaultTakeProfitPct
+          useAdaptiveDefaults
+            ? adaptiveRiskPolicy.effective_take_profit_pct
+            : paperTradingMeta.take_profit_pct ?? signalMeta.take_profit_pct,
+          adaptiveRiskPolicy.effective_take_profit_pct
         )
       );
+      const positionTrailingActivationPct = adaptiveRiskPolicy.effective_trailing_activation_pct;
+      const positionTrailingDrawdownPct = adaptiveRiskPolicy.effective_trailing_drawdown_pct;
       const quote = await this.getLatestPrice(symbol, toNumber(position.current_price, 0));
       const latestPrice = quote.price || toNumber(position.current_price, 0);
       const pnlPct = avgCost > 0 ? roundNumber(((latestPrice - avgCost) / avgCost) * 100, 4) : 0;
@@ -1255,7 +1320,7 @@ class PaperTradingAutomationService {
         entry_date: entryDate,
         entry_price: avgCost,
         latest_price: latestPrice,
-        trailing_drawdown_pct: trailingDrawdownPct,
+        trailing_drawdown_pct: positionTrailingDrawdownPct,
       });
 
       const baseItem: PaperTradingRiskExitItem = {
@@ -1269,13 +1334,13 @@ class PaperTradingAutomationService {
         holding_days: holdingDays,
         stop_loss_pct: stopLossPct,
         take_profit_pct: takeProfitPct,
-        trailing_activation_pct: trailingActivationPct,
-        trailing_drawdown_pct: trailingDrawdownPct,
+        trailing_activation_pct: positionTrailingActivationPct,
+        trailing_drawdown_pct: positionTrailingDrawdownPct,
         max_profit_pct: trailingStats.max_profit_pct,
         drawdown_from_peak_pct: trailingStats.drawdown_from_peak_pct,
         peak_price: trailingStats.peak_price,
         trailing_stop_price:
-          enableTrailingTakeProfit && trailingStats.max_profit_pct >= trailingActivationPct
+          enableTrailingTakeProfit && trailingStats.max_profit_pct >= positionTrailingActivationPct
             ? trailingStats.trailing_stop_price
             : undefined,
         source_signal_id: sourceSignal?.id,
@@ -1308,10 +1373,10 @@ class PaperTradingAutomationService {
         exitReason = 'take_profit';
       } else if (
         enableTrailingTakeProfit &&
-        trailingActivationPct > 0 &&
-        trailingDrawdownPct > 0 &&
-        trailingStats.max_profit_pct >= trailingActivationPct &&
-        Math.abs(Math.min(trailingStats.drawdown_from_peak_pct, 0)) >= trailingDrawdownPct
+        positionTrailingActivationPct > 0 &&
+        positionTrailingDrawdownPct > 0 &&
+        trailingStats.max_profit_pct >= positionTrailingActivationPct &&
+        Math.abs(Math.min(trailingStats.drawdown_from_peak_pct, 0)) >= positionTrailingDrawdownPct
       ) {
         exitReason = 'trailing_take_profit';
       } else if (enableSellSignals) {
@@ -1326,7 +1391,11 @@ class PaperTradingAutomationService {
         }
       }
 
-      if (!exitReason && maxHoldDays > 0 && holdingDays >= maxHoldDays) {
+      if (
+        !exitReason &&
+        adaptiveRiskPolicy.effective_max_hold_days > 0 &&
+        holdingDays >= adaptiveRiskPolicy.effective_max_hold_days
+      ) {
         exitReason = 'max_hold_days';
       }
 
@@ -1336,8 +1405,8 @@ class PaperTradingAutomationService {
           stop_loss_pct: stopLossPct,
           take_profit_pct: takeProfitPct,
           enable_trailing_take_profit: enableTrailingTakeProfit,
-          trailing_activation_pct: trailingActivationPct,
-          trailing_drawdown_pct: trailingDrawdownPct,
+          trailing_activation_pct: positionTrailingActivationPct,
+          trailing_drawdown_pct: positionTrailingDrawdownPct,
           max_profit_pct: trailingStats.max_profit_pct,
           drawdown_from_peak_pct: trailingStats.drawdown_from_peak_pct,
         });
@@ -1404,8 +1473,9 @@ class PaperTradingAutomationService {
             peak_price: trailingStats.peak_price,
             trailing_stop_price:
               exitReason === 'trailing_take_profit' ? trailingStats.trailing_stop_price : undefined,
-            trailing_activation_pct: trailingActivationPct,
-            trailing_drawdown_pct: trailingDrawdownPct,
+            trailing_activation_pct: positionTrailingActivationPct,
+            trailing_drawdown_pct: positionTrailingDrawdownPct,
+            adaptive_risk_policy: adaptiveRiskPolicy,
           });
           await this.refreshRecommendationTradeOutcome(sourceSignal.id);
         }
@@ -1431,6 +1501,7 @@ class PaperTradingAutomationService {
       exits,
       held_items: heldItems.slice(0, 30),
       skipped_items: skippedItems.slice(0, 30),
+      adaptive_risk_policy: adaptiveRiskPolicy,
       snapshot,
     };
 
@@ -1528,11 +1599,7 @@ class PaperTradingAutomationService {
         });
 
         for (const bar of bars as any[]) {
-          peakPrice = Math.max(
-            peakPrice,
-            toNumber(bar.high, 0),
-            toNumber(bar.close, 0)
-          );
+          peakPrice = Math.max(peakPrice, toNumber(bar.high, 0), toNumber(bar.close, 0));
         }
       }
     } catch (error) {
@@ -1649,6 +1716,176 @@ class PaperTradingAutomationService {
         ['created_at', 'DESC'],
       ],
     });
+  }
+
+  private async resolveAdaptiveRiskPolicy(options: {
+    enabled: boolean;
+    portfolio_id: number;
+    user_id: number;
+    username?: string;
+    min_closed_samples: number;
+    lookback_days: number;
+    override_signal_params: boolean;
+    requested_stop_loss_pct: number;
+    requested_take_profit_pct: number;
+    requested_trailing_activation_pct: number;
+    requested_trailing_drawdown_pct: number;
+    requested_max_hold_days: number;
+  }): Promise<PaperTradingAdaptiveRiskPolicy> {
+    const basePolicy: PaperTradingAdaptiveRiskPolicy = {
+      enabled: options.enabled,
+      applied: false,
+      closed_samples: 0,
+      min_closed_samples: options.min_closed_samples,
+      lookback_days: options.lookback_days,
+      confidence: 0,
+      reason: options.enabled ? '收益闭环样本不足，沿用默认风控参数' : '自适应风控未启用',
+      requested_stop_loss_pct: roundNumber(options.requested_stop_loss_pct, 2),
+      requested_take_profit_pct: roundNumber(options.requested_take_profit_pct, 2),
+      requested_trailing_activation_pct: roundNumber(options.requested_trailing_activation_pct, 2),
+      requested_trailing_drawdown_pct: roundNumber(options.requested_trailing_drawdown_pct, 2),
+      requested_max_hold_days: Math.max(
+        0,
+        Math.floor(toNumber(options.requested_max_hold_days, 0))
+      ),
+      effective_stop_loss_pct: roundNumber(options.requested_stop_loss_pct, 2),
+      effective_take_profit_pct: roundNumber(options.requested_take_profit_pct, 2),
+      effective_trailing_activation_pct: roundNumber(options.requested_trailing_activation_pct, 2),
+      effective_trailing_drawdown_pct: roundNumber(options.requested_trailing_drawdown_pct, 2),
+      effective_max_hold_days: Math.max(
+        0,
+        Math.floor(toNumber(options.requested_max_hold_days, 0))
+      ),
+      override_signal_params: options.override_signal_params,
+      notes: [],
+    };
+
+    if (!options.enabled) return basePolicy;
+
+    try {
+      const { recommendationTradeOutcomeService } = await import(
+        './RecommendationTradeOutcomeService'
+      );
+      const dashboard = await recommendationTradeOutcomeService.getDashboard({
+        portfolio_id: options.portfolio_id,
+        user_id: options.user_id,
+        username: options.username,
+        include_open: false,
+        trade_status: 'closed',
+        lookback_days: options.lookback_days,
+        limit: 2000,
+        report_to_feishu: false,
+      });
+      const summary: any = dashboard.summary || {};
+      const closedSamples = Number(summary.closed_count || 0);
+      const avgMfe = Math.max(0, toNumber(summary.avg_mfe_pct, 0));
+      const avgMaeAbs = Math.abs(Math.min(toNumber(summary.avg_mae_pct, 0), 0));
+      const avgReturn = toNumber(summary.avg_closed_return_pct, 0);
+      const avgExcess = toNumber(summary.avg_excess_return_pct, 0);
+      const winRate = toNumber(summary.win_rate, 0);
+      const excessWinRate = toNumber(summary.excess_win_rate, 0);
+      const profitFactor = toNumber(summary.profit_factor, 0);
+      const avgHoldingDays = toNumber(summary.avg_holding_days, 0);
+
+      const nextPolicy = { ...basePolicy };
+      nextPolicy.closed_samples = closedSamples;
+      nextPolicy.avg_mfe_pct = roundNumber(avgMfe, 4);
+      nextPolicy.avg_mae_pct = roundNumber(toNumber(summary.avg_mae_pct, 0), 4);
+      nextPolicy.avg_closed_return_pct = roundNumber(avgReturn, 4);
+      nextPolicy.avg_excess_return_pct = roundNumber(avgExcess, 4);
+      nextPolicy.win_rate = roundNumber(winRate, 2);
+      nextPolicy.excess_win_rate = roundNumber(excessWinRate, 2);
+      nextPolicy.profit_factor = roundNumber(profitFactor, 4);
+      nextPolicy.avg_holding_days = roundNumber(avgHoldingDays, 2);
+      nextPolicy.confidence = roundNumber(
+        clamp(closedSamples / Math.max(options.min_closed_samples, 1), 0, 1),
+        2
+      );
+
+      if (closedSamples < options.min_closed_samples) {
+        nextPolicy.reason = `闭环样本 ${closedSamples}/${options.min_closed_samples}，暂不自动改风控阈值`;
+        nextPolicy.notes = ['继续积累卖出样本后再调整止损/止盈参数，避免过拟合。'];
+        return nextPolicy;
+      }
+
+      const weakOutcome = avgReturn < 0 || avgExcess < -1 || winRate < 45 || profitFactor < 0.9;
+      const strongOutcome =
+        avgReturn > 2 && avgExcess > 0.8 && winRate >= 55 && profitFactor >= 1.2;
+      const requestedStop = Math.max(1, options.requested_stop_loss_pct || 7);
+      const requestedTake = Math.max(1, options.requested_take_profit_pct || 14);
+      const requestedTrailActivation = Math.max(1, options.requested_trailing_activation_pct || 8);
+      const requestedTrailDrawdown = Math.max(1, options.requested_trailing_drawdown_pct || 4);
+      const requestedMaxHold = Math.max(
+        0,
+        Math.floor(toNumber(options.requested_max_hold_days, 20))
+      );
+
+      const maeBasedStop = avgMaeAbs > 0 ? avgMaeAbs * (weakOutcome ? 0.85 : 1.1) : requestedStop;
+      let effectiveStop = clamp((requestedStop + maeBasedStop) / 2, 4, 10);
+      let effectiveTake = requestedTake;
+      let effectiveTrailActivation = requestedTrailActivation;
+      let effectiveTrailDrawdown = requestedTrailDrawdown;
+      let effectiveMaxHold = requestedMaxHold > 0 ? requestedMaxHold : 0;
+      const notes: string[] = [];
+
+      if (avgMfe > 0) {
+        effectiveTake = clamp(avgMfe * (weakOutcome ? 0.72 : strongOutcome ? 0.9 : 0.82), 9, 22);
+        effectiveTrailActivation = clamp(
+          avgMfe * (weakOutcome ? 0.48 : strongOutcome ? 0.62 : 0.55),
+          5,
+          14
+        );
+      }
+      if (avgMaeAbs > 0) {
+        effectiveTrailDrawdown = clamp(
+          avgMaeAbs * (weakOutcome ? 0.55 : strongOutcome ? 0.75 : 0.65),
+          2.5,
+          7
+        );
+      }
+      if (avgHoldingDays > 0 && requestedMaxHold > 0) {
+        effectiveMaxHold = Math.max(
+          5,
+          Math.min(
+            30,
+            Math.round(avgHoldingDays * (weakOutcome ? 0.9 : strongOutcome ? 1.25 : 1.05))
+          )
+        );
+      }
+
+      if (weakOutcome) {
+        effectiveStop = Math.min(effectiveStop, requestedStop);
+        effectiveTake = Math.min(effectiveTake, requestedTake);
+        effectiveTrailActivation = Math.min(effectiveTrailActivation, requestedTrailActivation);
+        notes.push('历史闭环偏弱：收紧止损/止盈，优先保护本金和减少持仓拖延。');
+      } else if (strongOutcome) {
+        effectiveStop = Math.max(effectiveStop, Math.min(requestedStop + 1, 10));
+        effectiveTake = Math.max(effectiveTake, requestedTake);
+        notes.push('历史闭环偏强：允许略宽波动并提高止盈目标，让强势样本多跑一段。');
+      } else {
+        notes.push('历史闭环中性：按 MFE/MAE 对默认风控参数做小幅校准。');
+      }
+
+      nextPolicy.applied = true;
+      nextPolicy.effective_stop_loss_pct = roundNumber(effectiveStop, 2);
+      nextPolicy.effective_take_profit_pct = roundNumber(effectiveTake, 2);
+      nextPolicy.effective_trailing_activation_pct = roundNumber(effectiveTrailActivation, 2);
+      nextPolicy.effective_trailing_drawdown_pct = roundNumber(effectiveTrailDrawdown, 2);
+      nextPolicy.effective_max_hold_days = effectiveMaxHold;
+      nextPolicy.reason = `闭环样本 ${closedSamples}，胜率 ${roundNumber(
+        winRate,
+        2
+      )}%，平均收益 ${roundNumber(avgReturn, 2)}%，已启用自适应风控`;
+      nextPolicy.notes = notes;
+      return nextPolicy;
+    } catch (error: any) {
+      logger.warn(`读取收益闭环自适应风控失败，沿用默认风控参数: ${error?.message || error}`);
+      return {
+        ...basePolicy,
+        enabled: true,
+        reason: `自适应风控读取失败，沿用默认参数：${error?.message || error}`,
+      };
+    }
   }
 
   private async resolveAttributionFeedbackPolicy(options: {
@@ -1801,8 +2038,8 @@ class PaperTradingAutomationService {
       const effectivePositionMultiplier = samplingMode
         ? clamp(options.sampling_multiplier, 0.1, 0.6)
         : allowEntries
-          ? clamp(positionMultiplier || 1, 0.1, 1.5)
-          : 0;
+        ? clamp(positionMultiplier || 1, 0.1, 1.5)
+        : 0;
 
       return {
         enabled: true,
@@ -1884,8 +2121,9 @@ class PaperTradingAutomationService {
     if (!options.enabled) return basePolicy;
 
     try {
-      const { recommendationTradeOutcomeService } =
-        await import('./RecommendationTradeOutcomeService');
+      const { recommendationTradeOutcomeService } = await import(
+        './RecommendationTradeOutcomeService'
+      );
       const dashboard = await recommendationTradeOutcomeService.getDashboard({
         portfolio_id: options.portfolio_id,
         user_id: options.user_id,
@@ -1924,8 +2162,8 @@ class PaperTradingAutomationService {
         closedSamples < options.min_closed_samples
           ? clamp(Math.min(rawPositionMultiplier, 0.75), 0.35, 0.9)
           : allowEntries
-            ? clamp(rawPositionMultiplier, 0.25, 1.25)
-            : 0;
+          ? clamp(rawPositionMultiplier, 0.25, 1.25)
+          : 0;
       const effectiveMinScore =
         closedSamples < options.min_closed_samples
           ? options.requested_min_score
@@ -1947,14 +2185,14 @@ class PaperTradingAutomationService {
         closedSamples < options.min_closed_samples
           ? `闭环样本 ${closedSamples}/${options.min_closed_samples}，先小仓位积累样本`
           : allowEntries
-            ? `闭环样本 ${closedSamples}，平均超额 ${roundNumber(
-                avgExcess,
-                2
-              )}%，仓位倍率 ${roundNumber(effectivePositionMultiplier, 2)}x`
-            : `闭环样本 ${closedSamples}，平均超额 ${roundNumber(
-                avgExcess,
-                2
-              )}%、超额胜率 ${roundNumber(excessWinRate, 2)}%，暂停自动入场`;
+          ? `闭环样本 ${closedSamples}，平均超额 ${roundNumber(
+              avgExcess,
+              2
+            )}%，仓位倍率 ${roundNumber(effectivePositionMultiplier, 2)}x`
+          : `闭环样本 ${closedSamples}，平均超额 ${roundNumber(
+              avgExcess,
+              2
+            )}%、超额胜率 ${roundNumber(excessWinRate, 2)}%，暂停自动入场`;
 
       return {
         enabled: true,
@@ -2502,8 +2740,9 @@ class PaperTradingAutomationService {
 
   private async refreshRecommendationTradeOutcome(signal_id: number) {
     try {
-      const { recommendationTradeOutcomeService } =
-        await import('./RecommendationTradeOutcomeService');
+      const { recommendationTradeOutcomeService } = await import(
+        './RecommendationTradeOutcomeService'
+      );
       await recommendationTradeOutcomeService.refreshOutcomeBySignal(signal_id);
     } catch (error: any) {
       logger.warn(`推荐交易收益闭环刷新失败 signal#${signal_id}: ${error?.message || error}`);
