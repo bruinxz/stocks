@@ -165,6 +165,104 @@ function rankConsensusCandidates(candidates: any[], loopPolicy: any): any[] {
     );
 }
 
+function environmentPolicyStrategyKeySet(policy: any, field: string): Set<string> {
+  const values = Array.isArray(policy?.[field]) ? policy[field] : [];
+  return new Set(
+    values
+      .map(
+        (item: any) => extractStrategyKeyFromEnvironmentComboKey(item?.key) || item?.strategy_key
+      )
+      .map((item: any) =>
+        String(item || '')
+          .trim()
+          .toLowerCase()
+      )
+      .filter(Boolean)
+  );
+}
+
+function applyEnvironmentStrategyCandidateTuning(
+  candidates: any[],
+  options: { environment_policy?: any; strategy_key?: string }
+): any[] {
+  const strategyKey = String(options.strategy_key || '')
+    .trim()
+    .toLowerCase();
+  if (!strategyKey) return candidates;
+  const recovered = environmentPolicyStrategyKeySet(
+    options.environment_policy,
+    'recovered_environment_strategy_combos'
+  );
+  const extended = environmentPolicyStrategyKeySet(
+    options.environment_policy,
+    'extended_cooldown_environment_strategy_combos'
+  );
+  const resampling = environmentPolicyStrategyKeySet(
+    options.environment_policy,
+    'resample_environment_strategy_combos'
+  );
+  const isRecovered = recovered.has(strategyKey);
+  const isExtended = extended.has(strategyKey);
+  const isResampling = resampling.has(strategyKey);
+  if (!isRecovered && !isExtended && !isResampling) return candidates;
+
+  return [...candidates]
+    .map((candidate, index) => {
+      const originalScore = Number(candidate.score || 0);
+      const environmentStrategyAdjustment = isExtended
+        ? -6
+        : isRecovered
+        ? 3
+        : isResampling
+        ? -2
+        : 0;
+      const positionMultiplier = isExtended ? 0.55 : isRecovered ? 1.06 : isResampling ? 0.72 : 1;
+      const basePosition = Number(candidate.suggested_position_pct || 0);
+      const maxPosition = isRecovered ? Math.min(12, basePosition * 1.1) : basePosition;
+      const adjustedPosition =
+        candidate.suggested_position_pct === undefined
+          ? candidate.suggested_position_pct
+          : roundNumber(clampNumber(basePosition * positionMultiplier, 0, maxPosition), 2);
+      const policyLabel = isExtended
+        ? '复采样仍弱，源头降权'
+        : isRecovered
+        ? '复采样跑赢，源头小幅优先'
+        : '冷却复采样，候选小仓验证';
+      return {
+        ...candidate,
+        score: roundNumber(clampNumber(originalScore + environmentStrategyAdjustment, 0, 100), 2),
+        original_score: candidate.original_score ?? candidate.score,
+        suggested_position_pct: adjustedPosition,
+        environment_strategy_adjustment: environmentStrategyAdjustment,
+        environment_strategy_policy_label: policyLabel,
+        environment_strategy_policy_action: isExtended
+          ? 'extended_cooldown'
+          : isRecovered
+          ? 'recovered'
+          : 'resample',
+        reasons: [
+          ...(Array.isArray(candidate.reasons) ? candidate.reasons : []),
+          environmentStrategyAdjustment > 0
+            ? `${policyLabel}，评分 +${environmentStrategyAdjustment}`
+            : `${policyLabel}，评分 ${environmentStrategyAdjustment}`,
+        ].slice(0, 6),
+        warnings:
+          environmentStrategyAdjustment < 0
+            ? [...(Array.isArray(candidate.warnings) ? candidate.warnings : []), policyLabel].slice(
+                0,
+                6
+              )
+            : candidate.warnings,
+        metadata_rank_index: candidate.metadata_rank_index ?? index,
+      };
+    })
+    .sort(
+      (a, b) =>
+        Number(b.score || 0) - Number(a.score || 0) ||
+        Number(a.metadata_rank_index || 0) - Number(b.metadata_rank_index || 0)
+    );
+}
+
 class AutomatedRecommendationLoopService {
   private async applyPolicyVersionPromotion(
     policy: any,
@@ -1157,14 +1255,40 @@ class AutomatedRecommendationLoopService {
         options.min_market_cap_yi === undefined ? 30 : Number(options.min_market_cap_yi),
     });
 
-    const rankedRecommendations = rankConsensusCandidates(
+    const consensusRecommendations = rankConsensusCandidates(
       generated.recommendations || [],
       loop_policy
+    );
+    const rankedRecommendations = applyEnvironmentStrategyCandidateTuning(
+      consensusRecommendations,
+      {
+        environment_policy,
+        strategy_key: strategyVariant.strategy_key,
+      }
     );
     (generated as any).recommendations = rankedRecommendations;
     (generated as any).consensus_ranked = true;
     (generated as any).consensus_overlap_count =
       loop_policy.strategy_experiment?.overlap_count || 0;
+    (generated as any).environment_strategy_candidate_tuning = {
+      enabled: rankedRecommendations !== consensusRecommendations,
+      strategy_key: strategyVariant.strategy_key,
+      recovered_count: Array.isArray(environment_policy.recovered_environment_strategy_combos)
+        ? environment_policy.recovered_environment_strategy_combos.length
+        : 0,
+      extended_cooldown_count: Array.isArray(
+        environment_policy.extended_cooldown_environment_strategy_combos
+      )
+        ? environment_policy.extended_cooldown_environment_strategy_combos.length
+        : 0,
+      resample_count: Array.isArray(environment_policy.resample_environment_strategy_combos)
+        ? environment_policy.resample_environment_strategy_combos.length
+        : 0,
+    };
+    Object.assign(loop_policy, {
+      environment_strategy_candidate_tuning: (generated as any)
+        .environment_strategy_candidate_tuning,
+    });
     const archiveCandidates = rankedRecommendations.slice(0, archiveLimit);
     const archive = await aiInvestmentSignalService.archiveQuantRecommendations({
       candidates: archiveCandidates,

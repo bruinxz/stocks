@@ -1295,6 +1295,9 @@ export class AIInvestmentSignalService {
           consensus_variants: Array.isArray(candidate.consensus_variants)
             ? candidate.consensus_variants
             : [],
+          environment_strategy_adjustment: (candidate as any).environment_strategy_adjustment,
+          environment_strategy_policy_label: (candidate as any).environment_strategy_policy_label,
+          environment_strategy_policy_action: (candidate as any).environment_strategy_policy_action,
           market_environment: candidate.market_environment,
           environment_policy: options.environment_policy,
           environment_policy_snapshot_id: options.environment_policy_snapshot_id,
@@ -1338,6 +1341,9 @@ export class AIInvestmentSignalService {
           consensus_variants: Array.isArray(candidate.consensus_variants)
             ? candidate.consensus_variants
             : [],
+          environment_strategy_adjustment: (candidate as any).environment_strategy_adjustment,
+          environment_strategy_policy_label: (candidate as any).environment_strategy_policy_label,
+          environment_strategy_policy_action: (candidate as any).environment_strategy_policy_action,
           market_environment: candidate.market_environment,
           environment_policy: options.environment_policy,
           environment_policy_snapshot_id: options.environment_policy_snapshot_id,

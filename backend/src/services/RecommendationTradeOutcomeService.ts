@@ -891,7 +891,7 @@ export class RecommendationTradeOutcomeService {
     const environmentVersionGroups = outcomeDashboard.groups.by_environment_policy_version || [];
     const environmentStrategyComboGroups =
       outcomeDashboard.groups.by_environment_strategy_combo || [];
-    const environmentPolicy = this.buildEnvironmentLoopPolicy({
+    const environmentPolicy: any = this.buildEnvironmentLoopPolicy({
       market_regime_groups: marketRegimeGroups,
       industry_regime_groups: industryRegimeGroups,
       version_groups: environmentVersionGroups,
@@ -925,6 +925,19 @@ export class RecommendationTradeOutcomeService {
       environment_blocked_segments: environmentPolicy.blocked_segments.slice(0, 5),
       environment_reduced_segments: environmentPolicy.reduced_segments.slice(0, 5),
       environment_boosted_segments: environmentPolicy.boosted_segments.slice(0, 5),
+      recovered_environment_strategy_combos:
+        environmentPolicy.recovered_environment_strategy_combos || [],
+      extended_cooldown_environment_strategy_combos:
+        environmentPolicy.extended_cooldown_environment_strategy_combos || [],
+      resample_environment_strategy_combos:
+        environmentPolicy.resample_environment_strategy_combos || [],
+      candidate_tuning_reason: environmentPolicy.recovered_environment_strategy_combos?.[0]
+        ? `下一轮候选源头优先恢复 ${environmentPolicy.recovered_environment_strategy_combos[0].label}`
+        : environmentPolicy.extended_cooldown_environment_strategy_combos?.[0]
+        ? `下一轮候选源头压低 ${environmentPolicy.extended_cooldown_environment_strategy_combos[0].label}`
+        : environmentPolicy.resample_environment_strategy_combos?.[0]
+        ? `下一轮候选源头小仓复采样 ${environmentPolicy.resample_environment_strategy_combos[0].label}`
+        : '',
     };
 
     const weakSegments = outcomeDashboard.feedback.weak_segments.slice(0, 4);

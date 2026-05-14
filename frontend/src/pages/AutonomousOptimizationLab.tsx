@@ -221,6 +221,10 @@ interface OptimizationData {
     environment_blocked_segments?: EnvironmentPolicySegment[];
     environment_reduced_segments?: EnvironmentPolicySegment[];
     environment_boosted_segments?: EnvironmentPolicySegment[];
+    recovered_environment_strategy_combos?: EnvironmentStrategyComboRanking[];
+    extended_cooldown_environment_strategy_combos?: EnvironmentStrategyComboRanking[];
+    resample_environment_strategy_combos?: EnvironmentStrategyComboRanking[];
+    candidate_tuning_reason?: string;
   };
   segment_actions: {
     boost: Array<any>;
@@ -472,6 +476,12 @@ const AutonomousOptimizationLab: React.FC = () => {
             环境倍率 {data?.next_policy?.environment_position_multiplier || '--'}x · 置信度{' '}
             {Math.round(Number(data?.next_policy?.environment_confidence || 0) * 100)}%
           </div>
+          {data?.next_policy?.candidate_tuning_reason && (
+            <div className="optimization-env-strip recovered">
+              <SafetyCertificateOutlined />
+              {data.next_policy.candidate_tuning_reason}
+            </div>
+          )}
         </div>
       </div>
 

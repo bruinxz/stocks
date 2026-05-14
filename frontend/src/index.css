@@ -4069,6 +4069,16 @@ a {
   font-weight: 900;
 }
 
+.optimization-env-strip.recovered {
+  display: flex;
+  max-width: 100%;
+  margin-top: 10px;
+  white-space: normal;
+  color: rgba(224, 250, 255, 0.96);
+  background: rgba(14, 116, 144, 0.2);
+  border-color: rgba(141, 214, 228, 0.32);
+}
+
 .optimization-metrics {
   margin-bottom: 16px;
 }

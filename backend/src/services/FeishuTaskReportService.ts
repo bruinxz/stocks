@@ -510,6 +510,7 @@ class FeishuTaskReportService {
     const consensusOverlapCount =
       generated.consensus_overlap_count ?? strategyExperiment?.overlap_count ?? 0;
     const consensusRanked = Boolean(generated.consensus_ranked);
+    const candidateTuning = generated.environment_strategy_candidate_tuning || {};
     const consensusTopPicks = topPicks.filter(
       (item: any) =>
         Number(item?.consensus_count || 0) > 1 || Number(item?.consensus_bonus || 0) > 0
@@ -588,6 +589,13 @@ class FeishuTaskReportService {
           }；共识标的 ${consensusOverlapCount} 个；${
             consensusRanked ? '本轮已按多策略共识优先排序' : '本轮未触发共识排序'
           }`
+        : '',
+      candidateTuning?.enabled
+        ? `- **候选源头调权**：已启用；恢复组合 ${
+            candidateTuning.recovered_count || 0
+          } 个，延长冷却 ${candidateTuning.extended_cooldown_count || 0} 个，复采样 ${
+            candidateTuning.resample_count || 0
+          } 个；候选在进入 Agent 前已按复采样结果调分/调仓。`
         : '',
       environmentPolicy?.enabled
         ? `- **环境闸门版本**：${environmentPolicy.snapshot_id || '-'}；默认倍率 ${
@@ -689,6 +697,7 @@ class FeishuTaskReportService {
       环境闸门原因: environmentPolicy?.reason,
       共识排序: consensusRanked ? '是' : '否',
       共识标的数: consensusOverlapCount,
+      候选源头调权: candidateTuning?.enabled ? '是' : '否',
       最佳标的: bestPick
         ? `${bestPick.name || bestPick.symbol}(${bestPick.symbol}) ${bestPick.score}`
         : '',
