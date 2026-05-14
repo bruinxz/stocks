@@ -8,6 +8,10 @@ import { RecommendationTradeOutcome } from '../models/RecommendationTradeOutcome
 import { normalizeSymbol } from '../utils/stockSymbol';
 import { logger } from '../utils/logger';
 import { DEFAULT_BENCHMARK_INDICES } from './BenchmarkIndexService';
+import {
+  marketEnvironmentService,
+  type MarketEnvironmentSnapshot,
+} from './MarketEnvironmentService';
 
 export type RecommendationUniverse = 'favorites' | 'market';
 export type RecommendationStyle = 'balanced' | 'momentum' | 'value' | 'low_risk';
@@ -143,6 +147,7 @@ export interface QuantRecommendationItem {
   consensus_count?: number;
   consensus_bonus?: number;
   consensus_variants?: string[];
+  market_environment?: MarketEnvironmentSnapshot;
   trend?: Array<{ time: string; close: number }>;
 }
 
@@ -337,20 +342,22 @@ function resolveRecommendationTier(params: {
       recommendation_tier: 'strong_recommend',
       recommendation_tier_label: '强推荐池',
       tier_rank: 1,
-      tier_reason: `评分 ${round(params.score, 1)}，低风险、无硬警告，${factorPassCount} 个核心因子达标，可进入强推荐复核`,
+      tier_reason: `评分 ${round(
+        params.score,
+        1
+      )}，低风险、无硬警告，${factorPassCount} 个核心因子达标，可进入强推荐复核`,
     };
   }
 
-  if (
-    ['buy', 'watch'].includes(params.action) &&
-    params.score >= 72 &&
-    !hasCriticalWarning
-  ) {
+  if (['buy', 'watch'].includes(params.action) && params.score >= 72 && !hasCriticalWarning) {
     return {
       recommendation_tier: 'trial_position',
       recommendation_tier_label: '轻仓试错池',
       tier_rank: 2,
-      tier_reason: `评分 ${round(params.score, 1)}，具备交易候选价值，但仍需小仓试错或等待 Agent 复核`,
+      tier_reason: `评分 ${round(
+        params.score,
+        1
+      )}，具备交易候选价值，但仍需小仓试错或等待 Agent 复核`,
     };
   }
 
@@ -411,12 +418,17 @@ export class QuantRecommendationService {
           Math.max(Number(variant.candidate_pool_limit || 0) || basePoolLimit, 80),
           1000
         ),
-        lookback_days: Math.min(Math.max(variant.lookback_days || options.lookback_days || 120, 45), 360),
+        lookback_days: Math.min(
+          Math.max(variant.lookback_days || options.lookback_days || 120, 45),
+          360
+        ),
         min_bars: variant.min_bars || options.min_bars,
         include_trend: false,
         exclude_st: variant.exclude_st ?? options.exclude_st ?? true,
         min_market_cap_yi:
-          variant.min_market_cap_yi ?? options.min_market_cap_yi ?? (universe === 'market' ? 30 : undefined),
+          variant.min_market_cap_yi ??
+          options.min_market_cap_yi ??
+          (universe === 'market' ? 30 : undefined),
       });
       const recommendations = generated.recommendations || [];
       const tierCounts = recommendations.reduce((acc: Record<string, number>, item) => {
@@ -479,7 +491,9 @@ export class QuantRecommendationService {
           candidate_pool_limit: variant.candidate_pool_limit || basePoolLimit,
           lookback_days: variant.lookback_days || options.lookback_days || 120,
           min_market_cap_yi:
-            variant.min_market_cap_yi ?? options.min_market_cap_yi ?? (universe === 'market' ? 30 : undefined),
+            variant.min_market_cap_yi ??
+            options.min_market_cap_yi ??
+            (universe === 'market' ? 30 : undefined),
         },
         generated: {
           total_candidates: generated.total_candidates,
@@ -505,7 +519,11 @@ export class QuantRecommendationService {
     }
 
     const overlaps = [...symbolToVariants.entries()]
-      .map(([symbol, variantSet]) => ({ symbol, variant_count: variantSet.size, variants: [...variantSet] }))
+      .map(([symbol, variantSet]) => ({
+        symbol,
+        variant_count: variantSet.size,
+        variants: [...variantSet],
+      }))
       .filter(item => item.variant_count > 1)
       .sort((a, b) => b.variant_count - a.variant_count || a.symbol.localeCompare(b.symbol))
       .slice(0, 20);
@@ -587,6 +605,8 @@ export class QuantRecommendationService {
     }
 
     recommendations.sort((a, b) => b.score - a.score);
+    const selectedRecommendations = recommendations.slice(0, limit);
+    await this.attachMarketEnvironment(selectedRecommendations);
 
     return {
       as_of: moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm:ss'),
@@ -594,8 +614,26 @@ export class QuantRecommendationService {
       style,
       total_candidates: stocks.length,
       analyzed_candidates: recommendations.length,
-      recommendations: recommendations.slice(0, limit),
+      recommendations: selectedRecommendations,
     };
+  }
+
+  private async attachMarketEnvironment(recommendations: QuantRecommendationItem[]) {
+    await Promise.all(
+      recommendations.map(async item => {
+        try {
+          item.market_environment = await marketEnvironmentService.getEnvironmentForStock(
+            item.symbol,
+            {
+              industry: item.industry,
+              use_cache: true,
+            }
+          );
+        } catch (error: any) {
+          logger.warn(`推荐候选市场环境归因失败 ${item.symbol}: ${error?.message || error}`);
+        }
+      })
+    );
   }
 
   async getCandidateStocks(options: {
@@ -877,10 +915,12 @@ export class QuantRecommendationService {
                 round(feedback.avg_trade_excess_return_pct, 2) ?? '--'
               }%，超额胜率 ${round(feedback.trade_excess_win_rate, 1) ?? '--'}%`
             : feedback.completed_count > 0
-              ? `历史推荐 ${feedback.completed_count} 个完成样本，平均收益 ${
-                  round(feedback.avg_return_pct, 2) ?? '--'
-                }%，胜率 ${round(feedback.positive_rate, 1) ?? '--'}%`
-              : `历史已有 ${feedback.signal_count || feedback.trade_outcome_count || 0} 次推荐/跟单记录，后验收益仍在跟踪`,
+            ? `历史推荐 ${feedback.completed_count} 个完成样本，平均收益 ${
+                round(feedback.avg_return_pct, 2) ?? '--'
+              }%，胜率 ${round(feedback.positive_rate, 1) ?? '--'}%`
+            : `历史已有 ${
+                feedback.signal_count || feedback.trade_outcome_count || 0
+              } 次推荐/跟单记录，后验收益仍在跟踪`,
       });
     }
 
@@ -892,7 +932,9 @@ export class QuantRecommendationService {
       value: dataQuality.score,
       reason:
         dataQuality.bucket === 'high'
-          ? `行情覆盖充分，最新交易日 ${dataQuality.metrics.latest_date || '--'}，数据可用于自动跟单`
+          ? `行情覆盖充分，最新交易日 ${
+              dataQuality.metrics.latest_date || '--'
+            }，数据可用于自动跟单`
           : `数据质量 ${dataQuality.score} 分：${
               dataQuality.issues.slice(0, 2).join('；') || '存在缺失项，需谨慎复核'
             }`,
@@ -945,8 +987,8 @@ export class QuantRecommendationService {
       dataQuality.bucket === 'critical' || warnings.length >= 2 || riskScore < 45
         ? 'high'
         : dataQuality.bucket === 'low' || warnings.length === 1 || riskScore < 65
-          ? 'medium'
-          : 'low';
+        ? 'medium'
+        : 'low';
     const rawActionPlan = resolveAction({ score, risk_level, warnings, feedback });
     const actionPlan = !dataQuality.auto_trade_allowed
       ? {
@@ -1266,8 +1308,9 @@ export class QuantRecommendationService {
       ? moment().tz('Asia/Shanghai').startOf('day').diff(latestMoment.startOf('day'), 'days')
       : undefined;
     const validCloseCount = bars.filter(bar => Number.isFinite(bar.close) && bar.close > 0).length;
-    const zeroVolumeCount = bars.filter(bar => !Number.isFinite(bar.volume) || bar.volume <= 0)
-      .length;
+    const zeroVolumeCount = bars.filter(
+      bar => !Number.isFinite(bar.volume) || bar.volume <= 0
+    ).length;
     const turnoverCount = bars.filter(
       bar => bar.turnover !== undefined && Number.isFinite(bar.turnover) && bar.turnover > 0
     ).length;
@@ -1347,10 +1390,10 @@ export class QuantRecommendationService {
       normalizedScore >= 82
         ? 'high'
         : normalizedScore >= 68
-          ? 'medium'
-          : normalizedScore >= 45
-            ? 'low'
-            : 'critical';
+        ? 'medium'
+        : normalizedScore >= 45
+        ? 'low'
+        : 'critical';
     const confidenceMultiplier =
       bucket === 'high' ? 1 : bucket === 'medium' ? 0.94 : bucket === 'low' ? 0.78 : 0.55;
     const positionMultiplier =
@@ -1367,10 +1410,10 @@ export class QuantRecommendationService {
         bucket === 'high'
           ? 'allow_auto_trade'
           : bucket === 'medium'
-            ? 'allow_reduced_position'
-            : bucket === 'low'
-              ? 'manual_review_required'
-              : 'block_auto_trade',
+          ? 'allow_reduced_position'
+          : bucket === 'low'
+          ? 'manual_review_required'
+          : 'block_auto_trade',
       issues,
       warnings,
       coverage: {
@@ -1379,8 +1422,8 @@ export class QuantRecommendationService {
           daysSinceLatest === undefined || daysSinceLatest > 14
             ? 'missing'
             : daysSinceLatest > 5
-              ? 'partial'
-              : 'ok',
+            ? 'partial'
+            : 'ok',
         price: Number.isFinite(price) && price > 0 ? 'ok' : 'missing',
         turnover:
           turnoverCoveragePct >= 70 ? 'ok' : turnoverCoveragePct >= 30 ? 'partial' : 'missing',

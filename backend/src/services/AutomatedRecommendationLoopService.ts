@@ -1039,7 +1039,11 @@ class AutomatedRecommendationLoopService {
             recommendation_style: options.style,
             recommendation_source: options.universe,
             strategy_key: options.strategy_key,
-            strategy_variant: options.strategy_variant,
+            strategy_variant: {
+              ...(options.strategy_variant || {}),
+              market_environment: candidate.market_environment,
+            },
+            market_environment: candidate.market_environment,
             agent_session: options.agent_session,
             auto_paper_trade: options.auto_paper_trade,
             paper_trade_username: options.paper_trade_username,

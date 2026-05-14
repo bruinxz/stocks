@@ -13,6 +13,7 @@ import { logger } from '../utils/logger';
 import { DataSyncService } from '../data/services/DataSyncService';
 import { benchmarkIndexService } from './BenchmarkIndexService';
 import type { QuantRecommendationItem } from './QuantRecommendationService';
+import { marketEnvironmentService } from './MarketEnvironmentService';
 
 const DEFAULT_HORIZONS = [1, 3, 5, 10, 20];
 const DEFAULT_PERFORMANCE_HORIZON = '5d';
@@ -1095,6 +1096,7 @@ export class AIInvestmentSignalService {
     loop_policy_snapshot_id?: number;
     strategy_key?: string;
     strategy_variant?: Record<string, any>;
+    market_environment?: Record<string, any>;
   }): Promise<AIInvestmentSignal> {
     const symbol = normalizeSymbol(params.symbol);
     const signal_date = params.signal_date || new Date().toISOString().split('T')[0];
@@ -1129,6 +1131,14 @@ export class AIInvestmentSignalService {
         : structured.data_quality.bucket === 'low' && normalizedDecision !== AISignalDecision.SELL
         ? 'medium'
         : structured.risk_level || this.inferRiskLevel(params);
+    const marketEnvironment =
+      params.market_environment ||
+      (await marketEnvironmentService
+        .getEnvironmentForStock(symbol, { stock, use_cache: true })
+        .catch(error => {
+          logger.warn(`TradingAgents 信号市场环境归因失败 ${symbol}: ${error?.message || error}`);
+          return undefined;
+        }));
 
     const payload = {
       source_type,
@@ -1155,6 +1165,7 @@ export class AIInvestmentSignalService {
         strategy_key: params.strategy_key,
         strategy_variant: params.strategy_variant,
         strategy_bucket_label: params.strategy_variant?.strategy_bucket_label,
+        market_environment: marketEnvironment,
         structured_decision: structured,
         data_quality: structured.data_quality,
         data_quality_score: structured.data_quality.score,
@@ -1282,6 +1293,7 @@ export class AIInvestmentSignalService {
           consensus_variants: Array.isArray(candidate.consensus_variants)
             ? candidate.consensus_variants
             : [],
+          market_environment: candidate.market_environment,
           strategy_key: options.strategy_key,
           strategy_variant: options.strategy_variant,
           strategy_bucket_label: options.strategy_variant?.strategy_bucket_label,
@@ -1322,6 +1334,7 @@ export class AIInvestmentSignalService {
           consensus_variants: Array.isArray(candidate.consensus_variants)
             ? candidate.consensus_variants
             : [],
+          market_environment: candidate.market_environment,
           strategy_key: options.strategy_key,
           strategy_variant: options.strategy_variant,
           strategy_bucket_label: options.strategy_variant?.strategy_bucket_label,

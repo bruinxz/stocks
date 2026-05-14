@@ -86,6 +86,7 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
     recommendation_source,
     strategy_key,
     strategy_variant,
+    market_environment,
     agent_session,
     current_price: submitted_current_price,
     price_change_pct: submitted_price_change_pct,
@@ -177,6 +178,7 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
           recommendation_source,
           strategy_key,
           strategy_variant,
+          market_environment,
           task_label: taskLabel,
           agent_session: agentSession,
           loop_run_id: loopRunId,
@@ -215,6 +217,7 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
           loop_policy_snapshot_id: resolvedPolicySnapshotId,
           strategy_key,
           strategy_variant,
+          market_environment: market_environment || strategy_variant?.market_environment,
         });
         if (
           archivedSignal &&
@@ -230,6 +233,7 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
               quant_data_quality_bucket: submitted_data_quality_bucket,
               strategy_key,
               strategy_variant,
+              market_environment,
             },
           });
         }

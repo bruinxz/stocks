@@ -66,6 +66,11 @@ interface OutcomeBucket {
   worst_return_pct?: number;
   avg_consensus_count?: number;
   avg_consensus_bonus?: number;
+  robust_score?: number;
+  bayesian_win_rate?: number;
+  risk_adjusted_excess_return_pct?: number;
+  sample_confidence?: number;
+  dimension?: string;
 }
 
 interface TradeOutcome {
@@ -116,6 +121,22 @@ interface TradeOutcome {
       original_score?: number;
       consensus_variants?: string[];
       recommendation_tier_label?: string;
+      market_environment?: {
+        market_regime?: string;
+        market_regime_label?: string;
+        industry?: {
+          regime?: string;
+          label?: string;
+        };
+      };
+    };
+    market_environment?: {
+      market_regime?: string;
+      market_regime_label?: string;
+      industry?: {
+        regime?: string;
+        label?: string;
+      };
     };
     consensus?: {
       consensus_count?: number;
@@ -165,6 +186,8 @@ interface OutcomeDashboard {
     by_risk_level: OutcomeBucket[];
     by_industry: OutcomeBucket[];
     by_consensus?: OutcomeBucket[];
+    by_market_regime?: OutcomeBucket[];
+    by_industry_regime?: OutcomeBucket[];
   };
   outcomes: TradeOutcome[];
   feedback: {
@@ -215,6 +238,9 @@ const sessionLabel = (value?: string) => {
 
 const getConsensusMeta = (record: TradeOutcome) =>
   record.metadata?.consensus || record.metadata?.signal_metadata || {};
+
+const getMarketEnvironment = (record?: TradeOutcome) =>
+  record?.metadata?.market_environment || record?.metadata?.signal_metadata?.market_environment;
 
 const RecommendationTradeOutcomes: React.FC = () => {
   const [dashboard, setDashboard] = useState<OutcomeDashboard | null>(null);
@@ -328,6 +354,23 @@ const RecommendationTradeOutcomes: React.FC = () => {
   }, [dashboard]);
 
   const consensusBuckets = useMemo(() => dashboard?.groups?.by_consensus || [], [dashboard]);
+  const marketRegimeBuckets = useMemo(() => dashboard?.groups?.by_market_regime || [], [dashboard]);
+  const industryRegimeBuckets = useMemo(
+    () => dashboard?.groups?.by_industry_regime || [],
+    [dashboard]
+  );
+  const environmentAttribution = useMemo(() => {
+    const bestMarket = [...marketRegimeBuckets]
+      .filter(item => item.closed_count > 0)
+      .sort((a, b) => Number(b.robust_score || 0) - Number(a.robust_score || 0))[0];
+    const weakMarket = [...marketRegimeBuckets]
+      .filter(item => item.closed_count > 0)
+      .sort((a, b) => Number(a.robust_score || 0) - Number(b.robust_score || 0))[0];
+    const bestIndustry = [...industryRegimeBuckets]
+      .filter(item => item.closed_count > 0)
+      .sort((a, b) => Number(b.robust_score || 0) - Number(a.robust_score || 0))[0];
+    return { bestMarket, weakMarket, bestIndustry };
+  }, [marketRegimeBuckets, industryRegimeBuckets]);
 
   const consensusAttribution = useMemo(() => {
     const buckets = consensusBuckets.filter(item => item.key !== 'no_consensus');
@@ -455,6 +498,23 @@ const RecommendationTradeOutcomes: React.FC = () => {
               <Text type="secondary" style={{ fontSize: 12 }}>
                 原始 {Number(consensus.original_score || record.score || 0).toFixed(1)} · +
                 {consensus.consensus_bonus}
+              </Text>
+            )}
+          </Space>
+        );
+      },
+    },
+    {
+      title: '市场环境',
+      width: 150,
+      render: (_: any, record: TradeOutcome) => {
+        const env = getMarketEnvironment(record);
+        return (
+          <Space direction="vertical" size={2}>
+            <Tag color="cyan">{env?.market_regime_label || env?.market_regime || '未知环境'}</Tag>
+            {env?.industry?.label && (
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {env.industry.label}
               </Text>
             )}
           </Space>
@@ -783,6 +843,62 @@ const RecommendationTradeOutcomes: React.FC = () => {
           </Card>
         </Col>
       </Row>
+
+      <Card className="modern-card consensus-attribution-card" variant="borderless">
+        <Row gutter={[18, 18]} align="middle">
+          <Col xs={24} lg={7}>
+            <div className="outcome-panel-title">
+              <RadarChartOutlined /> 市场/行业环境归因
+            </div>
+            <p>
+              将每笔推荐成交按大盘趋势和行业热度分桶，后续自动跟单会优先保留适配当前环境的组合，压力市和弱行业自动降权。
+            </p>
+            <Space wrap>
+              <Tag color="cyan">
+                最强环境 {environmentAttribution.bestMarket?.label || '等待样本'}
+              </Tag>
+              <Tag color="orange">
+                待降权 {environmentAttribution.weakMarket?.label || '等待样本'}
+              </Tag>
+            </Space>
+          </Col>
+          <Col xs={12} lg={4}>
+            <Statistic
+              title="环境稳健分"
+              value={environmentAttribution.bestMarket?.robust_score || 0}
+              precision={1}
+              valueStyle={{ color: pnlColor(environmentAttribution.bestMarket?.robust_score) }}
+            />
+            <Text type="secondary">{environmentAttribution.bestMarket?.label || '暂无'}</Text>
+          </Col>
+          <Col xs={12} lg={4}>
+            <Statistic
+              title="行业状态"
+              value={environmentAttribution.bestIndustry?.robust_score || 0}
+              precision={1}
+              valueStyle={{ color: pnlColor(environmentAttribution.bestIndustry?.robust_score) }}
+            />
+            <Text type="secondary">{environmentAttribution.bestIndustry?.label || '暂无'}</Text>
+          </Col>
+          <Col xs={24} lg={9}>
+            <Space wrap size={[8, 8]}>
+              {[...marketRegimeBuckets, ...industryRegimeBuckets].slice(0, 8).map(bucket => (
+                <Tag
+                  key={`${bucket.dimension || 'env'}-${bucket.key}`}
+                  color={Number(bucket.robust_score || 0) >= 0 ? 'cyan' : 'orange'}
+                >
+                  {bucket.label}：{bucket.closed_count}闭环 / 稳健分{' '}
+                  {Number(bucket.robust_score || 0).toFixed(1)} / 风调超额{' '}
+                  {formatPercent(bucket.risk_adjusted_excess_return_pct)}
+                </Tag>
+              ))}
+              {marketRegimeBuckets.length + industryRegimeBuckets.length === 0 && (
+                <Text type="secondary">暂无环境归因样本</Text>
+              )}
+            </Space>
+          </Col>
+        </Row>
+      </Card>
 
       <Card className="modern-card consensus-attribution-card" variant="borderless">
         <Row gutter={[18, 18]} align="middle">

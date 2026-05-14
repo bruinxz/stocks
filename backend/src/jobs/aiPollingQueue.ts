@@ -17,6 +17,7 @@ export interface AIPollingJobData {
   recommendation_source?: string;
   strategy_key?: string;
   strategy_variant?: any;
+  market_environment?: any;
   agent_session?: string;
   auto_paper_trade?: boolean;
   paper_trade_username?: string;

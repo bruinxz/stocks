@@ -91,6 +91,8 @@ export interface RecommendationTradeOutcomeDashboard {
     by_consensus: RecommendationTradeOutcomeBucket[];
     by_score_position_bucket: RecommendationTradeOutcomeBucket[];
     by_strategy_key: RecommendationTradeOutcomeBucket[];
+    by_market_regime: RecommendationTradeOutcomeBucket[];
+    by_industry_regime: RecommendationTradeOutcomeBucket[];
   };
   outcomes: RecommendationTradeOutcome[];
   feedback: {
@@ -196,6 +198,46 @@ function consensusGroupLabel(key: string): string {
     no_consensus: '无显式共识',
   };
   return labels[key] || key;
+}
+
+function marketRegimeKey(record: RecommendationTradeOutcome): string {
+  const metadata = asPlainObject(record.metadata);
+  const signalMetadata = asPlainObject(metadata.signal_metadata);
+  const env =
+    asPlainObject(metadata.market_environment).market_regime ||
+    asPlainObject(signalMetadata.market_environment).market_regime;
+  return String(env || 'unknown');
+}
+
+function marketRegimeLabel(key: string): string {
+  const labels: Record<string, string> = {
+    bull: '市场强势',
+    bear: '市场弱势',
+    range: '震荡市',
+    rebound: '反弹市',
+    stress: '压力市',
+    unknown: '环境未知',
+  };
+  return labels[key] || key || '环境未知';
+}
+
+function industryRegimeKey(record: RecommendationTradeOutcome): string {
+  const metadata = asPlainObject(record.metadata);
+  const signalMetadata = asPlainObject(metadata.signal_metadata);
+  const industry =
+    asPlainObject(asPlainObject(metadata.market_environment).industry).regime ||
+    asPlainObject(asPlainObject(signalMetadata.market_environment).industry).regime;
+  return String(industry || 'unknown');
+}
+
+function industryRegimeLabel(key: string): string {
+  const labels: Record<string, string> = {
+    hot: '行业强势',
+    warm: '行业中性',
+    cold: '行业弱势',
+    unknown: '行业未知',
+  };
+  return labels[key] || key || '行业未知';
 }
 
 function strategyKeyFromOutcome(record: RecommendationTradeOutcome): string {
@@ -545,6 +587,18 @@ export class RecommendationTradeOutcomeService {
         recommendationStrategyKeyLabel,
         'strategy_key'
       ),
+      by_market_regime: this.buildBuckets(
+        outcomes,
+        item => marketRegimeKey(item),
+        marketRegimeLabel,
+        'market_regime'
+      ),
+      by_industry_regime: this.buildBuckets(
+        outcomes,
+        item => industryRegimeKey(item),
+        industryRegimeLabel,
+        'industry_regime'
+      ),
     };
 
     const dashboard: RecommendationTradeOutcomeDashboard = {
@@ -735,6 +789,8 @@ export class RecommendationTradeOutcomeService {
 
     const strategyComboGroups = outcomeDashboard.groups.by_strategy_key || [];
     const scorePositionGroups = outcomeDashboard.groups.by_score_position_bucket || [];
+    const marketRegimeGroups = outcomeDashboard.groups.by_market_regime || [];
+    const industryRegimeGroups = outcomeDashboard.groups.by_industry_regime || [];
     const weakSegments = outcomeDashboard.feedback.weak_segments.slice(0, 4);
     const bestSegments = outcomeDashboard.feedback.best_segments.slice(0, 4);
     const bestStrategyCombo = strategyComboGroups
@@ -822,6 +878,10 @@ export class RecommendationTradeOutcomeService {
         weak: weakStrategyCombo || null,
         rankings: strategyComboGroups.slice(0, 8),
         score_position_rankings: scorePositionGroups.slice(0, 8),
+      },
+      market_environment: {
+        market_regime_rankings: marketRegimeGroups.slice(0, 8),
+        industry_regime_rankings: industryRegimeGroups.slice(0, 8),
       },
       policy_versions: policyDashboard
         ? {
@@ -1029,6 +1089,7 @@ export class RecommendationTradeOutcomeService {
           metadata.strategy_bucket_label ||
           strategyVariant.strategy_bucket_label ||
           asPlainObject(paperTrading.strategy_variant).strategy_bucket_label,
+        market_environment: metadata.market_environment,
         signal_metadata: metadata,
         paper_trading: paperTrading,
         benchmark,
@@ -1551,6 +1612,8 @@ export class RecommendationTradeOutcomeService {
       ...groups.by_consensus,
       ...groups.by_score_position_bucket,
       ...groups.by_strategy_key,
+      ...groups.by_market_regime,
+      ...groups.by_industry_regime,
       ...groups.by_industry,
     ];
     const bestSegments = allGroups
