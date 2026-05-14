@@ -1073,6 +1073,13 @@ export class RecommendationTradeOutcomeService {
       strategyVariant.strategy_key ||
       paperTrading.strategy_key ||
       asPlainObject(paperTrading.strategy_variant).strategy_key;
+    const environmentPolicy = asPlainObject(
+      paperTrading.environment_policy || metadata.environment_policy
+    );
+    const environmentPolicySnapshotId =
+      environmentPolicy.external_policy_snapshot_id ||
+      environmentPolicy.snapshot_id ||
+      metadata.environment_policy_snapshot_id;
     const portfolio_id = Number(options.portfolio_id || paperTrading.portfolio_id);
     if (!portfolio_id || !paperTrading.trade_id) return null;
 
@@ -1255,7 +1262,9 @@ export class RecommendationTradeOutcomeService {
           metadata.strategy_bucket_label ||
           strategyVariant.strategy_bucket_label ||
           asPlainObject(paperTrading.strategy_variant).strategy_bucket_label,
-        market_environment: metadata.market_environment,
+        market_environment: metadata.market_environment || environmentPolicy.market_environment,
+        environment_policy: environmentPolicy,
+        environment_policy_snapshot_id: environmentPolicySnapshotId,
         signal_metadata: metadata,
         paper_trading: paperTrading,
         benchmark,

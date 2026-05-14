@@ -75,6 +75,7 @@ export interface AutomatedRecommendationLoopOptions {
   block_limit_up?: boolean;
   block_limit_down?: boolean;
   block_suspended?: boolean;
+  use_environment_policy_feedback?: boolean;
 }
 
 function toNumber(value: any, fallback = 0): number {
@@ -354,6 +355,86 @@ class AutomatedRecommendationLoopService {
         policy_version_feedback_reason: `策略版本晋级建议读取失败，沿用当前参数：${
           error?.message || error
         }`,
+      };
+    }
+  }
+
+  private async resolveEnvironmentPolicyFeedback(options: {
+    enabled: boolean;
+    username?: string;
+    portfolio_name?: string;
+    initial_capital?: number;
+    force_new_portfolio?: boolean;
+    loop_run_id: string;
+    lookback_days: number;
+  }) {
+    const fallback = {
+      enabled: options.enabled,
+      applied: false,
+      snapshot_id: `${options.loop_run_id}_env_pending`,
+      default_position_multiplier: 1,
+      confidence: 0,
+      closed_samples: 0,
+      blocked_segments: [] as any[],
+      reduced_segments: [] as any[],
+      boosted_segments: [] as any[],
+      reason: options.enabled ? '环境闸门反馈已启用，等待优化台样本' : '环境闸门反馈未启用',
+    };
+
+    if (!options.enabled) return fallback;
+
+    try {
+      const dashboard = await recommendationTradeOutcomeService.getOptimizationDashboard({
+        username: options.username,
+        portfolio_name: options.portfolio_name,
+        initial_capital: options.initial_capital,
+        force_new_portfolio: options.force_new_portfolio,
+        include_open: true,
+        lookback_days: options.lookback_days,
+        limit: 2000,
+        report_to_feishu: false,
+      } as any);
+      const policy =
+        (dashboard as any).environment_policy ||
+        (dashboard as any).market_environment?.policy ||
+        {};
+      const confidence = toNumber(policy.confidence, 0);
+      const closedSamples = toNumber(policy.closed_samples, 0);
+      const applied = closedSamples >= 2 || confidence >= 0.15;
+      return {
+        ...policy,
+        enabled: true,
+        applied,
+        snapshot_id: `${options.loop_run_id}_env_${moment()
+          .tz('Asia/Shanghai')
+          .format('YYYYMMDDHHmmss')}`,
+        default_position_multiplier: roundNumber(
+          clampNumber(toNumber(policy.default_position_multiplier, 1), 0.35, 1.15),
+          2
+        ),
+        confidence: roundNumber(confidence, 4),
+        closed_samples: closedSamples,
+        blocked_segments: Array.isArray(policy.blocked_segments)
+          ? policy.blocked_segments.slice(0, 8)
+          : [],
+        reduced_segments: Array.isArray(policy.reduced_segments)
+          ? policy.reduced_segments.slice(0, 8)
+          : [],
+        boosted_segments: Array.isArray(policy.boosted_segments)
+          ? policy.boosted_segments.slice(0, 8)
+          : [],
+        watch_segments: Array.isArray(policy.watch_segments)
+          ? policy.watch_segments.slice(0, 8)
+          : [],
+        reason:
+          policy.reason ||
+          (applied ? '环境闸门策略已从闭环优化台生成' : '环境样本不足，暂按默认环境纪律执行'),
+      };
+    } catch (error: any) {
+      logger.warn(`读取环境闸门反馈失败，沿用默认环境纪律: ${error?.message || error}`);
+      return {
+        ...fallback,
+        reason: `环境闸门反馈读取失败：${error?.message || error}`,
       };
     }
   }
@@ -673,6 +754,21 @@ class AutomatedRecommendationLoopService {
       lookback_days: toPositiveInt(options.outcome_feedback_lookback_days, 365, 3650),
       min_closed_samples: toPositiveInt(options.outcome_feedback_min_closed_samples, 5, 100),
     });
+    const environment_policy = await this.resolveEnvironmentPolicyFeedback({
+      enabled: options.use_environment_policy_feedback !== false,
+      username: options.username,
+      portfolio_name: options.portfolio_name,
+      initial_capital: options.initial_capital,
+      force_new_portfolio: options.force_new_portfolio,
+      loop_run_id,
+      lookback_days: toPositiveInt(options.outcome_feedback_lookback_days, 365, 3650),
+    });
+    Object.assign(loop_policy, {
+      environment_policy,
+      environment_policy_snapshot_id: environment_policy.snapshot_id,
+      environment_feedback_applied: environment_policy.applied,
+      environment_feedback_reason: environment_policy.reason,
+    });
     const candidateLimit = toPositiveInt(
       options.candidate_limit,
       universe === 'market' ? 30 : 20,
@@ -748,6 +844,8 @@ class AutomatedRecommendationLoopService {
       loop_run_id,
       strategy_key: strategyVariant.strategy_key,
       strategy_variant: strategyVariant,
+      environment_policy,
+      environment_policy_snapshot_id: environment_policy.snapshot_id,
     });
 
     const agent_analysis =
@@ -782,6 +880,8 @@ class AutomatedRecommendationLoopService {
             loop_run_id,
             strategy_key: strategyVariant.strategy_key,
             strategy_variant: strategyVariant,
+            environment_policy,
+            environment_policy_snapshot_id: environment_policy.snapshot_id,
             universe,
             style,
           });
@@ -835,6 +935,8 @@ class AutomatedRecommendationLoopService {
         block_limit_down: options.block_limit_down !== false,
         block_suspended: options.block_suspended !== false,
         signal_ids: archive.signal_ids,
+        external_environment_policy: environment_policy,
+        environment_policy_snapshot_id: environment_policy.snapshot_id,
         dry_run: Boolean(options.dry_run),
         report_to_feishu: false,
       });
@@ -979,6 +1081,8 @@ class AutomatedRecommendationLoopService {
     loop_run_id?: string;
     strategy_key?: string;
     strategy_variant?: any;
+    environment_policy?: any;
+    environment_policy_snapshot_id?: string;
     universe: string;
     style: string;
   }) {
@@ -1042,8 +1146,12 @@ class AutomatedRecommendationLoopService {
             strategy_variant: {
               ...(options.strategy_variant || {}),
               market_environment: candidate.market_environment,
+              environment_policy: options.environment_policy,
+              environment_policy_snapshot_id: options.environment_policy_snapshot_id,
             },
             market_environment: candidate.market_environment,
+            environment_policy: options.environment_policy,
+            environment_policy_snapshot_id: options.environment_policy_snapshot_id,
             agent_session: options.agent_session,
             auto_paper_trade: options.auto_paper_trade,
             paper_trade_username: options.paper_trade_username,

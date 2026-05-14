@@ -42,6 +42,11 @@ function modelToPlain<T = any>(record: any): T {
   return record;
 }
 
+function asPlainObject(value: any): Record<string, any> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value;
+}
+
 export interface LoopPolicySnapshotQueryOptions {
   limit?: number;
   offset?: number;
@@ -74,6 +79,14 @@ export class RecommendationLoopPolicySnapshotService {
       const paper = result?.paper_trading || {};
       const tradeOutcomes = result?.trade_outcomes || {};
       const outcomeSummary = tradeOutcomes?.summary || {};
+      const environmentPolicy =
+        asPlainObject(loopPolicy.environment_policy).enabled !== undefined
+          ? asPlainObject(loopPolicy.environment_policy)
+          : asPlainObject(result?.environment_policy);
+      const environmentPolicySnapshotId =
+        loopPolicy.environment_policy_snapshot_id ||
+        environmentPolicy.snapshot_id ||
+        result?.environment_policy_snapshot_id;
       const strategyVariant =
         loopPolicy.strategy_variant ||
         buildRecommendationStrategyVariant(loopPolicy, {
@@ -197,11 +210,14 @@ export class RecommendationLoopPolicySnapshotService {
                 },
                 profit_gate_policy: paper.profit_gate_policy,
                 outcome_feedback_policy: paper.outcome_feedback_policy,
+                environment_guard_policy: paper.environment_guard_policy,
               }
             : null,
           trade_outcomes: tradeOutcomes,
           quality_report: result?.quality_report,
           strategy_variant: strategyVariant,
+          environment_policy: environmentPolicy,
+          environment_policy_snapshot_id: environmentPolicySnapshotId,
         },
         metadata: {
           result_generated_at: result?.generated_at,
@@ -211,6 +227,8 @@ export class RecommendationLoopPolicySnapshotService {
           strategy_key: strategyKey,
           strategy_variant: strategyVariant,
           strategy_bucket_label: strategyVariant.strategy_bucket_label,
+          environment_policy_snapshot_id: environmentPolicySnapshotId,
+          environment_policy: environmentPolicy,
         },
       } as any);
       if (snapshot?.id && archiveSignalIds.length > 0) {
@@ -218,7 +236,11 @@ export class RecommendationLoopPolicySnapshotService {
           archiveSignalIds,
           snapshot.id,
           result?.loop_run_id,
-          strategyVariant
+          strategyVariant,
+          {
+            environment_policy: environmentPolicy,
+            environment_policy_snapshot_id: environmentPolicySnapshotId,
+          }
         );
       }
       return snapshot;
@@ -232,7 +254,8 @@ export class RecommendationLoopPolicySnapshotService {
     signalIds: number[],
     snapshotId: number,
     loopRunId?: string,
-    strategyVariant?: any
+    strategyVariant?: any,
+    extraMetadata: Record<string, any> = {}
   ) {
     try {
       const { AIInvestmentSignal } = await import('../models/AIInvestmentSignal');
@@ -250,6 +273,7 @@ export class RecommendationLoopPolicySnapshotService {
             strategy_variant: metadata.strategy_variant || strategyVariant,
             strategy_bucket_label:
               metadata.strategy_bucket_label || strategyVariant?.strategy_bucket_label,
+            ...extraMetadata,
           },
         });
       }

@@ -15,6 +15,7 @@ import {
   Modal,
 } from 'antd';
 import {
+  CloudSyncOutlined,
   ExperimentOutlined,
   FireOutlined,
   NodeIndexOutlined,
@@ -106,11 +107,19 @@ interface PolicySnapshot {
     strategy_key?: string;
     strategy_bucket_label?: string;
     strategy_variant?: StrategyVariant;
+    environment_policy_snapshot_id?: string;
+    environment_policy?: any;
   };
   loop_policy?: {
     strategy_key?: string;
     strategy_bucket_label?: string;
     strategy_variant?: StrategyVariant;
+    environment_policy_snapshot_id?: string;
+    environment_policy?: any;
+  };
+  run_metrics?: {
+    environment_policy_snapshot_id?: string;
+    environment_policy?: any;
   };
 }
 
@@ -205,6 +214,19 @@ const getSnapshotStrategyLabel = (record: PolicySnapshot) =>
   record.metadata?.strategy_key ||
   record.loop_policy?.strategy_key ||
   '未标注参数组合';
+
+const getSnapshotEnvironmentPolicy = (record?: PolicySnapshot) =>
+  record?.metadata?.environment_policy ||
+  record?.loop_policy?.environment_policy ||
+  record?.run_metrics?.environment_policy ||
+  {};
+
+const getSnapshotEnvironmentPolicyId = (record?: PolicySnapshot) =>
+  record?.metadata?.environment_policy_snapshot_id ||
+  record?.loop_policy?.environment_policy_snapshot_id ||
+  record?.run_metrics?.environment_policy_snapshot_id ||
+  getSnapshotEnvironmentPolicy(record)?.snapshot_id ||
+  '';
 
 const actionLabel = (value?: string) => {
   const labels: Record<string, string> = {
@@ -356,6 +378,8 @@ const RecommendationLoopPolicies: React.FC = () => {
     () => (dashboard?.rankings?.by_strategy_key || []).slice(0, 5),
     [dashboard]
   );
+  const latestEnvironmentPolicy = getSnapshotEnvironmentPolicy(summary?.latest_policy);
+  const latestEnvironmentPolicyId = getSnapshotEnvironmentPolicyId(summary?.latest_policy);
 
   const columns = [
     {
@@ -401,6 +425,28 @@ const RecommendationLoopPolicies: React.FC = () => {
           </Text>
         </Space>
       ),
+    },
+    {
+      title: '环境闸门',
+      width: 210,
+      render: (_: any, record: PolicySnapshot) => {
+        const policy = getSnapshotEnvironmentPolicy(record);
+        const policyId = getSnapshotEnvironmentPolicyId(record);
+        return (
+          <Space direction="vertical" size={3}>
+            <Tag color={policy?.applied ? 'cyan' : 'default'}>
+              {policy?.applied ? '已应用' : policy?.enabled ? '观察中' : '未启用'}
+            </Tag>
+            <Text type="secondary">
+              倍率 {policy?.default_position_multiplier ?? '--'}x · 置信{' '}
+              {Math.round(Number(policy?.confidence || 0) * 100)}%
+            </Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {policyId ? `版本 ${policyId}` : '暂无环境版本'}
+            </Text>
+          </Space>
+        );
+      },
     },
     {
       title: '样本状态',
@@ -599,6 +645,39 @@ const RecommendationLoopPolicies: React.FC = () => {
             {!promotion?.reasons?.length && (
               <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无晋级建议" />
             )}
+          </div>
+        </Col>
+      </Row>
+
+      <Row gutter={[18, 18]} style={{ marginBottom: 18 }}>
+        <Col xs={24}>
+          <div className="loop-policy-env-version">
+            <div>
+              <div className="outcome-kicker">
+                <CloudSyncOutlined /> Environment Gate Version
+              </div>
+              <h2>环境闸门版本化</h2>
+              <p>
+                每次全市场闭环现在都会把大盘/行业环境闸门写入策略快照、信号和模拟交易元数据，后续可按“策略参数
+                + 环境版本”双维度比较收益。
+              </p>
+              <Space wrap>
+                <Tag color="cyan">版本：{latestEnvironmentPolicyId || '等待生成'}</Tag>
+                <Tag color="gold">
+                  默认倍率 {latestEnvironmentPolicy?.default_position_multiplier ?? '--'}x
+                </Tag>
+                <Tag color="purple">
+                  暂停 {latestEnvironmentPolicy?.blocked_segments?.length || 0} · 降仓{' '}
+                  {latestEnvironmentPolicy?.reduced_segments?.length || 0} · 放大{' '}
+                  {latestEnvironmentPolicy?.boosted_segments?.length || 0}
+                </Tag>
+              </Space>
+            </div>
+            <div className="loop-policy-env-meter">
+              <span>ENV CONFIDENCE</span>
+              <strong>{Math.round(Number(latestEnvironmentPolicy?.confidence || 0) * 100)}%</strong>
+              <em>{latestEnvironmentPolicy?.reason || '等待环境闭环样本'}</em>
+            </div>
           </div>
         </Col>
       </Row>

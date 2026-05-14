@@ -67,6 +67,10 @@ interface EnvironmentEntryPolicy {
   market_environment?: MarketEnvironmentSnapshotLike;
   matched_segment?: any;
   preferred_segment?: any;
+  external_policy_snapshot_id?: string;
+  loop_policy_snapshot_id?: number;
+  external_policy_reason?: string;
+  external_policy_match?: any;
   notes?: string[];
 }
 
@@ -106,6 +110,9 @@ export interface PaperTradingAutoOptions {
   outcome_feedback_min_closed_samples?: number;
   outcome_feedback_lookback_days?: number;
   outcome_feedback_limit?: number;
+  external_environment_policy?: Record<string, any>;
+  environment_policy_snapshot_id?: string;
+  loop_policy_snapshot_id?: number;
   use_entry_risk_guard?: boolean;
   max_daily_new_positions?: number;
   max_daily_new_exposure_pct?: number;
@@ -1009,6 +1016,9 @@ class PaperTradingAutomationService {
       const environmentPolicy = await this.evaluateEnvironmentEntryPolicy(signal, {
         metadata,
         outcome_feedback_policy: outcomeFeedbackPolicy,
+        external_environment_policy: options.external_environment_policy,
+        environment_policy_snapshot_id: options.environment_policy_snapshot_id,
+        loop_policy_snapshot_id: options.loop_policy_snapshot_id,
         forced: signalIds.includes(signal.id),
       });
       if (!environmentPolicy.allow_entry) {
@@ -1176,6 +1186,8 @@ class PaperTradingAutomationService {
           strategy_key: metadata.strategy_key,
           strategy_variant: metadata.strategy_variant,
           strategy_bucket_label: metadata.strategy_bucket_label,
+          loop_policy_snapshot_id:
+            options.loop_policy_snapshot_id ?? metadata.loop_policy_snapshot_id,
           profit_gate: profitGatePolicy,
           outcome_feedback: outcomeFeedbackPolicy,
           environment_policy: environmentPolicy,
@@ -2749,12 +2761,17 @@ class PaperTradingAutomationService {
     options: {
       metadata: Record<string, any>;
       outcome_feedback_policy?: PaperTradingAutoResult['outcome_feedback_policy'];
+      external_environment_policy?: Record<string, any>;
+      environment_policy_snapshot_id?: string;
+      loop_policy_snapshot_id?: number;
       forced?: boolean;
     }
   ): Promise<EnvironmentEntryPolicy> {
     const environment = await this.resolveEnvironmentForSignal(signal, options.metadata);
     const marketRegime = this.normalizeEnvironmentKey(environment.market_regime || 'unknown');
     const industryRegime = this.normalizeEnvironmentKey(environment.industry?.regime || 'unknown');
+    const externalPolicy = asPlainObject(options.external_environment_policy);
+    const externalSegments = this.resolveExternalEnvironmentSegments(environment, externalPolicy);
     const notes: string[] = [];
     let multiplier = 1;
     let allowEntry = true;
@@ -2788,6 +2805,36 @@ class PaperTradingAutomationService {
     } else if (industryRegime === 'unknown') {
       multiplier *= 0.92;
       notes.push('行业环境未知');
+    }
+
+    if (externalSegments.block) {
+      allowEntry = false;
+      multiplier = 0;
+      notes.push(`策略快照暂停 ${externalSegments.block.label || externalSegments.block.key}`);
+    } else if (externalSegments.reduce) {
+      const segmentMultiplier = toNumber(externalSegments.reduce.position_multiplier, 0.65);
+      multiplier *= clamp(segmentMultiplier, 0.25, 0.85);
+      notes.push(
+        `策略快照降仓 ${externalSegments.reduce.label || externalSegments.reduce.key}：${
+          externalSegments.reduce.reason || `${roundNumber(segmentMultiplier, 2)}x`
+        }`
+      );
+    } else if (externalSegments.boost) {
+      const segmentMultiplier = toNumber(externalSegments.boost.position_multiplier, 1.05);
+      multiplier *= clamp(segmentMultiplier, 0.95, 1.15);
+      notes.push(
+        `策略快照优势 ${externalSegments.boost.label || externalSegments.boost.key}：${
+          externalSegments.boost.reason || `${roundNumber(segmentMultiplier, 2)}x`
+        }`
+      );
+    } else if (externalPolicy?.default_position_multiplier !== undefined) {
+      const policyMultiplier = clamp(
+        toNumber(externalPolicy.default_position_multiplier, 1),
+        0.35,
+        1.15
+      );
+      multiplier *= policyMultiplier;
+      notes.push(`策略快照环境默认倍率 ${roundNumber(policyMultiplier, 2)}x`);
     }
 
     const blockedFeedbackSegments = options.outcome_feedback_policy?.blocked_segments || [];
@@ -2879,6 +2926,25 @@ class PaperTradingAutomationService {
       matched_segment: weakSegment || undefined,
       preferred_segment: preferredSegment || undefined,
       notes,
+      external_policy_snapshot_id:
+        options.environment_policy_snapshot_id || externalPolicy.snapshot_id || externalPolicy.id,
+      loop_policy_snapshot_id: options.loop_policy_snapshot_id,
+      external_policy_reason: externalPolicy.reason,
+      external_policy_match:
+        externalSegments.block || externalSegments.reduce || externalSegments.boost,
+    };
+  }
+
+  private resolveExternalEnvironmentSegments(
+    environment: MarketEnvironmentSnapshotLike,
+    policy: Record<string, any>
+  ): { block?: any; reduce?: any; boost?: any } {
+    if (!policy || Object.keys(policy).length === 0) return {};
+    const match = (segments: any[]) => this.findEnvironmentFeedbackSegment(environment, segments);
+    return {
+      block: match(Array.isArray(policy.blocked_segments) ? policy.blocked_segments : []),
+      reduce: match(Array.isArray(policy.reduced_segments) ? policy.reduced_segments : []),
+      boost: match(Array.isArray(policy.boosted_segments) ? policy.boosted_segments : []),
     };
   }
 

@@ -495,6 +495,7 @@ class FeishuTaskReportService {
     const tradeOutcomes = result?.trade_outcomes || {};
     const outcomeSummary = tradeOutcomes?.summary || {};
     const loopPolicy = result?.loop_policy || {};
+    const environmentPolicy = loopPolicy?.environment_policy || result?.environment_policy || {};
     const policySnapshot = result?.policy_snapshot || {};
     const qualityOverview = result?.quality_report?.overview || {};
     const topPicks = recommendations.slice(0, 5);
@@ -588,6 +589,15 @@ class FeishuTaskReportService {
             consensusRanked ? '本轮已按多策略共识优先排序' : '本轮未触发共识排序'
           }`
         : '',
+      environmentPolicy?.enabled
+        ? `- **环境闸门版本**：${environmentPolicy.snapshot_id || '-'}；默认倍率 ${
+            environmentPolicy.default_position_multiplier ?? '--'
+          }x；暂停 ${environmentPolicy.blocked_segments?.length || 0} / 降仓 ${
+            environmentPolicy.reduced_segments?.length || 0
+          } / 放大 ${environmentPolicy.boosted_segments?.length || 0}；${
+            environmentPolicy.reason || '按市场/行业环境闭环结果动态调仓'
+          }`
+        : '',
       bestPick
         ? `- **首选标的**：${bestPick.name || bestPick.symbol}（${bestPick.symbol}），${
             this.buildInlinePriceText(bestPick) || '当前股价 --'
@@ -673,6 +683,10 @@ class FeishuTaskReportService {
       策略实验质量差: strategyExperiment?.quality_delta,
       策略实验是否切换: loopPolicy?.strategy_experiment_feedback_applied ? '是' : '否',
       策略实验原因: loopPolicy?.strategy_experiment_feedback_reason,
+      环境闸门版本: environmentPolicy?.snapshot_id,
+      环境闸门倍率: environmentPolicy?.default_position_multiplier,
+      环境闸门置信度: environmentPolicy?.confidence,
+      环境闸门原因: environmentPolicy?.reason,
       共识排序: consensusRanked ? '是' : '否',
       共识标的数: consensusOverlapCount,
       最佳标的: bestPick
@@ -694,6 +708,7 @@ class FeishuTaskReportService {
           },
           archive,
           loop_policy: loopPolicy,
+          environment_policy: environmentPolicy,
           strategy_experiment: strategyExperiment,
           policy_snapshot: policySnapshot,
           agent_analysis: agentAnalysis,
@@ -713,6 +728,7 @@ class FeishuTaskReportService {
             trades: Array.isArray(paper?.trades) ? paper.trades.slice(0, 10) : [],
             profit_gate_policy: paper?.profit_gate_policy,
             outcome_feedback_policy: paper?.outcome_feedback_policy,
+            environment_guard_policy: paper?.environment_guard_policy,
           },
           trade_outcomes: tradeOutcomes,
           quality_report: result?.quality_report,

@@ -76,6 +76,8 @@ export interface QuantRecommendationArchiveOptions {
   loop_policy_snapshot_id?: number;
   strategy_key?: string;
   strategy_variant?: Record<string, any>;
+  environment_policy?: Record<string, any>;
+  environment_policy_snapshot_id?: string;
 }
 
 export interface TradingAgentsStructuredDecision {
@@ -1294,6 +1296,8 @@ export class AIInvestmentSignalService {
             ? candidate.consensus_variants
             : [],
           market_environment: candidate.market_environment,
+          environment_policy: options.environment_policy,
+          environment_policy_snapshot_id: options.environment_policy_snapshot_id,
           strategy_key: options.strategy_key,
           strategy_variant: options.strategy_variant,
           strategy_bucket_label: options.strategy_variant?.strategy_bucket_label,
@@ -1335,6 +1339,8 @@ export class AIInvestmentSignalService {
             ? candidate.consensus_variants
             : [],
           market_environment: candidate.market_environment,
+          environment_policy: options.environment_policy,
+          environment_policy_snapshot_id: options.environment_policy_snapshot_id,
           strategy_key: options.strategy_key,
           strategy_variant: options.strategy_variant,
           strategy_bucket_label: options.strategy_variant?.strategy_bucket_label,

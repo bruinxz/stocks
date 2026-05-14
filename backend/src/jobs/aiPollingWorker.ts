@@ -87,6 +87,8 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
     strategy_key,
     strategy_variant,
     market_environment,
+    environment_policy,
+    environment_policy_snapshot_id,
     agent_session,
     current_price: submitted_current_price,
     price_change_pct: submitted_price_change_pct,
@@ -191,8 +193,9 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
       logger.info(`AI 分析任务 ${taskId} 对于股票 ${symbol} 已完成并保存入库 (增量)`);
 
       let archivedSignal: any = null;
+      let resolvedPolicySnapshotId: number | undefined;
       try {
-        const resolvedPolicySnapshotId =
+        resolvedPolicySnapshotId =
           loopPolicySnapshotId ||
           (
             await RecommendationLoopPolicySnapshot.findOne({
@@ -216,7 +219,11 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
           loop_run_id: loopRunId,
           loop_policy_snapshot_id: resolvedPolicySnapshotId,
           strategy_key,
-          strategy_variant,
+          strategy_variant: {
+            ...(strategy_variant || {}),
+            environment_policy,
+            environment_policy_snapshot_id,
+          },
           market_environment: market_environment || strategy_variant?.market_environment,
         });
         if (
@@ -233,6 +240,8 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
               quant_data_quality_bucket: submitted_data_quality_bucket,
               strategy_key,
               strategy_variant,
+              environment_policy,
+              environment_policy_snapshot_id,
               market_environment,
             },
           });
@@ -274,6 +283,9 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
             use_profit_gate: true,
             profit_gate_allow_sampling: true,
             use_outcome_feedback: true,
+            external_environment_policy: environment_policy,
+            environment_policy_snapshot_id,
+            loop_policy_snapshot_id: resolvedPolicySnapshotId,
             dry_run: false,
             report_to_feishu: true,
           });

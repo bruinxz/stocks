@@ -18,6 +18,8 @@ export interface AIPollingJobData {
   strategy_key?: string;
   strategy_variant?: any;
   market_environment?: any;
+  environment_policy?: any;
+  environment_policy_snapshot_id?: string;
   agent_session?: string;
   auto_paper_trade?: boolean;
   paper_trade_username?: string;
