@@ -563,6 +563,11 @@ class AutomatedRecommendationLoopService {
           cooldown_reason: item.cooldown_reason,
           resample_ready: item.resample_ready,
           resample_reason: item.resample_reason,
+          resample_closed_count: item.resample_closed_count,
+          resample_avg_excess_return_pct: item.resample_avg_excess_return_pct,
+          resample_excess_win_rate: item.resample_excess_win_rate,
+          resample_decision: item.resample_decision,
+          resample_decision_reason: item.resample_decision_reason,
         })),
         resample_environment_strategy_combos: resampleEnvironmentStrategyCombos.map(
           (item: any) => ({
@@ -578,6 +583,11 @@ class AutomatedRecommendationLoopService {
             cooldown_reason: item.cooldown_reason,
             resample_reason: item.resample_reason,
             resample_position_multiplier: item.resample_position_multiplier || 0.35,
+            resample_closed_count: item.resample_closed_count,
+            resample_avg_excess_return_pct: item.resample_avg_excess_return_pct,
+            resample_excess_win_rate: item.resample_excess_win_rate,
+            resample_decision: item.resample_decision,
+            resample_decision_reason: item.resample_decision_reason,
           })
         ),
         resample_environment_strategy_policy: resampleEnvironmentStrategyCombos[0]

@@ -167,6 +167,10 @@ export interface PaperTradingAutoTradeItem {
   recommendation_tier_label?: string;
   environment_multiplier?: number;
   environment_reason?: string;
+  resample_sample?: boolean;
+  resample_combo_key?: string;
+  resample_reason?: string;
+  resample_position_multiplier?: number;
   market_regime?: string;
   market_regime_label?: string;
   industry_regime?: string;
@@ -1118,6 +1122,12 @@ class PaperTradingAutomationService {
         continue;
       }
 
+      const resampleMatch = asPlainObject(environmentPolicy.resample_match);
+      const resampleSample = Object.keys(resampleMatch).length > 0;
+      const resamplePositionMultiplier = toOptionalNumber(
+        resampleMatch.resample_position_multiplier ?? resampleMatch.position_multiplier
+      );
+
       eligible++;
       const tradePayload: PaperTradingAutoTradeItem = {
         ...itemBase,
@@ -1126,6 +1136,10 @@ class PaperTradingAutomationService {
         action_label: metadata.action_label,
         environment_multiplier: environmentPolicy.position_multiplier,
         environment_reason: environmentPolicy.reason,
+        resample_sample: resampleSample || undefined,
+        resample_combo_key: resampleMatch.key,
+        resample_reason: resampleMatch.resample_reason || resampleMatch.reason,
+        resample_position_multiplier: resamplePositionMultiplier,
         market_regime: environmentPolicy.market_regime,
         market_regime_label: environmentPolicy.market_regime_label,
         industry_regime: environmentPolicy.industry_regime,
@@ -1192,6 +1206,11 @@ class PaperTradingAutomationService {
           profit_gate: profitGatePolicy,
           outcome_feedback: outcomeFeedbackPolicy,
           environment_policy: environmentPolicy,
+          resample_sample: resampleSample || undefined,
+          resample_match: resampleSample ? resampleMatch : undefined,
+          resample_combo_key: resampleMatch.key,
+          resample_reason: resampleMatch.resample_reason || resampleMatch.reason,
+          resample_position_multiplier: resamplePositionMultiplier,
           market_environment: environmentPolicy.market_environment || metadata.market_environment,
           entry_risk_guard: this.buildEntryRiskGuardPolicy(entryRiskGuard),
           entry_market_profile: marketProfile,

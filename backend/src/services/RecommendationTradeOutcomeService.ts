@@ -95,6 +95,7 @@ export interface RecommendationTradeOutcomeDashboard {
     by_industry_regime: RecommendationTradeOutcomeBucket[];
     by_environment_policy_version: RecommendationTradeOutcomeBucket[];
     by_environment_strategy_combo: RecommendationTradeOutcomeBucket[];
+    by_resample: RecommendationTradeOutcomeBucket[];
   };
   outcomes: RecommendationTradeOutcome[];
   feedback: {
@@ -148,6 +149,14 @@ export interface RecommendationTradeOutcomeBucket {
   resample_ready?: boolean;
   resample_reason?: string;
   resample_position_multiplier?: number;
+  resample_closed_count?: number;
+  resample_avg_excess_return_pct?: number;
+  resample_win_rate?: number;
+  resample_excess_win_rate?: number;
+  resample_total_pnl?: number;
+  resample_profit_factor?: number;
+  resample_decision?: 'promote' | 'continue_sampling' | 'cooldown' | 'observe';
+  resample_decision_reason?: string;
 }
 
 function toNumber(value: any, fallback = 0): number {
@@ -306,6 +315,34 @@ function environmentStrategyComboLabel(key: string): string {
   return `${environmentPolicyVersionLabel(envKey)} × ${recommendationStrategyKeyLabel(
     strategyKey
   )}`;
+}
+
+function isResampleOutcome(record: RecommendationTradeOutcome): boolean {
+  const metadata = asPlainObject(record.metadata);
+  const signalMetadata = asPlainObject(metadata.signal_metadata);
+  const paperTrading = asPlainObject(metadata.paper_trading);
+  const environmentPolicy = asPlainObject(
+    metadata.environment_policy ||
+      paperTrading.environment_policy ||
+      signalMetadata.environment_policy ||
+      asPlainObject(signalMetadata.paper_trading).environment_policy
+  );
+  return Boolean(
+    metadata.resample_sample ||
+      paperTrading.resample_sample ||
+      signalMetadata.resample_sample ||
+      environmentPolicy.resample_match ||
+      metadata.resample_match ||
+      paperTrading.resample_match
+  );
+}
+
+function resampleGroupKey(record: RecommendationTradeOutcome): string {
+  return isResampleOutcome(record) ? 'resample' : 'normal';
+}
+
+function resampleGroupLabel(key: string): string {
+  return key === 'resample' ? '冷却复采样' : '常规推荐';
 }
 
 function dateOnly(value?: Date | string | null): string {
@@ -665,6 +702,12 @@ export class RecommendationTradeOutcomeService {
         environmentStrategyComboLabel,
         'environment_strategy_combo'
       ),
+      by_resample: this.buildBuckets(
+        outcomes,
+        item => resampleGroupKey(item),
+        resampleGroupLabel,
+        'resample'
+      ),
     };
 
     const dashboard: RecommendationTradeOutcomeDashboard = {
@@ -988,6 +1031,16 @@ export class RecommendationTradeOutcomeService {
               !item.key.includes('strategy:unknown')
           )
           .slice(0, 10),
+        resample_summary: outcomeDashboard.groups.by_resample,
+        resample_combo_rankings: environmentStrategyComboGroups
+          .filter(item => toNumber(item.resample_closed_count, 0) > 0 || item.resample_decision)
+          .sort(
+            (a, b) =>
+              toNumber(b.resample_avg_excess_return_pct, -999) -
+                toNumber(a.resample_avg_excess_return_pct, -999) ||
+              toNumber(b.resample_closed_count, 0) - toNumber(a.resample_closed_count, 0)
+          )
+          .slice(0, 8),
         policy: environmentPolicy,
       },
       policy_versions: policyDashboard
@@ -1840,6 +1893,68 @@ export class RecommendationTradeOutcomeService {
             ? '冷却组合出现改善信号，仅允许小仓复采样'
             : `冷却已满 ${cooldownDays} 天，仅允许小仓复采样`
           : undefined;
+        const resampleTrades =
+          dimension === 'environment_strategy_combo'
+            ? plain.filter(item => isResampleOutcome(item))
+            : [];
+        const closedResampleTrades = resampleTrades.filter(item => item.trade_status === 'closed');
+        const resampleWins = closedResampleTrades.filter(item => toNumber(item.total_pnl) > 0);
+        const resampleExcessWins = closedResampleTrades.filter(
+          item => toNumber(item.excess_return_pct) > 0
+        );
+        const resampleLossSum = Math.abs(
+          closedResampleTrades
+            .filter(item => toNumber(item.realized_pnl) < 0)
+            .reduce((sum, item) => sum + toNumber(item.realized_pnl), 0)
+        );
+        const resampleWinSum = closedResampleTrades
+          .filter(item => toNumber(item.realized_pnl) > 0)
+          .reduce((sum, item) => sum + toNumber(item.realized_pnl), 0);
+        const resampleAvgExcess = roundNumber(
+          average(closedResampleTrades.map(item => toNumber(item.excess_return_pct))),
+          4
+        );
+        const resampleClosedCount = closedResampleTrades.length;
+        const resampleWinRate = resampleClosedCount
+          ? roundNumber((resampleWins.length / resampleClosedCount) * 100, 2)
+          : undefined;
+        const resampleExcessWinRate = resampleClosedCount
+          ? roundNumber((resampleExcessWins.length / resampleClosedCount) * 100, 2)
+          : undefined;
+        const resampleTotalPnl = resampleTrades.length
+          ? roundNumber(
+              resampleTrades.reduce((sum, item) => sum + toNumber(item.total_pnl), 0),
+              2
+            )
+          : undefined;
+        const resampleProfitFactor =
+          resampleClosedCount && resampleLossSum > 0
+            ? roundNumber(resampleWinSum / resampleLossSum, 4)
+            : resampleClosedCount && resampleWins.length > 0
+            ? 999
+            : resampleClosedCount
+            ? 0
+            : undefined;
+        const resampleDecision: RecommendationTradeOutcomeBucket['resample_decision'] =
+          dimension === 'environment_strategy_combo' && resampleClosedCount >= 2
+            ? resampleAvgExcess >= 0.8 && toNumber(resampleExcessWinRate, 0) >= 50
+              ? 'promote'
+              : resampleAvgExcess <= -0.8 || toNumber(resampleExcessWinRate, 100) < 35
+              ? 'cooldown'
+              : 'continue_sampling'
+            : dimension === 'environment_strategy_combo' && resampleTrades.length > 0
+            ? 'observe'
+            : undefined;
+        const resampleDecisionReason =
+          resampleDecision === 'promote'
+            ? `复采样 ${resampleClosedCount} 笔平均超额 ${resampleAvgExcess}%，可评估恢复常规采样`
+            : resampleDecision === 'cooldown'
+            ? `复采样 ${resampleClosedCount} 笔仍跑输，继续冷却并避免放大`
+            : resampleDecision === 'continue_sampling'
+            ? `复采样 ${resampleClosedCount} 笔结论未稳定，继续小仓观察`
+            : resampleDecision === 'observe'
+            ? '已有复采样持仓但尚未形成闭环，等待平仓验证'
+            : undefined;
         return {
           key,
           label: labelSelector(key),
@@ -1907,6 +2022,18 @@ export class RecommendationTradeOutcomeService {
           resample_ready: resampleReady,
           resample_reason: resampleReason,
           resample_position_multiplier: resampleReady ? 0.35 : undefined,
+          resample_closed_count:
+            dimension === 'environment_strategy_combo' ? resampleClosedCount : undefined,
+          resample_avg_excess_return_pct:
+            dimension === 'environment_strategy_combo' && resampleTrades.length
+              ? resampleAvgExcess
+              : undefined,
+          resample_win_rate: resampleWinRate,
+          resample_excess_win_rate: resampleExcessWinRate,
+          resample_total_pnl: resampleTotalPnl,
+          resample_profit_factor: resampleProfitFactor,
+          resample_decision: resampleDecision,
+          resample_decision_reason: resampleDecisionReason,
         };
       })
       .sort((a, b) => {

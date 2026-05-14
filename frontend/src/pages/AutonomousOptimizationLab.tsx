@@ -148,6 +148,14 @@ interface EnvironmentStrategyComboRanking extends EnvironmentRanking {
   resample_ready?: boolean;
   resample_reason?: string;
   resample_position_multiplier?: number;
+  resample_closed_count?: number;
+  resample_avg_excess_return_pct?: number;
+  resample_win_rate?: number;
+  resample_excess_win_rate?: number;
+  resample_total_pnl?: number;
+  resample_profit_factor?: number;
+  resample_decision?: 'promote' | 'continue_sampling' | 'cooldown' | 'observe' | string;
+  resample_decision_reason?: string;
 }
 
 interface OptimizationData {
@@ -215,6 +223,8 @@ interface OptimizationData {
     industry_regime_rankings?: EnvironmentRanking[];
     version_rankings?: EnvironmentRanking[];
     strategy_combo_rankings?: EnvironmentStrategyComboRanking[];
+    resample_summary?: EnvironmentRanking[];
+    resample_combo_rankings?: EnvironmentStrategyComboRanking[];
     policy?: EnvironmentLoopPolicy;
   };
   insights: string[];
@@ -342,6 +352,13 @@ const AutonomousOptimizationLab: React.FC = () => {
   );
   const environmentStrategyComboRankings = useMemo(
     () => (data?.market_environment?.strategy_combo_rankings || []).slice(0, 6),
+    [data]
+  );
+  const resampleComboRankings = useMemo(
+    () =>
+      (data?.market_environment?.resample_combo_rankings || []).filter(
+        item => Number(item.resample_closed_count || 0) > 0 || item.resample_decision
+      ),
     [data]
   );
 
@@ -567,6 +584,58 @@ const AutonomousOptimizationLab: React.FC = () => {
           </Card>
         </Col>
       </Row>
+
+      {!!resampleComboRankings.length && (
+        <Row gutter={[16, 16]}>
+          <Col xs={24}>
+            <Card
+              className="modern-card optimization-env-card"
+              title={
+                <Space>
+                  <ReloadOutlined /> 复采样收益回收
+                </Space>
+              }
+              loading={loading}
+            >
+              <div className="optimization-resample-board">
+                {resampleComboRankings.slice(0, 4).map((item, index) => (
+                  <div
+                    className={`optimization-resample-card ${item.resample_decision || 'observe'}`}
+                    key={item.key || index}
+                  >
+                    <div className="optimization-env-combo-rank">R{index + 1}</div>
+                    <Text strong>{item.label || item.key}</Text>
+                    <div className="optimization-env-combo-stats">
+                      <span>
+                        复采闭环 <b>{item.resample_closed_count || 0}</b>
+                      </span>
+                      <span>
+                        复采超额 <b>{formatPercent(item.resample_avg_excess_return_pct)}</b>
+                      </span>
+                      <span>
+                        超额胜率 <b>{formatPercent(item.resample_excess_win_rate)}</b>
+                      </span>
+                    </div>
+                    <strong style={{ color: pnlColor(item.resample_avg_excess_return_pct) }}>
+                      {formatPercent(item.resample_avg_excess_return_pct)}
+                    </strong>
+                    <em>
+                      {item.resample_decision === 'promote'
+                        ? '可评估恢复常规采样'
+                        : item.resample_decision === 'cooldown'
+                        ? '复采仍弱，继续冷却'
+                        : item.resample_decision === 'continue_sampling'
+                        ? '继续小仓观察'
+                        : '等待复采闭环'}
+                    </em>
+                    <p>{item.resample_decision_reason || item.resample_reason}</p>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          </Col>
+        </Row>
+      )}
 
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={10}>
