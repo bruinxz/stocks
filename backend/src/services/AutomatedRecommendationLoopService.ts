@@ -111,6 +111,11 @@ function extractStrategyKeyFromEnvironmentComboKey(key?: string): string {
   return match?.[1] || '';
 }
 
+function extractEnvironmentPolicyIdFromEnvironmentComboKey(key?: string): string {
+  const match = String(key || '').match(/env:([^|]+)/);
+  return match?.[1] || '';
+}
+
 function buildLoopRunId(prefix = 'loop'): string {
   const stamp = moment().tz('Asia/Shanghai').format('YYYYMMDDHHmmss');
   const suffix = Math.random().toString(36).slice(2, 8);
@@ -450,6 +455,9 @@ class AutomatedRecommendationLoopService {
       const cooledEnvironmentStrategyCombos = strategyComboRankings
         .filter((item: any) => item?.cooldown_active)
         .slice(0, 5);
+      const resampleEnvironmentStrategyCombos = strategyComboRankings
+        .filter((item: any) => item?.resample_ready)
+        .slice(0, 5);
       const inheritedEnvironmentVersion = bestEnvironmentVersion
         ? await recommendationLoopPolicySnapshotService.findEnvironmentPolicySnapshot({
             snapshot_id: bestEnvironmentVersion.key,
@@ -543,13 +551,50 @@ class AutomatedRecommendationLoopService {
         cooled_environment_strategy_combos: cooledEnvironmentStrategyCombos.map((item: any) => ({
           key: item.key,
           label: item.label,
+          environment_policy_snapshot_id: extractEnvironmentPolicyIdFromEnvironmentComboKey(
+            item.key
+          ),
+          strategy_key: extractStrategyKeyFromEnvironmentComboKey(item.key),
           closed_count: item.closed_count,
           avg_excess_return_pct: item.avg_excess_return_pct,
           robust_score: item.robust_score,
           recent_loss_streak: item.recent_loss_streak,
           cooldown_days: item.cooldown_days,
           cooldown_reason: item.cooldown_reason,
+          resample_ready: item.resample_ready,
+          resample_reason: item.resample_reason,
         })),
+        resample_environment_strategy_combos: resampleEnvironmentStrategyCombos.map(
+          (item: any) => ({
+            key: item.key,
+            label: item.label,
+            environment_policy_snapshot_id: extractEnvironmentPolicyIdFromEnvironmentComboKey(
+              item.key
+            ),
+            strategy_key: extractStrategyKeyFromEnvironmentComboKey(item.key),
+            closed_count: item.closed_count,
+            avg_excess_return_pct: item.avg_excess_return_pct,
+            robust_score: item.robust_score,
+            cooldown_reason: item.cooldown_reason,
+            resample_reason: item.resample_reason,
+            resample_position_multiplier: item.resample_position_multiplier || 0.35,
+          })
+        ),
+        resample_environment_strategy_policy: resampleEnvironmentStrategyCombos[0]
+          ? {
+              key: resampleEnvironmentStrategyCombos[0].key,
+              label: resampleEnvironmentStrategyCombos[0].label,
+              environment_policy_snapshot_id: extractEnvironmentPolicyIdFromEnvironmentComboKey(
+                resampleEnvironmentStrategyCombos[0].key
+              ),
+              strategy_key: extractStrategyKeyFromEnvironmentComboKey(
+                resampleEnvironmentStrategyCombos[0].key
+              ),
+              position_multiplier:
+                resampleEnvironmentStrategyCombos[0].resample_position_multiplier || 0.35,
+              reason: resampleEnvironmentStrategyCombos[0].resample_reason,
+            }
+          : null,
         promoted_environment_strategy_feedback_applied: Boolean(bestEnvironmentStrategyCombo),
         promoted_environment_strategy_feedback_reason: bestEnvironmentStrategyCombo
           ? `环境×策略冠军 ${bestEnvironmentStrategyCombo.label}：闭环 ${bestEnvironmentStrategyCombo.closed_count} 笔、平均超额 ${bestEnvironmentStrategyCombo.avg_excess_return_pct}%、稳健分 ${bestEnvironmentStrategyCombo.robust_score}，下一轮接管扫描参数`

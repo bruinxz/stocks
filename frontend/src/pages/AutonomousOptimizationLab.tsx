@@ -112,6 +112,13 @@ interface EnvironmentLoopPolicy {
     strategy_key?: string;
   } | null;
   cooled_environment_strategy_combos?: EnvironmentStrategyComboRanking[];
+  resample_environment_strategy_combos?: EnvironmentStrategyComboRanking[];
+  resample_environment_strategy_policy?: {
+    key?: string;
+    label?: string;
+    position_multiplier?: number;
+    reason?: string;
+  } | null;
 }
 
 interface EnvironmentRanking {
@@ -138,6 +145,9 @@ interface EnvironmentStrategyComboRanking extends EnvironmentRanking {
   cooldown_reason?: string;
   recent_loss_streak?: number;
   cooldown_days?: number;
+  resample_ready?: boolean;
+  resample_reason?: string;
+  resample_position_multiplier?: number;
 }
 
 interface OptimizationData {
@@ -734,11 +744,28 @@ const AutonomousOptimizationLab: React.FC = () => {
                 </span>
               </div>
             )}
+            {!!environmentPolicy?.resample_environment_strategy_combos?.length && (
+              <div className="optimization-env-resample-strip">
+                <ReloadOutlined />
+                <span>
+                  已开放 {environmentPolicy.resample_environment_strategy_combos.length}{' '}
+                  个冷却组合小仓复采样：
+                  {environmentPolicy.resample_environment_strategy_combos[0]?.label} ·{' '}
+                  {environmentPolicy.resample_environment_strategy_combos[0]?.resample_reason}
+                </span>
+              </div>
+            )}
             <div className="optimization-env-combo-grid">
               {environmentStrategyComboRankings.map((item, index) => (
                 <div
                   className={`optimization-env-combo-tile ${
-                    item.cooldown_active ? 'cooldown' : item.takeover_ready ? 'ready' : ''
+                    item.resample_ready
+                      ? 'resample'
+                      : item.cooldown_active
+                      ? 'cooldown'
+                      : item.takeover_ready
+                      ? 'ready'
+                      : ''
                   }`}
                   key={item.key || index}
                 >
@@ -759,7 +786,9 @@ const AutonomousOptimizationLab: React.FC = () => {
                     {formatPercent(item.avg_excess_return_pct)}
                   </strong>
                   <em>
-                    {item.cooldown_active
+                    {item.resample_ready
+                      ? item.resample_reason || '小仓复采样'
+                      : item.cooldown_active
                       ? item.cooldown_reason || '组合冷却中'
                       : item.takeover_ready
                       ? '已满足接管条件'

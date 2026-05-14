@@ -71,6 +71,7 @@ interface EnvironmentEntryPolicy {
   loop_policy_snapshot_id?: number;
   external_policy_reason?: string;
   external_policy_match?: any;
+  resample_match?: any;
   notes?: string[];
 }
 
@@ -2690,6 +2691,75 @@ class PaperTradingAutomationService {
     return [...new Set(candidates)];
   }
 
+  private buildEnvironmentStrategyComboKey(
+    environment: MarketEnvironmentSnapshotLike,
+    strategyKey?: string
+  ): string {
+    const policy = asPlainObject(environment as any);
+    const externalPolicySnapshotId =
+      policy.external_policy_snapshot_id || policy.snapshot_id || policy.id || 'unknown';
+    return `env:${externalPolicySnapshotId}|strategy:${strategyKey || 'unknown'}`;
+  }
+
+  private extractStrategyKeyFromEnvironmentComboKey(key?: string): string {
+    const match = String(key || '').match(/strategy:(.+)$/);
+    return match?.[1] || '';
+  }
+
+  private extractEnvironmentPolicyIdFromComboKey(key?: string): string {
+    const match = String(key || '').match(/env:([^|]+)/);
+    return match?.[1] || '';
+  }
+
+  private matchResampleEnvironmentStrategyPolicy(
+    item: any,
+    options: {
+      environment: MarketEnvironmentSnapshotLike;
+      strategy_key?: string;
+      external_policy: Record<string, any>;
+      environment_policy_snapshot_id?: string;
+    }
+  ): boolean {
+    const key = this.normalizeEnvironmentKey(item?.key);
+    const strategyKey = this.normalizeEnvironmentKey(options.strategy_key);
+    const itemStrategyKey = this.normalizeEnvironmentKey(
+      item?.strategy_key || this.extractStrategyKeyFromEnvironmentComboKey(item?.key)
+    );
+    if (!strategyKey || strategyKey === 'unknown' || !itemStrategyKey) return false;
+
+    const candidates = [
+      this.buildEnvironmentStrategyComboKey(options.environment, options.strategy_key),
+      `env:${
+        options.environment_policy_snapshot_id ||
+        options.external_policy.snapshot_id ||
+        options.external_policy.id ||
+        'unknown'
+      }|strategy:${options.strategy_key || 'unknown'}`,
+    ].map(value => this.normalizeEnvironmentKey(value));
+
+    if (key && candidates.includes(key)) return true;
+
+    const itemEnvironmentId = this.normalizeEnvironmentKey(
+      item?.environment_policy_snapshot_id || this.extractEnvironmentPolicyIdFromComboKey(item?.key)
+    );
+    const currentEnvironmentIds = [
+      options.environment_policy_snapshot_id,
+      options.external_policy.snapshot_id,
+      options.external_policy.id,
+      (options.environment as any)?.external_policy_snapshot_id,
+      (options.environment as any)?.snapshot_id,
+      (options.environment as any)?.id,
+    ]
+      .map(value => this.normalizeEnvironmentKey(value))
+      .filter(Boolean);
+
+    if (itemEnvironmentId && currentEnvironmentIds.includes(itemEnvironmentId)) {
+      return itemStrategyKey === strategyKey;
+    }
+
+    return itemStrategyKey === strategyKey;
+  }
+
   private resolveSignalMarketEnvironment(
     signal: AIInvestmentSignal,
     metadata: Record<string, any> = asPlainObject(signal.metadata)
@@ -2772,6 +2842,21 @@ class PaperTradingAutomationService {
     const industryRegime = this.normalizeEnvironmentKey(environment.industry?.regime || 'unknown');
     const externalPolicy = asPlainObject(options.external_environment_policy);
     const externalSegments = this.resolveExternalEnvironmentSegments(environment, externalPolicy);
+    const strategyKey =
+      options.metadata.strategy_key ||
+      asPlainObject(options.metadata.strategy_variant).strategy_key ||
+      asPlainObject(options.metadata.paper_trading).strategy_key;
+    const resamplePolicies = Array.isArray(externalPolicy.resample_environment_strategy_combos)
+      ? externalPolicy.resample_environment_strategy_combos
+      : [];
+    const resamplePolicy = resamplePolicies.find((item: any) =>
+      this.matchResampleEnvironmentStrategyPolicy(item, {
+        environment,
+        strategy_key: strategyKey,
+        external_policy: externalPolicy,
+        environment_policy_snapshot_id: options.environment_policy_snapshot_id,
+      })
+    );
     const notes: string[] = [];
     let multiplier = 1;
     let allowEntry = true;
@@ -2903,6 +2988,21 @@ class PaperTradingAutomationService {
       notes.push('压力市叠加弱行业，默认禁止新开仓');
     }
 
+    if (resamplePolicy) {
+      const resampleMultiplier = clamp(
+        toNumber(resamplePolicy.resample_position_multiplier, 0.35),
+        0.15,
+        0.45
+      );
+      multiplier *= resampleMultiplier;
+      allowEntry = allowEntry || Boolean(options.forced);
+      notes.unshift(
+        `冷却期满复采样 ${resamplePolicy.label || resamplePolicy.key}：${
+          resamplePolicy.resample_reason || `${roundNumber(resampleMultiplier, 2)}x`
+        }`
+      );
+    }
+
     const normalizedMultiplier = roundNumber(clamp(multiplier, 0, 1.15), 2);
     const reason = [
       `${environment.market_regime_label || this.environmentMarketLabel(marketRegime)}`,
@@ -2932,6 +3032,7 @@ class PaperTradingAutomationService {
       external_policy_reason: externalPolicy.reason,
       external_policy_match:
         externalSegments.block || externalSegments.reduce || externalSegments.boost,
+      resample_match: resamplePolicy,
     };
   }
 

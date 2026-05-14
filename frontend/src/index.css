@@ -4283,6 +4283,12 @@ a {
     linear-gradient(160deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.04));
 }
 
+.optimization-env-combo-tile.resample {
+  border-color: rgba(214, 166, 79, 0.42);
+  background: radial-gradient(circle at 88% 0%, rgba(214, 166, 79, 0.24), transparent 34%),
+    linear-gradient(160deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.045));
+}
+
 .optimization-env-cooldown-strip {
   display: flex;
   align-items: center;
@@ -4299,6 +4305,24 @@ a {
 
 .optimization-env-cooldown-strip .anticon {
   color: #ffb4a8;
+}
+
+.optimization-env-resample-strip {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: -4px 0 14px;
+  padding: 11px 14px;
+  border-radius: 16px;
+  color: rgba(255, 247, 224, 0.94);
+  background: rgba(120, 83, 20, 0.22);
+  border: 1px solid rgba(214, 166, 79, 0.34);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.optimization-env-resample-strip .anticon {
+  color: #ffe7ae;
 }
 
 .optimization-env-combo-rank {

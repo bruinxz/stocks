@@ -145,6 +145,9 @@ export interface RecommendationTradeOutcomeBucket {
   cooldown_reason?: string;
   recent_loss_streak?: number;
   cooldown_days?: number;
+  resample_ready?: boolean;
+  resample_reason?: string;
+  resample_position_multiplier?: number;
 }
 
 function toNumber(value: any, fallback = 0): number {
@@ -1818,6 +1821,25 @@ export class RecommendationTradeOutcomeService {
               ? `贝叶斯胜率 ${roundNumber(bayesianWinRate, 2)}% 偏低，冷却观察`
               : `最大不利波动 ${roundNumber(drawdownPenalty, 2)}% 偏高，冷却观察`
             : undefined;
+        const latestClosedDate = recentClosed[0]?.exit_date || recentClosed[0]?.entry_date;
+        const daysSinceLatestClosed = latestClosedDate
+          ? Math.max(0, moment().tz('Asia/Shanghai').diff(moment(latestClosedDate), 'days'))
+          : 0;
+        const cooldownDays = cooldownActive ? Math.min(20, 5 + recentLossStreak * 3) : undefined;
+        const improvementSignal =
+          dimension === 'environment_strategy_combo' &&
+          cooldownActive &&
+          recentLossStreak === 0 &&
+          (riskAdjustedExcess > -0.2 || bayesianWinRate >= 48 || robustScore >= -1);
+        const resampleReady =
+          dimension === 'environment_strategy_combo' &&
+          cooldownActive &&
+          (daysSinceLatestClosed >= toNumber(cooldownDays, 999) || improvementSignal);
+        const resampleReason = resampleReady
+          ? improvementSignal
+            ? '冷却组合出现改善信号，仅允许小仓复采样'
+            : `冷却已满 ${cooldownDays} 天，仅允许小仓复采样`
+          : undefined;
         return {
           key,
           label: labelSelector(key),
@@ -1881,7 +1903,10 @@ export class RecommendationTradeOutcomeService {
           cooldown_reason: cooldownReason,
           recent_loss_streak:
             dimension === 'environment_strategy_combo' ? recentLossStreak : undefined,
-          cooldown_days: cooldownActive ? Math.min(20, 5 + recentLossStreak * 3) : undefined,
+          cooldown_days: cooldownDays,
+          resample_ready: resampleReady,
+          resample_reason: resampleReason,
+          resample_position_multiplier: resampleReady ? 0.35 : undefined,
         };
       })
       .sort((a, b) => {
