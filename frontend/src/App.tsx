@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Layout, ConfigProvider, Menu, Avatar, Dropdown } from 'antd';
 import {
   BrowserRouter as Router,
@@ -21,6 +21,7 @@ import {
   LogoutOutlined,
   BarChartOutlined,
   FundProjectionScreenOutlined,
+  DownOutlined,
 } from '@ant-design/icons';
 import zhCN from 'antd/locale/zh_CN';
 import { useSelector, useDispatch } from 'react-redux';
@@ -90,12 +91,45 @@ const BacktestDetailRoute: React.FC = () => {
   return <BacktestResults backtest_id={id} />;
 };
 
+const menuLink = (key: string, icon: React.ReactNode, title: string) => ({
+  key,
+  icon,
+  label: <Link to={key}>{title}</Link>,
+  title,
+});
+
+const flattenMenu = (
+  items: MenuProps['items'] = [],
+  parentKeys: string[] = [],
+  section = ''
+): Array<{ key: string; parentKeys: string[]; section: string; title: string }> => {
+  const result: Array<{ key: string; parentKeys: string[]; section: string; title: string }> = [];
+
+  (items || []).forEach((item: any) => {
+    if (!item) return;
+    const key = String(item.key || '');
+    const title = String(item.title || item.label || '');
+
+    if (Array.isArray(item.children) && item.children.length > 0) {
+      result.push(...flattenMenu(item.children, key ? [...parentKeys, key] : parentKeys, title));
+      return;
+    }
+
+    if (key.startsWith('/')) {
+      result.push({ key, parentKeys, section, title });
+    }
+  });
+
+  return result;
+};
+
 const AppContent: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const dispatch = useDispatch();
   const token = localStorage.getItem('token');
   const { user } = useSelector((state: RootState) => state.auth);
+  const [openKeys, setOpenKeys] = useState<string[]>([]);
 
   useEffect(() => {
     // Fetch profile on initial load if token exists but user state is missing
@@ -132,152 +166,117 @@ const AppContent: React.FC = () => {
     navigate('/login');
   };
 
-  const mainMenuItems: MenuProps['items'] = [
-    {
-      type: 'group',
-      label: '核心概览',
-      children: [
-        {
-          key: '/dashboard',
-          icon: <DashboardOutlined />,
-          label: <Link to="/dashboard">仪表盘</Link>,
-        },
-        { key: '/market', icon: <AreaChartOutlined />, label: <Link to="/market">市场大盘</Link> },
-      ],
-    },
-    {
-      type: 'group',
-      label: 'AI 投顾',
-      children: [
-        {
-          key: '/ai-advisor',
-          icon: <RobotOutlined />,
-          label: <Link to="/ai-advisor">AI 深度研报</Link>,
-        },
-        {
-          key: '/recommendations',
-          icon: <ThunderboltOutlined />,
-          label: <Link to="/recommendations">智能候选推荐</Link>,
-        },
-        {
-          key: '/recommendation-performance',
-          icon: <FundProjectionScreenOutlined />,
-          label: <Link to="/recommendation-performance">推荐绩效实验室</Link>,
-        },
-        {
-          key: '/agent-tail-alpha',
-          icon: <RadarChartOutlined />,
-          label: <Link to="/agent-tail-alpha">尾盘Agent账本</Link>,
-        },
-        {
-          key: '/recommendation-trade-outcomes',
-          icon: <NodeIndexOutlined />,
-          label: <Link to="/recommendation-trade-outcomes">交易收益闭环</Link>,
-        },
-        {
-          key: '/recommendation-loop-policies',
-          icon: <BranchesOutlined />,
-          label: <Link to="/recommendation-loop-policies">策略版本实验室</Link>,
-        },
-        {
-          key: '/strategy-experiment-lab',
-          icon: <ExperimentOutlined />,
-          label: <Link to="/strategy-experiment-lab">策略实验室</Link>,
-        },
-        {
-          key: '/screener',
-          icon: <RocketOutlined />,
-          label: <Link to="/screener">AI 每日优选</Link>,
-        },
-      ],
-    },
-    {
-      type: 'group',
-      label: '自主交易闭环',
-      children: [
-        {
-          key: '/autonomous-trading/overview',
-          icon: <FundProjectionScreenOutlined />,
-          label: <Link to="/autonomous-trading/overview">自主收益驾驶舱</Link>,
-        },
-        {
-          key: '/autonomous-trading/recommendations',
-          icon: <NodeIndexOutlined />,
-          label: <Link to="/autonomous-trading/recommendations">每日推荐追踪</Link>,
-        },
-        {
-          key: '/autonomous-trading/optimization',
-          icon: <ExperimentOutlined />,
-          label: <Link to="/autonomous-trading/optimization">闭环优化台</Link>,
-        },
-        {
-          key: '/paper-trading',
-          icon: <AccountBookOutlined />,
-          label: <Link to="/paper-trading">模拟交易台</Link>,
-        },
-      ],
-    },
-    {
-      type: 'group',
-      label: '量化交易',
-      children: [
-        { key: '/strategy', icon: <StockOutlined />, label: <Link to="/strategy">策略中心</Link> },
-        {
-          key: '/portfolio',
-          icon: <PieChartOutlined />,
-          label: <Link to="/portfolio">组合收益</Link>,
-        },
-        {
-          key: '/backtest',
-          icon: <LineChartOutlined />,
-          label: <Link to="/backtest">回测分析</Link>,
-        },
-        {
-          key: '/risk-alerts',
-          icon: <AlertOutlined />,
-          label: <Link to="/risk-alerts">风控告警</Link>,
-        },
-      ],
-    },
-    {
-      type: 'group',
-      label: '系统与设置',
-      children: [
-        ...(user?.role === 'admin'
-          ? [{ key: '/users', icon: <UserOutlined />, label: <Link to="/users">用户管理</Link> }]
-          : []),
-        { key: '/journals', icon: <BookOutlined />, label: <Link to="/journals">交易日记</Link> },
-        { key: '/tasks', icon: <ClockCircleOutlined />, label: <Link to="/tasks">定时调度</Link> },
-        {
-          key: '/data-update',
-          icon: <SyncOutlined />,
-          label: <Link to="/data-update">系统监控</Link>,
-        },
-        {
-          key: '/logs',
-          icon: <BookOutlined />,
-          label: <Link to="/logs">系统日志</Link>,
-        },
-        { key: '/profile', icon: <UserOutlined />, label: <Link to="/profile">个人中心</Link> },
-      ],
-    },
-  ];
+  const mainMenuItems: MenuProps['items'] = useMemo(
+    () => [
+      {
+        key: 'nav-workbench',
+        icon: <DashboardOutlined />,
+        label: '工作台',
+        title: '工作台',
+        children: [
+          menuLink('/dashboard', <DashboardOutlined />, '总览仪表盘'),
+          menuLink('/market', <AreaChartOutlined />, '市场与自选'),
+        ],
+      },
+      {
+        key: 'nav-autonomous',
+        icon: <FundProjectionScreenOutlined />,
+        label: '自主交易',
+        title: '自主交易',
+        children: [
+          menuLink('/autonomous-trading/overview', <FundProjectionScreenOutlined />, '收益驾驶舱'),
+          menuLink('/autonomous-trading/recommendations', <NodeIndexOutlined />, '推荐追踪'),
+          menuLink('/paper-trading', <AccountBookOutlined />, '模拟交易台'),
+          menuLink('/risk-alerts', <AlertOutlined />, '风险告警'),
+        ],
+      },
+      {
+        key: 'nav-research',
+        icon: <RobotOutlined />,
+        label: 'AI投研',
+        title: 'AI投研',
+        children: [
+          menuLink('/ai-advisor', <RobotOutlined />, '深度研报'),
+          menuLink('/screener', <RocketOutlined />, '每日优选'),
+          menuLink('/recommendations', <ThunderboltOutlined />, '智能候选'),
+        ],
+      },
+      {
+        key: 'nav-review',
+        icon: <RadarChartOutlined />,
+        label: '复盘优化',
+        title: '复盘优化',
+        children: [
+          menuLink('/recommendation-trade-outcomes', <NodeIndexOutlined />, '交易收益闭环'),
+          menuLink('/recommendation-performance', <FundProjectionScreenOutlined />, '推荐绩效'),
+          menuLink('/agent-tail-alpha', <RadarChartOutlined />, '尾盘账本'),
+          menuLink('/autonomous-trading/optimization', <ExperimentOutlined />, '闭环优化台'),
+          menuLink('/recommendation-loop-policies', <BranchesOutlined />, '策略版本'),
+          menuLink('/strategy-experiment-lab', <ExperimentOutlined />, '策略实验'),
+        ],
+      },
+      {
+        key: 'nav-quant',
+        icon: <LineChartOutlined />,
+        label: '量化回测',
+        title: '量化回测',
+        children: [
+          menuLink('/backtest', <LineChartOutlined />, '事件回测'),
+          menuLink('/portfolio', <PieChartOutlined />, '组合收益'),
+          menuLink('/strategy', <StockOutlined />, '策略中心'),
+        ],
+      },
+      {
+        key: 'nav-ops',
+        icon: <SyncOutlined />,
+        label: '系统运营',
+        title: '系统运营',
+        children: [
+          menuLink('/tasks', <ClockCircleOutlined />, '调度任务'),
+          menuLink('/data-update', <SyncOutlined />, '数据同步'),
+          menuLink('/logs', <BookOutlined />, '运行日志'),
+          menuLink('/journals', <BookOutlined />, '交易日记'),
+          ...(user?.role === 'admin' ? [menuLink('/users', <UserOutlined />, '用户管理')] : []),
+          menuLink('/profile', <UserOutlined />, '个人中心'),
+        ],
+      },
+    ],
+    [user?.role]
+  );
 
-  const extractKeys = (items: any[]): any[] => {
-    let keys: any[] = [];
-    items.forEach(item => {
-      if (item.children) {
-        keys = keys.concat(item.children);
-      } else {
-        keys.push(item);
-      }
-    });
-    return keys;
+  const flatMenuItems = useMemo(() => flattenMenu(mainMenuItems), [mainMenuItems]);
+  const selectedMenu =
+    flatMenuItems
+      .filter(
+        item => location.pathname === item.key || location.pathname.startsWith(`${item.key}/`)
+      )
+      .sort((a, b) => b.key.length - a.key.length)[0] || flatMenuItems[0];
+  const selectedKey = selectedMenu?.key || '/dashboard';
+  const currentSection = selectedMenu?.section || '工作台';
+  const currentPageTitle = selectedMenu?.title || '总览仪表盘';
+  const selectedParentKeys = useMemo(
+    () => selectedMenu?.parentKeys || [],
+    [selectedMenu?.parentKeys]
+  );
+  const rootSubmenuKeys = useMemo(
+    () => (mainMenuItems || []).map((item: any) => String(item?.key || '')).filter(Boolean),
+    [mainMenuItems]
+  );
+
+  useEffect(() => {
+    if (selectedParentKeys.length) {
+      setOpenKeys(selectedParentKeys);
+    }
+  }, [selectedKey, selectedParentKeys]);
+
+  const handleMenuOpenChange = (keys: string[]) => {
+    const latestOpenKey = keys.find(key => !openKeys.includes(key));
+    if (latestOpenKey && rootSubmenuKeys.includes(latestOpenKey)) {
+      setOpenKeys([latestOpenKey]);
+    } else {
+      setOpenKeys(keys);
+    }
   };
-
-  const selectedKey =
-    extractKeys(mainMenuItems).find((item: any) => location.pathname.startsWith(item.key))?.key ||
-    '/dashboard';
 
   const userMenuProps: MenuProps = {
     items: [
@@ -309,16 +308,21 @@ const AppContent: React.FC = () => {
 
   return (
     <Layout className="modern-layout">
-      <Sider width={240} className="modern-sider">
+      <Sider width={256} className="modern-sider">
         <div className="modern-sider-inner">
           <div>
             <div className="modern-logo">
               <BarChartOutlined className="logo-icon" />
-              <span>QuantX</span>
+              <span className="logo-copy">
+                <strong>QuantX</strong>
+                <em>Autonomous A-Share Lab</em>
+              </span>
             </div>
             <Menu
               mode="inline"
               selectedKeys={[selectedKey]}
+              openKeys={openKeys}
+              onOpenChange={handleMenuOpenChange}
               className="modern-menu"
               items={mainMenuItems}
             />
@@ -327,28 +331,24 @@ const AppContent: React.FC = () => {
       </Sider>
       <Layout style={{ background: 'transparent' }}>
         <Header className="modern-header">
+          <div className="header-context">
+            <span>{currentSection}</span>
+            <strong>{currentPageTitle}</strong>
+          </div>
           {token && (
             <Dropdown menu={userMenuProps} placement="bottomRight" trigger={['click']}>
-              <div
-                className="header-user-dropdown"
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  cursor: 'pointer',
-                  padding: '4px 12px',
-                  borderRadius: 8,
-                  transition: 'background 0.2s',
-                }}
-              >
+              <div className="header-user-dropdown">
                 <Avatar
-                  size={32}
-                  style={{ backgroundColor: '#1f3a5f', fontSize: 14, marginRight: 12 }}
+                  size={36}
+                  style={{ backgroundColor: '#1f3a5f', fontSize: 14 }}
                   icon={<UserOutlined />}
                   src={avatarSrc}
                 />
-                <span style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-main)' }}>
-                  {displayUsername}
+                <span className="header-user-copy">
+                  <strong>{displayUsername}</strong>
+                  <em>{user?.role === 'admin' ? '管理员' : '已登录'}</em>
                 </span>
+                <DownOutlined className="header-user-caret" />
               </div>
             </Dropdown>
           )}
@@ -576,8 +576,9 @@ const App: React.FC = () => {
           colorWarning: '#c9822b',
           colorError: '#c94b4b',
           borderRadius: 12,
-          fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif",
-          colorBgContainer: '#fffdf8',
+          fontFamily:
+            "'IBM Plex Sans', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif",
+          colorBgContainer: '#ffffff',
           colorText: '#1e252b',
           colorTextSecondary: '#65727e',
         },
