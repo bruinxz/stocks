@@ -496,6 +496,8 @@ class FeishuTaskReportService {
     const outcomeSummary = tradeOutcomes?.summary || {};
     const loopPolicy = result?.loop_policy || {};
     const environmentPolicy = loopPolicy?.environment_policy || result?.environment_policy || {};
+    const strategyEvolution =
+      result?.trade_outcomes?.strategy_evolution || result?.strategy_evolution || {};
     const policySnapshot = result?.policy_snapshot || {};
     const qualityOverview = result?.quality_report?.overview || {};
     const topPicks = recommendations.slice(0, 5);
@@ -605,6 +607,21 @@ class FeishuTaskReportService {
           } / 放大 ${environmentPolicy.boosted_segments?.length || 0}；${
             environmentPolicy.reason || '按市场/行业环境闭环结果动态调仓'
           }`
+        : '',
+      strategyEvolution?.add_risk_budget?.length ||
+      strategyEvolution?.reduce_risk_budget?.length ||
+      strategyEvolution?.observe?.length
+        ? `- **资金方向**：加预算 ${
+            strategyEvolution.add_risk_budget?.[0]?.label ||
+            strategyEvolution.add_risk_budget?.[0]?.key ||
+            '暂无'
+          }；降权 ${
+            strategyEvolution.reduce_risk_budget?.[0]?.label ||
+            strategyEvolution.reduce_risk_budget?.[0]?.key ||
+            '暂无'
+          }；观察 ${
+            strategyEvolution.observe?.[0]?.label || strategyEvolution.observe?.[0]?.key || '暂无'
+          }。`
         : '',
       bestPick
         ? `- **首选标的**：${bestPick.name || bestPick.symbol}（${bestPick.symbol}），${

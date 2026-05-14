@@ -1469,6 +1469,7 @@ class AutomatedRecommendationLoopService {
             summary: trade_outcomes.dashboard?.summary,
             feedback: trade_outcomes.dashboard?.feedback,
             consensus_groups: trade_outcomes.dashboard?.groups?.by_consensus,
+            strategy_evolution: trade_outcomes.dashboard?.strategy_evolution,
           }
         : undefined,
       quality_report: {

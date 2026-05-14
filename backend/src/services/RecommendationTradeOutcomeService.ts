@@ -920,6 +920,7 @@ export class RecommendationTradeOutcomeService {
     const environmentVersionGroups = outcomeDashboard.groups.by_environment_policy_version || [];
     const environmentStrategyComboGroups =
       outcomeDashboard.groups.by_environment_strategy_combo || [];
+    const candidateTuningGroups = outcomeDashboard.groups.by_candidate_tuning || [];
     const environmentPolicy: any = this.buildEnvironmentLoopPolicy({
       market_regime_groups: marketRegimeGroups,
       industry_regime_groups: industryRegimeGroups,
@@ -968,6 +969,12 @@ export class RecommendationTradeOutcomeService {
         ? `下一轮候选源头小仓复采样 ${environmentPolicy.resample_environment_strategy_combos[0].label}`
         : '',
     };
+    const topCandidateTuning = candidateTuningGroups
+      .filter(item => item.key !== 'no_tuning' && item.closed_count > 0)
+      .sort((a, b) => b.avg_excess_return_pct - a.avg_excess_return_pct)[0];
+    const weakCandidateTuning = candidateTuningGroups
+      .filter(item => item.key !== 'no_tuning' && item.closed_count > 0)
+      .sort((a, b) => a.avg_excess_return_pct - b.avg_excess_return_pct)[0];
 
     const weakSegments = outcomeDashboard.feedback.weak_segments.slice(0, 4);
     const bestSegments = outcomeDashboard.feedback.best_segments.slice(0, 4);
@@ -1047,6 +1054,9 @@ export class RecommendationTradeOutcomeService {
             environmentStrategyComboGroups.find(item => item.cooldown_extended)?.label
           } 复采样仍跑输，下一轮延长冷却。`
         : '',
+      topCandidateTuning
+        ? `候选源头调权回收：${topCandidateTuning.label} 闭环 ${topCandidateTuning.closed_count} 笔，平均超额 ${topCandidateTuning.avg_excess_return_pct}%。`
+        : '',
     ].filter(Boolean);
 
     return {
@@ -1068,6 +1078,22 @@ export class RecommendationTradeOutcomeService {
       symbol_paths: symbolPaths,
       adaptive_risk: adaptiveRisk,
       next_policy: nextPolicy,
+      strategy_evolution: {
+        add_risk_budget: [
+          ...(environmentPolicy.recovered_environment_strategy_combos || []).slice(0, 3),
+          ...(environmentPolicy.boosted_segments || []).slice(0, 2),
+        ],
+        reduce_risk_budget: [
+          ...(environmentPolicy.extended_cooldown_environment_strategy_combos || []).slice(0, 3),
+          ...(environmentPolicy.blocked_segments || []).slice(0, 2),
+        ],
+        observe: [
+          ...(environmentPolicy.resample_environment_strategy_combos || []).slice(0, 3),
+          ...(environmentPolicy.watch_segments || []).slice(0, 2),
+        ],
+        candidate_tuning_best: topCandidateTuning || null,
+        candidate_tuning_weak: weakCandidateTuning || null,
+      },
       segment_actions: {
         boost: boostList,
         reduce: killList,

@@ -226,6 +226,13 @@ interface OptimizationData {
     resample_environment_strategy_combos?: EnvironmentStrategyComboRanking[];
     candidate_tuning_reason?: string;
   };
+  strategy_evolution?: {
+    add_risk_budget?: Array<any>;
+    reduce_risk_budget?: Array<any>;
+    observe?: Array<any>;
+    candidate_tuning_best?: EnvironmentRanking | null;
+    candidate_tuning_weak?: EnvironmentRanking | null;
+  };
   segment_actions: {
     boost: Array<any>;
     reduce: Array<any>;
@@ -612,6 +619,44 @@ const AutonomousOptimizationLab: React.FC = () => {
                 </div>
               ))}
               {!data?.insights?.length && <Empty description="暂无闭环洞察" />}
+            </div>
+          </Card>
+        </Col>
+      </Row>
+
+      <Row gutter={[16, 16]}>
+        <Col xs={24}>
+          <Card
+            className="modern-card optimization-env-card"
+            title={
+              <Space>
+                <SlidersOutlined /> 策略演进资金方向
+              </Space>
+            }
+            loading={loading}
+          >
+            <div className="optimization-evolution-board">
+              <div className="add">
+                <span>ADD RISK</span>
+                <strong>可加预算</strong>
+                {(data?.strategy_evolution?.add_risk_budget || []).slice(0, 4).map(item => (
+                  <em key={item.key || item.label}>{item.label || item.key}</em>
+                ))}
+              </div>
+              <div className="reduce">
+                <span>REDUCE</span>
+                <strong>降权/暂停</strong>
+                {(data?.strategy_evolution?.reduce_risk_budget || []).slice(0, 4).map(item => (
+                  <em key={item.key || item.label}>{item.label || item.key}</em>
+                ))}
+              </div>
+              <div className="observe">
+                <span>OBSERVE</span>
+                <strong>小仓观察</strong>
+                {(data?.strategy_evolution?.observe || []).slice(0, 4).map(item => (
+                  <em key={item.key || item.label}>{item.label || item.key}</em>
+                ))}
+              </div>
             </div>
           </Card>
         </Col>

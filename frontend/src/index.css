@@ -4479,6 +4479,66 @@ a {
   font-size: 12px;
 }
 
+.optimization-evolution-board {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.optimization-evolution-board > div {
+  min-height: 172px;
+  padding: 18px;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.11);
+}
+
+.optimization-evolution-board > div.add {
+  background: radial-gradient(circle at 92% 0%, rgba(141, 214, 228, 0.2), transparent 38%),
+    rgba(255, 255, 255, 0.07);
+}
+
+.optimization-evolution-board > div.reduce {
+  background: radial-gradient(circle at 92% 0%, rgba(209, 67, 67, 0.18), transparent 38%),
+    rgba(255, 255, 255, 0.06);
+}
+
+.optimization-evolution-board > div.observe {
+  background: radial-gradient(circle at 92% 0%, rgba(214, 166, 79, 0.2), transparent 38%),
+    rgba(255, 255, 255, 0.07);
+}
+
+.optimization-evolution-board span,
+.optimization-evolution-board strong,
+.optimization-evolution-board em {
+  display: block;
+}
+
+.optimization-evolution-board span {
+  color: var(--auto-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+}
+
+.optimization-evolution-board strong {
+  margin: 8px 0 12px;
+  color: #ffe7ae;
+  font-family: var(--font-display);
+  font-size: 30px;
+  line-height: 1;
+  letter-spacing: -0.055em;
+}
+
+.optimization-evolution-board em {
+  margin-top: 7px;
+  color: rgba(226, 236, 247, 0.76);
+  font-style: normal;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .optimization-env-combo-stats {
   display: flex;
   flex-wrap: wrap;
@@ -4980,6 +5040,10 @@ a {
   }
 
   .optimization-tuning-ledger {
+    grid-template-columns: 1fr;
+  }
+
+  .optimization-evolution-board {
     grid-template-columns: 1fr;
   }
 
