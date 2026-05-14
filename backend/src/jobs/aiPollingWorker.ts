@@ -44,8 +44,8 @@ const updateLogProgress = async (logId: number | undefined, isSuccess: boolean) 
       const errorMessage = allFailed
         ? 'AI_DAILY_SCREENER 所有候选股分析均失败，请查看关联队列任务失败原因'
         : log.failed_items > 0
-          ? `AI_DAILY_SCREENER 部分候选股分析失败：${log.failed_items}/${log.total_items}`
-          : null;
+        ? `AI_DAILY_SCREENER 部分候选股分析失败：${log.failed_items}/${log.total_items}`
+        : null;
 
       await log.update({
         status: finalStatus,
@@ -84,6 +84,8 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
     quant_warnings,
     recommendation_style,
     recommendation_source,
+    strategy_key,
+    strategy_variant,
     agent_session,
     current_price: submitted_current_price,
     price_change_pct: submitted_price_change_pct,
@@ -173,6 +175,8 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
           quant_data_quality_bucket: submitted_data_quality_bucket,
           recommendation_style,
           recommendation_source,
+          strategy_key,
+          strategy_variant,
           task_label: taskLabel,
           agent_session: agentSession,
           loop_run_id: loopRunId,
@@ -209,6 +213,8 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
           agent_session: agentSession,
           loop_run_id: loopRunId,
           loop_policy_snapshot_id: resolvedPolicySnapshotId,
+          strategy_key,
+          strategy_variant,
         });
         if (
           archivedSignal &&
@@ -222,6 +228,8 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
               quant_data_quality: submitted_data_quality,
               quant_data_quality_score: submitted_data_quality_score,
               quant_data_quality_bucket: submitted_data_quality_bucket,
+              strategy_key,
+              strategy_variant,
             },
           });
         }

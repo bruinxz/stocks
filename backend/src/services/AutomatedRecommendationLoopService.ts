@@ -9,6 +9,7 @@ import { AISignalSourceType } from '../models/AIInvestmentSignal';
 import { aiPollingQueue } from '../jobs/aiPollingQueue';
 import { recommendationTradeOutcomeService } from './RecommendationTradeOutcomeService';
 import { recommendationLoopPolicySnapshotService } from './RecommendationLoopPolicySnapshotService';
+import { buildRecommendationStrategyVariant } from '../utils/recommendationStrategyVariant';
 
 export interface AutomatedRecommendationLoopOptions {
   username?: string;
@@ -435,8 +436,8 @@ class AutomatedRecommendationLoopService {
         coldStart || avgExcess < -1 || excessWinRate < 45
           ? Math.max(1, Math.min(options.base_paper_trade_limit, 2))
           : avgExcess > 2 && excessWinRate >= 55
-            ? Math.min(5, options.base_paper_trade_limit + 1)
-            : options.base_paper_trade_limit;
+          ? Math.min(5, options.base_paper_trade_limit + 1)
+          : options.base_paper_trade_limit;
 
       const outcomePolicy = {
         ...basePolicy,
@@ -664,6 +665,16 @@ class AutomatedRecommendationLoopService {
     });
     Object.assign(loop_policy, experiment_policy);
     const style = loop_policy.effective_style;
+    const strategyVariant = buildRecommendationStrategyVariant(loop_policy, {
+      loop_run_id,
+      source: 'automated_recommendation_loop',
+      generated_at: moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm:ss'),
+    });
+    Object.assign(loop_policy, {
+      strategy_key: strategyVariant.strategy_key,
+      strategy_bucket_label: strategyVariant.strategy_bucket_label,
+      strategy_variant: strategyVariant,
+    });
     const archiveLimit = toPositiveInt(options.archive_limit, candidateLimit, 100);
     const generated = await quantRecommendationService.generateRecommendations({
       universe,
@@ -693,6 +704,8 @@ class AutomatedRecommendationLoopService {
       style,
       as_of: generated.as_of,
       loop_run_id,
+      strategy_key: strategyVariant.strategy_key,
+      strategy_variant: strategyVariant,
     });
 
     const agent_analysis =
@@ -725,6 +738,8 @@ class AutomatedRecommendationLoopService {
             paper_trade_min_trade_amount: Number(options.min_trade_amount || 3000),
             execution_log_id: options.execution_log_id,
             loop_run_id,
+            strategy_key: strategyVariant.strategy_key,
+            strategy_variant: strategyVariant,
             universe,
             style,
           });
@@ -920,6 +935,8 @@ class AutomatedRecommendationLoopService {
     paper_trade_min_trade_amount?: number;
     execution_log_id?: number;
     loop_run_id?: string;
+    strategy_key?: string;
+    strategy_variant?: any;
     universe: string;
     style: string;
   }) {
@@ -979,6 +996,8 @@ class AutomatedRecommendationLoopService {
             quant_warnings: candidate.warnings,
             recommendation_style: options.style,
             recommendation_source: options.universe,
+            strategy_key: options.strategy_key,
+            strategy_variant: options.strategy_variant,
             agent_session: options.agent_session,
             auto_paper_trade: options.auto_paper_trade,
             paper_trade_username: options.paper_trade_username,

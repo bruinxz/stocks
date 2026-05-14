@@ -73,6 +73,8 @@ export interface QuantRecommendationArchiveOptions {
   signal_date?: string;
   loop_run_id?: string;
   loop_policy_snapshot_id?: number;
+  strategy_key?: string;
+  strategy_variant?: Record<string, any>;
 }
 
 export interface TradingAgentsStructuredDecision {
@@ -741,46 +743,55 @@ function assessTradingAgentsDataQuality(combined: string): AgentDataQualityAsses
   const warnings: string[] = [];
   const missingSections = new Set<string>();
   const coverage: AgentDataQualityAssessment['coverage'] = {
-    market_data: /no data found for symbol|missing historical data|无法获取.*行情|缺失.*行情/i.test(text)
+    market_data: /no data found for symbol|missing historical data|无法获取.*行情|缺失.*行情/i.test(
+      text
+    )
       ? 'missing'
       : /Technical indicators|历史|K线|OHLCV|Date,|收盘|成交量/i.test(text)
+      ? 'ok'
+      : 'partial',
+    technical_indicators:
+      /Cannot calculate indicators|missing valid OHLCV|Unsupported indicators|技术指标.*失败|无法计算.*指标/i.test(
+        text
+      )
+        ? 'missing'
+        : /Technical indicators|MACD|RSI|BOLL|SMA|EMA|技术指标/i.test(text)
         ? 'ok'
         : 'partial',
-    technical_indicators: /Cannot calculate indicators|missing valid OHLCV|Unsupported indicators|技术指标.*失败|无法计算.*指标/i.test(
-      text
-    )
-      ? 'missing'
-      : /Technical indicators|MACD|RSI|BOLL|SMA|EMA|技术指标/i.test(text)
+    fundamentals:
+      /No fundamental data|无法获取.*基本面|无.*基本面|fundamental data unavailable|Data unavailable due to network issues/i.test(
+        text
+      )
+        ? 'missing'
+        : /fundamental|基本面|公司概况|PE|PB|市盈率|市净率/i.test(text)
         ? 'ok'
         : 'partial',
-    fundamentals: /No fundamental data|无法获取.*基本面|无.*基本面|fundamental data unavailable|Data unavailable due to network issues/i.test(
-      text
-    )
-      ? 'missing'
-      : /fundamental|基本面|公司概况|PE|PB|市盈率|市净率/i.test(text)
-        ? 'ok'
-        : 'partial',
-    financial_statements: /No balance sheet data|No cash flow data|No income statement data|无法获取.*资产负债|无法获取.*现金流|无法获取.*利润表|财务报表.*无|无可用数据/i.test(
-      text
-    )
-      ? 'missing'
-      : /balance sheet|cash flow|income statement|资产负债|现金流|利润表|财务报表/i.test(text)
+    financial_statements:
+      /No balance sheet data|No cash flow data|No income statement data|无法获取.*资产负债|无法获取.*现金流|无法获取.*利润表|财务报表.*无|无可用数据/i.test(
+        text
+      )
+        ? 'missing'
+        : /balance sheet|cash flow|income statement|资产负债|现金流|利润表|财务报表/i.test(text)
         ? 'ok'
         : 'partial',
     news: /No news|未检索到.*新闻|未发现.*资讯|无相关新闻|新闻.*缺失/i.test(text)
       ? 'missing'
       : /新闻|舆情|公告|宏观|news/i.test(text)
-        ? 'ok'
-        : 'partial',
+      ? 'ok'
+      : 'partial',
     realtime_quote: /Failed to get real-time quote|实时.*失败|无法获取.*实时/i.test(text)
       ? 'missing'
       : /Real-time Quote|最新价|实时|涨跌幅|current price/i.test(text)
-        ? 'ok'
-        : 'partial',
+      ? 'ok'
+      : 'partial',
   };
 
   let score = 100;
-  const penalize = (section: keyof AgentDataQualityAssessment['coverage'], points: number, msg: string) => {
+  const penalize = (
+    section: keyof AgentDataQualityAssessment['coverage'],
+    points: number,
+    msg: string
+  ) => {
     const status = coverage[section];
     if (status === 'missing') {
       score -= points;
@@ -798,11 +809,19 @@ function assessTradingAgentsDataQuality(combined: string): AgentDataQualityAsses
   penalize('news', 8, '新闻/舆情覆盖不足，事件驱动判断可能漏项');
   penalize('realtime_quote', 8, '实时行情缺失，入场价格与当日走势需复核');
 
-  if (/Data unavailable due to network issues|network issues|NoneType|接口请求失败|触发限流|max retries/i.test(text)) {
+  if (
+    /Data unavailable due to network issues|network issues|NoneType|接口请求失败|触发限流|max retries/i.test(
+      text
+    )
+  ) {
     score -= 10;
     warnings.push('外部数据源存在网络/限流异常，建议稍后重跑 Agent');
   }
-  if (/无法形成具体的交易决策支持|无法出具最终交易提案|无法提供完整|无法获取核心基本面数据/i.test(text)) {
+  if (
+    /无法形成具体的交易决策支持|无法出具最终交易提案|无法提供完整|无法获取核心基本面数据/i.test(
+      text
+    )
+  ) {
     score -= 12;
     warnings.push('Agent 明确提示关键数据不足，不能直接作为自动买入依据');
   }
@@ -819,10 +838,10 @@ function assessTradingAgentsDataQuality(combined: string): AgentDataQualityAsses
     bucket === 'high'
       ? 'allow_auto_trade'
       : bucket === 'medium'
-        ? 'allow_small_sample'
-        : bucket === 'low'
-          ? 'manual_review_required'
-          : 'block_auto_trade';
+      ? 'allow_small_sample'
+      : bucket === 'low'
+      ? 'manual_review_required'
+      : 'block_auto_trade';
 
   return {
     score: normalizedScore,
@@ -837,7 +856,10 @@ function assessTradingAgentsDataQuality(combined: string): AgentDataQualityAsses
   };
 }
 
-function applyAgentDataQualityToScore(score: number | undefined, dataQuality: AgentDataQualityAssessment) {
+function applyAgentDataQualityToScore(
+  score: number | undefined,
+  dataQuality: AgentDataQualityAssessment
+) {
   if (score === undefined) return undefined;
   const adjusted = score * dataQuality.confidence_multiplier;
   return roundNumber(adjusted, 2) ?? score;
@@ -1071,6 +1093,8 @@ export class AIInvestmentSignalService {
     agent_session?: string;
     loop_run_id?: string;
     loop_policy_snapshot_id?: number;
+    strategy_key?: string;
+    strategy_variant?: Record<string, any>;
   }): Promise<AIInvestmentSignal> {
     const symbol = normalizeSymbol(params.symbol);
     const signal_date = params.signal_date || new Date().toISOString().split('T')[0];
@@ -1103,8 +1127,8 @@ export class AIInvestmentSignalService {
       structured.data_quality.bucket === 'critical'
         ? 'high'
         : structured.data_quality.bucket === 'low' && normalizedDecision !== AISignalDecision.SELL
-          ? 'medium'
-          : structured.risk_level || this.inferRiskLevel(params);
+        ? 'medium'
+        : structured.risk_level || this.inferRiskLevel(params);
 
     const payload = {
       source_type,
@@ -1128,6 +1152,9 @@ export class AIInvestmentSignalService {
         is_tail_session: agent_session === 'close',
         loop_run_id: params.loop_run_id,
         loop_policy_snapshot_id: params.loop_policy_snapshot_id,
+        strategy_key: params.strategy_key,
+        strategy_variant: params.strategy_variant,
+        strategy_bucket_label: params.strategy_variant?.strategy_bucket_label,
         structured_decision: structured,
         data_quality: structured.data_quality,
         data_quality_score: structured.data_quality.score,
@@ -1255,6 +1282,9 @@ export class AIInvestmentSignalService {
           consensus_variants: Array.isArray(candidate.consensus_variants)
             ? candidate.consensus_variants
             : [],
+          strategy_key: options.strategy_key,
+          strategy_variant: options.strategy_variant,
+          strategy_bucket_label: options.strategy_variant?.strategy_bucket_label,
           suggested_position_pct: candidate.suggested_position_pct,
           stop_loss_pct: candidate.stop_loss_pct,
           take_profit_pct: candidate.take_profit_pct,
@@ -1292,6 +1322,9 @@ export class AIInvestmentSignalService {
           consensus_variants: Array.isArray(candidate.consensus_variants)
             ? candidate.consensus_variants
             : [],
+          strategy_key: options.strategy_key,
+          strategy_variant: options.strategy_variant,
+          strategy_bucket_label: options.strategy_variant?.strategy_bucket_label,
           suggested_position_pct: candidate.suggested_position_pct,
           stop_loss_pct: candidate.stop_loss_pct,
           take_profit_pct: candidate.take_profit_pct,

@@ -50,6 +50,16 @@ interface PolicyBucket {
   latest_generated_at?: string;
 }
 
+interface StrategyVariant {
+  strategy_key?: string;
+  strategy_bucket_label?: string;
+  style?: string;
+  min_score?: number;
+  default_position_pct?: number;
+  max_position_pct?: number;
+  paper_trade_limit?: number;
+}
+
 interface PolicySnapshot {
   id: number;
   generated_at: string;
@@ -82,6 +92,16 @@ interface PolicySnapshot {
   avg_excess_return_pct?: number;
   excess_win_rate?: number;
   policy_reason?: string;
+  metadata?: {
+    strategy_key?: string;
+    strategy_bucket_label?: string;
+    strategy_variant?: StrategyVariant;
+  };
+  loop_policy?: {
+    strategy_key?: string;
+    strategy_bucket_label?: string;
+    strategy_variant?: StrategyVariant;
+  };
 }
 
 interface PromotionAdvice {
@@ -97,6 +117,7 @@ interface PromotionAdvice {
   best_style?: PolicyBucket;
   best_score_bucket?: PolicyBucket;
   best_position_bucket?: PolicyBucket;
+  best_strategy_key?: PolicyBucket;
   reasons: string[];
 }
 
@@ -121,6 +142,8 @@ interface Dashboard {
     by_universe: PolicyBucket[];
     by_score_bucket: PolicyBucket[];
     by_position_bucket: PolicyBucket[];
+    by_score_position_bucket?: PolicyBucket[];
+    by_strategy_key?: PolicyBucket[];
   };
   rankings?: {
     snapshots: any[];
@@ -128,6 +151,8 @@ interface Dashboard {
     by_score_bucket: PolicyBucket[];
     by_position_bucket: PolicyBucket[];
     by_universe: PolicyBucket[];
+    by_score_position_bucket?: PolicyBucket[];
+    by_strategy_key?: PolicyBucket[];
   };
   promotion?: PromotionAdvice;
   snapshots: PolicySnapshot[];
@@ -151,6 +176,15 @@ const formatMoney = (value?: number | null) =>
     maximumFractionDigits: 2,
   })}`;
 const pnlColor = (value?: number | null) => (Number(value || 0) >= 0 ? '#d14343' : '#008f6b');
+
+const getSnapshotStrategyLabel = (record: PolicySnapshot) =>
+  record.metadata?.strategy_bucket_label ||
+  record.metadata?.strategy_variant?.strategy_bucket_label ||
+  record.loop_policy?.strategy_bucket_label ||
+  record.loop_policy?.strategy_variant?.strategy_bucket_label ||
+  record.metadata?.strategy_key ||
+  record.loop_policy?.strategy_key ||
+  '未标注参数组合';
 
 const actionLabel = (value?: string) => {
   const labels: Record<string, string> = {
@@ -298,6 +332,10 @@ const RecommendationLoopPolicies: React.FC = () => {
     () => (dashboard?.rankings?.snapshots || []).slice(0, 5),
     [dashboard]
   );
+  const topStrategyCombos = useMemo(
+    () => (dashboard?.rankings?.by_strategy_key || []).slice(0, 5),
+    [dashboard]
+  );
 
   const columns = [
     {
@@ -337,6 +375,9 @@ const RecommendationLoopPolicies: React.FC = () => {
             仓位 {record.effective_default_position_pct ?? '--'}% / max{' '}
             {record.effective_max_position_pct ?? '--'}%，跟单{' '}
             {record.effective_paper_trade_limit ?? '--'}
+          </Text>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            组合：{getSnapshotStrategyLabel(record)}
           </Text>
         </Space>
       ),
@@ -620,9 +661,44 @@ const RecommendationLoopPolicies: React.FC = () => {
           </Card>
         </Col>
         <Col xs={24} lg={14}>
+          <Card className="modern-card" variant="borderless" title="参数组合冠军榜">
+            {topStrategyCombos.length ? (
+              <Space direction="vertical" style={{ width: '100%' }} size={10}>
+                {topStrategyCombos.map((item, index) => (
+                  <div className="loop-policy-combo-row" key={item.key || index}>
+                    <div className="loop-policy-combo-rank">#{index + 1}</div>
+                    <div className="loop-policy-combo-main">
+                      <strong>{item.label}</strong>
+                      <span>
+                        版本 {item.count} 次 · 成交 {item.executed || 0} · 计划 {item.planned || 0}
+                      </span>
+                    </div>
+                    <div className="loop-policy-combo-score">
+                      <b style={{ color: pnlColor(item.avg_outcome_excess_return_pct) }}>
+                        {formatPercent(item.avg_outcome_excess_return_pct)}
+                      </b>
+                      <span>均超额</span>
+                    </div>
+                  </div>
+                ))}
+              </Space>
+            ) : (
+              <Empty description="暂无参数组合收益样本" />
+            )}
+          </Card>
+        </Col>
+      </Row>
+
+      <Row gutter={[18, 18]} style={{ marginBottom: 18 }}>
+        <Col xs={24}>
           <Card className="modern-card" variant="borderless" title="参数维度冠军">
             <Row gutter={[12, 12]}>
               {[
+                [
+                  '参数组合',
+                  promotion?.best_strategy_key?.label,
+                  promotion?.best_strategy_key?.avg_outcome_excess_return_pct,
+                ],
                 [
                   '最佳风格',
                   promotion?.best_style?.label,
@@ -639,7 +715,7 @@ const RecommendationLoopPolicies: React.FC = () => {
                   promotion?.best_position_bucket?.avg_outcome_excess_return_pct,
                 ],
               ].map(([label, name, excess]) => (
-                <Col xs={24} md={8} key={String(label)}>
+                <Col xs={24} md={12} key={String(label)}>
                   <div className="loop-policy-champion">
                     <span>{label}</span>
                     <strong>{name || '--'}</strong>

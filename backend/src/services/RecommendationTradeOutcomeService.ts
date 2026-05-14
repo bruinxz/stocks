@@ -14,6 +14,11 @@ import { feishuTaskReportService } from './FeishuTaskReportService';
 import { recommendationLoopPolicySnapshotService } from './RecommendationLoopPolicySnapshotService';
 import { normalizeSymbol, extractMarket } from '../utils/stockSymbol';
 import { logger } from '../utils/logger';
+import {
+  recommendationScorePositionKey,
+  recommendationScorePositionLabel,
+  recommendationStrategyKeyLabel,
+} from '../utils/recommendationStrategyVariant';
 
 export interface RecommendationTradeOutcomeRefreshOptions {
   user_id?: number;
@@ -84,6 +89,8 @@ export interface RecommendationTradeOutcomeDashboard {
     by_risk_level: RecommendationTradeOutcomeBucket[];
     by_industry: RecommendationTradeOutcomeBucket[];
     by_consensus: RecommendationTradeOutcomeBucket[];
+    by_score_position_bucket: RecommendationTradeOutcomeBucket[];
+    by_strategy_key: RecommendationTradeOutcomeBucket[];
   };
   outcomes: RecommendationTradeOutcome[];
   feedback: {
@@ -180,6 +187,20 @@ function consensusGroupLabel(key: string): string {
     no_consensus: '无显式共识',
   };
   return labels[key] || key;
+}
+
+function strategyKeyFromOutcome(record: RecommendationTradeOutcome): string {
+  const metadata = asPlainObject(record.metadata);
+  const signalMetadata = asPlainObject(metadata.signal_metadata);
+  const paperTrading = asPlainObject(metadata.paper_trading);
+  return (
+    metadata.strategy_key ||
+    signalMetadata.strategy_key ||
+    asPlainObject(signalMetadata.strategy_variant).strategy_key ||
+    paperTrading.strategy_key ||
+    asPlainObject(paperTrading.strategy_variant).strategy_key ||
+    'unknown'
+  );
 }
 
 function dateOnly(value?: Date | string | null): string {
@@ -494,6 +515,16 @@ export class RecommendationTradeOutcomeService {
         item => consensusGroupKey(item),
         consensusGroupLabel
       ),
+      by_score_position_bucket: this.buildBuckets(
+        outcomes,
+        item => recommendationScorePositionKey(item.score, item.position_pct),
+        recommendationScorePositionLabel
+      ),
+      by_strategy_key: this.buildBuckets(
+        outcomes,
+        item => strategyKeyFromOutcome(item),
+        recommendationStrategyKeyLabel
+      ),
     };
 
     const dashboard: RecommendationTradeOutcomeDashboard = {
@@ -750,6 +781,7 @@ export class RecommendationTradeOutcomeService {
             summary: policyDashboard.summary,
             promotion: policyDashboard.promotion,
             top_versions: (policyDashboard.rankings?.snapshots || []).slice(0, 5),
+            top_strategy_combos: (policyDashboard.rankings?.by_strategy_key || []).slice(0, 5),
           }
         : null,
       insights,
@@ -762,6 +794,12 @@ export class RecommendationTradeOutcomeService {
   ): Promise<RecommendationTradeOutcome | null> {
     const metadata = asPlainObject(signal.metadata);
     const paperTrading = asPlainObject(metadata.paper_trading);
+    const strategyVariant = asPlainObject(metadata.strategy_variant);
+    const strategyKey =
+      metadata.strategy_key ||
+      strategyVariant.strategy_key ||
+      paperTrading.strategy_key ||
+      asPlainObject(paperTrading.strategy_variant).strategy_key;
     const portfolio_id = Number(options.portfolio_id || paperTrading.portfolio_id);
     if (!portfolio_id || !paperTrading.trade_id) return null;
 
@@ -936,6 +974,14 @@ export class RecommendationTradeOutcomeService {
       exit_reason: paperTrading.exit_reason,
       exit_reason_label: paperTrading.exit_reason_label,
       metadata: {
+        strategy_key: strategyKey,
+        strategy_variant: Object.keys(strategyVariant).length
+          ? strategyVariant
+          : asPlainObject(paperTrading.strategy_variant),
+        strategy_bucket_label:
+          metadata.strategy_bucket_label ||
+          strategyVariant.strategy_bucket_label ||
+          asPlainObject(paperTrading.strategy_variant).strategy_bucket_label,
         signal_metadata: metadata,
         paper_trading: paperTrading,
         benchmark,
@@ -1421,6 +1467,8 @@ export class RecommendationTradeOutcomeService {
       ...groups.by_style,
       ...groups.by_action,
       ...groups.by_consensus,
+      ...groups.by_score_position_bucket,
+      ...groups.by_strategy_key,
       ...groups.by_industry,
     ];
     const bestSegments = allGroups

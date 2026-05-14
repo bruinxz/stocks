@@ -3,6 +3,15 @@ import moment from 'moment-timezone';
 import { RecommendationLoopPolicySnapshot } from '../models/RecommendationLoopPolicySnapshot';
 import { RecommendationTradeOutcome } from '../models/RecommendationTradeOutcome';
 import { logger } from '../utils/logger';
+import {
+  buildRecommendationStrategyVariant,
+  recommendationBucketLabel,
+  recommendationPositionBucket,
+  recommendationScoreBucket,
+  recommendationScorePositionKey,
+  recommendationScorePositionLabel,
+  recommendationStrategyKeyLabel,
+} from '../utils/recommendationStrategyVariant';
 
 function toNumber(value: any, fallback = 0): number {
   const num = Number(value);
@@ -65,6 +74,14 @@ export class RecommendationLoopPolicySnapshotService {
       const paper = result?.paper_trading || {};
       const tradeOutcomes = result?.trade_outcomes || {};
       const outcomeSummary = tradeOutcomes?.summary || {};
+      const strategyVariant =
+        loopPolicy.strategy_variant ||
+        buildRecommendationStrategyVariant(loopPolicy, {
+          loop_run_id: result?.loop_run_id,
+          source: 'automated_recommendation_loop',
+          generated_at: result?.generated_at,
+        });
+      const strategyKey = loopPolicy.strategy_key || strategyVariant.strategy_key;
 
       const archiveSignalIds = Array.isArray(archive.signal_ids) ? archive.signal_ids : [];
       const strategyExperiment = loopPolicy?.strategy_experiment || null;
@@ -184,16 +201,25 @@ export class RecommendationLoopPolicySnapshotService {
             : null,
           trade_outcomes: tradeOutcomes,
           quality_report: result?.quality_report,
+          strategy_variant: strategyVariant,
         },
         metadata: {
           result_generated_at: result?.generated_at,
           recorded_at: new Date().toISOString(),
           consensus_ranked: consensusSummary.ranked,
           consensus_overlap_count: consensusSummary.overlap_count,
+          strategy_key: strategyKey,
+          strategy_variant: strategyVariant,
+          strategy_bucket_label: strategyVariant.strategy_bucket_label,
         },
       } as any);
       if (snapshot?.id && archiveSignalIds.length > 0) {
-        await this.attachSnapshotToSignals(archiveSignalIds, snapshot.id, result?.loop_run_id);
+        await this.attachSnapshotToSignals(
+          archiveSignalIds,
+          snapshot.id,
+          result?.loop_run_id,
+          strategyVariant
+        );
       }
       return snapshot;
     } catch (error: any) {
@@ -205,7 +231,8 @@ export class RecommendationLoopPolicySnapshotService {
   private async attachSnapshotToSignals(
     signalIds: number[],
     snapshotId: number,
-    loopRunId?: string
+    loopRunId?: string,
+    strategyVariant?: any
   ) {
     try {
       const { AIInvestmentSignal } = await import('../models/AIInvestmentSignal');
@@ -219,6 +246,10 @@ export class RecommendationLoopPolicySnapshotService {
             ...metadata,
             loop_run_id: metadata.loop_run_id || loopRunId,
             loop_policy_snapshot_id: snapshotId,
+            strategy_key: metadata.strategy_key || strategyVariant?.strategy_key,
+            strategy_variant: metadata.strategy_variant || strategyVariant,
+            strategy_bucket_label:
+              metadata.strategy_bucket_label || strategyVariant?.strategy_bucket_label,
           },
         });
       }
@@ -258,6 +289,13 @@ export class RecommendationLoopPolicySnapshotService {
       by_position_bucket: this.buildBuckets(plain, item =>
         this.positionBucket(item.effective_default_position_pct)
       ),
+      by_score_position_bucket: this.buildBuckets(plain, item =>
+        recommendationScorePositionKey(
+          item.effective_min_score,
+          item.effective_default_position_pct
+        )
+      ),
+      by_strategy_key: this.buildBuckets(plain, item => this.strategyKeyFromSnapshot(item)),
     };
 
     const rankings = this.buildPolicyRankings(plain, groups);
@@ -509,6 +547,8 @@ export class RecommendationLoopPolicySnapshotService {
       by_score_bucket: rankBucket(groups.by_score_bucket),
       by_position_bucket: rankBucket(groups.by_position_bucket),
       by_universe: rankBucket(groups.by_universe),
+      by_score_position_bucket: rankBucket(groups.by_score_position_bucket),
+      by_strategy_key: rankBucket(groups.by_strategy_key),
     };
   }
 
@@ -518,6 +558,9 @@ export class RecommendationLoopPolicySnapshotService {
     const bestStyle = rankings.by_style?.find((item: any) => item.key && item.key !== 'unknown');
     const bestScoreBucket = rankings.by_score_bucket?.[0];
     const bestPositionBucket = rankings.by_position_bucket?.[0];
+    const bestStrategyKey = rankings.by_strategy_key?.find(
+      (item: any) => item.key && item.key !== 'unknown'
+    );
     const latestScore = toNumber(latest.effective_min_score, 72);
     const latestDefaultPosition = toNumber(latest.effective_default_position_pct, 5);
     const latestMaxPosition = toNumber(latest.effective_max_position_pct, 10);
@@ -594,6 +637,9 @@ export class RecommendationLoopPolicySnapshotService {
             bestStyle.avg_outcome_excess_return_pct
           }%。`
         : '',
+      bestStrategyKey
+        ? `参数组合冠军：${bestStrategyKey.label}，平均超额 ${bestStrategyKey.avg_outcome_excess_return_pct}%、版本 ${bestStrategyKey.count} 次。`
+        : '',
       closedSamples < 3 ? '闭环平仓样本仍不足，建议小仓继续采样，避免过早放大。' : '',
       avgExcess < -1 ? '版本平均超额为负，下一轮应提高评分阈值并降低仓位。' : '',
       avgExcess > 1.5 ? '版本平均超额为正且具备放量验证条件，可小幅放大跟单数量。' : '',
@@ -613,6 +659,7 @@ export class RecommendationLoopPolicySnapshotService {
       best_style: bestStyle || null,
       best_score_bucket: bestScoreBucket || null,
       best_position_bucket: bestPositionBucket || null,
+      best_strategy_key: bestStrategyKey || null,
       reasons,
     };
   }
@@ -628,6 +675,11 @@ export class RecommendationLoopPolicySnapshotService {
     if (groups.by_style?.[0]) {
       insights.push(
         `当前表现最好的风格是 ${groups.by_style[0].label}，平均闭环超额 ${groups.by_style[0].avg_outcome_excess_return_pct}%。`
+      );
+    }
+    if (groups.by_strategy_key?.[0]) {
+      insights.push(
+        `当前表现最好的参数组合是 ${groups.by_strategy_key[0].label}，平均闭环超额 ${groups.by_strategy_key[0].avg_outcome_excess_return_pct}%。`
       );
     }
     if (promotion?.action) {
@@ -703,39 +755,41 @@ export class RecommendationLoopPolicySnapshotService {
   }
 
   private scoreBucket(value: any) {
-    const score = toNumber(value);
-    if (score >= 85) return 'score_85_plus';
-    if (score >= 78) return 'score_78_84';
-    if (score >= 72) return 'score_72_77';
-    return 'score_below_72';
+    return recommendationScoreBucket(value);
   }
 
   private positionBucket(value: any) {
-    const pct = toNumber(value);
-    if (pct >= 8) return 'position_8_plus';
-    if (pct >= 5) return 'position_5_8';
-    if (pct >= 3) return 'position_3_5';
-    return 'position_below_3';
+    return recommendationPositionBucket(value);
   }
 
   private bucketLabel(key: string) {
-    const labels: Record<string, string> = {
-      balanced: '均衡',
-      momentum: '动量',
-      value: '价值',
-      low_risk: '低风险',
-      market: '全市场',
-      favorites: '自选池',
-      score_85_plus: '评分≥85',
-      score_78_84: '评分78-84',
-      score_72_77: '评分72-77',
-      score_below_72: '评分<72',
-      position_8_plus: '仓位≥8%',
-      position_5_8: '仓位5-8%',
-      position_3_5: '仓位3-5%',
-      position_below_3: '仓位<3%',
-    };
-    return labels[key] || key || '未标注';
+    if (String(key || '').includes('|')) {
+      if (String(key).startsWith('score:')) return recommendationScorePositionLabel(key);
+      return recommendationStrategyKeyLabel(key);
+    }
+    return recommendationBucketLabel(key);
+  }
+
+  private strategyKeyFromSnapshot(record: any): string {
+    const metadata = record?.metadata && typeof record.metadata === 'object' ? record.metadata : {};
+    const loopPolicy =
+      record?.loop_policy && typeof record.loop_policy === 'object' ? record.loop_policy : {};
+    return (
+      metadata.strategy_key ||
+      loopPolicy.strategy_key ||
+      loopPolicy.strategy_variant?.strategy_key ||
+      buildRecommendationStrategyVariant(
+        {
+          ...record,
+          ...loopPolicy,
+        },
+        {
+          loop_run_id: record?.loop_run_id,
+          source: 'policy_snapshot_backfill',
+        }
+      ).strategy_key ||
+      'unknown'
+    );
   }
 }
 

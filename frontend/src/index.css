@@ -2509,6 +2509,7 @@ a {
 .loop-policy-promotion,
 .loop-policy-reasons,
 .loop-policy-champion,
+.loop-policy-combo-row,
 .loop-policy-rank-row {
   border: 1px solid rgba(15, 23, 42, 0.08);
   box-shadow: var(--shadow-card);
@@ -2624,6 +2625,58 @@ a {
   font-size: 22px;
   font-style: normal;
   text-align: right;
+}
+
+.loop-policy-combo-row {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr) 104px;
+  gap: 14px;
+  align-items: center;
+  padding: 14px;
+  border-radius: 20px;
+  background: radial-gradient(circle at 0% 0%, rgba(0, 167, 194, 0.1), transparent 36%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(248, 250, 252, 0.82));
+}
+
+.loop-policy-combo-rank {
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  background: #fff7df;
+  color: #9a6a15;
+  font-weight: 900;
+  border: 1px solid rgba(214, 166, 79, 0.22);
+}
+
+.loop-policy-combo-main strong,
+.loop-policy-combo-main span,
+.loop-policy-combo-score b,
+.loop-policy-combo-score span {
+  display: block;
+}
+
+.loop-policy-combo-main strong {
+  color: var(--policy-ink);
+  font-size: 15px;
+}
+
+.loop-policy-combo-main span,
+.loop-policy-combo-score span {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.loop-policy-combo-score {
+  text-align: right;
+}
+
+.loop-policy-combo-score b {
+  font-family: var(--font-display);
+  font-size: 24px;
+  letter-spacing: -0.05em;
 }
 
 .loop-policy-champion {
@@ -3713,7 +3766,11 @@ a {
   margin-bottom: 16px;
   overflow: hidden;
   border: 1px solid rgba(15, 23, 42, 0.08) !important;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.9)) !important;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.96),
+    rgba(248, 250, 252, 0.9)
+  ) !important;
 }
 
 .autonomous-action-digest::before {
