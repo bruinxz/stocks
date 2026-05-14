@@ -125,6 +125,9 @@ export interface RecommendationTradeOutcomeBucket {
   worst_return_pct?: number;
   avg_consensus_count?: number;
   avg_consensus_bonus?: number;
+  dimension?: string;
+  auto_action?: string;
+  confidence?: number;
 }
 
 function toNumber(value: any, fallback = 0): number {
@@ -497,7 +500,8 @@ export class RecommendationTradeOutcomeService {
       by_style: this.buildBuckets(
         outcomes,
         item => item.recommendation_style,
-        value => value || '未标注'
+        value => value || '未标注',
+        'style'
       ),
       by_action: this.buildBuckets(
         outcomes,
@@ -518,12 +522,14 @@ export class RecommendationTradeOutcomeService {
       by_score_position_bucket: this.buildBuckets(
         outcomes,
         item => recommendationScorePositionKey(item.score, item.position_pct),
-        recommendationScorePositionLabel
+        recommendationScorePositionLabel,
+        'score_position'
       ),
       by_strategy_key: this.buildBuckets(
         outcomes,
         item => strategyKeyFromOutcome(item),
-        recommendationStrategyKeyLabel
+        recommendationStrategyKeyLabel,
+        'strategy_key'
       ),
     };
 
@@ -713,8 +719,22 @@ export class RecommendationTradeOutcomeService {
       reasons: Array.isArray(promotion?.reasons) ? promotion.reasons.slice(0, 4) : [],
     };
 
+    const strategyComboGroups = outcomeDashboard.groups.by_strategy_key || [];
+    const scorePositionGroups = outcomeDashboard.groups.by_score_position_bucket || [];
     const weakSegments = outcomeDashboard.feedback.weak_segments.slice(0, 4);
     const bestSegments = outcomeDashboard.feedback.best_segments.slice(0, 4);
+    const bestStrategyCombo = strategyComboGroups
+      .filter(segment => segment.key !== 'unknown' && segment.closed_count > 0)
+      .sort(
+        (a, b) =>
+          b.avg_excess_return_pct - a.avg_excess_return_pct || b.excess_win_rate - a.excess_win_rate
+      )[0];
+    const weakStrategyCombo = strategyComboGroups
+      .filter(segment => segment.key !== 'unknown' && segment.closed_count > 0)
+      .sort(
+        (a, b) =>
+          a.avg_excess_return_pct - b.avg_excess_return_pct || a.excess_win_rate - b.excess_win_rate
+      )[0];
     const killList = weakSegments
       .filter(segment => segment.closed_count >= 2 && segment.avg_excess_return_pct < -1)
       .map(segment => ({
@@ -751,6 +771,9 @@ export class RecommendationTradeOutcomeService {
       killList[0]
         ? `需降权片段：${killList[0].label}，平均超额 ${killList[0].avg_excess_return_pct}%。`
         : '暂无明确需要永久剔除的片段，继续以收益闸门控制仓位。',
+      bestStrategyCombo
+        ? `参数组合冠军：${bestStrategyCombo.label}，平均超额 ${bestStrategyCombo.avg_excess_return_pct}%、超额胜率 ${bestStrategyCombo.excess_win_rate}%。`
+        : '',
     ].filter(Boolean);
 
     return {
@@ -775,6 +798,12 @@ export class RecommendationTradeOutcomeService {
       segment_actions: {
         boost: boostList,
         reduce: killList,
+      },
+      strategy_combos: {
+        best: bestStrategyCombo || null,
+        weak: weakStrategyCombo || null,
+        rankings: strategyComboGroups.slice(0, 8),
+        score_position_rankings: scorePositionGroups.slice(0, 8),
       },
       policy_versions: policyDashboard
         ? {
@@ -1349,7 +1378,8 @@ export class RecommendationTradeOutcomeService {
   private buildBuckets(
     records: RecommendationTradeOutcome[],
     keySelector: (record: RecommendationTradeOutcome) => string | undefined | null,
-    labelSelector: (key: string) => string
+    labelSelector: (key: string) => string,
+    dimension = 'segment'
   ): RecommendationTradeOutcomeBucket[] {
     const grouped = new Map<string, RecommendationTradeOutcome[]>();
     for (const record of records) {
@@ -1417,6 +1447,16 @@ export class RecommendationTradeOutcomeService {
           worst_return_pct: worst?.total_pnl_pct,
           avg_consensus_count: roundNumber(average(consensusCounts), 2),
           avg_consensus_bonus: roundNumber(average(consensusBonuses), 2),
+          dimension,
+          auto_action:
+            closed.length < 2
+              ? 'collect_samples'
+              : roundNumber(average(closed.map(item => toNumber(item.excess_return_pct))), 4) > 1
+              ? 'boost'
+              : roundNumber(average(closed.map(item => toNumber(item.excess_return_pct))), 4) < -1
+              ? 'reduce'
+              : 'hold',
+          confidence: roundNumber(clamp(closed.length / 8, 0, 1), 2),
         };
       })
       .sort((a, b) => {

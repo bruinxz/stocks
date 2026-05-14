@@ -16,7 +16,7 @@ function roundNumber(value: any, digits = 2): number {
   return Math.round(num * base) / base;
 }
 
-function normalizeStyle(value: any): string {
+export function normalizeRecommendationStyle(value: any): string {
   const style = String(value || '').trim();
   return ['balanced', 'momentum', 'value', 'low_risk'].includes(style) ? style : 'balanced';
 }
@@ -94,7 +94,9 @@ export function buildRecommendationStrategyVariant(
   policy: Record<string, any> = {},
   options: { loop_run_id?: string; source?: string; generated_at?: string } = {}
 ): RecommendationStrategyVariant {
-  const style = normalizeStyle(policy.effective_style || policy.style || policy.base_style);
+  const style = normalizeRecommendationStyle(
+    policy.effective_style || policy.style || policy.base_style
+  );
   const min_score = roundNumber(policy.effective_min_score ?? policy.min_score ?? policy.score, 2);
   const default_position_pct = roundNumber(
     policy.effective_default_position_pct ??
@@ -164,6 +166,30 @@ export function parseRecommendationStrategyKey(key?: string): Record<string, str
       result[name] = rest.join(':');
     });
   return result;
+}
+
+export function recommendationScoreBucketFloor(key?: string, fallback = 72): number {
+  const bucket = String(key || '');
+  if (bucket === 'score_85_plus') return 85;
+  if (bucket === 'score_78_84') return 78;
+  if (bucket === 'score_72_77') return 72;
+  if (bucket === 'score_below_72') return 68;
+  return fallback;
+}
+
+export function recommendationPositionBucketMidpoint(key?: string, fallback = 3): number {
+  const bucket = String(key || '');
+  if (bucket === 'position_8_plus') return 8;
+  if (bucket === 'position_5_8') return 6.5;
+  if (bucket === 'position_3_5') return 4;
+  if (bucket === 'position_below_3') return 2.5;
+  return fallback;
+}
+
+export function recommendationTradeLimitFromStrategyKey(key?: string, fallback = 3): number {
+  const parsed = parseRecommendationStrategyKey(key);
+  const num = Number(parsed.limit);
+  return Number.isFinite(num) && num > 0 ? Math.floor(num) : fallback;
 }
 
 export function recommendationStrategyKeyLabel(key?: string): string {

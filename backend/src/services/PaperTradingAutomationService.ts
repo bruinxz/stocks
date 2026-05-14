@@ -2173,6 +2173,16 @@ class PaperTradingAutomationService {
           : clamp(Math.max(options.requested_min_score, recommendedMinScore), 55, 94);
       const weakSegments = Array.isArray(feedback.weak_segments) ? feedback.weak_segments : [];
       const bestSegments = Array.isArray(feedback.best_segments) ? feedback.best_segments : [];
+      const strategyWeakSegments = weakSegments.filter(
+        (segment: any) =>
+          ['strategy_key', 'score_position'].includes(String(segment.dimension || '')) ||
+          String(segment.key || '').includes('|')
+      );
+      const strategyBestSegments = bestSegments.filter(
+        (segment: any) =>
+          ['strategy_key', 'score_position'].includes(String(segment.dimension || '')) ||
+          String(segment.key || '').includes('|')
+      );
       const blockedSegments =
         closedSamples >= options.min_closed_samples
           ? weakSegments
@@ -2184,6 +2194,23 @@ class PaperTradingAutomationService {
               )
               .slice(0, 8)
           : [];
+      const strategyBlockedSegments =
+        closedSamples >= Math.max(2, Math.min(options.min_closed_samples, 5))
+          ? strategyWeakSegments
+              .filter(
+                (segment: any) =>
+                  Number(segment.closed_count || 0) >= 2 &&
+                  (Number(segment.avg_excess_return_pct || 0) <= -1.2 ||
+                    Number(segment.excess_win_rate || 0) < 40)
+              )
+              .slice(0, 6)
+          : [];
+      const mergedBlockedSegments = [...blockedSegments];
+      for (const segment of strategyBlockedSegments) {
+        if (!mergedBlockedSegments.some(item => String(item.key) === String(segment.key))) {
+          mergedBlockedSegments.push(segment);
+        }
+      }
       const reason =
         closedSamples < options.min_closed_samples
           ? `闭环样本 ${closedSamples}/${options.min_closed_samples}，先小仓位积累样本`
@@ -2211,8 +2238,13 @@ class PaperTradingAutomationService {
         avg_excess_return_pct: roundNumber(avgExcess, 4),
         excess_win_rate: roundNumber(excessWinRate, 2),
         allow_entries: allowEntries,
-        preferred_segments: bestSegments.slice(0, 5),
-        blocked_segments: blockedSegments,
+        preferred_segments: [...strategyBestSegments, ...bestSegments]
+          .filter(
+            (segment, index, array) =>
+              array.findIndex(item => String(item.key) === String(segment.key)) === index
+          )
+          .slice(0, 6),
+        blocked_segments: mergedBlockedSegments.slice(0, 10),
         best_segments: bestSegments,
         weak_segments: weakSegments,
         reason,
@@ -2527,12 +2559,18 @@ class PaperTradingAutomationService {
   ): any | null {
     if (!policy?.enabled || !Array.isArray(policy.blocked_segments)) return null;
     const metadata = asPlainObject(signal.metadata);
+    const signalStrategyKey = String(
+      metadata.strategy_key || asPlainObject(metadata.strategy_variant).strategy_key || ''
+    )
+      .trim()
+      .toLowerCase();
     const candidates = [
       signal.source_type,
       metadata.agent_session,
       metadata.style || metadata.recommendation_style,
       metadata.action_label || metadata.action,
       signal.risk_level,
+      signalStrategyKey,
     ]
       .map(value =>
         String(value || '')

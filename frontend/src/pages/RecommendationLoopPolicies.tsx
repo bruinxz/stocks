@@ -48,6 +48,10 @@ interface PolicyBucket {
   avg_outcome_excess_return_pct: number;
   promotion_score?: number;
   latest_generated_at?: string;
+  closed_count?: number;
+  excess_win_rate?: number;
+  auto_action?: string;
+  confidence?: number;
 }
 
 interface StrategyVariant {
@@ -176,6 +180,16 @@ const formatMoney = (value?: number | null) =>
     maximumFractionDigits: 2,
   })}`;
 const pnlColor = (value?: number | null) => (Number(value || 0) >= 0 ? '#d14343' : '#008f6b');
+
+const comboActionMeta = (value?: string) => {
+  const meta: Record<string, { label: string; color: string }> = {
+    boost: { label: '放大候选', color: 'red' },
+    reduce: { label: '自动降权', color: 'green' },
+    hold: { label: '继续观察', color: 'gold' },
+    collect_samples: { label: '采样中', color: 'blue' },
+  };
+  return meta[value || ''] || { label: value || '观察', color: 'default' };
+};
 
 const getSnapshotStrategyLabel = (record: PolicySnapshot) =>
   record.metadata?.strategy_bucket_label ||
@@ -668,9 +682,15 @@ const RecommendationLoopPolicies: React.FC = () => {
                   <div className="loop-policy-combo-row" key={item.key || index}>
                     <div className="loop-policy-combo-rank">#{index + 1}</div>
                     <div className="loop-policy-combo-main">
-                      <strong>{item.label}</strong>
+                      <Space size={6} wrap>
+                        <strong>{item.label}</strong>
+                        <Tag color={comboActionMeta(item.auto_action).color}>
+                          {comboActionMeta(item.auto_action).label}
+                        </Tag>
+                      </Space>
                       <span>
-                        版本 {item.count} 次 · 成交 {item.executed || 0} · 计划 {item.planned || 0}
+                        版本 {item.count} 次 · 闭环 {item.closed_count || 0} · 成交{' '}
+                        {item.executed || 0} · 胜率 {formatPercent(item.excess_win_rate)}
                       </span>
                     </div>
                     <div className="loop-policy-combo-score">

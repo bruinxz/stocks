@@ -9,7 +9,14 @@ import { AISignalSourceType } from '../models/AIInvestmentSignal';
 import { aiPollingQueue } from '../jobs/aiPollingQueue';
 import { recommendationTradeOutcomeService } from './RecommendationTradeOutcomeService';
 import { recommendationLoopPolicySnapshotService } from './RecommendationLoopPolicySnapshotService';
-import { buildRecommendationStrategyVariant } from '../utils/recommendationStrategyVariant';
+import {
+  buildRecommendationStrategyVariant,
+  normalizeRecommendationStyle,
+  parseRecommendationStrategyKey,
+  recommendationPositionBucketMidpoint,
+  recommendationScoreBucketFloor,
+  recommendationTradeLimitFromStrategyKey,
+} from '../utils/recommendationStrategyVariant';
 
 export interface AutomatedRecommendationLoopOptions {
   username?: string;
@@ -197,6 +204,7 @@ class AutomatedRecommendationLoopService {
         best_snapshot_id: promotion.best_snapshot?.id,
         best_snapshot_closed_trade_count: promotion.best_snapshot?.closed_trade_count,
         best_snapshot_avg_excess_return_pct: promotion.best_snapshot?.avg_excess_return_pct,
+        best_strategy_key: promotion.best_strategy_key,
         reasons: Array.isArray(promotion.reasons) ? promotion.reasons.slice(0, 4) : [],
       };
 
@@ -219,27 +227,47 @@ class AutomatedRecommendationLoopService {
       const recommendedStyle = allowedStyles.includes(String(promotion.recommended_style || ''))
         ? String(promotion.recommended_style)
         : policy.effective_style;
+      const bestStrategy = promotion.best_strategy_key || null;
+      const bestStrategyClosed = toNumber(bestStrategy?.closed_count, 0);
+      const bestStrategyExcess = toNumber(bestStrategy?.avg_outcome_excess_return_pct, 0);
+      const strategyParsed = parseRecommendationStrategyKey(bestStrategy?.key);
+      const shouldAdoptStrategyCombo =
+        bestStrategy &&
+        bestStrategy.key &&
+        bestStrategy.key !== 'unknown' &&
+        bestStrategyClosed >= 2 &&
+        bestStrategyExcess > Math.max(0.8, toNumber(summary.avg_outcome_excess_return_pct, 0));
       const currentMinScore = toNumber(policy.effective_min_score, options.base_min_score);
-      const recommendedMinScore = toNumber(promotion.recommended_min_score, currentMinScore);
+      const comboMinScore = shouldAdoptStrategyCombo
+        ? recommendationScoreBucketFloor(strategyParsed.score, currentMinScore)
+        : currentMinScore;
+      const recommendedMinScore = shouldAdoptStrategyCombo
+        ? Math.max(toNumber(promotion.recommended_min_score, currentMinScore), comboMinScore)
+        : toNumber(promotion.recommended_min_score, currentMinScore);
       const currentDefaultPosition = toNumber(policy.effective_default_position_pct, 3);
-      const recommendedDefaultPosition = toNumber(
-        promotion.recommended_default_position_pct,
-        currentDefaultPosition
-      );
+      const comboDefaultPosition = shouldAdoptStrategyCombo
+        ? recommendationPositionBucketMidpoint(strategyParsed.pos, currentDefaultPosition)
+        : currentDefaultPosition;
+      const recommendedDefaultPosition = shouldAdoptStrategyCombo
+        ? comboDefaultPosition
+        : toNumber(promotion.recommended_default_position_pct, currentDefaultPosition);
       const currentMaxPosition = toNumber(
         policy.effective_max_position_pct,
         options.base_max_position_pct
       );
-      const recommendedMaxPosition = toNumber(
-        promotion.recommended_max_position_pct,
-        currentMaxPosition
-      );
+      const comboMaxPosition = shouldAdoptStrategyCombo
+        ? recommendationPositionBucketMidpoint(strategyParsed.max, currentMaxPosition)
+        : currentMaxPosition;
+      const recommendedMaxPosition = shouldAdoptStrategyCombo
+        ? Math.max(comboMaxPosition, comboDefaultPosition)
+        : toNumber(promotion.recommended_max_position_pct, currentMaxPosition);
       const currentTradeLimit = toPositiveInt(policy.effective_paper_trade_limit, 2, 20);
-      const recommendedTradeLimit = toPositiveInt(
-        promotion.recommended_paper_trade_limit,
-        currentTradeLimit,
-        20
-      );
+      const comboTradeLimit = shouldAdoptStrategyCombo
+        ? recommendationTradeLimitFromStrategyKey(bestStrategy.key, currentTradeLimit)
+        : currentTradeLimit;
+      const recommendedTradeLimit = shouldAdoptStrategyCombo
+        ? comboTradeLimit
+        : toPositiveInt(promotion.recommended_paper_trade_limit, currentTradeLimit, 20);
 
       let effectiveMinScore = currentMinScore;
       let effectiveDefaultPositionPct = currentDefaultPosition;
@@ -288,22 +316,30 @@ class AutomatedRecommendationLoopService {
 
       return {
         ...enrichedPolicy,
-        effective_style: recommendedStyle,
+        effective_style: shouldAdoptStrategyCombo
+          ? normalizeRecommendationStyle(strategyParsed.style || recommendedStyle)
+          : recommendedStyle,
         effective_min_score: roundNumber(clampNumber(effectiveMinScore, 62, 94), 2),
         effective_default_position_pct: roundNumber(effectiveDefaultPositionPct, 2),
         effective_max_position_pct: roundNumber(effectiveMaxPositionPct, 2),
         effective_paper_trade_limit: Math.max(1, Math.min(8, effectivePaperTradeLimit)),
         policy_version_feedback_applied: true,
         policy_promotion: compactPromotion,
+        promoted_strategy_key: shouldAdoptStrategyCombo ? bestStrategy.key : undefined,
+        promoted_strategy_label: shouldAdoptStrategyCombo ? bestStrategy.label : undefined,
         policy_version_feedback_reason: `已应用策略版本晋级建议：${action}，置信度 ${Math.round(
           confidence * 100
         )}%、平仓样本 ${closedSamples}，下一轮采用 ${recommendedStyle}/评分≥${roundNumber(
           effectiveMinScore,
           2
-        )}/仓位 ${roundNumber(effectiveDefaultPositionPct, 2)}%`,
+        )}/仓位 ${roundNumber(effectiveDefaultPositionPct, 2)}%${
+          shouldAdoptStrategyCombo ? `；组合冠军 ${bestStrategy.label}` : ''
+        }`,
         reason: `${policy.reason}；策略版本反馈：${action} / ${Math.round(
           confidence * 100
-        )}% 置信度，已调整下一轮扫描参数`,
+        )}% 置信度，已调整下一轮扫描参数${
+          shouldAdoptStrategyCombo ? `，优先采用组合 ${bestStrategy.label}` : ''
+        }`,
       };
     } catch (error: any) {
       logger.warn(`读取策略版本晋级建议失败，沿用当前闭环参数: ${error?.message || error}`);
