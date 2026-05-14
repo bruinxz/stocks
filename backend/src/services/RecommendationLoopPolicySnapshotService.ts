@@ -320,6 +320,9 @@ export class RecommendationLoopPolicySnapshotService {
         )
       ),
       by_strategy_key: this.buildBuckets(plain, item => this.strategyKeyFromSnapshot(item)),
+      by_environment_policy_version: this.buildBuckets(plain, item =>
+        this.environmentPolicyVersionFromSnapshot(item)
+      ),
     };
 
     const rankings = this.buildPolicyRankings(plain, groups);
@@ -477,38 +480,68 @@ export class RecommendationLoopPolicySnapshotService {
     }
 
     return [...grouped.entries()]
-      .map(([key, items]) => ({
-        key,
-        label: this.bucketLabel(key),
-        count: items.length,
-        executed: items.reduce((sum, item) => sum + toNumber(item.paper_executed), 0),
-        planned: items.reduce((sum, item) => sum + toNumber(item.paper_planned), 0),
-        avg_min_score: roundNumber(
-          items.reduce((sum, item) => sum + toNumber(item.effective_min_score), 0) / items.length,
-          2
-        ),
-        avg_position_pct: roundNumber(
-          items.reduce((sum, item) => sum + toNumber(item.effective_default_position_pct), 0) /
-            items.length,
-          2
-        ),
-        avg_policy_excess_return_pct: roundNumber(
-          items.reduce((sum, item) => sum + toNumber(item.policy_avg_excess_return_pct), 0) /
-            items.length,
-          4
-        ),
-        avg_outcome_excess_return_pct: roundNumber(
+      .map(([key, items]) => {
+        const closedCount = items.reduce((sum, item) => sum + toNumber(item.closed_trade_count), 0);
+        const trackedCount = items.reduce(
+          (sum, item) => sum + toNumber(item.tracked_trade_count),
+          0
+        );
+        const totalPnl = items.reduce((sum, item) => sum + toNumber(item.total_pnl), 0);
+        const avgOutcomeExcess = roundNumber(
           items.reduce((sum, item) => sum + toNumber(item.avg_excess_return_pct), 0) / items.length,
           4
-        ),
-        latest_generated_at: items
-          .map(item => item.generated_at)
-          .sort()
-          .reverse()[0],
-      }))
+        );
+        const avgExcessWinRate = roundNumber(
+          items.reduce((sum, item) => sum + toNumber(item.excess_win_rate), 0) / items.length,
+          2
+        );
+        const sampleConfidence = Math.min(1, closedCount / 12);
+        const robustScore = roundNumber(
+          avgOutcomeExcess * 7 +
+            (avgExcessWinRate - 50) * 0.18 +
+            Math.log1p(Math.max(closedCount, trackedCount)) * 2 +
+            totalPnl / 20000 -
+            Math.max(0, 3 - closedCount) * 3,
+          2
+        );
+        return {
+          key,
+          label: this.bucketLabel(key),
+          count: items.length,
+          executed: items.reduce((sum, item) => sum + toNumber(item.paper_executed), 0),
+          planned: items.reduce((sum, item) => sum + toNumber(item.paper_planned), 0),
+          closed_count: closedCount,
+          tracked_count: trackedCount,
+          total_pnl: roundNumber(totalPnl, 2),
+          avg_min_score: roundNumber(
+            items.reduce((sum, item) => sum + toNumber(item.effective_min_score), 0) / items.length,
+            2
+          ),
+          avg_position_pct: roundNumber(
+            items.reduce((sum, item) => sum + toNumber(item.effective_default_position_pct), 0) /
+              items.length,
+            2
+          ),
+          avg_policy_excess_return_pct: roundNumber(
+            items.reduce((sum, item) => sum + toNumber(item.policy_avg_excess_return_pct), 0) /
+              items.length,
+            4
+          ),
+          avg_outcome_excess_return_pct: avgOutcomeExcess,
+          excess_win_rate: avgExcessWinRate,
+          sample_confidence: roundNumber(sampleConfidence, 2),
+          robust_score: robustScore,
+          latest_generated_at: items
+            .map(item => item.generated_at)
+            .sort()
+            .reverse()[0],
+        };
+      })
       .sort(
         (a, b) =>
-          b.avg_outcome_excess_return_pct - a.avg_outcome_excess_return_pct || b.count - a.count
+          b.robust_score - a.robust_score ||
+          b.avg_outcome_excess_return_pct - a.avg_outcome_excess_return_pct ||
+          b.count - a.count
       );
   }
 
@@ -575,6 +608,7 @@ export class RecommendationLoopPolicySnapshotService {
       by_universe: rankBucket(groups.by_universe),
       by_score_position_bucket: rankBucket(groups.by_score_position_bucket),
       by_strategy_key: rankBucket(groups.by_strategy_key),
+      by_environment_policy_version: rankBucket(groups.by_environment_policy_version),
     };
   }
 
@@ -585,6 +619,9 @@ export class RecommendationLoopPolicySnapshotService {
     const bestScoreBucket = rankings.by_score_bucket?.[0];
     const bestPositionBucket = rankings.by_position_bucket?.[0];
     const bestStrategyKey = rankings.by_strategy_key?.find(
+      (item: any) => item.key && item.key !== 'unknown'
+    );
+    const bestEnvironmentVersion = rankings.by_environment_policy_version?.find(
       (item: any) => item.key && item.key !== 'unknown'
     );
     const latestScore = toNumber(latest.effective_min_score, 72);
@@ -666,6 +703,11 @@ export class RecommendationLoopPolicySnapshotService {
       bestStrategyKey
         ? `参数组合冠军：${bestStrategyKey.label}，平均超额 ${bestStrategyKey.avg_outcome_excess_return_pct}%、版本 ${bestStrategyKey.count} 次。`
         : '',
+      bestEnvironmentVersion
+        ? `环境闸门冠军：${bestEnvironmentVersion.label}，平均超额 ${
+            bestEnvironmentVersion.avg_outcome_excess_return_pct
+          }%、闭环 ${bestEnvironmentVersion.closed_count || 0} 笔。`
+        : '',
       closedSamples < 3 ? '闭环平仓样本仍不足，建议小仓继续采样，避免过早放大。' : '',
       avgExcess < -1 ? '版本平均超额为负，下一轮应提高评分阈值并降低仓位。' : '',
       avgExcess > 1.5 ? '版本平均超额为正且具备放量验证条件，可小幅放大跟单数量。' : '',
@@ -686,6 +728,7 @@ export class RecommendationLoopPolicySnapshotService {
       best_score_bucket: bestScoreBucket || null,
       best_position_bucket: bestPositionBucket || null,
       best_strategy_key: bestStrategyKey || null,
+      best_environment_policy_version: bestEnvironmentVersion || null,
       reasons,
     };
   }
@@ -789,6 +832,9 @@ export class RecommendationLoopPolicySnapshotService {
   }
 
   private bucketLabel(key: string) {
+    if (String(key || '').includes('_env_')) {
+      return this.environmentPolicyVersionLabel(key);
+    }
     if (String(key || '').includes('|')) {
       if (String(key).startsWith('score:')) return recommendationScorePositionLabel(key);
       return recommendationStrategyKeyLabel(key);
@@ -815,6 +861,34 @@ export class RecommendationLoopPolicySnapshotService {
         }
       ).strategy_key ||
       'unknown'
+    );
+  }
+
+  private environmentPolicyVersionLabel(key: string): string {
+    if (!key || key === 'unknown') return '环境版本未知';
+    const parts = String(key).split('_env_');
+    if (parts.length >= 2) return `环境闸门 ${parts[1]}`;
+    return key;
+  }
+
+  private environmentPolicyVersionFromSnapshot(record: any): string {
+    const metadata = record?.metadata && typeof record.metadata === 'object' ? record.metadata : {};
+    const loopPolicy =
+      record?.loop_policy && typeof record.loop_policy === 'object' ? record.loop_policy : {};
+    const runMetrics =
+      record?.run_metrics && typeof record.run_metrics === 'object' ? record.run_metrics : {};
+    const environmentPolicy =
+      metadata.environment_policy ||
+      loopPolicy.environment_policy ||
+      runMetrics.environment_policy ||
+      {};
+    return String(
+      metadata.environment_policy_snapshot_id ||
+        loopPolicy.environment_policy_snapshot_id ||
+        runMetrics.environment_policy_snapshot_id ||
+        environmentPolicy.snapshot_id ||
+        environmentPolicy.id ||
+        'unknown'
     );
   }
 }

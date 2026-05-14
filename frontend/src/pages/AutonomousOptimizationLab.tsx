@@ -105,6 +105,8 @@ interface EnvironmentLoopPolicy {
 interface EnvironmentRanking {
   key: string;
   label: string;
+  count?: number;
+  tracked_count?: number;
   closed_count: number;
   avg_excess_return_pct: number;
   excess_win_rate: number;
@@ -176,6 +178,7 @@ interface OptimizationData {
   market_environment?: {
     market_regime_rankings?: EnvironmentRanking[];
     industry_regime_rankings?: EnvironmentRanking[];
+    version_rankings?: EnvironmentRanking[];
     policy?: EnvironmentLoopPolicy;
   };
   insights: string[];
@@ -295,6 +298,10 @@ const AutonomousOptimizationLab: React.FC = () => {
           dimension_label: '行业',
         })),
       ].slice(0, 10),
+    [data]
+  );
+  const environmentVersionRankings = useMemo(
+    () => (data?.market_environment?.version_rankings || []).slice(0, 5),
     [data]
   );
 
@@ -563,7 +570,45 @@ const AutonomousOptimizationLab: React.FC = () => {
             </div>
           </Card>
         </Col>
-        <Col xs={24} xl={14}>
+        <Col xs={24}>
+          <Card
+            className="modern-card optimization-env-card"
+            title={
+              <Space>
+                <BranchesOutlined /> 环境版本收益排行榜
+              </Space>
+            }
+            loading={loading}
+          >
+            <div className="optimization-env-version-ranking">
+              {environmentVersionRankings.map((item, index) => (
+                <div className="optimization-env-version-row" key={item.key || index}>
+                  <div className="optimization-env-rank">#{index + 1}</div>
+                  <div className="optimization-env-main">
+                    <Text strong>{item.label || item.key}</Text>
+                    <Text type="secondary">
+                      跟踪 {item.tracked_count || item.count || 0} · 闭环 {item.closed_count || 0} ·
+                      稳健分 {Number(item.robust_score || 0).toFixed(2)}
+                    </Text>
+                  </div>
+                  <div className="optimization-env-stat">
+                    <strong style={{ color: pnlColor(item.avg_excess_return_pct) }}>
+                      {formatPercent(item.avg_excess_return_pct)}
+                    </strong>
+                    <span>环境版本平均超额</span>
+                  </div>
+                </div>
+              ))}
+              {!environmentVersionRankings.length && (
+                <Empty description="暂无环境版本收益样本，下一轮闭环后自动沉淀" />
+              )}
+            </div>
+          </Card>
+        </Col>
+      </Row>
+
+      <Row gutter={[16, 16]}>
+        <Col xs={24}>
           <Card
             className="modern-card optimization-env-card"
             title="市场 / 行业环境表现矩阵"

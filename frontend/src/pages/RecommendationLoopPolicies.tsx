@@ -137,6 +137,7 @@ interface PromotionAdvice {
   best_score_bucket?: PolicyBucket;
   best_position_bucket?: PolicyBucket;
   best_strategy_key?: PolicyBucket;
+  best_environment_policy_version?: PolicyBucket;
   reasons: string[];
 }
 
@@ -163,6 +164,7 @@ interface Dashboard {
     by_position_bucket: PolicyBucket[];
     by_score_position_bucket?: PolicyBucket[];
     by_strategy_key?: PolicyBucket[];
+    by_environment_policy_version?: PolicyBucket[];
   };
   rankings?: {
     snapshots: any[];
@@ -172,6 +174,7 @@ interface Dashboard {
     by_universe: PolicyBucket[];
     by_score_position_bucket?: PolicyBucket[];
     by_strategy_key?: PolicyBucket[];
+    by_environment_policy_version?: PolicyBucket[];
   };
   promotion?: PromotionAdvice;
   snapshots: PolicySnapshot[];
@@ -376,6 +379,13 @@ const RecommendationLoopPolicies: React.FC = () => {
   );
   const topStrategyCombos = useMemo(
     () => (dashboard?.rankings?.by_strategy_key || []).slice(0, 5),
+    [dashboard]
+  );
+  const topEnvironmentVersions = useMemo(
+    () =>
+      (dashboard?.rankings?.by_environment_policy_version || [])
+        .filter(item => item.key !== 'unknown')
+        .slice(0, 5),
     [dashboard]
   );
   const latestEnvironmentPolicy = getSnapshotEnvironmentPolicy(summary?.latest_policy);
@@ -679,6 +689,48 @@ const RecommendationLoopPolicies: React.FC = () => {
               <em>{latestEnvironmentPolicy?.reason || '等待环境闭环样本'}</em>
             </div>
           </div>
+        </Col>
+      </Row>
+
+      <Row gutter={[18, 18]} style={{ marginBottom: 18 }}>
+        <Col xs={24}>
+          <Card
+            className="modern-card"
+            variant="borderless"
+            title={
+              <Space>
+                <CloudSyncOutlined /> 环境版本收益排行榜
+              </Space>
+            }
+          >
+            {topEnvironmentVersions.length ? (
+              <div className="loop-policy-env-ranking">
+                {topEnvironmentVersions.map((item, index) => (
+                  <div className="loop-policy-env-rank-row" key={item.key || index}>
+                    <div className="loop-policy-env-badge">#{index + 1}</div>
+                    <div className="loop-policy-env-rank-main">
+                      <Text strong>{item.label || item.key}</Text>
+                      <Text type="secondary">
+                        版本 {item.count} 次 · 成交 {item.executed || 0} · 计划 {item.planned || 0}
+                      </Text>
+                    </div>
+                    <div className="loop-policy-env-rank-stat">
+                      <strong style={{ color: pnlColor(item.avg_outcome_excess_return_pct) }}>
+                        {formatPercent(item.avg_outcome_excess_return_pct)}
+                      </strong>
+                      <span>平均闭环超额</span>
+                    </div>
+                    <div className="loop-policy-env-rank-stat">
+                      <strong>{Number(item.promotion_score || 0).toFixed(1)}</strong>
+                      <span>晋级分</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <Empty description="暂无可比较的环境版本收益样本" />
+            )}
+          </Card>
         </Col>
       </Row>
 

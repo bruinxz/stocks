@@ -398,9 +398,28 @@ class AutomatedRecommendationLoopService {
         (dashboard as any).environment_policy ||
         (dashboard as any).market_environment?.policy ||
         {};
+      const versionRankings = Array.isArray((dashboard as any).market_environment?.version_rankings)
+        ? (dashboard as any).market_environment.version_rankings
+        : Array.isArray(policy.version_rankings)
+        ? policy.version_rankings
+        : [];
+      const bestEnvironmentVersion = versionRankings.find(
+        (item: any) =>
+          item?.key &&
+          item.key !== 'unknown' &&
+          toNumber(item.closed_count, 0) >= 3 &&
+          toNumber(item.robust_score, 0) >= 4 &&
+          toNumber(item.avg_excess_return_pct, 0) > 0
+      );
       const confidence = toNumber(policy.confidence, 0);
       const closedSamples = toNumber(policy.closed_samples, 0);
-      const applied = closedSamples >= 2 || confidence >= 0.15;
+      const versionConfidence = bestEnvironmentVersion
+        ? clampNumber(toNumber(bestEnvironmentVersion.closed_count, 0) / 12, 0.15, 0.85)
+        : 0;
+      const applied = closedSamples >= 2 || confidence >= 0.15 || Boolean(bestEnvironmentVersion);
+      const policyReason =
+        policy.reason ||
+        (applied ? '环境闸门策略已从闭环优化台生成' : '环境样本不足，暂按默认环境纪律执行');
       return {
         ...policy,
         enabled: true,
@@ -412,7 +431,6 @@ class AutomatedRecommendationLoopService {
           clampNumber(toNumber(policy.default_position_multiplier, 1), 0.35, 1.15),
           2
         ),
-        confidence: roundNumber(confidence, 4),
         closed_samples: closedSamples,
         blocked_segments: Array.isArray(policy.blocked_segments)
           ? policy.blocked_segments.slice(0, 8)
@@ -426,9 +444,25 @@ class AutomatedRecommendationLoopService {
         watch_segments: Array.isArray(policy.watch_segments)
           ? policy.watch_segments.slice(0, 8)
           : [],
-        reason:
-          policy.reason ||
-          (applied ? '环境闸门策略已从闭环优化台生成' : '环境样本不足，暂按默认环境纪律执行'),
+        version_rankings: versionRankings.slice(0, 8),
+        promoted_environment_policy_version: bestEnvironmentVersion
+          ? {
+              key: bestEnvironmentVersion.key,
+              label: bestEnvironmentVersion.label,
+              closed_count: bestEnvironmentVersion.closed_count,
+              avg_excess_return_pct: bestEnvironmentVersion.avg_excess_return_pct,
+              robust_score: bestEnvironmentVersion.robust_score,
+              confidence: roundNumber(versionConfidence, 4),
+            }
+          : null,
+        promoted_environment_policy_feedback_applied: Boolean(bestEnvironmentVersion),
+        promoted_environment_policy_feedback_reason: bestEnvironmentVersion
+          ? `环境版本收益冠军 ${bestEnvironmentVersion.label}：闭环 ${bestEnvironmentVersion.closed_count} 笔、平均超额 ${bestEnvironmentVersion.avg_excess_return_pct}%、稳健分 ${bestEnvironmentVersion.robust_score}，下一轮沿用其环境纪律`
+          : '暂无可晋级的环境闸门版本',
+        confidence: roundNumber(Math.max(confidence, versionConfidence), 4),
+        reason: bestEnvironmentVersion
+          ? `${policyReason}；已参考环境版本冠军 ${bestEnvironmentVersion.label}`
+          : policyReason,
       };
     } catch (error: any) {
       logger.warn(`读取环境闸门反馈失败，沿用默认环境纪律: ${error?.message || error}`);

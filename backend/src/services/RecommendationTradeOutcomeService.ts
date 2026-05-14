@@ -93,6 +93,7 @@ export interface RecommendationTradeOutcomeDashboard {
     by_strategy_key: RecommendationTradeOutcomeBucket[];
     by_market_regime: RecommendationTradeOutcomeBucket[];
     by_industry_regime: RecommendationTradeOutcomeBucket[];
+    by_environment_policy_version: RecommendationTradeOutcomeBucket[];
   };
   outcomes: RecommendationTradeOutcome[];
   feedback: {
@@ -112,6 +113,7 @@ export interface RecommendationTradeOutcomeBucket {
   count: number;
   open_count: number;
   closed_count: number;
+  tracked_count?: number;
   win_rate: number;
   excess_win_rate: number;
   avg_return_pct: number;
@@ -238,6 +240,34 @@ function industryRegimeLabel(key: string): string {
     unknown: '行业未知',
   };
   return labels[key] || key || '行业未知';
+}
+
+function environmentPolicyVersionKey(record: RecommendationTradeOutcome): string {
+  const metadata = asPlainObject(record.metadata);
+  const signalMetadata = asPlainObject(metadata.signal_metadata);
+  const paperTrading = asPlainObject(metadata.paper_trading);
+  const environmentPolicy = asPlainObject(
+    metadata.environment_policy ||
+      signalMetadata.environment_policy ||
+      paperTrading.environment_policy ||
+      asPlainObject(signalMetadata.paper_trading).environment_policy
+  );
+  return String(
+    metadata.environment_policy_snapshot_id ||
+      signalMetadata.environment_policy_snapshot_id ||
+      paperTrading.environment_policy_snapshot_id ||
+      environmentPolicy.external_policy_snapshot_id ||
+      environmentPolicy.snapshot_id ||
+      environmentPolicy.id ||
+      'unknown'
+  );
+}
+
+function environmentPolicyVersionLabel(key: string): string {
+  if (!key || key === 'unknown') return '环境版本未知';
+  const parts = String(key).split('_env_');
+  if (parts.length >= 2) return `环境闸门 ${parts[1]}`;
+  return key;
 }
 
 function strategyKeyFromOutcome(record: RecommendationTradeOutcome): string {
@@ -599,6 +629,12 @@ export class RecommendationTradeOutcomeService {
         industryRegimeLabel,
         'industry_regime'
       ),
+      by_environment_policy_version: this.buildBuckets(
+        outcomes,
+        item => environmentPolicyVersionKey(item),
+        environmentPolicyVersionLabel,
+        'environment_policy_version'
+      ),
     };
 
     const dashboard: RecommendationTradeOutcomeDashboard = {
@@ -768,9 +804,11 @@ export class RecommendationTradeOutcomeService {
     const scorePositionGroups = outcomeDashboard.groups.by_score_position_bucket || [];
     const marketRegimeGroups = outcomeDashboard.groups.by_market_regime || [];
     const industryRegimeGroups = outcomeDashboard.groups.by_industry_regime || [];
+    const environmentVersionGroups = outcomeDashboard.groups.by_environment_policy_version || [];
     const environmentPolicy = this.buildEnvironmentLoopPolicy({
       market_regime_groups: marketRegimeGroups,
       industry_regime_groups: industryRegimeGroups,
+      version_groups: environmentVersionGroups,
       weak_outcome: weakOutcome,
       strong_outcome: strongOutcome,
     });
@@ -902,6 +940,9 @@ export class RecommendationTradeOutcomeService {
       market_environment: {
         market_regime_rankings: marketRegimeGroups.slice(0, 8),
         industry_regime_rankings: industryRegimeGroups.slice(0, 8),
+        version_rankings: environmentVersionGroups
+          .filter(item => item.key !== 'unknown')
+          .slice(0, 10),
         policy: environmentPolicy,
       },
       policy_versions: policyDashboard
@@ -919,6 +960,7 @@ export class RecommendationTradeOutcomeService {
   private buildEnvironmentLoopPolicy(options: {
     market_regime_groups: RecommendationTradeOutcomeBucket[];
     industry_regime_groups: RecommendationTradeOutcomeBucket[];
+    version_groups?: RecommendationTradeOutcomeBucket[];
     weak_outcome: boolean;
     strong_outcome: boolean;
   }) {
@@ -1046,6 +1088,9 @@ export class RecommendationTradeOutcomeService {
       reduced_segments: reducedSegments,
       boosted_segments: boostedSegments,
       watch_segments: watchSegments.slice(0, 8),
+      version_rankings: (options.version_groups || [])
+        .filter(group => group.key && group.key !== 'unknown')
+        .slice(0, 8),
       rules: [
         '样本≥3且稳健分/超额收益显著转弱：暂停该环境自动入场',
         '样本≥2且平均超额或贝叶斯胜率偏弱：降仓小样本验证',
@@ -1704,6 +1749,7 @@ export class RecommendationTradeOutcomeService {
           count: plain.length,
           open_count: open.length,
           closed_count: closed.length,
+          tracked_count: plain.length,
           win_rate: closed.length ? roundNumber((wins.length / closed.length) * 100, 2) : 0,
           excess_win_rate: roundNumber(excessWinRate, 2),
           avg_return_pct: roundNumber(
