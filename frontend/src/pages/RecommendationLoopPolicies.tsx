@@ -52,6 +52,12 @@ interface PolicyBucket {
   excess_win_rate?: number;
   auto_action?: string;
   confidence?: number;
+  robust_score?: number;
+  sample_confidence?: number;
+  bayesian_win_rate?: number;
+  risk_adjusted_excess_return_pct?: number;
+  return_volatility_pct?: number;
+  drawdown_penalty?: number;
 }
 
 interface StrategyVariant {
@@ -690,14 +696,18 @@ const RecommendationLoopPolicies: React.FC = () => {
                       </Space>
                       <span>
                         版本 {item.count} 次 · 闭环 {item.closed_count || 0} · 成交{' '}
-                        {item.executed || 0} · 胜率 {formatPercent(item.excess_win_rate)}
+                        {item.executed || 0} · 贝叶斯胜率 {formatPercent(item.bayesian_win_rate)}
+                      </span>
+                      <span>
+                        风险调整超额 {formatPercent(item.risk_adjusted_excess_return_pct)} ·
+                        样本置信 {Math.round(Number(item.sample_confidence || 0) * 100)}%
                       </span>
                     </div>
                     <div className="loop-policy-combo-score">
-                      <b style={{ color: pnlColor(item.avg_outcome_excess_return_pct) }}>
-                        {formatPercent(item.avg_outcome_excess_return_pct)}
+                      <b style={{ color: pnlColor(item.robust_score) }}>
+                        {Number(item.robust_score || 0).toFixed(1)}
                       </b>
-                      <span>均超额</span>
+                      <span>稳健分</span>
                     </div>
                   </div>
                 ))}

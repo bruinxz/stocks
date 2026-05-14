@@ -128,6 +128,12 @@ export interface RecommendationTradeOutcomeBucket {
   dimension?: string;
   auto_action?: string;
   confidence?: number;
+  robust_score?: number;
+  sample_confidence?: number;
+  bayesian_win_rate?: number;
+  return_volatility_pct?: number;
+  drawdown_penalty?: number;
+  risk_adjusted_excess_return_pct?: number;
 }
 
 function toNumber(value: any, fallback = 0): number {
@@ -239,6 +245,14 @@ function average(values: number[]): number {
   const valid = values.filter(Number.isFinite);
   if (valid.length === 0) return 0;
   return valid.reduce((sum, value) => sum + value, 0) / valid.length;
+}
+
+function standardDeviation(values: number[]): number {
+  const valid = values.filter(Number.isFinite);
+  if (valid.length <= 1) return 0;
+  const mean = average(valid);
+  const variance = average(valid.map(value => (value - mean) ** 2));
+  return Math.sqrt(Math.max(0, variance));
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -727,13 +741,17 @@ export class RecommendationTradeOutcomeService {
       .filter(segment => segment.key !== 'unknown' && segment.closed_count > 0)
       .sort(
         (a, b) =>
-          b.avg_excess_return_pct - a.avg_excess_return_pct || b.excess_win_rate - a.excess_win_rate
+          toNumber(b.robust_score) - toNumber(a.robust_score) ||
+          b.avg_excess_return_pct - a.avg_excess_return_pct ||
+          b.excess_win_rate - a.excess_win_rate
       )[0];
     const weakStrategyCombo = strategyComboGroups
       .filter(segment => segment.key !== 'unknown' && segment.closed_count > 0)
       .sort(
         (a, b) =>
-          a.avg_excess_return_pct - b.avg_excess_return_pct || a.excess_win_rate - b.excess_win_rate
+          toNumber(a.robust_score) - toNumber(b.robust_score) ||
+          a.avg_excess_return_pct - b.avg_excess_return_pct ||
+          a.excess_win_rate - b.excess_win_rate
       )[0];
     const killList = weakSegments
       .filter(segment => segment.closed_count >= 2 && segment.avg_excess_return_pct < -1)
@@ -772,7 +790,7 @@ export class RecommendationTradeOutcomeService {
         ? `需降权片段：${killList[0].label}，平均超额 ${killList[0].avg_excess_return_pct}%。`
         : '暂无明确需要永久剔除的片段，继续以收益闸门控制仓位。',
       bestStrategyCombo
-        ? `参数组合冠军：${bestStrategyCombo.label}，平均超额 ${bestStrategyCombo.avg_excess_return_pct}%、超额胜率 ${bestStrategyCombo.excess_win_rate}%。`
+        ? `参数组合冠军：${bestStrategyCombo.label}，稳健分 ${bestStrategyCombo.robust_score}，平均超额 ${bestStrategyCombo.avg_excess_return_pct}%、贝叶斯胜率 ${bestStrategyCombo.bayesian_win_rate}%。`
         : '',
     ].filter(Boolean);
 
@@ -1415,6 +1433,35 @@ export class RecommendationTradeOutcomeService {
             .filter(item => toNumber(item.realized_pnl) < 0)
             .reduce((sum, item) => sum + toNumber(item.realized_pnl), 0)
         );
+        const closedExcessReturns = closed.map(item => toNumber(item.excess_return_pct));
+        const avgExcessReturn = roundNumber(average(closedExcessReturns), 4);
+        const excessWinRate = closed.length ? (excessWins.length / closed.length) * 100 : 0;
+        const bayesianWinRate = closed.length
+          ? ((excessWins.length + 2) / (closed.length + 4)) * 100
+          : 50;
+        const sampleConfidence = clamp(closed.length / 12, 0, 1);
+        const returnVolatility = standardDeviation(closedExcessReturns);
+        const drawdownPenalty = Math.abs(
+          Math.min(0, average(plain.map(item => toNumber(item.max_adverse_excursion_pct))))
+        );
+        const riskAdjustedExcess =
+          avgExcessReturn - returnVolatility * 0.18 - drawdownPenalty * 0.12;
+        const robustScore = roundNumber(
+          riskAdjustedExcess * 7 +
+            (bayesianWinRate - 50) * 0.26 +
+            Math.log1p(closed.length) * 2.2 +
+            Math.min(10, toNumber(winSum) / 5000) -
+            Math.max(0, 3 - closed.length) * 3,
+          2
+        );
+        const autoAction =
+          closed.length < 3
+            ? 'collect_samples'
+            : robustScore >= 12 && riskAdjustedExcess > 0.6 && bayesianWinRate >= 53
+            ? 'boost'
+            : robustScore <= -6 || riskAdjustedExcess < -0.8 || bayesianWinRate < 45
+            ? 'reduce'
+            : 'hold';
         return {
           key,
           label: labelSelector(key),
@@ -1422,17 +1469,12 @@ export class RecommendationTradeOutcomeService {
           open_count: open.length,
           closed_count: closed.length,
           win_rate: closed.length ? roundNumber((wins.length / closed.length) * 100, 2) : 0,
-          excess_win_rate: closed.length
-            ? roundNumber((excessWins.length / closed.length) * 100, 2)
-            : 0,
+          excess_win_rate: roundNumber(excessWinRate, 2),
           avg_return_pct: roundNumber(
             average(closed.map(item => toNumber(item.realized_pnl_pct))),
             4
           ),
-          avg_excess_return_pct: roundNumber(
-            average(closed.map(item => toNumber(item.excess_return_pct))),
-            4
-          ),
+          avg_excess_return_pct: avgExcessReturn,
           total_pnl: roundNumber(
             plain.reduce((sum, item) => sum + toNumber(item.total_pnl), 0),
             2
@@ -1448,18 +1490,18 @@ export class RecommendationTradeOutcomeService {
           avg_consensus_count: roundNumber(average(consensusCounts), 2),
           avg_consensus_bonus: roundNumber(average(consensusBonuses), 2),
           dimension,
-          auto_action:
-            closed.length < 2
-              ? 'collect_samples'
-              : roundNumber(average(closed.map(item => toNumber(item.excess_return_pct))), 4) > 1
-              ? 'boost'
-              : roundNumber(average(closed.map(item => toNumber(item.excess_return_pct))), 4) < -1
-              ? 'reduce'
-              : 'hold',
-          confidence: roundNumber(clamp(closed.length / 8, 0, 1), 2),
+          auto_action: autoAction,
+          confidence: roundNumber(sampleConfidence, 2),
+          robust_score: robustScore,
+          sample_confidence: roundNumber(sampleConfidence, 2),
+          bayesian_win_rate: roundNumber(bayesianWinRate, 2),
+          return_volatility_pct: roundNumber(returnVolatility, 4),
+          drawdown_penalty: roundNumber(drawdownPenalty, 4),
+          risk_adjusted_excess_return_pct: roundNumber(riskAdjustedExcess, 4),
         };
       })
       .sort((a, b) => {
+        if (b.robust_score !== a.robust_score) return b.robust_score - a.robust_score;
         if (b.closed_count !== a.closed_count) return b.closed_count - a.closed_count;
         if (b.avg_excess_return_pct !== a.avg_excess_return_pct) {
           return b.avg_excess_return_pct - a.avg_excess_return_pct;

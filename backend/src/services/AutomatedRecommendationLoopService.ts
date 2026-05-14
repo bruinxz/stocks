@@ -230,13 +230,19 @@ class AutomatedRecommendationLoopService {
       const bestStrategy = promotion.best_strategy_key || null;
       const bestStrategyClosed = toNumber(bestStrategy?.closed_count, 0);
       const bestStrategyExcess = toNumber(bestStrategy?.avg_outcome_excess_return_pct, 0);
+      const bestStrategyRobustScore = toNumber(bestStrategy?.robust_score, 0);
+      const bestStrategyBayesianWinRate = toNumber(bestStrategy?.bayesian_win_rate, 50);
+      const bestStrategySampleConfidence = toNumber(bestStrategy?.sample_confidence, 0);
       const strategyParsed = parseRecommendationStrategyKey(bestStrategy?.key);
       const shouldAdoptStrategyCombo =
         bestStrategy &&
         bestStrategy.key &&
         bestStrategy.key !== 'unknown' &&
-        bestStrategyClosed >= 2 &&
-        bestStrategyExcess > Math.max(0.8, toNumber(summary.avg_outcome_excess_return_pct, 0));
+        bestStrategyClosed >= 3 &&
+        bestStrategySampleConfidence >= 0.25 &&
+        bestStrategyRobustScore >= 8 &&
+        bestStrategyBayesianWinRate >= 52 &&
+        bestStrategyExcess > Math.max(0.5, toNumber(summary.avg_outcome_excess_return_pct, 0));
       const currentMinScore = toNumber(policy.effective_min_score, options.base_min_score);
       const comboMinScore = shouldAdoptStrategyCombo
         ? recommendationScoreBucketFloor(strategyParsed.score, currentMinScore)

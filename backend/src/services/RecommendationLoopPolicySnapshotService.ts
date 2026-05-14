@@ -532,7 +532,9 @@ export class RecommendationLoopPolicySnapshotService {
         .map(item => ({
           ...item,
           promotion_score: roundNumber(
-            toNumber(item.avg_outcome_excess_return_pct) * 7 +
+            (item.robust_score !== undefined
+              ? toNumber(item.robust_score)
+              : toNumber(item.avg_outcome_excess_return_pct) * 7) +
               (toNumber(item.executed) + toNumber(item.planned)) * 0.8 +
               Math.log1p(toNumber(item.count)) * 2,
             2

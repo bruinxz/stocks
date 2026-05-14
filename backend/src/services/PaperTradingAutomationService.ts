@@ -2189,7 +2189,9 @@ class PaperTradingAutomationService {
               .filter(
                 (segment: any) =>
                   Number(segment.closed_count || 0) >= 2 &&
-                  (Number(segment.avg_excess_return_pct || 0) <= -2 ||
+                  (Number(segment.robust_score || 0) <= -6 ||
+                    Number(segment.risk_adjusted_excess_return_pct || 0) <= -1 ||
+                    Number(segment.avg_excess_return_pct || 0) <= -2 ||
                     Number(segment.excess_win_rate || 0) < 35)
               )
               .slice(0, 8)
@@ -2199,9 +2201,10 @@ class PaperTradingAutomationService {
           ? strategyWeakSegments
               .filter(
                 (segment: any) =>
-                  Number(segment.closed_count || 0) >= 2 &&
-                  (Number(segment.avg_excess_return_pct || 0) <= -1.2 ||
-                    Number(segment.excess_win_rate || 0) < 40)
+                  Number(segment.closed_count || 0) >= 3 &&
+                  (Number(segment.robust_score || 0) <= -4 ||
+                    Number(segment.risk_adjusted_excess_return_pct || 0) <= -0.8 ||
+                    Number(segment.bayesian_win_rate || 50) < 45)
               )
               .slice(0, 6)
           : [];
