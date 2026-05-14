@@ -100,6 +100,17 @@ interface EnvironmentLoopPolicy {
   watch_segments: EnvironmentPolicySegment[];
   rules?: string[];
   reason?: string;
+  promoted_environment_strategy_combo?: EnvironmentStrategyComboRanking | null;
+  promoted_environment_strategy_feedback_applied?: boolean;
+  promoted_environment_strategy_feedback_reason?: string;
+  promoted_environment_strategy_policy?: {
+    style?: string;
+    min_score?: number;
+    default_position_pct?: number;
+    max_position_pct?: number;
+    paper_trade_limit?: number;
+    strategy_key?: string;
+  } | null;
 }
 
 interface EnvironmentRanking {
@@ -120,6 +131,8 @@ interface EnvironmentRanking {
 interface EnvironmentStrategyComboRanking extends EnvironmentRanking {
   total_pnl?: number;
   auto_action?: string;
+  takeover_ready?: boolean;
+  takeover_reason?: string;
 }
 
 interface OptimizationData {
@@ -672,6 +685,40 @@ const AutonomousOptimizationLab: React.FC = () => {
             }
             loading={loading}
           >
+            <div className="optimization-env-takeover">
+              <div>
+                <span>TAKEOVER STATUS</span>
+                <strong>
+                  {environmentPolicy?.promoted_environment_strategy_feedback_applied
+                    ? '已接管下一轮参数'
+                    : '等待更多闭环样本'}
+                </strong>
+                <p>
+                  {environmentPolicy?.promoted_environment_strategy_feedback_reason ||
+                    '仅当闭环≥3、稳健分≥8、平均超额为正且贝叶斯胜率达标时，环境×策略冠军才会接管。'}
+                </p>
+              </div>
+              <Space wrap>
+                <Tag color="cyan">
+                  风格：
+                  {styleLabel(environmentPolicy?.promoted_environment_strategy_policy?.style)}
+                </Tag>
+                <Tag color="gold">
+                  评分≥{environmentPolicy?.promoted_environment_strategy_policy?.min_score || '--'}
+                </Tag>
+                <Tag color="purple">
+                  仓位{' '}
+                  {formatPercent(
+                    environmentPolicy?.promoted_environment_strategy_policy?.default_position_pct
+                  )}
+                </Tag>
+                <Tag color="geekblue">
+                  跟单{' '}
+                  {environmentPolicy?.promoted_environment_strategy_policy?.paper_trade_limit ||
+                    '--'}
+                </Tag>
+              </Space>
+            </div>
             <div className="optimization-env-combo-grid">
               {environmentStrategyComboRankings.map((item, index) => (
                 <div className="optimization-env-combo-tile" key={item.key || index}>
@@ -691,7 +738,9 @@ const AutonomousOptimizationLab: React.FC = () => {
                   <strong style={{ color: pnlColor(item.avg_excess_return_pct) }}>
                     {formatPercent(item.avg_excess_return_pct)}
                   </strong>
-                  <em>该环境下该参数组合的平均超额</em>
+                  <em>
+                    {item.takeover_ready ? '已满足接管条件' : item.takeover_reason || '继续观察'}
+                  </em>
                 </div>
               ))}
               {!environmentStrategyComboRankings.length && (

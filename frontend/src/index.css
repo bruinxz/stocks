@@ -4217,6 +4217,49 @@ a {
   gap: 12px;
 }
 
+.optimization-env-takeover {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 14px;
+  padding: 18px;
+  border-radius: 24px;
+  background: radial-gradient(circle at 0% 0%, rgba(214, 166, 79, 0.18), transparent 34%),
+    rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 231, 174, 0.14);
+}
+
+.optimization-env-takeover span,
+.optimization-env-takeover strong,
+.optimization-env-takeover p {
+  display: block;
+}
+
+.optimization-env-takeover span {
+  color: var(--auto-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+}
+
+.optimization-env-takeover strong {
+  margin-top: 5px;
+  color: #ffe7ae;
+  font-family: var(--font-display);
+  font-size: 30px;
+  line-height: 1;
+  letter-spacing: -0.055em;
+}
+
+.optimization-env-takeover p {
+  max-width: 760px;
+  margin: 8px 0 0;
+  color: rgba(226, 236, 247, 0.76);
+  line-height: 1.65;
+}
+
 .optimization-env-combo-tile {
   position: relative;
   min-height: 176px;
@@ -4749,6 +4792,11 @@ a {
 
   .optimization-env-combo-grid {
     grid-template-columns: 1fr;
+  }
+
+  .optimization-env-takeover {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .optimization-env-stat {

@@ -139,6 +139,8 @@ export interface RecommendationTradeOutcomeBucket {
   return_volatility_pct?: number;
   drawdown_penalty?: number;
   risk_adjusted_excess_return_pct?: number;
+  takeover_ready?: boolean;
+  takeover_reason?: string;
 }
 
 function toNumber(value: any, fallback = 0): number {
@@ -1816,6 +1818,25 @@ export class RecommendationTradeOutcomeService {
           return_volatility_pct: roundNumber(returnVolatility, 4),
           drawdown_penalty: roundNumber(drawdownPenalty, 4),
           risk_adjusted_excess_return_pct: roundNumber(riskAdjustedExcess, 4),
+          takeover_ready:
+            dimension === 'environment_strategy_combo' &&
+            closed.length >= 3 &&
+            sampleConfidence >= 0.25 &&
+            robustScore >= 8 &&
+            avgExcessReturn > 0.5 &&
+            bayesianWinRate >= 52,
+          takeover_reason:
+            dimension === 'environment_strategy_combo'
+              ? closed.length < 3
+                ? `闭环样本 ${closed.length}/3，不接管`
+                : robustScore < 8
+                ? `稳健分 ${robustScore}/8，不接管`
+                : avgExcessReturn <= 0.5
+                ? `平均超额 ${avgExcessReturn}% 不足，不接管`
+                : bayesianWinRate < 52
+                ? `贝叶斯胜率 ${roundNumber(bayesianWinRate, 2)}% 不足，不接管`
+                : '满足样本、稳健分、超额收益和贝叶斯胜率，允许接管'
+              : undefined,
         };
       })
       .sort((a, b) => {

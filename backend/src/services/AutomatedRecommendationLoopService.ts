@@ -106,6 +106,11 @@ function asPlainObject(value: any): Record<string, any> {
   return value;
 }
 
+function extractStrategyKeyFromEnvironmentComboKey(key?: string): string {
+  const match = String(key || '').match(/strategy:(.+)$/);
+  return match?.[1] || '';
+}
+
 function buildLoopRunId(prefix = 'loop'): string {
   const stamp = moment().tz('Asia/Shanghai').format('YYYYMMDDHHmmss');
   const suffix = Math.random().toString(36).slice(2, 8);
@@ -179,6 +184,14 @@ class AutomatedRecommendationLoopService {
     };
 
     if (!options.enabled) return enrichedPolicy;
+    if (policy.environment_strategy_feedback_applied) {
+      return {
+        ...enrichedPolicy,
+        strategy_experiment_feedback_reason:
+          '环境×策略收益冠军已接管本轮扫描参数，跳过策略实验覆盖，避免质量实验冲掉真实收益反馈。',
+        reason: `${policy.reason}；策略实验让位于环境×策略收益冠军`,
+      };
+    }
 
     try {
       const dashboard = await recommendationLoopPolicySnapshotService.getDashboard({
@@ -408,6 +421,11 @@ class AutomatedRecommendationLoopService {
         : Array.isArray(policy.version_rankings)
         ? policy.version_rankings
         : [];
+      const strategyComboRankings = Array.isArray(
+        (dashboard as any).market_environment?.strategy_combo_rankings
+      )
+        ? (dashboard as any).market_environment.strategy_combo_rankings
+        : [];
       const bestEnvironmentVersion = versionRankings.find(
         (item: any) =>
           item?.key &&
@@ -415,6 +433,18 @@ class AutomatedRecommendationLoopService {
           toNumber(item.closed_count, 0) >= 3 &&
           toNumber(item.robust_score, 0) >= 4 &&
           toNumber(item.avg_excess_return_pct, 0) > 0
+      );
+      const bestEnvironmentStrategyCombo = strategyComboRankings.find(
+        (item: any) =>
+          item?.key &&
+          !String(item.key).includes('env:unknown') &&
+          !String(item.key).includes('strategy:unknown') &&
+          (item.takeover_ready ||
+            (toNumber(item.closed_count, 0) >= 3 &&
+              toNumber(item.sample_confidence, 0) >= 0.25 &&
+              toNumber(item.robust_score, 0) >= 8 &&
+              toNumber(item.avg_excess_return_pct, 0) > 0.5 &&
+              toNumber(item.bayesian_win_rate, 50) >= 52))
       );
       const inheritedEnvironmentVersion = bestEnvironmentVersion
         ? await recommendationLoopPolicySnapshotService.findEnvironmentPolicySnapshot({
@@ -424,6 +454,10 @@ class AutomatedRecommendationLoopService {
           })
         : null;
       const inheritedPolicy = asPlainObject(inheritedEnvironmentVersion?.policy);
+      const strategyKey = extractStrategyKeyFromEnvironmentComboKey(
+        bestEnvironmentStrategyCombo?.key
+      );
+      const strategyParsed = parseRecommendationStrategyKey(strategyKey);
       const confidence = toNumber(policy.confidence, 0);
       const closedSamples = toNumber(policy.closed_samples, 0);
       const versionConfidence = bestEnvironmentVersion
@@ -489,14 +523,47 @@ class AutomatedRecommendationLoopService {
               confidence: roundNumber(versionConfidence, 4),
             }
           : null,
+        promoted_environment_strategy_combo: bestEnvironmentStrategyCombo
+          ? {
+              key: bestEnvironmentStrategyCombo.key,
+              label: bestEnvironmentStrategyCombo.label,
+              strategy_key: strategyKey,
+              closed_count: bestEnvironmentStrategyCombo.closed_count,
+              avg_excess_return_pct: bestEnvironmentStrategyCombo.avg_excess_return_pct,
+              excess_win_rate: bestEnvironmentStrategyCombo.excess_win_rate,
+              bayesian_win_rate: bestEnvironmentStrategyCombo.bayesian_win_rate,
+              robust_score: bestEnvironmentStrategyCombo.robust_score,
+              takeover_reason: bestEnvironmentStrategyCombo.takeover_reason,
+            }
+          : null,
+        promoted_environment_strategy_feedback_applied: Boolean(bestEnvironmentStrategyCombo),
+        promoted_environment_strategy_feedback_reason: bestEnvironmentStrategyCombo
+          ? `环境×策略冠军 ${bestEnvironmentStrategyCombo.label}：闭环 ${bestEnvironmentStrategyCombo.closed_count} 笔、平均超额 ${bestEnvironmentStrategyCombo.avg_excess_return_pct}%、稳健分 ${bestEnvironmentStrategyCombo.robust_score}，下一轮接管扫描参数`
+          : '暂无满足防过拟合条件的环境×策略组合',
+        promoted_environment_strategy_policy: bestEnvironmentStrategyCombo
+          ? {
+              strategy_key: strategyKey,
+              style: normalizeRecommendationStyle(strategyParsed.style),
+              min_score: recommendationScoreBucketFloor(strategyParsed.score, 72),
+              default_position_pct: recommendationPositionBucketMidpoint(strategyParsed.pos, 5),
+              max_position_pct: recommendationPositionBucketMidpoint(strategyParsed.max, 10),
+              paper_trade_limit: recommendationTradeLimitFromStrategyKey(strategyKey, 3),
+            }
+          : null,
         promoted_environment_policy_feedback_applied: Boolean(bestEnvironmentVersion),
         promoted_environment_policy_feedback_reason: bestEnvironmentVersion
           ? `环境版本收益冠军 ${bestEnvironmentVersion.label}：闭环 ${bestEnvironmentVersion.closed_count} 笔、平均超额 ${bestEnvironmentVersion.avg_excess_return_pct}%、稳健分 ${bestEnvironmentVersion.robust_score}，下一轮继承其环境纪律`
           : '暂无可晋级的环境闸门版本',
         confidence: roundNumber(Math.max(confidence, versionConfidence), 4),
-        reason: bestEnvironmentVersion
-          ? `${policyReason}；已继承环境版本冠军 ${bestEnvironmentVersion.label}`
-          : policyReason,
+        reason: [
+          policyReason,
+          bestEnvironmentVersion ? `已继承环境版本冠军 ${bestEnvironmentVersion.label}` : '',
+          bestEnvironmentStrategyCombo
+            ? `环境×策略冠军 ${bestEnvironmentStrategyCombo.label} 已具备接管条件`
+            : '',
+        ]
+          .filter(Boolean)
+          .join('；'),
       };
     } catch (error: any) {
       logger.warn(`读取环境闸门反馈失败，沿用默认环境纪律: ${error?.message || error}`);
@@ -837,6 +904,63 @@ class AutomatedRecommendationLoopService {
       environment_feedback_applied: environment_policy.applied,
       environment_feedback_reason: environment_policy.reason,
     });
+    const environmentStrategyPolicy = asPlainObject(
+      environment_policy.promoted_environment_strategy_policy
+    );
+    if (environment_policy.promoted_environment_strategy_feedback_applied) {
+      const nextMinScore = toNumber(
+        environmentStrategyPolicy.min_score,
+        loop_policy.effective_min_score
+      );
+      const nextDefaultPosition = toNumber(
+        environmentStrategyPolicy.default_position_pct,
+        loop_policy.effective_default_position_pct
+      );
+      const nextMaxPosition = toNumber(
+        environmentStrategyPolicy.max_position_pct,
+        loop_policy.effective_max_position_pct
+      );
+      const nextTradeLimit = toPositiveInt(
+        environmentStrategyPolicy.paper_trade_limit,
+        loop_policy.effective_paper_trade_limit,
+        20
+      );
+      Object.assign(loop_policy, {
+        effective_style: normalizeRecommendationStyle(
+          environmentStrategyPolicy.style || loop_policy.effective_style
+        ),
+        effective_min_score: roundNumber(
+          clampNumber(Math.max(toNumber(loop_policy.base_min_score, 72) - 2, nextMinScore), 62, 94),
+          2
+        ),
+        effective_default_position_pct: roundNumber(
+          clampNumber(
+            nextDefaultPosition,
+            1,
+            Math.max(1, toNumber(loop_policy.base_max_position_pct, 10))
+          ),
+          2
+        ),
+        effective_max_position_pct: roundNumber(
+          clampNumber(
+            Math.max(nextMaxPosition, nextDefaultPosition),
+            Math.max(1, nextDefaultPosition),
+            Math.max(nextDefaultPosition, toNumber(loop_policy.base_max_position_pct, 10))
+          ),
+          2
+        ),
+        effective_paper_trade_limit: Math.max(1, Math.min(8, nextTradeLimit)),
+        environment_strategy_feedback_applied: true,
+        promoted_environment_strategy_key: environmentStrategyPolicy.strategy_key,
+        promoted_environment_strategy_label:
+          environment_policy.promoted_environment_strategy_combo?.label,
+        environment_strategy_feedback_reason:
+          environment_policy.promoted_environment_strategy_feedback_reason,
+        reason: `${loop_policy.reason}；环境×策略反馈：${
+          environment_policy.promoted_environment_strategy_combo?.label || '冠军组合'
+        } 接管下一轮参数`,
+      });
+    }
     const candidateLimit = toPositiveInt(
       options.candidate_limit,
       universe === 'market' ? 30 : 20,
