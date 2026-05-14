@@ -42,7 +42,11 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import api, { getAutonomousTradingDashboard, runPaperTradingRiskCheck } from '../services/api';
+import {
+  getAutonomousTradingDashboard,
+  runAutonomousAutoSync,
+  runAutonomousRiskCheck,
+} from '../services/api';
 
 const { Text, Paragraph } = Typography;
 
@@ -174,6 +178,16 @@ interface DashboardData {
   };
 }
 
+interface ActionDigest {
+  tone: 'entry' | 'risk';
+  title: string;
+  description: string;
+  metrics: Array<{
+    label: string;
+    value: string | number;
+  }>;
+}
+
 const formatMoney = (value?: number | null) =>
   `¥${Number(value || 0).toLocaleString('zh-CN', {
     minimumFractionDigits: 2,
@@ -214,6 +228,7 @@ const AutonomousTradingOverview: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [riskChecking, setRiskChecking] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [lastAction, setLastAction] = useState<ActionDigest | null>(null);
 
   const fetchDashboard = async (silent = false) => {
     setLoading(true);
@@ -233,11 +248,9 @@ const AutonomousTradingOverview: React.FC = () => {
   const runRiskCheck = async () => {
     setRiskChecking(true);
     try {
-      const response = await runPaperTradingRiskCheck({
+      const response = await runAutonomousRiskCheck({
         dry_run: false,
         report_to_feishu: true,
-        portfolio_name: 'Codex自主荐股模拟盘（20W）',
-        initial_capital: 200000,
         enable_stop_loss: true,
         enable_take_profit: true,
         enable_sell_signals: true,
@@ -249,7 +262,30 @@ const AutonomousTradingOverview: React.FC = () => {
       });
       if (response.data.success) {
         message.success(response.data.message || '卖出/风控结算完成');
-        await fetchDashboard(true);
+        const execution = response.data.data?.execution;
+        if (execution) {
+          setLastAction({
+            tone: 'risk',
+            title: execution.dry_run ? '风控预演结果' : '风控结算结果',
+            description: execution.dry_run
+              ? `本次预演识别出 ${execution.planned || 0} 笔待退出仓位。`
+              : `本次已按卖出/止损/止盈规则结算 ${execution.exited || 0} 笔仓位。`,
+            metrics: [
+              { label: '检查持仓', value: execution.checked || 0 },
+              {
+                label: execution.dry_run ? '计划退出' : '已退出',
+                value: execution.dry_run ? execution.planned || 0 : execution.exited || 0,
+              },
+              { label: '继续持有', value: execution.held || 0 },
+              { label: '跳过', value: execution.skipped || 0 },
+            ],
+          });
+        }
+        if (response.data.data?.dashboard) {
+          setData(response.data.data.dashboard);
+        } else {
+          await fetchDashboard(true);
+        }
       }
     } catch (error: any) {
       message.error(error.response?.data?.message || '卖出/风控结算失败');
@@ -261,7 +297,7 @@ const AutonomousTradingOverview: React.FC = () => {
   const runAutoSync = async () => {
     setSyncing(true);
     try {
-      const response = await api.post('/paper-trading/auto-sync-recommendations', {
+      const response = await runAutonomousAutoSync({
         refresh_recommendations: true,
         universe: 'market',
         style: 'balanced',
@@ -274,8 +310,6 @@ const AutonomousTradingOverview: React.FC = () => {
         default_position_pct: 5,
         max_position_pct: 10,
         report_to_feishu: true,
-        portfolio_name: 'Codex自主荐股模拟盘（20W）',
-        initial_capital: 200000,
         verify_signals: true,
         use_entry_risk_guard: true,
         use_profit_gate: true,
@@ -283,7 +317,37 @@ const AutonomousTradingOverview: React.FC = () => {
       });
       if (response.data.success) {
         message.success(response.data.message || '全市场推荐与模拟跟单完成');
-        await fetchDashboard(true);
+        const execution = response.data.data?.execution;
+        if (execution) {
+          const generated = execution.generated;
+          setLastAction({
+            tone: 'entry',
+            title: execution.dry_run ? '推荐跟单预演结果' : '推荐跟单结果',
+            description: generated
+              ? `全市场候选 ${generated.analyzed_candidates || 0}/${
+                  generated.total_candidates || 0
+                }，最终模拟${execution.dry_run ? '计划' : '成交'} ${
+                  execution.dry_run ? execution.planned || 0 : execution.executed || 0
+                } 笔。`
+              : `从已有信号池中扫描 ${execution.scanned || 0} 条，模拟${
+                  execution.dry_run ? '计划' : '成交'
+                } ${execution.dry_run ? execution.planned || 0 : execution.executed || 0} 笔。`,
+            metrics: [
+              { label: '扫描信号', value: execution.scanned || 0 },
+              { label: '符合条件', value: execution.eligible || 0 },
+              {
+                label: execution.dry_run ? '计划买入' : '已买入',
+                value: execution.dry_run ? execution.planned || 0 : execution.executed || 0,
+              },
+              { label: '跳过', value: execution.skipped || 0 },
+            ],
+          });
+        }
+        if (response.data.data?.dashboard) {
+          setData(response.data.data.dashboard);
+        } else {
+          await fetchDashboard(true);
+        }
       }
     } catch (error: any) {
       message.error(error.response?.data?.message || '全市场推荐跟单失败');
@@ -497,6 +561,24 @@ const AutonomousTradingOverview: React.FC = () => {
         message="模拟盘说明"
         description="这里展示的是自主荐股能力的模拟交易闭环，不代表真实账户下单。卖出信号、止损、止盈和最长持有期会触发模拟结算，结算数据会用于后续策略反哺。"
       />
+
+      {lastAction ? (
+        <Card className={`modern-card autonomous-action-digest ${lastAction.tone}`}>
+          <div className="autonomous-action-copy">
+            <div className="autonomous-kicker dark">LATEST LOOP EXECUTION</div>
+            <h2>{lastAction.title}</h2>
+            <p>{lastAction.description}</p>
+          </div>
+          <div className="autonomous-action-metrics">
+            {lastAction.metrics.map(item => (
+              <div key={item.label}>
+                <span>{item.label}</span>
+                <strong>{item.value}</strong>
+              </div>
+            ))}
+          </div>
+        </Card>
+      ) : null}
 
       <Row gutter={[16, 16]} className="autonomous-score-row">
         <Col xs={24} sm={12} xl={6}>

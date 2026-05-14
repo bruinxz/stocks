@@ -14,6 +14,10 @@ import { paperTradingPlanService } from './PaperTradingPlanService';
 import { benchmarkIndexService } from './BenchmarkIndexService';
 import { automatedRecommendationLoopService } from './AutomatedRecommendationLoopService';
 import { recommendationTradeOutcomeService } from './RecommendationTradeOutcomeService';
+import {
+  AUTONOMOUS_PORTFOLIO_NAME,
+  DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
+} from './PaperTradingDashboardService';
 import moment from 'moment-timezone';
 import { Op } from 'sequelize';
 
@@ -91,6 +95,69 @@ class SchedulerService {
     return undefined;
   }
 
+  private resolvePortfolioParams(parameters: any) {
+    return {
+      portfolio_name:
+        parameters.portfolio_name ||
+        parameters.portfolioName ||
+        (parameters.use_autonomous_portfolio || parameters.useAutonomousPortfolio
+          ? AUTONOMOUS_PORTFOLIO_NAME
+          : undefined),
+      initial_capital:
+        parameters.initial_capital !== undefined
+          ? Number(parameters.initial_capital)
+          : parameters.initialCapital !== undefined
+            ? Number(parameters.initialCapital)
+            : parameters.use_autonomous_portfolio || parameters.useAutonomousPortfolio
+              ? DEFAULT_AUTONOMOUS_INITIAL_CAPITAL
+              : undefined,
+      force_new_portfolio:
+        parameters.force_new_portfolio !== undefined
+          ? Boolean(parameters.force_new_portfolio)
+          : parameters.forceNewPortfolio !== undefined
+            ? Boolean(parameters.forceNewPortfolio)
+            : false,
+    };
+  }
+
+  private patchMissingParameters(
+    existingParameters: Record<string, any> | null | undefined,
+    defaultParameters: Record<string, any> | null | undefined,
+    keys: string[]
+  ): Record<string, any> | null {
+    const params = existingParameters || {};
+    const defaults = defaultParameters || {};
+    const nextParams = { ...params };
+
+    for (const key of keys) {
+      if (nextParams[key] === undefined && defaults[key] !== undefined) {
+        nextParams[key] = defaults[key];
+      }
+    }
+
+    return JSON.stringify(nextParams) !== JSON.stringify(params) ? nextParams : null;
+  }
+
+  private patchAutonomousPortfolioParameters(task: ScheduledTask, taskData: any) {
+    const autonomousTaskNames = new Set([
+      '全市场荐股闭环',
+      '推荐信号模拟盘跟单',
+      'Agent尾盘建议模拟盘跟单',
+      '模拟盘风控退出检查',
+      '模拟盘收益归因报告',
+      '推荐交易收益闭环刷新',
+      '模拟盘交易计划报告',
+    ]);
+    if (!autonomousTaskNames.has(taskData.name)) return null;
+
+    return this.patchMissingParameters(task.parameters, taskData.parameters, [
+      'username',
+      'use_autonomous_portfolio',
+      'portfolio_name',
+      'initial_capital',
+    ]);
+  }
+
   private async markTaskFinished(
     task: ScheduledTask,
     status: TaskRunStatus,
@@ -148,10 +215,7 @@ class SchedulerService {
         started_at: timestamp,
       });
     } catch (error: any) {
-      logger.error(
-        `创建定时任务执行日志失败，任务仍将继续执行: ${task.id} (${task.name})`,
-        error
-      );
+      logger.error(`创建定时任务执行日志失败，任务仍将继续执行: ${task.id} (${task.name})`, error);
       return null;
     }
   }
@@ -195,6 +259,7 @@ class SchedulerService {
 
     try {
       const parameters = task.parameters || {};
+      const portfolioParams = this.resolvePortfolioParams(parameters);
       const today = this.getChinaDate();
 
       if (task.type === 'DAILY_UPDATE') {
@@ -466,6 +531,7 @@ class SchedulerService {
       } else if (task.type === 'PAPER_TRADING_AUTO_SYNC') {
         const result = await paperTradingAutomationService.runAutoSync({
           username: parameters.username,
+          ...portfolioParams,
           source_type: parameters.source_type || parameters.sourceType,
           limit: this.toPositiveInt(parameters.limit, 5, 20),
           scan_limit: this.toPositiveInt(
@@ -610,6 +676,7 @@ class SchedulerService {
       } else if (task.type === 'PAPER_TRADING_RISK_CHECK') {
         const result = await paperTradingAutomationService.runRiskCheck({
           username: parameters.username,
+          ...portfolioParams,
           dry_run:
             parameters.dry_run !== undefined
               ? Boolean(parameters.dry_run)
@@ -670,6 +737,7 @@ class SchedulerService {
       } else if (task.type === 'PAPER_TRADING_ATTRIBUTION_REPORT') {
         const result = await paperTradingAttributionService.getAttribution({
           username: parameters.username,
+          ...portfolioParams,
           include_open:
             parameters.include_open !== undefined
               ? Boolean(parameters.include_open)
@@ -703,6 +771,7 @@ class SchedulerService {
       } else if (task.type === 'RECOMMENDATION_TRADE_OUTCOME_REFRESH') {
         const result = await recommendationTradeOutcomeService.refreshPortfolioOutcomes({
           username: parameters.username || 'lym',
+          ...portfolioParams,
           include_open:
             parameters.include_open !== undefined
               ? Boolean(parameters.include_open)
@@ -740,6 +809,7 @@ class SchedulerService {
       } else if (task.type === 'PAPER_TRADING_DAILY_PLAN') {
         const result = await paperTradingPlanService.generatePlan({
           username: parameters.username,
+          ...portfolioParams,
           include_entries:
             parameters.include_entries !== undefined
               ? Boolean(parameters.include_entries)
@@ -895,6 +965,7 @@ class SchedulerService {
       } else if (task.type === 'AUTO_RECOMMENDATION_LOOP') {
         const result = await automatedRecommendationLoopService.run({
           username: parameters.username || 'lym',
+          ...portfolioParams,
           universe: parameters.universe === 'favorites' ? 'favorites' : 'market',
           style: ['balanced', 'momentum', 'value', 'low_risk'].includes(parameters.style)
             ? parameters.style
@@ -1361,6 +1432,9 @@ class SchedulerService {
         is_active: true,
         parameters: {
           username: 'lym',
+          use_autonomous_portfolio: true,
+          portfolio_name: AUTONOMOUS_PORTFOLIO_NAME,
+          initial_capital: DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
           universe: 'market',
           style: 'balanced',
           candidate_limit: 30,
@@ -1466,6 +1540,9 @@ class SchedulerService {
         is_active: true,
         parameters: {
           username: 'lym',
+          use_autonomous_portfolio: true,
+          portfolio_name: AUTONOMOUS_PORTFOLIO_NAME,
+          initial_capital: DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
           refresh_recommendations: true,
           universe: 'favorites',
           style: 'balanced',
@@ -1504,6 +1581,9 @@ class SchedulerService {
         is_active: true,
         parameters: {
           username: 'lym',
+          use_autonomous_portfolio: true,
+          portfolio_name: AUTONOMOUS_PORTFOLIO_NAME,
+          initial_capital: DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
           refresh_recommendations: false,
           source_type: 'tradingagents',
           agent_session: 'close',
@@ -1539,6 +1619,9 @@ class SchedulerService {
         is_active: true,
         parameters: {
           username: 'lym',
+          use_autonomous_portfolio: true,
+          portfolio_name: AUTONOMOUS_PORTFOLIO_NAME,
+          initial_capital: DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
           limit: 30,
           enable_stop_loss: true,
           enable_take_profit: true,
@@ -1559,6 +1642,9 @@ class SchedulerService {
         is_active: true,
         parameters: {
           username: 'lym',
+          use_autonomous_portfolio: true,
+          portfolio_name: AUTONOMOUS_PORTFOLIO_NAME,
+          initial_capital: DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
           include_open: true,
           limit: 2000,
           report_to_feishu: true,
@@ -1571,6 +1657,9 @@ class SchedulerService {
         is_active: true,
         parameters: {
           username: 'lym',
+          use_autonomous_portfolio: true,
+          portfolio_name: AUTONOMOUS_PORTFOLIO_NAME,
+          initial_capital: DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
           include_open: true,
           lookback_days: 180,
           limit: 2000,
@@ -1584,6 +1673,9 @@ class SchedulerService {
         is_active: true,
         parameters: {
           username: 'lym',
+          use_autonomous_portfolio: true,
+          portfolio_name: AUTONOMOUS_PORTFOLIO_NAME,
+          initial_capital: DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
           include_entries: true,
           include_exits: true,
           include_monitor: true,
@@ -1635,8 +1727,13 @@ class SchedulerService {
       if (task.is_active === null || task.is_active === undefined)
         patch.is_active = taskData.is_active;
 
+      const autonomousParamsPatch = this.patchAutonomousPortfolioParameters(task, taskData);
+      if (autonomousParamsPatch) {
+        patch.parameters = autonomousParamsPatch;
+      }
+
       if (taskData.name === '全量股票日线同步') {
-        const params = task.parameters || {};
+        const params = patch.parameters || task.parameters || {};
         const nextParams = { ...taskData.parameters, ...params };
         const hasExplicitScope =
           Array.isArray(params.symbols) ||
@@ -1665,7 +1762,7 @@ class SchedulerService {
       }
 
       if (taskData.name === 'Agent尾盘建议收益追踪') {
-        const params = task.parameters || {};
+        const params = patch.parameters || task.parameters || {};
         const nextParams = { ...taskData.parameters, ...params };
         for (const key of [
           'auto_repair_missing_data',
@@ -1687,7 +1784,7 @@ class SchedulerService {
       }
 
       if (taskData.name === '信号质量日报') {
-        const params = task.parameters || {};
+        const params = patch.parameters || task.parameters || {};
         const nextParams = { ...taskData.parameters, ...params };
         for (const key of [
           'horizon',
@@ -1712,10 +1809,13 @@ class SchedulerService {
       }
 
       if (taskData.name === '全市场荐股闭环') {
-        const params = task.parameters || {};
+        const params = patch.parameters || task.parameters || {};
         const nextParams = { ...taskData.parameters, ...params };
         for (const key of [
           'username',
+          'use_autonomous_portfolio',
+          'portfolio_name',
+          'initial_capital',
           'universe',
           'style',
           'candidate_limit',
@@ -1780,9 +1880,12 @@ class SchedulerService {
         taskData.name === 'Agent尾盘建议模拟盘跟单' ||
         taskData.name === '模拟盘交易计划报告'
       ) {
-        const params = task.parameters || {};
+        const params = patch.parameters || task.parameters || {};
         const nextParams = { ...taskData.parameters, ...params };
         for (const key of [
+          'use_autonomous_portfolio',
+          'portfolio_name',
+          'initial_capital',
           'use_profit_gate',
           'profit_gate_horizon',
           'profit_gate_min_samples',
@@ -1805,9 +1908,49 @@ class SchedulerService {
       }
 
       if (taskData.name === '推荐交易收益闭环刷新') {
-        const params = task.parameters || {};
+        const params = patch.parameters || task.parameters || {};
         const nextParams = { ...taskData.parameters, ...params };
-        for (const key of ['include_open', 'lookback_days', 'limit', 'report_to_feishu']) {
+        for (const key of [
+          'use_autonomous_portfolio',
+          'portfolio_name',
+          'initial_capital',
+          'include_open',
+          'lookback_days',
+          'limit',
+          'report_to_feishu',
+        ]) {
+          if (nextParams[key] === undefined && (taskData.parameters as any)[key] !== undefined) {
+            nextParams[key] = (taskData.parameters as any)[key];
+          }
+        }
+        if (JSON.stringify(nextParams) !== JSON.stringify(params)) {
+          patch.parameters = nextParams;
+        }
+      }
+
+      if (
+        taskData.name === '模拟盘风控退出检查' ||
+        taskData.name === '模拟盘收益归因报告'
+      ) {
+        const params = patch.parameters || task.parameters || {};
+        const nextParams = { ...taskData.parameters, ...params };
+        for (const key of [
+          'use_autonomous_portfolio',
+          'portfolio_name',
+          'initial_capital',
+          'limit',
+          'include_open',
+          'enable_stop_loss',
+          'enable_take_profit',
+          'enable_sell_signals',
+          'default_stop_loss_pct',
+          'default_take_profit_pct',
+          'max_hold_days',
+          'min_sell_signal_score',
+          'sell_signal_source_type',
+          'dry_run',
+          'report_to_feishu',
+        ]) {
           if (nextParams[key] === undefined && (taskData.parameters as any)[key] !== undefined) {
             nextParams[key] = (taskData.parameters as any)[key];
           }

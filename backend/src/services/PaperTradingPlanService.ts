@@ -16,6 +16,10 @@ export type TradingPlanPriority = 'critical' | 'high' | 'medium' | 'low';
 export interface PaperTradingPlanOptions {
   user_id?: number;
   username?: string;
+  portfolio_id?: number;
+  portfolio_name?: string;
+  initial_capital?: number;
+  force_new_portfolio?: boolean;
   include_entries?: boolean;
   include_exits?: boolean;
   include_monitor?: boolean;
@@ -168,6 +172,10 @@ class PaperTradingPlanService {
     const attribution = await paperTradingAttributionService.getAttribution({
       user_id: options.user_id,
       username: options.username,
+      portfolio_id: options.portfolio_id,
+      portfolio_name: options.portfolio_name,
+      initial_capital: options.initial_capital,
+      force_new_portfolio: options.force_new_portfolio,
       include_open: true,
       source_type: options.source_type,
       report_to_feishu: false,
@@ -178,6 +186,9 @@ class PaperTradingPlanService {
       riskCheck = await paperTradingAutomationService.runRiskCheck({
         user_id: options.user_id,
         username: options.username,
+        portfolio_name: options.portfolio_name,
+        initial_capital: options.initial_capital,
+        force_new_portfolio: options.force_new_portfolio,
         dry_run: true,
         report_to_feishu: false,
         limit: toPositiveInt(options.limit, 30, 100),
@@ -197,6 +208,9 @@ class PaperTradingPlanService {
       entryPreview = await paperTradingAutomationService.autoBuyFromSignals({
         user_id: options.user_id,
         username: options.username,
+        portfolio_name: options.portfolio_name,
+        initial_capital: options.initial_capital,
+        force_new_portfolio: options.force_new_portfolio,
         source_type: options.source_type,
         limit: entryLimit,
         scan_limit: toPositiveInt(options.scan_limit, Math.max(entryLimit * 12, 60), 500),
@@ -276,8 +290,8 @@ class PaperTradingPlanService {
             item.risk_state === 'near_stop_loss'
               ? '临近止损'
               : item.risk_state === 'approaching_take_profit'
-              ? '接近止盈'
-              : '继续观察',
+                ? '接近止盈'
+                : '继续观察',
           reason: `当前浮动盈亏 ${item.unrealized_pnl_pct}% ，距止损 ${
             item.distance_to_stop_loss_pct ?? '--'
           }pct，持有 ${item.holding_days} 天`,

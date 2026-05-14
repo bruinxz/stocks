@@ -10,10 +10,21 @@ import {
   paperTradingAutomationService,
 } from '../../services/PaperTradingAutomationService';
 import { paperTradingAttributionService } from '../../services/PaperTradingAttributionService';
-import { paperTradingDashboardService } from '../../services/PaperTradingDashboardService';
+import {
+  AUTONOMOUS_PORTFOLIO_NAME,
+  DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
+  paperTradingDashboardService,
+} from '../../services/PaperTradingDashboardService';
 import { paperTradingPlanService } from '../../services/PaperTradingPlanService';
 import { recommendationTradeOutcomeService } from '../../services/RecommendationTradeOutcomeService';
 import { logger } from '../../utils/logger';
+
+const withAutonomousPortfolio = (payload: any = {}) => ({
+  ...payload,
+  portfolio_name: AUTONOMOUS_PORTFOLIO_NAME,
+  initial_capital: DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
+  use_autonomous_portfolio: true,
+});
 
 export class PaperTradingController {
   private dataService: DataService;
@@ -451,6 +462,96 @@ export class PaperTradingController {
       });
     } catch (error: any) {
       logger.error('获取每日推荐追踪失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
+  // 自主闭环专用：全市场推荐→归档信号→模拟跟单，固定落到 20W 自主模拟盘
+  runAutonomousAutoSync = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const user = (req as any).user;
+      const result = await paperTradingAutomationService.runAutoSync(
+        withAutonomousPortfolio({
+          refresh_recommendations: true,
+          universe: 'market',
+          style: 'balanced',
+          candidate_limit: 12,
+          candidate_pool_limit: 360,
+          limit: 4,
+          scan_limit: 80,
+          min_score: 72,
+          max_positions: 8,
+          default_position_pct: 5,
+          max_position_pct: 10,
+          verify_signals: true,
+          use_entry_risk_guard: true,
+          use_profit_gate: true,
+          use_outcome_feedback: true,
+          report_to_feishu: true,
+          ...req.body,
+          user_id: user.id,
+          username: user.username || user.nickname,
+        })
+      );
+
+      const dashboard = await paperTradingDashboardService.getAutonomousDashboard({
+        user_id: user.id,
+        username: user.username || user.nickname,
+        lookback_days: 60,
+        limit: 120,
+      });
+
+      res.json({
+        success: true,
+        data: { execution: result, dashboard },
+        message: result.dry_run
+          ? `自主闭环预演完成，计划交易 ${result.planned} 笔`
+          : `自主闭环完成，模拟成交 ${result.executed} 笔，跳过 ${result.skipped} 笔`,
+      });
+    } catch (error: any) {
+      logger.error('自主闭环推荐并模拟跟单失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
+  // 自主闭环专用：卖出信号/止损/止盈/持有期结算，固定落到 20W 自主模拟盘
+  runAutonomousRiskCheck = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const user = (req as any).user;
+      const result = await paperTradingAutomationService.runRiskCheck(
+        withAutonomousPortfolio({
+          dry_run: false,
+          report_to_feishu: true,
+          enable_stop_loss: true,
+          enable_take_profit: true,
+          enable_sell_signals: true,
+          default_stop_loss_pct: 7,
+          default_take_profit_pct: 14,
+          max_hold_days: 20,
+          min_sell_signal_score: 60,
+          sell_signal_source_type: 'all',
+          ...req.body,
+          user_id: user.id,
+          username: user.username || user.nickname,
+        })
+      );
+
+      const dashboard = await paperTradingDashboardService.getAutonomousDashboard({
+        user_id: user.id,
+        username: user.username || user.nickname,
+        lookback_days: 60,
+        limit: 120,
+      });
+
+      res.json({
+        success: true,
+        data: { execution: result, dashboard },
+        message: result.dry_run
+          ? `自主风控预演完成，计划退出 ${result.planned} 笔`
+          : `自主风控结算完成，模拟卖出 ${result.exited} 笔`,
+      });
+    } catch (error: any) {
+      logger.error('自主闭环风控结算失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   };

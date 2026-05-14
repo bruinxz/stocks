@@ -12,6 +12,9 @@ import { recommendationLoopPolicySnapshotService } from './RecommendationLoopPol
 
 export interface AutomatedRecommendationLoopOptions {
   username?: string;
+  portfolio_name?: string;
+  initial_capital?: number;
+  force_new_portfolio?: boolean;
   universe?: 'favorites' | 'market';
   style?: 'balanced' | 'momentum' | 'value' | 'low_risk';
   candidate_limit?: number;
@@ -313,6 +316,9 @@ class AutomatedRecommendationLoopService {
 
   private async resolveLoopPolicy(options: {
     username?: string;
+    portfolio_name?: string;
+    initial_capital?: number;
+    force_new_portfolio?: boolean;
     enabled: boolean;
     use_policy_version_feedback?: boolean;
     policy_version_lookback_limit?: number;
@@ -365,6 +371,9 @@ class AutomatedRecommendationLoopService {
     try {
       const dashboard = await recommendationTradeOutcomeService.getDashboard({
         username: options.username,
+        portfolio_name: options.portfolio_name,
+        initial_capital: options.initial_capital,
+        force_new_portfolio: options.force_new_portfolio,
         include_open: true,
         lookback_days: options.lookback_days,
         limit: 2000,
@@ -425,8 +434,8 @@ class AutomatedRecommendationLoopService {
         coldStart || avgExcess < -1 || excessWinRate < 45
           ? Math.max(1, Math.min(options.base_paper_trade_limit, 2))
           : avgExcess > 2 && excessWinRate >= 55
-          ? Math.min(5, options.base_paper_trade_limit + 1)
-          : options.base_paper_trade_limit;
+            ? Math.min(5, options.base_paper_trade_limit + 1)
+            : options.base_paper_trade_limit;
 
       const outcomePolicy = {
         ...basePolicy,
@@ -601,6 +610,9 @@ class AutomatedRecommendationLoopService {
       : 'balanced';
     const loop_policy = await this.resolveLoopPolicy({
       username: options.username,
+      portfolio_name: options.portfolio_name,
+      initial_capital: options.initial_capital,
+      force_new_portfolio: options.force_new_portfolio,
       enabled: options.use_outcome_feedback !== false,
       use_policy_version_feedback: options.use_policy_version_feedback !== false,
       policy_version_lookback_limit: toPositiveInt(
@@ -702,6 +714,9 @@ class AutomatedRecommendationLoopService {
             auto_paper_trade:
               options.agent_auto_paper_trade !== false && Boolean(options.run_paper_trading),
             paper_trade_username: options.username,
+            paper_trade_portfolio_name: options.portfolio_name,
+            paper_trade_initial_capital: options.initial_capital,
+            paper_trade_force_new_portfolio: options.force_new_portfolio,
             paper_trade_min_score: loop_policy.effective_min_score,
             paper_trade_max_positions: toPositiveInt(options.max_positions, 8, 30),
             paper_trade_default_position_pct: loop_policy.effective_default_position_pct,
@@ -727,6 +742,9 @@ class AutomatedRecommendationLoopService {
     if (options.run_paper_trading) {
       paper_trading = await paperTradingAutomationService.runAutoSync({
         username: options.username,
+        portfolio_name: options.portfolio_name,
+        initial_capital: options.initial_capital,
+        force_new_portfolio: options.force_new_portfolio,
         refresh_recommendations: false,
         source_type: AISignalSourceType.QUANT_RECOMMENDATION,
         limit: loop_policy.effective_paper_trade_limit,
@@ -796,6 +814,9 @@ class AutomatedRecommendationLoopService {
 
       trade_outcomes = await recommendationTradeOutcomeService.refreshPortfolioOutcomes({
         username: options.username,
+        portfolio_name: options.portfolio_name,
+        initial_capital: options.initial_capital,
+        force_new_portfolio: options.force_new_portfolio,
         include_open: true,
         lookback_days: 180,
         source_type: AISignalSourceType.QUANT_RECOMMENDATION,
@@ -888,6 +909,9 @@ class AutomatedRecommendationLoopService {
     agent_session: string;
     auto_paper_trade?: boolean;
     paper_trade_username?: string;
+    paper_trade_portfolio_name?: string;
+    paper_trade_initial_capital?: number;
+    paper_trade_force_new_portfolio?: boolean;
     paper_trade_min_score?: number;
     paper_trade_max_positions?: number;
     paper_trade_default_position_pct?: number;
@@ -957,6 +981,9 @@ class AutomatedRecommendationLoopService {
             agent_session: options.agent_session,
             auto_paper_trade: options.auto_paper_trade,
             paper_trade_username: options.paper_trade_username,
+            paper_trade_portfolio_name: options.paper_trade_portfolio_name,
+            paper_trade_initial_capital: options.paper_trade_initial_capital,
+            paper_trade_force_new_portfolio: options.paper_trade_force_new_portfolio,
             paper_trade_min_score: options.paper_trade_min_score,
             paper_trade_max_positions: options.paper_trade_max_positions,
             paper_trade_default_position_pct: options.paper_trade_default_position_pct,

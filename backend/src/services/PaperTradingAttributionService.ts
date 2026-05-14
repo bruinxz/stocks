@@ -12,6 +12,10 @@ import { feishuTaskReportService } from './FeishuTaskReportService';
 export interface PaperTradingAttributionOptions {
   user_id?: number;
   username?: string;
+  portfolio_id?: number;
+  portfolio_name?: string;
+  initial_capital?: number;
+  force_new_portfolio?: boolean;
   include_open?: boolean;
   source_type?: string;
   start_date?: string;
@@ -453,17 +457,44 @@ export class PaperTradingAttributionService {
   }
 
   private async resolvePortfolio(
-    options: Pick<PaperTradingAttributionOptions, 'user_id' | 'username'>
+    options: Pick<
+      PaperTradingAttributionOptions,
+      | 'user_id'
+      | 'username'
+      | 'portfolio_id'
+      | 'portfolio_name'
+      | 'initial_capital'
+      | 'force_new_portfolio'
+    >
   ): Promise<PaperTradingPortfolio> {
+    if (options.portfolio_id) {
+      const portfolio = await PaperTradingPortfolio.findByPk(options.portfolio_id);
+      if (portfolio) return portfolio;
+    }
+
     const user = await this.resolveUser(options.user_id, options.username);
-    let portfolio = await PaperTradingPortfolio.findOne({
-      where: { user_id: user.id, is_active: true },
-      order: [['id', 'ASC']],
-    });
+    if (options.portfolio_name) {
+      const namedPortfolio = await PaperTradingPortfolio.findOne({
+        where: { user_id: user.id, name: options.portfolio_name },
+        order: [['id', 'ASC']],
+      });
+      if (namedPortfolio) return namedPortfolio;
+    }
+
+    let portfolio: PaperTradingPortfolio | null = null;
+    if (!options.portfolio_name) {
+      portfolio = await PaperTradingPortfolio.findOne({
+        where: { user_id: user.id, is_active: true },
+        order: [['id', 'ASC']],
+      });
+    }
     if (!portfolio) {
       portfolio = await paperTradingAutomationService.ensurePortfolio({
         user_id: user.id,
         username: user.username,
+        name: options.portfolio_name,
+        initial_capital: options.initial_capital,
+        force_new: options.force_new_portfolio,
       });
     }
     return portfolio;

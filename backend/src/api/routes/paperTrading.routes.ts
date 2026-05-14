@@ -71,6 +71,28 @@ router.get(
 );
 
 /**
+ * @route POST /api/paper-trading/autonomous-auto-sync
+ * @desc 自主荐股闭环专用：全市场推荐、归档信号并固定进入 20W 自主模拟盘
+ * @access Private
+ */
+router.post(
+  '/autonomous-auto-sync',
+  authController.authenticate,
+  paperTradingController.runAutonomousAutoSync
+);
+
+/**
+ * @route POST /api/paper-trading/autonomous-risk-check
+ * @desc 自主荐股闭环专用：按卖出信号、止损、止盈和持有期结算 20W 自主模拟盘
+ * @access Private
+ */
+router.post(
+  '/autonomous-risk-check',
+  authController.authenticate,
+  paperTradingController.runAutonomousRiskCheck
+);
+
+/**
  * @route GET /api/paper-trading/recommendation-tracking
  * @desc 获取每日推荐股票追踪与模拟收益
  * @access Private

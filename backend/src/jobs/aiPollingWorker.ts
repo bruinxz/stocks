@@ -87,6 +87,9 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
     agent_session,
     auto_paper_trade,
     paper_trade_username,
+    paper_trade_portfolio_name,
+    paper_trade_initial_capital,
+    paper_trade_force_new_portfolio,
     paper_trade_min_score,
     paper_trade_max_positions,
     paper_trade_default_position_pct,
@@ -216,6 +219,9 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
         try {
           paperTradingResult = await paperTradingAutomationService.autoBuyFromSignals({
             username: paper_trade_username,
+            portfolio_name: paper_trade_portfolio_name,
+            initial_capital: paper_trade_initial_capital,
+            force_new_portfolio: paper_trade_force_new_portfolio,
             source_type: 'tradingagents',
             agent_session: agentSession,
             signal_ids: [archivedSignal.id],

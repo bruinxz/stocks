@@ -18,6 +18,9 @@ export interface AIPollingJobData {
   agent_session?: string;
   auto_paper_trade?: boolean;
   paper_trade_username?: string;
+  paper_trade_portfolio_name?: string;
+  paper_trade_initial_capital?: number;
+  paper_trade_force_new_portfolio?: boolean;
   paper_trade_min_score?: number;
   paper_trade_max_positions?: number;
   paper_trade_default_position_pct?: number;

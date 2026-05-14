@@ -19,6 +19,9 @@ export interface RecommendationTradeOutcomeRefreshOptions {
   user_id?: number;
   username?: string;
   portfolio_id?: number;
+  portfolio_name?: string;
+  initial_capital?: number;
+  force_new_portfolio?: boolean;
   loop_run_id?: string;
   include_open?: boolean;
   lookback_days?: number;
@@ -29,8 +32,7 @@ export interface RecommendationTradeOutcomeRefreshOptions {
   report_to_feishu?: boolean;
 }
 
-export interface RecommendationTradeOutcomeQueryOptions
-  extends RecommendationTradeOutcomeRefreshOptions {
+export interface RecommendationTradeOutcomeQueryOptions extends RecommendationTradeOutcomeRefreshOptions {
   trade_status?: string;
   start_date?: string;
   end_date?: string;
@@ -760,7 +762,15 @@ export class RecommendationTradeOutcomeService {
   }
 
   private async resolvePortfolio(
-    options: Pick<RecommendationTradeOutcomeRefreshOptions, 'user_id' | 'username' | 'portfolio_id'>
+    options: Pick<
+      RecommendationTradeOutcomeRefreshOptions,
+      | 'user_id'
+      | 'username'
+      | 'portfolio_id'
+      | 'portfolio_name'
+      | 'initial_capital'
+      | 'force_new_portfolio'
+    >
   ): Promise<PaperTradingPortfolio> {
     if (options.portfolio_id) {
       const portfolio = await PaperTradingPortfolio.findByPk(options.portfolio_id);
@@ -768,14 +778,28 @@ export class RecommendationTradeOutcomeService {
     }
 
     const user = await this.resolveUser(options.user_id, options.username);
-    let portfolio = await PaperTradingPortfolio.findOne({
-      where: { user_id: user.id, is_active: true },
-      order: [['id', 'ASC']],
-    });
+    if (options.portfolio_name) {
+      const namedPortfolio = await PaperTradingPortfolio.findOne({
+        where: { user_id: user.id, name: options.portfolio_name },
+        order: [['id', 'ASC']],
+      });
+      if (namedPortfolio) return namedPortfolio;
+    }
+
+    let portfolio: PaperTradingPortfolio | null = null;
+    if (!options.portfolio_name) {
+      portfolio = await PaperTradingPortfolio.findOne({
+        where: { user_id: user.id, is_active: true },
+        order: [['id', 'ASC']],
+      });
+    }
     if (!portfolio) {
       portfolio = await paperTradingAutomationService.ensurePortfolio({
         user_id: user.id,
         username: user.username,
+        name: options.portfolio_name,
+        initial_capital: options.initial_capital,
+        force_new: options.force_new_portfolio,
       });
     }
     return portfolio;
@@ -884,8 +908,8 @@ export class RecommendationTradeOutcomeService {
         avgWinPct && avgLossPct
           ? roundNumber(avgWinPct / Math.abs(avgLossPct), 4)
           : wins.length > 0 && losses.length === 0
-          ? 999
-          : 0,
+            ? 999
+            : 0,
       profit_factor: lossSum > 0 ? roundNumber(winSum / lossSum, 4) : wins.length > 0 ? 999 : 0,
       avg_holding_days: roundNumber(average(plain.map(item => toNumber(item.holding_days))), 2),
       avg_mfe_pct: roundNumber(
@@ -1005,10 +1029,10 @@ export class RecommendationTradeOutcomeService {
       summary.closed_count < 5
         ? 0.65
         : summary.avg_excess_return_pct > 2 && summary.excess_win_rate >= 55
-        ? 1.15
-        : summary.avg_excess_return_pct < -1 || summary.excess_win_rate < 45
-        ? 0.55
-        : 0.85;
+          ? 1.15
+          : summary.avg_excess_return_pct < -1 || summary.excess_win_rate < 45
+            ? 0.55
+            : 0.85;
 
     const riskGroups = groups.by_risk_level.filter(group =>
       ['low', 'medium', 'high'].includes(group.key)

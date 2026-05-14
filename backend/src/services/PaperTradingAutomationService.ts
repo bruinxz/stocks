@@ -496,7 +496,9 @@ class PaperTradingAutomationService {
       });
     }
 
-    if (!portfolio && !options.force_new) {
+    // 显式传入 name 时，调用方通常希望隔离到指定模拟盘（例如 20W 自主荐股盘）。
+    // 如果命名盘不存在，直接创建该命名盘；不要回退到用户当前 active 模拟盘，避免收益闭环串盘。
+    if (!portfolio && !options.name && !options.force_new) {
       portfolio = await PaperTradingPortfolio.findOne({
         where: { user_id, is_active: true },
         order: [['id', 'ASC']],
@@ -642,6 +644,9 @@ class PaperTradingAutomationService {
     const feedbackPolicy = await this.resolveAttributionFeedbackPolicy({
       portfolio_id: portfolio.id,
       user_id: portfolio.user_id,
+      portfolio_name: options.portfolio_name,
+      initial_capital: options.initial_capital,
+      force_new_portfolio: options.force_new_portfolio,
       enabled: toBoolean(options.use_attribution_feedback, true),
       requested_min_score: min_score,
       requested_allowed_risk_levels: allowedRiskLevelList,
@@ -1472,6 +1477,9 @@ class PaperTradingAutomationService {
   private async resolveAttributionFeedbackPolicy(options: {
     portfolio_id: number;
     user_id: number;
+    portfolio_name?: string;
+    initial_capital?: number;
+    force_new_portfolio?: boolean;
     enabled: boolean;
     requested_min_score: number;
     requested_allowed_risk_levels: string[];
@@ -1498,6 +1506,10 @@ class PaperTradingAutomationService {
       const { paperTradingAttributionService } = await import('./PaperTradingAttributionService');
       const attribution = await paperTradingAttributionService.getAttribution({
         user_id: options.user_id,
+        portfolio_id: options.portfolio_id,
+        portfolio_name: options.portfolio_name,
+        initial_capital: options.initial_capital,
+        force_new_portfolio: options.force_new_portfolio,
         include_open: false,
         report_to_feishu: false,
       });
