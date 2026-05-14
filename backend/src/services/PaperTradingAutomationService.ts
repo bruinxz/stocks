@@ -16,6 +16,7 @@ import { RecommendationTradeOutcome } from '../models/RecommendationTradeOutcome
 import { quantRecommendationService } from './QuantRecommendationService';
 import { aiInvestmentSignalService } from './AIInvestmentSignalService';
 import { feishuTaskReportService } from './FeishuTaskReportService';
+import { marketEnvironmentService } from './MarketEnvironmentService';
 import { normalizeSymbol } from '../utils/stockSymbol';
 import { logger } from '../utils/logger';
 
@@ -29,6 +30,45 @@ type RiskExitReason =
   | 'trailing_take_profit'
   | 'sell_signal'
   | 'max_hold_days';
+
+type MarketEnvironmentSnapshotLike = {
+  as_of?: string;
+  market_regime?: string;
+  market_regime_label?: string;
+  benchmark_code?: string;
+  benchmark_name?: string;
+  benchmark_return_5d_pct?: number;
+  benchmark_return_20d_pct?: number;
+  benchmark_return_60d_pct?: number;
+  benchmark_drawdown_60d_pct?: number;
+  benchmark_price_vs_ma20_pct?: number;
+  benchmark_price_vs_ma60_pct?: number;
+  breadth?: Record<string, any>;
+  industry?: {
+    name?: string;
+    regime?: string;
+    label?: string;
+    sample_count?: number;
+    avg_return_20d_pct?: number;
+    relative_return_20d_pct?: number;
+    above_ma20_ratio?: number;
+  };
+};
+
+interface EnvironmentEntryPolicy {
+  enabled: boolean;
+  allow_entry: boolean;
+  position_multiplier: number;
+  reason: string;
+  market_regime?: string;
+  market_regime_label?: string;
+  industry_regime?: string;
+  industry_label?: string;
+  market_environment?: MarketEnvironmentSnapshotLike;
+  matched_segment?: any;
+  preferred_segment?: any;
+  notes?: string[];
+}
 
 export interface PaperTradingAutoOptions {
   user_id?: number;
@@ -117,6 +157,12 @@ export interface PaperTradingAutoTradeItem {
   consensus_variants?: string[];
   recommendation_tier?: string;
   recommendation_tier_label?: string;
+  environment_multiplier?: number;
+  environment_reason?: string;
+  market_regime?: string;
+  market_regime_label?: string;
+  industry_regime?: string;
+  industry_label?: string;
   trade_id?: number;
   reason?: string;
 }
@@ -223,6 +269,16 @@ export interface PaperTradingAutoResult {
     remaining_daily_new_positions: number;
     remaining_daily_new_exposure_pct: number;
     risk_notes: string[];
+  };
+  environment_guard_policy?: {
+    enabled: boolean;
+    description: string;
+    pressure_market_multiplier: number;
+    bear_market_multiplier: number;
+    strong_market_multiplier: number;
+    industry_cold_multiplier: number;
+    industry_hot_multiplier: number;
+    hard_block_rules: string[];
   };
   skip_reason_summary?: {
     total: number;
@@ -438,6 +494,7 @@ function normalizeSkipReasonCategory(reason?: string): string {
   }
   if (text.includes('收益闸门') || text.includes('Profit')) return 'profit_gate';
   if (text.includes('收益闭环') || text.includes('降权片段')) return 'outcome_feedback';
+  if (text.includes('市场环境') || text.includes('环境风控')) return 'market_environment_guard';
   if (text.includes('入场风控')) return 'entry_risk_guard';
   if (text.includes('风险等级')) return 'risk_level';
   if (text.includes('暂不参与') || text.includes('不是买入')) return 'trade_discipline';
@@ -949,6 +1006,16 @@ class PaperTradingAutomationService {
         continue;
       }
 
+      const environmentPolicy = await this.evaluateEnvironmentEntryPolicy(signal, {
+        metadata,
+        outcome_feedback_policy: outcomeFeedbackPolicy,
+        forced: signalIds.includes(signal.id),
+      });
+      if (!environmentPolicy.allow_entry) {
+        skip(`市场环境未放行：${environmentPolicy.reason}`);
+        continue;
+      }
+
       const blockedSegment = this.matchOutcomeBlockedSegment(signal, outcomeFeedbackPolicy);
       if (blockedSegment) {
         skip(
@@ -998,7 +1065,8 @@ class PaperTradingAutomationService {
         suggestedPct *
           profitGatePolicy.effective_position_multiplier *
           outcomePositionMultiplier *
-          dataQualityPositionMultiplier,
+          dataQualityPositionMultiplier *
+          environmentPolicy.position_multiplier,
         0,
         max_position_pct
       );
@@ -1045,6 +1113,12 @@ class PaperTradingAutomationService {
         status: dry_run ? 'planned' : 'executed',
         action,
         action_label: metadata.action_label,
+        environment_multiplier: environmentPolicy.position_multiplier,
+        environment_reason: environmentPolicy.reason,
+        market_regime: environmentPolicy.market_regime,
+        market_regime_label: environmentPolicy.market_regime_label,
+        industry_regime: environmentPolicy.industry_regime,
+        industry_label: environmentPolicy.industry_label,
         quantity,
         latest_price: quote.price,
         execute_price,
@@ -1065,6 +1139,9 @@ class PaperTradingAutomationService {
             ? `数据质量：${
                 dataQualityScore || '--'
               }分/${dataQualityBucket}，仓位倍率 ${dataQualityPositionMultiplier}x`
+            : '',
+          environmentPolicy.enabled
+            ? `环境风控：${environmentPolicy.reason}，倍率 ${environmentPolicy.position_multiplier}x`
             : '',
         ]
           .filter(Boolean)
@@ -1101,6 +1178,8 @@ class PaperTradingAutomationService {
           strategy_bucket_label: metadata.strategy_bucket_label,
           profit_gate: profitGatePolicy,
           outcome_feedback: outcomeFeedbackPolicy,
+          environment_policy: environmentPolicy,
+          market_environment: environmentPolicy.market_environment || metadata.market_environment,
           entry_risk_guard: this.buildEntryRiskGuardPolicy(entryRiskGuard),
           entry_market_profile: marketProfile,
         });
@@ -1135,6 +1214,7 @@ class PaperTradingAutomationService {
       profit_gate_policy: profitGatePolicy,
       outcome_feedback_policy: outcomeFeedbackPolicy,
       entry_risk_guard_policy: this.buildEntryRiskGuardPolicy(entryRiskGuard),
+      environment_guard_policy: this.buildEnvironmentGuardPolicy(),
       skip_reason_summary: summarizeSkippedItems(skipped_items),
     };
 
@@ -2556,6 +2636,274 @@ class PaperTradingAutomationService {
     );
   }
 
+  private buildEnvironmentGuardPolicy(): NonNullable<
+    PaperTradingAutoResult['environment_guard_policy']
+  > {
+    return {
+      enabled: true,
+      description:
+        '自动跟单根据大盘/行业状态动态调仓：压力市和弱行业降仓，压力市叠加弱行业默认禁入，强势环境只小幅放大。',
+      pressure_market_multiplier: 0.45,
+      bear_market_multiplier: 0.6,
+      strong_market_multiplier: 1.08,
+      industry_cold_multiplier: 0.65,
+      industry_hot_multiplier: 1.08,
+      hard_block_rules: [
+        '压力市+行业弱势禁入',
+        '压力市+弱历史环境片段禁入',
+        '非强制信号遇样本充分的弱环境片段禁入',
+      ],
+    };
+  }
+
+  private normalizeEnvironmentKey(value: any): string {
+    return String(value || '')
+      .trim()
+      .toLowerCase();
+  }
+
+  private buildEnvironmentCandidates(environment?: MarketEnvironmentSnapshotLike): string[] {
+    const marketRegime = this.normalizeEnvironmentKey(environment?.market_regime);
+    const industryRegime = this.normalizeEnvironmentKey(environment?.industry?.regime);
+    const candidates = [
+      marketRegime,
+      industryRegime,
+      environment?.market_regime_label,
+      environment?.industry?.label,
+      marketRegime ? `market_regime:${marketRegime}` : '',
+      industryRegime ? `industry_regime:${industryRegime}` : '',
+    ]
+      .map(value => this.normalizeEnvironmentKey(value))
+      .filter(Boolean);
+    return [...new Set(candidates)];
+  }
+
+  private resolveSignalMarketEnvironment(
+    signal: AIInvestmentSignal,
+    metadata: Record<string, any> = asPlainObject(signal.metadata)
+  ): MarketEnvironmentSnapshotLike {
+    const paperTrading = asPlainObject(metadata.paper_trading);
+    const candidates = [
+      metadata.market_environment,
+      paperTrading.market_environment,
+      asPlainObject(paperTrading.environment_policy).market_environment,
+      asPlainObject(metadata.strategy_variant).market_environment,
+    ];
+    for (const candidate of candidates) {
+      const env = asPlainObject(candidate);
+      if (env.market_regime || env.industry) {
+        return env as MarketEnvironmentSnapshotLike;
+      }
+    }
+    return {};
+  }
+
+  private async resolveEnvironmentForSignal(
+    signal: AIInvestmentSignal,
+    metadata: Record<string, any>
+  ): Promise<MarketEnvironmentSnapshotLike> {
+    const existing = this.resolveSignalMarketEnvironment(signal, metadata);
+    if (existing.market_regime || existing.industry?.regime) {
+      return existing;
+    }
+
+    try {
+      const stock = await Stock.findOne({ where: { symbol: normalizeSymbol(signal.symbol) } });
+      return (await marketEnvironmentService.getEnvironmentForStock(
+        normalizeSymbol(signal.symbol),
+        {
+          stock,
+          as_of: signal.signal_date || getChinaToday(),
+          industry: stock?.industry,
+        }
+      )) as MarketEnvironmentSnapshotLike;
+    } catch (error: any) {
+      logger.warn(
+        `读取 ${signal.symbol} 市场环境失败，自动跟单使用未知环境: ${error?.message || error}`
+      );
+      return {};
+    }
+  }
+
+  private findEnvironmentFeedbackSegment(
+    environment: MarketEnvironmentSnapshotLike | undefined,
+    segments?: any[]
+  ): any | null {
+    if (!Array.isArray(segments) || segments.length === 0) return null;
+    const candidates = this.buildEnvironmentCandidates(environment);
+    if (!candidates.length) return null;
+    return (
+      segments.find((segment: any) => {
+        const key = this.normalizeEnvironmentKey(segment?.key);
+        const label = this.normalizeEnvironmentKey(segment?.label);
+        const dimension = this.normalizeEnvironmentKey(segment?.dimension);
+        if (!key || key === 'unknown') return false;
+        if (dimension && !['market_regime', 'industry_regime'].includes(dimension)) return false;
+        return candidates.includes(key) || candidates.includes(label);
+      }) || null
+    );
+  }
+
+  private async evaluateEnvironmentEntryPolicy(
+    signal: AIInvestmentSignal,
+    options: {
+      metadata: Record<string, any>;
+      outcome_feedback_policy?: PaperTradingAutoResult['outcome_feedback_policy'];
+      forced?: boolean;
+    }
+  ): Promise<EnvironmentEntryPolicy> {
+    const environment = await this.resolveEnvironmentForSignal(signal, options.metadata);
+    const marketRegime = this.normalizeEnvironmentKey(environment.market_regime || 'unknown');
+    const industryRegime = this.normalizeEnvironmentKey(environment.industry?.regime || 'unknown');
+    const notes: string[] = [];
+    let multiplier = 1;
+    let allowEntry = true;
+
+    if (marketRegime === 'stress') {
+      multiplier *= 0.45;
+      notes.push('压力市，先保护本金');
+    } else if (marketRegime === 'bear') {
+      multiplier *= 0.6;
+      notes.push('弱势市，降低试错仓位');
+    } else if (marketRegime === 'range') {
+      multiplier *= 0.88;
+      notes.push('震荡市，控制仓位');
+    } else if (marketRegime === 'rebound') {
+      multiplier *= 0.95;
+      notes.push('反弹市，保持验证仓');
+    } else if (marketRegime === 'bull') {
+      multiplier *= 1.08;
+      notes.push('强势市，小幅放大');
+    } else {
+      multiplier *= 0.85;
+      notes.push('市场环境未知，保守入场');
+    }
+
+    if (industryRegime === 'hot') {
+      multiplier *= 1.08;
+      notes.push('行业强势');
+    } else if (industryRegime === 'cold') {
+      multiplier *= 0.65;
+      notes.push('行业弱势');
+    } else if (industryRegime === 'unknown') {
+      multiplier *= 0.92;
+      notes.push('行业环境未知');
+    }
+
+    const blockedFeedbackSegments = options.outcome_feedback_policy?.blocked_segments || [];
+    const weakFeedbackSegments = [
+      ...blockedFeedbackSegments,
+      ...(options.outcome_feedback_policy?.weak_segments || []),
+    ];
+    const preferredFeedbackSegments = [
+      ...(options.outcome_feedback_policy?.preferred_segments || []),
+      ...(options.outcome_feedback_policy?.best_segments || []),
+    ];
+    const weakSegment = this.findEnvironmentFeedbackSegment(environment, weakFeedbackSegments);
+    const preferredSegment = this.findEnvironmentFeedbackSegment(
+      environment,
+      preferredFeedbackSegments
+    );
+
+    if (weakSegment) {
+      const robustScore = toNumber(weakSegment.robust_score, 0);
+      const avgExcess = toNumber(weakSegment.avg_excess_return_pct, 0);
+      const riskAdjustedExcess = toNumber(weakSegment.risk_adjusted_excess_return_pct, 0);
+      const bayesianWinRate = toNumber(weakSegment.bayesian_win_rate, 50);
+      const excessWinRate = toNumber(weakSegment.excess_win_rate, 50);
+      const closedCount = toNumber(weakSegment.closed_count, 0);
+      const isBlockedSegment = blockedFeedbackSegments.some(
+        (segment: any) =>
+          this.normalizeEnvironmentKey(segment?.key) ===
+          this.normalizeEnvironmentKey(weakSegment.key)
+      );
+      const isMaterialWeak =
+        isBlockedSegment ||
+        (closedCount >= 2 &&
+          (robustScore <= -4 ||
+            riskAdjustedExcess <= -0.8 ||
+            avgExcess <= -1 ||
+            bayesianWinRate < 45 ||
+            excessWinRate < 38));
+      multiplier *= isMaterialWeak ? 0.55 : 0.85;
+      notes.push(
+        `历史${isMaterialWeak ? '弱' : '偏弱'}环境片段 ${
+          weakSegment.label || weakSegment.key
+        }：超额 ${roundNumber(avgExcess, 2)}%/${closedCount}样本`
+      );
+      if (
+        isMaterialWeak &&
+        (!options.forced ||
+          (closedCount >= 3 && (robustScore <= -6 || avgExcess <= -3 || excessWinRate < 30)))
+      ) {
+        allowEntry = false;
+      }
+    } else if (preferredSegment) {
+      const boost =
+        toNumber(preferredSegment.closed_count, 0) >= 3 &&
+        toNumber(preferredSegment.avg_excess_return_pct, 0) > 0
+          ? 1.05
+          : 1.02;
+      multiplier *= boost;
+      notes.push(`历史优势环境片段 ${preferredSegment.label || preferredSegment.key}`);
+    }
+
+    if (marketRegime === 'stress' && industryRegime === 'cold') {
+      if (!options.forced) {
+        allowEntry = false;
+      }
+      multiplier *= 0.5;
+      notes.push('压力市叠加弱行业，默认禁止新开仓');
+    }
+
+    const normalizedMultiplier = roundNumber(clamp(multiplier, 0, 1.15), 2);
+    const reason = [
+      `${environment.market_regime_label || this.environmentMarketLabel(marketRegime)}`,
+      `${environment.industry?.label || this.environmentIndustryLabel(industryRegime)}`,
+      ...notes.slice(0, 3),
+    ]
+      .filter(Boolean)
+      .join('，');
+
+    return {
+      enabled: true,
+      allow_entry: allowEntry,
+      position_multiplier: allowEntry ? normalizedMultiplier : 0,
+      reason,
+      market_regime: marketRegime || 'unknown',
+      market_regime_label:
+        environment.market_regime_label || this.environmentMarketLabel(marketRegime),
+      industry_regime: industryRegime || 'unknown',
+      industry_label: environment.industry?.label || this.environmentIndustryLabel(industryRegime),
+      market_environment: environment,
+      matched_segment: weakSegment || undefined,
+      preferred_segment: preferredSegment || undefined,
+      notes,
+    };
+  }
+
+  private environmentMarketLabel(key: string): string {
+    const labels: Record<string, string> = {
+      bull: '市场强势',
+      bear: '市场弱势',
+      range: '震荡市',
+      rebound: '反弹市',
+      stress: '压力市',
+      unknown: '环境未知',
+    };
+    return labels[key] || key || '环境未知';
+  }
+
+  private environmentIndustryLabel(key: string): string {
+    const labels: Record<string, string> = {
+      hot: '行业强势',
+      warm: '行业中性',
+      cold: '行业弱势',
+      unknown: '行业未知',
+    };
+    return labels[key] || key || '行业未知';
+  }
+
   private matchOutcomeBlockedSegment(
     signal: AIInvestmentSignal,
     policy?: PaperTradingAutoResult['outcome_feedback_policy']
@@ -2567,6 +2915,8 @@ class PaperTradingAutomationService {
     )
       .trim()
       .toLowerCase();
+    const environment = this.resolveSignalMarketEnvironment(signal, metadata);
+    const environmentCandidates = this.buildEnvironmentCandidates(environment);
     const candidates = [
       signal.source_type,
       metadata.agent_session,
@@ -2574,6 +2924,7 @@ class PaperTradingAutomationService {
       metadata.action_label || metadata.action,
       signal.risk_level,
       signalStrategyKey,
+      ...environmentCandidates,
     ]
       .map(value =>
         String(value || '')
@@ -2596,6 +2947,7 @@ class PaperTradingAutomationService {
   private buildTradeItemBase(signal: AIInvestmentSignal): PaperTradingAutoTradeItem {
     const metadata = asPlainObject(signal.metadata);
     const dataQuality = asPlainObject(metadata.data_quality);
+    const environment = this.resolveSignalMarketEnvironment(signal, metadata);
     return {
       status: 'skipped',
       signal_id: signal.id,
@@ -2620,6 +2972,10 @@ class PaperTradingAutomationService {
         : [],
       recommendation_tier: metadata.recommendation_tier,
       recommendation_tier_label: metadata.recommendation_tier_label,
+      market_regime: environment.market_regime,
+      market_regime_label: environment.market_regime_label,
+      industry_regime: environment.industry?.regime,
+      industry_label: environment.industry?.label,
       reason:
         metadata.data_quality_bucket || dataQuality.bucket
           ? `数据质量 ${metadata.data_quality_score ?? dataQuality.score ?? '--'}分/${

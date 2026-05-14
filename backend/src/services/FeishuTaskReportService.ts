@@ -813,6 +813,7 @@ class FeishuTaskReportService {
     const firstTrade = trades[0] || {};
     const profitGate = result?.profit_gate_policy || {};
     const outcomeFeedback = result?.outcome_feedback_policy || {};
+    const environmentGuard = result?.environment_guard_policy || {};
     const markdownMessage = this.buildPaperTradingAutomationMarkdown(result, options, recordType);
 
     return this.safeAppend({
@@ -842,6 +843,11 @@ class FeishuTaskReportService {
       收益闭环超额胜率: this.formatPercent(outcomeFeedback?.excess_win_rate),
       收益闭环仓位倍率: outcomeFeedback?.effective_position_multiplier,
       收益闭环结论: outcomeFeedback?.reason,
+      环境风控: environmentGuard?.enabled ? environmentGuard.description : '',
+      市场环境: firstTrade?.market_regime_label,
+      行业环境: firstTrade?.industry_label,
+      环境风控仓位倍率: firstTrade?.environment_multiplier,
+      环境风控结论: firstTrade?.environment_reason,
       股票代码: firstTrade?.symbol,
       股票名称: firstTrade?.name,
       成交数量: firstTrade?.quantity,
@@ -856,6 +862,7 @@ class FeishuTaskReportService {
           archive: result?.archive,
           profit_gate_policy: result?.profit_gate_policy,
           outcome_feedback_policy: result?.outcome_feedback_policy,
+          environment_guard_policy: result?.environment_guard_policy,
         },
         10000
       ),
@@ -1566,6 +1573,7 @@ class FeishuTaskReportService {
     const snapshot = result?.snapshot || {};
     const profitGate = result?.profit_gate_policy || {};
     const outcomeFeedback = result?.outcome_feedback_policy || {};
+    const environmentGuard = result?.environment_guard_policy || {};
     const dryRun = Boolean(result?.dry_run);
     const status = options.error ? 'FAILED' : 'COMPLETED';
     const actionCount = dryRun
@@ -1597,6 +1605,9 @@ class FeishuTaskReportService {
       outcomeFeedback?.reason
         ? `- **闭环判断**：${this.safeText(outcomeFeedback.reason, 180)}`
         : '',
+      environmentGuard?.enabled
+        ? `- **环境风控**：已接入大盘/行业状态；压力市和弱行业降仓，压力市+弱行业禁入`
+        : '',
     ];
 
     if (trades.length > 0) {
@@ -1615,7 +1626,9 @@ class FeishuTaskReportService {
           )}；目标仓位 ${trade.target_position_pct ?? '--'}%`,
           `   - 评分 ${trade.score ?? '--'}；止损 ${trade.stop_loss_pct ?? '--'}%；止盈 ${
             trade.take_profit_pct ?? '--'
-          }%`
+          }%${
+            trade.environment_reason ? `；环境：${this.safeText(trade.environment_reason, 90)}` : ''
+          }`
         );
       });
       if (trades.length > 5) {
