@@ -259,6 +259,8 @@ export interface PaperTradingAutoResult {
     blocked_segments?: any[];
     best_segments?: any[];
     weak_segments?: any[];
+    recovered_segments?: any[];
+    extended_cooldown_segments?: any[];
     reason?: string;
     insights?: string[];
     next_actions?: string[];
@@ -1127,6 +1129,10 @@ class PaperTradingAutomationService {
       const resamplePositionMultiplier = toOptionalNumber(
         resampleMatch.resample_position_multiplier ?? resampleMatch.position_multiplier
       );
+      const resampleReason =
+        resampleMatch.resample_reason ||
+        resampleMatch.resample_decision_reason ||
+        resampleMatch.reason;
 
       eligible++;
       const tradePayload: PaperTradingAutoTradeItem = {
@@ -1138,7 +1144,7 @@ class PaperTradingAutomationService {
         environment_reason: environmentPolicy.reason,
         resample_sample: resampleSample || undefined,
         resample_combo_key: resampleMatch.key,
-        resample_reason: resampleMatch.resample_reason || resampleMatch.reason,
+        resample_reason: resampleReason,
         resample_position_multiplier: resamplePositionMultiplier,
         market_regime: environmentPolicy.market_regime,
         market_regime_label: environmentPolicy.market_regime_label,
@@ -1209,7 +1215,7 @@ class PaperTradingAutomationService {
           resample_sample: resampleSample || undefined,
           resample_match: resampleSample ? resampleMatch : undefined,
           resample_combo_key: resampleMatch.key,
-          resample_reason: resampleMatch.resample_reason || resampleMatch.reason,
+          resample_reason: resampleReason,
           resample_position_multiplier: resamplePositionMultiplier,
           market_environment: environmentPolicy.market_environment || metadata.market_environment,
           entry_risk_guard: this.buildEntryRiskGuardPolicy(entryRiskGuard),
@@ -2295,6 +2301,25 @@ class PaperTradingAutomationService {
           ['strategy_key', 'score_position'].includes(String(segment.dimension || '')) ||
           String(segment.key || '').includes('|')
       );
+      const marketEnvironment: any = (dashboard as any).market_environment || {};
+      const recoveredSegments = Array.isArray(
+        marketEnvironment.policy?.recovered_environment_strategy_combos
+      )
+        ? marketEnvironment.policy.recovered_environment_strategy_combos
+        : Array.isArray(marketEnvironment.resample_combo_rankings)
+        ? marketEnvironment.resample_combo_rankings.filter(
+            (segment: any) => segment?.resample_policy_action === 'recover_small'
+          )
+        : [];
+      const extendedCooldownSegments = Array.isArray(
+        marketEnvironment.policy?.extended_cooldown_environment_strategy_combos
+      )
+        ? marketEnvironment.policy.extended_cooldown_environment_strategy_combos
+        : Array.isArray(marketEnvironment.resample_combo_rankings)
+        ? marketEnvironment.resample_combo_rankings.filter(
+            (segment: any) => segment?.resample_policy_action === 'extend_cooldown'
+          )
+        : [];
       const blockedSegments =
         closedSamples >= options.min_closed_samples
           ? weakSegments
@@ -2326,6 +2351,37 @@ class PaperTradingAutomationService {
           mergedBlockedSegments.push(segment);
         }
       }
+      const recoveredPreferredSegments = [
+        ...recoveredSegments.map((segment: any) => ({
+          ...segment,
+          action: 'recover_small',
+          position_multiplier:
+            segment.position_multiplier || segment.resample_recovery_position_multiplier || 0.58,
+          reason: segment.resample_decision_reason || '复采样跑赢，解除冷却并恢复小仓常规采样',
+        })),
+        ...strategyBestSegments,
+      ];
+      const filteredBlockedSegments = mergedBlockedSegments.filter(
+        segment =>
+          !recoveredSegments.some((recovered: any) =>
+            this.isSameEnvironmentStrategyComboSegment(segment, recovered)
+          )
+      );
+      for (const segment of extendedCooldownSegments) {
+        if (
+          !filteredBlockedSegments.some(item =>
+            this.isSameEnvironmentStrategyComboSegment(item, segment)
+          )
+        ) {
+          filteredBlockedSegments.push({
+            ...segment,
+            action: 'extend_cooldown',
+            reason:
+              segment.resample_decision_reason ||
+              `复采样仍跑输，延长冷却 ${segment.cooldown_extension_days || 7} 天`,
+          });
+        }
+      }
       const reason =
         closedSamples < options.min_closed_samples
           ? `闭环样本 ${closedSamples}/${options.min_closed_samples}，先小仓位积累样本`
@@ -2353,15 +2409,17 @@ class PaperTradingAutomationService {
         avg_excess_return_pct: roundNumber(avgExcess, 4),
         excess_win_rate: roundNumber(excessWinRate, 2),
         allow_entries: allowEntries,
-        preferred_segments: [...strategyBestSegments, ...bestSegments]
+        preferred_segments: [...recoveredPreferredSegments, ...bestSegments]
           .filter(
             (segment, index, array) =>
               array.findIndex(item => String(item.key) === String(segment.key)) === index
           )
           .slice(0, 6),
-        blocked_segments: mergedBlockedSegments.slice(0, 10),
+        blocked_segments: filteredBlockedSegments.slice(0, 10),
         best_segments: bestSegments,
         weak_segments: weakSegments,
+        recovered_segments: recoveredSegments.slice(0, 6),
+        extended_cooldown_segments: extendedCooldownSegments.slice(0, 6),
         reason,
         insights: Array.isArray(feedback.insights) ? feedback.insights.slice(0, 5) : [],
         next_actions: Array.isArray(feedback.next_actions) ? feedback.next_actions.slice(0, 5) : [],
@@ -2730,6 +2788,26 @@ class PaperTradingAutomationService {
     return match?.[1] || '';
   }
 
+  private isSameEnvironmentStrategyComboSegment(a: any, b: any): boolean {
+    const aKey = this.normalizeEnvironmentKey(a?.key);
+    const bKey = this.normalizeEnvironmentKey(b?.key);
+    if (aKey && bKey && aKey === bKey) return true;
+    const aStrategy = this.normalizeEnvironmentKey(
+      a?.strategy_key || this.extractStrategyKeyFromEnvironmentComboKey(a?.key)
+    );
+    const bStrategy = this.normalizeEnvironmentKey(
+      b?.strategy_key || this.extractStrategyKeyFromEnvironmentComboKey(b?.key)
+    );
+    if (!aStrategy || !bStrategy || aStrategy !== bStrategy) return false;
+    const aEnv = this.normalizeEnvironmentKey(
+      a?.environment_policy_snapshot_id || this.extractEnvironmentPolicyIdFromComboKey(a?.key)
+    );
+    const bEnv = this.normalizeEnvironmentKey(
+      b?.environment_policy_snapshot_id || this.extractEnvironmentPolicyIdFromComboKey(b?.key)
+    );
+    return !aEnv || !bEnv || aEnv === bEnv;
+  }
+
   private matchResampleEnvironmentStrategyPolicy(
     item: any,
     options: {
@@ -2845,6 +2923,25 @@ class PaperTradingAutomationService {
     );
   }
 
+  private findStrategyFeedbackSegment(strategyKey?: string, segments?: any[]): any | null {
+    if (!Array.isArray(segments) || segments.length === 0) return null;
+    const normalizedStrategy = this.normalizeEnvironmentKey(strategyKey);
+    if (!normalizedStrategy) return null;
+    return (
+      segments.find((segment: any) => {
+        const key = this.normalizeEnvironmentKey(segment?.key);
+        const segmentStrategy = this.normalizeEnvironmentKey(
+          segment?.strategy_key || this.extractStrategyKeyFromEnvironmentComboKey(segment?.key)
+        );
+        return (
+          segmentStrategy === normalizedStrategy ||
+          key === normalizedStrategy ||
+          key.endsWith(`strategy:${normalizedStrategy}`)
+        );
+      }) || null
+    );
+  }
+
   private async evaluateEnvironmentEntryPolicy(
     signal: AIInvestmentSignal,
     options: {
@@ -2869,6 +2966,30 @@ class PaperTradingAutomationService {
       ? externalPolicy.resample_environment_strategy_combos
       : [];
     const resamplePolicy = resamplePolicies.find((item: any) =>
+      this.matchResampleEnvironmentStrategyPolicy(item, {
+        environment,
+        strategy_key: strategyKey,
+        external_policy: externalPolicy,
+        environment_policy_snapshot_id: options.environment_policy_snapshot_id,
+      })
+    );
+    const recoveredPolicies = Array.isArray(externalPolicy.recovered_environment_strategy_combos)
+      ? externalPolicy.recovered_environment_strategy_combos
+      : [];
+    const recoveredPolicy = recoveredPolicies.find((item: any) =>
+      this.matchResampleEnvironmentStrategyPolicy(item, {
+        environment,
+        strategy_key: strategyKey,
+        external_policy: externalPolicy,
+        environment_policy_snapshot_id: options.environment_policy_snapshot_id,
+      })
+    );
+    const extendedCooldownPolicies = Array.isArray(
+      externalPolicy.extended_cooldown_environment_strategy_combos
+    )
+      ? externalPolicy.extended_cooldown_environment_strategy_combos
+      : [];
+    const extendedCooldownPolicy = extendedCooldownPolicies.find((item: any) =>
       this.matchResampleEnvironmentStrategyPolicy(item, {
         environment,
         strategy_key: strategyKey,
@@ -2955,6 +3076,14 @@ class PaperTradingAutomationService {
       environment,
       preferredFeedbackSegments
     );
+    const recoveredStrategySegment = this.findStrategyFeedbackSegment(
+      strategyKey,
+      options.outcome_feedback_policy?.recovered_segments || []
+    );
+    const extendedCooldownStrategySegment = this.findStrategyFeedbackSegment(
+      strategyKey,
+      options.outcome_feedback_policy?.extended_cooldown_segments || []
+    );
 
     if (weakSegment) {
       const robustScore = toNumber(weakSegment.robust_score, 0);
@@ -3007,6 +3136,42 @@ class PaperTradingAutomationService {
       notes.push('压力市叠加弱行业，默认禁止新开仓');
     }
 
+    const activeExtendedCooldownSegment = extendedCooldownPolicy || extendedCooldownStrategySegment;
+    const activeRecoveredSegment = recoveredPolicy || recoveredStrategySegment;
+
+    if (activeExtendedCooldownSegment) {
+      allowEntry = false;
+      multiplier = 0;
+      notes.unshift(
+        `复采样仍跑输，延长冷却 ${activeExtendedCooldownSegment.cooldown_extension_days || 7} 天：${
+          activeExtendedCooldownSegment.resample_decision_reason ||
+          activeExtendedCooldownSegment.reason ||
+          activeExtendedCooldownSegment.label ||
+          activeExtendedCooldownSegment.key
+        }`
+      );
+    } else if (activeRecoveredSegment) {
+      const recoveryMultiplier = clamp(
+        toNumber(
+          activeRecoveredSegment.position_multiplier ||
+            activeRecoveredSegment.resample_recovery_position_multiplier,
+          0.58
+        ),
+        0.35,
+        0.75
+      );
+      multiplier *= recoveryMultiplier;
+      allowEntry = allowEntry || Boolean(options.forced);
+      notes.unshift(
+        `复采样跑赢，解除冷却小仓恢复 ${roundNumber(recoveryMultiplier, 2)}x：${
+          activeRecoveredSegment.resample_decision_reason ||
+          activeRecoveredSegment.reason ||
+          activeRecoveredSegment.label ||
+          activeRecoveredSegment.key
+        }`
+      );
+    }
+
     if (resamplePolicy) {
       const resampleMultiplier = clamp(
         toNumber(resamplePolicy.resample_position_multiplier, 0.35),
@@ -3043,7 +3208,7 @@ class PaperTradingAutomationService {
       industry_label: environment.industry?.label || this.environmentIndustryLabel(industryRegime),
       market_environment: environment,
       matched_segment: weakSegment || undefined,
-      preferred_segment: preferredSegment || undefined,
+      preferred_segment: activeRecoveredSegment || preferredSegment || undefined,
       notes,
       external_policy_snapshot_id:
         options.environment_policy_snapshot_id || externalPolicy.snapshot_id || externalPolicy.id,
@@ -3051,7 +3216,7 @@ class PaperTradingAutomationService {
       external_policy_reason: externalPolicy.reason,
       external_policy_match:
         externalSegments.block || externalSegments.reduce || externalSegments.boost,
-      resample_match: resamplePolicy,
+      resample_match: resamplePolicy || activeRecoveredSegment,
     };
   }
 
@@ -3125,6 +3290,10 @@ class PaperTradingAutomationService {
           .trim()
           .toLowerCase();
         if (!key || key === 'unknown') return false;
+        const segmentStrategyKey = this.normalizeEnvironmentKey(
+          segment?.strategy_key || this.extractStrategyKeyFromEnvironmentComboKey(segment?.key)
+        );
+        if (segmentStrategyKey && segmentStrategyKey === signalStrategyKey) return segment;
         return candidates.includes(key);
       }) || null
     );

@@ -444,6 +444,7 @@ class AutomatedRecommendationLoopService {
           item?.key &&
           !String(item.key).includes('env:unknown') &&
           !String(item.key).includes('strategy:unknown') &&
+          !item.resample_recovery_ready &&
           !item.cooldown_active &&
           (item.takeover_ready ||
             (toNumber(item.closed_count, 0) >= 3 &&
@@ -457,6 +458,12 @@ class AutomatedRecommendationLoopService {
         .slice(0, 5);
       const resampleEnvironmentStrategyCombos = strategyComboRankings
         .filter((item: any) => item?.resample_ready)
+        .slice(0, 5);
+      const recoveredEnvironmentStrategyCombos = strategyComboRankings
+        .filter((item: any) => item?.resample_recovery_ready)
+        .slice(0, 5);
+      const extendedCooldownEnvironmentStrategyCombos = strategyComboRankings
+        .filter((item: any) => item?.cooldown_extended)
         .slice(0, 5);
       const inheritedEnvironmentVersion = bestEnvironmentVersion
         ? await recommendationLoopPolicySnapshotService.findEnvironmentPolicySnapshot({
@@ -568,6 +575,12 @@ class AutomatedRecommendationLoopService {
           resample_excess_win_rate: item.resample_excess_win_rate,
           resample_decision: item.resample_decision,
           resample_decision_reason: item.resample_decision_reason,
+          resample_recovery_ready: item.resample_recovery_ready,
+          resample_recovery_position_multiplier: item.resample_recovery_position_multiplier,
+          cooldown_extended: item.cooldown_extended,
+          cooldown_extension_days: item.cooldown_extension_days,
+          cooldown_expires_at: item.cooldown_expires_at,
+          resample_policy_action: item.resample_policy_action,
         })),
         resample_environment_strategy_combos: resampleEnvironmentStrategyCombos.map(
           (item: any) => ({
@@ -588,8 +601,64 @@ class AutomatedRecommendationLoopService {
             resample_excess_win_rate: item.resample_excess_win_rate,
             resample_decision: item.resample_decision,
             resample_decision_reason: item.resample_decision_reason,
+            resample_recovery_ready: item.resample_recovery_ready,
+            resample_recovery_position_multiplier: item.resample_recovery_position_multiplier,
+            cooldown_extended: item.cooldown_extended,
+            cooldown_extension_days: item.cooldown_extension_days,
+            cooldown_expires_at: item.cooldown_expires_at,
+            resample_policy_action: item.resample_policy_action,
           })
         ),
+        recovered_environment_strategy_combos: recoveredEnvironmentStrategyCombos.map(
+          (item: any) => ({
+            key: item.key,
+            label: item.label,
+            environment_policy_snapshot_id: extractEnvironmentPolicyIdFromEnvironmentComboKey(
+              item.key
+            ),
+            strategy_key: extractStrategyKeyFromEnvironmentComboKey(item.key),
+            closed_count: item.closed_count,
+            resample_closed_count: item.resample_closed_count,
+            resample_avg_excess_return_pct: item.resample_avg_excess_return_pct,
+            resample_excess_win_rate: item.resample_excess_win_rate,
+            resample_recovery_position_multiplier:
+              item.resample_recovery_position_multiplier || 0.58,
+            resample_decision_reason: item.resample_decision_reason,
+            resample_policy_action: item.resample_policy_action,
+          })
+        ),
+        extended_cooldown_environment_strategy_combos:
+          extendedCooldownEnvironmentStrategyCombos.map((item: any) => ({
+            key: item.key,
+            label: item.label,
+            environment_policy_snapshot_id: extractEnvironmentPolicyIdFromEnvironmentComboKey(
+              item.key
+            ),
+            strategy_key: extractStrategyKeyFromEnvironmentComboKey(item.key),
+            closed_count: item.closed_count,
+            resample_closed_count: item.resample_closed_count,
+            resample_avg_excess_return_pct: item.resample_avg_excess_return_pct,
+            resample_excess_win_rate: item.resample_excess_win_rate,
+            cooldown_extension_days: item.cooldown_extension_days,
+            cooldown_expires_at: item.cooldown_expires_at,
+            resample_decision_reason: item.resample_decision_reason,
+            resample_policy_action: item.resample_policy_action,
+          })),
+        recovered_environment_strategy_policy: recoveredEnvironmentStrategyCombos[0]
+          ? {
+              key: recoveredEnvironmentStrategyCombos[0].key,
+              label: recoveredEnvironmentStrategyCombos[0].label,
+              environment_policy_snapshot_id: extractEnvironmentPolicyIdFromEnvironmentComboKey(
+                recoveredEnvironmentStrategyCombos[0].key
+              ),
+              strategy_key: extractStrategyKeyFromEnvironmentComboKey(
+                recoveredEnvironmentStrategyCombos[0].key
+              ),
+              position_multiplier:
+                recoveredEnvironmentStrategyCombos[0].resample_recovery_position_multiplier || 0.58,
+              reason: recoveredEnvironmentStrategyCombos[0].resample_decision_reason,
+            }
+          : null,
         resample_environment_strategy_policy: resampleEnvironmentStrategyCombos[0]
           ? {
               key: resampleEnvironmentStrategyCombos[0].key,

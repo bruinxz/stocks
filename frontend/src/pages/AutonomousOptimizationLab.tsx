@@ -113,7 +113,15 @@ interface EnvironmentLoopPolicy {
   } | null;
   cooled_environment_strategy_combos?: EnvironmentStrategyComboRanking[];
   resample_environment_strategy_combos?: EnvironmentStrategyComboRanking[];
+  recovered_environment_strategy_combos?: EnvironmentStrategyComboRanking[];
+  extended_cooldown_environment_strategy_combos?: EnvironmentStrategyComboRanking[];
   resample_environment_strategy_policy?: {
+    key?: string;
+    label?: string;
+    position_multiplier?: number;
+    reason?: string;
+  } | null;
+  recovered_environment_strategy_policy?: {
     key?: string;
     label?: string;
     position_multiplier?: number;
@@ -156,6 +164,12 @@ interface EnvironmentStrategyComboRanking extends EnvironmentRanking {
   resample_profit_factor?: number;
   resample_decision?: 'promote' | 'continue_sampling' | 'cooldown' | 'observe' | string;
   resample_decision_reason?: string;
+  resample_recovery_ready?: boolean;
+  resample_recovery_position_multiplier?: number;
+  cooldown_extended?: boolean;
+  cooldown_extension_days?: number;
+  cooldown_expires_at?: string;
+  resample_policy_action?: string;
 }
 
 interface OptimizationData {
@@ -628,6 +642,21 @@ const AutonomousOptimizationLab: React.FC = () => {
                         ? '继续小仓观察'
                         : '等待复采闭环'}
                     </em>
+                    <Tag
+                      color={
+                        item.resample_policy_action === 'recover_small'
+                          ? 'cyan'
+                          : item.resample_policy_action === 'extend_cooldown'
+                          ? 'red'
+                          : 'gold'
+                      }
+                    >
+                      {item.resample_policy_action === 'recover_small'
+                        ? `恢复 ${item.resample_recovery_position_multiplier || 0.58}x`
+                        : item.resample_policy_action === 'extend_cooldown'
+                        ? `冷却+${item.cooldown_extension_days || 7}天`
+                        : '小仓观察'}
+                    </Tag>
                     <p>{item.resample_decision_reason || item.resample_reason}</p>
                   </div>
                 ))}
@@ -824,11 +853,41 @@ const AutonomousOptimizationLab: React.FC = () => {
                 </span>
               </div>
             )}
+            {!!environmentPolicy?.recovered_environment_strategy_combos?.length && (
+              <div className="optimization-env-recovered-strip">
+                <SafetyCertificateOutlined />
+                <span>
+                  {environmentPolicy.recovered_environment_strategy_combos.length}{' '}
+                  个组合复采样跑赢，已解除冷却并恢复小仓常规采样：
+                  {environmentPolicy.recovered_environment_strategy_combos[0]?.label} ·{' '}
+                  {
+                    environmentPolicy.recovered_environment_strategy_combos[0]
+                      ?.resample_decision_reason
+                  }
+                </span>
+              </div>
+            )}
+            {!!environmentPolicy?.extended_cooldown_environment_strategy_combos?.length && (
+              <div className="optimization-env-cooldown-strip">
+                <FireOutlined />
+                <span>
+                  {environmentPolicy.extended_cooldown_environment_strategy_combos.length}{' '}
+                  个组合复采样仍跑输，已延长冷却：
+                  {environmentPolicy.extended_cooldown_environment_strategy_combos[0]?.label} · 到期{' '}
+                  {environmentPolicy.extended_cooldown_environment_strategy_combos[0]
+                    ?.cooldown_expires_at || '--'}
+                </span>
+              </div>
+            )}
             <div className="optimization-env-combo-grid">
               {environmentStrategyComboRankings.map((item, index) => (
                 <div
                   className={`optimization-env-combo-tile ${
-                    item.resample_ready
+                    item.resample_recovery_ready
+                      ? 'recovered'
+                      : item.cooldown_extended
+                      ? 'cooldown'
+                      : item.resample_ready
                       ? 'resample'
                       : item.cooldown_active
                       ? 'cooldown'
@@ -855,7 +914,11 @@ const AutonomousOptimizationLab: React.FC = () => {
                     {formatPercent(item.avg_excess_return_pct)}
                   </strong>
                   <em>
-                    {item.resample_ready
+                    {item.resample_recovery_ready
+                      ? item.resample_decision_reason || '复采样跑赢，小仓恢复'
+                      : item.cooldown_extended
+                      ? item.resample_decision_reason || '复采样仍弱，延长冷却'
+                      : item.resample_ready
                       ? item.resample_reason || '小仓复采样'
                       : item.cooldown_active
                       ? item.cooldown_reason || '组合冷却中'

@@ -157,6 +157,17 @@ export interface RecommendationTradeOutcomeBucket {
   resample_profit_factor?: number;
   resample_decision?: 'promote' | 'continue_sampling' | 'cooldown' | 'observe';
   resample_decision_reason?: string;
+  resample_recovery_ready?: boolean;
+  resample_recovery_position_multiplier?: number;
+  cooldown_extended?: boolean;
+  cooldown_extension_days?: number;
+  cooldown_expires_at?: string;
+  resample_policy_action?:
+    | 'recover_small'
+    | 'extend_cooldown'
+    | 'continue_resample'
+    | 'observe'
+    | 'none';
 }
 
 function toNumber(value: any, fallback = 0): number {
@@ -984,6 +995,15 @@ export class RecommendationTradeOutcomeService {
         ? `环境闸门建议：${environmentPolicy.reduced_segments[0].label} 降至 ${environmentPolicy.reduced_segments[0].position_multiplier}x，小仓验证。`
         : environmentPolicy.boosted_segments[0]
         ? `环境闸门建议：优先小幅放大 ${environmentPolicy.boosted_segments[0].label}，倍率 ${environmentPolicy.boosted_segments[0].position_multiplier}x。`
+        : '',
+      environmentStrategyComboGroups.find(item => item.resample_recovery_ready)
+        ? `复采样升降级：${
+            environmentStrategyComboGroups.find(item => item.resample_recovery_ready)?.label
+          } 复采样跑赢，下一轮解除冷却并以小仓恢复。`
+        : environmentStrategyComboGroups.find(item => item.cooldown_extended)
+        ? `复采样升降级：${
+            environmentStrategyComboGroups.find(item => item.cooldown_extended)?.label
+          } 复采样仍跑输，下一轮延长冷却。`
         : '',
     ].filter(Boolean);
 
@@ -1884,15 +1904,6 @@ export class RecommendationTradeOutcomeService {
           cooldownActive &&
           recentLossStreak === 0 &&
           (riskAdjustedExcess > -0.2 || bayesianWinRate >= 48 || robustScore >= -1);
-        const resampleReady =
-          dimension === 'environment_strategy_combo' &&
-          cooldownActive &&
-          (daysSinceLatestClosed >= toNumber(cooldownDays, 999) || improvementSignal);
-        const resampleReason = resampleReady
-          ? improvementSignal
-            ? '冷却组合出现改善信号，仅允许小仓复采样'
-            : `冷却已满 ${cooldownDays} 天，仅允许小仓复采样`
-          : undefined;
         const resampleTrades =
           dimension === 'environment_strategy_combo'
             ? plain.filter(item => isResampleOutcome(item))
@@ -1955,6 +1966,47 @@ export class RecommendationTradeOutcomeService {
             : resampleDecision === 'observe'
             ? '已有复采样持仓但尚未形成闭环，等待平仓验证'
             : undefined;
+        const resampleRecoveryReady =
+          dimension === 'environment_strategy_combo' && resampleDecision === 'promote';
+        const cooldownExtended =
+          dimension === 'environment_strategy_combo' && resampleDecision === 'cooldown';
+        const cooldownExtensionDays = cooldownExtended
+          ? Math.min(30, toNumber(cooldownDays, 5) + 7)
+          : undefined;
+        const cooldownExpiresAt =
+          cooldownExtended && latestClosedDate
+            ? moment(latestClosedDate)
+                .tz('Asia/Shanghai')
+                .add(toNumber(cooldownExtensionDays, 0), 'days')
+                .format('YYYY-MM-DD')
+            : undefined;
+        const resampleRecoveryPositionMultiplier = resampleRecoveryReady ? 0.58 : undefined;
+        const resamplePolicyAction: RecommendationTradeOutcomeBucket['resample_policy_action'] =
+          resampleRecoveryReady
+            ? 'recover_small'
+            : cooldownExtended
+            ? 'extend_cooldown'
+            : resampleDecision === 'continue_sampling'
+            ? 'continue_resample'
+            : resampleDecision === 'observe'
+            ? 'observe'
+            : 'none';
+        const resampleReady =
+          dimension === 'environment_strategy_combo' &&
+          cooldownActive &&
+          !cooldownExtended &&
+          !resampleRecoveryReady &&
+          (daysSinceLatestClosed >= toNumber(cooldownDays, 999) || improvementSignal);
+        const resampleReason = resampleReady
+          ? improvementSignal
+            ? '冷却组合出现改善信号，仅允许小仓复采样'
+            : `冷却已满 ${cooldownDays} 天，仅允许小仓复采样`
+          : undefined;
+        const effectiveCooldownActive = cooldownActive && !resampleRecoveryReady;
+        const effectiveCooldownDays = cooldownExtended ? cooldownExtensionDays : cooldownDays;
+        const effectiveCooldownReason = cooldownExtended
+          ? `${resampleDecisionReason}，延长冷却至 ${cooldownExpiresAt || '后续交易日'}`
+          : cooldownReason;
         return {
           key,
           label: labelSelector(key),
@@ -1994,7 +2046,8 @@ export class RecommendationTradeOutcomeService {
           risk_adjusted_excess_return_pct: roundNumber(riskAdjustedExcess, 4),
           takeover_ready:
             dimension === 'environment_strategy_combo' &&
-            !cooldownActive &&
+            !effectiveCooldownActive &&
+            !resampleRecoveryReady &&
             closed.length >= 3 &&
             sampleConfidence >= 0.25 &&
             robustScore >= 8 &&
@@ -2002,8 +2055,10 @@ export class RecommendationTradeOutcomeService {
             bayesianWinRate >= 52,
           takeover_reason:
             dimension === 'environment_strategy_combo'
-              ? cooldownActive
-                ? cooldownReason
+              ? resampleRecoveryReady
+                ? resampleDecisionReason
+                : effectiveCooldownActive
+                ? effectiveCooldownReason
                 : closed.length < 3
                 ? `闭环样本 ${closed.length}/3，不接管`
                 : robustScore < 8
@@ -2014,11 +2069,11 @@ export class RecommendationTradeOutcomeService {
                 ? `贝叶斯胜率 ${roundNumber(bayesianWinRate, 2)}% 不足，不接管`
                 : '满足样本、稳健分、超额收益和贝叶斯胜率，允许接管'
               : undefined,
-          cooldown_active: cooldownActive,
-          cooldown_reason: cooldownReason,
+          cooldown_active: effectiveCooldownActive,
+          cooldown_reason: effectiveCooldownActive ? effectiveCooldownReason : undefined,
           recent_loss_streak:
             dimension === 'environment_strategy_combo' ? recentLossStreak : undefined,
-          cooldown_days: cooldownDays,
+          cooldown_days: effectiveCooldownActive ? effectiveCooldownDays : undefined,
           resample_ready: resampleReady,
           resample_reason: resampleReason,
           resample_position_multiplier: resampleReady ? 0.35 : undefined,
@@ -2034,6 +2089,12 @@ export class RecommendationTradeOutcomeService {
           resample_profit_factor: resampleProfitFactor,
           resample_decision: resampleDecision,
           resample_decision_reason: resampleDecisionReason,
+          resample_recovery_ready: resampleRecoveryReady,
+          resample_recovery_position_multiplier: resampleRecoveryPositionMultiplier,
+          cooldown_extended: cooldownExtended,
+          cooldown_extension_days: cooldownExtensionDays,
+          cooldown_expires_at: cooldownExpiresAt,
+          resample_policy_action: resamplePolicyAction,
         };
       })
       .sort((a, b) => {
