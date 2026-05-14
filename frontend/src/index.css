@@ -3931,13 +3931,29 @@ a {
   letter-spacing: -0.055em;
 }
 
+.optimization-env-strip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  margin-top: 18px;
+  padding: 9px 12px;
+  border-radius: 999px;
+  color: rgba(248, 251, 255, 0.9);
+  background: rgba(0, 167, 194, 0.14);
+  border: 1px solid rgba(141, 214, 228, 0.2);
+  font-size: 12px;
+  font-weight: 900;
+}
+
 .optimization-metrics {
   margin-bottom: 16px;
 }
 
 .optimization-chart-card,
 .optimization-intel-card,
-.optimization-path-card {
+.optimization-path-card,
+.optimization-env-card {
   height: 100%;
   background: radial-gradient(circle at 10% 0%, rgba(0, 167, 194, 0.15), transparent 32%),
     linear-gradient(145deg, rgba(7, 17, 31, 0.98), rgba(12, 27, 46, 0.94)) !important;
@@ -3947,16 +3963,19 @@ a {
 
 .optimization-chart-card .ant-card-head,
 .optimization-intel-card .ant-card-head,
-.optimization-path-card .ant-card-head {
+.optimization-path-card .ant-card-head,
+.optimization-env-card .ant-card-head {
   border-bottom-color: rgba(255, 255, 255, 0.1);
 }
 
 .optimization-chart-card .ant-card-head-title,
 .optimization-intel-card .ant-card-head-title,
 .optimization-path-card .ant-card-head-title,
+.optimization-env-card .ant-card-head-title,
 .optimization-chart-card .ant-typography,
 .optimization-intel-card .ant-typography,
-.optimization-path-card .ant-typography {
+.optimization-path-card .ant-typography,
+.optimization-env-card .ant-typography {
   color: rgba(248, 251, 255, 0.9) !important;
 }
 
@@ -3994,6 +4013,110 @@ a {
   margin: 0;
   color: rgba(226, 236, 247, 0.76);
   line-height: 1.65;
+}
+
+.optimization-policy-card.environment {
+  background: linear-gradient(135deg, rgba(0, 167, 194, 0.2), rgba(214, 166, 79, 0.1));
+  border-color: rgba(141, 214, 228, 0.24);
+}
+
+.optimization-env-actions {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.optimization-env-segment {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.optimization-env-segment strong,
+.optimization-env-segment span {
+  display: block;
+}
+
+.optimization-env-segment strong {
+  color: #fff;
+  font-weight: 900;
+}
+
+.optimization-env-segment span {
+  margin-top: 3px;
+  color: var(--auto-muted);
+  line-height: 1.55;
+}
+
+.optimization-env-segment.block {
+  border-color: rgba(209, 67, 67, 0.36);
+  background: rgba(127, 29, 29, 0.22);
+}
+
+.optimization-env-segment.reduce {
+  border-color: rgba(214, 166, 79, 0.32);
+}
+
+.optimization-env-segment.boost {
+  border-color: rgba(255, 231, 174, 0.32);
+}
+
+.optimization-env-ranking {
+  display: grid;
+  gap: 10px;
+}
+
+.optimization-env-row {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) minmax(160px, 230px);
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.optimization-env-rank {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+  color: #07111f;
+  background: linear-gradient(135deg, #ffe7ae, #8dd6e4);
+  font-weight: 950;
+}
+
+.optimization-env-main {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.optimization-env-stat {
+  text-align: right;
+}
+
+.optimization-env-stat strong,
+.optimization-env-stat span {
+  display: block;
+}
+
+.optimization-env-stat strong {
+  font-size: 18px;
+  font-weight: 950;
+}
+
+.optimization-env-stat span {
+  margin-top: 3px;
+  color: var(--auto-muted);
+  font-size: 12px;
 }
 
 .optimization-notes {
@@ -4412,6 +4535,15 @@ a {
   .autonomous-hero-meter {
     min-height: auto;
   }
+
+  .optimization-env-row {
+    grid-template-columns: 42px minmax(0, 1fr);
+  }
+
+  .optimization-env-stat {
+    grid-column: 2;
+    text-align: left;
+  }
 }
 
 @media (max-width: 768px) {
@@ -4439,6 +4571,18 @@ a {
 
   .optimization-hero h1 {
     font-size: 34px;
+  }
+
+  .optimization-env-row {
+    grid-template-columns: 1fr;
+  }
+
+  .optimization-env-rank {
+    display: none;
+  }
+
+  .optimization-env-stat {
+    grid-column: auto;
   }
 
   .autonomous-action-metrics {

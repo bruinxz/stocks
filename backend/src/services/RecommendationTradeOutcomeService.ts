@@ -764,6 +764,17 @@ export class RecommendationTradeOutcomeService {
         : '闭环收益中性，按 MFE/MAE 小幅校准风控参数',
     };
 
+    const strategyComboGroups = outcomeDashboard.groups.by_strategy_key || [];
+    const scorePositionGroups = outcomeDashboard.groups.by_score_position_bucket || [];
+    const marketRegimeGroups = outcomeDashboard.groups.by_market_regime || [];
+    const industryRegimeGroups = outcomeDashboard.groups.by_industry_regime || [];
+    const environmentPolicy = this.buildEnvironmentLoopPolicy({
+      market_regime_groups: marketRegimeGroups,
+      industry_regime_groups: industryRegimeGroups,
+      weak_outcome: weakOutcome,
+      strong_outcome: strongOutcome,
+    });
+
     const policyDashboard = await recommendationLoopPolicySnapshotService
       .getDashboard({
         username: options.username,
@@ -785,12 +796,13 @@ export class RecommendationTradeOutcomeService {
       confidence: promotion?.confidence || 0,
       action: promotion?.action || 'collect_samples',
       reasons: Array.isArray(promotion?.reasons) ? promotion.reasons.slice(0, 4) : [],
+      environment_position_multiplier: environmentPolicy.default_position_multiplier,
+      environment_confidence: environmentPolicy.confidence,
+      environment_blocked_segments: environmentPolicy.blocked_segments.slice(0, 5),
+      environment_reduced_segments: environmentPolicy.reduced_segments.slice(0, 5),
+      environment_boosted_segments: environmentPolicy.boosted_segments.slice(0, 5),
     };
 
-    const strategyComboGroups = outcomeDashboard.groups.by_strategy_key || [];
-    const scorePositionGroups = outcomeDashboard.groups.by_score_position_bucket || [];
-    const marketRegimeGroups = outcomeDashboard.groups.by_market_regime || [];
-    const industryRegimeGroups = outcomeDashboard.groups.by_industry_regime || [];
     const weakSegments = outcomeDashboard.feedback.weak_segments.slice(0, 4);
     const bestSegments = outcomeDashboard.feedback.best_segments.slice(0, 4);
     const bestStrategyCombo = strategyComboGroups
@@ -848,6 +860,13 @@ export class RecommendationTradeOutcomeService {
       bestStrategyCombo
         ? `参数组合冠军：${bestStrategyCombo.label}，稳健分 ${bestStrategyCombo.robust_score}，平均超额 ${bestStrategyCombo.avg_excess_return_pct}%、贝叶斯胜率 ${bestStrategyCombo.bayesian_win_rate}%。`
         : '',
+      environmentPolicy.blocked_segments[0]
+        ? `环境闸门建议：暂停 ${environmentPolicy.blocked_segments[0].label}，原因 ${environmentPolicy.blocked_segments[0].reason}。`
+        : environmentPolicy.reduced_segments[0]
+        ? `环境闸门建议：${environmentPolicy.reduced_segments[0].label} 降至 ${environmentPolicy.reduced_segments[0].position_multiplier}x，小仓验证。`
+        : environmentPolicy.boosted_segments[0]
+        ? `环境闸门建议：优先小幅放大 ${environmentPolicy.boosted_segments[0].label}，倍率 ${environmentPolicy.boosted_segments[0].position_multiplier}x。`
+        : '',
     ].filter(Boolean);
 
     return {
@@ -879,9 +898,11 @@ export class RecommendationTradeOutcomeService {
         rankings: strategyComboGroups.slice(0, 8),
         score_position_rankings: scorePositionGroups.slice(0, 8),
       },
+      environment_policy: environmentPolicy,
       market_environment: {
         market_regime_rankings: marketRegimeGroups.slice(0, 8),
         industry_regime_rankings: industryRegimeGroups.slice(0, 8),
+        policy: environmentPolicy,
       },
       policy_versions: policyDashboard
         ? {
@@ -892,6 +913,151 @@ export class RecommendationTradeOutcomeService {
           }
         : null,
       insights,
+    };
+  }
+
+  private buildEnvironmentLoopPolicy(options: {
+    market_regime_groups: RecommendationTradeOutcomeBucket[];
+    industry_regime_groups: RecommendationTradeOutcomeBucket[];
+    weak_outcome: boolean;
+    strong_outcome: boolean;
+  }) {
+    const marketGroups = options.market_regime_groups || [];
+    const industryGroups = options.industry_regime_groups || [];
+    const environmentGroups = [
+      ...marketGroups.map(group => ({ ...group, dimension: group.dimension || 'market_regime' })),
+      ...industryGroups.map(group => ({
+        ...group,
+        dimension: group.dimension || 'industry_regime',
+      })),
+    ].filter(group => group.key && group.key !== 'unknown' && group.closed_count > 0);
+
+    const closedSamples = environmentGroups.reduce(
+      (sum, group) => sum + toNumber(group.closed_count),
+      0
+    );
+    const confidence = roundNumber(clamp(closedSamples / 24, 0, 1), 2);
+    const defaultPositionMultiplier = options.weak_outcome
+      ? 0.72
+      : options.strong_outcome
+      ? 1.04
+      : 0.9;
+
+    const normalizeSegment = (group: RecommendationTradeOutcomeBucket) => {
+      const robustScore = toNumber(group.robust_score, 0);
+      const avgExcess = toNumber(group.avg_excess_return_pct, 0);
+      const riskAdjustedExcess = toNumber(group.risk_adjusted_excess_return_pct, avgExcess);
+      const excessWinRate = toNumber(group.excess_win_rate, 0);
+      const bayesianWinRate = toNumber(group.bayesian_win_rate, 50);
+      const closedCount = toNumber(group.closed_count, 0);
+      const sampleConfidence = toNumber(group.sample_confidence, clamp(closedCount / 10, 0, 1));
+
+      let action = 'watch';
+      let positionMultiplier = defaultPositionMultiplier;
+      let reason = `样本 ${closedCount}，继续观察`;
+
+      const shouldBlock =
+        closedCount >= 3 &&
+        (robustScore <= -6 || avgExcess <= -3 || riskAdjustedExcess <= -1.2 || excessWinRate < 30);
+      const shouldReduce =
+        closedCount >= 2 &&
+        (robustScore <= -3 ||
+          avgExcess < -1 ||
+          riskAdjustedExcess < -0.8 ||
+          bayesianWinRate < 45 ||
+          excessWinRate < 40);
+      const shouldBoost =
+        closedCount >= 2 &&
+        robustScore > 3 &&
+        avgExcess > 1 &&
+        riskAdjustedExcess > 0.5 &&
+        bayesianWinRate >= 52 &&
+        excessWinRate >= 50;
+
+      if (shouldBlock) {
+        action = 'block';
+        positionMultiplier = 0;
+        reason = `稳健分 ${roundNumber(robustScore, 2)}，平均超额 ${roundNumber(
+          avgExcess,
+          2
+        )}%，暂停自动入场`;
+      } else if (shouldReduce) {
+        action = 'reduce';
+        positionMultiplier = roundNumber(
+          clamp(defaultPositionMultiplier * (sampleConfidence >= 0.6 ? 0.58 : 0.72), 0.35, 0.75),
+          2
+        );
+        reason = `平均超额 ${roundNumber(avgExcess, 2)}%，贝叶斯胜率 ${roundNumber(
+          bayesianWinRate,
+          2
+        )}%，降仓验证`;
+      } else if (shouldBoost) {
+        action = 'boost';
+        positionMultiplier = roundNumber(
+          clamp(defaultPositionMultiplier * (sampleConfidence >= 0.6 ? 1.14 : 1.06), 0.95, 1.15),
+          2
+        );
+        reason = `平均超额 ${roundNumber(avgExcess, 2)}%，稳健分 ${roundNumber(
+          robustScore,
+          2
+        )}，允许小幅放大`;
+      }
+
+      return {
+        dimension: group.dimension,
+        key: group.key,
+        label: group.label,
+        closed_count: closedCount,
+        sample_confidence: roundNumber(sampleConfidence, 2),
+        avg_excess_return_pct: roundNumber(avgExcess, 4),
+        excess_win_rate: roundNumber(excessWinRate, 2),
+        bayesian_win_rate: roundNumber(bayesianWinRate, 2),
+        robust_score: roundNumber(robustScore, 4),
+        risk_adjusted_excess_return_pct: roundNumber(riskAdjustedExcess, 4),
+        action,
+        position_multiplier: positionMultiplier,
+        reason,
+      };
+    };
+
+    const segments = environmentGroups.map(normalizeSegment).sort((a, b) => {
+      const actionWeight: Record<string, number> = { block: 0, reduce: 1, watch: 2, boost: 3 };
+      if (actionWeight[a.action] !== actionWeight[b.action]) {
+        return actionWeight[a.action] - actionWeight[b.action];
+      }
+      return a.robust_score - b.robust_score;
+    });
+    const blockedSegments = segments.filter(segment => segment.action === 'block');
+    const reducedSegments = segments.filter(segment => segment.action === 'reduce');
+    const boostedSegments = segments
+      .filter(segment => segment.action === 'boost')
+      .sort(
+        (a, b) =>
+          b.robust_score - a.robust_score || b.avg_excess_return_pct - a.avg_excess_return_pct
+      );
+    const watchSegments = segments.filter(segment => segment.action === 'watch');
+
+    return {
+      enabled: true,
+      confidence,
+      closed_samples: closedSamples,
+      default_position_multiplier: roundNumber(defaultPositionMultiplier, 2),
+      blocked_segments: blockedSegments,
+      reduced_segments: reducedSegments,
+      boosted_segments: boostedSegments,
+      watch_segments: watchSegments.slice(0, 8),
+      rules: [
+        '样本≥3且稳健分/超额收益显著转弱：暂停该环境自动入场',
+        '样本≥2且平均超额或贝叶斯胜率偏弱：降仓小样本验证',
+        '稳健分、平均超额、贝叶斯胜率均占优：仅小幅放大，不追高',
+      ],
+      reason: blockedSegments[0]
+        ? `发现 ${blockedSegments.length} 个需暂停环境，优先保护本金`
+        : reducedSegments[0]
+        ? `发现 ${reducedSegments.length} 个需降仓环境，下一轮控制试错成本`
+        : boostedSegments[0]
+        ? `发现 ${boostedSegments.length} 个优势环境，可小幅放大验证`
+        : '环境样本未出现显著优劣，维持保守仓位',
     };
   }
 
