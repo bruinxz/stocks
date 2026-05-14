@@ -66,6 +66,16 @@ interface RecommendationItem {
   confidence: number;
   current_price: number;
   change_percent?: number;
+  data_quality_score?: number;
+  data_quality_bucket?: 'high' | 'medium' | 'low' | 'critical';
+  data_quality?: {
+    score?: number;
+    bucket?: string;
+    auto_trade_allowed?: boolean;
+    position_multiplier?: number;
+    issues?: string[];
+    warnings?: string[];
+  };
   factors: FactorScore[];
   reasons: string[];
   warnings: string[];
@@ -211,6 +221,22 @@ const tierColorMap: Record<string, string> = {
   trial_position: 'gold',
   watchlist: 'blue',
   avoid: 'default',
+};
+
+const dataQualityColorMap: Record<string, string> = {
+  high: 'green',
+  medium: 'blue',
+  low: 'orange',
+  critical: 'red',
+  unknown: 'default',
+};
+
+const dataQualityLabelMap: Record<string, string> = {
+  high: '高可信',
+  medium: '中可信',
+  low: '低可信',
+  critical: '阻断',
+  unknown: '未知',
 };
 
 const tierToneMap: Record<string, { title: string; subtitle: string; className: string }> = {
@@ -613,10 +639,10 @@ const Recommendations: React.FC = () => {
       ),
     },
     {
-      title: '综合分',
+      title: '综合分 / 数据',
       dataIndex: 'score',
       key: 'score',
-      width: 150,
+      width: 170,
       sorter: (a: RecommendationItem, b: RecommendationItem) => a.score - b.score,
       render: (score: number, record: RecommendationItem) => (
         <Space direction="vertical" size={0} style={{ width: 120 }}>
@@ -629,6 +655,21 @@ const Recommendations: React.FC = () => {
             </Text>
           )}
           <Progress percent={Math.round(score)} size="small" showInfo={false} />
+          <Tag
+            color={
+              dataQualityColorMap[
+                record.data_quality_bucket || record.data_quality?.bucket || 'unknown'
+              ]
+            }
+            style={{ marginTop: 4, width: 'fit-content' }}
+          >
+            数据{record.data_quality_score ?? record.data_quality?.score ?? '--'} ·{' '}
+            {
+              dataQualityLabelMap[
+                record.data_quality_bucket || record.data_quality?.bucket || 'unknown'
+              ]
+            }
+          </Tag>
         </Space>
       ),
     },
@@ -682,6 +723,11 @@ const Recommendations: React.FC = () => {
               {record.tier_reason}
             </Text>
           )}
+          {record.data_quality?.issues?.length ? (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              数据：{record.data_quality.issues.slice(0, 2).join('；')}
+            </Text>
+          ) : null}
           {Number(record.consensus_count || 0) > 1 && (
             <Text type="secondary" style={{ fontSize: 12 }}>
               共识来源：

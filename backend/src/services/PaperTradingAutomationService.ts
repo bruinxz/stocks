@@ -813,6 +813,17 @@ class PaperTradingAutomationService {
         metadata.data_quality_bucket || dataQuality.bucket || 'unknown'
       ).toLowerCase();
       const dataQualityScore = Number(metadata.data_quality_score ?? dataQuality.score ?? 100);
+      const dataQualityAutoTradeAllowed =
+        metadata.auto_trade_allowed_by_data_quality !== undefined
+          ? Boolean(metadata.auto_trade_allowed_by_data_quality)
+          : dataQuality.auto_trade_allowed !== undefined
+            ? Boolean(dataQuality.auto_trade_allowed)
+            : !['low', 'critical'].includes(dataQualityBucket);
+      const dataQualityIssues = Array.isArray(dataQuality.issues)
+        ? dataQuality.issues
+        : Array.isArray(dataQuality.warnings)
+          ? dataQuality.warnings
+          : [];
 
       const skip = (reason: string) => {
         skipped_items.push({ ...itemBase, status: 'skipped', reason });
@@ -831,9 +842,11 @@ class PaperTradingAutomationService {
         continue;
       }
 
-      if (['critical'].includes(dataQualityBucket)) {
+      if (['critical'].includes(dataQualityBucket) || !dataQualityAutoTradeAllowed) {
         skip(
-          `Agent 数据质量严重不足（${Number.isFinite(dataQualityScore) ? dataQualityScore : '--'}分），禁止自动买入`
+          `数据质量未达自动跟单标准（${Number.isFinite(dataQualityScore) ? dataQualityScore : '--'}分/${dataQualityBucket}），${
+            dataQualityIssues.slice(0, 2).join('；') || '禁止自动买入'
+          }`
         );
         continue;
       }
@@ -927,8 +940,8 @@ class PaperTradingAutomationService {
         dataQualityBucket === 'high' || dataQualityBucket === 'unknown'
           ? 1
           : dataQualityBucket === 'medium'
-            ? 0.75
-            : 0.5;
+            ? toNumber(dataQuality.position_multiplier, 0.75)
+            : toNumber(dataQuality.position_multiplier, 0.35);
       const gatedSuggestedPct = clamp(
         suggestedPct *
           profitGatePolicy.effective_position_multiplier *
@@ -997,7 +1010,7 @@ class PaperTradingAutomationService {
             ? `交易收益闭环：样本 ${outcomeFeedbackPolicy.closed_samples}，仓位倍率 ${outcomeFeedbackPolicy.effective_position_multiplier}x`
             : '',
           dataQualityBucket && !['high', 'unknown'].includes(dataQualityBucket)
-            ? `Agent数据质量：${dataQualityBucket}，仓位倍率 ${dataQualityPositionMultiplier}x`
+            ? `数据质量：${dataQualityScore || '--'}分/${dataQualityBucket}，仓位倍率 ${dataQualityPositionMultiplier}x`
             : '',
         ]
           .filter(Boolean)
@@ -1155,6 +1168,8 @@ class PaperTradingAutomationService {
               action: item.action,
               action_label: item.action_label,
               suggested_position_pct: item.suggested_position_pct,
+              data_quality_score: item.data_quality_score,
+              data_quality_bucket: item.data_quality_bucket,
             })),
           }
         : undefined,
@@ -2136,6 +2151,7 @@ class PaperTradingAutomationService {
 
   private buildTradeItemBase(signal: AIInvestmentSignal): PaperTradingAutoTradeItem {
     const metadata = asPlainObject(signal.metadata);
+    const dataQuality = asPlainObject(metadata.data_quality);
     return {
       status: 'skipped',
       signal_id: signal.id,
@@ -2160,6 +2176,12 @@ class PaperTradingAutomationService {
         : [],
       recommendation_tier: metadata.recommendation_tier,
       recommendation_tier_label: metadata.recommendation_tier_label,
+      reason:
+        metadata.data_quality_bucket || dataQuality.bucket
+          ? `数据质量 ${metadata.data_quality_score ?? dataQuality.score ?? '--'}分/${
+              metadata.data_quality_bucket || dataQuality.bucket
+            }`
+          : undefined,
     };
   }
 

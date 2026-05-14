@@ -121,8 +121,9 @@ function rankConsensusCandidates(candidates: any[], loopPolicy: any): any[] {
       const consensus_bonus = consensus_count > 1 ? Math.min(6, (consensus_count - 1) * 2) : 0;
       return {
         ...candidate,
-        score: Number(candidate.score || 0) + consensus_bonus,
+        score: Math.min(100, Number(candidate.score || 0) + consensus_bonus),
         original_score: candidate.original_score ?? candidate.score,
+        data_quality_adjusted_score: candidate.score,
         consensus_count,
         consensus_variants: consensus?.variants || [],
         consensus_bonus,
@@ -991,6 +992,9 @@ class AutomatedRecommendationLoopService {
             paper_trade_min_trade_amount: options.paper_trade_min_trade_amount,
             current_price: candidate.current_price,
             price_change_pct: candidate.change_percent,
+            data_quality_score: candidate.data_quality_score,
+            data_quality_bucket: candidate.data_quality_bucket,
+            data_quality: candidate.data_quality,
           },
           {
             jobId: `auto-loop-ai-${options.execution_log_id || 'manual'}-${response.task_id}`,
@@ -1008,6 +1012,8 @@ class AutomatedRecommendationLoopService {
           status: response.status,
           current_price: candidate.current_price,
           price_change_pct: candidate.change_percent,
+          data_quality_score: candidate.data_quality_score,
+          data_quality_bucket: candidate.data_quality_bucket,
           auto_paper_trade: Boolean(options.auto_paper_trade),
         });
       } catch (error: any) {

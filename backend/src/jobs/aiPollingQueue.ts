@@ -28,6 +28,9 @@ export interface AIPollingJobData {
   paper_trade_min_trade_amount?: number;
   current_price?: number;
   price_change_pct?: number;
+  data_quality_score?: number;
+  data_quality_bucket?: string;
+  data_quality?: any;
 }
 
 const aiPollingQueue = new Bull<AIPollingJobData>('ai_polling', {

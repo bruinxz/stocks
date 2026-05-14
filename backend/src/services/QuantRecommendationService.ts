@@ -69,6 +69,44 @@ interface EnrichedBar {
   turnover?: number;
   turnover_rate?: number;
   change_percent?: number;
+  is_suspended?: boolean;
+}
+
+export type QuantDataQualityBucket = 'high' | 'medium' | 'low' | 'critical';
+
+export interface QuantDataQualityAssessment {
+  score: number;
+  bucket: QuantDataQualityBucket;
+  confidence_multiplier: number;
+  position_multiplier: number;
+  auto_trade_allowed: boolean;
+  recommendation:
+    | 'allow_auto_trade'
+    | 'allow_reduced_position'
+    | 'manual_review_required'
+    | 'block_auto_trade';
+  issues: string[];
+  warnings: string[];
+  coverage: {
+    bars: 'ok' | 'partial' | 'missing';
+    freshness: 'ok' | 'partial' | 'missing';
+    price: 'ok' | 'missing';
+    turnover: 'ok' | 'partial' | 'missing';
+    valuation: 'ok' | 'partial' | 'missing';
+    listing_status: 'ok' | 'blocked';
+  };
+  metrics: {
+    bar_count: number;
+    expected_min_bars: number;
+    latest_date?: string;
+    days_since_latest?: number;
+    valid_close_count: number;
+    zero_volume_count: number;
+    turnover_coverage_pct: number;
+    avg_turnover_yuan?: number;
+    market_cap_yi?: number | null;
+    valuation_field_count: number;
+  };
 }
 
 export interface QuantRecommendationItem {
@@ -83,6 +121,9 @@ export interface QuantRecommendationItem {
   confidence: number;
   current_price: number;
   change_percent?: number;
+  data_quality_score: number;
+  data_quality_bucket: QuantDataQualityBucket;
+  data_quality: QuantDataQualityAssessment;
   factors: FactorScore[];
   reasons: string[];
   warnings: string[];
@@ -98,6 +139,7 @@ export interface QuantRecommendationItem {
   tier_reason: string;
   tier_rank: number;
   original_score?: number;
+  pre_quality_score?: number;
   consensus_count?: number;
   consensus_bonus?: number;
   consensus_variants?: string[];
@@ -695,6 +737,7 @@ export class QuantRecommendationService {
         bar.change_percent === null || bar.change_percent === undefined
           ? undefined
           : Number(bar.change_percent),
+      is_suspended: Boolean((bar as any).is_suspended),
     }));
 
     const closes = normalizedBars.map(bar => bar.close).filter(value => value > 0);
@@ -719,6 +762,12 @@ export class QuantRecommendationService {
     const volume5 = average(normalizedBars.slice(-5).map(bar => bar.volume));
     const volume20 = average(normalizedBars.slice(-20).map(bar => bar.volume));
     const volumeRatio = volume5 && volume20 ? volume5 / volume20 : undefined;
+    const avgTurnover = average(
+      normalizedBars
+        .slice(-20)
+        .map(bar => bar.turnover)
+        .filter((value): value is number => value !== undefined && Number.isFinite(value))
+    );
     const avgTurnoverRate20d = average(
       normalizedBars
         .slice(-20)
@@ -733,6 +782,13 @@ export class QuantRecommendationService {
     const factors: FactorScore[] = [];
     const reasons: string[] = [];
     const warnings: string[] = [];
+    const dataQuality = this.assessQuantDataQuality({
+      stock,
+      bars: normalizedBars,
+      min_bars: options.min_bars,
+      avg_turnover_yuan: avgTurnover,
+      price,
+    });
 
     const trendScore = this.scoreTrend({ price, ma5, ma20, ma60, return20d, return60d });
     factors.push({
@@ -828,16 +884,41 @@ export class QuantRecommendationService {
       });
     }
 
+    factors.push({
+      name: 'data_quality',
+      label: '数据可信度',
+      score: dataQuality.score,
+      weight: 0.16,
+      value: dataQuality.score,
+      reason:
+        dataQuality.bucket === 'high'
+          ? `行情覆盖充分，最新交易日 ${dataQuality.metrics.latest_date || '--'}，数据可用于自动跟单`
+          : `数据质量 ${dataQuality.score} 分：${
+              dataQuality.issues.slice(0, 2).join('；') || '存在缺失项，需谨慎复核'
+            }`,
+    });
+
     const baseScore = clamp(
       factors.reduce((sum, factor) => sum + factor.score * factor.weight, 0) /
         factors.reduce((sum, factor) => sum + factor.weight, 0)
     );
-    const score = clamp(baseScore + feedback.score_adjustment);
+    const preQualityScore = clamp(baseScore + feedback.score_adjustment);
+    const score = clamp(preQualityScore * dataQuality.confidence_multiplier);
 
     factors
       .filter(factor => factor.score >= 68)
       .slice(0, 3)
       .forEach(factor => reasons.push(factor.reason));
+    if (dataQuality.bucket !== 'high') {
+      warnings.push(
+        `数据质量${dataQuality.score}分/${dataQuality.bucket}：${
+          dataQuality.issues.slice(0, 2).join('；') || '建议先复核行情完整性'
+        }`
+      );
+    }
+    if (!dataQuality.auto_trade_allowed) {
+      warnings.push('数据质量未达到自动跟单要求，仅允许观察或人工复核');
+    }
 
     if (return5d !== undefined && return5d > 16)
       warnings.push(`近5日涨幅 ${round(return5d)}%，存在追高风险`);
@@ -861,12 +942,24 @@ export class QuantRecommendationService {
     }
 
     const risk_level: QuantRecommendationItem['risk_level'] =
-      warnings.length >= 2 || riskScore < 45
+      dataQuality.bucket === 'critical' || warnings.length >= 2 || riskScore < 45
         ? 'high'
-        : warnings.length === 1 || riskScore < 65
+        : dataQuality.bucket === 'low' || warnings.length === 1 || riskScore < 65
           ? 'medium'
           : 'low';
-    const actionPlan = resolveAction({ score, risk_level, warnings, feedback });
+    const rawActionPlan = resolveAction({ score, risk_level, warnings, feedback });
+    const actionPlan = !dataQuality.auto_trade_allowed
+      ? {
+          action: 'avoid' as const,
+          action_label: '暂不参与' as const,
+          suggested_position_pct: 0,
+        }
+      : {
+          ...rawActionPlan,
+          suggested_position_pct: Number(
+            (rawActionPlan.suggested_position_pct * dataQuality.position_multiplier).toFixed(2)
+          ),
+        };
     const tierPlan = resolveRecommendationTier({
       score,
       risk_level,
@@ -889,12 +982,16 @@ export class QuantRecommendationService {
       rating: scoreToRating(score),
       risk_level,
       confidence: clamp(
-        50 +
+        (50 +
           factors.filter(f => f.value !== undefined && f.value !== null).length * 8 +
-          feedback.confidence_boost
+          feedback.confidence_boost) *
+          dataQuality.confidence_multiplier
       ),
       current_price: Number(price.toFixed(4)),
       change_percent: round(changePercent, 2) ?? undefined,
+      data_quality_score: dataQuality.score,
+      data_quality_bucket: dataQuality.bucket,
+      data_quality: dataQuality,
       factors: factors.map(factor => ({ ...factor, score: Number(factor.score.toFixed(2)) })),
       reasons: reasons.length > 0 ? reasons : ['多因子评分居前，建议进入 TradingAgents 深度复核'],
       warnings,
@@ -911,6 +1008,7 @@ export class QuantRecommendationService {
         return_20d: round(return20d, 2),
         return_60d: round(return60d, 2),
         volume_ratio: round(volumeRatio, 2),
+        avg_turnover_yuan_20d: round(avgTurnover, 2),
         avg_turnover_rate_20d: round(avgTurnoverRate20d, 2),
         volatility_20d: round(volatility20d, 2),
         max_drawdown_60d: round(drawdown, 2),
@@ -918,10 +1016,15 @@ export class QuantRecommendationService {
         pb: round(Number(stock.pb), 2),
         total_market_cap_yi: round(Number(stock.total_market_cap || 0) / 100000000, 2),
         base_score: round(baseScore, 2),
+        pre_quality_score: round(preQualityScore, 2),
         feedback_score_adjustment: round(feedback.score_adjustment, 2),
+        data_quality_score: dataQuality.score,
+        data_quality_multiplier: dataQuality.confidence_multiplier,
+        data_quality_position_multiplier: dataQuality.position_multiplier,
       },
       feedback,
       ...tierPlan,
+      pre_quality_score: round(preQualityScore, 2) ?? undefined,
       trend: options.include_trend
         ? normalizedBars.slice(-30).map(bar => ({
             time: bar.time.toISOString().split('T')[0],
@@ -1142,6 +1245,163 @@ export class QuantRecommendationService {
     if (effectiveCompleted >= 5) score += 6;
     else if (effectiveCompleted > 0 && effectiveCompleted < 3) score -= 4;
     return clamp(score);
+  }
+
+  private assessQuantDataQuality(params: {
+    stock: Stock;
+    bars: EnrichedBar[];
+    min_bars: number;
+    avg_turnover_yuan?: number;
+    price: number;
+  }): QuantDataQualityAssessment {
+    const { stock, bars, min_bars, price } = params;
+    const issues: string[] = [];
+    const warnings: string[] = [];
+    let score = 100;
+
+    const latest = bars[bars.length - 1];
+    const latestMoment = latest?.time ? moment(latest.time).tz('Asia/Shanghai') : null;
+    const latestDate = latestMoment?.isValid() ? latestMoment.format('YYYY-MM-DD') : undefined;
+    const daysSinceLatest = latestMoment?.isValid()
+      ? moment().tz('Asia/Shanghai').startOf('day').diff(latestMoment.startOf('day'), 'days')
+      : undefined;
+    const validCloseCount = bars.filter(bar => Number.isFinite(bar.close) && bar.close > 0).length;
+    const zeroVolumeCount = bars.filter(bar => !Number.isFinite(bar.volume) || bar.volume <= 0)
+      .length;
+    const turnoverCount = bars.filter(
+      bar => bar.turnover !== undefined && Number.isFinite(bar.turnover) && bar.turnover > 0
+    ).length;
+    const turnoverCoveragePct =
+      bars.length > 0 ? Number(((turnoverCount / bars.length) * 100).toFixed(2)) : 0;
+    const marketCapYi =
+      Number(stock.total_market_cap || stock.circulating_market_cap || 0) > 0
+        ? Number(stock.total_market_cap || stock.circulating_market_cap || 0) / 100000000
+        : null;
+    const valuationFieldCount = [stock.pe_dynamic, stock.pb].filter(value =>
+      Number.isFinite(Number(value))
+    ).length;
+
+    if (!stock.is_listed || /(^|\*)ST|退/i.test(stock.name || '')) {
+      score -= 45;
+      issues.push('上市状态/ST/退市风险不满足自动交易要求');
+    }
+    if (stock.data_status && ['no_data', 'conflict'].includes(stock.data_status)) {
+      score -= 35;
+      issues.push(`股票数据状态为 ${stock.data_status}`);
+    } else if (stock.data_status === 'incomplete') {
+      score -= 16;
+      warnings.push('股票数据状态 incomplete，需关注同步完整性');
+    }
+    if (bars.length < min_bars) {
+      score -= 35;
+      issues.push(`K线数量 ${bars.length} 条，低于最小要求 ${min_bars} 条`);
+    } else if (bars.length < min_bars * 1.25) {
+      score -= 8;
+      warnings.push(`K线覆盖刚达标：${bars.length}/${min_bars}`);
+    }
+    if (!latestDate) {
+      score -= 35;
+      issues.push('缺少最新K线日期');
+    } else if (daysSinceLatest !== undefined && daysSinceLatest > 14) {
+      score -= 30;
+      issues.push(`最新K线距今 ${daysSinceLatest} 天，行情明显过期`);
+    } else if (daysSinceLatest !== undefined && daysSinceLatest > 5) {
+      score -= 14;
+      warnings.push(`最新K线距今 ${daysSinceLatest} 天，可能不是最新交易日`);
+    }
+    if (!Number.isFinite(price) || price <= 0 || validCloseCount < min_bars) {
+      score -= 38;
+      issues.push('有效收盘价不足，无法可靠计算收益和均线');
+    }
+    if (zeroVolumeCount > 0) {
+      const penalty = Math.min(22, zeroVolumeCount * 3);
+      score -= penalty;
+      warnings.push(`${zeroVolumeCount} 条K线成交量为空/为0`);
+    }
+    if (turnoverCoveragePct < 30) {
+      score -= 18;
+      issues.push(`成交额覆盖率仅 ${turnoverCoveragePct}%`);
+    } else if (turnoverCoveragePct < 70) {
+      score -= 8;
+      warnings.push(`成交额覆盖率 ${turnoverCoveragePct}%，流动性判断置信度下降`);
+    }
+    if (Number(params.avg_turnover_yuan || 0) > 0 && Number(params.avg_turnover_yuan) < 20000000) {
+      score -= 10;
+      warnings.push(`20日均成交额约 ${Math.round(Number(params.avg_turnover_yuan) / 10000)} 万`);
+    }
+    if (marketCapYi !== null && marketCapYi < 20) {
+      score -= 10;
+      warnings.push(`市值约 ${round(marketCapYi, 1)} 亿，流动性和冲击成本需谨慎`);
+    }
+    if (valuationFieldCount === 0) {
+      score -= 8;
+      warnings.push('PE/PB 估值字段缺失');
+    }
+    if (latest?.is_suspended) {
+      score -= 40;
+      issues.push('最新交易日标记停牌');
+    }
+
+    const normalizedScore = Math.round(clamp(score));
+    const bucket: QuantDataQualityBucket =
+      normalizedScore >= 82
+        ? 'high'
+        : normalizedScore >= 68
+          ? 'medium'
+          : normalizedScore >= 45
+            ? 'low'
+            : 'critical';
+    const confidenceMultiplier =
+      bucket === 'high' ? 1 : bucket === 'medium' ? 0.94 : bucket === 'low' ? 0.78 : 0.55;
+    const positionMultiplier =
+      bucket === 'high' ? 1 : bucket === 'medium' ? 0.75 : bucket === 'low' ? 0.35 : 0;
+    const autoTradeAllowed = bucket !== 'critical' && bucket !== 'low';
+
+    return {
+      score: normalizedScore,
+      bucket,
+      confidence_multiplier: confidenceMultiplier,
+      position_multiplier: positionMultiplier,
+      auto_trade_allowed: autoTradeAllowed,
+      recommendation:
+        bucket === 'high'
+          ? 'allow_auto_trade'
+          : bucket === 'medium'
+            ? 'allow_reduced_position'
+            : bucket === 'low'
+              ? 'manual_review_required'
+              : 'block_auto_trade',
+      issues,
+      warnings,
+      coverage: {
+        bars: bars.length >= min_bars ? 'ok' : bars.length > 0 ? 'partial' : 'missing',
+        freshness:
+          daysSinceLatest === undefined || daysSinceLatest > 14
+            ? 'missing'
+            : daysSinceLatest > 5
+              ? 'partial'
+              : 'ok',
+        price: Number.isFinite(price) && price > 0 ? 'ok' : 'missing',
+        turnover:
+          turnoverCoveragePct >= 70 ? 'ok' : turnoverCoveragePct >= 30 ? 'partial' : 'missing',
+        valuation:
+          valuationFieldCount >= 2 ? 'ok' : valuationFieldCount === 1 ? 'partial' : 'missing',
+        listing_status:
+          !stock.is_listed || /(^|\*)ST|退/i.test(stock.name || '') ? 'blocked' : 'ok',
+      },
+      metrics: {
+        bar_count: bars.length,
+        expected_min_bars: min_bars,
+        latest_date: latestDate,
+        days_since_latest: daysSinceLatest,
+        valid_close_count: validCloseCount,
+        zero_volume_count: zeroVolumeCount,
+        turnover_coverage_pct: turnoverCoveragePct,
+        avg_turnover_yuan: round(params.avg_turnover_yuan, 2) ?? undefined,
+        market_cap_yi: round(marketCapYi, 2),
+        valuation_field_count: valuationFieldCount,
+      },
+    };
   }
 
   private scoreTrend(params: {

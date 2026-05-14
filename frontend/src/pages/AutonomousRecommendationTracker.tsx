@@ -189,6 +189,30 @@ const riskTag = (risk?: string) => {
   return <Tag>{risk}</Tag>;
 };
 
+const dataQualityTag = (bucket?: string, score?: number) => {
+  const normalized = String(bucket || 'unknown').toLowerCase();
+  const colorMap: Record<string, string> = {
+    high: 'green',
+    medium: 'blue',
+    low: 'orange',
+    critical: 'red',
+    unknown: 'default',
+  };
+  const labelMap: Record<string, string> = {
+    high: '数据高可信',
+    medium: '数据中可信',
+    low: '数据低可信',
+    critical: '数据阻断',
+    unknown: '数据未知',
+  };
+  return (
+    <Tag color={colorMap[normalized] || 'default'}>
+      {labelMap[normalized] || bucket || '数据未知'}
+      {score !== undefined ? ` ${Number(score).toFixed(0)}` : ''}
+    </Tag>
+  );
+};
+
 const AutonomousRecommendationTracker: React.FC = () => {
   const [data, setData] = useState<TrackingData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -294,12 +318,13 @@ const AutonomousRecommendationTracker: React.FC = () => {
     {
       title: '评分',
       key: 'score',
-      width: 120,
+      width: 145,
       align: 'right' as const,
       render: (_: any, record: TrackingItem) => (
         <Space direction="vertical" size={2}>
           <Text strong>{Number(record.score || 0).toFixed(1)}</Text>
           {riskTag(record.risk_level)}
+          {dataQualityTag(record.data_quality_bucket, record.data_quality_score)}
         </Space>
       ),
     },

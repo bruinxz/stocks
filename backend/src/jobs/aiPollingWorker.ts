@@ -87,6 +87,9 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
     agent_session,
     current_price: submitted_current_price,
     price_change_pct: submitted_price_change_pct,
+    data_quality_score: submitted_data_quality_score,
+    data_quality_bucket: submitted_data_quality_bucket,
+    data_quality: submitted_data_quality,
     auto_paper_trade,
     paper_trade_username,
     paper_trade_portfolio_name,
@@ -165,6 +168,9 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
           quant_factors: quant_factors || [],
           quant_reasons: quant_reasons || [],
           quant_warnings: quant_warnings || [],
+          quant_data_quality: submitted_data_quality,
+          quant_data_quality_score: submitted_data_quality_score,
+          quant_data_quality_bucket: submitted_data_quality_bucket,
           recommendation_style,
           recommendation_source,
           task_label: taskLabel,
@@ -204,6 +210,21 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
           loop_run_id: loopRunId,
           loop_policy_snapshot_id: resolvedPolicySnapshotId,
         });
+        if (
+          archivedSignal &&
+          (submitted_data_quality_score !== undefined ||
+            submitted_data_quality_bucket ||
+            submitted_data_quality)
+        ) {
+          await archivedSignal.update({
+            metadata: {
+              ...(archivedSignal.metadata || {}),
+              quant_data_quality: submitted_data_quality,
+              quant_data_quality_score: submitted_data_quality_score,
+              quant_data_quality_bucket: submitted_data_quality_bucket,
+            },
+          });
+        }
         await aiInvestmentSignalService.verifySignalReturns(archivedSignal);
       } catch (archiveError: any) {
         logger.warn(`AI 轮询任务结果归档失败 ${taskId}: ${archiveError.message}`);
