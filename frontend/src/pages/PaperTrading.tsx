@@ -93,11 +93,15 @@ interface RiskExitItem {
   symbol: string;
   name?: string;
   reason_label?: string;
+  reason?: string;
   quantity?: number;
   execute_price?: number;
   realized_pnl?: number;
   pnl_pct?: number;
   holding_days?: number;
+  max_profit_pct?: number;
+  drawdown_from_peak_pct?: number;
+  trailing_stop_price?: number;
   message?: string;
 }
 
@@ -533,9 +537,12 @@ const PaperTrading: React.FC = () => {
         report_to_feishu: !dryRun,
         enable_stop_loss: true,
         enable_take_profit: true,
+        enable_trailing_take_profit: true,
         enable_sell_signals: true,
         default_stop_loss_pct: 7,
         default_take_profit_pct: 14,
+        trailing_activation_pct: 8,
+        trailing_drawdown_pct: 4,
         max_hold_days: 20,
         min_sell_signal_score: 60,
         sell_signal_source_type: 'all',
@@ -801,6 +808,9 @@ const PaperTrading: React.FC = () => {
                     <Tag key={`${item.symbol}-${item.reason_label}`} color="orange">
                       {item.name || item.symbol} · {item.reason_label || '退出'} ·{' '}
                       {item.pnl_pct ?? '--'}%
+                      {item.reason === 'trailing_take_profit'
+                        ? ` · 峰值${item.max_profit_pct ?? '--'}%`
+                        : ''}
                     </Tag>
                   ))}
                 </Space>

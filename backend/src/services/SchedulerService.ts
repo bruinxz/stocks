@@ -702,6 +702,12 @@ class SchedulerService {
               : parameters.enableTakeProfit !== undefined
                 ? Boolean(parameters.enableTakeProfit)
                 : true,
+          enable_trailing_take_profit:
+            parameters.enable_trailing_take_profit !== undefined
+              ? Boolean(parameters.enable_trailing_take_profit)
+              : parameters.enableTrailingTakeProfit !== undefined
+                ? Boolean(parameters.enableTrailingTakeProfit)
+                : true,
           enable_sell_signals:
             parameters.enable_sell_signals !== undefined
               ? Boolean(parameters.enable_sell_signals)
@@ -713,6 +719,12 @@ class SchedulerService {
           ),
           default_take_profit_pct: Number(
             parameters.default_take_profit_pct || parameters.defaultTakeProfitPct || 14
+          ),
+          trailing_activation_pct: Number(
+            parameters.trailing_activation_pct || parameters.trailingActivationPct || 8
+          ),
+          trailing_drawdown_pct: Number(
+            parameters.trailing_drawdown_pct || parameters.trailingDrawdownPct || 4
           ),
           max_hold_days: Number(parameters.max_hold_days || parameters.maxHoldDays || 0),
           min_sell_signal_score: Number(
@@ -930,6 +942,12 @@ class SchedulerService {
               : parameters.enableTakeProfit !== undefined
                 ? Boolean(parameters.enableTakeProfit)
                 : true,
+          enable_trailing_take_profit:
+            parameters.enable_trailing_take_profit !== undefined
+              ? Boolean(parameters.enable_trailing_take_profit)
+              : parameters.enableTrailingTakeProfit !== undefined
+                ? Boolean(parameters.enableTrailingTakeProfit)
+                : true,
           enable_sell_signals:
             parameters.enable_sell_signals !== undefined
               ? Boolean(parameters.enable_sell_signals)
@@ -941,6 +959,12 @@ class SchedulerService {
           ),
           default_take_profit_pct: Number(
             parameters.default_take_profit_pct || parameters.defaultTakeProfitPct || 14
+          ),
+          trailing_activation_pct: Number(
+            parameters.trailing_activation_pct || parameters.trailingActivationPct || 8
+          ),
+          trailing_drawdown_pct: Number(
+            parameters.trailing_drawdown_pct || parameters.trailingDrawdownPct || 4
           ),
           max_hold_days: Number(parameters.max_hold_days || parameters.maxHoldDays || 20),
           min_sell_signal_score: Number(
@@ -1628,9 +1652,12 @@ class SchedulerService {
           limit: 30,
           enable_stop_loss: true,
           enable_take_profit: true,
+          enable_trailing_take_profit: true,
           enable_sell_signals: true,
           default_stop_loss_pct: 7,
           default_take_profit_pct: 14,
+          trailing_activation_pct: 8,
+          trailing_drawdown_pct: 4,
           max_hold_days: 20,
           min_sell_signal_score: 60,
           sell_signal_source_type: 'all',
@@ -1706,9 +1733,12 @@ class SchedulerService {
           outcome_feedback_limit: 2000,
           enable_stop_loss: true,
           enable_take_profit: true,
+          enable_trailing_take_profit: true,
           enable_sell_signals: true,
           default_stop_loss_pct: 7,
           default_take_profit_pct: 14,
+          trailing_activation_pct: 8,
+          trailing_drawdown_pct: 4,
           max_hold_days: 20,
           min_sell_signal_score: 60,
           sell_signal_source_type: 'all',
@@ -1945,9 +1975,12 @@ class SchedulerService {
           'include_open',
           'enable_stop_loss',
           'enable_take_profit',
+          'enable_trailing_take_profit',
           'enable_sell_signals',
           'default_stop_loss_pct',
           'default_take_profit_pct',
+          'trailing_activation_pct',
+          'trailing_drawdown_pct',
           'max_hold_days',
           'min_sell_signal_score',
           'sell_signal_source_type',

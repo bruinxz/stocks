@@ -23,7 +23,12 @@ export const DEFAULT_PAPER_TRADING_INITIAL_CAPITAL = 200000;
 
 type AutoTradeStatus = 'executed' | 'planned' | 'skipped';
 type RiskExitStatus = 'exited' | 'planned' | 'held' | 'skipped';
-type RiskExitReason = 'stop_loss' | 'take_profit' | 'sell_signal' | 'max_hold_days';
+type RiskExitReason =
+  | 'stop_loss'
+  | 'take_profit'
+  | 'trailing_take_profit'
+  | 'sell_signal'
+  | 'max_hold_days';
 
 export interface PaperTradingAutoOptions {
   user_id?: number;
@@ -288,9 +293,12 @@ export interface PaperTradingRiskCheckOptions {
   limit?: number;
   enable_stop_loss?: boolean;
   enable_take_profit?: boolean;
+  enable_trailing_take_profit?: boolean;
   enable_sell_signals?: boolean;
   default_stop_loss_pct?: number;
   default_take_profit_pct?: number;
+  trailing_activation_pct?: number;
+  trailing_drawdown_pct?: number;
   max_hold_days?: number;
   min_sell_signal_score?: number;
   sell_signal_source_type?: string;
@@ -314,6 +322,12 @@ export interface PaperTradingRiskExitItem {
   holding_days: number;
   stop_loss_pct?: number;
   take_profit_pct?: number;
+  trailing_activation_pct?: number;
+  trailing_drawdown_pct?: number;
+  max_profit_pct?: number;
+  drawdown_from_peak_pct?: number;
+  peak_price?: number;
+  trailing_stop_price?: number;
   signal_id?: number;
   source_signal_id?: number;
   sell_signal_id?: number;
@@ -465,6 +479,7 @@ function riskReasonLabel(reason: RiskExitReason): string {
   const labels: Record<RiskExitReason, string> = {
     stop_loss: '触发止损',
     take_profit: '触发止盈',
+    trailing_take_profit: '移动止盈',
     sell_signal: '出现卖出信号',
     max_hold_days: '达到最长持有期',
   };
@@ -1185,9 +1200,12 @@ class PaperTradingAutomationService {
     const limit = toPositiveInt(options.limit, 20, 100);
     const enableStopLoss = toBoolean(options.enable_stop_loss, true);
     const enableTakeProfit = toBoolean(options.enable_take_profit, true);
+    const enableTrailingTakeProfit = toBoolean(options.enable_trailing_take_profit, true);
     const enableSellSignals = toBoolean(options.enable_sell_signals, true);
     const defaultStopLossPct = Math.abs(toNumber(options.default_stop_loss_pct, 7));
     const defaultTakeProfitPct = Math.abs(toNumber(options.default_take_profit_pct, 14));
+    const trailingActivationPct = Math.abs(toNumber(options.trailing_activation_pct, 8));
+    const trailingDrawdownPct = Math.abs(toNumber(options.trailing_drawdown_pct, 4));
     const maxHoldDays = toNumber(options.max_hold_days, 0);
     const minSellSignalScore = toNumber(options.min_sell_signal_score, 60);
     const sellSignalSourceType = options.sell_signal_source_type || 'all';
@@ -1232,6 +1250,13 @@ class PaperTradingAutomationService {
       const quote = await this.getLatestPrice(symbol, toNumber(position.current_price, 0));
       const latestPrice = quote.price || toNumber(position.current_price, 0);
       const pnlPct = avgCost > 0 ? roundNumber(((latestPrice - avgCost) / avgCost) * 100, 4) : 0;
+      const trailingStats = await this.computePositionPeakProfit({
+        symbol,
+        entry_date: entryDate,
+        entry_price: avgCost,
+        latest_price: latestPrice,
+        trailing_drawdown_pct: trailingDrawdownPct,
+      });
 
       const baseItem: PaperTradingRiskExitItem = {
         status: 'held',
@@ -1244,6 +1269,15 @@ class PaperTradingAutomationService {
         holding_days: holdingDays,
         stop_loss_pct: stopLossPct,
         take_profit_pct: takeProfitPct,
+        trailing_activation_pct: trailingActivationPct,
+        trailing_drawdown_pct: trailingDrawdownPct,
+        max_profit_pct: trailingStats.max_profit_pct,
+        drawdown_from_peak_pct: trailingStats.drawdown_from_peak_pct,
+        peak_price: trailingStats.peak_price,
+        trailing_stop_price:
+          enableTrailingTakeProfit && trailingStats.max_profit_pct >= trailingActivationPct
+            ? trailingStats.trailing_stop_price
+            : undefined,
         source_signal_id: sourceSignal?.id,
       };
 
@@ -1272,6 +1306,14 @@ class PaperTradingAutomationService {
         exitReason = 'stop_loss';
       } else if (enableTakeProfit && takeProfitPct > 0 && pnlPct >= takeProfitPct) {
         exitReason = 'take_profit';
+      } else if (
+        enableTrailingTakeProfit &&
+        trailingActivationPct > 0 &&
+        trailingDrawdownPct > 0 &&
+        trailingStats.max_profit_pct >= trailingActivationPct &&
+        Math.abs(Math.min(trailingStats.drawdown_from_peak_pct, 0)) >= trailingDrawdownPct
+      ) {
+        exitReason = 'trailing_take_profit';
       } else if (enableSellSignals) {
         sellSignal = await this.findLatestSellSignal({
           symbol,
@@ -1289,13 +1331,20 @@ class PaperTradingAutomationService {
       }
 
       if (!exitReason) {
+        const holdMessage = this.buildRiskHoldMessage({
+          pnl_pct: pnlPct,
+          stop_loss_pct: stopLossPct,
+          take_profit_pct: takeProfitPct,
+          enable_trailing_take_profit: enableTrailingTakeProfit,
+          trailing_activation_pct: trailingActivationPct,
+          trailing_drawdown_pct: trailingDrawdownPct,
+          max_profit_pct: trailingStats.max_profit_pct,
+          drawdown_from_peak_pct: trailingStats.drawdown_from_peak_pct,
+        });
         heldItems.push({
           ...baseItem,
           status: 'held',
-          message:
-            pnlPct < 0
-              ? `距离止损线还有 ${roundNumber(stopLossPct + pnlPct, 2)} 个百分点`
-              : `距离止盈线还有 ${roundNumber(takeProfitPct - pnlPct, 2)} 个百分点`,
+          message: holdMessage,
         });
         continue;
       }
@@ -1350,6 +1399,13 @@ class PaperTradingAutomationService {
             realized_pnl,
             realized_pnl_pct: pnlPct,
             holding_days: holdingDays,
+            max_profit_pct: trailingStats.max_profit_pct,
+            drawdown_from_peak_pct: trailingStats.drawdown_from_peak_pct,
+            peak_price: trailingStats.peak_price,
+            trailing_stop_price:
+              exitReason === 'trailing_take_profit' ? trailingStats.trailing_stop_price : undefined,
+            trailing_activation_pct: trailingActivationPct,
+            trailing_drawdown_pct: trailingDrawdownPct,
           });
           await this.refreshRecommendationTradeOutcome(sourceSignal.id);
         }
@@ -1435,6 +1491,112 @@ class PaperTradingAutomationService {
       name: stock.name,
       date: latestBar?.time ? moment(latestBar.time).tz('Asia/Shanghai').format('YYYY-MM-DD') : '',
     };
+  }
+
+  private async computePositionPeakProfit(params: {
+    symbol: string;
+    entry_date: string | Date;
+    entry_price: number;
+    latest_price: number;
+    trailing_drawdown_pct: number;
+  }): Promise<{
+    max_profit_pct: number;
+    drawdown_from_peak_pct: number;
+    peak_price: number;
+    trailing_stop_price: number;
+  }> {
+    const normalizedSymbol = normalizeSymbol(params.symbol);
+    const entryPrice = toNumber(params.entry_price, 0);
+    const latestPrice = toNumber(params.latest_price, 0);
+    const trailingDrawdownPct = Math.max(0, toNumber(params.trailing_drawdown_pct, 0));
+    let peakPrice = Math.max(entryPrice, latestPrice, 0);
+
+    try {
+      const stock = await Stock.findOne({ where: { symbol: normalizedSymbol } });
+      if (stock?.id) {
+        const entryStart = moment(params.entry_date).isValid()
+          ? moment(params.entry_date).tz('Asia/Shanghai').startOf('day').toDate()
+          : moment().tz('Asia/Shanghai').startOf('day').toDate();
+        const bars = await DailyBar.findAll({
+          where: {
+            stock_id: stock.id,
+            time: { [Op.gte]: entryStart },
+          },
+          attributes: ['high', 'close', 'time'],
+          order: [['time', 'ASC']],
+          raw: true,
+        });
+
+        for (const bar of bars as any[]) {
+          peakPrice = Math.max(
+            peakPrice,
+            toNumber(bar.high, 0),
+            toNumber(bar.close, 0)
+          );
+        }
+      }
+    } catch (error) {
+      logger.warn(`计算 ${normalizedSymbol} 持仓峰值收益失败，使用最新价兜底:`, error);
+    }
+
+    const max_profit_pct =
+      entryPrice > 0 ? roundNumber(((peakPrice - entryPrice) / entryPrice) * 100, 4) : 0;
+    const drawdown_from_peak_pct =
+      peakPrice > 0 ? roundNumber(((latestPrice - peakPrice) / peakPrice) * 100, 4) : 0;
+
+    return {
+      max_profit_pct,
+      drawdown_from_peak_pct,
+      peak_price: roundNumber(peakPrice, 4),
+      trailing_stop_price: roundNumber(peakPrice * (1 - trailingDrawdownPct / 100), 4),
+    };
+  }
+
+  private buildRiskHoldMessage(params: {
+    pnl_pct: number;
+    stop_loss_pct: number;
+    take_profit_pct: number;
+    enable_trailing_take_profit: boolean;
+    trailing_activation_pct: number;
+    trailing_drawdown_pct: number;
+    max_profit_pct: number;
+    drawdown_from_peak_pct: number;
+  }): string {
+    const messages: string[] = [];
+    const pnlPct = toNumber(params.pnl_pct, 0);
+    const stopLossPct = Math.max(0, toNumber(params.stop_loss_pct, 0));
+    const takeProfitPct = Math.max(0, toNumber(params.take_profit_pct, 0));
+    const maxProfitPct = Math.max(0, toNumber(params.max_profit_pct, 0));
+    const currentDrawdownPct = Math.abs(Math.min(toNumber(params.drawdown_from_peak_pct, 0), 0));
+
+    if (pnlPct < 0 && stopLossPct > 0) {
+      messages.push(`距止损线 ${roundNumber(Math.max(stopLossPct + pnlPct, 0), 2)}pct`);
+    } else if (takeProfitPct > 0) {
+      messages.push(`距固定止盈 ${roundNumber(Math.max(takeProfitPct - pnlPct, 0), 2)}pct`);
+    }
+
+    if (params.enable_trailing_take_profit && params.trailing_activation_pct > 0) {
+      if (maxProfitPct >= params.trailing_activation_pct) {
+        messages.push(
+          `移动止盈已激活：峰值收益 ${roundNumber(maxProfitPct, 2)}%，当前回撤 ${roundNumber(
+            currentDrawdownPct,
+            2
+          )}%，距触发 ${roundNumber(
+            Math.max(params.trailing_drawdown_pct - currentDrawdownPct, 0),
+            2
+          )}pct`
+        );
+      } else {
+        messages.push(
+          `距移动止盈激活 ${roundNumber(
+            Math.max(params.trailing_activation_pct - maxProfitPct, 0),
+            2
+          )}pct`
+        );
+      }
+    }
+
+    return messages.join('；') || '未触发退出纪律';
   }
 
   private async findExecutionSignalForPosition(

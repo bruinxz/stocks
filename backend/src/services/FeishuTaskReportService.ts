@@ -1677,6 +1677,12 @@ class FeishuTaskReportService {
           { execute_price: item.execute_price },
           dryRun ? '预估卖出价' : '卖出价'
         );
+        const trailingText =
+          item.reason === 'trailing_take_profit'
+            ? `；峰值收益 ${this.formatPercent(item.max_profit_pct) || '--'}，峰值回撤 ${
+                this.formatPercent(item.drawdown_from_peak_pct) || '--'
+              }`
+            : '';
         lines.push(
           `${index + 1}. **${item.name || item.symbol}（${item.symbol}）** - ${
             item.reason_label || item.reason || '风控退出'
@@ -1689,7 +1695,7 @@ class FeishuTaskReportService {
             item.sell_signal_id
               ? `；卖出信号 #${item.sell_signal_id}（${item.sell_signal_score ?? '--'}分）`
               : ''
-          }`
+          }${trailingText}`
         );
       });
       if (exits.length > 5) {

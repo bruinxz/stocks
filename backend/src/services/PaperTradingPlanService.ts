@@ -48,9 +48,12 @@ export interface PaperTradingPlanOptions {
   outcome_feedback_limit?: number;
   enable_stop_loss?: boolean;
   enable_take_profit?: boolean;
+  enable_trailing_take_profit?: boolean;
   enable_sell_signals?: boolean;
   default_stop_loss_pct?: number;
   default_take_profit_pct?: number;
+  trailing_activation_pct?: number;
+  trailing_drawdown_pct?: number;
   max_hold_days?: number;
   min_sell_signal_score?: number;
   sell_signal_source_type?: string;
@@ -194,9 +197,12 @@ class PaperTradingPlanService {
         limit: toPositiveInt(options.limit, 30, 100),
         enable_stop_loss: options.enable_stop_loss,
         enable_take_profit: options.enable_take_profit,
+        enable_trailing_take_profit: options.enable_trailing_take_profit,
         enable_sell_signals: options.enable_sell_signals,
         default_stop_loss_pct: options.default_stop_loss_pct,
         default_take_profit_pct: options.default_take_profit_pct,
+        trailing_activation_pct: options.trailing_activation_pct,
+        trailing_drawdown_pct: options.trailing_drawdown_pct,
         max_hold_days: options.max_hold_days,
         min_sell_signal_score: options.min_sell_signal_score,
         sell_signal_source_type: options.sell_signal_source_type,
@@ -251,13 +257,25 @@ class PaperTradingPlanService {
           action_label: item.reason_label || '风控退出',
           reason: `${item.reason_label || item.reason || '触发退出纪律'}，当前盈亏 ${
             item.pnl_pct ?? '--'
-          }%，持有 ${item.holding_days ?? '--'} 天`,
+          }%，持有 ${item.holding_days ?? '--'} 天${
+            item.reason === 'trailing_take_profit'
+              ? `，峰值收益 ${item.max_profit_pct ?? '--'}%，峰值回撤 ${item.drawdown_from_peak_pct ?? '--'}%`
+              : ''
+          }`,
           instructions: [
             `按模拟卖出价 ¥${roundNumber(item.execute_price, 3)} 预估退出 ${item.quantity} 股。`,
             `预计净回款 ¥${roundNumber(item.net_revenue, 2)}，预计实现盈亏 ¥${roundNumber(
               item.realized_pnl,
               2
             )}。`,
+            item.reason === 'trailing_take_profit'
+              ? `移动止盈：峰值价 ¥${roundNumber(item.peak_price, 3)}，保护线 ¥${roundNumber(
+                  item.trailing_stop_price,
+                  3
+                )}，激活阈值 ${item.trailing_activation_pct ?? '--'}%，回撤阈值 ${
+                  item.trailing_drawdown_pct ?? '--'
+                }%。`
+              : '',
             item.sell_signal_id
               ? `存在卖出信号 #${item.sell_signal_id}，评分 ${item.sell_signal_score ?? '--'}。`
               : '真实下单前确认最新盘口、涨跌停状态和成交量。',
@@ -486,6 +504,7 @@ class PaperTradingPlanService {
     if (reason === 'stop_loss') return 'critical';
     if (reason === 'sell_signal') return 'high';
     if (reason === 'take_profit') return 'high';
+    if (reason === 'trailing_take_profit') return 'high';
     if (toNumber(pnlPct, 0) < -5) return 'high';
     return 'medium';
   }

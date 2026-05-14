@@ -249,9 +249,12 @@ const AutonomousRecommendationTracker: React.FC = () => {
         report_to_feishu: true,
         enable_stop_loss: true,
         enable_take_profit: true,
+        enable_trailing_take_profit: true,
         enable_sell_signals: true,
         default_stop_loss_pct: 7,
         default_take_profit_pct: 14,
+        trailing_activation_pct: 8,
+        trailing_drawdown_pct: 4,
         max_hold_days: 20,
         min_sell_signal_score: 60,
         sell_signal_source_type: 'all',
@@ -428,7 +431,7 @@ const AutonomousRecommendationTracker: React.FC = () => {
         showIcon
         type="warning"
         message="结算规则"
-        description="当系统产生卖出信号，或触发止损、止盈、最长持有期规则时，模拟盘会卖出对应持仓并把收益写入闭环；未成交推荐仍保留用于后验观察。"
+        description="当系统产生卖出信号，或触发止损、固定止盈、移动止盈（峰值收益达标后回撤）和最长持有期规则时，模拟盘会卖出对应持仓并把收益写入闭环；未成交推荐仍保留用于后验观察。"
       />
 
       <Row gutter={[16, 16]}>
