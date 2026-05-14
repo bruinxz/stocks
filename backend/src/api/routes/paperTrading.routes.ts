@@ -104,6 +104,17 @@ router.get(
 );
 
 /**
+ * @route GET /api/paper-trading/autonomous-optimization
+ * @desc 获取自主荐股闭环优化台：策略晋级、收益路径、降权/放大片段
+ * @access Private
+ */
+router.get(
+  '/autonomous-optimization',
+  authController.authenticate,
+  paperTradingController.getAutonomousOptimization
+);
+
+/**
  * @route GET /api/paper-trading/attribution
  * @desc 获取模拟盘信号收益归因与策略反哺
  * @access Private

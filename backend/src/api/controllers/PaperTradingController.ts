@@ -466,6 +466,29 @@ export class PaperTradingController {
     }
   };
 
+  // 获取自主荐股闭环优化台：收益路径、策略晋级、片段降权/放大建议
+  getAutonomousOptimization = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const user = (req as any).user;
+      const result = await recommendationTradeOutcomeService.getOptimizationDashboard(
+        withAutonomousPortfolio({
+          ...req.query,
+          user_id: user.id,
+          username: user.username || user.nickname,
+        }) as any
+      );
+
+      res.json({
+        success: true,
+        data: result,
+        message: `自主闭环优化台已刷新：闭环 ${result.summary.closed_count} 笔，建议评分≥${result.next_policy.recommended_min_score}`,
+      });
+    } catch (error: any) {
+      logger.error('获取自主荐股闭环优化台失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
   // 自主闭环专用：全市场推荐→归档信号→模拟跟单，固定落到 20W 自主模拟盘
   runAutonomousAutoSync = async (req: Request, res: Response, next: NextFunction) => {
     try {

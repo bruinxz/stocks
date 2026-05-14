@@ -51,6 +51,7 @@ import StrategyExperimentLab from './pages/StrategyExperimentLab';
 import PaperTrading from './pages/PaperTrading';
 import AutonomousTradingOverview from './pages/AutonomousTradingOverview';
 import AutonomousRecommendationTracker from './pages/AutonomousRecommendationTracker';
+import AutonomousOptimizationLab from './pages/AutonomousOptimizationLab';
 import RiskAlerts from './pages/RiskAlerts';
 import TradingJournal from './pages/TradingJournal';
 import SystemLogs from './pages/SystemLogs';
@@ -203,6 +204,11 @@ const AppContent: React.FC = () => {
           key: '/autonomous-trading/recommendations',
           icon: <NodeIndexOutlined />,
           label: <Link to="/autonomous-trading/recommendations">每日推荐追踪</Link>,
+        },
+        {
+          key: '/autonomous-trading/optimization',
+          icon: <ExperimentOutlined />,
+          label: <Link to="/autonomous-trading/optimization">闭环优化台</Link>,
         },
         {
           key: '/paper-trading',
@@ -379,6 +385,14 @@ const AppContent: React.FC = () => {
               element={
                 <ProtectedRoute>
                   <AutonomousRecommendationTracker />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/autonomous-trading/optimization"
+              element={
+                <ProtectedRoute>
+                  <AutonomousOptimizationLab />
                 </ProtectedRoute>
               }
             />

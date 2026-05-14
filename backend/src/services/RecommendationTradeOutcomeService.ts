@@ -39,6 +39,11 @@ export interface RecommendationTradeOutcomeQueryOptions extends RecommendationTr
   offset?: number;
 }
 
+export interface RecommendationTradeOutcomeOptimizationOptions
+  extends RecommendationTradeOutcomeQueryOptions {
+  horizons?: string[] | string;
+}
+
 export interface RecommendationTradeOutcomeSummary {
   total_count: number;
   open_count: number;
@@ -183,6 +188,20 @@ function dateOnly(value?: Date | string | null): string {
   return moment(date).tz('Asia/Shanghai').format('YYYY-MM-DD');
 }
 
+function normalizeHorizonList(
+  value?: string[] | string,
+  fallback = ['1d', '3d', '5d', '10d', '20d']
+) {
+  const raw = Array.isArray(value) ? value : value ? String(value).split(',') : fallback;
+  const normalized = raw
+    .map(item => {
+      const days = Number(String(item).replace(/[^\d]/g, ''));
+      return Number.isFinite(days) && days > 0 ? `${days}d` : '';
+    })
+    .filter(Boolean);
+  return normalized.length > 0 ? Array.from(new Set(normalized)) : fallback;
+}
+
 function holdingDays(start?: Date | string | null, end?: Date | string | null): number {
   if (!start) return 0;
   const startMoment = moment(start).tz('Asia/Shanghai');
@@ -216,6 +235,16 @@ function sourceTypeLabel(value?: string): string {
     tradingagents: 'TradingAgents',
     daily_screener: 'AI每日优选',
     manual_analysis: '手动分析',
+  };
+  return labels[String(value || '')] || value || '未标注';
+}
+
+function styleLabel(value?: string): string {
+  const labels: Record<string, string> = {
+    balanced: '均衡',
+    momentum: '动量',
+    value: '价值',
+    low_risk: '低风险',
   };
   return labels[String(value || '')] || value || '未标注';
 }
@@ -489,6 +518,195 @@ export class RecommendationTradeOutcomeService {
     }
 
     return dashboard;
+  }
+
+  async getOptimizationDashboard(options: RecommendationTradeOutcomeOptimizationOptions = {}) {
+    const portfolio = await this.resolvePortfolio(options);
+    const horizons = normalizeHorizonList(options.horizons);
+    const lookbackDays = toPositiveInt(options.lookback_days, 180, 3650);
+    const outcomeDashboard = await this.getDashboard({
+      ...options,
+      portfolio_id: portfolio.id,
+      include_open: true,
+      lookback_days: lookbackDays,
+      limit: toPositiveInt(options.limit, 2000, 10000),
+      report_to_feishu: false,
+    });
+
+    const outcomes = outcomeDashboard.outcomes.map(item => modelToPlain<any>(item));
+    const signalIds = outcomes
+      .map(item => Number(item.signal_id))
+      .filter(value => Number.isFinite(value) && value > 0);
+    const signals = signalIds.length
+      ? await AIInvestmentSignal.findAll({
+          where: { id: { [Op.in]: signalIds } },
+          raw: true,
+        })
+      : [];
+    const signalById = new Map<number, any>();
+    signals.forEach((signal: any) => signalById.set(Number(signal.id), signal));
+
+    const pathSamples = this.buildPathSamples(outcomes, signalById, horizons);
+    const horizon_path = horizons.map(horizon => {
+      const samples = pathSamples.filter(item => item.horizon === horizon);
+      const wins = samples.filter(item => item.directional_return_pct > 0);
+      const excessWins = samples.filter(item => Number(item.excess_return_pct || 0) > 0);
+      return {
+        horizon,
+        horizon_days: Number(horizon.replace('d', '')),
+        count: samples.length,
+        completed_count: samples.length,
+        avg_return_pct: roundNumber(average(samples.map(item => item.return_pct)), 4),
+        avg_directional_return_pct: roundNumber(
+          average(samples.map(item => item.directional_return_pct)),
+          4
+        ),
+        avg_excess_return_pct: roundNumber(average(samples.map(item => item.excess_return_pct)), 4),
+        win_rate: samples.length ? roundNumber((wins.length / samples.length) * 100, 2) : 0,
+        excess_win_rate: samples.length
+          ? roundNumber((excessWins.length / samples.length) * 100, 2)
+          : 0,
+        best_symbol: [...samples].sort(
+          (a, b) => b.directional_return_pct - a.directional_return_pct
+        )[0]?.symbol,
+        worst_symbol: [...samples].sort(
+          (a, b) => a.directional_return_pct - b.directional_return_pct
+        )[0]?.symbol,
+      };
+    });
+
+    const symbolPaths = this.buildSymbolPathSummaries(pathSamples, outcomes);
+    const openOutcomes = outcomes.filter(item => item.trade_status !== 'closed');
+    const closedOutcomes = outcomes.filter(item => item.trade_status === 'closed');
+    const bestHorizon = [...horizon_path]
+      .filter(item => item.count > 0)
+      .sort(
+        (a, b) =>
+          b.avg_directional_return_pct - a.avg_directional_return_pct ||
+          b.excess_win_rate - a.excess_win_rate ||
+          b.count - a.count
+      )[0];
+    const currentHoldDays = roundNumber(
+      average(openOutcomes.map(item => toNumber(item.holding_days))),
+      2
+    );
+    const closedAvgHoldDays = roundNumber(
+      average(closedOutcomes.map(item => toNumber(item.holding_days))),
+      2
+    );
+    const recommendedMaxHoldDays = bestHorizon
+      ? Math.max(5, Math.min(30, Number(bestHorizon.horizon_days || 10) * 2))
+      : 20;
+    const stopLossCandidates = closedOutcomes
+      .map(item => Math.abs(toNumber(item.max_adverse_excursion_pct)))
+      .filter(value => Number.isFinite(value) && value > 0);
+    const takeProfitCandidates = closedOutcomes
+      .map(item => toNumber(item.max_favorable_excursion_pct))
+      .filter(value => Number.isFinite(value) && value > 0);
+    const adaptiveRisk = {
+      recommended_max_hold_days: recommendedMaxHoldDays,
+      recommended_stop_loss_pct: roundNumber(
+        Math.max(5, Math.min(10, average(stopLossCandidates) || 7)),
+        2
+      ),
+      recommended_take_profit_pct: roundNumber(
+        Math.max(10, Math.min(20, average(takeProfitCandidates) || 14)),
+        2
+      ),
+      current_open_avg_holding_days: currentHoldDays,
+      closed_avg_holding_days: closedAvgHoldDays,
+      best_horizon: bestHorizon || null,
+    };
+
+    const policyDashboard = await recommendationLoopPolicySnapshotService
+      .getDashboard({
+        username: options.username,
+        universe: 'market',
+        limit: 120,
+      } as any)
+      .catch(error => {
+        logger.warn(`读取策略版本优化建议失败: ${error?.message || error}`);
+        return null;
+      });
+    const promotion = policyDashboard?.promotion || null;
+    const nextPolicy = {
+      recommended_style: promotion?.recommended_style || 'balanced',
+      recommended_min_score:
+        promotion?.recommended_min_score || outcomeDashboard.feedback.recommended_min_score,
+      recommended_default_position_pct: promotion?.recommended_default_position_pct || 3,
+      recommended_max_position_pct: promotion?.recommended_max_position_pct || 6,
+      recommended_paper_trade_limit: promotion?.recommended_paper_trade_limit || 2,
+      confidence: promotion?.confidence || 0,
+      action: promotion?.action || 'collect_samples',
+      reasons: Array.isArray(promotion?.reasons) ? promotion.reasons.slice(0, 4) : [],
+    };
+
+    const weakSegments = outcomeDashboard.feedback.weak_segments.slice(0, 4);
+    const bestSegments = outcomeDashboard.feedback.best_segments.slice(0, 4);
+    const killList = weakSegments
+      .filter(segment => segment.closed_count >= 2 && segment.avg_excess_return_pct < -1)
+      .map(segment => ({
+        dimension: '收益片段',
+        key: segment.key,
+        label: segment.label,
+        closed_count: segment.closed_count,
+        avg_excess_return_pct: segment.avg_excess_return_pct,
+        action: '下一轮降权或暂停自动跟单',
+      }));
+    const boostList = bestSegments
+      .filter(segment => segment.closed_count >= 2 && segment.avg_excess_return_pct > 1)
+      .map(segment => ({
+        dimension: '收益片段',
+        key: segment.key,
+        label: segment.label,
+        closed_count: segment.closed_count,
+        avg_excess_return_pct: segment.avg_excess_return_pct,
+        action: '下一轮优先保留小仓验证',
+      }));
+
+    const insights = [
+      `自主模拟盘当前总盈亏 ${roundNumber(outcomeDashboard.summary.total_pnl, 2)}，闭环 ${outcomeDashboard.summary.closed_count}/${outcomeDashboard.summary.total_count} 笔，胜率 ${outcomeDashboard.summary.win_rate}%。`,
+      bestHorizon
+        ? `后验收益路径显示 ${bestHorizon.horizon} 当前更优，平均方向收益 ${bestHorizon.avg_directional_return_pct}%、超额胜率 ${bestHorizon.excess_win_rate}%。`
+        : '收益路径样本不足，先继续让推荐进入小仓模拟盘沉淀样本。',
+      `下一轮建议：${styleLabel(nextPolicy.recommended_style)} / 评分≥${nextPolicy.recommended_min_score} / 默认仓位 ${nextPolicy.recommended_default_position_pct}% / 跟单 ${nextPolicy.recommended_paper_trade_limit} 笔。`,
+      killList[0]
+        ? `需降权片段：${killList[0].label}，平均超额 ${killList[0].avg_excess_return_pct}%。`
+        : '暂无明确需要永久剔除的片段，继续以收益闸门控制仓位。',
+    ].filter(Boolean);
+
+    return {
+      generated_at: moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm:ss'),
+      portfolio: {
+        id: portfolio.id,
+        name: portfolio.name,
+        initial_capital: toNumber(portfolio.initial_capital),
+        total_value: toNumber(portfolio.total_value),
+        current_cash: toNumber(portfolio.current_cash),
+      },
+      filters: {
+        lookback_days: lookbackDays,
+        horizons,
+      },
+      summary: outcomeDashboard.summary,
+      feedback: outcomeDashboard.feedback,
+      horizon_path,
+      symbol_paths: symbolPaths,
+      adaptive_risk: adaptiveRisk,
+      next_policy: nextPolicy,
+      segment_actions: {
+        boost: boostList,
+        reduce: killList,
+      },
+      policy_versions: policyDashboard
+        ? {
+            summary: policyDashboard.summary,
+            promotion: policyDashboard.promotion,
+            top_versions: (policyDashboard.rankings?.snapshots || []).slice(0, 5),
+          }
+        : null,
+      insights,
+    };
   }
 
   async upsertFromExecutedSignal(
@@ -853,6 +1071,115 @@ export class RecommendationTradeOutcomeService {
       };
     }
     return where;
+  }
+
+  private buildPathSamples(
+    outcomes: any[],
+    signalById: Map<number, any>,
+    horizons: string[]
+  ): any[] {
+    const samples: any[] = [];
+    for (const outcome of outcomes) {
+      const signal = signalById.get(Number(outcome.signal_id));
+      const forwardReturns = asPlainObject(signal?.forward_returns);
+      const horizonMap = asPlainObject(forwardReturns.horizons);
+      for (const horizon of horizons) {
+        const item = asPlainObject(horizonMap[horizon]);
+        if (item.status !== 'completed') continue;
+        const returnPct = toNumber(item.return_pct, NaN);
+        if (!Number.isFinite(returnPct)) continue;
+        const decision = outcome.decision || signal?.normalized_decision || signal?.decision;
+        const directionalReturn =
+          item.directional_return_pct !== undefined
+            ? toNumber(item.directional_return_pct)
+            : ['sell', 'strong_sell'].includes(String(decision || '').toLowerCase())
+              ? -returnPct
+              : returnPct;
+        samples.push({
+          outcome_id: outcome.id,
+          signal_id: outcome.signal_id,
+          symbol: outcome.symbol,
+          name: outcome.name,
+          source_type: outcome.source_type,
+          recommendation_style: outcome.recommendation_style,
+          risk_level: outcome.risk_level,
+          score: toNumber(outcome.score),
+          signal_date: outcome.signal_date,
+          entry_date: forwardReturns.entry_date || outcome.entry_date,
+          entry_price: toNumber(forwardReturns.entry_price, toNumber(outcome.entry_price)),
+          horizon,
+          horizon_days: Number(horizon.replace('d', '')),
+          exit_date: item.exit_date,
+          exit_price: toNumber(item.exit_price),
+          return_pct: roundNumber(returnPct, 4),
+          directional_return_pct: roundNumber(directionalReturn, 4),
+          excess_return_pct: roundNumber(toNumber(item.excess_return_pct, directionalReturn), 4),
+          max_favorable_excursion_pct: roundNumber(
+            toNumber(item.max_favorable_excursion_pct),
+            4
+          ),
+          max_adverse_excursion_pct: roundNumber(toNumber(item.max_adverse_excursion_pct), 4),
+          trade_status: outcome.trade_status,
+          total_pnl_pct: toNumber(outcome.total_pnl_pct),
+        });
+      }
+    }
+    return samples;
+  }
+
+  private buildSymbolPathSummaries(pathSamples: any[], outcomes: any[]) {
+    const grouped = new Map<string, any[]>();
+    for (const sample of pathSamples) {
+      if (!grouped.has(sample.symbol)) grouped.set(sample.symbol, []);
+      grouped.get(sample.symbol)!.push(sample);
+    }
+    const outcomeBySymbol = new Map<string, any[]>();
+    for (const outcome of outcomes) {
+      if (!outcomeBySymbol.has(outcome.symbol)) outcomeBySymbol.set(outcome.symbol, []);
+      outcomeBySymbol.get(outcome.symbol)!.push(outcome);
+    }
+
+    return [...grouped.entries()]
+      .map(([symbol, samples]) => {
+        const first = samples[0] || {};
+        const symbolOutcomes = outcomeBySymbol.get(symbol) || [];
+        const latestOutcome = [...symbolOutcomes].sort((a, b) =>
+          String(b.entry_date || b.signal_date).localeCompare(String(a.entry_date || a.signal_date))
+        )[0];
+        const bestHorizon = [...samples].sort(
+          (a, b) => b.directional_return_pct - a.directional_return_pct
+        )[0];
+        const worstHorizon = [...samples].sort(
+          (a, b) => a.directional_return_pct - b.directional_return_pct
+        )[0];
+        return {
+          symbol,
+          name: first.name || latestOutcome?.name,
+          latest_signal_date: latestOutcome?.signal_date || first.signal_date,
+          trade_status: latestOutcome?.trade_status,
+          score: latestOutcome?.score,
+          count: samples.length,
+          avg_directional_return_pct: roundNumber(
+            average(samples.map(item => item.directional_return_pct)),
+            4
+          ),
+          avg_excess_return_pct: roundNumber(
+            average(samples.map(item => item.excess_return_pct)),
+            4
+          ),
+          best_horizon: bestHorizon?.horizon,
+          best_horizon_return_pct: bestHorizon?.directional_return_pct,
+          worst_horizon: worstHorizon?.horizon,
+          worst_horizon_return_pct: worstHorizon?.directional_return_pct,
+          path: samples.sort((a, b) => a.horizon_days - b.horizon_days),
+        };
+      })
+      .sort(
+        (a, b) =>
+          b.avg_directional_return_pct - a.avg_directional_return_pct ||
+          b.avg_excess_return_pct - a.avg_excess_return_pct
+      )
+      .slice(0, 30);
   }
 
   private buildSummary(records: RecommendationTradeOutcome[]): RecommendationTradeOutcomeSummary {
