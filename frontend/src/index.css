@@ -4211,6 +4211,69 @@ a {
   border: 1px solid rgba(255, 231, 174, 0.13);
 }
 
+.optimization-env-combo-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.optimization-env-combo-tile {
+  position: relative;
+  min-height: 176px;
+  padding: 18px;
+  overflow: hidden;
+  border-radius: 22px;
+  background: radial-gradient(circle at 88% 0%, rgba(141, 214, 228, 0.18), transparent 34%),
+    linear-gradient(160deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.045));
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.optimization-env-combo-rank {
+  width: fit-content;
+  margin-bottom: 10px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  color: #07111f;
+  background: linear-gradient(135deg, #ffe7ae, #8dd6e4);
+  font-weight: 950;
+}
+
+.optimization-env-combo-tile > strong {
+  display: block;
+  margin-top: 16px;
+  font-family: var(--font-display);
+  font-size: 36px;
+  line-height: 0.95;
+  letter-spacing: -0.065em;
+}
+
+.optimization-env-combo-tile em {
+  display: block;
+  margin-top: 6px;
+  color: var(--auto-muted);
+  font-style: normal;
+  font-size: 12px;
+}
+
+.optimization-env-combo-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 12px;
+}
+
+.optimization-env-combo-stats span {
+  padding: 5px 8px;
+  border-radius: 999px;
+  color: rgba(248, 251, 255, 0.78);
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 11px;
+}
+
+.optimization-env-combo-stats b {
+  color: #ffe7ae;
+}
+
 .optimization-env-row {
   display: grid;
   grid-template-columns: 42px minmax(0, 1fr) minmax(160px, 230px);
@@ -4682,6 +4745,10 @@ a {
 
   .optimization-env-version-row {
     grid-template-columns: 42px minmax(0, 1fr);
+  }
+
+  .optimization-env-combo-grid {
+    grid-template-columns: 1fr;
   }
 
   .optimization-env-stat {

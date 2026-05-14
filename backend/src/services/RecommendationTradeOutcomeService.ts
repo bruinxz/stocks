@@ -94,6 +94,7 @@ export interface RecommendationTradeOutcomeDashboard {
     by_market_regime: RecommendationTradeOutcomeBucket[];
     by_industry_regime: RecommendationTradeOutcomeBucket[];
     by_environment_policy_version: RecommendationTradeOutcomeBucket[];
+    by_environment_strategy_combo: RecommendationTradeOutcomeBucket[];
   };
   outcomes: RecommendationTradeOutcome[];
   feedback: {
@@ -282,6 +283,20 @@ function strategyKeyFromOutcome(record: RecommendationTradeOutcome): string {
     asPlainObject(paperTrading.strategy_variant).strategy_key ||
     'unknown'
   );
+}
+
+function environmentStrategyComboKey(record: RecommendationTradeOutcome): string {
+  return `env:${environmentPolicyVersionKey(record)}|strategy:${strategyKeyFromOutcome(record)}`;
+}
+
+function environmentStrategyComboLabel(key: string): string {
+  const envMatch = String(key || '').match(/env:([^|]+)/);
+  const strategyMatch = String(key || '').match(/strategy:(.+)$/);
+  const envKey = envMatch?.[1] || 'unknown';
+  const strategyKey = strategyMatch?.[1] || 'unknown';
+  return `${environmentPolicyVersionLabel(envKey)} × ${recommendationStrategyKeyLabel(
+    strategyKey
+  )}`;
 }
 
 function dateOnly(value?: Date | string | null): string {
@@ -635,6 +650,12 @@ export class RecommendationTradeOutcomeService {
         environmentPolicyVersionLabel,
         'environment_policy_version'
       ),
+      by_environment_strategy_combo: this.buildBuckets(
+        outcomes,
+        item => environmentStrategyComboKey(item),
+        environmentStrategyComboLabel,
+        'environment_strategy_combo'
+      ),
     };
 
     const dashboard: RecommendationTradeOutcomeDashboard = {
@@ -805,6 +826,8 @@ export class RecommendationTradeOutcomeService {
     const marketRegimeGroups = outcomeDashboard.groups.by_market_regime || [];
     const industryRegimeGroups = outcomeDashboard.groups.by_industry_regime || [];
     const environmentVersionGroups = outcomeDashboard.groups.by_environment_policy_version || [];
+    const environmentStrategyComboGroups =
+      outcomeDashboard.groups.by_environment_strategy_combo || [];
     const environmentPolicy = this.buildEnvironmentLoopPolicy({
       market_regime_groups: marketRegimeGroups,
       industry_regime_groups: industryRegimeGroups,
@@ -898,6 +921,11 @@ export class RecommendationTradeOutcomeService {
       bestStrategyCombo
         ? `参数组合冠军：${bestStrategyCombo.label}，稳健分 ${bestStrategyCombo.robust_score}，平均超额 ${bestStrategyCombo.avg_excess_return_pct}%、贝叶斯胜率 ${bestStrategyCombo.bayesian_win_rate}%。`
         : '',
+      environmentStrategyComboGroups[0] &&
+      !environmentStrategyComboGroups[0].key.includes('env:unknown') &&
+      !environmentStrategyComboGroups[0].key.includes('strategy:unknown')
+        ? `环境×策略冠军：${environmentStrategyComboGroups[0].label}，平均超额 ${environmentStrategyComboGroups[0].avg_excess_return_pct}%、闭环 ${environmentStrategyComboGroups[0].closed_count} 笔。`
+        : '',
       environmentPolicy.blocked_segments[0]
         ? `环境闸门建议：暂停 ${environmentPolicy.blocked_segments[0].label}，原因 ${environmentPolicy.blocked_segments[0].reason}。`
         : environmentPolicy.reduced_segments[0]
@@ -942,6 +970,14 @@ export class RecommendationTradeOutcomeService {
         industry_regime_rankings: industryRegimeGroups.slice(0, 8),
         version_rankings: environmentVersionGroups
           .filter(item => item.key !== 'unknown')
+          .slice(0, 10),
+        strategy_combo_rankings: environmentStrategyComboGroups
+          .filter(
+            item =>
+              item.key &&
+              !item.key.includes('env:unknown') &&
+              !item.key.includes('strategy:unknown')
+          )
           .slice(0, 10),
         policy: environmentPolicy,
       },

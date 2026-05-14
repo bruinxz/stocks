@@ -101,6 +101,11 @@ function roundNumber(value: any, digits = 2): number {
   return Math.round(parsed * base) / base;
 }
 
+function asPlainObject(value: any): Record<string, any> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value;
+}
+
 function buildLoopRunId(prefix = 'loop'): string {
   const stamp = moment().tz('Asia/Shanghai').format('YYYYMMDDHHmmss');
   const suffix = Math.random().toString(36).slice(2, 8);
@@ -411,6 +416,14 @@ class AutomatedRecommendationLoopService {
           toNumber(item.robust_score, 0) >= 4 &&
           toNumber(item.avg_excess_return_pct, 0) > 0
       );
+      const inheritedEnvironmentVersion = bestEnvironmentVersion
+        ? await recommendationLoopPolicySnapshotService.findEnvironmentPolicySnapshot({
+            snapshot_id: bestEnvironmentVersion.key,
+            username: options.username,
+            limit: 1000,
+          })
+        : null;
+      const inheritedPolicy = asPlainObject(inheritedEnvironmentVersion?.policy);
       const confidence = toNumber(policy.confidence, 0);
       const closedSamples = toNumber(policy.closed_samples, 0);
       const versionConfidence = bestEnvironmentVersion
@@ -422,26 +435,47 @@ class AutomatedRecommendationLoopService {
         (applied ? '环境闸门策略已从闭环优化台生成' : '环境样本不足，暂按默认环境纪律执行');
       return {
         ...policy,
+        ...(Object.keys(inheritedPolicy).length
+          ? {
+              inherited_environment_policy: inheritedPolicy,
+              inherited_environment_policy_snapshot: inheritedEnvironmentVersion?.snapshot,
+            }
+          : {}),
         enabled: true,
         applied,
         snapshot_id: `${options.loop_run_id}_env_${moment()
           .tz('Asia/Shanghai')
           .format('YYYYMMDDHHmmss')}`,
         default_position_multiplier: roundNumber(
-          clampNumber(toNumber(policy.default_position_multiplier, 1), 0.35, 1.15),
+          clampNumber(
+            toNumber(
+              inheritedPolicy.default_position_multiplier,
+              toNumber(policy.default_position_multiplier, 1)
+            ),
+            0.35,
+            1.15
+          ),
           2
         ),
         closed_samples: closedSamples,
-        blocked_segments: Array.isArray(policy.blocked_segments)
+        blocked_segments: Array.isArray(inheritedPolicy.blocked_segments)
+          ? inheritedPolicy.blocked_segments.slice(0, 8)
+          : Array.isArray(policy.blocked_segments)
           ? policy.blocked_segments.slice(0, 8)
           : [],
-        reduced_segments: Array.isArray(policy.reduced_segments)
+        reduced_segments: Array.isArray(inheritedPolicy.reduced_segments)
+          ? inheritedPolicy.reduced_segments.slice(0, 8)
+          : Array.isArray(policy.reduced_segments)
           ? policy.reduced_segments.slice(0, 8)
           : [],
-        boosted_segments: Array.isArray(policy.boosted_segments)
+        boosted_segments: Array.isArray(inheritedPolicy.boosted_segments)
+          ? inheritedPolicy.boosted_segments.slice(0, 8)
+          : Array.isArray(policy.boosted_segments)
           ? policy.boosted_segments.slice(0, 8)
           : [],
-        watch_segments: Array.isArray(policy.watch_segments)
+        watch_segments: Array.isArray(inheritedPolicy.watch_segments)
+          ? inheritedPolicy.watch_segments.slice(0, 8)
+          : Array.isArray(policy.watch_segments)
           ? policy.watch_segments.slice(0, 8)
           : [],
         version_rankings: versionRankings.slice(0, 8),
@@ -457,11 +491,11 @@ class AutomatedRecommendationLoopService {
           : null,
         promoted_environment_policy_feedback_applied: Boolean(bestEnvironmentVersion),
         promoted_environment_policy_feedback_reason: bestEnvironmentVersion
-          ? `环境版本收益冠军 ${bestEnvironmentVersion.label}：闭环 ${bestEnvironmentVersion.closed_count} 笔、平均超额 ${bestEnvironmentVersion.avg_excess_return_pct}%、稳健分 ${bestEnvironmentVersion.robust_score}，下一轮沿用其环境纪律`
+          ? `环境版本收益冠军 ${bestEnvironmentVersion.label}：闭环 ${bestEnvironmentVersion.closed_count} 笔、平均超额 ${bestEnvironmentVersion.avg_excess_return_pct}%、稳健分 ${bestEnvironmentVersion.robust_score}，下一轮继承其环境纪律`
           : '暂无可晋级的环境闸门版本',
         confidence: roundNumber(Math.max(confidence, versionConfidence), 4),
         reason: bestEnvironmentVersion
-          ? `${policyReason}；已参考环境版本冠军 ${bestEnvironmentVersion.label}`
+          ? `${policyReason}；已继承环境版本冠军 ${bestEnvironmentVersion.label}`
           : policyReason,
       };
     } catch (error: any) {

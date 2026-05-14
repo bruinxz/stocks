@@ -343,6 +343,49 @@ export class RecommendationLoopPolicySnapshotService {
     };
   }
 
+  async findEnvironmentPolicySnapshot(options: {
+    snapshot_id?: string;
+    username?: string;
+    limit?: number;
+  }) {
+    const snapshotId = String(options.snapshot_id || '').trim();
+    if (!snapshotId) return null;
+
+    const where: any = {};
+    if (options.username) where.username = options.username;
+    const records = await RecommendationLoopPolicySnapshot.findAll({
+      where,
+      order: [['generated_at', 'DESC']],
+      limit: toPositiveInt(options.limit, 500, 3000),
+    });
+
+    for (const record of records.map(item => modelToPlain<any>(item))) {
+      const key = this.environmentPolicyVersionFromSnapshot(record);
+      if (key !== snapshotId) continue;
+      const policy = this.environmentPolicyFromSnapshot(record);
+      return {
+        snapshot_id: key,
+        policy,
+        snapshot: {
+          id: record.id,
+          loop_run_id: record.loop_run_id,
+          generated_at: record.generated_at,
+          username: record.username,
+          universe: record.universe,
+          effective_style: record.effective_style,
+          effective_min_score: record.effective_min_score,
+          effective_default_position_pct: record.effective_default_position_pct,
+          effective_max_position_pct: record.effective_max_position_pct,
+          effective_paper_trade_limit: record.effective_paper_trade_limit,
+          strategy_key: this.strategyKeyFromSnapshot(record),
+          avg_excess_return_pct: record.avg_excess_return_pct,
+          closed_trade_count: record.closed_trade_count,
+        },
+      };
+    }
+    return null;
+  }
+
   async refreshOutcomeMetrics(options: LoopPolicySnapshotRefreshOptions = {}) {
     const limit = toPositiveInt(options.limit, 200, 1000);
     const loopRunIds = Array.isArray(options.loop_run_ids)
@@ -889,6 +932,21 @@ export class RecommendationLoopPolicySnapshotService {
         environmentPolicy.snapshot_id ||
         environmentPolicy.id ||
         'unknown'
+    );
+  }
+
+  private environmentPolicyFromSnapshot(record: any): Record<string, any> {
+    const metadata = record?.metadata && typeof record.metadata === 'object' ? record.metadata : {};
+    const loopPolicy =
+      record?.loop_policy && typeof record.loop_policy === 'object' ? record.loop_policy : {};
+    const runMetrics =
+      record?.run_metrics && typeof record.run_metrics === 'object' ? record.run_metrics : {};
+    return asPlainObject(
+      metadata.environment_policy ||
+        loopPolicy.environment_policy ||
+        runMetrics.environment_policy ||
+        asPlainObject(runMetrics.paper_trading).environment_guard_policy ||
+        {}
     );
   }
 }

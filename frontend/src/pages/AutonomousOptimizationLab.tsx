@@ -113,6 +113,13 @@ interface EnvironmentRanking {
   robust_score?: number;
   bayesian_win_rate?: number;
   dimension?: string;
+  sample_confidence?: number;
+  risk_adjusted_excess_return_pct?: number;
+}
+
+interface EnvironmentStrategyComboRanking extends EnvironmentRanking {
+  total_pnl?: number;
+  auto_action?: string;
 }
 
 interface OptimizationData {
@@ -179,6 +186,7 @@ interface OptimizationData {
     market_regime_rankings?: EnvironmentRanking[];
     industry_regime_rankings?: EnvironmentRanking[];
     version_rankings?: EnvironmentRanking[];
+    strategy_combo_rankings?: EnvironmentStrategyComboRanking[];
     policy?: EnvironmentLoopPolicy;
   };
   insights: string[];
@@ -302,6 +310,10 @@ const AutonomousOptimizationLab: React.FC = () => {
   );
   const environmentVersionRankings = useMemo(
     () => (data?.market_environment?.version_rankings || []).slice(0, 5),
+    [data]
+  );
+  const environmentStrategyComboRankings = useMemo(
+    () => (data?.market_environment?.strategy_combo_rankings || []).slice(0, 6),
     [data]
   );
 
@@ -644,6 +656,47 @@ const AutonomousOptimizationLab: React.FC = () => {
                 </div>
               ))}
               {!environmentRankings.length && <Empty description="暂无环境归因样本" />}
+            </div>
+          </Card>
+        </Col>
+      </Row>
+
+      <Row gutter={[16, 16]}>
+        <Col xs={24}>
+          <Card
+            className="modern-card optimization-env-card"
+            title={
+              <Space>
+                <NodeIndexOutlined /> 环境 × 策略组合收益矩阵
+              </Space>
+            }
+            loading={loading}
+          >
+            <div className="optimization-env-combo-grid">
+              {environmentStrategyComboRankings.map((item, index) => (
+                <div className="optimization-env-combo-tile" key={item.key || index}>
+                  <div className="optimization-env-combo-rank">#{index + 1}</div>
+                  <Text strong>{item.label || item.key}</Text>
+                  <div className="optimization-env-combo-stats">
+                    <span>
+                      闭环 <b>{item.closed_count || 0}</b>
+                    </span>
+                    <span>
+                      超额胜率 <b>{formatPercent(item.excess_win_rate)}</b>
+                    </span>
+                    <span>
+                      稳健分 <b>{Number(item.robust_score || 0).toFixed(2)}</b>
+                    </span>
+                  </div>
+                  <strong style={{ color: pnlColor(item.avg_excess_return_pct) }}>
+                    {formatPercent(item.avg_excess_return_pct)}
+                  </strong>
+                  <em>该环境下该参数组合的平均超额</em>
+                </div>
+              ))}
+              {!environmentStrategyComboRankings.length && (
+                <Empty description="暂无环境×策略交叉样本，等待更多模拟盘闭环" />
+              )}
             </div>
           </Card>
         </Col>
