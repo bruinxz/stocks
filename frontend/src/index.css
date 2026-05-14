@@ -4271,6 +4271,36 @@ a {
   border: 1px solid rgba(255, 255, 255, 0.12);
 }
 
+.optimization-env-combo-tile.ready {
+  border-color: rgba(141, 214, 228, 0.34);
+  background: radial-gradient(circle at 88% 0%, rgba(141, 214, 228, 0.24), transparent 34%),
+    linear-gradient(160deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.05));
+}
+
+.optimization-env-combo-tile.cooldown {
+  border-color: rgba(209, 67, 67, 0.32);
+  background: radial-gradient(circle at 88% 0%, rgba(209, 67, 67, 0.18), transparent 34%),
+    linear-gradient(160deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.04));
+}
+
+.optimization-env-cooldown-strip {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: -4px 0 14px;
+  padding: 11px 14px;
+  border-radius: 16px;
+  color: rgba(255, 239, 239, 0.92);
+  background: rgba(127, 29, 29, 0.2);
+  border: 1px solid rgba(209, 67, 67, 0.28);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.optimization-env-cooldown-strip .anticon {
+  color: #ffb4a8;
+}
+
 .optimization-env-combo-rank {
   width: fit-content;
   margin-bottom: 10px;

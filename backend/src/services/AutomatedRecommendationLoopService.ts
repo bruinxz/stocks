@@ -439,6 +439,7 @@ class AutomatedRecommendationLoopService {
           item?.key &&
           !String(item.key).includes('env:unknown') &&
           !String(item.key).includes('strategy:unknown') &&
+          !item.cooldown_active &&
           (item.takeover_ready ||
             (toNumber(item.closed_count, 0) >= 3 &&
               toNumber(item.sample_confidence, 0) >= 0.25 &&
@@ -446,6 +447,9 @@ class AutomatedRecommendationLoopService {
               toNumber(item.avg_excess_return_pct, 0) > 0.5 &&
               toNumber(item.bayesian_win_rate, 50) >= 52))
       );
+      const cooledEnvironmentStrategyCombos = strategyComboRankings
+        .filter((item: any) => item?.cooldown_active)
+        .slice(0, 5);
       const inheritedEnvironmentVersion = bestEnvironmentVersion
         ? await recommendationLoopPolicySnapshotService.findEnvironmentPolicySnapshot({
             snapshot_id: bestEnvironmentVersion.key,
@@ -536,6 +540,16 @@ class AutomatedRecommendationLoopService {
               takeover_reason: bestEnvironmentStrategyCombo.takeover_reason,
             }
           : null,
+        cooled_environment_strategy_combos: cooledEnvironmentStrategyCombos.map((item: any) => ({
+          key: item.key,
+          label: item.label,
+          closed_count: item.closed_count,
+          avg_excess_return_pct: item.avg_excess_return_pct,
+          robust_score: item.robust_score,
+          recent_loss_streak: item.recent_loss_streak,
+          cooldown_days: item.cooldown_days,
+          cooldown_reason: item.cooldown_reason,
+        })),
         promoted_environment_strategy_feedback_applied: Boolean(bestEnvironmentStrategyCombo),
         promoted_environment_strategy_feedback_reason: bestEnvironmentStrategyCombo
           ? `环境×策略冠军 ${bestEnvironmentStrategyCombo.label}：闭环 ${bestEnvironmentStrategyCombo.closed_count} 笔、平均超额 ${bestEnvironmentStrategyCombo.avg_excess_return_pct}%、稳健分 ${bestEnvironmentStrategyCombo.robust_score}，下一轮接管扫描参数`

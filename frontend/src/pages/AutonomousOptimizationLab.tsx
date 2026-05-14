@@ -111,6 +111,7 @@ interface EnvironmentLoopPolicy {
     paper_trade_limit?: number;
     strategy_key?: string;
   } | null;
+  cooled_environment_strategy_combos?: EnvironmentStrategyComboRanking[];
 }
 
 interface EnvironmentRanking {
@@ -133,6 +134,10 @@ interface EnvironmentStrategyComboRanking extends EnvironmentRanking {
   auto_action?: string;
   takeover_ready?: boolean;
   takeover_reason?: string;
+  cooldown_active?: boolean;
+  cooldown_reason?: string;
+  recent_loss_streak?: number;
+  cooldown_days?: number;
 }
 
 interface OptimizationData {
@@ -719,9 +724,24 @@ const AutonomousOptimizationLab: React.FC = () => {
                 </Tag>
               </Space>
             </div>
+            {!!environmentPolicy?.cooled_environment_strategy_combos?.length && (
+              <div className="optimization-env-cooldown-strip">
+                <FireOutlined />
+                <span>
+                  已冷却 {environmentPolicy.cooled_environment_strategy_combos.length} 个跑输组合：
+                  {environmentPolicy.cooled_environment_strategy_combos[0]?.label} ·{' '}
+                  {environmentPolicy.cooled_environment_strategy_combos[0]?.cooldown_reason}
+                </span>
+              </div>
+            )}
             <div className="optimization-env-combo-grid">
               {environmentStrategyComboRankings.map((item, index) => (
-                <div className="optimization-env-combo-tile" key={item.key || index}>
+                <div
+                  className={`optimization-env-combo-tile ${
+                    item.cooldown_active ? 'cooldown' : item.takeover_ready ? 'ready' : ''
+                  }`}
+                  key={item.key || index}
+                >
                   <div className="optimization-env-combo-rank">#{index + 1}</div>
                   <Text strong>{item.label || item.key}</Text>
                   <div className="optimization-env-combo-stats">
@@ -739,7 +759,11 @@ const AutonomousOptimizationLab: React.FC = () => {
                     {formatPercent(item.avg_excess_return_pct)}
                   </strong>
                   <em>
-                    {item.takeover_ready ? '已满足接管条件' : item.takeover_reason || '继续观察'}
+                    {item.cooldown_active
+                      ? item.cooldown_reason || '组合冷却中'
+                      : item.takeover_ready
+                      ? '已满足接管条件'
+                      : item.takeover_reason || '继续观察'}
                   </em>
                 </div>
               ))}

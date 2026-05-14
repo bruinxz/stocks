@@ -141,6 +141,10 @@ export interface RecommendationTradeOutcomeBucket {
   risk_adjusted_excess_return_pct?: number;
   takeover_ready?: boolean;
   takeover_reason?: string;
+  cooldown_active?: boolean;
+  cooldown_reason?: string;
+  recent_loss_streak?: number;
+  cooldown_days?: number;
 }
 
 function toNumber(value: any, fallback = 0): number {
@@ -1765,6 +1769,19 @@ export class RecommendationTradeOutcomeService {
         );
         const riskAdjustedExcess =
           avgExcessReturn - returnVolatility * 0.18 - drawdownPenalty * 0.12;
+        const recentClosed = [...closed].sort((a, b) =>
+          String(b.exit_date || b.entry_date || '').localeCompare(
+            String(a.exit_date || a.entry_date || '')
+          )
+        );
+        let recentLossStreak = 0;
+        for (const item of recentClosed) {
+          if (toNumber(item.excess_return_pct) < 0 || toNumber(item.realized_pnl) < 0) {
+            recentLossStreak += 1;
+          } else {
+            break;
+          }
+        }
         const robustScore = roundNumber(
           riskAdjustedExcess * 7 +
             (bayesianWinRate - 50) * 0.26 +
@@ -1781,6 +1798,26 @@ export class RecommendationTradeOutcomeService {
             : robustScore <= -6 || riskAdjustedExcess < -0.8 || bayesianWinRate < 45
             ? 'reduce'
             : 'hold';
+        const cooldownActive =
+          dimension === 'environment_strategy_combo' &&
+          closed.length >= 3 &&
+          (recentLossStreak >= 2 ||
+            avgExcessReturn <= -1 ||
+            riskAdjustedExcess <= -0.8 ||
+            bayesianWinRate < 45 ||
+            drawdownPenalty >= 6);
+        const cooldownReason =
+          dimension === 'environment_strategy_combo' && cooldownActive
+            ? recentLossStreak >= 2
+              ? `最近 ${recentLossStreak} 笔连续跑输，冷却观察`
+              : avgExcessReturn <= -1
+              ? `平均超额 ${avgExcessReturn}% 为负，冷却观察`
+              : riskAdjustedExcess <= -0.8
+              ? `风险调整超额 ${roundNumber(riskAdjustedExcess, 2)}% 偏弱，冷却观察`
+              : bayesianWinRate < 45
+              ? `贝叶斯胜率 ${roundNumber(bayesianWinRate, 2)}% 偏低，冷却观察`
+              : `最大不利波动 ${roundNumber(drawdownPenalty, 2)}% 偏高，冷却观察`
+            : undefined;
         return {
           key,
           label: labelSelector(key),
@@ -1820,6 +1857,7 @@ export class RecommendationTradeOutcomeService {
           risk_adjusted_excess_return_pct: roundNumber(riskAdjustedExcess, 4),
           takeover_ready:
             dimension === 'environment_strategy_combo' &&
+            !cooldownActive &&
             closed.length >= 3 &&
             sampleConfidence >= 0.25 &&
             robustScore >= 8 &&
@@ -1827,7 +1865,9 @@ export class RecommendationTradeOutcomeService {
             bayesianWinRate >= 52,
           takeover_reason:
             dimension === 'environment_strategy_combo'
-              ? closed.length < 3
+              ? cooldownActive
+                ? cooldownReason
+                : closed.length < 3
                 ? `闭环样本 ${closed.length}/3，不接管`
                 : robustScore < 8
                 ? `稳健分 ${robustScore}/8，不接管`
@@ -1837,6 +1877,11 @@ export class RecommendationTradeOutcomeService {
                 ? `贝叶斯胜率 ${roundNumber(bayesianWinRate, 2)}% 不足，不接管`
                 : '满足样本、稳健分、超额收益和贝叶斯胜率，允许接管'
               : undefined,
+          cooldown_active: cooldownActive,
+          cooldown_reason: cooldownReason,
+          recent_loss_streak:
+            dimension === 'environment_strategy_combo' ? recentLossStreak : undefined,
+          cooldown_days: cooldownActive ? Math.min(20, 5 + recentLossStreak * 3) : undefined,
         };
       })
       .sort((a, b) => {
