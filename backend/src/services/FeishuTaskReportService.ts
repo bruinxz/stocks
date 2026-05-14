@@ -62,10 +62,13 @@ class FeishuTaskReportService {
       '### 结论',
       `- **投资评级**：${decision}`,
       payload.score != null ? `- **综合评分**：${Number(payload.score).toFixed(2)}` : '',
-      payload.current_price != null ? `- **最新价**：${payload.current_price}` : '',
-      payload.price_change_pct != null
-        ? `- **涨跌幅**：${Number(payload.price_change_pct).toFixed(2)}%`
-        : '',
+      this.buildPriceMarkdownLine(
+        {
+          current_price: payload.current_price,
+          price_change_pct: payload.price_change_pct,
+        },
+        '当前股价（Agent分析时）'
+      ),
       payload.task_label ? `- **任务来源**：${payload.task_label}` : '',
       '',
       '### 核心理由',
@@ -184,6 +187,13 @@ class FeishuTaskReportService {
       '### 任务信息',
       `- **股票代码**：${jobData?.symbol || '-'}`,
       `- **股票名称**：${jobData?.name || '-'}`,
+      this.buildPriceMarkdownLine(
+        {
+          current_price: jobData?.current_price,
+          price_change_pct: jobData?.price_change_pct,
+        },
+        '当前股价（提交Agent时）'
+      ),
       `- **任务名称**：${jobData?.taskLabel || 'AI 每日优选评估'}`,
       jobId ? `- **队列任务ID**：${jobId}` : '',
     ]
@@ -579,9 +589,11 @@ class FeishuTaskReportService {
           }`
         : '',
       bestPick
-        ? `- **首选标的**：${bestPick.name || bestPick.symbol}（${bestPick.symbol}），评分 ${
-            bestPick.score
-          }，动作 ${bestPick.action_label || bestPick.action || '-'}${formatConsensus(bestPick)}`
+        ? `- **首选标的**：${bestPick.name || bestPick.symbol}（${bestPick.symbol}），${
+            this.buildInlinePriceText(bestPick) || '当前股价 --'
+          }，评分 ${bestPick.score}，动作 ${
+            bestPick.action_label || bestPick.action || '-'
+          }${formatConsensus(bestPick)}`
         : '',
       '',
       '### 核心候选',
@@ -591,7 +603,9 @@ class FeishuTaskReportService {
               (item: any, index: number) =>
                 `${index + 1}. **${item.name || item.symbol}（${item.symbol}）**：评分 ${
                   item.score
-                }，${item.action_label || item.action || '-'}，风险 ${
+                }，${this.buildInlinePriceText(item) || '当前股价 --'}，${
+                  item.action_label || item.action || '-'
+                }，风险 ${
                   item.risk_level || '-'
                 }${formatConsensus(item)}，20日 ${
                   item.metrics?.return_20d ?? '--'
@@ -1579,12 +1593,17 @@ class FeishuTaskReportService {
     if (trades.length > 0) {
       lines.push('', `### ${dryRun ? '计划买入' : '买入明细'}`);
       trades.slice(0, 5).forEach((trade: any, index: number) => {
+        const quoteText = this.buildInlinePriceText(trade, '当前股价') || '当前股价 --';
+        const executeText = this.buildInlinePriceText(
+          { execute_price: trade.execute_price },
+          dryRun ? '预估成交价' : '成交价'
+        );
         lines.push(
           `${index + 1}. **${trade.name || trade.symbol}（${trade.symbol}）**：${
             trade.quantity ?? '-'
-          }股，¥${this.formatMoney(trade.execute_price)}，金额 ¥${this.formatMoney(
+          }股，${quoteText}${executeText ? `；${executeText}` : ''}；金额 ¥${this.formatMoney(
             trade.amount
-          )}，目标仓位 ${trade.target_position_pct ?? '--'}%`,
+          )}；目标仓位 ${trade.target_position_pct ?? '--'}%`,
           `   - 评分 ${trade.score ?? '--'}；止损 ${trade.stop_loss_pct ?? '--'}%；止盈 ${
             trade.take_profit_pct ?? '--'
           }%`
@@ -1652,10 +1671,18 @@ class FeishuTaskReportService {
       lines.push('', `### ${dryRun ? '计划退出' : '卖出明细'}`);
       exits.slice(0, 5).forEach((item: any, index: number) => {
         const pnlPrefix = Number(item.realized_pnl || 0) >= 0 ? '+' : '';
+        const quoteText = this.buildInlinePriceText(item, '当前股价') || '当前股价 --';
+        const costText = this.buildInlinePriceText({ avg_cost: item.avg_cost }, '持仓成本');
+        const executeText = this.buildInlinePriceText(
+          { execute_price: item.execute_price },
+          dryRun ? '预估卖出价' : '卖出价'
+        );
         lines.push(
           `${index + 1}. **${item.name || item.symbol}（${item.symbol}）** - ${
             item.reason_label || item.reason || '风控退出'
-          }：${item.quantity ?? '-'}股，¥${this.formatMoney(item.execute_price)}`,
+          }：${item.quantity ?? '-'}股，${quoteText}${costText ? `；${costText}` : ''}${
+            executeText ? `；${executeText}` : ''
+          }`,
           `   - 盈亏 ${pnlPrefix}¥${this.formatMoney(item.realized_pnl)}（${
             item.pnl_pct ?? '--'
           }%），持有 ${item.holding_days ?? '--'} 天${
@@ -1675,8 +1702,12 @@ class FeishuTaskReportService {
     if (heldItems.length > 0) {
       lines.push('', '### 继续观察');
       heldItems.slice(0, 5).forEach((item: any) => {
+        const quoteText = this.buildInlinePriceText(item, '当前股价') || '当前股价 --';
+        const costText = this.buildInlinePriceText({ avg_cost: item.avg_cost }, '持仓成本');
         lines.push(
-          `- **${item.name || item.symbol}（${item.symbol}）**：当前 ${item.pnl_pct ?? '--'}%，${
+          `- **${item.name || item.symbol}（${item.symbol}）**：${quoteText}${
+            costText ? `；${costText}` : ''
+          }；当前收益 ${item.pnl_pct ?? '--'}%，${
             item.message || '未触发退出'
           }`
         );
@@ -1686,8 +1717,11 @@ class FeishuTaskReportService {
     if (skippedItems.length > 0) {
       lines.push('', '### 跳过项');
       skippedItems.slice(0, 3).forEach((item: any) => {
+        const quoteText = this.buildInlinePriceText(item, '当前股价');
         lines.push(
-          `- **${item.name || item.symbol}（${item.symbol}）**：${item.message || '已跳过'}`
+          `- **${item.name || item.symbol}（${item.symbol}）**：${
+            quoteText ? `${quoteText}；` : ''
+          }${item.message || '已跳过'}`
         );
       });
     }
@@ -1738,7 +1772,7 @@ class FeishuTaskReportService {
         lines.push(
           `- **最佳**：${summary.best_trade.name || summary.best_trade.symbol}（${
             summary.best_trade.symbol
-          }）收益 ${this.formatPercent(
+          }）${this.buildTradePriceRangeText(summary.best_trade)}；收益 ${this.formatPercent(
             summary.best_trade.realized_pnl_pct
           )}，盈亏 ${this.formatSignedMoney(summary.best_trade.realized_pnl)}，持有 ${
             summary.best_trade.holding_days ?? '--'
@@ -1749,7 +1783,7 @@ class FeishuTaskReportService {
         lines.push(
           `- **最差**：${summary.worst_trade.name || summary.worst_trade.symbol}（${
             summary.worst_trade.symbol
-          }）收益 ${this.formatPercent(
+          }）${this.buildTradePriceRangeText(summary.worst_trade)}；收益 ${this.formatPercent(
             summary.worst_trade.realized_pnl_pct
           )}，盈亏 ${this.formatSignedMoney(summary.worst_trade.realized_pnl)}，原因：${
             summary.worst_trade.exit_reason_label || summary.worst_trade.exit_reason || '-'
@@ -1778,7 +1812,9 @@ class FeishuTaskReportService {
       lines.push('', '### 当前重点持仓');
       openPositions.slice(0, 5).forEach((item: any) => {
         lines.push(
-          `- **${item.name || item.symbol}（${item.symbol}）**：浮盈亏 ${this.formatSignedMoney(
+          `- **${item.name || item.symbol}（${item.symbol}）**：${this.buildTradePriceRangeText(
+            item
+          )}；浮盈亏 ${this.formatSignedMoney(
             item.unrealized_pnl
           )}（${this.formatPercent(item.unrealized_pnl_pct)}），持有 ${
             item.holding_days ?? '--'
@@ -1793,7 +1829,7 @@ class FeishuTaskReportService {
         lines.push(
           `${index + 1}. **${item.name || item.symbol}（${
             item.symbol
-          }）**：收益 ${this.formatPercent(
+          }）**：${this.buildTradePriceRangeText(item)}；收益 ${this.formatPercent(
             item.realized_pnl_pct
           )}，实现盈亏 ${this.formatSignedMoney(item.realized_pnl)}，退出：${
             item.exit_reason_label || item.exit_reason || '-'
@@ -1866,14 +1902,18 @@ class FeishuTaskReportService {
       bestTrade?.symbol
         ? `- **最佳样本**：${bestTrade.name || bestTrade.symbol}（${
             bestTrade.symbol
-          }）收益 ${this.formatPercent(bestTrade.total_pnl_pct)}，超额 ${this.formatPercent(
+          }）${this.buildTradePriceRangeText(bestTrade)}；收益 ${this.formatPercent(
+            bestTrade.total_pnl_pct
+          )}，超额 ${this.formatPercent(
             bestTrade.excess_return_pct
           )}`
         : '- **最佳样本**：暂无',
       worstTrade?.symbol
         ? `- **最弱样本**：${worstTrade.name || worstTrade.symbol}（${
             worstTrade.symbol
-          }）收益 ${this.formatPercent(worstTrade.total_pnl_pct)}，超额 ${this.formatPercent(
+          }）${this.buildTradePriceRangeText(worstTrade)}；收益 ${this.formatPercent(
+            worstTrade.total_pnl_pct
+          )}，超额 ${this.formatPercent(
             worstTrade.excess_return_pct
           )}`
         : '',
@@ -1999,7 +2039,7 @@ class FeishuTaskReportService {
           }`,
           `   - 原因：${item.reason || '-'}`,
           item.reference_price !== undefined
-            ? `   - 参考价：¥${this.formatMoney(item.reference_price)}${
+            ? `   - ${this.buildInlinePriceText(item, '当前股价/参考价') || '当前股价/参考价 --'}${
                 item.quantity ? `；数量：${item.quantity} 股` : ''
               }`
             : '',
@@ -2043,6 +2083,87 @@ class FeishuTaskReportService {
         }，实现盈亏 ${this.formatSignedMoney(group.total_realized_pnl)}`
       );
     });
+  }
+
+  private formatPrice(value: any): string {
+    if (value === undefined || value === null || value === '') return '';
+    const num = Number(value);
+    if (!Number.isFinite(num) || num <= 0) return '';
+    return num
+      .toFixed(num >= 100 ? 2 : 3)
+      .replace(/\.?0+$/, '');
+  }
+
+  private resolveStockPriceValue(item: any): any {
+    if (!item || typeof item !== 'object') return undefined;
+    return this.firstDefined(
+      item.agent_current_price,
+      item.current_price,
+      item.latest_price,
+      item.reference_price,
+      item.execute_price,
+      item.entry_price,
+      item.exit_price,
+      item.avg_cost
+    );
+  }
+
+  private resolveStockPriceLabel(item: any): string {
+    const formatted = this.formatPrice(this.resolveStockPriceValue(item));
+    return formatted ? `¥${formatted}` : '';
+  }
+
+  private buildPriceMarkdownLine(item: any, label = '当前股价'): string {
+    const price = this.resolveStockPriceLabel(item);
+    if (!price) return '';
+    const change = this.firstDefined(
+      item?.price_change_pct,
+      item?.change_percent,
+      item?.latest_change_percent
+    );
+    const changeText =
+      change !== undefined && change !== null && Number.isFinite(Number(change))
+        ? `；涨跌幅 ${Number(change).toFixed(2)}%`
+        : '';
+    return `- **${label}**：${price}${changeText}`;
+  }
+
+  private buildInlinePriceText(item: any, label = '当前股价'): string {
+    const price = this.resolveStockPriceLabel(item);
+    if (!price) return '';
+    const change = this.firstDefined(
+      item?.price_change_pct,
+      item?.change_percent,
+      item?.latest_change_percent
+    );
+    const changeText =
+      change !== undefined && change !== null && Number.isFinite(Number(change))
+        ? `，涨跌幅 ${Number(change).toFixed(2)}%`
+        : '';
+    return `${label} ${price}${changeText}`;
+  }
+
+  private buildTradePriceRangeText(item: any): string {
+    const parts: string[] = [];
+    const entry = this.formatPrice(item?.entry_price);
+    const exit = this.formatPrice(item?.exit_price);
+    const current = this.formatPrice(
+      this.firstDefined(item?.current_price, item?.latest_price, item?.reference_price)
+    );
+
+    if (entry) parts.push(`入场价 ¥${entry}`);
+    if (exit) {
+      parts.push(`退出价 ¥${exit}`);
+    } else if (current) {
+      parts.push(`当前股价 ¥${current}`);
+    }
+
+    if (parts.length === 0) {
+      const fallback = this.resolveStockPriceLabel(item);
+      if (fallback) parts.push(`当前股价 ${fallback}`);
+    }
+
+    return parts.join(' / ') || '价格 --';
   }
 
   private firstDefined(...values: any[]): any {

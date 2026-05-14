@@ -989,6 +989,8 @@ class AutomatedRecommendationLoopService {
             paper_trade_default_position_pct: options.paper_trade_default_position_pct,
             paper_trade_max_position_pct: options.paper_trade_max_position_pct,
             paper_trade_min_trade_amount: options.paper_trade_min_trade_amount,
+            current_price: candidate.current_price,
+            price_change_pct: candidate.change_percent,
           },
           {
             jobId: `auto-loop-ai-${options.execution_log_id || 'manual'}-${response.task_id}`,
@@ -1004,6 +1006,8 @@ class AutomatedRecommendationLoopService {
           action: candidate.action,
           task_id: response.task_id,
           status: response.status,
+          current_price: candidate.current_price,
+          price_change_pct: candidate.change_percent,
           auto_paper_trade: Boolean(options.auto_paper_trade),
         });
       } catch (error: any) {

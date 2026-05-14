@@ -85,6 +85,8 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
     recommendation_style,
     recommendation_source,
     agent_session,
+    current_price: submitted_current_price,
+    price_change_pct: submitted_price_change_pct,
     auto_paper_trade,
     paper_trade_username,
     paper_trade_portfolio_name,
@@ -136,8 +138,8 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
       const today = moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
 
       // Fetch real-time price
-      let currentPrice = null;
-      let priceChangePct = null;
+      let currentPrice = submitted_current_price ?? null;
+      let priceChangePct = submitted_price_change_pct ?? null;
       try {
         const quotes = await akshareClient.getRealtimeQuotes(symbol);
         if (quotes && quotes[symbol]) {
