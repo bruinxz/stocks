@@ -38,14 +38,16 @@ export interface RecommendationTradeOutcomeRefreshOptions {
   report_to_feishu?: boolean;
 }
 
-export interface RecommendationTradeOutcomeQueryOptions extends RecommendationTradeOutcomeRefreshOptions {
+export interface RecommendationTradeOutcomeQueryOptions
+  extends RecommendationTradeOutcomeRefreshOptions {
   trade_status?: string;
   start_date?: string;
   end_date?: string;
   offset?: number;
 }
 
-export interface RecommendationTradeOutcomeOptimizationOptions extends RecommendationTradeOutcomeQueryOptions {
+export interface RecommendationTradeOutcomeOptimizationOptions
+  extends RecommendationTradeOutcomeQueryOptions {
   horizons?: string[] | string;
 }
 
@@ -368,11 +370,11 @@ function isResampleOutcome(record: RecommendationTradeOutcome): boolean {
   );
   return Boolean(
     metadata.resample_sample ||
-    paperTrading.resample_sample ||
-    signalMetadata.resample_sample ||
-    environmentPolicy.resample_match ||
-    metadata.resample_match ||
-    paperTrading.resample_match
+      paperTrading.resample_sample ||
+      signalMetadata.resample_sample ||
+      environmentPolicy.resample_match ||
+      metadata.resample_match ||
+      paperTrading.resample_match
   );
 }
 
@@ -1075,8 +1077,8 @@ export class RecommendationTradeOutcomeService {
       reason: weakOutcome
         ? '闭环收益偏弱，建议收紧止损/止盈与移动止盈触发'
         : strongOutcome
-          ? '闭环收益偏强，建议给强势标的更多收益空间'
-          : '闭环收益中性，按 MFE/MAE 小幅校准风控参数',
+        ? '闭环收益偏强，建议给强势标的更多收益空间'
+        : '闭环收益中性，按 MFE/MAE 小幅校准风控参数',
     };
 
     const strategyComboGroups = outcomeDashboard.groups.by_strategy_key || [];
@@ -1133,10 +1135,10 @@ export class RecommendationTradeOutcomeService {
       candidate_tuning_reason: environmentPolicy.recovered_environment_strategy_combos?.[0]
         ? `下一轮候选源头优先恢复 ${environmentPolicy.recovered_environment_strategy_combos[0].label}`
         : environmentPolicy.extended_cooldown_environment_strategy_combos?.[0]
-          ? `下一轮候选源头压低 ${environmentPolicy.extended_cooldown_environment_strategy_combos[0].label}`
-          : environmentPolicy.resample_environment_strategy_combos?.[0]
-            ? `下一轮候选源头小仓复采样 ${environmentPolicy.resample_environment_strategy_combos[0].label}`
-            : '',
+        ? `下一轮候选源头压低 ${environmentPolicy.extended_cooldown_environment_strategy_combos[0].label}`
+        : environmentPolicy.resample_environment_strategy_combos?.[0]
+        ? `下一轮候选源头小仓复采样 ${environmentPolicy.resample_environment_strategy_combos[0].label}`
+        : '',
     };
     const topCandidateTuning = candidateTuningGroups
       .filter(item => item.key !== 'no_tuning' && item.closed_count > 0)
@@ -1163,16 +1165,37 @@ export class RecommendationTradeOutcomeService {
       )[0];
     const budgetPolicyExecutionAudit =
       this.buildBudgetPolicyExecutionAudit(budgetPolicyActionGroups);
-    const budgetActionPolicy = this.buildBudgetActionPolicy(
+    let budgetActionPolicy: any = this.buildBudgetActionPolicy(
       budgetActionRankings,
       budgetPolicyExecutionAudit
     );
-    const budgetPolicyVersion = this.buildBudgetPolicyVersionSnapshot({
+    const rawBudgetPolicyVersion = this.buildBudgetPolicyVersionSnapshot({
       policy: budgetActionPolicy,
       audit: budgetPolicyExecutionAudit,
       version_groups: budgetPolicyVersionGroups,
       lookback_days: lookbackDays,
     });
+    const budgetPolicyVersionGuard = this.buildBudgetPolicyVersionGuard(rawBudgetPolicyVersion);
+    let budgetPolicyVersion = rawBudgetPolicyVersion;
+    if (budgetPolicyVersionGuard.action === 'protective_downgrade') {
+      budgetActionPolicy = this.applyBudgetPolicyVersionGuard(
+        budgetActionPolicy,
+        budgetPolicyVersionGuard
+      );
+      budgetPolicyVersion = this.buildBudgetPolicyVersionSnapshot({
+        policy: budgetActionPolicy,
+        audit: budgetPolicyExecutionAudit,
+        version_groups: budgetPolicyVersionGroups,
+        lookback_days: lookbackDays,
+        guard: budgetPolicyVersionGuard,
+        base_version: rawBudgetPolicyVersion,
+      });
+    }
+    budgetPolicyVersion = this.attachBudgetPolicyVersionGuard(
+      budgetPolicyVersion,
+      budgetPolicyVersionGuard,
+      rawBudgetPolicyVersion
+    );
     (budgetActionPolicy as any).version = budgetPolicyVersion;
     (budgetActionPolicy as any).version_id = budgetPolicyVersion.version_id;
     (budgetActionPolicy as any).version_hash = budgetPolicyVersion.version_hash;
@@ -1214,10 +1237,10 @@ export class RecommendationTradeOutcomeService {
           (raw.resample_policy_action === 'extend_cooldown' || raw.action === 'block'
             ? 'pause'
             : raw.action === 'reduce'
-              ? 'reduce'
-              : raw.action === 'boost' || raw.resample_policy_action === 'recover_small'
-                ? 'increase'
-                : 'observe'),
+            ? 'reduce'
+            : raw.action === 'boost' || raw.resample_policy_action === 'recover_small'
+            ? 'increase'
+            : 'observe'),
         recommended_budget_multiplier: roundNumber(
           clamp(toNumber(fallbackMultiplier, 0.72), 0, 1.2),
           2
@@ -1365,19 +1388,19 @@ export class RecommendationTradeOutcomeService {
       environmentPolicy.blocked_segments[0]
         ? `环境闸门建议：暂停 ${environmentPolicy.blocked_segments[0].label}，原因 ${environmentPolicy.blocked_segments[0].reason}。`
         : environmentPolicy.reduced_segments[0]
-          ? `环境闸门建议：${environmentPolicy.reduced_segments[0].label} 降至 ${environmentPolicy.reduced_segments[0].position_multiplier}x，小仓验证。`
-          : environmentPolicy.boosted_segments[0]
-            ? `环境闸门建议：优先小幅放大 ${environmentPolicy.boosted_segments[0].label}，倍率 ${environmentPolicy.boosted_segments[0].position_multiplier}x。`
-            : '',
+        ? `环境闸门建议：${environmentPolicy.reduced_segments[0].label} 降至 ${environmentPolicy.reduced_segments[0].position_multiplier}x，小仓验证。`
+        : environmentPolicy.boosted_segments[0]
+        ? `环境闸门建议：优先小幅放大 ${environmentPolicy.boosted_segments[0].label}，倍率 ${environmentPolicy.boosted_segments[0].position_multiplier}x。`
+        : '',
       environmentStrategyComboGroups.find(item => item.resample_recovery_ready)
         ? `复采样升降级：${
             environmentStrategyComboGroups.find(item => item.resample_recovery_ready)?.label
           } 复采样跑赢，下一轮解除冷却并以小仓恢复。`
         : environmentStrategyComboGroups.find(item => item.cooldown_extended)
-          ? `复采样升降级：${
-              environmentStrategyComboGroups.find(item => item.cooldown_extended)?.label
-            } 复采样仍跑输，下一轮延长冷却。`
-          : '',
+        ? `复采样升降级：${
+            environmentStrategyComboGroups.find(item => item.cooldown_extended)?.label
+          } 复采样仍跑输，下一轮延长冷却。`
+        : '',
       topCandidateTuning
         ? `候选源头调权回收：${topCandidateTuning.label} 闭环 ${topCandidateTuning.closed_count} 笔，平均超额 ${topCandidateTuning.avg_excess_return_pct}%。`
         : '',
@@ -1392,6 +1415,9 @@ export class RecommendationTradeOutcomeService {
         : '',
       budgetPolicyVersion.enabled
         ? `预算权重版本：${budgetPolicyVersion.version_id}，指纹 ${budgetPolicyVersion.version_hash}。`
+        : '',
+      budgetPolicyVersion.underperformance_guard?.action === 'protective_downgrade'
+        ? `预算权重保护：${budgetPolicyVersion.underperformance_guard.reason}`
         : '',
       budgetPolicyExecutionAudit.enabled
         ? `预算策略审计：${budgetPolicyExecutionAudit.reason}`
@@ -1516,10 +1542,10 @@ export class RecommendationTradeOutcomeService {
                 1.16
               );
               scoreAdjustment = 2;
-              reason = `加预算动作已验证有效：超额 ${roundNumber(avgExcess, 2)}%，效率 ${roundNumber(
-                capitalEfficiency,
-                1
-              )}`;
+              reason = `加预算动作已验证有效：超额 ${roundNumber(
+                avgExcess,
+                2
+              )}%，效率 ${roundNumber(capitalEfficiency, 1)}`;
             } else if (avgExcess < 0 || capitalEfficiency < 0) {
               action = 'cap_increase';
               positionMultiplier = 0.82;
@@ -1673,18 +1699,18 @@ export class RecommendationTradeOutcomeService {
       audit_feedback_reason: auditFeedbackAppliedCount
         ? `已将 ${auditFeedbackAppliedCount} 条执行审计结论反哺到下一轮调分/调仓`
         : executionAudit.enabled
-          ? '已有执行审计，但尚未匹配到可反哺的预算动作'
-          : '执行审计样本不足，暂未反哺',
+        ? '已有执行审计，但尚未匹配到可反哺的预算动作'
+        : '执行审计样本不足，暂未反哺',
       actions,
       best_action: bestAction,
       weak_action: weakAction,
       reason: bestAction
-        ? `最佳动作 ${bestAction.label}，效率 ${bestAction.capital_efficiency_score}、超额 ${bestAction.avg_excess_return_pct}%；最弱 ${
-            weakAction?.label || '暂无'
-          }，下一轮按动作后验自动调分调仓`
+        ? `最佳动作 ${bestAction.label}，效率 ${bestAction.capital_efficiency_score}、超额 ${
+            bestAction.avg_excess_return_pct
+          }%；最弱 ${weakAction?.label || '暂无'}，下一轮按动作后验自动调分调仓`
         : actions.length
-          ? '预算动作已有样本但闭环不足，下一轮只做保守小仓验证'
-          : '暂无预算动作收益回收样本',
+        ? '预算动作已有样本但闭环不足，下一轮只做保守小仓验证'
+        : '暂无预算动作收益回收样本',
       rules: [
         '加预算动作跑赢且资金效率达标：下一轮候选加分并小幅放大',
         '观察动作跑赢：升为常规小仓；观察跑输：缩小试错',
@@ -1698,9 +1724,13 @@ export class RecommendationTradeOutcomeService {
     audit: any;
     version_groups?: RecommendationTradeOutcomeBucket[];
     lookback_days?: number;
+    guard?: any;
+    base_version?: any;
   }) {
     const policy = asPlainObject(options.policy);
     const audit = asPlainObject(options.audit);
+    const guard = asPlainObject(options.guard);
+    const baseVersion = asPlainObject(options.base_version);
     const actions = Array.isArray(policy.actions) ? policy.actions : [];
     const actionWeights = actions.map((item: any) => ({
       key: item.key,
@@ -1719,6 +1749,8 @@ export class RecommendationTradeOutcomeService {
       audit_confidence: roundNumber(audit.confidence, 2),
       total_closed_count: toNumber(policy.total_closed_count, 0),
       lookback_days: toNumber(options.lookback_days, 0),
+      underperformance_guard_action: guard.action || 'none',
+      guarded_from_version_id: baseVersion.version_id || '',
     };
     const versionHash = shortHash(payload, 12);
     const versionId = `bpw_${versionHash}`;
@@ -1746,10 +1778,149 @@ export class RecommendationTradeOutcomeService {
       audit_feedback_reason: policy.audit_feedback_reason,
       current_version_outcome: currentVersionOutcome,
       version_rankings: versionGroups.slice(0, 8),
+      underperformance_guard: guard,
+      guarded_from_version_id: baseVersion.version_id,
+      guarded_from_version_hash: baseVersion.version_hash,
       reason: currentVersionOutcome
         ? `当前预算权重版本已有闭环 ${currentVersionOutcome.closed_count} 笔，平均超额 ${currentVersionOutcome.avg_excess_return_pct}%`
+        : guard.action === 'protective_downgrade'
+        ? `预算权重版本 ${versionId} 已应用保护降级，等待后续模拟盘验证`
         : `生成预算权重版本 ${versionId}，等待后续模拟盘成交验证`,
       payload,
+    };
+  }
+
+  private buildBudgetPolicyVersionGuard(version: any) {
+    const current = asPlainObject(version.current_version_outcome);
+    const rankings = Array.isArray(version.version_rankings) ? version.version_rankings : [];
+    const champion =
+      rankings.find(
+        (item: any) =>
+          item?.key &&
+          item.key !== version.version_id &&
+          toNumber(item.closed_count, 0) >= 3 &&
+          toNumber(item.capital_efficiency_score, -999) > 0 &&
+          toNumber(item.avg_excess_return_pct, -999) > 0
+      ) || null;
+    const currentClosed = toNumber(current.closed_count, 0);
+    const championEfficiency = toNumber(champion?.capital_efficiency_score, 0);
+    const currentEfficiency = toNumber(current.capital_efficiency_score, 0);
+    const championExcess = toNumber(champion?.avg_excess_return_pct, 0);
+    const currentExcess = toNumber(current.avg_excess_return_pct, 0);
+    const efficiencyGap = champion ? roundNumber(championEfficiency - currentEfficiency, 2) : 0;
+    const excessGap = champion ? roundNumber(championExcess - currentExcess, 4) : 0;
+    const currentUnderperforms =
+      currentClosed >= 3 &&
+      champion &&
+      (efficiencyGap >= 6 || excessGap >= 1.2) &&
+      (currentEfficiency < 0 || currentExcess < 0 || toNumber(current.excess_win_rate, 50) < 45);
+
+    if (currentUnderperforms) {
+      return {
+        enabled: true,
+        action: 'protective_downgrade',
+        severity: efficiencyGap >= 10 || excessGap >= 2 ? 'high' : 'medium',
+        champion_version_id: champion.key,
+        champion_label: champion.label,
+        champion_closed_count: champion.closed_count,
+        champion_avg_excess_return_pct: champion.avg_excess_return_pct,
+        champion_capital_efficiency_score: champion.capital_efficiency_score,
+        current_version_id: version.version_id,
+        current_closed_count: currentClosed,
+        current_avg_excess_return_pct: current.avg_excess_return_pct,
+        current_capital_efficiency_score: current.capital_efficiency_score,
+        efficiency_gap: efficiencyGap,
+        excess_gap: excessGap,
+        multiplier_cap: 0.82,
+        score_penalty: -1,
+        reason: `当前版本闭环 ${currentClosed} 笔后跑输历史冠军 ${champion.key}，效率差 ${efficiencyGap}、超额差 ${excessGap}%，下一轮自动保护降级`,
+      };
+    }
+
+    if (champion) {
+      return {
+        enabled: true,
+        action: currentClosed > 0 ? 'compare' : 'collect_samples',
+        severity: 'info',
+        champion_version_id: champion.key,
+        champion_label: champion.label,
+        champion_closed_count: champion.closed_count,
+        champion_avg_excess_return_pct: champion.avg_excess_return_pct,
+        champion_capital_efficiency_score: champion.capital_efficiency_score,
+        current_version_id: version.version_id,
+        current_closed_count: currentClosed,
+        efficiency_gap: efficiencyGap,
+        excess_gap: excessGap,
+        reason:
+          currentClosed > 0
+            ? `当前版本与历史冠军 ${champion.key} 对比中，暂未触发保护降级`
+            : `历史冠军 ${champion.key} 已作为观察基准，当前版本等待成交闭环`,
+      };
+    }
+
+    return {
+      enabled: false,
+      action: 'collect_samples',
+      severity: 'info',
+      current_version_id: version.version_id,
+      current_closed_count: currentClosed,
+      reason: '预算权重版本样本不足，先收集成交闭环',
+    };
+  }
+
+  private applyBudgetPolicyVersionGuard(policy: any, guard: any) {
+    const policyObject = asPlainObject(policy);
+    const multiplierCap = clamp(toNumber(guard.multiplier_cap, 0.82), 0.4, 1);
+    const scorePenalty = Math.min(0, toNumber(guard.score_penalty, -1));
+    const actions = Array.isArray(policyObject.actions)
+      ? policyObject.actions.map((item: any) => {
+          const originalMultiplier = toNumber(item.position_multiplier, 1);
+          const guardedMultiplier =
+            originalMultiplier > 0
+              ? roundNumber(Math.min(originalMultiplier, originalMultiplier * multiplierCap), 2)
+              : 0;
+          const guardedScoreAdjustment = Math.min(
+            toNumber(item.score_adjustment, 0),
+            toNumber(item.score_adjustment, 0) + scorePenalty
+          );
+          return {
+            ...item,
+            position_multiplier: guardedMultiplier,
+            score_adjustment: guardedScoreAdjustment,
+            version_guard_applied: true,
+            version_guard_reason: guard.reason,
+            reason: `${item.reason || ''}；预算版本保护：${guard.reason}`,
+          };
+        })
+      : [];
+    return {
+      ...policyObject,
+      actions,
+      version_guard_applied: true,
+      version_guard: guard,
+      version_guard_reason: guard.reason,
+      reason: `${policyObject.reason || '预算动作策略'}；${guard.reason}`,
+    };
+  }
+
+  private attachBudgetPolicyVersionGuard(version: any, guard: any, rawVersion: any) {
+    const guardObject = asPlainObject(guard);
+    const rawVersionObject = asPlainObject(rawVersion);
+    return {
+      ...version,
+      underperformance_guard: guardObject,
+      raw_version_id:
+        rawVersionObject.version_id && rawVersionObject.version_id !== version.version_id
+          ? rawVersionObject.version_id
+          : undefined,
+      raw_version_hash:
+        rawVersionObject.version_hash && rawVersionObject.version_hash !== version.version_hash
+          ? rawVersionObject.version_hash
+          : undefined,
+      comparison_champion_version_id: guardObject.champion_version_id,
+      comparison_champion_label: guardObject.champion_label,
+      comparison_efficiency_gap: guardObject.efficiency_gap,
+      comparison_excess_gap: guardObject.excess_gap,
     };
   }
 
@@ -1833,9 +2004,9 @@ export class RecommendationTradeOutcomeService {
       best_execution,
       weak_execution,
       reason: best_execution
-        ? `最佳执行 ${best_execution.label}，超额 ${best_execution.avg_excess_return_pct}%、效率 ${best_execution.capital_efficiency_score}；弱项 ${
-            weak_execution?.label || '暂无'
-          }，后续按审计结果继续校准`
+        ? `最佳执行 ${best_execution.label}，超额 ${best_execution.avg_excess_return_pct}%、效率 ${
+            best_execution.capital_efficiency_score
+          }；弱项 ${weak_execution?.label || '暂无'}，后续按审计结果继续校准`
         : '预算动作自动策略尚未产生可审计成交',
     };
   }
@@ -1865,8 +2036,8 @@ export class RecommendationTradeOutcomeService {
     const defaultPositionMultiplier = options.weak_outcome
       ? 0.72
       : options.strong_outcome
-        ? 1.04
-        : 0.9;
+      ? 1.04
+      : 0.9;
 
     const normalizeSegment = (group: RecommendationTradeOutcomeBucket) => {
       const robustScore = toNumber(group.robust_score, 0);
@@ -1989,10 +2160,10 @@ export class RecommendationTradeOutcomeService {
       reason: blockedSegments[0]
         ? `发现 ${blockedSegments.length} 个需暂停环境，优先保护本金`
         : reducedSegments[0]
-          ? `发现 ${reducedSegments.length} 个需降仓环境，下一轮控制试错成本`
-          : boostedSegments[0]
-            ? `发现 ${boostedSegments.length} 个优势环境，可小幅放大验证`
-            : '环境样本未出现显著优劣，维持保守仓位',
+        ? `发现 ${reducedSegments.length} 个需降仓环境，下一轮控制试错成本`
+        : boostedSegments[0]
+        ? `发现 ${boostedSegments.length} 个优势环境，可小幅放大验证`
+        : '环境样本未出现显著优劣，维持保守仓位',
     };
   }
 
@@ -2218,6 +2389,12 @@ export class RecommendationTradeOutcomeService {
           metadata.environment_strategy_budget_policy_version_id,
         environment_strategy_budget_policy_version_hash:
           metadata.environment_strategy_budget_policy_version_hash,
+        environment_strategy_budget_policy_version_guard_action:
+          metadata.environment_strategy_budget_policy_version_guard_action,
+        environment_strategy_budget_policy_version_guard_reason:
+          metadata.environment_strategy_budget_policy_version_guard_reason,
+        environment_strategy_budget_policy_version_guard_champion:
+          metadata.environment_strategy_budget_policy_version_guard_champion,
         environment_strategy_capital_efficiency_score:
           metadata.environment_strategy_capital_efficiency_score,
         signal_metadata: metadata,
@@ -2424,8 +2601,8 @@ export class RecommendationTradeOutcomeService {
           item.directional_return_pct !== undefined
             ? toNumber(item.directional_return_pct)
             : ['sell', 'strong_sell'].includes(String(decision || '').toLowerCase())
-              ? -returnPct
-              : returnPct;
+            ? -returnPct
+            : returnPct;
         samples.push({
           outcome_id: outcome.id,
           signal_id: outcome.signal_id,
@@ -2563,8 +2740,8 @@ export class RecommendationTradeOutcomeService {
         avgWinPct && avgLossPct
           ? roundNumber(avgWinPct / Math.abs(avgLossPct), 4)
           : wins.length > 0 && losses.length === 0
-            ? 999
-            : 0,
+          ? 999
+          : 0,
       profit_factor: lossSum > 0 ? roundNumber(winSum / lossSum, 4) : wins.length > 0 ? 999 : 0,
       avg_holding_days: roundNumber(average(plain.map(item => toNumber(item.holding_days))), 2),
       avg_mfe_pct: roundNumber(
@@ -2693,10 +2870,10 @@ export class RecommendationTradeOutcomeService {
           closed.length < 3
             ? 'collect_samples'
             : robustScore >= 12 && riskAdjustedExcess > 0.6 && bayesianWinRate >= 53
-              ? 'boost'
-              : robustScore <= -6 || riskAdjustedExcess < -0.8 || bayesianWinRate < 45
-                ? 'reduce'
-                : 'hold';
+            ? 'boost'
+            : robustScore <= -6 || riskAdjustedExcess < -0.8 || bayesianWinRate < 45
+            ? 'reduce'
+            : 'hold';
         const cooldownActive =
           dimension === 'environment_strategy_combo' &&
           closed.length >= 3 &&
@@ -2710,12 +2887,12 @@ export class RecommendationTradeOutcomeService {
             ? recentLossStreak >= 2
               ? `最近 ${recentLossStreak} 笔连续跑输，冷却观察`
               : avgExcessReturn <= -1
-                ? `平均超额 ${avgExcessReturn}% 为负，冷却观察`
-                : riskAdjustedExcess <= -0.8
-                  ? `风险调整超额 ${roundNumber(riskAdjustedExcess, 2)}% 偏弱，冷却观察`
-                  : bayesianWinRate < 45
-                    ? `贝叶斯胜率 ${roundNumber(bayesianWinRate, 2)}% 偏低，冷却观察`
-                    : `最大不利波动 ${roundNumber(drawdownPenalty, 2)}% 偏高，冷却观察`
+              ? `平均超额 ${avgExcessReturn}% 为负，冷却观察`
+              : riskAdjustedExcess <= -0.8
+              ? `风险调整超额 ${roundNumber(riskAdjustedExcess, 2)}% 偏弱，冷却观察`
+              : bayesianWinRate < 45
+              ? `贝叶斯胜率 ${roundNumber(bayesianWinRate, 2)}% 偏低，冷却观察`
+              : `最大不利波动 ${roundNumber(drawdownPenalty, 2)}% 偏高，冷却观察`
             : undefined;
         const latestClosedDate = recentClosed[0]?.exit_date || recentClosed[0]?.entry_date;
         const daysSinceLatestClosed = latestClosedDate
@@ -2765,30 +2942,30 @@ export class RecommendationTradeOutcomeService {
           resampleClosedCount && resampleLossSum > 0
             ? roundNumber(resampleWinSum / resampleLossSum, 4)
             : resampleClosedCount && resampleWins.length > 0
-              ? 999
-              : resampleClosedCount
-                ? 0
-                : undefined;
+            ? 999
+            : resampleClosedCount
+            ? 0
+            : undefined;
         const resampleDecision: RecommendationTradeOutcomeBucket['resample_decision'] =
           dimension === 'environment_strategy_combo' && resampleClosedCount >= 2
             ? resampleAvgExcess >= 0.8 && toNumber(resampleExcessWinRate, 0) >= 50
               ? 'promote'
               : resampleAvgExcess <= -0.8 || toNumber(resampleExcessWinRate, 100) < 35
-                ? 'cooldown'
-                : 'continue_sampling'
+              ? 'cooldown'
+              : 'continue_sampling'
             : dimension === 'environment_strategy_combo' && resampleTrades.length > 0
-              ? 'observe'
-              : undefined;
+            ? 'observe'
+            : undefined;
         const resampleDecisionReason =
           resampleDecision === 'promote'
             ? `复采样 ${resampleClosedCount} 笔平均超额 ${resampleAvgExcess}%，可评估恢复常规采样`
             : resampleDecision === 'cooldown'
-              ? `复采样 ${resampleClosedCount} 笔仍跑输，继续冷却并避免放大`
-              : resampleDecision === 'continue_sampling'
-                ? `复采样 ${resampleClosedCount} 笔结论未稳定，继续小仓观察`
-                : resampleDecision === 'observe'
-                  ? '已有复采样持仓但尚未形成闭环，等待平仓验证'
-                  : undefined;
+            ? `复采样 ${resampleClosedCount} 笔仍跑输，继续冷却并避免放大`
+            : resampleDecision === 'continue_sampling'
+            ? `复采样 ${resampleClosedCount} 笔结论未稳定，继续小仓观察`
+            : resampleDecision === 'observe'
+            ? '已有复采样持仓但尚未形成闭环，等待平仓验证'
+            : undefined;
         const resampleRecoveryReady =
           dimension === 'environment_strategy_combo' && resampleDecision === 'promote';
         const cooldownExtended =
@@ -2808,12 +2985,12 @@ export class RecommendationTradeOutcomeService {
           resampleRecoveryReady
             ? 'recover_small'
             : cooldownExtended
-              ? 'extend_cooldown'
-              : resampleDecision === 'continue_sampling'
-                ? 'continue_resample'
-                : resampleDecision === 'observe'
-                  ? 'observe'
-                  : 'none';
+            ? 'extend_cooldown'
+            : resampleDecision === 'continue_sampling'
+            ? 'continue_resample'
+            : resampleDecision === 'observe'
+            ? 'observe'
+            : 'none';
         const resampleReady =
           dimension === 'environment_strategy_combo' &&
           cooldownActive &&
@@ -2943,16 +3120,16 @@ export class RecommendationTradeOutcomeService {
               ? resampleRecoveryReady
                 ? resampleDecisionReason
                 : effectiveCooldownActive
-                  ? effectiveCooldownReason
-                  : closed.length < 3
-                    ? `闭环样本 ${closed.length}/3，不接管`
-                    : robustScore < 8
-                      ? `稳健分 ${robustScore}/8，不接管`
-                      : avgExcessReturn <= 0.5
-                        ? `平均超额 ${avgExcessReturn}% 不足，不接管`
-                        : bayesianWinRate < 52
-                          ? `贝叶斯胜率 ${roundNumber(bayesianWinRate, 2)}% 不足，不接管`
-                          : '满足样本、稳健分、超额收益和贝叶斯胜率，允许接管'
+                ? effectiveCooldownReason
+                : closed.length < 3
+                ? `闭环样本 ${closed.length}/3，不接管`
+                : robustScore < 8
+                ? `稳健分 ${robustScore}/8，不接管`
+                : avgExcessReturn <= 0.5
+                ? `平均超额 ${avgExcessReturn}% 不足，不接管`
+                : bayesianWinRate < 52
+                ? `贝叶斯胜率 ${roundNumber(bayesianWinRate, 2)}% 不足，不接管`
+                : '满足样本、稳健分、超额收益和贝叶斯胜率，允许接管'
               : undefined,
           cooldown_active: effectiveCooldownActive,
           cooldown_reason: effectiveCooldownActive ? effectiveCooldownReason : undefined,
@@ -3010,10 +3187,10 @@ export class RecommendationTradeOutcomeService {
       summary.closed_count < 5
         ? 0.65
         : summary.avg_excess_return_pct > 2 && summary.excess_win_rate >= 55
-          ? 1.15
-          : summary.avg_excess_return_pct < -1 || summary.excess_win_rate < 45
-            ? 0.55
-            : 0.85;
+        ? 1.15
+        : summary.avg_excess_return_pct < -1 || summary.excess_win_rate < 45
+        ? 0.55
+        : 0.85;
 
     const riskGroups = groups.by_risk_level.filter(group =>
       ['low', 'medium', 'high'].includes(group.key)

@@ -74,6 +74,7 @@ interface EnvironmentEntryPolicy {
   resample_match?: any;
   budget_action_policy_match?: any;
   budget_policy_version?: any;
+  budget_policy_version_guard?: any;
   notes?: string[];
 }
 
@@ -181,6 +182,9 @@ export interface PaperTradingAutoTradeItem {
   environment_strategy_budget_policy_multiplier?: number;
   environment_strategy_budget_policy_version_id?: string;
   environment_strategy_budget_policy_version_hash?: string;
+  environment_strategy_budget_policy_version_guard_action?: string;
+  environment_strategy_budget_policy_version_guard_reason?: string;
+  environment_strategy_budget_policy_version_guard_champion?: string;
   market_regime?: string;
   market_regime_label?: string;
   industry_regime?: string;
@@ -969,13 +973,13 @@ class PaperTradingAutomationService {
         metadata.auto_trade_allowed_by_data_quality !== undefined
           ? Boolean(metadata.auto_trade_allowed_by_data_quality)
           : dataQuality.auto_trade_allowed !== undefined
-            ? Boolean(dataQuality.auto_trade_allowed)
-            : !['low', 'critical'].includes(dataQualityBucket);
+          ? Boolean(dataQuality.auto_trade_allowed)
+          : !['low', 'critical'].includes(dataQualityBucket);
       const dataQualityIssues = Array.isArray(dataQuality.issues)
         ? dataQuality.issues
         : Array.isArray(dataQuality.warnings)
-          ? dataQuality.warnings
-          : [];
+        ? dataQuality.warnings
+        : [];
 
       const skip = (reason: string) => {
         skipped_items.push({ ...itemBase, status: 'skipped', reason });
@@ -1107,8 +1111,8 @@ class PaperTradingAutomationService {
         dataQualityBucket === 'high' || dataQualityBucket === 'unknown'
           ? 1
           : dataQualityBucket === 'medium'
-            ? toNumber(dataQuality.position_multiplier, 0.75)
-            : toNumber(dataQuality.position_multiplier, 0.35);
+          ? toNumber(dataQuality.position_multiplier, 0.75)
+          : toNumber(dataQuality.position_multiplier, 0.35);
       const gatedSuggestedPct = clamp(
         suggestedPct *
           profitGatePolicy.effective_position_multiplier *
@@ -1163,6 +1167,11 @@ class PaperTradingAutomationService {
           asPlainObject(options.external_environment_policy).budget_action_policy?.version ||
           asPlainObject(environmentPolicy).budget_policy_version
       );
+      const budgetPolicyVersionGuard = asPlainObject(
+        budgetPolicyVersion.underperformance_guard ||
+          asPlainObject(environmentPolicy).budget_policy_version_guard ||
+          asPlainObject(options.external_environment_policy).budget_policy_version_guard
+      );
       const resamplePositionMultiplier = toOptionalNumber(
         resampleMatch.resample_position_multiplier ?? resampleMatch.position_multiplier
       );
@@ -1177,16 +1186,16 @@ class PaperTradingAutomationService {
         (resampleMatch.resample_policy_action === 'recover_small'
           ? 'increase'
           : resampleMatch.resample_policy_action === 'extend_cooldown'
-            ? 'pause'
-            : resampleSample
-              ? 'observe'
-              : metadata.environment_strategy_policy_action === 'extended_cooldown'
-                ? 'reduce'
-                : metadata.environment_strategy_policy_action === 'recovered'
-                  ? 'increase'
-                  : metadata.environment_strategy_policy_action === 'resample'
-                    ? 'observe'
-                    : undefined);
+          ? 'pause'
+          : resampleSample
+          ? 'observe'
+          : metadata.environment_strategy_policy_action === 'extended_cooldown'
+          ? 'reduce'
+          : metadata.environment_strategy_policy_action === 'recovered'
+          ? 'increase'
+          : metadata.environment_strategy_policy_action === 'resample'
+          ? 'observe'
+          : undefined);
       const budgetMultiplier =
         toOptionalNumber(
           metadata.environment_strategy_budget_multiplier ??
@@ -1232,6 +1241,15 @@ class PaperTradingAutomationService {
           metadata.environment_strategy_budget_policy_version_hash ||
           budgetPolicyVersion.version_hash ||
           asPlainObject(options.external_environment_policy).budget_action_policy?.version_hash,
+        environment_strategy_budget_policy_version_guard_action:
+          metadata.environment_strategy_budget_policy_version_guard_action ||
+          budgetPolicyVersionGuard.action,
+        environment_strategy_budget_policy_version_guard_reason:
+          metadata.environment_strategy_budget_policy_version_guard_reason ||
+          budgetPolicyVersionGuard.reason,
+        environment_strategy_budget_policy_version_guard_champion:
+          metadata.environment_strategy_budget_policy_version_guard_champion ||
+          budgetPolicyVersionGuard.champion_version_id,
         market_regime: environmentPolicy.market_regime,
         market_regime_label: environmentPolicy.market_regime_label,
         industry_regime: environmentPolicy.industry_regime,
@@ -1325,6 +1343,15 @@ class PaperTradingAutomationService {
             metadata.environment_strategy_budget_policy_version_hash ||
             budgetPolicyVersion.version_hash ||
             asPlainObject(options.external_environment_policy).budget_action_policy?.version_hash,
+          environment_strategy_budget_policy_version_guard_action:
+            metadata.environment_strategy_budget_policy_version_guard_action ||
+            budgetPolicyVersionGuard.action,
+          environment_strategy_budget_policy_version_guard_reason:
+            metadata.environment_strategy_budget_policy_version_guard_reason ||
+            budgetPolicyVersionGuard.reason,
+          environment_strategy_budget_policy_version_guard_champion:
+            metadata.environment_strategy_budget_policy_version_guard_champion ||
+            budgetPolicyVersionGuard.champion_version_id,
           environment_strategy_capital_efficiency_score:
             metadata.environment_strategy_capital_efficiency_score ||
             budgetActionPolicyMatch.capital_efficiency_score ||
@@ -1531,7 +1558,7 @@ class PaperTradingAutomationService {
         toNumber(
           useAdaptiveDefaults
             ? adaptiveRiskPolicy.effective_stop_loss_pct
-            : (paperTradingMeta.stop_loss_pct ?? signalMeta.stop_loss_pct),
+            : paperTradingMeta.stop_loss_pct ?? signalMeta.stop_loss_pct,
           adaptiveRiskPolicy.effective_stop_loss_pct
         )
       );
@@ -1539,7 +1566,7 @@ class PaperTradingAutomationService {
         toNumber(
           useAdaptiveDefaults
             ? adaptiveRiskPolicy.effective_take_profit_pct
-            : (paperTradingMeta.take_profit_pct ?? signalMeta.take_profit_pct),
+            : paperTradingMeta.take_profit_pct ?? signalMeta.take_profit_pct,
           adaptiveRiskPolicy.effective_take_profit_pct
         )
       );
@@ -1996,8 +2023,9 @@ class PaperTradingAutomationService {
     if (!options.enabled) return basePolicy;
 
     try {
-      const { recommendationTradeOutcomeService } =
-        await import('./RecommendationTradeOutcomeService');
+      const { recommendationTradeOutcomeService } = await import(
+        './RecommendationTradeOutcomeService'
+      );
       const dashboard = await recommendationTradeOutcomeService.getDashboard({
         portfolio_id: options.portfolio_id,
         user_id: options.user_id,
@@ -2270,8 +2298,8 @@ class PaperTradingAutomationService {
       const effectivePositionMultiplier = samplingMode
         ? clamp(options.sampling_multiplier, 0.1, 0.6)
         : allowEntries
-          ? clamp(positionMultiplier || 1, 0.1, 1.5)
-          : 0;
+        ? clamp(positionMultiplier || 1, 0.1, 1.5)
+        : 0;
 
       return {
         enabled: true,
@@ -2353,8 +2381,9 @@ class PaperTradingAutomationService {
     if (!options.enabled) return basePolicy;
 
     try {
-      const { recommendationTradeOutcomeService } =
-        await import('./RecommendationTradeOutcomeService');
+      const { recommendationTradeOutcomeService } = await import(
+        './RecommendationTradeOutcomeService'
+      );
       const dashboard = await recommendationTradeOutcomeService.getDashboard({
         portfolio_id: options.portfolio_id,
         user_id: options.user_id,
@@ -2393,8 +2422,8 @@ class PaperTradingAutomationService {
         closedSamples < options.min_closed_samples
           ? clamp(Math.min(rawPositionMultiplier, 0.75), 0.35, 0.9)
           : allowEntries
-            ? clamp(rawPositionMultiplier, 0.25, 1.25)
-            : 0;
+          ? clamp(rawPositionMultiplier, 0.25, 1.25)
+          : 0;
       const effectiveMinScore =
         closedSamples < options.min_closed_samples
           ? options.requested_min_score
@@ -2417,19 +2446,19 @@ class PaperTradingAutomationService {
       )
         ? marketEnvironment.policy.recovered_environment_strategy_combos
         : Array.isArray(marketEnvironment.resample_combo_rankings)
-          ? marketEnvironment.resample_combo_rankings.filter(
-              (segment: any) => segment?.resample_policy_action === 'recover_small'
-            )
-          : [];
+        ? marketEnvironment.resample_combo_rankings.filter(
+            (segment: any) => segment?.resample_policy_action === 'recover_small'
+          )
+        : [];
       const extendedCooldownSegments = Array.isArray(
         marketEnvironment.policy?.extended_cooldown_environment_strategy_combos
       )
         ? marketEnvironment.policy.extended_cooldown_environment_strategy_combos
         : Array.isArray(marketEnvironment.resample_combo_rankings)
-          ? marketEnvironment.resample_combo_rankings.filter(
-              (segment: any) => segment?.resample_policy_action === 'extend_cooldown'
-            )
-          : [];
+        ? marketEnvironment.resample_combo_rankings.filter(
+            (segment: any) => segment?.resample_policy_action === 'extend_cooldown'
+          )
+        : [];
       const blockedSegments =
         closedSamples >= options.min_closed_samples
           ? weakSegments
@@ -2496,14 +2525,14 @@ class PaperTradingAutomationService {
         closedSamples < options.min_closed_samples
           ? `闭环样本 ${closedSamples}/${options.min_closed_samples}，先小仓位积累样本`
           : allowEntries
-            ? `闭环样本 ${closedSamples}，平均超额 ${roundNumber(
-                avgExcess,
-                2
-              )}%，仓位倍率 ${roundNumber(effectivePositionMultiplier, 2)}x`
-            : `闭环样本 ${closedSamples}，平均超额 ${roundNumber(
-                avgExcess,
-                2
-              )}%、超额胜率 ${roundNumber(excessWinRate, 2)}%，暂停自动入场`;
+          ? `闭环样本 ${closedSamples}，平均超额 ${roundNumber(
+              avgExcess,
+              2
+            )}%，仓位倍率 ${roundNumber(effectivePositionMultiplier, 2)}x`
+          : `闭环样本 ${closedSamples}，平均超额 ${roundNumber(
+              avgExcess,
+              2
+            )}%、超额胜率 ${roundNumber(excessWinRate, 2)}%，暂停自动入场`;
 
       return {
         enabled: true,
@@ -3079,6 +3108,12 @@ class PaperTradingAutomationService {
         asPlainObject(options.metadata.paper_trading).budget_action
     );
     const budgetActionPolicy = asPlainObject(externalPolicy.budget_action_policy);
+    const externalBudgetPolicyVersion = asPlainObject(
+      externalPolicy.budget_policy_version || budgetActionPolicy.version
+    );
+    const externalBudgetPolicyGuard = asPlainObject(
+      externalBudgetPolicyVersion.underperformance_guard || budgetActionPolicy.version_guard
+    );
     const budgetActionRules = Array.isArray(budgetActionPolicy.actions)
       ? budgetActionPolicy.actions
       : [];
@@ -3092,8 +3127,8 @@ class PaperTradingAutomationService {
         : null;
     const budgetActionPolicyAlreadyApplied = Boolean(
       options.metadata.environment_strategy_budget_policy_action ||
-      options.metadata.environment_strategy_budget_policy_reason ||
-      options.metadata.environment_strategy_budget_policy_multiplier
+        options.metadata.environment_strategy_budget_policy_reason ||
+        options.metadata.environment_strategy_budget_policy_multiplier
     );
     const resamplePolicies = Array.isArray(externalPolicy.resample_environment_strategy_combos)
       ? externalPolicy.resample_environment_strategy_combos
@@ -3344,6 +3379,16 @@ class PaperTradingAutomationService {
       );
     }
 
+    if (externalBudgetPolicyGuard.action === 'protective_downgrade') {
+      const guardMultiplier = clamp(
+        toNumber(externalBudgetPolicyGuard.multiplier_cap, 0.82),
+        0.4,
+        1
+      );
+      multiplier *= guardMultiplier;
+      notes.unshift(`预算权重保护降级：${externalBudgetPolicyGuard.reason}`);
+    }
+
     const normalizedMultiplier = roundNumber(clamp(multiplier, 0, 1.15), 2);
     const reason = [
       `${environment.market_regime_label || this.environmentMarketLabel(marketRegime)}`,
@@ -3376,9 +3421,11 @@ class PaperTradingAutomationService {
       resample_match: resamplePolicy || activeRecoveredSegment,
       budget_action_policy_match: budgetActionPolicyMatch || undefined,
       budget_policy_version:
-        externalPolicy.budget_policy_version ||
-        asPlainObject(externalPolicy.budget_action_policy).version ||
-        undefined,
+        Object.keys(externalBudgetPolicyVersion).length > 0
+          ? externalBudgetPolicyVersion
+          : undefined,
+      budget_policy_version_guard:
+        Object.keys(externalBudgetPolicyGuard).length > 0 ? externalBudgetPolicyGuard : undefined,
     };
   }
 
@@ -3657,8 +3704,9 @@ class PaperTradingAutomationService {
 
   private async refreshRecommendationTradeOutcome(signal_id: number) {
     try {
-      const { recommendationTradeOutcomeService } =
-        await import('./RecommendationTradeOutcomeService');
+      const { recommendationTradeOutcomeService } = await import(
+        './RecommendationTradeOutcomeService'
+      );
       await recommendationTradeOutcomeService.refreshOutcomeBySignal(signal_id);
     } catch (error: any) {
       logger.warn(`推荐交易收益闭环刷新失败 signal#${signal_id}: ${error?.message || error}`);

@@ -4633,6 +4633,60 @@ a {
   font-style: normal;
 }
 
+.optimization-budget-version-guard {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid rgba(209, 67, 67, 0.26);
+  border-radius: 18px;
+  background: radial-gradient(circle at 0% 0%, rgba(209, 67, 67, 0.22), transparent 38%),
+    rgba(3, 9, 20, 0.24);
+}
+
+.optimization-budget-version-guard .anticon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 15px;
+  color: #fff8e7;
+  background: linear-gradient(145deg, #d14343, #d6a64f);
+}
+
+.optimization-budget-version-guard span,
+.optimization-budget-version-guard strong,
+.optimization-budget-version-guard em {
+  display: block;
+}
+
+.optimization-budget-version-guard span {
+  color: rgba(255, 204, 204, 0.92);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: 0.17em;
+}
+
+.optimization-budget-version-guard strong {
+  margin-top: 4px;
+  color: #fff8e7;
+  font-family: var(--font-display);
+  font-size: 21px;
+  line-height: 1;
+  letter-spacing: -0.05em;
+}
+
+.optimization-budget-version-guard em {
+  margin-top: 5px;
+  color: rgba(255, 248, 231, 0.7);
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.45;
+}
+
 .optimization-budget-policy-head {
   display: grid;
   grid-template-columns: minmax(180px, 0.58fr) minmax(180px, 0.7fr) minmax(0, 1fr);
@@ -4760,6 +4814,121 @@ a {
   overflow: hidden;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+}
+
+.optimization-budget-version-board {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.75fr) repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid rgba(141, 214, 228, 0.14);
+  border-radius: 22px;
+  background: linear-gradient(135deg, rgba(141, 214, 228, 0.1), rgba(255, 255, 255, 0.035));
+}
+
+.optimization-budget-version-board-head,
+.optimization-budget-version-row {
+  min-width: 0;
+  padding: 12px;
+  border-radius: 17px;
+}
+
+.optimization-budget-version-board-head {
+  background: rgba(3, 9, 20, 0.22);
+}
+
+.optimization-budget-version-board-head span,
+.optimization-budget-version-board-head strong,
+.optimization-budget-version-board-head em {
+  display: block;
+}
+
+.optimization-budget-version-board-head span {
+  color: rgba(141, 214, 228, 0.92);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: 0.17em;
+}
+
+.optimization-budget-version-board-head strong {
+  margin-top: 6px;
+  color: #e0faff;
+  font-family: var(--font-display);
+  font-size: 23px;
+  line-height: 1;
+  letter-spacing: -0.055em;
+}
+
+.optimization-budget-version-board-head em {
+  margin-top: 7px;
+  color: rgba(226, 236, 247, 0.58);
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.45;
+}
+
+.optimization-budget-version-row {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.095);
+  background: rgba(3, 9, 20, 0.2);
+}
+
+.optimization-budget-version-row > strong {
+  grid-column: 1 / -1;
+  font-family: var(--font-display);
+  font-size: 28px;
+  line-height: 0.95;
+  letter-spacing: -0.06em;
+}
+
+.optimization-budget-version-row.current {
+  border-color: rgba(141, 214, 228, 0.32);
+  background: radial-gradient(circle at 100% 0%, rgba(141, 214, 228, 0.18), transparent 42%),
+    rgba(3, 9, 20, 0.22);
+}
+
+.optimization-budget-version-row.champion {
+  border-color: rgba(214, 166, 79, 0.32);
+  background: radial-gradient(circle at 100% 0%, rgba(214, 166, 79, 0.2), transparent 42%),
+    rgba(3, 9, 20, 0.22);
+}
+
+.optimization-budget-version-rank {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 14px;
+  color: #07111f;
+  background: linear-gradient(135deg, #ffe7ae, #8dd6e4);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 950;
+}
+
+.optimization-budget-version-row .ant-typography {
+  display: block;
+}
+
+.optimization-budget-version-row .ant-typography:first-child {
+  overflow: hidden;
+  color: rgba(255, 248, 231, 0.94) !important;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.optimization-budget-version-row .ant-typography-secondary {
+  margin-top: 5px;
+  color: rgba(226, 236, 247, 0.58) !important;
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .optimization-budget-audit {
@@ -5555,6 +5724,7 @@ a {
   .optimization-budget-policy-head,
   .optimization-budget-policy-grid,
   .optimization-budget-version-strip,
+  .optimization-budget-version-board,
   .optimization-budget-audit-head,
   .optimization-budget-audit-grid {
     grid-template-columns: 1fr;

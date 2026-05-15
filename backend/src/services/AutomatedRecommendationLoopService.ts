@@ -213,6 +213,14 @@ function budgetActionPolicyMap(policy: any): Map<string, any> {
   return map;
 }
 
+function budgetPolicyVersionGuard(policy: any): any {
+  return asPlainObject(
+    asPlainObject(policy?.budget_policy_version).underperformance_guard ||
+      asPlainObject(policy?.budget_action_policy).version_guard ||
+      asPlainObject(asPlainObject(policy?.budget_action_policy).version).underperformance_guard
+  );
+}
+
 function applyEnvironmentStrategyCandidateTuning(
   candidates: any[],
   options: { environment_policy?: any; strategy_key?: string }
@@ -237,6 +245,8 @@ function applyEnvironmentStrategyCandidateTuning(
   const isExtended = extended.has(strategyKey);
   const isResampling = resampling.has(strategyKey);
   const budgetPolicies = budgetActionPolicyMap(options.environment_policy);
+  const versionGuard = budgetPolicyVersionGuard(options.environment_policy);
+  const versionGuardDowngrade = versionGuard.action === 'protective_downgrade';
   const hasCandidateBudgetAction =
     budgetPolicies.size > 0 &&
     candidates.some(candidate => {
@@ -249,7 +259,14 @@ function applyEnvironmentStrategyCandidateTuning(
       return key !== 'no_budget_action' && budgetPolicies.has(key);
     });
   const budgetPolicyEnabled = budgetPolicies.size > 0 && hasCandidateBudgetAction;
-  if (!isRecovered && !isExtended && !isResampling && !budgetPolicyEnabled) return candidates;
+  if (
+    !isRecovered &&
+    !isExtended &&
+    !isResampling &&
+    !budgetPolicyEnabled &&
+    !versionGuardDowngrade
+  )
+    return candidates;
 
   return [...candidates]
     .map((candidate, index) => {
@@ -257,17 +274,17 @@ function applyEnvironmentStrategyCandidateTuning(
       const environmentStrategyAdjustment = isExtended
         ? -6
         : isRecovered
-          ? 3
-          : isResampling
-            ? -2
-            : 0;
+        ? 3
+        : isResampling
+        ? -2
+        : 0;
       const matchedPolicy = isExtended
         ? extended.get(strategyKey)
         : isRecovered
-          ? recovered.get(strategyKey)
-          : isResampling
-            ? resampling.get(strategyKey)
-            : null;
+        ? recovered.get(strategyKey)
+        : isResampling
+        ? resampling.get(strategyKey)
+        : null;
       const policyBudgetMultiplier = toNumber(
         asPlainObject(matchedPolicy).recommended_budget_multiplier,
         NaN
@@ -282,24 +299,24 @@ function applyEnvironmentStrategyCandidateTuning(
         candidateBudgetAction !== 'no_budget_action'
           ? candidateBudgetAction
           : isExtended
-            ? 'reduce'
-            : isRecovered
-              ? 'increase'
-              : isResampling
-                ? 'observe'
-                : 'no_budget_action';
+          ? 'reduce'
+          : isRecovered
+          ? 'increase'
+          : isResampling
+          ? 'observe'
+          : 'no_budget_action';
       const positionMultiplier = Number.isFinite(policyBudgetMultiplier)
         ? clampNumber(policyBudgetMultiplier, 0, 1.2)
         : isExtended
-          ? 0.55
-          : isRecovered
-            ? 1.06
-            : isResampling
-              ? 0.72
-              : 1;
+        ? 0.55
+        : isRecovered
+        ? 1.06
+        : isResampling
+        ? 0.72
+        : 1;
       const budgetPolicy =
         budgetAction !== 'no_budget_action' ? budgetPolicies.get(budgetAction) : null;
-      if (!isExtended && !isRecovered && !isResampling && !budgetPolicy) {
+      if (!isExtended && !isRecovered && !isResampling && !budgetPolicy && !versionGuardDowngrade) {
         return {
           ...candidate,
           metadata_rank_index: candidate.metadata_rank_index ?? index,
@@ -311,11 +328,20 @@ function applyEnvironmentStrategyCandidateTuning(
       const budgetPolicyMultiplier = budgetPolicy
         ? clampNumber(toNumber(budgetPolicy.position_multiplier, 1), 0, 1.2)
         : 1;
+      const versionGuardScoreAdjustment = versionGuardDowngrade
+        ? toNumber(versionGuard.score_penalty, -1)
+        : 0;
+      const versionGuardMultiplier = versionGuardDowngrade
+        ? clampNumber(toNumber(versionGuard.multiplier_cap, 0.82), 0.4, 1)
+        : 1;
       const finalScoreAdjustment = roundNumber(
-        environmentStrategyAdjustment + budgetPolicyScoreAdjustment,
+        environmentStrategyAdjustment + budgetPolicyScoreAdjustment + versionGuardScoreAdjustment,
         2
       );
-      const finalPositionMultiplier = roundNumber(positionMultiplier * budgetPolicyMultiplier, 2);
+      const finalPositionMultiplier = roundNumber(
+        positionMultiplier * budgetPolicyMultiplier * versionGuardMultiplier,
+        2
+      );
       const basePosition = Number(candidate.suggested_position_pct || 0);
       const maxPosition =
         finalPositionMultiplier > 1
@@ -331,10 +357,10 @@ function applyEnvironmentStrategyCandidateTuning(
       const policyLabel = isExtended
         ? '复采样仍弱，源头降权'
         : isRecovered
-          ? '复采样跑赢，源头小幅优先'
-          : isResampling
-            ? '冷却复采样，候选小仓验证'
-            : '预算动作后验调权';
+        ? '复采样跑赢，源头小幅优先'
+        : isResampling
+        ? '冷却复采样，候选小仓验证'
+        : '预算动作后验调权';
       const policyReason = [
         isExtended || isRecovered || isResampling
           ? asPlainObject(matchedPolicy).budget_action_reason ||
@@ -343,6 +369,7 @@ function applyEnvironmentStrategyCandidateTuning(
             policyLabel
           : '',
         budgetPolicy?.reason ? `预算动作策略：${budgetPolicy.reason}` : '',
+        versionGuardDowngrade ? `预算权重保护：${versionGuard.reason}` : '',
       ]
         .filter(Boolean)
         .join('；');
@@ -368,19 +395,23 @@ function applyEnvironmentStrategyCandidateTuning(
         environment_strategy_budget_policy_version_hash:
           asPlainObject(options.environment_policy?.budget_policy_version).version_hash ||
           asPlainObject(options.environment_policy?.budget_action_policy).version_hash,
+        environment_strategy_budget_policy_version_guard_action: versionGuard.action,
+        environment_strategy_budget_policy_version_guard_reason: versionGuard.reason,
+        environment_strategy_budget_policy_version_guard_champion: versionGuard.champion_version_id,
         environment_strategy_policy_action: isExtended
           ? 'extended_cooldown'
           : isRecovered
-            ? 'recovered'
-            : isResampling
-              ? 'resample'
-              : 'budget_action_policy',
+          ? 'recovered'
+          : isResampling
+          ? 'resample'
+          : 'budget_action_policy',
         reasons: [
           ...(Array.isArray(candidate.reasons) ? candidate.reasons : []),
           finalScoreAdjustment > 0
             ? `${policyLabel}，评分 +${finalScoreAdjustment}`
             : `${policyLabel}，评分 ${finalScoreAdjustment}`,
           budgetPolicy?.reason ? `预算动作策略：${budgetPolicy.reason}` : '',
+          versionGuardDowngrade ? `预算权重保护：${versionGuard.reason}` : '',
         ].slice(0, 6),
         warnings:
           finalScoreAdjustment < 0
@@ -658,8 +689,8 @@ class AutomatedRecommendationLoopService {
       const versionRankings = Array.isArray((dashboard as any).market_environment?.version_rankings)
         ? (dashboard as any).market_environment.version_rankings
         : Array.isArray(policy.version_rankings)
-          ? policy.version_rankings
-          : [];
+        ? policy.version_rankings
+        : [];
       const strategyComboRankings = Array.isArray(
         (dashboard as any).market_environment?.strategy_combo_rankings
       )
@@ -667,6 +698,10 @@ class AutomatedRecommendationLoopService {
         : [];
       const strategyEvolution = asPlainObject((dashboard as any).strategy_evolution);
       const budgetActionPolicy = asPlainObject(strategyEvolution.budget_action_policy);
+      const budgetPolicyVersion =
+        strategyEvolution.budget_policy_version ||
+        asPlainObject(policy.budget_policy_version) ||
+        asPlainObject(budgetActionPolicy.version);
       const bestEnvironmentVersion = versionRankings.find(
         (item: any) =>
           item?.key &&
@@ -750,23 +785,23 @@ class AutomatedRecommendationLoopService {
         blocked_segments: Array.isArray(inheritedPolicy.blocked_segments)
           ? inheritedPolicy.blocked_segments.slice(0, 8)
           : Array.isArray(policy.blocked_segments)
-            ? policy.blocked_segments.slice(0, 8)
-            : [],
+          ? policy.blocked_segments.slice(0, 8)
+          : [],
         reduced_segments: Array.isArray(inheritedPolicy.reduced_segments)
           ? inheritedPolicy.reduced_segments.slice(0, 8)
           : Array.isArray(policy.reduced_segments)
-            ? policy.reduced_segments.slice(0, 8)
-            : [],
+          ? policy.reduced_segments.slice(0, 8)
+          : [],
         boosted_segments: Array.isArray(inheritedPolicy.boosted_segments)
           ? inheritedPolicy.boosted_segments.slice(0, 8)
           : Array.isArray(policy.boosted_segments)
-            ? policy.boosted_segments.slice(0, 8)
-            : [],
+          ? policy.boosted_segments.slice(0, 8)
+          : [],
         watch_segments: Array.isArray(inheritedPolicy.watch_segments)
           ? inheritedPolicy.watch_segments.slice(0, 8)
           : Array.isArray(policy.watch_segments)
-            ? policy.watch_segments.slice(0, 8)
-            : [],
+          ? policy.watch_segments.slice(0, 8)
+          : [],
         version_rankings: versionRankings.slice(0, 8),
         promoted_environment_policy_version: bestEnvironmentVersion
           ? {
@@ -971,9 +1006,15 @@ class AutomatedRecommendationLoopService {
           ? `环境版本收益冠军 ${bestEnvironmentVersion.label}：闭环 ${bestEnvironmentVersion.closed_count} 笔、平均超额 ${bestEnvironmentVersion.avg_excess_return_pct}%、稳健分 ${bestEnvironmentVersion.robust_score}，下一轮继承其环境纪律`
           : '暂无可晋级的环境闸门版本',
         budget_action_policy: budgetActionPolicy,
+        budget_policy_version: budgetPolicyVersion,
         budget_action_feedback_applied: Boolean(budgetActionPolicy.enabled),
         budget_action_feedback_reason:
           budgetActionPolicy.reason || '预算动作收益回收样本不足，暂不自动升降级',
+        budget_policy_version_feedback_applied: Boolean(budgetPolicyVersion?.enabled),
+        budget_policy_version_feedback_reason:
+          budgetPolicyVersion?.underperformance_guard?.reason ||
+          budgetPolicyVersion?.reason ||
+          '预算权重版本等待闭环验证',
         confidence: roundNumber(Math.max(confidence, versionConfidence), 4),
         reason: [
           policyReason,
@@ -982,6 +1023,9 @@ class AutomatedRecommendationLoopService {
             ? `环境×策略冠军 ${bestEnvironmentStrategyCombo.label} 已具备接管条件`
             : '',
           budgetActionPolicy.enabled ? budgetActionPolicy.reason : '',
+          budgetPolicyVersion?.underperformance_guard?.action === 'protective_downgrade'
+            ? budgetPolicyVersion.underperformance_guard.reason
+            : '',
         ]
           .filter(Boolean)
           .join('；'),
@@ -1115,8 +1159,8 @@ class AutomatedRecommendationLoopService {
         coldStart || avgExcess < -1 || excessWinRate < 45
           ? Math.max(1, Math.min(options.base_paper_trade_limit, 2))
           : avgExcess > 2 && excessWinRate >= 55
-            ? Math.min(5, options.base_paper_trade_limit + 1)
-            : options.base_paper_trade_limit;
+          ? Math.min(5, options.base_paper_trade_limit + 1)
+          : options.base_paper_trade_limit;
 
       const outcomePolicy = {
         ...basePolicy,

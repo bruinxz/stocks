@@ -357,43 +357,43 @@ function summarizeReturnSamples(samples: any[]) {
     excess_positive_count: excessWins.length,
     excess_positive_rate:
       excessReturns.length > 0
-        ? (roundNumber((excessWins.length / excessReturns.length) * 100, 2) ?? 0)
+        ? roundNumber((excessWins.length / excessReturns.length) * 100, 2) ?? 0
         : 0,
     positive_count: wins.length,
     positive_rate:
       completedSamples.length > 0
-        ? (roundNumber((wins.length / completedSamples.length) * 100, 2) ?? 0)
+        ? roundNumber((wins.length / completedSamples.length) * 100, 2) ?? 0
         : 0,
     directional_success_count: directionalWins.length,
     directional_success_rate:
       completedSamples.length > 0
-        ? (roundNumber((directionalWins.length / completedSamples.length) * 100, 2) ?? 0)
+        ? roundNumber((directionalWins.length / completedSamples.length) * 100, 2) ?? 0
         : 0,
     directional_excess_sample_count: directionalExcessReturns.length,
     directional_excess_success_count: directionalExcessWins.length,
     directional_excess_success_rate:
       directionalExcessReturns.length > 0
-        ? (roundNumber((directionalExcessWins.length / directionalExcessReturns.length) * 100, 2) ??
-          0)
+        ? roundNumber((directionalExcessWins.length / directionalExcessReturns.length) * 100, 2) ??
+          0
         : 0,
     avg_win_pct: roundNumber(avgWin, 4) ?? 0,
     avg_loss_pct: roundNumber(avgLoss, 4) ?? 0,
     payoff_ratio:
       avgWin !== null && avgLoss !== null && avgLoss !== 0
-        ? (roundNumber(avgWin / Math.abs(avgLoss), 4) ?? 0)
+        ? roundNumber(avgWin / Math.abs(avgLoss), 4) ?? 0
         : wins.length > 0 && losses.length === 0
-          ? 999
-          : 0,
+        ? 999
+        : 0,
     profit_factor:
-      sumLosses > 0 ? (roundNumber(sumWins / sumLosses, 4) ?? 0) : wins.length > 0 ? 999 : 0,
+      sumLosses > 0 ? roundNumber(sumWins / sumLosses, 4) ?? 0 : wins.length > 0 ? 999 : 0,
     expectancy_pct: roundNumber(avgReturn, 4) ?? 0,
-    max_return_pct: returns.length > 0 ? (roundNumber(Math.max(...returns), 4) ?? 0) : 0,
-    min_return_pct: returns.length > 0 ? (roundNumber(Math.min(...returns), 4) ?? 0) : 0,
+    max_return_pct: returns.length > 0 ? roundNumber(Math.max(...returns), 4) ?? 0 : 0,
+    min_return_pct: returns.length > 0 ? roundNumber(Math.min(...returns), 4) ?? 0 : 0,
     avg_mfe_pct: roundNumber(avgMfe, 4) ?? 0,
     avg_mae_pct: roundNumber(avgMae, 4) ?? 0,
     risk_reward_ratio:
       avgMfe !== null && avgMae !== null && avgMae !== 0
-        ? (roundNumber(avgMfe / Math.abs(avgMae), 4) ?? 0)
+        ? roundNumber(avgMfe / Math.abs(avgMae), 4) ?? 0
         : 0,
   };
 }
@@ -530,7 +530,7 @@ function buildConsensusMaturity(signals: any[], horizon: string) {
     .map(bucket => ({
       ...bucket,
       mature_rate:
-        bucket.total > 0 ? (roundNumber((bucket.completed / bucket.total) * 100, 2) ?? 0) : 0,
+        bucket.total > 0 ? roundNumber((bucket.completed / bucket.total) * 100, 2) ?? 0 : 0,
       waiting: bucket.pending + bucket.partial,
     }))
     .sort((a, b) => {
@@ -554,7 +554,7 @@ function buildConsensusMaturity(signals: any[], horizon: string) {
     consensus_pending: consensusPending,
     consensus_no_data: consensusNoData,
     consensus_mature_rate:
-      consensusTotal > 0 ? (roundNumber((consensusCompleted / consensusTotal) * 100, 2) ?? 0) : 0,
+      consensusTotal > 0 ? roundNumber((consensusCompleted / consensusTotal) * 100, 2) ?? 0 : 0,
   };
 }
 
@@ -751,42 +751,42 @@ function assessTradingAgentsDataQuality(combined: string): AgentDataQualityAsses
     )
       ? 'missing'
       : /Technical indicators|历史|K线|OHLCV|Date,|收盘|成交量/i.test(text)
-        ? 'ok'
-        : 'partial',
+      ? 'ok'
+      : 'partial',
     technical_indicators:
       /Cannot calculate indicators|missing valid OHLCV|Unsupported indicators|技术指标.*失败|无法计算.*指标/i.test(
         text
       )
         ? 'missing'
         : /Technical indicators|MACD|RSI|BOLL|SMA|EMA|技术指标/i.test(text)
-          ? 'ok'
-          : 'partial',
+        ? 'ok'
+        : 'partial',
     fundamentals:
       /No fundamental data|无法获取.*基本面|无.*基本面|fundamental data unavailable|Data unavailable due to network issues/i.test(
         text
       )
         ? 'missing'
         : /fundamental|基本面|公司概况|PE|PB|市盈率|市净率/i.test(text)
-          ? 'ok'
-          : 'partial',
+        ? 'ok'
+        : 'partial',
     financial_statements:
       /No balance sheet data|No cash flow data|No income statement data|无法获取.*资产负债|无法获取.*现金流|无法获取.*利润表|财务报表.*无|无可用数据/i.test(
         text
       )
         ? 'missing'
         : /balance sheet|cash flow|income statement|资产负债|现金流|利润表|财务报表/i.test(text)
-          ? 'ok'
-          : 'partial',
+        ? 'ok'
+        : 'partial',
     news: /No news|未检索到.*新闻|未发现.*资讯|无相关新闻|新闻.*缺失/i.test(text)
       ? 'missing'
       : /新闻|舆情|公告|宏观|news/i.test(text)
-        ? 'ok'
-        : 'partial',
+      ? 'ok'
+      : 'partial',
     realtime_quote: /Failed to get real-time quote|实时.*失败|无法获取.*实时/i.test(text)
       ? 'missing'
       : /Real-time Quote|最新价|实时|涨跌幅|current price/i.test(text)
-        ? 'ok'
-        : 'partial',
+      ? 'ok'
+      : 'partial',
   };
 
   let score = 100;
@@ -841,10 +841,10 @@ function assessTradingAgentsDataQuality(combined: string): AgentDataQualityAsses
     bucket === 'high'
       ? 'allow_auto_trade'
       : bucket === 'medium'
-        ? 'allow_small_sample'
-        : bucket === 'low'
-          ? 'manual_review_required'
-          : 'block_auto_trade';
+      ? 'allow_small_sample'
+      : bucket === 'low'
+      ? 'manual_review_required'
+      : 'block_auto_trade';
 
   return {
     score: normalizedScore,
@@ -889,10 +889,10 @@ export class AIInvestmentSignalService {
       typeof detail === 'string'
         ? detail
         : detail?.text
-          ? String(detail.text)
-          : detail
-            ? JSON.stringify(detail)
-            : '';
+        ? String(detail.text)
+        : detail
+        ? JSON.stringify(detail)
+        : '';
     const combined = `${text}\n${detailText}`;
 
     const explicitDecision = this.normalizeDecision(text);
@@ -942,14 +942,14 @@ export class AIInvestmentSignalService {
       normalized_decision === AISignalDecision.STRONG_BUY
         ? 88
         : normalized_decision === AISignalDecision.BUY
-          ? 78
-          : normalized_decision === AISignalDecision.HOLD
-            ? 58
-            : normalized_decision === AISignalDecision.SELL
-              ? 35
-              : normalized_decision === AISignalDecision.STRONG_SELL
-                ? 20
-                : undefined;
+        ? 78
+        : normalized_decision === AISignalDecision.HOLD
+        ? 58
+        : normalized_decision === AISignalDecision.SELL
+        ? 35
+        : normalized_decision === AISignalDecision.STRONG_SELL
+        ? 20
+        : undefined;
     const data_quality = assessTradingAgentsDataQuality(combined);
     const confidence_score = applyAgentDataQualityToScore(baseConfidenceScore, data_quality);
 
@@ -957,8 +957,8 @@ export class AIInvestmentSignalService {
       upper.includes('SELL') || /高风险|严格止损|禁止介入|清仓|HIGH RISK/i.test(combined)
         ? 'high'
         : /低风险|LOW RISK|稳健/i.test(combined)
-          ? 'low'
-          : 'medium';
+        ? 'low'
+        : 'medium';
 
     return {
       rating: rawRating,
@@ -1109,8 +1109,8 @@ export class AIInvestmentSignalService {
       typeof params.detail === 'string'
         ? params.detail
         : params.detail
-          ? JSON.stringify(params.detail)
-          : undefined;
+        ? JSON.stringify(params.detail)
+        : undefined;
     const structured = this.parseTradingAgentsDecision(
       params.decision || params.rationale || '',
       params.detail
@@ -1131,8 +1131,8 @@ export class AIInvestmentSignalService {
       structured.data_quality.bucket === 'critical'
         ? 'high'
         : structured.data_quality.bucket === 'low' && normalizedDecision !== AISignalDecision.SELL
-          ? 'medium'
-          : structured.risk_level || this.inferRiskLevel(params);
+        ? 'medium'
+        : structured.risk_level || this.inferRiskLevel(params);
     const marketEnvironment =
       params.market_environment ||
       (await marketEnvironmentService
@@ -1256,8 +1256,8 @@ export class AIInvestmentSignalService {
         candidate.action === 'buy'
           ? AISignalDecision.BUY
           : candidate.action === 'avoid'
-            ? AISignalDecision.HOLD
-            : this.decisionFromQuantScore(Number(candidate.score || 0));
+          ? AISignalDecision.HOLD
+          : this.decisionFromQuantScore(Number(candidate.score || 0));
       const source_id = `${symbol}_${signal_date}_${style}_${universe}`;
       const stock = await Stock.findOne({ where: { symbol } });
       const payload = {
@@ -1314,6 +1314,12 @@ export class AIInvestmentSignalService {
             .environment_strategy_budget_policy_version_id,
           environment_strategy_budget_policy_version_hash: (candidate as any)
             .environment_strategy_budget_policy_version_hash,
+          environment_strategy_budget_policy_version_guard_action: (candidate as any)
+            .environment_strategy_budget_policy_version_guard_action,
+          environment_strategy_budget_policy_version_guard_reason: (candidate as any)
+            .environment_strategy_budget_policy_version_guard_reason,
+          environment_strategy_budget_policy_version_guard_champion: (candidate as any)
+            .environment_strategy_budget_policy_version_guard_champion,
           environment_strategy_capital_efficiency_score: (candidate as any)
             .environment_strategy_capital_efficiency_score,
           market_environment: candidate.market_environment,
@@ -1378,6 +1384,12 @@ export class AIInvestmentSignalService {
             .environment_strategy_budget_policy_version_id,
           environment_strategy_budget_policy_version_hash: (candidate as any)
             .environment_strategy_budget_policy_version_hash,
+          environment_strategy_budget_policy_version_guard_action: (candidate as any)
+            .environment_strategy_budget_policy_version_guard_action,
+          environment_strategy_budget_policy_version_guard_reason: (candidate as any)
+            .environment_strategy_budget_policy_version_guard_reason,
+          environment_strategy_budget_policy_version_guard_champion: (candidate as any)
+            .environment_strategy_budget_policy_version_guard_champion,
           environment_strategy_capital_efficiency_score: (candidate as any)
             .environment_strategy_capital_efficiency_score,
           market_environment: candidate.market_environment,
@@ -2269,8 +2281,8 @@ export class AIInvestmentSignalService {
       const excessPct = Number.isFinite(Number(sample.directional_excess_return_pct))
         ? Number(sample.directional_excess_return_pct)
         : Number.isFinite(Number(sample.excess_return_pct))
-          ? Number(sample.excess_return_pct)
-          : returnPct;
+        ? Number(sample.excess_return_pct)
+        : returnPct;
       cumulativeReturn += returnPct;
       cumulativeExcess += excessPct;
       peakReturn = Math.max(peakReturn, cumulativeReturn);
@@ -2342,10 +2354,10 @@ export class AIInvestmentSignalService {
       gate.action === 'scale_up'
         ? 'agent_tail_scale_up'
         : gate.action === 'deprioritize'
-          ? 'agent_tail_deprioritize'
-          : gate.action === 'collect_more_samples'
-            ? 'agent_tail_collect_samples'
-            : 'agent_tail_watch';
+        ? 'agent_tail_deprioritize'
+        : gate.action === 'collect_more_samples'
+        ? 'agent_tail_collect_samples'
+        : 'agent_tail_watch';
     const insights = [
       `尾盘 Agent 在 ${primaryHorizon} 周期已完成 ${overall.count}/${
         signals.length

@@ -200,6 +200,24 @@ interface BudgetPolicyVersion {
   audit_feedback_reason?: string;
   current_version_outcome?: EnvironmentRanking | null;
   version_rankings?: EnvironmentRanking[];
+  underperformance_guard?: {
+    enabled?: boolean;
+    action?: string;
+    severity?: string;
+    champion_version_id?: string;
+    champion_label?: string;
+    champion_closed_count?: number;
+    champion_avg_excess_return_pct?: number;
+    champion_capital_efficiency_score?: number;
+    efficiency_gap?: number;
+    excess_gap?: number;
+    reason?: string;
+  };
+  raw_version_id?: string;
+  comparison_champion_version_id?: string;
+  comparison_champion_label?: string;
+  comparison_efficiency_gap?: number;
+  comparison_excess_gap?: number;
   reason?: string;
 }
 
@@ -574,6 +592,17 @@ const AutonomousOptimizationLab: React.FC = () => {
     data?.strategy_evolution?.budget_policy_version ||
     data?.environment_policy?.budget_policy_version ||
     budgetActionPolicy?.version;
+  const budgetPolicyVersionRankings = useMemo(
+    () =>
+      (
+        budgetPolicyVersion?.version_rankings ||
+        data?.market_environment?.budget_policy_version_rankings ||
+        []
+      )
+        .filter(item => item.key !== 'no_budget_policy_version')
+        .slice(0, 6),
+    [budgetPolicyVersion, data]
+  );
   const budgetPolicyExecutionAudit =
     data?.strategy_evolution?.budget_policy_execution_audit ||
     data?.environment_policy?.budget_policy_execution_audit;
@@ -983,6 +1012,17 @@ const AutonomousOptimizationLab: React.FC = () => {
                       </em>
                     </div>
                   )}
+                  {budgetPolicyVersion?.underperformance_guard?.action ===
+                    'protective_downgrade' && (
+                    <div className="optimization-budget-version-guard">
+                      <FireOutlined />
+                      <div>
+                        <span>VERSION GUARD</span>
+                        <strong>预算权重保护降级已启用</strong>
+                        <em>{budgetPolicyVersion.underperformance_guard.reason}</em>
+                      </div>
+                    </div>
+                  )}
                   <div className="optimization-budget-policy-head">
                     <span>AUTO UPGRADE POLICY</span>
                     <strong>预算动作自动升降级</strong>
@@ -1024,6 +1064,44 @@ const AutonomousOptimizationLab: React.FC = () => {
                       </div>
                     ))}
                   </div>
+                  {!!budgetPolicyVersionRankings.length && (
+                    <div className="optimization-budget-version-board">
+                      <div className="optimization-budget-version-board-head">
+                        <span>VERSION LEADERBOARD</span>
+                        <strong>预算权重版本收益榜</strong>
+                        <em>当前版本与历史冠军对比，跑输后自动保护降级，不让坏权重继续放大。</em>
+                      </div>
+                      {budgetPolicyVersionRankings.map((item, index) => {
+                        const isCurrent = item.key === budgetPolicyVersion?.version_id;
+                        const isChampion =
+                          item.key ===
+                          budgetPolicyVersion?.underperformance_guard?.champion_version_id;
+                        return (
+                          <div
+                            className={`optimization-budget-version-row ${
+                              isCurrent ? 'current' : ''
+                            } ${isChampion ? 'champion' : ''}`}
+                            key={item.key || index}
+                          >
+                            <div className="optimization-budget-version-rank">
+                              {isCurrent ? 'NOW' : `#${index + 1}`}
+                            </div>
+                            <div>
+                              <Text strong>{item.key || item.label}</Text>
+                              <Text type="secondary">
+                                闭环 {item.closed_count || 0} · 效率{' '}
+                                {Number(item.capital_efficiency_score || 0).toFixed(1)} · 1万收益{' '}
+                                {formatMoney(item.pnl_per_10k)}
+                              </Text>
+                            </div>
+                            <strong style={{ color: pnlColor(item.avg_excess_return_pct) }}>
+                              {formatPercent(item.avg_excess_return_pct)}
+                            </strong>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
               {budgetPolicyExecutionAudit?.enabled && (
