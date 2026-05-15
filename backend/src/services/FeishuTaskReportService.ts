@@ -660,7 +660,9 @@ class FeishuTaskReportService {
         : '',
       budgetActionPolicy?.enabled
         ? `- **预算动作自动策略**：${this.safeText(
-            budgetActionPolicy.reason || '下一轮按预算动作后验自动升降级',
+            budgetActionPolicy.audit_feedback_applied_count
+              ? budgetActionPolicy.audit_feedback_reason
+              : budgetActionPolicy.reason || '下一轮按预算动作后验自动升降级',
             120
           )}`
         : '',
@@ -761,6 +763,8 @@ class FeishuTaskReportService {
       环境闸门原因: environmentPolicy?.reason,
       预算动作自动策略: budgetActionPolicy?.enabled ? '是' : '否',
       预算动作策略原因: budgetActionPolicy?.reason,
+      预算审计反哺条数: budgetActionPolicy?.audit_feedback_applied_count,
+      预算审计反哺原因: budgetActionPolicy?.audit_feedback_reason,
       预算策略执行审计: budgetPolicyExecutionAudit?.enabled ? '是' : '否',
       预算策略审计原因: budgetPolicyExecutionAudit?.reason,
       共识排序: consensusRanked ? '是' : '否',

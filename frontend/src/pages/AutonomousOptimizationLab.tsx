@@ -161,6 +161,12 @@ interface BudgetActionPolicyItem extends EnvironmentRanking {
   score_adjustment?: number;
   allow_entry?: boolean;
   confidence?: number;
+  audit_feedback_applied?: boolean;
+  audit_feedback_reason?: string;
+  audit_verdict?: string;
+  audit_score?: number;
+  audit_multiplier_adjustment?: number;
+  audit_score_adjustment?: number;
   reason?: string;
 }
 
@@ -168,6 +174,9 @@ interface BudgetActionPolicy {
   enabled?: boolean;
   confidence?: number;
   total_closed_count?: number;
+  audit_feedback_enabled?: boolean;
+  audit_feedback_applied_count?: number;
+  audit_feedback_reason?: string;
   actions?: BudgetActionPolicyItem[];
   best_action?: BudgetActionPolicyItem | null;
   weak_action?: BudgetActionPolicyItem | null;
@@ -942,7 +951,10 @@ const AutonomousOptimizationLab: React.FC = () => {
                     <span>AUTO UPGRADE POLICY</span>
                     <strong>预算动作自动升降级</strong>
                     <em>
-                      {budgetActionPolicy.reason || '下一轮自动把预算动作收益回收为调分/调仓规则'}
+                      {budgetActionPolicy.audit_feedback_applied_count
+                        ? budgetActionPolicy.audit_feedback_reason
+                        : budgetActionPolicy.reason ||
+                          '下一轮自动把预算动作收益回收为调分/调仓规则'}
                     </em>
                   </div>
                   <div className="optimization-budget-policy-grid">
@@ -966,6 +978,12 @@ const AutonomousOptimizationLab: React.FC = () => {
                           {item.closed_count || 0} · 置信{' '}
                           {Math.round(Number(item.confidence || 0) * 100)}%
                         </em>
+                        {item.audit_feedback_applied && (
+                          <small>
+                            审计反哺 · {budgetAuditVerdictLabel(item.audit_verdict)} · 倍率校准{' '}
+                            {Number(item.audit_multiplier_adjustment || 1).toFixed(2)}x
+                          </small>
+                        )}
                         <p>{item.reason}</p>
                       </div>
                     ))}

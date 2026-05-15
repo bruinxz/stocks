@@ -4694,6 +4694,7 @@ a {
 }
 
 .optimization-budget-policy-card em,
+.optimization-budget-policy-card small,
 .optimization-budget-policy-card p {
   display: block;
   margin: 7px 0 0;
@@ -4701,6 +4702,15 @@ a {
   font-size: 11px;
   font-style: normal;
   line-height: 1.42;
+}
+
+.optimization-budget-policy-card small {
+  width: fit-content;
+  padding: 4px 8px;
+  border-radius: 999px;
+  color: #ffe7ae;
+  background: rgba(214, 166, 79, 0.13);
+  border: 1px solid rgba(214, 166, 79, 0.18);
 }
 
 .optimization-budget-policy-card p {

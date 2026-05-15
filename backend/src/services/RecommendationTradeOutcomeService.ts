@@ -1116,9 +1116,12 @@ export class RecommendationTradeOutcomeService {
           toNumber(a.capital_efficiency_score) - toNumber(b.capital_efficiency_score) ||
           a.avg_excess_return_pct - b.avg_excess_return_pct
       )[0];
-    const budgetActionPolicy = this.buildBudgetActionPolicy(budgetActionRankings);
     const budgetPolicyExecutionAudit =
       this.buildBudgetPolicyExecutionAudit(budgetPolicyActionGroups);
+    const budgetActionPolicy = this.buildBudgetActionPolicy(
+      budgetActionRankings,
+      budgetPolicyExecutionAudit
+    );
     (environmentPolicy as any).budget_action_policy = budgetActionPolicy;
     (environmentPolicy as any).budget_policy_execution_audit = budgetPolicyExecutionAudit;
     (environmentPolicy as any).budget_action_feedback_applied = Boolean(budgetActionPolicy.enabled);
@@ -1327,6 +1330,9 @@ export class RecommendationTradeOutcomeService {
       budgetActionPolicy.enabled && budgetActionPolicy.best_action
         ? `预算动作策略：${budgetActionPolicy.reason}`
         : '',
+      budgetActionPolicy.audit_feedback_applied_count
+        ? `预算审计反哺：${budgetActionPolicy.audit_feedback_reason}`
+        : '',
       budgetPolicyExecutionAudit.enabled
         ? `预算策略审计：${budgetPolicyExecutionAudit.reason}`
         : '',
@@ -1404,7 +1410,20 @@ export class RecommendationTradeOutcomeService {
     };
   }
 
-  private buildBudgetActionPolicy(rankings: RecommendationTradeOutcomeBucket[] = []) {
+  private buildBudgetActionPolicy(
+    rankings: RecommendationTradeOutcomeBucket[] = [],
+    executionAudit: any = {}
+  ) {
+    const auditByAction = new Map<string, any>();
+    const auditExecutions = Array.isArray(executionAudit.executions)
+      ? executionAudit.executions
+      : [];
+    for (const audit of auditExecutions) {
+      const action = String(audit?.key || '').trim();
+      if (action && !auditByAction.has(action)) {
+        auditByAction.set(action, audit);
+      }
+    }
     const actions = rankings
       .filter(item => item.key && item.key !== 'no_budget_action')
       .map(item => {
@@ -1492,6 +1511,54 @@ export class RecommendationTradeOutcomeService {
             }
           }
         }
+        const actionAudit = auditByAction.get(action);
+        const auditVerdict = String(actionAudit?.verdict || '');
+        const auditConfidence = toNumber(actionAudit?.confidence, 0);
+        const auditScore = toNumber(actionAudit?.audit_score, 0);
+        let auditMultiplierAdjustment = 1;
+        let auditScoreAdjustment = 0;
+        let audit_feedback_reason = '';
+        let audit_feedback_applied = false;
+
+        if (actionAudit) {
+          audit_feedback_applied = true;
+          if (auditVerdict === 'effective') {
+            auditMultiplierAdjustment = clamp(
+              1.03 + Math.min(0.09, Math.max(0, auditScore) / 180),
+              1.03,
+              1.12
+            );
+            auditScoreAdjustment = auditConfidence >= 0.35 ? 1 : 0;
+            audit_feedback_reason = `执行审计有效，倍率再校准 ${roundNumber(
+              auditMultiplierAdjustment,
+              2
+            )}x`;
+          } else if (auditVerdict === 'ineffective') {
+            auditMultiplierAdjustment = 0.72;
+            auditScoreAdjustment = -2;
+            audit_feedback_reason = `执行审计无效，自动降权 ${roundNumber(
+              auditMultiplierAdjustment,
+              2
+            )}x`;
+          } else {
+            auditMultiplierAdjustment = 0.94;
+            auditScoreAdjustment = -1;
+            audit_feedback_reason = '执行审计仍中性，维持观察并轻微降温';
+          }
+
+          positionMultiplier = clamp(positionMultiplier * auditMultiplierAdjustment, 0, 1.2);
+          scoreAdjustment += auditScoreAdjustment;
+
+          if (auditVerdict === 'ineffective' && action === 'reopen_small') {
+            action = 'keep_paused';
+            positionMultiplier = 0;
+            scoreAdjustment = Math.min(scoreAdjustment, -3);
+            allowEntry = false;
+            audit_feedback_reason = '小仓重开审计无效，回退为继续暂停';
+          }
+
+          reason = `${reason}；${audit_feedback_reason}`;
+        }
 
         return {
           key,
@@ -1507,6 +1574,14 @@ export class RecommendationTradeOutcomeService {
           position_multiplier: roundNumber(positionMultiplier, 2),
           score_adjustment: scoreAdjustment,
           allow_entry: allowEntry,
+          audit_feedback_applied,
+          audit_feedback_reason,
+          audit_verdict: auditVerdict || undefined,
+          audit_score: actionAudit ? roundNumber(auditScore, 2) : undefined,
+          audit_multiplier_adjustment: actionAudit
+            ? roundNumber(auditMultiplierAdjustment, 2)
+            : undefined,
+          audit_score_adjustment: actionAudit ? auditScoreAdjustment : undefined,
           reason,
         };
       })
@@ -1526,11 +1601,19 @@ export class RecommendationTradeOutcomeService {
           a.avg_excess_return_pct - b.avg_excess_return_pct
       )[0] || null;
     const totalClosed = actions.reduce((sum, item) => sum + item.closed_count, 0);
+    const auditFeedbackAppliedCount = actions.filter(item => item.audit_feedback_applied).length;
 
     return {
       enabled: actions.length > 0,
       confidence: roundNumber(clamp(totalClosed / 18, 0, 1), 2),
       total_closed_count: totalClosed,
+      audit_feedback_enabled: Boolean(executionAudit.enabled),
+      audit_feedback_applied_count: auditFeedbackAppliedCount,
+      audit_feedback_reason: auditFeedbackAppliedCount
+        ? `已将 ${auditFeedbackAppliedCount} 条执行审计结论反哺到下一轮调分/调仓`
+        : executionAudit.enabled
+          ? '已有执行审计，但尚未匹配到可反哺的预算动作'
+          : '执行审计样本不足，暂未反哺',
       actions,
       best_action: bestAction,
       weak_action: weakAction,
