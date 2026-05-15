@@ -221,6 +221,14 @@ function budgetPolicyVersionGuard(policy: any): any {
   );
 }
 
+function budgetPolicyRollbackPlan(policy: any): any {
+  return asPlainObject(
+    asPlainObject(policy?.budget_policy_version).rollback_plan ||
+      asPlainObject(policy?.budget_policy_version_rollback_plan) ||
+      asPlainObject(asPlainObject(policy?.budget_action_policy).version).rollback_plan
+  );
+}
+
 function applyEnvironmentStrategyCandidateTuning(
   candidates: any[],
   options: { environment_policy?: any; strategy_key?: string }
@@ -246,7 +254,9 @@ function applyEnvironmentStrategyCandidateTuning(
   const isResampling = resampling.has(strategyKey);
   const budgetPolicies = budgetActionPolicyMap(options.environment_policy);
   const versionGuard = budgetPolicyVersionGuard(options.environment_policy);
+  const rollbackPlan = budgetPolicyRollbackPlan(options.environment_policy);
   const versionGuardDowngrade = versionGuard.action === 'protective_downgrade';
+  const rollbackApplied = Boolean(rollbackPlan.apply);
   const hasCandidateBudgetAction =
     budgetPolicies.size > 0 &&
     candidates.some(candidate => {
@@ -264,7 +274,8 @@ function applyEnvironmentStrategyCandidateTuning(
     !isExtended &&
     !isResampling &&
     !budgetPolicyEnabled &&
-    !versionGuardDowngrade
+    !versionGuardDowngrade &&
+    !rollbackApplied
   )
     return candidates;
 
@@ -316,7 +327,14 @@ function applyEnvironmentStrategyCandidateTuning(
         : 1;
       const budgetPolicy =
         budgetAction !== 'no_budget_action' ? budgetPolicies.get(budgetAction) : null;
-      if (!isExtended && !isRecovered && !isResampling && !budgetPolicy && !versionGuardDowngrade) {
+      if (
+        !isExtended &&
+        !isRecovered &&
+        !isResampling &&
+        !budgetPolicy &&
+        !versionGuardDowngrade &&
+        !rollbackApplied
+      ) {
         return {
           ...candidate,
           metadata_rank_index: candidate.metadata_rank_index ?? index,
@@ -334,12 +352,25 @@ function applyEnvironmentStrategyCandidateTuning(
       const versionGuardMultiplier = versionGuardDowngrade
         ? clampNumber(toNumber(versionGuard.multiplier_cap, 0.82), 0.4, 1)
         : 1;
+      const rollbackScoreAdjustment = rollbackApplied
+        ? rollbackPlan.action === 'champion_warm_start'
+          ? 0.5
+          : -0.5
+        : 0;
+      const rollbackMultiplier = rollbackApplied
+        ? rollbackPlan.action === 'champion_warm_start'
+          ? clampNumber(0.92 + toNumber(rollbackPlan.blend_weight, 0.65) * 0.08, 0.9, 1.0)
+          : 0.9
+        : 1;
       const finalScoreAdjustment = roundNumber(
-        environmentStrategyAdjustment + budgetPolicyScoreAdjustment + versionGuardScoreAdjustment,
+        environmentStrategyAdjustment +
+          budgetPolicyScoreAdjustment +
+          versionGuardScoreAdjustment +
+          rollbackScoreAdjustment,
         2
       );
       const finalPositionMultiplier = roundNumber(
-        positionMultiplier * budgetPolicyMultiplier * versionGuardMultiplier,
+        positionMultiplier * budgetPolicyMultiplier * versionGuardMultiplier * rollbackMultiplier,
         2
       );
       const basePosition = Number(candidate.suggested_position_pct || 0);
@@ -370,6 +401,7 @@ function applyEnvironmentStrategyCandidateTuning(
           : '',
         budgetPolicy?.reason ? `预算动作策略：${budgetPolicy.reason}` : '',
         versionGuardDowngrade ? `预算权重保护：${versionGuard.reason}` : '',
+        rollbackApplied ? `预算版本回滚审计：${rollbackPlan.reason}` : '',
       ]
         .filter(Boolean)
         .join('；');
@@ -398,6 +430,10 @@ function applyEnvironmentStrategyCandidateTuning(
         environment_strategy_budget_policy_version_guard_action: versionGuard.action,
         environment_strategy_budget_policy_version_guard_reason: versionGuard.reason,
         environment_strategy_budget_policy_version_guard_champion: versionGuard.champion_version_id,
+        environment_strategy_budget_policy_rollback_action: rollbackPlan.action,
+        environment_strategy_budget_policy_rollback_source: rollbackPlan.source_version_id,
+        environment_strategy_budget_policy_rollback_snapshot_id: rollbackPlan.source_snapshot_id,
+        environment_strategy_budget_policy_rollback_reason: rollbackPlan.reason,
         environment_strategy_policy_action: isExtended
           ? 'extended_cooldown'
           : isRecovered
@@ -412,6 +448,7 @@ function applyEnvironmentStrategyCandidateTuning(
             : `${policyLabel}，评分 ${finalScoreAdjustment}`,
           budgetPolicy?.reason ? `预算动作策略：${budgetPolicy.reason}` : '',
           versionGuardDowngrade ? `预算权重保护：${versionGuard.reason}` : '',
+          rollbackApplied ? `预算版本回滚：${rollbackPlan.reason}` : '',
         ].slice(0, 6),
         warnings:
           finalScoreAdjustment < 0

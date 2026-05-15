@@ -102,6 +102,7 @@ export interface RecommendationTradeOutcomeDashboard {
     by_budget_action: RecommendationTradeOutcomeBucket[];
     by_budget_policy_action: RecommendationTradeOutcomeBucket[];
     by_budget_policy_version: RecommendationTradeOutcomeBucket[];
+    by_budget_policy_rollback: RecommendationTradeOutcomeBucket[];
   };
   outcomes: RecommendationTradeOutcome[];
   feedback: {
@@ -524,6 +525,45 @@ function budgetPolicyVersionLabel(key: string): string {
   return `预算权重 ${key}`;
 }
 
+function budgetPolicyRollbackKey(record: RecommendationTradeOutcome | any): string {
+  const metadata = asPlainObject(record.metadata);
+  const signalMetadata = asPlainObject(metadata.signal_metadata);
+  const paperTrading = asPlainObject(metadata.paper_trading);
+  const rollbackAction =
+    metadata.environment_strategy_budget_policy_rollback_action ||
+    signalMetadata.environment_strategy_budget_policy_rollback_action ||
+    paperTrading.environment_strategy_budget_policy_rollback_action ||
+    metadata.budget_policy_rollback_action ||
+    signalMetadata.budget_policy_rollback_action ||
+    paperTrading.budget_policy_rollback_action;
+  const rollbackSource =
+    metadata.environment_strategy_budget_policy_rollback_source ||
+    signalMetadata.environment_strategy_budget_policy_rollback_source ||
+    paperTrading.environment_strategy_budget_policy_rollback_source ||
+    metadata.budget_policy_rollback_source ||
+      signalMetadata.budget_policy_rollback_source ||
+      paperTrading.budget_policy_rollback_source;
+  if (!rollbackAction && !rollbackSource) return 'no_budget_policy_rollback';
+  if (
+    rollbackAction &&
+    !['protective_rollback', 'champion_warm_start', 'rollback'].includes(String(rollbackAction))
+  ) {
+    return 'no_budget_policy_rollback';
+  }
+  return `${rollbackAction || 'rollback'}:${rollbackSource || 'unknown'}`;
+}
+
+function budgetPolicyRollbackLabel(key: string): string {
+  if (!key || key === 'no_budget_policy_rollback') return '未触发预算版本回滚';
+  const [action, source] = key.split(':');
+  const labels: Record<string, string> = {
+    protective_rollback: '保护回滚',
+    champion_warm_start: '冠军温启动',
+    rollback: '版本回滚',
+  };
+  return `${labels[action] || action} · ${source || 'unknown'}`;
+}
+
 function dateOnly(value?: Date | string | null): string {
   if (!value) return getChinaToday();
   const date = value instanceof Date ? value : new Date(value);
@@ -917,6 +957,12 @@ export class RecommendationTradeOutcomeService {
         budgetPolicyVersionLabel,
         'budget_policy_version'
       ),
+      by_budget_policy_rollback: this.buildBuckets(
+        outcomes,
+        item => budgetPolicyRollbackKey(item),
+        budgetPolicyRollbackLabel,
+        'budget_policy_rollback'
+      ),
     };
 
     const dashboard: RecommendationTradeOutcomeDashboard = {
@@ -1093,6 +1139,7 @@ export class RecommendationTradeOutcomeService {
     const budgetActionGroups = outcomeDashboard.groups.by_budget_action || [];
     const budgetPolicyActionGroups = outcomeDashboard.groups.by_budget_policy_action || [];
     const budgetPolicyVersionGroups = outcomeDashboard.groups.by_budget_policy_version || [];
+    const budgetPolicyRollbackGroups = outcomeDashboard.groups.by_budget_policy_rollback || [];
     const environmentPolicy: any = this.buildEnvironmentLoopPolicy({
       market_regime_groups: marketRegimeGroups,
       industry_regime_groups: industryRegimeGroups,
@@ -1166,6 +1213,8 @@ export class RecommendationTradeOutcomeService {
       )[0];
     const budgetPolicyExecutionAudit =
       this.buildBudgetPolicyExecutionAudit(budgetPolicyActionGroups);
+    const budgetPolicyRollbackAudit =
+      this.buildBudgetPolicyRollbackAudit(budgetPolicyRollbackGroups);
     let budgetActionPolicy: any = this.buildBudgetActionPolicy(
       budgetActionRankings,
       budgetPolicyExecutionAudit
@@ -1203,7 +1252,11 @@ export class RecommendationTradeOutcomeService {
     } catch (error: any) {
       logger.warn(`读取预算权重持久化版本智能失败: ${error?.message || error}`);
     }
-    const rollbackPlan = asPlainObject(budgetPolicyVersionIntelligence?.rollback_plan);
+    let rollbackPlan = asPlainObject(budgetPolicyVersionIntelligence?.rollback_plan);
+    rollbackPlan = this.applyBudgetPolicyRollbackAuditBlock(
+      rollbackPlan,
+      budgetPolicyRollbackAudit
+    );
     if (rollbackPlan.apply) {
       budgetActionPolicy = this.applyBudgetPolicySnapshotRollback(budgetActionPolicy, rollbackPlan);
       budgetPolicyVersion = this.buildBudgetPolicyVersionSnapshot({
@@ -1232,8 +1285,11 @@ export class RecommendationTradeOutcomeService {
       rawBudgetPolicyVersion
     );
     (budgetPolicyVersion as any).version_intelligence = budgetPolicyVersionIntelligence;
-    (budgetPolicyVersion as any).rollback_plan =
-      budgetPolicyVersionIntelligence?.rollback_plan || rollbackPlan;
+    (budgetPolicyVersion as any).rollback_plan = rollbackPlan;
+    if (budgetPolicyVersionIntelligence) {
+      (budgetPolicyVersionIntelligence as any).rollback_plan = rollbackPlan;
+    }
+    (budgetPolicyVersion as any).rollback_audit = budgetPolicyRollbackAudit;
     const budgetPolicyVersionSnapshot = await budgetPolicyVersionSnapshotService.recordVersion(
       budgetPolicyVersion,
       {
@@ -1252,12 +1308,14 @@ export class RecommendationTradeOutcomeService {
     (environmentPolicy as any).budget_policy_version = budgetPolicyVersion;
     (environmentPolicy as any).budget_policy_version_intelligence = budgetPolicyVersionIntelligence;
     (environmentPolicy as any).budget_policy_execution_audit = budgetPolicyExecutionAudit;
+    (environmentPolicy as any).budget_policy_rollback_audit = budgetPolicyRollbackAudit;
     (environmentPolicy as any).budget_action_feedback_applied = Boolean(budgetActionPolicy.enabled);
     (environmentPolicy as any).budget_action_feedback_reason = budgetActionPolicy.reason;
     (nextPolicy as any).budget_action_policy = budgetActionPolicy;
     (nextPolicy as any).budget_action_reason = budgetActionPolicy.reason;
     (nextPolicy as any).budget_policy_version = budgetPolicyVersion;
     (nextPolicy as any).budget_policy_execution_audit = budgetPolicyExecutionAudit;
+    (nextPolicy as any).budget_policy_rollback_audit = budgetPolicyRollbackAudit;
     const weakCandidateTuning = candidateTuningGroups
       .filter(item => item.key !== 'no_tuning' && item.closed_count > 0)
       .sort(
@@ -1371,6 +1429,7 @@ export class RecommendationTradeOutcomeService {
       budget_action_policy: budgetActionPolicy,
       budget_policy_version: budgetPolicyVersion,
       budget_policy_execution_audit: budgetPolicyExecutionAudit,
+      budget_policy_rollback_audit: budgetPolicyRollbackAudit,
     };
 
     const weakSegments = outcomeDashboard.feedback.weak_segments.slice(0, 4);
@@ -1475,6 +1534,9 @@ export class RecommendationTradeOutcomeService {
       budgetPolicyExecutionAudit.enabled
         ? `预算策略审计：${budgetPolicyExecutionAudit.reason}`
         : '',
+      budgetPolicyRollbackAudit.enabled
+        ? `预算版本回滚审计：${budgetPolicyRollbackAudit.reason}`
+        : '',
     ].filter(Boolean);
 
     return {
@@ -1527,6 +1589,7 @@ export class RecommendationTradeOutcomeService {
         budget_action_rankings: outcomeDashboard.groups.by_budget_action,
         budget_policy_action_rankings: outcomeDashboard.groups.by_budget_policy_action,
         budget_policy_version_rankings: outcomeDashboard.groups.by_budget_policy_version,
+        budget_policy_rollback_rankings: outcomeDashboard.groups.by_budget_policy_rollback,
         resample_combo_rankings: environmentStrategyComboGroups
           .filter(item => toNumber(item.resample_closed_count, 0) > 0 || item.resample_decision)
           .sort(
@@ -2017,6 +2080,36 @@ export class RecommendationTradeOutcomeService {
     };
   }
 
+  private applyBudgetPolicyRollbackAuditBlock(rollbackPlan: any, rollbackAudit: any) {
+    const plan = asPlainObject(rollbackPlan);
+    if (!plan.apply) return plan;
+
+    const weakRollback = asPlainObject(rollbackAudit?.weak_rollback);
+    const weakSource = String(weakRollback.key || '').split(':')[1] || '';
+    const sourceVersionId = String(plan.source_version_id || '').trim();
+    const auditSaysIneffective =
+      weakRollback.verdict === 'ineffective' &&
+      sourceVersionId &&
+      (weakSource === sourceVersionId || String(weakRollback.key || '').includes(sourceVersionId));
+
+    if (!auditSaysIneffective) return plan;
+
+    return {
+      ...plan,
+      apply: false,
+      action: 'rollback_audit_blocked',
+      blocked_by_rollback_audit: true,
+      blocked_source_version_id: sourceVersionId,
+      blocked_reason:
+        weakRollback.reason ||
+        '历史回滚进入模拟盘后的真实收益审计无效，本轮不继续继承该冠军版本',
+      original_action: plan.action,
+      reason: `历史回滚审计无效，暂不继续继承 ${sourceVersionId}：${
+        weakRollback.reason || '回滚后仍跑输'
+      }`,
+    };
+  }
+
   private attachBudgetPolicyVersionGuard(version: any, guard: any, rawVersion: any) {
     const guardObject = asPlainObject(guard);
     const rawVersionObject = asPlainObject(rawVersion);
@@ -2125,6 +2218,96 @@ export class RecommendationTradeOutcomeService {
             best_execution.capital_efficiency_score
           }；弱项 ${weak_execution?.label || '暂无'}，后续按审计结果继续校准`
         : '预算动作自动策略尚未产生可审计成交',
+    };
+  }
+
+  private buildBudgetPolicyRollbackAudit(rankings: RecommendationTradeOutcomeBucket[] = []) {
+    const executions = rankings
+      .filter(item => item.key && item.key !== 'no_budget_policy_rollback')
+      .map(item => {
+        const closedCount = toNumber(item.closed_count, 0);
+        const avgExcess = toNumber(item.avg_excess_return_pct, 0);
+        const capitalEfficiency = toNumber(item.capital_efficiency_score, 0);
+        const excessWinRate = toNumber(item.excess_win_rate, 0);
+        const pnlPer10k = toNumber(item.pnl_per_10k, 0);
+        const rollbackScore =
+          capitalEfficiency + avgExcess * 2 + (excessWinRate - 50) * 0.12 + Math.log1p(closedCount);
+        let verdict: 'effective' | 'watch' | 'ineffective' = 'watch';
+        let next_action = '继续采样，暂不改变冠军版本信任度';
+        let reason = `${item.label}闭环 ${closedCount} 笔，继续等待回滚效果确认`;
+
+        if (closedCount >= 2 && avgExcess >= 0.6 && capitalEfficiency >= 4 && excessWinRate >= 50) {
+          verdict = 'effective';
+          next_action = '继续信任该冠军版本/温启动策略';
+          reason = `回滚后表现有效：超额 ${roundNumber(avgExcess, 2)}%，效率 ${roundNumber(
+            capitalEfficiency,
+            1
+          )}`;
+        } else if (
+          closedCount >= 2 &&
+          (avgExcess <= -0.8 || capitalEfficiency <= -3 || excessWinRate < 38)
+        ) {
+          verdict = 'ineffective';
+          next_action = '降低该冠军版本信任度，下一轮避免继续回滚到该来源';
+          reason = `回滚后仍跑输：超额 ${roundNumber(avgExcess, 2)}%，效率 ${roundNumber(
+            capitalEfficiency,
+            1
+          )}`;
+        } else if (closedCount >= 2) {
+          reason = `回滚效果中性：超额 ${roundNumber(avgExcess, 2)}%，继续观察来源版本`;
+        }
+
+        return {
+          key: item.key,
+          label: item.label,
+          closed_count: closedCount,
+          tracked_count: toNumber(item.tracked_count ?? item.count, 0),
+          avg_excess_return_pct: roundNumber(avgExcess, 4),
+          excess_win_rate: roundNumber(excessWinRate, 2),
+          capital_efficiency_score: roundNumber(capitalEfficiency, 2),
+          pnl_per_10k: roundNumber(pnlPer10k, 2),
+          confidence: roundNumber(clamp(closedCount / 10, 0, 1), 2),
+          rollback_score: roundNumber(rollbackScore, 2),
+          verdict,
+          next_action,
+          reason,
+        };
+      })
+      .sort(
+        (a, b) =>
+          b.rollback_score - a.rollback_score ||
+          b.avg_excess_return_pct - a.avg_excess_return_pct ||
+          b.closed_count - a.closed_count
+      );
+
+    const effective = executions.filter(item => item.verdict === 'effective');
+    const ineffective = executions.filter(item => item.verdict === 'ineffective');
+    const best_rollback = effective[0] || executions[0] || null;
+    const weak_rollback =
+      ineffective[0] ||
+      [...executions].sort(
+        (a, b) =>
+          a.rollback_score - b.rollback_score ||
+          a.avg_excess_return_pct - b.avg_excess_return_pct ||
+          b.closed_count - a.closed_count
+      )[0] ||
+      null;
+    const closedCount = executions.reduce((sum, item) => sum + item.closed_count, 0);
+
+    return {
+      enabled: executions.length > 0,
+      confidence: roundNumber(clamp(closedCount / 20, 0, 1), 2),
+      total_closed_count: closedCount,
+      effective_count: effective.length,
+      ineffective_count: ineffective.length,
+      executions,
+      best_rollback,
+      weak_rollback,
+      reason: best_rollback
+        ? `最佳回滚 ${best_rollback.label}，超额 ${best_rollback.avg_excess_return_pct}%、效率 ${
+            best_rollback.capital_efficiency_score
+          }；弱回滚 ${weak_rollback?.label || '暂无'}，后续按真实收益决定是否继续信任冠军版本`
+        : '预算版本回滚尚未产生可审计成交',
     };
   }
 
@@ -2515,6 +2698,18 @@ export class RecommendationTradeOutcomeService {
           metadata.environment_strategy_budget_policy_version_guard_reason,
         environment_strategy_budget_policy_version_guard_champion:
           metadata.environment_strategy_budget_policy_version_guard_champion,
+        environment_strategy_budget_policy_rollback_action:
+          metadata.environment_strategy_budget_policy_rollback_action ||
+          paperTrading.environment_strategy_budget_policy_rollback_action,
+        environment_strategy_budget_policy_rollback_source:
+          metadata.environment_strategy_budget_policy_rollback_source ||
+          paperTrading.environment_strategy_budget_policy_rollback_source,
+        environment_strategy_budget_policy_rollback_snapshot_id:
+          metadata.environment_strategy_budget_policy_rollback_snapshot_id ||
+          paperTrading.environment_strategy_budget_policy_rollback_snapshot_id,
+        environment_strategy_budget_policy_rollback_reason:
+          metadata.environment_strategy_budget_policy_rollback_reason ||
+          paperTrading.environment_strategy_budget_policy_rollback_reason,
         environment_strategy_capital_efficiency_score:
           metadata.environment_strategy_capital_efficiency_score,
         signal_metadata: metadata,

@@ -512,6 +512,11 @@ class FeishuTaskReportService {
       strategyEvolution?.budget_policy_execution_audit ||
       environmentPolicy?.budget_policy_execution_audit ||
       {};
+    const budgetPolicyRollbackAudit =
+      strategyEvolution?.budget_policy_rollback_audit ||
+      environmentPolicy?.budget_policy_rollback_audit ||
+      budgetPolicyVersion?.rollback_audit ||
+      {};
     const policySnapshot = result?.policy_snapshot || {};
     const qualityOverview = result?.quality_report?.overview || {};
     const topPicks = recommendations.slice(0, 5);
@@ -699,6 +704,12 @@ class FeishuTaskReportService {
             120
           )}`
         : '',
+      budgetPolicyRollbackAudit?.enabled
+        ? `- **预算版本回滚审计**：${this.safeText(
+            budgetPolicyRollbackAudit.reason || '已开始审计回滚后的真实成交收益',
+            120
+          )}`
+        : '',
       bestPick
         ? `- **首选标的**：${bestPick.name || bestPick.symbol}（${bestPick.symbol}），${
             this.buildInlinePriceText(bestPick) || '当前股价 --'
@@ -805,6 +816,10 @@ class FeishuTaskReportService {
       预算版本回滚来源: budgetPolicyVersion?.rollback_plan?.source_version_id,
       预算策略执行审计: budgetPolicyExecutionAudit?.enabled ? '是' : '否',
       预算策略审计原因: budgetPolicyExecutionAudit?.reason,
+      预算版本回滚审计: budgetPolicyRollbackAudit?.enabled ? '是' : '否',
+      预算版本回滚审计原因: budgetPolicyRollbackAudit?.reason,
+      预算版本回滚有效数: budgetPolicyRollbackAudit?.effective_count,
+      预算版本回滚无效数: budgetPolicyRollbackAudit?.ineffective_count,
       共识排序: consensusRanked ? '是' : '否',
       共识标的数: consensusOverlapCount,
       候选源头调权: candidateTuning?.enabled ? '是' : '否',

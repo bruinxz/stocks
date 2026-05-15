@@ -130,6 +130,7 @@ interface EnvironmentLoopPolicy {
   budget_action_policy?: BudgetActionPolicy;
   budget_policy_version?: BudgetPolicyVersion;
   budget_policy_execution_audit?: BudgetPolicyExecutionAudit;
+  budget_policy_rollback_audit?: BudgetPolicyRollbackAudit;
 }
 
 interface EnvironmentRanking {
@@ -212,6 +213,7 @@ interface BudgetPolicyVersion {
     reason?: string;
   };
   rollback_plan?: BudgetPolicyRollbackPlan;
+  rollback_audit?: BudgetPolicyRollbackAudit;
   underperformance_guard?: {
     enabled?: boolean;
     action?: string;
@@ -284,6 +286,25 @@ interface BudgetPolicyExecutionAudit {
   executions?: BudgetPolicyExecutionItem[];
   best_execution?: BudgetPolicyExecutionItem | null;
   weak_execution?: BudgetPolicyExecutionItem | null;
+  reason?: string;
+}
+
+interface BudgetPolicyRollbackAuditItem extends EnvironmentRanking {
+  rollback_score?: number;
+  verdict?: 'effective' | 'watch' | 'ineffective' | string;
+  next_action?: string;
+  reason?: string;
+}
+
+interface BudgetPolicyRollbackAudit {
+  enabled?: boolean;
+  confidence?: number;
+  total_closed_count?: number;
+  effective_count?: number;
+  ineffective_count?: number;
+  executions?: BudgetPolicyRollbackAuditItem[];
+  best_rollback?: BudgetPolicyRollbackAuditItem | null;
+  weak_rollback?: BudgetPolicyRollbackAuditItem | null;
   reason?: string;
 }
 
@@ -382,6 +403,7 @@ interface OptimizationData {
     budget_action_policy?: BudgetActionPolicy;
     budget_policy_version?: BudgetPolicyVersion;
     budget_policy_execution_audit?: BudgetPolicyExecutionAudit;
+    budget_policy_rollback_audit?: BudgetPolicyRollbackAudit;
   };
   segment_actions: {
     boost: Array<any>;
@@ -403,6 +425,7 @@ interface OptimizationData {
     budget_action_rankings?: EnvironmentRanking[];
     budget_policy_action_rankings?: EnvironmentRanking[];
     budget_policy_version_rankings?: EnvironmentRanking[];
+    budget_policy_rollback_rankings?: EnvironmentRanking[];
     resample_combo_rankings?: EnvironmentStrategyComboRanking[];
     policy?: EnvironmentLoopPolicy;
   };
@@ -660,6 +683,10 @@ const AutonomousOptimizationLab: React.FC = () => {
   const budgetPolicyExecutionAudit =
     data?.strategy_evolution?.budget_policy_execution_audit ||
     data?.environment_policy?.budget_policy_execution_audit;
+  const budgetPolicyRollbackAudit =
+    data?.strategy_evolution?.budget_policy_rollback_audit ||
+    data?.environment_policy?.budget_policy_rollback_audit ||
+    budgetPolicyVersion?.rollback_audit;
 
   const symbolColumns = [
     {
@@ -1231,6 +1258,44 @@ const AutonomousOptimizationLab: React.FC = () => {
                             />
                           </AreaChart>
                         </ResponsiveContainer>
+                      </div>
+                    </div>
+                  )}
+                  {budgetPolicyRollbackAudit?.enabled && (
+                    <div className="optimization-budget-rollback-audit">
+                      <div className="optimization-budget-rollback-audit-head">
+                        <span>ROLLBACK AUDIT</span>
+                        <strong>回滚真实收益审计</strong>
+                        <em>
+                          {budgetPolicyRollbackAudit.reason ||
+                            '追踪冠军回滚/温启动进入模拟盘后的真实收益，决定后续是否继续信任该版本。'}
+                        </em>
+                      </div>
+                      <div className="optimization-budget-rollback-audit-grid">
+                        {(budgetPolicyRollbackAudit.executions || []).slice(0, 4).map(item => (
+                          <div
+                            className={`optimization-budget-rollback-audit-card ${
+                              item.verdict || 'watch'
+                            }`}
+                            key={item.key || item.label}
+                          >
+                            <div className="optimization-budget-rollback-audit-top">
+                              <Tag color={budgetAuditVerdictColor(item.verdict)}>
+                                {budgetAuditVerdictLabel(item.verdict)}
+                              </Tag>
+                              <b>{item.label || item.key}</b>
+                            </div>
+                            <strong style={{ color: pnlColor(item.avg_excess_return_pct) }}>
+                              {formatPercent(item.avg_excess_return_pct)}
+                            </strong>
+                            <em>
+                              回滚分 {Number(item.rollback_score || 0).toFixed(1)} · 闭环{' '}
+                              {item.closed_count || 0} · 效率{' '}
+                              {Number(item.capital_efficiency_score || 0).toFixed(1)}
+                            </em>
+                            <p>{item.reason || item.next_action}</p>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   )}

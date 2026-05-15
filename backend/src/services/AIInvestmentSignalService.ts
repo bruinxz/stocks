@@ -1320,6 +1320,14 @@ export class AIInvestmentSignalService {
             .environment_strategy_budget_policy_version_guard_reason,
           environment_strategy_budget_policy_version_guard_champion: (candidate as any)
             .environment_strategy_budget_policy_version_guard_champion,
+          environment_strategy_budget_policy_rollback_action: (candidate as any)
+            .environment_strategy_budget_policy_rollback_action,
+          environment_strategy_budget_policy_rollback_source: (candidate as any)
+            .environment_strategy_budget_policy_rollback_source,
+          environment_strategy_budget_policy_rollback_snapshot_id: (candidate as any)
+            .environment_strategy_budget_policy_rollback_snapshot_id,
+          environment_strategy_budget_policy_rollback_reason: (candidate as any)
+            .environment_strategy_budget_policy_rollback_reason,
           environment_strategy_capital_efficiency_score: (candidate as any)
             .environment_strategy_capital_efficiency_score,
           market_environment: candidate.market_environment,
@@ -1390,6 +1398,14 @@ export class AIInvestmentSignalService {
             .environment_strategy_budget_policy_version_guard_reason,
           environment_strategy_budget_policy_version_guard_champion: (candidate as any)
             .environment_strategy_budget_policy_version_guard_champion,
+          environment_strategy_budget_policy_rollback_action: (candidate as any)
+            .environment_strategy_budget_policy_rollback_action,
+          environment_strategy_budget_policy_rollback_source: (candidate as any)
+            .environment_strategy_budget_policy_rollback_source,
+          environment_strategy_budget_policy_rollback_snapshot_id: (candidate as any)
+            .environment_strategy_budget_policy_rollback_snapshot_id,
+          environment_strategy_budget_policy_rollback_reason: (candidate as any)
+            .environment_strategy_budget_policy_rollback_reason,
           environment_strategy_capital_efficiency_score: (candidate as any)
             .environment_strategy_capital_efficiency_score,
           market_environment: candidate.market_environment,
