@@ -127,6 +127,7 @@ interface EnvironmentLoopPolicy {
     position_multiplier?: number;
     reason?: string;
   } | null;
+  budget_action_policy?: BudgetActionPolicy;
 }
 
 interface EnvironmentRanking {
@@ -151,6 +152,26 @@ interface EnvironmentRanking {
   budget_action?: 'increase' | 'reduce' | 'observe' | 'pause' | string;
   budget_action_reason?: string;
   recommended_budget_multiplier?: number;
+}
+
+interface BudgetActionPolicyItem extends EnvironmentRanking {
+  action?: string;
+  position_multiplier?: number;
+  score_adjustment?: number;
+  allow_entry?: boolean;
+  confidence?: number;
+  reason?: string;
+}
+
+interface BudgetActionPolicy {
+  enabled?: boolean;
+  confidence?: number;
+  total_closed_count?: number;
+  actions?: BudgetActionPolicyItem[];
+  best_action?: BudgetActionPolicyItem | null;
+  weak_action?: BudgetActionPolicyItem | null;
+  reason?: string;
+  rules?: string[];
 }
 
 interface EnvironmentStrategyComboRanking extends EnvironmentRanking {
@@ -245,6 +266,7 @@ interface OptimizationData {
     budget_action_rankings?: EnvironmentRanking[];
     best_budget_action?: EnvironmentRanking | null;
     weak_budget_action?: EnvironmentRanking | null;
+    budget_action_policy?: BudgetActionPolicy;
   };
   segment_actions: {
     boost: Array<any>;
@@ -329,6 +351,23 @@ const budgetActionLabel = (value?: string) => {
     boost: '放大',
     block: '暂停',
     watch: '观察',
+  };
+  return labels[value || ''] || value || '观察';
+};
+
+const budgetPolicyActionLabel = (value?: string) => {
+  const labels: Record<string, string> = {
+    collect_samples: '收集样本',
+    scale_up: '放大',
+    cap_increase: '限制放大',
+    verify: '继续验证',
+    promote_from_observe: '观察升档',
+    sample_smaller: '缩小试错',
+    keep_observe: '继续观察',
+    keep_defensive: '防守跟随',
+    tighten_reduce: '继续压仓',
+    reopen_small: '小仓重开',
+    keep_paused: '继续暂停',
   };
   return labels[value || ''] || value || '观察';
 };
@@ -458,6 +497,9 @@ const AutonomousOptimizationLab: React.FC = () => {
       ).filter(item => item.key !== 'no_budget_action'),
     [data]
   );
+  const budgetActionPolicy =
+    data?.strategy_evolution?.budget_action_policy ||
+    data?.environment_policy?.budget_action_policy;
 
   const symbolColumns = [
     {
@@ -849,6 +891,42 @@ const AutonomousOptimizationLab: React.FC = () => {
                       </em>
                     </div>
                   ))}
+                </div>
+              )}
+              {budgetActionPolicy?.enabled && (
+                <div className="optimization-budget-policy">
+                  <div className="optimization-budget-policy-head">
+                    <span>AUTO UPGRADE POLICY</span>
+                    <strong>预算动作自动升降级</strong>
+                    <em>
+                      {budgetActionPolicy.reason || '下一轮自动把预算动作收益回收为调分/调仓规则'}
+                    </em>
+                  </div>
+                  <div className="optimization-budget-policy-grid">
+                    {(budgetActionPolicy.actions || []).slice(0, 4).map(item => (
+                      <div
+                        className={`optimization-budget-policy-card ${item.key || 'observe'} ${
+                          item.allow_entry === false ? 'blocked' : ''
+                        }`}
+                        key={item.key || item.action}
+                      >
+                        <div>
+                          <Tag color={item.allow_entry === false ? 'red' : 'geekblue'}>
+                            {budgetPolicyActionLabel(item.action)}
+                          </Tag>
+                          <span>{budgetActionLabel(item.key)}</span>
+                        </div>
+                        <strong>{Number(item.position_multiplier ?? 1).toFixed(2)}x</strong>
+                        <em>
+                          评分 {Number(item.score_adjustment || 0) >= 0 ? '+' : ''}
+                          {Number(item.score_adjustment || 0).toFixed(0)} · 闭环{' '}
+                          {item.closed_count || 0} · 置信{' '}
+                          {Math.round(Number(item.confidence || 0) * 100)}%
+                        </em>
+                        <p>{item.reason}</p>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </Card>

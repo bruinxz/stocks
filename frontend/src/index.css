@@ -4582,6 +4582,134 @@ a {
   line-height: 1.4;
 }
 
+.optimization-budget-policy {
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid rgba(141, 214, 228, 0.18);
+  border-radius: 24px;
+  background: radial-gradient(circle at 0% 0%, rgba(141, 214, 228, 0.16), transparent 38%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.065), rgba(255, 255, 255, 0.035));
+}
+
+.optimization-budget-policy-head {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.58fr) minmax(180px, 0.7fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.optimization-budget-policy-head span,
+.optimization-budget-policy-head strong,
+.optimization-budget-policy-head em {
+  display: block;
+}
+
+.optimization-budget-policy-head span {
+  color: rgba(141, 214, 228, 0.92);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: 0.17em;
+}
+
+.optimization-budget-policy-head strong {
+  color: #fff8e7;
+  font-family: var(--font-display);
+  font-size: 24px;
+  line-height: 1;
+  letter-spacing: -0.055em;
+}
+
+.optimization-budget-policy-head em {
+  color: rgba(226, 236, 247, 0.68);
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.45;
+}
+
+.optimization-budget-policy-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.optimization-budget-policy-card {
+  position: relative;
+  min-width: 0;
+  min-height: 156px;
+  padding: 14px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 18px;
+  background: rgba(3, 9, 20, 0.2);
+}
+
+.optimization-budget-policy-card::after {
+  content: '';
+  position: absolute;
+  inset: auto -18px -24px auto;
+  width: 82px;
+  height: 82px;
+  border-radius: 999px;
+  background: rgba(141, 214, 228, 0.14);
+  filter: blur(2px);
+}
+
+.optimization-budget-policy-card.increase::after {
+  background: rgba(209, 67, 67, 0.15);
+}
+
+.optimization-budget-policy-card.reduce::after,
+.optimization-budget-policy-card.pause::after,
+.optimization-budget-policy-card.blocked::after {
+  background: rgba(0, 143, 107, 0.15);
+}
+
+.optimization-budget-policy-card > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.optimization-budget-policy-card > div span {
+  overflow: hidden;
+  color: rgba(255, 248, 231, 0.9);
+  font-size: 12px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.optimization-budget-policy-card strong {
+  display: block;
+  margin-top: 16px;
+  color: #ffe7ae;
+  font-family: var(--font-display);
+  font-size: 32px;
+  line-height: 0.95;
+  letter-spacing: -0.065em;
+}
+
+.optimization-budget-policy-card em,
+.optimization-budget-policy-card p {
+  display: block;
+  margin: 7px 0 0;
+  color: rgba(226, 236, 247, 0.64);
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.42;
+}
+
+.optimization-budget-policy-card p {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
 .optimization-evolution-board {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -5255,6 +5383,11 @@ a {
   }
 
   .optimization-budget-ledger {
+    grid-template-columns: 1fr;
+  }
+
+  .optimization-budget-policy-head,
+  .optimization-budget-policy-grid {
     grid-template-columns: 1fr;
   }
 

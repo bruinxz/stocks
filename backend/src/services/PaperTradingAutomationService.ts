@@ -72,6 +72,7 @@ interface EnvironmentEntryPolicy {
   external_policy_reason?: string;
   external_policy_match?: any;
   resample_match?: any;
+  budget_action_policy_match?: any;
   notes?: string[];
 }
 
@@ -174,6 +175,9 @@ export interface PaperTradingAutoTradeItem {
   environment_strategy_budget_action?: string;
   environment_strategy_budget_multiplier?: number;
   environment_strategy_budget_reason?: string;
+  environment_strategy_budget_policy_action?: string;
+  environment_strategy_budget_policy_reason?: string;
+  environment_strategy_budget_policy_multiplier?: number;
   market_regime?: string;
   market_regime_label?: string;
   industry_regime?: string;
@@ -501,6 +505,27 @@ function clamp(value: number, min: number, max: number): number {
 function asPlainObject(value: any): Record<string, any> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   return value;
+}
+
+function normalizeBudgetActionKey(value: any): string {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase();
+  if (['increase', 'boost', 'add', 'add_risk', 'recovered', 'recover_small'].includes(normalized)) {
+    return 'increase';
+  }
+  if (['pause', 'block', 'blocked', 'extended_cooldown', 'extend_cooldown'].includes(normalized)) {
+    return 'pause';
+  }
+  if (['reduce', 'reduced', 'decrease', 'cut'].includes(normalized)) {
+    return 'reduce';
+  }
+  if (
+    ['observe', 'watch', 'resample', 'continue_resample', 'continue_sampling'].includes(normalized)
+  ) {
+    return 'observe';
+  }
+  return normalized || 'no_budget_action';
 }
 
 function normalizeSkipReasonCategory(reason?: string): string {
@@ -1129,6 +1154,7 @@ class PaperTradingAutomationService {
 
       const resampleMatch = asPlainObject(environmentPolicy.resample_match);
       const resampleSample = Object.keys(resampleMatch).length > 0;
+      const budgetActionPolicyMatch = asPlainObject(environmentPolicy.budget_action_policy_match);
       const resamplePositionMultiplier = toOptionalNumber(
         resampleMatch.resample_position_multiplier ?? resampleMatch.position_multiplier
       );
@@ -1156,10 +1182,13 @@ class PaperTradingAutomationService {
       const budgetMultiplier =
         toOptionalNumber(
           metadata.environment_strategy_budget_multiplier ??
+            budgetActionPolicyMatch.position_multiplier ??
             resampleMatch.recommended_budget_multiplier ??
             resampleMatch.position_multiplier ??
             resampleMatch.resample_position_multiplier
         ) || undefined;
+      const budgetPolicyReason =
+        metadata.environment_strategy_budget_policy_reason || budgetActionPolicyMatch.reason;
 
       eligible++;
       const tradePayload: PaperTradingAutoTradeItem = {
@@ -1176,7 +1205,17 @@ class PaperTradingAutomationService {
         environment_strategy_budget_action: budgetAction,
         environment_strategy_budget_multiplier: budgetMultiplier,
         environment_strategy_budget_reason:
-          metadata.environment_strategy_budget_reason || resampleMatch.budget_action_reason,
+          budgetPolicyReason ||
+          metadata.environment_strategy_budget_reason ||
+          resampleMatch.budget_action_reason,
+        environment_strategy_budget_policy_action:
+          metadata.environment_strategy_budget_policy_action || budgetActionPolicyMatch.action,
+        environment_strategy_budget_policy_reason: budgetPolicyReason,
+        environment_strategy_budget_policy_multiplier:
+          toOptionalNumber(
+            metadata.environment_strategy_budget_policy_multiplier ??
+              budgetActionPolicyMatch.position_multiplier
+          ) || undefined,
         market_regime: environmentPolicy.market_regime,
         market_regime_label: environmentPolicy.market_regime_label,
         industry_regime: environmentPolicy.industry_regime,
@@ -1251,9 +1290,20 @@ class PaperTradingAutomationService {
           environment_strategy_budget_action: budgetAction,
           environment_strategy_budget_multiplier: budgetMultiplier,
           environment_strategy_budget_reason:
-            metadata.environment_strategy_budget_reason || resampleMatch.budget_action_reason,
+            budgetPolicyReason ||
+            metadata.environment_strategy_budget_reason ||
+            resampleMatch.budget_action_reason,
+          environment_strategy_budget_policy_action:
+            metadata.environment_strategy_budget_policy_action || budgetActionPolicyMatch.action,
+          environment_strategy_budget_policy_reason: budgetPolicyReason,
+          environment_strategy_budget_policy_multiplier:
+            toOptionalNumber(
+              metadata.environment_strategy_budget_policy_multiplier ??
+                budgetActionPolicyMatch.position_multiplier
+            ) || undefined,
           environment_strategy_capital_efficiency_score:
             metadata.environment_strategy_capital_efficiency_score ||
+            budgetActionPolicyMatch.capital_efficiency_score ||
             resampleMatch.capital_efficiency_score,
           market_environment: environmentPolicy.market_environment || metadata.market_environment,
           entry_risk_guard: this.buildEntryRiskGuardPolicy(entryRiskGuard),
@@ -2998,6 +3048,29 @@ class PaperTradingAutomationService {
       options.metadata.strategy_key ||
       asPlainObject(options.metadata.strategy_variant).strategy_key ||
       asPlainObject(options.metadata.paper_trading).strategy_key;
+    const signalBudgetAction = normalizeBudgetActionKey(
+      options.metadata.environment_strategy_budget_action ||
+        options.metadata.budget_action ||
+        asPlainObject(options.metadata.paper_trading).environment_strategy_budget_action ||
+        asPlainObject(options.metadata.paper_trading).budget_action
+    );
+    const budgetActionPolicy = asPlainObject(externalPolicy.budget_action_policy);
+    const budgetActionRules = Array.isArray(budgetActionPolicy.actions)
+      ? budgetActionPolicy.actions
+      : [];
+    const budgetActionPolicyMatch =
+      signalBudgetAction !== 'no_budget_action'
+        ? budgetActionRules.find(
+            (item: any) =>
+              normalizeBudgetActionKey(item?.key || item?.budget_action || item?.action) ===
+              signalBudgetAction
+          )
+        : null;
+    const budgetActionPolicyAlreadyApplied = Boolean(
+      options.metadata.environment_strategy_budget_policy_action ||
+      options.metadata.environment_strategy_budget_policy_reason ||
+      options.metadata.environment_strategy_budget_policy_multiplier
+    );
     const resamplePolicies = Array.isArray(externalPolicy.resample_environment_strategy_combos)
       ? externalPolicy.resample_environment_strategy_combos
       : [];
@@ -3228,6 +3301,25 @@ class PaperTradingAutomationService {
       );
     }
 
+    if (budgetActionPolicyMatch) {
+      const actionMultiplier = clamp(
+        toNumber(budgetActionPolicyMatch.position_multiplier, 1),
+        0,
+        1.2
+      );
+      if (!budgetActionPolicyAlreadyApplied) {
+        multiplier *= actionMultiplier;
+      }
+      if (budgetActionPolicyMatch.allow_entry === false && !options.forced) {
+        allowEntry = false;
+      }
+      notes.unshift(
+        `预算动作策略${budgetActionPolicyAlreadyApplied ? '已在候选阶段生效' : ''} ${
+          budgetActionPolicyMatch.label || signalBudgetAction
+        }：${budgetActionPolicyMatch.reason || `${roundNumber(actionMultiplier, 2)}x`}`
+      );
+    }
+
     const normalizedMultiplier = roundNumber(clamp(multiplier, 0, 1.15), 2);
     const reason = [
       `${environment.market_regime_label || this.environmentMarketLabel(marketRegime)}`,
@@ -3258,6 +3350,7 @@ class PaperTradingAutomationService {
       external_policy_match:
         externalSegments.block || externalSegments.reduce || externalSegments.boost,
       resample_match: resamplePolicy || activeRecoveredSegment,
+      budget_action_policy_match: budgetActionPolicyMatch || undefined,
     };
   }
 

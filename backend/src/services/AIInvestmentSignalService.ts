@@ -1302,6 +1302,14 @@ export class AIInvestmentSignalService {
           environment_strategy_budget_reason: (candidate as any).environment_strategy_budget_reason,
           environment_strategy_budget_multiplier: (candidate as any)
             .environment_strategy_budget_multiplier,
+          environment_strategy_budget_policy_action: (candidate as any)
+            .environment_strategy_budget_policy_action,
+          environment_strategy_budget_policy_reason: (candidate as any)
+            .environment_strategy_budget_policy_reason,
+          environment_strategy_budget_policy_score_adjustment: (candidate as any)
+            .environment_strategy_budget_policy_score_adjustment,
+          environment_strategy_budget_policy_multiplier: (candidate as any)
+            .environment_strategy_budget_policy_multiplier,
           environment_strategy_capital_efficiency_score: (candidate as any)
             .environment_strategy_capital_efficiency_score,
           market_environment: candidate.market_environment,
@@ -1354,6 +1362,14 @@ export class AIInvestmentSignalService {
           environment_strategy_budget_reason: (candidate as any).environment_strategy_budget_reason,
           environment_strategy_budget_multiplier: (candidate as any)
             .environment_strategy_budget_multiplier,
+          environment_strategy_budget_policy_action: (candidate as any)
+            .environment_strategy_budget_policy_action,
+          environment_strategy_budget_policy_reason: (candidate as any)
+            .environment_strategy_budget_policy_reason,
+          environment_strategy_budget_policy_score_adjustment: (candidate as any)
+            .environment_strategy_budget_policy_score_adjustment,
+          environment_strategy_budget_policy_multiplier: (candidate as any)
+            .environment_strategy_budget_policy_multiplier,
           environment_strategy_capital_efficiency_score: (candidate as any)
             .environment_strategy_capital_efficiency_score,
           market_environment: candidate.market_environment,

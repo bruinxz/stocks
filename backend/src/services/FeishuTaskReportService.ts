@@ -501,6 +501,8 @@ class FeishuTaskReportService {
     const budgetActionRankings = Array.isArray(strategyEvolution?.budget_action_rankings)
       ? strategyEvolution.budget_action_rankings
       : [];
+    const budgetActionPolicy =
+      strategyEvolution?.budget_action_policy || environmentPolicy?.budget_action_policy || {};
     const policySnapshot = result?.policy_snapshot || {};
     const qualityOverview = result?.quality_report?.overview || {};
     const topPicks = recommendations.slice(0, 5);
@@ -621,7 +623,9 @@ class FeishuTaskReportService {
             candidateTuning.recovered_count || 0
           } 个，延长冷却 ${candidateTuning.extended_cooldown_count || 0} 个，复采样 ${
             candidateTuning.resample_count || 0
-          } 个；候选在进入 Agent 前已按复采样结果调分/调仓。`
+          } 个；预算动作策略 ${
+            candidateTuning.budget_action_policy_enabled ? '已接入' : '未接入'
+          }；候选在进入 Agent 前已按复采样/预算后验调分调仓。`
         : '',
       environmentPolicy?.enabled
         ? `- **环境闸门版本**：${environmentPolicy.snapshot_id || '-'}；默认倍率 ${
@@ -649,6 +653,12 @@ class FeishuTaskReportService {
                 Number(a.avg_excess_return_pct || 0) - Number(b.avg_excess_return_pct || 0)
             )[0]
           )}。`
+        : '',
+      budgetActionPolicy?.enabled
+        ? `- **预算动作自动策略**：${this.safeText(
+            budgetActionPolicy.reason || '下一轮按预算动作后验自动升降级',
+            120
+          )}`
         : '',
       bestPick
         ? `- **首选标的**：${bestPick.name || bestPick.symbol}（${bestPick.symbol}），${
@@ -739,6 +749,8 @@ class FeishuTaskReportService {
       环境闸门倍率: environmentPolicy?.default_position_multiplier,
       环境闸门置信度: environmentPolicy?.confidence,
       环境闸门原因: environmentPolicy?.reason,
+      预算动作自动策略: budgetActionPolicy?.enabled ? '是' : '否',
+      预算动作策略原因: budgetActionPolicy?.reason,
       共识排序: consensusRanked ? '是' : '否',
       共识标的数: consensusOverlapCount,
       候选源头调权: candidateTuning?.enabled ? '是' : '否',

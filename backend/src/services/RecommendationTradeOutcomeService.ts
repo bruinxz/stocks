@@ -1078,6 +1078,12 @@ export class RecommendationTradeOutcomeService {
           toNumber(a.capital_efficiency_score) - toNumber(b.capital_efficiency_score) ||
           a.avg_excess_return_pct - b.avg_excess_return_pct
       )[0];
+    const budgetActionPolicy = this.buildBudgetActionPolicy(budgetActionRankings);
+    (environmentPolicy as any).budget_action_policy = budgetActionPolicy;
+    (environmentPolicy as any).budget_action_feedback_applied = Boolean(budgetActionPolicy.enabled);
+    (environmentPolicy as any).budget_action_feedback_reason = budgetActionPolicy.reason;
+    (nextPolicy as any).budget_action_policy = budgetActionPolicy;
+    (nextPolicy as any).budget_action_reason = budgetActionPolicy.reason;
     const weakCandidateTuning = candidateTuningGroups
       .filter(item => item.key !== 'no_tuning' && item.closed_count > 0)
       .sort(
@@ -1188,6 +1194,7 @@ export class RecommendationTradeOutcomeService {
       budget_action_rankings: budgetActionRankings.slice(0, 8),
       best_budget_action: bestBudgetAction || null,
       weak_budget_action: weakBudgetAction || null,
+      budget_action_policy: budgetActionPolicy,
     };
 
     const weakSegments = outcomeDashboard.feedback.weak_segments.slice(0, 4);
@@ -1274,6 +1281,9 @@ export class RecommendationTradeOutcomeService {
       bestBudgetAction
         ? `预算动作回收：${bestBudgetAction.label} 当前效率 ${bestBudgetAction.capital_efficiency_score}、平均超额 ${bestBudgetAction.avg_excess_return_pct}%，后续按收益继续调仓。`
         : '',
+      budgetActionPolicy.enabled && budgetActionPolicy.best_action
+        ? `预算动作策略：${budgetActionPolicy.reason}`
+        : '',
     ].filter(Boolean);
 
     return {
@@ -1344,6 +1354,151 @@ export class RecommendationTradeOutcomeService {
           }
         : null,
       insights,
+    };
+  }
+
+  private buildBudgetActionPolicy(rankings: RecommendationTradeOutcomeBucket[] = []) {
+    const actions = rankings
+      .filter(item => item.key && item.key !== 'no_budget_action')
+      .map(item => {
+        const key = normalizeBudgetActionKey(item.key);
+        const closedCount = toNumber(item.closed_count, 0);
+        const avgExcess = toNumber(item.avg_excess_return_pct, 0);
+        const excessWinRate = toNumber(item.excess_win_rate, 0);
+        const capitalEfficiency = toNumber(item.capital_efficiency_score, 0);
+        const pnlPer10k = toNumber(item.pnl_per_10k, 0);
+        const confidence = clamp(closedCount / 8, 0, 1);
+        let action = 'collect_samples';
+        let positionMultiplier =
+          key === 'increase' ? 0.92 : key === 'observe' ? 0.88 : key === 'reduce' ? 0.78 : 0;
+        let scoreAdjustment = 0;
+        let allowEntry = key !== 'pause';
+        let reason = `${item.label}闭环 ${closedCount} 笔，样本不足，先小仓收集验证`;
+        if (key === 'pause' && closedCount < 2) {
+          reason = `${item.label}闭环 ${closedCount} 笔，暂停动作尚未证明修复，继续禁止新仓`;
+          scoreAdjustment = -2;
+        }
+
+        if (closedCount >= 2) {
+          if (key === 'increase') {
+            if (avgExcess >= 0.8 && capitalEfficiency >= 8 && excessWinRate >= 50) {
+              action = 'scale_up';
+              positionMultiplier = clamp(
+                1.04 + Math.min(0.12, capitalEfficiency / 180),
+                1.05,
+                1.16
+              );
+              scoreAdjustment = 2;
+              reason = `加预算动作已验证有效：超额 ${roundNumber(avgExcess, 2)}%，效率 ${roundNumber(
+                capitalEfficiency,
+                1
+              )}`;
+            } else if (avgExcess < 0 || capitalEfficiency < 0) {
+              action = 'cap_increase';
+              positionMultiplier = 0.82;
+              scoreAdjustment = -2;
+              reason = `加预算后表现未达标：超额 ${roundNumber(avgExcess, 2)}%，先限制放大`;
+            } else {
+              action = 'verify';
+              positionMultiplier = 0.98;
+              reason = `加预算动作仍在验证：超额 ${roundNumber(avgExcess, 2)}%，暂不继续放大`;
+            }
+          } else if (key === 'observe') {
+            if (avgExcess >= 0.7 && capitalEfficiency >= 5 && excessWinRate >= 50) {
+              action = 'promote_from_observe';
+              positionMultiplier = 1.03;
+              scoreAdjustment = 1;
+              reason = `观察仓表现转强：超额 ${roundNumber(avgExcess, 2)}%，可升为常规小仓`;
+            } else if (avgExcess <= -0.8 || capitalEfficiency <= -3) {
+              action = 'sample_smaller';
+              positionMultiplier = 0.76;
+              scoreAdjustment = -1;
+              reason = `观察仓仍偏弱：超额 ${roundNumber(avgExcess, 2)}%，缩小试错`;
+            } else {
+              action = 'keep_observe';
+              positionMultiplier = 0.88;
+              reason = `观察仓结论中性：超额 ${roundNumber(avgExcess, 2)}%，继续小仓验证`;
+            }
+          } else if (key === 'reduce') {
+            if (avgExcess >= 0.4 && capitalEfficiency >= 0) {
+              action = 'keep_defensive';
+              positionMultiplier = 0.92;
+              reason = `降权动作后风险改善：超额 ${roundNumber(avgExcess, 2)}%，维持防守仓`;
+            } else {
+              action = 'tighten_reduce';
+              positionMultiplier = 0.72;
+              scoreAdjustment = -1;
+              reason = `降权对象仍跑输：超额 ${roundNumber(avgExcess, 2)}%，继续压低仓位`;
+            }
+          } else if (key === 'pause') {
+            if (avgExcess >= 0.8 && capitalEfficiency >= 4) {
+              action = 'reopen_small';
+              positionMultiplier = 0.55;
+              scoreAdjustment = 1;
+              reason = `暂停池出现修复：超额 ${roundNumber(avgExcess, 2)}%，仅小仓重开`;
+            } else {
+              action = 'keep_paused';
+              positionMultiplier = 0;
+              scoreAdjustment = -3;
+              allowEntry = false;
+              reason = `暂停池未修复：超额 ${roundNumber(avgExcess, 2)}%，继续禁止新仓`;
+            }
+          }
+        }
+
+        return {
+          key,
+          label: item.label || budgetActionLabel(key),
+          action,
+          closed_count: closedCount,
+          tracked_count: toNumber(item.tracked_count ?? item.count, 0),
+          avg_excess_return_pct: roundNumber(avgExcess, 4),
+          excess_win_rate: roundNumber(excessWinRate, 2),
+          capital_efficiency_score: roundNumber(capitalEfficiency, 2),
+          pnl_per_10k: roundNumber(pnlPer10k, 2),
+          confidence: roundNumber(confidence, 2),
+          position_multiplier: roundNumber(positionMultiplier, 2),
+          score_adjustment: scoreAdjustment,
+          allow_entry: allowEntry,
+          reason,
+        };
+      })
+      .sort(
+        (a, b) =>
+          b.capital_efficiency_score - a.capital_efficiency_score ||
+          b.avg_excess_return_pct - a.avg_excess_return_pct ||
+          b.closed_count - a.closed_count
+      );
+
+    const closedActions = actions.filter(item => item.closed_count > 0);
+    const bestAction = closedActions[0] || null;
+    const weakAction =
+      [...closedActions].sort(
+        (a, b) =>
+          a.capital_efficiency_score - b.capital_efficiency_score ||
+          a.avg_excess_return_pct - b.avg_excess_return_pct
+      )[0] || null;
+    const totalClosed = actions.reduce((sum, item) => sum + item.closed_count, 0);
+
+    return {
+      enabled: actions.length > 0,
+      confidence: roundNumber(clamp(totalClosed / 18, 0, 1), 2),
+      total_closed_count: totalClosed,
+      actions,
+      best_action: bestAction,
+      weak_action: weakAction,
+      reason: bestAction
+        ? `最佳动作 ${bestAction.label}，效率 ${bestAction.capital_efficiency_score}、超额 ${bestAction.avg_excess_return_pct}%；最弱 ${
+            weakAction?.label || '暂无'
+          }，下一轮按动作后验自动调分调仓`
+        : actions.length
+          ? '预算动作已有样本但闭环不足，下一轮只做保守小仓验证'
+          : '暂无预算动作收益回收样本',
+      rules: [
+        '加预算动作跑赢且资金效率达标：下一轮候选加分并小幅放大',
+        '观察动作跑赢：升为常规小仓；观察跑输：缩小试错',
+        '降权/暂停动作仍跑输：继续压仓或禁入；修复后仅小仓重开',
+      ],
     };
   }
 
