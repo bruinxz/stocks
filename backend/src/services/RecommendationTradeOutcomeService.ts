@@ -141,6 +141,15 @@ export interface RecommendationTradeOutcomeBucket {
   return_volatility_pct?: number;
   drawdown_penalty?: number;
   risk_adjusted_excess_return_pct?: number;
+  avg_position_pct?: number;
+  avg_entry_amount?: number;
+  total_entry_amount?: number;
+  pnl_per_10k?: number;
+  excess_per_position_pct?: number;
+  capital_efficiency_score?: number;
+  budget_action?: 'increase' | 'reduce' | 'observe' | 'pause';
+  budget_action_reason?: string;
+  recommended_budget_multiplier?: number;
   takeover_ready?: boolean;
   takeover_reason?: string;
   cooldown_active?: boolean;
@@ -735,6 +744,12 @@ export class RecommendationTradeOutcomeService {
         item => environmentStrategyComboKey(item),
         environmentStrategyComboLabel,
         'environment_strategy_combo'
+      ).sort(
+        (a, b) =>
+          Number(Boolean(b.takeover_ready)) - Number(Boolean(a.takeover_ready)) ||
+          toNumber(b.capital_efficiency_score) - toNumber(a.capital_efficiency_score) ||
+          toNumber(b.robust_score) - toNumber(a.robust_score) ||
+          b.avg_excess_return_pct - a.avg_excess_return_pct
       ),
       by_resample: this.buildBuckets(
         outcomes,
@@ -971,10 +986,119 @@ export class RecommendationTradeOutcomeService {
     };
     const topCandidateTuning = candidateTuningGroups
       .filter(item => item.key !== 'no_tuning' && item.closed_count > 0)
-      .sort((a, b) => b.avg_excess_return_pct - a.avg_excess_return_pct)[0];
+      .sort(
+        (a, b) =>
+          toNumber(b.capital_efficiency_score) - toNumber(a.capital_efficiency_score) ||
+          b.avg_excess_return_pct - a.avg_excess_return_pct
+      )[0];
     const weakCandidateTuning = candidateTuningGroups
       .filter(item => item.key !== 'no_tuning' && item.closed_count > 0)
-      .sort((a, b) => a.avg_excess_return_pct - b.avg_excess_return_pct)[0];
+      .sort(
+        (a, b) =>
+          toNumber(a.capital_efficiency_score) - toNumber(b.capital_efficiency_score) ||
+          a.avg_excess_return_pct - b.avg_excess_return_pct
+      )[0];
+    const enrichBudgetItem = (item: any): any => {
+      const raw = asPlainObject(item);
+      const action = raw.budget_action || raw.action;
+      const fallbackMultiplier =
+        raw.position_multiplier ??
+        raw.resample_recovery_position_multiplier ??
+        raw.resample_position_multiplier ??
+        (action === 'boost' ? 1.08 : action === 'block' ? 0 : action === 'reduce' ? 0.55 : 0.72);
+      return {
+        ...raw,
+        capital_efficiency_score: roundNumber(
+          toNumber(
+            raw.capital_efficiency_score,
+            toNumber(raw.robust_score, 0) + toNumber(raw.avg_excess_return_pct, 0) * 2
+          ),
+          2
+        ),
+        budget_action:
+          raw.budget_action ||
+          (raw.resample_policy_action === 'extend_cooldown' || raw.action === 'block'
+            ? 'pause'
+            : raw.action === 'reduce'
+            ? 'reduce'
+            : raw.action === 'boost' || raw.resample_policy_action === 'recover_small'
+            ? 'increase'
+            : 'observe'),
+        recommended_budget_multiplier: roundNumber(
+          clamp(toNumber(fallbackMultiplier, 0.72), 0, 1.2),
+          2
+        ),
+        budget_action_reason:
+          raw.budget_action_reason ||
+          raw.reason ||
+          raw.resample_decision_reason ||
+          raw.resample_reason ||
+          raw.cooldown_reason ||
+          '按闭环收益与资金效率动态分配预算',
+      };
+    };
+    const uniqueBudgetItems = (items: any[]) => {
+      const seen = new Set<string>();
+      return items.map(enrichBudgetItem).filter(item => {
+        const key = item.key || item.label;
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    };
+    const rankByCapitalEfficiency = (items: any[]) =>
+      uniqueBudgetItems(items).sort(
+        (a, b) =>
+          toNumber(b.capital_efficiency_score) - toNumber(a.capital_efficiency_score) ||
+          toNumber(b.avg_excess_return_pct) - toNumber(a.avg_excess_return_pct) ||
+          toNumber(b.closed_count) - toNumber(a.closed_count)
+      );
+    const rankByWeakCapitalEfficiency = (items: any[]) =>
+      uniqueBudgetItems(items).sort(
+        (a, b) =>
+          toNumber(a.recommended_budget_multiplier) - toNumber(b.recommended_budget_multiplier) ||
+          toNumber(a.capital_efficiency_score) - toNumber(b.capital_efficiency_score) ||
+          toNumber(a.avg_excess_return_pct) - toNumber(b.avg_excess_return_pct)
+      );
+    const capitalEfficiencyRankings = rankByCapitalEfficiency([
+      ...environmentStrategyComboGroups.filter(
+        item =>
+          item.key &&
+          !item.key.includes('env:unknown') &&
+          !item.key.includes('strategy:unknown') &&
+          item.closed_count > 0
+      ),
+      ...candidateTuningGroups.filter(item => item.key !== 'no_tuning' && item.closed_count > 0),
+      ...strategyComboGroups.filter(item => item.key !== 'unknown' && item.closed_count > 0),
+    ]).slice(0, 8);
+    const strategyEvolution = {
+      add_risk_budget: rankByCapitalEfficiency([
+        ...(environmentPolicy.recovered_environment_strategy_combos || []),
+        ...(environmentPolicy.boosted_segments || []),
+        ...capitalEfficiencyRankings.filter(
+          item =>
+            item.budget_action === 'increase' ||
+            (toNumber(item.capital_efficiency_score) >= 10 &&
+              toNumber(item.avg_excess_return_pct) > 0.8)
+        ),
+      ]).slice(0, 5),
+      reduce_risk_budget: rankByWeakCapitalEfficiency([
+        ...(environmentPolicy.extended_cooldown_environment_strategy_combos || []),
+        ...(environmentPolicy.blocked_segments || []),
+        ...(environmentPolicy.reduced_segments || []),
+        ...environmentStrategyComboGroups.filter(
+          item => item.budget_action === 'pause' || item.budget_action === 'reduce'
+        ),
+      ]).slice(0, 5),
+      observe: rankByCapitalEfficiency([
+        ...(environmentPolicy.resample_environment_strategy_combos || []),
+        ...(environmentPolicy.watch_segments || []),
+        ...capitalEfficiencyRankings.filter(item => item.budget_action === 'observe'),
+      ]).slice(0, 5),
+      candidate_tuning_best: topCandidateTuning || null,
+      candidate_tuning_weak: weakCandidateTuning || null,
+      capital_efficiency_rankings: capitalEfficiencyRankings,
+    };
 
     const weakSegments = outcomeDashboard.feedback.weak_segments.slice(0, 4);
     const bestSegments = outcomeDashboard.feedback.best_segments.slice(0, 4);
@@ -1078,22 +1202,7 @@ export class RecommendationTradeOutcomeService {
       symbol_paths: symbolPaths,
       adaptive_risk: adaptiveRisk,
       next_policy: nextPolicy,
-      strategy_evolution: {
-        add_risk_budget: [
-          ...(environmentPolicy.recovered_environment_strategy_combos || []).slice(0, 3),
-          ...(environmentPolicy.boosted_segments || []).slice(0, 2),
-        ],
-        reduce_risk_budget: [
-          ...(environmentPolicy.extended_cooldown_environment_strategy_combos || []).slice(0, 3),
-          ...(environmentPolicy.blocked_segments || []).slice(0, 2),
-        ],
-        observe: [
-          ...(environmentPolicy.resample_environment_strategy_combos || []).slice(0, 3),
-          ...(environmentPolicy.watch_segments || []).slice(0, 2),
-        ],
-        candidate_tuning_best: topCandidateTuning || null,
-        candidate_tuning_weak: weakCandidateTuning || null,
-      },
+      strategy_evolution: strategyEvolution,
       segment_actions: {
         boost: boostList,
         reduce: killList,
@@ -1243,6 +1352,13 @@ export class RecommendationTradeOutcomeService {
         bayesian_win_rate: roundNumber(bayesianWinRate, 2),
         robust_score: roundNumber(robustScore, 4),
         risk_adjusted_excess_return_pct: roundNumber(riskAdjustedExcess, 4),
+        capital_efficiency_score: group.capital_efficiency_score,
+        pnl_per_10k: group.pnl_per_10k,
+        avg_position_pct: group.avg_position_pct,
+        excess_per_position_pct: group.excess_per_position_pct,
+        budget_action: group.budget_action,
+        budget_action_reason: group.budget_action_reason,
+        recommended_budget_multiplier: group.recommended_budget_multiplier,
         action,
         position_multiplier: positionMultiplier,
         reason,
@@ -1904,6 +2020,22 @@ export class RecommendationTradeOutcomeService {
             .filter(item => toNumber(item.realized_pnl) < 0)
             .reduce((sum, item) => sum + toNumber(item.realized_pnl), 0)
         );
+        const totalPnl = roundNumber(
+          plain.reduce((sum, item) => sum + toNumber(item.total_pnl), 0),
+          2
+        );
+        const totalEntryAmount = roundNumber(
+          plain.reduce((sum, item) => sum + Math.max(0, toNumber(item.entry_amount)), 0),
+          2
+        );
+        const avgEntryAmount = roundNumber(
+          average(plain.map(item => toNumber(item.entry_amount))),
+          2
+        );
+        const avgPositionPct = roundNumber(
+          average(plain.map(item => toNumber(item.position_pct))),
+          4
+        );
         const closedExcessReturns = closed.map(item => toNumber(item.excess_return_pct));
         const avgExcessReturn = roundNumber(average(closedExcessReturns), 4);
         const excessWinRate = closed.length ? (excessWins.length / closed.length) * 100 : 0;
@@ -1936,6 +2068,21 @@ export class RecommendationTradeOutcomeService {
             Math.log1p(closed.length) * 2.2 +
             Math.min(10, toNumber(winSum) / 5000) -
             Math.max(0, 3 - closed.length) * 3,
+          2
+        );
+        const profitFactor =
+          lossSum > 0 ? roundNumber(winSum / lossSum, 4) : wins.length > 0 ? 999 : 0;
+        const pnlPer10k =
+          totalEntryAmount > 0 ? roundNumber((totalPnl / totalEntryAmount) * 10000, 2) : 0;
+        const excessPerPositionPct =
+          avgPositionPct > 0 ? roundNumber(avgExcessReturn / avgPositionPct, 4) : 0;
+        const capitalEfficiencyScore = roundNumber(
+          robustScore +
+            excessPerPositionPct * 3 +
+            clamp(pnlPer10k / 120, -8, 8) +
+            (profitFactor >= 999 ? 3 : clamp((profitFactor - 1) * 2.4, -4, 5)) +
+            (sampleConfidence - 0.5) * 4 -
+            drawdownPenalty * 0.35,
           2
         );
         const autoAction =
@@ -2079,6 +2226,62 @@ export class RecommendationTradeOutcomeService {
         const effectiveCooldownReason = cooldownExtended
           ? `${resampleDecisionReason}，延长冷却至 ${cooldownExpiresAt || '后续交易日'}`
           : cooldownReason;
+        let budgetAction: RecommendationTradeOutcomeBucket['budget_action'] = 'observe';
+        let recommendedBudgetMultiplier = closed.length < 2 ? 0.45 : 0.72;
+        let budgetActionReason = `闭环样本 ${closed.length} 笔，先保持观察仓`;
+        if (
+          cooldownExtended ||
+          (effectiveCooldownActive && (recentLossStreak >= 2 || avgExcessReturn <= -1.2))
+        ) {
+          budgetAction = 'pause';
+          recommendedBudgetMultiplier = 0;
+          budgetActionReason =
+            effectiveCooldownReason ||
+            `平均超额 ${avgExcessReturn}%、连续跑输 ${recentLossStreak} 笔，暂停预算`;
+        } else if (
+          effectiveCooldownActive ||
+          capitalEfficiencyScore <= -4 ||
+          avgExcessReturn <= -1 ||
+          bayesianWinRate < 45
+        ) {
+          budgetAction = 'reduce';
+          recommendedBudgetMultiplier = roundNumber(
+            clamp(0.55 + Math.min(0, capitalEfficiencyScore) / 30, 0.28, 0.62),
+            2
+          );
+          budgetActionReason =
+            effectiveCooldownReason ||
+            `资金效率 ${capitalEfficiencyScore}、平均超额 ${avgExcessReturn}%，降低试错成本`;
+        } else if (
+          resampleRecoveryReady ||
+          (closed.length >= 3 &&
+            capitalEfficiencyScore >= 10 &&
+            avgExcessReturn >= 0.8 &&
+            bayesianWinRate >= 52)
+        ) {
+          budgetAction = 'increase';
+          recommendedBudgetMultiplier = roundNumber(
+            clamp(1.06 + Math.min(0.14, capitalEfficiencyScore / 180), 1.08, 1.2),
+            2
+          );
+          budgetActionReason = resampleRecoveryReady
+            ? resampleDecisionReason || `复采样跑赢，资金效率 ${capitalEfficiencyScore}`
+            : `单位资金效率 ${capitalEfficiencyScore}，平均超额 ${avgExcessReturn}%`;
+        } else if (resampleReady || resampleDecision === 'continue_sampling') {
+          budgetAction = 'observe';
+          recommendedBudgetMultiplier = roundNumber(
+            clamp(resampleReady ? 0.35 : 0.42, 0.25, 0.5),
+            2
+          );
+          budgetActionReason =
+            resampleReason || resampleDecisionReason || '复采样尚未稳定，小仓观察';
+        } else {
+          recommendedBudgetMultiplier = roundNumber(
+            clamp(0.68 + capitalEfficiencyScore / 120, 0.45, 0.92),
+            2
+          );
+          budgetActionReason = `资金效率 ${capitalEfficiencyScore}，等待更多闭环样本确认`;
+        }
         return {
           key,
           label: labelSelector(key),
@@ -2093,11 +2296,8 @@ export class RecommendationTradeOutcomeService {
             4
           ),
           avg_excess_return_pct: avgExcessReturn,
-          total_pnl: roundNumber(
-            plain.reduce((sum, item) => sum + toNumber(item.total_pnl), 0),
-            2
-          ),
-          profit_factor: lossSum > 0 ? roundNumber(winSum / lossSum, 4) : wins.length > 0 ? 999 : 0,
+          total_pnl: totalPnl,
+          profit_factor: profitFactor,
           avg_holding_days: roundNumber(average(plain.map(item => toNumber(item.holding_days))), 2),
           best_symbol: best?.symbol,
           best_name: best?.name,
@@ -2116,6 +2316,15 @@ export class RecommendationTradeOutcomeService {
           return_volatility_pct: roundNumber(returnVolatility, 4),
           drawdown_penalty: roundNumber(drawdownPenalty, 4),
           risk_adjusted_excess_return_pct: roundNumber(riskAdjustedExcess, 4),
+          avg_position_pct: avgPositionPct,
+          avg_entry_amount: avgEntryAmount,
+          total_entry_amount: totalEntryAmount,
+          pnl_per_10k: pnlPer10k,
+          excess_per_position_pct: excessPerPositionPct,
+          capital_efficiency_score: capitalEfficiencyScore,
+          budget_action: budgetAction,
+          budget_action_reason: budgetActionReason,
+          recommended_budget_multiplier: recommendedBudgetMultiplier,
           takeover_ready:
             dimension === 'environment_strategy_combo' &&
             !effectiveCooldownActive &&

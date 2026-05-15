@@ -165,20 +165,18 @@ function rankConsensusCandidates(candidates: any[], loopPolicy: any): any[] {
     );
 }
 
-function environmentPolicyStrategyKeySet(policy: any, field: string): Set<string> {
+function environmentPolicyStrategyMap(policy: any, field: string): Map<string, any> {
   const values = Array.isArray(policy?.[field]) ? policy[field] : [];
-  return new Set(
-    values
-      .map(
-        (item: any) => extractStrategyKeyFromEnvironmentComboKey(item?.key) || item?.strategy_key
-      )
-      .map((item: any) =>
-        String(item || '')
-          .trim()
-          .toLowerCase()
-      )
-      .filter(Boolean)
-  );
+  const map = new Map<string, any>();
+  for (const item of values) {
+    const key = String(
+      extractStrategyKeyFromEnvironmentComboKey(item?.key) || item?.strategy_key || ''
+    )
+      .trim()
+      .toLowerCase();
+    if (key && !map.has(key)) map.set(key, item);
+  }
+  return map;
 }
 
 function applyEnvironmentStrategyCandidateTuning(
@@ -189,15 +187,15 @@ function applyEnvironmentStrategyCandidateTuning(
     .trim()
     .toLowerCase();
   if (!strategyKey) return candidates;
-  const recovered = environmentPolicyStrategyKeySet(
+  const recovered = environmentPolicyStrategyMap(
     options.environment_policy,
     'recovered_environment_strategy_combos'
   );
-  const extended = environmentPolicyStrategyKeySet(
+  const extended = environmentPolicyStrategyMap(
     options.environment_policy,
     'extended_cooldown_environment_strategy_combos'
   );
-  const resampling = environmentPolicyStrategyKeySet(
+  const resampling = environmentPolicyStrategyMap(
     options.environment_policy,
     'resample_environment_strategy_combos'
   );
@@ -216,7 +214,26 @@ function applyEnvironmentStrategyCandidateTuning(
         : isResampling
         ? -2
         : 0;
-      const positionMultiplier = isExtended ? 0.55 : isRecovered ? 1.06 : isResampling ? 0.72 : 1;
+      const matchedPolicy = isExtended
+        ? extended.get(strategyKey)
+        : isRecovered
+        ? recovered.get(strategyKey)
+        : isResampling
+        ? resampling.get(strategyKey)
+        : null;
+      const policyBudgetMultiplier = toNumber(
+        asPlainObject(matchedPolicy).recommended_budget_multiplier,
+        NaN
+      );
+      const positionMultiplier = Number.isFinite(policyBudgetMultiplier)
+        ? clampNumber(policyBudgetMultiplier, 0, 1.2)
+        : isExtended
+        ? 0.55
+        : isRecovered
+        ? 1.06
+        : isResampling
+        ? 0.72
+        : 1;
       const basePosition = Number(candidate.suggested_position_pct || 0);
       const maxPosition = isRecovered ? Math.min(12, basePosition * 1.1) : basePosition;
       const adjustedPosition =
@@ -235,6 +252,9 @@ function applyEnvironmentStrategyCandidateTuning(
         suggested_position_pct: adjustedPosition,
         environment_strategy_adjustment: environmentStrategyAdjustment,
         environment_strategy_policy_label: policyLabel,
+        environment_strategy_capital_efficiency_score:
+          asPlainObject(matchedPolicy).capital_efficiency_score,
+        environment_strategy_budget_multiplier: positionMultiplier,
         environment_strategy_policy_action: isExtended
           ? 'extended_cooldown'
           : isRecovered
@@ -650,6 +670,12 @@ class AutomatedRecommendationLoopService {
               excess_win_rate: bestEnvironmentStrategyCombo.excess_win_rate,
               bayesian_win_rate: bestEnvironmentStrategyCombo.bayesian_win_rate,
               robust_score: bestEnvironmentStrategyCombo.robust_score,
+              capital_efficiency_score: bestEnvironmentStrategyCombo.capital_efficiency_score,
+              pnl_per_10k: bestEnvironmentStrategyCombo.pnl_per_10k,
+              recommended_budget_multiplier:
+                bestEnvironmentStrategyCombo.recommended_budget_multiplier,
+              budget_action: bestEnvironmentStrategyCombo.budget_action,
+              budget_action_reason: bestEnvironmentStrategyCombo.budget_action_reason,
               takeover_reason: bestEnvironmentStrategyCombo.takeover_reason,
             }
           : null,
@@ -663,6 +689,11 @@ class AutomatedRecommendationLoopService {
           closed_count: item.closed_count,
           avg_excess_return_pct: item.avg_excess_return_pct,
           robust_score: item.robust_score,
+          capital_efficiency_score: item.capital_efficiency_score,
+          pnl_per_10k: item.pnl_per_10k,
+          recommended_budget_multiplier: item.recommended_budget_multiplier,
+          budget_action: item.budget_action,
+          budget_action_reason: item.budget_action_reason,
           recent_loss_streak: item.recent_loss_streak,
           cooldown_days: item.cooldown_days,
           cooldown_reason: item.cooldown_reason,
@@ -691,6 +722,11 @@ class AutomatedRecommendationLoopService {
             closed_count: item.closed_count,
             avg_excess_return_pct: item.avg_excess_return_pct,
             robust_score: item.robust_score,
+            capital_efficiency_score: item.capital_efficiency_score,
+            pnl_per_10k: item.pnl_per_10k,
+            recommended_budget_multiplier: item.recommended_budget_multiplier,
+            budget_action: item.budget_action,
+            budget_action_reason: item.budget_action_reason,
             cooldown_reason: item.cooldown_reason,
             resample_reason: item.resample_reason,
             resample_position_multiplier: item.resample_position_multiplier || 0.35,
@@ -716,6 +752,13 @@ class AutomatedRecommendationLoopService {
             ),
             strategy_key: extractStrategyKeyFromEnvironmentComboKey(item.key),
             closed_count: item.closed_count,
+            avg_excess_return_pct: item.avg_excess_return_pct,
+            robust_score: item.robust_score,
+            capital_efficiency_score: item.capital_efficiency_score,
+            pnl_per_10k: item.pnl_per_10k,
+            recommended_budget_multiplier: item.recommended_budget_multiplier,
+            budget_action: item.budget_action,
+            budget_action_reason: item.budget_action_reason,
             resample_closed_count: item.resample_closed_count,
             resample_avg_excess_return_pct: item.resample_avg_excess_return_pct,
             resample_excess_win_rate: item.resample_excess_win_rate,
@@ -734,6 +777,13 @@ class AutomatedRecommendationLoopService {
             ),
             strategy_key: extractStrategyKeyFromEnvironmentComboKey(item.key),
             closed_count: item.closed_count,
+            avg_excess_return_pct: item.avg_excess_return_pct,
+            robust_score: item.robust_score,
+            capital_efficiency_score: item.capital_efficiency_score,
+            pnl_per_10k: item.pnl_per_10k,
+            recommended_budget_multiplier: item.recommended_budget_multiplier,
+            budget_action: item.budget_action,
+            budget_action_reason: item.budget_action_reason,
             resample_closed_count: item.resample_closed_count,
             resample_avg_excess_return_pct: item.resample_avg_excess_return_pct,
             resample_excess_win_rate: item.resample_excess_win_rate,
@@ -753,8 +803,14 @@ class AutomatedRecommendationLoopService {
                 recoveredEnvironmentStrategyCombos[0].key
               ),
               position_multiplier:
-                recoveredEnvironmentStrategyCombos[0].resample_recovery_position_multiplier || 0.58,
-              reason: recoveredEnvironmentStrategyCombos[0].resample_decision_reason,
+                recoveredEnvironmentStrategyCombos[0].recommended_budget_multiplier ||
+                recoveredEnvironmentStrategyCombos[0].resample_recovery_position_multiplier ||
+                0.58,
+              capital_efficiency_score:
+                recoveredEnvironmentStrategyCombos[0].capital_efficiency_score,
+              reason:
+                recoveredEnvironmentStrategyCombos[0].budget_action_reason ||
+                recoveredEnvironmentStrategyCombos[0].resample_decision_reason,
             }
           : null,
         resample_environment_strategy_policy: resampleEnvironmentStrategyCombos[0]
@@ -768,8 +824,14 @@ class AutomatedRecommendationLoopService {
                 resampleEnvironmentStrategyCombos[0].key
               ),
               position_multiplier:
-                resampleEnvironmentStrategyCombos[0].resample_position_multiplier || 0.35,
-              reason: resampleEnvironmentStrategyCombos[0].resample_reason,
+                resampleEnvironmentStrategyCombos[0].recommended_budget_multiplier ||
+                resampleEnvironmentStrategyCombos[0].resample_position_multiplier ||
+                0.35,
+              capital_efficiency_score:
+                resampleEnvironmentStrategyCombos[0].capital_efficiency_score,
+              reason:
+                resampleEnvironmentStrategyCombos[0].budget_action_reason ||
+                resampleEnvironmentStrategyCombos[0].resample_reason,
             }
           : null,
         promoted_environment_strategy_feedback_applied: Boolean(bestEnvironmentStrategyCombo),
@@ -1152,6 +1214,18 @@ class AutomatedRecommendationLoopService {
         environmentStrategyPolicy.default_position_pct,
         loop_policy.effective_default_position_pct
       );
+      const strategyBudgetMultiplier = clampNumber(
+        toNumber(
+          environment_policy.promoted_environment_strategy_combo?.recommended_budget_multiplier,
+          1
+        ),
+        0.6,
+        1.2
+      );
+      const budgetAdjustedDefaultPosition = roundNumber(
+        nextDefaultPosition * strategyBudgetMultiplier,
+        2
+      );
       const nextMaxPosition = toNumber(
         environmentStrategyPolicy.max_position_pct,
         loop_policy.effective_max_position_pct
@@ -1171,7 +1245,7 @@ class AutomatedRecommendationLoopService {
         ),
         effective_default_position_pct: roundNumber(
           clampNumber(
-            nextDefaultPosition,
+            budgetAdjustedDefaultPosition,
             1,
             Math.max(1, toNumber(loop_policy.base_max_position_pct, 10))
           ),
@@ -1194,7 +1268,7 @@ class AutomatedRecommendationLoopService {
           environment_policy.promoted_environment_strategy_feedback_reason,
         reason: `${loop_policy.reason}；环境×策略反馈：${
           environment_policy.promoted_environment_strategy_combo?.label || '冠军组合'
-        } 接管下一轮参数`,
+        } 接管下一轮参数，预算倍率 ${roundNumber(strategyBudgetMultiplier, 2)}x`,
       });
     }
     const candidateLimit = toPositiveInt(

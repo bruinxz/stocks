@@ -513,6 +513,27 @@ class FeishuTaskReportService {
       generated.consensus_overlap_count ?? strategyExperiment?.overlap_count ?? 0;
     const consensusRanked = Boolean(generated.consensus_ranked);
     const candidateTuning = generated.environment_strategy_candidate_tuning || {};
+    const formatBudgetTarget = (item: any) => {
+      if (!item) return '暂无';
+      const label = item.label || item.key || '未命名组合';
+      const efficiency =
+        item.capital_efficiency_score !== undefined
+          ? `效率 ${Number(item.capital_efficiency_score).toFixed(1)}`
+          : item.avg_excess_return_pct !== undefined
+            ? `超额 ${this.formatPercent(item.avg_excess_return_pct)}`
+            : '';
+      const multiplier =
+        item.recommended_budget_multiplier !== undefined
+          ? `预算 ${Number(item.recommended_budget_multiplier).toFixed(2)}x`
+          : item.position_multiplier !== undefined
+            ? `预算 ${Number(item.position_multiplier).toFixed(2)}x`
+            : '';
+      const reason = this.safeText(
+        item.budget_action_reason || item.reason || item.resample_decision_reason || '',
+        44
+      );
+      return [label, efficiency, multiplier, reason].filter(Boolean).join('，');
+    };
     const consensusTopPicks = topPicks.filter(
       (item: any) =>
         Number(item?.consensus_count || 0) > 1 || Number(item?.consensus_bonus || 0) > 0
@@ -611,17 +632,11 @@ class FeishuTaskReportService {
       strategyEvolution?.add_risk_budget?.length ||
       strategyEvolution?.reduce_risk_budget?.length ||
       strategyEvolution?.observe?.length
-        ? `- **资金方向**：加预算 ${
-            strategyEvolution.add_risk_budget?.[0]?.label ||
-            strategyEvolution.add_risk_budget?.[0]?.key ||
-            '暂无'
-          }；降权 ${
-            strategyEvolution.reduce_risk_budget?.[0]?.label ||
-            strategyEvolution.reduce_risk_budget?.[0]?.key ||
-            '暂无'
-          }；观察 ${
-            strategyEvolution.observe?.[0]?.label || strategyEvolution.observe?.[0]?.key || '暂无'
-          }。`
+        ? `- **资金方向**：加预算 ${formatBudgetTarget(
+            strategyEvolution.add_risk_budget?.[0]
+          )}；降权 ${formatBudgetTarget(strategyEvolution.reduce_risk_budget?.[0])}；观察 ${formatBudgetTarget(
+            strategyEvolution.observe?.[0]
+          )}。`
         : '',
       bestPick
         ? `- **首选标的**：${bestPick.name || bestPick.symbol}（${bestPick.symbol}），${
@@ -1619,8 +1634,8 @@ class FeishuTaskReportService {
     const dryRun = Boolean(result?.dry_run);
     const status = options.error ? 'FAILED' : 'COMPLETED';
     const actionCount = dryRun
-      ? result?.planned ?? trades.length
-      : result?.executed ?? trades.length;
+      ? (result?.planned ?? trades.length)
+      : (result?.executed ?? trades.length);
     const skipReasonLines = this.buildCompactSkipReasonLines(result, skippedItems, 3);
 
     const lines = [
@@ -1710,7 +1725,7 @@ class FeishuTaskReportService {
     const adaptiveRisk = result?.adaptive_risk_policy || {};
     const dryRun = Boolean(result?.dry_run);
     const status = options.error ? 'FAILED' : 'COMPLETED';
-    const exitCount = dryRun ? result?.planned ?? exits.length : result?.exited ?? exits.length;
+    const exitCount = dryRun ? (result?.planned ?? exits.length) : (result?.exited ?? exits.length);
 
     const lines = [
       `## ${recordType}`,

@@ -3153,7 +3153,8 @@ class PaperTradingAutomationService {
     } else if (activeRecoveredSegment) {
       const recoveryMultiplier = clamp(
         toNumber(
-          activeRecoveredSegment.position_multiplier ||
+          activeRecoveredSegment.recommended_budget_multiplier ||
+            activeRecoveredSegment.position_multiplier ||
             activeRecoveredSegment.resample_recovery_position_multiplier,
           0.58
         ),
@@ -3174,7 +3175,11 @@ class PaperTradingAutomationService {
 
     if (resamplePolicy) {
       const resampleMultiplier = clamp(
-        toNumber(resamplePolicy.resample_position_multiplier, 0.35),
+        toNumber(
+          resamplePolicy.recommended_budget_multiplier ||
+            resamplePolicy.resample_position_multiplier,
+          0.35
+        ),
         0.15,
         0.45
       );

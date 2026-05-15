@@ -142,6 +142,15 @@ interface EnvironmentRanking {
   dimension?: string;
   sample_confidence?: number;
   risk_adjusted_excess_return_pct?: number;
+  capital_efficiency_score?: number;
+  avg_position_pct?: number;
+  avg_entry_amount?: number;
+  total_entry_amount?: number;
+  pnl_per_10k?: number;
+  excess_per_position_pct?: number;
+  budget_action?: 'increase' | 'reduce' | 'observe' | 'pause' | string;
+  budget_action_reason?: string;
+  recommended_budget_multiplier?: number;
 }
 
 interface EnvironmentStrategyComboRanking extends EnvironmentRanking {
@@ -232,6 +241,7 @@ interface OptimizationData {
     observe?: Array<any>;
     candidate_tuning_best?: EnvironmentRanking | null;
     candidate_tuning_weak?: EnvironmentRanking | null;
+    capital_efficiency_rankings?: EnvironmentRanking[];
   };
   segment_actions: {
     boost: Array<any>;
@@ -305,6 +315,43 @@ const actionLabel = (value?: string) => {
   };
   return labels[value || ''] || value || '观察';
 };
+
+const budgetActionLabel = (value?: string) => {
+  const labels: Record<string, string> = {
+    increase: '加预算',
+    reduce: '降权',
+    observe: '观察',
+    pause: '暂停',
+    boost: '放大',
+    block: '暂停',
+    watch: '观察',
+  };
+  return labels[value || ''] || value || '观察';
+};
+
+const budgetMeta = (item: any) => {
+  const efficiency =
+    item?.capital_efficiency_score !== undefined
+      ? `效率 ${Number(item.capital_efficiency_score).toFixed(1)}`
+      : `超额 ${formatPercent(item?.avg_excess_return_pct)}`;
+  const multiplier =
+    item?.recommended_budget_multiplier !== undefined
+      ? `预算 ${Number(item.recommended_budget_multiplier).toFixed(2)}x`
+      : item?.position_multiplier !== undefined
+      ? `预算 ${Number(item.position_multiplier).toFixed(2)}x`
+      : '预算 --';
+  return `${efficiency} · ${multiplier}`;
+};
+
+const renderBudgetItem = (item: any) => (
+  <em className="optimization-budget-pill" key={item.key || item.label}>
+    <b>{item.label || item.key}</b>
+    <span>{budgetMeta(item)}</span>
+    {(item.budget_action_reason || item.reason || item.resample_decision_reason) && (
+      <small>{item.budget_action_reason || item.reason || item.resample_decision_reason}</small>
+    )}
+  </em>
+);
 
 const AutonomousOptimizationLab: React.FC = () => {
   const [data, setData] = useState<OptimizationData | null>(null);
@@ -392,6 +439,10 @@ const AutonomousOptimizationLab: React.FC = () => {
       (data?.market_environment?.candidate_tuning_rankings || []).filter(
         item => item.key !== 'no_tuning'
       ),
+    [data]
+  );
+  const capitalEfficiencyRankings = useMemo(
+    () => (data?.strategy_evolution?.capital_efficiency_rankings || []).slice(0, 6),
     [data]
   );
 
@@ -639,25 +690,50 @@ const AutonomousOptimizationLab: React.FC = () => {
               <div className="add">
                 <span>ADD RISK</span>
                 <strong>可加预算</strong>
-                {(data?.strategy_evolution?.add_risk_budget || []).slice(0, 4).map(item => (
-                  <em key={item.key || item.label}>{item.label || item.key}</em>
-                ))}
+                {(data?.strategy_evolution?.add_risk_budget || [])
+                  .slice(0, 4)
+                  .map(renderBudgetItem)}
+                {!data?.strategy_evolution?.add_risk_budget?.length && (
+                  <em className="optimization-budget-empty">暂无满足加预算条件</em>
+                )}
               </div>
               <div className="reduce">
                 <span>REDUCE</span>
                 <strong>降权/暂停</strong>
-                {(data?.strategy_evolution?.reduce_risk_budget || []).slice(0, 4).map(item => (
-                  <em key={item.key || item.label}>{item.label || item.key}</em>
-                ))}
+                {(data?.strategy_evolution?.reduce_risk_budget || [])
+                  .slice(0, 4)
+                  .map(renderBudgetItem)}
+                {!data?.strategy_evolution?.reduce_risk_budget?.length && (
+                  <em className="optimization-budget-empty">暂无强制降权片段</em>
+                )}
               </div>
               <div className="observe">
                 <span>OBSERVE</span>
                 <strong>小仓观察</strong>
-                {(data?.strategy_evolution?.observe || []).slice(0, 4).map(item => (
-                  <em key={item.key || item.label}>{item.label || item.key}</em>
-                ))}
+                {(data?.strategy_evolution?.observe || []).slice(0, 4).map(renderBudgetItem)}
+                {!data?.strategy_evolution?.observe?.length && (
+                  <em className="optimization-budget-empty">等待新增闭环样本</em>
+                )}
               </div>
             </div>
+            {!!capitalEfficiencyRankings.length && (
+              <div className="optimization-capital-strip">
+                <div>
+                  <span>CAPITAL EFFICIENCY</span>
+                  <strong>单位资金效率排行</strong>
+                </div>
+                {capitalEfficiencyRankings.map(item => (
+                  <div key={item.key} className="optimization-capital-chip">
+                    <b>{item.label}</b>
+                    <em>
+                      {budgetActionLabel(item.budget_action)} · 效率{' '}
+                      {Number(item.capital_efficiency_score || 0).toFixed(1)} · 1万收益{' '}
+                      {formatMoney(item.pnl_per_10k)}
+                    </em>
+                  </div>
+                ))}
+              </div>
+            )}
           </Card>
         </Col>
       </Row>
