@@ -171,6 +171,9 @@ export interface PaperTradingAutoTradeItem {
   resample_combo_key?: string;
   resample_reason?: string;
   resample_position_multiplier?: number;
+  environment_strategy_budget_action?: string;
+  environment_strategy_budget_multiplier?: number;
+  environment_strategy_budget_reason?: string;
   market_regime?: string;
   market_regime_label?: string;
   industry_regime?: string;
@@ -938,13 +941,13 @@ class PaperTradingAutomationService {
         metadata.auto_trade_allowed_by_data_quality !== undefined
           ? Boolean(metadata.auto_trade_allowed_by_data_quality)
           : dataQuality.auto_trade_allowed !== undefined
-          ? Boolean(dataQuality.auto_trade_allowed)
-          : !['low', 'critical'].includes(dataQualityBucket);
+            ? Boolean(dataQuality.auto_trade_allowed)
+            : !['low', 'critical'].includes(dataQualityBucket);
       const dataQualityIssues = Array.isArray(dataQuality.issues)
         ? dataQuality.issues
         : Array.isArray(dataQuality.warnings)
-        ? dataQuality.warnings
-        : [];
+          ? dataQuality.warnings
+          : [];
 
       const skip = (reason: string) => {
         skipped_items.push({ ...itemBase, status: 'skipped', reason });
@@ -1076,8 +1079,8 @@ class PaperTradingAutomationService {
         dataQualityBucket === 'high' || dataQualityBucket === 'unknown'
           ? 1
           : dataQualityBucket === 'medium'
-          ? toNumber(dataQuality.position_multiplier, 0.75)
-          : toNumber(dataQuality.position_multiplier, 0.35);
+            ? toNumber(dataQuality.position_multiplier, 0.75)
+            : toNumber(dataQuality.position_multiplier, 0.35);
       const gatedSuggestedPct = clamp(
         suggestedPct *
           profitGatePolicy.effective_position_multiplier *
@@ -1132,7 +1135,31 @@ class PaperTradingAutomationService {
       const resampleReason =
         resampleMatch.resample_reason ||
         resampleMatch.resample_decision_reason ||
+        resampleMatch.budget_action_reason ||
         resampleMatch.reason;
+      const budgetAction =
+        metadata.environment_strategy_budget_action ||
+        resampleMatch.budget_action ||
+        (resampleMatch.resample_policy_action === 'recover_small'
+          ? 'increase'
+          : resampleMatch.resample_policy_action === 'extend_cooldown'
+            ? 'pause'
+            : resampleSample
+              ? 'observe'
+              : metadata.environment_strategy_policy_action === 'extended_cooldown'
+                ? 'reduce'
+                : metadata.environment_strategy_policy_action === 'recovered'
+                  ? 'increase'
+                  : metadata.environment_strategy_policy_action === 'resample'
+                    ? 'observe'
+                    : undefined);
+      const budgetMultiplier =
+        toOptionalNumber(
+          metadata.environment_strategy_budget_multiplier ??
+            resampleMatch.recommended_budget_multiplier ??
+            resampleMatch.position_multiplier ??
+            resampleMatch.resample_position_multiplier
+        ) || undefined;
 
       eligible++;
       const tradePayload: PaperTradingAutoTradeItem = {
@@ -1146,6 +1173,10 @@ class PaperTradingAutomationService {
         resample_combo_key: resampleMatch.key,
         resample_reason: resampleReason,
         resample_position_multiplier: resamplePositionMultiplier,
+        environment_strategy_budget_action: budgetAction,
+        environment_strategy_budget_multiplier: budgetMultiplier,
+        environment_strategy_budget_reason:
+          metadata.environment_strategy_budget_reason || resampleMatch.budget_action_reason,
         market_regime: environmentPolicy.market_regime,
         market_regime_label: environmentPolicy.market_regime_label,
         industry_regime: environmentPolicy.industry_regime,
@@ -1217,6 +1248,13 @@ class PaperTradingAutomationService {
           resample_combo_key: resampleMatch.key,
           resample_reason: resampleReason,
           resample_position_multiplier: resamplePositionMultiplier,
+          environment_strategy_budget_action: budgetAction,
+          environment_strategy_budget_multiplier: budgetMultiplier,
+          environment_strategy_budget_reason:
+            metadata.environment_strategy_budget_reason || resampleMatch.budget_action_reason,
+          environment_strategy_capital_efficiency_score:
+            metadata.environment_strategy_capital_efficiency_score ||
+            resampleMatch.capital_efficiency_score,
           market_environment: environmentPolicy.market_environment || metadata.market_environment,
           entry_risk_guard: this.buildEntryRiskGuardPolicy(entryRiskGuard),
           entry_market_profile: marketProfile,
@@ -1419,7 +1457,7 @@ class PaperTradingAutomationService {
         toNumber(
           useAdaptiveDefaults
             ? adaptiveRiskPolicy.effective_stop_loss_pct
-            : paperTradingMeta.stop_loss_pct ?? signalMeta.stop_loss_pct,
+            : (paperTradingMeta.stop_loss_pct ?? signalMeta.stop_loss_pct),
           adaptiveRiskPolicy.effective_stop_loss_pct
         )
       );
@@ -1427,7 +1465,7 @@ class PaperTradingAutomationService {
         toNumber(
           useAdaptiveDefaults
             ? adaptiveRiskPolicy.effective_take_profit_pct
-            : paperTradingMeta.take_profit_pct ?? signalMeta.take_profit_pct,
+            : (paperTradingMeta.take_profit_pct ?? signalMeta.take_profit_pct),
           adaptiveRiskPolicy.effective_take_profit_pct
         )
       );
@@ -1884,9 +1922,8 @@ class PaperTradingAutomationService {
     if (!options.enabled) return basePolicy;
 
     try {
-      const { recommendationTradeOutcomeService } = await import(
-        './RecommendationTradeOutcomeService'
-      );
+      const { recommendationTradeOutcomeService } =
+        await import('./RecommendationTradeOutcomeService');
       const dashboard = await recommendationTradeOutcomeService.getDashboard({
         portfolio_id: options.portfolio_id,
         user_id: options.user_id,
@@ -2159,8 +2196,8 @@ class PaperTradingAutomationService {
       const effectivePositionMultiplier = samplingMode
         ? clamp(options.sampling_multiplier, 0.1, 0.6)
         : allowEntries
-        ? clamp(positionMultiplier || 1, 0.1, 1.5)
-        : 0;
+          ? clamp(positionMultiplier || 1, 0.1, 1.5)
+          : 0;
 
       return {
         enabled: true,
@@ -2242,9 +2279,8 @@ class PaperTradingAutomationService {
     if (!options.enabled) return basePolicy;
 
     try {
-      const { recommendationTradeOutcomeService } = await import(
-        './RecommendationTradeOutcomeService'
-      );
+      const { recommendationTradeOutcomeService } =
+        await import('./RecommendationTradeOutcomeService');
       const dashboard = await recommendationTradeOutcomeService.getDashboard({
         portfolio_id: options.portfolio_id,
         user_id: options.user_id,
@@ -2283,8 +2319,8 @@ class PaperTradingAutomationService {
         closedSamples < options.min_closed_samples
           ? clamp(Math.min(rawPositionMultiplier, 0.75), 0.35, 0.9)
           : allowEntries
-          ? clamp(rawPositionMultiplier, 0.25, 1.25)
-          : 0;
+            ? clamp(rawPositionMultiplier, 0.25, 1.25)
+            : 0;
       const effectiveMinScore =
         closedSamples < options.min_closed_samples
           ? options.requested_min_score
@@ -2307,19 +2343,19 @@ class PaperTradingAutomationService {
       )
         ? marketEnvironment.policy.recovered_environment_strategy_combos
         : Array.isArray(marketEnvironment.resample_combo_rankings)
-        ? marketEnvironment.resample_combo_rankings.filter(
-            (segment: any) => segment?.resample_policy_action === 'recover_small'
-          )
-        : [];
+          ? marketEnvironment.resample_combo_rankings.filter(
+              (segment: any) => segment?.resample_policy_action === 'recover_small'
+            )
+          : [];
       const extendedCooldownSegments = Array.isArray(
         marketEnvironment.policy?.extended_cooldown_environment_strategy_combos
       )
         ? marketEnvironment.policy.extended_cooldown_environment_strategy_combos
         : Array.isArray(marketEnvironment.resample_combo_rankings)
-        ? marketEnvironment.resample_combo_rankings.filter(
-            (segment: any) => segment?.resample_policy_action === 'extend_cooldown'
-          )
-        : [];
+          ? marketEnvironment.resample_combo_rankings.filter(
+              (segment: any) => segment?.resample_policy_action === 'extend_cooldown'
+            )
+          : [];
       const blockedSegments =
         closedSamples >= options.min_closed_samples
           ? weakSegments
@@ -2386,14 +2422,14 @@ class PaperTradingAutomationService {
         closedSamples < options.min_closed_samples
           ? `闭环样本 ${closedSamples}/${options.min_closed_samples}，先小仓位积累样本`
           : allowEntries
-          ? `闭环样本 ${closedSamples}，平均超额 ${roundNumber(
-              avgExcess,
-              2
-            )}%，仓位倍率 ${roundNumber(effectivePositionMultiplier, 2)}x`
-          : `闭环样本 ${closedSamples}，平均超额 ${roundNumber(
-              avgExcess,
-              2
-            )}%、超额胜率 ${roundNumber(excessWinRate, 2)}%，暂停自动入场`;
+            ? `闭环样本 ${closedSamples}，平均超额 ${roundNumber(
+                avgExcess,
+                2
+              )}%，仓位倍率 ${roundNumber(effectivePositionMultiplier, 2)}x`
+            : `闭环样本 ${closedSamples}，平均超额 ${roundNumber(
+                avgExcess,
+                2
+              )}%、超额胜率 ${roundNumber(excessWinRate, 2)}%，暂停自动入场`;
 
       return {
         enabled: true,
@@ -3500,9 +3536,8 @@ class PaperTradingAutomationService {
 
   private async refreshRecommendationTradeOutcome(signal_id: number) {
     try {
-      const { recommendationTradeOutcomeService } = await import(
-        './RecommendationTradeOutcomeService'
-      );
+      const { recommendationTradeOutcomeService } =
+        await import('./RecommendationTradeOutcomeService');
       await recommendationTradeOutcomeService.refreshOutcomeBySignal(signal_id);
     } catch (error: any) {
       logger.warn(`推荐交易收益闭环刷新失败 signal#${signal_id}: ${error?.message || error}`);

@@ -37,16 +37,14 @@ export interface RecommendationTradeOutcomeRefreshOptions {
   report_to_feishu?: boolean;
 }
 
-export interface RecommendationTradeOutcomeQueryOptions
-  extends RecommendationTradeOutcomeRefreshOptions {
+export interface RecommendationTradeOutcomeQueryOptions extends RecommendationTradeOutcomeRefreshOptions {
   trade_status?: string;
   start_date?: string;
   end_date?: string;
   offset?: number;
 }
 
-export interface RecommendationTradeOutcomeOptimizationOptions
-  extends RecommendationTradeOutcomeQueryOptions {
+export interface RecommendationTradeOutcomeOptimizationOptions extends RecommendationTradeOutcomeQueryOptions {
   horizons?: string[] | string;
 }
 
@@ -97,6 +95,7 @@ export interface RecommendationTradeOutcomeDashboard {
     by_environment_strategy_combo: RecommendationTradeOutcomeBucket[];
     by_resample: RecommendationTradeOutcomeBucket[];
     by_candidate_tuning: RecommendationTradeOutcomeBucket[];
+    by_budget_action: RecommendationTradeOutcomeBucket[];
   };
   outcomes: RecommendationTradeOutcome[];
   feedback: {
@@ -350,11 +349,11 @@ function isResampleOutcome(record: RecommendationTradeOutcome): boolean {
   );
   return Boolean(
     metadata.resample_sample ||
-      paperTrading.resample_sample ||
-      signalMetadata.resample_sample ||
-      environmentPolicy.resample_match ||
-      metadata.resample_match ||
-      paperTrading.resample_match
+    paperTrading.resample_sample ||
+    signalMetadata.resample_sample ||
+    environmentPolicy.resample_match ||
+    metadata.resample_match ||
+    paperTrading.resample_match
   );
 }
 
@@ -386,6 +385,71 @@ function candidateTuningLabel(key: string): string {
     no_tuning: '未调权候选',
   };
   return labels[key] || key || '未调权候选';
+}
+
+function normalizeBudgetActionKey(value: any): string {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase();
+  if (['increase', 'boost', 'add', 'add_risk', 'recovered', 'recover_small'].includes(normalized)) {
+    return 'increase';
+  }
+  if (['pause', 'block', 'blocked', 'extended_cooldown', 'extend_cooldown'].includes(normalized)) {
+    return 'pause';
+  }
+  if (['reduce', 'reduced', 'decrease', 'cut'].includes(normalized)) {
+    return 'reduce';
+  }
+  if (
+    ['observe', 'watch', 'resample', 'continue_resample', 'continue_sampling'].includes(normalized)
+  ) {
+    return 'observe';
+  }
+  return normalized || 'no_budget_action';
+}
+
+function budgetActionKey(record: RecommendationTradeOutcome): string {
+  const metadata = asPlainObject(record.metadata);
+  const signalMetadata = asPlainObject(metadata.signal_metadata);
+  const paperTrading = asPlainObject(metadata.paper_trading);
+  const explicit =
+    metadata.environment_strategy_budget_action ||
+    signalMetadata.environment_strategy_budget_action ||
+    paperTrading.environment_strategy_budget_action ||
+    metadata.budget_action ||
+    signalMetadata.budget_action ||
+    paperTrading.budget_action;
+  if (explicit) return normalizeBudgetActionKey(explicit);
+
+  const policyAction = candidateTuningKey(record);
+  if (policyAction !== 'no_tuning') return normalizeBudgetActionKey(policyAction);
+
+  const multiplier = toOptionalNumber(
+    metadata.environment_strategy_budget_multiplier ??
+      signalMetadata.environment_strategy_budget_multiplier ??
+      paperTrading.environment_strategy_budget_multiplier ??
+      metadata.recommended_budget_multiplier ??
+      signalMetadata.recommended_budget_multiplier ??
+      paperTrading.recommended_budget_multiplier
+  );
+  if (multiplier !== undefined) {
+    if (multiplier <= 0.05) return 'pause';
+    if (multiplier < 0.65) return 'reduce';
+    if (multiplier > 1.03) return 'increase';
+    return 'observe';
+  }
+  return 'no_budget_action';
+}
+
+function budgetActionLabel(key: string): string {
+  const labels: Record<string, string> = {
+    increase: '加预算执行',
+    reduce: '降权执行',
+    pause: '暂停/冷却执行',
+    observe: '小仓观察执行',
+    no_budget_action: '未纳入预算动作',
+  };
+  return labels[key] || key || '未纳入预算动作';
 }
 
 function dateOnly(value?: Date | string | null): string {
@@ -763,6 +827,12 @@ export class RecommendationTradeOutcomeService {
         candidateTuningLabel,
         'candidate_tuning'
       ),
+      by_budget_action: this.buildBuckets(
+        outcomes,
+        item => budgetActionKey(item),
+        budgetActionLabel,
+        'budget_action'
+      ),
     };
 
     const dashboard: RecommendationTradeOutcomeDashboard = {
@@ -924,8 +994,8 @@ export class RecommendationTradeOutcomeService {
       reason: weakOutcome
         ? '闭环收益偏弱，建议收紧止损/止盈与移动止盈触发'
         : strongOutcome
-        ? '闭环收益偏强，建议给强势标的更多收益空间'
-        : '闭环收益中性，按 MFE/MAE 小幅校准风控参数',
+          ? '闭环收益偏强，建议给强势标的更多收益空间'
+          : '闭环收益中性，按 MFE/MAE 小幅校准风控参数',
     };
 
     const strategyComboGroups = outcomeDashboard.groups.by_strategy_key || [];
@@ -936,6 +1006,7 @@ export class RecommendationTradeOutcomeService {
     const environmentStrategyComboGroups =
       outcomeDashboard.groups.by_environment_strategy_combo || [];
     const candidateTuningGroups = outcomeDashboard.groups.by_candidate_tuning || [];
+    const budgetActionGroups = outcomeDashboard.groups.by_budget_action || [];
     const environmentPolicy: any = this.buildEnvironmentLoopPolicy({
       market_regime_groups: marketRegimeGroups,
       industry_regime_groups: industryRegimeGroups,
@@ -979,10 +1050,10 @@ export class RecommendationTradeOutcomeService {
       candidate_tuning_reason: environmentPolicy.recovered_environment_strategy_combos?.[0]
         ? `下一轮候选源头优先恢复 ${environmentPolicy.recovered_environment_strategy_combos[0].label}`
         : environmentPolicy.extended_cooldown_environment_strategy_combos?.[0]
-        ? `下一轮候选源头压低 ${environmentPolicy.extended_cooldown_environment_strategy_combos[0].label}`
-        : environmentPolicy.resample_environment_strategy_combos?.[0]
-        ? `下一轮候选源头小仓复采样 ${environmentPolicy.resample_environment_strategy_combos[0].label}`
-        : '',
+          ? `下一轮候选源头压低 ${environmentPolicy.extended_cooldown_environment_strategy_combos[0].label}`
+          : environmentPolicy.resample_environment_strategy_combos?.[0]
+            ? `下一轮候选源头小仓复采样 ${environmentPolicy.resample_environment_strategy_combos[0].label}`
+            : '',
     };
     const topCandidateTuning = candidateTuningGroups
       .filter(item => item.key !== 'no_tuning' && item.closed_count > 0)
@@ -990,6 +1061,22 @@ export class RecommendationTradeOutcomeService {
         (a, b) =>
           toNumber(b.capital_efficiency_score) - toNumber(a.capital_efficiency_score) ||
           b.avg_excess_return_pct - a.avg_excess_return_pct
+      )[0];
+    const budgetActionRankings = budgetActionGroups
+      .filter(item => item.key !== 'no_budget_action')
+      .sort(
+        (a, b) =>
+          toNumber(b.capital_efficiency_score) - toNumber(a.capital_efficiency_score) ||
+          b.avg_excess_return_pct - a.avg_excess_return_pct ||
+          b.closed_count - a.closed_count
+      );
+    const bestBudgetAction = budgetActionRankings.filter(item => item.closed_count > 0)[0];
+    const weakBudgetAction = [...budgetActionRankings]
+      .filter(item => item.closed_count > 0)
+      .sort(
+        (a, b) =>
+          toNumber(a.capital_efficiency_score) - toNumber(b.capital_efficiency_score) ||
+          a.avg_excess_return_pct - b.avg_excess_return_pct
       )[0];
     const weakCandidateTuning = candidateTuningGroups
       .filter(item => item.key !== 'no_tuning' && item.closed_count > 0)
@@ -1020,10 +1107,10 @@ export class RecommendationTradeOutcomeService {
           (raw.resample_policy_action === 'extend_cooldown' || raw.action === 'block'
             ? 'pause'
             : raw.action === 'reduce'
-            ? 'reduce'
-            : raw.action === 'boost' || raw.resample_policy_action === 'recover_small'
-            ? 'increase'
-            : 'observe'),
+              ? 'reduce'
+              : raw.action === 'boost' || raw.resample_policy_action === 'recover_small'
+                ? 'increase'
+                : 'observe'),
         recommended_budget_multiplier: roundNumber(
           clamp(toNumber(fallbackMultiplier, 0.72), 0, 1.2),
           2
@@ -1098,6 +1185,9 @@ export class RecommendationTradeOutcomeService {
       candidate_tuning_best: topCandidateTuning || null,
       candidate_tuning_weak: weakCandidateTuning || null,
       capital_efficiency_rankings: capitalEfficiencyRankings,
+      budget_action_rankings: budgetActionRankings.slice(0, 8),
+      best_budget_action: bestBudgetAction || null,
+      weak_budget_action: weakBudgetAction || null,
     };
 
     const weakSegments = outcomeDashboard.feedback.weak_segments.slice(0, 4);
@@ -1165,21 +1255,24 @@ export class RecommendationTradeOutcomeService {
       environmentPolicy.blocked_segments[0]
         ? `环境闸门建议：暂停 ${environmentPolicy.blocked_segments[0].label}，原因 ${environmentPolicy.blocked_segments[0].reason}。`
         : environmentPolicy.reduced_segments[0]
-        ? `环境闸门建议：${environmentPolicy.reduced_segments[0].label} 降至 ${environmentPolicy.reduced_segments[0].position_multiplier}x，小仓验证。`
-        : environmentPolicy.boosted_segments[0]
-        ? `环境闸门建议：优先小幅放大 ${environmentPolicy.boosted_segments[0].label}，倍率 ${environmentPolicy.boosted_segments[0].position_multiplier}x。`
-        : '',
+          ? `环境闸门建议：${environmentPolicy.reduced_segments[0].label} 降至 ${environmentPolicy.reduced_segments[0].position_multiplier}x，小仓验证。`
+          : environmentPolicy.boosted_segments[0]
+            ? `环境闸门建议：优先小幅放大 ${environmentPolicy.boosted_segments[0].label}，倍率 ${environmentPolicy.boosted_segments[0].position_multiplier}x。`
+            : '',
       environmentStrategyComboGroups.find(item => item.resample_recovery_ready)
         ? `复采样升降级：${
             environmentStrategyComboGroups.find(item => item.resample_recovery_ready)?.label
           } 复采样跑赢，下一轮解除冷却并以小仓恢复。`
         : environmentStrategyComboGroups.find(item => item.cooldown_extended)
-        ? `复采样升降级：${
-            environmentStrategyComboGroups.find(item => item.cooldown_extended)?.label
-          } 复采样仍跑输，下一轮延长冷却。`
-        : '',
+          ? `复采样升降级：${
+              environmentStrategyComboGroups.find(item => item.cooldown_extended)?.label
+            } 复采样仍跑输，下一轮延长冷却。`
+          : '',
       topCandidateTuning
         ? `候选源头调权回收：${topCandidateTuning.label} 闭环 ${topCandidateTuning.closed_count} 笔，平均超额 ${topCandidateTuning.avg_excess_return_pct}%。`
+        : '',
+      bestBudgetAction
+        ? `预算动作回收：${bestBudgetAction.label} 当前效率 ${bestBudgetAction.capital_efficiency_score}、平均超额 ${bestBudgetAction.avg_excess_return_pct}%，后续按收益继续调仓。`
         : '',
     ].filter(Boolean);
 
@@ -1230,6 +1323,7 @@ export class RecommendationTradeOutcomeService {
           .slice(0, 10),
         resample_summary: outcomeDashboard.groups.by_resample,
         candidate_tuning_rankings: outcomeDashboard.groups.by_candidate_tuning,
+        budget_action_rankings: outcomeDashboard.groups.by_budget_action,
         resample_combo_rankings: environmentStrategyComboGroups
           .filter(item => toNumber(item.resample_closed_count, 0) > 0 || item.resample_decision)
           .sort(
@@ -1278,8 +1372,8 @@ export class RecommendationTradeOutcomeService {
     const defaultPositionMultiplier = options.weak_outcome
       ? 0.72
       : options.strong_outcome
-      ? 1.04
-      : 0.9;
+        ? 1.04
+        : 0.9;
 
     const normalizeSegment = (group: RecommendationTradeOutcomeBucket) => {
       const robustScore = toNumber(group.robust_score, 0);
@@ -1402,10 +1496,10 @@ export class RecommendationTradeOutcomeService {
       reason: blockedSegments[0]
         ? `发现 ${blockedSegments.length} 个需暂停环境，优先保护本金`
         : reducedSegments[0]
-        ? `发现 ${reducedSegments.length} 个需降仓环境，下一轮控制试错成本`
-        : boostedSegments[0]
-        ? `发现 ${boostedSegments.length} 个优势环境，可小幅放大验证`
-        : '环境样本未出现显著优劣，维持保守仓位',
+          ? `发现 ${reducedSegments.length} 个需降仓环境，下一轮控制试错成本`
+          : boostedSegments[0]
+            ? `发现 ${boostedSegments.length} 个优势环境，可小幅放大验证`
+            : '环境样本未出现显著优劣，维持保守仓位',
     };
   }
 
@@ -1616,6 +1710,11 @@ export class RecommendationTradeOutcomeService {
         environment_strategy_adjustment: metadata.environment_strategy_adjustment,
         environment_strategy_policy_label: metadata.environment_strategy_policy_label,
         environment_strategy_policy_action: metadata.environment_strategy_policy_action,
+        environment_strategy_budget_action: metadata.environment_strategy_budget_action,
+        environment_strategy_budget_reason: metadata.environment_strategy_budget_reason,
+        environment_strategy_budget_multiplier: metadata.environment_strategy_budget_multiplier,
+        environment_strategy_capital_efficiency_score:
+          metadata.environment_strategy_capital_efficiency_score,
         signal_metadata: metadata,
         paper_trading: paperTrading,
         benchmark,
@@ -1820,8 +1919,8 @@ export class RecommendationTradeOutcomeService {
           item.directional_return_pct !== undefined
             ? toNumber(item.directional_return_pct)
             : ['sell', 'strong_sell'].includes(String(decision || '').toLowerCase())
-            ? -returnPct
-            : returnPct;
+              ? -returnPct
+              : returnPct;
         samples.push({
           outcome_id: outcome.id,
           signal_id: outcome.signal_id,
@@ -1959,8 +2058,8 @@ export class RecommendationTradeOutcomeService {
         avgWinPct && avgLossPct
           ? roundNumber(avgWinPct / Math.abs(avgLossPct), 4)
           : wins.length > 0 && losses.length === 0
-          ? 999
-          : 0,
+            ? 999
+            : 0,
       profit_factor: lossSum > 0 ? roundNumber(winSum / lossSum, 4) : wins.length > 0 ? 999 : 0,
       avg_holding_days: roundNumber(average(plain.map(item => toNumber(item.holding_days))), 2),
       avg_mfe_pct: roundNumber(
@@ -2089,10 +2188,10 @@ export class RecommendationTradeOutcomeService {
           closed.length < 3
             ? 'collect_samples'
             : robustScore >= 12 && riskAdjustedExcess > 0.6 && bayesianWinRate >= 53
-            ? 'boost'
-            : robustScore <= -6 || riskAdjustedExcess < -0.8 || bayesianWinRate < 45
-            ? 'reduce'
-            : 'hold';
+              ? 'boost'
+              : robustScore <= -6 || riskAdjustedExcess < -0.8 || bayesianWinRate < 45
+                ? 'reduce'
+                : 'hold';
         const cooldownActive =
           dimension === 'environment_strategy_combo' &&
           closed.length >= 3 &&
@@ -2106,12 +2205,12 @@ export class RecommendationTradeOutcomeService {
             ? recentLossStreak >= 2
               ? `最近 ${recentLossStreak} 笔连续跑输，冷却观察`
               : avgExcessReturn <= -1
-              ? `平均超额 ${avgExcessReturn}% 为负，冷却观察`
-              : riskAdjustedExcess <= -0.8
-              ? `风险调整超额 ${roundNumber(riskAdjustedExcess, 2)}% 偏弱，冷却观察`
-              : bayesianWinRate < 45
-              ? `贝叶斯胜率 ${roundNumber(bayesianWinRate, 2)}% 偏低，冷却观察`
-              : `最大不利波动 ${roundNumber(drawdownPenalty, 2)}% 偏高，冷却观察`
+                ? `平均超额 ${avgExcessReturn}% 为负，冷却观察`
+                : riskAdjustedExcess <= -0.8
+                  ? `风险调整超额 ${roundNumber(riskAdjustedExcess, 2)}% 偏弱，冷却观察`
+                  : bayesianWinRate < 45
+                    ? `贝叶斯胜率 ${roundNumber(bayesianWinRate, 2)}% 偏低，冷却观察`
+                    : `最大不利波动 ${roundNumber(drawdownPenalty, 2)}% 偏高，冷却观察`
             : undefined;
         const latestClosedDate = recentClosed[0]?.exit_date || recentClosed[0]?.entry_date;
         const daysSinceLatestClosed = latestClosedDate
@@ -2161,30 +2260,30 @@ export class RecommendationTradeOutcomeService {
           resampleClosedCount && resampleLossSum > 0
             ? roundNumber(resampleWinSum / resampleLossSum, 4)
             : resampleClosedCount && resampleWins.length > 0
-            ? 999
-            : resampleClosedCount
-            ? 0
-            : undefined;
+              ? 999
+              : resampleClosedCount
+                ? 0
+                : undefined;
         const resampleDecision: RecommendationTradeOutcomeBucket['resample_decision'] =
           dimension === 'environment_strategy_combo' && resampleClosedCount >= 2
             ? resampleAvgExcess >= 0.8 && toNumber(resampleExcessWinRate, 0) >= 50
               ? 'promote'
               : resampleAvgExcess <= -0.8 || toNumber(resampleExcessWinRate, 100) < 35
-              ? 'cooldown'
-              : 'continue_sampling'
+                ? 'cooldown'
+                : 'continue_sampling'
             : dimension === 'environment_strategy_combo' && resampleTrades.length > 0
-            ? 'observe'
-            : undefined;
+              ? 'observe'
+              : undefined;
         const resampleDecisionReason =
           resampleDecision === 'promote'
             ? `复采样 ${resampleClosedCount} 笔平均超额 ${resampleAvgExcess}%，可评估恢复常规采样`
             : resampleDecision === 'cooldown'
-            ? `复采样 ${resampleClosedCount} 笔仍跑输，继续冷却并避免放大`
-            : resampleDecision === 'continue_sampling'
-            ? `复采样 ${resampleClosedCount} 笔结论未稳定，继续小仓观察`
-            : resampleDecision === 'observe'
-            ? '已有复采样持仓但尚未形成闭环，等待平仓验证'
-            : undefined;
+              ? `复采样 ${resampleClosedCount} 笔仍跑输，继续冷却并避免放大`
+              : resampleDecision === 'continue_sampling'
+                ? `复采样 ${resampleClosedCount} 笔结论未稳定，继续小仓观察`
+                : resampleDecision === 'observe'
+                  ? '已有复采样持仓但尚未形成闭环，等待平仓验证'
+                  : undefined;
         const resampleRecoveryReady =
           dimension === 'environment_strategy_combo' && resampleDecision === 'promote';
         const cooldownExtended =
@@ -2204,12 +2303,12 @@ export class RecommendationTradeOutcomeService {
           resampleRecoveryReady
             ? 'recover_small'
             : cooldownExtended
-            ? 'extend_cooldown'
-            : resampleDecision === 'continue_sampling'
-            ? 'continue_resample'
-            : resampleDecision === 'observe'
-            ? 'observe'
-            : 'none';
+              ? 'extend_cooldown'
+              : resampleDecision === 'continue_sampling'
+                ? 'continue_resample'
+                : resampleDecision === 'observe'
+                  ? 'observe'
+                  : 'none';
         const resampleReady =
           dimension === 'environment_strategy_combo' &&
           cooldownActive &&
@@ -2339,16 +2438,16 @@ export class RecommendationTradeOutcomeService {
               ? resampleRecoveryReady
                 ? resampleDecisionReason
                 : effectiveCooldownActive
-                ? effectiveCooldownReason
-                : closed.length < 3
-                ? `闭环样本 ${closed.length}/3，不接管`
-                : robustScore < 8
-                ? `稳健分 ${robustScore}/8，不接管`
-                : avgExcessReturn <= 0.5
-                ? `平均超额 ${avgExcessReturn}% 不足，不接管`
-                : bayesianWinRate < 52
-                ? `贝叶斯胜率 ${roundNumber(bayesianWinRate, 2)}% 不足，不接管`
-                : '满足样本、稳健分、超额收益和贝叶斯胜率，允许接管'
+                  ? effectiveCooldownReason
+                  : closed.length < 3
+                    ? `闭环样本 ${closed.length}/3，不接管`
+                    : robustScore < 8
+                      ? `稳健分 ${robustScore}/8，不接管`
+                      : avgExcessReturn <= 0.5
+                        ? `平均超额 ${avgExcessReturn}% 不足，不接管`
+                        : bayesianWinRate < 52
+                          ? `贝叶斯胜率 ${roundNumber(bayesianWinRate, 2)}% 不足，不接管`
+                          : '满足样本、稳健分、超额收益和贝叶斯胜率，允许接管'
               : undefined,
           cooldown_active: effectiveCooldownActive,
           cooldown_reason: effectiveCooldownActive ? effectiveCooldownReason : undefined,
@@ -2406,10 +2505,10 @@ export class RecommendationTradeOutcomeService {
       summary.closed_count < 5
         ? 0.65
         : summary.avg_excess_return_pct > 2 && summary.excess_win_rate >= 55
-        ? 1.15
-        : summary.avg_excess_return_pct < -1 || summary.excess_win_rate < 45
-        ? 0.55
-        : 0.85;
+          ? 1.15
+          : summary.avg_excess_return_pct < -1 || summary.excess_win_rate < 45
+            ? 0.55
+            : 0.85;
 
     const riskGroups = groups.by_risk_level.filter(group =>
       ['low', 'medium', 'high'].includes(group.key)

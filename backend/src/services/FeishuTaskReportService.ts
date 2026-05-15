@@ -498,6 +498,9 @@ class FeishuTaskReportService {
     const environmentPolicy = loopPolicy?.environment_policy || result?.environment_policy || {};
     const strategyEvolution =
       result?.trade_outcomes?.strategy_evolution || result?.strategy_evolution || {};
+    const budgetActionRankings = Array.isArray(strategyEvolution?.budget_action_rankings)
+      ? strategyEvolution.budget_action_rankings
+      : [];
     const policySnapshot = result?.policy_snapshot || {};
     const qualityOverview = result?.quality_report?.overview || {};
     const topPicks = recommendations.slice(0, 5);
@@ -636,6 +639,15 @@ class FeishuTaskReportService {
             strategyEvolution.add_risk_budget?.[0]
           )}；降权 ${formatBudgetTarget(strategyEvolution.reduce_risk_budget?.[0])}；观察 ${formatBudgetTarget(
             strategyEvolution.observe?.[0]
+          )}。`
+        : '',
+      budgetActionRankings.length
+        ? `- **预算动作回收**：最佳 ${formatBudgetTarget(budgetActionRankings[0])}；最弱 ${formatBudgetTarget(
+            [...budgetActionRankings].sort(
+              (a: any, b: any) =>
+                Number(a.capital_efficiency_score || 0) - Number(b.capital_efficiency_score || 0) ||
+                Number(a.avg_excess_return_pct || 0) - Number(b.avg_excess_return_pct || 0)
+            )[0]
           )}。`
         : '',
       bestPick

@@ -210,30 +210,37 @@ function applyEnvironmentStrategyCandidateTuning(
       const environmentStrategyAdjustment = isExtended
         ? -6
         : isRecovered
-        ? 3
-        : isResampling
-        ? -2
-        : 0;
+          ? 3
+          : isResampling
+            ? -2
+            : 0;
       const matchedPolicy = isExtended
         ? extended.get(strategyKey)
         : isRecovered
-        ? recovered.get(strategyKey)
-        : isResampling
-        ? resampling.get(strategyKey)
-        : null;
+          ? recovered.get(strategyKey)
+          : isResampling
+            ? resampling.get(strategyKey)
+            : null;
       const policyBudgetMultiplier = toNumber(
         asPlainObject(matchedPolicy).recommended_budget_multiplier,
         NaN
       );
+      const budgetAction = isExtended
+        ? 'reduce'
+        : isRecovered
+          ? 'increase'
+          : isResampling
+            ? 'observe'
+            : 'observe';
       const positionMultiplier = Number.isFinite(policyBudgetMultiplier)
         ? clampNumber(policyBudgetMultiplier, 0, 1.2)
         : isExtended
-        ? 0.55
-        : isRecovered
-        ? 1.06
-        : isResampling
-        ? 0.72
-        : 1;
+          ? 0.55
+          : isRecovered
+            ? 1.06
+            : isResampling
+              ? 0.72
+              : 1;
       const basePosition = Number(candidate.suggested_position_pct || 0);
       const maxPosition = isRecovered ? Math.min(12, basePosition * 1.1) : basePosition;
       const adjustedPosition =
@@ -243,8 +250,8 @@ function applyEnvironmentStrategyCandidateTuning(
       const policyLabel = isExtended
         ? '复采样仍弱，源头降权'
         : isRecovered
-        ? '复采样跑赢，源头小幅优先'
-        : '冷却复采样，候选小仓验证';
+          ? '复采样跑赢，源头小幅优先'
+          : '冷却复采样，候选小仓验证';
       return {
         ...candidate,
         score: roundNumber(clampNumber(originalScore + environmentStrategyAdjustment, 0, 100), 2),
@@ -255,11 +262,17 @@ function applyEnvironmentStrategyCandidateTuning(
         environment_strategy_capital_efficiency_score:
           asPlainObject(matchedPolicy).capital_efficiency_score,
         environment_strategy_budget_multiplier: positionMultiplier,
+        environment_strategy_budget_action: budgetAction,
+        environment_strategy_budget_reason:
+          asPlainObject(matchedPolicy).budget_action_reason ||
+          asPlainObject(matchedPolicy).reason ||
+          asPlainObject(matchedPolicy).resample_decision_reason ||
+          policyLabel,
         environment_strategy_policy_action: isExtended
           ? 'extended_cooldown'
           : isRecovered
-          ? 'recovered'
-          : 'resample',
+            ? 'recovered'
+            : 'resample',
         reasons: [
           ...(Array.isArray(candidate.reasons) ? candidate.reasons : []),
           environmentStrategyAdjustment > 0
@@ -542,8 +555,8 @@ class AutomatedRecommendationLoopService {
       const versionRankings = Array.isArray((dashboard as any).market_environment?.version_rankings)
         ? (dashboard as any).market_environment.version_rankings
         : Array.isArray(policy.version_rankings)
-        ? policy.version_rankings
-        : [];
+          ? policy.version_rankings
+          : [];
       const strategyComboRankings = Array.isArray(
         (dashboard as any).market_environment?.strategy_combo_rankings
       )
@@ -632,23 +645,23 @@ class AutomatedRecommendationLoopService {
         blocked_segments: Array.isArray(inheritedPolicy.blocked_segments)
           ? inheritedPolicy.blocked_segments.slice(0, 8)
           : Array.isArray(policy.blocked_segments)
-          ? policy.blocked_segments.slice(0, 8)
-          : [],
+            ? policy.blocked_segments.slice(0, 8)
+            : [],
         reduced_segments: Array.isArray(inheritedPolicy.reduced_segments)
           ? inheritedPolicy.reduced_segments.slice(0, 8)
           : Array.isArray(policy.reduced_segments)
-          ? policy.reduced_segments.slice(0, 8)
-          : [],
+            ? policy.reduced_segments.slice(0, 8)
+            : [],
         boosted_segments: Array.isArray(inheritedPolicy.boosted_segments)
           ? inheritedPolicy.boosted_segments.slice(0, 8)
           : Array.isArray(policy.boosted_segments)
-          ? policy.boosted_segments.slice(0, 8)
-          : [],
+            ? policy.boosted_segments.slice(0, 8)
+            : [],
         watch_segments: Array.isArray(inheritedPolicy.watch_segments)
           ? inheritedPolicy.watch_segments.slice(0, 8)
           : Array.isArray(policy.watch_segments)
-          ? policy.watch_segments.slice(0, 8)
-          : [],
+            ? policy.watch_segments.slice(0, 8)
+            : [],
         version_rankings: versionRankings.slice(0, 8),
         promoted_environment_policy_version: bestEnvironmentVersion
           ? {
@@ -992,8 +1005,8 @@ class AutomatedRecommendationLoopService {
         coldStart || avgExcess < -1 || excessWinRate < 45
           ? Math.max(1, Math.min(options.base_paper_trade_limit, 2))
           : avgExcess > 2 && excessWinRate >= 55
-          ? Math.min(5, options.base_paper_trade_limit + 1)
-          : options.base_paper_trade_limit;
+            ? Math.min(5, options.base_paper_trade_limit + 1)
+            : options.base_paper_trade_limit;
 
       const outcomePolicy = {
         ...basePolicy,

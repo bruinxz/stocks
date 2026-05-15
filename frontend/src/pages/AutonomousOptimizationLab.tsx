@@ -242,6 +242,9 @@ interface OptimizationData {
     candidate_tuning_best?: EnvironmentRanking | null;
     candidate_tuning_weak?: EnvironmentRanking | null;
     capital_efficiency_rankings?: EnvironmentRanking[];
+    budget_action_rankings?: EnvironmentRanking[];
+    best_budget_action?: EnvironmentRanking | null;
+    weak_budget_action?: EnvironmentRanking | null;
   };
   segment_actions: {
     boost: Array<any>;
@@ -260,6 +263,7 @@ interface OptimizationData {
     strategy_combo_rankings?: EnvironmentStrategyComboRanking[];
     resample_summary?: EnvironmentRanking[];
     candidate_tuning_rankings?: EnvironmentRanking[];
+    budget_action_rankings?: EnvironmentRanking[];
     resample_combo_rankings?: EnvironmentStrategyComboRanking[];
     policy?: EnvironmentLoopPolicy;
   };
@@ -443,6 +447,15 @@ const AutonomousOptimizationLab: React.FC = () => {
   );
   const capitalEfficiencyRankings = useMemo(
     () => (data?.strategy_evolution?.capital_efficiency_rankings || []).slice(0, 6),
+    [data]
+  );
+  const budgetActionRankings = useMemo(
+    () =>
+      (
+        data?.strategy_evolution?.budget_action_rankings ||
+        data?.market_environment?.budget_action_rankings ||
+        []
+      ).filter(item => item.key !== 'no_budget_action'),
     [data]
   );
 
@@ -811,6 +824,28 @@ const AutonomousOptimizationLab: React.FC = () => {
                       <em>
                         闭环 {item.closed_count || 0} · 超额胜率{' '}
                         {formatPercent(item.excess_win_rate)}
+                      </em>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {!!budgetActionRankings.length && (
+                <div className="optimization-budget-ledger">
+                  <div className="optimization-budget-ledger-head">
+                    <span>BUDGET ACTION BACKTEST</span>
+                    <strong>预算动作收益回收</strong>
+                    <em>验证加预算、降权、观察这些动作后续是否真的跑赢</em>
+                  </div>
+                  {budgetActionRankings.slice(0, 4).map(item => (
+                    <div className={`optimization-budget-action-card ${item.key}`} key={item.key}>
+                      <span>{item.label}</span>
+                      <strong style={{ color: pnlColor(item.avg_excess_return_pct) }}>
+                        {formatPercent(item.avg_excess_return_pct)}
+                      </strong>
+                      <em>
+                        闭环 {item.closed_count || 0} · 效率{' '}
+                        {Number(item.capital_efficiency_score || 0).toFixed(1)} · 1万收益{' '}
+                        {formatMoney(item.pnl_per_10k)}
                       </em>
                     </div>
                   ))}
