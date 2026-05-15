@@ -410,7 +410,7 @@ const AutonomousRecommendationTracker: React.FC = () => {
         </div>
         <Space wrap>
           <Link to="/autonomous-trading/overview">
-            <Button icon={<FundProjectionScreenOutlined />}>收益驾驶舱</Button>
+            <Button icon={<FundProjectionScreenOutlined />}>交易驾驶舱</Button>
           </Link>
           <Button
             icon={<SafetyCertificateOutlined />}

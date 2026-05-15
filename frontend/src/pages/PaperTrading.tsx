@@ -735,14 +735,16 @@ const PaperTrading: React.FC = () => {
   ];
 
   return (
-    <div className="fade-in-up">
+    <div className="fade-in-up paper-trading-page">
       <div
-        className="page-header-modern"
+        className="page-header-modern paper-trading-header"
         style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
       >
         <div>
-          <h1 className="page-title-modern">投资组合模拟盘</h1>
-          <p className="page-subtitle-modern">实时跟踪您的模拟交易与持仓盈亏</p>
+          <h1 className="page-title-modern">手动模拟交易</h1>
+          <p className="page-subtitle-modern">
+            与交易驾驶舱共用同一个模拟账户。这里保留手动买卖、交易计划和收益归因能力。
+          </p>
         </div>
         <Space>
           <Button
@@ -776,9 +778,9 @@ const PaperTrading: React.FC = () => {
             marginBottom: 24,
             overflow: 'hidden',
             background:
-              'radial-gradient(circle at 12% 18%, rgba(248,113,113,0.28), transparent 28%), linear-gradient(135deg, #111827 0%, #1f2937 46%, #431407 100%)',
-            border: '1px solid rgba(251,191,36,0.18)',
-            boxShadow: '0 24px 60px rgba(15,23,42,0.22)',
+              'radial-gradient(circle at 12% 18%, rgba(248,113,113,0.16), transparent 28%), linear-gradient(135deg, rgba(255,255,255,0.98), rgba(255,247,237,0.92))',
+            border: '1px solid rgba(251,146,60,0.18)',
+            boxShadow: '0 16px 42px rgba(124,45,18,0.08)',
           }}
         >
           <Row gutter={[18, 18]} align="middle">
@@ -787,30 +789,30 @@ const PaperTrading: React.FC = () => {
                 <Tag color={riskResult.dry_run ? 'blue' : 'volcano'}>
                   {riskResult.dry_run ? '纸面风控预演' : '已执行模拟风控'}
                 </Tag>
-                <Text style={{ color: '#fff7ed', fontSize: 20, fontWeight: 900 }}>
+                <Text style={{ color: '#7c2d12', fontSize: 20, fontWeight: 900 }}>
                   风控交易台回执
                 </Text>
-                <Text style={{ color: 'rgba(255,247,237,0.72)' }}>
+                <Text style={{ color: 'rgba(124,45,18,0.72)' }}>
                   检查 {riskResult.checked} 个持仓，触发 {riskResult.exit_candidates} 个退出条件
                 </Text>
               </Space>
             </Col>
             <Col xs={12} md={5} lg={4}>
               <Statistic
-                title={<span style={{ color: 'rgba(255,247,237,0.72)' }}>退出/计划</span>}
+                title={<span style={{ color: 'rgba(124,45,18,0.66)' }}>退出/计划</span>}
                 value={riskResult.dry_run ? riskResult.planned : riskResult.exited}
                 suffix="笔"
                 prefix={<ThunderboltOutlined />}
-                valueStyle={{ color: '#fed7aa' }}
+                valueStyle={{ color: '#c2410c' }}
               />
             </Col>
             <Col xs={12} md={5} lg={4}>
               <Statistic
-                title={<span style={{ color: 'rgba(255,247,237,0.72)' }}>继续持有</span>}
+                title={<span style={{ color: 'rgba(30,64,175,0.66)' }}>继续持有</span>}
                 value={riskResult.held}
                 suffix="只"
                 prefix={<FieldTimeOutlined />}
-                valueStyle={{ color: '#bfdbfe' }}
+                valueStyle={{ color: '#2563eb' }}
               />
             </Col>
             <Col xs={24} lg={9}>
@@ -827,7 +829,7 @@ const PaperTrading: React.FC = () => {
                   ))}
                 </Space>
               ) : (
-                <Text style={{ color: 'rgba(255,247,237,0.75)' }}>
+                <Text style={{ color: 'rgba(75,85,101,0.86)' }}>
                   暂无触发退出条件：
                   {riskResult.held_items?.[0]?.message || '持仓仍在止损/止盈纪律范围内'}
                 </Text>

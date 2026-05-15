@@ -765,7 +765,7 @@ const AutonomousOptimizationLab: React.FC = () => {
               刷新优化台
             </Button>
             <Link to="/autonomous-trading/overview">
-              <Button icon={<LineChartOutlined />}>收益驾驶舱</Button>
+              <Button icon={<LineChartOutlined />}>交易驾驶舱</Button>
             </Link>
             <Link to="/recommendation-loop-policies">
               <Button icon={<BranchesOutlined />}>策略版本实验室</Button>
@@ -863,9 +863,9 @@ const AutonomousOptimizationLab: React.FC = () => {
               <div style={{ height: 320 }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={horizonChart} margin={{ top: 12, right: 18, left: 0, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(226,236,247,.16)" />
-                    <XAxis dataKey="horizon" stroke="rgba(226,236,247,.62)" />
-                    <YAxis stroke="rgba(226,236,247,.62)" />
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.08)" />
+                    <XAxis dataKey="horizon" stroke="rgba(75,85,101,.58)" />
+                    <YAxis stroke="rgba(75,85,101,.58)" />
                     <RechartsTooltip
                       formatter={(value: any, name: string) => [formatPercent(Number(value)), name]}
                     />
@@ -1224,13 +1224,13 @@ const AutonomousOptimizationLab: React.FC = () => {
                             data={budgetPolicySnapshotCurve}
                             margin={{ top: 12, right: 16, left: 0, bottom: 0 }}
                           >
-                            <CartesianGrid strokeDasharray="3 3" stroke="rgba(226,236,247,.14)" />
+                            <CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.08)" />
                             <XAxis
                               dataKey="id"
-                              stroke="rgba(226,236,247,.52)"
+                              stroke="rgba(75,85,101,.58)"
                               tickFormatter={(value: any) => `#${value}`}
                             />
-                            <YAxis stroke="rgba(226,236,247,.52)" />
+                            <YAxis stroke="rgba(75,85,101,.58)" />
                             <RechartsTooltip
                               formatter={(value: any, name: string) => [
                                 name.includes('超额')
@@ -1665,9 +1665,9 @@ const AutonomousOptimizationLab: React.FC = () => {
               <div style={{ height: 300 }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={pathCurve} margin={{ top: 12, right: 18, left: 0, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(226,236,247,.16)" />
-                    <XAxis dataKey="horizon" stroke="rgba(226,236,247,.62)" />
-                    <YAxis stroke="rgba(226,236,247,.62)" />
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,.08)" />
+                    <XAxis dataKey="horizon" stroke="rgba(75,85,101,.58)" />
+                    <YAxis stroke="rgba(75,85,101,.58)" />
                     <RechartsTooltip
                       formatter={(value: any, name: string, item: any) => [
                         formatPercent(Number(value)),

@@ -49,7 +49,6 @@ import RecommendationTradeOutcomes from './pages/RecommendationTradeOutcomes';
 import RecommendationLoopPolicies from './pages/RecommendationLoopPolicies';
 import AgentTailAlphaLedger from './pages/AgentTailAlphaLedger';
 import StrategyExperimentLab from './pages/StrategyExperimentLab';
-import PaperTrading from './pages/PaperTrading';
 import AutonomousTradingOverview from './pages/AutonomousTradingOverview';
 import AutonomousRecommendationTracker from './pages/AutonomousRecommendationTracker';
 import AutonomousOptimizationLab from './pages/AutonomousOptimizationLab';
@@ -60,7 +59,6 @@ import {
   RobotOutlined,
   ClockCircleOutlined,
   RocketOutlined,
-  AccountBookOutlined,
   AlertOutlined,
   BookOutlined,
   ThunderboltOutlined,
@@ -184,9 +182,8 @@ const AppContent: React.FC = () => {
         label: '自主交易',
         title: '自主交易',
         children: [
-          menuLink('/autonomous-trading/overview', <FundProjectionScreenOutlined />, '收益驾驶舱'),
-          menuLink('/autonomous-trading/recommendations', <NodeIndexOutlined />, '推荐追踪'),
-          menuLink('/paper-trading', <AccountBookOutlined />, '模拟交易台'),
+          menuLink('/autonomous-trading/overview', <FundProjectionScreenOutlined />, '交易驾驶舱'),
+          menuLink('/autonomous-trading/recommendations', <NodeIndexOutlined />, '每日推荐'),
           menuLink('/risk-alerts', <AlertOutlined />, '风险告警'),
         ],
       },
@@ -366,11 +363,7 @@ const AppContent: React.FC = () => {
             />
             <Route
               path="/paper-trading"
-              element={
-                <ProtectedRoute>
-                  <PaperTrading />
-                </ProtectedRoute>
-              }
+              element={<Navigate to="/autonomous-trading/overview?tab=manual" replace />}
             />
             <Route
               path="/autonomous-trading/overview"
