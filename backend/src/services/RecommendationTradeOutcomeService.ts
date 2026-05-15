@@ -1,5 +1,6 @@
 import { Op } from 'sequelize';
 import moment from 'moment-timezone';
+import { createHash } from 'crypto';
 import { RecommendationTradeOutcome } from '../models/RecommendationTradeOutcome';
 import { AIInvestmentSignal } from '../models/AIInvestmentSignal';
 import { PaperTradingPortfolio } from '../models/PaperTradingPortfolio';
@@ -97,6 +98,7 @@ export interface RecommendationTradeOutcomeDashboard {
     by_candidate_tuning: RecommendationTradeOutcomeBucket[];
     by_budget_action: RecommendationTradeOutcomeBucket[];
     by_budget_policy_action: RecommendationTradeOutcomeBucket[];
+    by_budget_policy_version: RecommendationTradeOutcomeBucket[];
   };
   outcomes: RecommendationTradeOutcome[];
   feedback: {
@@ -216,6 +218,22 @@ function roundNumber(value: any, digits = 2): number {
 function asPlainObject(value: any): Record<string, any> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   return value;
+}
+
+function stableStringify(value: any): string {
+  if (value === null || value === undefined) return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(item => stableStringify(item)).join(',')}]`;
+  if (typeof value === 'object') {
+    return `{${Object.keys(value)
+      .sort()
+      .map(key => `${JSON.stringify(key)}:${stableStringify(value[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function shortHash(value: any, length = 12): string {
+  return createHash('sha1').update(stableStringify(value)).digest('hex').slice(0, length);
 }
 
 function getChinaToday(): string {
@@ -481,6 +499,26 @@ function budgetPolicyActionLabel(key: string): string {
     no_policy_execution: '未执行预算策略',
   };
   return labels[key] || key || '未执行预算策略';
+}
+
+function budgetPolicyVersionKey(record: RecommendationTradeOutcome | any): string {
+  const metadata = asPlainObject(record.metadata);
+  const signalMetadata = asPlainObject(metadata.signal_metadata);
+  const paperTrading = asPlainObject(metadata.paper_trading);
+  return String(
+    metadata.environment_strategy_budget_policy_version_id ||
+      signalMetadata.environment_strategy_budget_policy_version_id ||
+      paperTrading.environment_strategy_budget_policy_version_id ||
+      metadata.budget_policy_version_id ||
+      signalMetadata.budget_policy_version_id ||
+      paperTrading.budget_policy_version_id ||
+      'no_budget_policy_version'
+  );
+}
+
+function budgetPolicyVersionLabel(key: string): string {
+  if (!key || key === 'no_budget_policy_version') return '未记录预算权重版本';
+  return `预算权重 ${key}`;
 }
 
 function dateOnly(value?: Date | string | null): string {
@@ -870,6 +908,12 @@ export class RecommendationTradeOutcomeService {
         budgetPolicyActionLabel,
         'budget_policy_action'
       ),
+      by_budget_policy_version: this.buildBuckets(
+        outcomes,
+        item => budgetPolicyVersionKey(item),
+        budgetPolicyVersionLabel,
+        'budget_policy_version'
+      ),
     };
 
     const dashboard: RecommendationTradeOutcomeDashboard = {
@@ -1045,6 +1089,7 @@ export class RecommendationTradeOutcomeService {
     const candidateTuningGroups = outcomeDashboard.groups.by_candidate_tuning || [];
     const budgetActionGroups = outcomeDashboard.groups.by_budget_action || [];
     const budgetPolicyActionGroups = outcomeDashboard.groups.by_budget_policy_action || [];
+    const budgetPolicyVersionGroups = outcomeDashboard.groups.by_budget_policy_version || [];
     const environmentPolicy: any = this.buildEnvironmentLoopPolicy({
       market_regime_groups: marketRegimeGroups,
       industry_regime_groups: industryRegimeGroups,
@@ -1122,12 +1167,23 @@ export class RecommendationTradeOutcomeService {
       budgetActionRankings,
       budgetPolicyExecutionAudit
     );
+    const budgetPolicyVersion = this.buildBudgetPolicyVersionSnapshot({
+      policy: budgetActionPolicy,
+      audit: budgetPolicyExecutionAudit,
+      version_groups: budgetPolicyVersionGroups,
+      lookback_days: lookbackDays,
+    });
+    (budgetActionPolicy as any).version = budgetPolicyVersion;
+    (budgetActionPolicy as any).version_id = budgetPolicyVersion.version_id;
+    (budgetActionPolicy as any).version_hash = budgetPolicyVersion.version_hash;
     (environmentPolicy as any).budget_action_policy = budgetActionPolicy;
+    (environmentPolicy as any).budget_policy_version = budgetPolicyVersion;
     (environmentPolicy as any).budget_policy_execution_audit = budgetPolicyExecutionAudit;
     (environmentPolicy as any).budget_action_feedback_applied = Boolean(budgetActionPolicy.enabled);
     (environmentPolicy as any).budget_action_feedback_reason = budgetActionPolicy.reason;
     (nextPolicy as any).budget_action_policy = budgetActionPolicy;
     (nextPolicy as any).budget_action_reason = budgetActionPolicy.reason;
+    (nextPolicy as any).budget_policy_version = budgetPolicyVersion;
     (nextPolicy as any).budget_policy_execution_audit = budgetPolicyExecutionAudit;
     const weakCandidateTuning = candidateTuningGroups
       .filter(item => item.key !== 'no_tuning' && item.closed_count > 0)
@@ -1240,6 +1296,7 @@ export class RecommendationTradeOutcomeService {
       best_budget_action: bestBudgetAction || null,
       weak_budget_action: weakBudgetAction || null,
       budget_action_policy: budgetActionPolicy,
+      budget_policy_version: budgetPolicyVersion,
       budget_policy_execution_audit: budgetPolicyExecutionAudit,
     };
 
@@ -1333,6 +1390,9 @@ export class RecommendationTradeOutcomeService {
       budgetActionPolicy.audit_feedback_applied_count
         ? `预算审计反哺：${budgetActionPolicy.audit_feedback_reason}`
         : '',
+      budgetPolicyVersion.enabled
+        ? `预算权重版本：${budgetPolicyVersion.version_id}，指纹 ${budgetPolicyVersion.version_hash}。`
+        : '',
       budgetPolicyExecutionAudit.enabled
         ? `预算策略审计：${budgetPolicyExecutionAudit.reason}`
         : '',
@@ -1387,6 +1447,7 @@ export class RecommendationTradeOutcomeService {
         candidate_tuning_rankings: outcomeDashboard.groups.by_candidate_tuning,
         budget_action_rankings: outcomeDashboard.groups.by_budget_action,
         budget_policy_action_rankings: outcomeDashboard.groups.by_budget_policy_action,
+        budget_policy_version_rankings: outcomeDashboard.groups.by_budget_policy_version,
         resample_combo_rankings: environmentStrategyComboGroups
           .filter(item => toNumber(item.resample_closed_count, 0) > 0 || item.resample_decision)
           .sort(
@@ -1629,6 +1690,66 @@ export class RecommendationTradeOutcomeService {
         '观察动作跑赢：升为常规小仓；观察跑输：缩小试错',
         '降权/暂停动作仍跑输：继续压仓或禁入；修复后仅小仓重开',
       ],
+    };
+  }
+
+  private buildBudgetPolicyVersionSnapshot(options: {
+    policy: any;
+    audit: any;
+    version_groups?: RecommendationTradeOutcomeBucket[];
+    lookback_days?: number;
+  }) {
+    const policy = asPlainObject(options.policy);
+    const audit = asPlainObject(options.audit);
+    const actions = Array.isArray(policy.actions) ? policy.actions : [];
+    const actionWeights = actions.map((item: any) => ({
+      key: item.key,
+      action: item.action,
+      allow_entry: item.allow_entry !== false,
+      position_multiplier: roundNumber(item.position_multiplier, 2),
+      score_adjustment: toNumber(item.score_adjustment, 0),
+      audit_verdict: item.audit_verdict || '',
+      audit_multiplier_adjustment: item.audit_multiplier_adjustment,
+      audit_score_adjustment: item.audit_score_adjustment,
+    }));
+    const payload = {
+      schema: 'budget_policy_weight_v1',
+      action_weights: actionWeights,
+      audit_feedback_applied_count: toNumber(policy.audit_feedback_applied_count, 0),
+      audit_confidence: roundNumber(audit.confidence, 2),
+      total_closed_count: toNumber(policy.total_closed_count, 0),
+      lookback_days: toNumber(options.lookback_days, 0),
+    };
+    const versionHash = shortHash(payload, 12);
+    const versionId = `bpw_${versionHash}`;
+    const versionGroups = (options.version_groups || [])
+      .filter(item => item.key && item.key !== 'no_budget_policy_version')
+      .sort(
+        (a, b) =>
+          toNumber(b.capital_efficiency_score) - toNumber(a.capital_efficiency_score) ||
+          b.avg_excess_return_pct - a.avg_excess_return_pct ||
+          b.closed_count - a.closed_count
+      );
+    const currentVersionOutcome =
+      versionGroups.find(item => item.key === versionId || item.key === versionHash) || null;
+
+    return {
+      enabled: actionWeights.length > 0,
+      schema: 'budget_policy_weight_v1',
+      version_id: versionId,
+      version_hash: versionHash,
+      generated_at: moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm:ss'),
+      lookback_days: toNumber(options.lookback_days, 0),
+      action_count: actionWeights.length,
+      action_weights: actionWeights,
+      audit_feedback_applied_count: toNumber(policy.audit_feedback_applied_count, 0),
+      audit_feedback_reason: policy.audit_feedback_reason,
+      current_version_outcome: currentVersionOutcome,
+      version_rankings: versionGroups.slice(0, 8),
+      reason: currentVersionOutcome
+        ? `当前预算权重版本已有闭环 ${currentVersionOutcome.closed_count} 笔，平均超额 ${currentVersionOutcome.avg_excess_return_pct}%`
+        : `生成预算权重版本 ${versionId}，等待后续模拟盘成交验证`,
+      payload,
     };
   }
 
@@ -2093,6 +2214,10 @@ export class RecommendationTradeOutcomeService {
           metadata.environment_strategy_budget_policy_score_adjustment,
         environment_strategy_budget_policy_multiplier:
           metadata.environment_strategy_budget_policy_multiplier,
+        environment_strategy_budget_policy_version_id:
+          metadata.environment_strategy_budget_policy_version_id,
+        environment_strategy_budget_policy_version_hash:
+          metadata.environment_strategy_budget_policy_version_hash,
         environment_strategy_capital_efficiency_score:
           metadata.environment_strategy_capital_efficiency_score,
         signal_metadata: metadata,

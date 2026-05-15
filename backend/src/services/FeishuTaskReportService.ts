@@ -503,6 +503,11 @@ class FeishuTaskReportService {
       : [];
     const budgetActionPolicy =
       strategyEvolution?.budget_action_policy || environmentPolicy?.budget_action_policy || {};
+    const budgetPolicyVersion =
+      strategyEvolution?.budget_policy_version ||
+      environmentPolicy?.budget_policy_version ||
+      budgetActionPolicy?.version ||
+      {};
     const budgetPolicyExecutionAudit =
       strategyEvolution?.budget_policy_execution_audit ||
       environmentPolicy?.budget_policy_execution_audit ||
@@ -666,6 +671,13 @@ class FeishuTaskReportService {
             120
           )}`
         : '',
+      budgetPolicyVersion?.enabled
+        ? `- **预算权重版本**：${budgetPolicyVersion.version_id || '-'}；指纹 ${
+            budgetPolicyVersion.version_hash || '-'
+          }；动作 ${budgetPolicyVersion.action_count ?? 0} 个；${
+            budgetPolicyVersion.reason || '等待后续成交验证'
+          }`
+        : '',
       budgetPolicyExecutionAudit?.enabled
         ? `- **预算策略执行审计**：${this.safeText(
             budgetPolicyExecutionAudit.reason || '已开始审计预算动作策略的真实成交收益',
@@ -765,6 +777,8 @@ class FeishuTaskReportService {
       预算动作策略原因: budgetActionPolicy?.reason,
       预算审计反哺条数: budgetActionPolicy?.audit_feedback_applied_count,
       预算审计反哺原因: budgetActionPolicy?.audit_feedback_reason,
+      预算权重版本: budgetPolicyVersion?.version_id,
+      预算权重指纹: budgetPolicyVersion?.version_hash,
       预算策略执行审计: budgetPolicyExecutionAudit?.enabled ? '是' : '否',
       预算策略审计原因: budgetPolicyExecutionAudit?.reason,
       共识排序: consensusRanked ? '是' : '否',

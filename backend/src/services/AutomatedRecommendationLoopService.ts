@@ -362,6 +362,12 @@ function applyEnvironmentStrategyCandidateTuning(
         environment_strategy_budget_policy_reason: budgetPolicy?.reason,
         environment_strategy_budget_policy_score_adjustment: budgetPolicyScoreAdjustment,
         environment_strategy_budget_policy_multiplier: budgetPolicyMultiplier,
+        environment_strategy_budget_policy_version_id:
+          asPlainObject(options.environment_policy?.budget_policy_version).version_id ||
+          asPlainObject(options.environment_policy?.budget_action_policy).version_id,
+        environment_strategy_budget_policy_version_hash:
+          asPlainObject(options.environment_policy?.budget_policy_version).version_hash ||
+          asPlainObject(options.environment_policy?.budget_action_policy).version_hash,
         environment_strategy_policy_action: isExtended
           ? 'extended_cooldown'
           : isRecovered

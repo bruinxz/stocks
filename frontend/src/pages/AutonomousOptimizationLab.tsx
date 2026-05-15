@@ -128,6 +128,7 @@ interface EnvironmentLoopPolicy {
     reason?: string;
   } | null;
   budget_action_policy?: BudgetActionPolicy;
+  budget_policy_version?: BudgetPolicyVersion;
   budget_policy_execution_audit?: BudgetPolicyExecutionAudit;
 }
 
@@ -177,11 +178,29 @@ interface BudgetActionPolicy {
   audit_feedback_enabled?: boolean;
   audit_feedback_applied_count?: number;
   audit_feedback_reason?: string;
+  version_id?: string;
+  version_hash?: string;
+  version?: BudgetPolicyVersion;
   actions?: BudgetActionPolicyItem[];
   best_action?: BudgetActionPolicyItem | null;
   weak_action?: BudgetActionPolicyItem | null;
   reason?: string;
   rules?: string[];
+}
+
+interface BudgetPolicyVersion {
+  enabled?: boolean;
+  schema?: string;
+  version_id?: string;
+  version_hash?: string;
+  generated_at?: string;
+  lookback_days?: number;
+  action_count?: number;
+  audit_feedback_applied_count?: number;
+  audit_feedback_reason?: string;
+  current_version_outcome?: EnvironmentRanking | null;
+  version_rankings?: EnvironmentRanking[];
+  reason?: string;
 }
 
 interface BudgetPolicyExecutionItem extends EnvironmentRanking {
@@ -296,6 +315,7 @@ interface OptimizationData {
     best_budget_action?: EnvironmentRanking | null;
     weak_budget_action?: EnvironmentRanking | null;
     budget_action_policy?: BudgetActionPolicy;
+    budget_policy_version?: BudgetPolicyVersion;
     budget_policy_execution_audit?: BudgetPolicyExecutionAudit;
   };
   segment_actions: {
@@ -317,6 +337,7 @@ interface OptimizationData {
     candidate_tuning_rankings?: EnvironmentRanking[];
     budget_action_rankings?: EnvironmentRanking[];
     budget_policy_action_rankings?: EnvironmentRanking[];
+    budget_policy_version_rankings?: EnvironmentRanking[];
     resample_combo_rankings?: EnvironmentStrategyComboRanking[];
     policy?: EnvironmentLoopPolicy;
   };
@@ -549,6 +570,10 @@ const AutonomousOptimizationLab: React.FC = () => {
   const budgetActionPolicy =
     data?.strategy_evolution?.budget_action_policy ||
     data?.environment_policy?.budget_action_policy;
+  const budgetPolicyVersion =
+    data?.strategy_evolution?.budget_policy_version ||
+    data?.environment_policy?.budget_policy_version ||
+    budgetActionPolicy?.version;
   const budgetPolicyExecutionAudit =
     data?.strategy_evolution?.budget_policy_execution_audit ||
     data?.environment_policy?.budget_policy_execution_audit;
@@ -947,6 +972,17 @@ const AutonomousOptimizationLab: React.FC = () => {
               )}
               {budgetActionPolicy?.enabled && (
                 <div className="optimization-budget-policy">
+                  {budgetPolicyVersion?.enabled && (
+                    <div className="optimization-budget-version-strip">
+                      <span>WEIGHT VERSION</span>
+                      <strong>{budgetPolicyVersion.version_id}</strong>
+                      <em>
+                        指纹 {budgetPolicyVersion.version_hash} · 动作{' '}
+                        {budgetPolicyVersion.action_count || 0} · 审计反哺{' '}
+                        {budgetPolicyVersion.audit_feedback_applied_count || 0}
+                      </em>
+                    </div>
+                  )}
                   <div className="optimization-budget-policy-head">
                     <span>AUTO UPGRADE POLICY</span>
                     <strong>预算动作自动升降级</strong>

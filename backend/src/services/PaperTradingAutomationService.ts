@@ -73,6 +73,7 @@ interface EnvironmentEntryPolicy {
   external_policy_match?: any;
   resample_match?: any;
   budget_action_policy_match?: any;
+  budget_policy_version?: any;
   notes?: string[];
 }
 
@@ -178,6 +179,8 @@ export interface PaperTradingAutoTradeItem {
   environment_strategy_budget_policy_action?: string;
   environment_strategy_budget_policy_reason?: string;
   environment_strategy_budget_policy_multiplier?: number;
+  environment_strategy_budget_policy_version_id?: string;
+  environment_strategy_budget_policy_version_hash?: string;
   market_regime?: string;
   market_regime_label?: string;
   industry_regime?: string;
@@ -1155,6 +1158,11 @@ class PaperTradingAutomationService {
       const resampleMatch = asPlainObject(environmentPolicy.resample_match);
       const resampleSample = Object.keys(resampleMatch).length > 0;
       const budgetActionPolicyMatch = asPlainObject(environmentPolicy.budget_action_policy_match);
+      const budgetPolicyVersion = asPlainObject(
+        asPlainObject(options.external_environment_policy).budget_policy_version ||
+          asPlainObject(options.external_environment_policy).budget_action_policy?.version ||
+          asPlainObject(environmentPolicy).budget_policy_version
+      );
       const resamplePositionMultiplier = toOptionalNumber(
         resampleMatch.resample_position_multiplier ?? resampleMatch.position_multiplier
       );
@@ -1216,6 +1224,14 @@ class PaperTradingAutomationService {
             metadata.environment_strategy_budget_policy_multiplier ??
               budgetActionPolicyMatch.position_multiplier
           ) || undefined,
+        environment_strategy_budget_policy_version_id:
+          metadata.environment_strategy_budget_policy_version_id ||
+          budgetPolicyVersion.version_id ||
+          asPlainObject(options.external_environment_policy).budget_action_policy?.version_id,
+        environment_strategy_budget_policy_version_hash:
+          metadata.environment_strategy_budget_policy_version_hash ||
+          budgetPolicyVersion.version_hash ||
+          asPlainObject(options.external_environment_policy).budget_action_policy?.version_hash,
         market_regime: environmentPolicy.market_regime,
         market_regime_label: environmentPolicy.market_regime_label,
         industry_regime: environmentPolicy.industry_regime,
@@ -1301,6 +1317,14 @@ class PaperTradingAutomationService {
               metadata.environment_strategy_budget_policy_multiplier ??
                 budgetActionPolicyMatch.position_multiplier
             ) || undefined,
+          environment_strategy_budget_policy_version_id:
+            metadata.environment_strategy_budget_policy_version_id ||
+            budgetPolicyVersion.version_id ||
+            asPlainObject(options.external_environment_policy).budget_action_policy?.version_id,
+          environment_strategy_budget_policy_version_hash:
+            metadata.environment_strategy_budget_policy_version_hash ||
+            budgetPolicyVersion.version_hash ||
+            asPlainObject(options.external_environment_policy).budget_action_policy?.version_hash,
           environment_strategy_capital_efficiency_score:
             metadata.environment_strategy_capital_efficiency_score ||
             budgetActionPolicyMatch.capital_efficiency_score ||
@@ -3351,6 +3375,10 @@ class PaperTradingAutomationService {
         externalSegments.block || externalSegments.reduce || externalSegments.boost,
       resample_match: resamplePolicy || activeRecoveredSegment,
       budget_action_policy_match: budgetActionPolicyMatch || undefined,
+      budget_policy_version:
+        externalPolicy.budget_policy_version ||
+        asPlainObject(externalPolicy.budget_action_policy).version ||
+        undefined,
     };
   }
 

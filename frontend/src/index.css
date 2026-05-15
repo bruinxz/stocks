@@ -4591,6 +4591,48 @@ a {
     linear-gradient(135deg, rgba(255, 255, 255, 0.065), rgba(255, 255, 255, 0.035));
 }
 
+.optimization-budget-version-strip {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.45fr) minmax(180px, 0.7fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(141, 214, 228, 0.16);
+  border-radius: 18px;
+  background: rgba(3, 9, 20, 0.2);
+}
+
+.optimization-budget-version-strip span,
+.optimization-budget-version-strip strong,
+.optimization-budget-version-strip em {
+  display: block;
+}
+
+.optimization-budget-version-strip span {
+  color: rgba(141, 214, 228, 0.92);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: 0.17em;
+}
+
+.optimization-budget-version-strip strong {
+  overflow: hidden;
+  color: #e0faff;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 950;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.optimization-budget-version-strip em {
+  color: rgba(226, 236, 247, 0.62);
+  font-size: 11px;
+  font-style: normal;
+}
+
 .optimization-budget-policy-head {
   display: grid;
   grid-template-columns: minmax(180px, 0.58fr) minmax(180px, 0.7fr) minmax(0, 1fr);
@@ -5512,6 +5554,7 @@ a {
 
   .optimization-budget-policy-head,
   .optimization-budget-policy-grid,
+  .optimization-budget-version-strip,
   .optimization-budget-audit-head,
   .optimization-budget-audit-grid {
     grid-template-columns: 1fr;
