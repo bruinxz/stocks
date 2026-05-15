@@ -96,6 +96,7 @@ export interface RecommendationTradeOutcomeDashboard {
     by_resample: RecommendationTradeOutcomeBucket[];
     by_candidate_tuning: RecommendationTradeOutcomeBucket[];
     by_budget_action: RecommendationTradeOutcomeBucket[];
+    by_budget_policy_action: RecommendationTradeOutcomeBucket[];
   };
   outcomes: RecommendationTradeOutcome[];
   feedback: {
@@ -450,6 +451,36 @@ function budgetActionLabel(key: string): string {
     no_budget_action: '未纳入预算动作',
   };
   return labels[key] || key || '未纳入预算动作';
+}
+
+function budgetPolicyActionKey(record: RecommendationTradeOutcome | any): string {
+  const metadata = asPlainObject(record.metadata);
+  const signalMetadata = asPlainObject(metadata.signal_metadata);
+  const paperTrading = asPlainObject(metadata.paper_trading);
+  return String(
+    metadata.environment_strategy_budget_policy_action ||
+      signalMetadata.environment_strategy_budget_policy_action ||
+      paperTrading.environment_strategy_budget_policy_action ||
+      'no_policy_execution'
+  );
+}
+
+function budgetPolicyActionLabel(key: string): string {
+  const labels: Record<string, string> = {
+    collect_samples: '收集样本执行',
+    scale_up: '放大执行',
+    cap_increase: '限制放大执行',
+    verify: '验证执行',
+    promote_from_observe: '观察升档执行',
+    sample_smaller: '缩小试错执行',
+    keep_observe: '继续观察执行',
+    keep_defensive: '防守跟随执行',
+    tighten_reduce: '继续压仓执行',
+    reopen_small: '小仓重开执行',
+    keep_paused: '继续暂停执行',
+    no_policy_execution: '未执行预算策略',
+  };
+  return labels[key] || key || '未执行预算策略';
 }
 
 function dateOnly(value?: Date | string | null): string {
@@ -833,6 +864,12 @@ export class RecommendationTradeOutcomeService {
         budgetActionLabel,
         'budget_action'
       ),
+      by_budget_policy_action: this.buildBuckets(
+        outcomes,
+        item => budgetPolicyActionKey(item),
+        budgetPolicyActionLabel,
+        'budget_policy_action'
+      ),
     };
 
     const dashboard: RecommendationTradeOutcomeDashboard = {
@@ -1007,6 +1044,7 @@ export class RecommendationTradeOutcomeService {
       outcomeDashboard.groups.by_environment_strategy_combo || [];
     const candidateTuningGroups = outcomeDashboard.groups.by_candidate_tuning || [];
     const budgetActionGroups = outcomeDashboard.groups.by_budget_action || [];
+    const budgetPolicyActionGroups = outcomeDashboard.groups.by_budget_policy_action || [];
     const environmentPolicy: any = this.buildEnvironmentLoopPolicy({
       market_regime_groups: marketRegimeGroups,
       industry_regime_groups: industryRegimeGroups,
@@ -1079,11 +1117,15 @@ export class RecommendationTradeOutcomeService {
           a.avg_excess_return_pct - b.avg_excess_return_pct
       )[0];
     const budgetActionPolicy = this.buildBudgetActionPolicy(budgetActionRankings);
+    const budgetPolicyExecutionAudit =
+      this.buildBudgetPolicyExecutionAudit(budgetPolicyActionGroups);
     (environmentPolicy as any).budget_action_policy = budgetActionPolicy;
+    (environmentPolicy as any).budget_policy_execution_audit = budgetPolicyExecutionAudit;
     (environmentPolicy as any).budget_action_feedback_applied = Boolean(budgetActionPolicy.enabled);
     (environmentPolicy as any).budget_action_feedback_reason = budgetActionPolicy.reason;
     (nextPolicy as any).budget_action_policy = budgetActionPolicy;
     (nextPolicy as any).budget_action_reason = budgetActionPolicy.reason;
+    (nextPolicy as any).budget_policy_execution_audit = budgetPolicyExecutionAudit;
     const weakCandidateTuning = candidateTuningGroups
       .filter(item => item.key !== 'no_tuning' && item.closed_count > 0)
       .sort(
@@ -1195,6 +1237,7 @@ export class RecommendationTradeOutcomeService {
       best_budget_action: bestBudgetAction || null,
       weak_budget_action: weakBudgetAction || null,
       budget_action_policy: budgetActionPolicy,
+      budget_policy_execution_audit: budgetPolicyExecutionAudit,
     };
 
     const weakSegments = outcomeDashboard.feedback.weak_segments.slice(0, 4);
@@ -1284,6 +1327,9 @@ export class RecommendationTradeOutcomeService {
       budgetActionPolicy.enabled && budgetActionPolicy.best_action
         ? `预算动作策略：${budgetActionPolicy.reason}`
         : '',
+      budgetPolicyExecutionAudit.enabled
+        ? `预算策略审计：${budgetPolicyExecutionAudit.reason}`
+        : '',
     ].filter(Boolean);
 
     return {
@@ -1334,6 +1380,7 @@ export class RecommendationTradeOutcomeService {
         resample_summary: outcomeDashboard.groups.by_resample,
         candidate_tuning_rankings: outcomeDashboard.groups.by_candidate_tuning,
         budget_action_rankings: outcomeDashboard.groups.by_budget_action,
+        budget_policy_action_rankings: outcomeDashboard.groups.by_budget_policy_action,
         resample_combo_rankings: environmentStrategyComboGroups
           .filter(item => toNumber(item.resample_closed_count, 0) > 0 || item.resample_decision)
           .sort(
@@ -1499,6 +1546,93 @@ export class RecommendationTradeOutcomeService {
         '观察动作跑赢：升为常规小仓；观察跑输：缩小试错',
         '降权/暂停动作仍跑输：继续压仓或禁入；修复后仅小仓重开',
       ],
+    };
+  }
+
+  private buildBudgetPolicyExecutionAudit(rankings: RecommendationTradeOutcomeBucket[] = []) {
+    const executions = rankings
+      .filter(item => item.key && item.key !== 'no_policy_execution')
+      .map(item => {
+        const closedCount = toNumber(item.closed_count, 0);
+        const avgExcess = toNumber(item.avg_excess_return_pct, 0);
+        const capitalEfficiency = toNumber(item.capital_efficiency_score, 0);
+        const excessWinRate = toNumber(item.excess_win_rate, 0);
+        const pnlPer10k = toNumber(item.pnl_per_10k, 0);
+        const score =
+          capitalEfficiency + avgExcess * 2 + (excessWinRate - 50) * 0.12 + Math.log1p(closedCount);
+        let verdict: 'effective' | 'watch' | 'ineffective' = 'watch';
+        let next_action = '继续采样';
+        let reason = `${item.label}闭环 ${closedCount} 笔，继续等待样本确认`;
+
+        if (closedCount >= 2 && avgExcess >= 0.6 && capitalEfficiency >= 4 && excessWinRate >= 50) {
+          verdict = 'effective';
+          next_action = '保留并允许继续参与下一轮自动调权';
+          reason = `执行后跑赢：超额 ${roundNumber(avgExcess, 2)}%，效率 ${roundNumber(
+            capitalEfficiency,
+            1
+          )}`;
+        } else if (closedCount >= 2 && (avgExcess <= -0.6 || capitalEfficiency < 0)) {
+          verdict = 'ineffective';
+          next_action = '下调该执行规则权重，必要时禁入';
+          reason = `执行后跑输：超额 ${roundNumber(avgExcess, 2)}%，效率 ${roundNumber(
+            capitalEfficiency,
+            1
+          )}`;
+        } else if (closedCount >= 2) {
+          reason = `执行效果中性：超额 ${roundNumber(avgExcess, 2)}%，暂不放大`;
+        }
+
+        return {
+          key: item.key,
+          label: item.label,
+          closed_count: closedCount,
+          tracked_count: toNumber(item.tracked_count ?? item.count, 0),
+          avg_excess_return_pct: roundNumber(avgExcess, 4),
+          excess_win_rate: roundNumber(excessWinRate, 2),
+          capital_efficiency_score: roundNumber(capitalEfficiency, 2),
+          pnl_per_10k: roundNumber(pnlPer10k, 2),
+          confidence: roundNumber(clamp(closedCount / 10, 0, 1), 2),
+          audit_score: roundNumber(score, 2),
+          verdict,
+          next_action,
+          reason,
+        };
+      })
+      .sort(
+        (a, b) =>
+          b.audit_score - a.audit_score ||
+          b.avg_excess_return_pct - a.avg_excess_return_pct ||
+          b.closed_count - a.closed_count
+      );
+
+    const effective = executions.filter(item => item.verdict === 'effective');
+    const ineffective = executions.filter(item => item.verdict === 'ineffective');
+    const best_execution = effective[0] || executions[0] || null;
+    const weak_execution =
+      ineffective[0] ||
+      [...executions].sort(
+        (a, b) =>
+          a.audit_score - b.audit_score ||
+          a.avg_excess_return_pct - b.avg_excess_return_pct ||
+          b.closed_count - a.closed_count
+      )[0] ||
+      null;
+    const closedCount = executions.reduce((sum, item) => sum + item.closed_count, 0);
+
+    return {
+      enabled: executions.length > 0,
+      confidence: roundNumber(clamp(closedCount / 20, 0, 1), 2),
+      total_closed_count: closedCount,
+      effective_count: effective.length,
+      ineffective_count: ineffective.length,
+      executions,
+      best_execution,
+      weak_execution,
+      reason: best_execution
+        ? `最佳执行 ${best_execution.label}，超额 ${best_execution.avg_excess_return_pct}%、效率 ${best_execution.capital_efficiency_score}；弱项 ${
+            weak_execution?.label || '暂无'
+          }，后续按审计结果继续校准`
+        : '预算动作自动策略尚未产生可审计成交',
     };
   }
 
@@ -1868,6 +2002,14 @@ export class RecommendationTradeOutcomeService {
         environment_strategy_budget_action: metadata.environment_strategy_budget_action,
         environment_strategy_budget_reason: metadata.environment_strategy_budget_reason,
         environment_strategy_budget_multiplier: metadata.environment_strategy_budget_multiplier,
+        environment_strategy_budget_policy_action:
+          metadata.environment_strategy_budget_policy_action,
+        environment_strategy_budget_policy_reason:
+          metadata.environment_strategy_budget_policy_reason,
+        environment_strategy_budget_policy_score_adjustment:
+          metadata.environment_strategy_budget_policy_score_adjustment,
+        environment_strategy_budget_policy_multiplier:
+          metadata.environment_strategy_budget_policy_multiplier,
         environment_strategy_capital_efficiency_score:
           metadata.environment_strategy_capital_efficiency_score,
         signal_metadata: metadata,

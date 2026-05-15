@@ -503,6 +503,10 @@ class FeishuTaskReportService {
       : [];
     const budgetActionPolicy =
       strategyEvolution?.budget_action_policy || environmentPolicy?.budget_action_policy || {};
+    const budgetPolicyExecutionAudit =
+      strategyEvolution?.budget_policy_execution_audit ||
+      environmentPolicy?.budget_policy_execution_audit ||
+      {};
     const policySnapshot = result?.policy_snapshot || {};
     const qualityOverview = result?.quality_report?.overview || {};
     const topPicks = recommendations.slice(0, 5);
@@ -660,6 +664,12 @@ class FeishuTaskReportService {
             120
           )}`
         : '',
+      budgetPolicyExecutionAudit?.enabled
+        ? `- **预算策略执行审计**：${this.safeText(
+            budgetPolicyExecutionAudit.reason || '已开始审计预算动作策略的真实成交收益',
+            120
+          )}`
+        : '',
       bestPick
         ? `- **首选标的**：${bestPick.name || bestPick.symbol}（${bestPick.symbol}），${
             this.buildInlinePriceText(bestPick) || '当前股价 --'
@@ -751,6 +761,8 @@ class FeishuTaskReportService {
       环境闸门原因: environmentPolicy?.reason,
       预算动作自动策略: budgetActionPolicy?.enabled ? '是' : '否',
       预算动作策略原因: budgetActionPolicy?.reason,
+      预算策略执行审计: budgetPolicyExecutionAudit?.enabled ? '是' : '否',
+      预算策略审计原因: budgetPolicyExecutionAudit?.reason,
       共识排序: consensusRanked ? '是' : '否',
       共识标的数: consensusOverlapCount,
       候选源头调权: candidateTuning?.enabled ? '是' : '否',

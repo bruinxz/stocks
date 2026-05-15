@@ -128,6 +128,7 @@ interface EnvironmentLoopPolicy {
     reason?: string;
   } | null;
   budget_action_policy?: BudgetActionPolicy;
+  budget_policy_execution_audit?: BudgetPolicyExecutionAudit;
 }
 
 interface EnvironmentRanking {
@@ -172,6 +173,25 @@ interface BudgetActionPolicy {
   weak_action?: BudgetActionPolicyItem | null;
   reason?: string;
   rules?: string[];
+}
+
+interface BudgetPolicyExecutionItem extends EnvironmentRanking {
+  audit_score?: number;
+  verdict?: 'effective' | 'watch' | 'ineffective' | string;
+  next_action?: string;
+  reason?: string;
+}
+
+interface BudgetPolicyExecutionAudit {
+  enabled?: boolean;
+  confidence?: number;
+  total_closed_count?: number;
+  effective_count?: number;
+  ineffective_count?: number;
+  executions?: BudgetPolicyExecutionItem[];
+  best_execution?: BudgetPolicyExecutionItem | null;
+  weak_execution?: BudgetPolicyExecutionItem | null;
+  reason?: string;
 }
 
 interface EnvironmentStrategyComboRanking extends EnvironmentRanking {
@@ -267,6 +287,7 @@ interface OptimizationData {
     best_budget_action?: EnvironmentRanking | null;
     weak_budget_action?: EnvironmentRanking | null;
     budget_action_policy?: BudgetActionPolicy;
+    budget_policy_execution_audit?: BudgetPolicyExecutionAudit;
   };
   segment_actions: {
     boost: Array<any>;
@@ -286,6 +307,7 @@ interface OptimizationData {
     resample_summary?: EnvironmentRanking[];
     candidate_tuning_rankings?: EnvironmentRanking[];
     budget_action_rankings?: EnvironmentRanking[];
+    budget_policy_action_rankings?: EnvironmentRanking[];
     resample_combo_rankings?: EnvironmentStrategyComboRanking[];
     policy?: EnvironmentLoopPolicy;
   };
@@ -370,6 +392,24 @@ const budgetPolicyActionLabel = (value?: string) => {
     keep_paused: '继续暂停',
   };
   return labels[value || ''] || value || '观察';
+};
+
+const budgetAuditVerdictLabel = (value?: string) => {
+  const labels: Record<string, string> = {
+    effective: '有效',
+    watch: '观察',
+    ineffective: '无效',
+  };
+  return labels[value || ''] || value || '观察';
+};
+
+const budgetAuditVerdictColor = (value?: string) => {
+  const colors: Record<string, string> = {
+    effective: 'cyan',
+    watch: 'gold',
+    ineffective: 'red',
+  };
+  return colors[value || ''] || 'default';
 };
 
 const budgetMeta = (item: any) => {
@@ -500,6 +540,9 @@ const AutonomousOptimizationLab: React.FC = () => {
   const budgetActionPolicy =
     data?.strategy_evolution?.budget_action_policy ||
     data?.environment_policy?.budget_action_policy;
+  const budgetPolicyExecutionAudit =
+    data?.strategy_evolution?.budget_policy_execution_audit ||
+    data?.environment_policy?.budget_policy_execution_audit;
 
   const symbolColumns = [
     {
@@ -924,6 +967,42 @@ const AutonomousOptimizationLab: React.FC = () => {
                           {Math.round(Number(item.confidence || 0) * 100)}%
                         </em>
                         <p>{item.reason}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {budgetPolicyExecutionAudit?.enabled && (
+                <div className="optimization-budget-audit">
+                  <div className="optimization-budget-audit-head">
+                    <span>EXECUTION AUDIT</span>
+                    <strong>预算策略执行审计</strong>
+                    <em>
+                      {budgetPolicyExecutionAudit.reason ||
+                        '审计自动升降级策略进入模拟盘后的真实收益表现'}
+                    </em>
+                  </div>
+                  <div className="optimization-budget-audit-grid">
+                    {(budgetPolicyExecutionAudit.executions || []).slice(0, 4).map(item => (
+                      <div
+                        className={`optimization-budget-audit-card ${item.verdict || 'watch'}`}
+                        key={item.key || item.label}
+                      >
+                        <div className="optimization-budget-audit-top">
+                          <Tag color={budgetAuditVerdictColor(item.verdict)}>
+                            {budgetAuditVerdictLabel(item.verdict)}
+                          </Tag>
+                          <b>{item.label || item.key}</b>
+                        </div>
+                        <strong style={{ color: pnlColor(item.avg_excess_return_pct) }}>
+                          {formatPercent(item.avg_excess_return_pct)}
+                        </strong>
+                        <em>
+                          审计分 {Number(item.audit_score || 0).toFixed(1)} · 闭环{' '}
+                          {item.closed_count || 0} · 效率{' '}
+                          {Number(item.capital_efficiency_score || 0).toFixed(1)}
+                        </em>
+                        <p>{item.reason || item.next_action}</p>
                       </div>
                     ))}
                   </div>
