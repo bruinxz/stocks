@@ -20,6 +20,7 @@ import { DataSourceHealth } from '../models/DataSourceHealth';
 import { AIInvestmentSignal } from '../models/AIInvestmentSignal';
 import { RecommendationTradeOutcome } from '../models/RecommendationTradeOutcome';
 import { RecommendationLoopPolicySnapshot } from '../models/RecommendationLoopPolicySnapshot';
+import { BudgetPolicyVersionSnapshot } from '../models/BudgetPolicyVersionSnapshot';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -62,6 +63,7 @@ const sequelize = new Sequelize({
     AIInvestmentSignal,
     RecommendationTradeOutcome,
     RecommendationLoopPolicySnapshot,
+    BudgetPolicyVersionSnapshot,
   ],
   logging: process.env.NODE_ENV === 'development' ? console.log : false,
   pool: {

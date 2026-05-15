@@ -20,3 +20,4 @@ export * from './DataSourceHealth';
 export * from './AIInvestmentSignal';
 export * from './RecommendationTradeOutcome';
 export * from './RecommendationLoopPolicySnapshot';
+export * from './BudgetPolicyVersionSnapshot';

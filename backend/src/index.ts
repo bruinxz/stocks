@@ -78,6 +78,7 @@ import { User } from './models/User';
 import { AIInvestmentSignal } from './models/AIInvestmentSignal';
 import { RecommendationTradeOutcome } from './models/RecommendationTradeOutcome';
 import { RecommendationLoopPolicySnapshot } from './models/RecommendationLoopPolicySnapshot';
+import { BudgetPolicyVersionSnapshot } from './models/BudgetPolicyVersionSnapshot';
 
 async function ensureRecommendationLoopRuntimeSchema() {
   const additions = [
@@ -137,10 +138,12 @@ async function initializeApp() {
       await AIInvestmentSignal.sync();
       await RecommendationTradeOutcome.sync();
       await RecommendationLoopPolicySnapshot.sync();
+      await BudgetPolicyVersionSnapshot.sync();
       await ensureRecommendationLoopRuntimeSchema();
       console.log('AIInvestmentSignal table checked successfully');
       console.log('RecommendationTradeOutcome table checked successfully');
       console.log('RecommendationLoopPolicySnapshot table checked successfully');
+      console.log('BudgetPolicyVersionSnapshot table checked successfully');
     } catch (schemaError: any) {
       console.warn(
         'Failed to sync recommendation loop tables:',
@@ -219,6 +222,20 @@ async function initializeApp() {
           }
         } catch (aiSignalSyncError) {
           console.warn('Failed to sync AIInvestmentSignal table:', aiSignalSyncError.message);
+        }
+
+        try {
+          console.log('Attempting to sync BudgetPolicyVersionSnapshot table separately...');
+          const BudgetPolicyVersionSnapshotModel = sequelize.models.BudgetPolicyVersionSnapshot;
+          if (BudgetPolicyVersionSnapshotModel) {
+            await BudgetPolicyVersionSnapshotModel.sync();
+            console.log('BudgetPolicyVersionSnapshot table synced successfully');
+          }
+        } catch (budgetPolicyVersionSyncError) {
+          console.warn(
+            'Failed to sync BudgetPolicyVersionSnapshot table:',
+            budgetPolicyVersionSyncError.message
+          );
         }
 
         try {

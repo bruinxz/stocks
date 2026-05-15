@@ -13,6 +13,7 @@ import { benchmarkIndexService } from './BenchmarkIndexService';
 import { paperTradingAutomationService } from './PaperTradingAutomationService';
 import { feishuTaskReportService } from './FeishuTaskReportService';
 import { recommendationLoopPolicySnapshotService } from './RecommendationLoopPolicySnapshotService';
+import { budgetPolicyVersionSnapshotService } from './BudgetPolicyVersionSnapshotService';
 import { normalizeSymbol, extractMarket } from '../utils/stockSymbol';
 import { logger } from '../utils/logger';
 import {
@@ -1196,6 +1197,17 @@ export class RecommendationTradeOutcomeService {
       budgetPolicyVersionGuard,
       rawBudgetPolicyVersion
     );
+    const budgetPolicyVersionSnapshot = await budgetPolicyVersionSnapshotService.recordVersion(
+      budgetPolicyVersion,
+      {
+        username: options.username,
+        source: 'autonomous_optimization_dashboard',
+      }
+    );
+    if (budgetPolicyVersionSnapshot) {
+      (budgetPolicyVersion as any).snapshot_record_id = budgetPolicyVersionSnapshot.id;
+      (budgetPolicyVersion as any).snapshot_recorded_at = budgetPolicyVersionSnapshot.updated_at;
+    }
     (budgetActionPolicy as any).version = budgetPolicyVersion;
     (budgetActionPolicy as any).version_id = budgetPolicyVersion.version_id;
     (budgetActionPolicy as any).version_hash = budgetPolicyVersion.version_hash;
@@ -2389,6 +2401,9 @@ export class RecommendationTradeOutcomeService {
           metadata.environment_strategy_budget_policy_version_id,
         environment_strategy_budget_policy_version_hash:
           metadata.environment_strategy_budget_policy_version_hash,
+        budget_policy_version_snapshot_id:
+          metadata.budget_policy_version_snapshot_id ||
+          paperTrading.budget_policy_version_snapshot_id,
         environment_strategy_budget_policy_version_guard_action:
           metadata.environment_strategy_budget_policy_version_guard_action,
         environment_strategy_budget_policy_version_guard_reason:

@@ -702,6 +702,8 @@ class AutomatedRecommendationLoopService {
         strategyEvolution.budget_policy_version ||
         asPlainObject(policy.budget_policy_version) ||
         asPlainObject(budgetActionPolicy.version);
+      const budgetPolicyVersionSnapshotId =
+        budgetPolicyVersion?.snapshot_record_id || budgetPolicyVersion?.snapshot_id;
       const bestEnvironmentVersion = versionRankings.find(
         (item: any) =>
           item?.key &&
@@ -1007,6 +1009,7 @@ class AutomatedRecommendationLoopService {
           : '暂无可晋级的环境闸门版本',
         budget_action_policy: budgetActionPolicy,
         budget_policy_version: budgetPolicyVersion,
+        budget_policy_version_snapshot_id: budgetPolicyVersionSnapshotId,
         budget_action_feedback_applied: Boolean(budgetActionPolicy.enabled),
         budget_action_feedback_reason:
           budgetActionPolicy.reason || '预算动作收益回收样本不足，暂不自动升降级',
@@ -1527,6 +1530,12 @@ class AutomatedRecommendationLoopService {
         : 0,
       budget_action_policy_enabled: Boolean(environment_policy.budget_action_policy?.enabled),
       budget_action_policy_reason: environment_policy.budget_action_policy?.reason,
+      budget_policy_version_id: environment_policy.budget_policy_version?.version_id,
+      budget_policy_version_snapshot_id:
+        environment_policy.budget_policy_version?.snapshot_record_id ||
+        environment_policy.budget_policy_version_snapshot_id,
+      budget_policy_version_guard_action:
+        environment_policy.budget_policy_version?.underperformance_guard?.action,
     };
     Object.assign(loop_policy, {
       environment_strategy_candidate_tuning: (generated as any)

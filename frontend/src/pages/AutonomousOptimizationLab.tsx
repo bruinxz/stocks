@@ -193,6 +193,8 @@ interface BudgetPolicyVersion {
   schema?: string;
   version_id?: string;
   version_hash?: string;
+  snapshot_record_id?: number;
+  snapshot_recorded_at?: string;
   generated_at?: string;
   lookback_days?: number;
   action_count?: number;
@@ -1009,6 +1011,9 @@ const AutonomousOptimizationLab: React.FC = () => {
                         指纹 {budgetPolicyVersion.version_hash} · 动作{' '}
                         {budgetPolicyVersion.action_count || 0} · 审计反哺{' '}
                         {budgetPolicyVersion.audit_feedback_applied_count || 0}
+                        {budgetPolicyVersion.snapshot_record_id
+                          ? ` · 快照#${budgetPolicyVersion.snapshot_record_id}`
+                          : ''}
                       </em>
                     </div>
                   )}

@@ -182,6 +182,7 @@ export interface PaperTradingAutoTradeItem {
   environment_strategy_budget_policy_multiplier?: number;
   environment_strategy_budget_policy_version_id?: string;
   environment_strategy_budget_policy_version_hash?: string;
+  budget_policy_version_snapshot_id?: number;
   environment_strategy_budget_policy_version_guard_action?: string;
   environment_strategy_budget_policy_version_guard_reason?: string;
   environment_strategy_budget_policy_version_guard_champion?: string;
@@ -1241,6 +1242,9 @@ class PaperTradingAutomationService {
           metadata.environment_strategy_budget_policy_version_hash ||
           budgetPolicyVersion.version_hash ||
           asPlainObject(options.external_environment_policy).budget_action_policy?.version_hash,
+        budget_policy_version_snapshot_id:
+          budgetPolicyVersion.snapshot_record_id ||
+          asPlainObject(options.external_environment_policy).budget_policy_version_snapshot_id,
         environment_strategy_budget_policy_version_guard_action:
           metadata.environment_strategy_budget_policy_version_guard_action ||
           budgetPolicyVersionGuard.action,
@@ -1343,6 +1347,9 @@ class PaperTradingAutomationService {
             metadata.environment_strategy_budget_policy_version_hash ||
             budgetPolicyVersion.version_hash ||
             asPlainObject(options.external_environment_policy).budget_action_policy?.version_hash,
+          budget_policy_version_snapshot_id:
+            budgetPolicyVersion.snapshot_record_id ||
+            asPlainObject(options.external_environment_policy).budget_policy_version_snapshot_id,
           environment_strategy_budget_policy_version_guard_action:
             metadata.environment_strategy_budget_policy_version_guard_action ||
             budgetPolicyVersionGuard.action,
