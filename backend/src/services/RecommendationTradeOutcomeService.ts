@@ -1177,7 +1177,7 @@ export class RecommendationTradeOutcomeService {
       lookback_days: lookbackDays,
     });
     const budgetPolicyVersionGuard = this.buildBudgetPolicyVersionGuard(rawBudgetPolicyVersion);
-    let budgetPolicyVersion = rawBudgetPolicyVersion;
+    let budgetPolicyVersion: any = rawBudgetPolicyVersion;
     if (budgetPolicyVersionGuard.action === 'protective_downgrade') {
       budgetActionPolicy = this.applyBudgetPolicyVersionGuard(
         budgetActionPolicy,
@@ -1192,11 +1192,48 @@ export class RecommendationTradeOutcomeService {
         base_version: rawBudgetPolicyVersion,
       });
     }
+    let budgetPolicyVersionIntelligence: any = null;
+    try {
+      budgetPolicyVersionIntelligence =
+        await budgetPolicyVersionSnapshotService.getVersionIntelligence({
+          current_version: budgetPolicyVersion,
+          limit: 160,
+          min_closed_count: 3,
+        });
+    } catch (error: any) {
+      logger.warn(`读取预算权重持久化版本智能失败: ${error?.message || error}`);
+    }
+    const rollbackPlan = asPlainObject(budgetPolicyVersionIntelligence?.rollback_plan);
+    if (rollbackPlan.apply) {
+      budgetActionPolicy = this.applyBudgetPolicySnapshotRollback(budgetActionPolicy, rollbackPlan);
+      budgetPolicyVersion = this.buildBudgetPolicyVersionSnapshot({
+        policy: budgetActionPolicy,
+        audit: budgetPolicyExecutionAudit,
+        version_groups: budgetPolicyVersionGroups,
+        lookback_days: lookbackDays,
+        guard: {
+          ...rollbackPlan,
+          action: rollbackPlan.action,
+          champion_version_id: rollbackPlan.source_version_id,
+          reason: rollbackPlan.reason,
+        },
+        base_version: budgetPolicyVersion,
+      });
+      budgetPolicyVersionIntelligence =
+        await budgetPolicyVersionSnapshotService.getVersionIntelligence({
+          current_version: budgetPolicyVersion,
+          limit: 160,
+          min_closed_count: 3,
+        });
+    }
     budgetPolicyVersion = this.attachBudgetPolicyVersionGuard(
       budgetPolicyVersion,
-      budgetPolicyVersionGuard,
+      rollbackPlan.apply ? rollbackPlan : budgetPolicyVersionGuard,
       rawBudgetPolicyVersion
     );
+    (budgetPolicyVersion as any).version_intelligence = budgetPolicyVersionIntelligence;
+    (budgetPolicyVersion as any).rollback_plan =
+      budgetPolicyVersionIntelligence?.rollback_plan || rollbackPlan;
     const budgetPolicyVersionSnapshot = await budgetPolicyVersionSnapshotService.recordVersion(
       budgetPolicyVersion,
       {
@@ -1213,6 +1250,7 @@ export class RecommendationTradeOutcomeService {
     (budgetActionPolicy as any).version_hash = budgetPolicyVersion.version_hash;
     (environmentPolicy as any).budget_action_policy = budgetActionPolicy;
     (environmentPolicy as any).budget_policy_version = budgetPolicyVersion;
+    (environmentPolicy as any).budget_policy_version_intelligence = budgetPolicyVersionIntelligence;
     (environmentPolicy as any).budget_policy_execution_audit = budgetPolicyExecutionAudit;
     (environmentPolicy as any).budget_action_feedback_applied = Boolean(budgetActionPolicy.enabled);
     (environmentPolicy as any).budget_action_feedback_reason = budgetActionPolicy.reason;
@@ -1430,6 +1468,9 @@ export class RecommendationTradeOutcomeService {
         : '',
       budgetPolicyVersion.underperformance_guard?.action === 'protective_downgrade'
         ? `预算权重保护：${budgetPolicyVersion.underperformance_guard.reason}`
+        : '',
+      budgetPolicyVersion.rollback_plan?.apply
+        ? `预算版本回滚：${budgetPolicyVersion.rollback_plan.reason}`
         : '',
       budgetPolicyExecutionAudit.enabled
         ? `预算策略审计：${budgetPolicyExecutionAudit.reason}`
@@ -1915,6 +1956,67 @@ export class RecommendationTradeOutcomeService {
     };
   }
 
+  private applyBudgetPolicySnapshotRollback(policy: any, rollbackPlan: any) {
+    const policyObject = asPlainObject(policy);
+    const sourceWeights = Array.isArray(rollbackPlan.source_action_weights)
+      ? rollbackPlan.source_action_weights
+      : [];
+    if (!sourceWeights.length) return policyObject;
+
+    const sourceByKey = new Map<string, any>();
+    for (const item of sourceWeights) {
+      const key = normalizeBudgetActionKey(item?.key || item?.action);
+      if (key && key !== 'no_budget_action' && !sourceByKey.has(key)) {
+        sourceByKey.set(key, item);
+      }
+    }
+    const blendWeight = clamp(toNumber(rollbackPlan.blend_weight, 1), 0.35, 1);
+    const actions = Array.isArray(policyObject.actions)
+      ? policyObject.actions.map((item: any) => {
+          const key = normalizeBudgetActionKey(item?.key || item?.action);
+          const source = sourceByKey.get(key);
+          if (!source) return item;
+
+          const currentMultiplier = toNumber(item.position_multiplier, 1);
+          const sourceMultiplier = toNumber(source.position_multiplier, currentMultiplier);
+          const currentScore = toNumber(item.score_adjustment, 0);
+          const sourceScore = toNumber(source.score_adjustment, currentScore);
+          const inheritedMultiplier = roundNumber(
+            currentMultiplier * (1 - blendWeight) + sourceMultiplier * blendWeight,
+            2
+          );
+          const inheritedScore = roundNumber(
+            currentScore * (1 - blendWeight) + sourceScore * blendWeight,
+            0
+          );
+
+          return {
+            ...item,
+            action: source.action || item.action,
+            allow_entry: source.allow_entry !== false && item.allow_entry !== false,
+            position_multiplier: inheritedMultiplier,
+            score_adjustment: inheritedScore,
+            snapshot_rollback_applied: true,
+            snapshot_rollback_source_version_id: rollbackPlan.source_version_id,
+            snapshot_rollback_source_snapshot_id: rollbackPlan.source_snapshot_id,
+            snapshot_rollback_reason: rollbackPlan.reason,
+            reason: `${item.reason || ''}；持久化版本回滚：继承 ${
+              rollbackPlan.source_version_id
+            } 权重 ${roundNumber(blendWeight * 100, 0)}%`,
+          };
+        })
+      : [];
+
+    return {
+      ...policyObject,
+      actions,
+      snapshot_rollback_applied: true,
+      snapshot_rollback_plan: rollbackPlan,
+      snapshot_rollback_reason: rollbackPlan.reason,
+      reason: `${policyObject.reason || '预算动作策略'}；${rollbackPlan.reason}`,
+    };
+  }
+
   private attachBudgetPolicyVersionGuard(version: any, guard: any, rawVersion: any) {
     const guardObject = asPlainObject(guard);
     const rawVersionObject = asPlainObject(rawVersion);
@@ -1933,6 +2035,9 @@ export class RecommendationTradeOutcomeService {
       comparison_champion_label: guardObject.champion_label,
       comparison_efficiency_gap: guardObject.efficiency_gap,
       comparison_excess_gap: guardObject.excess_gap,
+      rollback_source_version_id: guardObject.source_version_id,
+      rollback_source_snapshot_id: guardObject.source_snapshot_id,
+      rollback_action: guardObject.action,
     };
   }
 

@@ -1010,11 +1010,14 @@ class AutomatedRecommendationLoopService {
         budget_action_policy: budgetActionPolicy,
         budget_policy_version: budgetPolicyVersion,
         budget_policy_version_snapshot_id: budgetPolicyVersionSnapshotId,
+        budget_policy_version_intelligence: budgetPolicyVersion?.version_intelligence,
+        budget_policy_version_rollback_plan: budgetPolicyVersion?.rollback_plan,
         budget_action_feedback_applied: Boolean(budgetActionPolicy.enabled),
         budget_action_feedback_reason:
           budgetActionPolicy.reason || '预算动作收益回收样本不足，暂不自动升降级',
         budget_policy_version_feedback_applied: Boolean(budgetPolicyVersion?.enabled),
         budget_policy_version_feedback_reason:
+          budgetPolicyVersion?.rollback_plan?.reason ||
           budgetPolicyVersion?.underperformance_guard?.reason ||
           budgetPolicyVersion?.reason ||
           '预算权重版本等待闭环验证',
@@ -1029,6 +1032,7 @@ class AutomatedRecommendationLoopService {
           budgetPolicyVersion?.underperformance_guard?.action === 'protective_downgrade'
             ? budgetPolicyVersion.underperformance_guard.reason
             : '',
+          budgetPolicyVersion?.rollback_plan?.apply ? budgetPolicyVersion.rollback_plan.reason : '',
         ]
           .filter(Boolean)
           .join('；'),
@@ -1536,6 +1540,10 @@ class AutomatedRecommendationLoopService {
         environment_policy.budget_policy_version_snapshot_id,
       budget_policy_version_guard_action:
         environment_policy.budget_policy_version?.underperformance_guard?.action,
+      budget_policy_version_rollback_action:
+        environment_policy.budget_policy_version?.rollback_plan?.action,
+      budget_policy_version_rollback_source:
+        environment_policy.budget_policy_version?.rollback_plan?.source_version_id,
     };
     Object.assign(loop_policy, {
       environment_strategy_candidate_tuning: (generated as any)

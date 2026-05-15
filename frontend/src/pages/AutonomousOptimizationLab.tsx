@@ -202,6 +202,16 @@ interface BudgetPolicyVersion {
   audit_feedback_reason?: string;
   current_version_outcome?: EnvironmentRanking | null;
   version_rankings?: EnvironmentRanking[];
+  version_intelligence?: {
+    snapshot_count?: number;
+    current_version?: Record<string, any>;
+    champion_snapshot?: BudgetPolicySnapshot | null;
+    rollback_plan?: BudgetPolicyRollbackPlan;
+    recent_snapshots?: BudgetPolicySnapshot[];
+    equity_curve?: BudgetPolicySnapshot[];
+    reason?: string;
+  };
+  rollback_plan?: BudgetPolicyRollbackPlan;
   underperformance_guard?: {
     enabled?: boolean;
     action?: string;
@@ -220,6 +230,41 @@ interface BudgetPolicyVersion {
   comparison_champion_label?: string;
   comparison_efficiency_gap?: number;
   comparison_excess_gap?: number;
+  reason?: string;
+}
+
+interface BudgetPolicySnapshot {
+  id?: number;
+  version_id?: string;
+  version_hash?: string;
+  generated_at?: string;
+  guard_action?: string;
+  guard_severity?: string;
+  guarded_from_version_id?: string;
+  champion_version_id?: string;
+  current_closed_count?: number;
+  current_avg_excess_return_pct?: number;
+  current_capital_efficiency_score?: number;
+  comparison_efficiency_gap?: number;
+  comparison_excess_gap?: number;
+  score?: number;
+  reason?: string;
+}
+
+interface BudgetPolicyRollbackPlan {
+  enabled?: boolean;
+  apply?: boolean;
+  action?: string;
+  severity?: string;
+  source_version_id?: string;
+  source_snapshot_id?: number;
+  champion_closed_count?: number;
+  champion_avg_excess_return_pct?: number;
+  champion_capital_efficiency_score?: number;
+  current_closed_count?: number;
+  efficiency_gap?: number;
+  excess_gap?: number;
+  blend_weight?: number;
   reason?: string;
 }
 
@@ -594,6 +639,13 @@ const AutonomousOptimizationLab: React.FC = () => {
     data?.strategy_evolution?.budget_policy_version ||
     data?.environment_policy?.budget_policy_version ||
     budgetActionPolicy?.version;
+  const budgetPolicyVersionIntelligence = budgetPolicyVersion?.version_intelligence;
+  const budgetPolicyRollbackPlan =
+    budgetPolicyVersion?.rollback_plan || budgetPolicyVersionIntelligence?.rollback_plan;
+  const budgetPolicySnapshotCurve = useMemo(
+    () => (budgetPolicyVersionIntelligence?.equity_curve || []).slice(-12),
+    [budgetPolicyVersionIntelligence]
+  );
   const budgetPolicyVersionRankings = useMemo(
     () =>
       (
@@ -1028,6 +1080,27 @@ const AutonomousOptimizationLab: React.FC = () => {
                       </div>
                     </div>
                   )}
+                  {budgetPolicyRollbackPlan?.apply && (
+                    <div className="optimization-budget-rollback-strip">
+                      <SafetyCertificateOutlined />
+                      <div>
+                        <span>SNAPSHOT ROLLBACK</span>
+                        <strong>
+                          {budgetPolicyRollbackPlan.action === 'champion_warm_start'
+                            ? '冠军版本温启动'
+                            : '持久化冠军回滚'}
+                        </strong>
+                        <em>{budgetPolicyRollbackPlan.reason}</em>
+                      </div>
+                      <div>
+                        <b>{budgetPolicyRollbackPlan.source_version_id || '--'}</b>
+                        <small>
+                          快照#{budgetPolicyRollbackPlan.source_snapshot_id || '--'} · 继承{' '}
+                          {Math.round(Number(budgetPolicyRollbackPlan.blend_weight || 0) * 100)}%
+                        </small>
+                      </div>
+                    </div>
+                  )}
                   <div className="optimization-budget-policy-head">
                     <span>AUTO UPGRADE POLICY</span>
                     <strong>预算动作自动升降级</strong>
@@ -1105,6 +1178,60 @@ const AutonomousOptimizationLab: React.FC = () => {
                           </div>
                         );
                       })}
+                    </div>
+                  )}
+                  {!!budgetPolicySnapshotCurve.length && (
+                    <div className="optimization-budget-snapshot-lab">
+                      <div className="optimization-budget-snapshot-copy">
+                        <span>PERSISTED MEMORY</span>
+                        <strong>预算版本长期记忆</strong>
+                        <em>
+                          已沉淀 {budgetPolicyVersionIntelligence?.snapshot_count || 0}{' '}
+                          个权重快照；冠军{' '}
+                          {budgetPolicyVersionIntelligence?.champion_snapshot?.version_id || '--'}
+                        </em>
+                      </div>
+                      <div className="optimization-budget-snapshot-chart">
+                        <ResponsiveContainer width="100%" height={190}>
+                          <AreaChart
+                            data={budgetPolicySnapshotCurve}
+                            margin={{ top: 12, right: 16, left: 0, bottom: 0 }}
+                          >
+                            <CartesianGrid strokeDasharray="3 3" stroke="rgba(226,236,247,.14)" />
+                            <XAxis
+                              dataKey="id"
+                              stroke="rgba(226,236,247,.52)"
+                              tickFormatter={(value: any) => `#${value}`}
+                            />
+                            <YAxis stroke="rgba(226,236,247,.52)" />
+                            <RechartsTooltip
+                              formatter={(value: any, name: string) => [
+                                name.includes('超额')
+                                  ? formatPercent(Number(value))
+                                  : Number(value).toFixed(2),
+                                name,
+                              ]}
+                              labelFormatter={(value: any) => `快照 #${value}`}
+                            />
+                            <Area
+                              type="monotone"
+                              dataKey="current_avg_excess_return_pct"
+                              name="平均超额"
+                              stroke="#8dd6e4"
+                              fill="rgba(141,214,228,.18)"
+                              strokeWidth={2}
+                            />
+                            <Area
+                              type="monotone"
+                              dataKey="current_capital_efficiency_score"
+                              name="效率分"
+                              stroke="#d6a64f"
+                              fill="rgba(214,166,79,.13)"
+                              strokeWidth={2}
+                            />
+                          </AreaChart>
+                        </ResponsiveContainer>
+                      </div>
                     </div>
                   )}
                 </div>

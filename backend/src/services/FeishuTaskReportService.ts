@@ -687,6 +687,12 @@ class FeishuTaskReportService {
             140
           )}`
         : '',
+      budgetPolicyVersion?.rollback_plan?.apply
+        ? `- **预算版本回滚**：${this.safeText(
+            budgetPolicyVersion.rollback_plan.reason || '已继承持久化冠军版本权重',
+            140
+          )}`
+        : '',
       budgetPolicyExecutionAudit?.enabled
         ? `- **预算策略执行审计**：${this.safeText(
             budgetPolicyExecutionAudit.reason || '已开始审计预算动作策略的真实成交收益',
@@ -793,6 +799,10 @@ class FeishuTaskReportService {
           ? budgetPolicyVersion?.underperformance_guard?.reason
           : '',
       预算权重冠军版本: budgetPolicyVersion?.underperformance_guard?.champion_version_id,
+      预算版本回滚: budgetPolicyVersion?.rollback_plan?.apply
+        ? budgetPolicyVersion?.rollback_plan?.reason
+        : '',
+      预算版本回滚来源: budgetPolicyVersion?.rollback_plan?.source_version_id,
       预算策略执行审计: budgetPolicyExecutionAudit?.enabled ? '是' : '否',
       预算策略审计原因: budgetPolicyExecutionAudit?.reason,
       共识排序: consensusRanked ? '是' : '否',
