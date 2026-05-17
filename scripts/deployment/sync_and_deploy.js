@@ -3,7 +3,7 @@ const SftpClient = require('ssh2-sftp-client');
 const fs = require('fs');
 const path = require('path');
 const { runPostDeploySmoke } = require('./post_deploy_smoke');
-const { getDeployConfig } = require('./deploy_config');
+const { getDeployConfig, shellQuote } = require('./deploy_config');
 const { runLocalRegressionGate } = require('./local_regression_gate');
 const {
   buildDockerPsqlMigrationCommand,
