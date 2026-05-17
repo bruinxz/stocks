@@ -95,7 +95,7 @@ async function main() {
     `;
     await execCommand(
       conn, 
-      `PGPASSWORD=${shellQuote(deployConfig.postgres.password)} docker exec -i ${
+      `docker exec -e PGPASSWORD=${shellQuote(deployConfig.postgres.password)} -i ${
         deployConfig.postgres.docker_container
       } psql -U ${shellQuote(deployConfig.postgres.user)} -d ${shellQuote(
         deployConfig.postgres.database

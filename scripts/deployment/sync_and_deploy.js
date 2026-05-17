@@ -45,6 +45,22 @@ async function execCommand(conn, command, description) {
   });
 }
 
+async function ensureRemoteDir(sftp, remoteDir) {
+  const normalized = remoteDir.replace(/\\/g, '/');
+  const parts = normalized.split('/').filter(Boolean);
+  let current = normalized.startsWith('/') ? '/' : '';
+  for (const part of parts) {
+    current = current === '/' ? `/${part}` : `${current}/${part}`;
+    try {
+      await sftp.mkdir(current);
+    } catch (error) {
+      if (!String(error?.message || '').includes('Failure') && !String(error?.message || '').includes('exists')) {
+        // ssh2-sftp-client often reports existing directories as generic Failure; ignore and continue.
+      }
+    }
+  }
+}
+
 async function syncFiles(sftp, localDir, remoteDir, ignores) {
   console.log(`\n📂 同步 ${localDir} -> ${remoteDir}...`);
   
@@ -79,10 +95,12 @@ async function syncFiles(sftp, localDir, remoteDir, ignores) {
   for (let i = 0; i < filesToSync.length; i++) {
     const { local, remote } = filesToSync[i];
     try {
+      await ensureRemoteDir(sftp, path.dirname(remote));
       await sftp.put(local, remote, { useFastPut: true });
       process.stdout.write(`\r${i + 1}/${filesToSync.length}...`);
     } catch (err) {
       console.error(`\n❌ 同步失败 ${local}:`, err.message);
+      throw err;
     }
   }
   console.log(`\n✅ 同步完成！`);
@@ -161,7 +179,7 @@ async function main() {
     `;
     await execCommand(
       ssh, 
-      `PGPASSWORD=${shellQuote(deployConfig.postgres.password)} docker exec -i ${
+      `docker exec -e PGPASSWORD=${shellQuote(deployConfig.postgres.password)} -i ${
         deployConfig.postgres.docker_container
       } psql -U ${shellQuote(deployConfig.postgres.user)} -d ${shellQuote(
         deployConfig.postgres.database
