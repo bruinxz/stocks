@@ -1,10 +1,13 @@
+const { requireLegacyDeploymentUnlock } = require('./legacy_guard');
+requireLegacyDeploymentUnlock(__filename);
+
 const { Client } = require('ssh2');
+const { getDeployConfig, shellQuote } = require('./deploy_config');
+
+const deployConfig = getDeployConfig();
 
 const config = {
-  host: '103.242.3.87',
-  port: 14126,
-  username: 'root',
-  password: '7tsA0wS62A1e'
+  ...deployConfig.ssh
 };
 
 async function main() {
@@ -35,10 +38,10 @@ ALTER TABLE users DROP COLUMN IF EXISTS wxpusher_uid;
 ENDOF
 
 # 执行 SQL
-PGPASSWORD=x8Vq\$9pL2#mK7@nW1cF5^jY3!bH4*gD psql -U postgres -d stock_backtest < /tmp/migrate.sql
+PGPASSWORD=${shellQuote(deployConfig.postgres.password)} psql -U ${deployConfig.postgres.user} -d ${deployConfig.postgres.database} < /tmp/migrate.sql
 
 # 验证
-PGPASSWORD=x8Vq\$9pL2#mK7@nW1cF5^jY3!bH4*gD psql -U postgres -d stock_backtest -c '\\d users'
+PGPASSWORD=${shellQuote(deployConfig.postgres.password)} psql -U ${deployConfig.postgres.user} -d ${deployConfig.postgres.database} -c '\\d users'
 
 # 清理
 rm /tmp/migrate.sql

@@ -5,7 +5,11 @@ import { TaskExecutionLog } from '../models/TaskExecutionLog';
 import { RecommendationLoopPolicySnapshot } from '../models/RecommendationLoopPolicySnapshot';
 import { dataUpdateQueue } from '../jobs/dataUpdateQueue';
 import { aiPollingQueue } from '../jobs/aiPollingQueue';
+import { quantBacktestQueue } from '../jobs/quantBacktestQueue';
 import { logger } from '../utils/logger';
+import { riskThresholdStabilityService } from './RiskThresholdStabilityService';
+import { taskParameterAuditService, TaskParameterAuditOperator } from './TaskParameterAuditService';
+import { fieldGateAdjustmentAttributionService } from './FieldGateAdjustmentAttributionService';
 
 type HealthLevel = 'healthy' | 'warning' | 'critical';
 
@@ -33,6 +37,25 @@ type QueueHealthSummary = {
   }>;
   historical_failed_retained: number;
   error?: string;
+};
+
+type RiskLimitSuggestion = {
+  action: string;
+  reason?: string;
+  limits?: Record<string, number>;
+  stability?: Record<string, any>;
+  attribution?: Record<string, any>;
+  threshold_attribution?: Record<string, any>;
+  field_stability?: Record<string, any>;
+  field_gate_advice?: Record<string, any>;
+  field_gate_adjustment_attribution?: Record<string, any>;
+};
+
+type ApplyRiskLimitSuggestionOptions = {
+  dry_run?: boolean;
+  task_ids?: number[];
+  source_loop_run_id?: string;
+  operator?: TaskParameterAuditOperator;
 };
 
 interface HealthTaskSummary {
@@ -79,10 +102,33 @@ const CHAIN_CONFIGS: HealthChainConfig[] = [
     key: 'auto_recommendation_loop',
     title: '全市场荐股闭环',
     subtitle: '自动扫描 A 股机会、归档信号、触发 Agent 复核与模拟盘采样。',
-    task_names: ['全市场荐股闭环'],
+    task_names: ['量化策略全市场扫描', '全市场荐股闭环'],
     stale_hours: 72,
     critical_if_inactive: true,
     parameter_checks: [
+      {
+        task_name: '量化策略全市场扫描',
+        key: 'run_paper_trading',
+        camel_key: 'runPaperTrading',
+        expected: true,
+        label: '量化候选模拟盘跟单',
+        level: 'critical',
+      },
+      {
+        task_name: '量化策略全市场扫描',
+        key: 'submit_agent_analysis',
+        camel_key: 'submitAgentAnalysis',
+        expected: true,
+        label: '量化候选进入Agent复核',
+      },
+      {
+        task_name: '量化策略全市场扫描',
+        key: 'dry_run',
+        camel_key: 'dryRun',
+        expected: false,
+        label: '量化模拟盘真实记录',
+        level: 'warning',
+      },
       {
         task_name: '全市场荐股闭环',
         key: 'run_paper_trading',
@@ -178,6 +224,37 @@ const CHAIN_CONFIGS: HealthChainConfig[] = [
   },
 ];
 
+const RISK_LIMIT_TARGET_TASK_TYPES = ['AUTO_RECOMMENDATION_LOOP', 'QUANT_DAILY_PIPELINE'];
+
+const RISK_LIMIT_PARAMETER_KEYS = [
+  'min_cash_reserve_pct',
+  'max_total_exposure_pct',
+  'max_industry_exposure_pct',
+  'max_portfolio_drawdown_pct',
+  'max_position_correlation',
+  'max_portfolio_var_pct',
+  'max_single_stock_volatility_pct',
+];
+
+const RISK_LIMIT_PARAMETER_LABELS: Record<string, string> = {
+  min_cash_reserve_pct: '现金底线',
+  max_total_exposure_pct: '总仓位上限',
+  max_industry_exposure_pct: '行业集中上限',
+  max_portfolio_drawdown_pct: '组合回撤上限',
+  max_position_correlation: '持仓相关性上限',
+  max_portfolio_var_pct: '组合VaR上限',
+  max_single_stock_volatility_pct: '单票波动上限',
+};
+
+const RISK_LIMIT_ATTRIBUTION_KEY_MAP: Record<string, string[]> = {
+  max_portfolio_drawdown_pct: ['max_portfolio_drawdown_pct', 'drawdown_abs_pct', 'drawdown_pct'],
+  max_position_correlation: ['max_position_correlation', 'max_pair_correlation'],
+  max_portfolio_var_pct: ['max_portfolio_var_pct', 'portfolio_var_proxy_pct'],
+  max_single_stock_volatility_pct: ['max_single_stock_volatility_pct', 'max_volatility_20d_pct'],
+};
+
+const FIELD_STABILITY_MIN_CONSECUTIVE = 2;
+
 function toPlain<T = any>(record: any): T {
   if (!record) return record;
   return typeof record.toJSON === 'function' ? record.toJSON() : record;
@@ -207,6 +284,19 @@ function normalizeComparable(value: any, expected: any) {
     return Number.isFinite(parsed) ? parsed : undefined;
   }
   return value === undefined || value === null ? undefined : String(value);
+}
+
+function roundNumber(value: any, digits = 2): number {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return 0;
+  const base = 10 ** digits;
+  return Math.round(num * base) / base;
+}
+
+function averageNumbers(values: number[]): number {
+  const valid = values.filter(Number.isFinite);
+  if (!valid.length) return 0;
+  return valid.reduce((sum, value) => sum + value, 0) / valid.length;
 }
 
 function worstLevel(levels: HealthLevel[]): HealthLevel {
@@ -247,6 +337,22 @@ function summarizeParameters(task: any): Record<string, any> {
     'max_daily_new_positions',
     'max_daily_new_exposure_pct',
     'max_total_exposure_pct',
+    'max_industry_exposure_pct',
+    'min_cash_reserve_pct',
+    'max_portfolio_drawdown_pct',
+    'max_position_correlation',
+    'max_portfolio_var_pct',
+    'max_single_stock_volatility_pct',
+    'risk_threshold_stability_min_consecutive_same_action',
+    'risk_threshold_stability_min_actionable_samples',
+    'risk_threshold_stability_min_protected_runs',
+    'risk_threshold_stability_tighten_min_delta_pct',
+    'risk_threshold_stability_relax_max_delta_pct',
+    'risk_threshold_field_stability_min_consecutive_same_action',
+    'risk_threshold_field_min_confidence',
+    'risk_threshold_field_min_sample_count',
+    'risk_threshold_field_min_triggered_count',
+    'risk_threshold_field_gate_update_source',
     'min_score',
     'paper_trade_limit',
   ];
@@ -258,12 +364,20 @@ function summarizeParameters(task: any): Record<string, any> {
 
 export class TaskAutomationHealthService {
   async getHealth() {
-    const [tasks, recentLogs, latestSnapshot, dataQueueCounts, aiQueueCounts] = await Promise.all([
+    const [
+      tasks,
+      recentLogs,
+      latestSnapshots,
+      dataQueueCounts,
+      aiQueueCounts,
+      quantBacktestQueueCounts,
+    ] = await Promise.all([
       ScheduledTask.findAll({ order: [['id', 'ASC']] }),
       TaskExecutionLog.findAll({ order: [['started_at', 'DESC']], limit: 300 }),
-      RecommendationLoopPolicySnapshot.findOne({ order: [['generated_at', 'DESC']] }),
+      RecommendationLoopPolicySnapshot.findAll({ order: [['generated_at', 'DESC']], limit: 8 }),
       this.getQueueHealth('data-update', dataUpdateQueue),
       this.getQueueHealth('ai_polling', aiPollingQueue),
+      this.getQueueHealth('quant_backtest', quantBacktestQueue),
     ]);
 
     const plainTasks = tasks.map(task => toPlain<any>(task));
@@ -278,8 +392,22 @@ export class TaskAutomationHealthService {
     const chains = CHAIN_CONFIGS.map(config =>
       this.buildChainHealth(config, plainTasks, latestLogByTaskId)
     );
+    const plainSnapshots = latestSnapshots.map(snapshot => toPlain<any>(snapshot));
+    const latestSnapshot = plainSnapshots[0] || null;
     const latestLoop = this.buildLatestLoopSummary(toPlain<any>(latestSnapshot));
-    const queuePressureIssues = this.buildQueuePressureIssues(dataQueueCounts, aiQueueCounts);
+    const stabilityConfig = this.resolveRiskThresholdStabilityConfig(plainTasks);
+    const stability = this.buildRiskLimitSuggestionStability(plainSnapshots, stabilityConfig);
+    const riskLimitSuggestion = this.buildRiskLimitTaskSuggestion(
+      plainTasks,
+      latestLoop,
+      stability,
+      plainSnapshots
+    );
+    const queuePressureIssues = this.buildQueuePressureIssues(
+      dataQueueCounts,
+      aiQueueCounts,
+      quantBacktestQueueCounts
+    );
     const allIssues = [...chains.flatMap(item => item.issues), ...queuePressureIssues];
     const status = worstLevel([
       ...chains.map(item => item.status as HealthLevel),
@@ -298,7 +426,9 @@ export class TaskAutomationHealthService {
           Number(dataQueueCounts.waiting || 0) +
           Number(dataQueueCounts.delayed || 0) +
           Number(aiQueueCounts.waiting || 0) +
-          Number(aiQueueCounts.delayed || 0),
+          Number(aiQueueCounts.delayed || 0) +
+          Number(quantBacktestQueueCounts.waiting || 0) +
+          Number(quantBacktestQueueCounts.delayed || 0),
         latest_loop_run_at: latestLoop?.generated_at || null,
         latest_loop_run_id: latestLoop?.loop_run_id || null,
         latest_loop_trade_action:
@@ -311,11 +441,121 @@ export class TaskAutomationHealthService {
       queues: {
         data_update: dataQueueCounts,
         ai_polling: aiQueueCounts,
+        quant_backtest: quantBacktestQueueCounts,
       },
       chains,
       latest_loop: latestLoop,
+      risk_limit_suggestion: riskLimitSuggestion,
       issues: allIssues,
       next_actions: this.buildNextActions(chains, queuePressureIssues, latestLoop),
+    };
+  }
+
+  async applyRiskLimitSuggestion(options: ApplyRiskLimitSuggestionOptions = {}) {
+    const dryRun = options.dry_run !== false;
+    const tasks = await ScheduledTask.findAll({ order: [['id', 'ASC']] });
+    const latestSnapshots = await RecommendationLoopPolicySnapshot.findAll({
+      order: [['generated_at', 'DESC']],
+      limit: 8,
+    });
+    const latestSnapshot = latestSnapshots[0] || null;
+    const plainTasks = tasks.map(task => toPlain<any>(task));
+    const latestLoop = this.buildLatestLoopSummary(toPlain<any>(latestSnapshot));
+    const stabilityConfig = this.resolveRiskThresholdStabilityConfig(plainTasks);
+    const fieldGateConfig = this.resolveRiskThresholdFieldGateConfig(plainTasks);
+    const plainSnapshots = latestSnapshots.map(snapshot => toPlain<any>(snapshot));
+    const stability = this.buildRiskLimitSuggestionStability(plainSnapshots, stabilityConfig);
+    const suggestion = this.buildRiskLimitTaskSuggestion(
+      plainTasks,
+      latestLoop,
+      stability,
+      plainSnapshots
+    );
+    const sourceLoopRunId = suggestion?.source_loop_run_id || latestLoop?.loop_run_id;
+
+    if (!suggestion?.limits || !Object.keys(suggestion.limits).length) {
+      return {
+        dry_run: dryRun,
+        applied: false,
+        message: suggestion?.reason || '暂无可应用的风险阈值建议。',
+        source_loop_run_id: sourceLoopRunId || null,
+        action: suggestion?.action || 'observe',
+        stability: suggestion?.stability,
+        changes: [],
+      };
+    }
+
+    if (
+      options.source_loop_run_id &&
+      sourceLoopRunId &&
+      String(options.source_loop_run_id) !== String(sourceLoopRunId)
+    ) {
+      throw new Error('风险阈值建议已更新，请刷新页面后重新预览。');
+    }
+
+    const selectedTaskIds = new Set(
+      (options.task_ids || []).map(id => Number(id)).filter(id => Number.isInteger(id) && id > 0)
+    );
+    const targetTasks = tasks.filter(task => {
+      if (!RISK_LIMIT_TARGET_TASK_TYPES.includes(task.type)) return false;
+      if (selectedTaskIds.size > 0 && !selectedTaskIds.has(Number(task.id))) return false;
+      return true;
+    });
+
+    const changes = targetTasks
+      .map(task =>
+        this.buildRiskLimitTaskChange(
+          task,
+          suggestion.limits || {},
+          (suggestion as any).attribution || (suggestion as any).threshold_attribution,
+          (suggestion as any).field_stability,
+          fieldGateConfig
+        )
+      )
+      .filter(change => change.changed_keys.length > 0);
+
+    if (!dryRun) {
+      for (const change of changes) {
+        const task = targetTasks.find(item => Number(item.id) === Number(change.id));
+        if (!task) continue;
+        const beforeParameters = { ...(task.parameters || {}) };
+        await task.update({ parameters: change.suggested_parameters });
+        await taskParameterAuditService.record({
+          task,
+          event_type: 'risk_limit_suggestion_applied',
+          before_parameters: beforeParameters,
+          after_parameters: change.suggested_parameters,
+          changed_keys: change.changed_keys,
+          source_loop_run_id: sourceLoopRunId || undefined,
+          operator: options.operator,
+          metadata: {
+            source: 'risk_limit_suggestion_apply',
+            action: suggestion.action,
+            reason: suggestion.reason,
+            stability: suggestion.stability,
+            generated_at: suggestion.generated_at || null,
+          },
+        });
+      }
+    }
+
+    return {
+      dry_run: dryRun,
+      applied: !dryRun,
+      message:
+        changes.length === 0
+          ? '当前任务参数已经与风险阈值建议一致，无需更新。'
+          : dryRun
+          ? `已生成 ${changes.length} 个任务的风险阈值变更预览，确认后才会写入。`
+          : `已应用 ${changes.length} 个任务的风险阈值建议，并重新加载启用中的定时任务。`,
+      action: suggestion.action,
+      reason: suggestion.reason,
+      limits: suggestion.limits,
+      stability: suggestion.stability,
+      source_loop_run_id: sourceLoopRunId || null,
+      generated_at: suggestion.generated_at || null,
+      changes,
+      apply_mode: dryRun ? 'preview' : 'manual_confirmed',
     };
   }
 
@@ -503,6 +743,9 @@ export class TaskAutomationHealthService {
     const runMetrics = snapshot.run_metrics || {};
     const paper = runMetrics.paper_trading || {};
     const consensus = runMetrics.consensus || {};
+    const riskProfile = runMetrics.risk_profile || paper?.risk_profile || null;
+    const riskProfileGate = runMetrics.risk_profile_gate || paper?.risk_profile_gate || null;
+    const thresholdVersion = riskProfileGate?.threshold_version || null;
     const skipSummary = paper?.skip_reason_summary || null;
     return {
       id: snapshot.id,
@@ -525,6 +768,24 @@ export class TaskAutomationHealthService {
             skip_reason_summary: skipSummary,
           }
         : null,
+      risk_profile: riskProfile
+        ? {
+            status: riskProfile.status,
+            risk_metrics: riskProfile.risk_metrics,
+            warnings: Array.isArray(riskProfile.warnings) ? riskProfile.warnings.slice(0, 4) : [],
+          }
+        : null,
+      risk_profile_gate: riskProfileGate
+        ? {
+            action: riskProfileGate.action,
+            applied: Boolean(riskProfileGate.applied),
+            reason: riskProfileGate.reason,
+            effective_trade_limit: riskProfileGate.effective_trade_limit,
+            effective_default_position_pct: riskProfileGate.effective_default_position_pct,
+            effective_max_position_pct: riskProfileGate.effective_max_position_pct,
+            threshold_version: thresholdVersion,
+          }
+        : null,
       consensus: {
         ranked: Boolean(consensus.ranked),
         overlap_count: consensus.overlap_count,
@@ -533,6 +794,479 @@ export class TaskAutomationHealthService {
       outcome: runMetrics.trade_outcomes?.summary || null,
       quality: runMetrics.quality_report?.overview || null,
     };
+  }
+
+  private buildRiskLimitTaskSuggestion(
+    tasks: any[],
+    latestLoop: any,
+    stability?: any,
+    snapshots: any[] = []
+  ) {
+    const suggestion: RiskLimitSuggestion | null =
+      latestLoop?.risk_profile_gate?.threshold_version || null;
+    const fieldGateConfig = this.resolveRiskThresholdFieldGateConfig(tasks);
+    const fieldGateAdvice = this.buildRiskThresholdFieldGateAdvice(snapshots, fieldGateConfig);
+    const fieldGateAdjustmentAttribution =
+      this.buildFieldGateAdjustmentAttributionFromSnapshots(tasks, snapshots);
+    if (!suggestion?.limits || !Object.keys(suggestion.limits).length) {
+      return {
+        action: 'observe',
+        reason: '暂无风险阈值版本建议，继续积累 risk gate 后验样本。',
+        stability: stability || this.buildRiskLimitSuggestionStability([]),
+        field_gate_advice: fieldGateAdvice,
+        field_gate_adjustment_attribution: fieldGateAdjustmentAttribution,
+        targets: [],
+      };
+    }
+
+    const attribution = suggestion.attribution || suggestion.threshold_attribution;
+    const fieldStability = this.buildRiskLimitFieldStability(
+      snapshots,
+      attribution,
+      fieldGateConfig
+    );
+    const targetTasks = tasks
+      .filter(task => RISK_LIMIT_TARGET_TASK_TYPES.includes(task.type))
+      .map(task =>
+        this.buildRiskLimitTaskChange(
+          task,
+          suggestion.limits || {},
+          attribution,
+          fieldStability,
+          fieldGateConfig
+        )
+      );
+
+    return {
+      action: suggestion.action,
+      reason: suggestion.reason,
+      limits: suggestion.limits,
+      stability: stability || this.buildRiskLimitSuggestionStability([]),
+      attribution,
+      field_stability: fieldStability,
+      field_gate_advice: fieldGateAdvice,
+      field_gate_adjustment_attribution: fieldGateAdjustmentAttribution,
+      source_loop_run_id: latestLoop?.loop_run_id,
+      generated_at: latestLoop?.generated_at,
+      targets: targetTasks,
+      apply_mode: 'suggest_only',
+    };
+  }
+
+  private buildRiskLimitSuggestionStability(snapshots: any[], config: any = {}) {
+    return riskThresholdStabilityService.buildFromSnapshots(snapshots, {}, config);
+  }
+
+  private buildFieldGateAdjustmentAttributionFromSnapshots(tasks: any[] = [], snapshots: any[] = []) {
+    const sourceTask =
+      tasks.find(task => task.type === 'AUTO_RECOMMENDATION_LOOP') ||
+      tasks.find(task => task.type === 'QUANT_DAILY_PIPELINE') ||
+      null;
+    const params =
+      sourceTask?.parameters && typeof sourceTask.parameters === 'object'
+        ? sourceTask.parameters
+        : {};
+    return fieldGateAdjustmentAttributionService.build(snapshots, {
+      source: params.risk_threshold_field_gate_update_source,
+      changed_at: params.risk_threshold_stability_updated_at || sourceTask?.updated_at,
+      task_name: sourceTask?.name,
+    });
+  }
+
+  private buildRiskThresholdFieldGateAdvice(snapshots: any[] = [], config: any = {}) {
+    const items = RISK_LIMIT_PARAMETER_KEYS.map(key => {
+      const history = (snapshots || [])
+        .map(snapshot => this.extractFieldAttributionItem(snapshot, key))
+        .filter(Boolean) as any[];
+      const actionable = history.filter(item =>
+        ['tighten', 'relax'].includes(String(item.action || ''))
+      );
+      const confidences = actionable
+        .map(item => Number(item.confidence))
+        .filter(Number.isFinite);
+      const sampleCounts = actionable
+        .map(item => Number(item.sample_count))
+        .filter(Number.isFinite);
+      const triggeredCounts = actionable
+        .map(item => Number(item.triggered_count))
+        .filter(Number.isFinite);
+      const latest = actionable[0] || history[0] || null;
+      const avgConfidence = averageNumbers(confidences);
+      const avgSampleCount = averageNumbers(sampleCounts);
+      const avgTriggeredCount = averageNumbers(triggeredCounts);
+      const currentConfidence = this.resolvePositiveNumber(config.min_confidence, 0.45);
+      const currentSample = this.resolvePositiveInt(config.min_sample_count, 3);
+      const currentTriggered = this.resolvePositiveInt(config.min_triggered_count, 1);
+      const sampleCount = history.length;
+      const actionableCount = actionable.length;
+
+      let action = 'keep';
+      let reason = '字段级样本有限，建议保持当前门槛。';
+      const suggested: Record<string, number> = {};
+
+      if (sampleCount < 5 || actionableCount < 2) {
+        action = 'observe';
+        reason = `字段级历史 ${sampleCount} 条、可执行信号 ${actionableCount} 条，暂不建议调整门槛。`;
+      } else if (
+        avgConfidence >= currentConfidence + 0.12 &&
+        avgSampleCount >= currentSample + 2 &&
+        avgTriggeredCount >= currentTriggered + 1
+      ) {
+        action = 'tighten';
+        suggested.risk_threshold_field_min_confidence = roundNumber(
+          Math.min(0.75, currentConfidence + 0.05),
+          2
+        );
+        suggested.risk_threshold_field_min_sample_count = Math.min(12, currentSample + 1);
+        reason = `历史字段信号质量较高（平均置信 ${roundNumber(
+          avgConfidence,
+          2
+        )}、样本 ${roundNumber(avgSampleCount, 1)}），可小幅提高字段级写入门槛，减少误调参。`;
+      } else if (
+        avgConfidence >= Math.max(0.35, currentConfidence - 0.08) &&
+        avgSampleCount >= Math.max(2, currentSample - 1) &&
+        avgTriggeredCount >= currentTriggered
+      ) {
+        action = 'relax';
+        suggested.risk_threshold_field_min_confidence = roundNumber(
+          Math.max(0.35, currentConfidence - 0.03),
+          2
+        );
+        reason = `历史字段信号接近门槛但经常被拦截（平均置信 ${roundNumber(
+          avgConfidence,
+          2
+        )}、样本 ${roundNumber(avgSampleCount, 1)}），可观察性小幅放松。`;
+      } else {
+        reason = `字段信号质量一般（平均置信 ${roundNumber(
+          avgConfidence,
+          2
+        )}、样本 ${roundNumber(avgSampleCount, 1)}），建议保持当前字段级门槛。`;
+      }
+
+      return {
+        key,
+        label: RISK_LIMIT_PARAMETER_LABELS[key] || key,
+        action,
+        reason,
+        sample_count: sampleCount,
+        actionable_count: actionableCount,
+        avg_confidence: roundNumber(avgConfidence, 4),
+        avg_sample_count: roundNumber(avgSampleCount, 2),
+        avg_triggered_count: roundNumber(avgTriggeredCount, 2),
+        latest_action: latest?.action || 'observe',
+        suggested_parameters: suggested,
+      };
+    });
+    const actionableItems = items.filter(item => ['tighten', 'relax'].includes(item.action));
+    return {
+      generated_at: new Date().toISOString(),
+      current_parameters: {
+        risk_threshold_field_min_confidence: this.resolvePositiveNumber(
+          config.min_confidence,
+          0.45
+        ),
+        risk_threshold_field_min_sample_count: this.resolvePositiveInt(config.min_sample_count, 3),
+        risk_threshold_field_min_triggered_count: this.resolvePositiveInt(
+          config.min_triggered_count,
+          1
+        ),
+        risk_threshold_field_stability_min_consecutive_same_action: this.resolvePositiveInt(
+          config.min_consecutive_same_action,
+          FIELD_STABILITY_MIN_CONSECUTIVE
+        ),
+      },
+      conclusion: actionableItems.length
+        ? `字段级门槛有 ${actionableItems.length} 项可继续观察调整，建议先人工复核，不自动写入。`
+        : '字段级门槛暂无明确收益后验调整信号，建议保持当前保守设置。',
+      items,
+    };
+  }
+
+  private resolveRiskThresholdStabilityConfig(tasks: any[]) {
+    const sourceTask =
+      tasks.find(task => task.type === 'AUTO_RECOMMENDATION_LOOP') ||
+      tasks.find(task => task.type === 'QUANT_DAILY_PIPELINE') ||
+      null;
+    return riskThresholdStabilityService.buildConfigFromParameters(sourceTask?.parameters);
+  }
+
+  private resolveRiskThresholdFieldGateConfig(tasks: any[]) {
+    const sourceTask =
+      tasks.find(task => task.type === 'AUTO_RECOMMENDATION_LOOP') ||
+      tasks.find(task => task.type === 'QUANT_DAILY_PIPELINE') ||
+      null;
+    const params =
+      sourceTask?.parameters && typeof sourceTask.parameters === 'object'
+        ? sourceTask.parameters
+        : {};
+    const minConsecutive = Number(
+      params.risk_threshold_field_stability_min_consecutive_same_action
+    );
+    return {
+      min_consecutive_same_action:
+        Number.isFinite(minConsecutive) && minConsecutive > 0
+          ? Math.floor(minConsecutive)
+          : FIELD_STABILITY_MIN_CONSECUTIVE,
+      min_confidence: this.resolvePositiveNumber(
+        params.risk_threshold_field_min_confidence,
+        0.45
+      ),
+      min_sample_count: this.resolvePositiveInt(params.risk_threshold_field_min_sample_count, 3),
+      min_triggered_count: this.resolvePositiveInt(
+        params.risk_threshold_field_min_triggered_count,
+        1
+      ),
+    };
+  }
+
+  private buildRiskLimitFieldStability(
+    snapshots: any[] = [],
+    latestAttribution: any = {},
+    config: {
+      min_consecutive_same_action?: number;
+      min_confidence?: number;
+      min_sample_count?: number;
+      min_triggered_count?: number;
+    } = {}
+  ) {
+    const latestItems = Array.isArray(latestAttribution?.items) ? latestAttribution.items : [];
+    const keys = RISK_LIMIT_PARAMETER_KEYS;
+    const result: Record<string, any> = {};
+    const minConsecutiveSameAction =
+      Number.isFinite(Number(config.min_consecutive_same_action)) &&
+      Number(config.min_consecutive_same_action) > 0
+        ? Math.floor(Number(config.min_consecutive_same_action))
+        : FIELD_STABILITY_MIN_CONSECUTIVE;
+
+    for (const key of keys) {
+      const history = (snapshots || [])
+        .map(snapshot => this.extractFieldAttributionItem(snapshot, key))
+        .filter(Boolean) as any[];
+      const latestItem = this.findAttributionItemByKey(key, latestItems) || history[0];
+      const latestAction = String(latestItem?.action || history[0]?.action || 'observe');
+      let consecutiveSameAction = 0;
+      for (const item of history) {
+        if (String(item.action || 'observe') === latestAction) consecutiveSameAction += 1;
+        else break;
+      }
+      const canApply =
+        ['tighten', 'relax'].includes(latestAction) &&
+        consecutiveSameAction >= minConsecutiveSameAction;
+      result[key] = {
+        action: latestAction,
+        can_apply: canApply,
+        consecutive_same_action: consecutiveSameAction,
+        min_consecutive_same_action: minConsecutiveSameAction,
+        min_confidence: this.resolvePositiveNumber(config.min_confidence, 0.45),
+        min_sample_count: this.resolvePositiveInt(config.min_sample_count, 3),
+        min_triggered_count: this.resolvePositiveInt(config.min_triggered_count, 1),
+        label: canApply ? '字段稳定' : '字段观察',
+        reason: canApply
+          ? `该字段最近 ${consecutiveSameAction} 次分项归因均为${
+              latestAction === 'tighten' ? '收紧' : '放松'
+            }，允许进入应用候选。`
+          : `该字段最近同向归因 ${consecutiveSameAction}/${minConsecutiveSameAction} 次，暂不自动应用。`,
+        history: history.slice(0, 5).map(item => ({
+          action: item.action,
+          generated_at: item.generated_at,
+          loop_run_id: item.loop_run_id,
+          confidence: item.confidence,
+          sample_count: item.sample_count,
+          triggered_count: item.triggered_count,
+        })),
+      };
+    }
+
+    return result;
+  }
+
+  private extractFieldAttributionItem(snapshot: any, key: string) {
+    const runMetrics = snapshot?.run_metrics || {};
+    const paper = runMetrics.paper_trading || {};
+    const candidates = [
+      runMetrics.risk_profile_gate?.threshold_version?.attribution,
+      paper.risk_profile_gate?.threshold_version?.attribution,
+      snapshot?.metadata?.risk_profile_gate?.threshold_version?.attribution,
+      snapshot?.loop_policy?.risk_profile_gate?.threshold_version?.attribution,
+    ];
+    for (const attribution of candidates) {
+      const items = Array.isArray(attribution?.items) ? attribution.items : [];
+      const item = this.findAttributionItemByKey(key, items);
+      if (item) {
+        return {
+          ...item,
+          generated_at: snapshot?.generated_at,
+          loop_run_id: snapshot?.loop_run_id,
+        };
+      }
+    }
+    return null;
+  }
+
+  private findAttributionItemByKey(key: string, items: any[] = []) {
+    const aliases = new Set([key, ...(RISK_LIMIT_ATTRIBUTION_KEY_MAP[key] || [])]);
+    return items.find(item => aliases.has(String(item?.key || '')));
+  }
+
+  private buildRiskLimitTaskChange(
+    task: any,
+    limits: Record<string, number>,
+    attribution: any = {},
+    fieldStability: Record<string, any> = {},
+    fieldGateConfig: Record<string, any> = {}
+  ) {
+    const current =
+      task.parameters && typeof task.parameters === 'object' ? { ...task.parameters } : {};
+    const suggestedParameters = { ...current };
+    const attributionByKey = this.buildAttributionByKey(attribution);
+    const fieldEvidence: Record<string, any> = {};
+
+    for (const key of RISK_LIMIT_PARAMETER_KEYS) {
+      if (
+        limits[key] !== undefined &&
+        limits[key] !== null &&
+        Number.isFinite(Number(limits[key]))
+      ) {
+        const evidence = this.resolveFieldAttribution(key, attributionByKey);
+        fieldEvidence[key] = evidence
+          ? {
+              action: evidence.action,
+              confidence: evidence.confidence,
+              sample_count: evidence.sample_count,
+              triggered_count: evidence.triggered_count,
+              reason: evidence.reason,
+              stability: fieldStability[key],
+              can_apply: this.canApplyRiskLimitField(
+                key,
+                limits[key],
+                current[key],
+                evidence,
+                fieldStability[key],
+                fieldGateConfig
+              ),
+            }
+          : {
+              action: 'observe',
+              confidence: 0,
+              sample_count: 0,
+              triggered_count: 0,
+              reason: '暂无字段级归因样本，保守起见不自动写入该字段。',
+              stability: fieldStability[key],
+              can_apply: this.isRiskFieldEvidenceOptional(key),
+            };
+        if (!fieldEvidence[key].can_apply) continue;
+        suggestedParameters[key] = Number(limits[key]);
+      }
+    }
+
+    const changedKeys = RISK_LIMIT_PARAMETER_KEYS.filter(
+      key =>
+        suggestedParameters[key] !== undefined &&
+        String(current[key] ?? '') !== String(suggestedParameters[key])
+    );
+    const diffs = changedKeys.map(key => ({
+      key,
+      current_value: current[key] ?? null,
+      suggested_value: suggestedParameters[key],
+    }));
+
+    return {
+      id: task.id,
+      name: task.name,
+      type: task.type,
+      current_parameters: current,
+      suggested_parameters: suggestedParameters,
+      changed_keys: changedKeys,
+      changed: changedKeys.length > 0,
+      diffs,
+      field_evidence: fieldEvidence,
+    };
+  }
+
+  private buildAttributionByKey(attribution: any) {
+    const items = Array.isArray(attribution?.items) ? attribution.items : [];
+    const map = new Map<string, any>();
+    for (const item of items) {
+      if (item?.key) map.set(String(item.key), item);
+    }
+    return map;
+  }
+
+  private resolveFieldAttribution(key: string, attributionByKey: Map<string, any>) {
+    if (attributionByKey.has(key)) return attributionByKey.get(key);
+    for (const alias of RISK_LIMIT_ATTRIBUTION_KEY_MAP[key] || []) {
+      if (attributionByKey.has(alias)) return attributionByKey.get(alias);
+    }
+    return null;
+  }
+
+  private isRiskFieldEvidenceOptional(key: string) {
+    return false;
+  }
+
+  private canApplyRiskLimitField(
+    key: string,
+    suggestedValue: any,
+    currentValue: any,
+    evidence: any,
+    fieldStability: any = {},
+    fieldGateConfig: any = {}
+  ) {
+    if (this.isRiskFieldEvidenceOptional(key)) return true;
+    const suggested = Number(suggestedValue);
+    const current = Number(currentValue);
+    if (!Number.isFinite(suggested)) return false;
+    if (String(suggested) === String(current)) return true;
+
+    const evidenceAction = String(evidence?.action || '');
+    const confidence = Number(evidence?.confidence || 0);
+    const sampleCount = Number(evidence?.sample_count || 0);
+    const triggeredCount = Number(evidence?.triggered_count || 0);
+    const fieldStable = fieldStability?.can_apply === true;
+    const minConfidence = this.resolvePositiveNumber(
+      fieldStability?.min_confidence ?? fieldGateConfig?.min_confidence,
+      0.45
+    );
+    const minSampleCount = this.resolvePositiveInt(
+      fieldStability?.min_sample_count ?? fieldGateConfig?.min_sample_count,
+      3
+    );
+    const minTriggeredCount = this.resolvePositiveInt(
+      fieldStability?.min_triggered_count ?? fieldGateConfig?.min_triggered_count,
+      1
+    );
+    const hasEnoughEvidence =
+      fieldStable &&
+      confidence >= minConfidence &&
+      sampleCount >= minSampleCount &&
+      triggeredCount >= minTriggeredCount;
+
+    if (!Number.isFinite(current)) {
+      return ['tighten', 'relax'].includes(evidenceAction) && hasEnoughEvidence;
+    }
+
+    const direction =
+      key === 'min_cash_reserve_pct'
+        ? suggested > current
+          ? 'tighten'
+          : 'relax'
+        : suggested < current
+        ? 'tighten'
+        : 'relax';
+
+    return evidenceAction === direction && hasEnoughEvidence;
+  }
+
+  private resolvePositiveInt(value: any, fallback: number) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+    return Math.floor(parsed);
+  }
+
+  private resolvePositiveNumber(value: any, fallback: number) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+    return parsed;
   }
 
   private buildQueuePressureIssues(...queueCounts: QueueHealthSummary[]): AutomationHealthIssue[] {
@@ -577,13 +1311,21 @@ export class TaskAutomationHealthService {
       actions.push('检查 Redis/Bull 队列积压和失败任务，必要时清理失败任务后重新触发。');
     }
     const topSkip = latestLoop?.paper_trading?.skip_reason_summary?.top_reasons?.[0];
+    const riskGate = latestLoop?.risk_profile_gate;
+    if (riskGate?.applied) {
+      actions.push(
+        `最近闭环已触发组合风险闸门：${riskGate.action === 'pause' ? '暂停新增' : '降仓'}；${
+          riskGate.reason || '请先观察组合风险'
+        }。`
+      );
+    }
     if (topSkip) {
       actions.push(
         `最近闭环主要阻断原因：${topSkip.reason}（${topSkip.count} 次），建议针对性调参或等待样本成熟。`
       );
     }
     if (!latestLoop) {
-      actions.push('尚未找到荐股闭环快照，建议先手动执行一次“全市场荐股闭环”进行端到端验证。');
+      actions.push('尚未找到荐股闭环快照，建议先手动执行一次“量化策略全市场扫描”进行端到端验证。');
     }
     if (actions.length === 0) {
       actions.push('自动化链路处于可运行状态，继续积累模拟盘样本并观察收益闭环反馈。');

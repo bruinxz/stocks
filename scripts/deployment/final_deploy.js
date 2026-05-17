@@ -1,10 +1,13 @@
+const { requireLegacyDeploymentUnlock } = require('./legacy_guard');
+requireLegacyDeploymentUnlock(__filename);
+
 const { Client } = require('ssh2');
+const { getDeployConfig, renderBackendEnv, shellQuote } = require('./deploy_config');
+
+const deployConfig = getDeployConfig();
 
 const config = {
-  host: '103.242.3.87',
-  port: 14126,
-  username: 'root',
-  password: '7tsA0wS62A1e'
+  ...deployConfig.ssh
 };
 
 async function main() {
@@ -34,7 +37,7 @@ git pull
 
 # 2. 数据库迁移
 echo "📌 数据库迁移..."
-PGPASSWORD='x8Vq\$9pL2#mK7@nW1cF5^jY3!bH4*gD' docker exec -i stock_postgres psql -U stock_admin -d stock_backtest << 'END_SQL'
+PGPASSWORD=${shellQuote(deployConfig.postgres.password)} docker exec -i ${deployConfig.postgres.docker_container} psql -U ${deployConfig.postgres.user} -d ${deployConfig.postgres.database} << 'END_SQL'
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -66,27 +69,7 @@ echo "✅ 数据库迁移完成"
 
 # 3. 更新 .env 文件
 cat > /opt/stocks/backend/.env << 'ENV_EOF'
-DB_HOST=127.0.0.1
-DB_PORT=5432
-DB_NAME=stock_backtest
-DB_USER=stock_admin
-DB_PASSWORD='x8Vq$9pL2#mK7@nW1cF5^jY3!bH4*gD'
-DB_SSL=false
-
-REDIS_HOST=127.0.0.1
-REDIS_PORT=6379
-REDIS_PASSWORD=
-REDIS_DB=0
-
-JWT_SECRET=your-secret-key-change-in-production
-JWT_REFRESH_SECRET=your-refresh-secret-key-change-in-production
-
-NODE_ENV=development
-PORT=3000
-INTERNAL_API_KEY=tr_agent_k8s_x9a1!b2c3d4e5f6g7h8i9j0
-
-PUSHPLUS_TOKEN=261ae301eaf34c8ba4e0c67c8cd5ca78
-FRONTEND_BASE_URL=http://103.242.3.87:3001
+${renderBackendEnv(deployConfig.backend_env)}
 ENV_EOF
 
 echo "✅ 环境变量更新完成"

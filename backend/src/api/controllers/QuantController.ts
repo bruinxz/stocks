@@ -1,0 +1,179 @@
+import { Request, Response } from 'express';
+import { quantStrategyService } from '../../quant/services/QuantStrategyService';
+import { quantBacktestService } from '../../quant/services/QuantBacktestService';
+import { quantSignalService } from '../../quant/services/QuantSignalService';
+import { quantFusionService } from '../../quant/services/QuantFusionService';
+import { quantStrategyFeedbackService } from '../../quant/services/QuantStrategyFeedbackService';
+import { quantFusionAuditService } from '../../quant/services/QuantFusionAuditService';
+import { AuthenticatedRequest } from '../../middlewares/auth';
+import { logger } from '../../utils/logger';
+
+export class QuantController {
+  async getStrategies(req: Request, res: Response) {
+    try {
+      const strategies = await quantStrategyService.listStrategies();
+      res.json({ success: true, data: strategies });
+    } catch (error: any) {
+      logger.error('获取量化策略失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  async createBacktest(req: AuthenticatedRequest, res: Response) {
+    try {
+      const asyncMode = req.body?.async !== false && req.body?.async_mode !== false;
+      const result = await quantBacktestService.createBacktestTask(
+        req.body,
+        req.user?.id,
+        asyncMode
+      );
+      res.json({ success: true, data: result });
+    } catch (error: any) {
+      logger.error('运行量化跑分失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  async listBacktests(req: AuthenticatedRequest, res: Response) {
+    try {
+      const tasks = await quantBacktestService.listBacktests(
+        req.user?.id,
+        Number(req.query.limit || 30)
+      );
+      res.json({ success: true, data: tasks });
+    } catch (error: any) {
+      logger.error('获取量化跑分任务失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  async getBacktest(req: Request, res: Response) {
+    try {
+      const data = await quantBacktestService.getBacktest(Number(req.params.id));
+      if (!data) return res.status(404).json({ success: false, message: '跑分任务不存在' });
+      res.json({ success: true, data });
+    } catch (error: any) {
+      logger.error('获取量化跑分详情失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  async generateSignals(req: AuthenticatedRequest, res: Response) {
+    try {
+      const result = await quantSignalService.generateSignals({
+        ...req.body,
+        user_id: req.user?.id,
+      });
+      res.json({ success: true, data: result });
+    } catch (error: any) {
+      logger.error('生成量化信号失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  async runDailyPipeline(req: AuthenticatedRequest, res: Response) {
+    try {
+      const result = await quantFusionService.runDailyPipeline({
+        ...req.body,
+        user_id: req.user?.id,
+      });
+      res.json({ success: true, data: result });
+    } catch (error: any) {
+      logger.error('运行量化融合闭环失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  async listSignals(req: Request, res: Response) {
+    try {
+      const signals = await quantSignalService.listSignals(req.query as any);
+      res.json({ success: true, data: signals });
+    } catch (error: any) {
+      logger.error('获取量化信号失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  async refreshStrategyWeights(req: AuthenticatedRequest, res: Response) {
+    try {
+      const result = await quantStrategyFeedbackService.refreshWeights(req.body || {});
+      res.json({ success: true, data: result });
+    } catch (error: any) {
+      logger.error('刷新量化策略权重失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  async listStrategyWeights(req: AuthenticatedRequest, res: Response) {
+    try {
+      const weights = await quantStrategyFeedbackService.listWeights();
+      res.json({ success: true, data: weights });
+    } catch (error: any) {
+      logger.error('获取量化策略权重失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  async getAllocationPolicy(req: AuthenticatedRequest, res: Response) {
+    try {
+      const policy = await quantStrategyFeedbackService.getAllocationPolicy({
+        capital: Number(req.query.capital || req.body?.capital || 200000),
+        max_weight_pct: Number(req.query.max_weight_pct || req.body?.max_weight_pct || 35),
+        min_weight_pct: Number(req.query.min_weight_pct || req.body?.min_weight_pct || 4),
+      });
+      res.json({ success: true, data: policy });
+    } catch (error: any) {
+      logger.error('获取量化策略资金分配建议失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  async listFusionAudits(req: AuthenticatedRequest, res: Response) {
+    try {
+      const audits = await quantFusionAuditService.listAudits(req.query as any);
+      res.json({ success: true, data: audits });
+    } catch (error: any) {
+      logger.error('获取量化融合审计失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  async getRankings(req: AuthenticatedRequest, res: Response) {
+    try {
+      const limit = Number(req.query.limit || 30);
+      const [quantDashboard, fusionDashboard] = await Promise.all([
+        quantSignalService.getRankingDashboard({
+          trade_date: req.query.trade_date as string,
+          limit,
+        }),
+        quantFusionAuditService.getRankingDashboard({
+          signal_date: (req.query.signal_date || req.query.trade_date) as string,
+          limit,
+        }),
+      ]);
+      res.json({
+        success: true,
+        data: {
+          generated_at: new Date().toISOString(),
+          trade_date: quantDashboard.trade_date,
+          signal_date: fusionDashboard.signal_date,
+          quant_rankings: quantDashboard.quant_rankings,
+          fusion_rankings: fusionDashboard.fusion_rankings,
+          summary: {
+            ...(quantDashboard.summary || {}),
+            ...(fusionDashboard.summary || {}),
+            realtime_persisted: Boolean(
+              quantDashboard.summary?.quote_persistence?.persisted ||
+                quantDashboard.summary?.quote_persistence?.latest_trade_date_snapshot_count
+            ),
+          },
+        },
+      });
+    } catch (error: any) {
+      logger.error('获取量化排行榜失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+}
+
+export const quantController = new QuantController();

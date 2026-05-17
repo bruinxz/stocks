@@ -2,13 +2,14 @@ const { Client } = require('ssh2');
 const SftpClient = require('ssh2-sftp-client');
 const fs = require('fs');
 const path = require('path');
+const { runPostDeploySmoke } = require('./post_deploy_smoke');
+const { getDeployConfig, shellQuote } = require('./deploy_config');
+const { runLocalRegressionGate } = require('./local_regression_gate');
 
-const config = {
-  host: '103.242.3.87',
-  port: 14126,
-  username: 'root',
-  password: '7tsA0wS62A1e'
-};
+const deployConfig = getDeployConfig();
+const config = deployConfig.ssh;
+const paths = deployConfig.paths;
+const pm2 = deployConfig.pm2;
 
 async function execCommand(conn, command, description) {
   return new Promise((resolve, reject) => {
@@ -94,6 +95,7 @@ async function main() {
   try {
     console.log('🚀 开始 PushPlus 迁移部署');
     console.log('='.repeat(60));
+    runLocalRegressionGate();
 
     // 1. SSH 连接
     await new Promise((resolve, reject) => {
@@ -117,13 +119,13 @@ async function main() {
 
     // 3. 同步后端
     const ignores = ['node_modules', '.git', '.DS_Store', 'dist', 'uploads', '.env'];
-    await syncFiles(sftp, '/Users/bytedance/go/src/github.com/bruinxz/stocks/backend', '/opt/stocks/backend', ignores);
+    await syncFiles(sftp, paths.local_backend, paths.remote_backend, ignores);
 
     // 4. 同步前端
-    await syncFiles(sftp, '/Users/bytedance/go/src/github.com/bruinxz/stocks/frontend', '/opt/stocks/frontend', ignores);
+    await syncFiles(sftp, paths.local_frontend, paths.remote_frontend, ignores);
 
     // 5. 同步后端环境变量
-    await sftp.put('/Users/bytedance/go/src/github.com/bruinxz/stocks/backend/.env', '/opt/stocks/backend/.env');
+    await sftp.put(path.join(paths.local_backend, '.env'), `${paths.remote_backend}/.env`);
 
     sftp.end();
 
@@ -159,22 +161,33 @@ async function main() {
     `;
     await execCommand(
       ssh, 
-      `PGPASSWORD='x8Vq$9pL2#mK7@nW1cF5^jY3!bH4*gD' docker exec -i stock_postgres psql -U stock_admin -d stock_backtest << 'EOF'\n${migrateSQL}\nEOF`, 
+      `PGPASSWORD=${shellQuote(deployConfig.postgres.password)} docker exec -i ${
+        deployConfig.postgres.docker_container
+      } psql -U ${shellQuote(deployConfig.postgres.user)} -d ${shellQuote(
+        deployConfig.postgres.database
+      )} << 'EOF'\n${migrateSQL}\nEOF`,
       '数据库迁移'
     );
 
     // 7. 构建后端
-    await execCommand(ssh, 'cd /opt/stocks/backend && npm run build', '构建后端');
+    await execCommand(ssh, `cd ${shellQuote(paths.remote_backend)} && npm run build`, '构建后端');
 
     // 8. 构建前端（临时禁用 CI 模式）
-    await execCommand(ssh, 'cd /opt/stocks/frontend && CI=false npm run build', '构建前端');
+    await execCommand(
+      ssh,
+      `cd ${shellQuote(paths.remote_frontend)} && CI=false npm run build`,
+      '构建前端'
+    );
 
     // 9. 重启服务
-    await execCommand(ssh, 'pm2 restart stock-backend', '重启后端服务');
-    await execCommand(ssh, 'pm2 restart stock-frontend', '重启前端服务');
+    await execCommand(ssh, `pm2 restart ${shellQuote(pm2.backend)}`, '重启后端服务');
+    await execCommand(ssh, `pm2 restart ${shellQuote(pm2.frontend)}`, '重启前端服务');
 
     // 10. 检查服务状态
     await execCommand(ssh, 'pm2 status', '检查 PM2 服务状态');
+
+    // 11. 部署后只读冒烟测试：只验证核心接口，不触发同步/交易/Agent分析
+    await runPostDeploySmoke();
 
     console.log('\n' + '='.repeat(60));
     console.log('🎉 部署完成！');

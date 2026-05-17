@@ -492,9 +492,23 @@ class FeishuTaskReportService {
     const agentAnalysis = result?.agent_analysis || {};
     const verification = result?.verification || archive?.verification || {};
     const paper = result?.paper_trading || {};
+    const riskProfile = result?.risk_profile || paper?.risk_profile || {};
+    const riskMetrics = riskProfile?.risk_metrics || {};
+    const riskThresholdSuggestion =
+      result?.risk_threshold_suggestion || result?.risk_profile_gate?.threshold_version || {};
+    const riskThresholdStability =
+      riskThresholdSuggestion?.stability || riskThresholdSuggestion?.suggestion_stability || {};
+    const riskThresholdAttribution =
+      riskThresholdSuggestion?.attribution || riskThresholdSuggestion?.threshold_attribution || {};
+    const riskThresholdFieldGateAdvice = riskThresholdSuggestion?.field_gate_advice || {};
     const tradeOutcomes = result?.trade_outcomes || {};
     const outcomeSummary = tradeOutcomes?.summary || {};
     const loopPolicy = result?.loop_policy || {};
+    const fieldGateAdjustmentAttribution =
+      loopPolicy?.policy_promotion?.field_gate_adjustment_attribution ||
+      result?.field_gate_adjustment_attribution ||
+      {};
+    const riskGatePolicy = loopPolicy?.risk_profile_gate || result?.risk_profile_gate || {};
     const environmentPolicy = loopPolicy?.environment_policy || result?.environment_policy || {};
     const strategyEvolution =
       result?.trade_outcomes?.strategy_evolution || result?.strategy_evolution || {};
@@ -519,6 +533,12 @@ class FeishuTaskReportService {
       {};
     const policySnapshot = result?.policy_snapshot || {};
     const qualityOverview = result?.quality_report?.overview || {};
+    const thresholdVersion = riskGatePolicy?.threshold_version || {};
+    const thresholdStability =
+      thresholdVersion?.stability ||
+      loopPolicy?.policy_promotion?.risk_gate_analysis?.suggestion_stability ||
+      loopPolicy?.policy_promotion?.risk_gate_analysis?.suggested_limits?.stability ||
+      {};
     const topPicks = recommendations.slice(0, 5);
     const bestPick = topPicks[0];
     const skipReasonSummary = paper?.skip_reason_summary || {};
@@ -604,6 +624,31 @@ class FeishuTaskReportService {
       }；成交/计划 ${paper?.executed ?? paper?.planned ?? 0} 笔；跳过 ${
         paper?.skipped ?? 0
       } 条；共识成交/计划 ${paper?.consensus_executed ?? 0}/${paper?.consensus_planned ?? 0} 笔`,
+      riskProfile?.status
+        ? `- **组合风险**：${riskProfile.status.label}；现金 ${this.formatPercent(
+            riskMetrics.cash_pct
+          )}，总仓位 ${this.formatPercent(riskMetrics.exposure_pct)}，回撤 ${this.formatPercent(
+            Math.abs(Number(riskMetrics.drawdown_pct || 0))
+          )}；${this.safeText(riskProfile.status.conclusion, 120)}`
+        : '',
+      riskGatePolicy?.enabled
+        ? `- **风险闸门**：${
+            riskGatePolicy.action === 'pause'
+              ? '暂停新增'
+              : riskGatePolicy.action === 'reduce'
+              ? '自动降仓'
+              : '正常放行'
+          }；${this.safeText(
+            loopPolicy.risk_gate_feedback_reason || riskGatePolicy.reason || '按组合风险画像执行',
+            140
+          )}`
+        : '',
+      thresholdStability?.label
+        ? `- **阈值建议**：${thresholdStability.label}；${
+            thresholdStability.can_apply ? '建议人工预览后应用' : '暂继续观察'
+          }；${this.safeText(thresholdStability.reason, 110)}`
+        : '',
+      this.buildRiskThresholdAttributionLine(riskThresholdAttribution),
       topSkipReasons.length
         ? `- **主要阻断**：${topSkipReasons
             .map((item: any) => `${this.safeText(item.reason, 60)} ×${item.count}`)
@@ -779,6 +824,21 @@ class FeishuTaskReportService {
       模拟盘成交数: paper?.executed,
       模拟盘计划数: paper?.planned,
       模拟盘跳过数: paper?.skipped,
+      组合风险状态: riskProfile?.status?.label,
+      组合风险结论: riskProfile?.status?.conclusion,
+      组合现金水位: this.formatPercent(riskMetrics.cash_pct),
+      组合总仓位: this.formatPercent(riskMetrics.exposure_pct),
+      组合回撤: this.formatPercent(riskMetrics.drawdown_pct),
+      风险闸门动作: riskGatePolicy?.action,
+      风险闸门原因: riskGatePolicy?.reason,
+      风险闸门后验动作: loopPolicy?.risk_gate_feedback_action,
+      风险闸门后验原因: loopPolicy?.risk_gate_feedback_reason,
+      风险阈值建议状态: thresholdStability?.label,
+      风险阈值建议置信度:
+        thresholdStability?.confidence !== undefined
+          ? Number(thresholdStability.confidence).toFixed(2)
+          : '',
+      风险阈值建议原因: thresholdStability?.reason,
       共识模拟盘成交数: paper?.consensus_executed,
       共识模拟盘计划数: paper?.consensus_planned,
       跟踪交易数: outcomeSummary.total_count,
@@ -863,7 +923,13 @@ class FeishuTaskReportService {
             profit_gate_policy: paper?.profit_gate_policy,
             outcome_feedback_policy: paper?.outcome_feedback_policy,
             environment_guard_policy: paper?.environment_guard_policy,
+            risk_profile: paper?.risk_profile,
           },
+          risk_profile: riskProfile,
+          risk_threshold_stability: thresholdStability,
+          risk_threshold_attribution: riskThresholdAttribution,
+          risk_threshold_field_gate_advice: riskThresholdFieldGateAdvice,
+          risk_threshold_field_gate_adjustment_attribution: fieldGateAdjustmentAttribution,
           trade_outcomes: tradeOutcomes,
           quality_report: result?.quality_report,
         },
@@ -947,6 +1013,193 @@ class FeishuTaskReportService {
     });
   }
 
+  async reportQuantDailyPipeline(
+    result: any,
+    options: {
+      record_type?: string;
+      task_type?: string;
+      error?: any;
+    } = {}
+  ) {
+    const recordType = options.record_type || '量化策略扫描闭环';
+    const generated = result?.generated || {};
+    const fusion = result?.fusion || {};
+    const archive = result?.archive || {};
+    const agent = result?.agent_analysis || {};
+    const paper = result?.paper_trading || {};
+    const riskProfile = result?.risk_profile || paper?.risk_profile || {};
+    const riskMetrics = riskProfile?.risk_metrics || {};
+    const riskThresholdSuggestion =
+      result?.risk_threshold_suggestion || result?.risk_profile_gate?.threshold_version || {};
+    const riskThresholdStability =
+      riskThresholdSuggestion?.stability || riskThresholdSuggestion?.suggestion_stability || {};
+    const riskThresholdAttribution =
+      riskThresholdSuggestion?.attribution || riskThresholdSuggestion?.threshold_attribution || {};
+    const riskThresholdFieldGateAdvice = riskThresholdSuggestion?.field_gate_advice || {};
+    const riskThresholdFieldGateAdjustmentAttribution =
+      riskThresholdSuggestion?.field_gate_adjustment_attribution || {};
+    const topCandidates = Array.isArray(fusion.top_candidates) ? fusion.top_candidates : [];
+    const best = topCandidates[0] || {};
+    const quoteSync = generated?.quote_sync || {};
+    const bestRawFactors = best?.factors?.best_raw_factors || {};
+    const bestPriceSource = bestRawFactors.price_source || best.price_source;
+    const bestLatestQuoteTime = bestRawFactors.latest_quote_time || best.latest_quote_time;
+    const topReasons = Array.isArray(best.reasons) ? best.reasons.slice(0, 3) : [];
+    const topWarnings = Array.isArray(best.risk_flags) ? best.risk_flags.slice(0, 3) : [];
+    const submitted = Array.isArray(agent.submitted) ? agent.submitted.length : 0;
+    const failed = Array.isArray(agent.failed) ? agent.failed.length : 0;
+    const paperAction = paper
+      ? `${paper.dry_run ? '预演' : '执行'} ${paper.executed ?? paper.planned ?? 0} 笔，跳过 ${
+          paper.skipped ?? 0
+        } 条`
+      : '未触发';
+
+    const markdownMessage = [
+      `## ${recordType}`,
+      '',
+      '### 结论',
+      `- **扫描范围**：${result?.universe === 'favorites' ? '自选池' : '全市场'}；交易日 ${
+        result?.trade_date || '-'
+      }`,
+      `- **量化覆盖**：扫描 ${generated.scanned_stocks ?? 0} 只股票，策略 ${
+        generated.strategy_count ?? 0
+      } 个，生成 ${generated.signal_count ?? 0} 条原始信号。`,
+      quoteSync
+        ? `- **实时行情**：落盘 ${quoteSync.persisted_count ?? 0} 条，更新 ${
+            quoteSync.updated_stock_count ?? 0
+          } 只；最新 ${quoteSync.latest_quote_time || '-'}。`
+        : '',
+      `- **融合候选**：入选 ${fusion.selected_count ?? archive.total ?? 0} 条；归档 ${
+        archive.total ?? 0
+      } 条。`,
+      `- **Agent复核**：${
+        agent.enabled === false ? '未启用' : `提交 ${submitted} 条，失败 ${failed} 条`
+      }。`,
+      `- **模拟盘**：${paperAction}。`,
+      riskProfile?.status
+        ? `- **组合风险**：${riskProfile.status.label}；现金 ${this.formatPercent(
+            riskMetrics.cash_pct
+          )}，总仓位 ${this.formatPercent(riskMetrics.exposure_pct)}，回撤 ${this.formatPercent(
+            Math.abs(Number(riskMetrics.drawdown_pct || 0))
+          )}，结论：${this.safeText(riskProfile.status.conclusion, 120)}`
+        : '',
+      riskThresholdStability?.label
+        ? `- **阈值建议**：${riskThresholdStability.label}；${
+            riskThresholdStability.can_apply ? '建议人工预览后应用' : '暂继续观察'
+          }；${this.safeText(riskThresholdStability.reason, 110)}`
+        : '',
+      this.buildRiskThresholdAttributionLine(riskThresholdAttribution),
+      best?.symbol
+        ? `- **首选标的**：${best.name || best.symbol}（${best.symbol}），${
+            this.buildInlinePriceText(best) || '当前股价 --'
+          }，融合分 ${best.score ?? '-'}，动作 ${best.action_label || best.action || '-'}。`
+        : '- **首选标的**：暂无达到阈值的候选。',
+      '',
+      '### 核心理由',
+      topReasons.length
+        ? topReasons.map((item: string) => `- ${this.safeText(item, 180)}`).join('\n')
+        : '- 暂无核心理由。',
+      topWarnings.length ? '\n### 主要风险' : '',
+      topWarnings.map((item: string) => `- ${this.safeText(item, 180)}`).join('\n'),
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    return this.safeAppend({
+      文本: `${recordType} - 入选 ${
+        fusion.selected_count ?? archive.total ?? 0
+      } / Agent ${submitted} / 模拟盘 ${paper.executed ?? paper.planned ?? 0}`,
+      message: markdownMessage,
+      记录类型: recordType,
+      任务名称: '量化策略全市场扫描',
+      任务类型: options.task_type || 'QUANT_DAILY_PIPELINE',
+      运行状态: options.error ? 'FAILED' : 'COMPLETED',
+      交易日: result?.trade_date,
+      候选范围: result?.universe,
+      扫描股票数: generated.scanned_stocks,
+      策略数量: generated.strategy_count,
+      原始信号数: generated.signal_count,
+      融合候选数: fusion.candidate_count,
+      入选候选数: fusion.selected_count,
+      归档信号数: archive.total,
+      Agent提交数: submitted,
+      Agent失败数: failed,
+      模拟盘成交数: paper.executed,
+      模拟盘计划数: paper.planned,
+      模拟盘跳过数: paper.skipped,
+      最佳标的: best?.symbol
+        ? `${best.name || best.symbol}(${best.symbol}) ${best.score ?? '-'}`
+        : '',
+      最新价: best?.current_price,
+      核心理由: topReasons.join('；'),
+      风险提示: topWarnings.join('；'),
+      实时行情落盘数: quoteSync?.persisted_count,
+      实时行情更新股票数: quoteSync?.updated_stock_count,
+      实时行情最新时间: quoteSync?.latest_quote_time,
+      最佳标的价格源: bestPriceSource,
+      最佳标的行情时间: bestLatestQuoteTime,
+      组合风险状态: riskProfile?.status?.label,
+      组合风险结论: riskProfile?.status?.conclusion,
+      组合现金水位: this.formatPercent(riskMetrics.cash_pct),
+      组合总仓位: this.formatPercent(riskMetrics.exposure_pct),
+      组合回撤: this.formatPercent(riskMetrics.drawdown_pct),
+      风险阈值建议状态: riskThresholdStability?.label,
+      风险阈值建议置信度:
+        riskThresholdStability?.confidence !== undefined
+          ? Number(riskThresholdStability.confidence).toFixed(2)
+          : '',
+      风险阈值建议原因: riskThresholdStability?.reason,
+      结果摘要: this.safeJson(
+        {
+          generated,
+          quote_sync: quoteSync,
+          best_price_source: {
+            symbol: best?.symbol,
+            price_source: bestPriceSource,
+            latest_quote_time: bestLatestQuoteTime,
+            current_price: best?.current_price,
+          },
+          fusion: {
+            candidate_count: fusion.candidate_count,
+            selected_count: fusion.selected_count,
+            top_candidates: topCandidates.slice(0, 10),
+          },
+          archive: {
+            created: archive.created,
+            updated: archive.updated,
+            total: archive.total,
+            signal_ids: archive.signal_ids,
+          },
+          agent_analysis: {
+            enabled: agent.enabled,
+            submitted: Array.isArray(agent.submitted) ? agent.submitted : [],
+            failed: Array.isArray(agent.failed) ? agent.failed : [],
+            skipped: Array.isArray(agent.skipped) ? agent.skipped.slice(0, 10) : [],
+          },
+          paper_trading: paper
+            ? {
+                portfolio_id: paper.portfolio_id,
+                dry_run: paper.dry_run,
+                executed: paper.executed,
+                planned: paper.planned,
+                skipped: paper.skipped,
+                trades: Array.isArray(paper.trades) ? paper.trades.slice(0, 10) : [],
+              }
+            : null,
+          risk_profile: riskProfile,
+          risk_threshold_suggestion: riskThresholdSuggestion,
+          risk_threshold_attribution: riskThresholdAttribution,
+          risk_threshold_field_gate_advice: riskThresholdFieldGateAdvice,
+          risk_threshold_field_gate_adjustment_attribution:
+            riskThresholdFieldGateAdjustmentAttribution,
+        },
+        10000
+      ),
+      错误信息: this.errorMessage(options.error),
+      创建时间: this.formatDate(new Date()),
+    });
+  }
+
   async reportPaperTradingAutomation(
     result: any,
     options: {
@@ -964,6 +1217,10 @@ class FeishuTaskReportService {
     const profitGate = result?.profit_gate_policy || {};
     const outcomeFeedback = result?.outcome_feedback_policy || {};
     const environmentGuard = result?.environment_guard_policy || {};
+    const entryRiskGuard = result?.entry_risk_guard_policy || {};
+    const riskProfile = result?.risk_profile || {};
+    const riskMetrics = riskProfile?.risk_metrics || {};
+    const riskProfileGate = result?.risk_profile_gate || {};
     const markdownMessage = this.buildPaperTradingAutomationMarkdown(result, options, recordType);
 
     return this.safeAppend({
@@ -998,6 +1255,11 @@ class FeishuTaskReportService {
       行业环境: firstTrade?.industry_label,
       环境风控仓位倍率: firstTrade?.environment_multiplier,
       环境风控结论: firstTrade?.environment_reason,
+      组合风险状态: riskProfile?.status?.label,
+      组合风险结论: riskProfile?.status?.conclusion,
+      组合现金水位: this.formatPercent(riskMetrics.cash_pct),
+      组合总仓位: this.formatPercent(riskMetrics.exposure_pct),
+      组合回撤: this.formatPercent(riskMetrics.drawdown_pct),
       股票代码: firstTrade?.symbol,
       股票名称: firstTrade?.name,
       成交数量: firstTrade?.quantity,
@@ -1013,6 +1275,8 @@ class FeishuTaskReportService {
           profit_gate_policy: result?.profit_gate_policy,
           outcome_feedback_policy: result?.outcome_feedback_policy,
           environment_guard_policy: result?.environment_guard_policy,
+          risk_profile: riskProfile,
+          risk_profile_gate: riskProfileGate,
         },
         10000
       ),
@@ -1036,6 +1300,8 @@ class FeishuTaskReportService {
     const skippedItems = Array.isArray(result?.skipped_items) ? result.skipped_items : [];
     const snapshot = result?.snapshot || {};
     const firstExit = exits[0] || {};
+    const riskProfile = result?.risk_profile || {};
+    const riskMetrics = riskProfile?.risk_metrics || {};
     const markdownMessage = this.buildPaperTradingRiskMarkdown(result, options, recordType);
 
     return this.safeAppend({
@@ -1057,6 +1323,11 @@ class FeishuTaskReportService {
       总资产: snapshot?.total_value,
       可用资金: snapshot?.current_cash,
       持仓市值: snapshot?.position_value,
+      组合风险状态: riskProfile?.status?.label,
+      组合风险结论: riskProfile?.status?.conclusion,
+      组合现金水位: this.formatPercent(riskMetrics.cash_pct),
+      组合总仓位: this.formatPercent(riskMetrics.exposure_pct),
+      组合回撤: this.formatPercent(riskMetrics.drawdown_pct),
       股票代码: firstExit?.symbol,
       股票名称: firstExit?.name,
       退出原因: firstExit?.reason_label,
@@ -1069,6 +1340,7 @@ class FeishuTaskReportService {
           held_items: heldItems.slice(0, 10),
           skipped_items: skippedItems.slice(0, 10),
           snapshot,
+          risk_profile: riskProfile,
         },
         10000
       ),
@@ -1388,6 +1660,18 @@ class FeishuTaskReportService {
     if (value === undefined || value === null) return '';
     const text = typeof value === 'string' ? value : this.safeJson(value, maxLength);
     return text.length > maxLength ? `${text.substring(0, maxLength)}...` : text;
+  }
+
+  private buildRiskThresholdAttributionLine(attribution: any): string {
+    const items = Array.isArray(attribution?.items) ? attribution.items : [];
+    const focus = items
+      .filter((item: any) => ['tighten', 'relax'].includes(String(item?.action || '')))
+      .sort((a: any, b: any) => Number(b.confidence || 0) - Number(a.confidence || 0))[0];
+    if (!focus) return '';
+    const actionLabel = focus.action === 'tighten' ? '建议收紧' : '可观察放松';
+    return `- **阈值归因**：${focus.label || focus.key}${actionLabel}；触发 ${
+      focus.triggered_count || 0
+    }/${focus.sample_count || 0} 次；${this.safeText(focus.reason, 110)}`;
   }
 
   private safeJson(value: any, maxLength: number): string {
@@ -1724,6 +2008,10 @@ class FeishuTaskReportService {
     const profitGate = result?.profit_gate_policy || {};
     const outcomeFeedback = result?.outcome_feedback_policy || {};
     const environmentGuard = result?.environment_guard_policy || {};
+    const entryRiskGuard = result?.entry_risk_guard_policy || {};
+    const riskProfile = result?.risk_profile || {};
+    const riskMetrics = riskProfile?.risk_metrics || {};
+    const riskProfileGate = result?.risk_profile_gate || {};
     const dryRun = Boolean(result?.dry_run);
     const status = options.error ? 'FAILED' : 'COMPLETED';
     const actionCount = dryRun
@@ -1757,6 +2045,26 @@ class FeishuTaskReportService {
         : '',
       environmentGuard?.enabled
         ? `- **环境风控**：已接入大盘/行业状态；压力市和弱行业降仓，压力市+弱行业禁入`
+        : '',
+      entryRiskGuard?.enabled
+        ? `- **入场暴露**：总暴露 ${entryRiskGuard.current_exposure_pct ?? 0}%；今日新增 ${
+            entryRiskGuard.today_new_exposure_pct ?? 0
+          }%；现金底线 ${entryRiskGuard.min_cash_reserve_pct ?? '--'}%；组合回撤 ${
+            entryRiskGuard.portfolio_drawdown_pct ?? 0
+          }%；相关性/VaR已约束；策略预算已约束`
+        : '',
+      riskProfileGate?.quote_freshness_action === 'reduce'
+        ? `- **行情新鲜度**：${this.safeText(
+            riskProfileGate.quote_freshness_reason,
+            120
+          )}；仓位倍率 ${riskProfileGate.quote_freshness_multiplier ?? 0.5}x`
+        : '',
+      riskProfile?.status
+        ? `- **组合风险**：${riskProfile.status.label}；现金 ${this.formatPercent(
+            riskMetrics.cash_pct
+          )}，总仓位 ${this.formatPercent(riskMetrics.exposure_pct)}，回撤 ${this.formatPercent(
+            Math.abs(Number(riskMetrics.drawdown_pct || 0))
+          )}；${this.safeText(riskProfile.status.conclusion, 120)}`
         : '',
     ];
 
@@ -1806,6 +2114,10 @@ class FeishuTaskReportService {
     const parts = [
       `评分 ${trade?.score ?? '--'}`,
       `目标仓位 ${trade?.target_position_pct ?? '--'}%`,
+      trade?.strategy_max_single_trade_pct
+        ? `策略单票≤${trade.strategy_max_single_trade_pct}%`
+        : '',
+      trade?.strategy_allocation_pct ? `策略预算${trade.strategy_allocation_pct}%` : '',
       trade?.environment_strategy_budget_policy_version_id
         ? `预算版本 ${trade.environment_strategy_budget_policy_version_id}`
         : '',
@@ -1833,6 +2145,8 @@ class FeishuTaskReportService {
     const skippedItems = Array.isArray(result?.skipped_items) ? result.skipped_items : [];
     const snapshot = result?.snapshot || {};
     const adaptiveRisk = result?.adaptive_risk_policy || {};
+    const riskProfile = result?.risk_profile || {};
+    const riskMetrics = riskProfile?.risk_metrics || {};
     const dryRun = Boolean(result?.dry_run);
     const status = options.error ? 'FAILED' : 'COMPLETED';
     const exitCount = dryRun ? result?.planned ?? exits.length : result?.exited ?? exits.length;
@@ -1867,6 +2181,13 @@ class FeishuTaskReportService {
           )}/${this.formatPercent(adaptiveRisk.effective_trailing_drawdown_pct)}；${
             adaptiveRisk.reason || ''
           }`
+        : '',
+      riskProfile?.status
+        ? `- **风控后组合风险**：${riskProfile.status.label}；现金 ${this.formatPercent(
+            riskMetrics.cash_pct
+          )}，总仓位 ${this.formatPercent(riskMetrics.exposure_pct)}，回撤 ${this.formatPercent(
+            Math.abs(Number(riskMetrics.drawdown_pct || 0))
+          )}；${this.safeText(riskProfile.status.conclusion, 120)}`
         : '',
     ];
 

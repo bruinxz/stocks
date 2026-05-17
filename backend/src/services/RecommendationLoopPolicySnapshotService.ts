@@ -2,7 +2,14 @@ import { Op } from 'sequelize';
 import moment from 'moment-timezone';
 import { RecommendationLoopPolicySnapshot } from '../models/RecommendationLoopPolicySnapshot';
 import { RecommendationTradeOutcome } from '../models/RecommendationTradeOutcome';
+import { TaskParameterAuditLog } from '../models/TaskParameterAuditLog';
 import { logger } from '../utils/logger';
+import {
+  RiskThresholdStabilityConfig,
+  riskThresholdStabilityService,
+} from './RiskThresholdStabilityService';
+import { riskThresholdAttributionService } from './RiskThresholdAttributionService';
+import { fieldGateAdjustmentAttributionService } from './FieldGateAdjustmentAttributionService';
 import {
   buildRecommendationStrategyVariant,
   recommendationBucketLabel,
@@ -36,6 +43,12 @@ function roundNumber(value: any, digits = 2): number {
   return Math.round(num * base) / base;
 }
 
+function averageNumbers(values: number[]): number {
+  const valid = values.filter(Number.isFinite);
+  if (!valid.length) return 0;
+  return valid.reduce((sum, value) => sum + value, 0) / valid.length;
+}
+
 function modelToPlain<T = any>(record: any): T {
   if (!record) return record;
   if (typeof record.toJSON === 'function') return record.toJSON();
@@ -57,6 +70,7 @@ export interface LoopPolicySnapshotQueryOptions {
   style?: string;
   start_date?: string;
   end_date?: string;
+  risk_threshold_stability_config?: Partial<RiskThresholdStabilityConfig>;
 }
 
 export interface LoopPolicySnapshotRefreshOptions {
@@ -77,6 +91,10 @@ export class RecommendationLoopPolicySnapshotService {
       const archive = result?.archive || {};
       const agentAnalysis = result?.agent_analysis || {};
       const paper = result?.paper_trading || {};
+      const riskProfile = asPlainObject(result?.risk_profile || paper?.risk_profile);
+      const riskProfileGate = asPlainObject(
+        loopPolicy.risk_profile_gate || result?.risk_profile_gate || paper?.risk_profile_gate
+      );
       const tradeOutcomes = result?.trade_outcomes || {};
       const outcomeSummary = tradeOutcomes?.summary || {};
       const environmentPolicy =
@@ -211,8 +229,12 @@ export class RecommendationLoopPolicySnapshotService {
                 profit_gate_policy: paper.profit_gate_policy,
                 outcome_feedback_policy: paper.outcome_feedback_policy,
                 environment_guard_policy: paper.environment_guard_policy,
+                risk_profile_gate: paper.risk_profile_gate,
+                risk_profile: paper.risk_profile,
               }
             : null,
+          risk_profile: riskProfile,
+          risk_profile_gate: riskProfileGate,
           trade_outcomes: tradeOutcomes,
           quality_report: result?.quality_report,
           strategy_variant: strategyVariant,
@@ -229,6 +251,9 @@ export class RecommendationLoopPolicySnapshotService {
           strategy_bucket_label: strategyVariant.strategy_bucket_label,
           environment_policy_snapshot_id: environmentPolicySnapshotId,
           environment_policy: environmentPolicy,
+          risk_profile_status: riskProfile.status,
+          risk_profile_gate: riskProfileGate,
+          risk_profile_gate_action: riskProfileGate.action,
         },
       } as any);
       if (snapshot?.id && archiveSignalIds.length > 0) {
@@ -323,10 +348,22 @@ export class RecommendationLoopPolicySnapshotService {
       by_environment_policy_version: this.buildBuckets(plain, item =>
         this.environmentPolicyVersionFromSnapshot(item)
       ),
+      by_risk_profile_gate: this.buildBuckets(plain, item => this.riskGateActionFromSnapshot(item)),
     };
+    const riskGateAnalysis = this.buildRiskGateAnalysis(
+      groups.by_risk_profile_gate || [],
+      plain,
+      options.risk_threshold_stability_config
+    );
 
     const rankings = this.buildPolicyRankings(plain, groups);
-    const promotion = this.buildPromotionAdvice(summary, rankings, plain);
+    const fieldGateAdjustmentAttribution = await this.buildFieldGateAdjustmentAttribution(plain);
+    const promotion = this.buildPromotionAdvice(
+      summary,
+      rankings,
+      plain,
+      fieldGateAdjustmentAttribution
+    );
 
     return {
       generated_at: moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm:ss'),
@@ -338,9 +375,34 @@ export class RecommendationLoopPolicySnapshotService {
       groups,
       rankings,
       promotion,
+      risk_gate_analysis: riskGateAnalysis,
+      field_gate_adjustment_attribution: fieldGateAdjustmentAttribution,
       snapshots: plain,
       insights: this.buildInsights(summary, groups, plain, promotion),
     };
+  }
+
+  private async buildFieldGateAdjustmentAttribution(records: any[] = []) {
+    try {
+      const audit = await TaskParameterAuditLog.findOne({
+        where: {
+          event_type: 'risk_stability_settings_updated',
+        },
+        order: [['created_at', 'DESC']],
+      });
+      const plainAudit = modelToPlain<any>(audit);
+      return fieldGateAdjustmentAttributionService.build(records, {
+        source: plainAudit?.after_parameters?.risk_threshold_field_gate_update_source,
+        changed_at: plainAudit?.created_at,
+        task_name: plainAudit?.task_name,
+      });
+    } catch (error: any) {
+      logger.warn(`构建字段门槛调整归因失败: ${error?.message || error}`);
+      return {
+        status: 'unavailable',
+        conclusion: '字段门槛调整归因暂不可用。',
+      };
+    }
   }
 
   async findEnvironmentPolicySnapshot(options: {
@@ -652,10 +714,16 @@ export class RecommendationLoopPolicySnapshotService {
       by_score_position_bucket: rankBucket(groups.by_score_position_bucket),
       by_strategy_key: rankBucket(groups.by_strategy_key),
       by_environment_policy_version: rankBucket(groups.by_environment_policy_version),
+      by_risk_profile_gate: rankBucket(groups.by_risk_profile_gate),
     };
   }
 
-  private buildPromotionAdvice(summary: any, rankings: any, records: any[]) {
+  private buildPromotionAdvice(
+    summary: any,
+    rankings: any,
+    records: any[],
+    fieldGateAdjustmentAttribution?: any
+  ) {
     const latest = summary.latest_policy || {};
     const best = rankings.snapshots?.[0];
     const bestStyle = rankings.by_style?.find((item: any) => item.key && item.key !== 'unknown');
@@ -673,6 +741,32 @@ export class RecommendationLoopPolicySnapshotService {
     const latestTradeLimit = toNumber(latest.effective_paper_trade_limit, 3);
     const closedSamples = toNumber(summary.best_snapshot?.closed_trade_count);
     const avgExcess = toNumber(summary.avg_outcome_excess_return_pct);
+    const fieldGateDelta = toNumber(fieldGateAdjustmentAttribution?.delta_pct, 0);
+    const fieldGateDecision = fieldGateAdjustmentAttribution?.decision || {};
+    const fieldGateReady =
+      fieldGateAdjustmentAttribution?.status === 'ready' &&
+      toNumber(fieldGateAdjustmentAttribution?.before_sample_count, 0) >= 2 &&
+      toNumber(fieldGateAdjustmentAttribution?.after_sample_count, 0) >= 2;
+    const fieldGateConfidenceAdjustment =
+      fieldGateDecision?.action === 'caution'
+        ? -0.08
+        : fieldGateReady && fieldGateDelta < -0.4
+        ? -0.05
+        : 0;
+    const fieldGateReason =
+      fieldGateDecision?.action && fieldGateDecision.action !== 'insufficient'
+        ? `字段门槛调参后验：${fieldGateDecision.label || fieldGateDecision.action}，${fieldGateDecision.reason}`
+        : fieldGateReady && fieldGateDelta >= 0
+        ? `字段门槛人工采纳后平均超额提升 ${roundNumber(
+            fieldGateDelta,
+            2
+          )}pct，当前方向先继续观察，不自动放大参数。`
+        : fieldGateReady
+        ? `字段门槛人工采纳后平均超额下降 ${roundNumber(
+            Math.abs(fieldGateDelta),
+            2
+          )}pct，本轮晋级置信度保护性下调。`
+        : '';
 
     let recommendedStyle = latest.effective_style || bestStyle?.key || 'balanced';
     if (
@@ -738,6 +832,7 @@ export class RecommendationLoopPolicySnapshotService {
       best
         ? `当前最高晋级分版本 #${best.id}，平均超额 ${best.avg_excess_return_pct}%、闭环样本 ${best.closed_trade_count}。`
         : '',
+      fieldGateReason,
       bestStyle
         ? `风格排名第一：${this.bucketLabel(bestStyle.key)}，平均超额 ${
             bestStyle.avg_outcome_excess_return_pct
@@ -755,11 +850,19 @@ export class RecommendationLoopPolicySnapshotService {
       avgExcess < -1 ? '版本平均超额为负，下一轮应提高评分阈值并降低仓位。' : '',
       avgExcess > 1.5 ? '版本平均超额为正且具备放量验证条件，可小幅放大跟单数量。' : '',
     ].filter(Boolean);
+    const baseConfidence =
+      records.length === 0 ? 0 : closedSamples >= 5 ? 0.72 : closedSamples >= 3 ? 0.58 : 0.35;
+    const confidence = roundNumber(
+      Math.max(0, Math.min(0.9, baseConfidence + fieldGateConfidenceAdjustment)),
+      4
+    );
 
     return {
       action,
-      confidence:
-        records.length === 0 ? 0 : closedSamples >= 5 ? 0.72 : closedSamples >= 3 ? 0.58 : 0.35,
+      confidence,
+      base_confidence: baseConfidence,
+      field_gate_confidence_adjustment: roundNumber(fieldGateConfidenceAdjustment, 4),
+      field_gate_adjustment_attribution: fieldGateAdjustmentAttribution || null,
       recommended_style: recommendedStyle,
       recommended_min_score: recommendedMinScore,
       recommended_default_position_pct: recommendedDefaultPositionPct,
@@ -773,6 +876,196 @@ export class RecommendationLoopPolicySnapshotService {
       best_strategy_key: bestStrategyKey || null,
       best_environment_policy_version: bestEnvironmentVersion || null,
       reasons,
+    };
+  }
+
+  private buildRiskGateAnalysis(
+    gates: any[],
+    records: any[] = [],
+    stabilityConfig: Partial<RiskThresholdStabilityConfig> = {}
+  ) {
+    const byKey = new Map<string, any>((gates || []).map(item => [item.key, item]));
+    const allow = byKey.get('allow') || null;
+    const reduce = byKey.get('reduce') || null;
+    const pause = byKey.get('pause') || null;
+    const protectedActions = [reduce, pause].filter(Boolean);
+    const protectedRuns = protectedActions.reduce((sum, item) => sum + toNumber(item.count), 0);
+    const allowExcess = toNumber(allow?.avg_outcome_excess_return_pct);
+    const protectedExcessValues = protectedActions
+      .map(item => Number(item.avg_outcome_excess_return_pct))
+      .filter(Number.isFinite);
+    const protectedAvgExcess = protectedExcessValues.length
+      ? protectedExcessValues.reduce((sum, item) => sum + item, 0) / protectedExcessValues.length
+      : 0;
+    const suggestedLimits = this.buildRiskGateLimitSuggestion({
+      protectedRuns,
+      protectionDeltaPct: protectedAvgExcess - allowExcess,
+    });
+    const thresholdAttribution = riskThresholdAttributionService.buildFromSnapshots(
+      records,
+      suggestedLimits?.limits || {}
+    );
+    const fieldGateAdvice = this.buildRiskThresholdFieldGateAdvice(records);
+
+    return {
+      gates,
+      allow,
+      reduce,
+      pause,
+      protected_runs: protectedRuns,
+      allow_avg_excess_return_pct: roundNumber(allowExcess, 4),
+      protected_avg_excess_return_pct: roundNumber(protectedAvgExcess, 4),
+      protection_delta_pct: roundNumber(protectedAvgExcess - allowExcess, 4),
+      suggested_limits: {
+        ...suggestedLimits,
+        attribution: thresholdAttribution,
+        field_gate_advice: fieldGateAdvice,
+      },
+      threshold_attribution: thresholdAttribution,
+      field_gate_advice: fieldGateAdvice,
+      suggestion_stability: this.buildRiskGateSuggestionStability(records, {
+        protected_runs: protectedRuns,
+        protection_delta_pct: protectedAvgExcess - allowExcess,
+        stability_config: stabilityConfig,
+      }),
+      conclusion:
+        protectedRuns === 0
+          ? '风险闸门尚未触发，继续观察。'
+          : protectedAvgExcess >= allowExcess
+          ? '风险闸门触发后的收益不弱于正常放行，当前保护逻辑可以继续保留。'
+          : '风险闸门触发后的收益低于正常放行，后续需要检查是否过度保守导致错失收益。',
+    };
+  }
+
+  private buildRiskGateSuggestionStability(records: any[], evidence: any = {}) {
+    const stabilityConfig = evidence.stability_config || {};
+    return riskThresholdStabilityService.buildFromSnapshots(records, evidence, stabilityConfig);
+  }
+
+  private buildRiskThresholdFieldGateAdvice(records: any[] = []) {
+    const attributionItems = records
+      .flatMap(record => {
+        const runMetrics = asPlainObject(record?.run_metrics);
+        const paper = asPlainObject(runMetrics.paper_trading);
+        const candidates = [
+          runMetrics.risk_profile_gate?.threshold_version?.attribution,
+          paper.risk_profile_gate?.threshold_version?.attribution,
+          record?.metadata?.risk_profile_gate?.threshold_version?.attribution,
+          record?.loop_policy?.risk_profile_gate?.threshold_version?.attribution,
+        ];
+        return candidates.flatMap(attribution =>
+          Array.isArray(attribution?.items) ? attribution.items : []
+        );
+      })
+      .filter(item => item?.key);
+    const byKey = new Map<string, any[]>();
+    for (const item of attributionItems) {
+      const key = String(item.key);
+      byKey.set(key, [...(byKey.get(key) || []), item]);
+    }
+    const items = [...byKey.entries()].map(([key, rows]) => {
+      const actionable = rows.filter(item =>
+        ['tighten', 'relax'].includes(String(item.action || ''))
+      );
+      const avgConfidence = averageNumbers(
+        actionable.map(item => Number(item.confidence)).filter(Number.isFinite)
+      );
+      const avgSampleCount = averageNumbers(
+        actionable.map(item => Number(item.sample_count)).filter(Number.isFinite)
+      );
+      const avgTriggeredCount = averageNumbers(
+        actionable.map(item => Number(item.triggered_count)).filter(Number.isFinite)
+      );
+      const action =
+        rows.length < 5 || actionable.length < 2
+          ? 'observe'
+          : avgConfidence >= 0.57 && avgSampleCount >= 5 && avgTriggeredCount >= 2
+          ? 'tighten'
+          : avgConfidence >= 0.37 && avgSampleCount >= 2
+          ? 'relax'
+          : 'keep';
+      return {
+        key,
+        action,
+        sample_count: rows.length,
+        actionable_count: actionable.length,
+        avg_confidence: roundNumber(avgConfidence, 4),
+        avg_sample_count: roundNumber(avgSampleCount, 2),
+        avg_triggered_count: roundNumber(avgTriggeredCount, 2),
+        reason:
+          action === 'tighten'
+            ? '字段级历史信号质量较高，可观察提高门槛。'
+            : action === 'relax'
+            ? '字段级历史信号接近门槛，可观察小幅放松。'
+            : action === 'keep'
+            ? '字段级历史信号质量一般，建议保持。'
+            : '字段级样本不足，继续观察。',
+      };
+    });
+    const actionable = items.filter(item => ['tighten', 'relax'].includes(item.action));
+    return {
+      generated_at: new Date().toISOString(),
+      conclusion: actionable.length
+        ? `字段级门槛有 ${actionable.length} 项可观察调整，仍需人工确认。`
+        : '字段级门槛暂无明确调整信号。',
+      items,
+    };
+  }
+
+  private buildRiskGateLimitSuggestion(options: {
+    protectedRuns: number;
+    protectionDeltaPct: number;
+  }) {
+    const baseline = {
+      min_cash_reserve_pct: 8,
+      max_portfolio_drawdown_pct: 12,
+      max_total_exposure_pct: 60,
+      max_industry_exposure_pct: 25,
+      max_position_correlation: 0.82,
+      max_portfolio_var_pct: 10,
+      max_single_stock_volatility_pct: 7,
+    };
+    if (options.protectedRuns < 3) {
+      return {
+        action: 'observe',
+        limits: baseline,
+        reason: '风险闸门触发样本不足，暂不建议调整阈值。',
+      };
+    }
+    if (options.protectionDeltaPct >= 0.5) {
+      return {
+        action: 'tighten',
+        limits: {
+          ...baseline,
+          min_cash_reserve_pct: 10,
+          max_total_exposure_pct: 55,
+          max_industry_exposure_pct: 22,
+          max_position_correlation: 0.78,
+          max_portfolio_var_pct: 8,
+          max_single_stock_volatility_pct: 6.5,
+        },
+        reason: '风险保护有效，建议下一轮略收紧现金、总仓位、集中度、相关性和 VaR 阈值。',
+      };
+    }
+    if (options.protectionDeltaPct <= -0.8) {
+      return {
+        action: 'relax',
+        limits: {
+          ...baseline,
+          min_cash_reserve_pct: 6,
+          max_total_exposure_pct: 65,
+          max_industry_exposure_pct: 28,
+          max_position_correlation: 0.86,
+          max_portfolio_var_pct: 12,
+          max_single_stock_volatility_pct: 8,
+        },
+        reason: '风险保护可能过度保守，建议下一轮小幅放松核心阈值以减少错失收益。',
+      };
+    }
+    return {
+      action: 'keep',
+      limits: baseline,
+      reason: '风险保护效果中性，建议保持当前阈值继续观察。',
     };
   }
 
@@ -792,6 +1085,21 @@ export class RecommendationLoopPolicySnapshotService {
     if (groups.by_strategy_key?.[0]) {
       insights.push(
         `当前表现最好的参数组合是 ${groups.by_strategy_key[0].label}，平均闭环超额 ${groups.by_strategy_key[0].avg_outcome_excess_return_pct}%。`
+      );
+    }
+    const pausedGate = (groups.by_risk_profile_gate || []).find(
+      (item: any) => item.key === 'pause'
+    );
+    const reducedGate = (groups.by_risk_profile_gate || []).find(
+      (item: any) => item.key === 'reduce'
+    );
+    if (pausedGate || reducedGate) {
+      insights.push(
+        `组合风险闸门已触发 ${
+          toNumber(pausedGate?.count) + toNumber(reducedGate?.count)
+        } 次：暂停 ${pausedGate?.count || 0} 次、降仓 ${
+          reducedGate?.count || 0
+        } 次；后续会比较其保护收益与错失收益。`
       );
     }
     if (promotion?.action) {
@@ -875,6 +1183,15 @@ export class RecommendationLoopPolicySnapshotService {
   }
 
   private bucketLabel(key: string) {
+    if (['allow', 'reduce', 'pause', 'observe'].includes(String(key || ''))) {
+      const labels: Record<string, string> = {
+        allow: '正常放行',
+        reduce: '自动降仓',
+        pause: '暂停新增',
+        observe: '谨慎观察',
+      };
+      return labels[String(key)] || key;
+    }
     if (String(key || '').includes('_env_')) {
       return this.environmentPolicyVersionLabel(key);
     }
@@ -948,6 +1265,20 @@ export class RecommendationLoopPolicySnapshotService {
         asPlainObject(runMetrics.paper_trading).environment_guard_policy ||
         {}
     );
+  }
+
+  private riskGateActionFromSnapshot(record: any): string {
+    const metadata = asPlainObject(record?.metadata);
+    const loopPolicy = asPlainObject(record?.loop_policy);
+    const runMetrics = asPlainObject(record?.run_metrics);
+    const paperTrading = asPlainObject(runMetrics.paper_trading);
+    const gate = asPlainObject(
+      metadata.risk_profile_gate ||
+        loopPolicy.risk_profile_gate ||
+        runMetrics.risk_profile_gate ||
+        paperTrading.risk_profile_gate
+    );
+    return String(gate.action || metadata.risk_profile_gate_action || 'allow').toLowerCase();
   }
 }
 

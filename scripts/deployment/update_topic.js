@@ -1,10 +1,13 @@
+const { requireLegacyDeploymentUnlock } = require('./legacy_guard');
+requireLegacyDeploymentUnlock(__filename);
+
 const { Client } = require('ssh2');
+const { getDeployConfig, renderBackendEnv, renderFrontendEnv } = require('./deploy_config');
+
+const deployConfig = getDeployConfig();
 
 const config = {
-  host: '103.242.3.87',
-  port: 14126,
-  username: 'root',
-  password: '7tsA0wS62A1e'
+  ...deployConfig.ssh
 };
 
 async function main() {
@@ -28,37 +31,12 @@ cd /opt/stocks
 
 echo "1. 更新后端 .env..."
 cat > /opt/stocks/backend/.env << 'ENV_EOF'
-DB_HOST=127.0.0.1
-DB_PORT=5432
-DB_NAME=stock_backtest
-DB_USER=postgres
-DB_PASSWORD='x8Vq\$9pL2#mK7@nW1cF5^jY3!bH4*gD'
-DB_SSL=false
-
-REDIS_HOST=127.0.0.1
-REDIS_PORT=6379
-REDIS_PASSWORD=
-REDIS_DB=0
-
-JWT_SECRET=your-secret-key-change-in-production
-JWT_REFRESH_SECRET=your-refresh-secret-key-change-in-production
-
-NODE_ENV=development
-PORT=3000
-INTERNAL_API_KEY=tr_agent_k8s_x9a1!b2c3d4e5f6g7h8i9j0
-
-# PushPlus 微信群组推送配置
-PUSHPLUS_TOKEN=261ae301eaf34c8ba4e0c67c8cd5ca78
-PUSHPLUS_TOPIC=1
-FRONTEND_BASE_URL=http://103.242.3.87:3001
+${renderBackendEnv(deployConfig.backend_env)}
 ENV_EOF
 
 echo "2. 更新前端环境变量..."
 cat > /opt/stocks/frontend/.env.production << 'ENV_EOF'
-REACT_APP_API_BASE_URL=http://103.242.3.87:3000/api
-REACT_APP_WS_URL=ws://103.242.3.87:3000
-REACT_APP_ENV=production
-REACT_APP_PUSHPLUS_QRCODE_URL=https://www.pushplus.plus/api/common/qrcode/group/261ae301eaf34c8ba4e0c67c8cd5ca78?topic=1
+${renderFrontendEnv(deployConfig.frontend_env)}
 ENV_EOF
 
 echo "3. 重新构建前端..."

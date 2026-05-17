@@ -6,9 +6,12 @@ import { feishuTaskReportService } from './FeishuTaskReportService';
 import { aiAdvisorService } from './AIAdvisorService';
 import { logger } from '../utils/logger';
 import { AISignalSourceType } from '../models/AIInvestmentSignal';
+import { User } from '../models/User';
 import { aiPollingQueue } from '../jobs/aiPollingQueue';
 import { recommendationTradeOutcomeService } from './RecommendationTradeOutcomeService';
 import { recommendationLoopPolicySnapshotService } from './RecommendationLoopPolicySnapshotService';
+import { paperTradingRiskProfileService } from './PaperTradingRiskProfileService';
+import { riskThresholdStabilityService } from './RiskThresholdStabilityService';
 import {
   buildRecommendationStrategyVariant,
   normalizeRecommendationStyle,
@@ -70,6 +73,11 @@ export interface AutomatedRecommendationLoopOptions {
   max_daily_new_exposure_pct?: number;
   max_total_exposure_pct?: number;
   max_industry_exposure_pct?: number;
+  min_cash_reserve_pct?: number;
+  max_portfolio_drawdown_pct?: number;
+  max_single_stock_volatility_pct?: number;
+  max_position_correlation?: number;
+  max_portfolio_var_pct?: number;
   min_avg_turnover_yuan?: number;
   cooldown_days_after_loss?: number;
   block_limit_up?: boolean;
@@ -505,8 +513,11 @@ class AutomatedRecommendationLoopService {
         username: options.username,
         universe: options.universe || 'all',
         limit: options.lookback_limit,
+        risk_threshold_stability_config:
+          riskThresholdStabilityService.buildConfigFromParameters(policy),
       } as any);
       const promotion: any = dashboard?.promotion || {};
+      const riskGateAnalysis: any = dashboard?.risk_gate_analysis || {};
       const summary: any = dashboard?.summary || {};
       const runCount = toNumber(summary.run_count, 0);
       const action = String(promotion.action || '');
@@ -527,10 +538,41 @@ class AutomatedRecommendationLoopService {
         recommended_max_position_pct: promotion.recommended_max_position_pct,
         recommended_paper_trade_limit: promotion.recommended_paper_trade_limit,
         position_multiplier: promotion.position_multiplier,
+        base_confidence: promotion.base_confidence,
+        field_gate_confidence_adjustment: promotion.field_gate_confidence_adjustment,
+        field_gate_adjustment_attribution: promotion.field_gate_adjustment_attribution
+          ? {
+              status: promotion.field_gate_adjustment_attribution.status,
+              conclusion: promotion.field_gate_adjustment_attribution.conclusion,
+              before_sample_count: promotion.field_gate_adjustment_attribution.before_sample_count,
+              after_sample_count: promotion.field_gate_adjustment_attribution.after_sample_count,
+              delta_pct: promotion.field_gate_adjustment_attribution.delta_pct,
+              decision: promotion.field_gate_adjustment_attribution.decision,
+              windows: Array.isArray(promotion.field_gate_adjustment_attribution.windows)
+                ? promotion.field_gate_adjustment_attribution.windows.slice(0, 3)
+                : [],
+            }
+          : null,
         best_snapshot_id: promotion.best_snapshot?.id,
         best_snapshot_closed_trade_count: promotion.best_snapshot?.closed_trade_count,
         best_snapshot_avg_excess_return_pct: promotion.best_snapshot?.avg_excess_return_pct,
         best_strategy_key: promotion.best_strategy_key,
+        risk_gate_analysis: {
+          protected_runs: riskGateAnalysis.protected_runs,
+          allow_avg_excess_return_pct: riskGateAnalysis.allow_avg_excess_return_pct,
+          protected_avg_excess_return_pct: riskGateAnalysis.protected_avg_excess_return_pct,
+          protection_delta_pct: riskGateAnalysis.protection_delta_pct,
+          conclusion: riskGateAnalysis.conclusion,
+          suggested_limits: riskGateAnalysis.suggested_limits
+            ? {
+                ...riskGateAnalysis.suggested_limits,
+                stability: riskGateAnalysis.suggestion_stability,
+                attribution: riskGateAnalysis.threshold_attribution,
+              }
+            : riskGateAnalysis.suggested_limits,
+          suggestion_stability: riskGateAnalysis.suggestion_stability,
+          threshold_attribution: riskGateAnalysis.threshold_attribution,
+        },
         reasons: Array.isArray(promotion.reasons) ? promotion.reasons.slice(0, 4) : [],
       };
 
@@ -600,6 +642,14 @@ class AutomatedRecommendationLoopService {
       const recommendedTradeLimit = shouldAdoptStrategyCombo
         ? comboTradeLimit
         : toPositiveInt(promotion.recommended_paper_trade_limit, currentTradeLimit, 20);
+      const riskGateDelta = toNumber(riskGateAnalysis.protection_delta_pct, 0);
+      const riskGateProtectedRuns = toNumber(riskGateAnalysis.protected_runs, 0);
+      const riskGateAdjustment =
+        riskGateProtectedRuns >= 3 && riskGateDelta >= 0.5
+          ? 'tighten'
+          : riskGateProtectedRuns >= 3 && riskGateDelta <= -0.8
+          ? 'relax'
+          : 'observe';
 
       let effectiveMinScore = currentMinScore;
       let effectiveDefaultPositionPct = currentDefaultPosition;
@@ -646,6 +696,28 @@ class AutomatedRecommendationLoopService {
         Math.max(effectiveDefaultPositionPct, options.base_max_position_pct)
       );
 
+      if (riskGateAdjustment === 'tighten') {
+        effectiveDefaultPositionPct = Math.max(1, effectiveDefaultPositionPct * 0.9);
+        effectiveMaxPositionPct = Math.max(
+          effectiveDefaultPositionPct,
+          effectiveMaxPositionPct * 0.9
+        );
+        effectivePaperTradeLimit = Math.max(1, Math.min(effectivePaperTradeLimit, 3));
+      } else if (riskGateAdjustment === 'relax') {
+        effectiveDefaultPositionPct = Math.min(
+          options.base_max_position_pct,
+          effectiveDefaultPositionPct * 1.08
+        );
+        effectiveMaxPositionPct = Math.min(
+          Math.max(effectiveDefaultPositionPct, options.base_max_position_pct),
+          effectiveMaxPositionPct * 1.08
+        );
+        effectivePaperTradeLimit = Math.min(
+          8,
+          Math.max(effectivePaperTradeLimit, currentTradeLimit)
+        );
+      }
+
       return {
         ...enrichedPolicy,
         effective_style: shouldAdoptStrategyCombo
@@ -657,6 +729,20 @@ class AutomatedRecommendationLoopService {
         effective_paper_trade_limit: Math.max(1, Math.min(8, effectivePaperTradeLimit)),
         policy_version_feedback_applied: true,
         policy_promotion: compactPromotion,
+        risk_gate_feedback_applied: riskGateAdjustment !== 'observe',
+        risk_gate_feedback_action: riskGateAdjustment,
+        risk_gate_feedback_reason:
+          riskGateAdjustment === 'tighten'
+            ? `风险闸门保护有效，保护后平均超额较放行高 ${roundNumber(
+                riskGateDelta,
+                2
+              )}pct，下一轮小幅收紧仓位/跟单数量。`
+            : riskGateAdjustment === 'relax'
+            ? `风险闸门可能过度保守，保护后平均超额较放行低 ${roundNumber(
+                Math.abs(riskGateDelta),
+                2
+              )}pct，下一轮小幅放松仓位。`
+            : riskGateAnalysis.conclusion,
         promoted_strategy_key: shouldAdoptStrategyCombo ? bestStrategy.key : undefined,
         promoted_strategy_label: shouldAdoptStrategyCombo ? bestStrategy.label : undefined,
         policy_version_feedback_reason: `已应用策略版本晋级建议：${action}，置信度 ${Math.round(
@@ -671,6 +757,10 @@ class AutomatedRecommendationLoopService {
           confidence * 100
         )}% 置信度，已调整下一轮扫描参数${
           shouldAdoptStrategyCombo ? `，优先采用组合 ${bestStrategy.label}` : ''
+        }${
+          riskGateAdjustment !== 'observe'
+            ? `；风险闸门后验${riskGateAdjustment === 'tighten' ? '收紧' : '放松'}`
+            : ''
         }`,
       };
     } catch (error: any) {
@@ -1526,6 +1616,36 @@ class AutomatedRecommendationLoopService {
       strategy_bucket_label: strategyVariant.strategy_bucket_label,
       strategy_variant: strategyVariant,
     });
+    const preTradeRiskProfile = options.run_paper_trading
+      ? await paperTradingRiskProfileService
+          .getRiskProfile({
+            user_id: await this.resolveLoopUserId(options),
+            portfolio_name: options.portfolio_name,
+            min_cash_reserve_pct: options.min_cash_reserve_pct,
+            max_portfolio_drawdown_pct: options.max_portfolio_drawdown_pct,
+            max_total_exposure_pct: options.max_total_exposure_pct,
+            max_industry_exposure_pct: options.max_industry_exposure_pct,
+            max_position_correlation: options.max_position_correlation,
+            max_portfolio_var_pct: options.max_portfolio_var_pct,
+            max_single_stock_volatility_pct: options.max_single_stock_volatility_pct,
+          })
+          .catch(() => null)
+      : null;
+    const riskGate = this.buildRiskProfileGate(preTradeRiskProfile, {
+      requested_trade_limit: loop_policy.effective_paper_trade_limit,
+      requested_default_position_pct: loop_policy.effective_default_position_pct,
+      requested_max_position_pct: loop_policy.effective_max_position_pct,
+      suggested_limits: loop_policy.policy_promotion?.risk_gate_analysis?.suggested_limits,
+    });
+    Object.assign(loop_policy, {
+      risk_profile_gate: riskGate,
+      risk_profile_feedback_applied: riskGate.applied,
+      risk_profile_feedback_reason: riskGate.reason,
+      effective_paper_trade_limit: riskGate.effective_trade_limit,
+      effective_default_position_pct: riskGate.effective_default_position_pct,
+      effective_max_position_pct: riskGate.effective_max_position_pct,
+      risk_profile_status: preTradeRiskProfile?.status,
+    });
     const archiveLimit = toPositiveInt(options.archive_limit, candidateLimit, 100);
     const generated = await quantRecommendationService.generateRecommendations({
       universe,
@@ -1627,6 +1747,7 @@ class AutomatedRecommendationLoopService {
             paper_trade_default_position_pct: loop_policy.effective_default_position_pct,
             paper_trade_max_position_pct: loop_policy.effective_max_position_pct,
             paper_trade_min_trade_amount: Number(options.min_trade_amount || 3000),
+            paper_trade_risk_profile_gate: riskGate,
             execution_log_id: options.execution_log_id,
             loop_run_id,
             strategy_key: strategyVariant.strategy_key,
@@ -1680,6 +1801,11 @@ class AutomatedRecommendationLoopService {
         max_daily_new_exposure_pct: Number(options.max_daily_new_exposure_pct || 12),
         max_total_exposure_pct: Number(options.max_total_exposure_pct || 60),
         max_industry_exposure_pct: Number(options.max_industry_exposure_pct || 25),
+        min_cash_reserve_pct: Number(options.min_cash_reserve_pct || 8),
+        max_portfolio_drawdown_pct: Number(options.max_portfolio_drawdown_pct || 12),
+        max_single_stock_volatility_pct: Number(options.max_single_stock_volatility_pct || 7),
+        max_position_correlation: Number(options.max_position_correlation || 0.82),
+        max_portfolio_var_pct: Number(options.max_portfolio_var_pct || 10),
         min_avg_turnover_yuan: Number(options.min_avg_turnover_yuan || 30000000),
         cooldown_days_after_loss: toPositiveInt(options.cooldown_days_after_loss, 12, 120),
         block_limit_up: options.block_limit_up !== false,
@@ -1688,6 +1814,7 @@ class AutomatedRecommendationLoopService {
         signal_ids: archive.signal_ids,
         external_environment_policy: environment_policy,
         environment_policy_snapshot_id: environment_policy.snapshot_id,
+        risk_profile_gate: riskGate,
         dry_run: Boolean(options.dry_run),
         report_to_feishu: false,
       });
@@ -1736,6 +1863,26 @@ class AutomatedRecommendationLoopService {
       });
     }
 
+    const risk_profile =
+      options.run_paper_trading && paper_trading?.user_id
+        ? await paperTradingRiskProfileService
+            .getRiskProfile({
+              user_id: Number(paper_trading.user_id),
+              portfolio_name: options.portfolio_name,
+              min_cash_reserve_pct: options.min_cash_reserve_pct,
+              max_portfolio_drawdown_pct: options.max_portfolio_drawdown_pct,
+              max_total_exposure_pct: options.max_total_exposure_pct,
+              max_industry_exposure_pct: options.max_industry_exposure_pct,
+              max_position_correlation: options.max_position_correlation,
+              max_portfolio_var_pct: options.max_portfolio_var_pct,
+              max_single_stock_volatility_pct: options.max_single_stock_volatility_pct,
+            })
+            .catch(error => {
+              logger.warn(`自动荐股闭环读取组合风险画像失败: ${error?.message || error}`);
+              return paper_trading?.risk_profile || null;
+            })
+        : paper_trading?.risk_profile || null;
+
     const quality_report = await aiInvestmentSignalService.getSignalQualityReport({
       source_type: AISignalSourceType.QUANT_RECOMMENDATION,
       horizon: options.profit_gate_horizon || '5d',
@@ -1758,6 +1905,7 @@ class AutomatedRecommendationLoopService {
       agent_analysis,
       verification,
       paper_trading,
+      risk_profile,
       trade_outcomes: trade_outcomes
         ? {
             refreshed: trade_outcomes.refreshed,
@@ -1812,6 +1960,94 @@ class AutomatedRecommendationLoopService {
     return result;
   }
 
+  private async resolveLoopUserId(options: AutomatedRecommendationLoopOptions): Promise<number> {
+    const username = String(options.username || '').trim();
+    if (username) {
+      const user = await User.findOne({ where: { username } });
+      if (user?.id) return Number(user.id);
+    }
+
+    const fallback = await User.findOne({ order: [['id', 'ASC']] });
+    if (!fallback?.id) throw new Error('无法找到自动荐股闭环用户，无法读取组合风险画像');
+    return Number(fallback.id);
+  }
+
+  private buildRiskProfileGate(
+    riskProfile: any,
+    options: {
+      requested_trade_limit: number;
+      requested_default_position_pct: number;
+      requested_max_position_pct: number;
+      suggested_limits?: any;
+    }
+  ) {
+    const level = String(riskProfile?.status?.level || 'safe').toLowerCase();
+    const suggestedLimits = asPlainObject(
+      options.suggested_limits?.limits || options.suggested_limits
+    );
+    const threshold_version = {
+      action: options.suggested_limits?.action || 'observe',
+      reason: options.suggested_limits?.reason,
+      limits: suggestedLimits,
+      stability:
+        options.suggested_limits?.stability || options.suggested_limits?.suggestion_stability,
+      attribution:
+        options.suggested_limits?.attribution || options.suggested_limits?.threshold_attribution,
+    };
+    if (level === 'danger') {
+      return {
+        enabled: true,
+        applied: true,
+        action: 'pause',
+        position_multiplier: 0,
+        effective_trade_limit: 0,
+        effective_default_position_pct: 0,
+        effective_max_position_pct: 0,
+        reason: riskProfile?.status?.conclusion || '组合风险画像显示风险过高，本轮暂停新增买入',
+        status: riskProfile?.status,
+        metrics: riskProfile?.risk_metrics,
+        threshold_version,
+      };
+    }
+
+    if (level === 'watch') {
+      const multiplier = 0.5;
+      return {
+        enabled: true,
+        applied: true,
+        action: 'reduce',
+        position_multiplier: multiplier,
+        effective_trade_limit: Math.max(1, Math.min(options.requested_trade_limit, 2)),
+        effective_default_position_pct: roundNumber(
+          Math.max(1, options.requested_default_position_pct * multiplier),
+          2
+        ),
+        effective_max_position_pct: roundNumber(
+          Math.max(1, options.requested_max_position_pct * multiplier),
+          2
+        ),
+        reason: riskProfile?.status?.conclusion || '组合风险画像进入谨慎区，本轮自动半仓验证',
+        status: riskProfile?.status,
+        metrics: riskProfile?.risk_metrics,
+        threshold_version,
+      };
+    }
+
+    return {
+      enabled: true,
+      applied: false,
+      action: 'allow',
+      position_multiplier: 1,
+      effective_trade_limit: options.requested_trade_limit,
+      effective_default_position_pct: options.requested_default_position_pct,
+      effective_max_position_pct: options.requested_max_position_pct,
+      reason: riskProfile?.status?.conclusion || '组合风险画像允许继续小仓',
+      status: riskProfile?.status,
+      metrics: riskProfile?.risk_metrics,
+      threshold_version,
+    };
+  }
+
   private async submitAgentAnalysis(options: {
     candidates: any[];
     max_count: number;
@@ -1829,6 +2065,7 @@ class AutomatedRecommendationLoopService {
     paper_trade_default_position_pct?: number;
     paper_trade_max_position_pct?: number;
     paper_trade_min_trade_amount?: number;
+    paper_trade_risk_profile_gate?: any;
     execution_log_id?: number;
     loop_run_id?: string;
     strategy_key?: string;
@@ -1915,6 +2152,7 @@ class AutomatedRecommendationLoopService {
             paper_trade_default_position_pct: options.paper_trade_default_position_pct,
             paper_trade_max_position_pct: options.paper_trade_max_position_pct,
             paper_trade_min_trade_amount: options.paper_trade_min_trade_amount,
+            paper_trade_risk_profile_gate: options.paper_trade_risk_profile_gate,
             current_price: candidate.current_price,
             price_change_pct: candidate.change_percent,
             data_quality_score: candidate.data_quality_score,

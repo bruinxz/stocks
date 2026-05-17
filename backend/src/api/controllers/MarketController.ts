@@ -1322,7 +1322,10 @@ export class MarketController {
         'stock_list',
         'history_k',
         'stock_basic',
+        'realtime_quote',
+        'intraday_bar',
       ]);
+      const quantReadiness = DataSourceHealthService.buildQuantReadiness(providers, routingPlans);
 
       const status =
         healthyProviders.length > 0 &&
@@ -1351,6 +1354,7 @@ export class MarketController {
           },
           providers,
           routing_plans: routingPlans,
+          quant_readiness: quantReadiness,
           probe_result: probeResult,
         },
       });

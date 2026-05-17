@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Layout, ConfigProvider, Menu, Avatar, Dropdown } from 'antd';
+import React, { Suspense, lazy, useEffect, useMemo, useState } from 'react';
+import { Layout, ConfigProvider, Menu, Avatar, Dropdown, Spin } from 'antd';
 import {
   BrowserRouter as Router,
   Routes,
@@ -30,31 +30,34 @@ import { loginSuccess, logout } from './store/authSlice';
 import { authService } from './services/authService';
 import { API_DOMAIN_URL } from './services/api';
 
-import Dashboard from './pages/Dashboard';
-import Backtest from './pages/Backtest';
-import Strategy from './pages/Strategy';
-import Login from './pages/Login';
-import Portfolio from './pages/Portfolio';
-import Market from './pages/Market';
-import DataUpdateStatus from './pages/DataUpdateStatus';
-import BacktestResults from './components/backtest/BacktestResults';
-import Profile from './pages/Profile';
-import UserManagement from './pages/UserManagement';
-import AIAdvisor from './pages/AIAdvisor';
-import TaskScheduler from './pages/TaskScheduler';
-import Screener from './pages/Screener';
-import Recommendations from './pages/Recommendations';
-import RecommendationPerformance from './pages/RecommendationPerformance';
-import RecommendationTradeOutcomes from './pages/RecommendationTradeOutcomes';
-import RecommendationLoopPolicies from './pages/RecommendationLoopPolicies';
-import AgentTailAlphaLedger from './pages/AgentTailAlphaLedger';
-import StrategyExperimentLab from './pages/StrategyExperimentLab';
-import AutonomousTradingOverview from './pages/AutonomousTradingOverview';
-import AutonomousRecommendationTracker from './pages/AutonomousRecommendationTracker';
-import AutonomousOptimizationLab from './pages/AutonomousOptimizationLab';
-import RiskAlerts from './pages/RiskAlerts';
-import TradingJournal from './pages/TradingJournal';
-import SystemLogs from './pages/SystemLogs';
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Backtest = lazy(() => import('./pages/Backtest'));
+const Strategy = lazy(() => import('./pages/Strategy'));
+const Login = lazy(() => import('./pages/Login'));
+const Portfolio = lazy(() => import('./pages/Portfolio'));
+const Market = lazy(() => import('./pages/Market'));
+const DataUpdateStatus = lazy(() => import('./pages/DataUpdateStatus'));
+const BacktestResults = lazy(() => import('./components/backtest/BacktestResults'));
+const Profile = lazy(() => import('./pages/Profile'));
+const UserManagement = lazy(() => import('./pages/UserManagement'));
+const AIAdvisor = lazy(() => import('./pages/AIAdvisor'));
+const TaskScheduler = lazy(() => import('./pages/TaskScheduler'));
+const Screener = lazy(() => import('./pages/Screener'));
+const Recommendations = lazy(() => import('./pages/Recommendations'));
+const RecommendationPerformance = lazy(() => import('./pages/RecommendationPerformance'));
+const RecommendationTradeOutcomes = lazy(() => import('./pages/RecommendationTradeOutcomes'));
+const RecommendationLoopPolicies = lazy(() => import('./pages/RecommendationLoopPolicies'));
+const AgentTailAlphaLedger = lazy(() => import('./pages/AgentTailAlphaLedger'));
+const StrategyExperimentLab = lazy(() => import('./pages/StrategyExperimentLab'));
+const AutonomousTradingOverview = lazy(() => import('./pages/AutonomousTradingOverview'));
+const AutonomousRecommendationTracker = lazy(
+  () => import('./pages/AutonomousRecommendationTracker')
+);
+const AutonomousOptimizationLab = lazy(() => import('./pages/AutonomousOptimizationLab'));
+const QuantResearchWorkbench = lazy(() => import('./pages/QuantResearchWorkbench'));
+const RiskAlerts = lazy(() => import('./pages/RiskAlerts'));
+const TradingJournal = lazy(() => import('./pages/TradingJournal'));
+const SystemLogs = lazy(() => import('./pages/SystemLogs'));
 import {
   RobotOutlined,
   ClockCircleOutlined,
@@ -66,6 +69,7 @@ import {
   BranchesOutlined,
   RadarChartOutlined,
   ExperimentOutlined,
+  AimOutlined,
 } from '@ant-design/icons';
 
 import type { MenuProps } from 'antd';
@@ -88,6 +92,13 @@ const BacktestDetailRoute: React.FC = () => {
 
   return <BacktestResults backtest_id={id} />;
 };
+
+const routeFallback = (
+  <div className="route-loading">
+    <Spin />
+    <span>正在加载页面...</span>
+  </div>
+);
 
 const menuLink = (key: string, icon: React.ReactNode, title: string) => ({
   key,
@@ -186,6 +197,13 @@ const AppContent: React.FC = () => {
           menuLink('/autonomous-trading/recommendations', <NodeIndexOutlined />, '每日推荐'),
           menuLink('/risk-alerts', <AlertOutlined />, '风险告警'),
         ],
+      },
+      {
+        key: 'nav-quant-research',
+        icon: <AimOutlined />,
+        label: '量化研究',
+        title: '量化研究',
+        children: [menuLink('/quant', <ThunderboltOutlined />, '量化机会台')],
       },
       {
         key: 'nav-research',
@@ -297,9 +315,11 @@ const AppContent: React.FC = () => {
 
   if (location.pathname === '/login') {
     return (
-      <Routes>
-        <Route path="/login" element={<Login />} />
-      </Routes>
+      <Suspense fallback={routeFallback}>
+        <Routes>
+          <Route path="/login" element={<Login />} />
+        </Routes>
+      </Suspense>
     );
   }
 
@@ -351,206 +371,240 @@ const AppContent: React.FC = () => {
           )}
         </Header>
         <Content className="modern-layout-content">
-          <Routes>
-            <Route path="/" element={<Navigate to="/dashboard" replace />} />
-            <Route
-              path="/dashboard"
-              element={
-                <ProtectedRoute>
-                  <Dashboard />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/paper-trading"
-              element={<Navigate to="/autonomous-trading/overview?tab=manual" replace />}
-            />
-            <Route
-              path="/autonomous-trading/overview"
-              element={
-                <ProtectedRoute>
-                  <AutonomousTradingOverview />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/autonomous-trading/recommendations"
-              element={
-                <ProtectedRoute>
-                  <AutonomousRecommendationTracker />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/autonomous-trading/optimization"
-              element={
-                <ProtectedRoute>
-                  <AutonomousOptimizationLab />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/market"
-              element={
-                <ProtectedRoute>
-                  <Market />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/ai-advisor"
-              element={
-                <ProtectedRoute>
-                  <AIAdvisor />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/tasks"
-              element={
-                <ProtectedRoute>
-                  <TaskScheduler />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/data-update"
-              element={
-                <ProtectedRoute>
-                  <DataUpdateStatus />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/logs"
-              element={
-                <ProtectedRoute>
-                  <SystemLogs />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/portfolio"
-              element={
-                <ProtectedRoute>
-                  <Portfolio />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/backtest"
-              element={
-                <ProtectedRoute>
-                  <Backtest />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/backtest/:id"
-              element={
-                <ProtectedRoute>
-                  <BacktestDetailRoute />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/recommendations"
-              element={
-                <ProtectedRoute>
-                  <Recommendations />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/recommendation-performance"
-              element={
-                <ProtectedRoute>
-                  <RecommendationPerformance />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/agent-tail-alpha"
-              element={
-                <ProtectedRoute>
-                  <AgentTailAlphaLedger />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/recommendation-trade-outcomes"
-              element={
-                <ProtectedRoute>
-                  <RecommendationTradeOutcomes />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/recommendation-loop-policies"
-              element={
-                <ProtectedRoute>
-                  <RecommendationLoopPolicies />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/strategy-experiment-lab"
-              element={
-                <ProtectedRoute>
-                  <StrategyExperimentLab />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/screener"
-              element={
-                <ProtectedRoute>
-                  <Screener />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/risk-alerts"
-              element={
-                <ProtectedRoute>
-                  <RiskAlerts />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/journals"
-              element={
-                <ProtectedRoute>
-                  <TradingJournal />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/strategy"
-              element={
-                <ProtectedRoute>
-                  <Strategy />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/profile"
-              element={
-                <ProtectedRoute>
-                  <Profile />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/users"
-              element={
-                <ProtectedRoute>
-                  <UserManagement />
-                </ProtectedRoute>
-              }
-            />
-            <Route path="*" element={<Navigate to="/dashboard" replace />} />
-          </Routes>
+          <Suspense fallback={routeFallback}>
+            <Routes>
+              <Route path="/" element={<Navigate to="/dashboard" replace />} />
+              <Route
+                path="/dashboard"
+                element={
+                  <ProtectedRoute>
+                    <Dashboard />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/paper-trading"
+                element={<Navigate to="/autonomous-trading/overview?tab=manual" replace />}
+              />
+              <Route
+                path="/autonomous-trading/overview"
+                element={
+                  <ProtectedRoute>
+                    <AutonomousTradingOverview />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/autonomous-trading/recommendations"
+                element={
+                  <ProtectedRoute>
+                    <AutonomousRecommendationTracker />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/autonomous-trading/optimization"
+                element={
+                  <ProtectedRoute>
+                    <AutonomousOptimizationLab />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/quant"
+                element={
+                  <ProtectedRoute>
+                    <QuantResearchWorkbench />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/quant/strategies"
+                element={
+                  <ProtectedRoute>
+                    <QuantResearchWorkbench />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/quant/backtests"
+                element={
+                  <ProtectedRoute>
+                    <QuantResearchWorkbench />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/quant/signals"
+                element={
+                  <ProtectedRoute>
+                    <QuantResearchWorkbench />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/market"
+                element={
+                  <ProtectedRoute>
+                    <Market />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/ai-advisor"
+                element={
+                  <ProtectedRoute>
+                    <AIAdvisor />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/tasks"
+                element={
+                  <ProtectedRoute>
+                    <TaskScheduler />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/data-update"
+                element={
+                  <ProtectedRoute>
+                    <DataUpdateStatus />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/logs"
+                element={
+                  <ProtectedRoute>
+                    <SystemLogs />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/portfolio"
+                element={
+                  <ProtectedRoute>
+                    <Portfolio />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/backtest"
+                element={
+                  <ProtectedRoute>
+                    <Backtest />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/backtest/:id"
+                element={
+                  <ProtectedRoute>
+                    <BacktestDetailRoute />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/recommendations"
+                element={
+                  <ProtectedRoute>
+                    <Recommendations />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/recommendation-performance"
+                element={
+                  <ProtectedRoute>
+                    <RecommendationPerformance />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/agent-tail-alpha"
+                element={
+                  <ProtectedRoute>
+                    <AgentTailAlphaLedger />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/recommendation-trade-outcomes"
+                element={
+                  <ProtectedRoute>
+                    <RecommendationTradeOutcomes />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/recommendation-loop-policies"
+                element={
+                  <ProtectedRoute>
+                    <RecommendationLoopPolicies />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/strategy-experiment-lab"
+                element={
+                  <ProtectedRoute>
+                    <StrategyExperimentLab />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/screener"
+                element={
+                  <ProtectedRoute>
+                    <Screener />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/risk-alerts"
+                element={
+                  <ProtectedRoute>
+                    <RiskAlerts />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/journals"
+                element={
+                  <ProtectedRoute>
+                    <TradingJournal />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/strategy"
+                element={
+                  <ProtectedRoute>
+                    <Strategy />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/profile"
+                element={
+                  <ProtectedRoute>
+                    <Profile />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/users"
+                element={
+                  <ProtectedRoute>
+                    <UserManagement />
+                  </ProtectedRoute>
+                }
+              />
+              <Route path="*" element={<Navigate to="/dashboard" replace />} />
+            </Routes>
+          </Suspense>
         </Content>
       </Layout>
     </Layout>

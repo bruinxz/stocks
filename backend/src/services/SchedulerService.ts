@@ -6,6 +6,8 @@ import { dataUpdateQueue } from '../jobs/dataUpdateQueue';
 import { aiPollingQueue } from '../jobs/aiPollingQueue';
 import { aiAdvisorService } from './AIAdvisorService';
 import { quantRecommendationService } from './QuantRecommendationService';
+import { quantFusionService } from '../quant/services/QuantFusionService';
+import { quantStrategyFeedbackService } from '../quant/services/QuantStrategyFeedbackService';
 import { aiInvestmentSignalService } from './AIInvestmentSignalService';
 import { feishuTaskReportService } from './FeishuTaskReportService';
 import { paperTradingAutomationService } from './PaperTradingAutomationService';
@@ -14,6 +16,7 @@ import { paperTradingPlanService } from './PaperTradingPlanService';
 import { benchmarkIndexService } from './BenchmarkIndexService';
 import { automatedRecommendationLoopService } from './AutomatedRecommendationLoopService';
 import { recommendationTradeOutcomeService } from './RecommendationTradeOutcomeService';
+import { taskParameterAuditService } from './TaskParameterAuditService';
 import {
   AUTONOMOUS_PORTFOLIO_NAME,
   DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
@@ -367,6 +370,159 @@ class SchedulerService {
           },
           'dataQualityScan',
           isManual
+        );
+      } else if (task.type === 'QUANT_DAILY_PIPELINE') {
+        await quantStrategyFeedbackService.refreshWeights({
+          snapshot_date: today,
+          lookback_days: this.toPositiveInt(
+            parameters.strategy_weight_lookback_days || parameters.strategyWeightLookbackDays,
+            365,
+            3650
+          ),
+        });
+
+        const result = await quantFusionService.runDailyPipeline({
+          username: parameters.username || 'lym',
+          trade_date: parameters.trade_date || parameters.tradeDate || today,
+          target_date: parameters.target_date || parameters.targetDate || today,
+          universe: parameters.universe === 'favorites' ? 'favorites' : 'market',
+          symbols: Array.isArray(parameters.symbols) ? parameters.symbols : undefined,
+          strategy_keys: Array.isArray(parameters.strategy_keys)
+            ? parameters.strategy_keys
+            : Array.isArray(parameters.strategyKeys)
+            ? parameters.strategyKeys
+            : undefined,
+          lookback_days: this.toPositiveInt(
+            parameters.lookback_days || parameters.lookbackDays,
+            180,
+            3650
+          ),
+          candidate_limit: this.toPositiveInt(
+            parameters.candidate_limit || parameters.candidateLimit,
+            180,
+            1000
+          ),
+          refresh_realtime_quotes:
+            parameters.refresh_realtime_quotes !== undefined
+              ? Boolean(parameters.refresh_realtime_quotes)
+              : parameters.refreshRealtimeQuotes !== undefined
+              ? Boolean(parameters.refreshRealtimeQuotes)
+              : true,
+          quote_sync_limit: this.toPositiveInt(
+            parameters.quote_sync_limit || parameters.quoteSyncLimit,
+            parameters.candidate_limit || parameters.candidateLimit || 220,
+            1000
+          ),
+          min_score: Number(parameters.min_score || parameters.minScore || 55),
+          archive_limit: this.toPositiveInt(
+            parameters.archive_limit || parameters.archiveLimit,
+            30,
+            200
+          ),
+          max_industry_candidates: this.toPositiveInt(
+            parameters.max_industry_candidates || parameters.maxIndustryCandidates,
+            4,
+            20
+          ),
+          max_strategy_candidates: this.toPositiveInt(
+            parameters.max_strategy_candidates || parameters.maxStrategyCandidates,
+            8,
+            30
+          ),
+          submit_agent_analysis:
+            parameters.submit_agent_analysis !== undefined
+              ? Boolean(parameters.submit_agent_analysis)
+              : parameters.submitAgentAnalysis !== undefined
+              ? Boolean(parameters.submitAgentAnalysis)
+              : true,
+          agent_max_count: this.toPositiveInt(
+            parameters.agent_max_count || parameters.agentMaxCount,
+            5,
+            20
+          ),
+          agent_min_score: Number(parameters.agent_min_score || parameters.agentMinScore || 72),
+          agent_session: parameters.agent_session || parameters.agentSession || 'close',
+          agent_auto_paper_trade:
+            parameters.agent_auto_paper_trade !== undefined
+              ? Boolean(parameters.agent_auto_paper_trade)
+              : parameters.agentAutoPaperTrade !== undefined
+              ? Boolean(parameters.agentAutoPaperTrade)
+              : true,
+          run_paper_trading:
+            parameters.run_paper_trading !== undefined
+              ? Boolean(parameters.run_paper_trading)
+              : parameters.runPaperTrading !== undefined
+              ? Boolean(parameters.runPaperTrading)
+              : true,
+          dry_run:
+            parameters.dry_run !== undefined
+              ? Boolean(parameters.dry_run)
+              : parameters.dryRun !== undefined
+              ? Boolean(parameters.dryRun)
+              : false,
+          paper_trade_limit: this.toPositiveInt(
+            parameters.paper_trade_limit || parameters.paperTradeLimit,
+            3,
+            20
+          ),
+          paper_trade_scan_limit: this.toPositiveInt(
+            parameters.paper_trade_scan_limit || parameters.paperTradeScanLimit,
+            80,
+            300
+          ),
+          max_positions: this.toPositiveInt(
+            parameters.max_positions || parameters.maxPositions,
+            8,
+            30
+          ),
+          default_position_pct: Number(
+            parameters.default_position_pct || parameters.defaultPositionPct || 5
+          ),
+          max_position_pct: Number(parameters.max_position_pct || parameters.maxPositionPct || 10),
+          min_trade_amount: Number(
+            parameters.min_trade_amount || parameters.minTradeAmount || 3000
+          ),
+          ...portfolioParams,
+          task_label: task.name,
+          execution_log_id: executionLog?.id,
+          report_to_feishu:
+            parameters.report_to_feishu !== undefined
+              ? Boolean(parameters.report_to_feishu)
+              : parameters.reportToFeishu !== undefined
+              ? Boolean(parameters.reportToFeishu)
+              : true,
+          params_by_strategy: parameters.params_by_strategy || parameters.paramsByStrategy,
+        });
+
+        const agentSubmitted = Array.isArray(result.agent_analysis?.submitted)
+          ? result.agent_analysis.submitted.length
+          : 0;
+        const agentFailed = Array.isArray(result.agent_analysis?.failed)
+          ? result.agent_analysis.failed.length
+          : 0;
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items:
+            agentSubmitted > 0 ? agentSubmitted + agentFailed : result.archive?.total || 0,
+          completed_items: agentSubmitted > 0 ? 0 : result.archive?.total || 0,
+          failed_items: agentFailed,
+          status: agentSubmitted > 0 ? 'IN_PROGRESS' : 'COMPLETED',
+          completed_at: agentSubmitted > 0 ? null : new Date(),
+          error_message: null,
+        });
+
+        if (agentSubmitted === 0) {
+          await feishuTaskReportService.reportQuantDailyPipeline(result, {
+            record_type: '量化策略扫描完成',
+            task_type: 'QUANT_DAILY_PIPELINE',
+          });
+        }
+
+        logger.info(
+          `量化策略扫描闭环完成。归档 ${
+            result.archive?.total || 0
+          }，Agent提交 ${agentSubmitted}，模拟盘 ${
+            result.paper_trading?.executed ?? result.paper_trading?.planned ?? 0
+          }`
         );
       } else if (task.type === 'BENCHMARK_INDEX_SYNC') {
         const lookbackDays = this.toPositiveInt(
@@ -1169,6 +1325,23 @@ class SchedulerService {
           max_industry_exposure_pct: Number(
             parameters.max_industry_exposure_pct || parameters.maxIndustryExposurePct || 25
           ),
+          min_cash_reserve_pct: Number(
+            parameters.min_cash_reserve_pct || parameters.minCashReservePct || 8
+          ),
+          max_portfolio_drawdown_pct: Number(
+            parameters.max_portfolio_drawdown_pct || parameters.maxPortfolioDrawdownPct || 12
+          ),
+          max_single_stock_volatility_pct: Number(
+            parameters.max_single_stock_volatility_pct ||
+              parameters.maxSingleStockVolatilityPct ||
+              7
+          ),
+          max_position_correlation: Number(
+            parameters.max_position_correlation || parameters.maxPositionCorrelation || 0.82
+          ),
+          max_portfolio_var_pct: Number(
+            parameters.max_portfolio_var_pct || parameters.maxPortfolioVarPct || 10
+          ),
           min_avg_turnover_yuan: Number(
             parameters.min_avg_turnover_yuan || parameters.minAvgTurnoverYuan || 30000000
           ),
@@ -1451,6 +1624,60 @@ class SchedulerService {
         },
       },
       {
+        name: '量化策略全市场扫描',
+        type: 'QUANT_DAILY_PIPELINE',
+        cron_expression: '32 15 * * 1-5',
+        is_active: true,
+        parameters: {
+          username: 'lym',
+          use_autonomous_portfolio: true,
+          portfolio_name: AUTONOMOUS_PORTFOLIO_NAME,
+          initial_capital: DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
+          universe: 'market',
+          strategy_keys: [
+            'multi_factor_ranking',
+            'relative_strength_momentum',
+            'ma_trend',
+            'macd_trend',
+            'breakout_atr',
+            'volume_price_confirmation',
+            'low_volatility_quality',
+          ],
+          lookback_days: 180,
+          candidate_limit: 220,
+          refresh_realtime_quotes: true,
+          quote_sync_limit: 220,
+          min_score: 55,
+          archive_limit: 30,
+          max_industry_candidates: 4,
+          max_strategy_candidates: 8,
+          submit_agent_analysis: true,
+          agent_max_count: 5,
+          agent_min_score: 72,
+          agent_session: 'close',
+          agent_auto_paper_trade: true,
+          run_paper_trading: true,
+          dry_run: false,
+          paper_trade_limit: 3,
+          paper_trade_scan_limit: 100,
+          max_positions: 8,
+          default_position_pct: 5,
+          max_position_pct: 10,
+          min_trade_amount: 3000,
+          strategy_weight_lookback_days: 365,
+          risk_threshold_stability_min_consecutive_same_action: 2,
+          risk_threshold_stability_min_actionable_samples: 2,
+          risk_threshold_stability_min_protected_runs: 3,
+          risk_threshold_stability_tighten_min_delta_pct: 0.5,
+          risk_threshold_stability_relax_max_delta_pct: -0.8,
+          risk_threshold_field_stability_min_consecutive_same_action: 2,
+          risk_threshold_field_min_confidence: 0.45,
+          risk_threshold_field_min_sample_count: 3,
+          risk_threshold_field_min_triggered_count: 1,
+          report_to_feishu: true,
+        },
+      },
+      {
         name: 'AI优选-早盘分析',
         type: 'AI_DAILY_SCREENER',
         cron_expression: '0 9 * * 1-5',
@@ -1547,6 +1774,20 @@ class SchedulerService {
           max_daily_new_exposure_pct: 12,
           max_total_exposure_pct: 60,
           max_industry_exposure_pct: 25,
+          min_cash_reserve_pct: 8,
+          max_portfolio_drawdown_pct: 12,
+          max_single_stock_volatility_pct: 7,
+          max_position_correlation: 0.82,
+          max_portfolio_var_pct: 10,
+          risk_threshold_stability_min_consecutive_same_action: 2,
+          risk_threshold_stability_min_actionable_samples: 2,
+          risk_threshold_stability_min_protected_runs: 3,
+          risk_threshold_stability_tighten_min_delta_pct: 0.5,
+          risk_threshold_stability_relax_max_delta_pct: -0.8,
+          risk_threshold_field_stability_min_consecutive_same_action: 2,
+          risk_threshold_field_min_confidence: 0.45,
+          risk_threshold_field_min_sample_count: 3,
+          risk_threshold_field_min_triggered_count: 1,
           min_avg_turnover_yuan: 30000000,
           cooldown_days_after_loss: 12,
           block_limit_up: true,
@@ -1897,6 +2138,56 @@ class SchedulerService {
         }
       }
 
+      if (taskData.name === '量化策略全市场扫描') {
+        const params = patch.parameters || task.parameters || {};
+        const nextParams = { ...taskData.parameters, ...params };
+        for (const key of [
+          'username',
+          'use_autonomous_portfolio',
+          'portfolio_name',
+          'initial_capital',
+          'universe',
+          'strategy_keys',
+          'lookback_days',
+          'candidate_limit',
+          'refresh_realtime_quotes',
+          'quote_sync_limit',
+          'min_score',
+          'archive_limit',
+          'submit_agent_analysis',
+          'agent_max_count',
+          'agent_min_score',
+          'agent_session',
+          'agent_auto_paper_trade',
+          'run_paper_trading',
+          'dry_run',
+          'paper_trade_limit',
+          'paper_trade_scan_limit',
+          'max_positions',
+          'default_position_pct',
+          'max_position_pct',
+          'min_trade_amount',
+          'strategy_weight_lookback_days',
+          'risk_threshold_stability_min_consecutive_same_action',
+          'risk_threshold_stability_min_actionable_samples',
+          'risk_threshold_stability_min_protected_runs',
+          'risk_threshold_stability_tighten_min_delta_pct',
+          'risk_threshold_stability_relax_max_delta_pct',
+          'risk_threshold_field_stability_min_consecutive_same_action',
+          'risk_threshold_field_min_confidence',
+          'risk_threshold_field_min_sample_count',
+          'risk_threshold_field_min_triggered_count',
+          'report_to_feishu',
+        ]) {
+          if (nextParams[key] === undefined && (taskData.parameters as any)[key] !== undefined) {
+            nextParams[key] = (taskData.parameters as any)[key];
+          }
+        }
+        if (JSON.stringify(nextParams) !== JSON.stringify(params)) {
+          patch.parameters = nextParams;
+        }
+      }
+
       if (taskData.name === '全市场荐股闭环') {
         const params = patch.parameters || task.parameters || {};
         const nextParams = { ...taskData.parameters, ...params };
@@ -1942,6 +2233,20 @@ class SchedulerService {
           'max_daily_new_exposure_pct',
           'max_total_exposure_pct',
           'max_industry_exposure_pct',
+          'min_cash_reserve_pct',
+          'max_portfolio_drawdown_pct',
+          'max_single_stock_volatility_pct',
+          'max_position_correlation',
+          'max_portfolio_var_pct',
+          'risk_threshold_stability_min_consecutive_same_action',
+          'risk_threshold_stability_min_actionable_samples',
+          'risk_threshold_stability_min_protected_runs',
+          'risk_threshold_stability_tighten_min_delta_pct',
+          'risk_threshold_stability_relax_max_delta_pct',
+          'risk_threshold_field_stability_min_consecutive_same_action',
+          'risk_threshold_field_min_confidence',
+          'risk_threshold_field_min_sample_count',
+          'risk_threshold_field_min_triggered_count',
           'min_avg_turnover_yuan',
           'cooldown_days_after_loss',
           'block_limit_up',
@@ -2063,19 +2368,55 @@ class SchedulerService {
     }
   }
 
-  async createTask(data: any) {
+  async createTask(data: any, auditContext: any = {}) {
     const task = await ScheduledTask.create(data);
+    await taskParameterAuditService.record({
+      task,
+      event_type: 'task_created',
+      before_parameters: {},
+      after_parameters: task.parameters || {},
+      changed_keys: Object.keys(task.parameters || {}),
+      operator: auditContext.operator,
+      metadata: {
+        source: auditContext.source || 'scheduler_service',
+      },
+    });
     if (task.is_active) {
       this.scheduleTask(task);
     }
     return task;
   }
 
-  async updateTask(id: number, data: any) {
+  async updateTask(id: number, data: any, auditContext: any = {}) {
     const task = await ScheduledTask.findByPk(id);
     if (!task) throw new Error('Task not found');
 
+    const beforeParameters = { ...(task.parameters || {}) };
     await task.update(data);
+    const afterParameters = { ...(task.parameters || {}) };
+    const changedKeys = taskParameterAuditService.buildChangedKeys(
+      beforeParameters,
+      afterParameters,
+      auditContext.changed_keys
+    );
+    if (changedKeys.length > 0) {
+      await taskParameterAuditService.record({
+        task,
+        event_type:
+          auditContext.event_type ||
+          taskParameterAuditService.inferEventType(changedKeys, 'task_updated'),
+        before_parameters: beforeParameters,
+        after_parameters: afterParameters,
+        changed_keys: changedKeys,
+        source_loop_run_id: auditContext.source_loop_run_id,
+        operator: auditContext.operator,
+        metadata: {
+          source: auditContext.source || 'scheduler_service',
+          updated_fields: Object.keys(data || {}),
+          ...(auditContext.metadata || {}),
+        },
+      });
+    }
     await this.reloadTask(id);
     return task;
   }

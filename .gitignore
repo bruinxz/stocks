@@ -132,3 +132,5 @@ config.json
 
 # Data reports
 data_completeness_report.json
+# Codex desktop local state
+.bridge-state/

@@ -1,0 +1,69 @@
+import { Router } from 'express';
+import { quantController } from '../controllers/QuantController';
+import { AuthController } from '../controllers/AuthController';
+
+const router = Router();
+const authController = new AuthController();
+
+router.get(
+  '/strategies',
+  authController.authenticate,
+  quantController.getStrategies.bind(quantController)
+);
+router.post(
+  '/backtests',
+  authController.authenticate,
+  quantController.createBacktest.bind(quantController)
+);
+router.get(
+  '/backtests',
+  authController.authenticate,
+  quantController.listBacktests.bind(quantController)
+);
+router.get(
+  '/backtests/:id',
+  authController.authenticate,
+  quantController.getBacktest.bind(quantController)
+);
+router.post(
+  '/signals/generate',
+  authController.authenticate,
+  quantController.generateSignals.bind(quantController)
+);
+router.get(
+  '/signals',
+  authController.authenticate,
+  quantController.listSignals.bind(quantController)
+);
+router.post(
+  '/daily-pipeline/run',
+  authController.authenticate,
+  quantController.runDailyPipeline.bind(quantController)
+);
+router.get(
+  '/strategy-weights',
+  authController.authenticate,
+  quantController.listStrategyWeights.bind(quantController)
+);
+router.post(
+  '/strategy-weights/refresh',
+  authController.authenticate,
+  quantController.refreshStrategyWeights.bind(quantController)
+);
+router.get(
+  '/allocation-policy',
+  authController.authenticate,
+  quantController.getAllocationPolicy.bind(quantController)
+);
+router.get(
+  '/fusion-audits',
+  authController.authenticate,
+  quantController.listFusionAudits.bind(quantController)
+);
+router.get(
+  '/rankings',
+  authController.authenticate,
+  quantController.getRankings.bind(quantController)
+);
+
+export default router;

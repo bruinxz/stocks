@@ -14,6 +14,7 @@ export interface StockBasicInfo {
   circulating_market_cap?: number; // 流通市值
   pe_dynamic?: number; // 动态市盈率
   pb?: number; // 市净率
+  ps?: number; // 市销率
   turnover_rate?: number; // 换手率
   price?: number; // 最新价
   change_percent?: number; // 涨跌幅
@@ -35,6 +36,11 @@ export interface DailyBar {
   peTTM: number; // 市盈率TTM
   psTTM: number; // 市销率TTM
   pbMRQ: number; // 市净率MRQ
+  total_share?: number; // 总股本
+  float_share?: number; // 流通股本
+  free_share?: number; // 自由流通股本
+  total_mv?: number; // 总市值（万元）
+  circ_mv?: number; // 流通市值（万元）
   total_market_cap?: number; // 总市值(历史)
 }
 

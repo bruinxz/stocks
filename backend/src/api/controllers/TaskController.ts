@@ -5,6 +5,7 @@ import { logger } from '../../utils/logger';
 import { dataUpdateQueue } from '../../jobs/dataUpdateQueue';
 import { aiPollingQueue } from '../../jobs/aiPollingQueue';
 import { taskAutomationHealthService } from '../../services/TaskAutomationHealthService';
+import { taskParameterAuditService } from '../../services/TaskParameterAuditService';
 
 type QueueJobSummary = {
   id: string | number;
@@ -141,6 +142,34 @@ export class TaskController {
     }
   }
 
+  async applyRiskLimitSuggestion(req: Request, res: Response, next: NextFunction) {
+    try {
+      const result = await taskAutomationHealthService.applyRiskLimitSuggestion({
+        dry_run: req.body?.dry_run !== false,
+        task_ids: Array.isArray(req.body?.task_ids) ? req.body.task_ids : undefined,
+        source_loop_run_id: req.body?.source_loop_run_id,
+        operator: {
+          user_id: (req as any).user?.id,
+          username: (req as any).user?.username,
+        },
+      });
+
+      if (!result.dry_run && Array.isArray((result as any).changes)) {
+        await Promise.all(
+          (result as any).changes
+            .map((change: any) => Number(change.id))
+            .filter((id: number) => Number.isInteger(id) && id > 0)
+            .map((id: number) => schedulerService.reloadTask(id))
+        );
+      }
+
+      res.json({ success: true, data: result });
+    } catch (error: any) {
+      logger.error('应用风险阈值建议失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
   async getTaskLogs(req: Request, res: Response, next: NextFunction) {
     try {
       const { id } = req.params;
@@ -157,9 +186,93 @@ export class TaskController {
     }
   }
 
+  async getTaskParameterAudits(req: Request, res: Response, next: NextFunction) {
+    try {
+      const audits = await taskParameterAuditService.list({
+        task_id: req.query.task_id ? Number(req.query.task_id) : undefined,
+        event_type: req.query.event_type ? String(req.query.event_type) : undefined,
+        limit: req.query.limit ? Number(req.query.limit) : 50,
+        watched_only: req.query.watched_only !== 'false',
+      });
+      res.json({ success: true, data: audits });
+    } catch (error: any) {
+      logger.error('获取任务参数审计记录失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  async reportDeploymentSmoke(req: Request, res: Response, next: NextFunction) {
+    try {
+      const summary = req.body?.summary || req.body || {};
+      const criticalFailed = Number(summary.critical_failed || 0);
+      const failed = Number(summary.failed || 0);
+      const eventType =
+        summary.skipped === true
+          ? 'deployment_smoke_skipped'
+          : criticalFailed > 0 || failed > 0 || summary.success === false
+          ? 'deployment_smoke_failed'
+          : 'deployment_smoke_passed';
+
+      const audit = await taskParameterAuditService.record({
+        task: {
+          id: 0,
+          name: '部署后只读冒烟测试',
+          type: 'DEPLOYMENT_SMOKE',
+        },
+        event_type: eventType,
+        before_parameters: {},
+        after_parameters: {
+          success: Boolean(summary.success),
+          base_url: summary.base_url,
+          passed: Number(summary.passed || 0),
+          failed,
+          critical_failed: criticalFailed,
+          optional_failed: Number(summary.optional_failed || 0),
+          skipped: Number(summary.skipped || 0),
+          skip_reason: summary.skip_reason,
+          timeout_ms: Number(summary.timeout_ms || 0),
+          deployment_id: req.body?.deployment_id,
+          source: req.body?.source || 'deployment_script',
+          local_regression: req.body?.local_regression || null,
+        },
+        changed_keys: [
+          'success',
+          'passed',
+          'failed',
+          'critical_failed',
+          'optional_failed',
+          'skipped',
+          'skip_reason',
+          'timeout_ms',
+        ],
+        metadata: {
+          source: req.body?.source || 'deployment_script',
+          deployment_id: req.body?.deployment_id,
+          local_regression: req.body?.local_regression || null,
+          results: Array.isArray(req.body?.results) ? req.body.results.slice(0, 80) : undefined,
+        },
+      });
+
+      res.json({
+        success: true,
+        data: audit,
+        message: audit ? '部署冒烟结果已记录' : '部署冒烟结果无变化，已跳过记录',
+      });
+    } catch (error: any) {
+      logger.error('记录部署冒烟结果失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
   async createTask(req: Request, res: Response, next: NextFunction) {
     try {
-      const task = await schedulerService.createTask(req.body);
+      const task = await schedulerService.createTask(req.body, {
+        operator: {
+          user_id: (req as any).user?.id,
+          username: (req as any).user?.username,
+        },
+        source: 'task_controller_create',
+      });
       res.json({ success: true, data: task });
     } catch (error: any) {
       logger.error('创建定时任务失败:', error);
@@ -170,7 +283,16 @@ export class TaskController {
   async updateTask(req: Request, res: Response, next: NextFunction) {
     try {
       const { id } = req.params;
-      const task = await schedulerService.updateTask(parseInt(id), req.body);
+      const { audit_event_type, source_loop_run_id, ...updatePayload } = req.body || {};
+      const task = await schedulerService.updateTask(parseInt(id), updatePayload, {
+        operator: {
+          user_id: (req as any).user?.id,
+          username: (req as any).user?.username,
+        },
+        event_type: audit_event_type,
+        source_loop_run_id,
+        source: 'task_controller_update',
+      });
       res.json({ success: true, data: task });
     } catch (error: any) {
       logger.error('更新定时任务失败:', error);

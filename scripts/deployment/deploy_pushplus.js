@@ -1,12 +1,15 @@
+const { requireLegacyDeploymentUnlock } = require('./legacy_guard');
+requireLegacyDeploymentUnlock(__filename);
+
 const { Client } = require('ssh2');
 const fs = require('fs');
 const path = require('path');
+const { getDeployConfig, shellQuote } = require('./deploy_config');
+
+const deployConfig = getDeployConfig();
 
 const config = {
-  host: '103.242.3.87',
-  port: 14126,
-  username: 'root',
-  password: '7tsA0wS62A1e'
+  ...deployConfig.ssh
 };
 
 async function execCommand(conn, command, description) {
@@ -92,7 +95,7 @@ async function main() {
     `;
     await execCommand(
       conn, 
-      `PGPASSWORD='x8Vq$9pL2#mK7@nW1cF5^jY3!bH4*gD' docker exec -i stock_postgres psql -U stock_admin -d stock_backtest << 'EOF'\n${migrateSQL}\nEOF`, 
+      `PGPASSWORD=${shellQuote(deployConfig.postgres.password)} docker exec -i ${deployConfig.postgres.docker_container} psql -U ${deployConfig.postgres.user} -d ${deployConfig.postgres.database} << 'EOF'\n${migrateSQL}\nEOF`,
       '数据库迁移'
     );
 

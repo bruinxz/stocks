@@ -16,10 +16,15 @@ import { logger } from '../utils/logger';
 import moment from 'moment-timezone';
 import { paperTradingAutomationService } from '../services/PaperTradingAutomationService';
 import { RecommendationLoopPolicySnapshot } from '../models/RecommendationLoopPolicySnapshot';
+import { quantFusionAuditService } from '../quant/services/QuantFusionAuditService';
 
 const akshareClient = new AKShareClient();
 
-const updateLogProgress = async (logId: number | undefined, isSuccess: boolean) => {
+const updateLogProgress = async (
+  logId: number | undefined,
+  isSuccess: boolean,
+  schedulerTaskType = 'AI_DAILY_SCREENER'
+) => {
   if (!logId) return;
   try {
     const log = await TaskExecutionLog.findByPk(logId);
@@ -41,10 +46,12 @@ const updateLogProgress = async (logId: number | undefined, isSuccess: boolean) 
     if (log.completed_items + log.failed_items >= log.total_items) {
       const allFailed = Number(log.total_items) > 0 && Number(log.completed_items) === 0;
       const finalStatus = allFailed ? 'FAILED' : 'COMPLETED';
+      const taskLabel =
+        schedulerTaskType === 'QUANT_DAILY_PIPELINE' ? '量化策略Agent复核' : 'AI_DAILY_SCREENER';
       const errorMessage = allFailed
-        ? 'AI_DAILY_SCREENER 所有候选股分析均失败，请查看关联队列任务失败原因'
+        ? `${taskLabel} 所有候选股分析均失败，请查看关联队列任务失败原因`
         : log.failed_items > 0
-        ? `AI_DAILY_SCREENER 部分候选股分析失败：${log.failed_items}/${log.total_items}`
+        ? `${taskLabel} 部分候选股分析失败：${log.failed_items}/${log.total_items}`
         : null;
 
       await log.update({
@@ -59,9 +66,16 @@ const updateLogProgress = async (logId: number | undefined, isSuccess: boolean) 
       );
 
       await feishuTaskReportService.reportTaskExecutionLog(log, {
-        record_type: allFailed ? 'AI定时任务失败' : 'AI定时任务完成',
-        task_type: 'AI_DAILY_SCREENER',
-        error: allFailed ? new Error(errorMessage || 'AI_DAILY_SCREENER failed') : undefined,
+        record_type:
+          schedulerTaskType === 'QUANT_DAILY_PIPELINE'
+            ? allFailed
+              ? '量化策略Agent复核失败'
+              : '量化策略Agent复核完成'
+            : allFailed
+            ? 'AI定时任务失败'
+            : 'AI定时任务完成',
+        task_type: schedulerTaskType,
+        error: allFailed ? new Error(errorMessage || `${schedulerTaskType} failed`) : undefined,
       });
     }
   } catch (error) {
@@ -75,6 +89,7 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
     symbol,
     name,
     executionLogId,
+    scheduler_task_type,
     loopRunId,
     loopPolicySnapshotId,
     taskLabel,
@@ -105,6 +120,10 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
     paper_trade_default_position_pct,
     paper_trade_max_position_pct,
     paper_trade_min_trade_amount,
+    paper_trade_risk_profile_gate,
+    strategy_allocation_policy,
+    strategy_allocation_pct,
+    strategy_max_single_trade_pct,
   } = job.data;
 
   try {
@@ -182,6 +201,7 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
           strategy_variant,
           market_environment,
           task_label: taskLabel,
+          scheduler_task_type,
           agent_session: agentSession,
           loop_run_id: loopRunId,
           loop_policy_snapshot_id: loopPolicySnapshotId,
@@ -240,6 +260,9 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
               quant_data_quality_bucket: submitted_data_quality_bucket,
               strategy_key,
               strategy_variant,
+              strategy_allocation_policy,
+              strategy_allocation_pct,
+              strategy_max_single_trade_pct,
               environment_policy,
               environment_policy_snapshot_id,
               market_environment,
@@ -252,6 +275,30 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
       }
 
       let paperTradingResult: any = null;
+      let fusionAudit: any = null;
+      if (archivedSignal && scheduler_task_type === 'QUANT_DAILY_PIPELINE') {
+        try {
+          fusionAudit = await quantFusionAuditService.recordAgentFusion(archivedSignal, {
+            task_id: taskId,
+            quant_score,
+            strategy_key,
+            strategy_variant,
+            current_price: currentPrice,
+          });
+          await archivedSignal.update({
+            metadata: {
+              ...(archivedSignal.metadata || {}),
+              quant_fusion_audit_id: fusionAudit.id,
+              quant_fusion_final_score: fusionAudit.final_score,
+              quant_fusion_final_decision: fusionAudit.final_decision,
+              quant_fusion_rationale: fusionAudit.rationale,
+            },
+          });
+        } catch (auditError: any) {
+          logger.warn(`量化-Agent 融合审计写入失败 ${taskId}: ${auditError.message}`);
+        }
+      }
+
       if (
         auto_paper_trade &&
         archivedSignal &&
@@ -276,6 +323,7 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
             default_position_pct: Number(paper_trade_default_position_pct || 4),
             max_position_pct: Number(paper_trade_max_position_pct || 8),
             min_trade_amount: Number(paper_trade_min_trade_amount || 3000),
+            risk_profile_gate: paper_trade_risk_profile_gate,
             allowed_risk_levels: ['low', 'medium'],
             require_action_buy: false,
             ignore_profit_gate_for_forced_signals: true,
@@ -297,7 +345,7 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
         }
       }
 
-      await updateLogProgress(executionLogId, true);
+      await updateLogProgress(executionLogId, true, scheduler_task_type);
 
       // 异步写入飞书多维表格（失败也不影响主流程）
       notificationService
@@ -317,6 +365,9 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
       return {
         success: true,
         signal_id: archivedSignal?.id,
+        quant_fusion_audit_id: fusionAudit?.id,
+        quant_fusion_final_score: fusionAudit?.final_score,
+        quant_fusion_final_decision: fusionAudit?.final_decision,
         auto_paper_trade: Boolean(auto_paper_trade),
         paper_trading: paperTradingResult
           ? {
@@ -331,7 +382,7 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
     } else if (status === 'FAILED' || status === 'ERROR') {
       const errorMessage = normalizeTradingAgentsError(response.error || 'Unknown error');
       logger.error(`AI 分析任务 ${taskId} 对于股票 ${symbol} 失败: ${errorMessage}`);
-      await updateLogProgress(executionLogId, false);
+      await updateLogProgress(executionLogId, false, scheduler_task_type);
       // 远端任务已给出终态失败，不需要继续重试轮询；但应让 Bull job 呈现 failed，
       // 这样“队列任务详情”页面不会把实际失败误显示为 completed。
       job.discard();
@@ -353,7 +404,7 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
 aiPollingQueue.on('failed', async (job, err) => {
   if (job && job.attemptsMade >= job.opts.attempts!) {
     logger.error(`AI轮询任务最终失败(重试耗尽) ${job.id}: ${err.message}`);
-    await updateLogProgress(job.data.executionLogId, false);
+    await updateLogProgress(job.data.executionLogId, false, job.data.scheduler_task_type);
     await feishuTaskReportService.reportAiPollingFailure(job.data, err, job.id);
   }
 });

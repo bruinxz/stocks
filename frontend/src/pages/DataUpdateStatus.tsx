@@ -167,6 +167,35 @@ interface DataSourceHealthResponse {
   };
   providers: DataSourceProviderHealth[];
   routing_plans?: Record<string, DataSourceRoutingItem[]>;
+  quant_readiness?: {
+    score: number;
+    status: string;
+    summary: string;
+    history_ready: boolean;
+    realtime_ready: boolean;
+    fundamentals_ready: boolean;
+    intraday_ready: boolean;
+    agent_ready: boolean;
+    primary_history_provider?: string | null;
+    primary_stock_list_provider?: string | null;
+    primary_stock_basic_provider?: string | null;
+    realtime_providers?: string[];
+    recommended_paid_source?: {
+      provider_name: string;
+      provider_label: string;
+      priority: number;
+      reason: string;
+      required_env?: string[];
+    };
+    future_paid_sources?: Array<{
+      provider_name: string;
+      provider_label: string;
+      use_case: string;
+    }>;
+    missing_configs?: string[];
+    recommendations?: string[];
+    capability_notes?: string[];
+  };
 }
 
 interface DataQualityItem {
@@ -1009,6 +1038,7 @@ const DataUpdateStatus: React.FC = () => {
     const historyPlan = dataSourceHealth?.routing_plans?.history_k || [];
     const stockBasicPlan = dataSourceHealth?.routing_plans?.stock_basic || [];
     const stockListPlan = dataSourceHealth?.routing_plans?.stock_list || [];
+    const quantReadiness = dataSourceHealth?.quant_readiness;
     const bestProvider = (historyPlan.find(provider => provider.is_enabled) ||
       [...activeProviders].sort(
         (a, b) => Number(b.health_score || 0) - Number(a.health_score || 0)
@@ -1027,6 +1057,15 @@ const DataUpdateStatus: React.FC = () => {
             <Text type="secondary" style={{ fontSize: 11 }}>
               {record.provider_name} · P{record.priority}
             </Text>
+            <div style={{ marginTop: 4 }}>
+              <Tag color={record.metadata?.commercial_tier === 'free' ? 'green' : 'blue'}>
+                {record.metadata?.commercial_tier === 'free'
+                  ? '免费'
+                  : record.metadata?.commercial_tier === 'internal_service'
+                  ? '内部服务'
+                  : '付费增强'}
+              </Tag>
+            </div>
           </div>
         ),
       },
@@ -1074,6 +1113,21 @@ const DataUpdateStatus: React.FC = () => {
             {(features || []).length > 3 && (
               <Tag style={{ margin: 0, fontSize: 11 }}>+{features.length - 3}</Tag>
             )}
+          </Space>
+        ),
+      },
+      {
+        title: '量化用途',
+        key: 'quant_role',
+        width: 240,
+        render: (_, record) => (
+          <Space direction="vertical" size={2}>
+            <Text strong style={{ fontSize: 12 }}>
+              {record.metadata?.quant_role || '--'}
+            </Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {record.metadata?.recommendation || record.metadata?.quant_usage_notes || '--'}
+            </Text>
           </Space>
         ),
       },
@@ -1208,6 +1262,84 @@ const DataUpdateStatus: React.FC = () => {
           description="系统会根据健康分、近期失败、延迟和显式偏好动态调整股票列表、历史K线、基础资料的调用顺位；异常源只会降级为兜底，不会阻断同步任务。"
           style={{ marginBottom: 12 }}
         />
+
+        {quantReadiness && (
+          <Card className="data-source-readiness" variant="borderless" style={{ marginBottom: 12 }}>
+            <Row gutter={[16, 12]} align="middle">
+              <Col xs={24} md={7}>
+                <div className="data-source-readiness-score">
+                  <span>量化数据可用度</span>
+                  <strong>{Number(quantReadiness.score || 0).toFixed(0)}</strong>
+                  <Progress
+                    percent={Math.round(Number(quantReadiness.score || 0))}
+                    showInfo={false}
+                    strokeColor={
+                      Number(quantReadiness.score || 0) >= 82
+                        ? '#0f8f6b'
+                        : Number(quantReadiness.score || 0) >= 62
+                        ? '#2764b8'
+                        : '#d97706'
+                    }
+                  />
+                </div>
+              </Col>
+              <Col xs={24} md={17}>
+                <Text strong>{quantReadiness.summary}</Text>
+                <div className="data-source-readiness-tags">
+                  {[
+                    ['历史K线', quantReadiness.history_ready],
+                    ['实时行情', quantReadiness.realtime_ready],
+                    ['财务因子', quantReadiness.fundamentals_ready],
+                    ['日内数据', quantReadiness.intraday_ready],
+                    ['Agent研判', quantReadiness.agent_ready],
+                  ].map(([label, ok]) => (
+                    <Tag
+                      key={String(label)}
+                      className={`modern-tag ${ok ? 'tag-success' : 'tag-warning'}`}
+                    >
+                      {label} {ok ? '可用' : '待补齐'}
+                    </Tag>
+                  ))}
+                </div>
+                <div className="data-source-readiness-notes">
+                  {quantReadiness.primary_history_provider && (
+                    <Text type="secondary">
+                      历史K线首选：{quantReadiness.primary_history_provider}
+                    </Text>
+                  )}
+                  {quantReadiness.recommended_paid_source && (
+                    <Text type="secondary">
+                      推荐增强：{quantReadiness.recommended_paid_source.provider_label}，
+                      {quantReadiness.recommended_paid_source.reason}
+                    </Text>
+                  )}
+                </div>
+              </Col>
+            </Row>
+            {!!quantReadiness.recommendations?.length && (
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginTop: 12 }}
+                message="下一步数据源建议"
+                description={
+                  <Space direction="vertical" size={2}>
+                    {quantReadiness.recommendations.slice(0, 3).map(item => (
+                      <Text key={item} type="secondary">
+                        · {item}
+                      </Text>
+                    ))}
+                    {!!quantReadiness.missing_configs?.length && (
+                      <Text type="secondary">
+                        缺少配置：{quantReadiness.missing_configs.join('、')}
+                      </Text>
+                    )}
+                  </Space>
+                }
+              />
+            )}
+          </Card>
+        )}
 
         {historyPlan.length > 0 && (
           <Row gutter={[12, 12]} style={{ marginBottom: 12 }}>

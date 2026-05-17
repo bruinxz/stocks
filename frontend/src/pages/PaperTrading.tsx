@@ -260,6 +260,72 @@ interface PaperTradingPlan {
   actions: TradingPlanAction[];
 }
 
+interface PaperTradingRiskProfile {
+  generated_at: string;
+  portfolio: {
+    id: number;
+    name: string;
+    total_value: number;
+    current_cash: number;
+    initial_capital: number;
+    position_value: number;
+    cash_pct: number;
+    exposure_pct: number;
+    drawdown_pct: number;
+    peak_total_value: number;
+    open_position_count: number;
+  } | null;
+  status: {
+    level: 'safe' | 'watch' | 'danger';
+    label: string;
+    conclusion: string;
+  };
+  limits: {
+    min_cash_reserve_pct: number;
+    max_portfolio_drawdown_pct: number;
+    max_total_exposure_pct: number;
+    max_industry_exposure_pct: number;
+    max_position_correlation: number;
+    max_portfolio_var_pct: number;
+    max_single_stock_volatility_pct: number;
+  };
+  risk_metrics: {
+    cash_pct: number;
+    exposure_pct: number;
+    drawdown_pct: number;
+    max_industry_exposure_pct: number;
+    max_strategy_exposure_pct: number;
+    avg_volatility_20d_pct: number;
+    max_volatility_20d_pct: number;
+    max_pair_correlation: number;
+    portfolio_var_proxy_pct: number;
+  };
+  top_industries: Array<{
+    industry: string;
+    market_value: number;
+    exposure_pct: number;
+    count: number;
+  }>;
+  top_strategies: Array<{
+    strategy_key: string;
+    exposure_pct: number;
+    count: number;
+  }>;
+  position_risks: Array<{
+    symbol: string;
+    name?: string;
+    industry: string;
+    market_value: number;
+    exposure_pct: number;
+    volatility_20d_pct: number;
+    max_correlation: number;
+    strategy_keys: string[];
+    risk_flags: string[];
+  }>;
+  warnings: string[];
+  next_actions: string[];
+}
+
 const formatMoney = (value?: number | null) =>
   `¥${Number(value || 0).toLocaleString(undefined, {
     minimumFractionDigits: 2,
@@ -296,6 +362,14 @@ const actionTypeLabelMap: Record<TradingPlanAction['action_type'], string> = {
   monitor: '观察',
   review: '复盘',
 };
+const riskProfileToneMap: Record<
+  PaperTradingRiskProfile['status']['level'],
+  { tag: string; accent: string; progress: string }
+> = {
+  safe: { tag: 'green', accent: '#008f6b', progress: '#008f6b' },
+  watch: { tag: 'gold', accent: '#b7791f', progress: '#d6a64f' },
+  danger: { tag: 'volcano', accent: '#d14343', progress: '#d14343' },
+};
 
 const PaperTrading: React.FC = () => {
   const [portfolio, setPortfolio] = useState<PortfolioInfo | null>(null);
@@ -327,6 +401,8 @@ const PaperTrading: React.FC = () => {
   const [tradingPlan, setTradingPlan] = useState<PaperTradingPlan | null>(null);
   const [tradingPlanLoading, setTradingPlanLoading] = useState(false);
   const [tradingPlanReportLoading, setTradingPlanReportLoading] = useState(false);
+  const [riskProfile, setRiskProfile] = useState<PaperTradingRiskProfile | null>(null);
+  const [riskProfileLoading, setRiskProfileLoading] = useState(false);
 
   const fetchPortfolio = async () => {
     setLoading(true);
@@ -347,6 +423,7 @@ const PaperTrading: React.FC = () => {
     fetchPortfolio();
     fetchStocks(''); // 初始加载股票
     fetchSnapshots();
+    fetchRiskProfile(true);
     fetchAttribution(true);
     fetchTradingPlan(true);
   }, []);
@@ -374,6 +451,21 @@ const PaperTrading: React.FC = () => {
     }
   };
 
+  const fetchRiskProfile = async (silent = false) => {
+    setRiskProfileLoading(true);
+    try {
+      const response = await api.get('/paper-trading/risk-profile');
+      if (response.data.success) {
+        setRiskProfile(response.data.data);
+        if (!silent) message.success('组合风险画像已刷新');
+      }
+    } catch (error: any) {
+      if (!silent) message.error(error.response?.data?.message || '获取组合风险画像失败');
+    } finally {
+      setRiskProfileLoading(false);
+    }
+  };
+
   const handleSearchStock = (value: string) => {
     fetchStocks(value || '');
   };
@@ -396,7 +488,7 @@ const PaperTrading: React.FC = () => {
       if (response.data.success) {
         message.success('交易成功');
         setIsTradeModalVisible(false);
-        fetchPortfolio(); // 刷新持仓
+        await Promise.all([fetchPortfolio(), fetchRiskProfile(true)]); // 刷新持仓与组合风险
       }
     } catch (error: any) {
       message.error(error.response?.data?.message || '交易失败');
@@ -570,6 +662,7 @@ const PaperTrading: React.FC = () => {
         await Promise.all([
           fetchPortfolio(),
           fetchSnapshots(),
+          fetchRiskProfile(true),
           fetchAttribution(true),
           fetchTradingPlan(true),
         ]);
@@ -588,6 +681,8 @@ const PaperTrading: React.FC = () => {
   const attributionSummary = attribution?.summary;
   const attributionFeedback = attribution?.feedback;
   const tradingPlanSummary = tradingPlan?.summary;
+  const riskTone = riskProfile ? riskProfileToneMap[riskProfile.status.level] : undefined;
+  const topRiskPosition = riskProfile?.position_risks?.find(item => item.risk_flags.length > 0);
   const outcomeBlockedSegments = tradingPlanSummary?.outcome_blocked_segments || [];
   const urgentPlanActions = (tradingPlan?.actions || []).filter(action =>
     ['critical', 'high'].includes(action.priority)
@@ -927,6 +1022,232 @@ const PaperTrading: React.FC = () => {
           </Card>
         </Col>
       </Row>
+
+      <Card
+        className={`modern-card paper-risk-profile-card risk-${
+          riskProfile?.status.level || 'safe'
+        }`}
+        variant="borderless"
+        loading={riskProfileLoading && !riskProfile}
+        style={{ marginBottom: 24 }}
+      >
+        {riskProfile && riskTone ? (
+          <>
+            <div className="paper-risk-profile-header">
+              <div>
+                <Tag color={riskTone.tag} icon={<SafetyCertificateOutlined />}>
+                  Portfolio Guard
+                </Tag>
+                <h2 style={{ color: riskTone.accent }}>{riskProfile.status.label}</h2>
+                <p>{riskProfile.status.conclusion}</p>
+              </div>
+              <Space wrap>
+                <Tag className="modern-tag tag-info">
+                  持仓 {riskProfile.portfolio?.open_position_count || 0} 只
+                </Tag>
+                <Button
+                  icon={<ReloadOutlined />}
+                  onClick={() => fetchRiskProfile(false)}
+                  loading={riskProfileLoading}
+                >
+                  刷新画像
+                </Button>
+              </Space>
+            </div>
+
+            <Row gutter={[14, 14]} className="paper-risk-profile-grid">
+              <Col xs={12} md={4}>
+                <div className="paper-risk-metric">
+                  <span>现金水位</span>
+                  <strong>{formatPercent(riskProfile.risk_metrics.cash_pct)}</strong>
+                  <Progress
+                    percent={clampPercent(riskProfile.risk_metrics.cash_pct)}
+                    size="small"
+                    showInfo={false}
+                    strokeColor={riskTone.progress}
+                  />
+                  <em>底线 {riskProfile.limits.min_cash_reserve_pct}%</em>
+                </div>
+              </Col>
+              <Col xs={12} md={4}>
+                <div className="paper-risk-metric">
+                  <span>总仓位</span>
+                  <strong>{formatPercent(riskProfile.risk_metrics.exposure_pct)}</strong>
+                  <Progress
+                    percent={clampPercent(
+                      (riskProfile.risk_metrics.exposure_pct /
+                        riskProfile.limits.max_total_exposure_pct) *
+                        100
+                    )}
+                    size="small"
+                    showInfo={false}
+                    strokeColor={riskTone.progress}
+                  />
+                  <em>上限 {riskProfile.limits.max_total_exposure_pct}%</em>
+                </div>
+              </Col>
+              <Col xs={12} md={4}>
+                <div className="paper-risk-metric">
+                  <span>组合回撤</span>
+                  <strong>{formatPercent(Math.abs(riskProfile.risk_metrics.drawdown_pct))}</strong>
+                  <Progress
+                    percent={clampPercent(
+                      (Math.abs(riskProfile.risk_metrics.drawdown_pct) /
+                        riskProfile.limits.max_portfolio_drawdown_pct) *
+                        100
+                    )}
+                    size="small"
+                    showInfo={false}
+                    strokeColor={riskTone.progress}
+                  />
+                  <em>上限 {riskProfile.limits.max_portfolio_drawdown_pct}%</em>
+                </div>
+              </Col>
+              <Col xs={12} md={4}>
+                <div className="paper-risk-metric">
+                  <span>行业集中</span>
+                  <strong>
+                    {formatPercent(riskProfile.risk_metrics.max_industry_exposure_pct)}
+                  </strong>
+                  <Progress
+                    percent={clampPercent(
+                      (riskProfile.risk_metrics.max_industry_exposure_pct /
+                        riskProfile.limits.max_industry_exposure_pct) *
+                        100
+                    )}
+                    size="small"
+                    showInfo={false}
+                    strokeColor={riskTone.progress}
+                  />
+                  <em>{riskProfile.top_industries?.[0]?.industry || '暂无行业'}</em>
+                </div>
+              </Col>
+              <Col xs={12} md={4}>
+                <div className="paper-risk-metric">
+                  <span>最高相关</span>
+                  <strong>
+                    {formatPercent((riskProfile.risk_metrics.max_pair_correlation || 0) * 100)}
+                  </strong>
+                  <Progress
+                    percent={clampPercent(
+                      ((riskProfile.risk_metrics.max_pair_correlation || 0) /
+                        riskProfile.limits.max_position_correlation) *
+                        100
+                    )}
+                    size="small"
+                    showInfo={false}
+                    strokeColor={riskTone.progress}
+                  />
+                  <em>上限 {formatPercent(riskProfile.limits.max_position_correlation * 100)}</em>
+                </div>
+              </Col>
+              <Col xs={12} md={4}>
+                <div className="paper-risk-metric">
+                  <span>VaR 代理</span>
+                  <strong>{formatPercent(riskProfile.risk_metrics.portfolio_var_proxy_pct)}</strong>
+                  <Progress
+                    percent={clampPercent(
+                      (riskProfile.risk_metrics.portfolio_var_proxy_pct /
+                        riskProfile.limits.max_portfolio_var_pct) *
+                        100
+                    )}
+                    size="small"
+                    showInfo={false}
+                    strokeColor={riskTone.progress}
+                  />
+                  <em>上限 {riskProfile.limits.max_portfolio_var_pct}%</em>
+                </div>
+              </Col>
+            </Row>
+
+            <Row gutter={[18, 18]} style={{ marginTop: 16 }}>
+              <Col xs={24} lg={8}>
+                <div className="paper-risk-panel">
+                  <div className="paper-risk-panel-title">集中度提醒</div>
+                  <div className="paper-risk-strip">
+                    <span>行业</span>
+                    <strong>
+                      {riskProfile.top_industries?.[0]
+                        ? `${riskProfile.top_industries[0].industry} · ${formatPercent(
+                            riskProfile.top_industries[0].exposure_pct
+                          )}`
+                        : '暂无行业暴露'}
+                    </strong>
+                  </div>
+                  <div className="paper-risk-strip">
+                    <span>策略</span>
+                    <strong>
+                      {riskProfile.top_strategies?.[0]
+                        ? `${riskProfile.top_strategies[0].strategy_key} · ${formatPercent(
+                            riskProfile.top_strategies[0].exposure_pct
+                          )}`
+                        : '暂无策略归因'}
+                    </strong>
+                  </div>
+                </div>
+              </Col>
+              <Col xs={24} lg={8}>
+                <div className="paper-risk-panel">
+                  <div className="paper-risk-panel-title">下一步只看这个</div>
+                  {(riskProfile.next_actions || []).slice(0, 3).map((item, index) => (
+                    <div className="paper-risk-action" key={`risk-next-${index}`}>
+                      {item}
+                    </div>
+                  ))}
+                  {(!riskProfile.next_actions || riskProfile.next_actions.length === 0) && (
+                    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无额外动作" />
+                  )}
+                </div>
+              </Col>
+              <Col xs={24} lg={8}>
+                <div className="paper-risk-panel">
+                  <div className="paper-risk-panel-title">重点观察</div>
+                  {topRiskPosition ? (
+                    <>
+                      <div className="paper-risk-focus-name">
+                        {topRiskPosition.name || topRiskPosition.symbol}
+                        <Text type="secondary">（{topRiskPosition.symbol}）</Text>
+                      </div>
+                      <p>{topRiskPosition.risk_flags[0]}</p>
+                      <Space wrap>
+                        <Tag>{topRiskPosition.industry}</Tag>
+                        <Tag>波动 {formatPercent(topRiskPosition.volatility_20d_pct)}</Tag>
+                        <Tag>
+                          相关 {formatPercent((topRiskPosition.max_correlation || 0) * 100)}
+                        </Tag>
+                      </Space>
+                    </>
+                  ) : (
+                    <div className="paper-risk-action calm">
+                      暂无单票越线风险，继续保持分散和小仓跟踪。
+                    </div>
+                  )}
+                </div>
+              </Col>
+            </Row>
+
+            {riskProfile.warnings?.length > 0 && (
+              <Alert
+                className="paper-risk-alert"
+                type={riskProfile.status.level === 'danger' ? 'warning' : 'info'}
+                showIcon
+                message="风险提示"
+                description={
+                  <Space wrap>
+                    {riskProfile.warnings.slice(0, 4).map((item, index) => (
+                      <Tag key={`warning-${index}`} color={riskTone.tag}>
+                        {item}
+                      </Tag>
+                    ))}
+                  </Space>
+                }
+              />
+            )}
+          </>
+        ) : (
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无组合风险画像" />
+        )}
+      </Card>
 
       <Card
         className="modern-card paper-plan-card"

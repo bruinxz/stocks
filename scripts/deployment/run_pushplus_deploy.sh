@@ -1,12 +1,26 @@
 #!/bin/bash
 
+if [ "${ALLOW_LEGACY_DEPLOYMENT_SCRIPT:-}" != "true" ]; then
+  echo "[SAFE-GUARD] $0 is a legacy deployment script and is disabled by default." >&2
+  echo "[SAFE-GUARD] Use scripts/deployment/sync_and_deploy.js or scripts/deployment/simple_deploy.js instead." >&2
+  echo "[SAFE-GUARD] If you must run it after source review, set ALLOW_LEGACY_DEPLOYMENT_SCRIPT=true explicitly." >&2
+  exit 1
+fi
+
 set -e
 
 SSH_HOST="103.242.3.87"
 SSH_PORT="14126"
 SSH_USER="root"
-SSH_PASS="7tsA0wS62A1e"
-PG_PASS="x8Vq\$9pL2#mK7@nW1cF5^jY3!bH4*gD"
+SSH_PASS="${DEPLOY_PASSWORD:-${SSH_PASSWORD:-}}"
+PG_PASS="${DEPLOY_PG_PASSWORD:-${DB_PASSWORD:-}}"
+
+if [ -z "$SSH_PASS" ] || [ -z "$PG_PASS" ]; then
+  echo "DEPLOY_PASSWORD/SSH_PASSWORD and DEPLOY_PG_PASSWORD/DB_PASSWORD are required." >&2
+  exit 1
+fi
+
+export SSH_PASS PG_PASS
 
 echo "🚀 开始 PushPlus 迁移部署"
 echo "="
@@ -57,11 +71,11 @@ expect << 'EOF'
 set timeout 1200
 spawn ssh -p 14126 root@103.242.3.87
 expect "password:"
-send "7tsA0wS62A1e\r"
+send "$env(SSH_PASS)\r"
 expect "#"
 
 # 数据库迁移
-send "PGPASSWORD='x8Vq$9pL2#mK7@nW1cF5^jY3!bH4*gD' docker exec -i stock_postgres psql -U stock_admin -d stock_backtest << 'END_SQL'\r"
+send "PGPASSWORD='$env(PG_PASS)' docker exec -i stock_postgres psql -U stock_admin -d stock_backtest << 'END_SQL'\r"
 send "DO $$\r"
 send "BEGIN\r"
 send "  IF NOT EXISTS (\r"

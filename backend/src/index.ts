@@ -22,8 +22,10 @@ import journalRoutes from './api/routes/journal.routes';
 import userRoutes from './api/routes/user.routes';
 import logRoutes from './api/routes/log.routes';
 import internalRoutes from './api/routes/internal.routes';
+import quantRoutes from './api/routes/quant.routes';
 import './jobs/dataUpdateWorker'; // 初始化数据更新队列处理器
 import './jobs/aiPollingWorker'; // 初始化 AI 分析轮询队列处理器
+import './jobs/quantBacktestWorker'; // 初始化量化跑分队列处理器
 import { schedulerService } from './services/SchedulerService';
 import { repairLegacyDevelopmentSchema } from './utils/developmentSchemaRepair';
 
@@ -73,12 +75,23 @@ app.use('/api/journals', journalRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/logs', logRoutes);
 app.use('/api/internal', internalRoutes); // 给TradingAgents预留的安全数据接口
+app.use('/api/quant', quantRoutes);
 
 import { User } from './models/User';
 import { AIInvestmentSignal } from './models/AIInvestmentSignal';
 import { RecommendationTradeOutcome } from './models/RecommendationTradeOutcome';
 import { RecommendationLoopPolicySnapshot } from './models/RecommendationLoopPolicySnapshot';
 import { BudgetPolicyVersionSnapshot } from './models/BudgetPolicyVersionSnapshot';
+import { QuantStrategyModel } from './models/QuantStrategyModel';
+import { QuantBacktestTask } from './models/QuantBacktestTask';
+import { QuantBacktestResult } from './models/QuantBacktestResult';
+import { QuantBacktestTrade } from './models/QuantBacktestTrade';
+import { QuantSignal } from './models/QuantSignal';
+import { QuantStrategyPerformanceSnapshot } from './models/QuantStrategyPerformanceSnapshot';
+import { QuantStrategyWeight } from './models/QuantStrategyWeight';
+import { QuantFusionAudit } from './models/QuantFusionAudit';
+import { TaskParameterAuditLog } from './models/TaskParameterAuditLog';
+import { quantStrategyService } from './quant/services/QuantStrategyService';
 
 async function ensureRecommendationLoopRuntimeSchema() {
   const additions = [
@@ -139,11 +152,23 @@ async function initializeApp() {
       await RecommendationTradeOutcome.sync();
       await RecommendationLoopPolicySnapshot.sync();
       await BudgetPolicyVersionSnapshot.sync();
+      await QuantStrategyModel.sync();
+      await QuantBacktestTask.sync();
+      await QuantBacktestResult.sync();
+      await QuantBacktestTrade.sync();
+      await QuantSignal.sync();
+      await QuantStrategyPerformanceSnapshot.sync();
+      await QuantStrategyWeight.sync();
+      await QuantFusionAudit.sync();
+      await TaskParameterAuditLog.sync();
+      await quantStrategyService.syncRegistry();
       await ensureRecommendationLoopRuntimeSchema();
       console.log('AIInvestmentSignal table checked successfully');
       console.log('RecommendationTradeOutcome table checked successfully');
       console.log('RecommendationLoopPolicySnapshot table checked successfully');
       console.log('BudgetPolicyVersionSnapshot table checked successfully');
+      console.log('Quant research tables checked successfully');
+      console.log('TaskParameterAuditLog table checked successfully');
     } catch (schemaError: any) {
       console.warn(
         'Failed to sync recommendation loop tables:',

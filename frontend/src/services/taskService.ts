@@ -9,6 +9,8 @@ export interface ScheduledTask {
   is_active: boolean;
   last_run_at?: string;
   last_run_status?: string;
+  audit_event_type?: string;
+  source_loop_run_id?: string;
 }
 
 export interface QueueJobSummary {
@@ -47,6 +49,28 @@ export interface TaskExecutionLog {
     delayed: number;
   };
   queue_error?: string;
+}
+
+export interface TaskParameterAuditLog {
+  id: number;
+  task_id: number;
+  task_name: string;
+  task_type: string;
+  event_type: string;
+  source_loop_run_id?: string | null;
+  operator_user_id?: number;
+  operator_username?: string;
+  changed_keys: string[];
+  diffs: Array<{
+    key: string;
+    before: any;
+    after: any;
+  }>;
+  before_parameters: Record<string, any>;
+  after_parameters: Record<string, any>;
+  metadata?: Record<string, any>;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface AutomationHealthIssue {
@@ -95,8 +119,77 @@ export interface AutomationHealth {
   queues: Record<string, any>;
   chains: AutomationHealthChain[];
   latest_loop?: any;
+  risk_limit_suggestion?: any;
   issues: AutomationHealthIssue[];
   next_actions: string[];
+}
+
+export interface RiskLimitSuggestionApplyResult {
+  dry_run: boolean;
+  applied: boolean;
+  message: string;
+  action?: string;
+  reason?: string;
+  limits?: Record<string, number>;
+  stability?: {
+    latest_action: string;
+    latest_action_label?: string;
+    consecutive_same_action: number;
+    actionable_samples: number;
+    window_size: number;
+    can_apply: boolean;
+    confidence: number;
+    evidence_passed?: boolean;
+    protection_delta_pct?: number;
+    protected_runs?: number;
+    thresholds?: Record<string, number>;
+    label: string;
+    reason: string;
+    history?: Array<{
+      action: string;
+      loop_run_id?: string;
+      generated_at?: string;
+      reason?: string;
+    }>;
+  };
+  source_loop_run_id?: string | null;
+  generated_at?: string | null;
+  apply_mode?: 'preview' | 'manual_confirmed';
+  changes: Array<{
+    id: number;
+    name: string;
+    type: string;
+    current_parameters: Record<string, any>;
+    suggested_parameters: Record<string, any>;
+    changed_keys: string[];
+    changed: boolean;
+    diffs: Array<{
+      key: string;
+      current_value: any;
+      suggested_value: any;
+    }>;
+    field_evidence?: Record<
+      string,
+      {
+        action?: string;
+        confidence?: number;
+        sample_count?: number;
+        triggered_count?: number;
+        reason?: string;
+        can_apply?: boolean;
+        stability?: {
+          can_apply?: boolean;
+          consecutive_same_action?: number;
+          min_consecutive_same_action?: number;
+          min_confidence?: number;
+          min_sample_count?: number;
+          min_triggered_count?: number;
+          label?: string;
+          reason?: string;
+        };
+      }
+    >;
+  }>;
 }
 
 export const taskService = {
@@ -110,8 +203,27 @@ export const taskService = {
     return response.data.data;
   },
 
+  async applyRiskLimitSuggestion(data: {
+    dry_run?: boolean;
+    task_ids?: number[];
+    source_loop_run_id?: string;
+  }): Promise<RiskLimitSuggestionApplyResult> {
+    const response = await api.post('/tasks/risk-limit-suggestion/apply', data);
+    return response.data.data;
+  },
+
   async getTaskLogs(id: number): Promise<TaskExecutionLog[]> {
     const response = await api.get(`/tasks/${id}/logs`);
+    return response.data.data;
+  },
+
+  async getTaskParameterAudits(params?: {
+    task_id?: number;
+    event_type?: string;
+    limit?: number;
+    watched_only?: boolean;
+  }): Promise<TaskParameterAuditLog[]> {
+    const response = await api.get('/tasks/parameter-audits', { params });
     return response.data.data;
   },
 

@@ -254,6 +254,8 @@ export class CombinedDataSource {
         (stock as any).circulating_market_cap ?? (stock as any).circulatingMarketCap,
       industry: (stock as any).industry,
       pe_dynamic: (stock as any).pe_dynamic ?? (stock as any).peDynamic,
+      pb: (stock as any).pb,
+      ps: (stock as any).ps,
       turnover_rate: (stock as any).turnover_rate ?? (stock as any).turnoverRate,
       change_percent: (stock as any).change_percent ?? (stock as any).changePercent,
     }));
@@ -282,6 +284,11 @@ export class CombinedDataSource {
         peTTM: Number((bar as any).peTTM ?? (bar as any).pe_ttm ?? 0),
         psTTM: Number((bar as any).psTTM ?? (bar as any).ps_ttm ?? 0),
         pbMRQ: Number((bar as any).pbMRQ ?? (bar as any).pb_mrq ?? 0),
+        total_share: Number((bar as any).total_share ?? (bar as any).totalShare ?? 0),
+        float_share: Number((bar as any).float_share ?? (bar as any).floatShare ?? 0),
+        free_share: Number((bar as any).free_share ?? (bar as any).freeShare ?? 0),
+        total_mv: Number((bar as any).total_mv ?? (bar as any).totalMv ?? 0),
+        circ_mv: Number((bar as any).circ_mv ?? (bar as any).circMv ?? 0),
         total_market_cap: (bar as any).total_market_cap ?? (bar as any).totalMarketCap,
       } as DailyBar;
 

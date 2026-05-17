@@ -6,6 +6,7 @@ export interface AIPollingJobData {
   symbol: string;
   name: string;
   executionLogId?: number;
+  scheduler_task_type?: string;
   loopRunId?: string;
   loopPolicySnapshotId?: number;
   taskLabel?: string; // 任务标签，如 "AI优选-早盘分析"
@@ -31,6 +32,10 @@ export interface AIPollingJobData {
   paper_trade_default_position_pct?: number;
   paper_trade_max_position_pct?: number;
   paper_trade_min_trade_amount?: number;
+  paper_trade_risk_profile_gate?: any;
+  strategy_allocation_policy?: any;
+  strategy_allocation_pct?: number;
+  strategy_max_single_trade_pct?: number;
   current_price?: number;
   price_change_pct?: number;
   data_quality_score?: number;

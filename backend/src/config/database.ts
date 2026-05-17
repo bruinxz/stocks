@@ -21,6 +21,16 @@ import { AIInvestmentSignal } from '../models/AIInvestmentSignal';
 import { RecommendationTradeOutcome } from '../models/RecommendationTradeOutcome';
 import { RecommendationLoopPolicySnapshot } from '../models/RecommendationLoopPolicySnapshot';
 import { BudgetPolicyVersionSnapshot } from '../models/BudgetPolicyVersionSnapshot';
+import { QuantStrategyModel } from '../models/QuantStrategyModel';
+import { QuantBacktestTask } from '../models/QuantBacktestTask';
+import { QuantBacktestResult } from '../models/QuantBacktestResult';
+import { QuantBacktestTrade } from '../models/QuantBacktestTrade';
+import { QuantSignal } from '../models/QuantSignal';
+import { QuantStrategyPerformanceSnapshot } from '../models/QuantStrategyPerformanceSnapshot';
+import { QuantStrategyWeight } from '../models/QuantStrategyWeight';
+import { QuantFusionAudit } from '../models/QuantFusionAudit';
+import { TaskParameterAuditLog } from '../models/TaskParameterAuditLog';
+import { RealtimeQuote } from '../models/RealtimeQuote';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -64,6 +74,16 @@ const sequelize = new Sequelize({
     RecommendationTradeOutcome,
     RecommendationLoopPolicySnapshot,
     BudgetPolicyVersionSnapshot,
+    QuantStrategyModel,
+    QuantBacktestTask,
+    QuantBacktestResult,
+    QuantBacktestTrade,
+    QuantSignal,
+    QuantStrategyPerformanceSnapshot,
+    QuantStrategyWeight,
+    QuantFusionAudit,
+    TaskParameterAuditLog,
+    RealtimeQuote,
   ],
   logging: process.env.NODE_ENV === 'development' ? console.log : false,
   pool: {

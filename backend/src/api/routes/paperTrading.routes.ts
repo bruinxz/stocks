@@ -122,6 +122,13 @@ router.get(
 router.get('/attribution', authController.authenticate, paperTradingController.getAttribution);
 
 /**
+ * @route GET /api/paper-trading/risk-profile
+ * @desc 获取模拟盘组合风险画像：现金水位、总仓位、回撤、集中度、相关性与 VaR 代理值
+ * @access Private
+ */
+router.get('/risk-profile', authController.authenticate, paperTradingController.getRiskProfile);
+
+/**
  * @route GET /api/paper-trading/recommendation-outcomes
  * @desc 获取推荐信号到模拟交易收益的闭环看板
  * @access Private

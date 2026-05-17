@@ -25,6 +25,15 @@ export const DEFAULT_DATA_PROVIDERS: MarketDataProviderDefinition[] = [
       requires_token: true,
       env_token: 'TUSHARE_TOKEN',
       enable_env: 'TUSHARE_ENABLED=true',
+      commercial_tier: 'freemium_paid',
+      quant_role: '稳定日线/复权/财务因子增强源',
+      quant_usage_notes: '适合作为量化中长期研究的主增强源，尤其是复权行情、财务因子、指数成分。',
+      recommendation: hasTushareToken
+        ? '已检测到 Token，可优先用于复权行情和财务因子。'
+        : '建议优先配置 Tushare Pro Token，性价比高，能显著提升多因子策略稳定性。',
+      configuration_hint: 'TUSHARE_ENABLED=true 且配置 TUSHARE_TOKEN 或 TUSHARE_PRO_TOKEN',
+      strengths: ['复权行情稳定', '财务/估值因子丰富', '适合中长期回测'],
+      limitations: ['免费积分有调用限制', '分钟级与实时能力有限'],
     },
   },
   {
@@ -37,6 +46,15 @@ export const DEFAULT_DATA_PROVIDERS: MarketDataProviderDefinition[] = [
     metadata: {
       python_package: 'baostock',
       enable_env: 'BAOSTOCK_ENABLED=true',
+      commercial_tier: 'free',
+      quant_role: '免费历史日线兜底源',
+      quant_usage_notes: '适合补齐历史日线和交易日历，作为 AKShare/Tushare 异常时的兜底。',
+      recommendation: baostockEnabled
+        ? '已启用，可作为历史K线和交易日历兜底。'
+        : '可按需开启 BAOSTOCK_ENABLED=true，增强免费历史数据兜底能力。',
+      configuration_hint: 'BAOSTOCK_ENABLED=true 并安装 Python baostock',
+      strengths: ['免费', '历史日线稳定', '交易日历可用'],
+      limitations: ['实时行情弱', '财务因子覆盖有限'],
     },
   },
   {
@@ -55,6 +73,14 @@ export const DEFAULT_DATA_PROVIDERS: MarketDataProviderDefinition[] = [
     metadata: {
       python_package: 'akshare',
       role: 'primary_free_source',
+      commercial_tier: 'free',
+      quant_role: '免费主力行情源',
+      quant_usage_notes:
+        '当前免费栈主力，覆盖历史行情、实时行情和部分基础数据；适合日常扫描和 MVP 策略。',
+      recommendation: '保持启用；关键任务建议配合 Tushare/Baostock 做交叉校验。',
+      configuration_hint: '安装 Python akshare',
+      strengths: ['覆盖广', '免费', '实时/历史能力较全面'],
+      limitations: ['接口稳定性受上游页面影响', '字段口径偶有变化'],
     },
   },
   {
@@ -66,6 +92,14 @@ export const DEFAULT_DATA_PROVIDERS: MarketDataProviderDefinition[] = [
     supported_features: ['stock_list', 'history_k', 'stock_basic'],
     metadata: {
       role: 'fast_http_fallback',
+      commercial_tier: 'free',
+      quant_role: 'HTTP 快速兜底源',
+      quant_usage_notes:
+        '适合快速补充股票列表、历史K线与基础资料，作为 Python 数据源异常时的兜底。',
+      recommendation: '保持启用，用于同步任务 fallback。',
+      configuration_hint: '无需额外配置',
+      strengths: ['HTTP 调用快', '无需 Token', '适合作为 fallback'],
+      limitations: ['字段口径非专业量化标准', '调用频率需控制'],
     },
   },
   {
@@ -77,6 +111,13 @@ export const DEFAULT_DATA_PROVIDERS: MarketDataProviderDefinition[] = [
     supported_features: ['history_k'],
     metadata: {
       role: 'fast_incremental_history_source',
+      commercial_tier: 'free',
+      quant_role: '增量历史行情源',
+      quant_usage_notes: '适合日线增量同步和快速补洞，当前用于全量日线同步的轻量源。',
+      recommendation: '保持启用，用于日线增量同步。',
+      configuration_hint: '无需额外配置',
+      strengths: ['速度快', '适合增量日线', '无需 Token'],
+      limitations: ['基础资料/财务因子不足', '不是专业回测数据源'],
     },
   },
   {
@@ -88,6 +129,13 @@ export const DEFAULT_DATA_PROVIDERS: MarketDataProviderDefinition[] = [
     supported_features: ['stock_list', 'history_k'],
     metadata: {
       role: 'last_resort_fallback',
+      commercial_tier: 'free',
+      quant_role: '最后兜底源',
+      quant_usage_notes: '适合作为兜底链路，避免单一数据源异常导致同步任务中断。',
+      recommendation: '保持为低优先级兜底。',
+      configuration_hint: '无需额外配置',
+      strengths: ['无需 Token', '可兜底历史数据'],
+      limitations: ['能力覆盖较窄', '稳定性不适合作为主源'],
     },
   },
   {
@@ -100,6 +148,14 @@ export const DEFAULT_DATA_PROVIDERS: MarketDataProviderDefinition[] = [
     metadata: {
       base_url: process.env.TRADING_AGENTS_URL || 'http://47.93.224.109:8000',
       role: 'multi_agent_research',
+      commercial_tier: 'internal_service',
+      quant_role: '外部信息/多智能体深研源',
+      quant_usage_notes:
+        '不直接提供行情数据，用于对量化 Top 候选做基本面、新闻面、情绪面和技术面二次研判。',
+      recommendation: '保持健康探测；只对高分候选调用，控制成本和延迟。',
+      configuration_hint: 'TRADING_AGENTS_URL 指向已部署服务',
+      strengths: ['外部信息补充', '解释性强', '适合二次确认'],
+      limitations: ['非行情源', '耗时较长，应队列化调用'],
     },
   },
 ];
@@ -174,6 +230,15 @@ function getProbeDateRange(): { start_date: string; end_date: string } {
     start_date: formatDate(start),
     end_date: formatDate(end),
   };
+}
+
+function isProviderUsable(provider: any): boolean {
+  if (!provider || !provider.is_enabled) return false;
+  return ![DataSourceStatus.DISABLED, DataSourceStatus.UNHEALTHY].includes(provider.status);
+}
+
+function firstUsableRoute(routes: any[] = []): any | null {
+  return routes.find(route => isProviderUsable(route)) || null;
 }
 
 export class DataSourceHealthService {
@@ -839,6 +904,126 @@ export class DataSourceHealthService {
       });
     }
     return plans;
+  }
+
+  static buildQuantReadiness(
+    providers: any[],
+    routingPlans: Record<string, any[]> = {}
+  ): Record<string, any> {
+    const providerByName = new Map(
+      providers.map(provider => [String(provider.provider_name).toLowerCase(), provider])
+    );
+    const missingConfigs: string[] = [];
+    const recommendations: string[] = [];
+    const capabilityNotes: string[] = [];
+    const historyPrimary = firstUsableRoute(routingPlans.history_k || []);
+    const stockListPrimary = firstUsableRoute(routingPlans.stock_list || []);
+    const stockBasicPrimary = firstUsableRoute(routingPlans.stock_basic || []);
+    const realtimeProviders = providers.filter(
+      provider =>
+        isProviderUsable(provider) && (provider.supported_features || []).includes('realtime_quote')
+    );
+    const intradayProviders = providers.filter(
+      provider =>
+        isProviderUsable(provider) && (provider.supported_features || []).includes('intraday_bar')
+    );
+    const tushare = providerByName.get('tushare');
+    const baostock = providerByName.get('baostock');
+    const akshare = providerByName.get('akshare');
+    const tradingAgents = providerByName.get('tradingagents');
+    const hasTushareTokenNow = Boolean(process.env.TUSHARE_TOKEN || process.env.TUSHARE_PRO_TOKEN);
+
+    if (!hasTushareTokenNow) {
+      missingConfigs.push('TUSHARE_TOKEN');
+      recommendations.push('优先配置 Tushare Pro：提升复权行情、财务因子和指数成分的稳定性。');
+    }
+    if (!tushare?.is_enabled) {
+      missingConfigs.push('TUSHARE_ENABLED=true');
+    }
+    if (!baostock?.is_enabled) {
+      recommendations.push('可开启 Baostock 作为免费历史日线和交易日历兜底。');
+    }
+    if (!historyPrimary) {
+      recommendations.push(
+        '历史K线当前无可用主链路，请先修复 AKShare/腾讯/东方财富/Tushare 任一数据源。'
+      );
+    }
+    if (!realtimeProviders.length) {
+      recommendations.push('实时行情能力不足，建议检查 AKShare 实时接口或接入付费行情源。');
+    }
+    if (!isProviderUsable(tradingAgents)) {
+      recommendations.push('TradingAgents 健康状态异常，高分候选的二次研判可能延迟或缺失。');
+    }
+
+    if (isProviderUsable(akshare)) capabilityNotes.push('AKShare 可承担免费主力行情。');
+    if (isProviderUsable(tushare)) capabilityNotes.push('Tushare 可承担复权/财务因子增强。');
+    if (isProviderUsable(baostock)) capabilityNotes.push('Baostock 可承担历史日线兜底。');
+
+    const historyReady = Boolean(historyPrimary);
+    const realtimeReady = realtimeProviders.length > 0;
+    const fundamentalsReady = Boolean(isProviderUsable(tushare) || isProviderUsable(akshare));
+    const intradayReady = intradayProviders.length > 0;
+    const agentReady = Boolean(isProviderUsable(tradingAgents));
+    const score = clampScore(
+      (historyReady ? 26 : 0) +
+        (stockListPrimary ? 14 : 0) +
+        (stockBasicPrimary ? 14 : 0) +
+        (realtimeReady ? 14 : 0) +
+        (fundamentalsReady ? 16 : 0) +
+        (intradayReady ? 6 : 0) +
+        (agentReady ? 10 : 0)
+    );
+
+    return {
+      score,
+      status:
+        score >= 82
+          ? 'production_ready'
+          : score >= 62
+          ? 'usable'
+          : score >= 42
+          ? 'limited'
+          : 'blocked',
+      summary:
+        score >= 82
+          ? '量化扫描链路较完整，可支撑每日自动荐股闭环。'
+          : score >= 62
+          ? '量化扫描可用，但建议补齐 Tushare/兜底源提升稳定性。'
+          : score >= 42
+          ? '仅适合小规模验证，自动化荐股需要先修复关键数据源。'
+          : '关键行情链路不足，暂不建议运行自动闭环。',
+      history_ready: historyReady,
+      realtime_ready: realtimeReady,
+      fundamentals_ready: fundamentalsReady,
+      intraday_ready: intradayReady,
+      agent_ready: agentReady,
+      primary_history_provider: historyPrimary?.provider_label || null,
+      primary_stock_list_provider: stockListPrimary?.provider_label || null,
+      primary_stock_basic_provider: stockBasicPrimary?.provider_label || null,
+      realtime_providers: realtimeProviders.map(provider => provider.provider_label),
+      recommended_paid_source: {
+        provider_name: 'tushare',
+        provider_label: 'Tushare Pro',
+        priority: 1,
+        reason: '性价比高，最适合先补齐 A 股日线、复权、财务因子、指数成分和估值口径。',
+        required_env: ['TUSHARE_ENABLED=true', 'TUSHARE_TOKEN'],
+      },
+      future_paid_sources: [
+        {
+          provider_name: 'jqdata',
+          provider_label: '聚宽 JQData',
+          use_case: '分钟级行情、指数成分、财务因子与研究环境一体化。',
+        },
+        {
+          provider_name: 'gm',
+          provider_label: '掘金量化',
+          use_case: '更接近实盘的数据、回测和后续交易接口探索。',
+        },
+      ],
+      missing_configs: [...new Set(missingConfigs)],
+      recommendations: [...new Set(recommendations)],
+      capability_notes: capabilityNotes,
+    };
   }
 
   static async getHealthSnapshots(): Promise<any[]> {

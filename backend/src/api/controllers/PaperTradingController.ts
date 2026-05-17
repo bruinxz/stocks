@@ -16,6 +16,7 @@ import {
   paperTradingDashboardService,
 } from '../../services/PaperTradingDashboardService';
 import { paperTradingPlanService } from '../../services/PaperTradingPlanService';
+import { paperTradingRiskProfileService } from '../../services/PaperTradingRiskProfileService';
 import { recommendationTradeOutcomeService } from '../../services/RecommendationTradeOutcomeService';
 import { logger } from '../../utils/logger';
 
@@ -602,6 +603,26 @@ export class PaperTradingController {
       });
     } catch (error: any) {
       logger.error('获取模拟盘收益归因失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
+  // 获取模拟盘组合风险画像
+  getRiskProfile = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const user = (req as any).user;
+      const result = await paperTradingRiskProfileService.getRiskProfile({
+        ...req.query,
+        user_id: user.id,
+      });
+
+      res.json({
+        success: true,
+        data: result,
+        message: `组合风险画像：${result.status.label}`,
+      });
+    } catch (error: any) {
+      logger.error('获取模拟盘组合风险画像失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   };

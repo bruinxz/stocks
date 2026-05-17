@@ -314,7 +314,9 @@ export class DataSyncService {
   /**
    * 补全单只股票画像/估值快照，用于推荐因子质量提升。
    */
-  async syncStockProfile(symbolInput: string): Promise<{ symbol: string; updated: boolean; data: any }> {
+  async syncStockProfile(
+    symbolInput: string
+  ): Promise<{ symbol: string; updated: boolean; data: any }> {
     const symbol = normalizeSymbol(symbolInput);
     const existingStock = await Stock.findOne({ where: { symbol } });
     let stockData = await this.dataSource.queryStockBasic(symbol);
@@ -388,13 +390,18 @@ export class DataSyncService {
   /**
    * 批量补全股票画像。
    */
-  async syncStockProfiles(symbols: string[], limit = 30): Promise<{
+  async syncStockProfiles(
+    symbols: string[],
+    limit = 30
+  ): Promise<{
     total: number;
     success: number;
     failed: number;
     results: Array<{ symbol: string; success: boolean; error?: string }>;
   }> {
-    const uniqueSymbols = Array.from(new Set(normalizeSymbols(symbols))).filter(Boolean).slice(0, limit);
+    const uniqueSymbols = Array.from(new Set(normalizeSymbols(symbols)))
+      .filter(Boolean)
+      .slice(0, limit);
     const results: Array<{ symbol: string; success: boolean; error?: string }> = [];
 
     for (const symbol of uniqueSymbols) {
@@ -475,7 +482,7 @@ export class DataSyncService {
       if (bars.length > 0) {
         // 使用批量处理和去重，极大优化 CPU 和内存
         const barsToInsert = [];
-        
+
         for (const barData of bars) {
           try {
             const barToInsert = {
@@ -493,7 +500,10 @@ export class DataSyncService {
               pe: Number(barData.peTTM) || 0,
               pb: Number(barData.pbMRQ) || 0,
               ps: Number(barData.psTTM) || 0,
-              market_cap: Number(barData.total_market_cap) || 0,
+              market_cap:
+                Number(barData.total_market_cap) ||
+                (Number((barData as any).total_mv) || 0) * 10000 ||
+                0,
               is_trading_day: barData.tradestatus === 1,
               is_suspended: barData.tradestatus === 0,
             };
@@ -537,16 +547,16 @@ export class DataSyncService {
         if (barsToInsert.length > 0) {
           try {
             // 批量插入，如果主键冲突则忽略，这大大减少了数据库交互次数和连接池压力
-            await DailyBar.bulkCreate(barsToInsert, { 
+            await DailyBar.bulkCreate(barsToInsert, {
               ignoreDuplicates: true,
-              logging: false // 关闭 SQL 打印，避免日志过大导致内存泄漏
+              logging: false, // 关闭 SQL 打印，避免日志过大导致内存泄漏
             });
             insertedCount = barsToInsert.length;
           } catch (error) {
             failedCount += barsToInsert.length;
             this.recordError(ErrorCategory.DATABASE_INSERT, error, {
               symbol: normalizedSymbol,
-              batchSize: barsToInsert.length
+              batchSize: barsToInsert.length,
             });
           }
         }
@@ -570,8 +580,11 @@ export class DataSyncService {
       } catch (e) {
         // ignore
       }
-      
-      logger.error(`[${market}] 无法获取股票 ${normalizedSymbol} 的历史数据:`, error.message || error);
+
+      logger.error(
+        `[${market}] 无法获取股票 ${normalizedSymbol} 的历史数据:`,
+        error.message || error
+      );
       this.recordError(ErrorCategory.DATA_SOURCE_FETCH, error, {
         symbol: normalizedSymbol,
         start_date,

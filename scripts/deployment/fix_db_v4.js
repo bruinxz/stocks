@@ -1,12 +1,15 @@
+const { requireLegacyDeploymentUnlock } = require('./legacy_guard');
+requireLegacyDeploymentUnlock(__filename);
+
 const { Client } = require('ssh2');
 const fs = require('fs');
 const path = require('path');
+const { getDeployConfig } = require('./deploy_config');
+
+const deployConfig = getDeployConfig();
 
 const config = {
-  host: '103.242.3.87',
-  port: 14126,
-  username: 'root',
-  password: '7tsA0wS62A1e'
+  ...deployConfig.ssh
 };
 
 async function main() {

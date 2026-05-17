@@ -9,6 +9,7 @@ import {
   Empty,
   Form,
   Input,
+  InputNumber,
   Modal,
   Row,
   Select,
@@ -46,10 +47,18 @@ import {
   AutomationHealth,
   AutomationHealthChain,
   QueueJobSummary,
+  RiskLimitSuggestionApplyResult,
   ScheduledTask,
+  TaskParameterAuditLog,
   TaskExecutionLog,
   taskService,
 } from '../services/taskService';
+import { riskLimitKeyLabels, riskLimitKeyPriority } from '../constants/riskLimits';
+import {
+  DeploymentAuditSummary,
+  ParameterAuditSummary,
+} from '../components/task/AuditSummaries';
+import { RiskLimitPreviewModal } from '../components/task/RiskLimitPreviewModal';
 import dayjs from 'dayjs';
 
 const { Text, Title } = Typography;
@@ -61,6 +70,7 @@ const taskTypeLabels: Record<string, string> = {
   SYNC_HISTORY: '股票历史行情同步',
   DATA_QUALITY_SCAN: '数据质量扫描',
   BENCHMARK_INDEX_SYNC: '基准指数行情同步',
+  QUANT_DAILY_PIPELINE: '量化策略全市场扫描',
   AI_DAILY_SCREENER: 'AI 每日优选评估',
   AUTO_RECOMMENDATION_LOOP: '全市场荐股闭环',
   SIGNAL_PERFORMANCE_REFRESH: '推荐绩效后验刷新',
@@ -110,12 +120,56 @@ const defaultParametersByType: Record<string, any> = {
     use_profit_gate: true,
     use_entry_risk_guard: true,
     use_strategy_experiment_feedback: true,
+    risk_threshold_stability_min_consecutive_same_action: 2,
+    risk_threshold_stability_min_actionable_samples: 2,
+    risk_threshold_stability_min_protected_runs: 3,
+    risk_threshold_stability_tighten_min_delta_pct: 0.5,
+    risk_threshold_stability_relax_max_delta_pct: -0.8,
+    risk_threshold_field_stability_min_consecutive_same_action: 2,
+    risk_threshold_field_min_confidence: 0.45,
+    risk_threshold_field_min_sample_count: 3,
+    risk_threshold_field_min_triggered_count: 1,
     report_to_feishu: true,
   },
   BENCHMARK_INDEX_SYNC: {
     lookback_days: 180,
     data_source: 'tencent_only',
     concurrency: 2,
+    report_to_feishu: true,
+  },
+  QUANT_DAILY_PIPELINE: {
+    username: 'lym',
+    use_autonomous_portfolio: true,
+    universe: 'market',
+    strategy_keys: [
+      'multi_factor_ranking',
+      'relative_strength_momentum',
+      'ma_trend',
+      'macd_trend',
+      'volume_price_confirmation',
+      'low_volatility_quality',
+    ],
+    lookback_days: 180,
+    candidate_limit: 220,
+    min_score: 55,
+    archive_limit: 30,
+    submit_agent_analysis: true,
+    agent_max_count: 5,
+    agent_min_score: 72,
+    agent_session: 'close',
+    agent_auto_paper_trade: true,
+    run_paper_trading: true,
+    dry_run: false,
+    paper_trade_limit: 3,
+    risk_threshold_stability_min_consecutive_same_action: 2,
+    risk_threshold_stability_min_actionable_samples: 2,
+    risk_threshold_stability_min_protected_runs: 3,
+    risk_threshold_stability_tighten_min_delta_pct: 0.5,
+    risk_threshold_stability_relax_max_delta_pct: -0.8,
+    risk_threshold_field_stability_min_consecutive_same_action: 2,
+    risk_threshold_field_min_confidence: 0.45,
+    risk_threshold_field_min_sample_count: 3,
+    risk_threshold_field_min_triggered_count: 1,
     report_to_feishu: true,
   },
   SIGNAL_PERFORMANCE_REFRESH: {
@@ -224,11 +278,88 @@ const formatQueueTime = (timestamp?: number) =>
 const formatDateTime = (value?: string | null) =>
   value ? dayjs(value).format('YYYY-MM-DD HH:mm') : '-';
 
+const formatPercent = (value?: number | string | null) => {
+  const num = Number(value || 0);
+  return Number.isFinite(num) ? `${num.toFixed(2)}%` : '-';
+};
+
 const formatQueueProgress = (progress: any) => {
   if (progress === null || progress === undefined || progress === '') return '-';
   if (typeof progress === 'number') return `${progress}%`;
   if (typeof progress === 'object') return JSON.stringify(progress);
   return String(progress);
+};
+
+const getRiskFieldEvidenceScore = (evidence: any) => {
+  const confidence = Number(evidence?.confidence || 0);
+  const sampleCount = Number(evidence?.sample_count || 0);
+  const triggeredCount = Number(evidence?.triggered_count || 0);
+  const stability = evidence?.stability || {};
+  const sameAction = Number(stability.consecutive_same_action || 0);
+  const minSameAction = Number(stability.min_consecutive_same_action || 2);
+  const minConfidence = Number(stability.min_confidence || 0.45);
+  const minSampleCount = Number(stability.min_sample_count || 3);
+  const minTriggeredCount = Number(stability.min_triggered_count || 1);
+  const ratio = (value: number, target: number) =>
+    target > 0 ? Math.min(value / target, 1) : 0;
+  return (
+    ratio(confidence, minConfidence) * 0.35 +
+    ratio(sampleCount, minSampleCount) * 0.25 +
+    ratio(triggeredCount, minTriggeredCount) * 0.2 +
+    ratio(sameAction, minSameAction) * 0.2
+  );
+};
+
+const auditEventLabels: Record<string, string> = {
+  task_created: '任务创建',
+  task_updated: '参数更新',
+  risk_limit_suggestion_applied: '风险阈值应用',
+  risk_stability_settings_updated: '稳定性门槛',
+  deployment_smoke_passed: '部署验证通过',
+  deployment_smoke_failed: '部署验证失败',
+  deployment_smoke_skipped: '部署验证跳过',
+};
+
+const auditEventColors: Record<string, string> = {
+  task_created: 'blue',
+  task_updated: 'default',
+  risk_limit_suggestion_applied: 'green',
+  risk_stability_settings_updated: 'purple',
+  deployment_smoke_passed: 'green',
+  deployment_smoke_failed: 'red',
+  deployment_smoke_skipped: 'gold',
+};
+
+const defaultRiskStabilitySettings = {
+  min_consecutive_same_action: 2,
+  min_actionable_samples: 2,
+  min_protected_runs: 3,
+  tighten_min_delta_pct: 0.5,
+  relax_max_delta_pct: -0.8,
+  field_min_consecutive_same_action: 2,
+  field_min_confidence: 0.45,
+  field_min_sample_count: 3,
+  field_min_triggered_count: 1,
+};
+
+const formatRiskLimitValue = (key: string, value: any) => {
+  if (value === null || value === undefined || value === '') return '未配置';
+  const num = Number(value);
+  if (!Number.isFinite(num)) return String(value);
+  if (key === 'max_position_correlation') return num.toFixed(2);
+  if (key.startsWith('risk_threshold_stability_')) {
+    const isCountKey =
+      key.includes('consecutive') || key.includes('samples') || key.includes('protected_runs');
+    return isCountKey ? `${num.toFixed(0)} 次` : `${num.toFixed(2)}pct`;
+  }
+  if (key.startsWith('risk_threshold_field_stability_')) return `${num.toFixed(0)} 次`;
+  if (key === 'risk_threshold_field_min_confidence') return num.toFixed(2);
+  if (
+    key === 'risk_threshold_field_min_sample_count' ||
+    key === 'risk_threshold_field_min_triggered_count'
+  )
+    return `${num.toFixed(0)} 次`;
+  return `${num.toFixed(2)}%`;
 };
 
 const stringifyJson = (value: any) => {
@@ -262,7 +393,24 @@ const TaskScheduler: React.FC = () => {
   const [activeTaskName, setActiveTaskName] = useState<string>('');
   const [queueDetail, setQueueDetail] = useState<QueueJobSummary | null>(null);
   const [isQueueDetailVisible, setIsQueueDetailVisible] = useState(false);
+  const [quickCreatingQuant, setQuickCreatingQuant] = useState(false);
+  const [riskLimitApplying, setRiskLimitApplying] = useState(false);
+  const [riskLimitPreview, setRiskLimitPreview] = useState<RiskLimitSuggestionApplyResult | null>(
+    null
+  );
+  const [isRiskLimitModalVisible, setIsRiskLimitModalVisible] = useState(false);
+  const [isStabilityModalVisible, setIsStabilityModalVisible] = useState(false);
+  const [stabilitySaving, setStabilitySaving] = useState(false);
+  const [auditLogs, setAuditLogs] = useState<TaskParameterAuditLog[]>([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditFilter, setAuditFilter] = useState<'watched' | 'deployment' | 'all'>('watched');
+  const [deploymentAudits, setDeploymentAudits] = useState<TaskParameterAuditLog[]>([]);
+  const [deploymentAuditLoading, setDeploymentAuditLoading] = useState(false);
+  const [auditExpanded, setAuditExpanded] = useState(false);
+  const [auditDetail, setAuditDetail] = useState<TaskParameterAuditLog | null>(null);
+  const [fieldGateSuggestionFilled, setFieldGateSuggestionFilled] = useState(false);
   const [form] = Form.useForm();
+  const [stabilityForm] = Form.useForm();
 
   const fetchTasks = useCallback(async () => {
     setLoading(true);
@@ -288,9 +436,49 @@ const TaskScheduler: React.FC = () => {
     }
   }, []);
 
+  const fetchAuditLogs = useCallback(async () => {
+    setAuditLoading(true);
+    try {
+      setAuditExpanded(false);
+      const data = await taskService.getTaskParameterAudits({
+        limit: auditFilter === 'deployment' ? 20 : 12,
+        watched_only: auditFilter === 'watched',
+        event_type: auditFilter === 'deployment' ? 'deployment_smoke' : undefined,
+      });
+      setAuditLogs(
+        auditFilter === 'deployment'
+          ? data.filter(item => String(item.event_type || '').startsWith('deployment_smoke_'))
+          : data
+      );
+    } catch (error) {
+      // 审计不阻断主链路展示，旧库首次启动前可能还没有表。
+      setAuditLogs([]);
+    } finally {
+      setAuditLoading(false);
+    }
+  }, [auditFilter]);
+
+  const fetchDeploymentAudits = useCallback(async () => {
+    setDeploymentAuditLoading(true);
+    try {
+      const data = await taskService.getTaskParameterAudits({
+        limit: 6,
+        event_type: 'deployment_smoke',
+        watched_only: false,
+      });
+      setDeploymentAudits(
+        data.filter(item => String(item.event_type || '').startsWith('deployment_smoke_'))
+      );
+    } catch (error) {
+      setDeploymentAudits([]);
+    } finally {
+      setDeploymentAuditLoading(false);
+    }
+  }, []);
+
   const refreshAll = useCallback(async () => {
-    await Promise.all([fetchTasks(), fetchHealth()]);
-  }, [fetchHealth, fetchTasks]);
+    await Promise.all([fetchTasks(), fetchHealth(), fetchAuditLogs(), fetchDeploymentAudits()]);
+  }, [fetchAuditLogs, fetchDeploymentAudits, fetchHealth, fetchTasks]);
 
   useEffect(() => {
     refreshAll();
@@ -299,6 +487,54 @@ const TaskScheduler: React.FC = () => {
   const healthTone = health?.status || 'warning';
   const latestLoop = health?.latest_loop;
   const topSkipReasons = latestLoop?.paper_trading?.skip_reason_summary?.top_reasons || [];
+  const latestRiskGate = latestLoop?.risk_profile_gate;
+  const latestRiskProfile = latestLoop?.risk_profile;
+  const riskLimitSuggestion = health?.risk_limit_suggestion;
+  const riskLimitTargets = riskLimitSuggestion?.targets || [];
+  const riskLimitStability = riskLimitSuggestion?.stability;
+  const riskLimitCanApply = Boolean(
+    riskLimitStability?.can_apply && riskLimitTargets.some((target: any) => target.changed)
+  );
+  const riskLimitFieldStabilityFirst = riskLimitSuggestion?.field_stability
+    ? (Object.values(riskLimitSuggestion.field_stability as Record<string, any>)[0] as any)
+    : null;
+  const riskFieldGateAdvice = riskLimitSuggestion?.field_gate_advice;
+  const riskFieldGateAdjustmentAttribution =
+    riskLimitSuggestion?.field_gate_adjustment_attribution;
+  const riskFieldGateAdviceItems = Array.isArray(riskFieldGateAdvice?.items)
+    ? riskFieldGateAdvice.items.filter((item: any) => ['tighten', 'relax'].includes(item.action))
+    : [];
+  const riskFieldGateSuggestedParams = riskFieldGateAdviceItems.reduce(
+    (summary: Record<string, any>, item: any) => ({
+      ...summary,
+      ...(item.suggested_parameters || {}),
+    }),
+    {} as Record<string, any>
+  );
+  const latestDeploymentAudit = deploymentAudits[0];
+  const latestDeploymentSummary = latestDeploymentAudit?.after_parameters || {};
+  const latestLocalRegression =
+    latestDeploymentSummary.local_regression || latestDeploymentAudit?.metadata?.local_regression;
+  const latestDeploymentResults = Array.isArray(latestDeploymentAudit?.metadata?.results)
+    ? latestDeploymentAudit.metadata?.results || []
+    : [];
+  const latestDeploymentFailures = latestDeploymentResults.filter(
+    (item: any) => item?.status === 'fail'
+  );
+  const consecutiveDeploymentSkips = deploymentAudits.findIndex(
+    item => item.event_type !== 'deployment_smoke_skipped'
+  );
+  const deploymentSkipStreak =
+    consecutiveDeploymentSkips === -1 ? deploymentAudits.length : consecutiveDeploymentSkips;
+  const latestDeploymentTone =
+    latestDeploymentAudit?.event_type === 'deployment_smoke_failed'
+      ? 'critical'
+      : latestDeploymentAudit?.event_type === 'deployment_smoke_skipped'
+      ? 'warning'
+      : latestDeploymentAudit
+      ? 'healthy'
+      : 'warning';
+  const visibleAuditLogs = auditExpanded ? auditLogs : auditLogs.slice(0, 4);
 
   const taskStats = useMemo(() => {
     const active = tasks.filter(item => item.is_active).length;
@@ -358,6 +594,209 @@ const TaskScheduler: React.FC = () => {
         }
       },
     });
+  };
+
+  const handleEnsureQuantTask = async () => {
+    setQuickCreatingQuant(true);
+    try {
+      const existing = tasks.find(task => task.type === 'QUANT_DAILY_PIPELINE');
+      const payload = {
+        name: '量化策略全市场扫描',
+        type: 'QUANT_DAILY_PIPELINE',
+        cron_expression: '32 15 * * 1-5',
+        is_active: true,
+        parameters: defaultParametersByType.QUANT_DAILY_PIPELINE,
+      };
+      if (existing?.id) {
+        await taskService.updateTask(existing.id, {
+          ...payload,
+          parameters: { ...payload.parameters, ...(existing.parameters || {}) },
+        });
+        message.success('已检查并更新量化全市场扫描任务');
+      } else {
+        await taskService.createTask(payload);
+        message.success('已创建量化全市场扫描任务');
+      }
+      await refreshAll();
+    } catch (error: any) {
+      message.error(error?.response?.data?.message || '创建/更新量化任务失败');
+    } finally {
+      setQuickCreatingQuant(false);
+    }
+  };
+
+  const handlePreviewRiskLimitApply = async () => {
+    setRiskLimitApplying(true);
+    try {
+      const result = await taskService.applyRiskLimitSuggestion({
+        dry_run: true,
+        source_loop_run_id: riskLimitSuggestion?.source_loop_run_id,
+      });
+      setRiskLimitPreview(result);
+      setIsRiskLimitModalVisible(true);
+      if (!result.changes?.length) {
+        message.info(result.message || '当前没有需要更新的风险阈值');
+      }
+    } catch (error: any) {
+      message.error(error?.response?.data?.message || '生成风险阈值变更预览失败');
+    } finally {
+      setRiskLimitApplying(false);
+    }
+  };
+
+  const handleConfirmRiskLimitApply = () => {
+    if (!riskLimitPreview?.changes?.length) return;
+    if (!riskLimitPreview.stability?.can_apply) {
+      message.warning('当前风险阈值建议还未形成连续同向信号，暂不建议应用。');
+      return;
+    }
+    Modal.confirm({
+      title: '确认应用风险阈值建议',
+      content:
+        '该操作只会更新全市场荐股闭环与量化全市场扫描的风险阈值参数，并会重新加载已启用的定时任务。不会修改交易记录或立即触发交易。',
+      okText: '确认应用',
+      cancelText: '再看看',
+      onOk: async () => {
+        setRiskLimitApplying(true);
+        try {
+          const result = await taskService.applyRiskLimitSuggestion({
+            dry_run: false,
+            task_ids: riskLimitPreview.changes.map(item => item.id),
+            source_loop_run_id: riskLimitPreview.source_loop_run_id || undefined,
+          });
+          setRiskLimitPreview(result);
+          message.success(result.message || '风险阈值建议已应用');
+          await refreshAll();
+        } catch (error: any) {
+          message.error(error?.response?.data?.message || '应用风险阈值建议失败');
+        } finally {
+          setRiskLimitApplying(false);
+        }
+      },
+    });
+  };
+
+  const handleOpenStabilitySettings = () => {
+    const target =
+      tasks.find(task => task.type === 'AUTO_RECOMMENDATION_LOOP') ||
+      tasks.find(task => task.type === 'QUANT_DAILY_PIPELINE');
+    const params = target?.parameters || {};
+    stabilityForm.setFieldsValue({
+      min_consecutive_same_action:
+        params.risk_threshold_stability_min_consecutive_same_action ??
+        riskLimitStability?.thresholds?.min_consecutive_same_action ??
+        2,
+      min_actionable_samples:
+        params.risk_threshold_stability_min_actionable_samples ??
+        riskLimitStability?.thresholds?.min_actionable_samples ??
+        2,
+      min_protected_runs:
+        params.risk_threshold_stability_min_protected_runs ??
+        riskLimitStability?.thresholds?.min_protected_runs ??
+        3,
+      tighten_min_delta_pct:
+        params.risk_threshold_stability_tighten_min_delta_pct ??
+        riskLimitStability?.thresholds?.tighten_min_protection_delta_pct ??
+        0.5,
+      relax_max_delta_pct:
+        params.risk_threshold_stability_relax_max_delta_pct ??
+        riskLimitStability?.thresholds?.relax_max_protection_delta_pct ??
+        -0.8,
+      field_min_consecutive_same_action:
+        params.risk_threshold_field_stability_min_consecutive_same_action ?? 2,
+      field_min_confidence: params.risk_threshold_field_min_confidence ?? 0.45,
+      field_min_sample_count: params.risk_threshold_field_min_sample_count ?? 3,
+      field_min_triggered_count: params.risk_threshold_field_min_triggered_count ?? 1,
+    });
+    setFieldGateSuggestionFilled(false);
+    setIsStabilityModalVisible(true);
+  };
+
+  const handleSaveStabilitySettings = async () => {
+    try {
+      const values = await stabilityForm.validateFields();
+      const targetTasks = tasks.filter(task =>
+        ['AUTO_RECOMMENDATION_LOOP', 'QUANT_DAILY_PIPELINE'].includes(task.type)
+      );
+      if (!targetTasks.length) {
+        message.warning('未找到可更新的全市场荐股闭环或量化扫描任务');
+        return;
+      }
+      Modal.confirm({
+        title: '确认更新稳定性门槛',
+        content:
+          '该操作只会更新关键任务参数中的 risk_threshold_stability_* 字段，不会立即触发交易或修改风险阈值。',
+        okText: '确认更新',
+        cancelText: '取消',
+        onOk: async () => {
+          setStabilitySaving(true);
+          try {
+            await Promise.all(
+              targetTasks.flatMap(task => {
+                if (!task.id) return [];
+                return [
+                  taskService.updateTask(task.id, {
+                    audit_event_type: 'risk_stability_settings_updated',
+                    parameters: {
+                      ...(task.parameters || {}),
+                      risk_threshold_stability_min_consecutive_same_action:
+                        values.min_consecutive_same_action,
+                      risk_threshold_stability_min_actionable_samples:
+                        values.min_actionable_samples,
+                      risk_threshold_stability_min_protected_runs: values.min_protected_runs,
+                      risk_threshold_stability_tighten_min_delta_pct: values.tighten_min_delta_pct,
+                      risk_threshold_stability_relax_max_delta_pct: values.relax_max_delta_pct,
+                      risk_threshold_field_stability_min_consecutive_same_action:
+                        values.field_min_consecutive_same_action,
+                      risk_threshold_field_min_confidence: values.field_min_confidence,
+                      risk_threshold_field_min_sample_count: values.field_min_sample_count,
+                      risk_threshold_field_min_triggered_count: values.field_min_triggered_count,
+                      risk_threshold_stability_updated_at: new Date().toISOString(),
+                      risk_threshold_stability_update_note: 'updated_from_task_scheduler_safe_form',
+                      risk_threshold_field_gate_update_source: fieldGateSuggestionFilled
+                        ? 'filled_from_outcome_advice'
+                        : 'manual_input',
+                    },
+                  }),
+                ];
+              })
+            );
+            message.success('稳定性门槛已更新');
+            setIsStabilityModalVisible(false);
+            await refreshAll();
+          } catch (error: any) {
+            message.error(error?.response?.data?.message || '稳定性门槛更新失败');
+          } finally {
+            setStabilitySaving(false);
+          }
+        },
+      });
+    } catch (error) {
+      // 表单校验失败时不提示额外错误，AntD 会标注字段。
+    }
+  };
+
+  const handleFillFieldGateSuggestedValues = () => {
+    if (!Object.keys(riskFieldGateSuggestedParams).length) {
+      message.info('当前没有可填入的字段级门槛建议值');
+      return;
+    }
+    stabilityForm.setFieldsValue({
+      field_min_confidence:
+        riskFieldGateSuggestedParams.risk_threshold_field_min_confidence ??
+        stabilityForm.getFieldValue('field_min_confidence'),
+      field_min_sample_count:
+        riskFieldGateSuggestedParams.risk_threshold_field_min_sample_count ??
+        stabilityForm.getFieldValue('field_min_sample_count'),
+      field_min_triggered_count:
+        riskFieldGateSuggestedParams.risk_threshold_field_min_triggered_count ??
+        stabilityForm.getFieldValue('field_min_triggered_count'),
+      field_min_consecutive_same_action:
+        riskFieldGateSuggestedParams.risk_threshold_field_stability_min_consecutive_same_action ??
+        stabilityForm.getFieldValue('field_min_consecutive_same_action'),
+    });
+    setFieldGateSuggestionFilled(true);
+    message.info('已填入建议值；尚未保存，确认后需点击“保存到关键任务”。');
   };
 
   const handleToggleActive = async (id: number, checked: boolean) => {
@@ -574,6 +1013,70 @@ const TaskScheduler: React.FC = () => {
     },
   ];
 
+  const renderAuditLog = (item: TaskParameterAuditLog) => {
+    const visibleDiffs = (item.diffs || []).slice(0, 3);
+    const isDeploymentSmoke = String(item.event_type || '').startsWith('deployment_smoke_');
+    const failedSmoke = item.event_type === 'deployment_smoke_failed';
+    const after = item.after_parameters || {};
+    const fromOutcomeAdvice =
+      after.risk_threshold_field_gate_update_source === 'filled_from_outcome_advice';
+    return (
+      <div
+        className={`task-audit-row ${failedSmoke ? 'task-audit-row--danger' : ''}`}
+        key={item.id}
+      >
+        <div className="task-audit-row__head">
+          <Space size={6} wrap>
+            <Tag color={auditEventColors[item.event_type] || 'default'}>
+              {auditEventLabels[item.event_type] || item.event_type}
+            </Tag>
+            <Text strong>{item.task_name}</Text>
+            {fromOutcomeAdvice && <Tag color="cyan">收益后验建议</Tag>}
+          </Space>
+          <Text type="secondary">{formatDateTime(item.created_at)}</Text>
+        </div>
+        <div className="task-audit-row__body">
+          <Text type="secondary">
+            {isDeploymentSmoke
+              ? `通过 ${after.passed || 0} · 失败 ${after.failed || 0} · 关键失败 ${
+                  after.critical_failed || 0
+                }${after.deployment_id ? ` · ${after.deployment_id}` : ''}${
+                  after.skip_reason ? ` · ${after.skip_reason}` : ''
+                }${
+                  after.local_regression
+                    ? ` · 本地回归 ${after.local_regression.passed || 0}/${
+                        after.local_regression.total || 0
+                      }`
+                    : ''
+                } · ${
+                  after.base_url || ''
+                }`
+              : `${item.operator_username ? `${item.operator_username} · ` : ''}更新 ${
+                  item.changed_keys?.length || 0
+                } 项${item.source_loop_run_id ? ` · 来源 ${item.source_loop_run_id}` : ''}`}
+          </Text>
+          <div className="task-audit-row__foot">
+            <Space wrap size={[6, 6]}>
+              {visibleDiffs.map(diff => (
+                <Tag key={`${item.id}-${diff.key}`} className="task-audit-diff-tag">
+                  {riskLimitKeyLabels[diff.key] || diff.key}:{' '}
+                  {formatRiskLimitValue(diff.key, diff.before)} →{' '}
+                  {formatRiskLimitValue(diff.key, diff.after)}
+                </Tag>
+              ))}
+              {(item.diffs || []).length > visibleDiffs.length && (
+                <Tag>+{(item.diffs || []).length - visibleDiffs.length}</Tag>
+              )}
+            </Space>
+            <Button size="small" type="link" onClick={() => setAuditDetail(item)}>
+              详情
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="task-ops-page fade-in-up">
       <div className={`task-ops-hero task-ops-hero--${healthTone}`}>
@@ -600,6 +1103,13 @@ const TaskScheduler: React.FC = () => {
             </Button>
             <Button icon={<PlusOutlined />} onClick={handleAdd}>
               新建任务
+            </Button>
+            <Button
+              icon={<ThunderboltOutlined />}
+              loading={quickCreatingQuant}
+              onClick={handleEnsureQuantTask}
+            >
+              确保量化闭环任务
             </Button>
           </Space>
         </div>
@@ -688,6 +1198,136 @@ const TaskScheduler: React.FC = () => {
             </Card>
 
             <Card
+              className={`modern-card task-ops-section ops-health-card ops-health-card--${latestDeploymentTone}`}
+              variant="borderless"
+              title="运维健康"
+              extra={
+                <Button
+                  size="small"
+                  type="link"
+                  loading={deploymentAuditLoading}
+                  onClick={fetchDeploymentAudits}
+                >
+                  刷新
+                </Button>
+              }
+            >
+              {latestDeploymentAudit ? (
+                <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                  <div className="ops-health-summary">
+                    <div>
+                      <Text type="secondary">最近部署验证</Text>
+                      <strong>
+                        {latestDeploymentAudit.event_type === 'deployment_smoke_failed'
+                          ? '未通过'
+                          : latestDeploymentAudit.event_type === 'deployment_smoke_skipped'
+                          ? '已跳过'
+                          : '已通过'}
+                      </strong>
+                    </div>
+                    <Tag
+                      color={
+                        latestDeploymentAudit.event_type === 'deployment_smoke_failed'
+                          ? 'red'
+                          : latestDeploymentAudit.event_type === 'deployment_smoke_skipped'
+                          ? 'gold'
+                          : 'green'
+                      }
+                    >
+                      {formatDateTime(latestDeploymentAudit.created_at)}
+                    </Tag>
+                  </div>
+
+                  <div className="ops-health-counts">
+                    <span>
+                      <b>{latestDeploymentSummary.passed || 0}</b>
+                      通过
+                    </span>
+                    <span>
+                      <b>{latestDeploymentSummary.failed || 0}</b>
+                      失败
+                    </span>
+                    <span>
+                      <b>{latestDeploymentSummary.critical_failed || 0}</b>
+                      关键失败
+                    </span>
+                  </div>
+
+                  {latestLocalRegression && (
+                    <div className="ops-local-regression">
+                      <div>
+                        <Text type="secondary">部署前本地回归</Text>
+                        <strong>{latestLocalRegression.success ? '已通过' : '未通过'}</strong>
+                      </div>
+                      <Space wrap size={6}>
+                        <Tag color={latestLocalRegression.success ? 'green' : 'red'}>
+                          {latestLocalRegression.passed || 0}/{latestLocalRegression.total || 0}
+                        </Tag>
+                        {Number(latestLocalRegression.failed || 0) > 0 && (
+                          <Tag color="red">失败 {latestLocalRegression.failed}</Tag>
+                        )}
+                      </Space>
+                    </div>
+                  )}
+
+                  <Text type="secondary" ellipsis={{ tooltip: latestDeploymentSummary.base_url }}>
+                    目标：{latestDeploymentSummary.base_url || '-'}
+                  </Text>
+                  {latestDeploymentSummary.deployment_id && (
+                    <Text code copyable>
+                      {latestDeploymentSummary.deployment_id}
+                    </Text>
+                  )}
+                  {latestDeploymentSummary.skip_reason && (
+                    <Tag color="gold">跳过原因：{latestDeploymentSummary.skip_reason}</Tag>
+                  )}
+
+                  {latestDeploymentFailures.length > 0 ? (
+                    <div className="ops-health-failures">
+                      <Text strong>需要优先看</Text>
+                      {latestDeploymentFailures.slice(0, 3).map((item: any, index: number) => (
+                        <div className="ops-health-failure-row" key={`${item.name}-${index}`}>
+                          <Text ellipsis={{ tooltip: item.message }}>
+                            {item.name || item.path || '未知检查点'}
+                          </Text>
+                          <Tag color={item.critical ? 'red' : 'orange'}>
+                            {item.critical ? '关键' : '可选'}
+                          </Tag>
+                        </div>
+                      ))}
+                    </div>
+                  ) : latestDeploymentAudit.event_type === 'deployment_smoke_skipped' ? (
+                    <Alert
+                      type="warning"
+                      showIcon
+                      className="ops-health-ok ops-health-skip"
+                      message={
+                        deploymentSkipStreak >= 2
+                          ? `已连续 ${deploymentSkipStreak} 次跳过部署验证`
+                          : '最近一次部署验证被跳过'
+                      }
+                      description="建议恢复只读冒烟测试，至少覆盖登录、任务健康、量化与模拟盘核心只读接口。"
+                    />
+                  ) : (
+                    <Alert
+                      type="success"
+                      showIcon
+                      className="ops-health-ok"
+                      message="核心只读接口最近验证正常"
+                    />
+                  )}
+                </Space>
+              ) : (
+                <Empty
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  description={
+                    deploymentAuditLoading ? '正在读取部署验证...' : '暂无部署验证记录'
+                  }
+                />
+              )}
+            </Card>
+
+            <Card
               className="modern-card task-ops-section"
               variant="borderless"
               title="最近荐股闭环"
@@ -717,6 +1357,47 @@ const TaskScheduler: React.FC = () => {
                       {latestLoop.paper_trading?.planned || 0} / 跳过{' '}
                       {latestLoop.paper_trading?.skipped || 0}
                     </Descriptions.Item>
+                    <Descriptions.Item label="风险闸门">
+                      {latestRiskGate ? (
+                        <Space wrap>
+                          <Tag color={latestRiskGate.applied ? 'volcano' : 'green'}>
+                            {latestRiskGate.action === 'pause'
+                              ? '暂停新增'
+                              : latestRiskGate.action === 'reduce'
+                              ? '自动降仓'
+                              : '正常放行'}
+                          </Tag>
+                          <Text type="secondary">
+                            {latestRiskGate.reason || '组合风险画像正常'}
+                          </Text>
+                        </Space>
+                      ) : (
+                        '-'
+                      )}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="组合风险">
+                      {latestRiskProfile?.status ? (
+                        <Space wrap>
+                          <Tag
+                            color={
+                              latestRiskProfile.status.level === 'danger'
+                                ? 'red'
+                                : latestRiskProfile.status.level === 'watch'
+                                ? 'gold'
+                                : 'green'
+                            }
+                          >
+                            {latestRiskProfile.status.label}
+                          </Tag>
+                          <Text type="secondary">
+                            现金 {formatPercent(latestRiskProfile.risk_metrics?.cash_pct)} / 仓位{' '}
+                            {formatPercent(latestRiskProfile.risk_metrics?.exposure_pct)}
+                          </Text>
+                        </Space>
+                      ) : (
+                        '-'
+                      )}
+                    </Descriptions.Item>
                   </Descriptions>
 
                   {topSkipReasons.length > 0 && (
@@ -729,6 +1410,143 @@ const TaskScheduler: React.FC = () => {
                         </div>
                       ))}
                     </div>
+                  )}
+
+                  {riskLimitSuggestion && (
+                    <Alert
+                      className="risk-limit-suggestion-card"
+                      type={
+                        riskLimitCanApply
+                          ? riskLimitSuggestion.action === 'tighten'
+                            ? 'warning'
+                            : 'success'
+                          : 'info'
+                      }
+                      showIcon
+                      message={
+                        <Space wrap>
+                          <span>风险阈值建议（手动确认）</span>
+                          {riskLimitStability?.label && (
+                            <Tag color={riskLimitCanApply ? 'green' : 'blue'}>
+                              {riskLimitStability.label}
+                            </Tag>
+                          )}
+                        </Space>
+                      }
+                      description={
+                        <Space direction="vertical" size={8}>
+                          <Text>{riskLimitSuggestion.reason}</Text>
+                          {riskLimitStability?.reason && (
+                            <Text type={riskLimitCanApply ? 'success' : 'secondary'}>
+                              {riskLimitStability.reason}
+                            </Text>
+                          )}
+                          {riskLimitStability?.thresholds && (
+                            <Text type="secondary">
+                              门槛：连续同向≥
+                              {riskLimitStability.thresholds.min_consecutive_same_action}{' '}
+                              次，保护样本≥
+                              {riskLimitStability.thresholds.min_protected_runs}，收紧差值≥
+                              {formatPercent(
+                                riskLimitStability.thresholds.tighten_min_protection_delta_pct
+                              )}
+                              ，放松差值≤
+                              {formatPercent(
+                                riskLimitStability.thresholds.relax_max_protection_delta_pct
+                              )}
+                            </Text>
+                          )}
+                          {riskLimitSuggestion.field_stability && (
+                            <Text type="secondary">
+                              字段级门槛：单个阈值也需连续同向≥
+                              {riskLimitFieldStabilityFirst?.min_consecutive_same_action || 2}{' '}
+                              次、样本≥{riskLimitFieldStabilityFirst?.min_sample_count || 3}、触发≥
+                              {riskLimitFieldStabilityFirst?.min_triggered_count || 1}、置信度≥
+                              {Number(
+                                riskLimitFieldStabilityFirst?.min_confidence ?? 0.45
+                              ).toFixed(2)}
+                              ，才会进入实际写入候选。
+                            </Text>
+                          )}
+                          {riskFieldGateAdvice && (
+                            <div className="risk-field-gate-advice">
+                              <Text strong>字段门槛后验建议</Text>
+                              <Text type="secondary">
+                                {riskFieldGateAdvice.conclusion ||
+                                  '暂无明确字段级门槛调整信号。'}
+                              </Text>
+                              {riskFieldGateAdviceItems.length > 0 && (
+                                <Space wrap size={[6, 6]}>
+                                  {riskFieldGateAdviceItems.slice(0, 2).map((item: any) => (
+                                    <Tag
+                                      key={item.key}
+                                      color={item.action === 'tighten' ? 'orange' : 'green'}
+                                    >
+                                      {item.label || riskLimitKeyLabels[item.key] || item.key}：
+                                      {item.action === 'tighten' ? '建议更保守' : '可观察放松'}
+                                    </Tag>
+                                  ))}
+                                </Space>
+                              )}
+                            </div>
+                          )}
+                          <Space wrap>
+                            <Tag>
+                              现金底线{' '}
+                              {formatPercent(riskLimitSuggestion.limits?.min_cash_reserve_pct)}
+                            </Tag>
+                            <Tag>
+                              总仓位≤
+                              {formatPercent(riskLimitSuggestion.limits?.max_total_exposure_pct)}
+                            </Tag>
+                            <Tag>
+                              行业≤
+                              {formatPercent(riskLimitSuggestion.limits?.max_industry_exposure_pct)}
+                            </Tag>
+                            <Tag>
+                              相关≤
+                              {formatPercent(
+                                Number(riskLimitSuggestion.limits?.max_position_correlation || 0) *
+                                  100
+                              )}
+                            </Tag>
+                            <Tag>
+                              VaR≤{formatPercent(riskLimitSuggestion.limits?.max_portfolio_var_pct)}
+                            </Tag>
+                          </Space>
+                          {riskLimitTargets.length > 0 && (
+                            <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                              {riskLimitTargets.slice(0, 2).map((target: any) => (
+                                <Text type="secondary" key={target.id || target.name}>
+                                  {target.name}：建议更新{' '}
+                                  {target.changed_keys?.join('、') || '无差异'}
+                                </Text>
+                              ))}
+                            </Space>
+                          )}
+                          <Space wrap>
+                            <Button
+                              size="small"
+                              icon={<EyeOutlined />}
+                              loading={riskLimitApplying}
+                              onClick={handlePreviewRiskLimitApply}
+                              disabled={!riskLimitTargets.some((target: any) => target.changed)}
+                              type={riskLimitCanApply ? 'primary' : 'default'}
+                            >
+                              {riskLimitCanApply ? '预览并应用' : '预览差异'}
+                            </Button>
+                            <Text type="secondary">
+                              {riskLimitCanApply
+                                ? '建议已连续同向，仍需二次确认后才会写入。'
+                                : '低置信建议默认只观察；确认后也只更新风险阈值参数。'}
+                            </Text>
+                            <Button size="small" type="link" onClick={handleOpenStabilitySettings}>
+                              调整稳定性门槛
+                            </Button>
+                          </Space>
+                        </Space>
+                      }
+                    />
                   )}
                 </Space>
               ) : (
@@ -749,6 +1567,71 @@ const TaskScheduler: React.FC = () => {
           scroll={{ x: 960 }}
           locale={{ emptyText: <Empty description="暂无定时任务，请点击右上角新建任务" /> }}
         />
+      </Card>
+
+      <Card
+        className="modern-card task-audit-card"
+        variant="borderless"
+        title="参数变更审计"
+        extra={
+          <Space wrap>
+            <Select
+              size="small"
+              value={auditFilter}
+              style={{ width: 136 }}
+              onChange={value => setAuditFilter(value)}
+            >
+              <Option value="watched">关键参数</Option>
+              <Option value="deployment">部署验证</Option>
+              <Option value="all">全部审计</Option>
+            </Select>
+            <Button size="small" type="link" loading={auditLoading} onClick={fetchAuditLogs}>
+              刷新审计
+            </Button>
+          </Space>
+        }
+      >
+        <Alert
+          type="info"
+          showIcon
+          className="task-audit-hint"
+          message={
+            auditFilter === 'deployment'
+              ? '这里用于追溯部署验证明细，结论优先看右侧「运维健康」卡片'
+              : '这里用于追溯影响收益闭环的参数变化'
+          }
+          description={
+            auditFilter === 'deployment'
+              ? '仅当需要定位某次部署失败接口、部署 ID 或历史验证摘要时查看本区，避免和运维健康结论重复阅读。'
+              : '风险阈值、稳定性门槛和任务参数改动都会留下改前/改后差异，方便后续回看某次调参是否提升了荐股收益。'
+          }
+        />
+        {auditLogs.length ? (
+          <>
+            <div className="task-audit-list">{visibleAuditLogs.map(renderAuditLog)}</div>
+            {auditLogs.length > visibleAuditLogs.length && (
+              <div className="task-audit-more">
+                <Text type="secondary">已收起 {auditLogs.length - visibleAuditLogs.length} 条历史记录</Text>
+                <Button size="small" type="link" onClick={() => setAuditExpanded(true)}>
+                  展开全部
+                </Button>
+              </div>
+            )}
+            {auditExpanded && auditLogs.length > 4 && (
+              <div className="task-audit-more">
+                <Text type="secondary">当前显示 {auditLogs.length} 条记录</Text>
+                <Button size="small" type="link" onClick={() => setAuditExpanded(false)}>
+                  收起历史
+                </Button>
+              </div>
+            )}
+          </>
+        ) : (
+          <Empty
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description={auditLoading ? '正在加载审计记录...' : '暂无关键参数变更记录'}
+          />
+        )}
       </Card>
 
       <Modal
@@ -796,6 +1679,7 @@ const TaskScheduler: React.FC = () => {
               <Option value="SYNC_HISTORY">股票历史行情同步</Option>
               <Option value="DATA_QUALITY_SCAN">数据质量扫描</Option>
               <Option value="BENCHMARK_INDEX_SYNC">基准指数行情同步</Option>
+              <Option value="QUANT_DAILY_PIPELINE">量化策略全市场扫描</Option>
               <Option value="AI_DAILY_SCREENER">AI 每日优选评估</Option>
               <Option value="AUTO_RECOMMENDATION_LOOP">全市场荐股闭环</Option>
               <Option value="SIGNAL_PERFORMANCE_REFRESH">推荐绩效后验刷新</Option>
@@ -846,6 +1730,54 @@ const TaskScheduler: React.FC = () => {
             <Switch />
           </Form.Item>
         </Form>
+      </Modal>
+
+      <Modal
+        title="审计记录详情"
+        open={Boolean(auditDetail)}
+        onCancel={() => setAuditDetail(null)}
+        footer={[
+          <Button key="close" onClick={() => setAuditDetail(null)}>
+            关闭
+          </Button>,
+        ]}
+        width={820}
+      >
+        {auditDetail && (
+          <Space direction="vertical" size={12} style={{ width: '100%' }}>
+            <Space wrap>
+              <Tag color={auditEventColors[auditDetail.event_type] || 'default'}>
+                {auditEventLabels[auditDetail.event_type] || auditDetail.event_type}
+              </Tag>
+              <Text strong>{auditDetail.task_name}</Text>
+              <Text type="secondary">{formatDateTime(auditDetail.created_at)}</Text>
+            </Space>
+            <Descriptions bordered size="small" column={1}>
+              <Descriptions.Item label="任务类型">{auditDetail.task_type}</Descriptions.Item>
+              <Descriptions.Item label="操作者">
+                {auditDetail.operator_username || auditDetail.operator_user_id || '-'}
+              </Descriptions.Item>
+              <Descriptions.Item label="来源闭环">
+                {auditDetail.source_loop_run_id || '-'}
+              </Descriptions.Item>
+              <Descriptions.Item label="变更字段">
+                {(auditDetail.changed_keys || []).join('、') || '-'}
+              </Descriptions.Item>
+            </Descriptions>
+            <DeploymentAuditSummary audit={auditDetail} />
+            <ParameterAuditSummary
+              audit={auditDetail}
+              riskLimitKeyLabels={riskLimitKeyLabels}
+              formatRiskLimitValue={formatRiskLimitValue}
+            />
+            <div>
+              <Title level={5} style={{ marginBottom: 8 }}>
+                完整审计 JSON
+              </Title>
+              <pre className="task-ops-codeblock">{stringifyJson(auditDetail)}</pre>
+            </div>
+          </Space>
+        )}
       </Modal>
 
       <Modal
@@ -1031,6 +1963,196 @@ const TaskScheduler: React.FC = () => {
             </Space>
           </div>
         )}
+      </Modal>
+
+      <RiskLimitPreviewModal
+        open={isRiskLimitModalVisible}
+        loading={riskLimitApplying}
+        preview={riskLimitPreview}
+        riskFieldGateAdvice={riskFieldGateAdvice}
+        riskFieldGateAdjustmentAttribution={riskFieldGateAdjustmentAttribution}
+        riskFieldGateSuggestedParams={riskFieldGateSuggestedParams}
+        riskLimitKeyLabels={riskLimitKeyLabels}
+        riskLimitKeyPriority={riskLimitKeyPriority}
+        onCancel={() => setIsRiskLimitModalVisible(false)}
+        onPreview={handlePreviewRiskLimitApply}
+        onApply={handleConfirmRiskLimitApply}
+        formatPercent={formatPercent}
+        formatRiskLimitValue={formatRiskLimitValue}
+        getRiskFieldEvidenceScore={getRiskFieldEvidenceScore}
+      />
+
+      <Modal
+        title={
+          <Space>
+            <SafetyCertificateOutlined />
+            稳定性门槛安全编辑
+          </Space>
+        }
+        open={isStabilityModalVisible}
+        onCancel={() => setIsStabilityModalVisible(false)}
+        footer={[
+          <Button key="cancel" onClick={() => setIsStabilityModalVisible(false)}>
+            取消
+          </Button>,
+          <Button
+            key="reset"
+            onClick={() => stabilityForm.setFieldsValue(defaultRiskStabilitySettings)}
+          >
+            恢复默认保守门槛
+          </Button>,
+          <Button
+            key="save"
+            type="primary"
+            loading={stabilitySaving}
+            onClick={handleSaveStabilitySettings}
+          >
+            保存到关键任务
+          </Button>,
+        ]}
+        width={720}
+      >
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16, borderRadius: 14 }}
+          message="只更新稳定性判定参数"
+          description="这些参数只决定何时把阈值建议标记为“稳定可应用”，不会立即买卖股票，也不会直接改风险阈值。"
+        />
+        {riskFieldGateAdvice && (
+          <div className="risk-field-gate-modal-advice">
+            <Text strong>收益后验参考，不自动覆盖</Text>
+            <Text type="secondary">
+              {riskFieldGateAdvice.conclusion || '暂无明确字段级门槛调整信号。'}
+            </Text>
+            {riskFieldGateAdviceItems.length > 0 && (
+              <Space direction="vertical" size={6} style={{ width: '100%' }}>
+                {riskFieldGateAdviceItems.slice(0, 3).map((item: any) => (
+                  <div className="risk-field-gate-modal-advice__item" key={item.key}>
+                    <span>{item.label || riskLimitKeyLabels[item.key] || item.key}</span>
+                    <Text type="secondary" ellipsis={{ tooltip: item.reason }}>
+                      {item.reason}
+                    </Text>
+                  </div>
+                ))}
+              </Space>
+            )}
+            {Object.keys(riskFieldGateSuggestedParams).length > 0 && (
+              <div className="risk-field-gate-modal-advice__suggestions">
+                <Space wrap style={{ justifyContent: 'space-between', width: '100%' }}>
+                  <Text strong>建议值对比</Text>
+                  <Button size="small" type="link" onClick={handleFillFieldGateSuggestedValues}>
+                    填入建议值（不保存）
+                  </Button>
+                </Space>
+                {Object.entries(riskFieldGateSuggestedParams).map(([key, value]) => (
+                  <Text type="secondary" key={key}>
+                    {riskLimitKeyLabels[key] || key}：
+                    {formatRiskLimitValue(key, riskFieldGateAdvice.current_parameters?.[key])} →{' '}
+                    {formatRiskLimitValue(key, value)}
+                  </Text>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        <Form form={stabilityForm} layout="vertical" className="risk-stability-form">
+          <Row gutter={14}>
+            <Col xs={24} sm={12}>
+              <Form.Item
+                name="min_consecutive_same_action"
+                label="连续同向建议"
+                rules={[{ required: true, message: '请输入连续次数' }]}
+              >
+                <InputNumber min={1} max={10} precision={0} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12}>
+              <Form.Item
+                name="min_actionable_samples"
+                label="可执行建议样本"
+                rules={[{ required: true, message: '请输入样本数' }]}
+              >
+                <InputNumber min={1} max={20} precision={0} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12}>
+              <Form.Item
+                name="min_protected_runs"
+                label="最少保护触发"
+                rules={[{ required: true, message: '请输入保护触发次数' }]}
+              >
+                <InputNumber min={1} max={30} precision={0} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12}>
+              <Form.Item
+                name="tighten_min_delta_pct"
+                label="收紧所需保护差值"
+                rules={[{ required: true, message: '请输入收紧差值' }]}
+              >
+                <InputNumber
+                  min={0}
+                  max={10}
+                  step={0.1}
+                  style={{ width: '100%' }}
+                  addonAfter="pct"
+                />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12}>
+              <Form.Item
+                name="relax_max_delta_pct"
+                label="放松允许保护差值"
+                rules={[{ required: true, message: '请输入放松差值' }]}
+              >
+                <InputNumber
+                  min={-10}
+                  max={0}
+                  step={0.1}
+                  style={{ width: '100%' }}
+                  addonAfter="pct"
+                />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12}>
+              <Form.Item
+                name="field_min_consecutive_same_action"
+                label="字段连续同向"
+                rules={[{ required: true, message: '请输入字段连续次数' }]}
+              >
+                <InputNumber min={1} max={10} precision={0} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12}>
+              <Form.Item
+                name="field_min_confidence"
+                label="字段最小置信度"
+                rules={[{ required: true, message: '请输入字段置信度门槛' }]}
+              >
+                <InputNumber min={0.1} max={0.95} step={0.05} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12}>
+              <Form.Item
+                name="field_min_sample_count"
+                label="字段最小样本"
+                rules={[{ required: true, message: '请输入字段样本门槛' }]}
+              >
+                <InputNumber min={1} max={50} precision={0} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12}>
+              <Form.Item
+                name="field_min_triggered_count"
+                label="字段最小触发"
+                rules={[{ required: true, message: '请输入字段触发门槛' }]}
+              >
+                <InputNumber min={1} max={50} precision={0} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+          </Row>
+        </Form>
       </Modal>
     </div>
   );

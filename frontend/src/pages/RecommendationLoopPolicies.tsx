@@ -34,6 +34,7 @@ import {
   YAxis,
 } from 'recharts';
 import api from '../services/api';
+import { getRiskLimitKeyLabel } from '../constants/riskLimits';
 
 const { Text } = Typography;
 
@@ -109,6 +110,8 @@ interface PolicySnapshot {
     strategy_variant?: StrategyVariant;
     environment_policy_snapshot_id?: string;
     environment_policy?: any;
+    risk_profile_gate?: any;
+    risk_profile_gate_action?: string;
   };
   loop_policy?: {
     strategy_key?: string;
@@ -116,16 +119,22 @@ interface PolicySnapshot {
     strategy_variant?: StrategyVariant;
     environment_policy_snapshot_id?: string;
     environment_policy?: any;
+    risk_profile_gate?: any;
   };
   run_metrics?: {
     environment_policy_snapshot_id?: string;
     environment_policy?: any;
+    risk_profile?: any;
+    risk_profile_gate?: any;
+    paper_trading?: any;
   };
 }
 
 interface PromotionAdvice {
   action: string;
   confidence: number;
+  base_confidence?: number;
+  field_gate_confidence_adjustment?: number;
   recommended_style: string;
   recommended_min_score: number;
   recommended_default_position_pct: number;
@@ -138,7 +147,33 @@ interface PromotionAdvice {
   best_position_bucket?: PolicyBucket;
   best_strategy_key?: PolicyBucket;
   best_environment_policy_version?: PolicyBucket;
+  field_gate_adjustment_attribution?: FieldGateAdjustmentAttribution;
   reasons: string[];
+}
+
+interface FieldGateAdjustmentAttribution {
+  status: string;
+  conclusion: string;
+  changed_at?: string;
+  task_name?: string;
+  decision?: {
+    action: string;
+    label?: string;
+    confidence?: number;
+    reason?: string;
+  };
+  before_sample_count?: number;
+  after_sample_count?: number;
+  before_avg_excess_return_pct?: number;
+  after_avg_excess_return_pct?: number;
+  delta_pct?: number;
+  windows?: Array<{
+    days: number;
+    sample_count: number;
+    avg_excess_return_pct?: number;
+    delta_pct?: number;
+    conclusion?: string;
+  }>;
 }
 
 interface Dashboard {
@@ -165,6 +200,7 @@ interface Dashboard {
     by_score_position_bucket?: PolicyBucket[];
     by_strategy_key?: PolicyBucket[];
     by_environment_policy_version?: PolicyBucket[];
+    by_risk_profile_gate?: PolicyBucket[];
   };
   rankings?: {
     snapshots: any[];
@@ -175,7 +211,73 @@ interface Dashboard {
     by_score_position_bucket?: PolicyBucket[];
     by_strategy_key?: PolicyBucket[];
     by_environment_policy_version?: PolicyBucket[];
+    by_risk_profile_gate?: PolicyBucket[];
   };
+  risk_gate_analysis?: {
+    gates: PolicyBucket[];
+    allow?: PolicyBucket | null;
+    reduce?: PolicyBucket | null;
+    pause?: PolicyBucket | null;
+    protected_runs: number;
+    allow_avg_excess_return_pct: number;
+    protected_avg_excess_return_pct: number;
+    protection_delta_pct: number;
+    suggested_limits?: {
+      action: string;
+      reason: string;
+      limits: Record<string, number>;
+      attribution?: any;
+      field_gate_advice?: {
+        conclusion?: string;
+        items?: Array<{
+          key: string;
+          action: string;
+          reason?: string;
+          sample_count?: number;
+          actionable_count?: number;
+          avg_confidence?: number;
+        }>;
+      };
+    };
+    field_gate_advice?: {
+      conclusion?: string;
+      items?: Array<{
+        key: string;
+        action: string;
+        reason?: string;
+        sample_count?: number;
+        actionable_count?: number;
+        avg_confidence?: number;
+      }>;
+    };
+    threshold_attribution?: {
+      items?: Array<{
+        key: string;
+        label: string;
+        action: string;
+        triggered_count: number;
+        sample_count: number;
+        trigger_delta_pct?: number;
+      }>;
+    };
+    suggestion_stability?: {
+      latest_action: string;
+      latest_action_label?: string;
+      consecutive_same_action: number;
+      actionable_samples: number;
+      window_size: number;
+      can_apply: boolean;
+      confidence: number;
+      evidence_passed?: boolean;
+      protection_delta_pct?: number;
+      protected_runs?: number;
+      thresholds?: Record<string, number>;
+      label: string;
+      reason: string;
+    };
+    conclusion: string;
+  };
+  field_gate_adjustment_attribution?: FieldGateAdjustmentAttribution;
   promotion?: PromotionAdvice;
   snapshots: PolicySnapshot[];
   insights: string[];
@@ -231,6 +333,28 @@ const getSnapshotEnvironmentPolicyId = (record?: PolicySnapshot) =>
   getSnapshotEnvironmentPolicy(record)?.snapshot_id ||
   '';
 
+const getSnapshotRiskGate = (record?: PolicySnapshot) =>
+  record?.metadata?.risk_profile_gate ||
+  record?.loop_policy?.risk_profile_gate ||
+  record?.run_metrics?.risk_profile_gate ||
+  record?.run_metrics?.paper_trading?.risk_profile_gate ||
+  {};
+
+const riskGateMeta = (action?: string) => {
+  const map: Record<string, { label: string; color: string }> = {
+    allow: { label: '正常放行', color: 'green' },
+    reduce: { label: '自动降仓', color: 'gold' },
+    pause: { label: '暂停新增', color: 'red' },
+    observe: { label: '谨慎观察', color: 'blue' },
+  };
+  return (
+    map[String(action || 'allow').toLowerCase()] || {
+      label: action || '正常放行',
+      color: 'default',
+    }
+  );
+};
+
 const actionLabel = (value?: string) => {
   const labels: Record<string, string> = {
     wait_for_snapshots: '等待版本样本',
@@ -240,6 +364,30 @@ const actionLabel = (value?: string) => {
     hold_and_compare: '保持参数对比',
   };
   return labels[value || ''] || value || '未生成';
+};
+
+const fieldGateAttributionMeta = (status?: string, deltaPct?: number) => {
+  if (status === 'ready') {
+    return Number(deltaPct || 0) >= 0
+      ? { label: '调参后改善', color: 'green' }
+      : { label: '调参后走弱', color: 'orange' };
+  }
+  const meta: Record<string, { label: string; color: string }> = {
+    insufficient_samples: { label: '样本观察中', color: 'blue' },
+    no_advice_adjustment: { label: '暂无人工采纳', color: 'default' },
+    unavailable: { label: '暂不可用', color: 'default' },
+  };
+  return meta[status || ''] || { label: status || '等待样本', color: 'default' };
+};
+
+const fieldGateDecisionColor = (action?: string) => {
+  const map: Record<string, string> = {
+    support: 'green',
+    caution: 'orange',
+    observe: 'blue',
+    insufficient: 'default',
+  };
+  return map[action || ''] || 'default';
 };
 
 const RecommendationLoopPolicies: React.FC = () => {
@@ -388,6 +536,13 @@ const RecommendationLoopPolicies: React.FC = () => {
         .slice(0, 5),
     [dashboard]
   );
+  const riskGateAnalysis = dashboard?.risk_gate_analysis;
+  const fieldGateAdjustmentAttribution = dashboard?.field_gate_adjustment_attribution;
+  const riskGateRankings = useMemo(
+    () =>
+      dashboard?.rankings?.by_risk_profile_gate || dashboard?.groups?.by_risk_profile_gate || [],
+    [dashboard]
+  );
   const latestEnvironmentPolicy = getSnapshotEnvironmentPolicy(summary?.latest_policy);
   const latestEnvironmentPolicyId = getSnapshotEnvironmentPolicyId(summary?.latest_policy);
 
@@ -454,6 +609,28 @@ const RecommendationLoopPolicies: React.FC = () => {
             <Text type="secondary" style={{ fontSize: 12 }}>
               {policyId ? `版本 ${policyId}` : '暂无环境版本'}
             </Text>
+          </Space>
+        );
+      },
+    },
+    {
+      title: '风险闸门',
+      width: 190,
+      render: (_: any, record: PolicySnapshot) => {
+        const gate = getSnapshotRiskGate(record);
+        const meta = riskGateMeta(gate?.action || record.metadata?.risk_profile_gate_action);
+        return (
+          <Space direction="vertical" size={3}>
+            <Tag color={meta.color}>{meta.label}</Tag>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              跟单 {gate?.effective_trade_limit ?? record.effective_paper_trade_limit ?? '--'} ·
+              仓位 {formatPercent(gate?.effective_default_position_pct)}
+            </Text>
+            {gate?.reason && (
+              <Text type="secondary" ellipsis={{ tooltip: gate.reason }} style={{ maxWidth: 160 }}>
+                {gate.reason}
+              </Text>
+            )}
           </Space>
         );
       },
@@ -638,7 +815,14 @@ const RecommendationLoopPolicies: React.FC = () => {
             <div className="loop-policy-confidence">
               <span>CONFIDENCE</span>
               <strong>{Math.round(Number(promotion?.confidence || 0) * 100)}%</strong>
-              <em>仓位倍率 {promotion?.position_multiplier ?? '--'}x</em>
+              <em>
+                仓位倍率 {promotion?.position_multiplier ?? '--'}x
+                {promotion?.field_gate_confidence_adjustment
+                  ? ` · 字段后验 ${formatPercent(
+                      Number(promotion.field_gate_confidence_adjustment || 0) * 100
+                    )}`
+                  : ''}
+              </em>
             </div>
           </div>
         </Col>
@@ -729,6 +913,275 @@ const RecommendationLoopPolicies: React.FC = () => {
               </div>
             ) : (
               <Empty description="暂无可比较的环境版本收益样本" />
+            )}
+          </Card>
+        </Col>
+      </Row>
+
+      <Row gutter={[18, 18]} style={{ marginBottom: 18 }}>
+        <Col xs={24}>
+          <Card
+            className="modern-card"
+            variant="borderless"
+            title={
+              <Space>
+                <NodeIndexOutlined /> 组合风险闸门后验
+              </Space>
+            }
+          >
+            <Row gutter={[14, 14]}>
+              <Col xs={24} lg={8}>
+                <div className="loop-policy-champion">
+                  <span>保护触发</span>
+                  <strong>{riskGateAnalysis?.protected_runs || 0} 次</strong>
+                  <em>{riskGateAnalysis?.conclusion || '等待风险闸门触发样本'}</em>
+                </div>
+              </Col>
+              <Col xs={12} lg={8}>
+                <div className="loop-policy-champion">
+                  <span>正常放行均超额</span>
+                  <strong>{formatPercent(riskGateAnalysis?.allow_avg_excess_return_pct)}</strong>
+                  <em>allow 样本表现</em>
+                </div>
+              </Col>
+              <Col xs={12} lg={8}>
+                <div className="loop-policy-champion">
+                  <span>保护后均超额</span>
+                  <strong style={{ color: pnlColor(riskGateAnalysis?.protection_delta_pct) }}>
+                    {formatPercent(riskGateAnalysis?.protected_avg_excess_return_pct)}
+                  </strong>
+                  <em>差值 {formatPercent(riskGateAnalysis?.protection_delta_pct)}</em>
+                </div>
+              </Col>
+            </Row>
+
+            {fieldGateAdjustmentAttribution && (
+              <div className="loop-policy-field-gate-attribution">
+                <div className="loop-policy-field-gate-attribution__main">
+                  <Space size={8} wrap>
+                    <Text strong>字段门槛调参后验</Text>
+                    <Tag
+                      color={
+                        fieldGateAttributionMeta(
+                          fieldGateAdjustmentAttribution.status,
+                          fieldGateAdjustmentAttribution.delta_pct
+                        ).color
+                      }
+                    >
+                      {
+                        fieldGateAttributionMeta(
+                          fieldGateAdjustmentAttribution.status,
+                          fieldGateAdjustmentAttribution.delta_pct
+                        ).label
+                      }
+                    </Tag>
+                    {fieldGateAdjustmentAttribution.task_name && (
+                      <Tag>{fieldGateAdjustmentAttribution.task_name}</Tag>
+                    )}
+                    {fieldGateAdjustmentAttribution.decision?.action && (
+                      <Tag
+                        color={fieldGateDecisionColor(
+                          fieldGateAdjustmentAttribution.decision.action
+                        )}
+                      >
+                        {fieldGateAdjustmentAttribution.decision.label ||
+                          fieldGateAdjustmentAttribution.decision.action}
+                      </Tag>
+                    )}
+                  </Space>
+                  <Text type="secondary">
+                    {fieldGateAdjustmentAttribution.decision?.reason ||
+                      fieldGateAdjustmentAttribution.conclusion}
+                  </Text>
+                </div>
+                <div className="loop-policy-field-gate-attribution__stats">
+                  <span>前 {fieldGateAdjustmentAttribution.before_sample_count || 0} 个样本</span>
+                  <strong>
+                    {formatPercent(fieldGateAdjustmentAttribution.before_avg_excess_return_pct)}
+                  </strong>
+                </div>
+                <div className="loop-policy-field-gate-attribution__stats">
+                  <span>后 {fieldGateAdjustmentAttribution.after_sample_count || 0} 个样本</span>
+                  <strong>
+                    {formatPercent(fieldGateAdjustmentAttribution.after_avg_excess_return_pct)}
+                  </strong>
+                </div>
+                <div className="loop-policy-field-gate-attribution__delta">
+                  <span>变化</span>
+                  <strong style={{ color: pnlColor(fieldGateAdjustmentAttribution.delta_pct) }}>
+                    {formatPercent(fieldGateAdjustmentAttribution.delta_pct)}
+                  </strong>
+                </div>
+                {Boolean(fieldGateAdjustmentAttribution.windows?.length) && (
+                  <div className="loop-policy-field-gate-attribution__windows">
+                    {fieldGateAdjustmentAttribution.windows?.slice(0, 3).map(item => (
+                      <span key={item.days}>
+                        {item.days}天 · {item.sample_count}样本 ·{' '}
+                        <b style={{ color: pnlColor(item.delta_pct) }}>
+                          {formatPercent(item.delta_pct)}
+                        </b>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {riskGateAnalysis?.suggested_limits && (
+              <Alert
+                style={{ marginTop: 14, borderRadius: 16 }}
+                type={
+                  riskGateAnalysis.suggested_limits.action === 'tighten'
+                    ? 'warning'
+                    : riskGateAnalysis.suggested_limits.action === 'relax'
+                    ? 'info'
+                    : 'success'
+                }
+                showIcon
+                message={`阈值建议：${riskGateAnalysis.suggested_limits.action}`}
+                description={
+                  <Space direction="vertical" size={8}>
+                    <Text>{riskGateAnalysis.suggested_limits.reason}</Text>
+                    {riskGateAnalysis.suggestion_stability && (
+                      <Space wrap>
+                        <Tag
+                          color={riskGateAnalysis.suggestion_stability.can_apply ? 'green' : 'blue'}
+                        >
+                          {riskGateAnalysis.suggestion_stability.label}
+                        </Tag>
+                        <Text type="secondary">
+                          连续同向 {riskGateAnalysis.suggestion_stability.consecutive_same_action}{' '}
+                          次 · 置信度{' '}
+                          {formatPercent(
+                            Number(riskGateAnalysis.suggestion_stability.confidence || 0) * 100
+                          )}
+                        </Text>
+                      </Space>
+                    )}
+                    {riskGateAnalysis.suggestion_stability?.reason && (
+                      <Text type="secondary">{riskGateAnalysis.suggestion_stability.reason}</Text>
+                    )}
+                    <Space wrap>
+                      <Tag>
+                        现金底线{' '}
+                        {formatPercent(
+                          riskGateAnalysis.suggested_limits.limits?.min_cash_reserve_pct
+                        )}
+                      </Tag>
+                      <Tag>
+                        总仓位≤
+                        {formatPercent(
+                          riskGateAnalysis.suggested_limits.limits?.max_total_exposure_pct
+                        )}
+                      </Tag>
+                      <Tag>
+                        行业≤
+                        {formatPercent(
+                          riskGateAnalysis.suggested_limits.limits?.max_industry_exposure_pct
+                        )}
+                      </Tag>
+                      <Tag>
+                        相关≤
+                        {formatPercent(
+                          Number(
+                            riskGateAnalysis.suggested_limits.limits?.max_position_correlation || 0
+                          ) * 100
+                        )}
+                      </Tag>
+                      <Tag>
+                        VaR≤
+                        {formatPercent(
+                          riskGateAnalysis.suggested_limits.limits?.max_portfolio_var_pct
+                        )}
+                      </Tag>
+                    </Space>
+                    {riskGateAnalysis.threshold_attribution?.items?.length ? (
+                      <div className="risk-threshold-attribution-strip">
+                        {riskGateAnalysis.threshold_attribution.items
+                          .filter((item: any) => item.action !== 'observe')
+                          .slice(0, 3)
+                          .map((item: any) => (
+                            <div key={item.key}>
+                              <strong>{item.label}</strong>
+                              <Tag color={item.action === 'tighten' ? 'orange' : 'blue'}>
+                                {item.action === 'tighten'
+                                  ? '收紧'
+                                  : item.action === 'relax'
+                                  ? '放松'
+                                  : '保持'}
+                              </Tag>
+                              <span>
+                                触发 {item.triggered_count}/{item.sample_count} · 差值{' '}
+                                {formatPercent(item.trigger_delta_pct)}
+                              </span>
+                            </div>
+                          ))}
+                      </div>
+                    ) : null}
+                    {(riskGateAnalysis.field_gate_advice ||
+                      riskGateAnalysis.suggested_limits.field_gate_advice) && (
+                      <div className="risk-threshold-field-gate-strip">
+                        <Text strong>字段门槛后验</Text>
+                        <Text type="secondary">
+                          {(
+                            riskGateAnalysis.field_gate_advice ||
+                            riskGateAnalysis.suggested_limits.field_gate_advice
+                          )?.conclusion || '暂无明确字段级门槛调整信号'}
+                        </Text>
+                        <Space wrap size={[6, 6]}>
+                          {(
+                            (riskGateAnalysis.field_gate_advice ||
+                              riskGateAnalysis.suggested_limits.field_gate_advice)?.items || []
+                          )
+                            .filter((item: any) => ['tighten', 'relax'].includes(item.action))
+                            .slice(0, 2)
+                            .map((item: any) => (
+                              <Tag key={item.key} color={item.action === 'tighten' ? 'orange' : 'green'}>
+                                {getRiskLimitKeyLabel(item.key)} ·{' '}
+                                {item.action === 'tighten' ? '更保守' : '可放松'}
+                              </Tag>
+                            ))}
+                        </Space>
+                      </div>
+                    )}
+                  </Space>
+                }
+              />
+            )}
+
+            {riskGateRankings.length ? (
+              <div className="loop-policy-env-ranking" style={{ marginTop: 14 }}>
+                {riskGateRankings.map((item, index) => {
+                  const meta = riskGateMeta(item.key);
+                  return (
+                    <div className="loop-policy-env-rank-row" key={item.key || index}>
+                      <div className="loop-policy-env-badge">#{index + 1}</div>
+                      <div className="loop-policy-env-rank-main">
+                        <Space size={6} wrap>
+                          <Text strong>{item.label || meta.label}</Text>
+                          <Tag color={meta.color}>{meta.label}</Tag>
+                        </Space>
+                        <Text type="secondary">
+                          触发 {item.count} 次 · 成交 {item.executed || 0} · 跳过{' '}
+                          {Math.max(0, Number(item.count || 0) - Number(item.executed || 0))}
+                        </Text>
+                      </div>
+                      <div className="loop-policy-env-rank-stat">
+                        <strong style={{ color: pnlColor(item.avg_outcome_excess_return_pct) }}>
+                          {formatPercent(item.avg_outcome_excess_return_pct)}
+                        </strong>
+                        <span>平均闭环超额</span>
+                      </div>
+                      <div className="loop-policy-env-rank-stat">
+                        <strong>{Number(item.robust_score || 0).toFixed(1)}</strong>
+                        <span>稳健分</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <Empty description="暂无风险闸门后验样本" />
             )}
           </Card>
         </Col>

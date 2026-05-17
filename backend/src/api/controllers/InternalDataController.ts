@@ -6,6 +6,7 @@ import { logger } from '../../utils/logger';
 import { createClient, RedisClientType } from 'redis';
 import { AKShareClient } from '../../data/sources/AKShareClient';
 import { normalizeSymbol } from '../../utils/stockSymbol';
+import { realtimeQuoteService } from '../../data/services/RealtimeQuoteService';
 
 const redisUrl = process.env.REDIS_PASSWORD
   ? `redis://:${process.env.REDIS_PASSWORD}@${process.env.REDIS_HOST || '127.0.0.1'}:${
@@ -337,7 +338,10 @@ export class InternalDataController {
         return;
       }
 
-      const symbols = symbolsStr.split(',').filter(Boolean);
+      const symbols = symbolsStr
+        .split(',')
+        .map(symbol => String(symbol || '').trim())
+        .filter(Boolean);
       if (symbols.length === 0) {
         res.status(400).json({ success: false, message: 'invalid symbols parameter' });
         return;
@@ -368,10 +372,21 @@ export class InternalDataController {
       }
 
       // 2. Fetch missing symbols from AKShare
+      let persistence: any = null;
       if (missingSymbols.length > 0) {
         const missingSymbolsStr = missingSymbols.join(',');
         try {
           const quotes = await this.akshareClient.getRealtimeQuotes(missingSymbolsStr);
+          persistence = await realtimeQuoteService
+            .persistQuotes(quotes, missingSymbols, { source: 'akshare' })
+            .catch(error => {
+              logger.warn(`实时行情落盘失败: ${error?.message || error}`);
+              return {
+                persisted_count: 0,
+                updated_stock_count: 0,
+                error: error?.message || String(error),
+              };
+            });
 
           // Add to result and set cache
           for (const sym of missingSymbols) {
@@ -392,6 +407,7 @@ export class InternalDataController {
 
       res.json({
         success: true,
+        persistence,
         data: resultData,
       });
     } catch (error: any) {

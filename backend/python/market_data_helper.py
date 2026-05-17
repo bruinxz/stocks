@@ -265,6 +265,7 @@ def tushare_get_daily_data(
         raise RuntimeError("Tushare token is empty")
 
     ts_code = to_tushare_code(code)
+    pro = tushare_client(token)
     adj = adjust_to_tushare(adjustflag) or None
     df = ts.pro_bar(
         ts_code=ts_code,
@@ -277,6 +278,26 @@ def tushare_get_daily_data(
     if df is None or df.empty:
         return []
 
+    daily_basic_by_date: Dict[str, Dict[str, Any]] = {}
+    try:
+        basic_df = pro.daily_basic(
+            ts_code=ts_code,
+            start_date=start_date.replace("-", ""),
+            end_date=end_date.replace("-", ""),
+            fields=(
+                "ts_code,trade_date,turnover_rate,turnover_rate_f,volume_ratio,"
+                "pe,pe_ttm,pb,ps,ps_ttm,total_share,float_share,free_share,total_mv,circ_mv"
+            ),
+        )
+        if basic_df is not None and not basic_df.empty:
+            for _, basic_row in basic_df.iterrows():
+                basic_trade_date = str(basic_row.get("trade_date", ""))
+                if basic_trade_date:
+                    daily_basic_by_date[basic_trade_date] = basic_row.to_dict()
+    except Exception:
+        # daily_basic depends on Tushare points; keep historical bars usable if it fails.
+        daily_basic_by_date = {}
+
     bars: List[Dict[str, Any]] = []
     df = df.sort_values("trade_date")
     for _, row in df.iterrows():
@@ -288,6 +309,7 @@ def tushare_get_daily_data(
         close = safe_float(row.get("close"))
         pre_close = safe_float(row.get("pre_close"))
         pct_chg = safe_float(row.get("pct_chg"))
+        daily_basic = daily_basic_by_date.get(trade_date, {})
         if pct_chg == 0 and pre_close:
             pct_chg = (close - pre_close) / pre_close * 100
         bars.append(
@@ -301,13 +323,19 @@ def tushare_get_daily_data(
                 "volume": safe_float(row.get("vol")) * 100,
                 "amount": safe_float(row.get("amount")) * 1000,
                 "adjustflag": safe_int(adjustflag, 3),
-                "turn": 0,
+                "turn": safe_float(daily_basic.get("turnover_rate")),
                 "tradestatus": 1,
                 "pctChg": pct_chg,
-                "peTTM": 0,
-                "psTTM": 0,
+                "peTTM": safe_float(daily_basic.get("pe_ttm") or daily_basic.get("pe")),
+                "psTTM": safe_float(daily_basic.get("ps_ttm") or daily_basic.get("ps")),
                 "pcfNcfTTM": 0,
-                "pbMRQ": 0,
+                "pbMRQ": safe_float(daily_basic.get("pb")),
+                "total_share": safe_float(daily_basic.get("total_share")),
+                "float_share": safe_float(daily_basic.get("float_share")),
+                "free_share": safe_float(daily_basic.get("free_share")),
+                "total_mv": safe_float(daily_basic.get("total_mv")),
+                "circ_mv": safe_float(daily_basic.get("circ_mv")),
+                "total_market_cap": safe_float(daily_basic.get("total_mv")) * 10000,
             }
         )
     return bars
@@ -324,12 +352,30 @@ def tushare_get_stock_basic(token: str, code: str) -> Optional[Dict[str, Any]]:
     ipo_date = ""
     if len(list_date) == 8:
         ipo_date = f"{list_date[:4]}-{list_date[4:6]}-{list_date[6:]}"
+    daily_basic: Dict[str, Any] = {}
+    try:
+        basic_df = pro.daily_basic(
+            ts_code=ts_code,
+            fields="ts_code,trade_date,turnover_rate,pe,pe_ttm,pb,ps,ps_ttm,total_mv,circ_mv",
+            limit=1,
+        )
+        if basic_df is not None and not basic_df.empty:
+            daily_basic = basic_df.iloc[0].to_dict()
+    except Exception:
+        daily_basic = {}
     return {
         "code": normalize_symbol(ts_code),
         "code_name": str(row.get("name", "")),
         "ipoDate": ipo_date,
+        "industry": str(row.get("industry", "")),
         "type": 1,
         "status": 1,
+        "total_market_cap": safe_float(daily_basic.get("total_mv")) * 10000,
+        "circulating_market_cap": safe_float(daily_basic.get("circ_mv")) * 10000,
+        "pe_dynamic": safe_float(daily_basic.get("pe_ttm") or daily_basic.get("pe")),
+        "pb": safe_float(daily_basic.get("pb")),
+        "ps": safe_float(daily_basic.get("ps_ttm") or daily_basic.get("ps")),
+        "turnover_rate": safe_float(daily_basic.get("turnover_rate")),
     }
 
 
