@@ -8,7 +8,7 @@ function buildRuntimeSchemaMigrationSQL(appDbUser = 'stock_admin') {
   const role = sqlLiteral(appDbUser || 'stock_admin');
   return `
     -- 线上历史库曾由 postgres / stock_admin 混合建表，导致应用启动时无法 ALTER/CREATE。
-    -- 这里不改业务数据，只统一 public schema 权限与 owner，让后端启动时的幂等 sync 能补齐新表。
+    -- 这里不改业务数据；优先修复 owner，若维护角色不是 superuser/member，则降级为 grant/create 权限。
     DO $$
     DECLARE
       target_role text := ${role};
@@ -19,23 +19,49 @@ function buildRuntimeSchemaMigrationSQL(appDbUser = 'stock_admin') {
         RETURN;
       END IF;
 
-      EXECUTE format('GRANT CONNECT ON DATABASE %I TO %I', current_database(), target_role);
-      EXECUTE format('ALTER SCHEMA public OWNER TO %I', target_role);
-      EXECUTE format('GRANT USAGE, CREATE ON SCHEMA public TO %I', target_role);
+      BEGIN
+        EXECUTE format('GRANT CONNECT ON DATABASE %I TO %I', current_database(), target_role);
+      EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE 'GRANT CONNECT 失败：%', SQLERRM;
+      END;
+
+      BEGIN
+        EXECUTE format('ALTER SCHEMA public OWNER TO %I', target_role);
+      EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE 'ALTER SCHEMA OWNER 跳过：%', SQLERRM;
+      END;
+
+      BEGIN
+        EXECUTE format('GRANT USAGE, CREATE ON SCHEMA public TO %I', target_role);
+      EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE 'GRANT SCHEMA USAGE/CREATE 失败：%', SQLERRM;
+      END;
 
       FOR item IN SELECT tablename AS object_name FROM pg_tables WHERE schemaname = 'public'
       LOOP
-        EXECUTE format('ALTER TABLE IF EXISTS public.%I OWNER TO %I', item.object_name, target_role);
+        BEGIN
+          EXECUTE format('ALTER TABLE IF EXISTS public.%I OWNER TO %I', item.object_name, target_role);
+        EXCEPTION WHEN OTHERS THEN
+          RAISE NOTICE 'ALTER TABLE %.% OWNER 跳过：%', 'public', item.object_name, SQLERRM;
+        END;
       END LOOP;
 
       FOR item IN SELECT sequencename AS object_name FROM pg_sequences WHERE schemaname = 'public'
       LOOP
-        EXECUTE format('ALTER SEQUENCE IF EXISTS public.%I OWNER TO %I', item.object_name, target_role);
+        BEGIN
+          EXECUTE format('ALTER SEQUENCE IF EXISTS public.%I OWNER TO %I', item.object_name, target_role);
+        EXCEPTION WHEN OTHERS THEN
+          RAISE NOTICE 'ALTER SEQUENCE %.% OWNER 跳过：%', 'public', item.object_name, SQLERRM;
+        END;
       END LOOP;
 
       FOR item IN SELECT viewname AS object_name FROM pg_views WHERE schemaname = 'public'
       LOOP
-        EXECUTE format('ALTER VIEW IF EXISTS public.%I OWNER TO %I', item.object_name, target_role);
+        BEGIN
+          EXECUTE format('ALTER VIEW IF EXISTS public.%I OWNER TO %I', item.object_name, target_role);
+        EXCEPTION WHEN OTHERS THEN
+          RAISE NOTICE 'ALTER VIEW %.% OWNER 跳过：%', 'public', item.object_name, SQLERRM;
+        END;
       END LOOP;
 
       FOR item IN
@@ -44,20 +70,57 @@ function buildRuntimeSchemaMigrationSQL(appDbUser = 'stock_admin') {
         JOIN pg_namespace n ON n.oid = p.pronamespace
         WHERE n.nspname = 'public'
       LOOP
-        EXECUTE format(
-          'ALTER FUNCTION public.%I(%s) OWNER TO %I',
-          item.function_name,
-          item.args,
-          target_role
-        );
+        BEGIN
+          EXECUTE format(
+            'ALTER FUNCTION public.%I(%s) OWNER TO %I',
+            item.function_name,
+            item.args,
+            target_role
+          );
+        EXCEPTION WHEN OTHERS THEN
+          RAISE NOTICE 'ALTER FUNCTION %.%(%) OWNER 跳过：%',
+            'public',
+            item.function_name,
+            item.args,
+            SQLERRM;
+        END;
       END LOOP;
 
-      EXECUTE format('GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO %I', target_role);
-      EXECUTE format('GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO %I', target_role);
-      EXECUTE format('GRANT ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public TO %I', target_role);
-      EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO %I', target_role);
-      EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO %I', target_role);
-      EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO %I', target_role);
+      BEGIN
+        EXECUTE format('GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO %I', target_role);
+      EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE 'GRANT ALL TABLES 失败：%', SQLERRM;
+      END;
+
+      BEGIN
+        EXECUTE format('GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO %I', target_role);
+      EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE 'GRANT ALL SEQUENCES 失败：%', SQLERRM;
+      END;
+
+      BEGIN
+        EXECUTE format('GRANT ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public TO %I', target_role);
+      EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE 'GRANT ALL FUNCTIONS 失败：%', SQLERRM;
+      END;
+
+      BEGIN
+        EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO %I', target_role);
+      EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE 'ALTER DEFAULT PRIVILEGES TABLES 跳过：%', SQLERRM;
+      END;
+
+      BEGIN
+        EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO %I', target_role);
+      EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE 'ALTER DEFAULT PRIVILEGES SEQUENCES 跳过：%', SQLERRM;
+      END;
+
+      BEGIN
+        EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO %I', target_role);
+      EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE 'ALTER DEFAULT PRIVILEGES FUNCTIONS 跳过：%', SQLERRM;
+      END;
     END $$;
 
     -- 历史 PushPlus/微信字段兼容迁移，保持幂等。
