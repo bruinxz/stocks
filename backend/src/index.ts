@@ -91,6 +91,7 @@ import { QuantStrategyPerformanceSnapshot } from './models/QuantStrategyPerforma
 import { QuantStrategyWeight } from './models/QuantStrategyWeight';
 import { QuantFusionAudit } from './models/QuantFusionAudit';
 import { TaskParameterAuditLog } from './models/TaskParameterAuditLog';
+import { RealtimeQuote } from './models/RealtimeQuote';
 import { quantStrategyService } from './quant/services/QuantStrategyService';
 
 async function ensureRecommendationLoopRuntimeSchema() {
@@ -160,6 +161,7 @@ async function initializeApp() {
       await QuantStrategyPerformanceSnapshot.sync();
       await QuantStrategyWeight.sync();
       await QuantFusionAudit.sync();
+      await RealtimeQuote.sync();
       await TaskParameterAuditLog.sync();
       await quantStrategyService.syncRegistry();
       await ensureRecommendationLoopRuntimeSchema();
@@ -168,6 +170,7 @@ async function initializeApp() {
       console.log('RecommendationLoopPolicySnapshot table checked successfully');
       console.log('BudgetPolicyVersionSnapshot table checked successfully');
       console.log('Quant research tables checked successfully');
+      console.log('RealtimeQuote table checked successfully');
       console.log('TaskParameterAuditLog table checked successfully');
     } catch (schemaError: any) {
       console.warn(
