@@ -201,9 +201,14 @@ const AppContent: React.FC = () => {
       {
         key: 'nav-quant-research',
         icon: <AimOutlined />,
-        label: '量化研究',
-        title: '量化研究',
-        children: [menuLink('/quant/dashboard', <ThunderboltOutlined />, '量化机会台')],
+        label: '量化交易',
+        title: '量化交易',
+        children: [
+          menuLink('/quant/dashboard', <FundProjectionScreenOutlined />, '收益驾驶舱'),
+          menuLink('/quant/signals', <ThunderboltOutlined />, '今日机会'),
+          menuLink('/quant/backtests', <ExperimentOutlined />, '跑分验证'),
+          menuLink('/quant/strategies', <BranchesOutlined />, '策略权重'),
+        ],
       },
       {
         key: 'nav-research',
@@ -233,8 +238,8 @@ const AppContent: React.FC = () => {
       {
         key: 'nav-quant',
         icon: <LineChartOutlined />,
-        label: '量化回测',
-        title: '量化回测',
+        label: '事件回测',
+        title: '事件回测',
         children: [
           menuLink('/backtest', <LineChartOutlined />, '事件回测'),
           menuLink('/portfolio', <PieChartOutlined />, '组合收益'),

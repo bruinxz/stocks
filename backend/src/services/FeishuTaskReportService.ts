@@ -1053,11 +1053,15 @@ class FeishuTaskReportService {
           paper.skipped ?? 0
         } 条`
       : '未触发';
+    const scenarioLabel = '量化交易场景推荐';
 
     const markdownMessage = [
       `## ${recordType}`,
       '',
+      `> 场景：${scenarioLabel}。候选由量化指标全市场扫描生成，随后可进入 Agent 复核与 20W 模拟盘闭环验证。`,
+      '',
       '### 结论',
+      `- **推荐场景**：${scenarioLabel}`,
       `- **扫描范围**：${result?.universe === 'favorites' ? '自选池' : '全市场'}；交易日 ${
         result?.trade_date || '-'
       }`,
@@ -1106,11 +1110,13 @@ class FeishuTaskReportService {
       .join('\n');
 
     return this.safeAppend({
-      文本: `${recordType} - 入选 ${
+      文本: `${scenarioLabel} - ${recordType} - 入选 ${
         fusion.selected_count ?? archive.total ?? 0
       } / Agent ${submitted} / 模拟盘 ${paper.executed ?? paper.planned ?? 0}`,
       message: markdownMessage,
       记录类型: recordType,
+      业务场景: scenarioLabel,
+      推荐场景: scenarioLabel,
       任务名称: '量化策略全市场扫描',
       任务类型: options.task_type || 'QUANT_DAILY_PIPELINE',
       运行状态: options.error ? 'FAILED' : 'COMPLETED',

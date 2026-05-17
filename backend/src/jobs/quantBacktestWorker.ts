@@ -3,7 +3,15 @@ import { quantBacktestQueue, QuantBacktestJobData } from './quantBacktestQueue';
 import { quantBacktestService } from '../quant/services/QuantBacktestService';
 import { logger } from '../utils/logger';
 
-quantBacktestQueue.process(1, async (job: Job<QuantBacktestJobData>) => {
+const resolveBacktestConcurrency = () => {
+  const configured = Number(process.env.QUANT_BACKTEST_CONCURRENCY || 2);
+  if (!Number.isFinite(configured) || configured <= 0) return 2;
+  return Math.max(1, Math.min(Math.floor(configured), 3));
+};
+
+const quantBacktestConcurrency = resolveBacktestConcurrency();
+
+quantBacktestQueue.process(quantBacktestConcurrency, async (job: Job<QuantBacktestJobData>) => {
   await job.progress(5);
   const result = await quantBacktestService.processBacktestTask(
     job.data.task_id,
@@ -26,4 +34,4 @@ quantBacktestQueue.on('failed', async (job, error) => {
   }
 });
 
-logger.info('量化跑分队列处理器已启动');
+logger.info(`量化跑分队列处理器已启动，并发数: ${quantBacktestConcurrency}`);

@@ -552,9 +552,12 @@ class SchedulerService {
           error_message: null,
         });
 
-        if (agentSubmitted === 0) {
+        if (parameters.report_to_feishu !== false && parameters.reportToFeishu !== false) {
           await feishuTaskReportService.reportQuantDailyPipeline(result, {
-            record_type: parameters.record_type || parameters.recordType || `${task.name}完成`,
+            record_type:
+              parameters.record_type ||
+              parameters.recordType ||
+              (agentSubmitted > 0 ? `${task.name}已提交Agent复核` : `${task.name}完成`),
             task_type: 'QUANT_DAILY_PIPELINE',
           });
         }
