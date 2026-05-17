@@ -559,14 +559,14 @@ class FeishuTaskReportService {
         item.capital_efficiency_score !== undefined
           ? `效率 ${Number(item.capital_efficiency_score).toFixed(1)}`
           : item.avg_excess_return_pct !== undefined
-          ? `超额 ${this.formatPercent(item.avg_excess_return_pct)}`
-          : '';
+            ? `超额 ${this.formatPercent(item.avg_excess_return_pct)}`
+            : '';
       const multiplier =
         item.recommended_budget_multiplier !== undefined
           ? `预算 ${Number(item.recommended_budget_multiplier).toFixed(2)}x`
           : item.position_multiplier !== undefined
-          ? `预算 ${Number(item.position_multiplier).toFixed(2)}x`
-          : '';
+            ? `预算 ${Number(item.position_multiplier).toFixed(2)}x`
+            : '';
       const reason = this.safeText(
         item.budget_action_reason || item.reason || item.resample_decision_reason || '',
         44
@@ -636,8 +636,8 @@ class FeishuTaskReportService {
             riskGatePolicy.action === 'pause'
               ? '暂停新增'
               : riskGatePolicy.action === 'reduce'
-              ? '自动降仓'
-              : '正常放行'
+                ? '自动降仓'
+                : '正常放行'
           }；${this.safeText(
             loopPolicy.risk_gate_feedback_reason || riskGatePolicy.reason || '按组合风险画像执行',
             140
@@ -1044,6 +1044,11 @@ class FeishuTaskReportService {
     const bestRawFactors = best?.factors?.best_raw_factors || {};
     const bestPriceSource = bestRawFactors.price_source || best.price_source;
     const bestLatestQuoteTime = bestRawFactors.latest_quote_time || best.latest_quote_time;
+    const experimentParamSuggestion = generated?.experiment_param_suggestion || {};
+    const experimentParamSummary = experimentParamSuggestion.summary || {};
+    const adoptedStrategyKeys = Array.isArray(experimentParamSuggestion.adopted_strategy_keys)
+      ? experimentParamSuggestion.adopted_strategy_keys
+      : [];
     const topReasons = Array.isArray(best.reasons) ? best.reasons.slice(0, 3) : [];
     const topWarnings = Array.isArray(best.risk_flags) ? best.risk_flags.slice(0, 3) : [];
     const submitted = Array.isArray(agent.submitted) ? agent.submitted.length : 0;
@@ -1072,6 +1077,11 @@ class FeishuTaskReportService {
         ? `- **实时行情**：落盘 ${quoteSync.persisted_count ?? 0} 条，更新 ${
             quoteSync.updated_stock_count ?? 0
           } 只；最新 ${quoteSync.latest_quote_time || '-'}。`
+        : '',
+      experimentParamSummary.conclusion
+        ? `- **实验参数反哺**：自动采用 ${experimentParamSummary.use_count ?? 0} 个策略；${
+            experimentParamSummary.conclusion
+          }`
         : '',
       `- **融合候选**：入选 ${fusion.selected_count ?? archive.total ?? 0} 条；归档 ${
         archive.total ?? 0
@@ -1144,6 +1154,9 @@ class FeishuTaskReportService {
       实时行情最新时间: quoteSync?.latest_quote_time,
       最佳标的价格源: bestPriceSource,
       最佳标的行情时间: bestLatestQuoteTime,
+      实验参数采用策略: adoptedStrategyKeys.join(', '),
+      实验参数采用数: experimentParamSummary.use_count,
+      实验参数建议结论: experimentParamSummary.conclusion,
       组合风险状态: riskProfile?.status?.label,
       组合风险结论: riskProfile?.status?.conclusion,
       组合现金水位: this.formatPercent(riskMetrics.cash_pct),
@@ -1200,6 +1213,101 @@ class FeishuTaskReportService {
             riskThresholdFieldGateAdjustmentAttribution,
         },
         10000
+      ),
+      错误信息: this.errorMessage(options.error),
+      创建时间: this.formatDate(new Date()),
+    });
+  }
+
+  async reportQuantOpenWatchdog(
+    result: any,
+    options: {
+      record_type?: string;
+      task_type?: string;
+      error?: any;
+    } = {}
+  ) {
+    const recordType = options.record_type || '量化开盘链路看门狗';
+    const scenarioLabel = '量化交易场景推荐';
+    const status = result?.status || (options.error ? 'critical' : 'unknown');
+    const checks = result?.checks || {};
+    const quote = checks.quote_persistence || {};
+    const latestLog = result?.latest_log || {};
+    const issues = Array.isArray(result?.issues) ? result.issues : [];
+    const topIssues = issues.slice(0, 3);
+    const statusLabel =
+      status === 'healthy' ? '正常' : status === 'warning' ? '需要观察' : '关键异常';
+    const quoteLine = quote.persisted
+      ? `已落盘 ${quote.latest_trade_date_snapshot_count ?? 0} 条 / ${
+          quote.latest_trade_date_symbol_count ?? 0
+        } 只，最新 ${quote.latest_quote_time || '-'}，新鲜度 ${quote.age_minutes ?? '-'} 分钟`
+      : '尚未落盘';
+
+    const markdownMessage = [
+      `## ${recordType}`,
+      '',
+      `> 场景：${scenarioLabel}。该记录只汇总结论和核心原因，用于判断明日开盘推荐链路是否可用。`,
+      '',
+      '### 结论',
+      `- **链路状态**：${statusLabel}（${status}）`,
+      `- **交易日**：${result?.trade_date || '-'}`,
+      `- **任务执行**：${
+        latestLog?.status
+          ? `${latestLog.status}；开始 ${this.formatDate(latestLog.started_at) || '-'}`
+          : '未发现今日执行日志'
+      }`,
+      `- **信号/归档**：量化信号 ${checks.quant_signal_count ?? 0}/${
+        checks.min_quant_signals ?? 0
+      }；归档 ${checks.archived_signal_count ?? 0}/${checks.min_archived_signals ?? 0}`,
+      `- **实时行情**：${quoteLine}`,
+      `- **模拟盘成交**：${checks.paper_trade_count ?? 0} 笔`,
+      `- **核心判断**：${this.safeText(result?.conclusion || '', 180)}`,
+      topIssues.length ? '' : '',
+      topIssues.length ? '### 核心异常' : '',
+      topIssues
+        .map(
+          (issue: any) => `- **${issue.code || issue.level}**：${this.safeText(issue.message, 180)}`
+        )
+        .join('\n'),
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    return this.safeAppend({
+      文本: `${scenarioLabel} - ${recordType} - ${statusLabel}`,
+      message: markdownMessage,
+      记录类型: recordType,
+      业务场景: scenarioLabel,
+      推荐场景: scenarioLabel,
+      任务名称: result?.target_task?.name || '量化策略开盘机会扫描',
+      任务类型: options.task_type || 'QUANT_OPEN_WATCHDOG',
+      运行状态: options.error ? 'FAILED' : status === 'healthy' ? 'COMPLETED' : 'WARNING',
+      交易日: result?.trade_date,
+      目标任务ID: result?.target_task?.id,
+      目标任务状态: result?.target_task?.last_run_status,
+      目标任务Cron: result?.target_task?.cron_expression,
+      最近日志ID: latestLog?.id,
+      最近日志状态: latestLog?.status,
+      量化信号数: checks.quant_signal_count,
+      归档信号数: checks.archived_signal_count,
+      模拟盘成交数: checks.paper_trade_count,
+      实时行情状态: quote.freshness_status,
+      实时行情最新时间: quote.latest_quote_time,
+      实时行情落盘数: quote.latest_trade_date_snapshot_count,
+      实时行情股票数: quote.latest_trade_date_symbol_count,
+      实时行情年龄分钟: quote.age_minutes,
+      核心理由: topIssues.map((issue: any) => issue.message).join('；') || result?.conclusion,
+      结果摘要: this.safeJson(
+        {
+          status,
+          trade_date: result?.trade_date,
+          target_task: result?.target_task,
+          latest_log: result?.latest_log,
+          checks: result?.checks,
+          issues: topIssues,
+          conclusion: result?.conclusion,
+        },
+        5000
       ),
       错误信息: this.errorMessage(options.error),
       创建时间: this.formatDate(new Date()),
@@ -2021,8 +2129,8 @@ class FeishuTaskReportService {
     const dryRun = Boolean(result?.dry_run);
     const status = options.error ? 'FAILED' : 'COMPLETED';
     const actionCount = dryRun
-      ? result?.planned ?? trades.length
-      : result?.executed ?? trades.length;
+      ? (result?.planned ?? trades.length)
+      : (result?.executed ?? trades.length);
     const skipReasonLines = this.buildCompactSkipReasonLines(result, skippedItems, 3);
 
     const lines = [
@@ -2155,7 +2263,7 @@ class FeishuTaskReportService {
     const riskMetrics = riskProfile?.risk_metrics || {};
     const dryRun = Boolean(result?.dry_run);
     const status = options.error ? 'FAILED' : 'COMPLETED';
-    const exitCount = dryRun ? result?.planned ?? exits.length : result?.exited ?? exits.length;
+    const exitCount = dryRun ? (result?.planned ?? exits.length) : (result?.exited ?? exits.length);
 
     const lines = [
       `## ${recordType}`,

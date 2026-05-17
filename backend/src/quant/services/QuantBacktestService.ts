@@ -7,10 +7,12 @@ import { quantBacktestEngine } from '../engine/QuantBacktestEngine';
 import { round } from '../engine/QuantMath';
 import { quantBacktestQueue } from '../../jobs/quantBacktestQueue';
 import { benchmarkIndexService } from '../../services/BenchmarkIndexService';
+import { quantStrategyExperimentService } from './QuantStrategyExperimentService';
 import { logger } from '../../utils/logger';
 
 export class QuantBacktestService {
   async createBacktestTask(options: QuantBacktestOptions, user_id?: number, asyncMode = true) {
+    const normalizedOptions = this.withDefaultExecutionOptions(options);
     const task = await QuantBacktestTask.create({
       user_id,
       task_name: options.task_name || `量化策略跑分 ${options.start_date}~${options.end_date}`,
@@ -24,15 +26,17 @@ export class QuantBacktestService {
       slippage_rate: options.slippage_rate ?? 0.0005,
       status: asyncMode ? 'QUEUED' : 'RUNNING',
       progress: asyncMode ? 0 : 10,
-      parameters: options,
+      parameters: normalizedOptions,
     });
 
     if (!asyncMode) {
-      return this.processBacktestTask(task.id, options, { user_id });
+      return this.processBacktestTask(task.id, normalizedOptions, {
+        user_id,
+      });
     }
 
     const job = await quantBacktestQueue.add(
-      { task_id: task.id, user_id, options },
+      { task_id: task.id, user_id, options: normalizedOptions },
       {
         jobId: `quant-backtest-task-${task.id}-${Date.now()}`,
       }
@@ -40,7 +44,7 @@ export class QuantBacktestService {
 
     await task.update({
       parameters: {
-        ...(options as any),
+        ...(normalizedOptions as any),
         queue_job_id: job.id,
       },
     });
@@ -132,6 +136,7 @@ export class QuantBacktestService {
       }
       const best = [...results].sort((a, b) => b.total_return_pct - a.total_return_pct)[0];
       await task.update({ status: 'COMPLETED', progress: 100, error_message: null });
+      const experimentResult = await quantStrategyExperimentService.recordBacktestTask(task.id);
       return {
         task: await this.getBacktest(task.id),
         summary: {
@@ -141,12 +146,30 @@ export class QuantBacktestService {
           best_return_pct: round(best?.total_return_pct || 0, 2),
           benchmark_return_pct: round(benchmarkReturn?.benchmark_return_pct || 0, 2),
           best_excess_return_pct: round(best?.excess_return_pct || 0, 2),
+          experiment_count: experimentResult.recorded,
         },
       };
     } catch (error: any) {
       await this.markTaskFailed(task.id, error);
       throw error;
     }
+  }
+
+  private withDefaultExecutionOptions(options: QuantBacktestOptions): QuantBacktestOptions {
+    return {
+      execution_timing: options.execution_timing || 'next_open',
+      enable_t_plus_one: options.enable_t_plus_one !== false,
+      lot_size: options.lot_size || 100,
+      min_commission: options.min_commission ?? 5,
+      stamp_tax_rate: options.stamp_tax_rate ?? 0.001,
+      block_limit_up: options.block_limit_up !== false,
+      block_limit_down: options.block_limit_down !== false,
+      block_suspended: options.block_suspended !== false,
+      min_turnover_yuan: options.min_turnover_yuan ?? 0,
+      max_trade_amount_pct_of_turnover: options.max_trade_amount_pct_of_turnover ?? 1,
+      dynamic_slippage: options.dynamic_slippage !== false,
+      ...options,
+    };
   }
 
   async markTaskFailed(task_id: number, error: any) {

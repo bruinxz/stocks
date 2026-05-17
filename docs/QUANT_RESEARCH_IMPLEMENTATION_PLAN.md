@@ -1257,3 +1257,35 @@ final_score = 0.45 * quant_score
 - [x] 部署脚本在迁移、构建和重启后执行数据库权限健康检查；如果仍存在 critical 权限/缺表问题会阻断部署完成。
 - [x] 新增只读脚本 `scripts/tests/runtime_schema_health_check.js`，可在本地/服务器直接检查 PostgreSQL 权限；本地回归已覆盖脚本语法。
 - [x] 部署后已执行生产 DB owner/grant 迁移，`runtime-schema-health` 从 warning 收敛为 healthy：32/32 张运行表存在，critical=0、warnings=0、owner_mismatches=0、sequence_gaps=0。
+
+### P119：开盘量化链路看门狗与 A 股真实回测护栏（本轮完成）
+
+- [x] 新增 `QuantOpenWatchdogService`，按交易日检查 09:35 开盘量化扫描任务是否存在、是否启用、是否有执行日志、量化信号数、融合归档数、模拟盘成交数以及实时行情落盘/新鲜度。
+- [x] 新增只读接口 `GET /api/quant/open-watchdog`，用于页面/冒烟脚本/人工排查，不触发任何交易、同步或队列写入。
+- [x] 新增默认定时任务 `量化开盘链路看门狗`（工作日 09:55），发现关键异常时标记任务失败，并通过飞书多维表格写入结论。
+- [x] 飞书 `message` 遵守“只放结论和核心理由”原则，并明确标注“量化交易场景推荐”，不放完整分析，完整结构仅进入 `结果摘要`。
+- [x] 量化收益驾驶舱新增开盘看门狗节点与数据质量中心：可见实时行情是否落盘、新鲜度、最近跑分真实执行诊断和开盘任务最近状态。
+- [x] 只读核心冒烟新增 `quant open watchdog` 检查，作为部署后验证明日开盘链路可观测性的入口；该检查为非关键，不会因周末/盘前无信号误伤部署。
+- [x] `QuantBacktestEngine` 默认切换到更接近 A 股真实交易的执行规则：次日开盘成交、T+1、100 股手、最低佣金、印花税、动态滑点、涨跌停/停牌/流动性/成交额占比约束。
+- [x] 回测结果 `metrics_json.execution_diagnostics` 记录买卖尝试、成交、阻塞原因、佣金、印花税、滑点成本、挂单数量等诊断，避免“未来函数/无成本/不可成交”带来的虚假收益。
+- [x] `QuantBacktestService` 为新跑分任务自动写入真实执行默认参数，后续页面或 API 未显式传参时也会使用真实规则。
+- [ ] 下一步：补充量化策略实验版本表，把每次跑分参数、真实执行诊断和后验收益串成可比较的实验版本。
+- [ ] 下一步：开盘后观察 09:35 扫描、09:55 看门狗、飞书写入、多维表格字段、模拟盘成交与收益闭环是否符合预期。
+
+### P120：策略实验版本账本（本轮完成）
+
+- [x] 新增 `quant_strategy_experiments` 表，记录每次量化跑分完成后的策略、参数、时间窗口、收益、真实执行诊断、实验分和可读结论。
+- [x] `QuantBacktestService` 在跑分完成后自动调用 `QuantStrategyExperimentService.recordBacktestTask`，把历史跑分转化为可比较的实验版本。
+- [x] 新增只读接口 `GET /api/quant/strategy-experiments`，输出实验总数、冠军实验、按策略聚合和最近实验列表。
+- [x] 量化收益驾驶舱新增“策略实验版本与真实执行排行”，一眼看到当前冠军、超额收益、阻塞次数和实验结论。
+- [x] 只读冒烟新增 strategy experiments 检查，保证部署后该实验账本接口可用。
+
+### P121：实验参数反哺开盘扫描（本轮完成）
+
+- [x] `QuantStrategyExperimentService` 新增 `getParamsByStrategySuggestion`，按实验分、超额收益、回撤、成交次数和稳定次数筛选可自动采用的策略参数。
+- [x] 新增只读接口 `GET /api/quant/strategy-experiments/param-suggestions`，返回 `recommended_params_by_strategy`、逐策略建议、置信度和采用/观察/默认原因。
+- [x] `QUANT_DAILY_PIPELINE` 默认开启 `use_experiment_params`：开盘/收盘扫描会先读取实验账本建议，再与任务中手工 `params_by_strategy` 合并；手工参数优先级更高，避免自动建议覆盖人工风控。
+- [x] 默认定时任务「量化策略全市场扫描」和「量化策略开盘机会扫描」补齐 `experiment_param_policy`，当前门槛为实验分 ≥ 8、超额 ≥ 0、至少 1 笔交易、最大回撤 ≤ 35%、稳定次数 ≥ 1。
+- [x] 量化收益驾驶舱新增“实验参数反哺开盘扫描”卡片，可以看到哪些策略参数会自动采用、哪些仍在观察、哪些继续默认参数。
+- [x] 只读冒烟新增 param suggestions 检查，部署后可验证参数建议接口结构可用。
+- [ ] 下一步：把参数建议和真实开盘后 1/3/5/10 日表现做成 A/B 版本对照，避免短期回测冠军过拟合后被直接放大。

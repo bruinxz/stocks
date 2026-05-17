@@ -89,6 +89,7 @@ import { QuantBacktestTrade } from './models/QuantBacktestTrade';
 import { QuantSignal } from './models/QuantSignal';
 import { QuantStrategyPerformanceSnapshot } from './models/QuantStrategyPerformanceSnapshot';
 import { QuantStrategyWeight } from './models/QuantStrategyWeight';
+import { QuantStrategyExperiment } from './models/QuantStrategyExperiment';
 import { QuantFusionAudit } from './models/QuantFusionAudit';
 import { TaskParameterAuditLog } from './models/TaskParameterAuditLog';
 import { RealtimeQuote } from './models/RealtimeQuote';
@@ -165,7 +166,9 @@ async function ensureRecommendationLoopRuntimeSchema() {
     const hasColumn = await publicColumnExists(item.table, item.column);
     if (!hasColumn) {
       try {
-        await sequelize.query(`ALTER TABLE "${item.table}" ADD COLUMN "${item.column}" VARCHAR(80)`);
+        await sequelize.query(
+          `ALTER TABLE "${item.table}" ADD COLUMN "${item.column}" VARCHAR(80)`
+        );
         console.log(`Added runtime schema column ${item.table}.${item.column}`);
       } catch (error: any) {
         // 线上历史库可能存在 owner=postgres 的表；字段兼容失败不应阻断新量化表创建。
@@ -180,15 +183,10 @@ async function ensureRecommendationLoopRuntimeSchema() {
     const hasIndex = await publicIndexExists(item.index);
     if (!hasIndex) {
       try {
-        await sequelize.query(
-          `CREATE INDEX "${item.index}" ON "${item.table}" ("${item.column}")`
-        );
+        await sequelize.query(`CREATE INDEX "${item.index}" ON "${item.table}" ("${item.column}")`);
         console.log(`Added runtime schema index ${item.index}`);
       } catch (error: any) {
-        console.warn(
-          `Failed to add runtime schema index ${item.index}:`,
-          error?.message || error
-        );
+        console.warn(`Failed to add runtime schema index ${item.index}:`, error?.message || error);
       }
     }
   }
@@ -221,6 +219,7 @@ async function syncRecommendationRuntimeTables(): Promise<void> {
     { model: QuantSignal, label: 'QuantSignal' },
     { model: QuantStrategyPerformanceSnapshot, label: 'QuantStrategyPerformanceSnapshot' },
     { model: QuantStrategyWeight, label: 'QuantStrategyWeight' },
+    { model: QuantStrategyExperiment, label: 'QuantStrategyExperiment' },
     { model: QuantFusionAudit, label: 'QuantFusionAudit' },
     { model: RealtimeQuote, label: 'RealtimeQuote' },
     { model: TaskParameterAuditLog, label: 'TaskParameterAuditLog' },

@@ -7465,6 +7465,107 @@ a {
   line-height: 1.6;
 }
 
+.quant-watchdog-error {
+  padding: 8px 10px;
+  border: 1px solid rgba(180, 35, 24, 0.14);
+  border-radius: 12px;
+  background: rgba(254, 242, 242, 0.72);
+  color: #b42318 !important;
+  font-size: 12px;
+}
+
+.quant-data-quality-board {
+  overflow: hidden;
+}
+
+.quant-experiment-board {
+  overflow: hidden;
+}
+
+.quant-param-suggestion-board {
+  overflow: hidden;
+}
+
+.quant-quality-tile {
+  display: grid;
+  gap: 8px;
+  height: 100%;
+  min-height: 136px;
+  padding: 16px;
+  border: 1px solid rgba(39, 100, 184, 0.1);
+  border-radius: 20px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(250, 252, 255, 0.74));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+.quant-quality-tile span {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.quant-quality-tile strong {
+  color: var(--text-main);
+  font-family: var(--font-display);
+  font-size: 30px;
+  line-height: 1;
+  letter-spacing: -0.05em;
+}
+
+.quant-quality-tile p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.62;
+}
+
+.quant-experiment-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.quant-param-suggestion-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.quant-experiment-row,
+.quant-param-suggestion-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 210px;
+  gap: 14px;
+  align-items: center;
+  padding: 14px 16px;
+  border: 1px solid rgba(15, 23, 42, 0.075);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.quant-experiment-row strong,
+.quant-param-suggestion-row strong {
+  color: var(--text-main);
+}
+
+.quant-experiment-row p,
+.quant-param-suggestion-row p {
+  margin: 6px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.58;
+}
+
+.quant-experiment-row > div:last-child,
+.quant-param-suggestion-row > div:last-child {
+  display: grid;
+  gap: 4px;
+  justify-items: end;
+}
+
 .quant-family-list {
   display: grid;
   gap: 12px;

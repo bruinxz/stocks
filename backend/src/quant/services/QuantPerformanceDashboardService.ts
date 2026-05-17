@@ -5,6 +5,9 @@ import { QuantFusionAudit } from '../../models/QuantFusionAudit';
 import { QuantSignal } from '../../models/QuantSignal';
 import { RecommendationTradeOutcome } from '../../models/RecommendationTradeOutcome';
 import { ScheduledTask } from '../../models/ScheduledTask';
+import { TaskExecutionLog } from '../../models/TaskExecutionLog';
+import { quantStrategyExperimentService } from './QuantStrategyExperimentService';
+import { realtimeQuoteService } from '../../data/services/RealtimeQuoteService';
 import {
   AUTONOMOUS_PORTFOLIO_NAME,
   DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
@@ -88,7 +91,9 @@ function sourceFamily(outcome: any): {
 function summarizeOutcomeGroup(key: string, label: string, description: string, rows: any[]) {
   const closed = rows.filter(item => item.trade_status === 'closed');
   const open = rows.filter(item => item.trade_status !== 'closed');
-  const wins = closed.filter(item => toNumber(item.total_pnl) > 0 || toNumber(item.realized_pnl) > 0);
+  const wins = closed.filter(
+    item => toNumber(item.total_pnl) > 0 || toNumber(item.realized_pnl) > 0
+  );
   const excessWins = closed.filter(item => toNumber(item.excess_return_pct) > 0);
   const best = [...rows].sort((a, b) => toNumber(b.total_pnl_pct) - toNumber(a.total_pnl_pct))[0];
   const worst = [...rows].sort((a, b) => toNumber(a.total_pnl_pct) - toNumber(b.total_pnl_pct))[0];
@@ -216,13 +221,23 @@ export class QuantPerformanceDashboardService {
   }
 
   async getDashboard(options: { user_id?: number; username?: string } = {}) {
-    const [latestBacktests, signalSummary, scheduleSummary, outcomeComparison] =
-      await Promise.all([
-        this.getLatestBacktests(),
-        this.getSignalSummary(),
-        this.getScheduleSummary(),
-        this.getOutcomeComparison(options),
-      ]);
+    const [
+      latestBacktests,
+      signalSummary,
+      scheduleSummary,
+      outcomeComparison,
+      dataQuality,
+      strategyExperiments,
+      experimentParamSuggestions,
+    ] = await Promise.all([
+      this.getLatestBacktests(),
+      this.getSignalSummary(),
+      this.getScheduleSummary(),
+      this.getOutcomeComparison(options),
+      this.getDataQualityCenter(),
+      quantStrategyExperimentService.getExperimentSummary({ limit: 50 }),
+      quantStrategyExperimentService.getParamsByStrategySuggestion({ limit: 300 }),
+    ]);
 
     return {
       generated_at: new Date().toISOString(),
@@ -231,7 +246,10 @@ export class QuantPerformanceDashboardService {
       signal_summary: signalSummary,
       schedule_summary: scheduleSummary,
       outcome_comparison: outcomeComparison,
-      readiness: this.buildReadiness(signalSummary, latestBacktests, scheduleSummary),
+      data_quality_center: dataQuality,
+      strategy_experiments: strategyExperiments,
+      experiment_param_suggestions: experimentParamSuggestions,
+      readiness: this.buildReadiness(signalSummary, latestBacktests, scheduleSummary, dataQuality),
     };
   }
 
@@ -338,29 +356,100 @@ export class QuantPerformanceDashboardService {
 
   private async getScheduleSummary() {
     const tasks = await ScheduledTask.findAll({
-      where: { type: 'QUANT_DAILY_PIPELINE' },
+      where: { type: { [Op.in]: ['QUANT_DAILY_PIPELINE', 'QUANT_OPEN_WATCHDOG'] } },
       order: [['cron_expression', 'ASC']],
     });
     return {
-      quant_pipeline_task_count: tasks.length,
-      tasks: tasks.map(task => ({
-        id: task.id,
-        name: task.name,
-        cron_expression: task.cron_expression,
-        is_active: task.is_active,
-        last_run_at: task.last_run_at,
-        last_run_status: task.last_run_status,
-        parameters: {
-          universe: task.parameters?.universe,
-          strategy_keys: task.parameters?.strategy_keys,
-          agent_session: task.parameters?.agent_session,
-          submit_agent_analysis: task.parameters?.submit_agent_analysis,
-          run_paper_trading: task.parameters?.run_paper_trading,
-          paper_trade_limit: task.parameters?.paper_trade_limit,
-          default_position_pct: task.parameters?.default_position_pct,
-          max_position_pct: task.parameters?.max_position_pct,
-        },
-      })),
+      quant_pipeline_task_count: tasks.filter(task => task.type === 'QUANT_DAILY_PIPELINE').length,
+      watchdog_task_count: tasks.filter(task => task.type === 'QUANT_OPEN_WATCHDOG').length,
+      tasks: await Promise.all(
+        tasks.map(async task => {
+          const latestLog = await TaskExecutionLog.findOne({
+            where: { task_id: task.id },
+            order: [['started_at', 'DESC']],
+          });
+          return {
+            id: task.id,
+            name: task.name,
+            type: task.type,
+            cron_expression: task.cron_expression,
+            is_active: task.is_active,
+            last_run_at: task.last_run_at,
+            last_run_status: task.last_run_status,
+            latest_log: latestLog
+              ? {
+                  id: latestLog.id,
+                  status: latestLog.status,
+                  started_at: latestLog.started_at,
+                  completed_at: latestLog.completed_at,
+                  total_items: latestLog.total_items,
+                  completed_items: latestLog.completed_items,
+                  failed_items: latestLog.failed_items,
+                  error_message: latestLog.error_message,
+                }
+              : null,
+            parameters: {
+              target_task_name: task.parameters?.target_task_name,
+              expected_after_time: task.parameters?.expected_after_time,
+              latest_allowed_minutes: task.parameters?.latest_allowed_minutes,
+              min_quant_signals: task.parameters?.min_quant_signals,
+              min_archived_signals: task.parameters?.min_archived_signals,
+              freshness_max_minutes: task.parameters?.freshness_max_minutes,
+              universe: task.parameters?.universe,
+              strategy_keys: task.parameters?.strategy_keys,
+              agent_session: task.parameters?.agent_session,
+              submit_agent_analysis: task.parameters?.submit_agent_analysis,
+              run_paper_trading: task.parameters?.run_paper_trading,
+              paper_trade_limit: task.parameters?.paper_trade_limit,
+              default_position_pct: task.parameters?.default_position_pct,
+              max_position_pct: task.parameters?.max_position_pct,
+            },
+          };
+        })
+      ),
+    };
+  }
+
+  private async getDataQualityCenter() {
+    const quotePersistence = await realtimeQuoteService.getPersistenceSummary();
+    const latestTask = await QuantBacktestTask.findOne({
+      where: { status: 'COMPLETED' },
+      order: [['created_at', 'DESC']],
+    });
+    const latestResults = latestTask
+      ? await QuantBacktestResult.findAll({
+          where: { task_id: latestTask.id },
+          order: [['excess_return_pct', 'DESC']],
+          limit: 20,
+        })
+      : [];
+    const executionDiagnostics = latestResults
+      .map(result => ({
+        strategy_key: result.strategy_key,
+        strategy_name: result.strategy_name,
+        execution_diagnostics: asPlainObject(result.metrics_json).execution_diagnostics,
+      }))
+      .filter(item => item.execution_diagnostics);
+    const warningCount = executionDiagnostics.reduce((sum, item) => {
+      const diagnostics = item.execution_diagnostics || {};
+      return (
+        sum +
+        toNumber(diagnostics.blocked_buy_count) +
+        toNumber(diagnostics.blocked_sell_count) +
+        toNumber(diagnostics.suspended_bar_count)
+      );
+    }, 0);
+    return {
+      quote_persistence: quotePersistence,
+      latest_backtest_task_id: latestTask?.id || null,
+      latest_backtest_task_name: latestTask?.task_name || null,
+      execution_diagnostics: executionDiagnostics,
+      summary: {
+        realtime_persisted: Boolean(quotePersistence.persisted),
+        realtime_fresh: Boolean(quotePersistence.is_fresh),
+        diagnostics_strategy_count: executionDiagnostics.length,
+        execution_warning_count: warningCount,
+      },
     };
   }
 
@@ -410,7 +499,9 @@ export class QuantPerformanceDashboardService {
         summary: dashboard.summary,
         by_source_type: dashboard.groups.by_source_type,
         by_strategy_key: dashboard.groups.by_strategy_key.slice(0, 12),
-        families: families.sort((a, b) => b.total_count - a.total_count || b.total_pnl - a.total_pnl),
+        families: families.sort(
+          (a, b) => b.total_count - a.total_count || b.total_pnl - a.total_pnl
+        ),
       };
     } catch (error: any) {
       return {
@@ -423,7 +514,7 @@ export class QuantPerformanceDashboardService {
     }
   }
 
-  private buildReadiness(signalSummary: any, backtests: any, schedule: any) {
+  private buildReadiness(signalSummary: any, backtests: any, schedule: any, dataQuality: any) {
     const checks = [
       {
         key: 'indicator_catalog',
@@ -455,6 +546,18 @@ export class QuantPerformanceDashboardService {
             task.parameters?.run_paper_trading !== false
         ),
         label: '开盘自动推荐已启用',
+      },
+      {
+        key: 'open_watchdog',
+        ok: (schedule.tasks || []).some(
+          (task: any) => task.is_active && task.type === 'QUANT_OPEN_WATCHDOG'
+        ),
+        label: '开盘看门狗已启用',
+      },
+      {
+        key: 'realtime_quote_persistence',
+        ok: Boolean(dataQuality?.summary?.realtime_persisted),
+        label: '实时行情已落盘',
       },
     ];
     const readyCount = checks.filter(item => item.ok).length;

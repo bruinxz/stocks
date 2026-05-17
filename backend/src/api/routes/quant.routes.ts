@@ -20,6 +20,21 @@ router.get(
   authController.authenticate,
   quantController.getPerformanceDashboard.bind(quantController)
 );
+router.get(
+  '/open-watchdog',
+  authController.authenticate,
+  quantController.getOpenWatchdog.bind(quantController)
+);
+router.get(
+  '/strategy-experiments',
+  authController.authenticate,
+  quantController.listStrategyExperiments.bind(quantController)
+);
+router.get(
+  '/strategy-experiments/param-suggestions',
+  authController.authenticate,
+  quantController.getExperimentParamSuggestions.bind(quantController)
+);
 router.post(
   '/backtests',
   authController.authenticate,

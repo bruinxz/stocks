@@ -6,6 +6,8 @@ import { quantFusionService } from '../../quant/services/QuantFusionService';
 import { quantStrategyFeedbackService } from '../../quant/services/QuantStrategyFeedbackService';
 import { quantFusionAuditService } from '../../quant/services/QuantFusionAuditService';
 import { quantPerformanceDashboardService } from '../../quant/services/QuantPerformanceDashboardService';
+import { quantOpenWatchdogService } from '../../quant/services/QuantOpenWatchdogService';
+import { quantStrategyExperimentService } from '../../quant/services/QuantStrategyExperimentService';
 import { AuthenticatedRequest } from '../../middlewares/auth';
 import { logger } from '../../utils/logger';
 
@@ -39,6 +41,45 @@ export class QuantController {
       res.json({ success: true, data: dashboard });
     } catch (error: any) {
       logger.error('获取量化收益驾驶舱失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  async getOpenWatchdog(req: AuthenticatedRequest, res: Response) {
+    try {
+      const watchdog = await quantOpenWatchdogService.check(req.query as any);
+      res.json({ success: true, data: watchdog });
+    } catch (error: any) {
+      logger.error('获取量化开盘链路看门狗失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  async listStrategyExperiments(req: AuthenticatedRequest, res: Response) {
+    try {
+      const summary = await quantStrategyExperimentService.getExperimentSummary({
+        limit: Number(req.query.limit || 80),
+      });
+      res.json({ success: true, data: summary });
+    } catch (error: any) {
+      logger.error('获取量化策略实验版本失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  async getExperimentParamSuggestions(req: AuthenticatedRequest, res: Response) {
+    try {
+      const suggestions = await quantStrategyExperimentService.getParamsByStrategySuggestion({
+        limit: Number(req.query.limit || 300),
+        min_rank_score: Number(req.query.min_rank_score || 8),
+        min_excess_return_pct: Number(req.query.min_excess_return_pct || 0),
+        min_trade_count: Number(req.query.min_trade_count || 1),
+        max_drawdown_pct: Number(req.query.max_drawdown_pct || 35),
+        min_stable_count: Number(req.query.min_stable_count || 1),
+      });
+      res.json({ success: true, data: suggestions });
+    } catch (error: any) {
+      logger.error('获取量化策略实验参数建议失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   }
@@ -188,7 +229,7 @@ export class QuantController {
             ...(fusionDashboard.summary || {}),
             realtime_persisted: Boolean(
               quantDashboard.summary?.quote_persistence?.persisted ||
-                quantDashboard.summary?.quote_persistence?.latest_trade_date_snapshot_count
+              quantDashboard.summary?.quote_persistence?.latest_trade_date_snapshot_count
             ),
           },
         },

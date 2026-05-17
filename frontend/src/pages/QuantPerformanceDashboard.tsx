@@ -21,14 +21,15 @@ import {
   BarChartOutlined,
   CheckCircleOutlined,
   ClockCircleOutlined,
+  DatabaseOutlined,
   ExperimentOutlined,
   FundProjectionScreenOutlined,
   ReloadOutlined,
-  RiseOutlined,
   RobotOutlined,
   SafetyCertificateOutlined,
   ThunderboltOutlined,
   TrophyOutlined,
+  WarningOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api from '../services/api';
@@ -79,13 +80,41 @@ type OutcomeFamily = {
   worst_return_pct?: number;
 };
 
+type StrategyExperiment = {
+  id: number;
+  strategy_key: string;
+  strategy_name?: string;
+  start_date?: string;
+  end_date?: string;
+  total_return_pct?: number;
+  excess_return_pct?: number;
+  max_drawdown_pct?: number;
+  sharpe_ratio?: number;
+  win_rate?: number;
+  trade_count?: number;
+  rank_score?: number;
+  conclusion?: string;
+  execution_diagnostics?: Record<string, any>;
+};
+
 type ScheduleTask = {
   id: number;
   name: string;
+  type?: string;
   cron_expression: string;
   is_active: boolean;
   last_run_at?: string;
   last_run_status?: string;
+  latest_log?: {
+    id: number;
+    status: string;
+    started_at?: string;
+    completed_at?: string;
+    error_message?: string;
+    total_items?: number;
+    completed_items?: number;
+    failed_items?: number;
+  } | null;
   parameters?: Record<string, any>;
 };
 
@@ -115,8 +144,63 @@ type DashboardData = {
     fusion_watch_count?: number;
     fusion_avg_score?: number;
   };
-  schedule_summary?: { quant_pipeline_task_count?: number; tasks?: ScheduleTask[] };
+  schedule_summary?: {
+    quant_pipeline_task_count?: number;
+    watchdog_task_count?: number;
+    tasks?: ScheduleTask[];
+  };
   outcome_comparison?: { summary?: any; families?: OutcomeFamily[]; by_strategy_key?: any[] };
+  data_quality_center?: {
+    quote_persistence?: {
+      persisted?: boolean;
+      latest_quote_time?: string | null;
+      latest_trade_date?: string | null;
+      latest_trade_date_snapshot_count?: number;
+      latest_trade_date_symbol_count?: number;
+      age_minutes?: number | null;
+      freshness_status?: string;
+      is_fresh?: boolean;
+    };
+    latest_backtest_task_id?: number | null;
+    latest_backtest_task_name?: string | null;
+    execution_diagnostics?: Array<{
+      strategy_key: string;
+      strategy_name?: string;
+      execution_diagnostics?: Record<string, any>;
+    }>;
+    summary?: {
+      realtime_persisted?: boolean;
+      realtime_fresh?: boolean;
+      diagnostics_strategy_count?: number;
+      execution_warning_count?: number;
+    };
+  };
+  strategy_experiments?: {
+    total?: number;
+    best?: StrategyExperiment | null;
+    by_strategy?: any[];
+    experiments?: StrategyExperiment[];
+  };
+  experiment_param_suggestions?: {
+    summary?: {
+      experiment_count?: number;
+      strategy_count?: number;
+      use_count?: number;
+      observe_count?: number;
+      keep_default_count?: number;
+      conclusion?: string;
+    };
+    suggestions?: Array<{
+      strategy_key: string;
+      strategy_name?: string;
+      action: string;
+      confidence?: number;
+      stable_count?: number;
+      experiment_count?: number;
+      reason?: string;
+      source_experiment?: StrategyExperiment | null;
+    }>;
+  };
   readiness?: {
     score: number;
     ready: boolean;
@@ -172,14 +256,27 @@ const QuantPerformanceDashboard: React.FC = () => {
   const indicatorCatalog = dashboard?.indicator_catalog;
   const signalSummary = dashboard?.signal_summary;
   const readiness = dashboard?.readiness;
+  const dataQuality = dashboard?.data_quality_center;
+  const strategyExperiments = dashboard?.strategy_experiments;
+  const experimentParamSuggestions = dashboard?.experiment_param_suggestions;
+  const quotePersistence = dataQuality?.quote_persistence;
   const openTask = useMemo(
     () =>
-      (dashboard?.schedule_summary?.tasks || []).find(task => String(task.name).includes('开盘')),
+      (dashboard?.schedule_summary?.tasks || []).find(
+        task => task.type === 'QUANT_DAILY_PIPELINE' && String(task.name).includes('开盘')
+      ),
+    [dashboard]
+  );
+  const watchdogTask = useMemo(
+    () =>
+      (dashboard?.schedule_summary?.tasks || []).find(task => task.type === 'QUANT_OPEN_WATCHDOG'),
     [dashboard]
   );
   const closeTask = useMemo(
     () =>
-      (dashboard?.schedule_summary?.tasks || []).find(task => String(task.name).includes('全市场')),
+      (dashboard?.schedule_summary?.tasks || []).find(
+        task => task.type === 'QUANT_DAILY_PIPELINE' && String(task.name).includes('全市场')
+      ),
     [dashboard]
   );
   const families = dashboard?.outcome_comparison?.families || [];
@@ -267,6 +364,9 @@ const QuantPerformanceDashboard: React.FC = () => {
               历史跑分 {dashboard?.latest_backtests?.strategy_count || 0} 策略
             </Tag>
             <Tag icon={<RobotOutlined />}>Agent 融合 {signalSummary?.fusion_count || 0} 条</Tag>
+            <Tag icon={<DatabaseOutlined />}>
+              实时行情 {quotePersistence?.persisted ? '已落盘' : '未落盘'}
+            </Tag>
             <Tag icon={<FundProjectionScreenOutlined />}>
               模拟盘闭环 {dashboard?.outcome_comparison?.summary?.total_count || 0} 笔
             </Tag>
@@ -335,13 +435,14 @@ const QuantPerformanceDashboard: React.FC = () => {
         <Col xs={24} md={12} xl={6}>
           <Card className="modern-card quant-dashboard-stat" variant="borderless" loading={loading}>
             <Statistic
-              title="最新信号"
-              value={signalSummary?.quant_signal_count || 0}
-              prefix={<RiseOutlined />}
+              title="实时行情落盘"
+              value={quotePersistence?.latest_trade_date_symbol_count || 0}
+              prefix={<DatabaseOutlined />}
             />
             <Text type="secondary">
-              {signalSummary?.latest_quant_trade_date || '--'} · 买入{' '}
-              {signalSummary?.quant_buy_count || 0}
+              {quotePersistence?.latest_trade_date || '--'} ·{' '}
+              {quotePersistence?.freshness_status || 'unknown'} ·{' '}
+              {quotePersistence?.age_minutes ?? '--'} 分钟
             </Text>
           </Card>
         </Col>
@@ -380,6 +481,46 @@ const QuantPerformanceDashboard: React.FC = () => {
                     <Tag>Agent复核</Tag>
                     <Tag>20W组合风控</Tag>
                   </Space>
+                </div>
+              ),
+            },
+            {
+              color:
+                watchdogTask?.last_run_status === 'FAILED'
+                  ? 'red'
+                  : watchdogTask?.is_active
+                  ? 'green'
+                  : 'gold',
+              dot:
+                watchdogTask?.last_run_status === 'FAILED' ? (
+                  <WarningOutlined />
+                ) : (
+                  <SafetyCertificateOutlined />
+                ),
+              children: (
+                <div>
+                  <strong>09:55 看门狗校验 + 飞书告警</strong>
+                  <p>
+                    {watchdogTask
+                      ? `${watchdogTask.cron_expression} · ${
+                          watchdogTask.is_active ? '已启用' : '未启用'
+                        } · 最近 ${
+                          watchdogTask.latest_log?.status ||
+                          watchdogTask.last_run_status ||
+                          '等待运行'
+                        }`
+                      : '尚未创建量化开盘链路看门狗'}
+                  </p>
+                  <Space wrap size={[6, 6]}>
+                    <Tag>任务日志</Tag>
+                    <Tag>信号数量</Tag>
+                    <Tag>归档数量</Tag>
+                    <Tag>行情新鲜度</Tag>
+                    <Tag>飞书结论</Tag>
+                  </Space>
+                  {watchdogTask?.latest_log?.error_message && (
+                    <p className="quant-watchdog-error">{watchdogTask.latest_log.error_message}</p>
+                  )}
                 </div>
               ),
             },
@@ -430,6 +571,206 @@ const QuantPerformanceDashboard: React.FC = () => {
             },
           ]}
         />
+      </Card>
+
+      <Card className="modern-card quant-data-quality-board" variant="borderless" loading={loading}>
+        <div className="quant-section-heading">
+          <div>
+            <span>DATA QUALITY CENTER</span>
+            <h2>数据质量与真实回测护栏</h2>
+          </div>
+          <Text type="secondary">避免“看起来赚钱”的脏数据/未来函数，先让信号可信。</Text>
+        </div>
+        <Row gutter={[12, 12]}>
+          <Col xs={24} md={8}>
+            <div className="quant-quality-tile">
+              <span>实时行情</span>
+              <strong>{quotePersistence?.persisted ? '已落盘' : '待落盘'}</strong>
+              <p>
+                {quotePersistence?.latest_trade_date || '--'} ·{' '}
+                {quotePersistence?.latest_trade_date_snapshot_count || 0} 条快照 ·{' '}
+                {quotePersistence?.latest_trade_date_symbol_count || 0} 只股票
+              </p>
+            </div>
+          </Col>
+          <Col xs={24} md={8}>
+            <div className="quant-quality-tile">
+              <span>新鲜度</span>
+              <strong>{quotePersistence?.is_fresh ? '新鲜' : '需观察'}</strong>
+              <p>
+                最新 {formatDateTime(quotePersistence?.latest_quote_time || undefined)} · 延迟{' '}
+                {quotePersistence?.age_minutes ?? '--'} 分钟
+              </p>
+            </div>
+          </Col>
+          <Col xs={24} md={8}>
+            <div className="quant-quality-tile">
+              <span>A股真实执行诊断</span>
+              <strong>{dataQuality?.summary?.execution_warning_count || 0}</strong>
+              <p>
+                最新跑分：{dataQuality?.latest_backtest_task_name || '等待真实规则跑分'}；覆盖{' '}
+                {dataQuality?.summary?.diagnostics_strategy_count || 0} 个策略
+              </p>
+            </div>
+          </Col>
+        </Row>
+      </Card>
+
+      <Card className="modern-card quant-experiment-board" variant="borderless" loading={loading}>
+        <div className="quant-section-heading">
+          <div>
+            <span>EXPERIMENT LEDGER</span>
+            <h2>策略实验版本与真实执行排行</h2>
+          </div>
+          <Text type="secondary">
+            每次跑分完成后自动沉淀参数、收益和执行阻塞，后续用于反向优化策略权重。
+          </Text>
+        </div>
+        <Row gutter={[12, 12]}>
+          <Col xs={24} md={8}>
+            <div className="quant-quality-tile">
+              <span>实验版本</span>
+              <strong>{strategyExperiments?.total || 0}</strong>
+              <p>已记录的策略参数/真实执行结果，可用于横向比较。</p>
+            </div>
+          </Col>
+          <Col xs={24} md={8}>
+            <div className="quant-quality-tile">
+              <span>当前冠军</span>
+              <strong>
+                {strategyExperiments?.best?.rank_score !== undefined
+                  ? Number(strategyExperiments.best.rank_score).toFixed(1)
+                  : '--'}
+              </strong>
+              <p>
+                {strategyExperiments?.best?.strategy_name ||
+                  strategyExperiments?.best?.strategy_key ||
+                  '等待跑分实验沉淀'}
+              </p>
+            </div>
+          </Col>
+          <Col xs={24} md={8}>
+            <div className="quant-quality-tile">
+              <span>冠军超额</span>
+              <strong>{formatPct(strategyExperiments?.best?.excess_return_pct)}</strong>
+              <p>
+                回撤 {formatPct(strategyExperiments?.best?.max_drawdown_pct)} · 交易{' '}
+                {strategyExperiments?.best?.trade_count || 0} 笔
+              </p>
+            </div>
+          </Col>
+        </Row>
+        <div className="quant-experiment-list">
+          {(strategyExperiments?.experiments || []).slice(0, 5).map(item => {
+            const diagnostics = item.execution_diagnostics || {};
+            const blocked =
+              Number(diagnostics.blocked_buy_count || 0) +
+              Number(diagnostics.blocked_sell_count || 0);
+            return (
+              <div className="quant-experiment-row" key={item.id}>
+                <div>
+                  <Space wrap size={6}>
+                    <strong>{item.strategy_name || item.strategy_key}</strong>
+                    <Tag color={Number(item.rank_score || 0) >= 15 ? 'green' : 'blue'}>
+                      实验分 {Number(item.rank_score || 0).toFixed(1)}
+                    </Tag>
+                    <Tag>超额 {formatPct(item.excess_return_pct)}</Tag>
+                  </Space>
+                  <p>{item.conclusion || '暂无实验结论'}</p>
+                </div>
+                <div>
+                  <Text type="secondary">
+                    {item.start_date || '--'} ~ {item.end_date || '--'}
+                  </Text>
+                  <Text type="secondary">
+                    成交 {diagnostics.buy_fill_count || 0}/{diagnostics.buy_attempt_count || 0} ·
+                    阻塞 {blocked}
+                  </Text>
+                </div>
+              </div>
+            );
+          })}
+          {!strategyExperiments?.experiments?.length && <Empty description="暂无策略实验版本" />}
+        </div>
+      </Card>
+
+      <Card
+        className="modern-card quant-param-suggestion-board"
+        variant="borderless"
+        loading={loading}
+      >
+        <div className="quant-section-heading">
+          <div>
+            <span>PARAMETER FEEDBACK</span>
+            <h2>实验参数反哺开盘扫描</h2>
+          </div>
+          <Text type="secondary">
+            从真实执行跑分中挑选稳定领先的参数，自动生成明日开盘 `params_by_strategy`
+            建议；未达标的策略保持默认。
+          </Text>
+        </div>
+        <Row gutter={[12, 12]}>
+          <Col xs={24} md={8}>
+            <div className="quant-quality-tile">
+              <span>自动采用</span>
+              <strong>{experimentParamSuggestions?.summary?.use_count || 0}</strong>
+              <p>{experimentParamSuggestions?.summary?.conclusion || '等待实验参数沉淀。'}</p>
+            </div>
+          </Col>
+          <Col xs={24} md={8}>
+            <div className="quant-quality-tile">
+              <span>观察中</span>
+              <strong>{experimentParamSuggestions?.summary?.observe_count || 0}</strong>
+              <p>有实验样本但尚未同时满足收益、回撤、成交与稳定门槛。</p>
+            </div>
+          </Col>
+          <Col xs={24} md={8}>
+            <div className="quant-quality-tile">
+              <span>默认参数</span>
+              <strong>{experimentParamSuggestions?.summary?.keep_default_count || 0}</strong>
+              <p>
+                覆盖 {experimentParamSuggestions?.summary?.strategy_count || 0} 个策略 · 实验{' '}
+                {experimentParamSuggestions?.summary?.experiment_count || 0} 条
+              </p>
+            </div>
+          </Col>
+        </Row>
+        <div className="quant-param-suggestion-list">
+          {(experimentParamSuggestions?.suggestions || []).slice(0, 6).map(item => (
+            <div className="quant-param-suggestion-row" key={item.strategy_key}>
+              <div>
+                <Space wrap size={6}>
+                  <strong>{item.strategy_name || item.strategy_key}</strong>
+                  <Tag
+                    color={
+                      item.action === 'use'
+                        ? 'green'
+                        : item.action === 'observe'
+                        ? 'gold'
+                        : 'default'
+                    }
+                  >
+                    {item.action === 'use'
+                      ? '自动采用'
+                      : item.action === 'observe'
+                      ? '继续观察'
+                      : '默认参数'}
+                  </Tag>
+                  <Tag>信心 {Number(item.confidence || 0).toFixed(0)}</Tag>
+                  <Tag>稳定 {item.stable_count || 0}</Tag>
+                </Space>
+                <p>{item.reason || '暂无参数建议'}</p>
+              </div>
+              <div>
+                <Text type="secondary">
+                  超额 {formatPct(item.source_experiment?.excess_return_pct)}
+                </Text>
+                <Text type="secondary">交易 {item.source_experiment?.trade_count || 0} 笔</Text>
+              </div>
+            </div>
+          ))}
+          {!experimentParamSuggestions?.suggestions?.length && <Empty description="暂无参数建议" />}
+        </div>
       </Card>
 
       <Row gutter={[16, 16]}>

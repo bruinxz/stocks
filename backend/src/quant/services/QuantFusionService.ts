@@ -19,6 +19,7 @@ import { QuantStrategyWeight } from '../../models/QuantStrategyWeight';
 import { quantStrategyFeedbackService } from './QuantStrategyFeedbackService';
 import { recommendationLoopPolicySnapshotService } from '../../services/RecommendationLoopPolicySnapshotService';
 import { riskThresholdStabilityService } from '../../services/RiskThresholdStabilityService';
+import { quantStrategyExperimentService } from './QuantStrategyExperimentService';
 
 type QuantPipelineMode = 'archive_only' | 'agent_review' | 'paper_trade';
 
@@ -72,6 +73,8 @@ export interface QuantDailyPipelineOptions {
   execution_log_id?: number;
   report_to_feishu?: boolean;
   params_by_strategy?: Record<string, Record<string, any>>;
+  use_experiment_params?: boolean;
+  experiment_param_policy?: Record<string, any>;
   refresh_realtime_quotes?: boolean;
   quote_sync_limit?: number;
 }
@@ -196,6 +199,19 @@ export class QuantFusionService {
     const archiveLimit = toPositiveInt(options.archive_limit, 30, 200);
     const agentMaxCount = toPositiveInt(options.agent_max_count, 5, 20);
     const agentMinScore = safeNumber(options.agent_min_score, 72);
+    const experimentParamSuggestion =
+      options.use_experiment_params === false
+        ? null
+        : await quantStrategyExperimentService
+            .getParamsByStrategySuggestion(options.experiment_param_policy || {})
+            .catch(error => {
+              logger.warn(`读取量化策略实验参数建议失败，降级使用任务参数: ${error?.message || error}`);
+              return null;
+            });
+    const effectiveParamsByStrategy = {
+      ...(experimentParamSuggestion?.recommended_params_by_strategy || {}),
+      ...(options.params_by_strategy || {}),
+    };
     const generated = await quantSignalService.generateSignals({
       trade_date,
       universe: options.universe || 'market',
@@ -206,7 +222,7 @@ export class QuantFusionService {
       candidate_limit: options.candidate_limit || 180,
       min_score: options.min_score ?? 55,
       persist: true,
-      params_by_strategy: options.params_by_strategy,
+      params_by_strategy: effectiveParamsByStrategy,
       refresh_realtime_quotes: options.refresh_realtime_quotes !== false,
       quote_sync_limit: options.quote_sync_limit || options.candidate_limit || 180,
     });
@@ -340,6 +356,15 @@ export class QuantFusionService {
         signal_count: generated.signal_count,
         by_strategy: generated.by_strategy,
         quote_sync: generated.quote_sync,
+        experiment_param_suggestion: experimentParamSuggestion
+          ? {
+              policy: experimentParamSuggestion.policy,
+              summary: experimentParamSuggestion.summary,
+              adopted_strategy_keys: Object.keys(
+                experimentParamSuggestion.recommended_params_by_strategy || {}
+              ),
+            }
+          : null,
       },
       fusion: {
         candidate_count: candidates.length,

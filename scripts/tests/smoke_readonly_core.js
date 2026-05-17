@@ -21,34 +21,44 @@
  *   SMOKE_INCLUDE_EXTERNAL=true     # include TradingAgents health route
  */
 
-const baseUrl = process.env.SMOKE_BASE_URL || process.env.API_BASE_URL || 'http://127.0.0.1:3000';
-const username = process.env.SMOKE_USERNAME || process.env.ADMIN_USERNAME || 'lym';
-const password = process.env.SMOKE_PASSWORD || process.env.ADMIN_PASSWORD || '666';
+const baseUrl =
+  process.env.SMOKE_BASE_URL ||
+  process.env.API_BASE_URL ||
+  "http://127.0.0.1:3000";
+const username =
+  process.env.SMOKE_USERNAME || process.env.ADMIN_USERNAME || "lym";
+const password =
+  process.env.SMOKE_PASSWORD || process.env.ADMIN_PASSWORD || "666";
 const timeoutMs = Math.max(Number(process.env.SMOKE_TIMEOUT_MS || 15000), 1000);
-const includeExternal = String(process.env.SMOKE_INCLUDE_EXTERNAL || '').toLowerCase() === 'true';
-const jsonOutPath = process.env.SMOKE_JSON_OUT || '';
+const includeExternal =
+  String(process.env.SMOKE_INCLUDE_EXTERNAL || "").toLowerCase() === "true";
+const jsonOutPath = process.env.SMOKE_JSON_OUT || "";
 
 const results = [];
 
 const color = {
-  green: text => (process.stdout.isTTY ? `\u001b[32m${text}\u001b[0m` : text),
-  yellow: text => (process.stdout.isTTY ? `\u001b[33m${text}\u001b[0m` : text),
-  red: text => (process.stdout.isTTY ? `\u001b[31m${text}\u001b[0m` : text),
-  gray: text => (process.stdout.isTTY ? `\u001b[90m${text}\u001b[0m` : text),
+  green: (text) => (process.stdout.isTTY ? `\u001b[32m${text}\u001b[0m` : text),
+  yellow: (text) =>
+    process.stdout.isTTY ? `\u001b[33m${text}\u001b[0m` : text,
+  red: (text) => (process.stdout.isTTY ? `\u001b[31m${text}\u001b[0m` : text),
+  gray: (text) => (process.stdout.isTTY ? `\u001b[90m${text}\u001b[0m` : text),
 };
 
 function buildUrl(path) {
-  const normalizedBase = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
+  const normalizedBase = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
   const base = new URL(normalizedBase);
-  let normalizedPath = String(path || '').replace(/^\/+/, '');
+  let normalizedPath = String(path || "").replace(/^\/+/, "");
 
   // If callers pass SMOKE_BASE_URL=http://host/api, keep endpoint paths intuitive.
-  if (base.pathname.replace(/\/+$/, '').endsWith('/api') && normalizedPath.startsWith('api/')) {
+  if (
+    base.pathname.replace(/\/+$/, "").endsWith("/api") &&
+    normalizedPath.startsWith("api/")
+  ) {
     normalizedPath = normalizedPath.slice(4);
   }
   if (
-    base.pathname.replace(/\/+$/, '').endsWith('/api') &&
-    (normalizedPath === '' || normalizedPath === 'health')
+    base.pathname.replace(/\/+$/, "").endsWith("/api") &&
+    (normalizedPath === "" || normalizedPath === "health")
   ) {
     return new URL(`/${normalizedPath}`, base.origin).toString();
   }
@@ -66,7 +76,9 @@ function preview(value, limit = 700) {
 
 function assertApiSuccess(json, context) {
   if (!json || json.success !== true) {
-    throw new Error(`${context} expected { success: true }, got ${preview(json)}`);
+    throw new Error(
+      `${context} expected { success: true }, got ${preview(json)}`,
+    );
   }
 }
 
@@ -89,20 +101,21 @@ async function fetchWithTimeout(url, options = {}) {
 async function requestJson(name, path, options = {}) {
   const startedAt = Date.now();
   const critical = options.critical !== false;
-  const method = options.method || 'GET';
+  const method = options.method || "GET";
   const url = buildUrl(path);
 
   try {
     const response = await fetchWithTimeout(url, {
       method,
       headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        'User-Agent': 'stocks-readonly-smoke/1.0',
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "User-Agent": "stocks-readonly-smoke/1.0",
         ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
         ...(options.headers || {}),
       },
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      body:
+        options.body === undefined ? undefined : JSON.stringify(options.body),
     });
 
     const text = await response.text();
@@ -110,36 +123,57 @@ async function requestJson(name, path, options = {}) {
     try {
       json = text ? JSON.parse(text) : {};
     } catch {
-      throw new Error(`Non-JSON response ${response.status}: ${text.slice(0, 300)}`);
+      throw new Error(
+        `Non-JSON response ${response.status}: ${text.slice(0, 300)}`,
+      );
     }
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${preview(json)}`);
     }
 
-    if (typeof options.expect === 'function') {
+    if (typeof options.expect === "function") {
       options.expect(json, response);
     }
 
     const elapsedMs = Date.now() - startedAt;
-    results.push({ name, path, status: 'pass', critical, elapsed_ms: elapsedMs });
-    console.log(color.green(`[PASS] ${name}`), color.gray(`${method} ${path} ${elapsedMs}ms`));
+    results.push({
+      name,
+      path,
+      status: "pass",
+      critical,
+      elapsed_ms: elapsedMs,
+    });
+    console.log(
+      color.green(`[PASS] ${name}`),
+      color.gray(`${method} ${path} ${elapsedMs}ms`),
+    );
     return json;
   } catch (error) {
     const elapsedMs = Date.now() - startedAt;
-    const message = error?.name === 'AbortError' ? `timeout after ${timeoutMs}ms` : error.message;
-    results.push({ name, path, status: 'fail', critical, elapsed_ms: elapsedMs, message });
+    const message =
+      error?.name === "AbortError"
+        ? `timeout after ${timeoutMs}ms`
+        : error.message;
+    results.push({
+      name,
+      path,
+      status: "fail",
+      critical,
+      elapsed_ms: elapsedMs,
+      message,
+    });
     console.log(
       critical ? color.red(`[FAIL] ${name}`) : color.yellow(`[WARN] ${name}`),
       color.gray(`${method} ${path} ${elapsedMs}ms`),
-      message
+      message,
     );
     return null;
   }
 }
 
 function skip(name, reason) {
-  results.push({ name, status: 'skip', critical: false, message: reason });
+  results.push({ name, status: "skip", critical: false, message: reason });
   console.log(color.yellow(`[SKIP] ${name}`), reason);
 }
 
@@ -151,7 +185,7 @@ function extractToken(loginJson) {
     loginJson?.tokens?.accessToken ||
     loginJson?.accessToken ||
     loginJson?.token ||
-    ''
+    ""
   );
 }
 
@@ -165,296 +199,435 @@ function getTaskList(tasksJson) {
 
 function writeJsonSummary(payload) {
   if (!jsonOutPath) return;
-  const fs = require('fs');
-  const path = require('path');
+  const fs = require("fs");
+  const path = require("path");
   fs.mkdirSync(path.dirname(jsonOutPath), { recursive: true });
   fs.writeFileSync(jsonOutPath, JSON.stringify(payload, null, 2));
 }
 
 async function main() {
-  if (typeof fetch !== 'function') {
-    throw new Error('This script requires Node.js 18+ with global fetch support.');
+  if (typeof fetch !== "function") {
+    throw new Error(
+      "This script requires Node.js 18+ with global fetch support.",
+    );
   }
 
   console.log(
-    `Read-only smoke test started: base=${baseUrl}, timeout=${timeoutMs}ms, include_external=${includeExternal}`
+    `Read-only smoke test started: base=${baseUrl}, timeout=${timeoutMs}ms, include_external=${includeExternal}`,
   );
 
-  await requestJson('process health', '/health', {
-    expect: json => {
-      if (json.status !== 'ok') throw new Error(`unexpected health payload: ${preview(json)}`);
+  await requestJson("process health", "/health", {
+    expect: (json) => {
+      if (json.status !== "ok")
+        throw new Error(`unexpected health payload: ${preview(json)}`);
     },
   });
 
-  await requestJson('api root', '/', {
+  await requestJson("api root", "/", {
     critical: false,
-    expect: json => {
-      if (!json.message) throw new Error(`unexpected root payload: ${preview(json)}`);
+    expect: (json) => {
+      if (!json.message)
+        throw new Error(`unexpected root payload: ${preview(json)}`);
     },
   });
 
-  let token = process.env.SMOKE_TOKEN || '';
+  let token = process.env.SMOKE_TOKEN || "";
   if (!token) {
-    const loginJson = await requestJson('auth login', '/api/auth/login', {
-      method: 'POST',
+    const loginJson = await requestJson("auth login", "/api/auth/login", {
+      method: "POST",
       body: { username, password },
-      expect: json => assertApiSuccess(json, 'auth login'),
+      expect: (json) => assertApiSuccess(json, "auth login"),
     });
     token = extractToken(loginJson);
   } else {
-    skip('auth login', 'SMOKE_TOKEN provided, login skipped');
+    skip("auth login", "SMOKE_TOKEN provided, login skipped");
   }
 
   if (!token) {
-    console.log(color.red('No access token available; authenticated checks will be skipped.'));
-    skip('authenticated checks', 'missing token');
+    console.log(
+      color.red(
+        "No access token available; authenticated checks will be skipped.",
+      ),
+    );
+    skip("authenticated checks", "missing token");
   } else {
-    await requestJson('auth profile', '/api/auth/profile', {
+    await requestJson("auth profile", "/api/auth/profile", {
       token,
-      expect: json => {
-        assertApiSuccess(json, 'auth profile');
-        if (!json.data?.user?.id) throw new Error(`profile user missing: ${preview(json)}`);
+      expect: (json) => {
+        assertApiSuccess(json, "auth profile");
+        if (!json.data?.user?.id)
+          throw new Error(`profile user missing: ${preview(json)}`);
       },
     });
 
-    await requestJson('market service health', '/api/market/health', {
-      expect: json => {
-        assertApiSuccess(json, 'market service health');
-        if (!json.data?.status) throw new Error(`market health status missing: ${preview(json)}`);
+    await requestJson("market service health", "/api/market/health", {
+      expect: (json) => {
+        assertApiSuccess(json, "market service health");
+        if (!json.data?.status)
+          throw new Error(`market health status missing: ${preview(json)}`);
       },
     });
 
-    await requestJson('data source health', '/api/market/data-sources/health', {
-      expect: json => {
-        assertApiSuccess(json, 'data source health');
-        if (!json.data?.summary) throw new Error(`data source summary missing: ${preview(json)}`);
+    await requestJson("data source health", "/api/market/data-sources/health", {
+      expect: (json) => {
+        assertApiSuccess(json, "data source health");
+        if (!json.data?.summary)
+          throw new Error(`data source summary missing: ${preview(json)}`);
       },
     });
 
-    await requestJson('data update status', '/api/market/update-status?type=daily_update&limit=5', {
-      critical: false,
-      expect: json => assertApiSuccess(json, 'data update status'),
-    });
+    await requestJson(
+      "data update status",
+      "/api/market/update-status?type=daily_update&limit=5",
+      {
+        critical: false,
+        expect: (json) => assertApiSuccess(json, "data update status"),
+      },
+    );
 
-    const tasksJson = await requestJson('scheduled tasks', '/api/tasks', {
+    const tasksJson = await requestJson("scheduled tasks", "/api/tasks", {
       token,
-      expect: json => {
-        assertApiSuccess(json, 'scheduled tasks');
-        assertArray(getTaskList(json), 'scheduled tasks data');
+      expect: (json) => {
+        assertApiSuccess(json, "scheduled tasks");
+        assertArray(getTaskList(json), "scheduled tasks data");
       },
     });
 
-    await requestJson('automation health', '/api/tasks/automation-health', {
+    await requestJson("automation health", "/api/tasks/automation-health", {
       token,
-      expect: json => {
-        assertApiSuccess(json, 'automation health');
-        if (!json.data) throw new Error(`automation health data missing: ${preview(json)}`);
+      expect: (json) => {
+        assertApiSuccess(json, "automation health");
+        if (!json.data)
+          throw new Error(`automation health data missing: ${preview(json)}`);
         const fieldGateAttribution =
           json.data?.risk_limit_suggestion?.field_gate_adjustment_attribution;
         if (fieldGateAttribution?.decision) {
-          if (!fieldGateAttribution.decision.action || !fieldGateAttribution.decision.reason) {
+          if (
+            !fieldGateAttribution.decision.action ||
+            !fieldGateAttribution.decision.reason
+          ) {
             throw new Error(
-              `automation health field gate decision invalid: ${preview(fieldGateAttribution)}`
+              `automation health field gate decision invalid: ${preview(fieldGateAttribution)}`,
             );
           }
         }
       },
     });
 
-    await requestJson('runtime schema health', '/api/tasks/runtime-schema-health', {
-      token,
-      critical: false,
-      expect: json => {
-        assertApiSuccess(json, 'runtime schema health');
-        if (!json.data?.status || !json.data?.summary) {
-          throw new Error(`runtime schema health payload invalid: ${preview(json)}`);
-        }
-        if (json.data.status === 'critical') {
-          throw new Error(`runtime schema critical: ${preview(json.data?.summary)}`);
-        }
+    await requestJson(
+      "runtime schema health",
+      "/api/tasks/runtime-schema-health",
+      {
+        token,
+        critical: false,
+        expect: (json) => {
+          assertApiSuccess(json, "runtime schema health");
+          if (!json.data?.status || !json.data?.summary) {
+            throw new Error(
+              `runtime schema health payload invalid: ${preview(json)}`,
+            );
+          }
+          if (json.data.status === "critical") {
+            throw new Error(
+              `runtime schema critical: ${preview(json.data?.summary)}`,
+            );
+          }
+        },
       },
-    });
+    );
 
     const tasks = getTaskList(tasksJson);
-    const firstTaskWithId = tasks.find(task => Number.isInteger(Number(task?.id)));
+    const firstTaskWithId = tasks.find((task) =>
+      Number.isInteger(Number(task?.id)),
+    );
     if (firstTaskWithId) {
-      await requestJson('scheduled task logs + queue details', `/api/tasks/${firstTaskWithId.id}/logs`, {
-        token,
-        expect: json => {
-          assertApiSuccess(json, 'scheduled task logs');
-          assertArray(json.data, 'scheduled task logs data');
+      await requestJson(
+        "scheduled task logs + queue details",
+        `/api/tasks/${firstTaskWithId.id}/logs`,
+        {
+          token,
+          expect: (json) => {
+            assertApiSuccess(json, "scheduled task logs");
+            assertArray(json.data, "scheduled task logs data");
+          },
         },
-      });
+      );
     } else {
-      skip('scheduled task logs + queue details', 'no scheduled task with id found');
+      skip(
+        "scheduled task logs + queue details",
+        "no scheduled task with id found",
+      );
     }
 
-    await requestJson('task parameter audit timeline', '/api/tasks/parameter-audits?limit=5&watched_only=false', {
+    await requestJson(
+      "task parameter audit timeline",
+      "/api/tasks/parameter-audits?limit=5&watched_only=false",
+      {
+        token,
+        expect: (json) => {
+          assertApiSuccess(json, "task parameter audit timeline");
+          assertArray(json.data, "task parameter audit timeline data");
+        },
+      },
+    );
+
+    await requestJson("quant signal list", "/api/quant/signals?limit=5", {
       token,
-      expect: json => {
-        assertApiSuccess(json, 'task parameter audit timeline');
-        assertArray(json.data, 'task parameter audit timeline data');
+      expect: (json) => {
+        assertApiSuccess(json, "quant signal list");
+        assertArray(json.data, "quant signal list data");
       },
     });
 
-    await requestJson('quant signal list', '/api/quant/signals?limit=5', {
+    await requestJson("quant backtest list", "/api/quant/backtests?limit=5", {
       token,
-      expect: json => {
-        assertApiSuccess(json, 'quant signal list');
-        assertArray(json.data, 'quant signal list data');
+      expect: (json) => {
+        assertApiSuccess(json, "quant backtest list");
+        assertArray(json.data, "quant backtest list data");
       },
     });
 
-    await requestJson('quant backtest list', '/api/quant/backtests?limit=5', {
+    await requestJson("quant open watchdog", "/api/quant/open-watchdog", {
       token,
-      expect: json => {
-        assertApiSuccess(json, 'quant backtest list');
-        assertArray(json.data, 'quant backtest list data');
-      },
-    });
-
-    await requestJson('quant fusion audits', '/api/quant/fusion-audits?limit=5', {
-      token,
-      expect: json => {
-        assertApiSuccess(json, 'quant fusion audits');
-        assertArray(json.data, 'quant fusion audits data');
-      },
-    });
-
-    await requestJson('quant rankings dashboard', '/api/quant/rankings?limit=5', {
-      token,
-      expect: json => {
-        assertApiSuccess(json, 'quant rankings dashboard');
-        if (!json.data?.summary) {
-          throw new Error(`quant rankings summary missing: ${preview(json)}`);
+      critical: false,
+      expect: (json) => {
+        assertApiSuccess(json, "quant open watchdog");
+        if (
+          !json.data?.status ||
+          !json.data?.checks ||
+          !Array.isArray(json.data?.issues)
+        ) {
+          throw new Error(
+            `quant open watchdog payload invalid: ${preview(json)}`,
+          );
         }
-        assertArray(json.data.quant_rankings || [], 'quant rankings data');
-        assertArray(json.data.fusion_rankings || [], 'quant fusion rankings data');
-        if (json.data.summary.quote_persistence) {
-          const quotePersistence = json.data.summary.quote_persistence;
-          for (const key of [
-            'latest_trade_date_snapshot_count',
-            'latest_trade_date_symbol_count',
-          ]) {
-            if (
-              quotePersistence[key] !== undefined &&
-              !Number.isFinite(Number(quotePersistence[key]))
-            ) {
-              throw new Error(`quote persistence ${key} invalid: ${preview(quotePersistence)}`);
+      },
+    });
+
+    await requestJson(
+      "quant strategy experiments",
+      "/api/quant/strategy-experiments?limit=5",
+      {
+        token,
+        critical: false,
+        expect: (json) => {
+          assertApiSuccess(json, "quant strategy experiments");
+          if (!json.data || !Array.isArray(json.data.experiments || [])) {
+            throw new Error(
+              `quant strategy experiments payload invalid: ${preview(json)}`,
+            );
+          }
+        },
+      },
+    );
+
+    await requestJson(
+      "quant experiment param suggestions",
+      "/api/quant/strategy-experiments/param-suggestions?limit=50",
+      {
+        token,
+        critical: false,
+        expect: (json) => {
+          assertApiSuccess(json, "quant experiment param suggestions");
+          if (
+            !json.data?.summary ||
+            !Array.isArray(json.data?.suggestions || []) ||
+            !json.data?.recommended_params_by_strategy
+          ) {
+            throw new Error(
+              `quant experiment param suggestions payload invalid: ${preview(json)}`,
+            );
+          }
+        },
+      },
+    );
+
+    await requestJson(
+      "quant fusion audits",
+      "/api/quant/fusion-audits?limit=5",
+      {
+        token,
+        expect: (json) => {
+          assertApiSuccess(json, "quant fusion audits");
+          assertArray(json.data, "quant fusion audits data");
+        },
+      },
+    );
+
+    await requestJson(
+      "quant rankings dashboard",
+      "/api/quant/rankings?limit=5",
+      {
+        token,
+        expect: (json) => {
+          assertApiSuccess(json, "quant rankings dashboard");
+          if (!json.data?.summary) {
+            throw new Error(`quant rankings summary missing: ${preview(json)}`);
+          }
+          assertArray(json.data.quant_rankings || [], "quant rankings data");
+          assertArray(
+            json.data.fusion_rankings || [],
+            "quant fusion rankings data",
+          );
+          if (json.data.summary.quote_persistence) {
+            const quotePersistence = json.data.summary.quote_persistence;
+            for (const key of [
+              "latest_trade_date_snapshot_count",
+              "latest_trade_date_symbol_count",
+            ]) {
+              if (
+                quotePersistence[key] !== undefined &&
+                !Number.isFinite(Number(quotePersistence[key]))
+              ) {
+                throw new Error(
+                  `quote persistence ${key} invalid: ${preview(quotePersistence)}`,
+                );
+              }
             }
           }
-        }
+        },
       },
-    });
+    );
 
-    await requestJson('quant indicator catalog', '/api/quant/indicators', {
+    await requestJson("quant indicator catalog", "/api/quant/indicators", {
       token,
-      expect: json => {
-        assertApiSuccess(json, 'quant indicator catalog');
+      expect: (json) => {
+        assertApiSuccess(json, "quant indicator catalog");
         if (!json.data?.group_count || !Array.isArray(json.data?.groups)) {
           throw new Error(`quant indicator catalog invalid: ${preview(json)}`);
         }
       },
     });
 
-    await requestJson('quant performance dashboard', '/api/quant/performance-dashboard', {
-      token,
-      expect: json => {
-        assertApiSuccess(json, 'quant performance dashboard');
-        if (!json.data?.readiness || !json.data?.indicator_catalog) {
-          throw new Error(`quant performance dashboard missing readiness/catalog: ${preview(json)}`);
-        }
-        assertArray(
-          json.data?.latest_backtests?.leaderboard || [],
-          'quant performance backtest leaderboard'
-        );
-        assertArray(
-          json.data?.outcome_comparison?.families || [],
-          'quant performance outcome families'
-        );
-        assertArray(json.data?.schedule_summary?.tasks || [], 'quant performance schedules');
-      },
-    });
-
-    await requestJson('quant strategy weights', '/api/quant/strategy-weights', {
-      token,
-      expect: json => {
-        assertApiSuccess(json, 'quant strategy weights');
-        assertArray(json.data, 'quant strategy weights data');
-      },
-    });
-
-    await requestJson('quant allocation policy', '/api/quant/allocation-policy?capital=200000', {
-      token,
-      critical: false,
-      expect: json => {
-        assertApiSuccess(json, 'quant allocation policy');
-        if (!json.data) throw new Error(`allocation policy data missing: ${preview(json)}`);
-      },
-    });
-
-    await requestJson('paper trading risk profile', '/api/paper-trading/risk-profile', {
-      token,
-      expect: json => {
-        assertApiSuccess(json, 'paper trading risk profile');
-        if (!json.data?.status) throw new Error(`risk profile status missing: ${preview(json)}`);
-      },
-    });
-
     await requestJson(
-      'recommendation trade outcomes',
-      '/api/paper-trading/recommendation-outcomes?limit=5&include_open=false',
+      "quant performance dashboard",
+      "/api/quant/performance-dashboard",
       {
         token,
-        expect: json => {
-          assertApiSuccess(json, 'recommendation trade outcomes');
-          if (!json.data?.summary) {
-            throw new Error(`recommendation outcome summary missing: ${preview(json)}`);
+        expect: (json) => {
+          assertApiSuccess(json, "quant performance dashboard");
+          if (!json.data?.readiness || !json.data?.indicator_catalog) {
+            throw new Error(
+              `quant performance dashboard missing readiness/catalog: ${preview(json)}`,
+            );
           }
+          assertArray(
+            json.data?.latest_backtests?.leaderboard || [],
+            "quant performance backtest leaderboard",
+          );
+          assertArray(
+            json.data?.outcome_comparison?.families || [],
+            "quant performance outcome families",
+          );
+          assertArray(
+            json.data?.schedule_summary?.tasks || [],
+            "quant performance schedules",
+          );
         },
-      }
+      },
     );
 
-    await requestJson('AI signal stats', '/api/ai/signals/stats', {
+    await requestJson("quant strategy weights", "/api/quant/strategy-weights", {
       token,
-      critical: false,
-      expect: json => assertApiSuccess(json, 'AI signal stats'),
+      expect: (json) => {
+        assertApiSuccess(json, "quant strategy weights");
+        assertArray(json.data, "quant strategy weights data");
+      },
     });
 
     await requestJson(
-      'recommendation loop policy snapshots',
-      '/api/ai/recommendations/loop-policy-snapshots?limit=5',
+      "quant allocation policy",
+      "/api/quant/allocation-policy?capital=200000",
       {
         token,
-        expect: json => {
-          assertApiSuccess(json, 'recommendation loop policy snapshots');
+        critical: false,
+        expect: (json) => {
+          assertApiSuccess(json, "quant allocation policy");
+          if (!json.data)
+            throw new Error(`allocation policy data missing: ${preview(json)}`);
+        },
+      },
+    );
+
+    await requestJson(
+      "paper trading risk profile",
+      "/api/paper-trading/risk-profile",
+      {
+        token,
+        expect: (json) => {
+          assertApiSuccess(json, "paper trading risk profile");
+          if (!json.data?.status)
+            throw new Error(`risk profile status missing: ${preview(json)}`);
+        },
+      },
+    );
+
+    await requestJson(
+      "recommendation trade outcomes",
+      "/api/paper-trading/recommendation-outcomes?limit=5&include_open=false",
+      {
+        token,
+        expect: (json) => {
+          assertApiSuccess(json, "recommendation trade outcomes");
+          if (!json.data?.summary) {
+            throw new Error(
+              `recommendation outcome summary missing: ${preview(json)}`,
+            );
+          }
+        },
+      },
+    );
+
+    await requestJson("AI signal stats", "/api/ai/signals/stats", {
+      token,
+      critical: false,
+      expect: (json) => assertApiSuccess(json, "AI signal stats"),
+    });
+
+    await requestJson(
+      "recommendation loop policy snapshots",
+      "/api/ai/recommendations/loop-policy-snapshots?limit=5",
+      {
+        token,
+        expect: (json) => {
+          assertApiSuccess(json, "recommendation loop policy snapshots");
           if (!json.data?.summary || !Array.isArray(json.data?.snapshots)) {
-            throw new Error(`loop policy snapshot payload missing: ${preview(json)}`);
+            throw new Error(
+              `loop policy snapshot payload missing: ${preview(json)}`,
+            );
           }
           const riskGateAnalysis = json.data?.risk_gate_analysis;
           if (riskGateAnalysis && riskGateAnalysis.field_gate_advice) {
             if (!Array.isArray(riskGateAnalysis.field_gate_advice.items)) {
-              throw new Error(`field gate advice items missing: ${preview(riskGateAnalysis)}`);
+              throw new Error(
+                `field gate advice items missing: ${preview(riskGateAnalysis)}`,
+              );
             }
             if (!riskGateAnalysis.field_gate_advice.conclusion) {
-              throw new Error(`field gate advice conclusion missing: ${preview(riskGateAnalysis)}`);
+              throw new Error(
+                `field gate advice conclusion missing: ${preview(riskGateAnalysis)}`,
+              );
             }
           }
-          const fieldGateAttribution = json.data?.field_gate_adjustment_attribution;
+          const fieldGateAttribution =
+            json.data?.field_gate_adjustment_attribution;
           if (fieldGateAttribution) {
-            if (!fieldGateAttribution.status || !fieldGateAttribution.conclusion) {
+            if (
+              !fieldGateAttribution.status ||
+              !fieldGateAttribution.conclusion
+            ) {
               throw new Error(
                 `field gate adjustment attribution status/conclusion missing: ${preview(
-                  fieldGateAttribution
-                )}`
+                  fieldGateAttribution,
+                )}`,
               );
             }
             for (const key of [
-              'before_sample_count',
-              'after_sample_count',
-              'before_avg_excess_return_pct',
-              'after_avg_excess_return_pct',
-              'delta_pct',
+              "before_sample_count",
+              "after_sample_count",
+              "before_avg_excess_return_pct",
+              "after_avg_excess_return_pct",
+              "delta_pct",
             ]) {
               if (
                 fieldGateAttribution[key] !== undefined &&
@@ -462,8 +635,8 @@ async function main() {
               ) {
                 throw new Error(
                   `field gate adjustment attribution ${key} invalid: ${preview(
-                    fieldGateAttribution
-                  )}`
+                    fieldGateAttribution,
+                  )}`,
                 );
               }
             }
@@ -471,67 +644,80 @@ async function main() {
               if (!Array.isArray(fieldGateAttribution.windows)) {
                 throw new Error(
                   `field gate adjustment attribution windows invalid: ${preview(
-                    fieldGateAttribution
-                  )}`
+                    fieldGateAttribution,
+                  )}`,
                 );
               }
               for (const item of fieldGateAttribution.windows) {
-                if (!Number.isFinite(Number(item.days)) || !Number.isFinite(Number(item.sample_count))) {
+                if (
+                  !Number.isFinite(Number(item.days)) ||
+                  !Number.isFinite(Number(item.sample_count))
+                ) {
                   throw new Error(
-                    `field gate adjustment attribution window fields invalid: ${preview(item)}`
-                );
+                    `field gate adjustment attribution window fields invalid: ${preview(item)}`,
+                  );
+                }
+              }
+              if (fieldGateAttribution.decision !== undefined) {
+                if (
+                  !fieldGateAttribution.decision.action ||
+                  !fieldGateAttribution.decision.reason
+                ) {
+                  throw new Error(
+                    `field gate adjustment attribution decision invalid: ${preview(
+                      fieldGateAttribution,
+                    )}`,
+                  );
+                }
               }
             }
-            if (fieldGateAttribution.decision !== undefined) {
-              if (
-                !fieldGateAttribution.decision.action ||
-                !fieldGateAttribution.decision.reason
-              ) {
-                throw new Error(
-                  `field gate adjustment attribution decision invalid: ${preview(
-                    fieldGateAttribution
-                  )}`
-                );
-              }
-            }
-          }
           }
           const promotion = json.data?.promotion;
           if (promotion?.field_gate_adjustment_attribution) {
             if (
-              promotion.field_gate_adjustment_attribution.status !== fieldGateAttribution?.status ||
+              promotion.field_gate_adjustment_attribution.status !==
+                fieldGateAttribution?.status ||
               !promotion.field_gate_adjustment_attribution.conclusion
             ) {
               throw new Error(
-                `promotion field gate attribution inconsistent: ${preview(promotion)}`
+                `promotion field gate attribution inconsistent: ${preview(promotion)}`,
               );
             }
             if (
               promotion.field_gate_confidence_adjustment !== undefined &&
-              !Number.isFinite(Number(promotion.field_gate_confidence_adjustment))
+              !Number.isFinite(
+                Number(promotion.field_gate_confidence_adjustment),
+              )
             ) {
-              throw new Error(`promotion field gate confidence invalid: ${preview(promotion)}`);
+              throw new Error(
+                `promotion field gate confidence invalid: ${preview(promotion)}`,
+              );
             }
           }
         },
-      }
+      },
     );
 
     if (includeExternal) {
-      await requestJson('TradingAgents health', '/api/ai/health', {
+      await requestJson("TradingAgents health", "/api/ai/health", {
         token,
         critical: false,
-        expect: json => assertApiSuccess(json, 'TradingAgents health'),
+        expect: (json) => assertApiSuccess(json, "TradingAgents health"),
       });
     } else {
-      skip('TradingAgents health', 'set SMOKE_INCLUDE_EXTERNAL=true to include remote health probe');
+      skip(
+        "TradingAgents health",
+        "set SMOKE_INCLUDE_EXTERNAL=true to include remote health probe",
+      );
     }
   }
 
-  const passed = results.filter(item => item.status === 'pass').length;
-  const failed = results.filter(item => item.status === 'fail').length;
-  const skipped = results.filter(item => item.status === 'skip').length;
-  const criticalFailed = results.filter(item => item.status === 'fail' && item.critical).length;
+  const passed = results.filter((item) => item.status === "pass").length;
+  const failed = results.filter((item) => item.status === "fail").length;
+  const skipped = results.filter((item) => item.status === "skip").length;
+  const criticalFailed = results.filter(
+    (item) => item.status === "fail" && item.critical,
+  ).length;
   const optionalFailed = failed - criticalFailed;
 
   const summary = {
@@ -546,14 +732,14 @@ async function main() {
   };
   writeJsonSummary({ summary, results });
 
-  console.log('\n' + JSON.stringify(summary, null, 2));
+  console.log("\n" + JSON.stringify(summary, null, 2));
 
   if (criticalFailed > 0) {
     process.exit(1);
   }
 }
 
-main().catch(error => {
-  console.error(color.red('[FATAL]'), error);
+main().catch((error) => {
+  console.error(color.red("[FATAL]"), error);
   process.exit(1);
 });

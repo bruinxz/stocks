@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  Alert,
   Button,
   Card,
   Col,
@@ -48,6 +49,8 @@ type BacktestTask = {
   start_date: string;
   end_date: string;
   created_at: string;
+  error_message?: string;
+  parameters?: Record<string, any>;
 };
 type BacktestResult = {
   strategy_key: string;
@@ -60,6 +63,7 @@ type BacktestResult = {
   win_rate: number;
   trade_count: number;
   equity_curve_json: any[];
+  metrics_json?: Record<string, any>;
 };
 
 type BacktestDetail = { task: BacktestTask; results: BacktestResult[]; trades: any[] };
@@ -114,6 +118,17 @@ const QuantBacktestLab: React.FC = () => {
         max_positions: values.max_positions,
         position_pct: values.position_pct,
         min_score: values.min_score,
+        execution_timing: values.execution_timing,
+        enable_t_plus_one: values.enable_t_plus_one,
+        lot_size: values.lot_size,
+        min_commission: values.min_commission,
+        stamp_tax_rate: values.stamp_tax_rate,
+        block_limit_up: values.block_limit_up,
+        block_limit_down: values.block_limit_down,
+        block_suspended: values.block_suspended,
+        dynamic_slippage: values.dynamic_slippage,
+        min_turnover_yuan: values.min_turnover_yuan,
+        max_trade_amount_pct_of_turnover: values.max_trade_amount_pct_of_turnover,
       });
       if (response.data.success) {
         const taskDetail = response.data.data?.task;
@@ -170,6 +185,32 @@ const QuantBacktestLab: React.FC = () => {
       key: 'strategy_name',
       fixed: 'left' as const,
       width: 180,
+    },
+    {
+      title: '真实执行诊断',
+      key: 'execution_diagnostics',
+      width: 220,
+      render: (_: any, record: BacktestResult) => {
+        const diagnostics = record.metrics_json?.execution_diagnostics || {};
+        const blocked =
+          Number(diagnostics.blocked_buy_count || 0) + Number(diagnostics.blocked_sell_count || 0);
+        return (
+          <Space direction="vertical" size={0}>
+            <Text>
+              买入 {diagnostics.buy_fill_count || 0}/{diagnostics.buy_attempt_count || 0} · 卖出{' '}
+              {diagnostics.sell_fill_count || 0}/{diagnostics.sell_attempt_count || 0}
+            </Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              阻塞 {blocked} · 成本 ¥
+              {Number(
+                Number(diagnostics.total_commission || 0) +
+                  Number(diagnostics.total_stamp_tax || 0) +
+                  Number(diagnostics.total_slippage_cost || 0)
+              ).toLocaleString()}
+            </Text>
+          </Space>
+        );
+      },
     },
     {
       title: '总收益',
@@ -244,8 +285,26 @@ const QuantBacktestLab: React.FC = () => {
             max_positions: 8,
             position_pct: 10,
             min_score: 68,
+            execution_timing: 'next_open',
+            enable_t_plus_one: true,
+            lot_size: 100,
+            min_commission: 5,
+            stamp_tax_rate: 0.001,
+            block_limit_up: true,
+            block_limit_down: true,
+            block_suspended: true,
+            dynamic_slippage: true,
+            min_turnover_yuan: 0,
+            max_trade_amount_pct_of_turnover: 1,
           }}
         >
+          <Alert
+            showIcon
+            type="info"
+            style={{ marginBottom: 14 }}
+            message="默认使用 A 股真实回测护栏"
+            description="跑分默认按次日开盘成交、T+1、一手100股、最低佣金、印花税、动态滑点、涨跌停/停牌/流动性约束执行，减少未来函数和不可成交收益。"
+          />
           <Row gutter={[14, 0]}>
             <Col xs={24} md={6}>
               <Form.Item label="股票池" name="universe">
@@ -316,6 +375,96 @@ const QuantBacktestLab: React.FC = () => {
                         <Col xs={12} md={4}>
                           <Form.Item label="最低分" name="min_score">
                             <InputNumber style={{ width: '100%' }} min={0} max={100} />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={12} md={4}>
+                          <Form.Item label="成交时点" name="execution_timing">
+                            <Select
+                              options={[
+                                { label: '次日开盘', value: 'next_open' },
+                                { label: '当日收盘', value: 'same_close' },
+                              ]}
+                            />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={12} md={4}>
+                          <Form.Item label="T+1" name="enable_t_plus_one">
+                            <Select
+                              options={[
+                                { label: '开启', value: true },
+                                { label: '关闭', value: false },
+                              ]}
+                            />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={12} md={4}>
+                          <Form.Item label="一手股数" name="lot_size">
+                            <InputNumber style={{ width: '100%' }} min={1} max={1000} />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={12} md={4}>
+                          <Form.Item label="最低佣金" name="min_commission">
+                            <InputNumber style={{ width: '100%' }} min={0} max={50} />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={12} md={4}>
+                          <Form.Item label="印花税率" name="stamp_tax_rate">
+                            <InputNumber
+                              style={{ width: '100%' }}
+                              min={0}
+                              max={0.01}
+                              step={0.0001}
+                            />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={12} md={4}>
+                          <Form.Item label="动态滑点" name="dynamic_slippage">
+                            <Select
+                              options={[
+                                { label: '开启', value: true },
+                                { label: '关闭', value: false },
+                              ]}
+                            />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={12} md={4}>
+                          <Form.Item label="涨停禁买" name="block_limit_up">
+                            <Select
+                              options={[
+                                { label: '开启', value: true },
+                                { label: '关闭', value: false },
+                              ]}
+                            />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={12} md={4}>
+                          <Form.Item label="跌停禁卖" name="block_limit_down">
+                            <Select
+                              options={[
+                                { label: '开启', value: true },
+                                { label: '关闭', value: false },
+                              ]}
+                            />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={12} md={4}>
+                          <Form.Item label="停牌过滤" name="block_suspended">
+                            <Select
+                              options={[
+                                { label: '开启', value: true },
+                                { label: '关闭', value: false },
+                              ]}
+                            />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={12} md={4}>
+                          <Form.Item label="最低成交额" name="min_turnover_yuan">
+                            <InputNumber style={{ width: '100%' }} min={0} step={1000000} />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={12} md={4}>
+                          <Form.Item label="成交额占比%" name="max_trade_amount_pct_of_turnover">
+                            <InputNumber style={{ width: '100%' }} min={0.01} max={10} step={0.1} />
                           </Form.Item>
                         </Col>
                       </Row>
