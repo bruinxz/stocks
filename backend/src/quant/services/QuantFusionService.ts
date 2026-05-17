@@ -20,6 +20,12 @@ import { quantStrategyFeedbackService } from './QuantStrategyFeedbackService';
 import { recommendationLoopPolicySnapshotService } from '../../services/RecommendationLoopPolicySnapshotService';
 import { riskThresholdStabilityService } from '../../services/RiskThresholdStabilityService';
 import { quantStrategyExperimentService } from './QuantStrategyExperimentService';
+import { quantStrategyParamVersionService } from './QuantStrategyParamVersionService';
+import {
+  AUTONOMOUS_PORTFOLIO_NAME,
+  QUANT_AGENT_FUSION_PORTFOLIO_NAME,
+  QUANT_ONLY_PORTFOLIO_NAME,
+} from '../../services/PaperTradingDashboardService';
 
 type QuantPipelineMode = 'archive_only' | 'agent_review' | 'paper_trade';
 
@@ -199,6 +205,15 @@ export class QuantFusionService {
     const archiveLimit = toPositiveInt(options.archive_limit, 30, 200);
     const agentMaxCount = toPositiveInt(options.agent_max_count, 5, 20);
     const agentMinScore = safeNumber(options.agent_min_score, 72);
+    const requestedPortfolioName = options.portfolio_name;
+    const useDefaultPortfolioFamily =
+      !requestedPortfolioName || requestedPortfolioName === AUTONOMOUS_PORTFOLIO_NAME;
+    const pureQuantPortfolioName = useDefaultPortfolioFamily
+      ? QUANT_ONLY_PORTFOLIO_NAME
+      : requestedPortfolioName;
+    const agentFusionPortfolioName = useDefaultPortfolioFamily
+      ? QUANT_AGENT_FUSION_PORTFOLIO_NAME
+      : requestedPortfolioName;
     const experimentParamSuggestion =
       options.use_experiment_params === false
         ? null
@@ -212,6 +227,18 @@ export class QuantFusionService {
       ...(experimentParamSuggestion?.recommended_params_by_strategy || {}),
       ...(options.params_by_strategy || {}),
     };
+    const paramVersionRefresh = await quantStrategyParamVersionService
+      .refreshVersionsFromExperiments({
+        suggestions: experimentParamSuggestion,
+        manual_params_by_strategy: options.params_by_strategy,
+        use_experiment_params: options.use_experiment_params !== false,
+      })
+      .catch(error => {
+        logger.warn(`刷新量化策略参数版本失败，降级继续扫描: ${error?.message || error}`);
+        return null;
+      });
+    const effectiveParamVersionByStrategy =
+      paramVersionRefresh?.adopted_param_version_by_strategy || {};
     const generated = await quantSignalService.generateSignals({
       trade_date,
       universe: options.universe || 'market',
@@ -223,9 +250,27 @@ export class QuantFusionService {
       min_score: options.min_score ?? 55,
       persist: true,
       params_by_strategy: effectiveParamsByStrategy,
+      param_version_by_strategy: effectiveParamVersionByStrategy,
       refresh_realtime_quotes: options.refresh_realtime_quotes !== false,
       quote_sync_limit: options.quote_sync_limit || options.candidate_limit || 180,
     });
+    const paramValidationRefresh = await quantStrategyParamVersionService
+      .createPendingValidationsFromSignals({
+        trade_date,
+        strategy_keys: options.strategy_keys,
+        limit: options.candidate_limit || 500,
+      })
+      .then(async create => ({
+        create,
+        refresh: await quantStrategyParamVersionService.refreshValidationReturns({
+          limit: 1200,
+          auto_sync_benchmark: false,
+        }),
+      }))
+      .catch(error => {
+        logger.warn(`刷新量化策略参数 A/B 收益验证失败，降级继续闭环: ${error?.message || error}`);
+        return null;
+      });
 
     const candidates = await this.buildFusionCandidates({
       trade_date,
@@ -246,7 +291,7 @@ export class QuantFusionService {
         ? await paperTradingRiskProfileService
             .getRiskProfile({
               user_id: options.user_id,
-              portfolio_name: options.portfolio_name,
+              portfolio_name: pureQuantPortfolioName,
               min_cash_reserve_pct: options.min_cash_reserve_pct,
               max_portfolio_drawdown_pct: options.max_portfolio_drawdown_pct,
               max_total_exposure_pct: options.max_total_exposure_pct,
@@ -280,7 +325,7 @@ export class QuantFusionService {
       paperTrading = await paperTradingAutomationService.autoBuyFromSignals({
         user_id: options.user_id,
         username: options.username,
-        portfolio_name: options.portfolio_name,
+        portfolio_name: pureQuantPortfolioName,
         initial_capital: options.initial_capital,
         force_new_portfolio: options.force_new_portfolio,
         source_type: AISignalSourceType.QUANT_RECOMMENDATION,
@@ -330,7 +375,7 @@ export class QuantFusionService {
         ? await paperTradingRiskProfileService
             .getRiskProfile({
               user_id: options.user_id,
-              portfolio_name: options.portfolio_name,
+              portfolio_name: pureQuantPortfolioName,
               min_cash_reserve_pct: options.min_cash_reserve_pct,
               max_portfolio_drawdown_pct: options.max_portfolio_drawdown_pct,
               max_total_exposure_pct: options.max_total_exposure_pct,
@@ -363,6 +408,22 @@ export class QuantFusionService {
               adopted_strategy_keys: Object.keys(
                 experimentParamSuggestion.recommended_params_by_strategy || {}
               ),
+            }
+          : null,
+        param_version_refresh: paramVersionRefresh
+          ? {
+              summary: paramVersionRefresh.summary,
+              adopted_strategy_keys: Object.keys(
+                paramVersionRefresh.adopted_param_version_by_strategy || {}
+              ),
+            }
+          : null,
+        param_validation_refresh: paramValidationRefresh
+          ? {
+              created: paramValidationRefresh.create?.created || 0,
+              updated: paramValidationRefresh.create?.updated || 0,
+              completed: paramValidationRefresh.refresh?.completed || 0,
+              pending: paramValidationRefresh.refresh?.pending || 0,
             }
           : null,
       },
@@ -656,6 +717,27 @@ export class QuantFusionService {
     if (!best) return null;
 
     const strategyKeys = uniqueValues(sorted.map(item => item.strategy_key));
+    const paramVersions = uniqueValues(
+      sorted
+        .map(item => {
+          const raw = asPlainObject(item.raw_factors);
+          return raw.param_version_key
+            ? {
+                strategy_key: item.strategy_key,
+                version_key: raw.param_version_key,
+                version_type: raw.param_version_type,
+                status: raw.param_version_status,
+                ab_group: raw.param_version_ab_group,
+                source_experiment_key: raw.param_version_source_experiment_key,
+              }
+            : null;
+        })
+        .filter(Boolean)
+        .map(item => JSON.stringify(item))
+    ).map(item => JSON.parse(String(item)));
+    const paramVersionKeys = uniqueValues(
+      paramVersions.map(item => String(item.version_key || '').trim())
+    );
     const riskFlags = uniqueValues(sorted.flatMap(item => item.risk_flags || []));
     const reasons = uniqueValues(sorted.flatMap(item => splitReasonText(item.reason))).slice(0, 8);
     const consensusCount = strategyKeys.length;
@@ -801,6 +883,8 @@ export class QuantFusionService {
       factors: {
         best_strategy_key: best.strategy_key,
         best_raw_factors: best.raw_factors || {},
+        param_versions: paramVersions,
+        param_version_keys: paramVersionKeys,
         market_environment: marketEnvironment,
         strategy_weight: round(avgStrategyWeight, 4),
         strategy_weight_adjustment: round(weightAdjustment, 4),
@@ -902,6 +986,8 @@ export class QuantFusionService {
             strategy_keys: candidate.strategy_keys,
             quant_signal_ids: candidate.quant_signal_ids,
             fusion_score: candidate.score,
+            param_versions: candidate.factors?.param_versions,
+            param_version_keys: candidate.factors?.param_version_keys,
             fusion_formula:
               'quant_score + consensus_bonus + strategy_weight_adjustment + environment_weight_adjustment - risk_penalty',
             strategy_allocation_policy: candidate.factors?.strategy_allocation_policy,
@@ -981,6 +1067,11 @@ export class QuantFusionService {
     const submitted: any[] = [];
     const failed: any[] = [];
     const skipped: any[] = [];
+    const requestedPortfolioName = options.portfolio_name;
+    const agentFusionPortfolioName =
+      !requestedPortfolioName || requestedPortfolioName === AUTONOMOUS_PORTFOLIO_NAME
+        ? QUANT_AGENT_FUSION_PORTFOLIO_NAME
+        : requestedPortfolioName;
     if (!enabled) {
       return { enabled: false, submitted, failed, skipped };
     }
@@ -1050,6 +1141,8 @@ export class QuantFusionService {
               ai_signal_id: archivedSignal?.id,
               consensus_count: candidate.consensus_count,
               fusion_score: candidate.score,
+              param_versions: candidate.factors?.param_versions,
+              param_version_keys: candidate.factors?.param_version_keys,
               strategy_allocation_policy: candidate.factors?.strategy_allocation_policy,
               market_environment: candidate.factors?.market_environment,
               regime_adjustments: candidate.factors?.regime_adjustments,
@@ -1068,7 +1161,7 @@ export class QuantFusionService {
             },
             auto_paper_trade: options.agent_auto_paper_trade !== false,
             paper_trade_username: options.username,
-            paper_trade_portfolio_name: options.portfolio_name,
+            paper_trade_portfolio_name: agentFusionPortfolioName,
             paper_trade_initial_capital: options.initial_capital,
             paper_trade_force_new_portfolio: options.force_new_portfolio,
             paper_trade_min_score: options.agent_min_score,

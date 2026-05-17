@@ -442,6 +442,23 @@ async function main() {
       },
     );
 
+    await requestJson("quant param versions", "/api/quant/param-versions?limit=20", {
+      token,
+      critical: false,
+      expect: (json) => {
+        assertApiSuccess(json, "quant param versions");
+        if (
+          !json.data?.summary ||
+          !Array.isArray(json.data?.versions || []) ||
+          !Array.isArray(json.data?.summary_by_version || [])
+        ) {
+          throw new Error(
+            `quant param versions payload invalid: ${preview(json)}`,
+          );
+        }
+      },
+    });
+
     await requestJson(
       "quant fusion audits",
       "/api/quant/fusion-audits?limit=5",
@@ -518,6 +535,14 @@ async function main() {
           assertArray(
             json.data?.outcome_comparison?.families || [],
             "quant performance outcome families",
+          );
+          assertArray(
+            json.data?.param_validation_dashboard?.summary_by_version || [],
+            "quant performance param validation",
+          );
+          assertArray(
+            json.data?.portfolio_family_comparison?.families || [],
+            "quant performance portfolio families",
           );
           assertArray(
             json.data?.schedule_summary?.tasks || [],

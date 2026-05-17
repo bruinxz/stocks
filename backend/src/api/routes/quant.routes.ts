@@ -35,6 +35,26 @@ router.get(
   authController.authenticate,
   quantController.getExperimentParamSuggestions.bind(quantController)
 );
+router.get(
+  '/param-versions',
+  authController.authenticate,
+  quantController.listParamVersions.bind(quantController)
+);
+router.get(
+  '/param-validations',
+  authController.authenticate,
+  quantController.listParamVersions.bind(quantController)
+);
+router.post(
+  '/param-versions/refresh',
+  authController.authenticate,
+  quantController.refreshParamVersions.bind(quantController)
+);
+router.post(
+  '/param-validations/refresh',
+  authController.authenticate,
+  quantController.refreshParamValidations.bind(quantController)
+);
 router.post(
   '/backtests',
   authController.authenticate,

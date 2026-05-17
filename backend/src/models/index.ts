@@ -29,6 +29,8 @@ export * from './QuantSignal';
 export * from './QuantStrategyPerformanceSnapshot';
 export * from './QuantStrategyWeight';
 export * from './QuantStrategyExperiment';
+export * from './QuantStrategyParamVersion';
+export * from './QuantStrategyParamValidation';
 export * from './QuantFusionAudit';
 export * from './TaskParameterAuditLog';
 export * from './RealtimeQuote';

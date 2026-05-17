@@ -21,6 +21,7 @@ import { taskParameterAuditService } from './TaskParameterAuditService';
 import {
   AUTONOMOUS_PORTFOLIO_NAME,
   DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
+  QUANT_ONLY_PORTFOLIO_NAME,
 } from './PaperTradingDashboardService';
 import moment from 'moment-timezone';
 import { Op } from 'sequelize';

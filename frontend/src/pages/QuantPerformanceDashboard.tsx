@@ -80,6 +80,26 @@ type OutcomeFamily = {
   worst_return_pct?: number;
 };
 
+type PortfolioFamily = {
+  key: string;
+  label: string;
+  name: string;
+  description: string;
+  exists?: boolean;
+  portfolio_id?: number | null;
+  total_value?: number;
+  total_pnl?: number;
+  total_return_pct?: number;
+  current_cash?: number;
+  position_value?: number;
+  open_position_count?: number;
+  trade_count?: number;
+  outcome_count?: number;
+  closed_outcome_count?: number;
+  win_rate?: number;
+  avg_closed_return_pct?: number;
+};
+
 type StrategyExperiment = {
   id: number;
   strategy_key: string;
@@ -201,6 +221,55 @@ type DashboardData = {
       source_experiment?: StrategyExperiment | null;
     }>;
   };
+  param_validation_dashboard?: {
+    summary?: {
+      version_count?: number;
+      active_candidate_count?: number;
+      validation_count?: number;
+      completed_count?: number;
+      pending_count?: number;
+      conclusion?: string;
+    };
+    champion?: {
+      version_key: string;
+      strategy_key: string;
+      strategy_name?: string;
+      version_type?: string;
+      status?: string;
+      completed_count?: number;
+      pending_count?: number;
+      avg_return_pct?: number;
+      avg_excess_return_pct?: number;
+      win_rate?: number;
+      rank_score?: number;
+    } | null;
+    summary_by_version?: Array<{
+      version_key: string;
+      strategy_key: string;
+      strategy_name?: string;
+      version_type?: string;
+      status?: string;
+      total_count?: number;
+      completed_count?: number;
+      pending_count?: number;
+      avg_return_pct?: number;
+      avg_excess_return_pct?: number;
+      win_rate?: number;
+      rank_score?: number;
+      best_symbol?: string;
+      best_name?: string;
+      best_return_pct?: number;
+    }>;
+  };
+  portfolio_family_comparison?: {
+    summary?: {
+      family_count?: number;
+      active_family_count?: number;
+      champion?: PortfolioFamily;
+      conclusion?: string;
+    } | null;
+    families?: PortfolioFamily[];
+  };
   readiness?: {
     score: number;
     ready: boolean;
@@ -259,6 +328,8 @@ const QuantPerformanceDashboard: React.FC = () => {
   const dataQuality = dashboard?.data_quality_center;
   const strategyExperiments = dashboard?.strategy_experiments;
   const experimentParamSuggestions = dashboard?.experiment_param_suggestions;
+  const paramValidation = dashboard?.param_validation_dashboard;
+  const portfolioFamilyComparison = dashboard?.portfolio_family_comparison;
   const quotePersistence = dataQuality?.quote_persistence;
   const openTask = useMemo(
     () =>
@@ -282,6 +353,7 @@ const QuantPerformanceDashboard: React.FC = () => {
   const families = dashboard?.outcome_comparison?.families || [];
   const pureQuant = families.find(item => item.key === 'pure_quant');
   const agentFusion = families.find(item => item.key === 'agent_fusion');
+  const portfolioFamilies = portfolioFamilyComparison?.families || [];
 
   const backtestColumns: TableColumnsType<BacktestItem> = [
     {
@@ -771,6 +843,145 @@ const QuantPerformanceDashboard: React.FC = () => {
           ))}
           {!experimentParamSuggestions?.suggestions?.length && <Empty description="暂无参数建议" />}
         </div>
+      </Card>
+
+      <Card className="modern-card quant-ab-board" variant="borderless" loading={loading}>
+        <div className="quant-section-heading">
+          <div>
+            <span>PARAMETER A/B VALIDATION</span>
+            <h2>策略参数 A/B 验证闭环</h2>
+          </div>
+          <Text type="secondary">
+            每次量化扫描会把采用的默认/实验/手工参数版本写入信号，并追踪 1/3/5/10
+            日收益，防止单次回测冠军过拟合后被直接放大。
+          </Text>
+        </div>
+        <Row gutter={[12, 12]}>
+          <Col xs={24} md={6}>
+            <div className="quant-quality-tile">
+              <span>参数版本</span>
+              <strong>{paramValidation?.summary?.version_count || 0}</strong>
+              <p>默认基线、实验候选和手工覆盖均会独立留痕。</p>
+            </div>
+          </Col>
+          <Col xs={24} md={6}>
+            <div className="quant-quality-tile">
+              <span>候选版本</span>
+              <strong>{paramValidation?.summary?.active_candidate_count || 0}</strong>
+              <p>达到门槛后才进入开盘扫描，并持续接受样本验证。</p>
+            </div>
+          </Col>
+          <Col xs={24} md={6}>
+            <div className="quant-quality-tile">
+              <span>验证完成</span>
+              <strong>{paramValidation?.summary?.completed_count || 0}</strong>
+              <p>待完成 {paramValidation?.summary?.pending_count || 0} 条，按交易日滚动更新。</p>
+            </div>
+          </Col>
+          <Col xs={24} md={6}>
+            <div className="quant-quality-tile">
+              <span>当前冠军</span>
+              <strong>
+                {paramValidation?.champion?.avg_excess_return_pct !== undefined
+                  ? formatPct(paramValidation.champion.avg_excess_return_pct)
+                  : '--'}
+              </strong>
+              <p>
+                {paramValidation?.champion?.strategy_name ||
+                  paramValidation?.champion?.strategy_key ||
+                  '等待 A/B 样本完成'}
+              </p>
+            </div>
+          </Col>
+        </Row>
+        <div className="quant-ab-list">
+          {(paramValidation?.summary_by_version || []).slice(0, 6).map(item => (
+            <div className="quant-ab-row" key={item.version_key}>
+              <div>
+                <Space wrap size={6}>
+                  <strong>{item.strategy_name || item.strategy_key}</strong>
+                  <Tag color={item.status === 'active_candidate' ? 'green' : 'blue'}>
+                    {item.version_type || 'version'}
+                  </Tag>
+                  <Tag>样本 {item.completed_count || 0}</Tag>
+                  <Tag>胜率 {formatPct(item.win_rate)}</Tag>
+                </Space>
+                <p>
+                  {item.version_key} · 平均收益 {formatPct(item.avg_return_pct)} · 平均超额{' '}
+                  {formatPct(item.avg_excess_return_pct)} · 最佳{' '}
+                  {item.best_name || item.best_symbol || '--'}{' '}
+                  {item.best_return_pct !== undefined ? formatPct(item.best_return_pct) : ''}
+                </p>
+              </div>
+              <div>
+                <Text strong>{Number(item.rank_score || 0).toFixed(1)}</Text>
+                <Text type="secondary">A/B 分</Text>
+              </div>
+            </div>
+          ))}
+          {!paramValidation?.summary_by_version?.length && (
+            <Empty description="暂无参数 A/B 验证样本，下一次量化扫描后会自动生成" />
+          )}
+        </div>
+        <Alert
+          className="quant-inline-note"
+          type="info"
+          showIcon
+          message={paramValidation?.summary?.conclusion || '等待参数版本与收益样本沉淀。'}
+        />
+      </Card>
+
+      <Card
+        className="modern-card quant-portfolio-family-board"
+        variant="borderless"
+        loading={loading}
+      >
+        <div className="quant-section-heading">
+          <div>
+            <span>PAPER ACCOUNT FAMILY</span>
+            <h2>独立模拟账户对照组</h2>
+          </div>
+          <Text type="secondary">
+            将纯量化、量化+Agent、Agent独立和参数实验拆成不同 20W 账户，收益互不串盘。
+          </Text>
+        </div>
+        <Row gutter={[12, 12]}>
+          {portfolioFamilies.map(family => (
+            <Col xs={24} md={12} xl={8} key={family.key}>
+              <div className="quant-portfolio-family-card">
+                <Space wrap size={6}>
+                  <Tag color={family.exists ? 'green' : 'default'}>
+                    {family.exists ? '已运行' : '待建仓'}
+                  </Tag>
+                  <Tag>{family.name}</Tag>
+                </Space>
+                <strong>{family.label}</strong>
+                <p>{family.description}</p>
+                <div className="quant-family-metrics">
+                  <span>收益 {formatPct(family.total_return_pct)}</span>
+                  <span>PnL {formatMoney(family.total_pnl)}</span>
+                  <span>持仓 {family.open_position_count || 0}</span>
+                  <span>交易 {family.trade_count || 0}</span>
+                  <span>胜率 {formatPct(family.win_rate)}</span>
+                </div>
+              </div>
+            </Col>
+          ))}
+          {!portfolioFamilies.length && (
+            <Col span={24}>
+              <Empty description="暂无独立模拟账户数据" />
+            </Col>
+          )}
+        </Row>
+        <Alert
+          className="quant-inline-note"
+          type="success"
+          showIcon
+          message={
+            portfolioFamilyComparison?.summary?.conclusion ||
+            '独立模拟账户将在后续开盘/收盘扫描时自动沉淀收益。'
+          }
+        />
       </Card>
 
       <Row gutter={[16, 16]}>

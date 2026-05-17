@@ -27,6 +27,7 @@ export class QuantSignalService {
     min_score?: number;
     persist?: boolean;
     params_by_strategy?: Record<string, Record<string, any>>;
+    param_version_by_strategy?: Record<string, any>;
     refresh_realtime_quotes?: boolean;
     quote_sync_limit?: number;
   }) {
@@ -128,6 +129,20 @@ export class QuantSignalService {
           risk_flags: signal.risk_flags || [],
           raw_factors: {
             ...(signal.factors || {}),
+            param_version_key:
+              options.param_version_by_strategy?.[signal.strategy_key]?.version_key ||
+              `qparam_${signal.strategy_key}_default`,
+            param_version_type:
+              options.param_version_by_strategy?.[signal.strategy_key]?.version_type || 'default',
+            param_version_status:
+              options.param_version_by_strategy?.[signal.strategy_key]?.status || 'baseline',
+            param_version_ab_group:
+              options.param_version_by_strategy?.[signal.strategy_key]?.metadata?.ab_group ||
+              'default',
+            param_version_source_experiment_key:
+              options.param_version_by_strategy?.[signal.strategy_key]?.source_experiment_key ||
+              null,
+            strategy_params: options.params_by_strategy?.[signal.strategy_key] || {},
             price_source: contextBySymbol.get(signal.symbol)?.price_source || 'daily_bar',
             latest_quote_time: contextBySymbol.get(signal.symbol)?.latest_quote_time || null,
             market_environment: marketEnvironment,
@@ -165,6 +180,7 @@ export class QuantSignalService {
       signal_count: limited.length,
       persisted: options.persist !== false,
       quote_sync: quoteSync,
+      param_version_by_strategy: options.param_version_by_strategy || {},
       by_strategy: grouped,
       signals: limited,
     };

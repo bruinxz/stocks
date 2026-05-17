@@ -7486,6 +7486,11 @@ a {
   overflow: hidden;
 }
 
+.quant-ab-board,
+.quant-portfolio-family-board {
+  overflow: hidden;
+}
+
 .quant-quality-tile {
   display: grid;
   gap: 8px;
@@ -7534,8 +7539,15 @@ a {
   margin-top: 12px;
 }
 
+.quant-ab-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
 .quant-experiment-row,
-.quant-param-suggestion-row {
+.quant-param-suggestion-row,
+.quant-ab-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 210px;
   gap: 14px;
@@ -7547,12 +7559,14 @@ a {
 }
 
 .quant-experiment-row strong,
-.quant-param-suggestion-row strong {
+.quant-param-suggestion-row strong,
+.quant-ab-row strong {
   color: var(--text-main);
 }
 
 .quant-experiment-row p,
-.quant-param-suggestion-row p {
+.quant-param-suggestion-row p,
+.quant-ab-row p {
   margin: 6px 0 0;
   color: var(--text-secondary);
   font-size: 12px;
@@ -7560,10 +7574,67 @@ a {
 }
 
 .quant-experiment-row > div:last-child,
-.quant-param-suggestion-row > div:last-child {
+.quant-param-suggestion-row > div:last-child,
+.quant-ab-row > div:last-child {
   display: grid;
   gap: 4px;
   justify-items: end;
+}
+
+.quant-ab-row {
+  border-color: rgba(15, 143, 107, 0.12);
+  background:
+    radial-gradient(circle at 4% 0%, rgba(15, 143, 107, 0.06), transparent 32%),
+    rgba(255, 255, 255, 0.78);
+}
+
+.quant-ab-row > div:last-child {
+  align-content: center;
+  min-width: 92px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  background: rgba(236, 253, 245, 0.72);
+}
+
+.quant-ab-row > div:last-child .ant-typography:first-child {
+  color: #0f8f6b;
+  font-family: var(--font-display);
+  font-size: 26px;
+  line-height: 1;
+}
+
+.quant-inline-note {
+  margin-top: 12px;
+  border-radius: 16px;
+}
+
+.quant-portfolio-family-card {
+  display: grid;
+  gap: 9px;
+  height: 100%;
+  min-height: 190px;
+  padding: 16px;
+  border: 1px solid rgba(39, 100, 184, 0.1);
+  border-radius: 22px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(248, 251, 255, 0.72)),
+    radial-gradient(circle at 100% 0%, rgba(39, 100, 184, 0.08), transparent 34%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.74);
+}
+
+.quant-portfolio-family-card strong {
+  color: var(--text-main);
+  font-family: var(--font-display);
+  font-size: 21px;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+}
+
+.quant-portfolio-family-card p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.62;
 }
 
 .quant-family-list {

@@ -8,6 +8,7 @@ import { quantFusionAuditService } from '../../quant/services/QuantFusionAuditSe
 import { quantPerformanceDashboardService } from '../../quant/services/QuantPerformanceDashboardService';
 import { quantOpenWatchdogService } from '../../quant/services/QuantOpenWatchdogService';
 import { quantStrategyExperimentService } from '../../quant/services/QuantStrategyExperimentService';
+import { quantStrategyParamVersionService } from '../../quant/services/QuantStrategyParamVersionService';
 import { AuthenticatedRequest } from '../../middlewares/auth';
 import { logger } from '../../utils/logger';
 
@@ -80,6 +81,63 @@ export class QuantController {
       res.json({ success: true, data: suggestions });
     } catch (error: any) {
       logger.error('获取量化策略实验参数建议失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  async listParamVersions(req: AuthenticatedRequest, res: Response) {
+    try {
+      const dashboard = await quantStrategyParamVersionService.getDashboard({
+        limit: Number(req.query.limit || 200),
+        strategy_key: req.query.strategy_key as string,
+      });
+      res.json({ success: true, data: dashboard });
+    } catch (error: any) {
+      logger.error('获取量化策略参数 A/B 验证失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  async refreshParamVersions(req: AuthenticatedRequest, res: Response) {
+    try {
+      const result = await quantStrategyParamVersionService.refreshVersionsFromExperiments({
+        suggestion_options: req.body?.suggestion_options || req.body?.suggestionOptions || {},
+        manual_params_by_strategy: req.body?.params_by_strategy || req.body?.paramsByStrategy,
+        use_experiment_params:
+          req.body?.use_experiment_params !== undefined
+            ? Boolean(req.body.use_experiment_params)
+            : req.body?.useExperimentParams !== undefined
+              ? Boolean(req.body.useExperimentParams)
+              : true,
+      });
+      res.json({ success: true, data: result });
+    } catch (error: any) {
+      logger.error('刷新量化策略参数版本失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  async refreshParamValidations(req: AuthenticatedRequest, res: Response) {
+    try {
+      const createResult = await quantStrategyParamVersionService.createPendingValidationsFromSignals(
+        {
+          trade_date: req.body?.trade_date || req.body?.tradeDate,
+          start_date: req.body?.start_date || req.body?.startDate,
+          end_date: req.body?.end_date || req.body?.endDate,
+          strategy_keys: req.body?.strategy_keys || req.body?.strategyKeys,
+          horizons: req.body?.horizons,
+          limit: Number(req.body?.limit || 500),
+          signal: req.body?.signal,
+        }
+      );
+      const refreshResult = await quantStrategyParamVersionService.refreshValidationReturns({
+        limit: Number(req.body?.refresh_limit || req.body?.refreshLimit || 1000),
+        include_completed: Boolean(req.body?.include_completed || req.body?.includeCompleted),
+        auto_sync_benchmark: Boolean(req.body?.auto_sync_benchmark || req.body?.autoSyncBenchmark),
+      });
+      res.json({ success: true, data: { create: createResult, refresh: refreshResult } });
+    } catch (error: any) {
+      logger.error('刷新量化策略参数收益验证失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   }

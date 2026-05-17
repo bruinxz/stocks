@@ -4,13 +4,18 @@ import { QuantBacktestTask } from '../../models/QuantBacktestTask';
 import { QuantFusionAudit } from '../../models/QuantFusionAudit';
 import { QuantSignal } from '../../models/QuantSignal';
 import { RecommendationTradeOutcome } from '../../models/RecommendationTradeOutcome';
+import { PaperTradingPortfolio } from '../../models/PaperTradingPortfolio';
+import { PaperTradingPosition } from '../../models/PaperTradingPosition';
+import { PaperTradingTrade } from '../../models/PaperTradingTrade';
 import { ScheduledTask } from '../../models/ScheduledTask';
 import { TaskExecutionLog } from '../../models/TaskExecutionLog';
 import { quantStrategyExperimentService } from './QuantStrategyExperimentService';
+import { quantStrategyParamVersionService } from './QuantStrategyParamVersionService';
 import { realtimeQuoteService } from '../../data/services/RealtimeQuoteService';
 import {
   AUTONOMOUS_PORTFOLIO_NAME,
   DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
+  PAPER_PORTFOLIO_FAMILIES,
 } from '../../services/PaperTradingDashboardService';
 import { recommendationTradeOutcomeService } from '../../services/RecommendationTradeOutcomeService';
 import { strategyRegistry } from '../engine/StrategyRegistry';
@@ -229,6 +234,8 @@ export class QuantPerformanceDashboardService {
       dataQuality,
       strategyExperiments,
       experimentParamSuggestions,
+      paramValidation,
+      portfolioFamilies,
     ] = await Promise.all([
       this.getLatestBacktests(),
       this.getSignalSummary(),
@@ -237,6 +244,8 @@ export class QuantPerformanceDashboardService {
       this.getDataQualityCenter(),
       quantStrategyExperimentService.getExperimentSummary({ limit: 50 }),
       quantStrategyExperimentService.getParamsByStrategySuggestion({ limit: 300 }),
+      quantStrategyParamVersionService.getDashboard({ limit: 1200 }),
+      this.getPortfolioFamilyComparison(options),
     ]);
 
     return {
@@ -249,6 +258,8 @@ export class QuantPerformanceDashboardService {
       data_quality_center: dataQuality,
       strategy_experiments: strategyExperiments,
       experiment_param_suggestions: experimentParamSuggestions,
+      param_validation_dashboard: paramValidation,
+      portfolio_family_comparison: portfolioFamilies,
       readiness: this.buildReadiness(signalSummary, latestBacktests, scheduleSummary, dataQuality),
     };
   }
@@ -510,6 +521,112 @@ export class QuantPerformanceDashboardService {
         by_source_type: [],
         by_strategy_key: [],
         families: [],
+      };
+    }
+  }
+
+  private async getPortfolioFamilyComparison(options: { user_id?: number; username?: string }) {
+    try {
+      const userWhere = options.user_id ? { user_id: options.user_id } : {};
+      const portfolios = await PaperTradingPortfolio.findAll({
+        where: {
+          name: { [Op.in]: PAPER_PORTFOLIO_FAMILIES.map(item => item.name) },
+          ...userWhere,
+        },
+        order: [['id', 'ASC']],
+      });
+      const latestByName = new Map<string, PaperTradingPortfolio>();
+      for (const portfolio of portfolios) {
+        latestByName.set(portfolio.name, portfolio);
+      }
+      const rows = await Promise.all(
+        PAPER_PORTFOLIO_FAMILIES.map(async family => {
+          const portfolio = latestByName.get(family.name);
+          if (!portfolio) {
+            return {
+              ...family,
+              portfolio_id: null,
+              exists: false,
+              initial_capital: DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
+              total_value: DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
+              current_cash: DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
+              position_value: 0,
+              total_pnl: 0,
+              total_return_pct: 0,
+              open_position_count: 0,
+              trade_count: 0,
+              outcome_count: 0,
+              closed_outcome_count: 0,
+              win_rate: 0,
+              avg_closed_return_pct: 0,
+            };
+          }
+          const [positions, trades, outcomes] = await Promise.all([
+            PaperTradingPosition.findAll({ where: { portfolio_id: portfolio.id }, raw: true }),
+            PaperTradingTrade.findAll({ where: { portfolio_id: portfolio.id }, raw: true }),
+            RecommendationTradeOutcome.findAll({
+              where: { portfolio_id: portfolio.id },
+              limit: 2000,
+              raw: true,
+            }) as any,
+          ]);
+          const initialCapital = toNumber(
+            portfolio.initial_capital,
+            DEFAULT_AUTONOMOUS_INITIAL_CAPITAL
+          );
+          const totalValue = toNumber(portfolio.total_value, initialCapital);
+          const positionValue = positions.reduce(
+            (sum: number, item: any) => sum + toNumber(item.market_value),
+            0
+          );
+          const closed = outcomes.filter((item: any) => item.trade_status === 'closed');
+          const wins = closed.filter((item: any) => toNumber(item.total_pnl) > 0);
+          return {
+            ...family,
+            portfolio_id: portfolio.id,
+            exists: true,
+            initial_capital: roundNumber(initialCapital, 2),
+            total_value: roundNumber(totalValue, 2),
+            current_cash: roundNumber(portfolio.current_cash, 2),
+            position_value: roundNumber(positionValue, 2),
+            total_pnl: roundNumber(totalValue - initialCapital, 2),
+            total_return_pct:
+              initialCapital > 0 ? roundNumber(((totalValue - initialCapital) / initialCapital) * 100, 4) : 0,
+            open_position_count: positions.length,
+            trade_count: trades.length,
+            outcome_count: outcomes.length,
+            closed_outcome_count: closed.length,
+            win_rate: closed.length ? roundNumber((wins.length / closed.length) * 100, 2) : 0,
+            avg_closed_return_pct: closed.length
+              ? roundNumber(
+                  closed.reduce((sum: number, item: any) => sum + toNumber(item.total_pnl_pct), 0) /
+                    closed.length,
+                  4
+                )
+              : 0,
+          };
+        })
+      );
+      const champion = [...rows].sort(
+        (a, b) => toNumber(b.total_return_pct) - toNumber(a.total_return_pct)
+      )[0];
+      return {
+        generated_at: new Date().toISOString(),
+        families: rows,
+        summary: {
+          family_count: rows.length,
+          active_family_count: rows.filter(item => item.exists).length,
+          champion,
+          conclusion: champion?.exists
+            ? `当前模拟账户冠军为 ${champion.label}，总收益 ${champion.total_return_pct}%。`
+            : '独立模拟账户已定义，等待下一次量化/Agent 扫描自动建仓后沉淀收益。',
+        },
+      };
+    } catch (error: any) {
+      return {
+        error: error?.message || String(error),
+        families: [],
+        summary: null,
       };
     }
   }

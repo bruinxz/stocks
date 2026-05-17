@@ -29,6 +29,8 @@ import { QuantSignal } from '../models/QuantSignal';
 import { QuantStrategyPerformanceSnapshot } from '../models/QuantStrategyPerformanceSnapshot';
 import { QuantStrategyWeight } from '../models/QuantStrategyWeight';
 import { QuantStrategyExperiment } from '../models/QuantStrategyExperiment';
+import { QuantStrategyParamVersion } from '../models/QuantStrategyParamVersion';
+import { QuantStrategyParamValidation } from '../models/QuantStrategyParamValidation';
 import { QuantFusionAudit } from '../models/QuantFusionAudit';
 import { TaskParameterAuditLog } from '../models/TaskParameterAuditLog';
 import { RealtimeQuote } from '../models/RealtimeQuote';
@@ -83,6 +85,8 @@ const sequelize = new Sequelize({
     QuantStrategyPerformanceSnapshot,
     QuantStrategyWeight,
     QuantStrategyExperiment,
+    QuantStrategyParamVersion,
+    QuantStrategyParamValidation,
     QuantFusionAudit,
     TaskParameterAuditLog,
     RealtimeQuote,

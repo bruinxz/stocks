@@ -90,6 +90,8 @@ import { QuantSignal } from './models/QuantSignal';
 import { QuantStrategyPerformanceSnapshot } from './models/QuantStrategyPerformanceSnapshot';
 import { QuantStrategyWeight } from './models/QuantStrategyWeight';
 import { QuantStrategyExperiment } from './models/QuantStrategyExperiment';
+import { QuantStrategyParamVersion } from './models/QuantStrategyParamVersion';
+import { QuantStrategyParamValidation } from './models/QuantStrategyParamValidation';
 import { QuantFusionAudit } from './models/QuantFusionAudit';
 import { TaskParameterAuditLog } from './models/TaskParameterAuditLog';
 import { RealtimeQuote } from './models/RealtimeQuote';
@@ -220,6 +222,8 @@ async function syncRecommendationRuntimeTables(): Promise<void> {
     { model: QuantStrategyPerformanceSnapshot, label: 'QuantStrategyPerformanceSnapshot' },
     { model: QuantStrategyWeight, label: 'QuantStrategyWeight' },
     { model: QuantStrategyExperiment, label: 'QuantStrategyExperiment' },
+    { model: QuantStrategyParamVersion, label: 'QuantStrategyParamVersion' },
+    { model: QuantStrategyParamValidation, label: 'QuantStrategyParamValidation' },
     { model: QuantFusionAudit, label: 'QuantFusionAudit' },
     { model: RealtimeQuote, label: 'RealtimeQuote' },
     { model: TaskParameterAuditLog, label: 'TaskParameterAuditLog' },

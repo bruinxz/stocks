@@ -1289,3 +1289,15 @@ final_score = 0.45 * quant_score
 - [x] 量化收益驾驶舱新增“实验参数反哺开盘扫描”卡片，可以看到哪些策略参数会自动采用、哪些仍在观察、哪些继续默认参数。
 - [x] 只读冒烟新增 param suggestions 检查，部署后可验证参数建议接口结构可用。
 - [ ] 下一步：把参数建议和真实开盘后 1/3/5/10 日表现做成 A/B 版本对照，避免短期回测冠军过拟合后被直接放大。
+
+### P122：参数 A/B 验证与模拟账户分层（本轮推进）
+
+- [x] 新增 `quant_strategy_param_versions` 与 `quant_strategy_param_validations` 两张表，分别记录默认/实验/手工参数版本，以及每条量化信号在 1/3/5/10 日窗口内的真实收益、基准收益和超额收益。
+- [x] 新增 `QuantStrategyParamVersionService`：支持从策略实验建议自动生成参数版本、为最新量化信号创建待验证样本、按日线刷新验证收益，并输出 A/B dashboard 聚合。
+- [x] `QuantFusionService.runDailyPipeline` 在量化扫描前刷新参数版本，在生成信号时写入 `raw_factors.param_version_key/type/status`；扫描后自动创建/刷新参数验证样本，参数版本和后验收益开始闭环。
+- [x] 新增只读接口 `GET /api/quant/param-versions` 与写入接口 `POST /api/quant/param-versions/refresh`、`POST /api/quant/param-validations/refresh`，冒烟新增只读结构检查。
+- [x] 量化收益驾驶舱新增“策略参数 A/B 验证闭环”卡片：展示版本数、候选版本、验证完成数、当前冠军和 Top 版本列表。
+- [x] 定义独立模拟账户家族：综合盘、纯量化盘、量化+Agent 融合盘、Agent独立盘、参数实验盘；量化闭环默认将纯量化直接跟单写入“纯量化盘”，TradingAgents 异步复核跟单写入“量化+Agent融合盘”，避免收益串盘。
+- [x] 量化收益驾驶舱新增“独立模拟账户对照组”，可见不同账户总收益、PnL、持仓、交易数和胜率。
+- [ ] 下一步：将参数 A/B 冠军纳入更严格的“推广/回滚”状态机，要求跨窗口、跨市场环境、跨行业样本稳定后才从 active_candidate 升级为 champion。
+- [ ] 下一步：为参数实验盘单独承接小仓验证交易，并在收益恶化时自动回滚到默认参数。
