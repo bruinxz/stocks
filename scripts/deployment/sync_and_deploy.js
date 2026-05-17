@@ -6,7 +6,9 @@ const { runPostDeploySmoke } = require('./post_deploy_smoke');
 const { getDeployConfig, shellQuote } = require('./deploy_config');
 const { runLocalRegressionGate } = require('./local_regression_gate');
 const {
+  buildDockerPsqlHealthCommand,
   buildDockerPsqlMigrationCommand,
+  buildRuntimeSchemaHealthSQL,
   buildRuntimeSchemaMigrationSQL,
 } = require('./runtime_schema_migration');
 
@@ -173,6 +175,15 @@ async function main() {
     // 9. 重启服务
     await execCommand(ssh, `pm2 restart ${shellQuote(pm2.backend)}`, '重启后端服务');
     await execCommand(ssh, `pm2 restart ${shellQuote(pm2.frontend)}`, '重启前端服务');
+
+    await execCommand(
+      ssh,
+      buildDockerPsqlHealthCommand(
+        deployConfig,
+        buildRuntimeSchemaHealthSQL(deployConfig.backend_env.DB_USER || 'stock_admin')
+      ),
+      '数据库权限健康检查'
+    );
 
     // 10. 检查服务状态
     await execCommand(ssh, 'pm2 status', '检查 PM2 服务状态');

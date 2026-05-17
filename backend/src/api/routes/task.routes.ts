@@ -21,6 +21,17 @@ router.get('/', authController.authenticate, taskController.getTasks);
 router.get('/automation-health', authController.authenticate, taskController.getAutomationHealth);
 
 /**
+ * @route GET /api/tasks/runtime-schema-health
+ * @desc 获取生产数据库运行时 schema owner/grant 健康状态
+ * @access Private
+ */
+router.get(
+  '/runtime-schema-health',
+  authController.authenticate,
+  taskController.getRuntimeSchemaHealth
+);
+
+/**
  * @route GET /api/tasks/parameter-audits
  * @desc 获取任务参数变更审计记录
  * @access Private

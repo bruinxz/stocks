@@ -10,6 +10,7 @@ import { logger } from '../utils/logger';
 import { riskThresholdStabilityService } from './RiskThresholdStabilityService';
 import { taskParameterAuditService, TaskParameterAuditOperator } from './TaskParameterAuditService';
 import { fieldGateAdjustmentAttributionService } from './FieldGateAdjustmentAttributionService';
+import { runtimeSchemaHealthService } from './RuntimeSchemaHealthService';
 
 type HealthLevel = 'healthy' | 'warning' | 'critical';
 
@@ -371,6 +372,7 @@ export class TaskAutomationHealthService {
       dataQueueCounts,
       aiQueueCounts,
       quantBacktestQueueCounts,
+      runtimeSchemaHealth,
     ] = await Promise.all([
       ScheduledTask.findAll({ order: [['id', 'ASC']] }),
       TaskExecutionLog.findAll({ order: [['started_at', 'DESC']], limit: 300 }),
@@ -378,6 +380,7 @@ export class TaskAutomationHealthService {
       this.getQueueHealth('data-update', dataUpdateQueue),
       this.getQueueHealth('ai_polling', aiPollingQueue),
       this.getQueueHealth('quant_backtest', quantBacktestQueue),
+      runtimeSchemaHealthService.getHealth(),
     ]);
 
     const plainTasks = tasks.map(task => toPlain<any>(task));
@@ -408,10 +411,16 @@ export class TaskAutomationHealthService {
       aiQueueCounts,
       quantBacktestQueueCounts
     );
-    const allIssues = [...chains.flatMap(item => item.issues), ...queuePressureIssues];
+    const runtimeSchemaIssues = this.buildRuntimeSchemaIssues(runtimeSchemaHealth);
+    const allIssues = [
+      ...chains.flatMap(item => item.issues),
+      ...queuePressureIssues,
+      ...runtimeSchemaIssues,
+    ];
     const status = worstLevel([
       ...chains.map(item => item.status as HealthLevel),
       ...queuePressureIssues.map(issue => issue.level),
+      runtimeSchemaHealth?.status as HealthLevel,
     ]);
 
     return {
@@ -443,11 +452,17 @@ export class TaskAutomationHealthService {
         ai_polling: aiQueueCounts,
         quant_backtest: quantBacktestQueueCounts,
       },
+      runtime_schema: runtimeSchemaHealth,
       chains,
       latest_loop: latestLoop,
       risk_limit_suggestion: riskLimitSuggestion,
       issues: allIssues,
-      next_actions: this.buildNextActions(chains, queuePressureIssues, latestLoop),
+      next_actions: this.buildNextActions(
+        chains,
+        queuePressureIssues,
+        latestLoop,
+        runtimeSchemaHealth
+      ),
     };
   }
 
@@ -1299,8 +1314,41 @@ export class TaskAutomationHealthService {
     return issues;
   }
 
-  private buildNextActions(chains: any[], queueIssues: AutomationHealthIssue[], latestLoop: any) {
+  private buildRuntimeSchemaIssues(runtimeSchemaHealth: any): AutomationHealthIssue[] {
+    if (!runtimeSchemaHealth || runtimeSchemaHealth.status === 'healthy') return [];
+    const level = runtimeSchemaHealth.status === 'critical' ? 'critical' : 'warning';
+    const summary = runtimeSchemaHealth.summary || {};
+    const messages = [
+      summary.critical_issues ? `关键问题 ${summary.critical_issues}` : '',
+      summary.warnings ? `警告 ${summary.warnings}` : '',
+      summary.owner_mismatches ? `owner 不一致 ${summary.owner_mismatches}` : '',
+      summary.privilege_gaps ? `权限缺口 ${summary.privilege_gaps}` : '',
+      summary.sequence_gaps ? `序列缺口 ${summary.sequence_gaps}` : '',
+    ].filter(Boolean);
+
+    return [
+      {
+        level,
+        code: 'runtime_schema_health',
+        message: `生产数据库运行时 schema 健康异常：${messages.join('，') || runtimeSchemaHealth.status}`,
+      },
+    ];
+  }
+
+  private buildNextActions(
+    chains: any[],
+    queueIssues: AutomationHealthIssue[],
+    latestLoop: any,
+    runtimeSchemaHealth?: any
+  ) {
     const actions: string[] = [];
+    if (runtimeSchemaHealth?.status === 'critical') {
+      actions.push(
+        '先修复生产数据库 public schema / 表 / 序列权限，否则定时任务日志、量化推荐或模拟盘写入可能失败。'
+      );
+    } else if (runtimeSchemaHealth?.status === 'warning') {
+      actions.push('建议运行数据库权限迁移，消除历史 owner 不一致，降低后续 Sequelize alter 和任务写入噪音。');
+    }
     const criticalChains = chains.filter(item => item.status === 'critical');
     if (criticalChains.length > 0) {
       actions.push(

@@ -261,6 +261,20 @@ async function main() {
       },
     });
 
+    await requestJson('runtime schema health', '/api/tasks/runtime-schema-health', {
+      token,
+      critical: false,
+      expect: json => {
+        assertApiSuccess(json, 'runtime schema health');
+        if (!json.data?.status || !json.data?.summary) {
+          throw new Error(`runtime schema health payload invalid: ${preview(json)}`);
+        }
+        if (json.data.status === 'critical') {
+          throw new Error(`runtime schema critical: ${preview(json.data?.summary)}`);
+        }
+      },
+    });
+
     const tasks = getTaskList(tasksJson);
     const firstTaskWithId = tasks.find(task => Number.isInteger(Number(task?.id)));
     if (firstTaskWithId) {

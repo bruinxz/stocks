@@ -1247,3 +1247,13 @@ final_score = 0.45 * quant_score
 - [x] 使用轻量参数手动触发开盘任务链路验证：任务完成、归档 5 条、飞书写入成功，且 `message` 中包含「量化交易场景推荐」和当前股价。
 - [x] 部署后 smoke 通过：23 pass / 0 fail / 1 skipped（TradingAgents 外部健康检查按默认跳过）。
 - [ ] 后续可把生产 DB owner/grant 检查做成部署前硬门禁，避免历史权限噪音继续出现在 PM2 error log。
+
+### P118：生产数据库运行时权限健康门禁（进行中）
+
+- [x] 新增运行时 schema 表清单常量，覆盖核心业务表、量化表、模拟盘表、任务日志表与飞书/审计相关表。
+- [x] 新增 `RuntimeSchemaHealthService`，只读检查应用角色对 public schema、运行表和自增序列的 owner/grant 状态，输出 healthy/warning/critical、缺表、权限缺口、owner 不一致与修复建议。
+- [x] 新增 API `GET /api/tasks/runtime-schema-health`，并把结果合入 `/api/tasks/automation-health`，让系统运营页/冒烟脚本能直接看到 DB 写入权限风险。
+- [x] 部署后 smoke 增加 runtime schema health 检查；critical 会作为 smoke 警告暴露，避免定时任务因为 `task_execution_logs` 或量化表权限不足而静默失败。
+- [x] 部署脚本在迁移、构建和重启后执行数据库权限健康检查；如果仍存在 critical 权限/缺表问题会阻断部署完成。
+- [x] 新增只读脚本 `scripts/tests/runtime_schema_health_check.js`，可在本地/服务器直接检查 PostgreSQL 权限；本地回归已覆盖脚本语法。
+- [ ] 部署后观察线上 runtime schema health：如果只有 owner mismatch warning，可继续运行；如果出现 critical，需要先跑迁移或人工修复 grant/owner。

@@ -33,6 +33,11 @@ const checks = [
     args: ['--check', path.join(repoRoot, 'scripts/tests/quant_data_freshness_check.js')],
   },
   {
+    name: 'runtime schema health syntax',
+    command: process.execPath,
+    args: ['--check', path.join(repoRoot, 'scripts/tests/runtime_schema_health_check.js')],
+  },
+  {
     name: 'post deploy smoke syntax',
     command: process.execPath,
     args: ['--check', path.join(repoRoot, 'scripts/deployment/post_deploy_smoke.js')],
