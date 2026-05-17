@@ -42,6 +42,21 @@ const checks = [
     command: process.execPath,
     args: ['--check', path.join(repoRoot, 'scripts/deployment/deploy_config.js')],
   },
+  {
+    name: 'runtime schema migration syntax',
+    command: process.execPath,
+    args: ['--check', path.join(repoRoot, 'scripts/deployment/runtime_schema_migration.js')],
+  },
+  {
+    name: 'sync deploy script syntax',
+    command: process.execPath,
+    args: ['--check', path.join(repoRoot, 'scripts/deployment/sync_and_deploy.js')],
+  },
+  {
+    name: 'simple deploy script syntax',
+    command: process.execPath,
+    args: ['--check', path.join(repoRoot, 'scripts/deployment/simple_deploy.js')],
+  },
 ];
 
 let failed = 0;

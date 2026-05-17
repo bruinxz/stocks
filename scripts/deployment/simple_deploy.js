@@ -2,6 +2,10 @@ const { Client } = require('ssh2');
 const { runPostDeploySmoke } = require('./post_deploy_smoke');
 const { getDeployConfig, renderBackendEnv, shellQuote } = require('./deploy_config');
 const { runLocalRegressionGate } = require('./local_regression_gate');
+const {
+  buildDockerPsqlMigrationCommand,
+  buildRuntimeSchemaMigrationSQL,
+} = require('./runtime_schema_migration');
 
 const deployConfig = getDeployConfig();
 const config = deployConfig.ssh;
@@ -63,43 +67,12 @@ async function main() {
     // 1. 拉取代码
     await execCommand(conn, `cd ${shellQuote(paths.remote_root)} && git pull`, '拉取最新代码');
 
-    // 2. 数据库迁移
-    const migrateSQL = `
-      -- 新增 pushplus_token 列
-      DO $$
-      BEGIN
-        IF NOT EXISTS (
-          SELECT 1 FROM information_schema.columns
-          WHERE table_name = 'users' AND column_name = 'pushplus_token'
-        ) THEN
-          ALTER TABLE users ADD COLUMN pushplus_token VARCHAR(100) DEFAULT NULL;
-          RAISE NOTICE '新增 pushplus_token 列成功';
-        ELSE
-          RAISE NOTICE 'pushplus_token 列已存在，跳过';
-        END IF;
-      END $$;
-
-      -- 移除 wxpusher_uid 列（如果存在）
-      DO $$
-      BEGIN
-        IF EXISTS (
-          SELECT 1 FROM information_schema.columns
-          WHERE table_name = 'users' AND column_name = 'wxpusher_uid'
-        ) THEN
-          ALTER TABLE users DROP COLUMN wxpusher_uid;
-          RAISE NOTICE '移除 wxpusher_uid 列成功';
-        ELSE
-          RAISE NOTICE 'wxpusher_uid 列不存在，跳过';
-        END IF;
-      END $$;
-    `;
     await execCommand(
-      conn, 
-      `docker exec -e PGPASSWORD=${shellQuote(deployConfig.postgres.password)} -i ${
-        deployConfig.postgres.docker_container
-      } psql -U ${shellQuote(deployConfig.postgres.user)} -d ${shellQuote(
-        deployConfig.postgres.database
-      )} << 'END_SQL'\n${migrateSQL}\nEND_SQL`,
+      conn,
+      buildDockerPsqlMigrationCommand(
+        deployConfig,
+        buildRuntimeSchemaMigrationSQL(deployConfig.backend_env.DB_USER || 'stock_admin')
+      ),
       '数据库迁移'
     );
 

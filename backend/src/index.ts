@@ -94,6 +94,50 @@ import { TaskParameterAuditLog } from './models/TaskParameterAuditLog';
 import { RealtimeQuote } from './models/RealtimeQuote';
 import { quantStrategyService } from './quant/services/QuantStrategyService';
 
+async function publicTableExists(tableName: string): Promise<boolean> {
+  const [rows] = await sequelize.query(
+    `
+      SELECT 1
+      FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = :tableName
+      LIMIT 1
+    `,
+    { replacements: { tableName } }
+  );
+
+  return (rows as any[]).length > 0;
+}
+
+async function publicColumnExists(tableName: string, columnName: string): Promise<boolean> {
+  const [rows] = await sequelize.query(
+    `
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = :tableName
+        AND column_name = :columnName
+      LIMIT 1
+    `,
+    { replacements: { tableName, columnName } }
+  );
+
+  return (rows as any[]).length > 0;
+}
+
+async function publicIndexExists(indexName: string): Promise<boolean> {
+  const [rows] = await sequelize.query(
+    `
+      SELECT 1
+      FROM pg_indexes
+      WHERE schemaname = 'public' AND indexname = :indexName
+      LIMIT 1
+    `,
+    { replacements: { indexName } }
+  );
+
+  return (rows as any[]).length > 0;
+}
+
 async function ensureRecommendationLoopRuntimeSchema() {
   const additions = [
     {
@@ -114,25 +158,93 @@ async function ensureRecommendationLoopRuntimeSchema() {
   ];
 
   for (const item of additions) {
-    const [tables] = await sequelize.query(
-      `
-        SELECT 1
-        FROM information_schema.tables
-        WHERE table_schema = 'public' AND table_name = :table
-        LIMIT 1
-      `,
-      { replacements: { table: item.table } }
-    );
-    if ((tables as any[]).length === 0) {
+    if (!(await publicTableExists(item.table))) {
       continue;
     }
 
-    await sequelize.query(
-      `ALTER TABLE "${item.table}" ADD COLUMN IF NOT EXISTS "${item.column}" VARCHAR(80)`
-    );
-    await sequelize.query(
-      `CREATE INDEX IF NOT EXISTS "${item.index}" ON "${item.table}" ("${item.column}")`
-    );
+    const hasColumn = await publicColumnExists(item.table, item.column);
+    if (!hasColumn) {
+      try {
+        await sequelize.query(`ALTER TABLE "${item.table}" ADD COLUMN "${item.column}" VARCHAR(80)`);
+        console.log(`Added runtime schema column ${item.table}.${item.column}`);
+      } catch (error: any) {
+        // 线上历史库可能存在 owner=postgres 的表；字段兼容失败不应阻断新量化表创建。
+        console.warn(
+          `Failed to add runtime schema column ${item.table}.${item.column}:`,
+          error?.message || error
+        );
+        continue;
+      }
+    }
+
+    const hasIndex = await publicIndexExists(item.index);
+    if (!hasIndex) {
+      try {
+        await sequelize.query(
+          `CREATE INDEX "${item.index}" ON "${item.table}" ("${item.column}")`
+        );
+        console.log(`Added runtime schema index ${item.index}`);
+      } catch (error: any) {
+        console.warn(
+          `Failed to add runtime schema index ${item.index}:`,
+          error?.message || error
+        );
+      }
+    }
+  }
+}
+
+async function syncRuntimeModel(model: any, label: string): Promise<boolean> {
+  try {
+    await model.sync();
+    console.log(`${label} table checked successfully`);
+    return true;
+  } catch (error: any) {
+    // 单表权限/索引异常不应让后续新增表全部跳过；部署脚本会补齐 owner/grant。
+    console.warn(`Failed to sync ${label} table:`, error?.message || error);
+    return false;
+  }
+}
+
+async function syncRecommendationRuntimeTables(): Promise<void> {
+  await ensureRecommendationLoopRuntimeSchema();
+
+  const syncItems = [
+    { model: AIInvestmentSignal, label: 'AIInvestmentSignal' },
+    { model: RecommendationTradeOutcome, label: 'RecommendationTradeOutcome' },
+    { model: RecommendationLoopPolicySnapshot, label: 'RecommendationLoopPolicySnapshot' },
+    { model: BudgetPolicyVersionSnapshot, label: 'BudgetPolicyVersionSnapshot' },
+    { model: QuantStrategyModel, label: 'QuantStrategyModel' },
+    { model: QuantBacktestTask, label: 'QuantBacktestTask' },
+    { model: QuantBacktestResult, label: 'QuantBacktestResult' },
+    { model: QuantBacktestTrade, label: 'QuantBacktestTrade' },
+    { model: QuantSignal, label: 'QuantSignal' },
+    { model: QuantStrategyPerformanceSnapshot, label: 'QuantStrategyPerformanceSnapshot' },
+    { model: QuantStrategyWeight, label: 'QuantStrategyWeight' },
+    { model: QuantFusionAudit, label: 'QuantFusionAudit' },
+    { model: RealtimeQuote, label: 'RealtimeQuote' },
+    { model: TaskParameterAuditLog, label: 'TaskParameterAuditLog' },
+  ];
+
+  const results = [];
+  for (const item of syncItems) {
+    results.push(await syncRuntimeModel(item.model, item.label));
+  }
+
+  try {
+    await quantStrategyService.syncRegistry();
+    console.log('Quant strategy registry checked successfully');
+  } catch (error: any) {
+    console.warn('Failed to sync quant strategy registry:', error?.message || error);
+  }
+
+  await ensureRecommendationLoopRuntimeSchema();
+
+  const failedCount = results.filter(result => !result).length;
+  if (failedCount > 0) {
+    console.warn(`Recommendation runtime schema check completed with ${failedCount} warning(s)`);
+  } else {
+    console.log('Recommendation runtime schema check completed successfully');
   }
 }
 
@@ -148,30 +260,7 @@ async function initializeApp() {
     // 生产环境当前没有独立 migration runner；新闭环收益表必须在启动时幂等创建，
     // 以免定时任务先于开发环境 alter 同步执行导致接口 500。
     try {
-      await ensureRecommendationLoopRuntimeSchema();
-      await AIInvestmentSignal.sync();
-      await RecommendationTradeOutcome.sync();
-      await RecommendationLoopPolicySnapshot.sync();
-      await BudgetPolicyVersionSnapshot.sync();
-      await QuantStrategyModel.sync();
-      await QuantBacktestTask.sync();
-      await QuantBacktestResult.sync();
-      await QuantBacktestTrade.sync();
-      await QuantSignal.sync();
-      await QuantStrategyPerformanceSnapshot.sync();
-      await QuantStrategyWeight.sync();
-      await QuantFusionAudit.sync();
-      await RealtimeQuote.sync();
-      await TaskParameterAuditLog.sync();
-      await quantStrategyService.syncRegistry();
-      await ensureRecommendationLoopRuntimeSchema();
-      console.log('AIInvestmentSignal table checked successfully');
-      console.log('RecommendationTradeOutcome table checked successfully');
-      console.log('RecommendationLoopPolicySnapshot table checked successfully');
-      console.log('BudgetPolicyVersionSnapshot table checked successfully');
-      console.log('Quant research tables checked successfully');
-      console.log('RealtimeQuote table checked successfully');
-      console.log('TaskParameterAuditLog table checked successfully');
+      await syncRecommendationRuntimeTables();
     } catch (schemaError: any) {
       console.warn(
         'Failed to sync recommendation loop tables:',

@@ -1212,3 +1212,14 @@ final_score = 0.45 * quant_score
 - [x] 新增只读脚本 `scripts/tests/quant_data_freshness_check.js`，直接检查 `realtime_quotes / quant_signals / quant_fusion_audits` 最新时间和数量，不触发同步、Agent、队列或交易。
 - [x] `scripts/tests/local_readonly_regression.js` 增加新鲜度脚本语法检查，部署前至少保证检查脚本自身可运行。
 - [ ] 后续把新鲜度脚本接入部署后 smoke 的可选阶段：有 DB 环境时输出 WARN，不阻断部署；生产关键表缺失才阻断。
+
+### P115：线上量化表初始化与部署权限自愈（完成第一版）
+
+- [x] 线上 smoke 发现 `task_parameter_audit_logs / quant_signals / quant_backtest_tasks / quant_fusion_audits / quant_strategy_weights` 等表不存在，根因是历史库里部分表 owner 为 `postgres`，应用角色 `stock_admin` 在启动时执行兼容 ALTER 被 `must be owner` 阻断，导致后续新增量化表全部未创建。
+- [x] 后端启动 schema 同步从“一个异常阻断整批”改为“单表独立 sync + 独立日志”：历史表权限异常只会记录 warning，不再阻断 `quant_* / realtime_quotes / task_parameter_audit_logs` 等新表创建。
+- [x] `ensureRecommendationLoopRuntimeSchema` 增加列/索引存在性预检查与单项容错，避免 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` 在非 owner 表上因为即使字段已存在仍需 owner 权限而失败。
+- [x] 新增 `scripts/deployment/runtime_schema_migration.js`：部署前通过容器内 `psql -h 127.0.0.1` 执行幂等迁移，把 public schema、已有表、序列、视图、函数 owner/grant 统一修复给应用角色，并保留历史 PushPlus/微信字段兼容迁移。
+- [x] `sync_and_deploy.js / simple_deploy.js` 复用运行时 schema 迁移，避免后续新增页面/API 只读 smoke 因生产 DB 权限或缺表再次失败。
+- [x] `deploy_config.js` 的 DB 迁移默认使用容器内 `postgres` 角色；仅在显式提供 `DEPLOY_PG_PASSWORD` 时传入密码，适配当前线上 `host all all all trust` 的容器内维护链路。
+- [x] 本地只读回归增加 `runtime_schema_migration.js / sync_and_deploy.js / simple_deploy.js` 语法检查，避免部署脚本修改后未被门禁覆盖。
+- [ ] 后续可把生产 DB owner/grant 检查做成独立只读 health endpoint，在部署前直接提示“应用角色无法建表/改表”的风险。

@@ -37,8 +37,10 @@ function required(value, name) {
 }
 
 function getDeployConfig(options = {}) {
-  const requirePostgres = options.requirePostgres !== false;
-  const postgresPassword = pick(process.env.DEPLOY_PG_PASSWORD, backendEnv.DB_PASSWORD);
+  const requirePostgres = options.requirePostgres === true;
+  // 生产容器的本地 TCP pg_hba 通常为 trust；维护脚本优先使用 postgres 角色走
+  // `docker exec ... psql -h 127.0.0.1`，仅在显式配置 DEPLOY_PG_PASSWORD 时传入密码。
+  const postgresPassword = pick(process.env.DEPLOY_PG_PASSWORD, process.env.PGPASSWORD, '');
   const remoteRoot = pick(process.env.DEPLOY_REMOTE_ROOT, '/opt/stocks');
   const frontendBaseUrl = pick(
     process.env.DEPLOY_FRONTEND_BASE_URL,
@@ -79,7 +81,7 @@ function getDeployConfig(options = {}) {
       password: required(pick(process.env.DEPLOY_PASSWORD, process.env.SSH_PASSWORD), 'DEPLOY_PASSWORD'),
     },
     postgres: {
-      user: pick(process.env.DEPLOY_PG_USER, backendEnv.DB_USER, 'stock_admin'),
+      user: pick(process.env.DEPLOY_PG_USER, process.env.PGUSER, 'postgres'),
       database: pick(process.env.DEPLOY_PG_DATABASE, backendEnv.DB_NAME, 'stock_backtest'),
       password: requirePostgres ? required(postgresPassword, 'DEPLOY_PG_PASSWORD') : postgresPassword,
       docker_container: pick(process.env.DEPLOY_PG_CONTAINER, 'stock_postgres'),
