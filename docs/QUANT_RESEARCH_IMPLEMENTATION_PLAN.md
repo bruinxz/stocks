@@ -1256,4 +1256,4 @@ final_score = 0.45 * quant_score
 - [x] 部署后 smoke 增加 runtime schema health 检查；critical 会作为 smoke 警告暴露，避免定时任务因为 `task_execution_logs` 或量化表权限不足而静默失败。
 - [x] 部署脚本在迁移、构建和重启后执行数据库权限健康检查；如果仍存在 critical 权限/缺表问题会阻断部署完成。
 - [x] 新增只读脚本 `scripts/tests/runtime_schema_health_check.js`，可在本地/服务器直接检查 PostgreSQL 权限；本地回归已覆盖脚本语法。
-- [ ] 部署后观察线上 runtime schema health：如果只有 owner mismatch warning，可继续运行；如果出现 critical，需要先跑迁移或人工修复 grant/owner。
+- [x] 部署后已执行生产 DB owner/grant 迁移，`runtime-schema-health` 从 warning 收敛为 healthy：32/32 张运行表存在，critical=0、warnings=0、owner_mismatches=0、sequence_gaps=0。

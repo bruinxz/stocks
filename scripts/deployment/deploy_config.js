@@ -81,7 +81,7 @@ function getDeployConfig(options = {}) {
       password: required(pick(process.env.DEPLOY_PASSWORD, process.env.SSH_PASSWORD), 'DEPLOY_PASSWORD'),
     },
     postgres: {
-      user: pick(process.env.DEPLOY_PG_USER, process.env.PGUSER, 'postgres'),
+      user: pick(process.env.DEPLOY_PG_USER, process.env.PGUSER, 'pgg_superadmins'),
       database: pick(process.env.DEPLOY_PG_DATABASE, backendEnv.DB_NAME, 'stock_backtest'),
       password: requirePostgres ? required(postgresPassword, 'DEPLOY_PG_PASSWORD') : postgresPassword,
       docker_container: pick(process.env.DEPLOY_PG_CONTAINER, 'stock_postgres'),

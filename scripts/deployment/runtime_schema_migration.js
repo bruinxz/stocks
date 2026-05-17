@@ -61,6 +61,7 @@ function buildRuntimeSchemaMigrationSQL(appDbUser = 'stock_admin') {
   return `
     -- 线上历史库曾由 postgres / stock_admin 混合建表，导致应用启动时无法 ALTER/CREATE。
     -- 这里不改业务数据；优先修复 owner，若维护角色不是 superuser/member，则降级为 grant/create 权限。
+    -- 注意：ALTER ... OWNER TO app_role 需要维护角色是 superuser 或 app_role 成员；生产默认用 pgg_superadmins。
     DO $$
     DECLARE
       target_role text := ${role};
@@ -311,7 +312,7 @@ function buildRuntimeSchemaHealthSQL(appDbUser = 'stock_admin') {
     )`;
 
   return `
-    CREATE TEMP TABLE runtime_schema_health_result ON COMMIT DROP AS
+    CREATE TEMP TABLE runtime_schema_health_result AS
     WITH ${healthCte}
     SELECT
       CASE
