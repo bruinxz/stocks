@@ -1061,6 +1061,7 @@ export class QuantFusionService {
             strategy_allocation_policy: candidate.factors?.strategy_allocation_policy,
             strategy_allocation_pct: candidate.strategy_allocation_pct,
             strategy_max_single_trade_pct: candidate.strategy_max_single_trade_pct,
+            quant_agent_fusion: true,
           },
           {
             jobId: `ai-poll-quant-${

@@ -1223,3 +1223,13 @@ final_score = 0.45 * quant_score
 - [x] `deploy_config.js` 的 DB 迁移默认使用容器内 `postgres` 角色；仅在显式提供 `DEPLOY_PG_PASSWORD` 时传入密码，适配当前线上 `host all all all trust` 的容器内维护链路。
 - [x] 本地只读回归增加 `runtime_schema_migration.js / sync_and_deploy.js / simple_deploy.js` 语法检查，避免部署脚本修改后未被门禁覆盖。
 - [ ] 后续可把生产 DB owner/grant 检查做成独立只读 health endpoint，在部署前直接提示“应用角色无法建表/改表”的风险。
+
+### P116：量化收益驾驶舱与开盘闭环（进行中）
+
+- [x] 新增 `QuantPerformanceDashboardService`，聚合完整指标目录、最新历史跑分排行榜、量化/Agent 融合信号摘要、定时任务状态与模拟盘收益分组。
+- [x] 新增只读 API：`GET /api/quant/indicators` 与 `GET /api/quant/performance-dashboard`，用于页面直接看到“指标是否完整、历史收益是否存在、融合收益是否沉淀、开盘任务是否启用”。
+- [x] 新增前端 `/quant/dashboard`「收益驾驶舱」Tab：展示开盘准备度、历史冠军收益、纯量化模拟收益、Agent融合模拟收益、明日开盘运行链路、收益对比、指标地图和量化调度任务。
+- [x] 默认定时任务新增 `量化策略开盘机会扫描`：工作日 09:35 运行全市场量化扫描，刷新实时行情，提交 Agent 复核，并让纯量化与 Agent 融合候选进入 20W 自主模拟盘。
+- [x] `QUANT_DAILY_PIPELINE` 任务参数补齐统一风控：开盘/收盘任务均支持行业/策略分散、现金保留、组合回撤、单票波动、涨跌停/停牌过滤、行情新鲜度与风险阈值建议。
+- [x] TradingAgents 异步结果归档时显式标记 `quant_framework_signal / quant_agent_fusion`，方便模拟盘收益分组稳定区分“纯量化指标”和“量化 + Agent融合”。
+- [ ] 本轮待完成：后端/前端 TypeScript、只读回归、部署后 smoke；如生产已有旧任务，启动后的 `ensureDefaultTasks` 会自动补齐新参数与新开盘任务。

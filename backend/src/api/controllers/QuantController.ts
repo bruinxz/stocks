@@ -5,6 +5,7 @@ import { quantSignalService } from '../../quant/services/QuantSignalService';
 import { quantFusionService } from '../../quant/services/QuantFusionService';
 import { quantStrategyFeedbackService } from '../../quant/services/QuantStrategyFeedbackService';
 import { quantFusionAuditService } from '../../quant/services/QuantFusionAuditService';
+import { quantPerformanceDashboardService } from '../../quant/services/QuantPerformanceDashboardService';
 import { AuthenticatedRequest } from '../../middlewares/auth';
 import { logger } from '../../utils/logger';
 
@@ -15,6 +16,29 @@ export class QuantController {
       res.json({ success: true, data: strategies });
     } catch (error: any) {
       logger.error('获取量化策略失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  async getIndicatorCatalog(req: Request, res: Response) {
+    try {
+      const catalog = quantPerformanceDashboardService.getIndicatorCatalog();
+      res.json({ success: true, data: catalog });
+    } catch (error: any) {
+      logger.error('获取量化指标目录失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  async getPerformanceDashboard(req: AuthenticatedRequest, res: Response) {
+    try {
+      const dashboard = await quantPerformanceDashboardService.getDashboard({
+        user_id: req.user?.id,
+        username: req.user?.username,
+      });
+      res.json({ success: true, data: dashboard });
+    } catch (error: any) {
+      logger.error('获取量化收益驾驶舱失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   }

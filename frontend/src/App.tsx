@@ -203,7 +203,7 @@ const AppContent: React.FC = () => {
         icon: <AimOutlined />,
         label: '量化研究',
         title: '量化研究',
-        children: [menuLink('/quant', <ThunderboltOutlined />, '量化机会台')],
+        children: [menuLink('/quant/dashboard', <ThunderboltOutlined />, '量化机会台')],
       },
       {
         key: 'nav-research',
@@ -410,8 +410,9 @@ const AppContent: React.FC = () => {
                   </ProtectedRoute>
                 }
               />
+              <Route path="/quant" element={<Navigate to="/quant/dashboard" replace />} />
               <Route
-                path="/quant"
+                path="/quant/dashboard"
                 element={
                   <ProtectedRoute>
                     <QuantResearchWorkbench />

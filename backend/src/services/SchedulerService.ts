@@ -482,6 +482,48 @@ class SchedulerService {
           min_trade_amount: Number(
             parameters.min_trade_amount || parameters.minTradeAmount || 3000
           ),
+          use_entry_risk_guard:
+            parameters.use_entry_risk_guard !== undefined
+              ? Boolean(parameters.use_entry_risk_guard)
+              : parameters.useEntryRiskGuard !== undefined
+              ? Boolean(parameters.useEntryRiskGuard)
+              : undefined,
+          max_daily_new_positions:
+            parameters.max_daily_new_positions ?? parameters.maxDailyNewPositions,
+          max_daily_new_exposure_pct:
+            parameters.max_daily_new_exposure_pct ?? parameters.maxDailyNewExposurePct,
+          max_total_exposure_pct: parameters.max_total_exposure_pct ?? parameters.maxTotalExposurePct,
+          max_industry_exposure_pct:
+            parameters.max_industry_exposure_pct ?? parameters.maxIndustryExposurePct,
+          min_cash_reserve_pct: parameters.min_cash_reserve_pct ?? parameters.minCashReservePct,
+          max_portfolio_drawdown_pct:
+            parameters.max_portfolio_drawdown_pct ?? parameters.maxPortfolioDrawdownPct,
+          max_single_stock_volatility_pct:
+            parameters.max_single_stock_volatility_pct ?? parameters.maxSingleStockVolatilityPct,
+          max_position_correlation:
+            parameters.max_position_correlation ?? parameters.maxPositionCorrelation,
+          max_portfolio_var_pct: parameters.max_portfolio_var_pct ?? parameters.maxPortfolioVarPct,
+          min_avg_turnover_yuan: parameters.min_avg_turnover_yuan ?? parameters.minAvgTurnoverYuan,
+          cooldown_days_after_loss:
+            parameters.cooldown_days_after_loss ?? parameters.cooldownDaysAfterLoss,
+          block_limit_up:
+            parameters.block_limit_up !== undefined
+              ? Boolean(parameters.block_limit_up)
+              : parameters.blockLimitUp !== undefined
+              ? Boolean(parameters.blockLimitUp)
+              : undefined,
+          block_limit_down:
+            parameters.block_limit_down !== undefined
+              ? Boolean(parameters.block_limit_down)
+              : parameters.blockLimitDown !== undefined
+              ? Boolean(parameters.blockLimitDown)
+              : undefined,
+          block_suspended:
+            parameters.block_suspended !== undefined
+              ? Boolean(parameters.block_suspended)
+              : parameters.blockSuspended !== undefined
+              ? Boolean(parameters.blockSuspended)
+              : undefined,
           ...portfolioParams,
           task_label: task.name,
           execution_log_id: executionLog?.id,
@@ -512,7 +554,7 @@ class SchedulerService {
 
         if (agentSubmitted === 0) {
           await feishuTaskReportService.reportQuantDailyPipeline(result, {
-            record_type: '量化策略扫描完成',
+            record_type: parameters.record_type || parameters.recordType || `${task.name}完成`,
             task_type: 'QUANT_DAILY_PIPELINE',
           });
         }
@@ -1665,6 +1707,21 @@ class SchedulerService {
           max_position_pct: 10,
           min_trade_amount: 3000,
           strategy_weight_lookback_days: 365,
+          use_entry_risk_guard: true,
+          max_daily_new_positions: 3,
+          max_daily_new_exposure_pct: 12,
+          max_total_exposure_pct: 60,
+          max_industry_exposure_pct: 25,
+          min_cash_reserve_pct: 8,
+          max_portfolio_drawdown_pct: 12,
+          max_single_stock_volatility_pct: 7,
+          max_position_correlation: 0.82,
+          max_portfolio_var_pct: 10,
+          min_avg_turnover_yuan: 30000000,
+          cooldown_days_after_loss: 12,
+          block_limit_up: true,
+          block_limit_down: true,
+          block_suspended: true,
           risk_threshold_stability_min_consecutive_same_action: 2,
           risk_threshold_stability_min_actionable_samples: 2,
           risk_threshold_stability_min_protected_runs: 3,
@@ -1675,6 +1732,77 @@ class SchedulerService {
           risk_threshold_field_min_sample_count: 3,
           risk_threshold_field_min_triggered_count: 1,
           report_to_feishu: true,
+          record_type: '量化策略全市场扫描',
+        },
+      },
+      {
+        name: '量化策略开盘机会扫描',
+        type: 'QUANT_DAILY_PIPELINE',
+        cron_expression: '35 9 * * 1-5',
+        is_active: true,
+        parameters: {
+          username: 'lym',
+          use_autonomous_portfolio: true,
+          portfolio_name: AUTONOMOUS_PORTFOLIO_NAME,
+          initial_capital: DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
+          universe: 'market',
+          strategy_keys: [
+            'multi_factor_ranking',
+            'relative_strength_momentum',
+            'ma_trend',
+            'macd_trend',
+            'breakout_atr',
+            'volume_price_confirmation',
+            'low_volatility_quality',
+          ],
+          lookback_days: 180,
+          candidate_limit: 220,
+          refresh_realtime_quotes: true,
+          quote_sync_limit: 220,
+          min_score: 55,
+          archive_limit: 30,
+          max_industry_candidates: 4,
+          max_strategy_candidates: 8,
+          submit_agent_analysis: true,
+          agent_max_count: 5,
+          agent_min_score: 72,
+          agent_session: 'open',
+          agent_auto_paper_trade: true,
+          run_paper_trading: true,
+          dry_run: false,
+          paper_trade_limit: 3,
+          paper_trade_scan_limit: 100,
+          max_positions: 8,
+          default_position_pct: 4,
+          max_position_pct: 8,
+          min_trade_amount: 3000,
+          strategy_weight_lookback_days: 365,
+          use_entry_risk_guard: true,
+          max_daily_new_positions: 3,
+          max_daily_new_exposure_pct: 12,
+          max_total_exposure_pct: 60,
+          max_industry_exposure_pct: 25,
+          min_cash_reserve_pct: 8,
+          max_portfolio_drawdown_pct: 12,
+          max_single_stock_volatility_pct: 7,
+          max_position_correlation: 0.82,
+          max_portfolio_var_pct: 10,
+          min_avg_turnover_yuan: 30000000,
+          cooldown_days_after_loss: 12,
+          block_limit_up: true,
+          block_limit_down: true,
+          block_suspended: true,
+          risk_threshold_stability_min_consecutive_same_action: 2,
+          risk_threshold_stability_min_actionable_samples: 2,
+          risk_threshold_stability_min_protected_runs: 3,
+          risk_threshold_stability_tighten_min_delta_pct: 0.5,
+          risk_threshold_stability_relax_max_delta_pct: -0.8,
+          risk_threshold_field_stability_min_consecutive_same_action: 2,
+          risk_threshold_field_min_confidence: 0.45,
+          risk_threshold_field_min_sample_count: 3,
+          risk_threshold_field_min_triggered_count: 1,
+          report_to_feishu: true,
+          record_type: '量化策略开盘机会扫描',
         },
       },
       {
@@ -2138,7 +2266,7 @@ class SchedulerService {
         }
       }
 
-      if (taskData.name === '量化策略全市场扫描') {
+      if (taskData.type === 'QUANT_DAILY_PIPELINE') {
         const params = patch.parameters || task.parameters || {};
         const nextParams = { ...taskData.parameters, ...params };
         for (const key of [
@@ -2154,6 +2282,8 @@ class SchedulerService {
           'quote_sync_limit',
           'min_score',
           'archive_limit',
+          'max_industry_candidates',
+          'max_strategy_candidates',
           'submit_agent_analysis',
           'agent_max_count',
           'agent_min_score',
@@ -2168,6 +2298,21 @@ class SchedulerService {
           'max_position_pct',
           'min_trade_amount',
           'strategy_weight_lookback_days',
+          'use_entry_risk_guard',
+          'max_daily_new_positions',
+          'max_daily_new_exposure_pct',
+          'max_total_exposure_pct',
+          'max_industry_exposure_pct',
+          'min_cash_reserve_pct',
+          'max_portfolio_drawdown_pct',
+          'max_single_stock_volatility_pct',
+          'max_position_correlation',
+          'max_portfolio_var_pct',
+          'min_avg_turnover_yuan',
+          'cooldown_days_after_loss',
+          'block_limit_up',
+          'block_limit_down',
+          'block_suspended',
           'risk_threshold_stability_min_consecutive_same_action',
           'risk_threshold_stability_min_actionable_samples',
           'risk_threshold_stability_min_protected_runs',
@@ -2178,6 +2323,7 @@ class SchedulerService {
           'risk_threshold_field_min_sample_count',
           'risk_threshold_field_min_triggered_count',
           'report_to_feishu',
+          'record_type',
         ]) {
           if (nextParams[key] === undefined && (taskData.parameters as any)[key] !== undefined) {
             nextParams[key] = (taskData.parameters as any)[key];

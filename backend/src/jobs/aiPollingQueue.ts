@@ -36,6 +36,7 @@ export interface AIPollingJobData {
   strategy_allocation_policy?: any;
   strategy_allocation_pct?: number;
   strategy_max_single_trade_pct?: number;
+  quant_agent_fusion?: boolean;
   current_price?: number;
   price_change_pct?: number;
   data_quality_score?: number;

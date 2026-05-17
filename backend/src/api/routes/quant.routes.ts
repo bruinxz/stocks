@@ -10,6 +10,16 @@ router.get(
   authController.authenticate,
   quantController.getStrategies.bind(quantController)
 );
+router.get(
+  '/indicators',
+  authController.authenticate,
+  quantController.getIndicatorCatalog.bind(quantController)
+);
+router.get(
+  '/performance-dashboard',
+  authController.authenticate,
+  quantController.getPerformanceDashboard.bind(quantController)
+);
 router.post(
   '/backtests',
   authController.authenticate,

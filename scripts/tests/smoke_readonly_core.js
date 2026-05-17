@@ -333,6 +333,35 @@ async function main() {
       },
     });
 
+    await requestJson('quant indicator catalog', '/api/quant/indicators', {
+      token,
+      expect: json => {
+        assertApiSuccess(json, 'quant indicator catalog');
+        if (!json.data?.group_count || !Array.isArray(json.data?.groups)) {
+          throw new Error(`quant indicator catalog invalid: ${preview(json)}`);
+        }
+      },
+    });
+
+    await requestJson('quant performance dashboard', '/api/quant/performance-dashboard', {
+      token,
+      expect: json => {
+        assertApiSuccess(json, 'quant performance dashboard');
+        if (!json.data?.readiness || !json.data?.indicator_catalog) {
+          throw new Error(`quant performance dashboard missing readiness/catalog: ${preview(json)}`);
+        }
+        assertArray(
+          json.data?.latest_backtests?.leaderboard || [],
+          'quant performance backtest leaderboard'
+        );
+        assertArray(
+          json.data?.outcome_comparison?.families || [],
+          'quant performance outcome families'
+        );
+        assertArray(json.data?.schedule_summary?.tasks || [], 'quant performance schedules');
+      },
+    });
+
     await requestJson('quant strategy weights', '/api/quant/strategy-weights', {
       token,
       expect: json => {

@@ -124,6 +124,7 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
     strategy_allocation_policy,
     strategy_allocation_pct,
     strategy_max_single_trade_pct,
+    quant_agent_fusion,
   } = job.data;
 
   try {
@@ -243,15 +244,13 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
             ...(strategy_variant || {}),
             environment_policy,
             environment_policy_snapshot_id,
+            quant_agent_fusion: Boolean(
+              quant_agent_fusion || scheduler_task_type === 'QUANT_DAILY_PIPELINE'
+            ),
           },
           market_environment: market_environment || strategy_variant?.market_environment,
         });
-        if (
-          archivedSignal &&
-          (submitted_data_quality_score !== undefined ||
-            submitted_data_quality_bucket ||
-            submitted_data_quality)
-        ) {
+        if (archivedSignal) {
           await archivedSignal.update({
             metadata: {
               ...(archivedSignal.metadata || {}),
@@ -259,10 +258,19 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
               quant_data_quality_score: submitted_data_quality_score,
               quant_data_quality_bucket: submitted_data_quality_bucket,
               strategy_key,
-              strategy_variant,
+              strategy_variant: {
+                ...(strategy_variant || {}),
+                quant_agent_fusion: Boolean(
+                  quant_agent_fusion || scheduler_task_type === 'QUANT_DAILY_PIPELINE'
+                ),
+              },
               strategy_allocation_policy,
               strategy_allocation_pct,
               strategy_max_single_trade_pct,
+              quant_framework_signal: Boolean(scheduler_task_type === 'QUANT_DAILY_PIPELINE'),
+              quant_agent_fusion: Boolean(
+                quant_agent_fusion || scheduler_task_type === 'QUANT_DAILY_PIPELINE'
+              ),
               environment_policy,
               environment_policy_snapshot_id,
               market_environment,
@@ -292,6 +300,8 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
               quant_fusion_final_score: fusionAudit.final_score,
               quant_fusion_final_decision: fusionAudit.final_decision,
               quant_fusion_rationale: fusionAudit.rationale,
+              quant_framework_signal: true,
+              quant_agent_fusion: true,
             },
           });
         } catch (auditError: any) {
