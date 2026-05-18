@@ -84,7 +84,6 @@ export class Trade extends Model {
   @Column({
     type: DataType.ENUM(...Object.values(TradeDirection)),
     allowNull: false,
-    comment: '交易方向',
   })
   declare direction: TradeDirection;
 
