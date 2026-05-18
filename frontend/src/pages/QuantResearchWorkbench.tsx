@@ -1,22 +1,15 @@
 import React, { useMemo } from 'react';
 import { Tabs } from 'antd';
 import { useLocation, useNavigate } from 'react-router-dom';
-import {
-  BranchesOutlined,
-  DashboardOutlined,
-  ExperimentOutlined,
-  ThunderboltOutlined,
-} from '@ant-design/icons';
+import { DashboardOutlined, ExperimentOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import QuantPerformanceDashboard from './QuantPerformanceDashboard';
 import QuantSignalPool from './QuantSignalPool';
 import QuantBacktestLab from './QuantBacktestLab';
-import QuantStrategyLibrary from './QuantStrategyLibrary';
 
 const tabPathMap: Record<string, string> = {
   dashboard: '/quant/dashboard',
   signals: '/quant/signals',
   backtests: '/quant/backtests',
-  strategies: '/quant/strategies',
 };
 
 const QuantResearchWorkbench: React.FC = () => {
@@ -26,7 +19,6 @@ const QuantResearchWorkbench: React.FC = () => {
   const activeKey = useMemo(() => {
     if (location.pathname.includes('/quant/dashboard')) return 'dashboard';
     if (location.pathname.includes('/quant/backtests')) return 'backtests';
-    if (location.pathname.includes('/quant/strategies')) return 'strategies';
     return 'signals';
   }, [location.pathname]);
 
@@ -63,15 +55,6 @@ const QuantResearchWorkbench: React.FC = () => {
               </span>
             ),
             children: <QuantBacktestLab />,
-          },
-          {
-            key: 'strategies',
-            label: (
-              <span>
-                <BranchesOutlined /> 策略权重
-              </span>
-            ),
-            children: <QuantStrategyLibrary />,
           },
         ]}
       />

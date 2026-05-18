@@ -13,7 +13,6 @@ import {
 import {
   DashboardOutlined,
   LineChartOutlined,
-  StockOutlined,
   UserOutlined,
   PieChartOutlined,
   AreaChartOutlined,
@@ -31,8 +30,8 @@ import { authService } from './services/authService';
 import { API_DOMAIN_URL } from './services/api';
 
 const Dashboard = lazy(() => import('./pages/Dashboard'));
+const TodayCommandCenter = lazy(() => import('./pages/TodayCommandCenter'));
 const Backtest = lazy(() => import('./pages/Backtest'));
-const Strategy = lazy(() => import('./pages/Strategy'));
 const Login = lazy(() => import('./pages/Login'));
 const Portfolio = lazy(() => import('./pages/Portfolio'));
 const Market = lazy(() => import('./pages/Market'));
@@ -44,24 +43,19 @@ const AIAdvisor = lazy(() => import('./pages/AIAdvisor'));
 const TaskScheduler = lazy(() => import('./pages/TaskScheduler'));
 const Screener = lazy(() => import('./pages/Screener'));
 const Recommendations = lazy(() => import('./pages/Recommendations'));
-const RecommendationPerformance = lazy(() => import('./pages/RecommendationPerformance'));
-const RecommendationTradeOutcomes = lazy(() => import('./pages/RecommendationTradeOutcomes'));
-const RecommendationLoopPolicies = lazy(() => import('./pages/RecommendationLoopPolicies'));
-const AgentTailAlphaLedger = lazy(() => import('./pages/AgentTailAlphaLedger'));
-const StrategyExperimentLab = lazy(() => import('./pages/StrategyExperimentLab'));
+const ReviewCenter = lazy(() => import('./pages/ReviewCenter'));
+const StrategyResearchCenter = lazy(() => import('./pages/StrategyResearchCenter'));
+const RecommendationTrace = lazy(() => import('./pages/RecommendationTrace'));
 const AutonomousTradingOverview = lazy(() => import('./pages/AutonomousTradingOverview'));
 const AutonomousRecommendationTracker = lazy(
   () => import('./pages/AutonomousRecommendationTracker')
 );
-const AutonomousOptimizationLab = lazy(() => import('./pages/AutonomousOptimizationLab'));
 const QuantResearchWorkbench = lazy(() => import('./pages/QuantResearchWorkbench'));
 const RiskAlerts = lazy(() => import('./pages/RiskAlerts'));
-const TradingJournal = lazy(() => import('./pages/TradingJournal'));
 const SystemLogs = lazy(() => import('./pages/SystemLogs'));
 import {
   RobotOutlined,
   ClockCircleOutlined,
-  RocketOutlined,
   AlertOutlined,
   BookOutlined,
   ThunderboltOutlined,
@@ -70,6 +64,8 @@ import {
   RadarChartOutlined,
   ExperimentOutlined,
   AimOutlined,
+  CompassOutlined,
+  SettingOutlined,
 } from '@ant-design/icons';
 
 import type { MenuProps } from 'antd';
@@ -178,86 +174,65 @@ const AppContent: React.FC = () => {
   const mainMenuItems: MenuProps['items'] = useMemo(
     () => [
       {
-        key: 'nav-workbench',
-        icon: <DashboardOutlined />,
-        label: '工作台',
-        title: '工作台',
+        key: 'nav-today',
+        icon: <CompassOutlined />,
+        label: '今日作战',
+        title: '今日作战',
         children: [
-          menuLink('/dashboard', <DashboardOutlined />, '总览仪表盘'),
-          menuLink('/market', <AreaChartOutlined />, '市场与自选'),
-        ],
-      },
-      {
-        key: 'nav-autonomous',
-        icon: <FundProjectionScreenOutlined />,
-        label: '自主交易',
-        title: '自主交易',
-        children: [
-          menuLink('/autonomous-trading/overview', <FundProjectionScreenOutlined />, '交易驾驶舱'),
-          menuLink('/autonomous-trading/recommendations', <NodeIndexOutlined />, '每日推荐'),
-          menuLink('/risk-alerts', <AlertOutlined />, '风险告警'),
+          menuLink('/today', <CompassOutlined />, '今日作战台'),
+          menuLink('/quant/signals', <ThunderboltOutlined />, '今日机会'),
+          menuLink('/autonomous-trading/overview', <FundProjectionScreenOutlined />, '当前持仓'),
+          menuLink('/risk-alerts', <AlertOutlined />, '卖出/风控'),
         ],
       },
       {
         key: 'nav-quant-research',
         icon: <AimOutlined />,
-        label: '量化交易',
-        title: '量化交易',
+        label: '策略研究',
+        title: '策略研究',
         children: [
-          menuLink('/quant/dashboard', <FundProjectionScreenOutlined />, '收益驾驶舱'),
-          menuLink('/quant/signals', <ThunderboltOutlined />, '今日机会'),
+          menuLink('/quant/dashboard', <FundProjectionScreenOutlined />, '量化收益驾驶舱'),
           menuLink('/quant/backtests', <ExperimentOutlined />, '跑分验证'),
-          menuLink('/quant/strategies', <BranchesOutlined />, '策略权重'),
-        ],
-      },
-      {
-        key: 'nav-research',
-        icon: <RobotOutlined />,
-        label: 'AI投研',
-        title: 'AI投研',
-        children: [
+          menuLink('/strategy-research/weights', <BranchesOutlined />, '策略库与权重'),
+          menuLink('/strategy-research/optimization', <NodeIndexOutlined />, '策略版本与实验'),
           menuLink('/ai-advisor', <RobotOutlined />, '深度研报'),
-          menuLink('/screener', <RocketOutlined />, '每日优选'),
-          menuLink('/recommendations', <ThunderboltOutlined />, '智能候选'),
+          menuLink('/backtest', <LineChartOutlined />, '事件回测'),
+          menuLink('/portfolio', <PieChartOutlined />, '组合收益'),
         ],
       },
       {
         key: 'nav-review',
         icon: <RadarChartOutlined />,
-        label: '复盘优化',
-        title: '复盘优化',
+        label: '收益复盘',
+        title: '收益复盘',
         children: [
-          menuLink('/recommendation-trade-outcomes', <NodeIndexOutlined />, '交易收益闭环'),
-          menuLink('/recommendation-performance', <FundProjectionScreenOutlined />, '推荐绩效'),
-          menuLink('/agent-tail-alpha', <RadarChartOutlined />, '尾盘账本'),
-          menuLink('/autonomous-trading/optimization', <ExperimentOutlined />, '闭环优化台'),
-          menuLink('/recommendation-loop-policies', <BranchesOutlined />, '策略版本'),
-          menuLink('/strategy-experiment-lab', <ExperimentOutlined />, '策略实验'),
+          menuLink('/review/trades', <NodeIndexOutlined />, '交易收益闭环'),
+          menuLink('/review/performance', <FundProjectionScreenOutlined />, '信号绩效'),
+          menuLink('/review/agent-tail', <RadarChartOutlined />, 'Agent尾盘账本'),
+          menuLink('/review/journal', <BookOutlined />, '交易日记'),
         ],
       },
       {
-        key: 'nav-quant',
-        icon: <LineChartOutlined />,
-        label: '事件回测',
-        title: '事件回测',
-        children: [
-          menuLink('/backtest', <LineChartOutlined />, '事件回测'),
-          menuLink('/portfolio', <PieChartOutlined />, '组合收益'),
-          menuLink('/strategy', <StockOutlined />, '策略中心'),
-        ],
-      },
-      {
-        key: 'nav-ops',
+        key: 'nav-data-system',
         icon: <SyncOutlined />,
-        label: '系统运营',
-        title: '系统运营',
+        label: '数据与系统',
+        title: '数据与系统',
         children: [
-          menuLink('/tasks', <ClockCircleOutlined />, '调度任务'),
+          menuLink('/market', <AreaChartOutlined />, '市场与自选'),
           menuLink('/data-update', <SyncOutlined />, '数据同步'),
+          menuLink('/tasks', <ClockCircleOutlined />, '调度任务'),
           menuLink('/logs', <BookOutlined />, '运行日志'),
-          menuLink('/journals', <BookOutlined />, '交易日记'),
-          ...(user?.role === 'admin' ? [menuLink('/users', <UserOutlined />, '用户管理')] : []),
+          menuLink('/dashboard', <DashboardOutlined />, '系统总览'),
+        ],
+      },
+      {
+        key: 'nav-settings',
+        icon: <SettingOutlined />,
+        label: '账号与设置',
+        title: '账号与设置',
+        children: [
           menuLink('/profile', <UserOutlined />, '个人中心'),
+          ...(user?.role === 'admin' ? [menuLink('/users', <UserOutlined />, '用户管理')] : []),
         ],
       },
     ],
@@ -378,7 +353,15 @@ const AppContent: React.FC = () => {
         <Content className="modern-layout-content">
           <Suspense fallback={routeFallback}>
             <Routes>
-              <Route path="/" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/" element={<Navigate to="/today" replace />} />
+              <Route
+                path="/today"
+                element={
+                  <ProtectedRoute>
+                    <TodayCommandCenter />
+                  </ProtectedRoute>
+                }
+              />
               <Route
                 path="/dashboard"
                 element={
@@ -409,9 +392,41 @@ const AppContent: React.FC = () => {
               />
               <Route
                 path="/autonomous-trading/optimization"
+                element={<Navigate to="/strategy-research/optimization" replace />}
+              />
+              <Route
+                path="/strategy-research"
+                element={<Navigate to="/strategy-research/optimization" replace />}
+              />
+              <Route
+                path="/strategy-research/optimization"
                 element={
                   <ProtectedRoute>
-                    <AutonomousOptimizationLab />
+                    <StrategyResearchCenter />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/strategy-research/versions"
+                element={
+                  <ProtectedRoute>
+                    <StrategyResearchCenter />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/strategy-research/experiments"
+                element={
+                  <ProtectedRoute>
+                    <StrategyResearchCenter />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/strategy-research/weights"
+                element={
+                  <ProtectedRoute>
+                    <StrategyResearchCenter />
                   </ProtectedRoute>
                 }
               />
@@ -426,11 +441,7 @@ const AppContent: React.FC = () => {
               />
               <Route
                 path="/quant/strategies"
-                element={
-                  <ProtectedRoute>
-                    <QuantResearchWorkbench />
-                  </ProtectedRoute>
-                }
+                element={<Navigate to="/strategy-research/weights" replace />}
               />
               <Route
                 path="/quant/backtests"
@@ -522,43 +533,72 @@ const AppContent: React.FC = () => {
               />
               <Route
                 path="/recommendation-performance"
-                element={
-                  <ProtectedRoute>
-                    <RecommendationPerformance />
-                  </ProtectedRoute>
-                }
+                element={<Navigate to="/review/performance" replace />}
               />
               <Route
                 path="/agent-tail-alpha"
+                element={<Navigate to="/review/agent-tail" replace />}
+              />
+              <Route
+                path="/recommendation-trade-outcomes"
+                element={<Navigate to="/review/trades" replace />}
+              />
+              <Route
+                path="/recommendation-trade-outcomes/:id"
                 element={
                   <ProtectedRoute>
-                    <AgentTailAlphaLedger />
+                    <RecommendationTrace />
                   </ProtectedRoute>
                 }
               />
               <Route
-                path="/recommendation-trade-outcomes"
+                path="/signals/:id/trace"
                 element={
                   <ProtectedRoute>
-                    <RecommendationTradeOutcomes />
+                    <RecommendationTrace />
+                  </ProtectedRoute>
+                }
+              />
+              <Route path="/review" element={<Navigate to="/review/trades" replace />} />
+              <Route
+                path="/review/trades"
+                element={
+                  <ProtectedRoute>
+                    <ReviewCenter />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/review/performance"
+                element={
+                  <ProtectedRoute>
+                    <ReviewCenter />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/review/agent-tail"
+                element={
+                  <ProtectedRoute>
+                    <ReviewCenter />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/review/journal"
+                element={
+                  <ProtectedRoute>
+                    <ReviewCenter />
                   </ProtectedRoute>
                 }
               />
               <Route
                 path="/recommendation-loop-policies"
-                element={
-                  <ProtectedRoute>
-                    <RecommendationLoopPolicies />
-                  </ProtectedRoute>
-                }
+                element={<Navigate to="/strategy-research/versions" replace />}
               />
               <Route
                 path="/strategy-experiment-lab"
-                element={
-                  <ProtectedRoute>
-                    <StrategyExperimentLab />
-                  </ProtectedRoute>
-                }
+                element={<Navigate to="/strategy-research/experiments" replace />}
               />
               <Route
                 path="/screener"
@@ -576,22 +616,8 @@ const AppContent: React.FC = () => {
                   </ProtectedRoute>
                 }
               />
-              <Route
-                path="/journals"
-                element={
-                  <ProtectedRoute>
-                    <TradingJournal />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/strategy"
-                element={
-                  <ProtectedRoute>
-                    <Strategy />
-                  </ProtectedRoute>
-                }
-              />
+              <Route path="/journals" element={<Navigate to="/review/journal" replace />} />
+              <Route path="/strategy" element={<Navigate to="/backtest" replace />} />
               <Route
                 path="/profile"
                 element={
@@ -608,7 +634,7 @@ const AppContent: React.FC = () => {
                   </ProtectedRoute>
                 }
               />
-              <Route path="*" element={<Navigate to="/dashboard" replace />} />
+              <Route path="*" element={<Navigate to="/today" replace />} />
             </Routes>
           </Suspense>
         </Content>

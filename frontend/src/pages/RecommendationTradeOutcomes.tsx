@@ -17,6 +17,7 @@ import {
 } from 'antd';
 import {
   ApartmentOutlined,
+  ArrowRightOutlined,
   BarChartOutlined,
   CloudUploadOutlined,
   ExperimentOutlined,
@@ -29,6 +30,7 @@ import {
   SafetyCertificateOutlined,
   TrophyOutlined,
 } from '@ant-design/icons';
+import { useNavigate } from 'react-router-dom';
 import {
   Area,
   AreaChart,
@@ -243,6 +245,7 @@ const getMarketEnvironment = (record?: TradeOutcome) =>
   record?.metadata?.market_environment || record?.metadata?.signal_metadata?.market_environment;
 
 const RecommendationTradeOutcomes: React.FC = () => {
+  const navigate = useNavigate();
   const [dashboard, setDashboard] = useState<OutcomeDashboard | null>(null);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -590,6 +593,20 @@ const RecommendationTradeOutcomes: React.FC = () => {
       width: 140,
       render: (_: any, record: TradeOutcome) =>
         record.exit_reason_label || record.action_label || '-',
+    },
+    {
+      title: '链路',
+      width: 92,
+      fixed: 'right' as const,
+      render: (_: any, record: TradeOutcome) => (
+        <Button
+          type="link"
+          size="small"
+          onClick={() => navigate(`/recommendation-trade-outcomes/${record.id}`)}
+        >
+          追踪 <ArrowRightOutlined />
+        </Button>
+      ),
     },
   ];
 
