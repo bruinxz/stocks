@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Button,
@@ -195,7 +195,7 @@ const QuantBacktestLab: React.FC = () => {
   const [retryingId, setRetryingId] = useState<number | null>(null);
   const [pollingTaskId, setPollingTaskId] = useState<number | null>(null);
 
-  const fetchStrategies = async () => {
+  const fetchStrategies = useCallback(async () => {
     const response = await api.get('/quant/strategies');
     if (response.data.success) {
       const strategyList = response.data.data || [];
@@ -208,12 +208,12 @@ const QuantBacktestLab: React.FC = () => {
         form.setFieldValue('strategy_keys', enabledKeys.slice(0, 6));
       }
     }
-  };
+  }, [form]);
 
-  const fetchTasks = async () => {
+  const fetchTasks = useCallback(async () => {
     const response = await api.get('/quant/backtests');
     if (response.data.success) setTasks(response.data.data || []);
-  };
+  }, []);
 
   const fetchDetail = async (id: number) => {
     setLoading(true);
@@ -228,7 +228,7 @@ const QuantBacktestLab: React.FC = () => {
   useEffect(() => {
     fetchStrategies();
     fetchTasks();
-  }, []);
+  }, [fetchStrategies, fetchTasks]);
 
   useEffect(() => {
     if (!detail && tasks[0]?.id) fetchDetail(tasks[0].id);
