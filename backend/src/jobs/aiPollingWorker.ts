@@ -19,6 +19,9 @@ import { RecommendationLoopPolicySnapshot } from '../models/RecommendationLoopPo
 import { quantFusionAuditService } from '../quant/services/QuantFusionAuditService';
 
 const akshareClient = new AKShareClient();
+const aiPollingWorkerDisabled =
+  String(process.env.DISABLE_QUEUE_WORKERS || '').toLowerCase() === 'true' ||
+  String(process.env.DISABLE_AI_POLLING_WORKER || '').toLowerCase() === 'true';
 
 const updateLogProgress = async (
   logId: number | undefined,
@@ -83,7 +86,10 @@ const updateLogProgress = async (
   }
 };
 
-aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
+if (aiPollingWorkerDisabled) {
+  logger.info('AI 分析轮询队列处理器已按环境变量禁用');
+} else {
+  aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
   const {
     taskId,
     symbol,
@@ -408,7 +414,8 @@ aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
     logger.error(`Error polling AI task ${taskId}:`, error);
     throw error;
   }
-});
+  });
+}
 
 // 处理最终失败的重试耗尽
 aiPollingQueue.on('failed', async (job, err) => {

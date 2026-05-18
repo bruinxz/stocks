@@ -15,6 +15,10 @@ export class DataUpdateWorker {
 
   constructor() {
     this.dataSyncService = new DataSyncService();
+    if (String(process.env.DISABLE_QUEUE_WORKERS || '').toLowerCase() === 'true') {
+      logger.info('数据更新队列处理器已按环境变量禁用');
+      return;
+    }
     this.setupWorkers();
   }
 

@@ -31,6 +31,9 @@ import { repairLegacyDevelopmentSchema } from './utils/developmentSchemaRepair';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const disableScheduler = String(process.env.DISABLE_SCHEDULER || '').toLowerCase() === 'true';
+const disableDefaultTaskSeed =
+  disableScheduler || String(process.env.DISABLE_DEFAULT_TASK_SEED || '').toLowerCase() === 'true';
 
 // Middleware
 app.use(
@@ -290,8 +293,12 @@ async function initializeApp() {
           console.log('Default admin user "lym" created successfully');
         }
 
-        await schedulerService.ensureDefaultTasks();
-        console.log('Default scheduled tasks checked successfully');
+        if (disableDefaultTaskSeed) {
+          console.log('Default scheduled task seeding skipped by environment flag');
+        } else {
+          await schedulerService.ensureDefaultTasks();
+          console.log('Default scheduled tasks checked successfully');
+        }
       } catch (error: any) {
         console.warn('Database sync failed, continuing with existing schema:', error.message);
         console.warn('Error details:', error);
@@ -359,8 +366,12 @@ async function initializeApp() {
         }
 
         try {
-          await schedulerService.ensureDefaultTasks();
-          console.log('Default scheduled tasks checked successfully after partial sync');
+          if (disableDefaultTaskSeed) {
+            console.log('Default scheduled task seeding skipped by environment flag');
+          } else {
+            await schedulerService.ensureDefaultTasks();
+            console.log('Default scheduled tasks checked successfully after partial sync');
+          }
         } catch (taskSeedError: any) {
           console.warn('Failed to check default scheduled tasks:', taskSeedError.message);
         }
@@ -370,15 +381,23 @@ async function initializeApp() {
     // 生产环境不执行 sequelize.sync，但默认任务仍需要随版本演进做幂等补齐。
     // ensureDefaultTasks 只会 findOrCreate / 补缺省字段，不会覆盖用户已有 cron 配置。
     try {
-      await schedulerService.ensureDefaultTasks();
-      console.log('Default scheduled tasks checked successfully');
+      if (disableDefaultTaskSeed) {
+        console.log('Default scheduled task seeding skipped by environment flag');
+      } else {
+        await schedulerService.ensureDefaultTasks();
+        console.log('Default scheduled tasks checked successfully');
+      }
     } catch (taskSeedError: any) {
       console.warn('Failed to check default scheduled tasks:', taskSeedError.message);
     }
 
     // Initialize scheduler after development schema repair/sync to avoid stale local schemas
     // blocking server startup or task listing APIs.
-    await schedulerService.initialize();
+    if (disableScheduler) {
+      console.log('Scheduler initialization skipped by environment flag');
+    } else {
+      await schedulerService.initialize();
+    }
 
     app.listen(Number(PORT), '0.0.0.0', () => {
       console.log(`Server is running on port ${PORT}`);

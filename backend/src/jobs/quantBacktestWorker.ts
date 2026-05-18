@@ -11,19 +11,23 @@ const resolveBacktestConcurrency = () => {
 
 const quantBacktestConcurrency = resolveBacktestConcurrency();
 
-quantBacktestQueue.process(quantBacktestConcurrency, async (job: Job<QuantBacktestJobData>) => {
-  await job.progress(5);
-  const result = await quantBacktestService.processBacktestTask(
-    job.data.task_id,
-    job.data.options,
-    {
-      user_id: job.data.user_id,
-      on_progress: async progress => job.progress(progress),
-    }
-  );
-  await job.progress(100);
-  return result;
-});
+if (String(process.env.DISABLE_QUEUE_WORKERS || '').toLowerCase() === 'true') {
+  logger.info('量化跑分队列处理器已按环境变量禁用');
+} else {
+  quantBacktestQueue.process(quantBacktestConcurrency, async (job: Job<QuantBacktestJobData>) => {
+    await job.progress(5);
+    const result = await quantBacktestService.processBacktestTask(
+      job.data.task_id,
+      job.data.options,
+      {
+        user_id: job.data.user_id,
+        on_progress: async progress => job.progress(progress),
+      }
+    );
+    await job.progress(100);
+    return result;
+  });
+}
 
 quantBacktestQueue.on('failed', async (job, error) => {
   if (!job) return;
