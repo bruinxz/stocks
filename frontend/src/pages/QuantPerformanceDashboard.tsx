@@ -225,6 +225,9 @@ type DashboardData = {
     summary?: {
       version_count?: number;
       active_candidate_count?: number;
+      champion_count?: number;
+      degraded_count?: number;
+      rolled_back_count?: number;
       validation_count?: number;
       completed_count?: number;
       pending_count?: number;
@@ -240,9 +243,23 @@ type DashboardData = {
       pending_count?: number;
       avg_return_pct?: number;
       avg_excess_return_pct?: number;
+      recent_avg_excess_return_pct?: number;
       win_rate?: number;
       rank_score?: number;
     } | null;
+    lifecycle?: {
+      summary?: {
+        promotion_count?: number;
+        degradation_count?: number;
+        rollback_count?: number;
+        observation_count?: number;
+        conclusion?: string;
+      };
+      promotions?: any[];
+      degradations?: any[];
+      rollbacks?: any[];
+      observations?: any[];
+    };
     summary_by_version?: Array<{
       version_key: string;
       strategy_key: string;
@@ -254,6 +271,7 @@ type DashboardData = {
       pending_count?: number;
       avg_return_pct?: number;
       avg_excess_return_pct?: number;
+      recent_avg_excess_return_pct?: number;
       win_rate?: number;
       rank_score?: number;
       best_symbol?: string;
@@ -866,9 +884,15 @@ const QuantPerformanceDashboard: React.FC = () => {
           </Col>
           <Col xs={24} md={6}>
             <div className="quant-quality-tile">
-              <span>候选版本</span>
-              <strong>{paramValidation?.summary?.active_candidate_count || 0}</strong>
-              <p>达到门槛后才进入开盘扫描，并持续接受样本验证。</p>
+              <span>冠军/候选</span>
+              <strong>
+                {(paramValidation?.summary?.champion_count || 0) +
+                  (paramValidation?.summary?.active_candidate_count || 0)}
+              </strong>
+              <p>
+                冠军 {paramValidation?.summary?.champion_count || 0} · 候选{' '}
+                {paramValidation?.summary?.active_candidate_count || 0}
+              </p>
             </div>
           </Col>
           <Col xs={24} md={6}>
@@ -894,6 +918,29 @@ const QuantPerformanceDashboard: React.FC = () => {
             </div>
           </Col>
         </Row>
+        <Row gutter={[12, 12]} className="quant-lifecycle-strip">
+          <Col xs={24} md={8}>
+            <div className="quant-lifecycle-tile promote">
+              <span>可推广</span>
+              <strong>{paramValidation?.lifecycle?.summary?.promotion_count || 0}</strong>
+              <p>达到样本、超额、胜率和相对默认优势后升级为 champion。</p>
+            </div>
+          </Col>
+          <Col xs={24} md={8}>
+            <div className="quant-lifecycle-tile degrade">
+              <span>需降级</span>
+              <strong>{paramValidation?.lifecycle?.summary?.degradation_count || 0}</strong>
+              <p>近期收益、整体超额或胜率转弱时，自动降为 degraded。</p>
+            </div>
+          </Col>
+          <Col xs={24} md={8}>
+            <div className="quant-lifecycle-tile rollback">
+              <span>需回滚</span>
+              <strong>{paramValidation?.lifecycle?.summary?.rollback_count || 0}</strong>
+              <p>持续跑输且近期恶化时回滚默认参数，避免继续放大亏损。</p>
+            </div>
+          </Col>
+        </Row>
         <div className="quant-ab-list">
           {(paramValidation?.summary_by_version || []).slice(0, 6).map(item => (
             <div className="quant-ab-row" key={item.version_key}>
@@ -901,14 +948,15 @@ const QuantPerformanceDashboard: React.FC = () => {
                 <Space wrap size={6}>
                   <strong>{item.strategy_name || item.strategy_key}</strong>
                   <Tag color={item.status === 'active_candidate' ? 'green' : 'blue'}>
-                    {item.version_type || 'version'}
+                    {item.status || item.version_type || 'version'}
                   </Tag>
                   <Tag>样本 {item.completed_count || 0}</Tag>
                   <Tag>胜率 {formatPct(item.win_rate)}</Tag>
                 </Space>
                 <p>
                   {item.version_key} · 平均收益 {formatPct(item.avg_return_pct)} · 平均超额{' '}
-                  {formatPct(item.avg_excess_return_pct)} · 最佳{' '}
+                  {formatPct(item.avg_excess_return_pct)} · 近期超额{' '}
+                  {formatPct(item.recent_avg_excess_return_pct)} · 最佳{' '}
                   {item.best_name || item.best_symbol || '--'}{' '}
                   {item.best_return_pct !== undefined ? formatPct(item.best_return_pct) : ''}
                 </p>
@@ -927,7 +975,11 @@ const QuantPerformanceDashboard: React.FC = () => {
           className="quant-inline-note"
           type="info"
           showIcon
-          message={paramValidation?.summary?.conclusion || '等待参数版本与收益样本沉淀。'}
+          message={
+            paramValidation?.lifecycle?.summary?.conclusion ||
+            paramValidation?.summary?.conclusion ||
+            '等待参数版本与收益样本沉淀。'
+          }
         />
       </Card>
 

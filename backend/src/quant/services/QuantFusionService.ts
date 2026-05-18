@@ -25,6 +25,7 @@ import {
   AUTONOMOUS_PORTFOLIO_NAME,
   QUANT_AGENT_FUSION_PORTFOLIO_NAME,
   QUANT_ONLY_PORTFOLIO_NAME,
+  PARAM_EXPERIMENT_PORTFOLIO_NAME,
 } from '../../services/PaperTradingDashboardService';
 
 type QuantPipelineMode = 'archive_only' | 'agent_review' | 'paper_trade';
@@ -271,6 +272,12 @@ export class QuantFusionService {
         logger.warn(`刷新量化策略参数 A/B 收益验证失败，降级继续闭环: ${error?.message || error}`);
         return null;
       });
+    const paramLifecycle = await quantStrategyParamVersionService
+      .evaluateAndApplyLifecycle({ dry_run: false, limit: 5000 })
+      .catch(error => {
+        logger.warn(`评估量化参数冠军/回滚状态机失败，降级继续闭环: ${error?.message || error}`);
+        return null;
+      });
 
     const candidates = await this.buildFusionCandidates({
       trade_date,
@@ -321,6 +328,7 @@ export class QuantFusionService {
     });
 
     let paperTrading: any = null;
+    let paramExperimentPaperTrading: any = null;
     if (options.run_paper_trading) {
       paperTrading = await paperTradingAutomationService.autoBuyFromSignals({
         user_id: options.user_id,
@@ -368,6 +376,90 @@ export class QuantFusionService {
           ...(options.risk_profile_gate || {}),
         },
       });
+      const lifecycleSummary = paramLifecycle?.lifecycle?.summary || {};
+      const candidateLikeCount =
+        Number(lifecycleSummary.promotion_count || 0) +
+        Number(lifecycleSummary.observation_count || 0);
+      if (candidateLikeCount > 0 || Object.keys(effectiveParamVersionByStrategy).length > 0) {
+        paramExperimentPaperTrading = await paperTradingAutomationService
+          .autoBuyFromSignals({
+            user_id: options.user_id,
+            username: options.username,
+            portfolio_name: PARAM_EXPERIMENT_PORTFOLIO_NAME,
+            initial_capital: options.initial_capital,
+            force_new_portfolio: options.force_new_portfolio,
+            source_type: AISignalSourceType.QUANT_RECOMMENDATION,
+            signal_ids: archive.signal_ids,
+            limit: Math.min(2, toPositiveInt(options.paper_trade_limit, 3, 20)),
+            scan_limit: toPositiveInt(
+              options.paper_trade_scan_limit,
+              Math.max(archive.signal_ids.length, 30),
+              300
+            ),
+            min_score: Math.max(68, agentMinScore - 4),
+            max_positions: Math.min(6, toPositiveInt(options.max_positions, 8, 30)),
+            default_position_pct: Math.min(3, safeNumber(options.default_position_pct, 5)),
+            max_position_pct: Math.min(4, safeNumber(options.max_position_pct, 10)),
+            min_trade_amount: safeNumber(options.min_trade_amount, 3000),
+            allowed_risk_levels: ['low', 'medium'],
+            require_action_buy: true,
+            dry_run: Boolean(options.dry_run),
+            report_to_feishu: false,
+            ignore_profit_gate_for_forced_signals: true,
+            use_profit_gate: true,
+            use_outcome_feedback: true,
+            use_entry_risk_guard: options.use_entry_risk_guard,
+            max_daily_new_positions: Math.min(
+              2,
+              toPositiveInt(options.max_daily_new_positions, 3, 20)
+            ),
+            max_daily_new_exposure_pct: Math.min(
+              6,
+              safeNumber(options.max_daily_new_exposure_pct, 12)
+            ),
+            max_total_exposure_pct: Math.min(30, safeNumber(options.max_total_exposure_pct, 60)),
+            max_industry_exposure_pct: Math.min(
+              15,
+              safeNumber(options.max_industry_exposure_pct, 25)
+            ),
+            min_cash_reserve_pct: Math.max(20, safeNumber(options.min_cash_reserve_pct, 8)),
+            max_portfolio_drawdown_pct: Math.min(
+              8,
+              safeNumber(options.max_portfolio_drawdown_pct, 12)
+            ),
+            max_single_stock_volatility_pct: options.max_single_stock_volatility_pct,
+            max_position_correlation: options.max_position_correlation,
+            max_portfolio_var_pct: Math.min(6, safeNumber(options.max_portfolio_var_pct, 10)),
+            min_avg_turnover_yuan: options.min_avg_turnover_yuan,
+            cooldown_days_after_loss: options.cooldown_days_after_loss,
+            block_limit_up: options.block_limit_up,
+            block_limit_down: options.block_limit_down,
+            block_suspended: options.block_suspended,
+            risk_profile_gate: {
+              ...riskProfileGate,
+              action: riskProfileGate.action === 'pause' ? 'pause' : 'observe',
+              reason:
+                riskProfileGate.action === 'pause'
+                  ? riskProfileGate.reason
+                  : '参数实验盘仅做小仓 A/B 验证，默认降仓观察',
+              position_multiplier: Math.min(
+                0.45,
+                safeNumber(riskProfileGate.position_multiplier, 1)
+              ),
+              metadata_contains: {
+                quant_candidate: true,
+                quant_framework_signal: true,
+              },
+              param_experiment: true,
+              lifecycle_summary: lifecycleSummary,
+              ...(options.risk_profile_gate || {}),
+            },
+          })
+          .catch(error => {
+            logger.warn(`参数实验模拟盘跟单失败，主闭环不受影响: ${error?.message || error}`);
+            return null;
+          });
+      }
     }
 
     const riskProfile =
@@ -424,6 +516,12 @@ export class QuantFusionService {
               updated: paramValidationRefresh.create?.updated || 0,
               completed: paramValidationRefresh.refresh?.completed || 0,
               pending: paramValidationRefresh.refresh?.pending || 0,
+          }
+          : null,
+        param_lifecycle: paramLifecycle
+          ? {
+              applied: paramLifecycle.applied,
+              summary: paramLifecycle.lifecycle?.summary,
             }
           : null,
       },
@@ -442,6 +540,7 @@ export class QuantFusionService {
       },
       agent_analysis: agentAnalysis,
       paper_trading: paperTrading,
+      param_experiment_paper_trading: paramExperimentPaperTrading,
       risk_profile: riskProfile || paperTrading?.risk_profile || preTradeRiskProfile || null,
       risk_profile_gate: riskProfileGate,
       risk_threshold_suggestion: thresholdSuggestion,

@@ -137,6 +137,7 @@ export interface PaperTradingAutoOptions {
   block_limit_down?: boolean;
   block_suspended?: boolean;
   risk_profile_gate?: {
+    [key: string]: any;
     enabled?: boolean;
     action?: string;
     reason?: string;
@@ -148,6 +149,7 @@ export interface PaperTradingAutoOptions {
     quote_freshness_reason?: string;
     quote_freshness_multiplier?: number;
     quote_persistence?: Record<string, any>;
+    metadata_contains?: Record<string, any>;
   };
 }
 
@@ -1057,6 +1059,14 @@ class PaperTradingAutomationService {
       if (options.agent_session) metadataFilters.agent_session = options.agent_session;
       if (options.task_label) metadataFilters.task_label = options.task_label;
       where.metadata = { [Op.contains]: metadataFilters };
+    }
+    const metadataContains = asPlainObject(
+      riskProfileGate.metadata_contains || riskProfileGate.metadataContains
+    );
+    if (Object.keys(metadataContains).length > 0) {
+      where.metadata = where.metadata
+        ? { [Op.and]: [where.metadata, { [Op.contains]: metadataContains }] }
+        : { [Op.contains]: metadataContains };
     }
     if (options.signal_date_start || options.signal_date_end) {
       where.signal_date = {};

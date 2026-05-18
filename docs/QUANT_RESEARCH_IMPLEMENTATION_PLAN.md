@@ -1301,3 +1301,14 @@ final_score = 0.45 * quant_score
 - [x] 量化收益驾驶舱新增“独立模拟账户对照组”，可见不同账户总收益、PnL、持仓、交易数和胜率。
 - [ ] 下一步：将参数 A/B 冠军纳入更严格的“推广/回滚”状态机，要求跨窗口、跨市场环境、跨行业样本稳定后才从 active_candidate 升级为 champion。
 - [ ] 下一步：为参数实验盘单独承接小仓验证交易，并在收益恶化时自动回滚到默认参数。
+
+### P123：参数冠军推广/回滚状态机与参数实验盘（本轮推进）
+
+- [x] `QuantStrategyParamVersionService` 新增参数生命周期策略：按样本数、平均超额、近期超额、胜率、A/B 分和相对默认参数优势自动判断 `promote / degrade / rollback / observe`。
+- [x] 参数版本状态机扩展为 `baseline / observing / active_candidate / champion / degraded / rolled_back / manual_override`；每次状态变更会写入 `metadata.lifecycle_history`，保留变更时间、原状态、新状态、原因和关键收益指标。
+- [x] `POST /api/quant/param-validations/refresh` 在刷新收益验证后自动执行生命周期评估；新增 `POST /api/quant/param-lifecycle/refresh` 可单独触发推广/降级/回滚。
+- [x] `QuantFusionService.runDailyPipeline` 在创建/刷新参数收益验证后自动执行生命周期评估，让每日开盘/收盘扫描都能推动冠军推广和风险回滚。
+- [x] 参数实验盘真正参与跟单：当存在候选/观察参数或本轮已记录参数版本时，系统会把量化归档信号以更小仓位写入「Codex参数实验模拟盘（20W）」；该盘默认单票 3% 以内、最多 2 笔、总风险更保守，且不向飞书重复发送复杂消息。
+- [x] 量化收益驾驶舱的 A/B 区块新增生命周期摘要：可推广、需降级、需回滚、近期超额收益和状态标签，用户可以直接看到参数是否该放大或回退。
+- [ ] 下一步：把参数生命周期按市场环境/行业环境分桶，避免某个参数只在单一行情里表现好却被全局推广。
+- [ ] 下一步：参数实验盘单独归因到具体 `param_version_key` 的交易收益，形成“参数版本 → 模拟交易 → 收益归因 → 再次调参”的更强闭环。

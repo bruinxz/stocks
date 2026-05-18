@@ -36,6 +36,36 @@ type ParamVersionPlain = {
   metadata?: Record<string, any>;
 };
 
+type ParamVersionLifecyclePolicy = {
+  min_completed_samples: number;
+  min_avg_excess_return_pct: number;
+  min_win_rate: number;
+  min_rank_score: number;
+  min_default_excess_delta_pct: number;
+  degrade_min_completed_samples: number;
+  degrade_avg_excess_return_pct: number;
+  degrade_win_rate: number;
+  degrade_recent_excess_return_pct: number;
+  rollback_min_completed_samples: number;
+  rollback_recent_excess_return_pct: number;
+  rollback_avg_excess_return_pct: number;
+};
+
+const DEFAULT_LIFECYCLE_POLICY: ParamVersionLifecyclePolicy = {
+  min_completed_samples: 12,
+  min_avg_excess_return_pct: 0.35,
+  min_win_rate: 52,
+  min_rank_score: 4,
+  min_default_excess_delta_pct: 0.25,
+  degrade_min_completed_samples: 8,
+  degrade_avg_excess_return_pct: -0.8,
+  degrade_win_rate: 42,
+  degrade_recent_excess_return_pct: -1.2,
+  rollback_min_completed_samples: 10,
+  rollback_recent_excess_return_pct: -1.5,
+  rollback_avg_excess_return_pct: -1.2,
+};
+
 function asPlainObject(value: any): Record<string, any> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   return value;
@@ -98,6 +128,15 @@ function addCalendarDays(date: string, days: number) {
   return moment(date).add(days, 'days').format('YYYY-MM-DD');
 }
 
+function mergeLifecyclePolicy(
+  policy?: Partial<ParamVersionLifecyclePolicy>
+): ParamVersionLifecyclePolicy {
+  return {
+    ...DEFAULT_LIFECYCLE_POLICY,
+    ...(policy || {}),
+  };
+}
+
 function summarizeValidationRows(rows: any[], versionByKey: Map<string, any>) {
   const total = rows.length;
   const completed = rows.filter(row => row.status === 'completed');
@@ -125,6 +164,49 @@ function summarizeValidationRows(rows: any[], versionByKey: Map<string, any>) {
   );
   const best = [...completed].sort((a, b) => toNumber(b.return_pct) - toNumber(a.return_pct))[0];
   const worst = [...completed].sort((a, b) => toNumber(a.return_pct) - toNumber(b.return_pct))[0];
+  const recentCompleted = [...completed]
+    .sort(
+      (a, b) =>
+        String(b.evaluation_date || b.updated_at || '').localeCompare(
+          String(a.evaluation_date || a.updated_at || '')
+        ) || Number(b.id || 0) - Number(a.id || 0)
+    )
+    .slice(0, 8);
+  const recentAvgExcess = recentCompleted.length
+    ? recentCompleted.reduce((sum, row) => sum + toNumber(row.excess_return_pct), 0) /
+      recentCompleted.length
+    : 0;
+  const horizonMap = new Map<number, any[]>();
+  for (const row of completed) {
+    const horizon = toPositiveInt(row.horizon_days, 1, 60);
+    if (!horizonMap.has(horizon)) horizonMap.set(horizon, []);
+    horizonMap.get(horizon)!.push(row);
+  }
+  const byHorizon = [...horizonMap.entries()]
+    .map(([horizon_days, horizonRows]) => {
+      const horizonWins = horizonRows.filter(row => toNumber(row.return_pct) > 0);
+      const horizonExcessWins = horizonRows.filter(row => toNumber(row.excess_return_pct) > 0);
+      return {
+        horizon_days,
+        completed_count: horizonRows.length,
+        avg_return_pct: round(
+          horizonRows.reduce((sum, row) => sum + toNumber(row.return_pct), 0) /
+            Math.max(horizonRows.length, 1),
+          4
+        ),
+        avg_excess_return_pct: round(
+          horizonRows.reduce((sum, row) => sum + toNumber(row.excess_return_pct), 0) /
+            Math.max(horizonRows.length, 1),
+          4
+        ),
+        win_rate: round((horizonWins.length / Math.max(horizonRows.length, 1)) * 100, 2),
+        excess_win_rate: round(
+          (horizonExcessWins.length / Math.max(horizonRows.length, 1)) * 100,
+          2
+        ),
+      };
+    })
+    .sort((a, b) => a.horizon_days - b.horizon_days);
   return {
     version_key: rows[0]?.version_key,
     strategy_key: rows[0]?.strategy_key || version?.strategy_key,
@@ -140,6 +222,9 @@ function summarizeValidationRows(rows: any[], versionByKey: Map<string, any>) {
     avg_excess_return_pct: round(avgExcess, 4),
     win_rate: round(winRate, 2),
     excess_win_rate: round(excessWinRate, 2),
+    recent_completed_count: recentCompleted.length,
+    recent_avg_excess_return_pct: round(recentAvgExcess, 4),
+    by_horizon: byHorizon,
     rank_score: rankScore,
     best_symbol: best?.symbol,
     best_name: best?.name,
@@ -599,12 +684,25 @@ export class QuantStrategyParamVersionService {
         ),
       };
     });
-    const champion = summaryByVersion.find(item => item.completed_count > 0) || null;
+    const defaultByStrategy = new Map(
+      summaryByVersion
+        .filter(item => item.version_type === 'default' || item.status === 'baseline')
+        .map(item => [item.strategy_key, item])
+    );
+    const lifecyclePreview = this.buildLifecyclePreview(summaryByVersion, defaultByStrategy);
+    const champion =
+      lifecyclePreview.promotions[0] ||
+      summaryByVersion.find(item => item.status === 'champion' && item.completed_count > 0) ||
+      summaryByVersion.find(item => item.completed_count > 0) ||
+      null;
     const completedCount = plainValidations.filter(item => item.status === 'completed').length;
     const pendingCount = plainValidations.filter(item => item.status === 'pending').length;
     const activeCandidateCount = plainVersions.filter(
       item => item.status === 'active_candidate'
     ).length;
+    const championCount = plainVersions.filter(item => item.status === 'champion').length;
+    const degradedCount = plainVersions.filter(item => item.status === 'degraded').length;
+    const rolledBackCount = plainVersions.filter(item => item.status === 'rolled_back').length;
 
     return {
       generated_at: new Date().toISOString(),
@@ -613,9 +711,13 @@ export class QuantStrategyParamVersionService {
       summary_by_version: summaryByVersion,
       summary_by_strategy: summaryByStrategy,
       champion,
+      lifecycle: lifecyclePreview,
       summary: {
         version_count: plainVersions.length,
         active_candidate_count: activeCandidateCount,
+        champion_count: championCount,
+        degraded_count: degradedCount,
+        rolled_back_count: rolledBackCount,
         validation_count: plainValidations.length,
         completed_count: completedCount,
         pending_count: pendingCount,
@@ -629,6 +731,106 @@ export class QuantStrategyParamVersionService {
             ? '参数版本已开始留痕，等待 1/3/5/10 日收益样本完成。'
             : '参数版本验证尚未产生样本；下一次量化扫描后会自动创建待验证记录。',
       },
+    };
+  }
+
+  async evaluateAndApplyLifecycle(
+    options: {
+      policy?: Partial<ParamVersionLifecyclePolicy>;
+      dry_run?: boolean;
+      limit?: number;
+    } = {}
+  ) {
+    const dashboard = await this.getDashboard({ limit: options.limit || 5000 });
+    const versionByKey = new Map(
+      (dashboard.versions || []).map((version: any) => [version.version_key, version])
+    );
+    const rows = dashboard.summary_by_version || [];
+    const defaultByStrategy = new Map(
+      rows
+        .filter((row: any) => row.version_type === 'default' || row.status === 'baseline')
+        .map((row: any) => [row.strategy_key, row])
+    );
+    const lifecycle = this.buildLifecyclePreview(rows, defaultByStrategy, options.policy);
+    if (options.dry_run) {
+      return {
+        generated_at: new Date().toISOString(),
+        dry_run: true,
+        applied: 0,
+        lifecycle,
+      };
+    }
+
+    const today = moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
+    let applied = 0;
+    const updated: any[] = [];
+    const actions = [
+      ...lifecycle.promotions.map((item: any) => ({ ...item, next_status: 'champion' })),
+      ...lifecycle.degradations.map((item: any) => ({ ...item, next_status: 'degraded' })),
+      ...lifecycle.rollbacks.map((item: any) => ({ ...item, next_status: 'rolled_back' })),
+    ];
+    for (const action of actions) {
+      const plainVersion = versionByKey.get(action.version_key);
+      if (!plainVersion) continue;
+      const currentStatus = String(plainVersion.status || '');
+      if (currentStatus === action.next_status) continue;
+      const record = await QuantStrategyParamVersion.findOne({
+        where: { version_key: action.version_key },
+      });
+      if (!record) continue;
+      const metadata = asPlainObject(record.metadata);
+      const history = Array.isArray(metadata.lifecycle_history)
+        ? metadata.lifecycle_history.slice(-20)
+        : [];
+      await record.update({
+        status: action.next_status,
+        active_from:
+          action.next_status === 'champion' ? record.active_from || today : record.active_from,
+        active_to:
+          action.next_status === 'rolled_back' || action.next_status === 'degraded'
+            ? today
+            : record.active_to,
+        adoption_reason: action.reason,
+        metadata: {
+          ...metadata,
+          lifecycle_policy: lifecycle.policy,
+          lifecycle_last_action: {
+            at: new Date().toISOString(),
+            from_status: currentStatus,
+            to_status: action.next_status,
+            reason: action.reason,
+            summary: action,
+          },
+          lifecycle_history: [
+            ...history,
+            {
+              at: new Date().toISOString(),
+              from_status: currentStatus,
+              to_status: action.next_status,
+              reason: action.reason,
+              rank_score: action.rank_score,
+              avg_excess_return_pct: action.avg_excess_return_pct,
+              recent_avg_excess_return_pct: action.recent_avg_excess_return_pct,
+            },
+          ],
+        },
+      } as any);
+      applied++;
+      updated.push({
+        version_key: action.version_key,
+        strategy_key: action.strategy_key,
+        from_status: currentStatus,
+        to_status: action.next_status,
+        reason: action.reason,
+      });
+    }
+
+    return {
+      generated_at: new Date().toISOString(),
+      dry_run: false,
+      applied,
+      updated,
+      lifecycle,
     };
   }
 
@@ -646,10 +848,147 @@ export class QuantStrategyParamVersionService {
     return record;
   }
 
+  private buildLifecyclePreview(
+    rows: any[],
+    defaultByStrategy: Map<string, any>,
+    policyInput?: Partial<ParamVersionLifecyclePolicy>
+  ) {
+    const policy = mergeLifecyclePolicy(policyInput);
+    const promotions: any[] = [];
+    const degradations: any[] = [];
+    const rollbacks: any[] = [];
+    const observations: any[] = [];
+
+    for (const row of rows) {
+      const status = String(row.status || '').toLowerCase();
+      const versionType = String(row.version_type || '').toLowerCase();
+      if (versionType === 'default' || status === 'baseline' || status === 'manual_override') {
+        continue;
+      }
+
+      const completedCount = toNumber(row.completed_count);
+      const avgExcess = toNumber(row.avg_excess_return_pct);
+      const recentExcess = toNumber(row.recent_avg_excess_return_pct);
+      const winRate = toNumber(row.win_rate);
+      const rankScore = toNumber(row.rank_score);
+      const defaultSummary = defaultByStrategy.get(row.strategy_key);
+      const defaultExcess = toNumber(defaultSummary?.avg_excess_return_pct);
+      const excessDelta = avgExcess - defaultExcess;
+      const compact = {
+        version_key: row.version_key,
+        strategy_key: row.strategy_key,
+        strategy_name: row.strategy_name,
+        version_type: row.version_type,
+        status: row.status,
+        completed_count: completedCount,
+        avg_excess_return_pct: row.avg_excess_return_pct,
+        recent_avg_excess_return_pct: row.recent_avg_excess_return_pct,
+        win_rate: row.win_rate,
+        rank_score: row.rank_score,
+        default_avg_excess_return_pct: defaultSummary?.avg_excess_return_pct,
+        excess_delta_vs_default_pct: round(excessDelta, 4),
+      };
+
+      const canPromote =
+        ['active_candidate', 'observing'].includes(status) &&
+        completedCount >= policy.min_completed_samples &&
+        avgExcess >= policy.min_avg_excess_return_pct &&
+        winRate >= policy.min_win_rate &&
+        rankScore >= policy.min_rank_score &&
+        excessDelta >= policy.min_default_excess_delta_pct;
+      if (canPromote) {
+        promotions.push({
+          ...compact,
+          action: 'promote',
+          next_status: 'champion',
+          reason: `满足冠军推广：样本 ${completedCount}，平均超额 ${round(
+            avgExcess,
+            2
+          )}%，胜率 ${round(winRate, 1)}%，较默认参数超额 +${round(excessDelta, 2)}%。`,
+        });
+        continue;
+      }
+
+      const shouldRollback =
+        ['champion', 'active_candidate', 'degraded'].includes(status) &&
+        completedCount >= policy.rollback_min_completed_samples &&
+        recentExcess <= policy.rollback_recent_excess_return_pct &&
+        avgExcess <= policy.rollback_avg_excess_return_pct;
+      if (shouldRollback) {
+        rollbacks.push({
+          ...compact,
+          action: 'rollback',
+          next_status: 'rolled_back',
+          reason: `触发回滚：近期平均超额 ${round(recentExcess, 2)}%，整体超额 ${round(
+            avgExcess,
+            2
+          )}%，低于安全阈值，回退默认参数。`,
+        });
+        continue;
+      }
+
+      const shouldDegrade =
+        ['champion', 'active_candidate'].includes(status) &&
+        completedCount >= policy.degrade_min_completed_samples &&
+        (avgExcess <= policy.degrade_avg_excess_return_pct ||
+          winRate <= policy.degrade_win_rate ||
+          recentExcess <= policy.degrade_recent_excess_return_pct);
+      if (shouldDegrade) {
+        degradations.push({
+          ...compact,
+          action: 'degrade',
+          next_status: 'degraded',
+          reason: `降级观察：平均超额 ${round(avgExcess, 2)}%，近期超额 ${round(
+            recentExcess,
+            2
+          )}%，胜率 ${round(winRate, 1)}%，未满足继续放大条件。`,
+        });
+        continue;
+      }
+
+      observations.push({
+        ...compact,
+        action: 'observe',
+        next_status: row.status,
+        reason:
+          completedCount < policy.min_completed_samples
+            ? `样本 ${completedCount}/${policy.min_completed_samples}，继续观察。`
+            : `暂不调整：收益、胜率或相对默认优势尚未触发推广/降级规则。`,
+      });
+    }
+
+    const sortByImpact = (a: any, b: any) =>
+      toNumber(b.rank_score) - toNumber(a.rank_score) ||
+      toNumber(b.avg_excess_return_pct) - toNumber(a.avg_excess_return_pct);
+
+    return {
+      policy,
+      promotions: promotions.sort(sortByImpact),
+      degradations: degradations.sort(sortByImpact),
+      rollbacks: rollbacks.sort(sortByImpact),
+      observations: observations.sort(sortByImpact).slice(0, 20),
+      summary: {
+        promotion_count: promotions.length,
+        degradation_count: degradations.length,
+        rollback_count: rollbacks.length,
+        observation_count: observations.length,
+        conclusion:
+          promotions.length > 0
+            ? `发现 ${promotions.length} 个可推广冠军参数，建议小仓放大并继续观察。`
+            : rollbacks.length > 0
+              ? `发现 ${rollbacks.length} 个需回滚参数，避免继续扩大亏损。`
+              : degradations.length > 0
+                ? `发现 ${degradations.length} 个需降级观察参数，暂缓放大。`
+                : '暂无需要推广或回滚的参数版本，继续积累 A/B 样本。',
+      },
+    };
+  }
+
   private versionPriority(version: QuantStrategyParamVersion) {
     const status = String(version.status || '').toLowerCase();
     const type = String(version.version_type || '').toLowerCase();
     if (status === 'manual_override' || type === 'manual') return 40;
+    if (status === 'champion') return 35;
     if (status === 'active_candidate') return 30;
     if (status === 'observing') return 20;
     if (status === 'baseline') return 10;

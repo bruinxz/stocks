@@ -135,9 +135,30 @@ export class QuantController {
         include_completed: Boolean(req.body?.include_completed || req.body?.includeCompleted),
         auto_sync_benchmark: Boolean(req.body?.auto_sync_benchmark || req.body?.autoSyncBenchmark),
       });
-      res.json({ success: true, data: { create: createResult, refresh: refreshResult } });
+      const lifecycleResult = await quantStrategyParamVersionService.evaluateAndApplyLifecycle({
+        dry_run: Boolean(req.body?.dry_run_lifecycle || req.body?.dryRunLifecycle),
+        policy: req.body?.lifecycle_policy || req.body?.lifecyclePolicy,
+      });
+      res.json({
+        success: true,
+        data: { create: createResult, refresh: refreshResult, lifecycle: lifecycleResult },
+      });
     } catch (error: any) {
       logger.error('刷新量化策略参数收益验证失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  async refreshParamLifecycle(req: AuthenticatedRequest, res: Response) {
+    try {
+      const result = await quantStrategyParamVersionService.evaluateAndApplyLifecycle({
+        dry_run: Boolean(req.body?.dry_run || req.body?.dryRun),
+        policy: req.body?.policy,
+        limit: Number(req.body?.limit || 5000),
+      });
+      res.json({ success: true, data: result });
+    } catch (error: any) {
+      logger.error('刷新量化策略参数生命周期失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   }

@@ -56,6 +56,11 @@ router.post(
   quantController.refreshParamValidations.bind(quantController)
 );
 router.post(
+  '/param-lifecycle/refresh',
+  authController.authenticate,
+  quantController.refreshParamLifecycle.bind(quantController)
+);
+router.post(
   '/backtests',
   authController.authenticate,
   quantController.createBacktest.bind(quantController)

@@ -7545,6 +7545,58 @@ a {
   margin-top: 12px;
 }
 
+.quant-lifecycle-strip {
+  margin-top: 12px;
+}
+
+.quant-lifecycle-tile {
+  display: grid;
+  gap: 6px;
+  height: 100%;
+  min-height: 118px;
+  padding: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.075);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.quant-lifecycle-tile span {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.12em;
+}
+
+.quant-lifecycle-tile strong {
+  color: var(--text-main);
+  font-family: var(--font-display);
+  font-size: 30px;
+  line-height: 1;
+}
+
+.quant-lifecycle-tile p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.58;
+}
+
+.quant-lifecycle-tile.promote {
+  border-color: rgba(15, 143, 107, 0.14);
+  background: linear-gradient(180deg, rgba(236, 253, 245, 0.76), rgba(255, 255, 255, 0.7));
+}
+
+.quant-lifecycle-tile.degrade {
+  border-color: rgba(214, 166, 79, 0.18);
+  background: linear-gradient(180deg, rgba(255, 251, 235, 0.78), rgba(255, 255, 255, 0.7));
+}
+
+.quant-lifecycle-tile.rollback {
+  border-color: rgba(180, 35, 24, 0.14);
+  background: linear-gradient(180deg, rgba(254, 242, 242, 0.72), rgba(255, 255, 255, 0.7));
+}
+
 .quant-experiment-row,
 .quant-param-suggestion-row,
 .quant-ab-row {
