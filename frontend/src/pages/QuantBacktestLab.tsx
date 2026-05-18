@@ -16,14 +16,19 @@ import {
   Statistic,
   Table,
   Tag,
+  Tooltip as AntTooltip,
   Typography,
   message,
 } from 'antd';
 import {
+  ClockCircleOutlined,
   ExperimentOutlined,
+  FieldTimeOutlined,
   PlayCircleOutlined,
+  RedoOutlined,
   ReloadOutlined,
-  TrophyOutlined,
+  StockOutlined,
+  WarningOutlined,
 } from '@ant-design/icons';
 import {
   Area,
@@ -41,6 +46,45 @@ const { RangePicker } = DatePicker;
 const { Text } = Typography;
 
 type Strategy = { strategy_key: string; name: string };
+type RunSummary = {
+  task_id?: number;
+  status?: string;
+  progress?: number;
+  universe?: string;
+  start_date?: string;
+  end_date?: string;
+  range_label?: string;
+  strategy_count?: number;
+  symbol_count?: number;
+  candidate_limit?: number;
+  initial_capital?: number;
+  run_started_at?: string | null;
+  run_finished_at?: string | null;
+  run_completed_at?: string | null;
+  run_failed_at?: string | null;
+  duration_seconds?: number;
+  duration_label?: string;
+  queue_wait_seconds?: number;
+  queue_wait_label?: string;
+  last_stage?: string | null;
+  retry_count?: number;
+  last_error?: string | null;
+  scanned_stocks?: number;
+  benchmark_return_pct?: number;
+  best_strategy_key?: string | null;
+  best_strategy_name?: string | null;
+  best_return_pct?: number;
+  best_excess_return_pct?: number;
+  best_max_drawdown_pct?: number;
+  best_sharpe_ratio?: number;
+  best_trade_count?: number;
+  worst_strategy_key?: string | null;
+  worst_return_pct?: number;
+  result_count?: number;
+  retryable?: boolean;
+  resumable?: boolean;
+  conclusion?: string;
+};
 type BacktestTask = {
   id: number;
   task_name: string;
@@ -49,24 +93,97 @@ type BacktestTask = {
   start_date: string;
   end_date: string;
   created_at: string;
+  updated_at?: string;
   error_message?: string;
+  universe?: string;
+  strategy_keys?: string[];
+  symbols?: string[];
+  initial_capital?: number;
   parameters?: Record<string, any>;
+  run_summary?: RunSummary;
 };
 type BacktestResult = {
   strategy_key: string;
   strategy_name: string;
   total_return_pct: number;
+  annual_return_pct?: number;
   excess_return_pct?: number;
   benchmark_return_pct?: number;
   max_drawdown_pct: number;
   sharpe_ratio: number;
   win_rate: number;
+  profit_factor?: number;
   trade_count: number;
+  avg_holding_days?: number;
   equity_curve_json: any[];
   metrics_json?: Record<string, any>;
 };
 
-type BacktestDetail = { task: BacktestTask; results: BacktestResult[]; trades: any[] };
+type BacktestDetail = {
+  task: BacktestTask;
+  results: BacktestResult[];
+  trades: any[];
+  run_summary?: RunSummary;
+};
+
+const pct = (value?: number | string | null, precision = 2) =>
+  Number.isFinite(Number(value)) ? `${Number(value).toFixed(precision)}%` : '--';
+
+const money = (value?: number | string | null) =>
+  Number.isFinite(Number(value)) ? `¥${Number(value).toLocaleString()}` : '--';
+
+const compactDate = (value?: string | null) => {
+  if (!value) return '--';
+  const parsed = dayjs(value);
+  return parsed.isValid() ? parsed.format('YYYY-MM-DD') : String(value).slice(0, 10);
+};
+
+const formatTime = (value?: string | null) => {
+  if (!value) return '--';
+  const parsed = dayjs(value);
+  return parsed.isValid() ? parsed.format('MM-DD HH:mm') : value;
+};
+
+const formatDateTime = (value?: string | null) => {
+  if (!value) return '--';
+  const parsed = dayjs(value);
+  return parsed.isValid() ? parsed.format('YYYY-MM-DD HH:mm:ss') : value;
+};
+
+const statusColor = (status?: string) => {
+  if (status === 'COMPLETED') return 'green';
+  if (status === 'FAILED') return 'red';
+  if (status === 'QUEUED') return 'gold';
+  if (status === 'RUNNING') return 'blue';
+  return 'default';
+};
+
+const statusLabel = (status?: string) => {
+  const labels: Record<string, string> = {
+    COMPLETED: '已完成',
+    FAILED: '失败',
+    QUEUED: '队列中',
+    RUNNING: '运行中',
+    PENDING: '待运行',
+  };
+  return labels[status || ''] || status || '--';
+};
+
+const universeLabel = (value?: string) => (value === 'favorites' ? '自选股' : '全市场');
+const isQueueLockFailure = (messageText?: string | null) =>
+  /stalled|missing lock|lock/i.test(messageText || '');
+
+const stageLabel = (stage?: string | null) => {
+  const labels: Record<string, string> = {
+    queued_retry: '重试排队',
+    prepare_contexts: '准备股票数据',
+    resolve_benchmark: '计算基准收益',
+    run_engine: '执行策略引擎',
+    persist_results: '写入跑分结果',
+    completed: '完成',
+  };
+  return labels[stage || ''] || stage || '--';
+};
 
 const QuantBacktestLab: React.FC = () => {
   const [form] = Form.useForm();
@@ -75,6 +192,7 @@ const QuantBacktestLab: React.FC = () => {
   const [detail, setDetail] = useState<BacktestDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [running, setRunning] = useState(false);
+  const [retryingId, setRetryingId] = useState<number | null>(null);
   const [pollingTaskId, setPollingTaskId] = useState<number | null>(null);
 
   const fetchStrategies = async () => {
@@ -101,6 +219,14 @@ const QuantBacktestLab: React.FC = () => {
     fetchStrategies();
     fetchTasks();
   }, []);
+
+  useEffect(() => {
+    if (!detail && tasks[0]?.id) fetchDetail(tasks[0].id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasks, detail]);
+
+  const selectedSummary = detail?.run_summary || detail?.task?.run_summary;
+  const selectedTask = detail?.task;
 
   const runBacktest = async () => {
     const values = await form.validateFields();
@@ -140,12 +266,31 @@ const QuantBacktestLab: React.FC = () => {
           message.success('跑分完成');
         }
         await fetchTasks();
-        setDetail(taskDetail);
+        if (taskRecord?.id) await fetchDetail(taskRecord.id);
       }
     } catch (error: any) {
       message.error(error.response?.data?.message || '运行跑分失败');
     } finally {
       setRunning(false);
+    }
+  };
+
+  const retryBacktest = async (task: BacktestTask) => {
+    setRetryingId(task.id);
+    try {
+      const response = await api.post(`/quant/backtests/${task.id}/retry`);
+      if (response.data.success) {
+        const taskDetail = response.data.data?.task;
+        const taskRecord = taskDetail?.task || taskDetail;
+        setPollingTaskId(taskRecord?.id || task.id);
+        message.success(response.data.data?.message || '已重新入队');
+        await fetchTasks();
+        await fetchDetail(task.id);
+      }
+    } catch (error: any) {
+      message.error(error.response?.data?.message || '重试跑分失败');
+    } finally {
+      setRetryingId(null);
     }
   };
 
@@ -177,6 +322,19 @@ const QuantBacktestLab: React.FC = () => {
     [detail]
   );
   const curve = best?.equity_curve_json || [];
+  const latestFailed = tasks.find(task => task.status === 'FAILED');
+  const lastTask = tasks[0];
+  const taskStrategies =
+    selectedTask?.strategy_keys || selectedTask?.parameters?.strategy_keys || [];
+  const scannedStocks =
+    selectedSummary?.scanned_stocks ||
+    selectedTask?.parameters?.scanned_stocks ||
+    selectedSummary?.candidate_limit ||
+    selectedTask?.parameters?.scanned_stocks ||
+    selectedTask?.symbols?.length ||
+    0;
+  const selectedErrorText = selectedTask?.error_message || selectedSummary?.last_error;
+  const selectedQueueLockFailure = isQueueLockFailure(selectedErrorText);
 
   const resultColumns = [
     {
@@ -184,12 +342,65 @@ const QuantBacktestLab: React.FC = () => {
       dataIndex: 'strategy_name',
       key: 'strategy_name',
       fixed: 'left' as const,
-      width: 180,
+      width: 190,
+      render: (text: string, record: BacktestResult) => (
+        <Space direction="vertical" size={0}>
+          <Text strong>{text || record.strategy_key}</Text>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            {record.strategy_key}
+          </Text>
+        </Space>
+      ),
+    },
+    {
+      title: '总收益 / 超额',
+      key: 'return_pair',
+      width: 150,
+      sorter: (a: BacktestResult, b: BacktestResult) => a.total_return_pct - b.total_return_pct,
+      render: (_: any, record: BacktestResult) => (
+        <Space direction="vertical" size={0}>
+          <Text
+            strong
+            style={{ color: Number(record.total_return_pct) >= 0 ? '#cf1322' : '#0f8f6b' }}
+          >
+            {pct(record.total_return_pct)}
+          </Text>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            超额 {pct(record.excess_return_pct)} · 基准 {pct(record.benchmark_return_pct)}
+          </Text>
+        </Space>
+      ),
+    },
+    {
+      title: '风险',
+      key: 'risk',
+      width: 130,
+      render: (_: any, record: BacktestResult) => (
+        <Space direction="vertical" size={0}>
+          <Text>回撤 {pct(record.max_drawdown_pct)}</Text>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            夏普 {Number(record.sharpe_ratio || 0).toFixed(2)}
+          </Text>
+        </Space>
+      ),
+    },
+    {
+      title: '胜率/交易',
+      key: 'win_trade',
+      width: 128,
+      render: (_: any, record: BacktestResult) => (
+        <Space direction="vertical" size={0}>
+          <Text>{pct(record.win_rate, 1)}</Text>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            {record.trade_count || 0} 笔 · 持仓 {Number(record.avg_holding_days || 0).toFixed(1)}天
+          </Text>
+        </Space>
+      ),
     },
     {
       title: '真实执行诊断',
       key: 'execution_diagnostics',
-      width: 220,
+      width: 240,
       render: (_: any, record: BacktestResult) => {
         const diagnostics = record.metrics_json?.execution_diagnostics || {};
         const blocked =
@@ -212,60 +423,62 @@ const QuantBacktestLab: React.FC = () => {
         );
       },
     },
-    {
-      title: '总收益',
-      dataIndex: 'total_return_pct',
-      key: 'total_return_pct',
-      sorter: (a: BacktestResult, b: BacktestResult) => a.total_return_pct - b.total_return_pct,
-      render: (v: number) => (
-        <Text strong style={{ color: Number(v) >= 0 ? '#cf1322' : '#0f8f6b' }}>
-          {Number(v || 0).toFixed(2)}%
-        </Text>
-      ),
-    },
-    {
-      title: '最大回撤',
-      dataIndex: 'max_drawdown_pct',
-      key: 'max_drawdown_pct',
-      render: (v: number) => `${Number(v || 0).toFixed(2)}%`,
-    },
-    {
-      title: '夏普',
-      dataIndex: 'sharpe_ratio',
-      key: 'sharpe_ratio',
-      render: (v: number) => Number(v || 0).toFixed(2),
-    },
-    {
-      title: '超额收益',
-      dataIndex: 'excess_return_pct',
-      key: 'excess_return_pct',
-      render: (v: number) => `${Number(v || 0).toFixed(2)}%`,
-    },
-    {
-      title: '胜率',
-      dataIndex: 'win_rate',
-      key: 'win_rate',
-      render: (v: number) => `${Number(v || 0).toFixed(1)}%`,
-    },
-    { title: '交易次数', dataIndex: 'trade_count', key: 'trade_count' },
   ];
 
   return (
-    <div className="quant-research-page fade-in-up">
-      <div className="quant-research-hero compact">
+    <div className="quant-research-page quant-backtest-page fade-in-up">
+      <div className="quant-research-hero compact quant-backtest-hero">
         <div>
           <div className="quant-research-kicker">BACKTEST SCORE LAB</div>
           <h1>策略跑分实验室</h1>
           <p>
-            选择多个策略、股票池和时间区间，自动跑出收益率、回撤、夏普、胜率和交易明细，用真实历史数据验证策略是否值得进入自动荐股闭环。
+            一页看清本次跑分的范围、时间、耗时、收益和失败原因；失败任务可以按原参数一键重试/续跑，避免重复配置。
           </p>
+          <Space wrap className="quant-backtest-hero-tags">
+            <Tag icon={<StockOutlined />}>{universeLabel(lastTask?.universe)}优先</Tag>
+            <Tag icon={<FieldTimeOutlined />}>A股真实成交护栏</Tag>
+            <Tag icon={<ClockCircleOutlined />}>队列自动刷新</Tag>
+            <Tag icon={<ExperimentOutlined />}>参数实验可沉淀</Tag>
+          </Space>
         </div>
         <div className="quant-research-meter">
           <span>BEST</span>
-          <strong>{best ? `${Number(best.total_return_pct).toFixed(1)}%` : '--'}</strong>
-          <em>{best?.strategy_name || '等待跑分'}</em>
+          <strong>{best ? pct(best.total_return_pct, 1) : '--'}</strong>
+          <em>{best?.strategy_name || selectedSummary?.best_strategy_name || '等待跑分'}</em>
         </div>
       </div>
+
+      {latestFailed && (
+        <Alert
+          className="quant-backtest-failure-alert"
+          type="error"
+          showIcon
+          icon={<WarningOutlined />}
+          message={`最近失败：${latestFailed.task_name}`}
+          description={
+            <Space direction="vertical" size={4}>
+              <Text>{latestFailed.error_message || '未知错误'}</Text>
+              <Text type="secondary">
+                已运行 {latestFailed.run_summary?.duration_label || '--'} · 范围{' '}
+                {latestFailed.run_summary?.range_label ||
+                  `${compactDate(latestFailed.start_date)} ~ ${compactDate(latestFailed.end_date)}`}
+                。
+                {isQueueLockFailure(latestFailed.error_message)
+                  ? '线上日志显示该任务来自 Bull 长任务锁续约丢失（job stalled / missing lock），已加长跑分队列锁周期并降低默认并发，可直接重试。'
+                  : '可以按原参数重新入队；重试会刷新同一个任务的结果，避免重复配置。'}
+              </Text>
+              <Button
+                danger
+                icon={<RedoOutlined />}
+                loading={retryingId === latestFailed.id}
+                onClick={() => retryBacktest(latestFailed)}
+              >
+                按原参数重试/续跑
+              </Button>
+            </Space>
+          }
+        />
+      )}
 
       <Card className="modern-card quant-backtest-form" variant="borderless">
         <Form
@@ -477,52 +690,223 @@ const QuantBacktestLab: React.FC = () => {
         </Form>
       </Card>
 
+      <Row gutter={[16, 16]} className="quant-backtest-summary-row">
+        <Col xs={12} md={6}>
+          <Card className="modern-card quant-backtest-kpi">
+            <Statistic title="跑分范围" value={selectedSummary?.range_label || '--'} />
+            <Text type="secondary">
+              {universeLabel(selectedTask?.universe)} · {taskStrategies.length || 0} 策略 · 候选{' '}
+              {scannedStocks || '--'}
+            </Text>
+          </Card>
+        </Col>
+        <Col xs={12} md={6}>
+          <Card className="modern-card quant-backtest-kpi">
+            <Statistic title="运行耗时" value={selectedSummary?.duration_label || '--'} />
+            <Text type="secondary">
+              创建 {formatTime(selectedTask?.created_at)} · 更新{' '}
+              {formatTime(selectedTask?.updated_at)}
+            </Text>
+          </Card>
+        </Col>
+        <Col xs={12} md={6}>
+          <Card className="modern-card quant-backtest-kpi">
+            <Statistic
+              title="冠军收益"
+              value={Number(best?.total_return_pct || 0)}
+              suffix="%"
+              precision={2}
+            />
+            <Text type="secondary">
+              超额 {pct(best?.excess_return_pct)} · 回撤 {pct(best?.max_drawdown_pct)}
+            </Text>
+          </Card>
+        </Col>
+        <Col xs={12} md={6}>
+          <Card className="modern-card quant-backtest-kpi">
+            <Statistic
+              title="交易次数"
+              value={best?.trade_count || 0}
+              prefix={<ExperimentOutlined />}
+            />
+            <Text type="secondary">
+              胜率 {pct(best?.win_rate, 1)} · 夏普 {Number(best?.sharpe_ratio || 0).toFixed(2)}
+            </Text>
+          </Card>
+        </Col>
+      </Row>
+
+      {selectedTask && (
+        <Alert
+          className="quant-backtest-conclusion"
+          type={
+            selectedTask.status === 'FAILED'
+              ? 'error'
+              : selectedTask.status === 'COMPLETED'
+              ? 'success'
+              : 'info'
+          }
+          showIcon
+          message={selectedSummary?.conclusion || '请选择一个跑分任务查看详情'}
+          description={
+            selectedTask.status === 'FAILED' && selectedQueueLockFailure
+              ? '原因判断：该错误属于队列锁/长任务保活问题，不是策略逻辑收益计算失败；本次已将锁周期加长到默认 90 分钟、锁检查降低频率，并把默认跑分并发降为 1，适合长区间重试。'
+              : undefined
+          }
+          action={
+            selectedTask.status === 'FAILED' ? (
+              <Button
+                size="small"
+                danger
+                icon={<RedoOutlined />}
+                loading={retryingId === selectedTask.id}
+                onClick={() => retryBacktest(selectedTask)}
+              >
+                重试/续跑
+              </Button>
+            ) : null
+          }
+        />
+      )}
+
+      {selectedTask && (
+        <Card className="modern-card quant-run-detail-card" variant="borderless">
+          <div className="quant-run-detail-header">
+            <div>
+              <span>RUN CONTEXT</span>
+              <strong>本次跑分信息</strong>
+            </div>
+            <Tag color={statusColor(selectedTask.status)}>{statusLabel(selectedTask.status)}</Tag>
+          </div>
+          <div className="quant-run-detail-grid">
+            <div>
+              <span>跑分范围</span>
+              <strong>{selectedSummary?.range_label || '--'}</strong>
+            </div>
+            <div>
+              <span>开始时间</span>
+              <strong>{formatDateTime(selectedSummary?.run_started_at)}</strong>
+            </div>
+            <div>
+              <span>结束时间</span>
+              <strong>
+                {formatDateTime(
+                  selectedSummary?.run_finished_at ||
+                    selectedSummary?.run_completed_at ||
+                    selectedSummary?.run_failed_at
+                )}
+              </strong>
+            </div>
+            <div>
+              <span>运行耗时</span>
+              <strong>{selectedSummary?.duration_label || '--'}</strong>
+            </div>
+            <div>
+              <span>队列等待</span>
+              <strong>{selectedSummary?.queue_wait_label || '--'}</strong>
+            </div>
+            <div>
+              <span>运行阶段</span>
+              <strong>{stageLabel(selectedSummary?.last_stage)}</strong>
+            </div>
+            <div>
+              <span>扫描股票</span>
+              <strong>{selectedSummary?.scanned_stocks || scannedStocks || '--'}</strong>
+            </div>
+            <div>
+              <span>基准收益</span>
+              <strong>{pct(selectedSummary?.benchmark_return_pct)}</strong>
+            </div>
+            <div>
+              <span>策略结果</span>
+              <strong>{selectedSummary?.result_count ?? detail?.results?.length ?? 0}</strong>
+            </div>
+            <div>
+              <span>重试次数</span>
+              <strong>{selectedSummary?.retry_count || 0}</strong>
+            </div>
+          </div>
+        </Card>
+      )}
+
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-        <Col xs={24} xl={7}>
+        <Col xs={24} xl={8}>
           <Card
-            className="modern-card"
+            className="modern-card quant-task-list-card"
             title="历史跑分任务"
             extra={<Button icon={<ReloadOutlined />} onClick={fetchTasks} />}
             loading={loading}
           >
             <Space direction="vertical" style={{ width: '100%' }}>
-              {tasks.slice(0, 10).map(task => (
-                <div className="quant-task-row" key={task.id} onClick={() => fetchDetail(task.id)}>
-                  <strong>{task.task_name}</strong>
-                  <span>
-                    {task.start_date}~{task.end_date}
-                  </span>
-                  <Space size={6}>
-                    <Tag
-                      color={
-                        task.status === 'COMPLETED'
-                          ? 'green'
-                          : task.status === 'FAILED'
-                          ? 'red'
-                          : task.status === 'QUEUED'
-                          ? 'gold'
-                          : 'blue'
-                      }
-                    >
-                      {task.status}
-                    </Tag>
+              {tasks.slice(0, 12).map(task => {
+                const summary = task.run_summary || {};
+                return (
+                  <div
+                    className={`quant-task-row ${detail?.task?.id === task.id ? 'active' : ''}`}
+                    key={task.id}
+                    onClick={() => fetchDetail(task.id)}
+                  >
+                    <div className="quant-task-row-main">
+                      <strong>{task.task_name}</strong>
+                      <span>
+                        {summary.range_label ||
+                          `${compactDate(task.start_date)} ~ ${compactDate(task.end_date)}`}
+                      </span>
+                      {task.error_message && <em>{task.error_message}</em>}
+                    </div>
+                    <div className="quant-task-row-side">
+                      <Tag color={statusColor(task.status)}>{statusLabel(task.status)}</Tag>
+                      <Text strong>
+                        {summary.best_return_pct !== undefined
+                          ? pct(summary.best_return_pct)
+                          : '--'}
+                      </Text>
+                      <Text type="secondary">{summary.duration_label || '--'}</Text>
+                      {task.status === 'FAILED' && (
+                        <AntTooltip title="按原参数重新入队">
+                          <Button
+                            size="small"
+                            danger
+                            icon={<RedoOutlined />}
+                            loading={retryingId === task.id}
+                            onClick={event => {
+                              event.stopPropagation();
+                              retryBacktest(task);
+                            }}
+                          />
+                        </AntTooltip>
+                      )}
+                    </div>
                     {['QUEUED', 'RUNNING'].includes(task.status) && (
                       <Progress
                         percent={Number(task.progress || 0)}
                         size="small"
-                        style={{ width: 72 }}
                         showInfo={false}
                       />
                     )}
-                  </Space>
-                </div>
-              ))}
+                  </div>
+                );
+              })}
               {!tasks.length && <Empty description="暂无跑分任务" />}
             </Space>
           </Card>
         </Col>
-        <Col xs={24} xl={17}>
-          <Card className="modern-card" title="冠军策略资金曲线" loading={loading}>
+        <Col xs={24} xl={16}>
+          <Card
+            className="modern-card quant-equity-card"
+            title="冠军策略资金曲线"
+            loading={loading}
+          >
+            <div className="quant-equity-meta">
+              <Tag color={statusColor(selectedTask?.status)}>
+                {statusLabel(selectedTask?.status)}
+              </Tag>
+              <Tag>{selectedSummary?.range_label || '未选择区间'}</Tag>
+              <Tag>{best?.strategy_name || '等待冠军策略'}</Tag>
+              <Tag>
+                初始资金 {money(selectedSummary?.initial_capital || selectedTask?.initial_capital)}
+              </Tag>
+            </div>
             <div style={{ height: 320 }}>
               {curve.length ? (
                 <ResponsiveContainer width="100%" height="100%">
@@ -549,53 +933,12 @@ const QuantBacktestLab: React.FC = () => {
         </Col>
       </Row>
 
-      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-        <Col xs={12} md={6}>
-          <Card className="modern-card">
-            <Statistic
-              title="冠军策略"
-              value={best?.strategy_name || '--'}
-              prefix={<TrophyOutlined />}
-            />
-          </Card>
-        </Col>
-        <Col xs={12} md={6}>
-          <Card className="modern-card">
-            <Statistic
-              title="总收益"
-              value={Number(best?.total_return_pct || 0)}
-              suffix="%"
-              precision={2}
-            />
-          </Card>
-        </Col>
-        <Col xs={12} md={6}>
-          <Card className="modern-card">
-            <Statistic
-              title="超额收益"
-              value={Number(best?.excess_return_pct || 0)}
-              suffix="%"
-              precision={2}
-            />
-          </Card>
-        </Col>
-        <Col xs={12} md={6}>
-          <Card className="modern-card">
-            <Statistic
-              title="交易次数"
-              value={best?.trade_count || 0}
-              prefix={<ExperimentOutlined />}
-            />
-          </Card>
-        </Col>
-      </Row>
-
       <Card className="modern-card" title="策略跑分对比">
         <Table
           columns={resultColumns}
           dataSource={detail?.results || []}
           rowKey="strategy_key"
-          scroll={{ x: 900 }}
+          scroll={{ x: 980 }}
           pagination={false}
           locale={{ emptyText: <Empty description="暂无跑分结果" /> }}
         />

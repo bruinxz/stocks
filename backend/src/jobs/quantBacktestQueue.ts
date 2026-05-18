@@ -15,6 +15,12 @@ const quantBacktestQueue = new Bull<QuantBacktestJobData>('quant-backtest', {
     password: process.env.REDIS_PASSWORD,
     db: parseInt(process.env.REDIS_DB || '1'),
   },
+  settings: {
+    lockDuration: parseInt(process.env.QUANT_BACKTEST_LOCK_DURATION_MS || `${90 * 60 * 1000}`),
+    lockRenewTime: parseInt(process.env.QUANT_BACKTEST_LOCK_RENEW_MS || `${15 * 60 * 1000}`),
+    stalledInterval: parseInt(process.env.QUANT_BACKTEST_STALLED_INTERVAL_MS || `${5 * 60 * 1000}`),
+    maxStalledCount: parseInt(process.env.QUANT_BACKTEST_MAX_STALLED_COUNT || '2'),
+  },
   defaultJobOptions: {
     attempts: 2,
     backoff: {

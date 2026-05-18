@@ -202,6 +202,16 @@ export class QuantController {
     }
   }
 
+  async retryBacktest(req: AuthenticatedRequest, res: Response) {
+    try {
+      const result = await quantBacktestService.retryBacktest(Number(req.params.id), req.user?.id);
+      res.json({ success: true, data: result });
+    } catch (error: any) {
+      logger.error('重试量化跑分失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
   async generateSignals(req: AuthenticatedRequest, res: Response) {
     try {
       const result = await quantSignalService.generateSignals({

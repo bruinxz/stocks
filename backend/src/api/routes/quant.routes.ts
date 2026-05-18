@@ -76,6 +76,11 @@ router.get(
   quantController.getBacktest.bind(quantController)
 );
 router.post(
+  '/backtests/:id/retry',
+  authController.authenticate,
+  quantController.retryBacktest.bind(quantController)
+);
+router.post(
   '/signals/generate',
   authController.authenticate,
   quantController.generateSignals.bind(quantController)

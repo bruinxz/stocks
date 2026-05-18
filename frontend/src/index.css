@@ -7086,33 +7086,213 @@ a {
   margin-bottom: 0;
 }
 
+.quant-backtest-page {
+  --backtest-blue: #2764b8;
+  --backtest-gold: #d6a64f;
+  --backtest-green: #0f8f6b;
+}
+
+.quant-backtest-hero {
+  margin-bottom: 16px;
+}
+
+.quant-backtest-hero-tags {
+  margin-top: 16px;
+}
+
+.quant-backtest-failure-alert,
+.quant-backtest-conclusion {
+  margin-bottom: 16px;
+  border-radius: 18px;
+}
+
+.quant-run-detail-card {
+  margin-bottom: 16px;
+}
+
+.quant-backtest-summary-row {
+  margin-bottom: 16px;
+}
+
+.quant-backtest-kpi {
+  min-height: 136px;
+}
+
+.quant-backtest-kpi .ant-statistic-title {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.quant-backtest-kpi .ant-statistic-content {
+  color: var(--text-main);
+  font-family: var(--font-display);
+  font-size: 25px;
+  letter-spacing: -0.035em;
+}
+
+.quant-backtest-kpi .ant-typography {
+  display: block;
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.quant-run-detail-header {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.quant-run-detail-header span {
+  display: block;
+  color: var(--primary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.16em;
+}
+
+.quant-run-detail-header strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-main);
+  font-family: var(--font-display);
+  font-size: 22px;
+  letter-spacing: -0.035em;
+}
+
+.quant-run-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.quant-run-detail-grid > div {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(39, 100, 184, 0.08);
+  border-radius: 16px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(247, 251, 255, 0.72)),
+    radial-gradient(circle at 100% 0%, rgba(214, 166, 79, 0.08), transparent 42%);
+}
+
+.quant-run-detail-grid span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.quant-run-detail-grid strong {
+  display: block;
+  min-height: 20px;
+  margin-top: 5px;
+  overflow: hidden;
+  color: var(--text-main);
+  font-family: var(--font-display);
+  font-size: 16px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quant-task-list-card .ant-card-body {
+  max-height: 650px;
+  overflow: auto;
+}
+
 .quant-task-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 4px 10px;
-  padding: 12px;
+  grid-template-columns: minmax(0, 1fr) 112px;
+  gap: 8px 12px;
+  padding: 13px;
   cursor: pointer;
   border: 1px solid rgba(15, 23, 42, 0.075);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.74);
-  transition: transform 0.18s ease, border-color 0.18s ease;
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(39, 100, 184, 0.055), transparent 36%),
+    rgba(255, 255, 255, 0.78);
+  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
 }
 
 .quant-task-row:hover {
   transform: translateY(-1px);
   border-color: rgba(39, 100, 184, 0.22);
+  box-shadow: 0 12px 28px rgba(39, 73, 111, 0.07);
 }
 
-.quant-task-row strong,
-.quant-task-row span {
+.quant-task-row.active {
+  border-color: rgba(39, 100, 184, 0.3);
+  background:
+    radial-gradient(circle at 0% 0%, rgba(39, 100, 184, 0.11), transparent 36%),
+    rgba(247, 250, 255, 0.9);
+}
+
+.quant-task-row-main,
+.quant-task-row-side {
+  min-width: 0;
+}
+
+.quant-task-row-main strong,
+.quant-task-row-main span,
+.quant-task-row-main em {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.quant-task-row span {
+.quant-task-row-main strong {
+  color: var(--text-main);
+}
+
+.quant-task-row-main span,
+.quant-task-row-main em {
   color: var(--text-muted);
   font-size: 12px;
+}
+
+.quant-task-row-main em {
+  color: #b42318;
+  font-style: normal;
+}
+
+.quant-task-row-side {
+  display: grid;
+  gap: 4px;
+  justify-items: end;
+  text-align: right;
+}
+
+.quant-task-row-side .ant-typography:first-of-type {
+  color: var(--backtest-blue);
+  font-family: var(--font-display);
+  font-size: 18px;
+  line-height: 1;
+}
+
+.quant-task-row .ant-progress {
+  grid-column: 1 / -1;
+}
+
+.quant-equity-card {
+  overflow: hidden;
+}
+
+.quant-equity-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.quant-equity-meta .ant-tag {
+  margin: 0;
+  border-radius: 999px;
+  font-weight: 800;
 }
 
 .quant-workbench-tabs > .ant-tabs-nav {
@@ -7960,6 +8140,19 @@ a {
 
   .quant-family-card {
     grid-template-columns: 1fr;
+  }
+
+  .quant-task-row {
+    grid-template-columns: 1fr;
+  }
+
+  .quant-run-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .quant-task-row-side {
+    justify-items: start;
+    text-align: left;
   }
 
   .quant-segment-row,

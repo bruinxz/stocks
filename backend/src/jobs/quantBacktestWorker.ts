@@ -4,8 +4,8 @@ import { quantBacktestService } from '../quant/services/QuantBacktestService';
 import { logger } from '../utils/logger';
 
 const resolveBacktestConcurrency = () => {
-  const configured = Number(process.env.QUANT_BACKTEST_CONCURRENCY || 2);
-  if (!Number.isFinite(configured) || configured <= 0) return 2;
+  const configured = Number(process.env.QUANT_BACKTEST_CONCURRENCY || 1);
+  if (!Number.isFinite(configured) || configured <= 0) return 1;
   return Math.max(1, Math.min(Math.floor(configured), 3));
 };
 
