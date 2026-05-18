@@ -299,6 +299,17 @@ type DashboardData = {
         observation_count?: number;
         conclusion?: string;
       };
+      environment_guard?: {
+        version_count?: number;
+        min_positive_environment_buckets?: number;
+        max_negative_environment_buckets?: number;
+      };
+      trade_guard?: {
+        version_count?: number;
+        degrade_min_closed_samples?: number;
+        rollback_min_closed_samples?: number;
+        rollback_total_pnl?: number;
+      };
       promotions?: any[];
       degradations?: any[];
       rollbacks?: any[];
@@ -1001,24 +1012,40 @@ const QuantPerformanceDashboard: React.FC = () => {
             <div className="quant-lifecycle-tile promote">
               <span>可推广</span>
               <strong>{paramValidation?.lifecycle?.summary?.promotion_count || 0}</strong>
-              <p>达到样本、超额、胜率和相对默认优势后升级为 champion。</p>
+              <p>需同时通过样本、超额、胜率、相对默认优势和环境分桶护栏后升级为 champion。</p>
             </div>
           </Col>
           <Col xs={24} md={8}>
             <div className="quant-lifecycle-tile degrade">
               <span>需降级</span>
               <strong>{paramValidation?.lifecycle?.summary?.degradation_count || 0}</strong>
-              <p>近期收益、整体超额或胜率转弱时，自动降为 degraded。</p>
+              <p>近期收益、整体超额、环境稳定性或实验盘交易转弱时，自动降为 degraded。</p>
             </div>
           </Col>
           <Col xs={24} md={8}>
             <div className="quant-lifecycle-tile rollback">
               <span>需回滚</span>
               <strong>{paramValidation?.lifecycle?.summary?.rollback_count || 0}</strong>
-              <p>持续跑输且近期恶化时回滚默认参数，避免继续放大亏损。</p>
+              <p>持续跑输、近期恶化或实验盘 PnL 跌破护栏时回滚默认参数。</p>
             </div>
           </Col>
         </Row>
+        <div className="quant-lifecycle-guard-note">
+          <Tag color="blue">
+            环境护栏覆盖 {paramValidation?.lifecycle?.environment_guard?.version_count || 0} 个版本
+          </Tag>
+          <Tag color="gold">
+            推广至少{' '}
+            {paramValidation?.lifecycle?.environment_guard?.min_positive_environment_buckets || 0}{' '}
+            个优势环境桶
+          </Tag>
+          <Tag color="purple">
+            实验盘护栏覆盖 {paramValidation?.lifecycle?.trade_guard?.version_count || 0} 个版本
+          </Tag>
+          <Tag color="red">
+            回滚PnL ≤ {formatMoney(paramValidation?.lifecycle?.trade_guard?.rollback_total_pnl)}
+          </Tag>
+        </div>
         <div className="quant-ab-list">
           {(paramValidation?.summary_by_version || []).slice(0, 6).map(item => (
             <div className="quant-ab-row" key={item.version_key}>

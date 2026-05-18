@@ -7549,6 +7549,23 @@ a {
   margin-top: 12px;
 }
 
+.quant-lifecycle-guard-note {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px dashed rgba(39, 100, 184, 0.16);
+  border-radius: 16px;
+  background: rgba(247, 250, 255, 0.68);
+}
+
+.quant-lifecycle-guard-note .ant-tag {
+  margin: 0;
+  border-radius: 999px;
+  font-weight: 800;
+}
+
 .quant-param-attribution-grid {
   margin-top: 12px;
 }

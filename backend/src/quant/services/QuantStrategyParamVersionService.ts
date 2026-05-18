@@ -5,8 +5,11 @@ import { DailyBar } from '../../models/DailyBar';
 import { QuantSignal } from '../../models/QuantSignal';
 import { QuantStrategyParamValidation } from '../../models/QuantStrategyParamValidation';
 import { QuantStrategyParamVersion } from '../../models/QuantStrategyParamVersion';
+import { RecommendationTradeOutcome } from '../../models/RecommendationTradeOutcome';
+import { PaperTradingPortfolio } from '../../models/PaperTradingPortfolio';
 import { Stock } from '../../models/Stock';
 import { benchmarkIndexService } from '../../services/BenchmarkIndexService';
+import { PARAM_EXPERIMENT_PORTFOLIO_NAME } from '../../services/PaperTradingDashboardService';
 import { normalizeSymbol } from '../../utils/stockSymbol';
 import { logger } from '../../utils/logger';
 import { round } from '../engine/QuantMath';
@@ -49,6 +52,15 @@ type ParamVersionLifecyclePolicy = {
   rollback_min_completed_samples: number;
   rollback_recent_excess_return_pct: number;
   rollback_avg_excess_return_pct: number;
+  min_positive_environment_buckets: number;
+  max_negative_environment_buckets: number;
+  min_environment_bucket_completed_samples: number;
+  min_environment_bucket_excess_return_pct: number;
+  trade_degrade_min_closed_samples: number;
+  trade_degrade_avg_excess_return_pct: number;
+  trade_rollback_min_closed_samples: number;
+  trade_rollback_avg_excess_return_pct: number;
+  trade_rollback_total_pnl: number;
 };
 
 const DEFAULT_LIFECYCLE_POLICY: ParamVersionLifecyclePolicy = {
@@ -64,6 +76,15 @@ const DEFAULT_LIFECYCLE_POLICY: ParamVersionLifecyclePolicy = {
   rollback_min_completed_samples: 10,
   rollback_recent_excess_return_pct: -1.5,
   rollback_avg_excess_return_pct: -1.2,
+  min_positive_environment_buckets: 1,
+  max_negative_environment_buckets: 1,
+  min_environment_bucket_completed_samples: 3,
+  min_environment_bucket_excess_return_pct: -0.2,
+  trade_degrade_min_closed_samples: 2,
+  trade_degrade_avg_excess_return_pct: -0.8,
+  trade_rollback_min_closed_samples: 3,
+  trade_rollback_avg_excess_return_pct: -1.5,
+  trade_rollback_total_pnl: -1200,
 };
 
 function asPlainObject(value: any): Record<string, any> {
@@ -444,6 +465,76 @@ function buildEnvironmentAttribution(rows: any[], versionByKey: Map<string, any>
     by_market_regime: byMarketRegime,
     by_industry_regime: byIndustryRegime,
     by_industry: byIndustry.slice(0, 20),
+  };
+}
+
+function normalizeStringArray(value: any): string[] {
+  if (!Array.isArray(value)) return [];
+  return [
+    ...new Set(
+      value.map(item => String(item || '').trim()).filter(item => item && item !== 'unknown')
+    ),
+  ];
+}
+
+function paramVersionKeysFromOutcome(outcome: any): string[] {
+  const metadata = asPlainObject(outcome.metadata);
+  const strategyVariant = asPlainObject(metadata.strategy_variant);
+  const signalMetadata = asPlainObject(metadata.signal_metadata);
+  const signalVariant = asPlainObject(signalMetadata.strategy_variant);
+  const signalFactors = asPlainObject(signalMetadata.factors);
+  const paperTrading = asPlainObject(metadata.paper_trading);
+  const paperVariant = asPlainObject(paperTrading.strategy_variant);
+  return [
+    ...new Set(
+      [
+        ...normalizeStringArray(strategyVariant.param_version_keys),
+        ...normalizeStringArray(signalVariant.param_version_keys),
+        ...normalizeStringArray(signalFactors.param_version_keys),
+        ...normalizeStringArray(paperVariant.param_version_keys),
+        strategyVariant.param_version_key,
+        signalVariant.param_version_key,
+        signalMetadata.param_version_key,
+        signalFactors.param_version_key,
+        paperVariant.param_version_key,
+      ]
+        .map(item => String(item || '').trim())
+        .filter(item => item && item !== 'unknown')
+    ),
+  ];
+}
+
+function summarizeParamTradeOutcomeRows(versionKey: string, rows: any[]) {
+  const closed = rows.filter(item => item.trade_status === 'closed');
+  const open = rows.filter(item => item.trade_status !== 'closed');
+  const wins = closed.filter(item => toNumber(item.total_pnl) > 0);
+  const excessWins = closed.filter(item => toNumber(item.excess_return_pct) > 0);
+  const avgReturn = closed.length
+    ? closed.reduce((sum, item) => sum + toNumber(item.total_pnl_pct), 0) / closed.length
+    : 0;
+  const avgExcess = closed.length
+    ? closed.reduce((sum, item) => sum + toNumber(item.excess_return_pct), 0) / closed.length
+    : 0;
+  const totalPnl = rows.reduce((sum, item) => sum + toNumber(item.total_pnl), 0);
+  const best = [...rows].sort((a, b) => toNumber(b.total_pnl_pct) - toNumber(a.total_pnl_pct))[0];
+  const worst = [...rows].sort((a, b) => toNumber(a.total_pnl_pct) - toNumber(b.total_pnl_pct))[0];
+
+  return {
+    param_version_key: versionKey,
+    total_count: rows.length,
+    open_count: open.length,
+    closed_count: closed.length,
+    win_rate: closed.length ? round((wins.length / closed.length) * 100, 2) : 0,
+    excess_win_rate: closed.length ? round((excessWins.length / closed.length) * 100, 2) : 0,
+    avg_return_pct: round(avgReturn, 4),
+    avg_excess_return_pct: round(avgExcess, 4),
+    total_pnl: round(totalPnl, 2),
+    best_symbol: best?.symbol,
+    best_name: best?.name,
+    best_return_pct: best ? round(toNumber(best.total_pnl_pct), 4) : undefined,
+    worst_symbol: worst?.symbol,
+    worst_name: worst?.name,
+    worst_return_pct: worst ? round(toNumber(worst.total_pnl_pct), 4) : undefined,
   };
 }
 
@@ -985,12 +1076,20 @@ export class QuantStrategyParamVersionService {
         .filter((row: any) => row.version_type === 'default' || row.status === 'baseline')
         .map((row: any) => [row.strategy_key, row])
     );
-    const lifecycle = this.buildLifecyclePreview(rows, defaultByStrategy, options.policy);
+    const tradeAttribution = await this.getParamExperimentTradeAttribution();
+    const lifecycle = this.buildLifecyclePreview(
+      rows,
+      defaultByStrategy,
+      options.policy,
+      dashboard.environment_attribution,
+      tradeAttribution
+    );
     if (options.dry_run) {
       return {
         generated_at: new Date().toISOString(),
         dry_run: true,
         applied: 0,
+        trade_attribution: tradeAttribution,
         lifecycle,
       };
     }
@@ -1064,6 +1163,7 @@ export class QuantStrategyParamVersionService {
       dry_run: false,
       applied,
       updated,
+      trade_attribution: tradeAttribution,
       lifecycle,
     };
   }
@@ -1082,16 +1182,102 @@ export class QuantStrategyParamVersionService {
     return record;
   }
 
+  private async getParamExperimentTradeAttribution() {
+    try {
+      const portfolios = await PaperTradingPortfolio.findAll({
+        where: { name: PARAM_EXPERIMENT_PORTFOLIO_NAME },
+        order: [['id', 'DESC']],
+        limit: 20,
+      });
+      const portfolioIds = portfolios.map(item => Number(item.id)).filter(Boolean);
+      if (!portfolioIds.length) {
+        return {
+          generated_at: new Date().toISOString(),
+          portfolio_name: PARAM_EXPERIMENT_PORTFOLIO_NAME,
+          portfolio_ids: [],
+          by_version: [],
+          summary: {
+            portfolio_count: 0,
+            outcome_count: 0,
+            attributed_version_count: 0,
+            conclusion: '参数实验盘尚未产生交易样本，生命周期暂仅依据 A/B 后验收益。',
+          },
+        };
+      }
+
+      const outcomes = (await RecommendationTradeOutcome.findAll({
+        where: { portfolio_id: { [Op.in]: portfolioIds } },
+        order: [
+          ['entry_date', 'DESC'],
+          ['id', 'DESC'],
+        ],
+        limit: 5000,
+        raw: true,
+      })) as any[];
+      const grouped = new Map<string, any[]>();
+      for (const outcome of outcomes) {
+        for (const key of paramVersionKeysFromOutcome(outcome)) {
+          if (!grouped.has(key)) grouped.set(key, []);
+          grouped.get(key)!.push(outcome);
+        }
+      }
+      const byVersion = [...grouped.entries()]
+        .map(([key, rows]) => summarizeParamTradeOutcomeRows(key, rows))
+        .sort(
+          (a, b) =>
+            toNumber(b.closed_count) - toNumber(a.closed_count) ||
+            toNumber(b.avg_excess_return_pct) - toNumber(a.avg_excess_return_pct)
+        );
+      return {
+        generated_at: new Date().toISOString(),
+        portfolio_name: PARAM_EXPERIMENT_PORTFOLIO_NAME,
+        portfolio_ids: portfolioIds,
+        by_version: byVersion,
+        summary: {
+          portfolio_count: portfolioIds.length,
+          outcome_count: outcomes.length,
+          attributed_version_count: byVersion.length,
+          conclusion: byVersion.length
+            ? `参数实验盘已按 ${byVersion.length} 个参数版本沉淀交易收益，可参与生命周期护栏。`
+            : '参数实验盘已有交易但暂未识别参数版本键，新信号会继续补齐归因。',
+        },
+      };
+    } catch (error: any) {
+      return {
+        generated_at: new Date().toISOString(),
+        portfolio_name: PARAM_EXPERIMENT_PORTFOLIO_NAME,
+        portfolio_ids: [],
+        by_version: [],
+        error: error?.message || String(error),
+        summary: {
+          portfolio_count: 0,
+          outcome_count: 0,
+          attributed_version_count: 0,
+          conclusion: '参数实验盘交易归因读取失败，生命周期暂不使用交易护栏。',
+        },
+      };
+    }
+  }
+
   private buildLifecyclePreview(
     rows: any[],
     defaultByStrategy: Map<string, any>,
-    policyInput?: Partial<ParamVersionLifecyclePolicy>
+    policyInput?: Partial<ParamVersionLifecyclePolicy>,
+    environmentAttribution?: any,
+    tradeAttribution?: any
   ) {
     const policy = mergeLifecyclePolicy(policyInput);
     const promotions: any[] = [];
     const degradations: any[] = [];
     const rollbacks: any[] = [];
     const observations: any[] = [];
+    const environmentDiagnosticsByVersion = this.buildEnvironmentLifecycleDiagnostics(
+      environmentAttribution,
+      policy
+    );
+    const tradeDiagnosticsByVersion = new Map(
+      ((tradeAttribution?.by_version || []) as any[]).map(item => [item.param_version_key, item])
+    );
 
     for (const row of rows) {
       const status = String(row.status || '').toLowerCase();
@@ -1108,6 +1294,25 @@ export class QuantStrategyParamVersionService {
       const defaultSummary = defaultByStrategy.get(row.strategy_key);
       const defaultExcess = toNumber(defaultSummary?.avg_excess_return_pct);
       const excessDelta = avgExcess - defaultExcess;
+      const environmentDiagnostics = environmentDiagnosticsByVersion.get(row.version_key) || {
+        positive_bucket_count: 0,
+        negative_bucket_count: 0,
+        qualified_bucket_count: 0,
+        buckets: [],
+      };
+      const tradeDiagnostics = tradeDiagnosticsByVersion.get(row.version_key);
+      const tradeClosedCount = toNumber((tradeDiagnostics as any)?.closed_count);
+      const tradeAvgExcess = toNumber((tradeDiagnostics as any)?.avg_excess_return_pct);
+      const tradeTotalPnl = toNumber((tradeDiagnostics as any)?.total_pnl);
+      const tradeShouldRollback =
+        Boolean(tradeDiagnostics) &&
+        tradeClosedCount >= policy.trade_rollback_min_closed_samples &&
+        tradeAvgExcess <= policy.trade_rollback_avg_excess_return_pct &&
+        tradeTotalPnl <= policy.trade_rollback_total_pnl;
+      const tradeShouldDegrade =
+        Boolean(tradeDiagnostics) &&
+        tradeClosedCount >= policy.trade_degrade_min_closed_samples &&
+        tradeAvgExcess <= policy.trade_degrade_avg_excess_return_pct;
       const compact = {
         version_key: row.version_key,
         strategy_key: row.strategy_key,
@@ -1121,7 +1326,28 @@ export class QuantStrategyParamVersionService {
         rank_score: row.rank_score,
         default_avg_excess_return_pct: defaultSummary?.avg_excess_return_pct,
         excess_delta_vs_default_pct: round(excessDelta, 4),
+        environment_diagnostics: environmentDiagnostics,
+        trade_diagnostics: tradeDiagnostics,
       };
+      const envSatisfied =
+        environmentDiagnostics.positive_bucket_count >= policy.min_positive_environment_buckets &&
+        environmentDiagnostics.negative_bucket_count <= policy.max_negative_environment_buckets;
+      const envShouldDegrade =
+        environmentDiagnostics.qualified_bucket_count > 0 &&
+        environmentDiagnostics.negative_bucket_count > policy.max_negative_environment_buckets;
+
+      if (tradeShouldRollback) {
+        rollbacks.push({
+          ...compact,
+          action: 'rollback',
+          next_status: 'rolled_back',
+          reason: `参数实验盘触发回滚：闭环 ${tradeClosedCount} 笔，交易均超额 ${round(
+            tradeAvgExcess,
+            2
+          )}%，累计 PnL ${round(tradeTotalPnl, 2)}，低于交易护栏。`,
+        });
+        continue;
+      }
 
       const canPromote =
         ['active_candidate', 'observing'].includes(status) &&
@@ -1129,7 +1355,9 @@ export class QuantStrategyParamVersionService {
         avgExcess >= policy.min_avg_excess_return_pct &&
         winRate >= policy.min_win_rate &&
         rankScore >= policy.min_rank_score &&
-        excessDelta >= policy.min_default_excess_delta_pct;
+        excessDelta >= policy.min_default_excess_delta_pct &&
+        envSatisfied &&
+        !tradeShouldDegrade;
       if (canPromote) {
         promotions.push({
           ...compact,
@@ -1138,7 +1366,28 @@ export class QuantStrategyParamVersionService {
           reason: `满足冠军推广：样本 ${completedCount}，平均超额 ${round(
             avgExcess,
             2
-          )}%，胜率 ${round(winRate, 1)}%，较默认参数超额 +${round(excessDelta, 2)}%。`,
+          )}%，胜率 ${round(winRate, 1)}%，较默认参数超额 +${round(
+            excessDelta,
+            2
+          )}%，环境优势桶 ${environmentDiagnostics.positive_bucket_count} 个。`,
+        });
+        continue;
+      }
+
+      if (
+        ['active_candidate', 'observing'].includes(status) &&
+        completedCount >= policy.min_completed_samples &&
+        avgExcess >= policy.min_avg_excess_return_pct &&
+        winRate >= policy.min_win_rate &&
+        rankScore >= policy.min_rank_score &&
+        excessDelta >= policy.min_default_excess_delta_pct &&
+        !envSatisfied
+      ) {
+        observations.push({
+          ...compact,
+          action: 'observe',
+          next_status: row.status,
+          reason: `全局指标达标但环境分桶未达推广护栏：优势桶 ${environmentDiagnostics.positive_bucket_count}/${policy.min_positive_environment_buckets}，弱势桶 ${environmentDiagnostics.negative_bucket_count}/${policy.max_negative_environment_buckets}，继续小仓观察。`,
         });
         continue;
       }
@@ -1166,16 +1415,26 @@ export class QuantStrategyParamVersionService {
         completedCount >= policy.degrade_min_completed_samples &&
         (avgExcess <= policy.degrade_avg_excess_return_pct ||
           winRate <= policy.degrade_win_rate ||
-          recentExcess <= policy.degrade_recent_excess_return_pct);
+          recentExcess <= policy.degrade_recent_excess_return_pct ||
+          (completedCount >= policy.min_completed_samples && envShouldDegrade) ||
+          tradeShouldDegrade);
       if (shouldDegrade) {
+        const degradeReason = tradeShouldDegrade
+          ? `参数实验盘降级：闭环 ${tradeClosedCount} 笔，交易均超额 ${round(
+              tradeAvgExcess,
+              2
+            )}%，暂缓放大。`
+          : envShouldDegrade && completedCount >= policy.min_completed_samples
+            ? `环境分桶降级：优势桶 ${environmentDiagnostics.positive_bucket_count}，弱势桶 ${environmentDiagnostics.negative_bucket_count}，跨行情稳定性不足。`
+            : `降级观察：平均超额 ${round(avgExcess, 2)}%，近期超额 ${round(
+                recentExcess,
+                2
+              )}%，胜率 ${round(winRate, 1)}%，未满足继续放大条件。`;
         degradations.push({
           ...compact,
           action: 'degrade',
           next_status: 'degraded',
-          reason: `降级观察：平均超额 ${round(avgExcess, 2)}%，近期超额 ${round(
-            recentExcess,
-            2
-          )}%，胜率 ${round(winRate, 1)}%，未满足继续放大条件。`,
+          reason: degradeReason,
         });
         continue;
       }
@@ -1197,6 +1456,21 @@ export class QuantStrategyParamVersionService {
 
     return {
       policy,
+      environment_guard: {
+        version_count: environmentDiagnosticsByVersion.size,
+        min_positive_environment_buckets: policy.min_positive_environment_buckets,
+        max_negative_environment_buckets: policy.max_negative_environment_buckets,
+        min_environment_bucket_completed_samples: policy.min_environment_bucket_completed_samples,
+        min_environment_bucket_excess_return_pct: policy.min_environment_bucket_excess_return_pct,
+      },
+      trade_guard: {
+        version_count: tradeDiagnosticsByVersion.size,
+        degrade_min_closed_samples: policy.trade_degrade_min_closed_samples,
+        degrade_avg_excess_return_pct: policy.trade_degrade_avg_excess_return_pct,
+        rollback_min_closed_samples: policy.trade_rollback_min_closed_samples,
+        rollback_avg_excess_return_pct: policy.trade_rollback_avg_excess_return_pct,
+        rollback_total_pnl: policy.trade_rollback_total_pnl,
+      },
       promotions: promotions.sort(sortByImpact),
       degradations: degradations.sort(sortByImpact),
       rollbacks: rollbacks.sort(sortByImpact),
@@ -1216,6 +1490,70 @@ export class QuantStrategyParamVersionService {
                 : '暂无需要推广或回滚的参数版本，继续积累 A/B 样本。',
       },
     };
+  }
+
+  private buildEnvironmentLifecycleDiagnostics(
+    environmentAttribution: any,
+    policy: ParamVersionLifecyclePolicy
+  ) {
+    const diagnostics = new Map<
+      string,
+      {
+        positive_bucket_count: number;
+        negative_bucket_count: number;
+        qualified_bucket_count: number;
+        buckets: any[];
+      }
+    >();
+    const buckets = [
+      ...(((environmentAttribution || {}).by_market_regime || []) as any[]),
+      ...(((environmentAttribution || {}).by_industry_regime || []) as any[]),
+    ];
+    for (const bucket of buckets) {
+      const version = bucket.best_version;
+      const versionKey = String(version?.version_key || '').trim();
+      if (!versionKey) continue;
+      if (!diagnostics.has(versionKey)) {
+        diagnostics.set(versionKey, {
+          positive_bucket_count: 0,
+          negative_bucket_count: 0,
+          qualified_bucket_count: 0,
+          buckets: [],
+        });
+      }
+      const target = diagnostics.get(versionKey)!;
+      const completedCount = toNumber(bucket.completed_count);
+      const avgExcess = toNumber(bucket.avg_excess_return_pct);
+      const isQualifiedBucket = completedCount >= policy.min_environment_bucket_completed_samples;
+      if (isQualifiedBucket) {
+        target.qualified_bucket_count++;
+      }
+      const bucketSummary = {
+        key: bucket.key,
+        label: bucket.label,
+        segment_type: bucket.segment_type,
+        completed_count: completedCount,
+        avg_excess_return_pct: bucket.avg_excess_return_pct,
+        rank_score: bucket.rank_score,
+      };
+      if (isQualifiedBucket && avgExcess >= policy.min_environment_bucket_excess_return_pct) {
+        target.positive_bucket_count++;
+      }
+      if (isQualifiedBucket && avgExcess < policy.min_environment_bucket_excess_return_pct) {
+        target.negative_bucket_count++;
+      }
+      target.buckets.push(bucketSummary);
+    }
+    for (const value of diagnostics.values()) {
+      value.buckets = value.buckets
+        .sort(
+          (a, b) =>
+            toNumber(b.completed_count) - toNumber(a.completed_count) ||
+            toNumber(b.rank_score) - toNumber(a.rank_score)
+        )
+        .slice(0, 8);
+    }
+    return diagnostics;
   }
 
   private versionPriority(version: QuantStrategyParamVersion) {
