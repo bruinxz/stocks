@@ -15,6 +15,7 @@ import { realtimeQuoteService } from '../../data/services/RealtimeQuoteService';
 import {
   AUTONOMOUS_PORTFOLIO_NAME,
   DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
+  PARAM_EXPERIMENT_PORTFOLIO_NAME,
   PAPER_PORTFOLIO_FAMILIES,
 } from '../../services/PaperTradingDashboardService';
 import { recommendationTradeOutcomeService } from '../../services/RecommendationTradeOutcomeService';
@@ -134,6 +135,111 @@ function summarizeOutcomeGroup(key: string, label: string, description: string, 
   };
 }
 
+function normalizeStringArray(value: any): string[] {
+  if (!Array.isArray(value)) return [];
+  return [
+    ...new Set(
+      value.map(item => String(item || '').trim()).filter(item => item && item !== 'unknown')
+    ),
+  ];
+}
+
+function paramVersionKeysFromOutcome(outcome: any): string[] {
+  const metadata = asPlainObject(outcome.metadata);
+  const strategyVariant = asPlainObject(metadata.strategy_variant);
+  const signalMetadata = asPlainObject(metadata.signal_metadata);
+  const signalVariant = asPlainObject(signalMetadata.strategy_variant);
+  const signalFactors = asPlainObject(signalMetadata.factors);
+  const paperTrading = asPlainObject(metadata.paper_trading);
+  const paperVariant = asPlainObject(paperTrading.strategy_variant);
+  const candidates = [
+    ...normalizeStringArray(strategyVariant.param_version_keys),
+    ...normalizeStringArray(signalVariant.param_version_keys),
+    ...normalizeStringArray(signalFactors.param_version_keys),
+    ...normalizeStringArray(paperVariant.param_version_keys),
+    strategyVariant.param_version_key,
+    signalVariant.param_version_key,
+    signalMetadata.param_version_key,
+    signalFactors.param_version_key,
+    paperVariant.param_version_key,
+  ]
+    .map(item => String(item || '').trim())
+    .filter(item => item && item !== 'unknown');
+
+  return [...new Set(candidates)];
+}
+
+function strategyKeysFromOutcomeMetadata(outcome: any): string[] {
+  const metadata = asPlainObject(outcome.metadata);
+  const strategyVariant = asPlainObject(metadata.strategy_variant);
+  const signalMetadata = asPlainObject(metadata.signal_metadata);
+  const signalVariant = asPlainObject(signalMetadata.strategy_variant);
+  const paperTrading = asPlainObject(metadata.paper_trading);
+  const paperVariant = asPlainObject(paperTrading.strategy_variant);
+  return [
+    ...new Set(
+      [
+        metadata.strategy_key,
+        strategyVariant.strategy_key,
+        signalMetadata.strategy_key,
+        signalVariant.strategy_key,
+        paperTrading.strategy_key,
+        paperVariant.strategy_key,
+        ...normalizeStringArray(strategyVariant.strategy_keys),
+        ...normalizeStringArray(signalVariant.strategy_keys),
+        ...normalizeStringArray(paperVariant.strategy_keys),
+      ]
+        .map(item => String(item || '').trim())
+        .filter(Boolean)
+    ),
+  ];
+}
+
+function summarizeParamTradeAttributionRow(versionKey: string, rows: any[]) {
+  const closed = rows.filter(item => item.trade_status === 'closed');
+  const open = rows.filter(item => item.trade_status !== 'closed');
+  const wins = closed.filter(item => toNumber(item.total_pnl) > 0);
+  const excessWins = closed.filter(item => toNumber(item.excess_return_pct) > 0);
+  const avgReturn = closed.length
+    ? closed.reduce((sum, item) => sum + toNumber(item.total_pnl_pct), 0) / closed.length
+    : 0;
+  const avgExcess = closed.length
+    ? closed.reduce((sum, item) => sum + toNumber(item.excess_return_pct), 0) / closed.length
+    : 0;
+  const totalPnl = rows.reduce((sum, item) => sum + toNumber(item.total_pnl), 0);
+  const best = [...rows].sort((a, b) => toNumber(b.total_pnl_pct) - toNumber(a.total_pnl_pct))[0];
+  const worst = [...rows].sort((a, b) => toNumber(a.total_pnl_pct) - toNumber(b.total_pnl_pct))[0];
+  const strategyKeys = [
+    ...new Set(rows.flatMap(item => strategyKeysFromOutcomeMetadata(item)).filter(Boolean)),
+  ];
+  const rankScore = roundNumber(
+    avgExcess * 1.25 +
+      (closed.length ? (wins.length / closed.length) * 100 - 50 : 0) * 0.08 +
+      Math.min(8, closed.length * 1.2),
+    4
+  );
+
+  return {
+    param_version_key: versionKey,
+    strategy_keys: strategyKeys,
+    total_count: rows.length,
+    open_count: open.length,
+    closed_count: closed.length,
+    win_rate: closed.length ? roundNumber((wins.length / closed.length) * 100, 2) : 0,
+    excess_win_rate: closed.length ? roundNumber((excessWins.length / closed.length) * 100, 2) : 0,
+    avg_return_pct: roundNumber(avgReturn, 4),
+    avg_excess_return_pct: roundNumber(avgExcess, 4),
+    total_pnl: roundNumber(totalPnl, 2),
+    rank_score: rankScore,
+    best_symbol: best?.symbol,
+    best_name: best?.name,
+    best_return_pct: best ? roundNumber(best.total_pnl_pct, 4) : undefined,
+    worst_symbol: worst?.symbol,
+    worst_name: worst?.name,
+    worst_return_pct: worst ? roundNumber(worst.total_pnl_pct, 4) : undefined,
+  };
+}
+
 export class QuantPerformanceDashboardService {
   getIndicatorCatalog() {
     const indicatorCatalog = [
@@ -236,6 +342,7 @@ export class QuantPerformanceDashboardService {
       experimentParamSuggestions,
       paramValidation,
       portfolioFamilies,
+      paramTradeAttribution,
     ] = await Promise.all([
       this.getLatestBacktests(),
       this.getSignalSummary(),
@@ -246,6 +353,7 @@ export class QuantPerformanceDashboardService {
       quantStrategyExperimentService.getParamsByStrategySuggestion({ limit: 300 }),
       quantStrategyParamVersionService.getDashboard({ limit: 1200 }),
       this.getPortfolioFamilyComparison(options),
+      this.getParamExperimentTradeAttribution(options),
     ]);
 
     return {
@@ -258,7 +366,10 @@ export class QuantPerformanceDashboardService {
       data_quality_center: dataQuality,
       strategy_experiments: strategyExperiments,
       experiment_param_suggestions: experimentParamSuggestions,
-      param_validation_dashboard: paramValidation,
+      param_validation_dashboard: {
+        ...paramValidation,
+        trade_attribution: paramTradeAttribution,
+      },
       portfolio_family_comparison: portfolioFamilies,
       readiness: this.buildReadiness(signalSummary, latestBacktests, scheduleSummary, dataQuality),
     };
@@ -591,7 +702,9 @@ export class QuantPerformanceDashboardService {
             position_value: roundNumber(positionValue, 2),
             total_pnl: roundNumber(totalValue - initialCapital, 2),
             total_return_pct:
-              initialCapital > 0 ? roundNumber(((totalValue - initialCapital) / initialCapital) * 100, 4) : 0,
+              initialCapital > 0
+                ? roundNumber(((totalValue - initialCapital) / initialCapital) * 100, 4)
+                : 0,
             open_position_count: positions.length,
             trade_count: trades.length,
             outcome_count: outcomes.length,
@@ -627,6 +740,100 @@ export class QuantPerformanceDashboardService {
         error: error?.message || String(error),
         families: [],
         summary: null,
+      };
+    }
+  }
+
+  private async getParamExperimentTradeAttribution(options: {
+    user_id?: number;
+    username?: string;
+  }) {
+    try {
+      const userWhere = options.user_id ? { user_id: options.user_id } : {};
+      const portfolios = await PaperTradingPortfolio.findAll({
+        where: {
+          name: PARAM_EXPERIMENT_PORTFOLIO_NAME,
+          ...userWhere,
+        },
+        order: [['id', 'DESC']],
+        limit: 5,
+      });
+      const portfolioIds = portfolios.map(item => Number(item.id)).filter(Boolean);
+      if (!portfolioIds.length) {
+        return {
+          generated_at: new Date().toISOString(),
+          portfolio_name: PARAM_EXPERIMENT_PORTFOLIO_NAME,
+          portfolio_ids: [],
+          rows: [],
+          summary: {
+            portfolio_count: 0,
+            attributed_version_count: 0,
+            outcome_count: 0,
+            closed_count: 0,
+            conclusion: '参数实验盘尚未建仓，下一次量化扫描会用小仓位承接候选参数验证。',
+          },
+        };
+      }
+
+      const outcomes = (await RecommendationTradeOutcome.findAll({
+        where: { portfolio_id: { [Op.in]: portfolioIds } },
+        order: [
+          ['entry_date', 'DESC'],
+          ['id', 'DESC'],
+        ],
+        limit: 3000,
+        raw: true,
+      })) as any[];
+      const grouped = new Map<string, any[]>();
+      for (const outcome of outcomes) {
+        const keys = paramVersionKeysFromOutcome(outcome);
+        for (const key of keys.length ? keys : ['unknown']) {
+          if (!grouped.has(key)) grouped.set(key, []);
+          grouped.get(key)!.push(outcome);
+        }
+      }
+      const rows = [...grouped.entries()]
+        .map(([key, items]) => summarizeParamTradeAttributionRow(key, items))
+        .sort((a, b) => {
+          if (b.closed_count !== a.closed_count) return b.closed_count - a.closed_count;
+          return toNumber(b.rank_score) - toNumber(a.rank_score);
+        });
+      const attributedRows = rows.filter(item => item.param_version_key !== 'unknown');
+      const champion =
+        attributedRows.find(item => item.closed_count > 0) || attributedRows[0] || null;
+      const closedCount = outcomes.filter(item => item.trade_status === 'closed').length;
+
+      return {
+        generated_at: new Date().toISOString(),
+        portfolio_name: PARAM_EXPERIMENT_PORTFOLIO_NAME,
+        portfolio_ids: portfolioIds,
+        rows,
+        summary: {
+          portfolio_count: portfolioIds.length,
+          attributed_version_count: attributedRows.length,
+          outcome_count: outcomes.length,
+          closed_count: closedCount,
+          champion,
+          conclusion: champion
+            ? `参数实验盘当前领先版本为 ${champion.param_version_key}，交易均超额 ${champion.avg_excess_return_pct}%（闭环 ${champion.closed_count} 笔）。`
+            : outcomes.length
+              ? '参数实验盘已有交易，但暂未识别到参数版本键；后续新信号会自动补齐归因。'
+              : '参数实验盘已存在，等待候选参数小仓交易沉淀收益。',
+        },
+      };
+    } catch (error: any) {
+      return {
+        error: error?.message || String(error),
+        portfolio_name: PARAM_EXPERIMENT_PORTFOLIO_NAME,
+        portfolio_ids: [],
+        rows: [],
+        summary: {
+          portfolio_count: 0,
+          attributed_version_count: 0,
+          outcome_count: 0,
+          closed_count: 0,
+          conclusion: '参数实验盘交易归因读取失败，请检查模拟盘收益闭环表。',
+        },
       };
     }
   }

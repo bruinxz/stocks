@@ -117,6 +117,50 @@ type StrategyExperiment = {
   execution_diagnostics?: Record<string, any>;
 };
 
+type ParamEnvironmentSegment = {
+  key: string;
+  label: string;
+  segment_type?: string;
+  total_count?: number;
+  completed_count?: number;
+  pending_count?: number;
+  avg_return_pct?: number;
+  avg_excess_return_pct?: number;
+  win_rate?: number;
+  rank_score?: number;
+  best_version?: {
+    version_key?: string;
+    strategy_key?: string;
+    strategy_name?: string;
+    avg_excess_return_pct?: number;
+    completed_count?: number;
+    rank_score?: number;
+  } | null;
+  best_symbol?: string;
+  best_name?: string;
+  best_return_pct?: number;
+};
+
+type ParamTradeAttributionRow = {
+  param_version_key: string;
+  strategy_keys?: string[];
+  total_count?: number;
+  open_count?: number;
+  closed_count?: number;
+  win_rate?: number;
+  excess_win_rate?: number;
+  avg_return_pct?: number;
+  avg_excess_return_pct?: number;
+  total_pnl?: number;
+  rank_score?: number;
+  best_symbol?: string;
+  best_name?: string;
+  best_return_pct?: number;
+  worst_symbol?: string;
+  worst_name?: string;
+  worst_return_pct?: number;
+};
+
 type ScheduleTask = {
   id: number;
   name: string;
@@ -260,6 +304,35 @@ type DashboardData = {
       rollbacks?: any[];
       observations?: any[];
     };
+    environment_attribution?: {
+      summary?: {
+        market_regime_count?: number;
+        industry_regime_count?: number;
+        industry_count?: number;
+        completed_count?: number;
+        conclusion?: string;
+        best_market_regime?: ParamEnvironmentSegment | null;
+        weakest_market_regime?: ParamEnvironmentSegment | null;
+        best_industry_regime?: ParamEnvironmentSegment | null;
+      };
+      by_market_regime?: ParamEnvironmentSegment[];
+      by_industry_regime?: ParamEnvironmentSegment[];
+      by_industry?: ParamEnvironmentSegment[];
+    };
+    trade_attribution?: {
+      portfolio_name?: string;
+      portfolio_ids?: number[];
+      rows?: ParamTradeAttributionRow[];
+      summary?: {
+        portfolio_count?: number;
+        attributed_version_count?: number;
+        outcome_count?: number;
+        closed_count?: number;
+        champion?: ParamTradeAttributionRow | null;
+        conclusion?: string;
+      };
+      error?: string;
+    };
     summary_by_version?: Array<{
       version_key: string;
       strategy_key: string;
@@ -347,6 +420,8 @@ const QuantPerformanceDashboard: React.FC = () => {
   const strategyExperiments = dashboard?.strategy_experiments;
   const experimentParamSuggestions = dashboard?.experiment_param_suggestions;
   const paramValidation = dashboard?.param_validation_dashboard;
+  const environmentAttribution = paramValidation?.environment_attribution;
+  const paramTradeAttribution = paramValidation?.trade_attribution;
   const portfolioFamilyComparison = dashboard?.portfolio_family_comparison;
   const quotePersistence = dataQuality?.quote_persistence;
   const openTask = useMemo(
@@ -372,6 +447,9 @@ const QuantPerformanceDashboard: React.FC = () => {
   const pureQuant = families.find(item => item.key === 'pure_quant');
   const agentFusion = families.find(item => item.key === 'agent_fusion');
   const portfolioFamilies = portfolioFamilyComparison?.families || [];
+  const topMarketSegments = environmentAttribution?.by_market_regime || [];
+  const topIndustrySegments = environmentAttribution?.by_industry_regime || [];
+  const paramTradeRows = paramTradeAttribution?.rows || [];
 
   const backtestColumns: TableColumnsType<BacktestItem> = [
     {
@@ -971,6 +1049,92 @@ const QuantPerformanceDashboard: React.FC = () => {
             <Empty description="暂无参数 A/B 验证样本，下一次量化扫描后会自动生成" />
           )}
         </div>
+        <Row gutter={[12, 12]} className="quant-param-attribution-grid">
+          <Col xs={24} xl={12}>
+            <div className="quant-attribution-panel">
+              <div className="quant-mini-heading">
+                <span>ENVIRONMENT FIT</span>
+                <strong>市场/行业分桶适配</strong>
+              </div>
+              <p>
+                {environmentAttribution?.summary?.conclusion ||
+                  '按市场强弱、行业温度拆开看参数，不让单一行情里的冠军被全局放大。'}
+              </p>
+              <div className="quant-segment-list">
+                {topMarketSegments.slice(0, 3).map(segment => (
+                  <div className="quant-segment-row" key={`market-${segment.key}`}>
+                    <div>
+                      <strong>{segment.label || segment.key}</strong>
+                      <Text type="secondary">
+                        样本 {segment.completed_count || 0} · 胜率 {formatPct(segment.win_rate)}
+                      </Text>
+                    </div>
+                    <div>
+                      <Text strong>{formatPct(segment.avg_excess_return_pct)}</Text>
+                      <Text type="secondary">
+                        {segment.best_version?.strategy_name ||
+                          segment.best_version?.strategy_key ||
+                          '等待版本'}
+                      </Text>
+                    </div>
+                  </div>
+                ))}
+                {topIndustrySegments.slice(0, 2).map(segment => (
+                  <div className="quant-segment-row industry" key={`industry-${segment.key}`}>
+                    <div>
+                      <strong>{segment.label || segment.key}</strong>
+                      <Text type="secondary">行业温度 · 样本 {segment.completed_count || 0}</Text>
+                    </div>
+                    <div>
+                      <Text strong>{formatPct(segment.avg_excess_return_pct)}</Text>
+                      <Text type="secondary">A/B {Number(segment.rank_score || 0).toFixed(1)}</Text>
+                    </div>
+                  </div>
+                ))}
+                {!topMarketSegments.length && !topIndustrySegments.length && (
+                  <Empty description="暂无环境分桶样本" />
+                )}
+              </div>
+            </div>
+          </Col>
+          <Col xs={24} xl={12}>
+            <div className="quant-attribution-panel trade">
+              <div className="quant-mini-heading">
+                <span>PARAM PAPER ATTRIBUTION</span>
+                <strong>参数实验盘交易归因</strong>
+              </div>
+              <p>
+                {paramTradeAttribution?.summary?.conclusion ||
+                  '候选参数会用更小仓位进入独立模拟盘，并按 param_version_key 回看真实交易收益。'}
+              </p>
+              <div className="quant-param-trade-list">
+                {paramTradeRows.slice(0, 4).map(row => (
+                  <div className="quant-param-trade-row" key={row.param_version_key}>
+                    <div>
+                      <Space wrap size={6}>
+                        <strong>{row.param_version_key}</strong>
+                        <Tag>闭环 {row.closed_count || 0}</Tag>
+                        <Tag color={Number(row.avg_excess_return_pct || 0) >= 0 ? 'red' : 'green'}>
+                          超额 {formatPct(row.avg_excess_return_pct)}
+                        </Tag>
+                      </Space>
+                      <Text type="secondary">
+                        {row.strategy_keys?.slice(0, 3).join(' / ') || '策略待识别'} · 最佳{' '}
+                        {row.best_name || row.best_symbol || '--'}{' '}
+                        {row.best_return_pct !== undefined ? formatPct(row.best_return_pct) : ''}
+                      </Text>
+                    </div>
+                    <div>
+                      <Text strong>{formatMoney(row.total_pnl)}</Text>
+                      <Text type="secondary">胜率 {formatPct(row.win_rate)}</Text>
+                    </div>
+                  </div>
+                ))}
+                {!paramTradeRows.length && <Empty description="暂无参数实验盘交易归因" />}
+              </div>
+            </div>
+          </Col>
+        </Row>
         <Alert
           className="quant-inline-note"
           type="info"

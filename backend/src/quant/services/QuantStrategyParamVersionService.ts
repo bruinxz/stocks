@@ -115,7 +115,11 @@ function buildDefaultVersionKey(strategy_key: string) {
   return `qparam_${strategy_key}_default`;
 }
 
-function buildExperimentVersionKey(strategy_key: string, sourceKey: string | undefined, params: any) {
+function buildExperimentVersionKey(
+  strategy_key: string,
+  sourceKey: string | undefined,
+  params: any
+) {
   const suffix = sourceKey ? sourceKey.replace(/^qexp_/, '') : shortHash(params);
   return `qparam_${strategy_key}_exp_${suffix}`.slice(0, 120);
 }
@@ -153,8 +157,7 @@ function summarizeValidationRows(rows: any[], versionByKey: Map<string, any>) {
   const winRate = completed.length ? (wins.length / completed.length) * 100 : 0;
   const excessWinRate = completed.length ? (excessWins.length / completed.length) * 100 : 0;
   const avgBenchmark = completed.length
-    ? completed.reduce((sum, row) => sum + toNumber(row.benchmark_return_pct), 0) /
-      completed.length
+    ? completed.reduce((sum, row) => sum + toNumber(row.benchmark_return_pct), 0) / completed.length
     : 0;
   const version = versionByKey.get(rows[0]?.version_key);
   const sampleConfidence = Math.min(1, completed.length / 20);
@@ -232,6 +235,215 @@ function summarizeValidationRows(rows: any[], versionByKey: Map<string, any>) {
     worst_symbol: worst?.symbol,
     worst_name: worst?.name,
     worst_return_pct: worst ? round(toNumber(worst.return_pct), 4) : undefined,
+  };
+}
+
+function marketRegimeLabel(key: string): string {
+  const labels: Record<string, string> = {
+    bull: '市场强势',
+    bear: '市场弱势',
+    range: '震荡市',
+    rebound: '反弹市',
+    stress: '压力市',
+    unknown: '环境未知',
+  };
+  return labels[key] || key || '环境未知';
+}
+
+function industryRegimeLabel(key: string): string {
+  const labels: Record<string, string> = {
+    hot: '行业强势',
+    warm: '行业中性',
+    cold: '行业弱势',
+    unknown: '行业未知',
+  };
+  return labels[key] || key || '行业未知';
+}
+
+function normalizeSegmentKey(value: any, fallback = 'unknown'): string {
+  const normalized = String(value || '').trim();
+  return normalized || fallback;
+}
+
+function resolveValidationEnvironment(row: any) {
+  const metadata = asPlainObject(row.metadata);
+  const marketEnvironment = asPlainObject(metadata.market_environment);
+  const industryEnvironment = asPlainObject(marketEnvironment.industry);
+  const market_regime = normalizeSegmentKey(
+    metadata.market_regime || marketEnvironment.market_regime
+  );
+  const industry_regime = normalizeSegmentKey(
+    metadata.industry_regime || industryEnvironment.regime
+  );
+  const industry = normalizeSegmentKey(
+    metadata.industry || metadata.industry_name || industryEnvironment.name,
+    'unknown_industry'
+  );
+
+  return {
+    market_regime,
+    market_regime_label:
+      metadata.market_regime_label ||
+      marketEnvironment.market_regime_label ||
+      marketEnvironment.label ||
+      marketRegimeLabel(market_regime),
+    industry_regime,
+    industry_regime_label:
+      metadata.industry_regime_label ||
+      industryEnvironment.label ||
+      industryRegimeLabel(industry_regime),
+    industry,
+    industry_label: industry === 'unknown_industry' ? '行业未知' : industry,
+  };
+}
+
+function compactVersionSummary(item: any) {
+  if (!item) return null;
+  return {
+    version_key: item.version_key,
+    strategy_key: item.strategy_key,
+    strategy_name: item.strategy_name,
+    version_type: item.version_type,
+    status: item.status,
+    completed_count: item.completed_count,
+    avg_return_pct: item.avg_return_pct,
+    avg_excess_return_pct: item.avg_excess_return_pct,
+    recent_avg_excess_return_pct: item.recent_avg_excess_return_pct,
+    win_rate: item.win_rate,
+    rank_score: item.rank_score,
+  };
+}
+
+function buildSegmentAttributionRows(
+  rows: any[],
+  versionByKey: Map<string, any>,
+  segmentType: 'market_regime' | 'industry_regime' | 'industry'
+) {
+  const grouped = new Map<string, { label: string; rows: any[] }>();
+  for (const row of rows) {
+    const environment = resolveValidationEnvironment(row);
+    const key = environment[segmentType];
+    const label =
+      segmentType === 'market_regime'
+        ? environment.market_regime_label
+        : segmentType === 'industry_regime'
+          ? environment.industry_regime_label
+          : environment.industry_label;
+    if (!grouped.has(key)) grouped.set(key, { label, rows: [] });
+    grouped.get(key)!.rows.push(row);
+  }
+
+  return [...grouped.entries()]
+    .map(([key, value]) => {
+      const completed = value.rows.filter(row => row.status === 'completed');
+      const pending = value.rows.filter(row => row.status === 'pending');
+      const noData = value.rows.filter(row => row.status === 'no_data');
+      const wins = completed.filter(row => toNumber(row.return_pct) > 0);
+      const excessWins = completed.filter(row => toNumber(row.excess_return_pct) > 0);
+      const avgReturn = completed.length
+        ? completed.reduce((sum, row) => sum + toNumber(row.return_pct), 0) / completed.length
+        : 0;
+      const avgBenchmark = completed.length
+        ? completed.reduce((sum, row) => sum + toNumber(row.benchmark_return_pct), 0) /
+          completed.length
+        : 0;
+      const avgExcess = completed.length
+        ? completed.reduce((sum, row) => sum + toNumber(row.excess_return_pct), 0) /
+          completed.length
+        : 0;
+      const winRate = completed.length ? (wins.length / completed.length) * 100 : 0;
+      const excessWinRate = completed.length ? (excessWins.length / completed.length) * 100 : 0;
+      const sampleConfidence = Math.min(1, completed.length / 24);
+      const rankScore = round(
+        avgExcess * 1.3 + (winRate - 50) * 0.07 + sampleConfidence * 6 - noData.length * 0.08,
+        4
+      );
+      const versionGroups = new Map<string, any[]>();
+      for (const row of value.rows) {
+        if (!versionGroups.has(row.version_key)) versionGroups.set(row.version_key, []);
+        versionGroups.get(row.version_key)!.push(row);
+      }
+      const versionSummaries = [...versionGroups.values()]
+        .map(groupRows => summarizeValidationRows(groupRows, versionByKey))
+        .sort((a, b) => toNumber(b.rank_score) - toNumber(a.rank_score));
+      const bestVersion =
+        versionSummaries.find(item => toNumber(item.completed_count) > 0) || versionSummaries[0];
+      const weakestVersion = [...versionSummaries]
+        .filter(item => toNumber(item.completed_count) > 0)
+        .sort((a, b) => toNumber(a.avg_excess_return_pct) - toNumber(b.avg_excess_return_pct))[0];
+      const bestSample = [...completed].sort(
+        (a, b) => toNumber(b.return_pct) - toNumber(a.return_pct)
+      )[0];
+      const worstSample = [...completed].sort(
+        (a, b) => toNumber(a.return_pct) - toNumber(b.return_pct)
+      )[0];
+
+      return {
+        key,
+        label: value.label,
+        segment_type: segmentType,
+        total_count: value.rows.length,
+        completed_count: completed.length,
+        pending_count: pending.length,
+        no_data_count: noData.length,
+        avg_return_pct: round(avgReturn, 4),
+        avg_benchmark_return_pct: round(avgBenchmark, 4),
+        avg_excess_return_pct: round(avgExcess, 4),
+        win_rate: round(winRate, 2),
+        excess_win_rate: round(excessWinRate, 2),
+        rank_score: rankScore,
+        best_version: compactVersionSummary(bestVersion),
+        weakest_version: compactVersionSummary(weakestVersion),
+        top_versions: versionSummaries.slice(0, 3).map(compactVersionSummary).filter(Boolean),
+        best_symbol: bestSample?.symbol,
+        best_name: bestSample?.name,
+        best_return_pct: bestSample ? round(toNumber(bestSample.return_pct), 4) : undefined,
+        worst_symbol: worstSample?.symbol,
+        worst_name: worstSample?.name,
+        worst_return_pct: worstSample ? round(toNumber(worstSample.return_pct), 4) : undefined,
+      };
+    })
+    .sort((a, b) => {
+      if (b.completed_count !== a.completed_count) return b.completed_count - a.completed_count;
+      return toNumber(b.rank_score) - toNumber(a.rank_score);
+    });
+}
+
+function buildEnvironmentAttribution(rows: any[], versionByKey: Map<string, any>) {
+  const byMarketRegime = buildSegmentAttributionRows(rows, versionByKey, 'market_regime');
+  const byIndustryRegime = buildSegmentAttributionRows(rows, versionByKey, 'industry_regime');
+  const byIndustry = buildSegmentAttributionRows(rows, versionByKey, 'industry');
+  const bestMarket =
+    [...byMarketRegime]
+      .filter(item => item.completed_count > 0)
+      .sort((a, b) => toNumber(b.rank_score) - toNumber(a.rank_score))[0] || null;
+  const weakestMarket =
+    [...byMarketRegime]
+      .filter(item => item.completed_count > 0)
+      .sort((a, b) => toNumber(a.avg_excess_return_pct) - toNumber(b.avg_excess_return_pct))[0] ||
+    null;
+  const bestIndustryRegime =
+    [...byIndustryRegime]
+      .filter(item => item.completed_count > 0)
+      .sort((a, b) => toNumber(b.rank_score) - toNumber(a.rank_score))[0] || null;
+  const completedCount = rows.filter(item => item.status === 'completed').length;
+
+  return {
+    summary: {
+      market_regime_count: byMarketRegime.length,
+      industry_regime_count: byIndustryRegime.length,
+      industry_count: byIndustry.length,
+      completed_count: completedCount,
+      best_market_regime: bestMarket,
+      weakest_market_regime: weakestMarket,
+      best_industry_regime: bestIndustryRegime,
+      conclusion: bestMarket
+        ? `参数版本在「${bestMarket.label}」环境中表现最好，平均超额 ${bestMarket.avg_excess_return_pct}%（样本 ${bestMarket.completed_count}）。`
+        : '参数环境分桶已就绪，等待验证样本完成后识别适合放大的市场/行业环境。',
+    },
+    by_market_regime: byMarketRegime,
+    by_industry_regime: byIndustryRegime,
+    by_industry: byIndustry.slice(0, 20),
   };
 }
 
@@ -436,6 +648,8 @@ export class QuantStrategyParamVersionService {
 
     for (const signal of signals) {
       const raw = asPlainObject(signal.raw_factors);
+      const marketEnvironment = asPlainObject(raw.market_environment);
+      const industryEnvironment = asPlainObject(marketEnvironment.industry);
       const inferredVersion =
         raw.param_version_key ||
         latestVersionByStrategy.get(signal.strategy_key)?.version_key ||
@@ -458,6 +672,26 @@ export class QuantStrategyParamVersionService {
             quant_signal: signal.signal,
             param_version_type: raw.param_version_type,
             param_version_status: raw.param_version_status,
+            param_version_key: inferredVersion,
+            param_version_ab_group: raw.param_version_ab_group,
+            param_version_source_experiment_key: raw.param_version_source_experiment_key,
+            price_source: raw.price_source,
+            latest_quote_time: raw.latest_quote_time,
+            market_environment: marketEnvironment,
+            market_regime: raw.market_regime || marketEnvironment.market_regime,
+            market_regime_label:
+              marketEnvironment.market_regime_label ||
+              marketEnvironment.label ||
+              marketRegimeLabel(
+                String(raw.market_regime || marketEnvironment.market_regime || 'unknown')
+              ),
+            industry: raw.industry || industryEnvironment.name,
+            industry_regime: raw.industry_regime || industryEnvironment.regime,
+            industry_regime_label:
+              industryEnvironment.label ||
+              industryRegimeLabel(
+                String(raw.industry_regime || industryEnvironment.regime || 'unknown')
+              ),
           },
         };
         const [row, isCreated] = await QuantStrategyParamValidation.findOrCreate({
@@ -690,6 +924,7 @@ export class QuantStrategyParamVersionService {
         .map(item => [item.strategy_key, item])
     );
     const lifecyclePreview = this.buildLifecyclePreview(summaryByVersion, defaultByStrategy);
+    const environmentAttribution = buildEnvironmentAttribution(plainValidations, versionByKey);
     const champion =
       lifecyclePreview.promotions[0] ||
       summaryByVersion.find(item => item.status === 'champion' && item.completed_count > 0) ||
@@ -712,6 +947,7 @@ export class QuantStrategyParamVersionService {
       summary_by_strategy: summaryByStrategy,
       champion,
       lifecycle: lifecyclePreview,
+      environment_attribution: environmentAttribution,
       summary: {
         version_count: plainVersions.length,
         active_candidate_count: activeCandidateCount,
@@ -724,9 +960,7 @@ export class QuantStrategyParamVersionService {
         conclusion: champion
           ? `当前参数 A/B 冠军为 ${champion.strategy_name || champion.strategy_key} / ${
               champion.version_key
-            }，平均超额 ${champion.avg_excess_return_pct}%（样本 ${
-              champion.completed_count
-            }）。`
+            }，平均超额 ${champion.avg_excess_return_pct}%（样本 ${champion.completed_count}）。`
           : pendingCount > 0
             ? '参数版本已开始留痕，等待 1/3/5/10 日收益样本完成。'
             : '参数版本验证尚未产生样本；下一次量化扫描后会自动创建待验证记录。',
