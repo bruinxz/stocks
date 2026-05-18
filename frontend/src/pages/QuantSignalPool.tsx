@@ -32,7 +32,14 @@ import api from '../services/api';
 
 const { Text } = Typography;
 
-type Strategy = { strategy_key: string; name: string };
+type Strategy = { strategy_key: string; name: string; enabled?: boolean };
+const DEFAULT_STRATEGY_KEYS = [
+  'multi_factor_ranking',
+  'relative_strength_momentum',
+  'volume_price_confirmation',
+  'low_volatility_quality',
+];
+
 type QuantSignal = {
   id: number;
   trade_date: string;
@@ -187,12 +194,7 @@ const QuantSignalPool: React.FC = () => {
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [signals, setSignals] = useState<QuantSignal[]>([]);
   const [tradeDate, setTradeDate] = useState(dayjs());
-  const [strategyKeys, setStrategyKeys] = useState<string[]>([
-    'multi_factor_ranking',
-    'relative_strength_momentum',
-    'volume_price_confirmation',
-    'low_volatility_quality',
-  ]);
+  const [strategyKeys, setStrategyKeys] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [pipelineRunning, setPipelineRunning] = useState(false);
@@ -203,7 +205,18 @@ const QuantSignalPool: React.FC = () => {
 
   const fetchStrategies = async () => {
     const response = await api.get('/quant/strategies');
-    if (response.data.success) setStrategies(response.data.data || []);
+    if (response.data.success) {
+      const strategyList = response.data.data || [];
+      setStrategies(strategyList);
+      setStrategyKeys(current => {
+        if (current.length > 0) return current;
+        const enabledKeys = strategyList
+          .filter((item: any) => item.enabled !== false)
+          .map((item: any) => item.strategy_key);
+        const preferred = DEFAULT_STRATEGY_KEYS.filter(key => enabledKeys.includes(key));
+        return preferred.length > 0 ? preferred : enabledKeys;
+      });
+    }
   };
 
   const fetchSignals = async () => {
@@ -432,7 +445,9 @@ const QuantSignalPool: React.FC = () => {
       title: '动作',
       dataIndex: 'signal',
       width: 88,
-      render: (value: string) => <Tag color={signalColor[value]}>{signalLabel[value] || value}</Tag>,
+      render: (value: string) => (
+        <Tag color={signalColor[value]}>{signalLabel[value] || value}</Tag>
+      ),
     },
     {
       title: '共识',
@@ -491,7 +506,8 @@ const QuantSignalPool: React.FC = () => {
       width: 126,
       render: (_: any, record: FusionRankingItem) => (
         <Text type="secondary">
-          {Number(record.quant_score || 0).toFixed(0)} / {Number(record.agent_score || 0).toFixed(0)}
+          {Number(record.quant_score || 0).toFixed(0)} /{' '}
+          {Number(record.agent_score || 0).toFixed(0)}
         </Text>
       ),
     },
@@ -546,7 +562,11 @@ const QuantSignalPool: React.FC = () => {
                 {quotePersistence?.persisted
                   ? `${quotePersistence.latest_trade_date_symbol_count || 0} 只 / ${compactDateTime(
                       quotePersistence.latest_quote_time
-                    )}${quotePersistence.is_fresh ? '' : ` · 已过期${quotePersistence.age_minutes || 0}分钟`}`
+                    )}${
+                      quotePersistence.is_fresh
+                        ? ''
+                        : ` · 已过期${quotePersistence.age_minutes || 0}分钟`
+                    }`
                   : '等待行情写入'}
               </span>
             </Tooltip>
@@ -706,7 +726,11 @@ const QuantSignalPool: React.FC = () => {
           <Card
             className="modern-card quant-ranking-card"
             title="量化排行榜"
-            extra={<Text type="secondary">{rankingDashboard?.trade_date || tradeDate.format('YYYY-MM-DD')}</Text>}
+            extra={
+              <Text type="secondary">
+                {rankingDashboard?.trade_date || tradeDate.format('YYYY-MM-DD')}
+              </Text>
+            }
             loading={loading}
           >
             <Table

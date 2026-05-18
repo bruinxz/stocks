@@ -31,6 +31,8 @@ import {
 import dayjs from 'dayjs';
 import { useNavigate } from 'react-router-dom';
 import api, { getAutonomousTradingDashboard } from '../services/api';
+import { taskService } from '../services/taskService';
+import type { AutomationHealth } from '../services/taskService';
 
 const { Text, Paragraph } = Typography;
 
@@ -112,6 +114,8 @@ const TodayCommandCenter: React.FC = () => {
   const [rankingDashboard, setRankingDashboard] = useState<any>(null);
   const [recommendations, setRecommendations] = useState<any[]>([]);
   const [riskProfile, setRiskProfile] = useState<any>(null);
+  const [automationHealth, setAutomationHealth] = useState<AutomationHealth | null>(null);
+  const [openWatchdog, setOpenWatchdog] = useState<any>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const fetchCommandData = async (silent = false) => {
@@ -132,18 +136,22 @@ const TodayCommandCenter: React.FC = () => {
           },
         }),
         api.get('/paper-trading/risk-profile'),
+        taskService.getAutomationHealth(),
+        api.get('/quant/open-watchdog', { params: { trade_date: tradeDate } }),
       ]);
 
       const nextErrors: Record<string, string> = {};
       const pick = (index: number, key: string) => {
         const result = results[index];
-        if (result.status === 'fulfilled' && result.value.data?.success) {
-          return result.value.data.data;
+        if (result.status === 'fulfilled') {
+          const value: any = result.value;
+          if (value?.data?.success) return value.data.data;
+          if (value && !value.data && key === 'automation') return value;
         }
         nextErrors[key] =
           result.status === 'rejected'
             ? result.reason?.message || '加载失败'
-            : result.value.data?.message || '加载失败';
+            : (result.value as any)?.data?.message || '加载失败';
         return null;
       };
 
@@ -151,6 +159,8 @@ const TodayCommandCenter: React.FC = () => {
       setRankingDashboard(pick(1, 'quant'));
       setRecommendations(pick(2, 'recommendations')?.recommendations || []);
       setRiskProfile(pick(3, 'risk'));
+      setAutomationHealth(pick(4, 'automation'));
+      setOpenWatchdog(pick(5, 'openWatchdog'));
       setErrors(nextErrors);
       if (!silent) message.success('今日作战台已刷新');
     } catch (error: any) {
@@ -230,6 +240,9 @@ const TodayCommandCenter: React.FC = () => {
     ) || [];
   const summary = dashboard?.summary || {};
   const riskStatus = riskProfile?.status || {};
+  const healthStatus = automationHealth?.status || 'warning';
+  const quotePersistence =
+    rankingDashboard?.summary?.quote_persistence || openWatchdog?.checks?.quote_persistence;
   const cashPct = Number(summary.cash_pct ?? riskProfile?.cash?.cash_pct ?? 0);
   const exposurePct = Number(summary.exposure_pct ?? riskProfile?.exposure?.exposure_pct ?? 0);
   const conclusionTone =
@@ -241,6 +254,55 @@ const TodayCommandCenter: React.FC = () => {
       : positions.length > 0
       ? `暂无强买入，持仓 ${positions.length} 只优先做风控复查`
       : `暂无持仓，等待今日量化/Agent 信号确认`;
+  const readinessItems = [
+    {
+      key: 'data',
+      label: '行情数据新鲜',
+      ok:
+        Boolean(quotePersistence?.persisted) &&
+        (quotePersistence?.is_fresh !== false || Number(quotePersistence?.age_minutes || 0) <= 90),
+      detail: quotePersistence?.persisted
+        ? `最新 ${quotePersistence.latest_quote_time || quotePersistence.latest_trade_date || '--'}`
+        : '等待实时行情落盘',
+    },
+    {
+      key: 'tasks',
+      label: '自动任务链路',
+      ok: healthStatus === 'healthy',
+      warn: healthStatus === 'warning',
+      detail: `${automationHealth?.summary?.active_tasks || 0}/${
+        automationHealth?.summary?.total_tasks || 0
+      } 个任务启用`,
+    },
+    {
+      key: 'signals',
+      label: '推荐信号生成',
+      ok: candidates.length > 0 || Number(openWatchdog?.checks?.quant_signal_count || 0) > 0,
+      detail: `量化 ${Number(
+        openWatchdog?.checks?.quant_signal_count || candidates.length || 0
+      )} 条 · 融合 ${rankingDashboard?.fusion_rankings?.length || 0} 条`,
+    },
+    {
+      key: 'risk',
+      label: '风控允许新增',
+      ok: cashPct >= 10 && exposurePct <= 85 && healthStatus !== 'critical',
+      warn: cashPct >= 6 && exposurePct <= 92,
+      detail: `现金 ${cashPct.toFixed(1)}% · 仓位 ${exposurePct.toFixed(1)}%`,
+    },
+    {
+      key: 'feishu',
+      label: '飞书/复盘闭环',
+      ok:
+        (automationHealth?.chains || []).some(
+          chain => chain.key === 'trade_outcome_loop' && chain.status === 'healthy'
+        ) || healthStatus === 'healthy',
+      warn: healthStatus === 'warning',
+      detail:
+        automationHealth?.summary?.latest_loop_run_at ||
+        openWatchdog?.latest_log?.completed_at ||
+        '等待最近任务日志',
+    },
+  ];
 
   const candidateColumns = [
     {
@@ -470,6 +532,55 @@ const TodayCommandCenter: React.FC = () => {
           </Card>
         </Col>
       </Row>
+
+      <Card
+        className="modern-card today-readiness-card"
+        variant="borderless"
+        title={
+          <Space>
+            <SafetyCertificateOutlined />
+            <span>实盘前检查清单</span>
+          </Space>
+        }
+        extra={
+          <Button type="link" onClick={() => navigate('/tasks')}>
+            查看调度任务 <ArrowRightOutlined />
+          </Button>
+        }
+      >
+        <div className="today-readiness-grid">
+          {readinessItems.map(item => {
+            const tone = item.ok ? 'ok' : item.warn ? 'warn' : 'danger';
+            return (
+              <div className={`today-readiness-item ${tone}`} key={item.key}>
+                <CheckCircleOutlined />
+                <div>
+                  <strong>{item.label}</strong>
+                  <span>{item.detail}</span>
+                </div>
+                <Tag color={item.ok ? 'green' : item.warn ? 'gold' : 'red'}>
+                  {item.ok ? '通过' : item.warn ? '注意' : '异常'}
+                </Tag>
+              </div>
+            );
+          })}
+        </div>
+        {openWatchdog?.conclusion && (
+          <Alert
+            showIcon
+            type={
+              openWatchdog.status === 'critical'
+                ? 'error'
+                : openWatchdog.status === 'warning'
+                ? 'warning'
+                : 'success'
+            }
+            style={{ marginTop: 14, borderRadius: 14 }}
+            message="开盘链路看门狗"
+            description={openWatchdog.conclusion}
+          />
+        )}
+      </Card>
 
       <Card
         className="modern-card today-decision-card"

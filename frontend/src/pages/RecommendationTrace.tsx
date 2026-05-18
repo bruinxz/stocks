@@ -48,27 +48,39 @@ const sourceLabel = (value?: string) => {
   return labels[value || ''] || value || '未标注';
 };
 
+const compactTime = (value?: string | Date | null) => {
+  if (!value) return '--';
+  return String(value).slice(0, 19).replace('T', ' ');
+};
+
 const RecommendationTrace: React.FC = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
-  const [outcome, setOutcome] = useState<any>(null);
+  const [trace, setTrace] = useState<any>(null);
 
   const fetchTrace = async () => {
     setLoading(true);
     try {
-      const response = await api.get('/paper-trading/recommendation-outcomes', {
-        params: { include_open: true, limit: 2000, lookback_days: 365 },
-      });
+      const response = await api.get(`/paper-trading/recommendation-outcomes/${id}/trace`);
       if (response.data.success) {
-        const item = (response.data.data?.outcomes || []).find(
-          (row: any) => String(row.id) === String(id) || String(row.signal_id) === String(id)
-        );
-        setOutcome(item || null);
-        if (!item) message.warning('未在最近闭环样本中找到该记录');
+        setTrace(response.data.data || null);
       }
     } catch (error: any) {
-      message.error(error.response?.data?.message || '加载链路详情失败');
+      try {
+        const response = await api.get('/paper-trading/recommendation-outcomes', {
+          params: { include_open: true, limit: 2000, lookback_days: 365 },
+        });
+        if (response.data.success) {
+          const item = (response.data.data?.outcomes || []).find(
+            (row: any) => String(row.id) === String(id) || String(row.signal_id) === String(id)
+          );
+          setTrace(item ? { outcome: item, steps: [], conclusion: '' } : null);
+          if (!item) message.warning('未在最近闭环样本中找到该记录');
+        }
+      } catch (fallbackError: any) {
+        message.error(error.response?.data?.message || '加载链路详情失败');
+      }
     } finally {
       setLoading(false);
     }
@@ -79,11 +91,51 @@ const RecommendationTrace: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
+  const outcome = trace?.outcome;
   const consensus = outcome?.metadata?.consensus || outcome?.metadata?.signal_metadata || {};
   const env =
     outcome?.metadata?.market_environment || outcome?.metadata?.signal_metadata?.market_environment;
-  const traceSteps = useMemo(
-    () => [
+  const traceSteps = useMemo(() => {
+    if (Array.isArray(trace?.steps) && trace.steps.length > 0) {
+      return trace.steps.map((step: any) => ({
+        title: step.title,
+        status:
+          step.status === 'finish' || step.status === 'process' || step.status === 'wait'
+            ? step.status
+            : 'wait',
+        icon:
+          step.key === 'signal' ? (
+            <StockOutlined />
+          ) : step.key === 'quant' || step.key === 'agent' ? (
+            <RobotOutlined />
+          ) : step.key === 'risk' ? (
+            <SafetyCertificateOutlined />
+          ) : step.key === 'entry' ? (
+            <FundProjectionScreenOutlined />
+          ) : (
+            <CheckCircleOutlined />
+          ),
+        description: step.at
+          ? `${compactTime(step.at).slice(0, 10)} · ${
+              step.key === 'quant'
+                ? `${(step.evidence || []).length} 条量化证据`
+                : step.key === 'agent'
+                ? `${(step.evidence || []).length} 条融合证据`
+                : step.key === 'risk'
+                ? `仓位 ${formatPercent(step.evidence?.position_pct)}`
+                : step.key === 'entry'
+                ? formatMoney(outcome?.entry_price)
+                : step.key === 'exit'
+                ? outcome?.trade_status === 'closed'
+                  ? formatMoney(outcome?.exit_price)
+                  : formatMoney(outcome?.latest_price)
+                : sourceLabel(outcome?.source_type)
+            }`
+          : '等待证据',
+      }));
+    }
+
+    return [
       {
         title: '信号生成',
         status: 'finish' as const,
@@ -119,9 +171,8 @@ const RecommendationTrace: React.FC = () => {
             ? `${outcome?.exit_date || '--'} · ${formatMoney(outcome?.exit_price)}`
             : `最新 ${formatMoney(outcome?.latest_price)} · 持有 ${outcome?.holding_days || 0} 天`,
       },
-    ],
-    [consensus.consensus_count, outcome]
-  );
+    ];
+  }, [consensus.consensus_count, outcome, trace?.steps]);
 
   return (
     <div className="trace-page fade-in-up">
@@ -169,6 +220,15 @@ const RecommendationTrace: React.FC = () => {
 
             <Card className="modern-card trace-steps-card" variant="borderless">
               <Steps items={traceSteps} />
+              {trace?.conclusion && (
+                <Alert
+                  showIcon
+                  type="info"
+                  style={{ marginTop: 16, borderRadius: 14 }}
+                  message="链路结论"
+                  description={trace.conclusion}
+                />
+              )}
             </Card>
 
             <Row gutter={[16, 16]}>
@@ -241,6 +301,75 @@ const RecommendationTrace: React.FC = () => {
                         MAE {formatPercent(outcome.max_adverse_excursion_pct)}
                       </Tag>
                     </div>
+                  </Space>
+                </Card>
+              </Col>
+            </Row>
+
+            <Row gutter={[16, 16]}>
+              <Col xs={24} xl={12}>
+                <Card className="modern-card" variant="borderless" title="量化 / Agent 证据">
+                  <Space direction="vertical" style={{ width: '100%' }}>
+                    {(trace?.quant_signals || []).slice(0, 4).map((item: any) => (
+                      <Alert
+                        key={`quant-${item.id}`}
+                        type="info"
+                        showIcon
+                        message={`${item.strategy_key} · ${item.signal} · ${Number(
+                          item.score || 0
+                        ).toFixed(1)}分`}
+                        description={item.reason || '暂无量化理由'}
+                      />
+                    ))}
+                    {(trace?.fusion_audits || []).slice(0, 3).map((item: any) => (
+                      <Alert
+                        key={`fusion-${item.id}`}
+                        type="success"
+                        showIcon
+                        message={`融合复核 · 最终 ${item.final_decision || '--'} · ${Number(
+                          item.final_score || 0
+                        ).toFixed(1)}分`}
+                        description={item.rationale || '暂无融合理由'}
+                      />
+                    ))}
+                    {!trace?.quant_signals?.length && !trace?.fusion_audits?.length && (
+                      <Empty description="暂无可关联的量化/Agent 证据，可能来自早期历史信号" />
+                    )}
+                  </Space>
+                </Card>
+              </Col>
+              <Col xs={24} xl={12}>
+                <Card className="modern-card" variant="borderless" title="关联任务与交易记录">
+                  <Space direction="vertical" style={{ width: '100%' }}>
+                    {(trace?.task_logs || []).slice(0, 5).map((item: any) => (
+                      <div className="trace-log-row" key={`task-${item.id}`}>
+                        <div>
+                          <strong>{item.task_name}</strong>
+                          <span>{compactTime(item.started_at)}</span>
+                        </div>
+                        <Tag color={item.status === 'COMPLETED' ? 'green' : 'gold'}>
+                          {item.status}
+                        </Tag>
+                      </div>
+                    ))}
+                    {(trace?.trades || []).map((item: any) => (
+                      <div className="trace-log-row" key={`trade-${item.id}`}>
+                        <div>
+                          <strong>
+                            {item.direction === 'BUY' ? '模拟买入' : '模拟卖出'} · {item.quantity}股
+                          </strong>
+                          <span>
+                            {formatMoney(item.execute_price)} · {formatMoney(item.amount)}
+                          </span>
+                        </div>
+                        <Tag color={item.direction === 'BUY' ? 'volcano' : 'green'}>
+                          {item.direction}
+                        </Tag>
+                      </div>
+                    ))}
+                    {!trace?.task_logs?.length && !trace?.trades?.length && (
+                      <Empty description="暂无关联任务/交易记录" />
+                    )}
                   </Space>
                 </Card>
               </Col>

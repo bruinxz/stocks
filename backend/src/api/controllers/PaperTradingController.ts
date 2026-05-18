@@ -647,6 +647,30 @@ export class PaperTradingController {
     }
   };
 
+  // 获取单笔推荐从信号、量化/Agent、风控、模拟交易到收益的完整链路
+  getRecommendationOutcomeTrace = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const user = (req as any).user;
+      const result = await recommendationTradeOutcomeService.getTrace(req.params.id, {
+        ...req.query,
+        user_id: user.id,
+      });
+
+      if (!result) {
+        return res.status(404).json({ success: false, message: '未找到推荐链路详情' });
+      }
+
+      res.json({
+        success: true,
+        data: result,
+        message: result.conclusion,
+      });
+    } catch (error: any) {
+      logger.error('获取推荐链路详情失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
   // 刷新推荐信号→模拟交易→收益结果闭环
   refreshRecommendationOutcomes = async (req: Request, res: Response, next: NextFunction) => {
     try {

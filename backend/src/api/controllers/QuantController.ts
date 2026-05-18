@@ -23,6 +23,28 @@ export class QuantController {
     }
   }
 
+  async updateStrategyConfig(req: AuthenticatedRequest, res: Response) {
+    try {
+      const default_params =
+        req.body?.default_params !== undefined
+          ? req.body.default_params
+          : req.body?.defaultParams !== undefined
+            ? req.body.defaultParams
+            : undefined;
+      const strategy = await quantStrategyService.updateStrategyConfig(req.params.strategy_key, {
+        enabled:
+          req.body?.enabled === undefined || req.body?.enabled === null
+            ? undefined
+            : Boolean(req.body.enabled),
+        default_params,
+      });
+      res.json({ success: true, data: strategy });
+    } catch (error: any) {
+      logger.error('更新量化策略配置失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
   async getIndicatorCatalog(req: Request, res: Response) {
     try {
       const catalog = quantPerformanceDashboardService.getIndicatorCatalog();
@@ -166,8 +188,19 @@ export class QuantController {
   async createBacktest(req: AuthenticatedRequest, res: Response) {
     try {
       const asyncMode = req.body?.async !== false && req.body?.async_mode !== false;
+      const strategy_keys = await quantStrategyService.resolveStrategyKeys(
+        req.body?.strategy_keys || req.body?.strategyKeys
+      );
+      const params_by_strategy = {
+        ...(await quantStrategyService.getDefaultParamsByStrategy(strategy_keys)),
+        ...(req.body?.params_by_strategy || req.body?.paramsByStrategy || {}),
+      };
       const result = await quantBacktestService.createBacktestTask(
-        req.body,
+        {
+          ...req.body,
+          strategy_keys,
+          params_by_strategy,
+        },
         req.user?.id,
         asyncMode
       );
@@ -214,8 +247,17 @@ export class QuantController {
 
   async generateSignals(req: AuthenticatedRequest, res: Response) {
     try {
+      const strategy_keys = await quantStrategyService.resolveStrategyKeys(
+        req.body?.strategy_keys || req.body?.strategyKeys
+      );
+      const params_by_strategy = {
+        ...(await quantStrategyService.getDefaultParamsByStrategy(strategy_keys)),
+        ...(req.body?.params_by_strategy || req.body?.paramsByStrategy || {}),
+      };
       const result = await quantSignalService.generateSignals({
         ...req.body,
+        strategy_keys,
+        params_by_strategy,
         user_id: req.user?.id,
       });
       res.json({ success: true, data: result });
@@ -227,8 +269,17 @@ export class QuantController {
 
   async runDailyPipeline(req: AuthenticatedRequest, res: Response) {
     try {
+      const strategy_keys = await quantStrategyService.resolveStrategyKeys(
+        req.body?.strategy_keys || req.body?.strategyKeys
+      );
+      const params_by_strategy = {
+        ...(await quantStrategyService.getDefaultParamsByStrategy(strategy_keys)),
+        ...(req.body?.params_by_strategy || req.body?.paramsByStrategy || {}),
+      };
       const result = await quantFusionService.runDailyPipeline({
         ...req.body,
+        strategy_keys,
+        params_by_strategy,
         user_id: req.user?.id,
       });
       res.json({ success: true, data: result });

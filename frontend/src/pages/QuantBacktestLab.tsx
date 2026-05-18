@@ -45,7 +45,7 @@ import api from '../services/api';
 const { RangePicker } = DatePicker;
 const { Text } = Typography;
 
-type Strategy = { strategy_key: string; name: string };
+type Strategy = { strategy_key: string; name: string; enabled?: boolean };
 type RunSummary = {
   task_id?: number;
   status?: string;
@@ -197,7 +197,17 @@ const QuantBacktestLab: React.FC = () => {
 
   const fetchStrategies = async () => {
     const response = await api.get('/quant/strategies');
-    if (response.data.success) setStrategies(response.data.data || []);
+    if (response.data.success) {
+      const strategyList = response.data.data || [];
+      setStrategies(strategyList);
+      const enabledKeys = strategyList
+        .filter((item: Strategy) => item.enabled !== false)
+        .map((item: Strategy) => item.strategy_key);
+      const currentKeys = form.getFieldValue('strategy_keys') || [];
+      if (!currentKeys.length && enabledKeys.length) {
+        form.setFieldValue('strategy_keys', enabledKeys.slice(0, 6));
+      }
+    }
   };
 
   const fetchTasks = async () => {
@@ -486,12 +496,7 @@ const QuantBacktestLab: React.FC = () => {
           layout="vertical"
           initialValues={{
             universe: 'market',
-            strategy_keys: [
-              'multi_factor_ranking',
-              'relative_strength_momentum',
-              'volume_price_confirmation',
-              'low_volatility_quality',
-            ],
+            strategy_keys: [],
             range: [dayjs().subtract(180, 'day'), dayjs()],
             initial_capital: 200000,
             candidate_limit: 80,

@@ -9,6 +9,9 @@ import { PaperTradingTrade } from '../models/PaperTradingTrade';
 import { DailyBar } from '../models/DailyBar';
 import { Stock } from '../models/Stock';
 import { User } from '../models/User';
+import { QuantSignal } from '../models/QuantSignal';
+import { QuantFusionAudit } from '../models/QuantFusionAudit';
+import { TaskExecutionLog } from '../models/TaskExecutionLog';
 import { benchmarkIndexService } from './BenchmarkIndexService';
 import { paperTradingAutomationService } from './PaperTradingAutomationService';
 import { feishuTaskReportService } from './FeishuTaskReportService';
@@ -827,6 +830,185 @@ export class RecommendationTradeOutcomeService {
       limit,
       offset,
       summary: this.buildSummary(rows),
+    };
+  }
+
+  async getTrace(
+    id_or_signal_id: number | string,
+    options: RecommendationTradeOutcomeQueryOptions = {}
+  ) {
+    const portfolio = await this.resolvePortfolio(options);
+    const idText = String(id_or_signal_id || '').trim();
+    const idNumber = Number(idText);
+    const baseWhere: any = { portfolio_id: portfolio.id };
+    if (Number.isFinite(idNumber) && idNumber > 0) {
+      baseWhere[Op.or] = [{ id: idNumber }, { signal_id: idNumber }];
+    } else {
+      baseWhere.source_id = idText;
+    }
+
+    let outcome = await RecommendationTradeOutcome.findOne({ where: baseWhere });
+    if (!outcome && Number.isFinite(idNumber) && idNumber > 0) {
+      const refreshed = await this.refreshOutcomeBySignal(idNumber).catch(error => {
+        logger.warn(`按 signal_id 刷新推荐链路失败 ${idNumber}: ${error?.message || error}`);
+        return null;
+      });
+      if (refreshed && Number(refreshed.portfolio_id) === Number(portfolio.id)) outcome = refreshed;
+    }
+    if (!outcome) return null;
+
+    const signal = await AIInvestmentSignal.findByPk(outcome.signal_id);
+    const metadata = asPlainObject(outcome.metadata);
+    const signalMetadata = asPlainObject(metadata.signal_metadata || signal?.metadata);
+    const paperTrading = asPlainObject(metadata.paper_trading || signalMetadata.paper_trading);
+    const strategyKey = strategyKeyFromOutcome(outcome);
+    const tradeIds = [
+      toOptionalNumber(outcome.entry_trade_id),
+      toOptionalNumber(outcome.exit_trade_id),
+    ].filter((value): value is number => Boolean(value));
+    const trades = tradeIds.length
+      ? await PaperTradingTrade.findAll({
+          where: { id: { [Op.in]: tradeIds }, portfolio_id: portfolio.id },
+          order: [['created_at', 'ASC']],
+        })
+      : [];
+    const quantSignals = await QuantSignal.findAll({
+      where: {
+        symbol: outcome.symbol,
+        trade_date: outcome.signal_date,
+        ...(strategyKey && strategyKey !== 'unknown' ? { strategy_key: strategyKey } : {}),
+      },
+      order: [['score', 'DESC']],
+      limit: 8,
+    }).catch(() => []);
+    const fusionAudits = await QuantFusionAudit.findAll({
+      where: {
+        symbol: outcome.symbol,
+        signal_date: outcome.signal_date,
+      },
+      order: [['final_score', 'DESC NULLS LAST'], ['created_at', 'DESC']] as any,
+      limit: 8,
+    }).catch(() => []);
+    const taskLogs = await TaskExecutionLog.findAll({
+      where: {
+        started_at: {
+          [Op.between]: [
+            moment.tz(`${outcome.signal_date} 00:00`, 'YYYY-MM-DD HH:mm', 'Asia/Shanghai').toDate(),
+            moment
+              .tz(`${outcome.signal_date} 23:59:59`, 'YYYY-MM-DD HH:mm:ss', 'Asia/Shanghai')
+              .toDate(),
+          ],
+        },
+        [Op.or]: [
+          { task_name: { [Op.iLike]: '%量化%' } },
+          { task_name: { [Op.iLike]: '%荐股%' } },
+          { task_name: { [Op.iLike]: '%模拟盘%' } },
+          { task_name: { [Op.iLike]: '%Agent%' } },
+        ],
+      },
+      order: [['started_at', 'ASC']],
+      limit: 20,
+    }).catch(() => []);
+
+    const steps = [
+      {
+        key: 'signal',
+        title: '信号生成',
+        status: signal ? 'finish' : 'warning',
+        at: signal?.created_at || outcome.created_at,
+        evidence: {
+          signal_id: outcome.signal_id,
+          source_type: outcome.source_type,
+          source_id: outcome.source_id,
+          decision: outcome.decision,
+          score: outcome.score,
+          current_price: signal?.current_price,
+          rationale: signal?.rationale,
+        },
+      },
+      {
+        key: 'quant',
+        title: '量化评分',
+        status: quantSignals.length ? 'finish' : 'wait',
+        at: quantSignals[0]?.created_at,
+        evidence: quantSignals.map(item => ({
+          id: item.id,
+          strategy_key: item.strategy_key,
+          signal: item.signal,
+          score: item.score,
+          confidence: item.confidence,
+          entry_price: item.entry_price,
+          reason: item.reason,
+          risk_flags: item.risk_flags,
+        })),
+      },
+      {
+        key: 'agent',
+        title: 'Agent/融合复核',
+        status: fusionAudits.length || outcome.source_type === 'tradingagents' ? 'finish' : 'wait',
+        at: fusionAudits[0]?.created_at,
+        evidence: fusionAudits.map(item => ({
+          id: item.id,
+          quant_score: item.quant_score,
+          agent_score: item.agent_score,
+          final_score: item.final_score,
+          final_decision: item.final_decision,
+          risk_level: item.risk_level,
+          current_price: item.current_price,
+          rationale: item.rationale,
+        })),
+      },
+      {
+        key: 'risk',
+        title: '风控放行',
+        status: outcome.entry_price ? 'finish' : 'wait',
+        at: outcome.entry_date,
+        evidence: {
+          risk_level: outcome.risk_level,
+          position_pct: outcome.position_pct,
+          strategy_key: strategyKey,
+          environment_policy: metadata.environment_policy,
+          paper_trading: paperTrading,
+        },
+      },
+      {
+        key: 'entry',
+        title: '模拟买入',
+        status: outcome.entry_trade_id ? 'finish' : 'wait',
+        at: outcome.entry_date,
+        evidence: trades
+          .filter(trade => trade.direction === 'BUY')
+          .map(trade => modelToPlain(trade)),
+      },
+      {
+        key: 'exit',
+        title: outcome.trade_status === 'closed' ? '卖出闭环' : '持仓跟踪',
+        status: outcome.trade_status === 'closed' ? 'finish' : 'process',
+        at: outcome.exit_date || outcome.updated_at,
+        evidence:
+          outcome.trade_status === 'closed'
+            ? trades.filter(trade => trade.direction === 'SELL').map(trade => modelToPlain(trade))
+            : {
+                latest_price: outcome.latest_price,
+                holding_days: outcome.holding_days,
+                unrealized_pnl: outcome.unrealized_pnl,
+                unrealized_pnl_pct: outcome.unrealized_pnl_pct,
+              },
+      },
+    ];
+
+    return {
+      generated_at: moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm:ss'),
+      portfolio_id: portfolio.id,
+      user_id: portfolio.user_id,
+      outcome,
+      signal,
+      trades,
+      quant_signals: quantSignals,
+      fusion_audits: fusionAudits,
+      task_logs: taskLogs,
+      steps,
+      conclusion: this.buildTraceConclusion(outcome),
     };
   }
 
@@ -2894,6 +3076,22 @@ export class RecommendationTradeOutcomeService {
       };
     }
     return where;
+  }
+
+  private buildTraceConclusion(outcome: RecommendationTradeOutcome) {
+    const pnlPct = toNumber(outcome.total_pnl_pct);
+    const excessPct = toNumber(outcome.excess_return_pct);
+    const status = outcome.trade_status === 'closed' ? '已闭环' : '持仓中';
+    const action =
+      pnlPct > 0 && excessPct >= 0
+        ? '有效'
+        : pnlPct > 0
+          ? '绝对收益有效但跑输基准'
+          : '暂未验证有效';
+    return `${status}：${outcome.name || outcome.symbol} 收益 ${roundNumber(
+      pnlPct,
+      2
+    )}%，超额 ${roundNumber(excessPct, 2)}%，推荐链路${action}。`;
   }
 
   private buildPathSamples(

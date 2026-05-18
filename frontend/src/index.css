@@ -8384,6 +8384,69 @@ a {
   border-radius: 18px;
 }
 
+.today-readiness-card {
+  overflow: hidden;
+}
+
+.today-readiness-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.today-readiness-item {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 84px;
+  padding: 14px;
+  border: 1px solid rgba(39, 100, 184, 0.08);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(248, 252, 255, 0.82));
+}
+
+.today-readiness-item > .anticon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 13px;
+  background: rgba(39, 100, 184, 0.08);
+  color: var(--primary);
+}
+
+.today-readiness-item.ok > .anticon {
+  background: rgba(0, 143, 107, 0.1);
+  color: var(--success);
+}
+
+.today-readiness-item.warn > .anticon {
+  background: rgba(183, 121, 31, 0.1);
+  color: var(--warning);
+}
+
+.today-readiness-item.danger > .anticon {
+  background: rgba(209, 67, 67, 0.1);
+  color: var(--danger);
+}
+
+.today-readiness-item strong,
+.trace-log-row strong {
+  display: block;
+  color: var(--text-main);
+  font-weight: 900;
+}
+
+.today-readiness-item span,
+.trace-log-row span {
+  display: block;
+  margin-top: 3px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .review-center-tabs > .ant-tabs-nav,
 .strategy-research-tabs > .ant-tabs-nav,
 .quant-workbench-tabs > .ant-tabs-nav {
@@ -8418,10 +8481,31 @@ a {
   gap: 8px;
 }
 
+.trace-log-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid rgba(39, 100, 184, 0.08);
+  border-radius: 16px;
+  background: rgba(248, 252, 255, 0.76);
+}
+
+.strategy-config-param-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 12px;
+}
+
 @media (max-width: 1180px) {
   .today-command-hero,
   .trace-hero {
     grid-template-columns: 1fr;
+  }
+
+  .today-readiness-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -8440,5 +8524,10 @@ a {
   .strategy-research-tabs > .ant-tabs-nav,
   .quant-workbench-tabs > .ant-tabs-nav {
     position: static;
+  }
+
+  .today-readiness-grid,
+  .strategy-config-param-grid {
+    grid-template-columns: 1fr;
   }
 }

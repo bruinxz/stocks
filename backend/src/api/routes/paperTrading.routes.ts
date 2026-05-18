@@ -140,6 +140,17 @@ router.get(
 );
 
 /**
+ * @route GET /api/paper-trading/recommendation-outcomes/:id/trace
+ * @desc 获取单笔推荐链路详情：信号、量化/Agent复核、风控、模拟交易和收益
+ * @access Private
+ */
+router.get(
+  '/recommendation-outcomes/:id/trace',
+  authController.authenticate,
+  paperTradingController.getRecommendationOutcomeTrace
+);
+
+/**
  * @route POST /api/paper-trading/recommendation-outcomes/refresh
  * @desc 刷新推荐信号到模拟交易收益的闭环结果
  * @access Private

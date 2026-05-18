@@ -195,6 +195,7 @@ const AppContent: React.FC = () => {
           menuLink('/quant/backtests', <ExperimentOutlined />, '跑分验证'),
           menuLink('/strategy-research/weights', <BranchesOutlined />, '策略库与权重'),
           menuLink('/strategy-research/optimization', <NodeIndexOutlined />, '策略版本与实验'),
+          menuLink('/strategy-research/event-results', <LineChartOutlined />, '事件策略榜'),
           menuLink('/ai-advisor', <RobotOutlined />, '深度研报'),
           menuLink('/backtest', <LineChartOutlined />, '事件回测'),
           menuLink('/portfolio', <PieChartOutlined />, '组合收益'),
@@ -423,6 +424,14 @@ const AppContent: React.FC = () => {
                 }
               />
               <Route
+                path="/strategy-research/event-results"
+                element={
+                  <ProtectedRoute>
+                    <StrategyResearchCenter />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
                 path="/strategy-research/weights"
                 element={
                   <ProtectedRoute>
@@ -617,7 +626,10 @@ const AppContent: React.FC = () => {
                 }
               />
               <Route path="/journals" element={<Navigate to="/review/journal" replace />} />
-              <Route path="/strategy" element={<Navigate to="/backtest" replace />} />
+              <Route
+                path="/strategy"
+                element={<Navigate to="/strategy-research/event-results" replace />}
+              />
               <Route
                 path="/profile"
                 element={

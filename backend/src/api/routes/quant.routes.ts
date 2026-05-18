@@ -10,6 +10,11 @@ router.get(
   authController.authenticate,
   quantController.getStrategies.bind(quantController)
 );
+router.patch(
+  '/strategies/:strategy_key',
+  authController.authenticate,
+  quantController.updateStrategyConfig.bind(quantController)
+);
 router.get(
   '/indicators',
   authController.authenticate,

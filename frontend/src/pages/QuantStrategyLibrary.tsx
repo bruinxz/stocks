@@ -1,13 +1,20 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  Alert,
   Button,
   Card,
   Col,
+  Drawer,
   Empty,
+  Form,
+  Input,
+  InputNumber,
+  Modal,
   Progress,
   Row,
   Space,
   Statistic,
+  Switch,
   Tag,
   Typography,
   message,
@@ -121,6 +128,9 @@ const QuantStrategyLibrary: React.FC = () => {
   const [allocationPolicy, setAllocationPolicy] = useState<AllocationPolicy | null>(null);
   const [loading, setLoading] = useState(false);
   const [refreshingWeights, setRefreshingWeights] = useState(false);
+  const [editingStrategy, setEditingStrategy] = useState<QuantStrategy | null>(null);
+  const [savingConfig, setSavingConfig] = useState(false);
+  const [form] = Form.useForm();
 
   const fetchStrategies = async (silent = false) => {
     setLoading(true);
@@ -171,6 +181,51 @@ const QuantStrategyLibrary: React.FC = () => {
     } finally {
       setRefreshingWeights(false);
     }
+  };
+
+  const openStrategyConfig = (strategy: QuantStrategy) => {
+    setEditingStrategy(strategy);
+    form.setFieldsValue({
+      enabled: strategy.enabled,
+      default_params: strategy.default_params || {},
+    });
+  };
+
+  const saveStrategyConfig = async () => {
+    if (!editingStrategy) return;
+    const values = await form.validateFields();
+    setSavingConfig(true);
+    try {
+      const response = await api.patch(`/quant/strategies/${editingStrategy.strategy_key}`, {
+        enabled: values.enabled,
+        default_params: values.default_params || {},
+      });
+      if (response.data.success) {
+        message.success('策略配置已保存，后续信号/跑分会使用新默认参数');
+        setEditingStrategy(null);
+        await fetchStrategies(true);
+      }
+    } catch (error: any) {
+      message.error(error.response?.data?.message || '保存策略配置失败');
+    } finally {
+      setSavingConfig(false);
+    }
+  };
+
+  const resetStrategyConfig = () => {
+    if (!editingStrategy) return;
+    Modal.confirm({
+      title: '恢复默认参数？',
+      content: '该操作会把当前抽屉中的参数恢复为打开时的默认值，保存后才会写入后端。',
+      okText: '恢复',
+      cancelText: '取消',
+      onOk: () => {
+        form.setFieldsValue({
+          enabled: editingStrategy.enabled,
+          default_params: editingStrategy.default_params || {},
+        });
+      },
+    });
   };
 
   useEffect(() => {
@@ -422,6 +477,13 @@ const QuantStrategyLibrary: React.FC = () => {
                     {weight.reason}
                   </Text>
                 )}
+                <Button
+                  block
+                  icon={<SlidersOutlined />}
+                  onClick={() => openStrategyConfig(strategy)}
+                >
+                  配置启停与默认参数
+                </Button>
               </Card>
             </Col>
           );
@@ -432,6 +494,58 @@ const QuantStrategyLibrary: React.FC = () => {
           </Col>
         )}
       </Row>
+
+      <Drawer
+        title={editingStrategy ? `策略配置 · ${editingStrategy.name}` : '策略配置'}
+        open={Boolean(editingStrategy)}
+        onClose={() => setEditingStrategy(null)}
+        width={520}
+        extra={
+          <Space>
+            <Button onClick={resetStrategyConfig}>恢复</Button>
+            <Button type="primary" loading={savingConfig} onClick={saveStrategyConfig}>
+              保存配置
+            </Button>
+          </Space>
+        }
+      >
+        {editingStrategy && (
+          <Form form={form} layout="vertical">
+            <Form.Item
+              label="是否启用"
+              name="enabled"
+              valuePropName="checked"
+              tooltip="关闭后，未显式选择策略时不会进入默认今日信号和跑分策略池。"
+            >
+              <Switch checkedChildren="启用" unCheckedChildren="停用" />
+            </Form.Item>
+            <div className="strategy-config-param-grid">
+              {Object.entries(editingStrategy.default_params || {}).map(([key, value]) => (
+                <Form.Item
+                  key={key}
+                  label={key}
+                  name={['default_params', key]}
+                  tooltip={`当前默认值：${String(value)}`}
+                >
+                  {typeof value === 'boolean' ? (
+                    <Switch checkedChildren="true" unCheckedChildren="false" />
+                  ) : typeof value === 'number' ? (
+                    <InputNumber style={{ width: '100%' }} precision={4} />
+                  ) : (
+                    <Input placeholder={String(value)} />
+                  )}
+                </Form.Item>
+              ))}
+            </div>
+            <Alert
+              showIcon
+              type="info"
+              message="配置说明"
+              description="这里是普通用户可理解的可视化策略配置层；新增策略仍通过后端 StrategyRegistry 注册，页面自动识别默认参数并提供编辑入口。"
+            />
+          </Form>
+        )}
+      </Drawer>
     </div>
   );
 };

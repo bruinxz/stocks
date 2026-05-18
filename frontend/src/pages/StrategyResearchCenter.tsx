@@ -5,18 +5,21 @@ import {
   BranchesOutlined,
   ExperimentOutlined,
   FundProjectionScreenOutlined,
+  LineChartOutlined,
   SlidersOutlined,
 } from '@ant-design/icons';
 import AutonomousOptimizationLab from './AutonomousOptimizationLab';
 import RecommendationLoopPolicies from './RecommendationLoopPolicies';
 import StrategyExperimentLab from './StrategyExperimentLab';
 import QuantStrategyLibrary from './QuantStrategyLibrary';
+import Strategy from './Strategy';
 
 const tabPathMap: Record<string, string> = {
   optimization: '/strategy-research/optimization',
   versions: '/strategy-research/versions',
   experiments: '/strategy-research/experiments',
   weights: '/strategy-research/weights',
+  eventResults: '/strategy-research/event-results',
 };
 
 const StrategyResearchCenter: React.FC = () => {
@@ -27,6 +30,7 @@ const StrategyResearchCenter: React.FC = () => {
     if (location.pathname.includes('/strategy-research/versions')) return 'versions';
     if (location.pathname.includes('/strategy-research/experiments')) return 'experiments';
     if (location.pathname.includes('/strategy-research/weights')) return 'weights';
+    if (location.pathname.includes('/strategy-research/event-results')) return 'eventResults';
     return 'optimization';
   }, [location.pathname]);
 
@@ -72,6 +76,15 @@ const StrategyResearchCenter: React.FC = () => {
               </span>
             ),
             children: <QuantStrategyLibrary />,
+          },
+          {
+            key: 'eventResults',
+            label: (
+              <span>
+                <LineChartOutlined /> 事件策略榜
+              </span>
+            ),
+            children: <Strategy />,
           },
         ]}
       />
