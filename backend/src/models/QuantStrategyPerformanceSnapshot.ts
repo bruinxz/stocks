@@ -8,7 +8,11 @@ import { Table, Column, Model, DataType, CreatedAt, UpdatedAt } from 'sequelize-
     { fields: ['strategy_key'] },
     { fields: ['snapshot_date'] },
     { fields: ['source_type'] },
-    { unique: true, fields: ['strategy_key', 'snapshot_date', 'source_type', 'horizon'] },
+    {
+      name: 'uniq_qs_perf_strategy_date_source_horizon',
+      unique: true,
+      fields: ['strategy_key', 'snapshot_date', 'source_type', 'horizon'],
+    },
   ],
 })
 export class QuantStrategyPerformanceSnapshot extends Model {

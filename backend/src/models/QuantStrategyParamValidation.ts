@@ -6,6 +6,7 @@ import { Table, Column, Model, DataType, CreatedAt, UpdatedAt } from 'sequelize-
   underscored: true,
   indexes: [
     {
+      name: 'uniq_qs_param_validation_version_symbol_horizon',
       unique: true,
       fields: ['version_key', 'symbol', 'signal_date', 'horizon_days'],
     },
