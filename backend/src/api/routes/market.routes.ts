@@ -1,9 +1,14 @@
 import { Router } from 'express';
 import { MarketController } from '../controllers/MarketController';
-import { authenticate } from '../../middlewares/auth';
+import { AuthController } from '../controllers/AuthController';
+import { body, query } from 'express-validator';
+import { validateRequest } from '../../middlewares/validateRequest';
 
 const router = Router();
 const marketController = new MarketController();
+const authController = new AuthController();
+
+// Market routes
 
 /**
  * @swagger
@@ -11,6 +16,16 @@ const marketController = new MarketController();
  *   name: Market
  *   description: 大盘视图和收藏功能
  */
+
+/**
+ * @swagger
+ * /api/market/overview:
+ *   get:
+ *     tags: [Market]
+ *     summary: 获取市场大盘概览
+ *     description: 获取沪深300等核心指数的最新状态和近期走势
+ */
+router.get('/overview', authController.authenticate, marketController.getMarketOverview);
 
 /**
  * @swagger
@@ -95,13 +110,13 @@ router.get('/search', marketController.searchStocks);
  *           type: string
  *         description: 股票代码（如 600000.SH）
  *       - in: query
- *         name: startDate
+ *         name: start_date
  *         schema:
  *           type: string
  *           format: date
  *         description: 开始日期（YYYY-MM-DD），默认一年前
  *       - in: query
- *         name: endDate
+ *         name: end_date
  *         schema:
  *           type: string
  *           format: date
@@ -154,9 +169,9 @@ router.get('/search', marketController.searchStocks);
  *                     summary:
  *                       type: object
  *                       properties:
- *                         startDate:
+ *                         start_date:
  *                           type: string
- *                         endDate:
+ *                         end_date:
  *                           type: string
  *                         totalDays:
  *                           type: integer
@@ -182,7 +197,7 @@ router.get('/history/:symbol', marketController.getStockHistory);
  *       - bearerAuth: []
  *     parameters:
  *       - in: query
- *         name: groupId
+ *         name: group_id
  *         schema:
  *           type: string
  *         description: 按分组筛选
@@ -206,13 +221,13 @@ router.get('/history/:symbol', marketController.getStockHistory);
  *                         properties:
  *                           id:
  *                             type: integer
- *                           groupId:
+ *                           group_id:
  *                             type: string
  *                           tags:
  *                             type: string
  *                           notes:
  *                             type: string
- *                           sortOrder:
+ *                           sort_order:
  *                             type: integer
  *                           stock:
  *                             $ref: '#/components/schemas/Stock'
@@ -227,7 +242,7 @@ router.get('/history/:symbol', marketController.getStockHistory);
  *       500:
  *         description: 服务器错误
  */
-router.get('/favorites', authenticate, marketController.getFavorites);
+router.get('/favorites', authController.authenticate, marketController.getFavorites);
 
 /**
  * @swagger
@@ -252,13 +267,13 @@ router.get('/favorites', authenticate, marketController.getFavorites);
  *           schema:
  *             type: object
  *             properties:
- *               groupId:
+ *               group_id:
  *                 type: string
  *               tags:
  *                 type: string
  *               notes:
  *                 type: string
- *               sortOrder:
+ *               sort_order:
  *                 type: integer
  *     responses:
  *       200:
@@ -272,7 +287,7 @@ router.get('/favorites', authenticate, marketController.getFavorites);
  *       500:
  *         description: 服务器错误
  */
-router.post('/favorites/:symbol', authenticate, marketController.addFavorite as any);
+router.post('/favorites/:symbol', authController.authenticate, marketController.addFavorite as any);
 
 /**
  * @swagger
@@ -300,7 +315,11 @@ router.post('/favorites/:symbol', authenticate, marketController.addFavorite as 
  *       500:
  *         description: 服务器错误
  */
-router.delete('/favorites/:symbol', authenticate, marketController.removeFavorite as any);
+router.delete(
+  '/favorites/:symbol',
+  authController.authenticate,
+  marketController.removeFavorite as any
+);
 
 /**
  * @swagger
@@ -341,7 +360,11 @@ router.delete('/favorites/:symbol', authenticate, marketController.removeFavorit
  *       500:
  *         description: 服务器错误
  */
-router.get('/favorites/:symbol', authenticate, marketController.checkFavorite as any);
+router.get(
+  '/favorites/:symbol',
+  authController.authenticate,
+  marketController.checkFavorite as any
+);
 
 /**
  * @swagger
@@ -366,13 +389,13 @@ router.get('/favorites/:symbol', authenticate, marketController.checkFavorite as
  *           schema:
  *             type: object
  *             properties:
- *               groupId:
+ *               group_id:
  *                 type: string
  *               tags:
  *                 type: string
  *               notes:
  *                 type: string
- *               sortOrder:
+ *               sort_order:
  *                 type: integer
  *     responses:
  *       200:
@@ -384,7 +407,11 @@ router.get('/favorites/:symbol', authenticate, marketController.checkFavorite as
  *       500:
  *         description: 服务器错误
  */
-router.patch('/favorites/:symbol', authenticate, marketController.updateFavorite as any);
+router.patch(
+  '/favorites/:symbol',
+  authController.authenticate,
+  marketController.updateFavorite as any
+);
 
 /**
  * @swagger
@@ -424,7 +451,7 @@ router.patch('/favorites/:symbol', authenticate, marketController.updateFavorite
  *                       type: string
  *                       enum: [pending, in_progress, completed, failed]
  *                       description: 更新状态
- *                     startedAt:
+ *                     started_at:
  *                       type: string
  *                       format: date-time
  *       500:
@@ -452,13 +479,13 @@ router.post('/update-data', marketController.updateData);
  *           format: date
  *         description: 日期 YYYY-MM-DD（可选）
  *       - in: query
- *         name: startDate
+ *         name: start_date
  *         schema:
  *           type: string
  *           format: date
  *         description: 开始日期 YYYY-MM-DD（可选），筛选创建时间
  *       - in: query
- *         name: endDate
+ *         name: end_date
  *         schema:
  *           type: string
  *           format: date
@@ -518,7 +545,7 @@ router.get('/update-status', marketController.getUpdateStatus);
  *             properties:
  *               type:
  *                 type: string
- *                 enum: [daily_update, new_stocks_sync, weekly_completeness_check, manual_sync]
+ *                 enum: [daily_update, new_stocks_sync, weekly_completeness_check, manual_sync, health_check]
  *                 default: new_stocks_sync
  *                 description: 同步类型
  *               force:
@@ -589,17 +616,17 @@ router.post('/manual-sync', marketController.triggerManualSync);
  *                 type: boolean
  *                 default: false
  *                 description: 是否同步所有股票（如果为true，忽略symbols和marketFilters）
- *               startDate:
+ *               start_date:
  *                 type: string
  *                 format: date
  *                 description: 同步开始日期（YYYY-MM-DD），默认一年前
- *               endDate:
+ *               end_date:
  *                 type: string
  *                 format: date
  *                 description: 同步结束日期（YYYY-MM-DD），默认今天
  *               dataSource:
  *                 type: string
- *                 enum: [akshare]
+ *                 enum: [auto, tushare, baostock, akshare, eastmoney, sina]
  *                 default: akshare
  *                 description: 数据源（目前只支持akshare）
  *               concurrency:
@@ -846,6 +873,8 @@ router.post('/queue/:jobId/retry', marketController.retryJob as any);
  *         description: 健康检查失败
  */
 router.get('/health', marketController.healthCheck as any);
+router.get('/data-sources/health', marketController.getDataSourceHealth as any);
+router.get('/data-quality', authController.authenticate, marketController.getDataQuality as any);
 
 /**
  * @swagger
@@ -856,14 +885,14 @@ router.get('/health', marketController.healthCheck as any);
  *     description: 统计数据库里股票的只数和数据完整性（从指定开始日期到结束日期）
  *     parameters:
  *       - in: query
- *         name: startDate
+ *         name: start_date
  *         schema:
  *           type: string
  *           format: date
  *           default: 2020-01-01
  *         description: 开始日期（YYYY-MM-DD）
  *       - in: query
- *         name: endDate
+ *         name: end_date
  *         schema:
  *           type: string
  *           format: date
@@ -898,9 +927,9 @@ router.get('/health', marketController.healthCheck as any);
  *                         dateRange:
  *                           type: object
  *                           properties:
- *                             startDate:
+ *                             start_date:
  *                               type: string
- *                             endDate:
+ *                             end_date:
  *                               type: string
  *                         timestamp:
  *                           type: string
@@ -973,14 +1002,14 @@ router.get('/data-completeness', marketController.getDataCompletenessStats as an
  *     description: 强制清除数据完整性统计的缓存，使下次请求重新计算
  *     parameters:
  *       - in: query
- *         name: startDate
+ *         name: start_date
  *         schema:
  *           type: string
  *           format: date
  *           default: 2020-01-01
  *         description: 开始日期（YYYY-MM-DD）
  *       - in: query
- *         name: endDate
+ *         name: end_date
  *         schema:
  *           type: string
  *           format: date

@@ -1,4 +1,13 @@
-import { Event, EventType, BarEvent, SignalEvent, OrderEvent, StartEvent, EndEvent, TimerEvent } from './Event';
+import {
+  Event,
+  EventType,
+  BarEvent,
+  SignalEvent,
+  OrderEvent,
+  StartEvent,
+  EndEvent,
+  TimerEvent,
+} from './Event';
 import { Portfolio } from './Portfolio';
 import { OrderManager, Order, FixedSlippageModel, FixedCommissionModel } from './OrderManager';
 import { Strategy } from '../strategies/Strategy';
@@ -6,9 +15,9 @@ import { DataService } from '../../data/services/DataService';
 import { logger } from '../../utils/logger';
 
 export interface BacktestConfig {
-  startDate: Date;
-  endDate: Date;
-  initialCapital: number;
+  start_date: Date;
+  end_date: Date;
+  initial_capital: number;
   symbols: string[];
   strategy: Strategy;
   dataService: DataService;
@@ -19,26 +28,26 @@ export interface BacktestConfig {
 
 export interface BacktestResult {
   metrics: {
-    initialCapital: number;
-    finalCapital: number;
-    totalReturn: number;
-    annualizedReturn: number;
-    sharpeRatio: number;
-    sortinoRatio: number;
-    maxDrawdown: number;
-    winRate: number;
-    profitLossRatio: number;
-    totalTrades: number;
-    profitTrades: number;
-    lossTrades: number;
+    initial_capital: number;
+    final_capital: number;
+    total_return: number;
+    annualized_return: number;
+    sharpe_ratio: number;
+    sortino_ratio: number;
+    max_drawdown: number;
+    win_rate: number;
+    profit_loss_ratio: number;
+    total_trades: number;
+    profit_trades: number;
+    loss_trades: number;
     averageHoldingDays: number;
     averageProfit: number;
     averageLoss: number;
   };
-  equityCurve: { date: Date; value: number }[];
+  equity_curve: { date: Date; value: number }[];
   trades: any[];
   positions: any[];
-  dailyReturns: number[];
+  daily_returns: number[];
 }
 
 export class BacktestEngine {
@@ -49,20 +58,21 @@ export class BacktestEngine {
   private dataService: DataService;
   private events: Event[] = [];
   private currentDate: Date;
-  private isRunning: boolean = false;
+  private isRunning = false;
   private eventQueue: Event[] = [];
   private eventHandlers: Map<EventType, ((event: Event) => void)[]> = new Map();
+  private totalEventsCount: number = 0;
 
   constructor(config: BacktestConfig) {
     this.config = config;
-    this.portfolio = new Portfolio(config.initialCapital);
+    this.portfolio = new Portfolio(config.initial_capital);
     this.orderManager = new OrderManager(
       new FixedSlippageModel(config.slippage || 0.001),
       new FixedCommissionModel(config.commissionRate || 0.0003)
     );
     this.strategy = config.strategy;
     this.dataService = config.dataService;
-    this.currentDate = new Date(config.startDate);
+    this.currentDate = new Date(config.start_date);
 
     this.registerEventHandlers();
   }
@@ -93,7 +103,7 @@ export class BacktestEngine {
    * 触发事件
    */
   private emit(event: Event): void {
-    this.events.push(event);
+    this.totalEventsCount++;
     this.eventQueue.push(event);
 
     const handlers = this.eventHandlers.get(event.type) || [];
@@ -118,7 +128,7 @@ export class BacktestEngine {
     // 更新投资组合市值
     const prices = new Map<string, number>();
     prices.set(symbol, event.data.close);
-    this.portfolio.updatePositions(prices);
+    this.portfolio.updatePositions(prices, effectiveTime);
 
     // 处理订单
     const orderResults = this.orderManager.processBarEvent(event, this.portfolio);
@@ -213,7 +223,7 @@ export class BacktestEngine {
    */
   private handleFillEvent(event: Event): void {
     if (event.type === EventType.FILL) {
-      this.portfolio.handleFillEvent(event);
+      this.portfolio.handleFillEvent(event, this.currentDate);
     }
   }
 
@@ -275,7 +285,7 @@ export class BacktestEngine {
     }
 
     this.isRunning = true;
-    this.events = [];
+    this.totalEventsCount = 0;
     this.eventQueue = [];
     this.portfolio.clear();
     this.orderManager.clear();
@@ -285,9 +295,9 @@ export class BacktestEngine {
       type: EventType.START,
       timestamp: this.currentDate,
       data: {
-        startDate: this.config.startDate,
-        endDate: this.config.endDate,
-        initialCapital: this.config.initialCapital,
+        start_date: this.config.start_date,
+        end_date: this.config.end_date,
+        initial_capital: this.config.initial_capital,
       },
     };
     this.emit(startEvent);
@@ -320,7 +330,7 @@ export class BacktestEngine {
       }
 
       // 检查是否到达结束日期
-      if (this.currentDate > this.config.endDate) {
+      if (this.currentDate > this.config.end_date) {
         break;
       }
     }
@@ -330,11 +340,11 @@ export class BacktestEngine {
       type: EventType.END,
       timestamp: this.currentDate,
       data: {
-        finalCapital: this.portfolio.getMetrics().totalValue,
-        totalReturn: this.calculateTotalReturn(),
-        totalTrades: this.portfolio.getTrades().length,
-        startDate: this.config.startDate,
-        endDate: this.currentDate,
+        final_capital: this.portfolio.getMetrics().total_value,
+        total_return: this.calculateTotalReturn(),
+        total_trades: this.portfolio.getTrades().length,
+        start_date: this.config.start_date,
+        end_date: this.currentDate,
       },
     };
     this.emit(endEvent);
@@ -351,15 +361,17 @@ export class BacktestEngine {
    */
   private async loadHistoricalData(): Promise<any[]> {
     const data: any[] = [];
-    const { startDate, endDate, symbols } = this.config;
+    const { start_date, end_date, symbols } = this.config;
 
     for (const symbol of symbols) {
-      const bars = await this.dataService.getDailyBars(symbol, startDate, endDate);
-      data.push(...bars.map(bar => ({
-        ...bar,
-        symbol,
-        timestamp: bar.time,
-      })));
+      const bars = await this.dataService.getDailyBars(symbol, start_date, end_date);
+      data.push(
+        ...bars.map(bar => ({
+          ...bar,
+          symbol,
+          timestamp: bar.time,
+        }))
+      );
     }
 
     return data;
@@ -370,7 +382,7 @@ export class BacktestEngine {
    */
   private calculateTotalReturn(): number {
     const metrics = this.portfolio.getMetrics();
-    return ((metrics.totalValue - this.config.initialCapital) / this.config.initialCapital) * 100;
+    return ((metrics.total_value - this.config.initial_capital) / this.config.initial_capital) * 100;
   }
 
   /**
@@ -379,155 +391,156 @@ export class BacktestEngine {
   private calculateResults(): BacktestResult {
     const trades = this.portfolio.getTrades();
     const positions = this.portfolio.getPositions();
-    const equityCurve = this.portfolio.getEquityCurve();
-    const dailyReturns = this.portfolio.getDailyReturns();
+    const equity_curve = this.portfolio.getEquityCurve();
+    const daily_returns = this.portfolio.getDailyReturns();
 
     // 计算交易统计
-    const profitTrades = trades.filter(t => t.pnl && t.pnl > 0);
-    const lossTrades = trades.filter(t => t.pnl && t.pnl <= 0);
+    const profit_trades = trades.filter(t => t.pnl && t.pnl > 0);
+    const loss_trades = trades.filter(t => t.pnl && t.pnl <= 0);
 
-    const totalProfit = profitTrades.reduce((sum, t) => sum + (t.pnl || 0), 0);
-    const totalLoss = Math.abs(lossTrades.reduce((sum, t) => sum + (t.pnl || 0), 0));
+    const totalProfit = profit_trades.reduce((sum, t) => sum + (t.pnl || 0), 0);
+    const totalLoss = Math.abs(loss_trades.reduce((sum, t) => sum + (t.pnl || 0), 0));
 
-    const averageProfit = profitTrades.length > 0 ? totalProfit / profitTrades.length : 0;
-    const averageLoss = lossTrades.length > 0 ? totalLoss / lossTrades.length : 0;
+    const averageProfit = profit_trades.length > 0 ? totalProfit / profit_trades.length : 0;
+    const averageLoss = loss_trades.length > 0 ? totalLoss / loss_trades.length : 0;
 
-    const winRate = trades.length > 0 ? (profitTrades.length / trades.length) * 100 : 0;
-    const profitLossRatio = averageLoss !== 0 ? averageProfit / averageLoss : 0;
+    const win_rate = trades.length > 0 ? (profit_trades.length / trades.length) * 100 : 0;
+    const profit_loss_ratio = averageLoss !== 0 ? averageProfit / averageLoss : 0;
 
     // 计算持有天数
-    const holdingDays = trades
-      .filter(t => t.holdingDays)
-      .map(t => t.holdingDays || 0);
-    const averageHoldingDays = holdingDays.length > 0
-      ? holdingDays.reduce((sum, days) => sum + days, 0) / holdingDays.length
-      : 0;
+    const holding_days = trades.filter(t => t.holding_days).map(t => t.holding_days || 0);
+    const averageHoldingDays =
+      holding_days.length > 0
+        ? holding_days.reduce((sum, days) => sum + days, 0) / holding_days.length
+        : 0;
 
     // 计算夏普比率（简化版）
-    const sharpeRatio = this.calculateSharpeRatio(dailyReturns);
-    const sortinoRatio = this.calculateSortinoRatio(dailyReturns);
+    const sharpe_ratio = this.calculateSharpeRatio(daily_returns);
+    const sortino_ratio = this.calculateSortinoRatio(daily_returns);
 
     // 计算最大回撤
-    const maxDrawdown = this.calculateMaxDrawdown(equityCurve);
+    const max_drawdown = this.calculateMaxDrawdown(equity_curve);
 
     // 计算年化收益率
-    const annualizedReturn = this.calculateAnnualizedReturn(equityCurve);
+    const annualized_return = this.calculateAnnualizedReturn(equity_curve);
 
     const metrics = this.portfolio.getMetrics();
 
     return {
       metrics: {
-        initialCapital: this.config.initialCapital,
-        finalCapital: metrics.totalValue,
-        totalReturn: this.calculateTotalReturn(),
-        annualizedReturn,
-        sharpeRatio,
-        sortinoRatio,
-        maxDrawdown,
-        winRate,
-        profitLossRatio,
-        totalTrades: trades.length,
-        profitTrades: profitTrades.length,
-        lossTrades: lossTrades.length,
+        initial_capital: this.config.initial_capital,
+        final_capital: metrics.total_value,
+        total_return: this.calculateTotalReturn(),
+        annualized_return,
+        sharpe_ratio,
+        sortino_ratio,
+        max_drawdown,
+        win_rate,
+        profit_loss_ratio,
+        total_trades: trades.length,
+        profit_trades: profit_trades.length,
+        loss_trades: loss_trades.length,
         averageHoldingDays,
         averageProfit,
         averageLoss,
       },
-      equityCurve,
+      equity_curve,
       trades,
       positions,
-      dailyReturns,
+      daily_returns,
     };
   }
 
   /**
    * 计算夏普比率
    */
-  private calculateSharpeRatio(dailyReturns: number[], riskFreeRate: number = 0.03): number {
-    if (dailyReturns.length === 0) return 0;
+  private calculateSharpeRatio(daily_returns: number[], riskFreeRate = 0.03): number {
+    if (daily_returns.length === 0) return 0;
 
-    const avgReturn = dailyReturns.reduce((sum, r) => sum + r, 0) / dailyReturns.length;
-    const variance = dailyReturns.reduce((sum, r) => sum + Math.pow(r - avgReturn, 2), 0) / dailyReturns.length;
+    const avgReturn = daily_returns.reduce((sum, r) => sum + r, 0) / daily_returns.length;
+    const variance =
+      daily_returns.reduce((sum, r) => sum + Math.pow(r - avgReturn, 2), 0) / daily_returns.length;
     const stdDev = Math.sqrt(variance);
 
     if (stdDev === 0) return 0;
 
     // 年化
-    const annualizedReturn = avgReturn * 252;
+    const annualized_return = avgReturn * 252;
     const annualizedStdDev = stdDev * Math.sqrt(252);
 
-    return (annualizedReturn - riskFreeRate) / annualizedStdDev;
+    return (annualized_return - riskFreeRate) / annualizedStdDev;
   }
 
   /**
    * 计算索提诺比率
    */
-  private calculateSortinoRatio(dailyReturns: number[], riskFreeRate: number = 0.03): number {
-    if (dailyReturns.length === 0) return 0;
+  private calculateSortinoRatio(daily_returns: number[], riskFreeRate = 0.03): number {
+    if (daily_returns.length === 0) return 0;
 
-    const avgReturn = dailyReturns.reduce((sum, r) => sum + r, 0) / dailyReturns.length;
-    const downsideReturns = dailyReturns.filter(r => r < 0);
+    const avgReturn = daily_returns.reduce((sum, r) => sum + r, 0) / daily_returns.length;
+    const downsideReturns = daily_returns.filter(r => r < 0);
 
     if (downsideReturns.length === 0) return 0;
 
-    const downsideVariance = downsideReturns.reduce((sum, r) => sum + Math.pow(r, 2), 0) / downsideReturns.length;
+    const downsideVariance =
+      downsideReturns.reduce((sum, r) => sum + Math.pow(r, 2), 0) / downsideReturns.length;
     const downsideStdDev = Math.sqrt(downsideVariance);
 
     if (downsideStdDev === 0) return 0;
 
     // 年化
-    const annualizedReturn = avgReturn * 252;
+    const annualized_return = avgReturn * 252;
     const annualizedDownsideStdDev = downsideStdDev * Math.sqrt(252);
 
-    return (annualizedReturn - riskFreeRate) / annualizedDownsideStdDev;
+    return (annualized_return - riskFreeRate) / annualizedDownsideStdDev;
   }
 
   /**
    * 计算最大回撤
    */
-  private calculateMaxDrawdown(equityCurve: { date: Date; value: number }[]): number {
-    if (equityCurve.length === 0) return 0;
+  private calculateMaxDrawdown(equity_curve: { date: Date; value: number }[]): number {
+    if (equity_curve.length === 0) return 0;
 
-    let peak = equityCurve[0].value;
-    let maxDrawdown = 0;
+    let peak = equity_curve[0].value;
+    let max_drawdown = 0;
 
-    for (const point of equityCurve) {
+    for (const point of equity_curve) {
       if (point.value > peak) {
         peak = point.value;
       }
-      const drawdown = (peak - point.value) / peak * 100;
-      if (drawdown > maxDrawdown) {
-        maxDrawdown = drawdown;
+      const drawdown = ((peak - point.value) / peak) * 100;
+      if (drawdown > max_drawdown) {
+        max_drawdown = drawdown;
       }
     }
 
-    return maxDrawdown;
+    return max_drawdown;
   }
 
   /**
    * 计算年化收益率
    */
-  private calculateAnnualizedReturn(equityCurve: { date: Date; value: number }[]): number {
-    if (equityCurve.length < 2) return 0;
+  private calculateAnnualizedReturn(equity_curve: { date: Date; value: number }[]): number {
+    if (equity_curve.length < 2) return 0;
 
-    const startValue = equityCurve[0].value;
-    const endValue = equityCurve[equityCurve.length - 1].value;
-    const totalReturn = (endValue - startValue) / startValue;
+    const startValue = equity_curve[0].value;
+    const endValue = equity_curve[equity_curve.length - 1].value;
+    const total_return = (endValue - startValue) / startValue;
 
-    const startDate = equityCurve[0].date;
-    const endDate = equityCurve[equityCurve.length - 1].date;
-    const years = (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24 * 365.25);
+    const start_date = equity_curve[0].date;
+    const end_date = equity_curve[equity_curve.length - 1].date;
+    const years = (end_date.getTime() - start_date.getTime()) / (1000 * 60 * 60 * 24 * 365.25);
 
     if (years <= 0) return 0;
 
-    return (Math.pow(1 + totalReturn, 1 / years) - 1) * 100;
+    return (Math.pow(1 + total_return, 1 / years) - 1) * 100;
   }
 
   /**
    * 获取事件记录
    */
   getEvents(): Event[] {
-    return [...this.events];
+    return []; // 已移除 events 存储以节省内存
   }
 
   /**
@@ -538,7 +551,7 @@ export class BacktestEngine {
       isRunning: this.isRunning,
       currentDate: this.currentDate,
       portfolioMetrics: this.portfolio.getMetrics(),
-      totalEvents: this.events.length,
+      totalEvents: this.totalEventsCount,
       pendingOrders: this.orderManager.getOrders().length,
     };
   }

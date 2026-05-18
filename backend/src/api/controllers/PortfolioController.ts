@@ -1,6 +1,13 @@
-import { Request, Response, NextFunction } from 'express';
-import { PortfolioReturnSimulator, PortfolioSimulationConfig } from '../../portfolio/PortfolioReturnSimulator';
+import { Request, Response } from 'express';
+import {
+  PortfolioReturnSimulator,
+  PortfolioSimulationConfig,
+} from '../../portfolio/PortfolioReturnSimulator';
 import { logger } from '../../utils/logger';
+import { PortfolioSimulation } from '../../models/PortfolioSimulation';
+import { Stock } from '../../models/Stock';
+import { Op } from 'sequelize';
+import { normalizeSymbol } from '../../utils/stockSymbol';
 
 export class PortfolioController {
   private simulator: PortfolioReturnSimulator;
@@ -18,7 +25,7 @@ export class PortfolioController {
    * 运行投资组合收益模拟
    * POST /api/portfolio/simulate
    */
-  async simulatePortfolio(req: Request, res: Response, next: NextFunction) {
+  async simulatePortfolio(req: Request, res: Response) {
     try {
       logger.info('收到投资组合模拟请求 - 完整body:', JSON.stringify(req.body));
       logger.info('收到投资组合模拟请求详情:', {
@@ -26,17 +33,17 @@ export class PortfolioController {
         symbols: req.body.symbols,
         buyDate: req.body.buyDate,
         days: req.body.days,
-        initialCapital: req.body.initialCapital,
-        allocationStrategy: req.body.allocationStrategy
+        initial_capital: req.body.initial_capital,
+        allocationStrategy: req.body.allocationStrategy,
       });
-      const userId = (req as any).user?.id || 1; // 暂时使用默认用户ID
+      const user_id = (req as any).user?.id || 1; // 暂时使用默认用户ID
       const {
         name,
         description,
         symbols,
         buyDate,
         days,
-        initialCapital = 100000,
+        initial_capital = 100000,
         allocationStrategy = 'equal',
         includeDividends = false,
         reinvest = false,
@@ -64,7 +71,7 @@ export class PortfolioController {
         });
       }
 
-      if (initialCapital <= 0) {
+      if (initial_capital <= 0) {
         return res.status(400).json({
           success: false,
           message: '初始资金必须大于0',
@@ -81,17 +88,17 @@ export class PortfolioController {
 
       // 准备配置
       const config: PortfolioSimulationConfig = {
-        symbols,
+        symbols: symbols.map((symbol: string) => normalizeSymbol(symbol)),
         buyDate: new Date(buyDate),
         days: parseInt(days, 10),
-        initialCapital: parseFloat(initialCapital),
+        initial_capital: parseFloat(initial_capital),
         allocationStrategy,
         includeDividends,
         reinvest,
       };
 
       logger.info('Starting portfolio simulation', {
-        userId,
+        user_id,
         symbols: config.symbols,
         buyDate: config.buyDate,
         days: config.days,
@@ -110,15 +117,15 @@ export class PortfolioController {
               symbols: config.symbols,
               buyDate: config.buyDate,
               days: config.days,
-              initialCapital: config.initialCapital,
+              initial_capital: config.initial_capital,
               allocationStrategy: config.allocationStrategy,
             },
             summary: result.summary,
             performanceMetrics: result.performanceMetrics,
             // 简化返回数据，避免响应过大
-            dailyReturns: result.dailyReturns.map(r => ({
+            daily_returns: result.daily_returns.map(r => ({
               date: r.date,
-              totalValue: r.totalValue,
+              total_value: r.total_value,
               dailyReturn: r.dailyReturn * 100, // 转换为百分比
               cumulativeReturn: r.cumulativeReturn * 100, // 转换为百分比
             })),
@@ -129,32 +136,56 @@ export class PortfolioController {
               allocationAmount: sr.allocationAmount,
               shares: sr.shares,
               // 只返回最后一天的收益
-              finalValue: sr.dailyReturns[sr.dailyReturns.length - 1]?.value || 0,
-              totalReturn: sr.dailyReturns[sr.dailyReturns.length - 1]?.cumulativeReturn * 100 || 0,
+              finalValue: sr.daily_returns[sr.daily_returns.length - 1]?.value || 0,
+              total_return:
+                sr.daily_returns[sr.daily_returns.length - 1]?.cumulativeReturn * 100 || 0,
             })),
           },
         },
       };
 
-      // TODO: 保存模拟结果到数据库（可选）
+      const simulationName =
+        name ||
+        `${config.symbols.length}股组合 ${new Date().toLocaleDateString('zh-CN', {
+          timeZone: 'Asia/Shanghai',
+        })}`;
+
+      await PortfolioSimulation.create({
+        user_id,
+        name: simulationName,
+        description,
+        symbols: config.symbols,
+        buy_date: config.buyDate,
+        days: config.days,
+        initial_capital: config.initial_capital,
+        allocation_strategy: config.allocationStrategy,
+        final_capital: result.summary.final_capital,
+        total_return: result.summary.total_return,
+        annualized_return: result.summary.annualized_return,
+        config: response.data.simulation.config,
+        summary: response.data.simulation.summary,
+        performance_metrics: response.data.simulation.performanceMetrics,
+        daily_returns: response.data.simulation.daily_returns,
+        stock_returns: response.data.simulation.stockReturns,
+      });
 
       res.status(200).json(response);
     } catch (error: any) {
       logger.error('投资组合收益模拟失败:', error);
 
       // 提供更友好的错误信息
-      let errorMessage = '模拟失败';
+      let error_message = '模拟失败';
       if (error.message.includes('股票') && error.message.includes('不存在')) {
-        errorMessage = error.message;
+        error_message = error.message;
       } else if (error.message.includes('没有买入日数据')) {
-        errorMessage = '部分股票在买入日期没有数据';
+        error_message = '部分股票在买入日期没有数据';
       } else if (error.message.includes('买入价格无效')) {
-        errorMessage = '部分股票买入价格无效';
+        error_message = '部分股票买入价格无效';
       }
 
       res.status(400).json({
         success: false,
-        message: errorMessage,
+        message: error_message,
         error: process.env.NODE_ENV === 'development' ? error.message : undefined,
       });
     }
@@ -164,33 +195,52 @@ export class PortfolioController {
    * 获取模拟历史记录
    * GET /api/portfolio/history
    */
-  async getSimulationHistory(req: Request, res: Response, next: NextFunction) {
+  async getSimulationHistory(req: Request, res: Response) {
     try {
-      const userId = (req as any).user?.id || 1;
-      const {
-        page = '1',
-        limit = '20',
-        startDate,
-        endDate,
-      } = req.query;
+      const user_id = (req as any).user?.id || 1;
+      const { page = '1', limit = '20', start_date, end_date } = req.query;
+      const pageNum = parseInt(page as string, 10);
+      const limitNum = parseInt(limit as string, 10);
+      const offset = (pageNum - 1) * limitNum;
 
-      // TODO: 从数据库获取历史记录
-      // 暂时返回空列表
+      const where: any = { user_id };
+      if (start_date || end_date) {
+        where.created_at = {};
+        if (start_date) {
+          where.created_at[Op.gte] = new Date(start_date as string);
+        }
+        if (end_date) {
+          const endDate = new Date(end_date as string);
+          endDate.setHours(23, 59, 59, 999);
+          where.created_at[Op.lte] = endDate;
+        }
+      }
+
+      const { rows, count } = await PortfolioSimulation.findAndCountAll({
+        where,
+        order: [['created_at', 'DESC']],
+        limit: limitNum,
+        offset,
+      });
+
       res.json({
         success: true,
         data: {
-          simulations: [],
+          simulations: rows,
           pagination: {
-            total: 0,
-            page: parseInt(page as string, 10),
-            limit: parseInt(limit as string, 10),
-            totalPages: 0,
+            total: count,
+            page: pageNum,
+            limit: limitNum,
+            totalPages: Math.ceil(count / limitNum),
           },
         },
       });
     } catch (error) {
       logger.error('获取模拟历史失败:', error);
-      next(error);
+      res.status(500).json({
+        success: false,
+        message: '获取模拟历史失败',
+      });
     }
   }
 
@@ -198,19 +248,34 @@ export class PortfolioController {
    * 获取模拟详情
    * GET /api/portfolio/:id
    */
-  async getSimulationDetail(req: Request, res: Response, next: NextFunction) {
+  async getSimulationDetail(req: Request, res: Response) {
     try {
+      const user_id = (req as any).user?.id || 1;
       const { id } = req.params;
 
-      // TODO: 从数据库获取模拟详情
-      // 暂时返回404
-      res.status(404).json({
-        success: false,
-        message: '模拟记录不存在',
+      const simulation = await PortfolioSimulation.findOne({
+        where: { id, user_id },
+      });
+
+      if (!simulation) {
+        return res.status(404).json({
+          success: false,
+          message: '模拟记录不存在',
+        });
+      }
+
+      res.json({
+        success: true,
+        data: {
+          simulation,
+        },
       });
     } catch (error) {
       logger.error('获取模拟详情失败:', error);
-      next(error);
+      res.status(500).json({
+        success: false,
+        message: '获取模拟详情失败',
+      });
     }
   }
 
@@ -218,7 +283,7 @@ export class PortfolioController {
    * 批量验证股票
    * POST /api/portfolio/validate-stocks
    */
-  async validateStocks(req: Request, res: Response, next: NextFunction) {
+  async validateStocks(req: Request, res: Response) {
     try {
       const { symbols } = req.body;
 
@@ -229,26 +294,43 @@ export class PortfolioController {
         });
       }
 
-      // TODO: 验证股票是否存在并获取基本信息
-      // 暂时返回简化响应
-      const validatedStocks = symbols.map((symbol: string) => ({
-        symbol,
-        exists: true, // 暂时假设都存在
-        name: symbol, // 实际应从数据库获取
-        market: symbol.startsWith('sh.') ? 'SH' : symbol.startsWith('sz.') ? 'SZ' : 'Unknown',
-      }));
+      const normalizedSymbols = symbols.map((symbol: string) => normalizeSymbol(symbol));
+      const existingStocks = await Stock.findAll({
+        where: {
+          symbol: {
+            [Op.in]: normalizedSymbols,
+          },
+        },
+        attributes: ['symbol', 'name', 'market'],
+      });
+
+      const stockMap = new Map(existingStocks.map(stock => [stock.symbol, stock]));
+      const validatedStocks = normalizedSymbols.map(symbol => {
+        const stock = stockMap.get(symbol);
+        return {
+          symbol,
+          exists: !!stock,
+          name: stock?.name || symbol,
+          market:
+            stock?.market ||
+            (symbol.startsWith('sh.') ? 'SH' : symbol.startsWith('sz.') ? 'SZ' : 'BJ'),
+        };
+      });
 
       res.json({
         success: true,
         data: {
           stocks: validatedStocks,
-          validCount: validatedStocks.length,
-          invalidCount: 0,
+          validCount: validatedStocks.filter(stock => stock.exists).length,
+          invalidCount: validatedStocks.filter(stock => !stock.exists).length,
         },
       });
     } catch (error) {
       logger.error('验证股票失败:', error);
-      next(error);
+      res.status(500).json({
+        success: false,
+        message: '验证股票失败',
+      });
     }
   }
 
@@ -256,14 +338,16 @@ export class PortfolioController {
    * 获取推荐配置
    * GET /api/portfolio/recommended-config
    */
-  async getRecommendedConfig(req: Request, res: Response, next: NextFunction) {
+  async getRecommendedConfig(req: Request, res: Response) {
     try {
       // 返回推荐的默认配置
       const recommendedConfig = {
         symbols: ['sh.600000', 'sz.000001', 'sh.600036'],
-        buyDate: new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split('T')[0],
+        buyDate: new Date(new Date().setDate(new Date().getDate() - 30))
+          .toISOString()
+          .split('T')[0],
         days: 30,
-        initialCapital: 100000,
+        initial_capital: 100000,
         allocationStrategy: 'equal',
         maxStocks: 10,
         minDays: 1,
@@ -297,7 +381,10 @@ export class PortfolioController {
       });
     } catch (error) {
       logger.error('获取推荐配置失败:', error);
-      next(error);
+      res.status(500).json({
+        success: false,
+        message: '获取推荐配置失败',
+      });
     }
   }
 }

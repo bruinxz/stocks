@@ -6,6 +6,9 @@ import { User } from '../../models/User';
 import { BacktestEngine, BacktestConfig } from '../../backtest/engine/BacktestEngine';
 import { DataService } from '../../data/services/DataService';
 import { MovingAverageCrossoverStrategy } from '../../backtest/strategies/MovingAverageCrossoverStrategy';
+import { RSIStrategy } from '../../backtest/strategies/RSIStrategy';
+import { MACDStrategy } from '../../backtest/strategies/MACDStrategy';
+import { BollingerBandsStrategy } from '../../backtest/strategies/BollingerBandsStrategy';
 import { Strategy } from '../../backtest/strategies/Strategy';
 import { logger } from '../../utils/logger';
 
@@ -28,14 +31,14 @@ export class BacktestController {
    */
   async createBacktest(req: Request, res: Response, next: NextFunction) {
     try {
-      const userId = (req as any).user?.id || 1;
+      const user_id = (req as any).user?.id || 1;
       const {
         name,
         description,
         symbols,
-        startDate,
-        endDate,
-        initialCapital,
+        start_date,
+        end_date,
+        initial_capital,
         strategyType = 'moving_average_crossover',
         strategyParams,
         slippage = 0.001,
@@ -49,7 +52,7 @@ export class BacktestController {
 
       switch (strategyType) {
         case 'moving_average_crossover':
-          const strategyConfig = {
+          const strategy_config = {
             id: `strategy_${Date.now()}`,
             name: 'Moving Average Crossover',
             parameters: {
@@ -58,7 +61,42 @@ export class BacktestController {
               threshold: strategyParams?.threshold || 0,
             },
           };
-          strategy = new MovingAverageCrossoverStrategy(strategyConfig, symbol);
+          strategy = new MovingAverageCrossoverStrategy(strategy_config, symbol);
+          break;
+        case 'rsi':
+          const rsiConfig = {
+            id: `strategy_${Date.now()}`,
+            name: 'RSI Strategy',
+            parameters: {
+              period: strategyParams?.period || 14,
+              overbought: strategyParams?.overbought || 70,
+              oversold: strategyParams?.oversold || 30,
+            },
+          };
+          strategy = new RSIStrategy(rsiConfig, symbol);
+          break;
+        case 'macd':
+          const macdConfig = {
+            id: `strategy_${Date.now()}`,
+            name: 'MACD Strategy',
+            parameters: {
+              fastPeriod: strategyParams?.fastPeriod || 12,
+              slowPeriod: strategyParams?.slowPeriod || 26,
+              signalPeriod: strategyParams?.signalPeriod || 9,
+            },
+          };
+          strategy = new MACDStrategy(macdConfig, symbol);
+          break;
+        case 'bollinger_bands':
+          const bbConfig = {
+            id: `strategy_${Date.now()}`,
+            name: 'Bollinger Bands Strategy',
+            parameters: {
+              period: strategyParams?.period || 20,
+              stdDev: strategyParams?.stdDev || 2,
+            },
+          };
+          strategy = new BollingerBandsStrategy(bbConfig, symbol);
           break;
         // 可以扩展其他策略类型
         default:
@@ -70,9 +108,9 @@ export class BacktestController {
 
       // 创建回测配置
       const config: BacktestConfig = {
-        startDate: new Date(startDate),
-        endDate: new Date(endDate),
-        initialCapital: parseFloat(initialCapital),
+        start_date: new Date(start_date),
+        end_date: new Date(end_date),
+        initial_capital: parseFloat(initial_capital),
         symbols: Array.isArray(symbols) ? symbols : [symbols],
         strategy,
         dataService: this.dataService,
@@ -87,10 +125,10 @@ export class BacktestController {
 
       // 保存回测结果到数据库
       const backtestResult = await BacktestResult.create({
-        userId,
+        user_id: user_id,
         name,
         description,
-        strategyConfig: {
+        strategy_config: {
           strategyType,
           strategyParams,
           symbols: config.symbols,
@@ -98,35 +136,38 @@ export class BacktestController {
           commissionRate,
           frequency,
         },
-        startDate: config.startDate,
-        endDate: config.endDate,
-        initialCapital: config.initialCapital,
-        finalCapital: result.metrics.finalCapital,
-        totalReturn: result.metrics.totalReturn,
-        annualizedReturn: result.metrics.annualizedReturn,
-        sharpeRatio: result.metrics.sharpeRatio,
-        maxDrawdown: result.metrics.maxDrawdown,
-        winRate: result.metrics.winRate,
-        totalTrades: result.metrics.totalTrades,
-        profitTrades: result.metrics.profitTrades || 0,
-        lossTrades: result.metrics.lossTrades || 0,
+        start_date: config.start_date,
+        end_date: config.end_date,
+        initial_capital: config.initial_capital,
+        final_capital: result.metrics.final_capital,
+        total_return: result.metrics.total_return,
+        annualized_return: result.metrics.annualized_return,
+        sharpe_ratio: result.metrics.sharpe_ratio,
+        max_drawdown: result.metrics.max_drawdown,
+        win_rate: result.metrics.win_rate,
+        total_trades: result.metrics.total_trades,
+        profit_trades: result.metrics.profit_trades || 0,
+        loss_trades: result.metrics.loss_trades || 0,
         status: BacktestStatus.COMPLETED,
+        equity_curve: result.equity_curve,
+        daily_returns: result.daily_returns,
+        detailed_metrics: result.metrics,
       });
 
       // 保存交易记录
       if (result.trades && result.trades.length > 0) {
         const tradesData = result.trades.map((trade: any) => ({
-          backtestId: backtestResult.id,
+          backtest_id: backtestResult.id,
           symbol: trade.symbol,
           direction: trade.direction,
-          entryPrice: trade.entryPrice,
-          exitPrice: trade.exitPrice,
+          entry_price: trade.entry_price,
+          exit_price: trade.exit_price,
           quantity: trade.quantity,
-          entryDate: trade.entryDate,
-          exitDate: trade.exitDate,
+          entry_date: trade.entry_date,
+          exit_date: trade.exit_date,
           pnl: trade.pnl,
-          pnlPercent: trade.pnlPercent,
-          holdingDays: trade.holdingDays,
+          pnl_percent: trade.pnl_percent,
+          holding_days: trade.holding_days,
         }));
         await Trade.bulkCreate(tradesData);
       }
@@ -152,42 +193,36 @@ export class BacktestController {
    */
   async getBacktestList(req: Request, res: Response, next: NextFunction) {
     try {
-      const userId = (req as any).user?.id || 1;
-      const {
-        page = '1',
-        limit = '20',
-        status,
-        startDate,
-        endDate,
-      } = req.query;
+      const user_id = (req as any).user?.id || 1;
+      const { page = '1', limit = '20', status, start_date, end_date } = req.query;
 
       const pageNum = parseInt(page as string, 10);
       const limitNum = parseInt(limit as string, 10);
       const offset = (pageNum - 1) * limitNum;
 
-      const where: any = { userId };
+      const where: any = { user_id: user_id };
 
       if (status) {
         where.status = status;
       }
 
-      if (startDate) {
-        where.createdAt = { ...where.createdAt, [Op.gte]: new Date(startDate as string) };
+      if (start_date) {
+        where.created_at = { ...where.created_at, [Op.gte]: new Date(start_date as string) };
       }
 
-      if (endDate) {
-        where.createdAt = { ...where.createdAt, [Op.lte]: new Date(endDate as string) };
+      if (end_date) {
+        where.created_at = { ...where.created_at, [Op.lte]: new Date(end_date as string) };
       }
 
       const { count, rows } = await BacktestResult.findAndCountAll({
         where,
         limit: limitNum,
         offset,
-        order: [['createdAt', 'DESC']],
+        order: [['created_at', 'DESC']],
         include: [
           {
             model: Trade,
-            attributes: ['id', 'direction', 'pnl', 'entryDate', 'exitDate'],
+            attributes: ['id', 'direction', 'pnl', 'entry_date', 'exit_date'],
             limit: 5,
           },
         ],
@@ -216,11 +251,11 @@ export class BacktestController {
    */
   async getBacktestDetail(req: Request, res: Response, next: NextFunction) {
     try {
-      const userId = (req as any).user?.id || 1;
+      const user_id = (req as any).user?.id || 1;
       const { id } = req.params;
 
       const backtest = await BacktestResult.findOne({
-        where: { id, userId },
+        where: { id, user_id: user_id },
         include: [Trade],
       });
 
@@ -233,7 +268,26 @@ export class BacktestController {
 
       res.json({
         success: true,
-        data: { backtest },
+        data: {
+          backtest,
+          metrics: backtest.detailed_metrics || {
+            initial_capital: backtest.initial_capital,
+            final_capital: backtest.final_capital,
+            total_return: backtest.total_return,
+            annualized_return: backtest.annualized_return,
+            sharpe_ratio: backtest.sharpe_ratio,
+            sortino_ratio: backtest.sortino_ratio,
+            max_drawdown: backtest.max_drawdown,
+            win_rate: backtest.win_rate,
+            profit_loss_ratio: backtest.profit_loss_ratio,
+            total_trades: backtest.total_trades,
+            profit_trades: backtest.profit_trades,
+            loss_trades: backtest.loss_trades,
+          },
+          equity_curve: backtest.equity_curve || [],
+          daily_returns: backtest.daily_returns || [],
+          trades: backtest.trades || [],
+        },
       });
     } catch (error) {
       logger.error('获取回测详情失败:', error);
@@ -246,11 +300,11 @@ export class BacktestController {
    */
   async deleteBacktest(req: Request, res: Response, next: NextFunction) {
     try {
-      const userId = (req as any).user?.id || 1;
+      const user_id = (req as any).user?.id || 1;
       const { id } = req.params;
 
       const backtest = await BacktestResult.findOne({
-        where: { id, userId },
+        where: { id, user_id: user_id },
       });
 
       if (!backtest) {
@@ -261,7 +315,7 @@ export class BacktestController {
       }
 
       // 删除关联的交易记录
-      await Trade.destroy({ where: { backtestId: id } });
+      await Trade.destroy({ where: { backtest_id: id } });
 
       // 删除回测记录
       await backtest.destroy();
@@ -281,26 +335,27 @@ export class BacktestController {
    */
   async getBacktestStats(req: Request, res: Response, next: NextFunction) {
     try {
-      const userId = (req as any).user?.id || 1;
+      const user_id = (req as any).user?.id || 1;
 
-      const totalBacktests = await BacktestResult.count({ where: { userId } });
+      const totalBacktests = await BacktestResult.count({ where: { user_id: user_id } });
       const completedBacktests = await BacktestResult.count({
-        where: { userId, status: BacktestStatus.COMPLETED },
+        where: { user_id: user_id, status: BacktestStatus.COMPLETED },
       });
       const failedBacktests = await BacktestResult.count({
-        where: { userId, status: BacktestStatus.FAILED },
+        where: { user_id: user_id, status: BacktestStatus.FAILED },
       });
 
       const recentBacktests = await BacktestResult.findAll({
-        where: { userId },
-        attributes: ['totalReturn', 'annualizedReturn', 'sharpeRatio', 'maxDrawdown'],
+        where: { user_id: user_id },
+        attributes: ['total_return', 'annualized_return', 'sharpe_ratio', 'max_drawdown'],
         limit: 10,
-        order: [['createdAt', 'DESC']],
+        order: [['created_at', 'DESC']],
       });
 
-      const avgReturn = recentBacktests.length > 0
-        ? recentBacktests.reduce((sum, bt) => sum + bt.totalReturn, 0) / recentBacktests.length
-        : 0;
+      const avgReturn =
+        recentBacktests.length > 0
+          ? recentBacktests.reduce((sum, bt) => sum + bt.total_return, 0) / recentBacktests.length
+          : 0;
 
       res.json({
         success: true,

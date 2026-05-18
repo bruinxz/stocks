@@ -24,17 +24,12 @@ export function normalizeSymbol(symbol: string): string {
 
   const trimmed = symbol.trim();
 
-  // 如果已经是标准格式（sh.600000, sz.000001, bj.830799），直接返回
-  if (trimmed.includes('.') && !trimmed.endsWith('.SH') && !trimmed.endsWith('.SZ')) {
-    return trimmed;
-  }
-
-  // 处理Tushare格式（000001.SZ, 600000.SH）
-  if (trimmed.includes('.SH') || trimmed.includes('.SZ')) {
+  // 处理 Tushare 格式（000001.SZ, 600000.SH, 830799.BJ），大小写均兼容
+  if (/\.(SH|SZ|BJ)$/i.test(trimmed)) {
     const parts = trimmed.split('.');
     if (parts.length === 2) {
       const code = parts[0];
-      const suffix = parts[1];
+      const suffix = parts[1].toUpperCase();
 
       if (suffix === 'SH') {
         return `sh.${code}`;
@@ -46,18 +41,25 @@ export function normalizeSymbol(symbol: string): string {
     }
   }
 
+  // 如果已经是标准格式（sh.600000, sz.000001, bj.830799），统一小写市场前缀后返回
+  if (/^(sh|sz|bj)\.\d{6}$/i.test(trimmed)) {
+    const [market, code] = trimmed.split('.');
+    return `${market.toLowerCase()}.${code}`;
+  }
+
   // 处理AKShare带前缀不带点格式（sh000001, sz000001）
-  if (trimmed.startsWith('sh') && trimmed.length > 2 && !trimmed.startsWith('sh.')) {
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith('sh') && trimmed.length > 2 && !lower.startsWith('sh.')) {
     const code = trimmed.substring(2);
     return `sh.${code}`;
   }
 
-  if (trimmed.startsWith('sz') && trimmed.length > 2 && !trimmed.startsWith('sz.')) {
+  if (lower.startsWith('sz') && trimmed.length > 2 && !lower.startsWith('sz.')) {
     const code = trimmed.substring(2);
     return `sz.${code}`;
   }
 
-  if (trimmed.startsWith('bj') && trimmed.length > 2 && !trimmed.startsWith('bj.')) {
+  if (lower.startsWith('bj') && trimmed.length > 2 && !lower.startsWith('bj.')) {
     const code = trimmed.substring(2);
     return `bj.${code}`;
   }
@@ -70,8 +72,10 @@ export function normalizeSymbol(symbol: string): string {
       return `sh.${trimmed}`;
     } else if (firstChar === '0' || firstChar === '3') {
       return `sz.${trimmed}`;
-    } else if (firstChar === '8' || firstChar === '4') {
+    } else if (firstChar === '8' || firstChar === '4' || firstChar === '9') {
       return `bj.${trimmed}`;
+    } else {
+      return `sh.${trimmed}`; // 兜底给 sh，防止产生无前缀的孤儿数据
     }
   }
 
@@ -112,7 +116,7 @@ export function toAKShareDailyCode(symbol: string): string {
     return `sh${normalized}`;
   } else if (normalized.startsWith('0') || normalized.startsWith('3')) {
     return `sz${normalized}`;
-  } else if (normalized.startsWith('8') || normalized.startsWith('4')) {
+  } else if (normalized.startsWith('8') || normalized.startsWith('4') || normalized.startsWith('9')) {
     return `bj${normalized}`;
   }
 
@@ -146,11 +150,11 @@ export function toTushareFormat(symbol: string): string {
     return `${normalized}.SH`;
   } else if (normalized.startsWith('0') || normalized.startsWith('3')) {
     return `${normalized}.SZ`;
-  } else if (normalized.startsWith('8') || normalized.startsWith('4')) {
+  } else if (normalized.startsWith('8') || normalized.startsWith('4') || normalized.startsWith('9')) {
     return `${normalized}.BJ`;
+  } else {
+    return `${normalized}.SH`;
   }
-
-  return normalized;
 }
 
 /**
@@ -257,7 +261,5 @@ export function isValidSymbol(symbol: string): boolean {
  * @returns 标准化后的股票代码数组
  */
 export function normalizeSymbols(symbols: string[]): string[] {
-  return symbols
-    .map(symbol => normalizeSymbol(symbol))
-    .filter(symbol => isValidSymbol(symbol));
+  return symbols.map(symbol => normalizeSymbol(symbol)).filter(symbol => isValidSymbol(symbol));
 }

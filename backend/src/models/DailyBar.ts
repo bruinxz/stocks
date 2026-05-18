@@ -1,4 +1,14 @@
-import { Table, Column, Model, DataType, ForeignKey, BelongsTo, Index, CreatedAt, UpdatedAt } from 'sequelize-typescript';
+import {
+  Table,
+  Column,
+  Model,
+  DataType,
+  ForeignKey,
+  BelongsTo,
+  Index,
+  CreatedAt,
+  UpdatedAt,
+} from 'sequelize-typescript';
 import { Stock } from './Stock';
 
 @Table({
@@ -35,9 +45,10 @@ export class DailyBar extends Model {
     type: DataType.INTEGER,
     allowNull: false,
     primaryKey: true,
+    field: 'stock_id',
     comment: '股票ID',
   })
-  declare stockId: number;
+  declare stock_id: number;
 
   @Column({
     type: DataType.DECIMAL(12, 4),
@@ -84,23 +95,26 @@ export class DailyBar extends Model {
   @Column({
     type: DataType.DECIMAL(12, 4),
     allowNull: true,
+    field: 'adj_close',
     comment: '复权收盘价',
   })
-  declare adjClose?: number;
+  declare adj_close?: number;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
     allowNull: true,
+    field: 'turnover_rate',
     comment: '换手率(%)',
   })
-  declare turnoverRate?: number;
+  declare turnover_rate?: number;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
     allowNull: true,
+    field: 'change_percent',
     comment: '涨跌幅(%)',
   })
-  declare changePercent?: number;
+  declare change_percent?: number;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
@@ -131,21 +145,36 @@ export class DailyBar extends Model {
   declare ps?: number;
 
   @Column({
+    type: DataType.DECIMAL(20, 4),
+    allowNull: true,
+    field: 'market_cap',
+    comment: '总市值(元)',
+  })
+  declare market_cap?: number;
+
+  @Column({
     type: DataType.BOOLEAN,
     defaultValue: true,
+    field: 'is_trading_day',
     comment: '是否交易日',
   })
-  declare isTradingDay: boolean;
+  declare is_trading_day: boolean;
 
   @Column({
     type: DataType.BOOLEAN,
     defaultValue: false,
+    field: 'is_suspended',
     comment: '是否停牌',
   })
-  declare isSuspended: boolean;
+  declare is_suspended: boolean;
 
   @CreatedAt
-  declare createdAt: Date;
+  @Column({ field: 'created_at' })
+  declare created_at: Date;
+
+  @UpdatedAt
+  @Column({ field: 'updated_at' })
+  declare updated_at: Date;
 
   // 关联关系
   @BelongsTo(() => Stock)

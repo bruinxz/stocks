@@ -1,7 +1,24 @@
-import { EastMoneyClient, StockBasicInfo as EastMoneyStockBasicInfo, DailyBar as EastMoneyDailyBar } from './EastMoneyClient';
-import { AKShareClient, StockBasicInfo as AKShareStockBasicInfo, DailyBar as AKShareDailyBar } from './AKShareClient';
+import { EastMoneyClient } from './EastMoneyClient';
+import {
+  AKShareClient,
+  StockBasicInfo as AKShareStockBasicInfo,
+  DailyBar as AKShareDailyBar,
+} from './AKShareClient';
+import { SinaFinanceClient } from './SinaFinanceClient';
+import { BaostockClient } from './BaostockClient';
+import { TushareClient } from './TushareClient';
+import { TencentFinanceClient } from './TencentFinanceClient';
 import { logger } from '../../utils/logger';
-import { toAKSharePureCode, toEastMoneyFormat, normalizeSymbol } from '../../utils/stockSymbol';
+import { toEastMoneyFormat, normalizeSymbol } from '../../utils/stockSymbol';
+import {
+  MarketDataFeature,
+  MarketDataProviderDefinition,
+  ProviderExecutionOptions,
+} from './MarketDataProvider';
+import {
+  DataSourceHealthService,
+  DEFAULT_DATA_PROVIDERS,
+} from '../services/DataSourceHealthService';
 
 // 使用AKShare的接口定义（兼容其他数据源）
 export type StockBasicInfo = AKShareStockBasicInfo;
@@ -18,49 +35,178 @@ export type QueryParams = {
 export class CombinedDataSource {
   private eastMoneyClient: EastMoneyClient;
   private akshareClient: AKShareClient;
+  private sinaFinanceClient: SinaFinanceClient;
+  private baostockClient: BaostockClient;
+  private tushareClient: TushareClient;
+  private tencentFinanceClient: TencentFinanceClient;
+  private providers: Record<string, MarketDataProviderDefinition>;
 
   constructor() {
     this.eastMoneyClient = new EastMoneyClient();
     this.akshareClient = new AKShareClient();
+    this.sinaFinanceClient = new SinaFinanceClient();
+    this.baostockClient = new BaostockClient();
+    this.tushareClient = new TushareClient();
+    this.tencentFinanceClient = new TencentFinanceClient();
+    this.providers = Object.fromEntries(
+      DEFAULT_DATA_PROVIDERS.map(provider => [provider.provider_name, provider])
+    );
+  }
+
+  private getProvider(provider_name: string): MarketDataProviderDefinition {
+    return this.providers[provider_name];
+  }
+
+  private isProviderEnabled(provider_name: string): boolean {
+    const provider = this.getProvider(provider_name);
+    return Boolean(provider?.is_enabled);
+  }
+
+  private getPreferredProviders(
+    feature: MarketDataFeature,
+    preferred_provider?: string
+  ): string[] | null {
+    const normalizedPreferredProvider = preferred_provider?.endsWith('_only')
+      ? preferred_provider.replace(/_only$/, '')
+      : preferred_provider;
+    const configured =
+      normalizedPreferredProvider && normalizedPreferredProvider !== 'auto'
+        ? [normalizedPreferredProvider]
+        : process.env.DATA_SOURCE_PREFERENCE?.split(',')
+            .map(item => item.trim().toLowerCase())
+            .filter(Boolean);
+
+    if (!configured || configured.length === 0 || configured.includes('auto')) {
+      return null;
+    }
+
+    return configured.filter(provider_name => {
+      const provider = this.getProvider(provider_name);
+      return provider?.supported_features.includes(feature);
+    });
+  }
+
+  private async buildProviderChain<T>(
+    providerChain: Array<[string, () => Promise<T>]>,
+    feature: MarketDataFeature,
+    preferred_provider?: string
+  ): Promise<Array<[string, () => Promise<T>]>> {
+    if (preferred_provider?.endsWith('_only')) {
+      const provider_name = preferred_provider.replace(/_only$/, '');
+      const strictProvider = providerChain.find(([name]) => name === provider_name);
+      return strictProvider ? [strictProvider] : [];
+    }
+
+    const preferredProviders = this.getPreferredProviders(feature, preferred_provider);
+    if (!preferredProviders || preferredProviders.length === 0) {
+      try {
+        return this.applyDynamicProviderRouting(providerChain, feature);
+      } catch (error: any) {
+        logger.warn(`动态数据源排序失败，回退默认顺序 (${feature}): ${error.message}`);
+        return providerChain;
+      }
+    }
+
+    const preferredSet = new Set(preferredProviders);
+    const preferred = preferredProviders
+      .map(provider_name => providerChain.find(([name]) => name === provider_name))
+      .filter(Boolean) as Array<[string, () => Promise<T>]>;
+    const fallback = providerChain.filter(([provider_name]) => !preferredSet.has(provider_name));
+    return [...preferred, ...fallback];
+  }
+
+  private async applyDynamicProviderRouting<T>(
+    providerChain: Array<[string, () => Promise<T>]>,
+    feature: MarketDataFeature
+  ): Promise<Array<[string, () => Promise<T>]>> {
+    if (process.env.DATA_SOURCE_DYNAMIC_ROUTING === 'false') {
+      return providerChain;
+    }
+
+    const chainMap = new Map(providerChain);
+    const plan = await DataSourceHealthService.getRankedProviders(
+      feature,
+      providerChain.map(([provider_name]) => provider_name)
+    );
+    const ranked = plan
+      .map(item => {
+        const fetcher = chainMap.get(item.provider_name);
+        return fetcher ? ([item.provider_name, fetcher] as [string, () => Promise<T>]) : null;
+      })
+      .filter(Boolean) as Array<[string, () => Promise<T>]>;
+    const rankedSet = new Set(ranked.map(([provider_name]) => provider_name));
+    const missing = providerChain.filter(([provider_name]) => !rankedSet.has(provider_name));
+    const finalChain = [...ranked, ...missing];
+
+    logger.info(
+      `数据源动态路由(${feature}): ${plan
+        .map(item => `${item.rank}.${item.provider_name}:${item.status}/${item.route_score}`)
+        .join(' -> ')}`
+    );
+
+    return finalChain;
   }
 
   /**
-   * 指数退避重试
-   * @param operation 要执行的操作
-   * @param operationName 操作名称，用于日志
-   * @param maxRetries 最大重试次数
-   * @param initialDelay 初始延迟（毫秒）
-   * @param maxDelay 最大延迟（毫秒）
+   * 指数退避重试，并将每个数据源的成功/失败/空结果写入健康状态表。
    */
   private async retryWithBackoff<T>(
     operation: () => Promise<T>,
-    operationName: string,
-    maxRetries: number = 3,
-    initialDelay: number = 1000,
-    maxDelay: number = 10000
+    optionsOrName: ProviderExecutionOptions | string,
+    maxRetries = 3,
+    initialDelay = 1000,
+    maxDelay = 10000
   ): Promise<T> {
+    const options: ProviderExecutionOptions | null =
+      typeof optionsOrName === 'string' ? null : optionsOrName;
+    const operationName =
+      typeof optionsOrName === 'string' ? optionsOrName : optionsOrName.operation_name;
+    const retries = options?.max_retries ?? maxRetries;
+    const initialDelayMs = options?.initial_delay_ms ?? initialDelay;
+    const maxDelayMs = options?.max_delay_ms ?? maxDelay;
     let lastError: Error | null = null;
+    const startedAt = Date.now();
 
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    if (options && !options.is_enabled) {
+      const reason = `${options.provider_label} is disabled`;
+      await DataSourceHealthService.recordDisabled(options, options.feature, reason);
+      throw new Error(reason);
+    }
+
+    for (let attempt = 1; attempt <= retries; attempt++) {
       try {
         if (attempt > 1) {
-          logger.info(`重试 ${operationName}，尝试 ${attempt}/${maxRetries}`);
+          logger.info(`重试 ${operationName}，尝试 ${attempt}/${retries}`);
         }
-        return await operation();
+        const result = await operation();
+        const latencyMs = Date.now() - startedAt;
+
+        if (options) {
+          const isEmptyResult = Array.isArray(result) && result.length === 0;
+          if (isEmptyResult) {
+            await DataSourceHealthService.recordEmptyResult(options, options.feature, latencyMs);
+          } else {
+            await DataSourceHealthService.recordSuccess(options, options.feature, latencyMs, {
+              attempt,
+              result_size: Array.isArray(result) ? result.length : undefined,
+            });
+          }
+        }
+
+        return result;
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
 
-        if (attempt >= maxRetries) {
+        if (attempt >= retries) {
           break;
         }
 
-        // 计算延迟时间（指数退避）
-        const delay = Math.min(initialDelay * Math.pow(2, attempt - 1), maxDelay);
-        const jitter = Math.random() * 0.3 * delay; // 添加30%的随机抖动
+        const delay = Math.min(initialDelayMs * Math.pow(2, attempt - 1), maxDelayMs);
+        const jitter = Math.random() * 0.3 * delay;
         const totalDelay = delay + jitter;
 
         logger.warn(
-          `${operationName} 失败，${delay.toFixed(0)}ms 后重试 (尝试 ${attempt}/${maxRetries}):`,
+          `${operationName} 失败，${delay.toFixed(0)}ms 后重试 (尝试 ${attempt}/${retries}):`,
           lastError.message
         );
 
@@ -68,250 +214,485 @@ export class CombinedDataSource {
       }
     }
 
-    logger.error(`${operationName} 在 ${maxRetries} 次重试后失败:`, lastError?.message);
+    const latencyMs = Date.now() - startedAt;
+    if (options) {
+      await DataSourceHealthService.recordFailure(
+        options,
+        options.feature,
+        lastError || new Error(`${operationName} 失败`),
+        latencyMs
+      );
+    }
+
+    logger.error(`${operationName} 在 ${retries} 次重试后失败:`, lastError?.message);
     throw lastError || new Error(`${operationName} 失败`);
   }
 
-  /**
-   * 获取所有股票列表（优先使用AKShare，失败时使用东方财富）
-   */
-  async getAllStocks(): Promise<StockBasicInfo[]> {
-    // 优先使用AKShare
-    try {
-      const stocks = await this.retryWithBackoff(
-        () => this.akshareClient.getAllStocks(),
-        'getAllStocks from AKShare',
-        3, 1000, 10000
-      );
-      if (stocks && stocks.length > 0) {
-        logger.info(`Using ${stocks.length} real stocks from AKShare`);
-        // AKShare返回的代码已经是标准化格式，但确保一下
-        return stocks.map(stock => ({
-          ...stock,
-          code: normalizeSymbol(stock.code)
-        }));
+  private buildProviderOptions(
+    provider_name: string,
+    feature: MarketDataFeature,
+    operation_name: string,
+    retryOverrides: Partial<
+      Pick<ProviderExecutionOptions, 'max_retries' | 'initial_delay_ms' | 'max_delay_ms'>
+    > = {}
+  ): ProviderExecutionOptions {
+    const provider = this.getProvider(provider_name);
+    return {
+      ...provider,
+      feature,
+      operation_name,
+      ...retryOverrides,
+    };
+  }
+
+  private normalizeStockList(stocks: StockBasicInfo[]): StockBasicInfo[] {
+    return stocks.map(stock => ({
+      ...stock,
+      code: normalizeSymbol(stock.code),
+      total_market_cap: (stock as any).total_market_cap ?? (stock as any).totalMarketCap,
+      circulating_market_cap:
+        (stock as any).circulating_market_cap ?? (stock as any).circulatingMarketCap,
+      industry: (stock as any).industry,
+      pe_dynamic: (stock as any).pe_dynamic ?? (stock as any).peDynamic,
+      pb: (stock as any).pb,
+      ps: (stock as any).ps,
+      turnover_rate: (stock as any).turnover_rate ?? (stock as any).turnoverRate,
+      change_percent: (stock as any).change_percent ?? (stock as any).changePercent,
+    }));
+  }
+
+  private normalizeBars(bars: DailyBar[], normalizedCode: string): DailyBar[] {
+    const dateMap = new Map<string, DailyBar>();
+
+    for (const bar of bars || []) {
+      if (!bar?.date) {
+        continue;
       }
-      logger.info('AKShare returned empty stock list, trying EastMoney');
-    } catch (error) {
-      logger.warn('Failed to fetch stocks from AKShare, trying EastMoney:', error.message);
+      const normalizedBar = {
+        ...bar,
+        code: normalizedCode,
+        open: Number(bar.open) || 0,
+        high: Number(bar.high) || 0,
+        low: Number(bar.low) || 0,
+        close: Number(bar.close) || 0,
+        volume: Number(bar.volume) || 0,
+        amount: Number(bar.amount) || 0,
+        adjustflag: Number(bar.adjustflag || 3),
+        turn: Number(bar.turn) || 0,
+        tradestatus: Number(bar.tradestatus ?? 1),
+        pctChg: Number((bar as any).pctChg ?? (bar as any).pct_chg ?? 0),
+        peTTM: Number((bar as any).peTTM ?? (bar as any).pe_ttm ?? 0),
+        psTTM: Number((bar as any).psTTM ?? (bar as any).ps_ttm ?? 0),
+        pbMRQ: Number((bar as any).pbMRQ ?? (bar as any).pb_mrq ?? 0),
+        total_share: Number((bar as any).total_share ?? (bar as any).totalShare ?? 0),
+        float_share: Number((bar as any).float_share ?? (bar as any).floatShare ?? 0),
+        free_share: Number((bar as any).free_share ?? (bar as any).freeShare ?? 0),
+        total_mv: Number((bar as any).total_mv ?? (bar as any).totalMv ?? 0),
+        circ_mv: Number((bar as any).circ_mv ?? (bar as any).circMv ?? 0),
+        total_market_cap: (bar as any).total_market_cap ?? (bar as any).totalMarketCap,
+      } as DailyBar;
+
+      if (!dateMap.has(normalizedBar.date)) {
+        dateMap.set(normalizedBar.date, normalizedBar);
+      }
     }
 
-    // 回退到东方财富
+    return Array.from(dateMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+  }
+
+  private async tryStockListProvider(
+    provider_name: string,
+    fetcher: () => Promise<StockBasicInfo[]>
+  ): Promise<StockBasicInfo[] | null> {
+    if (!this.isProviderEnabled(provider_name)) {
+      await DataSourceHealthService.recordDisabled(
+        this.getProvider(provider_name),
+        'stock_list',
+        `${provider_name} 未启用`
+      );
+      return null;
+    }
+
+    const provider = this.getProvider(provider_name);
     try {
       const stocks = await this.retryWithBackoff(
-        () => this.eastMoneyClient.getAllStocks(),
-        'getAllStocks from EastMoney',
-        3, 1000, 10000
+        fetcher,
+        this.buildProviderOptions(
+          provider_name,
+          'stock_list',
+          `getAllStocks from ${provider.provider_label}`,
+          {
+            max_retries: provider_name === 'akshare' ? 2 : 1,
+          }
+        )
       );
+
       if (stocks && stocks.length > 0) {
-        logger.info(`Using ${stocks.length} real stocks from EastMoney`);
-        // 标准化返回的股票代码
-        return stocks.map(stock => ({
-          ...stock,
-          code: normalizeSymbol(stock.code)
-        }));
+        logger.info(`Using ${stocks.length} real stocks from ${provider.provider_label}`);
+        return this.normalizeStockList(stocks);
       }
-      // 如果返回空数组，抛出错误
-      logger.error('All data sources returned empty stock list');
-      throw new Error('无法从任何数据源获取股票列表');
-    } catch (error) {
-      // 如果失败，抛出错误
-      logger.error('Failed to fetch stocks from all data sources:', error.message);
-      throw new Error(`无法获取股票列表: ${error.message}`);
+
+      logger.info(`${provider.provider_label} returned empty stock list`);
+      return null;
+    } catch (error: any) {
+      logger.warn(`Failed to fetch stocks from ${provider.provider_label}:`, error.message);
+      return null;
     }
   }
 
   /**
-   * 查询股票日线数据（优先使用AKShare，失败时使用东方财富）
+   * 获取所有股票列表：可配置源优先，其后自动 fallback。
+   */
+  async getAllStocks(): Promise<StockBasicInfo[]> {
+    const providerChain: Array<[string, () => Promise<StockBasicInfo[]>]> = [
+      ['tushare', () => this.tushareClient.getAllStocks()],
+      ['baostock', () => this.baostockClient.getAllStocks()],
+      ['akshare', () => this.akshareClient.getAllStocks()],
+      ['eastmoney', () => this.eastMoneyClient.getAllStocks()],
+      ['sina', () => this.sinaFinanceClient.getAllStocks()],
+    ];
+
+    for (const [provider_name, fetcher] of await this.buildProviderChain(
+      providerChain,
+      'stock_list'
+    )) {
+      const result = await this.tryStockListProvider(provider_name, fetcher);
+      if (result && result.length > 0) {
+        return result;
+      }
+    }
+
+    throw new Error('无法从任何数据源获取股票列表');
+  }
+
+  private async tryHistoryProvider(
+    provider_name: string,
+    normalizedCode: string,
+    start_date: string,
+    end_date: string,
+    frequency: 'd' | 'w' | 'm',
+    adjustflag: '1' | '2' | '3',
+    fetcher: () => Promise<DailyBar[]>
+  ): Promise<DailyBar[] | null> {
+    if (!this.isProviderEnabled(provider_name)) {
+      await DataSourceHealthService.recordDisabled(
+        this.getProvider(provider_name),
+        'history_k',
+        `${provider_name} 未启用`
+      );
+      return null;
+    }
+
+    const provider = this.getProvider(provider_name);
+    try {
+      const bars = await this.retryWithBackoff(
+        fetcher,
+        this.buildProviderOptions(
+          provider_name,
+          'history_k',
+          `queryHistoryKData from ${provider.provider_label} for ${normalizedCode}`,
+          {
+            max_retries: provider_name === 'akshare' ? 2 : 1,
+          }
+        )
+      );
+
+      if (bars && bars.length > 0) {
+        const normalizedBars = this.normalizeBars(bars, normalizedCode).filter(
+          bar => bar.date >= start_date && bar.date <= end_date
+        );
+        if (normalizedBars.length > 0) {
+          logger.info(
+            `Using ${normalizedBars.length} real data bars from ${provider.provider_label} for ${normalizedCode}`
+          );
+          return normalizedBars;
+        }
+      }
+
+      logger.info(`${provider.provider_label} returned empty history data for ${normalizedCode}`);
+      return null;
+    } catch (error: any) {
+      logger.warn(
+        `Failed to fetch history data from ${provider.provider_label} for ${normalizedCode}:`,
+        error.message
+      );
+      return null;
+    }
+  }
+
+  /**
+   * 查询股票日线数据：Tushare/Baostock 可选启用，AKShare、东方财富、新浪自动兜底。
    */
   async queryHistoryKData(
     code: string,
-    startDate: string,
-    endDate: string,
+    start_date: string,
+    end_date: string,
     frequency: 'd' | 'w' | 'm' = 'd',
-    adjustflag: '1' | '2' | '3' = '3'
+    adjustflag: '1' | '2' | '3' = '3',
+    preferred_provider: string = 'auto'
   ): Promise<DailyBar[]> {
-    // 标准化股票代码
     const normalizedCode = normalizeSymbol(code);
-    const akshareCode = normalizedCode; // AKShare客户端期望标准化格式
     const eastMoneyCode = toEastMoneyFormat(normalizedCode);
+    const strictProviderOnly = preferred_provider.endsWith('_only');
 
-    logger.info(`Querying history data for ${normalizedCode} (AKShare: ${akshareCode}, EastMoney: ${eastMoneyCode})`);
+    logger.info(
+      `Querying history data for ${normalizedCode} (EastMoney: ${eastMoneyCode}, frequency=${frequency}, adjustflag=${adjustflag})`
+    );
 
-    // 优先使用AKShare
-    try {
-      const akshareBars = await this.retryWithBackoff(
-        () => this.akshareClient.queryHistoryKData(akshareCode, startDate, endDate, frequency, adjustflag),
-        `queryHistoryKData from AKShare for ${normalizedCode}`,
-        3, 1000, 10000
+    const providerChain: Array<[string, () => Promise<DailyBar[]>]> = [
+      [
+        'tushare',
+        () =>
+          this.tushareClient.queryHistoryKData(
+            normalizedCode,
+            start_date,
+            end_date,
+            frequency,
+            adjustflag
+          ),
+      ],
+      [
+        'baostock',
+        () =>
+          this.baostockClient.queryHistoryKData(
+            normalizedCode,
+            start_date,
+            end_date,
+            frequency,
+            adjustflag
+          ),
+      ],
+      [
+        'akshare',
+        () =>
+          this.akshareClient.queryHistoryKData(
+            normalizedCode,
+            start_date,
+            end_date,
+            frequency,
+            adjustflag
+          ),
+      ],
+      [
+        'eastmoney',
+        () =>
+          this.eastMoneyClient.queryHistoryKData(
+            eastMoneyCode,
+            start_date,
+            end_date,
+            frequency,
+            adjustflag
+          ),
+      ],
+      [
+        'tencent',
+        () =>
+          this.tencentFinanceClient.queryHistoryKData(
+            normalizedCode,
+            start_date,
+            end_date,
+            frequency,
+            adjustflag
+          ),
+      ],
+      [
+        'sina',
+        () =>
+          this.sinaFinanceClient.queryHistoryKData(
+            normalizedCode,
+            start_date,
+            end_date,
+            frequency,
+            adjustflag
+          ),
+      ],
+    ];
+
+    for (const [provider_name, fetcher] of await this.buildProviderChain(
+      providerChain,
+      'history_k',
+      preferred_provider
+    )) {
+      const result = await this.tryHistoryProvider(
+        provider_name,
+        normalizedCode,
+        start_date,
+        end_date,
+        frequency,
+        adjustflag,
+        fetcher
       );
-
-      // 如果AKShare返回了数据，使用它
-      if (akshareBars && akshareBars.length > 0) {
-        logger.info(`Using ${akshareBars.length} real data bars from AKShare for ${normalizedCode}`);
-        return akshareBars;
+      if (result && result.length > 0) {
+        return result;
       }
-
-      // 否则尝试东方财富
-      logger.info(`AKShare returned empty data for ${normalizedCode}, trying EastMoney`);
-    } catch (error) {
-      logger.warn(`Failed to fetch data from AKShare for ${normalizedCode}, trying EastMoney:`, error.message);
     }
 
-    // 回退到东方财富
-    try {
-      const eastMoneyBars = await this.retryWithBackoff(
-        () => this.eastMoneyClient.queryHistoryKData(eastMoneyCode, startDate, endDate, frequency, adjustflag),
-        `queryHistoryKData from EastMoney for ${normalizedCode}`,
-        3, 1000, 10000
+    if (strictProviderOnly) {
+      logger.info(
+        `Strict history provider ${preferred_provider} returned no data for ${normalizedCode}, treating as empty result`
       );
+      return [];
+    }
 
-      if (eastMoneyBars && eastMoneyBars.length > 0) {
-        logger.info(`Using ${eastMoneyBars.length} real data bars from EastMoney for ${normalizedCode}`);
-        // 将东方财富返回的数据中的代码转换为标准化格式
-        return eastMoneyBars.map(bar => ({
-          ...bar,
-          code: normalizedCode
-        }));
+    throw new Error(`无法获取股票 ${normalizedCode} 的历史数据：所有数据源均无可用结果`);
+  }
+
+  private async tryStockBasicProvider(
+    provider_name: string,
+    normalizedCode: string,
+    fetcher: () => Promise<StockBasicInfo | null>
+  ): Promise<StockBasicInfo | null> {
+    if (!this.isProviderEnabled(provider_name)) {
+      await DataSourceHealthService.recordDisabled(
+        this.getProvider(provider_name),
+        'stock_basic',
+        `${provider_name} 未启用`
+      );
+      return null;
+    }
+
+    const provider = this.getProvider(provider_name);
+    try {
+      const stockInfo = await this.retryWithBackoff(
+        fetcher,
+        this.buildProviderOptions(
+          provider_name,
+          'stock_basic',
+          `queryStockBasic from ${provider.provider_label} for ${normalizedCode}`,
+          { max_retries: 1 }
+        )
+      );
+      if (stockInfo) {
+        return this.normalizeStockList([
+          {
+            ...stockInfo,
+            code: normalizedCode,
+          },
+        ])[0];
       }
-
-      // 如果所有数据源都返回空数组，抛出错误
-      logger.error(`No real data available for ${normalizedCode} from any data source`);
-      throw new Error(`无法获取股票 ${normalizedCode} 的历史数据`);
-    } catch (error) {
-      // 如果所有数据源接口都出错，抛出错误
-      logger.error(`Failed to fetch data for ${normalizedCode} from all data sources:`, error.message);
-      throw new Error(`无法获取股票 ${normalizedCode} 的历史数据: ${error.message}`);
+      return null;
+    } catch (error: any) {
+      logger.warn(
+        `Failed to fetch stock basic info from ${provider.provider_label} for ${normalizedCode}:`,
+        error.message
+      );
+      return null;
     }
   }
 
   /**
-   * 查询股票基本信息（优先使用Tushare，失败时使用东方财富）
+   * 查询股票基本信息
    */
   async queryStockBasic(code: string): Promise<StockBasicInfo | null> {
-    // 标准化股票代码
     const normalizedCode = normalizeSymbol(code);
-    const akshareCode = normalizedCode; // AKShare客户端期望标准化格式
     const eastMoneyCode = toEastMoneyFormat(normalizedCode);
 
-    logger.info(`Querying stock basic info for ${normalizedCode} (AKShare: ${akshareCode}, EastMoney: ${eastMoneyCode})`);
+    const providerChain: Array<[string, () => Promise<StockBasicInfo | null>]> = [
+      ['tushare', () => this.tushareClient.queryStockBasic(normalizedCode)],
+      ['baostock', () => this.baostockClient.queryStockBasic(normalizedCode)],
+      ['akshare', () => this.akshareClient.queryStockBasic(normalizedCode)],
+      ['eastmoney', () => this.eastMoneyClient.queryStockBasic(eastMoneyCode)],
+    ];
 
-    // 优先使用AKShare
-    try {
-      const stockInfo = await this.retryWithBackoff(
-        () => this.akshareClient.queryStockBasic(akshareCode),
-        `queryStockBasic from AKShare for ${normalizedCode}`,
-        3, 1000, 10000
-      );
-      if (stockInfo) {
-        logger.info(`Using stock basic info from AKShare for ${normalizedCode}`);
-        return stockInfo;
+    for (const [provider_name, fetcher] of await this.buildProviderChain(
+      providerChain,
+      'stock_basic'
+    )) {
+      const result = await this.tryStockBasicProvider(provider_name, normalizedCode, fetcher);
+      if (result) {
+        logger.info(
+          `Using stock basic info from ${this.getProvider(provider_name).provider_label}`
+        );
+        return result;
       }
-      logger.info(`AKShare returned no stock basic info for ${normalizedCode}, trying EastMoney`);
-    } catch (error) {
-      logger.warn(`Failed to fetch stock basic info from AKShare for ${normalizedCode}, trying EastMoney:`, error.message);
-    }
-
-    // 回退到东方财富
-    const eastMoneyInfo = await this.retryWithBackoff(
-      () => this.eastMoneyClient.queryStockBasic(eastMoneyCode),
-      `queryStockBasic from EastMoney for ${normalizedCode}`,
-      3, 1000, 10000
-    );
-
-    if (eastMoneyInfo) {
-      // 将东方财富返回的数据中的代码转换为标准化格式
-      return {
-        ...eastMoneyInfo,
-        code: normalizedCode
-      };
     }
 
     return null;
   }
 
   /**
-   * 获取指数成分股（优先使用Tushare，失败时使用东方财富）
+   * 获取指数成分股（当前仅保留东方财富实现入口）
    */
   async getIndexStocks(indexCode: string): Promise<StockBasicInfo[]> {
-    // 标准化指数代码（如果有需要）
     const normalizedIndexCode = normalizeSymbol(indexCode);
 
-    // 使用东方财富（AKShare不支持指数成分股）
+    if (!this.isProviderEnabled('eastmoney')) {
+      return [];
+    }
+
     try {
       const stocks = await this.retryWithBackoff(
         () => this.eastMoneyClient.getIndexStocks(normalizedIndexCode),
-        `getIndexStocks from EastMoney for ${normalizedIndexCode}`,
-        3, 1000, 10000
+        this.buildProviderOptions(
+          'eastmoney',
+          'index_constituents',
+          `getIndexStocks from 东方财富 for ${normalizedIndexCode}`,
+          { max_retries: 1 }
+        )
       );
       if (stocks && stocks.length > 0) {
-        logger.info(`Using ${stocks.length} real index stocks from EastMoney for ${normalizedIndexCode}`);
-        // 标准化返回的股票代码
-        return stocks.map(stock => ({
-          ...stock,
-          code: normalizeSymbol(stock.code)
-        }));
+        return this.normalizeStockList(stocks);
       }
-      // 如果返回空数组，抛出错误
-      logger.error(`All data sources returned empty index stocks for ${normalizedIndexCode}`);
       throw new Error(`无法从任何数据源获取指数 ${normalizedIndexCode} 的成分股`);
-    } catch (error) {
-      logger.error(`Failed to fetch index stocks for ${normalizedIndexCode} from all data sources:`, error.message);
+    } catch (error: any) {
+      logger.error(
+        `Failed to fetch index stocks for ${normalizedIndexCode} from all data sources:`,
+        error.message
+      );
       throw new Error(`无法获取指数 ${normalizedIndexCode} 的成分股: ${error.message}`);
     }
   }
 
-  /**
-   * 获取沪深300成分股
-   */
   async getHS300Stocks(): Promise<StockBasicInfo[]> {
     return this.getIndexStocks('sh.000300');
   }
 
-  /**
-   * 获取上证50成分股
-   */
   async getSZ50Stocks(): Promise<StockBasicInfo[]> {
     return this.getIndexStocks('sh.000016');
   }
 
-  /**
-   * 获取中证500成分股
-   */
   async getZZ500Stocks(): Promise<StockBasicInfo[]> {
     return this.getIndexStocks('sh.000905');
   }
 
-  /**
-   * 查询交易日历（暂不支持）
-   */
-  async queryTradeDates(startDate: string, endDate: string): Promise<string[]> {
-    logger.warn('CombinedDataSource.queryTradeDates not implemented');
-    return [];
+  async queryTradeDates(start_date: string, end_date: string): Promise<string[]> {
+    if (!this.isProviderEnabled('baostock')) {
+      logger.warn('Baostock trade calendar is disabled; returning empty trade dates');
+      return [];
+    }
+
+    try {
+      return await this.retryWithBackoff(
+        () => this.baostockClient.queryTradeDates(start_date, end_date),
+        this.buildProviderOptions('baostock', 'trade_calendar', 'queryTradeDates from Baostock', {
+          max_retries: 1,
+        })
+      );
+    } catch (error: any) {
+      logger.warn(`Baostock trade calendar failed: ${error.message}`);
+      return [];
+    }
   }
 
-  /**
-   * 登录（不需要）
-   */
   async login(username?: string, password?: string): Promise<boolean> {
-    // 两个客户端都无需登录
     return true;
   }
 
-  /**
-   * 登出（不需要）
-   */
   async logout(): Promise<boolean> {
     return true;
   }
 
-  /**
-   * 获取客户端状态
-   */
+  async getHealthSnapshots(): Promise<any[]> {
+    return DataSourceHealthService.getHealthSnapshots();
+  }
+
   getStatus() {
     return {
+      tushare: this.tushareClient.getStatus(),
+      baostock: this.baostockClient.getStatus(),
       eastMoney: this.eastMoneyClient.getStatus(),
       akshare: this.akshareClient.getStatus(),
+      sina: this.sinaFinanceClient.getStatus(),
     };
   }
 }

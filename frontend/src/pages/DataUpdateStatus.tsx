@@ -1,16 +1,15 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Layout,
   Card,
   Table,
   Button,
+  Statistic,
   Space,
   Tag,
   Row,
   Col,
   Typography,
   Divider,
-  Statistic,
   Progress,
   Alert,
   Modal,
@@ -18,8 +17,6 @@ import {
   Tooltip,
   Switch,
   Empty,
-  Timeline,
-  Badge,
   Radio,
   Checkbox,
   Select,
@@ -35,11 +32,11 @@ import {
   CheckCircleOutlined,
   CloseCircleOutlined,
   ExclamationCircleOutlined,
-  InfoCircleOutlined,
-  BarChartOutlined,
-  LineChartOutlined,
   DashboardOutlined,
-  SettingOutlined,
+  DatabaseOutlined,
+  ApiOutlined,
+  ThunderboltOutlined,
+  ToolOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import {
@@ -49,10 +46,7 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip as RechartsTooltip,
-  Legend,
   ResponsiveContainer,
-  BarChart,
-  Bar,
   PieChart,
   Pie,
   Cell,
@@ -60,7 +54,7 @@ import {
 import dayjs from 'dayjs';
 import api from '../services/api';
 
-const { Title, Text, Paragraph } = Typography;
+const { Text } = Typography;
 
 interface QueueStatus {
   waiting: number;
@@ -77,7 +71,7 @@ interface JobInfo {
     type: string;
     date: string;
     forceUpdate?: boolean;
-    userId?: number;
+    user_id?: number;
   };
   state: string;
   progress: number;
@@ -92,14 +86,14 @@ interface UpdateLog {
   type: string;
   status: string;
   date: string;
-  affectedStocks?: number;
-  insertedRecords?: number;
+  affected_stocks?: number;
+  inserted_records?: number;
   error?: string;
   result?: any;
-  startedAt?: string;
-  completedAt?: string;
-  createdAt: string;
-  updatedAt: string;
+  started_at?: string;
+  completed_at?: string;
+  created_at: string;
+  updated_at: string;
 }
 
 interface UpdateStats {
@@ -111,8 +105,8 @@ interface UpdateStats {
   avgInsertedRecords: number;
   dailyBreakdown: Array<{
     date: string;
-    affectedStocks: number;
-    insertedRecords: number;
+    affected_stocks: number;
+    inserted_records: number;
     status: string;
   }>;
 }
@@ -128,6 +122,123 @@ interface SystemHealth {
   database: boolean;
   queue: boolean;
   dataSource: boolean;
+}
+
+interface DataSourceProviderHealth {
+  id?: number | null;
+  provider_name: string;
+  provider_label: string;
+  provider_type: string;
+  status: 'healthy' | 'degraded' | 'unhealthy' | 'disabled' | 'unknown' | string;
+  priority: number;
+  is_enabled: boolean;
+  supported_features: string[];
+  health_score: number;
+  success_count: number;
+  failure_count: number;
+  consecutive_failures: number;
+  last_success_at?: string | null;
+  last_failure_at?: string | null;
+  last_latency_ms?: number | null;
+  last_checked_at?: string | null;
+  last_error?: string | null;
+  metadata?: Record<string, any>;
+}
+
+interface DataSourceRoutingItem extends DataSourceProviderHealth {
+  rank: number;
+  feature: string;
+  route_score: number;
+  route_reason?: string;
+  preference_rank?: number | null;
+  is_preferred?: boolean;
+}
+
+interface DataSourceHealthResponse {
+  status: string;
+  summary: {
+    total_providers: number;
+    enabled_providers: number;
+    healthy_providers: number;
+    degraded_providers: number;
+    unhealthy_providers: number;
+    disabled_providers: number;
+    avg_health_score: number;
+  };
+  providers: DataSourceProviderHealth[];
+  routing_plans?: Record<string, DataSourceRoutingItem[]>;
+  quant_readiness?: {
+    score: number;
+    status: string;
+    summary: string;
+    history_ready: boolean;
+    realtime_ready: boolean;
+    fundamentals_ready: boolean;
+    intraday_ready: boolean;
+    agent_ready: boolean;
+    primary_history_provider?: string | null;
+    primary_stock_list_provider?: string | null;
+    primary_stock_basic_provider?: string | null;
+    realtime_providers?: string[];
+    recommended_paid_source?: {
+      provider_name: string;
+      provider_label: string;
+      priority: number;
+      reason: string;
+      required_env?: string[];
+    };
+    future_paid_sources?: Array<{
+      provider_name: string;
+      provider_label: string;
+      use_case: string;
+    }>;
+    missing_configs?: string[];
+    recommendations?: string[];
+    capability_notes?: string[];
+  };
+}
+
+interface DataQualityItem {
+  symbol: string;
+  name: string;
+  market?: string;
+  industry?: string;
+  data_status?: string;
+  quality_score: number;
+  grade: 'excellent' | 'good' | 'fair' | 'poor' | 'empty' | string;
+  bar_count: number;
+  coverage_rate: number;
+  first_date?: string;
+  latest_date?: string;
+  issues: Record<string, number>;
+  sample_issues: Array<{ date: string; type: string; detail: string }>;
+  recommended_action: string;
+}
+
+interface DataQualityResponse {
+  as_of: string;
+  scope: string;
+  lookback_days: number;
+  summary: {
+    scanned_stocks: number;
+    avg_quality_score: number;
+    low_quality_count: number;
+    low_quality_rate: number;
+    stale_count: number;
+    issue_totals: Record<string, number>;
+    grade_distribution: Record<string, number>;
+  };
+  repair_suggestions: {
+    target_count: number;
+    top_symbols: string[];
+    recommended_payload?: {
+      symbols: string[];
+      start_date?: string;
+      dataSource: string;
+      concurrency: number;
+    } | null;
+  };
+  items: DataQualityItem[];
 }
 
 const DataUpdateStatus: React.FC = () => {
@@ -153,15 +264,35 @@ const DataUpdateStatus: React.FC = () => {
     queue: true,
     dataSource: true,
   });
-  const [systemHealthDetails, setSystemHealthDetails] = useState<any>(null);
+
+  const [dataSourceHealth, setDataSourceHealth] = useState<DataSourceHealthResponse | null>(null);
+  const [dataQuality, setDataQuality] = useState<DataQualityResponse | null>(null);
+
   const [loading, setLoading] = useState({
     queue: false,
     logs: false,
     stats: false,
     health: false,
+    quality: false,
   });
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [refreshInterval, setRefreshInterval] = useState(10); // 秒
+  const [triggerLoading, setTriggerLoading] = useState(false);
+
+  const handleManualTrigger = async (type: string) => {
+    setTriggerLoading(true);
+    try {
+      const response = await api.post('/market/manual-sync', { type, force: true });
+      if (response.data.success) {
+        message.success(response.data.data.message || '操作成功');
+        fetchAllData();
+      }
+    } catch (error: any) {
+      message.error(error.response?.data?.error || '操作失败');
+    } finally {
+      setTriggerLoading(false);
+    }
+  };
 
   // 批量同步相关状态
   const [bulkSyncModalVisible, setBulkSyncModalVisible] = useState(false);
@@ -170,9 +301,9 @@ const DataUpdateStatus: React.FC = () => {
     symbols: [] as string[],
     marketFilters: [] as ('SH' | 'SZ' | 'BJ')[],
     syncAllStocks: false,
-    startDate: '',
-    endDate: '',
-    dataSource: 'akshare' as 'akshare',
+    start_date: '',
+    end_date: '',
+    dataSource: 'auto',
     concurrency: 10,
   });
   const [stockOptions, setStockOptions] = useState<{ label: string; value: string }[]>([]);
@@ -181,27 +312,32 @@ const DataUpdateStatus: React.FC = () => {
   // 日志筛选状态
   const [logFilters, setLogFilters] = useState({
     types: [] as string[], // 任务类型筛选
-    startDate: '', // 开始日期 YYYY-MM-DD
-    endDate: '', // 结束日期 YYYY-MM-DD
+    start_date: '', // 开始日期 YYYY-MM-DD
+    end_date: '', // 结束日期 YYYY-MM-DD
   });
 
   // 获取所有数据
   const fetchAllData = useCallback(async () => {
     try {
-      setLoading(prev => ({ ...prev, queue: true, logs: true, stats: true, health: true }));
+      setLoading(prev => ({
+        ...prev,
+        queue: true,
+        logs: true,
+        stats: true,
+        health: true,
+        quality: true,
+      }));
 
       // 获取队列状态（带筛选参数）
       const queryParams = new URLSearchParams();
       if (logFilters.types.length > 0) {
-        // 如果选择了多个类型，可以传递多个type参数，或者用逗号分隔
-        // 这里后端支持多个type参数，所以可以传递多个
         logFilters.types.forEach(type => queryParams.append('type', type));
       }
-      if (logFilters.startDate) {
-        queryParams.append('startDate', logFilters.startDate);
+      if (logFilters.start_date) {
+        queryParams.append('start_date', logFilters.start_date);
       }
-      if (logFilters.endDate) {
-        queryParams.append('endDate', logFilters.endDate);
+      if (logFilters.end_date) {
+        queryParams.append('end_date', logFilters.end_date);
       }
 
       const queryString = queryParams.toString();
@@ -210,10 +346,9 @@ const DataUpdateStatus: React.FC = () => {
       const statusResponse = await api.get(url);
       if (statusResponse.data.success) {
         const data = statusResponse.data.data;
-        setQueueStatus(data.queue);
-        // 优先使用jobs数组，如果不存在则使用job字段
+        if (data.queue) setQueueStatus(data.queue);
         setJobs(data.jobs || (data.job ? [data.job] : []) || []);
-        setLockStatus(data.locks);
+        if (data.locks) setLockStatus(data.locks);
         setUpdateLogs(data.logs || []);
       }
 
@@ -224,65 +359,87 @@ const DataUpdateStatus: React.FC = () => {
       }
 
       // 获取系统健康状态
-      const healthResponse = await api.get('/market/health');
+      const [healthResponse, dataSourceHealthResponse, dataQualityResponse] = await Promise.all([
+        api.get('/market/health'),
+        api.get('/market/data-sources/health'),
+        api.get('/market/data-quality', {
+          params: { scope: 'favorites', lookback_days: 180, limit: 50 },
+        }),
+      ]);
+      const nextSystemHealth = {
+        redis: true,
+        database: true,
+        queue: true,
+        dataSource: true,
+      };
+
       if (healthResponse.data.success) {
         const healthData = healthResponse.data.data;
-        // 将后端健康数据转换为前端格式
-        setSystemHealth({
-          redis: healthData.services.redisLock?.status === 'healthy',
-          database: healthData.services.database?.status === 'healthy',
-          queue: healthData.services.dataUpdateQueue?.status === 'healthy',
-          dataSource: true, // 数据源健康状态需要单独检查
-        });
-        setSystemHealthDetails(healthData);
+        nextSystemHealth.redis = healthData.services.redisLock?.status === 'healthy';
+        nextSystemHealth.database = healthData.services.database?.status === 'healthy';
+        nextSystemHealth.queue = healthData.services.dataUpdateQueue?.status === 'healthy';
+        nextSystemHealth.dataSource = healthData.services.dataSource?.status !== 'unhealthy';
       }
 
+      if (dataSourceHealthResponse.data.success) {
+        const healthData = dataSourceHealthResponse.data.data as DataSourceHealthResponse;
+        setDataSourceHealth(healthData);
+        nextSystemHealth.dataSource = healthData.status !== 'unhealthy';
+      }
+
+      if (dataQualityResponse.data.success) {
+        setDataQuality(dataQualityResponse.data.data as DataQualityResponse);
+      }
+
+      setSystemHealth(nextSystemHealth);
     } catch (error: any) {
       message.error('获取数据失败: ' + error.message);
     } finally {
-      setLoading(prev => ({ ...prev, queue: false, logs: false, stats: false, health: false }));
+      setLoading(prev => ({
+        ...prev,
+        queue: false,
+        logs: false,
+        stats: false,
+        health: false,
+        quality: false,
+      }));
     }
-  }, [logFilters]); // 添加依赖，当筛选条件变化时重新创建函数
+  }, [logFilters]);
 
   // 筛选处理函数
-  // 任务类型选项
   const taskTypeOptions = [
     { label: '每日更新', value: 'daily_update' },
     { label: '新股同步', value: 'new_stocks_sync' },
     { label: '周完整性检查', value: 'weekly_completeness_check' },
+    { label: '数据质量扫描', value: 'data_quality_scan' },
     { label: '手动同步', value: 'manual_sync' },
     { label: '批量同步', value: 'bulk_sync_custom' },
   ];
 
-  // 筛选条件变更
   const handleFilterChange = (key: keyof typeof logFilters, value: any) => {
     setLogFilters(prev => ({ ...prev, [key]: value }));
   };
 
-  // 应用筛选
   const handleApplyFilters = () => {
     fetchAllData();
     message.success('筛选已应用');
   };
 
-  // 重置筛选
   const handleResetFilters = () => {
     setLogFilters({
       types: [],
-      startDate: '',
-      endDate: '',
+      start_date: '',
+      end_date: '',
     });
-    // 重置后立即刷新数据
     setTimeout(() => fetchAllData(), 100);
     message.success('筛选条件已重置');
   };
 
-  // 加载股票选项
   const loadStockOptions = useCallback(async () => {
     try {
       setLoadingStocks(true);
       const response = await api.get('/market/search', {
-        params: { limit: 5000 } // 获取所有股票
+        params: { limit: 5000 },
       });
       if (response.data.success) {
         const stocks = response.data.data.stocks || [];
@@ -299,20 +456,19 @@ const DataUpdateStatus: React.FC = () => {
     }
   }, []);
 
-  // 批量同步表单变更
   const handleBulkSyncFormChange = (key: keyof typeof bulkSyncForm, value: any) => {
     setBulkSyncForm(prev => ({ ...prev, [key]: value }));
   };
 
-  // 提交批量同步任务
   const handleBulkSyncSubmit = async () => {
     try {
       setBulkSyncLoading(true);
 
-      // 验证表单
-      if (!bulkSyncForm.syncAllStocks &&
-          bulkSyncForm.symbols.length === 0 &&
-          bulkSyncForm.marketFilters.length === 0) {
+      if (
+        !bulkSyncForm.syncAllStocks &&
+        bulkSyncForm.symbols.length === 0 &&
+        bulkSyncForm.marketFilters.length === 0
+      ) {
         message.error('请选择要同步的股票范围');
         return;
       }
@@ -326,11 +482,11 @@ const DataUpdateStatus: React.FC = () => {
         payload.marketFilters = bulkSyncForm.marketFilters;
       }
 
-      if (bulkSyncForm.startDate) {
-        payload.startDate = bulkSyncForm.startDate;
+      if (bulkSyncForm.start_date) {
+        payload.start_date = bulkSyncForm.start_date;
       }
-      if (bulkSyncForm.endDate) {
-        payload.endDate = bulkSyncForm.endDate;
+      if (bulkSyncForm.end_date) {
+        payload.end_date = bulkSyncForm.end_date;
       }
       if (bulkSyncForm.concurrency) {
         payload.concurrency = bulkSyncForm.concurrency;
@@ -341,17 +497,15 @@ const DataUpdateStatus: React.FC = () => {
       if (response.data.success) {
         message.success('批量同步任务已提交');
         setBulkSyncModalVisible(false);
-        // 重置表单
         setBulkSyncForm({
           symbols: [],
           marketFilters: [],
           syncAllStocks: false,
-          startDate: '',
-          endDate: '',
-          dataSource: 'akshare',
+          start_date: '',
+          end_date: '',
+          dataSource: 'auto',
           concurrency: 10,
         });
-        // 刷新数据
         fetchAllData();
       }
     } catch (error: any) {
@@ -361,22 +515,38 @@ const DataUpdateStatus: React.FC = () => {
     }
   };
 
-  // 打开批量同步模态框
   const openBulkSyncModal = () => {
     setBulkSyncModalVisible(true);
-    // 如果股票选项为空，则加载
     if (stockOptions.length === 0) {
       loadStockOptions();
     }
   };
 
-  // 手动刷新
   const handleRefresh = () => {
     fetchAllData();
     message.success('数据已刷新');
   };
 
-  // 触发数据更新
+  const handleProbeDataSources = async () => {
+    setLoading(prev => ({ ...prev, health: true }));
+    try {
+      const response = await api.get('/market/data-sources/health', {
+        params: { refresh: true },
+        timeout: 60000,
+      });
+      if (response.data.success) {
+        setDataSourceHealth(response.data.data as DataSourceHealthResponse);
+        message.success('数据源主动探测完成，动态路由已刷新');
+      } else {
+        message.warning(response.data.message || response.data.error || '数据源探测未完成');
+      }
+    } catch (error: any) {
+      message.error('数据源主动探测失败: ' + (error.response?.data?.error || error.message));
+    } finally {
+      setLoading(prev => ({ ...prev, health: false }));
+    }
+  };
+
   const handleTriggerUpdate = async (force = false) => {
     try {
       const url = force ? '/market/update-data?force=true' : '/market/update-data';
@@ -390,7 +560,6 @@ const DataUpdateStatus: React.FC = () => {
     }
   };
 
-  // 手动同步
   const handleManualSync = async (type: string) => {
     try {
       const response = await api.post('/market/manual-sync', { type });
@@ -403,7 +572,6 @@ const DataUpdateStatus: React.FC = () => {
     }
   };
 
-  // 清理队列
   const handleCleanQueue = async () => {
     Modal.confirm({
       title: '确认清理队列',
@@ -424,7 +592,6 @@ const DataUpdateStatus: React.FC = () => {
     });
   };
 
-  // 取消任务
   const handleCancelJob = async (jobId: string) => {
     Modal.confirm({
       title: '确认取消任务',
@@ -447,7 +614,6 @@ const DataUpdateStatus: React.FC = () => {
     });
   };
 
-  // 重试失败任务
   const handleRetryJob = async (jobId: string) => {
     Modal.confirm({
       title: '确认重试任务',
@@ -470,7 +636,6 @@ const DataUpdateStatus: React.FC = () => {
     });
   };
 
-  // 自动刷新
   useEffect(() => {
     fetchAllData();
 
@@ -486,8 +651,6 @@ const DataUpdateStatus: React.FC = () => {
     };
   }, [fetchAllData, autoRefresh, refreshInterval]);
 
-  // 任务表格列定义
-  // 计算预计剩余时间
   const calculateETA = (progress: number, processedOn?: number): string => {
     if (!processedOn || progress <= 0 || progress >= 100) {
       return '--';
@@ -513,18 +676,19 @@ const DataUpdateStatus: React.FC = () => {
       dataIndex: 'id',
       key: 'id',
       width: 150,
-      render: (id) => <Text code>{id.substring(0, 8)}...</Text>,
+      render: id => <Text code>{id.substring(0, 8)}...</Text>,
     },
     {
       title: '类型',
       dataIndex: ['data', 'type'],
       key: 'type',
       width: 120,
-      render: (type) => {
-        const typeMap: Record<string, { label: string, color: string }> = {
+      render: type => {
+        const typeMap: Record<string, { label: string; color: string }> = {
           daily_update: { label: '每日更新', color: 'blue' },
           new_stocks_sync: { label: '新股同步', color: 'green' },
           weekly_completeness_check: { label: '完整性检查', color: 'orange' },
+          data_quality_scan: { label: '质量扫描', color: 'volcano' },
           manual_sync: { label: '手动同步', color: 'purple' },
           bulk_sync_custom: { label: '批量同步', color: 'cyan' },
         };
@@ -537,8 +701,8 @@ const DataUpdateStatus: React.FC = () => {
       dataIndex: 'state',
       key: 'state',
       width: 100,
-      render: (state) => {
-        const stateMap: Record<string, { label: string, color: string, icon: React.ReactNode }> = {
+      render: state => {
+        const stateMap: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
           waiting: { label: '等待中', color: 'default', icon: <SyncOutlined spin /> },
           active: { label: '进行中', color: 'processing', icon: <SyncOutlined spin /> },
           completed: { label: '已完成', color: 'success', icon: <CheckCircleOutlined /> },
@@ -571,18 +735,14 @@ const DataUpdateStatus: React.FC = () => {
       dataIndex: 'processedOn',
       key: 'processedOn',
       width: 180,
-      render: (timestamp) => (
-        timestamp ? dayjs(timestamp).format('YYYY-MM-DD HH:mm:ss') : '--'
-      ),
+      render: timestamp => (timestamp ? dayjs(timestamp).format('YYYY-MM-DD HH:mm:ss') : '--'),
     },
     {
       title: '预计剩余',
       key: 'eta',
       width: 120,
       render: (_, record) => (
-        <Text type="secondary">
-          {calculateETA(record.progress, record.processedOn)}
-        </Text>
+        <Text type="secondary">{calculateETA(record.progress, record.processedOn)}</Text>
       ),
     },
     {
@@ -616,7 +776,6 @@ const DataUpdateStatus: React.FC = () => {
     },
   ];
 
-  // 更新日志表格列定义
   const logColumns: ColumnsType<UpdateLog> = [
     {
       title: '日期',
@@ -629,11 +788,12 @@ const DataUpdateStatus: React.FC = () => {
       dataIndex: 'type',
       key: 'type',
       width: 120,
-      render: (type) => {
-        const typeMap: Record<string, { label: string, color: string }> = {
+      render: type => {
+        const typeMap: Record<string, { label: string; color: string }> = {
           daily_update: { label: '每日更新', color: 'blue' },
           new_stocks_sync: { label: '新股同步', color: 'green' },
           weekly_completeness_check: { label: '完整性检查', color: 'orange' },
+          data_quality_scan: { label: '质量扫描', color: 'volcano' },
           manual_sync: { label: '手动同步', color: 'purple' },
           bulk_sync_custom: { label: '批量同步', color: 'cyan' },
         };
@@ -646,8 +806,8 @@ const DataUpdateStatus: React.FC = () => {
       dataIndex: 'status',
       key: 'status',
       width: 100,
-      render: (status) => {
-        const statusMap: Record<string, { label: string, color: string }> = {
+      render: status => {
+        const statusMap: Record<string, { label: string; color: string }> = {
           pending: { label: '待处理', color: 'default' },
           in_progress: { label: '进行中', color: 'processing' },
           completed: { label: '已完成', color: 'success' },
@@ -659,17 +819,17 @@ const DataUpdateStatus: React.FC = () => {
     },
     {
       title: '影响股票',
-      dataIndex: 'affectedStocks',
-      key: 'affectedStocks',
+      dataIndex: 'affected_stocks',
+      key: 'affected_stocks',
       width: 100,
-      render: (count) => count || '--',
+      render: count => count || '--',
     },
     {
       title: '插入记录',
-      dataIndex: 'insertedRecords',
-      key: 'insertedRecords',
+      dataIndex: 'inserted_records',
+      key: 'inserted_records',
       width: 100,
-      render: (count) => count || '--',
+      render: count => count || '--',
     },
     {
       title: '错误信息',
@@ -677,38 +837,39 @@ const DataUpdateStatus: React.FC = () => {
       key: 'error',
       width: 200,
       ellipsis: true,
-      render: (error) => (
+      render: error =>
         error ? (
           <Tooltip title={error}>
             <Text type="danger" style={{ cursor: 'pointer' }}>
               {error.substring(0, 30)}...
             </Text>
           </Tooltip>
-        ) : '--'
-      ),
+        ) : (
+          '--'
+        ),
     },
     {
       title: '开始时间',
-      dataIndex: 'startedAt',
-      key: 'startedAt',
+      dataIndex: 'started_at',
+      key: 'started_at',
       width: 180,
-      render: (time) => time ? dayjs(time).format('YYYY-MM-DD HH:mm:ss') : '--',
+      render: time => (time ? dayjs(time).format('YYYY-MM-DD HH:mm:ss') : '--'),
     },
     {
       title: '完成时间',
-      dataIndex: 'completedAt',
-      key: 'completedAt',
+      dataIndex: 'completed_at',
+      key: 'completed_at',
       width: 180,
-      render: (time) => time ? dayjs(time).format('YYYY-MM-DD HH:mm:ss') : '--',
+      render: time => (time ? dayjs(time).format('YYYY-MM-DD HH:mm:ss') : '--'),
     },
     {
       title: '耗时',
       key: 'duration',
       width: 120,
       render: (_, record) => {
-        if (!record.startedAt || !record.completedAt) return '--';
-        const start = dayjs(record.startedAt);
-        const end = dayjs(record.completedAt);
+        if (!record.started_at || !record.completed_at) return '--';
+        const start = dayjs(record.started_at);
+        const end = dayjs(record.completed_at);
         const durationMs = end.diff(start);
         const seconds = Math.floor(durationMs / 1000);
         if (seconds < 60) {
@@ -733,36 +894,40 @@ const DataUpdateStatus: React.FC = () => {
         try {
           const result = record.result;
           if (typeof result === 'object') {
-            // 批量同步任务结果（包括manual_sync和bulk_sync_custom）
-            if (result.bulkSync || result.successfulSyncs !== undefined || result.failedSyncs !== undefined) {
-              const totalStocks = result.totalStocks || (result.successfulSyncs || 0) + (result.failedSyncs || 0);
+            if (
+              result.bulkSync ||
+              result.successfulSyncs !== undefined ||
+              result.failedSyncs !== undefined
+            ) {
+              const totalStocks =
+                result.totalStocks || (result.successfulSyncs || 0) + (result.failedSyncs || 0);
               const successfulSyncs = result.successfulSyncs || 0;
-              const failedSyncs = result.failedSyncs || 0;
               const totalRecordsInserted = result.totalRecordsInserted || 0;
               return (
                 <div>
-                  <div>股票: {successfulSyncs}/{totalStocks} 成功</div>
+                  <div>
+                    股票: {successfulSyncs}/{totalStocks} 成功
+                  </div>
                   <div>记录: {totalRecordsInserted} 条</div>
                 </div>
               );
             }
-            // 每日更新结果
             if (result.dailyUpdate) {
               const successCount = result.dailyUpdate.successCount || 0;
               const failCount = result.dailyUpdate.failCount || 0;
               const totalInserted = result.dailyUpdate.totalInserted || 0;
               return (
                 <div>
-                  <div>股票: {successCount} 成功, {failCount} 失败</div>
+                  <div>
+                    股票: {successCount} 成功, {failCount} 失败
+                  </div>
                   <div>记录: {totalInserted} 条</div>
                 </div>
               );
             }
-            // 新股同步结果
             if (result.syncedCount !== undefined) {
               return `同步股票: ${result.syncedCount}`;
             }
-            // 周完整性检查结果
             if (result.missingDataCount !== undefined) {
               return (
                 <div>
@@ -771,7 +936,14 @@ const DataUpdateStatus: React.FC = () => {
                 </div>
               );
             }
-            // 其他结果
+            if (result.summary?.avg_quality_score !== undefined) {
+              return (
+                <div>
+                  <div>扫描股票: {result.scanned || result.summary.scanned_stocks}</div>
+                  <div>均分: {Number(result.summary.avg_quality_score).toFixed(1)}</div>
+                </div>
+              );
+            }
             return JSON.stringify(result).substring(0, 50) + '...';
           }
           return String(result).substring(0, 50);
@@ -782,233 +954,807 @@ const DataUpdateStatus: React.FC = () => {
     },
   ];
 
-  // 系统健康状态卡片
+  const getProviderStatusConfig = (status: string) => {
+    const statusMap: Record<string, { label: string; color: string; tagClass: string }> = {
+      healthy: { label: '健康', color: '#16a34a', tagClass: 'tag-success' },
+      degraded: { label: '降级', color: '#ea580c', tagClass: 'tag-warning' },
+      unhealthy: { label: '异常', color: '#dc2626', tagClass: 'tag-error' },
+      disabled: { label: '未启用', color: '#64748b', tagClass: 'tag-default' },
+      unknown: { label: '未知', color: '#7c3aed', tagClass: 'tag-default' },
+    };
+    return statusMap[status] || { label: status, color: '#64748b', tagClass: 'tag-default' };
+  };
+
+  const featureLabelMap: Record<string, string> = {
+    stock_list: '股票列表',
+    history_k: '历史K线',
+    stock_basic: '个股基础',
+    index_constituents: '指数成分',
+    trade_calendar: '交易日历',
+    realtime_quote: '实时行情',
+    intraday_bar: '日内K线',
+    health_probe: '健康探测',
+  };
+
+  const getQualityGradeConfig = (grade: string) => {
+    const gradeMap: Record<string, { label: string; color: string; tagClass: string }> = {
+      excellent: { label: '优秀', color: '#16a34a', tagClass: 'tag-success' },
+      good: { label: '良好', color: '#22c55e', tagClass: 'tag-success' },
+      fair: { label: '一般', color: '#ea580c', tagClass: 'tag-warning' },
+      poor: { label: '较差', color: '#dc2626', tagClass: 'tag-error' },
+      empty: { label: '无数据', color: '#64748b', tagClass: 'tag-default' },
+    };
+    return gradeMap[grade] || { label: grade, color: '#64748b', tagClass: 'tag-default' };
+  };
+
+  const issueLabelMap: Record<string, string> = {
+    ohlc_anomaly: 'OHLC异常',
+    extreme_return: '异常涨跌',
+    duplicate_day: '重复日',
+    missing_business_day: '缺口',
+    stale_days: '滞后',
+    zero_volume: '零成交',
+  };
+
   const renderHealthCard = () => (
-    <Card title="系统健康状态" size="small">
-      <Row gutter={[16, 16]}>
-        <Col span={6}>
-          <Card size="small">
-            <Statistic
-              title="Redis"
-              value={systemHealth.redis ? '正常' : '异常'}
-              valueStyle={{ color: systemHealth.redis ? '#3f8600' : '#cf1322' }}
-              prefix={systemHealth.redis ? <CheckCircleOutlined /> : <CloseCircleOutlined />}
-            />
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card size="small">
-            <Statistic
-              title="数据库"
-              value={systemHealth.database ? '正常' : '异常'}
-              valueStyle={{ color: systemHealth.database ? '#3f8600' : '#cf1322' }}
-              prefix={systemHealth.database ? <CheckCircleOutlined /> : <CloseCircleOutlined />}
-            />
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card size="small">
-            <Statistic
-              title="队列系统"
-              value={systemHealth.queue ? '正常' : '异常'}
-              valueStyle={{ color: systemHealth.queue ? '#3f8600' : '#cf1322' }}
-              prefix={systemHealth.queue ? <CheckCircleOutlined /> : <CloseCircleOutlined />}
-            />
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card size="small">
-            <Statistic
-              title="数据源"
-              value={systemHealth.dataSource ? '正常' : '异常'}
-              valueStyle={{ color: systemHealth.dataSource ? '#3f8600' : '#cf1322' }}
-              prefix={systemHealth.dataSource ? <CheckCircleOutlined /> : <CloseCircleOutlined />}
-            />
-          </Card>
-        </Col>
-      </Row>
+    <Card className="modern-card" variant="borderless" title="系统健康">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {[
+          { label: 'Redis', ok: systemHealth.redis, icon: <CheckCircleOutlined /> },
+          { label: '数据库', ok: systemHealth.database, icon: <DatabaseOutlined /> },
+          { label: '队列', ok: systemHealth.queue, icon: <DashboardOutlined /> },
+          { label: '数据源', ok: systemHealth.dataSource, icon: <ApiOutlined /> },
+        ].map(item => (
+          <div
+            key={item.label}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '6px 0',
+              borderBottom: '1px solid #f5f5f5',
+            }}
+          >
+            <span
+              style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#666', fontSize: 13 }}
+            >
+              {item.icon} {item.label}
+            </span>
+            <Tag
+              className={`modern-tag ${item.ok ? 'tag-success' : 'tag-error'}`}
+              style={{ margin: 0 }}
+            >
+              {item.ok ? '正常' : '异常'}
+            </Tag>
+          </div>
+        ))}
+      </div>
     </Card>
   );
 
-  // 队列状态卡片
-  const renderQueueCard = () => (
-    <Card title="队列状态概览" size="small">
-      <Row gutter={[16, 16]}>
-        <Col span={4}>
-          <Card size="small">
-            <Statistic title="等待中" value={queueStatus.waiting} />
-          </Card>
-        </Col>
-        <Col span={4}>
-          <Card size="small">
-            <Statistic
-              title="进行中"
-              value={queueStatus.active}
-              valueStyle={{ color: queueStatus.active > 0 ? '#1890ff' : undefined }}
-            />
-          </Card>
-        </Col>
-        <Col span={4}>
-          <Card size="small">
-            <Statistic title="已完成" value={queueStatus.completed} />
-          </Card>
-        </Col>
-        <Col span={4}>
-          <Card size="small">
-            <Statistic
-              title="失败"
-              value={queueStatus.failed}
-              valueStyle={{ color: queueStatus.failed > 0 ? '#cf1322' : undefined }}
-            />
-          </Card>
-        </Col>
-        <Col span={4}>
-          <Card size="small">
-            <Statistic title="延迟" value={queueStatus.delayed} />
-          </Card>
-        </Col>
-        <Col span={4}>
-          <Card size="small">
-            <Statistic title="总计" value={queueStatus.total} />
-          </Card>
-        </Col>
-      </Row>
-      <Divider />
-      <Row gutter={[16, 16]}>
-        <Col span={24}>
-          <Text strong>分布式锁状态：</Text>
-          <Space style={{ marginLeft: 16 }}>
-            <Tag color={lockStatus.global ? 'red' : 'green'}>
-              全局锁：{lockStatus.global ? '已锁定' : '未锁定'}
-            </Tag>
-            <Tag color={lockStatus.daily ? 'red' : 'green'}>
-              日锁：{lockStatus.daily ? '已锁定' : '未锁定'}
-            </Tag>
-            <Tag color={lockStatus.newStocks ? 'red' : 'green'}>
-              新股锁：{lockStatus.newStocks ? '已锁定' : '未锁定'}
-            </Tag>
+  const renderDataSourceCard = () => {
+    const providers = dataSourceHealth?.providers || [];
+    const activeProviders = providers.filter(provider => provider.is_enabled);
+    const historyPlan = dataSourceHealth?.routing_plans?.history_k || [];
+    const stockBasicPlan = dataSourceHealth?.routing_plans?.stock_basic || [];
+    const stockListPlan = dataSourceHealth?.routing_plans?.stock_list || [];
+    const quantReadiness = dataSourceHealth?.quant_readiness;
+    const bestProvider = (historyPlan.find(provider => provider.is_enabled) ||
+      [...activeProviders].sort(
+        (a, b) => Number(b.health_score || 0) - Number(a.health_score || 0)
+      )[0]) as (DataSourceRoutingItem & DataSourceProviderHealth) | undefined;
+    const summary = dataSourceHealth?.summary;
+
+    const sourceColumns: ColumnsType<DataSourceProviderHealth> = [
+      {
+        title: '数据源',
+        dataIndex: 'provider_label',
+        key: 'provider_label',
+        width: 130,
+        render: (_, record) => (
+          <div>
+            <div style={{ fontWeight: 700, color: '#111827' }}>{record.provider_label}</div>
+            <Text type="secondary" style={{ fontSize: 11 }}>
+              {record.provider_name} · P{record.priority}
+            </Text>
+            <div style={{ marginTop: 4 }}>
+              <Tag color={record.metadata?.commercial_tier === 'free' ? 'green' : 'blue'}>
+                {record.metadata?.commercial_tier === 'free'
+                  ? '免费'
+                  : record.metadata?.commercial_tier === 'internal_service'
+                  ? '内部服务'
+                  : '付费增强'}
+              </Tag>
+            </div>
+          </div>
+        ),
+      },
+      {
+        title: '状态',
+        dataIndex: 'status',
+        key: 'status',
+        width: 92,
+        render: status => {
+          const config = getProviderStatusConfig(status);
+          return <Tag className={`modern-tag ${config.tagClass}`}>{config.label}</Tag>;
+        },
+      },
+      {
+        title: '健康分',
+        dataIndex: 'health_score',
+        key: 'health_score',
+        width: 130,
+        render: score => (
+          <Progress
+            percent={Math.round(Number(score || 0))}
+            size="small"
+            strokeColor={
+              Number(score || 0) >= 75
+                ? '#16a34a'
+                : Number(score || 0) >= 45
+                ? '#ea580c'
+                : '#dc2626'
+            }
+          />
+        ),
+      },
+      {
+        title: '能力',
+        dataIndex: 'supported_features',
+        key: 'supported_features',
+        ellipsis: true,
+        render: features => (
+          <Space size={[4, 4]} wrap>
+            {(features || []).slice(0, 3).map((feature: string) => (
+              <Tag key={feature} style={{ margin: 0, fontSize: 11 }}>
+                {featureLabelMap[feature] || feature}
+              </Tag>
+            ))}
+            {(features || []).length > 3 && (
+              <Tag style={{ margin: 0, fontSize: 11 }}>+{features.length - 3}</Tag>
+            )}
           </Space>
-        </Col>
-      </Row>
-    </Card>
-  );
+        ),
+      },
+      {
+        title: '量化用途',
+        key: 'quant_role',
+        width: 240,
+        render: (_, record) => (
+          <Space direction="vertical" size={2}>
+            <Text strong style={{ fontSize: 12 }}>
+              {record.metadata?.quant_role || '--'}
+            </Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {record.metadata?.recommendation || record.metadata?.quant_usage_notes || '--'}
+            </Text>
+          </Space>
+        ),
+      },
+      {
+        title: '最近检查',
+        dataIndex: 'last_checked_at',
+        key: 'last_checked_at',
+        width: 150,
+        render: time => (time ? dayjs(time).format('MM-DD HH:mm:ss') : '--'),
+      },
+      {
+        title: '错误',
+        dataIndex: 'last_error',
+        key: 'last_error',
+        width: 180,
+        ellipsis: true,
+        render: error =>
+          error ? (
+            <Tooltip title={error}>
+              <Text type="danger" style={{ fontSize: 12 }}>
+                {String(error).substring(0, 24)}...
+              </Text>
+            </Tooltip>
+          ) : (
+            <Text type="secondary">--</Text>
+          ),
+      },
+    ];
 
-  // 控制面板卡片
-  const renderControlPanel = () => (
-    <Card title="控制面板" size="small">
-      <Space direction="vertical" style={{ width: '100%' }}>
-        <Row gutter={[8, 8]}>
-          <Col>
-            <Button
-              type="primary"
-              icon={<PlayCircleOutlined />}
-              onClick={() => handleTriggerUpdate(false)}
-            >
-              触发数据更新
-            </Button>
+    const routeColumns: ColumnsType<DataSourceRoutingItem> = [
+      {
+        title: '顺位',
+        dataIndex: 'rank',
+        key: 'rank',
+        width: 70,
+        render: rank => <Tag color={rank === 1 ? 'blue' : 'default'}>#{rank}</Tag>,
+      },
+      {
+        title: '数据源',
+        dataIndex: 'provider_label',
+        key: 'provider_label',
+        width: 140,
+        render: (_, record) => (
+          <div>
+            <Text strong>{record.provider_label}</Text>
+            <div>
+              <Text type="secondary" style={{ fontSize: 11 }}>
+                {record.provider_name}
+              </Text>
+            </div>
+          </div>
+        ),
+      },
+      {
+        title: '状态 / 路由分',
+        key: 'score',
+        width: 150,
+        render: (_, record) => {
+          const config = getProviderStatusConfig(record.status);
+          return (
+            <Space direction="vertical" size={2}>
+              <Tag className={`modern-tag ${config.tagClass}`}>{config.label}</Tag>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {Number(record.route_score || 0).toFixed(1)}
+              </Text>
+            </Space>
+          );
+        },
+      },
+      {
+        title: '原因',
+        dataIndex: 'route_reason',
+        key: 'route_reason',
+        render: reason => (
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            {reason || '--'}
+          </Text>
+        ),
+      },
+    ];
+
+    return (
+      <Card
+        className="modern-card"
+        variant="borderless"
+        title="数据源韧性"
+        style={{ marginTop: 12 }}
+        extra={
+          <Button
+            size="small"
+            icon={<ReloadOutlined />}
+            onClick={handleProbeDataSources}
+            loading={loading.health}
+          >
+            主动探测
+          </Button>
+        }
+      >
+        <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
+          <Col xs={12} md={6}>
+            <Statistic
+              title="综合状态"
+              value={getProviderStatusConfig(dataSourceHealth?.status || 'unknown').label}
+            />
           </Col>
-          <Col>
-            <Button
-              type="primary"
-              danger
-              icon={<PlayCircleOutlined />}
-              onClick={() => handleTriggerUpdate(true)}
-            >
-              强制更新
-            </Button>
+          <Col xs={12} md={6}>
+            <Statistic
+              title="启用源"
+              value={summary?.enabled_providers || 0}
+              suffix={`/ ${summary?.total_providers || 0}`}
+            />
           </Col>
-          <Col>
-            <Button
-              icon={<SyncOutlined />}
-              onClick={handleRefresh}
-            >
-              刷新数据
-            </Button>
+          <Col xs={12} md={6}>
+            <Statistic title="平均健康分" value={summary?.avg_health_score || 0} precision={1} />
           </Col>
-          <Col>
-            <Button
-              icon={<DeleteOutlined />}
-              onClick={handleCleanQueue}
-            >
-              清理队列
-            </Button>
-          </Col>
-          <Col>
-            <Button
-              type="primary"
-              icon={<SyncOutlined />}
-              onClick={openBulkSyncModal}
-            >
-              批量同步
-            </Button>
+          <Col xs={12} md={6}>
+            <Statistic
+              title="K线首选源"
+              value={bestProvider?.provider_label || '--'}
+              suffix={
+                bestProvider?.route_score ? ` / ${Number(bestProvider.route_score).toFixed(0)}` : ''
+              }
+            />
           </Col>
         </Row>
 
-        <Row gutter={[8, 8]}>
-          <Col>
-            <Text strong>手动同步：</Text>
-          </Col>
-          <Col>
+        <Alert
+          type={dataSourceHealth?.status === 'healthy' ? 'success' : 'warning'}
+          showIcon
+          icon={<ThunderboltOutlined />}
+          message="智能择源与自动 fallback 已启用"
+          description="系统会根据健康分、近期失败、延迟和显式偏好动态调整股票列表、历史K线、基础资料的调用顺位；异常源只会降级为兜底，不会阻断同步任务。"
+          style={{ marginBottom: 12 }}
+        />
+
+        {quantReadiness && (
+          <Card className="data-source-readiness" variant="borderless" style={{ marginBottom: 12 }}>
+            <Row gutter={[16, 12]} align="middle">
+              <Col xs={24} md={7}>
+                <div className="data-source-readiness-score">
+                  <span>量化数据可用度</span>
+                  <strong>{Number(quantReadiness.score || 0).toFixed(0)}</strong>
+                  <Progress
+                    percent={Math.round(Number(quantReadiness.score || 0))}
+                    showInfo={false}
+                    strokeColor={
+                      Number(quantReadiness.score || 0) >= 82
+                        ? '#0f8f6b'
+                        : Number(quantReadiness.score || 0) >= 62
+                        ? '#2764b8'
+                        : '#d97706'
+                    }
+                  />
+                </div>
+              </Col>
+              <Col xs={24} md={17}>
+                <Text strong>{quantReadiness.summary}</Text>
+                <div className="data-source-readiness-tags">
+                  {[
+                    ['历史K线', quantReadiness.history_ready],
+                    ['实时行情', quantReadiness.realtime_ready],
+                    ['财务因子', quantReadiness.fundamentals_ready],
+                    ['日内数据', quantReadiness.intraday_ready],
+                    ['Agent研判', quantReadiness.agent_ready],
+                  ].map(([label, ok]) => (
+                    <Tag
+                      key={String(label)}
+                      className={`modern-tag ${ok ? 'tag-success' : 'tag-warning'}`}
+                    >
+                      {label} {ok ? '可用' : '待补齐'}
+                    </Tag>
+                  ))}
+                </div>
+                <div className="data-source-readiness-notes">
+                  {quantReadiness.primary_history_provider && (
+                    <Text type="secondary">
+                      历史K线首选：{quantReadiness.primary_history_provider}
+                    </Text>
+                  )}
+                  {quantReadiness.recommended_paid_source && (
+                    <Text type="secondary">
+                      推荐增强：{quantReadiness.recommended_paid_source.provider_label}，
+                      {quantReadiness.recommended_paid_source.reason}
+                    </Text>
+                  )}
+                </div>
+              </Col>
+            </Row>
+            {!!quantReadiness.recommendations?.length && (
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginTop: 12 }}
+                message="下一步数据源建议"
+                description={
+                  <Space direction="vertical" size={2}>
+                    {quantReadiness.recommendations.slice(0, 3).map(item => (
+                      <Text key={item} type="secondary">
+                        · {item}
+                      </Text>
+                    ))}
+                    {!!quantReadiness.missing_configs?.length && (
+                      <Text type="secondary">
+                        缺少配置：{quantReadiness.missing_configs.join('、')}
+                      </Text>
+                    )}
+                  </Space>
+                }
+              />
+            )}
+          </Card>
+        )}
+
+        {historyPlan.length > 0 && (
+          <Row gutter={[12, 12]} style={{ marginBottom: 12 }}>
+            <Col xs={24} lg={8}>
+              <Card size="small" variant="borderless" style={{ background: '#f8fafc' }}>
+                <Statistic
+                  title="历史K线优先链路"
+                  value={historyPlan
+                    .slice(0, 3)
+                    .map(item => item.provider_label)
+                    .join(' → ')}
+                  valueStyle={{ fontSize: 14, fontWeight: 700 }}
+                />
+              </Card>
+            </Col>
+            <Col xs={24} lg={8}>
+              <Card size="small" variant="borderless" style={{ background: '#f8fafc' }}>
+                <Statistic
+                  title="股票列表链路"
+                  value={stockListPlan
+                    .slice(0, 3)
+                    .map(item => item.provider_label)
+                    .join(' → ')}
+                  valueStyle={{ fontSize: 14, fontWeight: 700 }}
+                />
+              </Card>
+            </Col>
+            <Col xs={24} lg={8}>
+              <Card size="small" variant="borderless" style={{ background: '#f8fafc' }}>
+                <Statistic
+                  title="基础资料链路"
+                  value={stockBasicPlan
+                    .slice(0, 3)
+                    .map(item => item.provider_label)
+                    .join(' → ')}
+                  valueStyle={{ fontSize: 14, fontWeight: 700 }}
+                />
+              </Card>
+            </Col>
+          </Row>
+        )}
+
+        <Table
+          style={{ marginBottom: 12 }}
+          title={() => <Text strong>历史K线动态路由计划</Text>}
+          columns={routeColumns}
+          dataSource={historyPlan}
+          rowKey={record => `${record.feature}-${record.provider_name}`}
+          size="small"
+          pagination={false}
+          loading={loading.health}
+          scroll={{ x: 720 }}
+          locale={{ emptyText: <Empty description="暂无动态路由计划" /> }}
+        />
+
+        <Table
+          title={() => <Text strong>数据源健康明细</Text>}
+          columns={sourceColumns}
+          dataSource={providers}
+          rowKey="provider_name"
+          size="small"
+          pagination={false}
+          loading={loading.health}
+          scroll={{ x: 900 }}
+          locale={{ emptyText: <Empty description="暂无数据源健康记录" /> }}
+        />
+      </Card>
+    );
+  };
+
+  const renderDataQualityCard = () => {
+    const summary = dataQuality?.summary;
+    const repairPayload = dataQuality?.repair_suggestions?.recommended_payload;
+    const issueTotals = summary?.issue_totals || {};
+
+    const qualityColumns: ColumnsType<DataQualityItem> = [
+      {
+        title: '标的',
+        key: 'stock',
+        width: 160,
+        render: (_, record) => (
+          <div>
+            <Text strong>{record.name}</Text>
+            <div>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {record.symbol} · {record.industry || record.market || '未分类'}
+              </Text>
+            </div>
+          </div>
+        ),
+      },
+      {
+        title: '质量分',
+        dataIndex: 'quality_score',
+        key: 'quality_score',
+        width: 150,
+        render: (score, record) => {
+          const config = getQualityGradeConfig(record.grade);
+          return (
+            <Space direction="vertical" size={2} style={{ width: 120 }}>
+              <Space>
+                <Text strong style={{ color: config.color }}>
+                  {Number(score || 0).toFixed(1)}
+                </Text>
+                <Tag className={`modern-tag ${config.tagClass}`}>{config.label}</Tag>
+              </Space>
+              <Progress
+                percent={Math.round(Number(score || 0))}
+                size="small"
+                showInfo={false}
+                strokeColor={config.color}
+              />
+            </Space>
+          );
+        },
+      },
+      {
+        title: '覆盖 / 最新',
+        key: 'coverage',
+        width: 140,
+        render: (_, record) => (
+          <Space direction="vertical" size={0}>
+            <Text>{Number(record.coverage_rate || 0).toFixed(1)}%</Text>
+            <Text type="secondary">{record.latest_date || '--'}</Text>
+          </Space>
+        ),
+      },
+      {
+        title: '问题',
+        key: 'issues',
+        render: (_, record) => (
+          <Space size={[4, 4]} wrap>
+            {Object.entries(record.issues || {})
+              .filter(([, value]) => Number(value || 0) > 0)
+              .slice(0, 4)
+              .map(([key, value]) => (
+                <Tag
+                  key={key}
+                  color={key === 'stale_days' ? 'orange' : 'red'}
+                  style={{ margin: 0 }}
+                >
+                  {issueLabelMap[key] || key} {value}
+                </Tag>
+              ))}
+            {Object.values(record.issues || {}).every(value => Number(value || 0) === 0) && (
+              <Tag color="green" style={{ margin: 0 }}>
+                暂无异常
+              </Tag>
+            )}
+          </Space>
+        ),
+      },
+      {
+        title: '修复建议',
+        dataIndex: 'recommended_action',
+        key: 'recommended_action',
+        ellipsis: true,
+        render: text => (
+          <Tooltip title={text}>
+            <Text>{text}</Text>
+          </Tooltip>
+        ),
+      },
+    ];
+
+    const triggerQualityScan = () => handleManualSync('data_quality_scan');
+
+    const repairTopQualityIssues = async () => {
+      if (!repairPayload?.symbols?.length) {
+        message.info('当前没有需要批量补数的低质量标的');
+        return;
+      }
+
+      try {
+        const response = await api.post('/market/bulk-sync', {
+          symbols: repairPayload.symbols,
+          start_date: repairPayload.start_date,
+          dataSource: repairPayload.dataSource || 'auto',
+          concurrency: repairPayload.concurrency || 2,
+        });
+        if (response.data.success) {
+          message.success(`已提交 ${repairPayload.symbols.length} 只低质量标的补数任务`);
+          fetchAllData();
+        }
+      } catch (error: any) {
+        message.error(error.response?.data?.error || '提交补数任务失败');
+      }
+    };
+
+    return (
+      <Card
+        className="modern-card"
+        variant="borderless"
+        title="数据质量画像"
+        style={{ marginTop: 12 }}
+        extra={
+          <Space>
+            <Button size="small" icon={<ToolOutlined />} onClick={triggerQualityScan}>
+              后台扫描
+            </Button>
+            <Button size="small" onClick={repairTopQualityIssues} disabled={!repairPayload}>
+              修复Top缺口
+            </Button>
             <Button
               size="small"
-              onClick={() => handleManualSync('new_stocks_sync')}
+              icon={<ReloadOutlined />}
+              onClick={handleRefresh}
+              loading={loading.quality}
             >
+              刷新
+            </Button>
+          </Space>
+        }
+      >
+        <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
+          <Col xs={12} md={6}>
+            <Statistic title="扫描标的" value={summary?.scanned_stocks || 0} />
+          </Col>
+          <Col xs={12} md={6}>
+            <Statistic title="平均质量分" value={summary?.avg_quality_score || 0} precision={1} />
+          </Col>
+          <Col xs={12} md={6}>
+            <Statistic
+              title="低质量占比"
+              value={summary?.low_quality_rate || 0}
+              precision={1}
+              suffix="%"
+              valueStyle={{
+                color: Number(summary?.low_quality_rate || 0) > 30 ? '#dc2626' : '#16a34a',
+              }}
+            />
+          </Col>
+          <Col xs={12} md={6}>
+            <Statistic title="滞后标的" value={summary?.stale_count || 0} />
+          </Col>
+        </Row>
+
+        <Alert
+          type={Number(summary?.low_quality_count || 0) > 0 ? 'warning' : 'success'}
+          showIcon
+          message="质量口径"
+          description={`按近 ${
+            dataQuality?.lookback_days || 180
+          } 天K线覆盖率、OHLC逻辑、异常涨跌幅、重复交易日、交易日缺口和最新日期滞后综合评分。累计问题：OHLC ${
+            issueTotals.ohlc_anomaly || 0
+          }，异常涨跌 ${issueTotals.extreme_return || 0}，缺口 ${
+            issueTotals.missing_business_day || 0
+          }，滞后 ${issueTotals.stale_days || 0}。`}
+          style={{ marginBottom: 12 }}
+        />
+
+        <Table
+          columns={qualityColumns}
+          dataSource={dataQuality?.items || []}
+          rowKey="symbol"
+          size="small"
+          loading={loading.quality}
+          pagination={{ pageSize: 5, showSizeChanger: false }}
+          scroll={{ x: 900 }}
+          locale={{ emptyText: <Empty description="暂无数据质量画像" /> }}
+        />
+      </Card>
+    );
+  };
+
+  const renderQueueCard = () => (
+    <Card className="modern-card" variant="borderless" title="队列状态">
+      <div
+        style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 12 }}
+      >
+        {[
+          { label: '等待', value: queueStatus.waiting, color: '#4f46e5' },
+          { label: '进行中', value: queueStatus.active, color: '#0891b2' },
+          { label: '已完成', value: queueStatus.completed, color: '#16a34a' },
+          { label: '失败', value: queueStatus.failed, color: '#dc2626' },
+          { label: '延迟', value: queueStatus.delayed, color: '#ea580c' },
+          { label: '总计', value: queueStatus.total, color: '#1a1a1a' },
+        ].map(item => (
+          <div
+            key={item.label}
+            style={{
+              textAlign: 'center',
+              padding: '8px 0',
+              background: '#fafafa',
+              borderRadius: 6,
+            }}
+          >
+            <div style={{ fontSize: 18, fontWeight: 700, color: item.color }}>{item.value}</div>
+            <div style={{ fontSize: 11, color: '#999' }}>{item.label}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        <Text style={{ fontSize: 12, color: '#999', marginRight: 4 }}>锁状态：</Text>
+        <Tag
+          className={`modern-tag ${lockStatus.global ? 'tag-error' : 'tag-default'}`}
+          style={{ margin: 0, fontSize: 11 }}
+        >
+          全局{lockStatus.global ? '锁定' : '空闲'}
+        </Tag>
+        <Tag
+          className={`modern-tag ${lockStatus.daily ? 'tag-error' : 'tag-default'}`}
+          style={{ margin: 0, fontSize: 11 }}
+        >
+          日更{lockStatus.daily ? '锁定' : '空闲'}
+        </Tag>
+        <Tag
+          className={`modern-tag ${lockStatus.newStocks ? 'tag-error' : 'tag-default'}`}
+          style={{ margin: 0, fontSize: 11 }}
+        >
+          新股{lockStatus.newStocks ? '锁定' : '空闲'}
+        </Tag>
+      </div>
+    </Card>
+  );
+
+  const renderControlPanel = () => (
+    <Card className="modern-card" variant="borderless" title="操作">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {/* 数据更新核心操作 */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          <Button
+            size="middle"
+            type="primary"
+            icon={<PlayCircleOutlined />}
+            onClick={() => handleTriggerUpdate(false)}
+            style={{ borderRadius: 6 }}
+          >
+            更新
+          </Button>
+          <Button
+            size="middle"
+            danger
+            type="primary"
+            icon={<PlayCircleOutlined />}
+            onClick={() => handleTriggerUpdate(true)}
+            style={{ borderRadius: 6 }}
+          >
+            强制
+          </Button>
+        </div>
+
+        {/* 辅助操作 */}
+        <div>
+          <div style={{ fontSize: 11, color: '#bbb', marginBottom: 8, fontWeight: 500 }}>
+            高级工具
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <Button size="small" type="dashed" onClick={() => handleManualSync('new_stocks_sync')}>
               新股同步
             </Button>
-          </Col>
-          <Col>
+            <Button size="small" type="dashed" onClick={() => handleManualSync('daily_update')}>
+              日更同步
+            </Button>
             <Button
               size="small"
+              type="dashed"
               onClick={() => handleManualSync('weekly_completeness_check')}
             >
               完整性检查
             </Button>
-          </Col>
-          <Col>
             <Button
               size="small"
-              onClick={() => handleManualSync('daily_update')}
+              type="dashed"
+              onClick={() => handleManualSync('data_quality_scan')}
             >
-              每日更新
+              质量扫描
             </Button>
-          </Col>
-        </Row>
+            <Button size="small" type="dashed" icon={<SyncOutlined />} onClick={openBulkSyncModal}>
+              批量补数
+            </Button>
+            <Button size="small" type="dashed" icon={<DeleteOutlined />} onClick={handleCleanQueue}>
+              清理队列
+            </Button>
+            <Button size="small" type="dashed" icon={<ReloadOutlined />} onClick={handleRefresh}>
+              手动刷新
+            </Button>
+          </div>
+        </div>
 
-        <Row gutter={[8, 8]} align="middle">
-          <Col>
-            <Text strong>自动刷新：</Text>
-          </Col>
-          <Col>
-            <Switch
-              checked={autoRefresh}
-              onChange={setAutoRefresh}
-              checkedChildren="开"
-              unCheckedChildren="关"
-            />
-          </Col>
-          <Col>
-            <Text>间隔：</Text>
-          </Col>
-          <Col>
-            <Space>
-              {[5, 10, 30, 60].map(seconds => (
+        {/* 自动刷新 */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '10px 12px',
+            background: 'var(--bg-inset)',
+            borderRadius: 6,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 12, color: '#666', fontWeight: 500 }}>自动刷新</span>
+            <Switch size="small" checked={autoRefresh} onChange={setAutoRefresh} />
+          </div>
+          {autoRefresh && (
+            <div style={{ display: 'flex', gap: 2 }}>
+              {[5, 10, 30].map(s => (
                 <Button
-                  key={seconds}
+                  key={s}
                   size="small"
-                  type={refreshInterval === seconds ? 'primary' : 'default'}
-                  onClick={() => setRefreshInterval(seconds)}
+                  type={refreshInterval === s ? 'primary' : 'text'}
+                  onClick={() => setRefreshInterval(s)}
+                  style={{ padding: '0 6px', fontSize: 11, height: 22, borderRadius: 4 }}
                 >
-                  {seconds}秒
+                  {s}s
                 </Button>
               ))}
-            </Space>
-          </Col>
-        </Row>
-      </Space>
+            </div>
+          )}
+        </div>
+      </div>
     </Card>
   );
 
-  // 批量同步模态框
   const renderBulkSyncModal = () => {
     const marketOptions = [
       { label: '上海交易所 (SH)', value: 'SH' },
@@ -1017,7 +1763,12 @@ const DataUpdateStatus: React.FC = () => {
     ];
 
     const dataSourceOptions = [
-      { label: 'AKShare (推荐)', value: 'akshare' },
+      { label: '自动 fallback (推荐)', value: 'auto' },
+      { label: 'Tushare Pro', value: 'tushare' },
+      { label: 'Baostock', value: 'baostock' },
+      { label: 'AKShare', value: 'akshare' },
+      { label: '东方财富', value: 'eastmoney' },
+      { label: '新浪财经', value: 'sina' },
     ];
 
     return (
@@ -1043,7 +1794,7 @@ const DataUpdateStatus: React.FC = () => {
             <Col span={24}>
               <Radio.Group
                 value={bulkSyncForm.syncAllStocks ? 'all' : 'custom'}
-                onChange={(e) => handleBulkSyncFormChange('syncAllStocks', e.target.value === 'all')}
+                onChange={e => handleBulkSyncFormChange('syncAllStocks', e.target.value === 'all')}
               >
                 <Space direction="vertical">
                   <Radio value="all">同步所有股票（当前数据库中的所有股票）</Radio>
@@ -1061,7 +1812,7 @@ const DataUpdateStatus: React.FC = () => {
                   <Checkbox.Group
                     options={marketOptions}
                     value={bulkSyncForm.marketFilters}
-                    onChange={(values) => handleBulkSyncFormChange('marketFilters', values)}
+                    onChange={values => handleBulkSyncFormChange('marketFilters', values)}
                     style={{ marginLeft: 16 }}
                   />
                 </Col>
@@ -1074,7 +1825,7 @@ const DataUpdateStatus: React.FC = () => {
                     mode="multiple"
                     placeholder="选择股票代码"
                     value={bulkSyncForm.symbols}
-                    onChange={(values) => handleBulkSyncFormChange('symbols', values)}
+                    onChange={values => handleBulkSyncFormChange('symbols', values)}
                     style={{ width: '100%', marginTop: 8 }}
                     loading={loadingStocks}
                     options={stockOptions}
@@ -1092,14 +1843,18 @@ const DataUpdateStatus: React.FC = () => {
             </>
           )}
 
-          <Divider orientation="left">日期范围</Divider>
+          <div style={{ fontSize: 14, fontWeight: 600, color: '#1a1a1a', margin: '24px 0 16px 0' }}>
+            日期范围
+          </div>
 
           <Row gutter={[16, 16]}>
             <Col span={12}>
               <Text strong>开始日期：</Text>
               <DatePicker
-                value={bulkSyncForm.startDate ? dayjs(bulkSyncForm.startDate) : null}
-                onChange={(date) => handleBulkSyncFormChange('startDate', date ? date.format('YYYY-MM-DD') : '')}
+                value={bulkSyncForm.start_date ? dayjs(bulkSyncForm.start_date) : null}
+                onChange={date =>
+                  handleBulkSyncFormChange('start_date', date ? date.format('YYYY-MM-DD') : '')
+                }
                 style={{ width: '100%', marginTop: 8 }}
                 placeholder="选择开始日期（留空则从2020-01-01开始）"
               />
@@ -1107,15 +1862,19 @@ const DataUpdateStatus: React.FC = () => {
             <Col span={12}>
               <Text strong>结束日期：</Text>
               <DatePicker
-                value={bulkSyncForm.endDate ? dayjs(bulkSyncForm.endDate) : null}
-                onChange={(date) => handleBulkSyncFormChange('endDate', date ? date.format('YYYY-MM-DD') : '')}
+                value={bulkSyncForm.end_date ? dayjs(bulkSyncForm.end_date) : null}
+                onChange={date =>
+                  handleBulkSyncFormChange('end_date', date ? date.format('YYYY-MM-DD') : '')
+                }
                 style={{ width: '100%', marginTop: 8 }}
                 placeholder="选择结束日期（留空则到今天）"
               />
             </Col>
           </Row>
 
-          <Divider orientation="left">同步设置</Divider>
+          <div style={{ fontSize: 14, fontWeight: 600, color: '#1a1a1a', margin: '24px 0 16px 0' }}>
+            同步设置
+          </div>
 
           <Row gutter={[16, 16]}>
             <Col span={12}>
@@ -1123,8 +1882,8 @@ const DataUpdateStatus: React.FC = () => {
               <Radio.Group
                 options={dataSourceOptions}
                 value={bulkSyncForm.dataSource}
-                onChange={(e) => handleBulkSyncFormChange('dataSource', e.target.value)}
-                style={{ marginLeft: 16 }}
+                onChange={e => handleBulkSyncFormChange('dataSource', e.target.value)}
+                style={{ marginLeft: 16, display: 'flex', flexDirection: 'column', gap: 8 }}
               />
             </Col>
             <Col span={12}>
@@ -1133,7 +1892,7 @@ const DataUpdateStatus: React.FC = () => {
                 min={1}
                 max={50}
                 value={bulkSyncForm.concurrency}
-                onChange={(value) => handleBulkSyncFormChange('concurrency', value || 10)}
+                onChange={value => handleBulkSyncFormChange('concurrency', value || 10)}
                 style={{ width: '100%', marginTop: 8 }}
                 addonAfter="个/批次"
                 placeholder="同时处理的股票数量"
@@ -1149,74 +1908,70 @@ const DataUpdateStatus: React.FC = () => {
             description="批量同步任务将在后台执行，可能需要较长时间。您可以在任务队列中查看进度。"
             type="warning"
             showIcon
+            style={{ marginTop: 16 }}
           />
         </Space>
       </Modal>
     );
   };
 
-  // 统计信息卡片
   const renderStatsCard = () => {
     if (!updateStats) return null;
 
-    // 成功率图表数据
     const successRateData = [
       { name: '成功', value: updateStats.successfulUpdates, color: '#52c41a' },
       { name: '失败', value: updateStats.failedUpdates, color: '#f5222d' },
       { name: '进行中', value: updateStats.inProgressUpdates, color: '#1890ff' },
     ];
 
+    const successRate =
+      updateStats.totalUpdates > 0
+        ? ((updateStats.successfulUpdates / updateStats.totalUpdates) * 100).toFixed(1)
+        : '0';
+
     return (
-      <Card title="统计信息 (最近7天)" size="small">
-        <Row gutter={[16, 16]}>
-          <Col span={6}>
-            <Card size="small">
-              <Statistic title="总更新次数" value={updateStats.totalUpdates} />
-            </Card>
-          </Col>
-          <Col span={6}>
-            <Card size="small">
-              <Statistic
-                title="成功率"
-                value={updateStats.totalUpdates > 0 ?
-                  ((updateStats.successfulUpdates / updateStats.totalUpdates) * 100).toFixed(1) : 0}
-                suffix="%"
-                valueStyle={{ color: '#3f8600' }}
-              />
-            </Card>
-          </Col>
-          <Col span={6}>
-            <Card size="small">
-              <Statistic
-                title="平均影响股票"
-                value={updateStats.avgAffectedStocks}
-              />
-            </Card>
-          </Col>
-          <Col span={6}>
-            <Card size="small">
-              <Statistic
-                title="平均插入记录"
-                value={updateStats.avgInsertedRecords}
-              />
-            </Card>
-          </Col>
-        </Row>
+      <Card className="modern-card" variant="borderless" title="统计 (最近7天)">
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr 1fr 1fr',
+            gap: 12,
+            marginBottom: 16,
+          }}
+        >
+          {[
+            { label: '总更新', value: updateStats.totalUpdates },
+            { label: '成功率', value: `${successRate}%` },
+            { label: '平均股票', value: updateStats.avgAffectedStocks },
+            { label: '平均记录', value: updateStats.avgInsertedRecords },
+          ].map(item => (
+            <div
+              key={item.label}
+              style={{
+                textAlign: 'center',
+                padding: '8px 0',
+                background: '#fafafa',
+                borderRadius: 6,
+              }}
+            >
+              <div style={{ fontSize: 18, fontWeight: 700, color: '#1a1a1a' }}>{item.value}</div>
+              <div style={{ fontSize: 11, color: '#999' }}>{item.label}</div>
+            </div>
+          ))}
+        </div>
 
-        <Divider />
-
-        <Row gutter={[16, 16]}>
+        <Row gutter={[12, 12]}>
           <Col span={12}>
-            <Card size="small" title="成功率分布">
-              <ResponsiveContainer width="100%" height={200}>
+            <Card className="modern-card" variant="borderless" title="成功率分布" size="small">
+              <ResponsiveContainer width="100%" height={180}>
                 <PieChart>
                   <Pie
                     data={successRateData}
                     cx="50%"
                     cy="50%"
                     labelLine={false}
-                    label={(entry) => `${entry.name}: ${entry.value}`}
-                    outerRadius={80}
+                    label={entry => `${entry.name}: ${entry.value}`}
+                    outerRadius={65}
                     fill="#8884d8"
                     dataKey="value"
                   >
@@ -1230,18 +1985,19 @@ const DataUpdateStatus: React.FC = () => {
             </Card>
           </Col>
           <Col span={12}>
-            <Card size="small" title="每日更新趋势">
-              <ResponsiveContainer width="100%" height={200}>
+            <Card className="modern-card" variant="borderless" title="更新趋势" size="small">
+              <ResponsiveContainer width="100%" height={180}>
                 <LineChart data={updateStats.dailyBreakdown}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="date" />
-                  <YAxis />
+                  <CartesianGrid vertical={false} stroke="#f0f0f0" />
+                  <XAxis dataKey="date" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
                   <RechartsTooltip />
-                  <Legend />
                   <Line
                     type="monotone"
-                    dataKey="affectedStocks"
-                    stroke="#1890ff"
+                    dataKey="affected_stocks"
+                    stroke="#4f46e5"
+                    strokeWidth={2}
+                    dot={false}
                     name="影响股票"
                   />
                 </LineChart>
@@ -1254,41 +2010,55 @@ const DataUpdateStatus: React.FC = () => {
   };
 
   return (
-    <Layout>
-      <Title level={2}>数据更新监控</Title>
-      <Paragraph>
-        监控股票数据更新状态、队列情况、系统健康状态，并提供控制功能。
-        <Text type="secondary" style={{ marginLeft: 8 }}>
-          最后更新: {dayjs().format('YYYY-MM-DD HH:mm:ss')}
-        </Text>
-      </Paragraph>
-
-      <Alert
-        message="系统提示"
-        description="数据更新系统使用Bull队列进行异步处理，Redis分布式锁防止并发冲突，增量更新减少数据源请求。"
-        type="info"
-        showIcon
-        style={{ marginBottom: 16 }}
-      />
+    <div className="fade-in-up">
+      <div
+        className="page-header-modern"
+        style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+      >
+        <div>
+          <h1 className="page-title-modern">数据更新与系统监控</h1>
+          <p className="page-subtitle-modern">实时监控 A 股数据同步状态，确保量化回测的准确性</p>
+        </div>
+        <Space>
+          <Button
+            icon={<PlayCircleOutlined />}
+            onClick={() => handleManualTrigger('health_check')}
+            loading={triggerLoading}
+          >
+            健康检查
+          </Button>
+          <Button
+            type="primary"
+            icon={<SyncOutlined />}
+            onClick={() => handleManualTrigger('daily_update')}
+            loading={triggerLoading}
+          >
+            手动同步今日数据
+          </Button>
+        </Space>
+      </div>
 
       <Row gutter={[16, 16]}>
         {/* 左侧：状态概览和控制面板 */}
-        <Col xs={24} lg={8}>
+        <Col xs={24} md={10} lg={7}>
           {renderHealthCard()}
-          <div style={{ marginTop: 16 }} />
+          <div style={{ marginTop: 12 }} />
           {renderQueueCard()}
-          <div style={{ marginTop: 16 }} />
+          <div style={{ marginTop: 12 }} />
           {renderControlPanel()}
         </Col>
 
         {/* 右侧：详细信息和图表 */}
-        <Col xs={24} lg={16}>
+        <Col xs={24} md={14} lg={17}>
           {renderStatsCard()}
+          {renderDataSourceCard()}
+          {renderDataQualityCard()}
 
           <Card
+            className="modern-card"
+            variant="borderless"
             title="任务队列"
-            size="small"
-            style={{ marginTop: 16 }}
+            style={{ marginTop: 12 }}
             extra={
               <Button
                 size="small"
@@ -1300,24 +2070,22 @@ const DataUpdateStatus: React.FC = () => {
               </Button>
             }
           >
-            {jobs.length > 0 ? (
-              <Table
-                columns={jobColumns}
-                dataSource={jobs}
-                rowKey="id"
-                size="small"
-                pagination={false}
-                loading={loading.queue}
-              />
-            ) : (
-              <Empty description="暂无活跃任务" />
-            )}
+            <Table
+              columns={jobColumns}
+              dataSource={jobs}
+              rowKey="id"
+              size="small"
+              pagination={false}
+              loading={loading.queue}
+              locale={{ emptyText: <Empty description="暂无活跃任务" /> }}
+            />
           </Card>
 
           <Card
+            className="modern-card"
+            variant="borderless"
             title="更新日志"
-            size="small"
-            style={{ marginTop: 16 }}
+            style={{ marginTop: 12 }}
             extra={
               <Button
                 size="small"
@@ -1330,7 +2098,14 @@ const DataUpdateStatus: React.FC = () => {
             }
           >
             {/* 筛选器面板 */}
-            <div style={{ marginBottom: 16, padding: 12, backgroundColor: '#fafafa', borderRadius: 4 }}>
+            <div
+              style={{
+                marginBottom: 16,
+                padding: 12,
+                backgroundColor: '#fafafa',
+                borderRadius: 8,
+              }}
+            >
               <Space direction="vertical" style={{ width: '100%' }}>
                 <Row gutter={[16, 16]} align="middle">
                   <Col span={24}>
@@ -1339,7 +2114,7 @@ const DataUpdateStatus: React.FC = () => {
                       mode="multiple"
                       placeholder="选择任务类型（可多选）"
                       value={logFilters.types}
-                      onChange={(values) => handleFilterChange('types', values)}
+                      onChange={values => handleFilterChange('types', values)}
                       style={{ width: '100%', marginTop: 8 }}
                       options={taskTypeOptions}
                       allowClear
@@ -1350,8 +2125,10 @@ const DataUpdateStatus: React.FC = () => {
                   <Col span={12}>
                     <Text strong>开始日期：</Text>
                     <DatePicker
-                      value={logFilters.startDate ? dayjs(logFilters.startDate) : null}
-                      onChange={(date) => handleFilterChange('startDate', date ? date.format('YYYY-MM-DD') : '')}
+                      value={logFilters.start_date ? dayjs(logFilters.start_date) : null}
+                      onChange={date =>
+                        handleFilterChange('start_date', date ? date.format('YYYY-MM-DD') : '')
+                      }
                       style={{ width: '100%', marginTop: 8 }}
                       placeholder="选择开始日期"
                     />
@@ -1359,8 +2136,10 @@ const DataUpdateStatus: React.FC = () => {
                   <Col span={12}>
                     <Text strong>结束日期：</Text>
                     <DatePicker
-                      value={logFilters.endDate ? dayjs(logFilters.endDate) : null}
-                      onChange={(date) => handleFilterChange('endDate', date ? date.format('YYYY-MM-DD') : '')}
+                      value={logFilters.end_date ? dayjs(logFilters.end_date) : null}
+                      onChange={date =>
+                        handleFilterChange('end_date', date ? date.format('YYYY-MM-DD') : '')
+                      }
                       style={{ width: '100%', marginTop: 8 }}
                       placeholder="选择结束日期"
                     />
@@ -1369,7 +2148,12 @@ const DataUpdateStatus: React.FC = () => {
                 <Row gutter={[16, 16]} justify="end">
                   <Col>
                     <Space>
-                      <Button onClick={handleResetFilters} disabled={!logFilters.types.length && !logFilters.startDate && !logFilters.endDate}>
+                      <Button
+                        onClick={handleResetFilters}
+                        disabled={
+                          !logFilters.types.length && !logFilters.start_date && !logFilters.end_date
+                        }
+                      >
                         重置筛选
                       </Button>
                       <Button type="primary" onClick={handleApplyFilters}>
@@ -1389,12 +2173,13 @@ const DataUpdateStatus: React.FC = () => {
               pagination={{ pageSize: 10, showSizeChanger: true }}
               loading={loading.logs}
               scroll={{ y: 400 }}
+              locale={{ emptyText: <Empty description="暂无更新日志" /> }}
             />
           </Card>
         </Col>
       </Row>
       {renderBulkSyncModal()}
-    </Layout>
+    </div>
   );
 };
 

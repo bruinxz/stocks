@@ -6,6 +6,34 @@ import { Trade } from '../models/Trade';
 import { User } from '../models/User';
 import { FavoriteStock } from '../models/FavoriteStock';
 import { DataUpdateLog } from '../models/DataUpdateLog';
+import { ScheduledTask } from '../models/ScheduledTask';
+import { TaskExecutionLog } from '../models/TaskExecutionLog';
+import { DailyScreener } from '../models/DailyScreener';
+import { PaperTradingPortfolio } from '../models/PaperTradingPortfolio';
+import { PaperTradingPosition } from '../models/PaperTradingPosition';
+import { PaperTradingTrade } from '../models/PaperTradingTrade';
+import { PaperTradingSnapshot } from '../models/PaperTradingSnapshot';
+import { RiskAlert } from '../models/RiskAlert';
+import { TradingJournal } from '../models/TradingJournal';
+import { PortfolioSimulation } from '../models/PortfolioSimulation';
+import { DataSourceHealth } from '../models/DataSourceHealth';
+import { AIInvestmentSignal } from '../models/AIInvestmentSignal';
+import { RecommendationTradeOutcome } from '../models/RecommendationTradeOutcome';
+import { RecommendationLoopPolicySnapshot } from '../models/RecommendationLoopPolicySnapshot';
+import { BudgetPolicyVersionSnapshot } from '../models/BudgetPolicyVersionSnapshot';
+import { QuantStrategyModel } from '../models/QuantStrategyModel';
+import { QuantBacktestTask } from '../models/QuantBacktestTask';
+import { QuantBacktestResult } from '../models/QuantBacktestResult';
+import { QuantBacktestTrade } from '../models/QuantBacktestTrade';
+import { QuantSignal } from '../models/QuantSignal';
+import { QuantStrategyPerformanceSnapshot } from '../models/QuantStrategyPerformanceSnapshot';
+import { QuantStrategyWeight } from '../models/QuantStrategyWeight';
+import { QuantStrategyExperiment } from '../models/QuantStrategyExperiment';
+import { QuantStrategyParamVersion } from '../models/QuantStrategyParamVersion';
+import { QuantStrategyParamValidation } from '../models/QuantStrategyParamValidation';
+import { QuantFusionAudit } from '../models/QuantFusionAudit';
+import { TaskParameterAuditLog } from '../models/TaskParameterAuditLog';
+import { RealtimeQuote } from '../models/RealtimeQuote';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -18,12 +46,51 @@ const sequelize = new Sequelize({
   port: parseInt(process.env.DB_PORT || '5432'),
   dialect: 'postgres',
   dialectOptions: {
-    ssl: process.env.DB_SSL === 'true' ? {
-      require: true,
-      rejectUnauthorized: false,
-    } : false,
+    ssl:
+      process.env.DB_SSL === 'true'
+        ? {
+            require: true,
+            rejectUnauthorized: false,
+          }
+        : false,
   },
-  models: [Stock, DailyBar, BacktestResult, Trade, User, FavoriteStock, DataUpdateLog],
+  models: [
+    Stock,
+    DailyBar,
+    BacktestResult,
+    Trade,
+    User,
+    FavoriteStock,
+    DataUpdateLog,
+    ScheduledTask,
+    TaskExecutionLog,
+    DailyScreener,
+    PaperTradingPortfolio,
+    PaperTradingPosition,
+    PaperTradingTrade,
+    PaperTradingSnapshot,
+    RiskAlert,
+    TradingJournal,
+    PortfolioSimulation,
+    DataSourceHealth,
+    AIInvestmentSignal,
+    RecommendationTradeOutcome,
+    RecommendationLoopPolicySnapshot,
+    BudgetPolicyVersionSnapshot,
+    QuantStrategyModel,
+    QuantBacktestTask,
+    QuantBacktestResult,
+    QuantBacktestTrade,
+    QuantSignal,
+    QuantStrategyPerformanceSnapshot,
+    QuantStrategyWeight,
+    QuantStrategyExperiment,
+    QuantStrategyParamVersion,
+    QuantStrategyParamValidation,
+    QuantFusionAudit,
+    TaskParameterAuditLog,
+    RealtimeQuote,
+  ],
   logging: process.env.NODE_ENV === 'development' ? console.log : false,
   pool: {
     max: 10,

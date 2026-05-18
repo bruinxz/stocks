@@ -1,0 +1,184 @@
+import { Op } from 'sequelize';
+import { Stock } from '../../models/Stock';
+import { DailyBar } from '../../models/DailyBar';
+import { FavoriteStock } from '../../models/FavoriteStock';
+import { RealtimeQuote } from '../../models/RealtimeQuote';
+import { normalizeSymbol } from '../../utils/stockSymbol';
+import { QuantBar, QuantStockContext, QuantUniverse } from '../types/QuantTypes';
+
+function toDateOnly(value: Date | string): string {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).slice(0, 10);
+  return date.toISOString().slice(0, 10);
+}
+
+export class QuantDataService {
+  async getStocks(options: {
+    universe?: QuantUniverse;
+    user_id?: number;
+    symbols?: string[];
+    limit?: number;
+  }): Promise<Stock[]> {
+    const limit = Math.min(Number(options.limit || 120), 1000);
+    if (options.symbols?.length) {
+      const symbols = options.symbols.map(normalizeSymbol).filter(Boolean);
+      return Stock.findAll({ where: { symbol: { [Op.in]: symbols }, is_listed: true }, limit });
+    }
+    if (options.universe === 'favorites' && options.user_id) {
+      const favorites = await FavoriteStock.findAll({
+        where: { user_id: options.user_id },
+        include: [{ model: Stock }],
+        limit,
+      });
+      const stocks = favorites.map(item => item.stock).filter(Boolean) as Stock[];
+      if (stocks.length) return stocks;
+    }
+    return Stock.findAll({
+      where: {
+        is_listed: true,
+        [Op.or]: [{ type: 'stock' }, { type: null }],
+        name: { [Op.and]: [{ [Op.notILike]: '%ST%' }, { [Op.notILike]: '%退%' }] },
+      },
+      order: [
+        ['change_percent', 'DESC NULLS LAST'],
+        ['turnover_rate', 'DESC NULLS LAST'],
+        ['updated_at', 'DESC'],
+      ] as any,
+      limit,
+    });
+  }
+
+  async getContexts(options: {
+    universe?: QuantUniverse;
+    user_id?: number;
+    symbols?: string[];
+    start_date: string;
+    end_date: string;
+    warmup_days?: number;
+    limit?: number;
+    include_realtime_quote?: boolean;
+  }): Promise<QuantStockContext[]> {
+    const stocks = await this.getStocks(options);
+    const latestQuotes =
+      options.include_realtime_quote === false
+        ? []
+        : await RealtimeQuote.findAll({
+            where: { symbol: { [Op.in]: stocks.map(stock => stock.symbol) } },
+            order: [
+              ['symbol', 'ASC'],
+              ['quote_time', 'DESC'],
+            ],
+            limit: Math.max(stocks.length * 3, 50),
+          }).catch(() => [] as RealtimeQuote[]);
+    const latestQuoteBySymbol = new Map<string, RealtimeQuote>();
+    for (const quote of latestQuotes) {
+      if (!latestQuoteBySymbol.has(quote.symbol)) latestQuoteBySymbol.set(quote.symbol, quote);
+    }
+    const warmupStart = new Date(options.start_date);
+    warmupStart.setDate(warmupStart.getDate() - Number(options.warmup_days || 120));
+    const contexts: QuantStockContext[] = [];
+    for (const stock of stocks) {
+      const bars = await DailyBar.findAll({
+        where: {
+          stock_id: stock.id,
+          time: { [Op.between]: [warmupStart, new Date(`${options.end_date}T23:59:59.999Z`)] },
+        },
+        order: [['time', 'ASC']],
+      });
+      const quantBars: QuantBar[] = bars.map(bar => ({
+        time: bar.time,
+        open: Number(bar.open),
+        high: Number(bar.high),
+        low: Number(bar.low),
+        close: Number(bar.close),
+        volume: Number(bar.volume || 0),
+        turnover: bar.turnover === undefined ? null : Number(bar.turnover),
+        turnover_rate: bar.turnover_rate === undefined ? null : Number(bar.turnover_rate),
+        change_percent: bar.change_percent === undefined ? null : Number(bar.change_percent),
+      }));
+      if (quantBars.length < 30) continue;
+      const latestQuote = latestQuoteBySymbol.get(stock.symbol);
+      const mergedBars = this.mergeRealtimeQuoteIntoBars(
+        quantBars,
+        latestQuote,
+        options.end_date
+      );
+      const latest = mergedBars[mergedBars.length - 1];
+      const realtimePrice = latestQuote?.current_price ? Number(latestQuote.current_price) : null;
+      const stockPrice = stock.price ? Number(stock.price) : null;
+      const priceSource = realtimePrice
+        ? 'realtime_quote'
+        : stockPrice
+        ? 'stock_snapshot'
+        : 'daily_bar';
+      const realtimeChangePercent =
+        latestQuote?.change_percent === undefined ? null : Number(latestQuote.change_percent);
+      contexts.push({
+        stock_id: stock.id,
+        symbol: stock.symbol,
+        name: stock.name,
+        market: stock.market,
+        industry: stock.industry,
+        bars: mergedBars,
+        as_of: toDateOnly(latest.time),
+        latest_price: Number(realtimePrice || stockPrice || latest.close),
+        latest_quote_time: latestQuote?.quote_time?.toISOString?.() || null,
+        price_source: priceSource,
+        change_percent:
+          realtimeChangePercent ??
+          (stock.change_percent === undefined
+            ? latest.change_percent
+            : Number(stock.change_percent)),
+        total_market_cap:
+          stock.total_market_cap === undefined ? null : Number(stock.total_market_cap),
+        pe_dynamic: stock.pe_dynamic === undefined ? null : Number(stock.pe_dynamic),
+        pb: stock.pb === undefined ? null : Number(stock.pb),
+      });
+    }
+    return contexts;
+  }
+
+  private mergeRealtimeQuoteIntoBars(
+    bars: QuantBar[],
+    quote?: RealtimeQuote,
+    end_date?: string
+  ): QuantBar[] {
+    const currentPrice = quote?.current_price ? Number(quote.current_price) : 0;
+    if (!quote || !currentPrice || !Number.isFinite(currentPrice) || !bars.length) return bars;
+
+    const quoteDate = quote.trade_date || toDateOnly(quote.quote_time);
+    const normalizedEndDate = end_date ? toDateOnly(end_date) : quoteDate;
+    if (quoteDate > normalizedEndDate) return bars;
+
+    const latestBar = bars[bars.length - 1];
+    const latestDate = toDateOnly(latestBar.time);
+    const open = quote.open ? Number(quote.open) : latestBar.close;
+    const high = quote.high ? Number(quote.high) : Math.max(open, currentPrice, latestBar.close);
+    const low = quote.low ? Number(quote.low) : Math.min(open, currentPrice, latestBar.close);
+    const volume = quote.volume ? Number(quote.volume) : latestBar.volume;
+    const turnover = quote.turnover ? Number(quote.turnover) : latestBar.turnover;
+    const changePercent =
+      quote.change_percent === undefined ? latestBar.change_percent : Number(quote.change_percent);
+    const realtimeBar: QuantBar = {
+      time: quote.quote_time || new Date(`${quoteDate}T15:00:00.000Z`),
+      open,
+      high: Math.max(high, currentPrice),
+      low: Math.min(low, currentPrice),
+      close: currentPrice,
+      volume,
+      turnover,
+      turnover_rate: latestBar.turnover_rate,
+      change_percent: changePercent,
+    };
+
+    if (quoteDate === latestDate) {
+      return [...bars.slice(0, -1), realtimeBar];
+    }
+    if (quoteDate > latestDate) {
+      return [...bars, realtimeBar];
+    }
+    return bars;
+  }
+}
+
+export const quantDataService = new QuantDataService();

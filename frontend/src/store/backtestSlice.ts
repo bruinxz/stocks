@@ -5,14 +5,14 @@ export interface Backtest {
   name: string;
   status: 'pending' | 'running' | 'completed' | 'failed';
   symbol: string;
-  startDate: string;
-  endDate: string;
+  start_date: string;
+  end_date: string;
   strategyType: string;
-  initialCapital: number;
-  totalReturn: number;
-  sharpeRatio: number;
-  maxDrawdown: number;
-  createdAt: string;
+  initial_capital: number;
+  total_return: number;
+  sharpe_ratio: number;
+  max_drawdown: number;
+  created_at: string;
 }
 
 export interface BacktestState {

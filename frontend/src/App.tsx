@@ -1,6 +1,15 @@
-import React from 'react';
-import { Layout, ConfigProvider, Menu } from 'antd';
-import { BrowserRouter as Router, Routes, Route, Link, Navigate } from 'react-router-dom';
+import React, { Suspense, lazy, useEffect, useMemo, useState } from 'react';
+import { Layout, ConfigProvider, Menu, Avatar, Dropdown, Spin } from 'antd';
+import {
+  BrowserRouter as Router,
+  Routes,
+  Route,
+  Link,
+  Navigate,
+  useLocation,
+  useNavigate,
+  useParams,
+} from 'react-router-dom';
 import {
   DashboardOutlined,
   LineChartOutlined,
@@ -9,96 +18,640 @@ import {
   PieChartOutlined,
   AreaChartOutlined,
   SyncOutlined,
+  LogoutOutlined,
+  BarChartOutlined,
+  FundProjectionScreenOutlined,
+  DownOutlined,
 } from '@ant-design/icons';
 import zhCN from 'antd/locale/zh_CN';
+import { useSelector, useDispatch } from 'react-redux';
+import { RootState } from './store/rootReducer';
+import { loginSuccess, logout } from './store/authSlice';
+import { authService } from './services/authService';
+import { API_DOMAIN_URL } from './services/api';
 
-import Dashboard from './pages/Dashboard';
-import Backtest from './pages/Backtest';
-import Strategy from './pages/Strategy';
-import Login from './pages/Login';
-import Portfolio from './pages/Portfolio';
-import Market from './pages/Market';
-import DataUpdateStatus from './pages/DataUpdateStatus';
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Backtest = lazy(() => import('./pages/Backtest'));
+const Strategy = lazy(() => import('./pages/Strategy'));
+const Login = lazy(() => import('./pages/Login'));
+const Portfolio = lazy(() => import('./pages/Portfolio'));
+const Market = lazy(() => import('./pages/Market'));
+const DataUpdateStatus = lazy(() => import('./pages/DataUpdateStatus'));
+const BacktestResults = lazy(() => import('./components/backtest/BacktestResults'));
+const Profile = lazy(() => import('./pages/Profile'));
+const UserManagement = lazy(() => import('./pages/UserManagement'));
+const AIAdvisor = lazy(() => import('./pages/AIAdvisor'));
+const TaskScheduler = lazy(() => import('./pages/TaskScheduler'));
+const Screener = lazy(() => import('./pages/Screener'));
+const Recommendations = lazy(() => import('./pages/Recommendations'));
+const RecommendationPerformance = lazy(() => import('./pages/RecommendationPerformance'));
+const RecommendationTradeOutcomes = lazy(() => import('./pages/RecommendationTradeOutcomes'));
+const RecommendationLoopPolicies = lazy(() => import('./pages/RecommendationLoopPolicies'));
+const AgentTailAlphaLedger = lazy(() => import('./pages/AgentTailAlphaLedger'));
+const StrategyExperimentLab = lazy(() => import('./pages/StrategyExperimentLab'));
+const AutonomousTradingOverview = lazy(() => import('./pages/AutonomousTradingOverview'));
+const AutonomousRecommendationTracker = lazy(
+  () => import('./pages/AutonomousRecommendationTracker')
+);
+const AutonomousOptimizationLab = lazy(() => import('./pages/AutonomousOptimizationLab'));
+const QuantResearchWorkbench = lazy(() => import('./pages/QuantResearchWorkbench'));
+const RiskAlerts = lazy(() => import('./pages/RiskAlerts'));
+const TradingJournal = lazy(() => import('./pages/TradingJournal'));
+const SystemLogs = lazy(() => import('./pages/SystemLogs'));
+import {
+  RobotOutlined,
+  ClockCircleOutlined,
+  RocketOutlined,
+  AlertOutlined,
+  BookOutlined,
+  ThunderboltOutlined,
+  NodeIndexOutlined,
+  BranchesOutlined,
+  RadarChartOutlined,
+  ExperimentOutlined,
+  AimOutlined,
+} from '@ant-design/icons';
 
-const { Header, Content, Footer, Sider } = Layout;
+import type { MenuProps } from 'antd';
 
-const App: React.FC = () => {
-  // 简单认证状态（实际项目中应使用状态管理）
-  const isAuthenticated = true;
+const { Header, Content, Sider } = Layout;
 
-  const menuItems = [
-    {
-      key: '/dashboard',
-      icon: <DashboardOutlined />,
-      label: <Link to="/dashboard">仪表板</Link>,
-    },
-    {
-      key: '/portfolio',
-      icon: <PieChartOutlined />,
-      label: <Link to="/portfolio">组合收益模拟</Link>,
-    },
-    {
-      key: '/market',
-      icon: <AreaChartOutlined />,
-      label: <Link to="/market">大盘视图</Link>,
-    },
-    {
-      key: '/data-update',
-      icon: <SyncOutlined />,
-      label: <Link to="/data-update">数据更新监控</Link>,
-    },
-    {
-      key: '/backtest',
-      icon: <LineChartOutlined />,
-      label: <Link to="/backtest">回测管理</Link>,
-    },
-    {
-      key: '/strategy',
-      icon: <StockOutlined />,
-      label: <Link to="/strategy">策略管理</Link>,
-    },
-    {
-      key: '/login',
-      icon: <UserOutlined />,
-      label: <Link to="/login">登录</Link>,
-    },
-  ];
+const ProtectedRoute = ({ children }: { children: JSX.Element }) => {
+  const token = localStorage.getItem('token');
+  const location = useLocation();
+  if (!token) return <Navigate to="/login" state={{ from: location }} replace />;
+  return children;
+};
+
+const BacktestDetailRoute: React.FC = () => {
+  const { id } = useParams();
+
+  if (!id) {
+    return <Navigate to="/backtest" replace />;
+  }
+
+  return <BacktestResults backtest_id={id} />;
+};
+
+const routeFallback = (
+  <div className="route-loading">
+    <Spin />
+    <span>正在加载页面...</span>
+  </div>
+);
+
+const menuLink = (key: string, icon: React.ReactNode, title: string) => ({
+  key,
+  icon,
+  label: <Link to={key}>{title}</Link>,
+  title,
+});
+
+const flattenMenu = (
+  items: MenuProps['items'] = [],
+  parentKeys: string[] = [],
+  section = ''
+): Array<{ key: string; parentKeys: string[]; section: string; title: string }> => {
+  const result: Array<{ key: string; parentKeys: string[]; section: string; title: string }> = [];
+
+  (items || []).forEach((item: any) => {
+    if (!item) return;
+    const key = String(item.key || '');
+    const title = String(item.title || item.label || '');
+
+    if (Array.isArray(item.children) && item.children.length > 0) {
+      result.push(...flattenMenu(item.children, key ? [...parentKeys, key] : parentKeys, title));
+      return;
+    }
+
+    if (key.startsWith('/')) {
+      result.push({ key, parentKeys, section, title });
+    }
+  });
+
+  return result;
+};
+
+const AppContent: React.FC = () => {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const dispatch = useDispatch();
+  const token = localStorage.getItem('token');
+  const { user } = useSelector((state: RootState) => state.auth);
+  const [openKeys, setOpenKeys] = useState<string[]>([]);
+
+  useEffect(() => {
+    // Fetch profile on initial load if token exists but user state is missing
+    const fetchProfile = async () => {
+      if (token && !user) {
+        try {
+          const res = await authService.getCurrentUser();
+          if (res && res.success) {
+            dispatch(loginSuccess({ user: res.data.user, token }));
+          } else {
+            dispatch(logout());
+            localStorage.removeItem('token');
+          }
+        } catch (error) {
+          console.error('Failed to fetch user profile on load', error);
+        }
+      }
+    };
+    fetchProfile();
+  }, [token, user, dispatch]);
+
+  const displayUsername =
+    user?.nickname || user?.username || localStorage.getItem('username') || 'Admin';
+  const avatarSrc = user?.avatar_url
+    ? user.avatar_url.startsWith('http')
+      ? user.avatar_url
+      : `${API_DOMAIN_URL}${user.avatar_url}`
+    : undefined;
+
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('refreshToken');
+    localStorage.removeItem('username');
+    navigate('/login');
+  };
+
+  const mainMenuItems: MenuProps['items'] = useMemo(
+    () => [
+      {
+        key: 'nav-workbench',
+        icon: <DashboardOutlined />,
+        label: '工作台',
+        title: '工作台',
+        children: [
+          menuLink('/dashboard', <DashboardOutlined />, '总览仪表盘'),
+          menuLink('/market', <AreaChartOutlined />, '市场与自选'),
+        ],
+      },
+      {
+        key: 'nav-autonomous',
+        icon: <FundProjectionScreenOutlined />,
+        label: '自主交易',
+        title: '自主交易',
+        children: [
+          menuLink('/autonomous-trading/overview', <FundProjectionScreenOutlined />, '交易驾驶舱'),
+          menuLink('/autonomous-trading/recommendations', <NodeIndexOutlined />, '每日推荐'),
+          menuLink('/risk-alerts', <AlertOutlined />, '风险告警'),
+        ],
+      },
+      {
+        key: 'nav-quant-research',
+        icon: <AimOutlined />,
+        label: '量化交易',
+        title: '量化交易',
+        children: [
+          menuLink('/quant/dashboard', <FundProjectionScreenOutlined />, '收益驾驶舱'),
+          menuLink('/quant/signals', <ThunderboltOutlined />, '今日机会'),
+          menuLink('/quant/backtests', <ExperimentOutlined />, '跑分验证'),
+          menuLink('/quant/strategies', <BranchesOutlined />, '策略权重'),
+        ],
+      },
+      {
+        key: 'nav-research',
+        icon: <RobotOutlined />,
+        label: 'AI投研',
+        title: 'AI投研',
+        children: [
+          menuLink('/ai-advisor', <RobotOutlined />, '深度研报'),
+          menuLink('/screener', <RocketOutlined />, '每日优选'),
+          menuLink('/recommendations', <ThunderboltOutlined />, '智能候选'),
+        ],
+      },
+      {
+        key: 'nav-review',
+        icon: <RadarChartOutlined />,
+        label: '复盘优化',
+        title: '复盘优化',
+        children: [
+          menuLink('/recommendation-trade-outcomes', <NodeIndexOutlined />, '交易收益闭环'),
+          menuLink('/recommendation-performance', <FundProjectionScreenOutlined />, '推荐绩效'),
+          menuLink('/agent-tail-alpha', <RadarChartOutlined />, '尾盘账本'),
+          menuLink('/autonomous-trading/optimization', <ExperimentOutlined />, '闭环优化台'),
+          menuLink('/recommendation-loop-policies', <BranchesOutlined />, '策略版本'),
+          menuLink('/strategy-experiment-lab', <ExperimentOutlined />, '策略实验'),
+        ],
+      },
+      {
+        key: 'nav-quant',
+        icon: <LineChartOutlined />,
+        label: '事件回测',
+        title: '事件回测',
+        children: [
+          menuLink('/backtest', <LineChartOutlined />, '事件回测'),
+          menuLink('/portfolio', <PieChartOutlined />, '组合收益'),
+          menuLink('/strategy', <StockOutlined />, '策略中心'),
+        ],
+      },
+      {
+        key: 'nav-ops',
+        icon: <SyncOutlined />,
+        label: '系统运营',
+        title: '系统运营',
+        children: [
+          menuLink('/tasks', <ClockCircleOutlined />, '调度任务'),
+          menuLink('/data-update', <SyncOutlined />, '数据同步'),
+          menuLink('/logs', <BookOutlined />, '运行日志'),
+          menuLink('/journals', <BookOutlined />, '交易日记'),
+          ...(user?.role === 'admin' ? [menuLink('/users', <UserOutlined />, '用户管理')] : []),
+          menuLink('/profile', <UserOutlined />, '个人中心'),
+        ],
+      },
+    ],
+    [user?.role]
+  );
+
+  const flatMenuItems = useMemo(() => flattenMenu(mainMenuItems), [mainMenuItems]);
+  const selectedMenu =
+    flatMenuItems
+      .filter(
+        item => location.pathname === item.key || location.pathname.startsWith(`${item.key}/`)
+      )
+      .sort((a, b) => b.key.length - a.key.length)[0] || flatMenuItems[0];
+  const selectedKey = selectedMenu?.key || '/dashboard';
+  const currentSection = selectedMenu?.section || '工作台';
+  const currentPageTitle = selectedMenu?.title || '总览仪表盘';
+  const selectedParentKeys = useMemo(
+    () => selectedMenu?.parentKeys || [],
+    [selectedMenu?.parentKeys]
+  );
+  const rootSubmenuKeys = useMemo(
+    () => (mainMenuItems || []).map((item: any) => String(item?.key || '')).filter(Boolean),
+    [mainMenuItems]
+  );
+
+  useEffect(() => {
+    if (selectedParentKeys.length) {
+      setOpenKeys(selectedParentKeys);
+    }
+  }, [selectedKey, selectedParentKeys]);
+
+  const handleMenuOpenChange = (keys: string[]) => {
+    const latestOpenKey = keys.find(key => !openKeys.includes(key));
+    if (latestOpenKey && rootSubmenuKeys.includes(latestOpenKey)) {
+      setOpenKeys([latestOpenKey]);
+    } else {
+      setOpenKeys(keys);
+    }
+  };
+
+  const userMenuProps: MenuProps = {
+    items: [
+      {
+        key: 'profile',
+        icon: <UserOutlined />,
+        label: <Link to="/profile">个人中心</Link>,
+      },
+      {
+        type: 'divider',
+      },
+      {
+        key: 'logout',
+        icon: <LogoutOutlined />,
+        label: '退出登录',
+        danger: true,
+        onClick: handleLogout,
+      },
+    ],
+  };
+
+  if (location.pathname === '/login') {
+    return (
+      <Suspense fallback={routeFallback}>
+        <Routes>
+          <Route path="/login" element={<Login />} />
+        </Routes>
+      </Suspense>
+    );
+  }
 
   return (
-    <ConfigProvider locale={zhCN}>
-      <Router>
-        <Layout style={{ minHeight: '100vh' }}>
-          <Header style={{ color: 'white', fontSize: '20px', fontWeight: 'bold' }}>
-            A股股票回测系统
-          </Header>
-          <Layout>
-            <Sider width={200} theme="light">
-              <Menu
-                mode="inline"
-                defaultSelectedKeys={['/dashboard']}
-                style={{ height: '100%', borderRight: 0 }}
-                items={menuItems}
+    <Layout className="modern-layout">
+      <Sider width={256} className="modern-sider">
+        <div className="modern-sider-inner">
+          <div>
+            <div className="modern-logo">
+              <BarChartOutlined className="logo-icon" />
+              <span className="logo-copy">
+                <strong>QuantX</strong>
+                <em>Autonomous A-Share Lab</em>
+              </span>
+            </div>
+            <Menu
+              mode="inline"
+              selectedKeys={[selectedKey]}
+              openKeys={openKeys}
+              onOpenChange={handleMenuOpenChange}
+              className="modern-menu"
+              items={mainMenuItems}
+            />
+          </div>
+        </div>
+      </Sider>
+      <Layout style={{ background: 'transparent' }}>
+        <Header className="modern-header">
+          <div className="header-context">
+            <span>{currentSection}</span>
+            <strong>{currentPageTitle}</strong>
+          </div>
+          {token && (
+            <Dropdown menu={userMenuProps} placement="bottomRight" trigger={['click']}>
+              <div className="header-user-dropdown">
+                <Avatar
+                  size={36}
+                  style={{ backgroundColor: '#1f3a5f', fontSize: 14 }}
+                  icon={<UserOutlined />}
+                  src={avatarSrc}
+                />
+                <span className="header-user-copy">
+                  <strong>{displayUsername}</strong>
+                  <em>{user?.role === 'admin' ? '管理员' : '已登录'}</em>
+                </span>
+                <DownOutlined className="header-user-caret" />
+              </div>
+            </Dropdown>
+          )}
+        </Header>
+        <Content className="modern-layout-content">
+          <Suspense fallback={routeFallback}>
+            <Routes>
+              <Route path="/" element={<Navigate to="/dashboard" replace />} />
+              <Route
+                path="/dashboard"
+                element={
+                  <ProtectedRoute>
+                    <Dashboard />
+                  </ProtectedRoute>
+                }
               />
-            </Sider>
-            <Layout style={{ padding: '0 24px 24px' }}>
-              <Content style={{ padding: '24px', margin: 0, minHeight: 280 }}>
-                <Routes>
-                  <Route path="/" element={<Navigate to="/dashboard" replace />} />
-                  <Route path="/dashboard" element={<Dashboard />} />
-                  <Route path="/portfolio" element={<Portfolio />} />
-                  <Route path="/market" element={<Market />} />
-                  <Route path="/data-update" element={<DataUpdateStatus />} />
-                  <Route path="/backtest" element={<Backtest />} />
-                  <Route path="/strategy" element={<Strategy />} />
-                  <Route path="/login" element={<Login />} />
-                </Routes>
-              </Content>
-              <Footer style={{ textAlign: 'center' }}>
-                A-Share Stock Backtesting System ©2023
-              </Footer>
-            </Layout>
-          </Layout>
-        </Layout>
+              <Route
+                path="/paper-trading"
+                element={<Navigate to="/autonomous-trading/overview?tab=manual" replace />}
+              />
+              <Route
+                path="/autonomous-trading/overview"
+                element={
+                  <ProtectedRoute>
+                    <AutonomousTradingOverview />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/autonomous-trading/recommendations"
+                element={
+                  <ProtectedRoute>
+                    <AutonomousRecommendationTracker />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/autonomous-trading/optimization"
+                element={
+                  <ProtectedRoute>
+                    <AutonomousOptimizationLab />
+                  </ProtectedRoute>
+                }
+              />
+              <Route path="/quant" element={<Navigate to="/quant/dashboard" replace />} />
+              <Route
+                path="/quant/dashboard"
+                element={
+                  <ProtectedRoute>
+                    <QuantResearchWorkbench />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/quant/strategies"
+                element={
+                  <ProtectedRoute>
+                    <QuantResearchWorkbench />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/quant/backtests"
+                element={
+                  <ProtectedRoute>
+                    <QuantResearchWorkbench />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/quant/signals"
+                element={
+                  <ProtectedRoute>
+                    <QuantResearchWorkbench />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/market"
+                element={
+                  <ProtectedRoute>
+                    <Market />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/ai-advisor"
+                element={
+                  <ProtectedRoute>
+                    <AIAdvisor />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/tasks"
+                element={
+                  <ProtectedRoute>
+                    <TaskScheduler />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/data-update"
+                element={
+                  <ProtectedRoute>
+                    <DataUpdateStatus />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/logs"
+                element={
+                  <ProtectedRoute>
+                    <SystemLogs />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/portfolio"
+                element={
+                  <ProtectedRoute>
+                    <Portfolio />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/backtest"
+                element={
+                  <ProtectedRoute>
+                    <Backtest />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/backtest/:id"
+                element={
+                  <ProtectedRoute>
+                    <BacktestDetailRoute />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/recommendations"
+                element={
+                  <ProtectedRoute>
+                    <Recommendations />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/recommendation-performance"
+                element={
+                  <ProtectedRoute>
+                    <RecommendationPerformance />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/agent-tail-alpha"
+                element={
+                  <ProtectedRoute>
+                    <AgentTailAlphaLedger />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/recommendation-trade-outcomes"
+                element={
+                  <ProtectedRoute>
+                    <RecommendationTradeOutcomes />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/recommendation-loop-policies"
+                element={
+                  <ProtectedRoute>
+                    <RecommendationLoopPolicies />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/strategy-experiment-lab"
+                element={
+                  <ProtectedRoute>
+                    <StrategyExperimentLab />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/screener"
+                element={
+                  <ProtectedRoute>
+                    <Screener />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/risk-alerts"
+                element={
+                  <ProtectedRoute>
+                    <RiskAlerts />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/journals"
+                element={
+                  <ProtectedRoute>
+                    <TradingJournal />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/strategy"
+                element={
+                  <ProtectedRoute>
+                    <Strategy />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/profile"
+                element={
+                  <ProtectedRoute>
+                    <Profile />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/users"
+                element={
+                  <ProtectedRoute>
+                    <UserManagement />
+                  </ProtectedRoute>
+                }
+              />
+              <Route path="*" element={<Navigate to="/dashboard" replace />} />
+            </Routes>
+          </Suspense>
+        </Content>
+      </Layout>
+    </Layout>
+  );
+};
+
+const App: React.FC = () => {
+  return (
+    <ConfigProvider
+      locale={zhCN}
+      theme={{
+        token: {
+          colorPrimary: '#1f3a5f',
+          colorInfo: '#2f6f73',
+          colorSuccess: '#1f8a70',
+          colorWarning: '#c9822b',
+          colorError: '#c94b4b',
+          borderRadius: 12,
+          fontFamily:
+            "'IBM Plex Sans', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif",
+          colorBgContainer: '#ffffff',
+          colorText: '#1e252b',
+          colorTextSecondary: '#65727e',
+        },
+        components: {
+          Button: { borderRadius: 10, controlHeight: 36, fontWeight: 600 },
+          Card: { borderRadiusLG: 16 },
+          Table: {
+            borderRadius: 14,
+            headerBg: '#f7f1e7',
+            headerColor: '#55616c',
+            rowHoverBg: '#fbf7ef',
+          },
+          Input: { borderRadius: 10, controlHeight: 36 },
+          Select: { borderRadius: 10, controlHeight: 36 },
+          DatePicker: { borderRadius: 10, controlHeight: 36 },
+        },
+      }}
+    >
+      <Router>
+        <AppContent />
       </Router>
     </ConfigProvider>
   );

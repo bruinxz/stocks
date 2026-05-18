@@ -1,9 +1,18 @@
-import { CombinedDataSource, StockBasicInfo, DailyBar as DataSourceDailyBar } from '../sources/CombinedDataSource';
+import {
+  CombinedDataSource,
+  StockBasicInfo,
+  DailyBar as DataSourceDailyBar,
+} from '../sources/CombinedDataSource';
 import { Stock, DailyBar } from '../../models';
 import { sequelize } from '../../config/database';
 import { logger } from '../../utils/logger';
 import { getEast8TimeString, getEast8DateString, getEast8Time } from '../../utils/timezone';
-import { normalizeSymbol, extractMarket as extractMarketFromSymbol, isValidSymbol, normalizeSymbols } from '../../utils/stockSymbol';
+import {
+  normalizeSymbol,
+  extractMarket as extractMarketFromSymbol,
+  isValidSymbol,
+  normalizeSymbols,
+} from '../../utils/stockSymbol';
 import { Op } from 'sequelize';
 
 /**
@@ -70,12 +79,8 @@ export class DataSyncService {
   /**
    * 记录错误
    */
-  private recordError(
-    category: ErrorCategory,
-    error: Error | string,
-    context?: any
-  ): void {
-    const errorMessage = typeof error === 'string' ? error : error.message;
+  private recordError(category: ErrorCategory, error: Error | string, context?: any): void {
+    const error_message = typeof error === 'string' ? error : error.message;
     const timestamp = getEast8TimeString();
 
     if (!this.errorStats[category]) {
@@ -89,12 +94,12 @@ export class DataSyncService {
 
     const categoryStats = this.errorStats[category];
     categoryStats.count++;
-    categoryStats.lastError = errorMessage;
+    categoryStats.lastError = error_message;
     categoryStats.lastTimestamp = timestamp;
 
     // 保留最近10个错误样本
     categoryStats.samples.push({
-      error: errorMessage,
+      error: error_message,
       timestamp,
       context,
     });
@@ -103,13 +108,13 @@ export class DataSyncService {
       categoryStats.samples = categoryStats.samples.slice(-10);
     }
 
-    logger.error(`[${category}] ${errorMessage}`, { context });
+    logger.error(`[${category}] ${error_message}`, { context });
   }
 
   /**
    * 记录同步结果
    */
-  private recordSyncResult(success: boolean, recordsInserted: number = 0): void {
+  private recordSyncResult(success: boolean, recordsInserted = 0): void {
     this.syncStats.totalSyncs++;
 
     if (success) {
@@ -128,16 +133,21 @@ export class DataSyncService {
   /**
    * 记录同步指标（记录尝试和失败的详细统计）
    */
-  private recordSyncMetrics(recordsAttempted: number, recordsFailed: number = 0): void {
+  private recordSyncMetrics(recordsAttempted: number, recordsFailed = 0): void {
     this.syncStats.totalRecordsAttempted += recordsAttempted;
     this.syncStats.totalRecordsFailed += recordsFailed;
 
     // 检查失败率
     if (recordsAttempted > 0) {
       const failureRate = recordsFailed / recordsAttempted;
-      if (failureRate > 0.5) { // 失败率超过50%
+      if (failureRate > 0.5) {
+        // 失败率超过50%
         this.syncStats.consecutiveHighFailureSyncs++;
-        logger.warn(`高失败率告警: 尝试 ${recordsAttempted} 条记录，失败 ${recordsFailed} 条，失败率 ${(failureRate * 100).toFixed(1)}%`);
+        logger.warn(
+          `高失败率告警: 尝试 ${recordsAttempted} 条记录，失败 ${recordsFailed} 条，失败率 ${(
+            failureRate * 100
+          ).toFixed(1)}%`
+        );
       } else {
         this.syncStats.consecutiveHighFailureSyncs = 0; // 重置连续高失败计数
       }
@@ -154,15 +164,20 @@ export class DataSyncService {
       const lastAlert = this.syncStats.lastAlertTimestamp;
 
       // 防止告警过于频繁（至少间隔1小时）
-      if (!lastAlert || (new Date(now).getTime() - new Date(lastAlert).getTime() > 3600000)) {
-        logger.error(`⚠️ 严重告警: 连续 ${this.syncStats.consecutiveHighFailureSyncs} 次同步出现高失败率！`);
+      if (!lastAlert || new Date(now).getTime() - new Date(lastAlert).getTime() > 3600000) {
+        logger.error(
+          `⚠️ 严重告警: 连续 ${this.syncStats.consecutiveHighFailureSyncs} 次同步出现高失败率！`
+        );
         logger.error(`  总同步次数: ${this.syncStats.totalSyncs}`);
         logger.error(`  成功同步: ${this.syncStats.successfulSyncs}`);
         logger.error(`  失败同步: ${this.syncStats.failedSyncs}`);
         logger.error(`  总尝试记录: ${this.syncStats.totalRecordsAttempted}`);
         logger.error(`  总失败记录: ${this.syncStats.totalRecordsFailed}`);
         if (this.syncStats.totalRecordsAttempted > 0) {
-          const overallFailureRate = (this.syncStats.totalRecordsFailed / this.syncStats.totalRecordsAttempted * 100).toFixed(1);
+          const overallFailureRate = (
+            (this.syncStats.totalRecordsFailed / this.syncStats.totalRecordsAttempted) *
+            100
+          ).toFixed(1);
           logger.error(`  总体失败率: ${overallFailureRate}%`);
         }
 
@@ -174,10 +189,17 @@ export class DataSyncService {
     }
 
     // 检查总体失败率
-    if (this.syncStats.totalRecordsAttempted > 100) { // 至少有100条记录才检查
-      const overallFailureRate = this.syncStats.totalRecordsFailed / this.syncStats.totalRecordsAttempted;
-      if (overallFailureRate > 0.3) { // 总体失败率超过30%
-        logger.warn(`高总体失败率: ${(overallFailureRate * 100).toFixed(1)}% (${this.syncStats.totalRecordsFailed}/${this.syncStats.totalRecordsAttempted})`);
+    if (this.syncStats.totalRecordsAttempted > 100) {
+      // 至少有100条记录才检查
+      const overallFailureRate =
+        this.syncStats.totalRecordsFailed / this.syncStats.totalRecordsAttempted;
+      if (overallFailureRate > 0.3) {
+        // 总体失败率超过30%
+        logger.warn(
+          `高总体失败率: ${(overallFailureRate * 100).toFixed(1)}% (${
+            this.syncStats.totalRecordsFailed
+          }/${this.syncStats.totalRecordsAttempted})`
+        );
       }
     }
   }
@@ -211,9 +233,10 @@ export class DataSyncService {
    * 获取同步统计
    */
   getSyncStats() {
-    const averageInsertPerSync = this.syncStats.totalSyncs > 0
-      ? this.syncStats.totalRecordsInserted / this.syncStats.totalSyncs
-      : 0;
+    const averageInsertPerSync =
+      this.syncStats.totalSyncs > 0
+        ? this.syncStats.totalRecordsInserted / this.syncStats.totalSyncs
+        : 0;
 
     return {
       ...this.syncStats,
@@ -239,17 +262,27 @@ export class DataSyncService {
       for (const stockData of stocks) {
         const symbol = normalizeSymbol(stockData.code);
         try {
-          const [stock, created] = await Stock.upsert({
-            symbol: symbol,
-            name: stockData.code_name,
-            listingDate: this.safeParseDate(stockData.ipoDate),
-            delistingDate: this.safeParseDate(stockData.outDate),
-            isListed: stockData.status === 1,
-            type: this.mapStockType(stockData.type),
-            market: extractMarketFromSymbol(symbol),
-          }, {
-            conflictFields: ['symbol'],
-          });
+          const [stock, created] = await Stock.upsert(
+            {
+              symbol: symbol,
+              name: stockData.code_name,
+              listing_date: this.safeParseDate(stockData.ipoDate),
+              delisting_date: this.safeParseDate(stockData.outDate),
+              is_listed: stockData.status === 1,
+              type: this.mapStockType(stockData.type),
+              market: extractMarketFromSymbol(symbol),
+              total_market_cap: stockData.total_market_cap,
+              circulating_market_cap: stockData.circulating_market_cap,
+              pe_dynamic: stockData.pe_dynamic,
+              pb: stockData.pb,
+              turnover_rate: stockData.turnover_rate,
+              price: stockData.price,
+              change_percent: stockData.change_percent,
+            },
+            {
+              conflictFields: ['symbol'],
+            }
+          );
 
           if (created) {
             createdCount++;
@@ -258,18 +291,16 @@ export class DataSyncService {
           }
         } catch (error) {
           failedCount++;
-          this.recordError(
-            ErrorCategory.STOCK_UPSERT,
-            error,
-            { symbol: symbol, stockData }
-          );
+          this.recordError(ErrorCategory.STOCK_UPSERT, error, { symbol: symbol, stockData });
         }
       }
 
       // 记录同步指标
       this.recordSyncMetrics(stocks.length, failedCount);
 
-      logger.info(`Stock sync completed. Created: ${createdCount}, Updated: ${updatedCount}, Failed: ${failedCount}`);
+      logger.info(
+        `Stock sync completed. Created: ${createdCount}, Updated: ${updatedCount}, Failed: ${failedCount}`
+      );
       const totalAffected = createdCount + updatedCount;
       this.recordSyncResult(true, totalAffected);
       return totalAffected;
@@ -281,24 +312,140 @@ export class DataSyncService {
   }
 
   /**
+   * 补全单只股票画像/估值快照，用于推荐因子质量提升。
+   */
+  async syncStockProfile(
+    symbolInput: string
+  ): Promise<{ symbol: string; updated: boolean; data: any }> {
+    const symbol = normalizeSymbol(symbolInput);
+    const existingStock = await Stock.findOne({ where: { symbol } });
+    let stockData = await this.dataSource.queryStockBasic(symbol);
+    let source = 'external_profile';
+
+    // 外部画像源偶发不可用时，使用本地最新 K 线兜底刷新价格/涨跌/估值快照。
+    if (!stockData) {
+      const latestBar = existingStock
+        ? await DailyBar.findOne({
+            where: { stock_id: existingStock.id },
+            order: [['time', 'DESC']],
+          })
+        : null;
+
+      if (!existingStock && !latestBar) {
+        throw new Error(`未获取到 ${symbol} 的股票画像数据`);
+      }
+
+      source = 'local_daily_bar_fallback';
+      stockData = {
+        code: symbol,
+        code_name: existingStock?.name || symbol,
+        ipoDate: existingStock?.listing_date
+          ? new Date(existingStock.listing_date).toISOString().split('T')[0]
+          : '2000-01-01',
+        outDate: existingStock?.delisting_date
+          ? new Date(existingStock.delisting_date).toISOString().split('T')[0]
+          : undefined,
+        type: 1,
+        status: existingStock?.is_listed === false ? 0 : 1,
+        industry: existingStock?.industry,
+        total_market_cap: latestBar?.market_cap || existingStock?.total_market_cap,
+        circulating_market_cap: existingStock?.circulating_market_cap,
+        pe_dynamic: latestBar?.pe || existingStock?.pe_dynamic,
+        pb: latestBar?.pb || existingStock?.pb,
+        turnover_rate: latestBar?.turnover_rate || existingStock?.turnover_rate,
+        price: latestBar?.close || existingStock?.price,
+        change_percent: latestBar?.change_percent || existingStock?.change_percent,
+      } as any;
+    }
+
+    const payload: any = {
+      symbol,
+      name: stockData.code_name,
+      listing_date: this.safeParseDate(stockData.ipoDate),
+      delisting_date: this.safeParseDate(stockData.outDate),
+      is_listed: stockData.status === 1,
+      type: this.mapStockType(stockData.type),
+      market: extractMarketFromSymbol(symbol),
+      industry: stockData.industry,
+      total_market_cap: stockData.total_market_cap,
+      circulating_market_cap: stockData.circulating_market_cap,
+      pe_dynamic: stockData.pe_dynamic,
+      pb: stockData.pb,
+      turnover_rate: stockData.turnover_rate,
+      price: stockData.price,
+      change_percent: stockData.change_percent,
+    };
+
+    Object.keys(payload).forEach(key => {
+      if (payload[key] === undefined || payload[key] === null || payload[key] === '') {
+        delete payload[key];
+      }
+    });
+
+    const [, created] = await Stock.upsert(payload, { conflictFields: ['symbol'] });
+    this.recordSyncResult(true, 1);
+    return { symbol, updated: !created, data: { ...stockData, source } };
+  }
+
+  /**
+   * 批量补全股票画像。
+   */
+  async syncStockProfiles(
+    symbols: string[],
+    limit = 30
+  ): Promise<{
+    total: number;
+    success: number;
+    failed: number;
+    results: Array<{ symbol: string; success: boolean; error?: string }>;
+  }> {
+    const uniqueSymbols = Array.from(new Set(normalizeSymbols(symbols)))
+      .filter(Boolean)
+      .slice(0, limit);
+    const results: Array<{ symbol: string; success: boolean; error?: string }> = [];
+
+    for (const symbol of uniqueSymbols) {
+      try {
+        await this.syncStockProfile(symbol);
+        results.push({ symbol, success: true });
+      } catch (error: any) {
+        this.recordError(ErrorCategory.DATA_SOURCE_FETCH, error, { symbol });
+        results.push({ symbol, success: false, error: error.message });
+      }
+    }
+
+    return {
+      total: uniqueSymbols.length,
+      success: results.filter(item => item.success).length,
+      failed: results.filter(item => !item.success).length,
+      results,
+    };
+  }
+
+  /**
    * 同步单只股票的历史数据
    * @param symbol 股票代码
-   * @param startDate 开始日期，格式：'2020-01-01'
-   * @param endDate 结束日期，格式：'2023-12-31'
+   * @param start_date 开始日期，格式：'2020-01-01'
+   * @param end_date 结束日期，格式：'2023-12-31'
    */
   async syncStockHistory(
     symbol: string,
-    startDate: string,
-    endDate: string
+    start_date: string,
+    end_date: string,
+    dataSource = 'auto'
   ): Promise<number> {
     const normalizedSymbol = normalizeSymbol(symbol);
     try {
-      logger.info(`Syncing history for ${normalizedSymbol} (original: ${symbol}) from ${startDate} to ${endDate}`);
+      logger.info(
+        `Syncing history for ${normalizedSymbol} (original: ${symbol}) from ${start_date} to ${end_date}`
+      );
 
       // 验证日期范围
-      const { validStartDate, validEndDate } = this.validateDateRange(startDate, endDate);
-      if (validStartDate !== startDate || validEndDate !== endDate) {
-        logger.info(`日期范围已调整: ${validStartDate} 到 ${validEndDate} (原始: ${startDate} 到 ${endDate})`);
+      const { validStartDate, validEndDate } = this.validateDateRange(start_date, end_date);
+      if (validStartDate !== start_date || validEndDate !== end_date) {
+        logger.info(
+          `日期范围已调整: ${validStartDate} 到 ${validEndDate} (原始: ${start_date} 到 ${end_date})`
+        );
       }
 
       // 查找股票
@@ -312,35 +459,34 @@ export class DataSyncService {
         throw error;
       }
 
+      // 提取股票市场信息，记录在日志中
+      const market = stock.market || 'UNKNOWN';
+
       // 从数据源获取指定日期范围的数据
-      // 我们会获取整个范围的数据，然后只插入数据库中不存在的记录
       const bars = await this.dataSource.queryHistoryKData(
         normalizedSymbol,
         validStartDate,
-        validEndDate
+        validEndDate,
+        'd',
+        '2', // 默认使用前复权
+        dataSource
       );
 
-      logger.info(`Fetched ${bars.length} daily bars for ${normalizedSymbol} from ${validStartDate} to ${validEndDate}`);
+      logger.info(
+        `Fetched ${bars.length} daily bars for ${normalizedSymbol} from ${validStartDate} to ${validEndDate}`
+      );
 
       let insertedCount = 0;
       let failedCount = 0;
-      let processedCount = 0;
 
-      for (const barData of bars) {
-        processedCount++;
-        try {
-          // 检查是否已存在
-          const existing = await DailyBar.findOne({
-            where: {
-              stockId: stock.id,
-              time: new Date(barData.date + 'T00:00:00.000Z'),
-            },
-          });
+      if (bars.length > 0) {
+        // 使用批量处理和去重，极大优化 CPU 和内存
+        const barsToInsert = [];
 
-          if (!existing) {
-            // 确保所有字段类型正确
+        for (const barData of bars) {
+          try {
             const barToInsert = {
-              stockId: stock.id,
+              stock_id: stock.id,
               time: new Date(barData.date + 'T00:00:00.000Z'),
               open: Number(barData.open) || 0,
               high: Number(barData.high) || 0,
@@ -348,42 +494,71 @@ export class DataSyncService {
               close: Number(barData.close) || 0,
               volume: Math.round(Number(barData.volume) || 0), // 确保是整数
               turnover: Number(barData.amount) || 0,
-              adjClose: Number(barData.close) || 0,
-              turnoverRate: Number(barData.turn) || 0,
-              changePercent: Number(barData.pctChg) || 0,
+              adj_close: Number(barData.close) || 0,
+              turnover_rate: Number(barData.turn) || 0,
+              change_percent: Number(barData.pctChg) || 0,
               pe: Number(barData.peTTM) || 0,
               pb: Number(barData.pbMRQ) || 0,
               ps: Number(barData.psTTM) || 0,
-              isTradingDay: barData.tradestatus === 1,
-              isSuspended: barData.tradestatus === 0,
+              market_cap:
+                Number(barData.total_market_cap) ||
+                (Number((barData as any).total_mv) || 0) * 10000 ||
+                0,
+              is_trading_day: barData.tradestatus === 1,
+              is_suspended: barData.tradestatus === 0,
             };
 
             // 验证关键字段
             if (isNaN(barToInsert.volume)) {
               const error = `Invalid volume for ${normalizedSymbol} on ${barData.date}: ${barData.volume}, using 0`;
               logger.warn(error);
-              this.recordError(ErrorCategory.DATA_VALIDATION, error, { symbol: normalizedSymbol, date: barData.date, field: 'volume', value: barData.volume });
+              this.recordError(ErrorCategory.DATA_VALIDATION, error, {
+                symbol: normalizedSymbol,
+                date: barData.date,
+                field: 'volume',
+                value: barData.volume,
+              });
               barToInsert.volume = 0;
             }
 
             if (isNaN(barToInsert.close)) {
               const error = `Invalid close price for ${normalizedSymbol} on ${barData.date}: ${barData.close}, using 0`;
               logger.warn(error);
-              this.recordError(ErrorCategory.DATA_VALIDATION, error, { symbol: normalizedSymbol, date: barData.date, field: 'close', value: barData.close });
+              this.recordError(ErrorCategory.DATA_VALIDATION, error, {
+                symbol: normalizedSymbol,
+                date: barData.date,
+                field: 'close',
+                value: barData.close,
+              });
               barToInsert.close = 0;
             }
 
-            await DailyBar.create(barToInsert);
-            insertedCount++;
+            barsToInsert.push(barToInsert);
+          } catch (error) {
+            failedCount++;
+            this.recordError(ErrorCategory.DATA_VALIDATION, error, {
+              symbol: normalizedSymbol,
+              date: barData.date,
+              barData,
+            });
           }
-        } catch (error) {
-          failedCount++;
-          this.recordError(
-            ErrorCategory.DATABASE_INSERT,
-            error,
-            { symbol: normalizedSymbol, date: barData.date, barData }
-          );
-          // 继续处理下一条记录
+        }
+
+        if (barsToInsert.length > 0) {
+          try {
+            // 批量插入，如果主键冲突则忽略，这大大减少了数据库交互次数和连接池压力
+            await DailyBar.bulkCreate(barsToInsert, {
+              ignoreDuplicates: true,
+              logging: false, // 关闭 SQL 打印，避免日志过大导致内存泄漏
+            });
+            insertedCount = barsToInsert.length;
+          } catch (error) {
+            failedCount += barsToInsert.length;
+            this.recordError(ErrorCategory.DATABASE_INSERT, error, {
+              symbol: normalizedSymbol,
+              batchSize: barsToInsert.length,
+            });
+          }
         }
       }
 
@@ -391,11 +566,30 @@ export class DataSyncService {
       const attemptedCount = bars.length; // 尝试处理的记录数
       this.recordSyncMetrics(attemptedCount, failedCount);
 
-      logger.info(`Inserted ${insertedCount} new daily bars for ${normalizedSymbol}, failed: ${failedCount}`);
+      logger.info(
+        `Inserted ${insertedCount} new daily bars for ${normalizedSymbol}, failed: ${failedCount}`
+      );
       this.recordSyncResult(true, insertedCount);
       return insertedCount;
-    } catch (error) {
-      this.recordError(ErrorCategory.DATA_SOURCE_FETCH, error, { symbol: normalizedSymbol, startDate, endDate });
+    } catch (error: any) {
+      // 提取股票市场信息，如果在 catch 中拿不到 stock 对象，重新查一下
+      let market = 'UNKNOWN';
+      try {
+        const stock = await Stock.findOne({ where: { symbol: normalizedSymbol } });
+        if (stock && stock.market) market = stock.market;
+      } catch (e) {
+        // ignore
+      }
+
+      logger.error(
+        `[${market}] 无法获取股票 ${normalizedSymbol} 的历史数据:`,
+        error.message || error
+      );
+      this.recordError(ErrorCategory.DATA_SOURCE_FETCH, error, {
+        symbol: normalizedSymbol,
+        start_date,
+        end_date,
+      });
       this.recordSyncResult(false);
       throw error;
     }
@@ -404,40 +598,67 @@ export class DataSyncService {
   /**
    * 批量同步多只股票的历史数据
    * @param symbols 股票代码数组
-   * @param startDate 开始日期
-   * @param endDate 结束日期
+   * @param start_date 开始日期
+   * @param end_date 结束日期
    * @param batchSize 批次大小
    */
   async syncMultipleStocksHistory(
     symbols: string[],
-    startDate: string,
-    endDate: string,
-    batchSize: number = 10
+    start_date: string,
+    end_date: string,
+    batchSize = 2, // 默认批次调低为 2，防爆内存
+    progressCallback?: (
+      processedCount: number,
+      totalCount: number,
+      currentBatchInserted: number,
+      completedBatchSymbols: string[]
+    ) => void | Promise<void>,
+    dataSource = 'auto'
   ): Promise<{ [symbol: string]: number }> {
     const normalizedSymbols = normalizeSymbols(symbols);
     const results: { [symbol: string]: number } = {};
+    const totalCount = normalizedSymbols.length;
 
-    for (let i = 0; i < normalizedSymbols.length; i += batchSize) {
+    for (let i = 0; i < totalCount; i += batchSize) {
       const batch = normalizedSymbols.slice(i, i + batchSize);
       const promises = batch.map(symbol =>
-        this.syncStockHistory(symbol, startDate, endDate)
+        this.syncStockHistory(symbol, start_date, end_date, dataSource)
           .then(count => {
             results[symbol] = count;
             return { symbol, count };
           })
           .catch(error => {
-            this.recordError(
-              ErrorCategory.UNKNOWN,
-              error,
-              { symbol, startDate, endDate, batchIndex: i / batchSize }
-            );
+            this.recordError(ErrorCategory.UNKNOWN, error, {
+              symbol,
+              start_date,
+              end_date,
+              batchIndex: i / batchSize,
+            });
             results[symbol] = -1;
             return { symbol, count: -1 };
           })
       );
 
-      await Promise.all(promises);
-      logger.info(`Completed batch ${i / batchSize + 1}/${Math.ceil(normalizedSymbols.length / batchSize)}`);
+      const batchResults = await Promise.all(promises);
+      const currentBatchInserted = batchResults.reduce(
+        (sum, res) => (res.count > 0 ? sum + res.count : sum),
+        0
+      );
+      const completedBatchSymbols = batchResults
+        .filter(res => res.count !== -1)
+        .map(res => res.symbol);
+
+      const processedCount = Math.min(i + batchSize, totalCount);
+      logger.info(`Completed batch ${i / batchSize + 1}/${Math.ceil(totalCount / batchSize)}`);
+
+      if (progressCallback) {
+        await progressCallback(
+          processedCount,
+          totalCount,
+          currentBatchInserted,
+          completedBatchSymbols
+        );
+      }
 
       // 批次间延迟，避免请求过于频繁
       await new Promise(resolve => setTimeout(resolve, 1000));
@@ -462,33 +683,38 @@ export class DataSyncService {
       for (const stockData of indexStocks) {
         const symbol = normalizeSymbol(stockData.code);
         try {
-          const [stock, created] = await Stock.upsert({
-            symbol: symbol,
-            name: stockData.code_name,
-            market: extractMarketFromSymbol(symbol),
-            isListed: true,
-            type: 'stock',
-          }, {
-            conflictFields: ['symbol'],
-          });
+          const [stock, created] = await Stock.upsert(
+            {
+              symbol: symbol,
+              name: stockData.code_name,
+              market: extractMarketFromSymbol(symbol),
+              is_listed: true,
+              type: 'stock',
+            },
+            {
+              conflictFields: ['symbol'],
+            }
+          );
 
           if (created) {
             syncedCount++;
           }
         } catch (error) {
           failedCount++;
-          this.recordError(
-            ErrorCategory.STOCK_UPSERT,
-            error,
-            { symbol: symbol, indexCode, stockData }
-          );
+          this.recordError(ErrorCategory.STOCK_UPSERT, error, {
+            symbol: symbol,
+            indexCode,
+            stockData,
+          });
         }
       }
 
       // 记录同步指标
       this.recordSyncMetrics(indexStocks.length, failedCount);
 
-      logger.info(`Index stock sync completed for ${indexCode}. Synced: ${syncedCount}, Failed: ${failedCount}`);
+      logger.info(
+        `Index stock sync completed for ${indexCode}. Synced: ${syncedCount}, Failed: ${failedCount}`
+      );
       this.recordSyncResult(true, syncedCount);
       return syncedCount;
     } catch (error) {
@@ -502,28 +728,31 @@ export class DataSyncService {
    * 获取需要更新的股票列表（最近N天没有数据的股票）
    * @param days 天数阈值
    */
-  async getStocksNeedingUpdate(days: number = 7): Promise<string[]> {
+  async getStocksNeedingUpdate(days = 7): Promise<string[]> {
     try {
       const cutoffDate = new Date();
       cutoffDate.setDate(cutoffDate.getDate() - days);
 
-      const stocks = await Stock.findAll({
-        include: [{
-          model: DailyBar,
-          as: 'dailyBars',
-          required: false,
-          where: {
-            time: { [Op.gte]: cutoffDate },
-          },
-        }],
+      // 优化内存占用：不使用 LEFT JOIN 和 include，而是先查出最近有更新的股票ID
+      const recentBars = await DailyBar.findAll({
+        attributes: ['stock_id'],
+        where: {
+          time: { [Op.gte]: cutoffDate },
+        },
+        group: ['stock_id'],
+        raw: true, // 使用 raw 查询进一步减少内存占用
       });
 
-      const needsUpdate = stocks.filter(stock => {
-        // 如果没有最近的数据，则需要更新
-        return !stock.dailyBars || stock.dailyBars.length === 0;
+      const recentlyUpdatedStockIds = new Set(recentBars.map((b: any) => b.stock_id));
+
+      const allStocks = await Stock.findAll({
+        attributes: ['id', 'symbol'],
+        raw: true,
       });
 
-      return normalizeSymbols(needsUpdate.map(stock => stock.symbol));
+      const needsUpdate = allStocks.filter((stock: any) => !recentlyUpdatedStockIds.has(stock.id));
+
+      return normalizeSymbols(needsUpdate.map((stock: any) => stock.symbol));
     } catch (error) {
       this.recordError(ErrorCategory.DATABASE_QUERY, error);
       throw error;
@@ -542,25 +771,31 @@ export class DataSyncService {
       // 计算东八区7天前的日期
       const nowEast8 = getEast8Time();
       const sevenDaysAgo = new Date(nowEast8.getTime() - 7 * 24 * 60 * 60 * 1000);
-      const startDate = sevenDaysAgo.toISOString().split('T')[0];
+      const start_date = sevenDaysAgo.toISOString().split('T')[0];
 
       // 验证日期范围
-      const { validStartDate, validEndDate } = this.validateDateRange(startDate, lastTradingDay);
-      logger.info(`使用日期范围: ${validStartDate} 到 ${validEndDate} (原始: ${startDate} 到 ${lastTradingDay})`);
+      const { validStartDate, validEndDate } = this.validateDateRange(start_date, lastTradingDay);
+      logger.info(
+        `使用日期范围: ${validStartDate} 到 ${validEndDate} (原始: ${start_date} 到 ${lastTradingDay})`
+      );
 
       // 检查是否需要更新（如果结束日期早于最后一个交易日）
       if (validEndDate < lastTradingDay) {
-        logger.warn(`有效结束日期 ${validEndDate} 早于最后一个交易日 ${lastTradingDay}，可能是周末或节假日`);
+        logger.warn(
+          `有效结束日期 ${validEndDate} 早于最后一个交易日 ${lastTradingDay}，可能是周末或节假日`
+        );
       }
 
       // 获取所有已上市的股票
       const stocks = await Stock.findAll({
-        where: { isListed: true },
+        where: { is_listed: true },
         attributes: ['symbol'],
       });
 
       const symbols = normalizeSymbols(stocks.map(stock => stock.symbol));
-      logger.info(`Updating ${symbols.length} stocks (filtered from ${stocks.length} total stocks)`);
+      logger.info(
+        `Updating ${symbols.length} stocks (filtered from ${stocks.length} total stocks)`
+      );
 
       if (symbols.length === 0) {
         logger.warn('No valid symbols found for daily update');
@@ -577,9 +812,13 @@ export class DataSyncService {
       const successCount = Object.values(results).filter(count => count > 0).length;
       const failCount = Object.values(results).filter(count => count === -1).length;
       const skipCount = Object.values(results).filter(count => count === 0).length;
-      const totalInserted = Object.values(results).filter(count => count > 0).reduce((sum, count) => sum + count, 0);
+      const totalInserted = Object.values(results)
+        .filter(count => count > 0)
+        .reduce((sum, count) => sum + count, 0);
 
-      logger.info(`Daily update completed. Success: ${successCount}, Failed: ${failCount}, Skipped: ${skipCount}, Inserted: ${totalInserted}`);
+      logger.info(
+        `Daily update completed. Success: ${successCount}, Failed: ${failCount}, Skipped: ${skipCount}, Inserted: ${totalInserted}`
+      );
 
       // 记录同步结果：只要有任何成功或跳过的股票（而不是全部失败），就认为是成功的
       const hasSuccess = successCount > 0 || skipCount > 0;
@@ -597,7 +836,12 @@ export class DataSyncService {
    * 安全解析日期字符串，如果无效则返回null
    */
   private safeParseDate(dateString: string | null | undefined): Date | null {
-    if (!dateString || dateString.trim() === '' || dateString.toLowerCase() === 'null' || dateString === 'Invalid date') {
+    if (
+      !dateString ||
+      dateString.trim() === '' ||
+      dateString.toLowerCase() === 'null' ||
+      dateString === 'Invalid date'
+    ) {
       return null;
     }
 
@@ -638,20 +882,23 @@ export class DataSyncService {
   /**
    * 验证日期范围，确保不请求未来日期
    */
-  private validateDateRange(startDate: string, endDate: string): { validStartDate: string; validEndDate: string } {
+  private validateDateRange(
+    start_date: string,
+    end_date: string
+  ): { validStartDate: string; validEndDate: string } {
     const today = getEast8DateString();
 
     // 如果结束日期晚于今天，调整为今天
-    let validEndDate = endDate;
-    if (endDate > today) {
-      logger.warn(`结束日期 ${endDate} 晚于今天 ${today}，调整为今天`);
+    let validEndDate = end_date;
+    if (end_date > today) {
+      logger.warn(`结束日期 ${end_date} 晚于今天 ${today}，调整为今天`);
       validEndDate = today;
     }
 
     // 如果开始日期晚于有效结束日期，调整开始日期
-    let validStartDate = startDate;
-    if (startDate > validEndDate) {
-      logger.warn(`开始日期 ${startDate} 晚于结束日期 ${validEndDate}，调整为结束日期前30天`);
+    let validStartDate = start_date;
+    if (start_date > validEndDate) {
+      logger.warn(`开始日期 ${start_date} 晚于结束日期 ${validEndDate}，调整为结束日期前30天`);
       const start = new Date(validEndDate);
       start.setDate(start.getDate() - 30);
       validStartDate = start.toISOString().split('T')[0];
@@ -660,7 +907,9 @@ export class DataSyncService {
     // 确保日期格式正确
     const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
     if (!dateRegex.test(validStartDate) || !dateRegex.test(validEndDate)) {
-      throw new Error(`日期格式无效: startDate=${validStartDate}, endDate=${validEndDate}，必须为YYYY-MM-DD格式`);
+      throw new Error(
+        `日期格式无效: start_date=${validStartDate}, end_date=${validEndDate}，必须为YYYY-MM-DD格式`
+      );
     }
 
     // 检查开始日期是否太早（A股历史数据从1990年开始）
@@ -702,7 +951,7 @@ export class DataSyncService {
    * 检查是否为交易日（简单实现：周一至周五）
    * 未来可扩展为查询交易日历
    */
-  private isTradingDay(date: string): boolean {
+  private is_trading_day(date: string): boolean {
     const dateObj = new Date(date + 'T00:00:00.000Z');
     const dayOfWeek = dateObj.getDay();
     return dayOfWeek >= 1 && dayOfWeek <= 5; // 周一至周五

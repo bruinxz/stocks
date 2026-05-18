@@ -15,21 +15,21 @@ const authController = new AuthController();
  */
 router.post(
   '/',
-  // authController.authenticate,
+  authController.authenticate,
   [
     body('name').isString().isLength({ min: 1, max: 100 }),
     body('description').optional().isString().isLength({ max: 500 }),
     body('symbols')
-      .custom((value) => {
+      .custom(value => {
         if (Array.isArray(value)) {
-          return value.every((s) => typeof s === 'string' && s.length > 0);
+          return value.every(s => typeof s === 'string' && s.length > 0);
         }
         return typeof value === 'string' && value.length > 0;
       })
       .withMessage('symbols必须是字符串或字符串数组'),
-    body('startDate').isISO8601(),
-    body('endDate').isISO8601(),
-    body('initialCapital').isFloat({ min: 1000 }),
+    body('start_date').isISO8601(),
+    body('end_date').isISO8601(),
+    body('initial_capital').isFloat({ min: 1000 }),
     body('strategyType').optional().isString(),
     body('strategyParams').optional().isObject(),
     body('slippage').optional().isFloat({ min: 0, max: 0.1 }),
@@ -47,13 +47,13 @@ router.post(
  */
 router.get(
   '/',
-  // authController.authenticate,
+  authController.authenticate,
   [
     query('page').optional().isInt({ min: 1 }),
     query('limit').optional().isInt({ min: 1, max: 100 }),
     query('status').optional().isString(),
-    query('startDate').optional().isISO8601(),
-    query('endDate').optional().isISO8601(),
+    query('start_date').optional().isISO8601(),
+    query('end_date').optional().isISO8601(),
   ],
   validateRequest,
   backtestController.getBacktestList
@@ -61,35 +61,37 @@ router.get(
 
 /**
  * @route GET /api/backtests/stats
- * @desc 获取回测统计信息
+ * @desc 获取回测统计数据
  * @access Private
  */
-router.get(
-  '/stats',
-  // authController.authenticate,
-  backtestController.getBacktestStats
-);
+router.get('/stats', authController.authenticate, backtestController.getBacktestStats.bind(backtestController));
 
 /**
  * @route GET /api/backtests/:id
- * @desc 获取回测详情
+ * @desc 获取指定回测的详细结果
  * @access Private
  */
-router.get(
-  '/:id',
-  // authController.authenticate,
-  backtestController.getBacktestDetail
-);
+router.get('/:id', authController.authenticate, backtestController.getBacktestDetail.bind(backtestController));
+
+/**
+ * @route GET /api/backtests/:id/results
+ * @desc 获取指定回测的结果 (兼容旧版 API)
+ * @access Private
+ */
+router.get('/:id/results', authController.authenticate, backtestController.getBacktestDetail.bind(backtestController));
+
+/**
+ * @route GET /api/backtests/:id/trades
+ * @desc 获取指定回测的交易明细 (兼容旧版 API)
+ * @access Private
+ */
+router.get('/:id/trades', authController.authenticate, backtestController.getBacktestDetail.bind(backtestController));
 
 /**
  * @route DELETE /api/backtests/:id
  * @desc 删除回测
  * @access Private
  */
-router.delete(
-  '/:id',
-  // authController.authenticate,
-  backtestController.deleteBacktest
-);
+router.delete('/:id', authController.authenticate, backtestController.deleteBacktest.bind(backtestController));
 
 export default router;

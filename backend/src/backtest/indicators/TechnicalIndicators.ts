@@ -1,4 +1,3 @@
-
 export interface IndicatorResult {
   value: any;
   signal?: 'buy' | 'sell' | 'neutral';
@@ -45,7 +44,7 @@ export abstract class TechnicalIndicator {
  * 简单移动平均线 (SMA)
  */
 export class SMA extends TechnicalIndicator {
-  constructor(period: number = 20) {
+  constructor(period = 20) {
     super('SMA', { period });
   }
 
@@ -73,7 +72,7 @@ export class SMA extends TechnicalIndicator {
  * 指数移动平均线 (EMA)
  */
 export class EMA extends TechnicalIndicator {
-  constructor(period: number = 20) {
+  constructor(period = 20) {
     super('EMA', { period });
   }
 
@@ -108,7 +107,7 @@ export class EMA extends TechnicalIndicator {
  * 相对强弱指数 (RSI)
  */
 export class RSI extends TechnicalIndicator {
-  constructor(period: number = 14, overbought: number = 70, oversold: number = 30) {
+  constructor(period = 14, overbought = 70, oversold = 30) {
     super('RSI', { period, overbought, oversold });
   }
 
@@ -138,19 +137,19 @@ export class RSI extends TechnicalIndicator {
       rsiValues.push(100);
     } else {
       const rs = avgGain / avgLoss;
-      rsiValues.push(100 - (100 / (1 + rs)));
+      rsiValues.push(100 - 100 / (1 + rs));
     }
 
     // 计算后续RSI
     for (let i = period; i < gains.length; i++) {
-      avgGain = ((avgGain * (period - 1)) + gains[i]) / period;
-      avgLoss = ((avgLoss * (period - 1)) + losses[i]) / period;
+      avgGain = (avgGain * (period - 1) + gains[i]) / period;
+      avgLoss = (avgLoss * (period - 1) + losses[i]) / period;
 
       if (avgLoss === 0) {
         rsiValues.push(100);
       } else {
         const rs = avgGain / avgLoss;
-        rsiValues.push(100 - (100 / (1 + rs)));
+        rsiValues.push(100 - 100 / (1 + rs));
       }
     }
 
@@ -177,7 +176,7 @@ export class RSI extends TechnicalIndicator {
  * 移动平均收敛发散 (MACD)
  */
 export class MACD extends TechnicalIndicator {
-  constructor(fastPeriod: number = 12, slowPeriod: number = 26, signalPeriod: number = 9) {
+  constructor(fastPeriod = 12, slowPeriod = 26, signalPeriod = 9) {
     super('MACD', { fastPeriod, slowPeriod, signalPeriod });
   }
 
@@ -249,7 +248,7 @@ export class MACD extends TechnicalIndicator {
  * 布林带 (Bollinger Bands)
  */
 export class BollingerBands extends TechnicalIndicator {
-  constructor(period: number = 20, stdDev: number = 2) {
+  constructor(period = 20, stdDev = 2) {
     super('BollingerBands', { period, stdDev });
   }
 
@@ -270,20 +269,20 @@ export class BollingerBands extends TechnicalIndicator {
       const standardDeviation = Math.sqrt(variance);
 
       middleBand.push(mean);
-      upperBand.push(mean + (standardDeviation * stdDev));
-      lowerBand.push(mean - (standardDeviation * stdDev));
+      upperBand.push(mean + standardDeviation * stdDev);
+      lowerBand.push(mean - standardDeviation * stdDev);
     }
 
     // 生成信号（价格触及布林带边界）
     let signal: 'buy' | 'sell' | 'neutral' = 'neutral';
     if (data.length > period && middleBand.length > 0) {
-      const currentPrice = data[data.length - 1];
+      const current_price = data[data.length - 1];
       const currentUpper = upperBand[upperBand.length - 1];
       const currentLower = lowerBand[lowerBand.length - 1];
 
-      if (currentPrice <= currentLower) {
+      if (current_price <= currentLower) {
         signal = 'buy';
-      } else if (currentPrice >= currentUpper) {
+      } else if (current_price >= currentUpper) {
         signal = 'sell';
       }
     }
@@ -300,7 +299,7 @@ export class BollingerBands extends TechnicalIndicator {
  * 平均真实范围 (ATR)
  */
 export class ATR extends TechnicalIndicator {
-  constructor(period: number = 14) {
+  constructor(period = 14) {
     super('ATR', { period });
   }
 
@@ -330,7 +329,7 @@ export class ATR extends TechnicalIndicator {
     atrValues.push(atr);
 
     for (let i = period; i < trueRanges.length; i++) {
-      atr = ((atr * (period - 1)) + trueRanges[i]) / period;
+      atr = (atr * (period - 1) + trueRanges[i]) / period;
       atrValues.push(atr);
     }
 

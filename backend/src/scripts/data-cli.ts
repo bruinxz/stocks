@@ -2,22 +2,20 @@
 
 import { Command } from 'commander';
 import { logger } from '../utils/logger';
-import dotenv from 'dotenv';
-
-dotenv.config();
+import sequelize from '../config/database';
+import '../models';
 
 const program = new Command();
 
-program
-  .name('stock-data-cli')
-  .description('A股数据管理命令行工具')
-  .version('1.0.0');
+program.version('1.0.0').description('A股数据管理命令行工具');
 
 program
   .command('sync-stocks')
   .description('同步所有股票列表')
   .action(async () => {
     try {
+      await sequelize.authenticate();
+      await sequelize.sync();
       // 动态导入DataSyncService，确保环境变量已设置
       const { DataSyncService } = await import('../data/services/DataSyncService');
       const dataSyncService = new DataSyncService();
@@ -39,16 +37,14 @@ program
   .option('-e, --end <date>', '结束日期 (YYYY-MM-DD)', new Date().toISOString().split('T')[0])
   .action(async (symbol, options) => {
     try {
+      await sequelize.authenticate();
+      await sequelize.sync();
       // 动态导入DataSyncService，确保环境变量已设置
       const { DataSyncService } = await import('../data/services/DataSyncService');
       const dataSyncService = new DataSyncService();
 
       logger.info(`开始同步股票 ${symbol} 的历史数据...`);
-      const count = await dataSyncService.syncStockHistory(
-        symbol,
-        options.start,
-        options.end
-      );
+      const count = await dataSyncService.syncStockHistory(symbol, options.start, options.end);
       logger.info(`历史数据同步完成，新增了 ${count} 条日线数据`);
       process.exit(0);
     } catch (error) {
@@ -65,6 +61,8 @@ program
   .option('-b, --batch-size <number>', '批次大小', '10')
   .action(async (symbols, options) => {
     try {
+      await sequelize.authenticate();
+      await sequelize.sync();
       // 动态导入DataSyncService，确保环境变量已设置
       const { DataSyncService } = await import('../data/services/DataSyncService');
       const dataSyncService = new DataSyncService();
@@ -92,8 +90,10 @@ program
 program
   .command('sync-index <indexCode>')
   .description('同步指数成分股')
-  .action(async (indexCode) => {
+  .action(async indexCode => {
     try {
+      await sequelize.authenticate();
+      await sequelize.sync();
       // 动态导入DataSyncService，确保环境变量已设置
       const { DataSyncService } = await import('../data/services/DataSyncService');
       const dataSyncService = new DataSyncService();
@@ -113,6 +113,8 @@ program
   .description('执行每日数据更新')
   .action(async () => {
     try {
+      await sequelize.authenticate();
+      await sequelize.sync();
       // 动态导入DataSyncService，确保环境变量已设置
       const { DataSyncService } = await import('../data/services/DataSyncService');
       const dataSyncService = new DataSyncService();
@@ -136,15 +138,15 @@ program
   .command('check-update')
   .description('检查需要更新的股票')
   .option('-d, --days <number>', '天数阈值', '7')
-  .action(async (options) => {
+  .action(async options => {
     try {
+      await sequelize.authenticate();
+      await sequelize.sync();
       // 动态导入DataSyncService，确保环境变量已设置
       const { DataSyncService } = await import('../data/services/DataSyncService');
       const dataSyncService = new DataSyncService();
 
-      const symbols = await dataSyncService.getStocksNeedingUpdate(
-        parseInt(options.days)
-      );
+      const symbols = await dataSyncService.getStocksNeedingUpdate(parseInt(options.days));
       logger.info(`有 ${symbols.length} 只股票需要更新:`);
       symbols.forEach(symbol => console.log(`  ${symbol}`));
       process.exit(0);
@@ -159,6 +161,8 @@ program
   .description('查看数据服务状态')
   .action(async () => {
     try {
+      await sequelize.authenticate();
+      await sequelize.sync();
       // 动态导入DataSyncService，确保环境变量已设置
       const { DataSyncService } = await import('../data/services/DataSyncService');
       const dataSyncService = new DataSyncService();

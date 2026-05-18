@@ -5,7 +5,7 @@ import { Op } from 'sequelize';
 import { logger } from '../../utils/logger';
 
 export interface JwtPayload {
-  userId: number;
+  user_id: number;
   username: string;
   role: string;
 }
@@ -18,7 +18,8 @@ export class AuthController {
 
   constructor() {
     this.jwtSecret = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
-    this.refreshTokenSecret = process.env.JWT_REFRESH_SECRET || 'your-refresh-secret-key-change-in-production';
+    this.refreshTokenSecret =
+      process.env.JWT_REFRESH_SECRET || 'your-refresh-secret-key-change-in-production';
 
     // 绑定方法以确保正确的this上下文
     this.register = this.register.bind(this);
@@ -26,7 +27,36 @@ export class AuthController {
     this.refreshToken = this.refreshToken.bind(this);
     this.logout = this.logout.bind(this);
     this.getProfile = this.getProfile.bind(this);
-    // authenticate已经是箭头函数，不需要绑定
+    this.updateProfile = this.updateProfile.bind(this);
+    this.uploadAvatar = this.uploadAvatar.bind(this);
+
+    // 初始化默认用户
+    this.initDefaultUsers();
+  }
+
+  private async initDefaultUsers() {
+    try {
+      const defaultUsers = [
+        { username: 'xz', password_hash: '666', email: 'xz@example.com' },
+        { username: 'lym', password_hash: '666', email: 'lym@example.com' },
+      ];
+
+      for (const u of defaultUsers) {
+        const existingUser = await User.findOne({ where: { username: u.username } });
+        if (!existingUser) {
+          await User.create({
+            username: u.username,
+            email: u.email,
+            password_hash: u.password_hash,
+            role: 'admin',
+            is_active: true,
+          });
+          logger.info(`Default user ${u.username} created.`);
+        }
+      }
+    } catch (err) {
+      logger.error('Failed to init default users:', err);
+    }
   }
 
   /**
@@ -54,9 +84,9 @@ export class AuthController {
       const user = await User.create({
         username,
         email,
-        passwordHash: password, // 将在beforeCreate钩子中哈希
+        password_hash: password, // 将在beforeCreate钩子中哈希
         role: 'user',
-        isActive: true,
+        is_active: true,
       });
 
       // 生成访问令牌和刷新令牌
@@ -65,6 +95,15 @@ export class AuthController {
       const accessToken = this.generateAccessToken(user);
       const refreshToken = this.generateRefreshToken(user);
 
+      // 设置HttpOnly cookie
+      res.cookie('refreshToken', refreshToken, {
+        httpOnly: true,
+        secure: false, // 因为目前部署在 HTTP 下，如果是 true 会导致浏览器静默拦截 Cookie
+        sameSite: 'strict',
+        path: '/',
+        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      });
+
       res.status(201).json({
         success: true,
         message: '用户注册成功',
@@ -72,7 +111,6 @@ export class AuthController {
           user: user.toJSON(),
           tokens: {
             accessToken,
-            refreshToken,
           },
         },
       });
@@ -91,7 +129,7 @@ export class AuthController {
 
       // 查找用户
       const user = await User.findOne({
-        where: { username, isActive: true },
+        where: { username, is_active: true },
       });
 
       if (!user) {
@@ -114,6 +152,15 @@ export class AuthController {
       const accessToken = this.generateAccessToken(user);
       const refreshToken = this.generateRefreshToken(user);
 
+      // 设置HttpOnly cookie
+      res.cookie('refreshToken', refreshToken, {
+        httpOnly: true,
+        secure: false, // 因为目前部署在 HTTP 下，如果是 true 会导致浏览器静默拦截 Cookie
+        sameSite: 'strict',
+        path: '/',
+        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      });
+
       res.json({
         success: true,
         message: '登录成功',
@@ -121,7 +168,6 @@ export class AuthController {
           user: user.toJSON(),
           tokens: {
             accessToken,
-            refreshToken,
           },
         },
       });
@@ -136,7 +182,8 @@ export class AuthController {
    */
   async refreshToken(req: Request, res: Response, next: NextFunction) {
     try {
-      const { refreshToken } = req.body;
+      // 优先从cookie中获取，也可作为向后兼容从body获取
+      const refreshToken = req.cookies?.refreshToken || req.body.refreshToken;
 
       if (!refreshToken) {
         return res.status(400).json({
@@ -157,23 +204,32 @@ export class AuthController {
       }
 
       // 查找用户
-      const user = await User.findByPk(payload.userId);
-      if (!user || !user.isActive) {
+      const user = await User.findByPk(payload.user_id);
+      if (!user || !user.is_active) {
         return res.status(401).json({
           success: false,
           message: '用户不存在或已被禁用',
         });
       }
 
-      // 生成新的访问令牌
+      // 令牌轮转机制：生成新的访问令牌和刷新令牌
       const newAccessToken = this.generateAccessToken(user);
+      const newRefreshToken = this.generateRefreshToken(user);
+
+      // 设置新的HttpOnly cookie
+      res.cookie('refreshToken', newRefreshToken, {
+        httpOnly: true,
+        secure: false, // 禁用 secure 使得 HTTP 也能收发 Cookie
+        sameSite: 'strict',
+        path: '/',
+        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      });
 
       res.json({
         success: true,
         message: '令牌刷新成功',
         data: {
           accessToken: newAccessToken,
-          refreshToken, // 返回相同的刷新令牌（可考虑刷新刷新令牌）
         },
       });
     } catch (error) {
@@ -187,8 +243,14 @@ export class AuthController {
    */
   async logout(req: Request, res: Response, next: NextFunction) {
     try {
-      // 在实际应用中，可以将令牌加入黑名单
-      // 这里只是简单返回成功
+      // 清除HttpOnly cookie中的refreshToken
+      res.clearCookie('refreshToken', {
+        httpOnly: true,
+        secure: false, // 必须和 setCookie 时的配置保持一致才能清除成功
+        sameSite: 'strict',
+        path: '/',
+      });
+
       res.json({
         success: true,
         message: '登出成功',
@@ -218,6 +280,67 @@ export class AuthController {
   }
 
   /**
+   * 更新用户资料
+   */
+  async updateProfile(req: Request, res: Response, next: NextFunction) {
+    try {
+      const user = (req as any).user as User;
+      const { nickname, phone, avatar_url } = req.body;
+
+      if (nickname !== undefined) user.nickname = nickname;
+      if (phone !== undefined) user.phone = phone;
+      if (avatar_url !== undefined) user.avatar_url = avatar_url;
+
+      await user.save();
+
+      res.json({
+        success: true,
+        message: '个人资料更新成功',
+        data: {
+          user: user.toJSON(),
+        },
+      });
+    } catch (error) {
+      logger.error('更新用户资料失败:', error);
+      next(error);
+    }
+  }
+
+  /**
+   * 上传头像
+   */
+  async uploadAvatar(req: Request, res: Response, next: NextFunction) {
+    try {
+      const user = (req as any).user as User;
+      const file = (req as any).file;
+
+      if (!file) {
+        return res.status(400).json({
+          success: false,
+          message: '未找到上传的文件',
+        });
+      }
+
+      // 获取文件路径
+      const avatar_url = `/uploads/avatars/${file.filename}`;
+      user.avatar_url = avatar_url;
+      await user.save();
+
+      res.json({
+        success: true,
+        message: '头像上传成功',
+        data: {
+          avatar_url,
+          user: user.toJSON(),
+        },
+      });
+    } catch (error) {
+      logger.error('上传头像失败:', error);
+      next(error);
+    }
+  }
+
+  /**
    * 认证中间件
    */
   authenticate = async (req: Request, res: Response, next: NextFunction) => {
@@ -242,8 +365,8 @@ export class AuthController {
       const payload = jwt.verify(token, this.jwtSecret) as JwtPayload;
 
       // 查找用户
-      const user = await User.findByPk(payload.userId);
-      if (!user || !user.isActive) {
+      const user = await User.findByPk(payload.user_id);
+      if (!user || !user.is_active) {
         return res.status(401).json({
           success: false,
           message: '用户不存在或已被禁用',
@@ -270,7 +393,7 @@ export class AuthController {
    */
   private generateAccessToken = (user: User): string => {
     const payload: JwtPayload = {
-      userId: user.id,
+      user_id: user.id,
       username: user.username,
       role: user.role,
     };
@@ -284,7 +407,7 @@ export class AuthController {
    */
   private generateRefreshToken = (user: User): string => {
     const payload: JwtPayload = {
-      userId: user.id,
+      user_id: user.id,
       username: user.username,
       role: user.role,
     };

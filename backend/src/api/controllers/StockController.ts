@@ -10,14 +10,7 @@ export class StockController {
    */
   async getStockList(req: Request, res: Response, next: NextFunction) {
     try {
-      const {
-        page = '1',
-        limit = '20',
-        market,
-        industry,
-        search,
-        listedOnly = 'true',
-      } = req.query;
+      const { page = '1', limit = '20', market, industry, search, listedOnly = 'true' } = req.query;
 
       const pageNum = parseInt(page as string, 10);
       const limitNum = parseInt(limit as string, 10);
@@ -41,7 +34,7 @@ export class StockController {
       }
 
       if (listedOnly === 'true') {
-        where.isListed = true;
+        where.is_listed = true;
       }
 
       const { count, rows } = await Stock.findAndCountAll({
@@ -113,7 +106,7 @@ export class StockController {
         });
       }
 
-      const where: any = { stockId: stock.id };
+      const where: any = { stock_id: stock.id };
 
       if (start_date) {
         where.time = { ...where.time, [Op.gte]: new Date(start_date as string) };
@@ -150,11 +143,8 @@ export class StockController {
   async getMarketStats(req: Request, res: Response, next: NextFunction) {
     try {
       const marketStats = await Stock.findAll({
-        attributes: [
-          'market',
-          [Stock.sequelize!.fn('COUNT', Stock.sequelize!.col('id')), 'count'],
-        ],
-        where: { isListed: true },
+        attributes: ['market', [Stock.sequelize!.fn('COUNT', Stock.sequelize!.col('id')), 'count']],
+        where: { is_listed: true },
         group: ['market'],
       });
 
@@ -164,7 +154,7 @@ export class StockController {
           [Stock.sequelize!.fn('COUNT', Stock.sequelize!.col('id')), 'count'],
         ],
         where: {
-          isListed: true,
+          is_listed: true,
           industry: { [Op.not]: null },
         },
         group: ['industry'],
@@ -200,11 +190,8 @@ export class StockController {
 
       const suggestions = await Stock.findAll({
         where: {
-          [Op.or]: [
-            { symbol: { [Op.iLike]: `%${q}%` } },
-            { name: { [Op.iLike]: `%${q}%` } },
-          ],
-          isListed: true,
+          [Op.or]: [{ symbol: { [Op.iLike]: `%${q}%` } }, { name: { [Op.iLike]: `%${q}%` } }],
+          is_listed: true,
         },
         attributes: ['symbol', 'name', 'market', 'industry'],
         limit: 10,

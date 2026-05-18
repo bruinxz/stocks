@@ -7,6 +7,9 @@ export interface AuthState {
     username: string | null;
     email: string | null;
     role: string | null;
+    nickname?: string | null;
+    phone?: string | null;
+    avatar_url?: string | null;
   } | null;
   token: string | null;
   loading: boolean;
@@ -50,8 +53,14 @@ const authSlice = createSlice({
     clearError: state => {
       state.error = null;
     },
+    updateUser: (state, action: PayloadAction<any>) => {
+      if (state.user) {
+        state.user = { ...state.user, ...action.payload };
+      }
+    },
   },
 });
 
-export const { loginStart, loginSuccess, loginFailure, logout, clearError } = authSlice.actions;
+export const { loginStart, loginSuccess, loginFailure, logout, clearError, updateUser } =
+  authSlice.actions;
 export default authSlice.reducer;

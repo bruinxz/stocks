@@ -1,21 +1,22 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Form,
   Input,
-  InputNumber,
   Select,
   DatePicker,
+  InputNumber,
   Button,
   Card,
   Row,
   Col,
-  Space,
   message,
+  Radio,
+  Spin,
 } from 'antd';
 import { backtestService } from '../../services/backtestService';
+import { marketService, Stock } from '../../services/marketService';
 import dayjs from 'dayjs';
 
-const { Option } = Select;
 const { RangePicker } = DatePicker;
 
 interface BacktestFormProps {
@@ -27,19 +28,49 @@ const BacktestForm: React.FC<BacktestFormProps> = ({ onSuccess }) => {
   const [loading, setLoading] = useState(false);
   const [strategyType, setStrategyType] = useState('moving_average_crossover');
 
+  // 股票搜索状态
+  const [stocks, setStocks] = useState<Stock[]>([]);
+  const [fetchingStocks, setFetchingStocks] = useState(false);
+
+  // 初始化加载股票列表
+  useEffect(() => {
+    fetchStocks('');
+  }, []);
+
+  const fetchStocks = async (query: string) => {
+    setFetchingStocks(true);
+    try {
+      const response = await marketService.searchStocks(query, 100);
+      setStocks(response.data.stocks);
+    } catch (error) {
+      console.error('获取股票列表失败:', error);
+      message.error('获取股票列表失败');
+    } finally {
+      setFetchingStocks(false);
+    }
+  };
+
+  const handleSearch = (value: string) => {
+    if (value) {
+      fetchStocks(value);
+    } else {
+      fetchStocks('');
+    }
+  };
+
   const handleSubmit = async (values: any) => {
     setLoading(true);
     try {
-      const [startDate, endDate] = values.dateRange;
+      const [start_date, end_date] = values.dateRange;
 
       const backtestData = {
         name: values.name,
         symbol: values.symbol,
-        startDate: startDate.format('YYYY-MM-DD'),
-        endDate: endDate.format('YYYY-MM-DD'),
+        start_date: start_date.format('YYYY-MM-DD'),
+        end_date: end_date.format('YYYY-MM-DD'),
         strategyType: values.strategyType,
         strategyParams: values.strategyParams || {},
-        initialCapital: values.initialCapital,
+        initial_capital: values.initial_capital,
       };
 
       await backtestService.createBacktest(backtestData);
@@ -53,16 +84,6 @@ const BacktestForm: React.FC<BacktestFormProps> = ({ onSuccess }) => {
       setLoading(false);
     }
   };
-
-  // 股票代码选项（模拟数据）
-  const symbolOptions = [
-    { value: '000001.SZ', label: '平安银行 (000001.SZ)' },
-    { value: '000002.SZ', label: '万科A (000002.SZ)' },
-    { value: '000858.SZ', label: '五粮液 (000858.SZ)' },
-    { value: '600519.SH', label: '贵州茅台 (600519.SH)' },
-    { value: '000333.SZ', label: '美的集团 (000333.SZ)' },
-    { value: '300750.SZ', label: '宁德时代 (300750.SZ)' },
-  ];
 
   // 策略类型选项
   const strategyOptions = [
@@ -168,14 +189,14 @@ const BacktestForm: React.FC<BacktestFormProps> = ({ onSuccess }) => {
   };
 
   return (
-    <Card title="新建回测">
+    <Card className="modern-card" variant="borderless" title="新建回测">
       <Form
         form={form}
         layout="vertical"
         onFinish={handleSubmit}
         initialValues={{
           strategyType: 'moving_average_crossover',
-          initialCapital: 100000,
+          initial_capital: 100000,
         }}
       >
         <Row gutter={24}>
@@ -197,10 +218,18 @@ const BacktestForm: React.FC<BacktestFormProps> = ({ onSuccess }) => {
             >
               <Select
                 showSearch
-                placeholder="请选择股票"
-                optionFilterProp="label"
-                options={symbolOptions}
-              />
+                placeholder="搜索并选择股票"
+                optionFilterProp="children"
+                onSearch={handleSearch}
+                filterOption={false}
+                notFoundContent={fetchingStocks ? <Spin size="small" /> : '未找到股票'}
+              >
+                {stocks.map(stock => (
+                  <Select.Option key={stock.symbol} value={stock.symbol}>
+                    {stock.name} ({stock.symbol})
+                  </Select.Option>
+                ))}
+              </Select>
             </Form.Item>
           </Col>
         </Row>
@@ -227,7 +256,7 @@ const BacktestForm: React.FC<BacktestFormProps> = ({ onSuccess }) => {
           <Col span={12}>
             <Form.Item
               label="初始资金"
-              name="initialCapital"
+              name="initial_capital"
               rules={[{ required: true, message: '请输入初始资金' }]}
             >
               <InputNumber
@@ -245,29 +274,49 @@ const BacktestForm: React.FC<BacktestFormProps> = ({ onSuccess }) => {
         </Row>
 
         <Row gutter={24}>
-          <Col span={12}>
+          <Col span={24}>
             <Form.Item
               label="策略类型"
               name="strategyType"
               rules={[{ required: true, message: '请选择策略类型' }]}
             >
-              <Select options={strategyOptions} onChange={value => setStrategyType(value)} />
+              <Radio.Group
+                optionType="button"
+                buttonStyle="solid"
+                options={strategyOptions}
+                onChange={e => setStrategyType(e.target.value)}
+              />
             </Form.Item>
           </Col>
         </Row>
 
-        <Card type="inner" title="策略参数" style={{ marginBottom: 24 }}>
+        <Card
+          className="modern-card"
+          variant="borderless"
+          type="inner"
+          title={<span style={{ fontSize: 13, fontWeight: 600, color: '#6b7280' }}>策略参数</span>}
+          style={{ marginBottom: 24, background: '#f9fafb', border: '1px solid #f3f4f6' }}
+          headStyle={{ minHeight: 38, borderBottom: '1px solid #f3f4f6' }}
+        >
           {renderStrategyParams()}
         </Card>
 
-        <Form.Item>
-          <Space>
-            <Button type="primary" htmlType="submit" loading={loading}>
-              创建回测
-            </Button>
-            <Button onClick={() => form.resetFields()}>重置</Button>
-          </Space>
-        </Form.Item>
+        <div
+          style={{
+            marginTop: 32,
+            paddingTop: 24,
+            borderTop: '1px solid #f3f4f6',
+            display: 'flex',
+            gap: 12,
+          }}
+        >
+          <Button type="primary" htmlType="submit" loading={loading} style={{ padding: '0 32px' }}>
+            创建回测
+          </Button>
+          <Button type="text" onClick={() => form.resetFields()}>
+            重置
+          </Button>
+        </div>
       </Form>
     </Card>
   );

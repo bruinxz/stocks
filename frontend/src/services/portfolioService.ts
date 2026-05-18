@@ -4,7 +4,7 @@ export interface PortfolioSimulationRequest {
   symbols: string[];
   buyDate: string;
   days: number;
-  initialCapital: number;
+  initial_capital: number;
   allocationStrategy: 'equal' | 'weighted';
   includeDividends?: boolean;
   reinvest?: boolean;
@@ -19,19 +19,19 @@ export interface StockReturnData {
   allocationAmount: number;
   shares: number;
   finalValue: number;
-  totalReturn: number;
+  total_return: number;
 }
 
 export interface DailyReturnData {
   date: string;
-  totalValue: number;
+  total_value: number;
   dailyReturn: number;
   cumulativeReturn: number;
 }
 
 export interface PerformanceMetrics {
-  sharpeRatio: number;
-  maxDrawdown: number;
+  sharpe_ratio: number;
+  max_drawdown: number;
   volatility: number;
   winDays: number;
   lossDays: number;
@@ -45,20 +45,20 @@ export interface PortfolioSimulationResult {
     symbols: string[];
     buyDate: string;
     days: number;
-    initialCapital: number;
+    initial_capital: number;
     allocationStrategy: string;
   };
   summary: {
-    initialCapital: number;
-    finalCapital: number;
-    totalReturn: number;
-    annualizedReturn: number;
+    initial_capital: number;
+    final_capital: number;
+    total_return: number;
+    annualized_return: number;
     totalDays: number;
-    startDate: string;
-    endDate: string;
+    start_date: string;
+    end_date: string;
   };
   performanceMetrics: PerformanceMetrics;
-  dailyReturns: DailyReturnData[];
+  daily_returns: DailyReturnData[];
   stockReturns: StockReturnData[];
 }
 
@@ -97,7 +97,7 @@ export interface RecommendedConfigResponse {
       symbols: string[];
       buyDate: string;
       days: number;
-      initialCapital: number;
+      initial_capital: number;
       allocationStrategy: string;
       maxStocks: number;
       minDays: number;
@@ -116,7 +116,9 @@ export interface RecommendedConfigResponse {
 /**
  * 运行投资组合收益模拟
  */
-export const simulatePortfolio = async (request: PortfolioSimulationRequest): Promise<PortfolioSimulationResponse> => {
+export const simulatePortfolio = async (
+  request: PortfolioSimulationRequest
+): Promise<PortfolioSimulationResponse> => {
   const response = await api.post('/portfolio/simulate', request);
   return response.data;
 };
@@ -143,8 +145,8 @@ export const getRecommendedConfig = async (): Promise<RecommendedConfigResponse>
 export const getSimulationHistory = async (params?: {
   page?: number;
   limit?: number;
-  startDate?: string;
-  endDate?: string;
+  start_date?: string;
+  end_date?: string;
 }) => {
   const response = await api.get('/portfolio/history', { params });
   return response.data;

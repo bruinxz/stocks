@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { body } from 'express-validator';
 import { AuthController } from '../controllers/AuthController';
 import { validateRequest } from '../../middlewares/validateRequest';
+import { uploadAvatarMiddleware } from '../../middlewares/upload';
 
 const router = Router();
 const authController = new AuthController();
@@ -29,10 +30,7 @@ router.post(
  */
 router.post(
   '/login',
-  [
-    body('username').isString(),
-    body('password').isString(),
-  ],
+  [body('username').isString(), body('password').isString()],
   validateRequest,
   authController.login
 );
@@ -42,35 +40,56 @@ router.post(
  * @desc 刷新访问令牌
  * @access Public
  */
-router.post(
-  '/refresh',
-  [
-    body('refreshToken').isString(),
-  ],
-  validateRequest,
-  authController.refreshToken
-);
+router.post('/refresh', authController.refreshToken);
 
 /**
  * @route POST /api/auth/logout
  * @desc 用户登出
  * @access Private
  */
-router.post(
-  '/logout',
-  authController.authenticate,
-  authController.logout
-);
+router.post('/logout', authController.authenticate, authController.logout);
 
 /**
  * @route GET /api/auth/profile
  * @desc 获取用户资料
  * @access Private
  */
-router.get(
+router.get('/profile', authController.authenticate, authController.getProfile);
+
+/**
+ * @route PUT /api/auth/profile
+ * @desc 更新用户资料
+ * @access Private
+ */
+router.put(
   '/profile',
   authController.authenticate,
-  authController.getProfile
+  [
+    body('nickname').optional().isString().isLength({ max: 50 }),
+    body('phone').optional().isString().isLength({ max: 20 }),
+    body('avatar_url').optional().isString().isLength({ max: 255 }),
+  ],
+  validateRequest,
+  authController.updateProfile
+);
+
+/**
+ * @route POST /api/auth/avatar
+ * @desc 上传头像
+ * @access Private
+ */
+router.post(
+  '/avatar',
+  authController.authenticate,
+  (req, res, next) => {
+    uploadAvatarMiddleware.single('avatar')(req, res, err => {
+      if (err) {
+        return res.status(400).json({ success: false, message: err.message });
+      }
+      next();
+    });
+  },
+  authController.uploadAvatar
 );
 
 export default router;

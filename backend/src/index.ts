@@ -1,7 +1,12 @@
+import dotenv from 'dotenv';
+// Load environment variables immediately to ensure config is available for imports
+dotenv.config();
+
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import dotenv from 'dotenv';
+import path from 'path';
+import cookieParser from 'cookie-parser';
 import { sequelize } from './config/database';
 import authRoutes from './api/routes/auth.routes';
 import stockRoutes from './api/routes/stock.routes';
@@ -9,19 +14,41 @@ import backtestRoutes from './api/routes/backtest.routes';
 import strategyRoutes from './api/routes/strategy.routes';
 import portfolioRoutes from './api/routes/portfolio.routes';
 import marketRoutes from './api/routes/market.routes';
+import aiRoutes from './api/routes/ai.routes';
+import taskRoutes from './api/routes/task.routes';
+import paperTradingRoutes from './api/routes/paperTrading.routes';
+import riskAlertRoutes from './api/routes/riskAlert.routes';
+import journalRoutes from './api/routes/journal.routes';
+import userRoutes from './api/routes/user.routes';
+import logRoutes from './api/routes/log.routes';
+import internalRoutes from './api/routes/internal.routes';
+import quantRoutes from './api/routes/quant.routes';
 import './jobs/dataUpdateWorker'; // 初始化数据更新队列处理器
-
-// Load environment variables
-dotenv.config();
+import './jobs/aiPollingWorker'; // 初始化 AI 分析轮询队列处理器
+import './jobs/quantBacktestWorker'; // 初始化量化跑分队列处理器
+import { schedulerService } from './services/SchedulerService';
+import { repairLegacyDevelopmentSchema } from './utils/developmentSchemaRepair';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware
-app.use(cors());
-app.use(helmet());
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      // 允许任何来源访问，配合 credentials: true 会动态反射 Origin
+      callback(null, true);
+    },
+    credentials: true, // Allow cookies to be sent
+  })
+);
+app.use(helmet({ crossOriginResourcePolicy: false })); // Allow cross-origin for static files
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
+
+// Serve static files (like avatars)
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -40,6 +67,189 @@ app.use('/api/backtests', backtestRoutes);
 app.use('/api/strategies', strategyRoutes);
 app.use('/api/portfolio', portfolioRoutes);
 app.use('/api/market', marketRoutes);
+app.use('/api/ai', aiRoutes);
+app.use('/api/tasks', taskRoutes);
+app.use('/api/paper-trading', paperTradingRoutes);
+app.use('/api/risk-alerts', riskAlertRoutes);
+app.use('/api/journals', journalRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/logs', logRoutes);
+app.use('/api/internal', internalRoutes); // 给TradingAgents预留的安全数据接口
+app.use('/api/quant', quantRoutes);
+
+import { User } from './models/User';
+import { AIInvestmentSignal } from './models/AIInvestmentSignal';
+import { RecommendationTradeOutcome } from './models/RecommendationTradeOutcome';
+import { RecommendationLoopPolicySnapshot } from './models/RecommendationLoopPolicySnapshot';
+import { BudgetPolicyVersionSnapshot } from './models/BudgetPolicyVersionSnapshot';
+import { QuantStrategyModel } from './models/QuantStrategyModel';
+import { QuantBacktestTask } from './models/QuantBacktestTask';
+import { QuantBacktestResult } from './models/QuantBacktestResult';
+import { QuantBacktestTrade } from './models/QuantBacktestTrade';
+import { QuantSignal } from './models/QuantSignal';
+import { QuantStrategyPerformanceSnapshot } from './models/QuantStrategyPerformanceSnapshot';
+import { QuantStrategyWeight } from './models/QuantStrategyWeight';
+import { QuantStrategyExperiment } from './models/QuantStrategyExperiment';
+import { QuantStrategyParamVersion } from './models/QuantStrategyParamVersion';
+import { QuantStrategyParamValidation } from './models/QuantStrategyParamValidation';
+import { QuantFusionAudit } from './models/QuantFusionAudit';
+import { TaskParameterAuditLog } from './models/TaskParameterAuditLog';
+import { RealtimeQuote } from './models/RealtimeQuote';
+import { quantStrategyService } from './quant/services/QuantStrategyService';
+
+async function publicTableExists(tableName: string): Promise<boolean> {
+  const [rows] = await sequelize.query(
+    `
+      SELECT 1
+      FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = :tableName
+      LIMIT 1
+    `,
+    { replacements: { tableName } }
+  );
+
+  return (rows as any[]).length > 0;
+}
+
+async function publicColumnExists(tableName: string, columnName: string): Promise<boolean> {
+  const [rows] = await sequelize.query(
+    `
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = :tableName
+        AND column_name = :columnName
+      LIMIT 1
+    `,
+    { replacements: { tableName, columnName } }
+  );
+
+  return (rows as any[]).length > 0;
+}
+
+async function publicIndexExists(indexName: string): Promise<boolean> {
+  const [rows] = await sequelize.query(
+    `
+      SELECT 1
+      FROM pg_indexes
+      WHERE schemaname = 'public' AND indexname = :indexName
+      LIMIT 1
+    `,
+    { replacements: { indexName } }
+  );
+
+  return (rows as any[]).length > 0;
+}
+
+async function ensureRecommendationLoopRuntimeSchema() {
+  const additions = [
+    {
+      table: 'ai_investment_signals',
+      column: 'loop_run_id',
+      index: 'idx_ai_investment_signals_loop_run_id',
+    },
+    {
+      table: 'recommendation_trade_outcomes',
+      column: 'loop_run_id',
+      index: 'idx_recommendation_trade_outcomes_loop_run_id',
+    },
+    {
+      table: 'recommendation_loop_policy_snapshots',
+      column: 'loop_run_id',
+      index: 'idx_loop_policy_snapshots_loop_run_id',
+    },
+  ];
+
+  for (const item of additions) {
+    if (!(await publicTableExists(item.table))) {
+      continue;
+    }
+
+    const hasColumn = await publicColumnExists(item.table, item.column);
+    if (!hasColumn) {
+      try {
+        await sequelize.query(
+          `ALTER TABLE "${item.table}" ADD COLUMN "${item.column}" VARCHAR(80)`
+        );
+        console.log(`Added runtime schema column ${item.table}.${item.column}`);
+      } catch (error: any) {
+        // 线上历史库可能存在 owner=postgres 的表；字段兼容失败不应阻断新量化表创建。
+        console.warn(
+          `Failed to add runtime schema column ${item.table}.${item.column}:`,
+          error?.message || error
+        );
+        continue;
+      }
+    }
+
+    const hasIndex = await publicIndexExists(item.index);
+    if (!hasIndex) {
+      try {
+        await sequelize.query(`CREATE INDEX "${item.index}" ON "${item.table}" ("${item.column}")`);
+        console.log(`Added runtime schema index ${item.index}`);
+      } catch (error: any) {
+        console.warn(`Failed to add runtime schema index ${item.index}:`, error?.message || error);
+      }
+    }
+  }
+}
+
+async function syncRuntimeModel(model: any, label: string): Promise<boolean> {
+  try {
+    await model.sync();
+    console.log(`${label} table checked successfully`);
+    return true;
+  } catch (error: any) {
+    // 单表权限/索引异常不应让后续新增表全部跳过；部署脚本会补齐 owner/grant。
+    console.warn(`Failed to sync ${label} table:`, error?.message || error);
+    return false;
+  }
+}
+
+async function syncRecommendationRuntimeTables(): Promise<void> {
+  await ensureRecommendationLoopRuntimeSchema();
+
+  const syncItems = [
+    { model: AIInvestmentSignal, label: 'AIInvestmentSignal' },
+    { model: RecommendationTradeOutcome, label: 'RecommendationTradeOutcome' },
+    { model: RecommendationLoopPolicySnapshot, label: 'RecommendationLoopPolicySnapshot' },
+    { model: BudgetPolicyVersionSnapshot, label: 'BudgetPolicyVersionSnapshot' },
+    { model: QuantStrategyModel, label: 'QuantStrategyModel' },
+    { model: QuantBacktestTask, label: 'QuantBacktestTask' },
+    { model: QuantBacktestResult, label: 'QuantBacktestResult' },
+    { model: QuantBacktestTrade, label: 'QuantBacktestTrade' },
+    { model: QuantSignal, label: 'QuantSignal' },
+    { model: QuantStrategyPerformanceSnapshot, label: 'QuantStrategyPerformanceSnapshot' },
+    { model: QuantStrategyWeight, label: 'QuantStrategyWeight' },
+    { model: QuantStrategyExperiment, label: 'QuantStrategyExperiment' },
+    { model: QuantStrategyParamVersion, label: 'QuantStrategyParamVersion' },
+    { model: QuantStrategyParamValidation, label: 'QuantStrategyParamValidation' },
+    { model: QuantFusionAudit, label: 'QuantFusionAudit' },
+    { model: RealtimeQuote, label: 'RealtimeQuote' },
+    { model: TaskParameterAuditLog, label: 'TaskParameterAuditLog' },
+  ];
+
+  const results = [];
+  for (const item of syncItems) {
+    results.push(await syncRuntimeModel(item.model, item.label));
+  }
+
+  try {
+    await quantStrategyService.syncRegistry();
+    console.log('Quant strategy registry checked successfully');
+  } catch (error: any) {
+    console.warn('Failed to sync quant strategy registry:', error?.message || error);
+  }
+
+  await ensureRecommendationLoopRuntimeSchema();
+
+  const failedCount = results.filter(result => !result).length;
+  if (failedCount > 0) {
+    console.warn(`Recommendation runtime schema check completed with ${failedCount} warning(s)`);
+  } else {
+    console.log('Recommendation runtime schema check completed successfully');
+  }
+}
 
 // Initialize database connection and start server
 async function initializeApp() {
@@ -48,13 +258,41 @@ async function initializeApp() {
     await sequelize.authenticate();
     console.log('Database connection has been established successfully.');
 
+    await repairLegacyDevelopmentSchema();
+
+    // 生产环境当前没有独立 migration runner；新闭环收益表必须在启动时幂等创建，
+    // 以免定时任务先于开发环境 alter 同步执行导致接口 500。
+    try {
+      await syncRecommendationRuntimeTables();
+    } catch (schemaError: any) {
+      console.warn(
+        'Failed to sync recommendation loop tables:',
+        schemaError?.message || schemaError
+      );
+    }
+
     // Sync models in development environment
     if (process.env.NODE_ENV === 'development') {
       console.log('Syncing database models...');
       try {
-        await sequelize.sync(); // 只创建缺失的表，不修改现有表结构
-        console.log('Database models synced successfully');
-      } catch (error) {
+        await sequelize.sync({ alter: true }); // 创建缺失的表并修改现有表结构
+        console.log('Database models synced successfully with alter: true');
+
+        const lymCount = await User.count({ where: { username: 'lym' } });
+        if (lymCount === 0) {
+          await User.create({
+            username: 'lym',
+            password_hash: '666',
+            email: 'lym@example.com',
+            role: 'admin',
+            is_active: true,
+          });
+          console.log('Default admin user "lym" created successfully');
+        }
+
+        await schedulerService.ensureDefaultTasks();
+        console.log('Default scheduled tasks checked successfully');
+      } catch (error: any) {
         console.warn('Database sync failed, continuing with existing schema:', error.message);
         console.warn('Error details:', error);
 
@@ -69,10 +307,80 @@ async function initializeApp() {
         } catch (logSyncError) {
           console.warn('Failed to sync DataUpdateLog table:', logSyncError.message);
         }
+
+        // 全量 alter 可能被旧表结构阻断；确保组合收益模拟核心表仍可独立创建。
+        try {
+          console.log('Attempting to sync PortfolioSimulation table separately...');
+          const PortfolioSimulationModel = sequelize.models.PortfolioSimulation;
+          if (PortfolioSimulationModel) {
+            await PortfolioSimulationModel.sync();
+            console.log('PortfolioSimulation table synced successfully');
+          }
+        } catch (portfolioSyncError) {
+          console.warn('Failed to sync PortfolioSimulation table:', portfolioSyncError.message);
+        }
+
+        // 确保数据源健康状态表可独立创建。
+        try {
+          console.log('Attempting to sync DataSourceHealth table separately...');
+          const DataSourceHealthModel = sequelize.models.DataSourceHealth;
+          if (DataSourceHealthModel) {
+            await DataSourceHealthModel.sync();
+            console.log('DataSourceHealth table synced successfully');
+          }
+        } catch (dataSourceHealthSyncError) {
+          console.warn('Failed to sync DataSourceHealth table:', dataSourceHealthSyncError.message);
+        }
+
+        // 确保 AI 投研信号归档表可独立创建。
+        try {
+          console.log('Attempting to sync AIInvestmentSignal table separately...');
+          const AIInvestmentSignalModel = sequelize.models.AIInvestmentSignal;
+          if (AIInvestmentSignalModel) {
+            await AIInvestmentSignalModel.sync();
+            console.log('AIInvestmentSignal table synced successfully');
+          }
+        } catch (aiSignalSyncError) {
+          console.warn('Failed to sync AIInvestmentSignal table:', aiSignalSyncError.message);
+        }
+
+        try {
+          console.log('Attempting to sync BudgetPolicyVersionSnapshot table separately...');
+          const BudgetPolicyVersionSnapshotModel = sequelize.models.BudgetPolicyVersionSnapshot;
+          if (BudgetPolicyVersionSnapshotModel) {
+            await BudgetPolicyVersionSnapshotModel.sync();
+            console.log('BudgetPolicyVersionSnapshot table synced successfully');
+          }
+        } catch (budgetPolicyVersionSyncError) {
+          console.warn(
+            'Failed to sync BudgetPolicyVersionSnapshot table:',
+            budgetPolicyVersionSyncError.message
+          );
+        }
+
+        try {
+          await schedulerService.ensureDefaultTasks();
+          console.log('Default scheduled tasks checked successfully after partial sync');
+        } catch (taskSeedError: any) {
+          console.warn('Failed to check default scheduled tasks:', taskSeedError.message);
+        }
       }
     }
 
-    app.listen(PORT, () => {
+    // 生产环境不执行 sequelize.sync，但默认任务仍需要随版本演进做幂等补齐。
+    // ensureDefaultTasks 只会 findOrCreate / 补缺省字段，不会覆盖用户已有 cron 配置。
+    try {
+      await schedulerService.ensureDefaultTasks();
+      console.log('Default scheduled tasks checked successfully');
+    } catch (taskSeedError: any) {
+      console.warn('Failed to check default scheduled tasks:', taskSeedError.message);
+    }
+
+    // Initialize scheduler after development schema repair/sync to avoid stale local schemas
+    // blocking server startup or task listing APIs.
+    await schedulerService.initialize();
+
+    app.listen(Number(PORT), '0.0.0.0', () => {
       console.log(`Server is running on port ${PORT}`);
       console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
     });
@@ -81,7 +389,7 @@ async function initializeApp() {
     console.warn('Starting server without database connection. Some features may be limited.');
 
     // Start server even without database connection
-    app.listen(PORT, () => {
+    app.listen(Number(PORT), '0.0.0.0', () => {
       console.log(`Server is running on port ${PORT} (without database connection)`);
       console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
     });

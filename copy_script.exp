@@ -1,0 +1,10 @@
+#!/usr/bin/expect -f
+set timeout -1
+set password [lindex $argv 0]
+
+spawn scp -o StrictHostKeyChecking=no -P 14126 /Users/bytedance/go/src/github.com/bruinxz/stocks/backend/python/akshare_helper.py root@103.242.3.87:/opt/stocks/backend/python/akshare_helper.py
+expect {
+    "*yes/no*" { send "yes\r"; exp_continue }
+    "*assword:*" { send "$password\r"; exp_continue }
+    eof
+}

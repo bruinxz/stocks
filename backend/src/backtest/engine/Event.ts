@@ -1,13 +1,13 @@
 export enum EventType {
-  BAR = 'bar',           // K线数据事件
-  SIGNAL = 'signal',     // 信号事件
-  ORDER = 'order',       // 订单事件
-  FILL = 'fill',         // 成交事件
+  BAR = 'bar', // K线数据事件
+  SIGNAL = 'signal', // 信号事件
+  ORDER = 'order', // 订单事件
+  FILL = 'fill', // 成交事件
   SLIPPAGE = 'slippage', // 滑点事件
   COMMISSION = 'commission', // 佣金事件
-  TIMER = 'timer',       // 定时器事件
-  START = 'start',       // 回测开始事件
-  END = 'end',           // 回测结束事件
+  TIMER = 'timer', // 定时器事件
+  START = 'start', // 回测开始事件
+  END = 'end', // 回测结束事件
 }
 
 export interface BaseEvent {
@@ -27,8 +27,8 @@ export interface BarEvent extends BaseEvent {
     volume: number;
     turnover?: number;
     time: Date;
-    isTradingDay: boolean;
-    isSuspended: boolean;
+    is_trading_day: boolean;
+    is_suspended: boolean;
   };
 }
 
@@ -90,8 +90,8 @@ export interface CommissionEvent extends BaseEvent {
     commission: number;
     details: {
       brokerage: number;
-      stampDuty: number;
-      transferFee: number;
+      stamp_duty: number;
+      transfer_fee: number;
       otherFees: number;
     };
   };
@@ -108,20 +108,20 @@ export interface TimerEvent extends BaseEvent {
 export interface StartEvent extends BaseEvent {
   type: EventType.START;
   data: {
-    startDate: Date;
-    endDate: Date;
-    initialCapital: number;
+    start_date: Date;
+    end_date: Date;
+    initial_capital: number;
   };
 }
 
 export interface EndEvent extends BaseEvent {
   type: EventType.END;
   data: {
-    finalCapital: number;
-    totalReturn: number;
-    totalTrades: number;
-    startDate: Date;
-    endDate: Date;
+    final_capital: number;
+    total_return: number;
+    total_trades: number;
+    start_date: Date;
+    end_date: Date;
   };
 }
 

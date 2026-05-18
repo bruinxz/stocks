@@ -1,4 +1,14 @@
-import { Table, Column, Model, DataType, HasMany, CreatedAt, UpdatedAt, ForeignKey, BelongsTo } from 'sequelize-typescript';
+import {
+  Table,
+  Column,
+  Model,
+  DataType,
+  HasMany,
+  CreatedAt,
+  UpdatedAt,
+  ForeignKey,
+  BelongsTo,
+} from 'sequelize-typescript';
 import { Trade } from './Trade';
 import { User } from './User';
 
@@ -16,7 +26,7 @@ export enum BacktestStatus {
   indexes: [
     {
       name: 'idx_backtest_results_created_at',
-      fields: ['createdAt'],
+      fields: ['created_at'],
     },
     {
       name: 'idx_backtest_results_status',
@@ -53,7 +63,7 @@ export class BacktestResult extends Model {
     comment: '用户ID',
     field: 'user_id',
   })
-  declare userId: number;
+  declare user_id: number;
 
   @BelongsTo(() => User)
   declare user: User;
@@ -61,110 +71,125 @@ export class BacktestResult extends Model {
   @Column({
     type: DataType.JSONB,
     allowNull: false,
+    field: 'strategy_config',
     comment: '策略配置',
   })
-  declare strategyConfig: any;
+  declare strategy_config: any;
 
   @Column({
     type: DataType.DATEONLY,
     allowNull: false,
+    field: 'start_date',
     comment: '开始日期',
   })
-  declare startDate: Date;
+  declare start_date: Date;
 
   @Column({
     type: DataType.DATEONLY,
     allowNull: false,
+    field: 'end_date',
     comment: '结束日期',
   })
-  declare endDate: Date;
+  declare end_date: Date;
 
   @Column({
     type: DataType.DECIMAL(20, 4),
     allowNull: false,
+    field: 'initial_capital',
     comment: '初始资金',
   })
-  declare initialCapital: number;
+  declare initial_capital: number;
 
   @Column({
     type: DataType.DECIMAL(20, 4),
     allowNull: false,
+    field: 'final_capital',
     comment: '最终资金',
   })
-  finalCapital!: number;
+  declare final_capital: number;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
     allowNull: false,
+    field: 'total_return',
     comment: '总收益率(%)',
   })
-  totalReturn!: number;
+  declare total_return: number;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
     allowNull: true,
+    field: 'annualized_return',
     comment: '年化收益率(%)',
   })
-  annualizedReturn?: number;
+  declare annualized_return: number;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
     allowNull: true,
+    field: 'sharpe_ratio',
     comment: '夏普比率',
   })
-  sharpeRatio?: number;
+  declare sharpe_ratio: number;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
     allowNull: true,
+    field: 'sortino_ratio',
     comment: '索提诺比率',
   })
-  sortinoRatio?: number;
+  declare sortino_ratio: number;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
     allowNull: true,
+    field: 'max_drawdown',
     comment: '最大回撤(%)',
   })
-  maxDrawdown?: number;
+  declare max_drawdown: number;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
     allowNull: true,
+    field: 'win_rate',
     comment: '胜率(%)',
   })
-  winRate?: number;
+  declare win_rate: number;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
     allowNull: true,
+    field: 'profit_loss_ratio',
     comment: '盈亏比',
   })
-  profitLossRatio?: number;
+  declare profit_loss_ratio: number;
 
   @Column({
     type: DataType.INTEGER,
     allowNull: false,
+    field: 'total_trades',
     defaultValue: 0,
     comment: '总交易次数',
   })
-  totalTrades!: number;
+  declare total_trades: number;
 
   @Column({
     type: DataType.INTEGER,
     allowNull: false,
+    field: 'profit_trades',
     defaultValue: 0,
     comment: '盈利交易次数',
   })
-  profitTrades!: number;
+  declare profit_trades: number;
 
   @Column({
     type: DataType.INTEGER,
     allowNull: false,
+    field: 'loss_trades',
     defaultValue: 0,
     comment: '亏损交易次数',
   })
-  lossTrades!: number;
+  declare loss_trades: number;
 
   @Column({
     type: DataType.STRING(20),
@@ -174,48 +199,71 @@ export class BacktestResult extends Model {
       isIn: [Object.values(BacktestStatus)],
     },
   })
-  status!: BacktestStatus;
+  declare status: BacktestStatus;
 
   @Column({
     type: DataType.TEXT,
     allowNull: true,
+    field: 'error_message',
     comment: '错误信息',
   })
-  errorMessage?: string;
+  declare error_message: string;
 
   @Column({
     type: DataType.JSONB,
     allowNull: true,
+    field: 'detailed_metrics',
     comment: '详细指标',
   })
-  detailedMetrics?: any;
+  declare detailed_metrics: any;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
     allowNull: true,
+    field: 'annualized_volatility',
     comment: '年化波动率',
   })
-  annualizedVolatility?: number;
+  declare annualized_volatility: number;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
     allowNull: true,
+    field: 'information_ratio',
     comment: '信息比率',
   })
-  informationRatio?: number;
+  declare information_ratio: number;
 
   @Column({
     type: DataType.DECIMAL(10, 4),
     allowNull: true,
+    field: 'calmar_ratio',
     comment: '卡玛比率',
   })
-  calmarRatio?: number;
+  declare calmar_ratio: number;
+
+  @Column({
+    type: DataType.JSONB,
+    allowNull: true,
+    field: 'equity_curve',
+    comment: '资金曲线',
+  })
+  declare equity_curve: any;
+
+  @Column({
+    type: DataType.JSONB,
+    allowNull: true,
+    field: 'daily_returns',
+    comment: '每日收益率',
+  })
+  declare daily_returns: any;
 
   @CreatedAt
-  declare createdAt: Date;
+  @Column({ field: 'created_at' })
+  declare created_at: Date;
 
   @UpdatedAt
-  declare updatedAt: Date;
+  @Column({ field: 'updated_at' })
+  declare updated_at: Date;
 
   // 关联关系
   @HasMany(() => Trade)

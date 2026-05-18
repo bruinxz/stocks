@@ -101,7 +101,7 @@ export class StrategyController {
   async getStrategyDetail(req: Request, res: Response, next: NextFunction) {
     try {
       const { strategyId } = req.params;
-      const strategy = this.strategies.find((s) => s.id === strategyId);
+      const strategy = this.strategies.find(s => s.id === strategyId);
 
       if (!strategy) {
         return res.status(404).json({
@@ -126,7 +126,7 @@ export class StrategyController {
   async validateStrategyParams(req: Request, res: Response, next: NextFunction) {
     try {
       const { strategyId, params } = req.body;
-      const strategy = this.strategies.find((s) => s.id === strategyId);
+      const strategy = this.strategies.find(s => s.id === strategyId);
 
       if (!strategy) {
         return res.status(404).json({
@@ -207,7 +207,7 @@ export class StrategyController {
       const stats = {
         totalBacktests: 0,
         avgReturn: 0,
-        winRate: 0,
+        win_rate: 0,
         bestReturn: 0,
         worstReturn: 0,
       };

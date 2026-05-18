@@ -1,4 +1,11 @@
-import { EventType, OrderEvent, FillEvent, SlippageEvent, CommissionEvent, BarEvent } from './Event';
+import {
+  EventType,
+  OrderEvent,
+  FillEvent,
+  SlippageEvent,
+  CommissionEvent,
+  BarEvent,
+} from './Event';
 import { Portfolio } from './Portfolio';
 
 export interface Order {
@@ -16,7 +23,7 @@ export interface Order {
 }
 
 export interface SlippageModel {
-  calculateSlippage(order: Order, currentPrice: number): number;
+  calculateSlippage(order: Order, current_price: number): number;
 }
 
 export interface CommissionModel {
@@ -26,15 +33,15 @@ export interface CommissionModel {
 export class FixedSlippageModel implements SlippageModel {
   constructor(private slippage: number = 0.001) {}
 
-  calculateSlippage(order: Order, currentPrice: number): number {
-    return currentPrice * this.slippage;
+  calculateSlippage(order: Order, current_price: number): number {
+    return current_price * this.slippage;
   }
 }
 
 export class FixedCommissionModel implements CommissionModel {
   constructor(
-    private brokerageRate: number = 0.0003,  // 佣金费率：0.03%
-    private stampDutyRate: number = 0.001,   // 印花税率：0.1%（卖出时收取）
+    private brokerageRate: number = 0.0003, // 佣金费率：0.03%
+    private stampDutyRate: number = 0.001, // 印花税率：0.1%（卖出时收取）
     private transferFeeRate: number = 0.00002 // 过户费率：0.002%
   ) {}
 
@@ -56,7 +63,7 @@ export class FixedCommissionModel implements CommissionModel {
 
 export class OrderManager {
   private orders: Map<string, Order> = new Map();
-  private orderCounter: number = 1;
+  private orderCounter = 1;
   private slippageModel: SlippageModel;
   private commissionModel: CommissionModel;
 
@@ -104,7 +111,7 @@ export class OrderManager {
       id: order.orderId,
       filledQuantity: 0,
       filledPrice: undefined,
-      commission: undefined
+      commission: undefined,
     });
     return [this.orders.get(order.orderId)!];
   }
@@ -112,7 +119,10 @@ export class OrderManager {
   /**
    * 处理K线事件，执行挂单
    */
-  processBarEvent(barEvent: BarEvent, portfolio: Portfolio): {
+  processBarEvent(
+    barEvent: BarEvent,
+    portfolio: Portfolio
+  ): {
     fillEvents: FillEvent[];
     slippageEvents: SlippageEvent[];
     commissionEvents: CommissionEvent[];
@@ -163,9 +173,8 @@ export class OrderManager {
 
         // 计算滑点
         const slippage = this.slippageModel.calculateSlippage(order, filledPrice);
-        const actualPrice = order.direction === 'buy'
-          ? filledPrice + slippage
-          : filledPrice - slippage;
+        const actualPrice =
+          order.direction === 'buy' ? filledPrice + slippage : filledPrice - slippage;
 
         // 计算佣金
         const commission = this.commissionModel.calculateCommission(order, actualPrice);
@@ -216,8 +225,8 @@ export class OrderManager {
             commission,
             details: {
               brokerage: commission * 0.7, // 假设70%是佣金
-              stampDuty: order.direction === 'sell' ? commission * 0.2 : 0, // 卖出时收取印花税
-              transferFee: commission * 0.1,
+              stamp_duty: order.direction === 'sell' ? commission * 0.2 : 0, // 卖出时收取印花税
+              transfer_fee: commission * 0.1,
               otherFees: 0,
             },
           },

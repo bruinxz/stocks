@@ -11,20 +11,14 @@ const strategyController = new StrategyController();
  * @desc 获取所有可用策略
  * @access Public
  */
-router.get(
-  '/',
-  strategyController.getStrategies
-);
+router.get('/', strategyController.getStrategies.bind(strategyController));
 
 /**
  * @route GET /api/strategies/:strategyId
  * @desc 获取策略详情
  * @access Public
  */
-router.get(
-  '/:strategyId',
-  strategyController.getStrategyDetail
-);
+router.get('/:strategyId', strategyController.getStrategyDetail.bind(strategyController));
 
 /**
  * @route POST /api/strategies/validate
@@ -33,12 +27,9 @@ router.get(
  */
 router.post(
   '/validate',
-  [
-    body('strategyId').isString(),
-    body('params').isObject(),
-  ],
+  [body('strategyId').isString(), body('params').isObject()],
   validateRequest,
-  strategyController.validateStrategyParams
+  strategyController.validateStrategyParams.bind(strategyController)
 );
 
 /**
@@ -46,9 +37,6 @@ router.post(
  * @desc 获取策略性能统计
  * @access Public
  */
-router.get(
-  '/:strategyId/stats',
-  strategyController.getStrategyStats
-);
+router.get('/:strategyId/stats', strategyController.getStrategyStats.bind(strategyController));
 
 export default router;
