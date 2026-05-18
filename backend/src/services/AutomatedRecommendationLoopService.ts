@@ -12,6 +12,7 @@ import { recommendationTradeOutcomeService } from './RecommendationTradeOutcomeS
 import { recommendationLoopPolicySnapshotService } from './RecommendationLoopPolicySnapshotService';
 import { paperTradingRiskProfileService } from './PaperTradingRiskProfileService';
 import { riskThresholdStabilityService } from './RiskThresholdStabilityService';
+import { feishuBotWebhookService } from './FeishuBotWebhookService';
 import {
   buildRecommendationStrategyVariant,
   normalizeRecommendationStyle,
@@ -67,6 +68,7 @@ export interface AutomatedRecommendationLoopOptions {
   task_label?: string;
   execution_log_id?: number;
   report_to_feishu?: boolean;
+  notify_to_feishu_bot?: boolean;
   record_type?: string;
   use_entry_risk_guard?: boolean;
   max_daily_new_positions?: number;
@@ -1947,6 +1949,13 @@ class AutomatedRecommendationLoopService {
       await feishuTaskReportService.reportAutomatedRecommendationLoop(result, {
         record_type: options.record_type || '全市场荐股闭环',
       });
+      if (options.notify_to_feishu_bot !== false) {
+        await feishuBotWebhookService.sendRecommendationSummary({
+          scenario: 'automated_recommendation_loop',
+          record_type: options.record_type || '全市场荐股闭环',
+          result,
+        });
+      }
     }
 
     logger.info(

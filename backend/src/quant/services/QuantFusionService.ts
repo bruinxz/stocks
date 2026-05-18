@@ -21,6 +21,7 @@ import { recommendationLoopPolicySnapshotService } from '../../services/Recommen
 import { riskThresholdStabilityService } from '../../services/RiskThresholdStabilityService';
 import { quantStrategyExperimentService } from './QuantStrategyExperimentService';
 import { quantStrategyParamVersionService } from './QuantStrategyParamVersionService';
+import { feishuBotWebhookService } from '../../services/FeishuBotWebhookService';
 import {
   AUTONOMOUS_PORTFOLIO_NAME,
   QUANT_AGENT_FUSION_PORTFOLIO_NAME,
@@ -79,6 +80,7 @@ export interface QuantDailyPipelineOptions {
   task_label?: string;
   execution_log_id?: number;
   report_to_feishu?: boolean;
+  notify_to_feishu_bot?: boolean;
   params_by_strategy?: Record<string, Record<string, any>>;
   use_experiment_params?: boolean;
   experiment_param_policy?: Record<string, any>;
@@ -482,7 +484,7 @@ export class QuantFusionService {
             })
         : null;
 
-    return {
+    const result = {
       mode: this.resolveMode(options),
       generated_at: new Date().toISOString(),
       trade_date,
@@ -552,6 +554,16 @@ export class QuantFusionService {
         paperTrading,
       }),
     };
+
+    if (options.report_to_feishu !== false && options.notify_to_feishu_bot !== false) {
+      await feishuBotWebhookService.sendRecommendationSummary({
+        scenario: 'quant_daily_pipeline',
+        record_type: '量化交易场景推荐',
+        result,
+      });
+    }
+
+    return result;
   }
 
   private resolveMode(options: QuantDailyPipelineOptions): QuantPipelineMode {

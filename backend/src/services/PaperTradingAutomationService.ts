@@ -18,6 +18,7 @@ import { aiInvestmentSignalService } from './AIInvestmentSignalService';
 import { feishuTaskReportService } from './FeishuTaskReportService';
 import { marketEnvironmentService } from './MarketEnvironmentService';
 import { paperTradingRiskProfileService } from './PaperTradingRiskProfileService';
+import { feishuBotWebhookService } from './FeishuBotWebhookService';
 import { normalizeSymbol } from '../utils/stockSymbol';
 import { logger } from '../utils/logger';
 import { realtimeQuoteService } from '../data/services/RealtimeQuoteService';
@@ -101,6 +102,7 @@ export interface PaperTradingAutoOptions {
   require_action_buy?: boolean;
   dry_run?: boolean;
   report_to_feishu?: boolean;
+  notify_to_feishu_bot?: boolean;
   signal_date_start?: string;
   signal_date_end?: string;
   signal_ids?: number[];
@@ -1792,7 +1794,7 @@ class PaperTradingAutomationService {
       source_type: options.source_type || AISignalSourceType.QUANT_RECOMMENDATION,
     });
 
-    return {
+    const syncResult = {
       ...result,
       generated: generated
         ? {
@@ -1815,6 +1817,20 @@ class PaperTradingAutomationService {
         : undefined,
       archive,
     };
+
+    if (
+      toBoolean(options.report_to_feishu, true) &&
+      options.notify_to_feishu_bot !== false &&
+      (refreshRecommendations || Array.isArray((syncResult as any).generated?.recommendations))
+    ) {
+      await feishuBotWebhookService.sendRecommendationSummary({
+        scenario: 'paper_trading_auto_sync',
+        record_type: result.dry_run ? '模拟盘荐股预演' : '模拟盘荐股同步',
+        result: syncResult,
+      });
+    }
+
+    return syncResult;
   }
 
   async runRiskCheck(
