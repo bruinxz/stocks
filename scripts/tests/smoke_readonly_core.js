@@ -577,6 +577,14 @@ async function main() {
             `quant runtime required columns missing: ${preview(json.data.runtime_schema.summary)}`,
           );
         }
+        if (
+          json.data.factor_coverage &&
+          Number(json.data.factor_coverage?.coverage_rate?.valuation || 0) <= 0
+        ) {
+          throw new Error(
+            `quant runtime factor coverage invalid: ${preview(json.data.factor_coverage)}`,
+          );
+        }
       },
     });
 

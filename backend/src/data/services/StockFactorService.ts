@@ -31,6 +31,28 @@ function clamp(value: number, min = 0, max = 100): number {
   return Math.max(min, Math.min(max, value));
 }
 
+function daysBetween(from?: string | null, to?: string | null): number | null {
+  if (!from || !to) return null;
+  const start = new Date(`${String(from).slice(0, 10)}T00:00:00+08:00`);
+  const end = new Date(`${String(to).slice(0, 10)}T00:00:00+08:00`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+  return Math.round((end.getTime() - start.getTime()) / 86400000);
+}
+
+function isRealFactorSource(source: string): boolean {
+  const normalized = String(source || '').trim().toLowerCase();
+  if (!normalized) return false;
+  return ![
+    'local',
+    'local_derived',
+    'derived',
+    'fallback',
+    'mock',
+    'unknown',
+    'n/a',
+  ].includes(normalized);
+}
+
 function percentileRank(values: number[], value: number): number | undefined {
   const filtered = values.filter(item => Number.isFinite(item) && item > 0).sort((a, b) => a - b);
   if (!filtered.length || !Number.isFinite(value) || value <= 0) return undefined;
@@ -53,6 +75,9 @@ export interface FactorCoverage {
   as_of: string;
   latest_trade_date: string | null;
   latest_factor_date?: string | null;
+  latest_landed_factor_date?: string | null;
+  factor_lag_days?: number | null;
+  coverage_status?: 'real_ready' | 'derived_ready' | 'limited' | 'missing';
   universe_stock_count: number;
   coverage: {
     valuation: number;
@@ -82,6 +107,13 @@ export interface FactorCoverage {
     valuation: Record<string, number>;
     money_flow: Record<string, number>;
     fundamental: Record<string, number>;
+  };
+  source_quality?: {
+    total_source_records: number;
+    real_provider_records: number;
+    derived_records: number;
+    real_provider_rate: number;
+    primary_source: string | null;
   };
   next_actions: string[];
 }
@@ -711,6 +743,42 @@ export class StockFactorService {
       fundamentalRows.map(item => [item.symbol, item] as [string, StockFundamentalFactor])
     );
     const denominator = Math.max(stocks.length, 1);
+    const sourceBreakdown = {
+      valuation: countBySource(valuationRowsAll),
+      money_flow: countBySource(moneyRowsAll),
+      fundamental: countBySource(fundamentalRowsAll),
+    };
+    const sourcePairs = Object.values(sourceBreakdown).flatMap(group => Object.entries(group));
+    const totalSourceRecords = sourcePairs.reduce((sum, [, count]) => sum + toNumber(count), 0);
+    const realProviderRecords = sourcePairs.reduce(
+      (sum, [source, count]) => sum + (isRealFactorSource(source) ? toNumber(count) : 0),
+      0
+    );
+    const minCoverageRate = Math.min(
+      round((valuationCount / denominator) * 100, 2),
+      round((moneyFlowCount / denominator) * 100, 2),
+      round((fundamentalCount / denominator) * 100, 2)
+    );
+    const sourceQuality = {
+      total_source_records: totalSourceRecords,
+      real_provider_records: realProviderRecords,
+      derived_records: Math.max(totalSourceRecords - realProviderRecords, 0),
+      real_provider_rate:
+        totalSourceRecords > 0 ? round((realProviderRecords / totalSourceRecords) * 100, 2) : 0,
+      primary_source:
+        [...sourcePairs]
+          .sort((a, b) => toNumber(b[1]) - toNumber(a[1]))
+          .map(([source]) => source)[0] || null,
+    };
+    const factorLagDays = daysBetween(latestFactorDate, latestTradeDate);
+    const coverageStatus: FactorCoverage['coverage_status'] =
+      minCoverageRate >= 70 && sourceQuality.real_provider_rate >= 10
+        ? 'real_ready'
+        : minCoverageRate >= 70
+        ? 'derived_ready'
+        : minCoverageRate >= 45
+        ? 'limited'
+        : 'missing';
     const nextActions = [];
     if (!stocks.length) nextActions.push('股票基础表为空，先执行新股同步。');
     if (!latestTradeDate) nextActions.push('历史K线为空，先执行日更同步/批量补数。');
@@ -719,12 +787,19 @@ export class StockFactorService {
       nextActions.push('执行因子落盘任务，补齐量价资金流特征。');
     if (fundamentalCount / denominator < 0.7)
       nextActions.push('配置 Tushare Pro 后补齐真实财务质量因子。');
+    if (sourceQuality.real_provider_rate < 10 && minCoverageRate >= 70)
+      nextActions.push('当前因子主要来自本地派生，建议配置 Tushare Pro 提升财务/资金流真实性。');
+    if (factorLagDays !== null && factorLagDays > 3)
+      nextActions.push(`因子快照滞后 ${factorLagDays} 天，建议先执行因子同步后再开盘扫描。`);
     if (!nextActions.length) nextActions.push('因子覆盖良好，可用于策略打分和样本外验证。');
 
     return {
       as_of: new Date().toISOString(),
       latest_trade_date: latestTradeDate,
       latest_factor_date: coverageFactorDate,
+      latest_landed_factor_date: latestFactorDate,
+      factor_lag_days: factorLagDays,
+      coverage_status: coverageStatus,
       universe_stock_count: stocks.length,
       coverage: {
         valuation: valuationCount,
@@ -754,11 +829,8 @@ export class StockFactorService {
           factor_date: item.factor_date,
         };
       }),
-      source_breakdown: {
-        valuation: countBySource(valuationRowsAll),
-        money_flow: countBySource(moneyRowsAll),
-        fundamental: countBySource(fundamentalRowsAll),
-      },
+      source_breakdown: sourceBreakdown,
+      source_quality: sourceQuality,
       next_actions: nextActions,
     };
   }

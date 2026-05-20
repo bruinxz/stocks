@@ -476,3 +476,44 @@ Follow-up observation for tomorrow:
 2. Confirm 09:55 watchdog remains green and writes concise Feishu message.
 3. Confirm newly completed Agent jobs archive without `loop_run_id` errors and increment `quant_fusion_audits` automatically.
 4. Track pure-quant open outcomes over 1/3/5/10 days before raising position limits.
+
+## 2026-05-20 continuous iteration: runtime realism and safer release gate
+
+Focus: make the system more real-data aware and prevent unstable deployments from staying online.
+
+Completed:
+
+- Production verification after the previous runtime-health release:
+  - restarted main + lym backend services only;
+  - verified `/health`, frontends, `/api/quant/runtime-health` and read-only smoke on both environments;
+  - smoke result: `29 passed / 0 failed` for main and lym.
+- Runtime health now includes a dedicated **factor coverage / real-source** check:
+  - samples market factor coverage before open scans;
+  - reports minimum valuation/money-flow/fundamental coverage;
+  - reports real-provider rate vs local-derived fallback;
+  - exposes `factor_coverage` in `/api/quant/runtime-health` and dashboard payload.
+- `StockFactorService.getCoverage()` now returns:
+  - `latest_landed_factor_date`
+  - `factor_lag_days`
+  - `coverage_status`
+  - `source_quality.real_provider_rate`
+  - clearer next actions when factors are stale or mostly local-derived.
+- Quant daily pipeline now has a hard discipline guard:
+  - after signal archive, it re-checks runtime health;
+  - if runtime health is `risk`, it keeps archived watch-only signals but blocks Agent/paper-buy execution;
+  - default scheduled open/close quant pipeline parameters now set `block_buy_on_runtime_risk=true`.
+- Scheduled quant defaults are more explicit:
+  - factor sync before scan enabled;
+  - factor sync scope/limit/skip threshold persisted in default task parameters.
+- Read-only smoke now validates factor coverage appears in runtime-health.
+- Added `scripts/deployment/release_health_gate.js`:
+  - restarts requested services;
+  - runs backend/frontend health and read-only smoke;
+  - rolls back `current` symlink to previous release and restarts when health fails;
+  - defaults to main + lym and intentionally does not touch xxz.
+
+Next:
+
+1. Wire `release_health_gate.js` into the normal deploy path so activation + health + rollback becomes one command.
+2. Add factor freshness and real-provider rate into the quant dashboard UI summary so users can see whether the model is using real data or local fallback.
+3. Add a small backend audit record for runtime-risk blocked quant runs so “why no buy today” is visible in task history.

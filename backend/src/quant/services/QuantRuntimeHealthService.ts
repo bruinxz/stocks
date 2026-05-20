@@ -5,6 +5,7 @@ import { realtimeQuoteService } from '../../data/services/RealtimeQuoteService';
 import { quantStrategyService } from './QuantStrategyService';
 import { quantDataFreshnessService } from './QuantDataFreshnessService';
 import { quantStrategyParamVersionService } from './QuantStrategyParamVersionService';
+import { stockFactorService } from '../../data/services/StockFactorService';
 
 function toNumber(value: any, fallback = 0): number {
   const parsed = Number(value);
@@ -18,10 +19,22 @@ function mapStatusToCheck(status: string | undefined): 'ok' | 'warn' | 'risk' {
   return 'warn';
 }
 
+function round(value: number, precision = 1): number {
+  const factor = 10 ** precision;
+  return Math.round((Number(value) || 0) * factor) / factor;
+}
+
 class QuantRuntimeHealthService {
   async getHealth(options: { user_id?: number } = {}) {
-    const [schemaHealth, strategies, quoteSummary, dataFreshness, activeScanParams, tasks] =
-      await Promise.all([
+    const [
+      schemaHealth,
+      strategies,
+      quoteSummary,
+      dataFreshness,
+      activeScanParams,
+      factorCoverage,
+      tasks,
+    ] = await Promise.all([
         runtimeSchemaHealthService.getHealth().catch(error => ({
           status: 'critical',
           summary: { critical_issues: 1, warnings: 0, missing_columns: 0 },
@@ -58,6 +71,18 @@ class QuantRuntimeHealthService {
           },
           selections: [],
         })),
+        stockFactorService
+          .getCoverage({
+            scope: 'market',
+            limit: toNumber(process.env.RUNTIME_HEALTH_FACTOR_SAMPLE_LIMIT, 180),
+            user_id: options.user_id,
+          })
+          .catch(error => ({
+            error: error?.message || String(error),
+            coverage_rate: { valuation: 0, money_flow: 0, fundamental: 0 },
+            source_quality: { real_provider_rate: 0 },
+            next_actions: ['因子覆盖读取失败，请检查因子表与日线数据。'],
+          })),
         ScheduledTask.findAll({
           where: { type: { [Op.in]: ['QUANT_DAILY_PIPELINE', 'QUANT_OPEN_WATCHDOG'] } },
           order: [['cron_expression', 'ASC']],
@@ -97,6 +122,19 @@ class QuantRuntimeHealthService {
       task => task.type === 'QUANT_OPEN_WATCHDOG' && task.is_active
     );
     const adoptedCount = toNumber((activeScanParams as any)?.summary?.adopted_strategy_count);
+    const factorCoverageRates = (factorCoverage as any)?.coverage_rate || {};
+    const factorMinCoverage = Math.min(
+      toNumber(factorCoverageRates.valuation),
+      toNumber(factorCoverageRates.money_flow),
+      toNumber(factorCoverageRates.fundamental)
+    );
+    const factorRealProviderRate = toNumber((factorCoverage as any)?.source_quality?.real_provider_rate);
+    const factorStatus =
+      (factorCoverage as any)?.error || factorMinCoverage < 45
+        ? 'risk'
+        : factorMinCoverage < 70
+        ? 'warn'
+        : 'ok';
     const checks = [
       {
         key: 'schema_columns',
@@ -145,6 +183,19 @@ class QuantRuntimeHealthService {
               (quoteSummary as any).latest_trade_date_symbol_count || 0
             } 只股票，状态 ${(quoteSummary as any).freshness_status || 'unknown'}。`
           : '实时行情尚未落盘，开盘扫描会降级或无法给出可信价格。',
+      },
+      {
+        key: 'factor_coverage',
+        label: '真实因子',
+        status: factorStatus,
+        metric: `${round(factorMinCoverage)}%`,
+        conclusion: (factorCoverage as any)?.error
+          ? `因子覆盖读取失败：${(factorCoverage as any).error}`
+          : factorRealProviderRate >= 10
+          ? `因子最低覆盖 ${round(factorMinCoverage)}%，真实源占比 ${round(
+              factorRealProviderRate
+            )}%，可支撑多因子评分。`
+          : `因子最低覆盖 ${round(factorMinCoverage)}%，但主要是本地派生；可运行，建议接 Tushare 提升真实性。`,
       },
       {
         key: 'data_freshness',
@@ -201,6 +252,8 @@ class QuantRuntimeHealthService {
         policy_ready_strategy_count: policyReadyCount,
         open_task_count: openTasks.length,
         watchdog_task_count: watchdogTasks.length,
+        factor_min_coverage_rate: round(factorMinCoverage),
+        factor_real_provider_rate: round(factorRealProviderRate),
         conclusion:
           status === 'ready'
             ? '量化运行时健康：字段、策略、行情、参数和开盘任务均已就绪。'
@@ -217,6 +270,7 @@ class QuantRuntimeHealthService {
           .slice(0, 8),
       },
       quote_persistence: quoteSummary,
+      factor_coverage: factorCoverage,
       data_freshness: dataFreshness,
       active_scan_params: {
         summary: (activeScanParams as any).summary,
