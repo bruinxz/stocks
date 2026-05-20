@@ -1,6 +1,7 @@
 import winston from 'winston';
 import path from 'path';
 import moment from 'moment-timezone';
+import { ensureLogsRuntime, getLogsRoot } from './runtimePaths';
 
 // 强制所有通过 logger 的时间都是北京时间
 const appendTimestamp = winston.format((info, opts: any) => {
@@ -10,7 +11,8 @@ const appendTimestamp = winston.format((info, opts: any) => {
   return info;
 });
 
-const logDir = 'logs';
+ensureLogsRuntime();
+const logDir = getLogsRoot();
 
 const levels = {
   error: 0,

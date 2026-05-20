@@ -1,7 +1,6 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { logger } from './logger';
 
 type ResolvedRuntimePath = {
   root: string;
@@ -9,8 +8,9 @@ type ResolvedRuntimePath = {
 };
 
 let cachedUploadsRoot: ResolvedRuntimePath | null = null;
+let cachedLogsRoot: ResolvedRuntimePath | null = null;
 
-function ensureWritableDirectory(directory: string): boolean {
+export function ensureWritableDirectory(directory: string): boolean {
   try {
     fs.mkdirSync(directory, { recursive: true });
     fs.accessSync(directory, fs.constants.W_OK);
@@ -20,12 +20,12 @@ function ensureWritableDirectory(directory: string): boolean {
   }
 }
 
-function discoverSharedUploadsRoot(): string | null {
+function discoverSharedRoot(child: 'uploads' | 'logs'): string | null {
   let current = path.resolve(process.cwd());
   for (let depth = 0; depth < 6; depth++) {
     const sharedDir = path.join(current, 'shared');
     if (fs.existsSync(sharedDir) && fs.statSync(sharedDir).isDirectory()) {
-      return path.join(sharedDir, 'uploads');
+      return path.join(sharedDir, child);
     }
     const parent = path.dirname(current);
     if (parent === current) break;
@@ -34,9 +34,19 @@ function discoverSharedUploadsRoot(): string | null {
   return null;
 }
 
+function reportRuntimePath(level: 'info' | 'warn', message: string) {
+  // Avoid importing logger here: logger itself depends on runtime path discovery.
+  const prefix = `[runtime-paths] ${message}`;
+  if (level === 'warn') {
+    console.warn(prefix);
+  } else {
+    console.log(prefix);
+  }
+}
+
 function buildUploadsCandidates() {
   const explicit = process.env.UPLOADS_ROOT ? path.resolve(process.env.UPLOADS_ROOT) : null;
-  const shared = discoverSharedUploadsRoot();
+  const shared = discoverSharedRoot('uploads');
   const cwdUploads = path.resolve(process.cwd(), 'uploads');
   const legacyUploads = path.resolve(__dirname, '../../uploads');
   const tempUploads = path.join(os.tmpdir(), 'stocks-runtime', 'uploads');
@@ -58,7 +68,10 @@ function resolveUploadsRoot(): ResolvedRuntimePath {
     if (ensureWritableDirectory(candidate.root)) {
       cachedUploadsRoot = candidate;
       if (candidate.source !== 'legacy/backend/uploads') {
-        logger.info(`Uploads runtime root resolved to ${candidate.root} (${candidate.source})`);
+        reportRuntimePath(
+          'info',
+          `Uploads runtime root resolved to ${candidate.root} (${candidate.source})`
+        );
       }
       return cachedUploadsRoot;
     }
@@ -68,10 +81,55 @@ function resolveUploadsRoot(): ResolvedRuntimePath {
   const emergencyRoot = path.join(os.tmpdir(), 'stocks-runtime', 'uploads');
   fs.mkdirSync(emergencyRoot, { recursive: true });
   cachedUploadsRoot = { root: emergencyRoot, source: 'emergency-os.tmpdir()' };
-  logger.warn(
+  reportRuntimePath(
+    'warn',
     `Failed to use preferred uploads roots (${errors.join(', ')}); falling back to ${emergencyRoot}`
   );
   return cachedUploadsRoot;
+}
+
+function buildLogsCandidates() {
+  const explicit = process.env.LOGS_ROOT ? path.resolve(process.env.LOGS_ROOT) : null;
+  const shared = discoverSharedRoot('logs');
+  const cwdLogs = path.resolve(process.cwd(), 'logs');
+  const legacyLogs = path.resolve(__dirname, '../../logs');
+  const tempLogs = path.join(os.tmpdir(), 'stocks-runtime', 'logs');
+
+  return [
+    explicit ? { root: explicit, source: 'env.LOGS_ROOT' } : null,
+    shared ? { root: shared, source: 'shared/logs' } : null,
+    { root: cwdLogs, source: 'cwd/logs' },
+    { root: legacyLogs, source: 'legacy/backend/logs' },
+    { root: tempLogs, source: 'os.tmpdir() fallback' },
+  ].filter(Boolean) as Array<{ root: string; source: string }>;
+}
+
+function resolveLogsRoot(): ResolvedRuntimePath {
+  if (cachedLogsRoot) return cachedLogsRoot;
+
+  const errors: string[] = [];
+  for (const candidate of buildLogsCandidates()) {
+    if (ensureWritableDirectory(candidate.root)) {
+      cachedLogsRoot = candidate;
+      if (candidate.source !== 'legacy/backend/logs') {
+        reportRuntimePath(
+          'info',
+          `Logs runtime root resolved to ${candidate.root} (${candidate.source})`
+        );
+      }
+      return cachedLogsRoot;
+    }
+    errors.push(`${candidate.source}:${candidate.root}`);
+  }
+
+  const emergencyRoot = path.join(os.tmpdir(), 'stocks-runtime', 'logs');
+  fs.mkdirSync(emergencyRoot, { recursive: true });
+  cachedLogsRoot = { root: emergencyRoot, source: 'emergency-os.tmpdir()' };
+  reportRuntimePath(
+    'warn',
+    `Failed to use preferred log roots (${errors.join(', ')}); falling back to ${emergencyRoot}`
+  );
+  return cachedLogsRoot;
 }
 
 export function getUploadsRoot() {
@@ -93,4 +151,16 @@ export function ensureUploadsRuntime() {
     throw new Error(`无法创建或写入头像目录: ${avatarDir}`);
   }
   return resolved;
+}
+
+export function getLogsRoot() {
+  return resolveLogsRoot().root;
+}
+
+export function getLogsRootMeta() {
+  return resolveLogsRoot();
+}
+
+export function ensureLogsRuntime() {
+  return resolveLogsRoot();
 }
