@@ -11,6 +11,7 @@ import { ScheduledTask } from '../../models/ScheduledTask';
 import { TaskExecutionLog } from '../../models/TaskExecutionLog';
 import { quantStrategyExperimentService } from './QuantStrategyExperimentService';
 import { quantStrategyParamVersionService } from './QuantStrategyParamVersionService';
+import { quantDataFreshnessService } from './QuantDataFreshnessService';
 import { realtimeQuoteService } from '../../data/services/RealtimeQuoteService';
 import {
   AUTONOMOUS_PORTFOLIO_NAME,
@@ -343,6 +344,7 @@ export class QuantPerformanceDashboardService {
       paramValidation,
       portfolioFamilies,
       paramTradeAttribution,
+      dataFreshness,
     ] = await Promise.all([
       this.getLatestBacktests(),
       this.getSignalSummary(),
@@ -354,6 +356,7 @@ export class QuantPerformanceDashboardService {
       quantStrategyParamVersionService.getDashboard({ limit: 1200 }),
       this.getPortfolioFamilyComparison(options),
       this.getParamExperimentTradeAttribution(options),
+      quantDataFreshnessService.getSnapshot(),
     ]);
 
     return {
@@ -364,6 +367,7 @@ export class QuantPerformanceDashboardService {
       schedule_summary: scheduleSummary,
       outcome_comparison: outcomeComparison,
       data_quality_center: dataQuality,
+      data_freshness: dataFreshness,
       strategy_experiments: strategyExperiments,
       experiment_param_suggestions: experimentParamSuggestions,
       param_validation_dashboard: {
@@ -371,7 +375,13 @@ export class QuantPerformanceDashboardService {
         trade_attribution: paramTradeAttribution,
       },
       portfolio_family_comparison: portfolioFamilies,
-      readiness: this.buildReadiness(signalSummary, latestBacktests, scheduleSummary, dataQuality),
+      readiness: this.buildReadiness(
+        signalSummary,
+        latestBacktests,
+        scheduleSummary,
+        dataQuality,
+        dataFreshness
+      ),
     };
   }
 
@@ -419,11 +429,61 @@ export class QuantPerformanceDashboardService {
       where: { status: 'COMPLETED' },
       order: [['created_at', 'DESC']],
     });
+    const completedTasks = await QuantBacktestTask.findAll({
+      where: { status: 'COMPLETED' },
+      order: [['created_at', 'DESC']],
+      limit: 200,
+    });
+    const finishedAtValues = results
+      .map(item => new Date(item.created_at as any).getTime())
+      .filter(item => Number.isFinite(item));
+    const resultCount = results.length;
+    const tradeCount = results.reduce((sum, item) => sum + toNumber(item.trade_count), 0);
+    const avgTotalReturn = resultCount
+      ? results.reduce((sum, item) => sum + toNumber(item.total_return_pct), 0) / resultCount
+      : 0;
+    const avgExcessReturn = resultCount
+      ? results.reduce((sum, item) => sum + toNumber(item.excess_return_pct), 0) / resultCount
+      : 0;
+    const profitableCount = results.filter(item => toNumber(item.total_return_pct) > 0).length;
+    const topResults = [...results]
+      .sort((a, b) => toNumber(b.total_return_pct) - toNumber(a.total_return_pct))
+      .slice(0, 10)
+      .map(result => ({
+        strategy_key: result.strategy_key,
+        strategy_name: result.strategy_name,
+        task_id: result.task_id,
+        task_name: taskById.get(Number(result.task_id))?.task_name,
+        total_return_pct: roundNumber(result.total_return_pct, 4),
+        excess_return_pct: roundNumber(result.excess_return_pct, 4),
+        max_drawdown_pct: roundNumber(result.max_drawdown_pct, 4),
+        sharpe_ratio: roundNumber(result.sharpe_ratio, 4),
+        trade_count: result.trade_count,
+        created_at: result.created_at,
+      }));
     return {
       latest_task: latestTask ? modelToPlain(latestTask) : null,
       best_strategy: best,
       strategy_count: leaderboard.length,
       leaderboard,
+      overview: {
+        completed_task_count: completedTasks.length,
+        result_count: resultCount,
+        trade_count: tradeCount,
+        avg_total_return_pct: roundNumber(avgTotalReturn, 4),
+        avg_excess_return_pct: roundNumber(avgExcessReturn, 4),
+        positive_result_count: profitableCount,
+        positive_result_rate: resultCount ? roundNumber((profitableCount / resultCount) * 100, 2) : 0,
+        best_total_return_pct: topResults[0]?.total_return_pct ?? 0,
+        best_strategy_key: topResults[0]?.strategy_key || null,
+        latest_result_at: finishedAtValues.length
+          ? new Date(Math.max(...finishedAtValues)).toISOString()
+          : null,
+        latest_task_range: latestTask
+          ? `${latestTask.start_date || '-'} ~ ${latestTask.end_date || '-'}`
+          : null,
+      },
+      top_results: topResults,
     };
   }
 
@@ -838,7 +898,13 @@ export class QuantPerformanceDashboardService {
     }
   }
 
-  private buildReadiness(signalSummary: any, backtests: any, schedule: any, dataQuality: any) {
+  private buildReadiness(
+    signalSummary: any,
+    backtests: any,
+    schedule: any,
+    dataQuality: any,
+    dataFreshness?: any
+  ) {
     const checks = [
       {
         key: 'indicator_catalog',
@@ -882,6 +948,11 @@ export class QuantPerformanceDashboardService {
         key: 'realtime_quote_persistence',
         ok: Boolean(dataQuality?.summary?.realtime_persisted),
         label: '实时行情已落盘',
+      },
+      {
+        key: 'data_freshness',
+        ok: dataFreshness?.status !== 'risk',
+        label: '闭环无关键风险',
       },
     ];
     const readyCount = checks.filter(item => item.ok).length;

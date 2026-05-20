@@ -218,6 +218,153 @@ final_score = 0.45 * quant_score
 4. **P9 数据源增强**：增加 Tushare Pro 配置与健康检查；把指数成分、财务因子、复权行情纳入多因子策略。
 5. **P10 前端持续简化**：量化研究页面加入「只看结论」模式；把复杂参数折叠到高级设置，降低页面理解成本。
 
+## 11. 服务器重装后的数据闭环重建 Runbook
+
+> 背景：服务器重装后 PostgreSQL/Redis 虽已恢复，但 `daily_bars`、量化跑分结果、量化信号、因子快照均可能为空，需要重新跑完整闭环。
+
+### 11.1 重建目标与验收阈值
+
+1. **股票基础表**：`stocks` 中 A 股已上市股票数应约 5000+。
+2. **全行情日线**：`daily_bars` 覆盖主要 A 股，最低验收：
+   - `stocks_with_bars >= 5000` 或覆盖率 `>= 92%`；
+   - `SH60 / SZ00 / SZ30 / SH68` 均有足够覆盖；
+   - 最近交易日落到 `daily_bars.max(time)`。
+3. **因子快照**：`stock_valuation_factors` / `stock_money_flow_factors` / `stock_fundamental_factors` 至少覆盖已具备日线的核心股票；无付费源时使用 `local_derived` 兜底。
+4. **量化历史跑分**：按股票分片创建 `quant_backtest_tasks`，结果写入：
+   - `quant_backtest_results`
+   - `quant_backtest_trades`
+   - `quant_strategy_experiments` / 参数版本候选（由服务自动沉淀）
+5. **量化信号与排行榜**：
+   - `quant_signals` 生成当日信号；
+   - `/api/quant/rankings` 可见量化排行榜；
+   - 小规模 `daily-pipeline` smoke 能跑通融合归档。
+
+### 11.2 可续跑脚本
+
+新增脚本：
+
+```bash
+scripts/deployment/rebuild_data_closed_loop.sh
+```
+
+推荐在服务器 `/opt/stocks/current` 中运行：
+
+```bash
+cd /opt/stocks/current
+chmod +x scripts/deployment/rebuild_data_closed_loop.sh
+
+# 先只补行情，低并发、可续跑；达到阈值后再跑因子/跑分/信号。
+RUN_FACTORS_AFTER=0 \
+RUN_BACKTESTS_AFTER=0 \
+RUN_SIGNALS_AFTER=0 \
+RUN_DAILY_PIPELINE_AFTER=0 \
+MAX_MARKET_ROUNDS=80 \
+TARGET_WITH_BARS=5000 \
+TARGET_COVERAGE_PCT=92 \
+./scripts/deployment/rebuild_data_closed_loop.sh
+
+# 行情覆盖达标后，补因子、分片创建量化跑分、生成信号、跑融合 smoke。
+RUN_FACTORS_AFTER=1 \
+RUN_BACKTESTS_AFTER=1 \
+WAIT_BACKTESTS_AFTER_QUEUE=1 \
+RUN_SIGNALS_AFTER=1 \
+RUN_DAILY_PIPELINE_AFTER=1 \
+MAX_MARKET_ROUNDS=0 \
+BACKTEST_CHUNK_SIZE=500 \
+FACTOR_CHUNK_SIZE=800 \
+./scripts/deployment/rebuild_data_closed_loop.sh
+```
+
+脚本特性：
+
+- 通过 `/api/tasks/2/run` 复用正式“全量股票日线同步”任务，任务参数已设为：
+  - `dataSource=tencent_only`
+  - `batch_limit=100`
+  - `concurrency=2`
+  - `lookback_days=180`
+  - `stale_first=true`
+  - `include_no_data=auto`
+- 会等待 `data-update` 队列空闲后再触发下一轮，避免重复加压。
+- SQL 覆盖率使用 `count(distinct ...)`，避免 join 放大。
+- 因子和跑分均按 symbols 分片，可重复执行。
+- 跑分默认异步进入 `quant-backtest` 队列，服务器上由 worker 串行/低并发消费；`WAIT_BACKTESTS_AFTER_QUEUE=1` 会等待本批分片完成后再生成信号，避免信号/排行榜早于历史跑分结果。
+
+### 11.3 关键检查 SQL
+
+```sql
+select
+  case
+    when s.symbol like 'sh.60%' then 'SH60'
+    when s.symbol like 'sz.00%' then 'SZ00'
+    when s.symbol like 'sz.30%' then 'SZ30'
+    when s.symbol like 'sh.68%' then 'SH68'
+    when s.symbol like 'bj.%' then 'BJ'
+    else 'OTHER'
+  end as bucket,
+  count(distinct s.id) as stocks,
+  count(distinct b.stock_id) as with_bars,
+  count(b.*) as bars,
+  min(b.time)::date as first_day,
+  max(b.time)::date as last_day
+from stocks s
+left join daily_bars b on b.stock_id = s.id
+where s.type='stock' and s.is_listed=true
+group by 1
+order by 1;
+```
+
+量化闭环表：
+
+```sql
+select 'quant_strategies', count(*) from quant_strategies
+union all select 'quant_backtest_tasks', count(*) from quant_backtest_tasks
+union all select 'quant_backtest_results', count(*) from quant_backtest_results
+union all select 'quant_backtest_trades', count(*) from quant_backtest_trades
+union all select 'quant_signals', count(*) from quant_signals
+union all select 'stock_valuation_factors', count(*) from stock_valuation_factors
+union all select 'stock_money_flow_factors', count(*) from stock_money_flow_factors
+union all select 'stock_fundamental_factors', count(*) from stock_fundamental_factors;
+```
+
+### 11.4 当前重建状态（2026-05-19 晚间最终验收）
+
+- 服务已恢复并通过健康检查：`stocks-backend / nginx / stocks-postgres / stocks-redis` 均 active/healthy。
+- 股票基础表已恢复：`stocks = 5522`，其中 A 股已上市口径 `5518`。
+- 全行情日线已完成：
+  - `daily_bars = 596231`
+  - `stocks_with_bars = 5516 / 5518 = 99.96%`
+  - 日期范围：`2025-11-20 ~ 2026-05-19`
+  - 主板/创业板/科创覆盖充分；BJ 多数仅有当日一根 K 线，属于数据源返回限制。
+- 因子快照已完成（免费兜底）：
+  - `stock_valuation_factors = 5190`
+  - `stock_money_flow_factors = 5190`
+  - `stock_fundamental_factors = 5190`
+  - source 当前为 `local_derived`；后续配置 Tushare 后可自动优先增强。
+- 量化历史跑分已完成：
+  - `quant_backtest_tasks = 11`，全部 `COMPLETED`
+  - `quant_backtest_results = 99`
+  - `quant_backtest_trades = 5501`
+  - 最佳结果：`multi_factor_ranking`，总收益 `35.4854%`，超额 `32.6211%`，最大回撤 `-10.6479%`，Sharpe `3.6351`。
+- 信号/排行榜已完成：
+  - `quant_signals = 1022`
+  - `/api/quant/rankings` 可见量化排行榜，summary `buy_count = 1022`。
+  - `/api/quant/performance-dashboard` 已可见 `latest_backtests.overview`：11 个完成任务、99 个策略结果、5501 笔交易。
+- 融合 smoke 已完成：
+  - `daily-pipeline` 以 `archive_only` 模式跑通，scanned `215`、signal `220`、archive `30`、selected `30`。
+  - `quant_fusion_audits = 0` 是预期结果：本次重建 smoke 关闭了 Agent/飞书/模拟盘写入，等待正式开盘/收盘定时任务沉淀。
+- 开盘自检已通过：
+  - `risk_count = 0`
+  - `warn_count = 0`
+  - 腾讯实时行情兜底落盘 `120` 只，解决 AKShare/EastMoney 实时接口断连导致的 `realtime_quotes = 0` 问题。
+
+### 11.5 下一步观察顺序
+
+1. 明日 09:35 观察「量化策略开盘机会扫描」是否按定时任务自动执行并刷新实时行情。
+2. 明日 09:55 观察「量化开盘链路看门狗」是否通过，并检查飞书多维表格/机器人摘要是否包含“量化交易场景推荐”。
+3. 等 TradingAgents 异步完成后确认 `quant_fusion_audits` 产生融合结果，收益驾驶舱中 Agent 融合模块从等待状态转为可见。
+4. 收盘后确认模拟盘/参数实验盘产生交易或归档收益样本，并继续反哺策略参数版本。
+5. 如果腾讯实时接口也出现限流，再接入第二实时兜底源（新浪/雪球/付费行情）并保留数据源健康权重。
+
 ---
 
 ## 11. 2026-05-17 持续推进记录
@@ -1329,3 +1476,70 @@ final_score = 0.45 * quant_score
 - [x] 量化收益驾驶舱 A/B 区块新增生命周期护栏说明：可见环境护栏覆盖版本数、推广所需优势环境桶、实验盘护栏覆盖版本数和 PnL 回滚线。
 - [ ] 下一步：把当前护栏阈值从固定默认值升级为按策略风险级别自适应，例如高波动突破策略需要更多环境桶确认，低波质量策略可降低样本门槛。
 - [ ] 下一步：将被 `rolled_back` 的参数版本从开盘扫描参数候选中显式排除一段冷却期，避免刚回滚的实验参数被下一轮实验建议重新采用。
+
+### 11.6 本轮线上发布与验证记录（2026-05-19 深夜）
+
+已发布到 `/opt/stocks/current` 并重启 `stocks-backend`：
+
+- 实时行情兜底：`RealtimeQuoteService` 在 AKShare/EastMoney 实时接口返回空或断连时自动降级腾讯 `qt.gtimg.cn`，并继续写入 `realtime_quotes` 与 `stocks.price/change_percent` 快照。
+- 排行榜统计：`/api/quant/rankings` 保留量化 `buy_count/watch_count`，融合统计使用 `fusion_buy_count/fusion_watch_count/fusion_avoid_count`，避免 summary 字段互相覆盖。
+- 因子覆盖口径：因子覆盖用最新 `factor_date`，不再因为当日日线比低频因子新一天而误判 0% 覆盖。
+- 收益驾驶舱：新增 `latest_backtests.overview` 和页面“全市场历史跑分概览”，直接展示任务数、结果数、交易样本、正收益率、平均收益和平均超额。
+- 开盘/收盘定时任务：显式补齐 `notify_to_feishu_bot=true`，确保写多维表格之外也会走飞书机器人简洁摘要。
+- 线上 smoke：公网前端地址 `http://127.0.0.1:3001` 下只读核心冒烟通过 `27 pass / 0 fail / 2 skipped`。
+
+明日重点观察：
+
+1. 09:35 开盘扫描是否刷新实时行情、归档量化候选、写入飞书多维表格并发送机器人摘要。
+2. 09:55 看门狗是否成功，若失败需优先查看 `task_execution_logs` 与飞书记录。
+3. TradingAgents 异步回调后 `quant_fusion_audits` 是否开始增长。
+4. 模拟盘是否出现纯量化盘/量化+Agent融合盘的新持仓或被风控拦截原因。
+
+### P126：参数生命周期风险自适应与开盘数据闭环新鲜度（本轮完成）
+
+- [x] 新增 `QuantDataFreshnessService` 与 `GET /api/quant/data-freshness`，只读检查实时行情、量化信号、推荐归档、Agent 融合审计、参数 A/B 验证、模拟盘收益闭环。
+- [x] 开盘自检 `QuantOpeningPreflightService` 接入 `data_freshness`，把数据闭环状态纳入明日开盘准备度。
+- [x] 策略研究总览新增“开盘数据闭环检查”轻量卡片，展示每个闭环节点的正常/观察/风险和一句核心原因，避免用户必须读复杂 JSON。
+- [x] 参数生命周期引入策略风险级别自适应门槛：高风险突破策略需要更多样本、胜率、超额收益和环境桶确认；低风险防守策略可更早观察放大但更慢回滚。
+- [x] 参数回滚/降级写入 `lifecycle_cooldown_until`，已回滚版本和仍在冷却的降级版本会从开盘扫描候选中排除，避免刚失败参数被下一轮实验建议重新采用。
+- [x] 开盘扫描参数诊断新增 `excluded_versions`，说明每个排除版本的状态、冷却期和原因。
+- [x] 飞书量化任务摘要新增“参数护栏”短句，说明风险自适应与冷却排除已启用；仍保持 message 只放结论和核心理由。
+- [x] 只读 smoke 新增 `quant data freshness` 检查。
+- [x] 本地门禁通过：后端 TypeScript、前端生产构建、smoke 脚本语法。
+
+下一步：
+
+1. 线上发布后运行公网 smoke，确认 `/api/quant/data-freshness` 与 `/api/strategy-research/opening-preflight` 均可用。
+2. 开盘后重点观察：09:35 量化扫描是否刷新行情、归档候选、发送飞书；09:55 看门狗是否把数据闭环状态写入飞书；Agent 异步完成后 `quant_fusion_audits` 是否增长。
+3. 后续可把 `data_freshness` 卡片接入量化收益驾驶舱顶部，让“今日是否值得看推荐”更加直接。
+
+### P127：量化收益驾驶舱接入数据闭环可信度（本轮完成）
+
+- [x] `/api/quant/performance-dashboard` 返回 `data_freshness`，复用只读新鲜度服务，避免前端多次请求。
+- [x] 收益驾驶舱 readiness 增加“闭环无关键风险”检查，避免只看实时行情落盘而忽略 Agent 融合/模拟盘收益沉淀状态。
+- [x] 前端收益驾驶舱新增“今日推荐链路可信度”卡片，用 6 个轻量节点展示：实时行情、量化信号、推荐归档、Agent融合、参数A/B、模拟盘收益。
+- [x] 本地后端 TypeScript 与前端生产构建通过。
+
+下一步：发布该 UI/API 增量到线上，运行 smoke，并在明日开盘后观察可信度卡片从 warn 向 ok 收敛。
+
+### P128：历史信号防未来实时价污染护栏（本轮完成）
+
+- [x] 发现历史补样时 `trade_date=2026-04-20` 的部分信号读取了 `2026-05-19` 的实时行情元数据，存在时间穿越风险。
+- [x] `QuantSignalService.generateSignals` 增加 `include_realtime_quote` 参数，并默认仅当 `trade_date >= today` 时合入实时行情；历史补样默认只使用对应日期日线。
+- [ ] 部署后清理并重建 `2026-04-20` 的量化信号和参数 A/B 验证，确保历史样本没有未来价格源。
+
+### P129：历史样本清理与模拟盘最低一手采样（本轮完成）
+
+- [x] 线上部署 P128 历史信号防未来实时价污染护栏，并通过 `/healthz` 与只读 smoke。
+- [x] 清理并重建 `2026-04-20` 历史补样：仅删除该日期 `quant_signals=254` 与 `quant_strategy_param_validations=860`，重建后 `price_source` 只剩 `daily_bar/stock_snapshot`，`latest_quote_time` 为空。
+- [x] 定位纯量化模拟盘没有收益闭环样本的原因：冷启动仓位倍率过低，A 股 100 股一手约束导致“买不起一手”。
+- [x] `PaperTradingAutomationService` 新增强制候选最低一手采样护栏：仅对 pipeline 指定 `signal_ids` 生效，并继续受策略单票上限、现金、日内新增仓位、总仓位、行业暴露等风控约束。
+- [x] 小仓真实补样：纯量化盘成交 `sz.300693 盛弘股份`、`sz.300691 联合光电` 各 100 股；`recommendation_trade_outcomes` 产生 2 条 open 样本。
+
+### P130：TradingAgents 归档空 loop_run_id 修复与融合审计补偿（本轮完成）
+
+- [x] 定位 `quant_fusion_audits=0` 的根因：AI 轮询 job 已完成，但 `loopRunId` 为空时仍查询 `RecommendationLoopPolicySnapshot where loop_run_id=undefined`，导致 TradingAgents 结果归档失败。
+- [x] 修复 `aiPollingWorker`：仅当 `loopRunId` 存在时查询策略快照；否则跳过，不影响 Agent 结果归档。
+- [x] 对已完成的 2 个量化 Agent job 执行补偿：归档 2 条 `tradingagents` 信号，写入 2 条 `quant_fusion_audits`。
+- [x] 当前量化数据闭环新鲜度为 `ok`，收益驾驶舱 readiness 达到 `100/ready=true`。
+- [ ] 明日开盘后重点确认新 Agent job 不再出现“WHERE parameter loop_run_id has invalid undefined value”，并能自动写入融合审计。

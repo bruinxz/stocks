@@ -37,6 +37,7 @@ import {
   ApiOutlined,
   ThunderboltOutlined,
   ToolOutlined,
+  FundProjectionScreenOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import {
@@ -175,10 +176,20 @@ interface DataSourceHealthResponse {
     realtime_ready: boolean;
     fundamentals_ready: boolean;
     intraday_ready: boolean;
+    money_flow_ready?: boolean;
+    valuation_ready?: boolean;
     agent_ready: boolean;
     primary_history_provider?: string | null;
     primary_stock_list_provider?: string | null;
     primary_stock_basic_provider?: string | null;
+    primary_fundamental_provider?: string | null;
+    primary_money_flow_provider?: string | null;
+    primary_valuation_provider?: string | null;
+    factor_landing_plan?: {
+      status?: string;
+      target_tables?: string[];
+      next_step?: string;
+    };
     realtime_providers?: string[];
     recommended_paid_source?: {
       provider_name: string;
@@ -241,6 +252,37 @@ interface DataQualityResponse {
   items: DataQualityItem[];
 }
 
+interface FactorCoverageResponse {
+  as_of: string;
+  latest_trade_date?: string | null;
+  universe_stock_count: number;
+  coverage: {
+    valuation: number;
+    money_flow: number;
+    fundamental: number;
+  };
+  coverage_rate: {
+    valuation: number;
+    money_flow: number;
+    fundamental: number;
+  };
+  samples: Array<{
+    symbol: string;
+    name: string;
+    industry?: string | null;
+    valuation_score?: number | null;
+    money_flow_score?: number | null;
+    quality_score?: number | null;
+    factor_date?: string | null;
+  }>;
+  source_breakdown?: {
+    valuation?: Record<string, number>;
+    money_flow?: Record<string, number>;
+    fundamental?: Record<string, number>;
+  };
+  next_actions: string[];
+}
+
 const DataUpdateStatus: React.FC = () => {
   const [queueStatus, setQueueStatus] = useState<QueueStatus>({
     waiting: 0,
@@ -267,6 +309,7 @@ const DataUpdateStatus: React.FC = () => {
 
   const [dataSourceHealth, setDataSourceHealth] = useState<DataSourceHealthResponse | null>(null);
   const [dataQuality, setDataQuality] = useState<DataQualityResponse | null>(null);
+  const [factorCoverage, setFactorCoverage] = useState<FactorCoverageResponse | null>(null);
 
   const [loading, setLoading] = useState({
     queue: false,
@@ -274,6 +317,7 @@ const DataUpdateStatus: React.FC = () => {
     stats: false,
     health: false,
     quality: false,
+    factors: false,
   });
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [refreshInterval, setRefreshInterval] = useState(10); // 秒
@@ -326,6 +370,7 @@ const DataUpdateStatus: React.FC = () => {
         stats: true,
         health: true,
         quality: true,
+        factors: true,
       }));
 
       // 获取队列状态（带筛选参数）
@@ -359,13 +404,17 @@ const DataUpdateStatus: React.FC = () => {
       }
 
       // 获取系统健康状态
-      const [healthResponse, dataSourceHealthResponse, dataQualityResponse] = await Promise.all([
-        api.get('/market/health'),
-        api.get('/market/data-sources/health'),
-        api.get('/market/data-quality', {
-          params: { scope: 'favorites', lookback_days: 180, limit: 50 },
-        }),
-      ]);
+      const [healthResponse, dataSourceHealthResponse, dataQualityResponse, factorResponse] =
+        await Promise.all([
+          api.get('/market/health'),
+          api.get('/market/data-sources/health'),
+          api.get('/market/data-quality', {
+            params: { scope: 'favorites', lookback_days: 180, limit: 50 },
+          }),
+          api.get('/market/factors/coverage', {
+            params: { scope: 'market', limit: 120 },
+          }),
+        ]);
       const nextSystemHealth = {
         redis: true,
         database: true,
@@ -391,6 +440,10 @@ const DataUpdateStatus: React.FC = () => {
         setDataQuality(dataQualityResponse.data.data as DataQualityResponse);
       }
 
+      if (factorResponse.data.success) {
+        setFactorCoverage(factorResponse.data.data as FactorCoverageResponse);
+      }
+
       setSystemHealth(nextSystemHealth);
     } catch (error: any) {
       message.error('获取数据失败: ' + error.message);
@@ -402,6 +455,7 @@ const DataUpdateStatus: React.FC = () => {
         stats: false,
         health: false,
         quality: false,
+        factors: false,
       }));
     }
   }, [logFilters]);
@@ -544,6 +598,29 @@ const DataUpdateStatus: React.FC = () => {
       message.error('数据源主动探测失败: ' + (error.response?.data?.error || error.message));
     } finally {
       setLoading(prev => ({ ...prev, health: false }));
+    }
+  };
+
+  const handleSyncFactors = async () => {
+    setLoading(prev => ({ ...prev, factors: true }));
+    try {
+      const response = await api.post('/market/factors/sync', {
+        scope: 'market',
+        limit: 180,
+      });
+      if (response.data.success) {
+        message.success(response.data.message || '因子落盘完成');
+        const coverageResponse = await api.get('/market/factors/coverage', {
+          params: { scope: 'market', limit: 180 },
+        });
+        if (coverageResponse.data.success) {
+          setFactorCoverage(coverageResponse.data.data as FactorCoverageResponse);
+        }
+      }
+    } catch (error: any) {
+      message.error('因子落盘失败: ' + (error.response?.data?.error || error.message));
+    } finally {
+      setLoading(prev => ({ ...prev, factors: false }));
     }
   };
 
@@ -973,6 +1050,9 @@ const DataUpdateStatus: React.FC = () => {
     trade_calendar: '交易日历',
     realtime_quote: '实时行情',
     intraday_bar: '日内K线',
+    fundamental_factor: '财务因子',
+    money_flow: '资金流',
+    valuation: '估值',
     health_probe: '健康探测',
   };
 
@@ -1038,6 +1118,11 @@ const DataUpdateStatus: React.FC = () => {
     const historyPlan = dataSourceHealth?.routing_plans?.history_k || [];
     const stockBasicPlan = dataSourceHealth?.routing_plans?.stock_basic || [];
     const stockListPlan = dataSourceHealth?.routing_plans?.stock_list || [];
+    const factorPlan = [
+      ...(dataSourceHealth?.routing_plans?.fundamental_factor || []),
+      ...(dataSourceHealth?.routing_plans?.money_flow || []),
+      ...(dataSourceHealth?.routing_plans?.valuation || []),
+    ];
     const quantReadiness = dataSourceHealth?.quant_readiness;
     const bestProvider = (historyPlan.find(provider => provider.is_enabled) ||
       [...activeProviders].sort(
@@ -1158,6 +1243,13 @@ const DataUpdateStatus: React.FC = () => {
     ];
 
     const routeColumns: ColumnsType<DataSourceRoutingItem> = [
+      {
+        title: '能力',
+        dataIndex: 'feature',
+        key: 'feature',
+        width: 100,
+        render: feature => <Tag>{featureLabelMap[feature] || feature}</Tag>,
+      },
       {
         title: '顺位',
         dataIndex: 'rank',
@@ -1290,6 +1382,8 @@ const DataUpdateStatus: React.FC = () => {
                     ['历史K线', quantReadiness.history_ready],
                     ['实时行情', quantReadiness.realtime_ready],
                     ['财务因子', quantReadiness.fundamentals_ready],
+                    ['资金流', quantReadiness.money_flow_ready],
+                    ['估值', quantReadiness.valuation_ready],
                     ['日内数据', quantReadiness.intraday_ready],
                     ['Agent研判', quantReadiness.agent_ready],
                   ].map(([label, ok]) => (
@@ -1311,6 +1405,11 @@ const DataUpdateStatus: React.FC = () => {
                     <Text type="secondary">
                       推荐增强：{quantReadiness.recommended_paid_source.provider_label}，
                       {quantReadiness.recommended_paid_source.reason}
+                    </Text>
+                  )}
+                  {quantReadiness.factor_landing_plan?.next_step && (
+                    <Text type="secondary">
+                      因子落盘：{quantReadiness.factor_landing_plan.next_step}
                     </Text>
                   )}
                 </div>
@@ -1386,7 +1485,7 @@ const DataUpdateStatus: React.FC = () => {
           style={{ marginBottom: 12 }}
           title={() => <Text strong>历史K线动态路由计划</Text>}
           columns={routeColumns}
-          dataSource={historyPlan}
+          dataSource={[...historyPlan, ...factorPlan]}
           rowKey={record => `${record.feature}-${record.provider_name}`}
           size="small"
           pagination={false}
@@ -1600,6 +1699,166 @@ const DataUpdateStatus: React.FC = () => {
           pagination={{ pageSize: 5, showSizeChanger: false }}
           scroll={{ x: 900 }}
           locale={{ emptyText: <Empty description="暂无数据质量画像" /> }}
+        />
+      </Card>
+    );
+  };
+
+  const renderFactorCoverageCard = () => {
+    const coverage = factorCoverage;
+    const factorRows = [
+      {
+        key: 'valuation',
+        label: '估值分位',
+        description: 'PE/PB/市值与历史分位，辅助过滤估值极端标的',
+        count: coverage?.coverage?.valuation || 0,
+        rate: coverage?.coverage_rate?.valuation || 0,
+      },
+      {
+        key: 'money_flow',
+        label: '量价资金流',
+        description: '量比、换手、5/20日动量，先用免费日线衍生，后续接真实资金流',
+        count: coverage?.coverage?.money_flow || 0,
+        rate: coverage?.coverage_rate?.money_flow || 0,
+      },
+      {
+        key: 'fundamental',
+        label: '质量因子',
+        description: 'ROE/成长/负债等真实财务待 Tushare 增强，当前使用本地质量代理分',
+        count: coverage?.coverage?.fundamental || 0,
+        rate: coverage?.coverage_rate?.fundamental || 0,
+      },
+    ];
+    const sourceBreakdown = coverage?.source_breakdown || {};
+    const sourceRows = [
+      { key: 'valuation', label: '估值', data: sourceBreakdown.valuation || {} },
+      { key: 'money_flow', label: '资金流', data: sourceBreakdown.money_flow || {} },
+      { key: 'fundamental', label: '质量', data: sourceBreakdown.fundamental || {} },
+    ];
+
+    const sampleColumns: ColumnsType<FactorCoverageResponse['samples'][number]> = [
+      {
+        title: '标的',
+        key: 'stock',
+        render: (_, record) => (
+          <Space direction="vertical" size={0}>
+            <Text strong>{record.name || record.symbol}</Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {record.symbol} · {record.industry || '未分类'}
+            </Text>
+          </Space>
+        ),
+      },
+      {
+        title: '估值',
+        dataIndex: 'valuation_score',
+        key: 'valuation_score',
+        width: 90,
+        render: value => <Text strong>{Number(value || 0).toFixed(1)}</Text>,
+      },
+      {
+        title: '资金流',
+        dataIndex: 'money_flow_score',
+        key: 'money_flow_score',
+        width: 90,
+        render: value => (
+          <Text strong>{value === null ? '--' : Number(value || 0).toFixed(1)}</Text>
+        ),
+      },
+      {
+        title: '质量',
+        dataIndex: 'quality_score',
+        key: 'quality_score',
+        width: 90,
+        render: value => (
+          <Text strong>{value === null ? '--' : Number(value || 0).toFixed(1)}</Text>
+        ),
+      },
+      {
+        title: '日期',
+        dataIndex: 'factor_date',
+        key: 'factor_date',
+        width: 110,
+      },
+    ];
+
+    return (
+      <Card
+        className="modern-card"
+        variant="borderless"
+        title="量化因子落盘"
+        style={{ marginTop: 12 }}
+        extra={
+          <Button
+            size="small"
+            icon={<FundProjectionScreenOutlined />}
+            onClick={handleSyncFactors}
+            loading={loading.factors}
+          >
+            同步因子
+          </Button>
+        }
+      >
+        <Alert
+          showIcon
+          type="info"
+          message="因子层已独立建模，已支持 Tushare 增强通道 + 本地派生兜底"
+          description="默认 provider=auto：若 TUSHARE_ENABLED=true 且配置 token，会优先尝试 daily_basic / moneyflow / fina_indicator；失败或未配置时继续使用 local_derived 免费因子，策略读取层无需改动。"
+          style={{ marginBottom: 12 }}
+        />
+        <Row gutter={[12, 12]} style={{ marginBottom: 12 }}>
+          {factorRows.map(item => (
+            <Col xs={24} md={8} key={item.key}>
+              <Card size="small" variant="borderless" style={{ background: '#f8fafc' }}>
+                <Statistic
+                  title={item.label}
+                  value={Number(item.rate || 0)}
+                  precision={1}
+                  suffix="%"
+                />
+                <Progress
+                  percent={Math.round(Number(item.rate || 0))}
+                  size="small"
+                  showInfo={false}
+                />
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {item.count}/{coverage?.universe_stock_count || 0} · {item.description}
+                </Text>
+              </Card>
+            </Col>
+          ))}
+        </Row>
+        <Space direction="vertical" size={4} style={{ width: '100%', marginBottom: 12 }}>
+          <Text type="secondary">
+            最新交易日：{coverage?.latest_trade_date || '--'} · 样本池：
+            {coverage?.universe_stock_count || 0} 只
+          </Text>
+          <Space wrap size={6}>
+            {sourceRows.map(row => (
+              <Tag key={row.key}>
+                {row.label}来源：
+                {Object.keys(row.data).length
+                  ? Object.entries(row.data)
+                      .map(([source, count]) => `${source} ${count}`)
+                      .join(' / ')
+                  : '--'}
+              </Tag>
+            ))}
+          </Space>
+          {(coverage?.next_actions || []).slice(0, 3).map(item => (
+            <Text key={item} type="secondary">
+              · {item}
+            </Text>
+          ))}
+        </Space>
+        <Table
+          columns={sampleColumns}
+          dataSource={coverage?.samples || []}
+          rowKey="symbol"
+          size="small"
+          loading={loading.factors}
+          pagination={false}
+          locale={{ emptyText: <Empty description="暂无因子样本，点击同步因子生成" /> }}
         />
       </Card>
     );
@@ -2052,6 +2311,7 @@ const DataUpdateStatus: React.FC = () => {
         <Col xs={24} md={14} lg={17}>
           {renderStatsCard()}
           {renderDataSourceCard()}
+          {renderFactorCoverageCard()}
           {renderDataQualityCard()}
 
           <Card

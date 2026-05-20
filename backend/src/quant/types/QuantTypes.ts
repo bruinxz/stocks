@@ -36,6 +36,12 @@ export interface QuantStockContext {
   total_market_cap?: number | null;
   pe_dynamic?: number | null;
   pb?: number | null;
+  factor_snapshot?: {
+    valuation?: Record<string, any> | null;
+    money_flow?: Record<string, any> | null;
+    fundamental?: Record<string, any> | null;
+    factor_date?: string | null;
+  };
 }
 
 export interface QuantSignalResult {
@@ -101,6 +107,17 @@ export interface QuantBacktestOptions {
   candidate_limit?: number;
   min_score?: number;
   params_by_strategy?: Record<string, Record<string, any>>;
+  validation_split?: {
+    enabled?: boolean;
+    train_pct?: number;
+    validation_pct?: number;
+    test_pct?: number;
+    train_end_date?: string;
+    validation_start_date?: string;
+    validation_end_date?: string;
+    test_start_date?: string;
+  };
+  grid_search?: Record<string, any>;
 }
 
 export interface QuantEquityPoint {

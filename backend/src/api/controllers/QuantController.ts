@@ -9,6 +9,7 @@ import { quantPerformanceDashboardService } from '../../quant/services/QuantPerf
 import { quantOpenWatchdogService } from '../../quant/services/QuantOpenWatchdogService';
 import { quantStrategyExperimentService } from '../../quant/services/QuantStrategyExperimentService';
 import { quantStrategyParamVersionService } from '../../quant/services/QuantStrategyParamVersionService';
+import { quantDataFreshnessService } from '../../quant/services/QuantDataFreshnessService';
 import { AuthenticatedRequest } from '../../middlewares/auth';
 import { logger } from '../../utils/logger';
 
@@ -29,8 +30,8 @@ export class QuantController {
         req.body?.default_params !== undefined
           ? req.body.default_params
           : req.body?.defaultParams !== undefined
-            ? req.body.defaultParams
-            : undefined;
+          ? req.body.defaultParams
+          : undefined;
       const strategy = await quantStrategyService.updateStrategyConfig(req.params.strategy_key, {
         enabled:
           req.body?.enabled === undefined || req.body?.enabled === null
@@ -78,6 +79,18 @@ export class QuantController {
     }
   }
 
+  async getDataFreshness(req: AuthenticatedRequest, res: Response) {
+    try {
+      const data = await quantDataFreshnessService.getSnapshot({
+        trade_date: req.query.trade_date as string,
+      });
+      res.json({ success: true, data, message: data.summary.conclusion });
+    } catch (error: any) {
+      logger.error('获取量化数据新鲜度失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
   async listStrategyExperiments(req: AuthenticatedRequest, res: Response) {
     try {
       const summary = await quantStrategyExperimentService.getExperimentSummary({
@@ -120,6 +133,34 @@ export class QuantController {
     }
   }
 
+  async getActiveScanParams(req: AuthenticatedRequest, res: Response) {
+    try {
+      const strategy_keys =
+        typeof req.query.strategy_keys === 'string'
+          ? req.query.strategy_keys
+              .split(',')
+              .map(item => item.trim())
+              .filter(Boolean)
+          : typeof req.query.strategyKeys === 'string'
+          ? req.query.strategyKeys
+              .split(',')
+              .map(item => item.trim())
+              .filter(Boolean)
+          : undefined;
+      const result = await quantStrategyParamVersionService.getActiveParamsForScan({
+        strategy_keys,
+        include_grid_search: req.query.include_grid_search !== 'false',
+        include_experiment: req.query.include_experiment !== 'false',
+        include_observing: req.query.include_observing === 'true',
+        include_degraded: req.query.include_degraded === 'true',
+      });
+      res.json({ success: true, data: result });
+    } catch (error: any) {
+      logger.error('获取开盘扫描参数版本失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
   async refreshParamVersions(req: AuthenticatedRequest, res: Response) {
     try {
       const result = await quantStrategyParamVersionService.refreshVersionsFromExperiments({
@@ -129,8 +170,8 @@ export class QuantController {
           req.body?.use_experiment_params !== undefined
             ? Boolean(req.body.use_experiment_params)
             : req.body?.useExperimentParams !== undefined
-              ? Boolean(req.body.useExperimentParams)
-              : true,
+            ? Boolean(req.body.useExperimentParams)
+            : true,
       });
       res.json({ success: true, data: result });
     } catch (error: any) {
@@ -141,8 +182,8 @@ export class QuantController {
 
   async refreshParamValidations(req: AuthenticatedRequest, res: Response) {
     try {
-      const createResult = await quantStrategyParamVersionService.createPendingValidationsFromSignals(
-        {
+      const createResult =
+        await quantStrategyParamVersionService.createPendingValidationsFromSignals({
           trade_date: req.body?.trade_date || req.body?.tradeDate,
           start_date: req.body?.start_date || req.body?.startDate,
           end_date: req.body?.end_date || req.body?.endDate,
@@ -150,8 +191,7 @@ export class QuantController {
           horizons: req.body?.horizons,
           limit: Number(req.body?.limit || 500),
           signal: req.body?.signal,
-        }
-      );
+        });
       const refreshResult = await quantStrategyParamVersionService.refreshValidationReturns({
         limit: Number(req.body?.refresh_limit || req.body?.refreshLimit || 1000),
         include_completed: Boolean(req.body?.include_completed || req.body?.includeCompleted),
@@ -207,6 +247,75 @@ export class QuantController {
       res.json({ success: true, data: result });
     } catch (error: any) {
       logger.error('运行量化跑分失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  async createWalkForwardBacktests(req: AuthenticatedRequest, res: Response) {
+    try {
+      const strategy_keys = await quantStrategyService.resolveStrategyKeys(
+        req.body?.strategy_keys || req.body?.strategyKeys
+      );
+      const params_by_strategy = {
+        ...(await quantStrategyService.getDefaultParamsByStrategy(strategy_keys)),
+        ...(req.body?.params_by_strategy || req.body?.paramsByStrategy || {}),
+      };
+      const result = await quantBacktestService.createWalkForwardBacktests(
+        {
+          ...req.body,
+          strategy_keys,
+          params_by_strategy,
+        },
+        req.user?.id
+      );
+      res.json({ success: true, data: result, message: result.message });
+    } catch (error: any) {
+      logger.error('创建滚动验证跑分失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  async createParameterGridBacktests(req: AuthenticatedRequest, res: Response) {
+    try {
+      const strategy_keys = await quantStrategyService.resolveStrategyKeys(
+        req.body?.strategy_keys || req.body?.strategyKeys
+      );
+      const params_by_strategy = {
+        ...(await quantStrategyService.getDefaultParamsByStrategy(strategy_keys)),
+        ...(req.body?.params_by_strategy || req.body?.paramsByStrategy || {}),
+      };
+      const result = await quantBacktestService.createParameterGridBacktests(
+        {
+          ...req.body,
+          strategy_keys,
+          params_by_strategy,
+        },
+        req.user?.id
+      );
+      res.json({ success: true, data: result, message: result.message });
+    } catch (error: any) {
+      logger.error('创建参数网格跑分失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  async getParameterGridSummary(req: AuthenticatedRequest, res: Response) {
+    try {
+      const data = await quantBacktestService.summarizeParameterGridSearch({
+        user_id: req.user?.id,
+        group_id: req.query.group_id as string,
+        limit: Number(req.query.limit || 300),
+      });
+      let param_versions: any = null;
+      if (req.query.upsert_versions === 'true' || req.query.upsertVersions === 'true') {
+        param_versions = await quantStrategyParamVersionService.upsertGridSearchCandidates({
+          groups: data.groups,
+          min_rank_score: Number(req.query.min_rank_score || 0),
+        });
+      }
+      res.json({ success: true, data: { ...data, param_versions } });
+    } catch (error: any) {
+      logger.error('获取参数网格搜索汇总失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   }
@@ -272,10 +381,7 @@ export class QuantController {
       const strategy_keys = await quantStrategyService.resolveStrategyKeys(
         req.body?.strategy_keys || req.body?.strategyKeys
       );
-      const params_by_strategy = {
-        ...(await quantStrategyService.getDefaultParamsByStrategy(strategy_keys)),
-        ...(req.body?.params_by_strategy || req.body?.paramsByStrategy || {}),
-      };
+      const params_by_strategy = req.body?.params_by_strategy || req.body?.paramsByStrategy;
       const result = await quantFusionService.runDailyPipeline({
         ...req.body,
         strategy_keys,
@@ -356,6 +462,8 @@ export class QuantController {
           limit,
         }),
       ]);
+      const quantSummary: any = quantDashboard.summary || {};
+      const fusionSummary: any = fusionDashboard.summary || {};
       res.json({
         success: true,
         data: {
@@ -365,11 +473,18 @@ export class QuantController {
           quant_rankings: quantDashboard.quant_rankings,
           fusion_rankings: fusionDashboard.fusion_rankings,
           summary: {
-            ...(quantDashboard.summary || {}),
-            ...(fusionDashboard.summary || {}),
+            ...fusionSummary,
+            ...quantSummary,
+            fusion_count: fusionSummary.fusion_count || 0,
+            fusion_buy_count: fusionSummary.fusion_buy_count ?? fusionSummary.buy_count ?? 0,
+            fusion_watch_count: fusionSummary.fusion_watch_count ?? fusionSummary.watch_count ?? 0,
+            fusion_avoid_count: fusionSummary.fusion_avoid_count ?? fusionSummary.avoid_count ?? 0,
+            agent_rescored: Boolean(fusionSummary.agent_rescored),
+            avg_quant_score: fusionSummary.avg_quant_score,
+            avg_final_score: fusionSummary.avg_final_score,
             realtime_persisted: Boolean(
-              quantDashboard.summary?.quote_persistence?.persisted ||
-              quantDashboard.summary?.quote_persistence?.latest_trade_date_snapshot_count
+              quantSummary.quote_persistence?.persisted ||
+                quantSummary.quote_persistence?.latest_trade_date_snapshot_count
             ),
           },
         },

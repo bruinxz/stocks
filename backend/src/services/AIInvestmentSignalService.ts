@@ -1439,9 +1439,18 @@ export class AIInvestmentSignalService {
         updated++;
       }
       signal_ids.push(record.id);
+      (candidate as any).signal_id = record.id;
+      (candidate as any).trace_url = this.buildSignalTraceUrl(record.id);
     }
 
     return { created, updated, total: candidates.length, signal_ids };
+  }
+
+  private buildSignalTraceUrl(signal_id?: number): string | undefined {
+    if (!signal_id) return undefined;
+    const baseUrl = String(process.env.FRONTEND_BASE_URL || '').replace(/\/+$/, '');
+    const path = `/signals/${signal_id}/trace`;
+    return baseUrl ? `${baseUrl}${path}` : path;
   }
 
   async verifySignalReturns(

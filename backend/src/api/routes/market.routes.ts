@@ -875,6 +875,12 @@ router.post('/queue/:jobId/retry', marketController.retryJob as any);
 router.get('/health', marketController.healthCheck as any);
 router.get('/data-sources/health', marketController.getDataSourceHealth as any);
 router.get('/data-quality', authController.authenticate, marketController.getDataQuality as any);
+router.get(
+  '/factors/coverage',
+  authController.authenticate,
+  marketController.getFactorCoverage as any
+);
+router.post('/factors/sync', authController.authenticate, marketController.syncFactors as any);
 
 /**
  * @swagger

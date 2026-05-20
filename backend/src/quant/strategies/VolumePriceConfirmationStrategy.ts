@@ -42,6 +42,7 @@ export class VolumePriceConfirmationStrategy extends QuantStrategy {
     const closes = bars.map(bar => bar.close);
     const volumes = bars.map(bar => Number(bar.volume || 0));
     const turnoverRates = bars.map(bar => Number(bar.turnover_rate || 0));
+    const moneyFlowFactor = context.factor_snapshot?.money_flow || {};
     const latestClose = last(closes) || Number(context.latest_price || 0);
     const ma10 = last(sma(closes, 10)) || latestClose;
     const ma20 = last(sma(closes, 20)) || ma10;
@@ -59,6 +60,8 @@ export class VolumePriceConfirmationStrategy extends QuantStrategy {
     const latestAdx = last(adxValues.adx) || 0;
     const plusDi = last(adxValues.plus_di) || 0;
     const minusDi = last(adxValues.minus_di) || 0;
+    const factorMoneyFlowScore = Number(moneyFlowFactor.money_flow_score || 0);
+    const factorMomentum5 = Number(moneyFlowFactor.momentum_5d || 0);
 
     let score = 44;
     const reasons: string[] = [];
@@ -110,6 +113,13 @@ export class VolumePriceConfirmationStrategy extends QuantStrategy {
       score += 12;
       reasons.push('5/20日动量方向一致，量价配合较好');
     }
+    if (factorMoneyFlowScore >= 68) {
+      score += 8;
+      reasons.push('因子表资金流分较高，量价确认增强');
+    } else if (factorMoneyFlowScore > 0 && factorMoneyFlowScore < 42) {
+      score -= 6;
+      risk_flags.push('因子表资金流分偏弱，需降低追入优先级');
+    }
     if (ret20 > Number(params.max_return20)) {
       score -= 14;
       risk_flags.push('20日涨幅过高，量价确认不追高');
@@ -140,6 +150,10 @@ export class VolumePriceConfirmationStrategy extends QuantStrategy {
         turnover_rate: round(latestTurnoverRate, 2),
         mfi: round(mfiValue, 2),
         obv_trend_pct: round(obvTrendPct, 2),
+        factor_date: context.factor_snapshot?.factor_date,
+        factor_money_flow_score: round(factorMoneyFlowScore, 2),
+        factor_momentum_5d: round(factorMomentum5, 2),
+        factor_money_flow_source: moneyFlowFactor.source,
         adx: round(latestAdx, 2),
         plus_di: round(plusDi, 2),
         minus_di: round(minusDi, 2),

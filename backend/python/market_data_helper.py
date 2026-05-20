@@ -8,7 +8,7 @@ returns a structured JSON error instead of crashing the Node.js process.
 import json
 import sys
 import traceback
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 
@@ -69,6 +69,20 @@ def safe_int(value: Any, default: int = 0) -> int:
         return int(float(value))
     except Exception:
         return default
+
+
+def to_yyyymmdd(value: str) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return datetime.now().strftime("%Y%m%d")
+    return raw.replace("-", "")[:8]
+
+
+def from_yyyymmdd(value: Any) -> str:
+    raw = str(value or "").strip()
+    if len(raw) == 8 and raw.isdigit():
+        return f"{raw[:4]}-{raw[4:6]}-{raw[6:]}"
+    return raw[:10]
 
 
 def adjust_to_baostock(adjustflag: str) -> str:
@@ -379,6 +393,123 @@ def tushare_get_stock_basic(token: str, code: str) -> Optional[Dict[str, Any]]:
     }
 
 
+def tushare_get_factor_snapshot(token: str, symbols_csv: str, as_of: str = "") -> List[Dict[str, Any]]:
+    """Fetch best-effort Tushare factor snapshots.
+
+    The function intentionally tolerates per-endpoint failures because Tushare
+    permissions/points vary by account. Node.js can still persist whichever
+    slices are available and fall back to local_derived for the rest.
+    """
+    pro = tushare_client(token)
+    symbols = [item.strip() for item in str(symbols_csv or "").split(",") if item.strip()]
+    end_date = to_yyyymmdd(as_of)
+    end_dt = datetime.strptime(end_date, "%Y%m%d")
+    recent_start = (end_dt - timedelta(days=45)).strftime("%Y%m%d")
+    financial_start = (end_dt - timedelta(days=900)).strftime("%Y%m%d")
+    snapshots: List[Dict[str, Any]] = []
+
+    for symbol in symbols:
+        ts_code = to_tushare_code(symbol)
+        item: Dict[str, Any] = {
+            "symbol": normalize_symbol(ts_code),
+            "ts_code": ts_code,
+            "as_of": from_yyyymmdd(end_date),
+            "source": "tushare",
+            "errors": [],
+        }
+
+        try:
+            daily_df = pro.daily_basic(
+                ts_code=ts_code,
+                start_date=recent_start,
+                end_date=end_date,
+                fields=(
+                    "ts_code,trade_date,turnover_rate,turnover_rate_f,volume_ratio,"
+                    "pe,pe_ttm,pb,ps,ps_ttm,total_share,float_share,free_share,total_mv,circ_mv"
+                ),
+            )
+            if daily_df is not None and not daily_df.empty:
+                daily_df = daily_df.sort_values("trade_date", ascending=False)
+                row = daily_df.iloc[0].to_dict()
+                item["daily_basic"] = {
+                    "trade_date": from_yyyymmdd(row.get("trade_date")),
+                    "turnover_rate": safe_float(row.get("turnover_rate")),
+                    "turnover_rate_f": safe_float(row.get("turnover_rate_f")),
+                    "volume_ratio": safe_float(row.get("volume_ratio")),
+                    "pe": safe_float(row.get("pe")),
+                    "pe_ttm": safe_float(row.get("pe_ttm") or row.get("pe")),
+                    "pb": safe_float(row.get("pb")),
+                    "ps": safe_float(row.get("ps")),
+                    "ps_ttm": safe_float(row.get("ps_ttm") or row.get("ps")),
+                    "total_mv": safe_float(row.get("total_mv")),
+                    "circ_mv": safe_float(row.get("circ_mv")),
+                }
+        except Exception as exc:
+            item["errors"].append(f"daily_basic: {exc}")
+
+        try:
+            money_df = pro.moneyflow(
+                ts_code=ts_code,
+                start_date=recent_start,
+                end_date=end_date,
+                fields=(
+                    "ts_code,trade_date,buy_lg_amount,sell_lg_amount,"
+                    "buy_elg_amount,sell_elg_amount,net_mf_amount"
+                ),
+            )
+            if money_df is not None and not money_df.empty:
+                money_df = money_df.sort_values("trade_date", ascending=False)
+                row = money_df.iloc[0].to_dict()
+                buy_main = safe_float(row.get("buy_lg_amount")) + safe_float(
+                    row.get("buy_elg_amount")
+                )
+                sell_main = safe_float(row.get("sell_lg_amount")) + safe_float(
+                    row.get("sell_elg_amount")
+                )
+                item["moneyflow"] = {
+                    "trade_date": from_yyyymmdd(row.get("trade_date")),
+                    "net_mf_amount": safe_float(row.get("net_mf_amount")),
+                    "main_net_inflow": buy_main - sell_main,
+                    "buy_lg_amount": safe_float(row.get("buy_lg_amount")),
+                    "sell_lg_amount": safe_float(row.get("sell_lg_amount")),
+                    "buy_elg_amount": safe_float(row.get("buy_elg_amount")),
+                    "sell_elg_amount": safe_float(row.get("sell_elg_amount")),
+                }
+        except Exception as exc:
+            item["errors"].append(f"moneyflow: {exc}")
+
+        try:
+            fina_df = pro.fina_indicator(
+                ts_code=ts_code,
+                start_date=financial_start,
+                end_date=end_date,
+                fields=(
+                    "ts_code,ann_date,end_date,roe,grossprofit_margin,"
+                    "netprofit_yoy,or_yoy,debt_to_assets,eps,bps"
+                ),
+            )
+            if fina_df is not None and not fina_df.empty:
+                fina_df = fina_df.sort_values(["end_date", "ann_date"], ascending=False)
+                row = fina_df.iloc[0].to_dict()
+                item["fina_indicator"] = {
+                    "ann_date": from_yyyymmdd(row.get("ann_date")),
+                    "end_date": from_yyyymmdd(row.get("end_date")),
+                    "roe": safe_float(row.get("roe")),
+                    "gross_margin": safe_float(row.get("grossprofit_margin")),
+                    "net_profit_growth": safe_float(row.get("netprofit_yoy")),
+                    "revenue_growth": safe_float(row.get("or_yoy")),
+                    "debt_asset_ratio": safe_float(row.get("debt_to_assets")),
+                    "eps": safe_float(row.get("eps")),
+                    "book_value_per_share": safe_float(row.get("bps")),
+                }
+        except Exception as exc:
+            item["errors"].append(f"fina_indicator: {exc}")
+
+        snapshots.append(item)
+
+    return snapshots
+
+
 def main() -> None:
     if len(sys.argv) < 2:
         output_error("No command provided")
@@ -402,6 +533,8 @@ def main() -> None:
             output_success(tushare_get_daily_data(args[0], args[1], args[2], args[3], args[4], args[5]))
         elif command == "tushare_get_stock_basic":
             output_success(tushare_get_stock_basic(args[0], args[1]))
+        elif command == "tushare_get_factor_snapshot":
+            output_success(tushare_get_factor_snapshot(args[0], args[1], args[2] if len(args) > 2 else ""))
         else:
             output_error(f"Unknown command: {command}")
     except Exception as exc:

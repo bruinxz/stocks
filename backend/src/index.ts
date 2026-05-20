@@ -23,6 +23,10 @@ import userRoutes from './api/routes/user.routes';
 import logRoutes from './api/routes/log.routes';
 import internalRoutes from './api/routes/internal.routes';
 import quantRoutes from './api/routes/quant.routes';
+import todayRoutes from './api/routes/today.routes';
+import reviewRoutes from './api/routes/review.routes';
+import strategyResearchRoutes from './api/routes/strategyResearch.routes';
+import signalTraceRoutes from './api/routes/signalTrace.routes';
 import './jobs/dataUpdateWorker'; // 初始化数据更新队列处理器
 import './jobs/aiPollingWorker'; // 初始化 AI 分析轮询队列处理器
 import './jobs/quantBacktestWorker'; // 初始化量化跑分队列处理器
@@ -31,6 +35,7 @@ import { repairLegacyDevelopmentSchema } from './utils/developmentSchemaRepair';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const HOST = process.env.HOST || '0.0.0.0';
 const disableScheduler = String(process.env.DISABLE_SCHEDULER || '').toLowerCase() === 'true';
 const disableDefaultTaskSeed =
   disableScheduler || String(process.env.DISABLE_DEFAULT_TASK_SEED || '').toLowerCase() === 'true';
@@ -79,6 +84,10 @@ app.use('/api/users', userRoutes);
 app.use('/api/logs', logRoutes);
 app.use('/api/internal', internalRoutes); // 给TradingAgents预留的安全数据接口
 app.use('/api/quant', quantRoutes);
+app.use('/api/today', todayRoutes);
+app.use('/api/review', reviewRoutes);
+app.use('/api/strategy-research', strategyResearchRoutes);
+app.use('/api/signals', signalTraceRoutes);
 
 import { User } from './models/User';
 import { AIInvestmentSignal } from './models/AIInvestmentSignal';
@@ -98,6 +107,9 @@ import { QuantStrategyParamValidation } from './models/QuantStrategyParamValidat
 import { QuantFusionAudit } from './models/QuantFusionAudit';
 import { TaskParameterAuditLog } from './models/TaskParameterAuditLog';
 import { RealtimeQuote } from './models/RealtimeQuote';
+import { StockFundamentalFactor } from './models/StockFundamentalFactor';
+import { StockMoneyFlowFactor } from './models/StockMoneyFlowFactor';
+import { StockValuationFactor } from './models/StockValuationFactor';
 import { quantStrategyService } from './quant/services/QuantStrategyService';
 
 async function publicTableExists(tableName: string): Promise<boolean> {
@@ -229,6 +241,9 @@ async function syncRecommendationRuntimeTables(): Promise<void> {
     { model: QuantStrategyParamValidation, label: 'QuantStrategyParamValidation' },
     { model: QuantFusionAudit, label: 'QuantFusionAudit' },
     { model: RealtimeQuote, label: 'RealtimeQuote' },
+    { model: StockFundamentalFactor, label: 'StockFundamentalFactor' },
+    { model: StockMoneyFlowFactor, label: 'StockMoneyFlowFactor' },
+    { model: StockValuationFactor, label: 'StockValuationFactor' },
     { model: TaskParameterAuditLog, label: 'TaskParameterAuditLog' },
   ];
 
@@ -399,8 +414,8 @@ async function initializeApp() {
       await schedulerService.initialize();
     }
 
-    app.listen(Number(PORT), '0.0.0.0', () => {
-      console.log(`Server is running on port ${PORT}`);
+    app.listen(Number(PORT), HOST, () => {
+      console.log(`Server is running on ${HOST}:${PORT}`);
       console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
     });
   } catch (error) {
@@ -408,8 +423,8 @@ async function initializeApp() {
     console.warn('Starting server without database connection. Some features may be limited.');
 
     // Start server even without database connection
-    app.listen(Number(PORT), '0.0.0.0', () => {
-      console.log(`Server is running on port ${PORT} (without database connection)`);
+    app.listen(Number(PORT), HOST, () => {
+      console.log(`Server is running on ${HOST}:${PORT} (without database connection)`);
       console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
     });
   }

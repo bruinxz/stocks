@@ -34,6 +34,9 @@ import { QuantStrategyParamValidation } from '../models/QuantStrategyParamValida
 import { QuantFusionAudit } from '../models/QuantFusionAudit';
 import { TaskParameterAuditLog } from '../models/TaskParameterAuditLog';
 import { RealtimeQuote } from '../models/RealtimeQuote';
+import { StockFundamentalFactor } from '../models/StockFundamentalFactor';
+import { StockMoneyFlowFactor } from '../models/StockMoneyFlowFactor';
+import { StockValuationFactor } from '../models/StockValuationFactor';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -90,6 +93,9 @@ const sequelize = new Sequelize({
     QuantFusionAudit,
     TaskParameterAuditLog,
     RealtimeQuote,
+    StockFundamentalFactor,
+    StockMoneyFlowFactor,
+    StockValuationFactor,
   ],
   logging: process.env.NODE_ENV === 'development' ? console.log : false,
   pool: {

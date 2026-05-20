@@ -1,4 +1,5 @@
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 function readEnvFile(filePath) {
@@ -25,6 +26,18 @@ const backendEnv = readEnvFile(path.join(repoRoot, 'backend', '.env'));
 
 function pick(...values) {
   return values.find(value => value !== undefined && value !== null && value !== '');
+}
+
+
+function expandHome(filePath) {
+  if (!filePath) return '';
+  return String(filePath).replace(/^~(?=$|\/|\\)/, os.homedir());
+}
+
+function readPrivateKey(filePath) {
+  const expanded = expandHome(filePath);
+  if (!expanded) return undefined;
+  return fs.existsSync(expanded) ? fs.readFileSync(expanded) : undefined;
 }
 
 function required(value, name) {
@@ -64,12 +77,12 @@ function getDeployConfig(options = {}) {
       REACT_APP_API_BASE_URL: pick(
         process.env.DEPLOY_REACT_APP_API_BASE_URL,
         process.env.REACT_APP_API_BASE_URL,
-        `http://${pick(process.env.DEPLOY_HOST, process.env.SSH_HOST, '103.242.3.87')}:3000/api`
+        '/api'
       ),
       REACT_APP_WS_URL: pick(
         process.env.DEPLOY_REACT_APP_WS_URL,
         process.env.REACT_APP_WS_URL,
-        `ws://${pick(process.env.DEPLOY_HOST, process.env.SSH_HOST, '103.242.3.87')}:3000`
+        ''
       ),
       REACT_APP_ENV: pick(process.env.DEPLOY_REACT_APP_ENV, process.env.REACT_APP_ENV, 'production'),
       REACT_APP_PUSHPLUS_QRCODE_URL: pick(process.env.LEGACY_PUSHPLUS_QRCODE_URL, ''),
@@ -77,8 +90,10 @@ function getDeployConfig(options = {}) {
     ssh: {
       host: pick(process.env.DEPLOY_HOST, process.env.SSH_HOST, '103.242.3.87'),
       port: Number(pick(process.env.DEPLOY_PORT, process.env.SSH_PORT, 14126)),
-      username: pick(process.env.DEPLOY_USER, process.env.SSH_USER, 'root'),
-      password: required(pick(process.env.DEPLOY_PASSWORD, process.env.SSH_PASSWORD), 'DEPLOY_PASSWORD'),
+      username: pick(process.env.DEPLOY_USER, process.env.SSH_USER, 'deploy'),
+      password: pick(process.env.DEPLOY_PASSWORD, process.env.SSH_PASSWORD, ''),
+      privateKey: readPrivateKey(pick(process.env.DEPLOY_KEY_PATH, process.env.SSH_KEY_PATH, '')),
+      passphrase: pick(process.env.DEPLOY_KEY_PASSPHRASE, process.env.SSH_KEY_PASSPHRASE, ''),
     },
     postgres: {
       user: pick(process.env.DEPLOY_PG_USER, process.env.PGUSER, 'pgg_superadmins'),

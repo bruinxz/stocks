@@ -663,7 +663,7 @@ export class DataUpdateWorker {
       batch_limit,
       lag_days_threshold = 0,
       stale_first = true,
-      include_no_data = false,
+      include_no_data,
     } = job.data;
 
     const lockKey = LockKeys.BULK_SYNC;
@@ -697,7 +697,7 @@ export class DataUpdateWorker {
           batch_limit,
           lag_days_threshold,
           stale_first,
-          include_no_data,
+          include_no_data: include_no_data ?? 'auto',
         },
         started_at: new Date(),
       });
@@ -913,7 +913,7 @@ export class DataUpdateWorker {
     include_no_data?: boolean;
     end_date: string;
   }): Promise<string[]> {
-    const limit = Math.min(Math.max(Number(options.batch_limit || 200), 1), 2000);
+    const limit = Math.min(Math.max(Number(options.batch_limit || 200), 1), 6000);
     const lagDaysThreshold = Math.max(Number(options.lag_days_threshold || 0), 0);
     const targetDate = moment.tz(options.end_date, 'Asia/Shanghai').endOf('day').toDate();
     const rows = (await Stock.findAll({
@@ -937,6 +937,16 @@ export class DataUpdateWorker {
             ? 'MAX("daily_bars"."time") DESC NULLS LAST'
             : 'MAX("daily_bars"."time") ASC NULLS FIRST'
         ) as any,
+        DailyBar.sequelize!.literal(`
+          CASE
+            WHEN "Stock"."symbol" LIKE 'sh.60%' THEN 1
+            WHEN "Stock"."symbol" LIKE 'sz.00%' THEN 2
+            WHEN "Stock"."symbol" LIKE 'sz.30%' THEN 3
+            WHEN "Stock"."symbol" LIKE 'sh.68%' THEN 4
+            WHEN "Stock"."symbol" LIKE 'bj.%' THEN 8
+            ELSE 9
+          END
+        `) as any,
         ['id', 'ASC'],
       ],
       raw: true,
@@ -944,9 +954,22 @@ export class DataUpdateWorker {
       limit: limit * 6,
     })) as any[];
 
+    const totalRows = rows.length;
+    const noDataRows = rows.filter(row => !row.latest_time).length;
+    const shouldIncludeNoData =
+      options.include_no_data !== undefined
+        ? Boolean(options.include_no_data)
+        : totalRows > 0 && noDataRows / totalRows >= 0.35;
+
+    if (options.include_no_data === undefined && shouldIncludeNoData) {
+      logger.info(
+        `历史同步检测到行情库覆盖率较低，自动纳入未入库股票: ${noDataRows}/${totalRows}`
+      );
+    }
+
     return rows
       .filter(row => {
-        if (!row.latest_time) return Boolean(options.include_no_data);
+        if (!row.latest_time) return shouldIncludeNoData;
         const latest = new Date(row.latest_time);
         const lagDays = moment(targetDate).diff(moment(latest), 'days');
         return lagDays > lagDaysThreshold;

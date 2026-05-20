@@ -1041,6 +1041,14 @@ class FeishuTaskReportService {
     const topCandidates = Array.isArray(fusion.top_candidates) ? fusion.top_candidates : [];
     const best = topCandidates[0] || {};
     const quoteSync = generated?.quote_sync || {};
+    const factorSync = generated?.factor_sync || {};
+    const activeScanParams = generated?.active_scan_params || {};
+    const activeScanSummary = activeScanParams?.summary || {};
+    const activeScanLifecycle = activeScanParams?.lifecycle || generated?.param_lifecycle || {};
+    const riskAdjustedPolicy = activeScanLifecycle?.risk_adjusted_policy;
+    const activeScanSelections = Array.isArray(activeScanParams?.selections)
+      ? activeScanParams.selections
+      : [];
     const bestRawFactors = best?.factors?.best_raw_factors || {};
     const bestPriceSource = bestRawFactors.price_source || best.price_source;
     const bestLatestQuoteTime = bestRawFactors.latest_quote_time || best.latest_quote_time;
@@ -1077,6 +1085,21 @@ class FeishuTaskReportService {
         ? `- **实时行情**：落盘 ${quoteSync.persisted_count ?? 0} 条，更新 ${
             quoteSync.updated_stock_count ?? 0
           } 只；最新 ${quoteSync.latest_quote_time || '-'}。`
+        : '',
+      factorSync
+        ? `- **因子刷新**：${factorSync.processed_stock_count ?? 0}/${
+            factorSync.requested_stock_count ?? 0
+          } 只，估值 ${factorSync.upserts?.valuation ?? 0}，资金流 ${
+            factorSync.upserts?.money_flow ?? 0
+          }，质量 ${factorSync.upserts?.fundamental ?? 0}；provider ${
+            factorSync.provider_plan?.providers?.join('/') || 'local_derived'
+          }。`
+        : '',
+      activeScanSummary.conclusion
+        ? `- **参数版本**：${this.safeText(activeScanSummary.conclusion, 160)}`
+        : '',
+      riskAdjustedPolicy?.enabled
+        ? '- **参数护栏**：已启用按策略风险级别的推广/回滚门槛；高波动策略需更多样本与环境桶确认，已回滚参数进入冷却排除。'
         : '',
       experimentParamSummary.conclusion
         ? `- **实验参数反哺**：自动采用 ${experimentParamSummary.use_count ?? 0} 个策略；${
@@ -1154,6 +1177,20 @@ class FeishuTaskReportService {
       实时行情最新时间: quoteSync?.latest_quote_time,
       最佳标的价格源: bestPriceSource,
       最佳标的行情时间: bestLatestQuoteTime,
+      因子刷新股票数: factorSync?.processed_stock_count,
+      因子刷新Provider: factorSync?.provider_plan?.providers?.join(', '),
+      因子估值写入数: factorSync?.upserts?.valuation,
+      因子资金流写入数: factorSync?.upserts?.money_flow,
+      因子质量写入数: factorSync?.upserts?.fundamental,
+      扫描参数版本采用数: activeScanSummary?.adopted_strategy_count,
+      扫描参数版本网格数: activeScanSummary?.grid_search_count,
+      扫描参数版本冠军数: activeScanSummary?.champion_count,
+      扫描参数版本实验数: activeScanSummary?.experiment_count,
+      扫描参数版本结论: activeScanSummary?.conclusion,
+      参数生命周期推广数: activeScanLifecycle?.summary?.promotion_count,
+      参数生命周期降级数: activeScanLifecycle?.summary?.degradation_count,
+      参数生命周期回滚数: activeScanLifecycle?.summary?.rollback_count,
+      参数风险自适应护栏: riskAdjustedPolicy?.enabled ? 'enabled' : '',
       实验参数采用策略: adoptedStrategyKeys.join(', '),
       实验参数采用数: experimentParamSummary.use_count,
       实验参数建议结论: experimentParamSummary.conclusion,
@@ -1172,6 +1209,12 @@ class FeishuTaskReportService {
         {
           generated,
           quote_sync: quoteSync,
+          factor_sync: factorSync,
+          active_scan_params: {
+            summary: activeScanSummary,
+            selections: activeScanSelections.slice(0, 20),
+            lifecycle: activeScanLifecycle,
+          },
           best_price_source: {
             symbol: best?.symbol,
             price_source: bestPriceSource,

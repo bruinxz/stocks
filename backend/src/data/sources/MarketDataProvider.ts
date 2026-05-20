@@ -4,6 +4,9 @@ export type MarketDataFeature =
   | 'stock_basic'
   | 'index_constituents'
   | 'trade_calendar'
+  | 'fundamental_factor'
+  | 'money_flow'
+  | 'valuation'
   | 'realtime_quote'
   | 'intraday_bar'
   | 'health_probe';

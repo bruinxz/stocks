@@ -48,8 +48,12 @@ export class LowVolatilityQualityStrategy extends QuantStrategy {
     const vol20 = stddev(dailyReturns.slice(-20));
     const drawdown60 = Math.abs(maxDrawdownFromValues(closes.slice(-60)));
     const avgTurnover = average(turnovers.slice(-20));
-    const pe = Number(context.pe_dynamic || 0);
-    const pb = Number(context.pb || 0);
+    const valuationFactor = context.factor_snapshot?.valuation || {};
+    const fundamentalFactor = context.factor_snapshot?.fundamental || {};
+    const pe = Number(valuationFactor.pe_ttm ?? context.pe_dynamic ?? 0);
+    const pb = Number(valuationFactor.pb ?? context.pb ?? 0);
+    const valuationScore = Number(valuationFactor.valuation_score || 0);
+    const qualityScore = Number(fundamentalFactor.quality_score || 0);
 
     let score = 48;
     const reasons: string[] = [];
@@ -88,6 +92,14 @@ export class LowVolatilityQualityStrategy extends QuantStrategy {
       score += 6;
       reasons.push('估值未见明显极端压力');
     }
+    if (valuationScore >= 68) {
+      score += 5;
+      reasons.push('因子表估值分位较安全');
+    }
+    if (qualityScore >= 68) {
+      score += 7;
+      reasons.push('因子表质量分较高，防守属性增强');
+    }
     if (ret20 > 32) {
       score -= 10;
       risk_flags.push('近20日涨幅较高，防守策略不追高');
@@ -115,6 +127,11 @@ export class LowVolatilityQualityStrategy extends QuantStrategy {
         avg_turnover_yuan: round(avgTurnover, 2),
         pe_dynamic: round(pe, 2),
         pb: round(pb, 2),
+        factor_date: context.factor_snapshot?.factor_date,
+        valuation_score: round(valuationScore, 2),
+        quality_score: round(qualityScore, 2),
+        factor_valuation_source: valuationFactor.source,
+        factor_fundamental_source: fundamentalFactor.source,
         ma20: round(ma20, 4),
         ma60: round(ma60, 4),
       },

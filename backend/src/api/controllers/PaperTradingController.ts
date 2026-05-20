@@ -27,6 +27,13 @@ const withAutonomousPortfolio = (payload: any = {}) => ({
   use_autonomous_portfolio: true,
 });
 
+const toNumber = (value: any, fallback = 0): number => {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
+};
+
+const roundMoney = (value: any): number => Math.round(toNumber(value, 0) * 100) / 100;
+
 export class PaperTradingController {
   private dataService: DataService;
 
@@ -71,9 +78,11 @@ export class PaperTradingController {
               new Date()
             );
             if (bars && bars.length > 0) {
-              const current_price = bars[bars.length - 1].close;
-              const market_value = current_price * pos.quantity;
-              const unrealized_pnl = market_value - pos.avg_cost * pos.quantity;
+              const current_price = toNumber(bars[bars.length - 1].close, toNumber(pos.current_price));
+              const quantity = toNumber(pos.quantity);
+              const avg_cost = toNumber(pos.avg_cost);
+              const market_value = roundMoney(current_price * quantity);
+              const unrealized_pnl = roundMoney(market_value - avg_cost * quantity);
 
               // 更新数据库
               pos.current_price = current_price;
@@ -81,18 +90,18 @@ export class PaperTradingController {
               pos.unrealized_pnl = unrealized_pnl;
               await pos.save();
             }
-            totalMarketValue += pos.market_value;
+            totalMarketValue += toNumber(pos.market_value);
             return pos;
           } catch (e) {
             logger.error(`获取股票 ${pos.symbol} 价格失败`, e);
-            totalMarketValue += pos.market_value;
+            totalMarketValue += toNumber(pos.market_value);
             return pos;
           }
         })
       );
 
       // 更新总资产
-      portfolio.total_value = portfolio.current_cash + totalMarketValue;
+      portfolio.total_value = roundMoney(toNumber(portfolio.current_cash) + totalMarketValue);
       await portfolio.save();
 
       res.json({

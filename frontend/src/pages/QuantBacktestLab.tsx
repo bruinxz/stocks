@@ -84,6 +84,7 @@ type RunSummary = {
   retryable?: boolean;
   resumable?: boolean;
   conclusion?: string;
+  best_validation_verdict?: string;
 };
 type BacktestTask = {
   id: number;
@@ -124,6 +125,33 @@ type BacktestDetail = {
   results: BacktestResult[];
   trades: any[];
   run_summary?: RunSummary;
+};
+type GridSearchSummary = {
+  group_count: number;
+  param_versions?: {
+    upserted_count?: number;
+    conclusion?: string;
+    versions?: Array<{
+      version_key: string;
+      strategy_key: string;
+      version_type: string;
+      status: string;
+      source_rank_score?: number;
+      source_excess_return_pct?: number;
+      adoption_reason?: string;
+    }>;
+  } | null;
+  groups: Array<{
+    group_id: string;
+    parent_task_name: string;
+    total_tasks: number;
+    completed_tasks: number;
+    failed_tasks: number;
+    running_tasks: number;
+    conclusion: string;
+    best?: any;
+    candidates: any[];
+  }>;
 };
 
 const pct = (value?: number | string | null, precision = 2) =>
@@ -172,6 +200,10 @@ const statusLabel = (status?: string) => {
 const universeLabel = (value?: string) => (value === 'favorites' ? '自选股' : '全市场');
 const isQueueLockFailure = (messageText?: string | null) =>
   /stalled|missing lock|lock/i.test(messageText || '');
+const validationLabel = (value?: string) =>
+  value === 'passed' ? '通过' : value === 'watch' ? '观察' : '--';
+const validationColor = (value?: string) =>
+  value === 'passed' ? 'green' : value === 'watch' ? 'gold' : 'default';
 
 const stageLabel = (stage?: string | null) => {
   const labels: Record<string, string> = {
@@ -190,8 +222,12 @@ const QuantBacktestLab: React.FC = () => {
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [tasks, setTasks] = useState<BacktestTask[]>([]);
   const [detail, setDetail] = useState<BacktestDetail | null>(null);
+  const [gridSummary, setGridSummary] = useState<GridSearchSummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [running, setRunning] = useState(false);
+  const [walking, setWalking] = useState(false);
+  const [gridSearching, setGridSearching] = useState(false);
+  const [upsertingGrid, setUpsertingGrid] = useState(false);
   const [retryingId, setRetryingId] = useState<number | null>(null);
   const [pollingTaskId, setPollingTaskId] = useState<number | null>(null);
 
@@ -215,6 +251,11 @@ const QuantBacktestLab: React.FC = () => {
     if (response.data.success) setTasks(response.data.data || []);
   }, []);
 
+  const fetchGridSummary = useCallback(async () => {
+    const response = await api.get('/quant/backtests/grid-search/summary');
+    if (response.data.success) setGridSummary(response.data.data || null);
+  }, []);
+
   const fetchDetail = async (id: number) => {
     setLoading(true);
     try {
@@ -228,7 +269,8 @@ const QuantBacktestLab: React.FC = () => {
   useEffect(() => {
     fetchStrategies();
     fetchTasks();
-  }, [fetchStrategies, fetchTasks]);
+    fetchGridSummary();
+  }, [fetchStrategies, fetchTasks, fetchGridSummary]);
 
   useEffect(() => {
     if (!detail && tasks[0]?.id) fetchDetail(tasks[0].id);
@@ -238,34 +280,45 @@ const QuantBacktestLab: React.FC = () => {
   const selectedSummary = detail?.run_summary || detail?.task?.run_summary;
   const selectedTask = detail?.task;
 
+  const buildBacktestPayload = (values: any, start: dayjs.Dayjs, end: dayjs.Dayjs) => ({
+    task_name: values.task_name || '量化多策略跑分',
+    universe: values.universe,
+    strategy_keys: values.strategy_keys,
+    start_date: start.format('YYYY-MM-DD'),
+    end_date: end.format('YYYY-MM-DD'),
+    initial_capital: values.initial_capital,
+    candidate_limit: values.candidate_limit,
+    max_positions: values.max_positions,
+    position_pct: values.position_pct,
+    min_score: values.min_score,
+    execution_timing: values.execution_timing,
+    enable_t_plus_one: values.enable_t_plus_one,
+    lot_size: values.lot_size,
+    min_commission: values.min_commission,
+    stamp_tax_rate: values.stamp_tax_rate,
+    block_limit_up: values.block_limit_up,
+    block_limit_down: values.block_limit_down,
+    block_suspended: values.block_suspended,
+    dynamic_slippage: values.dynamic_slippage,
+    min_turnover_yuan: values.min_turnover_yuan,
+    max_trade_amount_pct_of_turnover: values.max_trade_amount_pct_of_turnover,
+    validation_split: {
+      enabled: true,
+      train_pct: values.validation_train_pct,
+      validation_pct: values.validation_pct,
+      test_pct: Math.max(
+        0,
+        100 - Number(values.validation_train_pct || 60) - Number(values.validation_pct || 20)
+      ),
+    },
+  });
+
   const runBacktest = async () => {
     const values = await form.validateFields();
     const [start, end] = values.range || [];
     setRunning(true);
     try {
-      const response = await api.post('/quant/backtests', {
-        task_name: values.task_name || '量化多策略跑分',
-        universe: values.universe,
-        strategy_keys: values.strategy_keys,
-        start_date: start.format('YYYY-MM-DD'),
-        end_date: end.format('YYYY-MM-DD'),
-        initial_capital: values.initial_capital,
-        candidate_limit: values.candidate_limit,
-        max_positions: values.max_positions,
-        position_pct: values.position_pct,
-        min_score: values.min_score,
-        execution_timing: values.execution_timing,
-        enable_t_plus_one: values.enable_t_plus_one,
-        lot_size: values.lot_size,
-        min_commission: values.min_commission,
-        stamp_tax_rate: values.stamp_tax_rate,
-        block_limit_up: values.block_limit_up,
-        block_limit_down: values.block_limit_down,
-        block_suspended: values.block_suspended,
-        dynamic_slippage: values.dynamic_slippage,
-        min_turnover_yuan: values.min_turnover_yuan,
-        max_trade_amount_pct_of_turnover: values.max_trade_amount_pct_of_turnover,
-      });
+      const response = await api.post('/quant/backtests', buildBacktestPayload(values, start, end));
       if (response.data.success) {
         const taskDetail = response.data.data?.task;
         const taskRecord = taskDetail?.task || taskDetail;
@@ -282,6 +335,78 @@ const QuantBacktestLab: React.FC = () => {
       message.error(error.response?.data?.message || '运行跑分失败');
     } finally {
       setRunning(false);
+    }
+  };
+
+  const runWalkForward = async () => {
+    const values = await form.validateFields();
+    const [start, end] = values.range || [];
+    setWalking(true);
+    try {
+      const response = await api.post('/quant/backtests/walk-forward', {
+        ...buildBacktestPayload(values, start, end),
+        parent_task_name: values.task_name || '量化滚动验证',
+        windows: values.walk_windows,
+        window_days: values.walk_window_days,
+        step_days: values.walk_step_days,
+      });
+      if (response.data.success) {
+        const tasksCreated = response.data.data?.tasks || [];
+        const firstTask = tasksCreated[0]?.task?.task || tasksCreated[0]?.task || tasksCreated[0];
+        if (firstTask?.id) setPollingTaskId(firstTask.id);
+        message.success(response.data.message || `已创建 ${tasksCreated.length} 个滚动验证任务`);
+        await fetchTasks();
+        await fetchGridSummary();
+        if (firstTask?.id) await fetchDetail(firstTask.id);
+      }
+    } catch (error: any) {
+      message.error(error.response?.data?.message || '创建滚动验证失败');
+    } finally {
+      setWalking(false);
+    }
+  };
+
+  const runGridSearch = async () => {
+    const values = await form.validateFields();
+    const [start, end] = values.range || [];
+    setGridSearching(true);
+    try {
+      const response = await api.post('/quant/backtests/grid-search', {
+        ...buildBacktestPayload(values, start, end),
+        parent_task_name: values.task_name || '量化参数网格搜索',
+        max_tasks: values.grid_max_tasks,
+      });
+      if (response.data.success) {
+        const tasksCreated = response.data.data?.tasks || [];
+        const firstTask = tasksCreated[0]?.task?.task || tasksCreated[0]?.task || tasksCreated[0];
+        if (firstTask?.id) setPollingTaskId(firstTask.id);
+        message.success(response.data.message || `已创建 ${tasksCreated.length} 个参数搜索任务`);
+        await fetchTasks();
+        await fetchGridSummary();
+        if (firstTask?.id) await fetchDetail(firstTask.id);
+      }
+    } catch (error: any) {
+      message.error(error.response?.data?.message || '创建参数网格搜索失败');
+    } finally {
+      setGridSearching(false);
+    }
+  };
+
+  const upsertGridParamVersions = async () => {
+    setUpsertingGrid(true);
+    try {
+      const response = await api.get('/quant/backtests/grid-search/summary', {
+        params: { upsert_versions: true },
+      });
+      if (response.data.success) {
+        setGridSummary(response.data.data || null);
+        const count = response.data.data?.param_versions?.upserted_count || 0;
+        message.success(count ? `已沉淀 ${count} 个网格参数版本` : '暂无达到门槛的网格冠军参数');
+      }
+    } catch (error: any) {
+      message.error(error.response?.data?.message || '沉淀网格参数版本失败');
+    } finally {
+      setUpsertingGrid(false);
     }
   };
 
@@ -312,6 +437,7 @@ const QuantBacktestLab: React.FC = () => {
       const nextDetail = response.data.data;
       setDetail(nextDetail);
       await fetchTasks();
+      await fetchGridSummary();
       const status = nextDetail?.task?.status;
       if (status === 'COMPLETED' || status === 'FAILED') {
         setPollingTaskId(null);
@@ -345,6 +471,7 @@ const QuantBacktestLab: React.FC = () => {
     0;
   const selectedErrorText = selectedTask?.error_message || selectedSummary?.last_error;
   const selectedQueueLockFailure = isQueueLockFailure(selectedErrorText);
+  const selectedValidation = best?.metrics_json?.validation || {};
 
   const resultColumns = [
     {
@@ -433,6 +560,25 @@ const QuantBacktestLab: React.FC = () => {
         );
       },
     },
+    {
+      title: '样本外验证',
+      key: 'validation',
+      width: 220,
+      render: (_: any, record: BacktestResult) => {
+        const validation = record.metrics_json?.validation || {};
+        return (
+          <Space direction="vertical" size={0}>
+            <Tag color={validationColor(validation.verdict)}>
+              {validationLabel(validation.verdict)}
+            </Tag>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              验证超额 {pct(validation.segments?.validation?.excess_return_pct)} · 测试超额{' '}
+              {pct(validation.segments?.test?.excess_return_pct)}
+            </Text>
+          </Space>
+        );
+      },
+    },
   ];
 
   return (
@@ -449,6 +595,7 @@ const QuantBacktestLab: React.FC = () => {
             <Tag icon={<FieldTimeOutlined />}>A股真实成交护栏</Tag>
             <Tag icon={<ClockCircleOutlined />}>队列自动刷新</Tag>
             <Tag icon={<ExperimentOutlined />}>参数实验可沉淀</Tag>
+            <Tag icon={<ExperimentOutlined />}>因子表已参与多因子/量价/质量策略</Tag>
           </Space>
         </div>
         <div className="quant-research-meter">
@@ -514,6 +661,12 @@ const QuantBacktestLab: React.FC = () => {
             dynamic_slippage: true,
             min_turnover_yuan: 0,
             max_trade_amount_pct_of_turnover: 1,
+            validation_train_pct: 60,
+            validation_pct: 20,
+            walk_windows: 3,
+            walk_window_days: 180,
+            walk_step_days: 60,
+            grid_max_tasks: 12,
           }}
         >
           <Alert
@@ -557,6 +710,20 @@ const QuantBacktestLab: React.FC = () => {
                   block
                 >
                   开始跑分
+                </Button>
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={4}>
+              <Form.Item label="稳健验证">
+                <Button loading={walking} onClick={runWalkForward} block>
+                  滚动验证
+                </Button>
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={4}>
+              <Form.Item label="参数实验">
+                <Button loading={gridSearching} onClick={runGridSearch} block>
+                  网格搜索
                 </Button>
               </Form.Item>
             </Col>
@@ -685,6 +852,36 @@ const QuantBacktestLab: React.FC = () => {
                             <InputNumber style={{ width: '100%' }} min={0.01} max={10} step={0.1} />
                           </Form.Item>
                         </Col>
+                        <Col xs={12} md={4}>
+                          <Form.Item label="训练集%" name="validation_train_pct">
+                            <InputNumber style={{ width: '100%' }} min={10} max={90} />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={12} md={4}>
+                          <Form.Item label="验证集%" name="validation_pct">
+                            <InputNumber style={{ width: '100%' }} min={5} max={60} />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={12} md={4}>
+                          <Form.Item label="滚动窗口数" name="walk_windows">
+                            <InputNumber style={{ width: '100%' }} min={1} max={8} />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={12} md={4}>
+                          <Form.Item label="窗口天数" name="walk_window_days">
+                            <InputNumber style={{ width: '100%' }} min={60} max={720} />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={12} md={4}>
+                          <Form.Item label="步长天数" name="walk_step_days">
+                            <InputNumber style={{ width: '100%' }} min={20} max={360} />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={12} md={4}>
+                          <Form.Item label="网格任务上限" name="grid_max_tasks">
+                            <InputNumber style={{ width: '100%' }} min={1} max={48} />
+                          </Form.Item>
+                        </Col>
                       </Row>
                     ),
                   },
@@ -740,6 +937,130 @@ const QuantBacktestLab: React.FC = () => {
           </Card>
         </Col>
       </Row>
+
+      {best && selectedValidation?.segments && (
+        <Card className="modern-card quant-validation-card" variant="borderless">
+          <div className="quant-run-detail-header">
+            <div>
+              <span>OUT-OF-SAMPLE</span>
+              <strong>训练 / 验证 / 测试分区</strong>
+            </div>
+            <Tag color={validationColor(selectedValidation.verdict)}>
+              {validationLabel(selectedValidation.verdict)}
+            </Tag>
+          </div>
+          <Alert
+            showIcon
+            type={selectedValidation.verdict === 'passed' ? 'success' : 'warning'}
+            message={selectedValidation.conclusion || '分区指标已生成'}
+            description="训练集用于观察策略适配，验证集用于筛选参数，测试集用于最终验收；该拆分能降低过拟合和未来函数风险。"
+            style={{ marginBottom: 12 }}
+          />
+          <Row gutter={[12, 12]}>
+            {(['train', 'validation', 'test'] as const).map(key => {
+              const item = selectedValidation.segments?.[key] || {};
+              const labelMap = { train: '训练集', validation: '验证集', test: '测试集' };
+              return (
+                <Col xs={24} md={8} key={key}>
+                  <div className="quant-validation-segment">
+                    <span>{labelMap[key]}</span>
+                    <strong>{pct(item.total_return_pct)}</strong>
+                    <em>
+                      超额 {pct(item.excess_return_pct)} · 回撤 {pct(item.max_drawdown_pct)} ·{' '}
+                      {item.trade_count || 0} 笔
+                    </em>
+                    <Text type="secondary">
+                      {item.start_date || '--'} ~ {item.end_date || '--'}
+                    </Text>
+                  </div>
+                </Col>
+              );
+            })}
+          </Row>
+          <div className="quant-validation-footnote">
+            泛化差距 {pct(selectedValidation.generalization_gap_pct)} ·{' '}
+            {selectedValidation.split_plan?.note || '按时间顺序切分。'}
+          </div>
+        </Card>
+      )}
+
+      {!!gridSummary?.groups?.length && (
+        <Card className="modern-card quant-grid-summary-card" variant="borderless">
+          <div className="quant-run-detail-header">
+            <div>
+              <span>PARAMETER GRID</span>
+              <strong>参数网格搜索摘要</strong>
+            </div>
+            <Button size="small" icon={<ReloadOutlined />} onClick={fetchGridSummary}>
+              刷新
+            </Button>
+            <Button size="small" loading={upsertingGrid} onClick={upsertGridParamVersions}>
+              沉淀参数版本
+            </Button>
+          </div>
+          <Alert
+            showIcon
+            type={Number(gridSummary.param_versions?.upserted_count || 0) > 0 ? 'success' : 'info'}
+            message={
+              gridSummary.param_versions?.conclusion ||
+              '网格冠军可沉淀为 grid_search 参数版本；沉淀后会在每日量化扫描中按“手工 > 冠军 > 网格/实验候选 > 默认”自动选用，并进入 A/B 收益验证。'
+            }
+            description={
+              Number(gridSummary.param_versions?.upserted_count || 0) > 0
+                ? `本次沉淀 ${gridSummary.param_versions?.upserted_count} 个版本，后续开盘扫描会自动读取可用冠军/候选参数。`
+                : '建议只沉淀验证/测试集表现都不差的候选；测试集超额较弱的参数只做观察，不要直接放大仓位。'
+            }
+            style={{ marginBottom: 12 }}
+          />
+          {!!gridSummary.param_versions?.versions?.length && (
+            <div className="quant-grid-version-strip">
+              {gridSummary.param_versions.versions.slice(0, 6).map(version => (
+                <Tag
+                  key={version.version_key}
+                  color={version.status === 'active_candidate' ? 'blue' : 'gold'}
+                >
+                  {version.strategy_key} · {version.status} · 分{' '}
+                  {Number(version.source_rank_score || 0).toFixed(1)}
+                </Tag>
+              ))}
+            </div>
+          )}
+          <Space direction="vertical" style={{ width: '100%' }}>
+            {gridSummary.groups.slice(0, 3).map(group => (
+              <div className="quant-grid-group" key={group.group_id}>
+                <div>
+                  <Text strong>{group.parent_task_name}</Text>
+                  <Text type="secondary" style={{ display: 'block', fontSize: 12 }}>
+                    {group.completed_tasks}/{group.total_tasks} 完成 · 运行中 {group.running_tasks}{' '}
+                    · 失败 {group.failed_tasks}
+                  </Text>
+                </div>
+                <div className="quant-grid-group-verdict">
+                  <Tag color={group.best?.validation_verdict === 'passed' ? 'green' : 'gold'}>
+                    {validationLabel(group.best?.validation_verdict)}
+                  </Tag>
+                  <Text>{group.conclusion}</Text>
+                </div>
+                <div className="quant-grid-candidates">
+                  {(group.candidates || []).slice(0, 4).map(candidate => (
+                    <button
+                      type="button"
+                      key={`${group.group_id}-${candidate.task_id}`}
+                      onClick={() => fetchDetail(candidate.task_id)}
+                    >
+                      <span>
+                        {candidate.strategy_key} #{candidate.grid_index}
+                      </span>
+                      <strong>{pct(candidate.total_return_pct)}</strong>
+                      <em>测试超额 {pct(candidate.test_excess_return_pct)}</em>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </Space>
+        </Card>
+      )}
 
       {selectedTask && (
         <Alert

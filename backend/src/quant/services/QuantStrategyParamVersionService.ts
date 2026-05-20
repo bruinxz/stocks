@@ -39,6 +39,16 @@ type ParamVersionPlain = {
   metadata?: Record<string, any>;
 };
 
+type ActiveScanParamOptions = {
+  strategy_keys?: string[];
+  include_grid_search?: boolean;
+  include_experiment?: boolean;
+  include_observing?: boolean;
+  include_degraded?: boolean;
+  include_default?: boolean;
+  manual_params_by_strategy?: Record<string, Record<string, any>>;
+};
+
 type ParamVersionLifecyclePolicy = {
   min_completed_samples: number;
   min_avg_excess_return_pct: number;
@@ -62,6 +72,8 @@ type ParamVersionLifecyclePolicy = {
   trade_rollback_avg_excess_return_pct: number;
   trade_rollback_total_pnl: number;
 };
+
+type StrategyRiskLevel = 'low' | 'medium' | 'high';
 
 const DEFAULT_LIFECYCLE_POLICY: ParamVersionLifecyclePolicy = {
   min_completed_samples: 12,
@@ -145,6 +157,11 @@ function buildExperimentVersionKey(
   return `qparam_${strategy_key}_exp_${suffix}`.slice(0, 120);
 }
 
+function buildGridVersionKey(strategy_key: string, groupId: string, params: any) {
+  const suffix = `${groupId.replace(/^qgrid_/, '')}_${shortHash(params, 6)}`;
+  return `qparam_${strategy_key}_grid_${suffix}`.slice(0, 120);
+}
+
 function buildManualVersionKey(strategy_key: string, params: any) {
   return `qparam_${strategy_key}_manual_${shortHash(params)}`.slice(0, 120);
 }
@@ -160,6 +177,12 @@ function mergeLifecyclePolicy(
     ...DEFAULT_LIFECYCLE_POLICY,
     ...(policy || {}),
   };
+}
+
+function normalizeRiskLevel(value: any): StrategyRiskLevel {
+  const normalized = String(value || '').toLowerCase();
+  if (normalized === 'low' || normalized === 'high') return normalized;
+  return 'medium';
 }
 
 function summarizeValidationRows(rows: any[], versionByKey: Map<string, any>) {
@@ -348,8 +371,8 @@ function buildSegmentAttributionRows(
       segmentType === 'market_regime'
         ? environment.market_regime_label
         : segmentType === 'industry_regime'
-          ? environment.industry_regime_label
-          : environment.industry_label;
+        ? environment.industry_regime_label
+        : environment.industry_label;
     if (!grouped.has(key)) grouped.set(key, { label, rows: [] });
     grouped.get(key)!.rows.push(row);
   }
@@ -539,6 +562,234 @@ function summarizeParamTradeOutcomeRows(versionKey: string, rows: any[]) {
 }
 
 export class QuantStrategyParamVersionService {
+  async getActiveParamsForScan(options: ActiveScanParamOptions = {}) {
+    const definitions = strategyRegistry
+      .list()
+      .filter(
+        definition =>
+          !options.strategy_keys?.length || options.strategy_keys.includes(definition.strategy_key)
+      );
+    const strategyKeys = definitions.map(item => item.strategy_key);
+    const manualParamsByStrategy = asPlainObject(options.manual_params_by_strategy);
+    const includeDefault = options.include_default !== false;
+    const statuses = ['manual_override', 'champion', 'active_candidate'];
+    if (options.include_observing) statuses.push('observing');
+    if (options.include_degraded) statuses.push('degraded');
+    if (includeDefault) statuses.push('baseline');
+    const versionTypes = ['manual', 'default'];
+    if (options.include_experiment !== false) versionTypes.push('experiment');
+    if (options.include_grid_search !== false) versionTypes.push('grid_search');
+
+    const rawVersions = strategyKeys.length
+      ? await QuantStrategyParamVersion.findAll({
+          where: {
+            strategy_key: { [Op.in]: strategyKeys },
+            status: { [Op.in]: statuses },
+            version_type: { [Op.in]: versionTypes },
+          },
+          order: [
+            ['strategy_key', 'ASC'],
+            ['updated_at', 'DESC'],
+          ],
+        })
+      : [];
+    const excludedVersions = await this.getScanExcludedVersions(strategyKeys);
+    const excludedByStrategy = new Map<string, QuantStrategyParamVersion[]>();
+    for (const version of excludedVersions) {
+      if (!excludedByStrategy.has(version.strategy_key)) {
+        excludedByStrategy.set(version.strategy_key, []);
+      }
+      excludedByStrategy.get(version.strategy_key)!.push(version);
+    }
+    const versions = rawVersions.filter(version => !this.shouldExcludeFromScan(version));
+    const versionsByStrategy = new Map<string, QuantStrategyParamVersion[]>();
+    for (const version of versions) {
+      if (!versionsByStrategy.has(version.strategy_key)) {
+        versionsByStrategy.set(version.strategy_key, []);
+      }
+      versionsByStrategy.get(version.strategy_key)!.push(version);
+    }
+
+    const adoptedByStrategy: Record<string, ParamVersionPlain> = {};
+    const recommendedParamsForScan: Record<string, Record<string, any>> = {};
+    const selectionRows: any[] = [];
+    const diagnosticsByStrategy: Record<string, any> = {};
+    let manualOverrideCount = 0;
+    let championCount = 0;
+    let gridSearchCount = 0;
+    let experimentCount = 0;
+    let defaultCount = 0;
+
+    for (const definition of definitions) {
+      const baseParams = asPlainObject(definition.default_params);
+      const candidatesForStrategy = versionsByStrategy.get(definition.strategy_key) || [];
+      let selected = this.selectBestScanVersion(candidatesForStrategy);
+      const excludedForStrategy = excludedByStrategy.get(definition.strategy_key) || [];
+      const manualParams = asPlainObject(manualParamsByStrategy[definition.strategy_key]);
+
+      if (Object.keys(manualParams).length > 0) {
+        const manualVersion = await this.upsertVersion({
+          version_key: buildManualVersionKey(definition.strategy_key, {
+            ...baseParams,
+            ...manualParams,
+          }),
+          strategy_key: definition.strategy_key,
+          strategy_name: definition.name,
+          version_type: 'manual',
+          status: 'manual_override',
+          params_json: {
+            ...baseParams,
+            ...manualParams,
+          },
+          active_from: moment().tz('Asia/Shanghai').format('YYYY-MM-DD'),
+          adoption_reason: '任务参数手工覆盖，优先级高于冠军/网格/实验参数。',
+          metadata: {
+            ab_group: 'manual_override',
+            source: 'task_params_by_strategy',
+          },
+        });
+        selected = manualVersion;
+      }
+
+      if (!selected && includeDefault) {
+        selected = await this.upsertVersion({
+          version_key: buildDefaultVersionKey(definition.strategy_key),
+          strategy_key: definition.strategy_key,
+          strategy_name: definition.name,
+          version_type: 'default',
+          status: 'baseline',
+          params_json: baseParams,
+          active_from: moment().tz('Asia/Shanghai').format('YYYY-MM-DD'),
+          adoption_reason: '默认参数基线。',
+          metadata: {
+            ab_group: 'default',
+            source: 'strategy_default',
+            risk_level: definition.risk_level,
+            tags: definition.tags || [],
+          },
+        });
+      }
+
+      if (!selected) continue;
+      const plain = modelToPlain<ParamVersionPlain>(selected);
+      const fullParams = {
+        ...baseParams,
+        ...asPlainObject(plain.params_json),
+      };
+      adoptedByStrategy[definition.strategy_key] = {
+        ...plain,
+        params_json: fullParams,
+      };
+      recommendedParamsForScan[definition.strategy_key] = fullParams;
+
+      const status = String(plain.status || '').toLowerCase();
+      const type = String(plain.version_type || '').toLowerCase();
+      if (status === 'manual_override' || type === 'manual') manualOverrideCount++;
+      else if (status === 'champion') championCount++;
+      else if (type === 'grid_search') gridSearchCount++;
+      else if (type === 'experiment') experimentCount++;
+      else if (type === 'default') defaultCount++;
+
+      selectionRows.push({
+        strategy_key: definition.strategy_key,
+        strategy_name: definition.name,
+        version_key: plain.version_key,
+        version_type: plain.version_type,
+        status: plain.status,
+        rank_score: toNumber(plain.source_rank_score, 0),
+        source_excess_return_pct: toNumber(plain.source_excess_return_pct, 0),
+        source_trade_count: toNumber(plain.source_trade_count, 0),
+        reason: plain.adoption_reason || '按参数版本优先级自动选择。',
+      });
+      diagnosticsByStrategy[definition.strategy_key] = this.buildScanSelectionDiagnostic(
+        definition,
+        selected,
+        candidatesForStrategy,
+        excludedForStrategy
+      );
+    }
+
+    return {
+      generated_at: new Date().toISOString(),
+      recommended_params_by_strategy: recommendedParamsForScan,
+      adopted_param_version_by_strategy: adoptedByStrategy,
+      selections: selectionRows,
+      diagnostics_by_strategy: diagnosticsByStrategy,
+      summary: {
+        strategy_count: definitions.length,
+        adopted_strategy_count: selectionRows.length,
+        manual_override_count: manualOverrideCount,
+        champion_count: championCount,
+        grid_search_count: gridSearchCount,
+        experiment_count: experimentCount,
+        default_count: defaultCount,
+        conclusion:
+          championCount + gridSearchCount + experimentCount + manualOverrideCount > 0
+            ? `已为 ${selectionRows.length} 个策略选择可用于开盘扫描的参数版本，其中冠军 ${championCount}、网格 ${gridSearchCount}、实验 ${experimentCount}、手工 ${manualOverrideCount}。`
+            : '暂无冠军/网格/实验参数可采用，本轮扫描使用默认参数基线。',
+      },
+    };
+  }
+
+  async upsertGridSearchCandidates(options: { groups?: any[]; min_rank_score?: number } = {}) {
+    const today = moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
+    const definitionsByKey = new Map(
+      strategyRegistry.list().map(item => [item.strategy_key, item])
+    );
+    const minRankScore = toNumber(options.min_rank_score, 0);
+    const candidates = (options.groups || [])
+      .map(group => ({ group, best: group?.best }))
+      .filter(item => item.best?.strategy_key && item.best?.params);
+    const versions: QuantStrategyParamVersion[] = [];
+
+    for (const { group, best } of candidates) {
+      if (toNumber(best.rank_score, -9999) < minRankScore) continue;
+      const definition = definitionsByKey.get(best.strategy_key);
+      const params = {
+        ...(definition?.default_params || {}),
+        ...asPlainObject(best.params),
+      };
+      const version = await this.upsertVersion({
+        version_key: buildGridVersionKey(best.strategy_key, group.group_id, params),
+        strategy_key: best.strategy_key,
+        strategy_name: definition?.name || best.strategy_key,
+        version_type: 'grid_search',
+        status: best.validation_verdict === 'passed' ? 'active_candidate' : 'observing',
+        params_json: params,
+        source_experiment_key: group.group_id,
+        source_rank_score: best.rank_score,
+        source_excess_return_pct: best.excess_return_pct,
+        source_max_drawdown_pct: best.max_drawdown_pct,
+        source_trade_count: best.trade_count || 0,
+        adoption_reason: `参数网格搜索冠军：${group.conclusion || ''}`,
+        active_from: today,
+        metadata: {
+          ab_group:
+            best.validation_verdict === 'passed' ? 'grid_search_candidate' : 'grid_search_observe',
+          source: 'parameter_grid_search',
+          group_id: group.group_id,
+          task_id: best.task_id,
+          grid_index: best.grid_index,
+          validation_verdict: best.validation_verdict,
+          validation_excess_return_pct: best.validation_excess_return_pct,
+          test_excess_return_pct: best.test_excess_return_pct,
+          total_return_pct: best.total_return_pct,
+        },
+      });
+      versions.push(version);
+    }
+
+    return {
+      generated_at: new Date().toISOString(),
+      scanned_group_count: options.groups?.length || 0,
+      upserted_count: versions.length,
+      versions: versions.map(item => modelToPlain(item)),
+      conclusion: versions.length
+        ? `已将 ${versions.length} 个网格冠军参数沉淀为参数版本候选。`
+        : '暂无达到门槛的网格冠军参数版本。',
+    };
+  }
+
   async refreshVersionsFromExperiments(
     options: {
       suggestions?: ParamSuggestionPayload | null;
@@ -554,10 +805,10 @@ export class QuantStrategyParamVersionService {
       options.suggestions !== undefined
         ? options.suggestions
         : options.use_experiment_params === false
-          ? null
-          : await quantStrategyExperimentService.getParamsByStrategySuggestion(
-              options.suggestion_options || {}
-            );
+        ? null
+        : await quantStrategyExperimentService.getParamsByStrategySuggestion(
+            options.suggestion_options || {}
+          );
     const suggestionByStrategy = new Map(
       ((suggestions as any)?.suggestions || []).map((item: any) => [item.strategy_key, item])
     );
@@ -824,8 +1075,8 @@ export class QuantStrategyParamVersionService {
     const statuses = options.status?.length
       ? options.status
       : options.include_completed
-        ? ['pending', 'completed']
-        : ['pending'];
+      ? ['pending', 'completed']
+      : ['pending'];
     const rows = await QuantStrategyParamValidation.findAll({
       where: { status: { [Op.in]: statuses } },
       order: [
@@ -1014,7 +1265,20 @@ export class QuantStrategyParamVersionService {
         .filter(item => item.version_type === 'default' || item.status === 'baseline')
         .map(item => [item.strategy_key, item])
     );
-    const lifecyclePreview = this.buildLifecyclePreview(summaryByVersion, defaultByStrategy);
+    const strategyRiskByKey = new Map(
+      strategyRegistry.list().map(definition => [
+        definition.strategy_key,
+        normalizeRiskLevel(definition.risk_level),
+      ])
+    );
+    const lifecyclePreview = this.buildLifecyclePreview(
+      summaryByVersion,
+      defaultByStrategy,
+      undefined,
+      undefined,
+      undefined,
+      strategyRiskByKey
+    );
     const environmentAttribution = buildEnvironmentAttribution(plainValidations, versionByKey);
     const champion =
       lifecyclePreview.promotions[0] ||
@@ -1053,8 +1317,8 @@ export class QuantStrategyParamVersionService {
               champion.version_key
             }，平均超额 ${champion.avg_excess_return_pct}%（样本 ${champion.completed_count}）。`
           : pendingCount > 0
-            ? '参数版本已开始留痕，等待 1/3/5/10 日收益样本完成。'
-            : '参数版本验证尚未产生样本；下一次量化扫描后会自动创建待验证记录。',
+          ? '参数版本已开始留痕，等待 1/3/5/10 日收益样本完成。'
+          : '参数版本验证尚未产生样本；下一次量化扫描后会自动创建待验证记录。',
       },
     };
   }
@@ -1077,12 +1341,19 @@ export class QuantStrategyParamVersionService {
         .map((row: any) => [row.strategy_key, row])
     );
     const tradeAttribution = await this.getParamExperimentTradeAttribution();
+    const strategyRiskByKey = new Map(
+      strategyRegistry.list().map(definition => [
+        definition.strategy_key,
+        normalizeRiskLevel(definition.risk_level),
+      ])
+    );
     const lifecycle = this.buildLifecyclePreview(
       rows,
       defaultByStrategy,
       options.policy,
       dashboard.environment_attribution,
-      tradeAttribution
+      tradeAttribution,
+      strategyRiskByKey
     );
     if (options.dry_run) {
       return {
@@ -1115,6 +1386,10 @@ export class QuantStrategyParamVersionService {
       const history = Array.isArray(metadata.lifecycle_history)
         ? metadata.lifecycle_history.slice(-20)
         : [];
+      const nextCooldownUntil =
+        action.next_status === 'champion'
+          ? null
+          : action.cooldown_until || metadata.lifecycle_cooldown_until;
       await record.update({
         status: action.next_status,
         active_from:
@@ -1127,11 +1402,14 @@ export class QuantStrategyParamVersionService {
         metadata: {
           ...metadata,
           lifecycle_policy: lifecycle.policy,
+          lifecycle_effective_policy: action.effective_policy,
+          lifecycle_cooldown_until: nextCooldownUntil,
           lifecycle_last_action: {
             at: new Date().toISOString(),
             from_status: currentStatus,
             to_status: action.next_status,
             reason: action.reason,
+            cooldown_until: action.cooldown_until,
             summary: action,
           },
           lifecycle_history: [
@@ -1144,6 +1422,7 @@ export class QuantStrategyParamVersionService {
               rank_score: action.rank_score,
               avg_excess_return_pct: action.avg_excess_return_pct,
               recent_avg_excess_return_pct: action.recent_avg_excess_return_pct,
+              cooldown_until: action.cooldown_until,
             },
           ],
         },
@@ -1264,7 +1543,8 @@ export class QuantStrategyParamVersionService {
     defaultByStrategy: Map<string, any>,
     policyInput?: Partial<ParamVersionLifecyclePolicy>,
     environmentAttribution?: any,
-    tradeAttribution?: any
+    tradeAttribution?: any,
+    strategyRiskByKey?: Map<string, StrategyRiskLevel>
   ) {
     const policy = mergeLifecyclePolicy(policyInput);
     const promotions: any[] = [];
@@ -1294,6 +1574,9 @@ export class QuantStrategyParamVersionService {
       const defaultSummary = defaultByStrategy.get(row.strategy_key);
       const defaultExcess = toNumber(defaultSummary?.avg_excess_return_pct);
       const excessDelta = avgExcess - defaultExcess;
+      const riskLevel = this.resolveStrategyRiskLevel(row, strategyRiskByKey);
+      const effectivePolicy = this.buildRiskAdjustedLifecyclePolicy(policy, riskLevel);
+      const cooldown = this.resolveLifecycleCooldown(row, effectivePolicy);
       const environmentDiagnostics = environmentDiagnosticsByVersion.get(row.version_key) || {
         positive_bucket_count: 0,
         negative_bucket_count: 0,
@@ -1306,19 +1589,20 @@ export class QuantStrategyParamVersionService {
       const tradeTotalPnl = toNumber((tradeDiagnostics as any)?.total_pnl);
       const tradeShouldRollback =
         Boolean(tradeDiagnostics) &&
-        tradeClosedCount >= policy.trade_rollback_min_closed_samples &&
-        tradeAvgExcess <= policy.trade_rollback_avg_excess_return_pct &&
-        tradeTotalPnl <= policy.trade_rollback_total_pnl;
+        tradeClosedCount >= effectivePolicy.trade_rollback_min_closed_samples &&
+        tradeAvgExcess <= effectivePolicy.trade_rollback_avg_excess_return_pct &&
+        tradeTotalPnl <= effectivePolicy.trade_rollback_total_pnl;
       const tradeShouldDegrade =
         Boolean(tradeDiagnostics) &&
-        tradeClosedCount >= policy.trade_degrade_min_closed_samples &&
-        tradeAvgExcess <= policy.trade_degrade_avg_excess_return_pct;
+        tradeClosedCount >= effectivePolicy.trade_degrade_min_closed_samples &&
+        tradeAvgExcess <= effectivePolicy.trade_degrade_avg_excess_return_pct;
       const compact = {
         version_key: row.version_key,
         strategy_key: row.strategy_key,
         strategy_name: row.strategy_name,
         version_type: row.version_type,
         status: row.status,
+        risk_level: riskLevel,
         completed_count: completedCount,
         avg_excess_return_pct: row.avg_excess_return_pct,
         recent_avg_excess_return_pct: row.recent_avg_excess_return_pct,
@@ -1326,21 +1610,42 @@ export class QuantStrategyParamVersionService {
         rank_score: row.rank_score,
         default_avg_excess_return_pct: defaultSummary?.avg_excess_return_pct,
         excess_delta_vs_default_pct: round(excessDelta, 4),
+        effective_policy: this.compactLifecyclePolicy(effectivePolicy),
+        cooldown_until: cooldown.cooldown_until,
+        cooldown_active: cooldown.active,
+        cooldown_reason: cooldown.reason,
         environment_diagnostics: environmentDiagnostics,
         trade_diagnostics: tradeDiagnostics,
       };
       const envSatisfied =
-        environmentDiagnostics.positive_bucket_count >= policy.min_positive_environment_buckets &&
-        environmentDiagnostics.negative_bucket_count <= policy.max_negative_environment_buckets;
+        environmentDiagnostics.positive_bucket_count >=
+          effectivePolicy.min_positive_environment_buckets &&
+        environmentDiagnostics.negative_bucket_count <=
+          effectivePolicy.max_negative_environment_buckets;
       const envShouldDegrade =
         environmentDiagnostics.qualified_bucket_count > 0 &&
-        environmentDiagnostics.negative_bucket_count > policy.max_negative_environment_buckets;
+        environmentDiagnostics.negative_bucket_count >
+          effectivePolicy.max_negative_environment_buckets;
+
+      if (
+        cooldown.active &&
+        ['active_candidate', 'observing', 'degraded', 'rolled_back'].includes(status)
+      ) {
+        observations.push({
+          ...compact,
+          action: 'cooldown',
+          next_status: row.status,
+          reason: cooldown.reason,
+        });
+        continue;
+      }
 
       if (tradeShouldRollback) {
         rollbacks.push({
           ...compact,
           action: 'rollback',
           next_status: 'rolled_back',
+          cooldown_until: this.buildLifecycleCooldownUntil(riskLevel),
           reason: `参数实验盘触发回滚：闭环 ${tradeClosedCount} 笔，交易均超额 ${round(
             tradeAvgExcess,
             2
@@ -1351,11 +1656,11 @@ export class QuantStrategyParamVersionService {
 
       const canPromote =
         ['active_candidate', 'observing'].includes(status) &&
-        completedCount >= policy.min_completed_samples &&
-        avgExcess >= policy.min_avg_excess_return_pct &&
-        winRate >= policy.min_win_rate &&
-        rankScore >= policy.min_rank_score &&
-        excessDelta >= policy.min_default_excess_delta_pct &&
+        completedCount >= effectivePolicy.min_completed_samples &&
+        avgExcess >= effectivePolicy.min_avg_excess_return_pct &&
+        winRate >= effectivePolicy.min_win_rate &&
+        rankScore >= effectivePolicy.min_rank_score &&
+        excessDelta >= effectivePolicy.min_default_excess_delta_pct &&
         envSatisfied &&
         !tradeShouldDegrade;
       if (canPromote) {
@@ -1366,42 +1671,46 @@ export class QuantStrategyParamVersionService {
           reason: `满足冠军推广：样本 ${completedCount}，平均超额 ${round(
             avgExcess,
             2
-          )}%，胜率 ${round(winRate, 1)}%，较默认参数超额 +${round(
-            excessDelta,
-            2
-          )}%，环境优势桶 ${environmentDiagnostics.positive_bucket_count} 个。`,
+          )}%，胜率 ${round(winRate, 1)}%，较默认参数超额 +${round(excessDelta, 2)}%，环境优势桶 ${
+            environmentDiagnostics.positive_bucket_count
+          } 个，策略风险级别 ${riskLevel} 已通过自适应护栏。`,
         });
         continue;
       }
 
       if (
         ['active_candidate', 'observing'].includes(status) &&
-        completedCount >= policy.min_completed_samples &&
-        avgExcess >= policy.min_avg_excess_return_pct &&
-        winRate >= policy.min_win_rate &&
-        rankScore >= policy.min_rank_score &&
-        excessDelta >= policy.min_default_excess_delta_pct &&
+        completedCount >= effectivePolicy.min_completed_samples &&
+        avgExcess >= effectivePolicy.min_avg_excess_return_pct &&
+        winRate >= effectivePolicy.min_win_rate &&
+        rankScore >= effectivePolicy.min_rank_score &&
+        excessDelta >= effectivePolicy.min_default_excess_delta_pct &&
         !envSatisfied
       ) {
         observations.push({
           ...compact,
           action: 'observe',
           next_status: row.status,
-          reason: `全局指标达标但环境分桶未达推广护栏：优势桶 ${environmentDiagnostics.positive_bucket_count}/${policy.min_positive_environment_buckets}，弱势桶 ${environmentDiagnostics.negative_bucket_count}/${policy.max_negative_environment_buckets}，继续小仓观察。`,
+          reason: `全局指标达标但环境分桶未达推广护栏：优势桶 ${
+            environmentDiagnostics.positive_bucket_count
+          }/${effectivePolicy.min_positive_environment_buckets}，弱势桶 ${
+            environmentDiagnostics.negative_bucket_count
+          }/${effectivePolicy.max_negative_environment_buckets}，继续小仓观察。`,
         });
         continue;
       }
 
       const shouldRollback =
         ['champion', 'active_candidate', 'degraded'].includes(status) &&
-        completedCount >= policy.rollback_min_completed_samples &&
-        recentExcess <= policy.rollback_recent_excess_return_pct &&
-        avgExcess <= policy.rollback_avg_excess_return_pct;
+        completedCount >= effectivePolicy.rollback_min_completed_samples &&
+        recentExcess <= effectivePolicy.rollback_recent_excess_return_pct &&
+        avgExcess <= effectivePolicy.rollback_avg_excess_return_pct;
       if (shouldRollback) {
         rollbacks.push({
           ...compact,
           action: 'rollback',
           next_status: 'rolled_back',
+          cooldown_until: this.buildLifecycleCooldownUntil(riskLevel),
           reason: `触发回滚：近期平均超额 ${round(recentExcess, 2)}%，整体超额 ${round(
             avgExcess,
             2
@@ -1412,11 +1721,11 @@ export class QuantStrategyParamVersionService {
 
       const shouldDegrade =
         ['champion', 'active_candidate'].includes(status) &&
-        completedCount >= policy.degrade_min_completed_samples &&
-        (avgExcess <= policy.degrade_avg_excess_return_pct ||
-          winRate <= policy.degrade_win_rate ||
-          recentExcess <= policy.degrade_recent_excess_return_pct ||
-          (completedCount >= policy.min_completed_samples && envShouldDegrade) ||
+        completedCount >= effectivePolicy.degrade_min_completed_samples &&
+        (avgExcess <= effectivePolicy.degrade_avg_excess_return_pct ||
+          winRate <= effectivePolicy.degrade_win_rate ||
+          recentExcess <= effectivePolicy.degrade_recent_excess_return_pct ||
+          (completedCount >= effectivePolicy.min_completed_samples && envShouldDegrade) ||
           tradeShouldDegrade);
       if (shouldDegrade) {
         const degradeReason = tradeShouldDegrade
@@ -1424,16 +1733,17 @@ export class QuantStrategyParamVersionService {
               tradeAvgExcess,
               2
             )}%，暂缓放大。`
-          : envShouldDegrade && completedCount >= policy.min_completed_samples
-            ? `环境分桶降级：优势桶 ${environmentDiagnostics.positive_bucket_count}，弱势桶 ${environmentDiagnostics.negative_bucket_count}，跨行情稳定性不足。`
-            : `降级观察：平均超额 ${round(avgExcess, 2)}%，近期超额 ${round(
-                recentExcess,
-                2
-              )}%，胜率 ${round(winRate, 1)}%，未满足继续放大条件。`;
+          : envShouldDegrade && completedCount >= effectivePolicy.min_completed_samples
+          ? `环境分桶降级：优势桶 ${environmentDiagnostics.positive_bucket_count}，弱势桶 ${environmentDiagnostics.negative_bucket_count}，跨行情稳定性不足。`
+          : `降级观察：平均超额 ${round(avgExcess, 2)}%，近期超额 ${round(
+              recentExcess,
+              2
+            )}%，胜率 ${round(winRate, 1)}%，未满足继续放大条件。`;
         degradations.push({
           ...compact,
           action: 'degrade',
           next_status: 'degraded',
+          cooldown_until: this.buildLifecycleCooldownUntil(riskLevel, 'degraded'),
           reason: degradeReason,
         });
         continue;
@@ -1444,8 +1754,8 @@ export class QuantStrategyParamVersionService {
         action: 'observe',
         next_status: row.status,
         reason:
-          completedCount < policy.min_completed_samples
-            ? `样本 ${completedCount}/${policy.min_completed_samples}，继续观察。`
+          completedCount < effectivePolicy.min_completed_samples
+            ? `样本 ${completedCount}/${effectivePolicy.min_completed_samples}，继续观察。`
             : `暂不调整：收益、胜率或相对默认优势尚未触发推广/降级规则。`,
       });
     }
@@ -1462,6 +1772,7 @@ export class QuantStrategyParamVersionService {
         max_negative_environment_buckets: policy.max_negative_environment_buckets,
         min_environment_bucket_completed_samples: policy.min_environment_bucket_completed_samples,
         min_environment_bucket_excess_return_pct: policy.min_environment_bucket_excess_return_pct,
+        risk_adjusted: true,
       },
       trade_guard: {
         version_count: tradeDiagnosticsByVersion.size,
@@ -1470,6 +1781,13 @@ export class QuantStrategyParamVersionService {
         rollback_min_closed_samples: policy.trade_rollback_min_closed_samples,
         rollback_avg_excess_return_pct: policy.trade_rollback_avg_excess_return_pct,
         rollback_total_pnl: policy.trade_rollback_total_pnl,
+        risk_adjusted: true,
+      },
+      risk_adjusted_policy: {
+        enabled: true,
+        low: this.compactLifecyclePolicy(this.buildRiskAdjustedLifecyclePolicy(policy, 'low')),
+        medium: this.compactLifecyclePolicy(this.buildRiskAdjustedLifecyclePolicy(policy, 'medium')),
+        high: this.compactLifecyclePolicy(this.buildRiskAdjustedLifecyclePolicy(policy, 'high')),
       },
       promotions: promotions.sort(sortByImpact),
       degradations: degradations.sort(sortByImpact),
@@ -1484,10 +1802,10 @@ export class QuantStrategyParamVersionService {
           promotions.length > 0
             ? `发现 ${promotions.length} 个可推广冠军参数，建议小仓放大并继续观察。`
             : rollbacks.length > 0
-              ? `发现 ${rollbacks.length} 个需回滚参数，避免继续扩大亏损。`
-              : degradations.length > 0
-                ? `发现 ${degradations.length} 个需降级观察参数，暂缓放大。`
-                : '暂无需要推广或回滚的参数版本，继续积累 A/B 样本。',
+            ? `发现 ${rollbacks.length} 个需回滚参数，避免继续扩大亏损。`
+            : degradations.length > 0
+            ? `发现 ${degradations.length} 个需降级观察参数，暂缓放大。`
+            : '暂无需要推广或回滚的参数版本，继续积累 A/B 样本。',
       },
     };
   }
@@ -1556,15 +1874,262 @@ export class QuantStrategyParamVersionService {
     return diagnostics;
   }
 
+  private resolveStrategyRiskLevel(
+    row: any,
+    strategyRiskByKey?: Map<string, StrategyRiskLevel>
+  ): StrategyRiskLevel {
+    const metadata = asPlainObject(row?.metadata);
+    return normalizeRiskLevel(
+      row?.risk_level ||
+        metadata.risk_level ||
+        strategyRiskByKey?.get(String(row?.strategy_key || '')) ||
+        'medium'
+    );
+  }
+
+  private buildRiskAdjustedLifecyclePolicy(
+    basePolicy: ParamVersionLifecyclePolicy,
+    riskLevel: StrategyRiskLevel
+  ): ParamVersionLifecyclePolicy {
+    if (riskLevel === 'high') {
+      return {
+        ...basePolicy,
+        min_completed_samples: Math.max(basePolicy.min_completed_samples, 18),
+        min_avg_excess_return_pct: Math.max(basePolicy.min_avg_excess_return_pct, 0.65),
+        min_win_rate: Math.max(basePolicy.min_win_rate, 55),
+        min_rank_score: Math.max(basePolicy.min_rank_score, 5.5),
+        min_default_excess_delta_pct: Math.max(basePolicy.min_default_excess_delta_pct, 0.45),
+        min_positive_environment_buckets: Math.max(basePolicy.min_positive_environment_buckets, 2),
+        max_negative_environment_buckets: Math.min(basePolicy.max_negative_environment_buckets, 0),
+        min_environment_bucket_completed_samples: Math.max(
+          basePolicy.min_environment_bucket_completed_samples,
+          4
+        ),
+        trade_degrade_min_closed_samples: Math.max(basePolicy.trade_degrade_min_closed_samples, 2),
+        trade_rollback_min_closed_samples: Math.max(
+          basePolicy.trade_rollback_min_closed_samples,
+          2
+        ),
+        trade_rollback_total_pnl: Math.min(basePolicy.trade_rollback_total_pnl, -800),
+      };
+    }
+
+    if (riskLevel === 'low') {
+      return {
+        ...basePolicy,
+        min_completed_samples: Math.max(8, Math.min(basePolicy.min_completed_samples, 10)),
+        min_avg_excess_return_pct: Math.min(basePolicy.min_avg_excess_return_pct, 0.25),
+        min_win_rate: Math.min(basePolicy.min_win_rate, 50),
+        min_rank_score: Math.min(basePolicy.min_rank_score, 3.5),
+        min_default_excess_delta_pct: Math.min(basePolicy.min_default_excess_delta_pct, 0.15),
+        min_environment_bucket_completed_samples: Math.max(
+          2,
+          Math.min(basePolicy.min_environment_bucket_completed_samples, 3)
+        ),
+        trade_degrade_min_closed_samples: Math.max(basePolicy.trade_degrade_min_closed_samples, 3),
+        trade_rollback_min_closed_samples: Math.max(
+          basePolicy.trade_rollback_min_closed_samples,
+          4
+        ),
+      };
+    }
+
+    return basePolicy;
+  }
+
+  private compactLifecyclePolicy(policy: ParamVersionLifecyclePolicy) {
+    return {
+      min_completed_samples: policy.min_completed_samples,
+      min_avg_excess_return_pct: policy.min_avg_excess_return_pct,
+      min_win_rate: policy.min_win_rate,
+      min_rank_score: policy.min_rank_score,
+      min_default_excess_delta_pct: policy.min_default_excess_delta_pct,
+      min_positive_environment_buckets: policy.min_positive_environment_buckets,
+      max_negative_environment_buckets: policy.max_negative_environment_buckets,
+      min_environment_bucket_completed_samples: policy.min_environment_bucket_completed_samples,
+      trade_degrade_min_closed_samples: policy.trade_degrade_min_closed_samples,
+      trade_rollback_min_closed_samples: policy.trade_rollback_min_closed_samples,
+      trade_rollback_total_pnl: policy.trade_rollback_total_pnl,
+    };
+  }
+
+  private buildLifecycleCooldownUntil(
+    riskLevel: StrategyRiskLevel,
+    action: 'rolled_back' | 'degraded' = 'rolled_back'
+  ) {
+    const days =
+      action === 'degraded'
+        ? riskLevel === 'high'
+          ? 10
+          : riskLevel === 'low'
+          ? 3
+          : 5
+        : riskLevel === 'high'
+        ? 30
+        : riskLevel === 'low'
+        ? 10
+        : 20;
+    return moment().tz('Asia/Shanghai').add(days, 'days').format('YYYY-MM-DD');
+  }
+
+  private resolveLifecycleCooldown(row: any, policy: ParamVersionLifecyclePolicy) {
+    const metadata = asPlainObject(row?.metadata);
+    const cooldownUntil = String(metadata.lifecycle_cooldown_until || row?.cooldown_until || '');
+    const today = moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
+    const isRolledBack = String(row?.status || '').toLowerCase() === 'rolled_back';
+    const active = Boolean(cooldownUntil && cooldownUntil >= today);
+    if (active) {
+      return {
+        active: true,
+        cooldown_until: cooldownUntil,
+        reason: `参数版本处于冷却期至 ${cooldownUntil}，暂不重新参与开盘扫描候选。`,
+      };
+    }
+    if (isRolledBack && !active) {
+      const completedCount = toNumber(row?.completed_count);
+      if (completedCount < policy.min_completed_samples) {
+        return {
+          active: true,
+          cooldown_until: cooldownUntil || null,
+          reason: `参数版本已回滚且新增有效样本 ${completedCount}/${policy.min_completed_samples} 不足，继续排除。`,
+        };
+      }
+    }
+    return { active: false, cooldown_until: cooldownUntil || null, reason: '' };
+  }
+
   private versionPriority(version: QuantStrategyParamVersion) {
     const status = String(version.status || '').toLowerCase();
     const type = String(version.version_type || '').toLowerCase();
+    if (this.shouldExcludeFromScan(version)) return -10;
     if (status === 'manual_override' || type === 'manual') return 40;
     if (status === 'champion') return 35;
     if (status === 'active_candidate') return 30;
     if (status === 'observing') return 20;
     if (status === 'baseline') return 10;
     return 0;
+  }
+
+  private async getScanExcludedVersions(strategyKeys: string[]) {
+    if (!strategyKeys.length) return [];
+    return QuantStrategyParamVersion.findAll({
+      where: {
+        strategy_key: { [Op.in]: strategyKeys },
+        status: { [Op.in]: ['rolled_back', 'degraded'] },
+      },
+      order: [
+        ['strategy_key', 'ASC'],
+        ['updated_at', 'DESC'],
+      ],
+    }).catch(() => [] as QuantStrategyParamVersion[]);
+  }
+
+  private shouldExcludeFromScan(version: QuantStrategyParamVersion) {
+    const status = String(version.status || '').toLowerCase();
+    const metadata = asPlainObject(version.metadata);
+    const cooldownUntil = String(metadata.lifecycle_cooldown_until || '').slice(0, 10);
+    const today = moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
+    if (cooldownUntil && cooldownUntil >= today) return true;
+    return status === 'rolled_back';
+  }
+
+  private selectBestScanVersion(versions: QuantStrategyParamVersion[]) {
+    return [...versions].sort((a, b) => {
+      const priorityDelta = this.versionPriority(b) - this.versionPriority(a);
+      if (priorityDelta !== 0) return priorityDelta;
+      const rankDelta = toNumber(b.source_rank_score) - toNumber(a.source_rank_score);
+      if (rankDelta !== 0) return rankDelta;
+      const excessDelta =
+        toNumber(b.source_excess_return_pct) - toNumber(a.source_excess_return_pct);
+      if (excessDelta !== 0) return excessDelta;
+      return new Date(b.updated_at || 0).getTime() - new Date(a.updated_at || 0).getTime();
+    })[0];
+  }
+
+  private buildScanSelectionDiagnostic(
+    definition: any,
+    selected: QuantStrategyParamVersion,
+    candidates: QuantStrategyParamVersion[],
+    excluded: QuantStrategyParamVersion[] = []
+  ) {
+    const ranked = [...candidates].sort((a, b) => {
+      const priorityDelta = this.versionPriority(b) - this.versionPriority(a);
+      if (priorityDelta !== 0) return priorityDelta;
+      const rankDelta = toNumber(b.source_rank_score) - toNumber(a.source_rank_score);
+      if (rankDelta !== 0) return rankDelta;
+      return (
+        toNumber(b.source_excess_return_pct) - toNumber(a.source_excess_return_pct) ||
+        new Date(b.updated_at || 0).getTime() - new Date(a.updated_at || 0).getTime()
+      );
+    });
+    const selectedKey = selected?.version_key;
+    return {
+      strategy_key: definition.strategy_key,
+      strategy_name: definition.name,
+      selected_version_key: selectedKey,
+      selected_reason: selected?.adoption_reason || '按参数版本优先级自动选择。',
+      candidate_count: candidates.length,
+      excluded_count: excluded.length,
+      candidates: ranked.slice(0, 5).map((item, index) => ({
+        rank: index + 1,
+        version_key: item.version_key,
+        version_type: item.version_type,
+        status: item.status,
+        priority: this.versionPriority(item),
+        source_rank_score: toNumber(item.source_rank_score, 0),
+        source_excess_return_pct: toNumber(item.source_excess_return_pct, 0),
+        source_trade_count: toNumber(item.source_trade_count, 0),
+        selected: item.version_key === selectedKey,
+        reason:
+          item.version_key === selectedKey
+            ? '当前采用'
+            : this.explainWhyNotSelected(item, selected),
+      })),
+      excluded_versions: excluded.slice(0, 5).map((item, index) => ({
+        rank: index + 1,
+        version_key: item.version_key,
+        version_type: item.version_type,
+        status: item.status,
+        cooldown_until: asPlainObject(item.metadata).lifecycle_cooldown_until || null,
+        reason: this.explainScanExclusion(item),
+      })),
+    };
+  }
+
+  private explainScanExclusion(candidate: QuantStrategyParamVersion) {
+    const metadata = asPlainObject(candidate.metadata);
+    const cooldownUntil = String(metadata.lifecycle_cooldown_until || '').slice(0, 10);
+    const status = String(candidate.status || '').toLowerCase();
+    const today = moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
+    if (cooldownUntil && cooldownUntil >= today) {
+      return `处于冷却期至 ${cooldownUntil}，本轮开盘扫描排除。`;
+    }
+    if (status === 'rolled_back') return '参数已回滚，等待重新验证后才可恢复。';
+    if (status === 'degraded') return '参数处于降级观察且冷却期未结束，暂不参与生产扫描。';
+    return '未进入生产扫描候选状态。';
+  }
+
+  private explainWhyNotSelected(candidate: QuantStrategyParamVersion, selected: QuantStrategyParamVersion) {
+    if (!selected) return '无已选版本。';
+    const candidatePriority = this.versionPriority(candidate);
+    const selectedPriority = this.versionPriority(selected);
+    if (candidatePriority < selectedPriority) {
+      return `优先级低于已选版本（${candidate.status}/${candidate.version_type} < ${selected.status}/${selected.version_type}）。`;
+    }
+    if (candidatePriority > selectedPriority) return '优先级更高但未被排序选中，请检查状态或更新时间。';
+    if (toNumber(candidate.source_rank_score) < toNumber(selected.source_rank_score)) {
+      return `rank_score 较低（${toNumber(candidate.source_rank_score, 0)} < ${toNumber(
+        selected.source_rank_score,
+        0
+      )}）。`;
+    }
+    if (toNumber(candidate.source_excess_return_pct) < toNumber(selected.source_excess_return_pct)) {
+      return `超额收益较低（${toNumber(candidate.source_excess_return_pct, 0)} < ${toNumber(
+        selected.source_excess_return_pct,
+        0
+      )}）。`;
+    }
+    return '同优先级下更新时间更早或综合排序略低。';
   }
 }
 

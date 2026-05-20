@@ -107,6 +107,8 @@ export interface PaperTradingAutoOptions {
   signal_date_end?: string;
   signal_ids?: number[];
   ignore_profit_gate_for_forced_signals?: boolean;
+  allow_min_lot_for_forced_signals?: boolean;
+  max_forced_min_lot_position_pct?: number;
   use_attribution_feedback?: boolean;
   use_profit_gate?: boolean;
   profit_gate_horizon?: string;
@@ -185,6 +187,8 @@ export interface PaperTradingAutoTradeItem {
   commission?: number;
   total_cost?: number;
   target_position_pct?: number;
+  min_lot_sample?: boolean;
+  min_lot_sample_reason?: string;
   stop_loss_pct?: number;
   take_profit_pct?: number;
   original_score?: number;
@@ -224,6 +228,7 @@ export interface PaperTradingAutoTradeItem {
   industry_regime?: string;
   industry_label?: string;
   trade_id?: number;
+  trace_url?: string;
   reason?: string;
 }
 
@@ -433,6 +438,7 @@ export interface PaperTradingRiskCheckOptions {
   force_new_portfolio?: boolean;
   dry_run?: boolean;
   report_to_feishu?: boolean;
+  notify_to_feishu_bot?: boolean;
   limit?: number;
   enable_stop_loss?: boolean;
   enable_take_profit?: boolean;
@@ -1370,14 +1376,46 @@ class PaperTradingAutomationService {
         0,
         strategyPositionCap
       );
+      const forcedSignal = signalIds.includes(signal.id);
+      const execute_price = roundNumber(quote.price * (1 + this.slippageRate), 3);
+      const oneLotQuantity = 100;
+      const oneLotAmount = roundNumber(execute_price * oneLotQuantity, 2);
+      const oneLotCommission = roundNumber(oneLotAmount * this.commissionRate, 2);
+      const oneLotCost = roundNumber(oneLotAmount + oneLotCommission, 2);
+      const oneLotPositionPct =
+        totalValue > 0 ? roundNumber((oneLotCost / totalValue) * 100, 4) : 0;
+      const minTradeAmountPct =
+        totalValue > 0 ? roundNumber((min_trade_amount / totalValue) * 100, 4) : 0;
+      const forcedMinLotEnabled =
+        forcedSignal && toBoolean(options.allow_min_lot_for_forced_signals, true);
+      const forcedMinLotCapPct = clamp(
+        toNumber(options.max_forced_min_lot_position_pct, Math.min(strategyPositionCap, 6)),
+        0.5,
+        Math.max(0.5, strategyPositionCap)
+      );
+      let effectiveTargetPct = gatedSuggestedPct;
+      let minLotSample = false;
+      let minLotSampleReason = '';
+      if (forcedMinLotEnabled && gatedSuggestedPct > 0 && oneLotCost <= availableCash * 0.98) {
+        const minExecutablePct = Math.max(oneLotPositionPct, minTradeAmountPct);
+        const canRespectPositionCap = minExecutablePct <= forcedMinLotCapPct + 0.05;
+        if (minExecutablePct > gatedSuggestedPct && canRespectPositionCap) {
+          effectiveTargetPct = clamp(minExecutablePct, gatedSuggestedPct, forcedMinLotCapPct);
+          minLotSample = true;
+          minLotSampleReason = `A股一手起买冷启动采样：目标仓位由 ${roundNumber(
+            gatedSuggestedPct,
+            2
+          )}% 提升至 ${roundNumber(effectiveTargetPct, 2)}%`;
+        }
+      }
       const tradeRisk = this.evaluateEntryRiskGuard({
         guard: entryRiskGuard,
         profile: await this.enrichEntryMarketProfileRisk(
           marketProfileWithPortfolioRisk,
           entryRiskGuard,
-          gatedSuggestedPct
+          effectiveTargetPct
         ),
-        candidate_position_pct: gatedSuggestedPct,
+        candidate_position_pct: effectiveTargetPct,
         strategy_keys: strategyKeysForBudget,
         strategy_allocation_pct: strategyAllocationPct,
       });
@@ -1389,13 +1427,12 @@ class PaperTradingAutomationService {
         skip(`收益闸门仓位倍率为 ${profitGatePolicy.effective_position_multiplier}，不执行买入`);
         continue;
       }
-      const targetAmount = Math.min(totalValue * (gatedSuggestedPct / 100), availableCash * 0.98);
-      if (targetAmount < min_trade_amount) {
+      const targetAmount = Math.min(totalValue * (effectiveTargetPct / 100), availableCash * 0.98);
+      if (targetAmount < min_trade_amount && !minLotSample) {
         skip(`目标交易金额低于最小阈值 ${min_trade_amount}`);
         continue;
       }
 
-      const execute_price = roundNumber(quote.price * (1 + this.slippageRate), 3);
       let quantity = Math.floor(targetAmount / execute_price / 100) * 100;
       let amount = roundNumber(execute_price * quantity, 2);
       let commission = roundNumber(amount * this.commissionRate, 2);
@@ -1535,7 +1572,9 @@ class PaperTradingAutomationService {
         amount,
         commission,
         total_cost,
-        target_position_pct: roundNumber(gatedSuggestedPct, 2),
+        target_position_pct: roundNumber(effectiveTargetPct, 2),
+        min_lot_sample: minLotSample || undefined,
+        min_lot_sample_reason: minLotSampleReason || undefined,
         strategy_allocation_pct: strategyAllocationPct,
         strategy_allocation_amount: toOptionalNumber(
           metadata.strategy_allocation_amount ||
@@ -1566,6 +1605,7 @@ class PaperTradingAutomationService {
           environmentPolicy.enabled
             ? `环境风控：${environmentPolicy.reason}，倍率 ${environmentPolicy.position_multiplier}x`
             : '',
+          minLotSampleReason,
         ]
           .filter(Boolean)
           .join('；'),
@@ -1599,6 +1639,8 @@ class PaperTradingAutomationService {
           strategy_max_single_trade_pct: tradePayload.strategy_max_single_trade_pct,
           strategy_max_single_trade_amount: tradePayload.strategy_max_single_trade_amount,
           strategy_allocation_policy: strategyAllocationPolicy,
+          min_lot_sample: minLotSample || undefined,
+          min_lot_sample_reason: minLotSampleReason || undefined,
           stop_loss_pct: tradePayload.stop_loss_pct,
           take_profit_pct: tradePayload.take_profit_pct,
           strategy_key: metadata.strategy_key,
@@ -2121,6 +2163,14 @@ class PaperTradingAutomationService {
       await feishuTaskReportService.reportPaperTradingRiskCheck(result, {
         record_type: dry_run ? '模拟盘风控预演' : '模拟盘风控退出',
       });
+
+      if (options.notify_to_feishu_bot !== false) {
+        await feishuBotWebhookService.sendRecommendationSummary({
+          scenario: 'paper_trading_risk_check',
+          record_type: dry_run ? '模拟盘风控预演' : '模拟盘风控退出',
+          result,
+        });
+      }
     }
 
     return result;
@@ -4117,6 +4167,7 @@ class PaperTradingAutomationService {
     return {
       status: 'skipped',
       signal_id: signal.id,
+      trace_url: this.buildSignalTraceUrl(signal.id),
       source_type: signal.source_type,
       source_id: signal.source_id,
       signal_date: signal.signal_date,
@@ -4317,6 +4368,13 @@ class PaperTradingAutomationService {
     } catch (error: any) {
       logger.warn(`推荐交易收益闭环刷新失败 signal#${signal_id}: ${error?.message || error}`);
     }
+  }
+
+  private buildSignalTraceUrl(signal_id?: number): string | undefined {
+    if (!signal_id) return undefined;
+    const baseUrl = String(process.env.FRONTEND_BASE_URL || '').replace(/\/+$/, '');
+    const path = `/signals/${signal_id}/trace`;
+    return baseUrl ? `${baseUrl}${path}` : path;
   }
 }
 

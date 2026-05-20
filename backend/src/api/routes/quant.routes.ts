@@ -31,6 +31,11 @@ router.get(
   quantController.getOpenWatchdog.bind(quantController)
 );
 router.get(
+  '/data-freshness',
+  authController.authenticate,
+  quantController.getDataFreshness.bind(quantController)
+);
+router.get(
   '/strategy-experiments',
   authController.authenticate,
   quantController.listStrategyExperiments.bind(quantController)
@@ -44,6 +49,11 @@ router.get(
   '/param-versions',
   authController.authenticate,
   quantController.listParamVersions.bind(quantController)
+);
+router.get(
+  '/param-versions/active-scan',
+  authController.authenticate,
+  quantController.getActiveScanParams.bind(quantController)
 );
 router.get(
   '/param-validations',
@@ -69,6 +79,21 @@ router.post(
   '/backtests',
   authController.authenticate,
   quantController.createBacktest.bind(quantController)
+);
+router.post(
+  '/backtests/walk-forward',
+  authController.authenticate,
+  quantController.createWalkForwardBacktests.bind(quantController)
+);
+router.post(
+  '/backtests/grid-search',
+  authController.authenticate,
+  quantController.createParameterGridBacktests.bind(quantController)
+);
+router.get(
+  '/backtests/grid-search/summary',
+  authController.authenticate,
+  quantController.getParameterGridSummary.bind(quantController)
 );
 router.get(
   '/backtests',

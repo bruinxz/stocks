@@ -34,3 +34,6 @@ export * from './QuantStrategyParamValidation';
 export * from './QuantFusionAudit';
 export * from './TaskParameterAuditLog';
 export * from './RealtimeQuote';
+export * from './StockFundamentalFactor';
+export * from './StockMoneyFlowFactor';
+export * from './StockValuationFactor';

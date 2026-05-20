@@ -28,11 +28,8 @@ import {
   ThunderboltOutlined,
   WalletOutlined,
 } from '@ant-design/icons';
-import dayjs from 'dayjs';
 import { useNavigate } from 'react-router-dom';
-import api, { getAutonomousTradingDashboard } from '../services/api';
-import { taskService } from '../services/taskService';
-import type { AutomationHealth } from '../services/taskService';
+import api from '../services/api';
 
 const { Text, Paragraph } = Typography;
 
@@ -110,61 +107,21 @@ const buildPositionAdvice = (position: Position) => {
 const TodayCommandCenter: React.FC = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
-  const [dashboard, setDashboard] = useState<any>(null);
-  const [rankingDashboard, setRankingDashboard] = useState<any>(null);
-  const [recommendations, setRecommendations] = useState<any[]>([]);
-  const [riskProfile, setRiskProfile] = useState<any>(null);
-  const [automationHealth, setAutomationHealth] = useState<AutomationHealth | null>(null);
-  const [openWatchdog, setOpenWatchdog] = useState<any>(null);
+  const [commandData, setCommandData] = useState<any>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const fetchCommandData = async (silent = false) => {
     setLoading(true);
     try {
-      const tradeDate = dayjs().format('YYYY-MM-DD');
-      const results = await Promise.allSettled([
-        getAutonomousTradingDashboard({ lookback_days: 60, limit: 120 }),
-        api.get('/quant/rankings', { params: { trade_date: tradeDate, limit: 20 } }),
-        api.get('/ai/recommendations', {
-          params: {
-            universe: 'market',
-            style: 'balanced',
-            limit: 8,
-            candidate_pool_limit: 180,
-            lookback_days: 120,
-            exclude_st: true,
-          },
-        }),
-        api.get('/paper-trading/risk-profile'),
-        taskService.getAutomationHealth(),
-        api.get('/quant/open-watchdog', { params: { trade_date: tradeDate } }),
-      ]);
-
-      const nextErrors: Record<string, string> = {};
-      const pick = (index: number, key: string) => {
-        const result = results[index];
-        if (result.status === 'fulfilled') {
-          const value: any = result.value;
-          if (value?.data?.success) return value.data.data;
-          if (value && !value.data && key === 'automation') return value;
-        }
-        nextErrors[key] =
-          result.status === 'rejected'
-            ? result.reason?.message || '加载失败'
-            : (result.value as any)?.data?.message || '加载失败';
-        return null;
-      };
-
-      setDashboard(pick(0, 'dashboard'));
-      setRankingDashboard(pick(1, 'quant'));
-      setRecommendations(pick(2, 'recommendations')?.recommendations || []);
-      setRiskProfile(pick(3, 'risk'));
-      setAutomationHealth(pick(4, 'automation'));
-      setOpenWatchdog(pick(5, 'openWatchdog'));
-      setErrors(nextErrors);
+      const response = await api.get('/today/command-center', { params: { limit: 8 } });
+      const data = response.data?.data;
+      setCommandData(data);
+      setErrors({});
       if (!silent) message.success('今日作战台已刷新');
     } catch (error: any) {
-      message.error(error.response?.data?.message || '加载今日作战台失败');
+      const messageText = error.response?.data?.message || '加载今日作战台失败';
+      setErrors({ command_center: messageText });
+      message.error(messageText);
     } finally {
       setLoading(false);
     }
@@ -175,134 +132,27 @@ const TodayCommandCenter: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const candidates = useMemo<Candidate[]>(() => {
-    const fusion = (rankingDashboard?.fusion_rankings || []).map((item: any) => ({
-      key: `fusion-${item.id || item.symbol}`,
-      symbol: item.symbol,
-      name: item.name,
-      source: '量化+Agent融合',
-      action: item.final_decision || item.agent_decision || 'watch',
-      score: item.final_score ?? item.agent_score ?? item.quant_score,
-      confidence: item.final_score,
-      current_price: item.current_price,
-      suggested_position_pct: Number(item.final_score || 0) >= 82 ? 6 : 4,
-      reason: item.rationale,
-      risk: item.risk_level,
-    }));
-
-    const quant = (rankingDashboard?.quant_rankings || []).map((item: any) => ({
-      key: `quant-${item.rank || item.symbol}`,
-      symbol: item.symbol,
-      name: item.name,
-      source: '量化策略',
-      action: item.signal || 'watch',
-      score: item.score,
-      confidence: item.confidence,
-      current_price: item.entry_price,
-      suggested_position_pct: Number(item.score || 0) >= 82 ? 6 : 4,
-      reason: item.reason,
-      risk: (item.risk_flags || []).slice(0, 2).join('、'),
-    }));
-
-    const ai = recommendations.map((item: any, index: number) => ({
-      key: `ai-${item.symbol}-${index}`,
-      symbol: item.symbol,
-      name: item.name,
-      source: 'AI智能候选',
-      action: item.action || item.recommendation_tier || 'watch',
-      score: item.score,
-      confidence: item.confidence,
-      current_price: item.current_price,
-      suggested_position_pct: item.suggested_position_pct,
-      reason: item.tier_reason || item.reasons?.[0],
-      risk: item.risk_level,
-    }));
-
-    const seen = new Set<string>();
-    return [...fusion, ...quant, ...ai]
-      .filter(item => {
-        if (!item.symbol || seen.has(item.symbol)) return false;
-        seen.add(item.symbol);
-        return true;
-      })
-      .sort((a, b) => Number(b.score || 0) - Number(a.score || 0))
-      .slice(0, 8);
-  }, [rankingDashboard, recommendations]);
-
-  const buyCandidates = candidates.filter(item => actionMeta(item.action).label === '买入');
-  const watchCandidates = candidates.filter(item => actionMeta(item.action).label !== '买入');
-  const positions: Position[] = dashboard?.positions || [];
-  const sellSignals =
-    dashboard?.recommendation_tracking?.items?.filter((item: any) =>
-      ['sell', 'sell_signal', 'reduce', 'exit'].includes(
-        String(item.command || item.status || '').toLowerCase()
-      )
-    ) || [];
-  const summary = dashboard?.summary || {};
-  const riskStatus = riskProfile?.status || {};
-  const healthStatus = automationHealth?.status || 'warning';
-  const quotePersistence =
-    rankingDashboard?.summary?.quote_persistence || openWatchdog?.checks?.quote_persistence;
-  const cashPct = Number(summary.cash_pct ?? riskProfile?.cash?.cash_pct ?? 0);
-  const exposurePct = Number(summary.exposure_pct ?? riskProfile?.exposure?.exposure_pct ?? 0);
-  const conclusionTone =
-    buyCandidates.length > 0 ? 'action' : positions.length > 0 ? 'hold' : 'wait';
-
+  const candidates = useMemo<Candidate[]>(() => commandData?.all_candidates || [], [commandData]);
+  const buyCandidates =
+    commandData?.buy_candidates || candidates.filter(item => item.action === 'buy');
+  const watchCandidates =
+    commandData?.watch_candidates || candidates.filter(item => item.action !== 'buy');
+  const positions: Position[] = commandData?.positions || [];
+  const sellSignals = commandData?.sell_candidates || [];
+  const summary = commandData?.summary || {};
+  const riskStatus = commandData?.risk_profile?.status || {};
+  const readinessItems = commandData?.readiness || [];
+  const latestFeishu = commandData?.latest_feishu;
+  const cashPct = Number(summary.cash_pct || 0);
+  const exposurePct = Number(summary.exposure_pct || 0);
+  const conclusionTone = commandData?.conclusion?.tone || 'wait';
   const conclusionText =
-    buyCandidates.length > 0
+    commandData?.conclusion?.headline ||
+    (buyCandidates.length > 0
       ? `谨慎买入 ${buyCandidates.length} 只，观察 ${watchCandidates.length} 只，卖出/减仓 ${sellSignals.length} 只`
       : positions.length > 0
       ? `暂无强买入，持仓 ${positions.length} 只优先做风控复查`
-      : `暂无持仓，等待今日量化/Agent 信号确认`;
-  const readinessItems = [
-    {
-      key: 'data',
-      label: '行情数据新鲜',
-      ok:
-        Boolean(quotePersistence?.persisted) &&
-        (quotePersistence?.is_fresh !== false || Number(quotePersistence?.age_minutes || 0) <= 90),
-      detail: quotePersistence?.persisted
-        ? `最新 ${quotePersistence.latest_quote_time || quotePersistence.latest_trade_date || '--'}`
-        : '等待实时行情落盘',
-    },
-    {
-      key: 'tasks',
-      label: '自动任务链路',
-      ok: healthStatus === 'healthy',
-      warn: healthStatus === 'warning',
-      detail: `${automationHealth?.summary?.active_tasks || 0}/${
-        automationHealth?.summary?.total_tasks || 0
-      } 个任务启用`,
-    },
-    {
-      key: 'signals',
-      label: '推荐信号生成',
-      ok: candidates.length > 0 || Number(openWatchdog?.checks?.quant_signal_count || 0) > 0,
-      detail: `量化 ${Number(
-        openWatchdog?.checks?.quant_signal_count || candidates.length || 0
-      )} 条 · 融合 ${rankingDashboard?.fusion_rankings?.length || 0} 条`,
-    },
-    {
-      key: 'risk',
-      label: '风控允许新增',
-      ok: cashPct >= 10 && exposurePct <= 85 && healthStatus !== 'critical',
-      warn: cashPct >= 6 && exposurePct <= 92,
-      detail: `现金 ${cashPct.toFixed(1)}% · 仓位 ${exposurePct.toFixed(1)}%`,
-    },
-    {
-      key: 'feishu',
-      label: '飞书/复盘闭环',
-      ok:
-        (automationHealth?.chains || []).some(
-          chain => chain.key === 'trade_outcome_loop' && chain.status === 'healthy'
-        ) || healthStatus === 'healthy',
-      warn: healthStatus === 'warning',
-      detail:
-        automationHealth?.summary?.latest_loop_run_at ||
-        openWatchdog?.latest_log?.completed_at ||
-        '等待最近任务日志',
-    },
-  ];
+      : `暂无持仓，等待今日量化/Agent 信号确认`);
 
   const candidateColumns = [
     {
@@ -459,7 +309,7 @@ const TodayCommandCenter: React.FC = () => {
           <span>今日结论</span>
           <strong>{conclusionText}</strong>
           <em>
-            核心原因：量化机会 {candidates.length} 只，Agent/AI 候选 {recommendations.length} 只；
+            核心原因：量化/Agent 候选 {candidates.length} 只，卖出/风控 {sellSignals.length} 只；
             现金水位 {cashPct.toFixed(1)}%，总仓位 {exposurePct.toFixed(1)}%。
           </em>
           <Alert
@@ -477,11 +327,11 @@ const TodayCommandCenter: React.FC = () => {
           <Card
             className="modern-card today-metric-card"
             variant="borderless"
-            loading={loading && !dashboard}
+            loading={loading && !commandData}
           >
             <Statistic
               title="总资产"
-              value={summary.total_value || dashboard?.portfolio?.total_value || 200000}
+              value={summary.total_value || 200000}
               precision={2}
               prefix="¥"
               valueStyle={{ color: 'var(--text-main)' }}
@@ -495,7 +345,7 @@ const TodayCommandCenter: React.FC = () => {
           <Card
             className="modern-card today-metric-card"
             variant="borderless"
-            loading={loading && !dashboard}
+            loading={loading && !commandData}
           >
             <Statistic
               title="今日买入候选"
@@ -509,7 +359,7 @@ const TodayCommandCenter: React.FC = () => {
           <Card
             className="modern-card today-metric-card"
             variant="borderless"
-            loading={loading && !dashboard}
+            loading={loading && !commandData}
           >
             <Statistic title="当前持仓" value={positions.length} prefix={<WalletOutlined />} />
             <Text type="secondary">
@@ -521,7 +371,7 @@ const TodayCommandCenter: React.FC = () => {
           <Card
             className="modern-card today-metric-card"
             variant="borderless"
-            loading={loading && !riskProfile}
+            loading={loading && !commandData}
           >
             <Statistic
               title="卖出/风控信号"
@@ -549,7 +399,7 @@ const TodayCommandCenter: React.FC = () => {
         }
       >
         <div className="today-readiness-grid">
-          {readinessItems.map(item => {
+          {readinessItems.map((item: any) => {
             const tone = item.ok ? 'ok' : item.warn ? 'warn' : 'danger';
             return (
               <div className={`today-readiness-item ${tone}`} key={item.key}>
@@ -565,19 +415,15 @@ const TodayCommandCenter: React.FC = () => {
             );
           })}
         </div>
-        {openWatchdog?.conclusion && (
+        {latestFeishu && (
           <Alert
             showIcon
-            type={
-              openWatchdog.status === 'critical'
-                ? 'error'
-                : openWatchdog.status === 'warning'
-                ? 'warning'
-                : 'success'
-            }
+            type={latestFeishu.status === 'FAILED' ? 'warning' : 'success'}
             style={{ marginTop: 14, borderRadius: 14 }}
-            message="开盘链路看门狗"
-            description={openWatchdog.conclusion}
+            message="最近荐股/飞书链路"
+            description={`${latestFeishu.task_name || '荐股任务'} · ${
+              latestFeishu.status || '--'
+            } · ${latestFeishu.completed_at || latestFeishu.started_at || '等待任务日志'}`}
           />
         )}
       </Card>

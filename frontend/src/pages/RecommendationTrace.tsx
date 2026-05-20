@@ -6,6 +6,7 @@ import {
   Col,
   Descriptions,
   Empty,
+  Progress,
   Row,
   Skeleton,
   Space,
@@ -13,15 +14,18 @@ import {
   Tag,
   Typography,
   message,
+  Statistic,
 } from 'antd';
 import {
   ArrowLeftOutlined,
   CheckCircleOutlined,
   FundProjectionScreenOutlined,
+  LinkOutlined,
   NodeIndexOutlined,
   RobotOutlined,
   SafetyCertificateOutlined,
   StockOutlined,
+  TrophyOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from '../services/api';
@@ -62,12 +66,17 @@ const RecommendationTrace: React.FC = () => {
   const fetchTrace = async () => {
     setLoading(true);
     try {
-      const response = await api.get(`/paper-trading/recommendation-outcomes/${id}/trace`);
+      const response = await api.get(`/signals/${id}/trace`);
       if (response.data.success) {
         setTrace(response.data.data || null);
       }
     } catch (error: any) {
       try {
+        const traceResponse = await api.get(`/paper-trading/recommendation-outcomes/${id}/trace`);
+        if (traceResponse.data.success) {
+          setTrace(traceResponse.data.data || null);
+          return;
+        }
         const response = await api.get('/paper-trading/recommendation-outcomes', {
           params: { include_open: true, limit: 2000, lookback_days: 365 },
         });
@@ -92,6 +101,9 @@ const RecommendationTrace: React.FC = () => {
   }, [id]);
 
   const outcome = trace?.outcome;
+  const summary = trace?.summary || {};
+  const keyEvidence = Array.isArray(trace?.key_evidence) ? trace.key_evidence : [];
+  const decisionContext = trace?.decision_context || {};
   const consensus = outcome?.metadata?.consensus || outcome?.metadata?.signal_metadata || {};
   const env =
     outcome?.metadata?.market_environment || outcome?.metadata?.signal_metadata?.market_environment;
@@ -194,7 +206,8 @@ const RecommendationTrace: React.FC = () => {
                   {outcome.name || outcome.symbol} <span>{outcome.symbol}</span>
                 </h1>
                 <Paragraph>
-                  从信号生成、策略/Agent 复核、风控放行、模拟买入到卖出闭环的完整证据链。
+                  {summary.conclusion ||
+                    '从信号生成、策略/Agent 复核、风控放行、模拟买入到卖出闭环的完整证据链。'}
                 </Paragraph>
                 <Space wrap>
                   <Tag icon={<NodeIndexOutlined />} color="geekblue">
@@ -203,20 +216,84 @@ const RecommendationTrace: React.FC = () => {
                   <Tag color={outcome.trade_status === 'closed' ? 'purple' : 'blue'}>
                     {outcome.trade_status === 'closed' ? '已平仓' : '持仓中'}
                   </Tag>
-                  <Tag color="gold">评分 {outcome.score ?? '--'}</Tag>
+                  <Tag color="gold">评分 {summary.score ?? outcome.score ?? '--'}</Tag>
+                  <Tag color="cyan">
+                    信号价 {formatMoney(summary.current_price || outcome.entry_price)}
+                  </Tag>
+                  {summary.trace_id && <Tag color="default">{summary.trace_id}</Tag>}
                 </Space>
               </div>
               <div className="trace-result-card">
                 <span>当前结果</span>
                 <strong style={{ color: pnlColor(outcome.total_pnl) }}>
-                  {formatMoney(outcome.total_pnl)}
+                  {formatMoney(summary.total_pnl ?? outcome.total_pnl)}
                 </strong>
                 <em style={{ color: pnlColor(outcome.total_pnl_pct) }}>
-                  收益 {formatPercent(outcome.total_pnl_pct)} · 超额{' '}
-                  {formatPercent(outcome.excess_return_pct)}
+                  收益 {formatPercent(summary.total_pnl_pct ?? outcome.total_pnl_pct)} · 超额{' '}
+                  {formatPercent(summary.excess_return_pct ?? outcome.excess_return_pct)}
                 </em>
+                {summary.trace_url && (
+                  <Button
+                    size="small"
+                    icon={<LinkOutlined />}
+                    onClick={() => navigator.clipboard?.writeText(summary.trace_url)}
+                  >
+                    复制链路
+                  </Button>
+                )}
               </div>
             </div>
+
+            <Card className="modern-card trace-verdict-card" variant="borderless">
+              <Row gutter={[16, 16]} align="middle">
+                <Col xs={24} lg={10}>
+                  <div className="trace-verdict-title">
+                    <TrophyOutlined />
+                    <div>
+                      <span>KEY VERDICT</span>
+                      <strong>{summary.conclusion || trace?.conclusion || '链路结论生成中'}</strong>
+                    </div>
+                  </div>
+                </Col>
+                <Col xs={12} sm={6} lg={3}>
+                  <Statistic
+                    title="信号/买入价"
+                    value={formatMoney(summary.entry_price || outcome.entry_price)}
+                  />
+                </Col>
+                <Col xs={12} sm={6} lg={3}>
+                  <Statistic
+                    title="当前/卖出价"
+                    value={formatMoney(
+                      summary.exit_price ||
+                        summary.latest_price ||
+                        outcome.exit_price ||
+                        outcome.latest_price
+                    )}
+                  />
+                </Col>
+                <Col xs={12} sm={6} lg={4}>
+                  <Statistic
+                    title="收益率"
+                    value={Number(summary.total_pnl_pct ?? outcome.total_pnl_pct ?? 0)}
+                    precision={2}
+                    suffix="%"
+                    valueStyle={{ color: pnlColor(summary.total_pnl_pct ?? outcome.total_pnl_pct) }}
+                  />
+                </Col>
+                <Col xs={12} sm={6} lg={4}>
+                  <Statistic
+                    title="超额收益"
+                    value={Number(summary.excess_return_pct ?? outcome.excess_return_pct ?? 0)}
+                    precision={2}
+                    suffix="%"
+                    valueStyle={{
+                      color: pnlColor(summary.excess_return_pct ?? outcome.excess_return_pct),
+                    }}
+                  />
+                </Col>
+              </Row>
+            </Card>
 
             <Card className="modern-card trace-steps-card" variant="borderless">
               <Steps items={traceSteps} />
@@ -230,6 +307,85 @@ const RecommendationTrace: React.FC = () => {
                 />
               )}
             </Card>
+
+            <Row gutter={[16, 16]}>
+              <Col xs={24} xl={14}>
+                <Card
+                  className="modern-card trace-evidence-card"
+                  variant="borderless"
+                  title="关键证据，不看长报告也能判断"
+                >
+                  <div className="trace-evidence-grid">
+                    {keyEvidence.length ? (
+                      keyEvidence.map((item: any, index: number) => (
+                        <div
+                          className={`trace-evidence-item ${item.weight || 'medium'}`}
+                          key={`${item.type || 'evidence'}-${index}`}
+                        >
+                          <span>{item.label}</span>
+                          <strong>{item.value}</strong>
+                          {item.detail && <em>{item.detail}</em>}
+                        </div>
+                      ))
+                    ) : (
+                      <Empty description="暂无关键证据摘要" />
+                    )}
+                  </div>
+                </Card>
+              </Col>
+              <Col xs={24} xl={10}>
+                <Card
+                  className="modern-card trace-risk-card"
+                  variant="borderless"
+                  title="风控与链路完整度"
+                >
+                  <Space direction="vertical" size={14} style={{ width: '100%' }}>
+                    <Alert
+                      showIcon
+                      type={summary.trade_status === 'closed' ? 'success' : 'warning'}
+                      message={summary.current_risk || '暂无风控摘要'}
+                      description={summary.sell_or_hold_reason || '继续观察持仓变化'}
+                    />
+                    <div className="trace-health-row">
+                      <span>量化证据</span>
+                      <Progress
+                        percent={Math.min(
+                          100,
+                          (decisionContext.evidence_counts?.quant_signals || 0) * 25
+                        )}
+                        showInfo={false}
+                      />
+                      <strong>{decisionContext.evidence_counts?.quant_signals || 0} 条</strong>
+                    </div>
+                    <div className="trace-health-row">
+                      <span>融合审计</span>
+                      <Progress
+                        percent={Math.min(
+                          100,
+                          (decisionContext.evidence_counts?.fusion_audits || 0) * 34
+                        )}
+                        showInfo={false}
+                        strokeColor="#0fa6a6"
+                      />
+                      <strong>{decisionContext.evidence_counts?.fusion_audits || 0} 条</strong>
+                    </div>
+                    <div className="trace-chip-row">
+                      <Tag color="blue">
+                        {decisionContext.strategy?.strategy_label ||
+                          summary.strategy_label ||
+                          '参数未知'}
+                      </Tag>
+                      <Tag color="cyan">
+                        {decisionContext.market_environment?.market_regime_label ||
+                          summary.market_regime_label ||
+                          '环境未知'}
+                      </Tag>
+                      <Tag color="gold">{summary.agent_session_label || '场次未知'}</Tag>
+                    </div>
+                  </Space>
+                </Card>
+              </Col>
+            </Row>
 
             <Row gutter={[16, 16]}>
               <Col xs={24} xl={14}>
@@ -274,6 +430,7 @@ const RecommendationTrace: React.FC = () => {
                       showIcon
                       message="买入理由"
                       description={
+                        summary.buy_reason ||
                         consensus.recommendation_tier_label ||
                         outcome.action_label ||
                         `评分 ${outcome.score ?? '--'}，风险 ${outcome.risk_level || '--'}`
@@ -285,8 +442,11 @@ const RecommendationTrace: React.FC = () => {
                       message={outcome.trade_status === 'closed' ? '卖出/闭环理由' : '当前跟踪重点'}
                       description={
                         outcome.trade_status === 'closed'
-                          ? outcome.exit_reason_label || '已按模拟盘规则完成闭环'
-                          : '仍在持仓，继续观察止损、止盈、卖出信号和最长持有期'
+                          ? summary.sell_or_hold_reason ||
+                            outcome.exit_reason_label ||
+                            '已按模拟盘规则完成闭环'
+                          : summary.sell_or_hold_reason ||
+                            '仍在持仓，继续观察止损、止盈、卖出信号和最长持有期'
                       }
                     />
                     <div className="trace-chip-row">

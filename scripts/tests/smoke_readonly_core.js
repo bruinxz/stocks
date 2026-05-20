@@ -58,7 +58,11 @@ function buildUrl(path) {
   }
   if (
     base.pathname.replace(/\/+$/, "").endsWith("/api") &&
-    (normalizedPath === "" || normalizedPath === "health")
+    (
+      normalizedPath === "" ||
+      normalizedPath === "health" ||
+      normalizedPath === "healthz"
+    )
   ) {
     return new URL(`/${normalizedPath}`, base.origin).toString();
   }
@@ -96,6 +100,82 @@ async function fetchWithTimeout(url, options = {}) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function requestProcessHealth() {
+  const startedAt = Date.now();
+  const candidates = ["/health", "/healthz"];
+  const errors = [];
+
+  for (const path of candidates) {
+    const url = buildUrl(path);
+    try {
+      const response = await fetchWithTimeout(url, {
+        method: "GET",
+        headers: {
+          Accept: "application/json,text/plain,*/*",
+          "User-Agent": "stocks-readonly-smoke/1.0",
+        },
+      });
+      const text = await response.text();
+      if (!response.ok) {
+        errors.push(`${path}: HTTP ${response.status}`);
+        continue;
+      }
+      const trimmed = text.trim();
+      let ok = false;
+      if (trimmed === "ok") {
+        ok = true;
+      } else {
+        try {
+          const json = trimmed ? JSON.parse(trimmed) : {};
+          ok = json.status === "ok" || json.success === true;
+        } catch {
+          ok = false;
+        }
+      }
+      if (!ok) {
+        errors.push(`${path}: unexpected payload ${trimmed.slice(0, 120)}`);
+        continue;
+      }
+      const elapsedMs = Date.now() - startedAt;
+      results.push({
+        name: "process health",
+        path,
+        status: "pass",
+        critical: true,
+        elapsed_ms: elapsedMs,
+      });
+      console.log(
+        color.green("[PASS] process health"),
+        color.gray(`GET ${path} ${elapsedMs}ms`),
+      );
+      return true;
+    } catch (error) {
+      const message =
+        error?.name === "AbortError"
+          ? `timeout after ${timeoutMs}ms`
+          : error.message;
+      errors.push(`${path}: ${message}`);
+    }
+  }
+
+  const elapsedMs = Date.now() - startedAt;
+  const message = errors.join("; ");
+  results.push({
+    name: "process health",
+    path: candidates.join(" | "),
+    status: "fail",
+    critical: true,
+    elapsed_ms: elapsedMs,
+    message,
+  });
+  console.log(
+    color.red("[FAIL] process health"),
+    color.gray(`GET ${candidates.join(" | ")} ${elapsedMs}ms`),
+    message,
+  );
+  return false;
 }
 
 async function requestJson(name, path, options = {}) {
@@ -216,20 +296,19 @@ async function main() {
     `Read-only smoke test started: base=${baseUrl}, timeout=${timeoutMs}ms, include_external=${includeExternal}`,
   );
 
-  await requestJson("process health", "/health", {
-    expect: (json) => {
-      if (json.status !== "ok")
-        throw new Error(`unexpected health payload: ${preview(json)}`);
-    },
-  });
+  await requestProcessHealth();
 
-  await requestJson("api root", "/", {
-    critical: false,
-    expect: (json) => {
-      if (!json.message)
-        throw new Error(`unexpected root payload: ${preview(json)}`);
-    },
-  });
+  if (String(process.env.SMOKE_CHECK_API_ROOT || "").toLowerCase() === "true") {
+    await requestJson("api root", "/", {
+      critical: false,
+      expect: (json) => {
+        if (!json.message)
+          throw new Error(`unexpected root payload: ${preview(json)}`);
+      },
+    });
+  } else {
+    skip("api root", "skipped by default because public frontend roots often serve HTML");
+  }
 
   let token = process.env.SMOKE_TOKEN || "";
   if (!token) {
@@ -454,6 +533,24 @@ async function main() {
         ) {
           throw new Error(
             `quant param versions payload invalid: ${preview(json)}`,
+          );
+        }
+      },
+    });
+
+    await requestJson("quant data freshness", "/api/quant/data-freshness", {
+      token,
+      critical: false,
+      expect: (json) => {
+        assertApiSuccess(json, "quant data freshness");
+        if (
+          !json.data?.status ||
+          !json.data?.summary ||
+          !json.data?.checks ||
+          !Array.isArray(json.data?.issues)
+        ) {
+          throw new Error(
+            `quant data freshness payload invalid: ${preview(json)}`,
           );
         }
       },

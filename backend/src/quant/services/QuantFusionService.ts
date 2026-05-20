@@ -21,6 +21,7 @@ import { recommendationLoopPolicySnapshotService } from '../../services/Recommen
 import { riskThresholdStabilityService } from '../../services/RiskThresholdStabilityService';
 import { quantStrategyExperimentService } from './QuantStrategyExperimentService';
 import { quantStrategyParamVersionService } from './QuantStrategyParamVersionService';
+import { stockFactorService } from '../../data/services/StockFactorService';
 import { feishuBotWebhookService } from '../../services/FeishuBotWebhookService';
 import {
   AUTONOMOUS_PORTFOLIO_NAME,
@@ -86,6 +87,10 @@ export interface QuantDailyPipelineOptions {
   experiment_param_policy?: Record<string, any>;
   refresh_realtime_quotes?: boolean;
   quote_sync_limit?: number;
+  sync_factors_before_scan?: boolean;
+  factor_sync_scope?: 'market' | 'favorites' | 'custom';
+  factor_sync_limit?: number;
+  factor_sync_skip_if_coverage_rate_gte?: number;
 }
 
 interface QuantFusionCandidate {
@@ -120,6 +125,7 @@ interface QuantFusionCandidate {
   reasons: string[];
   risk_flags: string[];
   factors: Record<string, any>;
+  trace_url?: string;
 }
 
 function getChinaDate(): string {
@@ -217,19 +223,51 @@ export class QuantFusionService {
     const agentFusionPortfolioName = useDefaultPortfolioFamily
       ? QUANT_AGENT_FUSION_PORTFOLIO_NAME
       : requestedPortfolioName;
+    const factorSync =
+      options.sync_factors_before_scan === false
+        ? null
+        : await stockFactorService
+            .syncDerivedFactors({
+              scope:
+                options.factor_sync_scope ||
+                (options.symbols?.length
+                  ? 'custom'
+                  : options.universe === 'favorites'
+                  ? 'favorites'
+                  : 'market'),
+              symbols: options.symbols,
+              limit: toPositiveInt(
+                options.factor_sync_limit,
+                Math.max(options.candidate_limit || 180, 180),
+                1500
+              ),
+              as_of: trade_date,
+              user_id: options.user_id,
+              skip_if_coverage_rate_gte: safeNumber(
+                options.factor_sync_skip_if_coverage_rate_gte,
+                92
+              ),
+            })
+            .catch(error => {
+              logger.warn(`量化扫描前因子落盘失败，降级使用已有因子: ${error?.message || error}`);
+              return {
+                generated_at: new Date().toISOString(),
+                skipped: true,
+                error: error?.message || String(error),
+                message: '量化扫描前因子落盘失败，本轮继续使用已有因子快照。',
+              };
+            });
     const experimentParamSuggestion =
       options.use_experiment_params === false
         ? null
         : await quantStrategyExperimentService
             .getParamsByStrategySuggestion(options.experiment_param_policy || {})
             .catch(error => {
-              logger.warn(`读取量化策略实验参数建议失败，降级使用任务参数: ${error?.message || error}`);
+              logger.warn(
+                `读取量化策略实验参数建议失败，降级使用任务参数: ${error?.message || error}`
+              );
               return null;
             });
-    const effectiveParamsByStrategy = {
-      ...(experimentParamSuggestion?.recommended_params_by_strategy || {}),
-      ...(options.params_by_strategy || {}),
-    };
     const paramVersionRefresh = await quantStrategyParamVersionService
       .refreshVersionsFromExperiments({
         suggestions: experimentParamSuggestion,
@@ -240,8 +278,27 @@ export class QuantFusionService {
         logger.warn(`刷新量化策略参数版本失败，降级继续扫描: ${error?.message || error}`);
         return null;
       });
-    const effectiveParamVersionByStrategy =
-      paramVersionRefresh?.adopted_param_version_by_strategy || {};
+    const activeScanParams = await quantStrategyParamVersionService
+      .getActiveParamsForScan({
+        strategy_keys: options.strategy_keys,
+        include_grid_search: true,
+        include_experiment: options.use_experiment_params !== false,
+        manual_params_by_strategy: options.params_by_strategy,
+      })
+      .catch(error => {
+        logger.warn(`读取开盘扫描参数版本失败，降级使用实验/任务参数: ${error?.message || error}`);
+        return null;
+      });
+    const effectiveParamsByStrategy = {
+      ...(experimentParamSuggestion?.recommended_params_by_strategy || {}),
+      ...(paramVersionRefresh?.recommended_params_by_strategy || {}),
+      ...(activeScanParams?.recommended_params_by_strategy || {}),
+      ...(options.params_by_strategy || {}),
+    };
+    const effectiveParamVersionByStrategy = {
+      ...(paramVersionRefresh?.adopted_param_version_by_strategy || {}),
+      ...(activeScanParams?.adopted_param_version_by_strategy || {}),
+    };
     const generated = await quantSignalService.generateSignals({
       trade_date,
       universe: options.universe || 'market',
@@ -495,6 +552,7 @@ export class QuantFusionService {
         signal_count: generated.signal_count,
         by_strategy: generated.by_strategy,
         quote_sync: generated.quote_sync,
+        factor_sync: factorSync,
         experiment_param_suggestion: experimentParamSuggestion
           ? {
               policy: experimentParamSuggestion.policy,
@@ -512,13 +570,22 @@ export class QuantFusionService {
               ),
             }
           : null,
+        active_scan_params: activeScanParams
+          ? {
+              summary: activeScanParams.summary,
+              adopted_strategy_keys: Object.keys(
+                activeScanParams.adopted_param_version_by_strategy || {}
+              ),
+              selections: activeScanParams.selections,
+            }
+          : null,
         param_validation_refresh: paramValidationRefresh
           ? {
               created: paramValidationRefresh.create?.created || 0,
               updated: paramValidationRefresh.create?.updated || 0,
               completed: paramValidationRefresh.refresh?.completed || 0,
               pending: paramValidationRefresh.refresh?.pending || 0,
-          }
+            }
           : null,
         param_lifecycle: paramLifecycle
           ? {
@@ -570,6 +637,13 @@ export class QuantFusionService {
     if (options.run_paper_trading) return 'paper_trade';
     if (options.submit_agent_analysis !== false) return 'agent_review';
     return 'archive_only';
+  }
+
+  private buildSignalTraceUrl(signal_id?: number): string | undefined {
+    if (!signal_id) return undefined;
+    const baseUrl = String(process.env.FRONTEND_BASE_URL || '').replace(/\/+$/, '');
+    const path = `/signals/${signal_id}/trace`;
+    return baseUrl ? `${baseUrl}${path}` : path;
   }
 
   private buildRiskProfileGate(
@@ -1148,6 +1222,7 @@ export class QuantFusionService {
 
       signal_ids.push(record.id);
       signal_records.push(record);
+      candidate.trace_url = this.buildSignalTraceUrl(record.id);
       await QuantSignal.update(
         { agent_status: 'archived' },
         { where: { id: { [Op.in]: candidate.quant_signal_ids } } }

@@ -30,6 +30,7 @@ export class QuantSignalService {
     param_version_by_strategy?: Record<string, any>;
     refresh_realtime_quotes?: boolean;
     quote_sync_limit?: number;
+    include_realtime_quote?: boolean;
   }) {
     const trade_date = options.trade_date || dateOnly(new Date());
     let quoteSync: any = null;
@@ -65,7 +66,10 @@ export class QuantSignalService {
       end_date: trade_date,
       warmup_days: 80,
       limit: options.candidate_limit || 180,
-      include_realtime_quote: true,
+      include_realtime_quote:
+        options.include_realtime_quote !== undefined
+          ? options.include_realtime_quote
+          : trade_date >= dateOnly(new Date()),
     });
     const strategies = strategyRegistry.resolve(options.strategy_keys);
     const signals: QuantSignalResult[] = [];
@@ -216,8 +220,19 @@ export class QuantSignalService {
   }
 
   async getRankingDashboard(options: { trade_date?: string; limit?: number } = {}) {
-    const tradeDate =
-      options.trade_date ||
+    const requestedTradeDate = options.trade_date;
+    let tradeDate = requestedTradeDate;
+    if (tradeDate) {
+      const exists = await QuantSignal.findOne({
+        where: { trade_date: tradeDate },
+        order: [['score', 'DESC']],
+      });
+      if (!exists) {
+        tradeDate = undefined;
+      }
+    }
+    tradeDate =
+      tradeDate ||
       (
         await QuantSignal.findOne({
           order: [
@@ -242,17 +257,18 @@ export class QuantSignalService {
       };
     }
     const limit = Math.min(Math.max(Number(options.limit || 30), 1), 100);
-    const signals = await QuantSignal.findAll({
-      where: {
-        trade_date: tradeDate,
-        signal: { [Op.in]: ['buy', 'watch', 'hold'] },
-      },
+    const allSignals = await QuantSignal.findAll({
+      where: { trade_date: tradeDate },
       order: [
         ['score', 'DESC'],
         ['confidence', 'DESC'],
       ],
-      limit: Math.max(limit * 5, 100),
+      limit: 5000,
     });
+    const rankableSignals = allSignals.filter(item =>
+      ['buy', 'watch', 'hold'].includes(String(item.signal || '').toLowerCase())
+    );
+    const signals = rankableSignals.slice(0, Math.max(limit * 5, 100));
     const grouped = new Map<string, QuantSignal[]>();
     for (const signal of signals) {
       const existing = grouped.get(signal.symbol) || [];
@@ -304,10 +320,15 @@ export class QuantSignalService {
       trade_date: tradeDate,
       quant_rankings,
       summary: {
-        signal_count: signals.length,
-        buy_count: signals.filter(item => item.signal === 'buy').length,
-        watch_count: signals.filter(item => item.signal === 'watch').length,
-        quant_scored: signals.length > 0,
+        requested_trade_date: requestedTradeDate || null,
+        fallback_used: Boolean(requestedTradeDate && requestedTradeDate !== tradeDate),
+        signal_count: allSignals.length,
+        ranking_signal_count: rankableSignals.length,
+        ranked_symbol_count: quant_rankings.length,
+        buy_count: allSignals.filter(item => item.signal === 'buy').length,
+        watch_count: allSignals.filter(item => item.signal === 'watch').length,
+        hold_count: allSignals.filter(item => item.signal === 'hold').length,
+        quant_scored: allSignals.length > 0,
         quote_persistence: quotePersistence,
       },
     };

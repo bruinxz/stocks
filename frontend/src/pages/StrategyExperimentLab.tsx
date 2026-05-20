@@ -114,7 +114,14 @@ const StrategyExperimentLab: React.FC = () => {
   }, [universe, limit]);
 
   const champion = data?.champion;
-  const chartData = useMemo(() => data?.variants || [], [data]);
+  const chartData = useMemo(
+    () =>
+      (data?.variants || []).map(({ style: variant_style, ...item }) => ({
+        ...item,
+        variant_style,
+      })),
+    [data]
+  );
 
   const columns = [
     {

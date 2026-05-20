@@ -66,6 +66,7 @@ import {
   AimOutlined,
   CompassOutlined,
   SettingOutlined,
+  TrophyOutlined,
 } from '@ant-design/icons';
 
 import type { MenuProps } from 'antd';
@@ -191,6 +192,7 @@ const AppContent: React.FC = () => {
         label: '策略研究',
         title: '策略研究',
         children: [
+          menuLink('/strategy-research', <TrophyOutlined />, '策略研究总览'),
           menuLink('/quant/dashboard', <FundProjectionScreenOutlined />, '量化收益驾驶舱'),
           menuLink('/quant/backtests', <ExperimentOutlined />, '跑分验证'),
           menuLink('/strategy-research/weights', <BranchesOutlined />, '策略库与权重'),
@@ -207,7 +209,8 @@ const AppContent: React.FC = () => {
         label: '收益复盘',
         title: '收益复盘',
         children: [
-          menuLink('/review/trades', <NodeIndexOutlined />, '交易收益闭环'),
+          menuLink('/review', <RadarChartOutlined />, '复盘总览'),
+          menuLink('/review/trades', <NodeIndexOutlined />, '交易明细'),
           menuLink('/review/performance', <FundProjectionScreenOutlined />, '信号绩效'),
           menuLink('/review/agent-tail', <RadarChartOutlined />, 'Agent尾盘账本'),
           menuLink('/review/journal', <BookOutlined />, '交易日记'),
@@ -397,7 +400,11 @@ const AppContent: React.FC = () => {
               />
               <Route
                 path="/strategy-research"
-                element={<Navigate to="/strategy-research/optimization" replace />}
+                element={
+                  <ProtectedRoute>
+                    <StrategyResearchCenter />
+                  </ProtectedRoute>
+                }
               />
               <Route
                 path="/strategy-research/optimization"
@@ -568,7 +575,14 @@ const AppContent: React.FC = () => {
                   </ProtectedRoute>
                 }
               />
-              <Route path="/review" element={<Navigate to="/review/trades" replace />} />
+              <Route
+                path="/review"
+                element={
+                  <ProtectedRoute>
+                    <ReviewCenter />
+                  </ProtectedRoute>
+                }
+              />
               <Route
                 path="/review/trades"
                 element={

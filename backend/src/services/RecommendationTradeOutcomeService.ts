@@ -544,8 +544,8 @@ function budgetPolicyRollbackKey(record: RecommendationTradeOutcome | any): stri
     signalMetadata.environment_strategy_budget_policy_rollback_source ||
     paperTrading.environment_strategy_budget_policy_rollback_source ||
     metadata.budget_policy_rollback_source ||
-      signalMetadata.budget_policy_rollback_source ||
-      paperTrading.budget_policy_rollback_source;
+    signalMetadata.budget_policy_rollback_source ||
+    paperTrading.budget_policy_rollback_source;
   if (!rollbackAction && !rollbackSource) return 'no_budget_policy_rollback';
   if (
     rollbackAction &&
@@ -886,7 +886,10 @@ export class RecommendationTradeOutcomeService {
         symbol: outcome.symbol,
         signal_date: outcome.signal_date,
       },
-      order: [['final_score', 'DESC NULLS LAST'], ['created_at', 'DESC']] as any,
+      order: [
+        ['final_score', 'DESC NULLS LAST'],
+        ['created_at', 'DESC'],
+      ] as any,
       limit: 8,
     }).catch(() => []);
     const taskLogs = await TaskExecutionLog.findAll({
@@ -909,6 +912,52 @@ export class RecommendationTradeOutcomeService {
       order: [['started_at', 'ASC']],
       limit: 20,
     }).catch(() => []);
+
+    const outcomePlain = modelToPlain<any>(outcome);
+    const signalPlain = modelToPlain<any>(signal);
+    const tradesPlain = trades.map(trade => modelToPlain<any>(trade));
+    const quantSignalPlain = quantSignals.map(item => modelToPlain<any>(item));
+    const fusionAuditPlain = fusionAudits.map(item => modelToPlain<any>(item));
+    const taskLogPlain = taskLogs.map(item => modelToPlain<any>(item));
+    const traceId = outcome.signal_id ? `signal:${outcome.signal_id}` : `outcome:${outcome.id}`;
+    const traceUrl = this.buildTraceUrl(outcome);
+    const conclusion = this.buildTraceConclusion(outcome);
+    const keyEvidence = this.buildTraceKeyEvidence({
+      outcome,
+      signal,
+      metadata,
+      signalMetadata,
+      paperTrading,
+      quantSignals,
+      fusionAudits,
+      trades,
+      taskLogs,
+      strategyKey,
+    });
+    const summary = this.buildTraceSummary({
+      outcome,
+      signal,
+      metadata,
+      signalMetadata,
+      paperTrading,
+      quantSignals,
+      fusionAudits,
+      taskLogs,
+      strategyKey,
+      traceUrl,
+      traceId,
+      conclusion,
+      keyEvidence,
+    });
+    const decisionContext = this.buildTraceDecisionContext({
+      outcome,
+      metadata,
+      signalMetadata,
+      paperTrading,
+      strategyKey,
+      quantSignals,
+      fusionAudits,
+    });
 
     const steps = [
       {
@@ -1001,14 +1050,19 @@ export class RecommendationTradeOutcomeService {
       generated_at: moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm:ss'),
       portfolio_id: portfolio.id,
       user_id: portfolio.user_id,
-      outcome,
-      signal,
-      trades,
-      quant_signals: quantSignals,
-      fusion_audits: fusionAudits,
-      task_logs: taskLogs,
+      trace_id: traceId,
+      trace_url: traceUrl,
+      outcome: outcomePlain,
+      signal: signalPlain,
+      trades: tradesPlain,
+      quant_signals: quantSignalPlain,
+      fusion_audits: fusionAuditPlain,
+      task_logs: taskLogPlain,
       steps,
-      conclusion: this.buildTraceConclusion(outcome),
+      summary,
+      key_evidence: keyEvidence,
+      decision_context: decisionContext,
+      conclusion,
     };
   }
 
@@ -1395,8 +1449,9 @@ export class RecommendationTradeOutcomeService {
       )[0];
     const budgetPolicyExecutionAudit =
       this.buildBudgetPolicyExecutionAudit(budgetPolicyActionGroups);
-    const budgetPolicyRollbackAudit =
-      this.buildBudgetPolicyRollbackAudit(budgetPolicyRollbackGroups);
+    const budgetPolicyRollbackAudit = this.buildBudgetPolicyRollbackAudit(
+      budgetPolicyRollbackGroups
+    );
     let budgetActionPolicy: any = this.buildBudgetActionPolicy(
       budgetActionRankings,
       budgetPolicyExecutionAudit
@@ -2283,8 +2338,7 @@ export class RecommendationTradeOutcomeService {
       blocked_by_rollback_audit: true,
       blocked_source_version_id: sourceVersionId,
       blocked_reason:
-        weakRollback.reason ||
-        '历史回滚进入模拟盘后的真实收益审计无效，本轮不继续继承该冠军版本',
+        weakRollback.reason || '历史回滚进入模拟盘后的真实收益审计无效，本轮不继续继承该冠军版本',
       original_action: plan.action,
       reason: `历史回滚审计无效，暂不继续继承 ${sourceVersionId}：${
         weakRollback.reason || '回滚后仍跑输'
@@ -3086,12 +3140,428 @@ export class RecommendationTradeOutcomeService {
       pnlPct > 0 && excessPct >= 0
         ? '有效'
         : pnlPct > 0
-          ? '绝对收益有效但跑输基准'
-          : '暂未验证有效';
+        ? '绝对收益有效但跑输基准'
+        : '暂未验证有效';
     return `${status}：${outcome.name || outcome.symbol} 收益 ${roundNumber(
       pnlPct,
       2
     )}%，超额 ${roundNumber(excessPct, 2)}%，推荐链路${action}。`;
+  }
+
+  private buildTraceUrl(outcome: RecommendationTradeOutcome): string {
+    const baseUrl = String(process.env.FRONTEND_BASE_URL || '').replace(/\/+$/, '');
+    const id = outcome.signal_id || outcome.id;
+    const path = `/signals/${id}/trace`;
+    return baseUrl ? `${baseUrl}${path}` : path;
+  }
+
+  private buildTraceSummary(params: {
+    outcome: RecommendationTradeOutcome;
+    signal?: AIInvestmentSignal | null;
+    metadata: Record<string, any>;
+    signalMetadata: Record<string, any>;
+    paperTrading: Record<string, any>;
+    quantSignals: QuantSignal[];
+    fusionAudits: QuantFusionAudit[];
+    taskLogs: TaskExecutionLog[];
+    strategyKey: string;
+    traceUrl: string;
+    traceId: string;
+    conclusion: string;
+    keyEvidence: any[];
+  }): Record<string, any> {
+    const {
+      outcome,
+      signal,
+      metadata,
+      signalMetadata,
+      paperTrading,
+      quantSignals,
+      fusionAudits,
+      taskLogs,
+      strategyKey,
+      traceUrl,
+      traceId,
+      conclusion,
+      keyEvidence,
+    } = params;
+    const latestFusion = fusionAudits[0];
+    const latestQuant = quantSignals[0];
+    const env =
+      asPlainObject(metadata.market_environment).market_regime ||
+      asPlainObject(signalMetadata.market_environment).market_regime ||
+      asPlainObject(asPlainObject(paperTrading.environment_policy).market_environment)
+        .market_regime;
+
+    return {
+      trace_id: traceId,
+      trace_url: traceUrl,
+      outcome_id: outcome.id,
+      signal_id: outcome.signal_id,
+      loop_run_id: outcome.loop_run_id,
+      symbol: outcome.symbol,
+      name: outcome.name,
+      source_type: outcome.source_type,
+      source_label: sourceTypeLabel(outcome.source_type),
+      source_id: outcome.source_id,
+      task_name: taskLogs[0]?.task_name || signalMetadata.task_label || metadata.task_label,
+      strategy_key: strategyKey,
+      strategy_label: recommendationStrategyKeyLabel(strategyKey),
+      agent_session:
+        outcome.agent_session || signalMetadata.agent_session || metadata.agent_session,
+      agent_session_label: agentSessionLabel(
+        outcome.agent_session || signalMetadata.agent_session || metadata.agent_session
+      ),
+      signal_date: outcome.signal_date,
+      entry_date: outcome.entry_date,
+      exit_date: outcome.exit_date,
+      signal_price: roundNumber(signal?.current_price),
+      current_price: roundNumber(
+        signal?.current_price || outcome.entry_price || outcome.latest_price
+      ),
+      entry_price: roundNumber(outcome.entry_price),
+      latest_price: roundNumber(outcome.latest_price),
+      exit_price: roundNumber(outcome.exit_price),
+      quantity: outcome.quantity,
+      position_pct: roundNumber(outcome.position_pct),
+      decision: outcome.decision || signal?.normalized_decision || signal?.decision,
+      action_label: outcome.action_label || signalMetadata.action_label || metadata.action_label,
+      score: roundNumber(outcome.score ?? signal?.confidence_score),
+      risk_level: outcome.risk_level || signal?.risk_level,
+      risk_label: riskLabel(outcome.risk_level || signal?.risk_level),
+      trade_status: outcome.trade_status,
+      trade_status_label: outcome.trade_status === 'closed' ? '已平仓' : '持仓中',
+      holding_days: toNumber(outcome.holding_days),
+      total_pnl: roundNumber(outcome.total_pnl),
+      total_pnl_pct: roundNumber(outcome.total_pnl_pct),
+      realized_pnl: roundNumber(outcome.realized_pnl),
+      unrealized_pnl: roundNumber(outcome.unrealized_pnl),
+      excess_return_pct: roundNumber(outcome.excess_return_pct),
+      benchmark_return_pct: roundNumber(outcome.benchmark_return_pct),
+      max_favorable_excursion_pct: roundNumber(outcome.max_favorable_excursion_pct),
+      max_adverse_excursion_pct: roundNumber(outcome.max_adverse_excursion_pct),
+      exit_reason_label: outcome.exit_reason_label,
+      conclusion,
+      buy_reason: this.buildTraceBuyReason({
+        outcome,
+        signal,
+        metadata,
+        signalMetadata,
+        quantSignals,
+        fusionAudits,
+      }),
+      sell_or_hold_reason: this.buildTraceSellOrHoldReason({ outcome, paperTrading }),
+      current_risk: this.buildTraceRiskSentence({
+        outcome,
+        metadata,
+        signalMetadata,
+        paperTrading,
+      }),
+      top_quant_strategy: latestQuant?.strategy_key,
+      top_quant_score: roundNumber(latestQuant?.score),
+      top_agent_decision: latestFusion?.final_decision,
+      top_agent_score: roundNumber(latestFusion?.final_score),
+      market_regime: env || 'unknown',
+      market_regime_label: marketRegimeLabel(String(env || 'unknown')),
+      key_evidence_count: keyEvidence.length,
+    };
+  }
+
+  private buildTraceKeyEvidence(params: {
+    outcome: RecommendationTradeOutcome;
+    signal?: AIInvestmentSignal | null;
+    metadata: Record<string, any>;
+    signalMetadata: Record<string, any>;
+    paperTrading: Record<string, any>;
+    quantSignals: QuantSignal[];
+    fusionAudits: QuantFusionAudit[];
+    trades: PaperTradingTrade[];
+    taskLogs: TaskExecutionLog[];
+    strategyKey: string;
+  }): any[] {
+    const {
+      outcome,
+      signal,
+      metadata,
+      signalMetadata,
+      paperTrading,
+      quantSignals,
+      fusionAudits,
+      trades,
+      taskLogs,
+      strategyKey,
+    } = params;
+    const evidence: any[] = [];
+    const push = (
+      type: string,
+      label: string,
+      value: string,
+      detail?: string,
+      weight: 'high' | 'medium' | 'low' = 'medium'
+    ) => {
+      const safeValue = this.compactTraceText(value, 120);
+      if (!safeValue) return;
+      evidence.push({
+        type,
+        label,
+        value: safeValue,
+        detail: this.compactTraceText(detail, 160),
+        weight,
+      });
+    };
+
+    push(
+      'price',
+      '信号价格',
+      `生成价 ${this.formatTracePrice(
+        signal?.current_price || outcome.entry_price
+      )}，买入价 ${this.formatTracePrice(outcome.entry_price)}，最新/卖出价 ${this.formatTracePrice(
+        outcome.exit_price || outcome.latest_price
+      )}`,
+      '用于判断推荐时是否追高、后续盈亏是否由价格兑现。',
+      'high'
+    );
+    push(
+      'source',
+      '推荐来源',
+      `${sourceTypeLabel(outcome.source_type)}｜${outcome.source_id}`,
+      taskLogs[0]?.task_name || signalMetadata.task_label || metadata.task_label,
+      'high'
+    );
+    if (quantSignals[0]) {
+      push(
+        'quant',
+        '量化命中',
+        `${quantSignals[0].strategy_key} ${quantSignals[0].signal}，${roundNumber(
+          quantSignals[0].score,
+          1
+        )}分`,
+        quantSignals[0].reason,
+        'high'
+      );
+    }
+    if (fusionAudits[0]) {
+      push(
+        'agent',
+        'Agent/融合复核',
+        `最终 ${fusionAudits[0].final_decision || '--'}，${roundNumber(
+          fusionAudits[0].final_score,
+          1
+        )}分`,
+        fusionAudits[0].rationale,
+        'high'
+      );
+    }
+    push(
+      'risk',
+      '风控依据',
+      this.buildTraceRiskSentence({ outcome, metadata, signalMetadata, paperTrading }),
+      asPlainObject(metadata.environment_policy).reason ||
+        asPlainObject(paperTrading.environment_policy).reason,
+      'high'
+    );
+    const buyTrade = trades.find(trade => trade.direction === 'BUY');
+    if (buyTrade) {
+      push(
+        'entry',
+        '模拟买入',
+        `${buyTrade.quantity}股｜执行价 ${this.formatTracePrice(
+          buyTrade.execute_price
+        )}｜金额 ${this.formatTraceMoney(buyTrade.amount)}`,
+        buyTrade.created_at
+          ? moment(buyTrade.created_at).tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm')
+          : '',
+        'high'
+      );
+    }
+    const sellTrade = trades.find(trade => trade.direction === 'SELL');
+    if (sellTrade || outcome.trade_status === 'closed') {
+      push(
+        'exit',
+        '卖出/闭环',
+        `${outcome.exit_reason_label || '按模拟盘规则闭环'}｜收益 ${this.formatTracePercent(
+          outcome.total_pnl_pct
+        )}｜超额 ${this.formatTracePercent(outcome.excess_return_pct)}`,
+        sellTrade
+          ? `${sellTrade.quantity}股｜执行价 ${this.formatTracePrice(sellTrade.execute_price)}`
+          : '',
+        'high'
+      );
+    } else {
+      push(
+        'tracking',
+        '持仓跟踪',
+        `持有 ${toNumber(outcome.holding_days)} 天｜浮盈亏 ${this.formatTracePercent(
+          outcome.unrealized_pnl_pct
+        )}`,
+        '继续观察止损、止盈、卖出信号与最长持有期。',
+        'medium'
+      );
+    }
+    push(
+      'strategy',
+      '参数组合',
+      recommendationStrategyKeyLabel(strategyKey),
+      styleLabel(outcome.recommendation_style),
+      'medium'
+    );
+
+    return evidence.slice(0, 8);
+  }
+
+  private buildTraceDecisionContext(params: {
+    outcome: RecommendationTradeOutcome;
+    metadata: Record<string, any>;
+    signalMetadata: Record<string, any>;
+    paperTrading: Record<string, any>;
+    strategyKey: string;
+    quantSignals: QuantSignal[];
+    fusionAudits: QuantFusionAudit[];
+  }): Record<string, any> {
+    const {
+      outcome,
+      metadata,
+      signalMetadata,
+      paperTrading,
+      strategyKey,
+      quantSignals,
+      fusionAudits,
+    } = params;
+    const marketEnvironment =
+      asPlainObject(metadata.market_environment).market_regime ||
+      asPlainObject(signalMetadata.market_environment).market_regime ||
+      'unknown';
+    const industryEnvironment =
+      asPlainObject(asPlainObject(metadata.market_environment).industry).regime ||
+      asPlainObject(asPlainObject(signalMetadata.market_environment).industry).regime ||
+      'unknown';
+
+    return {
+      data_dictionary: {
+        signal_id: 'AI/量化推荐归档记录 ID',
+        outcome_id: '推荐进入模拟盘后的收益闭环记录 ID',
+        entry_trade_id: '模拟买入交易流水 ID',
+        exit_trade_id: '模拟卖出交易流水 ID',
+        quant_signals: '同一交易日、同一股票、同策略的量化原始信号',
+        fusion_audits: '量化与 TradingAgents 融合后的复核记录',
+        task_logs: '同日相关自动化任务日志',
+      },
+      market_environment: {
+        market_regime: marketEnvironment,
+        market_regime_label: marketRegimeLabel(String(marketEnvironment)),
+        industry_regime: industryEnvironment,
+        industry_label: industryRegimeLabel(String(industryEnvironment)),
+      },
+      strategy: {
+        strategy_key: strategyKey,
+        strategy_label: recommendationStrategyKeyLabel(strategyKey),
+        style: outcome.recommendation_style || signalMetadata.style || metadata.style,
+        style_label: styleLabel(
+          outcome.recommendation_style || signalMetadata.style || metadata.style
+        ),
+      },
+      risk: {
+        risk_level: outcome.risk_level,
+        risk_label: riskLabel(outcome.risk_level),
+        position_pct: roundNumber(outcome.position_pct),
+        stop_loss_pct: roundNumber(signalMetadata.stop_loss_pct || metadata.stop_loss_pct),
+        take_profit_pct: roundNumber(signalMetadata.take_profit_pct || metadata.take_profit_pct),
+        environment_policy: metadata.environment_policy || paperTrading.environment_policy || {},
+      },
+      evidence_counts: {
+        quant_signals: quantSignals.length,
+        fusion_audits: fusionAudits.length,
+      },
+    };
+  }
+
+  private buildTraceBuyReason(params: {
+    outcome: RecommendationTradeOutcome;
+    signal?: AIInvestmentSignal | null;
+    metadata: Record<string, any>;
+    signalMetadata: Record<string, any>;
+    quantSignals: QuantSignal[];
+    fusionAudits: QuantFusionAudit[];
+  }): string {
+    const { outcome, signal, metadata, signalMetadata, quantSignals, fusionAudits } = params;
+    const reasons = [
+      signalMetadata.recommendation_tier_label || metadata.recommendation_tier_label,
+      signalMetadata.tier_reason || metadata.tier_reason,
+      quantSignals[0]?.reason,
+      fusionAudits[0]?.rationale,
+      signal?.rationale,
+      outcome.action_label,
+      `评分 ${roundNumber(outcome.score ?? signal?.confidence_score, 1)}，风险 ${riskLabel(
+        outcome.risk_level || signal?.risk_level
+      )}`,
+    ];
+    return (
+      this.compactTraceText(reasons.find(Boolean), 180) || '暂无明确买入理由，建议回看来源任务。'
+    );
+  }
+
+  private buildTraceSellOrHoldReason(params: {
+    outcome: RecommendationTradeOutcome;
+    paperTrading: Record<string, any>;
+  }): string {
+    const { outcome, paperTrading } = params;
+    if (outcome.trade_status === 'closed') {
+      return (
+        this.compactTraceText(outcome.exit_reason_label || paperTrading.exit_reason_label, 160) ||
+        '已按模拟盘卖出/风控规则完成闭环。'
+      );
+    }
+    return `仍在持仓，当前收益 ${this.formatTracePercent(
+      outcome.total_pnl_pct ?? outcome.unrealized_pnl_pct
+    )}，继续观察止损、止盈、卖出信号和最长持有期。`;
+  }
+
+  private buildTraceRiskSentence(params: {
+    outcome: RecommendationTradeOutcome;
+    metadata: Record<string, any>;
+    signalMetadata: Record<string, any>;
+    paperTrading: Record<string, any>;
+  }): string {
+    const { outcome, metadata, signalMetadata, paperTrading } = params;
+    const environmentPolicy = asPlainObject(
+      metadata.environment_policy ||
+        signalMetadata.environment_policy ||
+        paperTrading.environment_policy
+    );
+    const parts = [
+      riskLabel(outcome.risk_level),
+      outcome.position_pct !== undefined ? `仓位 ${roundNumber(outcome.position_pct, 2)}%` : '',
+      environmentPolicy.action ? `环境动作 ${environmentPolicy.action}` : '',
+      environmentPolicy.reason,
+    ].filter(Boolean);
+    return this.compactTraceText(parts.join('，'), 180) || '暂无风控明细。';
+  }
+
+  private compactTraceText(value: any, maxLength = 120): string {
+    const text = String(value || '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!text) return '';
+    return text.length > maxLength ? `${text.slice(0, Math.max(0, maxLength - 1))}…` : text;
+  }
+
+  private formatTracePrice(value: any): string {
+    const num = Number(value);
+    if (!Number.isFinite(num) || num <= 0) return '--';
+    return `¥${num.toFixed(2)}`;
+  }
+
+  private formatTraceMoney(value: any): string {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return '--';
+    return `¥${num.toLocaleString('zh-CN', { maximumFractionDigits: 0 })}`;
+  }
+
+  private formatTracePercent(value: any): string {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return '--';
+    const prefix = num > 0 ? '+' : '';
+    return `${prefix}${num.toFixed(2)}%`;
   }
 
   private buildPathSamples(

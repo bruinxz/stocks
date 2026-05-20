@@ -335,7 +335,7 @@ class SchedulerService {
             batch_limit: this.toPositiveInt(
               this.getParameterValue(parameters, 'batch_limit', 'batchLimit'),
               200,
-              2000
+              6000
             ),
             lag_days_threshold: this.toPositiveInt(
               this.getParameterValue(parameters, 'lag_days_threshold', 'lagDaysThreshold'),
@@ -349,7 +349,7 @@ class SchedulerService {
             include_no_data:
               this.getParameterValue(parameters, 'include_no_data', 'includeNoData') !== undefined
                 ? Boolean(this.getParameterValue(parameters, 'include_no_data', 'includeNoData'))
-                : false,
+                : undefined,
             execution_log_id: executionLog?.id,
             scheduled_task_id: task.id,
           },
@@ -410,6 +410,24 @@ class SchedulerService {
               : parameters.refreshRealtimeQuotes !== undefined
                 ? Boolean(parameters.refreshRealtimeQuotes)
                 : true,
+          sync_factors_before_scan:
+            parameters.sync_factors_before_scan !== undefined
+              ? Boolean(parameters.sync_factors_before_scan)
+              : parameters.syncFactorsBeforeScan !== undefined
+                ? Boolean(parameters.syncFactorsBeforeScan)
+                : true,
+          factor_sync_scope:
+            parameters.factor_sync_scope || parameters.factorSyncScope || parameters.universe,
+          factor_sync_limit: this.toPositiveInt(
+            parameters.factor_sync_limit || parameters.factorSyncLimit,
+            parameters.candidate_limit || parameters.candidateLimit || 220,
+            1500
+          ),
+          factor_sync_skip_if_coverage_rate_gte: Number(
+            parameters.factor_sync_skip_if_coverage_rate_gte ??
+              parameters.factorSyncSkipIfCoverageRateGte ??
+              92
+          ),
           quote_sync_limit: this.toPositiveInt(
             parameters.quote_sync_limit || parameters.quoteSyncLimit,
             parameters.candidate_limit || parameters.candidateLimit || 220,
@@ -543,6 +561,12 @@ class SchedulerService {
               ? Boolean(parameters.report_to_feishu)
               : parameters.reportToFeishu !== undefined
                 ? Boolean(parameters.reportToFeishu)
+                : true,
+          notify_to_feishu_bot:
+            parameters.notify_to_feishu_bot !== undefined
+              ? Boolean(parameters.notify_to_feishu_bot)
+              : parameters.notifyToFeishuBot !== undefined
+                ? Boolean(parameters.notifyToFeishuBot)
                 : true,
           params_by_strategy: parameters.params_by_strategy || parameters.paramsByStrategy,
         });
@@ -1724,7 +1748,6 @@ class SchedulerService {
           batch_limit: 300,
           lag_days_threshold: 0,
           stale_first: true,
-          include_no_data: false,
         },
       },
       {
@@ -1814,6 +1837,7 @@ class SchedulerService {
           risk_threshold_field_min_sample_count: 3,
           risk_threshold_field_min_triggered_count: 1,
           report_to_feishu: true,
+          notify_to_feishu_bot: true,
           record_type: '量化策略全市场扫描',
         },
       },
@@ -1892,6 +1916,7 @@ class SchedulerService {
           risk_threshold_field_min_sample_count: 3,
           risk_threshold_field_min_triggered_count: 1,
           report_to_feishu: true,
+          notify_to_feishu_bot: true,
           record_type: '量化策略开盘机会扫描',
         },
       },
@@ -1909,6 +1934,7 @@ class SchedulerService {
           require_fresh_quote: true,
           freshness_max_minutes: 75,
           report_to_feishu: true,
+          notify_to_feishu_bot: true,
           record_type: '量化开盘链路看门狗',
         },
       },
@@ -2362,6 +2388,7 @@ class SchedulerService {
           'sync_concurrency',
           'verify_before_report',
           'report_to_feishu',
+          'notify_to_feishu_bot',
           'record_type',
         ]) {
           if (nextParams[key] === undefined && (taskData.parameters as any)[key] !== undefined) {
@@ -2432,6 +2459,7 @@ class SchedulerService {
           'risk_threshold_field_min_sample_count',
           'risk_threshold_field_min_triggered_count',
           'report_to_feishu',
+          'notify_to_feishu_bot',
           'record_type',
         ]) {
           if (nextParams[key] === undefined && (taskData.parameters as any)[key] !== undefined) {
@@ -2455,6 +2483,7 @@ class SchedulerService {
           'require_fresh_quote',
           'freshness_max_minutes',
           'report_to_feishu',
+          'notify_to_feishu_bot',
           'record_type',
         ]) {
           if (nextParams[key] === undefined && (taskData.parameters as any)[key] !== undefined) {

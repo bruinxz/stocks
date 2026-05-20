@@ -1,8 +1,11 @@
-import { Op } from 'sequelize';
+import { Op, literal } from 'sequelize';
 import { Stock } from '../../models/Stock';
 import { DailyBar } from '../../models/DailyBar';
 import { FavoriteStock } from '../../models/FavoriteStock';
 import { RealtimeQuote } from '../../models/RealtimeQuote';
+import { StockFundamentalFactor } from '../../models/StockFundamentalFactor';
+import { StockMoneyFlowFactor } from '../../models/StockMoneyFlowFactor';
+import { StockValuationFactor } from '../../models/StockValuationFactor';
 import { normalizeSymbol } from '../../utils/stockSymbol';
 import { QuantBar, QuantStockContext, QuantUniverse } from '../types/QuantTypes';
 
@@ -12,7 +15,35 @@ function toDateOnly(value: Date | string): string {
   return date.toISOString().slice(0, 10);
 }
 
+function factorSourcePriority(row: any): number {
+  const source = String(row?.source || '').toLowerCase();
+  if (source === 'tushare') return 30;
+  if (source === 'eastmoney') return 22;
+  if (source === 'akshare') return 20;
+  if (source === 'local_derived') return 10;
+  return 0;
+}
+
 export class QuantDataService {
+  private buildMarketOrder(): any[] {
+    return [
+      ['change_percent', 'DESC NULLS LAST'],
+      ['turnover_rate', 'DESC NULLS LAST'],
+      [
+        literal(`CASE
+          WHEN "Stock"."symbol" LIKE 'sh.60%' THEN 1
+          WHEN "Stock"."symbol" LIKE 'sz.00%' THEN 2
+          WHEN "Stock"."symbol" LIKE 'sz.30%' THEN 3
+          WHEN "Stock"."symbol" LIKE 'sh.68%' THEN 4
+          WHEN "Stock"."symbol" LIKE 'bj.%' THEN 5
+          ELSE 9
+        END`),
+        'ASC',
+      ],
+      ['symbol', 'ASC'],
+    ] as any;
+  }
+
   async getStocks(options: {
     universe?: QuantUniverse;
     user_id?: number;
@@ -39,11 +70,7 @@ export class QuantDataService {
         [Op.or]: [{ type: 'stock' }, { type: null }],
         name: { [Op.and]: [{ [Op.notILike]: '%ST%' }, { [Op.notILike]: '%退%' }] },
       },
-      order: [
-        ['change_percent', 'DESC NULLS LAST'],
-        ['turnover_rate', 'DESC NULLS LAST'],
-        ['updated_at', 'DESC'],
-      ] as any,
+      order: this.buildMarketOrder(),
       limit,
     });
   }
@@ -74,6 +101,61 @@ export class QuantDataService {
     for (const quote of latestQuotes) {
       if (!latestQuoteBySymbol.has(quote.symbol)) latestQuoteBySymbol.set(quote.symbol, quote);
     }
+    const [valuationRows, moneyFlowRows, fundamentalRows] = await Promise.all([
+      StockValuationFactor.findAll({
+        where: { symbol: { [Op.in]: stocks.map(stock => stock.symbol) } },
+        order: [
+          ['symbol', 'ASC'],
+          ['factor_date', 'DESC'],
+        ],
+        limit: Math.max(stocks.length * 3, 50),
+      }).catch(() => [] as StockValuationFactor[]),
+      StockMoneyFlowFactor.findAll({
+        where: { symbol: { [Op.in]: stocks.map(stock => stock.symbol) } },
+        order: [
+          ['symbol', 'ASC'],
+          ['factor_date', 'DESC'],
+        ],
+        limit: Math.max(stocks.length * 3, 50),
+      }).catch(() => [] as StockMoneyFlowFactor[]),
+      StockFundamentalFactor.findAll({
+        where: { symbol: { [Op.in]: stocks.map(stock => stock.symbol) } },
+        order: [
+          ['symbol', 'ASC'],
+          ['factor_date', 'DESC'],
+        ],
+        limit: Math.max(stocks.length * 3, 50),
+      }).catch(() => [] as StockFundamentalFactor[]),
+    ]);
+    const latestBySymbol = <T extends { symbol: string; factor_date?: string; source?: string }>(
+      rows: T[]
+    ) => {
+      const map = new Map<string, T>();
+      for (const row of rows) {
+        const existing = map.get(row.symbol);
+        if (!existing) {
+          map.set(row.symbol, row);
+          continue;
+        }
+        const dateCompare = String(row.factor_date || '').localeCompare(
+          String(existing.factor_date || '')
+        );
+        if (dateCompare > 0) {
+          map.set(row.symbol, row);
+          continue;
+        }
+        if (
+          dateCompare === 0 &&
+          factorSourcePriority(row) > factorSourcePriority(existing)
+        ) {
+          map.set(row.symbol, row);
+        }
+      }
+      return map;
+    };
+    const valuationBySymbol = latestBySymbol(valuationRows);
+    const moneyFlowBySymbol = latestBySymbol(moneyFlowRows);
+    const fundamentalBySymbol = latestBySymbol(fundamentalRows);
     const warmupStart = new Date(options.start_date);
     warmupStart.setDate(warmupStart.getDate() - Number(options.warmup_days || 120));
     const contexts: QuantStockContext[] = [];
@@ -98,11 +180,10 @@ export class QuantDataService {
       }));
       if (quantBars.length < 30) continue;
       const latestQuote = latestQuoteBySymbol.get(stock.symbol);
-      const mergedBars = this.mergeRealtimeQuoteIntoBars(
-        quantBars,
-        latestQuote,
-        options.end_date
-      );
+      const valuationFactor = valuationBySymbol.get(stock.symbol);
+      const moneyFlowFactor = moneyFlowBySymbol.get(stock.symbol);
+      const fundamentalFactor = fundamentalBySymbol.get(stock.symbol);
+      const mergedBars = this.mergeRealtimeQuoteIntoBars(quantBars, latestQuote, options.end_date);
       const latest = mergedBars[mergedBars.length - 1];
       const realtimePrice = latestQuote?.current_price ? Number(latestQuote.current_price) : null;
       const stockPrice = stock.price ? Number(stock.price) : null;
@@ -130,9 +211,33 @@ export class QuantDataService {
             ? latest.change_percent
             : Number(stock.change_percent)),
         total_market_cap:
-          stock.total_market_cap === undefined ? null : Number(stock.total_market_cap),
-        pe_dynamic: stock.pe_dynamic === undefined ? null : Number(stock.pe_dynamic),
-        pb: stock.pb === undefined ? null : Number(stock.pb),
+          valuationFactor?.total_market_cap !== undefined
+            ? Number(valuationFactor.total_market_cap)
+            : stock.total_market_cap === undefined
+            ? null
+            : Number(stock.total_market_cap),
+        pe_dynamic:
+          valuationFactor?.pe_ttm !== undefined
+            ? Number(valuationFactor.pe_ttm)
+            : stock.pe_dynamic === undefined
+            ? null
+            : Number(stock.pe_dynamic),
+        pb:
+          valuationFactor?.pb !== undefined
+            ? Number(valuationFactor.pb)
+            : stock.pb === undefined
+            ? null
+            : Number(stock.pb),
+        factor_snapshot: {
+          valuation: valuationFactor?.toJSON?.() || null,
+          money_flow: moneyFlowFactor?.toJSON?.() || null,
+          fundamental: fundamentalFactor?.toJSON?.() || null,
+          factor_date:
+            valuationFactor?.factor_date ||
+            moneyFlowFactor?.factor_date ||
+            fundamentalFactor?.factor_date ||
+            null,
+        },
       });
     }
     return contexts;

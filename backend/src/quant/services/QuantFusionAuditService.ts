@@ -196,8 +196,19 @@ export class QuantFusionAuditService {
   }
 
   async getRankingDashboard(options: { signal_date?: string; limit?: number } = {}) {
-    const signalDate =
-      options.signal_date ||
+    const requestedSignalDate = options.signal_date;
+    let signalDate = requestedSignalDate;
+    if (signalDate) {
+      const exists = await QuantFusionAudit.findOne({
+        where: { signal_date: signalDate },
+        order: [['final_score', 'DESC']],
+      });
+      if (!exists) {
+        signalDate = undefined;
+      }
+    }
+    signalDate =
+      signalDate ||
       (
         await QuantFusionAudit.findOne({
           order: [
@@ -262,7 +273,12 @@ export class QuantFusionAuditService {
       signal_date: signalDate,
       fusion_rankings,
       summary: {
+        requested_signal_date: requestedSignalDate || null,
+        fusion_fallback_used: Boolean(requestedSignalDate && requestedSignalDate !== signalDate),
         fusion_count: audits.length,
+        fusion_buy_count: audits.filter(item => item.final_decision === 'buy').length,
+        fusion_watch_count: audits.filter(item => item.final_decision === 'watch').length,
+        fusion_avoid_count: audits.filter(item => item.final_decision === 'avoid').length,
         buy_count: audits.filter(item => item.final_decision === 'buy').length,
         watch_count: audits.filter(item => item.final_decision === 'watch').length,
         avoid_count: audits.filter(item => item.final_decision === 'avoid').length,

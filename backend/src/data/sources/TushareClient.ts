@@ -52,6 +52,19 @@ export class TushareClient extends PythonMarketDataClient {
     return this.callPythonScript('tushare_get_stock_basic', this.token || '', code);
   }
 
+  async getFactorSnapshots(symbols: string[], as_of?: string): Promise<any[]> {
+    this.assertEnabled();
+    const uniqueSymbols = [...new Set(symbols.filter(Boolean))];
+    if (!uniqueSymbols.length) return [];
+    logger.info(`Fetching ${uniqueSymbols.length} factor snapshots via Tushare`);
+    return this.callPythonScript(
+      'tushare_get_factor_snapshot',
+      this.token || '',
+      uniqueSymbols.join(','),
+      as_of || ''
+    );
+  }
+
   getStatus() {
     return {
       ...this.getBaseStatus(),

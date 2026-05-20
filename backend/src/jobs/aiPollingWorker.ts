@@ -224,12 +224,14 @@ if (aiPollingWorkerDisabled) {
       try {
         resolvedPolicySnapshotId =
           loopPolicySnapshotId ||
-          (
-            await RecommendationLoopPolicySnapshot.findOne({
-              where: { loop_run_id: loopRunId },
-              order: [['generated_at', 'DESC']],
-            })
-          )?.id;
+          (loopRunId
+            ? (
+                await RecommendationLoopPolicySnapshot.findOne({
+                  where: { loop_run_id: loopRunId },
+                  order: [['generated_at', 'DESC']],
+                })
+              )?.id
+            : undefined);
         archivedSignal = await aiInvestmentSignalService.archiveTradingAgentsResult({
           task_id: taskId,
           symbol,

@@ -11,7 +11,7 @@ set -e
 
 SSH_HOST="103.242.3.87"
 SSH_PORT="14126"
-SSH_USER="root"
+SSH_USER="${DEPLOY_USER:-${SSH_USER:-deploy}}"
 SSH_PASS="${DEPLOY_PASSWORD:-${SSH_PASSWORD:-}}"
 PG_PASS="${DEPLOY_PG_PASSWORD:-${DB_PASSWORD:-}}"
 
@@ -69,7 +69,7 @@ EOF
 echo "🔧 在服务器执行部署..."
 expect << 'EOF'
 set timeout 1200
-spawn ssh -p 14126 root@103.242.3.87
+spawn ssh -p $SSH_PORT $SSH_USER@$SSH_HOST
 expect "password:"
 send "$env(SSH_PASS)\r"
 expect "#"

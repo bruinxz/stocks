@@ -195,6 +195,20 @@ type DashboardData = {
     strategy_count?: number;
     leaderboard?: BacktestItem[];
     latest_task?: any;
+    overview?: {
+      completed_task_count?: number;
+      result_count?: number;
+      trade_count?: number;
+      avg_total_return_pct?: number;
+      avg_excess_return_pct?: number;
+      positive_result_count?: number;
+      positive_result_rate?: number;
+      best_total_return_pct?: number;
+      best_strategy_key?: string | null;
+      latest_result_at?: string | null;
+      latest_task_range?: string | null;
+    };
+    top_results?: BacktestItem[];
   };
   signal_summary?: {
     latest_quant_trade_date?: string | null;
@@ -238,6 +252,29 @@ type DashboardData = {
       diagnostics_strategy_count?: number;
       execution_warning_count?: number;
     };
+  };
+  data_freshness?: {
+    status?: 'ok' | 'warn' | 'risk';
+    summary?: {
+      risk_count?: number;
+      warn_count?: number;
+      conclusion?: string;
+    };
+    checks?: Record<
+      string,
+      {
+        status?: 'ok' | 'warn' | 'risk';
+        conclusion?: string;
+        latest_quote_time?: string | null;
+        latest_trade_date?: string | null;
+        today_count?: number;
+        pending_count?: number;
+        completed_count?: number;
+        open_count?: number;
+        closed_count?: number;
+      }
+    >;
+    issues?: Array<{ key: string; status: string; conclusion: string }>;
   };
   strategy_experiments?: {
     total?: number;
@@ -424,10 +461,13 @@ const QuantPerformanceDashboard: React.FC = () => {
   }, []);
 
   const best = dashboard?.latest_backtests?.best_strategy || null;
+  const backtestOverview = dashboard?.latest_backtests?.overview;
   const indicatorCatalog = dashboard?.indicator_catalog;
   const signalSummary = dashboard?.signal_summary;
   const readiness = dashboard?.readiness;
   const dataQuality = dashboard?.data_quality_center;
+  const dataFreshness = dashboard?.data_freshness;
+  const dataFreshnessChecks = dataFreshness?.checks || {};
   const strategyExperiments = dashboard?.strategy_experiments;
   const experimentParamSuggestions = dashboard?.experiment_param_suggestions;
   const paramValidation = dashboard?.param_validation_dashboard;
@@ -626,6 +666,108 @@ const QuantPerformanceDashboard: React.FC = () => {
           </Card>
         </Col>
       </Row>
+
+      <Card
+        className="modern-card quant-data-freshness-board"
+        variant="borderless"
+        loading={loading}
+      >
+        <div className="quant-section-heading">
+          <div>
+            <span>OPEN CHAIN TRUST</span>
+            <h2>今日推荐链路可信度</h2>
+          </div>
+          <Tag
+            color={
+              dataFreshness?.status === 'ok'
+                ? 'green'
+                : dataFreshness?.status === 'risk'
+                ? 'red'
+                : 'gold'
+            }
+          >
+            风险 {dataFreshness?.summary?.risk_count || 0} / 观察{' '}
+            {dataFreshness?.summary?.warn_count || 0}
+          </Tag>
+        </div>
+        <Alert
+          type={
+            dataFreshness?.status === 'ok'
+              ? 'success'
+              : dataFreshness?.status === 'risk'
+              ? 'error'
+              : 'warning'
+          }
+          showIcon
+          message={
+            dataFreshness?.summary?.conclusion ||
+            '正在读取实时行情、信号归档、Agent融合和模拟盘收益闭环。'
+          }
+          style={{ marginBottom: 12 }}
+        />
+        <div className="quant-data-freshness-grid">
+          {[
+            ['实时行情', dataFreshnessChecks.realtime_quotes],
+            ['量化信号', dataFreshnessChecks.quant_signals],
+            ['推荐归档', dataFreshnessChecks.archived_quant_recommendations],
+            ['Agent融合', dataFreshnessChecks.agent_fusion_audits],
+            ['参数A/B', dataFreshnessChecks.param_validations],
+            ['模拟盘收益', dataFreshnessChecks.paper_trade_outcomes],
+          ].map(([label, item]: any) => (
+            <div className={`quant-data-freshness-item ${item?.status || 'unknown'}`} key={label}>
+              <span>{label}</span>
+              <strong>{item?.status === 'ok' ? '正常' : item?.status === 'risk' ? '风险' : '观察'}</strong>
+              <em>{item?.conclusion || '等待检查结果'}</em>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      <Card className="modern-card quant-execution-board" variant="borderless" loading={loading}>
+        <div className="quant-section-heading">
+          <div>
+            <span>BACKTEST OVERVIEW</span>
+            <h2>全市场历史跑分概览</h2>
+          </div>
+          <Text type="secondary">
+            {backtestOverview?.latest_task_range || '等待跑分范围'} · 最近完成{' '}
+            {formatDateTime(backtestOverview?.latest_result_at || undefined)}
+          </Text>
+        </div>
+        <Row gutter={[12, 12]} className="quant-backtest-overview-row">
+          <Col xs={12} md={6}>
+            <Statistic title="完成任务" value={backtestOverview?.completed_task_count || 0} />
+          </Col>
+          <Col xs={12} md={6}>
+            <Statistic title="策略结果" value={backtestOverview?.result_count || 0} />
+          </Col>
+          <Col xs={12} md={6}>
+            <Statistic title="交易样本" value={backtestOverview?.trade_count || 0} />
+          </Col>
+          <Col xs={12} md={6}>
+            <Statistic
+              title="正收益率"
+              value={backtestOverview?.positive_result_rate || 0}
+              precision={1}
+              suffix="%"
+            />
+          </Col>
+        </Row>
+        <Alert
+          className="quant-inline-note"
+          type={Number(backtestOverview?.result_count || 0) > 0 ? 'success' : 'warning'}
+          showIcon
+          message={
+            Number(backtestOverview?.result_count || 0) > 0
+              ? `历史跑分已恢复：${backtestOverview?.result_count || 0} 个策略结果、${
+                  backtestOverview?.trade_count || 0
+                } 笔交易；平均收益 ${formatPct(
+                  backtestOverview?.avg_total_return_pct
+                )}，平均超额 ${formatPct(backtestOverview?.avg_excess_return_pct)}。`
+              : '暂无历史跑分概览，请先在量化跑分实验室发起一次回测。'
+          }
+        />
+      </Card>
 
       <Card className="modern-card quant-execution-board" variant="borderless" loading={loading}>
         <div className="quant-section-heading">

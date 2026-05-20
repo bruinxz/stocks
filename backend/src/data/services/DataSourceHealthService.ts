@@ -20,7 +20,15 @@ export const DEFAULT_DATA_PROVIDERS: MarketDataProviderDefinition[] = [
     provider_type: 'api',
     priority: 10,
     is_enabled: tushareEnabled,
-    supported_features: ['stock_list', 'history_k', 'stock_basic'],
+    supported_features: [
+      'stock_list',
+      'history_k',
+      'stock_basic',
+      'index_constituents',
+      'fundamental_factor',
+      'money_flow',
+      'valuation',
+    ],
     metadata: {
       requires_token: true,
       env_token: 'TUSHARE_TOKEN',
@@ -69,6 +77,8 @@ export const DEFAULT_DATA_PROVIDERS: MarketDataProviderDefinition[] = [
       'stock_basic',
       'realtime_quote',
       'intraday_bar',
+      'fundamental_factor',
+      'money_flow',
     ],
     metadata: {
       python_package: 'akshare',
@@ -79,8 +89,8 @@ export const DEFAULT_DATA_PROVIDERS: MarketDataProviderDefinition[] = [
         '当前免费栈主力，覆盖历史行情、实时行情和部分基础数据；适合日常扫描和 MVP 策略。',
       recommendation: '保持启用；关键任务建议配合 Tushare/Baostock 做交叉校验。',
       configuration_hint: '安装 Python akshare',
-      strengths: ['覆盖广', '免费', '实时/历史能力较全面'],
-      limitations: ['接口稳定性受上游页面影响', '字段口径偶有变化'],
+      strengths: ['覆盖广', '免费', '实时/历史能力较全面', '部分财务/资金流接口可扩展'],
+      limitations: ['接口稳定性受上游页面影响', '字段口径偶有变化', '专业财务口径需交叉校验'],
     },
   },
   {
@@ -89,7 +99,7 @@ export const DEFAULT_DATA_PROVIDERS: MarketDataProviderDefinition[] = [
     provider_type: 'api',
     priority: 40,
     is_enabled: true,
-    supported_features: ['stock_list', 'history_k', 'stock_basic'],
+    supported_features: ['stock_list', 'history_k', 'stock_basic', 'money_flow', 'valuation'],
     metadata: {
       role: 'fast_http_fallback',
       commercial_tier: 'free',
@@ -961,7 +971,12 @@ export class DataSourceHealthService {
 
     const historyReady = Boolean(historyPrimary);
     const realtimeReady = realtimeProviders.length > 0;
-    const fundamentalsReady = Boolean(isProviderUsable(tushare) || isProviderUsable(akshare));
+    const fundamentalsRoutes = routingPlans.fundamental_factor || [];
+    const moneyFlowRoutes = routingPlans.money_flow || [];
+    const valuationRoutes = routingPlans.valuation || [];
+    const fundamentalsReady = Boolean(firstUsableRoute(fundamentalsRoutes));
+    const moneyFlowReady = Boolean(firstUsableRoute(moneyFlowRoutes));
+    const valuationReady = Boolean(firstUsableRoute(valuationRoutes));
     const intradayReady = intradayProviders.length > 0;
     const agentReady = Boolean(isProviderUsable(tradingAgents));
     const score = clampScore(
@@ -969,7 +984,9 @@ export class DataSourceHealthService {
         (stockListPrimary ? 14 : 0) +
         (stockBasicPrimary ? 14 : 0) +
         (realtimeReady ? 14 : 0) +
-        (fundamentalsReady ? 16 : 0) +
+        (fundamentalsReady ? 10 : 0) +
+        (moneyFlowReady ? 4 : 0) +
+        (valuationReady ? 2 : 0) +
         (intradayReady ? 6 : 0) +
         (agentReady ? 10 : 0)
     );
@@ -995,12 +1012,34 @@ export class DataSourceHealthService {
       history_ready: historyReady,
       realtime_ready: realtimeReady,
       fundamentals_ready: fundamentalsReady,
+      money_flow_ready: moneyFlowReady,
+      valuation_ready: valuationReady,
       intraday_ready: intradayReady,
       agent_ready: agentReady,
       primary_history_provider: historyPrimary?.provider_label || null,
       primary_stock_list_provider: stockListPrimary?.provider_label || null,
       primary_stock_basic_provider: stockBasicPrimary?.provider_label || null,
+      primary_fundamental_provider: firstUsableRoute(fundamentalsRoutes)?.provider_label || null,
+      primary_money_flow_provider: firstUsableRoute(moneyFlowRoutes)?.provider_label || null,
+      primary_valuation_provider: firstUsableRoute(valuationRoutes)?.provider_label || null,
       realtime_providers: realtimeProviders.map(provider => provider.provider_label),
+      factor_landing_plan: {
+        phase: 'P4',
+        status:
+          fundamentalsReady || moneyFlowReady || valuationReady
+            ? 'ready_to_land'
+            : 'needs_provider',
+        tables: [
+          'stock_fundamental_factors',
+          'stock_money_flow_factors',
+          'stock_valuation_factors',
+        ],
+        recommended_provider_order: ['tushare', 'akshare', 'eastmoney'],
+        next_step:
+          fundamentalsReady || moneyFlowReady || valuationReady
+            ? '建立因子落库表与同步任务，先覆盖估值、ROE/营收增速、主力资金流、换手率等可解释因子。'
+            : '先配置 Tushare 或确认 AKShare/东方财富因子接口稳定，再落库。',
+      },
       recommended_paid_source: {
         provider_name: 'tushare',
         provider_label: 'Tushare Pro',

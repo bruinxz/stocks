@@ -5,7 +5,8 @@ import { logger } from '../utils/logger';
 export type FeishuRecommendationScenario =
   | 'quant_daily_pipeline'
   | 'automated_recommendation_loop'
-  | 'paper_trading_auto_sync';
+  | 'paper_trading_auto_sync'
+  | 'paper_trading_risk_check';
 
 export interface FeishuRecommendationSummaryPayload {
   scenario: FeishuRecommendationScenario;
@@ -39,6 +40,19 @@ type NormalizedRecommendation = {
   reason?: string;
   risk_level?: string;
   amount?: number;
+  trace_url?: string;
+};
+
+type NormalizedRiskExit = {
+  symbol: string;
+  name: string;
+  latest_price?: number;
+  execute_price?: number;
+  pnl_pct?: number;
+  reason_label?: string;
+  status?: string;
+  holding_days?: number;
+  realized_pnl?: number;
 };
 
 const DEFAULT_MAX_ITEMS = 5;
@@ -141,16 +155,17 @@ class FeishuBotWebhookService {
   }
 
   private getWebhookUrl(): string {
-    return firstText(
-      process.env.FEISHU_RECOMMENDATION_BOT_WEBHOOK,
-      process.env.FEISHU_BOT_WEBHOOK
-    );
+    return firstText(process.env.FEISHU_RECOMMENDATION_BOT_WEBHOOK, process.env.FEISHU_BOT_WEBHOOK);
   }
 
   private buildRecommendationPost(payload: FeishuRecommendationSummaryPayload): {
     title: string;
     content: FeishuPostElement[][];
   } {
+    if (payload.scenario === 'paper_trading_risk_check') {
+      return this.buildRiskCheckPost(payload);
+    }
+
     const result = payload.result || {};
     const scenarioLabel = this.getScenarioLabel(payload.scenario, payload.record_type);
     const maxItems = Math.max(
@@ -166,31 +181,68 @@ class FeishuBotWebhookService {
     const paper = this.resolvePaperTrading(result);
     const riskLine = this.buildRiskLine(result);
     const scopeLine = this.buildScopeLine(result, payload.scenario);
+    const timeLine = moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm');
 
     const lines = [
       this.buildConclusionLine(totalCount, recommendations.length, paper),
       scopeLine,
-      recommendations.length ? '推荐标的：' : '推荐标的：暂无满足条件的买入候选，建议观望。',
-      ...recommendations.map((item, index) => this.formatRecommendationLine(item, index + 1)),
-      riskLine,
-      '详情：完整记录已同步多维表格，系统内可查看完整分析。',
-      `时间：${moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm')}`,
+      recommendations.length ? '' : '标的：暂无满足条件的买入候选，建议观望。',
     ].filter(Boolean);
 
     return {
-      title: payload.title || `荐股摘要｜${scenarioLabel}`,
+      title: payload.title || this.getScenarioTitle(payload.scenario, scenarioLabel),
+      content: [
+        ...lines.map(line => [{ tag: 'text' as const, text: line }]),
+        ...recommendations.map((item, index) => this.formatRecommendationLine(item, index + 1)),
+        [{ tag: 'text' as const, text: `${riskLine}｜时间：${timeLine}` }],
+      ],
+    };
+  }
+
+  private buildRiskCheckPost(payload: FeishuRecommendationSummaryPayload): {
+    title: string;
+    content: FeishuPostElement[][];
+  } {
+    const result = payload.result || {};
+    const scenarioLabel = this.getScenarioLabel(payload.scenario, payload.record_type);
+    const maxItems = Math.max(
+      1,
+      Math.min(
+        5,
+        firstNumber(payload.max_items, process.env.FEISHU_RECOMMENDATION_BOT_MAX_ITEMS) ||
+          DEFAULT_MAX_ITEMS
+      )
+    );
+    const exits = this.extractRiskExits(result).slice(0, maxItems);
+    const timeLine = moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm');
+    const riskLine = this.buildRiskLine(result);
+    const lines = [
+      this.buildRiskCheckConclusionLine(result, exits.length),
+      this.buildRiskScopeLine(result),
+      exits.length ? '' : '卖出标的：暂无触发止损/止盈/卖出信号，继续观察持仓。',
+      ...exits.map((item, index) => this.formatRiskExitLine(item, index + 1)),
+      `${riskLine}｜时间：${timeLine}`,
+    ].filter(Boolean);
+
+    return {
+      title: payload.title || this.getScenarioTitle(payload.scenario, scenarioLabel),
       content: lines.map(line => [{ tag: 'text', text: line }]),
     };
   }
 
-  private getScenarioLabel(
-    scenario: FeishuRecommendationScenario,
-    recordType?: string
-  ): string {
+  private getScenarioLabel(scenario: FeishuRecommendationScenario, recordType?: string): string {
     if (recordType) return recordType;
     if (scenario === 'quant_daily_pipeline') return '量化交易场景推荐';
     if (scenario === 'automated_recommendation_loop') return '全市场荐股闭环';
+    if (scenario === 'paper_trading_risk_check') return '模拟盘风控退出';
     return '模拟盘推荐同步';
+  }
+
+  private getScenarioTitle(scenario: FeishuRecommendationScenario, scenarioLabel: string): string {
+    if (scenario === 'paper_trading_risk_check') return `风控摘要｜${scenarioLabel}`;
+    if (scenario === 'paper_trading_auto_sync') return `模拟盘摘要｜${scenarioLabel}`;
+    if (scenario === 'automated_recommendation_loop') return `荐股闭环摘要｜${scenarioLabel}`;
+    return `开盘荐股摘要｜${scenarioLabel}`;
   }
 
   private buildConclusionLine(
@@ -205,8 +257,8 @@ class FeishuBotWebhookService {
       executed > 0
         ? `模拟盘已买入 ${executed} 笔`
         : planned > 0
-          ? `模拟盘计划买入 ${planned} 笔`
-          : '模拟盘未新增买入';
+        ? `模拟盘计划买入 ${planned} 笔`
+        : '模拟盘未新增买入';
     if (totalCount <= 0) {
       return `结论：本轮暂无可执行推荐，${tradeText}。`;
     }
@@ -233,14 +285,16 @@ class FeishuBotWebhookService {
       agent?.enabled === false
         ? 'Agent未启用'
         : Array.isArray(agent?.submitted)
-          ? `Agent复核 ${agent.submitted.length} 只`
-          : '';
+        ? `Agent复核 ${agent.submitted.length} 只`
+        : '';
     const scenarioText =
       scenario === 'quant_daily_pipeline'
         ? '量化'
         : scenario === 'automated_recommendation_loop'
-          ? '闭环'
-          : '模拟盘';
+        ? '闭环'
+        : scenario === 'paper_trading_risk_check'
+        ? '风控'
+        : '模拟盘';
 
     return [
       `范围：${universe}`,
@@ -262,10 +316,10 @@ class FeishuBotWebhookService {
       gateAction === 'pause'
         ? '暂停新增'
         : gateAction === 'reduce'
-          ? '降仓验证'
-          : gateAction === 'observe'
-            ? '小仓观察'
-            : '';
+        ? '降仓验证'
+        : gateAction === 'observe'
+        ? '小仓观察'
+        : '';
     const label = firstText(status.label, gateLabel, '正常');
     const conclusion = this.safeText(firstText(status.conclusion, riskGate.reason), 54);
     return `风控：${label}${conclusion ? `｜${conclusion}` : ''}`;
@@ -288,6 +342,60 @@ class FeishuBotWebhookService {
         Array.isArray(result?.trades) ? result.trades.length : undefined,
         fallback
       ) || 0
+    );
+  }
+
+  private buildRiskCheckConclusionLine(result: any, shownCount: number): string {
+    const checked = firstNumber(result?.checked, result?.positions?.length) || 0;
+    const exited = firstNumber(result?.exited) || 0;
+    const planned = firstNumber(result?.planned) || 0;
+    const held = firstNumber(result?.held) || 0;
+    const skipped = firstNumber(result?.skipped) || 0;
+    const actionCount = exited > 0 ? exited : planned;
+    const actionLabel = exited > 0 ? '已模拟卖出' : planned > 0 ? '计划卖出' : '暂无卖出';
+    const shownText = actionCount > shownCount && shownCount > 0 ? `，展示 Top ${shownCount}` : '';
+    const skippedText = skipped > 0 ? `，跳过 ${skipped} 只` : '';
+    return `结论：检查 ${checked} 只持仓，${actionLabel} ${actionCount} 只，继续持有 ${held} 只${skippedText}${shownText}。`;
+  }
+
+  private buildRiskScopeLine(result: any): string {
+    const dryRun = toBoolean(result?.dry_run, false);
+    const portfolioText = result?.portfolio_id ? `组合#${result.portfolio_id}` : '自主模拟盘';
+    const policy = result?.adaptive_risk_policy || {};
+    const policyText = policy?.applied
+      ? `自适应风控：止损${this.formatNumber(
+          policy.effective_stop_loss_pct,
+          1
+        )}%/止盈${this.formatNumber(policy.effective_take_profit_pct, 1)}%`
+      : '固定风控阈值';
+    return `范围：${portfolioText}｜${dryRun ? '预演不成交' : '已按规则结算'}｜${policyText}`;
+  }
+
+  private extractRiskExits(result: any): NormalizedRiskExit[] {
+    const sources = [
+      Array.isArray(result?.exits) ? result.exits : [],
+      Array.isArray(result?.exit_candidates) ? result.exit_candidates : [],
+    ];
+    const items: NormalizedRiskExit[] = [];
+    for (const source of sources) {
+      for (const raw of source) {
+        if (!raw?.symbol) continue;
+        items.push({
+          symbol: String(raw.symbol).trim(),
+          name: firstText(raw.name, raw.stock_name, raw.symbol),
+          latest_price: firstNumber(raw.latest_price, raw.current_price, raw.execute_price),
+          execute_price: firstNumber(raw.execute_price),
+          pnl_pct: firstNumber(raw.pnl_pct, raw.realized_pnl_pct, raw.unrealized_pnl_pct),
+          reason_label: firstText(raw.reason_label, raw.reason, raw.message),
+          status: firstText(raw.status),
+          holding_days: firstNumber(raw.holding_days),
+          realized_pnl: firstNumber(raw.realized_pnl),
+        });
+      }
+      if (items.length > 0) break;
+    }
+    return items.sort(
+      (a, b) => Math.abs(Number(b.pnl_pct || 0)) - Math.abs(Number(a.pnl_pct || 0))
     );
   }
 
@@ -316,6 +424,7 @@ class FeishuBotWebhookService {
           action_label: normalized.action_label || exists?.action_label,
           status: normalized.status || exists?.status,
           amount: normalized.amount ?? exists?.amount,
+          trace_url: normalized.trace_url || exists?.trace_url,
         });
       }
     }
@@ -331,8 +440,8 @@ class FeishuBotWebhookService {
     const reasons = Array.isArray(raw.reasons)
       ? raw.reasons
       : Array.isArray(metadata.reasons)
-        ? metadata.reasons
-        : [];
+      ? metadata.reasons
+      : [];
     const reason = this.safeReason(
       firstText(raw.reason, raw.tier_reason, reasons[0], raw.rationale, metadata.tier_reason)
     );
@@ -363,6 +472,7 @@ class FeishuBotWebhookService {
       reason,
       risk_level: firstText(raw.risk_level, metadata.risk_level),
       amount: firstNumber(raw.amount, raw.total_cost, raw.strategy_allocation_amount),
+      trace_url: firstText(raw.trace_url, metadata.trace_url),
     };
   }
 
@@ -370,7 +480,9 @@ class FeishuBotWebhookService {
     if (status === 'executed') return '已模拟买入';
     if (status === 'planned') return '计划买入';
     if (status === 'skipped') return '已跳过';
-    const action = String(raw.action || raw.decision || raw.normalized_decision || '').toLowerCase();
+    const action = String(
+      raw.action || raw.decision || raw.normalized_decision || ''
+    ).toLowerCase();
     if (action === 'buy') return firstText(raw.action_label, '建议买入');
     if (action === 'watch') return firstText(raw.action_label, '观察');
     if (action === 'hold') return firstText(raw.action_label, '持有');
@@ -378,7 +490,10 @@ class FeishuBotWebhookService {
     return firstText(raw.action_label, raw.decision, '观察');
   }
 
-  private formatRecommendationLine(item: NormalizedRecommendation, index: number): string {
+  private formatRecommendationLine(
+    item: NormalizedRecommendation,
+    index: number
+  ): FeishuPostElement[] {
     const chunks = [
       `${index}. ${item.name || item.symbol}(${item.symbol})`,
       `现价${this.formatPrice(item.current_price)}`,
@@ -386,6 +501,28 @@ class FeishuBotWebhookService {
       item.score !== undefined ? `分${this.formatNumber(item.score, 1)}` : '',
       item.position_pct !== undefined ? `仓位${this.formatNumber(item.position_pct, 1)}%` : '',
       item.reason ? this.safeText(item.reason, 30) : '',
+    ].filter(Boolean);
+    const text = chunks.join('｜');
+    if (!item.trace_url || !/^https?:\/\//i.test(item.trace_url)) {
+      return [{ tag: 'text', text }];
+    }
+    return [
+      { tag: 'text', text: `${text}｜` },
+      { tag: 'a', text: '链路', href: item.trace_url },
+    ];
+  }
+
+  private formatRiskExitLine(item: NormalizedRiskExit, index: number): string {
+    const statusLabel =
+      item.status === 'exited' ? '已卖出' : item.status === 'planned' ? '计划卖出' : '卖出关注';
+    const chunks = [
+      `${index}. ${item.name || item.symbol}(${item.symbol})`,
+      `现价${this.formatPrice(item.latest_price)}`,
+      item.execute_price ? `执行价${this.formatPrice(item.execute_price)}` : '',
+      statusLabel,
+      item.reason_label ? this.safeText(item.reason_label, 18) : '',
+      item.pnl_pct !== undefined ? `盈亏${this.formatSignedPercent(item.pnl_pct)}` : '',
+      item.holding_days !== undefined ? `${item.holding_days}天` : '',
     ].filter(Boolean);
     return chunks.join('｜');
   }
@@ -399,6 +536,13 @@ class FeishuBotWebhookService {
     const parsed = Number(value);
     if (!Number.isFinite(parsed)) return '--';
     return parsed.toFixed(digits).replace(/\.0+$/, '');
+  }
+
+  private formatSignedPercent(value: any): string {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return '--';
+    const prefix = parsed > 0 ? '+' : '';
+    return `${prefix}${parsed.toFixed(2)}%`;
   }
 
   private safeReason(value: string): string {

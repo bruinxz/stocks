@@ -6,6 +6,7 @@ import { DataUpdateLog, UpdateType, UpdateStatus } from '../../models/DataUpdate
 import { DataService } from '../../data/services/DataService';
 import { DataSyncService } from '../../data/services/DataSyncService';
 import { DataSourceHealthService } from '../../data/services/DataSourceHealthService';
+import { stockFactorService } from '../../data/services/StockFactorService';
 import { dataQualityService } from '../../services/DataQualityService';
 import { dataUpdateQueue } from '../../jobs/dataUpdateQueue';
 import { dataUpdateWorker } from '../../jobs/dataUpdateWorker';
@@ -1322,6 +1323,9 @@ export class MarketController {
         'stock_list',
         'history_k',
         'stock_basic',
+        'fundamental_factor',
+        'money_flow',
+        'valuation',
         'realtime_quote',
         'intraday_bar',
       ]);
@@ -1412,6 +1416,84 @@ export class MarketController {
       res.status(500).json({
         success: false,
         error: '获取数据质量画像失败',
+        details: error.message,
+      });
+    }
+  };
+
+  /**
+   * 获取量化因子落盘覆盖情况
+   */
+  getFactorCoverage = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const user_id = (req as any).user?.id;
+      const { scope = 'market', symbols, limit = '120' } = req.query;
+      const symbolList =
+        typeof symbols === 'string'
+          ? symbols
+              .split(',')
+              .map(item => item.trim())
+              .filter(Boolean)
+          : undefined;
+      const data = await stockFactorService.getCoverage({
+        scope: scope as any,
+        symbols: symbolList,
+        limit: Number(limit || 120),
+        user_id,
+      });
+      res.json({ success: true, data });
+    } catch (error: any) {
+      logger.error('获取因子覆盖情况失败:', error);
+      res.status(500).json({
+        success: false,
+        error: '获取因子覆盖情况失败',
+        details: error.message,
+      });
+    }
+  };
+
+  /**
+   * 手动触发量化因子落盘
+   */
+  syncFactors = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const user_id = (req as any).user?.id;
+      const {
+        scope = 'market',
+        symbols,
+        limit = 120,
+        as_of,
+        provider = 'auto',
+        prefer_real_provider,
+      } = req.body || {};
+      const symbolList = Array.isArray(symbols)
+        ? symbols
+        : typeof symbols === 'string'
+        ? symbols
+            .split(',')
+            .map(item => item.trim())
+            .filter(Boolean)
+        : undefined;
+      const data = await stockFactorService.syncDerivedFactors({
+        scope,
+        symbols: symbolList,
+        limit: Number(limit || 120),
+        as_of,
+        user_id,
+        provider,
+        prefer_real_provider:
+          prefer_real_provider === undefined ? undefined : Boolean(prefer_real_provider),
+      });
+      res.json({
+        success: true,
+        data,
+        message: data.message,
+      });
+    } catch (error: any) {
+      logger.error('量化因子落盘失败:', error);
+      res.status(500).json({
+        success: false,
+        error: '量化因子落盘失败',
         details: error.message,
       });
     }

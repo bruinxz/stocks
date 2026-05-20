@@ -1,3 +1,4 @@
+import axios from 'axios';
 import moment from 'moment-timezone';
 import { Op } from 'sequelize';
 import { RealtimeQuote } from '../../models/RealtimeQuote';
@@ -36,6 +37,63 @@ function pickQuote(quotes: Record<string, any>, requested: string, normalized: s
   );
 }
 
+function toTencentSymbol(symbol: string): string {
+  return normalizeSymbol(symbol).replace('.', '');
+}
+
+function parseTencentQuoteTimestamp(value: string): Date {
+  const text = String(value || '').trim();
+  if (/^\d{14}$/.test(text)) {
+    const formatted = `${text.slice(0, 4)}-${text.slice(4, 6)}-${text.slice(6, 8)}T${text.slice(
+      8,
+      10
+    )}:${text.slice(10, 12)}:${text.slice(12, 14)}+08:00`;
+    const parsed = new Date(formatted);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+  return new Date();
+}
+
+function parseTencentRealtimePayload(
+  payload: string,
+  requestedSymbols: string[]
+): Record<string, any> {
+  const result: Record<string, any> = {};
+  const requestedByTencent = new Map(
+    requestedSymbols.map(symbol => [toTencentSymbol(symbol), normalizeSymbol(symbol)])
+  );
+  const lines = String(payload || '').split(';');
+  for (const line of lines) {
+    const match = line.match(/v_([a-z]{2}\d{6})="([^"]*)"/i);
+    if (!match) continue;
+    const tencentSymbol = match[1].toLowerCase();
+    const normalized = requestedByTencent.get(tencentSymbol);
+    if (!normalized) continue;
+    const parts = match[2].split('~');
+    const currentPrice = toNumber(parts[3]);
+    const previousClose = toNumber(parts[4]);
+    const open = toNumber(parts[5]);
+    const volumeLots = toNumber(parts[6]);
+    const amountWan = toNumber(parts[37]);
+    result[normalized] = {
+      // 不依赖腾讯 GBK 股票名解码，落盘时优先使用 stocks 表里的标准名称。
+      current_price: currentPrice,
+      previous_close: previousClose,
+      open,
+      high: toNumber(parts[33]),
+      low: toNumber(parts[34]),
+      change_amount: toNumber(parts[31]),
+      change_percent: toNumber(parts[32]),
+      volume: volumeLots === undefined ? undefined : volumeLots * 100,
+      turnover: amountWan === undefined ? undefined : amountWan * 10000,
+      timestamp: parseTencentQuoteTimestamp(parts[30]).toISOString(),
+      source: 'tencent',
+      raw: parts,
+    };
+  }
+  return result;
+}
+
 export interface PersistRealtimeQuotesResult {
   persisted_count: number;
   updated_stock_count: number;
@@ -45,6 +103,60 @@ export interface PersistRealtimeQuotesResult {
 
 export class RealtimeQuoteService {
   private akshareClient = new AKShareClient();
+
+  private async fetchTencentQuotes(symbols: string[]): Promise<Record<string, any>> {
+    const normalizedSymbols = [...new Set(symbols.map(normalizeSymbol).filter(Boolean))];
+    if (!normalizedSymbols.length) return {};
+    const url = `https://qt.gtimg.cn/q=${normalizedSymbols.map(toTencentSymbol).join(',')}`;
+    const response = await axios.get(url, {
+      timeout: Number(process.env.TENCENT_REALTIME_TIMEOUT_MS || 12000),
+      responseType: 'arraybuffer',
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+        Referer: 'https://gu.qq.com/',
+      },
+    });
+    const text = Buffer.from(response.data).toString('latin1');
+    // 腾讯接口主体是 GBK，但股票名不是落盘必需字段；使用 binary 文本解析数值字段即可。
+    return parseTencentRealtimePayload(text, normalizedSymbols);
+  }
+
+  private async fetchRealtimeQuotesWithFallback(
+    symbols: string[],
+    options: { source?: string } = {}
+  ): Promise<{ quotes: Record<string, any>; source: string }> {
+    const requestedSource = String(options.source || 'auto').toLowerCase();
+    const useAkshare = requestedSource === 'auto' || requestedSource === 'akshare';
+    const useTencent =
+      requestedSource === 'auto' || requestedSource === 'akshare' || requestedSource === 'tencent';
+
+    if (useAkshare) {
+      try {
+        const quotes = await this.akshareClient.getRealtimeQuotes(symbols.join(','));
+        if (quotes && Object.keys(quotes).length > 0) {
+          return { quotes, source: 'akshare' };
+        }
+        logger.warn(`AKShare 实时行情返回空结果，降级腾讯实时源: symbols=${symbols.length}`);
+      } catch (error: any) {
+        logger.warn(`AKShare 实时行情失败，降级腾讯实时源: ${error?.message || error}`);
+      }
+    }
+
+    if (useTencent) {
+      try {
+        const quotes = await this.fetchTencentQuotes(symbols);
+        if (quotes && Object.keys(quotes).length > 0) {
+          return { quotes, source: 'tencent' };
+        }
+        logger.warn(`腾讯实时行情返回空结果: symbols=${symbols.length}`);
+      } catch (error: any) {
+        logger.warn(`腾讯实时行情失败: ${error?.message || error}`);
+      }
+    }
+
+    return { quotes: {}, source: requestedSource === 'auto' ? 'unavailable' : requestedSource };
+  }
 
   async syncQuotesForSymbols(
     symbols: string[],
@@ -72,9 +184,11 @@ export class RealtimeQuoteService {
     };
     let latestQuoteTime: string | undefined;
     for (const batch of batches) {
-      const quotes = await this.akshareClient.getRealtimeQuotes(batch.join(','));
+      const { quotes, source } = await this.fetchRealtimeQuotesWithFallback(batch, {
+        source: options.source,
+      });
       const persisted = await this.persistQuotes(quotes, batch, {
-        source: options.source || 'akshare',
+        source,
       });
       aggregate.persisted_count += persisted.persisted_count;
       aggregate.updated_stock_count += persisted.updated_stock_count;
