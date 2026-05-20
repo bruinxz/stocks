@@ -9586,6 +9586,37 @@ a {
   font-weight: 800;
 }
 
+.quant-runtime-factor-strip {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid rgba(39, 100, 184, 0.1);
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(239, 246, 255, 0.72), rgba(240, 253, 250, 0.62));
+}
+
+.quant-runtime-factor-strip span {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: 0.15em;
+}
+
+.quant-runtime-factor-strip strong {
+  color: #1f4e79;
+  font-family: var(--font-display);
+  font-size: 18px;
+  letter-spacing: -0.03em;
+}
+
+.quant-runtime-factor-strip em {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.45;
+}
+
 .quant-runtime-check-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

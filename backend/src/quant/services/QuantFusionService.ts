@@ -23,6 +23,7 @@ import { quantStrategyExperimentService } from './QuantStrategyExperimentService
 import { quantStrategyParamVersionService } from './QuantStrategyParamVersionService';
 import { quantStrategyService } from './QuantStrategyService';
 import { stockFactorService } from '../../data/services/StockFactorService';
+import { quantRuntimeHealthService } from './QuantRuntimeHealthService';
 import { feishuBotWebhookService } from '../../services/FeishuBotWebhookService';
 import {
   AUTONOMOUS_PORTFOLIO_NAME,
@@ -92,6 +93,7 @@ export interface QuantDailyPipelineOptions {
   factor_sync_scope?: 'market' | 'favorites' | 'custom';
   factor_sync_limit?: number;
   factor_sync_skip_if_coverage_rate_gte?: number;
+  block_buy_on_runtime_risk?: boolean;
 }
 
 interface QuantFusionCandidate {
@@ -353,6 +355,60 @@ export class QuantFusionService {
     });
     const selectedCandidates = diversifiedSelection.selected;
     const archive = await this.archiveFusionCandidates(selectedCandidates, options);
+    const runtimeHealth =
+      options.block_buy_on_runtime_risk === false
+        ? null
+        : await quantRuntimeHealthService
+            .getHealth({ user_id: options.user_id })
+            .catch(error => {
+              logger.warn(`量化扫描运行时健康检查失败，本轮禁止自动买入: ${error?.message || error}`);
+              return {
+                status: 'risk',
+                score: 0,
+                summary: {
+                  conclusion: `量化扫描运行时健康检查失败：${error?.message || error}`,
+                },
+              };
+            });
+    const runtimeRiskBlocked = Boolean(runtimeHealth && runtimeHealth.status === 'risk');
+    if (runtimeRiskBlocked) {
+      logger.warn(
+        `量化运行时存在阻断风险，本轮仅归档观察信号，不执行 Agent 买入/模拟买入: ${
+          runtimeHealth?.summary?.conclusion || 'runtime risk'
+        }`
+      );
+      return {
+        generated_at: new Date().toISOString(),
+        trade_date,
+        status: 'runtime_risk_watch_only',
+        mode: 'archive_only' as QuantPipelineMode,
+        runtime_health: runtimeHealth,
+        runtime_risk_blocked: true,
+        generated,
+        factor_sync: factorSync,
+        experiment_param_suggestion: experimentParamSuggestion,
+        param_version_refresh: paramVersionRefresh,
+        active_scan_params: activeScanParams,
+        param_validation_refresh: paramValidationRefresh,
+        param_lifecycle: paramLifecycle,
+        diversification: diversifiedSelection.summary,
+        archive,
+        agent_analysis: {
+          submitted: [],
+          failed: [],
+          skipped: true,
+          reason: runtimeHealth?.summary?.conclusion || '量化运行时存在阻断风险。',
+        },
+        paper_trading: {
+          planned: 0,
+          executed: 0,
+          skipped: archive.total || selectedCandidates.length,
+          dry_run: true,
+          reason: '量化运行时存在风险项，本轮只观察不买入。',
+        },
+        message: '量化运行时存在风险项，本轮只归档观察信号，不执行模拟买入。',
+      };
+    }
     const thresholdSuggestion = await this.getRiskThresholdSuggestion(options);
     const preTradeRiskProfile =
       options.run_paper_trading && options.user_id
@@ -610,6 +666,8 @@ export class QuantFusionService {
         signal_ids: archive.signal_ids,
         candidates: archive.candidates.slice(0, 10),
       },
+      runtime_health: runtimeHealth,
+      runtime_risk_blocked: false,
       agent_analysis: agentAnalysis,
       paper_trading: paperTrading,
       param_experiment_paper_trading: paramExperimentPaperTrading,

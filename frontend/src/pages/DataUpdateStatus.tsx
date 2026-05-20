@@ -255,6 +255,10 @@ interface DataQualityResponse {
 interface FactorCoverageResponse {
   as_of: string;
   latest_trade_date?: string | null;
+  latest_factor_date?: string | null;
+  latest_landed_factor_date?: string | null;
+  factor_lag_days?: number | null;
+  coverage_status?: 'real_ready' | 'derived_ready' | 'limited' | 'missing';
   universe_stock_count: number;
   coverage: {
     valuation: number;
@@ -279,6 +283,13 @@ interface FactorCoverageResponse {
     valuation?: Record<string, number>;
     money_flow?: Record<string, number>;
     fundamental?: Record<string, number>;
+  };
+  source_quality?: {
+    total_source_records?: number;
+    real_provider_records?: number;
+    derived_records?: number;
+    real_provider_rate?: number;
+    primary_source?: string | null;
   };
   next_actions: string[];
 }
@@ -1830,10 +1841,26 @@ const DataUpdateStatus: React.FC = () => {
         </Row>
         <Space direction="vertical" size={4} style={{ width: '100%', marginBottom: 12 }}>
           <Text type="secondary">
-            最新交易日：{coverage?.latest_trade_date || '--'} · 样本池：
-            {coverage?.universe_stock_count || 0} 只
+            最新交易日：{coverage?.latest_trade_date || '--'} · 因子日：
+            {coverage?.latest_factor_date || coverage?.latest_landed_factor_date || '--'} · 滞后：
+            {coverage?.factor_lag_days ?? '--'} 天 · 样本池：{coverage?.universe_stock_count || 0}{' '}
+            只
           </Text>
           <Space wrap size={6}>
+            <Tag color={coverage?.coverage_status === 'real_ready' ? 'green' : 'gold'}>
+              {coverage?.coverage_status === 'real_ready'
+                ? '真实源就绪'
+                : coverage?.coverage_status === 'derived_ready'
+                ? '派生因子就绪'
+                : coverage?.coverage_status === 'limited'
+                ? '覆盖不足'
+                : '等待落盘'}
+            </Tag>
+            <Tag>
+              真实源占比：
+              {Number(coverage?.source_quality?.real_provider_rate || 0).toFixed(1)}%
+            </Tag>
+            <Tag>主来源：{coverage?.source_quality?.primary_source || '--'}</Tag>
             {sourceRows.map(row => (
               <Tag key={row.key}>
                 {row.label}来源：

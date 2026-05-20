@@ -553,6 +553,12 @@ class SchedulerService {
               : parameters.blockSuspended !== undefined
                 ? Boolean(parameters.blockSuspended)
                 : undefined,
+          block_buy_on_runtime_risk:
+            parameters.block_buy_on_runtime_risk !== undefined
+              ? Boolean(parameters.block_buy_on_runtime_risk)
+              : parameters.blockBuyOnRuntimeRisk !== undefined
+                ? Boolean(parameters.blockBuyOnRuntimeRisk)
+                : true,
           ...portfolioParams,
           task_label: task.name,
           execution_log_id: executionLog?.id,
@@ -1785,6 +1791,10 @@ class SchedulerService {
           lookback_days: 180,
           candidate_limit: 220,
           refresh_realtime_quotes: true,
+          sync_factors_before_scan: true,
+          factor_sync_scope: 'market',
+          factor_sync_limit: 220,
+          factor_sync_skip_if_coverage_rate_gte: 92,
           quote_sync_limit: 220,
           min_score: 55,
           archive_limit: 30,
@@ -1827,6 +1837,7 @@ class SchedulerService {
           block_limit_up: true,
           block_limit_down: true,
           block_suspended: true,
+          block_buy_on_runtime_risk: true,
           risk_threshold_stability_min_consecutive_same_action: 2,
           risk_threshold_stability_min_actionable_samples: 2,
           risk_threshold_stability_min_protected_runs: 3,
@@ -1864,6 +1875,10 @@ class SchedulerService {
           lookback_days: 180,
           candidate_limit: 220,
           refresh_realtime_quotes: true,
+          sync_factors_before_scan: true,
+          factor_sync_scope: 'market',
+          factor_sync_limit: 220,
+          factor_sync_skip_if_coverage_rate_gte: 92,
           quote_sync_limit: 220,
           min_score: 55,
           archive_limit: 30,
@@ -1906,6 +1921,7 @@ class SchedulerService {
           block_limit_up: true,
           block_limit_down: true,
           block_suspended: true,
+          block_buy_on_runtime_risk: true,
           risk_threshold_stability_min_consecutive_same_action: 2,
           risk_threshold_stability_min_actionable_samples: 2,
           risk_threshold_stability_min_protected_runs: 3,
@@ -2413,6 +2429,10 @@ class SchedulerService {
           'lookback_days',
           'candidate_limit',
           'refresh_realtime_quotes',
+          'sync_factors_before_scan',
+          'factor_sync_scope',
+          'factor_sync_limit',
+          'factor_sync_skip_if_coverage_rate_gte',
           'quote_sync_limit',
           'min_score',
           'archive_limit',
@@ -2449,6 +2469,7 @@ class SchedulerService {
           'block_limit_up',
           'block_limit_down',
           'block_suspended',
+          'block_buy_on_runtime_risk',
           'risk_threshold_stability_min_consecutive_same_action',
           'risk_threshold_stability_min_actionable_samples',
           'risk_threshold_stability_min_protected_runs',

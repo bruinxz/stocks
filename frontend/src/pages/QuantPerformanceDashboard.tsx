@@ -202,6 +202,8 @@ type RuntimeHealth = {
     policy_ready_strategy_count?: number;
     open_task_count?: number;
     watchdog_task_count?: number;
+    factor_min_coverage_rate?: number;
+    factor_real_provider_rate?: number;
     conclusion?: string;
   };
   checks?: RuntimeHealthCheck[];
@@ -215,6 +217,23 @@ type RuntimeHealth = {
       warnings?: number;
     };
     critical_issues?: Array<{ code?: string; message?: string }>;
+  };
+  factor_coverage?: {
+    latest_trade_date?: string | null;
+    latest_factor_date?: string | null;
+    latest_landed_factor_date?: string | null;
+    factor_lag_days?: number | null;
+    coverage_status?: string;
+    universe_stock_count?: number;
+    coverage_rate?: {
+      valuation?: number;
+      money_flow?: number;
+      fundamental?: number;
+    };
+    source_quality?: {
+      real_provider_rate?: number;
+      primary_source?: string | null;
+    };
   };
 };
 
@@ -737,6 +756,32 @@ const QuantPerformanceDashboard: React.FC = () => {
               <Tag>观察 {effectiveRuntimeHealth?.summary?.warn_count || 0}</Tag>
               <Tag>策略 {effectiveRuntimeHealth?.summary?.enabled_strategy_count || 0}</Tag>
               <Tag>开盘任务 {effectiveRuntimeHealth?.summary?.open_task_count || 0}</Tag>
+              <Tag>
+                因子覆盖 {effectiveRuntimeHealth?.summary?.factor_min_coverage_rate ?? '--'}%
+              </Tag>
+              <Tag>
+                真实源 {effectiveRuntimeHealth?.summary?.factor_real_provider_rate ?? '--'}%
+              </Tag>
+            </div>
+            <div className="quant-runtime-factor-strip">
+              <span>FACTOR</span>
+              <strong>
+                {effectiveRuntimeHealth?.factor_coverage?.coverage_status === 'real_ready'
+                  ? '真实源就绪'
+                  : effectiveRuntimeHealth?.factor_coverage?.coverage_status === 'derived_ready'
+                  ? '派生因子可用'
+                  : effectiveRuntimeHealth?.factor_coverage?.coverage_status === 'limited'
+                  ? '覆盖不足'
+                  : '等待落盘'}
+              </strong>
+              <em>
+                因子日{' '}
+                {effectiveRuntimeHealth?.factor_coverage?.latest_factor_date ||
+                  effectiveRuntimeHealth?.factor_coverage?.latest_landed_factor_date ||
+                  '--'}{' '}
+                · 主来源{' '}
+                {effectiveRuntimeHealth?.factor_coverage?.source_quality?.primary_source || '--'}
+              </em>
             </div>
           </div>
           <div className="quant-runtime-check-grid">
