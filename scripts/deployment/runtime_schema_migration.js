@@ -228,6 +228,22 @@ function buildRuntimeSchemaMigrationSQL(appDbUser = 'stock_admin') {
           ON recommendation_loop_policy_snapshots (loop_run_id);
       END IF;
     END $$;
+
+    -- 量化策略运行策略字段兼容；历史库可能已存在 quant_strategies 但缺少新字段，
+    -- 会导致策略注册、策略列表和开盘扫描配置读取失败。
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'quant_strategies') THEN
+        ALTER TABLE quant_strategies ADD COLUMN IF NOT EXISTS execution_policy JSONB NOT NULL DEFAULT '{}'::jsonb;
+        ALTER TABLE quant_strategies ADD COLUMN IF NOT EXISTS environment_policy JSONB NOT NULL DEFAULT '{}'::jsonb;
+        ALTER TABLE quant_strategies ADD COLUMN IF NOT EXISTS lifecycle_policy JSONB NOT NULL DEFAULT '{}'::jsonb;
+        ALTER TABLE quant_strategies ADD COLUMN IF NOT EXISTS notes TEXT;
+        ALTER TABLE quant_strategies ADD COLUMN IF NOT EXISTS display_order INTEGER;
+        UPDATE quant_strategies SET execution_policy = '{}'::jsonb WHERE execution_policy IS NULL;
+        UPDATE quant_strategies SET environment_policy = '{}'::jsonb WHERE environment_policy IS NULL;
+        UPDATE quant_strategies SET lifecycle_policy = '{}'::jsonb WHERE lifecycle_policy IS NULL;
+      END IF;
+    END $$;
   `;
 }
 
