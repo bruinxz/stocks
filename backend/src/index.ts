@@ -159,7 +159,7 @@ async function publicIndexExists(indexName: string): Promise<boolean> {
 }
 
 async function ensureRecommendationLoopRuntimeSchema() {
-  const additions = [
+  const indexedAdditions = [
     {
       table: 'ai_investment_signals',
       column: 'loop_run_id',
@@ -177,7 +177,7 @@ async function ensureRecommendationLoopRuntimeSchema() {
     },
   ];
 
-  for (const item of additions) {
+  for (const item of indexedAdditions) {
     if (!(await publicTableExists(item.table))) {
       continue;
     }
@@ -206,6 +206,81 @@ async function ensureRecommendationLoopRuntimeSchema() {
         console.log(`Added runtime schema index ${item.index}`);
       } catch (error: any) {
         console.warn(`Failed to add runtime schema index ${item.index}:`, error?.message || error);
+      }
+    }
+  }
+
+  await ensureQuantStrategyRuntimeSchema();
+}
+
+async function addColumnIfMissing(
+  table: string,
+  column: string,
+  definition: string
+): Promise<boolean> {
+  if (!(await publicTableExists(table))) {
+    return false;
+  }
+
+  const hasColumn = await publicColumnExists(table, column);
+  if (hasColumn) {
+    return true;
+  }
+
+  try {
+    await sequelize.query(`ALTER TABLE "${table}" ADD COLUMN "${column}" ${definition}`);
+    console.log(`Added runtime schema column ${table}.${column}`);
+    return true;
+  } catch (error: any) {
+    console.warn(
+      `Failed to add runtime schema column ${table}.${column}:`,
+      error?.message || error
+    );
+    return false;
+  }
+}
+
+async function ensureQuantStrategyRuntimeSchema() {
+  if (!(await publicTableExists('quant_strategies'))) {
+    return;
+  }
+
+  const additions = [
+    {
+      column: 'execution_policy',
+      definition: `JSONB NOT NULL DEFAULT '{}'::jsonb`,
+    },
+    {
+      column: 'environment_policy',
+      definition: `JSONB NOT NULL DEFAULT '{}'::jsonb`,
+    },
+    {
+      column: 'lifecycle_policy',
+      definition: `JSONB NOT NULL DEFAULT '{}'::jsonb`,
+    },
+    {
+      column: 'notes',
+      definition: 'TEXT',
+    },
+    {
+      column: 'display_order',
+      definition: 'INTEGER',
+    },
+  ];
+
+  for (const item of additions) {
+    await addColumnIfMissing('quant_strategies', item.column, item.definition);
+  }
+
+  const jsonbDefaults = ['execution_policy', 'environment_policy', 'lifecycle_policy'];
+  for (const column of jsonbDefaults) {
+    if (await publicColumnExists('quant_strategies', column)) {
+      try {
+        await sequelize.query(
+          `UPDATE "quant_strategies" SET "${column}" = '{}'::jsonb WHERE "${column}" IS NULL`
+        );
+      } catch (error: any) {
+        console.warn(`Failed to normalize quant_strategies.${column}:`, error?.message || error);
       }
     }
   }
