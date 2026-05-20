@@ -5,6 +5,7 @@ const path = require('path');
 const { runPostDeploySmoke } = require('./post_deploy_smoke');
 const { getDeployConfig, shellQuote } = require('./deploy_config');
 const { runLocalRegressionGate } = require('./local_regression_gate');
+const { buildEnsureRuntimePathsCommand } = require('./ensure_runtime_paths');
 const {
   buildDockerPsqlHealthCommand,
   buildDockerPsqlMigrationCommand,
@@ -152,6 +153,12 @@ async function main() {
     await sftp.put(path.join(paths.local_backend, '.env'), `${paths.remote_backend}/.env`);
 
     sftp.end();
+
+    await execCommand(
+      ssh,
+      buildEnsureRuntimePathsCommand(paths.remote_root),
+      '初始化运行时目录'
+    );
 
     await execCommand(
       ssh,

@@ -32,6 +32,7 @@ import './jobs/aiPollingWorker'; // 初始化 AI 分析轮询队列处理器
 import './jobs/quantBacktestWorker'; // 初始化量化跑分队列处理器
 import { schedulerService } from './services/SchedulerService';
 import { repairLegacyDevelopmentSchema } from './utils/developmentSchemaRepair';
+import { ensureUploadsRuntime, getUploadsRoot } from './utils/runtimePaths';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -56,7 +57,8 @@ app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
 // Serve static files (like avatars)
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+ensureUploadsRuntime();
+app.use('/uploads', express.static(getUploadsRoot()));
 
 // Health check endpoint
 app.get('/health', (req, res) => {

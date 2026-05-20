@@ -1,11 +1,11 @@
 # Autonomous Iteration Progress
 
-> Last updated: 2026-05-18
+> Last updated: 2026-05-20
 > Purpose: machine-readable handoff for continuing autonomous development after context compression.
 
 ## Current branch / workspace
 
-- Branch: `main`
+- Branch: `dev_lym`
 - Workspace: `/Users/bytedance/go/src/github.com/bruinxz/stocks`
 - Primary server paths from prior context:
   - main: `/opt/stocks`, backend `3000`, frontend `3001`
@@ -31,6 +31,61 @@ Known frontend build warnings are historical Prettier warnings in existing files
 - `src/pages/TaskScheduler.tsx`
 
 ## Completed in current autonomous batch
+
+### Five-priority continuation batch (2026-05-20)
+
+- Strategy runtime policy is now no longer only editable:
+  - `QuantStrategyService.getRuntimePoliciesByStrategy()` exposes merged execution/environment/lifecycle policies.
+  - `QuantSignalService.generateSignals()` reads per-strategy `execution_policy.min_score` and persists `strategy_runtime_policy` / `strategy_environment_policy` into signal raw factors.
+  - Strategy environment policy is applied as a **soft guard**: preferred regimes lightly boost score, blocked regimes reduce score instead of hard-killing candidates.
+  - Factor freshness discipline is applied in scoring: missing/stale factor snapshots add risk flags and reduce score.
+- Quant fusion / simulated trading now carries strategy runtime policy:
+  - `QuantFusionService` clamps candidate suggested position by strategy-level `max_position_pct`.
+  - Archived AI signals and Agent polling jobs carry `strategy_runtime_policy`, so paper trading can obey per-strategy caps.
+  - Daily pipeline result now surfaces `runtime_policy_diagnostics`.
+- Parameter lifecycle is now operator-actionable:
+  - Strategy Research Overview adds “预览生命周期” and “应用参数调整”.
+  - Calls `POST /api/quant/param-lifecycle/refresh` with dry-run/apply modes.
+  - Shows applied count and lifecycle summary in-page.
+- Strategy visual editor is simplified:
+  - Default drawer shows only enable/order + execution policy first.
+  - Strategy params, environment policy and lifecycle rules are collapsed under advanced sections.
+- Deployment stability hardening continues:
+  - upload runtime path uses `UPLOADS_ROOT` / `shared/uploads` / writable fallbacks.
+  - deployment scripts prepare `shared/uploads/avatars` before build/restart.
+
+### Five-priority hardening batch
+
+- Added runtime upload path resolver:
+  - `backend/src/utils/runtimePaths.ts`
+  - upload/static serving now prefers `shared/uploads` or explicit `UPLOADS_ROOT` over release-local `backend/uploads`
+  - prevents release switch permission issues from crashing backend on avatar directory creation
+- Deployment scripts now self-heal runtime directories before build/restart:
+  - new `scripts/deployment/ensure_runtime_paths.js`
+  - used by `simple_deploy.js` and `sync_and_deploy.js`
+- Added real factor provider smoke test:
+  - `StockFactorService.runProviderSmokeTest()`
+  - `TushareClient.smokeTest()`
+  - endpoint `GET /api/market/factors/provider-smoke`
+- Opening preflight now includes `factor_provider`:
+  - clearly reports whether real Tushare slices (`daily_basic / moneyflow / fina_indicator`) are available
+  - if not, conclusion explicitly states fallback to `local_derived`
+- Quant data freshness now includes `factor_snapshots`:
+  - latest factor date
+  - minimum coverage rate across valuation / money_flow / fundamental
+  - source breakdown visibility
+- Today Command Center now includes `discipline`:
+  - buy allowed or paused
+  - max new positions
+  - default position pct
+  - single-position cap
+  - min cash reserve / max total exposure
+  - forbidden industries / high-risk symbols
+  - review time and concise execution actions
+- Frontend simplification first slice shipped:
+  - Today page adds “今日交易纪律” and “卖出/减仓优先队列”
+  - Strategy Research Overview adds “参数生命周期状态” and “真实因子源状态”
+  - remains conclusion-first without changing existing functionality
 
 ### P4 quant parameter / factor loop
 

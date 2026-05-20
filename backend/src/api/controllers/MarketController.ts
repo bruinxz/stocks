@@ -1500,6 +1500,32 @@ export class MarketController {
   };
 
   /**
+   * 因子真实数据源烟测
+   */
+  smokeTestFactorProvider = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { provider = 'auto', symbol, as_of } = req.query as Record<string, string>;
+      const data = await stockFactorService.runProviderSmokeTest({
+        provider: provider as any,
+        symbol,
+        as_of,
+      });
+      res.json({
+        success: true,
+        data,
+        message: data.conclusion,
+      });
+    } catch (error: any) {
+      logger.error('因子数据源烟测失败:', error);
+      res.status(500).json({
+        success: false,
+        error: '因子数据源烟测失败',
+        details: error.message,
+      });
+    }
+  };
+
+  /**
    * 系统健康检查
    */
   healthCheck = async (req: Request, res: Response): Promise<void> => {

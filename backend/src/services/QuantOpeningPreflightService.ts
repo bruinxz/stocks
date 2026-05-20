@@ -57,6 +57,15 @@ class QuantOpeningPreflightService {
           issues: [],
         })),
       ]);
+    const factorSmoke = await stockFactorService
+      .runProviderSmokeTest({ provider: 'auto', symbol: 'sh.600000', as_of: tradeDate })
+      .catch(error => ({
+        ok: false,
+        provider: 'tushare',
+        enabled: false,
+        error: error?.message || String(error),
+        conclusion: `因子真实源烟测失败：${error?.message || error}`,
+      }));
 
     const quantTask = tasks.find(task => task.type === 'QUANT_DAILY_PIPELINE');
     const watchdogTask = tasks.find(task => task.type === 'QUANT_OPEN_WATCHDOG');
@@ -107,6 +116,16 @@ class QuantOpeningPreflightService {
           minFactorCoverage >= 70
             ? `因子覆盖可用，最低覆盖率 ${minFactorCoverage.toFixed(1)}%，因子日期 ${(factorCoverage as any).latest_factor_date || '-'}。`
             : `因子覆盖偏低，最低覆盖率 ${minFactorCoverage.toFixed(1)}%，开盘前建议同步因子。`,
+      },
+      factor_provider: {
+        status: checkStatus(Boolean((factorSmoke as any).ok), true),
+        ok: Boolean((factorSmoke as any).ok),
+        provider: (factorSmoke as any).provider,
+        symbol: (factorSmoke as any).symbol,
+        enabled: Boolean((factorSmoke as any).enabled),
+        checks: (factorSmoke as any).checks || {},
+        errors: (factorSmoke as any).errors || [],
+        conclusion: (factorSmoke as any).conclusion || '真实因子源烟测未执行。',
       },
       realtime_quote: {
         status: checkStatus(Boolean((quoteSummary as any).persisted), true),

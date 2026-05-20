@@ -5,6 +5,7 @@ import { QuantSignal } from '../../models/QuantSignal';
 import { QuantStrategyParamValidation } from '../../models/QuantStrategyParamValidation';
 import { RealtimeQuote } from '../../models/RealtimeQuote';
 import { RecommendationTradeOutcome } from '../../models/RecommendationTradeOutcome';
+import { stockFactorService } from '../../data/services/StockFactorService';
 
 function toNumber(value: any, fallback = 0): number {
   const parsed = Number(value);
@@ -45,6 +46,7 @@ class QuantDataFreshnessService {
       latestOutcome,
       openOutcomeCount,
       closedOutcomeCount,
+      factorCoverage,
     ] = await Promise.all([
       RealtimeQuote.findOne({ order: [['quote_time', 'DESC']] }).catch(() => null),
       RealtimeQuote.count({ where: { trade_date } }).catch(() => 0),
@@ -88,6 +90,9 @@ class QuantDataFreshnessService {
       }).catch(() => null),
       RecommendationTradeOutcome.count({ where: { trade_status: 'open' } }).catch(() => 0),
       RecommendationTradeOutcome.count({ where: { trade_status: 'closed' } }).catch(() => 0),
+      stockFactorService
+        .getCoverage({ scope: 'market', limit: 180 })
+        .catch(() => null as any),
     ]);
 
     const latestQuoteTime = safeDate(latestQuote?.quote_time);
@@ -103,8 +108,33 @@ class QuantDataFreshnessService {
     const quoteFresh =
       quoteAgeMinutes !== null &&
       (quoteAgeMinutes <= quoteThresholdMinutes || (!isMarketHours && quoteCountToday > 0));
+    const factorLatestDate = factorCoverage?.latest_factor_date || null;
+    const factorLagDays = daysBetween(factorLatestDate, trade_date);
+    const factorMinCoverage = Math.min(
+      toNumber(factorCoverage?.coverage_rate?.valuation, 0),
+      toNumber(factorCoverage?.coverage_rate?.money_flow, 0),
+      toNumber(factorCoverage?.coverage_rate?.fundamental, 0)
+    );
 
     const checks = {
+      factor_snapshots: {
+        status:
+          factorCoverage && factorLatestDate && factorMinCoverage >= 70
+            ? 'ok'
+            : factorCoverage && factorMinCoverage >= 45
+            ? 'warn'
+            : 'risk',
+        latest_factor_date: factorLatestDate,
+        lag_days: factorLagDays,
+        min_coverage_rate: factorMinCoverage,
+        source_breakdown: factorCoverage?.source_breakdown || {},
+        conclusion:
+          factorCoverage && factorLatestDate
+            ? factorMinCoverage >= 70
+              ? `因子快照已落盘，最低覆盖率 ${factorMinCoverage.toFixed(1)}%，最新因子日 ${factorLatestDate}。`
+              : `因子快照覆盖偏低，最低覆盖率 ${factorMinCoverage.toFixed(1)}%，建议优先补齐真实/派生因子。`
+            : '因子快照暂无有效覆盖，量化分会偏依赖行情特征。',
+      },
       realtime_quotes: {
         status: latestQuoteTime && quoteFresh ? 'ok' : latestQuoteTime ? 'warn' : 'risk',
         latest_quote_time: latestQuoteTime,

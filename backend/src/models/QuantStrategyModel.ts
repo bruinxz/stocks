@@ -29,6 +29,15 @@ export class QuantStrategyModel extends Model {
   @Column({ type: DataType.JSONB, allowNull: false, defaultValue: {}, field: 'default_params' })
   declare default_params: Record<string, any>;
 
+  @Column({ type: DataType.JSONB, allowNull: false, defaultValue: {}, field: 'execution_policy' })
+  declare execution_policy: Record<string, any>;
+
+  @Column({ type: DataType.JSONB, allowNull: false, defaultValue: {}, field: 'environment_policy' })
+  declare environment_policy: Record<string, any>;
+
+  @Column({ type: DataType.JSONB, allowNull: false, defaultValue: {}, field: 'lifecycle_policy' })
+  declare lifecycle_policy: Record<string, any>;
+
   @Column({ type: DataType.BOOLEAN, allowNull: false, defaultValue: true })
   declare enabled: boolean;
 
@@ -40,6 +49,12 @@ export class QuantStrategyModel extends Model {
 
   @Column({ type: DataType.JSONB, allowNull: false, defaultValue: {}, field: 'latest_metrics' })
   declare latest_metrics: Record<string, any>;
+
+  @Column({ type: DataType.TEXT, allowNull: true })
+  declare notes?: string;
+
+  @Column({ type: DataType.INTEGER, allowNull: true, field: 'display_order' })
+  declare display_order?: number;
 
   @CreatedAt
   @Column({ field: 'created_at' })
