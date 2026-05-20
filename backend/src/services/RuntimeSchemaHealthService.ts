@@ -2,6 +2,7 @@ import { QueryTypes } from 'sequelize';
 import sequelize from '../config/database';
 import {
   CRITICAL_RUNTIME_SCHEMA_TABLES,
+  RUNTIME_SCHEMA_REQUIRED_COLUMNS,
   RUNTIME_SCHEMA_TABLES,
 } from '../constants/runtimeSchemaTables';
 
@@ -12,6 +13,7 @@ type RuntimeSchemaIssue = {
   code: string;
   message: string;
   table_name?: string;
+  column_name?: string;
   sequence_name?: string;
 };
 
@@ -32,12 +34,25 @@ class RuntimeSchemaHealthService {
       ','
     )}]::text[]`;
     const role = sqlLiteral(appRole);
+    const expectedColumns = Object.entries(RUNTIME_SCHEMA_REQUIRED_COLUMNS).flatMap(
+      ([tableName, config]) =>
+        config.columns.map(columnName => ({
+          table_name: tableName,
+          column_name: columnName,
+          critical: config.critical,
+        }))
+    );
+    const expectedColumnsJson = sqlLiteral(JSON.stringify(expectedColumns));
 
     return `
       WITH expected_tables AS (
         SELECT unnest(${expectedTables}) AS table_name
       ), critical_tables AS (
         SELECT unnest(${criticalTables}) AS table_name
+      ), expected_columns AS (
+        SELECT *
+        FROM json_to_recordset(${expectedColumnsJson}::json)
+          AS x(table_name text, column_name text, critical boolean)
       ), actual_tables AS (
         SELECT c.relname AS table_name, pg_catalog.pg_get_userbyid(c.relowner) AS owner
         FROM pg_class c
@@ -55,6 +70,22 @@ class RuntimeSchemaHealthService {
           CASE WHEN a.table_name IS NULL THEN false ELSE has_table_privilege(${role}, format('public.%I', e.table_name), 'DELETE') END AS can_delete
         FROM expected_tables e
         LEFT JOIN actual_tables a ON a.table_name = e.table_name
+      ), column_health AS (
+        SELECT
+          e.table_name,
+          e.column_name,
+          e.critical,
+          t.exists AS table_exists,
+          c.column_name IS NOT NULL AS exists,
+          c.data_type,
+          c.is_nullable,
+          c.column_default
+        FROM expected_columns e
+        LEFT JOIN table_health t ON t.table_name = e.table_name
+        LEFT JOIN information_schema.columns c
+          ON c.table_schema = 'public'
+         AND c.table_name = e.table_name
+         AND c.column_name = e.column_name
       ), serial_sequences AS (
         SELECT DISTINCT pg_get_serial_sequence(format('public.%I', e.table_name), c.column_name) AS sequence_name
         FROM expected_tables e
@@ -80,6 +111,7 @@ class RuntimeSchemaHealthService {
         'app_role', ${role},
         'schema', (SELECT row_to_json(schema_health) FROM schema_health),
         'tables', COALESCE((SELECT json_agg(table_health ORDER BY critical DESC, table_name) FROM table_health), '[]'::json),
+        'columns', COALESCE((SELECT json_agg(column_health ORDER BY critical DESC, table_name, column_name) FROM column_health), '[]'::json),
         'sequences', COALESCE((SELECT json_agg(sequence_health ORDER BY sequence_name) FROM sequence_health), '[]'::json)
       ) AS health;
     `;
@@ -87,6 +119,7 @@ class RuntimeSchemaHealthService {
 
   private summarize(raw: any, appRole: string) {
     const tables = Array.isArray(raw?.tables) ? raw.tables : [];
+    const columns = Array.isArray(raw?.columns) ? raw.columns : [];
     const sequences = Array.isArray(raw?.sequences) ? raw.sequences : [];
     const schema = raw?.schema || {};
     const issues: RuntimeSchemaIssue[] = [];
@@ -124,6 +157,21 @@ class RuntimeSchemaHealthService {
           code: 'table_owner_mismatch',
           table_name: tableName,
           message: `运行表 owner 不是应用角色：${tableName} owner=${table.owner} app_role=${appRole}`,
+        });
+      }
+    }
+
+    for (const column of columns) {
+      if (!column.table_exists) {
+        continue;
+      }
+      if (!column.exists) {
+        issues.push({
+          level: column.critical ? 'critical' : 'warning',
+          code: column.critical ? 'critical_column_missing' : 'optional_column_missing',
+          table_name: column.table_name,
+          column_name: column.column_name,
+          message: `${column.critical ? '关键' : '可选'}运行字段缺失：${column.table_name}.${column.column_name}`,
         });
       }
     }
@@ -174,9 +222,13 @@ class RuntimeSchemaHealthService {
         privilege_gaps: issues.filter(issue => issue.code.includes('privilege_gap')).length,
         owner_mismatches: issues.filter(issue => issue.code === 'table_owner_mismatch').length,
         sequence_gaps: issues.filter(issue => issue.code === 'sequence_privilege_gap').length,
+        required_columns: columns.length,
+        existing_columns: columns.filter((item: any) => item.table_exists && item.exists).length,
+        missing_columns: issues.filter(issue => issue.code.includes('column_missing')).length,
       },
       schema,
       tables,
+      columns,
       sequences,
       issues,
       remediation: {

@@ -22,6 +22,9 @@ export const RUNTIME_SCHEMA_TABLES = [
   'recommendation_loop_policy_snapshots',
   'budget_policy_version_snapshots',
   'quant_strategies',
+  'stock_fundamental_factors',
+  'stock_money_flow_factors',
+  'stock_valuation_factors',
   'quant_backtest_tasks',
   'quant_backtest_results',
   'quant_backtest_trades',
@@ -50,8 +53,81 @@ export const CRITICAL_RUNTIME_SCHEMA_TABLES = [
   'quant_strategy_experiments',
   'quant_strategy_param_versions',
   'quant_strategy_param_validations',
+  'stock_fundamental_factors',
+  'stock_money_flow_factors',
+  'stock_valuation_factors',
   'realtime_quotes',
   'paper_trading_portfolios',
   'paper_trading_trades',
   'task_parameter_audit_logs',
 ] as const;
+
+export const RUNTIME_SCHEMA_REQUIRED_COLUMNS: Record<
+  string,
+  { critical: boolean; columns: string[] }
+> = {
+  quant_strategies: {
+    critical: true,
+    columns: [
+      'strategy_key',
+      'default_params',
+      'execution_policy',
+      'environment_policy',
+      'lifecycle_policy',
+      'notes',
+      'display_order',
+    ],
+  },
+  quant_signals: {
+    critical: true,
+    columns: [
+      'trade_date',
+      'symbol',
+      'strategy_key',
+      'signal',
+      'score',
+      'raw_factors',
+      'agent_eligible',
+      'agent_status',
+    ],
+  },
+  ai_investment_signals: {
+    critical: true,
+    columns: [
+      'source_type',
+      'source_id',
+      'loop_run_id',
+      'signal_date',
+      'metadata',
+      'current_price',
+    ],
+  },
+  recommendation_trade_outcomes: {
+    critical: true,
+    columns: ['signal_id', 'symbol', 'trade_status', 'loop_run_id', 'metadata'],
+  },
+  scheduled_tasks: {
+    critical: true,
+    columns: ['type', 'cron_expression', 'is_active', 'parameters', 'last_run_status'],
+  },
+  task_execution_logs: {
+    critical: true,
+    columns: ['task_id', 'task_name', 'status', 'total_items', 'completed_items', 'failed_items'],
+  },
+  stock_fundamental_factors: {
+    critical: true,
+    columns: ['symbol', 'factor_date', 'source'],
+  },
+  stock_money_flow_factors: {
+    critical: true,
+    columns: ['symbol', 'factor_date', 'source'],
+  },
+  stock_valuation_factors: {
+    critical: true,
+    columns: ['symbol', 'factor_date', 'source'],
+  },
+  realtime_quotes: {
+    critical: true,
+    columns: ['symbol', 'trade_date', 'quote_time', 'current_price'],
+  },
+};

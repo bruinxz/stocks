@@ -36,6 +36,11 @@ router.get(
   quantController.getDataFreshness.bind(quantController)
 );
 router.get(
+  '/runtime-health',
+  authController.authenticate,
+  quantController.getRuntimeHealth.bind(quantController)
+);
+router.get(
   '/strategy-experiments',
   authController.authenticate,
   quantController.listStrategyExperiments.bind(quantController)

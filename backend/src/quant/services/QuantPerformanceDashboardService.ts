@@ -12,6 +12,7 @@ import { TaskExecutionLog } from '../../models/TaskExecutionLog';
 import { quantStrategyExperimentService } from './QuantStrategyExperimentService';
 import { quantStrategyParamVersionService } from './QuantStrategyParamVersionService';
 import { quantDataFreshnessService } from './QuantDataFreshnessService';
+import { quantRuntimeHealthService } from './QuantRuntimeHealthService';
 import { realtimeQuoteService } from '../../data/services/RealtimeQuoteService';
 import {
   AUTONOMOUS_PORTFOLIO_NAME,
@@ -345,6 +346,7 @@ export class QuantPerformanceDashboardService {
       portfolioFamilies,
       paramTradeAttribution,
       dataFreshness,
+      runtimeHealth,
     ] = await Promise.all([
       this.getLatestBacktests(),
       this.getSignalSummary(),
@@ -357,6 +359,7 @@ export class QuantPerformanceDashboardService {
       this.getPortfolioFamilyComparison(options),
       this.getParamExperimentTradeAttribution(options),
       quantDataFreshnessService.getSnapshot(),
+      quantRuntimeHealthService.getHealth(options),
     ]);
 
     return {
@@ -368,6 +371,7 @@ export class QuantPerformanceDashboardService {
       outcome_comparison: outcomeComparison,
       data_quality_center: dataQuality,
       data_freshness: dataFreshness,
+      runtime_health: runtimeHealth,
       strategy_experiments: strategyExperiments,
       experiment_param_suggestions: experimentParamSuggestions,
       param_validation_dashboard: {
@@ -380,7 +384,8 @@ export class QuantPerformanceDashboardService {
         latestBacktests,
         scheduleSummary,
         dataQuality,
-        dataFreshness
+        dataFreshness,
+        runtimeHealth
       ),
     };
   }
@@ -473,7 +478,9 @@ export class QuantPerformanceDashboardService {
         avg_total_return_pct: roundNumber(avgTotalReturn, 4),
         avg_excess_return_pct: roundNumber(avgExcessReturn, 4),
         positive_result_count: profitableCount,
-        positive_result_rate: resultCount ? roundNumber((profitableCount / resultCount) * 100, 2) : 0,
+        positive_result_rate: resultCount
+          ? roundNumber((profitableCount / resultCount) * 100, 2)
+          : 0,
         best_total_return_pct: topResults[0]?.total_return_pct ?? 0,
         best_strategy_key: topResults[0]?.strategy_key || null,
         latest_result_at: finishedAtValues.length
@@ -877,8 +884,8 @@ export class QuantPerformanceDashboardService {
           conclusion: champion
             ? `参数实验盘当前领先版本为 ${champion.param_version_key}，交易均超额 ${champion.avg_excess_return_pct}%（闭环 ${champion.closed_count} 笔）。`
             : outcomes.length
-              ? '参数实验盘已有交易，但暂未识别到参数版本键；后续新信号会自动补齐归因。'
-              : '参数实验盘已存在，等待候选参数小仓交易沉淀收益。',
+            ? '参数实验盘已有交易，但暂未识别到参数版本键；后续新信号会自动补齐归因。'
+            : '参数实验盘已存在，等待候选参数小仓交易沉淀收益。',
         },
       };
     } catch (error: any) {
@@ -903,7 +910,8 @@ export class QuantPerformanceDashboardService {
     backtests: any,
     schedule: any,
     dataQuality: any,
-    dataFreshness?: any
+    dataFreshness?: any,
+    runtimeHealth?: any
   ) {
     const checks = [
       {
@@ -954,6 +962,11 @@ export class QuantPerformanceDashboardService {
         ok: dataFreshness?.status !== 'risk',
         label: '闭环无关键风险',
       },
+      {
+        key: 'runtime_health',
+        ok: runtimeHealth?.status !== 'risk',
+        label: '运行时健康',
+      },
     ];
     const readyCount = checks.filter(item => item.ok).length;
     return {
@@ -962,7 +975,7 @@ export class QuantPerformanceDashboardService {
       checks,
       conclusion:
         readyCount === checks.length
-          ? '量化指标、历史收益、开盘推荐、Agent融合和模拟盘验证链路均已具备。'
+          ? '量化指标、历史收益、开盘推荐、Agent融合、模拟盘验证和运行时健康均已具备。'
           : '链路已部分具备，仍需补齐历史跑分或等待明日开盘/Agent异步结果沉淀。',
     };
   }
