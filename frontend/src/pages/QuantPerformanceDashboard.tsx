@@ -182,6 +182,42 @@ type ScheduleTask = {
   parameters?: Record<string, any>;
 };
 
+type RuntimeHealthCheck = {
+  key: string;
+  label: string;
+  status: 'ok' | 'warn' | 'risk' | string;
+  metric?: string;
+  conclusion?: string;
+};
+
+type RuntimeHealth = {
+  generated_at?: string;
+  status?: 'ready' | 'warn' | 'risk' | string;
+  score?: number;
+  summary?: {
+    risk_count?: number;
+    warn_count?: number;
+    check_count?: number;
+    enabled_strategy_count?: number;
+    policy_ready_strategy_count?: number;
+    open_task_count?: number;
+    watchdog_task_count?: number;
+    conclusion?: string;
+  };
+  checks?: RuntimeHealthCheck[];
+  runtime_schema?: {
+    status?: string;
+    summary?: {
+      required_columns?: number;
+      existing_columns?: number;
+      missing_columns?: number;
+      critical_issues?: number;
+      warnings?: number;
+    };
+    critical_issues?: Array<{ code?: string; message?: string }>;
+  };
+};
+
 type DashboardData = {
   generated_at?: string;
   indicator_catalog?: {
@@ -253,6 +289,7 @@ type DashboardData = {
       execution_warning_count?: number;
     };
   };
+  runtime_health?: RuntimeHealth;
   data_freshness?: {
     status?: 'ok' | 'warn' | 'risk';
     summary?: {
@@ -439,15 +476,42 @@ const familyTone: Record<string, { color: string; icon: React.ReactNode }> = {
 
 const QuantPerformanceDashboard: React.FC = () => {
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
+  const [runtimeHealth, setRuntimeHealth] = useState<RuntimeHealth | null>(null);
   const [loading, setLoading] = useState(false);
+  const [runtimeLoading, setRuntimeLoading] = useState(false);
+
+  const fetchRuntimeHealth = async (silent = false) => {
+    setRuntimeLoading(true);
+    try {
+      const response = await api.get('/quant/runtime-health');
+      if (response.data.success) {
+        setRuntimeHealth(response.data.data || null);
+        if (!silent) message.success('量化运行时健康已刷新');
+        return response.data.data || null;
+      }
+    } catch (error: any) {
+      if (!silent) message.error(error.response?.data?.message || '获取量化运行时健康失败');
+    } finally {
+      setRuntimeLoading(false);
+    }
+    return null;
+  };
 
   const fetchDashboard = async (silent = false) => {
     setLoading(true);
     try {
-      const response = await api.get('/quant/performance-dashboard');
-      if (response.data.success) {
-        setDashboard(response.data.data || null);
+      const [response, runtimeResponse] = await Promise.allSettled([
+        api.get('/quant/performance-dashboard'),
+        api.get('/quant/runtime-health'),
+      ]);
+      if (response.status === 'fulfilled' && response.value.data.success) {
+        setDashboard(response.value.data.data || null);
         if (!silent) message.success('量化收益驾驶舱已刷新');
+      } else if (response.status === 'rejected') {
+        throw response.reason;
+      }
+      if (runtimeResponse.status === 'fulfilled' && runtimeResponse.value.data.success) {
+        setRuntimeHealth(runtimeResponse.value.data.data || null);
       }
     } catch (error: any) {
       message.error(error.response?.data?.message || '获取量化收益驾驶舱失败');
@@ -465,6 +529,7 @@ const QuantPerformanceDashboard: React.FC = () => {
   const indicatorCatalog = dashboard?.indicator_catalog;
   const signalSummary = dashboard?.signal_summary;
   const readiness = dashboard?.readiness;
+  const effectiveRuntimeHealth = runtimeHealth || dashboard?.runtime_health || null;
   const dataQuality = dashboard?.data_quality_center;
   const dataFreshness = dashboard?.data_freshness;
   const dataFreshnessChecks = dataFreshness?.checks || {};
@@ -610,6 +675,95 @@ const QuantPerformanceDashboard: React.FC = () => {
         </div>
       </div>
 
+      <Card
+        className={`modern-card quant-runtime-health-card quant-runtime-health-card--${
+          effectiveRuntimeHealth?.status || 'unknown'
+        }`}
+        variant="borderless"
+        loading={(loading && !effectiveRuntimeHealth) || runtimeLoading}
+      >
+        <div className="quant-section-heading quant-runtime-heading">
+          <div>
+            <span>RUNTIME HEALTH</span>
+            <h2>开盘运行时健康</h2>
+          </div>
+          <Space wrap>
+            <Tag
+              color={
+                effectiveRuntimeHealth?.status === 'ready'
+                  ? 'green'
+                  : effectiveRuntimeHealth?.status === 'risk'
+                  ? 'red'
+                  : 'gold'
+              }
+            >
+              {effectiveRuntimeHealth?.status === 'ready'
+                ? '可自动运行'
+                : effectiveRuntimeHealth?.status === 'risk'
+                ? '有阻断风险'
+                : '需要观察'}
+            </Tag>
+            <Button
+              size="small"
+              icon={<ReloadOutlined />}
+              loading={runtimeLoading}
+              onClick={() => fetchRuntimeHealth(false)}
+            >
+              刷新健康
+            </Button>
+          </Space>
+        </div>
+        <div className="quant-runtime-health-layout">
+          <div className="quant-runtime-score">
+            <span>HEALTH</span>
+            <strong>{effectiveRuntimeHealth?.score ?? '--'}</strong>
+            <Progress
+              percent={Number(effectiveRuntimeHealth?.score || 0)}
+              showInfo={false}
+              strokeColor={
+                effectiveRuntimeHealth?.status === 'ready'
+                  ? '#0f8f6b'
+                  : effectiveRuntimeHealth?.status === 'risk'
+                  ? '#b42318'
+                  : '#d6a64f'
+              }
+            />
+            <p>
+              {effectiveRuntimeHealth?.summary?.conclusion ||
+                '正在检查数据库字段、策略注册、实时行情、参数版本和自动任务。'}
+            </p>
+            <div className="quant-runtime-score-meta">
+              <Tag>风险 {effectiveRuntimeHealth?.summary?.risk_count || 0}</Tag>
+              <Tag>观察 {effectiveRuntimeHealth?.summary?.warn_count || 0}</Tag>
+              <Tag>策略 {effectiveRuntimeHealth?.summary?.enabled_strategy_count || 0}</Tag>
+              <Tag>开盘任务 {effectiveRuntimeHealth?.summary?.open_task_count || 0}</Tag>
+            </div>
+          </div>
+          <div className="quant-runtime-check-grid">
+            {(effectiveRuntimeHealth?.checks || []).map(item => (
+              <div
+                className={`quant-runtime-check-item ${item.status || 'unknown'}`}
+                key={item.key}
+              >
+                <span>{item.label}</span>
+                <strong>{item.metric || (item.status === 'ok' ? 'OK' : item.status)}</strong>
+                <em>{item.conclusion || '等待检查结果'}</em>
+              </div>
+            ))}
+            {!(effectiveRuntimeHealth?.checks || []).length &&
+              ['数据库字段', '策略注册', '实时行情', '自动参数', '自动任务', '闭环新鲜度'].map(
+                label => (
+                  <div className="quant-runtime-check-item unknown" key={label}>
+                    <span>{label}</span>
+                    <strong>--</strong>
+                    <em>等待检查结果</em>
+                  </div>
+                )
+              )}
+          </div>
+        </div>
+      </Card>
+
       <Row gutter={[16, 16]}>
         <Col xs={24} md={12} xl={6}>
           <Card className="modern-card quant-dashboard-stat" variant="borderless" loading={loading}>
@@ -716,7 +870,9 @@ const QuantPerformanceDashboard: React.FC = () => {
           ].map(([label, item]: any) => (
             <div className={`quant-data-freshness-item ${item?.status || 'unknown'}`} key={label}>
               <span>{label}</span>
-              <strong>{item?.status === 'ok' ? '正常' : item?.status === 'risk' ? '风险' : '观察'}</strong>
+              <strong>
+                {item?.status === 'ok' ? '正常' : item?.status === 'risk' ? '风险' : '观察'}
+              </strong>
               <em>{item?.conclusion || '等待检查结果'}</em>
             </div>
           ))}

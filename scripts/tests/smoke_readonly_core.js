@@ -556,6 +556,30 @@ async function main() {
       },
     });
 
+    await requestJson("quant runtime health", "/api/quant/runtime-health", {
+      token,
+      critical: false,
+      expect: (json) => {
+        assertApiSuccess(json, "quant runtime health");
+        if (
+          !json.data?.status ||
+          !json.data?.summary ||
+          !Array.isArray(json.data?.checks)
+        ) {
+          throw new Error(
+            `quant runtime health payload invalid: ${preview(json)}`,
+          );
+        }
+        if (
+          Number(json.data.runtime_schema?.summary?.missing_columns || 0) > 0
+        ) {
+          throw new Error(
+            `quant runtime required columns missing: ${preview(json.data.runtime_schema.summary)}`,
+          );
+        }
+      },
+    });
+
     await requestJson(
       "quant fusion audits",
       "/api/quant/fusion-audits?limit=5",
@@ -620,9 +644,13 @@ async function main() {
         token,
         expect: (json) => {
           assertApiSuccess(json, "quant performance dashboard");
-          if (!json.data?.readiness || !json.data?.indicator_catalog) {
+          if (
+            !json.data?.readiness ||
+            !json.data?.indicator_catalog ||
+            !json.data?.runtime_health
+          ) {
             throw new Error(
-              `quant performance dashboard missing readiness/catalog: ${preview(json)}`,
+              `quant performance dashboard missing readiness/catalog/runtime health: ${preview(json)}`,
             );
           }
           assertArray(

@@ -8460,22 +8460,19 @@ a {
   padding: 14px 15px;
   border: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: 18px;
-  background:
-    radial-gradient(circle at 12% 0%, rgba(255, 255, 255, 0.92), transparent 34%),
+  background: radial-gradient(circle at 12% 0%, rgba(255, 255, 255, 0.92), transparent 34%),
     linear-gradient(135deg, rgba(248, 250, 252, 0.96), rgba(255, 255, 255, 0.84));
 }
 
 .today-discipline-tile.ok {
   border-color: rgba(31, 138, 112, 0.18);
-  background:
-    radial-gradient(circle at 12% 0%, rgba(232, 255, 244, 0.9), transparent 36%),
+  background: radial-gradient(circle at 12% 0%, rgba(232, 255, 244, 0.9), transparent 36%),
     linear-gradient(135deg, rgba(250, 255, 252, 0.98), rgba(246, 253, 250, 0.84));
 }
 
 .today-discipline-tile.danger {
   border-color: rgba(201, 75, 75, 0.18);
-  background:
-    radial-gradient(circle at 12% 0%, rgba(255, 240, 240, 0.92), transparent 36%),
+  background: radial-gradient(circle at 12% 0%, rgba(255, 240, 240, 0.92), transparent 36%),
     linear-gradient(135deg, rgba(255, 251, 251, 0.98), rgba(255, 245, 245, 0.84));
 }
 
@@ -8937,15 +8934,13 @@ a {
   padding: 14px 15px;
   border: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: 18px;
-  background:
-    radial-gradient(circle at 20% 0%, rgba(255, 255, 255, 0.92), transparent 36%),
+  background: radial-gradient(circle at 20% 0%, rgba(255, 255, 255, 0.92), transparent 36%),
     linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(255, 255, 255, 0.84));
 }
 
 .strategy-lifecycle-tile.promote {
   border-color: rgba(183, 121, 31, 0.18);
-  background:
-    radial-gradient(circle at 20% 0%, rgba(255, 248, 230, 0.92), transparent 36%),
+  background: radial-gradient(circle at 20% 0%, rgba(255, 248, 230, 0.92), transparent 36%),
     linear-gradient(180deg, rgba(255, 252, 245, 0.98), rgba(255, 255, 255, 0.84));
 }
 
@@ -8955,15 +8950,13 @@ a {
 
 .strategy-lifecycle-tile.degrade {
   border-color: rgba(15, 166, 166, 0.16);
-  background:
-    radial-gradient(circle at 20% 0%, rgba(240, 255, 251, 0.92), transparent 36%),
+  background: radial-gradient(circle at 20% 0%, rgba(240, 255, 251, 0.92), transparent 36%),
     linear-gradient(180deg, rgba(247, 254, 252, 0.98), rgba(255, 255, 255, 0.84));
 }
 
 .strategy-lifecycle-tile.rollback {
   border-color: rgba(201, 75, 75, 0.2);
-  background:
-    radial-gradient(circle at 20% 0%, rgba(255, 240, 240, 0.92), transparent 36%),
+  background: radial-gradient(circle at 20% 0%, rgba(255, 240, 240, 0.92), transparent 36%),
     linear-gradient(180deg, rgba(255, 250, 250, 0.98), rgba(255, 244, 244, 0.84));
 }
 
@@ -9296,8 +9289,7 @@ a {
   padding: 14px 15px;
   border: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: 18px;
-  background:
-    radial-gradient(circle at 12% 8%, rgba(255, 255, 255, 0.88), transparent 34%),
+  background: radial-gradient(circle at 12% 8%, rgba(255, 255, 255, 0.88), transparent 34%),
     linear-gradient(135deg, rgba(248, 250, 252, 0.96), rgba(255, 255, 255, 0.82));
 }
 
@@ -9315,8 +9307,7 @@ a {
 
 .strategy-freshness-item.ok {
   border-color: rgba(31, 138, 112, 0.16);
-  background:
-    radial-gradient(circle at 12% 8%, rgba(231, 255, 244, 0.9), transparent 36%),
+  background: radial-gradient(circle at 12% 8%, rgba(231, 255, 244, 0.9), transparent 36%),
     linear-gradient(135deg, rgba(250, 255, 252, 0.98), rgba(246, 253, 250, 0.82));
 }
 
@@ -9327,8 +9318,7 @@ a {
 
 .strategy-freshness-item.warn {
   border-color: rgba(201, 130, 43, 0.18);
-  background:
-    radial-gradient(circle at 12% 8%, rgba(255, 247, 230, 0.95), transparent 36%),
+  background: radial-gradient(circle at 12% 8%, rgba(255, 247, 230, 0.95), transparent 36%),
     linear-gradient(135deg, rgba(255, 253, 247, 0.98), rgba(255, 250, 239, 0.82));
 }
 
@@ -9339,8 +9329,7 @@ a {
 
 .strategy-freshness-item.risk {
   border-color: rgba(201, 75, 75, 0.2);
-  background:
-    radial-gradient(circle at 12% 8%, rgba(255, 239, 239, 0.95), transparent 36%),
+  background: radial-gradient(circle at 12% 8%, rgba(255, 239, 239, 0.95), transparent 36%),
     linear-gradient(135deg, rgba(255, 250, 250, 0.98), rgba(255, 244, 244, 0.82));
 }
 
@@ -9383,8 +9372,7 @@ a {
   overflow: hidden;
   border: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: 18px;
-  background:
-    radial-gradient(circle at 20% 0%, rgba(255, 255, 255, 0.92), transparent 34%),
+  background: radial-gradient(circle at 20% 0%, rgba(255, 255, 255, 0.92), transparent 34%),
     linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(255, 255, 255, 0.84));
 }
 
@@ -9402,8 +9390,7 @@ a {
 
 .quant-data-freshness-item.ok {
   border-color: rgba(31, 138, 112, 0.16);
-  background:
-    radial-gradient(circle at 20% 0%, rgba(232, 255, 244, 0.9), transparent 36%),
+  background: radial-gradient(circle at 20% 0%, rgba(232, 255, 244, 0.9), transparent 36%),
     linear-gradient(180deg, rgba(250, 255, 252, 0.98), rgba(246, 253, 250, 0.82));
 }
 
@@ -9414,8 +9401,7 @@ a {
 
 .quant-data-freshness-item.warn {
   border-color: rgba(201, 130, 43, 0.18);
-  background:
-    radial-gradient(circle at 20% 0%, rgba(255, 247, 230, 0.92), transparent 36%),
+  background: radial-gradient(circle at 20% 0%, rgba(255, 247, 230, 0.92), transparent 36%),
     linear-gradient(180deg, rgba(255, 253, 247, 0.98), rgba(255, 250, 239, 0.82));
 }
 
@@ -9426,8 +9412,7 @@ a {
 
 .quant-data-freshness-item.risk {
   border-color: rgba(201, 75, 75, 0.2);
-  background:
-    radial-gradient(circle at 20% 0%, rgba(255, 239, 239, 0.92), transparent 36%),
+  background: radial-gradient(circle at 20% 0%, rgba(255, 239, 239, 0.92), transparent 36%),
     linear-gradient(180deg, rgba(255, 250, 250, 0.98), rgba(255, 244, 244, 0.82));
 }
 
@@ -9506,5 +9491,196 @@ a {
 
   .quant-data-freshness-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.quant-runtime-health-card {
+  position: relative;
+  overflow: hidden;
+  margin: 16px 0;
+  border-color: rgba(39, 100, 184, 0.1) !important;
+  background: radial-gradient(circle at 6% 8%, rgba(39, 100, 184, 0.08), transparent 28%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(247, 250, 255, 0.82));
+}
+
+.quant-runtime-health-card::after {
+  content: '';
+  position: absolute;
+  inset: auto -18% -72% 58%;
+  height: 210px;
+  transform: rotate(-8deg);
+  background: linear-gradient(90deg, rgba(39, 100, 184, 0.05), rgba(15, 143, 107, 0.08));
+  pointer-events: none;
+}
+
+.quant-runtime-health-card--ready {
+  border-color: rgba(15, 143, 107, 0.16) !important;
+}
+
+.quant-runtime-health-card--risk {
+  border-color: rgba(180, 35, 24, 0.16) !important;
+}
+
+.quant-runtime-heading {
+  position: relative;
+  z-index: 1;
+  align-items: center;
+}
+
+.quant-runtime-health-layout {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 14px;
+  align-items: stretch;
+}
+
+.quant-runtime-score {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-height: 214px;
+  padding: 18px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.76);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
+}
+
+.quant-runtime-score > span,
+.quant-runtime-check-item span {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+
+.quant-runtime-score strong {
+  color: var(--text-main);
+  font-family: var(--font-display);
+  font-size: 54px;
+  line-height: 0.9;
+  letter-spacing: -0.07em;
+}
+
+.quant-runtime-score p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.62;
+}
+
+.quant-runtime-score-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.quant-runtime-score-meta .ant-tag {
+  margin: 0;
+  border-radius: 999px;
+  background: rgba(248, 250, 252, 0.78);
+  font-weight: 800;
+}
+
+.quant-runtime-check-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.quant-runtime-check-item {
+  position: relative;
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  min-height: 102px;
+  padding: 14px;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 18px;
+  background: radial-gradient(circle at 0% 0%, rgba(255, 255, 255, 0.92), transparent 34%),
+    rgba(255, 255, 255, 0.66);
+}
+
+.quant-runtime-check-item::after {
+  content: '';
+  position: absolute;
+  top: 13px;
+  right: 13px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #94a3b8;
+  box-shadow: 0 0 0 7px rgba(148, 163, 184, 0.1);
+}
+
+.quant-runtime-check-item.ok {
+  border-color: rgba(15, 143, 107, 0.16);
+  background: radial-gradient(circle at 0% 0%, rgba(236, 253, 245, 0.86), transparent 34%),
+    rgba(255, 255, 255, 0.7);
+}
+
+.quant-runtime-check-item.ok::after {
+  background: #0f8f6b;
+  box-shadow: 0 0 0 7px rgba(15, 143, 107, 0.12);
+}
+
+.quant-runtime-check-item.warn {
+  border-color: rgba(214, 166, 79, 0.2);
+  background: radial-gradient(circle at 0% 0%, rgba(255, 251, 235, 0.9), transparent 34%),
+    rgba(255, 255, 255, 0.7);
+}
+
+.quant-runtime-check-item.warn::after {
+  background: #d6a64f;
+  box-shadow: 0 0 0 7px rgba(214, 166, 79, 0.13);
+}
+
+.quant-runtime-check-item.risk {
+  border-color: rgba(180, 35, 24, 0.18);
+  background: radial-gradient(circle at 0% 0%, rgba(254, 242, 242, 0.9), transparent 34%),
+    rgba(255, 255, 255, 0.7);
+}
+
+.quant-runtime-check-item.risk::after {
+  background: #b42318;
+  box-shadow: 0 0 0 7px rgba(180, 35, 24, 0.12);
+}
+
+.quant-runtime-check-item strong {
+  max-width: calc(100% - 24px);
+  overflow: hidden;
+  color: var(--text-main);
+  font-family: var(--font-display);
+  font-size: 24px;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quant-runtime-check-item em {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.52;
+}
+
+@media (max-width: 960px) {
+  .quant-runtime-health-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .quant-runtime-check-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .quant-runtime-check-grid {
+    grid-template-columns: 1fr;
   }
 }

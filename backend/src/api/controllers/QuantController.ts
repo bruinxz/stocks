@@ -10,6 +10,7 @@ import { quantOpenWatchdogService } from '../../quant/services/QuantOpenWatchdog
 import { quantStrategyExperimentService } from '../../quant/services/QuantStrategyExperimentService';
 import { quantStrategyParamVersionService } from '../../quant/services/QuantStrategyParamVersionService';
 import { quantDataFreshnessService } from '../../quant/services/QuantDataFreshnessService';
+import { quantRuntimeHealthService } from '../../quant/services/QuantRuntimeHealthService';
 import { AuthenticatedRequest } from '../../middlewares/auth';
 import { logger } from '../../utils/logger';
 
@@ -56,10 +57,7 @@ export class QuantController {
             : req.body?.lifecyclePolicy !== undefined
             ? req.body.lifecyclePolicy
             : undefined,
-        notes:
-          req.body?.notes !== undefined
-            ? String(req.body.notes || '')
-            : undefined,
+        notes: req.body?.notes !== undefined ? String(req.body.notes || '') : undefined,
         display_order:
           req.body?.display_order !== undefined
             ? Number(req.body.display_order)
@@ -115,6 +113,16 @@ export class QuantController {
       res.json({ success: true, data, message: data.summary.conclusion });
     } catch (error: any) {
       logger.error('获取量化数据新鲜度失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  async getRuntimeHealth(req: AuthenticatedRequest, res: Response) {
+    try {
+      const data = await quantRuntimeHealthService.getHealth({ user_id: req.user?.id });
+      res.json({ success: true, data, message: data.summary.conclusion });
+    } catch (error: any) {
+      logger.error('获取量化运行时健康失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   }
