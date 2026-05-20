@@ -1,12 +1,10 @@
 import multer from 'multer';
 import path from 'path';
-import fs from 'fs';
+import { ensureUploadsRuntime, getAvatarUploadsDir } from '../utils/runtimePaths';
 
-// 确保目录存在
-const avatarUploadsDir = path.join(__dirname, '../../uploads/avatars');
-if (!fs.existsSync(avatarUploadsDir)) {
-  fs.mkdirSync(avatarUploadsDir, { recursive: true });
-}
+// 优先使用 shared/uploads 或显式 UPLOADS_ROOT，避免发布切换到只读 release 目录导致启动失败。
+ensureUploadsRuntime();
+const avatarUploadsDir = getAvatarUploadsDir();
 
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {

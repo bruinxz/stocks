@@ -21,6 +21,7 @@ import { recommendationLoopPolicySnapshotService } from '../../services/Recommen
 import { riskThresholdStabilityService } from '../../services/RiskThresholdStabilityService';
 import { quantStrategyExperimentService } from './QuantStrategyExperimentService';
 import { quantStrategyParamVersionService } from './QuantStrategyParamVersionService';
+import { quantStrategyService } from './QuantStrategyService';
 import { stockFactorService } from '../../data/services/StockFactorService';
 import { feishuBotWebhookService } from '../../services/FeishuBotWebhookService';
 import {
@@ -115,6 +116,7 @@ interface QuantFusionCandidate {
   strategy_allocation_amount?: number;
   strategy_max_single_trade_pct?: number;
   strategy_max_single_trade_amount?: number;
+  strategy_runtime_policy?: Record<string, any>;
   risk_level: 'low' | 'medium' | 'high';
   strategy_key: string;
   strategy_name?: string;
@@ -552,6 +554,7 @@ export class QuantFusionService {
         signal_count: generated.signal_count,
         by_strategy: generated.by_strategy,
         quote_sync: generated.quote_sync,
+        runtime_policy_diagnostics: generated.runtime_policy_diagnostics,
         factor_sync: factorSync,
         experiment_param_suggestion: experimentParamSuggestion
           ? {
@@ -619,6 +622,7 @@ export class QuantFusionService {
         archive,
         agentAnalysis,
         paperTrading,
+        paramLifecycle,
       }),
     };
 
@@ -860,6 +864,9 @@ export class QuantFusionService {
     const allocationByStrategy = new Map(
       (allocationPolicy.allocations || []).map((item: any) => [item.strategy_key, item])
     );
+    const runtimePoliciesByStrategy = await quantStrategyService.getRuntimePoliciesByStrategy(
+      options.strategy_keys
+    );
 
     const groups = new Map<string, QuantSignal[]>();
     for (const signal of signals) {
@@ -872,7 +879,13 @@ export class QuantFusionService {
 
     return [...groups.values()]
       .map(items =>
-        this.toFusionCandidate(items, options.trade_date, strategyWeights, allocationByStrategy)
+        this.toFusionCandidate(
+          items,
+          options.trade_date,
+          strategyWeights,
+          allocationByStrategy,
+          runtimePoliciesByStrategy
+        )
       )
       .filter(Boolean)
       .sort(
@@ -895,7 +908,8 @@ export class QuantFusionService {
         metrics?: Record<string, any>;
       }
     >,
-    allocationByStrategy?: Map<string, any>
+    allocationByStrategy?: Map<string, any>,
+    runtimePoliciesByStrategy: Record<string, Record<string, any>> = {}
   ): QuantFusionCandidate | null {
     const sorted = [...items].sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
     const best = sorted[0];
@@ -1004,6 +1018,17 @@ export class QuantFusionService {
       );
     const primaryAllocation =
       allocationByStrategy?.get(best.strategy_key) || allocationCandidates[0] || undefined;
+    const runtimePolicy = runtimePoliciesByStrategy[best.strategy_key] || {};
+    const executionPolicy = asPlainObject(
+      asPlainObject(best.raw_factors || {}).strategy_runtime_policy ||
+        runtimePolicy.execution_policy
+    );
+    const environmentPolicy = asPlainObject(
+      asPlainObject(best.raw_factors || {}).strategy_environment_policy ||
+        runtimePolicy.environment_policy
+    );
+    const policyDefaultPositionPct = safeNumber(executionPolicy.default_position_pct, 0);
+    const policyMaxPositionPct = safeNumber(executionPolicy.max_position_pct, 0);
     const strategyMaxSingleTradePct = primaryAllocation
       ? safeNumber(primaryAllocation.max_single_trade_pct, 0)
       : 0;
@@ -1012,13 +1037,22 @@ export class QuantFusionService {
       : 0;
     const baseSuggestedPositionPct =
       action === 'buy'
-        ? clamp(3 + (score - 70) / 5 + consensusCount, 3, 10)
+        ? clamp(
+            policyDefaultPositionPct || 3 + (score - 70) / 5 + consensusCount,
+            1,
+            policyMaxPositionPct || 10
+          )
         : action === 'watch'
         ? clamp(1 + (score - 60) / 8, 1, 4)
         : 0;
+    const effectiveSingleTradeCap = Math.min(
+      ...[strategyMaxSingleTradePct, policyMaxPositionPct || undefined, 10]
+        .map(item => safeNumber(item, 0))
+        .filter(item => item > 0)
+    );
     const suggestedPositionPct =
-      action === 'buy' && strategyMaxSingleTradePct > 0
-        ? Math.min(baseSuggestedPositionPct, strategyMaxSingleTradePct)
+      action === 'buy' && effectiveSingleTradeCap > 0
+        ? Math.min(baseSuggestedPositionPct, effectiveSingleTradeCap)
         : baseSuggestedPositionPct;
 
     return {
@@ -1055,8 +1089,12 @@ export class QuantFusionService {
         strategyAllocationPct > 0 ? round(strategyAllocationPct, 2) : undefined,
       strategy_allocation_amount: primaryAllocation?.capital_amount,
       strategy_max_single_trade_pct:
-        strategyMaxSingleTradePct > 0 ? round(strategyMaxSingleTradePct, 2) : undefined,
+        effectiveSingleTradeCap > 0 ? round(effectiveSingleTradeCap, 2) : undefined,
       strategy_max_single_trade_amount: primaryAllocation?.max_single_trade_amount,
+      strategy_runtime_policy: {
+        execution_policy: executionPolicy,
+        environment_policy: environmentPolicy,
+      },
       risk_level: riskLevel,
       strategy_key: best.strategy_key,
       strategy_keys: strategyKeys,
@@ -1081,6 +1119,8 @@ export class QuantFusionService {
         })),
         strategy_allocation_policy: primaryAllocation,
         strategy_allocation_candidates: allocationCandidates.slice(0, 5),
+        strategy_runtime_policy: executionPolicy,
+        strategy_environment_policy: environmentPolicy,
         strategy_votes: sorted.map(item => ({
           id: item.id,
           strategy_key: item.strategy_key,
@@ -1173,6 +1213,7 @@ export class QuantFusionService {
             fusion_score: candidate.score,
             param_versions: candidate.factors?.param_versions,
             param_version_keys: candidate.factors?.param_version_keys,
+            strategy_runtime_policy: candidate.strategy_runtime_policy,
             fusion_formula:
               'quant_score + consensus_bonus + strategy_weight_adjustment + environment_weight_adjustment - risk_penalty',
             strategy_allocation_policy: candidate.factors?.strategy_allocation_policy,
@@ -1186,6 +1227,7 @@ export class QuantFusionService {
           strategy_max_single_trade_pct: candidate.strategy_max_single_trade_pct,
           strategy_max_single_trade_amount: candidate.strategy_max_single_trade_amount,
           strategy_allocation_policy: candidate.factors?.strategy_allocation_policy,
+          strategy_runtime_policy: candidate.strategy_runtime_policy,
           stop_loss_pct: candidate.stop_loss_pct,
           take_profit_pct: candidate.take_profit_pct,
           factors: compactFactors(candidate.factors?.best_raw_factors),
@@ -1330,6 +1372,7 @@ export class QuantFusionService {
               param_versions: candidate.factors?.param_versions,
               param_version_keys: candidate.factors?.param_version_keys,
               strategy_allocation_policy: candidate.factors?.strategy_allocation_policy,
+              strategy_runtime_policy: candidate.strategy_runtime_policy,
               market_environment: candidate.factors?.market_environment,
               regime_adjustments: candidate.factors?.regime_adjustments,
             },
@@ -1363,6 +1406,7 @@ export class QuantFusionService {
             paper_trade_min_trade_amount: options.min_trade_amount,
             paper_trade_risk_profile_gate: options.risk_profile_gate,
             strategy_allocation_policy: candidate.factors?.strategy_allocation_policy,
+            strategy_runtime_policy: candidate.strategy_runtime_policy,
             strategy_allocation_pct: candidate.strategy_allocation_pct,
             strategy_max_single_trade_pct: candidate.strategy_max_single_trade_pct,
             quant_agent_fusion: true,
@@ -1411,6 +1455,7 @@ export class QuantFusionService {
     archive: any;
     agentAnalysis: any;
     paperTrading: any;
+    paramLifecycle?: any;
   }) {
     const best = payload.selectedCandidates[0];
     return [
@@ -1422,6 +1467,13 @@ export class QuantFusionService {
         ? `模拟盘：成交/计划 ${
             payload.paperTrading.executed ?? payload.paperTrading.planned ?? 0
           } 笔，跳过 ${payload.paperTrading.skipped ?? 0} 条。`
+        : '',
+      payload.paramLifecycle
+        ? `参数生命周期：应用 ${payload.paramLifecycle.applied || 0} 条，晋级 ${
+            payload.paramLifecycle.lifecycle?.summary?.promotion_count || 0
+          } / 降级 ${payload.paramLifecycle.lifecycle?.summary?.degradation_count || 0} / 回滚 ${
+            payload.paramLifecycle.lifecycle?.summary?.rollback_count || 0
+          }。`
         : '',
       payload.generated?.quote_sync
         ? `实时行情：已落盘 ${payload.generated.quote_sync.persisted_count || 0} 条，更新 ${

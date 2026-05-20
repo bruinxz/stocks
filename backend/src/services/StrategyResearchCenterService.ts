@@ -287,6 +287,11 @@ class StrategyResearchCenterService {
           enabled: Boolean(strategy.enabled),
           risk_level: strategy.risk_level || '',
           tags: strategy.tags || [],
+          execution_policy: strategy.execution_policy || {},
+          environment_policy: strategy.environment_policy || {},
+          lifecycle_policy: strategy.lifecycle_policy || {},
+          notes: strategy.notes || '',
+          display_order: toNumber(strategy.display_order, 0),
           weight: roundNumber(weight.weight || 1, 2),
           weight_action: weight.action || 'observe',
           weight_action_label: actionLabel(weight.action),
@@ -313,6 +318,7 @@ class StrategyResearchCenterService {
       })
       .sort(
         (a: any, b: any) =>
+          toNumber(a.display_order, 0) - toNumber(b.display_order, 0) ||
           Number(b.enabled) - Number(a.enabled) ||
           toNumber(b.quality_score) - toNumber(a.quality_score) ||
           toNumber(b.best_rank_score) - toNumber(a.best_rank_score)

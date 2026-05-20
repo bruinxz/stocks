@@ -8,11 +8,43 @@ import { marketEnvironmentService } from '../../services/MarketEnvironmentServic
 import { Stock } from '../../models/Stock';
 import { logger } from '../../utils/logger';
 import { realtimeQuoteService } from '../../data/services/RealtimeQuoteService';
+import { quantStrategyService } from './QuantStrategyService';
 
 function dateOnly(value: Date | string): string {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return String(value).slice(0, 10);
   return date.toISOString().slice(0, 10);
+}
+
+function asPlainObject(value: any): Record<string, any> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value;
+}
+
+function toNumber(value: any, fallback = 0): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function normalizeStringArray(value: any): string[] {
+  if (Array.isArray(value)) {
+    return value.map(item => String(item || '').trim()).filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    return value
+      .split(',')
+      .map(item => item.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
+function daysBetween(from?: string | null, to?: string | null) {
+  if (!from || !to) return null;
+  const start = new Date(`${String(from).slice(0, 10)}T00:00:00.000Z`).getTime();
+  const end = new Date(`${String(to).slice(0, 10)}T00:00:00.000Z`).getTime();
+  if (Number.isNaN(start) || Number.isNaN(end)) return null;
+  return Math.round((end - start) / (24 * 60 * 60 * 1000));
 }
 
 export class QuantSignalService {
@@ -72,20 +104,132 @@ export class QuantSignalService {
           : trade_date >= dateOnly(new Date()),
     });
     const strategies = strategyRegistry.resolve(options.strategy_keys);
+    const runtimePoliciesByStrategy = await quantStrategyService.getRuntimePoliciesByStrategy(
+      strategies.map(strategy => strategy.definition.strategy_key)
+    );
     const signals: QuantSignalResult[] = [];
+    const policyDiagnostics: Record<string, any> = {};
+    const needsEnvironmentPolicy = Object.values(runtimePoliciesByStrategy).some(policy => {
+      const environmentPolicy = asPlainObject(policy.environment_policy);
+      return (
+        normalizeStringArray(environmentPolicy.blocked_market_regimes).length > 0 ||
+        normalizeStringArray(environmentPolicy.preferred_market_regimes).length > 0
+      );
+    });
+    const environmentBySymbol = new Map<string, any>();
     for (const context of contexts) {
+      let contextMarketEnvironment: any = null;
+      if (needsEnvironmentPolicy) {
+        try {
+          contextMarketEnvironment = await marketEnvironmentService.getEnvironmentForStock(
+            context.symbol,
+            {
+              industry: context.industry || undefined,
+              as_of: trade_date,
+              use_cache: true,
+            }
+          );
+          environmentBySymbol.set(context.symbol, contextMarketEnvironment);
+        } catch (error: any) {
+          logger.warn(`量化运行策略市场环境读取失败 ${context.symbol}: ${error?.message || error}`);
+        }
+      }
       for (const strategy of strategies) {
+        const strategyKey = strategy.definition.strategy_key;
+        const runtimePolicy = runtimePoliciesByStrategy[strategyKey] || {};
+        const executionPolicy = asPlainObject(runtimePolicy.execution_policy);
+        const environmentPolicy = asPlainObject(runtimePolicy.environment_policy);
+        const blockedMarketRegimes = normalizeStringArray(
+          environmentPolicy.blocked_market_regimes
+        );
+        const preferredMarketRegimes = normalizeStringArray(
+          environmentPolicy.preferred_market_regimes
+        );
         const minBars = Number(strategy.definition.default_params?.min_bars || 30);
         if ((context.bars || []).length < minBars) continue;
         const result = strategy.evaluate(context, {
           as_of: trade_date,
-          params: options.params_by_strategy?.[strategy.definition.strategy_key],
+          params: options.params_by_strategy?.[strategyKey],
         });
+        const originalScore = result.score;
+        const originalConfidence = result.confidence;
+        const policyMinScore = toNumber(executionPolicy.min_score, NaN);
+        const effectiveMinScore = Math.max(
+          Number(options.min_score || 0),
+          Number.isFinite(policyMinScore) ? policyMinScore : 0
+        );
+        const contextMarketRegime = String(contextMarketEnvironment?.market_regime || '');
+        const policyReasons: string[] = [];
+        let adjustedScore = result.score;
+        if (blockedMarketRegimes.length && blockedMarketRegimes.includes(contextMarketRegime)) {
+          adjustedScore -= 4;
+          policyReasons.push(`策略运行策略：当前市场环境 ${contextMarketRegime} 属于回避环境，降分观察`);
+        } else if (
+          preferredMarketRegimes.length &&
+          contextMarketRegime &&
+          preferredMarketRegimes.includes(contextMarketRegime)
+        ) {
+          adjustedScore += 1.5;
+          policyReasons.push(`策略运行策略：当前市场环境 ${contextMarketRegime} 属于偏好环境，小幅加分`);
+        }
+        const factorDate = context.factor_snapshot?.factor_date || null;
+        const factorLagDays = daysBetween(factorDate, trade_date);
+        if (factorLagDays === null || factorLagDays > 10) {
+          adjustedScore -= 2.5;
+          result.risk_flags = [
+            ...(result.risk_flags || []),
+            factorLagDays === null
+              ? '因子快照缺失，本次分数更依赖行情特征'
+              : `因子快照滞后 ${factorLagDays} 天，已降低因子置信度`,
+          ];
+          policyReasons.push(
+            factorLagDays === null
+              ? '数据纪律：因子快照缺失，降分保守处理'
+              : `数据纪律：因子快照滞后 ${factorLagDays} 天，降分保守处理`
+          );
+        }
+        if (!policyDiagnostics[strategyKey]) {
+          policyDiagnostics[strategyKey] = {
+            strategy_key: strategyKey,
+            min_score: effectiveMinScore,
+            default_position_pct: executionPolicy.default_position_pct,
+            max_position_pct: executionPolicy.max_position_pct,
+            blocked_market_regimes: blockedMarketRegimes,
+            preferred_market_regimes: preferredMarketRegimes,
+            adjusted_signal_count: 0,
+            rejected_by_min_score_count: 0,
+          };
+        }
+        result.score = round(Math.max(0, Math.min(100, adjustedScore)), 4);
+        result.confidence = round(
+          Math.max(0, Math.min(100, originalConfidence + (result.score - originalScore) * 0.35)),
+          4
+        );
+        result.factors = {
+          ...(result.factors || {}),
+          strategy_runtime_policy: {
+            min_score: effectiveMinScore,
+            default_position_pct: executionPolicy.default_position_pct,
+            max_position_pct: executionPolicy.max_position_pct,
+            candidate_limit: executionPolicy.candidate_limit,
+            preferred_market_regimes: preferredMarketRegimes,
+            blocked_market_regimes: blockedMarketRegimes,
+            factor_date: factorDate,
+            factor_lag_days: factorLagDays,
+          },
+          strategy_policy_adjustment_reasons: policyReasons,
+        };
+        if (policyReasons.length) {
+          policyDiagnostics[strategyKey].adjusted_signal_count += 1;
+          result.reasons = [...(result.reasons || []), ...policyReasons].slice(0, 8);
+        }
         if (
-          result.score >= Number(options.min_score || 0) ||
+          result.score >= effectiveMinScore ||
           ['buy', 'watch'].includes(result.signal)
         ) {
           signals.push(result);
+        } else {
+          policyDiagnostics[strategyKey].rejected_by_min_score_count += 1;
         }
       }
     }
@@ -147,9 +291,16 @@ export class QuantSignalService {
               options.param_version_by_strategy?.[signal.strategy_key]?.source_experiment_key ||
               null,
             strategy_params: options.params_by_strategy?.[signal.strategy_key] || {},
+            strategy_runtime_policy:
+              (signal.factors || {}).strategy_runtime_policy ||
+              runtimePoliciesByStrategy[signal.strategy_key]?.execution_policy ||
+              {},
+            strategy_environment_policy:
+              runtimePoliciesByStrategy[signal.strategy_key]?.environment_policy || {},
             price_source: contextBySymbol.get(signal.symbol)?.price_source || 'daily_bar',
             latest_quote_time: contextBySymbol.get(signal.symbol)?.latest_quote_time || null,
-            market_environment: marketEnvironment,
+            market_environment:
+              marketEnvironment || environmentBySymbol.get(signal.symbol) || null,
             industry: stock?.industry,
             market_regime: marketEnvironment?.market_regime,
             industry_regime: marketEnvironment?.industry?.regime,
@@ -185,6 +336,8 @@ export class QuantSignalService {
       persisted: options.persist !== false,
       quote_sync: quoteSync,
       param_version_by_strategy: options.param_version_by_strategy || {},
+      runtime_policy_by_strategy: runtimePoliciesByStrategy,
+      runtime_policy_diagnostics: Object.values(policyDiagnostics),
       by_strategy: grouped,
       signals: limited,
     };

@@ -72,6 +72,12 @@ function actionLabel(action: CommandAction): string {
   return labels[action];
 }
 
+function disciplineLabel(level: 'strict' | 'normal' | 'relaxed') {
+  if (level === 'strict') return '严格防守';
+  if (level === 'relaxed') return '可小幅进攻';
+  return '正常执行';
+}
+
 function getChinaToday(): string {
   return moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
 }
@@ -149,6 +155,14 @@ class TodayCommandCenterService {
       latestFeishuLog,
       summary,
     });
+    const discipline = this.buildDiscipline({
+      summary,
+      riskProfile,
+      candidates,
+      sellCandidates,
+      positions,
+      readiness,
+    });
 
     return {
       generated_at: moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm:ss'),
@@ -167,6 +181,7 @@ class TodayCommandCenterService {
       sell_candidates: sellCandidates,
       positions,
       readiness,
+      discipline,
       risk_profile: riskProfile,
       automation_health: automationHealth
         ? {
@@ -185,10 +200,10 @@ class TodayCommandCenterService {
         tasks: '/tasks',
       },
       guardrails: {
-        default_position_pct: 3,
-        max_position_pct: 6,
-        min_cash_reserve_pct: 10,
-        max_exposure_pct: 85,
+        default_position_pct: discipline.default_position_pct,
+        max_position_pct: discipline.single_position_cap_pct,
+        min_cash_reserve_pct: discipline.min_cash_reserve_pct,
+        max_exposure_pct: discipline.max_total_exposure_pct,
         note:
           '今日作战台只做聚合与决策提示，不会触发真实交易/Agent 调用；买卖仍由模拟盘任务记录。',
       },
@@ -525,6 +540,107 @@ class TodayCommandCenterService {
           : '等待最近荐股飞书任务',
       },
     ];
+  }
+
+  private buildDiscipline(payload: {
+    summary: any;
+    riskProfile: any;
+    candidates: any[];
+    sellCandidates: any[];
+    positions: any[];
+    readiness: any[];
+  }) {
+    const riskLevel = String(payload.riskProfile?.status?.level || 'safe').toLowerCase();
+    const cashPct = toNumber(payload.summary.cash_pct, 0);
+    const exposurePct = toNumber(payload.summary.exposure_pct, 0);
+    const quoteReady = payload.readiness.find((item: any) => item.key === 'data')?.ok !== false;
+    const signalsReady = payload.readiness.find((item: any) => item.key === 'signals')?.ok !== false;
+    const base = {
+      level: 'normal' as 'strict' | 'normal' | 'relaxed',
+      max_new_positions: 2,
+      suggested_new_position_count: Math.min(2, payload.candidates.filter(item => item.action === 'buy').length),
+      default_position_pct: 3,
+      single_position_cap_pct: 6,
+      max_total_exposure_pct: 85,
+      min_cash_reserve_pct: 10,
+      review_time: '14:35',
+      buy_allowed: true,
+      buy_reason: '数据、仓位与风控处于可执行区间，可按小仓位验证。',
+      forbidden_industries: [],
+      forbidden_symbols: [],
+      sell_priority_count: payload.sellCandidates.length,
+      conclusion: '今日可继续小仓验证，但只处理高置信前排候选。',
+      actions: [] as string[],
+    };
+
+    if (!quoteReady || !signalsReady || riskLevel === 'danger' || cashPct < 8 || exposurePct > 88) {
+      base.level = 'strict';
+      base.buy_allowed = false;
+      base.max_new_positions = 0;
+      base.suggested_new_position_count = 0;
+      base.default_position_pct = 0;
+      base.single_position_cap_pct = 4;
+      base.max_total_exposure_pct = 80;
+      base.min_cash_reserve_pct = 12;
+      base.buy_reason =
+        !quoteReady || !signalsReady
+          ? '行情/信号链路尚未完全就绪，今天不新增，先等任务完成。'
+          : '现金水位或总体风险已触发红线，今天优先减仓和保护利润。';
+      base.conclusion = '今日以风控为主，暂停新增仓位。';
+      base.actions = [
+        '优先处理卖出/减仓候选，再考虑新增。',
+        '不追高、不补跌，等待下一轮开盘/收盘信号确认。',
+        '收盘前只复查已有持仓与止损止盈条件。',
+      ];
+    } else if (riskLevel === 'watch' || cashPct < 12 || exposurePct > 75) {
+      base.level = 'normal';
+      base.max_new_positions = 1;
+      base.suggested_new_position_count = Math.min(1, payload.candidates.filter(item => item.action === 'buy').length);
+      base.default_position_pct = 2;
+      base.single_position_cap_pct = 4;
+      base.max_total_exposure_pct = 82;
+      base.min_cash_reserve_pct = 10;
+      base.buy_reason = '组合进入谨慎区，只允许处理最强 1 只候选，并降低默认仓位。';
+      base.conclusion = '今日可谨慎试仓 1 只，但先看卖出/风控候选。';
+      base.actions = [
+        '只跟最强 1 只候选，默认仓位不超过 2%-4%。',
+        '如已有卖出候选，先减仓再考虑新增。',
+        '避免继续加到同一行业或高相关策略来源。',
+      ];
+    } else {
+      base.level = 'relaxed';
+      base.max_new_positions = 2;
+      base.suggested_new_position_count = Math.min(2, payload.candidates.filter(item => item.action === 'buy').length);
+      base.default_position_pct = 3;
+      base.single_position_cap_pct = 6;
+      base.max_total_exposure_pct = 85;
+      base.min_cash_reserve_pct = 10;
+      base.buy_reason = '组合风险、现金和数据状态良好，可按默认节奏小仓扩样本。';
+      base.conclusion = '今日可小仓跟随高分候选，优先分散建仓。';
+      base.actions = [
+        '最多新增 2 只，优先不同策略/不同行业来源。',
+        '单票默认 3%，高分且低风险可放大到 5%-6%。',
+        '14:35 前复查持仓是否触发保护利润或止损规则。',
+      ];
+    }
+
+    const topIndustry = payload.riskProfile?.top_industries?.[0];
+    if (topIndustry && toNumber(topIndustry.exposure_pct, 0) >= 24) {
+      base.forbidden_industries = [topIndustry.industry];
+      base.actions.unshift(`避免继续买入 ${topIndustry.industry}，行业集中度已偏高。`);
+    }
+    const highRiskSymbols = (payload.riskProfile?.position_risks || [])
+      .filter((item: any) => Array.isArray(item.risk_flags) && item.risk_flags.length > 0)
+      .slice(0, 5)
+      .map((item: any) => item.symbol);
+    if (highRiskSymbols.length) {
+      base.forbidden_symbols = highRiskSymbols;
+    }
+
+    return {
+      ...base,
+      level_label: disciplineLabel(base.level),
+    };
   }
 
   private buildConclusion(payload: {

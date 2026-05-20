@@ -89,6 +89,51 @@ export interface FactorCoverage {
 export class StockFactorService {
   private tushareClient = new TushareClient();
 
+  async runProviderSmokeTest(options: { provider?: FactorProviderName; symbol?: string; as_of?: string } = {}) {
+    const provider = options.provider || 'auto';
+    const plan = this.getProviderPlan({
+      provider,
+      prefer_real_provider: true,
+    });
+    const symbol = normalizeSymbol(options.symbol || 'sh.600000');
+
+    if (plan.providers.includes('tushare') && plan.provider_status.tushare.enabled) {
+      try {
+        const result = await this.tushareClient.smokeTest({ symbol, as_of: options.as_of });
+        return {
+          provider: 'tushare',
+          requested_provider: provider,
+          symbol,
+          ok: result.snapshot_found || result.checks.daily_basic || result.checks.moneyflow || result.checks.fina_indicator,
+          plan,
+          ...result,
+        };
+      } catch (error: any) {
+        return {
+          provider: 'tushare',
+          requested_provider: provider,
+          symbol,
+          ok: false,
+          enabled: true,
+          has_token: Boolean(process.env.TUSHARE_TOKEN || process.env.TUSHARE_PRO_TOKEN),
+          plan,
+          error: error?.message || String(error),
+          conclusion: `Tushare 烟测失败：${error?.message || error}`,
+        };
+      }
+    }
+
+    return {
+      provider: 'local_derived',
+      requested_provider: provider,
+      symbol,
+      ok: false,
+      enabled: false,
+      plan,
+      conclusion: '当前未启用 Tushare；系统将继续使用 local_derived 免费因子兜底。',
+    };
+  }
+
   private getProviderPlan(options: FactorSyncOptions = {}) {
     const requestedProvider = options.provider || 'auto';
     const tushareEnabled = this.tushareClient.isEnabled();

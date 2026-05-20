@@ -24,6 +24,7 @@ import {
   NodeIndexOutlined,
   RadarChartOutlined,
   ReloadOutlined,
+  RiseOutlined,
   SafetyCertificateOutlined,
   ThunderboltOutlined,
   WalletOutlined,
@@ -143,6 +144,7 @@ const TodayCommandCenter: React.FC = () => {
   const riskStatus = commandData?.risk_profile?.status || {};
   const readinessItems = commandData?.readiness || [];
   const latestFeishu = commandData?.latest_feishu;
+  const discipline = commandData?.discipline || {};
   const cashPct = Number(summary.cash_pct || 0);
   const exposurePct = Number(summary.exposure_pct || 0);
   const conclusionTone = commandData?.conclusion?.tone || 'wait';
@@ -428,6 +430,112 @@ const TodayCommandCenter: React.FC = () => {
         )}
       </Card>
 
+      <Row gutter={[16, 16]}>
+        <Col xs={24} xl={16}>
+          <Card
+            className="modern-card today-discipline-card"
+            variant="borderless"
+            title={
+              <Space>
+                <RiseOutlined />
+                <span>今日交易纪律</span>
+              </Space>
+            }
+          >
+            <div className="today-discipline-grid">
+              <div className={`today-discipline-tile ${discipline.buy_allowed ? 'ok' : 'danger'}`}>
+                <span>新增仓位</span>
+                <strong>{discipline.buy_allowed ? '允许' : '暂停'}</strong>
+                <em>{discipline.buy_reason || '等待纪律摘要'}</em>
+              </div>
+              <div className="today-discipline-tile">
+                <span>最多新增</span>
+                <strong>{discipline.suggested_new_position_count ?? 0} / {discipline.max_new_positions ?? 0} 只</strong>
+                <em>建议先处理买入前排，不分散到太多标的。</em>
+              </div>
+              <div className="today-discipline-tile">
+                <span>默认仓位</span>
+                <strong>{Number(discipline.default_position_pct || 0).toFixed(1)}%</strong>
+                <em>单票上限 {Number(discipline.single_position_cap_pct || 0).toFixed(1)}%</em>
+              </div>
+              <div className="today-discipline-tile">
+                <span>现金/总仓位红线</span>
+                <strong>{Number(discipline.min_cash_reserve_pct || 0).toFixed(0)}% / {Number(discipline.max_total_exposure_pct || 0).toFixed(0)}%</strong>
+                <em>低于现金底线或超过总仓位上限时停止新增。</em>
+              </div>
+            </div>
+            <Space wrap style={{ marginTop: 14 }}>
+              <Tag color={discipline.buy_allowed ? 'green' : 'red'}>
+                {discipline.level_label || '正常执行'}
+              </Tag>
+              <Tag color="blue">复查时间 {discipline.review_time || '14:35'}</Tag>
+              <Tag color="gold">卖出优先 {discipline.sell_priority_count || 0} 只</Tag>
+              {(discipline.forbidden_industries || []).slice(0, 2).map((item: string) => (
+                <Tag color="orange" key={item}>
+                  避开行业：{item}
+                </Tag>
+              ))}
+              {(discipline.forbidden_symbols || []).slice(0, 2).map((item: string) => (
+                <Tag color="red" key={item}>
+                  重点风控：{item}
+                </Tag>
+              ))}
+            </Space>
+            {!!(discipline.actions || []).length && (
+              <div className="today-discipline-actions">
+                {(discipline.actions || []).slice(0, 4).map((item: string, index: number) => (
+                  <Alert
+                    key={`discipline-${index}`}
+                    type={index === 0 ? 'warning' : 'info'}
+                    showIcon
+                    message={item}
+                  />
+                ))}
+              </div>
+            )}
+          </Card>
+        </Col>
+        <Col xs={24} xl={8}>
+          <Card className="modern-card today-playbook-card" variant="borderless">
+            <div className="today-playbook-title">
+              <NodeIndexOutlined /> 今日执行清单
+            </div>
+            <div className="today-playbook-step">
+              <CheckCircleOutlined />
+              <div>
+                <strong>先看纪律</strong>
+                <span>{discipline.conclusion || '先确认今天允许新增几只、仓位上限是多少。'}</span>
+              </div>
+            </div>
+            <div className="today-playbook-step">
+              <RadarChartOutlined />
+              <div>
+                <strong>再处理候选</strong>
+                <span>只处理“买入”和“优先风控”，观察项不追高、不摊薄。</span>
+              </div>
+            </div>
+            <div className="today-playbook-step">
+              <SafetyCertificateOutlined />
+              <div>
+                <strong>最后做复盘</strong>
+                <span>所有推荐进入模拟盘后，到收益复盘中心看是否真的赚钱。</span>
+              </div>
+            </div>
+            <Space direction="vertical" style={{ width: '100%', marginTop: 16 }}>
+              <Button block type="primary" onClick={() => navigate('/autonomous-trading/overview')}>
+                打开模拟交易台
+              </Button>
+              <Button block onClick={() => navigate('/review/trades')}>
+                查看收益复盘中心
+              </Button>
+              <Button block onClick={() => navigate('/tasks')}>
+                检查开盘任务链路
+              </Button>
+            </Space>
+          </Card>
+        </Col>
+      </Row>
+
       <Card
         className="modern-card today-decision-card"
         variant="borderless"
@@ -486,41 +594,28 @@ const TodayCommandCenter: React.FC = () => {
           </Card>
         </Col>
         <Col xs={24} xl={9}>
-          <Card className="modern-card today-playbook-card" variant="borderless">
-            <div className="today-playbook-title">
-              <NodeIndexOutlined /> 今日执行清单
-            </div>
-            <div className="today-playbook-step">
-              <CheckCircleOutlined />
-              <div>
-                <strong>先看结论</strong>
-                <span>只处理“买入”和“优先风控”，观察项不要追高。</span>
-              </div>
-            </div>
-            <div className="today-playbook-step">
-              <RadarChartOutlined />
-              <div>
-                <strong>再看仓位</strong>
-                <span>单票默认 3%-6%，现金低于 10% 时不新增。</span>
-              </div>
-            </div>
-            <div className="today-playbook-step">
-              <SafetyCertificateOutlined />
-              <div>
-                <strong>最后做复盘</strong>
-                <span>所有推荐进入模拟盘后，到收益复盘中心看是否赚钱。</span>
-              </div>
-            </div>
-            <Space direction="vertical" style={{ width: '100%', marginTop: 16 }}>
-              <Button block type="primary" onClick={() => navigate('/autonomous-trading/overview')}>
-                打开模拟交易台
-              </Button>
-              <Button block onClick={() => navigate('/review/trades')}>
-                查看收益复盘中心
-              </Button>
-              <Button block onClick={() => navigate('/tasks')}>
-                检查开盘任务链路
-              </Button>
+          <Card className="modern-card today-decision-card" variant="borderless" title="卖出/减仓优先队列">
+            <Space direction="vertical" style={{ width: '100%' }}>
+              {sellSignals.length > 0 ? (
+                sellSignals.slice(0, 6).map((item: any) => (
+                  <div className="today-sell-row" key={item.symbol}>
+                    <div>
+                      <strong>{item.name || item.symbol}</strong>
+                      <span>
+                        {item.symbol} · 现价 {formatMoney(item.current_price)}
+                      </span>
+                    </div>
+                    <div>
+                      <Tag color={item.urgency === 'high' ? 'red' : 'orange'}>
+                        {item.action_label || '卖出/减仓'}
+                      </Tag>
+                      <em>{item.reason}</em>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <Empty description="暂无明确卖出/减仓优先项" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+              )}
             </Space>
           </Card>
         </Col>

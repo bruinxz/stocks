@@ -880,6 +880,11 @@ router.get(
   authController.authenticate,
   marketController.getFactorCoverage as any
 );
+router.get(
+  '/factors/provider-smoke',
+  authController.authenticate,
+  marketController.smokeTestFactorProvider as any
+);
 router.post('/factors/sync', authController.authenticate, marketController.syncFactors as any);
 
 /**

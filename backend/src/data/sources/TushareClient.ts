@@ -65,6 +65,36 @@ export class TushareClient extends PythonMarketDataClient {
     );
   }
 
+  async smokeTest(options: { symbol?: string; as_of?: string } = {}) {
+    this.assertEnabled();
+    const symbol = options.symbol || 'sh.600000';
+    const started_at = new Date().toISOString();
+    const snapshots = await this.getFactorSnapshots([symbol], options.as_of);
+    const snapshot = snapshots[0] || null;
+    return {
+      started_at,
+      finished_at: new Date().toISOString(),
+      symbol,
+      provider: 'tushare',
+      enabled: true,
+      has_token: Boolean(this.token),
+      snapshot_found: Boolean(snapshot),
+      snapshot,
+      checks: {
+        daily_basic: Boolean(snapshot?.daily_basic),
+        moneyflow: Boolean(snapshot?.moneyflow),
+        fina_indicator: Boolean(snapshot?.fina_indicator),
+      },
+      errors: Array.isArray(snapshot?.errors) ? snapshot.errors : [],
+      conclusion: snapshot
+        ? `Tushare 烟测成功，${symbol} 已返回 ${
+            [snapshot?.daily_basic, snapshot?.moneyflow, snapshot?.fina_indicator].filter(Boolean)
+              .length
+          } 类因子切片。`
+        : `Tushare 烟测未返回 ${symbol} 的有效快照。`,
+    };
+  }
+
   getStatus() {
     return {
       ...this.getBaseStatus(),

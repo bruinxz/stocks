@@ -69,6 +69,8 @@ const actionColor = (value?: string) => {
 const StrategyResearchOverview: React.FC = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
+  const [lifecycleRefreshing, setLifecycleRefreshing] = useState(false);
+  const [lifecycleResult, setLifecycleResult] = useState<any>(null);
   const [data, setData] = useState<any>(null);
   const [preflight, setPreflight] = useState<any>(null);
 
@@ -110,6 +112,28 @@ const StrategyResearchOverview: React.FC = () => {
   const freshness = preflight?.checks?.data_freshness || {};
   const freshnessChecks = freshness?.checks || {};
   const preflightStatus = preflight?.status;
+  const factorProvider = preflight?.checks?.factor_provider || {};
+  const lifecycle = data?.param_dashboard?.lifecycle || {};
+  const effectiveLifecycle = lifecycleResult?.lifecycle || lifecycle;
+  const effectiveLifecycleSummary = effectiveLifecycle?.summary || {};
+  const refreshLifecycle = async (dryRun = true) => {
+    setLifecycleRefreshing(true);
+    try {
+      const response = await api.post('/quant/param-lifecycle/refresh', {
+        dry_run: dryRun,
+        limit: 5000,
+      });
+      if (response.data?.success) {
+        setLifecycleResult(response.data.data);
+        message.success(dryRun ? '参数生命周期预览已生成' : '参数生命周期调整已应用');
+        if (!dryRun) await fetchCenter(true);
+      }
+    } catch (error: any) {
+      message.error(error.response?.data?.message || '刷新参数生命周期失败');
+    } finally {
+      setLifecycleRefreshing(false);
+    }
+  };
 
   const strategyColumns = [
     {
@@ -234,6 +258,21 @@ const StrategyResearchOverview: React.FC = () => {
           <Button onClick={() => navigate('/strategy-research/experiments')}>
             策略实验 <ExperimentOutlined />
           </Button>
+          <Button
+            icon={<BranchesOutlined />}
+            loading={lifecycleRefreshing}
+            onClick={() => refreshLifecycle(true)}
+          >
+            预览生命周期
+          </Button>
+          <Button
+            type="primary"
+            ghost
+            loading={lifecycleRefreshing}
+            onClick={() => refreshLifecycle(false)}
+          >
+            应用参数调整
+          </Button>
           <Text type="secondary">最后生成：{data?.generated_at || '--'}</Text>
         </Space>
       </Card>
@@ -249,7 +288,8 @@ const StrategyResearchOverview: React.FC = () => {
               日扫任务 {preflight?.checks?.quant_task?.ok ? '已启用' : '异常'}
             </Tag>
             <Tag color={preflight?.checks?.factor_coverage?.ok ? 'green' : 'gold'}>
-              因子覆盖 {Number(preflight?.checks?.factor_coverage?.min_coverage_rate || 0).toFixed(1)}%
+              因子覆盖{' '}
+              {Number(preflight?.checks?.factor_coverage?.min_coverage_rate || 0).toFixed(1)}%
             </Tag>
             <Tag color={preflight?.checks?.active_scan_params?.ok ? 'green' : 'gold'}>
               参数版本 {preflight?.checks?.active_scan_params?.summary?.adopted_strategy_count || 0}
@@ -260,7 +300,11 @@ const StrategyResearchOverview: React.FC = () => {
             <Tag color={preflight?.checks?.feishu?.ok ? 'green' : 'orange'}>
               飞书 {preflight?.checks?.feishu?.ok ? '可用' : '待检查'}
             </Tag>
-            <Tag color={freshness?.status === 'ok' ? 'green' : freshness?.status === 'risk' ? 'red' : 'gold'}>
+            <Tag
+              color={
+                freshness?.status === 'ok' ? 'green' : freshness?.status === 'risk' ? 'red' : 'gold'
+              }
+            >
               闭环 {freshness?.summary?.risk_count || 0}/{freshness?.summary?.warn_count || 0}
             </Tag>
           </Space>
@@ -284,7 +328,9 @@ const StrategyResearchOverview: React.FC = () => {
           ].map(([label, item]: any) => (
             <div className={`strategy-freshness-item ${item?.status || 'unknown'}`} key={label}>
               <span>{label}</span>
-              <strong>{item?.status === 'ok' ? '正常' : item?.status === 'risk' ? '风险' : '观察'}</strong>
+              <strong>
+                {item?.status === 'ok' ? '正常' : item?.status === 'risk' ? '风险' : '观察'}
+              </strong>
               <em>{item?.conclusion || '等待检查结果'}</em>
             </div>
           ))}
@@ -421,6 +467,98 @@ const StrategyResearchOverview: React.FC = () => {
         </Col>
       </Row>
 
+      <Row gutter={[18, 18]}>
+        <Col xs={24} lg={12}>
+          <Card
+            className="modern-card strategy-segment-card"
+            variant="borderless"
+            title="参数生命周期状态"
+          >
+            <div className="strategy-lifecycle-grid">
+              <div className="strategy-lifecycle-tile promote">
+                <span>待晋级</span>
+                <strong>{effectiveLifecycleSummary?.promotion_count || 0}</strong>
+                <em>{effectiveLifecycleSummary?.conclusion || '等待生命周期结论'}</em>
+              </div>
+              <div className="strategy-lifecycle-tile observe">
+                <span>观察中</span>
+                <strong>{effectiveLifecycleSummary?.observation_count || 0}</strong>
+                <em>全局指标达标但环境或交易护栏仍需继续验证。</em>
+              </div>
+              <div className="strategy-lifecycle-tile degrade">
+                <span>待降级</span>
+                <strong>{effectiveLifecycleSummary?.degradation_count || 0}</strong>
+                <em>近期表现转弱或环境桶失衡，建议先降权。</em>
+              </div>
+              <div className="strategy-lifecycle-tile rollback">
+                <span>待回滚</span>
+                <strong>{effectiveLifecycleSummary?.rollback_count || 0}</strong>
+                <em>实验盘收益或均超额跌破回滚护栏。</em>
+              </div>
+            </div>
+            {lifecycleResult && (
+              <Alert
+                className="strategy-lifecycle-result"
+                showIcon
+                type={lifecycleResult.dry_run ? 'info' : 'success'}
+                message={
+                  lifecycleResult.dry_run
+                    ? '这是生命周期预览，尚未改动生产参数'
+                    : `已应用 ${lifecycleResult.applied || 0} 条参数状态调整`
+                }
+                description={
+                  lifecycleResult.dry_run
+                    ? '确认晋级/降级/回滚数量符合预期后，可点击“应用参数调整”。'
+                    : (lifecycleResult.updated || [])
+                        .slice(0, 3)
+                        .map((item: any) => `${item.strategy_key}: ${item.to_status}`)
+                        .join('；') || '状态机已执行，无需额外操作。'
+                }
+              />
+            )}
+          </Card>
+        </Col>
+        <Col xs={24} lg={12}>
+          <Card
+            className="modern-card strategy-segment-card"
+            variant="borderless"
+            title="真实因子源状态"
+          >
+            <Alert
+              showIcon
+              type={factorProvider?.ok ? 'success' : factorProvider?.enabled ? 'warning' : 'info'}
+              message={factorProvider?.conclusion || '真实因子源烟测未生成'}
+              description={
+                <Space wrap size={6}>
+                  <Tag color={factorProvider?.ok ? 'green' : 'gold'}>
+                    Provider {factorProvider?.provider || '--'}
+                  </Tag>
+                  <Tag color={factorProvider?.checks?.daily_basic ? 'green' : 'default'}>
+                    daily_basic
+                  </Tag>
+                  <Tag color={factorProvider?.checks?.moneyflow ? 'green' : 'default'}>
+                    moneyflow
+                  </Tag>
+                  <Tag color={factorProvider?.checks?.fina_indicator ? 'green' : 'default'}>
+                    fina_indicator
+                  </Tag>
+                </Space>
+              }
+              style={{ marginBottom: 12 }}
+            />
+            <Space direction="vertical" style={{ width: '100%' }}>
+              <Text type="secondary">
+                优先使用真实因子增强多因子/低波质量/量价策略；若真实源未就绪，系统会自动回退到
+                local_derived，保证开盘链路不断。
+              </Text>
+              {(factorProvider?.errors || []).slice(0, 3).map((item: string, index: number) => (
+                <Alert key={`factor-provider-${index}`} type="warning" showIcon message={item} />
+              ))}
+            </Space>
+          </Card>
+        </Col>
+      </Row>
+
       <Card
         className="modern-card strategy-active-param-card"
         variant="borderless"
@@ -440,8 +578,7 @@ const StrategyResearchOverview: React.FC = () => {
                 <span>{item.strategy_name || item.strategy_key}</span>
                 <strong>{item.version_key}</strong>
                 <em>
-                  {item.version_type} · {item.status} · 分{' '}
-                  {Number(item.rank_score || 0).toFixed(1)}
+                  {item.version_type} · {item.status} · 分 {Number(item.rank_score || 0).toFixed(1)}
                 </em>
                 <em>
                   候选 {activeScanDiagnostics[item.strategy_key]?.candidate_count || 0} 个 ·{' '}

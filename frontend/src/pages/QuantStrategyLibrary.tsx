@@ -4,6 +4,7 @@ import {
   Button,
   Card,
   Col,
+  Collapse,
   Drawer,
   Empty,
   Form,
@@ -31,6 +32,7 @@ import {
 import api from '../services/api';
 
 const { Text } = Typography;
+const { Panel } = Collapse;
 
 type QuantStrategy = {
   id?: number;
@@ -39,10 +41,15 @@ type QuantStrategy = {
   description?: string;
   category: string;
   default_params: Record<string, any>;
+  execution_policy?: Record<string, any>;
+  environment_policy?: Record<string, any>;
+  lifecycle_policy?: Record<string, any>;
   enabled: boolean;
   risk_level?: string;
   tags?: string[];
   latest_metrics?: Record<string, any>;
+  notes?: string;
+  display_order?: number;
 };
 
 type StrategyWeight = {
@@ -188,6 +195,11 @@ const QuantStrategyLibrary: React.FC = () => {
     form.setFieldsValue({
       enabled: strategy.enabled,
       default_params: strategy.default_params || {},
+      execution_policy: strategy.execution_policy || {},
+      environment_policy: strategy.environment_policy || {},
+      lifecycle_policy: strategy.lifecycle_policy || {},
+      notes: strategy.notes || '',
+      display_order: strategy.display_order ?? undefined,
     });
   };
 
@@ -199,6 +211,11 @@ const QuantStrategyLibrary: React.FC = () => {
       const response = await api.patch(`/quant/strategies/${editingStrategy.strategy_key}`, {
         enabled: values.enabled,
         default_params: values.default_params || {},
+        execution_policy: values.execution_policy || {},
+        environment_policy: values.environment_policy || {},
+        lifecycle_policy: values.lifecycle_policy || {},
+        notes: values.notes || '',
+        display_order: values.display_order,
       });
       if (response.data.success) {
         message.success('策略配置已保存，后续信号/跑分会使用新默认参数');
@@ -223,6 +240,11 @@ const QuantStrategyLibrary: React.FC = () => {
         form.setFieldsValue({
           enabled: editingStrategy.enabled,
           default_params: editingStrategy.default_params || {},
+          execution_policy: editingStrategy.execution_policy || {},
+          environment_policy: editingStrategy.environment_policy || {},
+          lifecycle_policy: editingStrategy.lifecycle_policy || {},
+          notes: editingStrategy.notes || '',
+          display_order: editingStrategy.display_order ?? undefined,
         });
       },
     });
@@ -471,10 +493,18 @@ const QuantStrategyLibrary: React.FC = () => {
                       {Number(weight.weight || 1).toFixed(2)}x
                     </Tag>
                   )}
+                  <Tag icon={<DollarOutlined />}>
+                    单票≤{Number(strategy.execution_policy?.max_position_pct || 0).toFixed(1)}%
+                  </Tag>
                 </Space>
                 {weight?.reason && (
                   <Text type="secondary" style={{ fontSize: 12 }}>
                     {weight.reason}
+                  </Text>
+                )}
+                {!!strategy.notes && (
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    备注：{strategy.notes}
                   </Text>
                 )}
                 <Button
@@ -519,24 +549,150 @@ const QuantStrategyLibrary: React.FC = () => {
             >
               <Switch checkedChildren="启用" unCheckedChildren="停用" />
             </Form.Item>
+            <Form.Item label="显示顺序" name="display_order" tooltip="数值越小越靠前">
+              <InputNumber style={{ width: '100%' }} min={0} precision={0} />
+            </Form.Item>
+            <Alert
+              showIcon
+              type="success"
+              message="运行策略配置"
+              description="这里决定这套策略进入开盘扫描和模拟盘时的默认仓位/分数门槛/允许风险等级，是策略可视化编辑器的第一版。"
+              style={{ marginBottom: 12 }}
+            />
             <div className="strategy-config-param-grid">
-              {Object.entries(editingStrategy.default_params || {}).map(([key, value]) => (
-                <Form.Item
-                  key={key}
-                  label={key}
-                  name={['default_params', key]}
-                  tooltip={`当前默认值：${String(value)}`}
-                >
-                  {typeof value === 'boolean' ? (
-                    <Switch checkedChildren="true" unCheckedChildren="false" />
-                  ) : typeof value === 'number' ? (
-                    <InputNumber style={{ width: '100%' }} precision={4} />
-                  ) : (
-                    <Input placeholder={String(value)} />
-                  )}
-                </Form.Item>
-              ))}
+              <Form.Item label="默认仓位%" name={['execution_policy', 'default_position_pct']}>
+                <InputNumber style={{ width: '100%' }} min={0} max={20} precision={2} />
+              </Form.Item>
+              <Form.Item label="单票上限%" name={['execution_policy', 'max_position_pct']}>
+                <InputNumber style={{ width: '100%' }} min={0} max={30} precision={2} />
+              </Form.Item>
+              <Form.Item label="最低分数" name={['execution_policy', 'min_score']}>
+                <InputNumber style={{ width: '100%' }} min={0} max={100} precision={0} />
+              </Form.Item>
+              <Form.Item label="候选上限" name={['execution_policy', 'candidate_limit']}>
+                <InputNumber style={{ width: '100%' }} min={1} max={2000} precision={0} />
+              </Form.Item>
             </div>
+            <Collapse className="strategy-config-collapse" ghost>
+              <Panel header="高级：策略指标参数" key="params">
+                <div className="strategy-config-param-grid">
+                  {Object.entries(editingStrategy.default_params || {}).map(([key, value]) => (
+                    <Form.Item
+                      key={key}
+                      label={key}
+                      name={['default_params', key]}
+                      tooltip={`当前默认值：${String(value)}`}
+                    >
+                      {typeof value === 'boolean' ? (
+                        <Switch checkedChildren="true" unCheckedChildren="false" />
+                      ) : typeof value === 'number' ? (
+                        <InputNumber style={{ width: '100%' }} precision={4} />
+                      ) : (
+                        <Input placeholder={String(value)} />
+                      )}
+                    </Form.Item>
+                  ))}
+                </div>
+              </Panel>
+              <Panel header="高级：环境适用" key="environment">
+                <Alert
+                  showIcon
+                  type="info"
+                  message="环境适用"
+                  description="用于表达这套策略更适合什么市场状态；开盘扫描会进行软约束：偏好环境小幅加分，回避环境降分观察。"
+                  style={{ marginBottom: 12 }}
+                />
+                <div className="strategy-config-param-grid">
+                  <Form.Item
+                    label="偏好市场环境（逗号分隔）"
+                    name={['environment_policy', 'preferred_market_regimes']}
+                    getValueProps={(value: string[] | string) => ({
+                      value: Array.isArray(value) ? value.join(', ') : value || '',
+                    })}
+                    normalize={(value: string) =>
+                      String(value || '')
+                        .split(',')
+                        .map(item => item.trim())
+                        .filter(Boolean)
+                    }
+                  >
+                    <Input placeholder="bull, rebound, range" />
+                  </Form.Item>
+                  <Form.Item
+                    label="回避环境（逗号分隔）"
+                    name={['environment_policy', 'blocked_market_regimes']}
+                    getValueProps={(value: string[] | string) => ({
+                      value: Array.isArray(value) ? value.join(', ') : value || '',
+                    })}
+                    normalize={(value: string) =>
+                      String(value || '')
+                        .split(',')
+                        .map(item => item.trim())
+                        .filter(Boolean)
+                    }
+                  >
+                    <Input placeholder="stress, bear" />
+                  </Form.Item>
+                  <Form.Item
+                    label="允许行业重叠"
+                    name={['environment_policy', 'allow_same_industry_overlap']}
+                    valuePropName="checked"
+                  >
+                    <Switch checkedChildren="允许" unCheckedChildren="避免" />
+                  </Form.Item>
+                </div>
+              </Panel>
+              <Panel header="高级：生命周期规则" key="lifecycle">
+                <Alert
+                  showIcon
+                  type="warning"
+                  message="生命周期规则"
+                  description="这里是策略层的晋级/降级基线说明，参数级真实状态机会在研究总览和每日任务中自动执行。"
+                  style={{ marginBottom: 12 }}
+                />
+                <div className="strategy-config-param-grid">
+                  <Form.Item
+                    label="自动晋级"
+                    name={['lifecycle_policy', 'auto_promote']}
+                    valuePropName="checked"
+                  >
+                    <Switch checkedChildren="开" unCheckedChildren="关" />
+                  </Form.Item>
+                  <Form.Item
+                    label="自动降级"
+                    name={['lifecycle_policy', 'auto_degrade']}
+                    valuePropName="checked"
+                  >
+                    <Switch checkedChildren="开" unCheckedChildren="关" />
+                  </Form.Item>
+                  <Form.Item
+                    label="自动回滚"
+                    name={['lifecycle_policy', 'auto_rollback']}
+                    valuePropName="checked"
+                  >
+                    <Switch checkedChildren="开" unCheckedChildren="关" />
+                  </Form.Item>
+                  <Form.Item
+                    label="晋级样本门槛"
+                    name={['lifecycle_policy', 'promotion_min_completed_samples']}
+                  >
+                    <InputNumber style={{ width: '100%' }} min={1} max={500} precision={0} />
+                  </Form.Item>
+                  <Form.Item
+                    label="回滚样本门槛"
+                    name={['lifecycle_policy', 'rollback_min_completed_samples']}
+                  >
+                    <InputNumber style={{ width: '100%' }} min={1} max={500} precision={0} />
+                  </Form.Item>
+                  <Form.Item label="冷却天数" name={['lifecycle_policy', 'cooldown_days']}>
+                    <InputNumber style={{ width: '100%' }} min={0} max={180} precision={0} />
+                  </Form.Item>
+                </div>
+              </Panel>
+            </Collapse>
+            <Form.Item label="策略备注" name="notes">
+              <Input.TextArea rows={3} placeholder="记录这套策略适合的场景、使用约束或人工备注" />
+            </Form.Item>
             <Alert
               showIcon
               type="info"

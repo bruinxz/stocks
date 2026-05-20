@@ -38,6 +38,34 @@ export class QuantController {
             ? undefined
             : Boolean(req.body.enabled),
         default_params,
+        execution_policy:
+          req.body?.execution_policy !== undefined
+            ? req.body.execution_policy
+            : req.body?.executionPolicy !== undefined
+            ? req.body.executionPolicy
+            : undefined,
+        environment_policy:
+          req.body?.environment_policy !== undefined
+            ? req.body.environment_policy
+            : req.body?.environmentPolicy !== undefined
+            ? req.body.environmentPolicy
+            : undefined,
+        lifecycle_policy:
+          req.body?.lifecycle_policy !== undefined
+            ? req.body.lifecycle_policy
+            : req.body?.lifecyclePolicy !== undefined
+            ? req.body.lifecyclePolicy
+            : undefined,
+        notes:
+          req.body?.notes !== undefined
+            ? String(req.body.notes || '')
+            : undefined,
+        display_order:
+          req.body?.display_order !== undefined
+            ? Number(req.body.display_order)
+            : req.body?.displayOrder !== undefined
+            ? Number(req.body.displayOrder)
+            : undefined,
       });
       res.json({ success: true, data: strategy });
     } catch (error: any) {

@@ -33,7 +33,47 @@ function normalizeParams(params: Record<string, any> = {}) {
   );
 }
 
+function asObject(value: any): Record<string, any> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value;
+}
+
 export class QuantStrategyService {
+  private defaultExecutionPolicy(definition: any) {
+    return {
+      max_position_pct: definition.risk_level === 'high' ? 4 : definition.risk_level === 'low' ? 8 : 6,
+      default_position_pct: definition.risk_level === 'high' ? 2 : 3,
+      candidate_limit: 180,
+      min_score: definition.risk_level === 'high' ? 76 : definition.category === 'multi_factor' ? 68 : 70,
+      allowed_risk_levels:
+        definition.risk_level === 'low' ? ['low', 'medium'] : ['low', 'medium'],
+    };
+  }
+
+  private defaultEnvironmentPolicy(definition: any) {
+    return {
+      preferred_market_regimes:
+        definition.category === 'trend' || definition.category === 'momentum'
+          ? ['bull', 'rebound']
+          : definition.category === 'mean_reversion'
+          ? ['range', 'stress']
+          : ['bull', 'range', 'rebound'],
+      blocked_market_regimes: definition.risk_level === 'high' ? ['stress'] : [],
+      allow_same_industry_overlap: definition.category === 'multi_factor',
+    };
+  }
+
+  private defaultLifecyclePolicy(definition: any) {
+    return {
+      auto_promote: true,
+      auto_degrade: true,
+      auto_rollback: true,
+      promotion_min_completed_samples: definition.risk_level === 'high' ? 18 : 12,
+      rollback_min_completed_samples: definition.risk_level === 'high' ? 10 : 8,
+      cooldown_days: definition.risk_level === 'high' ? 20 : definition.risk_level === 'low' ? 10 : 15,
+    };
+  }
+
   async syncRegistry() {
     const definitions = strategyRegistry.list();
     const records = [];
@@ -46,6 +86,9 @@ export class QuantStrategyService {
           description: definition.description,
           category: definition.category,
           default_params: definition.default_params,
+          execution_policy: this.defaultExecutionPolicy(definition),
+          environment_policy: this.defaultEnvironmentPolicy(definition),
+          lifecycle_policy: this.defaultLifecyclePolicy(definition),
           enabled: definition.enabled,
           risk_level: definition.risk_level,
           tags: definition.tags,
@@ -59,6 +102,18 @@ export class QuantStrategyService {
         default_params: {
           ...(definition.default_params || {}),
           ...(asPlainObject(record.default_params) || {}),
+        },
+        execution_policy: {
+          ...this.defaultExecutionPolicy(definition),
+          ...asObject(record.execution_policy),
+        },
+        environment_policy: {
+          ...this.defaultEnvironmentPolicy(definition),
+          ...asObject(record.environment_policy),
+        },
+        lifecycle_policy: {
+          ...this.defaultLifecyclePolicy(definition),
+          ...asObject(record.lifecycle_policy),
         },
         risk_level: definition.risk_level,
         tags: definition.tags,
@@ -75,15 +130,24 @@ export class QuantStrategyService {
     await this.syncRegistry();
     return QuantStrategyModel.findAll({
       order: [
+        ['display_order', 'ASC NULLS LAST'],
         ['category', 'ASC'],
         ['strategy_key', 'ASC'],
-      ],
+      ] as any,
     });
   }
 
   async updateStrategyConfig(
     strategy_key: string,
-    patch: { enabled?: boolean; default_params?: Record<string, any> }
+    patch: {
+      enabled?: boolean;
+      default_params?: Record<string, any>;
+      execution_policy?: Record<string, any>;
+      environment_policy?: Record<string, any>;
+      lifecycle_policy?: Record<string, any>;
+      notes?: string;
+      display_order?: number;
+    }
   ) {
     await this.syncRegistry();
     const record = await QuantStrategyModel.findOne({ where: { strategy_key } });
@@ -97,6 +161,26 @@ export class QuantStrategyService {
         ...normalizeParams(patch.default_params),
       };
     }
+    if (patch.execution_policy && typeof patch.execution_policy === 'object') {
+      nextPatch.execution_policy = {
+        ...(asObject(record.execution_policy) || {}),
+        ...normalizeParams(patch.execution_policy),
+      };
+    }
+    if (patch.environment_policy && typeof patch.environment_policy === 'object') {
+      nextPatch.environment_policy = {
+        ...(asObject(record.environment_policy) || {}),
+        ...patch.environment_policy,
+      };
+    }
+    if (patch.lifecycle_policy && typeof patch.lifecycle_policy === 'object') {
+      nextPatch.lifecycle_policy = {
+        ...(asObject(record.lifecycle_policy) || {}),
+        ...normalizeParams(patch.lifecycle_policy),
+      };
+    }
+    if (patch.notes !== undefined) nextPatch.notes = patch.notes;
+    if (patch.display_order !== undefined) nextPatch.display_order = patch.display_order;
 
     if (Object.keys(nextPatch).length > 0) await record.update(nextPatch);
     return QuantStrategyModel.findOne({ where: { strategy_key } });
@@ -135,6 +219,39 @@ export class QuantStrategyService {
         ...(asPlainObject(record?.default_params) || {}),
       };
       return paramsByStrategy;
+    }, {});
+  }
+
+  async getRuntimePoliciesByStrategy(strategy_keys?: string[] | string) {
+    await this.syncRegistry();
+    const keys = await this.resolveStrategyKeys(strategy_keys);
+    if (!keys.length) return {};
+
+    const records = await QuantStrategyModel.findAll({ where: { strategy_key: keys } });
+    const byKey = new Map(records.map(record => [record.strategy_key, record]));
+    return keys.reduce<Record<string, Record<string, any>>>((policiesByStrategy, key) => {
+      const registryDefinition = strategyRegistry.get(key)?.definition;
+      const record = byKey.get(key);
+      policiesByStrategy[key] = {
+        strategy_key: key,
+        strategy_name: record?.name || registryDefinition?.name || key,
+        category: record?.category || registryDefinition?.category,
+        risk_level: record?.risk_level || registryDefinition?.risk_level || 'medium',
+        enabled: record?.enabled !== false,
+        execution_policy: {
+          ...(registryDefinition ? this.defaultExecutionPolicy(registryDefinition) : {}),
+          ...asObject(record?.execution_policy),
+        },
+        environment_policy: {
+          ...(registryDefinition ? this.defaultEnvironmentPolicy(registryDefinition) : {}),
+          ...asObject(record?.environment_policy),
+        },
+        lifecycle_policy: {
+          ...(registryDefinition ? this.defaultLifecyclePolicy(registryDefinition) : {}),
+          ...asObject(record?.lifecycle_policy),
+        },
+      };
+      return policiesByStrategy;
     }, {});
   }
 }

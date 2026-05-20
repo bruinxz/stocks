@@ -2,6 +2,7 @@ const { Client } = require('ssh2');
 const { runPostDeploySmoke } = require('./post_deploy_smoke');
 const { getDeployConfig, renderBackendEnv, shellQuote } = require('./deploy_config');
 const { runLocalRegressionGate } = require('./local_regression_gate');
+const { buildEnsureRuntimePathsCommand } = require('./ensure_runtime_paths');
 const {
   buildDockerPsqlHealthCommand,
   buildDockerPsqlMigrationCommand,
@@ -68,6 +69,12 @@ async function main() {
 
     // 1. 拉取代码
     await execCommand(conn, `cd ${shellQuote(paths.remote_root)} && git pull`, '拉取最新代码');
+
+    await execCommand(
+      conn,
+      buildEnsureRuntimePathsCommand(paths.remote_root),
+      '初始化运行时目录'
+    );
 
     await execCommand(
       conn,
