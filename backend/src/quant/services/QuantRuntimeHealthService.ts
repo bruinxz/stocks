@@ -37,6 +37,123 @@ type RuntimeHealthCheck = {
   position_multiplier?: number;
 };
 
+function buildRuntimeNextActions(options: {
+  status: string;
+  buy_gate_action: string;
+  buy_gate_multiplier: number;
+  blocking_checks: RuntimeHealthCheck[];
+  degraded_checks: RuntimeHealthCheck[];
+  warn_count: number;
+  quote_summary: any;
+  factor_min_coverage: number;
+  factor_real_provider_rate: number;
+  adopted_count: number;
+  execution_discipline_status: string;
+}) {
+  const actions: Array<{
+    key: string;
+    level: 'ok' | 'watch' | 'warn' | 'risk';
+    title: string;
+    description: string;
+    action_label: string;
+  }> = [];
+
+  if (options.blocking_checks.length > 0 || options.status === 'risk') {
+    actions.push({
+      key: 'pause_and_fix_blockers',
+      level: 'risk',
+      title: '暂停新增买入',
+      description: `先修复 ${
+        options.blocking_checks.map(item => item.label).join('、') || '硬阻断'
+      }，未恢复前只看信号不跟单。`,
+      action_label: '修复阻断',
+    });
+  } else if (options.buy_gate_action === 'reduce') {
+    actions.push({
+      key: 'small_position_validate',
+      level: 'warn',
+      title: '小仓验证',
+      description: `允许自动运行，但按 ${round(
+        options.buy_gate_multiplier,
+        2
+      )}x 仓位执行，优先看模拟盘真实收益。`,
+      action_label: '降仓运行',
+    });
+  } else {
+    actions.push({
+      key: 'wait_for_open_scan',
+      level: 'ok',
+      title: '等待开盘扫描',
+      description: '字段、任务、行情与执行纪律已就绪，明日开盘可按自动推荐闭环运行。',
+      action_label: '正常运行',
+    });
+  }
+
+  if (
+    (options.quote_summary?.persisted && !options.quote_summary?.is_fresh) ||
+    !options.quote_summary?.persisted
+  ) {
+    actions.push({
+      key: 'refresh_quote_snapshot',
+      level: options.quote_summary?.persisted ? 'watch' : 'risk',
+      title: '刷新实时行情',
+      description: '行情不新时先等盘中快照任务或手动触发行情刷新，避免用旧价格做买入决策。',
+      action_label: '补价格',
+    });
+  }
+
+  if (options.factor_min_coverage < 90 || options.factor_real_provider_rate < 70) {
+    actions.push({
+      key: 'refresh_real_factors',
+      level: options.factor_min_coverage < 60 ? 'warn' : 'watch',
+      title: '补真实因子',
+      description: `当前因子覆盖 ${round(options.factor_min_coverage)}%，真实源 ${round(
+        options.factor_real_provider_rate
+      )}%；保持 360 样本刷新后再扩大仓位。`,
+      action_label: '补因子',
+    });
+  }
+
+  if (options.adopted_count <= 0) {
+    actions.push({
+      key: 'promote_params',
+      level: 'watch',
+      title: '沉淀参数版本',
+      description: '暂无已采用参数版本时，继续跑历史/模拟样本，让默认参数先进入 A/B 验证再晋级。',
+      action_label: '跑样本',
+    });
+  }
+
+  if (options.execution_discipline_status !== 'ok') {
+    actions.push({
+      key: 'fix_execution_discipline',
+      level: 'warn',
+      title: '补执行纪律',
+      description: '检查飞书通知、模拟盘、风险阻断、Agent 复核是否全部开启，避免推荐无法闭环。',
+      action_label: '补纪律',
+    });
+  }
+
+  if (options.warn_count > 0 && actions.length < 4) {
+    actions.push({
+      key: 'observe_warnings',
+      level: 'watch',
+      title: '观察非致命项',
+      description: `当前还有 ${options.warn_count} 个观察项；不阻断买入，但建议继续看收益闭环是否改善。`,
+      action_label: '继续观察',
+    });
+  }
+
+  const seen = new Set<string>();
+  return actions
+    .filter(item => {
+      if (seen.has(item.key)) return false;
+      seen.add(item.key);
+      return true;
+    })
+    .slice(0, 4);
+}
+
 function classifyRuntimeCheck(check: RuntimeHealthCheck): RuntimeHealthCheck {
   if (check.status === 'ok') {
     return {
@@ -560,6 +677,19 @@ class QuantRuntimeHealthService {
     const score = Math.round(
       ((checks.length - riskCount - warnCount * 0.45) / checks.length) * 100
     );
+    const nextActions = buildRuntimeNextActions({
+      status,
+      buy_gate_action: buyGateAction,
+      buy_gate_multiplier: buyGateMultiplier,
+      blocking_checks: blockingChecks,
+      degraded_checks: degradedChecks,
+      warn_count: warnCount,
+      quote_summary: quoteSummary,
+      factor_min_coverage: factorMinCoverage,
+      factor_real_provider_rate: factorRealProviderRate,
+      adopted_count: adoptedCount,
+      execution_discipline_status: executionDiscipline.status,
+    });
 
     return {
       generated_at: new Date().toISOString(),
@@ -579,6 +709,8 @@ class QuantRuntimeHealthService {
         execution_discipline_status: executionDiscipline.status,
         factor_min_coverage_rate: round(factorMinCoverage),
         factor_real_provider_rate: round(factorRealProviderRate),
+        next_action: nextActions[0]?.title || '继续观察',
+        next_action_label: nextActions[0]?.action_label || '观察',
         conclusion:
           status === 'ready'
             ? '量化运行时健康：字段、策略、行情、参数和开盘任务均已就绪。'
@@ -588,6 +720,7 @@ class QuantRuntimeHealthService {
               : '量化运行时可运行但有观察项，开盘前建议关注行情新鲜度/参数样本。'
             : '量化运行时存在硬阻断风险，暂停自动买入。',
       },
+      next_actions: nextActions,
       checks: classifiedChecks,
       buy_gate: {
         action: buyGateAction,

@@ -40,6 +40,9 @@ Known frontend build warnings are historical Prettier warnings in existing files
   - 量化开盘/收盘扫描默认 `quote_sync_limit` 从 220 提升为 360，并显式使用 `realtime_quote_source=auto`，评分前优先走 AKShare，失败自动降级腾讯行情。
   - 量化开盘/收盘扫描默认 `factor_sync_limit` 同步提升为 360；因子跳过逻辑要求有效因子日期覆盖 `as_of`，避免历史真实源覆盖率高但当天快照未刷新时过早跳过。
   - runtime health 与只读 smoke 增加最低覆盖防回归：量化任务 `factor_sync_limit/quote_sync_limit` 必须保持 300+，实时行情源必须为 `auto`，独立行情刷新任务样本也必须 300+。
+- 页面更简洁：
+  - runtime health 新增 `next_actions` 与 `summary.next_action`，把“暂停新增 / 小仓验证 / 等待开盘扫描 / 补行情 / 补因子”等动作直接结构化输出。
+  - 收益驾驶舱运行时健康卡新增 NEXT 行动区，用户先看下一步动作，再看风险/因子/行情细项。
 - 纪律更可执行：
   - `QuantRuntimeHealthService` 的执行纪律纳入盘中行情刷新任务；若任务缺失会给出观察项。
   - 行情滞后时，如果盘中刷新任务已启用则作为 warn/降仓观察；若任务缺失则提升为阻断风险。
