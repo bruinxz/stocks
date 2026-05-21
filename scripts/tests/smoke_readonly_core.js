@@ -613,6 +613,23 @@ async function main() {
             }
           }
         }
+        if (
+          !json.data.execution_discipline?.summary ||
+          !Array.isArray(json.data.execution_discipline?.issues)
+        ) {
+          throw new Error(
+            `quant runtime execution discipline missing: ${preview(json.data.execution_discipline)}`,
+          );
+        }
+        if (
+          !(json.data.checks || []).some(
+            (item) => item?.key === "execution_discipline",
+          )
+        ) {
+          throw new Error(
+            `quant runtime execution discipline check missing: ${preview(json.data.checks)}`,
+          );
+        }
       },
     });
 
