@@ -1089,6 +1089,15 @@ async function main() {
                 )}`
               );
             }
+            if (
+              !Array.isArray(json.data.summary.hindsight.rule_suggestions || [])
+            ) {
+              throw new Error(
+                `paper trading order intent hindsight rule suggestions invalid: ${preview(
+                  json.data.summary.hindsight
+                )}`
+              );
+            }
           }
         },
       }

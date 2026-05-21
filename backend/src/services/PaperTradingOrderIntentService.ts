@@ -355,6 +355,7 @@ export class PaperTradingOrderIntentService {
         correct_reject_count: correctRejects.length,
         saved_loss_count: savedLoss.length,
         avg_intended_action_return_pct: avg,
+        rule_suggestions: this.buildRuleSuggestions(benchmark),
         top_false_rejections: falseRejects
           .sort(
             (a, b) =>
@@ -394,8 +395,81 @@ export class PaperTradingOrderIntentService {
       saved_loss_count: 0,
       avg_intended_action_return_pct: 0,
       top_false_rejections: [],
+      rule_suggestions: [],
       conclusion,
     };
+  }
+
+  private buildRuleSuggestions(items: any[]) {
+    const buckets = new Map<string, any[]>();
+    for (const item of items) {
+      const key = String(item.reason_category || 'unknown');
+      const list = buckets.get(key) || [];
+      list.push(item);
+      buckets.set(key, list);
+    }
+
+    return Array.from(buckets.entries())
+      .map(([key, list]) => {
+        const returns = list.map(item => toNumber(item.benchmark?.intended_action_return_pct, 0));
+        const falseRejectCount = returns.filter(value => value > 0.5).length;
+        const savedLossCount = returns.filter(value => value < -0.5).length;
+        const avg =
+          returns.length > 0
+            ? roundNumber(returns.reduce((sum, value) => sum + value, 0) / returns.length, 4)
+            : 0;
+        const falseRejectRate =
+          returns.length > 0 ? roundNumber((falseRejectCount / returns.length) * 100, 2) : 0;
+        const savedLossRate =
+          returns.length > 0 ? roundNumber((savedLossCount / returns.length) * 100, 2) : 0;
+        const sampleConfidence = Math.min(1, returns.length / 12);
+        const action =
+          returns.length < 3
+            ? 'observe'
+            : falseRejectRate >= 45 && avg > 0.8
+            ? 'loosen'
+            : savedLossRate >= 45 && avg < -0.5
+            ? 'tighten'
+            : 'keep';
+        const label =
+          action === 'loosen'
+            ? '建议放松'
+            : action === 'tighten'
+            ? '建议收紧'
+            : action === 'keep'
+            ? '维持规则'
+            : '继续观察';
+        const reason =
+          action === 'loosen'
+            ? `该类规则可能过严，${falseRejectRate}% 样本后验显示执行更优，平均相对 ${avg}%`
+            : action === 'tighten'
+            ? `该类拦截较有效，${savedLossRate}% 样本避免不利结果，平均相对 ${avg}%`
+            : action === 'keep'
+            ? `样本表现中性，平均相对 ${avg}%`
+            : `样本 ${returns.length} 条不足，先继续观察`;
+        return {
+          key,
+          label: reasonCategoryLabel(key),
+          action,
+          action_label: label,
+          sample_count: returns.length,
+          false_reject_count: falseRejectCount,
+          false_reject_rate: falseRejectRate,
+          saved_loss_count: savedLossCount,
+          saved_loss_rate: savedLossRate,
+          avg_intended_action_return_pct: avg,
+          sample_confidence: roundNumber(sampleConfidence, 2),
+          reason,
+        };
+      })
+      .sort((a, b) => {
+        const priority: Record<string, number> = { loosen: 3, tighten: 2, keep: 1, observe: 0 };
+        return (
+          (priority[b.action] || 0) - (priority[a.action] || 0) ||
+          Math.abs(b.avg_intended_action_return_pct) - Math.abs(a.avg_intended_action_return_pct)
+        );
+      })
+      .slice(0, 8);
   }
 
   private evaluateIntentHindsight(item: any, bars: any[]) {

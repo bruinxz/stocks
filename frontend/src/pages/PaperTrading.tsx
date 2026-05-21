@@ -394,6 +394,20 @@ interface PaperTradingOrderIntentDashboard {
         horizon: string;
         conclusion: string;
       }>;
+      rule_suggestions: Array<{
+        key: string;
+        label: string;
+        action: 'loosen' | 'tighten' | 'keep' | 'observe';
+        action_label: string;
+        sample_count: number;
+        false_reject_count: number;
+        false_reject_rate: number;
+        saved_loss_count: number;
+        saved_loss_rate: number;
+        avg_intended_action_return_pct: number;
+        sample_confidence: number;
+        reason: string;
+      }>;
     };
     top_reason_categories: Array<{
       key: string;
@@ -455,6 +469,12 @@ const orderIntentStatusColorMap: Record<string, string> = {
   rejected: 'volcano',
   skipped: 'default',
   held: 'gold',
+};
+const orderRuleActionColorMap: Record<string, string> = {
+  loosen: 'orange',
+  tighten: 'green',
+  keep: 'blue',
+  observe: 'default',
 };
 
 const PaperTrading: React.FC = () => {
@@ -1297,6 +1317,22 @@ const PaperTrading: React.FC = () => {
                   {(!orderIntentHindsight.top_false_rejections ||
                     orderIntentHindsight.top_false_rejections.length === 0) && (
                     <Text type="secondary">暂无明显错杀样本，当前拦截规则暂时有效。</Text>
+                  )}
+                  {(orderIntentHindsight.rule_suggestions || []).length > 0 && (
+                    <div className="order-rule-suggestions">
+                      <div className="order-rule-suggestion-title">规则建议</div>
+                      {(orderIntentHindsight.rule_suggestions || []).slice(0, 4).map(item => (
+                        <div className="order-rule-suggestion" key={item.key}>
+                          <div>
+                            <strong>{item.label}</strong>
+                            <span>{item.reason}</span>
+                          </div>
+                          <Tag color={orderRuleActionColorMap[item.action] || 'default'}>
+                            {item.action_label}
+                          </Tag>
+                        </div>
+                      ))}
+                    </div>
                   )}
                 </>
               ) : (
