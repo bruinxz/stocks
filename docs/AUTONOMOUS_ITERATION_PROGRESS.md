@@ -818,3 +818,38 @@ Next:
 
 1. Deploy main + lym using the new guarded release path.
 2. If upload still stalls, the script should fail fast and retry instead of blocking indefinitely.
+
+## 2026-05-21 continuous iteration: execution discipline runtime health
+
+Focus: make automated stock-picking execution discipline visible and enforceable, not only manually inspected.
+
+Completed:
+
+- Added `execution_discipline` to `/api/quant/runtime-health`.
+- The new check validates active open/close quant pipeline tasks for critical controls:
+  - realtime quote refresh enabled;
+  - factor sync before scan enabled;
+  - real factor provider not forced to `local_derived`;
+  - runtime buy gate enabled;
+  - entry risk guard enabled;
+  - paper trading enabled;
+  - Agent fusion enabled;
+  - Feishu report + bot notification enabled;
+  - factor sync range and real-provider skip threshold are sane;
+  - daily position/exposure/cash-reserve limits are not disabled or overly loose.
+- The watchdog task is checked for fresh-quote requirement, minimum signal/archive thresholds and Feishu notifications.
+- `execution_discipline` is added as a runtime-health check; critical misses become buy-gate blocking.
+- Read-only smoke now asserts execution discipline summary and check existence.
+
+Validation:
+
+```bash
+/Applications/Codex.app/Contents/Resources/node backend/node_modules/typescript/bin/tsc -p backend/tsconfig.json --pretty false
+node --check scripts/tests/smoke_readonly_core.js
+git diff --check
+```
+
+Next:
+
+1. Deploy main + lym and verify runtime health still reaches `ready` with `execution_discipline.status=ok`.
+2. Surface execution discipline in the dashboard UI if operators need more visibility than the generic runtime checks list.
