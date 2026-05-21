@@ -407,22 +407,54 @@ class PaperTradingPlanService {
       })
       .catch(() => null);
 
+    const stableRuleSuggestions =
+      orderIntentFeedback?.summary?.hindsight?.stable_rule_suggestions || [];
     const ruleSuggestions =
-      orderIntentFeedback?.summary?.hindsight?.rule_suggestions?.filter((item: any) =>
-        ['loosen', 'tighten'].includes(item.action)
-      ) || [];
+      stableRuleSuggestions.length > 0
+        ? stableRuleSuggestions.filter((item: any) => ['loosen', 'tighten'].includes(item.action))
+        : orderIntentFeedback?.summary?.hindsight?.rule_suggestions?.filter((item: any) =>
+            ['loosen', 'tighten'].includes(item.action)
+          ) || [];
+    const parameterAdjustmentPreview =
+      orderIntentFeedback?.summary?.hindsight?.parameter_adjustment_preview || [];
     for (const suggestion of ruleSuggestions.slice(0, 4)) {
+      const isStable = Boolean(suggestion.eligible_for_auto_tune);
       actions.push({
         action_type: 'review',
-        priority: suggestion.action === 'loosen' ? 'medium' : 'high',
-        action_label: suggestion.action === 'loosen' ? '拒单规则建议放松' : '拒单规则建议收紧',
+        priority: isStable || suggestion.action === 'tighten' ? 'high' : 'medium',
+        action_label: isStable
+          ? '拒单规则进入调参候选'
+          : suggestion.action === 'loosen'
+          ? '拒单规则建议放松'
+          : '拒单规则建议收紧',
         reason: `${suggestion.label}：${suggestion.reason}`,
         instructions: [
-          '当前仅作为建议态展示，不自动改阈值；连续两个窗口同向后再进入自动调参候选。',
+          isStable
+            ? `已通过 ${
+                suggestion.agreed_window_count || 0
+              } 个滚动窗口同向验证，可进入参数预览和审计确认。`
+            : '当前仅作为建议态展示，不自动改阈值；连续两个窗口同向后再进入自动调参候选。',
           `样本 ${suggestion.sample_count} 条，可能错杀率 ${suggestion.false_reject_rate}% ，有效拦截率 ${suggestion.saved_loss_rate}% ，平均相对 ${suggestion.avg_intended_action_return_pct}%。`,
+          suggestion.next_review_rule || '下一轮继续复核该规则是否稳定。',
         ],
         tags: ['order_intent_feedback', suggestion.action, suggestion.key],
         metadata: suggestion,
+      });
+    }
+
+    for (const preview of parameterAdjustmentPreview.slice(0, 4)) {
+      actions.push({
+        action_type: 'review',
+        priority: preview.action === 'tighten' ? 'high' : 'medium',
+        action_label: '参数调整预览',
+        reason: `${preview.reason_category_label}：${preview.parameter_label} ${preview.change_label}`,
+        instructions: [
+          '当前只生成预览，不直接写入定时任务参数。',
+          preview.rationale,
+          '若连续收益验证仍支持该方向，再通过参数审计日志落盘。',
+        ],
+        tags: ['order_intent_tuning_preview', preview.action, preview.parameter_key],
+        metadata: preview,
       });
     }
     for (const nextAction of outcomePolicy?.next_actions?.slice(0, 4) || []) {
@@ -529,6 +561,11 @@ class PaperTradingPlanService {
               orderIntentFeedback.summary.hindsight.avg_intended_action_return_pct,
             conclusion: orderIntentFeedback.summary.hindsight.conclusion,
             rule_suggestions: orderIntentFeedback.summary.hindsight.rule_suggestions,
+            stable_rule_suggestions: orderIntentFeedback.summary.hindsight.stable_rule_suggestions,
+            parameter_adjustment_preview:
+              orderIntentFeedback.summary.hindsight.parameter_adjustment_preview,
+            tuning_preview_conclusion:
+              orderIntentFeedback.summary.hindsight.tuning_preview_conclusion,
           }
         : undefined,
       adaptive_risk_policy: riskCheck?.adaptive_risk_policy,

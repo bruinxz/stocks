@@ -1098,6 +1098,39 @@ async function main() {
                 )}`
               );
             }
+            if (
+              !Array.isArray(
+                json.data.summary.hindsight.rule_suggestion_windows || []
+              )
+            ) {
+              throw new Error(
+                `paper trading order intent rule suggestion windows invalid: ${preview(
+                  json.data.summary.hindsight
+                )}`
+              );
+            }
+            if (
+              !Array.isArray(
+                json.data.summary.hindsight.stable_rule_suggestions || []
+              )
+            ) {
+              throw new Error(
+                `paper trading order intent stable rule suggestions invalid: ${preview(
+                  json.data.summary.hindsight
+                )}`
+              );
+            }
+            if (
+              !Array.isArray(
+                json.data.summary.hindsight.parameter_adjustment_preview || []
+              )
+            ) {
+              throw new Error(
+                `paper trading order intent parameter preview invalid: ${preview(
+                  json.data.summary.hindsight
+                )}`
+              );
+            }
           }
         },
       }

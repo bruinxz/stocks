@@ -82,6 +82,7 @@ function sideLabel(side?: string): string {
 }
 
 const HINDSIGHT_HORIZONS = [1, 3, 5, 10];
+const RULE_SUGGESTION_WINDOWS = [7, 14, 30];
 
 function dateOnly(value: any): string {
   if (!value) return '';
@@ -343,6 +344,13 @@ export class PaperTradingOrderIntentService {
             4
           )
         : 0;
+    const ruleSuggestions = this.buildRuleSuggestions(benchmark);
+    const windowReview = this.buildRuleSuggestionWindows(benchmark, ruleSuggestions);
+    const stableRuleSuggestions = this.buildStableRuleSuggestions(
+      ruleSuggestions,
+      windowReview.windows
+    );
+    const parameterAdjustmentPreview = this.buildParameterAdjustmentPreview(stableRuleSuggestions);
 
     return {
       by_intent_id: byIntentId,
@@ -355,7 +363,14 @@ export class PaperTradingOrderIntentService {
         correct_reject_count: correctRejects.length,
         saved_loss_count: savedLoss.length,
         avg_intended_action_return_pct: avg,
-        rule_suggestions: this.buildRuleSuggestions(benchmark),
+        rule_suggestions: ruleSuggestions,
+        rule_suggestion_windows: windowReview.windows,
+        stable_rule_suggestions: stableRuleSuggestions,
+        parameter_adjustment_preview: parameterAdjustmentPreview,
+        tuning_preview_conclusion: this.buildTuningPreviewConclusion(
+          stableRuleSuggestions,
+          parameterAdjustmentPreview
+        ),
         top_false_rejections: falseRejects
           .sort(
             (a, b) =>
@@ -396,6 +411,10 @@ export class PaperTradingOrderIntentService {
       avg_intended_action_return_pct: 0,
       top_false_rejections: [],
       rule_suggestions: [],
+      rule_suggestion_windows: [],
+      stable_rule_suggestions: [],
+      parameter_adjustment_preview: [],
+      tuning_preview_conclusion: '暂无稳定窗口样本，暂不生成自动调参预览。',
       conclusion,
     };
   }
@@ -472,6 +491,309 @@ export class PaperTradingOrderIntentService {
       .slice(0, 8);
   }
 
+  private buildRuleSuggestionWindows(items: any[], baselineSuggestions: any[]) {
+    const now = moment().tz('Asia/Shanghai');
+    const baselineByKey = new Map(baselineSuggestions.map(item => [item.key, item]));
+
+    const windows = RULE_SUGGESTION_WINDOWS.map(days => {
+      const startDate = now.clone().subtract(days, 'days').format('YYYY-MM-DD');
+      const windowItems = items.filter(item => {
+        const intentDate = String(item.intent_date || '').slice(0, 10);
+        return intentDate && intentDate >= startDate;
+      });
+      const suggestions = this.buildRuleSuggestions(windowItems).map(suggestion => ({
+        ...suggestion,
+        window_days: days,
+        window_label: `${days}日`,
+        baseline_action: baselineByKey.get(suggestion.key)?.action || 'observe',
+      }));
+      return {
+        window_days: days,
+        window_label: `${days}日`,
+        start_date: startDate,
+        sample_count: windowItems.length,
+        suggestions,
+      };
+    });
+
+    return { windows };
+  }
+
+  private buildStableRuleSuggestions(ruleSuggestions: any[], windows: any[]) {
+    return ruleSuggestions
+      .map(suggestion => {
+        const windowEvidence = windows
+          .map(window => {
+            const matched = (window.suggestions || []).find(
+              (item: any) => item.key === suggestion.key
+            );
+            return matched
+              ? {
+                  window_days: window.window_days,
+                  window_label: window.window_label,
+                  sample_count: matched.sample_count,
+                  action: matched.action,
+                  action_label: matched.action_label,
+                  avg_intended_action_return_pct: matched.avg_intended_action_return_pct,
+                  false_reject_rate: matched.false_reject_rate,
+                  saved_loss_rate: matched.saved_loss_rate,
+                  sample_confidence: matched.sample_confidence,
+                }
+              : {
+                  window_days: window.window_days,
+                  window_label: window.window_label,
+                  sample_count: 0,
+                  action: 'observe',
+                  action_label: '继续观察',
+                  avg_intended_action_return_pct: 0,
+                  false_reject_rate: 0,
+                  saved_loss_rate: 0,
+                  sample_confidence: 0,
+                };
+          })
+          .sort((a, b) => a.window_days - b.window_days);
+
+        const sameDirectionWindows = windowEvidence.filter(
+          evidence =>
+            evidence.action === suggestion.action &&
+            ['loosen', 'tighten'].includes(evidence.action) &&
+            evidence.sample_count >= 3
+        );
+        const evidenceSampleCount = windowEvidence.reduce(
+          (sum, evidence) => sum + toNumber(evidence.sample_count, 0),
+          0
+        );
+        const eligibleForAutoTune =
+          ['loosen', 'tighten'].includes(suggestion.action) &&
+          suggestion.sample_count >= 5 &&
+          sameDirectionWindows.length >= 2;
+        const stabilityScore = roundNumber(
+          Math.min(
+            100,
+            sameDirectionWindows.length * 34 +
+              Math.min(30, suggestion.sample_count * 2) +
+              Math.min(20, Math.abs(toNumber(suggestion.avg_intended_action_return_pct, 0)) * 4)
+          ),
+          2
+        );
+
+        return {
+          ...suggestion,
+          stability_state: eligibleForAutoTune
+            ? 'stable'
+            : sameDirectionWindows.length > 0
+            ? 'forming'
+            : 'unstable',
+          stability_label: eligibleForAutoTune
+            ? '可进入调参候选'
+            : sameDirectionWindows.length > 0
+            ? '证据形成中'
+            : '暂不稳定',
+          eligible_for_auto_tune: eligibleForAutoTune,
+          agreed_window_count: sameDirectionWindows.length,
+          evidence_sample_count: evidenceSampleCount,
+          stability_score: stabilityScore,
+          evidence_windows: windowEvidence,
+          next_review_rule: eligibleForAutoTune
+            ? '进入下一步人工/审计确认，默认仍不自动应用。'
+            : '继续等待至少两个滚动窗口给出同向建议。',
+        };
+      })
+      .filter(
+        suggestion =>
+          ['loosen', 'tighten'].includes(suggestion.action) ||
+          suggestion.stability_state !== 'unstable'
+      )
+      .sort((a, b) => {
+        if (Number(b.eligible_for_auto_tune) !== Number(a.eligible_for_auto_tune)) {
+          return Number(b.eligible_for_auto_tune) - Number(a.eligible_for_auto_tune);
+        }
+        return b.stability_score - a.stability_score;
+      })
+      .slice(0, 8);
+  }
+
+  private buildParameterAdjustmentPreview(stableSuggestions: any[]) {
+    const previews: any[] = [];
+    for (const suggestion of stableSuggestions) {
+      if (!suggestion.eligible_for_auto_tune) continue;
+      const candidates = this.parameterCandidatesForSuggestion(suggestion);
+      previews.push(...candidates);
+    }
+
+    const seen = new Set<string>();
+    return previews
+      .filter(item => {
+        const key = `${item.reason_category}:${item.parameter_key}:${item.action}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(0, 10);
+  }
+
+  private parameterCandidatesForSuggestion(suggestion: any) {
+    const action = suggestion.action;
+    const key = suggestion.key;
+    const directionLabel = action === 'loosen' ? '放松' : '收紧';
+    const base = {
+      reason_category: key,
+      reason_category_label: suggestion.label,
+      action,
+      action_label: suggestion.action_label,
+      confidence: suggestion.stability_score,
+      sample_count: suggestion.sample_count,
+      evidence: {
+        false_reject_rate: suggestion.false_reject_rate,
+        saved_loss_rate: suggestion.saved_loss_rate,
+        avg_intended_action_return_pct: suggestion.avg_intended_action_return_pct,
+        agreed_window_count: suggestion.agreed_window_count,
+      },
+      apply_status: 'preview_only',
+      apply_status_label: '仅预览，未应用',
+    };
+
+    const make = (
+      parameterKey: string,
+      parameterLabel: string,
+      currentValue: any,
+      previewValue: any,
+      unit: string,
+      rationale: string
+    ) => ({
+      ...base,
+      parameter_key: parameterKey,
+      parameter_label: parameterLabel,
+      current_value: currentValue,
+      preview_value: previewValue,
+      unit,
+      change_label: `${directionLabel}：${currentValue}${unit} → ${previewValue}${unit}`,
+      rationale,
+    });
+
+    switch (key) {
+      case 'execution_reality':
+      case 'market_data':
+        return [
+          make(
+            'min_avg_turnover_yuan',
+            '最低日均成交额',
+            30000000,
+            action === 'loosen' ? 24000000 : 36000000,
+            '元',
+            action === 'loosen'
+              ? '真实成交约束若持续错杀，可先小幅降低流动性门槛，仍保留停牌/涨跌停硬拦截。'
+              : '真实成交约束若持续有效，应提高流动性门槛，减少低成交额标的误入模拟盘。'
+          ),
+        ];
+      case 'entry_risk_guard':
+      case 'market_environment_guard':
+      case 'position_limit':
+        return [
+          make(
+            'max_daily_new_positions',
+            '单日新增持仓上限',
+            3,
+            action === 'loosen' ? 4 : 2,
+            '笔',
+            action === 'loosen'
+              ? '入场风控若连续错杀，可有限增加一笔试错名额。'
+              : '入场风控若拦截有效，应减少单日新增仓位，优先保护本金。'
+          ),
+          make(
+            'max_daily_new_exposure_pct',
+            '单日新增敞口上限',
+            12,
+            action === 'loosen' ? 14 : 10,
+            '%',
+            action === 'loosen'
+              ? '只做小幅敞口放松，避免因为短期窗口过拟合而放大风险。'
+              : '收紧新增敞口，让弱环境下的仓位纪律更可执行。'
+          ),
+        ];
+      case 'profit_gate':
+        return [
+          make(
+            'profit_gate_min_quality_score',
+            '收益闸门质量分',
+            45,
+            action === 'loosen' ? 40 : 55,
+            '分',
+            action === 'loosen'
+              ? '收益闸门若错杀高收益样本，可降低质量分让少量候选进入试错。'
+              : '收益闸门若保护有效，应提高质量分，避免低质量信号继续消耗资金。'
+          ),
+          make(
+            'profit_gate_sampling_multiplier',
+            '收益闸门抽样仓位倍率',
+            0.35,
+            action === 'loosen' ? 0.45 : 0.25,
+            'x',
+            action === 'loosen'
+              ? '放松时仍用抽样仓位，不直接恢复满仓位。'
+              : '收紧时降低抽样仓位，保留验证通道但减少损失。'
+          ),
+        ];
+      case 'outcome_feedback':
+      case 'risk_level':
+      case 'trade_discipline':
+        return [
+          make(
+            'min_score',
+            '最低推荐评分',
+            72,
+            action === 'loosen' ? 69 : 76,
+            '分',
+            action === 'loosen'
+              ? '收益闭环若显示门槛过严，可小幅降低评分线扩大候选池。'
+              : '收益闭环若显示低分样本拖累收益，应提高评分线。'
+          ),
+          make(
+            'default_position_pct',
+            '默认单票仓位',
+            5,
+            action === 'loosen' ? 5.5 : 4,
+            '%',
+            action === 'loosen'
+              ? '放松只微增单票仓位，避免过快放大单一规则风险。'
+              : '收紧时先降低单票仓位，把收益验证放在更小风险下进行。'
+          ),
+        ];
+      case 'capital_or_lot_size':
+        return [
+          make(
+            'min_trade_amount',
+            '最低单笔交易额',
+            3000,
+            action === 'loosen' ? 2000 : 5000,
+            '元',
+            action === 'loosen'
+              ? '资金/一手限制若错杀，可降低最小交易金额提高小仓位试错能力。'
+              : '若小额交易噪声较高，则提高最小交易金额，减少无效订单。'
+          ),
+        ];
+      default:
+        return [
+          make(
+            'min_score',
+            '最低推荐评分',
+            72,
+            action === 'loosen' ? 70 : 75,
+            '分',
+            '该原因暂未绑定专属参数，先用最低评分做保守预览。'
+          ),
+        ];
+    }
+  }
+
+  private buildTuningPreviewConclusion(stableSuggestions: any[], previews: any[]) {
+    const eligibleCount = stableSuggestions.filter(item => item.eligible_for_auto_tune).length;
+    if (eligibleCount <= 0) {
+      return '拒单后验尚未出现两个滚动窗口同向证据，继续观察，不建议自动改参数。';
+    }
+    return `已有 ${eligibleCount} 类规则通过稳定窗口校验，生成 ${previews.length} 条参数调整预览；当前仅展示不应用，下一步需审计确认。`;
+  }
+
   private evaluateIntentHindsight(item: any, bars: any[]) {
     const intentDate = String(item.intent_date || '').slice(0, 10);
     const side = String(item.side || '').toUpperCase();
@@ -481,6 +803,7 @@ export class PaperTradingOrderIntentService {
         intent_id: item.id,
         symbol: item.symbol,
         name: item.name,
+        intent_date: intentDate,
         side,
         status: item.status,
         reason_category: item.reason_category,
@@ -506,6 +829,7 @@ export class PaperTradingOrderIntentService {
         intent_id: item.id,
         symbol: item.symbol,
         name: item.name,
+        intent_date: intentDate,
         side,
         status: item.status,
         reason_category: item.reason_category,
@@ -537,6 +861,7 @@ export class PaperTradingOrderIntentService {
       intent_id: item.id,
       symbol: item.symbol,
       name: item.name,
+      intent_date: intentDate,
       side,
       status: item.status,
       reason_category: item.reason_category,

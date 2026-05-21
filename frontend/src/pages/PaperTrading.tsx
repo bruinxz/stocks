@@ -22,6 +22,7 @@ import {
   Timeline,
 } from 'antd';
 import {
+  AuditOutlined,
   BulbOutlined,
   CloudUploadOutlined,
   FallOutlined,
@@ -277,6 +278,9 @@ interface PaperTradingPlan {
         avg_intended_action_return_pct: number;
         reason: string;
       }>;
+      stable_rule_suggestions?: OrderIntentStableRuleSuggestion[];
+      parameter_adjustment_preview?: OrderIntentParameterPreview[];
+      tuning_preview_conclusion?: string;
     };
   };
   actions: TradingPlanAction[];
@@ -370,6 +374,54 @@ interface PaperTradingOrderIntentItem {
   created_at?: string;
 }
 
+interface OrderIntentStableRuleSuggestion {
+  key: string;
+  label: string;
+  action: 'loosen' | 'tighten' | 'keep' | 'observe';
+  action_label: string;
+  sample_count: number;
+  false_reject_rate: number;
+  saved_loss_rate: number;
+  avg_intended_action_return_pct: number;
+  reason: string;
+  stability_state: 'stable' | 'forming' | 'unstable';
+  stability_label: string;
+  eligible_for_auto_tune: boolean;
+  agreed_window_count: number;
+  evidence_sample_count: number;
+  stability_score: number;
+  next_review_rule?: string;
+  evidence_windows?: Array<{
+    window_days: number;
+    window_label: string;
+    sample_count: number;
+    action: string;
+    action_label: string;
+    avg_intended_action_return_pct: number;
+    false_reject_rate: number;
+    saved_loss_rate: number;
+    sample_confidence: number;
+  }>;
+}
+
+interface OrderIntentParameterPreview {
+  reason_category: string;
+  reason_category_label: string;
+  action: 'loosen' | 'tighten' | 'keep' | 'observe';
+  action_label: string;
+  parameter_key: string;
+  parameter_label: string;
+  current_value: number | string;
+  preview_value: number | string;
+  unit: string;
+  change_label: string;
+  rationale: string;
+  confidence: number;
+  sample_count: number;
+  apply_status: string;
+  apply_status_label: string;
+}
+
 interface PaperTradingOrderIntentDashboard {
   generated_at: string;
   portfolio?: PortfolioInfo | null;
@@ -426,6 +478,16 @@ interface PaperTradingOrderIntentDashboard {
         sample_confidence: number;
         reason: string;
       }>;
+      rule_suggestion_windows?: Array<{
+        window_days: number;
+        window_label: string;
+        start_date: string;
+        sample_count: number;
+        suggestions: Array<Record<string, any>>;
+      }>;
+      stable_rule_suggestions?: OrderIntentStableRuleSuggestion[];
+      parameter_adjustment_preview?: OrderIntentParameterPreview[];
+      tuning_preview_conclusion?: string;
     };
     top_reason_categories: Array<{
       key: string;
@@ -493,6 +555,21 @@ const orderRuleActionColorMap: Record<string, string> = {
   tighten: 'green',
   keep: 'blue',
   observe: 'default',
+};
+const orderRuleStabilityColorMap: Record<string, string> = {
+  stable: 'green',
+  forming: 'gold',
+  unstable: 'default',
+};
+const formatTuningValue = (value?: number | string | null, unit = '') => {
+  if (value === undefined || value === null || value === '') return '--';
+  const numeric = Number(value);
+  if (Number.isFinite(numeric)) {
+    if (unit === '元') return `¥${numeric.toLocaleString()}`;
+    if (unit === 'x') return `${numeric.toFixed(2)}x`;
+    if (unit === '%' || unit === '分' || unit === '笔') return `${numeric.toLocaleString()}${unit}`;
+  }
+  return `${value}${unit}`;
 };
 
 const PaperTrading: React.FC = () => {
@@ -833,6 +910,9 @@ const PaperTrading: React.FC = () => {
   const planOrderIntentFeedback = tradingPlanSummary?.order_intent_feedback;
   const orderIntentSummary = orderIntents?.summary;
   const orderIntentHindsight = orderIntentSummary?.hindsight;
+  const stableOrderRuleSuggestions = orderIntentHindsight?.stable_rule_suggestions || [];
+  const autoTuneReadyRules = stableOrderRuleSuggestions.filter(item => item.eligible_for_auto_tune);
+  const parameterAdjustmentPreview = orderIntentHindsight?.parameter_adjustment_preview || [];
   const recentOrderRejections = orderIntents?.recent_rejections || [];
   const riskTone = riskProfile ? riskProfileToneMap[riskProfile.status.level] : undefined;
   const topRiskPosition = riskProfile?.position_risks?.find(item => item.risk_flags.length > 0);
@@ -1254,9 +1334,9 @@ const PaperTrading: React.FC = () => {
           </Col>
           <Col xs={12} md={4}>
             <div className="order-intent-metric">
-              <span>继续持有</span>
-              <strong>{orderIntentSummary?.held_count || 0}</strong>
-              <em>风控未触发退出</em>
+              <span>可调参规则</span>
+              <strong>{autoTuneReadyRules.length}</strong>
+              <em>稳定建议 {stableOrderRuleSuggestions.length}</em>
             </div>
           </Col>
           <Col xs={12} md={4}>
@@ -1268,12 +1348,23 @@ const PaperTrading: React.FC = () => {
           </Col>
           <Col xs={12} md={4}>
             <div className="order-intent-metric">
-              <span>成交金额</span>
-              <strong>{formatMoney(orderIntentSummary?.executed_amount)}</strong>
-              <em>意图 {formatMoney(orderIntentSummary?.intended_amount)}</em>
+              <span>调参预览</span>
+              <strong>{parameterAdjustmentPreview.length}</strong>
+              <em>仅预览不应用</em>
             </div>
           </Col>
         </Row>
+
+        {orderIntentHindsight?.tuning_preview_conclusion && (
+          <Alert
+            className="order-tuning-conclusion"
+            type={autoTuneReadyRules.length > 0 ? 'warning' : 'info'}
+            showIcon
+            icon={<AuditOutlined />}
+            message={orderIntentHindsight.tuning_preview_conclusion}
+            description="自动调参必须先经过稳定窗口和审计确认；当前页面只给出下一轮参数会如何变化，避免黑箱改规则。"
+          />
+        )}
 
         <Row gutter={[18, 18]} style={{ marginTop: 18 }}>
           <Col xs={24} lg={9}>
@@ -1412,6 +1503,88 @@ const PaperTrading: React.FC = () => {
             </div>
           </Col>
         </Row>
+
+        {(stableOrderRuleSuggestions.length > 0 || parameterAdjustmentPreview.length > 0) && (
+          <Row gutter={[18, 18]} style={{ marginTop: 18 }}>
+            <Col xs={24} lg={11}>
+              <div className="order-intent-panel order-stability-panel">
+                <div className="order-intent-panel-title">稳定窗口</div>
+                {stableOrderRuleSuggestions.length > 0 ? (
+                  <div className="order-stability-list">
+                    {stableOrderRuleSuggestions.slice(0, 5).map(item => (
+                      <div className="order-stability-item" key={item.key}>
+                        <div className="order-stability-main">
+                          <Space wrap size={8}>
+                            <Text strong>{item.label}</Text>
+                            <Tag color={orderRuleActionColorMap[item.action] || 'default'}>
+                              {item.action_label}
+                            </Tag>
+                            <Tag
+                              color={orderRuleStabilityColorMap[item.stability_state] || 'default'}
+                            >
+                              {item.stability_label}
+                            </Tag>
+                          </Space>
+                          <p>{item.reason}</p>
+                          <div className="order-window-evidence">
+                            {(item.evidence_windows || []).slice(0, 3).map(window => (
+                              <span key={`${item.key}-${window.window_days}`}>
+                                {window.window_label} · {window.action_label} ·{' '}
+                                {window.sample_count} 样本
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="order-stability-score">
+                          <strong>{Math.round(Number(item.stability_score || 0))}</strong>
+                          <span>稳定分</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无稳定规则建议" />
+                )}
+              </div>
+            </Col>
+            <Col xs={24} lg={13}>
+              <div className="order-intent-panel order-parameter-preview-panel">
+                <div className="order-intent-panel-title">参数调整预览</div>
+                {parameterAdjustmentPreview.length > 0 ? (
+                  <div className="order-parameter-preview-list">
+                    {parameterAdjustmentPreview.slice(0, 6).map(item => (
+                      <div
+                        className="order-parameter-preview-item"
+                        key={`${item.reason_category}-${item.parameter_key}-${item.action}`}
+                      >
+                        <div>
+                          <Space wrap size={8}>
+                            <Text strong>{item.parameter_label}</Text>
+                            <Tag color={orderRuleActionColorMap[item.action] || 'default'}>
+                              {item.action_label}
+                            </Tag>
+                            <Tag color="default">{item.apply_status_label}</Tag>
+                          </Space>
+                          <p>{item.rationale}</p>
+                        </div>
+                        <div className="order-parameter-change">
+                          <span>{formatTuningValue(item.current_value, item.unit)}</span>
+                          <em>→</em>
+                          <strong>{formatTuningValue(item.preview_value, item.unit)}</strong>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <Empty
+                    image={Empty.PRESENTED_IMAGE_SIMPLE}
+                    description="还没有通过稳定窗口的参数预览"
+                  />
+                )}
+              </div>
+            </Col>
+          </Row>
+        )}
       </Card>
 
       <Card
