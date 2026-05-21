@@ -642,3 +642,30 @@ Next:
 1. Deploy and run release health gate on main + lym.
 2. After the next scheduled quant run, verify dashboard `runtime_discipline.recent_runs` contains the new run and displays block/pass correctly.
 3. Add a small manual safe dry-run endpoint/button later if we want to create a non-trading discipline sample on demand.
+
+## 2026-05-21 continuous iteration: effective factor coverage count fix
+
+Focus: keep runtime buy discipline realistic by avoiding false low factor coverage after partial real-source refreshes.
+
+Completed:
+
+- Fixed `StockFactorService.getEffectiveFactorCoverageRows()` effective-window aggregation:
+  - the previous SQL counted source groups instead of effective stocks after grouping by source;
+  - coverage now uses `SUM(source_count)` so `coverage` matches the effective per-stock source breakdown.
+- Added a read-only smoke regression check for `/api/quant/runtime-health`:
+  - if `source_breakdown` has effective rows, `coverage` must not be lower than the source sum.
+- This keeps Buy Gate from over-penalizing valid local-derived/eastmoney factor windows and makes dashboard coverage percentages align with the displayed provider breakdown.
+
+Validation:
+
+```bash
+/Applications/Codex.app/Contents/Resources/node backend/node_modules/typescript/bin/tsc -p backend/tsconfig.json --pretty false
+node --check scripts/tests/smoke_readonly_core.js
+git diff --check
+```
+
+Next:
+
+1. Deploy to main + lym and verify runtime factor coverage rises from the false ~1% value to the effective stock-window coverage.
+2. Re-run lym opening preflight dry-run and confirm Buy Gate degradation is driven by real-provider/data freshness, not false coverage math.
+3. Continue raising real-provider rate with broader EastMoney refresh or a paid Tushare source.
