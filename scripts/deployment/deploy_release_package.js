@@ -35,6 +35,11 @@ const deployPassword =
   process.env.DEPLOY_PASSWORD || process.env.SSH_PASSWORD || deployConfig.ssh.password || '';
 const opsUser = process.env.OPS_USER || 'ops';
 const opsPassword = process.env.OPS_PASSWORD || '';
+const commandTimeoutMs = Number(process.env.DEPLOY_COMMAND_TIMEOUT_MS || 15 * 60 * 1000);
+const remoteTimeoutSec = Number(process.env.DEPLOY_REMOTE_TIMEOUT_SEC || 300);
+const rsyncTimeoutSec = Number(process.env.DEPLOY_RSYNC_TIMEOUT_SEC || 240);
+const rsyncRetries = Math.max(Number(process.env.DEPLOY_RSYNC_RETRIES || 3), 1);
+const sshConnectTimeoutSec = Number(process.env.DEPLOY_SSH_CONNECT_TIMEOUT_SEC || 15);
 const targets = String(process.env.DEPLOY_TARGETS || 'main,lym')
   .split(',')
   .map(item => item.trim())
@@ -53,12 +58,36 @@ function run(command, options = {}) {
     stdio: options.capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
     encoding: 'utf8',
     env: { ...process.env, ...(options.env || {}) },
+    timeout: options.timeoutMs || commandTimeoutMs,
   });
+  if (result.error) {
+    throw new Error(`Command failed (${result.error.code || result.error.name}): ${command}`);
+  }
   if (result.status !== 0) {
     const details = [result.stdout, result.stderr].filter(Boolean).join('\n');
-    throw new Error(`Command failed (${result.status}): ${command}\n${details}`);
+    const status = result.status === null ? result.signal || 'unknown' : result.status;
+    throw new Error(`Command failed (${status}): ${command}\n${details}`);
   }
   return result.stdout || '';
+}
+
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function runWithRetry(label, fn, attempts = 3) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      if (attempt > 1) console.log(`\n↻ retry ${label}: attempt ${attempt}/${attempts}`);
+      return fn();
+    } catch (error) {
+      lastError = error;
+      console.warn(`⚠️ ${label} failed on attempt ${attempt}/${attempts}: ${error.message || error}`);
+      if (attempt < attempts) sleepSync(Math.min(3000 * attempt, 10000));
+    }
+  }
+  throw lastError;
 }
 
 function requireExpectPassword(value, name) {
@@ -77,12 +106,13 @@ function runRemoteAsDeploy(command) {
   const script = writeExpectScript(
     'stocks_deploy_remote',
     `#!/usr/bin/expect -f
-set timeout -1
+set timeout ${remoteTimeoutSec}
 set password {${deployPassword}}
-spawn ssh -o StrictHostKeyChecking=no -p ${sshPort} ${deployUser}@${sshHost} ${command}
+spawn ssh -o StrictHostKeyChecking=no -o ConnectTimeout=${sshConnectTimeoutSec} -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -p ${sshPort} ${deployUser}@${sshHost} ${command}
 expect {
   "*yes/no*" { send "yes\\r"; exp_continue }
   "*assword:*" { send "$password\\r"; exp_continue }
+  timeout { puts stderr "ERROR: deploy remote command timed out after $timeout seconds"; exit 124 }
   eof
 }
 catch wait result
@@ -98,13 +128,14 @@ function runRemoteAsOpsWithSudo(command) {
   const script = writeExpectScript(
     'stocks_ops_remote',
     `#!/usr/bin/expect -f
-set timeout -1
+set timeout ${remoteTimeoutSec}
 set password {${opsPassword}}
 set remote_cmd {printf "%s\\n" '${opsPassword.replace(/'/g, `'\\''`)}' | sudo -S ${command}}
-spawn ssh -tt -o StrictHostKeyChecking=no -p ${sshPort} ${opsUser}@${sshHost} $remote_cmd
+spawn ssh -tt -o StrictHostKeyChecking=no -o ConnectTimeout=${sshConnectTimeoutSec} -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -p ${sshPort} ${opsUser}@${sshHost} $remote_cmd
 expect {
   "*yes/no*" { send "yes\\r"; exp_continue }
   "*assword:*" { send "$password\\r"; exp_continue }
+  timeout { puts stderr "ERROR: ops remote command timed out after $timeout seconds"; exit 124 }
   eof
 }
 catch wait result
@@ -117,10 +148,18 @@ exit [lindex $result 3]
 
 function rsyncPackage(packagePath) {
   requireExpectPassword(deployPassword, 'DEPLOY_PASSWORD');
-  run(
-    `${shellQuote(path.join(repoRoot, 'scripts/deployment/rsync_expect.sh'))} ${shellQuote(
-      deployPassword
-    )} ${shellQuote(packagePath)} ${deployUser}@${sshHost}:/tmp/stocks-upload/stocks_release_root.tgz ${sshPort}`
+  runWithRetry(
+    'release package upload',
+    () =>
+      run(
+        `${shellQuote(path.join(repoRoot, 'scripts/deployment/rsync_expect.sh'))} ${shellQuote(
+          deployPassword
+        )} ${shellQuote(
+          packagePath
+        )} ${deployUser}@${sshHost}:/tmp/stocks-upload/stocks_release_root.tgz ${sshPort} ${rsyncTimeoutSec} ${sshConnectTimeoutSec}`,
+        { timeoutMs: (rsyncTimeoutSec + 45) * 1000 }
+      ),
+    rsyncRetries
   );
 }
 
