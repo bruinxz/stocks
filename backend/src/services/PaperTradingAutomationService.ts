@@ -11,6 +11,7 @@ import { PaperTradingTrade } from '../models/PaperTradingTrade';
 import { PaperTradingSnapshot } from '../models/PaperTradingSnapshot';
 import { DailyBar } from '../models/DailyBar';
 import { Stock } from '../models/Stock';
+import { RealtimeQuote } from '../models/RealtimeQuote';
 import { User } from '../models/User';
 import { RecommendationTradeOutcome } from '../models/RecommendationTradeOutcome';
 import { quantRecommendationService } from './QuantRecommendationService';
@@ -33,6 +34,26 @@ type RiskExitReason =
   | 'trailing_take_profit'
   | 'sell_signal'
   | 'max_hold_days';
+
+type ExecutionSide = 'BUY' | 'SELL';
+
+interface ExecutionRealityDecision {
+  allowed: boolean;
+  side: ExecutionSide;
+  action: 'allow' | 'reject' | 'watch';
+  label: string;
+  reasons: string[];
+  price?: number;
+  price_source?: string;
+  quote_time?: string;
+  quote_trade_date?: string;
+  quote_age_minutes?: number;
+  change_percent?: number;
+  turnover?: number;
+  avg_turnover_yuan?: number;
+  from_realtime?: boolean;
+  checks: Record<string, any>;
+}
 
 type MarketEnvironmentSnapshotLike = {
   as_of?: string;
@@ -214,6 +235,7 @@ export interface PaperTradingAutoTradeItem {
     strategy_allocation_pct?: number;
     checks?: Record<string, any>;
   };
+  execution_reality_decision?: ExecutionRealityDecision;
   environment_multiplier?: number;
   environment_reason?: string;
   resample_sample?: boolean;
@@ -435,6 +457,14 @@ interface EntryMarketProfile {
   max_correlation_with_positions?: number;
   estimated_portfolio_var_pct?: number;
   avg_turnover_yuan: number;
+  realtime_turnover_yuan?: number;
+  latest_price?: number;
+  price_source?: string;
+  quote_time?: string;
+  quote_age_minutes?: number;
+  quote_trade_date?: string;
+  quote_freshness_status?: string;
+  from_realtime?: boolean;
   latest_date?: string;
   cooldown_hit?: {
     exit_date?: string;
@@ -499,6 +529,7 @@ export interface PaperTradingRiskExitItem {
   sell_signal_id?: number;
   sell_signal_date?: string;
   sell_signal_score?: number;
+  execution_reality_decision?: ExecutionRealityDecision;
   trade_id?: number;
   message?: string;
 }
@@ -691,6 +722,9 @@ function normalizeBudgetActionKey(value: any): string {
 function normalizeSkipReasonCategory(reason?: string): string {
   const text = String(reason || '').trim();
   if (!text) return 'unknown';
+  if (text.includes('执行可行性') || text.includes('涨停') || text.includes('跌停')) {
+    return 'execution_reality';
+  }
   if (text.includes('已持有') || text.includes('重复加仓') || text.includes('执行过')) {
     return 'duplicate_or_existing_position';
   }
@@ -756,6 +790,13 @@ function normalizeRiskLevel(value: any): string {
   return String(value || '')
     .trim()
     .toLowerCase();
+}
+
+function quoteAgeMinutes(value?: Date | string | null): number | undefined {
+  if (!value) return undefined;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return undefined;
+  return Math.max(0, Math.round((Date.now() - date.getTime()) / 60000));
 }
 
 function getChinaToday(): string {
@@ -1375,6 +1416,20 @@ class PaperTradingAutomationService {
         skip('无法获取有效最新价格');
         continue;
       }
+      const executionRealityDecision = this.evaluateExecutionReality({
+        side: 'BUY',
+        profile: marketProfileWithPortfolioRisk,
+        quote,
+        min_avg_turnover_yuan: entryRiskGuard.min_avg_turnover_yuan,
+        block_limit_up: entryRiskGuard.block_limit_up,
+        block_limit_down: entryRiskGuard.block_limit_down,
+        block_suspended: entryRiskGuard.block_suspended,
+        block_st: entryRiskGuard.block_st,
+      });
+      if (!executionRealityDecision.allowed) {
+        skip(executionRealityDecision.reasons.join('；'));
+        continue;
+      }
 
       const strategyVariant = asPlainObject(metadata.strategy_variant);
       const externalStrategyBudgetDiscipline = asPlainObject(
@@ -1712,6 +1767,7 @@ class PaperTradingAutomationService {
         strategy_budget_confidence: strategyBudgetConfidence,
         strategy_budget_discipline: normalizedStrategyBudgetDiscipline,
         entry_risk_guard_decision: entryRiskGuardDecision,
+        execution_reality_decision: executionRealityDecision,
         stop_loss_pct: toOptionalNumber(metadata.stop_loss_pct),
         take_profit_pct: toOptionalNumber(metadata.take_profit_pct),
         reason: [
@@ -1770,6 +1826,7 @@ class PaperTradingAutomationService {
           strategy_budget_confidence: tradePayload.strategy_budget_confidence,
           strategy_budget_discipline: tradePayload.strategy_budget_discipline,
           entry_risk_guard_decision: tradePayload.entry_risk_guard_decision,
+          execution_reality_decision: tradePayload.execution_reality_decision,
           min_lot_sample: minLotSample || undefined,
           min_lot_sample_reason: minLotSampleReason || undefined,
           stop_loss_pct: tradePayload.stop_loss_pct,
@@ -2089,6 +2146,19 @@ class PaperTradingAutomationService {
       const positionTrailingDrawdownPct = adaptiveRiskPolicy.effective_trailing_drawdown_pct;
       const quote = await this.getLatestPrice(symbol, toNumber(position.current_price, 0));
       const latestPrice = quote.price || toNumber(position.current_price, 0);
+      const marketProfile = await this.getEntryMarketProfile(symbol, {
+        cooldown_days_after_loss: 0,
+      });
+      const executionRealityDecision = this.evaluateExecutionReality({
+        side: 'SELL',
+        profile: marketProfile,
+        quote,
+        min_avg_turnover_yuan: 0,
+        block_limit_up: false,
+        block_limit_down: true,
+        block_suspended: true,
+        block_st: false,
+      });
       const pnlPct = avgCost > 0 ? roundNumber(((latestPrice - avgCost) / avgCost) * 100, 4) : 0;
       const trailingStats = await this.computePositionPeakProfit({
         symbol,
@@ -2119,6 +2189,7 @@ class PaperTradingAutomationService {
             ? trailingStats.trailing_stop_price
             : undefined,
         source_signal_id: sourceSignal?.id,
+        execution_reality_decision: executionRealityDecision,
       };
 
       const skip = (message: string) => {
@@ -2193,6 +2264,11 @@ class PaperTradingAutomationService {
         continue;
       }
 
+      if (!executionRealityDecision.allowed) {
+        skip(executionRealityDecision.reasons.join('；'));
+        continue;
+      }
+
       const execute_price = roundNumber(latestPrice * (1 - this.slippageRate), 3);
       const amount = roundNumber(execute_price * quantity, 2);
       const commission = roundNumber(amount * this.commissionRate, 2);
@@ -2212,6 +2288,7 @@ class PaperTradingAutomationService {
         sell_signal_id: sellSignal?.id,
         sell_signal_date: sellSignal?.signal_date,
         sell_signal_score: toOptionalNumber(sellSignal?.confidence_score),
+        execution_reality_decision: executionRealityDecision,
       };
 
       if (!dry_run) {
@@ -2251,6 +2328,7 @@ class PaperTradingAutomationService {
             trailing_activation_pct: positionTrailingActivationPct,
             trailing_drawdown_pct: positionTrailingDrawdownPct,
             adaptive_risk_policy: adaptiveRiskPolicy,
+            execution_reality_decision: executionRealityDecision,
           });
           await this.refreshRecommendationTradeOutcome(sourceSignal.id);
         }
@@ -2337,11 +2415,35 @@ class PaperTradingAutomationService {
   private async getLatestPrice(
     symbol: string,
     fallbackPrice = 0
-  ): Promise<{ price: number; name?: string; date?: string }> {
+  ): Promise<{
+    price: number;
+    name?: string;
+    date?: string;
+    source?: string;
+    quote_time?: string;
+  }> {
     const normalizedSymbol = normalizeSymbol(symbol);
     const stock = await Stock.findOne({ where: { symbol: normalizedSymbol } });
     if (!stock) {
-      return { price: roundNumber(fallbackPrice, 4), name: normalizedSymbol };
+      return { price: roundNumber(fallbackPrice, 4), name: normalizedSymbol, source: 'fallback' };
+    }
+
+    const latestRealtime = await RealtimeQuote.findOne({
+      where: { symbol: normalizedSymbol },
+      order: [['quote_time', 'DESC']],
+    }).catch(() => null);
+    if (latestRealtime?.current_price && toNumber(latestRealtime.current_price, 0) > 0) {
+      return {
+        price: roundNumber(toNumber(latestRealtime.current_price, fallbackPrice), 4),
+        name: latestRealtime.name || stock.name,
+        date:
+          latestRealtime.trade_date ||
+          (latestRealtime.quote_time
+            ? moment(latestRealtime.quote_time).tz('Asia/Shanghai').format('YYYY-MM-DD')
+            : ''),
+        source: latestRealtime.source || 'realtime_quote',
+        quote_time: latestRealtime.quote_time?.toISOString(),
+      };
     }
 
     const latestBar = await DailyBar.findOne({
@@ -2354,6 +2456,7 @@ class PaperTradingAutomationService {
       price: roundNumber(price, 4),
       name: stock.name,
       date: latestBar?.time ? moment(latestBar.time).tz('Asia/Shanghai').format('YYYY-MM-DD') : '',
+      source: latestBar ? 'daily_bar' : 'stock_snapshot',
     };
   }
 
@@ -3364,8 +3467,21 @@ class PaperTradingAutomationService {
       validTurnovers.length > 0
         ? validTurnovers.reduce((sum, value) => sum + value, 0) / validTurnovers.length
         : 0;
+    const latestQuote = await RealtimeQuote.findOne({
+      where: { symbol: normalizedSymbol },
+      order: [['quote_time', 'DESC']],
+    }).catch(() => null);
     const name = stock?.name || normalizedSymbol;
-    const latestChangePercent = toOptionalNumber(latest?.change_percent ?? stock?.change_percent);
+    const latestChangePercent = toOptionalNumber(
+      latestQuote?.change_percent ?? latest?.change_percent ?? stock?.change_percent
+    );
+    const latestQuoteTime = latestQuote?.quote_time;
+    const latestQuoteAgeMinutes = quoteAgeMinutes(latestQuoteTime);
+    const latestQuoteTradeDate =
+      latestQuote?.trade_date ||
+      (latestQuoteTime ? moment(latestQuoteTime).tz('Asia/Shanghai').format('YYYY-MM-DD') : '');
+    const realtimeTurnover = toOptionalNumber(latestQuote?.turnover);
+    const realtimePrice = toOptionalNumber(latestQuote?.current_price);
     const cooldownHit =
       options.cooldown_days_after_loss > 0
         ? await RecommendationTradeOutcome.findOne({
@@ -3400,6 +3516,21 @@ class PaperTradingAutomationService {
       volatility_20d_pct: roundNumber(volatility20d, 2),
       recent_returns_20d: dailyReturns.slice(-20).map(value => roundNumber(value, 4)),
       avg_turnover_yuan: roundNumber(avgTurnover, 2),
+      realtime_turnover_yuan: realtimeTurnover,
+      latest_price: realtimePrice || toOptionalNumber(latest?.close ?? stock?.price),
+      price_source: latestQuote
+        ? latestQuote.source || 'realtime_quote'
+        : latest
+        ? 'daily_bar'
+        : 'stock_snapshot',
+      quote_time: latestQuoteTime?.toISOString(),
+      quote_age_minutes: latestQuoteAgeMinutes,
+      quote_trade_date: latestQuoteTradeDate,
+      quote_freshness_status:
+        latestQuoteTime && latestQuoteAgeMinutes !== undefined && latestQuoteAgeMinutes <= 30
+          ? 'fresh'
+          : 'stale_or_missing',
+      from_realtime: Boolean(latestQuote),
       latest_date: latest?.time ? moment(latest.time).tz('Asia/Shanghai').format('YYYY-MM-DD') : '',
       cooldown_hit: cooldownHit
         ? {
@@ -3606,6 +3737,101 @@ class PaperTradingAutomationService {
     }
 
     return { allowed: reasons.length === 0, reasons };
+  }
+
+  private evaluateExecutionReality(options: {
+    side: ExecutionSide;
+    profile: EntryMarketProfile;
+    quote?: { price?: number; source?: string; date?: string; quote_time?: string };
+    min_avg_turnover_yuan?: number;
+    block_limit_up?: boolean;
+    block_limit_down?: boolean;
+    block_suspended?: boolean;
+    block_st?: boolean;
+  }): ExecutionRealityDecision {
+    const { side, profile } = options;
+    const checks: Record<string, any> = {
+      block_st: options.block_st !== false,
+      block_suspended: options.block_suspended !== false,
+      block_limit_up: options.block_limit_up !== false,
+      block_limit_down: options.block_limit_down !== false,
+      min_avg_turnover_yuan: roundNumber(options.min_avg_turnover_yuan || 0, 2),
+      latest_change_percent: profile.latest_change_percent,
+      data_status: profile.data_status,
+      quote_freshness_status: profile.quote_freshness_status,
+    };
+    const reasons: string[] = [];
+    const quotePrice = toOptionalNumber(options.quote?.price);
+    const price = quotePrice || profile.latest_price;
+    const turnover = toOptionalNumber(profile.realtime_turnover_yuan);
+    const avgTurnover = toNumber(profile.avg_turnover_yuan, 0);
+    const effectiveTurnover = Math.max(toNumber(turnover, 0), avgTurnover);
+    const minTurnover = toNumber(options.min_avg_turnover_yuan, 0);
+
+    if (!price || price <= 0) {
+      reasons.push('执行可行性：没有有效现价，无法模拟成交');
+    }
+    if (options.block_st !== false && profile.is_st && side === 'BUY') {
+      reasons.push('执行可行性：ST/退市风险标的禁止新增买入');
+    }
+    if (options.block_suspended !== false && profile.is_suspended) {
+      reasons.push('执行可行性：最新交易日停牌，无法成交');
+    }
+    if (profile.data_status && ['no_data', 'conflict'].includes(profile.data_status)) {
+      reasons.push(`执行可行性：数据状态 ${profile.data_status}，成交假设不可信`);
+    }
+    if (side === 'BUY' && options.block_limit_up !== false && profile.is_limit_up) {
+      reasons.push(
+        `执行可行性：涨幅 ${profile.latest_change_percent ?? '--'}%，疑似涨停，买入可能排队无法成交`
+      );
+    }
+    if (side === 'SELL' && options.block_limit_down !== false && profile.is_limit_down) {
+      reasons.push(
+        `执行可行性：跌幅 ${profile.latest_change_percent ?? '--'}%，疑似跌停，卖出可能无法成交`
+      );
+    }
+    if (
+      side === 'BUY' &&
+      minTurnover > 0 &&
+      effectiveTurnover > 0 &&
+      effectiveTurnover < minTurnover
+    ) {
+      reasons.push(
+        `执行可行性：成交额约 ${Math.round(effectiveTurnover / 10000)} 万，低于阈值 ${Math.round(
+          minTurnover / 10000
+        )} 万`
+      );
+    }
+
+    const allowed = reasons.length === 0;
+    const quoteTime = options.quote?.quote_time || profile.quote_time;
+    const quoteAge = quoteAgeMinutes(quoteTime) ?? profile.quote_age_minutes;
+    return {
+      allowed,
+      side,
+      action: allowed ? 'allow' : 'reject',
+      label: allowed
+        ? `${side === 'BUY' ? '买入' : '卖出'}可模拟成交：价格/流动性/涨跌停检查通过`
+        : `${side === 'BUY' ? '买入' : '卖出'}执行受限：${compactText(reasons[0], 48)}`,
+      reasons: reasons.slice(0, 8),
+      price: price ? roundNumber(price, 4) : undefined,
+      price_source: options.quote?.source || profile.price_source || 'unknown',
+      quote_time: quoteTime,
+      quote_trade_date: profile.quote_trade_date || options.quote?.date,
+      quote_age_minutes: quoteAge,
+      change_percent: profile.latest_change_percent,
+      turnover,
+      avg_turnover_yuan: avgTurnover ? roundNumber(avgTurnover, 2) : undefined,
+      from_realtime: Boolean(profile.from_realtime || options.quote?.source === 'realtime_quote'),
+      checks: {
+        ...checks,
+        is_st: profile.is_st,
+        is_suspended: profile.is_suspended,
+        is_limit_up: profile.is_limit_up,
+        is_limit_down: profile.is_limit_down,
+        effective_turnover_yuan: effectiveTurnover ? roundNumber(effectiveTurnover, 2) : undefined,
+      },
+    };
   }
 
   private buildEntryRiskGuardDecision(options: {
@@ -4545,6 +4771,7 @@ class PaperTradingAutomationService {
     const loop_run_id = signal.loop_run_id || metadata.loop_run_id || execution.loop_run_id;
     const strategyBudgetDiscipline = asPlainObject(execution.strategy_budget_discipline);
     const entryRiskGuardDecision = asPlainObject(execution.entry_risk_guard_decision);
+    const executionRealityDecision = asPlainObject(execution.execution_reality_decision);
     const portfolioId = Number(execution.portfolio_id);
     const paperTrading = {
       ...paperTradingMetaForPortfolio(metadata, portfolioId),
@@ -4573,6 +4800,10 @@ class PaperTradingAutomationService {
             Object.keys(entryRiskGuardDecision).length > 0
               ? entryRiskGuardDecision
               : metadata.entry_risk_guard_decision,
+          execution_reality_decision:
+            Object.keys(executionRealityDecision).length > 0
+              ? executionRealityDecision
+              : metadata.execution_reality_decision,
         },
         portfolioId,
         paperTrading

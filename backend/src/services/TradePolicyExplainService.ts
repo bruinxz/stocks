@@ -16,6 +16,7 @@ export interface TradePolicyExplain {
   environment_budget: Record<string, any>;
   risk_gate: Record<string, any>;
   entry_risk_guard: Record<string, any>;
+  execution_reality: Record<string, any>;
   profit_gate: Record<string, any>;
   outcome_feedback: Record<string, any>;
   data_quality: Record<string, any>;
@@ -424,6 +425,7 @@ export function buildTradePolicyExplain(input: {
   const entryGuardRaw = asPlainObject(
     metadata.entry_risk_guard || signalMetadata.entry_risk_guard || paperTrading.entry_risk_guard
   );
+  const entryChecks = asPlainObject(entryDecision.checks);
   const entryRiskGuard = {
     allowed:
       entryDecision.allowed !== undefined
@@ -438,6 +440,8 @@ export function buildTradePolicyExplain(input: {
     ),
     risk_notes: Array.isArray(entryDecision.risk_notes)
       ? entryDecision.risk_notes.slice(0, 4)
+      : Array.isArray(entryDecision.reasons)
+      ? entryDecision.reasons.slice(0, 4)
       : Array.isArray(entryGuardRaw.risk_notes)
       ? entryGuardRaw.risk_notes.slice(0, 4)
       : [],
@@ -448,8 +452,43 @@ export function buildTradePolicyExplain(input: {
     today_buy_count: firstNumber(entryDecision.today_buy_count, entryGuardRaw.today_buy_count),
     max_daily_new_positions: firstNumber(
       entryDecision.max_daily_new_positions,
+      entryChecks.max_daily_new_positions,
       entryGuardRaw.max_daily_new_positions
     ),
+    candidate_position_pct: firstNumber(entryDecision.candidate_position_pct),
+    estimated_cash_pct: firstNumber(entryChecks.estimated_cash_pct),
+    next_total_exposure_pct: firstNumber(entryChecks.next_total_exposure_pct),
+    next_daily_exposure_pct: firstNumber(entryChecks.next_daily_exposure_pct),
+  };
+
+  const executionRealityRaw = asPlainObject(
+    metadata.execution_reality_decision ||
+      signalMetadata.execution_reality_decision ||
+      paperTrading.execution_reality_decision
+  );
+  const executionRealityChecks = asPlainObject(executionRealityRaw.checks);
+  const executionReality = {
+    ...executionRealityRaw,
+    allowed: executionRealityRaw.allowed !== false,
+    label: firstText(executionRealityRaw.label, executionRealityRaw.action_label),
+    reason: compactText(
+      firstText(
+        executionRealityRaw.reason,
+        executionRealityRaw.message,
+        Array.isArray(executionRealityRaw.reasons) ? executionRealityRaw.reasons[0] : ''
+      ),
+      180
+    ),
+    side: firstText(executionRealityRaw.side),
+    price: firstNumber(executionRealityRaw.price),
+    price_source: firstText(executionRealityRaw.price_source),
+    quote_age_minutes: firstNumber(executionRealityRaw.quote_age_minutes),
+    change_percent: firstNumber(executionRealityRaw.change_percent),
+    avg_turnover_yuan: firstNumber(executionRealityRaw.avg_turnover_yuan),
+    effective_turnover_yuan: firstNumber(executionRealityChecks.effective_turnover_yuan),
+    is_limit_up: executionRealityChecks.is_limit_up === true,
+    is_limit_down: executionRealityChecks.is_limit_down === true,
+    is_suspended: executionRealityChecks.is_suspended === true,
   };
 
   const profitGateRaw = asPlainObject(
@@ -528,6 +567,7 @@ export function buildTradePolicyExplain(input: {
     riskGateActionKey === 'block' ||
     budgetAction === 'pause' ||
     entryRiskGuard.allowed === false ||
+    executionReality.allowed === false ||
     profitGate.allow_entries === false ||
     outcomeFeedback.allow_entries === false;
   const allowed = !blocked;
@@ -560,6 +600,7 @@ export function buildTradePolicyExplain(input: {
     hasMeaningfulValue(riskGateRaw) ||
     hasMeaningfulValue(entryDecision) ||
     hasMeaningfulValue(entryGuardRaw) ||
+    hasMeaningfulValue(executionRealityRaw) ||
     hasMeaningfulValue(profitGateRaw) ||
     hasMeaningfulValue(outcomeFeedbackRaw) ||
     hasAnyMeaningfulValue(
@@ -587,6 +628,7 @@ export function buildTradePolicyExplain(input: {
       environmentBudget.reason,
       riskGate.reason,
       entryRiskGuard.reason,
+      executionReality.reason,
       profitGate.reason,
       outcomeFeedback.reason,
     ]
@@ -641,6 +683,13 @@ export function buildTradePolicyExplain(input: {
           tone: entryRiskGuard.allowed ? 'success' : 'danger',
         }
       : null,
+    executionReality.label
+      ? {
+          label: '执行可行性',
+          value: executionReality.label,
+          tone: executionReality.allowed ? 'success' : 'danger',
+        }
+      : null,
     profitGate.enabled && profitGate.effective_position_multiplier !== undefined
       ? {
           label: '收益闸门',
@@ -667,6 +716,7 @@ export function buildTradePolicyExplain(input: {
     environment_budget: environmentBudget,
     risk_gate: riskGate,
     entry_risk_guard: entryRiskGuard,
+    execution_reality: executionReality,
     profit_gate: profitGate,
     outcome_feedback: outcomeFeedback,
     data_quality: dataQuality,

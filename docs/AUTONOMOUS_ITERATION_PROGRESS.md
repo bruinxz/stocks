@@ -993,3 +993,38 @@ Next:
 1. Deploy main + lym and verify online smoke passes.
 2. Start P1 simulated execution realism: create/order-intent style checks for suspension, limit-up/down, liquidity, ST and minimum turnover before simulated BUY/SELL.
 3. Surface these execution-realism decisions in signal trace, paper-trading detail and outcome attribution.
+
+## 2026-05-21 continuous iteration: paper trading execution realism lane
+
+Focus: make simulated trading closer to real A-share execution, so recommendation PnL is not based on unrealistic fills.
+
+Completed:
+
+- Paper-trading auto-buy now performs an explicit `execution_reality_decision` before creating a simulated BUY:
+  - prefers persisted realtime quote price over stale daily close;
+  - blocks ST/new 退市-risk buys when configured;
+  - blocks suspended stocks;
+  - blocks likely limit-up buys because they may not fill;
+  - checks realtime/daily turnover against the liquidity threshold;
+  - records price source, quote time, quote age, turnover, limit-up/down and suspension checks.
+- Paper-trading sell/risk-exit now performs the same execution reality check for SELL:
+  - blocks suspended positions;
+  - blocks likely limit-down sells because they may not fill;
+  - records the sell-side execution decision in exit items and paper-trading metadata.
+- Recommendation trade outcome metadata now persists `execution_reality_decision`, and policy replay exposes it beside strategy budget and entry-risk guard.
+- Trade policy replay UI now shows execution price, post-buy cash, execution feasibility label, change percent and turnover, making each BUY/SELL easier to audit.
+- Read-only smoke now verifies recommendation outcome policy replay still includes entry-risk guard and valid execution reality shape when present.
+
+Validation:
+
+```bash
+./backend/node_modules/.bin/tsc --noEmit --project backend/tsconfig.json
+./frontend/node_modules/.bin/tsc --noEmit --project frontend/tsconfig.json
+git diff --check
+```
+
+Next:
+
+1. Run full frontend production build and deploy main + lym.
+2. Add a dedicated order-intent table/service if we need to persist rejected/partially-filled opportunities even when no simulated trade is created.
+3. Add execution-reality attribution buckets: which fills were rejected/allowed, and how rejected opportunities would have performed later.
