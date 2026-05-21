@@ -295,6 +295,7 @@ class QuantOpeningPreflightService {
       notify_to_feishu_bot: false,
       refresh_realtime_quotes: true,
       quote_sync_limit: Math.min(Math.max(Number(options.limit || 80), 20), 180),
+      realtime_quote_source: 'auto',
       sync_factors_before_scan: true,
       factor_sync_scope: 'market',
       factor_sync_limit: Math.min(Math.max(Number(options.limit || 80), 20), 220),

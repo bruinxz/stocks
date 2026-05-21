@@ -589,9 +589,11 @@ class SchedulerService {
           ),
           quote_sync_limit: this.toPositiveInt(
             parameters.quote_sync_limit || parameters.quoteSyncLimit,
-            parameters.candidate_limit || parameters.candidateLimit || 220,
+            Math.max(Number(parameters.candidate_limit || parameters.candidateLimit || 220), 360),
             1000
           ),
+          realtime_quote_source:
+            parameters.realtime_quote_source || parameters.realtimeQuoteSource || 'auto',
           min_score: Number(parameters.min_score || parameters.minScore || 55),
           archive_limit: this.toPositiveInt(
             parameters.archive_limit || parameters.archiveLimit,
@@ -1977,7 +1979,8 @@ class SchedulerService {
           factor_provider: 'auto',
           factor_sync_skip_if_coverage_rate_gte: 92,
           factor_sync_skip_if_real_provider_rate_gte: 65,
-          quote_sync_limit: 220,
+          quote_sync_limit: 360,
+          realtime_quote_source: 'auto',
           min_score: 55,
           archive_limit: 30,
           max_industry_candidates: 4,
@@ -2063,7 +2066,8 @@ class SchedulerService {
           factor_provider: 'auto',
           factor_sync_skip_if_coverage_rate_gte: 92,
           factor_sync_skip_if_real_provider_rate_gte: 65,
-          quote_sync_limit: 220,
+          quote_sync_limit: 360,
+          realtime_quote_source: 'auto',
           min_score: 55,
           archive_limit: 30,
           max_industry_candidates: 4,
@@ -2641,6 +2645,7 @@ class SchedulerService {
           'factor_sync_skip_if_coverage_rate_gte',
           'factor_sync_skip_if_real_provider_rate_gte',
           'quote_sync_limit',
+          'realtime_quote_source',
           'min_score',
           'archive_limit',
           'max_industry_candidates',

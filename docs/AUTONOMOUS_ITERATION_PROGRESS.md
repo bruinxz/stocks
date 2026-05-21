@@ -37,6 +37,7 @@ Known frontend build warnings are historical Prettier warnings in existing files
 - 数据更真实：
   - 新增 `REALTIME_QUOTE_SYNC` 定时任务类型，通过 `RealtimeQuoteService.syncQuotesForSymbols()` 独立刷新盘中实时行情快照。
   - 默认任务「实时行情快照刷新」已加入 `ensureDefaultTasks()`，工作日 `09:05/09:25/10:05/10:25/13:05/13:25/14:05/14:25` 执行，默认全市场排序样本 360，只落盘不发送飞书噪音。
+  - 量化开盘/收盘扫描默认 `quote_sync_limit` 从 220 提升为 360，并显式使用 `realtime_quote_source=auto`，评分前优先走 AKShare，失败自动降级腾讯行情。
 - 纪律更可执行：
   - `QuantRuntimeHealthService` 的执行纪律纳入盘中行情刷新任务；若任务缺失会给出观察项。
   - 行情滞后时，如果盘中刷新任务已启用则作为 warn/降仓观察；若任务缺失则提升为阻断风险。
