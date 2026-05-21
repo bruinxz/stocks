@@ -77,6 +77,7 @@ interface FactorSyncOptions {
   provider?: FactorProviderName;
   prefer_real_provider?: boolean;
   skip_if_coverage_rate_gte?: number;
+  skip_if_real_provider_rate_gte?: number;
 }
 
 export interface FactorCoverage {
@@ -528,6 +529,8 @@ export class StockFactorService {
         {
           concurrency: Number(process.env.EASTMONEY_FACTOR_CONCURRENCY || 5),
           limit: stocks.length,
+          chunkSize: Number(process.env.EASTMONEY_FACTOR_BATCH_SIZE || 80),
+          preferBatch: process.env.EASTMONEY_FACTOR_BATCH_ENABLED !== 'false',
         }
       )
       .catch(error => {
@@ -764,11 +767,13 @@ export class StockFactorService {
     const stocks = await this.resolveStocks(options);
     const providerPlan = this.getProviderPlan(options);
     const skipThreshold = Number(options.skip_if_coverage_rate_gte || 0);
-    if (skipThreshold > 0 && stocks.length > 0) {
+    const skipRealProviderThreshold = Number(options.skip_if_real_provider_rate_gte ?? 65);
+    if ((skipThreshold > 0 || skipRealProviderThreshold > 0) && stocks.length > 0) {
       const coverage = await this.getCoverage({
         ...options,
         limit: stocks.length,
         skip_if_coverage_rate_gte: undefined,
+        skip_if_real_provider_rate_gte: undefined,
       });
       const minCoverageRate = Math.min(
         Number(coverage.coverage_rate.valuation || 0),
@@ -782,7 +787,9 @@ export class StockFactorService {
       const shouldSkip =
         coverage.latest_trade_date &&
         minCoverageRate >= skipThreshold &&
-        (!requiresRealProvider || realProviderRate >= 10);
+        (!requiresRealProvider ||
+          skipRealProviderThreshold <= 0 ||
+          realProviderRate >= skipRealProviderThreshold);
       if (shouldSkip) {
         return {
           generated_at: new Date().toISOString(),
@@ -791,7 +798,11 @@ export class StockFactorService {
           skip_reason: `因子覆盖率 ${round(
             minCoverageRate,
             2
-          )}% 已达到阈值 ${skipThreshold}%，本轮跳过重复落盘。`,
+          )}% 已达到阈值 ${skipThreshold}%${
+            requiresRealProvider
+              ? `，真实源占比 ${round(realProviderRate, 2)}% 已达到阈值 ${skipRealProviderThreshold}%`
+              : ''
+          }，本轮跳过重复落盘。`,
           provider_plan: providerPlan,
           requested_stock_count: stocks.length,
           processed_stock_count: 0,
@@ -802,6 +813,7 @@ export class StockFactorService {
             latest_trade_date: coverage.latest_trade_date,
             coverage_rate: coverage.coverage_rate,
             source_breakdown: coverage.source_breakdown,
+            real_provider_rate: coverage.source_quality?.real_provider_rate,
           },
           message: '因子覆盖率已达标，跳过重复同步以缩短开盘扫描耗时。',
         };

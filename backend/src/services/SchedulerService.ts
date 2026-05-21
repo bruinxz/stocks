@@ -483,6 +483,11 @@ class SchedulerService {
               parameters.factorSyncSkipIfCoverageRateGte ??
               92
           ),
+          factor_sync_skip_if_real_provider_rate_gte: Number(
+            parameters.factor_sync_skip_if_real_provider_rate_gte ??
+              parameters.factorSyncSkipIfRealProviderRateGte ??
+              65
+          ),
           quote_sync_limit: this.toPositiveInt(
             parameters.quote_sync_limit || parameters.quoteSyncLimit,
             parameters.candidate_limit || parameters.candidateLimit || 220,
@@ -1857,6 +1862,7 @@ class SchedulerService {
           factor_sync_limit: 220,
           factor_provider: 'auto',
           factor_sync_skip_if_coverage_rate_gte: 92,
+          factor_sync_skip_if_real_provider_rate_gte: 65,
           quote_sync_limit: 220,
           min_score: 55,
           archive_limit: 30,
@@ -1942,6 +1948,7 @@ class SchedulerService {
           factor_sync_limit: 220,
           factor_provider: 'auto',
           factor_sync_skip_if_coverage_rate_gte: 92,
+          factor_sync_skip_if_real_provider_rate_gte: 65,
           quote_sync_limit: 220,
           min_score: 55,
           archive_limit: 30,
@@ -2497,6 +2504,7 @@ class SchedulerService {
           'factor_sync_limit',
           'factor_provider',
           'factor_sync_skip_if_coverage_rate_gte',
+          'factor_sync_skip_if_real_provider_rate_gte',
           'quote_sync_limit',
           'min_score',
           'archive_limit',

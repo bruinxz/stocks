@@ -191,7 +191,9 @@ class QuantRuntimeHealthService {
     const factorStatus =
       (factorCoverage as any)?.error || factorMinCoverage < 45
         ? 'risk'
-        : factorMinCoverage < 70 || factorCoverageStatus === 'limited'
+        : factorMinCoverage < 70 ||
+          factorCoverageStatus === 'limited' ||
+          (factorMinCoverage >= 70 && factorRealProviderRate < 10)
         ? 'warn'
         : 'ok';
     const checks: RuntimeHealthCheck[] = [

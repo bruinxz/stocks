@@ -618,7 +618,10 @@ const DataUpdateStatus: React.FC = () => {
     try {
       const response = await api.post('/market/factors/sync', {
         scope: 'market',
-        limit: 180,
+        limit: 220,
+        provider: 'auto',
+        skip_if_coverage_rate_gte: 92,
+        skip_if_real_provider_rate_gte: 65,
       });
       if (response.data.success) {
         message.success(response.data.message || '因子落盘完成');
@@ -1814,8 +1817,8 @@ const DataUpdateStatus: React.FC = () => {
         <Alert
           showIcon
           type="info"
-          message="因子层已独立建模，已支持 Tushare 增强通道 + 本地派生兜底"
-          description="默认 provider=auto：若 TUSHARE_ENABLED=true 且配置 token，会优先尝试 daily_basic / moneyflow / fina_indicator；失败或未配置时继续使用 local_derived 免费因子，策略读取层无需改动。"
+          message="因子层已独立建模，已支持东方财富批量真实快照 + Tushare 增强 + 本地派生兜底"
+          description="默认 provider=auto：优先补充东方财富实时价格、估值、市值、换手率和资金流代理；若 TUSHARE_ENABLED=true 且配置 token，会进一步尝试 daily_basic / moneyflow / fina_indicator；真实源不足时再使用 local_derived 兜底。"
           style={{ marginBottom: 12 }}
         />
         <Row gutter={[12, 12]} style={{ marginBottom: 12 }}>

@@ -1465,6 +1465,8 @@ export class MarketController {
         as_of,
         provider = 'auto',
         prefer_real_provider,
+        skip_if_coverage_rate_gte,
+        skip_if_real_provider_rate_gte,
       } = req.body || {};
       const symbolList = Array.isArray(symbols)
         ? symbols
@@ -1483,6 +1485,12 @@ export class MarketController {
         provider,
         prefer_real_provider:
           prefer_real_provider === undefined ? undefined : Boolean(prefer_real_provider),
+        skip_if_coverage_rate_gte:
+          skip_if_coverage_rate_gte === undefined ? undefined : Number(skip_if_coverage_rate_gte),
+        skip_if_real_provider_rate_gte:
+          skip_if_real_provider_rate_gte === undefined
+            ? undefined
+            : Number(skip_if_real_provider_rate_gte),
       });
       res.json({
         success: true,

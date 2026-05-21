@@ -39,6 +39,8 @@ export interface QueryParams {
   adjustflag?: '1' | '2' | '3'; // 复权类型
 }
 
+type EastMoneySnapshotPayloadMode = 'stock_get' | 'quote_list';
+
 export interface EastMoneyQuoteSnapshot {
   symbol: string;
   name?: string;
@@ -63,6 +65,7 @@ export interface EastMoneyQuoteSnapshot {
   main_net_inflow?: number;
   roe?: number;
   gross_margin?: number;
+  payload_mode?: EastMoneySnapshotPayloadMode;
   raw_payload: Record<string, any>;
 }
 
@@ -248,6 +251,20 @@ export class EastMoneyClient {
     return { market: '0', stockCode: normalizedCode };
   }
 
+  private toSecId(code: string): string {
+    const { market, stockCode } = this.parseSecId(code);
+    return `${market}.${stockCode}`;
+  }
+
+  private normalizeEastMoneyCode(code: any, market: any): string {
+    const stockCode = String(code || '').trim();
+    if (!stockCode) return '';
+    const marketCode = String(market ?? '').trim();
+    if (marketCode === '1') return normalizeSymbol(`sh.${stockCode}`);
+    if (/^(8|4|9)\d{5}$/.test(stockCode)) return normalizeSymbol(`bj.${stockCode}`);
+    return normalizeSymbol(`sz.${stockCode}`);
+  }
+
   private toNumber(value: any): number | undefined {
     if (value === null || value === undefined || value === '' || value === '-') return undefined;
     const parsed = Number(value);
@@ -257,6 +274,11 @@ export class EastMoneyClient {
   private scaled(value: any, divisor = 100): number | undefined {
     const parsed = this.toNumber(value);
     return parsed === undefined ? undefined : parsed / divisor;
+  }
+
+  private lotsToShares(value: any): number | undefined {
+    const parsed = this.toNumber(value);
+    return parsed === undefined ? undefined : parsed * 100;
   }
 
   private compactDate(value = new Date()): string {
@@ -280,7 +302,9 @@ export class EastMoneyClient {
       change_amount: this.scaled(payload.f169),
       change_percent: this.scaled(payload.f170),
       volume:
-        this.toNumber(payload.f47) === undefined ? undefined : Number(this.toNumber(payload.f47)) * 100,
+        this.toNumber(payload.f47) === undefined
+          ? undefined
+          : Number(this.toNumber(payload.f47)) * 100,
       turnover: this.toNumber(payload.f48),
       turnover_rate: this.scaled(payload.f168),
       pe_ttm: this.scaled(payload.f162),
@@ -292,6 +316,37 @@ export class EastMoneyClient {
       main_net_inflow: this.toNumber(payload.f62),
       roe: this.toNumber(payload.f173),
       gross_margin: this.scaled(payload.f174),
+      payload_mode: 'stock_get',
+      raw_payload: payload,
+    };
+  }
+
+  private buildQuoteListSnapshot(payload: Record<string, any>): EastMoneyQuoteSnapshot | null {
+    const symbol = this.normalizeEastMoneyCode(payload.f12, payload.f13);
+    if (!symbol) return null;
+    const quoteTime = new Date().toISOString();
+    const peTtm = this.toNumber(payload.f115) ?? this.toNumber(payload.f9);
+    return {
+      symbol,
+      name: payload.f14,
+      quote_time: quoteTime,
+      quote_date: this.compactDate(new Date()),
+      current_price: this.toNumber(payload.f2),
+      previous_close: this.toNumber(payload.f18),
+      open: this.toNumber(payload.f17),
+      high: this.toNumber(payload.f15),
+      low: this.toNumber(payload.f16),
+      change_amount: this.toNumber(payload.f4),
+      change_percent: this.toNumber(payload.f3),
+      volume: this.lotsToShares(payload.f5),
+      turnover: this.toNumber(payload.f6),
+      turnover_rate: this.toNumber(payload.f8),
+      pe_ttm: peTtm,
+      pb: this.toNumber(payload.f23),
+      total_market_cap: this.toNumber(payload.f20),
+      circulating_market_cap: this.toNumber(payload.f21),
+      main_net_inflow: this.toNumber(payload.f62),
+      payload_mode: 'quote_list',
       raw_payload: payload,
     };
   }
@@ -306,10 +361,9 @@ export class EastMoneyClient {
   async getQuoteSnapshot(code: string): Promise<EastMoneyQuoteSnapshot | null> {
     try {
       const normalizedCode = normalizeSymbol(code);
-      const { market, stockCode } = this.parseSecId(normalizedCode);
       const response = await this.client.get('/api/qt/stock/get', {
         params: {
-          secid: `${market}.${stockCode}`,
+          secid: this.toSecId(normalizedCode),
           fields:
             'f43,f44,f45,f46,f47,f48,f57,f58,f60,f62,f84,f85,f116,f117,f162,f167,f168,f169,f170,f173,f174',
         },
@@ -319,18 +373,116 @@ export class EastMoneyClient {
       if (!responseData.data) return null;
       return this.buildQuoteSnapshot(normalizedCode, responseData.data);
     } catch (error) {
-      logger.warn(`Failed to fetch EastMoney quote snapshot for ${code}: ${(error as any)?.message || error}`);
+      logger.warn(
+        `Failed to fetch EastMoney quote snapshot for ${code}: ${(error as any)?.message || error}`
+      );
       return null;
     }
   }
 
+  async getQuoteSnapshotsByBatch(
+    codes: string[],
+    options: { chunkSize?: number; limit?: number } = {}
+  ): Promise<EastMoneyQuoteSnapshot[]> {
+    const normalizedCodes = [...new Set((codes || []).map(normalizeSymbol).filter(Boolean))];
+    const limit = Math.min(Math.max(Number(options.limit || normalizedCodes.length), 1), 2000);
+    const queue = normalizedCodes.slice(0, limit);
+    const chunkSize = Math.min(Math.max(Number(options.chunkSize || 80), 10), 120);
+    const results: EastMoneyQuoteSnapshot[] = [];
+    const fields = [
+      'f2',
+      'f3',
+      'f4',
+      'f5',
+      'f6',
+      'f8',
+      'f9',
+      'f12',
+      'f13',
+      'f14',
+      'f15',
+      'f16',
+      'f17',
+      'f18',
+      'f20',
+      'f21',
+      'f23',
+      'f62',
+      'f115',
+      'f152',
+    ].join(',');
+
+    for (let start = 0; start < queue.length; start += chunkSize) {
+      const chunk = queue.slice(start, start + chunkSize);
+      const response = await this.client.get('/api/qt/ulist.np/get', {
+        params: {
+          fltt: 2,
+          invt: 2,
+          fields,
+          secids: chunk.map(symbol => this.toSecId(symbol)).join(','),
+        },
+      });
+      const responseData = this.unwrapResponse(response);
+      const rows = responseData.data?.diff || [];
+      if (!Array.isArray(rows)) continue;
+      for (const row of rows) {
+        const snapshot = this.buildQuoteListSnapshot(row);
+        if (
+          snapshot?.current_price !== undefined ||
+          snapshot?.pe_ttm !== undefined ||
+          snapshot?.pb !== undefined
+        ) {
+          results.push(snapshot);
+        }
+      }
+    }
+
+    return results;
+  }
+
   async getQuoteSnapshots(
     codes: string[],
-    options: { concurrency?: number; limit?: number } = {}
+    options: {
+      concurrency?: number;
+      limit?: number;
+      chunkSize?: number;
+      preferBatch?: boolean;
+    } = {}
   ): Promise<EastMoneyQuoteSnapshot[]> {
     const normalizedCodes = [...new Set((codes || []).map(normalizeSymbol).filter(Boolean))];
     const limit = Math.min(Math.max(Number(options.limit || normalizedCodes.length), 1), 1000);
     const queue = normalizedCodes.slice(0, limit);
+    const preferBatch = options.preferBatch !== false;
+    if (preferBatch && queue.length > 1) {
+      try {
+        const batchSnapshots = await this.getQuoteSnapshotsByBatch(queue, {
+          limit,
+          chunkSize: options.chunkSize,
+        });
+        const bySymbol = new Map(batchSnapshots.map(item => [normalizeSymbol(item.symbol), item]));
+        const missing = queue.filter(symbol => !bySymbol.has(normalizeSymbol(symbol)));
+        if (
+          !missing.length ||
+          batchSnapshots.length >= Math.max(1, Math.floor(queue.length * 0.8))
+        ) {
+          if (missing.length) {
+            logger.warn(
+              `EastMoney batch quote snapshots partial: requested=${queue.length}, received=${batchSnapshots.length}, missing=${missing.length}`
+            );
+          }
+          return batchSnapshots;
+        }
+        logger.warn(
+          `EastMoney batch quote snapshots incomplete, fallback single requests: requested=${queue.length}, received=${batchSnapshots.length}`
+        );
+      } catch (error) {
+        logger.warn(
+          `EastMoney batch quote snapshots failed, fallback single requests: ${
+            (error as any)?.message || error
+          }`
+        );
+      }
+    }
     const concurrency = Math.min(Math.max(Number(options.concurrency || 6), 1), 12);
     const results: EastMoneyQuoteSnapshot[] = [];
     let cursor = 0;
