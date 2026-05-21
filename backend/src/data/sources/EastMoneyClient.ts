@@ -453,7 +453,7 @@ export class EastMoneyClient {
     const limit = Math.min(Math.max(Number(options.limit || normalizedCodes.length), 1), 1000);
     const queue = normalizedCodes.slice(0, limit);
     const preferBatch = options.preferBatch !== false;
-    if (preferBatch && queue.length > 1) {
+    if (preferBatch && queue.length > 0) {
       try {
         const batchSnapshots = await this.getQuoteSnapshotsByBatch(queue, {
           limit,
