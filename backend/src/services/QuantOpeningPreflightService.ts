@@ -24,7 +24,11 @@ class QuantOpeningPreflightService {
     const [tasks, latestLogs, factorCoverage, quoteSummary, activeScanParams, dataFreshness] =
       await Promise.all([
         ScheduledTask.findAll({
-          where: { type: { [Op.in]: ['QUANT_DAILY_PIPELINE', 'QUANT_OPEN_WATCHDOG'] } },
+          where: {
+            type: {
+              [Op.in]: ['QUANT_DAILY_PIPELINE', 'QUANT_OPEN_WATCHDOG', 'REALTIME_QUOTE_SYNC'],
+            },
+          },
           order: [['updated_at', 'DESC']],
         }).catch(() => [] as ScheduledTask[]),
         TaskExecutionLog.findAll({
@@ -68,15 +72,24 @@ class QuantOpeningPreflightService {
         conclusion: `因子真实源烟测失败：${error?.message || error}`,
       }));
 
-    const quantTask = tasks.find(task => task.type === 'QUANT_DAILY_PIPELINE');
+    const quantTask =
+      tasks.find(
+        task =>
+          task.type === 'QUANT_DAILY_PIPELINE' &&
+          task.is_active &&
+          String(task.name || '').includes('开盘')
+      ) || tasks.find(task => task.type === 'QUANT_DAILY_PIPELINE');
     const watchdogTask = tasks.find(task => task.type === 'QUANT_OPEN_WATCHDOG');
+    const quoteSyncTask = tasks.find(task => task.type === 'REALTIME_QUOTE_SYNC' && task.is_active);
     const minFactorCoverage = Math.min(
       toNumber(factorCoverage.coverage_rate.valuation),
       toNumber(factorCoverage.coverage_rate.money_flow),
       toNumber(factorCoverage.coverage_rate.fundamental)
     );
     const feishuTableConfigured = Boolean(
-      process.env.FEISHU_APP_TOKEN || process.env.FEISHU_BITABLE_APP_TOKEN || process.env.FEISHU_BASE_APP_TOKEN
+      process.env.FEISHU_APP_TOKEN ||
+        process.env.FEISHU_BITABLE_APP_TOKEN ||
+        process.env.FEISHU_BASE_APP_TOKEN
     );
     const feishuBotConfigured = Boolean(process.env.FEISHU_RECOMMENDATION_BOT_WEBHOOK);
     const feishuBotDisabled = process.env.DISABLE_FEISHU_BOT_WEBHOOK === 'true';
@@ -123,7 +136,9 @@ class QuantOpeningPreflightService {
         source_breakdown: factorCoverage.source_breakdown,
         conclusion:
           minFactorCoverage >= 70
-            ? `因子覆盖可用，最低覆盖率 ${minFactorCoverage.toFixed(1)}%，因子日期 ${(factorCoverage as any).latest_factor_date || '-'}。`
+            ? `因子覆盖可用，最低覆盖率 ${minFactorCoverage.toFixed(1)}%，因子日期 ${
+                (factorCoverage as any).latest_factor_date || '-'
+              }。`
             : minFactorCoverage >= 15
             ? `因子覆盖不足但有真实源样本，最低覆盖率 ${minFactorCoverage.toFixed(
                 1
@@ -141,12 +156,32 @@ class QuantOpeningPreflightService {
         conclusion: (factorSmoke as any).conclusion || '真实因子源烟测未执行。',
       },
       realtime_quote: {
-        status: checkStatus(Boolean((quoteSummary as any).persisted), true),
-        ok: Boolean((quoteSummary as any).persisted),
+        status: checkStatus(
+          Boolean((quoteSummary as any).persisted) &&
+            (Boolean((quoteSummary as any).is_fresh) || Boolean(quoteSyncTask)),
+          true
+        ),
+        ok:
+          Boolean((quoteSummary as any).persisted) &&
+          (Boolean((quoteSummary as any).is_fresh) || Boolean(quoteSyncTask)),
         ...quoteSummary,
         conclusion: (quoteSummary as any).persisted
-          ? `实时行情已有落盘，最新时间 ${(quoteSummary as any).latest_quote_time || '-' }。`
+          ? `实时行情已有落盘，最新时间 ${
+              (quoteSummary as any).latest_quote_time || '-'
+            }；盘中刷新任务 ${quoteSyncTask ? '已启用' : '未启用'}。`
           : '实时行情未落盘或读取失败，开盘扫描会尝试刷新。',
+      },
+      quote_sync_task: {
+        status: checkStatus(Boolean(quoteSyncTask), true),
+        ok: Boolean(quoteSyncTask),
+        task_id: quoteSyncTask?.id,
+        name: quoteSyncTask?.name,
+        cron_expression: quoteSyncTask?.cron_expression,
+        last_run_at: quoteSyncTask?.last_run_at,
+        last_run_status: quoteSyncTask?.last_run_status,
+        conclusion: quoteSyncTask
+          ? `盘中实时行情快照刷新已启用：${quoteSyncTask.cron_expression}。`
+          : '未启用独立实时行情快照刷新任务，盘中价格可能只依赖开盘扫描即时刷新。',
       },
       active_scan_params: {
         status: checkStatus(adoptedCount > 0, true),
@@ -173,7 +208,10 @@ class QuantOpeningPreflightService {
           (dataFreshness as any).summary?.conclusion || '量化数据闭环新鲜度检查暂未生成。',
       },
       feishu: {
-        status: checkStatus(feishuTableConfigured && feishuBotConfigured && !feishuBotDisabled, true),
+        status: checkStatus(
+          feishuTableConfigured && feishuBotConfigured && !feishuBotDisabled,
+          true
+        ),
         ok: feishuTableConfigured && feishuBotConfigured && !feishuBotDisabled,
         table_configured: feishuTableConfigured,
         bot_configured: feishuBotConfigured,
@@ -229,14 +267,16 @@ class QuantOpeningPreflightService {
     };
   }
 
-  async runDryRun(options: {
-    user_id?: number;
-    username?: string;
-    trade_date?: string;
-    limit?: number;
-    min_score?: number;
-    factor_provider?: 'auto' | 'local_derived' | 'tushare' | 'eastmoney';
-  } = {}): Promise<Record<string, any>> {
+  async runDryRun(
+    options: {
+      user_id?: number;
+      username?: string;
+      trade_date?: string;
+      limit?: number;
+      min_score?: number;
+      factor_provider?: 'auto' | 'local_derived' | 'tushare' | 'eastmoney';
+    } = {}
+  ): Promise<Record<string, any>> {
     const tradeDate = options.trade_date || moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
     const startedAt = Date.now();
     const preflight = await this.check({ user_id: options.user_id, factor_limit: 120 });
