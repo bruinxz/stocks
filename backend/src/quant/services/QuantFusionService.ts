@@ -377,22 +377,76 @@ export class QuantFusionService {
           runtimeHealth?.summary?.conclusion || 'runtime risk'
         }`
       );
-      return {
+      const result = {
         generated_at: new Date().toISOString(),
         trade_date,
         status: 'runtime_risk_watch_only',
         mode: 'archive_only' as QuantPipelineMode,
+        universe: options.universe || 'market',
         runtime_health: runtimeHealth,
         runtime_risk_blocked: true,
-        generated,
-        factor_sync: factorSync,
-        experiment_param_suggestion: experimentParamSuggestion,
-        param_version_refresh: paramVersionRefresh,
-        active_scan_params: activeScanParams,
-        param_validation_refresh: paramValidationRefresh,
-        param_lifecycle: paramLifecycle,
-        diversification: diversifiedSelection.summary,
-        archive,
+        generated: {
+          scanned_stocks: generated.scanned_stocks,
+          strategy_count: generated.strategy_count,
+          signal_count: generated.signal_count,
+          by_strategy: generated.by_strategy,
+          quote_sync: generated.quote_sync,
+          runtime_policy_diagnostics: generated.runtime_policy_diagnostics,
+          factor_sync: factorSync,
+          experiment_param_suggestion: experimentParamSuggestion
+            ? {
+                policy: experimentParamSuggestion.policy,
+                summary: experimentParamSuggestion.summary,
+                adopted_strategy_keys: Object.keys(
+                  experimentParamSuggestion.recommended_params_by_strategy || {}
+                ),
+              }
+            : null,
+          param_version_refresh: paramVersionRefresh
+            ? {
+                summary: paramVersionRefresh.summary,
+                adopted_strategy_keys: Object.keys(
+                  paramVersionRefresh.adopted_param_version_by_strategy || {}
+                ),
+              }
+            : null,
+          active_scan_params: activeScanParams
+            ? {
+                summary: activeScanParams.summary,
+                adopted_strategy_keys: Object.keys(
+                  activeScanParams.adopted_param_version_by_strategy || {}
+                ),
+                selections: activeScanParams.selections,
+              }
+            : null,
+          param_validation_refresh: paramValidationRefresh
+            ? {
+                created: paramValidationRefresh.create?.created || 0,
+                updated: paramValidationRefresh.create?.updated || 0,
+                completed: paramValidationRefresh.refresh?.completed || 0,
+                pending: paramValidationRefresh.refresh?.pending || 0,
+              }
+            : null,
+          param_lifecycle: paramLifecycle
+            ? {
+                applied: paramLifecycle.applied,
+                summary: paramLifecycle.lifecycle?.summary,
+              }
+            : null,
+        },
+        fusion: {
+          candidate_count: candidates.length,
+          selected_count: selectedCandidates.length,
+          diversification: diversifiedSelection.summary,
+          top_candidates: selectedCandidates.slice(0, 10),
+        },
+        archive: {
+          created: archive.created,
+          updated: archive.updated,
+          total: archive.total,
+          signal_ids: archive.signal_ids,
+          candidates: archive.candidates.slice(0, 10),
+        },
         agent_analysis: {
           submitted: [],
           failed: [],
@@ -408,6 +462,14 @@ export class QuantFusionService {
         },
         message: '量化运行时存在风险项，本轮只归档观察信号，不执行模拟买入。',
       };
+      if (options.report_to_feishu !== false && options.notify_to_feishu_bot !== false) {
+        await feishuBotWebhookService.sendRecommendationSummary({
+          scenario: 'quant_daily_pipeline',
+          record_type: '量化交易场景推荐',
+          result,
+        });
+      }
+      return result;
     }
     const thresholdSuggestion = await this.getRiskThresholdSuggestion(options);
     const preTradeRiskProfile =

@@ -286,6 +286,18 @@ async function ensureQuantStrategyRuntimeSchema() {
   }
 }
 
+async function ensureTaskExecutionLogRuntimeSchema() {
+  if (!(await publicTableExists('task_execution_logs'))) {
+    return;
+  }
+
+  await addColumnIfMissing(
+    'task_execution_logs',
+    'result_summary',
+    `JSONB NOT NULL DEFAULT '{}'::jsonb`
+  );
+}
+
 async function syncRuntimeModel(model: any, label: string): Promise<boolean> {
   try {
     await model.sync();
@@ -300,6 +312,7 @@ async function syncRuntimeModel(model: any, label: string): Promise<boolean> {
 
 async function syncRecommendationRuntimeTables(): Promise<void> {
   await ensureRecommendationLoopRuntimeSchema();
+  await ensureTaskExecutionLogRuntimeSchema();
 
   const syncItems = [
     { model: AIInvestmentSignal, label: 'AIInvestmentSignal' },

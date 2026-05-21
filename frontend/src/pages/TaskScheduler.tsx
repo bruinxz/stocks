@@ -54,10 +54,7 @@ import {
   taskService,
 } from '../services/taskService';
 import { riskLimitKeyLabels, riskLimitKeyPriority } from '../constants/riskLimits';
-import {
-  DeploymentAuditSummary,
-  ParameterAuditSummary,
-} from '../components/task/AuditSummaries';
+import { DeploymentAuditSummary, ParameterAuditSummary } from '../components/task/AuditSummaries';
 import { RiskLimitPreviewModal } from '../components/task/RiskLimitPreviewModal';
 import dayjs from 'dayjs';
 
@@ -300,8 +297,7 @@ const getRiskFieldEvidenceScore = (evidence: any) => {
   const minConfidence = Number(stability.min_confidence || 0.45);
   const minSampleCount = Number(stability.min_sample_count || 3);
   const minTriggeredCount = Number(stability.min_triggered_count || 1);
-  const ratio = (value: number, target: number) =>
-    target > 0 ? Math.min(value / target, 1) : 0;
+  const ratio = (value: number, target: number) => (target > 0 ? Math.min(value / target, 1) : 0);
   return (
     ratio(confidence, minConfidence) * 0.35 +
     ratio(sampleCount, minSampleCount) * 0.25 +
@@ -369,6 +365,13 @@ const stringifyJson = (value: any) => {
   } catch (error) {
     return String(value);
   }
+};
+
+const getRuntimeHealthTagColor = (status?: string) => {
+  if (status === 'ready' || status === 'ok' || status === 'healthy') return 'green';
+  if (status === 'risk' || status === 'critical') return 'red';
+  if (status === 'warn' || status === 'warning') return 'gold';
+  return 'default';
 };
 
 const getChainIcon = (key: string) => {
@@ -499,8 +502,7 @@ const TaskScheduler: React.FC = () => {
     ? (Object.values(riskLimitSuggestion.field_stability as Record<string, any>)[0] as any)
     : null;
   const riskFieldGateAdvice = riskLimitSuggestion?.field_gate_advice;
-  const riskFieldGateAdjustmentAttribution =
-    riskLimitSuggestion?.field_gate_adjustment_attribution;
+  const riskFieldGateAdjustmentAttribution = riskLimitSuggestion?.field_gate_adjustment_attribution;
   const riskFieldGateAdviceItems = Array.isArray(riskFieldGateAdvice?.items)
     ? riskFieldGateAdvice.items.filter((item: any) => ['tighten', 'relax'].includes(item.action))
     : [];
@@ -1048,9 +1050,7 @@ const TaskScheduler: React.FC = () => {
                         after.local_regression.total || 0
                       }`
                     : ''
-                } · ${
-                  after.base_url || ''
-                }`
+                } · ${after.base_url || ''}`
               : `${item.operator_username ? `${item.operator_username} · ` : ''}更新 ${
                   item.changed_keys?.length || 0
                 } 项${item.source_loop_run_id ? ` · 来源 ${item.source_loop_run_id}` : ''}`}
@@ -1320,9 +1320,7 @@ const TaskScheduler: React.FC = () => {
               ) : (
                 <Empty
                   image={Empty.PRESENTED_IMAGE_SIMPLE}
-                  description={
-                    deploymentAuditLoading ? '正在读取部署验证...' : '暂无部署验证记录'
-                  }
+                  description={deploymentAuditLoading ? '正在读取部署验证...' : '暂无部署验证记录'}
                 />
               )}
             </Card>
@@ -1462,9 +1460,9 @@ const TaskScheduler: React.FC = () => {
                               {riskLimitFieldStabilityFirst?.min_consecutive_same_action || 2}{' '}
                               次、样本≥{riskLimitFieldStabilityFirst?.min_sample_count || 3}、触发≥
                               {riskLimitFieldStabilityFirst?.min_triggered_count || 1}、置信度≥
-                              {Number(
-                                riskLimitFieldStabilityFirst?.min_confidence ?? 0.45
-                              ).toFixed(2)}
+                              {Number(riskLimitFieldStabilityFirst?.min_confidence ?? 0.45).toFixed(
+                                2
+                              )}
                               ，才会进入实际写入候选。
                             </Text>
                           )}
@@ -1472,8 +1470,7 @@ const TaskScheduler: React.FC = () => {
                             <div className="risk-field-gate-advice">
                               <Text strong>字段门槛后验建议</Text>
                               <Text type="secondary">
-                                {riskFieldGateAdvice.conclusion ||
-                                  '暂无明确字段级门槛调整信号。'}
+                                {riskFieldGateAdvice.conclusion || '暂无明确字段级门槛调整信号。'}
                               </Text>
                               {riskFieldGateAdviceItems.length > 0 && (
                                 <Space wrap size={[6, 6]}>
@@ -1611,7 +1608,9 @@ const TaskScheduler: React.FC = () => {
             <div className="task-audit-list">{visibleAuditLogs.map(renderAuditLog)}</div>
             {auditLogs.length > visibleAuditLogs.length && (
               <div className="task-audit-more">
-                <Text type="secondary">已收起 {auditLogs.length - visibleAuditLogs.length} 条历史记录</Text>
+                <Text type="secondary">
+                  已收起 {auditLogs.length - visibleAuditLogs.length} 条历史记录
+                </Text>
                 <Button size="small" type="link" onClick={() => setAuditExpanded(true)}>
                   展开全部
                 </Button>
@@ -1785,7 +1784,7 @@ const TaskScheduler: React.FC = () => {
         open={isLogModalVisible}
         onCancel={() => setIsLogModalVisible(false)}
         footer={null}
-        width={960}
+        width={1180}
       >
         <Table
           dataSource={currentLogs}
@@ -1793,7 +1792,7 @@ const TaskScheduler: React.FC = () => {
           loading={logLoading}
           pagination={{ pageSize: 10 }}
           size="small"
-          scroll={{ x: 1080 }}
+          scroll={{ x: 1380 }}
           columns={[
             {
               title: '状态',
@@ -1826,6 +1825,59 @@ const TaskScheduler: React.FC = () => {
                   {record.total_items}
                 </Text>
               ),
+            },
+            {
+              title: '执行结论',
+              key: 'result_summary',
+              width: 280,
+              render: (_: any, record: TaskExecutionLog) => {
+                const summary = record.result_summary || {};
+                const runtimeHealth = summary.runtime_health || null;
+                if (!summary.scenario && !runtimeHealth) {
+                  return <Text type="secondary">暂无摘要</Text>;
+                }
+
+                return (
+                  <Space direction="vertical" size={4} style={{ maxWidth: 270 }}>
+                    <Space wrap size={4}>
+                      {summary.runtime_risk_blocked ? (
+                        <Tag color="red">风险阻断买入</Tag>
+                      ) : summary.scenario === 'quant_daily_pipeline' ? (
+                        <Tag color="blue">量化闭环</Tag>
+                      ) : null}
+                      {runtimeHealth?.status && (
+                        <Tag color={getRuntimeHealthTagColor(runtimeHealth.status)}>
+                          健康 {runtimeHealth.status}
+                          {runtimeHealth.score !== undefined ? `/${runtimeHealth.score}` : ''}
+                        </Tag>
+                      )}
+                      {runtimeHealth?.factor_min_coverage_rate !== undefined && (
+                        <Tag>因子 {runtimeHealth.factor_min_coverage_rate}%</Tag>
+                      )}
+                    </Space>
+                    <Text
+                      type={summary.runtime_risk_blocked ? 'danger' : 'secondary'}
+                      ellipsis={{
+                        tooltip:
+                          summary.runtime_block_reason ||
+                          runtimeHealth?.conclusion ||
+                          summary.message,
+                      }}
+                      style={{ maxWidth: 260 }}
+                    >
+                      {summary.runtime_block_reason ||
+                        runtimeHealth?.conclusion ||
+                        summary.message ||
+                        '执行完成'}
+                    </Text>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      归档 {summary.archived_signal_count ?? '-'} · Agent{' '}
+                      {summary.agent_submitted ?? 0} · 模拟买入{' '}
+                      {summary.paper_executed ?? summary.paper_planned ?? 0}
+                    </Text>
+                  </Space>
+                );
+              },
             },
             {
               title: '队列任务',

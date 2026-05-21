@@ -517,3 +517,49 @@ Next:
 1. Wire `release_health_gate.js` into the normal deploy path so activation + health + rollback becomes one command.
 2. Add factor freshness and real-provider rate into the quant dashboard UI summary so users can see whether the model is using real data or local fallback.
 3. Add a small backend audit record for runtime-risk blocked quant runs so “why no buy today” is visible in task history.
+
+## 2026-05-21 continuous iteration: release gate integration and visible no-buy reasons
+
+Focus: make deployment more stable and make “why no buy today” visible to operators/users.
+
+Completed:
+
+- Added `task_execution_logs.result_summary` as a JSONB runtime summary column.
+  - Startup guard and deployment migration both add it idempotently.
+  - Runtime schema required-column health now checks it.
+- Quant daily pipeline now writes a compact execution summary into `task_execution_logs.result_summary`:
+  - trade date / scanned stocks / signal count / archived signals;
+  - Agent submitted/failed;
+  - paper-trading executed/planned/skipped;
+  - runtime health status/score/factor coverage;
+  - explicit `runtime_risk_blocked` and `runtime_block_reason` when the pipeline only archives watch signals and blocks buy actions.
+- Task Scheduler history modal now includes an “执行结论” column:
+  - shows “风险阻断买入” tag when runtime discipline blocked buy actions;
+  - shows runtime health score, factor coverage, reason and compact execution counts.
+- Feishu task report and Feishu bot webhook now surface runtime-risk blocked pipeline runs clearly:
+  - concise conclusion: watch-only / no simulated buy;
+  - reason from runtime health summary;
+  - health score and factor real-source/coverage metrics.
+- Added `scripts/deployment/deploy_release_package.js` as a one-command wrapper for the current release-package production layout:
+  - build backend/frontend;
+  - package without node_modules/env/runtime dirs;
+  - upload tarball;
+  - activate main + lym releases;
+  - run `release_health_gate.js` with auto rollback.
+  - default targets remain `main,lym`; xxz is not touched.
+
+Validation:
+
+```bash
+node --check scripts/deployment/deploy_release_package.js
+node --check scripts/deployment/release_health_gate.js
+/Applications/Codex.app/Contents/Resources/node backend/node_modules/typescript/bin/tsc -p backend/tsconfig.json --pretty false
+cd frontend && /Applications/Codex.app/Contents/Resources/node node_modules/typescript/bin/tsc --noEmit --pretty false
+cd frontend && CI=false /Applications/Codex.app/Contents/Resources/node node_modules/react-scripts/bin/react-scripts.js build
+```
+
+Next:
+
+1. Deploy and verify `result_summary` appears in production task logs after the next quant/manual dry run.
+2. Add a read-only task-log smoke assertion for `result_summary` once at least one new-format log exists.
+3. Continue real-data-source work: configure/validate Tushare Pro or another paid real factor source so `factor_real_provider_rate` rises above local-derived fallback.

@@ -37,6 +37,39 @@ export interface TaskExecutionLog {
   completed_items: number;
   failed_items: number;
   error_message: string;
+  result_summary?: {
+    scenario?: string;
+    status?: string;
+    runtime_risk_blocked?: boolean;
+    runtime_block_reason?: string | null;
+    runtime_health?: {
+      status?: string;
+      score?: number;
+      conclusion?: string;
+      risk_count?: number;
+      warn_count?: number;
+      factor_min_coverage_rate?: number;
+      factor_real_provider_rate?: number;
+      factor_coverage_status?: string;
+      risk_checks?: Array<{
+        key?: string;
+        label?: string;
+        status?: string;
+        metric?: string;
+        conclusion?: string;
+      }>;
+    } | null;
+    trade_date?: string;
+    scanned_stocks?: number;
+    signal_count?: number;
+    archived_signal_count?: number;
+    agent_submitted?: number;
+    agent_failed?: number;
+    paper_executed?: number;
+    paper_planned?: number;
+    paper_skipped?: number;
+    message?: string;
+  };
   started_at: string;
   completed_at: string;
   queue_jobs?: QueueJobSummary[];

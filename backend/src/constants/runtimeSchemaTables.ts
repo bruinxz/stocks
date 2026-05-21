@@ -112,7 +112,15 @@ export const RUNTIME_SCHEMA_REQUIRED_COLUMNS: Record<
   },
   task_execution_logs: {
     critical: true,
-    columns: ['task_id', 'task_name', 'status', 'total_items', 'completed_items', 'failed_items'],
+    columns: [
+      'task_id',
+      'task_name',
+      'status',
+      'total_items',
+      'completed_items',
+      'failed_items',
+      'result_summary',
+    ],
   },
   stock_fundamental_factors: {
     critical: true,

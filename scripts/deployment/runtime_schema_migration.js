@@ -233,6 +233,11 @@ function buildRuntimeSchemaMigrationSQL(appDbUser = 'stock_admin') {
     -- 会导致策略注册、策略列表和开盘扫描配置读取失败。
     DO $$
     BEGIN
+      IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'task_execution_logs') THEN
+        ALTER TABLE task_execution_logs ADD COLUMN IF NOT EXISTS result_summary JSONB NOT NULL DEFAULT '{}'::jsonb;
+        UPDATE task_execution_logs SET result_summary = '{}'::jsonb WHERE result_summary IS NULL;
+      END IF;
+
       IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'quant_strategies') THEN
         ALTER TABLE quant_strategies ADD COLUMN IF NOT EXISTS execution_policy JSONB NOT NULL DEFAULT '{}'::jsonb;
         ALTER TABLE quant_strategies ADD COLUMN IF NOT EXISTS environment_policy JSONB NOT NULL DEFAULT '{}'::jsonb;
