@@ -909,6 +909,31 @@ export class PaperTradingController {
       res.status(500).json({ success: false, message: error.message });
     }
   };
+
+  // 预览或强确认回滚订单意图 Canary 小流量调参
+  rollbackOrderIntentTuningCanary = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const user = (req as any).user;
+      const result = await paperTradingTuningApplyService.applyCanaryRollback({
+        ...req.body,
+        user_id: user.id,
+        username: user.username || user.nickname,
+        operator: {
+          user_id: user.id,
+          username: user.username || user.nickname,
+        },
+      } as any);
+
+      res.json({
+        success: true,
+        data: result,
+        message: result.message,
+      });
+    } catch (error: any) {
+      logger.error('回滚订单意图 Canary 调参失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
 }
 
 export const paperTradingController = new PaperTradingController();
