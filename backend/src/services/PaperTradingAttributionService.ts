@@ -201,6 +201,13 @@ function asPlainObject(value: any): Record<string, any> {
   return value;
 }
 
+function paperTradingMetaForPortfolio(metadata: Record<string, any>, portfolio_id?: number) {
+  const legacy = asPlainObject(metadata.paper_trading);
+  const byPortfolio = asPlainObject(metadata.paper_trading_by_portfolio);
+  const keyed = portfolio_id ? asPlainObject(byPortfolio[String(portfolio_id)]) : {};
+  return Object.keys(keyed).length > 0 ? keyed : legacy;
+}
+
 function formatChinaDateTime(value?: Date | string | null): string {
   if (!value) return '';
   const date = value instanceof Date ? value : new Date(value);
@@ -274,7 +281,10 @@ export class PaperTradingAttributionService {
     });
 
     const signals = allSignals.filter(signal => {
-      const paperTrading = asPlainObject(asPlainObject(signal.metadata).paper_trading);
+      const paperTrading = paperTradingMetaForPortfolio(
+        asPlainObject(signal.metadata),
+        portfolio.id
+      );
       return (
         Number(paperTrading.portfolio_id) === Number(portfolio.id) &&
         ['executed', 'closed'].includes(String(paperTrading.status || ''))
@@ -285,7 +295,7 @@ export class PaperTradingAttributionService {
       ...new Set(
         signals
           .flatMap(signal => {
-            const meta = asPlainObject(asPlainObject(signal.metadata).paper_trading);
+            const meta = paperTradingMetaForPortfolio(asPlainObject(signal.metadata), portfolio.id);
             return [toOptionalNumber(meta.trade_id), toOptionalNumber(meta.sell_trade_id)];
           })
           .filter((id): id is number => Boolean(id))
@@ -315,7 +325,7 @@ export class PaperTradingAttributionService {
 
     for (const signal of signals) {
       const metadata = asPlainObject(signal.metadata);
-      const paperTrading = asPlainObject(metadata.paper_trading);
+      const paperTrading = paperTradingMetaForPortfolio(metadata, portfolio.id);
       const symbol = normalizeSymbol(signal.symbol);
       const entryTrade = paperTrading.trade_id ? tradeMap.get(Number(paperTrading.trade_id)) : null;
       const exitTrade = paperTrading.sell_trade_id
@@ -674,8 +684,8 @@ export class PaperTradingAttributionService {
         avgWinPct && avgLossPct
           ? roundNumber(avgWinPct / Math.abs(avgLossPct), 4)
           : wins.length > 0 && losses.length === 0
-            ? 999
-            : 0,
+          ? 999
+          : 0,
       profit_factor: lossSum > 0 ? roundNumber(winSum / lossSum, 4) : wins.length > 0 ? 999 : 0,
       open_exposure: openExposure,
       open_exposure_pct: roundNumber((openExposure / totalValue) * 100, 2),
@@ -801,12 +811,16 @@ export class PaperTradingAttributionService {
       );
       if (summary.best_trade) {
         insights.push(
-          `最佳样本是 ${summary.best_trade.name || summary.best_trade.symbol}，收益 ${summary.best_trade.realized_pnl_pct}%。`
+          `最佳样本是 ${summary.best_trade.name || summary.best_trade.symbol}，收益 ${
+            summary.best_trade.realized_pnl_pct
+          }%。`
         );
       }
       if (summary.worst_trade && summary.worst_trade.realized_pnl_pct < 0) {
         insights.push(
-          `最大拖累是 ${summary.worst_trade.name || summary.worst_trade.symbol}，收益 ${summary.worst_trade.realized_pnl_pct}%，后续需复盘入场条件。`
+          `最大拖累是 ${summary.worst_trade.name || summary.worst_trade.symbol}，收益 ${
+            summary.worst_trade.realized_pnl_pct
+          }%，后续需复盘入场条件。`
         );
       }
       if (bestSource) {

@@ -555,7 +555,14 @@ export class QuantPerformanceDashboardService {
   private async getScheduleSummary() {
     const tasks = await ScheduledTask.findAll({
       where: {
-        type: { [Op.in]: ['QUANT_DAILY_PIPELINE', 'QUANT_OPEN_WATCHDOG', 'REALTIME_QUOTE_SYNC', 'QUANT_PARAM_MAINTENANCE'] },
+        type: {
+          [Op.in]: [
+            'QUANT_DAILY_PIPELINE',
+            'QUANT_OPEN_WATCHDOG',
+            'REALTIME_QUOTE_SYNC',
+            'QUANT_PARAM_MAINTENANCE',
+          ],
+        },
       },
       order: [['cron_expression', 'ASC']],
     });
@@ -563,7 +570,8 @@ export class QuantPerformanceDashboardService {
       quant_pipeline_task_count: tasks.filter(task => task.type === 'QUANT_DAILY_PIPELINE').length,
       watchdog_task_count: tasks.filter(task => task.type === 'QUANT_OPEN_WATCHDOG').length,
       quote_sync_task_count: tasks.filter(task => task.type === 'REALTIME_QUOTE_SYNC').length,
-      param_maintenance_task_count: tasks.filter(task => task.type === 'QUANT_PARAM_MAINTENANCE').length,
+      param_maintenance_task_count: tasks.filter(task => task.type === 'QUANT_PARAM_MAINTENANCE')
+        .length,
       tasks: await Promise.all(
         tasks.map(async task => {
           const latestLog = await TaskExecutionLog.findOne({
@@ -843,11 +851,21 @@ export class QuantPerformanceDashboardService {
               closed_outcome_count: 0,
               win_rate: 0,
               avg_closed_return_pct: 0,
+              latest_trade_at: null,
+              top_positions: [],
             };
           }
           const [positions, trades, outcomes] = await Promise.all([
-            PaperTradingPosition.findAll({ where: { portfolio_id: portfolio.id }, raw: true }),
-            PaperTradingTrade.findAll({ where: { portfolio_id: portfolio.id }, raw: true }),
+            PaperTradingPosition.findAll({
+              where: { portfolio_id: portfolio.id },
+              order: [['market_value', 'DESC']],
+              raw: true,
+            }),
+            PaperTradingTrade.findAll({
+              where: { portfolio_id: portfolio.id },
+              order: [['created_at', 'DESC']],
+              raw: true,
+            }),
             RecommendationTradeOutcome.findAll({
               where: { portfolio_id: portfolio.id },
               limit: 2000,
@@ -865,6 +883,10 @@ export class QuantPerformanceDashboardService {
           );
           const closed = outcomes.filter((item: any) => item.trade_status === 'closed');
           const wins = closed.filter((item: any) => toNumber(item.total_pnl) > 0);
+          const latestTradeAt = trades
+            .map((trade: any) => String(trade.created_at || ''))
+            .sort()
+            .pop();
           return {
             ...family,
             portfolio_id: portfolio.id,
@@ -890,6 +912,23 @@ export class QuantPerformanceDashboardService {
                   4
                 )
               : 0,
+            latest_trade_at: latestTradeAt || null,
+            top_positions: (positions as any[]).slice(0, 5).map((position: any) => ({
+              symbol: position.symbol,
+              name: position.name,
+              quantity: toNumber(position.quantity),
+              market_value: roundNumber(position.market_value, 2),
+              unrealized_pnl: roundNumber(position.unrealized_pnl, 2),
+              unrealized_pnl_pct:
+                toNumber(position.avg_cost) > 0
+                  ? roundNumber(
+                      ((toNumber(position.current_price) - toNumber(position.avg_cost)) /
+                        toNumber(position.avg_cost)) *
+                        100,
+                      4
+                    )
+                  : 0,
+            })),
           };
         })
       );

@@ -593,6 +593,32 @@ function asPlainObject(value: any): Record<string, any> {
   return value;
 }
 
+function paperTradingMetaForPortfolio(
+  metadata: Record<string, any>,
+  portfolio_id?: number
+): Record<string, any> {
+  const legacy = asPlainObject(metadata.paper_trading);
+  const byPortfolio = asPlainObject(metadata.paper_trading_by_portfolio);
+  const keyed = portfolio_id ? asPlainObject(byPortfolio[String(portfolio_id)]) : {};
+  return Object.keys(keyed).length > 0 ? keyed : legacy;
+}
+
+function nextPaperTradingMetadata(
+  metadata: Record<string, any>,
+  portfolio_id: number,
+  paperTrading: Record<string, any>
+) {
+  const byPortfolio = asPlainObject(metadata.paper_trading_by_portfolio);
+  return {
+    ...metadata,
+    paper_trading: paperTrading,
+    paper_trading_by_portfolio: {
+      ...byPortfolio,
+      [String(portfolio_id)]: paperTrading,
+    },
+  };
+}
+
 function compactText(value: any, maxLength = 120): string {
   const text = String(value || '')
     .replace(/\s+/g, ' ')
@@ -625,7 +651,7 @@ function pearsonCorrelation(a: number[], b: number[]): number {
 
 function strategyKeysFromSignalMetadata(metadata: Record<string, any>): string[] {
   const strategyVariant = asPlainObject(metadata.strategy_variant);
-  const paperTrading = asPlainObject(metadata.paper_trading);
+  const paperTrading = paperTradingMetaForPortfolio(metadata);
   const paperVariant = asPlainObject(paperTrading.strategy_variant);
   const keys = [
     metadata.strategy_key,
@@ -1210,7 +1236,7 @@ class PaperTradingAutomationService {
       const itemBase = this.buildTradeItemBase(signal);
       const symbol = normalizeSymbol(signal.symbol);
       const metadata = asPlainObject(signal.metadata);
-      const paperTradingMeta = asPlainObject(metadata.paper_trading);
+      const paperTradingMeta = paperTradingMetaForPortfolio(metadata, portfolio.id);
       const action = String(metadata.action || '').toLowerCase();
       const dataQuality = asPlainObject(metadata.data_quality);
       const dataQualityBucket = String(
@@ -1586,8 +1612,7 @@ class PaperTradingAutomationService {
         allocation_pct: strategyBudgetDiscipline.allocation_pct || strategyAllocationPct,
         max_single_trade_pct:
           strategyBudgetDiscipline.max_single_trade_pct || strategyMaxSingleTradePct,
-        sample_confidence:
-          strategyBudgetDiscipline.sample_confidence || strategyBudgetConfidence,
+        sample_confidence: strategyBudgetDiscipline.sample_confidence || strategyBudgetConfidence,
         reason: strategyBudgetDiscipline.reason || strategyBudgetReason,
         label: strategyBudgetDiscipline.label || strategyBudgetLabel,
         policy: Object.keys(strategyAllocationPolicy).length
@@ -2039,7 +2064,7 @@ class PaperTradingAutomationService {
       const avgCost = toNumber(position.avg_cost, 0);
       const sourceSignal = await this.findExecutionSignalForPosition(portfolio.id, symbol);
       const signalMeta = asPlainObject(sourceSignal?.metadata);
-      const paperTradingMeta = asPlainObject(signalMeta.paper_trading);
+      const paperTradingMeta = paperTradingMetaForPortfolio(signalMeta, portfolio.id);
       const entryDate = paperTradingMeta.executed_at || position.created_at;
       const holdingDays = Math.max(0, moment().tz('Asia/Shanghai').diff(moment(entryDate), 'days'));
       const useAdaptiveDefaults =
@@ -2447,15 +2472,25 @@ class PaperTradingAutomationService {
       limit: 200,
     });
 
-    return (
-      signals.find(signal => {
-        const paperTrading = asPlainObject(asPlainObject(signal.metadata).paper_trading);
-        return (
-          Number(paperTrading.portfolio_id) === Number(portfolio_id) &&
-          ['executed', 'closing', 'closed'].includes(String(paperTrading.status || ''))
-        );
-      }) || null
-    );
+    const matched = signals.find(signal => {
+      const signalMetadata = asPlainObject(signal.metadata);
+      const paperTrading = paperTradingMetaForPortfolio(signalMetadata, portfolio_id);
+      return (
+        Number(paperTrading.portfolio_id) === Number(portfolio_id) &&
+        ['executed', 'closing', 'closed'].includes(String(paperTrading.status || ''))
+      );
+    });
+    if (matched) return matched;
+
+    const outcome = await RecommendationTradeOutcome.findOne({
+      where: {
+        portfolio_id,
+        symbol,
+        trade_status: { [Op.in]: ['open', 'closing'] },
+      },
+      order: [['updated_at', 'DESC']],
+    }).catch(() => null);
+    return outcome?.signal_id ? AIInvestmentSignal.findByPk(outcome.signal_id) : null;
   }
 
   private async findLatestSellSignal(options: {
@@ -3171,8 +3206,17 @@ class PaperTradingAutomationService {
         : 0;
     const executedSignals = await AIInvestmentSignal.findAll({
       where: {
-        'metadata.paper_trading.portfolio_id': options.portfolio_id,
-        'metadata.paper_trading.status': 'executed',
+        [Op.or]: [
+          {
+            'metadata.paper_trading.portfolio_id': options.portfolio_id,
+            'metadata.paper_trading.status': 'executed',
+          },
+          {
+            [`metadata.paper_trading_by_portfolio.${options.portfolio_id}.portfolio_id`]:
+              options.portfolio_id,
+            [`metadata.paper_trading_by_portfolio.${options.portfolio_id}.status`]: 'executed',
+          },
+        ],
       } as any,
       order: [['updated_at', 'DESC']],
       limit: 2000,
@@ -3784,7 +3828,7 @@ class PaperTradingAutomationService {
     signal: AIInvestmentSignal,
     metadata: Record<string, any> = asPlainObject(signal.metadata)
   ): MarketEnvironmentSnapshotLike {
-    const paperTrading = asPlainObject(metadata.paper_trading);
+    const paperTrading = paperTradingMetaForPortfolio(metadata);
     const candidates = [
       metadata.market_environment,
       paperTrading.market_environment,
@@ -3884,12 +3928,12 @@ class PaperTradingAutomationService {
     const strategyKey =
       options.metadata.strategy_key ||
       asPlainObject(options.metadata.strategy_variant).strategy_key ||
-      asPlainObject(options.metadata.paper_trading).strategy_key;
+      paperTradingMetaForPortfolio(options.metadata).strategy_key;
     const signalBudgetAction = normalizeBudgetActionKey(
       options.metadata.environment_strategy_budget_action ||
         options.metadata.budget_action ||
-        asPlainObject(options.metadata.paper_trading).environment_strategy_budget_action ||
-        asPlainObject(options.metadata.paper_trading).budget_action
+        paperTradingMetaForPortfolio(options.metadata).environment_strategy_budget_action ||
+        paperTradingMetaForPortfolio(options.metadata).budget_action
     );
     const budgetActionPolicy = asPlainObject(externalPolicy.budget_action_policy);
     const externalBudgetPolicyVersion = asPlainObject(
@@ -4363,10 +4407,11 @@ class PaperTradingAutomationService {
       strategy_budget_reason: metadata.strategy_budget_reason,
       strategy_budget_confidence: toOptionalNumber(metadata.strategy_budget_confidence),
       strategy_budget_discipline: asPlainObject(
-        metadata.strategy_budget_discipline || asPlainObject(metadata.strategy_variant).strategy_budget_discipline
+        metadata.strategy_budget_discipline ||
+          asPlainObject(metadata.strategy_variant).strategy_budget_discipline
       ),
       entry_risk_guard_decision: asPlainObject(
-        asPlainObject(metadata.paper_trading).entry_risk_guard_decision
+        paperTradingMetaForPortfolio(metadata).entry_risk_guard_decision
       ) as any,
       market_regime: environment.market_regime,
       market_regime_label: environment.market_regime_label,
@@ -4500,31 +4545,38 @@ class PaperTradingAutomationService {
     const loop_run_id = signal.loop_run_id || metadata.loop_run_id || execution.loop_run_id;
     const strategyBudgetDiscipline = asPlainObject(execution.strategy_budget_discipline);
     const entryRiskGuardDecision = asPlainObject(execution.entry_risk_guard_decision);
+    const portfolioId = Number(execution.portfolio_id);
+    const paperTrading = {
+      ...paperTradingMetaForPortfolio(metadata, portfolioId),
+      ...execution,
+      loop_run_id,
+      status: 'executed',
+      executed_at: new Date().toISOString(),
+      execution_source: 'paper_trading_auto_sync',
+    };
     await signal.update({
-      metadata: {
-        ...metadata,
-        strategy_budget_action: execution.strategy_budget_action || metadata.strategy_budget_action,
-        strategy_budget_label: execution.strategy_budget_label || metadata.strategy_budget_label,
-        strategy_budget_reason: execution.strategy_budget_reason || metadata.strategy_budget_reason,
-        strategy_budget_confidence:
-          execution.strategy_budget_confidence || metadata.strategy_budget_confidence,
-        strategy_budget_discipline:
-          Object.keys(strategyBudgetDiscipline).length > 0
-            ? strategyBudgetDiscipline
-            : metadata.strategy_budget_discipline,
-        entry_risk_guard_decision:
-          Object.keys(entryRiskGuardDecision).length > 0
-            ? entryRiskGuardDecision
-            : metadata.entry_risk_guard_decision,
-        paper_trading: {
-          ...(metadata.paper_trading || {}),
-          ...execution,
-          loop_run_id,
-          status: 'executed',
-          executed_at: new Date().toISOString(),
-          execution_source: 'paper_trading_auto_sync',
+      metadata: nextPaperTradingMetadata(
+        {
+          ...metadata,
+          strategy_budget_action:
+            execution.strategy_budget_action || metadata.strategy_budget_action,
+          strategy_budget_label: execution.strategy_budget_label || metadata.strategy_budget_label,
+          strategy_budget_reason:
+            execution.strategy_budget_reason || metadata.strategy_budget_reason,
+          strategy_budget_confidence:
+            execution.strategy_budget_confidence || metadata.strategy_budget_confidence,
+          strategy_budget_discipline:
+            Object.keys(strategyBudgetDiscipline).length > 0
+              ? strategyBudgetDiscipline
+              : metadata.strategy_budget_discipline,
+          entry_risk_guard_decision:
+            Object.keys(entryRiskGuardDecision).length > 0
+              ? entryRiskGuardDecision
+              : metadata.entry_risk_guard_decision,
         },
-      },
+        portfolioId,
+        paperTrading
+      ),
     });
   }
 
@@ -4533,19 +4585,20 @@ class PaperTradingAutomationService {
     const loop_run_id =
       signal.loop_run_id ||
       metadata.loop_run_id ||
-      asPlainObject(metadata.paper_trading).loop_run_id;
+      paperTradingMetaForPortfolio(metadata, Number(exit.portfolio_id)).loop_run_id;
+    const portfolioId = Number(
+      exit.portfolio_id || paperTradingMetaForPortfolio(metadata).portfolio_id
+    );
+    const paperTrading = {
+      ...paperTradingMetaForPortfolio(metadata, portfolioId),
+      ...exit,
+      loop_run_id,
+      status: 'closed',
+      closed_at: new Date().toISOString(),
+      close_source: 'paper_trading_risk_check',
+    };
     await signal.update({
-      metadata: {
-        ...metadata,
-        paper_trading: {
-          ...(metadata.paper_trading || {}),
-          ...exit,
-          loop_run_id,
-          status: 'closed',
-          closed_at: new Date().toISOString(),
-          close_source: 'paper_trading_risk_check',
-        },
-      },
+      metadata: nextPaperTradingMetadata(metadata, portfolioId, paperTrading),
     });
   }
 

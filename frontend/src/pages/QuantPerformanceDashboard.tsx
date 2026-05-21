@@ -110,6 +110,15 @@ type PortfolioFamily = {
   closed_outcome_count?: number;
   win_rate?: number;
   avg_closed_return_pct?: number;
+  latest_trade_at?: string | null;
+  top_positions?: Array<{
+    symbol: string;
+    name?: string;
+    quantity?: number;
+    market_value?: number;
+    unrealized_pnl?: number;
+    unrealized_pnl_pct?: number;
+  }>;
 };
 
 type StrategyExperiment = {
@@ -1882,6 +1891,20 @@ const QuantPerformanceDashboard: React.FC = () => {
                   <span>交易 {family.trade_count || 0}</span>
                   <span>胜率 {formatPct(family.win_rate)}</span>
                 </div>
+                {family.top_positions?.length ? (
+                  <div className="quant-family-position-strip">
+                    {family.top_positions.slice(0, 3).map(position => (
+                      <span key={`${family.key}-${position.symbol}`}>
+                        {position.name || position.symbol} ·{' '}
+                        {formatPct(position.unrealized_pnl_pct)}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    暂无持仓
+                  </Text>
+                )}
               </div>
             </Col>
           ))}
