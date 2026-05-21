@@ -417,7 +417,9 @@ async function main() {
         if (!paramMaintenanceTask) {
           throw new Error("quant param maintenance task missing");
         }
-        if (Number(paramMaintenanceTask.parameters?.refresh_limit || 0) < 1000) {
+        if (
+          Number(paramMaintenanceTask.parameters?.refresh_limit || 0) < 1000
+        ) {
           throw new Error(
             `quant param maintenance refresh_limit too low: ${preview(
               paramMaintenanceTask
@@ -759,6 +761,76 @@ async function main() {
           ) {
             throw new Error(
               `strategy opening preflight payload invalid: ${preview(json)}`
+            );
+          }
+        },
+      }
+    );
+
+    await requestJson(
+      "today opening readiness",
+      "/api/today/opening-readiness?factor_limit=80",
+      {
+        token,
+        critical: false,
+        expect: (json) => {
+          assertApiSuccess(json, "today opening readiness");
+          const data = json.data || {};
+          if (
+            !data.status ||
+            !["ready", "degraded", "blocked"].includes(data.status) ||
+            !data.buy_gate ||
+            !data.data ||
+            !data.tasks ||
+            !data.integrations ||
+            !Array.isArray(data.next_actions || []) ||
+            !Array.isArray(data.issues || [])
+          ) {
+            throw new Error(
+              `today opening readiness payload invalid: ${preview(json)}`
+            );
+          }
+          if (typeof data.buy_gate.allowed !== "boolean") {
+            throw new Error(
+              `today opening readiness buy gate allowed invalid: ${preview(
+                data.buy_gate
+              )}`
+            );
+          }
+          if (!Number.isFinite(Number(data.buy_gate.max_new_positions))) {
+            throw new Error(
+              `today opening readiness max_new_positions invalid: ${preview(
+                data.buy_gate
+              )}`
+            );
+          }
+        },
+      }
+    );
+
+    await requestJson(
+      "today command center",
+      "/api/today/command-center?limit=3",
+      {
+        token,
+        critical: false,
+        expect: (json) => {
+          assertApiSuccess(json, "today command center");
+          if (!json.data?.conclusion?.headline) {
+            throw new Error(
+              `today command center conclusion missing: ${preview(json)}`
+            );
+          }
+          if (
+            json.data?.opening_readiness &&
+            !["ready", "degraded", "blocked"].includes(
+              json.data.opening_readiness.status
+            )
+          ) {
+            throw new Error(
+              `today command center opening readiness invalid: ${preview(
+                json.data.opening_readiness
+              )}`
             );
           }
         },

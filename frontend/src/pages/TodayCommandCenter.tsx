@@ -113,6 +113,7 @@ const TodayCommandCenter: React.FC = () => {
   const [preflightLoading, setPreflightLoading] = useState(false);
   const [dryRunLoading, setDryRunLoading] = useState(false);
   const [commandData, setCommandData] = useState<any>(null);
+  const [openingReadiness, setOpeningReadiness] = useState<any>(null);
   const [preflight, setPreflight] = useState<any>(null);
   const [dryRun, setDryRun] = useState<any>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -123,6 +124,7 @@ const TodayCommandCenter: React.FC = () => {
       const response = await api.get('/today/command-center', { params: { limit: 8 } });
       const data = response.data?.data;
       setCommandData(data);
+      if (data?.opening_readiness) setOpeningReadiness(data.opening_readiness);
       setErrors({});
       if (!silent) message.success('今日作战台已刷新');
     } catch (error: any) {
@@ -152,6 +154,21 @@ const TodayCommandCenter: React.FC = () => {
     }
   };
 
+  const fetchOpeningReadiness = async (silent = false) => {
+    try {
+      const response = await api.get('/today/opening-readiness', {
+        params: { factor_limit: 220 },
+      });
+      const data = response.data?.data;
+      setOpeningReadiness(data);
+      if (!silent) message.success(response.data?.message || '开盘可信检查已刷新');
+    } catch (error: any) {
+      const messageText = error.response?.data?.message || '加载开盘可信检查失败';
+      setErrors(prev => ({ ...prev, opening_readiness: messageText }));
+      message.warning(messageText);
+    }
+  };
+
   const runOpeningDryRun = async () => {
     setDryRunLoading(true);
     try {
@@ -177,6 +194,7 @@ const TodayCommandCenter: React.FC = () => {
   useEffect(() => {
     fetchCommandData(true);
     fetchPreflight(true);
+    fetchOpeningReadiness(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -198,6 +216,14 @@ const TodayCommandCenter: React.FC = () => {
   const activeScanParams = preflightChecks.active_scan_params || {};
   const quantTask = preflightChecks.quant_task || {};
   const dryRunSummary = dryRun?.summary || {};
+  const readiness = openingReadiness || commandData?.opening_readiness;
+  const readinessBuyGate = readiness?.buy_gate || {};
+  const readinessData = readiness?.data || {};
+  const readinessTasks = readiness?.tasks || {};
+  const readinessPortfolio = readiness?.portfolio || {};
+  const readinessIntegrations = readiness?.integrations || {};
+  const readinessIssues = Array.isArray(readiness?.issues) ? readiness.issues : [];
+  const readinessActions = Array.isArray(readiness?.next_actions) ? readiness.next_actions : [];
   const cashPct = Number(summary.cash_pct || 0);
   const exposurePct = Number(summary.exposure_pct || 0);
   const conclusionTone = commandData?.conclusion?.tone || 'wait';
@@ -210,9 +236,13 @@ const TodayCommandCenter: React.FC = () => {
       : `暂无持仓，等待今日量化/Agent 信号确认`);
 
   const openingStatusMeta = (() => {
-    const status = String(preflight?.status || 'unknown');
+    const status = String(readiness?.status || preflight?.status || 'unknown');
     if (status === 'ready')
-      return { label: '明日可自动运行', color: 'green', type: 'success' as const };
+      return { label: '今日可自动运行', color: 'green', type: 'success' as const };
+    if (status === 'degraded')
+      return { label: '今日降仓运行', color: 'gold', type: 'warning' as const };
+    if (status === 'blocked')
+      return { label: '今日暂停新增', color: 'red', type: 'error' as const };
     if (status === 'risk') return { label: '开盘前需修复', color: 'red', type: 'error' as const };
     return { label: '可运行但需观察', color: 'gold', type: 'warning' as const };
   })();
@@ -392,6 +422,152 @@ const TodayCommandCenter: React.FC = () => {
         </div>
       </div>
 
+      <Card
+        className={`modern-card today-opening-readiness-card readiness-${
+          readiness?.status || 'unknown'
+        }`}
+        variant="borderless"
+        loading={!readiness && (loading || preflightLoading)}
+      >
+        <div className="today-opening-readiness-head">
+          <div>
+            <span className="today-section-kicker">OPENING TRUST GATE</span>
+            <h2>{readiness?.status_label || openingStatusMeta.label}</h2>
+            <p>{readiness?.conclusion || '正在聚合数据、任务、风控、Agent 与飞书状态。'}</p>
+          </div>
+          <Space wrap>
+            <Tag
+              className={`modern-tag tag-${
+                readiness?.status === 'blocked'
+                  ? 'error'
+                  : readiness?.status === 'ready'
+                  ? 'success'
+                  : 'warning'
+              }`}
+            >
+              {readinessBuyGate.allowed ? '允许新增' : '暂停新增'}
+            </Tag>
+            <Button
+              size="small"
+              icon={<ReloadOutlined />}
+              onClick={() => {
+                fetchOpeningReadiness(false);
+                fetchPreflight(true);
+              }}
+            >
+              刷新门禁
+            </Button>
+          </Space>
+        </div>
+
+        <div className="today-opening-readiness-grid">
+          <div className="today-opening-readiness-verdict">
+            <span>买入门禁</span>
+            <strong>{readinessBuyGate.allowed ? '放行' : '暂停'}</strong>
+            <em>{readinessBuyGate.reason || '等待运行时门禁结论'}</em>
+          </div>
+          <div className="today-opening-readiness-metric">
+            <span>最多新增</span>
+            <strong>{readinessBuyGate.max_new_positions ?? 0} 只</strong>
+            <em>
+              默认 {Number(readinessBuyGate.default_position_pct || 0).toFixed(1)}% · 单票{' '}
+              {Number(readinessBuyGate.max_single_position_pct || 0).toFixed(1)}%
+            </em>
+          </div>
+          <div className="today-opening-readiness-metric">
+            <span>数据可信</span>
+            <strong>{Number(readinessData.factor_coverage_pct || 0).toFixed(1)}%</strong>
+            <em>
+              因子覆盖 · 行情
+              {readinessData.realtime_quote_ready ? '已落盘' : '待刷新'}
+              {readinessData.latest_quote_time ? ` · ${readinessData.latest_quote_time}` : ''}
+            </em>
+          </div>
+          <div className="today-opening-readiness-metric">
+            <span>组合风险</span>
+            <strong>{readinessPortfolio.risk_label || riskStatus.label || '安全'}</strong>
+            <em>
+              现金 {Number(readinessPortfolio.cash_pct ?? cashPct).toFixed(1)}% · 仓位{' '}
+              {Number(readinessPortfolio.exposure_pct ?? exposurePct).toFixed(1)}%
+            </em>
+          </div>
+        </div>
+
+        <div className="today-opening-readiness-strips">
+          <div className="today-opening-readiness-strip">
+            <span>任务链路</span>
+            <Space wrap>
+              <Tag color={readinessTasks.opening_scan_ready ? 'green' : 'red'}>开盘扫描</Tag>
+              <Tag color={readinessTasks.realtime_quote_sync_ready ? 'green' : 'gold'}>
+                行情快照
+              </Tag>
+              <Tag color={readinessTasks.param_maintenance_ready ? 'green' : 'gold'}>参数维护</Tag>
+              <Tag color={readinessTasks.recommendation_outcome_refresh_ready ? 'green' : 'gold'}>
+                收益闭环
+              </Tag>
+            </Space>
+          </div>
+          <div className="today-opening-readiness-strip">
+            <span>外部集成</span>
+            <Space wrap>
+              <Tag color={readinessIntegrations.tradingagents_ready ? 'green' : 'gold'}>
+                Agent {readinessIntegrations.tradingagents_status || '--'}
+              </Tag>
+              <Tag color={readinessIntegrations.feishu_table_ready ? 'green' : 'gold'}>
+                多维表格
+              </Tag>
+              <Tag color={readinessIntegrations.feishu_bot_ready ? 'green' : 'gold'}>
+                飞书机器人
+              </Tag>
+            </Space>
+          </div>
+        </div>
+
+        <Row gutter={[14, 14]}>
+          <Col xs={24} lg={10}>
+            <div className="today-opening-readiness-panel">
+              <div className="today-opening-readiness-panel-title">下一步只做这些</div>
+              {readinessActions.length > 0 ? (
+                readinessActions.slice(0, 4).map((item: any) => (
+                  <div
+                    className={`today-readiness-action level-${item.level || 'watch'}`}
+                    key={item.key}
+                  >
+                    <strong>{item.title}</strong>
+                    <span>{item.description}</span>
+                    <Tag>{item.action_label || '执行'}</Tag>
+                  </div>
+                ))
+              ) : (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无动作建议" />
+              )}
+            </div>
+          </Col>
+          <Col xs={24} lg={14}>
+            <div className="today-opening-readiness-panel">
+              <div className="today-opening-readiness-panel-title">阻断/观察项</div>
+              {readinessIssues.length > 0 ? (
+                <div className="today-readiness-issue-grid">
+                  {readinessIssues.slice(0, 6).map((item: any) => (
+                    <Alert
+                      key={item.key}
+                      type={
+                        item.level === 'risk' ? 'error' : item.level === 'warn' ? 'warning' : 'info'
+                      }
+                      showIcon
+                      message={item.title}
+                      description={item.detail}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <Alert showIcon type="success" message="暂无硬阻断，按今日交易纪律执行。" />
+              )}
+            </div>
+          </Col>
+        </Row>
+      </Card>
+
       <Row gutter={[16, 16]}>
         <Col xs={12} xl={6}>
           <Card
@@ -469,12 +645,17 @@ const TodayCommandCenter: React.FC = () => {
             <Button size="small" loading={preflightLoading} onClick={() => fetchPreflight()}>
               刷新自检
             </Button>
+            <Button size="small" onClick={() => fetchOpeningReadiness()}>
+              刷新可信门禁
+            </Button>
           </Space>
         </div>
         <Alert
           showIcon
           type={openingStatusMeta.type}
-          message={preflight?.summary?.conclusion || '正在等待开盘链路自检结果'}
+          message={
+            readiness?.conclusion || preflight?.summary?.conclusion || '正在等待开盘链路自检结果'
+          }
           description={
             dryRun
               ? `最近演练：${dryRunSummary.conclusion || '--'}，耗时 ${Number(
