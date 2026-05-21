@@ -32,7 +32,6 @@ Known frontend build warnings are historical Prettier warnings in existing files
 
 ## Completed in current autonomous batch
 
-
 ### 2026-05-21 continuous iteration: quant parameter maintenance lane
 
 - 参数更自动：
@@ -941,7 +940,7 @@ Completed:
   - `strategy_budget_action/label/reason/confidence`;
   - normalized `strategy_budget_discipline`;
   - `entry_risk_guard_decision` with target position, cash, exposure and strategy-budget checks.
-- Recommendation trade outcomes now copy those fields into outcome metadata, so later收益复盘 can attribute each trade to the exact budget/risk rule that allowed it.
+- Recommendation trade outcomes now copy those fields into outcome metadata, so later 收益复盘 can attribute each trade to the exact budget/risk rule that allowed it.
 - Read-only smoke now also checks allocation rows expose a per-strategy `decision` object.
 
 Validation:
@@ -959,3 +958,38 @@ Next:
 1. Surface strategy-budget and entry-risk decision fields in signal trace / paper-trading detail UI.
 2. Add outcome attribution views for “which strategy-budget rule made/avoided money”.
 3. Let weak budget/risk-rule combinations automatically lower next-day candidate position caps.
+
+## 2026-05-21 continuous iteration: opening readiness trust gate
+
+Focus: make tomorrow/opening automated stock picking trustworthy at one glance before the system recommends or simulates new buys.
+
+Completed:
+
+- Added `OpeningReadinessService`, which aggregates runtime buy gate, opening preflight, scheduled tasks, realtime quote/factor readiness, paper-trading risk profile, TradingAgents health and Feishu readiness into one `ready | degraded | blocked` decision.
+- Added endpoint `GET /api/today/opening-readiness` for a conclusion-first go/no-go check.
+- Today Command Center now embeds `opening_readiness` and prioritizes that decision in the top conclusion, so the daily page answers “can we run / can we buy / at what size” before showing long tables.
+- Frontend Today Command Center adds an “Opening Trust Gate” card showing:
+  - buy allowed vs paused;
+  - max new positions, default position and single-stock cap;
+  - factor coverage and realtime quote persistence;
+  - portfolio cash/exposure risk;
+  - task-chain and external-integration readiness;
+  - only the next actions and blocking/watch items needed for the day.
+- Read-only smoke now validates both `/api/today/opening-readiness` and the command-center `opening_readiness` payload shape.
+
+Validation:
+
+```bash
+./backend/node_modules/.bin/tsc --noEmit --project backend/tsconfig.json
+./frontend/node_modules/.bin/tsc --noEmit --project frontend/tsconfig.json
+CI=false /Users/bytedance/.nvm/versions/node/v20.20.2/bin/npm --prefix frontend run build
+git diff --check
+```
+
+Known frontend build warnings remain historical Prettier warnings in unrelated files.
+
+Next:
+
+1. Deploy main + lym and verify online smoke passes.
+2. Start P1 simulated execution realism: create/order-intent style checks for suspension, limit-up/down, liquidity, ST and minimum turnover before simulated BUY/SELL.
+3. Surface these execution-realism decisions in signal trace, paper-trading detail and outcome attribution.

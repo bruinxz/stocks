@@ -10,5 +10,10 @@ router.get(
   authController.authenticate,
   todayController.getCommandCenter.bind(todayController)
 );
+router.get(
+  '/opening-readiness',
+  authController.authenticate,
+  todayController.getOpeningReadiness.bind(todayController)
+);
 
 export default router;
