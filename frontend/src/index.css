@@ -1766,6 +1766,66 @@ a {
   margin-top: 8px;
 }
 
+.order-canary-review {
+  margin-top: 10px;
+  padding: 10px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px dashed rgba(15, 23, 42, 0.12);
+}
+
+.order-canary-review-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.order-canary-review-head strong {
+  color: var(--text-main);
+  font-size: 12px;
+}
+
+.order-canary-review-head span {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.order-canary-review-reasons,
+.order-canary-next {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.order-canary-review-reasons span {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.order-canary-next em {
+  position: relative;
+  padding-left: 14px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.order-canary-next em::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 7px;
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--primary);
+}
+
 .order-tuning-audit-item {
   display: flex;
   align-items: center;
