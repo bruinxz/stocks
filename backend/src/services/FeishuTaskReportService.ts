@@ -2141,6 +2141,26 @@ class FeishuTaskReportService {
     const dailyUpdate = details.dailyUpdate || result.dailyUpdate;
     const stockInfoUpdate = details.stockInfoUpdate || result.stockInfoUpdate;
 
+    if (result.scenario === 'quant_param_maintenance') {
+      lines.push(
+        `- **维护窗口**：${result.signal_window?.start_date || '-'} ~ ${result.signal_window?.end_date || '-'}`,
+        `- **验证样本新增/更新**：${result.created_validations ?? 0}/${result.updated_validations ?? 0}`,
+        `- **收益刷新完成/待完成/无数据**：${result.completed_validations ?? 0}/${result.pending_validations ?? 0}/${result.no_data_validations ?? 0}`,
+        `- **生命周期应用**：${result.lifecycle_applied ?? 0}；推广 ${result.lifecycle_promotion_count ?? 0}、降级 ${result.lifecycle_degradation_count ?? 0}、回滚 ${result.lifecycle_rollback_count ?? 0}`,
+        `- **当前可采用参数**：${result.active_adopted_strategy_count ?? 0} 个策略；冠军 ${result.active_champion_count ?? 0}、候选 ${result.active_candidate_count ?? 0}`
+      );
+    }
+
+    if (result.scenario === 'realtime_quote_sync') {
+      lines.push(
+        `- **行情源/范围**：${result.source || '-'} / ${result.universe || '-'}`,
+        `- **请求/落盘/更新股票**：${result.requested_count ?? 0}/${result.persisted_count ?? 0}/${result.updated_stock_count ?? 0}`,
+        `- **最新行情时间**：${result.latest_quote_time || '-'}`,
+        `- **当日覆盖股票数**：${result.latest_trade_date_symbol_count ?? 0}`,
+        `- **新鲜度**：${result.freshness_status || '-'}`
+      );
+    }
+
     if (dailyUpdate) {
       lines.push(
         `- **日更目标日期**：${dailyUpdate.targetDate || '-'}`,

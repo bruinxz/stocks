@@ -491,6 +491,101 @@ function buildEnvironmentAttribution(rows: any[], versionByKey: Map<string, any>
   };
 }
 
+
+function buildParamMaintenanceStatus(options: {
+  versions: any[];
+  validations: any[];
+  lifecyclePreview: any;
+}) {
+  const { versions, validations, lifecyclePreview } = options;
+  const now = new Date();
+  const completed = validations.filter(item => item.status === 'completed');
+  const pending = validations.filter(item => item.status === 'pending');
+  const noData = validations.filter(item => item.status === 'no_data');
+  const latestUpdatedAt = validations
+    .map(item => new Date(item.updated_at || item.created_at || 0).getTime())
+    .filter(item => Number.isFinite(item) && item > 0)
+    .sort((a, b) => b - a)[0];
+  const latestCompletedAt = completed
+    .map(item => new Date(item.updated_at || item.created_at || 0).getTime())
+    .filter(item => Number.isFinite(item) && item > 0)
+    .sort((a, b) => b - a)[0];
+  const latestSignalDate = validations
+    .map(item => String(item.signal_date || '').slice(0, 10))
+    .filter(Boolean)
+    .sort()
+    .pop();
+  const latestEvaluationDate = validations
+    .map(item => String(item.evaluation_date || '').slice(0, 10))
+    .filter(Boolean)
+    .sort()
+    .pop();
+  const activeCandidateCount = versions.filter(item => item.status === 'active_candidate').length;
+  const championCount = versions.filter(item => item.status === 'champion').length;
+  const degradedCount = versions.filter(item => item.status === 'degraded').length;
+  const rolledBackCount = versions.filter(item => item.status === 'rolled_back').length;
+  const promotionCount = toNumber(lifecyclePreview?.summary?.promotion_count);
+  const degradationCount = toNumber(lifecyclePreview?.summary?.degradation_count);
+  const rollbackCount = toNumber(lifecyclePreview?.summary?.rollback_count);
+  const actionableCount = promotionCount + degradationCount + rollbackCount;
+  const staleHours = latestUpdatedAt ? (now.getTime() - latestUpdatedAt) / 3600000 : null;
+  const completionRate = validations.length ? (completed.length / validations.length) * 100 : 0;
+  const pendingRate = validations.length ? (pending.length / validations.length) * 100 : 0;
+  const noDataRate = validations.length ? (noData.length / validations.length) * 100 : 0;
+  const status =
+    validations.length === 0 || !latestUpdatedAt
+      ? 'empty'
+      : actionableCount > 0
+      ? 'actionable'
+      : staleHours !== null && staleHours > 36
+      ? 'stale'
+      : pendingRate > 80 && completed.length < 10
+      ? 'warming_up'
+      : 'healthy';
+  const nextAction =
+    status === 'empty'
+      ? '等待下一次量化扫描生成 A/B 样本'
+      : status === 'actionable'
+      ? '执行参数生命周期维护'
+      : status === 'stale'
+      ? '刷新参数收益后验'
+      : status === 'warming_up'
+      ? '继续等待 1/3/5/10 日窗口完成'
+      : '保持自动维护';
+  const conclusion =
+    status === 'empty'
+      ? '参数 A/B 账本尚未产生样本；下一次量化扫描会自动创建。'
+      : status === 'actionable'
+      ? `发现 ${actionableCount} 个参数生命周期动作待处理（推广 ${promotionCount}、降级 ${degradationCount}、回滚 ${rollbackCount}）。`
+      : status === 'stale'
+      ? `参数后验超过 ${round(staleHours || 0, 1)} 小时未刷新，建议触发量化参数后验维护任务。`
+      : status === 'warming_up'
+      ? `参数样本已沉淀但多数仍在等待持有期完成；已完成 ${completed.length}，待完成 ${pending.length}。`
+      : `参数后验维护正常：完成 ${completed.length} 条，待完成 ${pending.length} 条，冠军 ${championCount} 个。`;
+
+  return {
+    status,
+    next_action: nextAction,
+    conclusion,
+    completion_rate: round(completionRate, 2),
+    pending_rate: round(pendingRate, 2),
+    no_data_rate: round(noDataRate, 2),
+    latest_updated_at: latestUpdatedAt ? new Date(latestUpdatedAt).toISOString() : null,
+    latest_completed_at: latestCompletedAt ? new Date(latestCompletedAt).toISOString() : null,
+    stale_hours: staleHours === null ? null : round(staleHours, 2),
+    latest_signal_date: latestSignalDate || null,
+    latest_evaluation_date: latestEvaluationDate || null,
+    actionable_lifecycle_count: actionableCount,
+    promotion_count: promotionCount,
+    degradation_count: degradationCount,
+    rollback_count: rollbackCount,
+    active_candidate_count: activeCandidateCount,
+    champion_count: championCount,
+    degraded_count: degradedCount,
+    rolled_back_count: rolledBackCount,
+  };
+}
+
 function normalizeStringArray(value: any): string[] {
   if (!Array.isArray(value)) return [];
   return [
@@ -1293,6 +1388,11 @@ export class QuantStrategyParamVersionService {
     const championCount = plainVersions.filter(item => item.status === 'champion').length;
     const degradedCount = plainVersions.filter(item => item.status === 'degraded').length;
     const rolledBackCount = plainVersions.filter(item => item.status === 'rolled_back').length;
+    const maintenanceStatus = buildParamMaintenanceStatus({
+      versions: plainVersions,
+      validations: plainValidations,
+      lifecyclePreview,
+    });
 
     return {
       generated_at: new Date().toISOString(),
@@ -1302,6 +1402,7 @@ export class QuantStrategyParamVersionService {
       summary_by_strategy: summaryByStrategy,
       champion,
       lifecycle: lifecyclePreview,
+      maintenance_status: maintenanceStatus,
       environment_attribution: environmentAttribution,
       summary: {
         version_count: plainVersions.length,
@@ -1310,6 +1411,8 @@ export class QuantStrategyParamVersionService {
         degraded_count: degradedCount,
         rolled_back_count: rolledBackCount,
         validation_count: plainValidations.length,
+        maintenance_status: maintenanceStatus.status,
+        maintenance_next_action: maintenanceStatus.next_action,
         completed_count: completedCount,
         pending_count: pendingCount,
         conclusion: champion

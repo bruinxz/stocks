@@ -555,7 +555,7 @@ export class QuantPerformanceDashboardService {
   private async getScheduleSummary() {
     const tasks = await ScheduledTask.findAll({
       where: {
-        type: { [Op.in]: ['QUANT_DAILY_PIPELINE', 'QUANT_OPEN_WATCHDOG', 'REALTIME_QUOTE_SYNC'] },
+        type: { [Op.in]: ['QUANT_DAILY_PIPELINE', 'QUANT_OPEN_WATCHDOG', 'REALTIME_QUOTE_SYNC', 'QUANT_PARAM_MAINTENANCE'] },
       },
       order: [['cron_expression', 'ASC']],
     });
@@ -563,6 +563,7 @@ export class QuantPerformanceDashboardService {
       quant_pipeline_task_count: tasks.filter(task => task.type === 'QUANT_DAILY_PIPELINE').length,
       watchdog_task_count: tasks.filter(task => task.type === 'QUANT_OPEN_WATCHDOG').length,
       quote_sync_task_count: tasks.filter(task => task.type === 'REALTIME_QUOTE_SYNC').length,
+      param_maintenance_task_count: tasks.filter(task => task.type === 'QUANT_PARAM_MAINTENANCE').length,
       tasks: await Promise.all(
         tasks.map(async task => {
           const latestLog = await TaskExecutionLog.findOne({
@@ -600,6 +601,12 @@ export class QuantPerformanceDashboardService {
               limit: task.parameters?.limit,
               source: task.parameters?.source,
               batch_size: task.parameters?.batch_size,
+              horizons: task.parameters?.horizons,
+              signal: task.parameters?.signal,
+              lookback_days: task.parameters?.lookback_days,
+              refresh_limit: task.parameters?.refresh_limit,
+              lifecycle_limit: task.parameters?.lifecycle_limit,
+              dry_run_lifecycle: task.parameters?.dry_run_lifecycle,
               factor_sync_limit: task.parameters?.factor_sync_limit,
               quote_sync_limit: task.parameters?.quote_sync_limit,
               realtime_quote_source: task.parameters?.realtime_quote_source,
