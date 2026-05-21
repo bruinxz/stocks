@@ -1380,6 +1380,20 @@ async function main() {
                 `paper trading order intent canary review missing: ${preview(json.data)}`
               );
             }
+            if (!json.data.rollback_plan?.safety_state) {
+              throw new Error(
+                `paper trading order intent canary rollback plan missing: ${preview(
+                  json.data
+                )}`
+              );
+            }
+            if (!json.data.attribution?.conclusion) {
+              throw new Error(
+                `paper trading order intent canary attribution missing: ${preview(
+                  json.data
+                )}`
+              );
+            }
             if (!Array.isArray(json.data.review.reasons || [])) {
               throw new Error(
                 `paper trading order intent canary review reasons invalid: ${preview(

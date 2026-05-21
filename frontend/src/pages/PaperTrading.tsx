@@ -511,6 +511,47 @@ interface OrderIntentTuningCanaryStatus {
     reasons: string[];
     next_steps: string[];
   };
+  rollback_plan?: {
+    available: boolean;
+    safety_state: 'ready' | 'manual_review' | 'no_change';
+    safety_label: string;
+    task_count: number;
+    changed_key_count: number;
+    rollback_key_count: number;
+    changed_after_canary_count: number;
+    conclusion: string;
+    items?: Array<{
+      task_id: number;
+      task_name: string;
+      task_type: string;
+      parameters: Array<{
+        key: string;
+        before_value: any;
+        canary_value: any;
+        current_value: any;
+        restore_value: any;
+        needs_rollback: boolean;
+        changed_after_canary: boolean;
+      }>;
+    }>;
+  };
+  attribution?: {
+    start_date?: string;
+    selected_parameter_keys: string[];
+    task_count: number;
+    closed_count: number;
+    open_count: number;
+    total_pnl: number;
+    total_realized_pnl: number;
+    total_unrealized_pnl: number;
+    avg_closed_return_pct: number;
+    avg_excess_return_pct: number;
+    win_rate: number;
+    profit_factor: number;
+    conclusion: string;
+    winners: Array<{ id: number; symbol: string; name?: string; total_pnl_pct: number }>;
+    losers: Array<{ id: number; symbol: string; name?: string; total_pnl_pct: number }>;
+  };
   summary?: {
     conclusion: string;
   };
@@ -1232,6 +1273,8 @@ const PaperTrading: React.FC = () => {
       ? (Number(orderIntentHindsight?.cache_hit_count || 0) / orderIntentCacheTotal) * 100
       : 0;
   const canaryReview = canaryStatus?.review;
+  const canaryRollback = canaryStatus?.rollback_plan;
+  const canaryAttribution = canaryStatus?.attribution;
   const riskTone = riskProfile ? riskProfileToneMap[riskProfile.status.level] : undefined;
   const topRiskPosition = riskProfile?.position_risks?.find(item => item.risk_flags.length > 0);
   const outcomeBlockedSegments = tradingPlanSummary?.outcome_blocked_segments || [];
@@ -2036,6 +2079,65 @@ const PaperTrading: React.FC = () => {
                                 <em key={step}>{step}</em>
                               ))}
                             </div>
+                          </div>
+                        )}
+                        {(canaryAttribution || canaryRollback) && (
+                          <div className="order-canary-detail-grid">
+                            {canaryAttribution && (
+                              <div className="order-canary-detail-card">
+                                <div className="order-canary-detail-title">收益归因</div>
+                                <strong
+                                  style={{
+                                    color: pnlColor(canaryAttribution.avg_excess_return_pct),
+                                  }}
+                                >
+                                  {formatPercent(canaryAttribution.avg_excess_return_pct)}
+                                </strong>
+                                <span>
+                                  闭环 {canaryAttribution.closed_count} 笔 · 胜率{' '}
+                                  {formatPercent(canaryAttribution.win_rate)}
+                                </span>
+                                <p>{canaryAttribution.conclusion}</p>
+                                <div className="order-canary-mini-list">
+                                  {(canaryAttribution.winners || []).slice(0, 2).map(item => (
+                                    <em key={`winner-${item.id}`}>
+                                      贡献 {item.name || item.symbol}{' '}
+                                      {formatPercent(item.total_pnl_pct)}
+                                    </em>
+                                  ))}
+                                  {(canaryAttribution.losers || []).slice(0, 1).map(item => (
+                                    <em key={`loser-${item.id}`}>
+                                      拖累 {item.name || item.symbol}{' '}
+                                      {formatPercent(item.total_pnl_pct)}
+                                    </em>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                            {canaryRollback && (
+                              <div className="order-canary-detail-card">
+                                <div className="order-canary-detail-title">回滚预案</div>
+                                <strong>{canaryRollback.safety_label}</strong>
+                                <span>
+                                  {canaryRollback.task_count} 个任务 ·{' '}
+                                  {canaryRollback.rollback_key_count} 个参数
+                                </span>
+                                <p>{canaryRollback.conclusion}</p>
+                                <Space wrap size={6}>
+                                  {(canaryRollback.items || [])
+                                    .flatMap(item => item.parameters || [])
+                                    .slice(0, 4)
+                                    .map(item => (
+                                      <Tag
+                                        key={`${item.key}-${String(item.restore_value)}`}
+                                        color={item.changed_after_canary ? 'red' : 'blue'}
+                                      >
+                                        {item.key}
+                                      </Tag>
+                                    ))}
+                                </Space>
+                              </div>
+                            )}
                           </div>
                         )}
                       </>
