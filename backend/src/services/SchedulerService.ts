@@ -573,7 +573,7 @@ class SchedulerService {
             parameters.factor_sync_scope || parameters.factorSyncScope || parameters.universe,
           factor_sync_limit: this.toPositiveInt(
             parameters.factor_sync_limit || parameters.factorSyncLimit,
-            parameters.candidate_limit || parameters.candidateLimit || 220,
+            Math.max(Number(parameters.candidate_limit || parameters.candidateLimit || 220), 360),
             1500
           ),
           factor_provider: parameters.factor_provider || parameters.factorProvider || 'auto',
@@ -1975,7 +1975,7 @@ class SchedulerService {
           refresh_realtime_quotes: true,
           sync_factors_before_scan: true,
           factor_sync_scope: 'market',
-          factor_sync_limit: 220,
+          factor_sync_limit: 360,
           factor_provider: 'auto',
           factor_sync_skip_if_coverage_rate_gte: 92,
           factor_sync_skip_if_real_provider_rate_gte: 65,
@@ -2062,7 +2062,7 @@ class SchedulerService {
           refresh_realtime_quotes: true,
           sync_factors_before_scan: true,
           factor_sync_scope: 'market',
-          factor_sync_limit: 220,
+          factor_sync_limit: 360,
           factor_provider: 'auto',
           factor_sync_skip_if_coverage_rate_gte: 92,
           factor_sync_skip_if_real_provider_rate_gte: 65,
@@ -2704,6 +2704,12 @@ class SchedulerService {
           Number((taskData.parameters as any).quote_sync_limit || 0)
         ) {
           nextParams.quote_sync_limit = (taskData.parameters as any).quote_sync_limit;
+        }
+        if (
+          Number(nextParams.factor_sync_limit || 0) <
+          Number((taskData.parameters as any).factor_sync_limit || 0)
+        ) {
+          nextParams.factor_sync_limit = (taskData.parameters as any).factor_sync_limit;
         }
         if (JSON.stringify(nextParams) !== JSON.stringify(params)) {
           patch.parameters = nextParams;

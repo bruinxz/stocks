@@ -1940,6 +1940,7 @@ const QuantPerformanceDashboard: React.FC = () => {
                       <Tag>
                         模拟盘 {task.parameters?.run_paper_trading === false ? '关闭' : '开启'}
                       </Tag>
+                      <Tag>因子 {task.parameters?.factor_sync_limit || 360}</Tag>
                       <Tag>行情 {task.parameters?.quote_sync_limit || 360}</Tag>
                       <Tag>单次 {task.parameters?.paper_trade_limit || 3} 票</Tag>
                     </>
