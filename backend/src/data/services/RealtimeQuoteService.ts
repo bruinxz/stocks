@@ -27,6 +27,40 @@ function dateOnly(value: Date): string {
   return moment(value).tz('Asia/Shanghai').format('YYYY-MM-DD');
 }
 
+function getAshareSession(now = moment().tz('Asia/Shanghai')) {
+  const minutes = now.hour() * 60 + now.minute();
+  const weekday = now.isoWeekday();
+  const isWeekday = weekday >= 1 && weekday <= 5;
+  const tradeDate = now.format('YYYY-MM-DD');
+  const morningOpen = 9 * 60 + 30;
+  const morningClose = 11 * 60 + 30;
+  const afternoonOpen = 13 * 60;
+  const afternoonClose = 15 * 60;
+  const isContinuousTrading =
+    isWeekday &&
+    ((minutes >= morningOpen && minutes <= morningClose) ||
+      (minutes >= afternoonOpen && minutes <= afternoonClose));
+  const isTradingDayWindow = isWeekday && minutes >= morningOpen && minutes <= afternoonClose;
+  const session =
+    !isWeekday || minutes < morningOpen
+      ? 'pre_open'
+      : minutes <= morningClose
+      ? 'morning'
+      : minutes < afternoonOpen
+      ? 'lunch_break'
+      : minutes <= afternoonClose
+      ? 'afternoon'
+      : 'after_close';
+
+  return {
+    trade_date: tradeDate,
+    session,
+    is_weekday: isWeekday,
+    is_continuous_trading: isContinuousTrading,
+    is_trading_day_window: isTradingDayWindow,
+  };
+}
+
 function pickQuote(quotes: Record<string, any>, requested: string, normalized: string) {
   return (
     quotes[requested] ||
@@ -328,7 +362,11 @@ export class RealtimeQuoteService {
 
   async getPersistenceSummary(options: { trade_date?: string } = {}) {
     const latest = await RealtimeQuote.findOne({ order: [['quote_time', 'DESC']] });
-    const tradeDate = options.trade_date || (latest ? dateOnly(latest.quote_time) : undefined);
+    const marketSession = getAshareSession();
+    const tradeDate =
+      options.trade_date ||
+      (latest ? dateOnly(latest.quote_time) : undefined) ||
+      marketSession.trade_date;
     const todayCount = tradeDate
       ? await RealtimeQuote.count({ where: { trade_date: tradeDate } })
       : 0;
@@ -346,7 +384,23 @@ export class RealtimeQuoteService {
       Number(process.env.REALTIME_QUOTE_FRESHNESS_MINUTES || 30),
       1
     );
-    const isFresh = ageMinutes !== null && ageMinutes <= freshnessThresholdMinutes;
+    const latestTradeDateMatchesSession = latest ? dateOnly(latest.quote_time) === tradeDate : false;
+    const hasEnoughSameDaySymbols =
+      latestSymbols >= Number(process.env.REALTIME_QUOTE_MIN_SYMBOLS || 50);
+    const isIntradayFresh = ageMinutes !== null && ageMinutes <= freshnessThresholdMinutes;
+    const isSameDaySnapshotUsable =
+      Boolean(latest) &&
+      latestTradeDateMatchesSession &&
+      hasEnoughSameDaySymbols &&
+      !marketSession.is_continuous_trading;
+    const isFresh = isIntradayFresh || isSameDaySnapshotUsable;
+    const freshnessStatus = !latest
+      ? 'missing'
+      : isIntradayFresh
+      ? 'fresh'
+      : isSameDaySnapshotUsable
+      ? 'same_day_snapshot'
+      : 'stale';
     return {
       persisted: Boolean(latest),
       latest_quote_time: latest?.quote_time?.toISOString() || null,
@@ -355,8 +409,11 @@ export class RealtimeQuoteService {
       latest_trade_date_symbol_count: latestSymbols,
       age_minutes: ageMinutes,
       freshness_threshold_minutes: freshnessThresholdMinutes,
+      market_session: marketSession.session,
+      is_continuous_trading: marketSession.is_continuous_trading,
+      same_day_snapshot_usable: isSameDaySnapshotUsable,
       is_fresh: isFresh,
-      freshness_status: !latest ? 'missing' : isFresh ? 'fresh' : 'stale',
+      freshness_status: freshnessStatus,
     };
   }
 }

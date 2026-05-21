@@ -744,3 +744,28 @@ Validation:
 /Applications/Codex.app/Contents/Resources/node backend/node_modules/typescript/bin/tsc -p backend/tsconfig.json --pretty false
 git diff --check
 ```
+
+## 2026-05-21 continuous iteration: trading-session-aware quote freshness
+
+Focus: remove false runtime-health warnings while keeping intraday buy discipline strict.
+
+Completed:
+
+- `RealtimeQuoteService.getPersistenceSummary()` now understands A-share sessions:
+  - continuous trading: 09:30-11:30 and 13:00-15:00 on weekdays;
+  - lunch break / after close / pre-open / non-weekday are non-continuous sessions.
+- During continuous trading, quotes still must be within `REALTIME_QUOTE_FRESHNESS_MINUTES` to be `fresh`.
+- During non-continuous sessions, a same-day snapshot with enough symbols is treated as `same_day_snapshot` and `is_fresh=true`.
+- Runtime health should no longer stay `warn` at lunch/after close solely because the last quote is older than 30 minutes, while 09:35 open scans remain strict after refresh.
+
+Validation:
+
+```bash
+/Applications/Codex.app/Contents/Resources/node backend/node_modules/typescript/bin/tsc -p backend/tsconfig.json --pretty false
+git diff --check
+```
+
+Next:
+
+1. Deploy main + lym and verify `/api/quant/runtime-health` becomes `ready` when all other checks are green.
+2. Ensure `quote_persistence.freshness_status` clearly reports `same_day_snapshot` outside continuous trading.
