@@ -183,6 +183,54 @@ function asPlainObject(value: any): Record<string, any> {
   return value;
 }
 
+function buildRuntimeBuyGate(runtimeHealth: any) {
+  if (!runtimeHealth) {
+    return {
+      action: 'allow',
+      blocked: false,
+      degraded: false,
+      position_multiplier: 1,
+      conclusion: '未启用运行时健康门禁。',
+    };
+  }
+  const explicit = asPlainObject(runtimeHealth.buy_gate);
+  if (explicit.action) {
+    return {
+      action: String(explicit.action || 'allow').toLowerCase(),
+      blocked: Boolean(explicit.blocked),
+      degraded: Boolean(explicit.degraded),
+      position_multiplier: safeNumber(explicit.position_multiplier, 1),
+      conclusion: explicit.conclusion || runtimeHealth.summary?.conclusion,
+      blocking_checks: explicit.blocking_checks || [],
+      degraded_checks: explicit.degraded_checks || [],
+    };
+  }
+  const checks = Array.isArray(runtimeHealth.checks) ? runtimeHealth.checks : [];
+  const riskChecks = checks.filter((item: any) => item.status === 'risk');
+  const hardBlockKeys = new Set(['schema_columns', 'strategy_registry', 'quote_persistence', 'schedule']);
+  const hardBlocks = riskChecks.filter((item: any) => hardBlockKeys.has(String(item.key || '')));
+  if (hardBlocks.length > 0 || runtimeHealth.status === 'risk') {
+    return {
+      action: hardBlocks.length > 0 ? 'pause' : 'reduce',
+      blocked: hardBlocks.length > 0,
+      degraded: hardBlocks.length === 0,
+      position_multiplier: hardBlocks.length > 0 ? 0 : 0.5,
+      conclusion: runtimeHealth.summary?.conclusion || '运行时健康存在风险。',
+      blocking_checks: hardBlocks,
+      degraded_checks: hardBlocks.length > 0 ? [] : riskChecks,
+    };
+  }
+  return {
+    action: runtimeHealth.status === 'warn' ? 'observe' : 'allow',
+    blocked: false,
+    degraded: runtimeHealth.status === 'warn',
+    position_multiplier: runtimeHealth.status === 'warn' ? 0.75 : 1,
+    conclusion: runtimeHealth.summary?.conclusion || '运行时健康未触发阻断。',
+    blocking_checks: [],
+    degraded_checks: checks.filter((item: any) => item.status === 'warn'),
+  };
+}
+
 function regimeBucketAdjustment(
   buckets: any[],
   key: any,
@@ -371,9 +419,17 @@ export class QuantFusionService {
                 summary: {
                   conclusion: `量化扫描运行时健康检查失败：${error?.message || error}`,
                 },
+                buy_gate: {
+                  action: 'pause',
+                  blocked: true,
+                  degraded: false,
+                  position_multiplier: 0,
+                  conclusion: `量化扫描运行时健康检查失败：${error?.message || error}`,
+                },
               };
             });
-    const runtimeRiskBlocked = Boolean(runtimeHealth && runtimeHealth.status === 'risk');
+    const runtimeBuyGate = buildRuntimeBuyGate(runtimeHealth);
+    const runtimeRiskBlocked = Boolean(runtimeBuyGate.blocked);
     if (runtimeRiskBlocked) {
       logger.warn(
         `量化运行时存在阻断风险，本轮仅归档观察信号，不执行 Agent 买入/模拟买入: ${
@@ -387,6 +443,7 @@ export class QuantFusionService {
         mode: 'archive_only' as QuantPipelineMode,
         universe: options.universe || 'market',
         runtime_health: runtimeHealth,
+        runtime_buy_gate: runtimeBuyGate,
         runtime_risk_blocked: true,
         generated: {
           scanned_stocks: generated.scanned_stocks,
@@ -500,6 +557,52 @@ export class QuantFusionService {
       requested_max_position_pct: safeNumber(options.max_position_pct, 10),
       suggested_limits: thresholdSuggestion,
     });
+    const runtimeGateMultiplier = Math.max(
+      0,
+      Math.min(1, safeNumber(runtimeBuyGate.position_multiplier, 1))
+    );
+    const mergedRiskProfileGate =
+      runtimeBuyGate.action === 'allow'
+        ? riskProfileGate
+        : {
+            ...riskProfileGate,
+            runtime_buy_gate: runtimeBuyGate,
+            runtime_gate_action: runtimeBuyGate.action,
+            action:
+              riskProfileGate.action === 'pause' || runtimeBuyGate.action === 'pause'
+                ? 'pause'
+                : riskProfileGate.action === 'reduce' || runtimeBuyGate.action === 'reduce'
+                ? 'reduce'
+                : riskProfileGate.action === 'observe' || runtimeBuyGate.action === 'observe'
+                ? 'observe'
+                : riskProfileGate.action,
+            position_multiplier: roundNumber(
+              safeNumber(riskProfileGate.position_multiplier, 1) * runtimeGateMultiplier,
+              4
+            ),
+            effective_trade_limit:
+              runtimeBuyGate.action === 'reduce'
+                ? Math.max(1, Math.min(safeNumber(riskProfileGate.effective_trade_limit, 1), 1))
+                : riskProfileGate.effective_trade_limit,
+            effective_default_position_pct: roundNumber(
+              safeNumber(riskProfileGate.effective_default_position_pct, safeNumber(options.default_position_pct, 5)) *
+                runtimeGateMultiplier,
+              2
+            ),
+            effective_max_position_pct: roundNumber(
+              safeNumber(riskProfileGate.effective_max_position_pct, safeNumber(options.max_position_pct, 10)) *
+                runtimeGateMultiplier,
+              2
+            ),
+            reason:
+              runtimeBuyGate.action === 'reduce'
+                ? `运行时非致命风险降仓：${runtimeBuyGate.conclusion || riskProfileGate.reason}`
+                : runtimeBuyGate.conclusion || riskProfileGate.reason,
+          };
+    const effectiveRiskProfileGate = {
+      ...mergedRiskProfileGate,
+      ...(options.risk_profile_gate || {}),
+    };
 
     const agentAnalysis = await this.submitAgentReview(archive.candidates, archive.signal_records, {
       ...options,
@@ -553,10 +656,7 @@ export class QuantFusionService {
         block_limit_up: options.block_limit_up,
         block_limit_down: options.block_limit_down,
         block_suspended: options.block_suspended,
-        risk_profile_gate: {
-          ...riskProfileGate,
-          ...(options.risk_profile_gate || {}),
-        },
+        risk_profile_gate: effectiveRiskProfileGate,
       });
       const lifecycleSummary = paramLifecycle?.lifecycle?.summary || {};
       const candidateLikeCount =
@@ -618,15 +718,15 @@ export class QuantFusionService {
             block_limit_down: options.block_limit_down,
             block_suspended: options.block_suspended,
             risk_profile_gate: {
-              ...riskProfileGate,
-              action: riskProfileGate.action === 'pause' ? 'pause' : 'observe',
+              ...effectiveRiskProfileGate,
+              action: effectiveRiskProfileGate.action === 'pause' ? 'pause' : 'observe',
               reason:
-                riskProfileGate.action === 'pause'
-                  ? riskProfileGate.reason
+                effectiveRiskProfileGate.action === 'pause'
+                  ? effectiveRiskProfileGate.reason
                   : '参数实验盘仅做小仓 A/B 验证，默认降仓观察',
               position_multiplier: Math.min(
                 0.45,
-                safeNumber(riskProfileGate.position_multiplier, 1)
+                safeNumber(effectiveRiskProfileGate.position_multiplier, 1)
               ),
               metadata_contains: {
                 quant_candidate: true,
@@ -634,7 +734,6 @@ export class QuantFusionService {
               },
               param_experiment: true,
               lifecycle_summary: lifecycleSummary,
-              ...(options.risk_profile_gate || {}),
             },
           })
           .catch(error => {
@@ -732,12 +831,13 @@ export class QuantFusionService {
         candidates: archive.candidates.slice(0, 10),
       },
       runtime_health: runtimeHealth,
+      runtime_buy_gate: runtimeBuyGate,
       runtime_risk_blocked: false,
       agent_analysis: agentAnalysis,
       paper_trading: paperTrading,
       param_experiment_paper_trading: paramExperimentPaperTrading,
       risk_profile: riskProfile || paperTrading?.risk_profile || preTradeRiskProfile || null,
-      risk_profile_gate: riskProfileGate,
+      risk_profile_gate: effectiveRiskProfileGate,
       risk_threshold_suggestion: thresholdSuggestion,
       message: this.buildResultMessage({
         generated,

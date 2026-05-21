@@ -81,7 +81,14 @@ class QuantOpeningPreflightService {
     const feishuBotConfigured = Boolean(process.env.FEISHU_RECOMMENDATION_BOT_WEBHOOK);
     const feishuBotDisabled = process.env.DISABLE_FEISHU_BOT_WEBHOOK === 'true';
     const adoptedCount = toNumber((activeScanParams as any)?.summary?.adopted_strategy_count);
+    const dataFreshnessIssues = Array.isArray((dataFreshness as any).issues)
+      ? (dataFreshness as any).issues
+      : [];
+    const dataFreshnessHardRisk = dataFreshnessIssues.some((item: any) =>
+      ['realtime_quotes', 'quant_signals'].includes(String(item.key || ''))
+    );
 
+    const hardRiskKeys = new Set(['quant_task']);
     const checks = {
       quant_task: {
         status: checkStatus(Boolean(quantTask?.is_active)),
@@ -106,8 +113,9 @@ class QuantOpeningPreflightService {
           : '未启用开盘看门狗，建议开启以监控日扫是否准时完成。',
       },
       factor_coverage: {
-        status: checkStatus(minFactorCoverage >= 70, minFactorCoverage >= 45),
+        status: checkStatus(minFactorCoverage >= 70, minFactorCoverage >= 15),
         ok: minFactorCoverage >= 70,
+        degraded: minFactorCoverage >= 15 && minFactorCoverage < 70,
         min_coverage_rate: minFactorCoverage,
         latest_trade_date: factorCoverage.latest_trade_date,
         latest_factor_date: (factorCoverage as any).latest_factor_date || null,
@@ -116,6 +124,10 @@ class QuantOpeningPreflightService {
         conclusion:
           minFactorCoverage >= 70
             ? `因子覆盖可用，最低覆盖率 ${minFactorCoverage.toFixed(1)}%，因子日期 ${(factorCoverage as any).latest_factor_date || '-'}。`
+            : minFactorCoverage >= 15
+            ? `因子覆盖不足但有真实源样本，最低覆盖率 ${minFactorCoverage.toFixed(
+                1
+              )}%，开盘可降仓小样本验证。`
             : `因子覆盖偏低，最低覆盖率 ${minFactorCoverage.toFixed(1)}%，开盘前建议同步因子。`,
       },
       factor_provider: {
@@ -145,12 +157,15 @@ class QuantOpeningPreflightService {
       },
       data_freshness: {
         status:
-          (dataFreshness as any).status === 'risk'
+          (dataFreshness as any).status === 'risk' && dataFreshnessHardRisk
             ? 'risk'
             : (dataFreshness as any).status === 'warn'
             ? 'warn'
+            : (dataFreshness as any).status === 'risk'
+            ? 'warn'
             : 'ok',
         ok: (dataFreshness as any).status !== 'risk',
+        degraded: (dataFreshness as any).status === 'risk' && !dataFreshnessHardRisk,
         summary: (dataFreshness as any).summary,
         checks: (dataFreshness as any).checks,
         issues: (dataFreshness as any).issues || [],
@@ -173,9 +188,12 @@ class QuantOpeningPreflightService {
     const issueList = Object.entries(checks)
       .filter(([, value]: any) => value.status !== 'ok')
       .map(([key, value]: any) => ({ key, status: value.status, conclusion: value.conclusion }));
+    const hardRiskCount = issueList.filter(
+      item => item.status === 'risk' && hardRiskKeys.has(item.key)
+    ).length;
     const riskCount = issueList.filter(item => item.status === 'risk').length;
     const warnCount = issueList.filter(item => item.status === 'warn').length;
-    const status = riskCount > 0 ? 'risk' : warnCount > 0 ? 'warn' : 'ready';
+    const status = hardRiskCount > 0 ? 'risk' : riskCount > 0 || warnCount > 0 ? 'warn' : 'ready';
 
     return {
       generated_at: new Date().toISOString(),
@@ -184,12 +202,13 @@ class QuantOpeningPreflightService {
       summary: {
         risk_count: riskCount,
         warn_count: warnCount,
+        hard_risk_count: hardRiskCount,
         issue_count: issueList.length,
         conclusion:
           status === 'ready'
             ? '明日/今日开盘量化链路自检通过，可等待定时任务自动执行。'
             : status === 'warn'
-            ? '开盘链路有轻微告警，但可继续运行；建议关注告警项。'
+            ? '开盘链路可运行但需要降仓/观察，建议继续补因子覆盖与闭环样本。'
             : '开盘链路存在风险项，建议先修复再等待自动推荐。',
       },
       checks,

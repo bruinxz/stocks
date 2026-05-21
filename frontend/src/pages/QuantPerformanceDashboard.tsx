@@ -188,6 +188,9 @@ type RuntimeHealthCheck = {
   status: 'ok' | 'warn' | 'risk' | string;
   metric?: string;
   conclusion?: string;
+  severity?: 'blocking' | 'degraded' | 'watch' | string;
+  buy_gate_action?: string;
+  position_multiplier?: number;
 };
 
 type RuntimeHealth = {
@@ -197,6 +200,8 @@ type RuntimeHealth = {
   summary?: {
     risk_count?: number;
     warn_count?: number;
+    blocking_count?: number;
+    degraded_count?: number;
     check_count?: number;
     enabled_strategy_count?: number;
     policy_ready_strategy_count?: number;
@@ -205,6 +210,15 @@ type RuntimeHealth = {
     factor_min_coverage_rate?: number;
     factor_real_provider_rate?: number;
     conclusion?: string;
+  };
+  buy_gate?: {
+    action?: string;
+    blocked?: boolean;
+    degraded?: boolean;
+    position_multiplier?: number;
+    conclusion?: string;
+    blocking_checks?: RuntimeHealthCheck[];
+    degraded_checks?: RuntimeHealthCheck[];
   };
   checks?: RuntimeHealthCheck[];
   runtime_schema?: {
@@ -799,6 +813,18 @@ const QuantPerformanceDashboard: React.FC = () => {
             </p>
             <div className="quant-runtime-score-meta">
               <Tag>风险 {effectiveRuntimeHealth?.summary?.risk_count || 0}</Tag>
+              <Tag
+                color={(effectiveRuntimeHealth?.summary?.blocking_count || 0) > 0 ? 'red' : 'green'}
+              >
+                硬阻断 {effectiveRuntimeHealth?.summary?.blocking_count || 0}
+              </Tag>
+              <Tag
+                color={
+                  (effectiveRuntimeHealth?.summary?.degraded_count || 0) > 0 ? 'gold' : 'green'
+                }
+              >
+                降仓项 {effectiveRuntimeHealth?.summary?.degraded_count || 0}
+              </Tag>
               <Tag>观察 {effectiveRuntimeHealth?.summary?.warn_count || 0}</Tag>
               <Tag>策略 {effectiveRuntimeHealth?.summary?.enabled_strategy_count || 0}</Tag>
               <Tag>开盘任务 {effectiveRuntimeHealth?.summary?.open_task_count || 0}</Tag>
@@ -808,6 +834,28 @@ const QuantPerformanceDashboard: React.FC = () => {
               <Tag>
                 真实源 {effectiveRuntimeHealth?.summary?.factor_real_provider_rate ?? '--'}%
               </Tag>
+            </div>
+            <div
+              className={`quant-runtime-buy-gate quant-runtime-buy-gate--${
+                effectiveRuntimeHealth?.buy_gate?.action || 'allow'
+              }`}
+            >
+              <span>BUY GATE</span>
+              <strong>
+                {effectiveRuntimeHealth?.buy_gate?.action === 'pause'
+                  ? '暂停买入'
+                  : effectiveRuntimeHealth?.buy_gate?.action === 'reduce'
+                  ? '降仓放行'
+                  : effectiveRuntimeHealth?.buy_gate?.action === 'observe'
+                  ? '观察放行'
+                  : '正常放行'}
+              </strong>
+              <em>
+                {effectiveRuntimeHealth?.buy_gate?.conclusion ||
+                  `仓位倍率 ${Number(
+                    effectiveRuntimeHealth?.buy_gate?.position_multiplier ?? 1
+                  ).toFixed(2)}x`}
+              </em>
             </div>
             <div className="quant-runtime-factor-strip">
               <span>FACTOR</span>
@@ -838,6 +886,11 @@ const QuantPerformanceDashboard: React.FC = () => {
               >
                 <span>{item.label}</span>
                 <strong>{item.metric || (item.status === 'ok' ? 'OK' : item.status)}</strong>
+                {item.severity && item.severity !== 'watch' && (
+                  <Tag color={item.severity === 'blocking' ? 'red' : 'gold'}>
+                    {item.severity === 'blocking' ? '硬阻断' : '降仓'}
+                  </Tag>
+                )}
                 <em>{item.conclusion || '等待检查结果'}</em>
               </div>
             ))}
