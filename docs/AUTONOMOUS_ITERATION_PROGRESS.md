@@ -1150,3 +1150,39 @@ Next:
 1. Add a persisted audit/apply flow for approved parameter changes, writing before/after values into `task_parameter_audit_logs`.
 2. Add single-stock rejection drill-down: signal → gate reason → future 1/3/5/10d result → proposed parameter impact.
 3. Add cached/persisted hindsight snapshots if order-intent samples grow beyond lightweight request-time calculation.
+
+### 2026-05-21 order-intent tuning audit/apply path
+
+Focus: let stable order-intent tuning candidates move into scheduled task parameters safely, with preview-first UX and audit logs.
+
+Completed:
+
+- Added `PaperTradingTuningApplyService`.
+- Added API `POST /api/paper-trading/order-intent-tuning/apply`:
+  - `dry_run: true` returns preview-only changes;
+  - `dry_run: false` writes selected parameter changes to target tasks and reloads enabled schedules;
+  - targets only `PAPER_TRADING_AUTO_SYNC` and `PAPER_TRADING_DAILY_PLAN`;
+  - allowlisted parameters include `min_avg_turnover_yuan`, `max_daily_new_positions`, `max_daily_new_exposure_pct`, `profit_gate_min_quality_score`, `profit_gate_sampling_multiplier`, `min_score`, `default_position_pct`, `min_trade_amount`.
+- Applied changes are written to `task_parameter_audit_logs` with event type `order_intent_tuning_applied`, including before/after parameters and source preview metadata.
+- Watched audit keys now include the main paper-trading tuning parameters, so task audit pages can surface these changes.
+- Paper-trading page now supports:
+  - “生成审计预览” to show which scheduled tasks and keys would change;
+  - “写入任务参数” guarded by confirmation, explicitly not triggering immediate trades;
+  - concise task/key list after preview.
+- Read-only smoke now exercises the dry-run endpoint to ensure deployment catches API/schema regressions without mutating scheduled tasks.
+
+Validation:
+
+```bash
+node --check scripts/tests/smoke_readonly_core.js
+./backend/node_modules/.bin/tsc --noEmit --project backend/tsconfig.json
+./frontend/node_modules/.bin/tsc --noEmit --project frontend/tsconfig.json
+CI=false /Users/bytedance/.nvm/versions/node/v20.20.2/bin/npm --prefix frontend run build
+git diff --check
+```
+
+Next:
+
+1. Add a single-stock rejection drill-down modal/page for signal → gate → hindsight → parameter impact.
+2. Add persisted/cached order-intent hindsight snapshots to reduce request-time daily-bar scans when samples grow.
+3. Add automated canary mode: apply tuning to only one low-risk task/parameter first, observe next N trades, then graduate.

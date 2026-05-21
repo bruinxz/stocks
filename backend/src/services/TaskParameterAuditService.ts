@@ -7,7 +7,8 @@ export type TaskParameterAuditEventType =
   | 'task_updated'
   | 'task_created'
   | 'risk_limit_suggestion_applied'
-  | 'risk_stability_settings_updated';
+  | 'risk_stability_settings_updated'
+  | 'order_intent_tuning_applied';
 
 export interface TaskParameterAuditOperator {
   user_id?: number;
@@ -43,6 +44,14 @@ const WATCHED_PARAMETER_KEYS = [
   'risk_threshold_field_min_sample_count',
   'risk_threshold_field_min_triggered_count',
   'risk_threshold_field_gate_update_source',
+  'min_avg_turnover_yuan',
+  'max_daily_new_positions',
+  'max_daily_new_exposure_pct',
+  'profit_gate_min_quality_score',
+  'profit_gate_sampling_multiplier',
+  'min_score',
+  'default_position_pct',
+  'min_trade_amount',
 ];
 
 function asPlainObject(value: any): Record<string, any> {
@@ -108,7 +117,7 @@ export class TaskParameterAuditService {
     }));
   }
 
-  inferEventType(changed_keys: string[], fallback: string = 'task_updated'): string {
+  inferEventType(changed_keys: string[], fallback = 'task_updated'): string {
     const keySet = new Set(changed_keys);
     if (
       changed_keys.length > 0 &&
