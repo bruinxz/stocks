@@ -769,3 +769,23 @@ Next:
 
 1. Deploy main + lym and verify `/api/quant/runtime-health` becomes `ready` when all other checks are green.
 2. Ensure `quote_persistence.freshness_status` clearly reports `same_day_snapshot` outside continuous trading.
+
+## 2026-05-21 continuous iteration: quote freshness copy cleanup
+
+Focus: make the now session-aware quote freshness status readable in the UI.
+
+Completed:
+
+- Quant performance dashboard now renders quote freshness as Chinese labels:
+  - `fresh` -> 实时新鲜
+  - `same_day_snapshot` -> 当日快照可用
+  - `stale` -> 行情滞后
+  - `missing` -> 未落盘
+- Strategy research preflight tag uses the same label mapping.
+
+Validation:
+
+```bash
+cd frontend && /Applications/Codex.app/Contents/Resources/node node_modules/typescript/bin/tsc --noEmit --pretty false
+git diff --check
+```

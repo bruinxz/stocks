@@ -34,6 +34,18 @@ import api from '../services/api';
 
 const { Text, Paragraph } = Typography;
 
+const quoteFreshnessLabel: Record<string, string> = {
+  fresh: '实时新鲜',
+  same_day_snapshot: '当日快照可用',
+  stale: '行情滞后',
+  missing: '未落盘',
+  unavailable: '不可用',
+  unknown: '未知',
+};
+
+const formatQuoteFreshness = (value?: string | null) =>
+  quoteFreshnessLabel[String(value || 'unknown')] || String(value || '未知');
+
 const tabPathMap: Record<string, string> = {
   overview: '/strategy-research',
   optimization: '/strategy-research/optimization',
@@ -295,7 +307,7 @@ const StrategyResearchOverview: React.FC = () => {
               参数版本 {preflight?.checks?.active_scan_params?.summary?.adopted_strategy_count || 0}
             </Tag>
             <Tag color={preflight?.checks?.realtime_quote?.ok ? 'green' : 'gold'}>
-              行情 {preflight?.checks?.realtime_quote?.freshness_status || '--'}
+              行情 {formatQuoteFreshness(preflight?.checks?.realtime_quote?.freshness_status)}
             </Tag>
             <Tag color={preflight?.checks?.feishu?.ok ? 'green' : 'orange'}>
               飞书 {preflight?.checks?.feishu?.ok ? '可用' : '待检查'}
