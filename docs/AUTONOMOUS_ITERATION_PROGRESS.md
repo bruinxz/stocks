@@ -1070,3 +1070,19 @@ Next:
 1. Attribute rejected opportunities later: compute “if we had bought/sold despite the block, what happened after 1/3/5/10 days”.
 2. Add reason-category performance buckets to the recommendation loop policy so profitable false rejects can loosen future gates, while bad rejects become stricter rules.
 3. Surface the order-intent ledger in recommendation trace/outcome pages for single-stock drill-down.
+
+Follow-up completed in same lane:
+
+- `PaperTradingOrderIntentService` now computes lightweight hindsight for rejected/skipped/held intents using local daily bars:
+  - evaluates 1/3/5/10 trading-day future return from the intent reference price;
+  - BUY intent hindsight asks “if bought, would it have made money”;
+  - SELL intent hindsight asks “if sold, would it have avoided loss / improved outcome”;
+  - summary exposes possible false rejects, saved-loss counts, average intended-action return and top false-rejection samples.
+- The paper-trading page now shows a “拒单后验复盘” panel inside the order-intent card, so operators can see whether the gate is too strict without opening raw logs.
+- Smoke validates hindsight summary shape when present.
+
+Next after this follow-up:
+
+1. Persist hindsight snapshots instead of calculating from daily bars on every request if the sample grows large.
+2. Feed false-reject / saved-loss buckets back into the risk gate and profit gate thresholds.
+3. Add a drill-down page or modal for one rejected stock: signal → gate reason → future return → proposed rule adjustment.

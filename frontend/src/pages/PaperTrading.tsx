@@ -371,6 +371,30 @@ interface PaperTradingOrderIntentDashboard {
     executed_amount: number;
     execution_rate: number;
     conclusion: string;
+    hindsight?: {
+      evaluated_count: number;
+      pending_count: number;
+      benchmark_horizon: string;
+      benchmark_count: number;
+      false_reject_count: number;
+      correct_reject_count: number;
+      saved_loss_count: number;
+      avg_intended_action_return_pct: number;
+      conclusion: string;
+      top_false_rejections: Array<{
+        id: number;
+        symbol: string;
+        name?: string;
+        side: 'BUY' | 'SELL';
+        side_label?: string;
+        status: string;
+        reason_category_label?: string;
+        intended_action_return_pct: number;
+        raw_future_return_pct: number;
+        horizon: string;
+        conclusion: string;
+      }>;
+    };
     top_reason_categories: Array<{
       key: string;
       label: string;
@@ -769,6 +793,7 @@ const PaperTrading: React.FC = () => {
   const attributionFeedback = attribution?.feedback;
   const tradingPlanSummary = tradingPlan?.summary;
   const orderIntentSummary = orderIntents?.summary;
+  const orderIntentHindsight = orderIntentSummary?.hindsight;
   const recentOrderRejections = orderIntents?.recent_rejections || [];
   const riskTone = riskProfile ? riskProfileToneMap[riskProfile.status.level] : undefined;
   const topRiskPosition = riskProfile?.position_risks?.find(item => item.risk_flags.length > 0);
@@ -1227,7 +1252,59 @@ const PaperTrading: React.FC = () => {
               )}
             </div>
           </Col>
-          <Col xs={24} lg={15}>
+          <Col xs={24} lg={8}>
+            <div className="order-intent-panel">
+              <div className="order-intent-panel-title">拒单后验复盘</div>
+              {orderIntentHindsight ? (
+                <>
+                  <Alert
+                    type={orderIntentHindsight.false_reject_count > 0 ? 'warning' : 'success'}
+                    showIcon
+                    message={orderIntentHindsight.conclusion}
+                  />
+                  <div className="order-hindsight-grid">
+                    <div>
+                      <span>可评估</span>
+                      <strong>{orderIntentHindsight.evaluated_count}</strong>
+                    </div>
+                    <div>
+                      <span>可能错杀</span>
+                      <strong>{orderIntentHindsight.false_reject_count}</strong>
+                    </div>
+                    <div>
+                      <span>拦截有效</span>
+                      <strong>{orderIntentHindsight.saved_loss_count}</strong>
+                    </div>
+                    <div>
+                      <span>平均相对</span>
+                      <strong
+                        style={{
+                          color: pnlColor(orderIntentHindsight.avg_intended_action_return_pct),
+                        }}
+                      >
+                        {formatPercent(orderIntentHindsight.avg_intended_action_return_pct)}
+                      </strong>
+                    </div>
+                  </div>
+                  {(orderIntentHindsight.top_false_rejections || []).slice(0, 3).map(item => (
+                    <div className="order-false-reject" key={item.id}>
+                      <strong>
+                        {item.name || item.symbol} · {item.side_label || item.side}
+                      </strong>
+                      <span>{item.conclusion}</span>
+                    </div>
+                  ))}
+                  {(!orderIntentHindsight.top_false_rejections ||
+                    orderIntentHindsight.top_false_rejections.length === 0) && (
+                    <Text type="secondary">暂无明显错杀样本，当前拦截规则暂时有效。</Text>
+                  )}
+                </>
+              ) : (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无后验复盘数据" />
+              )}
+            </div>
+          </Col>
+          <Col xs={24} lg={7}>
             <div className="order-intent-panel">
               <div className="order-intent-panel-title">最近未成交/跳过</div>
               {recentOrderRejections.length > 0 ? (

@@ -1491,6 +1491,54 @@ a {
   font-variant-numeric: tabular-nums;
 }
 
+.order-hindsight-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 14px 0;
+}
+
+.order-hindsight-grid div {
+  padding: 12px;
+  border-radius: 16px;
+  background: rgba(248, 250, 252, 0.82);
+  border: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.order-hindsight-grid span {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+}
+
+.order-hindsight-grid strong {
+  color: var(--text-main);
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.order-false-reject {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 0;
+  border-top: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.order-false-reject strong {
+  color: var(--text-main);
+}
+
+.order-false-reject span {
+  color: var(--warning);
+  font-size: 12px;
+  line-height: 1.48;
+}
+
 .order-intent-timeline .ant-timeline-item-last {
   padding-bottom: 0;
 }
