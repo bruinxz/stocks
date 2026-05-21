@@ -1306,6 +1306,78 @@ async function main() {
       }
     );
 
+    await requestJson(
+      "paper trading order intent canary preview",
+      "/api/paper-trading/order-intent-tuning/apply",
+      {
+        method: "POST",
+        token,
+        body: {
+          dry_run: true,
+          canary: true,
+          canary_max_parameters: 1,
+          canary_observation_trades: 8,
+          canary_observation_days: 10,
+        },
+        expect: (json) => {
+          assertApiSuccess(json, "paper trading order intent canary preview");
+          if (!json.data || !Array.isArray(json.data.changes)) {
+            throw new Error(
+              `paper trading order intent canary preview payload invalid: ${preview(
+                json
+              )}`
+            );
+          }
+          if (
+            json.data.dry_run !== true ||
+            json.data.applied === true ||
+            json.data.canary !== true
+          ) {
+            throw new Error(
+              `paper trading order intent canary preview must be dry-run canary: ${preview(
+                json.data
+              )}`
+            );
+          }
+          if (
+            json.data.canary_plan &&
+            !Array.isArray(json.data.canary_plan.selected_parameter_keys || [])
+          ) {
+            throw new Error(
+              `paper trading order intent canary selected keys invalid: ${preview(
+                json.data.canary_plan
+              )}`
+            );
+          }
+        },
+      }
+    );
+
+    await requestJson(
+      "paper trading order intent canary status",
+      "/api/paper-trading/order-intent-tuning/canary",
+      {
+        token,
+        expect: (json) => {
+          assertApiSuccess(json, "paper trading order intent canary status");
+          if (!json.data?.summary?.conclusion) {
+            throw new Error(
+              `paper trading order intent canary status conclusion missing: ${preview(
+                json
+              )}`
+            );
+          }
+          if (json.data.active && !json.data.observation) {
+            throw new Error(
+              `paper trading order intent canary active observation missing: ${preview(
+                json.data
+              )}`
+            );
+          }
+        },
+      }
+    );
+
     await requestJson("AI signal stats", "/api/ai/signals/stats", {
       token,
       critical: false,

@@ -238,6 +238,17 @@ router.post(
 );
 
 /**
+ * @route GET /api/paper-trading/order-intent-tuning/canary
+ * @desc 获取订单意图 Canary 小流量调参观察状态
+ * @access Private
+ */
+router.get(
+  '/order-intent-tuning/canary',
+  authController.authenticate,
+  paperTradingController.getOrderIntentTuningCanary
+);
+
+/**
  * @route GET /api/paper-trading/history
  * @desc 获取模拟盘的交易流水
  * @access Private

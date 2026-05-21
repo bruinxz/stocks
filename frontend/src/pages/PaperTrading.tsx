@@ -19,11 +19,13 @@ import {
   message,
   Spin,
   Progress,
+  Tooltip,
   Timeline,
 } from 'antd';
 import {
   AuditOutlined,
   BulbOutlined,
+  ExperimentOutlined,
   CloudUploadOutlined,
   FallOutlined,
   FieldTimeOutlined,
@@ -437,14 +439,61 @@ interface OrderIntentTuningTaskChange {
 interface OrderIntentTuningApplyResult {
   dry_run: boolean;
   applied: boolean;
+  canary?: boolean;
   message: string;
   preview_count: number;
+  selected_preview_count?: number;
   applied_count: number;
   generated_at?: string;
   tuning_preview_conclusion?: string;
   previews?: OrderIntentParameterPreview[];
   changes: OrderIntentTuningTaskChange[];
-  apply_mode?: 'preview' | 'manual_confirmed';
+  canary_plan?: {
+    enabled: boolean;
+    max_parameters: number;
+    observation_trades: number;
+    observation_days: number;
+    selected_parameter_keys: string[];
+    selected_preview_count?: number;
+    target_task_count?: number;
+    guardrails?: string[];
+  };
+  apply_mode?: 'preview' | 'manual_confirmed' | 'canary_preview' | 'canary';
+}
+
+interface OrderIntentTuningCanaryStatus {
+  active: boolean;
+  generated_at?: string;
+  audit?: any;
+  canary?: {
+    selected_parameter_keys?: string[];
+    observation_trades?: number;
+    observation_days?: number;
+    target_task_count?: number;
+    guardrails?: string[];
+  };
+  observation?: {
+    start_date?: string;
+    elapsed_days: number;
+    target_days: number;
+    target_closed_trades: number;
+    progress_pct: number;
+    ready_for_review: boolean;
+    outcome_tone: 'observing' | 'healthy' | 'risk' | 'mixed';
+  };
+  outcome_summary?: {
+    closed_count: number;
+    open_count: number;
+    avg_excess_return_pct: number;
+    avg_closed_return_pct: number;
+    win_rate: number;
+    total_pnl: number;
+    total_realized_pnl: number;
+    total_unrealized_pnl: number;
+  };
+  summary?: {
+    conclusion: string;
+  };
 }
 
 interface OrderIntentTrace {
@@ -674,7 +723,11 @@ const PaperTrading: React.FC = () => {
   const [tradingPlanLoading, setTradingPlanLoading] = useState(false);
   const [tradingPlanReportLoading, setTradingPlanReportLoading] = useState(false);
   const [tuningApplyLoading, setTuningApplyLoading] = useState(false);
+  const [canaryPreviewLoading, setCanaryPreviewLoading] = useState(false);
+  const [canaryApplyLoading, setCanaryApplyLoading] = useState(false);
   const [tuningPreview, setTuningPreview] = useState<OrderIntentTuningApplyResult | null>(null);
+  const [canaryStatus, setCanaryStatus] = useState<OrderIntentTuningCanaryStatus | null>(null);
+  const [canaryStatusLoading, setCanaryStatusLoading] = useState(false);
   const [riskProfile, setRiskProfile] = useState<PaperTradingRiskProfile | null>(null);
   const [riskProfileLoading, setRiskProfileLoading] = useState(false);
   const [orderIntents, setOrderIntents] = useState<PaperTradingOrderIntentDashboard | null>(null);
@@ -706,6 +759,7 @@ const PaperTrading: React.FC = () => {
     fetchAttribution(true);
     fetchTradingPlan(true);
     fetchOrderIntents(true);
+    fetchOrderIntentTuningCanary(true);
   }, []);
 
   const fetchSnapshots = async () => {
@@ -965,6 +1019,87 @@ const PaperTrading: React.FC = () => {
     } finally {
       setTuningApplyLoading(false);
     }
+  };
+
+  const fetchOrderIntentTuningCanary = async (silent = false) => {
+    setCanaryStatusLoading(true);
+    try {
+      const response = await api.get('/paper-trading/order-intent-tuning/canary');
+      if (response.data.success) {
+        setCanaryStatus(response.data.data);
+        if (!silent) message.success('Canary 状态已刷新');
+      }
+    } catch (error: any) {
+      if (!silent) message.error(error.response?.data?.message || '获取 Canary 状态失败');
+    } finally {
+      setCanaryStatusLoading(false);
+    }
+  };
+
+  const previewOrderIntentTuningCanary = async () => {
+    setCanaryPreviewLoading(true);
+    try {
+      const response = await api.post('/paper-trading/order-intent-tuning/apply', {
+        dry_run: true,
+        canary: true,
+        canary_max_parameters: 1,
+        canary_observation_trades: 8,
+        canary_observation_days: 10,
+      });
+      const result = response.data.data as OrderIntentTuningApplyResult;
+      setTuningPreview(result);
+      if (result.changes?.length) {
+        message.success(result.message || 'Canary 预览已生成');
+      } else {
+        message.info(result.message || '当前没有可进入 Canary 的参数');
+      }
+    } catch (error: any) {
+      message.error(error.response?.data?.message || '生成 Canary 预览失败');
+    } finally {
+      setCanaryPreviewLoading(false);
+    }
+  };
+
+  const confirmOrderIntentTuningCanary = () => {
+    const targetPreview =
+      tuningPreview?.canary && tuningPreview.changes?.length ? tuningPreview : null;
+    if (!targetPreview?.changes?.length) {
+      message.info('请先生成 Canary 预览');
+      return;
+    }
+    Modal.confirm({
+      title: '确认启动订单意图 Canary 调参',
+      content:
+        '该操作只会小流量写入少量参数并记录 Canary 审计，不会立即触发买卖。后续需要观察闭环交易样本和收益表现后再决定是否扩大。',
+      okText: '启动 Canary',
+      cancelText: '再看看',
+      onOk: async () => {
+        setCanaryApplyLoading(true);
+        try {
+          const response = await api.post('/paper-trading/order-intent-tuning/apply', {
+            dry_run: false,
+            canary: true,
+            canary_max_parameters: 1,
+            canary_observation_trades: targetPreview.canary_plan?.observation_trades || 8,
+            canary_observation_days: targetPreview.canary_plan?.observation_days || 10,
+            task_ids: targetPreview.changes.map(item => item.id),
+            parameter_keys: targetPreview.canary_plan?.selected_parameter_keys?.length
+              ? targetPreview.canary_plan.selected_parameter_keys
+              : Array.from(new Set(targetPreview.changes.flatMap(item => item.changed_keys || []))),
+          });
+          const result = response.data.data as OrderIntentTuningApplyResult;
+          setTuningPreview(result);
+          message.success(result.message || 'Canary 调参已启动');
+          await fetchOrderIntentTuningCanary(true);
+          await fetchTradingPlan(true);
+          await fetchOrderIntents(true);
+        } catch (error: any) {
+          message.error(error.response?.data?.message || '启动 Canary 失败');
+        } finally {
+          setCanaryApplyLoading(false);
+        }
+      },
+    });
   };
 
   const confirmOrderIntentTuningApply = () => {
@@ -1738,6 +1873,25 @@ const PaperTrading: React.FC = () => {
                 <div className="order-panel-title-row">
                   <div className="order-intent-panel-title">参数调整预览</div>
                   <Space wrap size={8}>
+                    <Tooltip title="先选择 1 个参数小流量观察，避免一次改太多导致收益归因不清">
+                      <Button
+                        size="small"
+                        icon={<ExperimentOutlined />}
+                        loading={canaryPreviewLoading}
+                        onClick={previewOrderIntentTuningCanary}
+                      >
+                        Canary预览
+                      </Button>
+                    </Tooltip>
+                    <Button
+                      size="small"
+                      type="default"
+                      disabled={!tuningPreview?.canary || !tuningPreview?.changes?.length}
+                      loading={canaryApplyLoading}
+                      onClick={confirmOrderIntentTuningCanary}
+                    >
+                      启动Canary
+                    </Button>
                     <Button
                       size="small"
                       icon={<AuditOutlined />}
@@ -1765,11 +1919,79 @@ const PaperTrading: React.FC = () => {
                     message={tuningPreview.message}
                     description={
                       tuningPreview.changes?.length
-                        ? `将影响 ${tuningPreview.changes.length} 个定时任务，确认后写入审计日志。`
+                        ? tuningPreview.canary
+                          ? `Canary 只选择 ${
+                              tuningPreview.canary_plan?.selected_parameter_keys?.length || 0
+                            } 个参数，观察 ${
+                              tuningPreview.canary_plan?.observation_trades || 8
+                            } 笔闭环或 ${
+                              tuningPreview.canary_plan?.observation_days || 10
+                            } 天后再扩大。`
+                          : `将影响 ${tuningPreview.changes.length} 个定时任务，确认后写入审计日志。`
                         : '没有可写入的参数变化。'
                     }
                   />
                 )}
+                <Spin spinning={canaryStatusLoading}>
+                  <div
+                    className={`order-canary-card tone-${
+                      canaryStatus?.observation?.outcome_tone || 'observing'
+                    }`}
+                  >
+                    <div className="order-canary-head">
+                      <div>
+                        <Tag color={canaryStatus?.active ? 'gold' : 'default'}>Canary</Tag>
+                        <strong>{canaryStatus?.active ? '小流量观察中' : '暂无小流量调参'}</strong>
+                      </div>
+                      <Button
+                        size="small"
+                        type="link"
+                        icon={<ReloadOutlined />}
+                        onClick={() => fetchOrderIntentTuningCanary(false)}
+                      >
+                        刷新
+                      </Button>
+                    </div>
+                    <p>
+                      {canaryStatus?.summary?.conclusion ||
+                        '先生成 Canary 预览，再只写入少量参数，后续用真实模拟收益决定是否扩大。'}
+                    </p>
+                    {canaryStatus?.active && (
+                      <>
+                        <Progress
+                          percent={Math.round(canaryStatus.observation?.progress_pct || 0)}
+                          size="small"
+                          showInfo={false}
+                          strokeColor={
+                            canaryStatus.observation?.outcome_tone === 'risk'
+                              ? '#d14343'
+                              : canaryStatus.observation?.outcome_tone === 'healthy'
+                              ? '#008f6b'
+                              : '#d6a64f'
+                          }
+                        />
+                        <div className="order-canary-metrics">
+                          <span>
+                            闭环 {canaryStatus.outcome_summary?.closed_count || 0}/
+                            {canaryStatus.observation?.target_closed_trades || 8}
+                          </span>
+                          <span>
+                            超额{' '}
+                            {formatPercent(canaryStatus.outcome_summary?.avg_excess_return_pct)}
+                          </span>
+                          <span>胜率 {formatPercent(canaryStatus.outcome_summary?.win_rate)}</span>
+                        </div>
+                        <Space wrap size={6} className="order-canary-keys">
+                          {(canaryStatus.canary?.selected_parameter_keys || []).map(key => (
+                            <Tag key={key} color="gold">
+                              {key}
+                            </Tag>
+                          ))}
+                        </Space>
+                      </>
+                    )}
+                  </div>
+                </Spin>
                 {tuningPreview?.changes?.length ? (
                   <div className="order-tuning-audit-list">
                     {tuningPreview.changes.slice(0, 3).map(change => (
