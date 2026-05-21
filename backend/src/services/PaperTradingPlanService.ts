@@ -8,6 +8,7 @@ import {
   PaperTradingAttributionResult,
   paperTradingAttributionService,
 } from './PaperTradingAttributionService';
+import { paperTradingOrderIntentService } from './PaperTradingOrderIntentService';
 import { feishuTaskReportService } from './FeishuTaskReportService';
 
 export type TradingPlanActionType = 'exit' | 'entry' | 'monitor' | 'review';
@@ -122,6 +123,7 @@ export interface PaperTradingPlanResult {
     outcome_position_multiplier?: number;
     outcome_reason?: string;
     outcome_blocked_segments?: any[];
+    order_intent_feedback?: any;
   };
   actions: TradingPlanAction[];
   attribution: PaperTradingAttributionResult;
@@ -392,6 +394,37 @@ class PaperTradingPlanService {
     }
 
     const outcomePolicy = entryPreview?.outcome_feedback_policy;
+    const orderIntentFeedback = await paperTradingOrderIntentService
+      .getIntentDashboard({
+        user_id: options.user_id,
+        username: options.username,
+        portfolio_id: options.portfolio_id,
+        portfolio_name: options.portfolio_name,
+        initial_capital: options.initial_capital,
+        force_new_portfolio: options.force_new_portfolio,
+        lookback_days: 30,
+        limit: 120,
+      })
+      .catch(() => null);
+
+    const ruleSuggestions =
+      orderIntentFeedback?.summary?.hindsight?.rule_suggestions?.filter((item: any) =>
+        ['loosen', 'tighten'].includes(item.action)
+      ) || [];
+    for (const suggestion of ruleSuggestions.slice(0, 4)) {
+      actions.push({
+        action_type: 'review',
+        priority: suggestion.action === 'loosen' ? 'medium' : 'high',
+        action_label: suggestion.action === 'loosen' ? '拒单规则建议放松' : '拒单规则建议收紧',
+        reason: `${suggestion.label}：${suggestion.reason}`,
+        instructions: [
+          '当前仅作为建议态展示，不自动改阈值；连续两个窗口同向后再进入自动调参候选。',
+          `样本 ${suggestion.sample_count} 条，可能错杀率 ${suggestion.false_reject_rate}% ，有效拦截率 ${suggestion.saved_loss_rate}% ，平均相对 ${suggestion.avg_intended_action_return_pct}%。`,
+        ],
+        tags: ['order_intent_feedback', suggestion.action, suggestion.key],
+        metadata: suggestion,
+      });
+    }
     for (const nextAction of outcomePolicy?.next_actions?.slice(0, 4) || []) {
       actions.push({
         action_type: 'review',
@@ -487,6 +520,17 @@ class PaperTradingPlanService {
       outcome_position_multiplier: outcomePolicy?.effective_position_multiplier,
       outcome_reason: outcomePolicy?.reason,
       outcome_blocked_segments: outcomePolicy?.blocked_segments,
+      order_intent_feedback: orderIntentFeedback?.summary?.hindsight
+        ? {
+            evaluated_count: orderIntentFeedback.summary.hindsight.evaluated_count,
+            false_reject_count: orderIntentFeedback.summary.hindsight.false_reject_count,
+            saved_loss_count: orderIntentFeedback.summary.hindsight.saved_loss_count,
+            avg_intended_action_return_pct:
+              orderIntentFeedback.summary.hindsight.avg_intended_action_return_pct,
+            conclusion: orderIntentFeedback.summary.hindsight.conclusion,
+            rule_suggestions: orderIntentFeedback.summary.hindsight.rule_suggestions,
+          }
+        : undefined,
       adaptive_risk_policy: riskCheck?.adaptive_risk_policy,
     };
 

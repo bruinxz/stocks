@@ -1091,3 +1091,23 @@ Next after this follow-up:
 1. Persist hindsight snapshots instead of calculating from daily bars on every request if the sample grows large.
 2. Feed `rule_suggestions` back into the risk gate and profit gate thresholds automatically.
 3. Add a drill-down page or modal for one rejected stock: signal → gate reason → future return → proposed rule adjustment.
+
+### 2026-05-21 order-intent feedback enters trading plan
+
+- `PaperTradingPlanService` now reads the order-intent hindsight dashboard and injects material `rule_suggestions` into the daily trading plan as review actions.
+- The plan summary exposes `order_intent_feedback` with:
+  - evaluated sample count;
+  - possible false rejects;
+  - saved-loss count;
+  - average intended-action return;
+  - rule suggestions.
+- The manual paper-trading page shows a concise “拒单后验已进入下一轮计划建议” alert under the trading plan:
+  - this is intentionally suggestion-only;
+  - it does **not** auto-change thresholds yet;
+  - continuous same-direction evidence will be the next criterion for automatic tuning.
+
+Next:
+
+1. Add stability windows for order-intent rule suggestions, e.g. only auto-apply if two rolling windows agree.
+2. Add bounded automatic parameter preview: show what min turnover / profit gate / entry-risk thresholds would become before applying.
+3. Persist applied parameter changes into audit logs.
