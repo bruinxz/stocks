@@ -63,6 +63,19 @@ Known frontend build warnings are historical Prettier warnings in existing files
 - 部署更稳定：
   - smoke 对 `/api/quant/runtime-health` 增加 `buy_gate` 结构校验，防止门禁字段缺失。
 
+### 2026-05-21 continuous iteration: effective factor coverage window
+
+- 数据更真实：
+  - 修复因子覆盖率口径：不再只按“全局最新因子日”统计覆盖，避免当天仅同步一小批东方财富真实快照后，把其它仍有效的历史/派生因子误判为 0 覆盖。
+  - `StockFactorService.getCoverage()` 改为按股票取 7 日有效窗口内最新因子快照，并按 source 统计有效来源。
+  - 返回新增 `effective_factor_date`，用于区分“最新落盘日”和“有效覆盖口径日”。
+- 纪律更可执行：
+  - Buy Gate 的因子覆盖输入更稳定，避免因为局部真实快照试跑导致开盘链路被错误降仓/阻断。
+- 页面更简洁：
+  - 数据同步页、量化收益驾驶舱兼容 `effective_factor_date` 展示。
+- 部署更稳定：
+  - smoke 增加 `effective_factor_date` 结构校验，避免覆盖口径回退。
+
 ### Five-priority continuation batch (2026-05-20)
 
 - Strategy runtime policy is now no longer only editable:

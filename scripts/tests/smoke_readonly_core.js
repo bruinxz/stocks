@@ -586,6 +586,15 @@ async function main() {
             `quant runtime factor coverage invalid: ${preview(json.data.factor_coverage)}`,
           );
         }
+        if (
+          json.data.factor_coverage &&
+          json.data.factor_coverage.latest_landed_factor_date &&
+          !json.data.factor_coverage.effective_factor_date
+        ) {
+          throw new Error(
+            `quant runtime effective factor date missing: ${preview(json.data.factor_coverage)}`,
+          );
+        }
       },
     });
 

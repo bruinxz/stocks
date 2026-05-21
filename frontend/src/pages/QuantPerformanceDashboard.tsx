@@ -236,6 +236,7 @@ type RuntimeHealth = {
     latest_trade_date?: string | null;
     latest_factor_date?: string | null;
     latest_landed_factor_date?: string | null;
+    effective_factor_date?: string | null;
     factor_lag_days?: number | null;
     coverage_status?: string;
     universe_stock_count?: number;
@@ -871,6 +872,7 @@ const QuantPerformanceDashboard: React.FC = () => {
               <em>
                 因子日{' '}
                 {effectiveRuntimeHealth?.factor_coverage?.latest_factor_date ||
+                  effectiveRuntimeHealth?.factor_coverage?.effective_factor_date ||
                   effectiveRuntimeHealth?.factor_coverage?.latest_landed_factor_date ||
                   '--'}{' '}
                 · 主来源{' '}

@@ -257,6 +257,7 @@ interface FactorCoverageResponse {
   latest_trade_date?: string | null;
   latest_factor_date?: string | null;
   latest_landed_factor_date?: string | null;
+  effective_factor_date?: string | null;
   factor_lag_days?: number | null;
   coverage_status?: 'real_ready' | 'derived_ready' | 'limited' | 'missing';
   universe_stock_count: number;
@@ -1842,7 +1843,11 @@ const DataUpdateStatus: React.FC = () => {
         <Space direction="vertical" size={4} style={{ width: '100%', marginBottom: 12 }}>
           <Text type="secondary">
             最新交易日：{coverage?.latest_trade_date || '--'} · 因子日：
-            {coverage?.latest_factor_date || coverage?.latest_landed_factor_date || '--'} · 滞后：
+            {coverage?.latest_factor_date ||
+              coverage?.effective_factor_date ||
+              coverage?.latest_landed_factor_date ||
+              '--'}{' '}
+            · 滞后：
             {coverage?.factor_lag_days ?? '--'} 天 · 样本池：{coverage?.universe_stock_count || 0}{' '}
             只
           </Text>
