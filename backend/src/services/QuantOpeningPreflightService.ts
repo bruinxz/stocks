@@ -260,6 +260,7 @@ class QuantOpeningPreflightService {
       factor_sync_limit: Math.min(Math.max(Number(options.limit || 80), 20), 220),
       factor_provider: options.factor_provider || 'auto',
       factor_sync_skip_if_coverage_rate_gte: 0,
+      factor_sync_skip_if_real_provider_rate_gte: 0,
       block_buy_on_runtime_risk: true,
     });
     const runtimeBlocked = Boolean((result as any).runtime_risk_blocked);

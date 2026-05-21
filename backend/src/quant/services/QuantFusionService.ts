@@ -93,6 +93,7 @@ export interface QuantDailyPipelineOptions {
   factor_sync_scope?: 'market' | 'favorites' | 'custom';
   factor_sync_limit?: number;
   factor_sync_skip_if_coverage_rate_gte?: number;
+  factor_sync_skip_if_real_provider_rate_gte?: number;
   factor_provider?: 'auto' | 'local_derived' | 'tushare' | 'eastmoney';
   block_buy_on_runtime_risk?: boolean;
 }
@@ -301,6 +302,10 @@ export class QuantFusionService {
               skip_if_coverage_rate_gte: safeNumber(
                 options.factor_sync_skip_if_coverage_rate_gte,
                 92
+              ),
+              skip_if_real_provider_rate_gte: safeNumber(
+                options.factor_sync_skip_if_real_provider_rate_gte,
+                65
               ),
             })
             .catch(error => {

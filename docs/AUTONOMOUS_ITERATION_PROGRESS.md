@@ -669,3 +669,34 @@ Next:
 1. Deploy to main + lym and verify runtime factor coverage rises from the false ~1% value to the effective stock-window coverage.
 2. Re-run lym opening preflight dry-run and confirm Buy Gate degradation is driven by real-provider/data freshness, not false coverage math.
 3. Continue raising real-provider rate with broader EastMoney refresh or a paid Tushare source.
+
+## 2026-05-21 continuous iteration: EastMoney batch real-factor coverage
+
+Focus: make quant recommendations use more real market data instead of stopping at local-derived factor coverage.
+
+Completed:
+
+- Added EastMoney `ulist.np/get` batch quote snapshots in `EastMoneyClient`:
+  - one request can return price, change pct, volume, turnover, PE/PB, market cap and main net-inflow proxy for many symbols;
+  - single-stock `stock/get` remains as fallback when batch coverage is incomplete or the endpoint fails.
+- Factor sync now passes batch options to EastMoney and keeps concurrency fallback.
+- Added `skip_if_real_provider_rate_gte` / `factor_sync_skip_if_real_provider_rate_gte` controls:
+  - scheduled quant scans no longer skip real-source refresh just because local-derived coverage is already high;
+  - default skip requires both factor coverage >= 92% and real-provider rate >= 65%.
+- Opening dry-run disables both skip gates so it always rehearses the live refresh path safely.
+- Runtime health now marks high local-derived coverage with very low real-provider rate as a warning, not invisible green.
+- Data status page manual factor sync now requests the same real-source-aware thresholds and explains EastMoney batch + Tushare + local-derived fallback.
+
+Validation:
+
+```bash
+/Applications/Codex.app/Contents/Resources/node backend/node_modules/typescript/bin/tsc -p backend/tsconfig.json --pretty false
+cd frontend && /Applications/Codex.app/Contents/Resources/node node_modules/typescript/bin/tsc --noEmit --pretty false
+cd frontend && CI=false /Applications/Codex.app/Contents/Resources/node node_modules/react-scripts/bin/react-scripts.js build
+```
+
+Next:
+
+1. Deploy main + lym and run opening preflight dry-run to confirm EastMoney batch snapshots increase `factor_real_provider_rate`.
+2. If provider connectivity is unstable, keep fallback safe and consider adding a Tencent-derived valuation-light factor path for price/turnover realism.
+3. Continue real paid-data evaluation, especially Tushare Pro/JQData, for true financial-quality factors.
