@@ -693,6 +693,27 @@ export class PaperTradingController {
     }
   };
 
+  // 刷新订单意图后验快照，降低看板/链路反复扫日线成本
+  refreshOrderIntentHindsight = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const user = (req as any).user;
+      const result = await paperTradingOrderIntentService.refreshHindsightSnapshots({
+        ...req.body,
+        user_id: user.id,
+        username: user.username || user.nickname,
+      } as any);
+
+      res.json({
+        success: true,
+        data: result,
+        message: result.message,
+      });
+    } catch (error: any) {
+      logger.error('刷新模拟交易订单意图后验快照失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
   // 获取推荐信号→模拟交易→收益结果闭环看板
   getRecommendationOutcomes = async (req: Request, res: Response, next: NextFunction) => {
     try {

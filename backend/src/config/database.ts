@@ -14,6 +14,7 @@ import { PaperTradingPosition } from '../models/PaperTradingPosition';
 import { PaperTradingTrade } from '../models/PaperTradingTrade';
 import { PaperTradingSnapshot } from '../models/PaperTradingSnapshot';
 import { PaperTradingOrderIntent } from '../models/PaperTradingOrderIntent';
+import { PaperTradingOrderIntentOutcome } from '../models/PaperTradingOrderIntentOutcome';
 import { RiskAlert } from '../models/RiskAlert';
 import { TradingJournal } from '../models/TradingJournal';
 import { PortfolioSimulation } from '../models/PortfolioSimulation';
@@ -74,6 +75,7 @@ const sequelize = new Sequelize({
     PaperTradingTrade,
     PaperTradingSnapshot,
     PaperTradingOrderIntent,
+    PaperTradingOrderIntentOutcome,
     RiskAlert,
     TradingJournal,
     PortfolioSimulation,

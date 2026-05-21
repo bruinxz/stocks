@@ -1,11 +1,13 @@
 import { Op } from 'sequelize';
 import moment from 'moment-timezone';
 import { PaperTradingOrderIntent } from '../models/PaperTradingOrderIntent';
+import { PaperTradingOrderIntentOutcome } from '../models/PaperTradingOrderIntentOutcome';
 import { PaperTradingPortfolio } from '../models/PaperTradingPortfolio';
 import { DailyBar } from '../models/DailyBar';
 import { Stock } from '../models/Stock';
 import { User } from '../models/User';
 import { AIInvestmentSignal } from '../models/AIInvestmentSignal';
+import { logger } from '../utils/logger';
 
 export interface PaperTradingOrderIntentDashboardOptions {
   user_id?: number;
@@ -18,6 +20,9 @@ export interface PaperTradingOrderIntentDashboardOptions {
   limit?: number;
   side?: string;
   status?: string;
+  persist_hindsight?: boolean;
+  refresh_hindsight?: boolean;
+  dry_run?: boolean;
 }
 
 function toNumber(value: any, fallback = 0): number {
@@ -30,6 +35,16 @@ function toPositiveInt(value: any, fallback: number, max?: number): number {
   if (!Number.isFinite(num) || num <= 0) return fallback;
   const normalized = Math.floor(num);
   return max ? Math.min(normalized, max) : normalized;
+}
+
+function toBoolean(value: any, fallback = false): boolean {
+  if (value === undefined || value === null || value === '') return fallback;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  const normalized = String(value).trim().toLowerCase();
+  if (['true', '1', 'yes', 'y', 'on'].includes(normalized)) return true;
+  if (['false', '0', 'no', 'n', 'off'].includes(normalized)) return false;
+  return fallback;
 }
 
 function roundNumber(value: any, digits = 2): number {
@@ -160,7 +175,10 @@ export class PaperTradingOrderIntentService {
     ]);
 
     const plain = allRecords.map(item => modelToPlain<any>(item));
-    const hindsight = await this.buildHindsight(plain);
+    const hindsight = await this.buildHindsight(plain, {
+      persist: toBoolean(options.persist_hindsight, false),
+      refresh: toBoolean(options.refresh_hindsight, false),
+    });
     const visible = records.map(item =>
       this.normalizeIntent(modelToPlain<any>(item), hindsight.by_intent_id.get(Number(item.id)))
     );
@@ -305,6 +323,62 @@ export class PaperTradingOrderIntentService {
     };
   }
 
+  async refreshHindsightSnapshots(options: PaperTradingOrderIntentDashboardOptions = {}) {
+    const portfolio = await this.resolvePortfolio(options);
+    if (!portfolio) throw new Error('目标模拟盘尚未创建或无权访问');
+
+    const lookbackDays = toPositiveInt(options.lookback_days, 60, 3650);
+    const limit = toPositiveInt(options.limit, 800, 5000);
+    const dryRun = toBoolean(options.dry_run, false);
+    const forceRefresh = toBoolean(options.refresh_hindsight, true);
+    const startDate = moment()
+      .tz('Asia/Shanghai')
+      .subtract(lookbackDays, 'days')
+      .format('YYYY-MM-DD');
+    const records = await PaperTradingOrderIntent.findAll({
+      where: {
+        portfolio_id: portfolio.id,
+        intent_date: { [Op.gte]: startDate },
+        status: { [Op.in]: ['rejected', 'skipped', 'held'] },
+      },
+      order: [
+        ['intent_date', 'DESC'],
+        ['created_at', 'DESC'],
+      ],
+      limit,
+    });
+
+    const plain = records.map(item => modelToPlain<any>(item));
+    const hindsight = await this.buildHindsight(plain, {
+      persist: !dryRun,
+      refresh: forceRefresh,
+      dryRun,
+    });
+    const wouldPersistCount =
+      hindsight.summary.would_persist_count ?? hindsight.summary.cache_miss_count ?? 0;
+    const persistedCount = dryRun ? 0 : hindsight.summary.persisted_snapshot_count || 0;
+
+    return {
+      generated_at: moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm:ss'),
+      portfolio: modelToPlain(portfolio),
+      filters: {
+        lookback_days: lookbackDays,
+        start_date: startDate,
+        limit,
+      },
+      dry_run: dryRun,
+      summary: hindsight.summary,
+      processed_count: plain.length,
+      refreshed_count: persistedCount,
+      would_persist_count: wouldPersistCount,
+      message: dryRun
+        ? `订单意图后验快照预演完成：处理 ${plain.length} 条，预计写入 ${wouldPersistCount} 条，不改库。`
+        : `订单意图后验快照刷新完成：处理 ${plain.length} 条，写入 ${persistedCount} 条，失败 ${
+            hindsight.summary.persist_failed_count || 0
+          } 条。`,
+    };
+  }
+
   private normalizeIntent(item: any, opportunityOutcome?: any) {
     const metadata = item.metadata || {};
     const executionReality = metadata.execution_reality_decision || {};
@@ -430,7 +504,10 @@ export class PaperTradingOrderIntentService {
     return `${actionResult}：${benchmark.conclusion}。${tuning}`;
   }
 
-  private async buildHindsight(items: any[]) {
+  private async buildHindsight(
+    items: any[],
+    options: { persist?: boolean; refresh?: boolean; dryRun?: boolean } = {}
+  ) {
     const eligible = items
       .filter(item => {
         const status = String(item.status || '');
@@ -446,15 +523,32 @@ export class PaperTradingOrderIntentService {
       };
     }
 
-    const symbols = [...new Set(eligible.map(item => String(item.symbol || '')).filter(Boolean))];
-    const stocks = await Stock.findAll({
-      where: { symbol: { [Op.in]: symbols } },
-      raw: true,
-    });
+    const intentIds = eligible.map(item => Number(item.id)).filter(Boolean);
+    const cachedRows =
+      intentIds.length > 0 && !options.refresh
+        ? await PaperTradingOrderIntentOutcome.findAll({
+            where: { intent_id: { [Op.in]: intentIds } },
+            raw: true,
+          }).catch(() => [] as any[])
+        : [];
+    const cachedByIntentId = new Map<number, any>(
+      cachedRows.map((row: any) => [Number(row.intent_id), this.outcomeFromSnapshot(row)])
+    );
+    const computeEligible = eligible.filter(item => !cachedByIntentId.has(Number(item.id)));
+
+    const symbols = [
+      ...new Set(computeEligible.map(item => String(item.symbol || '')).filter(Boolean)),
+    ];
+    const stocks = symbols.length
+      ? await Stock.findAll({
+          where: { symbol: { [Op.in]: symbols } },
+          raw: true,
+        })
+      : [];
     const stockBySymbol = new Map(stocks.map((stock: any) => [stock.symbol, stock]));
     const stockIds = stocks.map((stock: any) => stock.id).filter(Boolean);
     const minIntentDate =
-      eligible
+      computeEligible
         .map(item => String(item.intent_date || '').slice(0, 10))
         .filter(Boolean)
         .sort()[0] || moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
@@ -484,11 +578,26 @@ export class PaperTradingOrderIntentService {
     }
 
     const byIntentId = new Map<number, any>();
-    for (const item of eligible) {
+    for (const [intentId, outcome] of cachedByIntentId.entries()) {
+      byIntentId.set(intentId, outcome);
+    }
+
+    const computedOutcomes: Array<{ item: any; outcome: any }> = [];
+    for (const item of computeEligible) {
       const stock = stockBySymbol.get(item.symbol);
       const stockBars = stock ? barsByStockId.get(Number((stock as any).id)) || [] : [];
       const outcome = this.evaluateIntentHindsight(item, stockBars);
       byIntentId.set(Number(item.id), outcome);
+      computedOutcomes.push({ item, outcome });
+    }
+
+    let persistedSnapshotCount = 0;
+    let persistFailedCount = 0;
+    const wouldPersistCount = computedOutcomes.length;
+    if (options.persist && computedOutcomes.length > 0) {
+      const persistResult = await this.persistHindsightSnapshots(computedOutcomes);
+      persistedSnapshotCount = persistResult.persisted;
+      persistFailedCount = persistResult.failed;
     }
 
     const completed = Array.from(byIntentId.values()).filter(
@@ -543,6 +652,12 @@ export class PaperTradingOrderIntentService {
         rule_suggestion_windows: windowReview.windows,
         stable_rule_suggestions: stableRuleSuggestions,
         parameter_adjustment_preview: parameterAdjustmentPreview,
+        cache_hit_count: cachedByIntentId.size,
+        cache_miss_count: computeEligible.length,
+        would_persist_count: wouldPersistCount,
+        persisted_snapshot_count: persistedSnapshotCount,
+        persist_failed_count: persistFailedCount,
+        cache_mode: options.dryRun ? 'dry_run' : options.persist ? 'persist' : 'read_through',
         tuning_preview_conclusion: this.buildTuningPreviewConclusion(
           stableRuleSuggestions,
           parameterAdjustmentPreview
@@ -590,9 +705,85 @@ export class PaperTradingOrderIntentService {
       rule_suggestion_windows: [],
       stable_rule_suggestions: [],
       parameter_adjustment_preview: [],
+      cache_hit_count: 0,
+      cache_miss_count: 0,
+      would_persist_count: 0,
+      persisted_snapshot_count: 0,
+      persist_failed_count: 0,
+      cache_mode: 'read_through',
       tuning_preview_conclusion: '暂无稳定窗口样本，暂不生成自动调参预览。',
       conclusion,
     };
+  }
+
+  private outcomeFromSnapshot(row: any) {
+    return {
+      intent_id: row.intent_id,
+      symbol: row.symbol,
+      name: row.name,
+      intent_date: dateOnly(row.intent_date),
+      side: row.side,
+      status: row.status,
+      reason_category: row.reason_category,
+      evaluation_status: row.evaluation_status,
+      benchmark_horizon: row.benchmark_horizon,
+      benchmark_conclusion: row.benchmark_conclusion,
+      horizons: row.horizons || {},
+      reason: row.metadata?.reason,
+      snapshot_cached: true,
+      evaluated_at: row.evaluated_at,
+    };
+  }
+
+  private async persistHindsightSnapshots(items: Array<{ item: any; outcome: any }>) {
+    let persisted = 0;
+    let failed = 0;
+    for (const { item, outcome } of items) {
+      try {
+        const benchmark =
+          outcome?.horizons?.['5d'] || this.firstAvailableHorizon(outcome?.horizons || {});
+        await PaperTradingOrderIntentOutcome.upsert({
+          intent_id: Number(item.id),
+          portfolio_id: Number(item.portfolio_id),
+          signal_id: item.signal_id ? Number(item.signal_id) : undefined,
+          symbol: String(item.symbol || ''),
+          name: item.name,
+          side: String(item.side || '').toUpperCase() === 'SELL' ? 'SELL' : 'BUY',
+          status: String(item.status || ''),
+          reason_category: item.reason_category || 'unknown',
+          intent_date: dateOnly(item.intent_date),
+          evaluation_status: outcome?.evaluation_status || 'pending',
+          benchmark_horizon: benchmark?.horizon,
+          benchmark_intended_return_pct:
+            benchmark?.intended_action_return_pct === undefined
+              ? undefined
+              : toNumber(benchmark.intended_action_return_pct),
+          benchmark_raw_return_pct:
+            benchmark?.raw_future_return_pct === undefined
+              ? undefined
+              : toNumber(benchmark.raw_future_return_pct),
+          benchmark_conclusion: benchmark?.conclusion || outcome?.benchmark_conclusion,
+          horizons: outcome?.horizons || {},
+          metadata: {
+            reason: outcome?.reason,
+            benchmark,
+            source: 'paper_trading_order_intent_hindsight',
+          },
+          evaluated_at: new Date(),
+        });
+        persisted += 1;
+      } catch (error: any) {
+        failed += 1;
+        if (failed <= 3) {
+          logger.warn(
+            `写入订单意图后验快照失败 intent#${item?.id || 'unknown'}: ${
+              error?.message || error
+            }`
+          );
+        }
+      }
+    }
+    return { persisted, failed };
   }
 
   private buildRuleSuggestions(items: any[]) {

@@ -17,6 +17,7 @@ import { feishuTaskReportService } from './FeishuTaskReportService';
 import { paperTradingAutomationService } from './PaperTradingAutomationService';
 import { paperTradingAttributionService } from './PaperTradingAttributionService';
 import { paperTradingPlanService } from './PaperTradingPlanService';
+import { paperTradingOrderIntentService } from './PaperTradingOrderIntentService';
 import { benchmarkIndexService } from './BenchmarkIndexService';
 import { automatedRecommendationLoopService } from './AutomatedRecommendationLoopService';
 import { recommendationTradeOutcomeService } from './RecommendationTradeOutcomeService';
@@ -1633,17 +1634,62 @@ class SchedulerService {
             parameters.sell_signal_source_type || parameters.sellSignalSourceType || 'all',
         });
 
+        const hindsightRefresh = await paperTradingOrderIntentService
+          .refreshHindsightSnapshots({
+            username: parameters.username,
+            ...portfolioParams,
+            lookback_days: this.toPositiveInt(
+              parameters.order_intent_hindsight_lookback_days ||
+                parameters.orderIntentHindsightLookbackDays,
+              60,
+              3650
+            ),
+            limit: this.toPositiveInt(
+              parameters.order_intent_hindsight_limit || parameters.orderIntentHindsightLimit,
+              800,
+              5000
+            ),
+            refresh_hindsight: Boolean(
+              parameters.order_intent_hindsight_force_refresh ||
+                parameters.orderIntentHindsightForceRefresh
+            ),
+          })
+          .catch((error: any) => {
+            logger.warn(`订单意图后验快照刷新失败，交易计划继续完成: ${error?.message || error}`);
+            return null;
+          });
+
         await this.safeUpdateExecutionLog(executionLog, {
           total_items: result.summary.action_count,
           completed_items: result.summary.action_count,
           failed_items: result.summary.urgent_count,
+          result_summary: {
+            scenario: 'paper_trading_daily_plan',
+            action_count: result.summary.action_count,
+            urgent_count: result.summary.urgent_count,
+            entry_count: result.summary.entry_count,
+            exit_count: result.summary.exit_count,
+            order_intent_hindsight_refresh: hindsightRefresh
+              ? {
+                  refreshed_count: hindsightRefresh.refreshed_count,
+                  evaluated_count: hindsightRefresh.summary?.evaluated_count,
+                  persisted_snapshot_count: hindsightRefresh.summary?.persisted_snapshot_count,
+                  cache_hit_count: hindsightRefresh.summary?.cache_hit_count,
+                  cache_miss_count: hindsightRefresh.summary?.cache_miss_count,
+                }
+              : null,
+          },
           status: 'COMPLETED',
           completed_at: new Date(),
           error_message: null,
         });
 
         logger.info(
-          `模拟盘交易计划完成。动作 ${result.summary.action_count}，紧急 ${result.summary.urgent_count}，入场 ${result.summary.entry_count}，退出 ${result.summary.exit_count}`
+          `模拟盘交易计划完成。动作 ${result.summary.action_count}，紧急 ${
+            result.summary.urgent_count
+          }，入场 ${result.summary.entry_count}，退出 ${result.summary.exit_count}，后验快照 ${
+            hindsightRefresh?.refreshed_count ?? 0
+          }`
         );
       } else if (task.type === 'AUTO_RECOMMENDATION_LOOP') {
         const result = await automatedRecommendationLoopService.run({
