@@ -18,6 +18,7 @@ import {
 } from '../../services/PaperTradingDashboardService';
 import { paperTradingPlanService } from '../../services/PaperTradingPlanService';
 import { paperTradingRiskProfileService } from '../../services/PaperTradingRiskProfileService';
+import { paperTradingOrderIntentService } from '../../services/PaperTradingOrderIntentService';
 import { recommendationTradeOutcomeService } from '../../services/RecommendationTradeOutcomeService';
 import { logger } from '../../utils/logger';
 
@@ -641,6 +642,27 @@ export class PaperTradingController {
       });
     } catch (error: any) {
       logger.error('获取模拟盘组合风险画像失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
+  // 获取模拟交易订单意图/拒单归因
+  getOrderIntents = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const user = (req as any).user;
+      const result = await paperTradingOrderIntentService.getIntentDashboard({
+        ...req.query,
+        user_id: user.id,
+        username: user.username || user.nickname,
+      } as any);
+
+      res.json({
+        success: true,
+        data: result,
+        message: result.summary?.conclusion || '订单意图已刷新',
+      });
+    } catch (error: any) {
+      logger.error('获取模拟交易订单意图失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   };

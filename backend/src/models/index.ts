@@ -13,6 +13,7 @@ export * from './PaperTradingPortfolio';
 export * from './PaperTradingPosition';
 export * from './PaperTradingTrade';
 export * from './PaperTradingSnapshot';
+export * from './PaperTradingOrderIntent';
 export * from './RiskAlert';
 export * from './TradingJournal';
 export * from './PortfolioSimulation';

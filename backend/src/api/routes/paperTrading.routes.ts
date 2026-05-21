@@ -129,6 +129,13 @@ router.get('/attribution', authController.authenticate, paperTradingController.g
 router.get('/risk-profile', authController.authenticate, paperTradingController.getRiskProfile);
 
 /**
+ * @route GET /api/paper-trading/order-intents
+ * @desc 获取模拟交易订单意图与拒单归因：记录买入/卖出为什么成交、计划、跳过或继续持有
+ * @access Private
+ */
+router.get('/order-intents', authController.authenticate, paperTradingController.getOrderIntents);
+
+/**
  * @route GET /api/paper-trading/recommendation-outcomes
  * @desc 获取推荐信号到模拟交易收益的闭环看板
  * @access Private

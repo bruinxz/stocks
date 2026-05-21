@@ -1028,3 +1028,45 @@ Next:
 1. Run full frontend production build and deploy main + lym.
 2. Add a dedicated order-intent table/service if we need to persist rejected/partially-filled opportunities even when no simulated trade is created.
 3. Add execution-reality attribution buckets: which fills were rejected/allowed, and how rejected opportunities would have performed later.
+
+## 2026-05-21 continuous iteration: paper trading order-intent ledger
+
+Focus: remove survivorship bias from the paper-trading loop by recording not only simulated fills, but also rejected/skipped/held opportunities.
+
+Completed:
+
+- Added `PaperTradingOrderIntent` model/table (`paper_trading_order_intents`) and registered it in Sequelize/runtime sync.
+- Auto-buy now writes BUY intents for:
+  - rejected/skipped candidates, including profit gate, outcome feedback, market environment, entry-risk guard, duplicated holdings, stale signals, capital/lot-size and execution-reality blocks;
+  - dry-run planned buys;
+  - executed simulated buys, linked to `paper_trading_trades.trade_id`.
+- Risk-check/sell flow now writes SELL intents for:
+  - held positions when no exit condition is triggered (sample-limited to avoid flooding);
+  - rejected exits due to missing price/invalid position/execution reality;
+  - dry-run planned sells;
+  - executed simulated sells, linked to sell trade id.
+- Added `PaperTradingOrderIntentService` and API:
+  - `GET /api/paper-trading/order-intents?lookback_days=30&limit=80`
+  - returns summary, top reason categories, recent rejections and visible intent rows without creating portfolios as a side effect.
+- Manual paper-trading page now has a light “执行意图与拒单归因” card:
+  - conclusion first;
+  - total/executed/rejected/held/execution-reality blocks;
+  - reason distribution;
+  - recent rejected/skipped timeline with reference price, score and reason.
+- Read-only smoke validates the new endpoint shape.
+
+Validation:
+
+```bash
+./backend/node_modules/.bin/tsc --noEmit --project backend/tsconfig.json
+./frontend/node_modules/.bin/tsc --noEmit --project frontend/tsconfig.json
+CI=false /Users/bytedance/.nvm/versions/node/v20.20.2/bin/npm --prefix frontend run build
+node --check scripts/tests/smoke_readonly_core.js
+git diff --check
+```
+
+Next:
+
+1. Attribute rejected opportunities later: compute “if we had bought/sold despite the block, what happened after 1/3/5/10 days”.
+2. Add reason-category performance buckets to the recommendation loop policy so profitable false rejects can loosen future gates, while bad rejects become stricter rules.
+3. Surface the order-intent ledger in recommendation trace/outcome pages for single-stock drill-down.
