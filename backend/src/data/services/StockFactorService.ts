@@ -360,7 +360,7 @@ export class StockFactorService {
         WHERE stock_id IN (:stock_ids)
           ${freshnessPredicate}
       )
-      SELECT COUNT(*)::int AS count,
+      SELECT COALESCE(SUM(source_count), 0)::int AS count,
              COALESCE(jsonb_object_agg(source, source_count), '{}'::jsonb) AS source_breakdown,
              MAX(latest_factor_date)::text AS latest_factor_date
       FROM (

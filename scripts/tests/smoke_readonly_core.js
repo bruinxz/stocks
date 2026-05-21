@@ -595,6 +595,24 @@ async function main() {
             `quant runtime effective factor date missing: ${preview(json.data.factor_coverage)}`,
           );
         }
+        if (json.data.factor_coverage?.source_breakdown) {
+          for (const [factorKey, breakdown] of Object.entries(
+            json.data.factor_coverage.source_breakdown,
+          )) {
+            const sourceSum = Object.values(breakdown || {}).reduce(
+              (sum, count) => sum + Number(count || 0),
+              0,
+            );
+            const coverageCount = Number(
+              json.data.factor_coverage.coverage?.[factorKey] || 0,
+            );
+            if (sourceSum > 0 && coverageCount < sourceSum) {
+              throw new Error(
+                `quant runtime factor coverage count below effective source breakdown: ${factorKey} coverage=${coverageCount} source_sum=${sourceSum}`,
+              );
+            }
+          }
+        }
       },
     });
 
