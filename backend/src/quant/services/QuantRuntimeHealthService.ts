@@ -129,10 +129,11 @@ class QuantRuntimeHealthService {
       toNumber(factorCoverageRates.fundamental)
     );
     const factorRealProviderRate = toNumber((factorCoverage as any)?.source_quality?.real_provider_rate);
+    const factorCoverageStatus = String((factorCoverage as any)?.coverage_status || '');
     const factorStatus =
       (factorCoverage as any)?.error || factorMinCoverage < 45
         ? 'risk'
-        : factorMinCoverage < 70
+        : factorMinCoverage < 70 || factorCoverageStatus === 'limited'
         ? 'warn'
         : 'ok';
     const checks = [
@@ -195,7 +196,13 @@ class QuantRuntimeHealthService {
           ? `因子最低覆盖 ${round(factorMinCoverage)}%，真实源占比 ${round(
               factorRealProviderRate
             )}%，可支撑多因子评分。`
-          : `因子最低覆盖 ${round(factorMinCoverage)}%，但主要是本地派生；可运行，建议接 Tushare 提升真实性。`,
+          : factorCoverageStatus === 'derived_ready'
+          ? `因子最低覆盖 ${round(
+              factorMinCoverage
+            )}%，当前以本地派生为主；可运行，但优先落地东方财富/Tushare 真实快照。`
+          : `因子最低覆盖 ${round(factorMinCoverage)}%，真实源占比 ${round(
+              factorRealProviderRate
+            )}%，建议先补充因子后再加大买入。`,
       },
       {
         key: 'data_freshness',

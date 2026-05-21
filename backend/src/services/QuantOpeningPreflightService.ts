@@ -6,6 +6,7 @@ import { stockFactorService } from '../data/services/StockFactorService';
 import { realtimeQuoteService } from '../data/services/RealtimeQuoteService';
 import { quantStrategyParamVersionService } from '../quant/services/QuantStrategyParamVersionService';
 import { quantDataFreshnessService } from '../quant/services/QuantDataFreshnessService';
+import { quantFusionService } from '../quant/services/QuantFusionService';
 
 function toNumber(value: any, fallback = 0): number {
   const parsed = Number(value);
@@ -206,6 +207,69 @@ class QuantOpeningPreflightService {
         completed_at: log.completed_at,
         created_at: log.created_at,
       })),
+    };
+  }
+
+  async runDryRun(options: {
+    user_id?: number;
+    username?: string;
+    trade_date?: string;
+    limit?: number;
+    min_score?: number;
+    factor_provider?: 'auto' | 'local_derived' | 'tushare' | 'eastmoney';
+  } = {}): Promise<Record<string, any>> {
+    const tradeDate = options.trade_date || moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
+    const startedAt = Date.now();
+    const preflight = await this.check({ user_id: options.user_id, factor_limit: 120 });
+    const result = await quantFusionService.runDailyPipeline({
+      user_id: options.user_id,
+      username: options.username,
+      trade_date: tradeDate,
+      universe: 'market',
+      candidate_limit: Math.min(Math.max(Number(options.limit || 80), 20), 180),
+      archive_limit: Math.min(Math.max(Number(options.limit || 12), 5), 30),
+      min_score: Number(options.min_score || 60),
+      submit_agent_analysis: false,
+      run_paper_trading: false,
+      dry_run: true,
+      report_to_feishu: false,
+      notify_to_feishu_bot: false,
+      refresh_realtime_quotes: true,
+      quote_sync_limit: Math.min(Math.max(Number(options.limit || 80), 20), 180),
+      sync_factors_before_scan: true,
+      factor_sync_scope: 'market',
+      factor_sync_limit: Math.min(Math.max(Number(options.limit || 80), 20), 220),
+      factor_provider: options.factor_provider || 'auto',
+      factor_sync_skip_if_coverage_rate_gte: 0,
+      block_buy_on_runtime_risk: true,
+    });
+    const runtimeBlocked = Boolean((result as any).runtime_risk_blocked);
+    const candidateCount = Number((result as any).fusion?.candidate_count || 0);
+    const selectedCount = Number((result as any).fusion?.selected_count || 0);
+    const signalCount = Number((result as any).generated?.signal_count || 0);
+
+    return {
+      generated_at: new Date().toISOString(),
+      trade_date: tradeDate,
+      status: runtimeBlocked ? 'watch_only' : candidateCount > 0 ? 'ready' : 'warn',
+      dry_run: true,
+      duration_ms: Date.now() - startedAt,
+      summary: {
+        preflight_status: preflight.status,
+        runtime_risk_blocked: runtimeBlocked,
+        scanned_stocks: (result as any).generated?.scanned_stocks || 0,
+        signal_count: signalCount,
+        candidate_count: candidateCount,
+        selected_count: selectedCount,
+        archived_signal_count: (result as any).archive?.total || 0,
+        conclusion: runtimeBlocked
+          ? '开盘演练完成：可生成候选但运行时风险阻断买入，明日将只归档观察。'
+          : candidateCount > 0
+          ? `开盘演练完成：已生成 ${candidateCount} 个候选、精选 ${selectedCount} 个，未触发真实买入/飞书发送。`
+          : '开盘演练完成：未形成有效候选，请关注因子覆盖、行情与策略阈值。',
+      },
+      preflight,
+      result,
     };
   }
 }

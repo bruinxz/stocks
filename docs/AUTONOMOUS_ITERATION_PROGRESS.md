@@ -32,6 +32,23 @@ Known frontend build warnings are historical Prettier warnings in existing files
 
 ## Completed in current autonomous batch
 
+### 2026-05-21 continuous iteration: real free factor source + opening rehearsal
+
+- 数据更真实：
+  - `EastMoneyClient` 增加免费实时快照接口，返回价格、成交额、换手率、PE/PB、市值、弱资金流/质量代理。
+  - `StockFactorService` 的 provider plan 扩展为 `auto | tushare | eastmoney | local_derived`。
+  - `auto` 现在优先 Tushare（如已配置），再使用东方财富免费真实快照，最后用 `local_derived` 兜底。
+  - 因子覆盖 `source_quality` 增加 provider 状态，运行时健康可区分 `real_ready / derived_ready / limited / missing`。
+- 纪律更可执行：
+  - `QuantOpeningPreflightService` 增加安全演练 `runDryRun()`。
+  - 新接口：`POST /api/strategy-research/opening-preflight/dry-run`。
+  - 演练会刷新因子/行情并跑量化融合链路，但不会提交 Agent、不会写飞书、不会模拟买入，用于确认明天开盘任务能否跑出候选。
+- 页面更简洁：
+  - 今日作战台新增“明日开盘自动荐股准备度”，集中展示日扫任务、因子覆盖、真实数据源、自动参数与演练结果。
+  - 复杂自检 issue 与演练明细折叠到“查看自检细节”，默认保持结论优先。
+- 部署更稳定：
+  - 只读 smoke 增加 `/api/strategy-research/opening-preflight` 结构校验，发布前可提前发现开盘链路接口断裂。
+
 ### Five-priority continuation batch (2026-05-20)
 
 - Strategy runtime policy is now no longer only editable:

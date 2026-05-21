@@ -4,6 +4,7 @@ import {
   Button,
   Card,
   Col,
+  Collapse,
   Empty,
   Progress,
   Row,
@@ -20,6 +21,7 @@ import {
   ArrowRightOutlined,
   CheckCircleOutlined,
   CompassOutlined,
+  ExperimentOutlined,
   FundProjectionScreenOutlined,
   NodeIndexOutlined,
   RadarChartOutlined,
@@ -108,7 +110,11 @@ const buildPositionAdvice = (position: Position) => {
 const TodayCommandCenter: React.FC = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
+  const [preflightLoading, setPreflightLoading] = useState(false);
+  const [dryRunLoading, setDryRunLoading] = useState(false);
   const [commandData, setCommandData] = useState<any>(null);
+  const [preflight, setPreflight] = useState<any>(null);
+  const [dryRun, setDryRun] = useState<any>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const fetchCommandData = async (silent = false) => {
@@ -128,8 +134,49 @@ const TodayCommandCenter: React.FC = () => {
     }
   };
 
+  const fetchPreflight = async (silent = false) => {
+    setPreflightLoading(true);
+    try {
+      const response = await api.get('/strategy-research/opening-preflight', {
+        params: { factor_limit: 220 },
+      });
+      const data = response.data?.data;
+      setPreflight(data);
+      if (!silent) message.success(response.data?.message || '开盘自检已刷新');
+    } catch (error: any) {
+      const messageText = error.response?.data?.message || '加载开盘自检失败';
+      setErrors(prev => ({ ...prev, opening_preflight: messageText }));
+      message.warning(messageText);
+    } finally {
+      setPreflightLoading(false);
+    }
+  };
+
+  const runOpeningDryRun = async () => {
+    setDryRunLoading(true);
+    try {
+      const response = await api.post('/strategy-research/opening-preflight/dry-run', {
+        limit: 80,
+        min_score: 60,
+        factor_provider: 'auto',
+      });
+      const data = response.data?.data;
+      setDryRun(data);
+      message.success(response.data?.message || '开盘安全演练完成');
+      await fetchPreflight(true);
+      await fetchCommandData(true);
+    } catch (error: any) {
+      const messageText = error.response?.data?.message || '开盘安全演练失败';
+      setErrors(prev => ({ ...prev, opening_dry_run: messageText }));
+      message.error(messageText);
+    } finally {
+      setDryRunLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchCommandData(true);
+    fetchPreflight(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -145,6 +192,12 @@ const TodayCommandCenter: React.FC = () => {
   const readinessItems = commandData?.readiness || [];
   const latestFeishu = commandData?.latest_feishu;
   const discipline = commandData?.discipline || {};
+  const preflightChecks = preflight?.checks || {};
+  const factorCoverage = preflightChecks.factor_coverage || {};
+  const factorProvider = preflightChecks.factor_provider || {};
+  const activeScanParams = preflightChecks.active_scan_params || {};
+  const quantTask = preflightChecks.quant_task || {};
+  const dryRunSummary = dryRun?.summary || {};
   const cashPct = Number(summary.cash_pct || 0);
   const exposurePct = Number(summary.exposure_pct || 0);
   const conclusionTone = commandData?.conclusion?.tone || 'wait';
@@ -155,6 +208,14 @@ const TodayCommandCenter: React.FC = () => {
       : positions.length > 0
       ? `暂无强买入，持仓 ${positions.length} 只优先做风控复查`
       : `暂无持仓，等待今日量化/Agent 信号确认`);
+
+  const openingStatusMeta = (() => {
+    const status = String(preflight?.status || 'unknown');
+    if (status === 'ready')
+      return { label: '明日可自动运行', color: 'green', type: 'success' as const };
+    if (status === 'risk') return { label: '开盘前需修复', color: 'red', type: 'error' as const };
+    return { label: '可运行但需观察', color: 'gold', type: 'warning' as const };
+  })();
 
   const candidateColumns = [
     {
@@ -305,6 +366,13 @@ const TodayCommandCenter: React.FC = () => {
             >
               进入模拟交易
             </Button>
+            <Button
+              icon={<ExperimentOutlined />}
+              loading={dryRunLoading}
+              onClick={runOpeningDryRun}
+            >
+              开盘安全演练
+            </Button>
           </Space>
         </div>
         <div className="today-command-verdict">
@@ -386,6 +454,107 @@ const TodayCommandCenter: React.FC = () => {
       </Row>
 
       <Card
+        className="modern-card today-opening-brief"
+        variant="borderless"
+        loading={preflightLoading && !preflight}
+      >
+        <div className="today-opening-header">
+          <div>
+            <span className="today-section-kicker">OPENING AUTO-RUN</span>
+            <h2>明日开盘自动荐股准备度</h2>
+            <p>只展示会影响“能否自动推荐/能否模拟买入”的关键项；详细策略跑分仍在量化研究页。</p>
+          </div>
+          <Space wrap>
+            <Tag color={openingStatusMeta.color}>{openingStatusMeta.label}</Tag>
+            <Button size="small" loading={preflightLoading} onClick={() => fetchPreflight()}>
+              刷新自检
+            </Button>
+          </Space>
+        </div>
+        <Alert
+          showIcon
+          type={openingStatusMeta.type}
+          message={preflight?.summary?.conclusion || '正在等待开盘链路自检结果'}
+          description={
+            dryRun
+              ? `最近演练：${dryRunSummary.conclusion || '--'}，耗时 ${Number(
+                  dryRun.duration_ms || 0
+                )}ms。`
+              : '如担心明天任务是否能跑通，可点击“开盘安全演练”；不会调用 Agent、不会写飞书、不会模拟买入。'
+          }
+        />
+        <div className="today-opening-grid">
+          <div className="today-opening-tile">
+            <span>日扫任务</span>
+            <strong>{quantTask.ok ? '已启用' : '未就绪'}</strong>
+            <em>{quantTask.cron_expression || quantTask.conclusion || '--'}</em>
+          </div>
+          <div className="today-opening-tile">
+            <span>因子覆盖</span>
+            <strong>{Number(factorCoverage.min_coverage_rate || 0).toFixed(1)}%</strong>
+            <em>
+              日期 {factorCoverage.latest_factor_date || '--'} ·{' '}
+              {factorCoverage.conclusion || '等待因子覆盖结果'}
+            </em>
+          </div>
+          <div className="today-opening-tile">
+            <span>真实数据源</span>
+            <strong>{factorProvider.provider || 'auto'}</strong>
+            <em>{factorProvider.conclusion || '优先 Tushare，未配置时用东方财富免费快照增强。'}</em>
+          </div>
+          <div className="today-opening-tile">
+            <span>自动参数</span>
+            <strong>{activeScanParams.summary?.adopted_strategy_count || 0} 组</strong>
+            <em>{activeScanParams.conclusion || activeScanParams.summary?.conclusion || '--'}</em>
+          </div>
+        </div>
+        <Collapse
+          ghost
+          className="today-opening-collapse"
+          items={[
+            {
+              key: 'details',
+              label: '查看自检细节 / 最近演练结果',
+              children: (
+                <div className="today-opening-detail-grid">
+                  {(preflight?.issues || []).length > 0 ? (
+                    (preflight?.issues || [])
+                      .slice(0, 6)
+                      .map((item: any) => (
+                        <Alert
+                          key={item.key}
+                          showIcon
+                          type={item.status === 'risk' ? 'error' : 'warning'}
+                          message={item.conclusion}
+                        />
+                      ))
+                  ) : (
+                    <Alert
+                      showIcon
+                      type="success"
+                      message="暂无阻断项，等待定时任务自动执行即可。"
+                    />
+                  )}
+                  {dryRun && (
+                    <Alert
+                      showIcon
+                      type={dryRun.status === 'ready' ? 'success' : 'warning'}
+                      message={dryRunSummary.conclusion}
+                      description={`扫描 ${dryRunSummary.scanned_stocks || 0} 只，信号 ${
+                        dryRunSummary.signal_count || 0
+                      } 个，候选 ${dryRunSummary.candidate_count || 0} 个，归档 ${
+                        dryRunSummary.archived_signal_count || 0
+                      } 个。`}
+                    />
+                  )}
+                </div>
+              ),
+            },
+          ]}
+        />
+      </Card>
+
+      <Card
         className="modern-card today-readiness-card"
         variant="borderless"
         title={
@@ -450,7 +619,10 @@ const TodayCommandCenter: React.FC = () => {
               </div>
               <div className="today-discipline-tile">
                 <span>最多新增</span>
-                <strong>{discipline.suggested_new_position_count ?? 0} / {discipline.max_new_positions ?? 0} 只</strong>
+                <strong>
+                  {discipline.suggested_new_position_count ?? 0} /{' '}
+                  {discipline.max_new_positions ?? 0} 只
+                </strong>
                 <em>建议先处理买入前排，不分散到太多标的。</em>
               </div>
               <div className="today-discipline-tile">
@@ -460,7 +632,10 @@ const TodayCommandCenter: React.FC = () => {
               </div>
               <div className="today-discipline-tile">
                 <span>现金/总仓位红线</span>
-                <strong>{Number(discipline.min_cash_reserve_pct || 0).toFixed(0)}% / {Number(discipline.max_total_exposure_pct || 0).toFixed(0)}%</strong>
+                <strong>
+                  {Number(discipline.min_cash_reserve_pct || 0).toFixed(0)}% /{' '}
+                  {Number(discipline.max_total_exposure_pct || 0).toFixed(0)}%
+                </strong>
                 <em>低于现金底线或超过总仓位上限时停止新增。</em>
               </div>
             </div>
@@ -594,7 +769,11 @@ const TodayCommandCenter: React.FC = () => {
           </Card>
         </Col>
         <Col xs={24} xl={9}>
-          <Card className="modern-card today-decision-card" variant="borderless" title="卖出/减仓优先队列">
+          <Card
+            className="modern-card today-decision-card"
+            variant="borderless"
+            title="卖出/减仓优先队列"
+          >
             <Space direction="vertical" style={{ width: '100%' }}>
               {sellSignals.length > 0 ? (
                 sellSignals.slice(0, 6).map((item: any) => (

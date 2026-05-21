@@ -39,6 +39,33 @@ export interface QueryParams {
   adjustflag?: '1' | '2' | '3'; // 复权类型
 }
 
+export interface EastMoneyQuoteSnapshot {
+  symbol: string;
+  name?: string;
+  quote_time: string;
+  quote_date: string;
+  current_price?: number;
+  previous_close?: number;
+  open?: number;
+  high?: number;
+  low?: number;
+  change_amount?: number;
+  change_percent?: number;
+  volume?: number;
+  turnover?: number;
+  turnover_rate?: number;
+  pe_ttm?: number;
+  pb?: number;
+  total_market_cap?: number;
+  circulating_market_cap?: number;
+  total_share?: number;
+  circulating_share?: number;
+  main_net_inflow?: number;
+  roe?: number;
+  gross_margin?: number;
+  raw_payload: Record<string, any>;
+}
+
 export class EastMoneyClient {
   private client: AxiosInstance;
   private baseURL: string;
@@ -219,6 +246,105 @@ export class EastMoneyClient {
       return { market: '1', stockCode: normalizedCode };
     }
     return { market: '0', stockCode: normalizedCode };
+  }
+
+  private toNumber(value: any): number | undefined {
+    if (value === null || value === undefined || value === '' || value === '-') return undefined;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+
+  private scaled(value: any, divisor = 100): number | undefined {
+    const parsed = this.toNumber(value);
+    return parsed === undefined ? undefined : parsed / divisor;
+  }
+
+  private compactDate(value = new Date()): string {
+    const date = value instanceof Date ? value : new Date(value);
+    const normalized = Number.isNaN(date.getTime()) ? new Date() : date;
+    return normalized.toISOString().slice(0, 10);
+  }
+
+  private buildQuoteSnapshot(symbol: string, payload: Record<string, any>): EastMoneyQuoteSnapshot {
+    const quoteTime = new Date().toISOString();
+    return {
+      symbol,
+      name: payload.f58,
+      quote_time: quoteTime,
+      quote_date: this.compactDate(new Date()),
+      current_price: this.scaled(payload.f43),
+      previous_close: this.scaled(payload.f60),
+      open: this.scaled(payload.f46),
+      high: this.scaled(payload.f44),
+      low: this.scaled(payload.f45),
+      change_amount: this.scaled(payload.f169),
+      change_percent: this.scaled(payload.f170),
+      volume:
+        this.toNumber(payload.f47) === undefined ? undefined : Number(this.toNumber(payload.f47)) * 100,
+      turnover: this.toNumber(payload.f48),
+      turnover_rate: this.scaled(payload.f168),
+      pe_ttm: this.scaled(payload.f162),
+      pb: this.scaled(payload.f167),
+      total_market_cap: this.toNumber(payload.f116),
+      circulating_market_cap: this.toNumber(payload.f117),
+      total_share: this.toNumber(payload.f84),
+      circulating_share: this.toNumber(payload.f85),
+      main_net_inflow: this.toNumber(payload.f62),
+      roe: this.toNumber(payload.f173),
+      gross_margin: this.scaled(payload.f174),
+      raw_payload: payload,
+    };
+  }
+
+  /**
+   * 获取东方财富免费实时快照。
+   *
+   * 该接口不需要 token，适合作为 Tushare 未配置时的“真实行情/估值”轻量增强：
+   * - 价格、涨跌幅、成交额、换手率、PE/PB、市值来自东方财富实时接口；
+   * - 财务字段只作为弱代理，不替代正式财报源。
+   */
+  async getQuoteSnapshot(code: string): Promise<EastMoneyQuoteSnapshot | null> {
+    try {
+      const normalizedCode = normalizeSymbol(code);
+      const { market, stockCode } = this.parseSecId(normalizedCode);
+      const response = await this.client.get('/api/qt/stock/get', {
+        params: {
+          secid: `${market}.${stockCode}`,
+          fields:
+            'f43,f44,f45,f46,f47,f48,f57,f58,f60,f62,f84,f85,f116,f117,f162,f167,f168,f169,f170,f173,f174',
+        },
+      });
+
+      const responseData = this.unwrapResponse(response);
+      if (!responseData.data) return null;
+      return this.buildQuoteSnapshot(normalizedCode, responseData.data);
+    } catch (error) {
+      logger.warn(`Failed to fetch EastMoney quote snapshot for ${code}: ${(error as any)?.message || error}`);
+      return null;
+    }
+  }
+
+  async getQuoteSnapshots(
+    codes: string[],
+    options: { concurrency?: number; limit?: number } = {}
+  ): Promise<EastMoneyQuoteSnapshot[]> {
+    const normalizedCodes = [...new Set((codes || []).map(normalizeSymbol).filter(Boolean))];
+    const limit = Math.min(Math.max(Number(options.limit || normalizedCodes.length), 1), 1000);
+    const queue = normalizedCodes.slice(0, limit);
+    const concurrency = Math.min(Math.max(Number(options.concurrency || 6), 1), 12);
+    const results: EastMoneyQuoteSnapshot[] = [];
+    let cursor = 0;
+
+    const worker = async () => {
+      while (cursor < queue.length) {
+        const symbol = queue[cursor++];
+        const snapshot = await this.getQuoteSnapshot(symbol);
+        if (snapshot) results.push(snapshot);
+      }
+    };
+
+    await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, worker));
+    return results;
   }
 
   /**

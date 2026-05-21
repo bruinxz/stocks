@@ -8,9 +8,10 @@ import { StockValuationFactor } from '../../models/StockValuationFactor';
 import { normalizeSymbol } from '../../utils/stockSymbol';
 import { logger } from '../../utils/logger';
 import { TushareClient } from '../sources/TushareClient';
+import { EastMoneyClient } from '../sources/EastMoneyClient';
 
 type FactorScope = 'favorites' | 'market' | 'custom';
-type FactorProviderName = 'auto' | 'local_derived' | 'tushare';
+type FactorProviderName = 'auto' | 'local_derived' | 'tushare' | 'eastmoney';
 
 function dateOnly(value: Date | string): string {
   if (typeof value === 'string') return value.slice(0, 10);
@@ -114,12 +115,14 @@ export interface FactorCoverage {
     derived_records: number;
     real_provider_rate: number;
     primary_source: string | null;
+    provider_status?: Record<string, any>;
   };
   next_actions: string[];
 }
 
 export class StockFactorService {
   private tushareClient = new TushareClient();
+  private eastMoneyClient = new EastMoneyClient(undefined, Number(process.env.EASTMONEY_FACTOR_TIMEOUT_MS || 12000));
 
   async runProviderSmokeTest(options: { provider?: FactorProviderName; symbol?: string; as_of?: string } = {}) {
     const provider = options.provider || 'auto';
@@ -155,6 +158,40 @@ export class StockFactorService {
       }
     }
 
+    if (plan.providers.includes('eastmoney')) {
+      try {
+        const snapshot = await this.eastMoneyClient.getQuoteSnapshot(symbol);
+        return {
+          provider: 'eastmoney',
+          requested_provider: provider,
+          symbol,
+          ok: Boolean(snapshot?.current_price || snapshot?.pe_ttm || snapshot?.pb),
+          enabled: true,
+          snapshot,
+          plan,
+          checks: {
+            quote: Boolean(snapshot?.current_price),
+            valuation: Boolean(snapshot?.pe_ttm || snapshot?.pb || snapshot?.total_market_cap),
+            money_flow: Boolean(snapshot?.turnover_rate || snapshot?.main_net_inflow),
+          },
+          conclusion: snapshot
+            ? `东方财富免费源烟测成功，${symbol} 返回价格/估值/换手率快照，可作为 Tushare 未配置时的真实因子增强。`
+            : `东方财富免费源未返回 ${symbol} 的有效快照。`,
+        };
+      } catch (error: any) {
+        return {
+          provider: 'eastmoney',
+          requested_provider: provider,
+          symbol,
+          ok: false,
+          enabled: true,
+          plan,
+          error: error?.message || String(error),
+          conclusion: `东方财富免费源烟测失败：${error?.message || error}`,
+        };
+      }
+    }
+
     return {
       provider: 'local_derived',
       requested_provider: provider,
@@ -173,10 +210,13 @@ export class StockFactorService {
     const providers: FactorProviderName[] = [];
     if (requestedProvider === 'tushare') {
       providers.push('tushare');
+    } else if (requestedProvider === 'eastmoney') {
+      providers.push('eastmoney');
     } else if (requestedProvider === 'local_derived') {
       providers.push('local_derived');
     } else {
       if (preferRealProvider && tushareEnabled) providers.push('tushare');
+      if (preferRealProvider) providers.push('eastmoney');
       providers.push('local_derived');
     }
     return {
@@ -190,6 +230,13 @@ export class StockFactorService {
           note: tushareEnabled
             ? 'Tushare 已启用，可用于真实 daily_basic / moneyflow / fina_indicator 增强。'
             : 'Tushare 未启用，当前使用 local_derived 免费因子兜底。',
+        },
+        eastmoney: {
+          enabled: true,
+          has_token: false,
+          required_env: [],
+          note:
+            '东方财富免费实时源已启用，用于补充价格、PE/PB、市值、换手率与弱资金流代理；无需 token，但需控制并发。',
         },
         local_derived: {
           enabled: true,
@@ -356,6 +403,169 @@ export class StockFactorService {
     );
   }
 
+  private scoreEastMoneyQuality(snapshot: Record<string, any>): number {
+    const roe = toNumber(snapshot.roe);
+    const grossMargin = toNumber(snapshot.gross_margin);
+    const pb = toNumber(snapshot.pb);
+    const pe = toNumber(snapshot.pe_ttm);
+    return round(
+      clamp(
+        50 +
+          Math.min(20, Math.max(-12, roe * 1.4)) +
+          Math.min(10, Math.max(-8, grossMargin * 0.12)) +
+          (pb > 0 ? Math.max(-12, Math.min(10, 6 - pb * 1.8)) : 0) +
+          (pe > 0 ? Math.max(-10, Math.min(8, 18 - pe * 0.28)) : 0)
+      ),
+      4
+    );
+  }
+
+  private scoreEastMoneyMoneyFlow(snapshot: Record<string, any>): number {
+    const changePercent = toNumber(snapshot.change_percent);
+    const turnoverRate = toNumber(snapshot.turnover_rate);
+    const turnover = toNumber(snapshot.turnover);
+    const mainNet = toNumber(snapshot.main_net_inflow);
+    const totalMarketCap = toNumber(snapshot.total_market_cap);
+    const mainNetPct = totalMarketCap > 0 ? (mainNet / totalMarketCap) * 100 : 0;
+    const turnoverBoost = turnover > 0 ? Math.min(10, Math.log10(turnover) - 6) : 0;
+    return round(
+      clamp(
+        50 +
+          Math.max(-16, Math.min(16, changePercent * 1.4)) +
+          Math.min(14, turnoverRate * 1.35) +
+          Math.max(-12, Math.min(12, mainNetPct * 120)) +
+          turnoverBoost
+      ),
+      4
+    );
+  }
+
+  private async syncEastMoneyFactors(stocks: Stock[], options: FactorSyncOptions = {}) {
+    if (!stocks.length) {
+      return {
+        requested: 0,
+        processed: 0,
+        upserts: { valuation: 0, money_flow: 0, fundamental: 0 },
+        errors: [],
+      };
+    }
+
+    const snapshots = await this.eastMoneyClient
+      .getQuoteSnapshots(
+        stocks.map(stock => stock.symbol),
+        {
+          concurrency: Number(process.env.EASTMONEY_FACTOR_CONCURRENCY || 5),
+          limit: stocks.length,
+        }
+      )
+      .catch(error => {
+        logger.warn(`东方财富免费因子快照读取失败，降级 local_derived: ${error?.message || error}`);
+        return [] as any[];
+      });
+    const stockBySymbol = new Map(stocks.map(stock => [normalizeSymbol(stock.symbol), stock]));
+    let processed = 0;
+    let valuation = 0;
+    let moneyFlow = 0;
+    let fundamental = 0;
+    const errors: string[] = [];
+
+    for (const snapshot of snapshots) {
+      const symbol = normalizeSymbol(snapshot.symbol);
+      const stock = stockBySymbol.get(symbol);
+      if (!stock) continue;
+      const factorDate = options.as_of || snapshot.quote_date || new Date().toISOString().slice(0, 10);
+      const pe = toNumber(snapshot.pe_ttm);
+      const pb = toNumber(snapshot.pb);
+      const cap = toNumber(snapshot.total_market_cap);
+      const valuationScore = clamp(
+        (pe > 0 ? clamp(100 - Math.min(pe * 1.85, 95)) : 50) * 0.42 +
+          (pb > 0 ? clamp(100 - Math.min(pb * 14, 95)) : 50) * 0.34 +
+          (cap > 0 ? clamp(Math.log10(cap) * 7 - 42, 20, 88) : 55) * 0.24
+      );
+      const rawPayload = {
+        provider: 'eastmoney',
+        source_note:
+          'EastMoney free quote snapshot: price/valuation/turnover fields are real-time public data; fundamental metrics are weak proxies and should be superseded by Tushare/JQ when available.',
+        snapshot,
+      };
+
+      if (pe > 0 || pb > 0 || cap > 0) {
+        await StockValuationFactor.upsert({
+          stock_id: stock.id,
+          symbol: stock.symbol,
+          name: snapshot.name || stock.name,
+          factor_date: factorDate,
+          pe_ttm: pe || undefined,
+          pb: pb || undefined,
+          total_market_cap: cap || undefined,
+          circulating_market_cap: toNumber(snapshot.circulating_market_cap) || undefined,
+          valuation_score: round(valuationScore, 4),
+          source: 'eastmoney',
+          raw_payload: rawPayload,
+        } as any);
+        valuation++;
+      }
+
+      if (
+        snapshot.current_price !== undefined ||
+        snapshot.turnover_rate !== undefined ||
+        snapshot.main_net_inflow !== undefined
+      ) {
+        const previousClose = toNumber(snapshot.previous_close);
+        const currentPrice = toNumber(snapshot.current_price);
+        const changePercent = toNumber(snapshot.change_percent);
+        await StockMoneyFlowFactor.upsert({
+          stock_id: stock.id,
+          symbol: stock.symbol,
+          name: snapshot.name || stock.name,
+          factor_date: factorDate,
+          net_inflow_amount: toNumber(snapshot.main_net_inflow) || undefined,
+          main_net_inflow: toNumber(snapshot.main_net_inflow) || undefined,
+          main_net_inflow_pct:
+            cap > 0 ? round((toNumber(snapshot.main_net_inflow) / cap) * 100, 4) : undefined,
+          turnover_rate: toNumber(snapshot.turnover_rate) || undefined,
+          momentum_5d: undefined,
+          momentum_20d:
+            previousClose > 0 && currentPrice > 0
+              ? round(((currentPrice - previousClose) / previousClose) * 100, 4)
+              : changePercent || undefined,
+          money_flow_score: this.scoreEastMoneyMoneyFlow(snapshot),
+          source: 'eastmoney',
+          raw_payload: rawPayload,
+        } as any);
+        moneyFlow++;
+      }
+
+      if (snapshot.roe !== undefined || snapshot.gross_margin !== undefined || pe > 0 || pb > 0) {
+        await StockFundamentalFactor.upsert({
+          stock_id: stock.id,
+          symbol: stock.symbol,
+          name: snapshot.name || stock.name,
+          factor_date: factorDate,
+          report_period: factorDate.slice(0, 7),
+          roe: toNumber(snapshot.roe) || undefined,
+          gross_margin: toNumber(snapshot.gross_margin) || undefined,
+          quality_score: this.scoreEastMoneyQuality(snapshot),
+          source: 'eastmoney',
+          raw_payload: rawPayload,
+        } as any);
+        fundamental++;
+      }
+      processed++;
+    }
+
+    if (!processed && stocks.length) {
+      errors.push('eastmoney_no_snapshot_returned');
+    }
+
+    return {
+      requested: stocks.length,
+      processed,
+      upserts: { valuation, money_flow: moneyFlow, fundamental },
+      errors: errors.slice(0, 20),
+    };
+  }
+
   private async syncTushareFactors(stocks: Stock[], options: FactorSyncOptions = {}) {
     if (!stocks.length || !this.tushareClient.isEnabled()) {
       return {
@@ -493,7 +703,15 @@ export class StockFactorService {
         Number(coverage.coverage_rate.money_flow || 0),
         Number(coverage.coverage_rate.fundamental || 0)
       );
-      if (coverage.latest_trade_date && minCoverageRate >= skipThreshold) {
+      const realProviderRate = Number(coverage.source_quality?.real_provider_rate || 0);
+      const requiresRealProvider = providerPlan.providers.some(provider =>
+        ['tushare', 'eastmoney'].includes(provider)
+      );
+      const shouldSkip =
+        coverage.latest_trade_date &&
+        minCoverageRate >= skipThreshold &&
+        (!requiresRealProvider || realProviderRate >= 10);
+      if (shouldSkip) {
         return {
           generated_at: new Date().toISOString(),
           scope: options.scope || (options.symbols?.length ? 'custom' : 'market'),
@@ -520,6 +738,9 @@ export class StockFactorService {
     const providerResults: Record<string, any> = {};
     if (providerPlan.providers.includes('tushare')) {
       providerResults.tushare = await this.syncTushareFactors(stocks, options);
+    }
+    if (providerPlan.providers.includes('eastmoney')) {
+      providerResults.eastmoney = await this.syncEastMoneyFactors(stocks, options);
     }
     let processed = 0;
     let skipped = 0;
@@ -651,6 +872,8 @@ export class StockFactorService {
       message:
         providerPlan.providers.includes('tushare') && providerPlan.provider_status.tushare.enabled
           ? '已按 provider plan 完成因子落盘；Tushare 增强通道已启用，local_derived 仍作为兜底。'
+          : providerPlan.providers.includes('eastmoney')
+          ? '已按 provider plan 完成因子落盘；东方财富免费真实快照已补充价格/估值/换手率，local_derived 继续兜底。'
           : '已基于本地日线/股票快照生成免费版估值、资金流、质量因子；配置 Tushare 后可自动优先使用真实财务和资金流增强。',
     };
   }
@@ -759,6 +982,8 @@ export class StockFactorService {
       round((moneyFlowCount / denominator) * 100, 2),
       round((fundamentalCount / denominator) * 100, 2)
     );
+    const providerStatus = this.getProviderPlan({ provider: 'auto', prefer_real_provider: true })
+      .provider_status;
     const sourceQuality = {
       total_source_records: totalSourceRecords,
       real_provider_records: realProviderRecords,
@@ -769,6 +994,7 @@ export class StockFactorService {
         [...sourcePairs]
           .sort((a, b) => toNumber(b[1]) - toNumber(a[1]))
           .map(([source]) => source)[0] || null,
+      provider_status: providerStatus,
     };
     const factorLagDays = daysBetween(latestFactorDate, latestTradeDate);
     const coverageStatus: FactorCoverage['coverage_status'] =

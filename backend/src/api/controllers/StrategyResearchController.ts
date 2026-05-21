@@ -40,6 +40,27 @@ class StrategyResearchController {
       res.status(500).json({ success: false, message: error.message || '获取量化开盘自检失败' });
     }
   }
+
+  async runOpeningDryRun(req: AuthenticatedRequest, res: Response) {
+    try {
+      const data = await quantOpeningPreflightService.runDryRun({
+        user_id: req.user?.id,
+        username: req.user?.username,
+        trade_date: req.body?.trade_date || req.body?.tradeDate,
+        limit: Number(req.body?.limit || 80),
+        min_score: req.body?.min_score !== undefined ? Number(req.body.min_score) : undefined,
+        factor_provider: req.body?.factor_provider || req.body?.factorProvider || 'auto',
+      });
+      res.json({
+        success: true,
+        data,
+        message: data.summary.conclusion,
+      });
+    } catch (error: any) {
+      logger.error('执行量化开盘安全演练失败:', error);
+      res.status(500).json({ success: false, message: error.message || '执行量化开盘安全演练失败' });
+    }
+  }
 }
 
 export const strategyResearchController = new StrategyResearchController();

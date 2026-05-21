@@ -15,5 +15,10 @@ router.get(
   authController.authenticate,
   strategyResearchController.getOpeningPreflight.bind(strategyResearchController)
 );
+router.post(
+  '/opening-preflight/dry-run',
+  authController.authenticate,
+  strategyResearchController.runOpeningDryRun.bind(strategyResearchController)
+);
 
 export default router;
