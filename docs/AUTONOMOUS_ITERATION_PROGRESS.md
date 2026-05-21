@@ -722,3 +722,25 @@ Next:
 
 1. Deploy main + lym and verify `/api/market/factors/provider-smoke?provider=eastmoney` returns `ok=true`.
 2. Run a 220-symbol real factor sync and confirm real-provider rate moves toward the 65% skip threshold.
+
+## 2026-05-21 continuous iteration: EastMoney single-symbol batch smoke
+
+Focus: finish the diagnostic cleanup after real-factor batch sync proved effective online.
+
+Completed:
+
+- `EastMoneyClient.getQuoteSnapshots()` now allows the batch `ulist.np/get` path for a single symbol as well as multi-symbol calls.
+- This makes `/api/market/factors/provider-smoke?provider=eastmoney&symbol=...` use the same working endpoint as the production factor sync path before falling back to `stock/get`.
+
+Online observation before this patch:
+
+- 220-symbol manual factor sync succeeded in ~17s.
+- Runtime factor coverage reached 100%; real-provider rate reached 100%; Buy Gate stayed `allow`.
+- Provider-smoke still falsely returned `ok=false` because it was blocked from the single-symbol batch path.
+
+Validation:
+
+```bash
+/Applications/Codex.app/Contents/Resources/node backend/node_modules/typescript/bin/tsc -p backend/tsconfig.json --pretty false
+git diff --check
+```
