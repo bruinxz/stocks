@@ -89,6 +89,7 @@ export interface QuantDailyPipelineOptions {
   experiment_param_policy?: Record<string, any>;
   refresh_realtime_quotes?: boolean;
   quote_sync_limit?: number;
+  realtime_quote_source?: string;
   sync_factors_before_scan?: boolean;
   factor_sync_scope?: 'market' | 'favorites' | 'custom';
   factor_sync_limit?: number;
@@ -208,7 +209,12 @@ function buildRuntimeBuyGate(runtimeHealth: any) {
   }
   const checks = Array.isArray(runtimeHealth.checks) ? runtimeHealth.checks : [];
   const riskChecks = checks.filter((item: any) => item.status === 'risk');
-  const hardBlockKeys = new Set(['schema_columns', 'strategy_registry', 'quote_persistence', 'schedule']);
+  const hardBlockKeys = new Set([
+    'schema_columns',
+    'strategy_registry',
+    'quote_persistence',
+    'schedule',
+  ]);
   const hardBlocks = riskChecks.filter((item: any) => hardBlockKeys.has(String(item.key || '')));
   if (hardBlocks.length > 0 || runtimeHealth.status === 'risk') {
     return {
@@ -373,6 +379,7 @@ export class QuantFusionService {
       param_version_by_strategy: effectiveParamVersionByStrategy,
       refresh_realtime_quotes: options.refresh_realtime_quotes !== false,
       quote_sync_limit: options.quote_sync_limit || options.candidate_limit || 180,
+      realtime_quote_source: options.realtime_quote_source || 'auto',
     });
     const paramValidationRefresh = await quantStrategyParamVersionService
       .createPendingValidationsFromSignals({
@@ -414,25 +421,23 @@ export class QuantFusionService {
     const runtimeHealth =
       options.block_buy_on_runtime_risk === false
         ? null
-        : await quantRuntimeHealthService
-            .getHealth({ user_id: options.user_id })
-            .catch(error => {
-              logger.warn(`量化扫描运行时健康检查失败，本轮禁止自动买入: ${error?.message || error}`);
-              return {
-                status: 'risk',
-                score: 0,
-                summary: {
-                  conclusion: `量化扫描运行时健康检查失败：${error?.message || error}`,
-                },
-                buy_gate: {
-                  action: 'pause',
-                  blocked: true,
-                  degraded: false,
-                  position_multiplier: 0,
-                  conclusion: `量化扫描运行时健康检查失败：${error?.message || error}`,
-                },
-              };
-            });
+        : await quantRuntimeHealthService.getHealth({ user_id: options.user_id }).catch(error => {
+            logger.warn(`量化扫描运行时健康检查失败，本轮禁止自动买入: ${error?.message || error}`);
+            return {
+              status: 'risk',
+              score: 0,
+              summary: {
+                conclusion: `量化扫描运行时健康检查失败：${error?.message || error}`,
+              },
+              buy_gate: {
+                action: 'pause',
+                blocked: true,
+                degraded: false,
+                position_multiplier: 0,
+                conclusion: `量化扫描运行时健康检查失败：${error?.message || error}`,
+              },
+            };
+          });
     const runtimeBuyGate = buildRuntimeBuyGate(runtimeHealth);
     const runtimeRiskBlocked = Boolean(runtimeBuyGate.blocked);
     if (runtimeRiskBlocked) {
@@ -590,13 +595,17 @@ export class QuantFusionService {
                 ? Math.max(1, Math.min(safeNumber(riskProfileGate.effective_trade_limit, 1), 1))
                 : riskProfileGate.effective_trade_limit,
             effective_default_position_pct: roundNumber(
-              safeNumber(riskProfileGate.effective_default_position_pct, safeNumber(options.default_position_pct, 5)) *
-                runtimeGateMultiplier,
+              safeNumber(
+                riskProfileGate.effective_default_position_pct,
+                safeNumber(options.default_position_pct, 5)
+              ) * runtimeGateMultiplier,
               2
             ),
             effective_max_position_pct: roundNumber(
-              safeNumber(riskProfileGate.effective_max_position_pct, safeNumber(options.max_position_pct, 10)) *
-                runtimeGateMultiplier,
+              safeNumber(
+                riskProfileGate.effective_max_position_pct,
+                safeNumber(options.max_position_pct, 10)
+              ) * runtimeGateMultiplier,
               2
             ),
             reason:

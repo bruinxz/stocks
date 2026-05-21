@@ -62,6 +62,7 @@ export class QuantSignalService {
     param_version_by_strategy?: Record<string, any>;
     refresh_realtime_quotes?: boolean;
     quote_sync_limit?: number;
+    realtime_quote_source?: string;
     include_realtime_quote?: boolean;
   }) {
     const trade_date = options.trade_date || dateOnly(new Date());
@@ -76,7 +77,7 @@ export class QuantSignalService {
         });
         quoteSync = await realtimeQuoteService.syncQuotesForSymbols(
           stocksForQuoteSync.map(stock => stock.symbol),
-          { source: 'akshare' }
+          { source: options.realtime_quote_source || 'auto' }
         );
       } catch (error: any) {
         logger.warn(`量化信号实时行情刷新失败: ${error?.message || error}`);
@@ -139,9 +140,7 @@ export class QuantSignalService {
         const runtimePolicy = runtimePoliciesByStrategy[strategyKey] || {};
         const executionPolicy = asPlainObject(runtimePolicy.execution_policy);
         const environmentPolicy = asPlainObject(runtimePolicy.environment_policy);
-        const blockedMarketRegimes = normalizeStringArray(
-          environmentPolicy.blocked_market_regimes
-        );
+        const blockedMarketRegimes = normalizeStringArray(environmentPolicy.blocked_market_regimes);
         const preferredMarketRegimes = normalizeStringArray(
           environmentPolicy.preferred_market_regimes
         );
@@ -163,14 +162,18 @@ export class QuantSignalService {
         let adjustedScore = result.score;
         if (blockedMarketRegimes.length && blockedMarketRegimes.includes(contextMarketRegime)) {
           adjustedScore -= 4;
-          policyReasons.push(`策略运行策略：当前市场环境 ${contextMarketRegime} 属于回避环境，降分观察`);
+          policyReasons.push(
+            `策略运行策略：当前市场环境 ${contextMarketRegime} 属于回避环境，降分观察`
+          );
         } else if (
           preferredMarketRegimes.length &&
           contextMarketRegime &&
           preferredMarketRegimes.includes(contextMarketRegime)
         ) {
           adjustedScore += 1.5;
-          policyReasons.push(`策略运行策略：当前市场环境 ${contextMarketRegime} 属于偏好环境，小幅加分`);
+          policyReasons.push(
+            `策略运行策略：当前市场环境 ${contextMarketRegime} 属于偏好环境，小幅加分`
+          );
         }
         const factorDate = context.factor_snapshot?.factor_date || null;
         const factorLagDays = daysBetween(factorDate, trade_date);
@@ -223,10 +226,7 @@ export class QuantSignalService {
           policyDiagnostics[strategyKey].adjusted_signal_count += 1;
           result.reasons = [...(result.reasons || []), ...policyReasons].slice(0, 8);
         }
-        if (
-          result.score >= effectiveMinScore ||
-          ['buy', 'watch'].includes(result.signal)
-        ) {
+        if (result.score >= effectiveMinScore || ['buy', 'watch'].includes(result.signal)) {
           signals.push(result);
         } else {
           policyDiagnostics[strategyKey].rejected_by_min_score_count += 1;
@@ -299,8 +299,7 @@ export class QuantSignalService {
               runtimePoliciesByStrategy[signal.strategy_key]?.environment_policy || {},
             price_source: contextBySymbol.get(signal.symbol)?.price_source || 'daily_bar',
             latest_quote_time: contextBySymbol.get(signal.symbol)?.latest_quote_time || null,
-            market_environment:
-              marketEnvironment || environmentBySymbol.get(signal.symbol) || null,
+            market_environment: marketEnvironment || environmentBySymbol.get(signal.symbol) || null,
             industry: stock?.industry,
             market_regime: marketEnvironment?.market_regime,
             industry_regime: marketEnvironment?.industry?.regime,
