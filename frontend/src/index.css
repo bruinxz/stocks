@@ -1635,6 +1635,44 @@ a {
   min-height: 260px;
 }
 
+.order-panel-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.order-panel-title-row .order-intent-panel-title {
+  margin-bottom: 0;
+}
+
+.order-tuning-audit-alert {
+  margin-bottom: 12px;
+  border-radius: 16px;
+  background: rgba(255, 251, 235, 0.72);
+  border-color: rgba(214, 166, 79, 0.2);
+}
+
+.order-tuning-audit-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.order-tuning-audit-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+
 .order-stability-list,
 .order-parameter-preview-list {
   display: flex;

@@ -205,6 +205,17 @@ router.get('/plan', authController.authenticate, paperTradingController.getTradi
 router.post('/plan/report', authController.authenticate, paperTradingController.reportTradingPlan);
 
 /**
+ * @route POST /api/paper-trading/order-intent-tuning/apply
+ * @desc 预览或手动应用订单意图稳定窗口给出的调参建议到自动跟单/交易计划任务
+ * @access Private
+ */
+router.post(
+  '/order-intent-tuning/apply',
+  authController.authenticate,
+  paperTradingController.applyOrderIntentTuning
+);
+
+/**
  * @route GET /api/paper-trading/history
  * @desc 获取模拟盘的交易流水
  * @access Private

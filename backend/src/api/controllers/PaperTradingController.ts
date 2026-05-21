@@ -19,6 +19,7 @@ import {
 import { paperTradingPlanService } from '../../services/PaperTradingPlanService';
 import { paperTradingRiskProfileService } from '../../services/PaperTradingRiskProfileService';
 import { paperTradingOrderIntentService } from '../../services/PaperTradingOrderIntentService';
+import { paperTradingTuningApplyService } from '../../services/PaperTradingTuningApplyService';
 import { recommendationTradeOutcomeService } from '../../services/RecommendationTradeOutcomeService';
 import { logger } from '../../utils/logger';
 
@@ -813,6 +814,31 @@ export class PaperTradingController {
       });
     } catch (error: any) {
       logger.error('上报模拟盘交易计划失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
+  // 预览或应用订单意图稳定窗口给出的调参建议
+  applyOrderIntentTuning = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const user = (req as any).user;
+      const result = await paperTradingTuningApplyService.applyOrderIntentTuningPreview({
+        ...req.body,
+        user_id: user.id,
+        username: user.username || user.nickname,
+        operator: {
+          user_id: user.id,
+          username: user.username || user.nickname,
+        },
+      });
+
+      res.json({
+        success: true,
+        data: result,
+        message: result.message,
+      });
+    } catch (error: any) {
+      logger.error('应用订单意图调参建议失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   };

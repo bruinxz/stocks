@@ -1175,6 +1175,42 @@ async function main() {
       }
     );
 
+    await requestJson(
+      "paper trading order intent tuning preview",
+      "/api/paper-trading/order-intent-tuning/apply",
+      {
+        method: "POST",
+        token,
+        body: { dry_run: true },
+        expect: (json) => {
+          assertApiSuccess(json, "paper trading order intent tuning preview");
+          if (!json.data || !Array.isArray(json.data.changes)) {
+            throw new Error(
+              `paper trading order intent tuning preview payload invalid: ${preview(
+                json
+              )}`
+            );
+          }
+          for (const key of ["preview_count", "applied_count"]) {
+            if (!Number.isFinite(Number(json.data[key] || 0))) {
+              throw new Error(
+                `paper trading order intent tuning preview ${key} invalid: ${preview(
+                  json.data
+                )}`
+              );
+            }
+          }
+          if (json.data.dry_run !== true || json.data.applied === true) {
+            throw new Error(
+              `paper trading order intent tuning preview must be read-only dry run: ${preview(
+                json.data
+              )}`
+            );
+          }
+        },
+      }
+    );
+
     await requestJson("AI signal stats", "/api/ai/signals/stats", {
       token,
       critical: false,

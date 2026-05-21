@@ -422,6 +422,27 @@ interface OrderIntentParameterPreview {
   apply_status_label: string;
 }
 
+interface OrderIntentTuningTaskChange {
+  id: number;
+  name: string;
+  type: string;
+  changed_keys: string[];
+  applied_previews: Array<OrderIntentParameterPreview & { before_value?: any; after_value?: any }>;
+}
+
+interface OrderIntentTuningApplyResult {
+  dry_run: boolean;
+  applied: boolean;
+  message: string;
+  preview_count: number;
+  applied_count: number;
+  generated_at?: string;
+  tuning_preview_conclusion?: string;
+  previews?: OrderIntentParameterPreview[];
+  changes: OrderIntentTuningTaskChange[];
+  apply_mode?: 'preview' | 'manual_confirmed';
+}
+
 interface PaperTradingOrderIntentDashboard {
   generated_at: string;
   portfolio?: PortfolioInfo | null;
@@ -602,6 +623,8 @@ const PaperTrading: React.FC = () => {
   const [tradingPlan, setTradingPlan] = useState<PaperTradingPlan | null>(null);
   const [tradingPlanLoading, setTradingPlanLoading] = useState(false);
   const [tradingPlanReportLoading, setTradingPlanReportLoading] = useState(false);
+  const [tuningApplyLoading, setTuningApplyLoading] = useState(false);
+  const [tuningPreview, setTuningPreview] = useState<OrderIntentTuningApplyResult | null>(null);
   const [riskProfile, setRiskProfile] = useState<PaperTradingRiskProfile | null>(null);
   const [riskProfileLoading, setRiskProfileLoading] = useState(false);
   const [orderIntents, setOrderIntents] = useState<PaperTradingOrderIntentDashboard | null>(null);
@@ -851,6 +874,61 @@ const PaperTrading: React.FC = () => {
     } finally {
       setTradingPlanReportLoading(false);
     }
+  };
+
+  const previewOrderIntentTuningApply = async () => {
+    setTuningApplyLoading(true);
+    try {
+      const response = await api.post('/paper-trading/order-intent-tuning/apply', {
+        dry_run: true,
+      });
+      const result = response.data.data as OrderIntentTuningApplyResult;
+      setTuningPreview(result);
+      if (result.changes?.length) {
+        message.success(result.message || '调参预览已生成');
+      } else {
+        message.info(result.message || '当前没有可应用的调参预览');
+      }
+    } catch (error: any) {
+      message.error(error.response?.data?.message || '生成调参预览失败');
+    } finally {
+      setTuningApplyLoading(false);
+    }
+  };
+
+  const confirmOrderIntentTuningApply = () => {
+    if (!tuningPreview?.changes?.length) {
+      message.info('没有可应用的参数变化');
+      return;
+    }
+    Modal.confirm({
+      title: '确认应用订单意图调参建议',
+      content:
+        '该操作只会更新自动跟单/交易计划定时任务的参数，并写入审计日志；不会立即触发买卖，也不会修改已有交易记录。',
+      okText: '确认写入参数',
+      cancelText: '再看看',
+      onOk: async () => {
+        setTuningApplyLoading(true);
+        try {
+          const response = await api.post('/paper-trading/order-intent-tuning/apply', {
+            dry_run: false,
+            task_ids: tuningPreview.changes.map(item => item.id),
+            parameter_keys: Array.from(
+              new Set(tuningPreview.changes.flatMap(item => item.changed_keys || []))
+            ),
+          });
+          const result = response.data.data as OrderIntentTuningApplyResult;
+          setTuningPreview(result);
+          message.success(result.message || '订单意图调参建议已写入任务参数');
+          await fetchTradingPlan(true);
+          await fetchOrderIntents(true);
+        } catch (error: any) {
+          message.error(error.response?.data?.message || '应用调参建议失败');
+        } finally {
+          setTuningApplyLoading(false);
+        }
+      },
+    });
   };
 
   const runRiskCheck = async (dryRun: boolean) => {
@@ -1549,7 +1627,57 @@ const PaperTrading: React.FC = () => {
             </Col>
             <Col xs={24} lg={13}>
               <div className="order-intent-panel order-parameter-preview-panel">
-                <div className="order-intent-panel-title">参数调整预览</div>
+                <div className="order-panel-title-row">
+                  <div className="order-intent-panel-title">参数调整预览</div>
+                  <Space wrap size={8}>
+                    <Button
+                      size="small"
+                      icon={<AuditOutlined />}
+                      loading={tuningApplyLoading}
+                      onClick={previewOrderIntentTuningApply}
+                    >
+                      生成审计预览
+                    </Button>
+                    <Button
+                      size="small"
+                      type="primary"
+                      disabled={!tuningPreview?.changes?.length}
+                      loading={tuningApplyLoading}
+                      onClick={confirmOrderIntentTuningApply}
+                    >
+                      写入任务参数
+                    </Button>
+                  </Space>
+                </div>
+                {tuningPreview && (
+                  <Alert
+                    className="order-tuning-audit-alert"
+                    type={tuningPreview.changes?.length ? 'warning' : 'info'}
+                    showIcon
+                    message={tuningPreview.message}
+                    description={
+                      tuningPreview.changes?.length
+                        ? `将影响 ${tuningPreview.changes.length} 个定时任务，确认后写入审计日志。`
+                        : '没有可写入的参数变化。'
+                    }
+                  />
+                )}
+                {tuningPreview?.changes?.length ? (
+                  <div className="order-tuning-audit-list">
+                    {tuningPreview.changes.slice(0, 3).map(change => (
+                      <div className="order-tuning-audit-item" key={change.id}>
+                        <Text strong>{change.name}</Text>
+                        <Space wrap size={6}>
+                          {change.changed_keys.slice(0, 4).map(key => (
+                            <Tag key={`${change.id}-${key}`} color="blue">
+                              {key}
+                            </Tag>
+                          ))}
+                        </Space>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
                 {parameterAdjustmentPreview.length > 0 ? (
                   <div className="order-parameter-preview-list">
                     {parameterAdjustmentPreview.slice(0, 6).map(item => (
