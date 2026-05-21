@@ -1375,3 +1375,37 @@ Next:
 1. Add a manual rollback apply endpoint with `dry_run` defaulting to true and hard confirmation required.
 2. Add a historical audit-to-PnL page/table so multiple Canary/apply events can be compared.
 3. Add snapshot retention/maintenance for order-intent hindsight outcomes.
+
+### 2026-05-22 order-intent canary rollback dry-run/apply
+
+Focus: close the Canary safety loop with an operator-controlled rollback path that is preview-first and auditable.
+
+Completed:
+
+- Added `POST /api/paper-trading/order-intent-tuning/canary/rollback`.
+  - Defaults to `dry_run: true`.
+  - Returns `changes`, `can_apply`, `blocked_reason`, `rollback_plan`, `confirm_required` and `confirm_text`.
+  - Real writes require `dry_run: false`, `confirm: true` and `confirm_text: CONFIRM_CANARY_ROLLBACK`.
+- Rollback applies only parameters that still need restore from the latest Canary audit.
+  - If any parameter changed again after Canary, apply is blocked and the result stays in manual-review mode.
+  - Successful apply restores task parameters, reloads scheduled tasks and records audit event `order_intent_tuning_canary_rollback`.
+- Paper-trading page now adds a compact rollback workflow inside the Canary card:
+  - “回滚预览” produces a read-only task/key summary.
+  - “确认回滚” opens a strong-confirm modal that shows current → restore values and requires the exact confirmation text.
+- Read-only smoke validates the rollback endpoint with `{ dry_run: true }` only, ensuring deployment checks do not mutate task parameters.
+
+Validation:
+
+```bash
+node --check scripts/tests/smoke_readonly_core.js
+./backend/node_modules/.bin/tsc --noEmit --project backend/tsconfig.json
+./frontend/node_modules/.bin/tsc --noEmit --project frontend/tsconfig.json
+git diff --check
+CI=false /Users/bytedance/.nvm/versions/node/v20.20.2/bin/npm --prefix frontend run build
+```
+
+Next:
+
+1. Add a historical audit-to-PnL page/table so multiple Canary/apply/rollback events can be compared by subsequent closed-trade PnL.
+2. Add snapshot retention/maintenance for order-intent hindsight outcomes.
+3. Add an optional “promote from Canary” preview that converts a healthy Canary into a broader-but-still-audited apply plan.

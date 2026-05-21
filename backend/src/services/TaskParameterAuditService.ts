@@ -9,7 +9,8 @@ export type TaskParameterAuditEventType =
   | 'risk_limit_suggestion_applied'
   | 'risk_stability_settings_updated'
   | 'order_intent_tuning_applied'
-  | 'order_intent_tuning_canary_applied';
+  | 'order_intent_tuning_canary_applied'
+  | 'order_intent_tuning_canary_rollback';
 
 export interface TaskParameterAuditOperator {
   user_id?: number;

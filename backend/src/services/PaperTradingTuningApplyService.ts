@@ -7,6 +7,8 @@ import { recommendationTradeOutcomeService } from './RecommendationTradeOutcomeS
 
 interface ApplyOrderIntentTuningOptions {
   dry_run?: boolean;
+  confirm?: boolean;
+  confirm_text?: string;
   parameter_keys?: string[];
   task_ids?: number[];
   canary?: boolean;
@@ -17,6 +19,8 @@ interface ApplyOrderIntentTuningOptions {
   username?: string;
   operator?: TaskParameterAuditOperator;
 }
+
+const CANARY_ROLLBACK_CONFIRM_TEXT = 'CONFIRM_CANARY_ROLLBACK';
 
 const TARGET_TASK_TYPES = ['PAPER_TRADING_AUTO_SYNC', 'PAPER_TRADING_DAILY_PLAN'];
 const PARAMETER_ALLOWLIST = [
@@ -359,6 +363,145 @@ export class PaperTradingTuningApplyService {
       summary: {
         conclusion,
       },
+    };
+  }
+
+  async applyCanaryRollback(options: ApplyOrderIntentTuningOptions = {}) {
+    const dryRun = toBoolean(options.dry_run, true);
+    const confirm = toBoolean(options.confirm, false);
+    const status = await this.getCanaryStatus(options);
+    if (!status.active) {
+      return {
+        dry_run: dryRun,
+        applied: false,
+        confirm_required: true,
+        confirm_text: CANARY_ROLLBACK_CONFIRM_TEXT,
+        can_apply: false,
+        blocked_reason: '暂无可回滚的 Canary 调参记录。',
+        message: '暂无可回滚的 Canary 调参记录。',
+        rollback_plan: null,
+        changes: [],
+      };
+    }
+
+    const rollbackPlan = (status as any).rollback_plan;
+    const allItems = Array.isArray(rollbackPlan?.items) ? rollbackPlan.items : [];
+    const selectedTaskIds = new Set(
+      (options.task_ids || []).map(id => Number(id)).filter(id => Number.isInteger(id) && id > 0)
+    );
+    const selectedKeys = new Set(
+      (options.parameter_keys || [])
+        .map(key => String(key || '').trim())
+        .filter(key => PARAMETER_ALLOWLIST.includes(key))
+    );
+    const scopedItems = allItems
+      .filter((item: any) => selectedTaskIds.size === 0 || selectedTaskIds.has(Number(item.task_id)))
+      .map((item: any) => ({
+        ...item,
+        parameters: (item.parameters || []).filter((parameter: any) => {
+          if (selectedKeys.size > 0 && !selectedKeys.has(parameter.key)) return false;
+          return Boolean(parameter.needs_rollback);
+        }),
+      }))
+      .filter((item: any) => item.parameters.length > 0);
+
+    const changes = scopedItems.map((item: any) => {
+      const currentParameters = Object.fromEntries(
+        item.parameters.map((parameter: any) => [parameter.key, parameter.current_value])
+      );
+      const restoreParameters = Object.fromEntries(
+        item.parameters.map((parameter: any) => [parameter.key, parameter.restore_value])
+      );
+      return {
+        task_id: item.task_id,
+        task_name: item.task_name,
+        task_type: item.task_type,
+        audit_id: item.audit_id,
+        changed_keys: item.parameters.map((parameter: any) => parameter.key),
+        current_parameters: currentParameters,
+        restore_parameters: restoreParameters,
+        parameters: item.parameters,
+      };
+    });
+
+    const hasManualReviewRisk = scopedItems.some((item: any) =>
+      (item.parameters || []).some((parameter: any) => parameter.changed_after_canary)
+    );
+    const canApply =
+      changes.length > 0 &&
+      !hasManualReviewRisk &&
+      rollbackPlan?.safety_state !== 'manual_review' &&
+      rollbackPlan?.safety_state !== 'no_change';
+
+    if (!dryRun && (!confirm || options.confirm_text !== CANARY_ROLLBACK_CONFIRM_TEXT)) {
+      throw new Error(`回滚 Canary 参数必须传 confirm=true 且 confirm_text=${CANARY_ROLLBACK_CONFIRM_TEXT}`);
+    }
+    if (!dryRun && !canApply) {
+      throw new Error(
+        hasManualReviewRisk
+          ? 'Canary 后部分参数又被其它流程修改，禁止直接回滚，请人工核对。'
+          : '当前没有可应用的 Canary 回滚参数。'
+      );
+    }
+
+    if (!dryRun) {
+      const tasks = await ScheduledTask.findAll({
+        where: { id: { [Op.in]: changes.map((change: any) => Number(change.task_id)) } },
+      });
+      const taskById = new Map<number, ScheduledTask>();
+      tasks.forEach(task => taskById.set(Number(task.id), task));
+
+      for (const change of changes) {
+        const task = taskById.get(Number(change.task_id));
+        if (!task) continue;
+        const beforeParameters = { ...(task.parameters || {}) };
+        const afterParameters = { ...beforeParameters, ...change.restore_parameters };
+        await task.update({ parameters: afterParameters });
+        await taskParameterAuditService.record({
+          task,
+          event_type: 'order_intent_tuning_canary_rollback',
+          before_parameters: beforeParameters,
+          after_parameters: afterParameters,
+          changed_keys: change.changed_keys,
+          operator: options.operator,
+          metadata: {
+            source: 'paper_trading_order_intent_canary_rollback',
+            canary_audit_id: change.audit_id,
+            rollback_reason: (status as any).review?.action_label || '',
+            attribution: (status as any).attribution,
+            rollback_plan_summary: {
+              safety_state: rollbackPlan?.safety_state,
+              safety_label: rollbackPlan?.safety_label,
+              rollback_key_count: rollbackPlan?.rollback_key_count,
+            },
+          },
+        });
+        await schedulerService.reloadTask(Number(task.id));
+      }
+    }
+
+    return {
+      dry_run: dryRun,
+      applied: !dryRun,
+      confirm_required: true,
+      confirm_text: CANARY_ROLLBACK_CONFIRM_TEXT,
+      can_apply: canApply,
+      blocked_reason: canApply
+        ? ''
+        : hasManualReviewRisk
+        ? 'Canary 后部分参数又被其它流程修改，需人工核对。'
+        : '当前没有可回滚参数。',
+      rollback_plan: rollbackPlan,
+      changes,
+      applied_count: dryRun ? 0 : changes.length,
+      message:
+        changes.length === 0
+          ? '当前没有可回滚的 Canary 参数。'
+          : dryRun
+          ? `Canary 回滚预览完成：将影响 ${changes.length} 个任务、${uniqueStrings(
+              changes.flatMap((change: any) => change.changed_keys)
+            ).length} 个参数；当前未写入。`
+          : `Canary 回滚已应用：恢复 ${changes.length} 个任务参数，并写入审计日志。`,
     };
   }
 

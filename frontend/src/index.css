@@ -1850,6 +1850,18 @@ a {
   text-transform: uppercase;
 }
 
+.order-canary-detail-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.order-canary-detail-title-row .order-canary-detail-title {
+  margin-bottom: 0;
+}
+
 .order-canary-detail-card strong,
 .order-canary-detail-card span {
   display: block;
@@ -1887,6 +1899,68 @@ a {
   font-size: 11px;
   font-style: normal;
   font-weight: 800;
+}
+
+.order-canary-rollback-preview {
+  margin-top: 10px;
+  padding: 9px 10px;
+  border-radius: 12px;
+  background: rgba(248, 250, 252, 0.82);
+  border: 1px dashed rgba(15, 23, 42, 0.12);
+}
+
+.order-canary-rollback-preview-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.order-canary-rollback-preview-head span,
+.order-canary-rollback-preview em {
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.order-canary-rollback-preview em {
+  display: block;
+  margin-top: 6px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.order-canary-rollback-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.order-canary-rollback-summary {
+  max-height: 260px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.order-canary-rollback-task {
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(248, 250, 252, 0.86);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.order-canary-rollback-task > span {
+  display: block;
+  margin: 3px 0 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.order-canary-rollback-task .ant-tag {
+  margin-bottom: 6px;
+  white-space: normal;
 }
 
 .order-tuning-audit-item {

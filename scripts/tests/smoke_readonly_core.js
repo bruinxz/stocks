@@ -1406,6 +1406,43 @@ async function main() {
       }
     );
 
+    await requestJson(
+      "paper trading order intent canary rollback dry run",
+      "/api/paper-trading/order-intent-tuning/canary/rollback",
+      {
+        method: "POST",
+        token,
+        body: { dry_run: true },
+        expect: (json) => {
+          assertApiSuccess(
+            json,
+            "paper trading order intent canary rollback dry run"
+          );
+          if (!json.data || !Array.isArray(json.data.changes)) {
+            throw new Error(
+              `paper trading order intent canary rollback payload invalid: ${preview(
+                json
+              )}`
+            );
+          }
+          if (json.data.dry_run !== true || json.data.applied === true) {
+            throw new Error(
+              `paper trading order intent canary rollback must be read-only dry run: ${preview(
+                json.data
+              )}`
+            );
+          }
+          if (!json.data.confirm_text) {
+            throw new Error(
+              `paper trading order intent canary rollback confirm text missing: ${preview(
+                json.data
+              )}`
+            );
+          }
+        },
+      }
+    );
+
     await requestJson("AI signal stats", "/api/ai/signals/stats", {
       token,
       critical: false,

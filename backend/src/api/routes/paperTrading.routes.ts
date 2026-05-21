@@ -249,6 +249,17 @@ router.get(
 );
 
 /**
+ * @route POST /api/paper-trading/order-intent-tuning/canary/rollback
+ * @desc 预览或强确认回滚订单意图 Canary 小流量调参
+ * @access Private
+ */
+router.post(
+  '/order-intent-tuning/canary/rollback',
+  authController.authenticate,
+  paperTradingController.rollbackOrderIntentTuningCanary
+);
+
+/**
  * @route GET /api/paper-trading/history
  * @desc 获取模拟盘的交易流水
  * @access Private

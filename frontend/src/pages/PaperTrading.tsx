@@ -13,6 +13,7 @@ import {
   Empty,
   Modal,
   Form,
+  Input,
   Select,
   InputNumber,
   Radio,
@@ -557,6 +558,29 @@ interface OrderIntentTuningCanaryStatus {
   };
 }
 
+interface CanaryRollbackResult {
+  dry_run: boolean;
+  applied: boolean;
+  can_apply: boolean;
+  confirm_required?: boolean;
+  message: string;
+  confirm_text: string;
+  blocked_reason?: string;
+  applied_count: number;
+  changes: Array<{
+    task_id: number;
+    task_name: string;
+    task_type: string;
+    changed_keys: string[];
+    parameters: Array<{
+      key: string;
+      current_value: any;
+      restore_value: any;
+      changed_after_canary: boolean;
+    }>;
+  }>;
+}
+
 interface OrderIntentTrace {
   generated_at: string;
   intent: PaperTradingOrderIntentItem & { opportunity_outcome?: any; execution_reality?: any };
@@ -758,6 +782,20 @@ const formatTuningValue = (value?: number | string | null, unit = '') => {
   }
   return `${value}${unit}`;
 };
+const formatRollbackValue = (value: any) => {
+  if (value === undefined) return '--';
+  if (value === null) return '空';
+  if (typeof value === 'number') return Number.isInteger(value) ? `${value}` : value.toFixed(2);
+  if (typeof value === 'boolean') return value ? '是' : '否';
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+};
+
+const CANARY_ROLLBACK_CONFIRM_TEXT = 'CONFIRM_CANARY_ROLLBACK';
 
 const PaperTrading: React.FC = () => {
   const [portfolio, setPortfolio] = useState<PortfolioInfo | null>(null);
@@ -792,6 +830,12 @@ const PaperTrading: React.FC = () => {
   const [tuningApplyLoading, setTuningApplyLoading] = useState(false);
   const [canaryPreviewLoading, setCanaryPreviewLoading] = useState(false);
   const [canaryApplyLoading, setCanaryApplyLoading] = useState(false);
+  const [canaryRollbackLoading, setCanaryRollbackLoading] = useState(false);
+  const [canaryRollbackPreview, setCanaryRollbackPreview] = useState<CanaryRollbackResult | null>(
+    null
+  );
+  const [isCanaryRollbackModalOpen, setIsCanaryRollbackModalOpen] = useState(false);
+  const [canaryRollbackConfirmText, setCanaryRollbackConfirmText] = useState('');
   const [tuningPreview, setTuningPreview] = useState<OrderIntentTuningApplyResult | null>(null);
   const [canaryStatus, setCanaryStatus] = useState<OrderIntentTuningCanaryStatus | null>(null);
   const [canaryStatusLoading, setCanaryStatusLoading] = useState(false);
@@ -1167,6 +1211,77 @@ const PaperTrading: React.FC = () => {
         }
       },
     });
+  };
+
+  const previewCanaryRollback = async () => {
+    setCanaryRollbackLoading(true);
+    try {
+      const response = await api.post('/paper-trading/order-intent-tuning/canary/rollback', {
+        dry_run: true,
+      });
+      const result = response.data.data as CanaryRollbackResult;
+      setCanaryRollbackPreview(result);
+      setCanaryRollbackConfirmText('');
+      if (result.changes?.length) {
+        message.success(result.message || 'Canary 回滚预览已生成');
+      } else {
+        message.info(result.message || '当前没有可回滚参数');
+      }
+    } catch (error: any) {
+      message.error(error.response?.data?.message || '生成 Canary 回滚预览失败');
+    } finally {
+      setCanaryRollbackLoading(false);
+    }
+  };
+
+  const openCanaryRollbackConfirm = () => {
+    if (!canaryRollbackPreview?.changes?.length) {
+      message.info('请先生成 Canary 回滚预览');
+      return;
+    }
+    if (!canaryRollbackPreview.can_apply) {
+      message.warning(canaryRollbackPreview.blocked_reason || '当前回滚预案不允许直接应用');
+      return;
+    }
+    setCanaryRollbackConfirmText('');
+    setIsCanaryRollbackModalOpen(true);
+  };
+
+  const confirmCanaryRollback = async () => {
+    if (!canaryRollbackPreview?.changes?.length) {
+      message.info('请先生成 Canary 回滚预览');
+      return;
+    }
+    const expectedText = canaryRollbackPreview.confirm_text || CANARY_ROLLBACK_CONFIRM_TEXT;
+    if (canaryRollbackConfirmText.trim() !== expectedText) {
+      message.warning(`请输入 ${expectedText} 后再确认回滚`);
+      return;
+    }
+
+    setCanaryRollbackLoading(true);
+    try {
+      const response = await api.post('/paper-trading/order-intent-tuning/canary/rollback', {
+        dry_run: false,
+        confirm: true,
+        confirm_text: expectedText,
+        task_ids: canaryRollbackPreview.changes.map(item => item.task_id),
+        parameter_keys: Array.from(
+          new Set(canaryRollbackPreview.changes.flatMap(item => item.changed_keys || []))
+        ),
+      });
+      const result = response.data.data as CanaryRollbackResult;
+      setCanaryRollbackPreview(result);
+      setIsCanaryRollbackModalOpen(false);
+      setCanaryRollbackConfirmText('');
+      message.success(result.message || 'Canary 参数已回滚');
+      await fetchOrderIntentTuningCanary(true);
+      await fetchTradingPlan(true);
+      await fetchOrderIntents(true);
+    } catch (error: any) {
+      message.error(error.response?.data?.message || '应用 Canary 回滚失败');
+    } finally {
+      setCanaryRollbackLoading(false);
+    }
   };
 
   const confirmOrderIntentTuningApply = () => {
@@ -2116,13 +2231,61 @@ const PaperTrading: React.FC = () => {
                             )}
                             {canaryRollback && (
                               <div className="order-canary-detail-card">
-                                <div className="order-canary-detail-title">回滚预案</div>
+                                <div className="order-canary-detail-title-row">
+                                  <div className="order-canary-detail-title">回滚预案</div>
+                                  <Space wrap size={6}>
+                                    <Button
+                                      size="small"
+                                      type="link"
+                                      loading={canaryRollbackLoading}
+                                      onClick={previewCanaryRollback}
+                                    >
+                                      回滚预览
+                                    </Button>
+                                    <Button
+                                      size="small"
+                                      danger
+                                      disabled={
+                                        !canaryRollbackPreview?.changes?.length ||
+                                        !canaryRollbackPreview.can_apply
+                                      }
+                                      loading={canaryRollbackLoading}
+                                      onClick={openCanaryRollbackConfirm}
+                                    >
+                                      确认回滚
+                                    </Button>
+                                  </Space>
+                                </div>
                                 <strong>{canaryRollback.safety_label}</strong>
                                 <span>
                                   {canaryRollback.task_count} 个任务 ·{' '}
                                   {canaryRollback.rollback_key_count} 个参数
                                 </span>
                                 <p>{canaryRollback.conclusion}</p>
+                                {canaryRollbackPreview && (
+                                  <div className="order-canary-rollback-preview">
+                                    <div className="order-canary-rollback-preview-head">
+                                      <Tag
+                                        color={canaryRollbackPreview.can_apply ? 'green' : 'orange'}
+                                      >
+                                        {canaryRollbackPreview.can_apply ? '可回滚' : '需复核'}
+                                      </Tag>
+                                      <span>{canaryRollbackPreview.message}</span>
+                                    </div>
+                                    {canaryRollbackPreview.blocked_reason && (
+                                      <em>{canaryRollbackPreview.blocked_reason}</em>
+                                    )}
+                                    <div className="order-canary-mini-list">
+                                      {(canaryRollbackPreview.changes || [])
+                                        .slice(0, 2)
+                                        .map(change => (
+                                          <em key={`rollback-${change.task_id}`}>
+                                            {change.task_name} · {change.changed_keys.join('、')}
+                                          </em>
+                                        ))}
+                                    </div>
+                                  </div>
+                                )}
                                 <Space wrap size={6}>
                                   {(canaryRollback.items || [])
                                     .flatMap(item => item.parameters || [])
@@ -3047,6 +3210,67 @@ const PaperTrading: React.FC = () => {
             <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无链路数据" />
           )}
         </Spin>
+      </Modal>
+
+      <Modal
+        title="强确认回滚 Canary 参数"
+        open={isCanaryRollbackModalOpen}
+        onOk={confirmCanaryRollback}
+        onCancel={() => setIsCanaryRollbackModalOpen(false)}
+        confirmLoading={canaryRollbackLoading}
+        okText="确认回滚"
+        okButtonProps={{
+          danger: true,
+          disabled:
+            canaryRollbackConfirmText.trim() !==
+            (canaryRollbackPreview?.confirm_text || CANARY_ROLLBACK_CONFIRM_TEXT),
+        }}
+        cancelText="取消"
+        destroyOnHidden
+      >
+        <div className="order-canary-rollback-modal">
+          <Alert
+            type="warning"
+            showIcon
+            message="该操作会恢复自动任务参数，但不会立即触发买卖。"
+            description={
+              canaryRollbackPreview?.message || '请先完成回滚预览，确认没有人工复核风险后再执行。'
+            }
+          />
+          <div className="order-canary-rollback-summary">
+            {(canaryRollbackPreview?.changes || []).map(change => (
+              <div className="order-canary-rollback-task" key={change.task_id}>
+                <Text strong>{change.task_name}</Text>
+                <span>{change.task_type}</span>
+                <div>
+                  {(change.parameters || []).map(parameter => (
+                    <Tag
+                      key={`${change.task_id}-${parameter.key}`}
+                      color={parameter.changed_after_canary ? 'red' : 'blue'}
+                    >
+                      {parameter.key}: {formatRollbackValue(parameter.current_value)} →{' '}
+                      {formatRollbackValue(parameter.restore_value)}
+                    </Tag>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+          <Form layout="vertical">
+            <Form.Item
+              label={`请输入 ${
+                canaryRollbackPreview?.confirm_text || CANARY_ROLLBACK_CONFIRM_TEXT
+              }`}
+              required
+            >
+              <Input
+                value={canaryRollbackConfirmText}
+                onChange={event => setCanaryRollbackConfirmText(event.target.value)}
+                placeholder={canaryRollbackPreview?.confirm_text || CANARY_ROLLBACK_CONFIRM_TEXT}
+              />
+            </Form.Item>
+          </Form>
+        </div>
       </Modal>
 
       <Modal
