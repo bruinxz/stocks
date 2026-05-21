@@ -2699,6 +2699,12 @@ class SchedulerService {
             nextParams[key] = (taskData.parameters as any)[key];
           }
         }
+        if (
+          Number(nextParams.quote_sync_limit || 0) <
+          Number((taskData.parameters as any).quote_sync_limit || 0)
+        ) {
+          nextParams.quote_sync_limit = (taskData.parameters as any).quote_sync_limit;
+        }
         if (JSON.stringify(nextParams) !== JSON.stringify(params)) {
           patch.parameters = nextParams;
         }
