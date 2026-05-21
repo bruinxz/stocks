@@ -222,8 +222,17 @@ type RuntimeHealth = {
     watchdog_task_count?: number;
     factor_min_coverage_rate?: number;
     factor_real_provider_rate?: number;
+    next_action?: string;
+    next_action_label?: string;
     conclusion?: string;
   };
+  next_actions?: Array<{
+    key?: string;
+    level?: 'ok' | 'watch' | 'warn' | 'risk' | string;
+    title?: string;
+    description?: string;
+    action_label?: string;
+  }>;
   buy_gate?: {
     action?: string;
     blocked?: boolean;
@@ -831,6 +840,34 @@ const QuantPerformanceDashboard: React.FC = () => {
               {effectiveRuntimeHealth?.summary?.conclusion ||
                 '正在检查数据库字段、策略注册、实时行情、参数版本和自动任务。'}
             </p>
+            <div className="quant-runtime-next-action">
+              <span>NEXT</span>
+              <strong>{effectiveRuntimeHealth?.summary?.next_action || '等待检查'}</strong>
+              <em>
+                {(effectiveRuntimeHealth?.next_actions || [])[0]?.description ||
+                  '刷新后会给出最应该执行的下一步动作。'}
+              </em>
+            </div>
+            {!!(effectiveRuntimeHealth?.next_actions || []).length && (
+              <div className="quant-runtime-action-chips">
+                {(effectiveRuntimeHealth?.next_actions || []).slice(0, 4).map(item => (
+                  <Tag
+                    key={item.key || item.title}
+                    color={
+                      item.level === 'risk'
+                        ? 'red'
+                        : item.level === 'warn'
+                        ? 'gold'
+                        : item.level === 'ok'
+                        ? 'green'
+                        : 'blue'
+                    }
+                  >
+                    {item.action_label || item.title}
+                  </Tag>
+                ))}
+              </div>
+            )}
             <div className="quant-runtime-score-meta">
               <Tag>风险 {effectiveRuntimeHealth?.summary?.risk_count || 0}</Tag>
               <Tag

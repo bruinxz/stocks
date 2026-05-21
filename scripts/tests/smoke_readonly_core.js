@@ -615,10 +615,26 @@ async function main() {
           !json.data?.status ||
           !json.data?.summary ||
           !json.data?.buy_gate ||
+          !Array.isArray(json.data?.next_actions || []) ||
           !Array.isArray(json.data?.checks)
         ) {
           throw new Error(
             `quant runtime health payload invalid: ${preview(json)}`
+          );
+        }
+        if (
+          !json.data.summary.next_action ||
+          !json.data.summary.next_action_label
+        ) {
+          throw new Error(
+            `quant runtime next action missing: ${preview(json.data.summary)}`
+          );
+        }
+        if ((json.data.next_actions || []).length === 0) {
+          throw new Error(
+            `quant runtime next actions empty: ${preview(
+              json.data.next_actions
+            )}`
           );
         }
         if (
