@@ -1080,9 +1080,14 @@ Follow-up completed in same lane:
   - summary exposes possible false rejects, saved-loss counts, average intended-action return and top false-rejection samples.
 - The paper-trading page now shows a “拒单后验复盘” panel inside the order-intent card, so operators can see whether the gate is too strict without opening raw logs.
 - Smoke validates hindsight summary shape when present.
+- Hindsight now also groups outcomes by `reason_category` and emits `rule_suggestions`:
+  - `loosen`: the gate may be too strict because many blocked opportunities later worked;
+  - `tighten`: the gate appears useful because many blocked opportunities later avoided losses;
+  - `keep / observe`: neutral or insufficient samples.
+- The page shows these suggestions as concise “规则建议” tags under the hindsight panel.
 
 Next after this follow-up:
 
 1. Persist hindsight snapshots instead of calculating from daily bars on every request if the sample grows large.
-2. Feed false-reject / saved-loss buckets back into the risk gate and profit gate thresholds.
+2. Feed `rule_suggestions` back into the risk gate and profit gate thresholds automatically.
 3. Add a drill-down page or modal for one rejected stock: signal → gate reason → future return → proposed rule adjustment.

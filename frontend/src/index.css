@@ -1539,6 +1539,46 @@ a {
   line-height: 1.48;
 }
 
+.order-rule-suggestions {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.order-rule-suggestion-title {
+  margin-bottom: 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.order-rule-suggestion {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 0;
+}
+
+.order-rule-suggestion strong,
+.order-rule-suggestion span {
+  display: block;
+}
+
+.order-rule-suggestion strong {
+  color: var(--text-main);
+  font-size: 13px;
+}
+
+.order-rule-suggestion span {
+  margin-top: 3px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .order-intent-timeline .ant-timeline-item-last {
   padding-bottom: 0;
 }
