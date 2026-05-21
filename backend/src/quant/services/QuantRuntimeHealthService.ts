@@ -24,6 +24,64 @@ function round(value: number, precision = 1): number {
   return Math.round((Number(value) || 0) * factor) / factor;
 }
 
+type RuntimeCheckStatus = 'ok' | 'warn' | 'risk';
+
+type RuntimeHealthCheck = {
+  key: string;
+  label: string;
+  status: RuntimeCheckStatus;
+  metric?: string;
+  conclusion?: string;
+  severity?: 'blocking' | 'degraded' | 'watch';
+  buy_gate_action?: 'allow' | 'reduce' | 'observe' | 'pause';
+  position_multiplier?: number;
+};
+
+function classifyRuntimeCheck(check: RuntimeHealthCheck): RuntimeHealthCheck {
+  if (check.status === 'ok') {
+    return {
+      ...check,
+      severity: 'watch',
+      buy_gate_action: 'allow',
+      position_multiplier: 1,
+    };
+  }
+
+  const key = String(check.key || '');
+  const blockingKeys = new Set(['schema_columns', 'strategy_registry', 'quote_persistence', 'schedule']);
+  const degradedKeys = new Set(['factor_coverage', 'data_freshness', 'active_params']);
+  if (check.status === 'risk' && blockingKeys.has(key)) {
+    return {
+      ...check,
+      severity: 'blocking',
+      buy_gate_action: 'pause',
+      position_multiplier: 0,
+    };
+  }
+  if (check.status === 'risk' && degradedKeys.has(key)) {
+    return {
+      ...check,
+      severity: 'degraded',
+      buy_gate_action: key === 'factor_coverage' ? 'reduce' : 'observe',
+      position_multiplier: key === 'factor_coverage' ? 0.45 : 0.65,
+    };
+  }
+  if (check.status === 'warn') {
+    return {
+      ...check,
+      severity: degradedKeys.has(key) ? 'degraded' : 'watch',
+      buy_gate_action: degradedKeys.has(key) ? 'observe' : 'allow',
+      position_multiplier: degradedKeys.has(key) ? 0.75 : 1,
+    };
+  }
+  return {
+    ...check,
+    severity: 'watch',
+    buy_gate_action: 'allow',
+    position_multiplier: 1,
+  };
+}
+
 class QuantRuntimeHealthService {
   async getHealth(options: { user_id?: number } = {}) {
     const [
@@ -136,7 +194,7 @@ class QuantRuntimeHealthService {
         : factorMinCoverage < 70 || factorCoverageStatus === 'limited'
         ? 'warn'
         : 'ok';
-    const checks = [
+    const checks: RuntimeHealthCheck[] = [
       {
         key: 'schema_columns',
         label: '数据库字段',
@@ -240,9 +298,34 @@ class QuantRuntimeHealthService {
       },
     ];
 
-    const riskCount = checks.filter(item => item.status === 'risk').length;
-    const warnCount = checks.filter(item => item.status === 'warn').length;
-    const status = riskCount > 0 ? 'risk' : warnCount > 0 ? 'warn' : 'ready';
+    const classifiedChecks = checks.map(classifyRuntimeCheck);
+    const riskCount = classifiedChecks.filter(item => item.status === 'risk').length;
+    const warnCount = classifiedChecks.filter(item => item.status === 'warn').length;
+    const blockingChecks = classifiedChecks.filter(item => item.severity === 'blocking');
+    const degradedChecks = classifiedChecks.filter(item => item.severity === 'degraded');
+    const status =
+      blockingChecks.length > 0
+        ? 'risk'
+        : degradedChecks.length > 0 || warnCount > 0
+        ? 'warn'
+        : 'ready';
+    const buyGateAction =
+      blockingChecks.length > 0 ? 'pause' : degradedChecks.length > 0 ? 'reduce' : 'allow';
+    const buyGateMultiplier =
+      buyGateAction === 'pause'
+        ? 0
+        : buyGateAction === 'reduce'
+        ? Math.max(
+            0.2,
+            Math.min(
+              1,
+              degradedChecks.reduce(
+                (product, item) => product * toNumber(item.position_multiplier, 0.7),
+                1
+              )
+            )
+          )
+        : 1;
     const score = Math.round(
       ((checks.length - riskCount - warnCount * 0.45) / checks.length) * 100
     );
@@ -254,6 +337,8 @@ class QuantRuntimeHealthService {
       summary: {
         risk_count: riskCount,
         warn_count: warnCount,
+        blocking_count: blockingChecks.length,
+        degraded_count: degradedChecks.length,
         check_count: checks.length,
         enabled_strategy_count: enabledStrategies.length,
         policy_ready_strategy_count: policyReadyCount,
@@ -265,10 +350,43 @@ class QuantRuntimeHealthService {
           status === 'ready'
             ? '量化运行时健康：字段、策略、行情、参数和开盘任务均已就绪。'
             : status === 'warn'
-            ? '量化运行时可运行但有观察项，开盘前建议关注行情新鲜度/参数样本。'
-            : '量化运行时存在风险项，可能影响明日开盘自动荐股。',
+            ? buyGateAction === 'reduce'
+              ? '量化运行时可运行但需降仓，开盘可小仓验证并继续补因子/闭环样本。'
+              : '量化运行时可运行但有观察项，开盘前建议关注行情新鲜度/参数样本。'
+            : '量化运行时存在硬阻断风险，暂停自动买入。',
       },
-      checks,
+      checks: classifiedChecks,
+      buy_gate: {
+        action: buyGateAction,
+        blocked: blockingChecks.length > 0,
+        degraded: degradedChecks.length > 0,
+        position_multiplier: round(buyGateMultiplier, 3),
+        blocking_checks: blockingChecks.map(item => ({
+          key: item.key,
+          label: item.label,
+          status: item.status,
+          metric: item.metric,
+          conclusion: item.conclusion,
+        })),
+        degraded_checks: degradedChecks.map(item => ({
+          key: item.key,
+          label: item.label,
+          status: item.status,
+          metric: item.metric,
+          conclusion: item.conclusion,
+          position_multiplier: item.position_multiplier,
+        })),
+        conclusion:
+          blockingChecks.length > 0
+            ? `硬阻断 ${blockingChecks.length} 项：${blockingChecks
+                .map(item => item.label)
+                .join('、')}。`
+            : degradedChecks.length > 0
+            ? `非致命降仓 ${degradedChecks.length} 项：${degradedChecks
+                .map(item => item.label)
+                .join('、')}；建议仓位倍率 ${round(buyGateMultiplier, 2)}x。`
+            : '未触发运行时买入阻断。',
+      },
       runtime_schema: {
         status: (schemaHealth as any).status,
         summary: (schemaHealth as any).summary,

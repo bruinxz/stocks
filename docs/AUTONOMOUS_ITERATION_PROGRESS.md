@@ -49,6 +49,20 @@ Known frontend build warnings are historical Prettier warnings in existing files
 - 部署更稳定：
   - 只读 smoke 增加 `/api/strategy-research/opening-preflight` 结构校验，发布前可提前发现开盘链路接口断裂。
 
+### 2026-05-21 continuous iteration: runtime buy gate grading
+
+- 纪律更可执行：
+  - `QuantRuntimeHealthService` 增加 `buy_gate`，把运行时异常拆成：
+    - `blocking`：数据库字段、策略注册、实时行情缺失、自动任务缺失等硬阻断，暂停买入；
+    - `degraded`：因子覆盖不足、闭环样本不足、参数观察项等非致命风险，降仓/观察放行；
+    - `watch`：仅展示，不影响自动买入。
+  - `QuantFusionService` 不再把所有 runtime `risk` 一律视为 no-buy；只有 `buy_gate.blocked=true` 才阻断，非致命风险会写入 `risk_profile_gate` 并自动降低交易数量/仓位。
+  - 开盘自检把“因子覆盖已有真实源样本但不足 70%”从硬风险调整为降仓观察，避免系统长期停在 watch-only。
+- 页面更简洁：
+  - 量化收益驾驶舱的运行时健康卡新增 Buy Gate，直接说明“正常放行 / 降仓放行 / 暂停买入”，并展示硬阻断数、降仓项。
+- 部署更稳定：
+  - smoke 对 `/api/quant/runtime-health` 增加 `buy_gate` 结构校验，防止门禁字段缺失。
+
 ### Five-priority continuation batch (2026-05-20)
 
 - Strategy runtime policy is now no longer only editable:

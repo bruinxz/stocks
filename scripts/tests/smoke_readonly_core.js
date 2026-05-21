@@ -564,6 +564,7 @@ async function main() {
         if (
           !json.data?.status ||
           !json.data?.summary ||
+          !json.data?.buy_gate ||
           !Array.isArray(json.data?.checks)
         ) {
           throw new Error(

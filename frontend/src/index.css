@@ -9691,6 +9691,7 @@ a {
   font-weight: 800;
 }
 
+.quant-runtime-buy-gate,
 .quant-runtime-factor-strip {
   display: grid;
   gap: 4px;
@@ -9700,6 +9701,18 @@ a {
   background: linear-gradient(135deg, rgba(239, 246, 255, 0.72), rgba(240, 253, 250, 0.62));
 }
 
+.quant-runtime-buy-gate--reduce,
+.quant-runtime-buy-gate--observe {
+  border-color: rgba(214, 166, 79, 0.18);
+  background: linear-gradient(135deg, rgba(255, 251, 235, 0.8), rgba(255, 255, 255, 0.62));
+}
+
+.quant-runtime-buy-gate--pause {
+  border-color: rgba(180, 35, 24, 0.18);
+  background: linear-gradient(135deg, rgba(254, 242, 242, 0.84), rgba(255, 255, 255, 0.62));
+}
+
+.quant-runtime-buy-gate span,
 .quant-runtime-factor-strip span {
   color: var(--text-muted);
   font-family: var(--font-mono);
@@ -9708,6 +9721,7 @@ a {
   letter-spacing: 0.15em;
 }
 
+.quant-runtime-buy-gate strong,
 .quant-runtime-factor-strip strong {
   color: #1f4e79;
   font-family: var(--font-display);
@@ -9715,6 +9729,16 @@ a {
   letter-spacing: -0.03em;
 }
 
+.quant-runtime-buy-gate--reduce strong,
+.quant-runtime-buy-gate--observe strong {
+  color: #9a5f0b;
+}
+
+.quant-runtime-buy-gate--pause strong {
+  color: #9f1f16;
+}
+
+.quant-runtime-buy-gate em,
 .quant-runtime-factor-strip em {
   color: var(--text-secondary);
   font-size: 12px;

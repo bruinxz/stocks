@@ -40,6 +40,7 @@ function compactRuntimeHealth(runtimeHealth: any) {
     factor_min_coverage_rate: runtimeHealth.summary?.factor_min_coverage_rate,
     factor_real_provider_rate: runtimeHealth.summary?.factor_real_provider_rate,
     factor_coverage_status: runtimeHealth.factor_coverage?.coverage_status,
+    buy_gate: runtimeHealth.buy_gate || null,
     risk_checks: Array.isArray(runtimeHealth.checks)
       ? runtimeHealth.checks
           .filter((item: any) => item.status === 'risk' || item.status === 'warn')
