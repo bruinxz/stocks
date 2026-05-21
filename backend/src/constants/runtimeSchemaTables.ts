@@ -13,6 +13,8 @@ export const RUNTIME_SCHEMA_TABLES = [
   'paper_trading_positions',
   'paper_trading_trades',
   'paper_trading_snapshots',
+  'paper_trading_order_intents',
+  'paper_trading_order_intent_outcomes',
   'risk_alerts',
   'trading_journals',
   'portfolio_simulations',
@@ -59,6 +61,8 @@ export const CRITICAL_RUNTIME_SCHEMA_TABLES = [
   'realtime_quotes',
   'paper_trading_portfolios',
   'paper_trading_trades',
+  'paper_trading_order_intents',
+  'paper_trading_order_intent_outcomes',
   'task_parameter_audit_logs',
 ] as const;
 
@@ -105,6 +109,14 @@ export const RUNTIME_SCHEMA_REQUIRED_COLUMNS: Record<
   recommendation_trade_outcomes: {
     critical: true,
     columns: ['signal_id', 'symbol', 'trade_status', 'loop_run_id', 'metadata'],
+  },
+  paper_trading_order_intents: {
+    critical: true,
+    columns: ['portfolio_id', 'symbol', 'side', 'status', 'intent_date', 'metadata'],
+  },
+  paper_trading_order_intent_outcomes: {
+    critical: true,
+    columns: ['intent_id', 'portfolio_id', 'symbol', 'evaluation_status', 'horizons'],
   },
   scheduled_tasks: {
     critical: true,

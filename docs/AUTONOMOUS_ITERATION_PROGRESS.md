@@ -1224,3 +1224,41 @@ Next:
 1. Persist/cache order-intent hindsight snapshots to reduce repeated daily-bar scans.
 2. Add canary auto-tuning mode: apply one low-risk parameter first, observe next closed trades, then graduate.
 3. Add a “规则 → 收益贡献” attribution page for which tuning decisions improved or hurt paper-trading PnL.
+
+### 2026-05-22 order-intent hindsight snapshot cache
+
+Focus: make rejected/skipped/held order-intent hindsight reusable instead of repeatedly scanning `daily_bars` on every dashboard or trace request.
+
+Completed:
+
+- Added `paper_trading_order_intent_outcomes` with model `PaperTradingOrderIntentOutcome`.
+  - One row per `intent_id`.
+  - Stores portfolio/signal/symbol/status/reason/date plus 1/3/5/10 day hindsight JSON, benchmark horizon, benchmark return and evaluated time.
+- Registered the model in Sequelize/runtime schema checks so deploy-time sync can create/repair the table.
+- `PaperTradingOrderIntentService.buildHindsight()` now:
+  - reads cached snapshots when available;
+  - computes only cache misses from `daily_bars`;
+  - returns cache metrics: `cache_hit_count`, `cache_miss_count`, `would_persist_count`, `persisted_snapshot_count`, `persist_failed_count`, `cache_mode`.
+- Added active refresh API:
+  - `POST /api/paper-trading/order-intents/hindsight/refresh`
+  - supports `dry_run: true` for read-only preview;
+  - supports force refresh via `refresh_hindsight`.
+- `PAPER_TRADING_DAILY_PLAN` now refreshes hindsight snapshots after plan generation and writes the summary into task execution logs without blocking the trading plan if refresh fails.
+- Paper-trading page shows a compact cache strip in “拒单后验复盘” so operators can see whether the panel reused snapshots or computed fresh data.
+- Read-only smoke now calls the refresh endpoint with `dry_run: true`, ensuring schema/API coverage without writing rows during deploy validation.
+
+Validation:
+
+```bash
+node --check scripts/tests/smoke_readonly_core.js
+./backend/node_modules/.bin/tsc --noEmit --project backend/tsconfig.json
+./frontend/node_modules/.bin/tsc --noEmit --project frontend/tsconfig.json
+CI=false /Users/bytedance/.nvm/versions/node/v20.20.2/bin/npm --prefix frontend run build
+git diff --check
+```
+
+Next:
+
+1. Add canary auto-tuning mode: apply one low-risk parameter first, observe next closed trades, then graduate.
+2. Add a “规则 → 收益贡献” attribution view for which tuning decisions improved or hurt paper-trading PnL.
+3. Add daily maintenance job/retention for stale hindsight snapshots if the table grows large.

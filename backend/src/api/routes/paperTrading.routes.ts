@@ -147,6 +147,17 @@ router.get(
 );
 
 /**
+ * @route POST /api/paper-trading/order-intents/hindsight/refresh
+ * @desc 主动刷新订单意图后验快照，供看板/链路复用缓存
+ * @access Private
+ */
+router.post(
+  '/order-intents/hindsight/refresh',
+  authController.authenticate,
+  paperTradingController.refreshOrderIntentHindsight
+);
+
+/**
  * @route GET /api/paper-trading/recommendation-outcomes
  * @desc 获取推荐信号到模拟交易收益的闭环看板
  * @access Private

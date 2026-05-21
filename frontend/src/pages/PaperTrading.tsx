@@ -280,6 +280,10 @@ interface PaperTradingPlan {
       }>;
       stable_rule_suggestions?: OrderIntentStableRuleSuggestion[];
       parameter_adjustment_preview?: OrderIntentParameterPreview[];
+      cache_hit_count?: number;
+      cache_miss_count?: number;
+      persisted_snapshot_count?: number;
+      cache_mode?: string;
       tuning_preview_conclusion?: string;
     };
   };
@@ -548,6 +552,12 @@ interface PaperTradingOrderIntentDashboard {
       }>;
       stable_rule_suggestions?: OrderIntentStableRuleSuggestion[];
       parameter_adjustment_preview?: OrderIntentParameterPreview[];
+      cache_hit_count?: number;
+      cache_miss_count?: number;
+      would_persist_count?: number;
+      persisted_snapshot_count?: number;
+      persist_failed_count?: number;
+      cache_mode?: string;
       tuning_preview_conclusion?: string;
     };
     top_reason_categories: Array<{
@@ -1053,6 +1063,13 @@ const PaperTrading: React.FC = () => {
   const autoTuneReadyRules = stableOrderRuleSuggestions.filter(item => item.eligible_for_auto_tune);
   const parameterAdjustmentPreview = orderIntentHindsight?.parameter_adjustment_preview || [];
   const recentOrderRejections = orderIntents?.recent_rejections || [];
+  const orderIntentCacheTotal =
+    Number(orderIntentHindsight?.cache_hit_count || 0) +
+    Number(orderIntentHindsight?.cache_miss_count || 0);
+  const orderIntentCacheHitRate =
+    orderIntentCacheTotal > 0
+      ? (Number(orderIntentHindsight?.cache_hit_count || 0) / orderIntentCacheTotal) * 100
+      : 0;
   const riskTone = riskProfile ? riskProfileToneMap[riskProfile.status.level] : undefined;
   const topRiskPosition = riskProfile?.position_risks?.find(item => item.risk_flags.length > 0);
   const outcomeBlockedSegments = tradingPlanSummary?.outcome_blocked_segments || [];
@@ -1552,6 +1569,29 @@ const PaperTrading: React.FC = () => {
                         }}
                       >
                         {formatPercent(orderIntentHindsight.avg_intended_action_return_pct)}
+                      </strong>
+                    </div>
+                  </div>
+                  <div className="order-hindsight-cache-strip">
+                    <div>
+                      <span>快照命中</span>
+                      <strong>{formatPercent(orderIntentCacheHitRate)}</strong>
+                    </div>
+                    <div>
+                      <span>缓存/计算</span>
+                      <strong>
+                        {orderIntentHindsight.cache_hit_count || 0}/
+                        {orderIntentHindsight.cache_miss_count || 0}
+                      </strong>
+                    </div>
+                    <div>
+                      <span>本次模式</span>
+                      <strong>
+                        {orderIntentHindsight.cache_mode === 'persist'
+                          ? '写入'
+                          : orderIntentHindsight.cache_mode === 'dry_run'
+                          ? '预演'
+                          : '只读'}
                       </strong>
                     </div>
                   </div>

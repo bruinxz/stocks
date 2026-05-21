@@ -1545,6 +1545,39 @@ a {
   font-variant-numeric: tabular-nums;
 }
 
+.order-hindsight-cache-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: -2px 0 12px;
+  padding: 10px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(29, 95, 208, 0.075), rgba(0, 143, 107, 0.06));
+  border: 1px solid rgba(29, 95, 208, 0.12);
+}
+
+.order-hindsight-cache-strip div {
+  min-width: 0;
+}
+
+.order-hindsight-cache-strip span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+
+.order-hindsight-cache-strip strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-main);
+  font-size: 13px;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+
 .order-false-reject {
   display: flex;
   flex-direction: column;

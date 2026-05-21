@@ -1137,6 +1137,23 @@ async function main() {
                 )}`
               );
             }
+            for (const key of [
+              "cache_hit_count",
+              "cache_miss_count",
+              "would_persist_count",
+              "persisted_snapshot_count",
+              "persist_failed_count",
+            ]) {
+              if (
+                !Number.isFinite(Number(json.data.summary.hindsight[key] || 0))
+              ) {
+                throw new Error(
+                  `paper trading order intent cache metric ${key} invalid: ${preview(
+                    json.data.summary.hindsight
+                  )}`
+                );
+              }
+            }
           }
         },
       }
@@ -1164,6 +1181,55 @@ async function main() {
         }
       );
     }
+
+    await requestJson(
+      "paper trading order intent hindsight refresh",
+      "/api/paper-trading/order-intents/hindsight/refresh",
+      {
+        method: "POST",
+        token,
+        body: {
+          dry_run: true,
+          lookback_days: 30,
+          limit: 80,
+          refresh_hindsight: false,
+        },
+        expect: (json) => {
+          assertApiSuccess(json, "paper trading order intent hindsight refresh");
+          if (!json.data?.summary) {
+            throw new Error(
+              `paper trading order intent hindsight refresh summary missing: ${preview(
+                json
+              )}`
+            );
+          }
+          if (
+            json.data.dry_run !== true ||
+            !Number.isFinite(Number(json.data.refreshed_count || 0)) ||
+            !Number.isFinite(Number(json.data.would_persist_count || 0)) ||
+            !Number.isFinite(
+              Number(json.data.summary.persisted_snapshot_count || 0)
+            )
+          ) {
+            throw new Error(
+              `paper trading order intent hindsight refresh metrics invalid: ${preview(
+                json.data
+              )}`
+            );
+          }
+          if (
+            Number(json.data.refreshed_count || 0) !== 0 ||
+            Number(json.data.summary.persisted_snapshot_count || 0) !== 0
+          ) {
+            throw new Error(
+              `paper trading order intent refresh smoke must stay dry-run: ${preview(
+                json.data
+              )}`
+            );
+          }
+        },
+      }
+    );
 
     await requestJson(
       "recommendation trade outcomes",
