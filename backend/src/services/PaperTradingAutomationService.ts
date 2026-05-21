@@ -9,6 +9,7 @@ import { PaperTradingPortfolio } from '../models/PaperTradingPortfolio';
 import { PaperTradingPosition } from '../models/PaperTradingPosition';
 import { PaperTradingTrade } from '../models/PaperTradingTrade';
 import { PaperTradingSnapshot } from '../models/PaperTradingSnapshot';
+import { PaperTradingOrderIntent } from '../models/PaperTradingOrderIntent';
 import { DailyBar } from '../models/DailyBar';
 import { Stock } from '../models/Stock';
 import { RealtimeQuote } from '../models/RealtimeQuote';
@@ -36,6 +37,7 @@ type RiskExitReason =
   | 'max_hold_days';
 
 type ExecutionSide = 'BUY' | 'SELL';
+type OrderIntentStatus = 'planned' | 'executed' | 'rejected' | 'skipped' | 'held';
 
 interface ExecutionRealityDecision {
   allowed: boolean;
@@ -53,6 +55,29 @@ interface ExecutionRealityDecision {
   avg_turnover_yuan?: number;
   from_realtime?: boolean;
   checks: Record<string, any>;
+}
+
+interface RecordOrderIntentParams {
+  portfolio_id: number;
+  signal?: AIInvestmentSignal | null;
+  trade_id?: number;
+  side: ExecutionSide;
+  status: OrderIntentStatus;
+  symbol: string;
+  name?: string;
+  source_type?: string;
+  source_id?: string;
+  intent_date?: string;
+  reference_price?: number;
+  execute_price?: number;
+  quantity?: number;
+  amount?: number;
+  target_position_pct?: number;
+  score?: number;
+  risk_level?: string;
+  reason_text?: string;
+  reason_category?: string;
+  metadata?: Record<string, any>;
 }
 
 type MarketEnvironmentSnapshotLike = {
@@ -1296,8 +1321,46 @@ class PaperTradingAutomationService {
         ? dataQuality.warnings
         : [];
 
-      const skip = (reason: string) => {
+      const recordBuyIntent = async (
+        status: OrderIntentStatus,
+        reason_text?: string,
+        extra: Partial<RecordOrderIntentParams> = {}
+      ) => {
+        const baseMetadata = {
+          action,
+          action_label: metadata.action_label,
+          decision: signal.normalized_decision || signal.decision,
+          data_quality_bucket: dataQualityBucket,
+          data_quality_score: Number.isFinite(dataQualityScore) ? dataQualityScore : undefined,
+          loop_run_id: signal.loop_run_id || metadata.loop_run_id,
+          agent_session: metadata.agent_session,
+          task_label: metadata.task_label,
+        };
+        return this.recordOrderIntent({
+          portfolio_id: portfolio.id,
+          signal,
+          side: 'BUY',
+          status,
+          symbol,
+          name: signal.name || symbol,
+          reference_price: toOptionalNumber(signal.current_price),
+          score: toOptionalNumber(signal.confidence_score),
+          risk_level: signal.risk_level,
+          ...extra,
+          reason_text,
+          reason_category:
+            extra.reason_category ||
+            (reason_text ? normalizeSkipReasonCategory(reason_text) : undefined),
+          metadata: {
+            ...baseMetadata,
+            ...(extra.metadata || {}),
+          },
+        });
+      };
+
+      const skip = async (reason: string, extra: Partial<RecordOrderIntentParams> = {}) => {
         skipped_items.push({ ...itemBase, status: 'skipped', reason });
+        await recordBuyIntent(reason.includes('旧信号') ? 'skipped' : 'rejected', reason, extra);
       };
 
       if (trades.length >= targetTradeCount) {
@@ -1309,12 +1372,12 @@ class PaperTradingAutomationService {
       }
 
       if (!profitGatePolicy.allow_entries && !ignoreProfitGateForForcedSignals) {
-        skip(`收益闸门未放行：${profitGatePolicy.reason || profitGatePolicy.gate_label}`);
+        await skip(`收益闸门未放行：${profitGatePolicy.reason || profitGatePolicy.gate_label}`);
         continue;
       }
 
       if (['critical'].includes(dataQualityBucket) || !dataQualityAutoTradeAllowed) {
-        skip(
+        await skip(
           `数据质量未达自动跟单标准（${
             Number.isFinite(dataQualityScore) ? dataQualityScore : '--'
           }分/${dataQualityBucket}），${dataQualityIssues.slice(0, 2).join('；') || '禁止自动买入'}`
@@ -1323,7 +1386,7 @@ class PaperTradingAutomationService {
       }
 
       if (dataQualityBucket === 'low' && !signalIds.includes(signal.id)) {
-        skip(
+        await skip(
           `Agent 数据质量偏低（${
             Number.isFinite(dataQualityScore) ? dataQualityScore : '--'
           }分），需人工复核后再跟单`
@@ -1332,18 +1395,18 @@ class PaperTradingAutomationService {
       }
 
       if (!outcomeFeedbackPolicy.allow_entries) {
-        skip(`收益闭环反哺未放行：${outcomeFeedbackPolicy.reason || '闭环样本质量不足'}`);
+        await skip(`收益闭环反哺未放行：${outcomeFeedbackPolicy.reason || '闭环样本质量不足'}`);
         continue;
       }
 
       if (seenSymbols.has(symbol)) {
-        skip('同一标的已有更新的候选信号，本条旧信号跳过');
+        await skip('同一标的已有更新的候选信号，本条旧信号跳过');
         continue;
       }
       seenSymbols.add(symbol);
 
       if (existingSymbols.has(symbol)) {
-        skip('模拟盘已持有该标的，避免重复加仓');
+        await skip('模拟盘已持有该标的，避免重复加仓');
         continue;
       }
 
@@ -1351,22 +1414,22 @@ class PaperTradingAutomationService {
         paperTradingMeta.status === 'executed' &&
         Number(paperTradingMeta.portfolio_id) === Number(portfolio.id)
       ) {
-        skip('该信号已被当前模拟盘执行过');
+        await skip('该信号已被当前模拟盘执行过');
         continue;
       }
 
       const riskLevel = normalizeRiskLevel(signal.risk_level);
       if (!allowedRiskLevels.has(riskLevel)) {
-        skip(`风险等级 ${riskLevel || 'unknown'} 不在允许范围内`);
+        await skip(`风险等级 ${riskLevel || 'unknown'} 不在允许范围内`);
         continue;
       }
 
       if (action === 'avoid') {
-        skip('候选交易纪律为暂不参与');
+        await skip('候选交易纪律为暂不参与');
         continue;
       }
       if (require_action_buy && action !== 'buy') {
-        skip(`候选交易纪律不是买入动作：${metadata.action_label || action || '未给出'}`);
+        await skip(`候选交易纪律不是买入动作：${metadata.action_label || action || '未给出'}`);
         continue;
       }
 
@@ -1379,13 +1442,13 @@ class PaperTradingAutomationService {
         forced: signalIds.includes(signal.id),
       });
       if (!environmentPolicy.allow_entry) {
-        skip(`市场环境未放行：${environmentPolicy.reason}`);
+        await skip(`市场环境未放行：${environmentPolicy.reason}`);
         continue;
       }
 
       const blockedSegment = this.matchOutcomeBlockedSegment(signal, outcomeFeedbackPolicy);
       if (blockedSegment) {
-        skip(
+        await skip(
           `收益闭环降权片段 ${blockedSegment.label || blockedSegment.key} 暂停自动买入：平均超额 ${
             blockedSegment.avg_excess_return_pct ?? '--'
           }% / 样本 ${blockedSegment.closed_count ?? '--'}`
@@ -1407,13 +1470,13 @@ class PaperTradingAutomationService {
         candidate_position_pct: 0,
       });
       if (!preTradeRisk.allowed) {
-        skip(preTradeRisk.reasons.join('；'));
+        await skip(preTradeRisk.reasons.join('；'));
         continue;
       }
 
       const quote = await this.getLatestPrice(symbol, toNumber(signal.current_price, 0));
       if (!quote.price || quote.price <= 0) {
-        skip('无法获取有效最新价格');
+        await skip('无法获取有效最新价格');
         continue;
       }
       const executionRealityDecision = this.evaluateExecutionReality({
@@ -1427,7 +1490,13 @@ class PaperTradingAutomationService {
         block_st: entryRiskGuard.block_st,
       });
       if (!executionRealityDecision.allowed) {
-        skip(executionRealityDecision.reasons.join('；'));
+        await skip(executionRealityDecision.reasons.join('；'), {
+          reference_price: executionRealityDecision.price || quote.price,
+          metadata: {
+            execution_reality_decision: executionRealityDecision,
+            price_source: executionRealityDecision.price_source || quote.source,
+          },
+        });
         continue;
       }
 
@@ -1536,7 +1605,7 @@ class PaperTradingAutomationService {
         strategy_allocation_pct: strategyAllocationPct,
       });
       if (!tradeRisk.allowed) {
-        skip(tradeRisk.reasons.join('；'));
+        await skip(tradeRisk.reasons.join('；'));
         continue;
       }
       const entryRiskGuardDecision = this.buildEntryRiskGuardDecision({
@@ -1548,12 +1617,14 @@ class PaperTradingAutomationService {
         strategy_keys: strategyKeysForBudget,
       });
       if (gatedSuggestedPct <= 0) {
-        skip(`收益闸门仓位倍率为 ${profitGatePolicy.effective_position_multiplier}，不执行买入`);
+        await skip(
+          `收益闸门仓位倍率为 ${profitGatePolicy.effective_position_multiplier}，不执行买入`
+        );
         continue;
       }
       const targetAmount = Math.min(totalValue * (effectiveTargetPct / 100), availableCash * 0.98);
       if (targetAmount < min_trade_amount && !minLotSample) {
-        skip(`目标交易金额低于最小阈值 ${min_trade_amount}`);
+        await skip(`目标交易金额低于最小阈值 ${min_trade_amount}`);
         continue;
       }
 
@@ -1570,7 +1641,7 @@ class PaperTradingAutomationService {
       }
 
       if (quantity < 100) {
-        skip('可用资金不足以买入一手');
+        await skip('可用资金不足以买入一手');
         continue;
       }
 
@@ -1792,6 +1863,25 @@ class PaperTradingAutomationService {
           .join('；'),
       };
 
+      const orderIntentMetadata = {
+        action,
+        action_label: metadata.action_label,
+        strategy_keys: strategyKeysForBudget,
+        strategy_allocation_policy: strategyAllocationPolicy,
+        strategy_budget_discipline: normalizedStrategyBudgetDiscipline,
+        entry_risk_guard_decision: entryRiskGuardDecision,
+        execution_reality_decision: executionRealityDecision,
+        profit_gate: profitGatePolicy,
+        outcome_feedback: outcomeFeedbackPolicy,
+        environment_policy: environmentPolicy,
+        entry_market_profile: marketProfileWithPortfolioRisk,
+        loop_policy_snapshot_id:
+          options.loop_policy_snapshot_id ?? metadata.loop_policy_snapshot_id,
+        loop_run_id: signal.loop_run_id || metadata.loop_run_id,
+        min_lot_sample: minLotSample || undefined,
+        min_lot_sample_reason: minLotSampleReason || undefined,
+      };
+
       if (!dry_run) {
         const trade = await this.createBuyTrade({
           portfolio,
@@ -1899,7 +1989,36 @@ class PaperTradingAutomationService {
           entry_risk_guard: this.buildEntryRiskGuardPolicy(entryRiskGuard),
           entry_market_profile: marketProfileWithPortfolioRisk,
         });
+        await recordBuyIntent('executed', tradePayload.reason || '自动跟单已模拟买入', {
+          trade_id: trade.id,
+          reference_price: quote.price,
+          execute_price,
+          quantity,
+          amount,
+          target_position_pct: tradePayload.target_position_pct,
+          reason_category: 'executed',
+          metadata: {
+            ...orderIntentMetadata,
+            trade_id: trade.id,
+            total_cost,
+            commission,
+          },
+        });
         await this.refreshRecommendationTradeOutcome(signal.id);
+      } else {
+        await recordBuyIntent('planned', tradePayload.reason || '自动跟单预演计划买入', {
+          reference_price: quote.price,
+          execute_price,
+          quantity,
+          amount,
+          target_position_pct: tradePayload.target_position_pct,
+          reason_category: 'planned',
+          metadata: {
+            ...orderIntentMetadata,
+            total_cost,
+            commission,
+          },
+        });
       }
 
       availableCash = roundNumber(availableCash - total_cost, 2);
@@ -2191,9 +2310,50 @@ class PaperTradingAutomationService {
         source_signal_id: sourceSignal?.id,
         execution_reality_decision: executionRealityDecision,
       };
+      let exitReason: RiskExitReason | undefined;
+      let sellSignal: AIInvestmentSignal | null = null;
 
-      const skip = (message: string) => {
+      const recordSellIntent = async (
+        status: OrderIntentStatus,
+        reason_text?: string,
+        extra: Partial<RecordOrderIntentParams> = {}
+      ) => {
+        const baseMetadata = {
+          source_signal_id: sourceSignal?.id,
+          sell_signal_id: sellSignal?.id,
+          exit_reason: exitReason,
+          exit_reason_label: exitReason ? riskReasonLabel(exitReason) : undefined,
+          pnl_pct: pnlPct,
+          holding_days: holdingDays,
+          adaptive_risk_policy: adaptiveRiskPolicy,
+          execution_reality_decision: executionRealityDecision,
+        };
+        return this.recordOrderIntent({
+          portfolio_id: portfolio.id,
+          signal: sourceSignal,
+          side: 'SELL',
+          status,
+          symbol,
+          name: position.name || quote.name || symbol,
+          reference_price: latestPrice,
+          quantity,
+          score: toOptionalNumber(sellSignal?.confidence_score ?? sourceSignal?.confidence_score),
+          risk_level: sourceSignal?.risk_level,
+          reason_text,
+          reason_category:
+            extra.reason_category ||
+            (reason_text ? normalizeSkipReasonCategory(reason_text) : undefined),
+          metadata: {
+            ...baseMetadata,
+            ...(extra.metadata || {}),
+          },
+          ...extra,
+        });
+      };
+
+      const skip = async (message: string) => {
         skippedItems.push({ ...baseItem, status: 'skipped', message });
+        await recordSellIntent('rejected', message);
       };
 
       if (exits.length >= limit) {
@@ -2201,17 +2361,14 @@ class PaperTradingAutomationService {
       }
 
       if (!quantity || quantity <= 0) {
-        skip('持仓数量无效，跳过');
+        await skip('持仓数量无效，跳过');
         continue;
       }
 
       if (!latestPrice || latestPrice <= 0 || !avgCost || avgCost <= 0) {
-        skip('无法获取有效价格或成本，跳过');
+        await skip('无法获取有效价格或成本，跳过');
         continue;
       }
-
-      let exitReason: RiskExitReason | undefined;
-      let sellSignal: AIInvestmentSignal | null = null;
 
       if (enableStopLoss && stopLossPct > 0 && pnlPct <= -stopLossPct) {
         exitReason = 'stop_loss';
@@ -2261,11 +2418,17 @@ class PaperTradingAutomationService {
           status: 'held',
           message: holdMessage,
         });
+        if (heldItems.length <= 10) {
+          await recordSellIntent('held', holdMessage, {
+            reason_category: 'risk_hold',
+            metadata: { max_profit_pct: trailingStats.max_profit_pct },
+          });
+        }
         continue;
       }
 
       if (!executionRealityDecision.allowed) {
-        skip(executionRealityDecision.reasons.join('；'));
+        await skip(executionRealityDecision.reasons.join('；'));
         continue;
       }
 
@@ -2305,6 +2468,20 @@ class PaperTradingAutomationService {
           realized_pnl,
         });
         exitItem.trade_id = trade.id;
+        await recordSellIntent('executed', riskReasonLabel(exitReason), {
+          trade_id: trade.id,
+          execute_price,
+          quantity,
+          amount,
+          reason_category: 'executed',
+          metadata: {
+            net_revenue,
+            realized_pnl,
+            sell_signal_id: sellSignal?.id,
+            sell_signal_date: sellSignal?.signal_date,
+            sell_signal_score: toOptionalNumber(sellSignal?.confidence_score),
+          },
+        });
 
         if (sourceSignal) {
           await this.markSignalClosed(sourceSignal, {
@@ -2332,6 +2509,20 @@ class PaperTradingAutomationService {
           });
           await this.refreshRecommendationTradeOutcome(sourceSignal.id);
         }
+      } else {
+        await recordSellIntent('planned', riskReasonLabel(exitReason), {
+          execute_price,
+          quantity,
+          amount,
+          reason_category: 'planned',
+          metadata: {
+            net_revenue,
+            realized_pnl,
+            sell_signal_id: sellSignal?.id,
+            sell_signal_date: sellSignal?.signal_date,
+            sell_signal_score: toOptionalNumber(sellSignal?.confidence_score),
+          },
+        });
       }
 
       exits.push(exitItem);
@@ -2410,6 +2601,43 @@ class PaperTradingAutomationService {
     }
 
     return user;
+  }
+
+  private async recordOrderIntent(params: RecordOrderIntentParams): Promise<void> {
+    try {
+      const symbol = normalizeSymbol(params.symbol);
+      if (!symbol) return;
+
+      const signal = params.signal || null;
+      const metadata = asPlainObject(params.metadata);
+      await PaperTradingOrderIntent.create({
+        portfolio_id: params.portfolio_id,
+        signal_id: signal?.id,
+        trade_id: params.trade_id,
+        source_type: params.source_type || signal?.source_type || 'paper_trading',
+        source_id: params.source_id || signal?.source_id || metadata.source_id,
+        symbol,
+        name: params.name || signal?.name || symbol,
+        side: params.side,
+        status: params.status,
+        intent_date: params.intent_date || getChinaToday(),
+        reference_price: toOptionalNumber(params.reference_price),
+        execute_price: toOptionalNumber(params.execute_price),
+        quantity: params.quantity,
+        amount: toOptionalNumber(params.amount),
+        target_position_pct: toOptionalNumber(params.target_position_pct),
+        score: toOptionalNumber(params.score ?? signal?.confidence_score),
+        risk_level: params.risk_level || signal?.risk_level,
+        reason_category: params.reason_category || normalizeSkipReasonCategory(params.reason_text),
+        reason_text: compactText(params.reason_text, 800),
+        metadata: {
+          ...metadata,
+          recorded_at: moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm:ss'),
+        },
+      });
+    } catch (error: any) {
+      logger.warn(`记录模拟交易订单意图失败: ${error?.message || error}`);
+    }
   }
 
   private async getLatestPrice(

@@ -19,6 +19,7 @@ import {
   message,
   Spin,
   Progress,
+  Timeline,
 } from 'antd';
 import {
   BulbOutlined,
@@ -329,6 +330,57 @@ interface PaperTradingRiskProfile {
   next_actions: string[];
 }
 
+interface PaperTradingOrderIntentItem {
+  id: number;
+  symbol: string;
+  name?: string;
+  side: 'BUY' | 'SELL';
+  side_label?: string;
+  status: 'planned' | 'executed' | 'rejected' | 'skipped' | 'held';
+  status_label?: string;
+  intent_date: string;
+  reference_price?: number | null;
+  execute_price?: number | null;
+  quantity?: number | null;
+  amount?: number | null;
+  target_position_pct?: number | null;
+  score?: number | null;
+  reason_category?: string;
+  reason_category_label?: string;
+  reason_text?: string;
+  compact_reason?: string;
+  created_at?: string;
+}
+
+interface PaperTradingOrderIntentDashboard {
+  generated_at: string;
+  portfolio?: PortfolioInfo | null;
+  summary: {
+    total: number;
+    executed_count: number;
+    rejected_count: number;
+    skipped_count: number;
+    planned_count: number;
+    held_count: number;
+    buy_count: number;
+    sell_count: number;
+    buy_rejected_count: number;
+    sell_rejected_count: number;
+    execution_reality_reject_count: number;
+    intended_amount: number;
+    executed_amount: number;
+    execution_rate: number;
+    conclusion: string;
+    top_reason_categories: Array<{
+      key: string;
+      label: string;
+      count: number;
+    }>;
+  };
+  intents: PaperTradingOrderIntentItem[];
+  recent_rejections: PaperTradingOrderIntentItem[];
+}
+
 const formatMoney = (value?: number | null) =>
   `¥${Number(value || 0).toLocaleString(undefined, {
     minimumFractionDigits: 2,
@@ -373,6 +425,13 @@ const riskProfileToneMap: Record<
   watch: { tag: 'gold', accent: '#b7791f', progress: '#d6a64f' },
   danger: { tag: 'volcano', accent: '#d14343', progress: '#d14343' },
 };
+const orderIntentStatusColorMap: Record<string, string> = {
+  executed: 'green',
+  planned: 'blue',
+  rejected: 'volcano',
+  skipped: 'default',
+  held: 'gold',
+};
 
 const PaperTrading: React.FC = () => {
   const [portfolio, setPortfolio] = useState<PortfolioInfo | null>(null);
@@ -406,6 +465,8 @@ const PaperTrading: React.FC = () => {
   const [tradingPlanReportLoading, setTradingPlanReportLoading] = useState(false);
   const [riskProfile, setRiskProfile] = useState<PaperTradingRiskProfile | null>(null);
   const [riskProfileLoading, setRiskProfileLoading] = useState(false);
+  const [orderIntents, setOrderIntents] = useState<PaperTradingOrderIntentDashboard | null>(null);
+  const [orderIntentsLoading, setOrderIntentsLoading] = useState(false);
 
   const fetchPortfolio = async () => {
     setLoading(true);
@@ -429,6 +490,7 @@ const PaperTrading: React.FC = () => {
     fetchRiskProfile(true);
     fetchAttribution(true);
     fetchTradingPlan(true);
+    fetchOrderIntents(true);
   }, []);
 
   const fetchSnapshots = async () => {
@@ -469,6 +531,26 @@ const PaperTrading: React.FC = () => {
     }
   };
 
+  const fetchOrderIntents = async (silent = false) => {
+    setOrderIntentsLoading(true);
+    try {
+      const response = await api.get('/paper-trading/order-intents', {
+        params: {
+          lookback_days: 30,
+          limit: 80,
+        },
+      });
+      if (response.data.success) {
+        setOrderIntents(response.data.data);
+        if (!silent) message.success('执行意图已刷新');
+      }
+    } catch (error: any) {
+      if (!silent) message.error(error.response?.data?.message || '获取执行意图失败');
+    } finally {
+      setOrderIntentsLoading(false);
+    }
+  };
+
   const handleSearchStock = (value: string) => {
     fetchStocks(value || '');
   };
@@ -492,6 +574,7 @@ const PaperTrading: React.FC = () => {
         message.success('交易成功');
         setIsTradeModalVisible(false);
         await Promise.all([fetchPortfolio(), fetchRiskProfile(true)]); // 刷新持仓与组合风险
+        fetchOrderIntents(true);
       }
     } catch (error: any) {
       message.error(error.response?.data?.message || '交易失败');
@@ -668,6 +751,7 @@ const PaperTrading: React.FC = () => {
           fetchRiskProfile(true),
           fetchAttribution(true),
           fetchTradingPlan(true),
+          fetchOrderIntents(true),
         ]);
       }
     } catch (error: any) {
@@ -684,6 +768,8 @@ const PaperTrading: React.FC = () => {
   const attributionSummary = attribution?.summary;
   const attributionFeedback = attribution?.feedback;
   const tradingPlanSummary = tradingPlan?.summary;
+  const orderIntentSummary = orderIntents?.summary;
+  const recentOrderRejections = orderIntents?.recent_rejections || [];
   const riskTone = riskProfile ? riskProfileToneMap[riskProfile.status.level] : undefined;
   const topRiskPosition = riskProfile?.position_risks?.find(item => item.risk_flags.length > 0);
   const outcomeBlockedSegments = tradingPlanSummary?.outcome_blocked_segments || [];
@@ -1032,6 +1118,169 @@ const PaperTrading: React.FC = () => {
           </Card>
         </Col>
       </Row>
+
+      <Card
+        className="modern-card paper-order-intent-card"
+        variant="borderless"
+        loading={orderIntentsLoading && !orderIntents}
+        style={{ marginBottom: 24 }}
+      >
+        <div className="paper-order-intent-header">
+          <div>
+            <Tag color="blue" icon={<SafetyCertificateOutlined />}>
+              Order Intent Ledger
+            </Tag>
+            <h2>执行意图与拒单归因</h2>
+            <p>
+              这里不只看成交，也记录“为什么没买/没卖”。先看结论，再看最近被风控、行情或资金纪律拦下的标的。
+            </p>
+          </div>
+          <Space wrap>
+            <Tag className="modern-tag tag-info">近30天</Tag>
+            <Button
+              icon={<ReloadOutlined />}
+              onClick={() => fetchOrderIntents(false)}
+              loading={orderIntentsLoading}
+            >
+              刷新意图
+            </Button>
+          </Space>
+        </div>
+
+        <Alert
+          className="paper-order-intent-conclusion"
+          type={
+            (orderIntentSummary?.rejected_count || 0) + (orderIntentSummary?.skipped_count || 0) > 0
+              ? 'warning'
+              : 'info'
+          }
+          showIcon
+          message={orderIntentSummary?.conclusion || '等待自动荐股或风控任务沉淀订单意图。'}
+        />
+
+        <Row gutter={[16, 16]} className="paper-order-intent-metrics">
+          <Col xs={12} md={4}>
+            <div className="order-intent-metric">
+              <span>全部意图</span>
+              <strong>{orderIntentSummary?.total || 0}</strong>
+              <em>
+                买 {orderIntentSummary?.buy_count || 0} / 卖 {orderIntentSummary?.sell_count || 0}
+              </em>
+            </div>
+          </Col>
+          <Col xs={12} md={4}>
+            <div className="order-intent-metric">
+              <span>已成交</span>
+              <strong>{orderIntentSummary?.executed_count || 0}</strong>
+              <em>成交率 {formatPercent(orderIntentSummary?.execution_rate)}</em>
+            </div>
+          </Col>
+          <Col xs={12} md={4}>
+            <div className="order-intent-metric">
+              <span>未放行</span>
+              <strong>
+                {(orderIntentSummary?.rejected_count || 0) +
+                  (orderIntentSummary?.skipped_count || 0)}
+              </strong>
+              <em>
+                买 {orderIntentSummary?.buy_rejected_count || 0} / 卖{' '}
+                {orderIntentSummary?.sell_rejected_count || 0}
+              </em>
+            </div>
+          </Col>
+          <Col xs={12} md={4}>
+            <div className="order-intent-metric">
+              <span>继续持有</span>
+              <strong>{orderIntentSummary?.held_count || 0}</strong>
+              <em>风控未触发退出</em>
+            </div>
+          </Col>
+          <Col xs={12} md={4}>
+            <div className="order-intent-metric">
+              <span>真实成交拦截</span>
+              <strong>{orderIntentSummary?.execution_reality_reject_count || 0}</strong>
+              <em>停牌/涨跌停/流动性</em>
+            </div>
+          </Col>
+          <Col xs={12} md={4}>
+            <div className="order-intent-metric">
+              <span>成交金额</span>
+              <strong>{formatMoney(orderIntentSummary?.executed_amount)}</strong>
+              <em>意图 {formatMoney(orderIntentSummary?.intended_amount)}</em>
+            </div>
+          </Col>
+        </Row>
+
+        <Row gutter={[18, 18]} style={{ marginTop: 18 }}>
+          <Col xs={24} lg={9}>
+            <div className="order-intent-panel">
+              <div className="order-intent-panel-title">主要原因</div>
+              {(orderIntentSummary?.top_reason_categories || []).slice(0, 6).map(item => (
+                <div className="order-reason-bar" key={item.key}>
+                  <span>{item.label}</span>
+                  <strong>{item.count}</strong>
+                </div>
+              ))}
+              {(!orderIntentSummary?.top_reason_categories ||
+                orderIntentSummary.top_reason_categories.length === 0) && (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无原因分布" />
+              )}
+            </div>
+          </Col>
+          <Col xs={24} lg={15}>
+            <div className="order-intent-panel">
+              <div className="order-intent-panel-title">最近未成交/跳过</div>
+              {recentOrderRejections.length > 0 ? (
+                <Timeline
+                  className="order-intent-timeline"
+                  items={recentOrderRejections.slice(0, 5).map(item => ({
+                    color:
+                      item.status === 'rejected'
+                        ? 'red'
+                        : item.status === 'skipped'
+                        ? 'gray'
+                        : 'blue',
+                    children: (
+                      <div className="order-intent-row">
+                        <div>
+                          <Space size={8} wrap>
+                            <Text strong>
+                              {item.name || item.symbol}（{item.symbol}）
+                            </Text>
+                            <Tag color={item.side === 'SELL' ? 'green' : 'red'}>
+                              {item.side_label || item.side}
+                            </Tag>
+                            <Tag color={orderIntentStatusColorMap[item.status] || 'default'}>
+                              {item.status_label || item.status}
+                            </Tag>
+                          </Space>
+                          <p>{item.compact_reason || item.reason_text || '暂无原因说明'}</p>
+                        </div>
+                        <div className="order-intent-row-meta">
+                          <Text>{formatMoney(item.amount)}</Text>
+                          <span>
+                            {item.reference_price
+                              ? `参考价 ${Number(item.reference_price).toFixed(2)}`
+                              : '无参考价'}
+                          </span>
+                          {item.score !== undefined && item.score !== null && (
+                            <span>评分 {Number(item.score).toFixed(0)}</span>
+                          )}
+                        </div>
+                      </div>
+                    ),
+                  }))}
+                />
+              ) : (
+                <Empty
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  description="暂无拒单/跳过记录，说明最近没有候选被拦截或自动任务尚未运行。"
+                />
+              )}
+            </div>
+          </Col>
+        </Row>
+      </Card>
 
       <Card
         className={`modern-card paper-risk-profile-card risk-${

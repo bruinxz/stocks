@@ -94,6 +94,7 @@ app.use('/api/signals', signalTraceRoutes);
 import { User } from './models/User';
 import { AIInvestmentSignal } from './models/AIInvestmentSignal';
 import { RecommendationTradeOutcome } from './models/RecommendationTradeOutcome';
+import { PaperTradingOrderIntent } from './models/PaperTradingOrderIntent';
 import { RecommendationLoopPolicySnapshot } from './models/RecommendationLoopPolicySnapshot';
 import { BudgetPolicyVersionSnapshot } from './models/BudgetPolicyVersionSnapshot';
 import { QuantStrategyModel } from './models/QuantStrategyModel';
@@ -317,6 +318,7 @@ async function syncRecommendationRuntimeTables(): Promise<void> {
   const syncItems = [
     { model: AIInvestmentSignal, label: 'AIInvestmentSignal' },
     { model: RecommendationTradeOutcome, label: 'RecommendationTradeOutcome' },
+    { model: PaperTradingOrderIntent, label: 'PaperTradingOrderIntent' },
     { model: RecommendationLoopPolicySnapshot, label: 'RecommendationLoopPolicySnapshot' },
     { model: BudgetPolicyVersionSnapshot, label: 'BudgetPolicyVersionSnapshot' },
     { model: QuantStrategyModel, label: 'QuantStrategyModel' },

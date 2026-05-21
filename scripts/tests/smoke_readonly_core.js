@@ -1023,6 +1023,48 @@ async function main() {
     );
 
     await requestJson(
+      "paper trading order intents",
+      "/api/paper-trading/order-intents?limit=5&lookback_days=30",
+      {
+        token,
+        expect: (json) => {
+          assertApiSuccess(json, "paper trading order intents");
+          if (!json.data?.summary || !Array.isArray(json.data?.intents)) {
+            throw new Error(
+              `paper trading order intents payload invalid: ${preview(json)}`
+            );
+          }
+          for (const key of [
+            "total",
+            "executed_count",
+            "rejected_count",
+            "planned_count",
+            "held_count",
+            "execution_rate",
+          ]) {
+            if (!Number.isFinite(Number(json.data.summary[key] || 0))) {
+              throw new Error(
+                `paper trading order intent summary ${key} invalid: ${preview(
+                  json.data.summary
+                )}`
+              );
+            }
+          }
+          if (
+            json.data.summary.top_reason_categories !== undefined &&
+            !Array.isArray(json.data.summary.top_reason_categories)
+          ) {
+            throw new Error(
+              `paper trading order intent top reasons invalid: ${preview(
+                json.data.summary
+              )}`
+            );
+          }
+        },
+      }
+    );
+
+    await requestJson(
       "recommendation trade outcomes",
       "/api/paper-trading/recommendation-outcomes?limit=5&include_open=false",
       {
