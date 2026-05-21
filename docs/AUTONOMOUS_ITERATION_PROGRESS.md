@@ -892,3 +892,34 @@ Next:
 
 1. Deploy main + lym and verify runtime health still reaches `ready` with `execution_discipline.status=ok`.
 2. Surface execution discipline in the dashboard UI if operators need more visibility than the generic runtime checks list.
+
+## 2026-05-21 continuous iteration: strategy weight playbook
+
+Focus: make the post-trade feedback loop easier to trust and execute by turning raw strategy weights into concise decisions, evidence, and guardrails.
+
+Completed:
+
+- Strategy weight refresh now builds a `weight_decision` object for each strategy, including:
+  - action label, target weight, confidence and sample confidence;
+  - concise reasons, next action and risk notes;
+  - recent closed-trade performance, worst-trade/downside proxy and regime fit;
+  - an execution playbook for sizing/review/guardrail discipline.
+- Allocation policy now consumes the decision confidence, returns conclusion-first `summary.conclusion`, `next_actions`, high-confidence count and top boosted/reduced strategy explanations.
+- Quant strategy library UI now shows a lighter “下一轮调权结论” playbook, confidence bars, regime fit, risk discipline notes and capital-allocation conclusion before the detailed strategy cards.
+- Read-only smoke now asserts strategy weights expose `metrics.weight_decision` and allocation policy exposes a readable conclusion plus next actions.
+
+Validation:
+
+```bash
+/Applications/Codex.app/Contents/Resources/node backend/node_modules/typescript/bin/tsc -p backend/tsconfig.json --pretty false
+cd frontend && /Applications/Codex.app/Contents/Resources/node node_modules/typescript/bin/tsc --noEmit --pretty false
+cd frontend && CI=false /Applications/Codex.app/Contents/Resources/node node_modules/react-scripts/bin/react-scripts.js build
+node --check scripts/tests/smoke_readonly_core.js
+git diff --check
+```
+
+Next:
+
+1. Deploy main + lym and verify `/api/quant/strategy-weights` contains `weight_decision` online.
+2. Use the same decision/playbook object in Feishu bot summaries when reporting strategy-budget changes.
+3. Continue tightening the simulated execution loop so each BUY/WATCH recommendation records which strategy budget and guardrail allowed it.

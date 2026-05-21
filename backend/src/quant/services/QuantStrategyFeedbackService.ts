@@ -129,46 +129,303 @@ function computeQualityScore(params: {
   );
 }
 
-function weightPolicy(qualityScore: number, closedCount: number) {
-  if (closedCount < 3) {
-    return {
-      weight: 1,
-      action: 'observe',
-      reason: `闭环样本 ${closedCount} 笔，样本不足，维持默认权重`,
-    };
-  }
-  if (qualityScore >= 76) {
-    return {
-      weight: 1.25,
-      action: 'increase',
-      reason: `质量分 ${qualityScore}，策略近期表现强，下一轮候选可小幅加权`,
-    };
-  }
-  if (qualityScore >= 62) {
-    return {
-      weight: 1.08,
-      action: 'slight_increase',
-      reason: `质量分 ${qualityScore}，策略表现良好，下一轮轻微加权`,
-    };
-  }
-  if (qualityScore >= 45) {
-    return {
-      weight: 1,
-      action: 'observe',
-      reason: `质量分 ${qualityScore}，策略表现中性，继续观察`,
-    };
-  }
-  if (qualityScore >= 30) {
-    return {
-      weight: 0.78,
-      action: 'reduce',
-      reason: `质量分 ${qualityScore}，策略弱于预期，下一轮降低权重`,
-    };
-  }
+function pctText(value: any, digits = 1): string {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return '--';
+  return `${parsed >= 0 ? '+' : ''}${parsed.toFixed(digits)}%`;
+}
+
+function compactList(values: Array<string | undefined | null>, limit = 4): string[] {
+  return values
+    .map(item => String(item || '').trim())
+    .filter(Boolean)
+    .slice(0, limit);
+}
+
+function sampleConfidence(closedCount: number): {
+  score: number;
+  level: 'empty' | 'low' | 'medium' | 'high' | 'strong';
+  label: string;
+} {
+  if (closedCount <= 0) return { score: 20, level: 'empty', label: '无闭环样本' };
+  if (closedCount < 3) return { score: 35, level: 'low', label: '样本不足' };
+  if (closedCount < 8) return { score: 55, level: 'medium', label: '低置信' };
+  if (closedCount < 20) return { score: 72, level: 'high', label: '中等置信' };
   return {
-    weight: 0.55,
-    action: 'pause',
-    reason: `质量分 ${qualityScore}，策略近期明显跑输，进入保护性降权`,
+    score: round(Math.min(95, 82 + Math.min(closedCount - 20, 30) * 0.45), 2),
+    level: 'strong',
+    label: '高置信',
+  };
+}
+
+function actionText(action: string): string {
+  const labels: Record<string, string> = {
+    increase: '加权',
+    slight_increase: '轻加权',
+    observe: '观察',
+    reduce: '降权',
+    pause: '暂停',
+  };
+  return labels[action] || action || '观察';
+}
+
+function nextActionText(action: string): string {
+  if (action === 'increase') return '下轮扫描放大候选权重，优先进入模拟盘验证。';
+  if (action === 'slight_increase') return '小幅加权，继续用 3-5 笔闭环确认稳定性。';
+  if (action === 'reduce') return '降低候选排序权重，只有多策略共识时再少量参与。';
+  if (action === 'pause') return '保护性暂停资金分配，仅保留观察和复盘。';
+  return '维持默认权重，等待更多平仓样本后再自动调参。';
+}
+
+function regimeBrief(item: any) {
+  if (!item) return undefined;
+  return {
+    key: item.key,
+    label: item.label || item.key,
+    closed_count: toNumber(item.closed_count, 0),
+    avg_excess_return_pct: item.avg_excess_return_pct,
+    quality_score: item.quality_score,
+  };
+}
+
+function bestRegime(items: any[]) {
+  return items
+    .filter(item => toNumber(item.closed_count, 0) > 0)
+    .sort((a, b) => toNumber(b.avg_excess_return_pct) - toNumber(a.avg_excess_return_pct))[0];
+}
+
+function weakestRegime(items: any[]) {
+  return items
+    .filter(item => toNumber(item.closed_count, 0) > 0)
+    .sort((a, b) => toNumber(a.avg_excess_return_pct) - toNumber(b.avg_excess_return_pct))[0];
+}
+
+function summarizeTrade(record?: RecommendationTradeOutcome) {
+  if (!record) return undefined;
+  return {
+    id: record.id,
+    symbol: record.symbol,
+    name: record.name,
+    entry_date: record.entry_date,
+    exit_date: record.exit_date,
+    total_pnl_pct: record.total_pnl_pct,
+    excess_return_pct: record.excess_return_pct,
+    holding_days: record.holding_days,
+    exit_reason_label: record.exit_reason_label,
+  };
+}
+
+function recentClosedRecords(records: RecommendationTradeOutcome[]): RecommendationTradeOutcome[] {
+  if (!records.length) return [];
+  const limit = Math.min(8, Math.max(3, Math.ceil(records.length * 0.35)));
+  return records
+    .slice()
+    .sort((a, b) => {
+      const bDate = String(b.exit_date || b.entry_date || b.signal_date || b.created_at || '');
+      const aDate = String(a.exit_date || a.entry_date || a.signal_date || a.created_at || '');
+      return bDate.localeCompare(aDate);
+    })
+    .slice(0, limit);
+}
+
+function worstAdversePct(records: RecommendationTradeOutcome[]): number | null {
+  const values = records
+    .map(record => toNumber(record.max_adverse_excursion_pct, NaN))
+    .filter(value => Number.isFinite(value));
+  if (!values.length) return null;
+  const byAbsolute = values.map(value => -Math.abs(value));
+  return Math.min(...byAbsolute);
+}
+
+function buildWeightDecision(params: {
+  strategy_key: string;
+  strategy_name?: string;
+  sample_count: number;
+  closed_count: number;
+  open_count: number;
+  quality_score: number;
+  avg_return_pct: number | null;
+  avg_excess_return_pct: number | null;
+  win_rate: number | null;
+  excess_win_rate: number | null;
+  profit_factor: number | null;
+  recent_avg_return_pct: number | null;
+  recent_avg_excess_return_pct: number | null;
+  recent_count: number;
+  worst_return_pct: number | null;
+  worst_adverse_pct: number | null;
+  by_market_regime: any[];
+  by_industry_regime: any[];
+}) {
+  const confidence = sampleConfidence(params.closed_count);
+  const avgExcess = toNumber(params.avg_excess_return_pct, 0);
+  const avgReturn = toNumber(params.avg_return_pct, 0);
+  const winRate = params.win_rate === null ? 50 : toNumber(params.win_rate, 50);
+  const excessWinRate =
+    params.excess_win_rate === null ? 50 : toNumber(params.excess_win_rate, 50);
+  const recentExcess =
+    params.recent_avg_excess_return_pct === null
+      ? avgExcess
+      : toNumber(params.recent_avg_excess_return_pct, avgExcess);
+  const worstReturn = params.worst_return_pct === null ? 0 : toNumber(params.worst_return_pct, 0);
+  const adversePct =
+    params.worst_adverse_pct === null ? 0 : Math.abs(toNumber(params.worst_adverse_pct, 0));
+  const downsideGuard = worstReturn <= -12 || adversePct >= 12;
+  const clearUnderperformance =
+    params.closed_count >= 5 && (avgExcess <= -4 || recentExcess <= -5 || excessWinRate < 38);
+  const recentDeteriorating =
+    params.closed_count >= 6 && recentExcess < Math.min(-2, avgExcess - 3);
+
+  let action = 'observe';
+  let weight = 1;
+
+  if (params.closed_count < 3) {
+    action = 'observe';
+    weight = 1;
+  } else if (clearUnderperformance && params.quality_score < 34) {
+    action = 'pause';
+    weight = 0.55;
+  } else if (clearUnderperformance || (downsideGuard && params.quality_score < 58)) {
+    action = 'reduce';
+    weight = 0.78;
+  } else if (
+    params.quality_score >= 78 &&
+    avgExcess > 1 &&
+    winRate >= 52 &&
+    recentExcess >= -1 &&
+    !downsideGuard
+  ) {
+    action = 'increase';
+    weight = 1.25;
+  } else if (params.quality_score >= 64 && avgExcess >= 0 && winRate >= 48 && !recentDeteriorating) {
+    action = 'slight_increase';
+    weight = 1.08;
+  } else if (params.quality_score >= 45 && !clearUnderperformance) {
+    action = 'observe';
+    weight = 1;
+  } else if (params.quality_score >= 30) {
+    action = 'reduce';
+    weight = 0.78;
+  } else {
+    action = 'pause';
+    weight = 0.55;
+  }
+
+  if (confidence.score < 60 && action === 'increase') {
+    action = 'slight_increase';
+    weight = 1.08;
+  }
+  if (confidence.score < 45 && ['increase', 'slight_increase'].includes(action)) {
+    action = 'observe';
+    weight = 1;
+  }
+
+  const bestMarket = bestRegime(params.by_market_regime);
+  const weakestMarket = weakestRegime(params.by_market_regime);
+  const bestIndustry = bestRegime(params.by_industry_regime);
+  const weakestIndustry = weakestRegime(params.by_industry_regime);
+
+  const reasons = compactList([
+    `质量分 ${params.quality_score.toFixed(1)}，${confidence.label}（闭环 ${params.closed_count} 笔）`,
+    `平均收益 ${pctText(avgReturn)}，超额收益 ${pctText(avgExcess)}，胜率 ${
+      params.win_rate === null ? '--' : pctText(params.win_rate, 0)
+    }`,
+    params.recent_count
+      ? `近 ${params.recent_count} 笔超额 ${pctText(params.recent_avg_excess_return_pct)}`
+      : undefined,
+    bestMarket ? `优势环境：${bestMarket.label}，超额 ${pctText(bestMarket.avg_excess_return_pct)}` : undefined,
+  ]);
+
+  const risk_notes = compactList(
+    [
+      params.closed_count < 8 ? `闭环样本仅 ${params.closed_count} 笔，禁止一次性重仓。` : undefined,
+      downsideGuard
+        ? `最差单笔 ${pctText(worstReturn)} / 最大不利波动 ${pctText(-adversePct)}，需压仓位。`
+        : undefined,
+      recentDeteriorating
+        ? `近期超额 ${pctText(recentExcess)}，较整体表现转弱，需等待修复。`
+        : undefined,
+      excessWinRate < 45 && params.closed_count >= 5
+        ? `超额胜率 ${pctText(excessWinRate, 0)}，跑赢指数稳定性不足。`
+        : undefined,
+      weakestMarket
+        ? `弱势环境：${weakestMarket.label}，历史超额 ${pctText(
+            weakestMarket.avg_excess_return_pct
+          )}。`
+        : undefined,
+    ],
+    5
+  );
+
+  const actionLabel = actionText(action);
+  const next_action = nextActionText(action);
+  const confidenceScore = round(
+    Math.max(
+      0,
+      Math.min(
+        100,
+        confidence.score * 0.55 +
+          params.quality_score * 0.3 +
+          Math.max(0, Math.min(15, avgExcess + 7))
+      )
+    ),
+    2
+  );
+  const reason = `${actionLabel}：${reasons.slice(0, 3).join('；')}。`;
+
+  return {
+    action,
+    action_label: actionLabel,
+    weight,
+    confidence: confidenceScore,
+    sample_confidence: confidence.score,
+    sample_confidence_level: confidence.level,
+    sample_confidence_label: confidence.label,
+    reason,
+    reasons,
+    risk_notes,
+    next_action,
+    evidence: {
+      strategy_key: params.strategy_key,
+      strategy_name: params.strategy_name,
+      sample_count: params.sample_count,
+      closed_count: params.closed_count,
+      open_count: params.open_count,
+      quality_score: params.quality_score,
+      avg_return_pct: params.avg_return_pct,
+      avg_excess_return_pct: params.avg_excess_return_pct,
+      win_rate: params.win_rate,
+      excess_win_rate: params.excess_win_rate,
+      profit_factor: params.profit_factor,
+      recent_count: params.recent_count,
+      recent_avg_return_pct: params.recent_avg_return_pct,
+      recent_avg_excess_return_pct: params.recent_avg_excess_return_pct,
+      worst_return_pct: params.worst_return_pct,
+      worst_adverse_pct: params.worst_adverse_pct,
+    },
+    regime_fit: {
+      best_market_regime: regimeBrief(bestMarket),
+      weakest_market_regime: regimeBrief(weakestMarket),
+      best_industry_regime: regimeBrief(bestIndustry),
+      weakest_industry_regime: regimeBrief(weakestIndustry),
+    },
+    playbook: {
+      sizing:
+        action === 'increase'
+          ? '可进入优先预算池，但单票仍按风控上限执行。'
+          : action === 'slight_increase'
+          ? '只做小幅预算倾斜，等待更多闭环确认。'
+          : action === 'reduce'
+          ? '降权参与，优先让多策略共识和低风险票通过。'
+          : action === 'pause'
+          ? '暂停资金分配，保留信号用于复盘。'
+          : '默认预算观察，不主动放大。',
+      review:
+        params.closed_count < 8
+          ? '优先补齐样本，至少观察到 8 笔闭环后再做激进调整。'
+          : '每个交易日收盘后自动刷新，若近期转弱会继续降权。',
+      guardrail: risk_notes[0] || '继续遵守单票仓位、止损和现金保留下限。',
+    },
   };
 }
 
@@ -257,6 +514,18 @@ export class QuantStrategyFeedbackService {
             sample_count: 0,
             closed_count: 0,
             source: 'default_registry_seed',
+            weight_decision: {
+              action: 'observe',
+              action_label: '观察',
+              weight: 1,
+              confidence: 20,
+              sample_confidence: 20,
+              sample_confidence_label: '无闭环样本',
+              reason: '观察：暂无闭环交易样本，先按默认权重参与候选筛选。',
+              reasons: ['暂无闭环交易样本'],
+              risk_notes: ['先让模拟盘积累平仓样本，再自动加减权。'],
+              next_action: '维持默认权重，等待更多平仓样本后再自动调参。',
+            },
           },
         },
       });
@@ -329,6 +598,43 @@ export class QuantStrategyFeedbackService {
       });
       const byMarketRegime = buildRegimeBuckets(records, marketRegimeKey, marketRegimeLabel);
       const byIndustryRegime = buildRegimeBuckets(records, industryRegimeKey, industryRegimeLabel);
+      const recentClosed = recentClosedRecords(closed);
+      const recentReturns = recentClosed.map(record => toNumber(record.total_pnl_pct, NaN));
+      const recentExcessReturns = recentClosed.map(record => toNumber(record.excess_return_pct, NaN));
+      const recentAvgReturn = average(recentReturns);
+      const recentAvgExcess = average(recentExcessReturns);
+      const bestMarketRegime = bestRegime(byMarketRegime);
+      const weakestMarketRegime = weakestRegime(byMarketRegime);
+      const bestIndustryRegime = bestRegime(byIndustryRegime);
+      const weakestIndustryRegime = weakestRegime(byIndustryRegime);
+      const bestTrade = closed
+        .slice()
+        .sort((a, b) => toNumber(b.total_pnl_pct) - toNumber(a.total_pnl_pct))[0];
+      const worstTrade = closed
+        .slice()
+        .sort((a, b) => toNumber(a.total_pnl_pct) - toNumber(b.total_pnl_pct))[0];
+      const worstReturnPct = worstTrade ? toNumber(worstTrade.total_pnl_pct, 0) : null;
+      const worstAdverse = worstAdversePct(closed);
+      const decision = buildWeightDecision({
+        strategy_key: strategyKey,
+        strategy_name: strategyNames.get(strategyKey),
+        sample_count: records.length,
+        closed_count: closed.length,
+        open_count: open.length,
+        quality_score: qualityScore,
+        avg_return_pct: avgReturn,
+        avg_excess_return_pct: avgExcess,
+        win_rate: winRate,
+        excess_win_rate: excessWinRate,
+        profit_factor: profitFactor,
+        recent_avg_return_pct: recentAvgReturn,
+        recent_avg_excess_return_pct: recentAvgExcess,
+        recent_count: recentClosed.length,
+        worst_return_pct: worstReturnPct,
+        worst_adverse_pct: worstAdverse,
+        by_market_regime: byMarketRegime,
+        by_industry_regime: byIndustryRegime,
+      });
 
       const snapshotPayload = {
         strategy_key: strategyKey,
@@ -350,22 +656,19 @@ export class QuantStrategyFeedbackService {
           end_date: snapshot_date,
           by_market_regime: byMarketRegime,
           by_industry_regime: byIndustryRegime,
-          best_market_regime: byMarketRegime
-            .filter(item => item.closed_count > 0)
-            .sort(
-              (a, b) => toNumber(b.avg_excess_return_pct) - toNumber(a.avg_excess_return_pct)
-            )[0],
-          weakest_market_regime: byMarketRegime
-            .filter(item => item.closed_count > 0)
-            .sort(
-              (a, b) => toNumber(a.avg_excess_return_pct) - toNumber(b.avg_excess_return_pct)
-            )[0],
-          best_trade: closed
-            .slice()
-            .sort((a, b) => toNumber(b.total_pnl_pct) - toNumber(a.total_pnl_pct))[0],
-          worst_trade: closed
-            .slice()
-            .sort((a, b) => toNumber(a.total_pnl_pct) - toNumber(b.total_pnl_pct))[0],
+          best_market_regime: bestMarketRegime,
+          weakest_market_regime: weakestMarketRegime,
+          best_industry_regime: bestIndustryRegime,
+          weakest_industry_regime: weakestIndustryRegime,
+          recent_count: recentClosed.length,
+          recent_avg_return_pct: recentAvgReturn === null ? undefined : round(recentAvgReturn, 4),
+          recent_avg_excess_return_pct:
+            recentAvgExcess === null ? undefined : round(recentAvgExcess, 4),
+          worst_return_pct: worstReturnPct === null ? undefined : round(worstReturnPct, 4),
+          worst_adverse_pct: worstAdverse === null ? undefined : round(worstAdverse, 4),
+          best_trade: summarizeTrade(bestTrade),
+          worst_trade: summarizeTrade(worstTrade),
+          weight_decision: decision,
         },
       };
 
@@ -381,23 +684,23 @@ export class QuantStrategyFeedbackService {
       await snapshot.update(snapshotPayload);
       snapshots.push(snapshot);
 
-      const policy = weightPolicy(qualityScore, closed.length);
       const weightPayload = {
         strategy_key: strategyKey,
         strategy_name: strategyNames.get(strategyKey),
-        weight: policy.weight,
-        action: policy.action,
+        weight: decision.weight,
+        action: decision.action,
         quality_score: qualityScore,
         sample_count: records.length,
         closed_count: closed.length,
-        reason: policy.reason,
+        reason: decision.reason,
         last_evaluated_at: new Date(),
         metrics: {
           ...snapshotPayload,
-          best_trade: undefined,
-          worst_trade: undefined,
+          best_trade: summarizeTrade(bestTrade),
+          worst_trade: summarizeTrade(worstTrade),
           by_market_regime: byMarketRegime,
           by_industry_regime: byIndustryRegime,
+          weight_decision: decision,
         },
       };
       const [weight] = await QuantStrategyWeight.findOrCreate({
@@ -408,6 +711,38 @@ export class QuantStrategyFeedbackService {
       weights.push(weight);
     }
 
+    const sortedWeights = weights.sort(
+      (a, b) => Number(b.quality_score || 0) - Number(a.quality_score || 0)
+    );
+    const boostedWeights = sortedWeights.filter(item =>
+      ['increase', 'slight_increase'].includes(item.action)
+    );
+    const reducedWeights = sortedWeights.filter(item => ['reduce', 'pause'].includes(item.action));
+    const topBoosted = boostedWeights.slice(0, 3).map(item => ({
+      strategy_key: item.strategy_key,
+      strategy_name: item.strategy_name,
+      action: item.action,
+      weight: Number(item.weight || 1),
+      quality_score: Number(item.quality_score || 0),
+      reason: item.reason,
+      decision: asPlainObject(item.metrics).weight_decision,
+    }));
+    const topReduced = reducedWeights.slice(0, 3).map(item => ({
+      strategy_key: item.strategy_key,
+      strategy_name: item.strategy_name,
+      action: item.action,
+      weight: Number(item.weight || 1),
+      quality_score: Number(item.quality_score || 0),
+      reason: item.reason,
+      decision: asPlainObject(item.metrics).weight_decision,
+    }));
+    const highConfidenceCount = sortedWeights.filter(
+      item => toNumber(asPlainObject(asPlainObject(item.metrics).weight_decision).sample_confidence, 0) >= 72
+    ).length;
+    const conclusion = sortedWeights.length
+      ? `本轮调权完成：${boostedWeights.length} 个加权、${reducedWeights.length} 个降权/暂停，${highConfidenceCount} 个具备中高置信样本。`
+      : '本轮暂无可调权策略，等待模拟盘平仓样本。';
+
     return {
       snapshot_date,
       lookback_days: lookbackDays,
@@ -416,12 +751,31 @@ export class QuantStrategyFeedbackService {
       scanned_outcomes: outcomes.length,
       strategy_count: groups.size,
       snapshots,
-      weights: weights.sort((a, b) => Number(b.quality_score || 0) - Number(a.quality_score || 0)),
+      weights: sortedWeights,
       summary: {
         increase: weights.filter(item => ['increase', 'slight_increase'].includes(item.action))
           .length,
         reduce: weights.filter(item => ['reduce', 'pause'].includes(item.action)).length,
         observe: weights.filter(item => item.action === 'observe').length,
+        high_confidence_count: highConfidenceCount,
+        conclusion,
+        top_boosted: topBoosted,
+        top_reduced: topReduced,
+        next_actions: compactList([
+          boostedWeights.length
+            ? `优先让 ${boostedWeights
+                .slice(0, 2)
+                .map(item => item.strategy_name || item.strategy_key)
+                .join('、')} 进入开盘候选预算池。`
+            : undefined,
+          reducedWeights.length
+            ? `对 ${reducedWeights
+                .slice(0, 2)
+                .map(item => item.strategy_name || item.strategy_key)
+                .join('、')} 保持降权/暂停，避免继续放大亏损。`
+            : undefined,
+          '继续用模拟盘闭环平仓结果反哺权重，样本不足策略只观察不重仓。',
+        ]),
       },
     };
   }
@@ -452,11 +806,21 @@ export class QuantStrategyFeedbackService {
       .map(record => {
         const closedCount = toNumber(record.closed_count, 0);
         const qualityScore = toNumber(record.quality_score, 50);
-        const sampleConfidence = Math.min(1, 0.55 + Math.min(closedCount, 30) * 0.015);
+        const decision = asPlainObject(asPlainObject(record.metrics).weight_decision);
+        const confidence = sampleConfidence(closedCount);
+        const sampleConfidenceRatio = Math.min(
+          1,
+          Math.max(0.25, toNumber(decision.sample_confidence, confidence.score) / 100)
+        );
+        const confidenceRatio = Math.min(
+          1.1,
+          Math.max(0.45, toNumber(decision.confidence, qualityScore) / 100)
+        );
         const rawScore =
           Math.max(0, toNumber(record.weight, 1)) *
           Math.max(15, qualityScore) *
-          sampleConfidence *
+          sampleConfidenceRatio *
+          confidenceRatio *
           actionMultiplier(record.action);
         return {
           strategy_key: record.strategy_key,
@@ -468,6 +832,12 @@ export class QuantStrategyFeedbackService {
           strategy_weight: toNumber(record.weight, 1),
           raw_score: round(rawScore, 4),
           reason: record.reason,
+          decision,
+          sample_confidence: toNumber(decision.sample_confidence, confidence.score),
+          sample_confidence_label: decision.sample_confidence_label || confidence.label,
+          next_action: decision.next_action,
+          risk_notes: Array.isArray(decision.risk_notes) ? decision.risk_notes : [],
+          regime_fit: asPlainObject(decision.regime_fit),
         };
       })
       .filter(item => item.raw_score > 0);
@@ -497,6 +867,26 @@ export class QuantStrategyFeedbackService {
       })
       .sort((a, b) => b.allocation_pct - a.allocation_pct);
 
+    const boosted = allocations.filter(item =>
+      ['increase', 'slight_increase'].includes(item.action)
+    );
+    const reduced = weights.filter(item => ['reduce', 'pause'].includes(item.action));
+    const topAllocations = allocations.slice(0, 3);
+    const conclusion = allocations.length
+      ? `当前 20W 预算优先给 ${topAllocations
+          .map(item => item.strategy_name || item.strategy_key)
+          .join('、')}；${boosted.length} 个策略加权，${reduced.length} 个策略降权/暂停。`
+      : '暂无可执行策略预算：所有策略处于暂停或样本不足状态。';
+    const nextActions = compactList([
+      boosted.length
+        ? `加权策略用于开盘候选排序，但单票仍不超过各自 max_single_trade_pct。`
+        : '暂无强加权策略，继续按默认权重积累样本。',
+      reduced.length
+        ? `降权/暂停策略只保留观察信号，避免扩大回撤。`
+        : undefined,
+      '每日收盘后用真实模拟盘平仓收益自动刷新下一轮预算。',
+    ]);
+
     return {
       generated_at: new Date().toISOString(),
       capital,
@@ -513,7 +903,21 @@ export class QuantStrategyFeedbackService {
         reduced_count: weights.filter(item => item.action === 'reduce').length,
         boosted_count: weights.filter(item => ['increase', 'slight_increase'].includes(item.action))
           .length,
+        high_confidence_count: allocations.filter(item => toNumber(item.sample_confidence, 0) >= 72)
+          .length,
+        conclusion,
+        top_boosted: boosted.slice(0, 3),
+        top_reduced: reduced.slice(0, 3).map(item => ({
+          strategy_key: item.strategy_key,
+          strategy_name: item.strategy_name,
+          action: item.action,
+          quality_score: Number(item.quality_score || 0),
+          reason: item.reason,
+          decision: asPlainObject(item.metrics).weight_decision,
+        })),
+        next_actions: nextActions,
       },
+      next_actions: nextActions,
       rule: 'allocation_score = strategy_weight * quality_score * sample_confidence * action_multiplier；再按上下限归一化。',
     };
   }

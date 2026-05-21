@@ -901,6 +901,12 @@ async function main() {
       expect: (json) => {
         assertApiSuccess(json, "quant strategy weights");
         assertArray(json.data, "quant strategy weights data");
+        const withMetrics = json.data.find((item) => item?.metrics);
+        if (withMetrics && !withMetrics.metrics?.weight_decision) {
+          throw new Error(
+            `quant strategy weight decision missing: ${preview(withMetrics)}`
+          );
+        }
       },
     });
 
@@ -914,6 +920,14 @@ async function main() {
           assertApiSuccess(json, "quant allocation policy");
           if (!json.data)
             throw new Error(`allocation policy data missing: ${preview(json)}`);
+          if (!json.data.summary?.conclusion)
+            throw new Error(
+              `allocation policy conclusion missing: ${preview(json.data)}`
+            );
+          if (!Array.isArray(json.data.next_actions))
+            throw new Error(
+              `allocation policy next_actions missing: ${preview(json.data)}`
+            );
         },
       }
     );
