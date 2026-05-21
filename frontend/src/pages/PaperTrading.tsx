@@ -443,6 +443,46 @@ interface OrderIntentTuningApplyResult {
   apply_mode?: 'preview' | 'manual_confirmed';
 }
 
+interface OrderIntentTrace {
+  generated_at: string;
+  intent: PaperTradingOrderIntentItem & { opportunity_outcome?: any; execution_reality?: any };
+  signal?: {
+    id: number;
+    source_type: string;
+    source_id: string;
+    loop_run_id?: string;
+    signal_date: string;
+    normalized_decision: string;
+    decision: string;
+    confidence_score?: number | null;
+    risk_level?: string;
+    rationale?: string;
+    current_price?: number | null;
+    price_change_pct?: number | null;
+    verification_status?: string;
+    forward_returns?: Record<string, any>;
+  } | null;
+  opportunity_outcome?: any;
+  peer_review?: {
+    reason_category: string;
+    reason_category_label: string;
+    sample_count: number;
+    hindsight?: any;
+    matching_rule_suggestion?: any;
+    stable_rule_suggestion?: OrderIntentStableRuleSuggestion | null;
+    parameter_impact?: OrderIntentParameterPreview[];
+  };
+  timeline: Array<{
+    stage: string;
+    label: string;
+    time?: string;
+    status: string;
+    summary: string;
+    metric?: Record<string, any>;
+  }>;
+  conclusion: string;
+}
+
 interface PaperTradingOrderIntentDashboard {
   generated_at: string;
   portfolio?: PortfolioInfo | null;
@@ -629,6 +669,9 @@ const PaperTrading: React.FC = () => {
   const [riskProfileLoading, setRiskProfileLoading] = useState(false);
   const [orderIntents, setOrderIntents] = useState<PaperTradingOrderIntentDashboard | null>(null);
   const [orderIntentsLoading, setOrderIntentsLoading] = useState(false);
+  const [orderIntentTrace, setOrderIntentTrace] = useState<OrderIntentTrace | null>(null);
+  const [orderIntentTraceLoading, setOrderIntentTraceLoading] = useState(false);
+  const [isOrderIntentTraceVisible, setIsOrderIntentTraceVisible] = useState(false);
 
   const fetchPortfolio = async () => {
     setLoading(true);
@@ -791,6 +834,24 @@ const PaperTrading: React.FC = () => {
       message.error(error.response?.data?.message || '收益归因上报失败');
     } finally {
       setAttributionReportLoading(false);
+    }
+  };
+
+  const openOrderIntentTrace = async (intent: PaperTradingOrderIntentItem) => {
+    setIsOrderIntentTraceVisible(true);
+    setOrderIntentTraceLoading(true);
+    setOrderIntentTrace(null);
+    try {
+      const response = await api.get(`/paper-trading/order-intents/${intent.id}/trace`, {
+        params: { lookback_days: 30 },
+      });
+      if (response.data.success) {
+        setOrderIntentTrace(response.data.data);
+      }
+    } catch (error: any) {
+      message.error(error.response?.data?.message || '获取拒单链路失败');
+    } finally {
+      setOrderIntentTraceLoading(false);
     }
   };
 
@@ -1567,6 +1628,13 @@ const PaperTrading: React.FC = () => {
                           {item.score !== undefined && item.score !== null && (
                             <span>评分 {Number(item.score).toFixed(0)}</span>
                           )}
+                          <Button
+                            size="small"
+                            type="link"
+                            onClick={() => openOrderIntentTrace(item)}
+                          >
+                            看链路
+                          </Button>
                         </div>
                       </div>
                     ),
@@ -2404,6 +2472,168 @@ const PaperTrading: React.FC = () => {
           }}
         />
       </Card>
+
+      <Modal
+        title={
+          orderIntentTrace?.intent
+            ? `${orderIntentTrace.intent.name || orderIntentTrace.intent.symbol} 拒单链路`
+            : '拒单链路'
+        }
+        open={isOrderIntentTraceVisible}
+        onCancel={() => setIsOrderIntentTraceVisible(false)}
+        footer={null}
+        width={980}
+        destroyOnHidden
+      >
+        <Spin spinning={orderIntentTraceLoading}>
+          {orderIntentTrace ? (
+            <div className="order-trace-modal">
+              <Alert type="info" showIcon message={orderIntentTrace.conclusion} />
+              <Row gutter={[14, 14]} className="order-trace-summary">
+                <Col xs={12} md={6}>
+                  <div>
+                    <span>动作</span>
+                    <strong>
+                      {orderIntentTrace.intent.side_label || orderIntentTrace.intent.side}
+                    </strong>
+                  </div>
+                </Col>
+                <Col xs={12} md={6}>
+                  <div>
+                    <span>状态</span>
+                    <strong>
+                      {orderIntentTrace.intent.status_label || orderIntentTrace.intent.status}
+                    </strong>
+                  </div>
+                </Col>
+                <Col xs={12} md={6}>
+                  <div>
+                    <span>参考价</span>
+                    <strong>
+                      {orderIntentTrace.intent.reference_price
+                        ? `¥${Number(orderIntentTrace.intent.reference_price).toFixed(2)}`
+                        : '--'}
+                    </strong>
+                  </div>
+                </Col>
+                <Col xs={12} md={6}>
+                  <div>
+                    <span>同类样本</span>
+                    <strong>{orderIntentTrace.peer_review?.sample_count || 0}</strong>
+                  </div>
+                </Col>
+              </Row>
+
+              <Row gutter={[16, 16]}>
+                <Col xs={24} lg={13}>
+                  <div className="order-trace-section">
+                    <h3>链路时间线</h3>
+                    <Timeline
+                      items={(orderIntentTrace.timeline || []).map(item => ({
+                        color:
+                          item.status === 'false_reject'
+                            ? 'orange'
+                            : item.status === 'protected_or_neutral'
+                            ? 'green'
+                            : item.status === 'missing'
+                            ? 'gray'
+                            : 'blue',
+                        children: (
+                          <div className="order-trace-step">
+                            <Space wrap size={8}>
+                              <Text strong>{item.label}</Text>
+                              {item.time && <Tag>{item.time}</Tag>}
+                            </Space>
+                            <p>{item.summary}</p>
+                            {item.metric && (
+                              <Space wrap size={8}>
+                                <Tag color={pnlColor(item.metric.intended_action_return_pct)}>
+                                  相对 {formatPercent(item.metric.intended_action_return_pct)}
+                                </Tag>
+                                <Tag>
+                                  目标价 ¥{Number(item.metric.target_price || 0).toFixed(2)}
+                                </Tag>
+                              </Space>
+                            )}
+                          </div>
+                        ),
+                      }))}
+                    />
+                  </div>
+                </Col>
+                <Col xs={24} lg={11}>
+                  <div className="order-trace-section">
+                    <h3>信号与规则影响</h3>
+                    {orderIntentTrace.signal ? (
+                      <div className="order-trace-signal">
+                        <Space wrap>
+                          <Tag color="blue">{orderIntentTrace.signal.source_type}</Tag>
+                          <Tag>{orderIntentTrace.signal.normalized_decision}</Tag>
+                          <Tag color="purple">
+                            评分 {orderIntentTrace.signal.confidence_score ?? '--'}
+                          </Tag>
+                        </Space>
+                        <p>{orderIntentTrace.signal.rationale || '暂无核心理由'}</p>
+                      </div>
+                    ) : (
+                      <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有关联信号" />
+                    )}
+
+                    {orderIntentTrace.peer_review?.matching_rule_suggestion && (
+                      <div className="order-trace-rule">
+                        <Text strong>{orderIntentTrace.peer_review.reason_category_label}</Text>
+                        <p>{orderIntentTrace.peer_review.matching_rule_suggestion.reason}</p>
+                        <Space wrap>
+                          <Tag
+                            color={
+                              orderRuleActionColorMap[
+                                orderIntentTrace.peer_review.matching_rule_suggestion.action
+                              ] || 'default'
+                            }
+                          >
+                            {orderIntentTrace.peer_review.matching_rule_suggestion.action_label}
+                          </Tag>
+                          {orderIntentTrace.peer_review.stable_rule_suggestion && (
+                            <Tag
+                              color={
+                                orderRuleStabilityColorMap[
+                                  orderIntentTrace.peer_review.stable_rule_suggestion
+                                    .stability_state
+                                ] || 'default'
+                              }
+                            >
+                              {orderIntentTrace.peer_review.stable_rule_suggestion.stability_label}
+                            </Tag>
+                          )}
+                        </Space>
+                      </div>
+                    )}
+
+                    {(orderIntentTrace.peer_review?.parameter_impact || []).length > 0 && (
+                      <div className="order-trace-params">
+                        <h4>可能影响的参数</h4>
+                        {(orderIntentTrace.peer_review?.parameter_impact || [])
+                          .slice(0, 4)
+                          .map(item => (
+                            <div className="order-trace-param" key={item.parameter_key}>
+                              <span>{item.parameter_label}</span>
+                              <strong>
+                                {formatTuningValue(item.current_value, item.unit)} →{' '}
+                                {formatTuningValue(item.preview_value, item.unit)}
+                              </strong>
+                            </div>
+                          ))}
+                      </div>
+                    )}
+                  </div>
+                </Col>
+              </Row>
+            </div>
+          ) : (
+            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无链路数据" />
+          )}
+        </Spin>
+      </Modal>
 
       <Modal
         title="模拟交易"

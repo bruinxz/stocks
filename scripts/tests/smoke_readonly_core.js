@@ -294,6 +294,8 @@ async function main() {
     `Read-only smoke test started: base=${baseUrl}, timeout=${timeoutMs}ms, include_external=${includeExternal}`
   );
 
+  let orderIntentTraceCandidateId = null;
+
   await requestProcessHealth();
 
   if (String(process.env.SMOKE_CHECK_API_ROOT || "").toLowerCase() === "true") {
@@ -1034,6 +1036,10 @@ async function main() {
               `paper trading order intents payload invalid: ${preview(json)}`
             );
           }
+          const traceCandidate = (json.data?.recent_rejections || [])[0] || json.data.intents[0];
+          if (traceCandidate?.id) {
+            orderIntentTraceCandidateId = traceCandidate.id;
+          }
           for (const key of [
             "total",
             "executed_count",
@@ -1135,6 +1141,29 @@ async function main() {
         },
       }
     );
+
+    if (orderIntentTraceCandidateId) {
+      await requestJson(
+        "paper trading order intent trace",
+        `/api/paper-trading/order-intents/${orderIntentTraceCandidateId}/trace`,
+        {
+          token,
+          expect: (json) => {
+            assertApiSuccess(json, "paper trading order intent trace");
+            if (!json.data?.intent || !Array.isArray(json.data?.timeline)) {
+              throw new Error(
+                `paper trading order intent trace payload invalid: ${preview(json)}`
+              );
+            }
+            if (!json.data?.peer_review) {
+              throw new Error(
+                `paper trading order intent trace peer review missing: ${preview(json)}`
+              );
+            }
+          },
+        }
+      );
+    }
 
     await requestJson(
       "recommendation trade outcomes",

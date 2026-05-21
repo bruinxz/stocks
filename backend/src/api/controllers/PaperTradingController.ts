@@ -668,6 +668,31 @@ export class PaperTradingController {
     }
   };
 
+  // 获取单条模拟交易订单意图的链路钻取
+  getOrderIntentTrace = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const user = (req as any).user;
+      const result = await paperTradingOrderIntentService.getIntentTrace(Number(req.params.id), {
+        ...req.query,
+        user_id: user.id,
+        username: user.username || user.nickname,
+      } as any);
+
+      if (!result) {
+        return res.status(404).json({ success: false, message: '未找到订单意图链路' });
+      }
+
+      res.json({
+        success: true,
+        data: result,
+        message: result.conclusion,
+      });
+    } catch (error: any) {
+      logger.error('获取模拟交易订单意图链路失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
   // 获取推荐信号→模拟交易→收益结果闭环看板
   getRecommendationOutcomes = async (req: Request, res: Response, next: NextFunction) => {
     try {
