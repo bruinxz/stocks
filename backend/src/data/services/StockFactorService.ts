@@ -42,17 +42,13 @@ function daysBetween(from?: string | null, to?: string | null): number | null {
 }
 
 function isRealFactorSource(source: string): boolean {
-  const normalized = String(source || '').trim().toLowerCase();
+  const normalized = String(source || '')
+    .trim()
+    .toLowerCase();
   if (!normalized) return false;
-  return ![
-    'local',
-    'local_derived',
-    'derived',
-    'fallback',
-    'mock',
-    'unknown',
-    'n/a',
-  ].includes(normalized);
+  return !['local', 'local_derived', 'derived', 'fallback', 'mock', 'unknown', 'n/a'].includes(
+    normalized
+  );
 }
 
 function percentileRank(values: number[], value: number): number | undefined {
@@ -131,9 +127,14 @@ export interface FactorCoverage {
 
 export class StockFactorService {
   private tushareClient = new TushareClient();
-  private eastMoneyClient = new EastMoneyClient(undefined, Number(process.env.EASTMONEY_FACTOR_TIMEOUT_MS || 12000));
+  private eastMoneyClient = new EastMoneyClient(
+    undefined,
+    Number(process.env.EASTMONEY_FACTOR_TIMEOUT_MS || 12000)
+  );
 
-  async runProviderSmokeTest(options: { provider?: FactorProviderName; symbol?: string; as_of?: string } = {}) {
+  async runProviderSmokeTest(
+    options: { provider?: FactorProviderName; symbol?: string; as_of?: string } = {}
+  ) {
     const provider = options.provider || 'auto';
     const plan = this.getProviderPlan({
       provider,
@@ -148,7 +149,11 @@ export class StockFactorService {
           provider: 'tushare',
           requested_provider: provider,
           symbol,
-          ok: result.snapshot_found || result.checks.daily_basic || result.checks.moneyflow || result.checks.fina_indicator,
+          ok:
+            result.snapshot_found ||
+            result.checks.daily_basic ||
+            result.checks.moneyflow ||
+            result.checks.fina_indicator,
           plan,
           ...result,
         };
@@ -250,8 +255,7 @@ export class StockFactorService {
           enabled: true,
           has_token: false,
           required_env: [],
-          note:
-            '东方财富免费实时源已启用，用于补充价格、PE/PB、市值、换手率与弱资金流代理；无需 token，但需控制并发。',
+          note: '东方财富免费实时源已启用，用于补充价格、PE/PB、市值、换手率与弱资金流代理；无需 token，但需控制并发。',
         },
         local_derived: {
           enabled: true,
@@ -389,7 +393,9 @@ export class StockFactorService {
     return row || { count: 0, source_breakdown: {}, latest_factor_date: null };
   }
 
-  private parseSourceBreakdown(value: FactorCoverageRow['source_breakdown']): Record<string, number> {
+  private parseSourceBreakdown(
+    value: FactorCoverageRow['source_breakdown']
+  ): Record<string, number> {
     if (!value) return {};
     const parsed = typeof value === 'string' ? JSON.parse(value || '{}') : value;
     return Object.entries(parsed || {}).reduce<Record<string, number>>((acc, [source, count]) => {
@@ -554,7 +560,8 @@ export class StockFactorService {
       const symbol = normalizeSymbol(snapshot.symbol);
       const stock = stockBySymbol.get(symbol);
       if (!stock) continue;
-      const factorDate = options.as_of || snapshot.quote_date || new Date().toISOString().slice(0, 10);
+      const factorDate =
+        options.as_of || snapshot.quote_date || new Date().toISOString().slice(0, 10);
       const pe = toNumber(snapshot.pe_ttm);
       const pb = toNumber(snapshot.pb);
       const cap = toNumber(snapshot.total_market_cap);
@@ -792,6 +799,14 @@ export class StockFactorService {
       );
       const shouldSkip =
         coverage.latest_trade_date &&
+        (!options.as_of ||
+          [
+            coverage.latest_factor_date,
+            coverage.latest_landed_factor_date,
+            coverage.effective_factor_date,
+          ]
+            .filter(Boolean)
+            .some(date => String(date).slice(0, 10) >= String(options.as_of).slice(0, 10))) &&
         minCoverageRate >= skipThreshold &&
         (!requiresRealProvider ||
           skipRealProviderThreshold <= 0 ||
@@ -801,12 +816,12 @@ export class StockFactorService {
           generated_at: new Date().toISOString(),
           scope: options.scope || (options.symbols?.length ? 'custom' : 'market'),
           skipped: true,
-          skip_reason: `因子覆盖率 ${round(
-            minCoverageRate,
-            2
-          )}% 已达到阈值 ${skipThreshold}%${
+          skip_reason: `因子覆盖率 ${round(minCoverageRate, 2)}% 已达到阈值 ${skipThreshold}%${
             requiresRealProvider
-              ? `，真实源占比 ${round(realProviderRate, 2)}% 已达到阈值 ${skipRealProviderThreshold}%`
+              ? `，真实源占比 ${round(
+                  realProviderRate,
+                  2
+                )}% 已达到阈值 ${skipRealProviderThreshold}%`
               : ''
           }，本轮跳过重复落盘。`,
           provider_plan: providerPlan,
@@ -817,6 +832,9 @@ export class StockFactorService {
           duration_ms: Date.now() - startedAt,
           coverage_snapshot: {
             latest_trade_date: coverage.latest_trade_date,
+            latest_factor_date: coverage.latest_factor_date,
+            latest_landed_factor_date: coverage.latest_landed_factor_date,
+            effective_factor_date: coverage.effective_factor_date,
             coverage_rate: coverage.coverage_rate,
             source_breakdown: coverage.source_breakdown,
             real_provider_rate: coverage.source_quality?.real_provider_rate,
@@ -986,11 +1004,7 @@ export class StockFactorService {
           }).catch(() => null)
         )?.factor_date || null
       : null;
-    const [
-      valuationCoverage,
-      moneyCoverage,
-      fundamentalCoverage,
-    ] = await Promise.all([
+    const [valuationCoverage, moneyCoverage, fundamentalCoverage] = await Promise.all([
       this.getEffectiveFactorCoverageRows({
         table: 'stock_valuation_factors',
         stock_ids: stockIds,
@@ -1071,8 +1085,10 @@ export class StockFactorService {
       round((moneyFlowCount / denominator) * 100, 2),
       round((fundamentalCount / denominator) * 100, 2)
     );
-    const providerStatus = this.getProviderPlan({ provider: 'auto', prefer_real_provider: true })
-      .provider_status;
+    const providerStatus = this.getProviderPlan({
+      provider: 'auto',
+      prefer_real_provider: true,
+    }).provider_status;
     const sourceQuality = {
       total_source_records: totalSourceRecords,
       real_provider_records: realProviderRecords,

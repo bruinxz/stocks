@@ -600,6 +600,7 @@ export class QuantPerformanceDashboardService {
               limit: task.parameters?.limit,
               source: task.parameters?.source,
               batch_size: task.parameters?.batch_size,
+              factor_sync_limit: task.parameters?.factor_sync_limit,
               quote_sync_limit: task.parameters?.quote_sync_limit,
               realtime_quote_source: task.parameters?.realtime_quote_source,
               strategy_keys: task.parameters?.strategy_keys,
