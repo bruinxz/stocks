@@ -563,3 +563,38 @@ Next:
 1. Deploy and verify `result_summary` appears in production task logs after the next quant/manual dry run.
 2. Add a read-only task-log smoke assertion for `result_summary` once at least one new-format log exists.
 3. Continue real-data-source work: configure/validate Tushare Pro or another paid real factor source so `factor_real_provider_rate` rises above local-derived fallback.
+
+## 2026-05-21 continuous iteration: runtime discipline dashboard
+
+Focus: make “why no buy” visible from the quant cockpit, not only from task-log details.
+
+Completed:
+
+- `QuantPerformanceDashboardService` now aggregates recent quant pipeline execution summaries from `task_execution_logs.result_summary`.
+- `/api/quant/performance-dashboard` now includes `runtime_discipline`:
+  - 14-day quant run count;
+  - runtime-risk blocked count and blocked rate;
+  - latest blocked run;
+  - top blocked reasons;
+  - recent quant run summaries.
+- Read-only smoke now asserts `runtime_discipline.summary` exists in the quant dashboard payload.
+- Quant收益驾驶舱 adds a new “买入纪律与阻断原因” card:
+  - no-buy block count;
+  - block rate;
+  - top reasons;
+  - recent run ledger with pass/block tags;
+  - keeps copy conclusion-first and light visual weight.
+
+Validation:
+
+```bash
+/Applications/Codex.app/Contents/Resources/node backend/node_modules/typescript/bin/tsc -p backend/tsconfig.json --pretty false
+cd frontend && /Applications/Codex.app/Contents/Resources/node node_modules/typescript/bin/tsc --noEmit --pretty false
+cd frontend && CI=false /Applications/Codex.app/Contents/Resources/node node_modules/react-scripts/bin/react-scripts.js build
+```
+
+Next:
+
+1. Deploy and run release health gate on main + lym.
+2. After the next scheduled quant run, verify dashboard `runtime_discipline.recent_runs` contains the new run and displays block/pass correctly.
+3. Add a small manual safe dry-run endpoint/button later if we want to create a non-trading discipline sample on demand.

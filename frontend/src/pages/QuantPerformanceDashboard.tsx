@@ -237,6 +237,33 @@ type RuntimeHealth = {
   };
 };
 
+type RuntimeDisciplineRun = {
+  log_id?: number;
+  task_id?: number;
+  task_name?: string;
+  status?: string;
+  started_at?: string;
+  completed_at?: string;
+  runtime_risk_blocked?: boolean;
+  runtime_block_reason?: string | null;
+  runtime_health?: {
+    status?: string;
+    score?: number;
+    conclusion?: string;
+    factor_min_coverage_rate?: number;
+    factor_real_provider_rate?: number;
+  } | null;
+  trade_date?: string;
+  scanned_stocks?: number;
+  signal_count?: number;
+  archived_signal_count?: number;
+  agent_submitted?: number;
+  paper_executed?: number;
+  paper_planned?: number;
+  paper_skipped?: number;
+  message?: string;
+};
+
 type DashboardData = {
   generated_at?: string;
   indicator_catalog?: {
@@ -331,6 +358,24 @@ type DashboardData = {
       }
     >;
     issues?: Array<{ key: string; status: string; conclusion: string }>;
+  };
+  runtime_discipline?: {
+    generated_at?: string;
+    window_days?: number;
+    summary?: {
+      quant_run_count?: number;
+      completed_run_count?: number;
+      blocked_count?: number;
+      blocked_rate_pct?: number;
+      latest_blocked_at?: string | null;
+      latest_run_at?: string | null;
+      latest_run_blocked?: boolean;
+      conclusion?: string;
+    };
+    top_reasons?: Array<{ reason: string; count: number }>;
+    latest?: RuntimeDisciplineRun | null;
+    latest_blocked?: RuntimeDisciplineRun | null;
+    recent_runs?: RuntimeDisciplineRun[];
   };
   strategy_experiments?: {
     total?: number;
@@ -551,6 +596,7 @@ const QuantPerformanceDashboard: React.FC = () => {
   const effectiveRuntimeHealth = runtimeHealth || dashboard?.runtime_health || null;
   const dataQuality = dashboard?.data_quality_center;
   const dataFreshness = dashboard?.data_freshness;
+  const runtimeDiscipline = dashboard?.runtime_discipline;
   const dataFreshnessChecks = dataFreshness?.checks || {};
   const strategyExperiments = dashboard?.strategy_experiments;
   const experimentParamSuggestions = dashboard?.experiment_param_suggestions;
@@ -805,6 +851,77 @@ const QuantPerformanceDashboard: React.FC = () => {
                   </div>
                 )
               )}
+          </div>
+        </div>
+      </Card>
+
+      <Card
+        className={`modern-card quant-discipline-card ${
+          runtimeDiscipline?.summary?.latest_run_blocked ? 'quant-discipline-card--blocked' : ''
+        }`}
+        variant="borderless"
+        loading={loading}
+      >
+        <div className="quant-section-heading quant-discipline-heading">
+          <div>
+            <span>DISCIPLINE LEDGER</span>
+            <h2>买入纪律与阻断原因</h2>
+          </div>
+          <Space wrap>
+            <Tag color={runtimeDiscipline?.summary?.latest_run_blocked ? 'red' : 'green'}>
+              最近一次{runtimeDiscipline?.summary?.latest_run_blocked ? '阻断买入' : '未阻断'}
+            </Tag>
+            <Tag>窗口 {runtimeDiscipline?.window_days || 14} 天</Tag>
+          </Space>
+        </div>
+        <div className="quant-discipline-layout">
+          <div className="quant-discipline-ledger">
+            <span>NO-BUY BLOCKS</span>
+            <strong>{runtimeDiscipline?.summary?.blocked_count ?? 0}</strong>
+            <em>
+              {runtimeDiscipline?.summary?.conclusion ||
+                '等待下一次量化任务写入执行摘要，届时可直接看到是否因为运行时健康而不买。'}
+            </em>
+            <div className="quant-discipline-ledger__meta">
+              <Tag>运行 {runtimeDiscipline?.summary?.quant_run_count ?? 0}</Tag>
+              <Tag>阻断率 {formatPct(runtimeDiscipline?.summary?.blocked_rate_pct || 0, 1)}</Tag>
+              <Tag>最近 {formatDateTime(runtimeDiscipline?.summary?.latest_run_at)}</Tag>
+            </div>
+          </div>
+          <div className="quant-discipline-reasons">
+            <div className="quant-discipline-mini-title">主要原因</div>
+            {(runtimeDiscipline?.top_reasons || []).length ? (
+              (runtimeDiscipline?.top_reasons || []).map(item => (
+                <div className="quant-discipline-reason" key={item.reason}>
+                  <Text>{item.reason}</Text>
+                  <Tag color="gold">{item.count} 次</Tag>
+                </div>
+              ))
+            ) : (
+              <div className="quant-discipline-empty">
+                暂无阻断原因。若运行时健康为 risk，系统会只归档观察并把原因写到这里。
+              </div>
+            )}
+          </div>
+          <div className="quant-discipline-runs">
+            <div className="quant-discipline-mini-title">最近任务</div>
+            {(runtimeDiscipline?.recent_runs || []).slice(0, 4).map(item => (
+              <div className="quant-discipline-run" key={item.log_id || item.started_at}>
+                <div>
+                  <b>{item.task_name || '量化任务'}</b>
+                  <span>
+                    {formatDateTime(item.started_at)} · 归档 {item.archived_signal_count ?? '--'} ·
+                    模拟买入 {item.paper_executed ?? item.paper_planned ?? 0}
+                  </span>
+                </div>
+                <Tag color={item.runtime_risk_blocked ? 'red' : 'green'}>
+                  {item.runtime_risk_blocked ? '阻断' : '放行'}
+                </Tag>
+              </div>
+            ))}
+            {!(runtimeDiscipline?.recent_runs || []).length && (
+              <div className="quant-discipline-empty">暂无新格式量化任务摘要。</div>
+            )}
           </div>
         </div>
       </Card>

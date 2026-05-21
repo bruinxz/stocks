@@ -45,6 +45,12 @@ function asPlainObject(value: any): Record<string, any> {
   return value;
 }
 
+function dateDaysAgo(days: number): Date {
+  const date = new Date();
+  date.setDate(date.getDate() - days);
+  return date;
+}
+
 function sourceFamily(outcome: any): {
   key: 'pure_quant' | 'agent_fusion' | 'agent_only' | 'ai_daily' | 'other';
   label: string;
@@ -347,6 +353,7 @@ export class QuantPerformanceDashboardService {
       paramTradeAttribution,
       dataFreshness,
       runtimeHealth,
+      runtimeDiscipline,
     ] = await Promise.all([
       this.getLatestBacktests(),
       this.getSignalSummary(),
@@ -360,6 +367,7 @@ export class QuantPerformanceDashboardService {
       this.getParamExperimentTradeAttribution(options),
       quantDataFreshnessService.getSnapshot(),
       quantRuntimeHealthService.getHealth(options),
+      this.getRuntimeDisciplineSummary(),
     ]);
 
     return {
@@ -372,6 +380,7 @@ export class QuantPerformanceDashboardService {
       data_quality_center: dataQuality,
       data_freshness: dataFreshness,
       runtime_health: runtimeHealth,
+      runtime_discipline: runtimeDiscipline,
       strategy_experiments: strategyExperiments,
       experiment_param_suggestions: experimentParamSuggestions,
       param_validation_dashboard: {
@@ -596,6 +605,87 @@ export class QuantPerformanceDashboardService {
           };
         })
       ),
+    };
+  }
+
+  private async getRuntimeDisciplineSummary() {
+    const logs = await TaskExecutionLog.findAll({
+      where: {
+        started_at: { [Op.gte]: dateDaysAgo(14) },
+      },
+      order: [['started_at', 'DESC']],
+      limit: 300,
+    }).catch(() => [] as TaskExecutionLog[]);
+
+    const quantLogs = logs
+      .map(log => {
+        const summary = asPlainObject((log as any).result_summary);
+        return { log, summary };
+      })
+      .filter(item => item.summary.scenario === 'quant_daily_pipeline');
+    const blocked = quantLogs.filter(item => Boolean(item.summary.runtime_risk_blocked));
+    const completed = quantLogs.filter(item => item.log.status === 'COMPLETED');
+    const latest = quantLogs[0] || null;
+    const latestBlocked = blocked[0] || null;
+    const reasonCounts = blocked.reduce<Record<string, number>>((acc, item) => {
+      const reason = String(
+        item.summary.runtime_block_reason ||
+          item.summary.runtime_health?.conclusion ||
+          item.summary.message ||
+          '运行时风险阻断'
+      ).slice(0, 120);
+      acc[reason] = (acc[reason] || 0) + 1;
+      return acc;
+    }, {});
+
+    const topReasons = Object.entries(reasonCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([reason, count]) => ({ reason, count }));
+
+    const mapRecord = (item: { log: TaskExecutionLog; summary: Record<string, any> }) => ({
+      log_id: item.log.id,
+      task_id: item.log.task_id,
+      task_name: item.log.task_name,
+      status: item.log.status,
+      started_at: item.log.started_at,
+      completed_at: item.log.completed_at,
+      runtime_risk_blocked: Boolean(item.summary.runtime_risk_blocked),
+      runtime_block_reason: item.summary.runtime_block_reason || null,
+      runtime_health: item.summary.runtime_health || null,
+      trade_date: item.summary.trade_date,
+      scanned_stocks: item.summary.scanned_stocks,
+      signal_count: item.summary.signal_count,
+      archived_signal_count: item.summary.archived_signal_count,
+      agent_submitted: item.summary.agent_submitted,
+      paper_executed: item.summary.paper_executed,
+      paper_planned: item.summary.paper_planned,
+      paper_skipped: item.summary.paper_skipped,
+      message: item.summary.message,
+    });
+
+    return {
+      generated_at: new Date().toISOString(),
+      window_days: 14,
+      summary: {
+        quant_run_count: quantLogs.length,
+        completed_run_count: completed.length,
+        blocked_count: blocked.length,
+        blocked_rate_pct: roundNumber((blocked.length / Math.max(quantLogs.length, 1)) * 100, 2),
+        latest_blocked_at: latestBlocked?.log.started_at || null,
+        latest_run_at: latest?.log.started_at || null,
+        latest_run_blocked: Boolean(latest?.summary.runtime_risk_blocked),
+        conclusion:
+          blocked.length > 0
+            ? `近 14 天量化运行 ${quantLogs.length} 次，其中 ${blocked.length} 次因运行时风险只观察不买入。`
+            : quantLogs.length > 0
+              ? `近 14 天量化运行 ${quantLogs.length} 次，暂无运行时风险阻断买入。`
+              : '近 14 天暂无量化任务执行摘要，等待下一次定时任务沉淀。',
+      },
+      top_reasons: topReasons,
+      latest: latest ? mapRecord(latest) : null,
+      latest_blocked: latestBlocked ? mapRecord(latestBlocked) : null,
+      recent_runs: quantLogs.slice(0, 8).map(mapRecord),
     };
   }
 
