@@ -180,9 +180,27 @@ const CHAIN_CONFIGS: HealthChainConfig[] = [
     key: 'signal_feedback',
     title: '信号后验反馈',
     subtitle: '验证推荐后的 5 日表现，给下一轮评分、仓位和策略版本反哺。',
-    task_names: ['推荐绩效后验刷新', 'Agent尾盘建议收益追踪', '信号质量日报'],
+    task_names: ['推荐绩效后验刷新', 'Agent尾盘建议收益追踪', '信号质量日报', '量化参数后验维护'],
     stale_hours: 96,
     critical_if_inactive: true,
+    parameter_checks: [
+      {
+        task_name: '量化参数后验维护',
+        key: 'dry_run_lifecycle',
+        camel_key: 'dryRunLifecycle',
+        expected: false,
+        label: '参数生命周期真实应用',
+        level: 'warning',
+      },
+      {
+        task_name: '量化参数后验维护',
+        key: 'report_to_feishu',
+        camel_key: 'reportToFeishu',
+        expected: true,
+        label: '参数后验飞书摘要',
+        level: 'warning',
+      },
+    ],
   },
   {
     key: 'paper_trading',

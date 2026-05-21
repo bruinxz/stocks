@@ -171,6 +171,7 @@ function classifyRuntimeCheck(check: RuntimeHealthCheck): RuntimeHealthCheck {
     'quote_persistence',
     'schedule',
     'execution_discipline',
+    'param_maintenance',
   ]);
   const degradedKeys = new Set(['factor_coverage', 'data_freshness', 'active_params']);
   if (check.status === 'risk' && blockingKeys.has(key)) {
@@ -237,6 +238,9 @@ function buildExecutionDiscipline(tasks: ScheduledTask[]) {
   const quoteSyncTasks = tasks.filter(
     task => task.type === 'REALTIME_QUOTE_SYNC' && task.is_active
   );
+  const paramMaintenanceTasks = tasks.filter(
+    task => task.type === 'QUANT_PARAM_MAINTENANCE' && task.is_active
+  );
   const watchdogTasks = tasks.filter(task => task.type === 'QUANT_OPEN_WATCHDOG' && task.is_active);
 
   const addIssue = (
@@ -254,6 +258,27 @@ function buildExecutionDiscipline(tasks: ScheduledTask[]) {
       'quote_sync_task_missing',
       '未启用盘中实时行情快照刷新任务，午间/盘中行情可能滞后。'
     );
+  }
+
+  if (paramMaintenanceTasks.length === 0) {
+    addIssue(
+      'warn',
+      'param_maintenance_task_missing',
+      '未启用量化参数后验维护任务，A/B 收益刷新和参数晋级可能只依赖扫描顺带执行。'
+    );
+  }
+
+  for (const task of paramMaintenanceTasks) {
+    const params = (task.parameters || {}) as Record<string, any>;
+    if (toNumber(params.refresh_limit, 0) < 1000) {
+      addIssue('warn', 'param_refresh_limit_low', `${task.name} 收益刷新上限低于 1000，可能无法覆盖待验证样本。`, task);
+    }
+    if (!Array.isArray(params.horizons) || params.horizons.length < 3) {
+      addIssue('warn', 'param_horizons_incomplete', `${task.name} 未覆盖 1/3/5/10 日等多窗口验证。`, task);
+    }
+    if (boolParam(params.dry_run_lifecycle, false)) {
+      addIssue('warn', 'param_lifecycle_dry_run', `${task.name} 生命周期处于 dry-run，不会真正推广/降级/回滚参数。`, task);
+    }
   }
 
   for (const task of pipelineTasks) {
@@ -397,6 +422,7 @@ function buildExecutionDiscipline(tasks: ScheduledTask[]) {
       open_task_count: openTasks.length,
       close_task_count: closeTasks.length,
       quote_sync_task_count: quoteSyncTasks.length,
+      param_maintenance_task_count: paramMaintenanceTasks.length,
       watchdog_task_count: watchdogTasks.length,
       conclusion:
         riskCount > 0
@@ -470,7 +496,7 @@ class QuantRuntimeHealthService {
         })),
       ScheduledTask.findAll({
         where: {
-          type: { [Op.in]: ['QUANT_DAILY_PIPELINE', 'QUANT_OPEN_WATCHDOG', 'REALTIME_QUOTE_SYNC'] },
+          type: { [Op.in]: ['QUANT_DAILY_PIPELINE', 'QUANT_OPEN_WATCHDOG', 'REALTIME_QUOTE_SYNC', 'QUANT_PARAM_MAINTENANCE'] },
         },
         order: [['cron_expression', 'ASC']],
       }).catch(() => [] as ScheduledTask[]),
@@ -507,6 +533,9 @@ class QuantRuntimeHealthService {
     );
     const quoteSyncTasks = tasks.filter(
       task => task.type === 'REALTIME_QUOTE_SYNC' && task.is_active
+    );
+    const paramMaintenanceTasks = tasks.filter(
+      task => task.type === 'QUANT_PARAM_MAINTENANCE' && task.is_active
     );
     const watchdogTasks = tasks.filter(
       task => task.type === 'QUANT_OPEN_WATCHDOG' && task.is_active
@@ -705,6 +734,7 @@ class QuantRuntimeHealthService {
         policy_ready_strategy_count: policyReadyCount,
         open_task_count: openTasks.length,
         quote_sync_task_count: quoteSyncTasks.length,
+        param_maintenance_task_count: paramMaintenanceTasks.length,
         watchdog_task_count: watchdogTasks.length,
         execution_discipline_status: executionDiscipline.status,
         factor_min_coverage_rate: round(factorMinCoverage),

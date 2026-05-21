@@ -32,6 +32,23 @@ Known frontend build warnings are historical Prettier warnings in existing files
 
 ## Completed in current autonomous batch
 
+
+### 2026-05-21 continuous iteration: quant parameter maintenance lane
+
+- 参数更自动：
+  - 新增 `QUANT_PARAM_MAINTENANCE` 定时任务「量化参数后验维护」，默认工作日 16:45 执行。
+  - 任务独立完成三件事：为最近 21 天 buy/watch 量化信号补建 1/3/5/10 日 A/B 验证样本；刷新待验证收益；执行参数生命周期推广/降级/回滚。
+  - 任务摘要写入 `task_execution_logs.result_summary.scenario=quant_param_maintenance`，包含新增验证、完成验证、待完成、生命周期应用数量、当前冠军/候选数量。
+- 纪律更可执行：
+  - runtime health / 执行纪律检查新增参数后验维护任务识别；缺失、刷新上限过低、多窗口不足或生命周期 dry-run 会提示观察项。
+  - 只读 smoke 增加 `QUANT_PARAM_MAINTENANCE` 存在性、`refresh_limit>=1000`、多窗口 horizons 以及收益驾驶舱维护状态结构校验，防止参数闭环回归。
+- 页面更简洁：
+  - 量化收益驾驶舱“明日开盘自动运行链路”新增 16:45 参数收益后验维护节点。
+  - 参数 A/B 区块新增「PARAM MAINTENANCE」结论条，直接展示下一步动作、完成率、待完成率、生命周期动作数和最近刷新时间。
+  - 任务调度历史日志支持识别“参数后验”和“行情快照”场景，展示新增/完成验证、生命周期动作和行情落盘摘要，减少读 JSON。
+- 部署更稳定：
+  - 默认任务 `ensureDefaultTasks()` 会自动补齐该维护任务；已有任务只补缺省参数，不覆盖人工调优。
+
 ### 2026-05-21 continuous iteration: intraday realtime quote refresh lane
 
 - 数据更真实：

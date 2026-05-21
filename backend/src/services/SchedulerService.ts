@@ -9,6 +9,7 @@ import { quantRecommendationService } from './QuantRecommendationService';
 import { quantFusionService } from '../quant/services/QuantFusionService';
 import { quantOpenWatchdogService } from '../quant/services/QuantOpenWatchdogService';
 import { quantStrategyFeedbackService } from '../quant/services/QuantStrategyFeedbackService';
+import { quantStrategyParamVersionService } from '../quant/services/QuantStrategyParamVersionService';
 import { quantDataService } from '../quant/services/QuantDataService';
 import { realtimeQuoteService } from '../data/services/RealtimeQuoteService';
 import { aiInvestmentSignalService } from './AIInvestmentSignalService';
@@ -85,6 +86,49 @@ function buildQuantDailyPipelineLogSummary(
     paper_planned: paper?.planned,
     paper_skipped: paper?.skipped,
     message: result?.message,
+  };
+}
+
+
+function buildQuantParamMaintenanceLogSummary(result: any) {
+  const create = result?.create || {};
+  const refresh = result?.refresh || {};
+  const lifecycle = result?.lifecycle || {};
+  const lifecycleSummary = lifecycle?.lifecycle?.summary || lifecycle?.summary || {};
+  const activeScan = result?.active_scan_params || {};
+  const activeSummary = activeScan?.summary || {};
+  const promoted = Number(lifecycleSummary.promotion_count || 0);
+  const degraded = Number(lifecycleSummary.degradation_count || 0);
+  const rolledBack = Number(lifecycleSummary.rollback_count || 0);
+  const applied = Number(lifecycle?.applied || 0);
+  const completed = Number(refresh?.completed || 0);
+  const pending = Number(refresh?.pending || 0);
+  const noData = Number(refresh?.no_data || 0);
+  const created = Number(create?.created || 0);
+  const updated = Number(create?.updated || 0);
+  return {
+    scenario: 'quant_param_maintenance',
+    status: result?.status || 'completed',
+    trade_date: result?.trade_date,
+    signal_window: result?.signal_window,
+    horizons: create?.horizons || result?.horizons,
+    created_validations: created,
+    updated_validations: updated,
+    refreshed_validations: Number(refresh?.refreshed || 0),
+    completed_validations: completed,
+    pending_validations: pending,
+    no_data_validations: noData,
+    lifecycle_applied: applied,
+    lifecycle_promotion_count: promoted,
+    lifecycle_degradation_count: degraded,
+    lifecycle_rollback_count: rolledBack,
+    active_adopted_strategy_count: Number(activeSummary.adopted_strategy_count || 0),
+    active_champion_count: Number(activeSummary.champion_count || 0),
+    active_candidate_count: Number(activeSummary.active_candidate_count || 0),
+    message:
+      applied > 0
+        ? `参数后验维护完成：应用 ${applied} 个生命周期动作（推广 ${promoted}、降级 ${degraded}、回滚 ${rolledBack}）。`
+        : `参数后验维护完成：新增 ${created} 条、更新 ${updated} 条，完成收益 ${completed} 条，待完成 ${pending} 条。`,
   };
 }
 
@@ -525,6 +569,108 @@ class SchedulerService {
           `实时行情快照刷新完成。请求 ${result.requested_count}，落盘 ${
             result.persisted_count
           }，更新股票 ${result.updated_stock_count}，最新 ${result.latest_quote_time || '-'}`
+        );
+      } else if (task.type === 'QUANT_PARAM_MAINTENANCE') {
+        const tradeDate = parameters.trade_date || parameters.tradeDate || today;
+        const lookbackDays = this.toPositiveInt(
+          parameters.lookback_days || parameters.lookbackDays,
+          14,
+          365
+        );
+        const signalStartDate =
+          parameters.start_date ||
+          parameters.startDate ||
+          moment(tradeDate).subtract(lookbackDays, 'days').format('YYYY-MM-DD');
+        const signalEndDate = parameters.end_date || parameters.endDate || tradeDate;
+        const rawSignals = Array.isArray(parameters.signal)
+          ? parameters.signal
+          : Array.isArray(parameters.signals)
+          ? parameters.signals
+          : ['buy', 'watch'];
+        const strategyKeys = Array.isArray(parameters.strategy_keys)
+          ? parameters.strategy_keys
+          : Array.isArray(parameters.strategyKeys)
+          ? parameters.strategyKeys
+          : undefined;
+        const horizons = Array.isArray(parameters.horizons)
+          ? parameters.horizons.map((item: any) => this.toPositiveInt(item, 1, 60)).filter(Boolean)
+          : [1, 3, 5, 10];
+        const create = await quantStrategyParamVersionService.createPendingValidationsFromSignals({
+          start_date: signalStartDate,
+          end_date: signalEndDate,
+          strategy_keys: strategyKeys,
+          horizons,
+          limit: this.toPositiveInt(parameters.limit, 1000, 10000),
+          signal: rawSignals.map((item: any) => String(item || '').trim()).filter(Boolean),
+        });
+        const refresh = await quantStrategyParamVersionService.refreshValidationReturns({
+          limit: this.toPositiveInt(
+            parameters.refresh_limit || parameters.refreshLimit,
+            3000,
+            20000
+          ),
+          include_completed:
+            parameters.include_completed !== undefined
+              ? Boolean(parameters.include_completed)
+              : parameters.includeCompleted !== undefined
+              ? Boolean(parameters.includeCompleted)
+              : false,
+          auto_sync_benchmark:
+            parameters.auto_sync_benchmark !== undefined
+              ? Boolean(parameters.auto_sync_benchmark)
+              : parameters.autoSyncBenchmark !== undefined
+              ? Boolean(parameters.autoSyncBenchmark)
+              : false,
+        });
+        const lifecycle = await quantStrategyParamVersionService.evaluateAndApplyLifecycle({
+          dry_run:
+            parameters.dry_run_lifecycle !== undefined
+              ? Boolean(parameters.dry_run_lifecycle)
+              : parameters.dryRunLifecycle !== undefined
+              ? Boolean(parameters.dryRunLifecycle)
+              : false,
+          policy: parameters.lifecycle_policy || parameters.lifecyclePolicy,
+          limit: this.toPositiveInt(parameters.lifecycle_limit || parameters.lifecycleLimit, 5000, 20000),
+        });
+        const activeScanParams = await quantStrategyParamVersionService.getActiveParamsForScan({
+          include_grid_search: true,
+          include_experiment: true,
+        });
+        const result = {
+          status: 'completed',
+          generated_at: new Date().toISOString(),
+          trade_date: tradeDate,
+          signal_window: { start_date: signalStartDate, end_date: signalEndDate },
+          horizons,
+          create,
+          refresh,
+          lifecycle,
+          active_scan_params: activeScanParams,
+          message: lifecycle?.applied
+            ? `参数后验维护完成，已应用 ${lifecycle.applied} 个推广/降级/回滚动作。`
+            : `参数后验维护完成，新增 ${create.created} 条验证样本，完成 ${refresh.completed} 条收益刷新。`,
+        };
+        const resultSummary = buildQuantParamMaintenanceLogSummary(result);
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: Number(create.scanned || 0) + Number(refresh.refreshed || 0),
+          completed_items: Number(create.created || 0) + Number(create.updated || 0) + Number(refresh.completed || 0),
+          failed_items: Number(refresh.no_data || 0),
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: null,
+          result_summary: resultSummary,
+        });
+
+        if (parameters.report_to_feishu !== false && parameters.reportToFeishu !== false) {
+          await feishuTaskReportService.reportTaskExecutionLog(executionLog, {
+            record_type: parameters.record_type || parameters.recordType || '量化参数后验维护',
+            task_type: 'QUANT_PARAM_MAINTENANCE',
+            result: resultSummary,
+          });
+        }
+
+        logger.info(
+          `量化参数后验维护完成。新增 ${create.created}，更新 ${create.updated}，完成收益 ${refresh.completed}，生命周期应用 ${lifecycle.applied}`
         );
       } else if (task.type === 'QUANT_DAILY_PIPELINE') {
         await quantStrategyFeedbackService.refreshWeights({
@@ -1936,6 +2082,25 @@ class SchedulerService {
         },
       },
       {
+        name: '量化参数后验维护',
+        type: 'QUANT_PARAM_MAINTENANCE',
+        cron_expression: '45 16 * * 1-5',
+        is_active: true,
+        parameters: {
+          lookback_days: 21,
+          horizons: [1, 3, 5, 10],
+          signal: ['buy', 'watch'],
+          limit: 1500,
+          refresh_limit: 5000,
+          lifecycle_limit: 5000,
+          auto_sync_benchmark: false,
+          dry_run_lifecycle: false,
+          report_to_feishu: true,
+          notify_to_feishu_bot: false,
+          record_type: '量化参数后验维护',
+        },
+      },
+      {
         name: '实时行情快照刷新',
         type: 'REALTIME_QUOTE_SYNC',
         cron_expression: '5,25 9,10,13,14 * * 1-5',
@@ -2591,6 +2756,31 @@ class SchedulerService {
           'repair_lookback_days',
           'sync_concurrency',
           'verify_before_report',
+          'report_to_feishu',
+          'notify_to_feishu_bot',
+          'record_type',
+        ]) {
+          if (nextParams[key] === undefined && (taskData.parameters as any)[key] !== undefined) {
+            nextParams[key] = (taskData.parameters as any)[key];
+          }
+        }
+        if (JSON.stringify(nextParams) !== JSON.stringify(params)) {
+          patch.parameters = nextParams;
+        }
+      }
+
+      if (taskData.type === 'QUANT_PARAM_MAINTENANCE') {
+        const params = patch.parameters || task.parameters || {};
+        const nextParams = { ...taskData.parameters, ...params };
+        for (const key of [
+          'lookback_days',
+          'horizons',
+          'signal',
+          'limit',
+          'refresh_limit',
+          'lifecycle_limit',
+          'auto_sync_benchmark',
+          'dry_run_lifecycle',
           'report_to_feishu',
           'notify_to_feishu_bot',
           'record_type',

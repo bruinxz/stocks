@@ -68,6 +68,8 @@ const taskTypeLabels: Record<string, string> = {
   DATA_QUALITY_SCAN: '数据质量扫描',
   BENCHMARK_INDEX_SYNC: '基准指数行情同步',
   QUANT_DAILY_PIPELINE: '量化策略全市场扫描',
+  QUANT_PARAM_MAINTENANCE: '量化参数后验维护',
+  REALTIME_QUOTE_SYNC: '实时行情快照刷新',
   AI_DAILY_SCREENER: 'AI 每日优选评估',
   AUTO_RECOMMENDATION_LOOP: '全市场荐股闭环',
   SIGNAL_PERFORMANCE_REFRESH: '推荐绩效后验刷新',
@@ -133,6 +135,26 @@ const defaultParametersByType: Record<string, any> = {
     data_source: 'tencent_only',
     concurrency: 2,
     report_to_feishu: true,
+  },
+  QUANT_PARAM_MAINTENANCE: {
+    lookback_days: 21,
+    horizons: [1, 3, 5, 10],
+    signal: ['buy', 'watch'],
+    limit: 1500,
+    refresh_limit: 5000,
+    lifecycle_limit: 5000,
+    auto_sync_benchmark: false,
+    dry_run_lifecycle: false,
+    report_to_feishu: true,
+    notify_to_feishu_bot: false,
+  },
+  REALTIME_QUOTE_SYNC: {
+    universe: 'market',
+    limit: 360,
+    source: 'auto',
+    batch_size: 300,
+    report_to_feishu: false,
+    notify_to_feishu_bot: false,
   },
   QUANT_DAILY_PIPELINE: {
     username: 'lym',
@@ -1844,7 +1866,24 @@ const TaskScheduler: React.FC = () => {
                         <Tag color="red">风险阻断买入</Tag>
                       ) : summary.scenario === 'quant_daily_pipeline' ? (
                         <Tag color="blue">量化闭环</Tag>
+                      ) : summary.scenario === 'quant_param_maintenance' ? (
+                        <Tag color="purple">参数后验</Tag>
+                      ) : summary.scenario === 'realtime_quote_sync' ? (
+                        <Tag color="cyan">行情快照</Tag>
                       ) : null}
+                      {summary.lifecycle_applied !== undefined && (
+                        <Tag
+                          color={Number(summary.lifecycle_applied || 0) > 0 ? 'green' : 'default'}
+                        >
+                          生命周期 {summary.lifecycle_applied}
+                        </Tag>
+                      )}
+                      {summary.completed_validations !== undefined && (
+                        <Tag>完成验证 {summary.completed_validations}</Tag>
+                      )}
+                      {summary.persisted_count !== undefined && (
+                        <Tag>行情 {summary.persisted_count}</Tag>
+                      )}
                       {runtimeHealth?.status && (
                         <Tag color={getRuntimeHealthTagColor(runtimeHealth.status)}>
                           健康 {runtimeHealth.status}
@@ -1871,9 +1910,17 @@ const TaskScheduler: React.FC = () => {
                         '执行完成'}
                     </Text>
                     <Text type="secondary" style={{ fontSize: 12 }}>
-                      归档 {summary.archived_signal_count ?? '-'} · Agent{' '}
-                      {summary.agent_submitted ?? 0} · 模拟买入{' '}
-                      {summary.paper_executed ?? summary.paper_planned ?? 0}
+                      {summary.scenario === 'quant_param_maintenance'
+                        ? `新增 ${summary.created_validations ?? 0} · 完成 ${
+                            summary.completed_validations ?? 0
+                          } · 待完成 ${summary.pending_validations ?? 0}`
+                        : summary.scenario === 'realtime_quote_sync'
+                        ? `请求 ${summary.requested_count ?? '-'} · 落盘 ${
+                            summary.persisted_count ?? 0
+                          } · 覆盖 ${summary.latest_trade_date_symbol_count ?? 0}`
+                        : `归档 ${summary.archived_signal_count ?? '-'} · Agent ${
+                            summary.agent_submitted ?? 0
+                          } · 模拟买入 ${summary.paper_executed ?? summary.paper_planned ?? 0}`}
                     </Text>
                   </Space>
                 );

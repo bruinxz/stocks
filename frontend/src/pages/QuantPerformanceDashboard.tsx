@@ -219,6 +219,7 @@ type RuntimeHealth = {
     policy_ready_strategy_count?: number;
     open_task_count?: number;
     quote_sync_task_count?: number;
+    param_maintenance_task_count?: number;
     watchdog_task_count?: number;
     factor_min_coverage_rate?: number;
     factor_real_provider_rate?: number;
@@ -345,6 +346,7 @@ type DashboardData = {
     quant_pipeline_task_count?: number;
     watchdog_task_count?: number;
     quote_sync_task_count?: number;
+    param_maintenance_task_count?: number;
     tasks?: ScheduleTask[];
   };
   outcome_comparison?: { summary?: any; families?: OutcomeFamily[]; by_strategy_key?: any[] };
@@ -467,6 +469,25 @@ type DashboardData = {
       win_rate?: number;
       rank_score?: number;
     } | null;
+    maintenance_status?: {
+      status?: string;
+      next_action?: string;
+      conclusion?: string;
+      completion_rate?: number;
+      pending_rate?: number;
+      no_data_rate?: number;
+      latest_updated_at?: string | null;
+      latest_completed_at?: string | null;
+      stale_hours?: number | null;
+      latest_signal_date?: string | null;
+      latest_evaluation_date?: string | null;
+      actionable_lifecycle_count?: number;
+      promotion_count?: number;
+      degradation_count?: number;
+      rollback_count?: number;
+      active_candidate_count?: number;
+      champion_count?: number;
+    };
     lifecycle?: {
       summary?: {
         promotion_count?: number;
@@ -658,6 +679,13 @@ const QuantPerformanceDashboard: React.FC = () => {
   const quoteSyncTask = useMemo(
     () =>
       (dashboard?.schedule_summary?.tasks || []).find(task => task.type === 'REALTIME_QUOTE_SYNC'),
+    [dashboard]
+  );
+  const paramMaintenanceTask = useMemo(
+    () =>
+      (dashboard?.schedule_summary?.tasks || []).find(
+        task => task.type === 'QUANT_PARAM_MAINTENANCE'
+      ),
     [dashboard]
   );
   const closeTask = useMemo(
@@ -1302,6 +1330,32 @@ const QuantPerformanceDashboard: React.FC = () => {
               ),
             },
             {
+              color: paramMaintenanceTask?.is_active ? 'green' : 'gold',
+              dot: <ExperimentOutlined />,
+              children: (
+                <div>
+                  <strong>16:45 参数收益后验维护</strong>
+                  <p>
+                    {paramMaintenanceTask
+                      ? `${paramMaintenanceTask.cron_expression} · ${
+                          paramMaintenanceTask.is_active ? '已启用' : '未启用'
+                        } · 最近 ${
+                          paramMaintenanceTask.latest_log?.status ||
+                          paramMaintenanceTask.last_run_status ||
+                          '等待运行'
+                        }`
+                      : '尚未创建量化参数后验维护任务'}
+                  </p>
+                  <Space wrap size={[6, 6]}>
+                    <Tag>A/B收益刷新</Tag>
+                    <Tag>冠军晋级</Tag>
+                    <Tag>降级/回滚</Tag>
+                    <Tag>冷却排除</Tag>
+                  </Space>
+                </div>
+              ),
+            },
+            {
               color: 'blue',
               dot: <ThunderboltOutlined />,
               children: (
@@ -1643,6 +1697,29 @@ const QuantPerformanceDashboard: React.FC = () => {
           <Tag color="red">
             回滚PnL ≤ {formatMoney(paramValidation?.lifecycle?.trade_guard?.rollback_total_pnl)}
           </Tag>
+        </div>
+        <div className="quant-maintenance-brief">
+          <div>
+            <span>PARAM MAINTENANCE</span>
+            <strong>{paramValidation?.maintenance_status?.next_action || '等待后验维护'}</strong>
+            <p>
+              {paramValidation?.maintenance_status?.conclusion ||
+                '参数后验维护任务会在收盘后刷新收益样本，并按护栏推广/降级/回滚参数。'}
+            </p>
+          </div>
+          <Space wrap size={[6, 6]}>
+            <Tag color={paramMaintenanceTask?.is_active ? 'green' : 'gold'}>
+              {paramMaintenanceTask?.is_active ? '定时已启用' : '定时待启用'}
+            </Tag>
+            <Tag>完成率 {formatPct(paramValidation?.maintenance_status?.completion_rate)}</Tag>
+            <Tag>待完成 {formatPct(paramValidation?.maintenance_status?.pending_rate)}</Tag>
+            <Tag>
+              生命周期动作 {paramValidation?.maintenance_status?.actionable_lifecycle_count || 0}
+            </Tag>
+            <Tag>
+              最近刷新 {formatDateTime(paramValidation?.maintenance_status?.latest_updated_at)}
+            </Tag>
+          </Space>
         </div>
         <div className="quant-ab-list">
           {(paramValidation?.summary_by_version || []).slice(0, 6).map(item => (

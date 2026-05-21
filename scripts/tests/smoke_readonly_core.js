@@ -411,6 +411,29 @@ async function main() {
             )}`
           );
         }
+        const paramMaintenanceTask = tasks.find(
+          (task) => task?.type === "QUANT_PARAM_MAINTENANCE"
+        );
+        if (!paramMaintenanceTask) {
+          throw new Error("quant param maintenance task missing");
+        }
+        if (Number(paramMaintenanceTask.parameters?.refresh_limit || 0) < 1000) {
+          throw new Error(
+            `quant param maintenance refresh_limit too low: ${preview(
+              paramMaintenanceTask
+            )}`
+          );
+        }
+        if (
+          !Array.isArray(paramMaintenanceTask.parameters?.horizons) ||
+          paramMaintenanceTask.parameters.horizons.length < 3
+        ) {
+          throw new Error(
+            `quant param maintenance horizons incomplete: ${preview(
+              paramMaintenanceTask
+            )}`
+          );
+        }
       },
     });
 
@@ -848,6 +871,24 @@ async function main() {
             throw new Error(
               `quant performance quote sync schedule missing: ${preview(
                 json.data?.schedule_summary
+              )}`
+            );
+          }
+          if (
+            !json.data?.schedule_summary?.tasks?.some(
+              (task) => task?.type === "QUANT_PARAM_MAINTENANCE"
+            )
+          ) {
+            throw new Error(
+              `quant performance param maintenance schedule missing: ${preview(
+                json.data?.schedule_summary
+              )}`
+            );
+          }
+          if (!json.data?.param_validation_dashboard?.maintenance_status) {
+            throw new Error(
+              `quant performance param maintenance status missing: ${preview(
+                json.data?.param_validation_dashboard
               )}`
             );
           }
