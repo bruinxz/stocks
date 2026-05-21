@@ -62,6 +62,13 @@ function asPlainObject(value: any): Record<string, any> {
   return value;
 }
 
+function paperTradingMetaForPortfolio(metadata: Record<string, any>, portfolio_id?: number) {
+  const legacy = asPlainObject(metadata.paper_trading);
+  const byPortfolio = asPlainObject(metadata.paper_trading_by_portfolio);
+  const keyed = portfolio_id ? asPlainObject(byPortfolio[String(portfolio_id)]) : {};
+  return Object.keys(keyed).length > 0 ? keyed : legacy;
+}
+
 function calculateReturns(closes: number[]): number[] {
   const returns: number[] = [];
   for (let index = 1; index < closes.length; index++) {
@@ -102,9 +109,12 @@ function pearsonCorrelation(a: number[], b: number[]): number {
   return roundNumber(numerator / denominator, 4);
 }
 
-function strategyKeysFromSignalMetadata(metadata: Record<string, any>): string[] {
+function strategyKeysFromSignalMetadata(
+  metadata: Record<string, any>,
+  portfolio_id?: number
+): string[] {
   const strategyVariant = asPlainObject(metadata.strategy_variant);
-  const paperTrading = asPlainObject(metadata.paper_trading);
+  const paperTrading = paperTradingMetaForPortfolio(metadata, portfolio_id);
   const paperVariant = asPlainObject(paperTrading.strategy_variant);
   const keys = [
     metadata.strategy_key,
@@ -211,8 +221,16 @@ export class PaperTradingRiskProfileService {
         : Promise.resolve([]),
       AIInvestmentSignal.findAll({
         where: {
-          'metadata.paper_trading.portfolio_id': portfolio.id,
-          'metadata.paper_trading.status': 'executed',
+          [Op.or]: [
+            {
+              'metadata.paper_trading.portfolio_id': portfolio.id,
+              'metadata.paper_trading.status': 'executed',
+            },
+            {
+              [`metadata.paper_trading_by_portfolio.${portfolio.id}.portfolio_id`]: portfolio.id,
+              [`metadata.paper_trading_by_portfolio.${portfolio.id}.status`]: 'executed',
+            },
+          ],
         } as any,
         order: [['updated_at', 'DESC']],
         limit: 2000,
@@ -270,7 +288,7 @@ export class PaperTradingRiskProfileService {
       const volatility20dPct = calculateVolatilityPct(returns.slice(-20));
       const maxCorrelation = roundNumber(toNumber(maxCorrelationBySymbol.get(symbol), 0), 4);
       const signalMetadata = signalMetadataBySymbol.get(symbol) || {};
-      const strategyKeys = strategyKeysFromSignalMetadata(signalMetadata);
+      const strategyKeys = strategyKeysFromSignalMetadata(signalMetadata, portfolio.id);
       const riskFlags: string[] = [];
       if (volatility20dPct > limits.max_single_stock_volatility_pct) {
         riskFlags.push(`波动 ${volatility20dPct}% 高于阈值`);

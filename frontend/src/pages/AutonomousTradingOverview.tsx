@@ -63,6 +63,10 @@ interface Position {
   unrealized_pnl: number;
   unrealized_pnl_pct: number;
   weight_pct: number;
+  account_key?: string;
+  account_label?: string;
+  account_name?: string;
+  portfolio_id?: number;
   created_at?: string;
 }
 
@@ -76,6 +80,10 @@ interface Trade {
   amount: number;
   commission: number;
   realized_pnl?: number | null;
+  account_key?: string;
+  account_label?: string;
+  account_name?: string;
+  portfolio_id?: number;
   created_at: string;
 }
 
@@ -85,6 +93,30 @@ interface EquityPoint {
   current_cash: number;
   position_value: number;
   total_return_pct: number;
+}
+
+interface PortfolioFamily {
+  key: string;
+  label: string;
+  name: string;
+  description: string;
+  exists?: boolean;
+  portfolio_id?: number | null;
+  total_value?: number;
+  current_cash?: number;
+  position_value?: number;
+  total_pnl?: number;
+  total_return_pct?: number;
+  cash_pct?: number;
+  exposure_pct?: number;
+  open_position_count?: number;
+  trade_count?: number;
+  outcome_count?: number;
+  closed_outcome_count?: number;
+  open_outcome_count?: number;
+  win_rate?: number;
+  avg_closed_return_pct?: number;
+  latest_trade_at?: string | null;
 }
 
 interface TrackingItem {
@@ -133,6 +165,22 @@ interface DashboardData {
   };
   positions: Position[];
   recent_trades: Trade[];
+  all_open_positions?: Position[];
+  all_recent_trades?: Trade[];
+  portfolio_family_summary?: {
+    generated_at: string;
+    families: PortfolioFamily[];
+    summary: {
+      family_count: number;
+      active_family_count: number;
+      open_position_count: number;
+      total_position_value: number;
+      total_pnl: number;
+      champion?: PortfolioFamily;
+      most_active?: PortfolioFamily;
+      conclusion?: string;
+    };
+  };
   equity_curve: EquityPoint[];
   recommendation_tracking?: {
     summary: {
@@ -223,6 +271,17 @@ const statusTag = (status?: string, label?: string) => {
     not_traded: 'default',
   };
   return <Tag color={colorMap[status || ''] || 'default'}>{label || status || '未知'}</Tag>;
+};
+
+const accountTagColor = (key?: string) => {
+  const colorMap: Record<string, string> = {
+    legacy_autonomous: 'blue',
+    quant_only: 'geekblue',
+    quant_agent_fusion: 'purple',
+    agent_only: 'cyan',
+    param_experiment: 'gold',
+  };
+  return colorMap[key || ''] || 'default';
 };
 
 const AutonomousTradingOverview: React.FC = () => {
@@ -376,9 +435,22 @@ const AutonomousTradingOverview: React.FC = () => {
   const summary = data?.summary;
   const trackingSummary = data?.recommendation_tracking?.summary;
   const feedback = data?.outcome_dashboard?.feedback;
+  const familySummary = data?.portfolio_family_summary;
+  const portfolioFamilies = familySummary?.families || [];
+  const totalOpenPositions =
+    familySummary?.summary?.open_position_count || summary?.open_position_count || 0;
+  const activeFamilies = portfolioFamilies.filter(
+    item => item.exists && Number(item.open_position_count || 0) > 0
+  );
+  const visiblePositions = data?.all_open_positions?.length
+    ? data.all_open_positions
+    : data?.positions || [];
+  const visibleTrades = data?.all_recent_trades?.length
+    ? data.all_recent_trades
+    : data?.recent_trades || [];
   const activeTab =
     new URLSearchParams(location.search).get('tab') === 'manual' ? 'manual' : 'auto';
-  const hasOpenRisk = Number(summary?.open_position_count || trackingSummary?.open_count || 0) > 0;
+  const hasOpenRisk = Number(totalOpenPositions || trackingSummary?.open_count || 0) > 0;
   const hasLoopFeedback = Number(summary?.closed_recommendation_count || 0) > 0;
   const primaryFocus = !hasOpenRisk
     ? '暂无持仓，先看新推荐'
@@ -414,6 +486,15 @@ const AutonomousTradingOverview: React.FC = () => {
             {record.symbol}
           </Text>
         </Space>
+      ),
+    },
+    {
+      title: '账户',
+      dataIndex: 'account_label',
+      key: 'account_label',
+      width: 138,
+      render: (_: string, record: Position) => (
+        <Tag color={accountTagColor(record.account_key)}>{record.account_label || '综合盘'}</Tag>
       ),
     },
     {
@@ -492,6 +573,15 @@ const AutonomousTradingOverview: React.FC = () => {
       ),
     },
     {
+      title: '账户',
+      dataIndex: 'account_label',
+      key: 'account_label',
+      width: 138,
+      render: (_: string, record: Trade) => (
+        <Tag color={accountTagColor(record.account_key)}>{record.account_label || '综合盘'}</Tag>
+      ),
+    },
+    {
       title: '方向',
       dataIndex: 'direction',
       key: 'direction',
@@ -534,18 +624,24 @@ const AutonomousTradingOverview: React.FC = () => {
         <div>
           <span>先看这里</span>
           <strong>
-            {summary?.total_pnl !== undefined
+            {familySummary?.summary
+              ? `${totalOpenPositions}只持仓 / ${formatSignedMoney(
+                  familySummary.summary.total_pnl
+                )}`
+              : summary?.total_pnl !== undefined
               ? `${formatSignedMoney(summary.total_pnl)} / ${formatPercent(
                   summary.total_return_pct
                 )}`
               : '等待模拟盘数据'}
           </strong>
-          <em>当前模拟盘总结果</em>
+          <em>全部策略账户汇总，不只看综合盘</em>
         </div>
         <div>
           <span>今天要做什么</span>
           <strong>{primaryFocus}</strong>
-          <em>{trackingSummary?.open_count || summary?.open_position_count || 0} 只持仓待检查</em>
+          <em>
+            {totalOpenPositions} 只持仓待检查，{activeFamilies.length || 0} 个账户已建仓
+          </em>
         </div>
         <div>
           <span>入口合并说明</span>
@@ -629,7 +725,7 @@ const AutonomousTradingOverview: React.FC = () => {
                 {formatMoney(summary?.total_value || data?.portfolio?.total_value || 200000)}
               </strong>
               <em style={{ color: pnlColor(summary?.total_pnl) }}>
-                {formatSignedMoney(summary?.total_pnl)} / {formatPercent(summary?.total_return_pct)}
+                综合盘 {formatSignedMoney(summary?.total_pnl)} / 全部持仓 {totalOpenPositions} 只
               </em>
             </div>
           </div>
@@ -691,7 +787,7 @@ const AutonomousTradingOverview: React.FC = () => {
                 <span>当前暴露</span>
                 <strong>{formatPercent(summary?.exposure_pct)}</strong>
                 <em>
-                  现金 {formatPercent(summary?.cash_pct)} / 持仓 {summary?.open_position_count || 0}{' '}
+                  综合盘现金 {formatPercent(summary?.cash_pct)} / 全部账户持仓 {totalOpenPositions}{' '}
                   只
                 </em>
               </Card>
@@ -708,6 +804,58 @@ const AutonomousTradingOverview: React.FC = () => {
               </Card>
             </Col>
           </Row>
+
+          <Card className="modern-card autonomous-family-board" loading={loading}>
+            <div className="autonomous-family-heading">
+              <div>
+                <span>ACCOUNT MAP</span>
+                <h2>策略账户持仓地图</h2>
+              </div>
+              <Text type="secondary">
+                定时任务已经拆成纯量化、量化+Agent、参数实验等账户；这里汇总全部真实模拟持仓，避免只看综合盘误判为
+                0。
+              </Text>
+            </div>
+            <Row gutter={[12, 12]}>
+              {portfolioFamilies.map(family => (
+                <Col xs={24} md={12} xl={8} key={family.key}>
+                  <div
+                    className={`autonomous-family-card ${
+                      Number(family.open_position_count || 0) > 0 ? 'active' : ''
+                    }`}
+                  >
+                    <Space wrap size={6}>
+                      <Tag color={accountTagColor(family.key)}>{family.label}</Tag>
+                      <Tag color={family.exists ? 'green' : 'default'}>
+                        {family.exists ? '已运行' : '待运行'}
+                      </Tag>
+                    </Space>
+                    <strong>{formatMoney(family.total_value)}</strong>
+                    <p>{family.description}</p>
+                    <div className="autonomous-family-metrics">
+                      <span>持仓 {family.open_position_count || 0}</span>
+                      <span>交易 {family.trade_count || 0}</span>
+                      <span>收益 {formatPercent(family.total_return_pct)}</span>
+                      <span>暴露 {formatPercent(family.exposure_pct)}</span>
+                    </div>
+                  </div>
+                </Col>
+              ))}
+              {!portfolioFamilies.length && (
+                <Col span={24}>
+                  <Empty description="暂无策略账户数据" />
+                </Col>
+              )}
+            </Row>
+            {familySummary?.summary?.conclusion ? (
+              <Alert
+                className="autonomous-family-note"
+                showIcon
+                type="success"
+                message={familySummary.summary.conclusion}
+              />
+            ) : null}
+          </Card>
 
           <Row gutter={[16, 16]}>
             <Col xs={24} xl={15}>
@@ -785,7 +933,7 @@ const AutonomousTradingOverview: React.FC = () => {
                     <AccountBookOutlined />
                     <div>
                       <strong>模拟持仓</strong>
-                      <span>{trackingSummary?.open_count || 0} 条推荐正在模拟持仓中</span>
+                      <span>{totalOpenPositions} 只股票正在模拟持仓中</span>
                     </div>
                   </div>
                   <div className="autonomous-command-item">
@@ -825,19 +973,19 @@ const AutonomousTradingOverview: React.FC = () => {
                 title={
                   <Space>
                     <ApartmentOutlined />
-                    当前持仓
+                    当前持仓（全部策略账户）
                   </Space>
                 }
-                extra={<Text type="secondary">浮盈亏实时随快照刷新</Text>}
+                extra={<Text type="secondary">共 {totalOpenPositions} 只，按账户区分来源</Text>}
                 loading={loading}
               >
                 <Table
                   rowKey={record => `${record.symbol}-${record.id || ''}`}
                   columns={positionColumns}
-                  dataSource={data?.positions || []}
+                  dataSource={visiblePositions}
                   pagination={false}
                   locale={{ emptyText: <Empty description="暂无持仓，等待自动跟单信号" /> }}
-                  scroll={{ x: 820 }}
+                  scroll={{ x: 960 }}
                 />
               </Card>
             </Col>
@@ -900,10 +1048,10 @@ const AutonomousTradingOverview: React.FC = () => {
                 <Table
                   rowKey="id"
                   columns={tradeColumns}
-                  dataSource={data?.recent_trades || []}
+                  dataSource={visibleTrades}
                   pagination={{ pageSize: 8 }}
                   locale={{ emptyText: <Empty description="暂无模拟交易流水" /> }}
-                  scroll={{ x: 760 }}
+                  scroll={{ x: 900 }}
                 />
               </Card>
             </Col>

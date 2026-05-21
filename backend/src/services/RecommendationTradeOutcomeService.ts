@@ -227,6 +227,30 @@ function asPlainObject(value: any): Record<string, any> {
   return value;
 }
 
+function paperTradingMetaForPortfolio(
+  metadata: Record<string, any>,
+  portfolio_id?: number
+): Record<string, any> {
+  const legacy = asPlainObject(metadata.paper_trading);
+  const byPortfolio = asPlainObject(metadata.paper_trading_by_portfolio);
+  const keyed = portfolio_id ? asPlainObject(byPortfolio[String(portfolio_id)]) : {};
+  return Object.keys(keyed).length > 0 ? keyed : legacy;
+}
+
+function paperTradingEntries(metadata: Record<string, any>): Record<string, any>[] {
+  const byPortfolio = asPlainObject(metadata.paper_trading_by_portfolio);
+  const entries = Object.values(byPortfolio)
+    .map(item => asPlainObject(item))
+    .filter(item => Object.keys(item).length > 0);
+  const legacy = asPlainObject(metadata.paper_trading);
+  if (Object.keys(legacy).length > 0) {
+    const legacyPortfolioId = Number(legacy.portfolio_id);
+    const exists = entries.some(item => Number(item.portfolio_id) === legacyPortfolioId);
+    if (!exists) entries.push(legacy);
+  }
+  return entries;
+}
+
 function stableStringify(value: any): string {
   if (value === null || value === undefined) return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(item => stableStringify(item)).join(',')}]`;
@@ -673,12 +697,19 @@ export class RecommendationTradeOutcomeService {
     const signal = await AIInvestmentSignal.findByPk(signal_id);
     if (!signal) return null;
 
-    const paperTrading = asPlainObject(asPlainObject(signal.metadata).paper_trading);
-    if (!paperTrading.portfolio_id) return null;
+    const entries = paperTradingEntries(asPlainObject(signal.metadata));
+    const latestPaperTrading = entries
+      .filter(item => item.portfolio_id)
+      .sort((a, b) =>
+        String(b.executed_at || b.closed_at || '').localeCompare(
+          String(a.executed_at || a.closed_at || '')
+        )
+      )[0];
+    if (!latestPaperTrading?.portfolio_id) return null;
 
     const outcome = await this.upsertFromExecutedSignal(signal, {
       include_open: true,
-      portfolio_id: Number(paperTrading.portfolio_id),
+      portfolio_id: Number(latestPaperTrading.portfolio_id),
     });
 
     if (outcome && options.report_to_feishu) {
@@ -733,7 +764,10 @@ export class RecommendationTradeOutcomeService {
     });
 
     const signals = candidateSignals.filter(signal => {
-      const paperTrading = asPlainObject(asPlainObject(signal.metadata).paper_trading);
+      const paperTrading = paperTradingMetaForPortfolio(
+        asPlainObject(signal.metadata),
+        portfolio.id
+      );
       const status = String(paperTrading.status || '');
       return (
         Number(paperTrading.portfolio_id) === Number(portfolio.id) &&
@@ -860,7 +894,10 @@ export class RecommendationTradeOutcomeService {
     const signal = await AIInvestmentSignal.findByPk(outcome.signal_id);
     const metadata = asPlainObject(outcome.metadata);
     const signalMetadata = asPlainObject(metadata.signal_metadata || signal?.metadata);
-    const paperTrading = asPlainObject(metadata.paper_trading || signalMetadata.paper_trading);
+    const paperTrading = paperTradingMetaForPortfolio(
+      Object.keys(signalMetadata).length ? signalMetadata : metadata,
+      outcome.portfolio_id
+    );
     const strategyKey = strategyKeyFromOutcome(outcome);
     const tradeIds = [
       toOptionalNumber(outcome.entry_trade_id),
@@ -2708,7 +2745,7 @@ export class RecommendationTradeOutcomeService {
     options: { include_open?: boolean; portfolio_id?: number } = {}
   ): Promise<RecommendationTradeOutcome | null> {
     const metadata = asPlainObject(signal.metadata);
-    const paperTrading = asPlainObject(metadata.paper_trading);
+    const paperTrading = paperTradingMetaForPortfolio(metadata, options.portfolio_id);
     const strategyVariant = asPlainObject(metadata.strategy_variant);
     const strategyKey =
       metadata.strategy_key ||

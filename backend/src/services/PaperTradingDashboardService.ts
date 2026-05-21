@@ -71,6 +71,7 @@ export interface PaperTradingDashboardOptions {
   limit?: number;
   source_type?: string;
   status?: string;
+  include_family_summary?: boolean;
 }
 
 function toNumber(value: any, fallback = 0): number {
@@ -209,10 +210,36 @@ function statusLabel(status: TrackingStatus): string {
   return labels[status] || status;
 }
 
+function portfolioFamilyByName(name?: string) {
+  return PAPER_PORTFOLIO_FAMILIES.find(item => item.name === name) || null;
+}
+
+function normalizeTrade(trade: any, family?: Record<string, any> | null) {
+  return {
+    ...trade,
+    execute_price: toNumber(trade.execute_price),
+    quantity: toNumber(trade.quantity),
+    amount: toNumber(trade.amount),
+    commission: toNumber(trade.commission),
+    realized_pnl: trade.realized_pnl === null ? null : toNumber(trade.realized_pnl),
+    account_key: family?.key,
+    account_label: family?.label,
+    account_name: family?.name,
+  };
+}
+
 export class PaperTradingDashboardService {
   async getAutonomousDashboard(options: PaperTradingDashboardOptions = {}) {
     const portfolio = await this.ensureAutonomousPortfolio(options);
-    const snapshot = await this.safeSyncSnapshot(portfolio.id);
+    const preSyncFamilySummary = await this.getPortfolioFamilySummary(options);
+    const syncTargets = [
+      portfolio.id,
+      ...preSyncFamilySummary.families
+        .map(item => Number(item.portfolio_id))
+        .filter(value => Number.isFinite(value) && value > 0),
+    ];
+    await Promise.all([...new Set(syncTargets)].map(id => this.safeSyncSnapshot(id)));
+    const familySummary = await this.getPortfolioFamilySummary(options);
     await portfolio.reload();
 
     const trackingOptions = {
@@ -222,41 +249,78 @@ export class PaperTradingDashboardService {
       lookback_days: toPositiveInt(options.lookback_days, 30, 3650),
     };
 
-    const [positions, recentTrades, allSellTrades, snapshots, outcomeDashboard, tracking] =
-      await Promise.all([
-        PaperTradingPosition.findAll({
-          where: { portfolio_id: portfolio.id },
-          order: [['market_value', 'DESC']],
-          raw: true,
-        }) as any,
-        PaperTradingTrade.findAll({
-          where: { portfolio_id: portfolio.id },
-          order: [['created_at', 'DESC']],
-          limit: 40,
-          raw: true,
-        }) as any,
-        PaperTradingTrade.findAll({
-          where: { portfolio_id: portfolio.id, direction: 'SELL' },
-          order: [['created_at', 'DESC']],
-          limit: 5000,
-          raw: true,
-        }) as any,
-        this.getRecentSnapshots(portfolio.id),
-        recommendationTradeOutcomeService
-          .getDashboard({ portfolio_id: portfolio.id, include_open: true, limit: 2000 })
-          .catch(error => {
-            logger.warn(`自主模拟盘收益闭环看板读取失败: ${error?.message || error}`);
-            return null;
-          }),
-        this.getRecommendationTracking(trackingOptions).catch(error => {
-          logger.warn(`自主模拟盘推荐追踪读取失败: ${error?.message || error}`);
+    const activeFamilyIds = familySummary.families
+      .filter(item => item.exists && Number(item.open_position_count || 0) > 0)
+      .map(item => Number(item.portfolio_id))
+      .filter(value => Number.isFinite(value) && value > 0);
+    const tradeFamilyIds = familySummary.families
+      .filter(item => item.exists && Number(item.trade_count || 0) > 0)
+      .map(item => Number(item.portfolio_id))
+      .filter(value => Number.isFinite(value) && value > 0);
+    const familyByPortfolioId = new Map(
+      familySummary.families
+        .filter(item => item.portfolio_id)
+        .map(item => [Number(item.portfolio_id), item])
+    );
+
+    const [
+      positions,
+      recentTrades,
+      allSellTrades,
+      snapshots,
+      outcomeDashboard,
+      tracking,
+      allOpenPositions,
+      familyRecentTrades,
+    ] = await Promise.all([
+      PaperTradingPosition.findAll({
+        where: { portfolio_id: portfolio.id },
+        order: [['market_value', 'DESC']],
+        raw: true,
+      }) as any,
+      PaperTradingTrade.findAll({
+        where: { portfolio_id: portfolio.id },
+        order: [['created_at', 'DESC']],
+        limit: 40,
+        raw: true,
+      }) as any,
+      PaperTradingTrade.findAll({
+        where: { portfolio_id: portfolio.id, direction: 'SELL' },
+        order: [['created_at', 'DESC']],
+        limit: 5000,
+        raw: true,
+      }) as any,
+      this.getRecentSnapshots(portfolio.id),
+      recommendationTradeOutcomeService
+        .getDashboard({ portfolio_id: portfolio.id, include_open: true, limit: 2000 })
+        .catch(error => {
+          logger.warn(`自主模拟盘收益闭环看板读取失败: ${error?.message || error}`);
           return null;
         }),
-      ]);
+      this.getRecommendationTracking(trackingOptions).catch(error => {
+        logger.warn(`自主模拟盘推荐追踪读取失败: ${error?.message || error}`);
+        return null;
+      }),
+      activeFamilyIds.length
+        ? (PaperTradingPosition.findAll({
+            where: { portfolio_id: { [Op.in]: activeFamilyIds } },
+            order: [['market_value', 'DESC']],
+            raw: true,
+          }) as any)
+        : [],
+      tradeFamilyIds.length
+        ? (PaperTradingTrade.findAll({
+            where: { portfolio_id: { [Op.in]: tradeFamilyIds } },
+            order: [['created_at', 'DESC']],
+            limit: 60,
+            raw: true,
+          }) as any)
+        : [],
+    ]);
 
     const initialCapital = toNumber(portfolio.initial_capital, DEFAULT_AUTONOMOUS_INITIAL_CAPITAL);
     const currentCash = toNumber(portfolio.current_cash, initialCapital);
-    const totalValue = toNumber(portfolio.total_value, snapshot?.total_value || initialCapital);
+    const totalValue = toNumber(portfolio.total_value, initialCapital);
     const positionValue = positions.reduce(
       (sum: number, item: any) => sum + toNumber(item.market_value),
       0
@@ -273,12 +337,13 @@ export class PaperTradingDashboardService {
     const closedCount = Number(outcomeDashboard?.summary?.closed_count || 0);
     const winRate = Number(outcomeDashboard?.summary?.win_rate || 0);
 
-    const normalizedPositions = positions.map((position: any) => {
+    const normalizePosition = (position: any, family?: Record<string, any> | null) => {
       const marketValue = toNumber(position.market_value);
       const avgCost = toNumber(position.avg_cost);
       const currentPrice = toNumber(position.current_price);
       const quantity = toNumber(position.quantity);
       const unrealized = toNumber(position.unrealized_pnl);
+      const accountTotalValue = toNumber(family?.total_value, totalValue);
       return {
         ...position,
         quantity,
@@ -288,9 +353,21 @@ export class PaperTradingDashboardService {
         unrealized_pnl: roundNumber(unrealized, 2),
         unrealized_pnl_pct:
           avgCost > 0 ? roundNumber(((currentPrice - avgCost) / avgCost) * 100, 4) : 0,
-        weight_pct: totalValue > 0 ? roundNumber((marketValue / totalValue) * 100, 2) : 0,
+        weight_pct:
+          accountTotalValue > 0 ? roundNumber((marketValue / accountTotalValue) * 100, 2) : 0,
+        account_key: family?.key,
+        account_label: family?.label,
+        account_name: family?.name,
       };
-    });
+    };
+
+    const autonomousFamily = portfolioFamilyByName(portfolio.name);
+    const normalizedPositions = positions.map((position: any) =>
+      normalizePosition(position, autonomousFamily)
+    );
+    const normalizedAllOpenPositions = (allOpenPositions as any[]).map((position: any) =>
+      normalizePosition(position, familyByPortfolioId.get(Number(position.portfolio_id)))
+    );
 
     return {
       generated_at: moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm:ss'),
@@ -316,14 +393,12 @@ export class PaperTradingDashboardService {
         avg_closed_return_pct: Number(outcomeDashboard?.summary?.avg_closed_return_pct || 0),
       },
       positions: normalizedPositions,
-      recent_trades: recentTrades.map((trade: any) => ({
-        ...trade,
-        execute_price: toNumber(trade.execute_price),
-        quantity: toNumber(trade.quantity),
-        amount: toNumber(trade.amount),
-        commission: toNumber(trade.commission),
-        realized_pnl: trade.realized_pnl === null ? null : toNumber(trade.realized_pnl),
-      })),
+      recent_trades: recentTrades.map((trade: any) => normalizeTrade(trade, autonomousFamily)),
+      all_open_positions: normalizedAllOpenPositions,
+      all_recent_trades: (familyRecentTrades as any[]).map((trade: any) =>
+        normalizeTrade(trade, familyByPortfolioId.get(Number(trade.portfolio_id)))
+      ),
+      portfolio_family_summary: familySummary,
       equity_curve: snapshots.map((item: any) => {
         const total = toNumber(item.total_value, initialCapital);
         return {
@@ -541,6 +616,143 @@ export class PaperTradingDashboardService {
       },
       daily_groups: dailyGroups,
       items,
+    };
+  }
+
+  async getPortfolioFamilySummary(options: PaperTradingDashboardOptions = {}) {
+    const where: any = {
+      name: { [Op.in]: PAPER_PORTFOLIO_FAMILIES.map(item => item.name) },
+    };
+    if (options.user_id) where.user_id = options.user_id;
+
+    const portfolios = await PaperTradingPortfolio.findAll({
+      where,
+      order: [['id', 'ASC']],
+    });
+    const latestByName = new Map<string, PaperTradingPortfolio>();
+    for (const portfolio of portfolios) {
+      latestByName.set(portfolio.name, portfolio);
+    }
+
+    const rows = await Promise.all(
+      PAPER_PORTFOLIO_FAMILIES.map(async family => {
+        const portfolio = latestByName.get(family.name);
+        if (!portfolio) {
+          return {
+            ...family,
+            portfolio_id: null,
+            exists: false,
+            initial_capital: DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
+            total_value: DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
+            current_cash: DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
+            position_value: 0,
+            total_pnl: 0,
+            total_return_pct: 0,
+            cash_pct: 100,
+            exposure_pct: 0,
+            open_position_count: 0,
+            trade_count: 0,
+            outcome_count: 0,
+            closed_outcome_count: 0,
+            open_outcome_count: 0,
+            win_rate: 0,
+            avg_closed_return_pct: 0,
+            latest_trade_at: null,
+          };
+        }
+
+        const [positions, trades, outcomes] = await Promise.all([
+          PaperTradingPosition.findAll({ where: { portfolio_id: portfolio.id }, raw: true }),
+          PaperTradingTrade.findAll({ where: { portfolio_id: portfolio.id }, raw: true }),
+          RecommendationTradeOutcome.findAll({
+            where: { portfolio_id: portfolio.id },
+            limit: 5000,
+            raw: true,
+          }) as any,
+        ]);
+        const initialCapital = toNumber(
+          portfolio.initial_capital,
+          DEFAULT_AUTONOMOUS_INITIAL_CAPITAL
+        );
+        const totalValue = toNumber(portfolio.total_value, initialCapital);
+        const currentCash = toNumber(portfolio.current_cash, initialCapital);
+        const positionValue = positions.reduce(
+          (sum: number, item: any) => sum + toNumber(item.market_value),
+          0
+        );
+        const closed = (outcomes as any[]).filter((item: any) => item.trade_status === 'closed');
+        const open = (outcomes as any[]).filter((item: any) => item.trade_status !== 'closed');
+        const wins = closed.filter((item: any) => toNumber(item.total_pnl) > 0);
+        const latestTradeAt = trades
+          .map((trade: any) => String(trade.created_at || ''))
+          .sort()
+          .pop();
+
+        return {
+          ...family,
+          portfolio_id: portfolio.id,
+          exists: true,
+          initial_capital: roundNumber(initialCapital, 2),
+          total_value: roundNumber(totalValue, 2),
+          current_cash: roundNumber(currentCash, 2),
+          position_value: roundNumber(positionValue, 2),
+          total_pnl: roundNumber(totalValue - initialCapital, 2),
+          total_return_pct:
+            initialCapital > 0
+              ? roundNumber(((totalValue - initialCapital) / initialCapital) * 100, 4)
+              : 0,
+          cash_pct: totalValue > 0 ? roundNumber((currentCash / totalValue) * 100, 2) : 0,
+          exposure_pct: totalValue > 0 ? roundNumber((positionValue / totalValue) * 100, 2) : 0,
+          open_position_count: positions.length,
+          trade_count: trades.length,
+          outcome_count: (outcomes as any[]).length,
+          closed_outcome_count: closed.length,
+          open_outcome_count: open.length,
+          win_rate: closed.length ? roundNumber((wins.length / closed.length) * 100, 2) : 0,
+          avg_closed_return_pct: closed.length
+            ? roundNumber(
+                closed.reduce((sum: number, item: any) => sum + toNumber(item.total_pnl_pct), 0) /
+                  closed.length,
+                4
+              )
+            : 0,
+          latest_trade_at: latestTradeAt || null,
+        };
+      })
+    );
+
+    const activeRows = rows.filter(item => item.exists);
+    const openPositionCount = rows.reduce(
+      (sum, item) => sum + toNumber(item.open_position_count),
+      0
+    );
+    const totalPositionValue = rows.reduce((sum, item) => sum + toNumber(item.position_value), 0);
+    const totalPnl = rows.reduce((sum, item) => sum + toNumber(item.total_pnl), 0);
+    const champion = [...activeRows].sort(
+      (a, b) => toNumber(b.total_return_pct) - toNumber(a.total_return_pct)
+    )[0];
+    const mostActive = [...activeRows].sort(
+      (a, b) => toNumber(b.open_position_count) - toNumber(a.open_position_count)
+    )[0];
+
+    return {
+      generated_at: moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm:ss'),
+      families: rows,
+      summary: {
+        family_count: rows.length,
+        active_family_count: activeRows.length,
+        open_position_count: openPositionCount,
+        total_position_value: roundNumber(totalPositionValue, 2),
+        total_pnl: roundNumber(totalPnl, 2),
+        champion,
+        most_active: mostActive,
+        conclusion:
+          openPositionCount > 0
+            ? `当前共有 ${openPositionCount} 只模拟持仓，主要分布在 ${
+                mostActive?.label || '独立账户'
+              }。`
+            : '当前所有模拟账户暂无持仓，等待下一轮自动扫描建仓。',
+      },
     };
   }
 

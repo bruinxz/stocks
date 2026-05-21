@@ -14,6 +14,7 @@ import {
   AUTONOMOUS_PORTFOLIO_NAME,
   DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
   paperTradingDashboardService,
+  QUANT_ONLY_PORTFOLIO_NAME,
 } from '../../services/PaperTradingDashboardService';
 import { paperTradingPlanService } from '../../services/PaperTradingPlanService';
 import { paperTradingRiskProfileService } from '../../services/PaperTradingRiskProfileService';
@@ -78,7 +79,10 @@ export class PaperTradingController {
               new Date()
             );
             if (bars && bars.length > 0) {
-              const current_price = toNumber(bars[bars.length - 1].close, toNumber(pos.current_price));
+              const current_price = toNumber(
+                bars[bars.length - 1].close,
+                toNumber(pos.current_price)
+              );
               const quantity = toNumber(pos.quantity);
               const avg_cost = toNumber(pos.avg_cost);
               const market_value = roundMoney(current_price * quantity);
@@ -167,7 +171,7 @@ export class PaperTradingController {
           return res.status(400).json({ success: false, message: '可用资金不足' });
         }
 
-        let position = await PaperTradingPosition.findOne({
+        const position = await PaperTradingPosition.findOne({
           where: { portfolio_id: portfolio.id, symbol },
         });
 
@@ -207,7 +211,7 @@ export class PaperTradingController {
           commission,
         });
       } else if (direction === 'SELL') {
-        let position = await PaperTradingPosition.findOne({
+        const position = await PaperTradingPosition.findOne({
           where: { portfolio_id: portfolio.id, symbol },
         });
 
@@ -443,11 +447,16 @@ export class PaperTradingController {
         user_id: user.id,
         username: user.username || user.nickname,
       } as any);
+      const familyOpenCount = Number(
+        result.portfolio_family_summary?.summary?.open_position_count ||
+          result.summary.open_position_count ||
+          0
+      );
 
       res.json({
         success: true,
         data: result,
-        message: `自主模拟盘总览已刷新：总资产 ${result.summary.total_value}，持仓 ${result.summary.open_position_count} 只`,
+        message: `自主模拟盘总览已刷新：综合盘持仓 ${result.summary.open_position_count} 只，全部策略账户持仓 ${familyOpenCount} 只`,
       });
     } catch (error: any) {
       logger.error('获取自主荐股模拟盘总览失败:', error);
@@ -641,6 +650,7 @@ export class PaperTradingController {
     try {
       const user = (req as any).user;
       const result = await recommendationTradeOutcomeService.getDashboard({
+        portfolio_name: QUANT_ONLY_PORTFOLIO_NAME,
         ...req.query,
         user_id: user.id,
       });
@@ -661,6 +671,7 @@ export class PaperTradingController {
     try {
       const user = (req as any).user;
       const result = await recommendationTradeOutcomeService.getTrace(req.params.id, {
+        portfolio_name: QUANT_ONLY_PORTFOLIO_NAME,
         ...req.query,
         user_id: user.id,
       });
@@ -685,6 +696,7 @@ export class PaperTradingController {
     try {
       const user = (req as any).user;
       const result = await recommendationTradeOutcomeService.refreshPortfolioOutcomes({
+        portfolio_name: QUANT_ONLY_PORTFOLIO_NAME,
         ...req.body,
         user_id: user.id,
       });
@@ -705,6 +717,7 @@ export class PaperTradingController {
     try {
       const user = (req as any).user;
       const result = await recommendationTradeOutcomeService.getDashboard({
+        portfolio_name: QUANT_ONLY_PORTFOLIO_NAME,
         ...req.body,
         user_id: user.id,
         report_to_feishu: true,
