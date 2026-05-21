@@ -260,6 +260,24 @@ interface PaperTradingPlan {
       avg_excess_return_pct: number;
       excess_win_rate?: number;
     }>;
+    order_intent_feedback?: {
+      evaluated_count: number;
+      false_reject_count: number;
+      saved_loss_count: number;
+      avg_intended_action_return_pct: number;
+      conclusion: string;
+      rule_suggestions: Array<{
+        key: string;
+        label: string;
+        action: 'loosen' | 'tighten' | 'keep' | 'observe';
+        action_label: string;
+        sample_count: number;
+        false_reject_rate: number;
+        saved_loss_rate: number;
+        avg_intended_action_return_pct: number;
+        reason: string;
+      }>;
+    };
   };
   actions: TradingPlanAction[];
 }
@@ -812,6 +830,7 @@ const PaperTrading: React.FC = () => {
   const attributionSummary = attribution?.summary;
   const attributionFeedback = attribution?.feedback;
   const tradingPlanSummary = tradingPlan?.summary;
+  const planOrderIntentFeedback = tradingPlanSummary?.order_intent_feedback;
   const orderIntentSummary = orderIntents?.summary;
   const orderIntentHindsight = orderIntentSummary?.hindsight;
   const recentOrderRejections = orderIntents?.recent_rejections || [];
@@ -1745,6 +1764,36 @@ const PaperTrading: React.FC = () => {
                   </Tag>
                 ))}
               </Space>
+            }
+          />
+        )}
+
+        {planOrderIntentFeedback && (
+          <Alert
+            className="outcome-feedback-alert order-feedback-alert"
+            type={planOrderIntentFeedback.false_reject_count > 0 ? 'warning' : 'info'}
+            showIcon
+            message="拒单后验已进入下一轮计划建议"
+            description={
+              <div className="plan-order-feedback">
+                <p>{planOrderIntentFeedback.conclusion}</p>
+                <Space wrap>
+                  <Tag color="orange">可能错杀 {planOrderIntentFeedback.false_reject_count}</Tag>
+                  <Tag color="green">有效拦截 {planOrderIntentFeedback.saved_loss_count}</Tag>
+                  <Tag color="blue">
+                    平均相对 {formatPercent(planOrderIntentFeedback.avg_intended_action_return_pct)}
+                  </Tag>
+                </Space>
+                {(planOrderIntentFeedback.rule_suggestions || []).length > 0 && (
+                  <div className="plan-order-feedback-rules">
+                    {(planOrderIntentFeedback.rule_suggestions || []).slice(0, 3).map(item => (
+                      <Tag key={item.key} color={orderRuleActionColorMap[item.action] || 'default'}>
+                        {item.label} · {item.action_label}
+                      </Tag>
+                    ))}
+                  </div>
+                )}
+              </div>
             }
           />
         )}

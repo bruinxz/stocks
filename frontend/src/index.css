@@ -1251,6 +1251,21 @@ a {
   color: var(--text-main);
 }
 
+.order-feedback-alert {
+  background: rgba(248, 250, 252, 0.82);
+  border-color: rgba(29, 95, 208, 0.16);
+}
+
+.plan-order-feedback p {
+  margin: 0 0 10px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.plan-order-feedback-rules {
+  margin-top: 10px;
+}
+
 .plan-lane {
   position: relative;
   z-index: 1;
