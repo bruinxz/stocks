@@ -29,6 +29,58 @@ import { Op } from 'sequelize';
 type TaskRunStatus = 'SUCCESS' | 'FAILED' | 'RUNNING';
 type TaskExecutionLogLike = TaskExecutionLog | null;
 
+function compactRuntimeHealth(runtimeHealth: any) {
+  if (!runtimeHealth) return null;
+  return {
+    status: runtimeHealth.status,
+    score: runtimeHealth.score,
+    conclusion: runtimeHealth.summary?.conclusion,
+    risk_count: runtimeHealth.summary?.risk_count,
+    warn_count: runtimeHealth.summary?.warn_count,
+    factor_min_coverage_rate: runtimeHealth.summary?.factor_min_coverage_rate,
+    factor_real_provider_rate: runtimeHealth.summary?.factor_real_provider_rate,
+    factor_coverage_status: runtimeHealth.factor_coverage?.coverage_status,
+    risk_checks: Array.isArray(runtimeHealth.checks)
+      ? runtimeHealth.checks
+          .filter((item: any) => item.status === 'risk' || item.status === 'warn')
+          .slice(0, 6)
+          .map((item: any) => ({
+            key: item.key,
+            label: item.label,
+            status: item.status,
+            metric: item.metric,
+            conclusion: item.conclusion,
+          }))
+      : [],
+  };
+}
+
+function buildQuantDailyPipelineLogSummary(result: any, agentSubmitted: number, agentFailed: number) {
+  const archive = result?.archive || {};
+  const paper = result?.paper_trading || {};
+  const generated = result?.generated || {};
+  const runtimeHealth = compactRuntimeHealth(result?.runtime_health);
+  return {
+    scenario: 'quant_daily_pipeline',
+    status: result?.status || 'completed',
+    runtime_risk_blocked: Boolean(result?.runtime_risk_blocked),
+    runtime_health: runtimeHealth,
+    runtime_block_reason: result?.runtime_risk_blocked
+      ? runtimeHealth?.conclusion || result?.message || '量化运行时存在风险项，本轮未执行买入。'
+      : null,
+    trade_date: result?.trade_date,
+    scanned_stocks: generated?.scanned_stocks,
+    signal_count: generated?.signal_count,
+    archived_signal_count: archive?.total,
+    agent_submitted: agentSubmitted,
+    agent_failed: agentFailed,
+    paper_executed: paper?.executed,
+    paper_planned: paper?.planned,
+    paper_skipped: paper?.skipped,
+    message: result?.message,
+  };
+}
+
 class SchedulerService {
   private activeTasks: Map<number, CronScheduledTask> = new Map();
 
@@ -583,6 +635,7 @@ class SchedulerService {
         const agentFailed = Array.isArray(result.agent_analysis?.failed)
           ? result.agent_analysis.failed.length
           : 0;
+        const runtimeRiskBlocked = Boolean(result.runtime_risk_blocked);
         await this.safeUpdateExecutionLog(executionLog, {
           total_items:
             agentSubmitted > 0 ? agentSubmitted + agentFailed : result.archive?.total || 0,
@@ -590,7 +643,12 @@ class SchedulerService {
           failed_items: agentFailed,
           status: agentSubmitted > 0 ? 'IN_PROGRESS' : 'COMPLETED',
           completed_at: agentSubmitted > 0 ? null : new Date(),
-          error_message: null,
+          error_message: runtimeRiskBlocked
+            ? result.runtime_health?.summary?.conclusion ||
+              result.message ||
+              '量化运行时存在风险项，本轮只归档观察信号，不执行模拟买入。'
+            : null,
+          result_summary: buildQuantDailyPipelineLogSummary(result, agentSubmitted, agentFailed),
         });
 
         if (parameters.report_to_feishu !== false && parameters.reportToFeishu !== false) {

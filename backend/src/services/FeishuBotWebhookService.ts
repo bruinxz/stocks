@@ -182,10 +182,12 @@ class FeishuBotWebhookService {
     const riskLine = this.buildRiskLine(result);
     const scopeLine = this.buildScopeLine(result, payload.scenario);
     const timeLine = moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm');
+    const runtimeBlockLine = this.buildRuntimeBlockLine(result);
 
     const lines = [
-      this.buildConclusionLine(totalCount, recommendations.length, paper),
+      runtimeBlockLine || this.buildConclusionLine(totalCount, recommendations.length, paper),
       scopeLine,
+      runtimeBlockLine ? this.buildConclusionLine(totalCount, recommendations.length, paper) : '',
       recommendations.length ? '' : '标的：暂无满足条件的买入候选，建议观望。',
     ].filter(Boolean);
 
@@ -323,6 +325,17 @@ class FeishuBotWebhookService {
     const label = firstText(status.label, gateLabel, '正常');
     const conclusion = this.safeText(firstText(status.conclusion, riskGate.reason), 54);
     return `风控：${label}${conclusion ? `｜${conclusion}` : ''}`;
+  }
+
+  private buildRuntimeBlockLine(result: any): string {
+    if (!result?.runtime_risk_blocked) return '';
+    const runtimeHealth = result?.runtime_health || {};
+    const conclusion = this.safeText(
+      firstText(runtimeHealth?.summary?.conclusion, result?.message, '运行时健康存在风险项'),
+      68
+    );
+    const score = runtimeHealth?.score !== undefined ? `，健康分 ${runtimeHealth.score}` : '';
+    return `结论：运行时风险阻断，本轮只归档观察，不执行模拟买入${score}。原因：${conclusion}`;
   }
 
   private resolvePaperTrading(result: any): Record<string, any> {

@@ -492,6 +492,8 @@ class FeishuTaskReportService {
     const agentAnalysis = result?.agent_analysis || {};
     const verification = result?.verification || archive?.verification || {};
     const paper = result?.paper_trading || {};
+    const runtimeHealth = result?.runtime_health || {};
+    const runtimeRiskBlocked = Boolean(result?.runtime_risk_blocked);
     const riskProfile = result?.risk_profile || paper?.risk_profile || {};
     const riskMetrics = riskProfile?.risk_metrics || {};
     const riskThresholdSuggestion =
@@ -1027,6 +1029,8 @@ class FeishuTaskReportService {
     const archive = result?.archive || {};
     const agent = result?.agent_analysis || {};
     const paper = result?.paper_trading || {};
+    const runtimeHealth = result?.runtime_health || {};
+    const runtimeRiskBlocked = Boolean(result?.runtime_risk_blocked);
     const riskProfile = result?.risk_profile || paper?.risk_profile || {};
     const riskMetrics = riskProfile?.risk_metrics || {};
     const riskThresholdSuggestion =
@@ -1109,6 +1113,16 @@ class FeishuTaskReportService {
       `- **融合候选**：入选 ${fusion.selected_count ?? archive.total ?? 0} 条；归档 ${
         archive.total ?? 0
       } 条。`,
+      runtimeRiskBlocked
+        ? `- **执行纪律**：运行时健康为 ${runtimeHealth.status || 'risk'}，本轮只归档观察，不执行 Agent 买入/模拟买入；原因：${this.safeText(
+            runtimeHealth.summary?.conclusion || result?.message || '量化运行时存在风险项',
+            140
+          )}`
+        : runtimeHealth.status
+          ? `- **运行时健康**：${runtimeHealth.status} / ${runtimeHealth.score ?? '-'} 分；因子覆盖 ${
+              runtimeHealth.summary?.factor_min_coverage_rate ?? '-'
+            }%，真实源 ${runtimeHealth.summary?.factor_real_provider_rate ?? '-'}%。`
+          : '',
       `- **Agent复核**：${
         agent.enabled === false ? '未启用' : `提交 ${submitted} 条，失败 ${failed} 条`
       }。`,
@@ -1166,6 +1180,12 @@ class FeishuTaskReportService {
       模拟盘成交数: paper.executed,
       模拟盘计划数: paper.planned,
       模拟盘跳过数: paper.skipped,
+      运行时风险阻断: runtimeRiskBlocked ? '是' : '否',
+      运行时健康状态: runtimeHealth.status,
+      运行时健康分: runtimeHealth.score,
+      运行时健康结论: runtimeHealth.summary?.conclusion,
+      因子最低覆盖率: runtimeHealth.summary?.factor_min_coverage_rate,
+      因子真实源占比: runtimeHealth.summary?.factor_real_provider_rate,
       最佳标的: best?.symbol
         ? `${best.name || best.symbol}(${best.symbol}) ${best.score ?? '-'}`
         : '',
@@ -1249,6 +1269,17 @@ class FeishuTaskReportService {
               }
             : null,
           risk_profile: riskProfile,
+          runtime_health: runtimeHealth
+            ? {
+                status: runtimeHealth.status,
+                score: runtimeHealth.score,
+                summary: runtimeHealth.summary,
+                checks: Array.isArray(runtimeHealth.checks)
+                  ? runtimeHealth.checks.slice(0, 8)
+                  : [],
+              }
+            : null,
+          runtime_risk_blocked: runtimeRiskBlocked,
           risk_threshold_suggestion: riskThresholdSuggestion,
           risk_threshold_attribution: riskThresholdAttribution,
           risk_threshold_field_gate_advice: riskThresholdFieldGateAdvice,

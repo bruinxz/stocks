@@ -54,6 +54,13 @@ export class TaskExecutionLog extends Model {
   declare error_message: string;
 
   @Column({
+    type: DataType.JSONB,
+    allowNull: false,
+    defaultValue: {},
+  })
+  declare result_summary: Record<string, any>;
+
+  @Column({
     type: DataType.DATE,
   })
   declare started_at: Date;
