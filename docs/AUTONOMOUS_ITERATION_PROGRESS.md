@@ -1262,3 +1262,42 @@ Next:
 1. Add canary auto-tuning mode: apply one low-risk parameter first, observe next closed trades, then graduate.
 2. Add a “规则 → 收益贡献” attribution view for which tuning decisions improved or hurt paper-trading PnL.
 3. Add daily maintenance job/retention for stale hindsight snapshots if the table grows large.
+
+### 2026-05-22 order-intent tuning canary
+
+Focus: move from “all-or-nothing manual tuning apply” to a safer small-traffic tuning path that can be attributed later.
+
+Completed:
+
+- `POST /api/paper-trading/order-intent-tuning/apply` now accepts Canary parameters:
+  - `canary: true`
+  - `canary_max_parameters`
+  - `canary_observation_trades`
+  - `canary_observation_days`
+- Canary preview chooses the highest-confidence actionable parameter(s) from stable order-intent tuning suggestions instead of applying every suggested key.
+- Canary apply writes the same task parameters but uses event type `order_intent_tuning_canary_applied` and stores the guardrails/observation window in `task_parameter_audit_logs.metadata.canary`.
+- Added `GET /api/paper-trading/order-intent-tuning/canary`:
+  - finds the latest Canary audit;
+  - compares elapsed days and closed recommendation-trade outcomes since the audit;
+  - reports progress, outcome tone, win rate and average excess return.
+- Paper-trading page parameter panel now has:
+  - “Canary预览”;
+  - “启动Canary”;
+  - a compact Canary status card showing progress, closed sample count, average excess return, win rate and selected keys.
+- Read-only smoke now validates Canary preview and Canary status without writing task parameters.
+
+Validation:
+
+```bash
+node --check scripts/tests/smoke_readonly_core.js
+./backend/node_modules/.bin/tsc --noEmit --project backend/tsconfig.json
+./frontend/node_modules/.bin/tsc --noEmit --project frontend/tsconfig.json
+CI=false /Users/bytedance/.nvm/versions/node/v20.20.2/bin/npm --prefix frontend run build
+git diff --check
+```
+
+Next:
+
+1. Add a “Canary graduate / rollback” preview that turns the latest Canary observation into an explicit promote/rollback recommendation without auto-mutating anything.
+2. Add a rule-to-PnL attribution view: show which parameter/rule changes improved or hurt closed-trade PnL.
+3. Add retention/maintenance for `paper_trading_order_intent_outcomes` snapshots.

@@ -1694,6 +1694,78 @@ a {
   margin-bottom: 12px;
 }
 
+.order-canary-card {
+  margin: 12px 0;
+  padding: 12px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(255, 251, 235, 0.78), rgba(255, 255, 255, 0.78));
+  border: 1px solid rgba(214, 166, 79, 0.22);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.62);
+}
+
+.order-canary-card.tone-healthy {
+  background: linear-gradient(135deg, rgba(236, 253, 245, 0.78), rgba(255, 255, 255, 0.78));
+  border-color: rgba(0, 143, 107, 0.18);
+}
+
+.order-canary-card.tone-risk {
+  background: linear-gradient(135deg, rgba(254, 242, 242, 0.8), rgba(255, 255, 255, 0.78));
+  border-color: rgba(209, 67, 67, 0.18);
+}
+
+.order-canary-card.tone-mixed {
+  background: linear-gradient(135deg, rgba(239, 246, 255, 0.78), rgba(255, 255, 255, 0.78));
+  border-color: rgba(29, 95, 208, 0.16);
+}
+
+.order-canary-head,
+.order-canary-head > div {
+  display: flex;
+  align-items: center;
+}
+
+.order-canary-head {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.order-canary-head > div {
+  gap: 8px;
+}
+
+.order-canary-head strong {
+  color: var(--text-main);
+  font-size: 13px;
+}
+
+.order-canary-card p {
+  margin: 8px 0 10px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.58;
+}
+
+.order-canary-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 9px;
+}
+
+.order-canary-metrics span {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.order-canary-keys {
+  margin-top: 8px;
+}
+
 .order-tuning-audit-item {
   display: flex;
   align-items: center;

@@ -888,6 +888,27 @@ export class PaperTradingController {
       res.status(500).json({ success: false, message: error.message });
     }
   };
+
+  // 获取订单意图 Canary 小流量调参的观察状态
+  getOrderIntentTuningCanary = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const user = (req as any).user;
+      const result = await paperTradingTuningApplyService.getCanaryStatus({
+        ...req.query,
+        user_id: user.id,
+        username: user.username || user.nickname,
+      } as any);
+
+      res.json({
+        success: true,
+        data: result,
+        message: result.summary?.conclusion || '订单意图 Canary 状态已刷新',
+      });
+    } catch (error: any) {
+      logger.error('获取订单意图 Canary 调参状态失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
 }
 
 export const paperTradingController = new PaperTradingController();
