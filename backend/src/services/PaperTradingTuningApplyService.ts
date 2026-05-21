@@ -78,6 +78,12 @@ function roundNumber(value: any, digits = 2): number {
   return Math.round(num * base) / base;
 }
 
+function toPlain(record: any): any {
+  if (!record) return record;
+  if (typeof record.toJSON === 'function') return record.toJSON();
+  return record;
+}
+
 export class PaperTradingTuningApplyService {
   async applyOrderIntentTuningPreview(options: ApplyOrderIntentTuningOptions = {}) {
     const dryRun = toBoolean(options.dry_run, true);
@@ -261,6 +267,14 @@ export class PaperTradingTuningApplyService {
 
     const metadata = (activeAudit as any).metadata || {};
     const canary = metadata.canary || {};
+    const relatedAudits = audits.filter((audit: any) => {
+      const itemMetadata = audit?.metadata || {};
+      if (!metadata.generated_at) return Number(audit?.id) === Number((activeAudit as any).id);
+      return (
+        itemMetadata.generated_at === metadata.generated_at &&
+        itemMetadata.source === metadata.source
+      );
+    });
     const appliedAt = (activeAudit as any).created_at;
     const observationDays = toPositiveInt(canary.observation_days, 10, 60);
     const observationTrades = toPositiveInt(canary.observation_trades, 8, 30);
@@ -316,11 +330,16 @@ export class PaperTradingTuningApplyService {
       },
       summary: dashboard.summary,
     });
+    const rollback_plan = await this.buildCanaryRollbackPlan(
+      relatedAudits.length ? relatedAudits : [activeAudit]
+    );
+    const attribution = this.buildCanaryAttribution(canary, dashboard, startDate);
 
     return {
       active: true,
       generated_at: new Date().toISOString(),
       audit: activeAudit,
+      related_audit_count: relatedAudits.length || 1,
       canary,
       observation: {
         start_date: startDate,
@@ -333,11 +352,141 @@ export class PaperTradingTuningApplyService {
       },
       outcome_summary: dashboard.summary,
       review,
+      rollback_plan,
+      attribution,
       recent_outcomes: dashboard.outcomes.slice(0, 8),
       audits,
       summary: {
         conclusion,
       },
+    };
+  }
+
+  private async buildCanaryRollbackPlan(audits: any[]) {
+    const plainAudits = audits.map(toPlain).filter(Boolean);
+    const taskIds = plainAudits
+      .map(audit => Number(audit.task_id))
+      .filter(id => Number.isInteger(id) && id > 0);
+    const tasks = taskIds.length
+      ? await ScheduledTask.findAll({
+          where: { id: { [Op.in]: taskIds } },
+        })
+      : [];
+    const taskById = new Map<number, any>();
+    tasks.forEach(task => taskById.set(Number(task.id), task));
+
+    const items = plainAudits.map(audit => {
+      const task = taskById.get(Number(audit.task_id));
+      const before = audit.before_parameters || {};
+      const after = audit.after_parameters || {};
+      const current = task ? task.parameters || {} : {};
+      const changedKeys = Array.isArray(audit.changed_keys) ? audit.changed_keys : [];
+      const parameterItems = changedKeys.map((key: string) => {
+        const currentMatchesCanary = valuesEqual(current?.[key], after?.[key]);
+        const currentMatchesBefore = valuesEqual(current?.[key], before?.[key]);
+        return {
+          key,
+          before_value: before?.[key],
+          canary_value: after?.[key],
+          current_value: current?.[key],
+          restore_value: before?.[key],
+          needs_rollback: !currentMatchesBefore,
+          current_matches_canary: currentMatchesCanary,
+          current_matches_before: currentMatchesBefore,
+          changed_after_canary: !currentMatchesCanary && !currentMatchesBefore,
+        };
+      });
+      return {
+        audit_id: audit.id,
+        task_id: audit.task_id,
+        task_name: audit.task_name,
+        task_type: audit.task_type,
+        task_exists: Boolean(task),
+        changed_keys: changedKeys,
+        restore_parameters: Object.fromEntries(changedKeys.map((key: string) => [key, before?.[key]])),
+        parameters: parameterItems,
+      };
+    });
+
+    const parameterItems = items.flatMap(item => item.parameters || []);
+    const changedAfterCanary = parameterItems.filter(item => item.changed_after_canary).length;
+    const needsRollback = parameterItems.filter(item => item.needs_rollback).length;
+    const safetyState =
+      changedAfterCanary > 0 ? 'manual_review' : needsRollback > 0 ? 'ready' : 'no_change';
+    const safetyLabels: Record<string, string> = {
+      manual_review: '需人工核对',
+      ready: '可生成回滚',
+      no_change: '无需回滚',
+    };
+
+    return {
+      available: items.length > 0,
+      safety_state: safetyState,
+      safety_label: safetyLabels[safetyState],
+      task_count: items.length,
+      changed_key_count: uniqueStrings(parameterItems.map(item => item.key)).length,
+      rollback_key_count: needsRollback,
+      changed_after_canary_count: changedAfterCanary,
+      items,
+      conclusion:
+        safetyState === 'manual_review'
+          ? 'Canary 后部分参数又被其它流程修改，回滚前必须人工核对当前值。'
+          : safetyState === 'ready'
+          ? `可回滚 ${needsRollback} 个参数到 Canary 前取值；当前仅生成预案，不自动写入。`
+          : '当前任务参数已等于 Canary 前取值，暂不需要回滚。',
+    };
+  }
+
+  private buildCanaryAttribution(canary: any, dashboard: any, startDate?: string) {
+    const outcomes = Array.isArray(dashboard?.outcomes) ? dashboard.outcomes : [];
+    const closed = outcomes.filter((item: any) => item.trade_status === 'closed');
+    const winners = [...closed]
+      .sort((a: any, b: any) => Number(b.total_pnl_pct || 0) - Number(a.total_pnl_pct || 0))
+      .slice(0, 3)
+      .map((item: any) => ({
+        id: item.id,
+        symbol: item.symbol,
+        name: item.name,
+        total_pnl_pct: roundNumber(item.total_pnl_pct, 4),
+        excess_return_pct: roundNumber(item.excess_return_pct, 4),
+        total_pnl: roundNumber(item.total_pnl, 2),
+      }));
+    const losers = [...closed]
+      .sort((a: any, b: any) => Number(a.total_pnl_pct || 0) - Number(b.total_pnl_pct || 0))
+      .slice(0, 3)
+      .map((item: any) => ({
+        id: item.id,
+        symbol: item.symbol,
+        name: item.name,
+        total_pnl_pct: roundNumber(item.total_pnl_pct, 4),
+        excess_return_pct: roundNumber(item.excess_return_pct, 4),
+        total_pnl: roundNumber(item.total_pnl, 2),
+      }));
+    const summary = dashboard?.summary || {};
+    const avgExcess = roundNumber(summary.avg_excess_return_pct, 4);
+    const winRate = roundNumber(summary.win_rate, 2);
+    const closedCount = Number(summary.closed_count || 0);
+    return {
+      start_date: startDate,
+      selected_parameter_keys: canary?.selected_parameter_keys || [],
+      task_count: Number(canary?.target_task_count || 0),
+      closed_count: closedCount,
+      open_count: Number(summary.open_count || 0),
+      total_pnl: roundNumber(summary.total_pnl, 2),
+      total_realized_pnl: roundNumber(summary.total_realized_pnl, 2),
+      total_unrealized_pnl: roundNumber(summary.total_unrealized_pnl, 2),
+      avg_closed_return_pct: roundNumber(summary.avg_closed_return_pct, 4),
+      avg_excess_return_pct: avgExcess,
+      win_rate: winRate,
+      profit_factor: roundNumber(summary.profit_factor, 4),
+      winners,
+      losers,
+      conclusion:
+        closedCount === 0
+          ? 'Canary 后尚无闭环交易，暂不能判断本次调参是否贡献收益。'
+          : avgExcess > 0 && winRate >= 45
+          ? `Canary 后闭环 ${closedCount} 笔，平均超额 ${avgExcess}%，收益贡献偏正。`
+          : `Canary 后闭环 ${closedCount} 笔，平均超额 ${avgExcess}%，收益贡献仍需谨慎。`,
     };
   }
 

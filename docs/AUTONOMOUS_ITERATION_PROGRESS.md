@@ -1341,3 +1341,37 @@ Next:
 1. Add a rule-to-PnL attribution view for Canary/audit events so each parameter change can be linked to subsequent closed-trade PnL.
 2. Add a manual rollback preview that shows exactly which task parameters would be restored from the Canary audit before any write.
 3. Add snapshot retention/maintenance for order-intent hindsight outcomes.
+
+### 2026-05-22 order-intent canary attribution and rollback plan
+
+Focus: make every Canary tuning change reversible and attributable before any manual decision to expand or roll back.
+
+Completed:
+
+- `GET /api/paper-trading/order-intent-tuning/canary` now also returns:
+  - `attribution`: closed/open outcome count, PnL, average closed return, average excess return, win rate, profit factor, top contributors and top draggers since the Canary audit date.
+  - `rollback_plan`: task-level and parameter-level restore preview from `task_parameter_audit_logs.before_parameters`.
+- Rollback preview is read-only and includes safety states:
+  - `ready`: current task values still match Canary values and can be restored to before-values if manually approved later.
+  - `manual_review`: some parameters changed again after Canary, so operators must review before rollback.
+  - `no_change`: current values already match pre-Canary values.
+- Paper-trading page Canary card now shows two compact cards:
+  - “收益归因”: average excess return, closed sample count, win rate, contributors/draggers.
+  - “回滚预案”: safety state, affected tasks, affected keys, and concise conclusion.
+- Smoke validates active Canary status includes rollback plan and attribution conclusion.
+
+Validation:
+
+```bash
+node --check scripts/tests/smoke_readonly_core.js
+./backend/node_modules/.bin/tsc --noEmit --project backend/tsconfig.json
+./frontend/node_modules/.bin/tsc --noEmit --project frontend/tsconfig.json
+CI=false /Users/bytedance/.nvm/versions/node/v20.20.2/bin/npm --prefix frontend run build
+git diff --check
+```
+
+Next:
+
+1. Add a manual rollback apply endpoint with `dry_run` defaulting to true and hard confirmation required.
+2. Add a historical audit-to-PnL page/table so multiple Canary/apply events can be compared.
+3. Add snapshot retention/maintenance for order-intent hindsight outcomes.
