@@ -1,4 +1,4 @@
-import { Op, literal } from 'sequelize';
+import { Op, literal, QueryTypes } from 'sequelize';
 import { DailyBar } from '../../models/DailyBar';
 import { Stock } from '../../models/Stock';
 import { FavoriteStock } from '../../models/FavoriteStock';
@@ -9,6 +9,7 @@ import { normalizeSymbol } from '../../utils/stockSymbol';
 import { logger } from '../../utils/logger';
 import { TushareClient } from '../sources/TushareClient';
 import { EastMoneyClient } from '../sources/EastMoneyClient';
+import sequelize from '../../config/database';
 
 type FactorScope = 'favorites' | 'market' | 'custom';
 type FactorProviderName = 'auto' | 'local_derived' | 'tushare' | 'eastmoney';
@@ -61,6 +62,12 @@ function percentileRank(values: number[], value: number): number | undefined {
   return round((lowerOrEqual / filtered.length) * 100, 4);
 }
 
+type FactorCoverageRow = {
+  count: string | number;
+  source_breakdown: Record<string, number> | string | null;
+  latest_factor_date: string | null;
+};
+
 interface FactorSyncOptions {
   scope?: FactorScope;
   symbols?: string[];
@@ -77,6 +84,7 @@ export interface FactorCoverage {
   latest_trade_date: string | null;
   latest_factor_date?: string | null;
   latest_landed_factor_date?: string | null;
+  effective_factor_date?: string | null;
   factor_lag_days?: number | null;
   coverage_status?: 'real_ready' | 'derived_ready' | 'limited' | 'missing';
   universe_stock_count: number;
@@ -317,6 +325,70 @@ export class StockFactorService {
       byStock.set(bar.stock_id, list);
     }
     return byStock;
+  }
+
+  private async getEffectiveFactorCoverageRows(options: {
+    table: string;
+    stock_ids: number[];
+    latest_trade_date?: string | null;
+    max_lag_days?: number;
+  }): Promise<FactorCoverageRow> {
+    if (!options.stock_ids.length) {
+      return { count: 0, source_breakdown: {}, latest_factor_date: null };
+    }
+    const maxLagDays = Math.max(Number(options.max_lag_days ?? 7), 0);
+    const freshnessPredicate = options.latest_trade_date
+      ? `AND factor_date >= (:latest_trade_date::date - (:max_lag_days::int * interval '1 day'))`
+      : '';
+    const [row] = await sequelize.query<FactorCoverageRow>(
+      `
+      WITH ranked AS (
+        SELECT stock_id, source, factor_date,
+               ROW_NUMBER() OVER (
+                 PARTITION BY stock_id
+                 ORDER BY factor_date DESC,
+                          CASE
+                            WHEN source = 'tushare' THEN 1
+                            WHEN source = 'eastmoney' THEN 2
+                            WHEN source = 'akshare' THEN 3
+                            WHEN source = 'local_derived' THEN 9
+                            ELSE 6
+                          END ASC,
+                          updated_at DESC
+               ) AS rn
+        FROM ${options.table}
+        WHERE stock_id IN (:stock_ids)
+          ${freshnessPredicate}
+      )
+      SELECT COUNT(*)::int AS count,
+             COALESCE(jsonb_object_agg(source, source_count), '{}'::jsonb) AS source_breakdown,
+             MAX(latest_factor_date)::text AS latest_factor_date
+      FROM (
+        SELECT source, COUNT(*)::int AS source_count, MAX(factor_date) AS latest_factor_date
+        FROM ranked
+        WHERE rn = 1
+        GROUP BY source
+      ) grouped
+      `,
+      {
+        replacements: {
+          stock_ids: options.stock_ids,
+          latest_trade_date: options.latest_trade_date || null,
+          max_lag_days: maxLagDays,
+        },
+        type: QueryTypes.SELECT,
+      }
+    );
+    return row || { count: 0, source_breakdown: {}, latest_factor_date: null };
+  }
+
+  private parseSourceBreakdown(value: FactorCoverageRow['source_breakdown']): Record<string, number> {
+    if (!value) return {};
+    const parsed = typeof value === 'string' ? JSON.parse(value || '{}') : value;
+    return Object.entries(parsed || {}).reduce<Record<string, number>>((acc, [source, count]) => {
+      acc[source] = toNumber(count);
+      return acc;
+    }, {});
   }
 
   private scoreValuation(latest: DailyBar, pePercentile?: number, pbPercentile?: number): number {
@@ -896,55 +968,54 @@ export class StockFactorService {
           }).catch(() => null)
         )?.factor_date || null
       : null;
-    // 因子是低频/日终特征，实时或当日 K 线补入后不应把昨日有效因子判成 0 覆盖。
-    // 覆盖率使用所选股票池内最新因子日期；latest_trade_date 仍返回 K 线最新交易日，便于识别数据时差。
-    const coverageFactorDate = latestFactorDate || latestTradeDate;
-    const where = stockIds.length
+    const [
+      valuationCoverage,
+      moneyCoverage,
+      fundamentalCoverage,
+    ] = await Promise.all([
+      this.getEffectiveFactorCoverageRows({
+        table: 'stock_valuation_factors',
+        stock_ids: stockIds,
+        latest_trade_date: latestTradeDate,
+      }),
+      this.getEffectiveFactorCoverageRows({
+        table: 'stock_money_flow_factors',
+        stock_ids: stockIds,
+        latest_trade_date: latestTradeDate,
+      }),
+      this.getEffectiveFactorCoverageRows({
+        table: 'stock_fundamental_factors',
+        stock_ids: stockIds,
+        latest_trade_date: latestTradeDate,
+      }),
+    ]);
+    const valuationCount = toNumber(valuationCoverage.count);
+    const moneyFlowCount = toNumber(moneyCoverage.count);
+    const fundamentalCount = toNumber(fundamentalCoverage.count);
+    const effectiveLatestFactorDates = [
+      valuationCoverage.latest_factor_date,
+      moneyCoverage.latest_factor_date,
+      fundamentalCoverage.latest_factor_date,
+    ].filter(Boolean) as string[];
+    const coverageFactorDate =
+      effectiveLatestFactorDates.sort((a, b) => b.localeCompare(a))[0] ||
+      latestFactorDate ||
+      latestTradeDate;
+    const sampleWhere = stockIds.length
       ? {
           stock_id: { [Op.in]: stockIds },
-          ...(coverageFactorDate ? { factor_date: coverageFactorDate } : {}),
+          ...(coverageFactorDate ? { factor_date: { [Op.lte]: coverageFactorDate } } : {}),
         }
       : {};
 
-    const [
-      valuationCount,
-      moneyFlowCount,
-      fundamentalCount,
-      valuationRowsAll,
-      moneyRowsAll,
-      fundamentalRowsAll,
-    ] = await Promise.all([
-      StockValuationFactor.count({ where }),
-      StockMoneyFlowFactor.count({ where }),
-      StockFundamentalFactor.count({ where }),
-      StockValuationFactor.findAll({
-        where,
-        attributes: ['source'],
-        raw: true,
-      }).catch(() => [] as any[]),
-      StockMoneyFlowFactor.findAll({
-        where,
-        attributes: ['source'],
-        raw: true,
-      }).catch(() => [] as any[]),
-      StockFundamentalFactor.findAll({
-        where,
-        attributes: ['source'],
-        raw: true,
-      }).catch(() => [] as any[]),
-    ]);
-    const countBySource = (rows: any[]) =>
-      rows.reduce<Record<string, number>>((acc, row) => {
-        const source = String(row.source || 'unknown');
-        acc[source] = (acc[source] || 0) + 1;
-        return acc;
-      }, {});
-
-    const samples = coverageFactorDate
+    const samples = stockIds.length
       ? await StockValuationFactor.findAll({
-          where,
+          where: sampleWhere,
           include: [{ model: Stock, attributes: ['industry'] }],
-          order: [['valuation_score', 'DESC']],
+          order: [
+            ['valuation_score', 'DESC'],
+            ['factor_date', 'DESC'],
+          ],
           limit: 10,
         }).catch(() => [])
       : [];
@@ -967,9 +1038,9 @@ export class StockFactorService {
     );
     const denominator = Math.max(stocks.length, 1);
     const sourceBreakdown = {
-      valuation: countBySource(valuationRowsAll),
-      money_flow: countBySource(moneyRowsAll),
-      fundamental: countBySource(fundamentalRowsAll),
+      valuation: this.parseSourceBreakdown(valuationCoverage.source_breakdown),
+      money_flow: this.parseSourceBreakdown(moneyCoverage.source_breakdown),
+      fundamental: this.parseSourceBreakdown(fundamentalCoverage.source_breakdown),
     };
     const sourcePairs = Object.values(sourceBreakdown).flatMap(group => Object.entries(group));
     const totalSourceRecords = sourcePairs.reduce((sum, [, count]) => sum + toNumber(count), 0);
@@ -996,7 +1067,7 @@ export class StockFactorService {
           .map(([source]) => source)[0] || null,
       provider_status: providerStatus,
     };
-    const factorLagDays = daysBetween(latestFactorDate, latestTradeDate);
+    const factorLagDays = daysBetween(coverageFactorDate, latestTradeDate);
     const coverageStatus: FactorCoverage['coverage_status'] =
       minCoverageRate >= 70 && sourceQuality.real_provider_rate >= 10
         ? 'real_ready'
@@ -1024,6 +1095,7 @@ export class StockFactorService {
       latest_trade_date: latestTradeDate,
       latest_factor_date: coverageFactorDate,
       latest_landed_factor_date: latestFactorDate,
+      effective_factor_date: coverageFactorDate,
       factor_lag_days: factorLagDays,
       coverage_status: coverageStatus,
       universe_stock_count: stocks.length,
