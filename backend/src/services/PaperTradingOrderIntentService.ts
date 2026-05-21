@@ -5,6 +5,7 @@ import { PaperTradingPortfolio } from '../models/PaperTradingPortfolio';
 import { DailyBar } from '../models/DailyBar';
 import { Stock } from '../models/Stock';
 import { User } from '../models/User';
+import { AIInvestmentSignal } from '../models/AIInvestmentSignal';
 
 export interface PaperTradingOrderIntentDashboardOptions {
   user_id?: number;
@@ -230,6 +231,80 @@ export class PaperTradingOrderIntentService {
     };
   }
 
+  async getIntentTrace(id: number, options: PaperTradingOrderIntentDashboardOptions = {}) {
+    const portfolio = await this.resolvePortfolio(options);
+    if (!portfolio) throw new Error('目标模拟盘尚未创建或无权访问');
+
+    const record = await PaperTradingOrderIntent.findOne({
+      where: { id, portfolio_id: portfolio.id },
+    });
+    if (!record) return null;
+
+    const item = modelToPlain<any>(record);
+    const [hindsight, signal, peerRecords] = await Promise.all([
+      this.buildHindsight([item]),
+      item.signal_id
+        ? AIInvestmentSignal.findByPk(item.signal_id, { raw: true }).catch(() => null)
+        : null,
+      PaperTradingOrderIntent.findAll({
+        where: {
+          portfolio_id: portfolio.id,
+          reason_category: item.reason_category || 'unknown',
+          status: { [Op.in]: ['rejected', 'skipped', 'held'] },
+          intent_date: {
+            [Op.gte]: moment()
+              .tz('Asia/Shanghai')
+              .subtract(toPositiveInt(options.lookback_days, 30, 3650), 'days')
+              .format('YYYY-MM-DD'),
+          },
+        },
+        order: [
+          ['intent_date', 'DESC'],
+          ['created_at', 'DESC'],
+        ],
+        limit: 300,
+      }),
+    ]);
+
+    const peerPlain = peerRecords.map(peer => modelToPlain<any>(peer));
+    const peerHindsight = await this.buildHindsight(peerPlain);
+    const opportunityOutcome = hindsight.by_intent_id.get(Number(item.id));
+    const normalizedIntent = this.normalizeIntent(item, opportunityOutcome);
+    const peerSuggestion = (peerHindsight.summary.rule_suggestions || []).find(
+      (suggestion: any) => suggestion.key === (item.reason_category || 'unknown')
+    );
+    const stableSuggestion = (peerHindsight.summary.stable_rule_suggestions || []).find(
+      (suggestion: any) => suggestion.key === (item.reason_category || 'unknown')
+    );
+    const parameterImpact = (peerHindsight.summary.parameter_adjustment_preview || []).filter(
+      (preview: any) => preview.reason_category === (item.reason_category || 'unknown')
+    );
+
+    return {
+      generated_at: moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm:ss'),
+      portfolio: modelToPlain(portfolio),
+      intent: normalizedIntent,
+      signal: signal ? this.normalizeSignal(signal) : null,
+      opportunity_outcome: opportunityOutcome,
+      peer_review: {
+        reason_category: item.reason_category || 'unknown',
+        reason_category_label: reasonCategoryLabel(item.reason_category),
+        sample_count: peerPlain.length,
+        hindsight: peerHindsight.summary,
+        matching_rule_suggestion: peerSuggestion || null,
+        stable_rule_suggestion: stableSuggestion || null,
+        parameter_impact: parameterImpact,
+      },
+      timeline: this.buildIntentTraceTimeline(normalizedIntent, signal, opportunityOutcome),
+      conclusion: this.buildIntentTraceConclusion(
+        normalizedIntent,
+        opportunityOutcome,
+        stableSuggestion,
+        parameterImpact
+      ),
+    };
+  }
+
   private normalizeIntent(item: any, opportunityOutcome?: any) {
     const metadata = item.metadata || {};
     const executionReality = metadata.execution_reality_decision || {};
@@ -252,6 +327,107 @@ export class PaperTradingOrderIntentService {
         executionReality.label ||
         (Array.isArray(executionReality.reasons) ? executionReality.reasons.join('；') : ''),
     };
+  }
+
+  private normalizeSignal(signal: any) {
+    return {
+      id: signal.id,
+      source_type: signal.source_type,
+      source_id: signal.source_id,
+      loop_run_id: signal.loop_run_id,
+      symbol: signal.symbol,
+      name: signal.name,
+      signal_date: signal.signal_date,
+      decision: signal.decision,
+      normalized_decision: signal.normalized_decision,
+      confidence_score:
+        signal.confidence_score === null || signal.confidence_score === undefined
+          ? null
+          : toNumber(signal.confidence_score),
+      risk_level: signal.risk_level,
+      rationale: signal.rationale,
+      current_price:
+        signal.current_price === null || signal.current_price === undefined
+          ? null
+          : toNumber(signal.current_price),
+      price_change_pct:
+        signal.price_change_pct === null || signal.price_change_pct === undefined
+          ? null
+          : toNumber(signal.price_change_pct),
+      verification_status: signal.verification_status,
+      forward_returns: signal.forward_returns || {},
+      metadata: signal.metadata || {},
+    };
+  }
+
+  private buildIntentTraceTimeline(intent: any, signal: any, outcome: any) {
+    const timeline: any[] = [
+      {
+        stage: 'signal',
+        label: '信号产生',
+        time: signal?.signal_date || intent.intent_date,
+        status: signal ? 'completed' : 'missing',
+        summary: signal
+          ? `${signal.source_type} 信号评分 ${toNumber(
+              signal.confidence_score,
+              intent.score || 0
+            )}，决策 ${signal.normalized_decision || signal.decision || '--'}。`
+          : '没有关联信号，可能来自风控持仓检查或手动流程。',
+      },
+      {
+        stage: 'intent',
+        label: '形成买卖意图',
+        time: intent.intent_date,
+        status: intent.status,
+        summary: `${intent.side_label || intent.side} · ${
+          intent.status_label || intent.status
+        }，原因：${intent.compact_reason || intent.reason_category_label || '暂无说明'}`,
+      },
+    ];
+
+    const horizons = outcome?.horizons || {};
+    for (const horizon of HINDSIGHT_HORIZONS) {
+      const item = horizons[`${horizon}d`];
+      if (!item) continue;
+      timeline.push({
+        stage: `hindsight_${horizon}d`,
+        label: `${horizon}日后验`,
+        time: item.target_date,
+        status: item.intended_action_return_pct > 0.5 ? 'false_reject' : 'protected_or_neutral',
+        summary: item.conclusion,
+        metric: {
+          intended_action_return_pct: item.intended_action_return_pct,
+          raw_future_return_pct: item.raw_future_return_pct,
+          target_price: item.target_price,
+          base_price: item.base_price,
+        },
+      });
+    }
+    return timeline;
+  }
+
+  private buildIntentTraceConclusion(
+    intent: any,
+    outcome: any,
+    stableSuggestion: any,
+    parameterImpact: any[]
+  ) {
+    const benchmark =
+      outcome?.horizons?.['5d'] || this.firstAvailableHorizon(outcome?.horizons || {});
+    if (!benchmark) {
+      return `${intent.name || intent.symbol} 的拒单/跳过仍缺少后续K线，暂不能判断是否错杀。`;
+    }
+    const actionResult =
+      toNumber(benchmark.intended_action_return_pct) > 0.5
+        ? '这笔更像可能错杀'
+        : toNumber(benchmark.intended_action_return_pct) < -0.5
+        ? '这笔拦截较有效'
+        : '这笔影响有限';
+    const tuning =
+      stableSuggestion?.eligible_for_auto_tune && parameterImpact.length > 0
+        ? `同类规则已进入调参候选，影响 ${parameterImpact.length} 个参数。`
+        : '同类规则暂未达到自动调参候选标准。';
+    return `${actionResult}：${benchmark.conclusion}。${tuning}`;
   }
 
   private async buildHindsight(items: any[]) {

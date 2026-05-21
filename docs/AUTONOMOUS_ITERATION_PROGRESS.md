@@ -1186,3 +1186,41 @@ Next:
 1. Add a single-stock rejection drill-down modal/page for signal → gate → hindsight → parameter impact.
 2. Add persisted/cached order-intent hindsight snapshots to reduce request-time daily-bar scans when samples grow.
 3. Add automated canary mode: apply tuning to only one low-risk task/parameter first, observe next N trades, then graduate.
+
+### 2026-05-21 single order-intent rejection trace
+
+Focus: make every rejected/skipped simulated trade explainable at single-stock level, not just aggregate buckets.
+
+Completed:
+
+- Added `PaperTradingOrderIntentService.getIntentTrace(id)` and API:
+  - `GET /api/paper-trading/order-intents/:id/trace`
+  - returns the order intent, linked investment signal when available, 1/3/5/10 day hindsight, peer reason-category review, stable rule suggestion and parameter-impact preview.
+- The trace conclusion answers whether the individual rejected/skipped action looks like:
+  - possible false reject;
+  - useful protection;
+  - neutral/insufficient data.
+- Paper-trading page “最近未成交/跳过” rows now include “看链路”.
+- Added a drill-down modal with:
+  - action/status/reference price/peer sample count summary;
+  - signal → intent → hindsight timeline;
+  - signal score/decision/rationale;
+  - matching rule suggestion and stable-window label;
+  - possible parameter impact.
+- Read-only smoke now calls the trace API when an order-intent sample exists.
+
+Validation:
+
+```bash
+node --check scripts/tests/smoke_readonly_core.js
+./backend/node_modules/.bin/tsc --noEmit --project backend/tsconfig.json
+./frontend/node_modules/.bin/tsc --noEmit --project frontend/tsconfig.json
+CI=false /Users/bytedance/.nvm/versions/node/v20.20.2/bin/npm --prefix frontend run build
+git diff --check
+```
+
+Next:
+
+1. Persist/cache order-intent hindsight snapshots to reduce repeated daily-bar scans.
+2. Add canary auto-tuning mode: apply one low-risk parameter first, observe next closed trades, then graduate.
+3. Add a “规则 → 收益贡献” attribution page for which tuning decisions improved or hurt paper-trading PnL.
