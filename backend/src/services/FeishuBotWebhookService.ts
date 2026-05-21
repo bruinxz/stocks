@@ -41,6 +41,10 @@ type NormalizedRecommendation = {
   risk_level?: string;
   amount?: number;
   trace_url?: string;
+  strategy_budget_label?: string;
+  strategy_budget_reason?: string;
+  strategy_budget_action?: string;
+  risk_guard_label?: string;
 };
 
 type NormalizedRiskExit = {
@@ -183,10 +187,12 @@ class FeishuBotWebhookService {
     const scopeLine = this.buildScopeLine(result, payload.scenario);
     const timeLine = moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm');
     const runtimeBlockLine = this.buildRuntimeBlockLine(result);
+    const strategyBudgetLine = this.buildStrategyBudgetLine(result);
 
     const lines = [
       runtimeBlockLine || this.buildConclusionLine(totalCount, recommendations.length, paper),
       scopeLine,
+      strategyBudgetLine,
       runtimeBlockLine ? this.buildConclusionLine(totalCount, recommendations.length, paper) : '',
       recommendations.length ? '' : '标的：暂无满足条件的买入候选，建议观望。',
     ].filter(Boolean);
@@ -338,6 +344,30 @@ class FeishuBotWebhookService {
     return `结论：运行时风险阻断，本轮只归档观察，不执行模拟买入${score}。原因：${conclusion}`;
   }
 
+  private buildStrategyBudgetLine(result: any): string {
+    const policy =
+      result?.strategy_allocation_policy ||
+      result?.allocation_policy ||
+      result?.quant_strategy_allocation_policy ||
+      {};
+    const summary = policy?.summary || {};
+    const conclusion = firstText(summary.conclusion, policy.conclusion);
+    if (conclusion) return `策略预算：${this.safeText(conclusion, 86)}`;
+
+    const topCandidates = Array.isArray(result?.fusion?.top_candidates)
+      ? result.fusion.top_candidates
+      : Array.isArray(result?.archive?.candidates)
+      ? result.archive.candidates
+      : [];
+    const topBudget = topCandidates
+      .map((item: any) => this.resolveStrategyBudget(item))
+      .find((item: any) => item?.label || item?.reason);
+    if (topBudget?.label || topBudget?.reason) {
+      return `策略预算：${this.safeText(firstText(topBudget.label, topBudget.reason), 86)}`;
+    }
+    return '';
+  }
+
   private resolvePaperTrading(result: any): Record<string, any> {
     return result?.paper_trading || (Array.isArray(result?.trades) ? result : {}) || {};
   }
@@ -448,6 +478,7 @@ class FeishuBotWebhookService {
   private normalizeRecommendation(raw: any): NormalizedRecommendation | null {
     if (!raw || !raw.symbol) return null;
     const metadata = raw.metadata || {};
+    const paperTrading = metadata.paper_trading || {};
     const rawFactors = raw.factors?.best_raw_factors || {};
     const symbol = String(raw.symbol).trim();
     const reasons = Array.isArray(raw.reasons)
@@ -460,6 +491,8 @@ class FeishuBotWebhookService {
     );
     const status = firstText(raw.status);
     const actionLabel = this.resolveActionLabel(raw, status);
+    const budget = this.resolveStrategyBudget(raw);
+    const riskGuard = this.resolveRiskGuard(raw);
 
     return {
       symbol,
@@ -486,7 +519,79 @@ class FeishuBotWebhookService {
       risk_level: firstText(raw.risk_level, metadata.risk_level),
       amount: firstNumber(raw.amount, raw.total_cost, raw.strategy_allocation_amount),
       trace_url: firstText(raw.trace_url, metadata.trace_url),
+      strategy_budget_label: budget.label,
+      strategy_budget_reason: budget.reason,
+      strategy_budget_action: budget.action,
+      risk_guard_label: riskGuard.label || firstText(paperTrading.entry_risk_guard_decision?.label),
     };
+  }
+
+  private resolveStrategyBudget(raw: any): { label?: string; reason?: string; action?: string } {
+    const metadata = raw?.metadata || {};
+    const paperTrading = metadata.paper_trading || {};
+    const policy =
+      raw?.strategy_allocation_policy ||
+      raw?.factors?.strategy_allocation_policy ||
+      metadata.strategy_allocation_policy ||
+      paperTrading.strategy_allocation_policy ||
+      metadata.strategy_variant?.strategy_allocation_policy ||
+      {};
+    const decision = policy?.decision || policy?.weight_decision || {};
+    const action = firstText(
+      raw?.strategy_budget_action,
+      metadata.strategy_budget_action,
+      paperTrading.strategy_budget_action,
+      decision.action_label,
+      policy.action
+    );
+    const allocationPct = firstNumber(
+      raw?.strategy_allocation_pct,
+      policy.allocation_pct,
+      metadata.strategy_allocation_pct,
+      paperTrading.strategy_allocation_pct
+    );
+    const capPct = firstNumber(
+      raw?.strategy_max_single_trade_pct,
+      raw?.max_single_trade_pct,
+      policy.max_single_trade_pct,
+      metadata.strategy_max_single_trade_pct,
+      paperTrading.strategy_max_single_trade_pct
+    );
+    const confidence = firstNumber(
+      raw?.strategy_budget_confidence,
+      metadata.strategy_budget_confidence,
+      paperTrading.strategy_budget_confidence,
+      decision.sample_confidence
+    );
+    const label = [
+      policy.strategy_name || raw?.strategy_name || metadata.strategy_name,
+      allocationPct !== undefined ? `预算${this.formatNumber(allocationPct, 1)}%` : '',
+      capPct !== undefined ? `单票≤${this.formatNumber(capPct, 1)}%` : '',
+      action ? `动作${action}` : '',
+      confidence !== undefined ? `置信${this.formatNumber(confidence, 0)}` : '',
+    ]
+      .filter(Boolean)
+      .join('，');
+    const reason = firstText(
+      raw?.strategy_budget_reason,
+      metadata.strategy_budget_reason,
+      paperTrading.strategy_budget_reason,
+      decision.reason,
+      policy.reason
+    );
+    return { label, reason, action };
+  }
+
+  private resolveRiskGuard(raw: any): { label?: string } {
+    const metadata = raw?.metadata || {};
+    const paperTrading = metadata.paper_trading || {};
+    const decision =
+      raw?.entry_risk_guard_decision ||
+      metadata.entry_risk_guard_decision ||
+      paperTrading.entry_risk_guard_decision ||
+      {};
+    const label = firstText(decision.label, decision.conclusion, decision.reason);
+    return { label };
   }
 
   private resolveActionLabel(raw: any, status: string): string {
@@ -513,6 +618,8 @@ class FeishuBotWebhookService {
       item.action_label,
       item.score !== undefined ? `分${this.formatNumber(item.score, 1)}` : '',
       item.position_pct !== undefined ? `仓位${this.formatNumber(item.position_pct, 1)}%` : '',
+      item.strategy_budget_label ? this.safeText(item.strategy_budget_label, 34) : '',
+      item.risk_guard_label ? this.safeText(item.risk_guard_label, 26) : '',
       item.reason ? this.safeText(item.reason, 30) : '',
     ].filter(Boolean);
     const text = chunks.join('｜');

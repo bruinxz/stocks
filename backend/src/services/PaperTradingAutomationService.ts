@@ -201,6 +201,19 @@ export interface PaperTradingAutoTradeItem {
   strategy_allocation_amount?: number;
   strategy_max_single_trade_pct?: number;
   strategy_max_single_trade_amount?: number;
+  strategy_budget_action?: string;
+  strategy_budget_label?: string;
+  strategy_budget_reason?: string;
+  strategy_budget_confidence?: number;
+  strategy_budget_discipline?: Record<string, any>;
+  entry_risk_guard_decision?: {
+    allowed: boolean;
+    label: string;
+    reasons: string[];
+    candidate_position_pct?: number;
+    strategy_allocation_pct?: number;
+    checks?: Record<string, any>;
+  };
   environment_multiplier?: number;
   environment_reason?: string;
   resample_sample?: boolean;
@@ -578,6 +591,14 @@ function clamp(value: number, min: number, max: number): number {
 function asPlainObject(value: any): Record<string, any> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   return value;
+}
+
+function compactText(value: any, maxLength = 120): string {
+  const text = String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) return '';
+  return text.length > maxLength ? `${text.slice(0, Math.max(0, maxLength - 1))}…` : text;
 }
 
 function pearsonCorrelation(a: number[], b: number[]): number {
@@ -1330,12 +1351,25 @@ class PaperTradingAutomationService {
       }
 
       const strategyVariant = asPlainObject(metadata.strategy_variant);
+      const externalStrategyBudgetDiscipline = asPlainObject(
+        asPlainObject(options.external_environment_policy).strategy_budget_discipline
+      );
+      const metadataStrategyBudgetDiscipline = asPlainObject(
+        metadata.strategy_budget_discipline || strategyVariant.strategy_budget_discipline
+      );
+      const strategyBudgetDiscipline = {
+        ...externalStrategyBudgetDiscipline,
+        ...metadataStrategyBudgetDiscipline,
+      };
       const strategyAllocationPolicy = asPlainObject(
-        metadata.strategy_allocation_policy || strategyVariant.strategy_allocation_policy
+        metadata.strategy_allocation_policy ||
+          strategyVariant.strategy_allocation_policy ||
+          strategyBudgetDiscipline.policy
       );
       const strategyMaxSingleTradePct = toOptionalNumber(
         metadata.strategy_max_single_trade_pct ||
           strategyAllocationPolicy.max_single_trade_pct ||
+          strategyBudgetDiscipline.max_single_trade_pct ||
           strategyVariant.strategy_max_single_trade_pct
       );
       const strategyPositionCap =
@@ -1346,6 +1380,7 @@ class PaperTradingAutomationService {
       const strategyAllocationPct = toOptionalNumber(
         metadata.strategy_allocation_pct ||
           strategyAllocationPolicy.allocation_pct ||
+          strategyBudgetDiscipline.allocation_pct ||
           strategyVariant.strategy_allocation_pct
       );
       const suggestedPct = clamp(
@@ -1423,6 +1458,14 @@ class PaperTradingAutomationService {
         skip(tradeRisk.reasons.join('；'));
         continue;
       }
+      const entryRiskGuardDecision = this.buildEntryRiskGuardDecision({
+        trade_risk: tradeRisk,
+        guard: entryRiskGuard,
+        profile: marketProfileWithPortfolioRisk,
+        candidate_position_pct: effectiveTargetPct,
+        strategy_allocation_pct: strategyAllocationPct,
+        strategy_keys: strategyKeysForBudget,
+      });
       if (gatedSuggestedPct <= 0) {
         skip(`收益闸门仓位倍率为 ${profitGatePolicy.effective_position_multiplier}，不执行买入`);
         continue;
@@ -1502,6 +1545,55 @@ class PaperTradingAutomationService {
         ) || undefined;
       const budgetPolicyReason =
         metadata.environment_strategy_budget_policy_reason || budgetActionPolicyMatch.reason;
+      const strategyBudgetAction =
+        metadata.strategy_budget_action ||
+        strategyBudgetDiscipline.action_label ||
+        strategyBudgetDiscipline.action ||
+        strategyAllocationPolicy.action;
+      const strategyBudgetReason = compactText(
+        metadata.strategy_budget_reason ||
+          strategyBudgetDiscipline.reason ||
+          asPlainObject(strategyAllocationPolicy.decision).reason ||
+          strategyAllocationPolicy.reason,
+        140
+      );
+      const strategyBudgetConfidence = toOptionalNumber(
+        metadata.strategy_budget_confidence ||
+          strategyBudgetDiscipline.sample_confidence ||
+          strategyBudgetDiscipline.confidence ||
+          asPlainObject(strategyAllocationPolicy.decision).sample_confidence
+      );
+      const strategyBudgetLabel = compactText(
+        metadata.strategy_budget_label ||
+          strategyBudgetDiscipline.label ||
+          [
+            strategyAllocationPolicy.strategy_name || metadata.strategy_key,
+            strategyAllocationPct ? `预算${roundNumber(strategyAllocationPct, 1)}%` : '',
+            strategyMaxSingleTradePct ? `单票≤${roundNumber(strategyMaxSingleTradePct, 1)}%` : '',
+            strategyBudgetAction ? `动作${strategyBudgetAction}` : '',
+            strategyBudgetConfidence ? `置信${roundNumber(strategyBudgetConfidence, 0)}` : '',
+          ]
+            .filter(Boolean)
+            .join('，'),
+        120
+      );
+      const normalizedStrategyBudgetDiscipline = {
+        ...strategyBudgetDiscipline,
+        strategy_key: strategyBudgetDiscipline.strategy_key || metadata.strategy_key,
+        strategy_keys: strategyBudgetDiscipline.strategy_keys || strategyKeysForBudget,
+        action: strategyBudgetDiscipline.action || strategyBudgetAction,
+        action_label: strategyBudgetDiscipline.action_label || strategyBudgetAction,
+        allocation_pct: strategyBudgetDiscipline.allocation_pct || strategyAllocationPct,
+        max_single_trade_pct:
+          strategyBudgetDiscipline.max_single_trade_pct || strategyMaxSingleTradePct,
+        sample_confidence:
+          strategyBudgetDiscipline.sample_confidence || strategyBudgetConfidence,
+        reason: strategyBudgetDiscipline.reason || strategyBudgetReason,
+        label: strategyBudgetDiscipline.label || strategyBudgetLabel,
+        policy: Object.keys(strategyAllocationPolicy).length
+          ? strategyAllocationPolicy
+          : strategyBudgetDiscipline.policy,
+      };
 
       eligible++;
       const tradePayload: PaperTradingAutoTradeItem = {
@@ -1579,14 +1671,22 @@ class PaperTradingAutomationService {
         strategy_allocation_amount: toOptionalNumber(
           metadata.strategy_allocation_amount ||
             strategyAllocationPolicy.capital_amount ||
+            strategyBudgetDiscipline.capital_amount ||
             strategyVariant.strategy_allocation_amount
         ),
         strategy_max_single_trade_pct: strategyMaxSingleTradePct,
         strategy_max_single_trade_amount: toOptionalNumber(
           metadata.strategy_max_single_trade_amount ||
             strategyAllocationPolicy.max_single_trade_amount ||
+            strategyBudgetDiscipline.max_single_trade_amount ||
             strategyVariant.strategy_max_single_trade_amount
         ),
+        strategy_budget_action: strategyBudgetAction,
+        strategy_budget_label: strategyBudgetLabel,
+        strategy_budget_reason: strategyBudgetReason,
+        strategy_budget_confidence: strategyBudgetConfidence,
+        strategy_budget_discipline: normalizedStrategyBudgetDiscipline,
+        entry_risk_guard_decision: entryRiskGuardDecision,
         stop_loss_pct: toOptionalNumber(metadata.stop_loss_pct),
         take_profit_pct: toOptionalNumber(metadata.take_profit_pct),
         reason: [
@@ -1639,6 +1739,12 @@ class PaperTradingAutomationService {
           strategy_max_single_trade_pct: tradePayload.strategy_max_single_trade_pct,
           strategy_max_single_trade_amount: tradePayload.strategy_max_single_trade_amount,
           strategy_allocation_policy: strategyAllocationPolicy,
+          strategy_budget_action: tradePayload.strategy_budget_action,
+          strategy_budget_label: tradePayload.strategy_budget_label,
+          strategy_budget_reason: tradePayload.strategy_budget_reason,
+          strategy_budget_confidence: tradePayload.strategy_budget_confidence,
+          strategy_budget_discipline: tradePayload.strategy_budget_discipline,
+          entry_risk_guard_decision: tradePayload.entry_risk_guard_decision,
           min_lot_sample: minLotSample || undefined,
           min_lot_sample_reason: minLotSampleReason || undefined,
           stop_loss_pct: tradePayload.stop_loss_pct,
@@ -3458,6 +3564,65 @@ class PaperTradingAutomationService {
     return { allowed: reasons.length === 0, reasons };
   }
 
+  private buildEntryRiskGuardDecision(options: {
+    trade_risk: { allowed: boolean; reasons: string[] };
+    guard: EntryRiskGuardState;
+    profile: EntryMarketProfile;
+    candidate_position_pct: number;
+    strategy_keys?: string[];
+    strategy_allocation_pct?: number;
+  }): NonNullable<PaperTradingAutoTradeItem['entry_risk_guard_decision']> {
+    const { trade_risk, guard, profile } = options;
+    const candidatePct = roundNumber(options.candidate_position_pct, 2);
+    const strategyAllocationPct = toOptionalNumber(options.strategy_allocation_pct);
+    const nextDailyExposure = roundNumber(
+      guard.today_new_exposure_pct + guard.staged_exposure_pct + candidatePct,
+      2
+    );
+    const nextTotalExposure = roundNumber(
+      guard.current_exposure_pct + guard.staged_exposure_pct + candidatePct,
+      2
+    );
+    const estimatedCashPct = roundNumber(Math.max(0, 100 - nextTotalExposure), 2);
+    const industry = profile.industry || '未分类';
+    const currentIndustryPct =
+      guard.total_value > 0
+        ? roundNumber(
+            (toNumber(guard.industry_exposure_amount.get(industry), 0) / guard.total_value) * 100,
+            2
+          )
+        : 0;
+    const label = trade_risk.allowed
+      ? `入场风控放行：目标${candidatePct}%｜现金${estimatedCashPct}%｜今日新增${nextDailyExposure}%`
+      : `入场风控拦截：${compactText(trade_risk.reasons[0], 48)}`;
+    return {
+      allowed: trade_risk.allowed,
+      label,
+      reasons: trade_risk.reasons.slice(0, 6),
+      candidate_position_pct: candidatePct,
+      strategy_allocation_pct: strategyAllocationPct,
+      checks: {
+        min_cash_reserve_pct: guard.min_cash_reserve_pct,
+        estimated_cash_pct: estimatedCashPct,
+        max_daily_new_exposure_pct: guard.max_daily_new_exposure_pct,
+        next_daily_exposure_pct: nextDailyExposure,
+        max_total_exposure_pct: guard.max_total_exposure_pct,
+        next_total_exposure_pct: nextTotalExposure,
+        max_industry_exposure_pct: guard.max_industry_exposure_pct,
+        industry,
+        current_industry_exposure_pct: currentIndustryPct,
+        next_industry_exposure_pct: roundNumber(currentIndustryPct + candidatePct, 2),
+        strategy_keys: options.strategy_keys || [],
+        max_daily_new_positions: guard.max_daily_new_positions,
+        today_buy_count: guard.today_buy_count + guard.staged_count,
+        remaining_daily_new_positions: Math.max(
+          0,
+          guard.max_daily_new_positions - guard.today_buy_count - guard.staged_count
+        ),
+      },
+    };
+  }
+
   private commitEntryRiskGuardTrade(
     guard: EntryRiskGuardState,
     options: {
@@ -4193,6 +4358,16 @@ class PaperTradingAutomationService {
       strategy_allocation_amount: toOptionalNumber(metadata.strategy_allocation_amount),
       strategy_max_single_trade_pct: toOptionalNumber(metadata.strategy_max_single_trade_pct),
       strategy_max_single_trade_amount: toOptionalNumber(metadata.strategy_max_single_trade_amount),
+      strategy_budget_action: metadata.strategy_budget_action,
+      strategy_budget_label: metadata.strategy_budget_label,
+      strategy_budget_reason: metadata.strategy_budget_reason,
+      strategy_budget_confidence: toOptionalNumber(metadata.strategy_budget_confidence),
+      strategy_budget_discipline: asPlainObject(
+        metadata.strategy_budget_discipline || asPlainObject(metadata.strategy_variant).strategy_budget_discipline
+      ),
+      entry_risk_guard_decision: asPlainObject(
+        asPlainObject(metadata.paper_trading).entry_risk_guard_decision
+      ) as any,
       market_regime: environment.market_regime,
       market_regime_label: environment.market_regime_label,
       industry_regime: environment.industry?.regime,
@@ -4323,9 +4498,24 @@ class PaperTradingAutomationService {
   private async markSignalExecuted(signal: AIInvestmentSignal, execution: Record<string, any>) {
     const metadata = asPlainObject(signal.metadata);
     const loop_run_id = signal.loop_run_id || metadata.loop_run_id || execution.loop_run_id;
+    const strategyBudgetDiscipline = asPlainObject(execution.strategy_budget_discipline);
+    const entryRiskGuardDecision = asPlainObject(execution.entry_risk_guard_decision);
     await signal.update({
       metadata: {
         ...metadata,
+        strategy_budget_action: execution.strategy_budget_action || metadata.strategy_budget_action,
+        strategy_budget_label: execution.strategy_budget_label || metadata.strategy_budget_label,
+        strategy_budget_reason: execution.strategy_budget_reason || metadata.strategy_budget_reason,
+        strategy_budget_confidence:
+          execution.strategy_budget_confidence || metadata.strategy_budget_confidence,
+        strategy_budget_discipline:
+          Object.keys(strategyBudgetDiscipline).length > 0
+            ? strategyBudgetDiscipline
+            : metadata.strategy_budget_discipline,
+        entry_risk_guard_decision:
+          Object.keys(entryRiskGuardDecision).length > 0
+            ? entryRiskGuardDecision
+            : metadata.entry_risk_guard_decision,
         paper_trading: {
           ...(metadata.paper_trading || {}),
           ...execution,

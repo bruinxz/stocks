@@ -121,6 +121,11 @@ interface QuantFusionCandidate {
   strategy_allocation_amount?: number;
   strategy_max_single_trade_pct?: number;
   strategy_max_single_trade_amount?: number;
+  strategy_budget_action?: string;
+  strategy_budget_label?: string;
+  strategy_budget_reason?: string;
+  strategy_budget_confidence?: number;
+  strategy_budget_discipline?: Record<string, any>;
   strategy_runtime_policy?: Record<string, any>;
   risk_level: 'low' | 'medium' | 'high';
   strategy_key: string;
@@ -183,6 +188,83 @@ function compactFactors(raw_factors: any): Array<{ name: string; value: any }> {
 function asPlainObject(value: any): Record<string, any> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   return value;
+}
+
+function compactText(value: any, maxLength = 120): string {
+  const text = String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) return '';
+  return text.length > maxLength ? `${text.slice(0, Math.max(0, maxLength - 1))}…` : text;
+}
+
+function actionLabelText(action: any): string {
+  const normalized = String(action || '').toLowerCase();
+  const labels: Record<string, string> = {
+    increase: '加权',
+    slight_increase: '轻加权',
+    observe: '观察',
+    reduce: '降权',
+    pause: '暂停',
+    allow: '放行',
+  };
+  return labels[normalized] || String(action || '').trim();
+}
+
+function buildStrategyBudgetDecision(
+  primaryAllocation: any,
+  options: {
+    effective_single_trade_cap?: number;
+    suggested_position_pct?: number;
+    strategy_keys?: string[];
+  } = {}
+) {
+  const allocation = asPlainObject(primaryAllocation);
+  const decision = asPlainObject(allocation.decision || allocation.weight_decision);
+  const action = decision.action || allocation.action || 'observe';
+  const action_label = decision.action_label || actionLabelText(action) || '观察';
+  const allocationPct = safeNumber(allocation.allocation_pct, 0);
+  const capPct =
+    safeNumber(options.effective_single_trade_cap, 0) ||
+    safeNumber(allocation.max_single_trade_pct, 0);
+  const sampleConfidence = safeNumber(
+    decision.sample_confidence ?? allocation.sample_confidence,
+    0
+  );
+  const reason = compactText(
+    decision.reason || allocation.reason || '按策略后验质量、样本置信度和动作倍率分配预算。',
+    120
+  );
+  const label = [
+    allocation.strategy_name || allocation.strategy_key,
+    allocationPct > 0 ? `预算${roundNumber(allocationPct, 1)}%` : '',
+    capPct > 0 ? `单票≤${roundNumber(capPct, 1)}%` : '',
+    action_label,
+    sampleConfidence > 0 ? `置信${roundNumber(sampleConfidence, 0)}` : '',
+  ]
+    .filter(Boolean)
+    .join('，');
+  return {
+    enabled: true,
+    strategy_key: allocation.strategy_key,
+    strategy_name: allocation.strategy_name,
+    strategy_keys: options.strategy_keys || [],
+    action,
+    action_label,
+    allocation_pct: allocationPct || undefined,
+    capital_amount: allocation.capital_amount,
+    max_single_trade_pct: capPct || undefined,
+    max_single_trade_amount: allocation.max_single_trade_amount,
+    suggested_position_pct: options.suggested_position_pct,
+    sample_confidence: sampleConfidence || undefined,
+    sample_confidence_label: decision.sample_confidence_label || allocation.sample_confidence_label,
+    confidence: safeNumber(decision.confidence, 0) || undefined,
+    reason,
+    risk_notes: Array.isArray(decision.risk_notes) ? decision.risk_notes.slice(0, 3) : [],
+    next_action: decision.next_action || allocation.next_action,
+    label,
+    policy: allocation,
+  };
 }
 
 function buildRuntimeBuyGate(runtimeHealth: any) {
@@ -418,6 +500,12 @@ export class QuantFusionService {
     });
     const selectedCandidates = diversifiedSelection.selected;
     const archive = await this.archiveFusionCandidates(selectedCandidates, options);
+    const strategyAllocationPolicy = await quantStrategyFeedbackService
+      .getAllocationPolicy({ capital: 200000 })
+      .catch(error => {
+        logger.warn(`读取策略资金分配摘要失败，飞书摘要降级: ${error?.message || error}`);
+        return null;
+      });
     const runtimeHealth =
       options.block_buy_on_runtime_risk === false
         ? null
@@ -530,6 +618,7 @@ export class QuantFusionService {
           dry_run: true,
           reason: '量化运行时存在风险项，本轮只观察不买入。',
         },
+        strategy_allocation_policy: strategyAllocationPolicy,
         message: '量化运行时存在风险项，本轮只归档观察信号，不执行模拟买入。',
       };
       if (options.report_to_feishu !== false && options.notify_to_feishu_bot !== false) {
@@ -853,6 +942,7 @@ export class QuantFusionService {
       risk_profile: riskProfile || paperTrading?.risk_profile || preTradeRiskProfile || null,
       risk_profile_gate: effectiveRiskProfileGate,
       risk_threshold_suggestion: thresholdSuggestion,
+      strategy_allocation_policy: strategyAllocationPolicy,
       message: this.buildResultMessage({
         generated,
         selectedCandidates,
@@ -1291,6 +1381,11 @@ export class QuantFusionService {
       action === 'buy' && effectiveSingleTradeCap > 0
         ? Math.min(baseSuggestedPositionPct, effectiveSingleTradeCap)
         : baseSuggestedPositionPct;
+    const strategyBudgetDiscipline = buildStrategyBudgetDecision(primaryAllocation, {
+      effective_single_trade_cap: effectiveSingleTradeCap,
+      suggested_position_pct: round(suggestedPositionPct, 2),
+      strategy_keys: strategyKeys,
+    });
 
     return {
       symbol: best.symbol,
@@ -1328,6 +1423,11 @@ export class QuantFusionService {
       strategy_max_single_trade_pct:
         effectiveSingleTradeCap > 0 ? round(effectiveSingleTradeCap, 2) : undefined,
       strategy_max_single_trade_amount: primaryAllocation?.max_single_trade_amount,
+      strategy_budget_action: strategyBudgetDiscipline.action,
+      strategy_budget_label: strategyBudgetDiscipline.label,
+      strategy_budget_reason: strategyBudgetDiscipline.reason,
+      strategy_budget_confidence: strategyBudgetDiscipline.sample_confidence,
+      strategy_budget_discipline: strategyBudgetDiscipline,
       strategy_runtime_policy: {
         execution_policy: executionPolicy,
         environment_policy: environmentPolicy,
@@ -1356,6 +1456,7 @@ export class QuantFusionService {
         })),
         strategy_allocation_policy: primaryAllocation,
         strategy_allocation_candidates: allocationCandidates.slice(0, 5),
+        strategy_budget_discipline: strategyBudgetDiscipline,
         strategy_runtime_policy: executionPolicy,
         strategy_environment_policy: environmentPolicy,
         strategy_votes: sorted.map(item => ({
@@ -1454,6 +1555,7 @@ export class QuantFusionService {
             fusion_formula:
               'quant_score + consensus_bonus + strategy_weight_adjustment + environment_weight_adjustment - risk_penalty',
             strategy_allocation_policy: candidate.factors?.strategy_allocation_policy,
+            strategy_budget_discipline: candidate.strategy_budget_discipline,
             market_environment: candidate.factors?.market_environment,
             regime_adjustments: candidate.factors?.regime_adjustments,
           },
@@ -1464,6 +1566,11 @@ export class QuantFusionService {
           strategy_max_single_trade_pct: candidate.strategy_max_single_trade_pct,
           strategy_max_single_trade_amount: candidate.strategy_max_single_trade_amount,
           strategy_allocation_policy: candidate.factors?.strategy_allocation_policy,
+          strategy_budget_action: candidate.strategy_budget_action,
+          strategy_budget_label: candidate.strategy_budget_label,
+          strategy_budget_reason: candidate.strategy_budget_reason,
+          strategy_budget_confidence: candidate.strategy_budget_confidence,
+          strategy_budget_discipline: candidate.strategy_budget_discipline,
           strategy_runtime_policy: candidate.strategy_runtime_policy,
           stop_loss_pct: candidate.stop_loss_pct,
           take_profit_pct: candidate.take_profit_pct,
@@ -1477,6 +1584,8 @@ export class QuantFusionService {
             take_profit_price: candidate.take_profit_price,
             strategy_allocation_pct: candidate.strategy_allocation_pct,
             strategy_max_single_trade_pct: candidate.strategy_max_single_trade_pct,
+            strategy_budget_action: candidate.strategy_budget_action,
+            strategy_budget_confidence: candidate.strategy_budget_confidence,
           },
           reasons: candidate.reasons,
           warnings: candidate.risk_flags,
@@ -1609,6 +1718,7 @@ export class QuantFusionService {
               param_versions: candidate.factors?.param_versions,
               param_version_keys: candidate.factors?.param_version_keys,
               strategy_allocation_policy: candidate.factors?.strategy_allocation_policy,
+              strategy_budget_discipline: candidate.strategy_budget_discipline,
               strategy_runtime_policy: candidate.strategy_runtime_policy,
               market_environment: candidate.factors?.market_environment,
               regime_adjustments: candidate.factors?.regime_adjustments,
@@ -1646,6 +1756,7 @@ export class QuantFusionService {
             strategy_runtime_policy: candidate.strategy_runtime_policy,
             strategy_allocation_pct: candidate.strategy_allocation_pct,
             strategy_max_single_trade_pct: candidate.strategy_max_single_trade_pct,
+            strategy_budget_discipline: candidate.strategy_budget_discipline,
             quant_agent_fusion: true,
           },
           {
