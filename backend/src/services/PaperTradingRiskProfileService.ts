@@ -5,6 +5,7 @@ import { PaperTradingPortfolio } from '../models/PaperTradingPortfolio';
 import { PaperTradingPosition } from '../models/PaperTradingPosition';
 import { PaperTradingSnapshot } from '../models/PaperTradingSnapshot';
 import { Stock } from '../models/Stock';
+import { PAPER_PORTFOLIO_FAMILIES } from './PaperTradingPortfolioFamilies';
 import { logger } from '../utils/logger';
 import { normalizeSymbol } from '../utils/stockSymbol';
 
@@ -33,6 +34,7 @@ interface PositionRiskItem {
 interface RiskProfileOptions {
   user_id: number;
   portfolio_name?: string;
+  include_family?: boolean | string;
   min_cash_reserve_pct?: number;
   max_portfolio_drawdown_pct?: number;
   max_total_exposure_pct?: number;
@@ -173,10 +175,20 @@ export class PaperTradingRiskProfileService {
       ),
     };
 
+    const includeFamily =
+      options.include_family === true ||
+      String(options.include_family || '').toLowerCase() === 'true';
+    if (includeFamily && !options.portfolio_name) {
+      return this.getFamilyRiskProfile({ ...options, include_family: false }, limits);
+    }
+
     const portfolioWhere: Record<string, any> = { user_id: options.user_id };
     if (options.portfolio_name) portfolioWhere.name = options.portfolio_name;
 
-    const portfolio = await PaperTradingPortfolio.findOne({ where: portfolioWhere });
+    const portfolio = await PaperTradingPortfolio.findOne({
+      where: portfolioWhere,
+      order: [['id', 'ASC']],
+    });
     if (!portfolio) {
       return this.buildEmptyProfile(limits);
     }
@@ -426,6 +438,352 @@ export class PaperTradingRiskProfileService {
       top_industries: topIndustries.slice(0, 5),
       top_strategies: topStrategies.slice(0, 5),
       position_risks: positionRisks.sort((a, b) => b.exposure_pct - a.exposure_pct),
+      warnings: [...warnings, ...watchWarnings].slice(0, 8),
+      next_actions: nextActions,
+    };
+  }
+
+  private async getFamilyRiskProfile(options: RiskProfileOptions, limits: typeof DEFAULT_LIMITS) {
+    const portfolios = await PaperTradingPortfolio.findAll({
+      where: {
+        user_id: options.user_id,
+        name: { [Op.in]: PAPER_PORTFOLIO_FAMILIES.map(item => item.name) },
+      },
+      order: [['id', 'ASC']],
+    });
+
+    if (portfolios.length === 0) return this.buildEmptyProfile(limits);
+
+    const familyByName = new Map<string, (typeof PAPER_PORTFOLIO_FAMILIES)[number]>(
+      PAPER_PORTFOLIO_FAMILIES.map(item => [item.name, item])
+    );
+    const portfolioIds = portfolios.map(portfolio => portfolio.id);
+    const [positions, snapshots] = await Promise.all([
+      PaperTradingPosition.findAll({
+        where: { portfolio_id: { [Op.in]: portfolioIds } },
+        raw: true,
+      }) as any,
+      PaperTradingSnapshot.findAll({
+        where: {
+          portfolio_id: { [Op.in]: portfolioIds },
+          date: {
+            [Op.gte]: new Date(Date.now() - 120 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+          },
+        },
+        order: [
+          ['portfolio_id', 'ASC'],
+          ['date', 'ASC'],
+        ],
+        raw: true,
+      }) as any,
+    ]);
+    const portfolioById = new Map(portfolios.map(portfolio => [portfolio.id, portfolio]));
+    const totalValue = Math.max(
+      portfolios.reduce((sum, portfolio) => sum + toNumber(portfolio.total_value, 0), 0),
+      1
+    );
+    const currentCash = portfolios.reduce(
+      (sum, portfolio) => sum + toNumber(portfolio.current_cash, 0),
+      0
+    );
+    const initialCapital = portfolios.reduce(
+      (sum, portfolio) => sum + toNumber(portfolio.initial_capital, 0),
+      0
+    );
+    const positionValue = (positions as any[]).reduce(
+      (sum: number, position: any) => sum + toNumber(position.market_value, 0),
+      0
+    );
+    const peakByPortfolio = new Map<number, number>();
+    for (const portfolio of portfolios) {
+      peakByPortfolio.set(portfolio.id, toNumber(portfolio.total_value, 0));
+    }
+    for (const snapshot of snapshots as any[]) {
+      const portfolioId = Number(snapshot.portfolio_id);
+      peakByPortfolio.set(
+        portfolioId,
+        Math.max(toNumber(peakByPortfolio.get(portfolioId), 0), toNumber(snapshot.total_value, 0))
+      );
+    }
+    const peakTotalValue = Math.max(
+      totalValue,
+      [...peakByPortfolio.values()].reduce((sum, value) => sum + toNumber(value, 0), 0)
+    );
+    const cashPct = roundNumber((currentCash / totalValue) * 100, 2);
+    const exposurePct = roundNumber((positionValue / totalValue) * 100, 2);
+    const drawdownPct =
+      peakTotalValue > 0
+        ? roundNumber(((totalValue - peakTotalValue) / peakTotalValue) * 100, 2)
+        : 0;
+
+    const symbols = [
+      ...new Set((positions as any[]).map(position => normalizeSymbol(position.symbol))),
+    ].filter(Boolean);
+    const [stocks, executedSignals] = await Promise.all([
+      symbols.length
+        ? Stock.findAll({ where: { symbol: { [Op.in]: symbols } }, raw: true })
+        : Promise.resolve([]),
+      AIInvestmentSignal.findAll({
+        where: {
+          [Op.or]: portfolioIds.flatMap(portfolioId => [
+            {
+              'metadata.paper_trading.portfolio_id': portfolioId,
+              'metadata.paper_trading.status': 'executed',
+            },
+            {
+              [`metadata.paper_trading_by_portfolio.${portfolioId}.portfolio_id`]: portfolioId,
+              [`metadata.paper_trading_by_portfolio.${portfolioId}.status`]: 'executed',
+            },
+          ]),
+        } as any,
+        order: [['updated_at', 'DESC']],
+        limit: 5000,
+      }).catch(error => {
+        logger.warn(`读取多账户模拟盘信号策略来源失败: ${error?.message || error}`);
+        return [] as AIInvestmentSignal[];
+      }),
+    ]);
+    const stockMap = new Map<string, any>(
+      (stocks as any[]).map(stock => [normalizeSymbol(stock.symbol), stock])
+    );
+    const signalMetadataByPortfolioSymbol = new Map<string, Record<string, any>>();
+    for (const signal of executedSignals) {
+      const symbol = normalizeSymbol(signal.symbol);
+      if (!symbol) continue;
+      const metadata = asPlainObject(signal.metadata);
+      for (const portfolioId of portfolioIds) {
+        const paperMeta = paperTradingMetaForPortfolio(metadata, portfolioId);
+        if (toNumber(paperMeta.portfolio_id, 0) !== portfolioId) continue;
+        const key = `${portfolioId}:${symbol}`;
+        if (!signalMetadataByPortfolioSymbol.has(key)) {
+          signalMetadataByPortfolioSymbol.set(key, metadata);
+        }
+      }
+    }
+
+    const returnSeriesBySymbol = await this.loadReturnSeries(symbols);
+    const maxCorrelationBySymbol = new Map<string, number>();
+    let maxPairCorrelation = 0;
+    for (let left = 0; left < symbols.length; left++) {
+      for (let right = left + 1; right < symbols.length; right++) {
+        const leftSymbol = symbols[left];
+        const rightSymbol = symbols[right];
+        const correlation = pearsonCorrelation(
+          returnSeriesBySymbol.get(leftSymbol) || [],
+          returnSeriesBySymbol.get(rightSymbol) || []
+        );
+        const absCorrelation = Math.abs(correlation);
+        maxPairCorrelation = Math.max(maxPairCorrelation, absCorrelation);
+        maxCorrelationBySymbol.set(
+          leftSymbol,
+          Math.max(toNumber(maxCorrelationBySymbol.get(leftSymbol), 0), absCorrelation)
+        );
+        maxCorrelationBySymbol.set(
+          rightSymbol,
+          Math.max(toNumber(maxCorrelationBySymbol.get(rightSymbol), 0), absCorrelation)
+        );
+      }
+    }
+
+    const industryExposure = new Map<string, { market_value: number; count: number }>();
+    const strategyExposure = new Map<string, { market_value: number; count: number }>();
+    const positionRisks: PositionRiskItem[] = [];
+    const accountRisks = new Map<string, any>();
+
+    for (const position of positions as any[]) {
+      const symbol = normalizeSymbol(position.symbol);
+      const portfolioId = Number(position.portfolio_id);
+      const portfolio = portfolioById.get(portfolioId);
+      const family = familyByName.get(portfolio?.name || '');
+      const accountName = portfolio?.name || `账户 ${portfolioId}`;
+      const accountKey = family?.key || `portfolio_${portfolioId}`;
+      const accountLabel = family?.label || accountName;
+      const stock = stockMap.get(symbol);
+      const industry = stock?.industry || '未分类';
+      const marketValue = toNumber(position.market_value, 0);
+      const exposure = totalValue > 0 ? (marketValue / totalValue) * 100 : 0;
+      const returns = returnSeriesBySymbol.get(symbol) || [];
+      const volatility20dPct = calculateVolatilityPct(returns.slice(-20));
+      const maxCorrelation = roundNumber(toNumber(maxCorrelationBySymbol.get(symbol), 0), 4);
+      const signalMetadata = signalMetadataByPortfolioSymbol.get(`${portfolioId}:${symbol}`) || {};
+      const strategyKeys = strategyKeysFromSignalMetadata(signalMetadata, portfolioId);
+      const riskFlags: string[] = [];
+      if (volatility20dPct > limits.max_single_stock_volatility_pct) {
+        riskFlags.push(`波动 ${volatility20dPct}% 高于阈值`);
+      }
+      if (maxCorrelation > limits.max_position_correlation) {
+        riskFlags.push(`相关性 ${roundNumber(maxCorrelation * 100, 1)}% 偏高`);
+      }
+      if (exposure > 15) riskFlags.push(`单票暴露 ${roundNumber(exposure, 1)}% 偏高`);
+
+      const currentIndustry = industryExposure.get(industry) || { market_value: 0, count: 0 };
+      industryExposure.set(industry, {
+        market_value: currentIndustry.market_value + marketValue,
+        count: currentIndustry.count + 1,
+      });
+
+      for (const strategyKey of strategyKeys) {
+        const currentStrategy = strategyExposure.get(strategyKey) || { market_value: 0, count: 0 };
+        strategyExposure.set(strategyKey, {
+          market_value: currentStrategy.market_value + marketValue,
+          count: currentStrategy.count + 1,
+        });
+      }
+
+      const account = accountRisks.get(accountKey) || {
+        key: accountKey,
+        label: accountLabel,
+        portfolio_id: portfolioId,
+        name: accountName,
+        total_value: roundNumber(toNumber(portfolio?.total_value, 0), 2),
+        position_value: 0,
+        exposure_pct: 0,
+        open_position_count: 0,
+        risk_count: 0,
+      };
+      account.position_value += marketValue;
+      account.open_position_count += 1;
+      account.risk_count += riskFlags.length > 0 ? 1 : 0;
+      accountRisks.set(accountKey, account);
+
+      positionRisks.push({
+        symbol,
+        name: position.name || stock?.name || symbol,
+        industry,
+        market_value: roundNumber(marketValue, 2),
+        exposure_pct: roundNumber(exposure, 2),
+        volatility_20d_pct: volatility20dPct,
+        max_correlation: maxCorrelation,
+        strategy_keys: strategyKeys,
+        risk_flags: riskFlags,
+        ...(family
+          ? {
+              account_key: family.key,
+              account_label: family.label,
+              account_name: family.name,
+              portfolio_id: portfolioId,
+            }
+          : {
+              account_key: accountKey,
+              account_label: accountLabel,
+              account_name: accountName,
+              portfolio_id: portfolioId,
+            }),
+      } as any);
+    }
+
+    const topIndustries = [...industryExposure.entries()]
+      .map(([industry, item]) => ({
+        industry,
+        market_value: roundNumber(item.market_value, 2),
+        exposure_pct: roundNumber((item.market_value / totalValue) * 100, 2),
+        count: item.count,
+      }))
+      .sort((a, b) => b.exposure_pct - a.exposure_pct);
+    const topStrategies = [...strategyExposure.entries()]
+      .map(([strategy_key, item]) => ({
+        strategy_key,
+        exposure_pct: roundNumber((item.market_value / totalValue) * 100, 2),
+        count: item.count,
+      }))
+      .sort((a, b) => b.exposure_pct - a.exposure_pct);
+    const account_exposures = [...accountRisks.values()]
+      .map(item => ({
+        ...item,
+        position_value: roundNumber(item.position_value, 2),
+        exposure_pct: roundNumber((item.position_value / totalValue) * 100, 2),
+      }))
+      .sort((a, b) => b.exposure_pct - a.exposure_pct);
+
+    const maxIndustryExposurePct = topIndustries[0]?.exposure_pct || 0;
+    const maxStrategyExposurePct = topStrategies[0]?.exposure_pct || 0;
+    const avgVolatility20dPct = positionRisks.length
+      ? roundNumber(
+          positionRisks.reduce((sum, item) => sum + item.volatility_20d_pct, 0) /
+            positionRisks.length,
+          2
+        )
+      : 0;
+    const maxVolatility20dPct = positionRisks.reduce(
+      (max, item) => Math.max(max, item.volatility_20d_pct),
+      0
+    );
+    const portfolioVarProxyPct = this.calculatePortfolioVarProxyPct(positionRisks, totalValue);
+
+    const warnings: string[] = [];
+    const watchWarnings: string[] = [];
+    this.pushRiskWarnings({
+      warnings,
+      watchWarnings,
+      cashPct,
+      exposurePct,
+      drawdownPct,
+      maxIndustryExposurePct,
+      maxPairCorrelation,
+      maxVolatility20dPct,
+      portfolioVarProxyPct,
+      limits,
+    });
+    const level = warnings.length > 0 ? 'danger' : watchWarnings.length > 0 ? 'watch' : 'safe';
+    const status = {
+      level,
+      label: level === 'danger' ? '暂停新增' : level === 'watch' ? '谨慎加仓' : '可继续小仓',
+      conclusion:
+        level === 'danger'
+          ? warnings[0]
+          : level === 'watch'
+          ? watchWarnings[0]
+          : '全部策略账户现金、回撤、行业集中度和波动均处于可控区间，可按策略预算小仓验证。',
+    };
+    const nextActions = this.buildNextActions({
+      level,
+      warnings,
+      watchWarnings,
+      cashPct,
+      exposurePct,
+      topIndustries,
+      positionRisks,
+      limits,
+    });
+
+    return {
+      generated_at: new Date().toISOString(),
+      portfolio: {
+        id: null,
+        name: '全部策略模拟账户',
+        total_value: roundNumber(totalValue, 2),
+        current_cash: roundNumber(currentCash, 2),
+        initial_capital: roundNumber(initialCapital, 2),
+        position_value: roundNumber(positionValue, 2),
+        cash_pct: cashPct,
+        exposure_pct: exposurePct,
+        drawdown_pct: drawdownPct,
+        peak_total_value: roundNumber(peakTotalValue, 2),
+        open_position_count: (positions as any[]).length,
+      },
+      status,
+      limits,
+      risk_metrics: {
+        cash_pct: cashPct,
+        exposure_pct: exposurePct,
+        drawdown_pct: drawdownPct,
+        max_industry_exposure_pct: maxIndustryExposurePct,
+        max_strategy_exposure_pct: maxStrategyExposurePct,
+        avg_volatility_20d_pct: avgVolatility20dPct,
+        max_volatility_20d_pct: roundNumber(maxVolatility20dPct, 2),
+        max_pair_correlation: roundNumber(maxPairCorrelation, 4),
+        portfolio_var_proxy_pct: portfolioVarProxyPct,
+      },
+      top_industries: topIndustries.slice(0, 5),
+      top_strategies: topStrategies.slice(0, 5),
+      position_risks: positionRisks.sort((a, b) => b.exposure_pct - a.exposure_pct),
+      account_exposures,
+      portfolio_family_summary: {
+        family_count: PAPER_PORTFOLIO_FAMILIES.length,
+        active_family_count: account_exposures.length,
+        open_position_count: (positions as any[]).length,
+        total_position_value: roundNumber(positionValue, 2),
+      },
       warnings: [...warnings, ...watchWarnings].slice(0, 8),
       next_actions: nextActions,
     };

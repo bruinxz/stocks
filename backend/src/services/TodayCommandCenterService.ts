@@ -103,6 +103,7 @@ class TodayCommandCenterService {
         paperTradingRiskProfileService
           .getRiskProfile({
             user_id: options.user_id,
+            include_family: true,
           })
           .catch(error => {
             logger.warn(`今日作战台读取组合风险画像失败: ${error?.message || error}`);
@@ -131,7 +132,12 @@ class TodayCommandCenterService {
       rankings,
       limit,
     });
-    const positions = this.normalizePositions(dashboard?.positions || [], dashboard?.summary || {});
+    const positions = this.normalizePositions(
+      dashboard?.all_open_positions?.length
+        ? dashboard.all_open_positions
+        : dashboard?.positions || [],
+      dashboard?.portfolio_family_summary?.summary || dashboard?.summary || {}
+    );
     const sellCandidates = this.buildSellCandidates({
       positions,
       tracking_items: dashboard?.recommendation_tracking?.items || [],
@@ -204,8 +210,7 @@ class TodayCommandCenterService {
         max_position_pct: discipline.single_position_cap_pct,
         min_cash_reserve_pct: discipline.min_cash_reserve_pct,
         max_exposure_pct: discipline.max_total_exposure_pct,
-        note:
-          '今日作战台只做聚合与决策提示，不会触发真实交易/Agent 调用；买卖仍由模拟盘任务记录。',
+        note: '今日作战台只做聚合与决策提示，不会触发真实交易/Agent 调用；买卖仍由模拟盘任务记录。',
       },
     };
   }
@@ -334,8 +339,8 @@ class TodayCommandCenterService {
           signal.source_type === 'tradingagents'
             ? 'TradingAgents'
             : signal.source_type === 'daily_screener'
-              ? 'AI每日优选'
-              : '归档信号',
+            ? 'AI每日优选'
+            : '归档信号',
         symbol: signal.symbol,
         name: signal.name,
         action: metadata.action || signal.normalized_decision,
@@ -360,6 +365,9 @@ class TodayCommandCenterService {
         return {
           symbol: normalizeSymbol(position.symbol),
           name: position.name,
+          account_key: position.account_key,
+          account_label: position.account_label,
+          account_name: position.account_name,
           quantity: toNumber(position.quantity),
           avg_cost: roundNumber(avgCost, 4),
           current_price: roundNumber(currentPrice, 4),
@@ -370,8 +378,8 @@ class TodayCommandCenterService {
             position.weight_pct !== undefined
               ? roundNumber(position.weight_pct, 2)
               : totalValue > 0
-                ? roundNumber((marketValue / totalValue) * 100, 2)
-                : 0,
+              ? roundNumber((marketValue / totalValue) * 100, 2)
+              : 0,
         };
       })
       .sort((a, b) => Number(b.weight_pct || 0) - Number(a.weight_pct || 0));
@@ -456,18 +464,29 @@ class TodayCommandCenterService {
     latestFeishuLog: any;
   }) {
     const dashboardSummary = payload.dashboard?.summary || {};
+    const familySummary = payload.dashboard?.portfolio_family_summary?.summary || {};
     const riskMetrics = payload.riskProfile?.risk_metrics || {};
-    const totalValue = toNumber(dashboardSummary.total_value, 200000);
-    const cashPct = toNumber(dashboardSummary.cash_pct ?? riskMetrics.cash_pct, 0);
-    const exposurePct = toNumber(dashboardSummary.exposure_pct ?? riskMetrics.exposure_pct, 0);
+    const totalValue = toNumber(
+      familySummary.champion?.total_value ?? dashboardSummary.total_value,
+      200000
+    );
+    const cashPct = toNumber(riskMetrics.cash_pct ?? dashboardSummary.cash_pct, 0);
+    const exposurePct = toNumber(riskMetrics.exposure_pct ?? dashboardSummary.exposure_pct, 0);
     return {
       total_value: roundNumber(totalValue, 2),
-      total_pnl: roundNumber(dashboardSummary.total_pnl, 2),
-      total_return_pct: roundNumber(dashboardSummary.total_return_pct, 4),
-      current_cash: roundNumber(dashboardSummary.current_cash, 2),
+      total_pnl: roundNumber(familySummary.total_pnl ?? dashboardSummary.total_pnl, 2),
+      total_return_pct: roundNumber(
+        familySummary.champion?.total_return_pct ?? dashboardSummary.total_return_pct,
+        4
+      ),
+      current_cash: roundNumber(
+        payload.riskProfile?.portfolio?.current_cash ?? dashboardSummary.current_cash,
+        2
+      ),
       cash_pct: roundNumber(cashPct, 2),
       exposure_pct: roundNumber(exposurePct, 2),
       open_position_count: payload.positions.length,
+      strategy_account_count: Number(familySummary.active_family_count || 0),
       buy_candidate_count: payload.candidates.filter(item => item.action === 'buy').length,
       watch_candidate_count: payload.candidates.filter(item => item.action !== 'buy').length,
       sell_candidate_count: payload.sellCandidates.length,
@@ -505,7 +524,11 @@ class TodayCommandCenterService {
         key: 'tasks',
         label: '自动任务链路',
         status:
-          automationStatus === 'healthy' ? 'ok' : automationStatus === 'warning' ? 'warn' : 'danger',
+          automationStatus === 'healthy'
+            ? 'ok'
+            : automationStatus === 'warning'
+            ? 'warn'
+            : 'danger',
         ok: automationStatus === 'healthy',
         detail: `${payload.automationHealth?.summary?.active_tasks || 0}/${
           payload.automationHealth?.summary?.total_tasks || 0
@@ -525,8 +548,8 @@ class TodayCommandCenterService {
           riskLevel === 'danger' || payload.summary.cash_pct < 6
             ? 'danger'
             : riskLevel === 'watch' || payload.summary.cash_pct < 10
-              ? 'warn'
-              : 'ok',
+            ? 'warn'
+            : 'ok',
         ok: riskLevel !== 'danger' && payload.summary.cash_pct >= 10,
         detail: `现金 ${payload.summary.cash_pct}% · 仓位 ${payload.summary.exposure_pct}%`,
       },
@@ -554,11 +577,15 @@ class TodayCommandCenterService {
     const cashPct = toNumber(payload.summary.cash_pct, 0);
     const exposurePct = toNumber(payload.summary.exposure_pct, 0);
     const quoteReady = payload.readiness.find((item: any) => item.key === 'data')?.ok !== false;
-    const signalsReady = payload.readiness.find((item: any) => item.key === 'signals')?.ok !== false;
+    const signalsReady =
+      payload.readiness.find((item: any) => item.key === 'signals')?.ok !== false;
     const base = {
       level: 'normal' as 'strict' | 'normal' | 'relaxed',
       max_new_positions: 2,
-      suggested_new_position_count: Math.min(2, payload.candidates.filter(item => item.action === 'buy').length),
+      suggested_new_position_count: Math.min(
+        2,
+        payload.candidates.filter(item => item.action === 'buy').length
+      ),
       default_position_pct: 3,
       single_position_cap_pct: 6,
       max_total_exposure_pct: 85,
@@ -595,7 +622,10 @@ class TodayCommandCenterService {
     } else if (riskLevel === 'watch' || cashPct < 12 || exposurePct > 75) {
       base.level = 'normal';
       base.max_new_positions = 1;
-      base.suggested_new_position_count = Math.min(1, payload.candidates.filter(item => item.action === 'buy').length);
+      base.suggested_new_position_count = Math.min(
+        1,
+        payload.candidates.filter(item => item.action === 'buy').length
+      );
       base.default_position_pct = 2;
       base.single_position_cap_pct = 4;
       base.max_total_exposure_pct = 82;
@@ -610,7 +640,10 @@ class TodayCommandCenterService {
     } else {
       base.level = 'relaxed';
       base.max_new_positions = 2;
-      base.suggested_new_position_count = Math.min(2, payload.candidates.filter(item => item.action === 'buy').length);
+      base.suggested_new_position_count = Math.min(
+        2,
+        payload.candidates.filter(item => item.action === 'buy').length
+      );
       base.default_position_pct = 3;
       base.single_position_cap_pct = 6;
       base.max_total_exposure_pct = 85;
@@ -658,8 +691,8 @@ class TodayCommandCenterService {
       buyCount > 0
         ? `谨慎买入 ${buyCount} 只，观察 ${watchCount} 只，卖出/减仓 ${sellCount} 只`
         : payload.positions.length > 0
-          ? `暂无强买入，持仓 ${payload.positions.length} 只优先做风控复查`
-          : '暂无强买入，等待量化/Agent 信号确认';
+        ? `暂无强买入，持仓 ${payload.positions.length} 只优先做风控复查`
+        : '暂无强买入，等待量化/Agent 信号确认';
     const reason = `候选 ${payload.candidates.length} 只；现金 ${payload.summary.cash_pct}%；总仓位 ${payload.summary.exposure_pct}%；风控 ${riskLabel}`;
     return {
       tone: buyCount > 0 ? 'action' : payload.positions.length > 0 ? 'hold' : 'wait',
