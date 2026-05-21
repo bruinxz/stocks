@@ -39,6 +39,7 @@ Known frontend build warnings are historical Prettier warnings in existing files
   - 默认任务「实时行情快照刷新」已加入 `ensureDefaultTasks()`，工作日 `09:05/09:25/10:05/10:25/13:05/13:25/14:05/14:25` 执行，默认全市场排序样本 360，只落盘不发送飞书噪音。
   - 量化开盘/收盘扫描默认 `quote_sync_limit` 从 220 提升为 360，并显式使用 `realtime_quote_source=auto`，评分前优先走 AKShare，失败自动降级腾讯行情。
   - 量化开盘/收盘扫描默认 `factor_sync_limit` 同步提升为 360；因子跳过逻辑要求有效因子日期覆盖 `as_of`，避免历史真实源覆盖率高但当天快照未刷新时过早跳过。
+  - runtime health 与只读 smoke 增加最低覆盖防回归：量化任务 `factor_sync_limit/quote_sync_limit` 必须保持 300+，实时行情源必须为 `auto`，独立行情刷新任务样本也必须 300+。
 - 纪律更可执行：
   - `QuantRuntimeHealthService` 的执行纪律纳入盘中行情刷新任务；若任务缺失会给出观察项。
   - 行情滞后时，如果盘中刷新任务已启用则作为 warn/降仓观察；若任务缺失则提升为阻断风险。

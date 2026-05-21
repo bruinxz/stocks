@@ -370,6 +370,47 @@ async function main() {
       expect: (json) => {
         assertApiSuccess(json, "scheduled tasks");
         assertArray(getTaskList(json), "scheduled tasks data");
+        const tasks = getTaskList(json);
+        const quantTasks = tasks.filter(
+          (task) => task?.type === "QUANT_DAILY_PIPELINE"
+        );
+        for (const task of quantTasks) {
+          const params = task.parameters || {};
+          if (Number(params.quote_sync_limit || 0) < 300) {
+            throw new Error(
+              `quant task quote_sync_limit below baseline: ${
+                task.name
+              } ${preview(params)}`
+            );
+          }
+          if (Number(params.factor_sync_limit || 0) < 300) {
+            throw new Error(
+              `quant task factor_sync_limit below baseline: ${
+                task.name
+              } ${preview(params)}`
+            );
+          }
+          if (String(params.realtime_quote_source || "auto") !== "auto") {
+            throw new Error(
+              `quant task realtime_quote_source should be auto: ${
+                task.name
+              } ${preview(params)}`
+            );
+          }
+        }
+        const quoteSyncTask = tasks.find(
+          (task) => task?.type === "REALTIME_QUOTE_SYNC"
+        );
+        if (
+          !quoteSyncTask ||
+          Number(quoteSyncTask.parameters?.limit || 0) < 300
+        ) {
+          throw new Error(
+            `realtime quote sync task missing or low limit: ${preview(
+              quoteSyncTask
+            )}`
+          );
+        }
       },
     });
 

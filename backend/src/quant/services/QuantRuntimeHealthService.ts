@@ -184,6 +184,30 @@ function buildExecutionDiscipline(tasks: ScheduledTask[]) {
     ) {
       addIssue('warn', 'factor_sync_limit_low', `${taskName} 因子同步范围小于候选池主样本。`, task);
     }
+    if (toNumber(params.factor_sync_limit, 0) < 300) {
+      addIssue(
+        'warn',
+        'factor_sync_limit_below_baseline',
+        `${taskName} 因子同步样本低于 300，建议保持 360 以上以覆盖真实源主样本。`,
+        task
+      );
+    }
+    if (toNumber(params.quote_sync_limit, 0) < 300) {
+      addIssue(
+        'warn',
+        'quote_sync_limit_below_baseline',
+        `${taskName} 实时行情刷新样本低于 300，可能导致候选价格不够新。`,
+        task
+      );
+    }
+    if (String(params.realtime_quote_source || 'auto').toLowerCase() !== 'auto') {
+      addIssue(
+        'warn',
+        'quote_source_not_auto',
+        `${taskName} 实时行情源未使用 auto，可能缺少 AKShare/腾讯双源兜底。`,
+        task
+      );
+    }
     if (toNumber(params.factor_sync_skip_if_real_provider_rate_gte, 0) < 10) {
       addIssue(
         'warn',
