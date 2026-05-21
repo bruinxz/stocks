@@ -429,6 +429,85 @@ function buildWeightDecision(params: {
   };
 }
 
+function buildFallbackWeightDecision(record: QuantStrategyWeight, strategyName?: string) {
+  const metrics = asPlainObject(record.metrics);
+  const closedCount = toNumber(record.closed_count, 0);
+  const sampleCount = toNumber(record.sample_count, closedCount);
+  const qualityScore = toNumber(record.quality_score, 50);
+  const confidence = sampleConfidence(closedCount);
+  const action = record.action || 'observe';
+  const actionLabel = actionText(action);
+  const weight = toNumber(record.weight, 1);
+  const evidence = {
+    strategy_key: record.strategy_key,
+    strategy_name: record.strategy_name || strategyName,
+    sample_count: sampleCount,
+    closed_count: closedCount,
+    open_count: Math.max(0, sampleCount - closedCount),
+    quality_score: qualityScore,
+    avg_return_pct: metrics.avg_return_pct,
+    avg_excess_return_pct: metrics.avg_excess_return_pct,
+    win_rate: metrics.win_rate,
+    excess_win_rate: metrics.excess_win_rate,
+    profit_factor: metrics.profit_factor,
+    recent_count: metrics.recent_count,
+    recent_avg_return_pct: metrics.recent_avg_return_pct,
+    recent_avg_excess_return_pct: metrics.recent_avg_excess_return_pct,
+    worst_return_pct: metrics.worst_return_pct,
+    worst_adverse_pct: metrics.worst_adverse_pct,
+  };
+  const reasons = compactList([
+    `质量分 ${qualityScore.toFixed(1)}，${confidence.label}（闭环 ${closedCount} 笔）`,
+    metrics.avg_excess_return_pct !== undefined
+      ? `历史超额 ${pctText(metrics.avg_excess_return_pct)}`
+      : undefined,
+    record.reason || '旧版本权重记录已自动补齐可解释决策',
+  ]);
+  const risk_notes = compactList([
+    closedCount < 8 ? `闭环样本仅 ${closedCount} 笔，禁止一次性重仓。` : undefined,
+    metrics.worst_return_pct !== undefined
+      ? `历史最差单笔 ${pctText(metrics.worst_return_pct)}，继续按风控上限执行。`
+      : undefined,
+  ]);
+
+  return {
+    action,
+    action_label: actionLabel,
+    weight,
+    confidence: round(Math.max(20, Math.min(90, confidence.score * 0.6 + qualityScore * 0.4)), 2),
+    sample_confidence: confidence.score,
+    sample_confidence_level: confidence.level,
+    sample_confidence_label: confidence.label,
+    reason: record.reason || `${actionLabel}：${reasons.join('；')}。`,
+    reasons,
+    risk_notes,
+    next_action: nextActionText(action),
+    evidence,
+    regime_fit: {
+      best_market_regime: regimeBrief(metrics.best_market_regime),
+      weakest_market_regime: regimeBrief(metrics.weakest_market_regime),
+      best_industry_regime: regimeBrief(metrics.best_industry_regime),
+      weakest_industry_regime: regimeBrief(metrics.weakest_industry_regime),
+    },
+    playbook: {
+      sizing:
+        action === 'pause'
+          ? '暂停资金分配，保留信号用于复盘。'
+          : action === 'reduce'
+          ? '降权参与，优先让多策略共识和低风险票通过。'
+          : ['increase', 'slight_increase'].includes(action)
+          ? '可进入预算倾斜池，但单票仍按风控上限执行。'
+          : '默认预算观察，不主动放大。',
+      review:
+        closedCount < 8
+          ? '优先补齐样本，至少观察到 8 笔闭环后再做激进调整。'
+          : '每个交易日收盘后自动刷新，若近期转弱会继续降权。',
+      guardrail: risk_notes[0] || '继续遵守单票仓位、止损和现金保留下限。',
+    },
+    migrated_from_legacy_metrics: true,
+  };
+}
+
 function actionMultiplier(action: string): number {
   if (action === 'increase') return 1.18;
   if (action === 'slight_increase') return 1.08;
@@ -497,6 +576,7 @@ function buildRegimeBuckets(
 export class QuantStrategyFeedbackService {
   private async ensureDefaultWeights() {
     const definitions = strategyRegistry.list();
+    const definitionNames = new Map(definitions.map(item => [item.strategy_key, item.name]));
     for (const definition of definitions) {
       const [record, created] = await QuantStrategyWeight.findOrCreate({
         where: { strategy_key: definition.strategy_key },
@@ -532,6 +612,25 @@ export class QuantStrategyFeedbackService {
       if (!created && !record.strategy_name) {
         await record.update({ strategy_name: definition.name });
       }
+    }
+
+    const existing = await QuantStrategyWeight.findAll();
+    for (const record of existing) {
+      const metrics = asPlainObject(record.metrics);
+      if (metrics.weight_decision) continue;
+      const fallbackDecision = buildFallbackWeightDecision(
+        record,
+        definitionNames.get(record.strategy_key)
+      );
+      await record.update({
+        metrics: {
+          ...metrics,
+          weight_decision: fallbackDecision,
+        },
+        reason: record.reason || fallbackDecision.reason,
+        strategy_name:
+          record.strategy_name || definitionNames.get(record.strategy_key) || record.strategy_name,
+      });
     }
   }
 
