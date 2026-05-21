@@ -36,6 +36,18 @@ import api from '../services/api';
 
 const { Text } = Typography;
 
+const quoteFreshnessLabel: Record<string, string> = {
+  fresh: '实时新鲜',
+  same_day_snapshot: '当日快照可用',
+  stale: '行情滞后',
+  missing: '未落盘',
+  unavailable: '不可用',
+  unknown: '未知',
+};
+
+const formatQuoteFreshness = (value?: string | null) =>
+  quoteFreshnessLabel[String(value || 'unknown')] || String(value || '未知');
+
 type IndicatorGroup = {
   key: string;
   name: string;
@@ -1031,7 +1043,7 @@ const QuantPerformanceDashboard: React.FC = () => {
             />
             <Text type="secondary">
               {quotePersistence?.latest_trade_date || '--'} ·{' '}
-              {quotePersistence?.freshness_status || 'unknown'} ·{' '}
+              {formatQuoteFreshness(quotePersistence?.freshness_status)} ·{' '}
               {quotePersistence?.age_minutes ?? '--'} 分钟
             </Text>
           </Card>
