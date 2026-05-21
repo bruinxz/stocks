@@ -169,7 +169,13 @@ export class StockFactorService {
 
     if (plan.providers.includes('eastmoney')) {
       try {
-        const snapshot = await this.eastMoneyClient.getQuoteSnapshot(symbol);
+        const snapshots = await this.eastMoneyClient.getQuoteSnapshots([symbol], {
+          preferBatch: true,
+          chunkSize: Number(process.env.EASTMONEY_FACTOR_BATCH_SIZE || 80),
+        });
+        const snapshot =
+          snapshots.find(item => normalizeSymbol(item.symbol) === symbol) ||
+          (await this.eastMoneyClient.getQuoteSnapshot(symbol));
         return {
           provider: 'eastmoney',
           requested_provider: provider,

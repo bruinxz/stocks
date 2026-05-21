@@ -700,3 +700,25 @@ Next:
 1. Deploy main + lym and run opening preflight dry-run to confirm EastMoney batch snapshots increase `factor_real_provider_rate`.
 2. If provider connectivity is unstable, keep fallback safe and consider adding a Tencent-derived valuation-light factor path for price/turnover realism.
 3. Continue real paid-data evaluation, especially Tushare Pro/JQData, for true financial-quality factors.
+
+## 2026-05-21 continuous iteration: EastMoney provider-smoke alignment
+
+Focus: avoid false data-source diagnostics after the batch EastMoney factor path became the primary real-source refresh path.
+
+Completed:
+
+- Updated `StockFactorService.runProviderSmokeTest()` for `eastmoney` to try `getQuoteSnapshots([symbol])` first, so smoke tests exercise the same batch endpoint used by real factor sync.
+- Kept single-symbol `stock/get` as fallback for compatibility.
+- This removes the mismatch where manual factor sync succeeded through batch snapshots but provider-smoke still reported a failed single-stock endpoint.
+
+Validation:
+
+```bash
+/Applications/Codex.app/Contents/Resources/node backend/node_modules/typescript/bin/tsc -p backend/tsconfig.json --pretty false
+git diff --check
+```
+
+Next:
+
+1. Deploy main + lym and verify `/api/market/factors/provider-smoke?provider=eastmoney` returns `ok=true`.
+2. Run a 220-symbol real factor sync and confirm real-provider rate moves toward the 65% skip threshold.
