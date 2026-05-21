@@ -655,10 +655,11 @@ async function main() {
           if (
             !json.data?.readiness ||
             !json.data?.indicator_catalog ||
-            !json.data?.runtime_health
+            !json.data?.runtime_health ||
+            !json.data?.runtime_discipline?.summary
           ) {
             throw new Error(
-              `quant performance dashboard missing readiness/catalog/runtime health: ${preview(json)}`,
+              `quant performance dashboard missing readiness/catalog/runtime discipline: ${preview(json)}`,
             );
           }
           assertArray(
