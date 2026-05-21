@@ -8,6 +8,7 @@ import { User } from '../models/User';
 import { normalizeSymbol } from '../utils/stockSymbol';
 import { paperTradingAutomationService } from './PaperTradingAutomationService';
 import { feishuTaskReportService } from './FeishuTaskReportService';
+import { buildTradePolicyExplain } from './TradePolicyExplainService';
 
 export interface PaperTradingAttributionOptions {
   user_id?: number;
@@ -52,6 +53,7 @@ export interface PaperTradingClosedAttributionItem {
   exit_reason_label?: string;
   executed_at?: string;
   closed_at?: string;
+  policy_explain?: Record<string, any>;
 }
 
 export interface PaperTradingOpenAttributionItem {
@@ -82,6 +84,7 @@ export interface PaperTradingOpenAttributionItem {
   distance_to_take_profit_pct?: number;
   risk_state: 'near_stop_loss' | 'approaching_take_profit' | 'profitable' | 'loss' | 'neutral';
   executed_at?: string;
+  policy_explain?: Record<string, any>;
 }
 
 export interface PaperTradingAttributionBucket {
@@ -400,6 +403,19 @@ export class PaperTradingAttributionService {
           exit_reason_label: paperTrading.exit_reason_label,
           executed_at: formatChinaDateTime(executedAt),
           closed_at: formatChinaDateTime(closedAt),
+          policy_explain: buildTradePolicyExplain({
+            outcome: {
+              trade_status: 'closed',
+              entry_price: roundNumber(entryPrice, 4),
+              latest_price: roundNumber(exitPrice, 4),
+              exit_price: roundNumber(exitPrice, 4),
+              total_pnl: realizedPnl,
+              total_pnl_pct: realizedPnlPct,
+              holding_days: toNumber(paperTrading.holding_days, holdingDays(executedAt, closedAt)),
+            },
+            metadata,
+            paperTrading,
+          }),
         });
         continue;
       }
@@ -594,6 +610,18 @@ export class PaperTradingAttributionService {
         distance_to_take_profit_pct: distanceToTakeProfit,
       }),
       executed_at: formatChinaDateTime(executedAt),
+      policy_explain: buildTradePolicyExplain({
+        outcome: {
+          trade_status: 'open',
+          entry_price: roundNumber(toNumber(paperTrading.execute_price, avgCost), 4),
+          latest_price: roundNumber(currentPrice, 4),
+          total_pnl: unrealizedPnl,
+          total_pnl_pct: unrealizedPnlPct,
+          holding_days: holdingDays(executedAt),
+        },
+        metadata,
+        paperTrading,
+      }),
     };
   }
 

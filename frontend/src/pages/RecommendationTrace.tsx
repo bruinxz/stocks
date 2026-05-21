@@ -29,6 +29,7 @@ import {
 } from '@ant-design/icons';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from '../services/api';
+import TradePolicyExplainPanel from '../components/trading/TradePolicyExplainPanel';
 
 const { Paragraph } = Typography;
 
@@ -101,6 +102,7 @@ const RecommendationTrace: React.FC = () => {
   }, [id]);
 
   const outcome = trace?.outcome;
+  const policyExplain = trace?.policy_explain || outcome?.policy_explain;
   const summary = trace?.summary || {};
   const keyEvidence = Array.isArray(trace?.key_evidence) ? trace.key_evidence : [];
   const decisionContext = trace?.decision_context || {};
@@ -307,6 +309,12 @@ const RecommendationTrace: React.FC = () => {
                 />
               )}
             </Card>
+
+            <TradePolicyExplainPanel
+              policy={policyExplain}
+              outcome={outcome}
+              title="这笔推荐为什么被允许买入"
+            />
 
             <Row gutter={[16, 16]}>
               <Col xs={24} xl={14}>

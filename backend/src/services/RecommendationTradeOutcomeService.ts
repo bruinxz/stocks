@@ -17,6 +17,7 @@ import { paperTradingAutomationService } from './PaperTradingAutomationService';
 import { feishuTaskReportService } from './FeishuTaskReportService';
 import { recommendationLoopPolicySnapshotService } from './RecommendationLoopPolicySnapshotService';
 import { budgetPolicyVersionSnapshotService } from './BudgetPolicyVersionSnapshotService';
+import { buildTradePolicyExplain } from './TradePolicyExplainService';
 import { normalizeSymbol, extractMarket } from '../utils/stockSymbol';
 import { logger } from '../utils/logger';
 import {
@@ -107,7 +108,7 @@ export interface RecommendationTradeOutcomeDashboard {
     by_budget_policy_version: RecommendationTradeOutcomeBucket[];
     by_budget_policy_rollback: RecommendationTradeOutcomeBucket[];
   };
-  outcomes: RecommendationTradeOutcome[];
+  outcomes: any[];
   feedback: {
     recommended_min_score: number;
     position_multiplier: number;
@@ -651,6 +652,24 @@ function modelToPlain<T = any>(record: any): T {
   return record;
 }
 
+function buildPolicyExplainForOutcome(record: RecommendationTradeOutcome | any): any {
+  const outcomePlain = modelToPlain<any>(record);
+  const metadata = asPlainObject(outcomePlain?.metadata);
+  const signalMetadata = asPlainObject(metadata.signal_metadata);
+  const paperTrading = paperTradingMetaForPortfolio(
+    Object.keys(signalMetadata).length ? signalMetadata : metadata,
+    outcomePlain?.portfolio_id
+  );
+
+  return buildTradePolicyExplain({
+    outcome: outcomePlain,
+    metadata,
+    signalMetadata,
+    paperTrading,
+    strategyKey: strategyKeyFromOutcome(outcomePlain as RecommendationTradeOutcome),
+  });
+}
+
 function sourceTypeLabel(value?: string): string {
   const labels: Record<string, string> = {
     quant_recommendation: '量化候选',
@@ -956,6 +975,13 @@ export class RecommendationTradeOutcomeService {
     const quantSignalPlain = quantSignals.map(item => modelToPlain<any>(item));
     const fusionAuditPlain = fusionAudits.map(item => modelToPlain<any>(item));
     const taskLogPlain = taskLogs.map(item => modelToPlain<any>(item));
+    const policyExplain = buildTradePolicyExplain({
+      outcome: outcomePlain,
+      metadata,
+      signalMetadata,
+      paperTrading,
+      strategyKey,
+    });
     const traceId = outcome.signal_id ? `signal:${outcome.signal_id}` : `outcome:${outcome.id}`;
     const traceUrl = this.buildTraceUrl(outcome);
     const conclusion = this.buildTraceConclusion(outcome);
@@ -1097,6 +1123,7 @@ export class RecommendationTradeOutcomeService {
       task_logs: taskLogPlain,
       steps,
       summary,
+      policy_explain: policyExplain,
       key_evidence: keyEvidence,
       decision_context: decisionContext,
       conclusion,
@@ -1254,7 +1281,13 @@ export class RecommendationTradeOutcomeService {
       },
       summary,
       groups,
-      outcomes: outcomes.slice(0, 200),
+      outcomes: outcomes.slice(0, 200).map(outcome => {
+        const plain = modelToPlain<any>(outcome);
+        return {
+          ...plain,
+          policy_explain: buildPolicyExplainForOutcome(plain),
+        };
+      }),
       feedback: this.buildFeedback(summary, groups),
     };
 
