@@ -72,6 +72,7 @@ const TradePolicyExplainPanel: React.FC<TradePolicyExplainPanelProps> = ({
   const environmentBudget = data.environment_budget || {};
   const riskGate = data.risk_gate || {};
   const entryGuard = data.entry_risk_guard || {};
+  const executionReality = data.execution_reality || {};
   const profitGate = data.profit_gate || {};
   const feedbackGate = data.outcome_feedback || {};
   const dataQuality = data.data_quality || {};
@@ -188,9 +189,16 @@ const TradePolicyExplainPanel: React.FC<TradePolicyExplainPanelProps> = ({
                 ? `${entryGuard.today_buy_count}/${entryGuard.max_daily_new_positions || '--'}`
                 : '--'
             )}
+            {metric('买后现金', formatPercent(entryGuard.estimated_cash_pct))}
+            {metric('执行价格', formatMoney(executionReality.price))}
           </Space>
-          {(riskGate.reason || entryGuard.reason) && (
-            <p>{compactText(riskGate.reason || entryGuard.reason, compact ? 90 : 150)}</p>
+          {(riskGate.reason || entryGuard.reason || executionReality.reason) && (
+            <p>
+              {compactText(
+                riskGate.reason || entryGuard.reason || executionReality.reason,
+                compact ? 90 : 150
+              )}
+            </p>
           )}
           {Array.isArray(entryGuard.risk_notes) && entryGuard.risk_notes.length > 0 && (
             <div className="trade-policy-footnote">
@@ -199,6 +207,19 @@ const TradePolicyExplainPanel: React.FC<TradePolicyExplainPanelProps> = ({
                   {compactText(note, 30)}
                 </Tag>
               ))}
+            </div>
+          )}
+          {executionReality.label && (
+            <div className="trade-policy-footnote">
+              <Tag color={executionReality.allowed === false ? 'volcano' : 'green'}>
+                {compactText(executionReality.label, 34)}
+              </Tag>
+              {hasValue(executionReality.change_percent) && (
+                <Tag color="blue">涨跌 {formatPercent(executionReality.change_percent)}</Tag>
+              )}
+              {hasValue(executionReality.avg_turnover_yuan) && (
+                <Tag>均额 {formatMoney(executionReality.avg_turnover_yuan)}</Tag>
+              )}
             </div>
           )}
         </section>

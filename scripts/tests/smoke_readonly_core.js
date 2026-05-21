@@ -1034,6 +1034,29 @@ async function main() {
               `recommendation outcome summary missing: ${preview(json)}`
             );
           }
+          const outcomeWithPolicy = (json.data?.outcomes || []).find(
+            (item) => item?.policy_explain
+          );
+          if (outcomeWithPolicy) {
+            if (!outcomeWithPolicy.policy_explain.entry_risk_guard) {
+              throw new Error(
+                `recommendation outcome entry risk explain missing: ${preview(
+                  outcomeWithPolicy.policy_explain
+                )}`
+              );
+            }
+            if (
+              outcomeWithPolicy.policy_explain.execution_reality &&
+              typeof outcomeWithPolicy.policy_explain.execution_reality
+                .allowed !== "boolean"
+            ) {
+              throw new Error(
+                `recommendation outcome execution reality invalid: ${preview(
+                  outcomeWithPolicy.policy_explain.execution_reality
+                )}`
+              );
+            }
+          }
         },
       }
     );

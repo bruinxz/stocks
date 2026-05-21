@@ -2994,6 +2994,8 @@ export class RecommendationTradeOutcomeService {
           metadata.strategy_budget_discipline || paperTrading.strategy_budget_discipline,
         entry_risk_guard_decision:
           metadata.entry_risk_guard_decision || paperTrading.entry_risk_guard_decision,
+        execution_reality_decision:
+          metadata.execution_reality_decision || paperTrading.execution_reality_decision,
         environment_strategy_budget_policy_action:
           metadata.environment_strategy_budget_policy_action,
         environment_strategy_budget_policy_reason:
