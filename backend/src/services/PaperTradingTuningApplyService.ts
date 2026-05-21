@@ -71,6 +71,13 @@ function uniqueStrings(values: any[]): string[] {
   return [...new Set(values.map(value => String(value || '').trim()).filter(Boolean))];
 }
 
+function roundNumber(value: any, digits = 2): number {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return 0;
+  const base = 10 ** digits;
+  return Math.round(num * base) / base;
+}
+
 export class PaperTradingTuningApplyService {
   async applyOrderIntentTuningPreview(options: ApplyOrderIntentTuningOptions = {}) {
     const dryRun = toBoolean(options.dry_run, true);
@@ -298,6 +305,17 @@ export class PaperTradingTuningApplyService {
         ? `Canary 已满足观察条件，闭环 ${closedCount} 笔，平均超额 ${dashboard.summary.avg_excess_return_pct}%，可考虑人工复核后扩大。`
         : `Canary 已满足观察条件，但收益表现仍需谨慎：闭环 ${closedCount} 笔，平均超额 ${dashboard.summary.avg_excess_return_pct}%。`
       : `Canary 观察中：已闭环 ${closedCount}/${observationTrades} 笔，运行 ${elapsedDays}/${observationDays} 天，暂不建议扩大。`;
+    const review = this.buildCanaryReview({
+      canary,
+      observation: {
+        elapsed_days: elapsedDays,
+        target_days: observationDays,
+        target_closed_trades: observationTrades,
+        ready_for_review: readyForReview,
+        outcome_tone: outcomeTone,
+      },
+      summary: dashboard.summary,
+    });
 
     return {
       active: true,
@@ -314,11 +332,98 @@ export class PaperTradingTuningApplyService {
         outcome_tone: outcomeTone,
       },
       outcome_summary: dashboard.summary,
+      review,
       recent_outcomes: dashboard.outcomes.slice(0, 8),
       audits,
       summary: {
         conclusion,
       },
+    };
+  }
+
+  private buildCanaryReview(input: {
+    canary: any;
+    observation: {
+      elapsed_days: number;
+      target_days: number;
+      target_closed_trades: number;
+      ready_for_review: boolean;
+      outcome_tone: string;
+    };
+    summary: any;
+  }) {
+    const closedCount = Number(input.summary.closed_count || 0);
+    const openCount = Number(input.summary.open_count || 0);
+    const avgExcess = roundNumber(input.summary.avg_excess_return_pct, 4);
+    const avgReturn = roundNumber(input.summary.avg_closed_return_pct, 4);
+    const winRate = roundNumber(input.summary.win_rate, 2);
+    const profitFactor = roundNumber(input.summary.profit_factor, 4);
+    const readyByTrades = closedCount >= input.observation.target_closed_trades;
+    const readyByDays = input.observation.elapsed_days >= input.observation.target_days;
+    const sampleScore = Math.min(100, (closedCount / Math.max(1, input.observation.target_closed_trades)) * 100);
+    const performanceScore =
+      avgExcess * 12 +
+      (winRate - 50) * 0.65 +
+      Math.min(18, Math.max(-12, (profitFactor - 1) * 8)) +
+      Math.min(8, avgReturn * 0.8);
+    const reviewScore = roundNumber(Math.max(0, Math.min(100, 50 + performanceScore + sampleScore * 0.18)), 2);
+
+    let action: 'promote' | 'rollback' | 'continue_observing' | 'hold';
+    if (!input.observation.ready_for_review) {
+      action = 'continue_observing';
+    } else if (closedCount >= 3 && (avgExcess <= -1.5 || winRate < 35 || profitFactor < 0.75)) {
+      action = 'rollback';
+    } else if (closedCount >= 5 && avgExcess >= 0.5 && winRate >= 50 && profitFactor >= 1) {
+      action = 'promote';
+    } else {
+      action = 'hold';
+    }
+
+    const actionLabels: Record<string, string> = {
+      promote: '建议扩大',
+      rollback: '建议回滚',
+      continue_observing: '继续观察',
+      hold: '暂不扩大',
+    };
+    const reasons: string[] = [];
+    reasons.push(`闭环样本 ${closedCount}/${input.observation.target_closed_trades} 笔，运行 ${input.observation.elapsed_days}/${input.observation.target_days} 天。`);
+    reasons.push(`平均超额 ${avgExcess}%，胜率 ${winRate}%，利润因子 ${profitFactor || 0}。`);
+    if (openCount > 0) reasons.push(`仍有 ${openCount} 笔未闭环持仓，结论需保留安全边际。`);
+    if (action === 'promote') {
+      reasons.push('样本和收益同时达标，可以进入人工复核后的扩大阶段。');
+    } else if (action === 'rollback') {
+      reasons.push('收益或胜率低于安全线，应优先回滚或降低该参数影响。');
+    } else if (action === 'continue_observing') {
+      reasons.push('观察窗口尚未满足，不应提前扩大或回滚。');
+    } else {
+      reasons.push('观察窗口已满足但收益优势不够明确，建议保持当前小流量。');
+    }
+
+    return {
+      action,
+      action_label: actionLabels[action],
+      review_score: reviewScore,
+      ready_for_review: input.observation.ready_for_review,
+      ready_by_trades: readyByTrades,
+      ready_by_days: readyByDays,
+      selected_parameter_keys: input.canary?.selected_parameter_keys || [],
+      metrics: {
+        closed_count: closedCount,
+        open_count: openCount,
+        avg_excess_return_pct: avgExcess,
+        avg_closed_return_pct: avgReturn,
+        win_rate: winRate,
+        profit_factor: profitFactor,
+      },
+      reasons,
+      next_steps:
+        action === 'promote'
+          ? ['人工复核最近成交明细', '生成非 Canary 审计预览', '确认后逐步扩大到更多参数/任务']
+          : action === 'rollback'
+          ? ['保留当前审计记录', '人工回看亏损样本', '生成回滚预案后再恢复旧参数']
+          : action === 'continue_observing'
+          ? ['等待更多闭环交易或观察天数', '不要扩大参数影响', '继续记录后验收益']
+          : ['保持 Canary 参数不变', '等待下一批闭环样本', '若连续改善再考虑扩大'],
     };
   }
 

@@ -487,9 +487,29 @@ interface OrderIntentTuningCanaryStatus {
     avg_excess_return_pct: number;
     avg_closed_return_pct: number;
     win_rate: number;
+    profit_factor?: number;
     total_pnl: number;
     total_realized_pnl: number;
     total_unrealized_pnl: number;
+  };
+  review?: {
+    action: 'promote' | 'rollback' | 'continue_observing' | 'hold';
+    action_label: string;
+    review_score: number;
+    ready_for_review: boolean;
+    ready_by_trades: boolean;
+    ready_by_days: boolean;
+    selected_parameter_keys: string[];
+    metrics: {
+      closed_count: number;
+      open_count: number;
+      avg_excess_return_pct: number;
+      avg_closed_return_pct: number;
+      win_rate: number;
+      profit_factor: number;
+    };
+    reasons: string[];
+    next_steps: string[];
   };
   summary?: {
     conclusion: string;
@@ -680,6 +700,12 @@ const orderRuleStabilityColorMap: Record<string, string> = {
   stable: 'green',
   forming: 'gold',
   unstable: 'default',
+};
+const canaryReviewColorMap: Record<string, string> = {
+  promote: 'green',
+  rollback: 'red',
+  continue_observing: 'gold',
+  hold: 'blue',
 };
 const formatTuningValue = (value?: number | string | null, unit = '') => {
   if (value === undefined || value === null || value === '') return '--';
@@ -1205,6 +1231,7 @@ const PaperTrading: React.FC = () => {
     orderIntentCacheTotal > 0
       ? (Number(orderIntentHindsight?.cache_hit_count || 0) / orderIntentCacheTotal) * 100
       : 0;
+  const canaryReview = canaryStatus?.review;
   const riskTone = riskProfile ? riskProfileToneMap[riskProfile.status.level] : undefined;
   const topRiskPosition = riskProfile?.position_risks?.find(item => item.risk_flags.length > 0);
   const outcomeBlockedSegments = tradingPlanSummary?.outcome_blocked_segments || [];
@@ -1988,6 +2015,29 @@ const PaperTrading: React.FC = () => {
                             </Tag>
                           ))}
                         </Space>
+                        {canaryReview && (
+                          <div className="order-canary-review">
+                            <div className="order-canary-review-head">
+                              <Tag color={canaryReviewColorMap[canaryReview.action] || 'default'}>
+                                {canaryReview.action_label}
+                              </Tag>
+                              <strong>评审分 {canaryReview.review_score}</strong>
+                              <span>
+                                {canaryReview.ready_for_review ? '已到复核窗口' : '样本未满'}
+                              </span>
+                            </div>
+                            <div className="order-canary-review-reasons">
+                              {(canaryReview.reasons || []).slice(0, 2).map(reason => (
+                                <span key={reason}>{reason}</span>
+                              ))}
+                            </div>
+                            <div className="order-canary-next">
+                              {(canaryReview.next_steps || []).slice(0, 2).map(step => (
+                                <em key={step}>{step}</em>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </>
                     )}
                   </div>

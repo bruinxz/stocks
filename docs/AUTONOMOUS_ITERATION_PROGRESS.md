@@ -1301,3 +1301,43 @@ Next:
 1. Add a “Canary graduate / rollback” preview that turns the latest Canary observation into an explicit promote/rollback recommendation without auto-mutating anything.
 2. Add a rule-to-PnL attribution view: show which parameter/rule changes improved or hurt closed-trade PnL.
 3. Add retention/maintenance for `paper_trading_order_intent_outcomes` snapshots.
+
+### 2026-05-22 order-intent canary review recommendation
+
+Focus: make Canary observation actionable without allowing the system to silently change production parameters.
+
+Completed:
+
+- `GET /api/paper-trading/order-intent-tuning/canary` now includes a read-only `review` object:
+  - `action`: `promote` / `rollback` / `continue_observing` / `hold`;
+  - `action_label`: Chinese operator-facing label;
+  - `review_score`;
+  - readiness by closed trade count and elapsed days;
+  - metrics: closed/open count, average excess return, average closed return, win rate, profit factor;
+  - concise reasons and next steps.
+- Review logic is intentionally conservative:
+  - promote only when observation is ready and closed samples, average excess return, win rate and profit factor are all healthy;
+  - rollback when ready samples show clearly negative excess return / low win rate / weak profit factor;
+  - otherwise continue observing or hold.
+- Paper-trading page Canary card now shows:
+  - recommended action tag;
+  - review score;
+  - whether the observation window is ready;
+  - top reasons and next steps.
+- Smoke validates that active Canary status includes review action and reasons.
+
+Validation:
+
+```bash
+node --check scripts/tests/smoke_readonly_core.js
+./backend/node_modules/.bin/tsc --noEmit --project backend/tsconfig.json
+./frontend/node_modules/.bin/tsc --noEmit --project frontend/tsconfig.json
+CI=false /Users/bytedance/.nvm/versions/node/v20.20.2/bin/npm --prefix frontend run build
+git diff --check
+```
+
+Next:
+
+1. Add a rule-to-PnL attribution view for Canary/audit events so each parameter change can be linked to subsequent closed-trade PnL.
+2. Add a manual rollback preview that shows exactly which task parameters would be restored from the Canary audit before any write.
+3. Add snapshot retention/maintenance for order-intent hindsight outcomes.

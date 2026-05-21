@@ -1374,6 +1374,20 @@ async function main() {
               )}`
             );
           }
+          if (json.data.active) {
+            if (!json.data.review?.action || !json.data.review?.action_label) {
+              throw new Error(
+                `paper trading order intent canary review missing: ${preview(json.data)}`
+              );
+            }
+            if (!Array.isArray(json.data.review.reasons || [])) {
+              throw new Error(
+                `paper trading order intent canary review reasons invalid: ${preview(
+                  json.data.review
+                )}`
+              );
+            }
+          }
         },
       }
     );
