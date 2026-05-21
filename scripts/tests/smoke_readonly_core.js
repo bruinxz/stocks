@@ -589,6 +589,28 @@ async function main() {
     });
 
     await requestJson(
+      "strategy opening preflight",
+      "/api/strategy-research/opening-preflight?factor_limit=80",
+      {
+        token,
+        critical: false,
+        expect: (json) => {
+          assertApiSuccess(json, "strategy opening preflight");
+          if (
+            !json.data?.status ||
+            !json.data?.summary ||
+            !json.data?.checks?.quant_task ||
+            !json.data?.checks?.factor_provider
+          ) {
+            throw new Error(
+              `strategy opening preflight payload invalid: ${preview(json)}`,
+            );
+          }
+        },
+      },
+    );
+
+    await requestJson(
       "quant fusion audits",
       "/api/quant/fusion-audits?limit=5",
       {

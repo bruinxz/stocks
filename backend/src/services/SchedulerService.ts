@@ -475,6 +475,8 @@ class SchedulerService {
             parameters.candidate_limit || parameters.candidateLimit || 220,
             1500
           ),
+          factor_provider:
+            parameters.factor_provider || parameters.factorProvider || 'auto',
           factor_sync_skip_if_coverage_rate_gte: Number(
             parameters.factor_sync_skip_if_coverage_rate_gte ??
               parameters.factorSyncSkipIfCoverageRateGte ??
@@ -1852,6 +1854,7 @@ class SchedulerService {
           sync_factors_before_scan: true,
           factor_sync_scope: 'market',
           factor_sync_limit: 220,
+          factor_provider: 'auto',
           factor_sync_skip_if_coverage_rate_gte: 92,
           quote_sync_limit: 220,
           min_score: 55,
@@ -1936,6 +1939,7 @@ class SchedulerService {
           sync_factors_before_scan: true,
           factor_sync_scope: 'market',
           factor_sync_limit: 220,
+          factor_provider: 'auto',
           factor_sync_skip_if_coverage_rate_gte: 92,
           quote_sync_limit: 220,
           min_score: 55,
@@ -2490,6 +2494,7 @@ class SchedulerService {
           'sync_factors_before_scan',
           'factor_sync_scope',
           'factor_sync_limit',
+          'factor_provider',
           'factor_sync_skip_if_coverage_rate_gte',
           'quote_sync_limit',
           'min_score',
