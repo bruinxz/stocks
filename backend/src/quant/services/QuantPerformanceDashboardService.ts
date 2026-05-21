@@ -554,12 +554,15 @@ export class QuantPerformanceDashboardService {
 
   private async getScheduleSummary() {
     const tasks = await ScheduledTask.findAll({
-      where: { type: { [Op.in]: ['QUANT_DAILY_PIPELINE', 'QUANT_OPEN_WATCHDOG'] } },
+      where: {
+        type: { [Op.in]: ['QUANT_DAILY_PIPELINE', 'QUANT_OPEN_WATCHDOG', 'REALTIME_QUOTE_SYNC'] },
+      },
       order: [['cron_expression', 'ASC']],
     });
     return {
       quant_pipeline_task_count: tasks.filter(task => task.type === 'QUANT_DAILY_PIPELINE').length,
       watchdog_task_count: tasks.filter(task => task.type === 'QUANT_OPEN_WATCHDOG').length,
+      quote_sync_task_count: tasks.filter(task => task.type === 'REALTIME_QUOTE_SYNC').length,
       tasks: await Promise.all(
         tasks.map(async task => {
           const latestLog = await TaskExecutionLog.findOne({
@@ -594,6 +597,9 @@ export class QuantPerformanceDashboardService {
               min_archived_signals: task.parameters?.min_archived_signals,
               freshness_max_minutes: task.parameters?.freshness_max_minutes,
               universe: task.parameters?.universe,
+              limit: task.parameters?.limit,
+              source: task.parameters?.source,
+              batch_size: task.parameters?.batch_size,
               strategy_keys: task.parameters?.strategy_keys,
               agent_session: task.parameters?.agent_session,
               submit_agent_analysis: task.parameters?.submit_agent_analysis,
@@ -679,8 +685,8 @@ export class QuantPerformanceDashboardService {
           blocked.length > 0
             ? `近 14 天量化运行 ${quantLogs.length} 次，其中 ${blocked.length} 次因运行时风险只观察不买入。`
             : quantLogs.length > 0
-              ? `近 14 天量化运行 ${quantLogs.length} 次，暂无运行时风险阻断买入。`
-              : '近 14 天暂无量化任务执行摘要，等待下一次定时任务沉淀。',
+            ? `近 14 天量化运行 ${quantLogs.length} 次，暂无运行时风险阻断买入。`
+            : '近 14 天暂无量化任务执行摘要，等待下一次定时任务沉淀。',
       },
       top_reasons: topReasons,
       latest: latest ? mapRecord(latest) : null,

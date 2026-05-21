@@ -9,6 +9,8 @@ import { quantRecommendationService } from './QuantRecommendationService';
 import { quantFusionService } from '../quant/services/QuantFusionService';
 import { quantOpenWatchdogService } from '../quant/services/QuantOpenWatchdogService';
 import { quantStrategyFeedbackService } from '../quant/services/QuantStrategyFeedbackService';
+import { quantDataService } from '../quant/services/QuantDataService';
+import { realtimeQuoteService } from '../data/services/RealtimeQuoteService';
 import { aiInvestmentSignalService } from './AIInvestmentSignalService';
 import { feishuTaskReportService } from './FeishuTaskReportService';
 import { paperTradingAutomationService } from './PaperTradingAutomationService';
@@ -56,7 +58,11 @@ function compactRuntimeHealth(runtimeHealth: any) {
   };
 }
 
-function buildQuantDailyPipelineLogSummary(result: any, agentSubmitted: number, agentFailed: number) {
+function buildQuantDailyPipelineLogSummary(
+  result: any,
+  agentSubmitted: number,
+  agentFailed: number
+) {
   const archive = result?.archive || {};
   const paper = result?.paper_trading || {};
   const generated = result?.generated || {};
@@ -79,6 +85,29 @@ function buildQuantDailyPipelineLogSummary(result: any, agentSubmitted: number, 
     paper_planned: paper?.planned,
     paper_skipped: paper?.skipped,
     message: result?.message,
+  };
+}
+
+function buildRealtimeQuoteSyncLogSummary(result: any, persistence: any, options: any = {}) {
+  return {
+    scenario: 'realtime_quote_sync',
+    status: result?.persisted_count > 0 ? 'completed' : 'empty',
+    source: options.source || 'auto',
+    universe: options.universe || 'market',
+    requested_count: result?.requested_count || 0,
+    batch_count: result?.batch_count || 0,
+    persisted_count: result?.persisted_count || 0,
+    updated_stock_count: result?.updated_stock_count || 0,
+    latest_quote_time: result?.latest_quote_time || persistence?.latest_quote_time || null,
+    freshness_status: persistence?.freshness_status || 'unknown',
+    latest_trade_date_symbol_count: persistence?.latest_trade_date_symbol_count || 0,
+    is_fresh: Boolean(persistence?.is_fresh),
+    message:
+      result?.persisted_count > 0
+        ? `实时行情快照已刷新 ${result.persisted_count} 条，覆盖 ${
+            persistence?.latest_trade_date_symbol_count || 0
+          } 只股票。`
+        : '实时行情快照未写入，请检查 AKShare/腾讯行情源连通性。',
   };
 }
 
@@ -165,16 +194,16 @@ class SchedulerService {
         parameters.initial_capital !== undefined
           ? Number(parameters.initial_capital)
           : parameters.initialCapital !== undefined
-            ? Number(parameters.initialCapital)
-            : parameters.use_autonomous_portfolio || parameters.useAutonomousPortfolio
-              ? DEFAULT_AUTONOMOUS_INITIAL_CAPITAL
-              : undefined,
+          ? Number(parameters.initialCapital)
+          : parameters.use_autonomous_portfolio || parameters.useAutonomousPortfolio
+          ? DEFAULT_AUTONOMOUS_INITIAL_CAPITAL
+          : undefined,
       force_new_portfolio:
         parameters.force_new_portfolio !== undefined
           ? Boolean(parameters.force_new_portfolio)
           : parameters.forceNewPortfolio !== undefined
-            ? Boolean(parameters.forceNewPortfolio)
-            : false,
+          ? Boolean(parameters.forceNewPortfolio)
+          : false,
     };
   }
 
@@ -240,7 +269,10 @@ class SchedulerService {
 
     await executionLog.update(patch);
 
-    if (status !== 'RUNNING') {
+    const parameters = task.parameters || {};
+    const shouldReportToFeishu =
+      parameters.report_to_feishu !== false && parameters.reportToFeishu !== false;
+    if (status !== 'RUNNING' && shouldReportToFeishu) {
       await feishuTaskReportService.reportTaskExecutionLog(executionLog, {
         record_type: status === 'FAILED' ? '定时任务失败' : '定时任务完成',
         error,
@@ -359,14 +391,14 @@ class SchedulerService {
         const marketFilters = Array.isArray(parameters.marketFilters)
           ? parameters.marketFilters
           : Array.isArray(parameters.market_filters)
-            ? parameters.market_filters
-            : undefined;
+          ? parameters.market_filters
+          : undefined;
         const syncAllStocks =
           parameters.syncAllStocks !== undefined
             ? Boolean(parameters.syncAllStocks)
             : parameters.sync_all_stocks !== undefined
-              ? Boolean(parameters.sync_all_stocks)
-              : !symbols?.length && !marketFilters?.length;
+            ? Boolean(parameters.sync_all_stocks)
+            : !symbols?.length && !marketFilters?.length;
 
         await this.enqueueDataUpdateJob(
           task,
@@ -426,6 +458,74 @@ class SchedulerService {
           'dataQualityScan',
           isManual
         );
+      } else if (task.type === 'REALTIME_QUOTE_SYNC') {
+        const rawSymbols = Array.isArray(parameters.symbols)
+          ? parameters.symbols
+          : Array.isArray(parameters.stock_symbols)
+          ? parameters.stock_symbols
+          : undefined;
+        const limit = this.toPositiveInt(
+          parameters.limit || parameters.quote_sync_limit || parameters.max_stocks,
+          360,
+          1500
+        );
+        const source = parameters.source || parameters.data_source || 'auto';
+        const universe = parameters.universe === 'favorites' ? 'favorites' : 'market';
+        const batchSize = this.toPositiveInt(
+          parameters.batch_size || parameters.batchSize,
+          300,
+          500
+        );
+        const stocks = rawSymbols?.length
+          ? []
+          : await quantDataService.getStocks({
+              universe,
+              user_id: parameters.user_id,
+              limit,
+            });
+        const targetSymbols = rawSymbols?.length
+          ? rawSymbols.map((symbol: any) => String(symbol || '').trim()).filter(Boolean)
+          : stocks.map(stock => stock.symbol);
+
+        const result = await realtimeQuoteService.syncQuotesForSymbols(targetSymbols, {
+          source,
+          batch_size: batchSize,
+        });
+        const persistence = await realtimeQuoteService.getPersistenceSummary().catch(error => ({
+          persisted: false,
+          freshness_status: 'unknown',
+          error: error?.message || String(error),
+        }));
+        const failedCount = Math.max(
+          0,
+          Number(result.requested_count || 0) - Number(result.persisted_count || 0)
+        );
+        const allFailed =
+          Number(result.requested_count || 0) > 0 && Number(result.persisted_count || 0) === 0;
+        const resultSummary = buildRealtimeQuoteSyncLogSummary(result, persistence, {
+          source,
+          universe,
+        });
+
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: result.requested_count,
+          completed_items: result.persisted_count,
+          failed_items: failedCount,
+          status: allFailed ? 'FAILED' : 'COMPLETED',
+          completed_at: new Date(),
+          error_message: allFailed ? resultSummary.message : null,
+          result_summary: resultSummary,
+        });
+
+        if (allFailed) {
+          throw new Error(resultSummary.message);
+        }
+
+        logger.info(
+          `实时行情快照刷新完成。请求 ${result.requested_count}，落盘 ${
+            result.persisted_count
+          }，更新股票 ${result.updated_stock_count}，最新 ${result.latest_quote_time || '-'}`
+        );
       } else if (task.type === 'QUANT_DAILY_PIPELINE') {
         await quantStrategyFeedbackService.refreshWeights({
           snapshot_date: today,
@@ -445,8 +545,8 @@ class SchedulerService {
           strategy_keys: Array.isArray(parameters.strategy_keys)
             ? parameters.strategy_keys
             : Array.isArray(parameters.strategyKeys)
-              ? parameters.strategyKeys
-              : undefined,
+            ? parameters.strategyKeys
+            : undefined,
           lookback_days: this.toPositiveInt(
             parameters.lookback_days || parameters.lookbackDays,
             180,
@@ -461,14 +561,14 @@ class SchedulerService {
             parameters.refresh_realtime_quotes !== undefined
               ? Boolean(parameters.refresh_realtime_quotes)
               : parameters.refreshRealtimeQuotes !== undefined
-                ? Boolean(parameters.refreshRealtimeQuotes)
-                : true,
+              ? Boolean(parameters.refreshRealtimeQuotes)
+              : true,
           sync_factors_before_scan:
             parameters.sync_factors_before_scan !== undefined
               ? Boolean(parameters.sync_factors_before_scan)
               : parameters.syncFactorsBeforeScan !== undefined
-                ? Boolean(parameters.syncFactorsBeforeScan)
-                : true,
+              ? Boolean(parameters.syncFactorsBeforeScan)
+              : true,
           factor_sync_scope:
             parameters.factor_sync_scope || parameters.factorSyncScope || parameters.universe,
           factor_sync_limit: this.toPositiveInt(
@@ -476,8 +576,7 @@ class SchedulerService {
             parameters.candidate_limit || parameters.candidateLimit || 220,
             1500
           ),
-          factor_provider:
-            parameters.factor_provider || parameters.factorProvider || 'auto',
+          factor_provider: parameters.factor_provider || parameters.factorProvider || 'auto',
           factor_sync_skip_if_coverage_rate_gte: Number(
             parameters.factor_sync_skip_if_coverage_rate_gte ??
               parameters.factorSyncSkipIfCoverageRateGte ??
@@ -513,8 +612,8 @@ class SchedulerService {
             parameters.submit_agent_analysis !== undefined
               ? Boolean(parameters.submit_agent_analysis)
               : parameters.submitAgentAnalysis !== undefined
-                ? Boolean(parameters.submitAgentAnalysis)
-                : true,
+              ? Boolean(parameters.submitAgentAnalysis)
+              : true,
           agent_max_count: this.toPositiveInt(
             parameters.agent_max_count || parameters.agentMaxCount,
             5,
@@ -526,20 +625,20 @@ class SchedulerService {
             parameters.agent_auto_paper_trade !== undefined
               ? Boolean(parameters.agent_auto_paper_trade)
               : parameters.agentAutoPaperTrade !== undefined
-                ? Boolean(parameters.agentAutoPaperTrade)
-                : true,
+              ? Boolean(parameters.agentAutoPaperTrade)
+              : true,
           run_paper_trading:
             parameters.run_paper_trading !== undefined
               ? Boolean(parameters.run_paper_trading)
               : parameters.runPaperTrading !== undefined
-                ? Boolean(parameters.runPaperTrading)
-                : true,
+              ? Boolean(parameters.runPaperTrading)
+              : true,
           dry_run:
             parameters.dry_run !== undefined
               ? Boolean(parameters.dry_run)
               : parameters.dryRun !== undefined
-                ? Boolean(parameters.dryRun)
-                : false,
+              ? Boolean(parameters.dryRun)
+              : false,
           paper_trade_limit: this.toPositiveInt(
             parameters.paper_trade_limit || parameters.paperTradeLimit,
             3,
@@ -566,8 +665,8 @@ class SchedulerService {
             parameters.use_entry_risk_guard !== undefined
               ? Boolean(parameters.use_entry_risk_guard)
               : parameters.useEntryRiskGuard !== undefined
-                ? Boolean(parameters.useEntryRiskGuard)
-                : undefined,
+              ? Boolean(parameters.useEntryRiskGuard)
+              : undefined,
           max_daily_new_positions:
             parameters.max_daily_new_positions ?? parameters.maxDailyNewPositions,
           max_daily_new_exposure_pct:
@@ -591,34 +690,34 @@ class SchedulerService {
             parameters.use_experiment_params !== undefined
               ? Boolean(parameters.use_experiment_params)
               : parameters.useExperimentParams !== undefined
-                ? Boolean(parameters.useExperimentParams)
-                : true,
+              ? Boolean(parameters.useExperimentParams)
+              : true,
           experiment_param_policy:
             parameters.experiment_param_policy || parameters.experimentParamPolicy,
           block_limit_up:
             parameters.block_limit_up !== undefined
               ? Boolean(parameters.block_limit_up)
               : parameters.blockLimitUp !== undefined
-                ? Boolean(parameters.blockLimitUp)
-                : undefined,
+              ? Boolean(parameters.blockLimitUp)
+              : undefined,
           block_limit_down:
             parameters.block_limit_down !== undefined
               ? Boolean(parameters.block_limit_down)
               : parameters.blockLimitDown !== undefined
-                ? Boolean(parameters.blockLimitDown)
-                : undefined,
+              ? Boolean(parameters.blockLimitDown)
+              : undefined,
           block_suspended:
             parameters.block_suspended !== undefined
               ? Boolean(parameters.block_suspended)
               : parameters.blockSuspended !== undefined
-                ? Boolean(parameters.blockSuspended)
-                : undefined,
+              ? Boolean(parameters.blockSuspended)
+              : undefined,
           block_buy_on_runtime_risk:
             parameters.block_buy_on_runtime_risk !== undefined
               ? Boolean(parameters.block_buy_on_runtime_risk)
               : parameters.blockBuyOnRuntimeRisk !== undefined
-                ? Boolean(parameters.blockBuyOnRuntimeRisk)
-                : true,
+              ? Boolean(parameters.blockBuyOnRuntimeRisk)
+              : true,
           ...portfolioParams,
           task_label: task.name,
           execution_log_id: executionLog?.id,
@@ -626,14 +725,14 @@ class SchedulerService {
             parameters.report_to_feishu !== undefined
               ? Boolean(parameters.report_to_feishu)
               : parameters.reportToFeishu !== undefined
-                ? Boolean(parameters.reportToFeishu)
-                : true,
+              ? Boolean(parameters.reportToFeishu)
+              : true,
           notify_to_feishu_bot:
             parameters.notify_to_feishu_bot !== undefined
               ? Boolean(parameters.notify_to_feishu_bot)
               : parameters.notifyToFeishuBot !== undefined
-                ? Boolean(parameters.notifyToFeishuBot)
-                : true,
+              ? Boolean(parameters.notifyToFeishuBot)
+              : true,
           params_by_strategy: parameters.params_by_strategy || parameters.paramsByStrategy,
         });
 
@@ -700,8 +799,8 @@ class SchedulerService {
             parameters.require_fresh_quote !== undefined
               ? Boolean(parameters.require_fresh_quote)
               : parameters.requireFreshQuote !== undefined
-                ? Boolean(parameters.requireFreshQuote)
-                : true,
+              ? Boolean(parameters.requireFreshQuote)
+              : true,
           freshness_max_minutes: this.toPositiveInt(
             parameters.freshness_max_minutes || parameters.freshnessMaxMinutes,
             60,
@@ -822,8 +921,8 @@ class SchedulerService {
             parameters.report_to_feishu !== undefined
               ? Boolean(parameters.report_to_feishu)
               : parameters.reportToFeishu !== undefined
-                ? Boolean(parameters.reportToFeishu)
-                : true,
+              ? Boolean(parameters.reportToFeishu)
+              : true,
         });
         (result as any).repair = repairResult;
 
@@ -856,8 +955,8 @@ class SchedulerService {
             parameters.auto_repair_missing_data !== undefined
               ? Boolean(parameters.auto_repair_missing_data)
               : parameters.autoRepairMissingData !== undefined
-                ? Boolean(parameters.autoRepairMissingData)
-                : true,
+              ? Boolean(parameters.autoRepairMissingData)
+              : true,
           data_source: parameters.data_source || parameters.dataSource || 'tencent_only',
           repair_lookback_days: this.toPositiveInt(
             parameters.repair_lookback_days || parameters.repairLookbackDays,
@@ -873,14 +972,14 @@ class SchedulerService {
             parameters.verify_before_report !== undefined
               ? Boolean(parameters.verify_before_report)
               : parameters.verifyBeforeReport !== undefined
-                ? Boolean(parameters.verifyBeforeReport)
-                : true,
+              ? Boolean(parameters.verifyBeforeReport)
+              : true,
           report_to_feishu:
             parameters.report_to_feishu !== undefined
               ? Boolean(parameters.report_to_feishu)
               : parameters.reportToFeishu !== undefined
-                ? Boolean(parameters.reportToFeishu)
-                : true,
+              ? Boolean(parameters.reportToFeishu)
+              : true,
           record_type: parameters.record_type || parameters.recordType || '信号质量日报',
         });
 
@@ -926,26 +1025,26 @@ class SchedulerService {
             parameters.require_action_buy !== undefined
               ? Boolean(parameters.require_action_buy)
               : parameters.requireActionBuy !== undefined
-                ? Boolean(parameters.requireActionBuy)
-                : true,
+              ? Boolean(parameters.requireActionBuy)
+              : true,
           dry_run:
             parameters.dry_run !== undefined
               ? Boolean(parameters.dry_run)
               : parameters.dryRun !== undefined
-                ? Boolean(parameters.dryRun)
-                : false,
+              ? Boolean(parameters.dryRun)
+              : false,
           report_to_feishu:
             parameters.report_to_feishu !== undefined
               ? Boolean(parameters.report_to_feishu)
               : parameters.reportToFeishu !== undefined
-                ? Boolean(parameters.reportToFeishu)
-                : true,
+              ? Boolean(parameters.reportToFeishu)
+              : true,
           refresh_recommendations:
             parameters.refresh_recommendations !== undefined
               ? Boolean(parameters.refresh_recommendations)
               : parameters.refreshRecommendations !== undefined
-                ? Boolean(parameters.refreshRecommendations)
-                : true,
+              ? Boolean(parameters.refreshRecommendations)
+              : true,
           universe: parameters.universe === 'market' ? 'market' : 'favorites',
           style: ['balanced', 'momentum', 'value', 'low_risk'].includes(parameters.style)
             ? parameters.style
@@ -964,20 +1063,20 @@ class SchedulerService {
             parameters.verify_signals !== undefined
               ? Boolean(parameters.verify_signals)
               : parameters.verifySignals !== undefined
-                ? Boolean(parameters.verifySignals)
-                : false,
+              ? Boolean(parameters.verifySignals)
+              : false,
           use_attribution_feedback:
             parameters.use_attribution_feedback !== undefined
               ? Boolean(parameters.use_attribution_feedback)
               : parameters.useAttributionFeedback !== undefined
-                ? Boolean(parameters.useAttributionFeedback)
-                : true,
+              ? Boolean(parameters.useAttributionFeedback)
+              : true,
           use_profit_gate:
             parameters.use_profit_gate !== undefined
               ? Boolean(parameters.use_profit_gate)
               : parameters.useProfitGate !== undefined
-                ? Boolean(parameters.useProfitGate)
-                : true,
+              ? Boolean(parameters.useProfitGate)
+              : true,
           profit_gate_horizon:
             parameters.profit_gate_horizon || parameters.profitGateHorizon || '5d',
           profit_gate_min_samples: this.toPositiveInt(
@@ -992,14 +1091,14 @@ class SchedulerService {
             parameters.profit_gate_allow_deprioritized !== undefined
               ? Boolean(parameters.profit_gate_allow_deprioritized)
               : parameters.profitGateAllowDeprioritized !== undefined
-                ? Boolean(parameters.profitGateAllowDeprioritized)
-                : false,
+              ? Boolean(parameters.profitGateAllowDeprioritized)
+              : false,
           profit_gate_allow_sampling:
             parameters.profit_gate_allow_sampling !== undefined
               ? Boolean(parameters.profit_gate_allow_sampling)
               : parameters.profitGateAllowSampling !== undefined
-                ? Boolean(parameters.profitGateAllowSampling)
-                : true,
+              ? Boolean(parameters.profitGateAllowSampling)
+              : true,
           profit_gate_sampling_multiplier: Number(
             parameters.profit_gate_sampling_multiplier ||
               parameters.profitGateSamplingMultiplier ||
@@ -1009,8 +1108,8 @@ class SchedulerService {
             parameters.use_outcome_feedback !== undefined
               ? Boolean(parameters.use_outcome_feedback)
               : parameters.useOutcomeFeedback !== undefined
-                ? Boolean(parameters.useOutcomeFeedback)
-                : true,
+              ? Boolean(parameters.useOutcomeFeedback)
+              : true,
           outcome_feedback_min_closed_samples: this.toPositiveInt(
             parameters.outcome_feedback_min_closed_samples ||
               parameters.outcomeFeedbackMinClosedSamples,
@@ -1049,45 +1148,45 @@ class SchedulerService {
             parameters.dry_run !== undefined
               ? Boolean(parameters.dry_run)
               : parameters.dryRun !== undefined
-                ? Boolean(parameters.dryRun)
-                : false,
+              ? Boolean(parameters.dryRun)
+              : false,
           report_to_feishu:
             parameters.report_to_feishu !== undefined
               ? Boolean(parameters.report_to_feishu)
               : parameters.reportToFeishu !== undefined
-                ? Boolean(parameters.reportToFeishu)
-                : true,
+              ? Boolean(parameters.reportToFeishu)
+              : true,
           limit: this.toPositiveInt(parameters.limit, 20, 100),
           enable_stop_loss:
             parameters.enable_stop_loss !== undefined
               ? Boolean(parameters.enable_stop_loss)
               : parameters.enableStopLoss !== undefined
-                ? Boolean(parameters.enableStopLoss)
-                : true,
+              ? Boolean(parameters.enableStopLoss)
+              : true,
           enable_take_profit:
             parameters.enable_take_profit !== undefined
               ? Boolean(parameters.enable_take_profit)
               : parameters.enableTakeProfit !== undefined
-                ? Boolean(parameters.enableTakeProfit)
-                : true,
+              ? Boolean(parameters.enableTakeProfit)
+              : true,
           enable_trailing_take_profit:
             parameters.enable_trailing_take_profit !== undefined
               ? Boolean(parameters.enable_trailing_take_profit)
               : parameters.enableTrailingTakeProfit !== undefined
-                ? Boolean(parameters.enableTrailingTakeProfit)
-                : true,
+              ? Boolean(parameters.enableTrailingTakeProfit)
+              : true,
           enable_sell_signals:
             parameters.enable_sell_signals !== undefined
               ? Boolean(parameters.enable_sell_signals)
               : parameters.enableSellSignals !== undefined
-                ? Boolean(parameters.enableSellSignals)
-                : true,
+              ? Boolean(parameters.enableSellSignals)
+              : true,
           use_adaptive_risk_policy:
             parameters.use_adaptive_risk_policy !== undefined
               ? Boolean(parameters.use_adaptive_risk_policy)
               : parameters.useAdaptiveRiskPolicy !== undefined
-                ? Boolean(parameters.useAdaptiveRiskPolicy)
-                : true,
+              ? Boolean(parameters.useAdaptiveRiskPolicy)
+              : true,
           adaptive_risk_lookback_days: this.toPositiveInt(
             parameters.adaptive_risk_lookback_days || parameters.adaptiveRiskLookbackDays,
             180,
@@ -1102,8 +1201,8 @@ class SchedulerService {
             parameters.adaptive_risk_override_signal_params !== undefined
               ? Boolean(parameters.adaptive_risk_override_signal_params)
               : parameters.adaptiveRiskOverrideSignalParams !== undefined
-                ? Boolean(parameters.adaptiveRiskOverrideSignalParams)
-                : false,
+              ? Boolean(parameters.adaptiveRiskOverrideSignalParams)
+              : false,
           default_stop_loss_pct: Number(
             parameters.default_stop_loss_pct || parameters.defaultStopLossPct || 7
           ),
@@ -1144,8 +1243,8 @@ class SchedulerService {
             parameters.include_open !== undefined
               ? Boolean(parameters.include_open)
               : parameters.includeOpen !== undefined
-                ? Boolean(parameters.includeOpen)
-                : true,
+              ? Boolean(parameters.includeOpen)
+              : true,
           source_type: parameters.source_type || parameters.sourceType,
           start_date: parameters.start_date || parameters.startDate,
           end_date: parameters.end_date || parameters.endDate,
@@ -1154,8 +1253,8 @@ class SchedulerService {
             parameters.report_to_feishu !== undefined
               ? Boolean(parameters.report_to_feishu)
               : parameters.reportToFeishu !== undefined
-                ? Boolean(parameters.reportToFeishu)
-                : true,
+              ? Boolean(parameters.reportToFeishu)
+              : true,
         });
 
         await this.safeUpdateExecutionLog(executionLog, {
@@ -1178,8 +1277,8 @@ class SchedulerService {
             parameters.include_open !== undefined
               ? Boolean(parameters.include_open)
               : parameters.includeOpen !== undefined
-                ? Boolean(parameters.includeOpen)
-                : true,
+              ? Boolean(parameters.includeOpen)
+              : true,
           lookback_days: this.toPositiveInt(
             parameters.lookback_days || parameters.lookbackDays,
             180,
@@ -1192,8 +1291,8 @@ class SchedulerService {
             parameters.report_to_feishu !== undefined
               ? Boolean(parameters.report_to_feishu)
               : parameters.reportToFeishu !== undefined
-                ? Boolean(parameters.reportToFeishu)
-                : true,
+              ? Boolean(parameters.reportToFeishu)
+              : true,
         });
 
         await this.safeUpdateExecutionLog(executionLog, {
@@ -1216,26 +1315,26 @@ class SchedulerService {
             parameters.include_entries !== undefined
               ? Boolean(parameters.include_entries)
               : parameters.includeEntries !== undefined
-                ? Boolean(parameters.includeEntries)
-                : true,
+              ? Boolean(parameters.includeEntries)
+              : true,
           include_exits:
             parameters.include_exits !== undefined
               ? Boolean(parameters.include_exits)
               : parameters.includeExits !== undefined
-                ? Boolean(parameters.includeExits)
-                : true,
+              ? Boolean(parameters.includeExits)
+              : true,
           include_monitor:
             parameters.include_monitor !== undefined
               ? Boolean(parameters.include_monitor)
               : parameters.includeMonitor !== undefined
-                ? Boolean(parameters.includeMonitor)
-                : true,
+              ? Boolean(parameters.includeMonitor)
+              : true,
           report_to_feishu:
             parameters.report_to_feishu !== undefined
               ? Boolean(parameters.report_to_feishu)
               : parameters.reportToFeishu !== undefined
-                ? Boolean(parameters.reportToFeishu)
-                : true,
+              ? Boolean(parameters.reportToFeishu)
+              : true,
           source_type: parameters.source_type || parameters.sourceType,
           limit: this.toPositiveInt(parameters.limit, 30, 100),
           entry_limit: this.toPositiveInt(parameters.entry_limit || parameters.entryLimit, 3, 20),
@@ -1263,14 +1362,14 @@ class SchedulerService {
             parameters.use_attribution_feedback !== undefined
               ? Boolean(parameters.use_attribution_feedback)
               : parameters.useAttributionFeedback !== undefined
-                ? Boolean(parameters.useAttributionFeedback)
-                : true,
+              ? Boolean(parameters.useAttributionFeedback)
+              : true,
           use_profit_gate:
             parameters.use_profit_gate !== undefined
               ? Boolean(parameters.use_profit_gate)
               : parameters.useProfitGate !== undefined
-                ? Boolean(parameters.useProfitGate)
-                : true,
+              ? Boolean(parameters.useProfitGate)
+              : true,
           profit_gate_horizon:
             parameters.profit_gate_horizon || parameters.profitGateHorizon || '5d',
           profit_gate_min_samples: this.toPositiveInt(
@@ -1285,14 +1384,14 @@ class SchedulerService {
             parameters.profit_gate_allow_deprioritized !== undefined
               ? Boolean(parameters.profit_gate_allow_deprioritized)
               : parameters.profitGateAllowDeprioritized !== undefined
-                ? Boolean(parameters.profitGateAllowDeprioritized)
-                : false,
+              ? Boolean(parameters.profitGateAllowDeprioritized)
+              : false,
           profit_gate_allow_sampling:
             parameters.profit_gate_allow_sampling !== undefined
               ? Boolean(parameters.profit_gate_allow_sampling)
               : parameters.profitGateAllowSampling !== undefined
-                ? Boolean(parameters.profitGateAllowSampling)
-                : true,
+              ? Boolean(parameters.profitGateAllowSampling)
+              : true,
           profit_gate_sampling_multiplier: Number(
             parameters.profit_gate_sampling_multiplier ||
               parameters.profitGateSamplingMultiplier ||
@@ -1302,8 +1401,8 @@ class SchedulerService {
             parameters.use_outcome_feedback !== undefined
               ? Boolean(parameters.use_outcome_feedback)
               : parameters.useOutcomeFeedback !== undefined
-                ? Boolean(parameters.useOutcomeFeedback)
-                : true,
+              ? Boolean(parameters.useOutcomeFeedback)
+              : true,
           outcome_feedback_min_closed_samples: this.toPositiveInt(
             parameters.outcome_feedback_min_closed_samples ||
               parameters.outcomeFeedbackMinClosedSamples,
@@ -1324,32 +1423,32 @@ class SchedulerService {
             parameters.enable_stop_loss !== undefined
               ? Boolean(parameters.enable_stop_loss)
               : parameters.enableStopLoss !== undefined
-                ? Boolean(parameters.enableStopLoss)
-                : true,
+              ? Boolean(parameters.enableStopLoss)
+              : true,
           enable_take_profit:
             parameters.enable_take_profit !== undefined
               ? Boolean(parameters.enable_take_profit)
               : parameters.enableTakeProfit !== undefined
-                ? Boolean(parameters.enableTakeProfit)
-                : true,
+              ? Boolean(parameters.enableTakeProfit)
+              : true,
           enable_trailing_take_profit:
             parameters.enable_trailing_take_profit !== undefined
               ? Boolean(parameters.enable_trailing_take_profit)
               : parameters.enableTrailingTakeProfit !== undefined
-                ? Boolean(parameters.enableTrailingTakeProfit)
-                : true,
+              ? Boolean(parameters.enableTrailingTakeProfit)
+              : true,
           enable_sell_signals:
             parameters.enable_sell_signals !== undefined
               ? Boolean(parameters.enable_sell_signals)
               : parameters.enableSellSignals !== undefined
-                ? Boolean(parameters.enableSellSignals)
-                : true,
+              ? Boolean(parameters.enableSellSignals)
+              : true,
           use_adaptive_risk_policy:
             parameters.use_adaptive_risk_policy !== undefined
               ? Boolean(parameters.use_adaptive_risk_policy)
               : parameters.useAdaptiveRiskPolicy !== undefined
-                ? Boolean(parameters.useAdaptiveRiskPolicy)
-                : true,
+              ? Boolean(parameters.useAdaptiveRiskPolicy)
+              : true,
           adaptive_risk_lookback_days: this.toPositiveInt(
             parameters.adaptive_risk_lookback_days || parameters.adaptiveRiskLookbackDays,
             180,
@@ -1364,8 +1463,8 @@ class SchedulerService {
             parameters.adaptive_risk_override_signal_params !== undefined
               ? Boolean(parameters.adaptive_risk_override_signal_params)
               : parameters.adaptiveRiskOverrideSignalParams !== undefined
-                ? Boolean(parameters.adaptiveRiskOverrideSignalParams)
-                : false,
+              ? Boolean(parameters.adaptiveRiskOverrideSignalParams)
+              : false,
           default_stop_loss_pct: Number(
             parameters.default_stop_loss_pct || parameters.defaultStopLossPct || 7
           ),
@@ -1414,33 +1513,33 @@ class SchedulerService {
             parameters.exclude_st !== undefined
               ? Boolean(parameters.exclude_st)
               : parameters.excludeSt !== undefined
-                ? Boolean(parameters.excludeSt)
-                : true,
+              ? Boolean(parameters.excludeSt)
+              : true,
           min_market_cap_yi:
             parameters.min_market_cap_yi !== undefined
               ? Number(parameters.min_market_cap_yi)
               : parameters.minMarketCapYi !== undefined
-                ? Number(parameters.minMarketCapYi)
-                : 30,
+              ? Number(parameters.minMarketCapYi)
+              : 30,
           archive_limit: this.toPositiveInt(parameters.archive_limit, 30, 100),
           verify_signals:
             parameters.verify_signals !== undefined
               ? Boolean(parameters.verify_signals)
               : parameters.verifySignals !== undefined
-                ? Boolean(parameters.verifySignals)
-                : true,
+              ? Boolean(parameters.verifySignals)
+              : true,
           run_paper_trading:
             parameters.run_paper_trading !== undefined
               ? Boolean(parameters.run_paper_trading)
               : parameters.runPaperTrading !== undefined
-                ? Boolean(parameters.runPaperTrading)
-                : true,
+              ? Boolean(parameters.runPaperTrading)
+              : true,
           dry_run:
             parameters.dry_run !== undefined
               ? Boolean(parameters.dry_run)
               : parameters.dryRun !== undefined
-                ? Boolean(parameters.dryRun)
-                : false,
+              ? Boolean(parameters.dryRun)
+              : false,
           paper_trade_limit: this.toPositiveInt(parameters.paper_trade_limit, 3, 20),
           paper_trade_scan_limit: this.toPositiveInt(parameters.paper_trade_scan_limit, 150, 500),
           min_score: Number(parameters.min_score || parameters.minScore || 72),
@@ -1456,14 +1555,14 @@ class SchedulerService {
             parameters.use_outcome_feedback !== undefined
               ? Boolean(parameters.use_outcome_feedback)
               : parameters.useOutcomeFeedback !== undefined
-                ? Boolean(parameters.useOutcomeFeedback)
-                : true,
+              ? Boolean(parameters.useOutcomeFeedback)
+              : true,
           use_policy_version_feedback:
             parameters.use_policy_version_feedback !== undefined
               ? Boolean(parameters.use_policy_version_feedback)
               : parameters.usePolicyVersionFeedback !== undefined
-                ? Boolean(parameters.usePolicyVersionFeedback)
-                : true,
+              ? Boolean(parameters.usePolicyVersionFeedback)
+              : true,
           policy_version_lookback_limit: this.toPositiveInt(
             parameters.policy_version_lookback_limit || parameters.policyVersionLookbackLimit,
             120,
@@ -1473,8 +1572,8 @@ class SchedulerService {
             parameters.use_strategy_experiment_feedback !== undefined
               ? Boolean(parameters.use_strategy_experiment_feedback)
               : parameters.useStrategyExperimentFeedback !== undefined
-                ? Boolean(parameters.useStrategyExperimentFeedback)
-                : true,
+              ? Boolean(parameters.useStrategyExperimentFeedback)
+              : true,
           strategy_experiment_min_quality_delta: Number(
             parameters.strategy_experiment_min_quality_delta ||
               parameters.strategyExperimentMinQualityDelta ||
@@ -1505,8 +1604,8 @@ class SchedulerService {
             parameters.use_profit_gate !== undefined
               ? Boolean(parameters.use_profit_gate)
               : parameters.useProfitGate !== undefined
-                ? Boolean(parameters.useProfitGate)
-                : true,
+              ? Boolean(parameters.useProfitGate)
+              : true,
           profit_gate_horizon:
             parameters.profit_gate_horizon || parameters.profitGateHorizon || '5d',
           profit_gate_min_samples: this.toPositiveInt(
@@ -1521,8 +1620,8 @@ class SchedulerService {
             parameters.use_entry_risk_guard !== undefined
               ? Boolean(parameters.use_entry_risk_guard)
               : parameters.useEntryRiskGuard !== undefined
-                ? Boolean(parameters.useEntryRiskGuard)
-                : true,
+              ? Boolean(parameters.useEntryRiskGuard)
+              : true,
           max_daily_new_positions: this.toPositiveInt(
             parameters.max_daily_new_positions || parameters.maxDailyNewPositions,
             3,
@@ -1566,32 +1665,32 @@ class SchedulerService {
             parameters.block_limit_up !== undefined
               ? Boolean(parameters.block_limit_up)
               : parameters.blockLimitUp !== undefined
-                ? Boolean(parameters.blockLimitUp)
-                : true,
+              ? Boolean(parameters.blockLimitUp)
+              : true,
           block_limit_down:
             parameters.block_limit_down !== undefined
               ? Boolean(parameters.block_limit_down)
               : parameters.blockLimitDown !== undefined
-                ? Boolean(parameters.blockLimitDown)
-                : true,
+              ? Boolean(parameters.blockLimitDown)
+              : true,
           block_suspended:
             parameters.block_suspended !== undefined
               ? Boolean(parameters.block_suspended)
               : parameters.blockSuspended !== undefined
-                ? Boolean(parameters.blockSuspended)
-                : true,
+              ? Boolean(parameters.blockSuspended)
+              : true,
           agent_auto_paper_trade:
             parameters.agent_auto_paper_trade !== undefined
               ? Boolean(parameters.agent_auto_paper_trade)
               : parameters.agentAutoPaperTrade !== undefined
-                ? Boolean(parameters.agentAutoPaperTrade)
-                : true,
+              ? Boolean(parameters.agentAutoPaperTrade)
+              : true,
           submit_agent_analysis:
             parameters.submit_agent_analysis !== undefined
               ? Boolean(parameters.submit_agent_analysis)
               : parameters.submitAgentAnalysis !== undefined
-                ? Boolean(parameters.submitAgentAnalysis)
-                : true,
+              ? Boolean(parameters.submitAgentAnalysis)
+              : true,
           agent_max_count: this.toPositiveInt(parameters.agent_max_count, 5, 10),
           agent_min_score: Number(parameters.agent_min_score || parameters.agentMinScore || 72),
           agent_session: parameters.agent_session || parameters.agentSession || 'close',
@@ -1602,8 +1701,8 @@ class SchedulerService {
             parameters.report_to_feishu !== undefined
               ? Boolean(parameters.report_to_feishu)
               : parameters.reportToFeishu !== undefined
-                ? Boolean(parameters.reportToFeishu)
-                : true,
+              ? Boolean(parameters.reportToFeishu)
+              : true,
           record_type: parameters.record_type || parameters.recordType || '全市场荐股闭环',
         });
 
@@ -1646,14 +1745,14 @@ class SchedulerService {
             parameters.exclude_st !== undefined
               ? Boolean(parameters.exclude_st)
               : parameters.excludeSt !== undefined
-                ? Boolean(parameters.excludeSt)
-                : true,
+              ? Boolean(parameters.excludeSt)
+              : true,
           min_market_cap_yi:
             parameters.min_market_cap_yi !== undefined
               ? Number(parameters.min_market_cap_yi)
               : parameters.minMarketCapYi !== undefined
-                ? Number(parameters.minMarketCapYi)
-                : 30,
+              ? Number(parameters.minMarketCapYi)
+              : 30,
           include_trend: false,
         });
 
@@ -1832,6 +1931,21 @@ class SchedulerService {
           data_source: 'tencent_only',
           concurrency: 2,
           report_to_feishu: true,
+        },
+      },
+      {
+        name: '实时行情快照刷新',
+        type: 'REALTIME_QUOTE_SYNC',
+        cron_expression: '5,25 9,10,13,14 * * 1-5',
+        is_active: true,
+        parameters: {
+          universe: 'market',
+          limit: 360,
+          source: 'auto',
+          batch_size: 300,
+          report_to_feishu: false,
+          notify_to_feishu_bot: false,
+          record_type: '实时行情快照刷新',
         },
       },
       {
@@ -2473,6 +2587,27 @@ class SchedulerService {
           'repair_lookback_days',
           'sync_concurrency',
           'verify_before_report',
+          'report_to_feishu',
+          'notify_to_feishu_bot',
+          'record_type',
+        ]) {
+          if (nextParams[key] === undefined && (taskData.parameters as any)[key] !== undefined) {
+            nextParams[key] = (taskData.parameters as any)[key];
+          }
+        }
+        if (JSON.stringify(nextParams) !== JSON.stringify(params)) {
+          patch.parameters = nextParams;
+        }
+      }
+
+      if (taskData.type === 'REALTIME_QUOTE_SYNC') {
+        const params = patch.parameters || task.parameters || {};
+        const nextParams = { ...taskData.parameters, ...params };
+        for (const key of [
+          'universe',
+          'limit',
+          'source',
+          'batch_size',
           'report_to_feishu',
           'notify_to_feishu_bot',
           'record_type',

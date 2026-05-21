@@ -1,6 +1,6 @@
 # Autonomous Iteration Progress
 
-> Last updated: 2026-05-20
+> Last updated: 2026-05-21
 > Purpose: machine-readable handoff for continuing autonomous development after context compression.
 
 ## Current branch / workspace
@@ -31,6 +31,22 @@ Known frontend build warnings are historical Prettier warnings in existing files
 - `src/pages/TaskScheduler.tsx`
 
 ## Completed in current autonomous batch
+
+### 2026-05-21 continuous iteration: intraday realtime quote refresh lane
+
+- 数据更真实：
+  - 新增 `REALTIME_QUOTE_SYNC` 定时任务类型，通过 `RealtimeQuoteService.syncQuotesForSymbols()` 独立刷新盘中实时行情快照。
+  - 默认任务「实时行情快照刷新」已加入 `ensureDefaultTasks()`，工作日 `09:05/09:25/10:05/10:25/13:05/13:25/14:05/14:25` 执行，默认全市场排序样本 360，只落盘不发送飞书噪音。
+- 纪律更可执行：
+  - `QuantRuntimeHealthService` 的执行纪律纳入盘中行情刷新任务；若任务缺失会给出观察项。
+  - 行情滞后时，如果盘中刷新任务已启用则作为 warn/降仓观察；若任务缺失则提升为阻断风险。
+  - 开盘前自检新增 `quote_sync_task`，明确显示独立行情快照任务是否就绪。
+- 页面更简洁：
+  - 收益驾驶舱的“明日开盘自动运行链路”新增“盘中行情快照刷新”节点。
+  - 量化定时任务卡片对 `REALTIME_QUOTE_SYNC` 显示样本数、数据源和批大小，避免误读为交易任务。
+- 部署更稳定：
+  - smoke 增加 `quote_sync_task_count`、开盘自检 `quote_sync_task`、收益驾驶舱调度列表含 `REALTIME_QUOTE_SYNC` 的结构校验。
+  - `markTaskFinished()` 尊重任务参数 `report_to_feishu=false`，避免高频行情刷新任务产生飞书噪音。
 
 ### 2026-05-21 continuous iteration: real free factor source + opening rehearsal
 
@@ -443,7 +459,7 @@ Completed after deployment smoke:
 
 - `QuantPerformanceDashboardService` now includes `data_freshness` in `/api/quant/performance-dashboard`.
 - Readiness score adds “闭环无关键风险” so the dashboard no longer only checks raw quote persistence; it also considers whether the chain has critical gaps.
-- Quant收益驾驶舱新增“今日推荐链路可信度” card:
+- Quant 收益驾驶舱新增“今日推荐链路可信度” card:
   - realtime quotes
   - quant signals
   - archived recommendations
@@ -622,7 +638,7 @@ Completed:
   - top blocked reasons;
   - recent quant run summaries.
 - Read-only smoke now asserts `runtime_discipline.summary` exists in the quant dashboard payload.
-- Quant收益驾驶舱 adds a new “买入纪律与阻断原因” card:
+- Quant 收益驾驶舱 adds a new “买入纪律与阻断原因” card:
   - no-buy block count;
   - block rate;
   - top reasons;

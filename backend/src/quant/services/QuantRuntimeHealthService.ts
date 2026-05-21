@@ -117,9 +117,10 @@ function buildExecutionDiscipline(tasks: ScheduledTask[]) {
       String(task.name || '').includes('全市场')
   );
   const pipelineTasks = [...openTasks, ...closeTasks];
-  const watchdogTasks = tasks.filter(
-    task => task.type === 'QUANT_OPEN_WATCHDOG' && task.is_active
+  const quoteSyncTasks = tasks.filter(
+    task => task.type === 'REALTIME_QUOTE_SYNC' && task.is_active
   );
+  const watchdogTasks = tasks.filter(task => task.type === 'QUANT_OPEN_WATCHDOG' && task.is_active);
 
   const addIssue = (
     level: 'risk' | 'warn',
@@ -129,6 +130,14 @@ function buildExecutionDiscipline(tasks: ScheduledTask[]) {
   ) => {
     issues.push({ level, code, task_name: task?.name, message });
   };
+
+  if (quoteSyncTasks.length === 0) {
+    addIssue(
+      'warn',
+      'quote_sync_task_missing',
+      '未启用盘中实时行情快照刷新任务，午间/盘中行情可能滞后。'
+    );
+  }
 
   for (const task of pipelineTasks) {
     const params = (task.parameters || {}) as Record<string, any>;
@@ -140,7 +149,12 @@ function buildExecutionDiscipline(tasks: ScheduledTask[]) {
       addIssue('risk', 'factor_sync_disabled', `${taskName} 未开启扫描前因子同步。`, task);
     }
     if (String(params.factor_provider || 'auto') === 'local_derived') {
-      addIssue('risk', 'real_factor_disabled', `${taskName} 仅使用本地派生因子，真实源未启用。`, task);
+      addIssue(
+        'risk',
+        'real_factor_disabled',
+        `${taskName} 仅使用本地派生因子，真实源未启用。`,
+        task
+      );
     }
     if (!boolParam(params.block_buy_on_runtime_risk, true)) {
       addIssue('risk', 'runtime_buy_gate_disabled', `${taskName} 未开启运行时风险阻断买入。`, task);
@@ -154,20 +168,51 @@ function buildExecutionDiscipline(tasks: ScheduledTask[]) {
     if (!boolParam(params.submit_agent_analysis, true)) {
       addIssue('warn', 'agent_fusion_disabled', `${taskName} 未开启 Agent 融合分析。`, task);
     }
-    if (!boolParam(params.report_to_feishu, true) || !boolParam(params.notify_to_feishu_bot, true)) {
-      addIssue('warn', 'feishu_notification_incomplete', `${taskName} 飞书报告或机器人通知未完整开启。`, task);
+    if (
+      !boolParam(params.report_to_feishu, true) ||
+      !boolParam(params.notify_to_feishu_bot, true)
+    ) {
+      addIssue(
+        'warn',
+        'feishu_notification_incomplete',
+        `${taskName} 飞书报告或机器人通知未完整开启。`,
+        task
+      );
     }
-    if (toNumber(params.factor_sync_limit, 0) < Math.min(toNumber(params.candidate_limit, 220), 180)) {
+    if (
+      toNumber(params.factor_sync_limit, 0) < Math.min(toNumber(params.candidate_limit, 220), 180)
+    ) {
       addIssue('warn', 'factor_sync_limit_low', `${taskName} 因子同步范围小于候选池主样本。`, task);
     }
     if (toNumber(params.factor_sync_skip_if_real_provider_rate_gte, 0) < 10) {
-      addIssue('warn', 'real_factor_skip_gate_low', `${taskName} 真实源跳过阈值过低，可能过早跳过真实因子刷新。`, task);
+      addIssue(
+        'warn',
+        'real_factor_skip_gate_low',
+        `${taskName} 真实源跳过阈值过低，可能过早跳过真实因子刷新。`,
+        task
+      );
     }
-    if (toNumber(params.max_daily_new_positions, 0) <= 0 || toNumber(params.paper_trade_limit, 0) <= 0) {
-      addIssue('warn', 'paper_trade_capacity_zero', `${taskName} 每日新开仓或模拟交易上限为 0。`, task);
+    if (
+      toNumber(params.max_daily_new_positions, 0) <= 0 ||
+      toNumber(params.paper_trade_limit, 0) <= 0
+    ) {
+      addIssue(
+        'warn',
+        'paper_trade_capacity_zero',
+        `${taskName} 每日新开仓或模拟交易上限为 0。`,
+        task
+      );
     }
-    if (toNumber(params.max_daily_new_exposure_pct, 0) > 20 || toNumber(params.max_total_exposure_pct, 0) > 80) {
-      addIssue('warn', 'exposure_limit_loose', `${taskName} 暴露上限偏松，建议保持小仓验证。`, task);
+    if (
+      toNumber(params.max_daily_new_exposure_pct, 0) > 20 ||
+      toNumber(params.max_total_exposure_pct, 0) > 80
+    ) {
+      addIssue(
+        'warn',
+        'exposure_limit_loose',
+        `${taskName} 暴露上限偏松，建议保持小仓验证。`,
+        task
+      );
     }
     if (toNumber(params.min_cash_reserve_pct, 0) < 5) {
       addIssue('warn', 'cash_reserve_low', `${taskName} 现金保留比例偏低。`, task);
@@ -177,13 +222,26 @@ function buildExecutionDiscipline(tasks: ScheduledTask[]) {
   for (const task of watchdogTasks) {
     const params = (task.parameters || {}) as Record<string, any>;
     if (!boolParam(params.require_fresh_quote, true)) {
-      addIssue('warn', 'watchdog_fresh_quote_disabled', `${task.name} 未要求检查行情新鲜度。`, task);
+      addIssue(
+        'warn',
+        'watchdog_fresh_quote_disabled',
+        `${task.name} 未要求检查行情新鲜度。`,
+        task
+      );
     }
     if (toNumber(params.min_quant_signals, 0) < 1 || toNumber(params.min_archived_signals, 0) < 1) {
       addIssue('warn', 'watchdog_min_signal_low', `${task.name} 信号/归档最低检查阈值过低。`, task);
     }
-    if (!boolParam(params.report_to_feishu, true) || !boolParam(params.notify_to_feishu_bot, true)) {
-      addIssue('warn', 'watchdog_feishu_disabled', `${task.name} 飞书报告或机器人通知未完整开启。`, task);
+    if (
+      !boolParam(params.report_to_feishu, true) ||
+      !boolParam(params.notify_to_feishu_bot, true)
+    ) {
+      addIssue(
+        'warn',
+        'watchdog_feishu_disabled',
+        `${task.name} 飞书报告或机器人通知未完整开启。`,
+        task
+      );
     }
   }
 
@@ -197,6 +255,7 @@ function buildExecutionDiscipline(tasks: ScheduledTask[]) {
       pipeline_task_count: pipelineTasks.length,
       open_task_count: openTasks.length,
       close_task_count: closeTasks.length,
+      quote_sync_task_count: quoteSyncTasks.length,
       watchdog_task_count: watchdogTasks.length,
       conclusion:
         riskCount > 0
@@ -220,59 +279,61 @@ class QuantRuntimeHealthService {
       factorCoverage,
       tasks,
     ] = await Promise.all([
-        runtimeSchemaHealthService.getHealth().catch(error => ({
-          status: 'critical',
-          summary: { critical_issues: 1, warnings: 0, missing_columns: 0 },
-          issues: [
-            {
-              level: 'critical',
-              code: 'runtime_schema_health_failed',
-              message: `数据库运行时健康检查失败：${error?.message || error}`,
-            },
-          ],
-        })),
-        quantStrategyService.listStrategies().catch(error => {
-          throw new Error(`量化策略注册读取失败：${error?.message || error}`);
-        }),
-        realtimeQuoteService.getPersistenceSummary().catch(error => ({
-          persisted: false,
-          freshness_status: 'missing',
+      runtimeSchemaHealthService.getHealth().catch(error => ({
+        status: 'critical',
+        summary: { critical_issues: 1, warnings: 0, missing_columns: 0 },
+        issues: [
+          {
+            level: 'critical',
+            code: 'runtime_schema_health_failed',
+            message: `数据库运行时健康检查失败：${error?.message || error}`,
+          },
+        ],
+      })),
+      quantStrategyService.listStrategies().catch(error => {
+        throw new Error(`量化策略注册读取失败：${error?.message || error}`);
+      }),
+      realtimeQuoteService.getPersistenceSummary().catch(error => ({
+        persisted: false,
+        freshness_status: 'missing',
+        error: error?.message || String(error),
+      })),
+      quantDataFreshnessService.getSnapshot().catch(error => ({
+        status: 'risk',
+        summary: {
+          risk_count: 1,
+          warn_count: 0,
+          conclusion: `量化数据新鲜度读取失败：${error?.message || error}`,
+        },
+        checks: {},
+        issues: [],
+      })),
+      quantStrategyParamVersionService.getActiveParamsForScan().catch(error => ({
+        summary: {
+          adopted_strategy_count: 0,
+          conclusion: `开盘参数版本读取失败：${error?.message || error}`,
+        },
+        selections: [],
+      })),
+      stockFactorService
+        .getCoverage({
+          scope: 'market',
+          limit: toNumber(process.env.RUNTIME_HEALTH_FACTOR_SAMPLE_LIMIT, 180),
+          user_id: options.user_id,
+        })
+        .catch(error => ({
           error: error?.message || String(error),
+          coverage_rate: { valuation: 0, money_flow: 0, fundamental: 0 },
+          source_quality: { real_provider_rate: 0 },
+          next_actions: ['因子覆盖读取失败，请检查因子表与日线数据。'],
         })),
-        quantDataFreshnessService.getSnapshot().catch(error => ({
-          status: 'risk',
-          summary: {
-            risk_count: 1,
-            warn_count: 0,
-            conclusion: `量化数据新鲜度读取失败：${error?.message || error}`,
-          },
-          checks: {},
-          issues: [],
-        })),
-        quantStrategyParamVersionService.getActiveParamsForScan().catch(error => ({
-          summary: {
-            adopted_strategy_count: 0,
-            conclusion: `开盘参数版本读取失败：${error?.message || error}`,
-          },
-          selections: [],
-        })),
-        stockFactorService
-          .getCoverage({
-            scope: 'market',
-            limit: toNumber(process.env.RUNTIME_HEALTH_FACTOR_SAMPLE_LIMIT, 180),
-            user_id: options.user_id,
-          })
-          .catch(error => ({
-            error: error?.message || String(error),
-            coverage_rate: { valuation: 0, money_flow: 0, fundamental: 0 },
-            source_quality: { real_provider_rate: 0 },
-            next_actions: ['因子覆盖读取失败，请检查因子表与日线数据。'],
-          })),
-        ScheduledTask.findAll({
-          where: { type: { [Op.in]: ['QUANT_DAILY_PIPELINE', 'QUANT_OPEN_WATCHDOG'] } },
-          order: [['cron_expression', 'ASC']],
-        }).catch(() => [] as ScheduledTask[]),
-      ]);
+      ScheduledTask.findAll({
+        where: {
+          type: { [Op.in]: ['QUANT_DAILY_PIPELINE', 'QUANT_OPEN_WATCHDOG', 'REALTIME_QUOTE_SYNC'] },
+        },
+        order: [['cron_expression', 'ASC']],
+      }).catch(() => [] as ScheduledTask[]),
+    ]);
 
     const enabledStrategies = strategies.filter((item: any) => item.enabled !== false);
     const policyReadyCount = enabledStrategies.filter((item: any) => {
@@ -303,6 +364,9 @@ class QuantRuntimeHealthService {
         task.is_active &&
         String(task.name || '').includes('全市场')
     );
+    const quoteSyncTasks = tasks.filter(
+      task => task.type === 'REALTIME_QUOTE_SYNC' && task.is_active
+    );
     const watchdogTasks = tasks.filter(
       task => task.type === 'QUANT_OPEN_WATCHDOG' && task.is_active
     );
@@ -314,7 +378,9 @@ class QuantRuntimeHealthService {
       toNumber(factorCoverageRates.money_flow),
       toNumber(factorCoverageRates.fundamental)
     );
-    const factorRealProviderRate = toNumber((factorCoverage as any)?.source_quality?.real_provider_rate);
+    const factorRealProviderRate = toNumber(
+      (factorCoverage as any)?.source_quality?.real_provider_rate
+    );
     const factorCoverageStatus = String((factorCoverage as any)?.coverage_status || '');
     const factorStatus =
       (factorCoverage as any)?.error || factorMinCoverage < 45
@@ -364,13 +430,17 @@ class QuantRuntimeHealthService {
         status: (quoteSummary as any).persisted
           ? (quoteSummary as any).is_fresh
             ? 'ok'
-            : 'warn'
+            : quoteSyncTasks.length > 0
+            ? 'warn'
+            : 'risk'
           : 'risk',
         metric: String((quoteSummary as any).latest_trade_date_symbol_count || 0),
         conclusion: (quoteSummary as any).persisted
           ? `最新行情 ${(quoteSummary as any).latest_quote_time || '-'}，覆盖 ${
               (quoteSummary as any).latest_trade_date_symbol_count || 0
-            } 只股票，状态 ${(quoteSummary as any).freshness_status || 'unknown'}。`
+            } 只股票，状态 ${(quoteSummary as any).freshness_status || 'unknown'}；盘中刷新任务 ${
+              quoteSyncTasks.length > 0 ? '已启用' : '未启用'
+            }。`
           : '实时行情尚未落盘，开盘扫描会降级或无法给出可信价格。',
       },
       {
@@ -480,6 +550,7 @@ class QuantRuntimeHealthService {
         enabled_strategy_count: enabledStrategies.length,
         policy_ready_strategy_count: policyReadyCount,
         open_task_count: openTasks.length,
+        quote_sync_task_count: quoteSyncTasks.length,
         watchdog_task_count: watchdogTasks.length,
         execution_discipline_status: executionDiscipline.status,
         factor_min_coverage_rate: round(factorMinCoverage),

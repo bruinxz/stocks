@@ -218,6 +218,7 @@ type RuntimeHealth = {
     enabled_strategy_count?: number;
     policy_ready_strategy_count?: number;
     open_task_count?: number;
+    quote_sync_task_count?: number;
     watchdog_task_count?: number;
     factor_min_coverage_rate?: number;
     factor_real_provider_rate?: number;
@@ -334,6 +335,7 @@ type DashboardData = {
   schedule_summary?: {
     quant_pipeline_task_count?: number;
     watchdog_task_count?: number;
+    quote_sync_task_count?: number;
     tasks?: ScheduleTask[];
   };
   outcome_comparison?: { summary?: any; families?: OutcomeFamily[]; by_strategy_key?: any[] };
@@ -644,6 +646,11 @@ const QuantPerformanceDashboard: React.FC = () => {
       (dashboard?.schedule_summary?.tasks || []).find(task => task.type === 'QUANT_OPEN_WATCHDOG'),
     [dashboard]
   );
+  const quoteSyncTask = useMemo(
+    () =>
+      (dashboard?.schedule_summary?.tasks || []).find(task => task.type === 'REALTIME_QUOTE_SYNC'),
+    [dashboard]
+  );
   const closeTask = useMemo(
     () =>
       (dashboard?.schedule_summary?.tasks || []).find(
@@ -841,6 +848,7 @@ const QuantPerformanceDashboard: React.FC = () => {
               <Tag>观察 {effectiveRuntimeHealth?.summary?.warn_count || 0}</Tag>
               <Tag>策略 {effectiveRuntimeHealth?.summary?.enabled_strategy_count || 0}</Tag>
               <Tag>开盘任务 {effectiveRuntimeHealth?.summary?.open_task_count || 0}</Tag>
+              <Tag>行情刷新 {effectiveRuntimeHealth?.summary?.quote_sync_task_count || 0}</Tag>
               <Tag>
                 因子覆盖 {effectiveRuntimeHealth?.summary?.factor_min_coverage_rate ?? '--'}%
               </Tag>
@@ -1186,6 +1194,32 @@ const QuantPerformanceDashboard: React.FC = () => {
                     <Tag>纯量化模拟盘</Tag>
                     <Tag>Agent复核</Tag>
                     <Tag>20W组合风控</Tag>
+                  </Space>
+                </div>
+              ),
+            },
+            {
+              color: quoteSyncTask?.is_active ? 'green' : 'gold',
+              dot: <DatabaseOutlined />,
+              children: (
+                <div>
+                  <strong>09:05-14:25 盘中行情快照刷新</strong>
+                  <p>
+                    {quoteSyncTask
+                      ? `${quoteSyncTask.cron_expression} · ${
+                          quoteSyncTask.is_active ? '已启用' : '未启用'
+                        } · 最近 ${
+                          quoteSyncTask.latest_log?.status ||
+                          quoteSyncTask.last_run_status ||
+                          '等待运行'
+                        }`
+                      : '尚未创建独立实时行情刷新任务'}
+                  </p>
+                  <Space wrap size={[6, 6]}>
+                    <Tag>腾讯/AKShare双源</Tag>
+                    <Tag>盘中快照</Tag>
+                    <Tag>开盘前补价</Tag>
+                    <Tag>不发送飞书噪音</Tag>
                   </Space>
                 </div>
               ),
@@ -1883,12 +1917,32 @@ const QuantPerformanceDashboard: React.FC = () => {
                 <strong>{task.name}</strong>
                 <Text type="secondary">上次运行：{formatDateTime(task.last_run_at)}</Text>
                 <div className="quant-schedule-tags">
-                  <Tag>{task.parameters?.agent_session === 'open' ? '开盘' : '收盘'}</Tag>
-                  <Tag>
-                    Agent {task.parameters?.submit_agent_analysis === false ? '关闭' : '开启'}
-                  </Tag>
-                  <Tag>模拟盘 {task.parameters?.run_paper_trading === false ? '关闭' : '开启'}</Tag>
-                  <Tag>单次 {task.parameters?.paper_trade_limit || 3} 票</Tag>
+                  {task.type === 'REALTIME_QUOTE_SYNC' ? (
+                    <>
+                      <Tag>盘中行情</Tag>
+                      <Tag>{task.parameters?.source || 'auto'}</Tag>
+                      <Tag>样本 {task.parameters?.limit || 360}</Tag>
+                      <Tag>批次 {task.parameters?.batch_size || 300}</Tag>
+                    </>
+                  ) : task.type === 'QUANT_OPEN_WATCHDOG' ? (
+                    <>
+                      <Tag>看门狗</Tag>
+                      <Tag>信号 ≥ {task.parameters?.min_quant_signals || 1}</Tag>
+                      <Tag>归档 ≥ {task.parameters?.min_archived_signals || 1}</Tag>
+                      <Tag>行情 ≤ {task.parameters?.freshness_max_minutes || 75}分钟</Tag>
+                    </>
+                  ) : (
+                    <>
+                      <Tag>{task.parameters?.agent_session === 'open' ? '开盘' : '收盘'}</Tag>
+                      <Tag>
+                        Agent {task.parameters?.submit_agent_analysis === false ? '关闭' : '开启'}
+                      </Tag>
+                      <Tag>
+                        模拟盘 {task.parameters?.run_paper_trading === false ? '关闭' : '开启'}
+                      </Tag>
+                      <Tag>单次 {task.parameters?.paper_trade_limit || 3} 票</Tag>
+                    </>
+                  )}
                 </div>
               </div>
             </Col>
