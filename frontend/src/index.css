@@ -7393,7 +7393,7 @@ a {
 .quant-weight-tile {
   display: grid;
   gap: 10px;
-  min-height: 214px;
+  min-height: 286px;
   padding: 16px;
 }
 
@@ -7430,6 +7430,82 @@ a {
   line-height: 1;
 }
 
+.quant-weight-playbook {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 34%);
+  gap: 14px;
+  align-items: stretch;
+  margin-bottom: 14px;
+  padding: 16px;
+  border: 1px solid rgba(15, 23, 42, 0.07);
+  border-radius: 22px;
+  background: linear-gradient(135deg, rgba(250, 253, 250, 0.92), rgba(244, 249, 255, 0.82)),
+    radial-gradient(circle at 0% 0%, rgba(15, 143, 107, 0.1), transparent 32%);
+}
+
+.quant-weight-playbook-main {
+  display: grid;
+  gap: 6px;
+}
+
+.quant-weight-playbook-main span,
+.quant-allocation-conclusion span {
+  color: var(--primary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.15em;
+}
+
+.quant-weight-playbook-main strong,
+.quant-allocation-conclusion strong {
+  color: var(--text-main);
+  font-family: var(--font-display);
+  font-size: 22px;
+  line-height: 1.24;
+  letter-spacing: -0.04em;
+}
+
+.quant-weight-playbook-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.quant-weight-playbook-metrics > div {
+  display: grid;
+  place-items: center;
+  min-height: 90px;
+  padding: 10px;
+  border: 1px solid rgba(15, 23, 42, 0.065);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.quant-weight-playbook-metrics b {
+  color: var(--primary-strong);
+  font-family: var(--font-display);
+  font-size: 26px;
+  line-height: 1;
+}
+
+.quant-weight-playbook-metrics span {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.quant-weight-risk-note {
+  padding: 8px 10px;
+  border: 1px solid rgba(214, 166, 79, 0.22);
+  border-radius: 14px;
+  background: rgba(255, 251, 235, 0.78);
+  color: #8a5a0a;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.5;
+}
+
 .quant-allocation-board .ant-statistic-title {
   color: var(--text-muted);
   font-size: 12px;
@@ -7451,6 +7527,23 @@ a {
   border: 1px solid rgba(15, 23, 42, 0.065);
   border-radius: 18px;
   background: rgba(248, 251, 255, 0.78);
+}
+
+.quant-allocation-conclusion {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+  padding: 14px 16px;
+  border: 1px solid rgba(15, 143, 107, 0.12);
+  border-radius: 20px;
+  background: linear-gradient(135deg, rgba(240, 253, 250, 0.78), rgba(248, 251, 255, 0.82));
+}
+
+.quant-allocation-conclusion > div {
+  display: grid;
+  gap: 5px;
 }
 
 .quant-allocation-note > span {
@@ -7502,6 +7595,12 @@ a {
   font-size: 12px;
   font-weight: 800;
   text-align: right;
+}
+
+.quant-allocation-next-action {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
 }
 
 .quant-conclusion-card h2 {
@@ -8175,8 +8274,14 @@ a {
     min-height: auto;
   }
 
+  .quant-weight-playbook,
+  .quant-allocation-conclusion,
   .quant-allocation-note,
   .quant-allocation-row {
+    grid-template-columns: 1fr;
+  }
+
+  .quant-weight-playbook-metrics {
     grid-template-columns: 1fr;
   }
 

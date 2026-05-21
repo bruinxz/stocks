@@ -66,6 +66,22 @@ type StrategyWeight = {
   last_evaluated_at?: string;
 };
 
+type WeightDecision = {
+  action?: string;
+  action_label?: string;
+  weight?: number;
+  confidence?: number;
+  sample_confidence?: number;
+  sample_confidence_label?: string;
+  reason?: string;
+  reasons?: string[];
+  risk_notes?: string[];
+  next_action?: string;
+  evidence?: Record<string, any>;
+  regime_fit?: Record<string, any>;
+  playbook?: Record<string, any>;
+};
+
 type AllocationItem = {
   strategy_key: string;
   strategy_name?: string;
@@ -79,6 +95,12 @@ type AllocationItem = {
   max_single_trade_pct: number;
   max_single_trade_amount: number;
   reason?: string;
+  decision?: WeightDecision;
+  sample_confidence?: number;
+  sample_confidence_label?: string;
+  next_action?: string;
+  risk_notes?: string[];
+  regime_fit?: Record<string, any>;
 };
 
 type AllocationPolicy = {
@@ -91,7 +113,13 @@ type AllocationPolicy = {
     paused_count: number;
     reduced_count: number;
     boosted_count: number;
+    high_confidence_count?: number;
+    conclusion?: string;
+    top_boosted?: AllocationItem[];
+    top_reduced?: Array<Partial<AllocationItem>>;
+    next_actions?: string[];
   };
+  next_actions?: string[];
   rule?: string;
 };
 
@@ -127,6 +155,35 @@ const actionColor: Record<string, string> = {
   observe: 'blue',
   reduce: 'gold',
   pause: 'default',
+};
+
+const toNumberValue = (value: any, fallback = 0) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const pctText = (value: any, digits = 1) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return '--';
+  return `${parsed >= 0 ? '+' : ''}${parsed.toFixed(digits)}%`;
+};
+
+const getDecision = (weight?: StrategyWeight): WeightDecision => {
+  const decision = weight?.metrics?.weight_decision;
+  return decision && typeof decision === 'object' && !Array.isArray(decision) ? decision : {};
+};
+
+const confidenceStroke = (value: any) => {
+  const score = toNumberValue(value, 0);
+  if (score >= 72) return '#0f8f6b';
+  if (score >= 55) return '#d6a64f';
+  return '#b42318';
+};
+
+const regimeLabel = (decision?: WeightDecision) => {
+  const regime = decision?.regime_fit?.best_market_regime as any;
+  if (!regime?.label) return '优势环境待确认';
+  return `${regime.label} · 超额 ${pctText(regime.avg_excess_return_pct)}`;
 };
 
 const QuantStrategyLibrary: React.FC = () => {
@@ -280,12 +337,41 @@ const QuantStrategyLibrary: React.FC = () => {
         (allocationPolicy?.summary?.reduced_count || 0) +
         (allocationPolicy?.summary?.paused_count || 0),
       total_allocation_pct: allocationPolicy?.summary?.total_allocation_pct || 0,
+      high_confidence_count: allocationPolicy?.summary?.high_confidence_count || 0,
+      conclusion:
+        allocationPolicy?.summary?.conclusion ||
+        '策略预算会根据模拟盘真实平仓收益自动加减权，当前等待更多闭环样本。',
+      next_actions: allocationPolicy?.next_actions || allocationPolicy?.summary?.next_actions || [],
       generated_at: allocationPolicy?.generated_at
         ? new Date(allocationPolicy.generated_at).toLocaleString()
         : '',
     }),
     [allocationPolicy]
   );
+
+  const playbookStats = useMemo(() => {
+    const boosted = topWeights.filter(item =>
+      ['increase', 'slight_increase'].includes(item.action)
+    );
+    const reduced = topWeights.filter(item => ['reduce', 'pause'].includes(item.action));
+    const highConfidence = topWeights.filter(
+      item => toNumberValue(getDecision(item).sample_confidence, 0) >= 72
+    );
+    const topName =
+      boosted[0]?.strategy_name ||
+      boosted[0]?.strategy_key ||
+      topWeights[0]?.strategy_name ||
+      topWeights[0]?.strategy_key ||
+      '暂无策略';
+    return {
+      boosted,
+      reduced,
+      highConfidence,
+      conclusion: topWeights.length
+        ? `下一轮重点看 ${topName}；${boosted.length} 个策略加权，${reduced.length} 个策略降权/暂停。`
+        : '暂无策略权重样本，先让模拟盘积累交易闭环。',
+    };
+  }, [topWeights]);
 
   return (
     <div className="quant-research-page fade-in-up">
@@ -340,28 +426,69 @@ const QuantStrategyLibrary: React.FC = () => {
           </div>
           <Text type="secondary">根据模拟盘已闭环交易的胜率、超额收益和样本数动态加减权。</Text>
         </div>
+        <div className="quant-weight-playbook">
+          <div className="quant-weight-playbook-main">
+            <span>下一轮调权结论</span>
+            <strong>{playbookStats.conclusion}</strong>
+            <Text type="secondary">
+              页面只展示结论、核心证据和风险纪律；完整交易明细仍留在模拟盘/跑分页追踪。
+            </Text>
+          </div>
+          <div className="quant-weight-playbook-metrics">
+            <div>
+              <b>{playbookStats.highConfidence.length}</b>
+              <span>中高置信</span>
+            </div>
+            <div>
+              <b>{playbookStats.boosted.length}</b>
+              <span>加权</span>
+            </div>
+            <div>
+              <b>{playbookStats.reduced.length}</b>
+              <span>降权/暂停</span>
+            </div>
+          </div>
+        </div>
         <Row gutter={[12, 12]}>
-          {topWeights.slice(0, 4).map(weight => (
-            <Col xs={24} md={12} xl={6} key={weight.strategy_key}>
-              <div className="quant-weight-tile">
-                <Space size={6} wrap>
-                  <Tag color={actionColor[weight.action] || 'default'}>
-                    {actionLabel[weight.action] || weight.action}
-                  </Tag>
-                  <Tag>{Number(weight.weight || 1).toFixed(2)}x</Tag>
-                </Space>
-                <strong>{weight.strategy_name || weight.strategy_key}</strong>
-                <div className="quant-weight-score">
-                  <span>质量分</span>
-                  <b>{Number(weight.quality_score || 0).toFixed(1)}</b>
+          {topWeights.slice(0, 4).map(weight => {
+            const decision = getDecision(weight);
+            const evidence = decision.evidence || {};
+            return (
+              <Col xs={24} md={12} xl={6} key={weight.strategy_key}>
+                <div className="quant-weight-tile">
+                  <Space size={6} wrap>
+                    <Tag color={actionColor[weight.action] || 'default'}>
+                      {actionLabel[weight.action] || decision.action_label || weight.action}
+                    </Tag>
+                    <Tag>{Number(weight.weight || 1).toFixed(2)}x</Tag>
+                    <Tag
+                      color={toNumberValue(decision.sample_confidence, 0) >= 72 ? 'green' : 'gold'}
+                    >
+                      {decision.sample_confidence_label || '置信待确认'}
+                    </Tag>
+                  </Space>
+                  <strong>{weight.strategy_name || weight.strategy_key}</strong>
+                  <div className="quant-weight-score">
+                    <span>质量分</span>
+                    <b>{Number(weight.quality_score || 0).toFixed(1)}</b>
+                  </div>
+                  <Progress
+                    percent={Math.round(toNumberValue(decision.sample_confidence, 20))}
+                    showInfo={false}
+                    strokeColor={confidenceStroke(decision.sample_confidence)}
+                  />
+                  <Text type="secondary">
+                    闭环 {weight.closed_count || 0} 笔 · 超额{' '}
+                    {pctText(evidence.avg_excess_return_pct)} · {regimeLabel(decision)}
+                  </Text>
+                  <p>{decision.reason || weight.reason || '暂无足够样本，维持观察。'}</p>
+                  {!!decision.risk_notes?.length && (
+                    <div className="quant-weight-risk-note">{decision.risk_notes[0]}</div>
+                  )}
                 </div>
-                <Text type="secondary">
-                  样本 {weight.sample_count || 0} / 闭环 {weight.closed_count || 0}
-                </Text>
-                <p>{weight.reason || '暂无足够样本，维持观察。'}</p>
-              </div>
-            </Col>
-          ))}
+              </Col>
+            );
+          })}
           {!topWeights.length && (
             <Col span={24}>
               <Empty description="暂无策略收益闭环样本；模拟盘交易平仓后会自动反哺权重" />
@@ -398,6 +525,18 @@ const QuantStrategyLibrary: React.FC = () => {
             <Statistic title="降权/暂停" value={allocationStats.de_risk_count} />
           </Col>
         </Row>
+        <div className="quant-allocation-conclusion">
+          <div>
+            <span>资金纪律结论</span>
+            <strong>{allocationStats.conclusion}</strong>
+          </div>
+          <Space wrap>
+            <Tag color="green">高置信 {allocationStats.high_confidence_count}</Tag>
+            {(allocationStats.next_actions || []).slice(0, 2).map(item => (
+              <Tag key={item}>{item}</Tag>
+            ))}
+          </Space>
+        </div>
         <div className="quant-allocation-note">
           <span>预算覆盖 {Number(allocationStats.total_allocation_pct || 0).toFixed(1)}%</span>
           <Text type="secondary">
@@ -420,8 +559,14 @@ const QuantStrategyLibrary: React.FC = () => {
                 </Space>
                 <Text type="secondary">
                   质量 {Number(item.quality_score || 0).toFixed(1)} · 闭环 {item.closed_count || 0}
-                  笔 · 单票≤{Number(item.max_single_trade_pct || 0).toFixed(1)}%
+                  笔 · {item.sample_confidence_label || '置信待确认'} · 单票≤
+                  {Number(item.max_single_trade_pct || 0).toFixed(1)}%
                 </Text>
+                {item.next_action && (
+                  <Text type="secondary" className="quant-allocation-next-action">
+                    {item.next_action}
+                  </Text>
+                )}
               </div>
               <div className="quant-allocation-bar">
                 <Progress
@@ -446,6 +591,7 @@ const QuantStrategyLibrary: React.FC = () => {
         {strategies.map(strategy => {
           const paramCount = Object.keys(strategy.default_params || {}).length;
           const weight = weightsByKey.get(strategy.strategy_key);
+          const decision = getDecision(weight);
           const readiness = strategy.enabled
             ? Math.min(100, Number(weight?.quality_score || 68) + paramCount * 2)
             : 28;
@@ -499,7 +645,12 @@ const QuantStrategyLibrary: React.FC = () => {
                 </Space>
                 {weight?.reason && (
                   <Text type="secondary" style={{ fontSize: 12 }}>
-                    {weight.reason}
+                    {decision.next_action || weight.reason}
+                  </Text>
+                )}
+                {!!decision.risk_notes?.length && (
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    风险纪律：{decision.risk_notes[0]}
                   </Text>
                 )}
                 {!!strategy.notes && (
