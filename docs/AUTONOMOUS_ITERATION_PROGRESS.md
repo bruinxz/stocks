@@ -789,3 +789,32 @@ Validation:
 cd frontend && /Applications/Codex.app/Contents/Resources/node node_modules/typescript/bin/tsc --noEmit --pretty false
 git diff --check
 ```
+
+## 2026-05-21 continuous iteration: deployment timeout and retry guard
+
+Focus: make releases more stable after observing an occasional rsync upload stall during deployment.
+
+Completed:
+
+- `deploy_release_package.js` now has configurable command/remote/upload timeouts:
+  - `DEPLOY_COMMAND_TIMEOUT_MS` default 15 minutes;
+  - `DEPLOY_REMOTE_TIMEOUT_SEC` default 300 seconds;
+  - `DEPLOY_RSYNC_TIMEOUT_SEC` default 240 seconds;
+  - `DEPLOY_SSH_CONNECT_TIMEOUT_SEC` default 15 seconds.
+- Release package upload now retries automatically via `DEPLOY_RSYNC_RETRIES` (default 3).
+- SSH calls now use `ConnectTimeout`, `ServerAliveInterval`, and `ServerAliveCountMax` to avoid silent hangs.
+- `rsync_expect.sh` now passes `--timeout` to rsync, exits with the remote rsync status, and emits a clear timeout error.
+- `run_remote.sh` now has a default timeout and returns the remote command exit code, improving diagnostics and CI-style usage.
+
+Validation:
+
+```bash
+node --check scripts/deployment/deploy_release_package.js
+git diff --check
+REMOTE_TIMEOUT_SEC=30 ./scripts/deployment/run_remote.sh '***' 'echo remote-ok' deploy
+```
+
+Next:
+
+1. Deploy main + lym using the new guarded release path.
+2. If upload still stalls, the script should fail fast and retry instead of blocking indefinitely.
