@@ -1060,6 +1060,36 @@ async function main() {
               )}`
             );
           }
+          if (json.data.summary.hindsight) {
+            for (const key of [
+              "evaluated_count",
+              "pending_count",
+              "false_reject_count",
+              "correct_reject_count",
+              "avg_intended_action_return_pct",
+            ]) {
+              if (
+                !Number.isFinite(Number(json.data.summary.hindsight[key] || 0))
+              ) {
+                throw new Error(
+                  `paper trading order intent hindsight ${key} invalid: ${preview(
+                    json.data.summary.hindsight
+                  )}`
+                );
+              }
+            }
+            if (
+              !Array.isArray(
+                json.data.summary.hindsight.top_false_rejections || []
+              )
+            ) {
+              throw new Error(
+                `paper trading order intent hindsight false rejections invalid: ${preview(
+                  json.data.summary.hindsight
+                )}`
+              );
+            }
+          }
         },
       }
     );

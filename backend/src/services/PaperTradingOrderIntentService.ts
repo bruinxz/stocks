@@ -2,6 +2,8 @@ import { Op } from 'sequelize';
 import moment from 'moment-timezone';
 import { PaperTradingOrderIntent } from '../models/PaperTradingOrderIntent';
 import { PaperTradingPortfolio } from '../models/PaperTradingPortfolio';
+import { DailyBar } from '../models/DailyBar';
+import { Stock } from '../models/Stock';
 import { User } from '../models/User';
 
 export interface PaperTradingOrderIntentDashboardOptions {
@@ -79,6 +81,15 @@ function sideLabel(side?: string): string {
   return String(side || '').toUpperCase() === 'SELL' ? '卖出' : '买入';
 }
 
+const HINDSIGHT_HORIZONS = [1, 3, 5, 10];
+
+function dateOnly(value: any): string {
+  if (!value) return '';
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).slice(0, 10);
+  return moment(date).tz('Asia/Shanghai').format('YYYY-MM-DD');
+}
+
 export class PaperTradingOrderIntentService {
   async getIntentDashboard(options: PaperTradingOrderIntentDashboardOptions = {}) {
     const portfolio = await this.resolvePortfolio(options);
@@ -147,7 +158,10 @@ export class PaperTradingOrderIntentService {
     ]);
 
     const plain = allRecords.map(item => modelToPlain<any>(item));
-    const visible = records.map(item => this.normalizeIntent(modelToPlain<any>(item)));
+    const hindsight = await this.buildHindsight(plain);
+    const visible = records.map(item =>
+      this.normalizeIntent(modelToPlain<any>(item), hindsight.by_intent_id.get(Number(item.id)))
+    );
     const statusCounts = this.countBy(plain, 'status');
     const sideCounts = this.countBy(plain, 'side');
     const reasonCounts = this.countBy(plain, 'reason_category');
@@ -199,6 +213,7 @@ export class PaperTradingOrderIntentService {
             ? roundNumber(((statusCounts.executed || 0) / plain.length) * 100, 2)
             : 0,
         top_reason_categories: topReasonCategories,
+        hindsight: hindsight.summary,
         conclusion: this.buildConclusion({
           total: plain.length,
           executed: statusCounts.executed || 0,
@@ -214,7 +229,7 @@ export class PaperTradingOrderIntentService {
     };
   }
 
-  private normalizeIntent(item: any) {
+  private normalizeIntent(item: any, opportunityOutcome?: any) {
     const metadata = item.metadata || {};
     const executionReality = metadata.execution_reality_decision || {};
     return {
@@ -230,11 +245,256 @@ export class PaperTradingOrderIntentService {
       status_label: statusLabel(item.status),
       reason_category_label: reasonCategoryLabel(item.reason_category),
       execution_reality: executionReality,
+      opportunity_outcome: opportunityOutcome,
       compact_reason:
         item.reason_text ||
         executionReality.label ||
         (Array.isArray(executionReality.reasons) ? executionReality.reasons.join('；') : ''),
     };
+  }
+
+  private async buildHindsight(items: any[]) {
+    const eligible = items
+      .filter(item => {
+        const status = String(item.status || '');
+        const side = String(item.side || '').toUpperCase();
+        return ['rejected', 'skipped'].includes(status) || (status === 'held' && side === 'SELL');
+      })
+      .slice(0, 500);
+
+    if (eligible.length === 0) {
+      return {
+        by_intent_id: new Map<number, any>(),
+        summary: this.emptyHindsightSummary('暂无可做后验复盘的拒单/跳过/持有观察样本。'),
+      };
+    }
+
+    const symbols = [...new Set(eligible.map(item => String(item.symbol || '')).filter(Boolean))];
+    const stocks = await Stock.findAll({
+      where: { symbol: { [Op.in]: symbols } },
+      raw: true,
+    });
+    const stockBySymbol = new Map(stocks.map((stock: any) => [stock.symbol, stock]));
+    const stockIds = stocks.map((stock: any) => stock.id).filter(Boolean);
+    const minIntentDate =
+      eligible
+        .map(item => String(item.intent_date || '').slice(0, 10))
+        .filter(Boolean)
+        .sort()[0] || moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
+
+    const bars = stockIds.length
+      ? await DailyBar.findAll({
+          where: {
+            stock_id: { [Op.in]: stockIds },
+            time: {
+              [Op.gte]: moment(minIntentDate).tz('Asia/Shanghai').subtract(3, 'days').toDate(),
+            },
+          },
+          order: [
+            ['stock_id', 'ASC'],
+            ['time', 'ASC'],
+          ],
+          raw: true,
+        })
+      : [];
+
+    const barsByStockId = new Map<number, any[]>();
+    for (const bar of bars as any[]) {
+      const stockId = Number(bar.stock_id);
+      const list = barsByStockId.get(stockId) || [];
+      list.push(bar);
+      barsByStockId.set(stockId, list);
+    }
+
+    const byIntentId = new Map<number, any>();
+    for (const item of eligible) {
+      const stock = stockBySymbol.get(item.symbol);
+      const stockBars = stock ? barsByStockId.get(Number((stock as any).id)) || [] : [];
+      const outcome = this.evaluateIntentHindsight(item, stockBars);
+      byIntentId.set(Number(item.id), outcome);
+    }
+
+    const completed = Array.from(byIntentId.values()).filter(
+      item => item?.evaluation_status === 'completed'
+    );
+    const benchmarkHorizon = '5d';
+    const benchmark = completed
+      .map(item => ({
+        ...item,
+        benchmark: item.horizons?.[benchmarkHorizon] || this.firstAvailableHorizon(item.horizons),
+      }))
+      .filter(item => item.benchmark);
+    const falseRejects = benchmark.filter(
+      item => toNumber(item.benchmark.intended_action_return_pct) > 0.5
+    );
+    const correctRejects = benchmark.filter(
+      item => toNumber(item.benchmark.intended_action_return_pct) <= 0.5
+    );
+    const savedLoss = benchmark.filter(
+      item => toNumber(item.benchmark.intended_action_return_pct) < -0.5
+    );
+    const avg =
+      benchmark.length > 0
+        ? roundNumber(
+            benchmark.reduce(
+              (sum, item) => sum + toNumber(item.benchmark.intended_action_return_pct),
+              0
+            ) / benchmark.length,
+            4
+          )
+        : 0;
+
+    return {
+      by_intent_id: byIntentId,
+      summary: {
+        evaluated_count: completed.length,
+        pending_count: eligible.length - completed.length,
+        benchmark_horizon: benchmarkHorizon,
+        benchmark_count: benchmark.length,
+        false_reject_count: falseRejects.length,
+        correct_reject_count: correctRejects.length,
+        saved_loss_count: savedLoss.length,
+        avg_intended_action_return_pct: avg,
+        top_false_rejections: falseRejects
+          .sort(
+            (a, b) =>
+              toNumber(b.benchmark.intended_action_return_pct) -
+              toNumber(a.benchmark.intended_action_return_pct)
+          )
+          .slice(0, 5)
+          .map(item => ({
+            id: item.intent_id,
+            symbol: item.symbol,
+            name: item.name,
+            side: item.side,
+            side_label: sideLabel(item.side),
+            status: item.status,
+            reason_category_label: reasonCategoryLabel(item.reason_category),
+            intended_action_return_pct: item.benchmark.intended_action_return_pct,
+            raw_future_return_pct: item.benchmark.raw_future_return_pct,
+            horizon: item.benchmark.horizon,
+            conclusion: item.benchmark.conclusion,
+          })),
+        conclusion:
+          benchmark.length > 0
+            ? `后验复盘 ${benchmark.length} 条可评估意图，可能错杀 ${falseRejects.length} 条，规则有效/影响不大 ${correctRejects.length} 条，平均执行意图相对收益 ${avg}%。`
+            : '拒单样本仍缺少足够后续K线，暂不能判断是否错杀。',
+      },
+    };
+  }
+
+  private emptyHindsightSummary(conclusion: string) {
+    return {
+      evaluated_count: 0,
+      pending_count: 0,
+      benchmark_horizon: '5d',
+      benchmark_count: 0,
+      false_reject_count: 0,
+      correct_reject_count: 0,
+      saved_loss_count: 0,
+      avg_intended_action_return_pct: 0,
+      top_false_rejections: [],
+      conclusion,
+    };
+  }
+
+  private evaluateIntentHindsight(item: any, bars: any[]) {
+    const intentDate = String(item.intent_date || '').slice(0, 10);
+    const side = String(item.side || '').toUpperCase();
+    const referencePrice = toNumber(item.reference_price ?? item.execute_price, 0);
+    if (!intentDate || bars.length === 0) {
+      return {
+        intent_id: item.id,
+        symbol: item.symbol,
+        name: item.name,
+        side,
+        status: item.status,
+        reason_category: item.reason_category,
+        evaluation_status: 'pending',
+        reason: '缺少后续K线',
+      };
+    }
+
+    const normalizedBars = bars
+      .map(bar => ({
+        date: dateOnly(bar.time),
+        close: toNumber(bar.close, 0),
+      }))
+      .filter(bar => bar.date && bar.close > 0)
+      .sort((a, b) => a.date.localeCompare(b.date));
+    const baseBar =
+      [...normalizedBars].reverse().find(bar => bar.date <= intentDate) ||
+      normalizedBars.find(bar => bar.date >= intentDate);
+    const basePrice = referencePrice > 0 ? referencePrice : toNumber(baseBar?.close, 0);
+    const futureBars = normalizedBars.filter(bar => bar.date > intentDate);
+    if (!basePrice || futureBars.length === 0) {
+      return {
+        intent_id: item.id,
+        symbol: item.symbol,
+        name: item.name,
+        side,
+        status: item.status,
+        reason_category: item.reason_category,
+        evaluation_status: 'pending',
+        reason: '后续交易日不足',
+      };
+    }
+
+    const horizons: Record<string, any> = {};
+    for (const horizon of HINDSIGHT_HORIZONS) {
+      const targetBar = futureBars[horizon - 1];
+      if (!targetBar) continue;
+      const rawFutureReturnPct = roundNumber(((targetBar.close - basePrice) / basePrice) * 100, 4);
+      const intendedActionReturnPct =
+        side === 'SELL' ? roundNumber(-rawFutureReturnPct, 4) : rawFutureReturnPct;
+      horizons[`${horizon}d`] = {
+        horizon: `${horizon}d`,
+        target_date: targetBar.date,
+        target_price: roundNumber(targetBar.close, 4),
+        base_price: roundNumber(basePrice, 4),
+        raw_future_return_pct: rawFutureReturnPct,
+        intended_action_return_pct: intendedActionReturnPct,
+        conclusion: this.buildHindsightConclusion(side, intendedActionReturnPct, `${horizon}日`),
+      };
+    }
+
+    const benchmark = horizons['5d'] || this.firstAvailableHorizon(horizons);
+    return {
+      intent_id: item.id,
+      symbol: item.symbol,
+      name: item.name,
+      side,
+      status: item.status,
+      reason_category: item.reason_category,
+      evaluation_status: Object.keys(horizons).length > 0 ? 'completed' : 'pending',
+      benchmark_horizon: benchmark?.horizon,
+      benchmark_conclusion: benchmark?.conclusion,
+      horizons,
+    };
+  }
+
+  private firstAvailableHorizon(horizons: Record<string, any>) {
+    return HINDSIGHT_HORIZONS.map(horizon => horizons[`${horizon}d`]).find(Boolean);
+  }
+
+  private buildHindsightConclusion(side: string, intendedActionReturnPct: number, label: string) {
+    const actionLabel = sideLabel(side);
+    if (intendedActionReturnPct > 0.5) {
+      return `可能错杀：若执行${actionLabel}，${label}后相对更优 ${roundNumber(
+        intendedActionReturnPct,
+        2
+      )}%`;
+    }
+    if (intendedActionReturnPct < -0.5) {
+      return `拦截有效：未执行${actionLabel}避免约 ${roundNumber(
+        Math.abs(intendedActionReturnPct),
+        2
+      )}%不利结果`;
+    }
+    return `影响有限：执行${actionLabel}与未执行的${label}差异约 ${roundNumber(
+      intendedActionReturnPct,
+      2
+    )}%`;
   }
 
   private countBy(items: any[], field: string): Record<string, number> {
