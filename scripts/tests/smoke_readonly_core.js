@@ -928,6 +928,11 @@ async function main() {
             throw new Error(
               `allocation policy next_actions missing: ${preview(json.data)}`
             );
+          const firstAllocation = (json.data.allocations || [])[0];
+          if (firstAllocation && !firstAllocation.decision)
+            throw new Error(
+              `allocation policy decision missing: ${preview(firstAllocation)}`
+            );
         },
       }
     );

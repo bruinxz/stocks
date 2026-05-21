@@ -923,3 +923,39 @@ Next:
 1. Deploy main + lym and verify `/api/quant/strategy-weights` contains `weight_decision` online.
 2. Use the same decision/playbook object in Feishu bot summaries when reporting strategy-budget changes.
 3. Continue tightening the simulated execution loop so each BUY/WATCH recommendation records which strategy budget and guardrail allowed it.
+
+## 2026-05-21 continuous iteration: Feishu budget discipline and trade trace
+
+Focus: make daily recommendations and simulated trades easier to audit by carrying the strategy-budget and entry-risk decisions through Feishu summaries, archived signals and paper-trade outcome metadata.
+
+Completed:
+
+- Feishu bot recommendation summaries now include a concise strategy-budget line and each top recommendation can show:
+  - strategy budget / single-stock cap / confidence;
+  - entry-risk guard pass label;
+  - current price and compact reason as before.
+- Quant daily pipeline result now attaches the current strategy allocation policy so both bot messages and Bitable records can explain the capital discipline behind recommendations.
+- Quant archived signals now persist `strategy_budget_*` and `strategy_budget_discipline` metadata from the post-trade feedback allocation policy.
+- TradingAgents polling jobs preserve the same strategy-budget discipline when Agent-confirmed buys are later auto-synced into the Agent-fusion simulated portfolio.
+- Paper-trading auto-buy now records:
+  - `strategy_budget_action/label/reason/confidence`;
+  - normalized `strategy_budget_discipline`;
+  - `entry_risk_guard_decision` with target position, cash, exposure and strategy-budget checks.
+- Recommendation trade outcomes now copy those fields into outcome metadata, so later收益复盘 can attribute each trade to the exact budget/risk rule that allowed it.
+- Read-only smoke now also checks allocation rows expose a per-strategy `decision` object.
+
+Validation:
+
+```bash
+/Applications/Codex.app/Contents/Resources/node backend/node_modules/typescript/bin/tsc -p backend/tsconfig.json --pretty false
+cd frontend && /Applications/Codex.app/Contents/Resources/node node_modules/typescript/bin/tsc --noEmit --pretty false
+cd frontend && CI=false /Applications/Codex.app/Contents/Resources/node node_modules/react-scripts/bin/react-scripts.js build
+node --check scripts/tests/smoke_readonly_core.js
+git diff --check
+```
+
+Next:
+
+1. Surface strategy-budget and entry-risk decision fields in signal trace / paper-trading detail UI.
+2. Add outcome attribution views for “which strategy-budget rule made/avoided money”.
+3. Let weak budget/risk-rule combinations automatically lower next-day candidate position caps.

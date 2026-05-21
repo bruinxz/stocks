@@ -1044,6 +1044,15 @@ class FeishuTaskReportService {
       riskThresholdSuggestion?.field_gate_adjustment_attribution || {};
     const topCandidates = Array.isArray(fusion.top_candidates) ? fusion.top_candidates : [];
     const best = topCandidates[0] || {};
+    const strategyAllocationPolicy = result?.strategy_allocation_policy || {};
+    const strategyAllocationSummary = strategyAllocationPolicy?.summary || {};
+    const strategyBudgetConclusion =
+      strategyAllocationSummary?.conclusion || strategyAllocationPolicy?.conclusion;
+    const strategyBudgetNextActions = Array.isArray(strategyAllocationPolicy?.next_actions)
+      ? strategyAllocationPolicy.next_actions
+      : Array.isArray(strategyAllocationSummary?.next_actions)
+      ? strategyAllocationSummary.next_actions
+      : [];
     const quoteSync = generated?.quote_sync || {};
     const factorSync = generated?.factor_sync || {};
     const activeScanParams = generated?.active_scan_params || {};
@@ -1127,6 +1136,15 @@ class FeishuTaskReportService {
         agent.enabled === false ? '未启用' : `提交 ${submitted} 条，失败 ${failed} 条`
       }。`,
       `- **模拟盘**：${paperAction}。`,
+      strategyBudgetConclusion
+        ? `- **策略预算纪律**：${this.safeText(strategyBudgetConclusion, 150)}`
+        : '',
+      strategyBudgetNextActions.length
+        ? `- **下一步调权**：${strategyBudgetNextActions
+            .slice(0, 2)
+            .map((item: string) => this.safeText(item, 80))
+            .join('；')}`
+        : '',
       riskProfile?.status
         ? `- **组合风险**：${riskProfile.status.label}；现金 ${this.formatPercent(
             riskMetrics.cash_pct
@@ -1190,6 +1208,11 @@ class FeishuTaskReportService {
         ? `${best.name || best.symbol}(${best.symbol}) ${best.score ?? '-'}`
         : '',
       最新价: best?.current_price,
+      策略预算结论: strategyBudgetConclusion,
+      策略预算下一步: strategyBudgetNextActions.join('；'),
+      策略预算高置信数: strategyAllocationSummary?.high_confidence_count,
+      策略预算加权数: strategyAllocationSummary?.boosted_count,
+      策略预算降权数: strategyAllocationSummary?.reduced_count,
       核心理由: topReasons.join('；'),
       风险提示: topWarnings.join('；'),
       实时行情落盘数: quoteSync?.persisted_count,
@@ -1266,6 +1289,17 @@ class FeishuTaskReportService {
                 planned: paper.planned,
                 skipped: paper.skipped,
                 trades: Array.isArray(paper.trades) ? paper.trades.slice(0, 10) : [],
+              }
+            : null,
+          strategy_allocation_policy: strategyAllocationPolicy
+            ? {
+                generated_at: strategyAllocationPolicy.generated_at,
+                capital: strategyAllocationPolicy.capital,
+                summary: strategyAllocationSummary,
+                next_actions: strategyAllocationPolicy.next_actions,
+                allocations: Array.isArray(strategyAllocationPolicy.allocations)
+                  ? strategyAllocationPolicy.allocations.slice(0, 10)
+                  : [],
               }
             : null,
           risk_profile: riskProfile,

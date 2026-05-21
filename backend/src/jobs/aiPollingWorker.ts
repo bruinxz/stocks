@@ -130,6 +130,7 @@ if (aiPollingWorkerDisabled) {
     strategy_allocation_policy,
     strategy_allocation_pct,
     strategy_max_single_trade_pct,
+    strategy_budget_discipline,
     quant_agent_fusion,
   } = job.data;
 
@@ -275,6 +276,7 @@ if (aiPollingWorkerDisabled) {
               strategy_allocation_policy,
               strategy_allocation_pct,
               strategy_max_single_trade_pct,
+              strategy_budget_discipline,
               quant_framework_signal: Boolean(scheduler_task_type === 'QUANT_DAILY_PIPELINE'),
               quant_agent_fusion: Boolean(
                 quant_agent_fusion || scheduler_task_type === 'QUANT_DAILY_PIPELINE'
@@ -342,6 +344,10 @@ if (aiPollingWorkerDisabled) {
             max_position_pct: Number(paper_trade_max_position_pct || 8),
             min_trade_amount: Number(paper_trade_min_trade_amount || 3000),
             risk_profile_gate: paper_trade_risk_profile_gate,
+            external_environment_policy: {
+              ...(environment_policy || {}),
+              strategy_budget_discipline,
+            },
             allowed_risk_levels: ['low', 'medium'],
             require_action_buy: false,
             ignore_profit_gate_for_forced_signals: true,
@@ -349,7 +355,6 @@ if (aiPollingWorkerDisabled) {
             use_profit_gate: true,
             profit_gate_allow_sampling: true,
             use_outcome_feedback: true,
-            external_environment_policy: environment_policy,
             environment_policy_snapshot_id,
             loop_policy_snapshot_id: resolvedPolicySnapshotId,
             dry_run: false,

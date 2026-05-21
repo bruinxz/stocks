@@ -2913,6 +2913,17 @@ export class RecommendationTradeOutcomeService {
         environment_strategy_budget_action: metadata.environment_strategy_budget_action,
         environment_strategy_budget_reason: metadata.environment_strategy_budget_reason,
         environment_strategy_budget_multiplier: metadata.environment_strategy_budget_multiplier,
+        strategy_budget_action:
+          metadata.strategy_budget_action || paperTrading.strategy_budget_action,
+        strategy_budget_label: metadata.strategy_budget_label || paperTrading.strategy_budget_label,
+        strategy_budget_reason:
+          metadata.strategy_budget_reason || paperTrading.strategy_budget_reason,
+        strategy_budget_confidence:
+          metadata.strategy_budget_confidence || paperTrading.strategy_budget_confidence,
+        strategy_budget_discipline:
+          metadata.strategy_budget_discipline || paperTrading.strategy_budget_discipline,
+        entry_risk_guard_decision:
+          metadata.entry_risk_guard_decision || paperTrading.entry_risk_guard_decision,
         environment_strategy_budget_policy_action:
           metadata.environment_strategy_budget_policy_action,
         environment_strategy_budget_policy_reason:
