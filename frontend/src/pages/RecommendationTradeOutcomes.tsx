@@ -44,6 +44,7 @@ import {
   YAxis,
 } from 'recharts';
 import api from '../services/api';
+import TradePolicyExplainPanel from '../components/trading/TradePolicyExplainPanel';
 
 const { Text } = Typography;
 
@@ -148,6 +149,7 @@ interface TradeOutcome {
       recommendation_tier_label?: string;
     };
   };
+  policy_explain?: any;
   updated_at?: string;
 }
 
@@ -1084,6 +1086,17 @@ const RecommendationTradeOutcomes: React.FC = () => {
           loading={loading}
           pagination={{ pageSize: 12, showSizeChanger: true }}
           scroll={{ x: 1320 }}
+          expandable={{
+            expandedRowRender: record => (
+              <TradePolicyExplainPanel
+                policy={record.policy_explain}
+                outcome={record}
+                compact
+                title={`${record.name || record.symbol} 的预算/风控/收益回放`}
+              />
+            ),
+            rowExpandable: record => Boolean(record.policy_explain),
+          }}
           locale={{
             emptyText: (
               <Empty description="暂无推荐交易收益样本，请先运行自动荐股闭环或模拟盘跟单" />

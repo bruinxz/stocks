@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Alert,
   Card,
@@ -46,6 +46,7 @@ import {
 } from 'recharts';
 import api, { getPaperTradingSnapshots } from '../services/api';
 import { marketService, Stock } from '../services/marketService';
+import TradePolicyExplainPanel from '../components/trading/TradePolicyExplainPanel';
 
 const { Text } = Typography;
 
@@ -138,6 +139,7 @@ interface AttributionClosedTrade {
   realized_pnl_pct: number;
   holding_days: number;
   exit_reason_label?: string;
+  policy_explain?: any;
 }
 
 interface AttributionOpenPosition {
@@ -150,6 +152,7 @@ interface AttributionOpenPosition {
   holding_days: number;
   distance_to_stop_loss_pct?: number;
   risk_state: string;
+  policy_explain?: any;
 }
 
 interface PaperTradingAttribution {
@@ -689,6 +692,13 @@ const PaperTrading: React.FC = () => {
   );
   const normalPlanActions = (tradingPlan?.actions || []).filter(action =>
     ['medium', 'low'].includes(action.priority)
+  );
+  const policyReplayItems = useMemo(
+    () =>
+      [...(attribution?.open_positions || []), ...(attribution?.closed_trades || [])]
+        .filter(item => Boolean(item.policy_explain))
+        .slice(0, 4),
+    [attribution]
   );
 
   const columns = [
@@ -1632,6 +1642,36 @@ const PaperTrading: React.FC = () => {
                 {formatPercent(attributionSummary.worst_trade.realized_pnl_pct)}
               </Tag>
             )}
+        </div>
+
+        <div className="paper-policy-replay-section">
+          <div className="paper-policy-replay-head">
+            <div>
+              <Tag color="blue" icon={<SafetyCertificateOutlined />}>
+                Entry Policy Replay
+              </Tag>
+              <h3>买入放行回放</h3>
+              <p>按当前持仓优先展示：每笔买入当时用了多少预算、过了哪些风控，以及现在赚没赚钱。</p>
+            </div>
+          </div>
+          {policyReplayItems.length > 0 ? (
+            <div className="paper-policy-replay-list">
+              {policyReplayItems.map((item: any) => (
+                <TradePolicyExplainPanel
+                  key={`${item.symbol}-${item.signal_id || item.entry_trade_id || item.status}`}
+                  policy={item.policy_explain}
+                  outcome={item}
+                  compact
+                  title={`${item.name || item.symbol}（${item.symbol}）买入放行`}
+                />
+              ))}
+            </div>
+          ) : (
+            <Empty
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+              description="暂无可回放的策略预算/风控记录，等自动荐股买入后会在这里沉淀。"
+            />
+          )}
         </div>
       </Card>
 
