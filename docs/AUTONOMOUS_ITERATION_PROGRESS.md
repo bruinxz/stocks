@@ -1111,3 +1111,42 @@ Next:
 1. Add stability windows for order-intent rule suggestions, e.g. only auto-apply if two rolling windows agree.
 2. Add bounded automatic parameter preview: show what min turnover / profit gate / entry-risk thresholds would become before applying.
 3. Persist applied parameter changes into audit logs.
+
+### 2026-05-21 order-intent stable windows and tuning preview
+
+Focus: move from “one-off hindsight suggestion” to safer, auditable rule tuning candidates without silently changing trading discipline.
+
+Completed:
+
+- `PaperTradingOrderIntentService` now evaluates order-intent rule suggestions across 7/14/30 day rolling windows.
+- A rule only becomes an auto-tuning candidate when at least two rolling windows agree in the same `loosen` / `tighten` direction and sample size is sufficient.
+- The order-intent hindsight summary now exposes:
+  - `rule_suggestion_windows`: rolling-window evidence;
+  - `stable_rule_suggestions`: stability label, agreed-window count, stability score and next review rule;
+  - `parameter_adjustment_preview`: bounded preview of what would change, such as `min_avg_turnover_yuan`, `max_daily_new_positions`, `profit_gate_min_quality_score`, `min_score`, `default_position_pct`;
+  - `tuning_preview_conclusion`: conclusion-first explanation for operators.
+- `PaperTradingPlanService` now prefers stable rule suggestions when generating the daily plan:
+  - unstable suggestions stay in review mode;
+  - stable suggestions become “调参候选” review actions;
+  - parameter previews appear as separate plan actions;
+  - no task parameter is modified automatically yet.
+- The paper-trading page now shows:
+  - “可调参规则 / 调参预览” metrics in the order-intent card;
+  - a concise tuning conclusion alert;
+  - a “稳定窗口” panel with 7/14/30 day evidence;
+  - a “参数调整预览” panel showing current value → preview value, explicitly marked preview-only.
+- Smoke validates the new hindsight fields so release health checks catch schema regressions.
+
+Validation:
+
+```bash
+./backend/node_modules/.bin/tsc --noEmit --project backend/tsconfig.json
+./frontend/node_modules/.bin/tsc --noEmit --project frontend/tsconfig.json
+node --check scripts/tests/smoke_readonly_core.js
+```
+
+Next:
+
+1. Add a persisted audit/apply flow for approved parameter changes, writing before/after values into `task_parameter_audit_logs`.
+2. Add single-stock rejection drill-down: signal → gate reason → future 1/3/5/10d result → proposed parameter impact.
+3. Add cached/persisted hindsight snapshots if order-intent samples grow beyond lightweight request-time calculation.
