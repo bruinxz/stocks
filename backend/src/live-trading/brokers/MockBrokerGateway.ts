@@ -13,6 +13,8 @@ import {
 } from './BrokerGateway';
 
 export class MockBrokerGateway implements BrokerGateway {
+  constructor(private readonly configuredGateway = 'mock_guarded') {}
+
   getCapabilities(): BrokerCapabilities {
     return {
       broker_key: 'mock_guarded',
@@ -26,6 +28,9 @@ export class MockBrokerGateway implements BrokerGateway {
       notes: [
         '当前网关只用于研发和页面联调，不连接真实券商。',
         '真实下单能力默认关闭，即使调用 placeOrder 也会被拒绝。',
+        ...(this.configuredGateway !== 'mock_guarded'
+          ? [`请求的券商网关 ${this.configuredGateway} 尚未实现，已安全降级为 mock_guarded。`]
+          : []),
       ],
     };
   }

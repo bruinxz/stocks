@@ -11791,6 +11791,54 @@ a {
   font-size: 13px;
 }
 
+.live-provider-compare {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.live-provider-compare-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.live-provider-compare-head .ant-typography-secondary {
+  max-width: 520px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.live-provider-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) auto minmax(220px, 1.3fr);
+  gap: 10px;
+  align-items: center;
+  padding: 9px 0;
+  border-top: 1px dashed rgba(15, 23, 42, 0.1);
+}
+
+.live-provider-row.active {
+  color: #2f6f73;
+}
+
+.live-provider-row span,
+.live-provider-row em {
+  display: block;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.live-provider-row em {
+  text-align: right;
+}
+
 .live-risk-limit-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -11903,6 +11951,14 @@ a {
 
   .live-market-health-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .live-provider-row {
+    grid-template-columns: 1fr;
+  }
+
+  .live-provider-row em {
+    text-align: left;
   }
 }
 

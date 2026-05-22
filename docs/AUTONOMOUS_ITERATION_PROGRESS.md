@@ -1486,3 +1486,33 @@ Next:
 1. Add a licensed quote provider adapter and make the page compare `database_realtime_quotes` vs licensed source freshness.
 2. Add a broker read-only adapter behind `LIVE_READONLY_ENABLED=true` and expand the account reconciliation panel.
 3. Add live-order draft generation from existing paper-trading/quant recommendations while keeping human approval mandatory.
+
+### 2026-05-22 live trading provider comparison and readonly broker skeleton
+
+Focus: prepare the live-trading module for real quote/broker integrations while preserving the default no-real-order safety boundary.
+
+Completed:
+
+- Added `ConfiguredQuoteProvider` for a future licensed quote source:
+  - `LIVE_LICENSED_QUOTE_URL_TEMPLATE` supports `{symbol}` and `{code}` placeholders.
+  - API-key header/prefix and JSON field mapping are configurable via env vars.
+  - Provider is inactive until URL is configured and does not affect default safety behavior.
+- Added `market_data_provider_comparison` to `GET /api/live-trading/readiness`:
+  - compares local database quote cache with the configured licensed provider;
+  - reports active provider, provider status, sample count, missing/stale counts and max latency;
+  - marks licensed provider as `not_configured` until explicitly configured.
+- Added `EnvReadonlyBrokerGateway` skeleton:
+  - reads account snapshots/positions/orders/trades from environment JSON for dry-run reconciliation;
+  - supports only readonly sync;
+  - `placeOrder` and `cancelOrder` always throw.
+- Live-trading service now selects broker gateway by `LIVE_BROKER_GATEWAY`:
+  - `env_readonly` uses the readonly env skeleton;
+  - unknown gateway names safely downgrade to `mock_guarded` with a capability note.
+- Frontend live-trading page now shows quote-provider comparison cards, including active provider, missing/stale counts and licensing state.
+- Smoke validates provider comparison exists while keeping default `can_submit_orders=false` assertion.
+
+Next:
+
+1. Add a real licensed quote adapter once provider credentials/contract are available.
+2. Add a read-only broker adapter for the selected broker and map real account/position fields.
+3. Add a reconciliation page that compares broker readonly positions with order drafts, paper-trading suggestions and risk budgets.

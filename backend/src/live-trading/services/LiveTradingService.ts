@@ -8,8 +8,11 @@ import { LiveTrade } from '../../models/LiveTrade';
 import { LiveExecutionAuditLog } from '../../models/LiveExecutionAuditLog';
 import { Stock } from '../../models/Stock';
 import { MockBrokerGateway } from '../brokers/MockBrokerGateway';
+import { EnvReadonlyBrokerGateway } from '../brokers/EnvReadonlyBrokerGateway';
 import { BrokerGateway } from '../brokers/BrokerGateway';
 import { DatabaseQuoteProvider } from '../market-data/DatabaseQuoteProvider';
+import { ConfiguredQuoteProvider } from '../market-data/ConfiguredQuoteProvider';
+import { LiveMarketDataProvider } from '../market-data/LiveMarketDataProvider';
 import { liveRiskGuardService } from './LiveRiskGuardService';
 import { LIVE_ORDER_CONFIRM_TEXT, liveTradingSafetyService } from './LiveTradingSafetyService';
 
@@ -58,11 +61,23 @@ function quoteLatency(quote: any): number | undefined {
 
 export class LiveTradingService {
   private brokerGateway: BrokerGateway;
-  private quoteProvider: DatabaseQuoteProvider;
+  private quoteProvider: LiveMarketDataProvider;
+  private databaseQuoteProvider: DatabaseQuoteProvider;
+  private licensedQuoteProvider: ConfiguredQuoteProvider;
 
   constructor() {
-    this.brokerGateway = new MockBrokerGateway();
-    this.quoteProvider = new DatabaseQuoteProvider();
+    const configuredBrokerGateway = process.env.LIVE_BROKER_GATEWAY || 'mock_guarded';
+    this.brokerGateway =
+      configuredBrokerGateway === 'env_readonly'
+        ? new EnvReadonlyBrokerGateway()
+        : new MockBrokerGateway(configuredBrokerGateway);
+    this.databaseQuoteProvider = new DatabaseQuoteProvider();
+    this.licensedQuoteProvider = new ConfiguredQuoteProvider();
+    this.quoteProvider =
+      process.env.LIVE_MARKET_DATA_PROVIDER === 'licensed_configured' &&
+      this.licensedQuoteProvider.isConfigured()
+        ? this.licensedQuoteProvider
+        : this.databaseQuoteProvider;
   }
 
   async getReadiness(user_id?: number) {
@@ -70,6 +85,9 @@ export class LiveTradingService {
     const broker = this.brokerGateway.getCapabilities();
     const marketData = this.quoteProvider.getProviderInfo();
     const marketDataHealth = await this.getMarketDataHealth();
+    const providerComparison = await this.getMarketDataProviderComparison(
+      marketDataHealth.checked_symbols
+    );
     const accountCount = user_id
       ? await LiveBrokerAccount.count({ where: { user_id, is_active: true } })
       : 0;
@@ -79,6 +97,7 @@ export class LiveTradingService {
       broker,
       market_data: marketData,
       market_data_health: marketDataHealth,
+      market_data_provider_comparison: providerComparison,
       account_count: accountCount,
       phases: [
         { key: 'safety_boundary', label: '安全边界', status: 'ready', detail: '默认禁止真实下单，强确认与熔断开关已内置。' },
@@ -147,13 +166,13 @@ export class LiveTradingService {
     };
   }
 
-  async getMarketDataHealth(symbols?: string[]) {
-    const provider = this.quoteProvider.getProviderInfo();
+  async getMarketDataHealth(symbols?: string[], provider: LiveMarketDataProvider = this.quoteProvider) {
+    const providerInfo = provider.getProviderInfo();
     const sla = liveTradingSafetyService.getMarketDataSla();
     const targetSymbols = (symbols || []).length
       ? symbols!.map(normalizeSymbol)
       : await this.pickHealthSymbols();
-    const quotes = targetSymbols.length ? await this.quoteProvider.getQuotes(targetSymbols) : [];
+    const quotes = targetSymbols.length ? await provider.getQuotes(targetSymbols) : [];
     const quoteBySymbol = new Map(quotes.map(quote => [normalizeSymbol(quote.symbol), quote]));
     const items = targetSymbols.map(symbol => {
       const quote = quoteBySymbol.get(normalizeSymbol(symbol));
@@ -168,7 +187,7 @@ export class LiveTradingService {
         name: quote?.name,
         current_price: quote?.current_price,
         quote_time: quote?.quote_time,
-        source: quote?.source || provider.provider_key,
+        source: quote?.source || providerInfo.provider_key,
         latency_seconds: latency,
         is_realtime: Boolean(quote?.is_realtime),
         missing,
@@ -181,7 +200,7 @@ export class LiveTradingService {
     const total = Math.max(items.length, 1);
     const missingRatio = round((missingCount / total) * 100, 4);
     const maxLatency = Math.max(0, ...items.map(item => Number(item.latency_seconds || 0)));
-    const licensed = Boolean(provider.licensed_for_external_use);
+    const licensed = Boolean(providerInfo.licensed_for_external_use);
     const status =
       items.length === 0
         ? 'empty'
@@ -191,7 +210,7 @@ export class LiveTradingService {
         ? 'degraded'
         : 'ok';
     return {
-      provider,
+      provider: providerInfo,
       sla,
       status,
       status_label:
@@ -223,6 +242,39 @@ export class LiveTradingService {
         ...(status === 'ok' ? [] : ['行情未完全满足实盘 SLA，订单草稿会保守阻断或要求复核。']),
       ],
       generated_at: new Date().toISOString(),
+    };
+  }
+
+  async getMarketDataProviderComparison(symbols?: string[]) {
+    const targetSymbols = (symbols || []).length
+      ? symbols!.map(normalizeSymbol)
+      : await this.pickHealthSymbols();
+    const database = await this.getMarketDataHealth(targetSymbols, this.databaseQuoteProvider);
+    const licensedConfigured = this.licensedQuoteProvider.isConfigured()
+      ? await this.getMarketDataHealth(targetSymbols, this.licensedQuoteProvider)
+      : {
+          provider: this.licensedQuoteProvider.getProviderInfo(),
+          sla: liveTradingSafetyService.getMarketDataSla(),
+          status: 'not_configured',
+          status_label: '未配置',
+          checked_symbols: targetSymbols,
+          sample_count: 0,
+          missing_count: targetSymbols.length,
+          stale_count: 0,
+          missing_ratio_pct: 100,
+          max_latency_seconds: 0,
+          licensed_for_external_use: false,
+          items: [],
+          conclusion: '未配置 LIVE_LICENSED_QUOTE_URL_TEMPLATE，暂不能进行授权行情源对比。',
+          warnings: ['对外使用前必须配置授权明确的实时行情源。'],
+          generated_at: new Date().toISOString(),
+        };
+    return {
+      active_provider_key: this.quoteProvider.getProviderInfo().provider_key,
+      providers: [database, licensedConfigured],
+      conclusion: this.licensedQuoteProvider.isConfigured()
+        ? '已完成本地缓存与授权行情 provider 对比，请优先使用满足 SLA 且具备授权声明的数据源。'
+        : '当前仅使用本地行情缓存；授权行情 provider 尚未配置。',
     };
   }
 

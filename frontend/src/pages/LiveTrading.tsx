@@ -82,6 +82,25 @@ interface LiveReadiness {
       source?: string;
     }>;
   };
+  market_data_provider_comparison?: {
+    active_provider_key: string;
+    conclusion: string;
+    providers: Array<{
+      provider: {
+        provider_key: string;
+        provider_name: string;
+        licensed_for_external_use: boolean;
+      };
+      status: string;
+      status_label: string;
+      sample_count: number;
+      missing_count: number;
+      stale_count: number;
+      missing_ratio_pct: number;
+      max_latency_seconds: number;
+      conclusion: string;
+    }>;
+  };
   phases: Array<{ key: string; label: string; status: string; detail: string }>;
   conclusion: string;
 }
@@ -166,6 +185,7 @@ const LiveTrading: React.FC = () => {
 
   const safety = overview?.readiness?.safety;
   const marketHealth = overview?.readiness?.market_data_health;
+  const providerComparison = overview?.readiness?.market_data_provider_comparison;
   const canSubmit = Boolean(safety?.can_submit_orders);
   const blockers = safety?.blockers || [];
   const modeTag = canSubmit ? '受限可提交' : safety?.mode === 'read_only' ? '只读观察' : '安全禁用';
@@ -506,6 +526,36 @@ const LiveTrading: React.FC = () => {
                       {marketHealth.licensed_for_external_use ? '可外用' : '内部验证'}
                     </strong>
                   </div>
+                </div>
+              )}
+              {providerComparison && (
+                <div className="live-provider-compare">
+                  <div className="live-provider-compare-head">
+                    <Text strong>行情源对比</Text>
+                    <Text type="secondary">{providerComparison.conclusion}</Text>
+                  </div>
+                  {(providerComparison.providers || []).map(provider => (
+                    <div
+                      className={`live-provider-row ${
+                        provider.provider.provider_key === providerComparison.active_provider_key
+                          ? 'active'
+                          : ''
+                      }`}
+                      key={provider.provider.provider_key}
+                    >
+                      <div>
+                        <Text strong>{provider.provider.provider_name}</Text>
+                        <span>{provider.provider.provider_key}</span>
+                      </div>
+                      <Tag color={marketHealthColor[provider.status] || 'default'}>
+                        {provider.status_label}
+                      </Tag>
+                      <em>
+                        样本 {provider.sample_count} · 缺失 {provider.missing_count} · 延迟{' '}
+                        {provider.stale_count} · 最大 {provider.max_latency_seconds}s
+                      </em>
+                    </div>
+                  ))}
                 </div>
               )}
               <div className="live-risk-limit-grid">
