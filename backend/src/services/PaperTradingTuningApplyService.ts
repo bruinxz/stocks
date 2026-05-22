@@ -550,6 +550,10 @@ export class PaperTradingTuningApplyService {
       relatedAudits.length ? relatedAudits : [activeAudit]
     );
     const attribution = this.buildCanaryAttribution(canary, dashboard, startDate);
+    const evidence = this.buildCanaryEvidenceSummary(
+      relatedAudits.length ? relatedAudits : [activeAudit],
+      canary
+    );
 
     return {
       active: true,
@@ -570,11 +574,116 @@ export class PaperTradingTuningApplyService {
       review,
       rollback_plan,
       attribution,
+      evidence,
       recent_outcomes: dashboard.outcomes.slice(0, 8),
       audits,
       summary: {
         conclusion,
       },
+    };
+  }
+
+  async getTuningCandidates(options: ApplyOrderIntentTuningOptions = {}) {
+    const useFamilyHindsight = toBoolean(options.use_family_hindsight, true);
+    const familyHindsightMinConsensus = toPositiveInt(options.family_hindsight_min_consensus, 2, 5);
+    const familyHindsightMinEvaluated = toPositiveInt(
+      options.family_hindsight_min_evaluated,
+      5,
+      50
+    );
+    const selectedKeys = new Set(
+      (options.parameter_keys || [])
+        .map(key => String(key || '').trim())
+        .filter(key => PARAMETER_ALLOWLIST.includes(key))
+    );
+    const plan = await paperTradingPlanService.generatePlan({
+      user_id: options.user_id,
+      username: options.username,
+      report_to_feishu: false,
+      include_entries: true,
+      include_exits: true,
+      include_monitor: true,
+      source_type: 'quant_recommendation',
+      limit: 30,
+      entry_limit: 3,
+      scan_limit: 100,
+      min_score: 72,
+      max_positions: 8,
+      use_attribution_feedback: true,
+      use_profit_gate: true,
+      profit_gate_horizon: '5d',
+      profit_gate_min_samples: 5,
+      profit_gate_min_quality_score: 45,
+      profit_gate_allow_sampling: true,
+      profit_gate_sampling_multiplier: 0.35,
+      use_outcome_feedback: true,
+      outcome_feedback_min_closed_samples: 5,
+      outcome_feedback_lookback_days: 365,
+      outcome_feedback_limit: 2000,
+      use_adaptive_risk_policy: true,
+      adaptive_risk_lookback_days: 180,
+      adaptive_risk_min_closed_samples: 5,
+      adaptive_risk_override_signal_params: false,
+    });
+
+    const stableWindowCandidates = (
+      plan.summary.order_intent_feedback?.parameter_adjustment_preview || []
+    )
+      .filter((item: any) => PARAMETER_ALLOWLIST.includes(String(item.parameter_key || '')))
+      .map((item: any) => ({
+        ...item,
+        evidence_source: item.evidence_source || 'stable_window',
+        evidence_source_label: item.evidence_source_label || '稳定窗口',
+      }))
+      .filter((item: any) => selectedKeys.size === 0 || selectedKeys.has(item.parameter_key));
+    const familyHindsight = useFamilyHindsight
+      ? await paperTradingOrderIntentService
+          .getFamilyHindsightDashboard({
+            user_id: options.user_id,
+            username: options.username,
+            lookback_days: toPositiveInt(options.family_hindsight_lookback_days, 45, 3650),
+            limit: toPositiveInt(options.family_hindsight_limit, 3000, 10000),
+          })
+          .catch(() => null)
+      : null;
+    const familyCandidates = familyHindsight
+      ? this.buildFamilyHindsightPreviews(familyHindsight, {
+          minConsensus: familyHindsightMinConsensus,
+          minEvaluated: familyHindsightMinEvaluated,
+        }).filter((item: any) => selectedKeys.size === 0 || selectedKeys.has(item.parameter_key))
+      : [];
+    const mergedCandidates = this.mergePreviewCandidates(stableWindowCandidates, familyCandidates);
+    const canaryCandidates = this.pickCanaryPreviews(
+      mergedCandidates,
+      toPositiveInt(options.canary_max_parameters, 1, 3)
+    );
+
+    return {
+      generated_at: plan.generated_at,
+      read_only: true,
+      thresholds: {
+        family_hindsight_min_consensus: familyHindsightMinConsensus,
+        family_hindsight_min_evaluated: familyHindsightMinEvaluated,
+      },
+      summary: {
+        stable_window_candidate_count: stableWindowCandidates.length,
+        family_hindsight_candidate_count: familyCandidates.length,
+        merged_candidate_count: mergedCandidates.length,
+        canary_candidate_count: canaryCandidates.length,
+        evidence_sources: uniqueStrings(mergedCandidates.map((item: any) => item.evidence_source)),
+        conclusion:
+          mergedCandidates.length > 0
+            ? `当前共有 ${mergedCandidates.length} 条只读调参候选，其中 Canary 推荐先观察 ${canaryCandidates.length} 条。`
+            : '当前没有满足稳定窗口或多账户后验门槛的调参候选，继续观察。',
+      },
+      family_hindsight: familyHindsight
+        ? this.summarizeFamilyHindsightForResult(familyHindsight, familyCandidates, {
+            minConsensus: familyHindsightMinConsensus,
+            minEvaluated: familyHindsightMinEvaluated,
+          })
+        : undefined,
+      candidates: mergedCandidates,
+      canary_candidates: canaryCandidates,
     };
   }
 
@@ -838,6 +947,8 @@ export class PaperTradingTuningApplyService {
       total_unrealized_pnl: roundNumber(summary.total_unrealized_pnl, 2),
       avg_closed_return_pct: roundNumber(summary.avg_closed_return_pct, 4),
       avg_excess_return_pct: avgExcess,
+      avg_mae_pct: roundNumber(summary.avg_mae_pct, 4),
+      worst_adverse_excursion_pct: roundNumber(summary.worst_trade?.max_adverse_excursion_pct, 4),
       win_rate: winRate,
       profit_factor: roundNumber(summary.profit_factor, 4),
       winners,
@@ -866,6 +977,10 @@ export class PaperTradingTuningApplyService {
     const openCount = Number(input.summary.open_count || 0);
     const avgExcess = roundNumber(input.summary.avg_excess_return_pct, 4);
     const avgReturn = roundNumber(input.summary.avg_closed_return_pct, 4);
+    const avgMaePct = roundNumber(input.summary.avg_mae_pct, 4);
+    const avgMaeAbs = Math.abs(avgMaePct);
+    const worstAdversePct = roundNumber(input.summary.worst_trade?.max_adverse_excursion_pct, 4);
+    const worstAdverseAbs = Math.abs(worstAdversePct);
     const winRate = roundNumber(input.summary.win_rate, 2);
     const profitFactor = roundNumber(input.summary.profit_factor, 4);
     const readyByTrades = closedCount >= input.observation.target_closed_trades;
@@ -887,9 +1002,19 @@ export class PaperTradingTuningApplyService {
     let action: 'promote' | 'rollback' | 'continue_observing' | 'hold';
     if (!input.observation.ready_for_review) {
       action = 'continue_observing';
-    } else if (closedCount >= 3 && (avgExcess <= -1.5 || winRate < 35 || profitFactor < 0.75)) {
+    } else if (
+      closedCount >= 3 &&
+      (avgExcess <= -1.5 || winRate < 35 || profitFactor < 0.75 || avgMaeAbs >= 10)
+    ) {
       action = 'rollback';
-    } else if (closedCount >= 5 && avgExcess >= 0.5 && winRate >= 50 && profitFactor >= 1) {
+    } else if (
+      closedCount >= 5 &&
+      avgExcess >= 0.5 &&
+      winRate >= 50 &&
+      profitFactor >= 1 &&
+      avgMaeAbs <= 6 &&
+      worstAdverseAbs <= 12
+    ) {
       action = 'promote';
     } else {
       action = 'hold';
@@ -906,6 +1031,9 @@ export class PaperTradingTuningApplyService {
       `闭环样本 ${closedCount}/${input.observation.target_closed_trades} 笔，运行 ${input.observation.elapsed_days}/${input.observation.target_days} 天。`
     );
     reasons.push(`平均超额 ${avgExcess}%，胜率 ${winRate}%，利润因子 ${profitFactor || 0}。`);
+    reasons.push(
+      `回撤约束：平均最大不利波动 ${avgMaePct || 0}%，单笔最差不利波动 ${worstAdversePct || 0}%。`
+    );
     if (openCount > 0) reasons.push(`仍有 ${openCount} 笔未闭环持仓，结论需保留安全边际。`);
     if (action === 'promote') {
       reasons.push('样本和收益同时达标，可以进入人工复核后的扩大阶段。');
@@ -930,8 +1058,21 @@ export class PaperTradingTuningApplyService {
         open_count: openCount,
         avg_excess_return_pct: avgExcess,
         avg_closed_return_pct: avgReturn,
+        avg_mae_pct: avgMaePct,
+        worst_adverse_excursion_pct: worstAdversePct,
         win_rate: winRate,
         profit_factor: profitFactor,
+      },
+      drawdown_guard: {
+        avg_mae_pct: avgMaePct,
+        avg_mae_limit_pct: 6,
+        worst_adverse_excursion_pct: worstAdversePct,
+        worst_adverse_limit_pct: 12,
+        passed: avgMaeAbs <= 6 && worstAdverseAbs <= 12,
+        conclusion:
+          avgMaeAbs <= 6 && worstAdverseAbs <= 12
+            ? '回撤约束通过，可继续看收益质量。'
+            : '回撤约束未通过，即使收益为正也暂不建议扩大。',
       },
       reasons,
       next_steps:
@@ -990,6 +1131,61 @@ export class PaperTradingTuningApplyService {
         Number(b.confidence || 0) - Number(a.confidence || 0) ||
         Number(b.sample_count || 0) - Number(a.sample_count || 0)
     );
+  }
+
+  private buildCanaryEvidenceSummary(audits: any[], canary: any) {
+    const previews = audits
+      .flatMap((audit: any) => audit?.metadata?.previews || [])
+      .filter(Boolean);
+    const sourceLabels: Record<string, string> = {
+      stable_window: '稳定窗口',
+      family_hindsight: '多账户后验',
+      'stable_window+family_hindsight': '稳定窗口 + 多账户后验',
+    };
+    const evidenceSources = uniqueStrings([
+      ...(canary?.evidence_sources || []),
+      ...previews.map((item: any) => item.evidence_source),
+    ]);
+    const familyConsensusItems = previews
+      .filter((item: any) => item.family_consensus)
+      .map((item: any) => ({
+        parameter_key: item.parameter_key,
+        parameter_label: item.parameter_label,
+        action: item.action,
+        action_label: item.action_label,
+        confidence: item.confidence,
+        sample_count: item.sample_count,
+        family_consensus: item.family_consensus,
+      }));
+
+    return {
+      evidence_sources: evidenceSources,
+      evidence_source_labels: evidenceSources.map(source => sourceLabels[source] || source),
+      candidate_count_by_source: evidenceSources.map(source => ({
+        source,
+        label: sourceLabels[source] || source || '未知',
+        count: previews.filter((item: any) => String(item.evidence_source || '') === source).length,
+      })),
+      preview_count: previews.length,
+      previews: previews.slice(0, 10).map((item: any) => ({
+        parameter_key: item.parameter_key,
+        parameter_label: item.parameter_label,
+        action: item.action,
+        action_label: item.action_label,
+        confidence: item.confidence,
+        sample_count: item.sample_count,
+        evidence_source: item.evidence_source,
+        evidence_source_label: item.evidence_source_label || sourceLabels[item.evidence_source],
+        family_consensus: item.family_consensus,
+      })),
+      family_consensus_items: familyConsensusItems.slice(0, 8),
+      conclusion:
+        familyConsensusItems.length > 0
+          ? `本次 Canary 包含 ${familyConsensusItems.length} 条多账户后验证据。`
+          : previews.length > 0
+          ? `本次 Canary 基于 ${previews.length} 条稳定窗口/审计候选。`
+          : '本次 Canary 暂无可解析的候选证据。',
+    };
   }
 
   private buildFamilyHindsightPreviews(

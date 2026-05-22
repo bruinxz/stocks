@@ -1756,6 +1756,12 @@ a {
     linear-gradient(135deg, rgba(255, 251, 235, 0.84), rgba(255, 255, 255, 0.78));
 }
 
+.order-family-canary-evidence.readonly {
+  border-color: rgba(39, 100, 184, 0.16);
+  background: radial-gradient(circle at 0% 0%, rgba(39, 100, 184, 0.1), transparent 34%),
+    linear-gradient(135deg, rgba(239, 246, 255, 0.82), rgba(255, 255, 255, 0.78));
+}
+
 .order-family-canary-head {
   display: flex;
   align-items: flex-start;
@@ -1865,6 +1871,41 @@ a {
   margin-top: 8px;
 }
 
+.order-canary-evidence-strip {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid rgba(214, 166, 79, 0.16);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.order-canary-evidence-strip span,
+.order-canary-evidence-strip strong,
+.order-canary-evidence-strip p {
+  display: block;
+  margin: 0;
+}
+
+.order-canary-evidence-strip span {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.order-canary-evidence-strip strong {
+  margin-top: 3px;
+  color: var(--text-main);
+  font-size: 13px;
+}
+
+.order-canary-evidence-strip p {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .order-canary-review {
   margin-top: 10px;
   padding: 10px;
@@ -1923,6 +1964,21 @@ a {
   height: 5px;
   border-radius: 999px;
   background: var(--primary);
+}
+
+.order-canary-drawdown-guard {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 9px;
+  padding-top: 9px;
+  border-top: 1px dashed rgba(15, 23, 42, 0.1);
+}
+
+.order-canary-drawdown-guard span {
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 .order-canary-detail-grid {

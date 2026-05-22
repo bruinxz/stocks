@@ -249,6 +249,17 @@ router.post(
 );
 
 /**
+ * @route GET /api/paper-trading/order-intent-tuning/candidates
+ * @desc 获取订单意图调参只读候选：稳定窗口 + 多账户拒单后验，不写入任务参数
+ * @access Private
+ */
+router.get(
+  '/order-intent-tuning/candidates',
+  authController.authenticate,
+  paperTradingController.getOrderIntentTuningCandidates
+);
+
+/**
  * @route GET /api/paper-trading/order-intent-tuning/canary
  * @desc 获取订单意图 Canary 小流量调参观察状态
  * @access Private

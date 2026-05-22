@@ -1622,3 +1622,34 @@ Next:
 1. Add family-hindsight evidence source to Canary status/attribution so active Canary can show whether it came from multi-account evidence.
 2. Add a read-only endpoint that returns family-hindsight candidates without generating a task-change preview, for command-center visibility.
 3. Add promotion rules that require both positive Canary attribution and no worsening of max drawdown before suggesting wider rollout.
+
+### 2026-05-22 Canary evidence status and drawdown guard
+
+Focus: make running Canary experiments explainable and prevent promotion when return improves but drawdown risk worsens.
+
+Completed:
+
+- Added read-only `GET /api/paper-trading/order-intent-tuning/candidates`:
+  - combines stable-window candidates and multi-account family-hindsight candidates;
+  - returns merged candidates plus the top Canary candidate without writing task parameters;
+  - keeps the same family-hindsight consensus thresholds as Canary preview.
+- Canary status now returns an `evidence` block parsed from audit metadata:
+  - evidence source labels;
+  - source-level candidate counts;
+  - family-consensus items when the Canary came from multi-account hindsight;
+  - concise evidence conclusion.
+- Canary review now includes a drawdown guard:
+  - average max adverse excursion must stay within the configured safety limit;
+  - worst adverse excursion also has a hard limit;
+  - promotion is blocked if drawdown guard fails, even if average excess return is positive.
+- Paper-trading page now shows:
+  - a read-only tuning-candidate radar;
+  - evidence source for the currently running Canary;
+  - drawdown guard pass/block status inside Canary review.
+- Smoke test now validates the read-only candidates endpoint, Canary evidence block, and drawdown guard shape.
+
+Next:
+
+1. Surface the read-only tuning-candidate radar in 今日指挥中心 so daily operators see parameter risks without opening the full simulation page.
+2. Add a one-click “生成 Canary 预览（使用当前只读首选候选）” shortcut that still requires confirmation before writing task parameters.
+3. Persist Canary review snapshots periodically so promotion/rollback recommendations can be tracked across days.
