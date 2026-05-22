@@ -22,9 +22,11 @@ import {
 } from 'antd';
 import {
   AuditOutlined,
+  BranchesOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
   LockOutlined,
+  ReconciliationOutlined,
   ReloadOutlined,
   SafetyCertificateOutlined,
   ThunderboltOutlined,
@@ -112,6 +114,7 @@ interface LiveOverview {
   latest_snapshot?: any;
   positions: any[];
   order_drafts: any[];
+  reconciliation?: LiveReconciliation;
   summary: {
     account_bound: boolean;
     total_asset: number;
@@ -124,6 +127,31 @@ interface LiveOverview {
     market_data_status: string;
     market_data_conclusion: string;
     mode_label: string;
+    conclusion: string;
+  };
+}
+
+interface LiveReconciliation {
+  status: string;
+  status_label: string;
+  snapshot_age_minutes?: number | null;
+  stale_threshold_minutes?: number;
+  paper_accounts: any[];
+  position_matches: any[];
+  suggestions: Array<{ level: string; title: string; detail: string }>;
+  summary: {
+    live_total_asset: number;
+    live_available_cash: number;
+    live_market_value: number;
+    live_position_count: number;
+    paper_total_value: number;
+    paper_market_value: number;
+    paper_position_count: number;
+    overlap_count: number;
+    live_only_count: number;
+    paper_only_count: number;
+    average_weight_gap_pct: number;
+    alignment_score: number;
     conclusion: string;
   };
 }
@@ -153,6 +181,21 @@ const marketHealthColor: Record<string, string> = {
   degraded: 'gold',
   risk: 'red',
   empty: 'default',
+};
+const reconciliationColor: Record<string, string> = {
+  aligned: 'green',
+  diverged: 'gold',
+  high_divergence: 'red',
+  stale: 'orange',
+  no_snapshot: 'default',
+  not_bound: 'default',
+};
+const matchColor: Record<string, string> = {
+  aligned: 'green',
+  live_only: 'red',
+  paper_only: 'blue',
+  live_overweight: 'orange',
+  live_underweight: 'gold',
 };
 
 const LiveTrading: React.FC = () => {
@@ -186,6 +229,7 @@ const LiveTrading: React.FC = () => {
   const safety = overview?.readiness?.safety;
   const marketHealth = overview?.readiness?.market_data_health;
   const providerComparison = overview?.readiness?.market_data_provider_comparison;
+  const reconciliation = overview?.reconciliation;
   const canSubmit = Boolean(safety?.can_submit_orders);
   const blockers = safety?.blockers || [];
   const modeTag = canSubmit ? '受限可提交' : safety?.mode === 'read_only' ? '只读观察' : '安全禁用';
@@ -261,6 +305,59 @@ const LiveTrading: React.FC = () => {
   };
 
   const riskChecks = useMemo(() => selectedDraft?.risk_check?.checks || [], [selectedDraft]);
+
+  const reconcileColumns = [
+    {
+      title: '股票',
+      dataIndex: 'symbol',
+      render: (_: any, record: any) => (
+        <Space direction="vertical" size={0}>
+          <Text strong>{record.name || record.symbol}</Text>
+          <Text type="secondary">{record.symbol}</Text>
+        </Space>
+      ),
+    },
+    {
+      title: '状态',
+      dataIndex: 'status',
+      render: (value: string, record: any) => (
+        <Tag color={matchColor[value] || 'default'}>{record.status_label || value}</Tag>
+      ),
+    },
+    {
+      title: '实盘',
+      render: (_: any, record: any) => (
+        <Space direction="vertical" size={0}>
+          <Text>{formatMoney(record.live_market_value)}</Text>
+          <Text type="secondary">
+            {Number(record.live_quantity || 0).toLocaleString()} 股 ·{' '}
+            {Number(record.live_weight_pct || 0).toFixed(2)}%
+          </Text>
+        </Space>
+      ),
+    },
+    {
+      title: '模拟策略',
+      render: (_: any, record: any) => (
+        <Space direction="vertical" size={0}>
+          <Text>{formatMoney(record.paper_market_value)}</Text>
+          <Text type="secondary">
+            {Number(record.paper_quantity || 0).toLocaleString()} 股 ·{' '}
+            {Number(record.paper_weight_pct || 0).toFixed(2)}%
+          </Text>
+        </Space>
+      ),
+    },
+    {
+      title: '权重差',
+      dataIndex: 'weight_gap_pct',
+      render: (value: number) => (
+        <Text type={Math.abs(Number(value || 0)) > 5 ? 'danger' : 'secondary'}>
+          {Number(value || 0).toFixed(2)}%
+        </Text>
+      ),
+    },
+  ];
 
   const draftColumns = [
     {
@@ -453,6 +550,17 @@ const LiveTrading: React.FC = () => {
               </span>
             </Card>
           </Col>
+          <Col xs={24} md={6}>
+            <Card className="modern-card live-stat-card" variant="borderless">
+              <Statistic
+                title="实盘/模拟对齐"
+                value={reconciliation?.summary?.alignment_score || 0}
+                precision={0}
+                suffix="分"
+              />
+              <span>{reconciliation?.status_label || '等待对账'}</span>
+            </Card>
+          </Col>
         </Row>
 
         <Row gutter={[16, 16]} className="live-section-row">
@@ -568,6 +676,107 @@ const LiveTrading: React.FC = () => {
                     </div>
                   ))}
               </div>
+            </Card>
+          </Col>
+        </Row>
+
+        <Row gutter={[16, 16]} className="live-section-row">
+          <Col xs={24} lg={9}>
+            <Card
+              className="modern-card live-reconcile-card"
+              variant="borderless"
+              title={
+                <Space>
+                  <ReconciliationOutlined />
+                  <span>只读对账结论</span>
+                </Space>
+              }
+            >
+              <div className="live-reconcile-score">
+                <div>
+                  <span>对齐分</span>
+                  <strong>
+                    {Number(reconciliation?.summary?.alignment_score || 0).toFixed(0)}
+                  </strong>
+                  <em>/100</em>
+                </div>
+                <Tag
+                  color={reconciliationColor[reconciliation?.status || 'not_bound'] || 'default'}
+                >
+                  {reconciliation?.status_label || '未接账户'}
+                </Tag>
+              </div>
+              <p className="live-reconcile-conclusion">
+                {reconciliation?.summary?.conclusion ||
+                  '接入券商只读账户后，这里会展示真实持仓与模拟策略账户的差异。'}
+              </p>
+              <div className="live-reconcile-metrics">
+                <div>
+                  <span>实盘市值</span>
+                  <strong>{formatMoney(reconciliation?.summary?.live_market_value)}</strong>
+                </div>
+                <div>
+                  <span>模拟市值</span>
+                  <strong>{formatMoney(reconciliation?.summary?.paper_market_value)}</strong>
+                </div>
+                <div>
+                  <span>仅实盘</span>
+                  <strong>{reconciliation?.summary?.live_only_count || 0} 只</strong>
+                </div>
+                <div>
+                  <span>仅模拟</span>
+                  <strong>{reconciliation?.summary?.paper_only_count || 0} 只</strong>
+                </div>
+              </div>
+              <div className="live-reconcile-suggestions">
+                {(reconciliation?.suggestions || []).slice(0, 4).map(item => (
+                  <div key={item.title} className={`live-reconcile-suggestion ${item.level}`}>
+                    <strong>{item.title}</strong>
+                    <span>{item.detail}</span>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          </Col>
+          <Col xs={24} lg={15}>
+            <Card
+              className="modern-card"
+              variant="borderless"
+              title={
+                <Space>
+                  <BranchesOutlined />
+                  <span>实盘 vs 策略模拟持仓</span>
+                </Space>
+              }
+            >
+              <div className="live-paper-account-strip">
+                {(reconciliation?.paper_accounts || []).slice(0, 5).map(account => (
+                  <div key={account.key} className={account.exists ? 'active' : ''}>
+                    <span>{account.label}</span>
+                    <strong>{formatMoney(account.total_value)}</strong>
+                    <em>
+                      持仓 {account.open_position_count || 0} · 暴露{' '}
+                      {Number(account.exposure_pct || 0).toFixed(1)}%
+                    </em>
+                  </div>
+                ))}
+              </div>
+              <Table
+                columns={reconcileColumns}
+                dataSource={reconciliation?.position_matches || []}
+                rowKey="symbol"
+                size="small"
+                pagination={{ pageSize: 6 }}
+                scroll={{ x: 'max-content' }}
+                locale={{
+                  emptyText: (
+                    <Empty
+                      image={Empty.PRESENTED_IMAGE_SIMPLE}
+                      description="暂无可对账持仓。模拟盘建仓或只读账户同步后会显示差异。"
+                    />
+                  ),
+                }}
+              />
             </Card>
           </Col>
         </Row>

@@ -225,6 +225,7 @@ const AppContent: React.FC = () => {
         title: '实盘交易',
         children: [
           menuLink('/live-trading', <SafetyCertificateOutlined />, '安全边界'),
+          menuLink('/live-trading/reconcile', <BranchesOutlined />, '只读对账'),
           menuLink('/live-trading/orders', <ThunderboltOutlined />, '订单审批'),
         ],
       },
@@ -416,6 +417,14 @@ const AppContent: React.FC = () => {
               />
               <Route
                 path="/live-trading/orders"
+                element={
+                  <ProtectedRoute>
+                    <LiveTrading />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/live-trading/reconcile"
                 element={
                   <ProtectedRoute>
                     <LiveTrading />

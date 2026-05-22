@@ -25,6 +25,16 @@ class LiveTradingController {
     }
   }
 
+  async getReconciliation(req: AuthenticatedRequest, res: Response) {
+    try {
+      const data = await liveTradingService.getReconciliation(Number(req.user?.id));
+      res.json({ success: true, data, message: data.summary.conclusion });
+    } catch (error: any) {
+      logger.error('获取实盘只读对账失败:', error);
+      res.status(500).json({ success: false, message: error.message || '获取实盘只读对账失败' });
+    }
+  }
+
   async getSafety(req: AuthenticatedRequest, res: Response) {
     try {
       const data = liveTradingSafetyService.getStatus();

@@ -10,6 +10,7 @@ router.use(authController.authenticate);
 router.get('/readiness', liveTradingController.getReadiness.bind(liveTradingController));
 router.get('/safety', liveTradingController.getSafety.bind(liveTradingController));
 router.get('/overview', liveTradingController.getOverview.bind(liveTradingController));
+router.get('/reconciliation', liveTradingController.getReconciliation.bind(liveTradingController));
 router.get('/quotes', liveTradingController.getQuotes.bind(liveTradingController));
 router.get('/order-drafts', liveTradingController.listDrafts.bind(liveTradingController));
 router.post('/order-drafts', liveTradingController.createDraft.bind(liveTradingController));
