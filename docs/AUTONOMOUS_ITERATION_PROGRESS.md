@@ -1555,3 +1555,26 @@ Next:
 1. Observe the next scheduled quant/Agent runs: quant+Agent fusion should now show an initialized account and order-intent/position diagnostics.
 2. If Agent-only needs to become a true independent control group, route non-quant TradingAgents BUY signals into the Agent-only paper portfolio with a separate low-risk budget.
 3. Add a compact account-family drill-down page that lists the top rejected symbols and whether a rejection later proved right or wrong.
+
+### 2026-05-22 Agent-only control group and rejection hindsight radar
+
+Focus: continue the autonomous recommendation loop by making the Agent-only paper account a real control group and making rejected-order hindsight visible on the account map.
+
+Completed:
+
+- Added Agent-only auto paper-trading configuration to the automated recommendation loop and AI polling jobs.
+- Non-quant TradingAgents BUY/STRONG_BUY results can now be mirrored into `Codex Agent独立模拟盘（20W）` as an independent control group, while quant daily pipeline Agent reviews continue to use the quant+Agent fusion account.
+- Added `/api/paper-trading/order-intents/family-hindsight` to aggregate rejected/skipped/held order-intent hindsight across strategy account families.
+- Autonomous dashboard now includes `family_order_intent_hindsight` and the strategy account map displays a compact rejection-hindsight radar:
+  - evaluated rejected intents;
+  - possible false rejects;
+  - saved-loss count;
+  - average intended-action return;
+  - account-level action label such as observe/keep/loosen/tighten.
+- Read-only smoke now validates the new family hindsight endpoint.
+
+Next:
+
+1. After the next TradingAgents polling cycle, verify Agent-only control group starts receiving order intents/trades.
+2. Add a drill-down drawer from the account map to top false-rejected symbols and the exact rule that blocked them.
+3. Use family-level hindsight to drive a conservative canary adjustment for `min_trade_amount` and minimum-lot sampling only when two rolling windows agree.

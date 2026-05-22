@@ -136,6 +136,17 @@ router.get('/risk-profile', authController.authenticate, paperTradingController.
 router.get('/order-intents', authController.authenticate, paperTradingController.getOrderIntents);
 
 /**
+ * @route GET /api/paper-trading/order-intents/family-hindsight
+ * @desc 获取全部策略账户拒单后验汇总：错杀、有效拦截与账户级规则建议
+ * @access Private
+ */
+router.get(
+  '/order-intents/family-hindsight',
+  authController.authenticate,
+  paperTradingController.getOrderIntentFamilyHindsight
+);
+
+/**
  * @route GET /api/paper-trading/order-intents/:id/trace
  * @desc 获取单条订单意图链路：信号、拒单原因、后验收益、同类规则建议和参数影响
  * @access Private

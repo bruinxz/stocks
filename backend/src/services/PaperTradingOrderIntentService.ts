@@ -8,6 +8,7 @@ import { Stock } from '../models/Stock';
 import { User } from '../models/User';
 import { AIInvestmentSignal } from '../models/AIInvestmentSignal';
 import { logger } from '../utils/logger';
+import { PAPER_PORTFOLIO_FAMILIES } from './PaperTradingPortfolioFamilies';
 
 export interface PaperTradingOrderIntentDashboardOptions {
   user_id?: number;
@@ -379,6 +380,170 @@ export class PaperTradingOrderIntentService {
     };
   }
 
+  async getFamilyHindsightDashboard(options: PaperTradingOrderIntentDashboardOptions = {}) {
+    const lookbackDays = toPositiveInt(options.lookback_days, 30, 3650);
+    const limit = toPositiveInt(options.limit, 2000, 10000);
+    const startDate = moment()
+      .tz('Asia/Shanghai')
+      .subtract(lookbackDays, 'days')
+      .format('YYYY-MM-DD');
+    const user = await this.resolveUser(options.user_id, options.username);
+    const portfolios = await PaperTradingPortfolio.findAll({
+      where: {
+        user_id: user.id,
+        name: { [Op.in]: PAPER_PORTFOLIO_FAMILIES.map(item => item.name) },
+      },
+      order: [['id', 'ASC']],
+      raw: true,
+    });
+    const portfolioIds = portfolios.map((item: any) => Number(item.id)).filter(Boolean);
+    const intentRows = portfolioIds.length
+      ? await PaperTradingOrderIntent.findAll({
+          where: {
+            portfolio_id: { [Op.in]: portfolioIds },
+            intent_date: { [Op.gte]: startDate },
+            status: { [Op.in]: ['rejected', 'skipped', 'held'] },
+          },
+          order: [
+            ['intent_date', 'DESC'],
+            ['created_at', 'DESC'],
+          ],
+          limit,
+          raw: true,
+        })
+      : [];
+    const intentPlain = (intentRows as any[]).map(item => modelToPlain<any>(item));
+    const hindsight = await this.buildHindsight(intentPlain, {
+      persist: toBoolean(options.persist_hindsight, false),
+      refresh: toBoolean(options.refresh_hindsight, false),
+      dryRun: toBoolean(options.dry_run, false),
+    });
+    const normalizedRows = intentPlain.map(item =>
+      this.normalizeIntentHindsightRow(item, hindsight.by_intent_id.get(Number(item.id)))
+    );
+    const grouped = new Map<number, any[]>();
+    for (const outcome of normalizedRows) {
+      const portfolio_id = Number(outcome.portfolio_id);
+      const list = grouped.get(portfolio_id) || [];
+      list.push(outcome);
+      grouped.set(portfolio_id, list);
+    }
+
+    const families = portfolios.map((portfolio: any) => {
+      const rows = grouped.get(Number(portfolio.id)) || [];
+      const normalized = rows;
+      const completed = normalized.filter(item => item.evaluation_status === 'completed');
+      const falseRejects = completed.filter(
+        item => toNumber(item.intended_action_return_pct) > 0.5
+      );
+      const savedLoss = completed.filter(item => toNumber(item.intended_action_return_pct) < -0.5);
+      const avg =
+        completed.length > 0
+          ? roundNumber(
+              completed.reduce((sum, item) => sum + toNumber(item.intended_action_return_pct), 0) /
+                completed.length,
+              4
+            )
+          : 0;
+      const reasonCounts = this.countBy(normalized, 'reason_category');
+      const topReasons = Object.entries(reasonCounts)
+        .map(([key, count]) => ({
+          key,
+          label: reasonCategoryLabel(key),
+          count,
+        }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 5);
+      const action =
+        completed.length < 5
+          ? 'observe'
+          : falseRejects.length >= Math.max(3, completed.length * 0.35) && avg > 0.5
+          ? 'loosen'
+          : savedLoss.length >= Math.max(3, completed.length * 0.35) && avg < -0.3
+          ? 'tighten'
+          : 'keep';
+      return {
+        portfolio_id: Number(portfolio.id),
+        portfolio_name: portfolio.name,
+        total_count: normalized.length,
+        evaluated_count: completed.length,
+        pending_count: normalized.length - completed.length,
+        false_reject_count: falseRejects.length,
+        saved_loss_count: savedLoss.length,
+        avg_intended_action_return_pct: avg,
+        false_reject_rate:
+          completed.length > 0 ? roundNumber((falseRejects.length / completed.length) * 100, 2) : 0,
+        saved_loss_rate:
+          completed.length > 0 ? roundNumber((savedLoss.length / completed.length) * 100, 2) : 0,
+        action,
+        action_label:
+          action === 'loosen'
+            ? '建议放松'
+            : action === 'tighten'
+            ? '建议收紧'
+            : action === 'keep'
+            ? '维持规则'
+            : '继续观察',
+        top_reason_categories: topReasons,
+        top_false_rejections: falseRejects
+          .sort(
+            (a, b) =>
+              toNumber(b.intended_action_return_pct) - toNumber(a.intended_action_return_pct)
+          )
+          .slice(0, 5),
+        top_saved_losses: savedLoss
+          .sort(
+            (a, b) =>
+              toNumber(a.intended_action_return_pct) - toNumber(b.intended_action_return_pct)
+          )
+          .slice(0, 5),
+        conclusion:
+          completed.length > 0
+            ? `后验 ${completed.length} 条，可能错杀 ${falseRejects.length} 条，避免亏损 ${savedLoss.length} 条，平均相对 ${avg}%。`
+            : '暂无已完成后验样本，等待更多后续K线。',
+      };
+    });
+
+    const evaluatedCount = families.reduce((sum, item) => sum + item.evaluated_count, 0);
+    const falseRejectCount = families.reduce((sum, item) => sum + item.false_reject_count, 0);
+    const savedLossCount = families.reduce((sum, item) => sum + item.saved_loss_count, 0);
+    const avg =
+      evaluatedCount > 0
+        ? roundNumber(
+            families.reduce(
+              (sum, item) => sum + item.avg_intended_action_return_pct * item.evaluated_count,
+              0
+            ) / evaluatedCount,
+            4
+          )
+        : 0;
+
+    return {
+      generated_at: moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm:ss'),
+      filters: {
+        lookback_days: lookbackDays,
+        start_date: startDate,
+        limit,
+      },
+      summary: {
+        portfolio_count: families.length,
+        evaluated_count: evaluatedCount,
+        false_reject_count: falseRejectCount,
+        saved_loss_count: savedLossCount,
+        avg_intended_action_return_pct: avg,
+        cache_hit_count: hindsight.summary.cache_hit_count,
+        cache_miss_count: hindsight.summary.cache_miss_count,
+        persisted_snapshot_count: hindsight.summary.persisted_snapshot_count,
+        persist_failed_count: hindsight.summary.persist_failed_count,
+        conclusion:
+          evaluatedCount > 0
+            ? `全部策略账户后验 ${evaluatedCount} 条，可能错杀 ${falseRejectCount} 条，避免亏损 ${savedLossCount} 条，平均相对 ${avg}%。`
+            : '全部策略账户暂无可评估拒单后验，等待后续K线和快照刷新。',
+      },
+      families,
+    };
+  }
+
   private normalizeIntent(item: any, opportunityOutcome?: any) {
     const metadata = item.metadata || {};
     const executionReality = metadata.execution_reality_decision || {};
@@ -400,6 +565,73 @@ export class PaperTradingOrderIntentService {
         item.reason_text ||
         executionReality.label ||
         (Array.isArray(executionReality.reasons) ? executionReality.reasons.join('；') : ''),
+    };
+  }
+
+  private normalizeIntentHindsightRow(item: any, outcome: any) {
+    const benchmark =
+      outcome?.horizons?.['5d'] ||
+      outcome?.metadata?.benchmark ||
+      this.firstAvailableHorizon(outcome?.horizons || {});
+    return {
+      id: item.id,
+      intent_id: item.id,
+      portfolio_id: item.portfolio_id,
+      signal_id: item.signal_id,
+      symbol: item.symbol,
+      name: item.name,
+      side: item.side,
+      side_label: sideLabel(item.side),
+      status: item.status,
+      reason_category: item.reason_category || 'unknown',
+      reason_category_label: reasonCategoryLabel(item.reason_category),
+      reason_text: item.reason_text,
+      intent_date: dateOnly(item.intent_date),
+      evaluation_status: outcome?.evaluation_status || 'pending',
+      benchmark_horizon: benchmark?.horizon || outcome?.benchmark_horizon,
+      intended_action_return_pct: toNumber(
+        benchmark?.intended_action_return_pct ?? outcome?.benchmark_intended_return_pct,
+        0
+      ),
+      raw_future_return_pct: toNumber(
+        benchmark?.raw_future_return_pct ?? outcome?.benchmark_raw_return_pct,
+        0
+      ),
+      benchmark_conclusion:
+        benchmark?.conclusion || outcome?.benchmark_conclusion || outcome?.reason,
+      evaluated_at: outcome?.evaluated_at,
+    };
+  }
+
+  private normalizeOutcomeSnapshot(row: any) {
+    const benchmark =
+      row.horizons?.['5d'] || row.metadata?.benchmark || this.firstAvailableHorizon(row.horizons);
+    return {
+      id: row.id,
+      intent_id: row.intent_id,
+      portfolio_id: row.portfolio_id,
+      signal_id: row.signal_id,
+      symbol: row.symbol,
+      name: row.name,
+      side: row.side,
+      side_label: sideLabel(row.side),
+      status: row.status,
+      reason_category: row.reason_category || 'unknown',
+      reason_category_label: reasonCategoryLabel(row.reason_category),
+      intent_date: dateOnly(row.intent_date),
+      evaluation_status: row.evaluation_status,
+      benchmark_horizon: row.benchmark_horizon || benchmark?.horizon,
+      intended_action_return_pct:
+        row.benchmark_intended_return_pct === null ||
+        row.benchmark_intended_return_pct === undefined
+          ? toNumber(benchmark?.intended_action_return_pct, 0)
+          : toNumber(row.benchmark_intended_return_pct),
+      raw_future_return_pct:
+        row.benchmark_raw_return_pct === null || row.benchmark_raw_return_pct === undefined
+          ? toNumber(benchmark?.raw_future_return_pct, 0)
+          : toNumber(row.benchmark_raw_return_pct),
+      benchmark_conclusion: row.benchmark_conclusion || benchmark?.conclusion,
+      evaluated_at: row.evaluated_at,
     };
   }
 
@@ -776,9 +1008,7 @@ export class PaperTradingOrderIntentService {
         failed += 1;
         if (failed <= 3) {
           logger.warn(
-            `写入订单意图后验快照失败 intent#${item?.id || 'unknown'}: ${
-              error?.message || error
-            }`
+            `写入订单意图后验快照失败 intent#${item?.id || 'unknown'}: ${error?.message || error}`
           );
         }
       }

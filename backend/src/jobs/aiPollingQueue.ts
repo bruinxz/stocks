@@ -25,6 +25,14 @@ export interface AIPollingJobData {
   auto_paper_trade?: boolean;
   paper_trade_username?: string;
   paper_trade_portfolio_name?: string;
+  agent_only_auto_paper_trade?: boolean;
+  agent_only_paper_trade_portfolio_name?: string;
+  agent_only_paper_trade_min_score?: number;
+  agent_only_paper_trade_max_positions?: number;
+  agent_only_paper_trade_default_position_pct?: number;
+  agent_only_paper_trade_max_position_pct?: number;
+  agent_only_paper_trade_min_trade_amount?: number;
+  agent_only_paper_trade_risk_profile_gate?: any;
   paper_trade_initial_capital?: number;
   paper_trade_force_new_portfolio?: boolean;
   paper_trade_min_score?: number;

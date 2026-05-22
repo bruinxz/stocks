@@ -13,6 +13,7 @@ import { PaperTradingOrderIntent } from '../models/PaperTradingOrderIntent';
 import { RecommendationTradeOutcome } from '../models/RecommendationTradeOutcome';
 import { paperTradingAutomationService } from './PaperTradingAutomationService';
 import { recommendationTradeOutcomeService } from './RecommendationTradeOutcomeService';
+import { paperTradingOrderIntentService } from './PaperTradingOrderIntentService';
 import {
   AGENT_ONLY_PORTFOLIO_NAME,
   AUTONOMOUS_PORTFOLIO_NAME,
@@ -327,6 +328,7 @@ export class PaperTradingDashboardService {
       snapshots,
       outcomeDashboard,
       tracking,
+      familyIntentHindsight,
       allOpenPositions,
       familyRecentTrades,
     ] = await Promise.all([
@@ -358,6 +360,17 @@ export class PaperTradingDashboardService {
         logger.warn(`自主模拟盘推荐追踪读取失败: ${error?.message || error}`);
         return null;
       }),
+      paperTradingOrderIntentService
+        .getFamilyHindsightDashboard({
+          user_id: options.user_id,
+          username: options.username,
+          lookback_days: toPositiveInt(options.lookback_days, 30, 3650),
+          limit: 2000,
+        })
+        .catch(error => {
+          logger.warn(`策略账户拒单后验读取失败: ${error?.message || error}`);
+          return null;
+        }),
       activeFamilyIds.length
         ? (PaperTradingPosition.findAll({
             where: { portfolio_id: { [Op.in]: activeFamilyIds } },
@@ -456,6 +469,7 @@ export class PaperTradingDashboardService {
         normalizeTrade(trade, familyByPortfolioId.get(Number(trade.portfolio_id)))
       ),
       portfolio_family_summary: familySummary,
+      family_order_intent_hindsight: familyIntentHindsight,
       equity_curve: snapshots.map((item: any) => {
         const total = toNumber(item.total_value, initialCapital);
         return {
