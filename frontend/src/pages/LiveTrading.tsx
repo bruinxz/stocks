@@ -282,6 +282,7 @@ const formatPct = (value?: number | null, digits = 2) =>
   value === null || value === undefined || Number.isNaN(Number(value))
     ? '--'
     : `${Number(value) > 0 ? '+' : ''}${Number(value).toFixed(digits)}%`;
+const formatDateTime = (value?: string | null) => (value ? new Date(value).toLocaleString() : '--');
 const pnlTextType = (value?: number | null) =>
   Number(value || 0) > 0 ? 'success' : Number(value || 0) < 0 ? 'danger' : 'secondary';
 const statusColor: Record<string, string> = {
@@ -337,12 +338,17 @@ const LiveTrading: React.FC = () => {
   const [draftCandidates, setDraftCandidates] = useState<LiveDraftCandidateDashboard | null>(null);
   const [shadowOutcomes, setShadowOutcomes] = useState<ShadowOutcomeDashboard | null>(null);
   const [shadowTrend, setShadowTrend] = useState<ShadowTrendDashboard | null>(null);
+  const [shadowBudgetAudit, setShadowBudgetAudit] = useState<{
+    suggestion?: any;
+    applied?: any;
+  } | null>(null);
   const [loading, setLoading] = useState(false);
   const [draftLoading, setDraftLoading] = useState(false);
   const [candidateLoading, setCandidateLoading] = useState(false);
   const [shadowLoading, setShadowLoading] = useState(false);
   const [shadowOutcomeLoading, setShadowOutcomeLoading] = useState(false);
   const [shadowTrendLoading, setShadowTrendLoading] = useState(false);
+  const [shadowBudgetAuditLoading, setShadowBudgetAuditLoading] = useState(false);
   const [syncLoading, setSyncLoading] = useState(false);
   const [isDraftModalOpen, setIsDraftModalOpen] = useState(false);
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
@@ -408,11 +414,45 @@ const LiveTrading: React.FC = () => {
     }
   };
 
+  const fetchShadowBudgetAudits = async (silent = false) => {
+    setShadowBudgetAuditLoading(true);
+    try {
+      const [suggestionResponse, appliedResponse] = await Promise.all([
+        api.get('/tasks/parameter-audits', {
+          params: {
+            event_type: 'live_shadow_budget_suggestion',
+            limit: 1,
+            watched_only: false,
+          },
+        }),
+        api.get('/tasks/parameter-audits', {
+          params: {
+            event_type: 'live_shadow_budget_applied',
+            limit: 1,
+            watched_only: false,
+          },
+        }),
+      ]);
+      setShadowBudgetAudit({
+        suggestion: suggestionResponse.data?.data?.[0] || null,
+        applied: appliedResponse.data?.data?.[0] || null,
+      });
+      if (!silent) message.success('影子预算建议状态已刷新');
+    } catch (error: any) {
+      if (!silent) {
+        message.error(error.response?.data?.message || '获取影子预算建议状态失败');
+      }
+    } finally {
+      setShadowBudgetAuditLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchOverview(true);
     fetchDraftCandidates(true);
     fetchShadowOutcomes(true);
     fetchShadowTrend(true);
+    fetchShadowBudgetAudits(true);
   }, []);
 
   const safety = overview?.readiness?.safety;
@@ -423,6 +463,44 @@ const LiveTrading: React.FC = () => {
   const shadowSummary = overview?.shadow_autopilot?.summary;
   const blockers = safety?.blockers || [];
   const modeTag = canSubmit ? '受限可提交' : safety?.mode === 'read_only' ? '只读观察' : '安全禁用';
+  const latestShadowBudgetSuggestion = shadowBudgetAudit?.suggestion;
+  const latestShadowBudgetApplied = shadowBudgetAudit?.applied;
+  const latestShadowBudgetSuggestionId = Number(latestShadowBudgetSuggestion?.id || 0);
+  const latestShadowBudgetAppliedSourceId = Number(
+    latestShadowBudgetApplied?.metadata?.source_audit_id ||
+      latestShadowBudgetApplied?.after_parameters?.shadow_budget_advice?.source_audit_id ||
+      0
+  );
+  const latestShadowBudgetSuggestionTime = Date.parse(
+    latestShadowBudgetSuggestion?.created_at || ''
+  );
+  const latestShadowBudgetAppliedTime = Date.parse(latestShadowBudgetApplied?.created_at || '');
+  const shadowBudgetSuggestedLimit =
+    latestShadowBudgetSuggestion?.after_parameters?.limit ??
+    latestShadowBudgetSuggestion?.after_parameters?.shadow_budget_advice?.recommended_limit;
+  const shadowBudgetAppliedLimit = latestShadowBudgetApplied?.after_parameters?.limit;
+  const shadowBudgetLikelyApplied =
+    latestShadowBudgetSuggestionId > 0 &&
+    (latestShadowBudgetAppliedSourceId === latestShadowBudgetSuggestionId ||
+      (Number.isFinite(latestShadowBudgetAppliedTime) &&
+        Number.isFinite(latestShadowBudgetSuggestionTime) &&
+        latestShadowBudgetAppliedTime >= latestShadowBudgetSuggestionTime &&
+        String(shadowBudgetAppliedLimit ?? '') === String(shadowBudgetSuggestedLimit ?? '')));
+  const shadowBudgetSuggestionUnapplied = Boolean(
+    latestShadowBudgetSuggestion && !shadowBudgetLikelyApplied
+  );
+  const shadowBudgetCurrentLimit =
+    latestShadowBudgetSuggestion?.before_parameters?.limit ??
+    latestShadowBudgetSuggestion?.after_parameters?.shadow_budget_advice?.current_limit ??
+    '--';
+  const shadowBudgetSuggestionLabel =
+    latestShadowBudgetSuggestion?.metadata?.outcome_summary?.budget_label ||
+    latestShadowBudgetSuggestion?.after_parameters?.shadow_budget_advice?.label ||
+    '影子预算建议';
+  const shadowBudgetSuggestionReason =
+    latestShadowBudgetSuggestion?.metadata?.outcome_summary?.budget_reason ||
+    latestShadowBudgetSuggestion?.after_parameters?.shadow_budget_advice?.reason ||
+    '等待更多样本验证影子执行预算是否需要调整。';
 
   const createDraft = async () => {
     try {
@@ -528,6 +606,7 @@ const LiveTrading: React.FC = () => {
       await fetchDraftCandidates(true);
       await fetchShadowOutcomes(true);
       await fetchShadowTrend(true);
+      await fetchShadowBudgetAudits(true);
     } catch (error: any) {
       message.warning(error.response?.data?.message || '无人影子执行暂不可用');
     } finally {
@@ -546,6 +625,7 @@ const LiveTrading: React.FC = () => {
       await fetchDraftCandidates(true);
       await fetchShadowOutcomes(true);
       await fetchShadowTrend(true);
+      await fetchShadowBudgetAudits(true);
     } catch (error: any) {
       message.warning(error.response?.data?.message || '影子执行被风控阻断');
     } finally {
@@ -1400,6 +1480,49 @@ const LiveTrading: React.FC = () => {
                 '样本不足时只保持小流量影子验证，不扩大到真实资金自动执行。'}
             </span>
           </div>
+          {latestShadowBudgetSuggestion && (
+            <div
+              className={`live-shadow-budget-audit ${
+                shadowBudgetSuggestionUnapplied
+                  ? 'live-shadow-budget-audit--pending'
+                  : 'live-shadow-budget-audit--applied'
+              }`}
+            >
+              <div>
+                <Space wrap size={6}>
+                  <Tag color={shadowBudgetSuggestionUnapplied ? 'gold' : 'green'}>
+                    {shadowBudgetSuggestionUnapplied ? '候选补丁待应用' : '最新建议已应用'}
+                  </Tag>
+                  <Text strong>{shadowBudgetSuggestionLabel}</Text>
+                </Space>
+                <Text type="secondary">
+                  limit {shadowBudgetCurrentLimit} → {shadowBudgetSuggestedLimit ?? '--'} ·{' '}
+                  {formatDateTime(latestShadowBudgetSuggestion.created_at)}
+                </Text>
+                <Text type="secondary">{shadowBudgetSuggestionReason}</Text>
+              </div>
+              <Space wrap>
+                <Button
+                  size="small"
+                  icon={<ReloadOutlined />}
+                  loading={shadowBudgetAuditLoading}
+                  onClick={() => fetchShadowBudgetAudits(false)}
+                >
+                  刷新建议
+                </Button>
+                <Button
+                  size="small"
+                  type={shadowBudgetSuggestionUnapplied ? 'primary' : 'default'}
+                  ghost={shadowBudgetSuggestionUnapplied}
+                  onClick={() => {
+                    window.location.href = '/tasks';
+                  }}
+                >
+                  去调度任务应用
+                </Button>
+              </Space>
+            </div>
+          )}
           <div className="live-candidate-metrics live-shadow-outcome-metrics">
             <div>
               <span>样本</span>

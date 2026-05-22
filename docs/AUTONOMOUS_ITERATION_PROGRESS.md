@@ -2056,8 +2056,29 @@ Completed:
 Next:
 
 1. Persist weekly shadow trend snapshots into a dedicated table if task logs become insufficient.
-2. Add a small badge on the live-trading page when the latest budget advice is unapplied.
-3. Compare applied vs unapplied shadow budget periods to measure whether budget expansion improved returns.
+2. Compare applied vs unapplied shadow budget periods to measure whether budget expansion improved returns.
+
+### 2026-05-22 live shadow budget visibility
+
+Focus: make weekly shadow budget advice visible where the operator reviews shadow returns.
+
+Completed:
+
+- Live-trading page now loads the latest `live_shadow_budget_suggestion` and
+  `live_shadow_budget_applied` audit records.
+- The shadow outcome card shows whether the latest budget candidate patch is still pending.
+- It displays:
+  - current limit → suggested limit;
+  - generated time;
+  - concise budget reason;
+  - direct jump to `/tasks` for guarded preview/apply.
+- It keeps the safety language explicit: this only affects shadow execution frequency and does not
+  submit real broker orders.
+
+Next:
+
+1. Compare applied vs unapplied shadow budget periods to measure whether budget expansion improved returns.
+2. Persist weekly shadow trend snapshots into a dedicated table if task logs become insufficient.
 
 ### 2026-05-22 live shadow trend chart
 
