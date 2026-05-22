@@ -1841,3 +1841,212 @@ Next:
 1. Add shadow execution outcome tracking: compare shadow fill price with subsequent 1/3/5-day returns.
 2. Add daily scheduled shadow autopilot after opening readiness passes, still with real broker submission hard-blocked.
 3. Add a dashboard sentence that states whether shadow execution is outperforming the manual/simulated baseline.
+
+### 2026-05-22 live shadow execution outcome tracking
+
+Focus: make unattended shadow execution accountable by showing whether the hypothetical fills actually made money after execution.
+
+Completed:
+
+- Added `GET /api/live-trading/shadow-outcomes` for shadow-only drafts:
+  - reads shadow fill price, quantity and execution time from draft metadata;
+  - joins latest realtime quote with daily bars;
+  - computes latest return / PnL plus 1/3/5-day horizon returns when enough market data exists;
+  - summarizes sample count, evaluated count, win rate, average return, total floating PnL and best/worst sample;
+  - always reports `real_order_submitted=0`.
+- Added a new `影子执行收益闭环` card on the live-trading page:
+  - concise verdict first;
+  - sample/evaluated/win-rate/average-return/floating-PnL metrics;
+  - 1/3/5-day compact strips;
+  - table with fill price, latest price, latest return and horizon returns.
+- Extended readonly smoke to verify the outcome API shape and the no-real-order invariant.
+
+Next:
+
+1. Add daily scheduled shadow autopilot after opening readiness passes, still with real broker submission hard-blocked.
+2. Compare shadow execution outcomes with simulated portfolio baselines and broad market benchmarks.
+3. Add a small “eligible for more shadow budget / should cool down” decision sentence driven by accumulated outcome quality.
+
+### 2026-05-22 scheduled live shadow autopilot
+
+Focus: let the unattended live-trading validation loop run by schedule while preserving the hard no-real-order boundary.
+
+Completed:
+
+- Added scheduler task type `LIVE_SHADOW_AUTOPILOT`:
+  - resolves the configured user (`lym` by default);
+  - runs `LiveTradingService.runShadowAutopilot`;
+  - refreshes `getShadowAutopilotOutcomes` immediately after the run;
+  - writes execution-log summary with selected count, shadow fills, blocked count, outcome samples, win rate, average return and floating PnL;
+  - keeps `real_order_submitted=0`.
+- Seeded default task `实盘影子执行闭环` at `09:58` on trading weekdays:
+  - small limit (`2`) to avoid load spikes;
+  - reports to Feishu using concise task markdown;
+  - does not submit real broker orders.
+- Extended Feishu task-detail rendering for `live_shadow_autopilot`, so scheduled reports show the result in readable bullets instead of raw JSON.
+
+Next:
+
+1. Add a readiness gate before scheduled shadow execution so it can skip cleanly if opening quotes/account snapshots are stale.
+2. Compare shadow outcomes against quant/Agent/paper-trading baselines.
+3. Add UI decision labels: “继续影子验证 / 降低影子预算 / 候选可扩大” based on closed-loop sample quality.
+
+### 2026-05-22 opening-readiness gate for scheduled shadow execution
+
+Focus: avoid producing noisy unattended shadow fills when the opening chain is clearly not trustworthy.
+
+Completed:
+
+- `LIVE_SHADOW_AUTOPILOT` now checks `OpeningReadinessService` before creating new shadow fills by default.
+- If readiness is `blocked` (or degraded is disallowed by task parameters), the task:
+  - skips new shadow fills;
+  - still refreshes existing shadow outcome statistics;
+  - records a completed execution log with `skipped=true`, readiness status and skip reason;
+  - keeps `real_order_submitted=0`.
+- Default task parameters now include:
+  - `require_opening_readiness=true`;
+  - `allow_degraded_readiness=true`;
+  - `factor_limit=220`;
+  - `cache_ttl_ms=90000`.
+- Feishu task markdown now shows the readiness gate state before the shadow execution counts.
+
+Next:
+
+1. Compare shadow outcomes against quant/Agent/paper-trading baselines.
+2. Add UI decision labels: “继续影子验证 / 降低影子预算 / 候选可扩大”.
+3. Add a scheduled weekly review that summarizes shadow outcome quality and recommended next-week shadow budget.
+
+### 2026-05-22 shadow outcome baseline comparison
+
+Focus: make shadow execution results comparable instead of isolated.
+
+Completed:
+
+- `shadow-outcomes` now includes baseline statistics:
+  - same-period paper-trading BUY trades across strategy portfolio families;
+  - signal forward-return samples from verified AI/quant/Agent signals;
+  - average return, win rate and total paper PnL where available.
+- The live-trading page now shows a compact baseline strip:
+  - 模拟盘同期 average return and win rate;
+  - 信号后验 average return and win rate;
+  - 影子 minus 模拟盘 return gap.
+- Scheduled shadow-autopilot Feishu markdown now includes baseline comparison bullets.
+- Outcome conclusion can mention the relative return gap when both shadow and paper baseline samples exist.
+
+Next:
+
+1. Add UI decision labels: “继续影子验证 / 降低影子预算 / 候选可扩大”.
+2. Add a scheduled weekly review that summarizes shadow outcome quality and recommended next-week shadow budget.
+3. Tie the shadow budget recommendation back into task parameters through a safe, human-readable candidate patch.
+
+### 2026-05-22 shadow budget decision label
+
+Focus: convert shadow outcome metrics into an immediately understandable operating recommendation.
+
+Completed:
+
+- `shadow-outcomes.summary.budget_decision` now returns:
+  - action (`continue_collecting`, `continue_shadow`, `cool_down`, `expand_shadow`);
+  - label;
+  - level;
+  - recommended per-run shadow limit;
+  - concise reason.
+- Decision policy is conservative:
+  - fewer than 5 evaluated samples → keep collecting;
+  - weak average return / low win rate → cool down;
+  - positive average, win rate ≥55%, and not worse than paper baseline → small expansion;
+  - otherwise continue small-flow shadow.
+- Live-trading page now shows the decision badge and a one-line budget note above the metrics.
+- Scheduled Feishu task report includes the budget recommendation and reason.
+
+Next:
+
+1. Add a scheduled weekly review that summarizes shadow outcome quality and recommended next-week shadow budget.
+2. Tie the shadow budget recommendation back into task parameters through a safe, human-readable candidate patch.
+3. Add a chart of shadow average return / win rate / budget recommendation over time.
+
+### 2026-05-22 weekly shadow execution review
+
+Focus: create a periodic management loop for unattended shadow validation.
+
+Completed:
+
+- Added scheduler task type `LIVE_SHADOW_WEEKLY_REVIEW`.
+- Seeded default task `影子执行周度复盘` every Friday at `16:20`.
+- The task does not create trades; it only reads `shadow-outcomes` and records:
+  - total/evaluated/open shadow samples;
+  - win rate and average latest return;
+  - floating PnL;
+  - paper-trading and signal-return baselines;
+  - next-week budget recommendation;
+  - `real_order_submitted=0`.
+- Feishu markdown now renders a dedicated weekly-review section with concise bullets.
+
+Next:
+
+1. Tie the shadow budget recommendation back into task parameters through a safe, human-readable candidate patch.
+2. Add a chart of shadow average return / win rate / budget recommendation over time.
+3. Add smoke coverage for both live shadow scheduler task definitions.
+
+### 2026-05-22 smoke coverage for live shadow schedules
+
+Focus: keep the new unattended shadow validation schedules from silently disappearing.
+
+Completed:
+
+- Readonly smoke now validates:
+  - `LIVE_SHADOW_AUTOPILOT` task exists;
+  - it requires opening readiness;
+  - per-run limit stays within a bounded 1-10 range;
+  - `LIVE_SHADOW_WEEKLY_REVIEW` task exists;
+  - weekly review outcome limit is large enough to review accumulated samples.
+
+Next:
+
+1. Tie the shadow budget recommendation back into task parameters through a safe, human-readable candidate patch.
+2. Add a chart of shadow average return / win rate / budget recommendation over time.
+3. Add a weekly trend persistence table if task logs are not enough for charting.
+
+### 2026-05-22 safe shadow budget candidate patch
+
+Focus: make the shadow budget recommendation operational without silently changing scheduled task parameters.
+
+Completed:
+
+- Weekly shadow review now looks up the active `LIVE_SHADOW_AUTOPILOT` task.
+- It builds a candidate parameter patch:
+  - current `limit` → recommended `limit`;
+  - `shadow_budget_advice` with action, label, reason and source review task;
+  - `applied=false`.
+- The patch is recorded in `task_parameter_audit_logs` as `live_shadow_budget_suggestion`.
+- The actual task parameters are **not** updated automatically.
+- Feishu weekly-review markdown includes the candidate patch line.
+- Task scheduler audit UI recognizes `live_shadow_budget_suggestion` and labels it as “仅候选不自动应用”.
+
+Next:
+
+1. Add a chart of shadow average return / win rate / budget recommendation over time.
+2. Add a weekly trend persistence table if task logs are not enough for charting.
+3. Provide a guarded one-click apply action later, still avoiding real broker orders.
+
+### 2026-05-22 live shadow trend chart
+
+Focus: make shadow validation direction visible over time.
+
+Completed:
+
+- Added `GET /api/live-trading/shadow-trend`:
+  - reads completed scheduler execution logs for `live_shadow_autopilot` and `live_shadow_weekly_review`;
+  - extracts average return, win rate, total PnL, evaluated samples and recommended budget;
+  - preserves the invariant that real order submissions sum to 0.
+- Live-trading page now includes a trend panel under the shadow outcome table:
+  - average return line;
+  - win-rate line;
+  - recommended-limit step line.
+- Smoke now validates the trend API shape and no-real-submission invariant.
+
+Next:
+
+1. Add a weekly trend persistence table if task logs are not enough for charting.
+2. Provide a guarded one-click apply action later, still avoiding real broker orders.
+3. Add a comparison overlay for paper-trading baseline trend once enough samples accumulate.

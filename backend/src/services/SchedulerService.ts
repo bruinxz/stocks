@@ -23,6 +23,9 @@ import { benchmarkIndexService } from './BenchmarkIndexService';
 import { automatedRecommendationLoopService } from './AutomatedRecommendationLoopService';
 import { recommendationTradeOutcomeService } from './RecommendationTradeOutcomeService';
 import { taskParameterAuditService } from './TaskParameterAuditService';
+import { liveTradingService } from '../live-trading/services/LiveTradingService';
+import { User } from '../models/User';
+import { openingReadinessService } from './OpeningReadinessService';
 import {
   AUTONOMOUS_PORTFOLIO_NAME,
   DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
@@ -129,6 +132,67 @@ function buildQuantParamMaintenanceLogSummary(result: any) {
       applied > 0
         ? `参数后验维护完成：应用 ${applied} 个生命周期动作（推广 ${promoted}、降级 ${degraded}、回滚 ${rolledBack}）。`
         : `参数后验维护完成：新增 ${created} 条、更新 ${updated} 条，完成收益 ${completed} 条，待完成 ${pending} 条。`,
+  };
+}
+
+function buildLiveShadowAutopilotLogSummary(result: any, outcomes: any) {
+  const runSummary = result?.summary || {};
+  const outcomeSummary = outcomes?.summary || {};
+  const skipped = Boolean(result?.skipped);
+  const readiness = result?.readiness || {};
+  return {
+    scenario: 'live_shadow_autopilot',
+    status: skipped ? 'skipped' : 'completed',
+    mode: result?.mode || 'shadow_only',
+    skipped,
+    skip_reason: result?.reason || '',
+    readiness_status: readiness?.status,
+    readiness_conclusion: readiness?.conclusion,
+    selected_count: Number(runSummary.selected_count || 0),
+    shadow_executed_count: Number(runSummary.shadow_executed_count || 0),
+    blocked_count: Number(runSummary.blocked_count || 0),
+    real_order_submitted: Number(runSummary.real_order_submitted || 0),
+    outcome_trade_count: Number(outcomeSummary.shadow_trade_count || 0),
+    outcome_evaluated_count: Number(outcomeSummary.evaluated_count || 0),
+    outcome_win_rate_pct: outcomeSummary.win_rate_pct,
+    outcome_avg_latest_return_pct: outcomeSummary.avg_latest_return_pct,
+    outcome_total_latest_pnl: outcomeSummary.total_latest_pnl,
+    paper_baseline_avg_return_pct: outcomeSummary.baseline?.paper_trading?.avg_latest_return_pct,
+    paper_baseline_win_rate_pct: outcomeSummary.baseline?.paper_trading?.win_rate_pct,
+    signal_baseline_avg_return_pct:
+      outcomeSummary.baseline?.signal_forward_returns?.avg_return_pct,
+    baseline_since: outcomeSummary.baseline?.since,
+    budget_action: outcomeSummary.budget_decision?.action,
+    budget_label: outcomeSummary.budget_decision?.label,
+    budget_recommended_limit: outcomeSummary.budget_decision?.recommended_limit,
+    budget_reason: outcomeSummary.budget_decision?.reason,
+    message:
+      outcomeSummary.conclusion ||
+      runSummary.conclusion ||
+      '无人影子执行完成；真实券商委托提交数为 0。',
+  };
+}
+
+function buildLiveShadowWeeklyReviewLogSummary(outcomes: any) {
+  const summary = outcomes?.summary || {};
+  return {
+    scenario: 'live_shadow_weekly_review',
+    status: 'completed',
+    shadow_trade_count: Number(summary.shadow_trade_count || 0),
+    evaluated_count: Number(summary.evaluated_count || 0),
+    open_count: Number(summary.open_count || 0),
+    win_rate_pct: summary.win_rate_pct,
+    avg_latest_return_pct: summary.avg_latest_return_pct,
+    total_latest_pnl: summary.total_latest_pnl,
+    real_order_submitted: Number(summary.real_order_submitted || 0),
+    paper_baseline_avg_return_pct: summary.baseline?.paper_trading?.avg_latest_return_pct,
+    signal_baseline_avg_return_pct: summary.baseline?.signal_forward_returns?.avg_return_pct,
+    baseline_since: summary.baseline?.since,
+    budget_action: summary.budget_decision?.action,
+    budget_label: summary.budget_decision?.label,
+    budget_recommended_limit: summary.budget_decision?.recommended_limit,
+    budget_reason: summary.budget_decision?.reason,
+    message: summary.conclusion || summary.budget_decision?.reason || '影子执行周度复盘完成。',
   };
 }
 
@@ -1039,6 +1103,207 @@ class SchedulerService {
 
         logger.info(
           `基准指数行情同步完成。指数 ${entries.length}，失败 ${failed}，写入/尝试 ${inserted} 条`
+        );
+      } else if (task.type === 'LIVE_SHADOW_AUTOPILOT') {
+        const username = parameters.username || 'lym';
+        const user = await User.findOne({ where: { username } });
+        if (!user) throw new Error(`未找到影子执行用户：${username}`);
+        const userId = Number((user as any).id);
+        const requireReadiness =
+          parameters.require_opening_readiness !== undefined
+            ? Boolean(parameters.require_opening_readiness)
+            : parameters.requireOpeningReadiness !== undefined
+            ? Boolean(parameters.requireOpeningReadiness)
+            : true;
+        const allowDegraded =
+          parameters.allow_degraded_readiness !== undefined
+            ? Boolean(parameters.allow_degraded_readiness)
+            : parameters.allowDegradedReadiness !== undefined
+            ? Boolean(parameters.allowDegradedReadiness)
+            : true;
+        const readiness = requireReadiness
+          ? await openingReadinessService.getReadiness({
+              user_id: userId,
+              username,
+              trade_date: parameters.trade_date || parameters.tradeDate || today,
+              factor_limit: this.toPositiveInt(parameters.factor_limit || parameters.factorLimit, 220, 1000),
+              use_cache: parameters.use_cache !== false && parameters.useCache !== false,
+              cache_ttl_ms: this.toPositiveInt(
+                parameters.cache_ttl_ms || parameters.cacheTtlMs,
+                90_000,
+                5 * 60 * 1000
+              ),
+            })
+          : null;
+        const readinessBlocked =
+          readiness && (readiness.status === 'blocked' || (!allowDegraded && readiness.status !== 'ready'));
+        let result: any;
+        if (readinessBlocked) {
+          result = {
+            generated_at: new Date().toISOString(),
+            mode: 'shadow_only',
+            skipped: true,
+            reason:
+              readiness?.conclusion ||
+              '开盘就绪门禁未通过，本轮不生成新的影子成交样本。',
+            readiness: readiness
+              ? {
+                  status: readiness.status,
+                  status_label: readiness.status_label,
+                  conclusion: readiness.conclusion,
+                  buy_gate: readiness.buy_gate,
+                }
+              : null,
+            summary: {
+              selected_count: 0,
+              shadow_executed_count: 0,
+              blocked_count: 0,
+              real_order_submitted: 0,
+              conclusion:
+                readiness?.conclusion ||
+                '开盘就绪门禁未通过，本轮不生成新的影子成交样本。',
+            },
+          };
+        } else {
+          result = await liveTradingService.runShadowAutopilot(userId, {
+            limit: this.toPositiveInt(parameters.limit || parameters.shadow_limit, 2, 10),
+            source: parameters.source || task.name || 'scheduled_live_shadow_autopilot',
+            dry_run:
+              parameters.dry_run !== undefined
+                ? Boolean(parameters.dry_run)
+                : parameters.dryRun !== undefined
+                ? Boolean(parameters.dryRun)
+                : false,
+          });
+          result.readiness = readiness
+            ? {
+                status: readiness.status,
+                status_label: readiness.status_label,
+                conclusion: readiness.conclusion,
+                buy_gate: readiness.buy_gate,
+              }
+            : null;
+        }
+        const outcomes = await liveTradingService.getShadowAutopilotOutcomes(userId, {
+          limit: this.toPositiveInt(parameters.outcome_limit || parameters.outcomeLimit, 30, 100),
+          horizons: Array.isArray(parameters.horizons)
+            ? parameters.horizons.map((item: any) => Number(item)).filter(Number.isFinite)
+            : [1, 3, 5],
+        });
+        const resultSummary = buildLiveShadowAutopilotLogSummary(result, outcomes);
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: Number(result.summary?.selected_count || 0),
+          completed_items: Number(result.summary?.shadow_executed_count || 0),
+          failed_items: Number(result.summary?.blocked_count || 0),
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: null,
+          result_summary: resultSummary,
+        });
+
+        if (parameters.report_to_feishu !== false && parameters.reportToFeishu !== false) {
+          await feishuTaskReportService.reportTaskExecutionLog(executionLog, {
+            record_type: parameters.record_type || parameters.recordType || '无人影子执行收益闭环',
+            task_type: 'LIVE_SHADOW_AUTOPILOT',
+            result: resultSummary,
+          });
+        }
+
+        logger.info(
+          `无人影子执行定时任务完成。影子成交 ${
+            result.summary?.shadow_executed_count || 0
+          }，真实提交 ${result.summary?.real_order_submitted || 0}，闭环样本 ${
+            outcomes.summary?.shadow_trade_count || 0
+          }`
+        );
+      } else if (task.type === 'LIVE_SHADOW_WEEKLY_REVIEW') {
+        const username = parameters.username || 'lym';
+        const user = await User.findOne({ where: { username } });
+        if (!user) throw new Error(`未找到影子执行用户：${username}`);
+        const shadowTask = await ScheduledTask.findOne({
+          where: { type: 'LIVE_SHADOW_AUTOPILOT', is_active: true },
+          order: [['id', 'ASC']],
+        });
+        const outcomes = await liveTradingService.getShadowAutopilotOutcomes(Number((user as any).id), {
+          limit: this.toPositiveInt(parameters.outcome_limit || parameters.outcomeLimit, 80, 200),
+          horizons: Array.isArray(parameters.horizons)
+            ? parameters.horizons.map((item: any) => Number(item)).filter(Number.isFinite)
+            : [1, 3, 5],
+        });
+        const resultSummary: any = buildLiveShadowWeeklyReviewLogSummary(outcomes);
+        if (shadowTask && outcomes.summary?.budget_decision) {
+          const beforeParameters = { ...((shadowTask as any).parameters || {}) };
+          const recommendedLimit = this.toPositiveInt(
+            outcomes.summary.budget_decision.recommended_limit,
+            Number(beforeParameters.limit || 2),
+            10
+          );
+          const suggestedParameters = {
+            ...beforeParameters,
+            limit: recommendedLimit,
+            shadow_budget_advice: {
+              generated_at: new Date().toISOString(),
+              source_task_id: Number(task.id),
+              action: outcomes.summary.budget_decision.action,
+              label: outcomes.summary.budget_decision.label,
+              reason: outcomes.summary.budget_decision.reason,
+              current_limit: Number(beforeParameters.limit || 0),
+              recommended_limit: recommendedLimit,
+              applied: false,
+              note: '仅记录候选补丁，不自动修改定时任务参数。',
+            },
+          };
+          const changedKeys = taskParameterAuditService.buildChangedKeys(
+            beforeParameters,
+            suggestedParameters,
+            ['limit', 'shadow_budget_advice']
+          );
+          if (changedKeys.length > 0) {
+            await taskParameterAuditService.record({
+              task: shadowTask,
+              event_type: 'live_shadow_budget_suggestion',
+              before_parameters: beforeParameters,
+              after_parameters: suggestedParameters,
+              changed_keys: changedKeys,
+              metadata: {
+                source: 'live_shadow_weekly_review',
+                review_task_id: Number(task.id),
+                outcome_summary: resultSummary,
+                auto_applied: false,
+              },
+            });
+          }
+          resultSummary.suggested_task_patch = {
+            target_task_id: Number((shadowTask as any).id),
+            target_task_name: (shadowTask as any).name,
+            changed_keys: changedKeys,
+            before_limit: beforeParameters.limit,
+            suggested_limit: recommendedLimit,
+            auto_applied: false,
+          };
+        }
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: Number(outcomes.summary?.shadow_trade_count || 0),
+          completed_items: Number(outcomes.summary?.evaluated_count || 0),
+          failed_items: 0,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: null,
+          result_summary: resultSummary,
+        });
+
+        if (parameters.report_to_feishu !== false && parameters.reportToFeishu !== false) {
+          await feishuTaskReportService.reportTaskExecutionLog(executionLog, {
+            record_type: parameters.record_type || parameters.recordType || '影子执行周度复盘',
+            task_type: 'LIVE_SHADOW_WEEKLY_REVIEW',
+            result: resultSummary,
+          });
+        }
+
+        logger.info(
+          `影子执行周度复盘完成。样本 ${outcomes.summary?.shadow_trade_count || 0}，已评估 ${
+            outcomes.summary?.evaluated_count || 0
+          }，建议 ${outcomes.summary?.budget_decision?.label || '-'}`
         );
       } else if (task.type === 'SIGNAL_PERFORMANCE_REFRESH') {
         const commonPerformanceParams = {
@@ -2207,6 +2472,41 @@ class SchedulerService {
         },
       },
       {
+        name: '实盘影子执行闭环',
+        type: 'LIVE_SHADOW_AUTOPILOT',
+        cron_expression: '58 9 * * 1-5',
+        is_active: true,
+        parameters: {
+          username: 'lym',
+          limit: 2,
+          outcome_limit: 30,
+          horizons: [1, 3, 5],
+          source: 'scheduled_open_shadow_autopilot',
+          require_opening_readiness: true,
+          allow_degraded_readiness: true,
+          factor_limit: 220,
+          cache_ttl_ms: 90_000,
+          dry_run: false,
+          report_to_feishu: true,
+          notify_to_feishu_bot: false,
+          record_type: '实盘影子执行闭环',
+        },
+      },
+      {
+        name: '影子执行周度复盘',
+        type: 'LIVE_SHADOW_WEEKLY_REVIEW',
+        cron_expression: '20 16 * * 5',
+        is_active: true,
+        parameters: {
+          username: 'lym',
+          outcome_limit: 80,
+          horizons: [1, 3, 5],
+          report_to_feishu: true,
+          notify_to_feishu_bot: false,
+          record_type: '影子执行周度复盘',
+        },
+      },
+      {
         name: '量化参数后验维护',
         type: 'QUANT_PARAM_MAINTENANCE',
         cron_expression: '45 16 * * 1-5',
@@ -2928,6 +3228,53 @@ class SchedulerService {
           'limit',
           'source',
           'batch_size',
+          'report_to_feishu',
+          'notify_to_feishu_bot',
+          'record_type',
+        ]) {
+          if (nextParams[key] === undefined && (taskData.parameters as any)[key] !== undefined) {
+            nextParams[key] = (taskData.parameters as any)[key];
+          }
+        }
+        if (JSON.stringify(nextParams) !== JSON.stringify(params)) {
+          patch.parameters = nextParams;
+        }
+      }
+
+      if (taskData.type === 'LIVE_SHADOW_AUTOPILOT') {
+        const params = patch.parameters || task.parameters || {};
+        const nextParams = { ...taskData.parameters, ...params };
+        for (const key of [
+          'username',
+          'limit',
+          'outcome_limit',
+          'horizons',
+          'source',
+          'require_opening_readiness',
+          'allow_degraded_readiness',
+          'factor_limit',
+          'cache_ttl_ms',
+          'dry_run',
+          'report_to_feishu',
+          'notify_to_feishu_bot',
+          'record_type',
+        ]) {
+          if (nextParams[key] === undefined && (taskData.parameters as any)[key] !== undefined) {
+            nextParams[key] = (taskData.parameters as any)[key];
+          }
+        }
+        if (JSON.stringify(nextParams) !== JSON.stringify(params)) {
+          patch.parameters = nextParams;
+        }
+      }
+
+      if (taskData.type === 'LIVE_SHADOW_WEEKLY_REVIEW') {
+        const params = patch.parameters || task.parameters || {};
+        const nextParams = { ...taskData.parameters, ...params };
+        for (const key of [
+          'username',
+          'outcome_limit',
+          'horizons',
           'report_to_feishu',
           'notify_to_feishu_bot',
           'record_type',

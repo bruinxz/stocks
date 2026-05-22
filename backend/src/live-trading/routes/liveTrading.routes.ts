@@ -14,6 +14,8 @@ router.get('/reconciliation', liveTradingController.getReconciliation.bind(liveT
 router.get('/quotes', liveTradingController.getQuotes.bind(liveTradingController));
 router.get('/order-drafts', liveTradingController.listDrafts.bind(liveTradingController));
 router.get('/order-draft-candidates', liveTradingController.getDraftCandidates.bind(liveTradingController));
+router.get('/shadow-outcomes', liveTradingController.getShadowOutcomes.bind(liveTradingController));
+router.get('/shadow-trend', liveTradingController.getShadowTrend.bind(liveTradingController));
 router.post('/order-drafts', liveTradingController.createDraft.bind(liveTradingController));
 router.post('/order-drafts/from-candidate', liveTradingController.createDraftFromCandidate.bind(liveTradingController));
 router.post('/order-drafts/shadow-autopilot', liveTradingController.runShadowAutopilot.bind(liveTradingController));

@@ -10,6 +10,10 @@ import { PaperTradingPortfolio } from '../../models/PaperTradingPortfolio';
 import { PaperTradingPosition } from '../../models/PaperTradingPosition';
 import { PaperTradingTrade } from '../../models/PaperTradingTrade';
 import { Stock } from '../../models/Stock';
+import { DailyBar } from '../../models/DailyBar';
+import { RealtimeQuote } from '../../models/RealtimeQuote';
+import { AIInvestmentSignal } from '../../models/AIInvestmentSignal';
+import { TaskExecutionLog } from '../../models/TaskExecutionLog';
 import { MockBrokerGateway } from '../brokers/MockBrokerGateway';
 import { EnvReadonlyBrokerGateway } from '../brokers/EnvReadonlyBrokerGateway';
 import { BrokerGateway } from '../brokers/BrokerGateway';
@@ -74,6 +78,54 @@ function envBool(name: string, fallback = false): boolean {
   const value = process.env[name];
   if (value === undefined || value === null || value === '') return fallback;
   return ['true', '1', 'yes', 'y', 'on'].includes(String(value).trim().toLowerCase());
+}
+
+function numberOrNull(value: any): number | null {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+function priceOrNull(value: any): number | null {
+  const num = numberOrNull(value);
+  return num !== null && num > 0 ? num : null;
+}
+
+function roundNullable(value: any, digits = 2): number | null {
+  const num = numberOrNull(value);
+  if (num === null) return null;
+  return round(num, digits);
+}
+
+function localDateKey(value?: string | Date | null): string {
+  if (!value) return '';
+  const date = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(date.getTime())) return '';
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function startOfLocalDay(value: string | Date): Date {
+  const date = value instanceof Date ? new Date(value) : new Date(value);
+  if (!Number.isFinite(date.getTime())) return new Date(0);
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function asPlainObject(value: any): Record<string, any> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value;
+}
+
+function paperTradingMetaForPortfolio(
+  metadata: Record<string, any>,
+  portfolio_id?: number
+): Record<string, any> {
+  const legacy = asPlainObject(metadata.paper_trading);
+  const byPortfolio = asPlainObject(metadata.paper_trading_by_portfolio);
+  const keyed = portfolio_id ? asPlainObject(byPortfolio[String(portfolio_id)]) : {};
+  return Object.keys(keyed).length > 0 ? keyed : legacy;
 }
 
 export class LiveTradingService {
@@ -651,6 +703,174 @@ export class LiveTradingService {
         conclusion: executed.length
           ? `已沉淀 ${executed.length} 条无人影子执行记录，用于后续和真实/模拟收益偏差对比。`
           : '暂无无人影子执行记录；可先从策略候选生成影子成交闭环。',
+      },
+    };
+  }
+
+  async getShadowAutopilotOutcomes(
+    user_id: number,
+    options: { limit?: number; horizons?: number[] } = {}
+  ) {
+    const limit = Math.min(Math.max(Number(options.limit || 20), 1), 100);
+    const horizons = (options.horizons || [1, 3, 5])
+      .map(value => Math.max(1, Math.min(30, Math.floor(Number(value)))))
+      .filter(Boolean)
+      .slice(0, 6);
+    const uniqueHorizons = horizons.length ? Array.from(new Set(horizons)) : [1, 3, 5];
+    const rows = await LiveOrderDraft.findAll({
+      where: {
+        user_id,
+        source_type: 'shadow_autopilot',
+        status: 'shadow_executed',
+      },
+      order: [['updated_at', 'DESC']],
+      limit,
+    });
+
+    const items = await Promise.all(
+      rows.map(async row => this.buildShadowOutcomeItem(this.toPlain(row), uniqueHorizons))
+    );
+    const evaluated = items.filter(item => item.evaluable);
+    const wins = evaluated.filter(item => Number(item.latest_return_pct || 0) > 0);
+    const totalAmount = items.reduce((sum, item) => sum + toNumber(item.shadow_amount), 0);
+    const totalPnl = evaluated.reduce((sum, item) => sum + toNumber(item.latest_pnl), 0);
+    const avgLatestReturn = evaluated.length
+      ? evaluated.reduce((sum, item) => sum + toNumber(item.latest_return_pct), 0) /
+        evaluated.length
+      : null;
+    const winRate = evaluated.length ? (wins.length / evaluated.length) * 100 : null;
+    const best = evaluated
+      .slice()
+      .sort((a, b) => toNumber(b.latest_return_pct) - toNumber(a.latest_return_pct))[0] || null;
+    const worst = evaluated
+      .slice()
+      .sort((a, b) => toNumber(a.latest_return_pct) - toNumber(b.latest_return_pct))[0] || null;
+    const horizonSummary = uniqueHorizons.map(days => {
+      const key = `${days}d`;
+      const rowsWithHorizon = items.filter(item => item.horizon_returns?.[key]?.evaluable);
+      const horizonWins = rowsWithHorizon.filter(
+        item => Number(item.horizon_returns?.[key]?.return_pct || 0) > 0
+      );
+      return {
+        horizon_days: days,
+        evaluated_count: rowsWithHorizon.length,
+        avg_return_pct: rowsWithHorizon.length
+          ? round(
+              rowsWithHorizon.reduce(
+                (sum, item) => sum + toNumber(item.horizon_returns?.[key]?.return_pct),
+                0
+              ) / rowsWithHorizon.length,
+              4
+            )
+          : null,
+        win_rate_pct: rowsWithHorizon.length
+          ? round((horizonWins.length / rowsWithHorizon.length) * 100, 2)
+          : null,
+      };
+    });
+    const baseline = await this.getShadowOutcomeBaseline(user_id, {
+      since: items
+        .map(item => item.entry_time)
+        .filter(Boolean)
+        .sort()[0],
+      limit: 500,
+    });
+
+    const conclusion = this.buildShadowOutcomeConclusion({
+      total_count: items.length,
+      evaluated_count: evaluated.length,
+      avg_latest_return_pct: avgLatestReturn,
+      win_rate_pct: winRate,
+      baseline,
+    });
+    const budgetDecision = this.buildShadowBudgetDecision({
+      total_count: items.length,
+      evaluated_count: evaluated.length,
+      avg_latest_return_pct: avgLatestReturn,
+      win_rate_pct: winRate,
+      baseline,
+    });
+
+    return {
+      generated_at: new Date().toISOString(),
+      horizons: uniqueHorizons,
+      items,
+      summary: {
+        shadow_trade_count: items.length,
+        evaluated_count: evaluated.length,
+        open_count: items.length - evaluated.length,
+        win_count: wins.length,
+        loss_count: evaluated.length - wins.length,
+        win_rate_pct: roundNullable(winRate, 2),
+        avg_latest_return_pct: roundNullable(avgLatestReturn, 4),
+        total_shadow_amount: round(totalAmount, 2),
+        total_latest_pnl: round(totalPnl, 2),
+        real_order_submitted: 0,
+        best,
+        worst,
+        horizon_summary: horizonSummary,
+        baseline,
+        budget_decision: budgetDecision,
+        conclusion,
+      },
+    };
+  }
+
+  async getShadowAutopilotTrend(user_id: number, options: { limit?: number } = {}) {
+    const limit = Math.min(Math.max(Number(options.limit || 12), 2), 60);
+    const rows = await TaskExecutionLog.findAll({
+      where: {
+        status: 'COMPLETED',
+        started_at: { [Op.gte]: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000) },
+      },
+      order: [['completed_at', 'DESC']],
+      limit: Math.max(limit * 4, 40),
+      raw: true,
+    }).catch(() => []);
+    const points = (rows as any[])
+      .filter(row =>
+        ['live_shadow_autopilot', 'live_shadow_weekly_review'].includes(
+          String(asPlainObject(row.result_summary).scenario || '')
+        )
+      )
+      .slice(0, limit)
+      .slice()
+      .reverse()
+      .map(row => {
+        const summary = asPlainObject(row.result_summary);
+        return {
+          log_id: row.id,
+          task_name: row.task_name,
+          scenario: summary.scenario,
+          completed_at: row.completed_at || row.updated_at || row.created_at,
+          date: localDateKey(row.completed_at || row.updated_at || row.created_at),
+          avg_return_pct: numberOrNull(
+            summary.outcome_avg_latest_return_pct ?? summary.avg_latest_return_pct
+          ),
+          win_rate_pct: numberOrNull(summary.outcome_win_rate_pct ?? summary.win_rate_pct),
+          total_pnl: numberOrNull(summary.outcome_total_latest_pnl ?? summary.total_latest_pnl),
+          evaluated_count: toNumber(summary.outcome_evaluated_count ?? summary.evaluated_count),
+          shadow_trade_count: toNumber(summary.outcome_trade_count ?? summary.shadow_trade_count),
+          recommended_limit: numberOrNull(summary.budget_recommended_limit),
+          budget_label: summary.budget_label || '',
+          real_order_submitted: toNumber(summary.real_order_submitted),
+        };
+      });
+    const latest = points[points.length - 1] || null;
+    return {
+      generated_at: new Date().toISOString(),
+      user_id,
+      points,
+      summary: {
+        point_count: points.length,
+        latest_avg_return_pct: latest?.avg_return_pct ?? null,
+        latest_win_rate_pct: latest?.win_rate_pct ?? null,
+        latest_recommended_limit: latest?.recommended_limit ?? null,
+        latest_budget_label: latest?.budget_label || '',
+        real_order_submitted: points.reduce((sum, item) => sum + toNumber(item.real_order_submitted), 0),
+        conclusion: points.length >= 2
+          ? '影子执行趋势已可观察，用于判断预算是否应继续小流量、降温或扩大。'
+          : '影子执行趋势样本仍少，等待更多定时任务执行日志。',
       },
     };
   }
@@ -1338,6 +1558,328 @@ export class LiveTradingService {
     return `实盘仓位低于策略模拟目标，权重差 ${round(candidate.weight_gap_pct, 2)}%；来源账户：${
       accounts || '策略模拟盘'
     }，${quoteText}。`;
+  }
+
+  private async buildShadowOutcomeItem(draft: any, horizons: number[]) {
+    const metadata = draft.metadata || {};
+    const shadowExecution = metadata.shadow_execution || {};
+    const symbol = normalizeSymbol(draft.symbol);
+    const stock = await Stock.findOne({
+      where: { symbol: { [Op.in]: [symbol, symbol.replace('.', '')] } },
+    });
+    const entryPrice =
+      priceOrNull(shadowExecution.fill_price) ||
+      priceOrNull(draft.limit_price) ||
+      priceOrNull(draft.quote_snapshot?.current_price);
+    const entryTime = shadowExecution.executed_at || draft.updated_at || draft.created_at;
+    const entryDate = startOfLocalDay(entryTime);
+    const latestQuote = await RealtimeQuote.findOne({
+      where: { symbol },
+      order: [['quote_time', 'DESC']],
+      raw: true,
+    });
+    const latestDailyBar = stock?.id
+      ? await DailyBar.findOne({
+          where: { stock_id: stock.id },
+          order: [['time', 'DESC']],
+          raw: true,
+        })
+      : null;
+    const quotePriceValue = priceOrNull((latestQuote as any)?.current_price);
+    const barCloseValue = priceOrNull((latestDailyBar as any)?.close);
+    const latestPrice = quotePriceValue || barCloseValue || null;
+    const latestPriceTime = quotePriceValue
+      ? (latestQuote as any)?.quote_time
+      : (latestDailyBar as any)?.time;
+    const quantity = toNumber(shadowExecution.quantity || draft.quantity);
+    const shadowAmount = round(toNumber(shadowExecution.amount) || (entryPrice || 0) * quantity, 2);
+    const latestReturnPct =
+      entryPrice && latestPrice ? round(((latestPrice - entryPrice) / entryPrice) * 100, 4) : null;
+    const latestPnl =
+      entryPrice && latestPrice && quantity ? round((latestPrice - entryPrice) * quantity, 2) : null;
+    const barsAfterEntry = stock?.id
+      ? await DailyBar.findAll({
+          where: {
+            stock_id: stock.id,
+            time: { [Op.gte]: entryDate },
+          },
+          order: [['time', 'ASC']],
+          limit: Math.max(...horizons) + 8,
+          raw: true,
+        })
+      : [];
+    const normalizedBars = (barsAfterEntry as any[]).filter(
+      bar => priceOrNull(bar.close) && localDateKey(bar.time) >= localDateKey(entryDate)
+    );
+    const horizonReturns: Record<string, any> = {};
+    for (const horizon of horizons) {
+      const targetBar = normalizedBars[horizon] || null;
+      const targetPrice = priceOrNull(targetBar?.close);
+      const returnPct =
+        entryPrice && targetPrice ? round(((targetPrice - entryPrice) / entryPrice) * 100, 4) : null;
+      horizonReturns[`${horizon}d`] = {
+        horizon_days: horizon,
+        target_date: targetBar?.time ? localDateKey(targetBar.time) : null,
+        price: targetPrice,
+        return_pct: returnPct,
+        pnl: entryPrice && targetPrice && quantity ? round((targetPrice - entryPrice) * quantity, 2) : null,
+        evaluable: returnPct !== null,
+      };
+    }
+    const firstHorizonKey = `${horizons[0] || 1}d`;
+    const firstHorizonEvaluable = Boolean(horizonReturns[firstHorizonKey]?.evaluable);
+    const latestEvaluable = latestReturnPct !== null;
+    const evaluable = latestEvaluable || firstHorizonEvaluable;
+    const outcomeStatus = !entryPrice
+      ? 'missing_entry_price'
+      : !latestPrice && !firstHorizonEvaluable
+      ? 'waiting_market_data'
+      : evaluable
+      ? 'evaluated'
+      : 'open';
+
+    return {
+      id: draft.id,
+      symbol,
+      name: draft.name || (stock as any)?.name || symbol,
+      side: draft.side,
+      quantity,
+      entry_price: entryPrice,
+      shadow_amount: shadowAmount,
+      entry_time: entryTime,
+      entry_date: localDateKey(entryTime),
+      latest_price: latestPrice,
+      latest_price_time: latestPriceTime || null,
+      latest_return_pct: latestReturnPct,
+      latest_pnl: latestPnl,
+      horizon_returns: horizonReturns,
+      evaluable,
+      outcome_status: outcomeStatus,
+      status_label:
+        outcomeStatus === 'evaluated'
+          ? '已评估'
+          : outcomeStatus === 'waiting_market_data'
+          ? '等行情'
+          : outcomeStatus === 'missing_entry_price'
+          ? '缺成交价'
+          : '观察中',
+      win: latestReturnPct !== null ? latestReturnPct > 0 : null,
+      source_id: draft.source_id,
+      rationale: draft.rationale,
+      real_order_submitted: false,
+    };
+  }
+
+  private buildShadowOutcomeConclusion(input: {
+    total_count: number;
+    evaluated_count: number;
+    avg_latest_return_pct: number | null;
+    win_rate_pct: number | null;
+    baseline?: any;
+  }) {
+    if (input.total_count === 0) {
+      return '暂无无人影子成交样本；先运行影子执行，系统会记录假设成交但不会提交真实订单。';
+    }
+    const baseline = input.baseline || {};
+    const paperAvg = numberOrNull(baseline.paper_trading?.avg_latest_return_pct);
+    const excessText =
+      paperAvg !== null && input.avg_latest_return_pct !== null
+        ? `，相对模拟盘均收 ${round(input.avg_latest_return_pct - paperAvg, 2)}pct`
+        : '';
+    if (input.evaluated_count < 5) {
+      return `已评估 ${input.evaluated_count}/${input.total_count} 条影子样本，样本仍少，先继续积累，不应放大到真实资金自动执行。`;
+    }
+    const avg = Number(input.avg_latest_return_pct || 0);
+    const winRate = Number(input.win_rate_pct || 0);
+    if (avg > 0 && winRate >= 50) {
+      return `影子执行初步有效：平均收益 ${round(avg, 2)}%，胜率 ${round(winRate, 1)}%${excessText}；下一步继续扩大影子样本并比较基准。`;
+    }
+    if (avg < 0) {
+      return `影子执行暂未证明有效：平均收益 ${round(avg, 2)}%，胜率 ${round(winRate, 1)}%${excessText}；保持真实下单阻断，优先复盘策略来源。`;
+    }
+    return `影子执行收益接近持平：平均收益 ${round(avg, 2)}%，胜率 ${round(winRate, 1)}%${excessText}；继续观察 1/3/5 日收益。`;
+  }
+
+  private buildShadowBudgetDecision(input: {
+    total_count: number;
+    evaluated_count: number;
+    avg_latest_return_pct: number | null;
+    win_rate_pct: number | null;
+    baseline?: any;
+  }) {
+    const avg = numberOrNull(input.avg_latest_return_pct);
+    const winRate = numberOrNull(input.win_rate_pct);
+    const paperAvg = numberOrNull(input.baseline?.paper_trading?.avg_latest_return_pct);
+    const excessPct = avg !== null && paperAvg !== null ? round(avg - paperAvg, 4) : null;
+    if (input.total_count === 0 || input.evaluated_count < 5) {
+      return {
+        action: 'continue_collecting',
+        label: '继续影子验证',
+        level: 'watch',
+        recommended_limit: 2,
+        reason: `可评估样本 ${input.evaluated_count}/${Math.max(input.total_count, 1)}，还不足以判断有效性。`,
+      };
+    }
+    if ((avg !== null && avg < -1.5) || (winRate !== null && winRate < 35)) {
+      return {
+        action: 'cool_down',
+        label: '降低影子预算',
+        level: 'risk',
+        recommended_limit: 1,
+        reason: `影子收益偏弱：平均 ${avg !== null ? round(avg, 2) : '--'}%，胜率 ${
+          winRate !== null ? round(winRate, 1) : '--'
+        }%，先减少新增样本并复盘来源。`,
+      };
+    }
+    if (
+      avg !== null &&
+      winRate !== null &&
+      avg > 0.8 &&
+      winRate >= 55 &&
+      (excessPct === null || excessPct >= 0)
+    ) {
+      return {
+        action: 'expand_shadow',
+        label: '可小幅扩大',
+        level: 'ok',
+        recommended_limit: 3,
+        reason: `影子样本初步跑赢：平均 ${round(avg, 2)}%，胜率 ${round(
+          winRate,
+          1
+        )}%${excessPct !== null ? `，相对模拟盘 ${round(excessPct, 2)}pct` : ''}。`,
+      };
+    }
+    return {
+      action: 'continue_shadow',
+      label: '继续小流量',
+      level: 'watch',
+      recommended_limit: 2,
+      reason: `结果未到扩大阈值：平均 ${avg !== null ? round(avg, 2) : '--'}%，胜率 ${
+        winRate !== null ? round(winRate, 1) : '--'
+      }%。`,
+    };
+  }
+
+  private async getShadowOutcomeBaseline(
+    user_id: number,
+    options: { since?: string | Date; limit?: number } = {}
+  ) {
+    const since = options.since ? new Date(options.since) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const limit = Math.min(Math.max(Number(options.limit || 500), 1), 2000);
+    const portfolios = await PaperTradingPortfolio.findAll({
+      where: {
+        user_id,
+        name: { [Op.in]: PAPER_PORTFOLIO_FAMILIES.map(item => item.name) },
+      },
+      order: [['id', 'ASC']],
+      limit: 50,
+      raw: true,
+    });
+    const portfolioIds = portfolios.map((item: any) => Number(item.id)).filter(Boolean);
+    const buyTrades = portfolioIds.length
+      ? await PaperTradingTrade.findAll({
+          where: {
+            portfolio_id: { [Op.in]: portfolioIds },
+            direction: 'BUY',
+            created_at: { [Op.gte]: Number.isFinite(since.getTime()) ? since : new Date(0) },
+          },
+          order: [['created_at', 'DESC']],
+          limit,
+          raw: true,
+        })
+      : [];
+    const paperItems = await Promise.all(
+      (buyTrades as any[]).map(async trade => {
+        const latestPrice = await this.getLatestComparablePrice(normalizeSymbol(trade.symbol));
+        const entryPrice = priceOrNull(trade.execute_price);
+        const quantity = toNumber(trade.quantity);
+        const returnPct =
+          entryPrice && latestPrice?.price
+            ? round(((latestPrice.price - entryPrice) / entryPrice) * 100, 4)
+            : null;
+        return {
+          symbol: normalizeSymbol(trade.symbol),
+          name: trade.name,
+          portfolio_id: Number(trade.portfolio_id),
+          entry_price: entryPrice,
+          latest_price: latestPrice?.price || null,
+          return_pct: returnPct,
+          pnl: entryPrice && latestPrice?.price && quantity ? round((latestPrice.price - entryPrice) * quantity, 2) : null,
+          entry_time: trade.created_at,
+        };
+      })
+    );
+    const evaluatedPaper = paperItems.filter(item => item.return_pct !== null);
+    const paperWinCount = evaluatedPaper.filter(item => Number(item.return_pct || 0) > 0).length;
+
+    const signals = await AIInvestmentSignal.findAll({
+      where: {
+        updated_at: { [Op.gte]: Number.isFinite(since.getTime()) ? since : new Date(0) },
+        verification_status: { [Op.in]: ['partial', 'completed'] },
+      },
+      order: [['updated_at', 'DESC']],
+      limit,
+      raw: true,
+    }).catch(() => []);
+    const signalReturns = (signals as any[])
+      .map(signal => {
+        const forward = asPlainObject(signal.forward_returns);
+        const preferred =
+          numberOrNull(forward['5d']?.return_pct) ??
+          numberOrNull(forward['3d']?.return_pct) ??
+          numberOrNull(forward['1d']?.return_pct);
+        return preferred;
+      })
+      .filter((value): value is number => value !== null);
+    const signalWinCount = signalReturns.filter(value => value > 0).length;
+
+    return {
+      since: localDateKey(since),
+      paper_trading: {
+        sample_count: paperItems.length,
+        evaluated_count: evaluatedPaper.length,
+        avg_latest_return_pct: evaluatedPaper.length
+          ? round(
+              evaluatedPaper.reduce((sum, item) => sum + Number(item.return_pct || 0), 0) /
+                evaluatedPaper.length,
+              4
+            )
+          : null,
+        win_rate_pct: evaluatedPaper.length ? round((paperWinCount / evaluatedPaper.length) * 100, 2) : null,
+        total_pnl: round(evaluatedPaper.reduce((sum, item) => sum + toNumber(item.pnl), 0), 2),
+      },
+      signal_forward_returns: {
+        sample_count: signalReturns.length,
+        avg_return_pct: signalReturns.length
+          ? round(signalReturns.reduce((sum, value) => sum + value, 0) / signalReturns.length, 4)
+          : null,
+        win_rate_pct: signalReturns.length ? round((signalWinCount / signalReturns.length) * 100, 2) : null,
+      },
+    };
+  }
+
+  private async getLatestComparablePrice(symbol: string): Promise<{ price: number; time?: any } | null> {
+    const normalized = normalizeSymbol(symbol);
+    const quote = await RealtimeQuote.findOne({
+      where: { symbol: normalized },
+      order: [['quote_time', 'DESC']],
+      raw: true,
+    }).catch(() => null);
+    const quotePx = priceOrNull((quote as any)?.current_price);
+    if (quotePx) return { price: quotePx, time: (quote as any)?.quote_time };
+    const stock = await Stock.findOne({
+      where: { symbol: { [Op.in]: [normalized, normalized.replace('.', '')] } },
+      raw: true,
+    }).catch(() => null);
+    const bar = (stock as any)?.id
+      ? await DailyBar.findOne({
+          where: { stock_id: (stock as any).id },
+          order: [['time', 'DESC']],
+          raw: true,
+        }).catch(() => null)
+      : null;
+    const barPx = priceOrNull((bar as any)?.close);
+    return barPx ? { price: barPx, time: (bar as any)?.time } : null;
   }
 
   private async audit(input: {

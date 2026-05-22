@@ -21,6 +21,15 @@ import {
   message,
 } from 'antd';
 import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip as RechartsTooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
+import {
   AuditOutlined,
   BranchesOutlined,
   BulbOutlined,
@@ -189,11 +198,92 @@ interface LiveDraftCandidateDashboard {
   };
 }
 
+interface ShadowOutcomeDashboard {
+  generated_at: string;
+  horizons: number[];
+  items: any[];
+  summary: {
+    shadow_trade_count: number;
+    evaluated_count: number;
+    open_count: number;
+    win_count: number;
+    loss_count: number;
+    win_rate_pct?: number | null;
+    avg_latest_return_pct?: number | null;
+    total_shadow_amount: number;
+    total_latest_pnl: number;
+    real_order_submitted: number;
+    baseline?: {
+      since?: string;
+      paper_trading?: {
+        sample_count: number;
+        evaluated_count: number;
+        avg_latest_return_pct?: number | null;
+        win_rate_pct?: number | null;
+        total_pnl?: number | null;
+      };
+      signal_forward_returns?: {
+        sample_count: number;
+        avg_return_pct?: number | null;
+        win_rate_pct?: number | null;
+      };
+    };
+    budget_decision?: {
+      action: string;
+      label: string;
+      level: string;
+      recommended_limit: number;
+      reason: string;
+    };
+    horizon_summary: Array<{
+      horizon_days: number;
+      evaluated_count: number;
+      avg_return_pct?: number | null;
+      win_rate_pct?: number | null;
+    }>;
+    conclusion: string;
+  };
+}
+
+interface ShadowTrendDashboard {
+  generated_at: string;
+  points: Array<{
+    log_id: number;
+    task_name: string;
+    scenario: string;
+    completed_at: string;
+    date: string;
+    avg_return_pct?: number | null;
+    win_rate_pct?: number | null;
+    total_pnl?: number | null;
+    evaluated_count: number;
+    shadow_trade_count: number;
+    recommended_limit?: number | null;
+    budget_label?: string;
+    real_order_submitted: number;
+  }>;
+  summary: {
+    point_count: number;
+    latest_avg_return_pct?: number | null;
+    latest_win_rate_pct?: number | null;
+    latest_recommended_limit?: number | null;
+    latest_budget_label?: string;
+    real_order_submitted: number;
+    conclusion: string;
+  };
+}
+
 const formatMoney = (value?: number | null) =>
   `¥${Number(value || 0).toLocaleString(undefined, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
+const formatPct = (value?: number | null, digits = 2) =>
+  value === null || value === undefined || Number.isNaN(Number(value))
+    ? '--'
+    : `${Number(value) > 0 ? '+' : ''}${Number(value).toFixed(digits)}%`;
+const pnlTextType = (value?: number | null) =>
+  Number(value || 0) > 0 ? 'success' : Number(value || 0) < 0 ? 'danger' : 'secondary';
 const statusColor: Record<string, string> = {
   ready: 'green',
   partial: 'gold',
@@ -230,14 +320,29 @@ const matchColor: Record<string, string> = {
   live_overweight: 'orange',
   live_underweight: 'gold',
 };
+const shadowOutcomeColor: Record<string, string> = {
+  evaluated: 'green',
+  open: 'blue',
+  waiting_market_data: 'gold',
+  missing_entry_price: 'red',
+};
+const shadowBudgetColor: Record<string, string> = {
+  ok: 'green',
+  watch: 'gold',
+  risk: 'red',
+};
 
 const LiveTrading: React.FC = () => {
   const [overview, setOverview] = useState<LiveOverview | null>(null);
   const [draftCandidates, setDraftCandidates] = useState<LiveDraftCandidateDashboard | null>(null);
+  const [shadowOutcomes, setShadowOutcomes] = useState<ShadowOutcomeDashboard | null>(null);
+  const [shadowTrend, setShadowTrend] = useState<ShadowTrendDashboard | null>(null);
   const [loading, setLoading] = useState(false);
   const [draftLoading, setDraftLoading] = useState(false);
   const [candidateLoading, setCandidateLoading] = useState(false);
   const [shadowLoading, setShadowLoading] = useState(false);
+  const [shadowOutcomeLoading, setShadowOutcomeLoading] = useState(false);
+  const [shadowTrendLoading, setShadowTrendLoading] = useState(false);
   const [syncLoading, setSyncLoading] = useState(false);
   const [isDraftModalOpen, setIsDraftModalOpen] = useState(false);
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
@@ -273,9 +378,41 @@ const LiveTrading: React.FC = () => {
     }
   };
 
+  const fetchShadowOutcomes = async (silent = false) => {
+    setShadowOutcomeLoading(true);
+    try {
+      const response = await api.get('/live-trading/shadow-outcomes', {
+        params: { limit: 30, horizons: '1,3,5' },
+      });
+      setShadowOutcomes(response.data.data);
+      if (!silent) message.success('影子收益闭环已刷新');
+    } catch (error: any) {
+      message.error(error.response?.data?.message || '获取影子收益闭环失败');
+    } finally {
+      setShadowOutcomeLoading(false);
+    }
+  };
+
+  const fetchShadowTrend = async (silent = false) => {
+    setShadowTrendLoading(true);
+    try {
+      const response = await api.get('/live-trading/shadow-trend', {
+        params: { limit: 16 },
+      });
+      setShadowTrend(response.data.data);
+      if (!silent) message.success('影子趋势已刷新');
+    } catch (error: any) {
+      message.error(error.response?.data?.message || '获取影子趋势失败');
+    } finally {
+      setShadowTrendLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchOverview(true);
     fetchDraftCandidates(true);
+    fetchShadowOutcomes(true);
+    fetchShadowTrend(true);
   }, []);
 
   const safety = overview?.readiness?.safety;
@@ -389,6 +526,8 @@ const LiveTrading: React.FC = () => {
       message.success(response.data.message || '无人影子执行已完成');
       await fetchOverview(true);
       await fetchDraftCandidates(true);
+      await fetchShadowOutcomes(true);
+      await fetchShadowTrend(true);
     } catch (error: any) {
       message.warning(error.response?.data?.message || '无人影子执行暂不可用');
     } finally {
@@ -405,6 +544,8 @@ const LiveTrading: React.FC = () => {
       message.success('影子执行已记录，未提交真实券商委托');
       await fetchOverview(true);
       await fetchDraftCandidates(true);
+      await fetchShadowOutcomes(true);
+      await fetchShadowTrend(true);
     } catch (error: any) {
       message.warning(error.response?.data?.message || '影子执行被风控阻断');
     } finally {
@@ -651,6 +792,81 @@ const LiveTrading: React.FC = () => {
         >
           生成草稿
         </Button>
+      ),
+    },
+  ];
+
+  const shadowOutcomeColumns = [
+    {
+      title: '影子标的',
+      dataIndex: 'symbol',
+      render: (_: any, record: any) => (
+        <Space direction="vertical" size={0}>
+          <Text strong>{record.name || record.symbol}</Text>
+          <Text type="secondary">{record.symbol}</Text>
+        </Space>
+      ),
+    },
+    {
+      title: '假设成交',
+      render: (_: any, record: any) => (
+        <Space direction="vertical" size={0}>
+          <Text>{Number(record.quantity || 0).toLocaleString()} 股</Text>
+          <Text type="secondary">¥{Number(record.entry_price || 0).toFixed(2)}</Text>
+          <Text type="secondary">{record.entry_date || '--'}</Text>
+        </Space>
+      ),
+    },
+    {
+      title: '最新收益',
+      render: (_: any, record: any) => (
+        <Space direction="vertical" size={0}>
+          <Text type={pnlTextType(record.latest_return_pct)}>
+            {formatPct(record.latest_return_pct)}
+          </Text>
+          <Text type={pnlTextType(record.latest_pnl)}>
+            {record.latest_pnl === null || record.latest_pnl === undefined
+              ? '--'
+              : formatMoney(record.latest_pnl)}
+          </Text>
+          <Text type="secondary">
+            最新价 {record.latest_price ? `¥${Number(record.latest_price).toFixed(2)}` : '--'}
+          </Text>
+        </Space>
+      ),
+    },
+    {
+      title: '1/3/5日',
+      render: (_: any, record: any) => {
+        const horizons = record.horizon_returns || {};
+        return (
+          <Space wrap size={[4, 4]}>
+            {['1d', '3d', '5d'].map(key => (
+              <Tag
+                key={key}
+                color={
+                  Number(horizons[key]?.return_pct || 0) > 0
+                    ? 'green'
+                    : Number(horizons[key]?.return_pct || 0) < 0
+                    ? 'red'
+                    : 'default'
+                }
+              >
+                {key.toUpperCase()} {formatPct(horizons[key]?.return_pct)}
+              </Tag>
+            ))}
+          </Space>
+        );
+      },
+    },
+    {
+      title: '状态',
+      dataIndex: 'outcome_status',
+      render: (value: string, record: any) => (
+        <Space direction="vertical" size={2}>
+          <Tag color={shadowOutcomeColor[value] || 'default'}>{record.status_label || value}</Tag>
+          <Text type="secondary">真实提交 {record.real_order_submitted ? '1' : '0'} 笔</Text>
+        </Space>
       ),
     },
   ];
@@ -1133,6 +1349,223 @@ const LiveTrading: React.FC = () => {
               ),
             }}
           />
+        </Card>
+
+        <Card
+          className="modern-card live-shadow-outcome-card"
+          variant="borderless"
+          title={
+            <Space>
+              <ReconciliationOutlined />
+              <span>影子执行收益闭环</span>
+            </Space>
+          }
+          extra={
+            <Button
+              size="small"
+              icon={<ReloadOutlined />}
+              onClick={() => fetchShadowOutcomes(false)}
+              loading={shadowOutcomeLoading}
+            >
+              刷新收益
+            </Button>
+          }
+        >
+          <div className="live-shadow-outcome-brief">
+            <div>
+              <Text type="secondary">结论</Text>
+              <strong>
+                {shadowOutcomes?.summary?.conclusion ||
+                  '运行影子执行后，这里会自动比较假设成交价与后续行情收益。'}
+              </strong>
+            </div>
+            <Space wrap>
+              <Tag
+                color={
+                  shadowBudgetColor[shadowOutcomes?.summary?.budget_decision?.level || 'watch'] ||
+                  'gold'
+                }
+              >
+                {shadowOutcomes?.summary?.budget_decision?.label || '等待样本'}
+              </Tag>
+              <Tag color="green">真实提交 0 笔</Tag>
+            </Space>
+          </div>
+          <div className="live-shadow-budget-note">
+            <strong>
+              建议影子预算：{shadowOutcomes?.summary?.budget_decision?.recommended_limit || 2} 笔/次
+            </strong>
+            <span>
+              {shadowOutcomes?.summary?.budget_decision?.reason ||
+                '样本不足时只保持小流量影子验证，不扩大到真实资金自动执行。'}
+            </span>
+          </div>
+          <div className="live-candidate-metrics live-shadow-outcome-metrics">
+            <div>
+              <span>样本</span>
+              <strong>{shadowOutcomes?.summary?.shadow_trade_count || 0}</strong>
+            </div>
+            <div>
+              <span>已评估</span>
+              <strong>{shadowOutcomes?.summary?.evaluated_count || 0}</strong>
+            </div>
+            <div>
+              <span>胜率</span>
+              <strong>{formatPct(shadowOutcomes?.summary?.win_rate_pct, 1)}</strong>
+            </div>
+            <div>
+              <span>平均收益</span>
+              <strong>{formatPct(shadowOutcomes?.summary?.avg_latest_return_pct, 2)}</strong>
+            </div>
+            <div>
+              <span>浮动盈亏</span>
+              <strong>{formatMoney(shadowOutcomes?.summary?.total_latest_pnl)}</strong>
+            </div>
+          </div>
+          <div className="live-shadow-horizon-strip">
+            {(shadowOutcomes?.summary?.horizon_summary || []).map(item => (
+              <div key={item.horizon_days}>
+                <span>{item.horizon_days}日收益</span>
+                <strong>{formatPct(item.avg_return_pct, 2)}</strong>
+                <em>
+                  {item.evaluated_count} 样本 · 胜率 {formatPct(item.win_rate_pct, 1)}
+                </em>
+              </div>
+            ))}
+          </div>
+          <div className="live-shadow-baseline-strip">
+            <div>
+              <span>模拟盘同期</span>
+              <strong>
+                {formatPct(
+                  shadowOutcomes?.summary?.baseline?.paper_trading?.avg_latest_return_pct
+                )}
+              </strong>
+              <em>
+                {shadowOutcomes?.summary?.baseline?.paper_trading?.evaluated_count || 0} 样本 ·
+                胜率{' '}
+                {formatPct(shadowOutcomes?.summary?.baseline?.paper_trading?.win_rate_pct, 1)}
+              </em>
+            </div>
+            <div>
+              <span>信号后验</span>
+              <strong>
+                {formatPct(
+                  shadowOutcomes?.summary?.baseline?.signal_forward_returns?.avg_return_pct
+                )}
+              </strong>
+              <em>
+                {shadowOutcomes?.summary?.baseline?.signal_forward_returns?.sample_count || 0} 样本
+                · 胜率{' '}
+                {formatPct(
+                  shadowOutcomes?.summary?.baseline?.signal_forward_returns?.win_rate_pct,
+                  1
+                )}
+              </em>
+            </div>
+            <div>
+              <span>影子-模拟差</span>
+              <strong>
+                {shadowOutcomes?.summary?.avg_latest_return_pct !== undefined &&
+                shadowOutcomes?.summary?.avg_latest_return_pct !== null &&
+                shadowOutcomes?.summary?.baseline?.paper_trading?.avg_latest_return_pct !==
+                  undefined &&
+                shadowOutcomes?.summary?.baseline?.paper_trading?.avg_latest_return_pct !== null
+                  ? `${(
+                      Number(shadowOutcomes.summary.avg_latest_return_pct) -
+                      Number(shadowOutcomes.summary.baseline.paper_trading.avg_latest_return_pct)
+                    ).toFixed(2)}pct`
+                  : '--'}
+              </strong>
+              <em>同期起点 {shadowOutcomes?.summary?.baseline?.since || '--'}</em>
+            </div>
+          </div>
+          <Table
+            columns={shadowOutcomeColumns}
+            dataSource={shadowOutcomes?.items || []}
+            rowKey="id"
+            size="small"
+            loading={shadowOutcomeLoading}
+            pagination={{ pageSize: 6 }}
+            scroll={{ x: 'max-content' }}
+            locale={{
+              emptyText: (
+                <Empty
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  description="暂无可评估影子成交。运行影子执行后会记录成交价，再用最新行情和日线计算收益。"
+                />
+              ),
+            }}
+          />
+          <div className="live-shadow-trend-panel">
+            <div className="live-shadow-trend-head">
+              <div>
+                <Text type="secondary">趋势</Text>
+                <strong>
+                  {shadowTrend?.summary?.conclusion || '等待更多影子执行日志形成趋势。'}
+                </strong>
+              </div>
+              <Button
+                size="small"
+                icon={<ReloadOutlined />}
+                loading={shadowTrendLoading}
+                onClick={() => fetchShadowTrend(false)}
+              >
+                刷新趋势
+              </Button>
+            </div>
+            <div className="live-shadow-trend-chart">
+              {shadowTrend?.points?.length ? (
+                <ResponsiveContainer width="100%" height={220}>
+                  <LineChart data={shadowTrend.points}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,0.08)" />
+                    <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                    <YAxis yAxisId="left" tick={{ fontSize: 11 }} />
+                    <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11 }} />
+                    <RechartsTooltip
+                      formatter={(value: any, name: string) => [
+                        name.includes('limit') || name.includes('样本')
+                          ? value
+                          : `${Number(value || 0).toFixed(2)}%`,
+                        name,
+                      ]}
+                    />
+                    <Line
+                      yAxisId="left"
+                      type="monotone"
+                      dataKey="avg_return_pct"
+                      name="平均收益"
+                      stroke="#1f8a70"
+                      strokeWidth={2}
+                      dot={false}
+                    />
+                    <Line
+                      yAxisId="left"
+                      type="monotone"
+                      dataKey="win_rate_pct"
+                      name="胜率"
+                      stroke="#1f3a5f"
+                      strokeWidth={2}
+                      dot={false}
+                    />
+                    <Line
+                      yAxisId="right"
+                      type="stepAfter"
+                      dataKey="recommended_limit"
+                      name="建议limit"
+                      stroke="#d97706"
+                      strokeWidth={2}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              ) : (
+                <Empty
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  description="暂无趋势点。等待定时影子执行或周度复盘产生执行日志。"
+                />
+              )}
+            </div>
+          </div>
         </Card>
 
         <Card className="modern-card" variant="borderless" title="实盘订单草稿">

@@ -118,6 +118,37 @@ class LiveTradingController {
     }
   }
 
+  async getShadowOutcomes(req: AuthenticatedRequest, res: Response) {
+    try {
+      const horizons = req.query.horizons
+        ? String(req.query.horizons)
+            .split(',')
+            .map(item => Number(item.trim()))
+            .filter(Number.isFinite)
+        : undefined;
+      const data = await liveTradingService.getShadowAutopilotOutcomes(Number(req.user?.id), {
+        limit: req.query.limit ? Number(req.query.limit) : undefined,
+        horizons,
+      });
+      res.json({ success: true, data, message: data.summary.conclusion });
+    } catch (error: any) {
+      logger.error('获取影子执行收益闭环失败:', error);
+      res.status(500).json({ success: false, message: error.message || '获取影子执行收益闭环失败' });
+    }
+  }
+
+  async getShadowTrend(req: AuthenticatedRequest, res: Response) {
+    try {
+      const data = await liveTradingService.getShadowAutopilotTrend(Number(req.user?.id), {
+        limit: req.query.limit ? Number(req.query.limit) : undefined,
+      });
+      res.json({ success: true, data, message: data.summary.conclusion });
+    } catch (error: any) {
+      logger.error('获取影子执行趋势失败:', error);
+      res.status(500).json({ success: false, message: error.message || '获取影子执行趋势失败' });
+    }
+  }
+
   async approveDraft(req: AuthenticatedRequest, res: Response) {
     try {
       const data = await liveTradingService.approveDraft(Number(req.user?.id), Number(req.params.id), req.body || {});
