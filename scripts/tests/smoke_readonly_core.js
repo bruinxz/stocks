@@ -357,6 +357,9 @@ async function main() {
         if (!json.data?.safety || !json.data?.broker || !json.data?.market_data) {
           throw new Error(`live trading readiness payload missing: ${preview(json)}`);
         }
+        if (!json.data.market_data_health?.status) {
+          throw new Error(`live trading market data health missing: ${preview(json)}`);
+        }
         if (json.data.safety.can_submit_orders === true) {
           throw new Error(
             `live trading readiness should be safe by default: ${preview(json.data.safety)}`
@@ -371,6 +374,9 @@ async function main() {
         assertApiSuccess(json, "live trading overview");
         if (!json.data?.summary || !json.data?.readiness) {
           throw new Error(`live trading overview payload missing: ${preview(json)}`);
+        }
+        if (!json.data.summary.market_data_status) {
+          throw new Error(`live trading overview market status missing: ${preview(json.data)}`);
         }
         if (json.data.summary.can_submit_orders === true) {
           throw new Error(

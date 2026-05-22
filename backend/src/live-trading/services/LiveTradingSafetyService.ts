@@ -72,6 +72,16 @@ export class LiveTradingSafetyService {
     };
   }
 
+  getMarketDataSla() {
+    return {
+      max_quote_latency_seconds: numberEnv('LIVE_MARKET_QUOTE_MAX_LATENCY_SECONDS', 15 * 60),
+      max_missing_quote_ratio_pct: numberEnv('LIVE_MARKET_MAX_MISSING_QUOTE_RATIO_PCT', 10),
+      require_quote_before_order: envBool('LIVE_MARKET_REQUIRE_QUOTE_BEFORE_ORDER', true),
+      require_realtime_for_order: envBool('LIVE_MARKET_REQUIRE_REALTIME_FOR_ORDER', true),
+      licensed_provider_required_for_external_use: true,
+    };
+  }
+
   assertOrderExecutionAllowed(confirmText?: string) {
     const status = this.getStatus();
     if (confirmText !== LIVE_ORDER_CONFIRM_TEXT) {
