@@ -117,6 +117,45 @@ interface PortfolioFamily {
   win_rate?: number;
   avg_closed_return_pct?: number;
   latest_trade_at?: string | null;
+  latest_intent_at?: string | null;
+  last_activity_at?: string | null;
+  run_status?: 'not_created' | 'ready_empty' | 'signaled_blocked' | 'active' | 'traded_flat';
+  run_status_label?: string;
+  empty_reason?: string;
+  diagnostics?: {
+    is_initialized?: boolean;
+    has_positions?: boolean;
+    has_trades?: boolean;
+    has_order_intents?: boolean;
+    primary_blocker?: { category: string; label: string; count: number } | null;
+    latest_intent_reason?: string | null;
+    default_hint?: string;
+  };
+  recent_intent_summary?: {
+    total: number;
+    planned_count: number;
+    executed_count: number;
+    rejected_count: number;
+    skipped_count: number;
+    held_count: number;
+    latest_intent_at?: string | null;
+    latest_intent?: {
+      symbol?: string;
+      name?: string;
+      side?: string;
+      status?: string;
+      status_label?: string;
+      reason_category?: string;
+      reason_label?: string;
+      reason_text?: string;
+      reference_price?: number;
+      amount?: number;
+      created_at?: string;
+    } | null;
+    top_statuses?: Array<{ status: string; label: string; count: number }>;
+    top_reason_categories?: Array<{ category: string; label: string; count: number }>;
+    recent_examples?: Array<Record<string, any>>;
+  };
 }
 
 interface TrackingItem {
@@ -282,6 +321,29 @@ const accountTagColor = (key?: string) => {
     param_experiment: 'gold',
   };
   return colorMap[key || ''] || 'default';
+};
+
+const familyRunStatusColor = (status?: string) => {
+  const colorMap: Record<string, string> = {
+    active: 'green',
+    traded_flat: 'cyan',
+    signaled_blocked: 'orange',
+    ready_empty: 'blue',
+    not_created: 'default',
+  };
+  return colorMap[status || ''] || 'default';
+};
+
+const formatShortTime = (value?: string | null) => {
+  if (!value) return '暂无';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).slice(0, 16);
+  return date.toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 };
 
 const AutonomousTradingOverview: React.FC = () => {
@@ -817,30 +879,74 @@ const AutonomousTradingOverview: React.FC = () => {
               </Text>
             </div>
             <Row gutter={[12, 12]}>
-              {portfolioFamilies.map(family => (
-                <Col xs={24} md={12} xl={8} key={family.key}>
-                  <div
-                    className={`autonomous-family-card ${
-                      Number(family.open_position_count || 0) > 0 ? 'active' : ''
-                    }`}
-                  >
-                    <Space wrap size={6}>
-                      <Tag color={accountTagColor(family.key)}>{family.label}</Tag>
-                      <Tag color={family.exists ? 'green' : 'default'}>
-                        {family.exists ? '已运行' : '待运行'}
-                      </Tag>
-                    </Space>
-                    <strong>{formatMoney(family.total_value)}</strong>
-                    <p>{family.description}</p>
-                    <div className="autonomous-family-metrics">
-                      <span>持仓 {family.open_position_count || 0}</span>
-                      <span>交易 {family.trade_count || 0}</span>
-                      <span>收益 {formatPercent(family.total_return_pct)}</span>
-                      <span>暴露 {formatPercent(family.exposure_pct)}</span>
+              {portfolioFamilies.map(family => {
+                const intentSummary = family.recent_intent_summary;
+                const primaryBlocker =
+                  family.diagnostics?.primary_blocker ||
+                  intentSummary?.top_reason_categories?.[0] ||
+                  null;
+                const isLive = Number(family.open_position_count || 0) > 0;
+                return (
+                  <Col xs={24} md={12} xl={8} key={family.key}>
+                    <div
+                      className={`autonomous-family-card ${
+                        isLive ? 'active' : family.run_status || 'ready_empty'
+                      }`}
+                    >
+                      <div className="autonomous-family-topline">
+                        <Space wrap size={6}>
+                          <Tag color={accountTagColor(family.key)}>{family.label}</Tag>
+                          <Tag color={familyRunStatusColor(family.run_status)}>
+                            {family.run_status_label || (family.exists ? '已就绪' : '未初始化')}
+                          </Tag>
+                        </Space>
+                        <span>{formatShortTime(family.last_activity_at)}</span>
+                      </div>
+                      <strong>{formatMoney(family.total_value)}</strong>
+                      <p>{family.empty_reason || family.description}</p>
+                      <div className="autonomous-family-metrics">
+                        <span>持仓 {family.open_position_count || 0}</span>
+                        <span>交易 {family.trade_count || 0}</span>
+                        <span>订单意图 {intentSummary?.total || 0}</span>
+                        <span>收益 {formatPercent(family.total_return_pct)}</span>
+                        <span>暴露 {formatPercent(family.exposure_pct)}</span>
+                      </div>
+                      <div className="autonomous-family-diagnostics">
+                        <div>
+                          <span>成交</span>
+                          <strong>{intentSummary?.executed_count || 0}</strong>
+                        </div>
+                        <div>
+                          <span>拦截/跳过</span>
+                          <strong>
+                            {(intentSummary?.rejected_count || 0) +
+                              (intentSummary?.skipped_count || 0)}
+                          </strong>
+                        </div>
+                        <div>
+                          <span>主因</span>
+                          <strong>{primaryBlocker?.label || '等待信号'}</strong>
+                        </div>
+                      </div>
+                      {intentSummary?.latest_intent ? (
+                        <div className="autonomous-family-latest">
+                          最近：
+                          {intentSummary.latest_intent.name || intentSummary.latest_intent.symbol}
+                          {' · '}
+                          {intentSummary.latest_intent.status_label}
+                          {intentSummary.latest_intent.reason_text
+                            ? ` · ${intentSummary.latest_intent.reason_text}`
+                            : ''}
+                        </div>
+                      ) : (
+                        <div className="autonomous-family-latest">
+                          {family.diagnostics?.default_hint || family.description}
+                        </div>
+                      )}
                     </div>
-                  </div>
-                </Col>
-              ))}
+                  </Col>
+                );
+              })}
               {!portfolioFamilies.length && (
                 <Col span={24}>
                   <Empty description="暂无策略账户数据" />

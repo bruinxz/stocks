@@ -1534,3 +1534,24 @@ Next:
 1. Add a real licensed quote adapter once provider credentials/contract are available.
 2. Add a read-only broker adapter for the selected broker and map real account/position fields.
 3. Add a reconciliation page that compares broker readonly positions with order drafts, paper-trading suggestions and risk budgets.
+
+### 2026-05-22 strategy account map diagnostics and cold-start lot fix
+
+Focus: explain and fix why several strategy accounts looked "not running" and why one active account had no positions/trades.
+
+Completed:
+
+- Diagnosed production data:
+  - only the legacy autonomous, pure-quant and parameter-experiment paper accounts existed before this change;
+  - quant+Agent fusion and Agent-only accounts were not initialized, so the page showed them as waiting/not running;
+  - the legacy autonomous account had thousands of order intents but no trades because most recent buy candidates were rejected by the 3,000 CNY minimum trade amount after risk/feedback multipliers reduced target size below an A-share board lot.
+- `PaperTradingDashboardService` now ensures all five portfolio families exist whenever the autonomous dashboard is opened.
+- Portfolio family summary now includes run status, empty-account explanation, latest activity time, order-intent counts, top blocker categories and recent intent examples.
+- The strategy account map UI now shows concise operational diagnostics instead of the ambiguous "已运行/待运行" label.
+- Fixed forced-signal minimum-lot cold-start sizing so forced signals can raise a tiny target position to the minimum executable A-share lot when it still respects cash and the requested cold-start cap.
+
+Next:
+
+1. Observe the next scheduled quant/Agent runs: quant+Agent fusion should now show an initialized account and order-intent/position diagnostics.
+2. If Agent-only needs to become a true independent control group, route non-quant TradingAgents BUY signals into the Agent-only paper portfolio with a separate low-risk budget.
+3. Add a compact account-family drill-down page that lists the top rejected symbols and whether a rejection later proved right or wrong.

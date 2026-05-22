@@ -9,6 +9,7 @@ import { PaperTradingPortfolio } from '../models/PaperTradingPortfolio';
 import { PaperTradingPosition } from '../models/PaperTradingPosition';
 import { PaperTradingTrade } from '../models/PaperTradingTrade';
 import { PaperTradingSnapshot } from '../models/PaperTradingSnapshot';
+import { PaperTradingOrderIntent } from '../models/PaperTradingOrderIntent';
 import { RecommendationTradeOutcome } from '../models/RecommendationTradeOutcome';
 import { paperTradingAutomationService } from './PaperTradingAutomationService';
 import { recommendationTradeOutcomeService } from './RecommendationTradeOutcomeService';
@@ -42,6 +43,13 @@ type TrackingStatus =
   | 'closed'
   | 'skipped'
   | 'not_traded';
+
+type PortfolioFamilyRunStatus =
+  | 'not_created'
+  | 'ready_empty'
+  | 'signaled_blocked'
+  | 'active'
+  | 'traded_flat';
 
 export interface PaperTradingDashboardOptions {
   portfolio_id?: number;
@@ -208,9 +216,78 @@ function normalizeTrade(trade: any, family?: Record<string, any> | null) {
   };
 }
 
+function orderIntentStatusLabel(status?: string): string {
+  const labels: Record<string, string> = {
+    planned: '计划',
+    executed: '成交',
+    rejected: '拦截',
+    skipped: '跳过',
+    held: '持有',
+  };
+  return labels[String(status || '')] || status || '未知';
+}
+
+function orderIntentReasonLabel(category?: string): string {
+  const labels: Record<string, string> = {
+    executed: '已成交',
+    planned: '计划买入',
+    risk_hold: '风控持有',
+    profit_gate: '收益闸门',
+    outcome_feedback: '收益反哺',
+    data_quality: '数据质量',
+    execution_reality: '交易可执行性',
+    risk_level: '风险等级',
+    trade_discipline: '交易纪律',
+    capital_or_lot_size: '资金/手数',
+    market_data: '行情数据',
+    position_limit: '持仓上限',
+    stale_signal: '旧信号',
+    other: '其他',
+    unknown: '未归类',
+  };
+  return labels[String(category || '')] || category || '未归类';
+}
+
+function buildFamilyDefaultReason(family: (typeof PAPER_PORTFOLIO_FAMILIES)[number]): string {
+  if (family.key === 'agent_only') {
+    return '独立 Agent 对照盘已初始化；当前 TradingAgents 深度复核优先写入「量化+Agent融合盘」，该账户用于后续独立 Agent 跟单对照。';
+  }
+  if (family.key === 'quant_agent_fusion') {
+    return '等待量化候选提交 TradingAgents 并轮询完成；只有 Agent 复核通过且风控放行后才会建仓。';
+  }
+  if (family.key === 'param_experiment') {
+    return '参数实验盘只承接 A/B 参数生命周期中的晋级/观察样本，小仓验证触发后才会出现持仓。';
+  }
+  if (family.key === 'quant_only') {
+    return '等待量化扫描产生买入候选，并通过行情、仓位、风控和资金手数校验。';
+  }
+  return '综合盘已就绪；有信号但被资金/风控/旧信号去重拦截时，不会生成模拟交易。';
+}
+
+function buildFamilyRunStatus(params: {
+  exists: boolean;
+  positions: any[];
+  trades: any[];
+  intentSummary?: any;
+}): { run_status: PortfolioFamilyRunStatus; run_status_label: string } {
+  if (!params.exists) return { run_status: 'not_created', run_status_label: '未初始化' };
+  if (params.positions.length > 0) return { run_status: 'active', run_status_label: '持仓运行中' };
+  if ((params.intentSummary?.executed_count || 0) > 0 || params.trades.length > 0) {
+    return { run_status: 'traded_flat', run_status_label: '已交易空仓' };
+  }
+  if (
+    (params.intentSummary?.rejected_count || 0) > 0 ||
+    (params.intentSummary?.skipped_count || 0) > 0
+  ) {
+    return { run_status: 'signaled_blocked', run_status_label: '有信号未成交' };
+  }
+  return { run_status: 'ready_empty', run_status_label: '已就绪待信号' };
+}
+
 export class PaperTradingDashboardService {
   async getAutonomousDashboard(options: PaperTradingDashboardOptions = {}) {
     const portfolio = await this.ensureAutonomousPortfolio(options);
+    await this.ensurePortfolioFamilies(options);
     const preSyncFamilySummary = await this.getPortfolioFamilySummary(options);
     const syncTargets = [
       portfolio.id,
@@ -638,10 +715,25 @@ export class PaperTradingDashboardService {
             win_rate: 0,
             avg_closed_return_pct: 0,
             latest_trade_at: null,
+            latest_intent_at: null,
+            last_activity_at: null,
+            run_status: 'not_created',
+            run_status_label: '未初始化',
+            empty_reason: buildFamilyDefaultReason(family),
+            diagnostics: {
+              is_initialized: false,
+              has_positions: false,
+              has_trades: false,
+              has_order_intents: false,
+              primary_blocker: null,
+              latest_intent_reason: null,
+              default_hint: buildFamilyDefaultReason(family),
+            },
+            recent_intent_summary: this.summarizeOrderIntents([]),
           };
         }
 
-        const [positions, trades, outcomes] = await Promise.all([
+        const [positions, trades, outcomes, recentIntents] = await Promise.all([
           PaperTradingPosition.findAll({ where: { portfolio_id: portfolio.id }, raw: true }),
           PaperTradingTrade.findAll({ where: { portfolio_id: portfolio.id }, raw: true }),
           RecommendationTradeOutcome.findAll({
@@ -649,7 +741,20 @@ export class PaperTradingDashboardService {
             limit: 5000,
             raw: true,
           }) as any,
+          PaperTradingOrderIntent.findAll({
+            where: { portfolio_id: portfolio.id },
+            order: [['created_at', 'DESC']],
+            limit: 500,
+            raw: true,
+          }) as any,
         ]);
+        const intentSummary = this.summarizeOrderIntents(recentIntents as any[]);
+        const runStatus = buildFamilyRunStatus({
+          exists: true,
+          positions,
+          trades,
+          intentSummary,
+        });
         const initialCapital = toNumber(
           portfolio.initial_capital,
           DEFAULT_AUTONOMOUS_INITIAL_CAPITAL
@@ -667,6 +772,18 @@ export class PaperTradingDashboardService {
           .map((trade: any) => String(trade.created_at || ''))
           .sort()
           .pop();
+        const dominantIntentReason = intentSummary.top_reason_categories?.[0];
+        const latestIntent = intentSummary.latest_intent;
+        const emptyReason =
+          positions.length > 0
+            ? `当前持有 ${positions.length} 只股票，账户正常运行。`
+            : trades.length > 0
+            ? '账户有历史交易但当前空仓，可能已触发卖出、止盈/止损或等待下一轮信号。'
+            : intentSummary.total > 0
+            ? `账户已收到 ${intentSummary.total} 条订单意图但暂无成交，主要被「${
+                dominantIntentReason?.label || '风控/交易纪律'
+              }」拦截；最近原因：${latestIntent?.reason_text || '暂无明细'}。`
+            : buildFamilyDefaultReason(family);
 
         return {
           ...family,
@@ -697,6 +814,21 @@ export class PaperTradingDashboardService {
               )
             : 0,
           latest_trade_at: latestTradeAt || null,
+          latest_intent_at: intentSummary.latest_intent_at,
+          last_activity_at: latestTradeAt || intentSummary.latest_intent_at || portfolio.updated_at,
+          run_status: runStatus.run_status,
+          run_status_label: runStatus.run_status_label,
+          empty_reason: emptyReason,
+          diagnostics: {
+            is_initialized: true,
+            has_positions: positions.length > 0,
+            has_trades: trades.length > 0,
+            has_order_intents: intentSummary.total > 0,
+            primary_blocker: dominantIntentReason || null,
+            latest_intent_reason: latestIntent?.reason_text || null,
+            default_hint: buildFamilyDefaultReason(family),
+          },
+          recent_intent_summary: intentSummary,
         };
       })
     );
@@ -753,6 +885,96 @@ export class PaperTradingDashboardService {
       name: AUTONOMOUS_PORTFOLIO_NAME,
       force_new: true,
     });
+  }
+
+  private async ensurePortfolioFamilies(options: PaperTradingDashboardOptions) {
+    await Promise.all(
+      PAPER_PORTFOLIO_FAMILIES.map(family =>
+        paperTradingAutomationService.ensurePortfolio({
+          user_id: options.user_id,
+          username: options.username,
+          initial_capital: DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
+          name: family.name,
+          force_new: true,
+        })
+      )
+    );
+  }
+
+  private summarizeOrderIntents(intents: any[]) {
+    const summary = {
+      total: intents.length,
+      planned_count: 0,
+      executed_count: 0,
+      rejected_count: 0,
+      skipped_count: 0,
+      held_count: 0,
+      latest_intent_at: null as string | null,
+      latest_intent: null as any,
+      top_statuses: [] as Array<{ status: string; label: string; count: number }>,
+      top_reason_categories: [] as Array<{ category: string; label: string; count: number }>,
+      recent_examples: [] as Array<Record<string, any>>,
+    };
+    const statusCounts = new Map<string, number>();
+    const categoryCounts = new Map<string, number>();
+    const sorted = [...intents].sort((a, b) =>
+      String(b.created_at || '').localeCompare(String(a.created_at || ''))
+    );
+
+    for (const intent of sorted) {
+      const status = String(intent.status || 'unknown');
+      const category = String(intent.reason_category || 'unknown');
+      statusCounts.set(status, (statusCounts.get(status) || 0) + 1);
+      categoryCounts.set(category, (categoryCounts.get(category) || 0) + 1);
+      if (status === 'planned') summary.planned_count += 1;
+      if (status === 'executed') summary.executed_count += 1;
+      if (status === 'rejected') summary.rejected_count += 1;
+      if (status === 'skipped') summary.skipped_count += 1;
+      if (status === 'held') summary.held_count += 1;
+    }
+
+    const latest = sorted[0];
+    if (latest) {
+      summary.latest_intent_at = latest.created_at || null;
+      summary.latest_intent = {
+        id: latest.id,
+        symbol: latest.symbol,
+        name: latest.name,
+        side: latest.side,
+        status: latest.status,
+        status_label: orderIntentStatusLabel(latest.status),
+        reason_category: latest.reason_category,
+        reason_label: orderIntentReasonLabel(latest.reason_category),
+        reason_text: latest.reason_text,
+        reference_price: latest.reference_price ? toNumber(latest.reference_price) : undefined,
+        amount: latest.amount ? toNumber(latest.amount) : undefined,
+        created_at: latest.created_at,
+      };
+    }
+
+    summary.top_statuses = [...statusCounts.entries()]
+      .map(([status, count]) => ({ status, label: orderIntentStatusLabel(status), count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+    summary.top_reason_categories = [...categoryCounts.entries()]
+      .map(([category, count]) => ({ category, label: orderIntentReasonLabel(category), count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+    summary.recent_examples = sorted.slice(0, 5).map(intent => ({
+      id: intent.id,
+      symbol: intent.symbol,
+      name: intent.name,
+      side: intent.side,
+      status: intent.status,
+      status_label: orderIntentStatusLabel(intent.status),
+      reason_category: intent.reason_category,
+      reason_label: orderIntentReasonLabel(intent.reason_category),
+      reason_text: intent.reason_text,
+      reference_price: intent.reference_price ? toNumber(intent.reference_price) : undefined,
+      amount: intent.amount ? toNumber(intent.amount) : undefined,
+      created_at: intent.created_at,
+    }));
+    return summary;
   }
 
   private async safeSyncSnapshot(portfolio_id: number) {

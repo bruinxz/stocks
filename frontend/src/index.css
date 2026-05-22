@@ -10974,9 +10974,9 @@ a {
 
 .autonomous-family-card {
   display: grid;
-  gap: 9px;
+  gap: 10px;
   height: 100%;
-  min-height: 168px;
+  min-height: 238px;
   padding: 15px;
   border: 1px solid rgba(15, 23, 42, 0.075);
   border-radius: 20px;
@@ -10990,6 +10990,32 @@ a {
     linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(255, 250, 240, 0.86));
 }
 
+.autonomous-family-card.signaled_blocked {
+  border-color: rgba(217, 119, 6, 0.18);
+  background: radial-gradient(circle at 100% 0%, rgba(245, 158, 11, 0.1), transparent 42%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(255, 251, 235, 0.72));
+}
+
+.autonomous-family-card.ready_empty,
+.autonomous-family-card.traded_flat {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(245, 249, 255, 0.74));
+}
+
+.autonomous-family-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.autonomous-family-topline > span {
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
 .autonomous-family-card strong {
   color: var(--text-main);
   font-family: var(--font-display);
@@ -11000,7 +11026,7 @@ a {
 }
 
 .autonomous-family-card p {
-  min-height: 38px;
+  min-height: 58px;
   margin: 0;
   color: var(--text-secondary);
   font-size: 12px;
@@ -11021,6 +11047,48 @@ a {
   color: var(--text-secondary);
   font-size: 11px;
   font-weight: 800;
+}
+
+.autonomous-family-diagnostics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.autonomous-family-diagnostics div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.autonomous-family-diagnostics span {
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.autonomous-family-diagnostics strong {
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.autonomous-family-latest {
+  display: -webkit-box;
+  overflow: hidden;
+  min-height: 35px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.55;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .autonomous-family-note {
