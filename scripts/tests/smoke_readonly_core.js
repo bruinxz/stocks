@@ -508,6 +508,59 @@ async function main() {
       }
     );
 
+    await requestJson(
+      "live trading shadow outcomes",
+      "/api/live-trading/shadow-outcomes?limit=5",
+      {
+        token,
+        expect: (json) => {
+          assertApiSuccess(json, "live trading shadow outcomes");
+          if (!json.data?.summary || !Array.isArray(json.data?.items)) {
+            throw new Error(
+              `live trading shadow outcomes payload missing: ${preview(json)}`
+            );
+          }
+          if (json.data.summary.real_order_submitted !== 0) {
+            throw new Error(
+              `live trading shadow outcomes must not include real submissions: ${preview(
+                json.data.summary
+              )}`
+            );
+          }
+          if (!Array.isArray(json.data.summary.horizon_summary)) {
+            throw new Error(
+              `live trading shadow horizon summary missing: ${preview(
+                json.data.summary
+              )}`
+            );
+          }
+        },
+      }
+    );
+
+    await requestJson(
+      "live trading shadow trend",
+      "/api/live-trading/shadow-trend?limit=5",
+      {
+        token,
+        expect: (json) => {
+          assertApiSuccess(json, "live trading shadow trend");
+          if (!json.data?.summary || !Array.isArray(json.data?.points)) {
+            throw new Error(
+              `live trading shadow trend payload missing: ${preview(json)}`
+            );
+          }
+          if (Number(json.data.summary.real_order_submitted || 0) !== 0) {
+            throw new Error(
+              `live trading shadow trend must not contain real submissions: ${preview(
+                json.data.summary
+              )}`
+            );
+          }
+        },
+      }
+    );
+
     await requestJson("data source health", "/api/market/data-sources/health", {
       expect: (json) => {
         assertApiSuccess(json, "data source health");
@@ -593,6 +646,36 @@ async function main() {
           throw new Error(
             `quant param maintenance horizons incomplete: ${preview(
               paramMaintenanceTask
+            )}`
+          );
+        }
+        const shadowAutopilotTask = tasks.find(
+          (task) => task?.type === "LIVE_SHADOW_AUTOPILOT"
+        );
+        if (!shadowAutopilotTask) {
+          throw new Error("live shadow autopilot task missing");
+        }
+        if (
+          shadowAutopilotTask.parameters?.require_opening_readiness !== true ||
+          Number(shadowAutopilotTask.parameters?.limit || 0) < 1 ||
+          Number(shadowAutopilotTask.parameters?.limit || 0) > 10
+        ) {
+          throw new Error(
+            `live shadow autopilot task parameters invalid: ${preview(
+              shadowAutopilotTask
+            )}`
+          );
+        }
+        const shadowWeeklyReviewTask = tasks.find(
+          (task) => task?.type === "LIVE_SHADOW_WEEKLY_REVIEW"
+        );
+        if (!shadowWeeklyReviewTask) {
+          throw new Error("live shadow weekly review task missing");
+        }
+        if (Number(shadowWeeklyReviewTask.parameters?.outcome_limit || 0) < 30) {
+          throw new Error(
+            `live shadow weekly review outcome_limit too low: ${preview(
+              shadowWeeklyReviewTask
             )}`
           );
         }

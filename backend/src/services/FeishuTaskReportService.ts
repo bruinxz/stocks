@@ -2195,6 +2195,58 @@ class FeishuTaskReportService {
       );
     }
 
+    if (result.scenario === 'live_shadow_autopilot') {
+      lines.push(
+        `- **门禁状态**：${result.readiness_status || '-'}；${this.safeText(
+          result.readiness_conclusion || result.skip_reason || '',
+          160
+        )}`,
+        `- **影子执行**：选中 ${result.selected_count ?? 0}，成交 ${
+          result.shadow_executed_count ?? 0
+        }，阻断 ${result.blocked_count ?? 0}`,
+        `- **真实提交**：${result.real_order_submitted ?? 0}（安全边界要求必须为 0）`,
+        `- **收益闭环**：样本 ${result.outcome_trade_count ?? 0}，已评估 ${
+          result.outcome_evaluated_count ?? 0
+        }，胜率 ${this.formatPercent(result.outcome_win_rate_pct)}，平均收益 ${this.formatPercent(
+          result.outcome_avg_latest_return_pct
+        )}`,
+        `- **基准对比**：模拟盘均收 ${this.formatPercent(
+          result.paper_baseline_avg_return_pct
+        )}，信号后验均收 ${this.formatPercent(result.signal_baseline_avg_return_pct)}，起点 ${
+          result.baseline_since || '-'
+        }`,
+        `- **影子预算建议**：${result.budget_label || '-'}；建议 ${
+          result.budget_recommended_limit ?? '-'
+        } 笔/次；${this.safeText(result.budget_reason || '', 160)}`,
+        `- **浮动盈亏**：${this.formatSignedMoney(result.outcome_total_latest_pnl)}`
+      );
+    }
+
+    if (result.scenario === 'live_shadow_weekly_review') {
+      lines.push(
+        `- **影子样本**：总数 ${result.shadow_trade_count ?? 0}，已评估 ${
+          result.evaluated_count ?? 0
+        }，观察中 ${result.open_count ?? 0}`,
+        `- **收益质量**：胜率 ${this.formatPercent(result.win_rate_pct)}，平均收益 ${this.formatPercent(
+          result.avg_latest_return_pct
+        )}，浮动盈亏 ${this.formatSignedMoney(result.total_latest_pnl)}`,
+        `- **基准对比**：模拟盘均收 ${this.formatPercent(
+          result.paper_baseline_avg_return_pct
+        )}，信号后验均收 ${this.formatPercent(result.signal_baseline_avg_return_pct)}，起点 ${
+          result.baseline_since || '-'
+        }`,
+        `- **下周预算建议**：${result.budget_label || '-'}；建议 ${
+          result.budget_recommended_limit ?? '-'
+        } 笔/次；${this.safeText(result.budget_reason || '', 180)}`,
+        result.suggested_task_patch
+          ? `- **参数候选补丁**：目标任务 #${result.suggested_task_patch.target_task_id}，limit ${
+              result.suggested_task_patch.before_limit ?? '-'
+            } → ${result.suggested_task_patch.suggested_limit ?? '-'}；仅记录，不自动应用`
+          : '',
+        `- **真实提交**：${result.real_order_submitted ?? 0}（无人真实下单仍阻断）`
+      );
+    }
+
     if (dailyUpdate) {
       lines.push(
         `- **日更目标日期**：${dailyUpdate.targetDate || '-'}`,

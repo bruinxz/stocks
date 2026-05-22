@@ -13280,6 +13280,59 @@ a {
     linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.92));
 }
 
+.live-shadow-outcome-card {
+  background: radial-gradient(circle at 4% 0%, rgba(47, 111, 115, 0.12), transparent 28%),
+    radial-gradient(circle at 100% 0%, rgba(245, 158, 11, 0.1), transparent 30%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(248, 250, 252, 0.94));
+}
+
+.live-shadow-outcome-brief {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(15, 23, 42, 0.07);
+}
+
+.live-shadow-outcome-brief .ant-typography-secondary,
+.live-shadow-outcome-brief strong {
+  display: block;
+}
+
+.live-shadow-outcome-brief strong {
+  margin-top: 4px;
+  color: var(--text-main);
+  line-height: 1.55;
+}
+
+.live-shadow-budget-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: -2px 0 12px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 251, 235, 0.68);
+  border: 1px solid rgba(245, 158, 11, 0.14);
+}
+
+.live-shadow-budget-note strong {
+  color: #92400e;
+  white-space: nowrap;
+}
+
+.live-shadow-budget-note span {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
 .live-candidate-alert {
   margin-bottom: 12px;
   border-radius: 16px;
@@ -13290,6 +13343,10 @@ a {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 12px;
+}
+
+.live-shadow-outcome-metrics {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
 .live-candidate-metrics div {
@@ -13317,6 +13374,103 @@ a {
   font-family: var(--font-display);
   font-size: 22px;
   letter-spacing: -0.04em;
+}
+
+.live-shadow-horizon-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.live-shadow-baseline-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.live-shadow-horizon-strip div,
+.live-shadow-baseline-strip div {
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(236, 253, 245, 0.58), rgba(255, 255, 255, 0.84));
+  border: 1px solid rgba(47, 111, 115, 0.13);
+}
+
+.live-shadow-baseline-strip div {
+  background: linear-gradient(180deg, rgba(239, 246, 255, 0.62), rgba(255, 255, 255, 0.86));
+  border-color: rgba(31, 58, 95, 0.12);
+}
+
+.live-shadow-horizon-strip span,
+.live-shadow-horizon-strip strong,
+.live-shadow-horizon-strip em,
+.live-shadow-baseline-strip span,
+.live-shadow-baseline-strip strong,
+.live-shadow-baseline-strip em {
+  display: block;
+}
+
+.live-shadow-horizon-strip span,
+.live-shadow-baseline-strip span {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+}
+
+.live-shadow-horizon-strip strong,
+.live-shadow-baseline-strip strong {
+  margin-top: 4px;
+  color: #1f8a70;
+  font-family: var(--font-display);
+  font-size: 20px;
+  letter-spacing: -0.04em;
+}
+
+.live-shadow-baseline-strip strong {
+  color: #1f3a5f;
+}
+
+.live-shadow-horizon-strip em,
+.live-shadow-baseline-strip em {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.live-shadow-trend-panel {
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(15, 23, 42, 0.07);
+}
+
+.live-shadow-trend-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.live-shadow-trend-head .ant-typography-secondary,
+.live-shadow-trend-head strong {
+  display: block;
+}
+
+.live-shadow-trend-head strong {
+  margin-top: 4px;
+  color: var(--text-main);
+  line-height: 1.45;
+}
+
+.live-shadow-trend-chart {
+  min-height: 220px;
 }
 
 .live-draft-form {
@@ -13416,6 +13570,12 @@ a {
   .live-candidate-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .live-shadow-outcome-metrics,
+  .live-shadow-horizon-strip,
+  .live-shadow-baseline-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 640px) {
@@ -13424,7 +13584,23 @@ a {
   .live-risk-checks > div,
   .live-reconcile-metrics,
   .live-paper-account-strip,
-  .live-candidate-metrics {
+  .live-candidate-metrics,
+  .live-shadow-outcome-metrics,
+  .live-shadow-horizon-strip,
+  .live-shadow-baseline-strip {
     grid-template-columns: 1fr;
+  }
+
+  .live-shadow-outcome-brief {
+    flex-direction: column;
+  }
+
+  .live-shadow-budget-note {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .live-shadow-trend-head {
+    flex-direction: column;
   }
 }

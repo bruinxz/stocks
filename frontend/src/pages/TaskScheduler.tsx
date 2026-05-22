@@ -333,6 +333,7 @@ const auditEventLabels: Record<string, string> = {
   task_updated: '参数更新',
   risk_limit_suggestion_applied: '风险阈值应用',
   risk_stability_settings_updated: '稳定性门槛',
+  live_shadow_budget_suggestion: '影子预算建议',
   deployment_smoke_passed: '部署验证通过',
   deployment_smoke_failed: '部署验证失败',
   deployment_smoke_skipped: '部署验证跳过',
@@ -343,6 +344,7 @@ const auditEventColors: Record<string, string> = {
   task_updated: 'default',
   risk_limit_suggestion_applied: 'green',
   risk_stability_settings_updated: 'purple',
+  live_shadow_budget_suggestion: 'cyan',
   deployment_smoke_passed: 'green',
   deployment_smoke_failed: 'red',
   deployment_smoke_skipped: 'gold',
@@ -1044,6 +1046,8 @@ const TaskScheduler: React.FC = () => {
     const after = item.after_parameters || {};
     const fromOutcomeAdvice =
       after.risk_threshold_field_gate_update_source === 'filled_from_outcome_advice';
+    const shadowAdvice = item.metadata?.outcome_summary;
+    const isShadowBudgetSuggestion = item.event_type === 'live_shadow_budget_suggestion';
     return (
       <div
         className={`task-audit-row ${failedSmoke ? 'task-audit-row--danger' : ''}`}
@@ -1056,6 +1060,7 @@ const TaskScheduler: React.FC = () => {
             </Tag>
             <Text strong>{item.task_name}</Text>
             {fromOutcomeAdvice && <Tag color="cyan">收益后验建议</Tag>}
+            {isShadowBudgetSuggestion && <Tag color="geekblue">仅候选不自动应用</Tag>}
           </Space>
           <Text type="secondary">{formatDateTime(item.created_at)}</Text>
         </div>
@@ -1073,6 +1078,12 @@ const TaskScheduler: React.FC = () => {
                       }`
                     : ''
                 } · ${after.base_url || ''}`
+              : isShadowBudgetSuggestion
+              ? `建议 ${
+                  shadowAdvice?.budget_label || after.shadow_budget_advice?.label || '-'
+                } · limit ${item.before_parameters?.limit ?? '-'} → ${after.limit ?? '-'} · ${
+                  shadowAdvice?.budget_reason || after.shadow_budget_advice?.reason || ''
+                }`
               : `${item.operator_username ? `${item.operator_username} · ` : ''}更新 ${
                   item.changed_keys?.length || 0
                 } 项${item.source_loop_run_id ? ` · 来源 ${item.source_loop_run_id}` : ''}`}
