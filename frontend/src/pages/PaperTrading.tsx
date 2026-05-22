@@ -26,6 +26,7 @@ import {
 import {
   AuditOutlined,
   BulbOutlined,
+  CheckCircleOutlined,
   ExperimentOutlined,
   CloudUploadOutlined,
   FallOutlined,
@@ -38,6 +39,7 @@ import {
   SafetyCertificateOutlined,
   ThunderboltOutlined,
   TrophyOutlined,
+  WarningOutlined,
   WalletOutlined,
 } from '@ant-design/icons';
 import {
@@ -522,6 +524,12 @@ interface OrderIntentTuningCandidatesResult {
   canary_candidates: OrderIntentParameterPreview[];
 }
 
+interface CanaryEvidenceFocus {
+  title: string;
+  source: 'preview' | 'readonly' | 'active';
+  item?: any;
+}
+
 interface OrderIntentTuningCanaryStatus {
   active: boolean;
   generated_at?: string;
@@ -985,6 +993,7 @@ const PaperTrading: React.FC = () => {
   const [canaryStatusLoading, setCanaryStatusLoading] = useState(false);
   const [canarySnapshots, setCanarySnapshots] = useState<CanaryReviewSnapshotTimeline | null>(null);
   const [canarySnapshotsLoading, setCanarySnapshotsLoading] = useState(false);
+  const [canaryEvidenceFocus, setCanaryEvidenceFocus] = useState<CanaryEvidenceFocus | null>(null);
   const canaryAutorunHandledRef = useRef(false);
   const [riskProfile, setRiskProfile] = useState<PaperTradingRiskProfile | null>(null);
   const [riskProfileLoading, setRiskProfileLoading] = useState(false);
@@ -1608,6 +1617,14 @@ const PaperTrading: React.FC = () => {
   const canaryEvidence = canaryStatus?.evidence;
   const canarySnapshotSummary = canarySnapshots?.summary;
   const recentCanarySnapshots = canarySnapshots?.snapshots || [];
+  const focusedFamilyConsensus =
+    canaryEvidenceFocus?.item?.family_consensus ||
+    canaryEvidence?.family_consensus_items?.find(
+      item => item.parameter_key === canaryEvidenceFocus?.item?.parameter_key
+    )?.family_consensus;
+  const activeCanaryEvidenceItems = canaryEvidence?.family_consensus_items || [];
+  const activeCanaryEvidenceTags =
+    canaryEvidence?.candidate_count_by_source || canaryEvidence?.evidence_source_labels || [];
   const riskTone = riskProfile ? riskProfileToneMap[riskProfile.status.level] : undefined;
   const topRiskPosition = riskProfile?.position_risks?.find(item => item.risk_flags.length > 0);
   const outcomeBlockedSegments = tradingPlanSummary?.outcome_blocked_segments || [];
@@ -1762,6 +1779,21 @@ const PaperTrading: React.FC = () => {
       },
     },
   ];
+
+  const renderCanaryEvidenceButton = (
+    title: string,
+    source: CanaryEvidenceFocus['source'],
+    item?: any
+  ) => (
+    <Button
+      size="small"
+      type="link"
+      className="order-canary-evidence-link"
+      onClick={() => setCanaryEvidenceFocus({ title, source, item })}
+    >
+      看证据
+    </Button>
+  );
 
   return (
     <div className="fade-in-up paper-trading-page">
@@ -2399,13 +2431,20 @@ const PaperTrading: React.FC = () => {
                       <div className="order-family-canary-candidates">
                         {tuningPreview.family_hindsight.candidates.slice(0, 4).map(item => (
                           <div key={`${item.parameter_key}-${item.action}`}>
-                            <Space wrap size={6}>
-                              <Text strong>{item.parameter_label}</Text>
-                              <Tag color={orderRuleActionColorMap[item.action] || 'default'}>
-                                {item.action_label}
-                              </Tag>
-                              <Tag color="blue">{item.evidence_source_label || '多账户后验'}</Tag>
-                            </Space>
+                            <div className="order-family-candidate-title">
+                              <Space wrap size={6}>
+                                <Text strong>{item.parameter_label}</Text>
+                                <Tag color={orderRuleActionColorMap[item.action] || 'default'}>
+                                  {item.action_label}
+                                </Tag>
+                                <Tag color="blue">{item.evidence_source_label || '多账户后验'}</Tag>
+                              </Space>
+                              {renderCanaryEvidenceButton(
+                                '多账户后验 Canary 证据',
+                                'preview',
+                                item
+                              )}
+                            </div>
                             <p>
                               {item.reason_category_label} · {item.change_label} ·{' '}
                               {item.family_consensus?.conclusion}
@@ -2455,19 +2494,22 @@ const PaperTrading: React.FC = () => {
                       <div className="order-family-canary-candidates">
                         {tuningCandidates.canary_candidates.slice(0, 3).map(item => (
                           <div key={`readonly-${item.parameter_key}-${item.action}`}>
-                            <Space wrap size={6}>
-                              <Text strong>{item.parameter_label}</Text>
-                              <Tag color={orderRuleActionColorMap[item.action] || 'default'}>
-                                {item.action_label}
-                              </Tag>
-                              <Tag
-                                color={
-                                  item.evidence_source === 'family_hindsight' ? 'gold' : 'blue'
-                                }
-                              >
-                                {item.evidence_source_label || '候选证据'}
-                              </Tag>
-                            </Space>
+                            <div className="order-family-candidate-title">
+                              <Space wrap size={6}>
+                                <Text strong>{item.parameter_label}</Text>
+                                <Tag color={orderRuleActionColorMap[item.action] || 'default'}>
+                                  {item.action_label}
+                                </Tag>
+                                <Tag
+                                  color={
+                                    item.evidence_source === 'family_hindsight' ? 'gold' : 'blue'
+                                  }
+                                >
+                                  {item.evidence_source_label || '候选证据'}
+                                </Tag>
+                              </Space>
+                              {renderCanaryEvidenceButton('只读 Canary 首选证据', 'readonly', item)}
+                            </div>
                             <p>
                               {item.reason_category_label} · {item.change_label} ·{' '}
                               {item.family_consensus?.conclusion || item.rationale}
@@ -2536,11 +2578,14 @@ const PaperTrading: React.FC = () => {
                         </Space>
                         {canaryEvidence ? (
                           <div className="order-canary-evidence-strip">
-                            <div>
-                              <span>证据来源</span>
-                              <strong>
-                                {canaryEvidence.evidence_source_labels?.join(' + ') || '审计记录'}
-                              </strong>
+                            <div className="order-canary-evidence-strip-head">
+                              <div>
+                                <span>证据来源</span>
+                                <strong>
+                                  {canaryEvidence.evidence_source_labels?.join(' + ') || '审计记录'}
+                                </strong>
+                              </div>
+                              {renderCanaryEvidenceButton('当前 Canary 证据链', 'active')}
                             </div>
                             <p>{canaryEvidence.conclusion}</p>
                             <Space wrap size={6}>
@@ -3544,6 +3589,179 @@ const PaperTrading: React.FC = () => {
           }}
         />
       </Card>
+
+      <Modal
+        title={canaryEvidenceFocus?.title || 'Canary 证据链'}
+        open={Boolean(canaryEvidenceFocus)}
+        onCancel={() => setCanaryEvidenceFocus(null)}
+        footer={null}
+        width={860}
+        destroyOnHidden
+      >
+        <div className="order-canary-evidence-modal">
+          <div className="order-canary-evidence-hero">
+            <div>
+              <span>CANARY EVIDENCE</span>
+              <h3>
+                {canaryEvidenceFocus?.item?.parameter_label ||
+                  (canaryEvidenceFocus?.source === 'active' ? '当前小流量调参证据' : '候选证据')}
+              </h3>
+              <p>
+                {canaryEvidenceFocus?.item?.rationale ||
+                  canaryEvidence?.conclusion ||
+                  '这里仅用于解释参数候选为什么值得小流量观察，不会写入任务参数，也不会触发买卖。'}
+              </p>
+            </div>
+            <Tag color={canaryEvidenceFocus?.source === 'active' ? 'gold' : 'blue'}>
+              {canaryEvidenceFocus?.source === 'active'
+                ? '观察中'
+                : canaryEvidenceFocus?.source === 'readonly'
+                ? '只读候选'
+                : '预览候选'}
+            </Tag>
+          </div>
+
+          {canaryEvidenceFocus?.item ? (
+            <>
+              <div className="order-canary-evidence-modal-metrics">
+                <div>
+                  <span>动作</span>
+                  <strong>{canaryEvidenceFocus.item.action_label}</strong>
+                </div>
+                <div>
+                  <span>参数变化</span>
+                  <strong>{canaryEvidenceFocus.item.change_label}</strong>
+                </div>
+                <div>
+                  <span>置信度</span>
+                  <strong>{Number(canaryEvidenceFocus.item.confidence || 0).toFixed(1)}</strong>
+                </div>
+                <div>
+                  <span>样本</span>
+                  <strong>{canaryEvidenceFocus.item.sample_count || 0}</strong>
+                </div>
+              </div>
+              <Alert
+                type="info"
+                showIcon
+                message="为什么现在只做 Canary？"
+                description="参数候选来自历史拒单/收益后验，但仍可能受行情阶段影响；因此先小流量观察闭环交易，不直接全量放开。"
+              />
+            </>
+          ) : (
+            <Alert
+              type="info"
+              showIcon
+              message={canaryEvidence?.conclusion || '当前 Canary 证据来自最近一次审计记录。'}
+              description="该弹窗仅做解释，不会改变任务参数；扩大或回滚仍要走评审分、闭环收益和回撤守门。"
+            />
+          )}
+
+          {focusedFamilyConsensus ? (
+            <div className="order-canary-family-brief">
+              <div className="order-canary-family-brief-head">
+                <div>
+                  <span>多账户共识</span>
+                  <strong>{focusedFamilyConsensus.action_label || '同向候选'}</strong>
+                </div>
+                <Tag color="gold">{focusedFamilyConsensus.family_count || 0} 个账户同向</Tag>
+              </div>
+              <p>{focusedFamilyConsensus.conclusion || '多账户后验显示该参数方向具备共识。'}</p>
+              <div className="order-canary-family-grid">
+                <div>
+                  <span>评估样本</span>
+                  <strong>{focusedFamilyConsensus.evaluated_count || 0}</strong>
+                </div>
+                <div>
+                  <span>可能错杀</span>
+                  <strong>{focusedFamilyConsensus.false_reject_count || 0}</strong>
+                </div>
+                <div>
+                  <span>有效避险</span>
+                  <strong>{focusedFamilyConsensus.saved_loss_count || 0}</strong>
+                </div>
+                <div>
+                  <span>平均相对</span>
+                  <strong
+                    style={{
+                      color: pnlColor(focusedFamilyConsensus.avg_intended_action_return_pct),
+                    }}
+                  >
+                    {formatPercent(focusedFamilyConsensus.avg_intended_action_return_pct)}
+                  </strong>
+                </div>
+              </div>
+              {focusedFamilyConsensus.portfolio_names?.length ? (
+                <Space wrap size={6} className="order-canary-family-portfolios">
+                  {focusedFamilyConsensus.portfolio_names.slice(0, 8).map((name: string) => (
+                    <Tag key={name} color="gold">
+                      {name}
+                    </Tag>
+                  ))}
+                </Space>
+              ) : null}
+            </div>
+          ) : (
+            <div className="order-canary-family-brief muted">
+              <div className="order-canary-family-brief-head">
+                <div>
+                  <span>证据说明</span>
+                  <strong>暂无多账户共识样本</strong>
+                </div>
+              </div>
+              <p>该候选可能来自稳定窗口或历史审计；需要继续观察闭环交易后再判断是否扩大。</p>
+            </div>
+          )}
+
+          {canaryEvidenceFocus?.source === 'active' ? (
+            <div className="order-canary-active-evidence-list">
+              <div className="order-canary-evidence-section-title">
+                <CheckCircleOutlined />
+                <span>当前 Canary 来源拆解</span>
+              </div>
+              <Space wrap size={6}>
+                {activeCanaryEvidenceTags.map((item: any) =>
+                  typeof item === 'string' ? (
+                    <Tag key={item} color="blue">
+                      {item}
+                    </Tag>
+                  ) : (
+                    <Tag
+                      key={item.source || item.label}
+                      color={item.source === 'family_hindsight' ? 'gold' : 'blue'}
+                    >
+                      {item.label} {item.count}
+                    </Tag>
+                  )
+                )}
+              </Space>
+              {activeCanaryEvidenceItems.length ? (
+                <div className="order-canary-modal-list">
+                  {activeCanaryEvidenceItems.slice(0, 6).map(item => (
+                    <div key={`${item.parameter_key}-${item.action}`}>
+                      <Space wrap size={6}>
+                        <Text strong>{item.parameter_label}</Text>
+                        <Tag color={orderRuleActionColorMap[item.action] || 'default'}>
+                          {item.action_label}
+                        </Tag>
+                        <Tag>{item.sample_count || 0} 样本</Tag>
+                      </Space>
+                      <p>{item.family_consensus?.conclusion || '等待更多闭环样本确认。'}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          <div className="order-canary-evidence-guardrail">
+            <WarningOutlined />
+            <span>
+              执行纪律：该证据只支持“小流量验证”。只有当闭环收益、胜率、回撤守门同时达标时，才建议扩大；否则继续观察或回滚。
+            </span>
+          </div>
+        </div>
+      </Modal>
 
       <Modal
         title={
