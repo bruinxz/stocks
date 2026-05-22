@@ -1699,3 +1699,22 @@ Next:
 1. Add a shortcut that turns the current top read-only Canary candidate into a preview, still requiring explicit confirmation before writing parameters.
 2. Add a scheduled snapshot capture after the daily simulated-trading run so review memory grows even when nobody opens the page.
 3. Reduce optional smoke timeout risk on opening-preflight by adding a lightweight summary endpoint or caching command-center preflight results.
+
+### 2026-05-22 command-center Canary preview shortcut
+
+Focus: make the daily command-center tuning radar actionable while preserving the manual confirmation safety boundary.
+
+Completed:
+
+- Added a `生成Canary预览` shortcut to 今日作战台’s 参数调优雷达.
+- The shortcut navigates to the merged 模拟交易台 manual tab and auto-runs a dry-run Canary preview.
+- The shortcut does not write task parameters:
+  - it only calls `order-intent-tuning/apply` with `dry_run=true` and `canary=true`;
+  - the existing `启动Canary` button in 模拟交易台 is still required before any parameter is persisted.
+- The simulated-trading page supports `?canary_preview=1` plus a session-storage flag so the shortcut works reliably after route changes.
+
+Next:
+
+1. Add a scheduled snapshot capture after the daily simulated-trading run so Canary review memory grows even when nobody opens the page.
+2. Reduce optional smoke timeout risk on opening-preflight by caching command-center preflight results or adding a lightweight summary endpoint.
+3. Add a compact “why this Canary candidate” drawer that shows family-hindsight consensus accounts and false-reject/saved-loss examples.

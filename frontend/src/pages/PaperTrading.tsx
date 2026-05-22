@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Alert,
   Card,
@@ -52,6 +52,8 @@ import {
 import api, { getPaperTradingSnapshots } from '../services/api';
 import { marketService, Stock } from '../services/marketService';
 import TradePolicyExplainPanel from '../components/trading/TradePolicyExplainPanel';
+
+const CANARY_PREVIEW_AUTORUN_STORAGE_KEY = 'today_canary_preview_autorun';
 
 const { Text } = Typography;
 
@@ -983,6 +985,7 @@ const PaperTrading: React.FC = () => {
   const [canaryStatusLoading, setCanaryStatusLoading] = useState(false);
   const [canarySnapshots, setCanarySnapshots] = useState<CanaryReviewSnapshotTimeline | null>(null);
   const [canarySnapshotsLoading, setCanarySnapshotsLoading] = useState(false);
+  const canaryAutorunHandledRef = useRef(false);
   const [riskProfile, setRiskProfile] = useState<PaperTradingRiskProfile | null>(null);
   const [riskProfileLoading, setRiskProfileLoading] = useState(false);
   const [orderIntents, setOrderIntents] = useState<PaperTradingOrderIntentDashboard | null>(null);
@@ -1017,6 +1020,18 @@ const PaperTrading: React.FC = () => {
     fetchOrderIntentTuningCanary(true);
     fetchOrderIntentTuningCandidates(true);
     fetchOrderIntentTuningCanarySnapshots(true);
+    try {
+      const shouldAutorun =
+        new URLSearchParams(window.location.search).get('canary_preview') === '1' ||
+        window.sessionStorage.getItem(CANARY_PREVIEW_AUTORUN_STORAGE_KEY) === '1';
+      if (shouldAutorun && !canaryAutorunHandledRef.current) {
+        canaryAutorunHandledRef.current = true;
+        window.sessionStorage.removeItem(CANARY_PREVIEW_AUTORUN_STORAGE_KEY);
+        setTimeout(() => previewOrderIntentTuningCanary({ source: 'today_command_center' }), 500);
+      }
+    } catch {
+      // 浏览器隐私模式下 sessionStorage 可能不可用；忽略自动预览即可。
+    }
   }, []);
 
   const fetchSnapshots = async () => {
@@ -1333,7 +1348,7 @@ const PaperTrading: React.FC = () => {
     }
   };
 
-  const previewOrderIntentTuningCanary = async () => {
+  const previewOrderIntentTuningCanary = async (options?: { source?: string }) => {
     setCanaryPreviewLoading(true);
     try {
       const response = await api.post('/paper-trading/order-intent-tuning/apply', {
@@ -1350,7 +1365,11 @@ const PaperTrading: React.FC = () => {
       const result = response.data.data as OrderIntentTuningApplyResult;
       setTuningPreview(result);
       if (result.changes?.length) {
-        message.success(result.message || 'Canary 预览已生成');
+        message.success(
+          options?.source === 'today_command_center'
+            ? '已根据今日作战台首选候选生成 Canary 预览，确认后才会写入参数'
+            : result.message || 'Canary 预览已生成'
+        );
       } else {
         message.info(result.message || '当前没有可进入 Canary 的参数');
       }
@@ -2262,7 +2281,7 @@ const PaperTrading: React.FC = () => {
                         size="small"
                         icon={<ExperimentOutlined />}
                         loading={canaryPreviewLoading}
-                        onClick={previewOrderIntentTuningCanary}
+                        onClick={() => previewOrderIntentTuningCanary()}
                       >
                         Canary预览
                       </Button>

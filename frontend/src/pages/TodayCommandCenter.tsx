@@ -123,11 +123,14 @@ const buildPositionAdvice = (position: Position) => {
   return { label: '继续观察', color: 'blue', reason: '暂未触发强制退出条件' };
 };
 
+const CANARY_PREVIEW_AUTORUN_STORAGE_KEY = 'today_canary_preview_autorun';
+
 const TodayCommandCenter: React.FC = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [preflightLoading, setPreflightLoading] = useState(false);
   const [dryRunLoading, setDryRunLoading] = useState(false);
+  const [canaryShortcutLoading, setCanaryShortcutLoading] = useState(false);
   const [commandData, setCommandData] = useState<any>(null);
   const [openingReadiness, setOpeningReadiness] = useState<any>(null);
   const [preflight, setPreflight] = useState<any>(null);
@@ -205,6 +208,17 @@ const TodayCommandCenter: React.FC = () => {
     } finally {
       setDryRunLoading(false);
     }
+  };
+
+  const openCanaryPreviewShortcut = () => {
+    setCanaryShortcutLoading(true);
+    try {
+      window.sessionStorage.setItem(CANARY_PREVIEW_AUTORUN_STORAGE_KEY, '1');
+    } catch {
+      // sessionStorage 不可用时仍然跳转，模拟盘页面也支持 query 参数触发。
+    }
+    message.info('正在跳转到模拟盘生成 Canary 预览；这一步不会写入参数。');
+    navigate('/autonomous-trading/overview?tab=manual&canary_preview=1');
   };
 
   useEffect(() => {
@@ -822,6 +836,17 @@ const TodayCommandCenter: React.FC = () => {
               type={Number(tuningRadarSummary.canary_candidate_count || 0) > 0 ? 'warning' : 'info'}
               message={tuningRadarSummary.conclusion || '暂无满足门槛的参数调优候选，继续观察。'}
               description="这里只读展示稳定窗口 + 多账户拒单后验的候选，不会写入任务参数。"
+              action={
+                <Button
+                  size="small"
+                  type="primary"
+                  loading={canaryShortcutLoading}
+                  disabled={Number(tuningRadarSummary.canary_candidate_count || 0) <= 0}
+                  onClick={openCanaryPreviewShortcut}
+                >
+                  生成Canary预览
+                </Button>
+              }
             />
             <div className="today-tuning-radar-grid">
               <div>
