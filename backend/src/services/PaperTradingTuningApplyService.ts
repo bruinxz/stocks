@@ -4,6 +4,7 @@ import { schedulerService } from './SchedulerService';
 import { taskParameterAuditService, TaskParameterAuditOperator } from './TaskParameterAuditService';
 import { paperTradingPlanService } from './PaperTradingPlanService';
 import { recommendationTradeOutcomeService } from './RecommendationTradeOutcomeService';
+import { paperTradingOrderIntentService } from './PaperTradingOrderIntentService';
 
 interface ApplyOrderIntentTuningOptions {
   dry_run?: boolean;
@@ -15,6 +16,11 @@ interface ApplyOrderIntentTuningOptions {
   canary_max_parameters?: number;
   canary_observation_trades?: number;
   canary_observation_days?: number;
+  use_family_hindsight?: boolean;
+  family_hindsight_lookback_days?: number;
+  family_hindsight_limit?: number;
+  family_hindsight_min_consensus?: number;
+  family_hindsight_min_evaluated?: number;
   user_id?: number;
   username?: string;
   operator?: TaskParameterAuditOperator;
@@ -33,6 +39,166 @@ const PARAMETER_ALLOWLIST = [
   'default_position_pct',
   'min_trade_amount',
 ];
+
+const REASON_PARAMETER_MAP: Record<
+  string,
+  Array<{
+    parameter_key: string;
+    parameter_label: string;
+    current_value: number;
+    loosen_value: number;
+    tighten_value: number;
+    unit: string;
+    loosen_rationale: string;
+    tighten_rationale: string;
+  }>
+> = {
+  execution_reality: [
+    {
+      parameter_key: 'min_avg_turnover_yuan',
+      parameter_label: '最低日均成交额',
+      current_value: 30000000,
+      loosen_value: 26000000,
+      tighten_value: 36000000,
+      unit: '元',
+      loosen_rationale:
+        '多账户后验证明真实成交约束可能错杀机会，Canary 仅小幅降低流动性门槛，仍保留涨跌停/停牌硬拦截。',
+      tighten_rationale:
+        '多账户后验证明真实成交约束有效避险，Canary 小幅提高流动性门槛，减少低成交额标的消耗资金。',
+    },
+  ],
+  market_data: [
+    {
+      parameter_key: 'min_avg_turnover_yuan',
+      parameter_label: '最低日均成交额',
+      current_value: 30000000,
+      loosen_value: 26000000,
+      tighten_value: 36000000,
+      unit: '元',
+      loosen_rationale:
+        '行情/数据质量拦截若在多个账户中被后验证明偏严，可小幅降低流动性门槛做有限试错。',
+      tighten_rationale: '行情/数据质量拦截若持续避免亏损，应提高流动性门槛，优先保护本金。',
+    },
+  ],
+  entry_risk_guard: [
+    {
+      parameter_key: 'max_daily_new_positions',
+      parameter_label: '单日新增持仓上限',
+      current_value: 3,
+      loosen_value: 4,
+      tighten_value: 2,
+      unit: '笔',
+      loosen_rationale:
+        '入场风控在多个账户出现错杀时，只增加一笔小流量试错名额，避免一次放大敞口。',
+      tighten_rationale: '入场风控有效避险时，减少单日新增仓位，让弱环境下的纪律更可执行。',
+    },
+    {
+      parameter_key: 'max_daily_new_exposure_pct',
+      parameter_label: '单日新增敞口上限',
+      current_value: 12,
+      loosen_value: 13,
+      tighten_value: 10,
+      unit: '%',
+      loosen_rationale: '仅小幅放松新增敞口，避免多账户错杀信号被完全挡在模拟盘外。',
+      tighten_rationale: '收紧新增敞口，把已被证明有效的拦截转化为更稳的仓位纪律。',
+    },
+  ],
+  market_environment_guard: [
+    {
+      parameter_key: 'max_daily_new_positions',
+      parameter_label: '单日新增持仓上限',
+      current_value: 3,
+      loosen_value: 4,
+      tighten_value: 2,
+      unit: '笔',
+      loosen_rationale: '市场环境拦截若多账户错杀，可只增加一笔观察仓，不直接扩大满额跟单。',
+      tighten_rationale: '市场环境拦截有效避险时，降低新增持仓数，优先等环境改善。',
+    },
+  ],
+  position_limit: [
+    {
+      parameter_key: 'max_daily_new_positions',
+      parameter_label: '单日新增持仓上限',
+      current_value: 3,
+      loosen_value: 4,
+      tighten_value: 2,
+      unit: '笔',
+      loosen_rationale: '持仓上限若多账户错杀，可用一笔 Canary 名额验证是否提高收益。',
+      tighten_rationale: '持仓上限若避免亏损，应减少新增仓位，降低组合噪声。',
+    },
+  ],
+  profit_gate: [
+    {
+      parameter_key: 'profit_gate_min_quality_score',
+      parameter_label: '收益闸门质量分',
+      current_value: 45,
+      loosen_value: 42,
+      tighten_value: 52,
+      unit: '分',
+      loosen_rationale: '收益闸门多账户错杀时，仅小幅降低质量分，让少量候选进入验证。',
+      tighten_rationale: '收益闸门多账户避险有效时，提高质量分，减少低质量信号消耗资金。',
+    },
+    {
+      parameter_key: 'profit_gate_sampling_multiplier',
+      parameter_label: '收益闸门抽样仓位倍率',
+      current_value: 0.35,
+      loosen_value: 0.42,
+      tighten_value: 0.28,
+      unit: 'x',
+      loosen_rationale: '放松时仍走抽样仓位，不直接恢复满仓位。',
+      tighten_rationale: '收紧时降低抽样仓位，保留验证通道但减少亏损。',
+    },
+  ],
+  outcome_feedback: [
+    {
+      parameter_key: 'min_score',
+      parameter_label: '最低推荐评分',
+      current_value: 72,
+      loosen_value: 70,
+      tighten_value: 75,
+      unit: '分',
+      loosen_rationale: '收益闭环后验证明评分线偏严时，小幅降低门槛扩大候选池。',
+      tighten_rationale: '收益闭环后验证明低分样本拖累收益时，提高评分线。',
+    },
+  ],
+  risk_level: [
+    {
+      parameter_key: 'min_score',
+      parameter_label: '最低推荐评分',
+      current_value: 72,
+      loosen_value: 70,
+      tighten_value: 75,
+      unit: '分',
+      loosen_rationale: '风险等级拦截若多账户错杀，可小幅降低评分线，让高质量样本进入试错。',
+      tighten_rationale: '风险等级拦截若多账户避险有效，应提高评分线。',
+    },
+  ],
+  trade_discipline: [
+    {
+      parameter_key: 'default_position_pct',
+      parameter_label: '默认单票仓位',
+      current_value: 5,
+      loosen_value: 5.25,
+      tighten_value: 4.5,
+      unit: '%',
+      loosen_rationale: '交易纪律错杀时只微增仓位，避免因为短期样本过拟合而放大风险。',
+      tighten_rationale: '交易纪律避险有效时先降低单票仓位，把验证放在更小风险下进行。',
+    },
+  ],
+  capital_or_lot_size: [
+    {
+      parameter_key: 'min_trade_amount',
+      parameter_label: '最低单笔交易额',
+      current_value: 3000,
+      loosen_value: 2500,
+      tighten_value: 4000,
+      unit: '元',
+      loosen_rationale:
+        '资金/一手限制在多个账户出现错杀时，只小幅降低最低交易额，提高冷启动小仓试错能力。',
+      tighten_rationale: '小额交易若多账户后验证明噪声高，则提高最低交易额，减少无效订单。',
+    },
+  ],
+};
 
 function toBoolean(value: any, fallback = true): boolean {
   if (value === undefined || value === null || value === '') return fallback;
@@ -92,9 +258,16 @@ export class PaperTradingTuningApplyService {
   async applyOrderIntentTuningPreview(options: ApplyOrderIntentTuningOptions = {}) {
     const dryRun = toBoolean(options.dry_run, true);
     const canary = toBoolean(options.canary, false);
+    const useFamilyHindsight = toBoolean(options.use_family_hindsight, canary);
     const canaryMaxParameters = toPositiveInt(options.canary_max_parameters, 1, 3);
     const canaryObservationTrades = toPositiveInt(options.canary_observation_trades, 8, 30);
     const canaryObservationDays = toPositiveInt(options.canary_observation_days, 10, 60);
+    const familyHindsightMinConsensus = toPositiveInt(options.family_hindsight_min_consensus, 2, 5);
+    const familyHindsightMinEvaluated = toPositiveInt(
+      options.family_hindsight_min_evaluated,
+      5,
+      50
+    );
     const selectedKeys = new Set(
       (options.parameter_keys || [])
         .map(key => String(key || '').trim())
@@ -137,9 +310,26 @@ export class PaperTradingTuningApplyService {
     const rawPreviews = (plan.summary.order_intent_feedback?.parameter_adjustment_preview || [])
       .filter((item: any) => PARAMETER_ALLOWLIST.includes(String(item.parameter_key || '')))
       .filter((item: any) => selectedKeys.size === 0 || selectedKeys.has(item.parameter_key));
+    const familyHindsight = useFamilyHindsight
+      ? await paperTradingOrderIntentService
+          .getFamilyHindsightDashboard({
+            user_id: options.user_id,
+            username: options.username,
+            lookback_days: toPositiveInt(options.family_hindsight_lookback_days, 45, 3650),
+            limit: toPositiveInt(options.family_hindsight_limit, 3000, 10000),
+          })
+          .catch(() => null)
+      : null;
+    const familyCandidates = familyHindsight
+      ? this.buildFamilyHindsightPreviews(familyHindsight, {
+          minConsensus: familyHindsightMinConsensus,
+          minEvaluated: familyHindsightMinEvaluated,
+        }).filter((item: any) => selectedKeys.size === 0 || selectedKeys.has(item.parameter_key))
+      : [];
+    const mergedPreviews = this.mergePreviewCandidates(rawPreviews, familyCandidates);
     const previews = canary
-      ? this.pickCanaryPreviews(rawPreviews, canaryMaxParameters)
-      : rawPreviews;
+      ? this.pickCanaryPreviews(mergedPreviews, canaryMaxParameters)
+      : mergedPreviews;
 
     if (previews.length === 0) {
       return {
@@ -149,8 +339,15 @@ export class PaperTradingTuningApplyService {
         message: '当前没有通过稳定窗口的订单意图调参预览，暂不更新任务参数。',
         changes: [],
         preview_count: rawPreviews.length,
+        family_hindsight_preview_count: familyCandidates.length,
         selected_preview_count: 0,
         applied_count: 0,
+        family_hindsight: familyHindsight
+          ? this.summarizeFamilyHindsightForResult(familyHindsight, familyCandidates, {
+              minConsensus: familyHindsightMinConsensus,
+              minEvaluated: familyHindsightMinEvaluated,
+            })
+          : undefined,
         canary_plan: canary
           ? {
               enabled: true,
@@ -188,10 +385,12 @@ export class PaperTradingTuningApplyService {
           ),
           selected_preview_count: previews.length,
           target_task_count: changes.length,
+          evidence_sources: uniqueStrings(previews.map((item: any) => item.evidence_source)),
           guardrails: [
             '每次最多放行少量参数，避免多变量同时变化导致收益归因失真。',
             '写入任务参数但不立即触发买卖，等待下一轮自动任务自然运行。',
             '后续用推荐交易收益闭环观察样本数、胜率、超额收益和最大亏损。',
+            '多账户后验候选必须至少两个策略账户同向，且单账户样本达到最低评估数。',
           ],
         }
       : undefined;
@@ -204,9 +403,7 @@ export class PaperTradingTuningApplyService {
         await task.update({ parameters: change.suggested_parameters });
         await taskParameterAuditService.record({
           task,
-          event_type: canary
-            ? 'order_intent_tuning_canary_applied'
-            : 'order_intent_tuning_applied',
+          event_type: canary ? 'order_intent_tuning_canary_applied' : 'order_intent_tuning_applied',
           before_parameters: beforeParameters,
           after_parameters: change.suggested_parameters,
           changed_keys: change.changed_keys,
@@ -233,21 +430,38 @@ export class PaperTradingTuningApplyService {
         changes.length === 0
           ? '目标任务参数已与订单意图调参预览一致，无需更新。'
           : canary && dryRun
-          ? `已生成 Canary 小流量调参预览：${changes.length} 个任务、${canaryPlan?.selected_parameter_keys.length || 0} 个参数，确认后先小范围观察。`
+          ? `已生成 Canary 小流量调参预览：${changes.length} 个任务、${
+              canaryPlan?.selected_parameter_keys.length || 0
+            } 个参数，确认后先小范围观察。`
           : canary
-          ? `已应用 Canary 小流量调参：${changes.length} 个任务、${canaryPlan?.selected_parameter_keys.length || 0} 个参数，等待后续收益闭环观察。`
+          ? `已应用 Canary 小流量调参：${changes.length} 个任务、${
+              canaryPlan?.selected_parameter_keys.length || 0
+            } 个参数，等待后续收益闭环观察。`
           : dryRun
           ? `已生成 ${changes.length} 个任务的订单意图调参预览，确认后才会写入。`
           : `已应用 ${changes.length} 个任务的订单意图调参建议，并重新加载启用中的定时任务。`,
       preview_count: rawPreviews.length,
+      family_hindsight_preview_count: familyCandidates.length,
       selected_preview_count: previews.length,
       applied_count: dryRun ? 0 : changes.length,
       generated_at: plan.generated_at,
       tuning_preview_conclusion: plan.summary.order_intent_feedback?.tuning_preview_conclusion,
       previews,
+      family_hindsight: familyHindsight
+        ? this.summarizeFamilyHindsightForResult(familyHindsight, familyCandidates, {
+            minConsensus: familyHindsightMinConsensus,
+            minEvaluated: familyHindsightMinEvaluated,
+          })
+        : undefined,
       changes,
       canary_plan: canaryPlan,
-      apply_mode: dryRun ? (canary ? 'canary_preview' : 'preview') : canary ? 'canary' : 'manual_confirmed',
+      apply_mode: dryRun
+        ? canary
+          ? 'canary_preview'
+          : 'preview'
+        : canary
+        ? 'canary'
+        : 'manual_confirmed',
     };
   }
 
@@ -282,9 +496,7 @@ export class PaperTradingTuningApplyService {
     const appliedAt = (activeAudit as any).created_at;
     const observationDays = toPositiveInt(canary.observation_days, 10, 60);
     const observationTrades = toPositiveInt(canary.observation_trades, 8, 30);
-    const startDate = appliedAt
-      ? new Date(appliedAt).toISOString().slice(0, 10)
-      : undefined;
+    const startDate = appliedAt ? new Date(appliedAt).toISOString().slice(0, 10) : undefined;
     const dashboard = await recommendationTradeOutcomeService.getDashboard({
       user_id: options.user_id,
       username: options.username,
@@ -395,7 +607,9 @@ export class PaperTradingTuningApplyService {
         .filter(key => PARAMETER_ALLOWLIST.includes(key))
     );
     const scopedItems = allItems
-      .filter((item: any) => selectedTaskIds.size === 0 || selectedTaskIds.has(Number(item.task_id)))
+      .filter(
+        (item: any) => selectedTaskIds.size === 0 || selectedTaskIds.has(Number(item.task_id))
+      )
       .map((item: any) => ({
         ...item,
         parameters: (item.parameters || []).filter((parameter: any) => {
@@ -434,7 +648,9 @@ export class PaperTradingTuningApplyService {
       rollbackPlan?.safety_state !== 'no_change';
 
     if (!dryRun && (!confirm || options.confirm_text !== CANARY_ROLLBACK_CONFIRM_TEXT)) {
-      throw new Error(`回滚 Canary 参数必须传 confirm=true 且 confirm_text=${CANARY_ROLLBACK_CONFIRM_TEXT}`);
+      throw new Error(
+        `回滚 Canary 参数必须传 confirm=true 且 confirm_text=${CANARY_ROLLBACK_CONFIRM_TEXT}`
+      );
     }
     if (!dryRun && !canApply) {
       throw new Error(
@@ -498,9 +714,9 @@ export class PaperTradingTuningApplyService {
         changes.length === 0
           ? '当前没有可回滚的 Canary 参数。'
           : dryRun
-          ? `Canary 回滚预览完成：将影响 ${changes.length} 个任务、${uniqueStrings(
-              changes.flatMap((change: any) => change.changed_keys)
-            ).length} 个参数；当前未写入。`
+          ? `Canary 回滚预览完成：将影响 ${changes.length} 个任务、${
+              uniqueStrings(changes.flatMap((change: any) => change.changed_keys)).length
+            } 个参数；当前未写入。`
           : `Canary 回滚已应用：恢复 ${changes.length} 个任务参数，并写入审计日志。`,
     };
   }
@@ -546,7 +762,9 @@ export class PaperTradingTuningApplyService {
         task_type: audit.task_type,
         task_exists: Boolean(task),
         changed_keys: changedKeys,
-        restore_parameters: Object.fromEntries(changedKeys.map((key: string) => [key, before?.[key]])),
+        restore_parameters: Object.fromEntries(
+          changedKeys.map((key: string) => [key, before?.[key]])
+        ),
         parameters: parameterItems,
       };
     });
@@ -652,13 +870,19 @@ export class PaperTradingTuningApplyService {
     const profitFactor = roundNumber(input.summary.profit_factor, 4);
     const readyByTrades = closedCount >= input.observation.target_closed_trades;
     const readyByDays = input.observation.elapsed_days >= input.observation.target_days;
-    const sampleScore = Math.min(100, (closedCount / Math.max(1, input.observation.target_closed_trades)) * 100);
+    const sampleScore = Math.min(
+      100,
+      (closedCount / Math.max(1, input.observation.target_closed_trades)) * 100
+    );
     const performanceScore =
       avgExcess * 12 +
       (winRate - 50) * 0.65 +
       Math.min(18, Math.max(-12, (profitFactor - 1) * 8)) +
       Math.min(8, avgReturn * 0.8);
-    const reviewScore = roundNumber(Math.max(0, Math.min(100, 50 + performanceScore + sampleScore * 0.18)), 2);
+    const reviewScore = roundNumber(
+      Math.max(0, Math.min(100, 50 + performanceScore + sampleScore * 0.18)),
+      2
+    );
 
     let action: 'promote' | 'rollback' | 'continue_observing' | 'hold';
     if (!input.observation.ready_for_review) {
@@ -678,7 +902,9 @@ export class PaperTradingTuningApplyService {
       hold: '暂不扩大',
     };
     const reasons: string[] = [];
-    reasons.push(`闭环样本 ${closedCount}/${input.observation.target_closed_trades} 笔，运行 ${input.observation.elapsed_days}/${input.observation.target_days} 天。`);
+    reasons.push(
+      `闭环样本 ${closedCount}/${input.observation.target_closed_trades} 笔，运行 ${input.observation.elapsed_days}/${input.observation.target_days} 天。`
+    );
     reasons.push(`平均超额 ${avgExcess}%，胜率 ${winRate}%，利润因子 ${profitFactor || 0}。`);
     if (openCount > 0) reasons.push(`仍有 ${openCount} 笔未闭环持仓，结论需保留安全边际。`);
     if (action === 'promote') {
@@ -737,6 +963,182 @@ export class PaperTradingTuningApplyService {
       if (selectedKeys.size >= maxParameters) break;
     }
     return selected.length > 0 ? selected : previews.slice(0, maxParameters);
+  }
+
+  private mergePreviewCandidates(primary: any[], familyCandidates: any[]) {
+    const byKey = new Map<string, any>();
+    for (const item of [...familyCandidates, ...primary]) {
+      const key = `${item.parameter_key}:${item.action}`;
+      const existing = byKey.get(key);
+      if (!existing || Number(item.confidence || 0) > Number(existing.confidence || 0)) {
+        byKey.set(key, item);
+      } else if (
+        existing &&
+        item.evidence_source &&
+        existing.evidence_source !== item.evidence_source
+      ) {
+        existing.evidence_source = 'stable_window+family_hindsight';
+        existing.evidence_source_label = '稳定窗口 + 多账户后验';
+        existing.confidence = Math.max(
+          Number(existing.confidence || 0),
+          Number(item.confidence || 0)
+        );
+      }
+    }
+    return [...byKey.values()].sort(
+      (a, b) =>
+        Number(b.confidence || 0) - Number(a.confidence || 0) ||
+        Number(b.sample_count || 0) - Number(a.sample_count || 0)
+    );
+  }
+
+  private buildFamilyHindsightPreviews(
+    familyHindsight: any,
+    options: { minConsensus: number; minEvaluated: number }
+  ) {
+    const candidates: any[] = [];
+    const families = (familyHindsight?.families || []).filter((family: any) => {
+      const action = String(family.action || '');
+      return (
+        ['loosen', 'tighten'].includes(action) &&
+        Number(family.evaluated_count || 0) >= options.minEvaluated
+      );
+    });
+
+    const directionGroups = new Map<string, any[]>();
+    for (const family of families) {
+      const action = String(family.action || '');
+      const list = directionGroups.get(action) || [];
+      list.push(family);
+      directionGroups.set(action, list);
+    }
+
+    for (const [action, group] of directionGroups.entries()) {
+      if (group.length < options.minConsensus) continue;
+      const reasonCounts = new Map<string, { key: string; label: string; count: number }>();
+      for (const family of group) {
+        for (const reason of family.top_reason_categories || []) {
+          const key = String(reason.key || reason.category || 'unknown');
+          const existing = reasonCounts.get(key) || {
+            key,
+            label: reason.label || key,
+            count: 0,
+          };
+          existing.count += Number(reason.count || 0);
+          reasonCounts.set(key, existing);
+        }
+      }
+
+      const reasons = [...reasonCounts.values()]
+        .filter(reason => REASON_PARAMETER_MAP[reason.key]?.length)
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 4);
+
+      for (const reason of reasons) {
+        const templates = REASON_PARAMETER_MAP[reason.key] || [];
+        for (const template of templates) {
+          const avg = roundNumber(
+            group.reduce(
+              (sum, family) => sum + Number(family.avg_intended_action_return_pct || 0),
+              0
+            ) / group.length,
+            4
+          );
+          const sampleCount = group.reduce(
+            (sum, family) => sum + Number(family.evaluated_count || 0),
+            0
+          );
+          const confidence = roundNumber(
+            Math.min(
+              100,
+              group.length * 24 +
+                Math.min(24, sampleCount * 0.8) +
+                Math.min(18, Math.abs(avg) * 4) +
+                Math.min(10, Number(reason.count || 0) * 0.4)
+            ),
+            2
+          );
+          const previewValue = action === 'loosen' ? template.loosen_value : template.tighten_value;
+          const actionLabel = action === 'loosen' ? '建议放松' : '建议收紧';
+          candidates.push({
+            reason_category: reason.key,
+            reason_category_label: reason.label,
+            action,
+            action_label: actionLabel,
+            parameter_key: template.parameter_key,
+            parameter_label: template.parameter_label,
+            current_value: template.current_value,
+            preview_value: previewValue,
+            unit: template.unit,
+            change_label: `${action === 'loosen' ? '放松' : '收紧'}：${template.current_value}${
+              template.unit
+            } → ${previewValue}${template.unit}`,
+            rationale: action === 'loosen' ? template.loosen_rationale : template.tighten_rationale,
+            confidence,
+            sample_count: sampleCount,
+            apply_status: 'preview_only',
+            apply_status_label: '仅预览，未应用',
+            evidence_source: 'family_hindsight',
+            evidence_source_label: '多账户后验',
+            family_consensus: {
+              action,
+              action_label: actionLabel,
+              family_count: group.length,
+              portfolio_names: group.map(family => family.portfolio_name),
+              evaluated_count: sampleCount,
+              false_reject_count: group.reduce(
+                (sum, family) => sum + Number(family.false_reject_count || 0),
+                0
+              ),
+              saved_loss_count: group.reduce(
+                (sum, family) => sum + Number(family.saved_loss_count || 0),
+                0
+              ),
+              avg_intended_action_return_pct: avg,
+              reason_count: reason.count,
+              conclusion: `多账户同向 ${group.length} 个，合计后验 ${sampleCount} 条，平均相对 ${avg}%。`,
+            },
+          });
+        }
+      }
+    }
+
+    return candidates
+      .filter(item => PARAMETER_ALLOWLIST.includes(String(item.parameter_key || '')))
+      .slice(0, 12);
+  }
+
+  private summarizeFamilyHindsightForResult(
+    familyHindsight: any,
+    candidates: any[],
+    options: { minConsensus: number; minEvaluated: number }
+  ) {
+    return {
+      generated_at: familyHindsight.generated_at,
+      filters: familyHindsight.filters,
+      thresholds: {
+        min_consensus_families: options.minConsensus,
+        min_evaluated_per_family: options.minEvaluated,
+      },
+      summary: familyHindsight.summary,
+      candidate_count: candidates.length,
+      candidates: candidates.slice(0, 8).map(item => ({
+        parameter_key: item.parameter_key,
+        parameter_label: item.parameter_label,
+        action: item.action,
+        action_label: item.action_label,
+        confidence: item.confidence,
+        sample_count: item.sample_count,
+        change_label: item.change_label,
+        reason_category_label: item.reason_category_label,
+        evidence_source_label: item.evidence_source_label,
+        family_consensus: item.family_consensus,
+      })),
+      conclusion:
+        candidates.length > 0
+          ? `多账户拒单后验生成 ${candidates.length} 条保守 Canary 候选，只允许小流量验证。`
+          : `多账户后验未达到 ${options.minConsensus} 个账户同向且每账户 ${options.minEvaluated} 条样本的门槛，继续观察。`,
+    };
   }
 
   private buildTaskChange(task: ScheduledTask, previews: any[]) {

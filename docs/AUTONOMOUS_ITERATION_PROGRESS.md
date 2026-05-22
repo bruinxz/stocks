@@ -1600,3 +1600,25 @@ Next:
 1. Add a conservative canary preview that uses this family hindsight to propose min-trade/lot-sampling adjustments only when multiple windows agree.
 2. Surface the same account-level explanation on the signal trace page and simulation detail page.
 3. Continue observing Agent-only after the next polling cycle to ensure the independent control group receives non-quant TradingAgents signals.
+
+### 2026-05-22 family hindsight powered Canary candidates
+
+Focus: turn the strategy-account rejection hindsight into conservative, auditable tuning candidates instead of only displaying diagnostics.
+
+Completed:
+
+- Order-intent tuning preview now optionally reads family-level hindsight across all strategy paper accounts.
+- Canary preview enables this by default and only creates family-hindsight candidates when:
+  - at least 2 strategy accounts agree on loosen/tighten direction;
+  - each contributing account has at least 5 evaluated hindsight samples;
+  - the mapped parameter is on the existing task-parameter allowlist.
+- Family-hindsight candidates are merged with existing stable-window candidates, ranked by confidence, and still capped by Canary max-parameter limits.
+- Canary audit metadata now records evidence source and guardrails so later attribution can tell whether a parameter came from stable windows, family hindsight, or both.
+- Paper-trading page now shows a compact “多账户后验 Canary 证据” panel with evaluated samples, possible false rejects, saved losses, average relative return and the candidate parameter changes.
+- No automatic broad parameter application was added; confirmed Canary still only writes a small number of task parameters and waits for closed trade outcomes.
+
+Next:
+
+1. Add family-hindsight evidence source to Canary status/attribution so active Canary can show whether it came from multi-account evidence.
+2. Add a read-only endpoint that returns family-hindsight candidates without generating a task-change preview, for command-center visibility.
+3. Add promotion rules that require both positive Canary attribution and no worsening of max drawdown before suggesting wider rollout.

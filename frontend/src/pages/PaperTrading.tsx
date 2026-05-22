@@ -427,6 +427,18 @@ interface OrderIntentParameterPreview {
   sample_count: number;
   apply_status: string;
   apply_status_label: string;
+  evidence_source?: string;
+  evidence_source_label?: string;
+  family_consensus?: {
+    action_label?: string;
+    family_count: number;
+    portfolio_names?: string[];
+    evaluated_count: number;
+    false_reject_count: number;
+    saved_loss_count: number;
+    avg_intended_action_return_pct: number;
+    conclusion?: string;
+  };
 }
 
 interface OrderIntentTuningTaskChange {
@@ -443,11 +455,40 @@ interface OrderIntentTuningApplyResult {
   canary?: boolean;
   message: string;
   preview_count: number;
+  family_hindsight_preview_count?: number;
   selected_preview_count?: number;
   applied_count: number;
   generated_at?: string;
   tuning_preview_conclusion?: string;
   previews?: OrderIntentParameterPreview[];
+  family_hindsight?: {
+    generated_at?: string;
+    thresholds?: {
+      min_consensus_families?: number;
+      min_evaluated_per_family?: number;
+    };
+    summary?: {
+      evaluated_count?: number;
+      false_reject_count?: number;
+      saved_loss_count?: number;
+      avg_intended_action_return_pct?: number;
+      conclusion?: string;
+    };
+    candidate_count: number;
+    candidates?: Array<{
+      parameter_key: string;
+      parameter_label: string;
+      action: string;
+      action_label: string;
+      confidence: number;
+      sample_count: number;
+      change_label: string;
+      reason_category_label: string;
+      evidence_source_label?: string;
+      family_consensus?: OrderIntentParameterPreview['family_consensus'];
+    }>;
+    conclusion?: string;
+  };
   changes: OrderIntentTuningTaskChange[];
   canary_plan?: {
     enabled: boolean;
@@ -457,6 +498,7 @@ interface OrderIntentTuningApplyResult {
     selected_parameter_keys: string[];
     selected_preview_count?: number;
     target_task_count?: number;
+    evidence_sources?: string[];
     guardrails?: string[];
   };
   apply_mode?: 'preview' | 'manual_confirmed' | 'canary_preview' | 'canary';
@@ -1153,6 +1195,10 @@ const PaperTrading: React.FC = () => {
       const response = await api.post('/paper-trading/order-intent-tuning/apply', {
         dry_run: true,
         canary: true,
+        use_family_hindsight: true,
+        family_hindsight_lookback_days: 45,
+        family_hindsight_min_consensus: 2,
+        family_hindsight_min_evaluated: 5,
         canary_max_parameters: 1,
         canary_observation_trades: 8,
         canary_observation_days: 10,
@@ -1190,6 +1236,10 @@ const PaperTrading: React.FC = () => {
           const response = await api.post('/paper-trading/order-intent-tuning/apply', {
             dry_run: false,
             canary: true,
+            use_family_hindsight: true,
+            family_hindsight_lookback_days: 45,
+            family_hindsight_min_consensus: 2,
+            family_hindsight_min_evaluated: 5,
             canary_max_parameters: 1,
             canary_observation_trades: targetPreview.canary_plan?.observation_trades || 8,
             canary_observation_days: targetPreview.canary_plan?.observation_days || 10,
@@ -2111,12 +2161,85 @@ const PaperTrading: React.FC = () => {
                               tuningPreview.canary_plan?.observation_trades || 8
                             } 笔闭环或 ${
                               tuningPreview.canary_plan?.observation_days || 10
-                            } 天后再扩大。`
+                            } 天后再扩大；多账户后验候选 ${
+                              tuningPreview.family_hindsight_preview_count || 0
+                            } 条。`
                           : `将影响 ${tuningPreview.changes.length} 个定时任务，确认后写入审计日志。`
                         : '没有可写入的参数变化。'
                     }
                   />
                 )}
+                {tuningPreview?.family_hindsight ? (
+                  <div className="order-family-canary-evidence">
+                    <div className="order-family-canary-head">
+                      <div>
+                        <span>FAMILY HINDSIGHT</span>
+                        <strong>多账户后验 Canary 证据</strong>
+                      </div>
+                      <Tag
+                        color={
+                          tuningPreview.family_hindsight.candidate_count > 0 ? 'gold' : 'default'
+                        }
+                      >
+                        候选 {tuningPreview.family_hindsight.candidate_count}
+                      </Tag>
+                    </div>
+                    <p>{tuningPreview.family_hindsight.conclusion}</p>
+                    <div className="order-family-canary-stats">
+                      <div>
+                        <span>评估样本</span>
+                        <strong>
+                          {tuningPreview.family_hindsight.summary?.evaluated_count || 0}
+                        </strong>
+                      </div>
+                      <div>
+                        <span>可能错杀</span>
+                        <strong>
+                          {tuningPreview.family_hindsight.summary?.false_reject_count || 0}
+                        </strong>
+                      </div>
+                      <div>
+                        <span>有效避险</span>
+                        <strong>
+                          {tuningPreview.family_hindsight.summary?.saved_loss_count || 0}
+                        </strong>
+                      </div>
+                      <div>
+                        <span>平均相对</span>
+                        <strong
+                          style={{
+                            color: pnlColor(
+                              tuningPreview.family_hindsight.summary?.avg_intended_action_return_pct
+                            ),
+                          }}
+                        >
+                          {formatPercent(
+                            tuningPreview.family_hindsight.summary?.avg_intended_action_return_pct
+                          )}
+                        </strong>
+                      </div>
+                    </div>
+                    {tuningPreview.family_hindsight.candidates?.length ? (
+                      <div className="order-family-canary-candidates">
+                        {tuningPreview.family_hindsight.candidates.slice(0, 4).map(item => (
+                          <div key={`${item.parameter_key}-${item.action}`}>
+                            <Space wrap size={6}>
+                              <Text strong>{item.parameter_label}</Text>
+                              <Tag color={orderRuleActionColorMap[item.action] || 'default'}>
+                                {item.action_label}
+                              </Tag>
+                              <Tag color="blue">{item.evidence_source_label || '多账户后验'}</Tag>
+                            </Space>
+                            <p>
+                              {item.reason_category_label} · {item.change_label} ·{' '}
+                              {item.family_consensus?.conclusion}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
                 <Spin spinning={canaryStatusLoading}>
                   <div
                     className={`order-canary-card tone-${
@@ -2336,9 +2459,23 @@ const PaperTrading: React.FC = () => {
                             <Tag color={orderRuleActionColorMap[item.action] || 'default'}>
                               {item.action_label}
                             </Tag>
+                            {item.evidence_source_label ? (
+                              <Tag
+                                color={
+                                  item.evidence_source === 'family_hindsight' ? 'gold' : 'blue'
+                                }
+                              >
+                                {item.evidence_source_label}
+                              </Tag>
+                            ) : null}
                             <Tag color="default">{item.apply_status_label}</Tag>
                           </Space>
-                          <p>{item.rationale}</p>
+                          <p>
+                            {item.rationale}
+                            {item.family_consensus?.conclusion
+                              ? ` ${item.family_consensus.conclusion}`
+                              : ''}
+                          </p>
                         </div>
                         <div className="order-parameter-change">
                           <span>{formatTuningValue(item.current_value, item.unit)}</span>
