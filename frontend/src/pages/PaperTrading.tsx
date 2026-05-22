@@ -504,6 +504,22 @@ interface OrderIntentTuningApplyResult {
   apply_mode?: 'preview' | 'manual_confirmed' | 'canary_preview' | 'canary';
 }
 
+interface OrderIntentTuningCandidatesResult {
+  generated_at?: string;
+  read_only: boolean;
+  summary: {
+    stable_window_candidate_count: number;
+    family_hindsight_candidate_count: number;
+    merged_candidate_count: number;
+    canary_candidate_count: number;
+    evidence_sources?: string[];
+    conclusion: string;
+  };
+  family_hindsight?: OrderIntentTuningApplyResult['family_hindsight'];
+  candidates: OrderIntentParameterPreview[];
+  canary_candidates: OrderIntentParameterPreview[];
+}
+
 interface OrderIntentTuningCanaryStatus {
   active: boolean;
   generated_at?: string;
@@ -513,6 +529,7 @@ interface OrderIntentTuningCanaryStatus {
     observation_trades?: number;
     observation_days?: number;
     target_task_count?: number;
+    evidence_sources?: string[];
     guardrails?: string[];
   };
   observation?: {
@@ -548,8 +565,18 @@ interface OrderIntentTuningCanaryStatus {
       open_count: number;
       avg_excess_return_pct: number;
       avg_closed_return_pct: number;
+      avg_mae_pct?: number;
+      worst_adverse_excursion_pct?: number;
       win_rate: number;
       profit_factor: number;
+    };
+    drawdown_guard?: {
+      avg_mae_pct: number;
+      avg_mae_limit_pct: number;
+      worst_adverse_excursion_pct: number;
+      worst_adverse_limit_pct: number;
+      passed: boolean;
+      conclusion: string;
     };
     reasons: string[];
     next_steps: string[];
@@ -589,11 +616,29 @@ interface OrderIntentTuningCanaryStatus {
     total_unrealized_pnl: number;
     avg_closed_return_pct: number;
     avg_excess_return_pct: number;
+    avg_mae_pct?: number;
+    worst_adverse_excursion_pct?: number;
     win_rate: number;
     profit_factor: number;
     conclusion: string;
     winners: Array<{ id: number; symbol: string; name?: string; total_pnl_pct: number }>;
     losers: Array<{ id: number; symbol: string; name?: string; total_pnl_pct: number }>;
+  };
+  evidence?: {
+    evidence_sources?: string[];
+    evidence_source_labels?: string[];
+    preview_count?: number;
+    conclusion?: string;
+    candidate_count_by_source?: Array<{ source: string; label: string; count: number }>;
+    family_consensus_items?: Array<{
+      parameter_key: string;
+      parameter_label: string;
+      action: string;
+      action_label: string;
+      confidence: number;
+      sample_count: number;
+      family_consensus?: OrderIntentParameterPreview['family_consensus'];
+    }>;
   };
   summary?: {
     conclusion: string;
@@ -879,6 +924,9 @@ const PaperTrading: React.FC = () => {
   const [isCanaryRollbackModalOpen, setIsCanaryRollbackModalOpen] = useState(false);
   const [canaryRollbackConfirmText, setCanaryRollbackConfirmText] = useState('');
   const [tuningPreview, setTuningPreview] = useState<OrderIntentTuningApplyResult | null>(null);
+  const [tuningCandidates, setTuningCandidates] =
+    useState<OrderIntentTuningCandidatesResult | null>(null);
+  const [tuningCandidatesLoading, setTuningCandidatesLoading] = useState(false);
   const [canaryStatus, setCanaryStatus] = useState<OrderIntentTuningCanaryStatus | null>(null);
   const [canaryStatusLoading, setCanaryStatusLoading] = useState(false);
   const [riskProfile, setRiskProfile] = useState<PaperTradingRiskProfile | null>(null);
@@ -913,6 +961,7 @@ const PaperTrading: React.FC = () => {
     fetchTradingPlan(true);
     fetchOrderIntents(true);
     fetchOrderIntentTuningCanary(true);
+    fetchOrderIntentTuningCandidates(true);
   }, []);
 
   const fetchSnapshots = async () => {
@@ -1189,6 +1238,29 @@ const PaperTrading: React.FC = () => {
     }
   };
 
+  const fetchOrderIntentTuningCandidates = async (silent = false) => {
+    setTuningCandidatesLoading(true);
+    try {
+      const response = await api.get('/paper-trading/order-intent-tuning/candidates', {
+        params: {
+          use_family_hindsight: true,
+          family_hindsight_lookback_days: 45,
+          family_hindsight_min_consensus: 2,
+          family_hindsight_min_evaluated: 5,
+          canary_max_parameters: 1,
+        },
+      });
+      if (response.data.success) {
+        setTuningCandidates(response.data.data);
+        if (!silent) message.success('只读调参候选已刷新');
+      }
+    } catch (error: any) {
+      if (!silent) message.error(error.response?.data?.message || '获取只读调参候选失败');
+    } finally {
+      setTuningCandidatesLoading(false);
+    }
+  };
+
   const previewOrderIntentTuningCanary = async () => {
     setCanaryPreviewLoading(true);
     try {
@@ -1440,6 +1512,7 @@ const PaperTrading: React.FC = () => {
   const canaryReview = canaryStatus?.review;
   const canaryRollback = canaryStatus?.rollback_plan;
   const canaryAttribution = canaryStatus?.attribution;
+  const canaryEvidence = canaryStatus?.evidence;
   const riskTone = riskProfile ? riskProfileToneMap[riskProfile.status.level] : undefined;
   const topRiskPosition = riskProfile?.position_risks?.find(item => item.risk_flags.length > 0);
   const outcomeBlockedSegments = tradingPlanSummary?.outcome_blocked_segments || [];
@@ -2120,6 +2193,14 @@ const PaperTrading: React.FC = () => {
                     </Tooltip>
                     <Button
                       size="small"
+                      icon={<ReloadOutlined />}
+                      loading={tuningCandidatesLoading}
+                      onClick={() => fetchOrderIntentTuningCandidates(false)}
+                    >
+                      只读候选
+                    </Button>
+                    <Button
+                      size="small"
                       type="default"
                       disabled={!tuningPreview?.canary || !tuningPreview?.changes?.length}
                       loading={canaryApplyLoading}
@@ -2240,6 +2321,68 @@ const PaperTrading: React.FC = () => {
                     ) : null}
                   </div>
                 ) : null}
+                {tuningCandidates ? (
+                  <div className="order-family-canary-evidence readonly">
+                    <div className="order-family-canary-head">
+                      <div>
+                        <span>READONLY CANDIDATES</span>
+                        <strong>只读调参候选雷达</strong>
+                      </div>
+                      <Space wrap size={6}>
+                        <Tag color="blue">
+                          合并 {tuningCandidates.summary.merged_candidate_count}
+                        </Tag>
+                        <Tag color="gold">
+                          Canary {tuningCandidates.summary.canary_candidate_count}
+                        </Tag>
+                      </Space>
+                    </div>
+                    <p>{tuningCandidates.summary.conclusion}</p>
+                    <div className="order-family-canary-stats">
+                      <div>
+                        <span>稳定窗口</span>
+                        <strong>{tuningCandidates.summary.stable_window_candidate_count}</strong>
+                      </div>
+                      <div>
+                        <span>多账户后验</span>
+                        <strong>{tuningCandidates.summary.family_hindsight_candidate_count}</strong>
+                      </div>
+                      <div>
+                        <span>合并候选</span>
+                        <strong>{tuningCandidates.summary.merged_candidate_count}</strong>
+                      </div>
+                      <div>
+                        <span>Canary首选</span>
+                        <strong>{tuningCandidates.summary.canary_candidate_count}</strong>
+                      </div>
+                    </div>
+                    {tuningCandidates.canary_candidates?.length ? (
+                      <div className="order-family-canary-candidates">
+                        {tuningCandidates.canary_candidates.slice(0, 3).map(item => (
+                          <div key={`readonly-${item.parameter_key}-${item.action}`}>
+                            <Space wrap size={6}>
+                              <Text strong>{item.parameter_label}</Text>
+                              <Tag color={orderRuleActionColorMap[item.action] || 'default'}>
+                                {item.action_label}
+                              </Tag>
+                              <Tag
+                                color={
+                                  item.evidence_source === 'family_hindsight' ? 'gold' : 'blue'
+                                }
+                              >
+                                {item.evidence_source_label || '候选证据'}
+                              </Tag>
+                            </Space>
+                            <p>
+                              {item.reason_category_label} · {item.change_label} ·{' '}
+                              {item.family_consensus?.conclusion || item.rationale}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
                 <Spin spinning={canaryStatusLoading}>
                   <div
                     className={`order-canary-card tone-${
@@ -2296,6 +2439,27 @@ const PaperTrading: React.FC = () => {
                             </Tag>
                           ))}
                         </Space>
+                        {canaryEvidence ? (
+                          <div className="order-canary-evidence-strip">
+                            <div>
+                              <span>证据来源</span>
+                              <strong>
+                                {canaryEvidence.evidence_source_labels?.join(' + ') || '审计记录'}
+                              </strong>
+                            </div>
+                            <p>{canaryEvidence.conclusion}</p>
+                            <Space wrap size={6}>
+                              {(canaryEvidence.candidate_count_by_source || []).map(item => (
+                                <Tag
+                                  key={item.source}
+                                  color={item.source === 'family_hindsight' ? 'gold' : 'blue'}
+                                >
+                                  {item.label} {item.count}
+                                </Tag>
+                              ))}
+                            </Space>
+                          </div>
+                        ) : null}
                         {canaryReview && (
                           <div className="order-canary-review">
                             <div className="order-canary-review-head">
@@ -2317,6 +2481,14 @@ const PaperTrading: React.FC = () => {
                                 <em key={step}>{step}</em>
                               ))}
                             </div>
+                            {canaryReview.drawdown_guard ? (
+                              <div className="order-canary-drawdown-guard">
+                                <Tag color={canaryReview.drawdown_guard.passed ? 'green' : 'red'}>
+                                  {canaryReview.drawdown_guard.passed ? '回撤通过' : '回撤拦截'}
+                                </Tag>
+                                <span>{canaryReview.drawdown_guard.conclusion}</span>
+                              </div>
+                            ) : null}
                           </div>
                         )}
                         {(canaryAttribution || canaryRollback) && (

@@ -354,18 +354,32 @@ async function main() {
       token,
       expect: (json) => {
         assertApiSuccess(json, "live trading readiness");
-        if (!json.data?.safety || !json.data?.broker || !json.data?.market_data) {
-          throw new Error(`live trading readiness payload missing: ${preview(json)}`);
+        if (
+          !json.data?.safety ||
+          !json.data?.broker ||
+          !json.data?.market_data
+        ) {
+          throw new Error(
+            `live trading readiness payload missing: ${preview(json)}`
+          );
         }
         if (!json.data.market_data_health?.status) {
-          throw new Error(`live trading market data health missing: ${preview(json)}`);
+          throw new Error(
+            `live trading market data health missing: ${preview(json)}`
+          );
         }
-        if (!Array.isArray(json.data.market_data_provider_comparison?.providers)) {
-          throw new Error(`live trading provider comparison missing: ${preview(json)}`);
+        if (
+          !Array.isArray(json.data.market_data_provider_comparison?.providers)
+        ) {
+          throw new Error(
+            `live trading provider comparison missing: ${preview(json)}`
+          );
         }
         if (json.data.safety.can_submit_orders === true) {
           throw new Error(
-            `live trading readiness should be safe by default: ${preview(json.data.safety)}`
+            `live trading readiness should be safe by default: ${preview(
+              json.data.safety
+            )}`
           );
         }
       },
@@ -376,14 +390,20 @@ async function main() {
       expect: (json) => {
         assertApiSuccess(json, "live trading overview");
         if (!json.data?.summary || !json.data?.readiness) {
-          throw new Error(`live trading overview payload missing: ${preview(json)}`);
+          throw new Error(
+            `live trading overview payload missing: ${preview(json)}`
+          );
         }
         if (!json.data.summary.market_data_status) {
-          throw new Error(`live trading overview market status missing: ${preview(json.data)}`);
+          throw new Error(
+            `live trading overview market status missing: ${preview(json.data)}`
+          );
         }
         if (json.data.summary.can_submit_orders === true) {
           throw new Error(
-            `live trading overview should not allow orders by default: ${preview(json.data.summary)}`
+            `live trading overview should not allow orders by default: ${preview(
+              json.data.summary
+            )}`
           );
         }
       },
@@ -396,14 +416,19 @@ async function main() {
         token,
         expect: (json) => {
           assertApiSuccess(json, "live trading reconciliation");
-          if (!json.data?.summary || !Array.isArray(json.data?.position_matches)) {
+          if (
+            !json.data?.summary ||
+            !Array.isArray(json.data?.position_matches)
+          ) {
             throw new Error(
               `live trading reconciliation payload missing: ${preview(json)}`
             );
           }
           if (Number(json.data.summary.alignment_score || 0) < 0) {
             throw new Error(
-              `live trading reconciliation score invalid: ${preview(json.data.summary)}`
+              `live trading reconciliation score invalid: ${preview(
+                json.data.summary
+              )}`
             );
           }
         },
@@ -422,9 +447,13 @@ async function main() {
               `live trading draft candidate payload missing: ${preview(json)}`
             );
           }
-          if (json.data.summary.eligible_count > json.data.summary.total_count) {
+          if (
+            json.data.summary.eligible_count > json.data.summary.total_count
+          ) {
             throw new Error(
-              `live trading draft candidate counts invalid: ${preview(json.data.summary)}`
+              `live trading draft candidate counts invalid: ${preview(
+                json.data.summary
+              )}`
             );
           }
         },
@@ -1117,7 +1146,8 @@ async function main() {
               `paper trading order intents payload invalid: ${preview(json)}`
             );
           }
-          const traceCandidate = (json.data?.recent_rejections || [])[0] || json.data.intents[0];
+          const traceCandidate =
+            (json.data?.recent_rejections || [])[0] || json.data.intents[0];
           if (traceCandidate?.id) {
             orderIntentTraceCandidateId = traceCandidate.id;
           }
@@ -1281,12 +1311,16 @@ async function main() {
             assertApiSuccess(json, "paper trading order intent trace");
             if (!json.data?.intent || !Array.isArray(json.data?.timeline)) {
               throw new Error(
-                `paper trading order intent trace payload invalid: ${preview(json)}`
+                `paper trading order intent trace payload invalid: ${preview(
+                  json
+                )}`
               );
             }
             if (!json.data?.peer_review) {
               throw new Error(
-                `paper trading order intent trace peer review missing: ${preview(json)}`
+                `paper trading order intent trace peer review missing: ${preview(
+                  json
+                )}`
               );
             }
           },
@@ -1307,7 +1341,10 @@ async function main() {
           refresh_hindsight: false,
         },
         expect: (json) => {
-          assertApiSuccess(json, "paper trading order intent hindsight refresh");
+          assertApiSuccess(
+            json,
+            "paper trading order intent hindsight refresh"
+          );
           if (!json.data?.summary) {
             throw new Error(
               `paper trading order intent hindsight refresh summary missing: ${preview(
@@ -1466,6 +1503,52 @@ async function main() {
     );
 
     await requestJson(
+      "paper trading order intent tuning candidates",
+      "/api/paper-trading/order-intent-tuning/candidates?use_family_hindsight=true&family_hindsight_min_consensus=2&family_hindsight_min_evaluated=5",
+      {
+        token,
+        expect: (json) => {
+          assertApiSuccess(
+            json,
+            "paper trading order intent tuning candidates"
+          );
+          if (!json.data || json.data.read_only !== true) {
+            throw new Error(
+              `paper trading order intent tuning candidates must be read-only: ${preview(
+                json
+              )}`
+            );
+          }
+          if (
+            !json.data.summary ||
+            !Array.isArray(json.data.candidates) ||
+            !Array.isArray(json.data.canary_candidates)
+          ) {
+            throw new Error(
+              `paper trading order intent tuning candidates payload invalid: ${preview(
+                json.data
+              )}`
+            );
+          }
+          for (const key of [
+            "stable_window_candidate_count",
+            "family_hindsight_candidate_count",
+            "merged_candidate_count",
+            "canary_candidate_count",
+          ]) {
+            if (!Number.isFinite(Number(json.data.summary[key] || 0))) {
+              throw new Error(
+                `paper trading order intent tuning candidate ${key} invalid: ${preview(
+                  json.data.summary
+                )}`
+              );
+            }
+          }
+        },
+      }
+    );
+
+    await requestJson(
       "paper trading order intent canary status",
       "/api/paper-trading/order-intent-tuning/canary",
       {
@@ -1489,7 +1572,9 @@ async function main() {
           if (json.data.active) {
             if (!json.data.review?.action || !json.data.review?.action_label) {
               throw new Error(
-                `paper trading order intent canary review missing: ${preview(json.data)}`
+                `paper trading order intent canary review missing: ${preview(
+                  json.data
+                )}`
               );
             }
             if (!json.data.rollback_plan?.safety_state) {
@@ -1503,6 +1588,23 @@ async function main() {
               throw new Error(
                 `paper trading order intent canary attribution missing: ${preview(
                   json.data
+                )}`
+              );
+            }
+            if (!json.data.evidence?.conclusion) {
+              throw new Error(
+                `paper trading order intent canary evidence missing: ${preview(
+                  json.data
+                )}`
+              );
+            }
+            if (
+              json.data.review.drawdown_guard &&
+              typeof json.data.review.drawdown_guard.passed !== "boolean"
+            ) {
+              throw new Error(
+                `paper trading order intent canary drawdown guard invalid: ${preview(
+                  json.data.review.drawdown_guard
                 )}`
               );
             }
