@@ -33,6 +33,7 @@ flowchart LR
 5. 用收益结果反过来优化策略权重、风控阈值和推荐参数。
 
 > 重要说明：当前所有「买入/卖出/收益」均为系统模拟与策略验证用途，不等于真实证券账户下单，也不构成投资建议。
+> 如需评估真实行情/券商交易 API 接入，请先阅读 [`docs/REAL_TRADING_API_INTEGRATION_PLAN.md`](REAL_TRADING_API_INTEGRATION_PLAN.md)，该文档明确了“可接真实行情与人工确认实盘，不应默认让 AI 无人代操真实账户”的边界与实施方案。
 
 ---
 
