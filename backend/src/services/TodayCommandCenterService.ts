@@ -11,6 +11,7 @@ import { TaskExecutionLog } from '../models/TaskExecutionLog';
 import { normalizeSymbol } from '../utils/stockSymbol';
 import { logger } from '../utils/logger';
 import { openingReadinessService } from './OpeningReadinessService';
+import { paperTradingTuningApplyService } from './PaperTradingTuningApplyService';
 
 type CommandAction = 'buy' | 'watch' | 'hold' | 'sell' | 'avoid';
 
@@ -96,6 +97,8 @@ class TodayCommandCenterService {
       quotePersistence,
       latestFeishuLog,
       openingReadiness,
+      tuningCandidates,
+      canarySnapshots,
     ] = await Promise.all([
       paperTradingDashboardService
         .getAutonomousDashboard({
@@ -142,6 +145,30 @@ class TodayCommandCenterService {
         })
         .catch(error => {
           logger.warn(`今日作战台读取开盘可信检查失败: ${error?.message || error}`);
+          return null;
+        }),
+      paperTradingTuningApplyService
+        .getTuningCandidates({
+          user_id: options.user_id,
+          username: options.username,
+          use_family_hindsight: true,
+          family_hindsight_lookback_days: 45,
+          family_hindsight_min_consensus: 2,
+          family_hindsight_min_evaluated: 5,
+          canary_max_parameters: 1,
+        })
+        .catch(error => {
+          logger.warn(`今日作战台读取只读调参候选失败: ${error?.message || error}`);
+          return null;
+        }),
+      paperTradingTuningApplyService
+        .listCanaryReviewSnapshots({
+          user_id: options.user_id,
+          username: options.username,
+          limit: 5,
+        })
+        .catch(error => {
+          logger.warn(`今日作战台读取 Canary 评审快照失败: ${error?.message || error}`);
           return null;
         }),
     ]);
@@ -220,6 +247,22 @@ class TodayCommandCenterService {
         : null,
       quote_persistence: quotePersistence,
       latest_feishu: latestFeishuLog,
+      tuning_radar: tuningCandidates
+        ? {
+            generated_at: tuningCandidates.generated_at,
+            summary: tuningCandidates.summary,
+            canary_candidates: (tuningCandidates.canary_candidates || []).slice(0, 3),
+            candidates: (tuningCandidates.candidates || []).slice(0, 5),
+            family_hindsight: tuningCandidates.family_hindsight,
+          }
+        : null,
+      canary_memory: canarySnapshots
+        ? {
+            generated_at: canarySnapshots.generated_at,
+            summary: canarySnapshots.summary,
+            snapshots: (canarySnapshots.snapshots || []).slice(0, 5),
+          }
+        : null,
       links: {
         quant_signals: '/quant/signals',
         trading_overview: '/autonomous-trading/overview',

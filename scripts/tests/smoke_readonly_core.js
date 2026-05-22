@@ -945,6 +945,28 @@ async function main() {
               )}`
             );
           }
+          if (
+            json.data?.tuning_radar &&
+            (!json.data.tuning_radar.summary ||
+              !Array.isArray(json.data.tuning_radar.canary_candidates || []))
+          ) {
+            throw new Error(
+              `today command center tuning radar invalid: ${preview(
+                json.data.tuning_radar
+              )}`
+            );
+          }
+          if (
+            json.data?.canary_memory &&
+            (!json.data.canary_memory.summary ||
+              !Array.isArray(json.data.canary_memory.snapshots || []))
+          ) {
+            throw new Error(
+              `today command center canary memory invalid: ${preview(
+                json.data.canary_memory
+              )}`
+            );
+          }
         },
       }
     );
