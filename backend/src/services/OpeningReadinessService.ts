@@ -18,6 +18,9 @@ interface OpeningReadinessOptions {
   username?: string;
   trade_date?: string;
   factor_limit?: number;
+  use_cache?: boolean;
+  cache_ttl_ms?: number;
+  force_refresh?: boolean;
 }
 
 function toNumber(value: any, fallback = 0): number {
@@ -119,7 +122,13 @@ class OpeningReadinessService {
         };
       }),
       quantOpeningPreflightService
-        .check({ user_id: options.user_id, factor_limit: factorLimit })
+        .check({
+          user_id: options.user_id,
+          factor_limit: factorLimit,
+          use_cache: options.use_cache !== false,
+          cache_ttl_ms: options.cache_ttl_ms || 90_000,
+          force_refresh: options.force_refresh,
+        })
         .catch(error => {
           logger.warn(`开盘可信检查读取开盘自检失败: ${error?.message || error}`);
           return {

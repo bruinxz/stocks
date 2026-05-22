@@ -142,6 +142,8 @@ class TodayCommandCenterService {
           username: options.username,
           trade_date: tradeDate,
           factor_limit: 220,
+          use_cache: true,
+          cache_ttl_ms: 90_000,
         })
         .catch(error => {
           logger.warn(`今日作战台读取开盘可信检查失败: ${error?.message || error}`);
