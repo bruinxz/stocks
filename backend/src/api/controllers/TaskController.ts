@@ -181,6 +181,23 @@ export class TaskController {
     }
   }
 
+  async applyLiveShadowBudgetSuggestion(req: Request, res: Response, next: NextFunction) {
+    try {
+      const result = await schedulerService.applyLiveShadowBudgetSuggestion({
+        audit_id: req.body?.audit_id ? Number(req.body.audit_id) : undefined,
+        dry_run: req.body?.dry_run !== false,
+        operator: {
+          user_id: (req as any).user?.id,
+          username: (req as any).user?.username,
+        },
+      });
+      res.json({ success: true, data: result, message: result.message });
+    } catch (error: any) {
+      logger.error('应用影子预算建议失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
   async getTaskLogs(req: Request, res: Response, next: NextFunction) {
     try {
       const { id } = req.params;

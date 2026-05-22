@@ -2377,6 +2377,102 @@ class SchedulerService {
     return await this._executeTaskLogic(task, true);
   }
 
+  async applyLiveShadowBudgetSuggestion(options: {
+    audit_id?: number;
+    dry_run?: boolean;
+    operator?: { user_id?: number; username?: string };
+  } = {}) {
+    const dryRun = options.dry_run !== false;
+    const audit = options.audit_id
+      ? await taskParameterAuditService
+          .list({
+            event_type: 'live_shadow_budget_suggestion',
+            limit: 100,
+            watched_only: false,
+          })
+          .then(rows => rows.find((row: any) => Number(row.id) === Number(options.audit_id)))
+      : await taskParameterAuditService
+          .list({
+            event_type: 'live_shadow_budget_suggestion',
+            limit: 1,
+            watched_only: false,
+          })
+          .then(rows => rows[0] as any);
+
+    if (!audit) throw new Error('未找到影子预算候选补丁');
+    if (audit.event_type !== 'live_shadow_budget_suggestion') {
+      throw new Error('只能应用影子预算候选补丁');
+    }
+
+    const task = await ScheduledTask.findOne({
+      where: { id: Number((audit as any).task_id), type: 'LIVE_SHADOW_AUTOPILOT' },
+    });
+    if (!task) throw new Error('目标影子执行任务不存在或类型不匹配');
+
+    const beforeParameters = { ...((task as any).parameters || {}) };
+    const suggested = { ...((audit as any).after_parameters || {}) };
+    const recommendedLimit = Number(suggested.limit);
+    if (!Number.isInteger(recommendedLimit) || recommendedLimit < 1 || recommendedLimit > 10) {
+      throw new Error(`影子预算 limit 必须在 1-10 之间，当前建议为 ${suggested.limit}`);
+    }
+
+    const afterParameters = {
+      ...beforeParameters,
+      limit: recommendedLimit,
+      shadow_budget_advice: {
+        ...(suggested.shadow_budget_advice || {}),
+        applied: !dryRun,
+        applied_at: dryRun ? undefined : new Date().toISOString(),
+        applied_by: dryRun ? undefined : options.operator?.username || options.operator?.user_id,
+        source_audit_id: Number((audit as any).id),
+      },
+    };
+    const changedKeys = taskParameterAuditService.buildChangedKeys(
+      beforeParameters,
+      afterParameters,
+      ['limit', 'shadow_budget_advice']
+    );
+    const result = {
+      dry_run: dryRun,
+      applied: false,
+      audit_id: Number((audit as any).id),
+      target_task_id: Number((task as any).id),
+      target_task_name: (task as any).name,
+      current_limit: Number(beforeParameters.limit || 0),
+      suggested_limit: recommendedLimit,
+      changed_keys: changedKeys,
+      before_parameters: beforeParameters,
+      suggested_parameters: afterParameters,
+      message: changedKeys.length
+        ? dryRun
+          ? `影子预算候选补丁可应用：limit ${beforeParameters.limit ?? '-'} → ${recommendedLimit}。`
+          : `影子预算候选补丁已应用：limit ${beforeParameters.limit ?? '-'} → ${recommendedLimit}。`
+        : '影子预算任务参数已与候选补丁一致，无需更新。',
+    };
+
+    if (!dryRun && changedKeys.length > 0) {
+      await task.update({ parameters: afterParameters });
+      await taskParameterAuditService.record({
+        task,
+        event_type: 'live_shadow_budget_applied',
+        before_parameters: beforeParameters,
+        after_parameters: afterParameters,
+        changed_keys: changedKeys,
+        operator: options.operator,
+        metadata: {
+          source: 'live_shadow_budget_suggestion_apply',
+          source_audit_id: Number((audit as any).id),
+          real_order_submitted: 0,
+          note: '仅应用影子执行任务预算参数，不触发真实券商委托。',
+        },
+      });
+      await this.reloadTask(Number((task as any).id));
+      result.applied = true;
+    }
+
+    return result;
+  }
+
   async reloadTask(taskId: number) {
     const task = await ScheduledTask.findByPk(taskId);
     if (!task) return;

@@ -762,6 +762,68 @@ async function main() {
       }
     );
 
+    const shadowBudgetAuditsJson = await requestJson(
+      "live shadow budget suggestion audit",
+      "/api/tasks/parameter-audits?event_type=live_shadow_budget_suggestion&limit=1&watched_only=false",
+      {
+        token,
+        critical: false,
+        expect: (json) => {
+          assertApiSuccess(json, "live shadow budget suggestion audit");
+          assertArray(json.data, "live shadow budget suggestion audit data");
+        },
+      }
+    );
+    const latestShadowBudgetAudit = Array.isArray(shadowBudgetAuditsJson?.data)
+      ? shadowBudgetAuditsJson.data[0]
+      : null;
+    if (latestShadowBudgetAudit?.id) {
+      await requestJson(
+        "live shadow budget apply dry run",
+        "/api/tasks/live-shadow-budget-suggestion/apply",
+        {
+          token,
+          method: "POST",
+          critical: false,
+          body: { dry_run: true, audit_id: latestShadowBudgetAudit.id },
+          expect: (json) => {
+            assertApiSuccess(json, "live shadow budget apply dry run");
+            if (json.data?.dry_run !== true || json.data?.applied === true) {
+              throw new Error(
+                `shadow budget apply smoke must stay dry-run: ${preview(
+                  json.data
+                )}`
+              );
+            }
+            if (
+              !Number.isInteger(Number(json.data?.suggested_limit)) ||
+              Number(json.data.suggested_limit) < 1 ||
+              Number(json.data.suggested_limit) > 10
+            ) {
+              throw new Error(
+                `shadow budget suggested limit invalid: ${preview(json.data)}`
+              );
+            }
+            if (
+              !Array.isArray(json.data?.changed_keys || []) ||
+              !json.data?.target_task_id
+            ) {
+              throw new Error(
+                `shadow budget apply preview payload invalid: ${preview(
+                  json.data
+                )}`
+              );
+            }
+          },
+        }
+      );
+    } else {
+      skip(
+        "live shadow budget apply dry run",
+        "no live_shadow_budget_suggestion audit found"
+      );
+    }
+
     await requestJson("quant signal list", "/api/quant/signals?limit=5", {
       token,
       expect: (json) => {

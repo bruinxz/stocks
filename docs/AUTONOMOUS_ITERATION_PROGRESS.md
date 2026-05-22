@@ -2029,6 +2029,36 @@ Next:
 2. Add a weekly trend persistence table if task logs are not enough for charting.
 3. Provide a guarded one-click apply action later, still avoiding real broker orders.
 
+### 2026-05-22 guarded live shadow budget apply
+
+Focus: close the loop from weekly shadow review advice to scheduled shadow-execution parameters,
+while keeping real-money safety boundaries explicit.
+
+Completed:
+
+- Added `POST /api/tasks/live-shadow-budget-suggestion/apply`.
+- The endpoint supports `dry_run=true` preview and manual apply.
+- It only accepts `live_shadow_budget_suggestion` audit records that target
+  `LIVE_SHADOW_AUTOPILOT`.
+- It hard-limits the suggested `limit` to `1-10`.
+- Manual apply updates only:
+  - `parameters.limit`;
+  - `parameters.shadow_budget_advice`.
+- It records `live_shadow_budget_applied` in `task_parameter_audit_logs`.
+- It reloads the scheduler task after apply.
+- It never triggers a task run and records `real_order_submitted=0`.
+- Task scheduler UI now shows:
+  - a candidate patch alert;
+  - per-audit "应用预览";
+  - a guarded preview modal with before/after limit and safety explanation.
+- Readonly smoke now optionally previews the latest shadow budget patch in dry-run mode.
+
+Next:
+
+1. Persist weekly shadow trend snapshots into a dedicated table if task logs become insufficient.
+2. Add a small badge on the live-trading page when the latest budget advice is unapplied.
+3. Compare applied vs unapplied shadow budget periods to measure whether budget expansion improved returns.
+
 ### 2026-05-22 live shadow trend chart
 
 Focus: make shadow validation direction visible over time.
