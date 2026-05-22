@@ -389,6 +389,27 @@ async function main() {
       },
     });
 
+    await requestJson(
+      "live trading reconciliation",
+      "/api/live-trading/reconciliation",
+      {
+        token,
+        expect: (json) => {
+          assertApiSuccess(json, "live trading reconciliation");
+          if (!json.data?.summary || !Array.isArray(json.data?.position_matches)) {
+            throw new Error(
+              `live trading reconciliation payload missing: ${preview(json)}`
+            );
+          }
+          if (Number(json.data.summary.alignment_score || 0) < 0) {
+            throw new Error(
+              `live trading reconciliation score invalid: ${preview(json.data.summary)}`
+            );
+          }
+        },
+      }
+    );
+
     await requestJson("data source health", "/api/market/data-sources/health", {
       expect: (json) => {
         assertApiSuccess(json, "data source health");

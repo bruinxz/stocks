@@ -6,6 +6,9 @@ import { LiveOrderDraft } from '../../models/LiveOrderDraft';
 import { LiveOrder } from '../../models/LiveOrder';
 import { LiveTrade } from '../../models/LiveTrade';
 import { LiveExecutionAuditLog } from '../../models/LiveExecutionAuditLog';
+import { PaperTradingPortfolio } from '../../models/PaperTradingPortfolio';
+import { PaperTradingPosition } from '../../models/PaperTradingPosition';
+import { PaperTradingTrade } from '../../models/PaperTradingTrade';
 import { Stock } from '../../models/Stock';
 import { MockBrokerGateway } from '../brokers/MockBrokerGateway';
 import { EnvReadonlyBrokerGateway } from '../brokers/EnvReadonlyBrokerGateway';
@@ -15,6 +18,7 @@ import { ConfiguredQuoteProvider } from '../market-data/ConfiguredQuoteProvider'
 import { LiveMarketDataProvider } from '../market-data/LiveMarketDataProvider';
 import { liveRiskGuardService } from './LiveRiskGuardService';
 import { LIVE_ORDER_CONFIRM_TEXT, liveTradingSafetyService } from './LiveTradingSafetyService';
+import { PAPER_PORTFOLIO_FAMILIES } from '../../services/PaperTradingPortfolioFamilies';
 
 function toNumber(value: any): number {
   const num = Number(value);
@@ -57,6 +61,13 @@ function quotePrice(quote: any): number {
 function quoteLatency(quote: any): number | undefined {
   const value = Number(quote?.latency_seconds);
   return Number.isFinite(value) ? value : undefined;
+}
+
+function ageMinutes(value?: string | Date | null): number | null {
+  if (!value) return null;
+  const time = new Date(value).getTime();
+  if (!Number.isFinite(time)) return null;
+  return round((Date.now() - time) / 60000, 2);
 }
 
 export class LiveTradingService {
@@ -137,6 +148,7 @@ export class LiveTradingService {
       order: [['created_at', 'DESC']],
       limit: 10,
     });
+    const reconciliation = await this.getReconciliation(user_id);
     const openDrafts = drafts.filter(item => ['preview', 'pending', 'blocked'].includes(String((item as any).status)));
     const exposure = positions.reduce((sum, item: any) => sum + toNumber(item.market_value), 0);
     const totalAsset = toNumber((latestSnapshot as any)?.total_asset);
@@ -149,6 +161,7 @@ export class LiveTradingService {
       latest_snapshot: latestSnapshot ? this.toPlain(latestSnapshot) : null,
       positions: positions.map(item => this.toPlain(item)),
       order_drafts: drafts.map(item => this.toPlain(item)),
+      reconciliation,
       summary: {
         account_bound: Boolean(account),
         total_asset: totalAsset,
@@ -162,6 +175,210 @@ export class LiveTradingService {
         market_data_conclusion: readiness.market_data_health.conclusion,
         mode_label: readiness.safety.mode === 'approval_execution_enabled' ? '实盘审批执行' : readiness.safety.mode === 'read_only' ? '只读实盘观察' : '模拟/安全禁用',
         conclusion: readiness.conclusion,
+      },
+    };
+  }
+
+  async getReconciliation(user_id: number) {
+    const staleThresholdMinutes = Math.max(
+      Number(process.env.LIVE_RECONCILIATION_STALE_MINUTES || 180),
+      15
+    );
+    const account = await LiveBrokerAccount.findOne({
+      where: { user_id, is_active: true },
+      order: [['updated_at', 'DESC']],
+    });
+    const accountId = account?.id ? Number(account.id) : undefined;
+    const latestSnapshot = accountId
+      ? await LiveAccountSnapshot.findOne({
+          where: { user_id, account_id: accountId },
+          order: [['snapshot_time', 'DESC']],
+        })
+      : null;
+    const livePositions = accountId
+      ? await LivePosition.findAll({
+          where: { user_id, account_id: accountId, quantity: { [Op.gt]: 0 } },
+          order: [['market_value', 'DESC']],
+          limit: 200,
+        })
+      : [];
+    const paperAccounts = await this.getPaperAccountReconciliationRows(user_id);
+    const liveTotalAsset = toNumber((latestSnapshot as any)?.total_asset);
+    const liveMarketValue = livePositions.reduce(
+      (sum, item: any) => sum + toNumber(item.market_value),
+      0
+    );
+    const paperTotalValue = paperAccounts.reduce(
+      (sum, item) => sum + toNumber(item.total_value),
+      0
+    );
+    const paperMarketValue = paperAccounts.reduce(
+      (sum, item) => sum + toNumber(item.position_value),
+      0
+    );
+    const liveBySymbol = new Map<string, any>();
+    livePositions.forEach((item: any) => {
+      liveBySymbol.set(normalizeSymbol(item.symbol), this.toPlain(item));
+    });
+    const paperBySymbol = new Map<string, any>();
+    for (const accountRow of paperAccounts) {
+      for (const position of accountRow.positions) {
+        const symbol = normalizeSymbol(position.symbol);
+        const existing = paperBySymbol.get(symbol) || {
+          symbol,
+          name: position.name,
+          quantity: 0,
+          market_value: 0,
+          accounts: [],
+        };
+        existing.quantity += toNumber(position.quantity);
+        existing.market_value += toNumber(position.market_value);
+        existing.accounts.push({
+          key: accountRow.key,
+          label: accountRow.label,
+          portfolio_id: accountRow.portfolio_id,
+          quantity: toNumber(position.quantity),
+          market_value: round(position.market_value),
+        });
+        paperBySymbol.set(symbol, existing);
+      }
+    }
+
+    const symbols = Array.from(new Set([...liveBySymbol.keys(), ...paperBySymbol.keys()])).sort();
+    const positionMatches = symbols.map(symbol => {
+      const live = liveBySymbol.get(symbol);
+      const paper = paperBySymbol.get(symbol);
+      const liveValue = toNumber(live?.market_value);
+      const paperValue = toNumber(paper?.market_value);
+      const liveWeightPct = liveTotalAsset > 0 ? round((liveValue / liveTotalAsset) * 100, 4) : 0;
+      const paperWeightPct =
+        paperTotalValue > 0 ? round((paperValue / paperTotalValue) * 100, 4) : 0;
+      const weightGapPct = round(liveWeightPct - paperWeightPct, 4);
+      const status = !live
+        ? 'paper_only'
+        : !paper
+        ? 'live_only'
+        : Math.abs(weightGapPct) <= 2.5
+        ? 'aligned'
+        : weightGapPct > 0
+        ? 'live_overweight'
+        : 'live_underweight';
+      return {
+        symbol,
+        name: live?.name || paper?.name || symbol,
+        status,
+        status_label:
+          status === 'aligned'
+            ? '权重接近'
+            : status === 'live_only'
+            ? '仅实盘持有'
+            : status === 'paper_only'
+            ? '仅模拟建议'
+            : status === 'live_overweight'
+            ? '实盘偏重'
+            : '实盘偏轻',
+        live_quantity: toNumber(live?.quantity),
+        live_market_value: round(liveValue),
+        live_weight_pct: liveWeightPct,
+        live_current_price: toNumber(live?.current_price),
+        paper_quantity: toNumber(paper?.quantity),
+        paper_market_value: round(paperValue),
+        paper_weight_pct: paperWeightPct,
+        weight_gap_pct: weightGapPct,
+        paper_accounts: paper?.accounts || [],
+      };
+    });
+
+    const bothSideMatches = positionMatches.filter(item =>
+      ['aligned', 'live_overweight', 'live_underweight'].includes(item.status)
+    );
+    const averageGapPct = bothSideMatches.length
+      ? round(
+          bothSideMatches.reduce((sum, item) => sum + Math.abs(item.weight_gap_pct), 0) /
+            bothSideMatches.length,
+          4
+        )
+      : 0;
+    const liveOnlyCount = positionMatches.filter(item => item.status === 'live_only').length;
+    const paperOnlyCount = positionMatches.filter(item => item.status === 'paper_only').length;
+    const alignmentScore = round(
+      Math.max(0, 100 - averageGapPct * 8 - (liveOnlyCount + paperOnlyCount) * 6),
+      2
+    );
+    const snapshotAge = ageMinutes((latestSnapshot as any)?.snapshot_time);
+    const status = !account
+      ? 'not_bound'
+      : !latestSnapshot
+      ? 'no_snapshot'
+      : snapshotAge !== null && snapshotAge > staleThresholdMinutes
+      ? 'stale'
+      : alignmentScore >= 80
+      ? 'aligned'
+      : alignmentScore >= 55
+      ? 'diverged'
+      : 'high_divergence';
+    const suggestions = this.buildReconciliationSuggestions({
+      status,
+      snapshot_age_minutes: snapshotAge,
+      stale_threshold_minutes: staleThresholdMinutes,
+      live_only_count: liveOnlyCount,
+      paper_only_count: paperOnlyCount,
+      live_market_value: liveMarketValue,
+      paper_market_value: paperMarketValue,
+      alignment_score: alignmentScore,
+    });
+
+    return {
+      generated_at: new Date().toISOString(),
+      status,
+      status_label:
+        status === 'not_bound'
+          ? '未接账户'
+          : status === 'no_snapshot'
+          ? '待同步'
+          : status === 'stale'
+          ? '快照过期'
+          : status === 'aligned'
+          ? '基本一致'
+          : status === 'diverged'
+          ? '存在偏离'
+          : '偏离较大',
+      account: account ? this.toPlain(account) : null,
+      latest_snapshot: latestSnapshot ? this.toPlain(latestSnapshot) : null,
+      snapshot_age_minutes: snapshotAge,
+      stale_threshold_minutes: staleThresholdMinutes,
+      paper_accounts: paperAccounts.map(item => ({
+        ...item,
+        positions: item.positions.slice(0, 10),
+      })),
+      position_matches: positionMatches
+        .sort(
+          (a, b) =>
+            Math.max(Math.abs(b.live_market_value), Math.abs(b.paper_market_value)) -
+            Math.max(Math.abs(a.live_market_value), Math.abs(a.paper_market_value))
+        )
+        .slice(0, 80),
+      suggestions,
+      summary: {
+        live_total_asset: round(liveTotalAsset),
+        live_available_cash: round((latestSnapshot as any)?.available_cash),
+        live_market_value: round(liveMarketValue),
+        live_position_count: livePositions.length,
+        paper_total_value: round(paperTotalValue),
+        paper_market_value: round(paperMarketValue),
+        paper_position_count: Array.from(paperBySymbol.keys()).length,
+        overlap_count: bothSideMatches.length,
+        live_only_count: liveOnlyCount,
+        paper_only_count: paperOnlyCount,
+        average_weight_gap_pct: averageGapPct,
+        alignment_score: alignmentScore,
+        conclusion: this.buildReconciliationConclusion({
+          status,
+          alignment_score: alignmentScore,
+          live_only_count: liveOnlyCount,
+          paper_only_count: paperOnlyCount,
+          snapshot_age_minutes: snapshotAge,
+        }),
       },
     };
   }
@@ -596,6 +813,175 @@ export class LiveTradingService {
       } as any,
     });
     return account;
+  }
+
+  private async getPaperAccountReconciliationRows(user_id: number) {
+    const portfolios = await PaperTradingPortfolio.findAll({
+      where: {
+        user_id,
+        name: { [Op.in]: PAPER_PORTFOLIO_FAMILIES.map(item => item.name) },
+      },
+      order: [['id', 'ASC']],
+      limit: 50,
+    });
+    const latestByName = new Map<string, PaperTradingPortfolio>();
+    for (const portfolio of portfolios) {
+      latestByName.set((portfolio as any).name, portfolio);
+    }
+
+    const rows = await Promise.all(
+      PAPER_PORTFOLIO_FAMILIES.map(async family => {
+        const portfolio = latestByName.get(family.name);
+        if (!portfolio) {
+          return {
+            key: family.key,
+            label: family.label,
+            name: family.name,
+            description: family.description,
+            exists: false,
+            portfolio_id: null,
+            total_value: 0,
+            current_cash: 0,
+            position_value: 0,
+            exposure_pct: 0,
+            total_return_pct: 0,
+            open_position_count: 0,
+            latest_trade_at: null,
+            positions: [] as any[],
+          };
+        }
+        const [positions, latestTrade] = await Promise.all([
+          PaperTradingPosition.findAll({
+            where: { portfolio_id: portfolio.id, quantity: { [Op.gt]: 0 } },
+            order: [['market_value', 'DESC']],
+            limit: 100,
+          }),
+          PaperTradingTrade.findOne({
+            where: { portfolio_id: portfolio.id },
+            order: [['created_at', 'DESC']],
+          }),
+        ]);
+        const positionRows = positions.map((item: any) => this.toPlain(item));
+        const positionValue = positionRows.reduce(
+          (sum, item) => sum + toNumber(item.market_value),
+          0
+        );
+        const totalValue = toNumber((portfolio as any).total_value);
+        const initialCapital = toNumber((portfolio as any).initial_capital);
+        return {
+          key: family.key,
+          label: family.label,
+          name: family.name,
+          description: family.description,
+          exists: true,
+          portfolio_id: Number(portfolio.id),
+          total_value: round(totalValue),
+          current_cash: round((portfolio as any).current_cash),
+          position_value: round(positionValue),
+          exposure_pct: totalValue > 0 ? round((positionValue / totalValue) * 100, 4) : 0,
+          total_return_pct:
+            initialCapital > 0 ? round(((totalValue - initialCapital) / initialCapital) * 100, 4) : 0,
+          open_position_count: positionRows.length,
+          latest_trade_at: (latestTrade as any)?.created_at || null,
+          positions: positionRows.map(position => ({
+            symbol: normalizeSymbol(position.symbol),
+            name: position.name || position.symbol,
+            quantity: toNumber(position.quantity),
+            avg_cost: toNumber(position.avg_cost),
+            current_price: toNumber(position.current_price),
+            market_value: round(position.market_value),
+            unrealized_pnl: round(position.unrealized_pnl),
+          })),
+        };
+      })
+    );
+
+    return rows;
+  }
+
+  private buildReconciliationConclusion(input: {
+    status: string;
+    alignment_score: number;
+    live_only_count: number;
+    paper_only_count: number;
+    snapshot_age_minutes: number | null;
+  }) {
+    if (input.status === 'not_bound') {
+      return '尚未接入券商只读账户；现在只能把模拟盘建议沉淀为订单草稿，不能做真实账户对账。';
+    }
+    if (input.status === 'no_snapshot') {
+      return '券商账户已创建但还没有只读快照；请先完成只读同步再评估实盘与模拟盘差异。';
+    }
+    if (input.status === 'stale') {
+      return `券商快照已超过 ${input.snapshot_age_minutes ?? '-'} 分钟未更新；不要用该快照做实盘决策。`;
+    }
+    if (input.status === 'aligned') {
+      return `实盘与模拟策略账户整体接近，对齐分 ${input.alignment_score}；仍需逐笔人工确认。`;
+    }
+    return `实盘与模拟建议存在偏离：仅实盘 ${input.live_only_count} 只、仅模拟 ${input.paper_only_count} 只，对齐分 ${input.alignment_score}。`;
+  }
+
+  private buildReconciliationSuggestions(input: {
+    status: string;
+    snapshot_age_minutes: number | null;
+    stale_threshold_minutes: number;
+    live_only_count: number;
+    paper_only_count: number;
+    live_market_value: number;
+    paper_market_value: number;
+    alignment_score: number;
+  }) {
+    const suggestions: Array<{ level: string; title: string; detail: string }> = [];
+    if (input.status === 'not_bound') {
+      suggestions.push({
+        level: 'warning',
+        title: '先接只读账户',
+        detail: '配置真实券商只读网关后再启用对账；默认 Mock/EnvReadonly 不会真实下单。',
+      });
+    }
+    if (input.status === 'no_snapshot' || input.status === 'stale') {
+      suggestions.push({
+        level: 'warning',
+        title: '刷新券商快照',
+        detail: `快照有效期建议控制在 ${input.stale_threshold_minutes} 分钟内，过期快照不应用于实盘确认。`,
+      });
+    }
+    if (input.paper_only_count > 0) {
+      suggestions.push({
+        level: 'info',
+        title: '模拟建议未落地',
+        detail: `有 ${input.paper_only_count} 只股票只出现在模拟策略账户，可作为候选订单草稿，但必须重新过行情 SLA 与风控。`,
+      });
+    }
+    if (input.live_only_count > 0) {
+      suggestions.push({
+        level: 'warning',
+        title: '实盘孤儿持仓',
+        detail: `有 ${input.live_only_count} 只股票没有对应模拟策略建议，建议复核买入来源、止损线和退出计划。`,
+      });
+    }
+    if (input.live_market_value > 0 && input.paper_market_value === 0) {
+      suggestions.push({
+        level: 'warning',
+        title: '模拟盘未覆盖当前实盘暴露',
+        detail: '真实持仓未被策略账户覆盖，系统无法用历史策略收益解释当前仓位。请补齐归因或降低仓位。',
+      });
+    }
+    if (input.alignment_score < 55 && input.paper_market_value > 0) {
+      suggestions.push({
+        level: 'warning',
+        title: '偏离过大',
+        detail: '真实账户与策略建议偏离较大，不建议直接放大策略仓位，应先做小仓验证和人工复核。',
+      });
+    }
+    if (!suggestions.length) {
+      suggestions.push({
+        level: 'success',
+        title: '保持人工确认',
+        detail: '当前对账没有明显红线；后续每个订单仍必须走强确认、二次行情复核和审计。',
+      });
+    }
+    return suggestions;
   }
 
   private async audit(input: {
