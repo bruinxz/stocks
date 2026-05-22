@@ -18,9 +18,124 @@ function checkStatus(ok: boolean, warn = false) {
   return warn ? 'warn' : 'risk';
 }
 
+interface QuantOpeningPreflightOptions {
+  user_id?: number;
+  factor_limit?: number;
+  use_cache?: boolean;
+  cache_ttl_ms?: number;
+  force_refresh?: boolean;
+}
+
+interface PreflightCacheEntry {
+  expires_at: number;
+  value: Record<string, any>;
+}
+
 class QuantOpeningPreflightService {
-  async check(options: { user_id?: number; factor_limit?: number } = {}) {
+  private preflightCache = new Map<string, PreflightCacheEntry>();
+  private inflightChecks = new Map<string, Promise<Record<string, any>>>();
+
+  async check(options: QuantOpeningPreflightOptions = {}): Promise<Record<string, any>> {
     const tradeDate = moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
+    const factorLimit = Math.min(Math.max(Number(options.factor_limit || 180), 20), 1000);
+    const useCache = options.use_cache !== false;
+    const cacheTtlMs = Math.min(Math.max(Number(options.cache_ttl_ms || 90_000), 15_000), 300_000);
+    const cacheKey = `${tradeDate}:${options.user_id || 'anon'}:${factorLimit}`;
+    const now = Date.now();
+
+    if (useCache && !options.force_refresh) {
+      const cached = this.preflightCache.get(cacheKey);
+      if (cached && cached.expires_at > now) {
+        return this.withCacheMetadata(cached.value, {
+          hit: true,
+          shared_inflight: false,
+          key: cacheKey,
+          ttl_ms_remaining: cached.expires_at - now,
+          ttl_ms: cacheTtlMs,
+        });
+      }
+      if (cached) {
+        this.preflightCache.delete(cacheKey);
+      }
+
+      const inflight = this.inflightChecks.get(cacheKey);
+      if (inflight) {
+        const value = await inflight;
+        const latest = this.preflightCache.get(cacheKey);
+        return this.withCacheMetadata(value, {
+          hit: false,
+          shared_inflight: true,
+          key: cacheKey,
+          ttl_ms_remaining: latest ? Math.max(0, latest.expires_at - Date.now()) : cacheTtlMs,
+          ttl_ms: cacheTtlMs,
+        });
+      }
+    }
+
+    const computePromise = this.computeCheck({
+      trade_date: tradeDate,
+      user_id: options.user_id,
+      factor_limit: factorLimit,
+    });
+
+    if (useCache) {
+      this.inflightChecks.set(cacheKey, computePromise);
+    }
+
+    try {
+      const value = await computePromise;
+      if (useCache) {
+        this.preflightCache.set(cacheKey, {
+          expires_at: Date.now() + cacheTtlMs,
+          value,
+        });
+      }
+      return this.withCacheMetadata(value, {
+        hit: false,
+        shared_inflight: false,
+        key: cacheKey,
+        ttl_ms_remaining: useCache ? cacheTtlMs : 0,
+        ttl_ms: useCache ? cacheTtlMs : 0,
+        force_refresh: Boolean(options.force_refresh),
+      });
+    } finally {
+      if (useCache && this.inflightChecks.get(cacheKey) === computePromise) {
+        this.inflightChecks.delete(cacheKey);
+      }
+    }
+  }
+
+  private withCacheMetadata(
+    value: Record<string, any>,
+    cache: {
+      hit: boolean;
+      shared_inflight: boolean;
+      key: string;
+      ttl_ms_remaining: number;
+      ttl_ms: number;
+      force_refresh?: boolean;
+    }
+  ): Record<string, any> {
+    return {
+      ...value,
+      cached: cache.hit,
+      cache: {
+        hit: cache.hit,
+        shared_inflight: cache.shared_inflight,
+        key: cache.key,
+        ttl_ms_remaining: Math.max(0, Math.round(cache.ttl_ms_remaining)),
+        ttl_ms: cache.ttl_ms,
+        force_refresh: Boolean(cache.force_refresh),
+      },
+    };
+  }
+
+  private async computeCheck(options: {
+    trade_date: string;
+    user_id?: number;
+    factor_limit: number;
+  }): Promise<Record<string, any>> {
+    const tradeDate = options.trade_date;
     const [tasks, latestLogs, factorCoverage, quoteSummary, activeScanParams, dataFreshness] =
       await Promise.all([
         ScheduledTask.findAll({
@@ -38,7 +153,7 @@ class QuantOpeningPreflightService {
         }).catch(() => [] as TaskExecutionLog[]),
         stockFactorService.getCoverage({
           scope: 'market',
-          limit: Math.min(Math.max(Number(options.factor_limit || 180), 20), 1000),
+          limit: options.factor_limit,
           user_id: options.user_id,
         }),
         realtimeQuoteService.getPersistenceSummary().catch(error => ({
@@ -279,7 +394,12 @@ class QuantOpeningPreflightService {
   ): Promise<Record<string, any>> {
     const tradeDate = options.trade_date || moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
     const startedAt = Date.now();
-    const preflight = await this.check({ user_id: options.user_id, factor_limit: 120 });
+    const preflight = await this.check({
+      user_id: options.user_id,
+      factor_limit: 120,
+      use_cache: true,
+      cache_ttl_ms: 90_000,
+    });
     const result = await quantFusionService.runDailyPipeline({
       user_id: options.user_id,
       username: options.username,

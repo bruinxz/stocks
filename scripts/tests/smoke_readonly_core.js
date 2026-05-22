@@ -858,7 +858,7 @@ async function main() {
 
     await requestJson(
       "strategy opening preflight",
-      "/api/strategy-research/opening-preflight?factor_limit=80",
+      "/api/strategy-research/opening-preflight?factor_limit=80&use_cache=true&cache_ttl_ms=90000",
       {
         token,
         critical: false,
@@ -869,7 +869,8 @@ async function main() {
             !json.data?.summary ||
             !json.data?.checks?.quant_task ||
             !json.data?.checks?.factor_provider ||
-            !json.data?.checks?.quote_sync_task
+            !json.data?.checks?.quote_sync_task ||
+            !json.data?.cache
           ) {
             throw new Error(
               `strategy opening preflight payload invalid: ${preview(json)}`
@@ -881,7 +882,7 @@ async function main() {
 
     await requestJson(
       "today opening readiness",
-      "/api/today/opening-readiness?factor_limit=80",
+      "/api/today/opening-readiness?factor_limit=80&use_cache=true&cache_ttl_ms=90000",
       {
         token,
         critical: false,

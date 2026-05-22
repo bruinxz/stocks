@@ -4,6 +4,12 @@ import { todayCommandCenterService } from '../../services/TodayCommandCenterServ
 import { openingReadinessService } from '../../services/OpeningReadinessService';
 import { logger } from '../../utils/logger';
 
+function optionalNumber(value: any): number | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 class TodayController {
   async getCommandCenter(req: AuthenticatedRequest, res: Response) {
     try {
@@ -26,7 +32,10 @@ class TodayController {
         user_id: req.user?.id,
         username: req.user?.username,
         trade_date: req.query.trade_date as string,
-        factor_limit: req.query.factor_limit ? Number(req.query.factor_limit) : undefined,
+        factor_limit: optionalNumber(req.query.factor_limit),
+        use_cache: req.query.use_cache !== 'false',
+        cache_ttl_ms: optionalNumber(req.query.cache_ttl_ms),
+        force_refresh: req.query.force_refresh === 'true',
       });
       res.json({ success: true, data, message: data.conclusion });
     } catch (error: any) {

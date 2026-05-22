@@ -1744,3 +1744,28 @@ Next:
 1. Reduce optional smoke timeout risk on opening-preflight by caching command-center preflight results or adding a lightweight summary endpoint.
 2. Add a compact “why this Canary candidate” drawer that shows family-hindsight consensus accounts and false-reject/saved-loss examples.
 3. Add Canary snapshot trend charts: score, avg excess return, win rate and drawdown guard over time.
+
+### 2026-05-22 opening preflight cache
+
+Focus: reduce opening-preflight / 今日作战台 timeout risk during smoke tests and morning operating windows.
+
+Completed:
+
+- Added an in-memory TTL cache to `QuantOpeningPreflightService.check`:
+  - cache key is scoped by trade date, user id and normalized factor limit;
+  - default TTL is 90 seconds and can be overridden by `cache_ttl_ms`;
+  - `force_refresh=true` bypasses cached values when an operator needs a fresh full check.
+- Added inflight de-duplication so concurrent requests for the same preflight key share one heavy provider/data check instead of running repeated smoke tests.
+- `OpeningReadinessService` now passes cache controls through to the preflight service.
+- `TodayCommandCenterService` uses cached readiness/preflight data for the command-center aggregation path.
+- `GET /api/strategy-research/opening-preflight` and `GET /api/today/opening-readiness` now accept:
+  - `use_cache=false` to disable cache;
+  - `force_refresh=true` to bypass cache once;
+  - `cache_ttl_ms` to tune TTL within the safe server-side bounds.
+- Smoke requests now opt into the cached opening-preflight path and validate cache metadata exists.
+
+Next:
+
+1. Add a compact “why this Canary candidate” drawer that shows family-hindsight consensus accounts and false-reject/saved-loss examples.
+2. Add Canary snapshot trend charts: score, avg excess return, win rate and drawdown guard over time.
+3. Add a small backend metric for preflight cache hit / shared-inflight counts so slow-path frequency is visible in health pages.
