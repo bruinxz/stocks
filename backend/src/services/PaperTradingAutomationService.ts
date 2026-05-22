@@ -1573,10 +1573,16 @@ class PaperTradingAutomationService {
         totalValue > 0 ? roundNumber((min_trade_amount / totalValue) * 100, 4) : 0;
       const forcedMinLotEnabled =
         forcedSignal && toBoolean(options.allow_min_lot_for_forced_signals, true);
-      const forcedMinLotCapPct = clamp(
-        toNumber(options.max_forced_min_lot_position_pct, Math.min(strategyPositionCap, 6)),
+      const requestedForcedMinLotCapPct = toNumber(
+        options.max_forced_min_lot_position_pct,
+        Math.max(strategyPositionCap, Math.min(6, Math.max(oneLotPositionPct, minTradeAmountPct)))
+      );
+      const forcedMinLotCapPct = Math.max(
         0.5,
-        Math.max(0.5, strategyPositionCap)
+        Math.min(
+          Math.max(strategyPositionCap, oneLotPositionPct, minTradeAmountPct),
+          requestedForcedMinLotCapPct
+        )
       );
       let effectiveTargetPct = gatedSuggestedPct;
       let minLotSample = false;
