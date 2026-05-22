@@ -2391,6 +2391,81 @@ a {
   letter-spacing: -0.035em;
 }
 
+.order-canary-snapshot-trend {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0;
+  padding: 11px;
+  border: 1px solid rgba(39, 100, 184, 0.1);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.order-canary-snapshot-trend-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.order-canary-snapshot-trend-head span {
+  display: block;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: 0.13em;
+}
+
+.order-canary-snapshot-trend-head strong {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-main);
+  font-size: 14px;
+}
+
+.order-canary-snapshot-chart {
+  width: 100%;
+  height: 210px;
+}
+
+.order-canary-snapshot-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.order-canary-snapshot-legend span {
+  position: relative;
+  padding-left: 14px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.order-canary-snapshot-legend span::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 7px;
+  width: 9px;
+  height: 3px;
+  border-radius: 999px;
+  background: #2764b8;
+}
+
+.order-canary-snapshot-legend .excess::before {
+  background: #cf1322;
+}
+
+.order-canary-snapshot-legend .win::before {
+  background: #0f8f83;
+}
+
+.order-canary-snapshot-legend .drawdown::before {
+  background: #d6a64f;
+}
+
 .order-canary-snapshot-list {
   display: grid;
   gap: 8px;
@@ -2589,7 +2664,8 @@ a {
   }
 
   .order-canary-snapshot-body,
-  .order-canary-snapshot-ribbon {
+  .order-canary-snapshot-ribbon,
+  .order-canary-snapshot-trend-head {
     align-items: flex-start;
     flex-direction: column;
   }

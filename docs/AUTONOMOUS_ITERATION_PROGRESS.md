@@ -1789,3 +1789,24 @@ Next:
 1. Add Canary snapshot trend charts: score, avg excess return, win rate and drawdown guard over time.
 2. Add backend cache-hit / shared-inflight counters for opening-preflight slow-path visibility.
 3. Add a concise daily “what changed since yesterday” block to 今日作战台.
+
+### 2026-05-22 Canary snapshot trend chart
+
+Focus: make Canary review memory trend-readable instead of only showing recent snapshot rows.
+
+Completed:
+
+- Added a compact trend chart to 模拟交易台’s `Canary评审快照` card when at least two snapshots exist.
+- The chart tracks:
+  - review score;
+  - average excess return;
+  - win rate;
+  - average adverse excursion / drawdown proxy.
+- The latest snapshot badge highlights the current review score and whether the drawdown guard is passing.
+- The trend view is read-only and does not change any scheduler parameters, Canary application, rollback, or trading behavior.
+
+Next:
+
+1. Add backend cache-hit / shared-inflight counters for opening-preflight slow-path visibility.
+2. Add a concise daily “what changed since yesterday” block to 今日作战台.
+3. Add a small Canary trend interpretation sentence, e.g. “评分上升但回撤恶化，暂不扩大”。

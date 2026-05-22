@@ -45,6 +45,8 @@ import {
 import {
   AreaChart,
   Area,
+  ComposedChart,
+  Line,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -943,6 +945,11 @@ const formatRollbackValue = (value: any) => {
     return String(value);
   }
 };
+const formatChartNumber = (value: any, suffix = '') => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return '--';
+  return `${parsed.toFixed(2)}${suffix}`;
+};
 
 const CANARY_ROLLBACK_CONFIRM_TEXT = 'CONFIRM_CANARY_ROLLBACK';
 
@@ -1616,7 +1623,32 @@ const PaperTrading: React.FC = () => {
   const canaryAttribution = canaryStatus?.attribution;
   const canaryEvidence = canaryStatus?.evidence;
   const canarySnapshotSummary = canarySnapshots?.summary;
-  const recentCanarySnapshots = canarySnapshots?.snapshots || [];
+  const recentCanarySnapshots = useMemo(
+    () => canarySnapshots?.snapshots || [],
+    [canarySnapshots?.snapshots]
+  );
+  const canarySnapshotTrend = useMemo(
+    () =>
+      [...recentCanarySnapshots]
+        .sort(
+          (a, b) =>
+            new Date(a.generated_at || a.snapshot_date).getTime() -
+            new Date(b.generated_at || b.snapshot_date).getTime()
+        )
+        .map(snapshot => ({
+          id: snapshot.id,
+          label: formatShortDateTime(snapshot.generated_at || snapshot.snapshot_date),
+          review_score: Number(snapshot.review_score || 0),
+          avg_excess_return_pct: Number(snapshot.avg_excess_return_pct || 0),
+          win_rate: Number(snapshot.win_rate || 0),
+          avg_mae_pct: Number(snapshot.avg_mae_pct || 0),
+          drawdown_guard_score: snapshot.drawdown_guard_passed === false ? 0 : 100,
+          closed_count: Number(snapshot.closed_count || 0),
+          action_label: snapshot.action_label || snapshot.action || '观察',
+        })),
+    [recentCanarySnapshots]
+  );
+  const latestCanaryTrendPoint = canarySnapshotTrend[canarySnapshotTrend.length - 1];
   const focusedFamilyConsensus =
     canaryEvidenceFocus?.item?.family_consensus ||
     canaryEvidence?.family_consensus_items?.find(
@@ -2788,43 +2820,154 @@ const PaperTrading: React.FC = () => {
                       </div>
                     ) : null}
                     {recentCanarySnapshots.length > 0 ? (
-                      <div className="order-canary-snapshot-list">
-                        {recentCanarySnapshots.slice(0, 5).map(snapshot => (
-                          <div className="order-canary-snapshot-item" key={snapshot.id}>
-                            <div className="order-canary-snapshot-ribbon">
-                              <Tag color={canaryReviewColorMap[snapshot.action || ''] || 'default'}>
-                                {snapshot.action_label || snapshot.action || '观察'}
-                              </Tag>
-                              <span>{formatShortDateTime(snapshot.generated_at)}</span>
-                            </div>
-                            <div className="order-canary-snapshot-body">
-                              <strong>{Number(snapshot.review_score || 0).toFixed(1)}</strong>
+                      <>
+                        {canarySnapshotTrend.length > 1 ? (
+                          <div className="order-canary-snapshot-trend">
+                            <div className="order-canary-snapshot-trend-head">
                               <div>
-                                <span>
-                                  闭环 {snapshot.closed_count || 0} · 超额{' '}
-                                  {formatPercent(snapshot.avg_excess_return_pct)}
-                                </span>
-                                <span>
-                                  胜率 {formatPercent(snapshot.win_rate)} · 回撤{' '}
-                                  {formatPercent(snapshot.avg_mae_pct)}
-                                </span>
+                                <span>TREND</span>
+                                <strong>评审趋势</strong>
                               </div>
-                            </div>
-                            <Space wrap size={6}>
-                              {(snapshot.selected_parameter_keys || []).slice(0, 4).map(key => (
-                                <Tag key={`${snapshot.id}-${key}`} color="gold">
-                                  {key}
+                              <Space wrap size={6}>
+                                <Tag color="blue">
+                                  最新评分 {formatChartNumber(latestCanaryTrendPoint?.review_score)}
                                 </Tag>
-                              ))}
-                              <Tag
-                                color={snapshot.drawdown_guard_passed === false ? 'red' : 'green'}
-                              >
-                                {snapshot.drawdown_guard_passed === false ? '回撤拦截' : '回撤OK'}
-                              </Tag>
-                            </Space>
+                                <Tag
+                                  color={
+                                    latestCanaryTrendPoint?.drawdown_guard_score ? 'green' : 'red'
+                                  }
+                                >
+                                  {latestCanaryTrendPoint?.drawdown_guard_score
+                                    ? '回撤OK'
+                                    : '回撤拦截'}
+                                </Tag>
+                              </Space>
+                            </div>
+                            <div className="order-canary-snapshot-chart">
+                              <ResponsiveContainer width="100%" height="100%">
+                                <ComposedChart data={canarySnapshotTrend}>
+                                  <CartesianGrid
+                                    strokeDasharray="3 3"
+                                    stroke="rgba(100, 116, 139, 0.18)"
+                                  />
+                                  <XAxis dataKey="label" tick={{ fontSize: 11 }} minTickGap={18} />
+                                  <YAxis yAxisId="left" tick={{ fontSize: 11 }} width={34} />
+                                  <YAxis
+                                    yAxisId="right"
+                                    orientation="right"
+                                    tick={{ fontSize: 11 }}
+                                    width={34}
+                                  />
+                                  <RechartsTooltip
+                                    formatter={(value: any, name: any) => {
+                                      const labelMap: Record<string, string> = {
+                                        review_score: '评审分',
+                                        avg_excess_return_pct: '超额收益',
+                                        win_rate: '胜率',
+                                        avg_mae_pct: '平均回撤',
+                                        drawdown_guard_score: '回撤守门',
+                                      };
+                                      const suffix =
+                                        name === 'review_score' || name === 'drawdown_guard_score'
+                                          ? ''
+                                          : '%';
+                                      return [
+                                        formatChartNumber(value, suffix),
+                                        labelMap[name] || name,
+                                      ];
+                                    }}
+                                    labelFormatter={label => `快照 ${label}`}
+                                  />
+                                  <Area
+                                    yAxisId="left"
+                                    type="monotone"
+                                    dataKey="review_score"
+                                    name="review_score"
+                                    fill="rgba(39, 100, 184, 0.13)"
+                                    stroke="#2764b8"
+                                    strokeWidth={2.2}
+                                    dot={false}
+                                  />
+                                  <Line
+                                    yAxisId="right"
+                                    type="monotone"
+                                    dataKey="avg_excess_return_pct"
+                                    name="avg_excess_return_pct"
+                                    stroke="#cf1322"
+                                    strokeWidth={2.1}
+                                    dot={{ r: 2 }}
+                                  />
+                                  <Line
+                                    yAxisId="right"
+                                    type="monotone"
+                                    dataKey="win_rate"
+                                    name="win_rate"
+                                    stroke="#0f8f83"
+                                    strokeDasharray="4 4"
+                                    strokeWidth={1.9}
+                                    dot={false}
+                                  />
+                                  <Line
+                                    yAxisId="right"
+                                    type="monotone"
+                                    dataKey="avg_mae_pct"
+                                    name="avg_mae_pct"
+                                    stroke="#d6a64f"
+                                    strokeDasharray="2 4"
+                                    strokeWidth={1.9}
+                                    dot={false}
+                                  />
+                                </ComposedChart>
+                              </ResponsiveContainer>
+                            </div>
+                            <div className="order-canary-snapshot-legend">
+                              <span className="score">评审分</span>
+                              <span className="excess">超额收益</span>
+                              <span className="win">胜率</span>
+                              <span className="drawdown">平均回撤</span>
+                            </div>
                           </div>
-                        ))}
-                      </div>
+                        ) : null}
+                        <div className="order-canary-snapshot-list">
+                          {recentCanarySnapshots.slice(0, 5).map(snapshot => (
+                            <div className="order-canary-snapshot-item" key={snapshot.id}>
+                              <div className="order-canary-snapshot-ribbon">
+                                <Tag
+                                  color={canaryReviewColorMap[snapshot.action || ''] || 'default'}
+                                >
+                                  {snapshot.action_label || snapshot.action || '观察'}
+                                </Tag>
+                                <span>{formatShortDateTime(snapshot.generated_at)}</span>
+                              </div>
+                              <div className="order-canary-snapshot-body">
+                                <strong>{Number(snapshot.review_score || 0).toFixed(1)}</strong>
+                                <div>
+                                  <span>
+                                    闭环 {snapshot.closed_count || 0} · 超额{' '}
+                                    {formatPercent(snapshot.avg_excess_return_pct)}
+                                  </span>
+                                  <span>
+                                    胜率 {formatPercent(snapshot.win_rate)} · 回撤{' '}
+                                    {formatPercent(snapshot.avg_mae_pct)}
+                                  </span>
+                                </div>
+                              </div>
+                              <Space wrap size={6}>
+                                {(snapshot.selected_parameter_keys || []).slice(0, 4).map(key => (
+                                  <Tag key={`${snapshot.id}-${key}`} color="gold">
+                                    {key}
+                                  </Tag>
+                                ))}
+                                <Tag
+                                  color={snapshot.drawdown_guard_passed === false ? 'red' : 'green'}
+                                >
+                                  {snapshot.drawdown_guard_passed === false ? '回撤拦截' : '回撤OK'}
+                                </Tag>
+                              </Space>
+                            </div>
+                          ))}
+                        </div>
+                      </>
                     ) : (
                       <Empty
                         image={Empty.PRESENTED_IMAGE_SIMPLE}
