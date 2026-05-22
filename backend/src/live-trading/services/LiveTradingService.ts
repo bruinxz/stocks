@@ -383,6 +383,139 @@ export class LiveTradingService {
     };
   }
 
+  async getDraftCandidates(user_id: number, options: { limit?: number } = {}) {
+    const reconciliation = await this.getReconciliation(user_id);
+    const maxCandidates = Math.min(Math.max(Number(options.limit || 20), 1), 80);
+    const accountReady = Boolean(reconciliation.account && reconciliation.latest_snapshot);
+    const rawMatches = (reconciliation.position_matches || []).filter((item: any) =>
+      ['paper_only', 'live_underweight'].includes(String(item.status))
+    );
+    const candidates = rawMatches.slice(0, maxCandidates);
+    const existingDrafts = candidates.length
+      ? await LiveOrderDraft.findAll({
+          where: {
+            user_id,
+            symbol: { [Op.in]: candidates.map((item: any) => item.symbol) },
+            side: 'BUY',
+            status: { [Op.in]: ['preview', 'pending', 'blocked', 'approved'] },
+          },
+          order: [['created_at', 'DESC']],
+        })
+      : [];
+    const latestDraftBySymbol = new Map<string, any>();
+    for (const draft of existingDrafts) {
+      const symbol = normalizeSymbol((draft as any).symbol);
+      if (!latestDraftBySymbol.has(symbol)) latestDraftBySymbol.set(symbol, this.toPlain(draft));
+    }
+
+    const rows = await Promise.all(
+      candidates.map(async (candidate: any) => {
+        const quote = await this.quoteProvider.getQuote(candidate.symbol);
+        const quotePx = quotePrice(quote);
+        const targetGapValue =
+          candidate.status === 'paper_only'
+            ? toNumber(candidate.paper_market_value)
+            : Math.max(0, toNumber(candidate.paper_market_value) - toNumber(candidate.live_market_value));
+        const rawQuantity = quotePx > 0 ? Math.floor(targetGapValue / quotePx / 100) * 100 : 0;
+        const quantity = Math.max(0, rawQuantity);
+        const estimatedAmount = round(quantity * quotePx, 2);
+        const duplicate = latestDraftBySymbol.get(normalizeSymbol(candidate.symbol));
+        const eligible =
+          accountReady &&
+          quantity >= 100 &&
+          quotePx > 0 &&
+          !duplicate &&
+          reconciliation.status !== 'stale';
+        return {
+          symbol: candidate.symbol,
+          name: candidate.name,
+          side: 'BUY',
+          status: candidate.status,
+          status_label: candidate.status_label,
+          candidate_type: candidate.status,
+          suggested_quantity: quantity,
+          suggested_limit_price: round(quotePx, 4),
+          estimated_amount: estimatedAmount,
+          target_gap_value: round(targetGapValue, 2),
+          live_weight_pct: candidate.live_weight_pct,
+          paper_weight_pct: candidate.paper_weight_pct,
+          weight_gap_pct: candidate.weight_gap_pct,
+          paper_accounts: candidate.paper_accounts || [],
+          quote_snapshot: quote || {},
+          duplicate_draft: duplicate
+            ? {
+                id: duplicate.id,
+                status: duplicate.status,
+                created_at: duplicate.created_at,
+              }
+            : null,
+          eligible,
+          block_reason: eligible
+            ? ''
+            : duplicate
+            ? `已有未完成草稿 #${duplicate.id}`
+            : !accountReady
+            ? '缺少券商只读账户/资产快照'
+            : reconciliation.status === 'stale'
+            ? '券商只读快照已过期'
+            : quotePx <= 0
+            ? '缺少可用行情'
+            : quantity < 100
+            ? '差额不足 100 股整手'
+            : '不满足生成条件',
+          rationale: this.buildCandidateRationale(candidate, quote),
+        };
+      })
+    );
+
+    const eligibleCount = rows.filter(item => item.eligible).length;
+    return {
+      generated_at: new Date().toISOString(),
+      reconciliation_summary: reconciliation.summary,
+      account_ready: accountReady,
+      candidates: rows,
+      summary: {
+        total_count: rows.length,
+        eligible_count: eligibleCount,
+        duplicate_count: rows.filter(item => item.duplicate_draft).length,
+        blocked_count: rows.length - eligibleCount,
+        conclusion: accountReady
+          ? eligibleCount > 0
+            ? `发现 ${eligibleCount} 个可生成实盘草稿的策略候选；生成后仍不会下单，必须人工确认。`
+            : '当前没有满足整手、行情、账户快照和去重条件的实盘草稿候选。'
+          : '尚未完成券商只读账户同步，策略候选只能观察，不能生成可提交草稿。',
+      },
+    };
+  }
+
+  async createDraftFromCandidate(user_id: number, input: any) {
+    const symbol = normalizeSymbol(input.symbol);
+    if (!symbol) throw new Error('缺少候选股票代码');
+    const candidates = await this.getDraftCandidates(user_id, { limit: Number(input.limit || 80) });
+    const candidate = candidates.candidates.find((item: any) => normalizeSymbol(item.symbol) === symbol);
+    if (!candidate) throw new Error('未找到该股票的策略候选，请先刷新只读对账候选。');
+    if (!candidate.eligible) {
+      throw new Error(`该候选暂不可生成实盘草稿：${candidate.block_reason || '未满足风控前置条件'}`);
+    }
+    return this.createDraft(user_id, {
+      symbol: candidate.symbol,
+      name: candidate.name,
+      side: 'BUY',
+      quantity: input.quantity || candidate.suggested_quantity,
+      limit_price: input.limit_price || candidate.suggested_limit_price,
+      source_type: 'paper_strategy_reconciliation',
+      source_id: input.source_id || `${candidate.candidate_type}:${candidate.symbol}`,
+      rationale:
+        input.rationale ||
+        `${candidate.rationale} 该操作只生成实盘订单草稿，不会自动下单；确认前会再次复核行情、账户和风控。`,
+      metadata: {
+        created_from: 'live_reconciliation_candidate',
+        candidate,
+        reconciliation_summary: candidates.reconciliation_summary,
+      },
+    });
+  }
+
   async getMarketDataHealth(symbols?: string[], provider: LiveMarketDataProvider = this.quoteProvider) {
     const providerInfo = provider.getProviderInfo();
     const sla = liveTradingSafetyService.getMarketDataSla();
@@ -559,6 +692,7 @@ export class LiveTradingService {
       expires_at: expiresAt,
       metadata: {
         created_from: 'live_trading_page',
+        ...(input.metadata || {}),
         safety_status: liveTradingSafetyService.getStatus(),
       },
     } as any);
@@ -982,6 +1116,22 @@ export class LiveTradingService {
       });
     }
     return suggestions;
+  }
+
+  private buildCandidateRationale(candidate: any, quote: any) {
+    const accounts = (candidate.paper_accounts || [])
+      .slice(0, 2)
+      .map((item: any) => item.label)
+      .join('、');
+    const quoteText = quotePrice(quote) > 0 ? `当前参考价 ¥${round(quotePrice(quote), 2)}` : '暂无可用参考价';
+    if (candidate.status === 'paper_only') {
+      return `策略模拟账户持有 ${candidate.name || candidate.symbol}，但实盘暂无对应仓位；来源账户：${
+        accounts || '策略模拟盘'
+      }，${quoteText}。`;
+    }
+    return `实盘仓位低于策略模拟目标，权重差 ${round(candidate.weight_gap_pct, 2)}%；来源账户：${
+      accounts || '策略模拟盘'
+    }，${quoteText}。`;
   }
 
   private async audit(input: {

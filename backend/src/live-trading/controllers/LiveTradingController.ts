@@ -45,6 +45,18 @@ class LiveTradingController {
     }
   }
 
+  async getDraftCandidates(req: AuthenticatedRequest, res: Response) {
+    try {
+      const data = await liveTradingService.getDraftCandidates(Number(req.user?.id), {
+        limit: req.query.limit ? Number(req.query.limit) : undefined,
+      });
+      res.json({ success: true, data, message: data.summary.conclusion });
+    } catch (error: any) {
+      logger.error('获取实盘草稿候选失败:', error);
+      res.status(500).json({ success: false, message: error.message || '获取实盘草稿候选失败' });
+    }
+  }
+
   async listDrafts(req: AuthenticatedRequest, res: Response) {
     try {
       const data = await liveTradingService.listDrafts(Number(req.user?.id), {
@@ -65,6 +77,16 @@ class LiveTradingController {
     } catch (error: any) {
       logger.error('创建实盘订单草稿失败:', error);
       res.status(500).json({ success: false, message: error.message || '创建实盘订单草稿失败' });
+    }
+  }
+
+  async createDraftFromCandidate(req: AuthenticatedRequest, res: Response) {
+    try {
+      const data = await liveTradingService.createDraftFromCandidate(Number(req.user?.id), req.body || {});
+      res.json({ success: true, data, message: data.risk_check?.conclusion || '策略候选已生成实盘订单草稿' });
+    } catch (error: any) {
+      logger.warn('策略候选生成实盘草稿被阻断:', error?.message || error);
+      res.status(400).json({ success: false, message: error.message || '策略候选生成实盘草稿失败' });
     }
   }
 

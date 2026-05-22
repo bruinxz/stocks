@@ -1974,7 +1974,6 @@ a {
   border: 1px solid rgba(15, 23, 42, 0.06);
 }
 
-
 .order-stability-list,
 .order-parameter-preview-list {
   display: flex;
@@ -11661,8 +11660,7 @@ a {
 }
 
 .live-trading-hero {
-  background:
-    radial-gradient(circle at 8% 10%, rgba(47, 111, 115, 0.16), transparent 28%),
+  background: radial-gradient(circle at 8% 10%, rgba(47, 111, 115, 0.16), transparent 28%),
     radial-gradient(circle at 92% 0%, rgba(201, 75, 75, 0.1), transparent 26%),
     linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(246, 249, 249, 0.92));
   border: 1px solid rgba(31, 58, 95, 0.08);
@@ -11716,8 +11714,7 @@ a {
   min-height: 170px;
   padding: 16px;
   border-radius: 18px;
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(244, 247, 248, 0.88));
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(244, 247, 248, 0.88));
   border: 1px solid rgba(15, 23, 42, 0.07);
 }
 
@@ -11873,8 +11870,7 @@ a {
 
 .live-reconcile-card {
   min-height: 100%;
-  background:
-    radial-gradient(circle at 0% 0%, rgba(47, 111, 115, 0.1), transparent 34%),
+  background: radial-gradient(circle at 0% 0%, rgba(47, 111, 115, 0.1), transparent 34%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.92));
 }
 
@@ -12010,8 +12006,7 @@ a {
 }
 
 .live-paper-account-strip div.active {
-  background:
-    linear-gradient(180deg, rgba(236, 253, 245, 0.7), rgba(255, 255, 255, 0.86));
+  background: linear-gradient(180deg, rgba(236, 253, 245, 0.7), rgba(255, 255, 255, 0.86));
   border-color: rgba(47, 111, 115, 0.16);
 }
 
@@ -12021,6 +12016,50 @@ a {
   font-size: 11px;
   font-style: normal;
   font-weight: 800;
+}
+
+.live-candidate-card {
+  background: radial-gradient(circle at 0% 0%, rgba(31, 58, 95, 0.08), transparent 28%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.92));
+}
+
+.live-candidate-alert {
+  margin-bottom: 12px;
+  border-radius: 16px;
+}
+
+.live-candidate-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.live-candidate-metrics div {
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(15, 23, 42, 0.07);
+}
+
+.live-candidate-metrics span,
+.live-candidate-metrics strong {
+  display: block;
+}
+
+.live-candidate-metrics span {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+}
+
+.live-candidate-metrics strong {
+  margin-top: 4px;
+  color: var(--text-main);
+  font-family: var(--font-display);
+  font-size: 22px;
+  letter-spacing: -0.04em;
 }
 
 .live-draft-form {
@@ -12116,6 +12155,10 @@ a {
   .live-paper-account-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .live-candidate-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 640px) {
@@ -12123,7 +12166,8 @@ a {
   .live-market-health-strip,
   .live-risk-checks > div,
   .live-reconcile-metrics,
-  .live-paper-account-strip {
+  .live-paper-account-strip,
+  .live-candidate-metrics {
     grid-template-columns: 1fr;
   }
 }

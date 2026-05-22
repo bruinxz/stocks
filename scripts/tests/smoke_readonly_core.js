@@ -410,6 +410,27 @@ async function main() {
       }
     );
 
+    await requestJson(
+      "live trading draft candidates",
+      "/api/live-trading/order-draft-candidates?limit=5",
+      {
+        token,
+        expect: (json) => {
+          assertApiSuccess(json, "live trading draft candidates");
+          if (!json.data?.summary || !Array.isArray(json.data?.candidates)) {
+            throw new Error(
+              `live trading draft candidate payload missing: ${preview(json)}`
+            );
+          }
+          if (json.data.summary.eligible_count > json.data.summary.total_count) {
+            throw new Error(
+              `live trading draft candidate counts invalid: ${preview(json.data.summary)}`
+            );
+          }
+        },
+      }
+    );
+
     await requestJson("data source health", "/api/market/data-sources/health", {
       expect: (json) => {
         assertApiSuccess(json, "data source health");

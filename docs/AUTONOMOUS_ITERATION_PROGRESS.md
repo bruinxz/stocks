@@ -38,13 +38,17 @@ Known frontend build warnings are historical Prettier warnings in existing files
   - `GET /api/live-trading/reconciliation` 新增只读对账接口，复用现有实盘账户/持仓模型，不触发任何真实下单。
   - `/api/live-trading/overview` 同步返回 `reconciliation`，便于页面一次加载安全状态、订单草稿和对账结论。
   - 对账口径为“券商只读快照 vs 五套策略模拟账户”，输出对齐分、快照年龄、仅实盘持仓、仅模拟建议、平均权重差和单票偏离。
+  - 新增 `GET /api/live-trading/order-draft-candidates` 与 `POST /api/live-trading/order-drafts/from-candidate`，将“仅模拟建议 / 实盘偏轻”安全翻译为实盘订单草稿候选。
 - 页面更简洁：
   - 实盘交易导航新增「只读对账」入口；页面增加“只读对账结论”和“实盘 vs 策略模拟持仓”区块。
+  - 页面新增“策略候选生成实盘草稿”区块，只看候选数、可生成数、已有草稿和阻断原因。
   - 默认只展示结论、核心数字和前 80 个偏离标的，避免把实盘页变成复杂报表。
 - 纪律更可执行：
   - 对账建议会明确提示：仅模拟建议只能成为订单草稿候选，仍必须重新通过行情 SLA、仓位/资金风控和人工确认；仅实盘持仓需要补齐买入依据、止损线和退出计划。
+  - 实盘草稿风控新增“券商只读资产快照”硬校验；没有真实/只读资产快照时，即使手动创建草稿也不能通过基础风控。
+  - 候选转草稿会去重已有未完成草稿，且只创建草稿，不会调用券商下单。
 - 发布稳定性：
-  - 只读 smoke 新增 `live trading reconciliation` 校验，确保对账接口、summary 与 position_matches 结构不回归。
+  - 只读 smoke 新增 `live trading reconciliation` 和 `live trading draft candidates` 校验，确保对账/候选接口结构不回归。
 
 ### 2026-05-21 continuous iteration: quant parameter maintenance lane
 

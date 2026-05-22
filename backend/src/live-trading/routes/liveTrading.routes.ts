@@ -13,7 +13,9 @@ router.get('/overview', liveTradingController.getOverview.bind(liveTradingContro
 router.get('/reconciliation', liveTradingController.getReconciliation.bind(liveTradingController));
 router.get('/quotes', liveTradingController.getQuotes.bind(liveTradingController));
 router.get('/order-drafts', liveTradingController.listDrafts.bind(liveTradingController));
+router.get('/order-draft-candidates', liveTradingController.getDraftCandidates.bind(liveTradingController));
 router.post('/order-drafts', liveTradingController.createDraft.bind(liveTradingController));
+router.post('/order-drafts/from-candidate', liveTradingController.createDraftFromCandidate.bind(liveTradingController));
 router.post('/order-drafts/:id/approve', liveTradingController.approveDraft.bind(liveTradingController));
 router.post('/order-drafts/:id/reject', liveTradingController.rejectDraft.bind(liveTradingController));
 router.post('/accounts/sync-readonly', liveTradingController.syncReadonly.bind(liveTradingController));
