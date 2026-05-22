@@ -1456,3 +1456,33 @@ Next:
 1. Add licensed real-time quote provider configuration and freshness SLAs.
 2. Add a real broker read-only adapter behind `LIVE_READONLY_ENABLED=true`.
 3. Add live account reconciliation UI after read-only sync is connected.
+
+### 2026-05-22 live trading market-data SLA guard
+
+Focus: make the real-market path more credible by checking quote freshness before any live-order workflow can proceed.
+
+Completed:
+
+- Added market-data SLA configuration to the live-trading safety service:
+  - `LIVE_MARKET_QUOTE_MAX_LATENCY_SECONDS` (default 900 seconds)
+  - `LIVE_MARKET_MAX_MISSING_QUOTE_RATIO_PCT` (default 10%)
+  - `LIVE_MARKET_REQUIRE_QUOTE_BEFORE_ORDER` (default true)
+  - `LIVE_MARKET_REQUIRE_REALTIME_FOR_ORDER` (default true)
+- `GET /api/live-trading/readiness` now includes `market_data_health`:
+  - provider identity;
+  - sample count;
+  - missing/stale counts;
+  - missing ratio;
+  - max quote latency;
+  - internal/commercial license warning;
+  - concise conclusion.
+- Live order drafts now include quote freshness and price-deviation checks in the risk checklist.
+- Live order approval now performs a second quote/account/risk recheck immediately before the hard safety boundary and broker submission path.
+- Frontend live-trading page now surfaces market-data SLA status, missing/stale counts, max latency and draft quote freshness.
+- Smoke validates `market_data_health.status` and `summary.market_data_status`, while still asserting real-order submission is disabled by default.
+
+Next:
+
+1. Add a licensed quote provider adapter and make the page compare `database_realtime_quotes` vs licensed source freshness.
+2. Add a broker read-only adapter behind `LIVE_READONLY_ENABLED=true` and expand the account reconciliation panel.
+3. Add live-order draft generation from existing paper-trading/quant recommendations while keeping human approval mandatory.

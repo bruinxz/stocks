@@ -20,6 +20,10 @@ export interface LiveRiskCheckInput {
   is_st?: boolean;
   is_limit_up?: boolean;
   price_deviation_pct?: number;
+  quote_missing?: boolean;
+  quote_latency_seconds?: number;
+  quote_is_realtime?: boolean;
+  quote_source?: string;
 }
 
 export class LiveRiskGuardService {
@@ -39,6 +43,7 @@ export class LiveRiskGuardService {
       Number(input.total_exposure_pct || 0) + (input.side === 'BUY' ? orderPct : 0),
       4
     );
+    const marketSla = liveTradingSafetyService.getMarketDataSla();
 
     const checks = [
       {
@@ -97,6 +102,38 @@ export class LiveRiskGuardService {
             ? '暂无外部参考价偏离数据，仅保留人工确认'
             : `价格偏离 ${round(input.price_deviation_pct, 4)}% / 上限 ${limits.price_deviation_guard_pct}%`,
       },
+      {
+        key: 'quote_required',
+        passed: !marketSla.require_quote_before_order || !input.quote_missing,
+        label: '行情快照必需',
+        message: input.quote_missing
+          ? '缺少可用行情快照，禁止形成可提交草稿'
+          : `已获取行情快照${input.quote_source ? `（${input.quote_source}）` : ''}`,
+      },
+      {
+        key: 'quote_latency',
+        passed:
+          !marketSla.require_realtime_for_order ||
+          input.quote_latency_seconds === undefined ||
+          Number(input.quote_latency_seconds) <= marketSla.max_quote_latency_seconds,
+        label: '行情延迟 SLA',
+        message:
+          input.quote_latency_seconds === undefined
+            ? '暂无行情延迟数据，保留人工复核'
+            : `行情延迟 ${Math.round(Number(input.quote_latency_seconds || 0))} 秒 / SLA ${marketSla.max_quote_latency_seconds} 秒`,
+      },
+      {
+        key: 'quote_realtime',
+        passed:
+          !marketSla.require_realtime_for_order ||
+          input.quote_is_realtime === undefined ||
+          Boolean(input.quote_is_realtime),
+        label: '实时行情可信度',
+        message:
+          input.quote_is_realtime === false
+            ? '当前行情不是实时可信快照，只允许观察不允许提交'
+            : '行情实时可信度满足当前配置或等待人工复核',
+      },
     ];
 
     const failed = checks.filter(item => !item.passed);
@@ -107,6 +144,7 @@ export class LiveRiskGuardService {
       order_pct: orderPct,
       projected_position_pct: projectedPositionPct,
       projected_exposure_pct: projectedExposurePct,
+      market_data_sla: marketSla,
       checks,
       failed_checks: failed,
       conclusion:

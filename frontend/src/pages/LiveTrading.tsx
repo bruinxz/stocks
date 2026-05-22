@@ -62,6 +62,26 @@ interface LiveReadiness {
     licensed_for_external_use: boolean;
     notes: string[];
   };
+  market_data_health: {
+    status: string;
+    status_label: string;
+    sample_count: number;
+    missing_count: number;
+    stale_count: number;
+    missing_ratio_pct: number;
+    max_latency_seconds: number;
+    licensed_for_external_use: boolean;
+    conclusion: string;
+    warnings: string[];
+    items: Array<{
+      symbol: string;
+      name?: string;
+      current_price?: number;
+      status: string;
+      latency_seconds?: number;
+      source?: string;
+    }>;
+  };
   phases: Array<{ key: string; label: string; status: string; detail: string }>;
   conclusion: string;
 }
@@ -82,6 +102,8 @@ interface LiveOverview {
     position_count: number;
     pending_draft_count: number;
     can_submit_orders: boolean;
+    market_data_status: string;
+    market_data_conclusion: string;
     mode_label: string;
     conclusion: string;
   };
@@ -106,6 +128,12 @@ const draftStatusColor: Record<string, string> = {
   approved: 'green',
   rejected: 'default',
   submitted: 'purple',
+};
+const marketHealthColor: Record<string, string> = {
+  ok: 'green',
+  degraded: 'gold',
+  risk: 'red',
+  empty: 'default',
 };
 
 const LiveTrading: React.FC = () => {
@@ -137,6 +165,7 @@ const LiveTrading: React.FC = () => {
   }, []);
 
   const safety = overview?.readiness?.safety;
+  const marketHealth = overview?.readiness?.market_data_health;
   const canSubmit = Boolean(safety?.can_submit_orders);
   const blockers = safety?.blockers || [];
   const modeTag = canSubmit ? '受限可提交' : safety?.mode === 'read_only' ? '只读观察' : '安全禁用';
@@ -258,6 +287,33 @@ const LiveTrading: React.FC = () => {
       ),
     },
     {
+      title: '行情/复核',
+      render: (_: any, record: any) => {
+        const quote = record.quote_snapshot || {};
+        const failedChecks = record.risk_check?.failed_checks || [];
+        return (
+          <Space direction="vertical" size={2}>
+            <Tag color={quote.is_realtime ? 'green' : quote.current_price ? 'gold' : 'default'}>
+              {quote.current_price ? `¥${Number(quote.current_price).toFixed(2)}` : '无行情'}
+            </Tag>
+            <Text type="secondary">
+              {quote.latency_seconds !== undefined
+                ? `延迟 ${Math.round(Number(quote.latency_seconds || 0))} 秒`
+                : '等待行情 SLA'}
+            </Text>
+            {failedChecks.length > 0 && (
+              <Text type="danger">
+                {failedChecks
+                  .slice(0, 2)
+                  .map((item: any) => item.label)
+                  .join('、')}
+              </Text>
+            )}
+          </Space>
+        );
+      },
+    },
+    {
       title: '操作',
       fixed: 'right' as const,
       render: (_: any, record: any) => (
@@ -369,8 +425,12 @@ const LiveTrading: React.FC = () => {
           </Col>
           <Col xs={24} md={6}>
             <Card className="modern-card live-stat-card" variant="borderless">
-              <Statistic title="待处理草稿" value={overview?.summary?.pending_draft_count || 0} />
-              <span>确认前不会提交券商</span>
+              <Statistic title="行情 SLA" value={marketHealth?.status_label || '--'} />
+              <span>
+                {marketHealth
+                  ? `样本 ${marketHealth.sample_count} · 延迟 ${marketHealth.max_latency_seconds}s`
+                  : '等待行情检查'}
+              </span>
             </Card>
           </Col>
         </Row>
@@ -411,19 +471,43 @@ const LiveTrading: React.FC = () => {
                 <Col xs={24} md={12}>
                   <div className="live-gateway-card">
                     <AuditOutlined />
-                    <strong>
-                      {overview?.readiness?.market_data?.provider_name || '本地行情缓存'}
-                    </strong>
+                    <Space wrap size={6}>
+                      <strong>
+                        {overview?.readiness?.market_data?.provider_name || '本地行情缓存'}
+                      </strong>
+                      <Tag color={marketHealthColor[marketHealth?.status || 'empty'] || 'default'}>
+                        {marketHealth?.status_label || '待检查'}
+                      </Tag>
+                    </Space>
                     <span>
                       {overview?.readiness?.market_data?.provider_key || 'database_realtime_quotes'}
                     </span>
-                    <p>
-                      {overview?.readiness?.market_data?.notes?.[0] ||
-                        '商业化前需替换授权实时行情。'}
-                    </p>
+                    <p>{marketHealth?.conclusion || '商业化前需替换授权实时行情。'}</p>
                   </div>
                 </Col>
               </Row>
+              {marketHealth && (
+                <div className="live-market-health-strip">
+                  <div>
+                    <span>缺失</span>
+                    <strong>{marketHealth.missing_count}</strong>
+                  </div>
+                  <div>
+                    <span>延迟</span>
+                    <strong>{marketHealth.stale_count}</strong>
+                  </div>
+                  <div>
+                    <span>缺失率</span>
+                    <strong>{Number(marketHealth.missing_ratio_pct || 0).toFixed(2)}%</strong>
+                  </div>
+                  <div>
+                    <span>授权</span>
+                    <strong>
+                      {marketHealth.licensed_for_external_use ? '可外用' : '内部验证'}
+                    </strong>
+                  </div>
+                </div>
+              )}
               <div className="live-risk-limit-grid">
                 {Object.entries(safety?.default_risk_limits || {})
                   .slice(0, 8)

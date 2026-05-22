@@ -47,6 +47,15 @@ function maskAccountNo(value?: string): string {
   return `${raw.slice(0, 2)}****${raw.slice(-4)}`;
 }
 
+function quotePrice(quote: any): number {
+  return toNumber(quote?.current_price);
+}
+
+function quoteLatency(quote: any): number | undefined {
+  const value = Number(quote?.latency_seconds);
+  return Number.isFinite(value) ? value : undefined;
+}
+
 export class LiveTradingService {
   private brokerGateway: BrokerGateway;
   private quoteProvider: DatabaseQuoteProvider;
@@ -60,6 +69,7 @@ export class LiveTradingService {
     const safety = liveTradingSafetyService.getStatus();
     const broker = this.brokerGateway.getCapabilities();
     const marketData = this.quoteProvider.getProviderInfo();
+    const marketDataHealth = await this.getMarketDataHealth();
     const accountCount = user_id
       ? await LiveBrokerAccount.count({ where: { user_id, is_active: true } })
       : 0;
@@ -68,10 +78,11 @@ export class LiveTradingService {
       safety,
       broker,
       market_data: marketData,
+      market_data_health: marketDataHealth,
       account_count: accountCount,
       phases: [
         { key: 'safety_boundary', label: '安全边界', status: 'ready', detail: '默认禁止真实下单，强确认与熔断开关已内置。' },
-        { key: 'market_data', label: '真实行情入口', status: 'partial', detail: '当前读取本地行情缓存；商业化前需替换授权实时行情。' },
+        { key: 'market_data', label: '真实行情入口', status: marketDataHealth.status === 'ok' ? 'ready' : marketDataHealth.status === 'empty' ? 'locked' : 'partial', detail: marketDataHealth.conclusion },
         { key: 'broker_readonly', label: '券商只读', status: safety.can_sync_account ? 'partial' : 'locked', detail: '接口与模型已就绪；真实券商适配器尚未启用。' },
         { key: 'order_approval', label: '订单审批', status: 'ready', detail: '支持订单草稿、风控说明、强确认；提交券商默认阻断。' },
         { key: 'execution', label: '真实执行', status: safety.can_submit_orders ? 'restricted' : 'blocked', detail: safety.can_submit_orders ? '仅限受控内部灰度。' : '真实下单被环境开关和 Mock 网关阻断。' },
@@ -128,9 +139,90 @@ export class LiveTradingService {
         position_count: positions.length,
         pending_draft_count: openDrafts.length,
         can_submit_orders: readiness.safety.can_submit_orders,
+        market_data_status: readiness.market_data_health.status,
+        market_data_conclusion: readiness.market_data_health.conclusion,
         mode_label: readiness.safety.mode === 'approval_execution_enabled' ? '实盘审批执行' : readiness.safety.mode === 'read_only' ? '只读实盘观察' : '模拟/安全禁用',
         conclusion: readiness.conclusion,
       },
+    };
+  }
+
+  async getMarketDataHealth(symbols?: string[]) {
+    const provider = this.quoteProvider.getProviderInfo();
+    const sla = liveTradingSafetyService.getMarketDataSla();
+    const targetSymbols = (symbols || []).length
+      ? symbols!.map(normalizeSymbol)
+      : await this.pickHealthSymbols();
+    const quotes = targetSymbols.length ? await this.quoteProvider.getQuotes(targetSymbols) : [];
+    const quoteBySymbol = new Map(quotes.map(quote => [normalizeSymbol(quote.symbol), quote]));
+    const items = targetSymbols.map(symbol => {
+      const quote = quoteBySymbol.get(normalizeSymbol(symbol));
+      const latency = quoteLatency(quote);
+      const missing = !quote || !quotePrice(quote);
+      const stale =
+        !missing &&
+        latency !== undefined &&
+        Number(latency) > Number(sla.max_quote_latency_seconds || 0);
+      return {
+        symbol,
+        name: quote?.name,
+        current_price: quote?.current_price,
+        quote_time: quote?.quote_time,
+        source: quote?.source || provider.provider_key,
+        latency_seconds: latency,
+        is_realtime: Boolean(quote?.is_realtime),
+        missing,
+        stale,
+        status: missing ? 'missing' : stale ? 'stale' : quote?.is_realtime ? 'fresh' : 'cached',
+      };
+    });
+    const missingCount = items.filter(item => item.missing).length;
+    const staleCount = items.filter(item => item.stale).length;
+    const total = Math.max(items.length, 1);
+    const missingRatio = round((missingCount / total) * 100, 4);
+    const maxLatency = Math.max(0, ...items.map(item => Number(item.latency_seconds || 0)));
+    const licensed = Boolean(provider.licensed_for_external_use);
+    const status =
+      items.length === 0
+        ? 'empty'
+        : missingRatio > sla.max_missing_quote_ratio_pct
+        ? 'risk'
+        : staleCount > 0
+        ? 'degraded'
+        : 'ok';
+    return {
+      provider,
+      sla,
+      status,
+      status_label:
+        status === 'ok'
+          ? '行情可用'
+          : status === 'degraded'
+          ? '部分延迟'
+          : status === 'risk'
+          ? '缺口偏高'
+          : '暂无样本',
+      checked_symbols: targetSymbols,
+      sample_count: items.length,
+      missing_count: missingCount,
+      stale_count: staleCount,
+      missing_ratio_pct: missingRatio,
+      max_latency_seconds: maxLatency,
+      licensed_for_external_use: licensed,
+      items,
+      conclusion:
+        status === 'ok'
+          ? `行情缓存满足当前 SLA：检查 ${items.length} 个样本，最大延迟 ${maxLatency} 秒。`
+          : status === 'degraded'
+          ? `行情存在延迟：${staleCount} 个样本超过 ${sla.max_quote_latency_seconds} 秒，实盘草稿需谨慎。`
+          : status === 'risk'
+          ? `行情缺口偏高：缺失率 ${missingRatio}%，不应进入真实下单。`
+          : '暂无可检查的行情样本，请先完成实时行情同步。',
+      warnings: [
+        ...(licensed ? [] : ['当前行情 provider 未声明对外商业授权，只能用于内部验证。']),
+        ...(status === 'ok' ? [] : ['行情未完全满足实盘 SLA，订单草稿会保守阻断或要求复核。']),
+      ],
+      generated_at: new Date().toISOString(),
     };
   }
 
@@ -167,6 +259,14 @@ export class LiveTradingService {
       current_position_value: toNumber(position?.market_value),
       total_exposure_pct: overview.summary.exposure_pct,
       is_st: /ST|退/.test(String(name || '')),
+      quote_missing: !quote || !quotePrice(quote),
+      quote_latency_seconds: quoteLatency(quote),
+      quote_is_realtime: quote?.is_realtime,
+      quote_source: quote?.source,
+      price_deviation_pct:
+        quotePrice(quote) > 0 && limitPrice > 0
+          ? round(((limitPrice - quotePrice(quote)) / quotePrice(quote)) * 100, 4)
+          : undefined,
     });
     const expiresAt = new Date(Date.now() + 20 * 60 * 1000);
     const draft = await LiveOrderDraft.create({
@@ -236,6 +336,32 @@ export class LiveTradingService {
     }
     const riskAllowed = Boolean((draft as any).risk_check?.allowed);
     if (!riskAllowed) throw new Error('订单草稿未通过基础风控，禁止确认提交。');
+
+    const recheck = await this.recheckDraft(user_id, draft);
+    await draft.update({
+      risk_check: recheck.risk_check,
+      quote_snapshot: recheck.quote_snapshot || {},
+      estimated_amount: recheck.risk_check.estimated_amount,
+      metadata: {
+        ...((draft as any).metadata || {}),
+        pre_submit_recheck_at: new Date().toISOString(),
+        pre_submit_recheck_conclusion: recheck.risk_check.conclusion,
+      },
+    });
+    if (!recheck.risk_check.allowed) {
+      await this.audit({
+        user_id,
+        account_id: (draft as any).account_id,
+        draft_id,
+        event_type: 'live_order_pre_submit_recheck_blocked',
+        severity: 'warning',
+        message: '实盘订单提交前二次行情/账户风控复核未通过。',
+        before_state: before,
+        after_state: this.toPlain(draft),
+        metadata: { risk_check: recheck.risk_check },
+      });
+      throw new Error(`提交前二次复核未通过：${recheck.risk_check.conclusion}`);
+    }
 
     liveTradingSafetyService.assertOrderExecutionAllowed(input.confirm_text);
 
@@ -357,6 +483,46 @@ export class LiveTradingService {
 
   async getQuotes(symbols: string[]) {
     return this.quoteProvider.getQuotes(symbols);
+  }
+
+  private async pickHealthSymbols() {
+    const stocks = await Stock.findAll({
+      where: { is_listed: true },
+      order: [['updated_at', 'DESC']],
+      limit: 12,
+    });
+    const symbols = stocks.map((stock: any) => normalizeSymbol(stock.symbol)).filter(Boolean);
+    return symbols.length ? symbols : ['000001.SH', '399001.SZ', '600519.SH', '000858.SZ'];
+  }
+
+  private async recheckDraft(user_id: number, draft: LiveOrderDraft) {
+    const symbol = normalizeSymbol((draft as any).symbol);
+    const quote = await this.quoteProvider.getQuote(symbol);
+    const overview = await this.getOverview(user_id);
+    const position = overview.positions.find((item: any) => normalizeSymbol(item.symbol) === symbol);
+    const latestPrice = quotePrice(quote);
+    const limitPrice = toNumber((draft as any).limit_price);
+    const riskCheck = liveRiskGuardService.evaluate({
+      side: (draft as any).side,
+      symbol,
+      name: (draft as any).name,
+      quantity: Number((draft as any).quantity),
+      limit_price: limitPrice,
+      total_asset: overview.summary.total_asset,
+      available_cash: overview.summary.available_cash,
+      current_position_value: toNumber(position?.market_value),
+      total_exposure_pct: overview.summary.exposure_pct,
+      is_st: /ST|退/.test(String((draft as any).name || '')),
+      quote_missing: !quote || !latestPrice,
+      quote_latency_seconds: quoteLatency(quote),
+      quote_is_realtime: quote?.is_realtime,
+      quote_source: quote?.source,
+      price_deviation_pct:
+        latestPrice > 0 && limitPrice > 0
+          ? round(((limitPrice - latestPrice) / latestPrice) * 100, 4)
+          : undefined,
+    });
+    return { risk_check: riskCheck, quote_snapshot: quote };
   }
 
   private async ensureAccount(user_id: number, input: any = {}) {
