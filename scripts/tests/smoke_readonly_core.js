@@ -1621,6 +1621,43 @@ async function main() {
     );
 
     await requestJson(
+      "paper trading order intent canary snapshots",
+      "/api/paper-trading/order-intent-tuning/canary/snapshots?limit=5",
+      {
+        token,
+        expect: (json) => {
+          assertApiSuccess(json, "paper trading order intent canary snapshots");
+          if (!json.data?.summary || !Array.isArray(json.data.snapshots)) {
+            throw new Error(
+              `paper trading order intent canary snapshots payload invalid: ${preview(
+                json
+              )}`
+            );
+          }
+          if (
+            !Number.isFinite(
+              Number(json.data.summary.snapshot_count ?? json.data.snapshots.length)
+            )
+          ) {
+            throw new Error(
+              `paper trading order intent canary snapshots count invalid: ${preview(
+                json.data.summary
+              )}`
+            );
+          }
+          const first = json.data.snapshots[0];
+          if (first && (!first.generated_at || !first.review)) {
+            throw new Error(
+              `paper trading order intent canary snapshot item invalid: ${preview(
+                first
+              )}`
+            );
+          }
+        },
+      }
+    );
+
+    await requestJson(
       "paper trading order intent canary rollback dry run",
       "/api/paper-trading/order-intent-tuning/canary/rollback",
       {

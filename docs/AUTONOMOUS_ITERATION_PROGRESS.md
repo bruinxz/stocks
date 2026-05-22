@@ -1653,3 +1653,26 @@ Next:
 1. Surface the read-only tuning-candidate radar in 今日指挥中心 so daily operators see parameter risks without opening the full simulation page.
 2. Add a one-click “生成 Canary 预览（使用当前只读首选候选）” shortcut that still requires confirmation before writing task parameters.
 3. Persist Canary review snapshots periodically so promotion/rollback recommendations can be tracked across days.
+
+### 2026-05-22 Canary review snapshots
+
+Focus: make Canary tuning decisions observable across days instead of only calculating the latest status in memory.
+
+Completed:
+
+- Added `paper_trading_canary_review_snapshots` as a runtime-synced table for Canary review memory.
+- Refreshing `GET /api/paper-trading/order-intent-tuning/canary` now writes a compact snapshot with:
+  - review action/score and readiness;
+  - closed/open sample counts, average excess return, win rate and profit factor;
+  - average/max adverse excursion and drawdown-guard result;
+  - selected parameter keys and evidence sources;
+  - attribution/evidence/rollback summary for later diagnosis.
+- Added read-only `GET /api/paper-trading/order-intent-tuning/canary/snapshots` for the latest snapshot timeline.
+- Paper-trading page now displays a “Canary评审快照” memory card with snapshot count, average score, promote/rollback counts, drawdown-blocked count and the latest review entries.
+- Smoke test now validates the snapshot endpoint and payload shape.
+
+Next:
+
+1. Add the read-only tuning-candidate radar and the latest Canary snapshot summary to 今日指挥中心.
+2. Add a shortcut that turns the current top read-only Canary candidate into a preview, still requiring explicit confirmation before writing parameters.
+3. Add a scheduled snapshot capture after the daily simulated-trading run so review memory grows even when nobody opens the page.

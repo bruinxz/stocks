@@ -952,6 +952,31 @@ export class PaperTradingController {
     }
   };
 
+  // 获取订单意图 Canary 评审快照时间线
+  getOrderIntentTuningCanarySnapshots = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) => {
+    try {
+      const user = (req as any).user;
+      const result = await paperTradingTuningApplyService.listCanaryReviewSnapshots({
+        ...req.query,
+        user_id: user.id,
+        username: user.username || user.nickname,
+      } as any);
+
+      res.json({
+        success: true,
+        data: result,
+        message: result.summary?.conclusion || '订单意图 Canary 快照已刷新',
+      });
+    } catch (error: any) {
+      logger.error('获取订单意图 Canary 评审快照失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
   // 预览或强确认回滚订单意图 Canary 小流量调参
   rollbackOrderIntentTuningCanary = async (req: Request, res: Response, next: NextFunction) => {
     try {

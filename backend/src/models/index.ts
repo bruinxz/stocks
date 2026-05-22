@@ -15,6 +15,7 @@ export * from './PaperTradingTrade';
 export * from './PaperTradingSnapshot';
 export * from './PaperTradingOrderIntent';
 export * from './PaperTradingOrderIntentOutcome';
+export * from './PaperTradingCanaryReviewSnapshot';
 export * from './RiskAlert';
 export * from './TradingJournal';
 export * from './PortfolioSimulation';

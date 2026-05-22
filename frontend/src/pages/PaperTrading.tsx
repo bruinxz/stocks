@@ -645,6 +645,49 @@ interface OrderIntentTuningCanaryStatus {
   };
 }
 
+interface CanaryReviewSnapshot {
+  id: number;
+  generated_at: string;
+  snapshot_date: string;
+  status: string;
+  action?: 'promote' | 'rollback' | 'continue_observing' | 'hold' | string;
+  action_label?: string;
+  review_score?: number;
+  ready_for_review: boolean;
+  outcome_tone?: 'observing' | 'healthy' | 'risk' | 'mixed' | string;
+  closed_count: number;
+  open_count: number;
+  avg_excess_return_pct?: number;
+  avg_closed_return_pct?: number;
+  avg_mae_pct?: number;
+  worst_adverse_excursion_pct?: number;
+  win_rate?: number;
+  profit_factor?: number;
+  total_pnl?: number;
+  drawdown_guard_passed?: boolean;
+  selected_parameter_keys?: string[];
+  evidence_sources?: string[];
+  review?: OrderIntentTuningCanaryStatus['review'];
+  attribution?: OrderIntentTuningCanaryStatus['attribution'];
+  evidence?: OrderIntentTuningCanaryStatus['evidence'];
+}
+
+interface CanaryReviewSnapshotTimeline {
+  generated_at?: string;
+  summary: {
+    snapshot_count: number;
+    latest_action?: string;
+    latest_action_label?: string;
+    latest_review_score?: number;
+    promote_count: number;
+    rollback_count: number;
+    drawdown_blocked_count: number;
+    avg_review_score: number;
+    conclusion: string;
+  };
+  snapshots: CanaryReviewSnapshot[];
+}
+
 interface CanaryRollbackResult {
   dry_run: boolean;
   applied: boolean;
@@ -809,6 +852,15 @@ const formatSignedMoney = (value?: number | null) => {
 const formatPercent = (value?: number | null) => `${Number(value || 0).toFixed(2)}%`;
 const pnlColor = (value?: number | null) => (Number(value || 0) >= 0 ? '#cf1322' : '#16a34a');
 const clampPercent = (value?: number | null) => Math.max(0, Math.min(100, Number(value || 0)));
+const formatShortDateTime = (value?: string | Date | null) => {
+  if (!value) return '--';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return `${date.toLocaleDateString()} ${date.toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+  })}`;
+};
 const priorityLabelMap: Record<TradingPlanAction['priority'], string> = {
   critical: '紧急',
   high: '高',
@@ -929,6 +981,8 @@ const PaperTrading: React.FC = () => {
   const [tuningCandidatesLoading, setTuningCandidatesLoading] = useState(false);
   const [canaryStatus, setCanaryStatus] = useState<OrderIntentTuningCanaryStatus | null>(null);
   const [canaryStatusLoading, setCanaryStatusLoading] = useState(false);
+  const [canarySnapshots, setCanarySnapshots] = useState<CanaryReviewSnapshotTimeline | null>(null);
+  const [canarySnapshotsLoading, setCanarySnapshotsLoading] = useState(false);
   const [riskProfile, setRiskProfile] = useState<PaperTradingRiskProfile | null>(null);
   const [riskProfileLoading, setRiskProfileLoading] = useState(false);
   const [orderIntents, setOrderIntents] = useState<PaperTradingOrderIntentDashboard | null>(null);
@@ -962,6 +1016,7 @@ const PaperTrading: React.FC = () => {
     fetchOrderIntents(true);
     fetchOrderIntentTuningCanary(true);
     fetchOrderIntentTuningCandidates(true);
+    fetchOrderIntentTuningCanarySnapshots(true);
   }, []);
 
   const fetchSnapshots = async () => {
@@ -1261,6 +1316,23 @@ const PaperTrading: React.FC = () => {
     }
   };
 
+  const fetchOrderIntentTuningCanarySnapshots = async (silent = false) => {
+    setCanarySnapshotsLoading(true);
+    try {
+      const response = await api.get('/paper-trading/order-intent-tuning/canary/snapshots', {
+        params: { limit: 8 },
+      });
+      if (response.data.success) {
+        setCanarySnapshots(response.data.data);
+        if (!silent) message.success('Canary 快照已刷新');
+      }
+    } catch (error: any) {
+      if (!silent) message.error(error.response?.data?.message || '获取 Canary 快照失败');
+    } finally {
+      setCanarySnapshotsLoading(false);
+    }
+  };
+
   const previewOrderIntentTuningCanary = async () => {
     setCanaryPreviewLoading(true);
     try {
@@ -1324,6 +1396,7 @@ const PaperTrading: React.FC = () => {
           setTuningPreview(result);
           message.success(result.message || 'Canary 调参已启动');
           await fetchOrderIntentTuningCanary(true);
+          await fetchOrderIntentTuningCanarySnapshots(true);
           await fetchTradingPlan(true);
           await fetchOrderIntents(true);
         } catch (error: any) {
@@ -1397,6 +1470,7 @@ const PaperTrading: React.FC = () => {
       setCanaryRollbackConfirmText('');
       message.success(result.message || 'Canary 参数已回滚');
       await fetchOrderIntentTuningCanary(true);
+      await fetchOrderIntentTuningCanarySnapshots(true);
       await fetchTradingPlan(true);
       await fetchOrderIntents(true);
     } catch (error: any) {
@@ -1513,6 +1587,8 @@ const PaperTrading: React.FC = () => {
   const canaryRollback = canaryStatus?.rollback_plan;
   const canaryAttribution = canaryStatus?.attribution;
   const canaryEvidence = canaryStatus?.evidence;
+  const canarySnapshotSummary = canarySnapshots?.summary;
+  const recentCanarySnapshots = canarySnapshots?.snapshots || [];
   const riskTone = riskProfile ? riskProfileToneMap[riskProfile.status.level] : undefined;
   const topRiskPosition = riskProfile?.position_risks?.find(item => item.risk_flags.length > 0);
   const outcomeBlockedSegments = tradingPlanSummary?.outcome_blocked_segments || [];
@@ -2599,6 +2675,97 @@ const PaperTrading: React.FC = () => {
                           </div>
                         )}
                       </>
+                    )}
+                  </div>
+                </Spin>
+                <Spin spinning={canarySnapshotsLoading}>
+                  <div className="order-canary-snapshots">
+                    <div className="order-canary-snapshots-head">
+                      <div>
+                        <span>REVIEW MEMORY</span>
+                        <strong>Canary评审快照</strong>
+                      </div>
+                      <Button
+                        size="small"
+                        type="link"
+                        icon={<HistoryOutlined />}
+                        onClick={() => fetchOrderIntentTuningCanarySnapshots(false)}
+                      >
+                        刷新快照
+                      </Button>
+                    </div>
+                    <p>
+                      {canarySnapshotSummary?.conclusion ||
+                        '每次刷新 Canary 状态都会沉淀一条评审快照，后续用于复盘参数是否真的提高收益。'}
+                    </p>
+                    {canarySnapshotSummary ? (
+                      <div className="order-canary-snapshot-metrics">
+                        <div>
+                          <span>快照</span>
+                          <strong>{canarySnapshotSummary.snapshot_count}</strong>
+                        </div>
+                        <div>
+                          <span>均分</span>
+                          <strong>
+                            {Number(canarySnapshotSummary.avg_review_score || 0).toFixed(1)}
+                          </strong>
+                        </div>
+                        <div>
+                          <span>扩大/回滚</span>
+                          <strong>
+                            {canarySnapshotSummary.promote_count}/
+                            {canarySnapshotSummary.rollback_count}
+                          </strong>
+                        </div>
+                        <div>
+                          <span>回撤拦截</span>
+                          <strong>{canarySnapshotSummary.drawdown_blocked_count}</strong>
+                        </div>
+                      </div>
+                    ) : null}
+                    {recentCanarySnapshots.length > 0 ? (
+                      <div className="order-canary-snapshot-list">
+                        {recentCanarySnapshots.slice(0, 5).map(snapshot => (
+                          <div className="order-canary-snapshot-item" key={snapshot.id}>
+                            <div className="order-canary-snapshot-ribbon">
+                              <Tag color={canaryReviewColorMap[snapshot.action || ''] || 'default'}>
+                                {snapshot.action_label || snapshot.action || '观察'}
+                              </Tag>
+                              <span>{formatShortDateTime(snapshot.generated_at)}</span>
+                            </div>
+                            <div className="order-canary-snapshot-body">
+                              <strong>{Number(snapshot.review_score || 0).toFixed(1)}</strong>
+                              <div>
+                                <span>
+                                  闭环 {snapshot.closed_count || 0} · 超额{' '}
+                                  {formatPercent(snapshot.avg_excess_return_pct)}
+                                </span>
+                                <span>
+                                  胜率 {formatPercent(snapshot.win_rate)} · 回撤{' '}
+                                  {formatPercent(snapshot.avg_mae_pct)}
+                                </span>
+                              </div>
+                            </div>
+                            <Space wrap size={6}>
+                              {(snapshot.selected_parameter_keys || []).slice(0, 4).map(key => (
+                                <Tag key={`${snapshot.id}-${key}`} color="gold">
+                                  {key}
+                                </Tag>
+                              ))}
+                              <Tag
+                                color={snapshot.drawdown_guard_passed === false ? 'red' : 'green'}
+                              >
+                                {snapshot.drawdown_guard_passed === false ? '回撤拦截' : '回撤OK'}
+                              </Tag>
+                            </Space>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <Empty
+                        image={Empty.PRESENTED_IMAGE_SIMPLE}
+                        description="暂无评审快照，刷新 Canary 状态后会自动生成。"
+                      />
                     )}
                   </div>
                 </Spin>

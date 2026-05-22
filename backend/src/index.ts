@@ -98,6 +98,7 @@ import { AIInvestmentSignal } from './models/AIInvestmentSignal';
 import { RecommendationTradeOutcome } from './models/RecommendationTradeOutcome';
 import { PaperTradingOrderIntent } from './models/PaperTradingOrderIntent';
 import { PaperTradingOrderIntentOutcome } from './models/PaperTradingOrderIntentOutcome';
+import { PaperTradingCanaryReviewSnapshot } from './models/PaperTradingCanaryReviewSnapshot';
 import { RecommendationLoopPolicySnapshot } from './models/RecommendationLoopPolicySnapshot';
 import { BudgetPolicyVersionSnapshot } from './models/BudgetPolicyVersionSnapshot';
 import { QuantStrategyModel } from './models/QuantStrategyModel';
@@ -330,6 +331,7 @@ async function syncRecommendationRuntimeTables(): Promise<void> {
     { model: RecommendationTradeOutcome, label: 'RecommendationTradeOutcome' },
     { model: PaperTradingOrderIntent, label: 'PaperTradingOrderIntent' },
     { model: PaperTradingOrderIntentOutcome, label: 'PaperTradingOrderIntentOutcome' },
+    { model: PaperTradingCanaryReviewSnapshot, label: 'PaperTradingCanaryReviewSnapshot' },
     { model: RecommendationLoopPolicySnapshot, label: 'RecommendationLoopPolicySnapshot' },
     { model: BudgetPolicyVersionSnapshot, label: 'BudgetPolicyVersionSnapshot' },
     { model: QuantStrategyModel, label: 'QuantStrategyModel' },
