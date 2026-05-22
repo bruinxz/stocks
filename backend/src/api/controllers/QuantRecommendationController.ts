@@ -230,8 +230,8 @@ export class QuantRecommendationController {
         loop_run_ids: Array.isArray(req.body?.loop_run_ids)
           ? req.body.loop_run_ids
           : req.body?.loop_run_ids
-            ? String(req.body.loop_run_ids).split(',')
-            : undefined,
+          ? String(req.body.loop_run_ids).split(',')
+          : undefined,
         lookback_days: req.body?.lookback_days ? Number(req.body.lookback_days) : undefined,
         limit: req.body?.limit ? Number(req.body.limit) : 200,
       });
@@ -311,6 +311,28 @@ export class QuantRecommendationController {
         agent_max_count: req.body?.agent_max_count ? Number(req.body.agent_max_count) : 5,
         agent_min_score: req.body?.agent_min_score ? Number(req.body.agent_min_score) : 72,
         agent_session: req.body?.agent_session || 'close',
+        agent_auto_paper_trade: req.body?.agent_auto_paper_trade !== false,
+        agent_only_auto_paper_trade: req.body?.agent_only_auto_paper_trade !== false,
+        agent_only_paper_trade_min_score: req.body?.agent_only_paper_trade_min_score
+          ? Number(req.body.agent_only_paper_trade_min_score)
+          : req.body?.agent_min_score
+          ? Number(req.body.agent_min_score)
+          : 72,
+        agent_only_paper_trade_max_positions: req.body?.agent_only_paper_trade_max_positions
+          ? Number(req.body.agent_only_paper_trade_max_positions)
+          : 8,
+        agent_only_paper_trade_default_position_pct: req.body
+          ?.agent_only_paper_trade_default_position_pct
+          ? Number(req.body.agent_only_paper_trade_default_position_pct)
+          : 4,
+        agent_only_paper_trade_max_position_pct: req.body?.agent_only_paper_trade_max_position_pct
+          ? Number(req.body.agent_only_paper_trade_max_position_pct)
+          : 8,
+        agent_only_paper_trade_min_trade_amount: req.body?.agent_only_paper_trade_min_trade_amount
+          ? Number(req.body.agent_only_paper_trade_min_trade_amount)
+          : req.body?.min_trade_amount
+          ? Number(req.body.min_trade_amount)
+          : 3000,
         target_date: req.body?.target_date,
         task_label: req.body?.task_label || '手动全市场荐股闭环',
         report_to_feishu: req.body?.report_to_feishu === true,

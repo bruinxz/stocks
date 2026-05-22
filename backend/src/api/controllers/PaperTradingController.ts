@@ -668,6 +668,27 @@ export class PaperTradingController {
     }
   };
 
+  // 获取全部策略账户的拒单后验汇总
+  getOrderIntentFamilyHindsight = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const user = (req as any).user;
+      const result = await paperTradingOrderIntentService.getFamilyHindsightDashboard({
+        ...req.query,
+        user_id: user.id,
+        username: user.username || user.nickname,
+      } as any);
+
+      res.json({
+        success: true,
+        data: result,
+        message: result.summary?.conclusion || '策略账户拒单后验已刷新',
+      });
+    } catch (error: any) {
+      logger.error('获取策略账户拒单后验失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
   // 获取单条模拟交易订单意图的链路钻取
   getOrderIntentTrace = async (req: Request, res: Response, next: NextFunction) => {
     try {

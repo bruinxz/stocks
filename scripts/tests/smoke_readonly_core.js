@@ -1240,6 +1240,37 @@ async function main() {
       }
     );
 
+    await requestJson(
+      "paper trading family hindsight",
+      "/api/paper-trading/order-intents/family-hindsight?lookback_days=30&limit=500",
+      {
+        token,
+        expect: (json) => {
+          assertApiSuccess(json, "paper trading family hindsight");
+          if (!json.data?.summary || !Array.isArray(json.data?.families)) {
+            throw new Error(
+              `paper trading family hindsight payload invalid: ${preview(json)}`
+            );
+          }
+          for (const key of [
+            "portfolio_count",
+            "evaluated_count",
+            "false_reject_count",
+            "saved_loss_count",
+            "avg_intended_action_return_pct",
+          ]) {
+            if (!Number.isFinite(Number(json.data.summary[key] || 0))) {
+              throw new Error(
+                `paper trading family hindsight summary ${key} invalid: ${preview(
+                  json.data.summary
+                )}`
+              );
+            }
+          }
+        },
+      }
+    );
+
     if (orderIntentTraceCandidateId) {
       await requestJson(
         "paper trading order intent trace",

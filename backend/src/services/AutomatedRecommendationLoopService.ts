@@ -13,6 +13,7 @@ import { recommendationLoopPolicySnapshotService } from './RecommendationLoopPol
 import { paperTradingRiskProfileService } from './PaperTradingRiskProfileService';
 import { riskThresholdStabilityService } from './RiskThresholdStabilityService';
 import { feishuBotWebhookService } from './FeishuBotWebhookService';
+import { AGENT_ONLY_PORTFOLIO_NAME } from './PaperTradingPortfolioFamilies';
 import {
   buildRecommendationStrategyVariant,
   normalizeRecommendationStyle,
@@ -64,6 +65,13 @@ export interface AutomatedRecommendationLoopOptions {
   agent_min_score?: number;
   agent_session?: string;
   agent_auto_paper_trade?: boolean;
+  agent_only_auto_paper_trade?: boolean;
+  agent_only_paper_trade_portfolio_name?: string;
+  agent_only_paper_trade_min_score?: number;
+  agent_only_paper_trade_max_positions?: number;
+  agent_only_paper_trade_default_position_pct?: number;
+  agent_only_paper_trade_max_position_pct?: number;
+  agent_only_paper_trade_min_trade_amount?: number;
   target_date?: string;
   task_label?: string;
   execution_log_id?: number;
@@ -1742,6 +1750,24 @@ class AutomatedRecommendationLoopService {
               options.agent_auto_paper_trade !== false && Boolean(options.run_paper_trading),
             paper_trade_username: options.username,
             paper_trade_portfolio_name: options.portfolio_name,
+            agent_only_auto_paper_trade:
+              options.agent_only_auto_paper_trade !== false && Boolean(options.run_paper_trading),
+            agent_only_paper_trade_portfolio_name:
+              options.agent_only_paper_trade_portfolio_name || AGENT_ONLY_PORTFOLIO_NAME,
+            agent_only_paper_trade_min_score:
+              options.agent_only_paper_trade_min_score || loop_policy.effective_min_score,
+            agent_only_paper_trade_max_positions:
+              options.agent_only_paper_trade_max_positions ||
+              toPositiveInt(options.max_positions, 8, 30),
+            agent_only_paper_trade_default_position_pct:
+              options.agent_only_paper_trade_default_position_pct ||
+              Math.min(4, loop_policy.effective_default_position_pct),
+            agent_only_paper_trade_max_position_pct:
+              options.agent_only_paper_trade_max_position_pct ||
+              Math.min(8, loop_policy.effective_max_position_pct),
+            agent_only_paper_trade_min_trade_amount:
+              options.agent_only_paper_trade_min_trade_amount ||
+              Number(options.min_trade_amount || 3000),
             paper_trade_initial_capital: options.initial_capital,
             paper_trade_force_new_portfolio: options.force_new_portfolio,
             paper_trade_min_score: loop_policy.effective_min_score,
@@ -2067,6 +2093,13 @@ class AutomatedRecommendationLoopService {
     auto_paper_trade?: boolean;
     paper_trade_username?: string;
     paper_trade_portfolio_name?: string;
+    agent_only_auto_paper_trade?: boolean;
+    agent_only_paper_trade_portfolio_name?: string;
+    agent_only_paper_trade_min_score?: number;
+    agent_only_paper_trade_max_positions?: number;
+    agent_only_paper_trade_default_position_pct?: number;
+    agent_only_paper_trade_max_position_pct?: number;
+    agent_only_paper_trade_min_trade_amount?: number;
     paper_trade_initial_capital?: number;
     paper_trade_force_new_portfolio?: boolean;
     paper_trade_min_score?: number;
@@ -2154,6 +2187,16 @@ class AutomatedRecommendationLoopService {
             auto_paper_trade: options.auto_paper_trade,
             paper_trade_username: options.paper_trade_username,
             paper_trade_portfolio_name: options.paper_trade_portfolio_name,
+            agent_only_auto_paper_trade: options.agent_only_auto_paper_trade,
+            agent_only_paper_trade_portfolio_name: options.agent_only_paper_trade_portfolio_name,
+            agent_only_paper_trade_min_score: options.agent_only_paper_trade_min_score,
+            agent_only_paper_trade_max_positions: options.agent_only_paper_trade_max_positions,
+            agent_only_paper_trade_default_position_pct:
+              options.agent_only_paper_trade_default_position_pct,
+            agent_only_paper_trade_max_position_pct:
+              options.agent_only_paper_trade_max_position_pct,
+            agent_only_paper_trade_min_trade_amount:
+              options.agent_only_paper_trade_min_trade_amount,
             paper_trade_initial_capital: options.paper_trade_initial_capital,
             paper_trade_force_new_portfolio: options.paper_trade_force_new_portfolio,
             paper_trade_min_score: options.paper_trade_min_score,
@@ -2187,6 +2230,7 @@ class AutomatedRecommendationLoopService {
           data_quality_score: candidate.data_quality_score,
           data_quality_bucket: candidate.data_quality_bucket,
           auto_paper_trade: Boolean(options.auto_paper_trade),
+          agent_only_auto_paper_trade: Boolean(options.agent_only_auto_paper_trade),
         });
       } catch (error: any) {
         failed.push({
@@ -2203,6 +2247,7 @@ class AutomatedRecommendationLoopService {
       task_label: options.task_label,
       agent_session: options.agent_session,
       auto_paper_trade: Boolean(options.auto_paper_trade),
+      agent_only_auto_paper_trade: Boolean(options.agent_only_auto_paper_trade),
       min_score: options.min_score,
       max_count: options.max_count,
       submitted,

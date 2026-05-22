@@ -25,7 +25,6 @@ import { taskParameterAuditService } from './TaskParameterAuditService';
 import {
   AUTONOMOUS_PORTFOLIO_NAME,
   DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
-  QUANT_ONLY_PORTFOLIO_NAME,
 } from './PaperTradingDashboardService';
 import moment from 'moment-timezone';
 import { Op } from 'sequelize';
@@ -89,7 +88,6 @@ function buildQuantDailyPipelineLogSummary(
     message: result?.message,
   };
 }
-
 
 function buildQuantParamMaintenanceLogSummary(result: any) {
   const create = result?.create || {};
@@ -386,7 +384,7 @@ class SchedulerService {
     return job;
   }
 
-  private async _executeTaskLogic(task: ScheduledTask, isManual: boolean = false) {
+  private async _executeTaskLogic(task: ScheduledTask, isManual = false) {
     const timestamp = new Date();
     await task.update({ last_run_at: timestamp, last_run_status: 'RUNNING' });
 
@@ -631,7 +629,11 @@ class SchedulerService {
               ? Boolean(parameters.dryRunLifecycle)
               : false,
           policy: parameters.lifecycle_policy || parameters.lifecyclePolicy,
-          limit: this.toPositiveInt(parameters.lifecycle_limit || parameters.lifecycleLimit, 5000, 20000),
+          limit: this.toPositiveInt(
+            parameters.lifecycle_limit || parameters.lifecycleLimit,
+            5000,
+            20000
+          ),
         });
         const activeScanParams = await quantStrategyParamVersionService.getActiveParamsForScan({
           include_grid_search: true,
@@ -654,7 +656,10 @@ class SchedulerService {
         const resultSummary = buildQuantParamMaintenanceLogSummary(result);
         await this.safeUpdateExecutionLog(executionLog, {
           total_items: Number(create.scanned || 0) + Number(refresh.refreshed || 0),
-          completed_items: Number(create.created || 0) + Number(create.updated || 0) + Number(refresh.completed || 0),
+          completed_items:
+            Number(create.created || 0) +
+            Number(create.updated || 0) +
+            Number(refresh.completed || 0),
           failed_items: Number(refresh.no_data || 0),
           status: 'COMPLETED',
           completed_at: new Date(),
@@ -1879,6 +1884,44 @@ class SchedulerService {
               : parameters.agentAutoPaperTrade !== undefined
               ? Boolean(parameters.agentAutoPaperTrade)
               : true,
+          agent_only_auto_paper_trade:
+            parameters.agent_only_auto_paper_trade !== undefined
+              ? Boolean(parameters.agent_only_auto_paper_trade)
+              : parameters.agentOnlyAutoPaperTrade !== undefined
+              ? Boolean(parameters.agentOnlyAutoPaperTrade)
+              : true,
+          agent_only_paper_trade_min_score: Number(
+            parameters.agent_only_paper_trade_min_score ||
+              parameters.agentOnlyPaperTradeMinScore ||
+              parameters.agent_min_score ||
+              parameters.agentMinScore ||
+              72
+          ),
+          agent_only_paper_trade_max_positions: this.toPositiveInt(
+            parameters.agent_only_paper_trade_max_positions ||
+              parameters.agentOnlyPaperTradeMaxPositions ||
+              parameters.max_positions ||
+              parameters.maxPositions,
+            8,
+            30
+          ),
+          agent_only_paper_trade_default_position_pct: Number(
+            parameters.agent_only_paper_trade_default_position_pct ||
+              parameters.agentOnlyPaperTradeDefaultPositionPct ||
+              4
+          ),
+          agent_only_paper_trade_max_position_pct: Number(
+            parameters.agent_only_paper_trade_max_position_pct ||
+              parameters.agentOnlyPaperTradeMaxPositionPct ||
+              8
+          ),
+          agent_only_paper_trade_min_trade_amount: Number(
+            parameters.agent_only_paper_trade_min_trade_amount ||
+              parameters.agentOnlyPaperTradeMinTradeAmount ||
+              parameters.min_trade_amount ||
+              parameters.minTradeAmount ||
+              3000
+          ),
           submit_agent_analysis:
             parameters.submit_agent_analysis !== undefined
               ? Boolean(parameters.submit_agent_analysis)

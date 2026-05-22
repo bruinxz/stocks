@@ -158,6 +158,31 @@ interface PortfolioFamily {
   };
 }
 
+interface FamilyHindsightItem {
+  portfolio_id: number;
+  portfolio_name: string;
+  total_count: number;
+  evaluated_count: number;
+  pending_count: number;
+  false_reject_count: number;
+  saved_loss_count: number;
+  avg_intended_action_return_pct: number;
+  false_reject_rate: number;
+  saved_loss_rate: number;
+  action: string;
+  action_label: string;
+  top_reason_categories?: Array<{ key: string; label: string; count: number }>;
+  top_false_rejections?: Array<{
+    intent_id: number;
+    symbol: string;
+    name?: string;
+    reason_category_label?: string;
+    intended_action_return_pct?: number;
+    benchmark_conclusion?: string;
+  }>;
+  conclusion?: string;
+}
+
 interface TrackingItem {
   signal_id: number;
   symbol: string;
@@ -220,6 +245,18 @@ interface DashboardData {
       conclusion?: string;
     };
   };
+  family_order_intent_hindsight?: {
+    generated_at: string;
+    summary: {
+      portfolio_count: number;
+      evaluated_count: number;
+      false_reject_count: number;
+      saved_loss_count: number;
+      avg_intended_action_return_pct: number;
+      conclusion?: string;
+    };
+    families: FamilyHindsightItem[];
+  } | null;
   equity_curve: EquityPoint[];
   recommendation_tracking?: {
     summary: {
@@ -498,7 +535,15 @@ const AutonomousTradingOverview: React.FC = () => {
   const trackingSummary = data?.recommendation_tracking?.summary;
   const feedback = data?.outcome_dashboard?.feedback;
   const familySummary = data?.portfolio_family_summary;
+  const familyHindsight = data?.family_order_intent_hindsight;
   const portfolioFamilies = familySummary?.families || [];
+  const familyHindsightByPortfolioId = useMemo(() => {
+    const map = new Map<number, FamilyHindsightItem>();
+    (familyHindsight?.families || []).forEach(item => {
+      map.set(Number(item.portfolio_id), item);
+    });
+    return map;
+  }, [familyHindsight]);
   const totalOpenPositions =
     familySummary?.summary?.open_position_count || summary?.open_position_count || 0;
   const activeFamilies = portfolioFamilies.filter(
@@ -881,6 +926,9 @@ const AutonomousTradingOverview: React.FC = () => {
             <Row gutter={[12, 12]}>
               {portfolioFamilies.map(family => {
                 const intentSummary = family.recent_intent_summary;
+                const hindsight = family.portfolio_id
+                  ? familyHindsightByPortfolioId.get(Number(family.portfolio_id))
+                  : undefined;
                 const primaryBlocker =
                   family.diagnostics?.primary_blocker ||
                   intentSummary?.top_reason_categories?.[0] ||
@@ -911,6 +959,15 @@ const AutonomousTradingOverview: React.FC = () => {
                         <span>收益 {formatPercent(family.total_return_pct)}</span>
                         <span>暴露 {formatPercent(family.exposure_pct)}</span>
                       </div>
+                      {hindsight ? (
+                        <div className="autonomous-family-hindsight-strip">
+                          <span>拒单后验</span>
+                          <strong>
+                            错杀 {hindsight.false_reject_count} / 避险 {hindsight.saved_loss_count}
+                          </strong>
+                          <em>{hindsight.action_label}</em>
+                        </div>
+                      ) : null}
                       <div className="autonomous-family-diagnostics">
                         <div>
                           <span>成交</span>
@@ -960,6 +1017,53 @@ const AutonomousTradingOverview: React.FC = () => {
                 type="success"
                 message={familySummary.summary.conclusion}
               />
+            ) : null}
+            {familyHindsight?.summary ? (
+              <div className="autonomous-hindsight-board">
+                <div className="autonomous-hindsight-head">
+                  <div>
+                    <span>REJECTION HINDSIGHT</span>
+                    <strong>拒单后验雷达</strong>
+                  </div>
+                  <p>{familyHindsight.summary.conclusion}</p>
+                </div>
+                <div className="autonomous-hindsight-stats">
+                  <div>
+                    <span>已评估</span>
+                    <strong>{familyHindsight.summary.evaluated_count}</strong>
+                  </div>
+                  <div>
+                    <span>可能错杀</span>
+                    <strong>{familyHindsight.summary.false_reject_count}</strong>
+                  </div>
+                  <div>
+                    <span>有效避险</span>
+                    <strong>{familyHindsight.summary.saved_loss_count}</strong>
+                  </div>
+                  <div>
+                    <span>平均相对</span>
+                    <strong
+                      style={{
+                        color: pnlColor(familyHindsight.summary.avg_intended_action_return_pct),
+                      }}
+                    >
+                      {formatPercent(familyHindsight.summary.avg_intended_action_return_pct)}
+                    </strong>
+                  </div>
+                </div>
+                <div className="autonomous-hindsight-family-list">
+                  {(familyHindsight.families || []).slice(0, 5).map(item => (
+                    <div key={item.portfolio_id}>
+                      <span>{item.portfolio_name.replace('Codex', '').replace('（20W）', '')}</span>
+                      <strong>{item.action_label}</strong>
+                      <em>
+                        {item.conclusion ||
+                          `错杀 ${item.false_reject_count} / 避险 ${item.saved_loss_count}`}
+                      </em>
+                    </div>
+                  ))}
+                </div>
+              </div>
             ) : null}
           </Card>
 

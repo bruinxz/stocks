@@ -123,6 +123,8 @@ export const updateFavorite = (symbol: string, data: any) =>
 // Autonomous paper trading loop
 export const getAutonomousTradingDashboard = (params?: any) =>
   api.get('/paper-trading/autonomous-dashboard', { params });
+export const getOrderIntentFamilyHindsight = (params?: any) =>
+  api.get('/paper-trading/order-intents/family-hindsight', { params });
 export const getRecommendationTracking = (params?: any) =>
   api.get('/paper-trading/recommendation-tracking', { params });
 export const getAutonomousOptimization = (params?: any) =>
