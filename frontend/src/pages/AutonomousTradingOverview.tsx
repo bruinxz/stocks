@@ -4,6 +4,7 @@ import {
   Button,
   Card,
   Col,
+  Drawer,
   Empty,
   message,
   Progress,
@@ -109,6 +110,7 @@ interface PortfolioFamily {
   total_return_pct?: number;
   cash_pct?: number;
   exposure_pct?: number;
+  initial_capital?: number;
   open_position_count?: number;
   trade_count?: number;
   outcome_count?: number;
@@ -177,6 +179,22 @@ interface FamilyHindsightItem {
     symbol: string;
     name?: string;
     reason_category_label?: string;
+    reason_text?: string;
+    intent_date?: string;
+    side_label?: string;
+    status?: string;
+    intended_action_return_pct?: number;
+    benchmark_conclusion?: string;
+  }>;
+  top_saved_losses?: Array<{
+    intent_id: number;
+    symbol: string;
+    name?: string;
+    reason_category_label?: string;
+    reason_text?: string;
+    intent_date?: string;
+    side_label?: string;
+    status?: string;
     intended_action_return_pct?: number;
     benchmark_conclusion?: string;
   }>;
@@ -349,6 +367,28 @@ const statusTag = (status?: string, label?: string) => {
   return <Tag color={colorMap[status || ''] || 'default'}>{label || status || '未知'}</Tag>;
 };
 
+const orderIntentStatusTag = (status?: string, label?: string) => {
+  const colorMap: Record<string, string> = {
+    planned: 'blue',
+    executed: 'green',
+    rejected: 'volcano',
+    skipped: 'default',
+    held: 'cyan',
+  };
+  const labelMap: Record<string, string> = {
+    planned: '预演',
+    executed: '成交',
+    rejected: '拒单',
+    skipped: '跳过',
+    held: '持有',
+  };
+  return (
+    <Tag color={colorMap[status || ''] || 'default'}>
+      {label || labelMap[status || ''] || status || '未知'}
+    </Tag>
+  );
+};
+
 const accountTagColor = (key?: string) => {
   const colorMap: Record<string, string> = {
     legacy_autonomous: 'blue',
@@ -391,6 +431,7 @@ const AutonomousTradingOverview: React.FC = () => {
   const [riskChecking, setRiskChecking] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [lastAction, setLastAction] = useState<ActionDigest | null>(null);
+  const [selectedFamilyKey, setSelectedFamilyKey] = useState<string | null>(null);
 
   const fetchDashboard = async (silent = false) => {
     setLoading(true);
@@ -536,7 +577,7 @@ const AutonomousTradingOverview: React.FC = () => {
   const feedback = data?.outcome_dashboard?.feedback;
   const familySummary = data?.portfolio_family_summary;
   const familyHindsight = data?.family_order_intent_hindsight;
-  const portfolioFamilies = familySummary?.families || [];
+  const portfolioFamilies = useMemo(() => familySummary?.families || [], [familySummary]);
   const familyHindsightByPortfolioId = useMemo(() => {
     const map = new Map<number, FamilyHindsightItem>();
     (familyHindsight?.families || []).forEach(item => {
@@ -544,6 +585,13 @@ const AutonomousTradingOverview: React.FC = () => {
     });
     return map;
   }, [familyHindsight]);
+  const selectedFamily = useMemo(
+    () => portfolioFamilies.find(item => item.key === selectedFamilyKey) || null,
+    [portfolioFamilies, selectedFamilyKey]
+  );
+  const selectedFamilyHindsight = selectedFamily?.portfolio_id
+    ? familyHindsightByPortfolioId.get(Number(selectedFamily.portfolio_id))
+    : undefined;
   const totalOpenPositions =
     familySummary?.summary?.open_position_count || summary?.open_position_count || 0;
   const activeFamilies = portfolioFamilies.filter(
@@ -948,7 +996,17 @@ const AutonomousTradingOverview: React.FC = () => {
                             {family.run_status_label || (family.exists ? '已就绪' : '未初始化')}
                           </Tag>
                         </Space>
-                        <span>{formatShortTime(family.last_activity_at)}</span>
+                        <Space size={6}>
+                          <span>{formatShortTime(family.last_activity_at)}</span>
+                          <Button
+                            size="small"
+                            type="link"
+                            className="autonomous-family-detail-btn"
+                            onClick={() => setSelectedFamilyKey(family.key)}
+                          >
+                            诊断
+                          </Button>
+                        </Space>
                       </div>
                       <strong>{formatMoney(family.total_value)}</strong>
                       <p>{family.empty_reason || family.description}</p>
@@ -1306,6 +1364,247 @@ const AutonomousTradingOverview: React.FC = () => {
               </Card>
             </Col>
           </Row>
+
+          <Drawer
+            width={760}
+            open={Boolean(selectedFamily)}
+            onClose={() => setSelectedFamilyKey(null)}
+            className="autonomous-family-drawer"
+            title={
+              selectedFamily ? (
+                <Space wrap>
+                  <Tag color={accountTagColor(selectedFamily.key)}>{selectedFamily.label}</Tag>
+                  <span>{selectedFamily.name}</span>
+                </Space>
+              ) : (
+                '策略账户诊断'
+              )
+            }
+          >
+            {selectedFamily ? (
+              <div className="family-dossier">
+                <div
+                  className={`family-dossier-hero ${selectedFamily.run_status || 'ready_empty'}`}
+                >
+                  <div>
+                    <span>ACCOUNT DOSSIER</span>
+                    <h2>{selectedFamily.run_status_label || '账户诊断'}</h2>
+                    <p>{selectedFamily.empty_reason || selectedFamily.description}</p>
+                  </div>
+                  <div>
+                    <strong>{formatMoney(selectedFamily.total_value)}</strong>
+                    <em style={{ color: pnlColor(selectedFamily.total_pnl) }}>
+                      {formatSignedMoney(selectedFamily.total_pnl)} /{' '}
+                      {formatPercent(selectedFamily.total_return_pct)}
+                    </em>
+                  </div>
+                </div>
+
+                <div className="family-dossier-stat-grid">
+                  <div>
+                    <span>持仓 / 暴露</span>
+                    <strong>
+                      {selectedFamily.open_position_count || 0} /{' '}
+                      {formatPercent(selectedFamily.exposure_pct)}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>成交 / 交易</span>
+                    <strong>
+                      {selectedFamily.recent_intent_summary?.executed_count || 0} /{' '}
+                      {selectedFamily.trade_count || 0}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>拒单+跳过</span>
+                    <strong>
+                      {(selectedFamily.recent_intent_summary?.rejected_count || 0) +
+                        (selectedFamily.recent_intent_summary?.skipped_count || 0)}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>后验动作</span>
+                    <strong>{selectedFamilyHindsight?.action_label || '等待样本'}</strong>
+                  </div>
+                </div>
+
+                <div className="family-dossier-section">
+                  <div className="family-dossier-section-head">
+                    <span>RUN PATH</span>
+                    <strong>运行链路判断</strong>
+                  </div>
+                  <div className="family-dossier-path">
+                    <div className={selectedFamily.exists ? 'done' : 'wait'}>
+                      <CheckCircleOutlined />
+                      <strong>账户初始化</strong>
+                      <span>{selectedFamily.exists ? '已创建策略账户' : '尚未创建账户'}</span>
+                    </div>
+                    <div
+                      className={selectedFamily.diagnostics?.has_order_intents ? 'done' : 'wait'}
+                    >
+                      <NodeIndexOutlined />
+                      <strong>信号进入</strong>
+                      <span>{selectedFamily.recent_intent_summary?.total || 0} 条订单意图</span>
+                    </div>
+                    <div className={selectedFamily.diagnostics?.has_trades ? 'done' : 'wait'}>
+                      <ThunderboltOutlined />
+                      <strong>模拟成交</strong>
+                      <span>{selectedFamily.trade_count || 0} 笔交易流水</span>
+                    </div>
+                    <div
+                      className={
+                        Number(selectedFamilyHindsight?.evaluated_count || 0) > 0 ? 'done' : 'wait'
+                      }
+                    >
+                      <RadarChartOutlined />
+                      <strong>后验反馈</strong>
+                      <span>{selectedFamilyHindsight?.conclusion || '等待未来K线验证'}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="family-dossier-section">
+                  <div className="family-dossier-section-head">
+                    <span>BLOCKERS</span>
+                    <strong>主要拦截规则</strong>
+                  </div>
+                  {selectedFamily.recent_intent_summary?.top_reason_categories?.length ? (
+                    <div className="family-dossier-reason-grid">
+                      {selectedFamily.recent_intent_summary.top_reason_categories.map(item => (
+                        <div key={item.category}>
+                          <strong>{item.label}</strong>
+                          <span>{item.count} 次</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无拦截规则样本" />
+                  )}
+                </div>
+
+                <div className="family-dossier-section">
+                  <div className="family-dossier-section-head">
+                    <span>RECENT INTENTS</span>
+                    <strong>最近订单意图</strong>
+                  </div>
+                  {selectedFamily.recent_intent_summary?.recent_examples?.length ? (
+                    <div className="family-intent-list">
+                      {selectedFamily.recent_intent_summary.recent_examples.map((intent: any) => (
+                        <div key={intent.id || `${intent.symbol}-${intent.created_at}`}>
+                          <div>
+                            <strong>{intent.name || intent.symbol}</strong>
+                            <span>
+                              {intent.symbol} · {intent.side === 'SELL' ? '卖出' : '买入'} ·{' '}
+                              {formatShortTime(intent.created_at)}
+                            </span>
+                          </div>
+                          <div>
+                            <Space wrap size={4}>
+                              {orderIntentStatusTag(intent.status, intent.status_label)}
+                              <Tag>{intent.reason_label || '未归类'}</Tag>
+                            </Space>
+                            <p>
+                              {intent.reason_text ||
+                                `参考价 ${Number(intent.reference_price || 0).toFixed(
+                                  2
+                                )}，金额 ${formatMoney(intent.amount)}`}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无订单意图" />
+                  )}
+                </div>
+
+                <div className="family-dossier-section">
+                  <div className="family-dossier-section-head">
+                    <span>HINDSIGHT</span>
+                    <strong>拒单后验：错杀与避险</strong>
+                  </div>
+                  {selectedFamilyHindsight ? (
+                    <>
+                      <div className="family-hindsight-mini-summary">
+                        <div>
+                          <span>已评估</span>
+                          <strong>{selectedFamilyHindsight.evaluated_count}</strong>
+                        </div>
+                        <div>
+                          <span>可能错杀</span>
+                          <strong>{selectedFamilyHindsight.false_reject_count}</strong>
+                        </div>
+                        <div>
+                          <span>有效避险</span>
+                          <strong>{selectedFamilyHindsight.saved_loss_count}</strong>
+                        </div>
+                        <div>
+                          <span>平均相对</span>
+                          <strong
+                            style={{
+                              color: pnlColor(
+                                selectedFamilyHindsight.avg_intended_action_return_pct
+                              ),
+                            }}
+                          >
+                            {formatPercent(selectedFamilyHindsight.avg_intended_action_return_pct)}
+                          </strong>
+                        </div>
+                      </div>
+                      <Row gutter={[12, 12]}>
+                        <Col xs={24} md={12}>
+                          <div className="family-hindsight-list false-reject">
+                            <strong>可能错杀 Top</strong>
+                            {(selectedFamilyHindsight.top_false_rejections || [])
+                              .slice(0, 4)
+                              .map(item => (
+                                <div key={item.intent_id}>
+                                  <span>
+                                    {item.name || item.symbol} ·{' '}
+                                    {formatPercent(item.intended_action_return_pct)}
+                                  </span>
+                                  <em>
+                                    {item.reason_category_label || '规则拦截'}：
+                                    {item.reason_text || item.benchmark_conclusion || '暂无明细'}
+                                  </em>
+                                </div>
+                              ))}
+                            {!selectedFamilyHindsight.top_false_rejections?.length ? (
+                              <p>暂无明显错杀样本。</p>
+                            ) : null}
+                          </div>
+                        </Col>
+                        <Col xs={24} md={12}>
+                          <div className="family-hindsight-list saved-loss">
+                            <strong>有效避险 Top</strong>
+                            {(selectedFamilyHindsight.top_saved_losses || [])
+                              .slice(0, 4)
+                              .map(item => (
+                                <div key={item.intent_id}>
+                                  <span>
+                                    {item.name || item.symbol} ·{' '}
+                                    {formatPercent(item.intended_action_return_pct)}
+                                  </span>
+                                  <em>
+                                    {item.reason_category_label || '规则拦截'}：
+                                    {item.reason_text || item.benchmark_conclusion || '暂无明细'}
+                                  </em>
+                                </div>
+                              ))}
+                            {!selectedFamilyHindsight.top_saved_losses?.length ? (
+                              <p>暂无明显避险样本。</p>
+                            ) : null}
+                          </div>
+                        </Col>
+                      </Row>
+                    </>
+                  ) : (
+                    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无后验数据" />
+                  )}
+                </div>
+              </div>
+            ) : null}
+          </Drawer>
         </>
       )}
     </div>

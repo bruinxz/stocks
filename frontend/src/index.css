@@ -11016,6 +11016,14 @@ a {
   white-space: nowrap;
 }
 
+.autonomous-family-detail-btn {
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 900;
+}
+
 .autonomous-family-card strong {
   color: var(--text-main);
   font-family: var(--font-display);
@@ -11221,6 +11229,345 @@ a {
   -webkit-line-clamp: 2;
 }
 
+.autonomous-family-drawer .ant-drawer-content {
+  background: linear-gradient(180deg, #fbfdff 0%, #f5f8fb 100%);
+}
+
+.autonomous-family-drawer .ant-drawer-header {
+  border-bottom: 1px solid rgba(15, 23, 42, 0.07);
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(16px);
+}
+
+.family-dossier {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.family-dossier-hero {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px;
+  border: 1px solid rgba(39, 100, 184, 0.12);
+  border-radius: 24px;
+  background: radial-gradient(circle at 0% 0%, rgba(39, 100, 184, 0.12), transparent 34%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(244, 248, 255, 0.82));
+  box-shadow: 0 18px 42px rgba(39, 73, 111, 0.08);
+}
+
+.family-dossier-hero.active {
+  border-color: rgba(214, 166, 79, 0.25);
+  background: radial-gradient(circle at 0% 0%, rgba(214, 166, 79, 0.18), transparent 36%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(255, 250, 240, 0.86));
+}
+
+.family-dossier-hero.signaled_blocked {
+  border-color: rgba(217, 119, 6, 0.2);
+  background: radial-gradient(circle at 0% 0%, rgba(245, 158, 11, 0.16), transparent 36%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(255, 251, 235, 0.8));
+}
+
+.family-dossier-hero span,
+.family-dossier-section-head span,
+.family-dossier-stat-grid span,
+.family-hindsight-mini-summary span {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.family-dossier-hero h2 {
+  margin: 5px 0 8px;
+  color: var(--text-main);
+  font-family: var(--font-display);
+  font-size: 28px;
+  line-height: 1.05;
+  letter-spacing: -0.05em;
+}
+
+.family-dossier-hero p {
+  max-width: 500px;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.family-dossier-hero > div:last-child {
+  flex: 0 0 210px;
+  text-align: right;
+}
+
+.family-dossier-hero strong {
+  display: block;
+  color: var(--text-main);
+  font-family: var(--font-display);
+  font-size: 26px;
+  letter-spacing: -0.045em;
+  font-variant-numeric: tabular-nums;
+}
+
+.family-dossier-hero em {
+  display: block;
+  margin-top: 6px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.family-dossier-stat-grid,
+.family-hindsight-mini-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.family-dossier-stat-grid div,
+.family-hindsight-mini-summary div {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  border-radius: 17px;
+  background: rgba(255, 255, 255, 0.76);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.78);
+}
+
+.family-dossier-stat-grid strong,
+.family-hindsight-mini-summary strong {
+  display: block;
+  overflow: hidden;
+  margin-top: 5px;
+  color: var(--text-main);
+  font-family: var(--font-display);
+  font-size: 20px;
+  letter-spacing: -0.035em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.family-dossier-section {
+  padding: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.07);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.family-dossier-section-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.family-dossier-section-head strong {
+  color: var(--text-main);
+  font-family: var(--font-display);
+  font-size: 18px;
+  letter-spacing: -0.035em;
+}
+
+.family-dossier-path {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.family-dossier-path div {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  border-radius: 16px;
+  background: rgba(248, 250, 252, 0.84);
+}
+
+.family-dossier-path div.done {
+  border-color: rgba(0, 143, 107, 0.16);
+  background: linear-gradient(135deg, rgba(236, 253, 245, 0.88), rgba(255, 255, 255, 0.76));
+}
+
+.family-dossier-path div.wait {
+  border-style: dashed;
+  opacity: 0.78;
+}
+
+.family-dossier-path svg {
+  color: var(--primary);
+  font-size: 18px;
+}
+
+.family-dossier-path strong,
+.family-dossier-path span,
+.family-dossier-reason-grid strong,
+.family-dossier-reason-grid span {
+  display: block;
+}
+
+.family-dossier-path strong {
+  margin-top: 8px;
+  color: var(--text-main);
+  font-size: 13px;
+}
+
+.family-dossier-path span {
+  display: -webkit-box;
+  overflow: hidden;
+  margin-top: 5px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.family-dossier-reason-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.family-dossier-reason-grid div {
+  padding: 10px;
+  border-radius: 15px;
+  background: rgba(248, 250, 252, 0.86);
+  border: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.family-dossier-reason-grid strong {
+  overflow: hidden;
+  color: var(--text-main);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.family-dossier-reason-grid span {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.family-intent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  max-height: 390px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.family-intent-list > div {
+  display: grid;
+  grid-template-columns: minmax(0, 190px) minmax(0, 1fr);
+  gap: 12px;
+  padding: 11px 12px;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  border-radius: 16px;
+  background: rgba(248, 250, 252, 0.78);
+}
+
+.family-intent-list strong,
+.family-intent-list span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.family-intent-list strong {
+  color: var(--text-main);
+  font-size: 13px;
+}
+
+.family-intent-list span {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.family-intent-list p {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 7px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.family-hindsight-mini-summary {
+  margin-bottom: 12px;
+}
+
+.family-hindsight-list {
+  height: 100%;
+  min-height: 150px;
+  padding: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  border-radius: 17px;
+  background: rgba(248, 250, 252, 0.8);
+}
+
+.family-hindsight-list.false-reject {
+  border-color: rgba(214, 166, 79, 0.18);
+  background: linear-gradient(135deg, rgba(255, 247, 230, 0.72), rgba(255, 255, 255, 0.7));
+}
+
+.family-hindsight-list.saved-loss {
+  border-color: rgba(0, 143, 107, 0.15);
+  background: linear-gradient(135deg, rgba(236, 253, 245, 0.72), rgba(255, 255, 255, 0.7));
+}
+
+.family-hindsight-list > strong {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--text-main);
+  font-size: 13px;
+}
+
+.family-hindsight-list div {
+  padding: 8px 0;
+  border-top: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.family-hindsight-list div:first-of-type {
+  border-top: 0;
+}
+
+.family-hindsight-list span,
+.family-hindsight-list em,
+.family-hindsight-list p {
+  display: block;
+  margin: 0;
+}
+
+.family-hindsight-list span {
+  color: var(--text-main);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.family-hindsight-list em,
+.family-hindsight-list p {
+  margin-top: 3px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.45;
+}
+
 @media (max-width: 768px) {
   .autonomous-family-heading {
     display: block;
@@ -11236,6 +11583,23 @@ a {
 
   .autonomous-hindsight-stats,
   .autonomous-hindsight-family-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .family-dossier-hero,
+  .family-intent-list > div {
+    display: block;
+  }
+
+  .family-dossier-hero > div:last-child {
+    margin-top: 14px;
+    text-align: left;
+  }
+
+  .family-dossier-stat-grid,
+  .family-hindsight-mini-summary,
+  .family-dossier-path,
+  .family-dossier-reason-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

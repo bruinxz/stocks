@@ -1299,8 +1299,8 @@ Completed:
   - compares elapsed days and closed recommendation-trade outcomes since the audit;
   - reports progress, outcome tone, win rate and average excess return.
 - Paper-trading page parameter panel now has:
-  - “Canary预览”;
-  - “启动Canary”;
+  - “Canary 预览”;
+  - “启动 Canary”;
   - a compact Canary status card showing progress, closed sample count, average excess return, win rate and selected keys.
 - Read-only smoke now validates Canary preview and Canary status without writing task parameters.
 
@@ -1578,3 +1578,25 @@ Next:
 1. After the next TradingAgents polling cycle, verify Agent-only control group starts receiving order intents/trades.
 2. Add a drill-down drawer from the account map to top false-rejected symbols and the exact rule that blocked them.
 3. Use family-level hindsight to drive a conservative canary adjustment for `min_trade_amount` and minimum-lot sampling only when two rolling windows agree.
+
+### 2026-05-22 strategy account drill-down dossier
+
+Focus: make the autonomous trading account map easier to understand without adding another page.
+
+Completed:
+
+- Added a drill-down drawer from each strategy account card in the autonomous trading overview.
+- The drawer now explains one account at a time:
+  - current status and empty-position reason;
+  - NAV, PnL, exposure, trades and blocked/skipped intent counts;
+  - run path from account initialization → signal intake → simulated execution → hindsight feedback;
+  - top blocker categories;
+  - latest order intents with readable status/reason;
+  - top possible false rejections and saved-loss samples from family hindsight.
+- Kept the existing account map and trading logic unchanged; this is a UX/explainability layer only.
+
+Next:
+
+1. Add a conservative canary preview that uses this family hindsight to propose min-trade/lot-sampling adjustments only when multiple windows agree.
+2. Surface the same account-level explanation on the signal trace page and simulation detail page.
+3. Continue observing Agent-only after the next polling cycle to ensure the independent control group receives non-quant TradingAgents signals.
