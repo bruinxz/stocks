@@ -44,6 +44,8 @@ interface LiveReadiness {
     mode: string;
     can_submit_orders: boolean;
     can_sync_account: boolean;
+    shadow_autopilot_enabled: boolean;
+    unattended_real_order_allowed: boolean;
     global_kill_switch: boolean;
     broker_gateway: string;
     market_data_provider: string;
@@ -51,6 +53,11 @@ interface LiveReadiness {
     blockers: string[];
     warnings: string[];
     default_risk_limits: Record<string, any>;
+    unattended_policy?: {
+      real_order_submission: string;
+      shadow_execution: string;
+      conclusion: string;
+    };
   };
   broker: {
     broker_key: string;
@@ -115,6 +122,18 @@ interface LiveOverview {
   latest_snapshot?: any;
   positions: any[];
   order_drafts: any[];
+  shadow_autopilot?: {
+    enabled: boolean;
+    drafts: any[];
+    summary: {
+      total_count: number;
+      shadow_executed_count: number;
+      total_shadow_amount: number;
+      latest_at?: string | null;
+      real_order_submitted: number;
+      conclusion: string;
+    };
+  };
   reconciliation?: LiveReconciliation;
   summary: {
     account_bound: boolean;
@@ -218,6 +237,7 @@ const LiveTrading: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [draftLoading, setDraftLoading] = useState(false);
   const [candidateLoading, setCandidateLoading] = useState(false);
+  const [shadowLoading, setShadowLoading] = useState(false);
   const [syncLoading, setSyncLoading] = useState(false);
   const [isDraftModalOpen, setIsDraftModalOpen] = useState(false);
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
@@ -263,6 +283,7 @@ const LiveTrading: React.FC = () => {
   const providerComparison = overview?.readiness?.market_data_provider_comparison;
   const reconciliation = overview?.reconciliation;
   const canSubmit = Boolean(safety?.can_submit_orders);
+  const shadowSummary = overview?.shadow_autopilot?.summary;
   const blockers = safety?.blockers || [];
   const modeTag = canSubmit ? '受限可提交' : safety?.mode === 'read_only' ? '只读观察' : '安全禁用';
 
@@ -355,6 +376,39 @@ const LiveTrading: React.FC = () => {
       message.warning(error.response?.data?.message || '该候选暂不能生成实盘草稿');
     } finally {
       setCandidateLoading(false);
+    }
+  };
+
+  const runShadowAutopilot = async () => {
+    setShadowLoading(true);
+    try {
+      const response = await api.post('/live-trading/order-drafts/shadow-autopilot', {
+        limit: 3,
+        source: 'live_trading_page',
+      });
+      message.success(response.data.message || '无人影子执行已完成');
+      await fetchOverview(true);
+      await fetchDraftCandidates(true);
+    } catch (error: any) {
+      message.warning(error.response?.data?.message || '无人影子执行暂不可用');
+    } finally {
+      setShadowLoading(false);
+    }
+  };
+
+  const shadowExecuteDraft = async (draft: any) => {
+    setShadowLoading(true);
+    try {
+      await api.post(`/live-trading/order-drafts/${draft.id}/shadow-execute`, {
+        source: 'live_trading_page',
+      });
+      message.success('影子执行已记录，未提交真实券商委托');
+      await fetchOverview(true);
+      await fetchDraftCandidates(true);
+    } catch (error: any) {
+      message.warning(error.response?.data?.message || '影子执行被风控阻断');
+    } finally {
+      setShadowLoading(false);
     }
   };
 
@@ -498,6 +552,18 @@ const LiveTrading: React.FC = () => {
           </Button>
           <Button
             size="small"
+            type="primary"
+            ghost
+            disabled={
+              !record.risk_check?.allowed || !['pending', 'preview'].includes(record.status)
+            }
+            loading={shadowLoading}
+            onClick={() => shadowExecuteDraft(record)}
+          >
+            影子执行
+          </Button>
+          <Button
+            size="small"
             type="link"
             disabled={['rejected', 'submitted'].includes(record.status)}
             onClick={() => rejectDraft(record)}
@@ -638,6 +704,27 @@ const LiveTrading: React.FC = () => {
           }
         />
 
+        <Alert
+          className="live-trading-boundary-alert"
+          type="info"
+          showIcon
+          message="无人确认已切到影子执行：真实券商委托仍硬阻断"
+          description={
+            safety?.unattended_policy?.conclusion ||
+            '系统可以自动记录影子成交、沉淀审计和后验样本；不会绕过确认提交真实资金订单。'
+          }
+          action={
+            <Button
+              size="small"
+              type="primary"
+              loading={shadowLoading}
+              onClick={runShadowAutopilot}
+            >
+              运行影子执行
+            </Button>
+          }
+        />
+
         <Row gutter={[16, 16]}>
           <Col xs={24} md={6}>
             <Card className="modern-card live-stat-card" variant="borderless">
@@ -680,6 +767,16 @@ const LiveTrading: React.FC = () => {
                   ? `样本 ${marketHealth.sample_count} · 延迟 ${marketHealth.max_latency_seconds}s`
                   : '等待行情检查'}
               </span>
+            </Card>
+          </Col>
+          <Col xs={24} md={6}>
+            <Card className="modern-card live-stat-card" variant="borderless">
+              <Statistic
+                title="影子执行"
+                value={shadowSummary?.shadow_executed_count || 0}
+                suffix="笔"
+              />
+              <span>真实提交 {shadowSummary?.real_order_submitted || 0} 笔</span>
             </Card>
           </Col>
           <Col xs={24} md={6}>
@@ -971,6 +1068,67 @@ const LiveTrading: React.FC = () => {
                 <Empty
                   image={Empty.PRESENTED_IMAGE_SIMPLE}
                   description="暂无策略草稿候选。需要模拟策略账户有持仓，且券商只读账户完成同步后才会出现。"
+                />
+              ),
+            }}
+          />
+        </Card>
+
+        <Card
+          className="modern-card live-candidate-card"
+          variant="borderless"
+          title="无人确认影子执行闭环"
+          extra={
+            <Button
+              size="small"
+              type="primary"
+              loading={shadowLoading}
+              onClick={runShadowAutopilot}
+            >
+              跑影子执行
+            </Button>
+          }
+        >
+          <Alert
+            type="info"
+            showIcon
+            message={shadowSummary?.conclusion || '影子执行只记录假设成交，不提交真实券商委托'}
+            description="这一步用于跳过人工确认做自动化闭环验证：系统会按策略候选生成草稿、二次风控并标记影子成交；真实资金订单提交数始终为 0。"
+          />
+          <div className="live-candidate-metrics">
+            <div>
+              <span>影子记录</span>
+              <strong>{shadowSummary?.shadow_executed_count || 0}</strong>
+            </div>
+            <div>
+              <span>影子金额</span>
+              <strong>{formatMoney(shadowSummary?.total_shadow_amount)}</strong>
+            </div>
+            <div>
+              <span>真实提交</span>
+              <strong>{shadowSummary?.real_order_submitted || 0}</strong>
+            </div>
+            <div>
+              <span>最新时间</span>
+              <strong>
+                {shadowSummary?.latest_at
+                  ? new Date(shadowSummary.latest_at).toLocaleString()
+                  : '--'}
+              </strong>
+            </div>
+          </div>
+          <Table
+            columns={draftColumns.filter((column: any) => column.title !== '操作')}
+            dataSource={overview?.shadow_autopilot?.drafts || []}
+            rowKey="id"
+            size="small"
+            pagination={{ pageSize: 5 }}
+            scroll={{ x: 'max-content' }}
+            locale={{
+              emptyText: (
+                <Empty
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  description="暂无影子执行记录。点击运行后会从可用候选中自动生成闭环样本。"
                 />
               ),
             }}

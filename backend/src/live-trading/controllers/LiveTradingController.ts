@@ -90,6 +90,34 @@ class LiveTradingController {
     }
   }
 
+  async runShadowAutopilot(req: AuthenticatedRequest, res: Response) {
+    try {
+      const data = await liveTradingService.runShadowAutopilot(Number(req.user?.id), {
+        limit: req.body?.limit ? Number(req.body.limit) : undefined,
+        source: req.body?.source,
+        dry_run: req.body?.dry_run === true,
+      });
+      res.json({ success: true, data, message: data.summary.conclusion });
+    } catch (error: any) {
+      logger.warn('无人影子执行被阻断:', error?.message || error);
+      res.status(400).json({ success: false, message: error.message || '无人影子执行失败' });
+    }
+  }
+
+  async runDraftShadowExecution(req: AuthenticatedRequest, res: Response) {
+    try {
+      const data = await liveTradingService.markDraftShadowExecuted(
+        Number(req.user?.id),
+        Number(req.params.id),
+        req.body || {}
+      );
+      res.json({ success: true, data, message: '影子执行已记录，未提交真实券商委托' });
+    } catch (error: any) {
+      logger.warn('订单草稿影子执行被阻断:', error?.message || error);
+      res.status(400).json({ success: false, message: error.message || '订单草稿影子执行失败' });
+    }
+  }
+
   async approveDraft(req: AuthenticatedRequest, res: Response) {
     try {
       const data = await liveTradingService.approveDraft(Number(req.user?.id), Number(req.params.id), req.body || {});

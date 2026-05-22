@@ -70,6 +70,12 @@ function ageMinutes(value?: string | Date | null): number | null {
   return round((Date.now() - time) / 60000, 2);
 }
 
+function envBool(name: string, fallback = false): boolean {
+  const value = process.env[name];
+  if (value === undefined || value === null || value === '') return fallback;
+  return ['true', '1', 'yes', 'y', 'on'].includes(String(value).trim().toLowerCase());
+}
+
 export class LiveTradingService {
   private brokerGateway: BrokerGateway;
   private quoteProvider: LiveMarketDataProvider;
@@ -115,6 +121,7 @@ export class LiveTradingService {
         { key: 'market_data', label: '真实行情入口', status: marketDataHealth.status === 'ok' ? 'ready' : marketDataHealth.status === 'empty' ? 'locked' : 'partial', detail: marketDataHealth.conclusion },
         { key: 'broker_readonly', label: '券商只读', status: safety.can_sync_account ? 'partial' : 'locked', detail: '接口与模型已就绪；真实券商适配器尚未启用。' },
         { key: 'order_approval', label: '订单审批', status: 'ready', detail: '支持订单草稿、风控说明、强确认；提交券商默认阻断。' },
+        { key: 'shadow_autopilot', label: '无人影子执行', status: safety.shadow_autopilot_enabled ? 'ready' : 'locked', detail: safety.unattended_policy.conclusion },
         { key: 'execution', label: '真实执行', status: safety.can_submit_orders ? 'restricted' : 'blocked', detail: safety.can_submit_orders ? '仅限受控内部灰度。' : '真实下单被环境开关和 Mock 网关阻断。' },
       ],
       conclusion: safety.can_submit_orders
@@ -148,8 +155,11 @@ export class LiveTradingService {
       order: [['created_at', 'DESC']],
       limit: 10,
     });
+    const shadowDashboard = await this.getShadowAutopilotDashboard(user_id, 8);
     const reconciliation = await this.getReconciliation(user_id);
-    const openDrafts = drafts.filter(item => ['preview', 'pending', 'blocked'].includes(String((item as any).status)));
+    const openDrafts = drafts.filter(item =>
+      ['preview', 'pending', 'blocked', 'shadow_executed'].includes(String((item as any).status))
+    );
     const exposure = positions.reduce((sum, item: any) => sum + toNumber(item.market_value), 0);
     const totalAsset = toNumber((latestSnapshot as any)?.total_asset);
     const exposurePct = totalAsset > 0 ? round((exposure / totalAsset) * 100, 4) : 0;
@@ -161,6 +171,7 @@ export class LiveTradingService {
       latest_snapshot: latestSnapshot ? this.toPlain(latestSnapshot) : null,
       positions: positions.map(item => this.toPlain(item)),
       order_drafts: drafts.map(item => this.toPlain(item)),
+      shadow_autopilot: shadowDashboard,
       reconciliation,
       summary: {
         account_bound: Boolean(account),
@@ -170,6 +181,7 @@ export class LiveTradingService {
         exposure_pct: exposurePct,
         position_count: positions.length,
         pending_draft_count: openDrafts.length,
+        shadow_executed_count: shadowDashboard.summary.shadow_executed_count,
         can_submit_orders: readiness.safety.can_submit_orders,
         market_data_status: readiness.market_data_health.status,
         market_data_conclusion: readiness.market_data_health.conclusion,
@@ -481,7 +493,7 @@ export class LiveTradingService {
         blocked_count: rows.length - eligibleCount,
         conclusion: accountReady
           ? eligibleCount > 0
-            ? `发现 ${eligibleCount} 个可生成实盘草稿的策略候选；生成后仍不会下单，必须人工确认。`
+            ? `发现 ${eligibleCount} 个可生成实盘草稿的策略候选；也可进入无人影子执行，但真实券商委托仍不会跳过确认。`
             : '当前没有满足整手、行情、账户快照和去重条件的实盘草稿候选。'
           : '尚未完成券商只读账户同步，策略候选只能观察，不能生成可提交草稿。',
       },
@@ -514,6 +526,133 @@ export class LiveTradingService {
         reconciliation_summary: candidates.reconciliation_summary,
       },
     });
+  }
+
+  async runShadowAutopilot(
+    user_id: number,
+    options: { limit?: number; source?: string; dry_run?: boolean } = {}
+  ) {
+    const safety = liveTradingSafetyService.getStatus();
+    const maxCount = Math.min(Math.max(Number(options.limit || 3), 1), 10);
+    const dryRun = options.dry_run === true;
+
+    if (!safety.shadow_autopilot_enabled) {
+      throw new Error('无人影子执行未启用：请设置 LIVE_SHADOW_AUTOPILOT_ENABLED=true。');
+    }
+
+    const candidateDashboard = await this.getDraftCandidates(user_id, { limit: Math.max(maxCount, 10) });
+    const candidates = (candidateDashboard.candidates || [])
+      .filter((item: any) => item.eligible)
+      .slice(0, maxCount);
+    const results: any[] = [];
+
+    for (const candidate of candidates) {
+      if (dryRun) {
+        results.push({
+          symbol: candidate.symbol,
+          name: candidate.name,
+          side: candidate.side || 'BUY',
+          quantity: candidate.suggested_quantity,
+          limit_price: candidate.suggested_limit_price,
+          estimated_amount: candidate.estimated_amount,
+          status: 'dry_run',
+          message: '影子执行预演：不会创建草稿，也不会提交券商。',
+        });
+        continue;
+      }
+
+      const draft = await this.createDraft(user_id, {
+        symbol: candidate.symbol,
+        name: candidate.name,
+        side: candidate.side || 'BUY',
+        quantity: candidate.suggested_quantity,
+        limit_price: candidate.suggested_limit_price,
+        source_type: 'shadow_autopilot',
+        source_id: `${candidate.candidate_type}:${candidate.symbol}`,
+        rationale: `${candidate.rationale} 无人确认模式仅执行影子实盘：记录假设成交与风控审计，不提交真实券商委托。`,
+        metadata: {
+          created_from: 'live_shadow_autopilot',
+          shadow_autopilot: true,
+          source: options.source || 'manual_shadow_autopilot',
+          candidate,
+          reconciliation_summary: candidateDashboard.reconciliation_summary,
+          safety_status: safety,
+        },
+      });
+      const executed = await this.markDraftShadowExecuted(user_id, Number(draft.id), {
+        source: options.source || 'manual_shadow_autopilot',
+      });
+      results.push(executed);
+    }
+
+    const blockedCount = Math.max(0, Number(candidateDashboard.summary.total_count || 0) - candidates.length);
+    const summary = {
+      dry_run: dryRun,
+      selected_count: candidates.length,
+      shadow_executed_count: dryRun ? 0 : results.length,
+      blocked_count: blockedCount,
+      real_order_submitted: 0,
+      conclusion: dryRun
+        ? `影子执行预演完成：可选 ${candidates.length} 条，不会创建草稿或提交券商。`
+        : candidates.length > 0
+        ? `无人影子执行完成：记录 ${results.length} 条假设成交；真实券商委托提交数为 0。`
+        : '暂无满足账户快照、行情、整手和去重条件的影子执行候选。',
+    };
+
+    await this.audit({
+      user_id,
+      event_type: dryRun ? 'live_shadow_autopilot_dry_run' : 'live_shadow_autopilot_completed',
+      severity: dryRun ? 'info' : 'warning',
+      message: summary.conclusion,
+      metadata: {
+        options,
+        summary,
+        candidate_summary: candidateDashboard.summary,
+        safety_status: safety,
+      },
+    });
+
+    return {
+      generated_at: new Date().toISOString(),
+      mode: 'shadow_only',
+      safety: {
+        can_submit_orders: safety.can_submit_orders,
+        unattended_real_order_allowed: safety.unattended_real_order_allowed,
+        conclusion: safety.unattended_policy.conclusion,
+      },
+      summary,
+      results,
+    };
+  }
+
+  async getShadowAutopilotDashboard(user_id: number, limit = 20) {
+    const rows = await LiveOrderDraft.findAll({
+      where: {
+        user_id,
+        source_type: 'shadow_autopilot',
+      },
+      order: [['updated_at', 'DESC']],
+      limit: Math.min(Math.max(Number(limit || 20), 1), 100),
+    });
+    const drafts = rows.map(item => this.toPlain(item));
+    const executed = drafts.filter(item => item.status === 'shadow_executed');
+    const totalAmount = executed.reduce((sum, item) => sum + toNumber(item.estimated_amount), 0);
+    const latest = drafts[0] || null;
+    return {
+      generated_at: new Date().toISOString(),
+      enabled: liveTradingSafetyService.getStatus().shadow_autopilot_enabled,
+      drafts,
+      summary: {
+        total_count: drafts.length,
+        shadow_executed_count: executed.length,
+        total_shadow_amount: round(totalAmount, 2),
+        latest_at: latest?.updated_at || latest?.created_at || null,
+        real_order_submitted: 0,
+        conclusion: executed.length
+          ? `已沉淀 ${executed.length} 条无人影子执行记录，用于后续和真实/模拟收益偏差对比。`
+          : '暂无无人影子执行记录；可先从策略候选生成影子成交闭环。',
+      },
+    };
   }
 
   async getMarketDataHealth(symbols?: string[], provider: LiveMarketDataProvider = this.quoteProvider) {
@@ -730,7 +869,74 @@ export class LiveTradingService {
     return this.toPlain(draft);
   }
 
+  async markDraftShadowExecuted(user_id: number, draft_id: number, input: any = {}) {
+    const draft = await LiveOrderDraft.findOne({ where: { id: draft_id, user_id } });
+    if (!draft) throw new Error('订单草稿不存在或无权限');
+    if (!['pending', 'preview'].includes(String((draft as any).status))) {
+      throw new Error(`当前订单草稿状态为 ${(draft as any).status}，不可影子执行。`);
+    }
+    const before = this.toPlain(draft);
+    const riskAllowed = Boolean((draft as any).risk_check?.allowed);
+    if (!riskAllowed) throw new Error('订单草稿未通过基础风控，禁止影子执行。');
+    const recheck = await this.recheckDraft(user_id, draft);
+    const shadowFillPrice =
+      quotePrice(recheck.quote_snapshot) || toNumber((draft as any).limit_price);
+    const shadowAmount = round(shadowFillPrice * Number((draft as any).quantity), 2);
+    const shadowExecution = {
+      mode: 'shadow_only',
+      source: input.source || 'manual_shadow_execution',
+      executed_at: new Date().toISOString(),
+      fill_price: shadowFillPrice,
+      quantity: Number((draft as any).quantity),
+      amount: shadowAmount,
+      real_order_submitted: false,
+      conclusion: '已记录影子成交；未提交真实券商委托。',
+    };
+
+    await draft.update({
+      status: 'shadow_executed',
+      risk_check: recheck.risk_check,
+      quote_snapshot: recheck.quote_snapshot || {},
+      estimated_amount: shadowAmount,
+      metadata: {
+        ...((draft as any).metadata || {}),
+        shadow_execution: shadowExecution,
+        pre_shadow_recheck_at: new Date().toISOString(),
+        pre_shadow_recheck_conclusion: recheck.risk_check.conclusion,
+      },
+    });
+
+    await this.audit({
+      user_id,
+      account_id: (draft as any).account_id,
+      draft_id,
+      event_type: 'live_order_shadow_executed',
+      severity: 'warning',
+      message: '无人确认影子执行已记录；真实券商委托提交数为 0。',
+      before_state: before,
+      after_state: this.toPlain(draft),
+      metadata: {
+        shadow_execution: shadowExecution,
+        risk_check: recheck.risk_check,
+        unattended_real_order_allowed: false,
+      },
+    });
+
+    return this.toPlain(draft);
+  }
+
   async approveDraft(user_id: number, draft_id: number, input: any) {
+    if (input?.skip_confirmation === true || input?.unattended === true) {
+      await this.audit({
+        user_id,
+        draft_id,
+        event_type: 'live_order_unattended_real_submit_blocked',
+        severity: 'critical',
+        message: '拒绝无人确认真实下单请求；可改用影子执行闭环。',
+        metadata: { input },
+      });
+      throw new Error('真实券商委托不能跳过人工确认；如需无人闭环，请使用影子执行。');
+    }
     const draft = await LiveOrderDraft.findOne({ where: { id: draft_id, user_id } });
     if (!draft) throw new Error('订单草稿不存在或无权限');
     const before = this.toPlain(draft);

@@ -382,6 +382,20 @@ async function main() {
             )}`
           );
         }
+        if (json.data.safety.unattended_real_order_allowed !== false) {
+          throw new Error(
+            `live trading unattended real orders must be blocked: ${preview(
+              json.data.safety
+            )}`
+          );
+        }
+        if (!json.data.safety.unattended_policy?.conclusion) {
+          throw new Error(
+            `live trading unattended policy missing: ${preview(
+              json.data.safety
+            )}`
+          );
+        }
       },
     });
 
@@ -403,6 +417,13 @@ async function main() {
           throw new Error(
             `live trading overview should not allow orders by default: ${preview(
               json.data.summary
+            )}`
+          );
+        }
+        if (!json.data.shadow_autopilot?.summary) {
+          throw new Error(
+            `live trading shadow autopilot summary missing: ${preview(
+              json.data
             )}`
           );
         }
@@ -453,6 +474,33 @@ async function main() {
             throw new Error(
               `live trading draft candidate counts invalid: ${preview(
                 json.data.summary
+              )}`
+            );
+          }
+        },
+      }
+    );
+
+    await requestJson(
+      "live trading shadow autopilot dry run",
+      "/api/live-trading/order-drafts/shadow-autopilot",
+      {
+        token,
+        method: "POST",
+        body: { dry_run: true, limit: 1, source: "readonly_smoke" },
+        expect: (json) => {
+          assertApiSuccess(json, "live trading shadow autopilot dry run");
+          if (json.data?.summary?.real_order_submitted !== 0) {
+            throw new Error(
+              `live trading shadow dry run must not submit real orders: ${preview(
+                json.data?.summary
+              )}`
+            );
+          }
+          if (json.data?.safety?.unattended_real_order_allowed !== false) {
+            throw new Error(
+              `live trading shadow dry run policy invalid: ${preview(
+                json.data?.safety
               )}`
             );
           }

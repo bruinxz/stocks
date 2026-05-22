@@ -1810,3 +1810,34 @@ Next:
 1. Add backend cache-hit / shared-inflight counters for opening-preflight slow-path visibility.
 2. Add a concise daily “what changed since yesterday” block to 今日作战台.
 3. Add a small Canary trend interpretation sentence, e.g. “评分上升但回撤恶化，暂不扩大”。
+
+### 2026-05-22 live shadow autopilot without real-order confirmation bypass
+
+Focus: satisfy the desire for unattended closed-loop validation without allowing unconfirmed real-money broker orders.
+
+Completed:
+
+- Added an explicit safety policy field to live-trading readiness:
+  - `unattended_real_order_allowed=false` is returned by the API and validated by smoke;
+  - `shadow_autopilot_enabled` controls unattended shadow execution separately from real broker order submission.
+- Added `POST /api/live-trading/order-drafts/shadow-autopilot`:
+  - selects eligible live draft candidates;
+  - can run as `dry_run=true` for smoke/read-only verification;
+  - creates shadow-only draft records when not dry-run;
+  - records audit logs;
+  - always reports `real_order_submitted=0`.
+- Added `POST /api/live-trading/order-drafts/:id/shadow-execute` to mark an existing risk-passed draft as shadow executed after a fresh quote/account risk recheck.
+- Added a hard guard in real draft approval: requests with `skip_confirmation` or `unattended` are rejected and audited.
+- Live-trading page now shows:
+  - an unattended policy banner;
+  - a “运行影子执行” action;
+  - shadow execution count/amount/real-submission count;
+  - a shadow execution record table;
+  - per-draft “影子执行” button.
+- Smoke now verifies live-trading unattended real orders remain blocked and shadow autopilot dry-run submits no real orders.
+
+Next:
+
+1. Add shadow execution outcome tracking: compare shadow fill price with subsequent 1/3/5-day returns.
+2. Add daily scheduled shadow autopilot after opening readiness passes, still with real broker submission hard-blocked.
+3. Add a dashboard sentence that states whether shadow execution is outperforming the manual/simulated baseline.

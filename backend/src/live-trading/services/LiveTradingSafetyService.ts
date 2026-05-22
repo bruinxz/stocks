@@ -20,11 +20,13 @@ export class LiveTradingSafetyService {
     const market_data_provider = process.env.LIVE_MARKET_DATA_PROVIDER || 'database_realtime_quotes';
     const global_kill_switch = envBool('LIVE_TRADING_KILL_SWITCH', true);
     const allowSandbox = envBool('LIVE_TRADING_SANDBOX_ENABLED', false);
+    const shadowAutopilotEnabled = envBool('LIVE_SHADOW_AUTOPILOT_ENABLED', true);
     const can_submit_orders =
       live_trading_enabled &&
       live_order_execution_enabled &&
       !global_kill_switch &&
       broker_gateway !== 'mock_guarded';
+    const unattended_real_order_allowed = false;
 
     const blockers: string[] = [];
     if (!live_trading_enabled) blockers.push('LIVE_TRADING_ENABLED 未开启');
@@ -43,6 +45,8 @@ export class LiveTradingSafetyService {
       broker_gateway,
       market_data_provider,
       sandbox_enabled: allowSandbox,
+      shadow_autopilot_enabled: shadowAutopilotEnabled,
+      unattended_real_order_allowed,
       confirm_text_required: LIVE_ORDER_CONFIRM_TEXT,
       external_use_allowed: false,
       compliance_state: can_submit_orders ? 'restricted_internal_only' : 'safe_disabled',
@@ -53,6 +57,13 @@ export class LiveTradingSafetyService {
         '对外商业化前必须接入授权行情源、持牌/合规券商通道、用户适当性与风险揭示。',
         '所有实盘订单必须经过用户确认、风控校验和审计留痕。',
       ],
+      unattended_policy: {
+        real_order_submission: 'blocked',
+        shadow_execution: shadowAutopilotEnabled ? 'enabled' : 'disabled',
+        conclusion: shadowAutopilotEnabled
+          ? '可以跳过人工确认做影子执行/模拟闭环；真实券商委托仍不可无人确认提交。'
+          : '无人确认影子执行已关闭；真实券商委托仍不可无人确认提交。',
+      },
       updated_at: new Date().toISOString(),
     };
   }
