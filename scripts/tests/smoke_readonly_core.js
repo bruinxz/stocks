@@ -360,6 +360,9 @@ async function main() {
         if (!json.data.market_data_health?.status) {
           throw new Error(`live trading market data health missing: ${preview(json)}`);
         }
+        if (!Array.isArray(json.data.market_data_provider_comparison?.providers)) {
+          throw new Error(`live trading provider comparison missing: ${preview(json)}`);
+        }
         if (json.data.safety.can_submit_orders === true) {
           throw new Error(
             `live trading readiness should be safe by default: ${preview(json.data.safety)}`
