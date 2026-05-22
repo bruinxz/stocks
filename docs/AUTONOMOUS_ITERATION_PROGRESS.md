@@ -1676,3 +1676,26 @@ Next:
 1. Add the read-only tuning-candidate radar and the latest Canary snapshot summary to 今日指挥中心.
 2. Add a shortcut that turns the current top read-only Canary candidate into a preview, still requiring explicit confirmation before writing parameters.
 3. Add a scheduled snapshot capture after the daily simulated-trading run so review memory grows even when nobody opens the page.
+
+### 2026-05-22 command-center tuning radar
+
+Focus: move parameter discipline from a deep simulation page into the daily operating surface.
+
+Completed:
+
+- 今日作战台 now aggregates:
+  - read-only order-intent tuning candidates;
+  - top Canary candidate previews;
+  - latest Canary review snapshot memory.
+- The command-center API returns compact `tuning_radar` and `canary_memory` blocks so daily operators can see whether parameters are safe, need observation, or have rollback/promote evidence.
+- The 今日作战台 page now shows:
+  - 参数调优雷达 with stable-window, family-hindsight, merged and Canary counts;
+  - top Canary candidate cards with action and evidence source;
+  - Canary评审记忆 with snapshot count, average score, promote/rollback count, and recent review rows.
+- Smoke test now verifies the new command-center aggregation blocks.
+
+Next:
+
+1. Add a shortcut that turns the current top read-only Canary candidate into a preview, still requiring explicit confirmation before writing parameters.
+2. Add a scheduled snapshot capture after the daily simulated-trading run so review memory grows even when nobody opens the page.
+3. Reduce optional smoke timeout risk on opening-preflight by adding a lightweight summary endpoint or caching command-center preflight results.

@@ -96,6 +96,22 @@ const actionMeta = (action?: string) => {
   return { label: '观察', color: 'gold' };
 };
 
+const tuningActionMeta = (action?: string) => {
+  const normalized = String(action || '').toLowerCase();
+  if (normalized === 'loosen') return { label: '放松', color: 'orange' };
+  if (normalized === 'tighten') return { label: '收紧', color: 'green' };
+  if (normalized === 'keep') return { label: '保持', color: 'blue' };
+  return { label: '观察', color: 'default' };
+};
+
+const canaryReviewMeta = (action?: string) => {
+  const normalized = String(action || '').toLowerCase();
+  if (normalized === 'promote') return { label: '建议扩大', color: 'green' };
+  if (normalized === 'rollback') return { label: '建议回滚', color: 'red' };
+  if (normalized === 'hold') return { label: '暂不扩大', color: 'blue' };
+  return { label: '继续观察', color: 'gold' };
+};
+
 const buildPositionAdvice = (position: Position) => {
   const pnlPct = Number(position.unrealized_pnl_pct || 0);
   const weight = Number(position.weight_pct || 0);
@@ -209,6 +225,10 @@ const TodayCommandCenter: React.FC = () => {
   const riskStatus = commandData?.risk_profile?.status || {};
   const readinessItems = commandData?.readiness || [];
   const latestFeishu = commandData?.latest_feishu;
+  const tuningRadar = commandData?.tuning_radar;
+  const tuningRadarSummary = tuningRadar?.summary || {};
+  const canaryMemory = commandData?.canary_memory;
+  const canaryMemorySummary = canaryMemory?.summary || {};
   const discipline = commandData?.discipline || {};
   const preflightChecks = preflight?.checks || {};
   const factorCoverage = preflightChecks.factor_coverage || {};
@@ -779,6 +799,133 @@ const TodayCommandCenter: React.FC = () => {
           />
         )}
       </Card>
+
+      <Row gutter={[16, 16]}>
+        <Col xs={24} xl={13}>
+          <Card
+            className="modern-card today-tuning-radar-card"
+            variant="borderless"
+            title={
+              <Space>
+                <RadarChartOutlined />
+                <span>参数调优雷达</span>
+              </Space>
+            }
+            extra={
+              <Button type="link" onClick={() => navigate('/autonomous-trading/overview')}>
+                去模拟盘调参 <ArrowRightOutlined />
+              </Button>
+            }
+          >
+            <Alert
+              showIcon
+              type={Number(tuningRadarSummary.canary_candidate_count || 0) > 0 ? 'warning' : 'info'}
+              message={tuningRadarSummary.conclusion || '暂无满足门槛的参数调优候选，继续观察。'}
+              description="这里只读展示稳定窗口 + 多账户拒单后验的候选，不会写入任务参数。"
+            />
+            <div className="today-tuning-radar-grid">
+              <div>
+                <span>稳定窗口</span>
+                <strong>{tuningRadarSummary.stable_window_candidate_count || 0}</strong>
+              </div>
+              <div>
+                <span>多账户后验</span>
+                <strong>{tuningRadarSummary.family_hindsight_candidate_count || 0}</strong>
+              </div>
+              <div>
+                <span>合并候选</span>
+                <strong>{tuningRadarSummary.merged_candidate_count || 0}</strong>
+              </div>
+              <div>
+                <span>Canary首选</span>
+                <strong>{tuningRadarSummary.canary_candidate_count || 0}</strong>
+              </div>
+            </div>
+            <div className="today-tuning-candidate-list">
+              {(tuningRadar?.canary_candidates || []).slice(0, 3).map((item: any) => {
+                const meta = tuningActionMeta(item.action);
+                return (
+                  <div
+                    className="today-tuning-candidate"
+                    key={`${item.parameter_key}-${item.action}`}
+                  >
+                    <div>
+                      <strong>{item.parameter_label || item.parameter_key}</strong>
+                      <span>
+                        {item.reason_category_label || '参数候选'} ·{' '}
+                        {item.change_label || item.rationale || '等待更多样本确认'}
+                      </span>
+                    </div>
+                    <Space wrap size={6}>
+                      <Tag color={meta.color}>{item.action_label || meta.label}</Tag>
+                      <Tag color={item.evidence_source === 'family_hindsight' ? 'gold' : 'blue'}>
+                        {item.evidence_source_label || '候选证据'}
+                      </Tag>
+                    </Space>
+                  </div>
+                );
+              })}
+              {!(tuningRadar?.canary_candidates || []).length && (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无 Canary 首选候选" />
+              )}
+            </div>
+          </Card>
+        </Col>
+        <Col xs={24} xl={11}>
+          <Card
+            className="modern-card today-canary-memory-card"
+            variant="borderless"
+            title={
+              <Space>
+                <ExperimentOutlined />
+                <span>Canary评审记忆</span>
+              </Space>
+            }
+          >
+            <div className="today-canary-memory-summary">
+              <div>
+                <span>快照</span>
+                <strong>{canaryMemorySummary.snapshot_count || 0}</strong>
+              </div>
+              <div>
+                <span>均分</span>
+                <strong>{Number(canaryMemorySummary.avg_review_score || 0).toFixed(1)}</strong>
+              </div>
+              <div>
+                <span>扩大/回滚</span>
+                <strong>
+                  {canaryMemorySummary.promote_count || 0}/{canaryMemorySummary.rollback_count || 0}
+                </strong>
+              </div>
+            </div>
+            <p>
+              {canaryMemorySummary.conclusion ||
+                '暂无 Canary 评审快照；刷新模拟盘 Canary 状态后会自动沉淀。'}
+            </p>
+            <div className="today-canary-memory-list">
+              {(canaryMemory?.snapshots || []).slice(0, 4).map((snapshot: any) => {
+                const meta = canaryReviewMeta(snapshot.action);
+                return (
+                  <div className="today-canary-memory-row" key={snapshot.id}>
+                    <div>
+                      <Tag color={meta.color}>{snapshot.action_label || meta.label}</Tag>
+                      <strong>{Number(snapshot.review_score || 0).toFixed(1)}</strong>
+                    </div>
+                    <span>
+                      闭环 {snapshot.closed_count || 0} · 超额{' '}
+                      {formatPercent(snapshot.avg_excess_return_pct)} · 回撤{' '}
+                      {snapshot.drawdown_guard_passed === false ? '未通过' : '通过'}
+                    </span>
+                  </div>
+                );
+              })}
+              {!(canaryMemory?.snapshots || []).length && (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无快照" />
+              )}
+            </div>
+          </Card>
+        </Col>
+      </Row>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={16}>
