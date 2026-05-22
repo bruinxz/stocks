@@ -1769,3 +1769,23 @@ Next:
 1. Add a compact “why this Canary candidate” drawer that shows family-hindsight consensus accounts and false-reject/saved-loss examples.
 2. Add Canary snapshot trend charts: score, avg excess return, win rate and drawdown guard over time.
 3. Add a small backend metric for preflight cache hit / shared-inflight counts so slow-path frequency is visible in health pages.
+
+### 2026-05-22 Canary candidate evidence drawer
+
+Focus: make Canary parameter candidates understandable before operators decide whether to start or expand a small-flow experiment.
+
+Completed:
+
+- Added a lightweight evidence modal to the merged 模拟交易台:
+  - preview candidates, read-only candidates and active Canary evidence can now be opened with `看证据`;
+  - the modal explains the candidate action, parameter change, confidence and sample count;
+  - multi-account family-hindsight consensus is summarized with evaluated samples, possible false rejects, saved-loss count, relative return and contributing account names;
+  - active Canary evidence shows source breakdown and family-consensus items when present.
+- The modal explicitly repeats the execution discipline: evidence only supports small-flow validation; expansion still requires closed-loop return, win-rate and drawdown guard to pass.
+- Visual treatment was kept light and editorial so the page remains readable while making the decision chain less opaque.
+
+Next:
+
+1. Add Canary snapshot trend charts: score, avg excess return, win rate and drawdown guard over time.
+2. Add backend cache-hit / shared-inflight counters for opening-preflight slow-path visibility.
+3. Add a concise daily “what changed since yesterday” block to 今日作战台.
