@@ -18,6 +18,7 @@ import { paperTradingAutomationService } from './PaperTradingAutomationService';
 import { paperTradingAttributionService } from './PaperTradingAttributionService';
 import { paperTradingPlanService } from './PaperTradingPlanService';
 import { paperTradingOrderIntentService } from './PaperTradingOrderIntentService';
+import { paperTradingTuningApplyService } from './PaperTradingTuningApplyService';
 import { benchmarkIndexService } from './BenchmarkIndexService';
 import { automatedRecommendationLoopService } from './AutomatedRecommendationLoopService';
 import { recommendationTradeOutcomeService } from './RecommendationTradeOutcomeService';
@@ -1663,6 +1664,26 @@ class SchedulerService {
             logger.warn(`订单意图后验快照刷新失败，交易计划继续完成: ${error?.message || error}`);
             return null;
           });
+        const shouldCaptureCanarySnapshot =
+          parameters.capture_canary_snapshot !== undefined
+            ? Boolean(parameters.capture_canary_snapshot)
+            : parameters.captureCanarySnapshot !== undefined
+            ? Boolean(parameters.captureCanarySnapshot)
+            : true;
+        const canarySnapshot = shouldCaptureCanarySnapshot
+          ? await paperTradingTuningApplyService
+              .getCanaryStatus({
+                username: parameters.username,
+                user_id: parameters.user_id || parameters.userId,
+                limit: 5,
+              })
+              .catch((error: any) => {
+                logger.warn(
+                  `Canary 评审快照自动沉淀失败，交易计划继续完成: ${error?.message || error}`
+                );
+                return null;
+              })
+          : null;
 
         await this.safeUpdateExecutionLog(executionLog, {
           total_items: result.summary.action_count,
@@ -1683,6 +1704,21 @@ class SchedulerService {
                   cache_miss_count: hindsightRefresh.summary?.cache_miss_count,
                 }
               : null,
+            canary_snapshot_capture: canarySnapshot?.active
+              ? {
+                  snapshot_id: canarySnapshot.snapshot_capture?.snapshot_id,
+                  action: canarySnapshot.review?.action,
+                  action_label: canarySnapshot.review?.action_label,
+                  review_score: canarySnapshot.review?.review_score,
+                  ready_for_review: canarySnapshot.review?.ready_for_review,
+                  closed_count: canarySnapshot.review?.metrics?.closed_count,
+                  avg_excess_return_pct: canarySnapshot.review?.metrics?.avg_excess_return_pct,
+                  drawdown_guard_passed: canarySnapshot.review?.drawdown_guard?.passed,
+                }
+              : {
+                  captured: false,
+                  reason: canarySnapshot?.summary?.conclusion || '暂无正在观察的 Canary 调参。',
+                },
           },
           status: 'COMPLETED',
           completed_at: new Date(),
@@ -1694,7 +1730,7 @@ class SchedulerService {
             result.summary.urgent_count
           }，入场 ${result.summary.entry_count}，退出 ${result.summary.exit_count}，后验快照 ${
             hindsightRefresh?.refreshed_count ?? 0
-          }`
+          }，Canary快照 ${canarySnapshot?.snapshot_capture?.snapshot_id || '无'}`
         );
       } else if (task.type === 'AUTO_RECOMMENDATION_LOOP') {
         const result = await automatedRecommendationLoopService.run({
@@ -2759,6 +2795,7 @@ class SchedulerService {
           min_sell_signal_score: 60,
           sell_signal_source_type: 'all',
           report_to_feishu: true,
+          capture_canary_snapshot: true,
         },
       },
     ];
