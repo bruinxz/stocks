@@ -590,9 +590,17 @@ export class PaperTradingTuningApplyService {
         conclusion,
       },
     };
-    await this.recordCanaryReviewSnapshot(result, options).catch(error =>
-      logger.warn(`记录 Canary 评审快照失败: ${error?.message || error}`)
-    );
+    const snapshot = await this.recordCanaryReviewSnapshot(result, options).catch(error => {
+      logger.warn(`记录 Canary 评审快照失败: ${error?.message || error}`);
+      return null;
+    });
+    if (snapshot) {
+      (result as any).snapshot_capture = {
+        captured: true,
+        snapshot_id: Number((snapshot as any).id),
+        generated_at: (snapshot as any).generated_at,
+      };
+    }
     return result;
   }
 

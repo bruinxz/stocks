@@ -1718,3 +1718,29 @@ Next:
 1. Add a scheduled snapshot capture after the daily simulated-trading run so Canary review memory grows even when nobody opens the page.
 2. Reduce optional smoke timeout risk on opening-preflight by caching command-center preflight results or adding a lightweight summary endpoint.
 3. Add a compact “why this Canary candidate” drawer that shows family-hindsight consensus accounts and false-reject/saved-loss examples.
+
+### 2026-05-22 scheduled Canary snapshot capture
+
+Focus: make Canary review memory grow automatically after the daily paper-trading plan, without relying on a human opening the page.
+
+Completed:
+
+- `getCanaryStatus` now returns `snapshot_capture` when a review snapshot is written or de-duplicated.
+- The `PAPER_TRADING_DAILY_PLAN` scheduler branch now captures the latest Canary review snapshot after:
+  - generating the trading plan;
+  - refreshing order-intent hindsight snapshots.
+- The task execution `result_summary` now includes `canary_snapshot_capture` with:
+  - snapshot id;
+  - review action/score;
+  - ready-for-review flag;
+  - closed sample count;
+  - average excess return;
+  - drawdown guard result.
+- Default `模拟盘交易计划报告` task now includes `capture_canary_snapshot: true`.
+- Runtime schema health now treats `paper_trading_canary_review_snapshots` as a critical closed-loop table.
+
+Next:
+
+1. Reduce optional smoke timeout risk on opening-preflight by caching command-center preflight results or adding a lightweight summary endpoint.
+2. Add a compact “why this Canary candidate” drawer that shows family-hindsight consensus accounts and false-reject/saved-loss examples.
+3. Add Canary snapshot trend charts: score, avg excess return, win rate and drawdown guard over time.

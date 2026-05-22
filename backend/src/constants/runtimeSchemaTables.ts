@@ -15,6 +15,7 @@ export const RUNTIME_SCHEMA_TABLES = [
   'paper_trading_snapshots',
   'paper_trading_order_intents',
   'paper_trading_order_intent_outcomes',
+  'paper_trading_canary_review_snapshots',
   'risk_alerts',
   'trading_journals',
   'portfolio_simulations',
@@ -63,6 +64,7 @@ export const CRITICAL_RUNTIME_SCHEMA_TABLES = [
   'paper_trading_trades',
   'paper_trading_order_intents',
   'paper_trading_order_intent_outcomes',
+  'paper_trading_canary_review_snapshots',
   'task_parameter_audit_logs',
 ] as const;
 
@@ -117,6 +119,18 @@ export const RUNTIME_SCHEMA_REQUIRED_COLUMNS: Record<
   paper_trading_order_intent_outcomes: {
     critical: true,
     columns: ['intent_id', 'portfolio_id', 'symbol', 'evaluation_status', 'horizons'],
+  },
+  paper_trading_canary_review_snapshots: {
+    critical: true,
+    columns: [
+      'generated_at',
+      'snapshot_date',
+      'status',
+      'action',
+      'review_score',
+      'closed_count',
+      'review',
+    ],
   },
   scheduled_tasks: {
     critical: true,
