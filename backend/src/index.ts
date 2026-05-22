@@ -27,6 +27,7 @@ import todayRoutes from './api/routes/today.routes';
 import reviewRoutes from './api/routes/review.routes';
 import strategyResearchRoutes from './api/routes/strategyResearch.routes';
 import signalTraceRoutes from './api/routes/signalTrace.routes';
+import liveTradingRoutes from './live-trading/routes/liveTrading.routes';
 import './jobs/dataUpdateWorker'; // 初始化数据更新队列处理器
 import './jobs/aiPollingWorker'; // 初始化 AI 分析轮询队列处理器
 import './jobs/quantBacktestWorker'; // 初始化量化跑分队列处理器
@@ -90,6 +91,7 @@ app.use('/api/today', todayRoutes);
 app.use('/api/review', reviewRoutes);
 app.use('/api/strategy-research', strategyResearchRoutes);
 app.use('/api/signals', signalTraceRoutes);
+app.use('/api/live-trading', liveTradingRoutes);
 
 import { User } from './models/User';
 import { AIInvestmentSignal } from './models/AIInvestmentSignal';
@@ -114,6 +116,13 @@ import { RealtimeQuote } from './models/RealtimeQuote';
 import { StockFundamentalFactor } from './models/StockFundamentalFactor';
 import { StockMoneyFlowFactor } from './models/StockMoneyFlowFactor';
 import { StockValuationFactor } from './models/StockValuationFactor';
+import { LiveBrokerAccount } from './models/LiveBrokerAccount';
+import { LiveAccountSnapshot } from './models/LiveAccountSnapshot';
+import { LivePosition } from './models/LivePosition';
+import { LiveOrderDraft } from './models/LiveOrderDraft';
+import { LiveOrder } from './models/LiveOrder';
+import { LiveTrade } from './models/LiveTrade';
+import { LiveExecutionAuditLog } from './models/LiveExecutionAuditLog';
 import { quantStrategyService } from './quant/services/QuantStrategyService';
 
 async function publicTableExists(tableName: string): Promise<boolean> {
@@ -339,6 +348,13 @@ async function syncRecommendationRuntimeTables(): Promise<void> {
     { model: StockMoneyFlowFactor, label: 'StockMoneyFlowFactor' },
     { model: StockValuationFactor, label: 'StockValuationFactor' },
     { model: TaskParameterAuditLog, label: 'TaskParameterAuditLog' },
+    { model: LiveBrokerAccount, label: 'LiveBrokerAccount' },
+    { model: LiveAccountSnapshot, label: 'LiveAccountSnapshot' },
+    { model: LivePosition, label: 'LivePosition' },
+    { model: LiveOrderDraft, label: 'LiveOrderDraft' },
+    { model: LiveOrder, label: 'LiveOrder' },
+    { model: LiveTrade, label: 'LiveTrade' },
+    { model: LiveExecutionAuditLog, label: 'LiveExecutionAuditLog' },
   ];
 
   const results = [];

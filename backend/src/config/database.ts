@@ -39,6 +39,13 @@ import { RealtimeQuote } from '../models/RealtimeQuote';
 import { StockFundamentalFactor } from '../models/StockFundamentalFactor';
 import { StockMoneyFlowFactor } from '../models/StockMoneyFlowFactor';
 import { StockValuationFactor } from '../models/StockValuationFactor';
+import { LiveBrokerAccount } from '../models/LiveBrokerAccount';
+import { LiveAccountSnapshot } from '../models/LiveAccountSnapshot';
+import { LivePosition } from '../models/LivePosition';
+import { LiveOrderDraft } from '../models/LiveOrderDraft';
+import { LiveOrder } from '../models/LiveOrder';
+import { LiveTrade } from '../models/LiveTrade';
+import { LiveExecutionAuditLog } from '../models/LiveExecutionAuditLog';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -100,6 +107,13 @@ const sequelize = new Sequelize({
     StockFundamentalFactor,
     StockMoneyFlowFactor,
     StockValuationFactor,
+    LiveBrokerAccount,
+    LiveAccountSnapshot,
+    LivePosition,
+    LiveOrderDraft,
+    LiveOrder,
+    LiveTrade,
+    LiveExecutionAuditLog,
   ],
   logging: process.env.NODE_ENV === 'development' ? console.log : false,
   pool: {

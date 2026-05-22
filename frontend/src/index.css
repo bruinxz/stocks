@@ -11653,3 +11653,226 @@ a {
   color: var(--primary);
   font-variant-numeric: tabular-nums;
 }
+
+.live-trading-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.live-trading-hero {
+  background:
+    radial-gradient(circle at 8% 10%, rgba(47, 111, 115, 0.16), transparent 28%),
+    radial-gradient(circle at 92% 0%, rgba(201, 75, 75, 0.1), transparent 26%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(246, 249, 249, 0.92));
+  border: 1px solid rgba(31, 58, 95, 0.08);
+}
+
+.live-trading-hero h1 {
+  margin: 10px 0 8px;
+  color: var(--text-main);
+  font-family: var(--font-display);
+  font-size: 32px;
+  letter-spacing: -0.045em;
+}
+
+.live-trading-hero p {
+  max-width: 780px;
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.7;
+}
+
+.live-trading-boundary-alert {
+  border-radius: 16px;
+  border: 1px solid rgba(31, 58, 95, 0.08);
+}
+
+.live-stat-card {
+  min-height: 132px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.9));
+}
+
+.live-stat-card span {
+  display: block;
+  margin-top: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.live-section-row {
+  margin-top: 2px;
+}
+
+.live-phase-item p {
+  margin: 6px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.live-gateway-card {
+  min-height: 170px;
+  padding: 16px;
+  border-radius: 18px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(244, 247, 248, 0.88));
+  border: 1px solid rgba(15, 23, 42, 0.07);
+}
+
+.live-gateway-card .anticon {
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 12px;
+  border-radius: 12px;
+  color: #2f6f73;
+  background: rgba(47, 111, 115, 0.1);
+}
+
+.live-gateway-card strong,
+.live-gateway-card span {
+  display: block;
+}
+
+.live-gateway-card strong {
+  color: var(--text-main);
+  font-size: 15px;
+}
+
+.live-gateway-card span {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.live-gateway-card p {
+  margin: 10px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.live-risk-limit-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.live-risk-limit-grid div {
+  padding: 10px;
+  border-radius: 14px;
+  background: rgba(248, 250, 252, 0.9);
+  border: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.live-risk-limit-grid span,
+.live-risk-limit-grid strong {
+  display: block;
+}
+
+.live-risk-limit-grid span {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 900;
+  word-break: break-word;
+}
+
+.live-risk-limit-grid strong {
+  margin-top: 5px;
+  color: var(--text-main);
+  font-size: 13px;
+}
+
+.live-draft-form {
+  margin-top: 14px;
+}
+
+.live-confirm-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.live-confirm-summary {
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(248, 250, 252, 0.92);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.live-confirm-summary strong,
+.live-confirm-summary span {
+  display: block;
+}
+
+.live-confirm-summary strong {
+  color: var(--text-main);
+  font-size: 16px;
+}
+
+.live-confirm-summary span {
+  margin-top: 5px;
+  color: var(--text-secondary);
+  font-weight: 800;
+}
+
+.live-risk-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.live-risk-checks > div {
+  display: grid;
+  grid-template-columns: 18px 108px 1fr;
+  gap: 8px;
+  align-items: start;
+  padding: 9px 10px;
+  border-radius: 12px;
+  background: rgba(248, 250, 252, 0.78);
+  border: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.live-risk-checks .passed .anticon {
+  color: #1f8a70;
+}
+
+.live-risk-checks .failed .anticon {
+  color: #c94b4b;
+}
+
+.live-risk-checks span {
+  color: var(--text-main);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.live-risk-checks em {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.45;
+}
+
+@media (max-width: 992px) {
+  .live-risk-limit-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .live-risk-limit-grid,
+  .live-risk-checks > div {
+    grid-template-columns: 1fr;
+  }
+}
