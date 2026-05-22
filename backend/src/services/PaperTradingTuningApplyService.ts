@@ -5,6 +5,8 @@ import { taskParameterAuditService, TaskParameterAuditOperator } from './TaskPar
 import { paperTradingPlanService } from './PaperTradingPlanService';
 import { recommendationTradeOutcomeService } from './RecommendationTradeOutcomeService';
 import { paperTradingOrderIntentService } from './PaperTradingOrderIntentService';
+import { PaperTradingCanaryReviewSnapshot } from '../models/PaperTradingCanaryReviewSnapshot';
+import { logger } from '../utils/logger';
 
 interface ApplyOrderIntentTuningOptions {
   dry_run?: boolean;
@@ -21,6 +23,7 @@ interface ApplyOrderIntentTuningOptions {
   family_hindsight_limit?: number;
   family_hindsight_min_consensus?: number;
   family_hindsight_min_evaluated?: number;
+  limit?: number;
   user_id?: number;
   username?: string;
   operator?: TaskParameterAuditOperator;
@@ -252,6 +255,12 @@ function toPlain(record: any): any {
   if (!record) return record;
   if (typeof record.toJSON === 'function') return record.toJSON();
   return record;
+}
+
+function stripSnapshotStatus(status: any) {
+  if (!status || typeof status !== 'object') return status;
+  const { audits, audit, ...safeStatus } = status;
+  return safeStatus;
 }
 
 export class PaperTradingTuningApplyService {
@@ -555,7 +564,7 @@ export class PaperTradingTuningApplyService {
       canary
     );
 
-    return {
+    const result = {
       active: true,
       generated_at: new Date().toISOString(),
       audit: activeAudit,
@@ -580,6 +589,75 @@ export class PaperTradingTuningApplyService {
       summary: {
         conclusion,
       },
+    };
+    await this.recordCanaryReviewSnapshot(result, options).catch(error =>
+      logger.warn(`记录 Canary 评审快照失败: ${error?.message || error}`)
+    );
+    return result;
+  }
+
+  async listCanaryReviewSnapshots(options: ApplyOrderIntentTuningOptions = {}) {
+    const limit = toPositiveInt(options.limit, 12, 100);
+    const where: any = {};
+    if (options.user_id) {
+      where.user_id = options.user_id;
+    } else if (options.username) {
+      where.username = options.username;
+    }
+
+    const rows = await PaperTradingCanaryReviewSnapshot.findAll({
+      where,
+      order: [['generated_at', 'DESC']],
+      limit,
+    });
+    const snapshots = rows.map(row => {
+      const plain = toPlain(row);
+      return {
+        ...plain,
+        review_score: roundNumber(plain.review_score, 2),
+        avg_excess_return_pct: roundNumber(plain.avg_excess_return_pct, 4),
+        avg_closed_return_pct: roundNumber(plain.avg_closed_return_pct, 4),
+        avg_mae_pct: roundNumber(plain.avg_mae_pct, 4),
+        worst_adverse_excursion_pct: roundNumber(plain.worst_adverse_excursion_pct, 4),
+        win_rate: roundNumber(plain.win_rate, 2),
+        profit_factor: roundNumber(plain.profit_factor, 4),
+        total_pnl: roundNumber(plain.total_pnl, 2),
+      };
+    });
+
+    const latest = snapshots[0];
+    const promoteCount = snapshots.filter(item => item.action === 'promote').length;
+    const rollbackCount = snapshots.filter(item => item.action === 'rollback').length;
+    const drawdownBlockedCount = snapshots.filter(
+      item => item.drawdown_guard_passed === false
+    ).length;
+    const avgScore =
+      snapshots.length > 0
+        ? roundNumber(
+            snapshots.reduce((sum, item) => sum + Number(item.review_score || 0), 0) /
+              snapshots.length,
+            2
+          )
+        : 0;
+
+    return {
+      generated_at: new Date().toISOString(),
+      summary: {
+        snapshot_count: snapshots.length,
+        latest_action: latest?.action,
+        latest_action_label: latest?.action_label,
+        latest_review_score: latest?.review_score,
+        promote_count: promoteCount,
+        rollback_count: rollbackCount,
+        drawdown_blocked_count: drawdownBlockedCount,
+        avg_review_score: avgScore,
+        conclusion: latest
+          ? `最近一次 Canary 评审为「${latest.action_label || latest.action || '未知'}」，评分 ${
+              latest.review_score || 0
+            }，闭环 ${latest.closed_count || 0} 笔。`
+          : '暂无 Canary 评审快照；刷新 Canary 状态后会自动沉淀快照。',
+      },
+      snapshots,
     };
   }
 
@@ -960,6 +1038,108 @@ export class PaperTradingTuningApplyService {
           ? `Canary 后闭环 ${closedCount} 笔，平均超额 ${avgExcess}%，收益贡献偏正。`
           : `Canary 后闭环 ${closedCount} 笔，平均超额 ${avgExcess}%，收益贡献仍需谨慎。`,
     };
+  }
+
+  private async recordCanaryReviewSnapshot(status: any, options: ApplyOrderIntentTuningOptions) {
+    if (!status?.active || !status.review) return null;
+
+    const generatedAt = new Date(status.generated_at || Date.now());
+    const review = status.review || {};
+    const metrics = review.metrics || {};
+    const observation = status.observation || {};
+    const outcomeSummary = status.outcome_summary || {};
+    const attribution = status.attribution || {};
+    const evidence = status.evidence || {};
+    const auditId = Number(status.audit?.id || 0) || undefined;
+    const coreFingerprint = {
+      action: review.action,
+      ready_for_review: Boolean(review.ready_for_review),
+      closed_count: Number(metrics.closed_count ?? outcomeSummary.closed_count ?? 0),
+      open_count: Number(metrics.open_count ?? outcomeSummary.open_count ?? 0),
+      review_score: roundNumber(review.review_score, 2),
+      drawdown_guard_passed:
+        review.drawdown_guard?.passed === undefined
+          ? undefined
+          : Boolean(review.drawdown_guard.passed),
+    };
+    const latestWhere: any = {};
+    if (auditId) latestWhere.audit_id = auditId;
+    if (options.user_id) latestWhere.user_id = options.user_id;
+    else if (options.username) latestWhere.username = options.username;
+
+    if (Object.keys(latestWhere).length > 0) {
+      const latest = await PaperTradingCanaryReviewSnapshot.findOne({
+        where: latestWhere,
+        order: [['generated_at', 'DESC']],
+      });
+      const latestPlain = toPlain(latest);
+      const latestGeneratedAt = latestPlain?.generated_at
+        ? new Date(latestPlain.generated_at).getTime()
+        : 0;
+      const recentEnough =
+        latestGeneratedAt > 0 && generatedAt.getTime() - latestGeneratedAt < 6 * 60 * 60 * 1000;
+      const sameFingerprint =
+        latestPlain &&
+        latestPlain.action === coreFingerprint.action &&
+        Boolean(latestPlain.ready_for_review) === coreFingerprint.ready_for_review &&
+        Number(latestPlain.closed_count || 0) === coreFingerprint.closed_count &&
+        Number(latestPlain.open_count || 0) === coreFingerprint.open_count &&
+        roundNumber(latestPlain.review_score, 2) === coreFingerprint.review_score &&
+        latestPlain.drawdown_guard_passed === coreFingerprint.drawdown_guard_passed;
+      if (recentEnough && sameFingerprint) {
+        return latest;
+      }
+    }
+
+    return PaperTradingCanaryReviewSnapshot.create({
+      generated_at: generatedAt,
+      snapshot_date: generatedAt.toISOString().slice(0, 10),
+      user_id: options.user_id,
+      username: options.username,
+      audit_id: auditId,
+      canary_applied_at: status.audit?.created_at ? new Date(status.audit.created_at) : undefined,
+      status: 'active',
+      action: review.action,
+      action_label: review.action_label,
+      review_score: roundNumber(review.review_score, 2),
+      ready_for_review: Boolean(review.ready_for_review),
+      outcome_tone: observation.outcome_tone,
+      closed_count: coreFingerprint.closed_count,
+      open_count: coreFingerprint.open_count,
+      avg_excess_return_pct: roundNumber(
+        metrics.avg_excess_return_pct ?? outcomeSummary.avg_excess_return_pct,
+        4
+      ),
+      avg_closed_return_pct: roundNumber(
+        metrics.avg_closed_return_pct ?? outcomeSummary.avg_closed_return_pct,
+        4
+      ),
+      avg_mae_pct: roundNumber(metrics.avg_mae_pct ?? outcomeSummary.avg_mae_pct, 4),
+      worst_adverse_excursion_pct: roundNumber(
+        metrics.worst_adverse_excursion_pct ??
+          outcomeSummary.worst_trade?.max_adverse_excursion_pct,
+        4
+      ),
+      win_rate: roundNumber(metrics.win_rate ?? outcomeSummary.win_rate, 2),
+      profit_factor: roundNumber(metrics.profit_factor ?? outcomeSummary.profit_factor, 4),
+      total_pnl: roundNumber(outcomeSummary.total_pnl ?? attribution.total_pnl, 2),
+      drawdown_guard_passed: coreFingerprint.drawdown_guard_passed,
+      selected_parameter_keys: review.selected_parameter_keys || [],
+      evidence_sources: evidence.evidence_sources || status.canary?.evidence_sources || [],
+      observation,
+      outcome_summary: outcomeSummary,
+      review,
+      attribution,
+      evidence,
+      rollback_plan: status.rollback_plan || {},
+      recent_outcomes: Array.isArray(status.recent_outcomes) ? status.recent_outcomes.slice(0, 8) : [],
+      metadata: {
+        source: 'paper_trading_canary_status',
+        related_audit_count: status.related_audit_count || 1,
+        summary: status.summary || {},
+        safe_status: stripSnapshotStatus(status),
+      },
+    });
   }
 
   private buildCanaryReview(input: {

@@ -260,6 +260,17 @@ router.get(
 );
 
 /**
+ * @route GET /api/paper-trading/order-intent-tuning/canary/snapshots
+ * @desc 获取订单意图 Canary 评审快照时间线
+ * @access Private
+ */
+router.get(
+  '/order-intent-tuning/canary/snapshots',
+  authController.authenticate,
+  paperTradingController.getOrderIntentTuningCanarySnapshots
+);
+
+/**
  * @route GET /api/paper-trading/order-intent-tuning/canary
  * @desc 获取订单意图 Canary 小流量调参观察状态
  * @access Private
