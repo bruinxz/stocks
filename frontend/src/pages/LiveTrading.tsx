@@ -23,6 +23,7 @@ import {
 import {
   AuditOutlined,
   BranchesOutlined,
+  BulbOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
   LockOutlined,
@@ -156,6 +157,19 @@ interface LiveReconciliation {
   };
 }
 
+interface LiveDraftCandidateDashboard {
+  generated_at: string;
+  account_ready: boolean;
+  candidates: any[];
+  summary: {
+    total_count: number;
+    eligible_count: number;
+    duplicate_count: number;
+    blocked_count: number;
+    conclusion: string;
+  };
+}
+
 const formatMoney = (value?: number | null) =>
   `¥${Number(value || 0).toLocaleString(undefined, {
     minimumFractionDigits: 2,
@@ -200,8 +214,10 @@ const matchColor: Record<string, string> = {
 
 const LiveTrading: React.FC = () => {
   const [overview, setOverview] = useState<LiveOverview | null>(null);
+  const [draftCandidates, setDraftCandidates] = useState<LiveDraftCandidateDashboard | null>(null);
   const [loading, setLoading] = useState(false);
   const [draftLoading, setDraftLoading] = useState(false);
+  const [candidateLoading, setCandidateLoading] = useState(false);
   const [syncLoading, setSyncLoading] = useState(false);
   const [isDraftModalOpen, setIsDraftModalOpen] = useState(false);
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
@@ -222,8 +238,24 @@ const LiveTrading: React.FC = () => {
     }
   };
 
+  const fetchDraftCandidates = async (silent = false) => {
+    setCandidateLoading(true);
+    try {
+      const response = await api.get('/live-trading/order-draft-candidates', {
+        params: { limit: 20 },
+      });
+      setDraftCandidates(response.data.data);
+      if (!silent) message.success('策略草稿候选已刷新');
+    } catch (error: any) {
+      message.error(error.response?.data?.message || '获取策略草稿候选失败');
+    } finally {
+      setCandidateLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchOverview(true);
+    fetchDraftCandidates(true);
   }, []);
 
   const safety = overview?.readiness?.safety;
@@ -243,6 +275,7 @@ const LiveTrading: React.FC = () => {
       setIsDraftModalOpen(false);
       draftForm.resetFields();
       await fetchOverview(true);
+      await fetchDraftCandidates(true);
     } catch (error: any) {
       if (error?.errorFields) return;
       message.error(error.response?.data?.message || '创建订单草稿失败');
@@ -257,6 +290,7 @@ const LiveTrading: React.FC = () => {
       await api.post(`/live-trading/order-drafts/${draft.id}/reject`, { reason: '用户在页面拒绝' });
       message.success('已拒绝订单草稿');
       await fetchOverview(true);
+      await fetchDraftCandidates(true);
     } catch (error: any) {
       message.error(error.response?.data?.message || '拒绝订单草稿失败');
     } finally {
@@ -284,6 +318,7 @@ const LiveTrading: React.FC = () => {
       message.success('订单草稿已确认');
       setIsConfirmModalOpen(false);
       await fetchOverview(true);
+      await fetchDraftCandidates(true);
     } catch (error: any) {
       message.error(error.response?.data?.message || '确认被安全边界阻断');
     } finally {
@@ -297,6 +332,7 @@ const LiveTrading: React.FC = () => {
       await api.post('/live-trading/accounts/sync-readonly', {});
       message.success('只读账户同步完成');
       await fetchOverview(true);
+      await fetchDraftCandidates(true);
     } catch (error: any) {
       message.warning(error.response?.data?.message || '当前未启用真实券商只读同步');
     } finally {
@@ -305,6 +341,22 @@ const LiveTrading: React.FC = () => {
   };
 
   const riskChecks = useMemo(() => selectedDraft?.risk_check?.checks || [], [selectedDraft]);
+
+  const createDraftFromCandidate = async (candidate: any) => {
+    setCandidateLoading(true);
+    try {
+      const response = await api.post('/live-trading/order-drafts/from-candidate', {
+        symbol: candidate.symbol,
+      });
+      message.success(response.data.message || '策略候选已生成实盘订单草稿');
+      await fetchOverview(true);
+      await fetchDraftCandidates(true);
+    } catch (error: any) {
+      message.warning(error.response?.data?.message || '该候选暂不能生成实盘草稿');
+    } finally {
+      setCandidateLoading(false);
+    }
+  };
 
   const reconcileColumns = [
     {
@@ -453,6 +505,86 @@ const LiveTrading: React.FC = () => {
             拒绝
           </Button>
         </Space>
+      ),
+    },
+  ];
+
+  const candidateColumns = [
+    {
+      title: '候选标的',
+      dataIndex: 'symbol',
+      render: (_: any, record: any) => (
+        <Space direction="vertical" size={0}>
+          <Text strong>{record.name || record.symbol}</Text>
+          <Text type="secondary">{record.symbol}</Text>
+        </Space>
+      ),
+    },
+    {
+      title: '来源差异',
+      render: (_: any, record: any) => (
+        <Space direction="vertical" size={2}>
+          <Tag color={matchColor[record.candidate_type] || 'blue'}>
+            {record.status_label || record.candidate_type}
+          </Tag>
+          <Text type="secondary">权重差 {Number(record.weight_gap_pct || 0).toFixed(2)}%</Text>
+        </Space>
+      ),
+    },
+    {
+      title: '建议草稿',
+      render: (_: any, record: any) => (
+        <Space direction="vertical" size={0}>
+          <Text>{Number(record.suggested_quantity || 0).toLocaleString()} 股</Text>
+          <Text type="secondary">限价 ¥{Number(record.suggested_limit_price || 0).toFixed(2)}</Text>
+          <Text type="secondary">{formatMoney(record.estimated_amount)}</Text>
+        </Space>
+      ),
+    },
+    {
+      title: '行情',
+      render: (_: any, record: any) => {
+        const quote = record.quote_snapshot || {};
+        return (
+          <Space direction="vertical" size={0}>
+            <Tag color={quote.is_realtime ? 'green' : quote.current_price ? 'gold' : 'default'}>
+              {quote.current_price ? `¥${Number(quote.current_price).toFixed(2)}` : '无行情'}
+            </Tag>
+            <Text type="secondary">
+              {quote.latency_seconds !== undefined
+                ? `延迟 ${Math.round(Number(quote.latency_seconds || 0))} 秒`
+                : '等待行情'}
+            </Text>
+          </Space>
+        );
+      },
+    },
+    {
+      title: '状态',
+      render: (_: any, record: any) => (
+        <Space direction="vertical" size={2}>
+          <Tag color={record.eligible ? 'green' : record.duplicate_draft ? 'purple' : 'default'}>
+            {record.eligible ? '可生成草稿' : record.duplicate_draft ? '已有草稿' : '暂不满足'}
+          </Tag>
+          {!record.eligible && (
+            <Text type="secondary">{record.block_reason || '等待条件满足'}</Text>
+          )}
+        </Space>
+      ),
+    },
+    {
+      title: '操作',
+      fixed: 'right' as const,
+      render: (_: any, record: any) => (
+        <Button
+          size="small"
+          type="primary"
+          disabled={!record.eligible}
+          loading={candidateLoading}
+          onClick={() => createDraftFromCandidate(record)}
+        >
+          生成草稿
+        </Button>
       ),
     },
   ];
@@ -780,6 +912,70 @@ const LiveTrading: React.FC = () => {
             </Card>
           </Col>
         </Row>
+
+        <Card
+          className="modern-card live-candidate-card"
+          variant="borderless"
+          title={
+            <Space>
+              <BulbOutlined />
+              <span>策略候选生成实盘草稿</span>
+            </Space>
+          }
+          extra={
+            <Button
+              size="small"
+              icon={<ReloadOutlined />}
+              onClick={() => fetchDraftCandidates(false)}
+              loading={candidateLoading}
+            >
+              刷新候选
+            </Button>
+          }
+        >
+          <Alert
+            className="live-candidate-alert"
+            type={draftCandidates?.summary?.eligible_count ? 'info' : 'warning'}
+            showIcon
+            message={draftCandidates?.summary?.conclusion || '正在检查策略候选是否可以进入实盘草稿'}
+            description="这里会把“仅模拟建议 / 实盘偏轻”的股票转成候选草稿；点击后只创建订单草稿，不会真实下单，确认前仍会重新跑行情 SLA、只读账户快照和风控。"
+          />
+          <div className="live-candidate-metrics">
+            <div>
+              <span>候选</span>
+              <strong>{draftCandidates?.summary?.total_count || 0}</strong>
+            </div>
+            <div>
+              <span>可生成</span>
+              <strong>{draftCandidates?.summary?.eligible_count || 0}</strong>
+            </div>
+            <div>
+              <span>已有草稿</span>
+              <strong>{draftCandidates?.summary?.duplicate_count || 0}</strong>
+            </div>
+            <div>
+              <span>阻断</span>
+              <strong>{draftCandidates?.summary?.blocked_count || 0}</strong>
+            </div>
+          </div>
+          <Table
+            columns={candidateColumns}
+            dataSource={draftCandidates?.candidates || []}
+            rowKey={(record: any) => `${record.symbol}-${record.candidate_type}`}
+            size="small"
+            loading={candidateLoading}
+            pagination={{ pageSize: 6 }}
+            scroll={{ x: 'max-content' }}
+            locale={{
+              emptyText: (
+                <Empty
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  description="暂无策略草稿候选。需要模拟策略账户有持仓，且券商只读账户完成同步后才会出现。"
+                />
+              ),
+            }}
+          />
+        </Card>
 
         <Card className="modern-card" variant="borderless" title="实盘订单草稿">
           <Table

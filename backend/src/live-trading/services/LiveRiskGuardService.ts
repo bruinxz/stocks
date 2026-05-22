@@ -47,6 +47,15 @@ export class LiveRiskGuardService {
 
     const checks = [
       {
+        key: 'account_snapshot',
+        passed: totalAsset > 0,
+        label: '券商只读资产快照',
+        message:
+          totalAsset > 0
+            ? `已获取只读资产快照，总资产 ¥${totalAsset.toLocaleString()}`
+            : '缺少券商只读资产快照，禁止形成可提交实盘草稿',
+      },
+      {
         key: 'round_lot',
         passed: quantity > 0 && quantity % 100 === 0,
         label: 'A股整手校验',
@@ -72,7 +81,7 @@ export class LiveRiskGuardService {
       },
       {
         key: 'cash_available',
-        passed: input.side === 'SELL' || availableCash === 0 || estimatedAmount <= availableCash,
+        passed: input.side === 'SELL' || (availableCash > 0 && estimatedAmount <= availableCash),
         label: '可用资金校验',
         message:
           input.side === 'SELL'
