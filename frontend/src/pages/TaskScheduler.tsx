@@ -46,6 +46,7 @@ import {
 import {
   AutomationHealth,
   AutomationHealthChain,
+  LiveShadowBudgetApplyResult,
   QueueJobSummary,
   RiskLimitSuggestionApplyResult,
   ScheduledTask,
@@ -334,6 +335,7 @@ const auditEventLabels: Record<string, string> = {
   risk_limit_suggestion_applied: '风险阈值应用',
   risk_stability_settings_updated: '稳定性门槛',
   live_shadow_budget_suggestion: '影子预算建议',
+  live_shadow_budget_applied: '影子预算已应用',
   deployment_smoke_passed: '部署验证通过',
   deployment_smoke_failed: '部署验证失败',
   deployment_smoke_skipped: '部署验证跳过',
@@ -345,6 +347,7 @@ const auditEventColors: Record<string, string> = {
   risk_limit_suggestion_applied: 'green',
   risk_stability_settings_updated: 'purple',
   live_shadow_budget_suggestion: 'cyan',
+  live_shadow_budget_applied: 'green',
   deployment_smoke_passed: 'green',
   deployment_smoke_failed: 'red',
   deployment_smoke_skipped: 'gold',
@@ -425,7 +428,11 @@ const TaskScheduler: React.FC = () => {
   const [riskLimitPreview, setRiskLimitPreview] = useState<RiskLimitSuggestionApplyResult | null>(
     null
   );
+  const [shadowBudgetApplying, setShadowBudgetApplying] = useState(false);
+  const [shadowBudgetPreview, setShadowBudgetPreview] =
+    useState<LiveShadowBudgetApplyResult | null>(null);
   const [isRiskLimitModalVisible, setIsRiskLimitModalVisible] = useState(false);
+  const [isShadowBudgetModalVisible, setIsShadowBudgetModalVisible] = useState(false);
   const [isStabilityModalVisible, setIsStabilityModalVisible] = useState(false);
   const [stabilitySaving, setStabilitySaving] = useState(false);
   const [auditLogs, setAuditLogs] = useState<TaskParameterAuditLog[]>([]);
@@ -560,6 +567,9 @@ const TaskScheduler: React.FC = () => {
       : latestDeploymentAudit
       ? 'healthy'
       : 'warning';
+  const latestShadowBudgetSuggestion = auditLogs.find(
+    item => item.event_type === 'live_shadow_budget_suggestion'
+  );
   const visibleAuditLogs = auditExpanded ? auditLogs : auditLogs.slice(0, 4);
 
   const taskStats = useMemo(() => {
@@ -697,6 +707,53 @@ const TaskScheduler: React.FC = () => {
           message.error(error?.response?.data?.message || '应用风险阈值建议失败');
         } finally {
           setRiskLimitApplying(false);
+        }
+      },
+    });
+  };
+
+  const handlePreviewShadowBudgetApply = async (audit?: TaskParameterAuditLog) => {
+    setShadowBudgetApplying(true);
+    try {
+      const result = await taskService.applyLiveShadowBudgetSuggestion({
+        audit_id: audit?.id || latestShadowBudgetSuggestion?.id,
+        dry_run: true,
+      });
+      setShadowBudgetPreview(result);
+      setIsShadowBudgetModalVisible(true);
+      if (!result.changed_keys?.length) {
+        message.info(result.message || '影子预算已与建议一致');
+      }
+    } catch (error: any) {
+      message.error(error?.response?.data?.message || '生成影子预算应用预览失败');
+    } finally {
+      setShadowBudgetApplying(false);
+    }
+  };
+
+  const handleConfirmShadowBudgetApply = () => {
+    if (!shadowBudgetPreview?.audit_id) return;
+    Modal.confirm({
+      title: '确认应用影子预算建议',
+      content:
+        '该操作只会更新 LIVE_SHADOW_AUTOPILOT 的影子执行 limit 和说明字段，不会执行任务，也不会提交真实券商委托。',
+      okText: '确认应用',
+      cancelText: '再看看',
+      onOk: async () => {
+        setShadowBudgetApplying(true);
+        try {
+          const result = await taskService.applyLiveShadowBudgetSuggestion({
+            audit_id: shadowBudgetPreview.audit_id,
+            dry_run: false,
+          });
+          message.success(result.message || '影子预算建议已应用');
+          setIsShadowBudgetModalVisible(false);
+          setShadowBudgetPreview(null);
+          await refreshAll();
+        } catch (error: any) {
+          message.error(error?.response?.data?.message || '应用影子预算建议失败');
+        } finally {
+          setShadowBudgetApplying(false);
         }
       },
     });
@@ -1062,7 +1119,19 @@ const TaskScheduler: React.FC = () => {
             {fromOutcomeAdvice && <Tag color="cyan">收益后验建议</Tag>}
             {isShadowBudgetSuggestion && <Tag color="geekblue">仅候选不自动应用</Tag>}
           </Space>
-          <Text type="secondary">{formatDateTime(item.created_at)}</Text>
+          <Space size={6}>
+            {isShadowBudgetSuggestion && (
+              <Button
+                size="small"
+                type="link"
+                loading={shadowBudgetApplying}
+                onClick={() => handlePreviewShadowBudgetApply(item)}
+              >
+                应用预览
+              </Button>
+            )}
+            <Text type="secondary">{formatDateTime(item.created_at)}</Text>
+          </Space>
         </div>
         <div className="task-audit-row__body">
           <Text type="secondary">
@@ -1636,6 +1705,42 @@ const TaskScheduler: React.FC = () => {
               : '风险阈值、稳定性门槛和任务参数改动都会留下改前/改后差异，方便后续回看某次调参是否提升了荐股收益。'
           }
         />
+        {latestShadowBudgetSuggestion && (
+          <Alert
+            className="task-shadow-budget-advice"
+            type="info"
+            showIcon
+            message="影子执行预算有候选补丁"
+            description={
+              <Space direction="vertical" size={4}>
+                <Text>
+                  {latestShadowBudgetSuggestion.metadata?.outcome_summary?.budget_label ||
+                    latestShadowBudgetSuggestion.after_parameters?.shadow_budget_advice?.label ||
+                    '影子预算建议'}
+                  ：limit {latestShadowBudgetSuggestion.before_parameters?.limit ?? '-'} →{' '}
+                  {latestShadowBudgetSuggestion.after_parameters?.limit ?? '-'}。
+                  该补丁只影响影子执行频次，不会触发真实下单。
+                </Text>
+                <Text type="secondary">
+                  {latestShadowBudgetSuggestion.metadata?.outcome_summary?.budget_reason ||
+                    latestShadowBudgetSuggestion.after_parameters?.shadow_budget_advice?.reason ||
+                    '建议先预览差异，再手动应用。'}
+                </Text>
+              </Space>
+            }
+            action={
+              <Button
+                size="small"
+                type="primary"
+                ghost
+                loading={shadowBudgetApplying}
+                onClick={() => handlePreviewShadowBudgetApply(latestShadowBudgetSuggestion)}
+              >
+                预览应用
+              </Button>
+            }
+          />
+        )}
         {auditLogs.length ? (
           <>
             <div className="task-audit-list">{visibleAuditLogs.map(renderAuditLog)}</div>
@@ -2091,6 +2196,134 @@ const TaskScheduler: React.FC = () => {
         formatRiskLimitValue={formatRiskLimitValue}
         getRiskFieldEvidenceScore={getRiskFieldEvidenceScore}
       />
+
+      <Modal
+        title={
+          <Space>
+            <SafetyCertificateOutlined />
+            影子预算建议预览
+          </Space>
+        }
+        open={isShadowBudgetModalVisible}
+        onCancel={() => {
+          setIsShadowBudgetModalVisible(false);
+          setShadowBudgetPreview(null);
+        }}
+        width={760}
+        footer={[
+          <Button
+            key="cancel"
+            onClick={() => {
+              setIsShadowBudgetModalVisible(false);
+              setShadowBudgetPreview(null);
+            }}
+          >
+            先不应用
+          </Button>,
+          <Button
+            key="refresh"
+            loading={shadowBudgetApplying}
+            onClick={() =>
+              handlePreviewShadowBudgetApply(
+                shadowBudgetPreview
+                  ? ({
+                      id: shadowBudgetPreview.audit_id,
+                    } as TaskParameterAuditLog)
+                  : undefined
+              )
+            }
+          >
+            重新预览
+          </Button>,
+          <Button
+            key="apply"
+            type="primary"
+            loading={shadowBudgetApplying}
+            disabled={!shadowBudgetPreview?.changed_keys?.length}
+            onClick={handleConfirmShadowBudgetApply}
+          >
+            应用到影子任务
+          </Button>,
+        ]}
+      >
+        {shadowBudgetPreview ? (
+          <Space direction="vertical" size={16} style={{ width: '100%' }}>
+            <Alert
+              type="success"
+              showIcon
+              className="task-shadow-budget-modal__guard"
+              message="安全边界：只调整影子执行预算"
+              description="该操作仅更新 LIVE_SHADOW_AUTOPILOT 的 limit 与影子预算说明，不会立即执行任务，不会创建真实券商委托，也不会改动历史交易记录。"
+            />
+
+            <div className="task-shadow-budget-modal__hero">
+              <div>
+                <Text type="secondary">目标任务</Text>
+                <Title level={5} style={{ margin: '4px 0 0' }}>
+                  {shadowBudgetPreview.target_task_name || 'LIVE_SHADOW_AUTOPILOT'}
+                </Title>
+                <Text type="secondary">审计 #{shadowBudgetPreview.audit_id}</Text>
+              </div>
+              <div className="task-shadow-budget-modal__limit">
+                <span>{shadowBudgetPreview.current_limit ?? '-'}</span>
+                <b>→</b>
+                <span>{shadowBudgetPreview.suggested_limit ?? '-'}</span>
+              </div>
+            </div>
+
+            <Descriptions bordered size="small" column={1}>
+              <Descriptions.Item label="目标任务 ID">
+                {shadowBudgetPreview.target_task_id}
+              </Descriptions.Item>
+              <Descriptions.Item label="变更字段">
+                {(shadowBudgetPreview.changed_keys || []).length ? (
+                  <Space wrap size={[6, 6]}>
+                    {shadowBudgetPreview.changed_keys.map(key => (
+                      <Tag color={key === 'limit' ? 'blue' : 'cyan'} key={key}>
+                        {key}
+                      </Tag>
+                    ))}
+                  </Space>
+                ) : (
+                  <Text type="secondary">当前参数已与建议一致，无需更新</Text>
+                )}
+              </Descriptions.Item>
+              <Descriptions.Item label="应用后说明">
+                {shadowBudgetPreview.suggested_parameters?.shadow_budget_advice?.label ||
+                  shadowBudgetPreview.suggested_parameters?.shadow_budget_advice?.action ||
+                  '-'}
+                {shadowBudgetPreview.suggested_parameters?.shadow_budget_advice?.reason ? (
+                  <Text type="secondary">
+                    {' '}
+                    · {shadowBudgetPreview.suggested_parameters.shadow_budget_advice.reason}
+                  </Text>
+                ) : null}
+              </Descriptions.Item>
+              <Descriptions.Item label="预览结论">
+                {shadowBudgetPreview.message || '-'}
+              </Descriptions.Item>
+            </Descriptions>
+
+            <div>
+              <Title level={5} style={{ marginBottom: 8 }}>
+                建议参数快照
+              </Title>
+              <pre className="task-ops-codeblock task-shadow-budget-modal__json">
+                {stringifyJson({
+                  limit: shadowBudgetPreview.suggested_parameters?.limit,
+                  shadow_budget_advice:
+                    shadowBudgetPreview.suggested_parameters?.shadow_budget_advice,
+                })}
+              </pre>
+            </div>
+          </Space>
+        ) : (
+          <Empty
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description={shadowBudgetApplying ? '正在生成影子预算预览...' : '暂无预览内容'}
+          />
+        )}
+      </Modal>
 
       <Modal
         title={

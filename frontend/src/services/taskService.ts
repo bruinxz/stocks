@@ -238,6 +238,20 @@ export interface RiskLimitSuggestionApplyResult {
   }>;
 }
 
+export interface LiveShadowBudgetApplyResult {
+  dry_run: boolean;
+  applied: boolean;
+  audit_id: number;
+  target_task_id: number;
+  target_task_name: string;
+  current_limit: number;
+  suggested_limit: number;
+  changed_keys: string[];
+  before_parameters: Record<string, any>;
+  suggested_parameters: Record<string, any>;
+  message: string;
+}
+
 export const taskService = {
   async getTasks(): Promise<ScheduledTask[]> {
     const response = await api.get('/tasks');
@@ -255,6 +269,14 @@ export const taskService = {
     source_loop_run_id?: string;
   }): Promise<RiskLimitSuggestionApplyResult> {
     const response = await api.post('/tasks/risk-limit-suggestion/apply', data);
+    return response.data.data;
+  },
+
+  async applyLiveShadowBudgetSuggestion(data: {
+    audit_id?: number;
+    dry_run?: boolean;
+  }): Promise<LiveShadowBudgetApplyResult> {
+    const response = await api.post('/tasks/live-shadow-budget-suggestion/apply', data);
     return response.data.data;
   },
 

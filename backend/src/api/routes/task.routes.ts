@@ -65,6 +65,17 @@ router.post(
 );
 
 /**
+ * @route POST /api/tasks/live-shadow-budget-suggestion/apply
+ * @desc 预览或手动应用影子执行预算候选补丁
+ * @access Private
+ */
+router.post(
+  '/live-shadow-budget-suggestion/apply',
+  authController.authenticate,
+  taskController.applyLiveShadowBudgetSuggestion
+);
+
+/**
  * @route GET /api/tasks/:id/logs
  * @desc 获取定时任务执行日志
  * @access Private
