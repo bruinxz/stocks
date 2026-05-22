@@ -21,6 +21,7 @@ import {
   BarChartOutlined,
   FundProjectionScreenOutlined,
   DownOutlined,
+  SafetyCertificateOutlined,
 } from '@ant-design/icons';
 import zhCN from 'antd/locale/zh_CN';
 import { useSelector, useDispatch } from 'react-redux';
@@ -50,6 +51,7 @@ const AutonomousTradingOverview = lazy(() => import('./pages/AutonomousTradingOv
 const AutonomousRecommendationTracker = lazy(
   () => import('./pages/AutonomousRecommendationTracker')
 );
+const LiveTrading = lazy(() => import('./pages/LiveTrading'));
 const QuantResearchWorkbench = lazy(() => import('./pages/QuantResearchWorkbench'));
 const RiskAlerts = lazy(() => import('./pages/RiskAlerts'));
 const SystemLogs = lazy(() => import('./pages/SystemLogs'));
@@ -214,6 +216,16 @@ const AppContent: React.FC = () => {
           menuLink('/review/performance', <FundProjectionScreenOutlined />, '信号绩效'),
           menuLink('/review/agent-tail', <RadarChartOutlined />, 'Agent尾盘账本'),
           menuLink('/review/journal', <BookOutlined />, '交易日记'),
+        ],
+      },
+      {
+        key: 'nav-live-trading',
+        icon: <SafetyCertificateOutlined />,
+        label: '实盘交易',
+        title: '实盘交易',
+        children: [
+          menuLink('/live-trading', <SafetyCertificateOutlined />, '安全边界'),
+          menuLink('/live-trading/orders', <ThunderboltOutlined />, '订单审批'),
         ],
       },
       {
@@ -391,6 +403,22 @@ const AppContent: React.FC = () => {
                 element={
                   <ProtectedRoute>
                     <AutonomousRecommendationTracker />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/live-trading"
+                element={
+                  <ProtectedRoute>
+                    <LiveTrading />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/live-trading/orders"
+                element={
+                  <ProtectedRoute>
+                    <LiveTrading />
                   </ProtectedRoute>
                 }
               />

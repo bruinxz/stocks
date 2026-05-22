@@ -1409,3 +1409,50 @@ Next:
 1. Add a historical audit-to-PnL page/table so multiple Canary/apply/rollback events can be compared by subsequent closed-trade PnL.
 2. Add snapshot retention/maintenance for order-intent hindsight outcomes.
 3. Add an optional “promote from Canary” preview that converts a healthy Canary into a broader-but-still-audited apply plan.
+
+### 2026-05-22 live trading safety boundary MVP
+
+Focus: start landing the real-market plan without creating any path for accidental real-money execution.
+
+Completed:
+
+- Added a new `live-trading` backend module with explicit safety boundaries:
+  - `GET /api/live-trading/readiness`
+  - `GET /api/live-trading/overview`
+  - `GET /api/live-trading/safety`
+  - `GET /api/live-trading/order-drafts`
+  - `POST /api/live-trading/order-drafts`
+  - `POST /api/live-trading/order-drafts/:id/approve`
+  - `POST /api/live-trading/order-drafts/:id/reject`
+  - `POST /api/live-trading/accounts/sync-readonly`
+  - `GET /api/live-trading/audit-logs`
+- Added live-trading persistence models for the future real-money workflow:
+  - `live_broker_accounts`
+  - `live_account_snapshots`
+  - `live_positions`
+  - `live_order_drafts`
+  - `live_orders`
+  - `live_trades`
+  - `live_execution_audit_logs`
+- Added a guarded broker gateway abstraction and a `MockBrokerGateway` that never submits real orders.
+- Added a database-backed quote provider that reads existing `realtime_quotes` / `stocks` snapshots, keeping the first live-market iteration read-only.
+- Added mandatory live-trading safety switches:
+  - `LIVE_TRADING_ENABLED`
+  - `LIVE_READONLY_ENABLED`
+  - `LIVE_ORDER_EXECUTION_ENABLED`
+  - `LIVE_TRADING_KILL_SWITCH`
+  - strong confirmation text `CONFIRM_LIVE_ORDER`
+- Added a first frontend page under “实盘交易”:
+  - safety/readiness dashboard;
+  - broker/market-data gateway status;
+  - default risk-limit tiles;
+  - order draft table;
+  - draft creation modal;
+  - strong-confirm modal that still gets blocked by the default safety boundary.
+- Read-only smoke now verifies live-trading readiness/overview and asserts `can_submit_orders` is false by default.
+
+Next:
+
+1. Add licensed real-time quote provider configuration and freshness SLAs.
+2. Add a real broker read-only adapter behind `LIVE_READONLY_ENABLED=true`.
+3. Add live account reconciliation UI after read-only sync is connected.
