@@ -149,6 +149,20 @@ class LiveTradingController {
     }
   }
 
+  async getShadowBudgetAttribution(req: AuthenticatedRequest, res: Response) {
+    try {
+      const data = await liveTradingService.getShadowBudgetAttribution(Number(req.user?.id), {
+        limit: req.query.limit ? Number(req.query.limit) : undefined,
+        lookback_days: req.query.lookback_days ? Number(req.query.lookback_days) : undefined,
+        window_days: req.query.window_days ? Number(req.query.window_days) : undefined,
+      });
+      res.json({ success: true, data, message: data.summary.conclusion });
+    } catch (error: any) {
+      logger.error('获取影子预算效果归因失败:', error);
+      res.status(500).json({ success: false, message: error.message || '获取影子预算效果归因失败' });
+    }
+  }
+
   async approveDraft(req: AuthenticatedRequest, res: Response) {
     try {
       const data = await liveTradingService.approveDraft(Number(req.user?.id), Number(req.params.id), req.body || {});

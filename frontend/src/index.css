@@ -13522,6 +13522,49 @@ a {
   color: #1f3a5f;
 }
 
+.live-shadow-budget-attribution-panel {
+  margin: 0 0 12px;
+  padding: 14px;
+  border-radius: 18px;
+  background: radial-gradient(circle at 0% 0%, rgba(14, 165, 233, 0.08), transparent 34%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.84), rgba(240, 253, 250, 0.68));
+  border: 1px solid rgba(15, 23, 42, 0.07);
+}
+
+.live-shadow-budget-attribution-metrics {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.live-shadow-budget-attribution-metrics div {
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.76);
+  border: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.live-shadow-budget-attribution-metrics span,
+.live-shadow-budget-attribution-metrics strong {
+  display: block;
+}
+
+.live-shadow-budget-attribution-metrics span {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+}
+
+.live-shadow-budget-attribution-metrics strong {
+  margin-top: 4px;
+  color: #0f766e;
+  font-family: var(--font-display);
+  font-size: 20px;
+  letter-spacing: -0.04em;
+}
+
 .live-shadow-horizon-strip em,
 .live-shadow-baseline-strip em {
   margin-top: 2px;
@@ -13661,6 +13704,7 @@ a {
   }
 
   .live-shadow-outcome-metrics,
+  .live-shadow-budget-attribution-metrics,
   .live-shadow-horizon-strip,
   .live-shadow-baseline-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -13675,6 +13719,7 @@ a {
   .live-paper-account-strip,
   .live-candidate-metrics,
   .live-shadow-outcome-metrics,
+  .live-shadow-budget-attribution-metrics,
   .live-shadow-horizon-strip,
   .live-shadow-baseline-strip {
     grid-template-columns: 1fr;

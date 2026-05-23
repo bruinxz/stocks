@@ -273,6 +273,68 @@ interface ShadowTrendDashboard {
   };
 }
 
+interface ShadowBudgetAttributionDashboard {
+  generated_at: string;
+  lookback_days: number;
+  window_days: number;
+  real_order_submitted: number;
+  periods: Array<{
+    audit_id: number;
+    task_name: string;
+    generated_at: string;
+    applied: boolean;
+    applied_audit_id?: number | null;
+    applied_at?: string | null;
+    before_limit?: number | null;
+    suggested_limit?: number | null;
+    budget_action?: string;
+    budget_label?: string;
+    budget_reason?: string;
+    pre_window: {
+      sample_count: number;
+      evaluated_count: number;
+      win_rate_pct?: number | null;
+      avg_latest_return_pct?: number | null;
+      total_latest_pnl: number;
+    };
+    post_window: {
+      sample_count: number;
+      evaluated_count: number;
+      win_rate_pct?: number | null;
+      avg_latest_return_pct?: number | null;
+      total_latest_pnl: number;
+    };
+    delta: {
+      avg_latest_return_pct?: number | null;
+      win_rate_pct?: number | null;
+      evaluated_count: number;
+      total_latest_pnl: number;
+    };
+    decision: {
+      action: string;
+      label: string;
+      level: string;
+      reason: string;
+    };
+  }>;
+  summary: {
+    suggestion_count: number;
+    applied_count: number;
+    pending_count: number;
+    effective_count: number;
+    ineffective_count: number;
+    latest_action: string;
+    latest_label: string;
+    latest_level: string;
+    latest_suggested_limit?: number | null;
+    latest_delta_avg_return_pct?: number | null;
+    latest_delta_win_rate_pct?: number | null;
+    total_shadow_sample_count: number;
+    total_evaluated_count: number;
+    conclusion: string;
+  };
+}
+
 const formatMoney = (value?: number | null) =>
   `¥${Number(value || 0).toLocaleString(undefined, {
     minimumFractionDigits: 2,
@@ -338,6 +400,8 @@ const LiveTrading: React.FC = () => {
   const [draftCandidates, setDraftCandidates] = useState<LiveDraftCandidateDashboard | null>(null);
   const [shadowOutcomes, setShadowOutcomes] = useState<ShadowOutcomeDashboard | null>(null);
   const [shadowTrend, setShadowTrend] = useState<ShadowTrendDashboard | null>(null);
+  const [shadowBudgetAttribution, setShadowBudgetAttribution] =
+    useState<ShadowBudgetAttributionDashboard | null>(null);
   const [shadowBudgetAudit, setShadowBudgetAudit] = useState<{
     suggestion?: any;
     applied?: any;
@@ -348,6 +412,7 @@ const LiveTrading: React.FC = () => {
   const [shadowLoading, setShadowLoading] = useState(false);
   const [shadowOutcomeLoading, setShadowOutcomeLoading] = useState(false);
   const [shadowTrendLoading, setShadowTrendLoading] = useState(false);
+  const [shadowBudgetAttributionLoading, setShadowBudgetAttributionLoading] = useState(false);
   const [shadowBudgetAuditLoading, setShadowBudgetAuditLoading] = useState(false);
   const [syncLoading, setSyncLoading] = useState(false);
   const [isDraftModalOpen, setIsDraftModalOpen] = useState(false);
@@ -414,6 +479,21 @@ const LiveTrading: React.FC = () => {
     }
   };
 
+  const fetchShadowBudgetAttribution = async (silent = false) => {
+    setShadowBudgetAttributionLoading(true);
+    try {
+      const response = await api.get('/live-trading/shadow-budget-attribution', {
+        params: { limit: 8, window_days: 14 },
+      });
+      setShadowBudgetAttribution(response.data.data);
+      if (!silent) message.success('影子预算效果归因已刷新');
+    } catch (error: any) {
+      message.error(error.response?.data?.message || '获取影子预算效果归因失败');
+    } finally {
+      setShadowBudgetAttributionLoading(false);
+    }
+  };
+
   const fetchShadowBudgetAudits = async (silent = false) => {
     setShadowBudgetAuditLoading(true);
     try {
@@ -452,6 +532,7 @@ const LiveTrading: React.FC = () => {
     fetchDraftCandidates(true);
     fetchShadowOutcomes(true);
     fetchShadowTrend(true);
+    fetchShadowBudgetAttribution(true);
     fetchShadowBudgetAudits(true);
   }, []);
 
@@ -606,6 +687,7 @@ const LiveTrading: React.FC = () => {
       await fetchDraftCandidates(true);
       await fetchShadowOutcomes(true);
       await fetchShadowTrend(true);
+      await fetchShadowBudgetAttribution(true);
       await fetchShadowBudgetAudits(true);
     } catch (error: any) {
       message.warning(error.response?.data?.message || '无人影子执行暂不可用');
@@ -625,6 +707,7 @@ const LiveTrading: React.FC = () => {
       await fetchDraftCandidates(true);
       await fetchShadowOutcomes(true);
       await fetchShadowTrend(true);
+      await fetchShadowBudgetAttribution(true);
       await fetchShadowBudgetAudits(true);
     } catch (error: any) {
       message.warning(error.response?.data?.message || '影子执行被风控阻断');
@@ -872,6 +955,79 @@ const LiveTrading: React.FC = () => {
         >
           生成草稿
         </Button>
+      ),
+    },
+  ];
+
+  const shadowBudgetAttributionColumns = [
+    {
+      title: '预算建议',
+      render: (_: any, record: any) => (
+        <Space direction="vertical" size={2}>
+          <Space wrap size={4}>
+            <Tag color={record.applied ? 'green' : 'gold'}>
+              {record.applied ? '已应用' : '待应用'}
+            </Tag>
+            <Text strong>
+              limit {record.before_limit ?? '--'} → {record.suggested_limit ?? '--'}
+            </Text>
+          </Space>
+          <Text type="secondary">
+            {record.budget_label || record.decision?.label || '影子预算'}
+          </Text>
+          <Text type="secondary">{formatDateTime(record.applied_at || record.generated_at)}</Text>
+        </Space>
+      ),
+    },
+    {
+      title: '应用前',
+      render: (_: any, record: any) => (
+        <Space direction="vertical" size={0}>
+          <Text>{record.pre_window?.evaluated_count || 0} 样本</Text>
+          <Text type={pnlTextType(record.pre_window?.avg_latest_return_pct)}>
+            均收 {formatPct(record.pre_window?.avg_latest_return_pct)}
+          </Text>
+          <Text type="secondary">胜率 {formatPct(record.pre_window?.win_rate_pct, 1)}</Text>
+        </Space>
+      ),
+    },
+    {
+      title: '应用后',
+      render: (_: any, record: any) => (
+        <Space direction="vertical" size={0}>
+          <Text>{record.post_window?.evaluated_count || 0} 样本</Text>
+          <Text type={pnlTextType(record.post_window?.avg_latest_return_pct)}>
+            均收 {formatPct(record.post_window?.avg_latest_return_pct)}
+          </Text>
+          <Text type="secondary">胜率 {formatPct(record.post_window?.win_rate_pct, 1)}</Text>
+        </Space>
+      ),
+    },
+    {
+      title: '变化',
+      render: (_: any, record: any) => (
+        <Space direction="vertical" size={0}>
+          <Text type={pnlTextType(record.delta?.avg_latest_return_pct)}>
+            均收 {formatPct(record.delta?.avg_latest_return_pct)}
+          </Text>
+          <Text type={pnlTextType(record.delta?.win_rate_pct)}>
+            胜率 {formatPct(record.delta?.win_rate_pct, 1)}
+          </Text>
+          <Text type="secondary">盈亏 {formatMoney(record.delta?.total_latest_pnl)}</Text>
+        </Space>
+      ),
+    },
+    {
+      title: '判断',
+      render: (_: any, record: any) => (
+        <Space direction="vertical" size={2}>
+          <Tag color={shadowBudgetColor[record.decision?.level || 'watch'] || 'gold'}>
+            {record.decision?.label || '观察'}
+          </Tag>
+          <Text type="secondary" ellipsis={{ tooltip: record.decision?.reason }}>
+            {record.decision?.reason || '--'}
+          </Text>
+        </Space>
       ),
     },
   ];
@@ -1602,6 +1758,66 @@ const LiveTrading: React.FC = () => {
               </strong>
               <em>同期起点 {shadowOutcomes?.summary?.baseline?.since || '--'}</em>
             </div>
+          </div>
+          <div className="live-shadow-budget-attribution-panel">
+            <div className="live-shadow-trend-head">
+              <div>
+                <Text type="secondary">预算效果归因</Text>
+                <strong>
+                  {shadowBudgetAttribution?.summary?.conclusion ||
+                    '等待周度复盘生成预算建议后，系统会比较应用前后的影子收益变化。'}
+                </strong>
+              </div>
+              <Button
+                size="small"
+                icon={<ReloadOutlined />}
+                loading={shadowBudgetAttributionLoading}
+                onClick={() => fetchShadowBudgetAttribution(false)}
+              >
+                刷新归因
+              </Button>
+            </div>
+            <div className="live-shadow-budget-attribution-metrics">
+              <div>
+                <span>建议数</span>
+                <strong>{shadowBudgetAttribution?.summary?.suggestion_count || 0}</strong>
+              </div>
+              <div>
+                <span>已应用</span>
+                <strong>{shadowBudgetAttribution?.summary?.applied_count || 0}</strong>
+              </div>
+              <div>
+                <span>有效</span>
+                <strong>{shadowBudgetAttribution?.summary?.effective_count || 0}</strong>
+              </div>
+              <div>
+                <span>最新均收变化</span>
+                <strong>
+                  {formatPct(shadowBudgetAttribution?.summary?.latest_delta_avg_return_pct)}
+                </strong>
+              </div>
+              <div>
+                <span>总样本</span>
+                <strong>{shadowBudgetAttribution?.summary?.total_evaluated_count || 0}</strong>
+              </div>
+            </div>
+            <Table
+              columns={shadowBudgetAttributionColumns}
+              dataSource={shadowBudgetAttribution?.periods || []}
+              rowKey="audit_id"
+              size="small"
+              loading={shadowBudgetAttributionLoading}
+              pagination={{ pageSize: 4 }}
+              scroll={{ x: 'max-content' }}
+              locale={{
+                emptyText: (
+                  <Empty
+                    image={Empty.PRESENTED_IMAGE_SIMPLE}
+                    description="暂无预算建议归因。等待周度影子复盘生成候选补丁，或先运行更多影子执行样本。"
+                  />
+                ),
+              }}
+            />
           </div>
           <Table
             columns={shadowOutcomeColumns}
