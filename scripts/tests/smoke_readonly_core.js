@@ -561,6 +561,54 @@ async function main() {
       }
     );
 
+    await requestJson(
+      "live trading shadow budget attribution",
+      "/api/live-trading/shadow-budget-attribution?limit=5&window_days=7",
+      {
+        token,
+        expect: (json) => {
+          assertApiSuccess(json, "live trading shadow budget attribution");
+          if (!json.data?.summary || !Array.isArray(json.data?.periods)) {
+            throw new Error(
+              `live trading shadow budget attribution payload missing: ${preview(
+                json
+              )}`
+            );
+          }
+          if (Number(json.data.real_order_submitted || 0) !== 0) {
+            throw new Error(
+              `shadow budget attribution must not contain real submissions: ${preview(
+                json.data
+              )}`
+            );
+          }
+          for (const key of [
+            "suggestion_count",
+            "applied_count",
+            "pending_count",
+            "total_shadow_sample_count",
+            "total_evaluated_count",
+          ]) {
+            if (!Number.isFinite(Number(json.data.summary[key] || 0))) {
+              throw new Error(
+                `shadow budget attribution summary ${key} invalid: ${preview(
+                  json.data.summary
+                )}`
+              );
+            }
+          }
+          const first = json.data.periods[0];
+          if (first) {
+            if (!first.decision?.action || !first.delta || !first.pre_window || !first.post_window) {
+              throw new Error(
+                `shadow budget attribution period invalid: ${preview(first)}`
+              );
+            }
+          }
+        },
+      }
+    );
+
     await requestJson("data source health", "/api/market/data-sources/health", {
       expect: (json) => {
         assertApiSuccess(json, "data source health");

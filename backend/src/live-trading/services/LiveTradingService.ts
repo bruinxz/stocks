@@ -14,6 +14,7 @@ import { DailyBar } from '../../models/DailyBar';
 import { RealtimeQuote } from '../../models/RealtimeQuote';
 import { AIInvestmentSignal } from '../../models/AIInvestmentSignal';
 import { TaskExecutionLog } from '../../models/TaskExecutionLog';
+import { TaskParameterAuditLog } from '../../models/TaskParameterAuditLog';
 import { MockBrokerGateway } from '../brokers/MockBrokerGateway';
 import { EnvReadonlyBrokerGateway } from '../brokers/EnvReadonlyBrokerGateway';
 import { BrokerGateway } from '../brokers/BrokerGateway';
@@ -871,6 +872,258 @@ export class LiveTradingService {
         conclusion: points.length >= 2
           ? '影子执行趋势已可观察，用于判断预算是否应继续小流量、降温或扩大。'
           : '影子执行趋势样本仍少，等待更多定时任务执行日志。',
+      },
+    };
+  }
+
+  async getShadowBudgetAttribution(
+    user_id: number,
+    options: { limit?: number; lookback_days?: number; window_days?: number } = {}
+  ) {
+    const limit = Math.min(Math.max(Number(options.limit || 8), 1), 20);
+    const lookbackDays = Math.min(Math.max(Number(options.lookback_days || 90), 14), 365);
+    const windowDays = Math.min(Math.max(Number(options.window_days || 14), 3), 60);
+    const now = Date.now();
+    const since = new Date(now - lookbackDays * 24 * 60 * 60 * 1000);
+    const horizons = [1, 3, 5];
+
+    const auditRows = await TaskParameterAuditLog.findAll({
+      where: {
+        event_type: {
+          [Op.in]: ['live_shadow_budget_suggestion', 'live_shadow_budget_applied'],
+        },
+        created_at: { [Op.gte]: since },
+      },
+      order: [['created_at', 'DESC']],
+      limit: 200,
+      raw: true,
+    }).catch(() => []);
+    const suggestions = (auditRows as any[])
+      .filter(row => row.event_type === 'live_shadow_budget_suggestion')
+      .slice(0, limit);
+    const appliedRows = (auditRows as any[]).filter(
+      row => row.event_type === 'live_shadow_budget_applied'
+    );
+
+    const draftRows = await LiveOrderDraft.findAll({
+      where: {
+        user_id,
+        source_type: 'shadow_autopilot',
+        status: 'shadow_executed',
+        updated_at: {
+          [Op.gte]: new Date(now - (lookbackDays + windowDays) * 24 * 60 * 60 * 1000),
+        },
+      },
+      order: [['updated_at', 'DESC']],
+      limit: 300,
+    }).catch(() => []);
+    const outcomes = await Promise.all(
+      (draftRows as any[]).map(row => this.buildShadowOutcomeItem(this.toPlain(row), horizons))
+    );
+
+    const summarizeWindow = (fromTime: number, toTime: number) => {
+      const scoped = outcomes.filter(item => {
+        const entryTime = new Date(item.entry_time || item.entry_date || '').getTime();
+        return Number.isFinite(entryTime) && entryTime >= fromTime && entryTime < toTime;
+      });
+      const evaluated = scoped.filter(item => numberOrNull(item.latest_return_pct) !== null);
+      const wins = evaluated.filter(item => Number(item.latest_return_pct || 0) > 0);
+      const avgLatest = evaluated.length
+        ? evaluated.reduce((sum, item) => sum + Number(item.latest_return_pct || 0), 0) /
+          evaluated.length
+        : null;
+      const horizon_summary = horizons.map(days => {
+        const key = `${days}d`;
+        const horizonRows = scoped.filter(item => item.horizon_returns?.[key]?.evaluable);
+        const horizonWins = horizonRows.filter(
+          item => Number(item.horizon_returns?.[key]?.return_pct || 0) > 0
+        );
+        return {
+          horizon_days: days,
+          evaluated_count: horizonRows.length,
+          avg_return_pct: horizonRows.length
+            ? round(
+                horizonRows.reduce(
+                  (sum, item) => sum + Number(item.horizon_returns?.[key]?.return_pct || 0),
+                  0
+                ) / horizonRows.length,
+                4
+              )
+            : null,
+          win_rate_pct: horizonRows.length
+            ? round((horizonWins.length / horizonRows.length) * 100, 2)
+            : null,
+        };
+      });
+      const sorted = evaluated
+        .slice()
+        .sort((left, right) => Number(left.latest_return_pct || 0) - Number(right.latest_return_pct || 0));
+      return {
+        from: new Date(fromTime).toISOString(),
+        to: new Date(toTime).toISOString(),
+        sample_count: scoped.length,
+        evaluated_count: evaluated.length,
+        win_count: wins.length,
+        win_rate_pct: evaluated.length ? round((wins.length / evaluated.length) * 100, 2) : null,
+        avg_latest_return_pct: roundNullable(avgLatest, 4),
+        total_latest_pnl: round(evaluated.reduce((sum, item) => sum + toNumber(item.latest_pnl), 0), 2),
+        best_return_pct: sorted.length
+          ? roundNullable(sorted[sorted.length - 1].latest_return_pct, 4)
+          : null,
+        worst_return_pct: sorted.length ? roundNullable(sorted[0].latest_return_pct, 4) : null,
+        horizon_summary,
+      };
+    };
+
+    const findApplyForSuggestion = (suggestion: any) => {
+      const suggestionId = Number(suggestion.id);
+      const suggestionTime = new Date(suggestion.created_at).getTime();
+      const after = asPlainObject(suggestion.after_parameters);
+      const suggestedLimit = Number(after.limit ?? after.shadow_budget_advice?.recommended_limit);
+      return appliedRows
+        .filter(row => {
+          const metadata = asPlainObject(row.metadata);
+          const afterParameters = asPlainObject(row.after_parameters);
+          const advice = asPlainObject(afterParameters.shadow_budget_advice);
+          const rowTime = new Date(row.created_at).getTime();
+          if (!Number.isFinite(rowTime) || rowTime < suggestionTime) return false;
+          if (Number(metadata.source_audit_id) === suggestionId) return true;
+          if (Number(advice.source_audit_id) === suggestionId) return true;
+          return (
+            Number(row.task_id) === Number(suggestion.task_id) &&
+            Number(afterParameters.limit) === suggestedLimit
+          );
+        })
+        .sort((left, right) => new Date(left.created_at).getTime() - new Date(right.created_at).getTime())[0] || null;
+    };
+
+    const periods = suggestions.map(suggestion => {
+      const before = asPlainObject(suggestion.before_parameters);
+      const after = asPlainObject(suggestion.after_parameters);
+      const advice = asPlainObject(after.shadow_budget_advice);
+      const applied = findApplyForSuggestion(suggestion);
+      const anchorTime = new Date(applied?.created_at || suggestion.created_at).getTime();
+      const safeAnchorTime = Number.isFinite(anchorTime) ? anchorTime : now;
+      const pre = summarizeWindow(
+        safeAnchorTime - windowDays * 24 * 60 * 60 * 1000,
+        safeAnchorTime
+      );
+      const post = summarizeWindow(
+        safeAnchorTime,
+        Math.min(now, safeAnchorTime + windowDays * 24 * 60 * 60 * 1000)
+      );
+      const avgDelta =
+        numberOrNull(pre.avg_latest_return_pct) !== null &&
+        numberOrNull(post.avg_latest_return_pct) !== null
+          ? round(Number(post.avg_latest_return_pct) - Number(pre.avg_latest_return_pct), 4)
+          : null;
+      const winRateDelta =
+        numberOrNull(pre.win_rate_pct) !== null && numberOrNull(post.win_rate_pct) !== null
+          ? round(Number(post.win_rate_pct) - Number(pre.win_rate_pct), 2)
+          : null;
+      const postAvg = numberOrNull(post.avg_latest_return_pct);
+      const decision = !applied
+        ? {
+            action: 'pending_apply',
+            label: '候选待应用',
+            level: 'watch',
+            reason: '该影子预算建议尚未应用，暂不能判断应用后的收益变化。',
+          }
+        : post.evaluated_count < 3
+        ? {
+            action: 'collecting_after_apply',
+            label: '继续收集',
+            level: 'watch',
+            reason: `应用后可评估样本 ${post.evaluated_count} 条，暂不足以判断预算调整是否有效。`,
+          }
+        : pre.evaluated_count < 3
+        ? {
+            action: 'insufficient_baseline',
+            label: '缺少前置基准',
+            level: 'watch',
+            reason: `应用前可评估样本 ${pre.evaluated_count} 条，缺少可靠对照。`,
+          }
+        : avgDelta !== null && avgDelta >= 0.5 && (postAvg === null || postAvg >= 0)
+        ? {
+            action: 'effective',
+            label: '调整有效',
+            level: 'ok',
+            reason: `应用后平均收益较应用前提升 ${round(avgDelta, 2)}pct。`,
+          }
+        : avgDelta !== null && (avgDelta <= -0.5 || (postAvg !== null && postAvg < -1))
+        ? {
+            action: 'ineffective',
+            label: '调整偏弱',
+            level: 'risk',
+            reason: `应用后平均收益较应用前变化 ${round(avgDelta, 2)}pct，建议降温观察。`,
+          }
+        : {
+            action: 'neutral',
+            label: '效果中性',
+            level: 'watch',
+            reason: `应用前后收益变化 ${avgDelta !== null ? round(avgDelta, 2) : '--'}pct，继续观察。`,
+          };
+
+      return {
+        audit_id: Number(suggestion.id),
+        task_id: Number(suggestion.task_id),
+        task_name: suggestion.task_name,
+        generated_at: suggestion.created_at,
+        applied: Boolean(applied),
+        applied_audit_id: applied ? Number(applied.id) : null,
+        applied_at: applied?.created_at || null,
+        before_limit: before.limit ?? advice.current_limit ?? null,
+        suggested_limit: after.limit ?? advice.recommended_limit ?? null,
+        budget_action: advice.action || '',
+        budget_label: advice.label || '',
+        budget_reason: advice.reason || '',
+        pre_window: pre,
+        post_window: post,
+        delta: {
+          avg_latest_return_pct: avgDelta,
+          win_rate_pct: winRateDelta,
+          evaluated_count: post.evaluated_count - pre.evaluated_count,
+          total_latest_pnl: round(post.total_latest_pnl - pre.total_latest_pnl, 2),
+        },
+        decision,
+      };
+    });
+    const latest = periods[0] || null;
+    const appliedCount = periods.filter(item => item.applied).length;
+    const effectiveCount = periods.filter(item => item.decision.action === 'effective').length;
+    const ineffectiveCount = periods.filter(item => item.decision.action === 'ineffective').length;
+    const summaryConclusion = latest
+      ? latest.decision.action === 'pending_apply'
+        ? '最新影子预算建议仍待应用；建议先在调度任务页预览后受控应用，再观察应用后收益。'
+        : latest.decision.action === 'effective'
+        ? '最新已应用影子预算建议显示正向改善，可继续按当前影子预算收集样本。'
+        : latest.decision.action === 'ineffective'
+        ? '最新已应用影子预算建议表现偏弱，建议降低影子预算并复盘信号来源。'
+        : latest.decision.reason
+      : '暂无影子预算候选补丁；等待周度影子复盘生成建议。';
+
+    return {
+      generated_at: new Date().toISOString(),
+      user_id,
+      lookback_days: lookbackDays,
+      window_days: windowDays,
+      real_order_submitted: 0,
+      periods,
+      summary: {
+        suggestion_count: periods.length,
+        applied_count: appliedCount,
+        pending_count: periods.length - appliedCount,
+        effective_count: effectiveCount,
+        ineffective_count: ineffectiveCount,
+        latest_action: latest?.decision.action || 'none',
+        latest_label: latest?.decision.label || '暂无建议',
+        latest_level: latest?.decision.level || 'watch',
+        latest_suggested_limit: latest?.suggested_limit ?? null,
+        latest_delta_avg_return_pct: latest?.delta.avg_latest_return_pct ?? null,
+        latest_delta_win_rate_pct: latest?.delta.win_rate_pct ?? null,
+        total_shadow_sample_count: outcomes.length,
+        total_evaluated_count: outcomes.filter(item => numberOrNull(item.latest_return_pct) !== null).length,
+        conclusion: summaryConclusion,
       },
     };
   }

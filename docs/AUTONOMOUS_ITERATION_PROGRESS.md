@@ -2080,6 +2080,38 @@ Next:
 1. Compare applied vs unapplied shadow budget periods to measure whether budget expansion improved returns.
 2. Persist weekly shadow trend snapshots into a dedicated table if task logs become insufficient.
 
+### 2026-05-23 live shadow budget attribution
+
+Focus: move shadow budget advice from "visible suggestion" to "measurable decision".
+
+Completed:
+
+- Added `GET /api/live-trading/shadow-budget-attribution`.
+- The endpoint reads recent `live_shadow_budget_suggestion` and
+  `live_shadow_budget_applied` audit records.
+- It compares shadow-execution outcomes before and after each budget suggestion/apply anchor.
+- For every budget period it returns:
+  - before limit → suggested limit;
+  - applied / pending status;
+  - pre-window and post-window sample count, win rate, average return and PnL;
+  - delta of average return, win rate, evaluated samples and PnL;
+  - decision label: pending, collecting, effective, ineffective or neutral.
+- It preserves the live-money safety invariant: `real_order_submitted=0`.
+- Live-trading shadow outcome card now includes a "预算效果归因" panel with:
+  - suggestion count;
+  - applied count;
+  - effective count;
+  - latest average-return delta;
+  - total evaluated shadow samples;
+  - a compact table of each budget period.
+- Readonly smoke validates the attribution endpoint shape and no-real-submission invariant.
+
+Next:
+
+1. Persist budget attribution snapshots if task-log/audit reconstruction becomes slow.
+2. Feed the latest attribution decision back into the weekly review message.
+3. Use effective/ineffective attribution to auto-suggest whether the next shadow limit should expand, hold or cool down.
+
 ### 2026-05-22 live shadow trend chart
 
 Focus: make shadow validation direction visible over time.
