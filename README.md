@@ -344,6 +344,10 @@ PORT=3001 npm start
 如果您在二次开发时需要查阅或者扩充数据库字段，请查看完整的数据库初始化脚本，该脚本包含了所有的表结构和字段定义：
 👉 [scripts/init-db-full.sql](./scripts/init-db-full.sql)
 
+## xz 沙箱开发（服务器 3021 / 3020）
+
+若在独立沙箱环境开发，请阅读 **[docs/DEV_XZ_ONBOARDING.md](./docs/DEV_XZ_ONBOARDING.md)**（Git 分支 `dev_xz`、仅发布 xz 的 `deploy_xz.sh`、与 lym/main 隔离说明）。
+
 ## 项目结构
 ```
 stocks/

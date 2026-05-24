@@ -1,5 +1,7 @@
 # 多环境部署说明（main / lym / xz）
 
+> **xz 开发者完整上下文（换机、AI 交接）请读：[DEV_XZ_ONBOARDING.md](./DEV_XZ_ONBOARDING.md)**
+
 ## 环境隔离
 
 | 环境 | 服务器路径 | 后端 | 前端 | systemd |
