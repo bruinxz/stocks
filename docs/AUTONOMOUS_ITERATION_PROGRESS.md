@@ -646,7 +646,7 @@ Completed:
   - upload tarball;
   - activate main + lym releases;
   - run `release_health_gate.js` with auto rollback.
-  - default targets remain `main,lym`; xxz is not touched.
+  - default targets remain `main,lym`; xz registered in `release_targets.js` but not in default set.
 
 Validation:
 
