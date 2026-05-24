@@ -5,12 +5,12 @@
 
 ## Current branch / workspace
 
-- Branch: `dev_lym`
+- Branch: `dev_lym` (lym sandbox) / `dev_xz` (xz sandbox)
 - Workspace: `/Users/bytedance/go/src/github.com/bruinxz/stocks`
 - Primary server paths from prior context:
   - main: `/opt/stocks`, backend `3000`, frontend `3001`
   - lym: `/opt/stocks-lym`, backend `3010`, frontend `3011`
-  - xxz: do not touch unless explicitly requested
+  - xz: `/opt/stocks-xz`, backend `3020`, frontend `3021` — deploy with `DEPLOY_TARGETS=xz` or `scripts/deployment/deploy_xz.sh` only
 
 ## Validation commands
 
@@ -278,7 +278,7 @@ Docs:
 
 - Keep Feishu messages concise: conclusion + core reasons only.
 - Recommendation messages must include current/analysis price.
-- Do not touch xxz server/path unless explicitly requested.
+- Deploy xz only via `DEPLOY_TARGETS=xz` or `scripts/deployment/deploy_xz.sh`; default deploy still skips xz.
 - Preserve snake_case for DB/model/API fields.
 
 ## Server reset closed-loop rebuild (2026-05-19)
@@ -610,7 +610,7 @@ Completed:
   - restarts requested services;
   - runs backend/frontend health and read-only smoke;
   - rolls back `current` symlink to previous release and restarts when health fails;
-  - defaults to main + lym and intentionally does not touch xxz.
+  - defaults to main + lym; xz is opt-in via `DEPLOY_TARGETS=xz` (see `docs/DEPLOY_ENVIRONMENTS.md`).
 
 Next:
 

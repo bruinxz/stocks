@@ -3,19 +3,17 @@
 /**
  * Release-package deployment helper for the current production layout.
  *
- * It intentionally targets only main + lym by default:
- * - build local backend dist + frontend build
- * - package repo without node_modules/env/runtime dirs
- * - upload to /tmp/stocks-upload/stocks_release_root.tgz
- * - call the server-side /tmp/activate_stocks_release.sh for /opt/stocks and /opt/stocks-lym
- * - run release_health_gate.js with automatic rollback
+ * Default deploy set is main + lym (see release_targets.js). The xz sandbox is opt-in:
+ *   DEPLOY_TARGETS=xz
+ * or:
+ *   bash scripts/deployment/deploy_xz.sh
  *
  * Required env:
  *   DEPLOY_PASSWORD / SSH_PASSWORD     deploy user password
  *   OPS_PASSWORD                       ops sudo password
  *
  * Optional env:
- *   DEPLOY_TARGETS=main,lym            do not include xxz unless explicitly requested
+ *   DEPLOY_TARGETS=main,lym            default; add xz only when intended
  *   DEPLOY_SKIP_BUILD=true
  *   RELEASE_RUN_SMOKE=true
  */
@@ -25,6 +23,10 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { getDeployConfig, shellQuote } = require('./deploy_config');
+const {
+  resolveTargets,
+  healthGateScriptForTarget,
+} = require('./release_targets');
 
 const repoRoot = path.resolve(__dirname, '..', '..');
 const deployConfig = getDeployConfig();
@@ -40,15 +42,8 @@ const remoteTimeoutSec = Number(process.env.DEPLOY_REMOTE_TIMEOUT_SEC || 300);
 const rsyncTimeoutSec = Number(process.env.DEPLOY_RSYNC_TIMEOUT_SEC || 240);
 const rsyncRetries = Math.max(Number(process.env.DEPLOY_RSYNC_RETRIES || 3), 1);
 const sshConnectTimeoutSec = Number(process.env.DEPLOY_SSH_CONNECT_TIMEOUT_SEC || 15);
-const targets = String(process.env.DEPLOY_TARGETS || 'main,lym')
-  .split(',')
-  .map(item => item.trim())
-  .filter(Boolean);
-
-const targetConfig = {
-  main: { root: '/opt/stocks', label: 'main' },
-  lym: { root: '/opt/stocks-lym', label: 'lym' },
-};
+const targetList = resolveTargets(process.env.DEPLOY_TARGETS);
+const targetKeys = targetList.map(item => item.key);
 
 function run(command, options = {}) {
   console.log(`\n$ ${command}`);
@@ -206,32 +201,31 @@ function buildPackage() {
 }
 
 function main() {
-  for (const target of targets) {
-    if (!targetConfig[target]) throw new Error(`Unsupported target: ${target}`);
-  }
-
   const packagePath = buildPackage();
   runRemoteAsDeploy('mkdir -p /tmp/stocks-upload && rm -f /tmp/stocks-upload/stocks_release_root.tgz');
   rsyncPackage(packagePath);
-  const activateCommand = targets
-    .map(target => {
-      const config = targetConfig[target];
-      return `bash /tmp/activate_stocks_release.sh ${shellQuote(config.root)} ${shellQuote(
-        config.label
-      )}`;
-    })
+  const activateCommand = targetList
+    .map(target =>
+      `bash /tmp/activate_stocks_release.sh ${shellQuote(target.root)} ${shellQuote(target.label)}`
+    )
     .join(' && ');
-  runRemoteAsDeploy(`${activateCommand} && readlink -f /opt/stocks/current && readlink -f /opt/stocks-lym/current`);
+  const readlinkCommand = targetList
+    .map(target => `readlink -f ${shellQuote(`${target.root}/current`)}`)
+    .join(' && ');
+  runRemoteAsDeploy(`${activateCommand} && ${readlinkCommand}`);
+
+  const healthGateTarget = targetList[0];
+  const smokeUsername =
+    process.env.RELEASE_SMOKE_USERNAME ||
+    (healthGateTarget.key === 'xz' ? 'xz' : 'lym');
   runRemoteAsOpsWithSudo(
-    `env RELEASE_TARGETS=${shellQuote(targets.join(','))} RELEASE_RUN_SMOKE=${shellQuote(
+    `env RELEASE_TARGETS=${shellQuote(targetKeys.join(','))} RELEASE_RUN_SMOKE=${shellQuote(
       process.env.RELEASE_RUN_SMOKE || 'true'
     )} RELEASE_AUTO_ROLLBACK=${shellQuote(
       process.env.RELEASE_AUTO_ROLLBACK || 'true'
-    )} RELEASE_SMOKE_USERNAME=${shellQuote(
-      process.env.RELEASE_SMOKE_USERNAME || 'lym'
-    )} RELEASE_SMOKE_PASSWORD=${shellQuote(
+    )} RELEASE_SMOKE_USERNAME=${shellQuote(smokeUsername)} RELEASE_SMOKE_PASSWORD=${shellQuote(
       process.env.RELEASE_SMOKE_PASSWORD || '666'
-    )} node /opt/stocks/current/scripts/deployment/release_health_gate.js`
+    )} node ${shellQuote(healthGateScriptForTarget(healthGateTarget))}`
   );
   console.log('\n✅ release package deployment completed');
 }

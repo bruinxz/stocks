@@ -14,6 +14,7 @@
  */
 
 const { spawnSync } = require('child_process');
+const { resolveTargets } = require('./release_targets');
 
 function readBool(value, fallback = false) {
   if (value === undefined || value === null || value === '') return fallback;
@@ -24,35 +25,19 @@ function readBool(value, fallback = false) {
 }
 
 function parseEnvs() {
-  const defaultTargets = [
-    {
-      key: 'main',
-      root: '/opt/stocks',
-      service: 'stocks-backend.service',
-      backend_url: 'http://127.0.0.1:3000',
-      frontend_url: 'http://127.0.0.1:3001',
-    },
-    {
-      key: 'lym',
-      root: '/opt/stocks-lym',
-      service: 'stocks-backend-lym.service',
-      backend_url: 'http://127.0.0.1:3010',
-      frontend_url: 'http://127.0.0.1:3011',
-    },
-  ];
-  const keys = String(process.env.RELEASE_TARGETS || 'main,lym')
-    .split(',')
-    .map(item => item.trim())
-    .filter(Boolean);
-  const custom = process.env.RELEASE_TARGET_CONFIG
-    ? JSON.parse(process.env.RELEASE_TARGET_CONFIG)
-    : null;
-  const catalog = custom || defaultTargets;
-  return keys.map(key => {
-    const target = catalog.find(item => item.key === key);
-    if (!target) throw new Error(`Unknown release target: ${key}`);
-    return target;
-  });
+  if (process.env.RELEASE_TARGET_CONFIG) {
+    const keys = String(process.env.RELEASE_TARGETS || 'main,lym')
+      .split(',')
+      .map(item => item.trim())
+      .filter(Boolean);
+    const catalog = JSON.parse(process.env.RELEASE_TARGET_CONFIG);
+    return keys.map(key => {
+      const target = catalog.find(item => item.key === key);
+      if (!target) throw new Error(`Unknown release target: ${key}`);
+      return target;
+    });
+  }
+  return resolveTargets(process.env.RELEASE_TARGETS);
 }
 
 function run(command, options = {}) {
@@ -113,7 +98,9 @@ function healthCheck(target) {
 
   const smoke = readBool(process.env.RELEASE_RUN_SMOKE, true);
   if (smoke) {
-    const username = process.env.RELEASE_SMOKE_USERNAME || process.env.SMOKE_USERNAME || 'lym';
+    const defaultSmokeUser = target.key === 'xz' ? 'xz' : 'lym';
+    const username =
+      process.env.RELEASE_SMOKE_USERNAME || process.env.SMOKE_USERNAME || defaultSmokeUser;
     const password = process.env.RELEASE_SMOKE_PASSWORD || process.env.SMOKE_PASSWORD || '666';
     run(
       `cd ${sh(`${target.root}/current`)} && SMOKE_BASE_URL=${sh(
