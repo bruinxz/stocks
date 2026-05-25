@@ -155,6 +155,9 @@ export interface PaperTradingAutoOptions {
   ignore_profit_gate_for_forced_signals?: boolean;
   allow_min_lot_for_forced_signals?: boolean;
   max_forced_min_lot_position_pct?: number;
+  allow_min_lot_for_sampling_signals?: boolean;
+  max_sampling_min_lot_position_pct?: number;
+  allow_low_data_quality_for_forced_signals?: boolean;
   use_attribution_feedback?: boolean;
   use_profit_gate?: boolean;
   profit_gate_horizon?: string;
@@ -1315,6 +1318,14 @@ class PaperTradingAutomationService {
           : dataQuality.auto_trade_allowed !== undefined
           ? Boolean(dataQuality.auto_trade_allowed)
           : !['low', 'critical'].includes(dataQualityBucket);
+      const forcedSignal = signalIds.includes(signal.id);
+      const allowLowQualityForcedSample =
+        forcedSignal &&
+        toBoolean(options.allow_low_data_quality_for_forced_signals, false) &&
+        dataQualityBucket === 'low';
+      const lowQualityForcedSampleReason = allowLowQualityForcedSample
+        ? `强制信号低数据质量小仓采样：${roundNumber(dataQualityScore, 0) || '--'}分/${dataQualityBucket}`
+        : '';
       const dataQualityIssues = Array.isArray(dataQuality.issues)
         ? dataQuality.issues
         : Array.isArray(dataQuality.warnings)
@@ -1376,7 +1387,10 @@ class PaperTradingAutomationService {
         continue;
       }
 
-      if (['critical'].includes(dataQualityBucket) || !dataQualityAutoTradeAllowed) {
+      if (
+        ['critical'].includes(dataQualityBucket) ||
+        (!dataQualityAutoTradeAllowed && !allowLowQualityForcedSample)
+      ) {
         await skip(
           `数据质量未达自动跟单标准（${
             Number.isFinite(dataQualityScore) ? dataQualityScore : '--'
@@ -1385,7 +1399,7 @@ class PaperTradingAutomationService {
         continue;
       }
 
-      if (dataQualityBucket === 'low' && !signalIds.includes(signal.id)) {
+      if (dataQualityBucket === 'low' && !forcedSignal) {
         await skip(
           `Agent 数据质量偏低（${
             Number.isFinite(dataQualityScore) ? dataQualityScore : '--'
@@ -1561,7 +1575,6 @@ class PaperTradingAutomationService {
         0,
         strategyPositionCap
       );
-      const forcedSignal = signalIds.includes(signal.id);
       const execute_price = roundNumber(quote.price * (1 + this.slippageRate), 3);
       const oneLotQuantity = 100;
       const oneLotAmount = roundNumber(execute_price * oneLotQuantity, 2);
@@ -1573,9 +1586,22 @@ class PaperTradingAutomationService {
         totalValue > 0 ? roundNumber((min_trade_amount / totalValue) * 100, 4) : 0;
       const forcedMinLotEnabled =
         forcedSignal && toBoolean(options.allow_min_lot_for_forced_signals, true);
+      const samplingMinLotEnabled =
+        !forcedSignal &&
+        toBoolean(options.allow_min_lot_for_sampling_signals, true) &&
+        (Boolean(profitGatePolicy.sampling_mode) ||
+          Number(outcomeFeedbackPolicy.closed_samples || 0) <
+            Number(outcomeFeedbackPolicy.min_closed_samples || 0));
       const requestedForcedMinLotCapPct = toNumber(
         options.max_forced_min_lot_position_pct,
         Math.max(strategyPositionCap, Math.min(6, Math.max(oneLotPositionPct, minTradeAmountPct)))
+      );
+      const requestedSamplingMinLotCapPct = toNumber(
+        options.max_sampling_min_lot_position_pct,
+        Math.max(
+          Math.min(strategyPositionCap, 3),
+          Math.min(3, Math.max(oneLotPositionPct, minTradeAmountPct))
+        )
       );
       const forcedMinLotCapPct = Math.max(
         0.5,
@@ -1584,16 +1610,32 @@ class PaperTradingAutomationService {
           requestedForcedMinLotCapPct
         )
       );
+      const samplingMinLotCapPct = Math.max(
+        0.5,
+        Math.min(
+          Math.max(Math.min(strategyPositionCap, 3), oneLotPositionPct, minTradeAmountPct),
+          requestedSamplingMinLotCapPct
+        )
+      );
       let effectiveTargetPct = gatedSuggestedPct;
       let minLotSample = false;
       let minLotSampleReason = '';
-      if (forcedMinLotEnabled && gatedSuggestedPct > 0 && oneLotCost <= availableCash * 0.98) {
+      if (
+        (forcedMinLotEnabled || samplingMinLotEnabled) &&
+        gatedSuggestedPct > 0 &&
+        oneLotCost <= availableCash * 0.98
+      ) {
         const minExecutablePct = Math.max(oneLotPositionPct, minTradeAmountPct);
-        const canRespectPositionCap = minExecutablePct <= forcedMinLotCapPct + 0.05;
+        const effectiveMinLotCapPct = forcedMinLotEnabled
+          ? forcedMinLotCapPct
+          : samplingMinLotCapPct;
+        const canRespectPositionCap = minExecutablePct <= effectiveMinLotCapPct + 0.05;
         if (minExecutablePct > gatedSuggestedPct && canRespectPositionCap) {
-          effectiveTargetPct = clamp(minExecutablePct, gatedSuggestedPct, forcedMinLotCapPct);
+          effectiveTargetPct = clamp(minExecutablePct, gatedSuggestedPct, effectiveMinLotCapPct);
           minLotSample = true;
-          minLotSampleReason = `A股一手起买冷启动采样：目标仓位由 ${roundNumber(
+          minLotSampleReason = `${
+            forcedMinLotEnabled ? 'A股一手起买冷启动采样' : 'A股一手起买收益闭环补样'
+          }：目标仓位由 ${roundNumber(
             gatedSuggestedPct,
             2
           )}% 提升至 ${roundNumber(effectiveTargetPct, 2)}%`;
@@ -1860,6 +1902,7 @@ class PaperTradingAutomationService {
                 dataQualityScore || '--'
               }分/${dataQualityBucket}，仓位倍率 ${dataQualityPositionMultiplier}x`
             : '',
+          lowQualityForcedSampleReason,
           environmentPolicy.enabled
             ? `环境风控：${environmentPolicy.reason}，倍率 ${environmentPolicy.position_multiplier}x`
             : '',
@@ -1886,6 +1929,8 @@ class PaperTradingAutomationService {
         loop_run_id: signal.loop_run_id || metadata.loop_run_id,
         min_lot_sample: minLotSample || undefined,
         min_lot_sample_reason: minLotSampleReason || undefined,
+        low_quality_forced_sample: allowLowQualityForcedSample || undefined,
+        low_quality_forced_sample_reason: lowQualityForcedSampleReason || undefined,
       };
 
       if (!dry_run) {

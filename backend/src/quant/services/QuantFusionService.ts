@@ -51,6 +51,7 @@ export interface QuantDailyPipelineOptions {
   submit_agent_analysis?: boolean;
   agent_max_count?: number;
   agent_min_score?: number;
+  agent_paper_trade_min_score?: number;
   agent_session?: string;
   agent_auto_paper_trade?: boolean;
   run_paper_trading?: boolean;
@@ -1740,7 +1741,10 @@ export class QuantFusionService {
             paper_trade_portfolio_name: agentFusionPortfolioName,
             paper_trade_initial_capital: options.initial_capital,
             paper_trade_force_new_portfolio: options.force_new_portfolio,
-            paper_trade_min_score: options.agent_min_score,
+            paper_trade_min_score: safeNumber(
+              options.agent_paper_trade_min_score,
+              Math.min(options.agent_min_score, 54)
+            ),
             paper_trade_max_positions: options.max_positions,
             paper_trade_default_position_pct: options.default_position_pct,
             paper_trade_max_position_pct: Math.min(
@@ -1752,6 +1756,7 @@ export class QuantFusionService {
             ),
             paper_trade_min_trade_amount: options.min_trade_amount,
             paper_trade_risk_profile_gate: options.risk_profile_gate,
+            allow_low_data_quality_for_forced_signals: true,
             strategy_allocation_policy: candidate.factors?.strategy_allocation_policy,
             strategy_runtime_policy: candidate.strategy_runtime_policy,
             strategy_allocation_pct: candidate.strategy_allocation_pct,
