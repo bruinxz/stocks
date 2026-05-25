@@ -839,6 +839,11 @@ class SchedulerService {
             20
           ),
           agent_min_score: Number(parameters.agent_min_score || parameters.agentMinScore || 72),
+          agent_paper_trade_min_score: Number(
+            parameters.agent_paper_trade_min_score ||
+              parameters.agentPaperTradeMinScore ||
+              Math.min(Number(parameters.agent_min_score || parameters.agentMinScore || 72), 54)
+          ),
           agent_session: parameters.agent_session || parameters.agentSession || 'close',
           agent_auto_paper_trade:
             parameters.agent_auto_paper_trade !== undefined
@@ -2674,6 +2679,7 @@ class SchedulerService {
           submit_agent_analysis: true,
           agent_max_count: 5,
           agent_min_score: 72,
+          agent_paper_trade_min_score: 54,
           agent_session: 'close',
           agent_auto_paper_trade: true,
           run_paper_trading: true,
@@ -2761,6 +2767,7 @@ class SchedulerService {
           submit_agent_analysis: true,
           agent_max_count: 5,
           agent_min_score: 72,
+          agent_paper_trade_min_score: 54,
           agent_session: 'open',
           agent_auto_paper_trade: true,
           run_paper_trading: true,
@@ -2945,6 +2952,7 @@ class SchedulerService {
           block_limit_down: true,
           block_suspended: true,
           agent_auto_paper_trade: true,
+          agent_only_paper_trade_min_score: 45,
           submit_agent_analysis: true,
           agent_max_count: 5,
           agent_min_score: 72,
@@ -3412,6 +3420,7 @@ class SchedulerService {
           'submit_agent_analysis',
           'agent_max_count',
           'agent_min_score',
+          'agent_paper_trade_min_score',
           'agent_session',
           'agent_auto_paper_trade',
           'run_paper_trading',
@@ -3564,6 +3573,7 @@ class SchedulerService {
           'block_limit_down',
           'block_suspended',
           'agent_auto_paper_trade',
+          'agent_only_paper_trade_min_score',
           'submit_agent_analysis',
           'agent_max_count',
           'agent_min_score',

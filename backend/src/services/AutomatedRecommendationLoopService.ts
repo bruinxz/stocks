@@ -1840,6 +1840,8 @@ class AutomatedRecommendationLoopService {
         block_limit_down: options.block_limit_down !== false,
         block_suspended: options.block_suspended !== false,
         signal_ids: archive.signal_ids,
+        allow_min_lot_for_sampling_signals: true,
+        max_sampling_min_lot_position_pct: 3,
         external_environment_policy: environment_policy,
         environment_policy_snapshot_id: environment_policy.snapshot_id,
         risk_profile_gate: riskGate,

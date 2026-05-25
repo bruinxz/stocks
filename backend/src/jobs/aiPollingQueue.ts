@@ -41,6 +41,7 @@ export interface AIPollingJobData {
   paper_trade_max_position_pct?: number;
   paper_trade_min_trade_amount?: number;
   paper_trade_risk_profile_gate?: any;
+  allow_low_data_quality_for_forced_signals?: boolean;
   strategy_allocation_policy?: any;
   strategy_runtime_policy?: any;
   strategy_allocation_pct?: number;

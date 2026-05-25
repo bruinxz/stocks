@@ -136,6 +136,7 @@ if (aiPollingWorkerDisabled) {
       paper_trade_max_position_pct,
       paper_trade_min_trade_amount,
       paper_trade_risk_profile_gate,
+      allow_low_data_quality_for_forced_signals,
       strategy_allocation_policy,
       strategy_allocation_pct,
       strategy_max_single_trade_pct,
@@ -328,13 +329,24 @@ if (aiPollingWorkerDisabled) {
           }
         }
 
+        const shouldAutoTradeQuantFusion =
+          Boolean(auto_paper_trade) &&
+          Boolean(quant_agent_fusion || scheduler_task_type === 'QUANT_DAILY_PIPELINE') &&
+          archivedSignal &&
+          fusionAudit &&
+          fusionAudit.final_decision === 'buy' &&
+          Number(fusionAudit.final_score || 0) >= Number(paper_trade_min_score || 54);
+
         if (
-          auto_paper_trade &&
+          (shouldAutoTradeQuantFusion ||
+            (auto_paper_trade &&
+              !Boolean(quant_agent_fusion || scheduler_task_type === 'QUANT_DAILY_PIPELINE'))) &&
           archivedSignal &&
           [AISignalDecision.BUY, AISignalDecision.STRONG_BUY].includes(
             archivedSignal.normalized_decision as any
           ) &&
-          Number(archivedSignal.confidence_score || 0) >= Number(paper_trade_min_score || 72)
+          (shouldAutoTradeQuantFusion ||
+            Number(archivedSignal.confidence_score || 0) >= Number(paper_trade_min_score || 72))
         ) {
           try {
             paperTradingResult = await paperTradingAutomationService.autoBuyFromSignals({
@@ -360,6 +372,10 @@ if (aiPollingWorkerDisabled) {
               allowed_risk_levels: ['low', 'medium'],
               require_action_buy: false,
               ignore_profit_gate_for_forced_signals: true,
+              allow_low_data_quality_for_forced_signals:
+                allow_low_data_quality_for_forced_signals !== undefined
+                  ? Boolean(allow_low_data_quality_for_forced_signals)
+                  : shouldAutoTradeQuantFusion,
               use_attribution_feedback: true,
               use_profit_gate: true,
               profit_gate_allow_sampling: true,
@@ -426,6 +442,7 @@ if (aiPollingWorkerDisabled) {
               allowed_risk_levels: ['low', 'medium'],
               require_action_buy: false,
               ignore_profit_gate_for_forced_signals: true,
+              allow_low_data_quality_for_forced_signals: true,
               use_attribution_feedback: true,
               use_profit_gate: true,
               profit_gate_allow_sampling: true,
