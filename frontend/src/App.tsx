@@ -14,7 +14,6 @@ import {
   DashboardOutlined,
   LineChartOutlined,
   UserOutlined,
-  PieChartOutlined,
   AreaChartOutlined,
   SyncOutlined,
   LogoutOutlined,
@@ -64,7 +63,6 @@ import {
   NodeIndexOutlined,
   BranchesOutlined,
   RadarChartOutlined,
-  ExperimentOutlined,
   AimOutlined,
   CompassOutlined,
   SettingOutlined,
@@ -105,6 +103,22 @@ const menuLink = (key: string, icon: React.ReactNode, title: string) => ({
   label: <Link to={key}>{title}</Link>,
   title,
 });
+
+const routeSelectionAliases: Array<[RegExp, string]> = [
+  [/^\/quant\/(research|signals|backtests|strategies|experiments)(\/.*)?$/, '/quant/research'],
+  [
+    /^\/strategy-research\/(optimization|versions|experiments|weights|event-results)(\/.*)?$/,
+    '/strategy-research',
+  ],
+  [/^\/live-trading\/(orders|reconcile)(\/.*)?$/, '/live-trading'],
+  [/^\/review\/(trades|performance|agent-tail|journal)(\/.*)?$/, '/review'],
+  [/^\/backtest\/.+$/, '/backtest'],
+];
+
+const resolveMenuPath = (pathname: string) => {
+  const matchedAlias = routeSelectionAliases.find(([pattern]) => pattern.test(pathname));
+  return matchedAlias?.[1] || pathname;
+};
 
 const flattenMenu = (
   items: MenuProps['items'] = [],
@@ -183,7 +197,6 @@ const AppContent: React.FC = () => {
         title: '今日作战',
         children: [
           menuLink('/today', <CompassOutlined />, '今日作战台'),
-          menuLink('/quant/signals', <ThunderboltOutlined />, '今日机会'),
           menuLink('/autonomous-trading/overview', <FundProjectionScreenOutlined />, '当前持仓'),
           menuLink('/risk-alerts', <AlertOutlined />, '卖出/风控'),
         ],
@@ -191,18 +204,14 @@ const AppContent: React.FC = () => {
       {
         key: 'nav-quant-research',
         icon: <AimOutlined />,
-        label: '策略研究',
-        title: '策略研究',
+        label: '量化交易',
+        title: '量化交易',
         children: [
-          menuLink('/strategy-research', <TrophyOutlined />, '策略研究总览'),
-          menuLink('/quant/dashboard', <FundProjectionScreenOutlined />, '量化收益驾驶舱'),
-          menuLink('/quant/backtests', <ExperimentOutlined />, '跑分验证'),
-          menuLink('/strategy-research/weights', <BranchesOutlined />, '策略库与权重'),
-          menuLink('/strategy-research/optimization', <NodeIndexOutlined />, '策略版本与实验'),
-          menuLink('/strategy-research/event-results', <LineChartOutlined />, '事件策略榜'),
-          menuLink('/ai-advisor', <RobotOutlined />, '深度研报'),
-          menuLink('/backtest', <LineChartOutlined />, '事件回测'),
-          menuLink('/portfolio', <PieChartOutlined />, '组合收益'),
+          menuLink('/quant/dashboard', <FundProjectionScreenOutlined />, '量化总览'),
+          menuLink('/quant/research', <ThunderboltOutlined />, '研究工作台'),
+          menuLink('/strategy-research', <TrophyOutlined />, '策略闭环'),
+          menuLink('/ai-advisor', <RobotOutlined />, 'AI深度研报'),
+          menuLink('/backtest', <LineChartOutlined />, '传统事件回测'),
         ],
       },
       {
@@ -257,11 +266,10 @@ const AppContent: React.FC = () => {
   );
 
   const flatMenuItems = useMemo(() => flattenMenu(mainMenuItems), [mainMenuItems]);
+  const menuPath = useMemo(() => resolveMenuPath(location.pathname), [location.pathname]);
   const selectedMenu =
     flatMenuItems
-      .filter(
-        item => location.pathname === item.key || location.pathname.startsWith(`${item.key}/`)
-      )
+      .filter(item => menuPath === item.key || menuPath.startsWith(`${item.key}/`))
       .sort((a, b) => b.key.length - a.key.length)[0] || flatMenuItems[0];
   const selectedKey = selectedMenu?.key || '/dashboard';
   const currentSection = selectedMenu?.section || '工作台';
@@ -493,8 +501,20 @@ const AppContent: React.FC = () => {
                 }
               />
               <Route
+                path="/quant/research"
+                element={
+                  <ProtectedRoute>
+                    <QuantResearchWorkbench />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
                 path="/quant/strategies"
-                element={<Navigate to="/strategy-research/weights" replace />}
+                element={
+                  <ProtectedRoute>
+                    <QuantResearchWorkbench />
+                  </ProtectedRoute>
+                }
               />
               <Route
                 path="/quant/backtests"
@@ -506,6 +526,14 @@ const AppContent: React.FC = () => {
               />
               <Route
                 path="/quant/signals"
+                element={
+                  <ProtectedRoute>
+                    <QuantResearchWorkbench />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/quant/experiments"
                 element={
                   <ProtectedRoute>
                     <QuantResearchWorkbench />
