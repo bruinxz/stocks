@@ -8,6 +8,13 @@ import { BreakoutAtrStrategy } from '../strategies/BreakoutAtrStrategy';
 import { MultiFactorRankingStrategy } from '../strategies/MultiFactorRankingStrategy';
 import { LowVolatilityQualityStrategy } from '../strategies/LowVolatilityQualityStrategy';
 import { VolumePriceConfirmationStrategy } from '../strategies/VolumePriceConfirmationStrategy';
+import { DonchianTrendStrategy } from '../strategies/DonchianTrendStrategy';
+import { TurtleBreakoutStrategy } from '../strategies/TurtleBreakoutStrategy';
+import { MinerviniTrendTemplateStrategy } from '../strategies/MinerviniTrendTemplateStrategy';
+import { VolatilityContractionBreakoutStrategy } from '../strategies/VolatilityContractionBreakoutStrategy';
+import { DualMomentumRotationStrategy } from '../strategies/DualMomentumRotationStrategy';
+import { QualityMomentumBlendStrategy } from '../strategies/QualityMomentumBlendStrategy';
+import { TrendPullbackReentryStrategy } from '../strategies/TrendPullbackReentryStrategy';
 import { QuantStrategyDefinition } from '../types/QuantTypes';
 
 export class StrategyRegistry {
@@ -23,6 +30,13 @@ export class StrategyRegistry {
     this.register(new MultiFactorRankingStrategy());
     this.register(new LowVolatilityQualityStrategy());
     this.register(new VolumePriceConfirmationStrategy());
+    this.register(new DonchianTrendStrategy());
+    this.register(new TurtleBreakoutStrategy());
+    this.register(new MinerviniTrendTemplateStrategy());
+    this.register(new VolatilityContractionBreakoutStrategy());
+    this.register(new DualMomentumRotationStrategy());
+    this.register(new QualityMomentumBlendStrategy());
+    this.register(new TrendPullbackReentryStrategy());
   }
 
   register(strategy: QuantStrategy) {

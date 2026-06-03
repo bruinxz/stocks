@@ -21,6 +21,7 @@
     "data:sync-index": "ts-node src/scripts/data-cli.ts sync-index",
     "data:daily-update": "ts-node src/scripts/data-cli.ts daily-update",
     "data:check-update": "ts-node src/scripts/data-cli.ts check-update",
+    "paper:reset-and-run-quant": "ts-node src/scripts/reset-paper-trading-and-run-quant.ts",
     "seed:mock": "ts-node src/scripts/seed-mock-data.ts",
     "data:status": "ts-node src/scripts/data-cli.ts status"
   },

@@ -32,6 +32,7 @@ import {
   QUANT_AGENT_FUSION_PORTFOLIO_NAME,
   QUANT_ONLY_PORTFOLIO_NAME,
   PARAM_EXPERIMENT_PORTFOLIO_NAME,
+  PAPER_PORTFOLIO_EXPERIMENT_FAMILIES,
 } from '../../services/PaperTradingDashboardService';
 
 type QuantPipelineMode = 'archive_only' | 'agent_review' | 'paper_trade';
@@ -116,6 +117,7 @@ export interface QuantDailyPipelineOptions {
   factor_sync_skip_if_real_provider_rate_gte?: number;
   factor_provider?: 'auto' | 'local_derived' | 'tushare' | 'eastmoney';
   block_buy_on_runtime_risk?: boolean;
+  run_strategy_portfolio_experiments?: boolean;
 }
 
 interface QuantFusionCandidate {
@@ -344,8 +346,8 @@ function buildStrategyAdmissionGate(
       (item.closed_count >= 3 &&
         (!Number.isFinite(item.avg_excess_return_pct) || item.avg_excess_return_pct >= -1))
   ).length;
-  const blocked =
-    hasPaused || hasReducedOnly || !hasActionable || evidenceCount === 0 || supportedCount === 0;
+  const coldStart = evidenceCount === 0 || supportedCount === 0;
+  const blocked = hasPaused || hasReducedOnly || !hasActionable;
   const scorePenalty = details.reduce((sum, item) => {
     if (item.action === 'reduce') return sum + 8;
     if (item.quality_score < 45) return sum + 5;
@@ -365,13 +367,11 @@ function buildStrategyAdmissionGate(
       return sum + 4;
     }
     return sum;
-  }, 0);
+  }, coldStart ? 8 : 0);
   const reasons = [
     hasPaused ? '包含已暂停策略' : '',
     hasReducedOnly ? '策略全部处于降权状态' : '',
     !hasActionable ? '没有可执行策略权重' : '',
-    evidenceCount === 0 ? '缺少历史/模拟样本支撑' : '',
-    supportedCount === 0 ? '缺少正向收益或质量分支撑' : '',
   ].filter(Boolean);
   const warnings = details
     .map(item => {
@@ -382,6 +382,11 @@ function buildStrategyAdmissionGate(
       }
       return '';
     })
+    .concat(
+      coldStart
+        ? ['策略冷启动：缺少历史/模拟收益样本，本轮只降分观察并允许实验盘小仓采样']
+        : []
+    )
     .filter(Boolean)
     .slice(0, 4);
 
@@ -844,6 +849,7 @@ export class QuantFusionService {
 
     let paperTrading: any = null;
     let paramExperimentPaperTrading: any = null;
+    let strategyPortfolioExperiments: any[] = [];
     if (options.run_paper_trading) {
       paperTrading = await paperTradingAutomationService.autoBuyFromSignals({
         user_id: options.user_id,
@@ -971,6 +977,14 @@ export class QuantFusionService {
             return null;
           });
       }
+      if (useDefaultPortfolioFamily && options.run_strategy_portfolio_experiments !== false) {
+        strategyPortfolioExperiments = await this.runStrategyPortfolioExperiments({
+          options,
+          archive_signal_ids: archive.signal_ids,
+          effective_risk_profile_gate: effectiveRiskProfileGate,
+          agent_min_score: agentMinScore,
+        });
+      }
     }
 
     const riskProfile =
@@ -1066,6 +1080,7 @@ export class QuantFusionService {
       agent_analysis: agentAnalysis,
       paper_trading: paperTrading,
       param_experiment_paper_trading: paramExperimentPaperTrading,
+      strategy_portfolio_experiments: strategyPortfolioExperiments,
       risk_profile: riskProfile || paperTrading?.risk_profile || preTradeRiskProfile || null,
       risk_profile_gate: effectiveRiskProfileGate,
       risk_threshold_suggestion: thresholdSuggestion,
@@ -1089,6 +1104,129 @@ export class QuantFusionService {
     }
 
     return result;
+  }
+
+  private async runStrategyPortfolioExperiments(params: {
+    options: QuantDailyPipelineOptions;
+    archive_signal_ids: number[];
+    effective_risk_profile_gate: Record<string, any>;
+    agent_min_score: number;
+  }) {
+    const { options, archive_signal_ids, effective_risk_profile_gate, agent_min_score } = params;
+    if (!archive_signal_ids.length) return [];
+
+    const results: any[] = [];
+    for (const family of PAPER_PORTFOLIO_EXPERIMENT_FAMILIES) {
+      const strategyKeys = [...family.strategy_keys];
+      const familyRiskGate = {
+        ...effective_risk_profile_gate,
+        ...(family.risk_profile_gate || {}),
+        action:
+          effective_risk_profile_gate.action === 'pause'
+            ? 'pause'
+            : family.risk_profile_gate?.action || effective_risk_profile_gate.action,
+        reason:
+          effective_risk_profile_gate.action === 'pause'
+            ? effective_risk_profile_gate.reason
+            : family.risk_profile_gate?.reason || effective_risk_profile_gate.reason,
+        metadata_contains: {
+          quant_candidate: true,
+          quant_framework_signal: true,
+          ...(effective_risk_profile_gate.metadata_contains || {}),
+        },
+        strategy_family_key: family.key,
+        strategy_filter_keys: strategyKeys,
+      };
+
+      const result = await paperTradingAutomationService
+        .autoBuyFromSignals({
+          user_id: options.user_id,
+          username: options.username,
+          portfolio_name: family.name,
+          initial_capital: options.initial_capital,
+          force_new_portfolio: options.force_new_portfolio,
+          source_type: AISignalSourceType.QUANT_RECOMMENDATION,
+          signal_ids: archive_signal_ids,
+          strategy_keys: strategyKeys,
+          strategy_family_key: family.key,
+          limit: Math.min(
+            Number(family.trade_limit || 2),
+            Math.max(1, toPositiveInt(options.paper_trade_limit, 3, 20))
+          ),
+          scan_limit: toPositiveInt(
+            options.paper_trade_scan_limit,
+            Math.max(archive_signal_ids.length, 30),
+            300
+          ),
+          min_score: Math.max(Number(family.min_score || 62), Math.min(agent_min_score, 70) - 8),
+          max_positions: Math.min(
+            Number(family.max_positions || 8),
+            toPositiveInt(options.max_positions, 8, 30)
+          ),
+          default_position_pct: Math.min(
+            Number(family.default_position_pct || 3),
+            safeNumber(options.default_position_pct, 5)
+          ),
+          max_position_pct: Math.min(
+            Number(family.max_position_pct || 6),
+            safeNumber(options.max_position_pct, 10)
+          ),
+          min_trade_amount: safeNumber(options.min_trade_amount, 3000),
+          allowed_risk_levels: [...family.allowed_risk_levels],
+          require_action_buy: false,
+          allow_watch_signals_for_sampling: true,
+          dry_run: Boolean(options.dry_run),
+          report_to_feishu: false,
+          ignore_profit_gate_for_forced_signals: true,
+          allow_min_lot_for_forced_signals: true,
+          allow_min_lot_for_sampling_signals: true,
+          use_profit_gate: true,
+          use_outcome_feedback: true,
+          use_entry_risk_guard: options.use_entry_risk_guard,
+          max_daily_new_positions: Math.min(
+            Number(family.trade_limit || 2),
+            toPositiveInt(options.max_daily_new_positions, 3, 20)
+          ),
+          max_daily_new_exposure_pct: Math.min(
+            Math.max(Number(family.default_position_pct || 3) * Number(family.trade_limit || 2), 5),
+            safeNumber(options.max_daily_new_exposure_pct, 12)
+          ),
+          max_total_exposure_pct: Math.min(50, safeNumber(options.max_total_exposure_pct, 60)),
+          max_industry_exposure_pct: Math.min(20, safeNumber(options.max_industry_exposure_pct, 25)),
+          min_cash_reserve_pct: Math.max(12, safeNumber(options.min_cash_reserve_pct, 8)),
+          max_portfolio_drawdown_pct: Math.min(
+            10,
+            safeNumber(options.max_portfolio_drawdown_pct, 12)
+          ),
+          max_single_stock_volatility_pct: options.max_single_stock_volatility_pct,
+          max_position_correlation: options.max_position_correlation,
+          max_portfolio_var_pct: Math.min(8, safeNumber(options.max_portfolio_var_pct, 10)),
+          min_avg_turnover_yuan: options.min_avg_turnover_yuan,
+          cooldown_days_after_loss: options.cooldown_days_after_loss,
+          block_limit_up: options.block_limit_up,
+          block_limit_down: options.block_limit_down,
+          block_suspended: options.block_suspended,
+          risk_profile_gate: familyRiskGate,
+        })
+        .catch(error => {
+          logger.warn(`${family.label}跟单失败，其他实验盘继续: ${error?.message || error}`);
+          return {
+            portfolio_name: family.name,
+            strategy_family_key: family.key,
+            strategy_keys: strategyKeys,
+            error: error?.message || String(error),
+          };
+        });
+
+      results.push({
+        key: family.key,
+        label: family.label,
+        portfolio_name: family.name,
+        strategy_keys: strategyKeys,
+        result,
+      });
+    }
+    return results;
   }
 
   private resolveMode(options: QuantDailyPipelineOptions): QuantPipelineMode {

@@ -146,6 +146,9 @@ export interface PaperTradingAutoOptions {
   min_trade_amount?: number;
   allowed_risk_levels?: string[];
   require_action_buy?: boolean;
+  allow_watch_signals_for_sampling?: boolean;
+  strategy_keys?: string[] | string;
+  strategy_family_key?: string;
   dry_run?: boolean;
   report_to_feishu?: boolean;
   notify_to_feishu_bot?: boolean;
@@ -435,6 +438,7 @@ export interface PaperTradingAutoResult {
   };
   risk_profile?: any;
   risk_profile_gate?: any;
+  strategy_filter_policy?: any;
 }
 
 interface EntryRiskGuardState {
@@ -724,6 +728,32 @@ function strategyKeysFromSignalMetadata(metadata: Record<string, any>): string[]
     .map(item => String(item || '').trim())
     .filter(Boolean);
   return [...new Set(keys.length ? keys : ['unknown'])];
+}
+
+function normalizeStringArray(value: any): string[] {
+  if (Array.isArray(value)) {
+    return [
+      ...new Set(value.map(item => String(item || '').trim()).filter(item => item.length > 0)),
+    ];
+  }
+  if (typeof value === 'string') {
+    return [
+      ...new Set(
+        value
+          .split(',')
+          .map(item => item.trim())
+          .filter(item => item.length > 0)
+      ),
+    ];
+  }
+  return [];
+}
+
+function signalMatchesStrategyKeys(signal: AIInvestmentSignal, strategyKeys: string[]): boolean {
+  if (!strategyKeys.length) return true;
+  const allowed = new Set(strategyKeys);
+  const metadata = asPlainObject(signal.metadata);
+  return strategyKeysFromSignalMetadata(metadata).some(key => allowed.has(key));
 }
 
 function normalizeBudgetActionKey(value: any): string {
@@ -1069,6 +1099,8 @@ class PaperTradingAutomationService {
       block_suspended: toBoolean(options.block_suspended, true),
     });
     const source_type = options.source_type || AISignalSourceType.QUANT_RECOMMENDATION;
+    const allowWatchSignalsForSampling = toBoolean(options.allow_watch_signals_for_sampling, false);
+    const strategyFilterKeys = normalizeStringArray(options.strategy_keys);
     const require_action_buy = toBoolean(
       options.require_action_buy,
       source_type === AISignalSourceType.QUANT_RECOMMENDATION
@@ -1169,7 +1201,9 @@ class PaperTradingAutomationService {
 
     const where: any = {
       normalized_decision: {
-        [Op.in]: [AISignalDecision.BUY, AISignalDecision.STRONG_BUY],
+        [Op.in]: allowWatchSignalsForSampling
+          ? [AISignalDecision.BUY, AISignalDecision.STRONG_BUY, AISignalDecision.HOLD]
+          : [AISignalDecision.BUY, AISignalDecision.STRONG_BUY],
       },
       confidence_score: {
         [Op.gte]: min_score,
@@ -1210,6 +1244,9 @@ class PaperTradingAutomationService {
       ],
       limit: scan_limit,
     });
+    const candidateSignals = strategyFilterKeys.length
+      ? signals.filter(signal => signalMatchesStrategyKeys(signal, strategyFilterKeys))
+      : signals;
 
     const trades: PaperTradingAutoTradeItem[] = [];
     const skipped_items: PaperTradingAutoTradeItem[] = [];
@@ -1301,7 +1338,20 @@ class PaperTradingAutomationService {
       });
     }
 
-    for (const signal of signals) {
+    if (strategyFilterKeys.length > 0 && candidateSignals.length === 0) {
+      skipped_items.push({
+        status: 'skipped',
+        signal_id: 0,
+        source_type,
+        source_id: '',
+        signal_date: getChinaToday(),
+        symbol: '',
+        decision: '',
+        reason: `策略实验盘无匹配候选：${strategyFilterKeys.join('/')}`,
+      });
+    }
+
+    for (const signal of candidateSignals) {
       const itemBase = this.buildTradeItemBase(signal);
       const symbol = normalizeSymbol(signal.symbol);
       const metadata = asPlainObject(signal.metadata);
@@ -1440,6 +1490,10 @@ class PaperTradingAutomationService {
 
       if (action === 'avoid') {
         await skip('候选交易纪律为暂不参与');
+        continue;
+      }
+      if (allowWatchSignalsForSampling && action && !['buy', 'watch'].includes(action)) {
+        await skip(`策略采样只允许买入/观察动作：${metadata.action_label || action}`);
         continue;
       }
       if (require_action_buy && action !== 'buy') {
@@ -2105,7 +2159,7 @@ class PaperTradingAutomationService {
       user_id: portfolio.user_id,
       dry_run,
       source_type,
-      scanned: signals.length,
+      scanned: candidateSignals.length,
       eligible,
       executed: dry_run ? 0 : trades.length,
       planned: dry_run ? trades.length : 0,
@@ -2121,6 +2175,15 @@ class PaperTradingAutomationService {
       skip_reason_summary: summarizeSkippedItems(skipped_items),
       risk_profile: riskProfile,
       risk_profile_gate: riskProfileGate,
+      strategy_filter_policy: strategyFilterKeys.length
+        ? {
+            strategy_family_key: options.strategy_family_key,
+            strategy_keys: strategyFilterKeys,
+            raw_scanned: signals.length,
+            matched: candidateSignals.length,
+            allow_watch_signals_for_sampling: allowWatchSignalsForSampling,
+          }
+        : undefined,
     };
 
     if (report_to_feishu) {

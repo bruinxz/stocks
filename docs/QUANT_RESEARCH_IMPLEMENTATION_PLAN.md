@@ -1559,3 +1559,30 @@ final_score = 0.45 * quant_score
 - [x] 当前结论：量化基础设施、数据同步、回测、Agent 复核、模拟盘链路可以继续运行；但在全市场近期真实规则跑分转正前，应保持“量化筛选 -> Agent 复核 -> 模拟盘验证”，不应直接实盘自动买入。
 - [ ] 明日开盘后观察 `recent_backtest_gate.auto_buy_allowed=false` 时，09:35 推荐是否仍能归档/发飞书，但候选动作保持观察并等待 Agent 复核。
 - [ ] 下一步：补齐成交额/换手率更可靠的数据源落盘，重新跑 30/60/120 日多窗口 walk-forward；只有连续窗口出现正超额、模拟盘闭环为正，再推进实盘 bridge 读写链路。
+
+### P132：模拟盘统一起跑与策略族对照（本轮完成）
+
+- [x] 新增 7 个可用现有 OHLCV/成交额/估值/质量/资金流因子直接落地的策略：
+  - `donchian_trend`：Donchian 通道趋势突破。
+  - `turtle_breakout`：海龟 20/55 日突破 + ATR 风控。
+  - `minervini_trend_template`：Minervini 趋势模板强势股筛选。
+  - `volatility_contraction_breakout`：波动收缩/平台突破。
+  - `dual_momentum_rotation`：绝对动量 + 相对强弱轮动。
+  - `quality_momentum_blend`：质量、估值、资金流、动量融合。
+  - `trend_pullback_reentry`：趋势内回踩再入场。
+- [x] 模拟盘家族从 5 个扩展为 11 个：保留综合盘、纯量化盘、量化+Agent融合盘、Agent独立盘、参数实验盘，并新增「趋势突破盘」「动量轮动盘」「均值回归盘」「多因子质量盘」「低波防守盘」「量价确认盘」。
+- [x] `QuantFusionService.runDailyPipeline` 默认在纯量化/参数实验之外，额外按策略族启动独立模拟盘实验。每个实验盘只接收自己的 `strategy_keys`，从同一批归档信号、同一时间、同一初始资金起跑。
+- [x] `PaperTradingAutomationService.autoBuyFromSignals` 支持 `strategy_keys / strategy_family_key / allow_watch_signals_for_sampling`，策略实验盘可以把“观察候选”作为小仓冷启动样本，但仍受数据质量、行情可执行性、仓位、行业暴露、现金水位、相关性、VaR、涨跌停/停牌等风控约束。
+- [x] 近期真实回测门禁仍保护主链路：近期跑分不佳时，纯量化盘不会强行买入；策略实验盘只做小仓采样，用来沉淀“哪个策略族真的赚钱”的证据。
+- [x] 新增一键清盘起跑脚本：
+  - 本地/开发：`cd backend && npm run paper:reset-and-run-quant -- --username lym`
+  - 线上编译后：`APP_DIR=/opt/stocks/current USERNAME=lym scripts/deployment/reset_paper_trading_and_start_quant.sh`
+  - 该脚本会清空 `paper_trading_*`、`recommendation_trade_outcomes`、旧信号的 `paper_trading` 元数据，然后触发当天全市场量化扫描和策略族模拟盘起跑。
+- [x] 前端收益驾驶舱和自主交易总览已识别新增策略盘，能直接看到各盘是否建仓、收益、持仓、交易数和拒单原因。
+
+执行纪律：
+
+1. 清盘前必须先在服务器做 PG 备份，至少覆盖 `paper_trading_portfolios / positions / trades / snapshots / order_intents / order_intent_outcomes / canary_review_snapshots / recommendation_trade_outcomes / ai_investment_signals`。
+2. 清盘后只把“本轮之后”的模拟收益作为策略族对比依据，旧收益只保留在备份里，不再混入页面冠军。
+3. 每天观察维度按优先级排序：总收益率、最大回撤、闭环胜率、平均超额收益、拒单原因、持仓集中度。
+4. 若某个策略盘连续 5-10 个闭环样本显著跑赢纯量化盘和综合盘，再考虑把该策略族提高预算；若连续跑输，则降低或暂停该策略族。

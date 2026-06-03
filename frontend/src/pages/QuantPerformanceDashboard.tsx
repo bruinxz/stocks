@@ -649,6 +649,16 @@ const formatDateTime = (value?: string | null) => {
 };
 
 const familyTone: Record<string, { color: string; icon: React.ReactNode }> = {
+  legacy_autonomous: { color: '#2764b8', icon: <FundProjectionScreenOutlined /> },
+  quant_only: { color: '#1d4ed8', icon: <ThunderboltOutlined /> },
+  quant_agent_fusion: { color: '#b7791f', icon: <RobotOutlined /> },
+  param_experiment: { color: '#b45309', icon: <ApiOutlined /> },
+  quant_trend_breakout: { color: '#dc2626', icon: <ThunderboltOutlined /> },
+  quant_momentum_rotation: { color: '#c026d3', icon: <FundProjectionScreenOutlined /> },
+  quant_mean_reversion: { color: '#16a34a', icon: <FundProjectionScreenOutlined /> },
+  quant_multi_factor_quality: { color: '#2563eb', icon: <ApiOutlined /> },
+  quant_low_vol_defensive: { color: '#65a30d', icon: <FundProjectionScreenOutlined /> },
+  quant_volume_price: { color: '#ea580c', icon: <ThunderboltOutlined /> },
   pure_quant: { color: '#2764b8', icon: <ThunderboltOutlined /> },
   agent_fusion: { color: '#b7791f', icon: <RobotOutlined /> },
   agent_only: { color: '#0f8f6b', icon: <RobotOutlined /> },
@@ -2097,7 +2107,7 @@ const QuantPerformanceDashboard: React.FC = () => {
               <Text type="secondary">基于已进入20W模拟盘的真实闭环/持仓样本。</Text>
             </div>
             <div className="quant-family-list">
-              {families.slice(0, 5).map(family => {
+              {families.map(family => {
                 const tone = familyTone[family.key] || familyTone.other;
                 return (
                   <div className="quant-family-card" key={family.key}>

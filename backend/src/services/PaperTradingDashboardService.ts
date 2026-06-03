@@ -20,6 +20,7 @@ import {
   DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
   PAPER_PORTFOLIO_FAMILIES,
   PARAM_EXPERIMENT_PORTFOLIO_NAME,
+  PAPER_PORTFOLIO_EXPERIMENT_FAMILIES,
   QUANT_AGENT_FUSION_PORTFOLIO_NAME,
   QUANT_ONLY_PORTFOLIO_NAME,
 } from './PaperTradingPortfolioFamilies';
@@ -32,6 +33,7 @@ export {
   DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
   PAPER_PORTFOLIO_FAMILIES,
   PARAM_EXPERIMENT_PORTFOLIO_NAME,
+  PAPER_PORTFOLIO_EXPERIMENT_FAMILIES,
   QUANT_AGENT_FUSION_PORTFOLIO_NAME,
   QUANT_ONLY_PORTFOLIO_NAME,
 } from './PaperTradingPortfolioFamilies';
@@ -261,6 +263,9 @@ function buildFamilyDefaultReason(family: (typeof PAPER_PORTFOLIO_FAMILIES)[numb
   }
   if (family.key === 'quant_only') {
     return '等待量化扫描产生买入候选，并通过行情、仓位、风控和资金手数校验。';
+  }
+  if (PAPER_PORTFOLIO_EXPERIMENT_FAMILIES.some(item => item.key === family.key)) {
+    return `${family.label}已就绪；只接收该策略族的独立小仓样本，等待下一轮量化扫描建仓或记录拒单原因。`;
   }
   return '综合盘已就绪；有信号但被资金/风控/旧信号去重拦截时，不会生成模拟交易。';
 }

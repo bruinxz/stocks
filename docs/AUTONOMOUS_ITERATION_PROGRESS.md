@@ -2133,3 +2133,18 @@ Next:
 1. Add a weekly trend persistence table if task logs are not enough for charting.
 2. Provide a guarded one-click apply action later, still avoiding real broker orders.
 3. Add a comparison overlay for paper-trading baseline trend once enough samples accumulate.
+## Paper portfolio reset and strategy-family race (2026-06-03)
+
+- Added 7 deployable quant strategies from common advanced frameworks that fit current data: Donchian channel, Turtle breakout, Minervini template, volatility contraction breakout, dual momentum rotation, quality-momentum blend, and trend pullback re-entry.
+- Expanded paper portfolio families to 11 accounts so all portfolios can be cleared and restarted from the same clock:
+  - core controls: 综合盘, 纯量化盘, 量化+Agent融合盘, Agent独立盘, 参数实验盘;
+  - strategy-family races: 趋势突破盘, 动量轮动盘, 均值回归盘, 多因子质量盘, 低波防守盘, 量价确认盘.
+- `QuantFusionService.runDailyPipeline()` now launches strategy-family paper experiments by default when using the standard portfolio family. Each family filters the archived signals by `strategy_keys`, uses smaller risk budgets, and records matched/skipped/executed counts.
+- `PaperTradingAutomationService.autoBuyFromSignals()` now supports `strategy_keys`, `strategy_family_key`, and `allow_watch_signals_for_sampling`, so cold-start strategy families can sample watch candidates without bypassing execution/risk/data-quality guards.
+- Added `backend/src/scripts/reset-paper-trading-and-run-quant.ts` and `scripts/deployment/reset_paper_trading_and_start_quant.sh` for the operational reset:
+  1. clear all paper trading tables and old signal paper-trading metadata;
+  2. trigger the current-day market quant pipeline;
+  3. print portfolio-family start status for comparison.
+- Validation:
+  - backend TypeScript passed;
+  - frontend production build passed with existing prettier warnings outside this task.

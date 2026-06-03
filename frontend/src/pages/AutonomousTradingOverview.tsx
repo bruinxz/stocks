@@ -396,6 +396,12 @@ const accountTagColor = (key?: string) => {
     quant_agent_fusion: 'purple',
     agent_only: 'cyan',
     param_experiment: 'gold',
+    quant_trend_breakout: 'volcano',
+    quant_momentum_rotation: 'magenta',
+    quant_mean_reversion: 'green',
+    quant_multi_factor_quality: 'blue',
+    quant_low_vol_defensive: 'lime',
+    quant_volume_price: 'orange',
   };
   return colorMap[key || ''] || 'default';
 };
