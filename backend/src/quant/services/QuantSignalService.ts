@@ -226,7 +226,10 @@ export class QuantSignalService {
           policyDiagnostics[strategyKey].adjusted_signal_count += 1;
           result.reasons = [...(result.reasons || []), ...policyReasons].slice(0, 8);
         }
-        if (result.score >= effectiveMinScore || ['buy', 'watch'].includes(result.signal)) {
+        const meetsScoreGate = result.score >= effectiveMinScore;
+        const isObservationSignal =
+          result.signal === 'watch' && result.score >= Math.max(62, effectiveMinScore - 8);
+        if (meetsScoreGate || isObservationSignal) {
           signals.push(result);
         } else {
           policyDiagnostics[strategyKey].rejected_by_min_score_count += 1;

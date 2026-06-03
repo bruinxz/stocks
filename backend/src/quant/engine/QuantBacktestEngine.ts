@@ -621,7 +621,13 @@ export class QuantBacktestEngine {
   }
 
   private resolveTurnover(bar: QuantBar): number {
-    return toNumber(bar.turnover ?? bar.amount, 0);
+    const persistedTurnover = toNumber(bar.turnover ?? bar.amount, 0);
+    if (persistedTurnover > 0) return persistedTurnover;
+
+    const volume = toNumber(bar.volume, 0);
+    const close = toNumber(bar.close || bar.open, 0);
+    if (volume > 0 && close > 0) return volume * close;
+    return 0;
   }
 
   private resolveChangePercent(bar: QuantBar): number {

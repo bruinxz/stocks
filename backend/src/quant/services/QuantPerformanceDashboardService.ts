@@ -248,6 +248,34 @@ function summarizeParamTradeAttributionRow(versionKey: string, rows: any[]) {
   };
 }
 
+type RecentBacktestGateAction = 'support' | 'observe' | 'reduce' | 'pause';
+
+function resolveRecentBacktestAction(options: {
+  sample_count: number;
+  buy_fill_count: number;
+  avg_return_pct: number;
+  avg_excess_return_pct: number;
+}): RecentBacktestGateAction {
+  if (options.sample_count < 3 || options.buy_fill_count < 10) return 'observe';
+  if (options.avg_excess_return_pct <= -2 && options.avg_return_pct < 0) return 'pause';
+  if (options.avg_excess_return_pct <= -0.5 || options.avg_return_pct < -0.5) return 'reduce';
+  if (options.avg_excess_return_pct >= 0.3 && options.avg_return_pct >= 0) return 'support';
+  return 'observe';
+}
+
+function weightedAverage<T>(
+  items: T[],
+  weightFn: (item: T) => number,
+  valueFn: (item: T) => number
+) {
+  const totalWeight = items.reduce((sum, item) => sum + Math.max(weightFn(item), 0), 0);
+  if (totalWeight <= 0) return 0;
+  return (
+    items.reduce((sum, item) => sum + valueFn(item) * Math.max(weightFn(item), 0), 0) /
+    totalWeight
+  );
+}
+
 export class QuantPerformanceDashboardService {
   getIndicatorCatalog() {
     const indicatorCatalog = [
@@ -354,6 +382,7 @@ export class QuantPerformanceDashboardService {
       dataFreshness,
       runtimeHealth,
       runtimeDiscipline,
+      recentBacktestGate,
     ] = await Promise.all([
       this.getLatestBacktests(),
       this.getSignalSummary(),
@@ -368,6 +397,7 @@ export class QuantPerformanceDashboardService {
       quantDataFreshnessService.getSnapshot(),
       quantRuntimeHealthService.getHealth(options),
       this.getRuntimeDisciplineSummary(),
+      this.getRecentBacktestGate(),
     ]);
 
     return {
@@ -381,6 +411,7 @@ export class QuantPerformanceDashboardService {
       data_freshness: dataFreshness,
       runtime_health: runtimeHealth,
       runtime_discipline: runtimeDiscipline,
+      recent_backtest_gate: recentBacktestGate,
       strategy_experiments: strategyExperiments,
       experiment_param_suggestions: experimentParamSuggestions,
       param_validation_dashboard: {
@@ -394,7 +425,8 @@ export class QuantPerformanceDashboardService {
         scheduleSummary,
         dataQuality,
         dataFreshness,
-        runtimeHealth
+        runtimeHealth,
+        recentBacktestGate
       ),
     };
   }
@@ -710,6 +742,169 @@ export class QuantPerformanceDashboardService {
       latest: latest ? mapRecord(latest) : null,
       latest_blocked: latestBlocked ? mapRecord(latestBlocked) : null,
       recent_runs: quantLogs.slice(0, 8).map(mapRecord),
+    };
+  }
+
+  private async getRecentBacktestGate(options: { window_days?: number } = {}) {
+    const windowDays = Number(options.window_days || 14);
+    const tasks = await QuantBacktestTask.findAll({
+      where: {
+        status: 'COMPLETED',
+        created_at: { [Op.gte]: dateDaysAgo(windowDays) },
+      },
+      order: [['created_at', 'DESC']],
+      limit: 200,
+    }).catch(() => [] as QuantBacktestTask[]);
+    const taskIds = tasks.map(task => Number(task.id)).filter(Boolean);
+    const results = taskIds.length
+      ? await QuantBacktestResult.findAll({
+          where: { task_id: { [Op.in]: taskIds } },
+          order: [['created_at', 'DESC']],
+        }).catch(() => [] as QuantBacktestResult[])
+      : [];
+    const taskById = new Map(tasks.map(task => [Number(task.id), task]));
+    const grouped = new Map<string, QuantBacktestResult[]>();
+
+    for (const result of results) {
+      const rows = grouped.get(result.strategy_key) || [];
+      rows.push(result);
+      grouped.set(result.strategy_key, rows);
+    }
+
+    const strategies = [...grouped.entries()]
+      .map(([strategyKey, rows]) => {
+        const avg = (values: number[]) =>
+          values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+        const buyFillCount = rows.reduce((sum, row) => {
+          const diagnostics = asPlainObject(asPlainObject(row.metrics_json).execution_diagnostics);
+          return sum + toNumber(diagnostics.buy_fill_count, 0);
+        }, 0);
+        const buyAttemptCount = rows.reduce((sum, row) => {
+          const diagnostics = asPlainObject(asPlainObject(row.metrics_json).execution_diagnostics);
+          return sum + toNumber(diagnostics.buy_attempt_count, 0);
+        }, 0);
+        const blockedBuyCount = rows.reduce((sum, row) => {
+          const diagnostics = asPlainObject(asPlainObject(row.metrics_json).execution_diagnostics);
+          return sum + toNumber(diagnostics.blocked_buy_count, 0);
+        }, 0);
+        const closedTradeCount = rows.reduce((sum, row) => sum + toNumber(row.trade_count, 0), 0);
+        const openPositionCount = rows.reduce(
+          (sum, row) => sum + toNumber(asPlainObject(row.metrics_json).open_positions, 0),
+          0
+        );
+        const avgReturn = roundNumber(avg(rows.map(row => toNumber(row.total_return_pct))), 4);
+        const avgExcess = roundNumber(avg(rows.map(row => toNumber(row.excess_return_pct))), 4);
+        const avgDrawdown = roundNumber(avg(rows.map(row => toNumber(row.max_drawdown_pct))), 4);
+        const avgSharpe = roundNumber(avg(rows.map(row => toNumber(row.sharpe_ratio))), 4);
+        const action = resolveRecentBacktestAction({
+          sample_count: rows.length,
+          buy_fill_count: buyFillCount,
+          avg_return_pct: avgReturn,
+          avg_excess_return_pct: avgExcess,
+        });
+        const latestTask = rows
+          .map(row => taskById.get(Number(row.task_id)))
+          .filter(Boolean)
+          .sort(
+            (a, b) =>
+              new Date((b as QuantBacktestTask).created_at as any).getTime() -
+              new Date((a as QuantBacktestTask).created_at as any).getTime()
+          )[0] as QuantBacktestTask | undefined;
+
+        return {
+          strategy_key: strategyKey,
+          strategy_name: rows[0]?.strategy_name || strategyKey,
+          task_samples: rows.length,
+          buy_fill_count: buyFillCount,
+          buy_attempt_count: buyAttemptCount,
+          blocked_buy_count: blockedBuyCount,
+          closed_trade_count: closedTradeCount,
+          open_position_count: openPositionCount,
+          avg_return_pct: avgReturn,
+          avg_excess_return_pct: avgExcess,
+          avg_drawdown_pct: avgDrawdown,
+          avg_sharpe: avgSharpe,
+          latest_task_id: latestTask?.id || null,
+          latest_task_name: latestTask?.task_name || null,
+          latest_task_range: latestTask
+            ? `${latestTask.start_date || '-'} ~ ${latestTask.end_date || '-'}`
+            : null,
+          action,
+          reason: `近 ${rows.length} 个回测分片，平均收益 ${
+            avgReturn >= 0 ? '+' : ''
+          }${avgReturn}%，超额 ${avgExcess >= 0 ? '+' : ''}${avgExcess}%，买入成交 ${buyFillCount} 次。`,
+        };
+      })
+      .sort((a, b) => toNumber(b.avg_excess_return_pct) - toNumber(a.avg_excess_return_pct));
+
+    const resultCount = results.length;
+    const buyFillCount = strategies.reduce((sum, row) => sum + toNumber(row.buy_fill_count), 0);
+    const closedTradeCount = strategies.reduce(
+      (sum, row) => sum + toNumber(row.closed_trade_count),
+      0
+    );
+    const avgReturn = roundNumber(
+      weightedAverage(
+        strategies,
+        item => Math.max(toNumber(item.task_samples), 1),
+        item => toNumber(item.avg_return_pct)
+      ),
+      4
+    );
+    const avgExcess = roundNumber(
+      weightedAverage(
+        strategies,
+        item => Math.max(toNumber(item.task_samples), 1),
+        item => toNumber(item.avg_excess_return_pct)
+      ),
+      4
+    );
+    const status = resolveRecentBacktestAction({
+      sample_count: resultCount,
+      buy_fill_count: buyFillCount,
+      avg_return_pct: avgReturn,
+      avg_excess_return_pct: avgExcess,
+    });
+    const autoBuyAllowed = status === 'support';
+    const conclusion = !resultCount
+      ? `近 ${windowDays} 天暂无可用的真实规则量化跑分，开盘推荐只应观察，不应放大仓位。`
+      : autoBuyAllowed
+      ? `近 ${windowDays} 天真实规则跑分平均收益 ${avgReturn >= 0 ? '+' : ''}${avgReturn}%，超额 ${
+          avgExcess >= 0 ? '+' : ''
+        }${avgExcess}%，可支持小仓量化自动买入。`
+      : `近 ${windowDays} 天真实规则跑分平均收益 ${avgReturn >= 0 ? '+' : ''}${avgReturn}%，超额 ${
+          avgExcess >= 0 ? '+' : ''
+        }${avgExcess}%，暂不支持量化自动买入；候选应降级观察并交给 Agent 复核。`;
+
+    return {
+      generated_at: new Date().toISOString(),
+      window_days: windowDays,
+      status,
+      auto_buy_allowed: autoBuyAllowed,
+      summary: {
+        task_sample_count: tasks.length,
+        result_count: resultCount,
+        strategy_count: strategies.length,
+        buy_fill_count: buyFillCount,
+        closed_trade_count: closedTradeCount,
+        avg_return_pct: avgReturn,
+        avg_excess_return_pct: avgExcess,
+        supported_count: strategies.filter(item => item.action === 'support').length,
+        observe_count: strategies.filter(item => item.action === 'observe').length,
+        reduce_count: strategies.filter(item => item.action === 'reduce').length,
+        pause_count: strategies.filter(item => item.action === 'pause').length,
+        conclusion,
+      },
+      strategies,
+      recent_tasks: tasks.slice(0, 8).map(task => ({
+        id: task.id,
+        task_name: task.task_name,
+        universe: task.universe,
+        start_date: task.start_date,
+        end_date: task.end_date,
+        created_at: task.created_at,
+        strategy_keys: task.strategy_keys,
+      })),
     };
   }
 
@@ -1056,7 +1251,8 @@ export class QuantPerformanceDashboardService {
     schedule: any,
     dataQuality: any,
     dataFreshness?: any,
-    runtimeHealth?: any
+    runtimeHealth?: any,
+    recentBacktestGate?: any
   ) {
     const checks = [
       {
@@ -1112,6 +1308,11 @@ export class QuantPerformanceDashboardService {
         ok: runtimeHealth?.status !== 'risk',
         label: '运行时健康',
       },
+      {
+        key: 'recent_backtest_gate',
+        ok: recentBacktestGate?.auto_buy_allowed === true,
+        label: '近期跑分支持买入',
+      },
     ];
     const readyCount = checks.filter(item => item.ok).length;
     return {
@@ -1120,7 +1321,9 @@ export class QuantPerformanceDashboardService {
       checks,
       conclusion:
         readyCount === checks.length
-          ? '量化指标、历史收益、开盘推荐、Agent融合、模拟盘验证和运行时健康均已具备。'
+          ? '量化指标、历史收益、开盘推荐、Agent融合、模拟盘验证、运行时健康和近期跑分门禁均已具备。'
+          : recentBacktestGate?.auto_buy_allowed === false
+          ? '链路可继续跑推荐和观察，但近期真实规则跑分暂不支持自动买入。'
           : '链路已部分具备，仍需补齐历史跑分或等待明日开盘/Agent异步结果沉淀。',
     };
   }

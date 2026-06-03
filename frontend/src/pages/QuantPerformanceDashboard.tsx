@@ -72,6 +72,26 @@ type BacktestItem = {
   trade_count?: number;
 };
 
+type RecentBacktestGateStrategy = {
+  strategy_key: string;
+  strategy_name?: string;
+  task_samples?: number;
+  buy_fill_count?: number;
+  buy_attempt_count?: number;
+  blocked_buy_count?: number;
+  closed_trade_count?: number;
+  open_position_count?: number;
+  avg_return_pct?: number;
+  avg_excess_return_pct?: number;
+  avg_drawdown_pct?: number;
+  avg_sharpe?: number;
+  latest_task_id?: number | null;
+  latest_task_name?: string | null;
+  latest_task_range?: string | null;
+  action?: 'support' | 'observe' | 'reduce' | 'pause' | string;
+  reason?: string;
+};
+
 type OutcomeFamily = {
   key: string;
   label: string;
@@ -426,6 +446,36 @@ type DashboardData = {
     latest_blocked?: RuntimeDisciplineRun | null;
     recent_runs?: RuntimeDisciplineRun[];
   };
+  recent_backtest_gate?: {
+    generated_at?: string;
+    window_days?: number;
+    status?: 'support' | 'observe' | 'reduce' | 'pause' | string;
+    auto_buy_allowed?: boolean;
+    summary?: {
+      task_sample_count?: number;
+      result_count?: number;
+      strategy_count?: number;
+      buy_fill_count?: number;
+      closed_trade_count?: number;
+      avg_return_pct?: number;
+      avg_excess_return_pct?: number;
+      supported_count?: number;
+      observe_count?: number;
+      reduce_count?: number;
+      pause_count?: number;
+      conclusion?: string;
+    };
+    strategies?: RecentBacktestGateStrategy[];
+    recent_tasks?: Array<{
+      id?: number;
+      task_name?: string;
+      universe?: string;
+      start_date?: string;
+      end_date?: string;
+      created_at?: string;
+      strategy_keys?: string[];
+    }>;
+  };
   strategy_experiments?: {
     total?: number;
     best?: StrategyExperiment | null;
@@ -606,6 +656,13 @@ const familyTone: Record<string, { color: string; icon: React.ReactNode }> = {
   other: { color: '#64748b', icon: <FundProjectionScreenOutlined /> },
 };
 
+const recentGateActionMeta: Record<string, { label: string; color: string; tone: string }> = {
+  support: { label: '支持小仓买入', color: 'green', tone: 'support' },
+  observe: { label: '观察复核', color: 'gold', tone: 'observe' },
+  reduce: { label: '降级观察', color: 'orange', tone: 'reduce' },
+  pause: { label: '暂停买入', color: 'red', tone: 'pause' },
+};
+
 const QuantPerformanceDashboard: React.FC = () => {
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [runtimeHealth, setRuntimeHealth] = useState<RuntimeHealth | null>(null);
@@ -665,6 +722,7 @@ const QuantPerformanceDashboard: React.FC = () => {
   const dataQuality = dashboard?.data_quality_center;
   const dataFreshness = dashboard?.data_freshness;
   const runtimeDiscipline = dashboard?.runtime_discipline;
+  const recentBacktestGate = dashboard?.recent_backtest_gate;
   const dataFreshnessChecks = dataFreshness?.checks || {};
   const strategyExperiments = dashboard?.strategy_experiments;
   const experimentParamSuggestions = dashboard?.experiment_param_suggestions;
@@ -1234,6 +1292,105 @@ const QuantPerformanceDashboard: React.FC = () => {
               : '暂无历史跑分概览，请先在量化跑分实验室发起一次回测。'
           }
         />
+      </Card>
+
+      <Card
+        className={`modern-card quant-recent-gate-card quant-recent-gate-card--${
+          recentGateActionMeta[String(recentBacktestGate?.status || 'observe')]?.tone || 'observe'
+        }`}
+        variant="borderless"
+        loading={loading}
+      >
+        <div className="quant-section-heading">
+          <div>
+            <span>RECENT REALISM GATE</span>
+            <h2>近期真实跑分门禁</h2>
+          </div>
+          <Space wrap>
+            <Tag
+              color={
+                recentGateActionMeta[String(recentBacktestGate?.status || 'observe')]?.color ||
+                'gold'
+              }
+            >
+              {recentGateActionMeta[String(recentBacktestGate?.status || 'observe')]?.label ||
+                '观察复核'}
+            </Tag>
+            <Tag>{recentBacktestGate?.window_days || 14} 天窗口</Tag>
+          </Space>
+        </div>
+        <Alert
+          className="quant-inline-note"
+          type={recentBacktestGate?.auto_buy_allowed ? 'success' : 'warning'}
+          showIcon
+          message={
+            recentBacktestGate?.summary?.conclusion ||
+            '等待近期真实规则回测沉淀。没有稳定正超额前，量化候选会降级观察并交给 Agent 复核。'
+          }
+        />
+        <div className="quant-recent-gate-layout">
+          <div className="quant-recent-gate-hero">
+            <span>AUTO BUY</span>
+            <strong>{recentBacktestGate?.auto_buy_allowed ? '允许' : '不放行'}</strong>
+            <p>
+              平均收益 {formatPct(recentBacktestGate?.summary?.avg_return_pct)} · 平均超额{' '}
+              {formatPct(recentBacktestGate?.summary?.avg_excess_return_pct)} · 买入成交{' '}
+              {recentBacktestGate?.summary?.buy_fill_count || 0} 次
+            </p>
+            <div className="quant-recent-gate-meta">
+              <Tag>任务 {recentBacktestGate?.summary?.task_sample_count || 0}</Tag>
+              <Tag>结果 {recentBacktestGate?.summary?.result_count || 0}</Tag>
+              <Tag>策略 {recentBacktestGate?.summary?.strategy_count || 0}</Tag>
+              <Tag>闭环 {recentBacktestGate?.summary?.closed_trade_count || 0}</Tag>
+            </div>
+          </div>
+          <div className="quant-recent-gate-counts">
+            <div className="quant-recent-gate-count support">
+              <span>支持</span>
+              <strong>{recentBacktestGate?.summary?.supported_count || 0}</strong>
+            </div>
+            <div className="quant-recent-gate-count observe">
+              <span>观察</span>
+              <strong>{recentBacktestGate?.summary?.observe_count || 0}</strong>
+            </div>
+            <div className="quant-recent-gate-count reduce">
+              <span>降级</span>
+              <strong>{recentBacktestGate?.summary?.reduce_count || 0}</strong>
+            </div>
+            <div className="quant-recent-gate-count pause">
+              <span>暂停</span>
+              <strong>{recentBacktestGate?.summary?.pause_count || 0}</strong>
+            </div>
+          </div>
+          <div className="quant-recent-gate-list">
+            {(recentBacktestGate?.strategies || []).slice(0, 5).map(item => {
+              const meta =
+                recentGateActionMeta[String(item.action || 'observe')] ||
+                recentGateActionMeta.observe;
+              return (
+                <div className={`quant-recent-gate-row ${meta.tone}`} key={item.strategy_key}>
+                  <div>
+                    <Space wrap size={6}>
+                      <strong>{item.strategy_name || item.strategy_key}</strong>
+                      <Tag color={meta.color}>{meta.label}</Tag>
+                      <Tag>样本 {item.task_samples || 0}</Tag>
+                    </Space>
+                    <p>{item.reason || '暂无近期跑分说明'}</p>
+                  </div>
+                  <div>
+                    <Text strong>{formatPct(item.avg_excess_return_pct)}</Text>
+                    <Text type="secondary">
+                      成交 {item.buy_fill_count || 0}/{item.buy_attempt_count || 0}
+                    </Text>
+                  </div>
+                </div>
+              );
+            })}
+            {!(recentBacktestGate?.strategies || []).length && (
+              <Empty description="暂无近期真实规则回测门禁样本" />
+            )}
+          </div>
+        </div>
       </Card>
 
       <Card className="modern-card quant-execution-board" variant="borderless" loading={loading}>

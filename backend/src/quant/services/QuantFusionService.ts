@@ -16,6 +16,8 @@ import { logger } from '../../utils/logger';
 import { round } from '../engine/QuantMath';
 import { QuantUniverse } from '../types/QuantTypes';
 import { QuantStrategyWeight } from '../../models/QuantStrategyWeight';
+import { QuantBacktestResult } from '../../models/QuantBacktestResult';
+import { QuantBacktestTask } from '../../models/QuantBacktestTask';
 import { quantStrategyFeedbackService } from './QuantStrategyFeedbackService';
 import { recommendationLoopPolicySnapshotService } from '../../services/RecommendationLoopPolicySnapshotService';
 import { riskThresholdStabilityService } from '../../services/RiskThresholdStabilityService';
@@ -33,6 +35,22 @@ import {
 } from '../../services/PaperTradingDashboardService';
 
 type QuantPipelineMode = 'archive_only' | 'agent_review' | 'paper_trade';
+
+interface StrategyRecentBacktestPerformance {
+  strategy_key: string;
+  task_samples: number;
+  buy_fill_count: number;
+  closed_trade_count: number;
+  open_position_count: number;
+  avg_return_pct: number;
+  avg_excess_return_pct: number;
+  avg_drawdown_pct: number;
+  avg_sharpe: number;
+  latest_task_end_date?: string;
+  latest_task_name?: string;
+  action: 'support' | 'observe' | 'reduce' | 'pause';
+  reason: string;
+}
 
 export interface QuantDailyPipelineOptions {
   user_id?: number;
@@ -265,6 +283,114 @@ function buildStrategyBudgetDecision(
     next_action: decision.next_action || allocation.next_action,
     label,
     policy: allocation,
+  };
+}
+
+function buildStrategyAdmissionGate(
+  strategyKeys: string[],
+  strategyWeights: Map<
+    string,
+    {
+      weight: number;
+      action?: string;
+      quality_score?: any;
+      sample_count?: any;
+      closed_count?: any;
+      reason?: string;
+      metrics?: Record<string, any>;
+    }
+  >,
+  recentBacktestPerformanceByStrategy: Map<string, StrategyRecentBacktestPerformance> = new Map()
+) {
+  const details = strategyKeys.map(key => {
+    const record = strategyWeights.get(key);
+    const metrics = asPlainObject(record?.metrics);
+    const decision = asPlainObject(metrics.weight_decision);
+    const recentBacktest = recentBacktestPerformanceByStrategy.get(key);
+    return {
+      strategy_key: key,
+      action: String(record?.action || 'observe'),
+      quality_score: safeNumber(record?.quality_score, 50),
+      closed_count: safeNumber(
+        record?.closed_count ?? metrics.closed_count ?? decision.evidence?.closed_count,
+        0
+      ),
+      sample_count: safeNumber(
+        record?.sample_count ?? metrics.sample_count ?? decision.evidence?.sample_count,
+        0
+      ),
+      avg_excess_return_pct: safeNumber(
+        metrics.avg_excess_return_pct ?? decision.evidence?.avg_excess_return_pct,
+        NaN
+      ),
+      recent_backtest: recentBacktest,
+      reason: record?.reason,
+    };
+  });
+  const hasPaused = details.some(item => item.action === 'pause');
+  const hasReducedOnly = details.length > 0 && details.every(item => item.action === 'reduce');
+  const hasActionable = details.some(item =>
+    ['increase', 'slight_increase', 'observe'].includes(item.action)
+  );
+  const evidenceCount = details.filter(
+    item =>
+      (item.quality_score >= 58 && (item.closed_count > 0 || item.sample_count >= 3)) ||
+      item.closed_count >= 3 ||
+      item.sample_count >= 3
+  ).length;
+  const supportedCount = details.filter(
+    item =>
+      (item.quality_score >= 58 && item.closed_count >= 2) ||
+      (item.closed_count >= 3 &&
+        (!Number.isFinite(item.avg_excess_return_pct) || item.avg_excess_return_pct >= -1))
+  ).length;
+  const blocked =
+    hasPaused || hasReducedOnly || !hasActionable || evidenceCount === 0 || supportedCount === 0;
+  const scorePenalty = details.reduce((sum, item) => {
+    if (item.action === 'reduce') return sum + 8;
+    if (item.quality_score < 45) return sum + 5;
+    if (item.closed_count === 0 && item.quality_score <= 50) return sum + 3;
+    if (item.closed_count > 0 && item.closed_count < 3) return sum + 5;
+    const recent = item.recent_backtest;
+    if (recent && recent.task_samples >= 3 && recent.buy_fill_count >= 10) {
+      if (recent.action === 'pause') return sum + 12;
+      if (recent.action === 'reduce') return sum + 8;
+      if (recent.avg_excess_return_pct < -0.5) return sum + 5;
+    }
+    if (
+      item.closed_count >= 3 &&
+      Number.isFinite(item.avg_excess_return_pct) &&
+      item.avg_excess_return_pct < -1
+    ) {
+      return sum + 4;
+    }
+    return sum;
+  }, 0);
+  const reasons = [
+    hasPaused ? '包含已暂停策略' : '',
+    hasReducedOnly ? '策略全部处于降权状态' : '',
+    !hasActionable ? '没有可执行策略权重' : '',
+    evidenceCount === 0 ? '缺少历史/模拟样本支撑' : '',
+    supportedCount === 0 ? '缺少正向收益或质量分支撑' : '',
+  ].filter(Boolean);
+  const warnings = details
+    .map(item => {
+      const recent = item.recent_backtest;
+      if (!recent || recent.task_samples < 3 || recent.buy_fill_count < 10) return '';
+      if (recent.action === 'pause' || recent.action === 'reduce') {
+        return `近期回测门禁：${item.strategy_key} ${recent.reason}`;
+      }
+      return '';
+    })
+    .filter(Boolean)
+    .slice(0, 4);
+
+  return {
+    blocked,
+    reasons,
+    warnings,
+    score_penalty: Math.min(18, scorePenalty),
+    details,
   };
 }
 
@@ -1150,6 +1276,98 @@ export class QuantFusionService {
     };
   }
 
+  private async getRecentBacktestPerformance(options: {
+    trade_date: string;
+    strategy_keys?: string[];
+    lookback_days?: number;
+  }): Promise<Map<string, StrategyRecentBacktestPerformance>> {
+    const since = moment()
+      .tz('Asia/Shanghai')
+      .subtract(Number(options.lookback_days || 14), 'days')
+      .toDate();
+    const tasks = await QuantBacktestTask.findAll({
+      where: {
+        status: 'COMPLETED',
+        end_date: { [Op.lte]: options.trade_date },
+        created_at: { [Op.gte]: since },
+      },
+      order: [['created_at', 'DESC']],
+      limit: 120,
+    }).catch(error => {
+      logger.warn(`读取近期量化回测任务失败，推荐门禁降级: ${error?.message || error}`);
+      return [] as QuantBacktestTask[];
+    });
+    const taskIds = tasks.map(task => Number(task.id)).filter(Boolean);
+    if (!taskIds.length) return new Map();
+
+    const resultWhere: any = { task_id: { [Op.in]: taskIds } };
+    if (options.strategy_keys?.length) {
+      resultWhere.strategy_key = { [Op.in]: options.strategy_keys };
+    }
+    const results = await QuantBacktestResult.findAll({ where: resultWhere }).catch(error => {
+      logger.warn(`读取近期量化回测结果失败，推荐门禁降级: ${error?.message || error}`);
+      return [] as QuantBacktestResult[];
+    });
+    const taskById = new Map(tasks.map(task => [Number(task.id), task]));
+    const groups = new Map<string, QuantBacktestResult[]>();
+    for (const result of results) {
+      const key = result.strategy_key;
+      const existing = groups.get(key) || [];
+      existing.push(result);
+      groups.set(key, existing);
+    }
+
+    const performance = new Map<string, StrategyRecentBacktestPerformance>();
+    for (const [strategy_key, rows] of groups.entries()) {
+      if (!rows.length) continue;
+      const avg = (values: number[]) =>
+        values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+      const buyFillCount = rows.reduce((sum, row) => {
+        const diagnostics = asPlainObject(asPlainObject(row.metrics_json).execution_diagnostics);
+        return sum + safeNumber(diagnostics.buy_fill_count, 0);
+      }, 0);
+      const closedTradeCount = rows.reduce((sum, row) => sum + safeNumber(row.trade_count, 0), 0);
+      const openPositionCount = rows.reduce(
+        (sum, row) => sum + safeNumber(asPlainObject(row.metrics_json).open_positions, 0),
+        0
+      );
+      const avgReturn = round(avg(rows.map(row => safeNumber(row.total_return_pct, 0))), 4);
+      const avgExcess = round(avg(rows.map(row => safeNumber(row.excess_return_pct, 0))), 4);
+      const avgDrawdown = round(avg(rows.map(row => safeNumber(row.max_drawdown_pct, 0))), 4);
+      const avgSharpe = round(avg(rows.map(row => safeNumber(row.sharpe_ratio, 0))), 4);
+      let action: StrategyRecentBacktestPerformance['action'] = 'observe';
+      if (rows.length >= 3 && buyFillCount >= 10) {
+        if (avgExcess <= -2 && avgReturn < 0) action = 'pause';
+        else if (avgExcess <= -0.5 || avgReturn < -0.5) action = 'reduce';
+        else if (avgExcess >= 0.3 && avgReturn >= 0) action = 'support';
+      }
+      const latestTask = rows
+        .map(row => taskById.get(Number(row.task_id)))
+        .filter(Boolean)
+        .sort((a, b) => String(b?.created_at || '').localeCompare(String(a?.created_at || '')))[0];
+      const reason = `近${rows.length}个回测分片，平均收益${avgReturn >= 0 ? '+' : ''}${avgReturn}%、超额${
+        avgExcess >= 0 ? '+' : ''
+      }${avgExcess}%、买入${buyFillCount}次`;
+      performance.set(strategy_key, {
+        strategy_key,
+        task_samples: rows.length,
+        buy_fill_count: buyFillCount,
+        closed_trade_count: closedTradeCount,
+        open_position_count: openPositionCount,
+        avg_return_pct: avgReturn,
+        avg_excess_return_pct: avgExcess,
+        avg_drawdown_pct: avgDrawdown,
+        avg_sharpe: avgSharpe,
+        latest_task_end_date: latestTask?.end_date,
+        latest_task_name: latestTask?.task_name,
+        action,
+        reason,
+      });
+    }
+
+    return performance;
+  }
+
   private async buildFusionCandidates(options: {
     trade_date: string;
     strategy_keys?: string[];
@@ -1181,6 +1399,8 @@ export class QuantFusionService {
           weight: safeNumber(record.weight, 1),
           action: record.action,
           quality_score: record.quality_score,
+          sample_count: record.sample_count,
+          closed_count: record.closed_count,
           reason: record.reason,
           metrics: record.metrics || {},
         },
@@ -1195,6 +1415,10 @@ export class QuantFusionService {
     const runtimePoliciesByStrategy = await quantStrategyService.getRuntimePoliciesByStrategy(
       options.strategy_keys
     );
+    const recentBacktestPerformanceByStrategy = await this.getRecentBacktestPerformance({
+      trade_date: options.trade_date,
+      strategy_keys: options.strategy_keys,
+    });
 
     const groups = new Map<string, QuantSignal[]>();
     for (const signal of signals) {
@@ -1212,7 +1436,8 @@ export class QuantFusionService {
           options.trade_date,
           strategyWeights,
           allocationByStrategy,
-          runtimePoliciesByStrategy
+          runtimePoliciesByStrategy,
+          recentBacktestPerformanceByStrategy
         )
       )
       .filter(Boolean)
@@ -1232,18 +1457,29 @@ export class QuantFusionService {
         weight: number;
         action?: string;
         quality_score?: any;
+        sample_count?: any;
+        closed_count?: any;
         reason?: string;
         metrics?: Record<string, any>;
       }
     >,
     allocationByStrategy?: Map<string, any>,
-    runtimePoliciesByStrategy: Record<string, Record<string, any>> = {}
+    runtimePoliciesByStrategy: Record<string, Record<string, any>> = {},
+    recentBacktestPerformanceByStrategy: Map<string, StrategyRecentBacktestPerformance> = new Map()
   ): QuantFusionCandidate | null {
     const sorted = [...items].sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
     const best = sorted[0];
     if (!best) return null;
 
     const strategyKeys = uniqueValues(sorted.map(item => item.strategy_key));
+    const strategyAdmissionGate = buildStrategyAdmissionGate(
+      strategyKeys,
+      strategyWeights,
+      recentBacktestPerformanceByStrategy
+    );
+    if (strategyAdmissionGate.blocked) {
+      return null;
+    }
     const paramVersions = uniqueValues(
       sorted
         .map(item => {
@@ -1309,8 +1545,16 @@ export class QuantFusionService {
         Math.max(regimeAdjustments.length, 1),
       2
     );
+    const admissionPenalty = strategyAdmissionGate.score_penalty;
     const score = round(
-      clamp(quantScore + consensusBonus + weightAdjustment + environmentAdjustment - riskPenalty),
+      clamp(
+        quantScore +
+          consensusBonus +
+          weightAdjustment +
+          environmentAdjustment -
+          riskPenalty -
+          admissionPenalty
+      ),
       2
     );
     const currentPrice = safeNumber(best.entry_price, 0) || undefined;
@@ -1326,10 +1570,40 @@ export class QuantFusionService {
         : 14;
     const sellVotes = sorted.filter(item => item.signal === 'sell').length;
     const buyVotes = sorted.filter(item => item.signal === 'buy').length;
+    const strongStrategySupport =
+      strategyAdmissionGate.details.some(
+        item =>
+          ['increase', 'slight_increase'].includes(item.action) ||
+          (item.closed_count >= 3 &&
+            (!Number.isFinite(item.avg_excess_return_pct) || item.avg_excess_return_pct >= 0))
+      ) ||
+      (consensusCount >= 2 &&
+        strategyAdmissionGate.details.some(item => item.closed_count > 0 || item.sample_count >= 3));
+    const recentBacktestSupport = strategyKeys
+      .map(key => recentBacktestPerformanceByStrategy.get(key))
+      .filter(Boolean) as StrategyRecentBacktestPerformance[];
+    const recentPerformanceGate = {
+      enabled: recentBacktestSupport.length > 0,
+      support_count: recentBacktestSupport.filter(item => item.action === 'support').length,
+      reduce_count: recentBacktestSupport.filter(item => item.action === 'reduce').length,
+      pause_count: recentBacktestSupport.filter(item => item.action === 'pause').length,
+      observe_count: recentBacktestSupport.filter(item => item.action === 'observe').length,
+      buy_allowed:
+        recentBacktestSupport.length === 0 ||
+        recentBacktestSupport.some(item => item.action === 'support') ||
+        (consensusCount >= 3 &&
+          recentBacktestSupport.every(item => !['pause', 'reduce'].includes(item.action)) &&
+          recentBacktestSupport.some(item => item.avg_excess_return_pct >= -0.25)),
+      details: recentBacktestSupport,
+    };
     const action =
       sellVotes > 0 && sellVotes >= buyVotes
         ? 'avoid'
-        : best.signal === 'buy' && score >= 70
+        : best.signal === 'buy' &&
+          score >= 74 &&
+          strongStrategySupport &&
+          recentPerformanceGate.buy_allowed &&
+          riskFlags.length <= 1
         ? 'buy'
         : best.signal === 'buy' || best.signal === 'watch'
         ? 'watch'
@@ -1440,7 +1714,14 @@ export class QuantFusionService {
       consensus_bonus: consensusBonus,
       quant_signal_ids: sorted.map(item => item.id).filter(Boolean),
       reasons: reasons.length ? reasons : ['量化策略给出正向候选，但核心理由不足，需Agent复核'],
-      risk_flags: riskFlags,
+      risk_flags: [
+        ...riskFlags,
+        ...strategyAdmissionGate.reasons.map(reason => `策略门禁：${reason}`),
+        ...strategyAdmissionGate.warnings,
+        ...(!recentPerformanceGate.buy_allowed
+          ? ['近期全市场回测未支持自动买入，本轮降级观察/等待Agent复核']
+          : []),
+      ],
       factors: {
         best_strategy_key: best.strategy_key,
         best_raw_factors: best.raw_factors || {},
@@ -1450,6 +1731,9 @@ export class QuantFusionService {
         strategy_weight: round(avgStrategyWeight, 4),
         strategy_weight_adjustment: round(weightAdjustment, 4),
         environment_weight_adjustment: environmentAdjustment,
+        strategy_admission_gate: strategyAdmissionGate,
+        strategy_admission_penalty: admissionPenalty,
+        recent_backtest_performance_gate: recentPerformanceGate,
         regime_adjustments: regimeAdjustments,
         strategy_weight_details: strategyKeys.map(key => ({
           strategy_key: key,
@@ -1554,11 +1838,13 @@ export class QuantFusionService {
             param_version_keys: candidate.factors?.param_version_keys,
             strategy_runtime_policy: candidate.strategy_runtime_policy,
             fusion_formula:
-              'quant_score + consensus_bonus + strategy_weight_adjustment + environment_weight_adjustment - risk_penalty',
+              'quant_score + consensus_bonus + strategy_weight_adjustment + environment_weight_adjustment - risk_penalty - strategy_admission_penalty',
             strategy_allocation_policy: candidate.factors?.strategy_allocation_policy,
             strategy_budget_discipline: candidate.strategy_budget_discipline,
             market_environment: candidate.factors?.market_environment,
             regime_adjustments: candidate.factors?.regime_adjustments,
+            recent_backtest_performance_gate:
+              candidate.factors?.recent_backtest_performance_gate,
           },
           market_environment: candidate.factors?.market_environment,
           suggested_position_pct: candidate.suggested_position_pct,
@@ -1581,6 +1867,7 @@ export class QuantFusionService {
             fusion_score: candidate.score,
             consensus_count: candidate.consensus_count,
             environment_weight_adjustment: candidate.factors?.environment_weight_adjustment,
+            strategy_admission_penalty: candidate.factors?.strategy_admission_penalty,
             stop_loss_price: candidate.stop_loss_price,
             take_profit_price: candidate.take_profit_price,
             strategy_allocation_pct: candidate.strategy_allocation_pct,
@@ -1588,6 +1875,8 @@ export class QuantFusionService {
             strategy_budget_action: candidate.strategy_budget_action,
             strategy_budget_confidence: candidate.strategy_budget_confidence,
           },
+          recent_backtest_performance_gate:
+            candidate.factors?.recent_backtest_performance_gate,
           reasons: candidate.reasons,
           warnings: candidate.risk_flags,
           current_price: candidate.current_price,
@@ -1657,7 +1946,7 @@ export class QuantFusionService {
     const reviewCandidates = candidates
       .filter(
         candidate =>
-          candidate.action === 'buy' &&
+          ['buy', 'watch'].includes(candidate.action) &&
           candidate.score >= options.agent_min_score &&
           candidate.risk_level !== 'high'
       )
@@ -1670,8 +1959,8 @@ export class QuantFusionService {
           name: candidate.name,
           score: candidate.score,
           reason:
-            candidate.action !== 'buy'
-              ? '不是买入动作'
+            !['buy', 'watch'].includes(candidate.action)
+              ? '不是买入/观察动作'
               : candidate.score < options.agent_min_score
               ? `融合分低于Agent阈值 ${options.agent_min_score}`
               : candidate.risk_level === 'high'
@@ -1723,6 +2012,9 @@ export class QuantFusionService {
               strategy_runtime_policy: candidate.strategy_runtime_policy,
               market_environment: candidate.factors?.market_environment,
               regime_adjustments: candidate.factors?.regime_adjustments,
+              quant_review_entry_action: candidate.action,
+              recent_backtest_performance_gate:
+                candidate.factors?.recent_backtest_performance_gate,
             },
             market_environment: candidate.factors?.market_environment,
             agent_session: options.agent_session || 'close',
