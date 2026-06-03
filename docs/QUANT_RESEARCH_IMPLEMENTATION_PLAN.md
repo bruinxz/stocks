@@ -1543,3 +1543,19 @@ final_score = 0.45 * quant_score
 - [x] 对已完成的 2 个量化 Agent job 执行补偿：归档 2 条 `tradingagents` 信号，写入 2 条 `quant_fusion_audits`。
 - [x] 当前量化数据闭环新鲜度为 `ok`，收益驾驶舱 readiness 达到 `100/ready=true`。
 - [ ] 明日开盘后重点确认新 Agent job 不再出现“WHERE parameter loop_run_id has invalid undefined value”，并能自动写入融合审计。
+
+### P131：近期真实跑分门禁与自动买入降级（本轮完成）
+
+- [x] 修复真实规则回测成交额口径：线上 `daily_bars.turnover/turnover_rate` 大量为 0 时，`QuantBacktestEngine.resolveTurnover()` 会使用 `volume * close` 兜底，避免所有买入被误判为 `turnover_below_threshold`。
+- [x] 重新跑近期全市场真实规则分片：修复后各策略仍整体为负，当前不具备直接接入实盘自动交易条件。
+  - `low_volatility_quality`：平均收益 `-1.2193%`，平均超额 `-1.6111%`。
+  - `relative_strength_momentum`：平均收益 `-1.2618%`，平均超额 `-1.6536%`。
+  - `multi_factor_ranking`：平均收益 `-1.3957%`，平均超额 `-1.7875%`。
+  - `volume_price_confirmation`：平均收益 `-1.6776%`，平均超额 `-2.0694%`。
+  - `ma_trend`：平均收益 `-2.3055%`，平均超额 `-2.6973%`。
+- [x] `QuantFusionService` 增加近期回测表现门禁：若近 14 天真实规则全市场跑分没有稳定正超额，高分候选可进入 `watch` 和 TradingAgents 复核，但不能升级为量化自动买入。
+- [x] `QuantSignalService` 收紧信号落库：只保留达到有效阈值的买入/观察候选，减少低分噪音进入页面、飞书和模拟盘。
+- [x] `QuantPerformanceDashboardService` 新增 `recent_backtest_gate`，收益驾驶舱新增“近期真实跑分门禁”区块，展示是否允许自动买入、平均收益/超额、买入成交数和各策略支持/观察/降级/暂停原因。
+- [x] 当前结论：量化基础设施、数据同步、回测、Agent 复核、模拟盘链路可以继续运行；但在全市场近期真实规则跑分转正前，应保持“量化筛选 -> Agent 复核 -> 模拟盘验证”，不应直接实盘自动买入。
+- [ ] 明日开盘后观察 `recent_backtest_gate.auto_buy_allowed=false` 时，09:35 推荐是否仍能归档/发飞书，但候选动作保持观察并等待 Agent 复核。
+- [ ] 下一步：补齐成交额/换手率更可靠的数据源落盘，重新跑 30/60/120 日多窗口 walk-forward；只有连续窗口出现正超额、模拟盘闭环为正，再推进实盘 bridge 读写链路。
