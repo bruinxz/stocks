@@ -71,6 +71,40 @@ function paperTradingMetaForPortfolio(metadata: Record<string, any>, portfolio_i
   return Object.keys(keyed).length > 0 ? keyed : legacy;
 }
 
+function executedSignalWhereForPortfolio(portfolio_id: number) {
+  const keyedPortfolioId = String(portfolio_id);
+  return [
+    {
+      metadata: {
+        [Op.contains]: {
+          paper_trading: {
+            portfolio_id,
+            status: 'executed',
+          },
+        },
+      },
+    },
+    {
+      metadata: {
+        [Op.contains]: {
+          paper_trading_by_portfolio: {
+            [keyedPortfolioId]: {
+              portfolio_id,
+              status: 'executed',
+            },
+          },
+        },
+      },
+    },
+  ];
+}
+
+function executedSignalWhereForPortfolios(portfolio_ids: number[]) {
+  return {
+    [Op.or]: portfolio_ids.flatMap(portfolio_id => executedSignalWhereForPortfolio(portfolio_id)),
+  } as any;
+}
+
 function calculateReturns(closes: number[]): number[] {
   const returns: number[] = [];
   for (let index = 1; index < closes.length; index++) {
@@ -232,18 +266,7 @@ export class PaperTradingRiskProfileService {
         ? Stock.findAll({ where: { symbol: { [Op.in]: symbols } }, raw: true })
         : Promise.resolve([]),
       AIInvestmentSignal.findAll({
-        where: {
-          [Op.or]: [
-            {
-              'metadata.paper_trading.portfolio_id': portfolio.id,
-              'metadata.paper_trading.status': 'executed',
-            },
-            {
-              [`metadata.paper_trading_by_portfolio.${portfolio.id}.portfolio_id`]: portfolio.id,
-              [`metadata.paper_trading_by_portfolio.${portfolio.id}.status`]: 'executed',
-            },
-          ],
-        } as any,
+        where: executedSignalWhereForPortfolios([portfolio.id]),
         order: [['updated_at', 'DESC']],
         limit: 2000,
       }).catch(error => {
@@ -524,18 +547,7 @@ export class PaperTradingRiskProfileService {
         ? Stock.findAll({ where: { symbol: { [Op.in]: symbols } }, raw: true })
         : Promise.resolve([]),
       AIInvestmentSignal.findAll({
-        where: {
-          [Op.or]: portfolioIds.flatMap(portfolioId => [
-            {
-              'metadata.paper_trading.portfolio_id': portfolioId,
-              'metadata.paper_trading.status': 'executed',
-            },
-            {
-              [`metadata.paper_trading_by_portfolio.${portfolioId}.portfolio_id`]: portfolioId,
-              [`metadata.paper_trading_by_portfolio.${portfolioId}.status`]: 'executed',
-            },
-          ]),
-        } as any,
+        where: executedSignalWhereForPortfolios(portfolioIds),
         order: [['updated_at', 'DESC']],
         limit: 5000,
       }).catch(error => {

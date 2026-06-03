@@ -666,6 +666,36 @@ function paperTradingMetaForPortfolio(
   return Object.keys(keyed).length > 0 ? keyed : legacy;
 }
 
+function executedSignalWhereForPortfolio(portfolio_id: number) {
+  const keyedPortfolioId = String(portfolio_id);
+  return {
+    [Op.or]: [
+      {
+        metadata: {
+          [Op.contains]: {
+            paper_trading: {
+              portfolio_id,
+              status: 'executed',
+            },
+          },
+        },
+      },
+      {
+        metadata: {
+          [Op.contains]: {
+            paper_trading_by_portfolio: {
+              [keyedPortfolioId]: {
+                portfolio_id,
+                status: 'executed',
+              },
+            },
+          },
+        },
+      },
+    ],
+  } as any;
+}
+
 function nextPaperTradingMetadata(
   metadata: Record<string, any>,
   portfolio_id: number,
@@ -3650,19 +3680,7 @@ class PaperTradingAutomationService {
         ? roundNumber(((totalValue - peakTotalValue) / peakTotalValue) * 100, 2)
         : 0;
     const executedSignals = await AIInvestmentSignal.findAll({
-      where: {
-        [Op.or]: [
-          {
-            'metadata.paper_trading.portfolio_id': options.portfolio_id,
-            'metadata.paper_trading.status': 'executed',
-          },
-          {
-            [`metadata.paper_trading_by_portfolio.${options.portfolio_id}.portfolio_id`]:
-              options.portfolio_id,
-            [`metadata.paper_trading_by_portfolio.${options.portfolio_id}.status`]: 'executed',
-          },
-        ],
-      } as any,
+      where: executedSignalWhereForPortfolio(options.portfolio_id),
       order: [['updated_at', 'DESC']],
       limit: 2000,
     }).catch(() => [] as AIInvestmentSignal[]);
