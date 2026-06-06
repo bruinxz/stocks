@@ -14032,3 +14032,66 @@ a {
     flex-direction: column;
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * Workspace shell (US-002): shared layout for the 6 unified workspaces.
+ * KPI bar is exactly 96px tall (set inline via Card style); the inner flex
+ * keeps title / metrics / actions on a single row at desktop widths.
+ * ------------------------------------------------------------------------- */
+.workspace-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.workspace-kpi-bar__inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 100%;
+  gap: 24px;
+}
+
+.workspace-kpi-bar__title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.workspace-kpi-bar__metrics {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+}
+
+.workspace-kpi-bar__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
+
+.workspace-side-tabs .ant-menu-item {
+  border-radius: 8px;
+}
+
+@media (max-width: 1024px) {
+  .workspace-kpi-bar__inner {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .workspace-kpi-bar__metrics {
+    justify-content: flex-start;
+  }
+
+  .workspace-body {
+    flex-direction: column;
+  }
+
+  .workspace-side-tabs {
+    width: 100% !important;
+  }
+}
+

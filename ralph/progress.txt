@@ -3,12 +3,15 @@
 ## Codebase Patterns
 
 - **Frontend workspace shells live under** `frontend/src/pages/workspace/`. Each is lazy-loaded in `frontend/src/App.tsx`. When adding workspace tabs in later stories, edit the shell file in place — do NOT introduce parallel page files.
+- **All 6 workspace shells use `WorkspaceLayout`** (`frontend/src/components/layout/WorkspaceLayout.tsx`). When a future story adds real content for a workspace, render the new tab UI as `children` (or branch on `activeKey`) and leave the KPI strip / side rail handled by the layout — do NOT rebuild the chrome from scratch.
+- **WorkspaceLayout props contract:** `tabs[]` (each `{key,label,icon?}`) → 220px left rail; `kpiSlot` → centered metrics inside the 96px KPI bar; `headerActions` → right-aligned `Space`; `activeKey` / `onTabChange` are required to drive the side-rail selection.
 - **App.tsx single source of truth** for routes and the top-level menu. The `routeSelectionAliases` array maps legacy paths to the workspace whose sidebar entry should be highlighted; the `<Routes>` block defines the actual `<Navigate>` redirects. Whenever a legacy path is deprecated, update BOTH arrays.
 - **Legacy page imports** are kept (under `/legacy/*` routes) so deep links and embedded iframes still resolve. Only physically delete a page file after all six workspaces have absorbed its functionality (stories US-015..US-018).
 - **Frontend node_modules are in the main repo, not the worktree.** Run `ln -s /Users/bytedance/go/src/github.com/bruinxz/stocks/frontend/node_modules frontend/node_modules` inside the worktree before `./node_modules/.bin/tsc --noEmit` or eslint. REMOVE the symlink before `git add` — gitignore matches the directory pattern but not the symlink file.
 - **Lint command:** `cd frontend && ./node_modules/.bin/eslint src --ext .ts,.tsx --quiet` (errors only). Warnings are prettier nags — use `--fix` to auto-resolve.
 - **Typecheck command:** `cd frontend && ./node_modules/.bin/tsc --noEmit` (exits 0 = clean).
 - **Browser verification:** No `dev-browser` MCP skill is configured in this environment. UI stories should fall back to manual verification and note that in progress.txt.
+- **Workspace shell CSS lives at the bottom of `frontend/src/index.css`** under a `Workspace shell (US-002)` banner. The shell uses `.workspace-shell`, `.workspace-kpi-bar__inner`, `.workspace-side-tabs`. Media query at 1024px stacks the side rail above content.
 
 ---
 
@@ -51,4 +54,49 @@ All legacy pages listed in the PRD acceptance criteria (StrategyExperimentLab, A
 - **Worktree gotcha:** the worktree has no `frontend/node_modules`. Symlinking to the main repo's copy works for typecheck/lint but the symlink shows up as a tracked-able file in `git status` (NOT matched by `node_modules/` gitignore pattern). Always `rm frontend/node_modules` before `git add`.
 - **The original App.tsx had a profile-fetch effect** keyed on `[token, user, dispatch]` — preserved unchanged. Auth flow still works because Login route is unchanged and the dropdown still calls handleLogout.
 
+---
+
+## 2026/06/06 - US-002
+
+### What was implemented
+Introduced a shared **WorkspaceLayout** shell and refactored all 6 workspaces to use it.
+
+- **`frontend/src/components/layout/WorkspaceLayout.tsx`** (new)
+  - Props: `title`, `subtitle?`, `tabs?: WorkspaceTab[]`, `activeKey?`, `onTabChange?`, `kpiSlot?`, `headerActions?`, `children`.
+  - Layout: 96px KPI bar (antd `Card`) on top → flex row with a 220px-wide side-tab `Card` (antd `Menu` mode="inline") + main `children` content. Both cards inherit the global `borderRadiusLG: 16` from `ConfigProvider`.
+  - Exports `WorkspaceTab` interface so workspace pages stay type-safe.
+- **6 workspace shells refactored** (`TodayWorkspace`, `FactorWorkspace`, `LabWorkspace`, `PortfolioWorkspace`, `DataWorkspace`, `SettingsWorkspace`).
+  - Each now carries 3–4 secondary tabs aligned with their future story scopes (e.g. PortfolioWorkspace → 当前持仓 / 资金曲线 / 交易明细 / 复盘日记 for US-017).
+  - Each renders ≥1 `Statistic` placeholder in the KPI strip and ≥1 `Card` + `Empty` per active tab.
+  - Tab state lives in `useState` inside each shell — easy for the later story to lift into URL params if needed.
+- **`frontend/src/index.css`** — appended a `Workspace shell (US-002)` block: `.workspace-shell`, `.workspace-kpi-bar__inner`, `.workspace-kpi-bar__title/metrics/actions`, `.workspace-side-tabs`, plus a 1024px media query that stacks the side rail above the content on small screens.
+
+### Files changed
+- `frontend/src/components/layout/WorkspaceLayout.tsx` (new)
+- `frontend/src/pages/workspace/TodayWorkspace.tsx`
+- `frontend/src/pages/workspace/FactorWorkspace.tsx`
+- `frontend/src/pages/workspace/LabWorkspace.tsx`
+- `frontend/src/pages/workspace/PortfolioWorkspace.tsx`
+- `frontend/src/pages/workspace/DataWorkspace.tsx`
+- `frontend/src/pages/workspace/SettingsWorkspace.tsx`
+- `frontend/src/index.css` (appended workspace shell rules)
+- `ralph/prd.json` (US-002 → passes:true)
+- `ralph/progress.txt` (this entry + Codebase Patterns addition)
+
+### Quality checks
+- `./node_modules/.bin/tsc --noEmit` → exit 0 (clean)
+- `./node_modules/.bin/eslint src --ext .ts,.tsx --quiet` → exit 0 (no errors)
+- Targeted lint on the changed dirs (`src/components/layout` + `src/pages/workspace`) → 0 warnings, 0 errors.
+
+### Browser verification
+**Not performed** — no `dev-browser` MCP skill is configured. Manual check recommended: run `npm start` in `frontend/`, log in, click through each of the 6 sidebar entries and confirm (a) the 96px KPI bar appears with placeholder Statistics, (b) the 220px left tab rail switches the central card's text, (c) the layout collapses gracefully below 1024px.
+
+### Learnings for future iterations
+- **Use `WorkspaceLayout` for any new workspace content.** When implementing US-015..US-018, render real content as `children` and switch on the existing `activeKey` rather than reintroducing your own Card/Menu chrome. The KPI slot already centers in the bar; the side rail already handles selection styling.
+- **`bodyStyle` is the supported escape hatch on antd Cards in this project** (Dashboard.tsx uses it heavily). antd v5 deprecated it in favor of `styles={{ body }}`, but ESLint/TS in this repo are still happy with the old form — staying consistent avoids a multi-file migration mid-story.
+- **Each shell exposes secondary tabs that mirror the eventual full pages.** Don't rename these keys casually — when US-015 adds the real "因子总览/权重调参/今日选股清单" content, it can deep-link via `?tab=overview` etc. without breaking the contract.
+- **Empty-state cards must use antd `Empty`**, not raw text, so the global Card border-radius (`16`) and the Empty illustration stay visually consistent across all 6 workspaces.
+- **Don't add anything to `frontend/src/components/layout/` other than the shell** until at least one other layout primitive earns its keep — the directory is intentionally small so future shells (e.g. a dual-pane workspace) are easy to find.
+- **Window-resize tip**: at <1024px the media query stacks the side rail above content. If a future story needs a horizontally scrollable tab bar at narrow widths, switch the side `Menu` to `mode="horizontal"` inside the same media query instead of bypassing the layout.
+- **Imports were kept minimal in each shell** (only the icons each one actually uses). Resist the temptation to centralize a "all workspace icons" barrel — it makes tree-shaking worse and obscures which workspace owns which icon.
 ---

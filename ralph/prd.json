@@ -32,8 +32,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 2,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026/06/06. Added frontend/src/components/layout/WorkspaceLayout.tsx (220px side tabs, 96px KPI bar) and refactored all 6 workspace shells to use it. Each shell exposes 3-4 secondary tabs with a Statistic-based KPI strip and per-tab empty-state card. Typecheck + lint pass. Browser verification noted as manual (no dev-browser MCP)."
     },
     {
       "id": "US-003",
