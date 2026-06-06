@@ -1113,6 +1113,138 @@ def _format_iso_date(yyyymmdd: str) -> str:
     return yyyymmdd
 
 
+def get_earnings_forecast(report_period: str) -> List[Dict[str, Any]]:
+    """
+    Fetch A-share earnings forecast (业绩预告) for a given REPORT PERIOD.
+
+    Uses AKShare `stock_yjyg_em(date=YYYYMMDD)` where `date` is the report-
+    period END date (e.g. '20240930' = Q3 2024), NOT the announcement date.
+    The dataframe returned lists every stock that has issued a forecast for
+    that report period, with the actual announce_date carried as a column.
+
+    Important: AKShare publishes 4 report periods per year — Q1 (0331), Q2/H1
+    (0630), Q3 (0930), 年报 (1231). Callers should pass one of these dates;
+    other dates return an empty dataframe.
+
+    Args:
+        report_period: report-period end date YYYY-MM-DD or YYYYMMDD.
+
+    Returns:
+        List of dicts: {announce_date, stock_code, stock_name, report_period,
+        forecast_type, profit_change_low, profit_change_high, profit_low,
+        profit_high, forecast_reason, raw_payload}.
+        Returns [] on empty / error so caller can checkpoint a "tried" period.
+    """
+    try:
+        pure_period = report_period.replace('-', '')
+        iso_period = _format_iso_date(pure_period)
+
+        print(f"Fetching earnings forecasts for report_period={pure_period}...", file=sys.stderr)
+
+        try:
+            df = ak.stock_yjyg_em(date=pure_period)
+        except TypeError:
+            df = ak.stock_yjyg_em(pure_period)
+        except Exception as e:
+            print(f"stock_yjyg_em failed for {pure_period}: {e}", file=sys.stderr)
+            return []
+
+        if df is None or df.empty:
+            print(f"AKShare returned empty dataframe for {pure_period}", file=sys.stderr)
+            return []
+
+        # ----- 列名柔性映射（AKShare 中文列名常飘移）-----
+        col_map: Dict[str, str] = {}
+        for col in df.columns:
+            col_s = str(col)
+            if col_s in ('股票代码', 'stock_code', 'code', '代码'):
+                col_map['stock_code'] = col_s
+            elif col_s in ('股票简称', '股票名称', '名称', 'name', 'stock_name'):
+                col_map['stock_name'] = col_s
+            elif col_s in ('公告日期', '最新公告日期'):
+                col_map['announce_date'] = col_s
+            elif col_s in ('预测指标', '业绩变动'):
+                # 历史/未来字段名差异 — 不入主表，但归档到 raw_payload
+                col_map.setdefault('indicator', col_s)
+            elif col_s in ('预告类型',):
+                col_map['forecast_type'] = col_s
+            elif col_s in (
+                '预测数值',
+                '预测净利润-下限',
+                '预测净利润下限',
+            ):
+                col_map['profit_low'] = col_s
+            elif col_s in ('预测净利润-上限', '预测净利润上限'):
+                col_map['profit_high'] = col_s
+            elif col_s in ('预测变动幅度-下限', '预测变动幅度下限', '净利润变动幅度-下限'):
+                col_map['profit_change_low'] = col_s
+            elif col_s in ('预测变动幅度-上限', '预测变动幅度上限', '净利润变动幅度-上限'):
+                col_map['profit_change_high'] = col_s
+            elif col_s in ('业绩变动原因', '变动原因'):
+                col_map['forecast_reason'] = col_s
+
+        results: List[Dict[str, Any]] = []
+        for _, row in df.iterrows():
+            raw_code = row.get(col_map.get('stock_code', '股票代码'))
+            if pd.isna(raw_code):
+                continue
+            stock_code = str(raw_code).strip().zfill(6)
+            if not stock_code or stock_code.lower() == 'nan':
+                continue
+            # 北交所 8 / 4 开头不在多数 A 股策略股池里 — 留在数据里，策略自己过滤
+            stock_name = _cell_str(row, col_map.get('stock_name'))
+
+            # 公告日期：可能是 datetime / Timestamp / 字符串
+            announce_raw = row.get(col_map.get('announce_date')) if col_map.get('announce_date') else None
+            announce_iso: Optional[str] = None
+            if announce_raw is not None and not pd.isna(announce_raw):
+                # pandas Timestamp / datetime / 字符串都先转 str 再 parse
+                announce_str = str(announce_raw).strip()
+                if len(announce_str) >= 10 and announce_str[4] in ('-', '/'):
+                    announce_iso = announce_str[0:10].replace('/', '-')
+                elif len(announce_str) >= 8 and announce_str[:8].isdigit():
+                    announce_iso = _format_iso_date(announce_str[:8])
+                else:
+                    # 兜底：用 report_period 当公告日，至少能 upsert（虽然非真实公告日）
+                    announce_iso = iso_period
+            else:
+                # 公告日缺失：用 report_period 当公告日兜底
+                announce_iso = iso_period
+
+            forecast_type = _cell_str(row, col_map.get('forecast_type'))
+            profit_low = _cell_float(row, col_map.get('profit_low'))
+            profit_high = _cell_float(row, col_map.get('profit_high'))
+            profit_change_low = _cell_float(row, col_map.get('profit_change_low'))
+            profit_change_high = _cell_float(row, col_map.get('profit_change_high'))
+            forecast_reason = _cell_str(row, col_map.get('forecast_reason'))
+
+            raw_payload = _row_to_jsonable(row, df.columns)
+
+            results.append({
+                'announce_date': announce_iso,
+                'stock_code': stock_code,
+                'stock_name': stock_name,
+                'report_period': iso_period,
+                'forecast_type': forecast_type,
+                'profit_change_low': profit_change_low,
+                'profit_change_high': profit_change_high,
+                'profit_low': profit_low,
+                'profit_high': profit_high,
+                'forecast_reason': forecast_reason,
+                'raw_payload': raw_payload,
+            })
+
+        print(
+            f"Parsed {len(results)} earnings-forecast rows for report_period {pure_period}",
+            file=sys.stderr,
+        )
+        return results
+    except Exception as e:
+        print(f"Error getting earnings forecast for {report_period}: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return []
+
+
 def get_limit_up_pool(date: str) -> List[Dict[str, Any]]:
     """
     Fetch the limit-up (涨停) stock pool for a given trade date, merging both
@@ -1697,6 +1829,14 @@ def main():
 
             date = sys.argv[2]
             result = get_industry_flow(date)
+
+        elif command == "get_earnings_forecast":
+            if len(sys.argv) < 3:
+                print(json.dumps({"error": "Missing report_period for get_earnings_forecast"}), file=sys.stderr)
+                sys.exit(1)
+
+            report_period = sys.argv[2]
+            result = get_earnings_forecast(report_period)
 
         else:
             print(json.dumps({"error": f"Unknown command: {command}"}), file=sys.stderr)

@@ -33,9 +33,10 @@ evaluate 模型表达不出。
 - 入参：交易日 + 可选 `{ params?, previousSelection? }`
 - 出参：`{ target_portfolio, signals: BUY/SELL/HOLD[], filtered, params, ... }`
 
-典型例子（截至 US-012 共 2 个）：
+典型例子（截至 US-013 共 3 个）：
 - `MultiFactorAlphaStrategy`（多因子 alpha 月度轮动）
 - `DragonHeadMomentumStrategy`（短线龙头战法 — 事件驱动每日）
+- `EarningsSurpriseStrategy`（业绩预告超预期 + 北向加仓双确认 — 事件驱动）
 
 后续 story 中其他组合级策略：US-019 NorthboundFollowStrategy、
 US-020 CTA100MomentumStrategy、US-021 SectorRotationLeaderStrategy、
@@ -140,3 +141,35 @@ WHERE trade_date = ? AND factor_name IN (?, ?, ...);
 复合 PK `(trade_date, stock_code, factor_name)` + Pipeline 中性补全的
 `z_score = 0` 让"查 N 个因子 = N × universe 行"，单查询毫秒级。
 权重合成 `composite = sum(z_score[i] * weight[i])` 直接在 TS 内存做。
+
+## 事件驱动 + 多源双确认（US-013 EarningsSurpriseStrategy）
+
+某些策略需要 **两个独立数据源同时确认** 才入场（业绩 + 北向资金 / 北向 + 龙虎榜 /
+龙虎榜 + 涨停板 等）。建议在 DataSource 接口里把每个数据源独立成一个
+`loadXxx()` 方法，让单测可以独立 mock 每条信号:
+
+- `loadAnnouncedForecasts(date)` — 事件触发源（必填，过滤候选池）
+- `loadNorthboundRatioDelta(date, lookbackDays, codes)` — 确认源（双确认必须）
+- `loadStockMeta(codes)` — 元数据（ST 过滤等）
+- `loadDailyClose(date, codes)` — 价格快照（止损 / 入场参考价）
+
+**判定顺序遵循"早过滤先做"**：
+1. 事件触发过滤（forecast_type / profit_change_low）— 通常剔除 80%+ 候选
+2. 元数据过滤（ST）— 单 Map 查询，~ns
+3. 多源确认（北向 delta > 0）— 需要历史回看的最贵查询，最后做
+
+避免反过来"先批量查北向再过滤" — 会浪费大量数据库 IO 在最终被业绩条件剔除
+的股票上。
+
+**事件驱动 + 事件分布稀疏的特性**：业绩预告一年只有 4 个集中披露期
+（前 30 天热闹，平日为 0）。`generateSignals(date)` 大多数交易日返回
+`eligible_count=0` 是**正常的**——这是事件驱动策略的本质，不是数据问题。
+日志写 `forecast_pool=0 eligible=0` 即可；不要把"无信号日"当成异常告警，
+否则告警噪音淹没真正的数据缺失问题。
+
+**中线策略的 currentPositions schema（vs DragonHead 短线）**：US-013 持有
+60 自然日 (vs DragonHead 3 自然日 / MultiFactor 月度)，但 exit 规则比
+DragonHead 简单（无炸板 / 高开减半逻辑）— 所以 `EarningsSurprisePosition` 不需
+要 `half_exited` 字段，但保留 `entry_report_period` 便于 debug（"我是因为
+哪个报告期的预告进场的"）。判据仍是：**调仓规则需要哪些 per-position state
+就放哪些字段**，多一个少一个都不行。

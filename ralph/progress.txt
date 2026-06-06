@@ -59,6 +59,8 @@
 - **Tests live in `backend/tests/strategies/`** (per AC). The dir is **outside** `tsconfig.json`'s `include` (which is `src/**/*`), so `npx tsc --noEmit` and `npm run lint` skip it. Tests use the node-direct convention (no jest) — `npx ts-node --transpile-only tests/strategies/<Name>.test.ts`. Pattern matches existing `productionPreflight.test.ts` / `LiveAuditAlertService.test.ts` / `liveTradingRateLimit.test.ts` in `src/`.
 - **`backend/src/quant/strategies/CLAUDE.md` is the source of truth** for the 组合级 pattern + 5 design constraints (DataSource injection, BUY/SELL/HOLD in strategy, evaluate-as-hold, stable sort tie-break, tests-in-backend/tests/). Update it (not this file) when refining the contract.
 - **组合级 strategies pick `previousSelection` schema based on exit needs (US-012)**: `string[]` is sufficient when调仓 only needs set membership (MultiFactorAlpha 月度调仓); `Position[]` with structured fields (entry_date/entry_price/half_exited) is required when exit rules depend on per-position state (DragonHead 止损 / holding_days / 防重复减半). New signal types beyond BUY/SELL/HOLD (e.g. `sell_half`, `add`, `scale_out`) are similarly tied to the strategy's domain — extend the signal union and document each state's trigger + caller撮合 action in the .ts jsdoc; recap in `strategies/CLAUDE.md`. `MultiFactorAlpha` and `DragonHead` are the two canonical references for "lightweight" vs "stateful" position schemas.
+- **Event-driven strategies (US-013) — sparse-day return is NORMAL**: 业绩预告一年只有 4 个集中披露期，平日 generateSignals 返回 `eligible_count=0` 是预期行为，不要把"无信号日"当成数据缺失告警，否则告警噪音淹没真正问题。事件触发 + 多源双确认的策略统一在 DataSource 接口里给每个数据源独立 `loadXxx()`，单测可独立 mock。判定顺序遵循"早过滤先做"：事件源 → 元数据 → 多源历史回看，避免反向次序浪费 IO。
+- **Report-period-keyed data sources (US-013 业绩预告)**: AKShare `stock_yjyg_em` / `stock_yjbb_em` / `stock_yjkb_em` 按 **报告期** 检索（不是公告日）。Sync 服务对应 `syncReportPeriod(period)`，模型 PK 包含 `report_period` 字段（3-tuple）；CLI 暴露 `--year=YYYY` 一键展开 4 个季度末。**业务超预期判定（is_surprise）留 TS 服务**，符合"Python 是 dumb fetcher / 业务规则可演化留 TS"的统一切分。
 
 
 ### Tooling
@@ -963,3 +965,176 @@ US-020 (CTA100) / US-021 (SectorRotationLeader) / US-028 (EnsembleStrategy)
 
 ---
 
+
+
+## 2026/06/07 - US-013
+
+### What was implemented
+事件驱动策略：业绩预告超预期 + 北向加仓双确认 (EarningsSurpriseStrategy)，
+配套完整数据层（Model + AKShare Client + SyncService + CLI）。第 3 个组合级
+策略，**第 1 个事件驱动策略**。
+
+**数据层（4 个新文件）**：
+
+- `backend/src/models/EarningsForecast.ts` — 3-tuple PK (announce_date,
+  stock_code, report_period)。字段：stock_name / forecast_type (预增/扭亏/
+  续盈/...) / profit_change_low/high (%) / profit_low/high (元) /
+  forecast_reason / is_surprise (boolean, TS 服务标定) + 标准 source /
+  raw_payload / timestamps。索引覆盖 announce_date / stock_code /
+  report_period / forecast_type / is_surprise + (announce_date, is_surprise)
+  / (stock_code, announce_date)。
+- `backend/python/akshare_helper.py` 新增 `get_earnings_forecast(report_period)`：
+  调 `ak.stock_yjyg_em(date=YYYYMMDD)`，**注意：date 参数是 report_period 不是
+  announce_date** —— AKShare 按报告期检索，返回该报告期所有股票的预告，
+  每行 announce_date 是真正的事件日。柔性 col_map 覆盖 AKShare 列名飘移
+  (预测净利润-下限 vs 预测净利润下限 vs 预测数值)，从 pandas Timestamp /
+  datetime / 字符串 robust 解析 announce_date，ship 全行 raw_payload。
+- `backend/src/data/sources/EarningsForecastClient.ts` — 标准 spawn + JSON
+  契约，默认 timeout 120s (EARNINGS_FORECAST_TIMEOUT_MS)；导出
+  `fetchForReportPeriod(period)`。
+- `backend/src/data/services/EarningsForecastSyncService.ts` — 与
+  NorthboundSyncService 同形：syncReportPeriod (bulkCreate +
+  updateOnDuplicate 幂等) / syncReportPeriods (按报告期循环 + 默认 skip-
+  existing)。**`is_surprise` 业务标签在此处计算**（forecast_type ∈
+  {预增/扭亏/续盈} AND profit_change_low ≥ 50），导出 computeIsSurprise +
+  isQuarterEnd helpers (便于测试)。
+- `backend/src/scripts/sync-earnings-forecast.ts` + `npm run
+  sync:earnings-forecast` — CLI 支持 `--report-period=2024-09-30,2024-12-31`
+  (多个逗号分隔) / `--year=2024` (一键展开 4 季度末) / `--force`。
+
+**策略**：
+
+- `backend/src/quant/strategies/EarningsSurpriseStrategy.ts` (~620 LOC)
+  - 继承 QuantStrategy，evaluate() 信息性 hold，generateSignals(tradeDate,
+    {params?, currentPositions?}) async 真正入口。
+  - **入场双确认**：
+    1. 业绩超预期：forecast_type ∈ surpriseForecastTypes (默认
+       [预增,扭亏,续盈]) 且 profit_change_low ≥ minProfitChangeLow (默认 50)
+    2. 北向加仓：过去 lookbackDays (默认 5) 交易日 hold_ratio 累计 delta > 0
+    3. 非 ST (excludeST=true 默认)
+  - **出场（按优先级 A→C）**:
+    - A. 持有 ≥ holdingDaysLimit (默认 60 自然日) → SELL（最高优先级）
+    - B. (close - entry_price)/entry_price ≤ stopLossPct (默认 -10%) → SELL
+    - C. HOLD（缺 close 数据安全 HOLD 等下日）
+  - **DataSource 接口** 4 个 loader（loadAnnouncedForecasts /
+    loadNorthboundRatioDelta / loadStockMeta / loadDailyClose），生产实现
+    走 EarningsForecast + NorthboundHolding + Stock + DailyBar。
+  - **入场排序**：profit_change_low 降序 → northbound_delta 降序 →
+    stock_code 稳定 tie-break。
+  - **maxPositions cap 流程**：HOLD 占用槽位 → remainingSlots =
+    maxPositions - kept.length → BUY top remainingSlots；已持仓不重复 BUY
+    （fail_already_held 计数）。
+  - 注册到 `backend/src/quant/engine/StrategyRegistry.ts` (strategy_key=
+    `earnings_surprise`，category=multi_factor，risk_level=medium，
+    tags=[事件驱动,业绩预告,北向资金,中线])。
+
+**Tests** (`backend/tests/strategies/EarningsSurpriseStrategy.test.ts`):
+32 用例 / 103 断言，覆盖：
+- 默认参数 (5 维 + surpriseForecastTypes)
+- strategy_definition 元数据
+- 入场双确认通过
+- 入场各维度独立失败 (forecast_type 不匹配 / profit_change 不足 / 北向缺
+  数据 / 北向减仓 / 北向 delta=0 边界 / ST 剔除)
+- excludeST=false 保留 ST
+- 扭亏 / 续盈 类型
+- maxPositions cap (25→20)
+- 排序 profit_change_low 降序
+- tie-break (stock_code / northbound_delta)
+- 出场 持有期到期 / 止损 / 优先级 (持有期>止损) / 阈值内 HOLD / 缺 close 安全 HOLD
+- HOLD 占用槽位限 BUY 数 (4 HOLD + maxPositions=5 → 1 BUY)
+- 已持仓不重复 BUY (fail_already_held)
+- evaluate() 信息性 hold + factors.note
+- helper computeIsSurprise (6 分支) / isQuarterEnd (季度末) /
+  isSTName (4 形态) / naturalDaysBetween (5 边角)
+- invalid trade_date / 空 universe / 自定义 params override —— 全部通过
+
+### Files changed
+- `backend/src/models/EarningsForecast.ts` (new)
+- `backend/src/models/index.ts` (+ EarningsForecast export)
+- `backend/src/config/database.ts` (+ EarningsForecast registration)
+- `backend/python/akshare_helper.py` (+ get_earnings_forecast ~140 LOC + dispatcher case)
+- `backend/src/data/sources/EarningsForecastClient.ts` (new)
+- `backend/src/data/services/EarningsForecastSyncService.ts` (new — exports
+  computeIsSurprise / isQuarterEnd for tests)
+- `backend/src/scripts/sync-earnings-forecast.ts` (new)
+- `backend/package.json` (+ sync:earnings-forecast script)
+- `backend/src/quant/strategies/EarningsSurpriseStrategy.ts` (new ~620 LOC)
+- `backend/src/quant/engine/StrategyRegistry.ts` (+ EarningsSurpriseStrategy 注册)
+- `backend/tests/strategies/EarningsSurpriseStrategy.test.ts` (new — 32 用例)
+- `backend/src/data/CLAUDE.md` (新 "Event-style data keyed by report period" section)
+- `backend/src/quant/strategies/CLAUDE.md` (新 "事件驱动 + 多源双确认" section +
+  组合级策略列表更新 2→3)
+- `ralph/prd.json` (US-013 → passes:true + notes)
+- `ralph/progress.txt` (this entry + Codebase Patterns)
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → exit 0 ✅
+- `eslint <8 new/changed files> --quiet` → exit 0 (2 prettier auto-fixed) ✅
+- `python3 -c "import ast; ast.parse(open('python/akshare_helper.py').read())"` → SYNTAX OK
+- `npx ts-node tests/strategies/EarningsSurpriseStrategy.test.ts` → 103
+  assertions pass < 1s
+- `npx ts-node src/scripts/sync-earnings-forecast.ts --help` → boots clean
+- Registry smoke: 19 strategies total（前 18 + earnings_surprise），
+  definition / default_params / tags 都正确序列化
+
+### Browser verification
+**N/A** — 后端策略 + 数据层，无 HTTP 表面。US-015 (因子工作区) / US-016 (策略
+实验室) / US-018 (今日作战) 等 UI story 会暴露策略调仓信号；本 story 仅落地
+策略实现 + 注册 + 测试 + 数据管道。
+
+### Learnings for future iterations
+- **报告期 vs 公告日不能混淆**。AKShare `stock_yjyg_em` 是按 **报告期**
+  检索的（输入 `date='20240930'` 拿 Q3 2024 所有股票的预告），dataframe
+  的 `公告日期` 列才是真正的事件日。同样模式的端点：`stock_yjbb_em` (业绩
+  报表) / `stock_yjkb_em` (业绩快报) / `stock_zcfz_em` (资产负债表)。
+  这类端点的 SyncService 入口应是 `syncReportPeriod` 不是 `syncDate`，
+  CLI 应暴露 `--year=YYYY` 一键展开 4 季度。
+- **3-tuple PK 是正确选择**。曾考虑用 (announce_date, stock_code) 2-tuple
+  覆盖修订 — 但一只股票同一公告日同时披露 Q1+H1 多个报告期是合法场景，
+  会丢数据。改成 3-tuple 后：(1) 同 announce_date 同 report_period 的修订
+  正确 upsert (`updateOnDuplicate`)；(2) 同 announce_date 不同 report_period
+  各成独立行；(3) 不同 announce_date 修订各成独立行（保留修订史）。
+- **`is_surprise` 是业务标签留 TS 服务**。曾犹豫"在 Python 里直接计算
+  is_surprise" — 但阈值 (50%) / 类型白名单 ([预增,扭亏,续盈]) 都是会
+  随策略迭代调整的业务规则；放 Python 意味着每次微调要重启服务（akshare
+  helper 是 subprocess）。延续 US-006 famousSeats 的统一切分：Python 是
+  dumb fetcher，业务规则留 TS。
+- **AKShare 公告日字段格式很多**：可能 pandas Timestamp、datetime、
+  "20240715"、"2024-07-15"、"2024/07/15"。Python 端兜底逻辑：用 str()
+  + 长度 + 第 5 位字符判断，找不到就 fallback 用 report_period 当公告日
+  （至少 PK 唯一不会丢数据）。这一类格式 robust 解析是 AKShare 接入的
+  通用问题，下个事件驱动策略可以抄过去。
+- **3 个组合级策略对比**：
+  - MultiFactorAlpha: 月度调仓 / `previousSelection: string[]` / 静态
+    universe (全市场 z_score)
+  - DragonHead: 每日触发 / `currentPositions: Position[]` (entry_date,
+    entry_price, half_exited) / 事件 universe (当日涨停股)
+  - EarningsSurprise: 每日触发但事件稀疏 / `currentPositions: Position[]`
+    (entry_date, entry_price, entry_report_period) / 事件 universe (当日
+    公告预告股)
+  schema 选择基于 exit 规则需要的 per-position state — 多一个少一个都不行。
+- **事件驱动 + 多源双确认的 DataSource 接口设计**：4 个 loader 比 1 个
+  big-bang `loadAll` 好得多 — 单测可独立 mock 每个数据源，过滤 fail 路径
+  能精准定位到"是哪一个数据源拒绝了它"。loadXxx() 命名清晰、签名明确
+  (date + codes 或 date + lookbackDays + codes)，FakeDataSource 实现 5
+  行 fixture + 30 行实现，整套测试 < 1s 完成。
+- **入场过滤顺序：早过滤先做**。最便宜的过滤（in-memory enum 比较）排
+  最前，最贵的过滤（北向 lookbackDays 历史回看）排最后。一个完美的
+  filter 顺序大约能让 80% 的候选在前两步被剔除，只让最少的股票走到
+  Promise.all([loadNorthbound, loadMeta, loadDailyClose])。日志里
+  `filtered.fail_*` 各分桶计数给 ops 提供"今日候选池被哪一道关卡剔除
+  最多"的直观信号，便于参数调优。
+- **`computeIsSurprise` 导出供测试用** — 业务规则用 testable pure
+  function 实现 + 单测覆盖所有分支 (50 边界 / null / trim / 非白名单
+  类型 / null forecast_type) 是迁移到生产前的保险。每次调整阈值就要
+  改测试用例，强迫"业务规则改动 = 阈值常量 + 测试用例同步更新"。
+- **`--year=YYYY` CLI 是 cron 友好的便利**。运维场景：cron 每月 1 号跑
+  `sync:earnings-forecast --year=$(date +%Y)` 即可覆盖当年 4 季度预告
+  的全集（skip-existing 让历史 3 季度跳过、当季增量更新）。比一次只能
+  传一个 report_period 友好很多。
+- **PR 注意点**：`backend/.gitignore` 不会忽略 worktree 里 `backend/node_modules`
+  软链接（gitignore 的 `node_modules/` 是目录模式，对软链接文件不生效）。
+  `git add` 前一定 `rm backend/node_modules`，否则 git 会跟踪一个指向
+  绝对路径的 symlink 入仓。
+
+---

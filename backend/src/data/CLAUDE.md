@@ -159,6 +159,34 @@ Make this caller-visible:
   is 240s because per-board `cons_em` fetches dominate (~86 boards × AKShare
   rate-limit). Don't set below 120s on a busy day.
 
+## Event-style data keyed by report period (US-013 earnings forecasts)
+
+A few AKShare endpoints — `stock_yjyg_em` (业绩预告), `stock_yjbb_em` (业绩快报),
+`stock_yjkb_em` (业绩报表) — are **keyed by report period (报告期末), not by
+the announce date**. The dataframe returned for `date='20240930'` lists every
+stock that has published a forecast for Q3 2024, with the actual announce date
+carried as a row column.
+
+Implications:
+
+- **Sync at the report-period level**, not the trade-date level. The service
+  method is `syncReportPeriod(period)`, not `syncDate(date)`.
+- **CLI accepts `--year=YYYY` as a convenience** that expands to the 4 quarter
+  ends. Pass `--report-period=YYYY-MM-DD` for one-off backfills.
+- **The primary key includes the report period** — `(announce_date, stock_code,
+  report_period)` 3-tuple. One stock may have multiple forecasts for different
+  report periods (most companies forecast quarterly), and revisions on a NEW
+  announce_date are distinct rows; revisions on the SAME announce_date overwrite
+  (which is exactly what `bulkCreate + updateOnDuplicate` does).
+- **Business-logic flags (`is_surprise`) live in the TS service**, not Python —
+  same rule as `is_famous_yz` in US-006. The rule "forecast_type ∈ {预增/扭亏/
+  续盈} AND profit_change_low ≥ 50%" may evolve as strategies tune thresholds;
+  keeping it TS-side means no Python redeploy.
+- **Quarter-end validation is advisory, not strict**: passing 2024-04-15 returns
+  an empty dataframe (`stock_yjyg_em` simply doesn't have a key for that), so
+  log a warn but don't reject. Some upstream calendars publish off-quarter
+  revisions; future proofing.
+
 ## Worktree gotcha (still active as of US-005)
 
 The git worktree has no `backend/node_modules`. Symlink before typecheck:
