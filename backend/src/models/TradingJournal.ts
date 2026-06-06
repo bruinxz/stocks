@@ -78,6 +78,23 @@ export class TradingJournal extends Model {
   })
   declare mood: string;
 
+  /**
+   * 用户手动追加的复盘手记 (US-017)。
+   *
+   * 数据 shape: `{ content: string, created_at: ISO8601 }[]`，按 created_at
+   * 升序保存。每次 `POST /api/journals/:date/notes` 在数组末尾 append 一条。
+   * 不允许在前端原地编辑既有 note —— 历史心路只允许追加，不允许改写
+   * （类似 git commit 不允许修改既有 hash）。
+   */
+  @Column({
+    type: DataType.JSONB,
+    allowNull: true,
+    field: 'user_notes',
+    defaultValue: [],
+    comment: '用户追加的复盘手记 [{content, created_at}]',
+  })
+  declare user_notes: Array<{ content: string; created_at: string }>;
+
   @CreatedAt
   @Column({ field: 'created_at' })
   declare created_at: Date;

@@ -614,6 +614,31 @@ export class PaperTradingController {
       sendError(res, error, '回滚订单意图 Canary 调参失败');
     }
   };
+
+  // US-017 — 设置/清除持仓的硬止损价
+  setPositionStopLoss = async (req: Request, res: Response, _next: NextFunction) => {
+    try {
+      const user = (req as any).user;
+      const positionId = Number(req.params.id);
+      const { stop_loss_price } = req.body as { stop_loss_price: number | null };
+      const result: any = await paperTradingFacade.applyAutomation({
+        action: 'set_stop_loss',
+        user_id: user.id,
+        username: user.username || user.nickname,
+        body: { position_id: positionId, stop_loss_price },
+      });
+      res.json({
+        success: true,
+        data: result,
+        message:
+          result.stop_loss_price === null
+            ? `已清除 ${result.symbol} 的止损价`
+            : `${result.symbol} 止损价设为 ¥${result.stop_loss_price}`,
+      });
+    } catch (error: any) {
+      sendError(res, error, '设置持仓止损价失败');
+    }
+  };
 }
 
 export const paperTradingController = new PaperTradingController();

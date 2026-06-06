@@ -119,7 +119,8 @@ export type ApplyAutomationAction =
   | 'plan_report'
   | 'tuning_apply'
   | 'tuning_rollback'
-  | 'hindsight_refresh';
+  | 'hindsight_refresh'
+  | 'set_stop_loss';
 
 export interface ApplyAutomationOptions {
   action: ApplyAutomationAction;
@@ -705,6 +706,49 @@ export class PaperTradingFacade {
           user_id,
           username,
         } as any);
+
+      case 'set_stop_loss': {
+        // US-017 — UI lets the user set a hard stop-loss price per position.
+        // Body shape: { position_id: number, stop_loss_price: number | null }.
+        // Verifies the position belongs to the user's portfolio before write.
+        const positionId = Number(body.position_id);
+        if (!Number.isFinite(positionId) || positionId <= 0) {
+          const err: any = new Error('position_id 无效');
+          err.statusCode = 400;
+          throw err;
+        }
+        const stopLossPrice =
+          body.stop_loss_price === null || body.stop_loss_price === undefined
+            ? null
+            : Number(body.stop_loss_price);
+        if (stopLossPrice !== null && (!Number.isFinite(stopLossPrice) || stopLossPrice <= 0)) {
+          const err: any = new Error('stop_loss_price 必须是正数或 null');
+          err.statusCode = 400;
+          throw err;
+        }
+        const portfolio = await PaperTradingPortfolio.findOne({ where: { user_id } });
+        if (!portfolio) {
+          const err: any = new Error('未找到模拟盘');
+          err.statusCode = 404;
+          throw err;
+        }
+        const position = await PaperTradingPosition.findOne({
+          where: { id: positionId, portfolio_id: portfolio.id },
+        });
+        if (!position) {
+          const err: any = new Error('未找到该持仓');
+          err.statusCode = 404;
+          throw err;
+        }
+        position.stop_loss_price = stopLossPrice;
+        await position.save();
+        return {
+          position_id: position.id,
+          symbol: position.symbol,
+          stop_loss_price: position.stop_loss_price,
+          current_price: position.current_price,
+        };
+      }
 
       default: {
         const exhaustiveCheck: never = action;

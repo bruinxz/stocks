@@ -40,4 +40,11 @@ router.put('/:date', authController.authenticate, journalController.updateJourna
  */
 router.delete('/:date', authController.authenticate, journalController.deleteJournal);
 
+/**
+ * @route POST /api/journals/:date/notes
+ * @desc US-017 — 追加用户手记（不修改 AI 生成的市场/持仓/明日策略字段）
+ * @access Private
+ */
+router.post('/:date/notes', authController.authenticate, journalController.appendNote);
+
 export default router;

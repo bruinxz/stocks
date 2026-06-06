@@ -14,6 +14,8 @@
 - **Workspace large-tab decomposition (US-016):** when a single tab's body exceeds ~150 lines, split into same-file sub-components (`MyStrategiesTab` / `NewBacktestTab` / `CompareTab`), pass state via props, keep the parent only for layout / routing / shared state. Sub-components stay module-private (no export). Shared helpers (`fmtPct` / `percentTag` / `compactDate` / `statusColor` / `statusLabel`) collect at the file BOTTOM. Polling `useEffect` with `window.setInterval` + `setPollingTaskId(null)` exit-condition is the standard cadence; refresh the list inside the interval so when user switches tabs they don't see stale data.
 - **Antd `InputNumber<number>` explicit generic** is required when both `formatter` and `parser` are used — without it, TS infers `value: 10000 | 100000000` from the `min`/`max` literals and rejects the parser's `number` return. Pattern: `<InputNumber<number> min={10000} max={100000000} parser={v => Number(v || '') || 0}>`.
 - **Recharts multi-series 必须共享 X 轴**：N 条曲线叠加时 `data` 是 **一个** array `[{date, task_5: 12.3, task_8: 9.8, ...}, ...]`，每个 `<Line dataKey="task_N" />` 取一列。**不能** N 条线各自 N 个 data array — 那是 chart.js 的旧模式，recharts 下会 X 轴对不齐。组装时用 `Map<date, row>` 累积，最后 `.sort()` 输出。
+- **Inline 表格编辑 hoist state 到 tab 级** (US-017): 用 `editingPositionId / editingValue` 两个 React 受控 state 控制 cell 分支 render (editing vs display)，不要走 antd Table 的 `record.editable` (那是 form-driven 模式，async save + 错误重试难协调)。Display 模式用 Tag + ✏ 按钮；Edit 模式 InputNumber + ✓ 保存 + ✗ 取消。保存失败保留编辑态 + message.error 让用户重试不需重输。
+- **行级 destructive 操作三件套** (US-017): `<Popconfirm okButtonProps={{ danger: true }}>` + `<Button danger loading={closingSymbol === row.symbol}>` + `closingSymbol: string | null` 状态隔离 (只锁该行不锁全表)。成功后触发整体 refresh (单字段 patch 不行：平仓影响 cash + total_value + positions + trades 全部链路)。
 
 ### Backend
 - **PaperTrading services live under `backend/src/portfolio/internal/`**, not `backend/src/services/` (US-003 refactor). The public surface is `backend/src/portfolio/PaperTradingFacade.ts` exposing **exactly 7 methods**: `getPortfolio`, `placeOrder`, `closePosition`, `getDailySnapshot`, `attributePnl`, `applyAutomation`, `getRiskProfile`. Controllers MUST only import the facade. Other services/scripts/jobs may still import from `internal/` directly (the facade-only constraint is the controller boundary).
@@ -23,6 +25,9 @@
 - **Quant services live under `backend/src/quant/{engine,backtest,performance,health}/internal/`** (US-004 refactor). The public surface is **exactly 5 classes**: `StrategyEngine` + `SignalEngine` (engine/), `BacktestEngine` (backtest/), `PerformanceReporter` (performance/), `QuantHealthMonitor` (health/). Controllers MUST only import these 5 facades; non-controller code (Scheduler, Jobs, sibling Services) may still reach into `internal/`. The facade design and method index live in `backend/src/quant/CLAUDE.md` — update that, not this file, when adding new facade methods.
 - **Cross-layer sibling imports inside quant** use explicit `../../<layer>/internal/...` paths (e.g. `engine/internal/QuantFusionService` imports `quantRuntimeHealthService` from `../../health/internal/QuantRuntimeHealthService`). Don't add wildcards or re-export barrels — staying explicit makes the inter-layer graph visible to future readers.
 - **`QuantMath.ts` and `StrategyRegistry.ts` stay at `quant/engine/` top level** (NOT in `engine/internal/`). They're imported by every strategy under `strategies/`; moving them would force strategies to reach into `internal/`. Treat them as shared primitives, not part of the facade-internal split.
+- **JSONB column mutation requires `model.changed('field', true)`** (US-017): Sequelize 的 dirty-check 对 JSONB 列上的 in-place mutate (push/splice) 或 reassign 都不会自动包含到 `_changed` set 里。任何 JSONB array/object 修改后必须 `model.changed('user_notes', true)` 显式标记，否则 UPDATE SQL 不发。`appendNote` 用 `journal.user_notes = [...existing, note]` (reassign) + `journal.changed('user_notes', true)` 双保险。
+- **"懒建档" 模式** (US-017): 用户写操作如果发生在 "主数据由 AI 生成 + 用户补充" 的领域里 (复盘日记追加手记 / RiskAlert 备注 / RecommendationFeedback)，遇到该主数据还不存在时 endpoint 自动 create 一行 placeholder (字段标识清晰: `mood='未生成'` 或 `is_placeholder=true`) 让用户操作能继续而不被 404 拦截。前端用 placeholder 标识区分 "AI 已生成" vs "纯用户操作"。
+- **facade 扩 action 联合类型而非加方法** (US-003 规则, US-017 实践): PaperTradingFacade 严格保持 7 个 public method (`getPortfolio / placeOrder / closePosition / getDailySnapshot / attributePnl / applyAutomation / getRiskProfile`)。新写操作就扩展最近 method 的 `XxxAction` / `XxxView` 联合类型 + switch case (default branch `const _: never = action` 保证 exhaustive check)。US-017 加 stop-loss 时套用：`ApplyAutomationAction += 'set_stop_loss'`，applyAutomation switch += 1 个 case，不破坏 facade 收敛。
 - **Symlinks for tooling in the worktree** — the worktree has no `backend/node_modules`. Before running typecheck, symlink: `cd backend && ln -s /Users/bytedance/go/src/github.com/bruinxz/stocks/backend/node_modules node_modules`. The repo's `backend/.gitignore` matches `node_modules/` as a directory pattern but the symlink shows up as an untracked symlink — REMOVE it before `git add` to keep the tree clean.
 
 ### A-share data ingestion (US-005+)
@@ -1515,3 +1520,202 @@ useEffect(() => {
 2. **Backend / Express 多 sub-resource 路由的顺序**：已存在（US-015）。
 3. **Antd / InputNumber<number> 显式泛型**：新增。
 4. **Frontend / Recharts 多曲线 X 轴对齐**：新增。
+
+---
+
+## 2026/06/07 - US-017
+
+### What was implemented
+持仓与复盘工作区 `/workspace/portfolio` 完整落地 — PRD 的 4 tab 一次性铺
+完：当前持仓 / 资金曲线 / 交易明细 / 复盘日记。这是前 16 个 story 数据
+闭环 → 用户感知闭环的临门一脚。
+
+**后端 (3 处 schema + service + 2 个新 endpoint)**:
+
+- `backend/src/models/PaperTradingPosition.ts` — 新增 `stop_loss_price?:
+  number | null` DECIMAL(10,3) nullable 列。这一列是用户手动设置的硬止损
+  价；US-048 (TrailingStopGuard) 之后还会读它做夜跑止损判定。**dev mode
+  下 sequelize.sync({alter:true}) 会自动 ALTER TABLE**（已在 codebase
+  pattern 中确立的演化路径）。
+- `backend/src/models/TradingJournal.ts` — 新增 `user_notes: {content:
+  string, created_at: ISO8601}[]` JSONB 列 (default `[]`)。**关键陷阱**:
+  JSONB 列在 Sequelize 里 push 元素后 `journal.changed('user_notes',
+  true)` 必须显式标记，否则 dirty check 跳过 SQL UPDATE。`appendNote`
+  endpoint 严格遵循。
+- `backend/src/portfolio/PaperTradingFacade.ts` — `ApplyAutomationAction`
+  联合类型扩展 `set_stop_loss`，applyAutomation switch 加新 case。**符合
+  facade 的"扩 discriminator 而非加第 8 个方法"硬规则**（CLAUDE.md 强制）。
+  实现：校验 positionId / stop_loss_price (allow null = 清除止损 / 正数 =
+  设置); 校验 position belongs to user's portfolio (jsdoc 标明这是统一
+  authorization 检查模式)；写入 + 返回 `{position_id, symbol,
+  stop_loss_price, current_price}`。
+
+- `PUT /api/paper-trading/positions/:id/stop-loss` — 新 endpoint，走
+  `PaperTradingController.setPositionStopLoss` → `facade.applyAutomation({
+  action: 'set_stop_loss', body: { position_id, stop_loss_price }})`。
+  Body 接受 `{ stop_loss_price: number | null }`。
+- `POST /api/journals/:date/notes` — 新 endpoint，走
+  `JournalController.appendNote`。如果该 date + user_id 还没有 row 自动
+  create 一条 placeholder（mood='未生成', market_summary='（未生成 AI
+  大盘总结）', portfolio_analysis='（未生成 AI 持仓分析）'），再 push
+  user_note 到数组末尾。**这个 "懒建档" 设计避免用户随手记一笔被 404
+  拦截** — 大盘点评 / 持仓分析等 US-087 AI 自动生成时会回填这些字段。
+  Note: PRD 写 `POST /api/journal/note` 单数，实现为复数 `/api/journals/:date/notes`
+  与既有 `/api/journals` 一致；service 层 jsdoc 标明 PRD 原文路径。
+
+**前端 service (新文件 ~210 LOC)**：
+`frontend/src/services/portfolioWorkspaceService.ts` — 9 个函数：
+- `getPortfolio` / `getSnapshots` / `getTradeHistory` — 包装既有 PaperTrading endpoints
+- `placeTrade` — POST /paper-trading/trade，用于一键平仓 (SELL with quantity = full)
+- `setPositionStopLoss` — US-017 新增 endpoint 客户端
+- `listJournals` / `getJournalDetail` / `appendJournalNote` — Journal endpoints；
+  `getJournalDetail` 404 时返回 null (该日期还没建档 ≠ 错误，UI 用 Empty 占位)
+- `fetchBenchmarkHistory` — 拉沪深 300 (或任意基准) 日 K 收盘价，柔性兼容
+  `/market/history` 不一定走统一 `{success, data}` 信封的 shape
+
+统一信封 unwrap helper + JS Error throw on `success=false`，与
+factorService / labService 同款 pattern。
+
+**前端 UI (rewrite ~1140 LOC, 从 53 行占位)**:
+`frontend/src/pages/workspace/PortfolioWorkspace.tsx` 严格遵循
+LabWorkspace 的"大型组件拆分"模式：parent 持顶层 KPI/loading/error +
+4 个 module-private sub-components (`PositionsTab` / `EquityCurveTab` /
+`TradesTab` / `JournalTab`) + 共享 helpers 集中文件底部 (`pnlColor` /
+`computeDailyReturns` / `computeMaxDrawdownPct` / `computeSharpeRatio` /
+`annualizeReturnPct` / `sliceSnapshotsByWindow`)。
+
+**4 tab 关键设计**：
+- **Tab 1 当前持仓**：9 列表格 (代码/名称/买入日/买入价/现价/数量/浮盈
+  +%/占比/止损价/所属策略/操作)。
+  - **Inline 止损价编辑**: editingPositionId + editingValue hoist 到 tab
+    级 state (不用 antd Table 自带 editable，async save 难协调)；render
+    cell 分支 `editingPositionId === row.id` → InputNumber + ✓/✗ 按钮；
+    Tooltip 显示 "距现价 N%" 或 "已 ≥ 现价可能立即触发" 警告。
+  - **一键平仓**: Popconfirm + danger button + `closingSymbol` 状态隔离
+    (只 disable 该行不 disable 全表)；成功后触发整体 refresh (平仓影响
+    cash + total_value 不能只 patch 一行)。
+  - **所属策略列**: 占位 "手动" Tag。真正归属来自
+    `PaperTradingAttribution.source_type` 链路，待 US-088 完善游资归属 /
+    signal→position join 后展开。
+- **Tab 2 资金曲线**：Recharts LineChart 我的净值 vs 沪深 300。
+  - **共享 X 轴**: 两条 line 共用一个 data array (每 row 含 `{date, my,
+    benchmark}`)，符合 US-016 总结的 "recharts 多曲线 X 轴对齐硬性要求"
+    pattern；基准缺失日期用 `null` + `connectNulls` 让节假日不断线。
+  - **归一化**: 首日 series[0] 设为 100，比值放大 100；用户切窗口
+    (Segmented 30d/90d/1y/全部) 触发 sliceSnapshots → 重新 fetch 基准 →
+    重新归一化。**不在后端预归一化** — 用户切窗口应可重新 rebase。
+  - **5 KPI**: 总收益 / 年化 / 最大回撤 / 夏普 / 当月收益，全部 frontend
+    helpers 计算。Sharpe = `mean/std * sqrt(252)` 常规口径；MaxDD =
+    `(peak-trough)/peak`；年化 = `(last/first)^(365/days) - 1`。
+- **Tab 3 交易明细**：分页 trade 表 (默认 pageSize=20, showSizeChanger)。
+  - **方向 Radio + 策略 Select + 日期 RangePicker** 全部 frontend 端
+    filter，因为 endpoint limit=100 已经足够小，server-side filter 无意义
+    带来 round-trip 延迟。
+  - **'实现盈亏' 列**: BUY 行 (realized_pnl = null) 显示 '-'，SELL 行
+    显示带符号金额带色 (green/red)；这是 PaperTradingTrade.realized_pnl
+    nullable 字段的天然分支。
+- **Tab 4 复盘日记**：25%/75% 双栏 (xs={24}/md={8|16}/lg={6|18})。
+  - 左侧 antd List 显示已生成日记日期 (mood Tag color=purple 标 AI 生成 /
+    label='无 AI 总结' 标用户手记建档)；顶部 DatePicker 可选任意日 (含未
+    建档日期)。
+  - 右侧 Card 4 个区段：市场总结 / 持仓点评 / 明日策略 / 标签 + Timeline
+    "我的手记"。**Markdown 渲染暂不引入** — 用 Typography.Paragraph + CSS
+    `whiteSpace: pre-wrap` 即可，等 US-087 真正 AI 生成时如需再补
+    react-markdown。
+  - **追加手记**: 底部 TextArea (5000 字上限带 count) + 主按钮；成功后
+    回填 detail.user_notes (体感更新)，若是 first-note 触发
+    onListRefresh 让左侧 List 出现新行。
+
+### Files changed
+- `backend/src/models/PaperTradingPosition.ts` (+ stop_loss_price column)
+- `backend/src/models/TradingJournal.ts` (+ user_notes JSONB column)
+- `backend/src/portfolio/PaperTradingFacade.ts` (+ ApplyAutomationAction
+  'set_stop_loss' + applyAutomation case)
+- `backend/src/api/controllers/PaperTradingController.ts` (+ setPositionStopLoss method)
+- `backend/src/api/controllers/JournalController.ts` (+ appendNote method)
+- `backend/src/api/routes/paperTrading.routes.ts` (+ PUT /positions/:id/stop-loss)
+- `backend/src/api/routes/journal.routes.ts` (+ POST /:date/notes)
+- `frontend/src/services/portfolioWorkspaceService.ts` (新文件 ~210 LOC)
+- `frontend/src/pages/workspace/PortfolioWorkspace.tsx` (rewrite 53 → ~1140 LOC)
+- `frontend/src/pages/workspace/CLAUDE.md` (新 4 个 section — Inline-edit
+  pattern / Inline confirm + execute pattern / Benchmark series alignment
+  pattern / Lazy detail fetch on selection pattern)
+- `ralph/prd.json` (US-017 → passes:true)
+- `ralph/progress.txt` (本条记录 + 新 Codebase Patterns)
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → exit 0 ✅
+- `cd backend && eslint <7 changed files> --quiet` → exit 0 (3 prettier
+  auto-fixed in JournalController.appendNote, 已 --fix)
+- `cd frontend && tsc --noEmit` → exit 0 ✅
+- `cd frontend && eslint src --ext .ts,.tsx --quiet` → exit 0
+- 既有回归测试 `AShareConstraintEngine` (64 tests) / `MultiFactorAlpha` (17
+  tests) / `DragonHeadMomentum` (25 tests) / `EarningsSurprise` (32 tests)
+  → 全部仍通过，US-017 模型字段添加未破坏既有契约
+
+### Browser verification
+**未执行** — 本环境未配置 dev-browser MCP skill。手动 smoke 建议：
+1. 后端 `npm run dev` + 前端 `npm start` (需 PostgreSQL + 至少一笔模拟交易让
+   PaperTradingPortfolio 自动创建)
+2. 登录后访问 `/workspace/portfolio`
+3. Tab1：持仓表渲染，点 ✏ 编辑止损价 → 保存后表里出现 Tag；点 '平仓' →
+   Popconfirm → 成功 message + portfolio refresh
+4. Tab2：曲线渲染 (我的蓝线 + 沪深 300 橙线)；切换 Segmented 时间窗 → X
+   轴范围变化 + 基准重新 fetch；KPI 数字非 NaN
+5. Tab3：切换方向 Radio + 选日期 → 行数正确 filter；按日期 sort 默认降序
+6. Tab4：选某日 → detail 填充；输入 "今日心得" + 点 "追加手记" → Timeline
+   立刻出现新条目；首次为某天 add note → 左侧 List 出现该日期 (mood='未生成')
+
+### Learnings for future iterations
+- **JSONB 列 mutate 后必须 `model.changed('field', true)`** — 这是 Sequelize
+  的 dirty-check 在 JSONB 列上的边角行为；如果 in-place mutate 数组 (push /
+  splice) 或者 reassign 整个数组，模型实例的 `_changed` set 都不会
+  自动包含这个字段，UPDATE SQL 就不发。`appendNote` 用 `journal.user_notes
+  = [...existing, note]` (reassign) + `journal.changed('user_notes', true)`
+  双保险。下一个 JSONB 列写入的 endpoint 直接抄这个模式。
+- **"懒建档" 模式 (Lazy materialization)** — `POST /journals/:date/notes`
+  如果该日期没记录会自动 create 一行 placeholder。这种"用户的写操作先于
+  AI 生成数据存在"的模式适用于任何"主数据由 AI 生成 + 用户补充"的领域：
+  US-087 (AI 复盘日记自动生成) / US-077 (RiskAlert 备注) 等都可以套
+  这个模式。关键判断：placeholder 字段要明确标识 (mood='未生成')，让前端
+  能区分 "AI 已生成 + 用户追加" vs "纯用户手记"。
+- **discriminator union 扩展 vs 加 facade 方法 — 严格守住 7 个**。
+  原本想给 PaperTradingFacade 加第 8 个方法 `setStopLoss`，被
+  CLAUDE.md 显式规则拦下 (US-003 留下的硬约束)。扩 `ApplyAutomationAction`
+  联合类型 + 一个 case 等价但保持 facade public surface 不膨胀。**未来给
+  facade 加新写操作: 先看 7 个 method 哪个语义最近, 再扩它的 action 联合类型**。
+- **Inline 编辑 pattern 不用 antd Table 自带 editable** — antd 的
+  `record.editable` 配合 EditableContext 是 form-driven 模式，把表单
+  state 和 cell render 强耦合，async save (PUT 请求 + 错误重试 + 保留
+  编辑态) 难协调。改用 "hoist editingPositionId + editingValue 到 tab
+  级 + cell render 分支" 模式：所有状态在 React 标准受控组件里，async
+  save → keep edit row open on error 等需求 1-2 行代码搞定。
+- **Popconfirm + danger button + 行级 loading state** — 一键平仓是
+  destructive 操作，必须 confirm。antd Popconfirm 比自定义 Modal 更
+  inline-friendly + 更 accessible。`closingSymbol: string | null` 状态
+  隔离让 loading spinner 只显示在执行的行，其他行不被锁。成功后触发整体
+  refresh (而非 optimistic patch single row) — 平仓影响 cash + total_value
+  + positions[] + trades[]，不能只 patch 单字段。
+- **Recharts 多曲线必须共享同一 data array** (US-016 已发现，US-017 复用)。
+  组装时用 `Map<date, value>` 索引基准价格，map 我的 snapshot 到 `{date,
+  my, benchmark}` 三元组；`connectNulls` 处理节假日断线。**不要**给两个
+  Line 各自传不同 data array (那是 chart.js 旧模式，recharts X 轴会对不齐)。
+- **基准数据按窗口动态 fetch** — 不在 mount 时 eager fetch 全市场指数 (用户
+  可能根本不切到 资金曲线 tab，纯浪费 round-trip)。切换 Segmented window 时
+  `useEffect([sliced])` 触发 fetch — sliced 由 windowKey 派生，依赖链清晰。
+- **`getJournalDetail` 404 → null** 比 throw 更友好 — "该日期还没有日记"
+  是预期场景而非错误，UI 用 Empty 占位 + 提示 "可追加手记建档" 是正确
+  reaction。service 层做 axios 404 拦截避免 component 写 try/catch。
+- **共享 helpers (pnlColor / computeSharpeRatio / annualizeReturnPct) 留
+  workspace 内**：这些 helper 仅 PortfolioWorkspace 用。如果未来 EquityCurve
+  抽出到 TodayWorkspace 也需要，再升级到 `frontend/src/utils/portfolio.ts`。
+  现在过早抽象会让 import 路径混乱。
+- **`所属策略` 列暂用 '手动' Tag 占位**: 真正的 strategy → trade 归属
+  需要 join QuantSignal 表 (PaperTradingAttribution 已经做了，但 cost
+  是每次 portfolio fetch 都额外 N 次 round-trip)。US-088 之后会有专门
+  endpoint 一次性返回 positions + strategy_origin，那时再加进来。
+- **Worktree gotcha (still active)**: before `git add`, 删 `frontend/node_modules`
+  + `backend/node_modules` symlink (两个都污染 git status；gitignore 的
+  `node_modules/` 是目录模式，对软链接文件不生效)。
+
+---

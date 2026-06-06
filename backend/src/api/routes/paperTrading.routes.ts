@@ -306,4 +306,15 @@ router.get('/history', authController.authenticate, paperTradingController.getTr
  */
 router.get('/snapshots', authController.authenticate, paperTradingController.getSnapshots);
 
+/**
+ * @route PUT /api/paper-trading/positions/:id/stop-loss
+ * @desc US-017 — 设置/清除指定持仓的硬止损价（body: { stop_loss_price: number | null }）
+ * @access Private
+ */
+router.put(
+  '/positions/:id/stop-loss',
+  authController.authenticate,
+  paperTradingController.setPositionStopLoss
+);
+
 export default router;

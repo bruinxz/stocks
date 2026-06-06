@@ -91,6 +91,21 @@ export class PaperTradingPosition extends Model {
   })
   declare unrealized_pnl: number;
 
+  /**
+   * 用户手动设置的止损价 (US-017)。
+   *
+   * 设置后 UI 在持仓表里会用红色提示"现价 ≤ 止损价"，并在 US-048
+   * (TrailingStopGuard) 中作为强制止损触发线。本列允许 NULL —— null 表示
+   * 用户未设置硬止损（仅依赖策略级 stop_loss_pct）。
+   */
+  @Column({
+    type: DataType.DECIMAL(10, 3),
+    allowNull: true,
+    field: 'stop_loss_price',
+    comment: '用户设置的止损价（NULL=未设置）',
+  })
+  declare stop_loss_price: number | null;
+
   @CreatedAt
   @Column({ field: 'created_at' })
   declare created_at: Date;
