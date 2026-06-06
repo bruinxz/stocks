@@ -33,8 +33,9 @@ evaluate 模型表达不出。
 - 入参：交易日 + 可选 `{ params?, previousSelection? }`
 - 出参：`{ target_portfolio, signals: BUY/SELL/HOLD[], filtered, params, ... }`
 
-典型例子（截至 US-011 共 1 个）：
+典型例子（截至 US-012 共 2 个）：
 - `MultiFactorAlphaStrategy`（多因子 alpha 月度轮动）
+- `DragonHeadMomentumStrategy`（短线龙头战法 — 事件驱动每日）
 
 后续 story 中其他组合级策略：US-019 NorthboundFollowStrategy、
 US-020 CTA100MomentumStrategy、US-021 SectorRotationLeaderStrategy、
@@ -65,6 +66,22 @@ US-028 EnsembleStrategy 等。
 
 只返回 target 让 caller 自己 diff 会出现 N 个调用方写出 N 份不一致 diff
 逻辑——这是 PaperTradingFacade 之前踩过的坑。
+
+**`previousSelection` 的形态视策略需要扩展**：
+- `MultiFactorAlphaStrategy`：`previousSelection: string[]` 就够了（月度
+  调仓只需要"哪只在哪只不在"）。
+- `DragonHeadMomentumStrategy`：扩展成 `currentPositions:
+  DragonHeadPosition[]`，每只持仓携带 `entry_date` / `entry_price` /
+  `half_exited`——因为 exit 规则要算 holding_days、止损（pnl_pct = (close -
+  entry_price) / entry_price）、防止已减半的仓位再次减半。新增 `sell_half`
+  这种"减仓但保留"的信号也是这一类 schema diff 的合理后果。
+
+**新增组合级 strategy 设计选 schema 的判据**：
+- 调仓决策只依赖"在不在"目标集合 → 用 `string[]`，保持简单。
+- 调仓决策依赖每只持仓的 *property*（进场价、持仓天数、是否已减仓） →
+  用结构化 `Position[]`，并文档化每个字段的语义。
+- 信号种类超出 BUY/SELL/HOLD 三态（如 SELL_HALF / ADD / SCALE_OUT） →
+  扩展 signal 联合类型并在 jsdoc 列出每态触发条件 + 调用方应做的撮合动作。
 
 ### C. evaluate() 必须实现为信息性 hold
 

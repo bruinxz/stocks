@@ -16,6 +16,7 @@ import { DualMomentumRotationStrategy } from '../strategies/DualMomentumRotation
 import { QualityMomentumBlendStrategy } from '../strategies/QualityMomentumBlendStrategy';
 import { TrendPullbackReentryStrategy } from '../strategies/TrendPullbackReentryStrategy';
 import { MultiFactorAlphaStrategy } from '../strategies/MultiFactorAlphaStrategy';
+import { DragonHeadMomentumStrategy } from '../strategies/DragonHeadMomentumStrategy';
 import { QuantStrategyDefinition } from '../types/QuantTypes';
 
 export class StrategyRegistry {
@@ -39,6 +40,7 @@ export class StrategyRegistry {
     this.register(new QualityMomentumBlendStrategy());
     this.register(new TrendPullbackReentryStrategy());
     this.register(new MultiFactorAlphaStrategy());
+    this.register(new DragonHeadMomentumStrategy());
   }
 
   register(strategy: QuantStrategy) {

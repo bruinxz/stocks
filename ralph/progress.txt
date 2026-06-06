@@ -58,6 +58,7 @@
 - **`override.weights` replaces default wholesale, NOT spread-merge** — users expect "what I list is the whole spec". Spread merge silently keeps 6 default factors in the weighted sum and breaks composite math. Same lesson applies to any new Record/object param in 组合级 strategies; scalar params (topN, maxPerIndustry) are safe to default.
 - **Tests live in `backend/tests/strategies/`** (per AC). The dir is **outside** `tsconfig.json`'s `include` (which is `src/**/*`), so `npx tsc --noEmit` and `npm run lint` skip it. Tests use the node-direct convention (no jest) — `npx ts-node --transpile-only tests/strategies/<Name>.test.ts`. Pattern matches existing `productionPreflight.test.ts` / `LiveAuditAlertService.test.ts` / `liveTradingRateLimit.test.ts` in `src/`.
 - **`backend/src/quant/strategies/CLAUDE.md` is the source of truth** for the 组合级 pattern + 5 design constraints (DataSource injection, BUY/SELL/HOLD in strategy, evaluate-as-hold, stable sort tie-break, tests-in-backend/tests/). Update it (not this file) when refining the contract.
+- **组合级 strategies pick `previousSelection` schema based on exit needs (US-012)**: `string[]` is sufficient when调仓 only needs set membership (MultiFactorAlpha 月度调仓); `Position[]` with structured fields (entry_date/entry_price/half_exited) is required when exit rules depend on per-position state (DragonHead 止损 / holding_days / 防重复减半). New signal types beyond BUY/SELL/HOLD (e.g. `sell_half`, `add`, `scale_out`) are similarly tied to the strategy's domain — extend the signal union and document each state's trigger + caller撮合 action in the .ts jsdoc; recap in `strategies/CLAUDE.md`. `MultiFactorAlpha` and `DragonHead` are the two canonical references for "lightweight" vs "stateful" position schemas.
 
 
 ### Tooling
@@ -832,3 +833,133 @@ US-020 (CTA100) / US-021 (SectorRotationLeader) / US-028 (EnsembleStrategy)
   (symlink 污染 git status)。
 
 ---
+
+
+## 2026/06/07 - US-012
+
+### What was implemented
+短线龙头战法策略：`DragonHeadMomentumStrategy`，第 2 个组合级策略。
+
+抓取强势行业内首板/低连板（1-3 板）梯队龙头：当日涨停 + 知名游资席位
+净买入 + 流通市值 30-200 亿 + 所属行业当日资金流排名前 10。次日开盘
+高开 5%+ 减半、炸板 / 持有 3 自然日强制平仓。
+
+**与 MultiFactorAlphaStrategy 的关键差异**：
+
+1. **事件驱动**而非月度调仓 — 每个交易日触发 generateSignals(date)。
+2. **`currentPositions` 比 `string[]` 复杂** — 每只持仓需带 entry_date /
+   entry_price / half_exited，因为 exit 规则要算 holding_days、止损 pnl、
+   防重复减半。这是 schema diff 从 MultiFactorAlpha 的合理扩展。
+3. **新信号类型 `sell_half`** — 高开减半时保留剩余仓位且标 half_exited=true。
+4. **target_positions 是 Position[]** 而非 string[]，对应上面 schema 扩展。
+
+**入场 5 维 AND 过滤**（按性能从快到慢编排，早 filter 早跳出）：
+1. 当日涨停（LimitUpStock 表存在记录） + 排除一字板（默认 true）
+2. 连板数 ∈ [minContinuousDays, maxContinuousDays]（默认 [1,3]）
+3. 所属行业当日 main_inflow 排名 ∈ top topIndustries（默认 10）
+4. 流通市值 ∈ [30亿, 200亿]
+5. 龙虎榜出现 is_famous_yz=true 且 SUM(net_amount) > 0
+
+**出场 4 类 + 优先级**（最先命中即触发；缺数据安全 HOLD）：
+- A. 持有 ≥ holdingDaysLimit (default 3) 自然日 → SELL（最高优先级）
+- B. (close - entry_price) / entry_price ≤ stopLossPct (default -7%) → SELL
+- C. holdingDays ≥ 1 且当日不在 limit_up 池 → SELL（炸板）
+- D. holdingDays ≥ 1 且 (open - prev_close)/prev_close ≥ highOpenSellHalfPct
+     (default 5%) 且 !half_exited → SELL_HALF
+- E. HOLD
+
+**maxPositions cap 流程**（避免过度持仓）：
+- 先算 exit signals → kept positions（HOLD + SELL_HALF）占用槽位
+- remainingSlots = maxPositions - kept.length
+- BUY 取入场候选游资 top remainingSlots
+- 已持仓的股票今天又涨停不重复 BUY（excludeStockCodes 集合）
+
+### Files changed
+- `backend/src/quant/strategies/DragonHeadMomentumStrategy.ts` (new ~840 LOC)
+- `backend/src/quant/engine/StrategyRegistry.ts` (注册 dragon_head_momentum)
+- `backend/tests/strategies/DragonHeadMomentumStrategy.test.ts` (new — 25 用例)
+- `backend/src/quant/strategies/CLAUDE.md` (更新组合级策略 schema diff 模式 +
+  US-012 加到示例列表)
+- `ralph/prd.json` (US-012 → passes:true)
+- `ralph/progress.txt` (this entry + Codebase Patterns 补充)
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → exit 0 ✅
+- `eslint DragonHeadMomentumStrategy.ts + StrategyRegistry.ts --quiet` →
+  exit 0 (8 prettier auto-fixed) ✅
+- `npx ts-node --transpile-only tests/strategies/DragonHeadMomentumStrategy.test.ts`
+  → 25 tests pass，覆盖 70+ 断言；运行时 < 1s
+  - 默认参数 (AC 指定 maxPositions=5 / 连板 [1,3] / stopLossPct=-7% 等)
+  - strategy_definition 元数据 (category=momentum, risk_level=high)
+  - 入场 5 维全通过单股
+  - 入场各维度独立失败：连板范围外、行业不在 top-N、行业 unknown、
+    游资无净买入、流通市值超范围
+  - 一字板剔除
+  - maxPositions cap (8 候选 cap 至 5)
+  - 排序稳定 tie-break (相同 net buy 按 stock_code)
+  - 出场 4 类全覆盖 (持有期 SELL / 止损 SELL / 炸板 SELL / 高开 SELL_HALF)
+  - half_exited=true 不重复减半
+  - 出场优先级 (持有期 > 止损)
+  - 进场首日 (holdingDays=0) 不触发炸板判定
+  - HOLD 占用槽位限 BUY 数 (4 HOLD + maxPositions=5 → 仅 1 BUY)
+  - 已持仓股票当日涨停不重复 BUY
+  - 缺当日行情数据安全 HOLD
+  - evaluate() 信息性 hold + factors.note 标记
+  - naturalDaysBetween 辅助 (同日/1日/3日/跨月/反向 clamp)
+  - invalid trade_date 抛出 + 空 universe 安全 + 自定义 params override
+- Registry smoke test: strategyRegistry.list() = 18 strategies (含
+  dragon_head_momentum), definition.tags=['短线','龙头','梯队','游资','涨停板']。
+
+### Browser verification
+**N/A** — 后端策略层，无 HTTP 表面。US-015 (因子工作区) / US-016 (策略
+实验室) / US-018 (今日作战) 等 UI story 会暴露策略调仓信号；本 story
+仅落地策略实现 + 注册 + 测试。
+
+### Learnings for future iterations
+- **DragonHead 是第一个引入"per-position 结构化状态"的组合级策略**。
+  MultiFactorAlpha 的 `previousSelection: string[]` 不够用 — exit 规则
+  需要 entry_date 算 holding_days、entry_price 算止损 pnl、half_exited
+  防重复减半。**新组合级策略设计时先列 exit 规则需要的状态**，再决定
+  `previousSelection` / `currentPositions` 的 schema 形态。
+- **sell_half 信号类型是 schema diff 的合理后果**。BUY/SELL/HOLD 三态
+  撑不起"减仓但保留剩余"的语义；新增 `'sell_half'` 联合分支 + jsdoc 标明
+  "撮合层做半仓 SELL + 标 half_exited=true 写回 currentPositions"。
+  下一个需要 ADD / SCALE_OUT / PARTIAL_SELL 的策略照此扩展。
+- **Exit 流程必须在 entry 之前算 + 互斥** — 已持仓的股票今天又涨停不应
+  双重路径（既 HOLD 又 BUY）。strategy 内部维护 `excludeStockCodes`
+  集合传给 evaluateEntries 保证不重 BUY。这条 invariant 测试用例
+  `test_exit_held_stock_not_re_bought` 显式守住。
+- **出场优先级测试用真实价格 + 真实日期**，不要走"今天人为构造矛盾场景"
+  的捷径。`test_exit_priority_holding_days_beats_stop_loss` 用 3 自然日 +
+  -20% 大亏的真实"双触发"场景，确保线上 holding-day-expiry 永远先于止损
+  生效（避免在持有期到期那天因为盘中先跌-7% 就触发止损 + reason 字段错乱）。
+- **`naturalDaysBetween` 故意用自然日不是交易日**。交易日跨周末（周五 +
+  3 天 = 周一）会让 holdingDaysLimit=3 实际成为 5 自然日的持仓 — 短线
+  龙头战法不应该长这么久。自然日口径是用户期望，文档化在 jsdoc 里防止
+  后人误"改进"。
+- **DefaultDragonHeadDataSource.loadDailyQuote 的 N+1 陷阱**：初稿用每只
+  股票单独 ORDER BY DESC LIMIT 1 拿 prev_close，5 只持仓 = 5 次 round-trip。
+  改成一次性查 [as_of - 10 天, as_of] 范围，TS 端按 stock_id 分组挑当日 +
+  当日前一条 bar。MomentumFactor 同款 pattern，可以复用 (没抽公共函数是
+  因为查询字段不同 + 各自只一个 caller，避免过度抽象)。
+- **业务规则 (excludeOneWordBoard=true) 是默认而非强制**。AC 没说一字板
+  必须剔除，但实操中一字板抢不到货 → 默认剔除。提供 override 给回测调研
+  用 (如想统计"如果能买到一字板"反事实场景)。这种"业务默认 + 留 override"
+  比"硬编码剔除"更尊重未来需求。
+- **FakeDataSource 的 `state` 字段 nullable Map<>**：让测试用例只需要
+  setup 自己关心的子集 (entry 测试不需 dailyQuote, exit 测试不需
+  topIndustries)。比"必填全 5 个 Map" 友好得多——25 个测试用例平均
+  只 setup 2-3 个 Map。
+- **getter pattern `ds['state'].limitUp!.set(...)`** 在
+  `test_exit_hold_kept_consumes_buy_slot` 用了一次让 dataSource 在
+  构造后还能 mutate。设计妥协：构造时 spread 一个完整 fixture 太啰嗦；
+  允许 mutate 是测试便利性的合理代价 (生产代码绝不会这么用)。
+- **registry smoke test 的细节**：`npx ts-node --transpile-only tests/_tmp.ts`
+  在 tests/ 目录下能跑（tsconfig 不 include 也行，ts-node --transpile-only
+  跳过 typecheck），但**必须放在 backend/tests/ 下**而不是 /tmp，否则
+  ESM 模块解析会找不到 logger 等深层依赖。最后用完即删保持 tests/ 干净。
+- **Worktree gotcha (still active)**：before `git add`, `rm backend/node_modules`
+  (symlink 污染 git status)。
+
+---
+
