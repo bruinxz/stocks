@@ -1,7 +1,7 @@
 {
   "project": "QuantX-AShare-Alpha-Refactor",
   "branchName": "claude/zen-khorana-13679b",
-  "description": "对 A 股回测/智能投顾系统进行激进重构：(1) 收敛过度发散的 38 个前端页面与 60+ 个后端 service 到统一的 6 个核心工作区；(2) 重写量化策略层，新增基于 A 股特色（北向资金、龙虎榜、涨停连板、业绩预告、行业资金流）的多因子选股策略与短线龙头战法两类真正可能赚钱的策略；(3) 建立统一信号-持仓-复盘闭环，目标是让模拟盘能跑出超额收益。本轮不做实盘对接。",
+  "description": "对 A 股回测/智能投顾系统进行端到端激进重构与能力扩展（100 story）：(1) 收敛 38 页前端到 6 工作区，合并重复 service；(2) 建立 A 股特色数据层（北向/龙虎榜/涨停/行业流/解禁/股东户数/融资融券/ETF 等 10+ 数据源）；(3) 重写量化策略层，建 14+ 个真正可能赚钱的策略（多因子/龙头/事件驱动/行业轮动/北向跟随/CTA100/GARP/游资接力/左侧反转/联动/Ensemble），8+ 个 alpha 因子，含 IC 验证、walk-forward、参数贝叶斯/grid 优化、蒙特卡洛、组合优化、行业归因；(4) 完整风控闭环（持仓上限、追踪止损、组合熔断、市场预警、单股止损、行业集中度、黑天鹅、晨间体检）；(5) AI 增强（单股深度问答、KOL 观点、市场情绪指数、雪球热词、公告 NLP、问答 NLP、K 线 AI 解读、Copilot 助手、复盘日记 AI 自生成）；(6) 推送闭环（飞书日报/业绩预告、邮件周报、微信公众号、实时风控 webhook）；(7) 运维闭环（env 校验、CI、OpenAPI、备份恢复、Prometheus 监控、清理、自检、文档、集成 smoke test）。目标：让模拟盘能跑出 sharpe > 1.5 的稳定超额收益。",
   "userStories": [
     {
       "id": "US-001",
@@ -294,6 +294,1384 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 18,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-019",
+      "title": "新策略：北向资金大幅加仓跟随策略",
+      "description": "As a 中长线投资者, I want 一个跟随北向资金大幅加仓的策略, so that 我能跟随聪明钱获取超额收益。",
+      "acceptanceCriteria": [
+        "在 backend/src/quant/strategies/ 新建 NorthboundFollowStrategy.ts，继承 QuantStrategy",
+        "入场条件：近 5 个交易日北向持股比例累计上升 >= 0.5% 且当前持股比例 > 1% + 市值 > 100 亿 + 非 ST",
+        "出场条件：近 5 日北向减仓 >= 0.3%、或持有 30 日到期、或个股跌幅 -8% 止损",
+        "支持参数 lookbackDays（默认 5）、minIncreasePct（默认 0.5）、maxPositions（默认 20）",
+        "新增单元测试 backend/tests/strategies/NorthboundFollowStrategy.test.ts",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 19,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-020",
+      "title": "新策略：CTA100 中证 1000 成份股动量策略",
+      "description": "As a 小盘风格投资者, I want 一个在中证 1000 成份股中选动量最强的 30 只, so that 我能把握小盘股的弹性。",
+      "acceptanceCriteria": [
+        "在 backend/src/quant/strategies/ 新建 CTA100MomentumStrategy.ts",
+        "股票池：中证 1000 成份股（通过 AKShare index_stock_cons_sina('000852')获取，新增 IndexComponentClient）",
+        "因子：60 日涨幅 - 5 日涨幅（剔除短期超涨）",
+        "选 top 30，月度调仓，行业中性（每行业最多 3 只）",
+        "新增模型 IndexComponent（trade_date、index_code、stock_code、weight）",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 20,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-021",
+      "title": "新策略：行业龙头轮动 SectorRotationLeader",
+      "description": "As a 行业轮动投资者, I want 一个先选强势行业再在行业内挑龙头的策略, so that 我能借助行业 beta 加 alpha。",
+      "acceptanceCriteria": [
+        "在 backend/src/quant/strategies/ 新建 SectorRotationLeaderStrategy.ts",
+        "Step1：选 IndustryFlow 表近 5 日主力净流入排名 top 10 的申万一级行业",
+        "Step2：在每个行业内选当日涨幅最大且流通市值 > 50 亿的 2 只龙头",
+        "出场条件：行业掉出 top 15 全部 SELL、个股跌出行业 top 5 个股 SELL、持有 10 日强制 SELL",
+        "支持参数 topIndustries（默认 10）、stocksPerIndustry（默认 2）",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 21,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-022",
+      "title": "新策略：高分红低 PE 长线价值策略",
+      "description": "As a 稳健型投资者, I want 一个选高股息率低 PE 蓝筹的长线策略, so that 我能拿股息加波段。",
+      "acceptanceCriteria": [
+        "在 backend/src/quant/strategies/ 新建 HighDividendValueStrategy.ts",
+        "入场条件：近 3 年平均股息率 >= 4% + PE-TTM <= 15 + ROE >= 10% + 总市值 > 200 亿",
+        "选 top 30，季度调仓（每季度第一个交易日）",
+        "新增 DividendHistoryClient 调用 AKShare stock_history_dividend_detail 接口",
+        "新增模型 DividendHistory（announce_date、ex_date、stock_code、dividend_per_share、yield_pct）",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 22,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-023",
+      "title": "新策略：突破策略 BreakoutStrategy",
+      "description": "As a 趋势交易者, I want 一个 60 日新高突破策略, so that 我能抓主升浪初始段。",
+      "acceptanceCriteria": [
+        "在 backend/src/quant/strategies/ 新建 BreakoutStrategy.ts",
+        "入场条件：突破 60 日新高 + 当日成交额 > 5 日均量 1.5 倍 + 所属行业当日资金流为正 + 非 ST",
+        "出场条件：跌破 20 日均线 SELL、回撤 15% 止损、持有 60 日到期",
+        "支持参数 newHighDays（默认 60）、volumeMultiplier（默认 1.5）",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 23,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-024",
+      "title": "新策略：业绩稳定增长 GARP 策略",
+      "description": "As a 价值成长投资者, I want 一个连续 3 年净利润正增长且 PEG < 1 的策略, so that 我能找到价格合理的成长股。",
+      "acceptanceCriteria": [
+        "在 backend/src/quant/strategies/ 新建 GARPStrategy.ts",
+        "入场条件：连续 3 年净利润同比 >= 15% + PEG = PE / 净利润增速 <= 1.0 + ROE 5 年均值 >= 12% + 资产负债率 <= 60%",
+        "选 top 30，半年度调仓",
+        "新增 FinancialReportClient（如尚未存在），从 AKShare stock_financial_report_sina 获取年度报表",
+        "新增模型 FinancialReport 字段：report_date、stock_code、net_profit、net_profit_yoy、revenue、revenue_yoy、roe、debt_ratio",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 24,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-025",
+      "title": "新策略：游资接力 GameTraderRelayStrategy",
+      "description": "As a 短线投资者, I want 一个识别游资席位连续 2 天进入同一只股票龙虎榜的策略, so that 我能跟接力。",
+      "acceptanceCriteria": [
+        "在 backend/src/quant/strategies/ 新建 GameTraderRelayStrategy.ts",
+        "入场条件：近 2 个交易日同一只股票出现知名游资席位且净买入累计 > 5000 万 + 当日涨幅 > 5% + 流通市值 30-150 亿",
+        "出场条件：次日跌幅 > 3% SELL、次日游资席位消失 SELL、持有 3 个交易日强制 SELL",
+        "支持参数 lookbackDays（默认 2）、netBuyThreshold（默认 50_000_000）",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 25,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-026",
+      "title": "新策略：左侧反转策略 LeftSideReversal",
+      "description": "As a 反转交易者, I want 一个抓超跌反弹的策略, so that 我能在恐慌底接货赚反弹。",
+      "acceptanceCriteria": [
+        "在 backend/src/quant/strategies/ 新建 LeftSideReversalStrategy.ts",
+        "入场条件：近 20 日跌幅 >= 30% + 当日收盘价反弹 > 5% + 主力资金净流入 > 0 + RSI(14) 从 < 25 区域上穿 25 + 流通市值 > 50 亿",
+        "出场条件：5 日内涨幅 > 15% SELL 一半、跌破入场价 7% 全部止损、持有 15 日强制 SELL",
+        "支持参数 dropPctThreshold（默认 30）、rsiThreshold（默认 25）",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 26,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-027",
+      "title": "新策略：联动股策略 LinkageStrategy",
+      "description": "As a 题材投资者, I want 一个识别行业内龙头大涨次日跟买联动股的策略, so that 我能吃到题材扩散。",
+      "acceptanceCriteria": [
+        "在 backend/src/quant/strategies/ 新建 LinkageStrategy.ts",
+        "入场条件：所属行业当日有股票涨停且涨幅 > 9% + 自身昨日涨幅 < 5% + 同属一行业 + 流通市值 < 龙头股 + 当日开盘高开 < 3%",
+        "出场条件：涨停 SELL、次日跌幅 > 3% SELL、持有 3 日强制 SELL",
+        "支持参数 maxPositions（默认 5）",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 27,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-028",
+      "title": "新策略：多策略融合 EnsembleStrategy",
+      "description": "As a 大户, I want 一个根据市场环境自适应选择子策略权重的融合策略, so that 我在不同行情都有合适的策略当家。",
+      "acceptanceCriteria": [
+        "在 backend/src/quant/strategies/ 新建 EnsembleStrategy.ts",
+        "判断市场环境：用 MarketEnvironmentService（已有）的输出（bull/bear/range/volatile）",
+        "bull 环境给 MultiFactorAlpha 0.4 + DragonHead 0.3 + Breakout 0.3",
+        "bear 环境给 HighDividendValue 0.6 + LowVol 0.4（LowVol 策略后续 story 实现）",
+        "range 环境给 SectorRotationLeader 0.4 + LeftSideReversal 0.3 + EarningsSurprise 0.3",
+        "volatile 环境给 GARPStrategy 0.5 + HighDividendValue 0.5",
+        "对外只暴露 generateSignals(date) 接口",
+        "新增单元测试覆盖 4 种环境",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 28,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-029",
+      "title": "新因子：换手率与流动性 LiquidityFactor",
+      "description": "As a 因子开发者, I need 一个换手率与流动性因子, so that 我可以避开僵尸股或拥挤股。",
+      "acceptanceCriteria": [
+        "在 backend/src/quant/factors/library/ 新建 LiquidityFactor.ts",
+        "计算公式：(近 20 日平均换手率 - 全市场分位 30%) ÷ 全市场分位标准差，过低过高都减分",
+        "注册到 FactorRegistry",
+        "新增单元测试验证 winsorize 与 z-score",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 29,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-030",
+      "title": "新因子：分析师一致预期评分 AnalystConsensusFactor",
+      "description": "As a 因子开发者, I need 一个分析师一致预期上修因子, so that 我能跟卖方调研的预期变化。",
+      "acceptanceCriteria": [
+        "新增模型 AnalystForecast（report_date、stock_code、target_price、rating、forecast_eps_y1、forecast_eps_y2、analyst_count）",
+        "新增 AnalystForecastClient 调用 AKShare stock_research_report_em",
+        "在 backend/src/quant/factors/library/ 新建 AnalystConsensusFactor.ts，计算近 90 日 forecast_eps_y1 上调幅度",
+        "新增 CLI 脚本 backend/src/scripts/sync-analyst-forecast.ts",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 30,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-031",
+      "title": "新因子：高阶质量 QualityHighFactor",
+      "description": "As a 因子开发者, I need 一个高阶质量因子（ROIC、毛利率稳定性、自由现金流）, so that 多因子模型更稳健。",
+      "acceptanceCriteria": [
+        "在 backend/src/quant/factors/library/ 新建 QualityHighFactor.ts",
+        "三个子分量等权重合成：ROIC = NOPAT / 投入资本，毛利率 5 年标准差倒数，自由现金流 / 营收 比率",
+        "需要的财务字段从 FinancialReport 表读取",
+        "注册到 FactorRegistry",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 31,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-032",
+      "title": "新因子：盈利惊喜 EarningsSurpriseFactor",
+      "description": "As a 因子开发者, I need 一个盈利公告超预期幅度因子, so that 多因子模型在年报季更敏感。",
+      "acceptanceCriteria": [
+        "在 backend/src/quant/factors/library/ 新建 EarningsSurpriseFactor.ts",
+        "计算公式：(实际净利润 - 一致预期净利润) / |一致预期净利润|，仅在公告日后 60 个交易日内生效",
+        "对应数据：实际值从 FinancialReport 读取，预期从 AnalystForecast 读取",
+        "注册到 FactorRegistry",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 32,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-033",
+      "title": "新因子：动量反转 MomentumReversalFactor",
+      "description": "As a 因子开发者, I need 一个动量反转因子（中短期与中长期动量分离）, so that 多因子模型能区分趋势延续与反转。",
+      "acceptanceCriteria": [
+        "在 backend/src/quant/factors/library/ 新建 MomentumReversalFactor.ts",
+        "计算公式：120 日动量 - 5 日动量（剔除短期反转噪音），正值代表趋势延续，负值代表反转",
+        "注册到 FactorRegistry",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 33,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-034",
+      "title": "新因子：东财问答热度 EastMoneyQAFactor",
+      "description": "As a 因子开发者, I need 一个东方财富股吧问答热度变化因子, so that 多因子模型能捕捉散户关注度。",
+      "acceptanceCriteria": [
+        "新增模型 StockSentiment（trade_date、stock_code、post_count、view_count、heat_score）",
+        "新增 EastMoneyQAClient 调用 stock_guba_em 或 stock_hot_rank_em 接口",
+        "在 backend/src/quant/factors/library/ 新建 EastMoneyQAFactor.ts，计算 post_count 近 5 日 / 近 30 日均值的比值",
+        "新增 CLI 脚本 backend/src/scripts/sync-stock-sentiment.ts",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 34,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-035",
+      "title": "新因子：股东户数变化 ShareholderConcentrationFactor",
+      "description": "As a 因子开发者, I need 一个股东户数环比变化因子, so that 多因子模型能识别筹码集中度变化。",
+      "acceptanceCriteria": [
+        "新增模型 ShareholderCount（report_date、stock_code、holder_count）",
+        "新增 ShareholderCountClient 调用 AKShare stock_zh_a_gdhs",
+        "在 backend/src/quant/factors/library/ 新建 ShareholderConcentrationFactor.ts，计算最新一期股东户数环比变化（负值=集中=正分）",
+        "新增 CLI 脚本 backend/src/scripts/sync-shareholder-count.ts",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 35,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-036",
+      "title": "新因子：渐进强爆 GradualBreakoutFactor",
+      "description": "As a 因子开发者, I need 一个渐进式价量配合的强爆因子, so that 多因子能识别温和放量逐步走强的股票。",
+      "acceptanceCriteria": [
+        "在 backend/src/quant/factors/library/ 新建 GradualBreakoutFactor.ts",
+        "计算公式：近 30 日每日（成交量 / 60 日均量 - 1）* sign(涨跌幅) 的累计值",
+        "注册到 FactorRegistry",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 36,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-037",
+      "title": "回测体系：参数 grid search 网格调优",
+      "description": "As a 策略开发者, I want 对策略关键参数做 grid search, so that 找到历史回测最优参数组合。",
+      "acceptanceCriteria": [
+        "在 backend/src/quant/backtest/ 新建 GridSearchOptimizer.ts，接口：optimize(strategy, paramGrid, backtestConfig)",
+        "支持多维参数（如 topN ∈ [10,20,30,50]、stopLossPct ∈ [-5,-7,-10]），生成所有组合并并行回测（Bull 队列）",
+        "结果按 夏普率、年化收益、回撤 多目标排序",
+        "新增模型 OptimizationRun（id、strategy_name、param_grid_json、created_at）与 OptimizationResult（run_id、params_json、sharpe、annual_return、max_drawdown、composite_score）",
+        "新增 CLI 脚本 backend/src/scripts/run-grid-search.ts",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 37,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-038",
+      "title": "回测体系：贝叶斯优化 BayesianOptimizer",
+      "description": "As a 策略开发者, I want 用贝叶斯优化替代 grid search 在连续参数空间高效搜索, so that 减少回测次数找到优参。",
+      "acceptanceCriteria": [
+        "在 backend/src/quant/backtest/ 新建 BayesianOptimizer.ts，使用 bayesian-optimization npm 包或自实现 EI（Expected Improvement）",
+        "接口：optimize(strategy, paramBounds, iterations, backtestConfig)，paramBounds 形如 { stopLossPct: { min: -15, max: -3 } }",
+        "每次迭代根据高斯过程后验选下一个采样点",
+        "新增 CLI 脚本 backend/src/scripts/run-bayesian-opt.ts",
+        "新增单元测试覆盖 EI 计算与采样逻辑",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 38,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-039",
+      "title": "回测体系：滚动 walk-forward 验证",
+      "description": "As a 策略验证者, I want 滚动窗口 walk-forward 验证以避免参数过拟合, so that 实盘前知道策略稳定性。",
+      "acceptanceCriteria": [
+        "在 backend/src/quant/backtest/ 新建 WalkForwardValidator.ts，接口：validate(strategy, paramBounds, trainMonths, testMonths, startDate, endDate)",
+        "在 train 窗口跑参数优化 → 在 test 窗口跑回测 → 窗口向前滚动 → 汇总每个 test 窗口绩效",
+        "结果保存到 WalkForwardResult 模型（run_id、train_start、train_end、test_start、test_end、best_params_json、test_sharpe、test_return、test_drawdown）",
+        "新增 CLI 脚本 backend/src/scripts/run-walk-forward.ts",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 39,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-040",
+      "title": "回测体系：分段市场环境回测报告",
+      "description": "As a 策略验证者, I want 在牛市/熊市/震荡/高波动 4 种环境分别验证策略表现, so that 知道策略在不同行情下的适应性。",
+      "acceptanceCriteria": [
+        "在 backend/src/quant/backtest/ 新建 RegimeSegmentedBacktest.ts，调用 MarketEnvironmentService 把回测期间分段",
+        "对每个 regime 段独立计算 收益、夏普、最大回撤、胜率",
+        "结果保存到 RegimeBacktestResult 模型（run_id、regime、start_date、end_date、return、sharpe、drawdown、win_rate、trade_count）",
+        "新增 CLI 脚本 backend/src/scripts/run-regime-backtest.ts",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 40,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-041",
+      "title": "回测体系：因子 IC 报告与 IC 衰减分析",
+      "description": "As a 因子开发者, I want 自动生成所有因子的 IC、IC_IR、IC 衰减图, so that 我能淘汰失效因子。",
+      "acceptanceCriteria": [
+        "在 backend/src/quant/factors/ 新建 FactorICReport.ts，接口：generate(factorName, startDate, endDate, lookForwardDays)",
+        "计算每个交易日 (factor_score, lookForward 日收益) 的 Spearman 秩相关 = IC",
+        "汇总：IC mean、IC std、IC_IR = mean/std、IC > 0 的比例、IC 衰减（lookForward = 1,5,10,20,60 日）",
+        "结果保存到 FactorICResult 模型（factor_name、look_forward_days、ic_mean、ic_std、ic_ir、ic_positive_ratio、computed_at）",
+        "新增 CLI 脚本 backend/src/scripts/compute-factor-ic.ts",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 41,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-042",
+      "title": "回测体系：因子相关性矩阵与因子聚类",
+      "description": "As a 因子开发者, I want 看到因子之间的相关性矩阵, so that 我避免在多因子模型里加入高度共线的因子。",
+      "acceptanceCriteria": [
+        "在 backend/src/quant/factors/ 新建 FactorCorrelationReport.ts",
+        "读取 FactorScore 表，按 (trade_date, stock_code) 透视成宽表，计算因子两两 Spearman 相关",
+        "结果保存到 FactorCorrelationResult 模型（factor_a、factor_b、correlation、sample_size、computed_at）",
+        "对相关性 > 0.7 的因子对，标记并写入告警表",
+        "新增 CLI 脚本 backend/src/scripts/compute-factor-correlation.ts",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 42,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-043",
+      "title": "回测体系：蒙特卡洛压力测试",
+      "description": "As a 策略验证者, I want 用蒙特卡洛随机交易重排来评估策略稳健性, so that 我知道历史表现是不是巧合。",
+      "acceptanceCriteria": [
+        "在 backend/src/quant/backtest/ 新建 MonteCarloStressTest.ts",
+        "对一次完成的回测，把每笔交易的盈亏（pct return）抽取出来，随机重排 N=1000 次，重新计算资金曲线",
+        "输出：N 次模拟的最终收益分位数（5%/50%/95%）、最大回撤分布、夏普分布",
+        "结果保存到 MonteCarloResult 模型（base_run_id、simulation_count、return_p5、return_p50、return_p95、drawdown_p95、sharpe_p5）",
+        "新增 CLI 脚本 backend/src/scripts/run-monte-carlo.ts",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 43,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-044",
+      "title": "回测体系：多策略组合优化",
+      "description": "As a 大户, I want 在多个候选策略之间做权重组合优化（夏普最大化）, so that 我得到一个组合而非单一策略。",
+      "acceptanceCriteria": [
+        "在 backend/src/quant/backtest/ 新建 PortfolioOptimizer.ts",
+        "输入：多个策略的历史日收益序列",
+        "求解：在权重和=1、每个权重在[0,0.4]约束下最大化夏普（梯度下降或 lp 解）",
+        "输出最优权重 + 组合的年化收益/夏普/回撤",
+        "结果保存到 StrategyPortfolioResult 模型（strategy_names_json、weights_json、annual_return、sharpe、max_drawdown）",
+        "新增 CLI 脚本 backend/src/scripts/optimize-portfolio.ts",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 44,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-045",
+      "title": "回测体系：基准比较与超额收益拆解",
+      "description": "As a 策略验证者, I want 自动对每次回测和沪深 300/中证 500/中证 1000 比较并拆解超额收益, so that 我知道是 beta 还是 alpha。",
+      "acceptanceCriteria": [
+        "在 backend/src/quant/performance/ 新建 BenchmarkAttributionService.ts",
+        "回测完成后自动计算：alpha（CAPM 回归截距）、beta（回归斜率）、信息比率、超额最大回撤、超额年化",
+        "对每个基准（HS300、CSI500、CSI1000）独立计算",
+        "结果保存到 BenchmarkAttributionResult 模型（run_id、benchmark、alpha_annual、beta、information_ratio、excess_return、excess_drawdown）",
+        "在 BacktestResult 完成 hook 中触发计算",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 45,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-046",
+      "title": "回测体系：分行业归因分析",
+      "description": "As a 策略验证者, I want 把策略收益拆到每个行业的贡献, so that 我知道哪些行业是 alpha 来源。",
+      "acceptanceCriteria": [
+        "在 backend/src/quant/performance/ 新建 IndustryAttributionService.ts",
+        "读取回测期内所有交易明细，按 SectorIndustry 表分组计算每个行业贡献 pct、胜率、平均持仓天数",
+        "结果保存到 IndustryAttributionResult 模型（run_id、industry_code、industry_name、contribution_pct、win_rate、avg_hold_days、trade_count）",
+        "在 BacktestResult 完成 hook 中触发",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 46,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-047",
+      "title": "风控：持仓上限与单股仓位限制",
+      "description": "As a 用户, I want 策略下单时受到持仓数量和单股仓位的硬性约束, so that 不会因为一只股票黑天鹅亏穿。",
+      "acceptanceCriteria": [
+        "在 backend/src/portfolio/risk/ 新建 PositionLimitGuard.ts",
+        "全局配置：最大持仓数（默认 20）、单股仓位上限（默认 10%）、单行业仓位上限（默认 30%）",
+        "在 PaperTradingFacade.placeOrder() 调用前注入校验，违规订单写入 RiskAlert 表（level=HIGH）",
+        "校验项：是否超持仓数、单股 (当前+本次买入金额)/总资产 是否超上限、单行业累计仓位是否超上限",
+        "新增配置 endpoint：GET/PUT /api/risk/position-limits",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 47,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-048",
+      "title": "风控：动态止损与追踪止损",
+      "description": "As a 用户, I want 每只持仓自动跟踪追踪止损价（最高价回撤 N%）, so that 利润不至于回吐殆尽。",
+      "acceptanceCriteria": [
+        "在 backend/src/portfolio/risk/ 新建 TrailingStopGuard.ts",
+        "在 PaperTradingPosition 模型新增字段：highest_price、trailing_stop_pct、trailing_stop_price",
+        "每日收盘后定时任务：对每只持仓更新 highest_price = max(highest_price, today_close)，重新计算 trailing_stop_price = highest_price * (1 - trailing_stop_pct)",
+        "次日开盘前检查若 prev_close <= trailing_stop_price 则触发 SELL 信号",
+        "默认追踪止损 10%，可在策略层覆盖",
+        "新增配置 endpoint",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 48,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-049",
+      "title": "风控：组合回撤熔断",
+      "description": "As a 用户, I want 当组合从历史高点回撤超过阈值时自动减仓, so that 防止系统性踩踏。",
+      "acceptanceCriteria": [
+        "在 backend/src/portfolio/risk/ 新建 DrawdownCircuitBreaker.ts",
+        "每日收盘后计算组合从历史高点回撤 = (peak_value - current_value) / peak_value",
+        "回撤 >= 10% 触发 LEVEL_1：暂停新开仓 24h",
+        "回撤 >= 15% 触发 LEVEL_2：减仓至 50%（卖出账户内涨幅最大的 50% 标的）",
+        "回撤 >= 20% 触发 LEVEL_3：清仓",
+        "所有触发写入 RiskAlert（level=HIGH）",
+        "新增配置 endpoint：阈值与启用状态",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 49,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-050",
+      "title": "风控：市场环境预警与降仓",
+      "description": "As a 用户, I want 当大盘出现连续暴跌、指数破位时自动收到提醒并建议降仓, so that 我提早避险。",
+      "acceptanceCriteria": [
+        "在 backend/src/portfolio/risk/ 新建 MarketRegimeAlertService.ts",
+        "每日开盘后检查：上证指数 3 日累计跌幅 > 5% → RiskAlert MEDIUM；月度跌幅 > 15% → HIGH；20 日均线下穿 60 日均线 → MEDIUM",
+        "对应触发：建议降仓 30%（仅 alert，不强制）",
+        "新增 endpoint：GET /api/risk/market-regime-status",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 50,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-051",
+      "title": "风控：每股最大跌幅与单日清仓限制",
+      "description": "As a 用户, I want 单只股票单日跌幅超 7% 自动止损卖出, so that 不留隔夜单",
+      "acceptanceCriteria": [
+        "在 backend/src/portfolio/risk/ 新建 PerStockStopLossGuard.ts",
+        "每日收盘后扫描所有持仓，若 (close - buy_price) / buy_price <= -7% 触发 SELL 信号",
+        "若触发数 >= 持仓总数 50%，额外触发组合级 LEVEL_2 RiskAlert",
+        "在 PaperTradingFacade 集成此 guard",
+        "可在策略级覆盖默认止损阈值",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 51,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-052",
+      "title": "风控：行业集中度告警与强制再平衡",
+      "description": "As a 用户, I want 行业仓位超 35% 时收到告警并支持一键再平衡, so that 不被某行业绑架。",
+      "acceptanceCriteria": [
+        "在 backend/src/portfolio/risk/ 新建 IndustryConcentrationGuard.ts",
+        "每日收盘后计算每个行业的仓位占比，超 35% 写 RiskAlert（level=MEDIUM）",
+        "新增 endpoint：POST /api/portfolio/rebalance-industry（输入 portfolio_id，自动卖出占比最大的行业内涨幅最大的 1-2 只直到 < 30%）",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 52,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-053",
+      "title": "风控：黑天鹅事件（停牌/退市/重大利空）应对",
+      "description": "As a 用户, I want 持仓股发生重大利空（停牌、立案调查、退市风险警示）时第一时间收到通知, so that 我能尽快脱手。",
+      "acceptanceCriteria": [
+        "在 backend/src/portfolio/risk/ 新建 BlackSwanWatchdog.ts",
+        "数据源：stock_zh_a_st_em（ST 列表）、stock_zh_a_stop_em（停牌列表）、stock_news_main_cx_em（重大新闻）",
+        "对每只持仓每日检查是否新增 ST/停牌/重大利空关键词（'立案'、'退市'、'重大违规'）",
+        "触发后立即写 RiskAlert（level=HIGH）并发飞书/邮件通知（依赖 US-080）",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 53,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-054",
+      "title": "风控：每日开盘前风险体检报告",
+      "description": "As a 用户, I want 每天早上 9 点收到一份持仓体检报告, so that 我开盘前心里有数。",
+      "acceptanceCriteria": [
+        "在 backend/src/portfolio/risk/ 新建 MorningRiskCheckupService.ts",
+        "每天 8:30 触发，输出：持仓数、单股最大占比、行业最大占比、当前组合回撤、本周净值变化、未触发告警数",
+        "结果保存到 MorningRiskCheckup 模型 + 推送（飞书/邮件，依赖 US-080）",
+        "新增 endpoint：GET /api/risk/morning-checkup/today",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 54,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-055",
+      "title": "AI：单股深度问答（接入 TradingAgents）",
+      "description": "As a 用户, I want 在持仓里点任意一只股票就能召唤 AI 给出深度分析（基本面/技术面/资金面/新闻面）, so that 我得到第二意见。",
+      "acceptanceCriteria": [
+        "在 backend/src/services/ 完善 AIAdvisorService（已有），新增 analyzeSingleStock(stockCode, options) 方法，options 含 dimensions: ['fundamental','technical','capital','news','sentiment']",
+        "结果保存到 AIStockAnalysisReport 模型（report_id、stock_code、dimensions、summary、recommendation、key_points_json、generated_at）",
+        "新增 endpoint：POST /api/ai/analyze-stock，支持 SSE 流式返回 + 普通返回",
+        "前端在持仓页 + 选股页 + 工作区上添加 'AI 解读' 入口",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 55,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-056",
+      "title": "AI：KOL 观点聚合",
+      "description": "As a 用户, I want 看到行业大 V 对当前关注股票的最新观点（球友、雪球大 V、券商研报）, so that 我跟踪市场认知。",
+      "acceptanceCriteria": [
+        "新增模型 KOLOpinion（stock_code、kol_name、kol_source、opinion_date、opinion_summary、sentiment_score、url）",
+        "新增 KOLAggregatorService 抓取来源：雪球热门评论、东财股吧高赞、券商研报标题与摘要（AKShare stock_research_report_em）",
+        "对每只关注股每周汇总 5-10 条最新 KOL 观点",
+        "新增 endpoint：GET /api/ai/kol-opinions?stock_code=000001",
+        "新增 CLI 脚本 backend/src/scripts/sync-kol-opinions.ts",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 56,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-057",
+      "title": "AI：市场情绪量化指数",
+      "description": "As a 用户, I want 一个综合涨停数、跌停数、北向、融资余额、问答热度的市场情绪指数, so that 我把握大势温度。",
+      "acceptanceCriteria": [
+        "在 backend/src/services/ 新建 MarketSentimentIndexService.ts",
+        "每日收盘后计算指数：(涨停数 - 跌停数) * 0.3 + 北向净买入 z-score * 0.3 + 融资净买入 z-score * 0.2 + 全市场问答热度 z-score * 0.2",
+        "结果归一化到 0-100，保存到 MarketSentimentIndex 模型（trade_date、index_value、components_json）",
+        "新增 endpoint：GET /api/sentiment/index?days=30",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 57,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-058",
+      "title": "AI：雪球热词与突变事件抓取",
+      "description": "As a 用户, I want 看到雪球热词榜每日新进的关键词, so that 我能跟踪市场最新热点。",
+      "acceptanceCriteria": [
+        "新增模型 SnowballHotKeyword（trade_date、keyword、heat_score、related_stocks_json）",
+        "新增 SnowballHotKeywordClient 抓取雪球热门话题",
+        "新增 SnowballHotKeywordSyncService 每日定时（盘后）抓取",
+        "新增 endpoint：GET /api/sentiment/snowball-keywords?date=2026-06-06",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 58,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-059",
+      "title": "AI：公告 NLP 关键信息提取",
+      "description": "As a 用户, I want 公司公告自动提取关键信息（利好/利空、涉及金额、涉及业务）, so that 我不用手动读 PDF。",
+      "acceptanceCriteria": [
+        "新增模型 AnnouncementSummary（announce_date、stock_code、original_title、summary、sentiment(正面/中性/负面)、key_amounts_json、key_topics_json）",
+        "新增 AnnouncementClient 调用 AKShare stock_notice_report",
+        "新增 AnnouncementNLPService 调用现有 AI（TradingAgents 或 OpenAI 兼容 API）抽取摘要 + 情绪",
+        "新增 CLI 脚本 backend/src/scripts/sync-announcements.ts",
+        "新增 endpoint：GET /api/announcements?stock_code=000001&days=30",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 59,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-060",
+      "title": "AI：东财问答 NLP 与个股关注度",
+      "description": "As a 用户, I want 看到每只股票本周问答里被讨论最多的话题（财务、产品、订单、人事）, so that 我了解散户关注点。",
+      "acceptanceCriteria": [
+        "新增模型 EastMoneyQATopic（stock_code、week_start、topic、mention_count、sentiment_score）",
+        "新增 EastMoneyQATopicService 抓取问答原文 + AI 分类（财务/产品/订单/人事/政策/其它）",
+        "新增 endpoint：GET /api/sentiment/qa-topics?stock_code=000001",
+        "新增 CLI 脚本",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 60,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-061",
+      "title": "AI：大模型技术面 K 线解读",
+      "description": "As a 用户, I want 大模型读取一段 K 线和指标后给出技术面解读（趋势、压力位、支撑位、买卖点）, so that 我不需要自己看图。",
+      "acceptanceCriteria": [
+        "新增 endpoint：POST /api/ai/technical-analysis，入参 stock_code + lookback_days",
+        "后端拼接近 N 日 OHLCV + MACD + RSI + 布林带 + 成交量比 → 调 AI 接口（先复用 TradingAgents 或 OpenAI 兼容）",
+        "返回 JSON：{trend, support_levels: number[], resistance_levels: number[], buy_zone, sell_zone, summary, confidence}",
+        "结果缓存到 TechnicalAnalysisReport 模型 24 小时",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 61,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-062",
+      "title": "AI：策略人机协同 (Copilot)",
+      "description": "As a 用户, I want 在策略实验室页面有一个 AI 助手能帮我调参/解释回测结果/建议改进, so that 不懂代码也能玩转策略。",
+      "acceptanceCriteria": [
+        "前端在 /workspace/lab 右下角浮一个聊天面板",
+        "对话流接 POST /api/ai/strategy-copilot，支持 SSE",
+        "Copilot 能力：(1) 读懂用户当前选中的策略和参数，(2) 解释最新回测结果指标，(3) 根据用户提问建议参数改动，(4) 根据用户描述生成新策略草案（输出 TypeScript 代码片段供用户复制）",
+        "后端新增 StrategyCopilotService，prompt 模板里包含策略元数据与最近 5 次回测摘要",
+        "新增单元测试覆盖 prompt 拼接",
+        "Typecheck passes",
+        "Tests pass",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 62,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-063",
+      "title": "推送：飞书机器人当日交易日报",
+      "description": "As a 用户, I want 每日收盘后飞书推送当日交易日报（盈亏、新增持仓、卖出明细、明日候选）, so that 我下班通勤路上就能看到。",
+      "acceptanceCriteria": [
+        "复用已有 FeishuBotWebhookService（如已存在）或新建",
+        "新增 DailyTradingDigestService 在每日 15:30 触发，聚合当日 PnL + 持仓变化 + 明日候选 → 调用 FeishuBotWebhookService 发卡片消息",
+        "卡片内容：账户当日盈亏（绝对+百分比）、新增 N 笔买入（前 3 只详情）、新增 M 笔卖出（前 3 只详情）、明日 3 个策略候选 top 5",
+        "新增配置：用户在 SettingsWorkspace 填写飞书 webhook URL",
+        "新增 endpoint：POST /api/settings/notification-channels 与 GET 对应",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 63,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-064",
+      "title": "推送：飞书业绩预告即时提醒",
+      "description": "As a 用户, I want 持仓股出业绩预告时实时推送, so that 我能第一时间反应。",
+      "acceptanceCriteria": [
+        "新增 EarningsForecastWatcher 监听 EarningsForecast 表新数据",
+        "对每条新预告：若该 stock 在当前持仓中 → 立即推送飞书；若在自选股中 → 当日盘后汇总推送",
+        "推送内容：股票名 + 预告类型 + 净利润变化区间 + 历史一致预期对比 + 直达 AI 解读链接",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 64,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-065",
+      "title": "推送：邮件周度策略复盘报告",
+      "description": "As a 用户, I want 每周一收到邮件版周报（上周净值、策略归因、调仓建议、AI 周观点）, so that 我能系统地复盘。",
+      "acceptanceCriteria": [
+        "新增 EmailNotificationService（基于 nodemailer），从 .env 读取 SMTP 配置",
+        "新增 WeeklyReviewReportService 在每周一 08:00 触发，汇总上周数据 → 渲染 HTML 邮件",
+        "邮件包含：上周净值曲线（嵌入 PNG，依赖 chart-png 库）、各策略贡献、行业归因、本周关注事件、AI 周观点",
+        "用户可在 SettingsWorkspace 关闭/开启 + 配置接收邮箱",
+        "新增 endpoint：POST /api/settings/email-config",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 65,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-066",
+      "title": "推送：服务号（微信公众号）订阅消息",
+      "description": "As a 用户, I want 通过微信公众号订阅每日交易日报, so that 我不用专门开飞书。",
+      "acceptanceCriteria": [
+        "新增 WeChatOAService 封装服务号 API（需 access_token 管理）",
+        "支持订阅消息模板：每日日报、业绩预告提醒、风控告警 3 种",
+        "用户需先扫码绑定（生成参数二维码 → 关注公众号 → 后端识别用户绑定）",
+        "新增配置 endpoint：GET /api/settings/wechat-bind-qrcode、POST /api/settings/wechat-bind-confirm",
+        "新增单元测试（接口 mock）",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 66,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-067",
+      "title": "推送：实时风控 webhook（高优先级告警）",
+      "description": "As a 用户, I want 任何 HIGH 级别 RiskAlert 立即触发飞书+邮件+短信（如配置）, so that 不漏过关键风险。",
+      "acceptanceCriteria": [
+        "新增 RealtimeAlertDispatcher 监听 RiskAlert 表 afterCreate hook",
+        "对 level=HIGH 的告警：立即并行触发 飞书机器人 + 邮件 + （可选）阿里云短信",
+        "防风暴：同一类告警 30 分钟内只推一次，使用 Redis 去重",
+        "新增配置：用户可勾选哪些通道接收 HIGH 告警",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 67,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-068",
+      "title": "运维：环境一致性脚本与 .env 验证",
+      "description": "As a 维护者, I want 启动前自动校验所有必要的环境变量与依赖, so that 不会半夜被 missing config 叫起来。",
+      "acceptanceCriteria": [
+        "在 backend/src/config/ 新建 EnvValidator.ts，使用 envalid 或 zod 校验",
+        "必查：DB 连接、Redis 连接、JWT_SECRET、TradingAgents URL、（可选）FeishuWebhook、SMTP",
+        "在 backend/src/index.ts 启动前调用，校验失败立即退出并打印缺失项",
+        "新增 .env.example 模板包含所有必需变量及注释说明",
+        "新增 npm script: npm run check-env",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 68,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-069",
+      "title": "运维：GitHub Actions CI 流水线",
+      "description": "As a 维护者, I want 每次 PR 自动跑 typecheck + lint + test, so that 主分支不被破坏。",
+      "acceptanceCriteria": [
+        "新增 .github/workflows/ci.yml，触发：push 到任何分支 + PR 到 main",
+        "Job 1: backend-check (cd backend && npm ci && npx tsc --noEmit && npm run lint && npm test)",
+        "Job 2: frontend-check (cd frontend && npm ci && tsc --noEmit && npm run lint)",
+        "缓存 node_modules（按 package-lock.json hash）",
+        "失败时在 PR 评论关键错误片段",
+        "新增 README 徽章"
+      ],
+      "priority": 69,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-070",
+      "title": "运维：API 接口文档自动生成（OpenAPI）",
+      "description": "As a 前后端联调者, I want 后端自动生成 OpenAPI 文档并提供 Swagger UI, so that 联调时不用问。",
+      "acceptanceCriteria": [
+        "引入 swagger-jsdoc + swagger-ui-express",
+        "在所有 routes 文件添加 JSDoc 注释（至少 paths/methods/params/responses）",
+        "在 /api-docs 暴露 Swagger UI（仅 development 模式可访问，不需鉴权）",
+        "新增 npm script: npm run docs:openapi 输出 JSON 文件到 docs/openapi.json",
+        "Typecheck passes"
+      ],
+      "priority": 70,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-071",
+      "title": "运维：定时全量备份与恢复脚本",
+      "description": "As a 维护者, I want 每日定时备份 PostgreSQL 数据库, so that 出问题能快速恢复。",
+      "acceptanceCriteria": [
+        "新增 scripts/backup-db.sh：pg_dump → gzip → 写入 backups/YYYY-MM-DD.sql.gz，保留近 30 天",
+        "新增 scripts/restore-db.sh：选定日期 → 解压 → psql restore",
+        "新增 cron 配置说明（README 一节）",
+        "新增 npm script: npm run db:backup 和 npm run db:restore -- --date=2026-06-06"
+      ],
+      "priority": 71,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-072",
+      "title": "运维：Prometheus 指标埋点",
+      "description": "As a 维护者, I want 关键指标（订单量、回测数、API 错误率、AI 调用量）输出 Prometheus 格式, so that 可以接 Grafana。",
+      "acceptanceCriteria": [
+        "引入 prom-client",
+        "暴露 /metrics endpoint",
+        "至少记录：http_requests_total (method, route, status)、backtest_total、ai_request_duration_seconds、order_total (status)",
+        "新增 docs/monitoring.md 说明指标含义",
+        "新增单元测试覆盖 metrics 格式",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 72,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-073",
+      "title": "前端：今日作战页 AI 摘要卡片",
+      "description": "As a 用户, I want 今日作战顶部多一个 AI 当日大盘速读卡片, so that 我每天打开看 1 张图就够。",
+      "acceptanceCriteria": [
+        "在 frontend/src/pages/workspace/TodayWorkspace.tsx 顶部 KPI 下方新增 'AI 大盘速读' 卡片",
+        "卡片内容：上日收盘 / 今日开盘 / 北向 / 涨停数 / AI 一句话观点（来自后端 GET /api/ai/market-brief/today）",
+        "后端新增 MarketBriefService 每日 8:30 生成并缓存（依赖 TradingAgents 或 OpenAI 兼容）",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 73,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-074",
+      "title": "前端：因子热力图（行业 x 因子分布）",
+      "description": "As a 用户, I want 因子页有一个行业 × 因子热力图（每格颜色代表该行业该因子的平均得分）, so that 一眼看到哪些行业被多个因子青睐。",
+      "acceptanceCriteria": [
+        "在 FactorWorkspace.tsx 新增第 4 个 tab '行业热力'",
+        "横轴：8+ 个因子；纵轴：申万一级行业；格子颜色：该行业内股票该因子 z_score 均值",
+        "前端使用 echarts heatmap（如未引入则新引入）",
+        "后端新增 GET /api/factors/industry-heatmap?date=2026-06-06 返回二维数组",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 74,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-075",
+      "title": "前端：策略实验室回测对比可视化增强",
+      "description": "As a 用户, I want 回测对比页除了净值曲线外还要看到回撤曲线、月度收益热力图、滚动夏普, so that 我对比策略更直观。",
+      "acceptanceCriteria": [
+        "在 LabWorkspace.tsx 的 '回测对比' tab 下方新增 3 个子图：(1) 回撤曲线（叠加多策略）；(2) 月度收益热力图（年 × 月，每策略一张）；(3) 滚动 90 日夏普曲线",
+        "数据接口：GET /api/quant/backtest/:id/drawdown-series、/monthly-returns、/rolling-sharpe-series",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 75,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-076",
+      "title": "前端：持仓页快速止盈止损设置",
+      "description": "As a 用户, I want 在持仓行里直接拖滑块设置每只股的止盈止损线, so that 操作更顺手。",
+      "acceptanceCriteria": [
+        "在 PortfolioWorkspace 的当前持仓表格每行新增 '止损' 与 '止盈' 列，显示当前值，点击进入编辑模式（数值或百分比）",
+        "保存调用 PUT /api/portfolio/positions/:id/stop-loss 与 /take-profit",
+        "止损价 < 现价 警告显示，止盈价 > 现价 显示绿色",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 76,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-077",
+      "title": "前端：风控告警中心",
+      "description": "As a 用户, I want 一个集中查看所有 RiskAlert 的页面（按级别、按日期、按类型过滤）, so that 我不漏报。",
+      "acceptanceCriteria": [
+        "在 TodayWorkspace 新增 '风控中心' 子 tab，列表展示 RiskAlert 表所有数据",
+        "支持筛选：级别（HIGH/MEDIUM/LOW）、日期范围、类型（持仓/市场/单股）",
+        "支持批量标记已读（PUT /api/risk-alerts/mark-read）",
+        "未读告警在顶部 KPI 条显示数字徽标",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 77,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-078",
+      "title": "前端：策略详情页（含历史回测列表）",
+      "description": "As a 用户, I want 点击某个策略名进入详情页，能看到这个策略所有历史回测列表与当前实盘运行状态, so that 我管理策略生命周期。",
+      "acceptanceCriteria": [
+        "新增路由 /workspace/lab/strategies/:id（在 LabWorkspace 内部嵌套）",
+        "详情页内容：策略描述、参数、绑定状态（是否在跑实盘）、近 10 次回测列表（含夏普、年化、回撤）、最新一次 IC 报告链接",
+        "支持 '复制策略' '编辑参数' '启动新回测' 三个操作",
+        "后端新增 GET /api/strategies/:id/detail",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 78,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-079",
+      "title": "前端：数据中心数据健康度看板",
+      "description": "As a 用户, I want 数据中心一眼看到所有数据源同步状态（北向/龙虎榜/涨停/行业流/财务），按红黄绿状态显示, so that 数据停了我立刻看到。",
+      "acceptanceCriteria": [
+        "在 DataWorkspace 新增 '数据健康' 子 tab",
+        "卡片网格展示每个数据源：名称、上次同步时间、最新数据日期、是否落后 N 个交易日（红 >3、黄 1-3、绿 0）、记录条数",
+        "每个卡片下方有 '手动触发同步' 按钮（调对应 sync endpoint）",
+        "后端新增 GET /api/data/health-status 聚合所有数据源状态",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 79,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-080",
+      "title": "前端：设置页推送渠道配置",
+      "description": "As a 用户, I want 在设置页能开启/关闭各个推送渠道（飞书 webhook、邮件、微信公众号）并配置参数, so that 我控制怎么收消息。",
+      "acceptanceCriteria": [
+        "在 SettingsWorkspace 新增 '推送渠道' 子 tab",
+        "分块：飞书 webhook URL（输入框 + 测试发送按钮）、邮件接收地址（输入框）、微信公众号绑定（显示绑定状态/二维码）",
+        "下方矩阵：每个事件类型（日报/业绩预告/风控告警/周报）x 每个渠道，可勾选启用",
+        "后端 GET/PUT /api/settings/notification-config",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 80,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-081",
+      "title": "策略 v2：MultiFactorAlpha 升级支持 12 因子动态权重",
+      "description": "As a 多因子使用者, I want 把 8 个基础因子扩展到 12 个（含新增的 QualityHigh、AnalystConsensus、EastMoneyQA、MomentumReversal），权重支持按 IC 动态调整, so that 模型更准。",
+      "acceptanceCriteria": [
+        "MultiFactorAlphaStrategy 的因子列表升级到 12 个",
+        "支持 weightMode 参数：'static'（默认）| 'ic_weighted'（按近 60 日 IC 动态加权）| 'equal'",
+        "新增单元测试覆盖三种 weightMode",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 81,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-082",
+      "title": "策略 v2：DragonHead 升级支持市场情绪过滤",
+      "description": "As a 龙头战法使用者, I want 龙头策略仅在市场情绪指数 > 60 时才发信号, so that 避免在情绪冰点白白被埋。",
+      "acceptanceCriteria": [
+        "DragonHeadMomentumStrategy 新增参数 minMarketSentiment（默认 60）",
+        "generateSignals 内部读取 MarketSentimentIndex 当日值，若低于阈值则当日全部跳过开仓（已有仓位正常持有）",
+        "新增单元测试覆盖情绪过滤分支",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 82,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-083",
+      "title": "策略 v2：所有策略支持 dry-run 模式",
+      "description": "As a 用户, I want 策略可以以 dry-run 模式运行（只产信号不下单）, so that 我可以先看一段时间再决定是否启用。",
+      "acceptanceCriteria": [
+        "QuantStrategy 基类新增 dryRun 字段",
+        "PaperTradingFacade.applyAutomation 检测 dryRun 时只把信号写入 QuantSignal 表，不调用 placeOrder",
+        "前端策略详情页新增 dry-run 切换按钮",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 83,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-084",
+      "title": "回测：基准动态选择（默认按策略风格自动匹配）",
+      "description": "As a 策略验证者, I want 不同风格策略自动用对应基准（小盘策略对比中证 1000、大盘价值对比沪深 300）, so that 比较公平。",
+      "acceptanceCriteria": [
+        "新增 BenchmarkSelector 根据策略元数据（style: large_cap_value | small_cap_growth | sector_rotation 等）自动选基准",
+        "BacktestEngine 默认不再固定沪深 300，调用 BenchmarkSelector",
+        "用户仍可在前端手动覆盖",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 84,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-085",
+      "title": "回测：交易成本敏感性分析",
+      "description": "As a 策略验证者, I want 同一策略在不同费率（佣金万 1.5 / 万 2.5 / 万 5）下回测对比, so that 知道策略对手续费的敏感度。",
+      "acceptanceCriteria": [
+        "在 backend/src/quant/backtest/ 新建 CostSensitivityAnalysis.ts",
+        "对一次完成的回测，重新跑 3 种费率档（万 1.5、万 2.5、万 5）",
+        "结果保存到 CostSensitivityResult 模型（base_run_id、cost_level、annual_return、sharpe、turnover）",
+        "新增 endpoint：POST /api/quant/backtests/:id/cost-sensitivity 触发",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 85,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-086",
+      "title": "风控：仓位再平衡引擎",
+      "description": "As a 用户, I want 一个统一的再平衡引擎，按目标权重自动生成最小化交易的调仓订单, so that 调仓不会乱。",
+      "acceptanceCriteria": [
+        "在 backend/src/portfolio/ 新建 RebalanceEngine.ts，接口：rebalance(portfolioId, targetWeights: Map<stockCode, weight>)",
+        "算法：计算每只股票当前权重 vs 目标权重的偏差，生成 BUY/SELL/HOLD 列表使交易额最小化",
+        "考虑 A 股 100 股最小交易单位（自动取整）",
+        "支持参数 minTradePct（默认 0.5%，低于此偏差不交易）",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 86,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-087",
+      "title": "AI：复盘日记 AI 自动生成升级",
+      "description": "As a 用户, I want 每日收盘后 AI 自动生成更丰富的复盘日记（含归因、市场观察、明日策略调整建议）, so that 我节省手动复盘时间。",
+      "acceptanceCriteria": [
+        "升级 TradingJournalService（如已存在）或新建 EnhancedTradingJournalService",
+        "每日 15:30 后自动触发生成，输入数据：当日 PnL、归因结果（行业/策略）、市场指数、北向、涨停数、AI 大盘观点",
+        "输出 markdown 结构：## 今日战报 ## 操作复盘 ## 市场观察 ## 明日策略 ## 风险提醒",
+        "保存到 TradingJournal 表，前端 PortfolioWorkspace 复盘日记 tab 渲染",
+        "新增单元测试覆盖 prompt 拼接",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 87,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-088",
+      "title": "数据：龙虎榜营业部归属机构识别",
+      "description": "As a 短线策略开发者, I need 把游资席位归属到具体机构（公募/外资/私募/著名游资）, so that 我可以做更精细化跟随。",
+      "acceptanceCriteria": [
+        "在 backend/src/constants/ 扩展 famousSeats.ts 增加分类：{ name, type: 'public_fund' | 'foreign' | 'private_fund' | 'famous_yz' | 'unknown', is_famous: boolean }",
+        "覆盖至少 100 个常见营业部",
+        "DragonTigerSyncService 入库时附加 seat_type 字段",
+        "新增 endpoint：GET /api/data/dragon-tiger?stock_code=&seat_type=public_fund",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 88,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-089",
+      "title": "数据：限售解禁日历入库",
+      "description": "As a 风控开发者, I need 限售解禁日历数据, so that 持仓股临近解禁能提前规避。",
+      "acceptanceCriteria": [
+        "新增模型 RestrictedShareRelease（ex_date、stock_code、release_shares、release_market_value、shareholder_name）",
+        "新增 RestrictedShareClient 调用 AKShare stock_restricted_release_queue",
+        "新增 RestrictedShareSyncService 与 CLI 脚本",
+        "在风控 watchdog 中：持仓股若 5 个交易日内解禁市值 > 当前流通市值 10% → RiskAlert MEDIUM",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 89,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-090",
+      "title": "数据：股东增减持公告入库",
+      "description": "As a 因子开发者, I need 股东增减持数据, so that 我能做'内部人买卖'因子。",
+      "acceptanceCriteria": [
+        "新增模型 ShareholderTradeRecord（announce_date、stock_code、shareholder_name、trade_direction、trade_shares、trade_amount、shareholder_type）",
+        "新增 ShareholderTradeClient 调用 AKShare stock_ggcg_em",
+        "新增 ShareholderTradeSyncService 与 CLI 脚本",
+        "在 backend/src/quant/factors/library/ 新建 InsiderTradeFactor.ts 计算最近 60 日内部人净买入/总市值",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 90,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-091",
+      "title": "数据：融资融券余额入库",
+      "description": "As a 因子开发者, I need 每日融资融券数据, so that 我能做杠杆资金跟随策略。",
+      "acceptanceCriteria": [
+        "新增模型 MarginTradingBalance（trade_date、stock_code、fin_balance、fin_buy_amt、fin_repay_amt、short_balance、short_sell_vol）",
+        "新增 MarginTradingClient 调用 AKShare stock_margin_detail_szse / sse",
+        "新增 MarginTradingSyncService 与 CLI 脚本",
+        "在 backend/src/quant/factors/library/ 新建 MarginFlowFactor.ts 计算近 5 日融资余额变化",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 91,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-092",
+      "title": "数据：ETF 资金流入流出数据",
+      "description": "As a 行业研究者, I need 行业 ETF 申赎数据, so that 我看资金真实流向。",
+      "acceptanceCriteria": [
+        "新增模型 ETFFlow（trade_date、etf_code、etf_name、underlying_industry、net_inflow、aum）",
+        "新增 ETFFlowClient 抓取行业 ETF 主流标的（医药 ETF / 半导体 ETF / 新能源车 ETF 等 30+ 只）的每日规模与净申赎",
+        "新增 CLI 脚本",
+        "新增 endpoint：GET /api/data/etf-flow?industry=半导体&days=30",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 92,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-093",
+      "title": "前端：策略实验室策略代码编辑器",
+      "description": "As a 高阶用户, I want 在策略实验室能直接编辑策略 TS 代码, so that 不用切到 IDE。",
+      "acceptanceCriteria": [
+        "在 LabWorkspace 策略详情新增 '代码视图' tab，集成 Monaco Editor（项目已含依赖）",
+        "支持读取 backend/src/quant/strategies/*.ts 源码，但只读模式（暂不支持线上写回，仅展示）",
+        "支持搜索 / 跳转到符号 / 行号高亮",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 93,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-094",
+      "title": "前端：因子单因子收益曲线",
+      "description": "As a 因子开发者, I want 看到单因子分组 5 等分组合的累计净值曲线（top 组、middle 组、bottom 组）, so that 我直观判断因子有效性。",
+      "acceptanceCriteria": [
+        "在 FactorWorkspace 因子总览每个因子卡片点击后弹出详情抽屉",
+        "抽屉内容：单因子描述、IC 历史曲线、5 等分组合净值曲线（top/Q2/Q3/Q4/bottom）",
+        "后端 GET /api/factors/:name/detail 返回数据",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 94,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-095",
+      "title": "前端：移动端响应式适配（基础）",
+      "description": "As a 移动用户, I want 系统在手机浏览器打开时 6 个工作区可正常浏览, so that 我通勤也能看持仓。",
+      "acceptanceCriteria": [
+        "WorkspaceLayout 在 < 768px 时左侧 tab 改成顶部 Drawer 弹出",
+        "今日作战、持仓与复盘 2 个工作区做完整移动端适配（表格转卡片列表，按钮加大）",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill (使用 Chrome devtools 移动端模式)"
+      ],
+      "priority": 95,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-096",
+      "title": "运维：系统启动自检页",
+      "description": "As a 维护者, I want 一个 /health/detail 端点输出所有外部依赖（DB/Redis/AI/AKShare/Feishu）的健康状态, so that 监控告警精准。",
+      "acceptanceCriteria": [
+        "扩展现有 /health 增加 /health/detail",
+        "返回 JSON：{ db: 'ok'|'fail', redis: 'ok'|'fail', tradingAgents: 'ok'|'fail', akshare: 'ok'|'fail', feishu: 'ok'|'fail'|'not_configured', uptime_seconds }",
+        "每项调用最小化的实际 ping（DB select 1、Redis ping、AI 健康 endpoint）",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 96,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-097",
+      "title": "运维：清理脚本（旧回测/旧日志/旧告警）",
+      "description": "As a 维护者, I want 自动清理 90 天前的回测结果、180 天前的日志、已读 30 天前的告警, so that 数据库不爆。",
+      "acceptanceCriteria": [
+        "新增 scripts/cleanup-old-data.ts",
+        "可配置：清理阈值（天数）、白名单（指定 strategy 不清）",
+        "在 scheduler 中注册每周日凌晨 3 点跑",
+        "执行前打印将清理的条数，需要 --confirm 才真正执行（避免手动误删）",
+        "新增单元测试",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 97,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-098",
+      "title": "文档：用户手册（如何在系统里跑出超额收益）",
+      "description": "As a 新用户, I want 一份 step-by-step 手册教我如何从空账户开始用本系统跑模拟盘并赚到钱, so that 我不用瞎摸索。",
+      "acceptanceCriteria": [
+        "新建 docs/USER_GUIDE.md，分章节：(1) 启动与登录 (2) 数据同步 (3) 选择策略 (4) 模拟盘开仓 (5) 阅读复盘 (6) 调参 (7) 风控配置 (8) 常见问题",
+        "至少 8 张截图（先用占位 ASCII / 文字描述，等 UI 稳定再补真图）",
+        "在 README 顶部添加 '入门指南' 链接到本文档",
+        "本 story 不需 typecheck（纯文档）"
+      ],
+      "priority": 98,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-099",
+      "title": "文档：开发者文档（如何添加新策略与新因子）",
+      "description": "As a 开发者, I want 一份开发指南教我如何添加新策略/新因子/新数据源, so that 二次开发不踩坑。",
+      "acceptanceCriteria": [
+        "新建 docs/DEVELOPER_GUIDE.md，分章节：(1) 项目结构 (2) 添加新数据源 (3) 添加新因子 (4) 添加新策略 (5) 编写测试 (6) 调试技巧 (7) 提交规范",
+        "每章给出 1 个完整可复制的代码模板",
+        "本 story 不需 typecheck"
+      ],
+      "priority": 99,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-100",
+      "title": "最终：全链路集成验证脚本",
+      "description": "As a QA, I want 一个端到端脚本：从拉数据 → 计算因子 → 跑策略 → 模拟盘下单 → 风控校验 → 推送通知 一条龙走通, so that 我相信系统真的能工作。",
+      "acceptanceCriteria": [
+        "新增 scripts/integration-smoke-test.ts",
+        "脚本步骤：(1) 调 sync-northbound/dragon-tiger/limit-up 取最近一日 (2) 调 compute-factors (3) 跑 MultiFactorAlphaStrategy generateSignals (4) 调 PaperTradingFacade.placeOrder 模拟下 3 单 (5) 调风控 guard 校验 (6) 调推送 dry-run",
+        "每步打印执行时间和结果计数，失败立即退出并打印错误",
+        "在 README '快速验证' 一节添加运行说明",
+        "新增 npm script: npm run smoke-test",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 100,
       "passes": false,
       "notes": ""
     }
