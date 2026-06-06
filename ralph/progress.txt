@@ -29,6 +29,8 @@
 - **Multi-endpoint merge (US-007 涨停 zt_pool + strong_pool)**: when AKShare has two endpoints with overlapping rows + each-side-unique extras, pick one as primary (zt_pool), index the other by stock_code as a side-car dict in Python, then 1-pass merge in `_, row in df_primary.iterrows()` + emit secondary-only rows in a final loop using a `seen_codes: set` guard. Keep both raw rows in `raw_payload = {primary_row, secondary_row}`.
 - **AKShare time-of-day strings are inconsistent** (`"09:25:03"` or `"92503"`). Parse digits-only in the Python helper (`_is_one_word(limit_up_time, open_times)` in `akshare_helper.py`) — let TS consumers see a pre-computed boolean instead of re-parsing. Counterpart for `is_famous_yz`/whitelists is in TS — divider: per-row computation that's pure data goes Python-side; rules that may evolve or need DB joins stay TS-side.
 - **Helper micro-functions to copy across AKShare commands**: `_cell_str / _cell_float / _cell_int / _row_to_jsonable / _format_iso_date` in `akshare_helper.py` — defined once for US-007, reuse them in future commands (`get_industry_flow`, `get_earnings_forecast`, etc.) instead of repeating `safe_float_value(row.get(col)) if col else None`.
+- **Multi-endpoint join WITHOUT a shared key (US-008 行业资金流)**: `stock_sector_fund_flow_rank` has metrics but no board code; `stock_board_industry_name_em` has the code but joins by Chinese 板块名称. Indexing the smaller "name→code+metadata" df into a Python dict, joining per row, and emitting `industry_code = "FALLBACK-<name>"` for unmapped names keeps rankings intact. **Cross-DB joins (e.g. `limit_up_count` requires JOIN-ing LimitUpStock by industry name) belong in the TS service, not Python** — same divider as `is_famous_yz` and `continuous_days`.
+- **Real-time-only snapshots (US-008 fund_flow / name / cons family)**: a subset of AKShare endpoints CANNOT replay history; you only get "now". The `date` param becomes a `trade_date` LABEL stamped onto each output row by Python — the data is still today's. Document this on the client jsdoc + service jsdoc; don't pretend `--start=2023-01-01` does what it appears to. Schedule once per day post-close; the `INDUSTRY_FLOW_TIMEOUT_MS` default is 240s because per-board `cons_em` fetches dominate (~86 boards × AKShare rate-limit).
 
 
 ### Tooling
@@ -417,5 +419,64 @@ A股涨停板与连板高度的日度入库（A-share 涨停股池 + 强势股�
 - **一字板规则在 Python 端预计算 vs TS 端推断**：选了 Python 端，因为 `limit_up_time` 的字符串格式是 AKShare 的细节（可能 "09:25:03" 也可能 "92503"），让 fetcher 一次解析掉避免每个消费方再写一遍。但 `is_famous_yz` 之类**业务白名单**仍留在 TS 服务（符合 codebase pattern：python 是 dumb fetcher，TS 拥有可演化的业务规则）。
 - **小柔性读取函数 `_cell_str/_cell_int/_cell_float`** 在 akshare_helper.py 里值得提取——之前 `get_northbound_holdings` 和 `get_dragon_tiger_detail` 都散落地写 `safe_float_value(row.get(col)) if col else None`。建议未来 US-008 行业资金流接口也复用这套。
 - **`Math.max(recomputed, akshareInitial)` 取大值兜底**比直接覆盖更稳：库刚开始用、历史还没积累时，AKShare 初值就是唯一信息源；积累后则以库内为准（akshare 偶发 0 也不会冲掉真实连板）。
+
+---
+
+## 2026/06/07 - US-008
+
+### What was implemented
+行业资金流与板块强度（东财 86+ 行业板块）日度入库管道，含每行业当日龙头股自动识别 + LimitUpStock 库内 join 算 limit_up_count。
+
+- **`backend/src/models/IndustryFlow.ts`** — Sequelize 模型，主键 (trade_date, industry_code)。字段：industry_name / change_pct / main_inflow (DECIMAL(20,4)) / main_inflow_ratio / limit_up_count (默认 0) / leader_stock_code / leader_stock_name / leader_stock_change_pct / advancing_count / declining_count + source + raw_payload (JSONB)。索引：trade_date / industry_code / industry_name / (trade_date, main_inflow) / (trade_date, change_pct)。
+- **`backend/python/akshare_helper.py`** — 新增 `get_industry_flow(date)`：
+  - 同时拉 3 个 AKShare 端点：
+    1. `stock_sector_fund_flow_rank(indicator='今日', sector_type='行业资金流')` → 名称 + 今日涨跌幅 + 今日主力净流入-净额 + 净占比。**无板块代码**。
+    2. `stock_board_industry_name_em()` → 板块名称 → 板块代码 (BKxxxx) + 上涨家数 + 下跌家数 + 领涨股票 (作为冗余审计)。
+    3. 对每个行业 `stock_board_industry_cons_em(symbol=industry_name)` → 行业内成份股 (代码/名称/涨跌幅/振幅) — 用于识别龙头。
+  - **Join 策略**：fund_flow 是主表，按 Chinese name 索引 name_em 为侧车 dict 拿 BKxxxx；没匹配到的发出 `industry_code = "FALLBACK-<name>"` 兜底（不丢失排名分析的全集）。
+  - **龙头股选择**：cons df 按 涨跌幅 desc 排序，挑第一个非一字板（启发式：涨跌幅 ≥ 9.95% 且 振幅 ≤ 0.5% 视为一字板）。全是一字板时退而求其次取涨幅最大行。
+  - `raw_payload = {fund_flow_row, board_row, leader_row}` 三层保留便于事后审计。
+  - 复用 `_cell_str / _cell_float / _row_to_jsonable / _format_iso_date` 四个 helper（US-007 留下来的）。
+- **`backend/src/data/sources/IndustryFlowClient.ts`** — `fetchDailySnapshot(date)`；timeout 默认 240s（`INDUSTRY_FLOW_TIMEOUT_MS`，因为 86 个 cons fetch 是限速主因）；jsdoc 显式注明 "AKShare 接口为实时快照而非历史"。
+- **`backend/src/data/services/IndustrySyncService.ts`** — 核心差异点：
+  - `loadLimitUpCountByIndustry(date)` 查同日 LimitUpStock 表的所有涨停股 industry 字段，分桶得 (行业名 → count) Map，merge 到每条 IndustryFlow 记录的 `limit_up_count`。这是**跨表 join，留在 TS 服务**而非 Python（符合 codebase pattern：python 是 dumb fetcher，TS 拥有需要 DB 上下文的业务规则）。
+  - 返回 `industries_with_limit_ups / industries_with_leader` 计数，便于 ops 在 cron 日志里直观判断当日数据健康度。
+  - `syncRange` 与 northbound/dragon-tiger/limit-up 同款断点续传（`INDUSTRY_FLOW_SKIP_EXISTING=0` 关闭）。
+- **`backend/src/scripts/sync-industry-flow.ts`** + `npm run sync:industry-flow`。CLI 提示符同样注明 "应当日盘后调度"。
+- 模型在 `models/index.ts` + `config/database.ts` 双注册，dev 模式 `sync({alter:true})` 自动建表。
+- `backend/src/data/CLAUDE.md` 追加两个 section：(1) "Multi-endpoint join WITHOUT a shared key" 描述 fund_flow + name_em 通过 Chinese name 字符串隐式 join 的模式 + 跨 DB join 留 TS 的规范；(2) "Real-time-only snapshots" 警示 caller 不能用 `--start=2023-01-01` 回填这类端点。
+
+### Files changed
+- `backend/src/models/IndustryFlow.ts` (new)
+- `backend/src/models/index.ts` (re-export)
+- `backend/src/config/database.ts` (import + register in `models[]`)
+- `backend/python/akshare_helper.py` (+ `get_industry_flow` ~140 LOC, + dispatcher case)
+- `backend/src/data/sources/IndustryFlowClient.ts` (new)
+- `backend/src/data/services/IndustrySyncService.ts` (new)
+- `backend/src/scripts/sync-industry-flow.ts` (new)
+- `backend/package.json` (sync:industry-flow script)
+- `backend/src/data/CLAUDE.md` (appended Multi-endpoint join + Real-time-only sections)
+- `ralph/prd.json` (US-008 → passes:true)
+- `ralph/progress.txt` (this entry + updated Codebase Patterns)
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → exit 0 ✅ matches AC verbatim
+- `eslint src/models/IndustryFlow.ts src/data/sources/IndustryFlowClient.ts src/data/services/IndustrySyncService.ts src/scripts/sync-industry-flow.ts --quiet` → exit 0 (3 prettier auto-fixed)
+- `python3 -c "import ast; ast.parse(open('python/akshare_helper.py').read())"` → SYNTAX OK
+- `npx ts-node --transpile-only src/scripts/sync-industry-flow.ts --help` → boots cleanly, prints commander help, IndustryFlowClient initializes
+- 端到端 AKShare 连通性需在有 akshare 的环境手验 (`npm run sync:industry-flow -- --date=$(today)`)；这里仅做静态校验，与 US-005/006/007 同。
+
+### Browser verification
+**N/A** — backend-only data layer. No HTTP surface in this story (consumers in US-021 SectorRotationLeader 等行业轮动策略会读 industry_flows 表)。
+
+### Learnings for future iterations
+- **AKShare 不是所有端点都能放回历史**。`stock_sector_fund_flow_rank` / `stock_board_industry_name_em` / `stock_board_industry_cons_em` 都是"当下时刻"的实时快照，没有 date 参数（甚至没有任何时间参数）。CLI 的 `--date` 只是 `trade_date` 标签——历史日期回填会让今日数据被打成历史日期的标签，污染数据库。这是数据源限制，不在服务层隐藏；jsdoc + CLI + service comment 三处都明确写。
+- **3 个端点的隐式 join key 是 Chinese 字符串**。`stock_sector_fund_flow_rank` 给 "名称"（无代码），`stock_board_industry_name_em` 给 "板块名称 ↔ 板块代码 BKxxxx" 映射。两者都来自东财，名字基本一致；少量边角情况通过 `industry_code = "FALLBACK-<name>"` 兜底，绝不丢行。
+- **86 个行业 × 1 次 cons fetch = 86 次外部请求**，AKShare 限速下单日同步耗时 120-180s。timeout 一定要 ≥ 240s，60s 必超。
+- **一字板启发式 = 涨跌幅 ≥ 9.95% 且 振幅 ≤ 0.5%**。振幅缺失时只要涨幅触顶就保守视为一字板（跳过选龙头）。全行业全是一字板时（极端情绪日，比如政策性新闻），退而求其次取涨幅最大行——不能让 `leader_stock_code` 永远是 null。
+- **`limit_up_count` 是跨 DB join 字段**：industry_flows 表的填充依赖 limit_up_stocks 表的当日数据，所以 sync 顺序应当是先 `sync:limit-up` 后 `sync:industry-flow`（cron 配置时注意）。若两者并发跑，第一次结果会 limit_up_count=0；下一次 sync 同日时 `updateOnDuplicate` 会修正。这层 ordering 关系在 README 的 cron 一节应该 follow up 加。
+- **`industries_with_limit_ups / industries_with_leader` 是 ops 指标**，不仅服务 caller 也服务监控：正常交易日应当 with_leader ≈ 86（绝大多数行业能找到非一字板龙头），with_limit_ups 在牛市能到 60-80、震荡市 5-20、跌市 0-5。某天突然 with_leader=0 就意味着 AKShare 抓数大概率出问题，应触发告警。
+- **3 个新的 Codebase Patterns 提炼**：(1) 多端点无共享键 join 用 Chinese name 隐式连接 + FALLBACK 行兜底，(2) 跨 DB join 永远留 TS 服务，(3) 实时快照端点要写明 "date 是标签而非过滤器"。这些会被 US-022 高分红低 PE / US-090 股东增减持 等后续股票/财务接口直接复用。
+- **Worktree gotcha (still active)**：before `git add`, `rm backend/node_modules`（symlink 污染 git status）。
 
 ---

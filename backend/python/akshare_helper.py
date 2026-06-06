@@ -1325,6 +1325,225 @@ def get_limit_up_pool(date: str) -> List[Dict[str, Any]]:
         return []
 
 
+def get_industry_flow(date: str) -> List[Dict[str, Any]]:
+    """
+    Fetch daily industry-board fund-flow + board-strength snapshot for all
+    Eastmoney 行业板块 (~86 boards) and identify the daily leader stock per
+    board (highest pct change among constituents that are NOT one-word boards).
+
+    Combines three AKShare endpoints:
+
+      1. `stock_sector_fund_flow_rank(indicator='今日', sector_type='行业资金流')`
+         — board-level fund flow. Provides 名称 / 今日涨跌幅 / 今日主力净流入-净额
+         / 今日主力净流入-净占比 / 今日主力净流入最大股 / 今日主力净流入最大股代码.
+         **No board code in this dataframe** — must join by 名称 to (2).
+      2. `stock_board_industry_name_em()` — board name → board code (BKxxxx)
+         + 上涨家数 / 下跌家数 / 领涨股票 / 领涨股票-涨跌幅.
+      3. `stock_board_industry_cons_em(symbol=<board_name>)` — board
+         constituents (代码 / 名称 / 最新价 / 涨跌幅 / 涨跌额 / 换手率 ...). The
+         daily leader is selected as the highest 涨跌幅 row that is NOT a
+         one-word board (heuristic: 涨跌幅 < 9.95% OR 振幅 > 0.5%).
+
+    Date semantics: AKShare's fund-flow + name endpoints are **real-time
+    snapshots, not historical**. We label every row with the supplied `date`
+    (the caller should always sync the day's data after market close). For
+    a backfill on a non-today date, the fund-flow + leader stocks are still
+    today-snapshot — the caller should accept this limitation and write
+    today's snapshot under today's `date`.
+
+    Args:
+        date: ISO YYYY-MM-DD or YYYYMMDD; stamped onto every output row.
+
+    Returns:
+        List of dicts: {trade_date, industry_code, industry_name, change_pct,
+        main_inflow, main_inflow_ratio, leader_stock_code, leader_stock_name,
+        leader_stock_change_pct, advancing_count, declining_count,
+        raw_payload{fund_flow_row, board_row, leader_row}}.
+
+        `limit_up_count` is intentionally LEFT TO THE TS SERVICE (it requires
+        joining LimitUpStock table; Python helper stays a dumb fetcher).
+        Returns [] on empty / error so caller can checkpoint a "tried" date.
+    """
+    try:
+        iso_date = _format_iso_date(date.replace('-', ''))
+
+        print(f"Fetching industry fund flow snapshot (stamp={iso_date})...", file=sys.stderr)
+
+        # ----- 1) 板块资金流 (rank) -----
+        try:
+            df_flow = ak.stock_sector_fund_flow_rank(indicator='今日', sector_type='行业资金流')
+        except TypeError:
+            df_flow = ak.stock_sector_fund_flow_rank('今日', '行业资金流')
+        except Exception as e:
+            print(f"stock_sector_fund_flow_rank failed: {e}", file=sys.stderr)
+            df_flow = None
+
+        if df_flow is None or df_flow.empty:
+            print("AKShare returned empty industry fund-flow", file=sys.stderr)
+            return []
+
+        # ----- 2) 板块名称→板块代码 + 上涨/下跌家数 + 领涨股 -----
+        try:
+            df_name = ak.stock_board_industry_name_em()
+        except Exception as e:
+            print(f"stock_board_industry_name_em failed: {e}", file=sys.stderr)
+            df_name = None
+
+        # 板块名称 → (代码, raw_row) 索引
+        name_to_board: Dict[str, Dict[str, Any]] = {}
+        if df_name is not None and not df_name.empty:
+            for _, brow in df_name.iterrows():
+                bname = str(brow.get('板块名称', '')).strip()
+                if not bname or bname.lower() == 'nan':
+                    continue
+                name_to_board[bname] = _row_to_jsonable(brow, df_name.columns)
+
+        # 列名柔性映射（fund_flow）
+        flow_col_map: Dict[str, str] = {}
+        for col in df_flow.columns:
+            col_s = str(col)
+            if col_s == '名称':
+                flow_col_map['industry_name'] = col_s
+            elif col_s == '今日涨跌幅':
+                flow_col_map['change_pct'] = col_s
+            elif col_s == '今日主力净流入-净额':
+                flow_col_map['main_inflow'] = col_s
+            elif col_s == '今日主力净流入-净占比':
+                flow_col_map['main_inflow_ratio'] = col_s
+            elif col_s == '今日主力净流入最大股':
+                flow_col_map['inflow_leader_name'] = col_s
+            elif col_s == '今日主力净流入最大股代码':
+                flow_col_map['inflow_leader_code'] = col_s
+
+        results: List[Dict[str, Any]] = []
+        for _, frow in df_flow.iterrows():
+            industry_name = _cell_str(frow, flow_col_map.get('industry_name'))
+            if not industry_name:
+                continue
+
+            board_row = name_to_board.get(industry_name)
+            # 找不到代码时构造一个 "FALLBACK-<name>" 兜底；丢弃这条会破坏排名分析的全集
+            if board_row and board_row.get('板块代码'):
+                industry_code = str(board_row.get('板块代码')).strip()
+            else:
+                industry_code = f"FALLBACK-{industry_name}"
+
+            change_pct = _cell_float(frow, flow_col_map.get('change_pct'))
+            main_inflow = _cell_float(frow, flow_col_map.get('main_inflow'))
+            main_inflow_ratio = _cell_float(frow, flow_col_map.get('main_inflow_ratio'))
+
+            advancing_count: Optional[int] = None
+            declining_count: Optional[int] = None
+            if board_row:
+                advancing_count = (
+                    int(board_row['上涨家数']) if board_row.get('上涨家数') is not None else None
+                )
+                declining_count = (
+                    int(board_row['下跌家数']) if board_row.get('下跌家数') is not None else None
+                )
+
+            # ----- 3) 行业内成份股 → 选龙头（涨幅最大且非一字板）-----
+            leader_code: Optional[str] = None
+            leader_name: Optional[str] = None
+            leader_change_pct: Optional[float] = None
+            leader_row_json: Optional[Dict[str, Any]] = None
+
+            try:
+                df_cons = ak.stock_board_industry_cons_em(symbol=industry_name)
+            except TypeError:
+                try:
+                    df_cons = ak.stock_board_industry_cons_em(industry_name)
+                except Exception as e:
+                    print(
+                        f"stock_board_industry_cons_em({industry_name}) failed: {e}",
+                        file=sys.stderr,
+                    )
+                    df_cons = None
+            except Exception as e:
+                print(
+                    f"stock_board_industry_cons_em({industry_name}) failed: {e}",
+                    file=sys.stderr,
+                )
+                df_cons = None
+
+            if df_cons is not None and not df_cons.empty:
+                # 按 涨跌幅 desc 排序，挑第一个非一字板
+                try:
+                    df_cons_sorted = df_cons.sort_values('涨跌幅', ascending=False, na_position='last')
+                except Exception:
+                    df_cons_sorted = df_cons
+                for _, crow in df_cons_sorted.iterrows():
+                    pct = safe_float_value(crow.get('涨跌幅'))
+                    if pct is None:
+                        continue
+                    # 一字板启发式：涨跌幅 >= 9.95% 且 振幅 <= 0.5%。
+                    # 振幅缺失时只要涨跌幅 >= 9.95 就视为一字板（保守跳过）。
+                    amplitude = safe_float_value(crow.get('振幅'))
+                    is_one_word = pct >= 9.95 and (amplitude is None or amplitude <= 0.5)
+                    if is_one_word:
+                        continue
+                    raw_code = crow.get('代码')
+                    if raw_code is None or pd.isna(raw_code):
+                        continue
+                    leader_code = str(raw_code).strip().zfill(6)
+                    raw_name = crow.get('名称')
+                    leader_name = (
+                        str(raw_name).strip()
+                        if raw_name is not None and not pd.isna(raw_name)
+                        else None
+                    )
+                    leader_change_pct = pct
+                    leader_row_json = _row_to_jsonable(crow, df_cons.columns)
+                    break
+
+                # 全是一字板 / 全部缺数据 → 退而求其次取涨幅最大行（含一字板）
+                if leader_code is None:
+                    for _, crow in df_cons_sorted.iterrows():
+                        raw_code = crow.get('代码')
+                        if raw_code is None or pd.isna(raw_code):
+                            continue
+                        leader_code = str(raw_code).strip().zfill(6)
+                        raw_name = crow.get('名称')
+                        leader_name = (
+                            str(raw_name).strip()
+                            if raw_name is not None and not pd.isna(raw_name)
+                            else None
+                        )
+                        leader_change_pct = safe_float_value(crow.get('涨跌幅'))
+                        leader_row_json = _row_to_jsonable(crow, df_cons.columns)
+                        break
+
+            results.append({
+                'trade_date': iso_date,
+                'industry_code': industry_code,
+                'industry_name': industry_name,
+                'change_pct': change_pct,
+                'main_inflow': main_inflow,
+                'main_inflow_ratio': main_inflow_ratio,
+                'leader_stock_code': leader_code,
+                'leader_stock_name': leader_name,
+                'leader_stock_change_pct': leader_change_pct,
+                'advancing_count': advancing_count,
+                'declining_count': declining_count,
+                'raw_payload': {
+                    'fund_flow_row': _row_to_jsonable(frow, df_flow.columns),
+                    'board_row': board_row,
+                    'leader_row': leader_row_json,
+                },
+            })
+
+        print(
+            f"Parsed {len(results)} industry rows (stamp={iso_date}, "
+            f"name_index={len(name_to_board)}, flow_rows={len(df_flow)})",
+            file=sys.stderr,
+        )
+        return results
+    except Exception as e:
+        print(f"Error getting industry flow for {date}: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return []
+
+
 def _cell_str(row, col: Optional[str]) -> Optional[str]:
     """安全读取一格并转字符串；空 / nan 返回 None"""
     if not col:
@@ -1470,6 +1689,14 @@ def main():
 
             date = sys.argv[2]
             result = get_limit_up_pool(date)
+
+        elif command == "get_industry_flow":
+            if len(sys.argv) < 3:
+                print(json.dumps({"error": "Missing date for get_industry_flow"}), file=sys.stderr)
+                sys.exit(1)
+
+            date = sys.argv[2]
+            result = get_industry_flow(date)
 
         else:
             print(json.dumps({"error": f"Unknown command: {command}"}), file=sys.stderr)

@@ -120,6 +120,45 @@ For fields that depend on N previous trading days (`continuous_days` looks back
    as continuous. `daysBetween > 4 ? 1 : prev+1` handles a long weekend plus
    one trading-day skip; tighten if your field is stricter.
 
+## Multi-endpoint join WITHOUT a shared key (US-008 industry flow)
+
+When AKShare exposes endpoints that **must be combined to get a row's full
+shape, but they don't share a stable key**: `stock_sector_fund_flow_rank` only
+gives 名称 (no board code), while `stock_board_industry_name_em` is the table
+that knows 板块代码 (BKxxxx). The join key is the (Chinese) industry NAME —
+which is fine in practice because Eastmoney is the single source of truth for
+both. Strategy:
+
+1. **Python pulls the "wide" / metric-rich endpoint first**, then the smaller
+   "name→code mapping" endpoint, indexes the latter by name into a dict, and
+   joins per row.
+2. **Always have a fallback for missing keys** — emit
+   `industry_code = "FALLBACK-<name>"` rather than dropping the row. Dropping
+   would silently break ranking analyses that rely on the full universe.
+3. **Cross-DB joins (e.g. `limit_up_count` requires JOINing LimitUpStock)
+   belong in the TS service**, not Python. Python is the stateless fetcher;
+   the TS service queries our DB in `loadXxxByIndustry()` and merges in pure
+   JS before `bulkCreate`. Same divider as `is_famous_yz` in US-006.
+
+## Real-time-only snapshots (no historical replay)
+
+A subset of AKShare endpoints — `stock_sector_fund_flow_rank`,
+`stock_board_industry_name_em`, `stock_board_industry_cons_em`, and most of
+the fund-flow family — are **point-in-time snapshots, not historical APIs**.
+You can never replay yesterday's fund flow; you can only snapshot today.
+
+Make this caller-visible:
+
+- **Document it on the client class** ("AKShare 接口为实时快照而非历史；调用方
+  应当日盘后调用").
+- **The `date` param becomes a label, not a fetch filter** — Python stamps
+  the supplied date onto every output row but the data is "now". Don't pretend
+  to support `--start=2023-01-01` backfills on these sources; the CLI works
+  but writes today's snapshot under historical dates, polluting the DB.
+- **Schedule once per day, post-close**. The `INDUSTRY_FLOW_TIMEOUT_MS` default
+  is 240s because per-board `cons_em` fetches dominate (~86 boards × AKShare
+  rate-limit). Don't set below 120s on a busy day.
+
 ## Worktree gotcha (still active as of US-005)
 
 The git worktree has no `backend/node_modules`. Symlink before typecheck:

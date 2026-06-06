@@ -125,8 +125,8 @@
         "Typecheck passes"
       ],
       "priority": 8,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026/06/07. Added Sequelize model backend/src/models/IndustryFlow.ts (PK trade_date+industry_code) with full set of PRD fields plus leader_stock_name/leader_stock_change_pct/advancing_count/declining_count for richer dashboards. IndustryFlowClient wraps AKShare via new python helper command get_industry_flow which combines THREE endpoints — stock_sector_fund_flow_rank (主力净流入+涨跌幅, no board code), stock_board_industry_name_em (name→BKxxxx + 上涨/下跌家数), and per-board stock_board_industry_cons_em (constituents, used to pick the daily leader stock = highest 涨跌幅 among non-one-word boards). The fund_flow→name join uses Chinese industry name as the implicit shared key with a FALLBACK-<name> fallback so missing rows don't pollute rankings. IndustrySyncService.syncDate cross-joins LimitUpStock by industry name to compute limit_up_count per industry — that cross-DB join stays TS-side per the data-layer pattern. syncRange supports skip-existing checkpoint (env INDUSTRY_FLOW_SKIP_EXISTING). CLI script + npm run sync:industry-flow. Model registered in models/index.ts + config/database.ts so sync({alter:true}) auto-creates the table in dev. **Key caveat documented in client + service jsdoc: AKShare's fund_flow / name / cons endpoints are real-time snapshots not historical — date param is a label only; caller should run post-close.** cd backend && npx tsc --noEmit passes clean."
     },
     {
       "id": "US-009",

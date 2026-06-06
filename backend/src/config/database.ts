@@ -43,6 +43,7 @@ import { StockValuationFactor } from '../models/StockValuationFactor';
 import { NorthboundHolding } from '../models/NorthboundHolding';
 import { DragonTigerBoard } from '../models/DragonTigerBoard';
 import { LimitUpStock } from '../models/LimitUpStock';
+import { IndustryFlow } from '../models/IndustryFlow';
 import { LiveBrokerAccount } from '../models/LiveBrokerAccount';
 import { LiveAccountSnapshot } from '../models/LiveAccountSnapshot';
 import { LivePosition } from '../models/LivePosition';
@@ -115,6 +116,7 @@ const sequelize = new Sequelize({
     NorthboundHolding,
     DragonTigerBoard,
     LimitUpStock,
+    IndustryFlow,
     LiveBrokerAccount,
     LiveAccountSnapshot,
     LivePosition,
