@@ -1,0 +1,301 @@
+{
+  "project": "QuantX-AShare-Alpha-Refactor",
+  "branchName": "claude/zen-khorana-13679b",
+  "description": "对 A 股回测/智能投顾系统进行激进重构：(1) 收敛过度发散的 38 个前端页面与 60+ 个后端 service 到统一的 6 个核心工作区；(2) 重写量化策略层，新增基于 A 股特色（北向资金、龙虎榜、涨停连板、业绩预告、行业资金流）的多因子选股策略与短线龙头战法两类真正可能赚钱的策略；(3) 建立统一信号-持仓-复盘闭环，目标是让模拟盘能跑出超额收益。本轮不做实盘对接。",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "前端路由收敛：从 38 页瘦身到 6 个工作区",
+      "description": "As a 个人投资者, I want 打开系统只看到 6 个清晰工作区（今日作战/选股因子/策略实验室/持仓与复盘/数据中心/账号），so that 我不再被几十个重复入口绕晕。",
+      "acceptanceCriteria": [
+        "frontend/src/App.tsx 的菜单顶层只保留 6 个分组：今日作战、选股因子、策略实验室、持仓与复盘、数据中心、账号设置",
+        "删除或重定向以下重复页面到对应工作区：StrategyExperimentLab.tsx、AutonomousOptimizationLab.tsx、QuantBacktestLab.tsx、QuantPerformanceDashboard.tsx、QuantSignalPool.tsx、QuantStrategyLibrary.tsx、Strategy.tsx、Recommendations.tsx、RecommendationPerformance.tsx、RecommendationTradeOutcomes.tsx、RecommendationLoopPolicies.tsx、AgentTailAlphaLedger.tsx、AutonomousRecommendationTracker.tsx",
+        "保留页面文件不立即物理删除，但在 App.tsx 中移除其菜单入口并通过 <Navigate> 重定向到新工作区路由",
+        "新路由 /workspace/today、/workspace/factors、/workspace/lab、/workspace/portfolio、/workspace/data、/workspace/settings 全部可访问且不报错",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "建立统一信息架构骨架：WorkspaceLayout 与 6 个工作区壳页面",
+      "description": "As a 用户, I want 每个工作区有统一的左侧二级 tab + 顶部 KPI 条 + 主内容区布局, so that 我无论进哪个模块视觉一致，操作路径可预测。",
+      "acceptanceCriteria": [
+        "在 frontend/src/components/layout/ 新建 WorkspaceLayout.tsx，提供 props: tabs[]、kpiSlot、headerActions、children",
+        "在 frontend/src/pages/workspace/ 创建 6 个壳页面：TodayWorkspace.tsx、FactorWorkspace.tsx、LabWorkspace.tsx、PortfolioWorkspace.tsx、DataWorkspace.tsx、SettingsWorkspace.tsx，全部使用 WorkspaceLayout",
+        "每个壳页面至少显示 1 个 KPI 占位（如 '今日盈亏'）和 1 个空状态卡片",
+        "WorkspaceLayout 在桌面分辨率下侧 tab 宽 220px，KPI 条高度 96px，遵循 antd Card 圆角风格",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "后端 service 重复整合：合并 Paper Trading 服务族",
+      "description": "As a 维护者, I want PaperTrading* 相关 9 个 service 合并为 1 个统一 facade, so that 后续添加策略只对接一个入口。",
+      "acceptanceCriteria": [
+        "在 backend/src/portfolio/ 新建 PaperTradingFacade.ts，对外只暴露 7 个方法：getPortfolio、placeOrder、closePosition、getDailySnapshot、attributePnl、applyAutomation、getRiskProfile",
+        "原有 PaperTradingDashboardService、PaperTradingOrderIntentService、PaperTradingAttributionService、PaperTradingAutomationService、PaperTradingPlanService、PaperTradingRiskProfileService、PaperTradingTuningApplyService、PaperTradingPortfolioFamilies 全部改为 facade 内部模块（internal/），不再 export 给 controller",
+        "更新 backend/src/api/controllers/ 下所有引用 PaperTrading 旧 service 的 controller，改为只 import PaperTradingFacade",
+        "运行 cd backend && npx tsc --noEmit 通过",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "后端 service 重复整合：合并 Quant 策略/信号服务族",
+      "description": "As a 维护者, I want Quant* 13 个 service 整合为 4 个清晰的层：StrategyEngine、SignalEngine、BacktestEngine、HealthMonitor, so that 策略迭代时不用在十几个文件之间跳。",
+      "acceptanceCriteria": [
+        "在 backend/src/quant/ 重新划分为 4 个目录：engine/（策略与信号生成）、backtest/（回测执行）、performance/（绩效与归因）、health/（数据新鲜度、运行健康）",
+        "保留对外 export：StrategyEngine、SignalEngine、BacktestEngine、PerformanceReporter、QuantHealthMonitor 共 5 个 class",
+        "原 QuantFusionService、QuantFusionAuditService、QuantStrategyFeedbackService、QuantOpenWatchdogService 整合到 engine/internal/ 与 health/internal/，不对外暴露",
+        "controller 层只 import 上述 5 个 class，不再直接 import 内部 service",
+        "运行 cd backend && npx tsc --noEmit 通过",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "A股特色数据：北向资金日度持股入库",
+      "description": "As a 因子开发者, I need 数据库里有北向资金每日持股明细（沪股通+深股通），so that 多因子模型可以用它作为聪明钱信号。",
+      "acceptanceCriteria": [
+        "新增 Sequelize 模型 backend/src/models/NorthboundHolding.ts，字段：trade_date、stock_code、hold_volume、hold_amount、hold_ratio、market_type('SH'|'SZ')、created_at、updated_at，主键 (trade_date, stock_code)",
+        "在 backend/src/data/sources/ 新增 NorthboundDataClient.ts，调用 AKShare 接口 stock_hsgt_hold_stock_em 获取每日数据",
+        "在 backend/src/data/services/ 新增 NorthboundSyncService.ts，提供 syncDate(date) 与 syncRange(start, end) 方法，支持断点续传",
+        "新增 CLI 脚本 backend/src/scripts/sync-northbound.ts，可通过 npm run sync:northbound -- --date=2026-06-05 调用",
+        "数据库迁移自动通过 sequelize.sync({alter:true}) 在开发模式生效",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "A股特色数据：龙虎榜每日明细入库",
+      "description": "As a 短线策略开发者, I need 数据库里有每日龙虎榜买卖营业部明细, so that 我可以识别游资席位与跟随机会。",
+      "acceptanceCriteria": [
+        "新增模型 backend/src/models/DragonTigerBoard.ts，字段：trade_date、stock_code、reason、buyer_seat、seller_seat、buy_amount、sell_amount、net_amount、is_famous_yz(boolean)，主键 (trade_date, stock_code, buyer_seat, seller_seat)",
+        "在 backend/src/data/sources/ 新增 DragonTigerClient.ts，调用 AKShare stock_lhb_detail_em 接口",
+        "在 backend/src/data/services/ 新增 DragonTigerSyncService.ts，提供 syncDate(date) 方法",
+        "维护一份知名游资席位白名单（赵老哥/章盟主/炒股养家等 30+ 席位）写在 backend/src/constants/famousSeats.ts，入库时设置 is_famous_yz=true",
+        "新增 CLI 脚本 backend/src/scripts/sync-dragon-tiger.ts",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "title": "A股特色数据：涨停板与连板高度入库",
+      "description": "As a 龙头战法开发者, I need 每日涨停股票及其连板天数, so that 我可以做接力打板与梯队分析。",
+      "acceptanceCriteria": [
+        "新增模型 backend/src/models/LimitUpStock.ts，字段：trade_date、stock_code、limit_up_time、limit_up_amount、limit_up_open_times、continuous_days、reason、industry、is_one_word_board(boolean)，主键 (trade_date, stock_code)",
+        "在 backend/src/data/sources/ 新增 LimitUpClient.ts，调用 AKShare stock_zt_pool_em 与 stock_zt_pool_strong_em 接口",
+        "在 backend/src/data/services/ 新增 LimitUpSyncService.ts，自动计算连板天数（基于过去 5 个交易日的入库记录）",
+        "新增 CLI 脚本 backend/src/scripts/sync-limit-up.ts",
+        "Typecheck passes"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-008",
+      "title": "A股特色数据：行业资金流与板块强度入库",
+      "description": "As a 行业轮动策略开发者, I need 每日 86 个申万一级行业的资金流向与涨跌幅, so that 我可以选择强势行业再选股。",
+      "acceptanceCriteria": [
+        "新增模型 backend/src/models/IndustryFlow.ts，字段：trade_date、industry_code、industry_name、change_pct、main_inflow、main_inflow_ratio、limit_up_count、leader_stock_code，主键 (trade_date, industry_code)",
+        "在 backend/src/data/sources/ 新增 IndustryFlowClient.ts，调用 AKShare stock_sector_fund_flow_rank 接口",
+        "在 backend/src/data/services/ 新增 IndustrySyncService.ts，每日入库 + 自动识别每个行业当日龙头股（涨幅最大且未一字板）",
+        "新增 CLI 脚本 backend/src/scripts/sync-industry-flow.ts",
+        "Typecheck passes"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-009",
+      "title": "因子库基础设施：FactorRegistry 与因子计算 pipeline",
+      "description": "As a 策略开发者, I need 一个统一的因子注册中心和按交易日批量计算因子的 pipeline, so that 多因子策略不用重复造轮子。",
+      "acceptanceCriteria": [
+        "在 backend/src/quant/factors/ 新建 FactorRegistry.ts，提供 register(factor)、get(name)、list() 方法",
+        "定义 Factor 接口：{ name: string; description: string; compute(ctx: FactorContext): Promise<Map<stockCode, score>> }",
+        "在 backend/src/quant/factors/ 新建 FactorPipeline.ts，提供 runForDate(date, factorNames[]) 方法，结果存入新模型 FactorScore（trade_date、stock_code、factor_name、raw_value、z_score、percentile）",
+        "新增模型 backend/src/models/FactorScore.ts，主键 (trade_date, stock_code, factor_name)",
+        "新增 CLI 脚本 backend/src/scripts/compute-factors.ts，可指定日期与因子列表",
+        "Typecheck passes"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-010",
+      "title": "实现 8 个基础因子：价值、质量、成长、动量、低波、北向、资金流、龙虎",
+      "description": "As a 多因子策略, I need 至少 8 个覆盖不同维度的有效因子, so that 我可以做综合打分选股。",
+      "acceptanceCriteria": [
+        "在 backend/src/quant/factors/library/ 实现 8 个因子文件，每个继承 Factor 接口：ValueFactor（PE-TTM 倒数 + PB 倒数）、QualityFactor（ROE 5 年均值 + 资产负债率反向）、GrowthFactor（净利润同比 + 营收同比）、MomentumFactor（120 日涨幅去掉最近 20 日）、LowVolFactor（120 日波动率反向）、NorthboundFactor（北向持股比例 20 日变化）、MoneyFlowFactor（主力资金 10 日累计净流入/流通市值）、DragonTigerFactor（近 20 日知名游资净买入次数）",
+        "全部因子注册到 FactorRegistry",
+        "compute-factors.ts 脚本运行后，FactorScore 表至少有 8 * 全市场股票数 行记录",
+        "每个因子内部做 winsorize（去极值 1%-99%）和 z-score 标准化",
+        "Typecheck passes"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-011",
+      "title": "多因子选股策略 v1：MultiFactorAlphaStrategy",
+      "description": "As a 中长线投资者, I want 一个把 8 个因子加权合成的多因子策略, so that 每月可以选出 30 只综合得分最高的股票轮动持有。",
+      "acceptanceCriteria": [
+        "在 backend/src/quant/strategies/ 新建 MultiFactorAlphaStrategy.ts，继承现有 QuantStrategy 基类",
+        "策略读取 FactorScore 表，按权重合成总分（默认权重：Value 0.15、Quality 0.15、Growth 0.15、Momentum 0.15、LowVol 0.10、Northbound 0.10、MoneyFlow 0.10、DragonTiger 0.10）",
+        "支持参数 topN（默认 30）、rebalancePeriod（默认 monthly）、industryNeutral（默认 true，每行业最多持 3 只）、excludeST（默认 true）、excludeNew60d（默认 true）",
+        "实现 generateSignals(date) 方法返回当日调仓信号（BUY 新进、SELL 剔除、HOLD 保留）",
+        "新增单元测试 backend/tests/strategies/MultiFactorAlphaStrategy.test.ts，至少覆盖 industryNeutral 与 excludeST 两个分支",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-012",
+      "title": "短线龙头战法策略：DragonHeadMomentumStrategy",
+      "description": "As a 短线投资者, I want 一个抓首板/二板梯队龙头的策略, so that 我可以在情绪高潮做短线接力。",
+      "acceptanceCriteria": [
+        "在 backend/src/quant/strategies/ 新建 DragonHeadMomentumStrategy.ts，继承 QuantStrategy",
+        "入场条件：当日涨停 + 连板数 1-3 + 所属行业当日强度排名前 10 + 龙虎榜出现知名游资席位 + 流通市值 30-200 亿",
+        "出场条件：次日开盘高开 5%以上 SELL 一半、次日炸板 SELL 全部、持有 3 个交易日强制 SELL",
+        "支持参数 maxPositions（默认 5）、minContinuousDays（默认 1）、maxContinuousDays（默认 3）、stopLossPct（默认 -7%）",
+        "新增单元测试 backend/tests/strategies/DragonHeadMomentumStrategy.test.ts，构造 mock 数据验证 entry/exit 触发",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-013",
+      "title": "事件驱动策略：业绩预告超预期+北向加仓双确认",
+      "description": "As a 中线投资者, I want 一个在业绩预告发布日筛选超预期且北向资金加仓的股票, so that 我可以提前埋伏业绩驱动主线。",
+      "acceptanceCriteria": [
+        "在 backend/src/quant/strategies/ 新建 EarningsSurpriseStrategy.ts",
+        "新增模型 backend/src/models/EarningsForecast.ts，字段：announce_date、stock_code、forecast_type、profit_change_low、profit_change_high、is_surprise(boolean)，并新增 EarningsForecastClient.ts 调用 AKShare stock_yjyg_em 接口",
+        "策略入场条件：业绩预告 profit_change_low >= 50% + 预告类型为 '预增'|'扭亏'|'续盈' + 过去 5 日北向持股比例上升",
+        "出场条件：60 日持有期到期、或单股跌幅 -10% 止损",
+        "新增 CLI 脚本 backend/src/scripts/sync-earnings-forecast.ts",
+        "新增单元测试 backend/tests/strategies/EarningsSurpriseStrategy.test.ts",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 13,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-014",
+      "title": "回测引擎升级：支持持仓数量约束、行业中性、交易成本与停牌处理",
+      "description": "As a 策略验证者, I want 回测引擎正确处理 A 股特有的停牌、涨跌停限价、T+1、印花税与佣金, so that 回测结果接近真实可达。",
+      "acceptanceCriteria": [
+        "在 backend/src/quant/backtest/ 新建 AShareConstraintEngine.ts，包含规则：T+1 当日买入不可卖、涨停日不可买入（仅可持有）、跌停日不可卖出（仅可买入）、停牌日跳过、ST 与 *ST 股按设置过滤",
+        "费率模型：佣金双边万 2.5（最低 5 元）、印花税卖出单边千 1、过户费双边万 0.1",
+        "执行价模型：默认次日开盘价 + 0.2% 滑点；龙头策略可切换为当日均价",
+        "回测引擎调用 AShareConstraintEngine 校验每笔订单，被拦截的订单记录到 BacktestResult.rejectedOrders 字段（新增字段）",
+        "新增集成测试 backend/tests/backtest/ashare-constraints.test.ts 验证 T+1 与涨停限价",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 14,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-015",
+      "title": "前端：因子选股工作区 (/workspace/factors) 完整页面",
+      "description": "As a 用户, I want 一个看到每个因子最新分布、可调权重并预览选股结果的页面, so that 我可以理解多因子模型当前在选什么。",
+      "acceptanceCriteria": [
+        "在 frontend/src/pages/workspace/FactorWorkspace.tsx 实现 3 个 tab：'因子总览' '权重调参' '今日选股清单'",
+        "因子总览 tab：用 8 个卡片展示每个因子的（最新计算日期、覆盖股票数、因子值直方图 mini chart）",
+        "权重调参 tab：8 个滑块控制每个因子权重（自动归一化为 100%），按 '预览' 调后端 POST /api/factors/preview 返回 top 30 股票",
+        "今日选股清单 tab：表格展示 MultiFactorAlphaStrategy 最新一次调仓结果，列：代码、名称、综合得分、各因子得分（可折叠）、所属行业、上次调仓动作",
+        "后端新增 POST /api/factors/preview 与 GET /api/strategies/multi-factor/latest-picks 两个 endpoint",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 15,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-016",
+      "title": "前端：策略实验室工作区 (/workspace/lab) 完整页面",
+      "description": "As a 用户, I want 一个能新建/克隆/对比策略回测、并保存策略版本的工作台, so that 我可以快速迭代策略参数。",
+      "acceptanceCriteria": [
+        "在 frontend/src/pages/workspace/LabWorkspace.tsx 实现 3 个 tab：'我的策略' '新建回测' '回测对比'",
+        "'我的策略' tab：列表展示已保存策略（含三个内置：MultiFactorAlpha、DragonHeadMomentum、EarningsSurprise），支持克隆与编辑参数",
+        "'新建回测' tab：表单选择策略 + 参数 + 时间段 + 初始资金 + 基准（默认沪深 300），提交后展示回测进度（轮询 /api/quant/backtest/:id/progress）",
+        "'回测对比' tab：选择 2-4 个已完成回测，叠加绘制净值曲线（recharts），下方表格对比年化收益、夏普、最大回撤、胜率、换手率",
+        "后端复用现有 /api/quant/backtests 等端点，必要时补充 POST /api/quant/backtests/compare",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 16,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-017",
+      "title": "前端：持仓与复盘工作区 (/workspace/portfolio) 完整页面",
+      "description": "As a 用户, I want 一个综合看模拟盘持仓、策略归因、每日复盘日记的页面, so that 我能闭环理解'为什么赚/为什么亏'。",
+      "acceptanceCriteria": [
+        "在 frontend/src/pages/workspace/PortfolioWorkspace.tsx 实现 4 个 tab：'当前持仓' '资金曲线' '交易明细' '复盘日记'",
+        "'当前持仓' tab：表格列：代码、名称、买入日、买入价、现价、浮盈、占比、止损价、所属策略；支持一键平仓与设置止损",
+        "'资金曲线' tab：日级净值曲线 vs 沪深 300，下方 KPI（总收益、年化、回撤、夏普、当月收益）",
+        "'交易明细' tab：分页表格展示历史成交，可按策略筛选",
+        "'复盘日记' tab：按日期选择展示当日 AI 生成的市场总结与持仓点评，并允许用户追加手记（POST /api/journal/note）",
+        "对接已有 PaperTradingFacade、TradingJournal、RecommendationTradeOutcomeService",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 17,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-018",
+      "title": "前端：今日作战工作区 (/workspace/today) 整合多策略当日信号",
+      "description": "As a 用户, I want 一个开盘前的'今日作战'页, so that 我一眼能看到三个策略的当日买卖建议、风险提醒与关键事件。",
+      "acceptanceCriteria": [
+        "frontend/src/pages/workspace/TodayWorkspace.tsx 顶部 KPI 条：账户余额、昨日盈亏、当月收益、未读风险提醒数",
+        "中部 3 列卡片，分别展示 MultiFactorAlphaStrategy 月度调仓变化、DragonHeadMomentumStrategy 今日候选 5 只、EarningsSurpriseStrategy 今日入选 1-3 只",
+        "底部 2 列：左侧'今日关键事件'（业绩披露、解禁、分红、降息等）；右侧'风险告警'（来自 RiskAlert 模型未读列表）",
+        "顶部按钮 '一键应用全部信号到模拟盘'，调 POST /api/today/apply-signals 后跳转到持仓页",
+        "后端新增 GET /api/today/signals 与 POST /api/today/apply-signals 两个端点，聚合三个策略",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 18,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}
