@@ -18,6 +18,7 @@ import { TrendPullbackReentryStrategy } from '../strategies/TrendPullbackReentry
 import { MultiFactorAlphaStrategy } from '../strategies/MultiFactorAlphaStrategy';
 import { DragonHeadMomentumStrategy } from '../strategies/DragonHeadMomentumStrategy';
 import { EarningsSurpriseStrategy } from '../strategies/EarningsSurpriseStrategy';
+import { NorthboundFollowStrategy } from '../strategies/NorthboundFollowStrategy';
 import { QuantStrategyDefinition } from '../types/QuantTypes';
 
 export class StrategyRegistry {
@@ -43,6 +44,7 @@ export class StrategyRegistry {
     this.register(new MultiFactorAlphaStrategy());
     this.register(new DragonHeadMomentumStrategy());
     this.register(new EarningsSurpriseStrategy());
+    this.register(new NorthboundFollowStrategy());
   }
 
   register(strategy: QuantStrategy) {

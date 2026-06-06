@@ -75,6 +75,7 @@
 - **组合级 strategies pick `previousSelection` schema based on exit needs (US-012)**: `string[]` is sufficient when调仓 only needs set membership (MultiFactorAlpha 月度调仓); `Position[]` with structured fields (entry_date/entry_price/half_exited) is required when exit rules depend on per-position state (DragonHead 止损 / holding_days / 防重复减半). New signal types beyond BUY/SELL/HOLD (e.g. `sell_half`, `add`, `scale_out`) are similarly tied to the strategy's domain — extend the signal union and document each state's trigger + caller撮合 action in the .ts jsdoc; recap in `strategies/CLAUDE.md`. `MultiFactorAlpha` and `DragonHead` are the two canonical references for "lightweight" vs "stateful" position schemas.
 - **Event-driven strategies (US-013) — sparse-day return is NORMAL**: 业绩预告一年只有 4 个集中披露期，平日 generateSignals 返回 `eligible_count=0` 是预期行为，不要把"无信号日"当成数据缺失告警，否则告警噪音淹没真正问题。事件触发 + 多源双确认的策略统一在 DataSource 接口里给每个数据源独立 `loadXxx()`，单测可独立 mock。判定顺序遵循"早过滤先做"：事件源 → 元数据 → 多源历史回看，避免反向次序浪费 IO。
 - **Report-period-keyed data sources (US-013 业绩预告)**: AKShare `stock_yjyg_em` / `stock_yjbb_em` / `stock_yjkb_em` 按 **报告期** 检索（不是公告日）。Sync 服务对应 `syncReportPeriod(period)`，模型 PK 包含 `report_period` 字段（3-tuple）；CLI 暴露 `--year=YYYY` 一键展开 4 个季度末。**业务超预期判定（is_surprise）留 TS 服务**，符合"Python 是 dumb fetcher / 业务规则可演化留 TS"的统一切分。
+- **跟随类组合级策略 vs 事件驱动 (US-019)**: 跟随类（北向 / 主力资金 / 融资余额）的触发源是"每日全市场都有的连续信号"，所以 DataSource 接口的 `loadCandidateXxx(asOfDate, params)` **不接受 stockCodes 列表**——它自己输出 universe。同源数据（如 ratio 快照）必须在主流程 `generateSignals()` 里拉一次然后传递给 `evaluateEntries` / `evaluateExits`，**不要**在两个 evaluate 内部各自重复 fetch。跟随类策略**必须**有 "反向信号出场线"（北向减仓 → SELL）；少了它就退化为"被动止损 + 持有期到期"，丢失 alpha 来源。出场优先级 A→B→C = 硬约束（到期 / 止损）> 软信号（北向减仓），避免短期噪音过早赶走浮盈持仓。完整 4 strategy 对比表在 `backend/src/quant/strategies/CLAUDE.md`。
 
 ### Backtest engine — A 股执行约束 (US-014+)
 - **`AShareConstraintEngine` 是无状态纯模块** at `backend/src/quant/backtest/AShareConstraintEngine.ts`。三个方法：`evaluateOrder(ctx)` 返回 `{ok, reason?, detail?}` 决定能否成交（T+1 / 涨跌停 / 停牌 / ST 过滤 / 流动性门槛）；`computeFees(amount, side)` 返回 commission + stamp_tax + transfer_fee 三段费用 breakdown；`executionPrice(bar, side, timing)` 给三种 timing (next_open / same_close / twap_proxy) 的成交价并附动态滑点。引擎严格无 DB 访问、无状态字段、不修改输入参数——多策略并发跑零状态污染。
@@ -1795,4 +1796,105 @@ LabWorkspace 的"大型组件拆分"模式：parent 持顶层 KPI/loading/error 
 - DragonHeadMomentum 需要 `limit_up_stocks` + `industry_flows` + `dragon_tiger_boards` → US-007/008/006 各自 sync 脚本
 - EarningsSurprise 需要 `earnings_forecasts`（有 is_surprise=true 的行）+ `northbound_holdings` → US-013/005 各自 sync 脚本
 - 当任一表为空时，对应 block 显示 `error: "..."` 而不是空白 — 用户看到的是"缺数据，请运行 X 脚本"而不是"功能坏了"。
+---
+
+## 2026/06/07 - US-019
+
+### What was implemented
+Added **NorthboundFollowStrategy** (4th 组合级 strategy) — a 跟随类 strategy
+that scans every trading day for stocks where 北向资金 has been accumulating
+over the prior 5 trading days, then exits when 北向 reverses, the position
+hits stop-loss, or the 30-day holding period expires.
+
+**Design (vs the 3 prior 组合级 strategies)**:
+
+| 维度 | MultiFactorAlpha (US-011) | DragonHead (US-012) | EarningsSurprise (US-013) | NorthboundFollow (US-019) |
+|------|--------------------------|---------------------|---------------------------|--------------------------|
+| 触发节奏 | 月度调仓 | 每日 (事件驱动) | 公告日 (事件驱动) | 每日 (全市场扫描) |
+| Universe 构造 | factor_scores 全市场 | LimitUpStock 当日涨停 | EarningsForecast 当日预告 | NorthboundHolding 有连续数据全市场 |
+| Exit 复用 entry 数据源 | n/a (月度) | 否 (close + limit_up) | 否 (close + holding 天数) | 是 (entry & exit 同读 ratioSnapshots) |
+| Position schema | string[] | Position[] (含 half_exited) | Position[] (含 report_period) | Position[] (含 entry_ratio) |
+| 出场看反向信号 | 否 | 否 (炸板≠北向减仓) | 否 | **是** (北向减仓 -0.3pp → SELL) |
+
+跟随类策略和事件驱动策略的核心差异：跟随类的 alpha 是"和聪明钱同向"，
+所以**反向信号必须做出场线**——否则就只剩"持有期到期"+"止损"两条
+被动出场，本质失去 alpha。
+
+### Files changed
+- `backend/src/quant/strategies/NorthboundFollowStrategy.ts` (new, ~545 LOC after prettier)
+- `backend/src/quant/engine/StrategyRegistry.ts` (+2 lines registering new strategy)
+- `backend/src/quant/strategies/CLAUDE.md` (新增 '全市场扫描 + 同源数据复用 (US-019)' 一节，
+  补充 4 个组合级策略对比表与 '出场看反向信号' 设计判据；典型例子列表 3 → 4)
+- `backend/tests/strategies/NorthboundFollowStrategy.test.ts` (new, 30 test cases, 95+ assertions)
+- `ralph/prd.json` (US-019 → passes:true)
+- `ralph/progress.txt` (this entry + 新 Codebase Pattern)
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → exit 0 ✅
+- `cd backend && ./node_modules/.bin/eslint src/quant/strategies/NorthboundFollowStrategy.ts src/quant/engine/StrategyRegistry.ts --quiet --fix` → exit 0
+- `cd backend && npx ts-node --transpile-only tests/strategies/NorthboundFollowStrategy.test.ts` → All 30 tests pass < 1s
+- Regression: 既有 3 个 strategy tests (MultiFactorAlpha / DragonHead / EarningsSurprise) → 全部仍通过
+
+### Browser verification
+**N/A** — backend-only strategy implementation. Frontend integration goes through
+the existing `/api/quant/strategies` list endpoint (registry-driven, so the new
+strategy auto-appears) plus the LabWorkspace's `新建回测` tab (US-016 already
+wired). End-user UX: open LabWorkspace, select strategy='北向资金大幅加仓跟随',
+configure params, run backtest. No UI change needed for US-019.
+
+### Learnings for future iterations
+
+#### 设计层 (会反复出现)
+- **跟随类策略的 DataSource 接口不要让 caller 传 universe**:
+  跟随类的候选池就是"有近 N+1 天连续数据的全市场股票"，没有更上游的过滤
+  源。如果 loader 强制要求 `stockCodes: string[]`，caller 反而要先发一遍
+  Sequelize 查询去拿 universe，等于重复查询。正确签名是
+  `loadCandidateRatioDeltas(asOfDate, lookbackDays): Promise<Map>`。
+- **同源数据 entry + exit 复用的边界 = 主流程层**：US-019 的
+  ratioSnapshots 在主 `generateSignals` 里拉一次，然后传递给
+  `evaluateEntries` 和 `evaluateExits`。**不要**在两个 evaluate 里各自
+  `await this.dataSource.loadX(...)` —— 同样的 SQL 跑两次是 wasted IO，
+  也会导致两侧"看到的快照"理论上不一致 (如果中间有别的 process 写入)。
+- **跟随类策略必须有"反向信号出场线"**：US-019 的优先级 A→B→C 把"持有
+  期到期 + 止损"放在 "北向减仓" 前面，让硬约束优先；"北向短期减仓" 是
+  软信号容易误判，但**少了它整个策略就退化为单纯的均值回归 + 止损**，
+  alpha 来源不再是"跟随聪明钱"。这条 guard 是跟随策略的命脉。
+- **boundary 测试要写 `≥` vs `>`**: US-019 入场用 `ratio_delta >=
+  minIncreasePct`（inclusive），但 `current_ratio > minCurrentRatio`
+  (exclusive)。这种细微差异 AC 里没明确说，但单测写 boundary case 强迫
+  作者明确选择——`>= minIncreasePct` 更宽容、容易触发；
+  `> minCurrentRatio` 更严格、避免"刚到 1.0% 的微仓"被算成"已建仓"。
+  Test 28 验证了 `=` 边界入选。
+- **Position 字段加 entry_ratio 是为了 debug 不是为了出场逻辑**：
+  US-019 出场看 `ratioSnapshots[code].ratio_delta` (5 日累计差)，不看
+  `current_ratio - entry_ratio`。但 entry_ratio 保留在 Position 里方便
+  复盘——"我进的时候北向才 1.5%，现在已经追到 3.0% 了" 这种洞察对调参
+  很有用。判据仍是 "调仓规则需要哪些 per-position state 就放哪些字段"，
+  entry_ratio 是 debug-only 字段而非 exit-driving 字段，所以 schema
+  允许它 optional (注释清楚)。
+
+#### 工具层 (本环境特定)
+- **worktree 下需要 backend node_modules 软链**：执行 `cd backend && ln
+  -sfn /Users/bytedance/go/src/github.com/bruinxz/stocks/backend/node_modules
+  node_modules` 再跑 tsc / ts-node / eslint。这条已在 Codebase Patterns
+  里，再次确认。提交前不需要 rm —— `backend/.gitignore` 的
+  `node_modules/` pattern 会 silently 忽略软链 (与 frontend 不同 — frontend
+  的 .gitignore 需要 explicit 排除软链)。
+- **eslint --fix 改了文件，必须**重新 typecheck + 重新跑测试再 commit。
+  prettier 自动格式化可能把 long if-else 拆行，绝大多数情况不破坏逻辑，
+  但偶尔会触发 unused-var 等次生错误。
+- **测试运行命令模式** (与 US-011..US-013 一致): `cd backend && npx ts-node
+  --transpile-only tests/strategies/<Strategy>.test.ts`。`--transpile-only`
+  跳过类型检查（tsc 那一步已经做过），加速 5-10×。运行时 < 1s 是 fake
+  DataSource + 无 DB 的好处，集成测试请另开目录。
+
+### Codebase Patterns (新增)
+- **跟随类策略 DataSource 签名**：`loadCandidateXxx(asOfDate, params)`
+  返回 `Map<stock_code, snapshot>` 一次性给出全市场快照——不要让 caller
+  传 stockCodes 列表。同源数据用一份在主流程，传递给 entry/exit 评估方法
+  做参数，**不要**在 evaluate 内部重复 fetch。
+- **组合级策略对比表已扩到 4 个 (US-011/012/013/019)**: 触发节奏/Universe
+  构造/Exit 复用 entry/Position schema/反向信号出场线 — 5 个维度。新加
+  组合级策略前先回看这张表，避免"为了用同样模板"而设计错误的 DataSource
+  接口形态。
 ---

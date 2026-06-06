@@ -33,14 +33,14 @@ evaluate 模型表达不出。
 - 入参：交易日 + 可选 `{ params?, previousSelection? }`
 - 出参：`{ target_portfolio, signals: BUY/SELL/HOLD[], filtered, params, ... }`
 
-典型例子（截至 US-013 共 3 个）：
+典型例子（截至 US-019 共 4 个）：
 - `MultiFactorAlphaStrategy`（多因子 alpha 月度轮动）
 - `DragonHeadMomentumStrategy`（短线龙头战法 — 事件驱动每日）
 - `EarningsSurpriseStrategy`（业绩预告超预期 + 北向加仓双确认 — 事件驱动）
+- `NorthboundFollowStrategy`（北向资金大幅加仓跟随 — 中线每日扫描全市场）
 
-后续 story 中其他组合级策略：US-019 NorthboundFollowStrategy、
-US-020 CTA100MomentumStrategy、US-021 SectorRotationLeaderStrategy、
-US-028 EnsembleStrategy 等。
+后续 story 中其他组合级策略：US-020 CTA100MomentumStrategy、
+US-021 SectorRotationLeaderStrategy、US-028 EnsembleStrategy 等。
 
 ## 组合级策略的设计约定（US-011 制定）
 
@@ -173,3 +173,46 @@ DragonHead 简单（无炸板 / 高开减半逻辑）— 所以 `EarningsSurpris
 要 `half_exited` 字段，但保留 `entry_report_period` 便于 debug（"我是因为
 哪个报告期的预告进场的"）。判据仍是：**调仓规则需要哪些 per-position state
 就放哪些字段**，多一个少一个都不行。
+
+## 全市场扫描 + 同源数据复用（US-019 NorthboundFollowStrategy）
+
+某些"跟随类"策略的触发源不是稀疏事件（业绩预告 / 龙虎榜上榜）而是
+**每日全市场都有的连续信号**（北向持股 / 主力资金 / 融资余额）。这类
+策略的 DataSource 应该把"候选池扫描"封装成一个 loader——一次性返回
+**全市场**满足"有近 N+1 天数据"的股票的关键指标快照：
+
+```ts
+loadCandidateRatioDeltas(asOfDate, lookbackDays): Promise<Map<stock_code, {current_ratio, ratio_delta}>>
+```
+
+而**不是**：
+
+```ts
+// ❌ 错误模式 - 假设 universe 是上游给的
+loadRatioDeltas(asOfDate, stockCodes: string[]): Map<...>
+```
+
+为什么：跟随类策略的"候选池"就等于"有北向数据的全市场股票"，没有
+更上游的过滤源。如果让 caller 先给 stockCodes，caller 反而要先查
+NorthboundHolding 表拿 universe，等于做两遍同样的查询。
+
+**同源数据在 entry + exit 复用**：US-019 拉到 ratioSnapshots 后既给
+entry 判定（delta ≥ 0.5%）又给 exit 判定（delta ≤ -0.3%）。**生命周期
+管理在 generateSignals() 主流程，不在 evaluateEntries/evaluateExits
+内部各拉一次**——否则同样的 Sequelize 查询发两次。
+
+跟随类策略 vs 事件驱动策略（US-013）的关键设计差异：
+
+| 维度 | 事件驱动 (US-013) | 跟随类 (US-019) |
+|------|------------------|----------------|
+| 触发源 | 稀疏事件（forecast 当日有） | 连续信号（北向每日都有） |
+| 候选池构造 | "拿 forecasts 再查北向确认" | "全市场扫北向 → 卡阈值" |
+| eligible=0 含义 | 当日无预告（正常） | 全市场无加仓（市场冷淡）|
+| Exit 是否复用 entry 数据源 | 否（exit 只看 close 价） | 是（exit 看北向 delta 反转）|
+| `loadCandidateXxx` 接受 stockCodes | 是（先有候选池） | 否（自己就是候选池）|
+
+**新增"出场看反向信号"出场线（exit_ratio_decrease）的判据**：当策略
+的核心 alpha 是"跟随某个方向"时，出场就要补一条"方向反转就退出"的
+guard——这是跟随策略的命脉。US-019 的优先级 A→B→C（到期 > 止损 >
+北向减仓）让"硬约束"优先于"软信号"，避免短期减仓噪音过早赶走还在
+浮盈的持仓。
