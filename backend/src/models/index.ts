@@ -44,3 +44,4 @@ export * from './NorthboundHolding';
 export * from './DragonTigerBoard';
 export * from './LimitUpStock';
 export * from './IndustryFlow';
+export * from './FactorScore';

@@ -141,8 +141,8 @@
         "Typecheck passes"
       ],
       "priority": 9,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026/06/07. Added Sequelize model backend/src/models/FactorScore.ts with composite PK (trade_date, stock_code, factor_name) — fields: raw_value (nullable), z_score, percentile, source + indexes on trade_date / stock_code / factor_name / their compound shapes. Created backend/src/quant/factors/ tree: types.ts (Factor interface + FactorContext + FactorComputeOutput), FactorRegistry.ts (singleton + class with duplicate-rejecting register/get/list/has, plus _clearForTesting helper), normalization.ts (winsorize/zscore/percentileRanks/mean/stddev — pure cross-sectional helpers, deliberately separate from quant/engine/QuantMath.ts time-series helpers), FactorPipeline.ts (runForDate(date, factorNames[]) → (1) cross-sectional winsorize/zscore/percentile (2) NEUTRAL-row fill for universe gaps so factor_scores row count = universe_size (3) bulkCreate + updateOnDuplicate for idempotent reruns (4) per-factor error isolation — one bad factor doesn't abort the batch). Library/index.ts placeholder for US-010 to add 8 concrete factors. CLI script + npm run compute:factors with --date/--factors/--skip/--universe/--lookback flags. Model registered in models/index.ts + config/database.ts so sync({alter:true}) auto-creates table in dev. Added backend/src/quant/factors/CLAUDE.md documenting the add-new-factor pattern + 6 design constraints (no factor-side normalization, sparse Map allowed, stock_code without market suffix, serial factor scheduling, FactorRegistry no-duplicate rule, neutral-row fill). cd backend && npx tsc --noEmit passes clean; runtime smoke test confirms primitives correct (mean/zscore/winsorize/percentileRanks/duplicate-register) + Pipeline.runForDate fills neutral rows correctly (fetched=3, effective=2, upserted=5 for 5-stock universe)."
     },
     {
       "id": "US-010",

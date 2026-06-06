@@ -32,6 +32,13 @@
 - **Multi-endpoint join WITHOUT a shared key (US-008 行业资金流)**: `stock_sector_fund_flow_rank` has metrics but no board code; `stock_board_industry_name_em` has the code but joins by Chinese 板块名称. Indexing the smaller "name→code+metadata" df into a Python dict, joining per row, and emitting `industry_code = "FALLBACK-<name>"` for unmapped names keeps rankings intact. **Cross-DB joins (e.g. `limit_up_count` requires JOIN-ing LimitUpStock by industry name) belong in the TS service, not Python** — same divider as `is_famous_yz` and `continuous_days`.
 - **Real-time-only snapshots (US-008 fund_flow / name / cons family)**: a subset of AKShare endpoints CANNOT replay history; you only get "now". The `date` param becomes a `trade_date` LABEL stamped onto each output row by Python — the data is still today's. Document this on the client jsdoc + service jsdoc; don't pretend `--start=2023-01-01` does what it appears to. Schedule once per day post-close; the `INDUSTRY_FLOW_TIMEOUT_MS` default is 240s because per-board `cons_em` fetches dominate (~86 boards × AKShare rate-limit).
 
+### Quant factor infrastructure (US-009+)
+- **Factor module tree** lives at `backend/src/quant/factors/` and is the **only** place where factor logic exists: `types.ts` (Factor interface + FactorContext), `FactorRegistry.ts` (singleton — same dedupe-on-register pattern as StrategyRegistry), `FactorPipeline.ts` (cross-sectional batch processor), `normalization.ts` (winsorize/zscore/percentileRanks — **cross-sectional** helpers, NOT to be confused with quant/engine/QuantMath.ts which is time-series). `library/index.ts` is the import-time aggregator: each factor file self-registers via `factorRegistry.register(...)` and gets pulled in by `library/index.ts` so callers only need `import '../quant/factors/library'` once.
+- **Factor design contract**: factors output **un-normalized** raw_value Map<stock_code, number|null>. The Pipeline does winsorize(1%-99%) → zscore → percentileRanks across the cross-section. Factors that self-normalize would break cross-factor comparability — **never** call zscore() inside a Factor.compute().
+- **Sparse Map is fine**: if a factor can't compute a value for a stock (missing data), just don't include it in the Map. The Pipeline fills the universe gap with a "neutral row" (raw_value=null, z_score=0, percentile=0.5) so factor_scores always has `universe_size` rows per (date, factor) — makes multi-factor JOIN-free.
+- **stock_code is suffix-less**: FactorScore.stock_code matches NorthboundHolding/LimitUpStock/IndustryFlow ("600519", not "600519.SH"). When a Factor.compute() reads Stock/DailyBar (which use "600519.SH"), it MUST `symbol.split('.')[0]` before keying the output Map.
+- **Pipeline serial-by-factor, not Promise.all parallel**: one bad factor doesn't kill the batch; logs stay readable; debug is straightforward. The compute step within one factor can still batch DB queries internally.
+
 
 ### Tooling
 - **Frontend node_modules are in the main repo, not the worktree.** Run `ln -s /Users/bytedance/go/src/github.com/bruinxz/stocks/frontend/node_modules frontend/node_modules` inside the worktree before `./node_modules/.bin/tsc --noEmit` or eslint. REMOVE the symlink before `git add` — gitignore matches the directory pattern but not the symlink file.
@@ -478,5 +485,118 @@ A股涨停板与连板高度的日度入库（A-share 涨停股池 + 强势股�
 - **`industries_with_limit_ups / industries_with_leader` 是 ops 指标**，不仅服务 caller 也服务监控：正常交易日应当 with_leader ≈ 86（绝大多数行业能找到非一字板龙头），with_limit_ups 在牛市能到 60-80、震荡市 5-20、跌市 0-5。某天突然 with_leader=0 就意味着 AKShare 抓数大概率出问题，应触发告警。
 - **3 个新的 Codebase Patterns 提炼**：(1) 多端点无共享键 join 用 Chinese name 隐式连接 + FALLBACK 行兜底，(2) 跨 DB join 永远留 TS 服务，(3) 实时快照端点要写明 "date 是标签而非过滤器"。这些会被 US-022 高分红低 PE / US-090 股东增减持 等后续股票/财务接口直接复用。
 - **Worktree gotcha (still active)**：before `git add`, `rm backend/node_modules`（symlink 污染 git status）。
+
+---
+
+## 2026/06/07 - US-009
+
+### What was implemented
+A-share 因子库基础设施：FactorRegistry + FactorPipeline + FactorScore 模型 + 横截面标准化工具 + CLI。
+US-009 不实现具体因子（那是 US-010 的事），落地的是 "因子运行环境"——US-010 在
+`backend/src/quant/factors/library/` 添加 8 个因子文件就能直接跑出全市场打分。
+
+- **`backend/src/models/FactorScore.ts`** — Sequelize 模型，**3 元组主键** (trade_date, stock_code, factor_name)。
+  字段：raw_value (DECIMAL(20,6), nullable — 因子缺值的中性行 raw_value=null) /
+  z_score (DECIMAL(12,6), default 0 — 横截面 winsorize 后) /
+  percentile (DECIMAL(8,6), default 0.5 — 横截面百分位) /
+  source (default 'pipeline')。索引：trade_date、stock_code、factor_name、
+  (trade_date,factor_name) 横截面常用、(stock_code,factor_name) 时序常用、
+  (trade_date,factor_name,z_score) 选股排行常用。
+- **`backend/src/quant/factors/types.ts`** — Factor 接口 + FactorContext + FactorComputeOutput +
+  FactorCategory ('value'|'quality'|'growth'|'momentum'|'volatility'|'liquidity'|'sentiment'|'flow'|'event'|'other')。
+  关键约定写在 jsdoc：因子只输出 **未标准化** raw_value；可返回稀疏 Map；
+  compute() 必须幂等纯函数；compute() 不写库（写库由 Pipeline 统一做）。
+- **`backend/src/quant/factors/FactorRegistry.ts`** — 全局单例 + class（便于测试隔离）。
+  register(): 同名重复抛出 (避免静默覆盖)；factor.compute 不是函数也抛。
+  get(): 不存在抛出 (含 known factor 列表方便排错)。
+  list() / listNames() / has() / _clearForTesting()。
+- **`backend/src/quant/factors/normalization.ts`** — 横截面 winsorize (双分位线性插值) / mean /
+  stddev (n-1 样本) / zscore (sd=0 → 全 0) / percentileRanks (平均秩处理 tie，n=1 → [0.5])。
+  **故意与 `quant/engine/QuantMath.ts` 分开**：那里是时序视角（rolling/ema/macd），这里是
+  截面视角，复用反而易混。
+- **`backend/src/quant/factors/FactorPipeline.ts`** — 核心批处理：
+  - runForDate(date, factorNames[], options): 解析 universe (默认全 A 股 active) →
+    按 (date, factor) 串行调度 → 每个因子内部 compute()→cleanup→winsorize→zscore→percentile
+    → **对 universe 中没在 compute 输出里的股票补"中性行"**（raw_value=null, z=0, p=0.5）→
+    bulkCreate + updateOnDuplicate。
+  - 每个因子失败独立隔离 (try/catch 写到 factor_results[i].error)，单因子崩不影响别的因子。
+  - 默认 universe loader 从 Stock 表读 `is_active != false` 的 symbol，截掉 .SH/.SZ 后缀以匹配
+    FactorScore.stock_code 的口径。
+- **`backend/src/quant/factors/library/index.ts`** — 占位 (US-010 在此追加每个因子文件的 import)。
+  设计：每个因子 .ts 在 import-time `factorRegistry.register(...)` 自我登记，library/index.ts
+  只 import 不 re-export，避免双重事实源。
+- **`backend/src/quant/factors/index.ts`** — 模块出口，re-export Registry/Pipeline/types/normalization。
+- **`backend/src/scripts/compute-factors.ts`** + `npm run compute:factors` — commander CLI，
+  flags: `--date` (必填) / `--factors` 白名单 / `--skip` 黑名单 / `--universe` 自定义股票池 /
+  `--lookback`。非 prod 自动 `sequelize.sync({alter:true})` 建表。
+- **`backend/src/quant/factors/CLAUDE.md`** — 详细文档：目录约定、添加新因子步骤模板（含
+  stripSuffix 模板代码）、6 条设计约束、测试模式、US-010 一定会踩的坑 4 条
+  (Stock.symbol 带后缀但 FactorScore.stock_code 不带；StockValuationFactor 等老表也带后缀；
+  NorthboundHolding 等新表已不带后缀；缺数据 ≠ 因子失效)。
+- 模型在 `models/index.ts` + `config/database.ts` 双注册，dev 模式 `sync({alter:true})` 自动建表。
+
+### Files changed
+- `backend/src/models/FactorScore.ts` (new)
+- `backend/src/models/index.ts` (added `export * from './FactorScore'`)
+- `backend/src/config/database.ts` (import + register in `models[]`)
+- `backend/src/quant/factors/types.ts` (new)
+- `backend/src/quant/factors/FactorRegistry.ts` (new)
+- `backend/src/quant/factors/normalization.ts` (new)
+- `backend/src/quant/factors/FactorPipeline.ts` (new)
+- `backend/src/quant/factors/index.ts` (new)
+- `backend/src/quant/factors/library/index.ts` (new, placeholder)
+- `backend/src/quant/factors/CLAUDE.md` (new)
+- `backend/src/scripts/compute-factors.ts` (new)
+- `backend/package.json` (added `compute:factors` script)
+- `ralph/prd.json` (US-009 → passes:true)
+- `ralph/progress.txt` (this entry + updated Codebase Patterns)
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → exit 0 ✅ matches AC verbatim
+- `eslint src/models/FactorScore.ts src/quant/factors src/scripts/compute-factors.ts --quiet` → exit 0 (3 prettier auto-fixed)
+- `npx ts-node --transpile-only src/scripts/compute-factors.ts --help` → boots cleanly,
+  prints commander help, factor library imports cleanly (empty registry).
+- 运行时小烟雾测：调用 normalization 各函数验证 mean/stddev/zscore/winsorize/percentileRanks
+  按预期；FactorRegistry duplicate-register 正确抛出；FactorPipeline.runForDate 用 mock factor +
+  5 股 universe + sparse Map (2 个有效值, 1 个 null, 2 个 universe 缺) → 返回 fetched=3, effective=2,
+  upserted=5（验证 "中性行补全 = universe_size" 这条核心契约）。
+
+### Browser verification
+**N/A** — backend-only infrastructure。HTTP surface 在 US-015 (因子工作区) 才开始暴露
+（GET /api/factors/...）。本 story 仅落地后端 pipeline + CLI + 模型。
+
+### Learnings for future iterations
+- **3 元组主键 (trade_date, stock_code, factor_name) 是设计核心**。曾考虑用 auto-increment id +
+  唯一索引——但 bulkCreate + updateOnDuplicate 对 composite PK 直接支持，省一个 unique constraint
+  + 让 "重跑覆盖" 行为最直观。
+- **"中性行" 补全是无声的契约**：调用方查 factor_scores 时不需要 LEFT JOIN 处理缺失股票，
+  因为每天每因子都保证写满整 universe。raw_value=null + z_score=0 + percentile=0.5 让多因子
+  合成 `SUM(z_score * weight)` 自然给缺值股票打 "中性总分"，不会因为单因子缺值就把整只股票剔出。
+  US-011 多因子策略可以直接 `WHERE trade_date=? GROUP BY stock_code` 不用关心覆盖率。
+- **横截面 vs 时序 normalization 必须分目录**。`quant/engine/QuantMath.ts` 的 mean/stddev 是
+  "对一只股票时间序列上的滚动均值/方差"；这里的 mean/stddev 是 "对一组股票同一时点截面值的均值/方差"。
+  混用会语义错。命名空间各自独立比 "复用代码" 重要。
+- **`Factor.compute` 不写库** 是关键的隔离设计：可以单独跑一个因子拿到 Map 做 debug / 单元
+  测试，不需要 DB up；Pipeline 是唯一持久化点，逻辑集中。"compute → persist 分离" 让
+  IC 报告 (US-041)、因子热力图 (US-074) 等下游能复用 compute() 输出而不重新写库。
+- **Stock.symbol vs FactorScore.stock_code 的格式差异是 US-010 第一坑**：
+  老的 Stock / DailyBar / StockValuationFactor 用 "600519.SH" 形式；新的 NorthboundHolding /
+  LimitUpStock / IndustryFlow / FactorScore 用 "600519"。在 CLAUDE.md 里写了 `stripSuffix`
+  模板代码 + 单元素工具函数，避免 US-010 8 个因子各写 8 次相同的 split。
+- **FactorRegistry 全局单例 + 单元测试用 new FactorRegistry() 实例隔离** 是关键模式。
+  生产代码（CLI / Pipeline / Strategy）共享单例确保所有因子在一个地方；测试创建独立 registry
+  注入到 `new FactorPipeline(registry)` 完全隔离，避免测试间状态污染。`_clearForTesting`
+  是 fallback 但鼓励 new instance 模式。
+- **CLI 的 `--skip` 与 `--factors` 并存**：白名单 + 黑名单同时支持。--factors 选定一组要跑
+  的因子，--skip 在那一组里再过滤。生产场景：cron 跑全部因子 + 黑名单临时下线某个失效因子，
+  比改全量列表更安全（一目了然，错过下线就是一次性的）。
+- **FactorPipeline 串行调度 vs 并行**：选了串行。8 因子 × 全 A 股 (~5000 只) × ~250 日 lookback
+  在 Postgres 上单因子 ~2-3s；串行 8 个 ~20-30s，完全可接受。并行的隐性风险大：
+  (1) bulkCreate 同时打满连接池；(2) 日志交错难调试；(3) 单因子 OOM 影响别的。
+  改并行的触发条件应当是 "因子数 > 20 且单因子 < 1s" 时再说。
+- **`is_active != false` 用 Op.or [{is_active: true}, {is_active: null}]** 是为了兼容
+  旧数据（Stock 表里可能有 NULL 的 is_active 字段）。`{is_active: { [Op.ne]: false }}` 看起来更直接
+  但 Sequelize 对 `Op.ne` + NULL 的 SQL 行为依赖 NOT NULL 假设，安全起见用 Or 显式。
+- **Worktree gotcha (still active)**：before `git add`, `rm backend/node_modules`。
 
 ---
