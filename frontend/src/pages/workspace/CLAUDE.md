@@ -100,3 +100,30 @@ When a list/detail layout needs fresh detail per selection:
 2. Keep detail state INSIDE the tab — `selectedDate` + `detail` + `detailLoading` + `detailError`. `useEffect([selectedDate], ...)` fires the per-selection fetch.
 3. On 404: the service swallows it and returns `null` — the tab renders an Empty card with a "建档" hint, NOT an error Alert. This is the right UX for "user navigated to a date that doesn't have data yet".
 4. Mutations (e.g. append note) update detail state locally and conditionally trigger `onListRefresh()` only if the mutation changes the list (e.g. first note creates a new journal row that wasn't in the list).
+
+## Multi-source 3-column comparison + per-block error fallback (US-018 — TodayWorkspace)
+
+For workspaces that show **N parallel data sources side-by-side** (3 strategies in TodayWorkspace; later: US-019..US-023 add more策略 cards; US-022 高分红 vs 低 PE 双因子对比 etc):
+
+1. **Backend service emits per-block error fields** — each Card's data block has `error?: string` populated when its compute branch throws. The aggregator uses `Promise.all(blocks.map(b => b.compute().catch(e => fallbackWithError)))` so one failure doesn't blank the page.
+2. **Frontend Card renders `<Alert type="warning">` for error blocks** instead of bailing out. Other Cards on the same row keep their data. This is critical when each Card's underlying data source (factor_scores / limit_up_stocks / earnings_forecasts) ingests via independent cron jobs — a single missing day shouldn't take down the whole `/workspace/today` page.
+3. **Row layout: `<Row gutter={[16,16]}><Col xs={24} lg={8}>...` for 3 columns**, `lg={12}` for 2 columns. The `xs={24}` falls back to stacked on mobile.
+4. **Each Card structure**: mini-KPI `<Space size={24}>` 三件套 (e.g. "新进入选 / 保留 / 剔除") + 主 Table (rowKey=stock_code) + `Empty image={Empty.PRESENTED_IMAGE_SIMPLE}` 占位。Table 用 `expandable={{ expandedRowRender: row => <Paragraph>{row.reason}</Paragraph> }}` 展示 why-this-pick 细节，不占主行宽度。
+
+## Cross-workspace navigation after an action (US-018 — apply-signals)
+
+For "do something" buttons that send the user to a different workspace afterwards:
+
+1. **Use `useNavigate()` from react-router-dom**, NOT `window.location.href`. The latter triggers a full-page reload, losing antd `ConfigProvider` state and Redux store.
+2. **Pattern**: `Popconfirm → async API call → Modal with result detail → setTimeout(() => navigate(...), 1800) for auto-jump`. The 1.8s delay lets users see what happened before being shuttled away. Always also include a "前往 X" button in the Modal footer for users who want to skip the delay.
+3. **Result Modal table shows per-item status** (placed / skipped / failed + reason). Users need to know *which* of their 12 signals succeeded vs. why others were skipped — a single "完成" toast is not enough for batch actions.
+
+## A-share signal data dependency (US-018 — three strategies need three different tables)
+
+Each策略 Card depends on a distinct upstream table that ingests via its own cron job. When the table is empty, the corresponding `compute<Strategy>Block()` should return `{...emptyBlock, error: "X 表为空，请运行 npm run Y"}` — **never** silently render an empty table or a 500 error.
+
+| Strategy             | Required upstream tables                                            | Sync script                       |
+| -------------------- | -------------------------------------------------------------------- | --------------------------------- |
+| MultiFactorAlpha     | `factor_scores`                                                      | `npm run compute:factors`         |
+| DragonHeadMomentum   | `limit_up_stocks` + `industry_flows` + `dragon_tiger_boards`         | US-006/007/008 sync scripts       |
+| EarningsSurprise     | `earnings_forecasts` (is_surprise=true) + `northbound_holdings`      | US-005/013 sync scripts           |

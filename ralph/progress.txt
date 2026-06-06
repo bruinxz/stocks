@@ -16,6 +16,8 @@
 - **Recharts multi-series 必须共享 X 轴**：N 条曲线叠加时 `data` 是 **一个** array `[{date, task_5: 12.3, task_8: 9.8, ...}, ...]`，每个 `<Line dataKey="task_N" />` 取一列。**不能** N 条线各自 N 个 data array — 那是 chart.js 的旧模式，recharts 下会 X 轴对不齐。组装时用 `Map<date, row>` 累积，最后 `.sort()` 输出。
 - **Inline 表格编辑 hoist state 到 tab 级** (US-017): 用 `editingPositionId / editingValue` 两个 React 受控 state 控制 cell 分支 render (editing vs display)，不要走 antd Table 的 `record.editable` (那是 form-driven 模式，async save + 错误重试难协调)。Display 模式用 Tag + ✏ 按钮；Edit 模式 InputNumber + ✓ 保存 + ✗ 取消。保存失败保留编辑态 + message.error 让用户重试不需重输。
 - **行级 destructive 操作三件套** (US-017): `<Popconfirm okButtonProps={{ danger: true }}>` + `<Button danger loading={closingSymbol === row.symbol}>` + `closingSymbol: string | null` 状态隔离 (只锁该行不锁全表)。成功后触发整体 refresh (单字段 patch 不行：平仓影响 cash + total_value + positions + trades 全部链路)。
+- **3 列 Card + per-block error 模板** (US-018): 多 source 对比型工作区 (TodayWorkspace 三策略对比 / 未来 US-019..US-023 加策略) 用 `<Row gutter={[16,16]}><Col xs={24} lg={8}>` 3 列布局，每个 Card 顶部 mini-KPI `<Space size={24}>` 三件套 + 主 Table + `error?: string` 字段时显示 `<Alert type="warning">`。一个数据源缺失不会把整页打挂，用户看到的是"X 缺数据"而不是"功能坏了"。
+- **跨工作区跳转用 `useNavigate('/workspace/portfolio')`** (US-018 first usage): react-router v6 模式，从 react-router-dom 直接 import `{ useNavigate }`。一键操作 → 弹 Modal 展示明细 → 2 秒延时 `setTimeout(() => navigate(...), 1800)` 跳转，让用户看到结果。**不要用 `window.location.href`** — 会触发 full-page reload 丢失 SPA state（包括 Redux store + antd ConfigProvider 等）。
 
 ### Backend
 - **PaperTrading services live under `backend/src/portfolio/internal/`**, not `backend/src/services/` (US-003 refactor). The public surface is `backend/src/portfolio/PaperTradingFacade.ts` exposing **exactly 7 methods**: `getPortfolio`, `placeOrder`, `closePosition`, `getDailySnapshot`, `attributePnl`, `applyAutomation`, `getRiskProfile`. Controllers MUST only import the facade. Other services/scripts/jobs may still import from `internal/` directly (the facade-only constraint is the controller boundary).
@@ -28,6 +30,7 @@
 - **JSONB column mutation requires `model.changed('field', true)`** (US-017): Sequelize 的 dirty-check 对 JSONB 列上的 in-place mutate (push/splice) 或 reassign 都不会自动包含到 `_changed` set 里。任何 JSONB array/object 修改后必须 `model.changed('user_notes', true)` 显式标记，否则 UPDATE SQL 不发。`appendNote` 用 `journal.user_notes = [...existing, note]` (reassign) + `journal.changed('user_notes', true)` 双保险。
 - **"懒建档" 模式** (US-017): 用户写操作如果发生在 "主数据由 AI 生成 + 用户补充" 的领域里 (复盘日记追加手记 / RiskAlert 备注 / RecommendationFeedback)，遇到该主数据还不存在时 endpoint 自动 create 一行 placeholder (字段标识清晰: `mood='未生成'` 或 `is_placeholder=true`) 让用户操作能继续而不被 404 拦截。前端用 placeholder 标识区分 "AI 已生成" vs "纯用户操作"。
 - **facade 扩 action 联合类型而非加方法** (US-003 规则, US-017 实践): PaperTradingFacade 严格保持 7 个 public method (`getPortfolio / placeOrder / closePosition / getDailySnapshot / attributePnl / applyAutomation / getRiskProfile`)。新写操作就扩展最近 method 的 `XxxAction` / `XxxView` 联合类型 + switch case (default branch `const _: never = action` 保证 exhaustive check)。US-017 加 stop-loss 时套用：`ApplyAutomationAction += 'set_stop_loss'`，applyAutomation switch += 1 个 case，不破坏 facade 收敛。
+- **工作区聚合 service per-block error fallback** (US-018): `getXxxSignals()` 用 `Promise.all` 并发跑 N 个独立查询，每个 catch 成自己的 fallback object 带 `error?: string` 字段。**任一查询失败不能阻塞其他**——前端按需在该 Card 顶部显示 `<Alert>`。`TodaySignalsService` 是模板：3 策略 + 账户 + 告警 + 事件 = 6 个并发分支，全部 catch fall back。一键操作 endpoint (`applySignals`) 先重新跑一次 `getSignals` 保证下单决策与 UI 一致，再用 `paperTradingFacade.placeOrder` 逐笔下单（不绕开 facade —— 否则 risk profile / automation hook 错位）。**已持有 + 本批次重复都要 skip**，避免一键下三次。
 - **Symlinks for tooling in the worktree** — the worktree has no `backend/node_modules`. Before running typecheck, symlink: `cd backend && ln -s /Users/bytedance/go/src/github.com/bruinxz/stocks/backend/node_modules node_modules`. The repo's `backend/.gitignore` matches `node_modules/` as a directory pattern but the symlink shows up as an untracked symlink — REMOVE it before `git add` to keep the tree clean.
 
 ### A-share data ingestion (US-005+)
@@ -1718,4 +1721,78 @@ LabWorkspace 的"大型组件拆分"模式：parent 持顶层 KPI/loading/error 
   + `backend/node_modules` symlink (两个都污染 git status；gitignore 的
   `node_modules/` 是目录模式，对软链接文件不生效)。
 
+---
+
+## 2026/06/07 - US-018
+
+### What was implemented
+**今日作战工作区 `/workspace/today`** — 把三条策略当日信号 + 关键事件 + 风险告警一站式聚合，开盘前一目了然。
+
+**后端**：新增 `backend/src/services/TodaySignalsService.ts` 作为 US-018 工作区专用聚合器（与遗留 `TodayCommandCenterService` 并存，旧 service 仍服务 `/api/today/command-center`，新 service 服务新 `/api/today/signals`）：
+- `getTodaySignals(options)` — `Promise.all` 并发跑 6 个查询（3 策略 + 账户摘要 + 未读告警 + 关键事件），任一失败该 block 返回 `error: <message>` 字段，其他 block 仍正常输出（避免一个数据缺失把整页打挂）。
+- MultiFactorAlpha 用真实持仓 `stripSuffix(p.symbol)` 作 previousSelection（保证 BUY/SELL/HOLD 增量正确）；DragonHead/EarningsSurprise 用空 currentPositions（首次评估场景，调用方后续可传历史）。
+- `trade_date` 默认取 `factor_scores` 最新一日，调用方可显式传 `?trade_date=YYYY-MM-DD` 覆盖。
+- 账户摘要：今值 vs `PaperTradingSnapshot` 最新一条 → 昨日盈亏；今值 vs 当月第一条 snapshot → 当月收益（无 snapshot 时返回 null，UI 显示 "—"）。
+- 关键事件：当日 `EarningsForecast`（is_surprise 优先排序）+ `LimitUpStock` continuous_days ≥ 3（高连板）合并，最多 30 条；排序 `earnings_surprise > earnings_announcement > limit_up_chain`，同类内按 rank_value 降序。
+- `applySignals(options)` — 重新跑一次 `getTodaySignals`（保证下单决策与 UI 一致），收集三策略的 BUY 信号，每笔 5000 元 + 100 股最小手数估算 quantity，逐笔 `paperTradingFacade.placeOrder`，已持有 symbols + 本批次重复 symbols 都 skip。返回每笔订单的 `status: 'placed'|'skipped'|'failed'` + `reason`。
+
+新增 2 个 endpoint：
+- `GET  /api/today/signals` — 接受 trade_date / dragon_head_limit / earnings_limit / alerts_limit query params
+- `POST /api/today/apply-signals` — 接受 trade_date / per_order_amount / max_orders body
+
+`TodayController` 新增 2 个 handler；`today.routes.ts` 注册路由（仍然位于既有 `/api/today/*` 路径下，与 `/command-center`、`/opening-readiness` 并列）。
+
+**前端**：完全重写 `frontend/src/pages/workspace/TodayWorkspace.tsx`（替换原 US-002 placeholder 壳）：
+- 顶部 KPI 4 个 Statistic：账户净值、昨日盈亏（红涨绿跌）、当月收益、未读风险条数。
+- 顶部右上 `<Popconfirm>` 包裹的 "一键应用全部信号" 主按钮，显示当前可下 BUY 总数；下单成功后弹出 `<Modal>` 展示每笔订单结果，2 秒后自动 `navigate('/workspace/portfolio')`。
+- 中部 3 列 `<Card>`：MultiFactorCard（KPI 三件套 新进/保留/剔除 + 新进入选 Table + 剔除 List）、DragonHeadCard（KPI 二件套 + 候选 Table 带可展开 reason）、EarningsSurpriseCard（KPI 三件套 当日 BUY/当日公告/双确认通过 + 候选 Table）。每个 card 单独处理 error 状态，不会因一个策略失败而隐藏其他。
+- 底部 2 列：今日关键事件（business event type tag + 一句话 summary）和未读风险告警（level icon + level tag）。
+- 3 个 tab：`today signals`（主 panel）/ `events`（全量 30 条事件列表）/ `alerts`（全量未读告警列表）。
+- 新增 `frontend/src/services/todayWorkspaceService.ts` — 2 个端点 + 类型定义（与后端 service 类型一对一）。
+
+### Files changed
+**新增**：
+- `backend/src/services/TodaySignalsService.ts`（508 行，service 主体 + 4 个内部 compute 方法 + 6 个 helper）
+- `frontend/src/services/todayWorkspaceService.ts`（159 行，API client + 类型定义）
+
+**修改**：
+- `backend/src/api/controllers/TodayController.ts`（新增 `getTodaySignals` 和 `applyTodaySignals` 两个 handler）
+- `backend/src/api/routes/today.routes.ts`（注册两条新路由）
+- `frontend/src/pages/workspace/TodayWorkspace.tsx`（重写：从 47 行壳页 → 完整工作区 ~720 行）
+- `ralph/prd.json`（US-018 → passes:true）
+- `ralph/progress.txt`（本条 + Codebase Patterns 新增）
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → exit 0
+- `cd frontend && ./node_modules/.bin/tsc --noEmit` → exit 0
+- `cd backend && ./node_modules/.bin/eslint src/services/TodaySignalsService.ts src/api/controllers/TodayController.ts src/api/routes/today.routes.ts --ext .ts --quiet` → exit 0 (4 prettier warnings auto-fixed mid-flight via `--fix`)
+- `cd frontend && ./node_modules/.bin/eslint src --ext .ts,.tsx --quiet` → exit 0
+
+### Browser verification
+**Not performed** — 与既有 stories 一致，本环境无 `dev-browser` MCP skill。手动验证清单：
+1. `npm start` 后登录 → 默认进入 `/workspace/today`
+2. 顶部 KPI 4 个数字（账户净值 / 昨日盈亏 / 当月收益 / 未读风险）正确显示，无数据时显示 "—"
+3. 中部 3 列卡片 在数据齐全时各自有 mini-KPI + 候选 Table；某个策略 503 时显示 Alert，其他卡片不受影响
+4. 底部 2 列事件 / 告警卡片显示前 8 条预览，切换到 `events` / `alerts` tab 看全量
+5. 点 "一键应用全部信号 (N)" → Popconfirm → 弹 Modal 显示每笔订单结果，2 秒后自动跳转 `/workspace/portfolio`
+6. Refresh 按钮重新拉取所有数据
+
+### Learnings for future iterations
+
+#### 后端 service 聚合 — 并发 + per-block error fallback 是新工作区的模板
+- **`Promise.all` + `.catch(e => fallbackBlock)`** 是新工作区聚合 service 的标准模板。每个 block 自带 `error?: string` 字段，前端按需在 Card 顶部显示 `<Alert>`。这样一个数据源缺失（factor_scores 没跑过 / EarningsForecast 表空）不会把整页打挂。Pattern 直接复用到 US-019..US-023 的新策略接入今日页：每加一个策略 = 加一个 `compute<Strategy>Block` 方法 + `Promise.all` 一项 + UI 一列 Card。
+- **遗留 service 共存策略**：US-018 没动 850 行的 `TodayCommandCenterService`，而是新建 `TodaySignalsService` 服务新 endpoint `/api/today/signals`。`/api/today/command-center` 旧 endpoint 仍由旧 service 服务（可能被某些遗留页面或 cron 调用）。后续 US-099+ 收敛旧 service 时再合并；目前并存优先保持新功能干净。
+- **`paperTradingFacade.placeOrder` 是规范的下单入口** — US-018 的一键应用功能套用 facade，没绕开（如果绕开 → 容易跟 risk profile / automation 等内部 hook 不一致）。新增任何"自动下单"功能（一键应用 / 自动调仓 / strategy 触发）都应该过 facade.placeOrder，不要直连 PaperTradingPosition.create。
+
+#### 前端 workspace pattern — 3 列卡片 + 一键操作 + 跳转
+- **3 列 + Card.error 模板** — 任何"对比多个 source/strategy/dimension" 的页都可以套这个布局：每个 Card 用 `<Space size={24}>` 三件套 mini-KPI + 主 Table + 错误 Alert。MultiFactor / DragonHead / EarningsSurprise 三个 Card 的代码可读为同一模板的 3 个 instance；未来 US-019..US-023 新策略加 Card 就照抄一遍。
+- **一键操作 → Popconfirm + Modal + navigate** — Popconfirm 处理 "确认要下 N 单吗" 的二次确认（用户最容易误触）；下单成功后弹 Modal 展示明细（让用户看到每笔下单结果，包括 placed/skipped/failed），2 秒延时 + `useNavigate()` 跳转目标页（避免用户被瞬间转走来不及看结果）。这个组合可复用到 US-019 北向加仓策略的"一键跟单"、US-022 高分红策略的"一键建仓"等场景。
+- **`useNavigate` from react-router-dom** 在工作区内部跳转 — 之前没有 workspace 用过 react-router 的 navigate hook (US-015..US-017 都是单页内部 tab 切换)。US-018 是第一个用 `useNavigate('/workspace/portfolio')` 做跨工作区跳转的页。**确认 react-router v6 模式：直接 import `{ useNavigate }` 即可，不需要 wrapped Router context**。
+- **`pnlColor` 函数返回 `undefined as unknown as string`** 处理"零值不上色"场景 — antd `Statistic.valueStyle.color` 类型要求 `string`，但 `undefined` 才能让它走默认色（不是黑也不是灰）。这个 type-cast hack 是 antd v5 valueStyle 设计的妥协，US-017 PortfolioWorkspace 已有同样写法，US-018 沿用。
+
+#### 数据准备状态 — 三策略需要的表（早期会大量 error/empty 是正常）
+- MultiFactorAlpha 需要 `factor_scores` 表有数据 → `npm run compute:factors -- --date=YYYY-MM-DD`
+- DragonHeadMomentum 需要 `limit_up_stocks` + `industry_flows` + `dragon_tiger_boards` → US-007/008/006 各自 sync 脚本
+- EarningsSurprise 需要 `earnings_forecasts`（有 is_surprise=true 的行）+ `northbound_holdings` → US-013/005 各自 sync 脚本
+- 当任一表为空时，对应 block 显示 `error: "..."` 而不是空白 — 用户看到的是"缺数据，请运行 X 脚本"而不是"功能坏了"。
 ---

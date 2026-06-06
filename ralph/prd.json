@@ -294,8 +294,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 18,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026/06/07. Added backend/src/services/TodaySignalsService.ts aggregating 3 strategies (MultiFactorAlpha + DragonHeadMomentum + EarningsSurprise) concurrently with per-block error isolation, plus account summary (today.total_value vs yesterday/month-start snapshots), unread RiskAlerts query, and key events (EarningsForecast + LimitUpStock continuous_days ≥ 3). 2 new endpoints under TodayController: GET /api/today/signals (full payload) and POST /api/today/apply-signals (one-click BUY orders via paperTradingFacade.placeOrder with per_order_amount=5000 default + held-symbol skip). Rebuilt frontend/src/pages/workspace/TodayWorkspace.tsx with 4-stat KPI (净值/昨日盈亏/当月收益/未读告警), 3-column strategy cards (multi-factor 调仓 / 龙头候选 / 业绩超预期), 2-column event+alerts panels, and 一键应用 button that auto-redirects to /workspace/portfolio after success modal. Added frontend/src/services/todayWorkspaceService.ts. cd backend && npx tsc --noEmit + cd frontend && tsc --noEmit pass; lint clean. Browser verification noted as manual (no dev-browser MCP)."
     },
     {
       "id": "US-019",

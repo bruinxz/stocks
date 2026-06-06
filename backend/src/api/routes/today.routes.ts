@@ -16,4 +16,16 @@ router.get(
   todayController.getOpeningReadiness.bind(todayController)
 );
 
+// US-018 — Today Workspace 聚合接口
+router.get(
+  '/signals',
+  authController.authenticate,
+  todayController.getTodaySignals.bind(todayController)
+);
+router.post(
+  '/apply-signals',
+  authController.authenticate,
+  todayController.applyTodaySignals.bind(todayController)
+);
+
 export default router;
