@@ -15,6 +15,7 @@ import { VolatilityContractionBreakoutStrategy } from '../strategies/VolatilityC
 import { DualMomentumRotationStrategy } from '../strategies/DualMomentumRotationStrategy';
 import { QualityMomentumBlendStrategy } from '../strategies/QualityMomentumBlendStrategy';
 import { TrendPullbackReentryStrategy } from '../strategies/TrendPullbackReentryStrategy';
+import { MultiFactorAlphaStrategy } from '../strategies/MultiFactorAlphaStrategy';
 import { QuantStrategyDefinition } from '../types/QuantTypes';
 
 export class StrategyRegistry {
@@ -37,6 +38,7 @@ export class StrategyRegistry {
     this.register(new DualMomentumRotationStrategy());
     this.register(new QualityMomentumBlendStrategy());
     this.register(new TrendPullbackReentryStrategy());
+    this.register(new MultiFactorAlphaStrategy());
   }
 
   register(strategy: QuantStrategy) {

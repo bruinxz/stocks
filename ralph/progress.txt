@@ -49,6 +49,16 @@
   - For "lower-is-better" factors (low_vol), return `-stddev` not `1/stddev`: avoid div-by-near-zero noise.
   - For "ratio family" factors (value), use `1/PE + 1/PB` not `-PE - PB`: keeps both ingredients dimensionless and naturally bounded.
 
+### Quant strategies — 组合级 vs per-stock (US-011+)
+- **Two strategy shapes coexist in `backend/src/quant/strategies/`**: the historical **per-stock `evaluate(context)`** pattern (17 strategies, called by StrategyEngine in a stock×strategy matrix), and the **组合级 async `generateSignals(date)`** pattern (introduced by US-011 MultiFactorAlphaStrategy). Picking the wrong shape forces you to encode 横截面 / top-N / 行业中性 / previous-diff logic into a per-stock evaluate — don't do it.
+- **组合级 strategies still extend `QuantStrategy`** for registry contract, but `evaluate()` returns an informational `signal='hold'` with `factors.note='use_generateSignals_instead'`. Real entry point is the async `generateSignals(date, { params?, previousSelection? })`.
+- **DataSource interface injection is mandatory for 组合级 tests** — every 组合级 strategy declares a `<Name>DataSource` interface + `Default<Name>DataSource` Sequelize impl + `PRODUCTION_DATA_SOURCE` singleton, and constructor accepts an override. Tests inject a fake `loadXxx()` returning Map<…>, completely bypassing DB. See `MultiFactorAlphaStrategy.ts` for the canonical layout.
+- **BUY/SELL/HOLD diff lives in the strategy, not the caller.** Caller passes `previousSelection: string[]`; strategy computes `BUY = target ∩ ¬prev`, `HOLD = target ∩ prev`, `SELL = prev ∩ ¬target`. Letting N callers each diff = N inconsistent diff implementations (the bug PaperTradingFacade already paid for).
+- **Stable tie-break in candidate sort = `stock_code.localeCompare`** — otherwise V8 TimSort plus comparator returning 0 makes monthly-rebalance boundary picks non-deterministic, breaking audit / replay / reconciliation.
+- **`override.weights` replaces default wholesale, NOT spread-merge** — users expect "what I list is the whole spec". Spread merge silently keeps 6 default factors in the weighted sum and breaks composite math. Same lesson applies to any new Record/object param in 组合级 strategies; scalar params (topN, maxPerIndustry) are safe to default.
+- **Tests live in `backend/tests/strategies/`** (per AC). The dir is **outside** `tsconfig.json`'s `include` (which is `src/**/*`), so `npx tsc --noEmit` and `npm run lint` skip it. Tests use the node-direct convention (no jest) — `npx ts-node --transpile-only tests/strategies/<Name>.test.ts`. Pattern matches existing `productionPreflight.test.ts` / `LiveAuditAlertService.test.ts` / `liveTradingRateLimit.test.ts` in `src/`.
+- **`backend/src/quant/strategies/CLAUDE.md` is the source of truth** for the 组合级 pattern + 5 design constraints (DataSource injection, BUY/SELL/HOLD in strategy, evaluate-as-hold, stable sort tie-break, tests-in-backend/tests/). Update it (not this file) when refining the contract.
+
 
 ### Tooling
 - **Frontend node_modules are in the main repo, not the worktree.** Run `ln -s /Users/bytedance/go/src/github.com/bruinxz/stocks/frontend/node_modules frontend/node_modules` inside the worktree before `./node_modules/.bin/tsc --noEmit` or eslint. REMOVE the symlink before `git add` — gitignore matches the directory pattern but not the symlink file.
@@ -714,5 +724,111 @@ US-009 不实现具体因子（那是 US-010 的事），落地的是 "因子运
   `if (!symbol) return ''; const i = symbol.indexOf('.'); return i < 0 ? symbol : symbol.slice(0, i);`
   ——库内已经有 `stripSuffix(symbol)`，统一了 8 份不一致的边界处理。
 - **Worktree gotcha (still active)**：before `git add`, `rm backend/node_modules`（symlink 污染 git status）。
+
+---
+
+
+## 2026/06/07 - US-011
+
+### What was implemented
+多因子 alpha 选股策略 v1：`MultiFactorAlphaStrategy`。
+US-009/010 已经把 8 因子横截面 z_score 写满 `factor_scores` 表 (每天每因子
+universe 全集)，本 story 在 `quant/strategies/` 里把它**消费起来**——按
+默认权重 (Value 0.15 / Quality 0.15 / Growth 0.15 / Momentum 0.15 / LowVol
+0.10 / Northbound 0.10 / MoneyFlow 0.10 / DragonTiger 0.10) 加权合成
+composite_score，月度调仓选 top-30 行业中性 (单行业 ≤ 3 只)，自动剔除
+ST 与上市 60 自然日内的次新股，并基于 previousSelection 输出
+BUY/SELL/HOLD 增量信号。
+
+**关键的"组合级策略"模式 (本 story 首次引入)**：
+现有 17 个策略都是 per-stock evaluate(context) 模式，被 StrategyEngine/
+SignalEngine 在每日 pipeline 中按 (股票 × 策略) 矩阵循环调用。但多因子
+top-N 选股 + 行业中性 + previous diff 这种**横截面**逻辑根本表达不出来。
+MultiFactorAlphaStrategy 仍继承 QuantStrategy 满足 registry 契约
+(`evaluate()` 退化为信息性 hold + machine-readable factors.note=
+'use_generateSignals_instead')，真正入口是 **async generateSignals(tradeDate,
+{params?, previousSelection?})**。这套模式后续 US-019 (NorthboundFollow) /
+US-020 (CTA100) / US-021 (SectorRotationLeader) / US-028 (EnsembleStrategy)
+都会复用——**`backend/src/quant/strategies/CLAUDE.md` 新增文档把 5 条
+设计约定写明**:
+1. **DataSource 接口注入** — 测试可传 fake 完全脱离 DB
+2. **BUY/SELL/HOLD 在策略内 diff** — caller 只传 previousSelection,
+   不让 caller 自己 diff (避免 N 份不一致逻辑)
+3. **evaluate() 实现为信息性 hold** — 误用 per-stock backtest 不崩
+4. **排序稳定 tie-break = stock_code 升序** — 月度调仓 boundary 不抖动
+5. **tests 在 backend/tests/strategies/** — 不依赖 jest，ts-node 直跑
+
+### Files changed
+- `backend/src/quant/strategies/MultiFactorAlphaStrategy.ts` (new ~430 LOC)
+- `backend/src/quant/strategies/CLAUDE.md` (new — 组合级策略模式)
+- `backend/src/quant/engine/StrategyRegistry.ts` (registered new strategy)
+- `backend/tests/strategies/MultiFactorAlphaStrategy.test.ts` (new — 17 用例, 60+ 断言)
+- `ralph/prd.json` (US-011 → passes:true)
+- `ralph/progress.txt` (this entry + 新 Codebase Patterns)
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → exit 0 ✅
+- `eslint MultiFactorAlphaStrategy.ts + StrategyRegistry.ts --quiet` → exit 0 ✅
+- `npx ts-node --transpile-only tests/strategies/MultiFactorAlphaStrategy.test.ts`
+  → 17 tests pass，覆盖 60+ 断言；运行时 < 1s
+  - default weights / params 校验 (sum=1.0, topN=30, industryNeutral=true 等)
+  - composite_score 加权合成正确 (全 z=1 → composite=1.0)
+  - industryNeutral=true 每行业 cap 在 maxPerIndustry (default 3)
+  - industryNeutral=false 不做行业限制
+  - excludeST=true 剔除 ST/*ST/S*ST 命名，excludeST=false 保留
+  - excludeNew60d 21 天剔除 / 92 天保留
+  - 全 8 因子 z=0 (no_factor_data) 剔除
+  - tie-break 按 stock_code 升序稳定
+  - previousSelection 算 BUY (新进) / HOLD (仍在) / SELL (跌出)
+  - 首次开仓 (无 previousSelection) 全为 BUY
+  - 自定义权重 (2, 8) → 归一化后 composite 正确
+  - evaluate() 返回信息性 hold (signal='hold', factors.note=…)
+  - helper isSTName / isNewerThan 边角覆盖
+  - invalid trade_date 抛出
+  - 空 universe 安全
+
+### Browser verification
+**N/A** — 后端策略层，无 HTTP 表面。US-015 因子工作区会通过
+`GET /api/strategies/multi-factor/latest-picks` 暴露 latest selection
+(那是后续 story 的 endpoint)。本 story 仅落地策略实现 + 注册 + 测试。
+
+### Learnings for future iterations
+- **组合级策略 vs per-stock evaluate 是 codebase 的 first-class 区分**。
+  US-011 后 `strategies/` 同时存在两种形态；新加策略前先决定形态再写代码：
+  trend / momentum / 突破/ 反转/ 防守 类几乎都是 per-stock evaluate；
+  多因子合成 / top-N / 行业轮动 / 北向跟随 / ensemble 几乎都是组合级。
+  混用同一接口意味着把不适合的逻辑硬塞进 evaluate() — 不要这么做。
+- **DataSource 接口注入是组合级策略的"测试解锁键"**。曾经犹豫"直接在
+  策略里 `FactorScore.findAll` 不行吗？"——行，但**测试就必须跑真 DB**，
+  CI 慢、隔离差、fake 数据难造。加一层接口（MultiFactorAlphaDataSource +
+  生产实现 + PRODUCTION_DATA_SOURCE 单例）让 17 个用例都跑 in-memory fake
+  数据，整套测试 < 1s 完成。代价：每个策略要写 ~30 行 DataSource 接口 +
+  生产实现，但 ROI 极高——后续 US-019/020/021 应当原样复用模式。
+- **override.weights 必须整体替换 default 而非 spread 合并**。原以为
+  `{ ...def.weights, ...override.weights }` 用户友好，写完测试才发现：
+  用户只想给 value=2, momentum=8 → 实际跑的是 8 因子加权 (其他 6 因子
+  还在 0.10-0.15)，composite 算出来根本对不上预期。改成"如果 override
+  里有 weights，整体替换"才符合直觉 (用户的心智模型: 列出的就是全部)。
+  类似陷阱在 `topN` / `maxPerIndustry` 等标量参数上不存在，**只有
+  Record/对象参数会踩**，下一个组合级策略加入新对象参数时记得复查。
+- **排序稳定性 tie-break = stock_code 升序** 是月度调仓的隐性硬性要求。
+  V8 的 Array.sort 是 TimSort (stable in ES2019+) 但 comparator 返回 0
+  仍然依赖原数组顺序——这意味着 universe 内 stock_code 的入栈顺序会
+  影响 boundary 的结果。显式 `localeCompare` tie-break 让"同一 (date,
+  factor_scores 快照, 参数) 跑出的结果完全相同"成为强契约——审计 /
+  对账 / 回放都依赖这一点。
+- **`factors.note='use_generateSignals_instead'` 是机器可读的提示**。
+  evaluate() 返回的 reasons[] 是给人看的；factors 对象里塞一个
+  enum-like 字段让 downstream 工具 (例如 backtest engine 自检) 能
+  识别 "这只信号被策略主动声明不可信"。后续组合级策略一律按这个 key
+  写，便于全局 grep。
+- **测试架构的妥协**：AC 要求 `backend/tests/strategies/` 路径，但
+  codebase 既有测试都在 `src/**/*.test.ts` 紧邻源码。最终选择尊重 AC：
+  tests/ 目录在 tsconfig 的 `include` 之外 → 不被 typecheck 带入 →
+  ts-node `--transpile-only` 跑零依赖，干净。eslint 默认只扫 `src/`，
+  tests/ 也不会被 `npm run lint` 触发，不污染日常 lint 噪音。
+  下一个组合级策略测试就放 `backend/tests/strategies/` 即可。
+- **Worktree gotcha (still active)**：before `git add`, `rm backend/node_modules`
+  (symlink 污染 git status)。
 
 ---
