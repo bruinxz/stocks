@@ -10,18 +10,7 @@ import {
   useNavigate,
   useParams,
 } from 'react-router-dom';
-import {
-  DashboardOutlined,
-  LineChartOutlined,
-  UserOutlined,
-  AreaChartOutlined,
-  SyncOutlined,
-  LogoutOutlined,
-  BarChartOutlined,
-  FundProjectionScreenOutlined,
-  DownOutlined,
-  SafetyCertificateOutlined,
-} from '@ant-design/icons';
+import { UserOutlined, LogoutOutlined, BarChartOutlined, DownOutlined } from '@ant-design/icons';
 import zhCN from 'antd/locale/zh_CN';
 import { useSelector, useDispatch } from 'react-redux';
 import { RootState } from './store/rootReducer';
@@ -42,31 +31,30 @@ const UserManagement = lazy(() => import('./pages/UserManagement'));
 const AIAdvisor = lazy(() => import('./pages/AIAdvisor'));
 const TaskScheduler = lazy(() => import('./pages/TaskScheduler'));
 const Screener = lazy(() => import('./pages/Screener'));
-const Recommendations = lazy(() => import('./pages/Recommendations'));
 const ReviewCenter = lazy(() => import('./pages/ReviewCenter'));
 const StrategyResearchCenter = lazy(() => import('./pages/StrategyResearchCenter'));
 const RecommendationTrace = lazy(() => import('./pages/RecommendationTrace'));
 const AutonomousTradingOverview = lazy(() => import('./pages/AutonomousTradingOverview'));
-const AutonomousRecommendationTracker = lazy(
-  () => import('./pages/AutonomousRecommendationTracker')
-);
 const LiveTrading = lazy(() => import('./pages/LiveTrading'));
 const QuantResearchWorkbench = lazy(() => import('./pages/QuantResearchWorkbench'));
 const RiskAlerts = lazy(() => import('./pages/RiskAlerts'));
 const SystemLogs = lazy(() => import('./pages/SystemLogs'));
+
+// 6 unified workspace shells (US-001/US-002)
+const TodayWorkspace = lazy(() => import('./pages/workspace/TodayWorkspace'));
+const FactorWorkspace = lazy(() => import('./pages/workspace/FactorWorkspace'));
+const LabWorkspace = lazy(() => import('./pages/workspace/LabWorkspace'));
+const PortfolioWorkspace = lazy(() => import('./pages/workspace/PortfolioWorkspace'));
+const DataWorkspace = lazy(() => import('./pages/workspace/DataWorkspace'));
+const SettingsWorkspace = lazy(() => import('./pages/workspace/SettingsWorkspace'));
+
 import {
-  RobotOutlined,
-  ClockCircleOutlined,
-  AlertOutlined,
-  BookOutlined,
-  ThunderboltOutlined,
-  NodeIndexOutlined,
-  BranchesOutlined,
-  RadarChartOutlined,
-  AimOutlined,
   CompassOutlined,
   SettingOutlined,
-  TrophyOutlined,
+  ExperimentOutlined,
+  DatabaseOutlined,
+  FilterOutlined,
+  PieChartOutlined,
 } from '@ant-design/icons';
 
 import type { MenuProps } from 'antd';
@@ -104,15 +92,43 @@ const menuLink = (key: string, icon: React.ReactNode, title: string) => ({
   title,
 });
 
+// All deprecated paths now resolve to a workspace entry in the menu so the
+// sidebar highlights the right top-level item even if we still render the
+// legacy page underneath for backward compatibility.
 const routeSelectionAliases: Array<[RegExp, string]> = [
-  [/^\/quant\/(research|signals|backtests|strategies|experiments)(\/.*)?$/, '/quant/research'],
+  // legacy aliases preserved for old deep links
   [
-    /^\/strategy-research\/(optimization|versions|experiments|weights|event-results)(\/.*)?$/,
-    '/strategy-research',
+    /^\/quant\/(research|signals|backtests|strategies|experiments|dashboard)(\/.*)?$/,
+    '/workspace/lab',
   ],
-  [/^\/live-trading\/(orders|reconcile)(\/.*)?$/, '/live-trading'],
-  [/^\/review\/(trades|performance|agent-tail|journal)(\/.*)?$/, '/review'],
-  [/^\/backtest\/.+$/, '/backtest'],
+  [
+    /^\/strategy-research(\/(optimization|versions|experiments|weights|event-results))?(\/.*)?$/,
+    '/workspace/lab',
+  ],
+  [/^\/live-trading(\/(orders|reconcile))?(\/.*)?$/, '/workspace/portfolio'],
+  [/^\/review(\/(trades|performance|agent-tail|journal))?(\/.*)?$/, '/workspace/portfolio'],
+  [/^\/backtest(\/.+)?$/, '/workspace/lab'],
+  [/^\/autonomous-trading(\/.*)?$/, '/workspace/portfolio'],
+  [/^\/paper-trading(\/.*)?$/, '/workspace/portfolio'],
+  [/^\/recommendations?(\/.*)?$/, '/workspace/today'],
+  [/^\/recommendation-(performance|trade-outcomes|loop-policies)(\/.*)?$/, '/workspace/portfolio'],
+  [/^\/agent-tail-alpha(\/.*)?$/, '/workspace/portfolio'],
+  [/^\/strategy-experiment-lab(\/.*)?$/, '/workspace/lab'],
+  [/^\/strategy(\/.*)?$/, '/workspace/lab'],
+  [/^\/risk-alerts(\/.*)?$/, '/workspace/today'],
+  [/^\/today(\/.*)?$/, '/workspace/today'],
+  [/^\/dashboard(\/.*)?$/, '/workspace/today'],
+  [/^\/portfolio(\/.*)?$/, '/workspace/portfolio'],
+  [/^\/screener(\/.*)?$/, '/workspace/factors'],
+  [/^\/market(\/.*)?$/, '/workspace/data'],
+  [/^\/data-update(\/.*)?$/, '/workspace/data'],
+  [/^\/tasks(\/.*)?$/, '/workspace/data'],
+  [/^\/logs(\/.*)?$/, '/workspace/data'],
+  [/^\/ai-advisor(\/.*)?$/, '/workspace/lab'],
+  [/^\/journals(\/.*)?$/, '/workspace/portfolio'],
+  [/^\/profile(\/.*)?$/, '/workspace/settings'],
+  [/^\/users(\/.*)?$/, '/workspace/settings'],
+  [/^\/signals\/.+\/trace$/, '/workspace/portfolio'],
 ];
 
 const resolveMenuPath = (pathname: string) => {
@@ -188,81 +204,18 @@ const AppContent: React.FC = () => {
     navigate('/login');
   };
 
+  // US-001: collapse the legacy 38-page sprawl into 6 top-level workspaces.
+  // Each workspace owns a tabbed inner layout (built out in later stories).
   const mainMenuItems: MenuProps['items'] = useMemo(
     () => [
-      {
-        key: 'nav-today',
-        icon: <CompassOutlined />,
-        label: '今日作战',
-        title: '今日作战',
-        children: [
-          menuLink('/today', <CompassOutlined />, '今日作战台'),
-          menuLink('/autonomous-trading/overview', <FundProjectionScreenOutlined />, '当前持仓'),
-          menuLink('/risk-alerts', <AlertOutlined />, '卖出/风控'),
-        ],
-      },
-      {
-        key: 'nav-quant-research',
-        icon: <AimOutlined />,
-        label: '量化交易',
-        title: '量化交易',
-        children: [
-          menuLink('/quant/dashboard', <FundProjectionScreenOutlined />, '量化总览'),
-          menuLink('/quant/research', <ThunderboltOutlined />, '研究工作台'),
-          menuLink('/strategy-research', <TrophyOutlined />, '策略闭环'),
-          menuLink('/ai-advisor', <RobotOutlined />, 'AI深度研报'),
-          menuLink('/backtest', <LineChartOutlined />, '传统事件回测'),
-        ],
-      },
-      {
-        key: 'nav-review',
-        icon: <RadarChartOutlined />,
-        label: '收益复盘',
-        title: '收益复盘',
-        children: [
-          menuLink('/review', <RadarChartOutlined />, '复盘总览'),
-          menuLink('/review/trades', <NodeIndexOutlined />, '交易明细'),
-          menuLink('/review/performance', <FundProjectionScreenOutlined />, '信号绩效'),
-          menuLink('/review/agent-tail', <RadarChartOutlined />, 'Agent尾盘账本'),
-          menuLink('/review/journal', <BookOutlined />, '交易日记'),
-        ],
-      },
-      {
-        key: 'nav-live-trading',
-        icon: <SafetyCertificateOutlined />,
-        label: '实盘交易',
-        title: '实盘交易',
-        children: [
-          menuLink('/live-trading', <SafetyCertificateOutlined />, '安全边界'),
-          menuLink('/live-trading/reconcile', <BranchesOutlined />, '只读对账'),
-          menuLink('/live-trading/orders', <ThunderboltOutlined />, '订单审批'),
-        ],
-      },
-      {
-        key: 'nav-data-system',
-        icon: <SyncOutlined />,
-        label: '数据与系统',
-        title: '数据与系统',
-        children: [
-          menuLink('/market', <AreaChartOutlined />, '市场与自选'),
-          menuLink('/data-update', <SyncOutlined />, '数据同步'),
-          menuLink('/tasks', <ClockCircleOutlined />, '调度任务'),
-          menuLink('/logs', <BookOutlined />, '运行日志'),
-          menuLink('/dashboard', <DashboardOutlined />, '系统总览'),
-        ],
-      },
-      {
-        key: 'nav-settings',
-        icon: <SettingOutlined />,
-        label: '账号与设置',
-        title: '账号与设置',
-        children: [
-          menuLink('/profile', <UserOutlined />, '个人中心'),
-          ...(user?.role === 'admin' ? [menuLink('/users', <UserOutlined />, '用户管理')] : []),
-        ],
-      },
+      menuLink('/workspace/today', <CompassOutlined />, '今日作战'),
+      menuLink('/workspace/factors', <FilterOutlined />, '选股因子'),
+      menuLink('/workspace/lab', <ExperimentOutlined />, '策略实验室'),
+      menuLink('/workspace/portfolio', <PieChartOutlined />, '持仓与复盘'),
+      menuLink('/workspace/data', <DatabaseOutlined />, '数据中心'),
+      menuLink('/workspace/settings', <SettingOutlined />, '账号设置'),
     ],
-    [user?.role]
+    []
   );
 
   const flatMenuItems = useMemo(() => flattenMenu(mainMenuItems), [mainMenuItems]);
@@ -271,9 +224,9 @@ const AppContent: React.FC = () => {
     flatMenuItems
       .filter(item => menuPath === item.key || menuPath.startsWith(`${item.key}/`))
       .sort((a, b) => b.key.length - a.key.length)[0] || flatMenuItems[0];
-  const selectedKey = selectedMenu?.key || '/dashboard';
+  const selectedKey = selectedMenu?.key || '/workspace/today';
   const currentSection = selectedMenu?.section || '工作台';
-  const currentPageTitle = selectedMenu?.title || '总览仪表盘';
+  const currentPageTitle = selectedMenu?.title || '今日作战';
   const selectedParentKeys = useMemo(
     () => selectedMenu?.parentKeys || [],
     [selectedMenu?.parentKeys]
@@ -303,7 +256,7 @@ const AppContent: React.FC = () => {
       {
         key: 'profile',
         icon: <UserOutlined />,
-        label: <Link to="/profile">个人中心</Link>,
+        label: <Link to="/workspace/settings">个人中心</Link>,
       },
       {
         type: 'divider',
@@ -378,9 +331,138 @@ const AppContent: React.FC = () => {
         <Content className="modern-layout-content">
           <Suspense fallback={routeFallback}>
             <Routes>
-              <Route path="/" element={<Navigate to="/today" replace />} />
+              {/* Default lands users in the new today workspace */}
+              <Route path="/" element={<Navigate to="/workspace/today" replace />} />
+
+              {/* 6 unified workspaces (US-001) */}
               <Route
-                path="/today"
+                path="/workspace/today"
+                element={
+                  <ProtectedRoute>
+                    <TodayWorkspace />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/workspace/factors"
+                element={
+                  <ProtectedRoute>
+                    <FactorWorkspace />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/workspace/lab"
+                element={
+                  <ProtectedRoute>
+                    <LabWorkspace />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/workspace/portfolio"
+                element={
+                  <ProtectedRoute>
+                    <PortfolioWorkspace />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/workspace/data"
+                element={
+                  <ProtectedRoute>
+                    <DataWorkspace />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/workspace/settings"
+                element={
+                  <ProtectedRoute>
+                    <SettingsWorkspace />
+                  </ProtectedRoute>
+                }
+              />
+
+              {/* Legacy redirects — duplicate pages now bounce to a workspace home.
+                  Listed in PRD US-001 acceptance criteria. */}
+              <Route path="/today" element={<Navigate to="/workspace/today" replace />} />
+              <Route path="/dashboard" element={<Navigate to="/workspace/today" replace />} />
+              <Route path="/risk-alerts" element={<Navigate to="/workspace/today" replace />} />
+              <Route
+                path="/strategy-experiment-lab"
+                element={<Navigate to="/workspace/lab" replace />}
+              />
+              <Route
+                path="/autonomous-optimization-lab"
+                element={<Navigate to="/workspace/lab" replace />}
+              />
+              <Route
+                path="/quant-backtest-lab"
+                element={<Navigate to="/workspace/lab" replace />}
+              />
+              <Route
+                path="/quant-performance-dashboard"
+                element={<Navigate to="/workspace/lab" replace />}
+              />
+              <Route path="/quant-signal-pool" element={<Navigate to="/workspace/lab" replace />} />
+              <Route
+                path="/quant-strategy-library"
+                element={<Navigate to="/workspace/lab" replace />}
+              />
+              <Route path="/strategy" element={<Navigate to="/workspace/lab" replace />} />
+              <Route path="/recommendations" element={<Navigate to="/workspace/today" replace />} />
+              <Route
+                path="/recommendation-performance"
+                element={<Navigate to="/workspace/portfolio" replace />}
+              />
+              <Route
+                path="/recommendation-trade-outcomes"
+                element={<Navigate to="/workspace/portfolio" replace />}
+              />
+              <Route
+                path="/recommendation-loop-policies"
+                element={<Navigate to="/workspace/portfolio" replace />}
+              />
+              <Route
+                path="/agent-tail-alpha"
+                element={<Navigate to="/workspace/portfolio" replace />}
+              />
+              <Route
+                path="/autonomous-recommendation-tracker"
+                element={<Navigate to="/workspace/portfolio" replace />}
+              />
+              <Route
+                path="/autonomous-trading/overview"
+                element={<Navigate to="/workspace/portfolio" replace />}
+              />
+              <Route
+                path="/autonomous-trading/recommendations"
+                element={<Navigate to="/workspace/portfolio" replace />}
+              />
+              <Route
+                path="/autonomous-trading/optimization"
+                element={<Navigate to="/workspace/lab" replace />}
+              />
+              <Route
+                path="/paper-trading"
+                element={<Navigate to="/workspace/portfolio" replace />}
+              />
+              <Route path="/portfolio" element={<Navigate to="/workspace/portfolio" replace />} />
+              <Route path="/journals" element={<Navigate to="/workspace/portfolio" replace />} />
+              <Route path="/screener" element={<Navigate to="/workspace/factors" replace />} />
+              <Route path="/market" element={<Navigate to="/workspace/data" replace />} />
+              <Route path="/data-update" element={<Navigate to="/workspace/data" replace />} />
+              <Route path="/tasks" element={<Navigate to="/workspace/data" replace />} />
+              <Route path="/logs" element={<Navigate to="/workspace/data" replace />} />
+              <Route path="/profile" element={<Navigate to="/workspace/settings" replace />} />
+              <Route path="/users" element={<Navigate to="/workspace/settings" replace />} />
+
+              {/* Pages still reachable for deep links / iframes — kept off the menu.
+                  Stories US-015..US-018 will fold their useful pieces into the
+                  workspace tabs and these can then be deleted physically. */}
+              <Route
+                path="/legacy/today"
                 element={
                   <ProtectedRoute>
                     <TodayCommandCenter />
@@ -388,19 +470,7 @@ const AppContent: React.FC = () => {
                 }
               />
               <Route
-                path="/dashboard"
-                element={
-                  <ProtectedRoute>
-                    <Dashboard />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/paper-trading"
-                element={<Navigate to="/autonomous-trading/overview?tab=manual" replace />}
-              />
-              <Route
-                path="/autonomous-trading/overview"
+                path="/legacy/portfolio"
                 element={
                   <ProtectedRoute>
                     <AutonomousTradingOverview />
@@ -408,15 +478,7 @@ const AppContent: React.FC = () => {
                 }
               />
               <Route
-                path="/autonomous-trading/recommendations"
-                element={
-                  <ProtectedRoute>
-                    <AutonomousRecommendationTracker />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/live-trading"
+                path="/legacy/live-trading"
                 element={
                   <ProtectedRoute>
                     <LiveTrading />
@@ -424,76 +486,7 @@ const AppContent: React.FC = () => {
                 }
               />
               <Route
-                path="/live-trading/orders"
-                element={
-                  <ProtectedRoute>
-                    <LiveTrading />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/live-trading/reconcile"
-                element={
-                  <ProtectedRoute>
-                    <LiveTrading />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/autonomous-trading/optimization"
-                element={<Navigate to="/strategy-research/optimization" replace />}
-              />
-              <Route
-                path="/strategy-research"
-                element={
-                  <ProtectedRoute>
-                    <StrategyResearchCenter />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/strategy-research/optimization"
-                element={
-                  <ProtectedRoute>
-                    <StrategyResearchCenter />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/strategy-research/versions"
-                element={
-                  <ProtectedRoute>
-                    <StrategyResearchCenter />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/strategy-research/experiments"
-                element={
-                  <ProtectedRoute>
-                    <StrategyResearchCenter />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/strategy-research/event-results"
-                element={
-                  <ProtectedRoute>
-                    <StrategyResearchCenter />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/strategy-research/weights"
-                element={
-                  <ProtectedRoute>
-                    <StrategyResearchCenter />
-                  </ProtectedRoute>
-                }
-              />
-              <Route path="/quant" element={<Navigate to="/quant/dashboard" replace />} />
-              <Route
-                path="/quant/dashboard"
+                path="/legacy/quant-research"
                 element={
                   <ProtectedRoute>
                     <QuantResearchWorkbench />
@@ -501,55 +494,23 @@ const AppContent: React.FC = () => {
                 }
               />
               <Route
-                path="/quant/research"
+                path="/legacy/strategy-research"
                 element={
                   <ProtectedRoute>
-                    <QuantResearchWorkbench />
+                    <StrategyResearchCenter />
                   </ProtectedRoute>
                 }
               />
               <Route
-                path="/quant/strategies"
+                path="/legacy/review"
                 element={
                   <ProtectedRoute>
-                    <QuantResearchWorkbench />
+                    <ReviewCenter />
                   </ProtectedRoute>
                 }
               />
               <Route
-                path="/quant/backtests"
-                element={
-                  <ProtectedRoute>
-                    <QuantResearchWorkbench />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/quant/signals"
-                element={
-                  <ProtectedRoute>
-                    <QuantResearchWorkbench />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/quant/experiments"
-                element={
-                  <ProtectedRoute>
-                    <QuantResearchWorkbench />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/market"
-                element={
-                  <ProtectedRoute>
-                    <Market />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/ai-advisor"
+                path="/legacy/ai-advisor"
                 element={
                   <ProtectedRoute>
                     <AIAdvisor />
@@ -557,39 +518,7 @@ const AppContent: React.FC = () => {
                 }
               />
               <Route
-                path="/tasks"
-                element={
-                  <ProtectedRoute>
-                    <TaskScheduler />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/data-update"
-                element={
-                  <ProtectedRoute>
-                    <DataUpdateStatus />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/logs"
-                element={
-                  <ProtectedRoute>
-                    <SystemLogs />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/portfolio"
-                element={
-                  <ProtectedRoute>
-                    <Portfolio />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/backtest"
+                path="/legacy/backtest"
                 element={
                   <ProtectedRoute>
                     <Backtest />
@@ -597,7 +526,7 @@ const AppContent: React.FC = () => {
                 }
               />
               <Route
-                path="/backtest/:id"
+                path="/legacy/backtest/:id"
                 element={
                   <ProtectedRoute>
                     <BacktestDetailRoute />
@@ -605,30 +534,82 @@ const AppContent: React.FC = () => {
                 }
               />
               <Route
-                path="/recommendations"
+                path="/legacy/risk-alerts"
                 element={
                   <ProtectedRoute>
-                    <Recommendations />
+                    <RiskAlerts />
                   </ProtectedRoute>
                 }
               />
               <Route
-                path="/recommendation-performance"
-                element={<Navigate to="/review/performance" replace />}
-              />
-              <Route
-                path="/agent-tail-alpha"
-                element={<Navigate to="/review/agent-tail" replace />}
-              />
-              <Route
-                path="/recommendation-trade-outcomes"
-                element={<Navigate to="/review/trades" replace />}
-              />
-              <Route
-                path="/recommendation-trade-outcomes/:id"
+                path="/legacy/dashboard"
                 element={
                   <ProtectedRoute>
-                    <RecommendationTrace />
+                    <Dashboard />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/legacy/market"
+                element={
+                  <ProtectedRoute>
+                    <Market />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/legacy/data-update"
+                element={
+                  <ProtectedRoute>
+                    <DataUpdateStatus />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/legacy/tasks"
+                element={
+                  <ProtectedRoute>
+                    <TaskScheduler />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/legacy/logs"
+                element={
+                  <ProtectedRoute>
+                    <SystemLogs />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/legacy/portfolio-classic"
+                element={
+                  <ProtectedRoute>
+                    <Portfolio />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/legacy/screener"
+                element={
+                  <ProtectedRoute>
+                    <Screener />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/legacy/profile"
+                element={
+                  <ProtectedRoute>
+                    <Profile />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/legacy/users"
+                element={
+                  <ProtectedRoute>
+                    <UserManagement />
                   </ProtectedRoute>
                 }
               />
@@ -641,91 +622,16 @@ const AppContent: React.FC = () => {
                 }
               />
               <Route
-                path="/review"
+                path="/recommendation-trade-outcomes/:id"
                 element={
                   <ProtectedRoute>
-                    <ReviewCenter />
+                    <RecommendationTrace />
                   </ProtectedRoute>
                 }
               />
-              <Route
-                path="/review/trades"
-                element={
-                  <ProtectedRoute>
-                    <ReviewCenter />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/review/performance"
-                element={
-                  <ProtectedRoute>
-                    <ReviewCenter />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/review/agent-tail"
-                element={
-                  <ProtectedRoute>
-                    <ReviewCenter />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/review/journal"
-                element={
-                  <ProtectedRoute>
-                    <ReviewCenter />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/recommendation-loop-policies"
-                element={<Navigate to="/strategy-research/versions" replace />}
-              />
-              <Route
-                path="/strategy-experiment-lab"
-                element={<Navigate to="/strategy-research/experiments" replace />}
-              />
-              <Route
-                path="/screener"
-                element={
-                  <ProtectedRoute>
-                    <Screener />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/risk-alerts"
-                element={
-                  <ProtectedRoute>
-                    <RiskAlerts />
-                  </ProtectedRoute>
-                }
-              />
-              <Route path="/journals" element={<Navigate to="/review/journal" replace />} />
-              <Route
-                path="/strategy"
-                element={<Navigate to="/strategy-research/event-results" replace />}
-              />
-              <Route
-                path="/profile"
-                element={
-                  <ProtectedRoute>
-                    <Profile />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/users"
-                element={
-                  <ProtectedRoute>
-                    <UserManagement />
-                  </ProtectedRoute>
-                }
-              />
-              <Route path="*" element={<Navigate to="/today" replace />} />
+
+              {/* Anything else: park in today workspace */}
+              <Route path="*" element={<Navigate to="/workspace/today" replace />} />
             </Routes>
           </Suspense>
         </Content>

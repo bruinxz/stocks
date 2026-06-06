@@ -1,2 +1,54 @@
 # Ralph Progress Log — QuantX A-Share Alpha Refactor
 
+## Codebase Patterns
+
+- **Frontend workspace shells live under** `frontend/src/pages/workspace/`. Each is lazy-loaded in `frontend/src/App.tsx`. When adding workspace tabs in later stories, edit the shell file in place — do NOT introduce parallel page files.
+- **App.tsx single source of truth** for routes and the top-level menu. The `routeSelectionAliases` array maps legacy paths to the workspace whose sidebar entry should be highlighted; the `<Routes>` block defines the actual `<Navigate>` redirects. Whenever a legacy path is deprecated, update BOTH arrays.
+- **Legacy page imports** are kept (under `/legacy/*` routes) so deep links and embedded iframes still resolve. Only physically delete a page file after all six workspaces have absorbed its functionality (stories US-015..US-018).
+- **Frontend node_modules are in the main repo, not the worktree.** Run `ln -s /Users/bytedance/go/src/github.com/bruinxz/stocks/frontend/node_modules frontend/node_modules` inside the worktree before `./node_modules/.bin/tsc --noEmit` or eslint. REMOVE the symlink before `git add` — gitignore matches the directory pattern but not the symlink file.
+- **Lint command:** `cd frontend && ./node_modules/.bin/eslint src --ext .ts,.tsx --quiet` (errors only). Warnings are prettier nags — use `--fix` to auto-resolve.
+- **Typecheck command:** `cd frontend && ./node_modules/.bin/tsc --noEmit` (exits 0 = clean).
+- **Browser verification:** No `dev-browser` MCP skill is configured in this environment. UI stories should fall back to manual verification and note that in progress.txt.
+
+---
+
+## 2026/06/06 - US-001
+
+### What was implemented
+Consolidated the frontend from a 38-page menu to **6 unified workspaces**:
+
+- `/workspace/today` (今日作战)
+- `/workspace/factors` (选股因子)
+- `/workspace/lab` (策略实验室)
+- `/workspace/portfolio` (持仓与复盘)
+- `/workspace/data` (数据中心)
+- `/workspace/settings` (账号设置)
+
+All legacy pages listed in the PRD acceptance criteria (StrategyExperimentLab, AutonomousOptimizationLab, QuantBacktestLab, QuantPerformanceDashboard, QuantSignalPool, QuantStrategyLibrary, Strategy, Recommendations, RecommendationPerformance, RecommendationTradeOutcomes, RecommendationLoopPolicies, AgentTailAlphaLedger, AutonomousRecommendationTracker) are now redirected via `<Navigate>` to their corresponding workspace home. Page files are preserved on disk (no physical deletion) and the larger ones remain reachable via `/legacy/*` routes for deep-link compatibility.
+
+### Files changed
+- `frontend/src/App.tsx` — rewrote menu (6 top-level items, no submenus), added 6 workspace routes, added 30+ legacy redirect routes, updated `routeSelectionAliases` so legacy paths still highlight the correct workspace.
+- `frontend/src/pages/workspace/TodayWorkspace.tsx` — new shell page (placeholder for US-018).
+- `frontend/src/pages/workspace/FactorWorkspace.tsx` — new shell page (placeholder for US-015).
+- `frontend/src/pages/workspace/LabWorkspace.tsx` — new shell page (placeholder for US-016).
+- `frontend/src/pages/workspace/PortfolioWorkspace.tsx` — new shell page (placeholder for US-017).
+- `frontend/src/pages/workspace/DataWorkspace.tsx` — new shell page.
+- `frontend/src/pages/workspace/SettingsWorkspace.tsx` — new shell page.
+
+### Quality checks
+- `./node_modules/.bin/tsc --noEmit` → exit 0
+- `./node_modules/.bin/eslint src --ext .ts,.tsx --quiet` → exit 0 (no errors; 4 prettier warnings auto-fixed)
+
+### Browser verification
+**Not performed** — no `dev-browser` MCP skill is configured in this environment. Manual verification recommended: run `npm start` in `frontend/`, log in, then click each of the 6 sidebar items and visit a few legacy URLs (`/dashboard`, `/recommendations`, `/strategy-experiment-lab`) to confirm they redirect to the right workspace home.
+
+### Learnings for future iterations
+- **The PRD's "6 workspaces" must literally be 6 flat menu items, not submenu groups.** The original App.tsx used nested submenus with 20+ leaf items; collapsing them into flat top-level entries is what unblocks downstream stories (US-002 onwards) that assume one-tab-per-workspace.
+- **Legacy menu used Chinese labels** ('今日作战' '量化交易' '复盘' '实盘' '数据与系统' '账号与设置'). Keep Chinese labels for consistency — A-share users prefer them.
+- **`routeSelectionAliases` must be updated whenever you add or remove routes** or the sidebar will highlight the wrong workspace when users land on a legacy URL. The aliases use anchored regex (`^...$`) so each legacy path family needs its own entry.
+- **Antd Menu with flat (no children) items still highlights correctly** via `selectedKeys`. No need for `<Menu.SubMenu>` wrappers.
+- **`useParams` and `BacktestDetailRoute` were preserved** — `/backtest/:id` is still reachable under `/legacy/backtest/:id` for any saved bookmarks.
+- **Worktree gotcha:** the worktree has no `frontend/node_modules`. Symlinking to the main repo's copy works for typecheck/lint but the symlink shows up as a tracked-able file in `git status` (NOT matched by `node_modules/` gitignore pattern). Always `rm frontend/node_modules` before `git add`.
+- **The original App.tsx had a profile-fetch effect** keyed on `[token, user, dispatch]` — preserved unchanged. Auth flow still works because Login route is unchanged and the dropdown still calls handleLogout.
+
+---
