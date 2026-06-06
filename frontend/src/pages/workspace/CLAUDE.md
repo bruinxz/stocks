@@ -44,3 +44,23 @@ When a workspace has tabs that consume different endpoints:
 2. **Lazy-fire on user action** for tabs whose data is driven by interactive controls (Tab 2's "预览" button → POST `/preview`). Don't refetch on tab-switch alone.
 3. **Keep a single `loadError` top-level Alert** that survives across tabs — if `overview` fails, all tabs render the alert in place of their tab body. This avoids the "tab 1 shows error, tab 2 shows empty card with no explanation" inconsistency.
 
+## Polling pattern for long-running jobs (US-016)
+
+When a tab kicks off a backend job (回测/批量 sync/…) that needs `~minutes` to complete:
+
+1. Store the running task id in a top-level `pollingTaskId` state.
+2. `useEffect` watches it and starts a `window.setInterval(async () => {...}, 3000)` that re-fetches the detail AND refreshes the parent list (so cross-tab navigation shows fresh state).
+3. Exit the loop when `status` is `COMPLETED` or `FAILED`, surface result via `message.success`/`message.error`, and clear `pollingTaskId`.
+4. Swallow network failures inside the interval silently — the next tick retries naturally.
+5. Cleanup with `return () => window.clearInterval(timer);` to avoid leaks on tab switch / unmount.
+6. **Disable the "submit" button while `pollingTaskId` is set** so users don't accidentally fire 5 backtests in 5 seconds.
+
+## Large-tab decomposition (US-016)
+
+When a single tab's content exceeds ~150 lines:
+
+- Split into same-file sub-components (`MyStrategiesTab` / `NewBacktestTab` / `CompareTab`), pass state via props.
+- Keep sub-components **module-private** (no export) — they only exist to serve this workspace.
+- Shared helpers (`fmtPct` / `percentTag` / `compactDate` / `statusColor` / `statusLabel`) collect at the file BOTTOM so the main flow stays top-to-bottom readable.
+- Parent component only owns: layout, route state (activeKey), shared API data, top-level loading/error.
+

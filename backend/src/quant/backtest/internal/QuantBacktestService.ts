@@ -978,6 +978,106 @@ export class QuantBacktestService {
     };
   }
 
+  /**
+   * US-016：回测对比 API。给定 2-4 个已完成回测的 task_id，输出每个 task 的
+   * 元数据 + 每个策略的核心指标 + 净值曲线，前端用 recharts 叠加绘图。
+   *
+   * 这是只读的聚合查询，不触发任何回测执行；调用方应自行筛选已完成 (status=COMPLETED) 的任务。
+   */
+  async compareBacktests(taskIds: number[]) {
+    if (!Array.isArray(taskIds) || taskIds.length < 2) {
+      throw new Error('至少需要 2 个回测任务才能对比');
+    }
+    if (taskIds.length > 4) {
+      throw new Error('最多支持同时对比 4 个回测任务');
+    }
+    const uniqueIds = Array.from(new Set(taskIds.map(id => Number(id)))).filter(Boolean);
+    const tasks = await QuantBacktestTask.findAll({
+      where: { id: { [Op.in]: uniqueIds } },
+      order: [['created_at', 'DESC']],
+    });
+    const results = uniqueIds.length
+      ? await QuantBacktestResult.findAll({ where: { task_id: { [Op.in]: uniqueIds } } })
+      : [];
+    const resultsByTask = new Map<number, QuantBacktestResult[]>();
+    for (const result of results) {
+      if (!resultsByTask.has(result.task_id)) resultsByTask.set(result.task_id, []);
+      resultsByTask.get(result.task_id)!.push(result);
+    }
+
+    const items = tasks.map(task => {
+      const taskResults = resultsByTask.get(task.id) || [];
+      const sortedResults = [...taskResults].sort(
+        (a, b) => Number(b.total_return_pct || 0) - Number(a.total_return_pct || 0)
+      );
+      const best = sortedResults[0];
+      return {
+        task_id: task.id,
+        task_name: task.task_name,
+        status: task.status,
+        start_date: this.normalizeDateOnly(task.start_date),
+        end_date: this.normalizeDateOnly(task.end_date),
+        universe: task.universe,
+        strategy_keys: task.strategy_keys || [],
+        initial_capital: Number(task.initial_capital || 0),
+        run_summary: this.buildTaskRunSummary(task, taskResults),
+        // 每个策略的核心 KPI（前端 KPI 表格列）
+        strategy_results: sortedResults.map(r => ({
+          strategy_key: r.strategy_key,
+          strategy_name: r.strategy_name,
+          total_return_pct: Number(r.total_return_pct || 0),
+          annual_return_pct: Number(r.annual_return_pct || 0),
+          excess_return_pct: Number(r.excess_return_pct || 0),
+          benchmark_return_pct: Number(r.benchmark_return_pct || 0),
+          max_drawdown_pct: Number(r.max_drawdown_pct || 0),
+          sharpe_ratio: Number(r.sharpe_ratio || 0),
+          win_rate: Number(r.win_rate || 0),
+          profit_factor: Number(r.profit_factor || 0),
+          trade_count: Number(r.trade_count || 0),
+          avg_holding_days: Number(r.avg_holding_days || 0),
+          // 换手率：metrics_json 中查找；不存在则 fallback 到 trade_count / 持仓上限近似
+          turnover_rate: Number(
+            (r.metrics_json as any)?.turnover_rate ??
+              (r.metrics_json as any)?.execution_diagnostics?.turnover_rate ??
+              0
+          ),
+        })),
+        // 冠军策略的净值曲线（用于前端叠加绘图）
+        best_strategy_key: best?.strategy_key || null,
+        best_strategy_name: best?.strategy_name || null,
+        best_equity_curve: (best?.equity_curve_json as any[]) || [],
+      };
+    });
+
+    // 同时计算"任务×策略"维度的对比表（行=策略，列=任务），方便前端构建对比表
+    const allStrategyKeys = new Set<string>();
+    items.forEach(item => item.strategy_results.forEach(r => allStrategyKeys.add(r.strategy_key)));
+    const strategy_comparison = Array.from(allStrategyKeys).map(strategy_key => {
+      const cells = items.map(item => {
+        const found = item.strategy_results.find(r => r.strategy_key === strategy_key);
+        return {
+          task_id: item.task_id,
+          present: Boolean(found),
+          total_return_pct: found?.total_return_pct ?? null,
+          excess_return_pct: found?.excess_return_pct ?? null,
+          max_drawdown_pct: found?.max_drawdown_pct ?? null,
+          sharpe_ratio: found?.sharpe_ratio ?? null,
+          win_rate: found?.win_rate ?? null,
+          turnover_rate: found?.turnover_rate ?? null,
+          trade_count: found?.trade_count ?? null,
+        };
+      });
+      return { strategy_key, cells };
+    });
+
+    return {
+      items,
+      strategy_comparison,
+      task_count: items.length,
+      missing_task_ids: uniqueIds.filter(id => !items.find(item => item.task_id === id)),
+    };
+  }
+
   private async resolveBenchmarkReturn(options: QuantBacktestOptions) {
     try {
       const benchmarkSymbol = options.benchmark_symbol || 'sh.000300';

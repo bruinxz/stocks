@@ -100,6 +100,13 @@ router.get(
   authController.authenticate,
   quantController.getParameterGridSummary.bind(quantController)
 );
+// Must be registered before /backtests/:id — Express matches top-down and
+// would otherwise consume "compare" as the :id param.
+router.post(
+  '/backtests/compare',
+  authController.authenticate,
+  quantController.compareBacktests.bind(quantController)
+);
 router.get(
   '/backtests',
   authController.authenticate,

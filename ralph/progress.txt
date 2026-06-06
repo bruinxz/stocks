@@ -11,6 +11,9 @@
 - **Workspace shell CSS lives at the bottom of `frontend/src/index.css`** under a `Workspace shell (US-002)` banner. The shell uses `.workspace-shell`, `.workspace-kpi-bar__inner`, `.workspace-side-tabs`. Media query at 1024px stacks the side rail above content.
 - **Per-workspace `<name>Service.ts` (US-015+) under `frontend/src/services/`** is the API client layer. Each service file co-locates types with the function that uses them (e.g. `FactorOverviewResponse` next to `listFactorsOverview()`). The service layer **unwraps the `{success,data}` envelope** and throws a JS Error on `success=false`, so components consume the inner `data` directly without re-extracting. Bundled `<name>Service` default export sits alongside named exports for tree-shaking. `frontend/src/services/factorService.ts` is the reference (calls `/factors/overview`, `/factors/preview`, `/strategies/multi-factor/latest-picks`).
 - **Workspace data-fetching cadence (US-015 reference):** (1) **Eagerly Promise.all** the data that paints initial KPI + Tab 1 on mount; (2) **lazy-fire** for tabs whose data is triggered by user action (POST `/preview` only when button pressed); (3) keep a **single top-level `loadError`** that replaces the entire body when set — avoids per-tab empty-state misdirection. Don't refetch on tab-switch alone.
+- **Workspace large-tab decomposition (US-016):** when a single tab's body exceeds ~150 lines, split into same-file sub-components (`MyStrategiesTab` / `NewBacktestTab` / `CompareTab`), pass state via props, keep the parent only for layout / routing / shared state. Sub-components stay module-private (no export). Shared helpers (`fmtPct` / `percentTag` / `compactDate` / `statusColor` / `statusLabel`) collect at the file BOTTOM. Polling `useEffect` with `window.setInterval` + `setPollingTaskId(null)` exit-condition is the standard cadence; refresh the list inside the interval so when user switches tabs they don't see stale data.
+- **Antd `InputNumber<number>` explicit generic** is required when both `formatter` and `parser` are used — without it, TS infers `value: 10000 | 100000000` from the `min`/`max` literals and rejects the parser's `number` return. Pattern: `<InputNumber<number> min={10000} max={100000000} parser={v => Number(v || '') || 0}>`.
+- **Recharts multi-series 必须共享 X 轴**：N 条曲线叠加时 `data` 是 **一个** array `[{date, task_5: 12.3, task_8: 9.8, ...}, ...]`，每个 `<Line dataKey="task_N" />` 取一列。**不能** N 条线各自 N 个 data array — 那是 chart.js 的旧模式，recharts 下会 X 轴对不齐。组装时用 `Map<date, row>` 累积，最后 `.sort()` 输出。
 
 ### Backend
 - **PaperTrading services live under `backend/src/portfolio/internal/`**, not `backend/src/services/` (US-003 refactor). The public surface is `backend/src/portfolio/PaperTradingFacade.ts` exposing **exactly 7 methods**: `getPortfolio`, `placeOrder`, `closePosition`, `getDailySnapshot`, `attributePnl`, `applyAutomation`, `getRiskProfile`. Controllers MUST only import the facade. Other services/scripts/jobs may still import from `internal/` directly (the facade-only constraint is the controller boundary).
@@ -1419,3 +1422,96 @@ PRD 把 US-009/010/011 (因子基础设施 + 8 因子 + MFA 策略) 的成果暴
   before git add (两个都是软链接污染 git status)。
 
 ---
+
+## 2026/06/07 - US-016
+
+### What was implemented
+前端"策略实验室"工作区 (`/workspace/lab`) 完整实现，3 个 tab + 后端新增 1 个 API。
+
+**Frontend** — `frontend/src/pages/workspace/LabWorkspace.tsx` 完全重写（从 47 行 placeholder 扩展到 ~850 行 production 实现）：
+- **Tab "我的策略"**：拉取 `GET /quant/strategies`，渲染策略卡片网格。每张卡显示 name + category tag + risk_level tag + description + strategy_key + 默认参数（按 tag 显示前 4 个）；每张卡有 2 个 action：
+  - **克隆**：把策略的 default_params 序列化成 JSON 灌到"新建回测"表单的 params_text 区，同时把 strategy_keys 字段设成该策略，回测时间段默认填最近 2 年，初始资金 200000；切换到"新建回测" tab。
+  - **查看/编辑参数**：右侧抽屉展示 strategy_key/description/default_params (JSON pretty)；抽屉里也有"克隆并跳到新建回测"按钮。
+- **Tab "新建回测"**：完整表单（任务名 + 股票池 + 策略多选 + RangePicker + 初始资金 + 基准下拉（沪深300/中证500/中证1000/上证50）+ 最大持仓数 + 候选池上限 + 撮合时机三选一 + T+1 开关 + 参数 JSON textarea）。
+  - 提交时构造 `CreateBacktestPayload`，POST `/quant/backtests`，启动 3 秒轮询直到 status=COMPLETED/FAILED。
+  - 进度卡片显示 antd `<Progress>` + status tag + error_message，每 3 秒自动刷新。
+  - 提交后自动跳回"我的策略" tab 让用户看任务列表。
+- **Tab "回测对比"**：勾选 2-4 个已完成回测（COMPLETED 状态过滤），按钮触发 `POST /quant/backtests/compare`，下方渲染：
+  - **Recharts `LineChart`** 叠加 N 条净值曲线（每条用 best_equity_curve 的 cumulative_return_pct 系列）。
+  - **任务总览表**：行=任务，列=冠军策略 KPI（总收益/超额/回撤/夏普/交易笔数）。
+  - **每策略横向对比表**：行=策略，列=任务，每 cell 展示 总收益/超额/回撤/夏普/交易笔数/换手率，缺失的策略显示灰色 X。
+- **顶部 KPI 条**：已注册策略数 / 进行中回测数 / 最近 7 日完成次数（基于 created_at 计算）。
+
+**Frontend service** — `frontend/src/services/labService.ts` 新建：
+- 5 个函数：`listQuantStrategies`、`listBacktestTasks`、`getBacktestDetail`、`createBacktestTask`、`compareBacktests`；
+- 完整 TS interfaces：`QuantStrategyItem`、`BacktestTask`、`BacktestDetail`、`BacktestStrategyResult`、`BacktestRunSummary`、`CreateBacktestPayload`、`BacktestCompareResponse`、`BacktestCompareItem`、`BacktestCompareCell`；
+- 统一 `{success, data}` 信封解析；error throw（与 factorService 同款 pattern）。
+
+**Backend** — 新增对比 API：
+- `backend/src/quant/backtest/internal/QuantBacktestService.ts` 新增 `compareBacktests(taskIds: number[])`：批量查 Task + Result，按 task 维度组装 strategy_results + best_equity_curve，按策略维度组装 strategy_comparison 二维表（行=策略，列=任务）。
+- `backend/src/quant/backtest/BacktestEngine.ts` 新增 facade 方法 `compare(taskIds)`。
+- `backend/src/api/controllers/QuantController.ts` 新增 `compareBacktests(req, res)`。
+- `backend/src/api/routes/quant.routes.ts` 新增 `POST /quant/backtests/compare`，**必须放在 `:id` 之前**（同 US-015 lesson）。
+
+### Files changed
+- `frontend/src/pages/workspace/LabWorkspace.tsx` (rewritten, +830 lines)
+- `frontend/src/services/labService.ts` (new, +220 lines)
+- `backend/src/quant/backtest/internal/QuantBacktestService.ts` (+113 lines — compareBacktests method)
+- `backend/src/quant/backtest/BacktestEngine.ts` (+6 lines — compare facade)
+- `backend/src/api/controllers/QuantController.ts` (+18 lines — compareBacktests controller)
+- `backend/src/api/routes/quant.routes.ts` (+8 lines — route, before /:id)
+- `ralph/prd.json` (US-016 passes=true)
+
+### Quality checks
+- `cd frontend && ./node_modules/.bin/tsc --noEmit` → exit 0
+- `cd frontend && ./node_modules/.bin/eslint src --ext .ts,.tsx --quiet` → exit 0
+- `cd backend && npx tsc --noEmit` → exit 0
+- `cd backend && ./node_modules/.bin/eslint <修改的 4 个文件> --quiet` → exit 0
+- `cd backend && npx ts-node --transpile-only tests/backtest/ashare-constraints.test.ts` → ALL PASS（无 regression）
+
+### Learnings for future iterations
+
+**前端 workspace 大型组件拆分模式**：当 workspace 单个 tab 内容超过 ~150 行时，把它抽成同文件内的子组件（如 `MyStrategiesTab` / `NewBacktestTab` / `CompareTab`），用 props 把 state 透传下去，主组件只做 layout/路由/共享 state。LabWorkspace 这次切了 3 个子组件 + 1 个 helper `CompareChartCard` + 1 个 helper `CompareTableCard`，可读性比 850 行 monolith 强一截。
+- **Sub-component 不要 export**：保留 module-private 帮助代码集中。
+- **共享 helper（fmtPct/percentTag/statusColor/statusLabel/compactDate）放文件底部** —— 同款 reset/cleanup 模式与 QuantBacktestLab 一致。
+
+**轮询 useEffect 在工作区内的标准模式**：
+```ts
+useEffect(() => {
+  if (!pollingTaskId) return undefined;
+  const timer = window.setInterval(async () => {
+    const detail = await labService.getBacktestDetail(pollingTaskId);
+    const status = detail?.task?.status;
+    const list = await labService.listBacktestTasks(50);  // 顺便刷整个列表
+    setTasks(list);
+    if (status === 'COMPLETED' || status === 'FAILED') {
+      setPollingTaskId(null);
+      message[status === 'COMPLETED' ? 'success' : 'error'](...);
+    }
+  }, 3000);
+  return () => window.clearInterval(timer);
+}, [pollingTaskId]);
+```
+要点：(1) 在轮询结束时同时刷新 list，否则用户切回"我的策略" tab 看到的还是旧数据；(2) 网络失败时静默吞掉，下一次 tick 自然重试；(3) cleanup 用 `window.clearInterval` 避免 SSR/TS 兼容性吵闹。
+
+**Recharts 多曲线叠加的数据组装**：每条曲线必须用同一个 `data` array，每个 row 是 `{date: 'YYYY-MM-DD', task_5: 12.3, task_8: 9.8, ...}`，然后 N 条 `<Line dataKey="task_N" />`。如果用 N 个不同 `data` array 会导致 X 轴无法对齐。组装时用 `Map<date, row>` 累积，最后 `.sort()` 输出。
+- **共享 X 轴 = recharts 的硬性要求**，不要被 "每个 series 独立 data" 的旧 chart.js 习惯误导。
+
+**Antd InputNumber<number> 显式泛型**：当用 `formatter` + `parser` 时，TS 会从 `min`/`max` 字面量类型推断 `value` 是字面量 union（`10000 | 100000000`）而不是 `number`，必须写 `<InputNumber<number> min={...} max={...} parser={...}>` 显式声明，否则 `parser` 返回 number 会报 TS2322。
+
+**Antd Card actions 数组**：`actions={[<A />, <B />]}` 数组里的子元素都要 `key`，**包括外层 Tooltip 包装**。`<Tooltip><a key="x">...</a></Tooltip>` 中 Tooltip 是真正在数组里的元素，需要 `<Tooltip key="x-tooltip">`。eslint 的 react/jsx-key 会精确报错到行号，遇到先看是不是外层 wrapper 漏 key。
+
+**前端 service 文件命名 = `<workspace>Service.ts`**：每个 workspace 配一个 service 文件（factorService / labService / portfolioService / ...）。Service 的导出风格统一：N 个命名 export + 1 个聚合 `<workspace>Service = {...}` 默认 export，与 factorService 完全对齐。
+
+**后端 sub-resource 路由位置**（US-015 lesson 再现）：`/backtests/compare` 必须在 `/backtests/:id` 之前注册，否则 Express 把 "compare" 当成 :id 进去；加注释 `// Must be registered before /backtests/:id` 防未来排序。
+
+**回测对比 API 同时返回两种视图**：一个是"按 task 维度的列表"（前端画曲线/任务概览），一个是"按策略 × 任务的二维 cell 表"（前端画对比矩阵）。在 service 一次性算好两份比让前端组合更省事 —— SQL 已经一次拉全所有 Result，重新走一遍 `flatMap` 几乎免费。前端组装这种二维 cell 表本身写起来就别扭（不像 service 端直接 `Map<strategy_key, Cell[]>`），后端预聚合 = 前端代码更线性。
+
+**`metrics_json.turnover_rate` fallback chain**：换手率不是 QuantBacktestResult 的顶层列，藏在 `metrics_json` 里，且历史代码两个位置都写过（`metrics_json.turnover_rate` 和 `metrics_json.execution_diagnostics.turnover_rate`），所以 service 端用 `??` 链 fallback 两个位置 + 默认 0；前端只读这一个字段。
+
+### Codebase Patterns 追加
+本轮发现 3 个值得追加到顶部 Codebase Patterns 的 reusable lesson：
+1. **Frontend / Workspace 大型组件拆分**：见 "Frontend" section.
+2. **Backend / Express 多 sub-resource 路由的顺序**：已存在（US-015）。
+3. **Antd / InputNumber<number> 显式泛型**：新增。
+4. **Frontend / Recharts 多曲线 X 轴对齐**：新增。

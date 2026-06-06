@@ -329,6 +329,24 @@ export class QuantController {
     }
   }
 
+  /**
+   * US-016：回测对比 — 给定 2-4 个 task_id，返回每个 task 的元数据、策略指标
+   * 和净值曲线。请求体：{ task_ids: number[] }。
+   */
+  async compareBacktests(req: AuthenticatedRequest, res: Response) {
+    try {
+      const rawIds = req.body?.task_ids ?? req.body?.taskIds ?? [];
+      const taskIds = Array.isArray(rawIds)
+        ? rawIds.map((id: any) => Number(id)).filter((id: number) => Number.isFinite(id) && id > 0)
+        : [];
+      const data = await backtestEngine.compare(taskIds);
+      res.json({ success: true, data });
+    } catch (error: any) {
+      logger.error('对比量化跑分失败:', error);
+      res.status(400).json({ success: false, message: error.message });
+    }
+  }
+
   async generateSignals(req: AuthenticatedRequest, res: Response) {
     try {
       const strategy_keys = await strategyEngine.resolveStrategyKeys(

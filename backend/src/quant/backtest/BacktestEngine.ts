@@ -62,6 +62,13 @@ export class BacktestEngine {
     return quantBacktestService.retryBacktest(id, user_id);
   }
 
+  /**
+   * US-016：对比 2-4 个已完成回测的核心指标 + 净值曲线。前端在"回测对比" tab 调用。
+   */
+  compare(taskIds: number[]) {
+    return quantBacktestService.compareBacktests(taskIds);
+  }
+
   processTask(
     taskId: number,
     options: any,
