@@ -42,3 +42,4 @@ export * from './StockMoneyFlowFactor';
 export * from './StockValuationFactor';
 export * from './NorthboundHolding';
 export * from './DragonTigerBoard';
+export * from './LimitUpStock';

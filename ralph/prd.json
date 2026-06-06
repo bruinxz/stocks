@@ -110,8 +110,8 @@
         "Typecheck passes"
       ],
       "priority": 7,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026/06/07. Added Sequelize model backend/src/models/LimitUpStock.ts with composite PK (trade_date, stock_code) — fields: stock_name, limit_up_time, limit_up_amount, limit_up_open_times, continuous_days, reason, industry, is_one_word_board, source, raw_payload. Added LimitUpClient calling AKShare stock_zt_pool_em + stock_zt_pool_strong_em via new python helper command get_limit_up_pool: Python merges both pools (zt_pool as primary, strong_pool as side-car for 入选理由), pre-computes is_one_word_board (首封 ≤ 09:30 AND 炸板次数 == 0), and ships zt_row/strong_row both inside raw_payload for audit. LimitUpSyncService.syncDate looks back 5 calendar days of LimitUpStock history per stock to recompute continuous_days (yesterday's CD + 1, with weekend gap tolerance up to 4 days). syncRange supports skip-existing (env LIMIT_UP_SKIP_EXISTING). CLI script + npm run sync:limit-up. Model registered in config/database.ts so sync({alter:true}) auto-creates the table in dev. cd backend && npx tsc --noEmit passes clean."
     },
     {
       "id": "US-008",

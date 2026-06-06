@@ -1112,6 +1112,278 @@ def _format_iso_date(yyyymmdd: str) -> str:
         return f"{yyyymmdd[0:4]}-{yyyymmdd[4:6]}-{yyyymmdd[6:8]}"
     return yyyymmdd
 
+
+def get_limit_up_pool(date: str) -> List[Dict[str, Any]]:
+    """
+    Fetch the limit-up (涨停) stock pool for a given trade date, merging both
+    AKShare endpoints into one row-per-stock list:
+
+      - `stock_zt_pool_em`        — 当日涨停股池 (16 cols incl. 连板数 / 封板资金 /
+                                     首次封板时间 / 最后封板时间 / 炸板次数 / 所属行业)
+      - `stock_zt_pool_strong_em` — 当日强势股池 (16 cols incl. 入选理由 / 涨速 /
+                                     是否新高 / 量比 / 所属行业)
+
+    Strategy:
+      1. Pull both dataframes for `date`.
+      2. Index strong-pool by stock_code; treat as a side-car so 入选理由 / 涨速
+         enrich the zt rows.
+      3. For stocks only in strong-pool (e.g. T 字板 + 当日未涨停但近期强势的样本)
+         emit minimal rows with continuous_days defaulting to 1.
+
+    `is_one_word_board` is computed here as a convenience signal:
+        首次封板时间 ≤ 09:30:00  AND  炸板次数 == 0
+    The TS service may refine this from raw_payload if needed.
+
+    Args:
+        date: trade date YYYY-MM-DD or YYYYMMDD.
+
+    Returns:
+        List of dicts: {trade_date, stock_code, stock_name, limit_up_time,
+        limit_up_amount, limit_up_open_times, continuous_days, reason, industry,
+        is_one_word_board, raw_payload{zt_row?, strong_row?}}.
+        Returns [] on empty / error so caller can checkpoint a "tried" date.
+    """
+    try:
+        pure_date = date.replace('-', '')
+        iso_date = _format_iso_date(pure_date)
+
+        print(f"Fetching limit-up pool for {pure_date}...", file=sys.stderr)
+
+        # ----- 1) 涨停股池 -----
+        try:
+            df_zt = ak.stock_zt_pool_em(date=pure_date)
+        except TypeError:
+            df_zt = ak.stock_zt_pool_em(pure_date)
+        except Exception as e:
+            print(f"stock_zt_pool_em failed for {pure_date}: {e}", file=sys.stderr)
+            df_zt = None
+
+        # ----- 2) 强势股池 -----
+        try:
+            df_strong = ak.stock_zt_pool_strong_em(date=pure_date)
+        except TypeError:
+            df_strong = ak.stock_zt_pool_strong_em(pure_date)
+        except Exception as e:
+            print(f"stock_zt_pool_strong_em failed for {pure_date}: {e}", file=sys.stderr)
+            df_strong = None
+
+        zt_empty = df_zt is None or df_zt.empty
+        strong_empty = df_strong is None or df_strong.empty
+        if zt_empty and strong_empty:
+            print(f"AKShare returned empty zt/strong pools for {pure_date}", file=sys.stderr)
+            return []
+
+        # ----- 3) 列名柔性映射（zt_pool）-----
+        zt_col_map: Dict[str, str] = {}
+        if not zt_empty:
+            for col in df_zt.columns:
+                col_s = str(col)
+                if col_s in ('代码', '股票代码', 'symbol', 'code'):
+                    zt_col_map['stock_code'] = col_s
+                elif col_s in ('名称', '股票简称', '股票名称', 'name'):
+                    zt_col_map['stock_name'] = col_s
+                elif col_s == '首次封板时间':
+                    zt_col_map['limit_up_time'] = col_s
+                elif col_s == '封板资金':
+                    zt_col_map['limit_up_amount'] = col_s
+                elif col_s == '炸板次数':
+                    zt_col_map['limit_up_open_times'] = col_s
+                elif col_s == '连板数':
+                    zt_col_map['continuous_days'] = col_s
+                elif col_s == '所属行业':
+                    zt_col_map['industry'] = col_s
+
+        # ----- 4) 列名柔性映射（strong_pool）-----
+        strong_col_map: Dict[str, str] = {}
+        if not strong_empty:
+            for col in df_strong.columns:
+                col_s = str(col)
+                if col_s in ('代码', '股票代码', 'symbol', 'code'):
+                    strong_col_map['stock_code'] = col_s
+                elif col_s in ('名称', '股票简称', '股票名称', 'name'):
+                    strong_col_map['stock_name'] = col_s
+                elif col_s == '入选理由':
+                    strong_col_map['reason'] = col_s
+                elif col_s == '所属行业':
+                    strong_col_map['industry'] = col_s
+
+        # 把 strong-pool 转成 code → raw 行字典，便于后续合并
+        strong_by_code: Dict[str, Dict[str, Any]] = {}
+        if not strong_empty:
+            for _, srow in df_strong.iterrows():
+                raw_code = srow.get(strong_col_map.get('stock_code', '代码'))
+                if pd.isna(raw_code):
+                    continue
+                code = str(raw_code).strip().zfill(6)
+                strong_by_code[code] = _row_to_jsonable(srow, df_strong.columns)
+
+        results: List[Dict[str, Any]] = []
+        seen_codes: set = set()
+
+        # ----- 5) 以 zt_pool 为主表合并 -----
+        if not zt_empty:
+            for _, zrow in df_zt.iterrows():
+                raw_code = zrow.get(zt_col_map.get('stock_code', '代码'))
+                if pd.isna(raw_code):
+                    continue
+                stock_code = str(raw_code).strip().zfill(6)
+                if not stock_code or stock_code.lower() == 'nan':
+                    continue
+                seen_codes.add(stock_code)
+
+                stock_name = _cell_str(zrow, zt_col_map.get('stock_name'))
+                limit_up_time = _cell_str(zrow, zt_col_map.get('limit_up_time'))
+                limit_up_amount = _cell_float(zrow, zt_col_map.get('limit_up_amount'))
+                limit_up_open_times = _cell_int(zrow, zt_col_map.get('limit_up_open_times'))
+                continuous_days_raw = _cell_int(zrow, zt_col_map.get('continuous_days'))
+                continuous_days = continuous_days_raw if continuous_days_raw and continuous_days_raw > 0 else 1
+                industry = _cell_str(zrow, zt_col_map.get('industry'))
+
+                # 强势池侧车字段：入选理由 / 行业（zt 行业为主，缺则取 strong 的）
+                strong_row = strong_by_code.get(stock_code)
+                reason: Optional[str] = None
+                if strong_row:
+                    reason_col = strong_col_map.get('reason')
+                    if reason_col and strong_row.get(reason_col) is not None:
+                        reason_val = strong_row.get(reason_col)
+                        reason = str(reason_val) if reason_val not in (None, 'None', 'nan') else None
+                    if not industry:
+                        industry_col = strong_col_map.get('industry')
+                        if industry_col and strong_row.get(industry_col) is not None:
+                            industry = str(strong_row.get(industry_col)) or None
+
+                # 一字板：首次封板时间 ≤ 09:30:00 AND 炸板次数 == 0
+                is_one_word = _is_one_word(limit_up_time, limit_up_open_times)
+
+                results.append({
+                    'trade_date': iso_date,
+                    'stock_code': stock_code,
+                    'stock_name': stock_name,
+                    'limit_up_time': limit_up_time,
+                    'limit_up_amount': limit_up_amount,
+                    'limit_up_open_times': limit_up_open_times if limit_up_open_times is not None else 0,
+                    'continuous_days': continuous_days,
+                    'reason': reason,
+                    'industry': industry,
+                    'is_one_word_board': is_one_word,
+                    'raw_payload': {
+                        'zt_row': _row_to_jsonable(zrow, df_zt.columns),
+                        'strong_row': strong_row,
+                    },
+                })
+
+        # ----- 6) 强势池独有的行（zt 中没出现的）-----
+        if not strong_empty:
+            for code, srow in strong_by_code.items():
+                if code in seen_codes:
+                    continue
+                stock_name_col = strong_col_map.get('stock_name')
+                stock_name = (
+                    str(srow.get(stock_name_col))
+                    if stock_name_col and srow.get(stock_name_col) is not None
+                    else None
+                )
+                reason_col = strong_col_map.get('reason')
+                reason = (
+                    str(srow.get(reason_col))
+                    if reason_col and srow.get(reason_col) is not None
+                    else None
+                )
+                industry_col = strong_col_map.get('industry')
+                industry = (
+                    str(srow.get(industry_col))
+                    if industry_col and srow.get(industry_col) is not None
+                    else None
+                )
+
+                results.append({
+                    'trade_date': iso_date,
+                    'stock_code': code,
+                    'stock_name': stock_name,
+                    'limit_up_time': None,
+                    'limit_up_amount': None,
+                    'limit_up_open_times': 0,
+                    'continuous_days': 1,
+                    'reason': reason,
+                    'industry': industry,
+                    'is_one_word_board': False,
+                    'raw_payload': {
+                        'zt_row': None,
+                        'strong_row': srow,
+                    },
+                })
+
+        print(
+            f"Parsed {len(results)} limit-up rows for {pure_date} "
+            f"(zt={0 if zt_empty else len(df_zt)}, strong={0 if strong_empty else len(df_strong)})",
+            file=sys.stderr,
+        )
+        return results
+    except Exception as e:
+        print(f"Error getting limit-up pool for {date}: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return []
+
+
+def _cell_str(row, col: Optional[str]) -> Optional[str]:
+    """安全读取一格并转字符串；空 / nan 返回 None"""
+    if not col:
+        return None
+    val = row.get(col)
+    if val is None or pd.isna(val):
+        return None
+    s = str(val).strip()
+    return s or None
+
+
+def _cell_float(row, col: Optional[str]) -> Optional[float]:
+    """安全读取一格并转 float；空 / nan 返回 None"""
+    if not col:
+        return None
+    return safe_float_value(row.get(col))
+
+
+def _cell_int(row, col: Optional[str]) -> Optional[int]:
+    """安全读取一格并转 int；空 / nan 返回 None"""
+    if not col:
+        return None
+    f = safe_float_value(row.get(col))
+    return int(f) if f is not None else None
+
+
+def _is_one_word(limit_up_time: Optional[str], open_times: Optional[int]) -> bool:
+    """一字板判定：首次封板时间 ≤ 09:30:00 且 炸板次数 == 0"""
+    if not limit_up_time:
+        return False
+    # AKShare 返回的时间常见格式 "09:25:03" 或 "92503"
+    digits = ''.join(c for c in limit_up_time if c.isdigit())
+    if len(digits) >= 6:
+        hh, mm = int(digits[0:2]), int(digits[2:4])
+    elif len(digits) == 5:
+        hh, mm = int(digits[0:1]), int(digits[1:3])
+    elif len(digits) == 4:
+        hh, mm = int(digits[0:2]), int(digits[2:4])
+    else:
+        return False
+    if (hh, mm) > (9, 30):
+        return False
+    return (open_times or 0) == 0
+
+
+def _row_to_jsonable(row, columns) -> Dict[str, Any]:
+    """把一行 pandas Series 转成 JSON 友好的 dict（NaN → None, 数字 → float）"""
+    raw: Dict[str, Any] = {}
+    for col in columns:
+        val = row.get(col)
+        if pd.isna(val):
+            raw[str(col)] = None
+        elif isinstance(val, (int, float)):
+            raw[str(col)] = float(val)
+        else:
+            raw[str(col)] = str(val)
+    return raw
+
+
 def main():
     """Main entry point for command line calls"""
     if len(sys.argv) < 2:
@@ -1190,6 +1462,14 @@ def main():
 
             date = sys.argv[2]
             result = get_dragon_tiger_detail(date)
+
+        elif command == "get_limit_up_pool":
+            if len(sys.argv) < 3:
+                print(json.dumps({"error": "Missing date for get_limit_up_pool"}), file=sys.stderr)
+                sys.exit(1)
+
+            date = sys.argv[2]
+            result = get_limit_up_pool(date)
 
         else:
             print(json.dumps({"error": f"Unknown command: {command}"}), file=sys.stderr)

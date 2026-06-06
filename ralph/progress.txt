@@ -25,6 +25,10 @@
 - **Idempotent reruns = composite-PK + `bulkCreate` + `updateOnDuplicate`**. Always include `updated_at` in `updateOnDuplicate` so ops can see refresh times. Default `syncRange` to skip-existing for cheap catch-up; expose `--force` for backfills.
 - **Multi-record-per-stock (US-006 龙虎榜) ⇒ N-tuple PK**: when one stock spawns many rows per day (e.g. `buyer_seat × seller_seat`), the model PK is a 3-/4-tuple. Do the cartesian fan-out IN the Python helper so the TS service stays a clean `bulkCreate`. Keep both halves in `raw_payload` (`{list_row, buyer_row, seller_row}`) for audit.
 - **Business-logic tagging (e.g. `is_famous_yz`) belongs in the TS service**, NOT the Python helper. Python is the dumb fetcher; TS owns whitelists like `backend/src/constants/famousSeats.ts` so the rule can evolve without re-running Python.
+- **Cross-day derived fields (e.g. `continuous_days` 连板天数) belong in the TS service** — `LimitUpSyncService.syncDate` looks back 5 calendar days of LimitUpStock history before each `bulkCreate` and recomputes `CD = yesterday.CD + 1` (max with akshare's own value as a floor). Pattern for any field that depends on previous-day records: `loadRecentHistory()` → map override → bulkCreate.
+- **Multi-endpoint merge (US-007 涨停 zt_pool + strong_pool)**: when AKShare has two endpoints with overlapping rows + each-side-unique extras, pick one as primary (zt_pool), index the other by stock_code as a side-car dict in Python, then 1-pass merge in `_, row in df_primary.iterrows()` + emit secondary-only rows in a final loop using a `seen_codes: set` guard. Keep both raw rows in `raw_payload = {primary_row, secondary_row}`.
+- **AKShare time-of-day strings are inconsistent** (`"09:25:03"` or `"92503"`). Parse digits-only in the Python helper (`_is_one_word(limit_up_time, open_times)` in `akshare_helper.py`) — let TS consumers see a pre-computed boolean instead of re-parsing. Counterpart for `is_famous_yz`/whitelists is in TS — divider: per-row computation that's pure data goes Python-side; rules that may evolve or need DB joins stay TS-side.
+- **Helper micro-functions to copy across AKShare commands**: `_cell_str / _cell_float / _cell_int / _row_to_jsonable / _format_iso_date` in `akshare_helper.py` — defined once for US-007, reuse them in future commands (`get_industry_flow`, `get_earnings_forecast`, etc.) instead of repeating `safe_float_value(row.get(col)) if col else None`.
 
 
 ### Tooling
@@ -367,4 +371,51 @@ Added the **龙虎榜 (Dragon-Tiger Board)** daily seat-detail ingestion pipelin
 - **180s timeout was chosen empirically.** ~50 LHB stocks/day × 2 API calls + AKShare's 30s+ rate-limit can push a single-day fetch past 60s. Don't drop below 120s without testing on a real busy day (e.g. 政策性新闻日 = 100+ LHB stocks).
 - **`raw_payload.{list_row, buyer_row, seller_row}` recovers everything** if AKShare adds a new column we forgot to map (`持股集中度变化` etc.). When extending the model with a derived field, read from `raw_payload` rather than re-fetching.
 - **Worktree gotcha (still active):** before `git add`, `rm backend/node_modules` (it's a symlink polluting git status).
+---
+
+## 2026/06/07 - US-007
+
+### What was implemented
+A股涨停板与连板高度的日度入库（A-share 涨停股池 + 强势股池合并）。
+
+- **`backend/src/models/LimitUpStock.ts`** — Sequelize 模型，主键 (trade_date, stock_code)。字段：stock_name / limit_up_time (HH:MM:SS) / limit_up_amount (元) / limit_up_open_times (炸板次数) / continuous_days (连板天数) / reason / industry / is_one_word_board (boolean) + source + raw_payload (JSONB)。索引覆盖 trade_date、stock_code、continuous_days、industry、(trade_date, continuous_days)、(trade_date, is_one_word_board)。
+- **`backend/python/akshare_helper.py`** — 新增 `get_limit_up_pool(date)`：
+  - 同时拉 `stock_zt_pool_em` (16 列：连板数 / 封板资金 / 首次封板时间 / 炸板次数 / 所属行业 ...) 和 `stock_zt_pool_strong_em` (16 列：入选理由 / 涨速 / 量比 ...)。
+  - **以 zt_pool 为主表合并**：strong_pool 按 stock_code 索引成 side-car，给主表的行补 `reason`/`industry`；强势池独有的股票（zt 中缺失）也单独 emit，CD 默认 1。
+  - Python 端预计算 `is_one_word_board`：首次封板时间 ≤ 09:30 且 炸板次数 == 0。
+  - `raw_payload = {zt_row, strong_row}` 双层保留，便于事后补字段。
+  - 抽出 3 个柔性读单元的小函数 `_cell_str/_cell_float/_cell_int` 减少模板代码（AKShare 列名飘移在所有 helper 里都存在）。
+- **`backend/src/data/sources/LimitUpClient.ts`** — `fetchDailyPool(date)`；timeout 60s（可通过 `LIMIT_UP_TIMEOUT_MS` 覆盖）；客户端结构与 NorthboundDataClient / DragonTigerClient 完全对齐。
+- **`backend/src/data/services/LimitUpSyncService.ts`** — 关键差异点：
+  - `syncDate(date)` 入库**前**先 `loadRecentHistory(today, 5)` 拉过去 5 个自然日的全部已入库行；对每只股票根据**前一条早于今日的记录**复算 `continuous_days = yesterday.CD + 1`。
+  - 与 AKShare 自带 `连板数` 做 `Math.max(recomputed, akshareInitial)` 取最大，避免数据源偶发掉数导致连板被打断；统计 `recomputed_continuous_days` 计数便于事后比对。
+  - 周末/节假日间隔：A 股周五涨停 → 周一仍算续涨（gap=3 OK），超过 4 自然日重置为 1。
+  - `syncRange(start, end)` 与 northbound/dragon-tiger 同款断点续传（`LIMIT_UP_SKIP_EXISTING=0` 关闭）。
+- **`backend/src/scripts/sync-limit-up.ts`** + `npm run sync:limit-up`。
+- 模型在 `models/index.ts` 与 `config/database.ts` 双注册，dev 模式下 `sync({alter:true})` 自动建表。
+
+### Files changed
+- `backend/src/models/LimitUpStock.ts` (new)
+- `backend/src/models/index.ts` (re-export)
+- `backend/src/config/database.ts` (import + register in `models[]`)
+- `backend/python/akshare_helper.py` (+ `get_limit_up_pool` and 4 helpers; + dispatcher case)
+- `backend/src/data/sources/LimitUpClient.ts` (new)
+- `backend/src/data/services/LimitUpSyncService.ts` (new)
+- `backend/src/scripts/sync-limit-up.ts` (new)
+- `backend/package.json` (sync:limit-up script)
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → exit 0
+- `eslint src/models/LimitUpStock.ts src/data/sources/LimitUpClient.ts src/data/services/LimitUpSyncService.ts src/scripts/sync-limit-up.ts --quiet` → exit 0 (1 prettier auto-fixed)
+- `python3 -c "import ast; ast.parse(open(...).read())"` → OK
+- 端到端 AKShare 连通性需在有 akshare 的环境手验 (`npm run sync:limit-up -- --date=2026-06-05`)；这里仅做了静态校验，与 US-005/006 同。
+
+### Learnings for future iterations
+- **AKShare 涨停接口分两个**：`stock_zt_pool_em` 给 "封板资金/连板数/炸板次数"，`stock_zt_pool_strong_em` 给 "入选理由/涨速/量比"。两者**有重叠 + 各有独占**，按 stock_code 合并比单拉一个完整。
+- **AKShare 自带的 `连板数` 字段不绝对可靠**（不同版本偶有掉数）。统一在 TS 服务里基于库内历史回看复算，并取 `max(akshare, recomputed)` 兜底是更稳的做法。
+- **A 股周末跨度**：周五涨停后周一续涨，自然日 gap = 3；超过 4 自然日（中间夹一个完整工作周）就视为中断 → 这是 `daysBetween > 4 ? 1 : prev+1` 的来源。
+- **一字板规则在 Python 端预计算 vs TS 端推断**：选了 Python 端，因为 `limit_up_time` 的字符串格式是 AKShare 的细节（可能 "09:25:03" 也可能 "92503"），让 fetcher 一次解析掉避免每个消费方再写一遍。但 `is_famous_yz` 之类**业务白名单**仍留在 TS 服务（符合 codebase pattern：python 是 dumb fetcher，TS 拥有可演化的业务规则）。
+- **小柔性读取函数 `_cell_str/_cell_int/_cell_float`** 在 akshare_helper.py 里值得提取——之前 `get_northbound_holdings` 和 `get_dragon_tiger_detail` 都散落地写 `safe_float_value(row.get(col)) if col else None`。建议未来 US-008 行业资金流接口也复用这套。
+- **`Math.max(recomputed, akshareInitial)` 取大值兜底**比直接覆盖更稳：库刚开始用、历史还没积累时，AKShare 初值就是唯一信息源；积累后则以库内为准（akshare 偶发 0 也不会冲掉真实连板）。
+
 ---
