@@ -894,6 +894,218 @@ def get_northbound_holdings(date: str, market: str = "北向") -> List[Dict[str,
         return []
 
 
+def get_dragon_tiger_detail(date: str) -> List[Dict[str, Any]]:
+    """
+    Fetch the Dragon-Tiger Board (龙虎榜) seat-level detail for a given trade date.
+
+    Strategy:
+      1. AKShare `stock_lhb_detail_em(start_date, end_date)` gives the list of
+         stocks that hit the LHB on that day + the "reason" they hit.
+      2. For each stock, AKShare `stock_lhb_stock_detail_em(symbol=<6 位代码>,
+         date=YYYYMMDD, flag='买入'/'卖出')` returns the 营业部 list for that
+         direction. We do a buyer × seller cartesian fan-out so each row is a
+         (buyer_seat, seller_seat) pair, matching the DragonTigerBoard PK.
+
+    Notes:
+      - Some days will have buyer-only or seller-only rows; we still emit those
+        with the absent side set to "" (empty string) so the PK stays unique.
+      - `net_amount` is per-pair: buy_amount - sell_amount (best effort; real
+         net is computed by the seat itself, but we keep both sides for audit).
+      - Returns [] on error / empty days so caller can checkpoint.
+
+    Args:
+        date: trade date as YYYY-MM-DD or YYYYMMDD.
+    """
+    try:
+        pure_date = date.replace('-', '')
+        iso_date = _format_iso_date(pure_date)
+
+        print(f"Fetching dragon-tiger detail for {pure_date}...", file=sys.stderr)
+        try:
+            # AKShare 接口签名：start_date / end_date 都接 YYYYMMDD
+            df_list = ak.stock_lhb_detail_em(start_date=pure_date, end_date=pure_date)
+        except TypeError:
+            # 某些版本签名是 (start_date, end_date) 位置参数
+            df_list = ak.stock_lhb_detail_em(pure_date, pure_date)
+
+        if df_list is None or df_list.empty:
+            print(f"AKShare returned empty LHB list for {pure_date}", file=sys.stderr)
+            return []
+
+        # 列名柔性映射
+        list_col_map: Dict[str, str] = {}
+        for col in df_list.columns:
+            col_s = str(col)
+            if col_s in ('代码', '股票代码', 'symbol', 'code'):
+                list_col_map['stock_code'] = col_s
+            elif col_s in ('名称', '股票简称', '股票名称', 'name'):
+                list_col_map['stock_name'] = col_s
+            elif col_s in ('上榜原因', '解读', 'reason'):
+                list_col_map.setdefault('reason', col_s)
+
+        results: List[Dict[str, Any]] = []
+        for _, lrow in df_list.iterrows():
+            raw_code = lrow.get(list_col_map.get('stock_code', '代码'))
+            if pd.isna(raw_code):
+                continue
+            stock_code = str(raw_code).strip().zfill(6)
+            if not stock_code or stock_code.lower() == 'nan':
+                continue
+
+            stock_name_col = list_col_map.get('stock_name')
+            stock_name = (
+                str(lrow.get(stock_name_col))
+                if stock_name_col and pd.notna(lrow.get(stock_name_col))
+                else None
+            )
+            reason_col = list_col_map.get('reason')
+            reason = (
+                str(lrow.get(reason_col))
+                if reason_col and pd.notna(lrow.get(reason_col))
+                else None
+            )
+
+            # 把上榜信息也拷一份到 raw_payload 顶层，便于审计
+            list_raw: Dict[str, Any] = {}
+            for col in df_list.columns:
+                val = lrow.get(col)
+                if pd.isna(val):
+                    list_raw[str(col)] = None
+                elif isinstance(val, (int, float)):
+                    list_raw[str(col)] = float(val)
+                else:
+                    list_raw[str(col)] = str(val)
+
+            # 抓买卖双方席位明细
+            buyers = _fetch_lhb_seat_side(stock_code, pure_date, '买入')
+            sellers = _fetch_lhb_seat_side(stock_code, pure_date, '卖出')
+
+            # 笛卡尔展开：买方 N × 卖方 M。
+            # 若一侧为空，用占位符保证 PK 仍能唯一。
+            buyers_iter = buyers if buyers else [{
+                'seat': '', 'buy_amount': None, 'sell_amount': None, 'net_amount': None, 'raw': {}
+            }]
+            sellers_iter = sellers if sellers else [{
+                'seat': '', 'buy_amount': None, 'sell_amount': None, 'net_amount': None, 'raw': {}
+            }]
+
+            for b in buyers_iter:
+                for s in sellers_iter:
+                    # buy_amount 取自买方席位明细，sell_amount 取自卖方席位明细
+                    buy_amt = b.get('buy_amount')
+                    sell_amt = s.get('sell_amount')
+                    if buy_amt is None and sell_amt is None:
+                        net = None
+                    else:
+                        net = (buy_amt or 0.0) - (sell_amt or 0.0)
+
+                    results.append({
+                        'trade_date': iso_date,
+                        'stock_code': stock_code,
+                        'stock_name': stock_name,
+                        'reason': reason,
+                        'buyer_seat': b.get('seat', ''),
+                        'seller_seat': s.get('seat', ''),
+                        'buy_amount': buy_amt,
+                        'sell_amount': sell_amt,
+                        'net_amount': net,
+                        'raw_payload': {
+                            'list_row': list_raw,
+                            'buyer_row': b.get('raw', {}),
+                            'seller_row': s.get('raw', {}),
+                        },
+                    })
+
+        print(
+            f"Parsed {len(results)} dragon-tiger seat-pair rows for {pure_date}",
+            file=sys.stderr,
+        )
+        return results
+    except Exception as e:
+        print(f"Error getting dragon-tiger detail for {date}: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return []
+
+
+def _fetch_lhb_seat_side(stock_code: str, pure_date: str, flag: str) -> List[Dict[str, Any]]:
+    """
+    单只股票单方向（买入 / 卖出）席位明细。
+    flag: '买入' | '卖出'
+    返回每席位一条记录：{seat, buy_amount, sell_amount, net_amount, raw}
+    """
+    try:
+        df = ak.stock_lhb_stock_detail_em(symbol=stock_code, date=pure_date, flag=flag)
+    except TypeError:
+        # 旧版本位置参数
+        try:
+            df = ak.stock_lhb_stock_detail_em(stock_code, pure_date, flag)
+        except Exception as e:
+            print(
+                f"_fetch_lhb_seat_side({stock_code},{pure_date},{flag}) call failed: {e}",
+                file=sys.stderr,
+            )
+            return []
+    except Exception as e:
+        print(
+            f"_fetch_lhb_seat_side({stock_code},{pure_date},{flag}) failed: {e}",
+            file=sys.stderr,
+        )
+        return []
+
+    if df is None or df.empty:
+        return []
+
+    # AKShare 席位明细常见列：交易营业部名称 / 买入金额 / 卖出金额 / 净额
+    seat_col = None
+    buy_amt_col = None
+    sell_amt_col = None
+    net_col = None
+    for col in df.columns:
+        col_s = str(col)
+        if seat_col is None and ('营业部' in col_s):
+            seat_col = col_s
+        elif col_s in ('买入金额', '买入金额(元)') and buy_amt_col is None:
+            buy_amt_col = col_s
+        elif col_s in ('卖出金额', '卖出金额(元)') and sell_amt_col is None:
+            sell_amt_col = col_s
+        elif col_s in ('净额', '净额(元)', '净买入金额') and net_col is None:
+            net_col = col_s
+
+    seats: List[Dict[str, Any]] = []
+    for _, row in df.iterrows():
+        seat_raw = row.get(seat_col) if seat_col else None
+        if pd.isna(seat_raw):
+            continue
+        seat = str(seat_raw).strip()
+        if not seat:
+            continue
+
+        buy_amount = safe_float_value(row.get(buy_amt_col)) if buy_amt_col else None
+        sell_amount = safe_float_value(row.get(sell_amt_col)) if sell_amt_col else None
+        net = safe_float_value(row.get(net_col)) if net_col else None
+
+        # 原始行 → JSON 友好
+        raw_row: Dict[str, Any] = {}
+        for col in df.columns:
+            val = row.get(col)
+            if pd.isna(val):
+                raw_row[str(col)] = None
+            elif isinstance(val, (int, float)):
+                raw_row[str(col)] = float(val)
+            else:
+                raw_row[str(col)] = str(val)
+
+        seats.append({
+            'seat': seat,
+            'buy_amount': buy_amount,
+            'sell_amount': sell_amount,
+            'net_amount': net,
+            'raw': raw_row,
+        })
+
+    return seats
+
+
 def _format_iso_date(yyyymmdd: str) -> str:
     """20250605 -> 2025-06-05; pass-through if already ISO"""
     if len(yyyymmdd) == 8 and yyyymmdd.isdigit():
@@ -970,6 +1182,14 @@ def main():
             date = sys.argv[2]
             market = sys.argv[3] if len(sys.argv) > 3 else "北向"
             result = get_northbound_holdings(date, market)
+
+        elif command == "get_dragon_tiger_detail":
+            if len(sys.argv) < 3:
+                print(json.dumps({"error": "Missing date for get_dragon_tiger_detail"}), file=sys.stderr)
+                sys.exit(1)
+
+            date = sys.argv[2]
+            result = get_dragon_tiger_detail(date)
 
         else:
             print(json.dumps({"error": f"Unknown command: {command}"}), file=sys.stderr)

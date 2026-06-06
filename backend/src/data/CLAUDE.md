@@ -66,6 +66,19 @@ Established by **US-005 (northbound holdings)** — follow the trio + CLI shape.
 - `_format_iso_date(yyyymmdd)` — `20250605` → `2025-06-05`; passthrough for
   already-ISO strings. Used to canonicalise `trade_date` before TS receives it.
 
+## Multi-record-per-stock pattern (US-006 dragon-tiger)
+
+Some A-share data sources fan a single stock into MANY rows per day:
+龙虎榜 is `buyer_seat × seller_seat` cartesian; eventual 涨停板 is candidate-list.
+For those, the model PK is a 3-/4-tuple (not just `trade_date + stock_code`).
+The Python helper does the fan-out and emits one TS row per pair so the service
+layer stays a simple `bulkCreate + updateOnDuplicate`. Keep both halves of the
+join in `raw_payload` (e.g. `{list_row, buyer_row, seller_row}`) for audit.
+
+A boolean tag computed from a whitelist (e.g. `is_famous_yz` against
+`constants/famousSeats.ts`) belongs in the **service**, not the Python helper:
+TS owns business logic, Python is the dumb fetcher.
+
 ## Worktree gotcha (still active as of US-005)
 
 The git worktree has no `backend/node_modules`. Symlink before typecheck:

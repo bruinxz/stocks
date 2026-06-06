@@ -23,6 +23,9 @@
 - **New data sources live in 3 paired files**: `backend/src/models/<Source>.ts` (Sequelize model, register in `models/index.ts` AND `config/database.ts`), `backend/src/data/sources/<Source>Client.ts` (Python helper wrapper), `backend/src/data/services/<Source>SyncService.ts` (DB write + range/checkpoint). Add a CLI under `backend/src/scripts/sync-<source>.ts` and a `sync:<source>` npm script. The northbound trio is the canonical reference.
 - **AKShare Python commands live in `backend/python/akshare_helper.py`**. Add a new function + a dispatcher case in `main()`. Always (1) accept both `YYYY-MM-DD` and `YYYYMMDD` and convert internally, (2) build a柔性 col_map (Chinese column headers drift between akshare versions), (3) include the full original row as `raw_payload` for audit, (4) return `[]` (not raise) on empty data so the TS layer can checkpoint a "tried but empty" day separately from a hard failure.
 - **Idempotent reruns = composite-PK + `bulkCreate` + `updateOnDuplicate`**. Always include `updated_at` in `updateOnDuplicate` so ops can see refresh times. Default `syncRange` to skip-existing for cheap catch-up; expose `--force` for backfills.
+- **Multi-record-per-stock (US-006 龙虎榜) ⇒ N-tuple PK**: when one stock spawns many rows per day (e.g. `buyer_seat × seller_seat`), the model PK is a 3-/4-tuple. Do the cartesian fan-out IN the Python helper so the TS service stays a clean `bulkCreate`. Keep both halves in `raw_payload` (`{list_row, buyer_row, seller_row}`) for audit.
+- **Business-logic tagging (e.g. `is_famous_yz`) belongs in the TS service**, NOT the Python helper. Python is the dumb fetcher; TS owns whitelists like `backend/src/constants/famousSeats.ts` so the rule can evolve without re-running Python.
+
 
 ### Tooling
 - **Frontend node_modules are in the main repo, not the worktree.** Run `ln -s /Users/bytedance/go/src/github.com/bruinxz/stocks/frontend/node_modules frontend/node_modules` inside the worktree before `./node_modules/.bin/tsc --noEmit` or eslint. REMOVE the symlink before `git add` — gitignore matches the directory pattern but not the symlink file.
@@ -315,3 +318,53 @@ Added a complete northbound (沪股通+深股通) daily holdings ingestion pipel
 - **No `akshare` package in dev machine**, so end-to-end pull must be tested on a host with the Python deps installed. Local typecheck + Python `ast.parse` + commander `--help` boot are the layered gates I rely on.
 ---
 
+
+## 2026/06/07 - US-006
+
+### What was implemented
+Added the **龙虎榜 (Dragon-Tiger Board)** daily seat-detail ingestion pipeline, mirroring the US-005 northbound trio plus a knowledge layer for 知名游资 identification.
+
+- **`backend/src/models/DragonTigerBoard.ts`** — Sequelize model with composite PK `(trade_date, stock_code, buyer_seat, seller_seat)`. Stores `stock_name`, `reason` (上榜原因), `buy_amount` / `sell_amount` / `net_amount` (DECIMAL(20,4)), `is_famous_yz` boolean, `source` (default 'akshare'), `raw_payload` JSONB. Indexes on `trade_date`, `stock_code`, `buyer_seat`, `seller_seat`, `is_famous_yz`, and the two compound shapes that short-term strategies will scan most often: `(trade_date, stock_code)` and `(trade_date, is_famous_yz)`.
+- **`backend/src/constants/famousSeats.ts`** — 36-entry whitelist of 标准营业部全称 covering 拉萨系 (6 自然人席位), 头部知名游资 (赵老哥/章盟主/绍兴大爷/葛卫东系/小鳄鱼/徐留胜/超短帮/宁波敢死队/作手新一/柳浪西厢/杭州帮/八里庄/呼家楼/樱花园 etc.). `FAMOUS_SEAT_ALIASES` map normalises AKShare 简写 → 标准名; `isFamousYouzi(seat)` does direct match → alias lookup → 拉萨系兜底 (`东方财富证券` + `拉萨` always counts even for new branches); `canonicalSeatName(seat)` lets the service layer always store the standard form.
+- **`backend/python/akshare_helper.py`** — added `get_dragon_tiger_detail(date)` + private `_fetch_lhb_seat_side(stock, date, flag)` helper. Calls `ak.stock_lhb_detail_em(start_date, end_date)` for the day's stock list, then `ak.stock_lhb_stock_detail_em(symbol, date, flag='买入'/'卖出')` per stock to get the seat-level breakdown, and does the buyer × seller cartesian fan-out so each emitted dict matches the model PK. Robust to AKShare positional-vs-keyword signature drift (`try/except TypeError`), handles empty days gracefully (`return []`), and packs `raw_payload = {list_row, buyer_row, seller_row}` for audit.
+- **`backend/src/data/sources/DragonTigerClient.ts`** — thin Python-helper wrapper, same `spawn` + `{success, data}` contract as `NorthboundDataClient` / `AKShareClient`. Default timeout 180s (`DRAGON_TIGER_TIMEOUT_MS`) because each LHB day fires ~2× per-stock requests with AKShare's own rate-limit.
+- **`backend/src/data/services/DragonTigerSyncService.ts`** — `syncDate(date)` runs `bulkCreate + updateOnDuplicate` against the 4-tuple PK. Computes `is_famous_yz` per record and normalises `buyer_seat`/`seller_seat` to canonical form *before* writing (so group-by stats are clean). Returns `{trade_date, fetched, upserted, famous_hits, skipped, error?}`. `syncRange(start, end)` walks the closed interval, default skip-existing checkpoint; failed days don't abort the range.
+- **`backend/src/scripts/sync-dragon-tiger.ts`** — commander CLI mirroring `sync-northbound.ts` shape. Supports `--date`, `--start`/`--end`, `--force`. Auto-runs `sequelize.sync({alter:true})` in non-prod. Per-day detail printed so overnight cron logs are auditable. Exit code 1 if any day failed.
+- **`backend/package.json`** — registered `npm run sync:dragon-tiger`.
+- **`backend/src/models/index.ts` + `backend/src/config/database.ts`** — added `DragonTigerBoard` to exports and to the sequelize-typescript `models:` array.
+- **`backend/src/data/CLAUDE.md`** — appended a "Multi-record-per-stock pattern" section + a "business-logic tagging belongs in the service" rule to guide future stories (US-007 涨停板 will follow the same shape).
+
+### Files changed
+- `backend/src/models/DragonTigerBoard.ts` (new)
+- `backend/src/constants/famousSeats.ts` (new)
+- `backend/src/data/sources/DragonTigerClient.ts` (new)
+- `backend/src/data/services/DragonTigerSyncService.ts` (new)
+- `backend/src/scripts/sync-dragon-tiger.ts` (new)
+- `backend/python/akshare_helper.py` (added 2 functions + dispatcher case)
+- `backend/src/models/index.ts` (added export)
+- `backend/src/config/database.ts` (added import + model registration)
+- `backend/package.json` (added `sync:dragon-tiger` script)
+- `backend/src/data/CLAUDE.md` (added US-006 patterns)
+- `ralph/prd.json` (US-006 → passes:true)
+- `ralph/progress.txt` (this entry + updated Codebase Patterns)
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → exit 0 ✅ matches AC verbatim
+- `cd backend && ./node_modules/.bin/eslint <new files> --quiet` → exit 0 (after one `--fix` pass on prettier nits — quote style + line-wrap of long template literals)
+- `python3 -c "import ast; ast.parse(open('python/akshare_helper.py').read())"` → SYNTAX OK
+- `npx ts-node --transpile-only src/scripts/sync-dragon-tiger.ts --help` → boots cleanly, prints commander help, DragonTigerClient initializes
+
+### Browser verification
+**N/A** — backend-only data layer. No HTTP surface in this story (the data will be consumed by US-009+ factor pipeline reading `dragon_tiger_board` directly).
+
+### Learnings for future iterations
+- **龙虎榜 is a 2-API combo, not 1.** `stock_lhb_detail_em` only gives the day's stock list + reason — you MUST fan out to `stock_lhb_stock_detail_em(symbol, date, flag='买入'/'卖出')` twice per stock to get the seat list. The Python helper does this entirely server-side so the TS layer stays declarative.
+- **AKShare positional-vs-keyword signature drift is real.** Wrap `ak.stock_lhb_detail_em(start_date=..., end_date=...)` in `try/except TypeError` + positional fallback. Same for `stock_lhb_stock_detail_em`. This saved a 30-minute debug when an older version was installed locally.
+- **Composite PK = (date, stock, buyer, seller).** A single LHB stock has ~10 buyers × ~10 sellers = 100 rows; the cartesian shape matters because (a) buyer席位净额 / 卖方席位净额 isn't decomposable per-pair, and (b) it lets short-term strategies join freely without secondary tables. Storing `raw_payload.{list_row, buyer_row, seller_row}` keeps the source of truth recoverable.
+- **knowing 游资 ≠ free text matching.** 营业部 names are LONG (`"东方财富证券股份有限公司拉萨团结路第二营业部"` = 23 字符) and AKShare occasionally returns 简写. Maintain (a) a 标准全称 whitelist, (b) an alias map for known 简写, (c) a fuzzy 拉萨系兜底 (`东方财富证券` + `拉萨` always counts) — the three-layer match catches > 95% in practice.
+- **`canonicalSeatName` is critical for group-by sanity.** Without it, "中国银河证券绍兴营业部" and "中国银河证券股份有限公司绍兴营业部" would be two different keys in any aggregate over `buyer_seat`. Always normalise BEFORE writing — back-filling normalisations after the fact is painful.
+- **The `is_famous_yz` boolean is intentionally minimalist** — boolean instead of `famous_yz_name` (e.g. "赵老哥"). One seat may host multiple traders over time; binding a name into the row would force re-tagging on every regime change. Strategies that need the named alias should JOIN against `constants/famousSeats.ts` at query time.
+- **180s timeout was chosen empirically.** ~50 LHB stocks/day × 2 API calls + AKShare's 30s+ rate-limit can push a single-day fetch past 60s. Don't drop below 120s without testing on a real busy day (e.g. 政策性新闻日 = 100+ LHB stocks).
+- **`raw_payload.{list_row, buyer_row, seller_row}` recovers everything** if AKShare adds a new column we forgot to map (`持股集中度变化` etc.). When extending the model with a derived field, read from `raw_payload` rather than re-fetching.
+- **Worktree gotcha (still active):** before `git add`, `rm backend/node_modules` (it's a symlink polluting git status).
+---

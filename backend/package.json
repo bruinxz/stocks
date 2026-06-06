@@ -22,6 +22,7 @@
     "data:daily-update": "ts-node src/scripts/data-cli.ts daily-update",
     "data:check-update": "ts-node src/scripts/data-cli.ts check-update",
     "sync:northbound": "ts-node src/scripts/sync-northbound.ts",
+    "sync:dragon-tiger": "ts-node src/scripts/sync-dragon-tiger.ts",
     "paper:reset-and-run-quant": "ts-node src/scripts/reset-paper-trading-and-run-quant.ts",
     "seed:mock": "ts-node src/scripts/seed-mock-data.ts",
     "data:status": "ts-node src/scripts/data-cli.ts status"

@@ -41,6 +41,7 @@ import { StockFundamentalFactor } from '../models/StockFundamentalFactor';
 import { StockMoneyFlowFactor } from '../models/StockMoneyFlowFactor';
 import { StockValuationFactor } from '../models/StockValuationFactor';
 import { NorthboundHolding } from '../models/NorthboundHolding';
+import { DragonTigerBoard } from '../models/DragonTigerBoard';
 import { LiveBrokerAccount } from '../models/LiveBrokerAccount';
 import { LiveAccountSnapshot } from '../models/LiveAccountSnapshot';
 import { LivePosition } from '../models/LivePosition';
@@ -111,6 +112,7 @@ const sequelize = new Sequelize({
     StockMoneyFlowFactor,
     StockValuationFactor,
     NorthboundHolding,
+    DragonTigerBoard,
     LiveBrokerAccount,
     LiveAccountSnapshot,
     LivePosition,
