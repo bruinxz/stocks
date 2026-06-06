@@ -781,6 +781,125 @@ def get_intraday_bars(code: str, period: str = '1', limit: int = 240) -> List[Di
         print(f"Error getting intraday bars for {code}: {e}", file=sys.stderr)
         return []
 
+def get_northbound_holdings(date: str, market: str = "北向") -> List[Dict[str, Any]]:
+    """
+    Fetch northbound (Stock Connect) holdings for a given trade date.
+
+    Uses AKShare `stock_hsgt_hold_stock_em`, which returns one row per stock
+    for the chosen market channel ('沪股通' / '深股通' / '北向').
+
+    Args:
+        date: trade date as YYYY-MM-DD or YYYYMMDD.
+        market: one of '北向' (combined SH+SZ, default), '沪股通', '深股通'.
+
+    Returns:
+        List of dicts with keys: trade_date, stock_code, stock_name,
+        hold_volume, hold_amount, hold_ratio, market_type, raw_payload.
+        Returns [] on empty / error so caller can checkpoint a "tried" date.
+    """
+    try:
+        # AKShare expects 20250605 form
+        pure_date = date.replace('-', '')
+        # market parameter values: "沪股通", "深股通", "北向"
+        market_param = market if market else "北向"
+
+        print(f"Fetching northbound holdings for {pure_date} ({market_param})...", file=sys.stderr)
+        df = ak.stock_hsgt_hold_stock_em(market=market_param, indicator=pure_date)
+
+        if df is None or df.empty:
+            print(f"AKShare returned empty dataframe for {pure_date}", file=sys.stderr)
+            return []
+
+        # AKShare 列名取决于版本，做一次柔性映射
+        col_map = {}
+        for col in df.columns:
+            col_s = str(col)
+            if col_s in ('股票代码', 'stock_code', 'code'):
+                col_map['stock_code'] = col_s
+            elif col_s in ('股票简称', '股票名称', 'name', 'stock_name'):
+                col_map['stock_name'] = col_s
+            elif col_s == '持股数量':
+                col_map['hold_volume'] = col_s
+            elif col_s == '持股市值':
+                col_map['hold_amount'] = col_s
+            elif col_s in ('持股数量占发行股百分比', '持股市值占A股市值比'):
+                # 优先选第一个匹配到的"占比"列
+                col_map.setdefault('hold_ratio', col_s)
+            elif col_s == '市场':
+                col_map['market_label'] = col_s
+
+        result: List[Dict[str, Any]] = []
+        for _, row in df.iterrows():
+            raw_code = row.get(col_map.get('stock_code', '股票代码'))
+            if pd.isna(raw_code):
+                continue
+            stock_code = str(raw_code).strip()
+            if not stock_code or stock_code.lower() == 'nan':
+                continue
+
+            # 推断市场类型：根据代码前缀
+            if stock_code.startswith('6'):
+                market_type = 'SH'
+            elif stock_code.startswith(('0', '3')):
+                market_type = 'SZ'
+            else:
+                # 如果有 "市场" 字段则用它来判定
+                m_label = row.get(col_map.get('market_label')) if col_map.get('market_label') else None
+                if isinstance(m_label, str) and '沪' in m_label:
+                    market_type = 'SH'
+                elif isinstance(m_label, str) and '深' in m_label:
+                    market_type = 'SZ'
+                else:
+                    # 不属于沪深 A 股直接跳过 (北交所/科创板 8 开头会落在这里)
+                    continue
+
+            stock_name_col = col_map.get('stock_name')
+            stock_name = str(row.get(stock_name_col)) if stock_name_col and pd.notna(row.get(stock_name_col)) else None
+
+            hold_volume_col = col_map.get('hold_volume')
+            hold_amount_col = col_map.get('hold_amount')
+            hold_ratio_col = col_map.get('hold_ratio')
+
+            hold_volume = safe_float_value(row.get(hold_volume_col)) if hold_volume_col else None
+            hold_amount = safe_float_value(row.get(hold_amount_col)) if hold_amount_col else None
+            hold_ratio = safe_float_value(row.get(hold_ratio_col)) if hold_ratio_col else None
+
+            # 原始行作为审计 payload，便于事后回溯字段含义
+            raw_payload: Dict[str, Any] = {}
+            for col in df.columns:
+                val = row.get(col)
+                if pd.isna(val):
+                    raw_payload[str(col)] = None
+                elif isinstance(val, (int, float)):
+                    raw_payload[str(col)] = float(val)
+                else:
+                    raw_payload[str(col)] = str(val)
+
+            result.append({
+                "trade_date": _format_iso_date(pure_date),
+                "stock_code": stock_code,
+                "stock_name": stock_name,
+                "hold_volume": int(hold_volume) if hold_volume is not None else None,
+                "hold_amount": hold_amount,
+                "hold_ratio": hold_ratio,
+                "market_type": market_type,
+                "raw_payload": raw_payload,
+            })
+
+        print(f"Parsed {len(result)} northbound rows for {pure_date}", file=sys.stderr)
+        return result
+    except Exception as e:
+        print(f"Error getting northbound holdings for {date}: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return []
+
+
+def _format_iso_date(yyyymmdd: str) -> str:
+    """20250605 -> 2025-06-05; pass-through if already ISO"""
+    if len(yyyymmdd) == 8 and yyyymmdd.isdigit():
+        return f"{yyyymmdd[0:4]}-{yyyymmdd[4:6]}-{yyyymmdd[6:8]}"
+    return yyyymmdd
+
 def main():
     """Main entry point for command line calls"""
     if len(sys.argv) < 2:
@@ -842,6 +961,15 @@ def main():
             start_date = sys.argv[3]
             end_date = sys.argv[4]
             result = health_check(code, start_date, end_date)
+
+        elif command == "get_northbound_holdings":
+            if len(sys.argv) < 3:
+                print(json.dumps({"error": "Missing date for get_northbound_holdings"}), file=sys.stderr)
+                sys.exit(1)
+
+            date = sys.argv[2]
+            market = sys.argv[3] if len(sys.argv) > 3 else "北向"
+            result = get_northbound_holdings(date, market)
 
         else:
             print(json.dumps({"error": f"Unknown command: {command}"}), file=sys.stderr)

@@ -40,6 +40,7 @@ import { RealtimeQuote } from '../models/RealtimeQuote';
 import { StockFundamentalFactor } from '../models/StockFundamentalFactor';
 import { StockMoneyFlowFactor } from '../models/StockMoneyFlowFactor';
 import { StockValuationFactor } from '../models/StockValuationFactor';
+import { NorthboundHolding } from '../models/NorthboundHolding';
 import { LiveBrokerAccount } from '../models/LiveBrokerAccount';
 import { LiveAccountSnapshot } from '../models/LiveAccountSnapshot';
 import { LivePosition } from '../models/LivePosition';
@@ -109,6 +110,7 @@ const sequelize = new Sequelize({
     StockFundamentalFactor,
     StockMoneyFlowFactor,
     StockValuationFactor,
+    NorthboundHolding,
     LiveBrokerAccount,
     LiveAccountSnapshot,
     LivePosition,

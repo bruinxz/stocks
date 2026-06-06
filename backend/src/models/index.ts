@@ -40,3 +40,4 @@ export * from './RealtimeQuote';
 export * from './StockFundamentalFactor';
 export * from './StockMoneyFlowFactor';
 export * from './StockValuationFactor';
+export * from './NorthboundHolding';

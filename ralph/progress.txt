@@ -19,6 +19,11 @@
 - **`QuantMath.ts` and `StrategyRegistry.ts` stay at `quant/engine/` top level** (NOT in `engine/internal/`). They're imported by every strategy under `strategies/`; moving them would force strategies to reach into `internal/`. Treat them as shared primitives, not part of the facade-internal split.
 - **Symlinks for tooling in the worktree** — the worktree has no `backend/node_modules`. Before running typecheck, symlink: `cd backend && ln -s /Users/bytedance/go/src/github.com/bruinxz/stocks/backend/node_modules node_modules`. The repo's `backend/.gitignore` matches `node_modules/` as a directory pattern but the symlink shows up as an untracked symlink — REMOVE it before `git add` to keep the tree clean.
 
+### A-share data ingestion (US-005+)
+- **New data sources live in 3 paired files**: `backend/src/models/<Source>.ts` (Sequelize model, register in `models/index.ts` AND `config/database.ts`), `backend/src/data/sources/<Source>Client.ts` (Python helper wrapper), `backend/src/data/services/<Source>SyncService.ts` (DB write + range/checkpoint). Add a CLI under `backend/src/scripts/sync-<source>.ts` and a `sync:<source>` npm script. The northbound trio is the canonical reference.
+- **AKShare Python commands live in `backend/python/akshare_helper.py`**. Add a new function + a dispatcher case in `main()`. Always (1) accept both `YYYY-MM-DD` and `YYYYMMDD` and convert internally, (2) build a柔性 col_map (Chinese column headers drift between akshare versions), (3) include the full original row as `raw_payload` for audit, (4) return `[]` (not raise) on empty data so the TS layer can checkpoint a "tried but empty" day separately from a hard failure.
+- **Idempotent reruns = composite-PK + `bulkCreate` + `updateOnDuplicate`**. Always include `updated_at` in `updateOnDuplicate` so ops can see refresh times. Default `syncRange` to skip-existing for cheap catch-up; expose `--force` for backfills.
+
 ### Tooling
 - **Frontend node_modules are in the main repo, not the worktree.** Run `ln -s /Users/bytedance/go/src/github.com/bruinxz/stocks/frontend/node_modules frontend/node_modules` inside the worktree before `./node_modules/.bin/tsc --noEmit` or eslint. REMOVE the symlink before `git add` — gitignore matches the directory pattern but not the symlink file.
 - **Frontend lint command:** `cd frontend && ./node_modules/.bin/eslint src --ext .ts,.tsx --quiet` (errors only). Warnings are prettier nags — use `--fix` to auto-resolve.
@@ -264,3 +269,49 @@ backend/src/quant/
 - **Backend lint still has ~500 pre-existing prettier errors in unrelated files**. Of the 6 files I created/rewrote, I ran `--fix` and they're now clean. For the 9 consumer files where I only edited import lines (lines 6-16), all reported errors live at lines 50+ and are pre-existing — don't `--fix` them in this story.
 - **The CLAUDE.md in `backend/src/quant/` is now the source of truth for facade rules + method index**. Update it (not progress.txt) when adding a new facade method or changing the public surface.
 ---
+
+## 2026/06/06 - US-005
+
+### What was implemented
+Added a complete northbound (沪股通+深股通) daily holdings ingestion pipeline:
+
+- **`backend/src/models/NorthboundHolding.ts`** — Sequelize model with composite PK `(trade_date, stock_code)`. Stores `stock_name`, `hold_volume` (BIGINT), `hold_amount` (DECIMAL(20,4)), `hold_ratio` (DECIMAL(10,6) — percentage of free-float), `market_type` (ENUM 'SH'|'SZ'), `source` (default 'akshare'), `raw_payload` (JSONB for full AKShare row), plus auto-managed `created_at` / `updated_at`. Secondary indexes on `trade_date`, `stock_code`, `market_type`, `(trade_date, market_type)` for the most common factor-derivation queries.
+- **`backend/src/data/sources/NorthboundDataClient.ts`** — thin wrapper around the Python AKShare helper. Exposes `fetchHoldings(date, market='北向')` returning a typed `NorthboundHoldingRow[]`. Reuses the same `spawn` + JSON `{success,data}` contract as `AKShareClient`, with a separate `NORTHBOUND_TIMEOUT_MS` env (default 60s).
+- **`backend/src/data/services/NorthboundSyncService.ts`** — orchestrates the DB write. `syncDate(date)` does `bulkCreate` + `updateOnDuplicate` for idempotent reruns (rebuilds the day's snapshot even if AKShare reports new numbers). `syncRange(start, end)` walks the closed interval day-by-day; default checkpoint behavior skips a date when any row is already present (override with `--force` CLI flag or `NORTHBOUND_SKIP_EXISTING=0`). Empty AKShare responses on weekends/holidays are logged as `fetched=0` (not an error), making it easy to distinguish "skipped" vs "no data" in ops logs.
+- **`backend/python/akshare_helper.py`** — added `get_northbound_holdings(date, market)` Python function + dispatcher case. Calls `ak.stock_hsgt_hold_stock_em(market=..., indicator=YYYYMMDD)`, normalizes ISO date, defends against AKShare column-name drift (柔性列名映射), infers SH/SZ from code prefix (6→SH, 0/3→SZ), and emits per-row `raw_payload` for audit.
+- **`backend/src/scripts/sync-northbound.ts`** — CLI built on `commander`. Auto-runs `sequelize.sync({alter:true})` in non-prod so a fresh DB picks up the new table without a manual migration. Supports `--date`, `--start`/`--end`, `--force`, `--market`. Exits 1 if any day failed so cron wrappers can retry.
+- **`backend/package.json`** — registered `npm run sync:northbound`.
+- **`backend/src/models/index.ts` & `backend/src/config/database.ts`** — added `NorthboundHolding` to model exports and sequelize-typescript registration so the model participates in `sync()`.
+
+### Files changed
+- `backend/src/models/NorthboundHolding.ts` (new)
+- `backend/src/data/sources/NorthboundDataClient.ts` (new)
+- `backend/src/data/services/NorthboundSyncService.ts` (new)
+- `backend/src/scripts/sync-northbound.ts` (new)
+- `backend/python/akshare_helper.py` (added function + dispatcher case)
+- `backend/src/models/index.ts` (added export)
+- `backend/src/config/database.ts` (added import + model registration)
+- `backend/package.json` (added `sync:northbound` script)
+- `ralph/prd.json` (US-005 → passes:true)
+- `ralph/progress.txt` (this entry)
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → exit 0 ✅ matches AC verbatim
+- `cd backend && ./node_modules/.bin/eslint <new files> --quiet` → exit 0 (after one `--fix` pass on prettier nits)
+- `python3 -c "import ast; ast.parse(open('python/akshare_helper.py').read())"` → SYNTAX OK
+- `npx ts-node --transpile-only src/scripts/sync-northbound.ts --help` → boots cleanly, prints commander help, NorthboundDataClient initializes
+
+### Browser verification
+**N/A** — backend-only data layer. No HTTP surface area in this story (consumers in US-009+ will read from `northbound_holdings` directly via a strategy/factor service).
+
+### Learnings for future iterations
+- **AKShare 列名容易随版本漂移**, especially Chinese column headers (持股数 vs 持股数量, 持股市值 vs 持股市值占A股市值比). Build a柔性 col_map in the Python helper instead of indexing by exact name — otherwise an akshare upgrade silently zeroes out your data.
+- **`stock_hsgt_hold_stock_em` 的 `indicator` 参数是 YYYYMMDD 串**, not ISO. The TS client accepts both; conversion happens in Python (`pure_date = date.replace('-', '')`) so callers never need to think about it.
+- **Skipping 8 开头 (北交所) / 4 开头 from northbound data is intentional** — Stock Connect only covers SH 600+/SZ 000+/SZ 300+. The Python helper drops them up-front so we don't pollute the table with rows that have no `market_type` answer.
+- **`updateOnDuplicate` + composite PK = idempotent reruns.** A rerun on the same day will overwrite stock_name/hold_volume/hold_amount/hold_ratio/raw_payload, which is exactly what we want when AKShare publishes a delayed correction. Don't forget to include `updated_at` in the update list — Sequelize won't touch it otherwise and ops can't tell when the row was last refreshed.
+- **`syncRange` returns per-day details, not just aggregates.** The CLI prints them one line per day so an overnight catch-up cron leaves a readable audit trail. Aggregate-only return shape would hide which date silently returned 0 rows.
+- **Worktree gotcha (still active):** the worktree has no `backend/node_modules`. Symlink before typecheck/lint, REMOVE the symlink before `git add`. `.gitignore` matches `node_modules/` as a directory pattern but the symlink shows up as an untracked symlink file.
+- **`safe_float_value` and `_format_iso_date` live in akshare_helper.py** — when adding a new northbound-style data source (US-006..US-014), reuse those helpers from the same file rather than reinventing them. Conversion of NaN / "−" / "未知" / "-" to None is centralised in `safe_float_value`.
+- **No `akshare` package in dev machine**, so end-to-end pull must be tested on a host with the Python deps installed. Local typecheck + Python `ast.parse` + commander `--help` boot are the layered gates I rely on.
+---
+

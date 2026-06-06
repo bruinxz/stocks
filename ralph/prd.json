@@ -79,8 +79,8 @@
         "Typecheck passes"
       ],
       "priority": 5,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026/06/06. Added Sequelize model backend/src/models/NorthboundHolding.ts with composite PK (trade_date, stock_code) and indexes by trade_date / stock_code / market_type. Added NorthboundDataClient calling AKShare stock_hsgt_hold_stock_em via a new python helper command get_northbound_holdings (handles YYYY-MM-DD ↔ YYYYMMDD conversion and infers SH/SZ from stock code prefix). NorthboundSyncService offers syncDate (bulkCreate + updateOnDuplicate for idempotent reruns) and syncRange with day-by-day skip-existing checkpoint logic, controllable via NORTHBOUND_SKIP_EXISTING env. CLI script (npm run sync:northbound) supports --date / --start+--end / --force / --market flags. Model registered in config/database.ts so sync({alter:true}) auto-creates the table in dev. cd backend && npx tsc --noEmit passes clean."
     },
     {
       "id": "US-006",
