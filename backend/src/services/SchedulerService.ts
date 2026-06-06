@@ -14,11 +14,11 @@ import { quantDataService } from '../quant/services/QuantDataService';
 import { realtimeQuoteService } from '../data/services/RealtimeQuoteService';
 import { aiInvestmentSignalService } from './AIInvestmentSignalService';
 import { feishuTaskReportService } from './FeishuTaskReportService';
-import { paperTradingAutomationService } from './PaperTradingAutomationService';
-import { paperTradingAttributionService } from './PaperTradingAttributionService';
-import { paperTradingPlanService } from './PaperTradingPlanService';
-import { paperTradingOrderIntentService } from './PaperTradingOrderIntentService';
-import { paperTradingTuningApplyService } from './PaperTradingTuningApplyService';
+import { paperTradingAutomationService } from '../portfolio/internal/PaperTradingAutomationService';
+import { paperTradingAttributionService } from '../portfolio/internal/PaperTradingAttributionService';
+import { paperTradingPlanService } from '../portfolio/internal/PaperTradingPlanService';
+import { paperTradingOrderIntentService } from '../portfolio/internal/PaperTradingOrderIntentService';
+import { paperTradingTuningApplyService } from '../portfolio/internal/PaperTradingTuningApplyService';
 import { benchmarkIndexService } from './BenchmarkIndexService';
 import { automatedRecommendationLoopService } from './AutomatedRecommendationLoopService';
 import { recommendationTradeOutcomeService } from './RecommendationTradeOutcomeService';
@@ -29,7 +29,7 @@ import { openingReadinessService } from './OpeningReadinessService';
 import {
   AUTONOMOUS_PORTFOLIO_NAME,
   DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
-} from './PaperTradingDashboardService';
+} from '../portfolio/internal/PaperTradingDashboardService';
 import moment from 'moment-timezone';
 import { Op } from 'sequelize';
 

@@ -5,9 +5,9 @@ import { TaskExecutionLog } from '../models/TaskExecutionLog';
 import { DataSourceHealthService } from '../data/services/DataSourceHealthService';
 import { quantRuntimeHealthService } from '../quant/services/QuantRuntimeHealthService';
 import { quantOpeningPreflightService } from './QuantOpeningPreflightService';
-import { paperTradingRiskProfileService } from './PaperTradingRiskProfileService';
+import { paperTradingRiskProfileService } from '../portfolio/internal/PaperTradingRiskProfileService';
 import { taskAutomationHealthService } from './TaskAutomationHealthService';
-import { AUTONOMOUS_PORTFOLIO_NAME } from './PaperTradingPortfolioFamilies';
+import { AUTONOMOUS_PORTFOLIO_NAME } from '../portfolio/internal/PaperTradingPortfolioFamilies';
 import { logger } from '../utils/logger';
 
 type ReadinessStatus = 'ready' | 'degraded' | 'blocked';

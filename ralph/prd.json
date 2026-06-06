@@ -47,8 +47,8 @@
         "Typecheck passes"
       ],
       "priority": 3,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026/06/06. Moved 8 PaperTrading services to backend/src/portfolio/internal/, created PaperTradingFacade with exactly 7 public methods (getPortfolio / placeOrder / closePosition / getDailySnapshot / attributePnl / applyAutomation / getRiskProfile) using discriminated-union actions to multiplex the ~25 controller endpoints. Controller now imports only the facade + 4 re-exported constants. Updated 12 other backend files (Scheduler, Quant, LiveTrading, jobs, scripts) to point at new internal paths. cd backend && npx tsc --noEmit passes clean."
     },
     {
       "id": "US-004",

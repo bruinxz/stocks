@@ -23,7 +23,7 @@ import { ConfiguredQuoteProvider } from '../market-data/ConfiguredQuoteProvider'
 import { LiveMarketDataProvider } from '../market-data/LiveMarketDataProvider';
 import { liveRiskGuardService } from './LiveRiskGuardService';
 import { LIVE_ORDER_CONFIRM_TEXT, liveTradingSafetyService } from './LiveTradingSafetyService';
-import { PAPER_PORTFOLIO_FAMILIES } from '../../services/PaperTradingPortfolioFamilies';
+import { PAPER_PORTFOLIO_FAMILIES } from '../../portfolio/internal/PaperTradingPortfolioFamilies';
 
 function toNumber(value: any): number {
   const num = Number(value);

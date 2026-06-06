@@ -1,7 +1,7 @@
 import moment from 'moment-timezone';
 import { recommendationTradeOutcomeService } from './RecommendationTradeOutcomeService';
 import { aiInvestmentSignalService } from './AIInvestmentSignalService';
-import { paperTradingRiskProfileService } from './PaperTradingRiskProfileService';
+import { paperTradingRiskProfileService } from '../portfolio/internal/PaperTradingRiskProfileService';
 import { logger } from '../utils/logger';
 
 interface ReviewPerformanceCenterOptions {

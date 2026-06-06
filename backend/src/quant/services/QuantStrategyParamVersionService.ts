@@ -9,7 +9,7 @@ import { RecommendationTradeOutcome } from '../../models/RecommendationTradeOutc
 import { PaperTradingPortfolio } from '../../models/PaperTradingPortfolio';
 import { Stock } from '../../models/Stock';
 import { benchmarkIndexService } from '../../services/BenchmarkIndexService';
-import { PARAM_EXPERIMENT_PORTFOLIO_NAME } from '../../services/PaperTradingDashboardService';
+import { PARAM_EXPERIMENT_PORTFOLIO_NAME } from '../../portfolio/internal/PaperTradingDashboardService';
 import { normalizeSymbol } from '../../utils/stockSymbol';
 import { logger } from '../../utils/logger';
 import { round } from '../engine/QuantMath';

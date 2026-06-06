@@ -1,7 +1,7 @@
 import { Op } from 'sequelize';
 import moment from 'moment-timezone';
-import { paperTradingDashboardService } from './PaperTradingDashboardService';
-import { paperTradingRiskProfileService } from './PaperTradingRiskProfileService';
+import { paperTradingDashboardService } from '../portfolio/internal/PaperTradingDashboardService';
+import { paperTradingRiskProfileService } from '../portfolio/internal/PaperTradingRiskProfileService';
 import { taskAutomationHealthService } from './TaskAutomationHealthService';
 import { quantSignalService } from '../quant/services/QuantSignalService';
 import { quantFusionAuditService } from '../quant/services/QuantFusionAuditService';
@@ -11,7 +11,7 @@ import { TaskExecutionLog } from '../models/TaskExecutionLog';
 import { normalizeSymbol } from '../utils/stockSymbol';
 import { logger } from '../utils/logger';
 import { openingReadinessService } from './OpeningReadinessService';
-import { paperTradingTuningApplyService } from './PaperTradingTuningApplyService';
+import { paperTradingTuningApplyService } from '../portfolio/internal/PaperTradingTuningApplyService';
 
 type CommandAction = 'buy' | 'watch' | 'hold' | 'sell' | 'avoid';
 

@@ -4,26 +4,26 @@ import {
   AIInvestmentSignal,
   AISignalDecision,
   AISignalSourceType,
-} from '../models/AIInvestmentSignal';
-import { PaperTradingPortfolio } from '../models/PaperTradingPortfolio';
-import { PaperTradingPosition } from '../models/PaperTradingPosition';
-import { PaperTradingTrade } from '../models/PaperTradingTrade';
-import { PaperTradingSnapshot } from '../models/PaperTradingSnapshot';
-import { PaperTradingOrderIntent } from '../models/PaperTradingOrderIntent';
-import { DailyBar } from '../models/DailyBar';
-import { Stock } from '../models/Stock';
-import { RealtimeQuote } from '../models/RealtimeQuote';
-import { User } from '../models/User';
-import { RecommendationTradeOutcome } from '../models/RecommendationTradeOutcome';
-import { quantRecommendationService } from './QuantRecommendationService';
-import { aiInvestmentSignalService } from './AIInvestmentSignalService';
-import { feishuTaskReportService } from './FeishuTaskReportService';
-import { marketEnvironmentService } from './MarketEnvironmentService';
+} from '../../models/AIInvestmentSignal';
+import { PaperTradingPortfolio } from '../../models/PaperTradingPortfolio';
+import { PaperTradingPosition } from '../../models/PaperTradingPosition';
+import { PaperTradingTrade } from '../../models/PaperTradingTrade';
+import { PaperTradingSnapshot } from '../../models/PaperTradingSnapshot';
+import { PaperTradingOrderIntent } from '../../models/PaperTradingOrderIntent';
+import { DailyBar } from '../../models/DailyBar';
+import { Stock } from '../../models/Stock';
+import { RealtimeQuote } from '../../models/RealtimeQuote';
+import { User } from '../../models/User';
+import { RecommendationTradeOutcome } from '../../models/RecommendationTradeOutcome';
+import { quantRecommendationService } from '../../services/QuantRecommendationService';
+import { aiInvestmentSignalService } from '../../services/AIInvestmentSignalService';
+import { feishuTaskReportService } from '../../services/FeishuTaskReportService';
+import { marketEnvironmentService } from '../../services/MarketEnvironmentService';
 import { paperTradingRiskProfileService } from './PaperTradingRiskProfileService';
-import { feishuBotWebhookService } from './FeishuBotWebhookService';
-import { normalizeSymbol } from '../utils/stockSymbol';
-import { logger } from '../utils/logger';
-import { realtimeQuoteService } from '../data/services/RealtimeQuoteService';
+import { feishuBotWebhookService } from '../../services/FeishuBotWebhookService';
+import { normalizeSymbol } from '../../utils/stockSymbol';
+import { logger } from '../../utils/logger';
+import { realtimeQuoteService } from '../../data/services/RealtimeQuoteService';
 
 export const DEFAULT_PAPER_TRADING_INITIAL_CAPITAL = 200000;
 
@@ -1404,7 +1404,9 @@ class PaperTradingAutomationService {
         toBoolean(options.allow_low_data_quality_for_forced_signals, false) &&
         dataQualityBucket === 'low';
       const lowQualityForcedSampleReason = allowLowQualityForcedSample
-        ? `强制信号低数据质量小仓采样：${roundNumber(dataQualityScore, 0) || '--'}分/${dataQualityBucket}`
+        ? `强制信号低数据质量小仓采样：${
+            roundNumber(dataQualityScore, 0) || '--'
+          }分/${dataQualityBucket}`
         : '';
       const dataQualityIssues = Array.isArray(dataQuality.issues)
         ? dataQuality.issues
@@ -1719,10 +1721,10 @@ class PaperTradingAutomationService {
           minLotSample = true;
           minLotSampleReason = `${
             forcedMinLotEnabled ? 'A股一手起买冷启动采样' : 'A股一手起买收益闭环补样'
-          }：目标仓位由 ${roundNumber(
-            gatedSuggestedPct,
+          }：目标仓位由 ${roundNumber(gatedSuggestedPct, 2)}% 提升至 ${roundNumber(
+            effectiveTargetPct,
             2
-          )}% 提升至 ${roundNumber(effectiveTargetPct, 2)}%`;
+          )}%`;
         }
       }
       const tradeRisk = this.evaluateEntryRiskGuard({
@@ -3042,7 +3044,7 @@ class PaperTradingAutomationService {
 
     try {
       const { recommendationTradeOutcomeService } = await import(
-        './RecommendationTradeOutcomeService'
+        '../../services/RecommendationTradeOutcomeService'
       );
       const dashboard = await recommendationTradeOutcomeService.getDashboard({
         portfolio_id: options.portfolio_id,
@@ -3400,7 +3402,7 @@ class PaperTradingAutomationService {
 
     try {
       const { recommendationTradeOutcomeService } = await import(
-        './RecommendationTradeOutcomeService'
+        '../../services/RecommendationTradeOutcomeService'
       );
       const dashboard = await recommendationTradeOutcomeService.getDashboard({
         portfolio_id: options.portfolio_id,
@@ -5196,7 +5198,7 @@ class PaperTradingAutomationService {
   private async refreshRecommendationTradeOutcome(signal_id: number) {
     try {
       const { recommendationTradeOutcomeService } = await import(
-        './RecommendationTradeOutcomeService'
+        '../../services/RecommendationTradeOutcomeService'
       );
       await recommendationTradeOutcomeService.refreshOutcomeBySignal(signal_id);
     } catch (error: any) {

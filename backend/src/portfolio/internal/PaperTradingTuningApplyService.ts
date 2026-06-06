@@ -1,12 +1,15 @@
 import { Op } from 'sequelize';
-import { ScheduledTask } from '../models/ScheduledTask';
-import { schedulerService } from './SchedulerService';
-import { taskParameterAuditService, TaskParameterAuditOperator } from './TaskParameterAuditService';
+import { ScheduledTask } from '../../models/ScheduledTask';
+import { schedulerService } from '../../services/SchedulerService';
+import {
+  taskParameterAuditService,
+  TaskParameterAuditOperator,
+} from '../../services/TaskParameterAuditService';
 import { paperTradingPlanService } from './PaperTradingPlanService';
-import { recommendationTradeOutcomeService } from './RecommendationTradeOutcomeService';
+import { recommendationTradeOutcomeService } from '../../services/RecommendationTradeOutcomeService';
 import { paperTradingOrderIntentService } from './PaperTradingOrderIntentService';
-import { PaperTradingCanaryReviewSnapshot } from '../models/PaperTradingCanaryReviewSnapshot';
-import { logger } from '../utils/logger';
+import { PaperTradingCanaryReviewSnapshot } from '../../models/PaperTradingCanaryReviewSnapshot';
+import { logger } from '../../utils/logger';
 
 interface ApplyOrderIntentTuningOptions {
   dry_run?: boolean;
@@ -1140,7 +1143,9 @@ export class PaperTradingTuningApplyService {
       attribution,
       evidence,
       rollback_plan: status.rollback_plan || {},
-      recent_outcomes: Array.isArray(status.recent_outcomes) ? status.recent_outcomes.slice(0, 8) : [],
+      recent_outcomes: Array.isArray(status.recent_outcomes)
+        ? status.recent_outcomes.slice(0, 8)
+        : [],
       metadata: {
         source: 'paper_trading_canary_status',
         related_audit_count: status.related_audit_count || 1,

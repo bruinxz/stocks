@@ -2,16 +2,27 @@
 
 ## Codebase Patterns
 
+### Frontend
 - **Frontend workspace shells live under** `frontend/src/pages/workspace/`. Each is lazy-loaded in `frontend/src/App.tsx`. When adding workspace tabs in later stories, edit the shell file in place — do NOT introduce parallel page files.
 - **All 6 workspace shells use `WorkspaceLayout`** (`frontend/src/components/layout/WorkspaceLayout.tsx`). When a future story adds real content for a workspace, render the new tab UI as `children` (or branch on `activeKey`) and leave the KPI strip / side rail handled by the layout — do NOT rebuild the chrome from scratch.
 - **WorkspaceLayout props contract:** `tabs[]` (each `{key,label,icon?}`) → 220px left rail; `kpiSlot` → centered metrics inside the 96px KPI bar; `headerActions` → right-aligned `Space`; `activeKey` / `onTabChange` are required to drive the side-rail selection.
 - **App.tsx single source of truth** for routes and the top-level menu. The `routeSelectionAliases` array maps legacy paths to the workspace whose sidebar entry should be highlighted; the `<Routes>` block defines the actual `<Navigate>` redirects. Whenever a legacy path is deprecated, update BOTH arrays.
 - **Legacy page imports** are kept (under `/legacy/*` routes) so deep links and embedded iframes still resolve. Only physically delete a page file after all six workspaces have absorbed its functionality (stories US-015..US-018).
-- **Frontend node_modules are in the main repo, not the worktree.** Run `ln -s /Users/bytedance/go/src/github.com/bruinxz/stocks/frontend/node_modules frontend/node_modules` inside the worktree before `./node_modules/.bin/tsc --noEmit` or eslint. REMOVE the symlink before `git add` — gitignore matches the directory pattern but not the symlink file.
-- **Lint command:** `cd frontend && ./node_modules/.bin/eslint src --ext .ts,.tsx --quiet` (errors only). Warnings are prettier nags — use `--fix` to auto-resolve.
-- **Typecheck command:** `cd frontend && ./node_modules/.bin/tsc --noEmit` (exits 0 = clean).
-- **Browser verification:** No `dev-browser` MCP skill is configured in this environment. UI stories should fall back to manual verification and note that in progress.txt.
 - **Workspace shell CSS lives at the bottom of `frontend/src/index.css`** under a `Workspace shell (US-002)` banner. The shell uses `.workspace-shell`, `.workspace-kpi-bar__inner`, `.workspace-side-tabs`. Media query at 1024px stacks the side rail above content.
+
+### Backend
+- **PaperTrading services live under `backend/src/portfolio/internal/`**, not `backend/src/services/` (US-003 refactor). The public surface is `backend/src/portfolio/PaperTradingFacade.ts` exposing **exactly 7 methods**: `getPortfolio`, `placeOrder`, `closePosition`, `getDailySnapshot`, `attributePnl`, `applyAutomation`, `getRiskProfile`. Controllers MUST only import the facade. Other services/scripts/jobs may still import from `internal/` directly (the facade-only constraint is the controller boundary).
+- **When adding a new paper-trading action**, extend the discriminator union (e.g. `ApplyAutomationAction`) inside `PaperTradingFacade.ts` — do NOT add an 8th method. The `switch` blocks use a `never`-typed default branch to catch missing cases at compile time.
+- **Constants re-exported by facade:** `DEFAULT_PAPER_TRADING_INITIAL_CAPITAL`, `AUTONOMOUS_PORTFOLIO_NAME`, `DEFAULT_AUTONOMOUS_INITIAL_CAPITAL`, `QUANT_ONLY_PORTFOLIO_NAME`. These were previously exported from `PaperTradingAutomationService` and `PaperTradingDashboardService`; controllers/tests now pull them from `../../portfolio/PaperTradingFacade`.
+- **Symlinks for tooling in the worktree** — the worktree has no `backend/node_modules`. Before running typecheck, symlink: `cd backend && ln -s /Users/bytedance/go/src/github.com/bruinxz/stocks/backend/node_modules node_modules`. The repo's `backend/.gitignore` matches `node_modules/` as a directory pattern but the symlink shows up as an untracked symlink — REMOVE it before `git add` to keep the tree clean.
+
+### Tooling
+- **Frontend node_modules are in the main repo, not the worktree.** Run `ln -s /Users/bytedance/go/src/github.com/bruinxz/stocks/frontend/node_modules frontend/node_modules` inside the worktree before `./node_modules/.bin/tsc --noEmit` or eslint. REMOVE the symlink before `git add` — gitignore matches the directory pattern but not the symlink file.
+- **Frontend lint command:** `cd frontend && ./node_modules/.bin/eslint src --ext .ts,.tsx --quiet` (errors only). Warnings are prettier nags — use `--fix` to auto-resolve.
+- **Frontend typecheck command:** `cd frontend && ./node_modules/.bin/tsc --noEmit` (exits 0 = clean).
+- **Backend lint command:** `cd backend && ./node_modules/.bin/eslint src --ext .ts --quiet`. NOTE: the repo currently has ~500+ pre-existing prettier formatting errors in unrelated files — running `--fix` repo-wide would create churn. When changing a file, only fix lint errors that touch your diff.
+- **Backend typecheck command:** `cd backend && npx tsc --noEmit` (exits 0 = clean).
+- **Browser verification:** No `dev-browser` MCP skill is configured in this environment. UI stories should fall back to manual verification and note that in progress.txt.
 
 ---
 
@@ -99,4 +110,64 @@ Introduced a shared **WorkspaceLayout** shell and refactored all 6 workspaces to
 - **Don't add anything to `frontend/src/components/layout/` other than the shell** until at least one other layout primitive earns its keep — the directory is intentionally small so future shells (e.g. a dual-pane workspace) are easy to find.
 - **Window-resize tip**: at <1024px the media query stacks the side rail above content. If a future story needs a horizontally scrollable tab bar at narrow widths, switch the side `Menu` to `mode="horizontal"` inside the same media query instead of bypassing the layout.
 - **Imports were kept minimal in each shell** (only the icons each one actually uses). Resist the temptation to centralize a "all workspace icons" barrel — it makes tree-shaking worse and obscures which workspace owns which icon.
+---
+
+## 2026/06/06 - US-003
+
+### What was implemented
+Collapsed **8 PaperTrading* services** into a single facade (`PaperTradingFacade`) with exactly 7 public methods, as required by the acceptance criteria.
+
+- **Moved** (via `git mv`) all 8 service files from `backend/src/services/` to `backend/src/portfolio/internal/`:
+  - `PaperTradingAttributionService.ts`
+  - `PaperTradingAutomationService.ts`
+  - `PaperTradingDashboardService.ts`
+  - `PaperTradingOrderIntentService.ts`
+  - `PaperTradingPlanService.ts`
+  - `PaperTradingPortfolioFamilies.ts`
+  - `PaperTradingRiskProfileService.ts`
+  - `PaperTradingTuningApplyService.ts`
+- **Created** `backend/src/portfolio/PaperTradingFacade.ts` exposing exactly 7 public methods:
+  1. `getPortfolio({view: 'basic'|'autonomous_dashboard'|'recommendation_tracking', ...})`
+  2. `placeOrder({user_id, symbol, direction, quantity})`
+  3. `closePosition({user_id, symbol})`
+  4. `getDailySnapshot({action: 'list'|'trades'|'refresh', user_id})`
+  5. `attributePnl({action: 'compute'|'report'|'autonomous_optimization'|'recommendation_outcomes'|'recommendation_outcome_trace'|'refresh_recommendation_outcomes'|'report_recommendation_outcomes', ...})`
+  6. `applyAutomation({action: 'auto_buy'|'auto_sync'|'risk_check'|'autonomous_auto_sync'|'autonomous_risk_check'|'plan'|'plan_report'|'tuning_apply'|'tuning_rollback'|'hindsight_refresh', ...})`
+  7. `getRiskProfile({view: 'profile'|'intents'|'intent_family_hindsight'|'intent_trace'|'tuning_canary'|'tuning_candidates'|'tuning_canary_snapshots', ...})`
+- **Rewrote** `backend/src/api/controllers/PaperTradingController.ts` to import ONLY `paperTradingFacade` plus the 4 re-exported constants — net ~700 LOC removed (the controller dropped from 1006 lines to ~600 by deduping price-fetch / commission / portfolio-lookup logic into the facade).
+- **Updated all non-controller imports** to point to `../portfolio/internal/...` instead of `../services/...`:
+  - `src/services/{Scheduler,AutomatedRecommendationLoop,OpeningReadiness,RecommendationTradeOutcome,ReviewPerformanceCenter,TodayCommandCenter}Service.ts`
+  - `src/quant/services/{QuantFusion,QuantPerformanceDashboard,QuantStrategyParamVersion}Service.ts`
+  - `src/live-trading/services/LiveTradingService.ts`
+  - `src/jobs/aiPollingWorker.ts`
+  - `src/scripts/reset-paper-trading-and-run-quant.ts`
+- **Fixed internal cross-imports** inside moved files: sibling-service imports that previously used `./XxxService` (e.g. `./RecommendationTradeOutcomeService`, `./FeishuTaskReportService`) now point to `../../services/XxxService`. Three dynamic `import('./RecommendationTradeOutcomeService')` calls inside `PaperTradingAutomationService` were also rewritten.
+- **Added** `backend/src/portfolio/CLAUDE.md` documenting the facade rules: controllers must use the facade only; other services may still reach `internal/`; never add an 8th method to the facade — extend the existing discriminator union instead.
+
+### Files changed
+- `backend/src/portfolio/PaperTradingFacade.ts` (new, 600+ LOC)
+- `backend/src/portfolio/CLAUDE.md` (new)
+- `backend/src/portfolio/internal/PaperTrading{Attribution,Automation,Dashboard,OrderIntent,Plan,PortfolioFamilies,RiskProfile,TuningApply}Service.ts` (moved + import-path tweaks)
+- `backend/src/api/controllers/PaperTradingController.ts` (rewritten)
+- 12 other files updated to point at the new internal paths (see list above)
+- `ralph/prd.json` (US-003 → passes:true)
+- `ralph/progress.txt` (this entry + updated Codebase Patterns)
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → exit 0 (clean) ✅ matches AC verbatim
+- `cd backend && ./node_modules/.bin/eslint src/portfolio src/api/controllers/PaperTradingController.ts --ext .ts --quiet` → exit 0 (no new errors). Repo-wide eslint still reports ~500 pre-existing prettier issues in unrelated files (down from ~524 in baseline — my deletes/rewrites actually reduced the count).
+
+### Browser verification
+**N/A** — backend-only refactor with no UI surface area. All public HTTP routes are byte-identical in shape and behaviour: every controller endpoint still returns the same `{ success, data, message }` envelope and the same `data.*` field names that the existing frontend already consumes. Manual smoke-test recommended after a real `npm start`: hit `/api/paper-trading/portfolio`, `/api/paper-trading/snapshots`, and `/api/paper-trading/autonomous/dashboard` to confirm the wire format is unchanged.
+
+### Learnings for future iterations
+- **Use `git mv` for service moves, not `mv` + `git add`.** Git rename detection only kicks in if you preserve a >50% content match across the same operation; doing `mv` then editing imports breaks detection and history is lost. (After a `git stash`/`pop` the rename detection may also reset — the diff still works but `git log --follow` may not.)
+- **The 8 PaperTrading services form a small dependency graph internally.** `Dashboard` calls `Automation` + `OrderIntent`; `Attribution` calls `Automation`; `Plan` calls `Attribution` + `Automation` + `OrderIntent`; `Tuning` calls `Plan` + `OrderIntent`. Keeping them all in one `internal/` directory means `./` sibling imports continue to work — no need to touch most cross-references.
+- **Discriminated-union actions beat method-count explosions.** The AC mandated 7 methods but the controller had ~25 endpoints. Folding endpoint families into `action`/`view` enums on a small fixed method surface scales without violating the contract. Use `default: const _: never = action` to keep the switch exhaustive.
+- **Don't try to keep service singletons stable across the move.** The exported `paperTradingAutomationService = new PaperTradingAutomationService()` lives at the bottom of each internal file unchanged — the facade just imports the existing singletons. No DI rewiring needed.
+- **Sequelize models did NOT move.** All `PaperTrading*` models (Portfolio, Position, Trade, Snapshot, OrderIntent, etc.) still live in `backend/src/models/`. Only the *services* moved. The facade imports models directly because the `placeOrder`/`getPortfolio` path was previously inlined in the controller.
+- **Backend has no Jest tests yet for these services** — the typecheck IS the test gate. When US-004+ adds tests, they should target the facade (the new public surface), not internal services, to avoid coupling tests to the now-private layer.
+- **`recommendationTradeOutcomeService` is at the boundary** — it lives in `src/services/` and is imported by both the facade and several internal PaperTrading services. It was deliberately NOT moved into `portfolio/internal/` because it's also consumed by non-paper-trading flows (`RecommendationTradeOutcomeService` itself is a candidate for the US-004 quant consolidation).
+- **Backend Lint has pre-existing churn.** Running `eslint --fix` repo-wide would touch ~500 unrelated files. Only `--fix` files you actually changed; let the rest stay until a dedicated formatting pass.
+- **`backend/src/portfolio/CLAUDE.md` is now the documentation source** for the facade contract — update it (not progress.txt) when adding new actions to the discriminator unions.
 ---

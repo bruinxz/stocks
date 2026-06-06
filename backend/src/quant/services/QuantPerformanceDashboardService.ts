@@ -19,7 +19,7 @@ import {
   DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
   PARAM_EXPERIMENT_PORTFOLIO_NAME,
   PAPER_PORTFOLIO_FAMILIES,
-} from '../../services/PaperTradingDashboardService';
+} from '../../portfolio/internal/PaperTradingDashboardService';
 import { recommendationTradeOutcomeService } from '../../services/RecommendationTradeOutcomeService';
 import { strategyRegistry } from '../engine/StrategyRegistry';
 

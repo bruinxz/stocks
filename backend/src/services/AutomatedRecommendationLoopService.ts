@@ -1,7 +1,7 @@
 import moment from 'moment-timezone';
 import { quantRecommendationService } from './QuantRecommendationService';
 import { aiInvestmentSignalService } from './AIInvestmentSignalService';
-import { paperTradingAutomationService } from './PaperTradingAutomationService';
+import { paperTradingAutomationService } from '../portfolio/internal/PaperTradingAutomationService';
 import { feishuTaskReportService } from './FeishuTaskReportService';
 import { aiAdvisorService } from './AIAdvisorService';
 import { logger } from '../utils/logger';
@@ -10,10 +10,10 @@ import { User } from '../models/User';
 import { aiPollingQueue } from '../jobs/aiPollingQueue';
 import { recommendationTradeOutcomeService } from './RecommendationTradeOutcomeService';
 import { recommendationLoopPolicySnapshotService } from './RecommendationLoopPolicySnapshotService';
-import { paperTradingRiskProfileService } from './PaperTradingRiskProfileService';
+import { paperTradingRiskProfileService } from '../portfolio/internal/PaperTradingRiskProfileService';
 import { riskThresholdStabilityService } from './RiskThresholdStabilityService';
 import { feishuBotWebhookService } from './FeishuBotWebhookService';
-import { AGENT_ONLY_PORTFOLIO_NAME } from './PaperTradingPortfolioFamilies';
+import { AGENT_ONLY_PORTFOLIO_NAME } from '../portfolio/internal/PaperTradingPortfolioFamilies';
 import {
   buildRecommendationStrategyVariant,
   normalizeRecommendationStyle,

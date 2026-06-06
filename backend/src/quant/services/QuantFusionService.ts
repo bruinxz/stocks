@@ -9,8 +9,8 @@ import {
 import { quantSignalService } from './QuantSignalService';
 import { aiAdvisorService } from '../../services/AIAdvisorService';
 import { aiPollingQueue } from '../../jobs/aiPollingQueue';
-import { paperTradingAutomationService } from '../../services/PaperTradingAutomationService';
-import { paperTradingRiskProfileService } from '../../services/PaperTradingRiskProfileService';
+import { paperTradingAutomationService } from '../../portfolio/internal/PaperTradingAutomationService';
+import { paperTradingRiskProfileService } from '../../portfolio/internal/PaperTradingRiskProfileService';
 import { normalizeSymbol } from '../../utils/stockSymbol';
 import { logger } from '../../utils/logger';
 import { round } from '../engine/QuantMath';
@@ -33,7 +33,7 @@ import {
   QUANT_ONLY_PORTFOLIO_NAME,
   PARAM_EXPERIMENT_PORTFOLIO_NAME,
   PAPER_PORTFOLIO_EXPERIMENT_FAMILIES,
-} from '../../services/PaperTradingDashboardService';
+} from '../../portfolio/internal/PaperTradingDashboardService';
 
 type QuantPipelineMode = 'archive_only' | 'agent_review' | 'paper_trade';
 

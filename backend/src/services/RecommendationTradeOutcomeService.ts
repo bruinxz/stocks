@@ -13,7 +13,7 @@ import { QuantSignal } from '../models/QuantSignal';
 import { QuantFusionAudit } from '../models/QuantFusionAudit';
 import { TaskExecutionLog } from '../models/TaskExecutionLog';
 import { benchmarkIndexService } from './BenchmarkIndexService';
-import { paperTradingAutomationService } from './PaperTradingAutomationService';
+import { paperTradingAutomationService } from '../portfolio/internal/PaperTradingAutomationService';
 import { feishuTaskReportService } from './FeishuTaskReportService';
 import { recommendationLoopPolicySnapshotService } from './RecommendationLoopPolicySnapshotService';
 import { budgetPolicyVersionSnapshotService } from './BudgetPolicyVersionSnapshotService';

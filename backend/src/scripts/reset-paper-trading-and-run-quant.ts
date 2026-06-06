@@ -5,7 +5,7 @@ import { QueryTypes } from 'sequelize';
 import sequelize from '../config/database';
 import { User } from '../models/User';
 import { quantFusionService } from '../quant/services/QuantFusionService';
-import { paperTradingDashboardService } from '../services/PaperTradingDashboardService';
+import { paperTradingDashboardService } from '../portfolio/internal/PaperTradingDashboardService';
 
 function argValue(name: string, fallback?: string) {
   const prefix = `--${name}=`;

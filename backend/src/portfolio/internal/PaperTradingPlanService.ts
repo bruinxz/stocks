@@ -9,7 +9,7 @@ import {
   paperTradingAttributionService,
 } from './PaperTradingAttributionService';
 import { paperTradingOrderIntentService } from './PaperTradingOrderIntentService';
-import { feishuTaskReportService } from './FeishuTaskReportService';
+import { feishuTaskReportService } from '../../services/FeishuTaskReportService';
 
 export type TradingPlanActionType = 'exit' | 'entry' | 'monitor' | 'review';
 export type TradingPlanPriority = 'critical' | 'high' | 'medium' | 'low';
