@@ -1,6 +1,6 @@
 import { Job } from 'bull';
 import { quantBacktestQueue, QuantBacktestJobData } from './quantBacktestQueue';
-import { quantBacktestService } from '../quant/services/QuantBacktestService';
+import { quantBacktestService } from '../quant/backtest/internal/QuantBacktestService';
 import { logger } from '../utils/logger';
 
 const resolveBacktestConcurrency = () => {

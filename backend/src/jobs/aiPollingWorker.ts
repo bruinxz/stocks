@@ -16,7 +16,7 @@ import { logger } from '../utils/logger';
 import moment from 'moment-timezone';
 import { paperTradingAutomationService } from '../portfolio/internal/PaperTradingAutomationService';
 import { RecommendationLoopPolicySnapshot } from '../models/RecommendationLoopPolicySnapshot';
-import { quantFusionAuditService } from '../quant/services/QuantFusionAuditService';
+import { quantFusionAuditService } from '../quant/engine/internal/QuantFusionAuditService';
 import { AGENT_ONLY_PORTFOLIO_NAME } from '../portfolio/internal/PaperTradingPortfolioFamilies';
 
 const akshareClient = new AKShareClient();

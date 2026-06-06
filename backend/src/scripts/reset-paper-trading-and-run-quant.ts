@@ -4,7 +4,7 @@ import moment from 'moment-timezone';
 import { QueryTypes } from 'sequelize';
 import sequelize from '../config/database';
 import { User } from '../models/User';
-import { quantFusionService } from '../quant/services/QuantFusionService';
+import { quantFusionService } from '../quant/engine/internal/QuantFusionService';
 import { paperTradingDashboardService } from '../portfolio/internal/PaperTradingDashboardService';
 
 function argValue(name: string, fallback?: string) {

@@ -1,10 +1,10 @@
 import { Op } from 'sequelize';
 import { createHash } from 'crypto';
-import { QuantStrategyExperiment } from '../../models/QuantStrategyExperiment';
-import { QuantBacktestTask } from '../../models/QuantBacktestTask';
-import { QuantBacktestResult } from '../../models/QuantBacktestResult';
-import { round } from '../engine/QuantMath';
-import { strategyRegistry } from '../engine/StrategyRegistry';
+import { QuantStrategyExperiment } from '../../../models/QuantStrategyExperiment';
+import { QuantBacktestTask } from '../../../models/QuantBacktestTask';
+import { QuantBacktestResult } from '../../../models/QuantBacktestResult';
+import { round } from '../../engine/QuantMath';
+import { strategyRegistry } from '../../engine/StrategyRegistry';
 
 function asPlainObject(value: any): Record<string, any> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};

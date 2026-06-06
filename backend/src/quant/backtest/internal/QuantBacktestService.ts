@@ -1,15 +1,15 @@
-import { QuantBacktestTask } from '../../models/QuantBacktestTask';
-import { QuantBacktestResult } from '../../models/QuantBacktestResult';
-import { QuantBacktestTrade } from '../../models/QuantBacktestTrade';
-import { QuantBacktestOptions } from '../types/QuantTypes';
-import { quantDataService } from './QuantDataService';
-import { quantBacktestEngine } from '../engine/QuantBacktestEngine';
-import { round } from '../engine/QuantMath';
-import { quantBacktestQueue } from '../../jobs/quantBacktestQueue';
-import { benchmarkIndexService } from '../../services/BenchmarkIndexService';
-import { quantStrategyExperimentService } from './QuantStrategyExperimentService';
-import { quantStrategyService } from './QuantStrategyService';
-import { logger } from '../../utils/logger';
+import { QuantBacktestTask } from '../../../models/QuantBacktestTask';
+import { QuantBacktestResult } from '../../../models/QuantBacktestResult';
+import { QuantBacktestTrade } from '../../../models/QuantBacktestTrade';
+import { QuantBacktestOptions } from '../../types/QuantTypes';
+import { quantDataService } from '../../engine/internal/QuantDataService';
+import { quantBacktestEngine } from './QuantBacktestEngine';
+import { round } from '../../engine/QuantMath';
+import { quantBacktestQueue } from '../../../jobs/quantBacktestQueue';
+import { benchmarkIndexService } from '../../../services/BenchmarkIndexService';
+import { quantStrategyExperimentService } from '../../engine/internal/QuantStrategyExperimentService';
+import { quantStrategyService } from '../../engine/internal/QuantStrategyService';
+import { logger } from '../../../utils/logger';
 import { Op } from 'sequelize';
 
 function maxSegmentDrawdown(curve: any[]): number {

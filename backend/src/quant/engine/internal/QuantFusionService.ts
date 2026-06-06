@@ -1,39 +1,39 @@
 import { Op } from 'sequelize';
 import moment from 'moment-timezone';
-import { QuantSignal } from '../../models/QuantSignal';
+import { QuantSignal } from '../../../models/QuantSignal';
 import {
   AIInvestmentSignal,
   AISignalDecision,
   AISignalSourceType,
-} from '../../models/AIInvestmentSignal';
+} from '../../../models/AIInvestmentSignal';
 import { quantSignalService } from './QuantSignalService';
-import { aiAdvisorService } from '../../services/AIAdvisorService';
-import { aiPollingQueue } from '../../jobs/aiPollingQueue';
-import { paperTradingAutomationService } from '../../portfolio/internal/PaperTradingAutomationService';
-import { paperTradingRiskProfileService } from '../../portfolio/internal/PaperTradingRiskProfileService';
-import { normalizeSymbol } from '../../utils/stockSymbol';
-import { logger } from '../../utils/logger';
-import { round } from '../engine/QuantMath';
-import { QuantUniverse } from '../types/QuantTypes';
-import { QuantStrategyWeight } from '../../models/QuantStrategyWeight';
-import { QuantBacktestResult } from '../../models/QuantBacktestResult';
-import { QuantBacktestTask } from '../../models/QuantBacktestTask';
+import { aiAdvisorService } from '../../../services/AIAdvisorService';
+import { aiPollingQueue } from '../../../jobs/aiPollingQueue';
+import { paperTradingAutomationService } from '../../../portfolio/internal/PaperTradingAutomationService';
+import { paperTradingRiskProfileService } from '../../../portfolio/internal/PaperTradingRiskProfileService';
+import { normalizeSymbol } from '../../../utils/stockSymbol';
+import { logger } from '../../../utils/logger';
+import { round } from '../../engine/QuantMath';
+import { QuantUniverse } from '../../types/QuantTypes';
+import { QuantStrategyWeight } from '../../../models/QuantStrategyWeight';
+import { QuantBacktestResult } from '../../../models/QuantBacktestResult';
+import { QuantBacktestTask } from '../../../models/QuantBacktestTask';
 import { quantStrategyFeedbackService } from './QuantStrategyFeedbackService';
-import { recommendationLoopPolicySnapshotService } from '../../services/RecommendationLoopPolicySnapshotService';
-import { riskThresholdStabilityService } from '../../services/RiskThresholdStabilityService';
+import { recommendationLoopPolicySnapshotService } from '../../../services/RecommendationLoopPolicySnapshotService';
+import { riskThresholdStabilityService } from '../../../services/RiskThresholdStabilityService';
 import { quantStrategyExperimentService } from './QuantStrategyExperimentService';
 import { quantStrategyParamVersionService } from './QuantStrategyParamVersionService';
 import { quantStrategyService } from './QuantStrategyService';
-import { stockFactorService } from '../../data/services/StockFactorService';
-import { quantRuntimeHealthService } from './QuantRuntimeHealthService';
-import { feishuBotWebhookService } from '../../services/FeishuBotWebhookService';
+import { stockFactorService } from '../../../data/services/StockFactorService';
+import { quantRuntimeHealthService } from '../../health/internal/QuantRuntimeHealthService';
+import { feishuBotWebhookService } from '../../../services/FeishuBotWebhookService';
 import {
   AUTONOMOUS_PORTFOLIO_NAME,
   QUANT_AGENT_FUSION_PORTFOLIO_NAME,
   QUANT_ONLY_PORTFOLIO_NAME,
   PARAM_EXPERIMENT_PORTFOLIO_NAME,
   PAPER_PORTFOLIO_EXPERIMENT_FAMILIES,
-} from '../../portfolio/internal/PaperTradingDashboardService';
+} from '../../../portfolio/internal/PaperTradingDashboardService';
 
 type QuantPipelineMode = 'archive_only' | 'agent_review' | 'paper_trade';
 

@@ -1,5 +1,5 @@
-import { QuantStrategyModel } from '../../models/QuantStrategyModel';
-import { strategyRegistry } from '../engine/StrategyRegistry';
+import { QuantStrategyModel } from '../../../models/QuantStrategyModel';
+import { strategyRegistry } from '../../engine/StrategyRegistry';
 
 function asPlainObject<T = any>(value: any): T {
   if (!value || typeof value !== 'object') return {} as T;

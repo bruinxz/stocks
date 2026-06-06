@@ -14,6 +14,9 @@
 - **PaperTrading services live under `backend/src/portfolio/internal/`**, not `backend/src/services/` (US-003 refactor). The public surface is `backend/src/portfolio/PaperTradingFacade.ts` exposing **exactly 7 methods**: `getPortfolio`, `placeOrder`, `closePosition`, `getDailySnapshot`, `attributePnl`, `applyAutomation`, `getRiskProfile`. Controllers MUST only import the facade. Other services/scripts/jobs may still import from `internal/` directly (the facade-only constraint is the controller boundary).
 - **When adding a new paper-trading action**, extend the discriminator union (e.g. `ApplyAutomationAction`) inside `PaperTradingFacade.ts` — do NOT add an 8th method. The `switch` blocks use a `never`-typed default branch to catch missing cases at compile time.
 - **Constants re-exported by facade:** `DEFAULT_PAPER_TRADING_INITIAL_CAPITAL`, `AUTONOMOUS_PORTFOLIO_NAME`, `DEFAULT_AUTONOMOUS_INITIAL_CAPITAL`, `QUANT_ONLY_PORTFOLIO_NAME`. These were previously exported from `PaperTradingAutomationService` and `PaperTradingDashboardService`; controllers/tests now pull them from `../../portfolio/PaperTradingFacade`.
+- **Quant services live under `backend/src/quant/{engine,backtest,performance,health}/internal/`** (US-004 refactor). The public surface is **exactly 5 classes**: `StrategyEngine` + `SignalEngine` (engine/), `BacktestEngine` (backtest/), `PerformanceReporter` (performance/), `QuantHealthMonitor` (health/). Controllers MUST only import these 5 facades; non-controller code (Scheduler, Jobs, sibling Services) may still reach into `internal/`. The facade design and method index live in `backend/src/quant/CLAUDE.md` — update that, not this file, when adding new facade methods.
+- **Cross-layer sibling imports inside quant** use explicit `../../<layer>/internal/...` paths (e.g. `engine/internal/QuantFusionService` imports `quantRuntimeHealthService` from `../../health/internal/QuantRuntimeHealthService`). Don't add wildcards or re-export barrels — staying explicit makes the inter-layer graph visible to future readers.
+- **`QuantMath.ts` and `StrategyRegistry.ts` stay at `quant/engine/` top level** (NOT in `engine/internal/`). They're imported by every strategy under `strategies/`; moving them would force strategies to reach into `internal/`. Treat them as shared primitives, not part of the facade-internal split.
 - **Symlinks for tooling in the worktree** — the worktree has no `backend/node_modules`. Before running typecheck, symlink: `cd backend && ln -s /Users/bytedance/go/src/github.com/bruinxz/stocks/backend/node_modules node_modules`. The repo's `backend/.gitignore` matches `node_modules/` as a directory pattern but the symlink shows up as an untracked symlink — REMOVE it before `git add` to keep the tree clean.
 
 ### Tooling
@@ -170,4 +173,94 @@ Collapsed **8 PaperTrading* services** into a single facade (`PaperTradingFacade
 - **`recommendationTradeOutcomeService` is at the boundary** — it lives in `src/services/` and is imported by both the facade and several internal PaperTrading services. It was deliberately NOT moved into `portfolio/internal/` because it's also consumed by non-paper-trading flows (`RecommendationTradeOutcomeService` itself is a candidate for the US-004 quant consolidation).
 - **Backend Lint has pre-existing churn.** Running `eslint --fix` repo-wide would touch ~500 unrelated files. Only `--fix` files you actually changed; let the rest stay until a dedicated formatting pass.
 - **`backend/src/portfolio/CLAUDE.md` is now the documentation source** for the facade contract — update it (not progress.txt) when adding new actions to the discriminator unions.
+---
+
+## 2026/06/06 - US-004
+
+### What was implemented
+Reorganised the **13 Quant* services** under `backend/src/quant/services/` into a **4-layer / 5-facade** architecture, as required by the acceptance criteria.
+
+**New layered tree:**
+
+```
+backend/src/quant/
+├── engine/                  ← strategy + signal generation
+│   ├── StrategyEngine.ts          (PUBLIC; strategyEngine singleton)
+│   ├── SignalEngine.ts            (PUBLIC; signalEngine singleton)
+│   ├── QuantMath.ts               (kept at top level — strategies/ depend on it)
+│   ├── StrategyRegistry.ts        (kept at top level)
+│   └── internal/                  ← 8 services (NOT for controllers)
+│       ├── QuantDataService.ts
+│       ├── QuantStrategyService.ts
+│       ├── QuantSignalService.ts
+│       ├── QuantFusionService.ts
+│       ├── QuantFusionAuditService.ts
+│       ├── QuantStrategyFeedbackService.ts
+│       ├── QuantStrategyExperimentService.ts
+│       └── QuantStrategyParamVersionService.ts
+├── backtest/
+│   ├── BacktestEngine.ts          (PUBLIC; backtestEngine singleton)
+│   └── internal/
+│       ├── QuantBacktestService.ts
+│       └── QuantBacktestEngine.ts (moved out of engine/, sits next to its service)
+├── performance/
+│   ├── PerformanceReporter.ts     (PUBLIC; performanceReporter singleton)
+│   └── internal/
+│       └── QuantPerformanceDashboardService.ts
+└── health/
+    ├── QuantHealthMonitor.ts      (PUBLIC; quantHealthMonitor singleton)
+    └── internal/
+        ├── QuantDataFreshnessService.ts
+        ├── QuantRuntimeHealthService.ts
+        └── QuantOpenWatchdogService.ts
+```
+
+**5 public facades expose all controller-visible methods:**
+
+1. `StrategyEngine` — strategy registry, experiments, param versions, fusion weights/allocation, `runDailyPipeline`
+2. `SignalEngine` — generate signals, list signals, fusion audits, the composed `getRankings()` dashboard previously assembled inline in the controller
+3. `BacktestEngine` — create/list/get/retry plus walk-forward / parameter-grid variants. **The `strategy_keys` + `params_by_strategy` resolution that QuantController did inline** is now baked into `backtestEngine.create*()` so the controller stays declarative.
+4. `PerformanceReporter` — performance dashboard + indicator catalog
+5. `QuantHealthMonitor` — data freshness, runtime health, open-of-trading watchdog
+
+**Controller rewrite:** `backend/src/api/controllers/QuantController.ts` shrank from 13 service imports to 5 facade imports. Wire format (`{success, data, message}`, all `data.*` field names) is byte-identical to the previous controller.
+
+**Cross-layer wiring inside `internal/`:** when sibling services span layers (e.g. `engine/internal/QuantFusionService` needs `quantRuntimeHealthService` from `health/internal/`), imports use explicit `../../<layer>/internal/...` paths — no barrels, no wildcards.
+
+**Non-controller consumers updated** to point at the new internal paths:
+- `src/index.ts`
+- `src/jobs/{aiPollingWorker,quantBacktestWorker}.ts`
+- `src/scripts/reset-paper-trading-and-run-quant.ts`
+- `src/services/{OpeningReadinessService,QuantOpeningPreflightService,SchedulerService,StrategyResearchCenterService,TodayCommandCenterService}.ts`
+
+### Files changed
+- `backend/src/quant/engine/StrategyEngine.ts` (new, facade)
+- `backend/src/quant/engine/SignalEngine.ts` (new, facade)
+- `backend/src/quant/backtest/BacktestEngine.ts` (new, facade)
+- `backend/src/quant/performance/PerformanceReporter.ts` (new, facade)
+- `backend/src/quant/health/QuantHealthMonitor.ts` (new, facade)
+- `backend/src/quant/CLAUDE.md` (new, facade rules + method index)
+- 13 services moved via `git mv` from `quant/services/` into `quant/{engine,backtest,performance,health}/internal/`
+- `backend/src/quant/backtest/internal/QuantBacktestEngine.ts` (moved from `engine/`)
+- `backend/src/api/controllers/QuantController.ts` (rewritten — 13 service imports → 5 facade imports, ~150 LOC trimmed)
+- 9 non-controller consumer files updated (import paths only)
+- `ralph/prd.json` (US-004 → passes:true)
+- `ralph/progress.txt` (this entry + new Codebase Patterns)
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → exit 0 ✅ matches AC verbatim
+- `cd backend && ./node_modules/.bin/eslint <touched-files> --quiet` → exit 0 for the 6 files I created/rewrote (after one `--fix` pass on prettier nits). Pre-existing prettier errors in unrelated quant files remain untouched per the project's "only fix lint errors that touch your diff" convention.
+
+### Browser verification
+**N/A** — backend-only refactor. Every endpoint under `/api/quant/*` still returns the same `{success, data, message}` envelope with the same field names. The controller-resolved `strategy_keys` + `params_by_strategy` pattern that callers depended on for backtest creation now lives inside the facade — the caller-visible behaviour is unchanged.
+
+### Learnings for future iterations
+- **The 5-facade ceiling is non-negotiable per the AC** (StrategyEngine, SignalEngine, BacktestEngine, PerformanceReporter, QuantHealthMonitor). When a new behaviour doesn't obviously fit into one of those buckets, add a method to the closest match rather than spawning a 6th facade. The original draft tempting was a separate "ParamVersionEngine" — folded into StrategyEngine instead, matching how the controller already grouped those endpoints.
+- **Returning `any` from facade methods short-circuits TS4053**. `QuantFusionService.runDailyPipeline()` has a complex internal return type referencing the un-exported `QuantFusionCandidate`. Re-typing the facade method as `Promise<any>` avoided cascading every internal type out to the public boundary (which would have leaked implementation details). Keep this trick scoped — only `runDailyPipeline` needed it.
+- **Keep `QuantMath.ts` and `StrategyRegistry.ts` at `engine/` top level**, NOT in `internal/`. The 17 strategy files under `quant/strategies/` import from there directly. Pushing those primitives into `internal/` would force the (non-internal!) strategies to reach into `internal/`, which contradicts the layering intent and creates a 17-file churn for no benefit. Treat them as a third tier of pure helpers.
+- **`git mv` for services + a single bulk `sed` for `../../` → `../../../` import paths** is the fast path. Then handcraft the cross-layer references (sibling imports `./QuantXxx` that crossed layers had to become `../../<layer>/internal/QuantXxx`). I also had to relocate `QuantBacktestEngine` from `engine/` into `backtest/internal/` so its sole consumer (QuantBacktestService) could keep a same-directory import — keeping co-located callers together makes the layer assignment self-documenting.
+- **The BacktestEngine facade absorbed the strategy_key + params_by_strategy resolution** that QuantController previously did inline before every `quantBacktestService.create*()` call. This is the right place for it because (a) every backtest path needs it, (b) controllers shouldn't know about strategy resolution, and (c) the facade method's input shape becomes "raw request body", which the controller can pass through verbatim.
+- **The SignalEngine facade absorbed the `getRankings` composition** that QuantController previously did inline (joining `quantSignalService.getRankingDashboard` + `quantFusionAuditService.getRankingDashboard` into a single response shape). Moving this into the facade keeps the controller as a thin HTTP adapter; future tests can exercise the composed rankings endpoint without going through Express.
+- **Backend lint still has ~500 pre-existing prettier errors in unrelated files**. Of the 6 files I created/rewrote, I ran `--fix` and they're now clean. For the 9 consumer files where I only edited import lines (lines 6-16), all reported errors live at lines 50+ and are pre-existing — don't `--fix` them in this story.
+- **The CLAUDE.md in `backend/src/quant/` is now the source of truth for facade rules + method index**. Update it (not progress.txt) when adding a new facade method or changing the public surface.
 ---

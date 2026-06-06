@@ -4,9 +4,9 @@ import { ScheduledTask } from '../models/ScheduledTask';
 import { TaskExecutionLog } from '../models/TaskExecutionLog';
 import { stockFactorService } from '../data/services/StockFactorService';
 import { realtimeQuoteService } from '../data/services/RealtimeQuoteService';
-import { quantStrategyParamVersionService } from '../quant/services/QuantStrategyParamVersionService';
-import { quantDataFreshnessService } from '../quant/services/QuantDataFreshnessService';
-import { quantFusionService } from '../quant/services/QuantFusionService';
+import { quantStrategyParamVersionService } from '../quant/engine/internal/QuantStrategyParamVersionService';
+import { quantDataFreshnessService } from '../quant/health/internal/QuantDataFreshnessService';
+import { quantFusionService } from '../quant/engine/internal/QuantFusionService';
 
 function toNumber(value: any, fallback = 0): number {
   const parsed = Number(value);

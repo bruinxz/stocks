@@ -3,7 +3,7 @@ import { Op } from 'sequelize';
 import { ScheduledTask } from '../models/ScheduledTask';
 import { TaskExecutionLog } from '../models/TaskExecutionLog';
 import { DataSourceHealthService } from '../data/services/DataSourceHealthService';
-import { quantRuntimeHealthService } from '../quant/services/QuantRuntimeHealthService';
+import { quantRuntimeHealthService } from '../quant/health/internal/QuantRuntimeHealthService';
 import { quantOpeningPreflightService } from './QuantOpeningPreflightService';
 import { paperTradingRiskProfileService } from '../portfolio/internal/PaperTradingRiskProfileService';
 import { taskAutomationHealthService } from './TaskAutomationHealthService';

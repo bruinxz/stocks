@@ -1,8 +1,8 @@
 import moment from 'moment-timezone';
-import { quantStrategyService } from '../quant/services/QuantStrategyService';
-import { quantStrategyFeedbackService } from '../quant/services/QuantStrategyFeedbackService';
-import { quantStrategyExperimentService } from '../quant/services/QuantStrategyExperimentService';
-import { quantStrategyParamVersionService } from '../quant/services/QuantStrategyParamVersionService';
+import { quantStrategyService } from '../quant/engine/internal/QuantStrategyService';
+import { quantStrategyFeedbackService } from '../quant/engine/internal/QuantStrategyFeedbackService';
+import { quantStrategyExperimentService } from '../quant/engine/internal/QuantStrategyExperimentService';
+import { quantStrategyParamVersionService } from '../quant/engine/internal/QuantStrategyParamVersionService';
 import { recommendationTradeOutcomeService } from './RecommendationTradeOutcomeService';
 import { logger } from '../utils/logger';
 

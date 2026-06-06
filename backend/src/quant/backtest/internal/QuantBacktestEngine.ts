@@ -1,5 +1,5 @@
-import { strategyRegistry } from './StrategyRegistry';
-import { average, maxDrawdownFromValues, pct, round, stddev } from './QuantMath';
+import { strategyRegistry } from '../../engine/StrategyRegistry';
+import { average, maxDrawdownFromValues, pct, round, stddev } from '../../engine/QuantMath';
 import {
   QuantBacktestOptions,
   QuantBacktestStrategyResult,
@@ -7,7 +7,7 @@ import {
   QuantEquityPoint,
   QuantStockContext,
   QuantBar,
-} from '../types/QuantTypes';
+} from '../../types/QuantTypes';
 
 function dateOnly(value: Date | string): string {
   const date = value instanceof Date ? value : new Date(value);

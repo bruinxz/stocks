@@ -63,8 +63,8 @@
         "Typecheck passes"
       ],
       "priority": 4,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026/06/06. Reorganized backend/src/quant/ into 4 layers: engine/ (strategy+signal), backtest/, performance/, health/. Created 5 public facade classes (StrategyEngine, SignalEngine, BacktestEngine, PerformanceReporter, QuantHealthMonitor); the original 13 services live under <layer>/internal/. QuantController now imports only the 5 facades. Non-controller consumers (Scheduler, Jobs, Scripts, sibling Services) updated to new internal/ paths. cd backend && npx tsc --noEmit passes clean."
     },
     {
       "id": "US-005",

@@ -1,27 +1,27 @@
 import { Op } from 'sequelize';
-import { QuantBacktestResult } from '../../models/QuantBacktestResult';
-import { QuantBacktestTask } from '../../models/QuantBacktestTask';
-import { QuantFusionAudit } from '../../models/QuantFusionAudit';
-import { QuantSignal } from '../../models/QuantSignal';
-import { RecommendationTradeOutcome } from '../../models/RecommendationTradeOutcome';
-import { PaperTradingPortfolio } from '../../models/PaperTradingPortfolio';
-import { PaperTradingPosition } from '../../models/PaperTradingPosition';
-import { PaperTradingTrade } from '../../models/PaperTradingTrade';
-import { ScheduledTask } from '../../models/ScheduledTask';
-import { TaskExecutionLog } from '../../models/TaskExecutionLog';
-import { quantStrategyExperimentService } from './QuantStrategyExperimentService';
-import { quantStrategyParamVersionService } from './QuantStrategyParamVersionService';
-import { quantDataFreshnessService } from './QuantDataFreshnessService';
-import { quantRuntimeHealthService } from './QuantRuntimeHealthService';
-import { realtimeQuoteService } from '../../data/services/RealtimeQuoteService';
+import { QuantBacktestResult } from '../../../models/QuantBacktestResult';
+import { QuantBacktestTask } from '../../../models/QuantBacktestTask';
+import { QuantFusionAudit } from '../../../models/QuantFusionAudit';
+import { QuantSignal } from '../../../models/QuantSignal';
+import { RecommendationTradeOutcome } from '../../../models/RecommendationTradeOutcome';
+import { PaperTradingPortfolio } from '../../../models/PaperTradingPortfolio';
+import { PaperTradingPosition } from '../../../models/PaperTradingPosition';
+import { PaperTradingTrade } from '../../../models/PaperTradingTrade';
+import { ScheduledTask } from '../../../models/ScheduledTask';
+import { TaskExecutionLog } from '../../../models/TaskExecutionLog';
+import { quantStrategyExperimentService } from '../../engine/internal/QuantStrategyExperimentService';
+import { quantStrategyParamVersionService } from '../../engine/internal/QuantStrategyParamVersionService';
+import { quantDataFreshnessService } from '../../health/internal/QuantDataFreshnessService';
+import { quantRuntimeHealthService } from '../../health/internal/QuantRuntimeHealthService';
+import { realtimeQuoteService } from '../../../data/services/RealtimeQuoteService';
 import {
   AUTONOMOUS_PORTFOLIO_NAME,
   DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
   PARAM_EXPERIMENT_PORTFOLIO_NAME,
   PAPER_PORTFOLIO_FAMILIES,
-} from '../../portfolio/internal/PaperTradingDashboardService';
-import { recommendationTradeOutcomeService } from '../../services/RecommendationTradeOutcomeService';
-import { strategyRegistry } from '../engine/StrategyRegistry';
+} from '../../../portfolio/internal/PaperTradingDashboardService';
+import { recommendationTradeOutcomeService } from '../../../services/RecommendationTradeOutcomeService';
+import { strategyRegistry } from '../../engine/StrategyRegistry';
 
 function toNumber(value: any, fallback = 0): number {
   const parsed = Number(value);

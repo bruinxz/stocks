@@ -124,7 +124,7 @@ import { LiveOrderDraft } from './models/LiveOrderDraft';
 import { LiveOrder } from './models/LiveOrder';
 import { LiveTrade } from './models/LiveTrade';
 import { LiveExecutionAuditLog } from './models/LiveExecutionAuditLog';
-import { quantStrategyService } from './quant/services/QuantStrategyService';
+import { quantStrategyService } from './quant/engine/internal/QuantStrategyService';
 
 async function publicTableExists(tableName: string): Promise<boolean> {
   const [rows] = await sequelize.query(

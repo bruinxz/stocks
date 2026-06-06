@@ -1,11 +1,11 @@
 import { Op } from 'sequelize';
-import { ScheduledTask } from '../../models/ScheduledTask';
-import { runtimeSchemaHealthService } from '../../services/RuntimeSchemaHealthService';
-import { realtimeQuoteService } from '../../data/services/RealtimeQuoteService';
-import { quantStrategyService } from './QuantStrategyService';
+import { ScheduledTask } from '../../../models/ScheduledTask';
+import { runtimeSchemaHealthService } from '../../../services/RuntimeSchemaHealthService';
+import { realtimeQuoteService } from '../../../data/services/RealtimeQuoteService';
+import { quantStrategyService } from '../../engine/internal/QuantStrategyService';
 import { quantDataFreshnessService } from './QuantDataFreshnessService';
-import { quantStrategyParamVersionService } from './QuantStrategyParamVersionService';
-import { stockFactorService } from '../../data/services/StockFactorService';
+import { quantStrategyParamVersionService } from '../../engine/internal/QuantStrategyParamVersionService';
+import { stockFactorService } from '../../../data/services/StockFactorService';
 
 function toNumber(value: any, fallback = 0): number {
   const parsed = Number(value);
