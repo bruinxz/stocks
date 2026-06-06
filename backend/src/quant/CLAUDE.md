@@ -116,3 +116,62 @@ Fusion/weights: `refreshWeights`, `listWeights`, `getAllocationPolicy`,
 
 ### `quantHealthMonitor` (health/QuantHealthMonitor.ts)
 `getDataFreshness`, `getRuntimeHealth`, `getOpenWatchdog`.
+
+## US-014: AShareConstraintEngine — A-share execution constraints
+
+`backend/src/quant/backtest/AShareConstraintEngine.ts` is a **pure module** (no
+state, no DB, no side-effects) that owns all A-share execution rules:
+
+- **`evaluateOrder(ctx)`** — single entry for "can this fill?" decisions:
+  T+1, 涨跌停, 停牌, ST 过滤, 流动性门槛. Returns `{ok, reason?, detail?}`;
+  `reason` is from the `RejectionReason` enum so downstream aggregations
+  (`block_reasons` counter, `RejectedOrder.reason` field, UI charts) all share
+  one vocabulary.
+- **`computeFees(amount, side)`** — A-share trading-cost model:
+  commission 万 2.5 (min 5 元) **双边**, stamp tax 千 1 **仅卖出**, transfer fee
+  万 0.1 **双边**. The 过户费 (transfer_fee) is the one most third-party回测
+  漏算的项 — keep it always-on by default.
+- **`executionPrice(bar, side, timing)`** — three execution-price models:
+  `'next_open'` (default; bar.open + 滑点), `'same_close'` (bar.close + 滑点),
+  `'twap_proxy'` ((open+high+low+close)/4 + 滑点 — proxy for VWAP, suits
+  short-term/龙头 strategies). Dynamic slippage scales 滑点 by turnover
+  buckets.
+
+### Why a separate module instead of inlining into `QuantBacktestEngine`?
+
+`QuantBacktestEngine` should be a撮合 dispatcher — it loops through dates,
+positions, candidates. Encoding A-share rules inline was making 685 LOC out
+of which ~300 were rule logic mixed with cash/position bookkeeping. Pulling
+the rules out:
+
+1. Makes the engine readable: 撮合 vs 规则 are visually separated.
+2. Makes the rules **testable in isolation** without spinning up bars +
+   contexts + strategies.
+3. Lets future strategy-level code (e.g. live trading guard) reuse the same
+   "can this order fill?" decision rather than reimplementing it.
+4. Lets us add a 4th execution timing or new rejection reason in **one** file.
+
+### When extending — design constraints
+
+- **Never** add state (instance fields that change after construction). The
+  engine is reused across all `(date, strategy, stock)` evaluations in a
+  single run; any mutated state would leak across them.
+- **Never** read from DB inside engine methods. If you need an external lookup
+  (e.g. "is this stock in the 不可融券 list?"), accept the data as part of
+  `EvaluateOrderContext` — let the caller load it.
+- **All rejection reasons MUST be added to `RejectionReason` enum first**, then
+  used. Free-text reasons break aggregation downstream (UI charts, alerting).
+- **`isSTName(name)` must stay in sync with the same function in
+  `strategies/MultiFactorAlphaStrategy.ts`**. If you tweak the detection rule
+  (e.g. handle 退市风险警示 prefix), update BOTH files in the same commit.
+  The strategies layer was the original home — engine just mirrors it.
+
+### `rejected_orders` audit trail
+
+`QuantBacktestStrategyResult.rejected_orders: RejectedOrder[]` is persisted to
+`quant_backtest_results.rejected_orders_json` (US-014 new column). One row per
+拒单 with `{trade_date, strategy_key, symbol, side, reason, detail?,
+reference_price?}`. The UI uses this to answer "为什么这只票今天没买/卖
+成?". The `diagnostics.block_reasons: Record<reason, count>` counter is the
+aggregate twin — both views are kept because aggregation (heatmaps,
+dashboards) and audit (per-row drill-down) have different consumers.

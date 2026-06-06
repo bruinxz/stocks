@@ -93,6 +93,19 @@ export class QuantBacktestResult extends Model {
   })
   declare drawdown_curve_json: any[];
 
+  /**
+   * US-014：被 AShareConstraintEngine 拦截的订单（T+1 / 涨跌停 / 停牌 / ST 等）。
+   * 每条形如：{trade_date, strategy_key, symbol, side, reason, detail?, reference_price?}
+   * defaultValue=[] 让旧任务的回放保持 NULL-safe。
+   */
+  @Column({
+    type: DataType.JSONB,
+    allowNull: false,
+    defaultValue: [],
+    field: 'rejected_orders_json',
+  })
+  declare rejected_orders_json: any[];
+
   @CreatedAt
   @Column({ field: 'created_at' })
   declare created_at: Date;

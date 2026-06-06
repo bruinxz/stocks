@@ -2,22 +2,29 @@ import { strategyRegistry } from '../../engine/StrategyRegistry';
 import { average, maxDrawdownFromValues, pct, round, stddev } from '../../engine/QuantMath';
 import {
   QuantBacktestOptions,
+  QuantBacktestRejectedOrder,
   QuantBacktestStrategyResult,
   QuantBacktestTradeResult,
   QuantEquityPoint,
   QuantStockContext,
   QuantBar,
 } from '../../types/QuantTypes';
+import {
+  AShareConstraintEngine,
+  ConstraintSettings,
+  DEFAULT_CONSTRAINT_SETTINGS,
+  DEFAULT_FEE_SETTINGS,
+  DEFAULT_SLIPPAGE_SETTINGS,
+  ExecutionTiming,
+  FeeSettings,
+  RejectionReason,
+  SlippageSettings,
+} from '../AShareConstraintEngine';
 
 function dateOnly(value: Date | string): string {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return String(value).slice(0, 10);
   return date.toISOString().slice(0, 10);
-}
-
-function toNumber(value: any, fallback = 0): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 interface OpenPosition {
@@ -51,35 +58,39 @@ interface PendingExitOrder {
 
 type TradeSide = 'buy' | 'sell';
 
+/**
+ * 内部执行配置（buildExecutionConfig 把 options 合并成这一份配置）。
+ *
+ * US-014 后，A 股约束相关字段（T+1 / 涨跌停 / 停牌 / ST / 费率 / 滑点）
+ * 不再散落在引擎里，而是组装成 AShareConstraintEngine 的三个 settings 对象,
+ * 引擎对外只暴露撮合 / 仓位调度。
+ */
 interface ExecutionConfig {
   initial_capital: number;
-  commission_rate: number;
-  min_commission: number;
-  slippage_rate: number;
-  stamp_tax_rate: number;
   max_positions: number;
   position_pct: number;
   min_score: number;
-  execution_timing: 'next_open' | 'same_close';
-  enable_t_plus_one: boolean;
+  execution_timing: ExecutionTiming;
   lot_size: number;
-  limit_up_pct: number;
-  limit_down_pct: number;
-  block_limit_up: boolean;
-  block_limit_down: boolean;
-  block_suspended: boolean;
-  min_turnover_yuan: number;
   max_trade_amount_pct_of_turnover: number;
-  dynamic_slippage: boolean;
+  /** US-014：A 股约束规则（T+1 / 涨跌停 / 停牌 / ST） */
+  constraint_settings: ConstraintSettings;
+  /** US-014：费率（佣金 / 印花税 / 过户费） */
+  fee_settings: FeeSettings;
+  /** US-014：滑点 */
+  slippage_settings: SlippageSettings;
 }
 
 interface ExecutionDiagnostics {
-  execution_timing: 'next_open' | 'same_close';
+  execution_timing: ExecutionTiming;
   enable_t_plus_one: boolean;
+  block_st_stocks: boolean;
   lot_size: number;
   commission_rate: number;
   min_commission: number;
   stamp_tax_rate: number;
+  /** US-014：过户费率（双边） */
+  transfer_fee_rate: number;
   base_slippage_rate: number;
   dynamic_slippage: boolean;
   min_turnover_yuan: number;
@@ -95,8 +106,12 @@ interface ExecutionDiagnostics {
   suspended_bar_count: number;
   total_commission: number;
   total_stamp_tax: number;
+  /** US-014：过户费累计 */
+  total_transfer_fee: number;
   total_slippage_cost: number;
   block_reasons: Record<string, number>;
+  /** US-014：被 A 股约束引擎拦截的订单数（reject path 走的总笔数） */
+  rejected_order_count: number;
 }
 
 function addBlock(diagnostics: ExecutionDiagnostics, side: TradeSide, reason: string) {
@@ -113,11 +128,19 @@ export class QuantBacktestEngine {
 
     return strategies.map(strategy => {
       const config = this.buildExecutionConfig(options);
+      // 每个策略一个 constraint 引擎实例 —— constructor 拷贝 settings,
+      // 互不干扰；可以在未来支持"按策略 override 部分约束"扩展。
+      const constraintEngine = new AShareConstraintEngine(
+        config.constraint_settings,
+        config.fee_settings,
+        config.slippage_settings
+      );
       let cash = config.initial_capital;
       const positions = new Map<string, OpenPosition>();
       const pendingOrders: PendingOrder[] = [];
       const pendingExitOrders: PendingExitOrder[] = [];
       const trades: QuantBacktestTradeResult[] = [];
+      const rejectedOrders: QuantBacktestRejectedOrder[] = [];
       const equityCurve: QuantEquityPoint[] = [];
       const diagnostics = this.createDiagnostics(config);
 
@@ -128,8 +151,11 @@ export class QuantBacktestEngine {
           positions,
           contextBySymbol,
           config,
+          constraintEngine,
           diagnostics,
           trades,
+          rejectedOrders,
+          strategy.definition.strategy_key,
           cashPatch => {
             cash += cashPatch;
           }
@@ -141,7 +167,10 @@ export class QuantBacktestEngine {
           positions,
           contextBySymbol,
           config,
+          constraintEngine,
           diagnostics,
+          rejectedOrders,
+          strategy.definition.strategy_key,
           cashPatch => {
             cash += cashPatch;
           },
@@ -189,8 +218,10 @@ export class QuantBacktestEngine {
                 strategy_key: strategy.definition.strategy_key,
                 positions,
                 config,
+                constraintEngine,
                 diagnostics,
                 trades,
+                rejectedOrders,
                 applyCashPatch: cashPatch => {
                   cash += cashPatch;
                 },
@@ -237,7 +268,10 @@ export class QuantBacktestEngine {
             positions,
             contextBySymbol,
             config,
+            constraintEngine,
             diagnostics,
+            rejectedOrders,
+            strategy.definition.strategy_key,
             cashPatch => {
               cash += cashPatch;
             },
@@ -279,7 +313,9 @@ export class QuantBacktestEngine {
       const calendarDays = Math.max(this.diffDays(options.start_date, options.end_date), 1);
       diagnostics.total_commission = round(diagnostics.total_commission, 4);
       diagnostics.total_stamp_tax = round(diagnostics.total_stamp_tax, 4);
+      diagnostics.total_transfer_fee = round(diagnostics.total_transfer_fee, 4);
       diagnostics.total_slippage_cost = round(diagnostics.total_slippage_cost, 4);
+      diagnostics.rejected_order_count = rejectedOrders.length;
 
       return {
         strategy_key: strategy.definition.strategy_key,
@@ -317,48 +353,64 @@ export class QuantBacktestEngine {
           drawdown_pct: item.drawdown_pct,
         })),
         trades,
+        rejected_orders: rejectedOrders,
       };
     });
   }
 
   private buildExecutionConfig(options: QuantBacktestOptions): ExecutionConfig {
-    return {
-      initial_capital: Number(options.initial_capital || 200000),
-      commission_rate: Number(options.commission_rate ?? 0.0003),
-      min_commission: Number(options.min_commission ?? 5),
-      slippage_rate: Number(options.slippage_rate ?? 0.0005),
-      stamp_tax_rate: Number(options.stamp_tax_rate ?? 0.001),
-      max_positions: Number(options.max_positions || 8),
-      position_pct: Number(options.position_pct || 10) / 100,
-      min_score: Number(options.min_score || 68),
-      execution_timing: options.execution_timing || 'next_open',
+    const constraint_settings: ConstraintSettings = {
       enable_t_plus_one: options.enable_t_plus_one !== false,
-      lot_size: Math.max(Number(options.lot_size || 100), 1),
-      limit_up_pct: Number(options.limit_up_pct || 9.8),
-      limit_down_pct: Number(options.limit_down_pct || -9.8),
       block_limit_up: options.block_limit_up !== false,
       block_limit_down: options.block_limit_down !== false,
       block_suspended: options.block_suspended !== false,
+      block_st_stocks: options.block_st_stocks !== false,
+      limit_up_pct: Number(options.limit_up_pct || DEFAULT_CONSTRAINT_SETTINGS.limit_up_pct),
+      limit_down_pct: Number(options.limit_down_pct || DEFAULT_CONSTRAINT_SETTINGS.limit_down_pct),
       min_turnover_yuan: Math.max(Number(options.min_turnover_yuan || 0), 0),
+    };
+    const fee_settings: FeeSettings = {
+      commission_rate: Number(options.commission_rate ?? DEFAULT_FEE_SETTINGS.commission_rate),
+      min_commission: Number(options.min_commission ?? DEFAULT_FEE_SETTINGS.min_commission),
+      stamp_tax_rate: Number(options.stamp_tax_rate ?? DEFAULT_FEE_SETTINGS.stamp_tax_rate),
+      transfer_fee_rate: Number(
+        options.transfer_fee_rate ?? DEFAULT_FEE_SETTINGS.transfer_fee_rate
+      ),
+    };
+    const slippage_settings: SlippageSettings = {
+      slippage_rate: Number(options.slippage_rate ?? DEFAULT_SLIPPAGE_SETTINGS.slippage_rate),
+      dynamic: options.dynamic_slippage !== false,
+    };
+    return {
+      initial_capital: Number(options.initial_capital || 200000),
+      max_positions: Number(options.max_positions || 8),
+      position_pct: Number(options.position_pct || 10) / 100,
+      min_score: Number(options.min_score || 68),
+      execution_timing: (options.execution_timing as ExecutionTiming) || 'next_open',
+      lot_size: Math.max(Number(options.lot_size || 100), 1),
       max_trade_amount_pct_of_turnover: Math.max(
         Number(options.max_trade_amount_pct_of_turnover || 1),
         0.01
       ),
-      dynamic_slippage: options.dynamic_slippage !== false,
+      constraint_settings,
+      fee_settings,
+      slippage_settings,
     };
   }
 
   private createDiagnostics(config: ExecutionConfig): ExecutionDiagnostics {
     return {
       execution_timing: config.execution_timing,
-      enable_t_plus_one: config.enable_t_plus_one,
+      enable_t_plus_one: config.constraint_settings.enable_t_plus_one,
+      block_st_stocks: config.constraint_settings.block_st_stocks,
       lot_size: config.lot_size,
-      commission_rate: config.commission_rate,
-      min_commission: config.min_commission,
-      stamp_tax_rate: config.stamp_tax_rate,
-      base_slippage_rate: config.slippage_rate,
-      dynamic_slippage: config.dynamic_slippage,
-      min_turnover_yuan: config.min_turnover_yuan,
+      commission_rate: config.fee_settings.commission_rate,
+      min_commission: config.fee_settings.min_commission,
+      stamp_tax_rate: config.fee_settings.stamp_tax_rate,
+      transfer_fee_rate: config.fee_settings.transfer_fee_rate,
+      base_slippage_rate: config.slippage_settings.slippage_rate,
+      dynamic_slippage: config.slippage_settings.dynamic,
+      min_turnover_yuan: config.constraint_settings.min_turnover_yuan,
       max_trade_amount_pct_of_turnover: config.max_trade_amount_pct_of_turnover,
       buy_attempt_count: 0,
       buy_fill_count: 0,
@@ -371,8 +423,10 @@ export class QuantBacktestEngine {
       suspended_bar_count: 0,
       total_commission: 0,
       total_stamp_tax: 0,
+      total_transfer_fee: 0,
       total_slippage_cost: 0,
       block_reasons: {},
+      rejected_order_count: 0,
     };
   }
 
@@ -382,8 +436,11 @@ export class QuantBacktestEngine {
     positions: Map<string, OpenPosition>,
     contextBySymbol: Map<string, QuantStockContext>,
     config: ExecutionConfig,
+    constraintEngine: AShareConstraintEngine,
     diagnostics: ExecutionDiagnostics,
     trades: QuantBacktestTradeResult[],
+    rejectedOrders: QuantBacktestRejectedOrder[],
+    strategy_key: string,
     applyCashPatch: (delta: number) => void
   ) {
     const due = pendingExitOrders.filter(order => order.signal_date < currentDate);
@@ -394,7 +451,16 @@ export class QuantBacktestEngine {
       const context = contextBySymbol.get(order.symbol) || order.context;
       const bar = context.bars.find(item => dateOnly(item.time) === currentDate);
       if (!bar) {
-        addBlock(diagnostics, 'sell', 'next_exit_bar_missing');
+        addBlock(diagnostics, 'sell', RejectionReason.NEXT_EXIT_BAR_MISSING);
+        rejectedOrders.push({
+          trade_date: currentDate,
+          strategy_key,
+          symbol: order.symbol,
+          name: context.name,
+          side: 'sell',
+          reason: RejectionReason.NEXT_EXIT_BAR_MISSING,
+          detail: '次日 bar 缺失，无法执行 pending 退出单',
+        });
         continue;
       }
       this.executeSellOrder({
@@ -406,8 +472,10 @@ export class QuantBacktestEngine {
         strategy_key: order.strategy_key,
         positions,
         config,
+        constraintEngine,
         diagnostics,
         trades,
+        rejectedOrders,
         applyCashPatch,
       });
     }
@@ -419,7 +487,10 @@ export class QuantBacktestEngine {
     positions: Map<string, OpenPosition>,
     contextBySymbol: Map<string, QuantStockContext>,
     config: ExecutionConfig,
+    constraintEngine: AShareConstraintEngine,
     diagnostics: ExecutionDiagnostics,
+    rejectedOrders: QuantBacktestRejectedOrder[],
+    strategy_key: string,
     applyCashPatch: (delta: number) => void,
     getCash: () => number
   ) {
@@ -435,7 +506,10 @@ export class QuantBacktestEngine {
       positions,
       contextBySymbol,
       config,
+      constraintEngine,
       diagnostics,
+      rejectedOrders,
+      strategy_key,
       delta => {
         applyCashPatch(delta);
       },
@@ -449,7 +523,10 @@ export class QuantBacktestEngine {
     positions: Map<string, OpenPosition>,
     contextBySymbol: Map<string, QuantStockContext>,
     config: ExecutionConfig,
+    constraintEngine: AShareConstraintEngine,
     diagnostics: ExecutionDiagnostics,
+    rejectedOrders: QuantBacktestRejectedOrder[],
+    strategy_key: string,
     applyCashPatch: (delta: number) => void,
     getCash: () => number
   ) {
@@ -457,25 +534,67 @@ export class QuantBacktestEngine {
     for (const candidate of candidates) {
       diagnostics.buy_attempt_count += 1;
       if (positions.size >= config.max_positions) {
-        addBlock(diagnostics, 'buy', 'max_positions');
+        addBlock(diagnostics, 'buy', RejectionReason.MAX_POSITIONS);
+        rejectedOrders.push({
+          trade_date: currentDate,
+          strategy_key,
+          symbol: candidate.context.symbol,
+          name: candidate.context.name,
+          side: 'buy',
+          reason: RejectionReason.MAX_POSITIONS,
+          detail: `已持仓 ${positions.size} ≥ 上限 ${config.max_positions}`,
+        });
         continue;
       }
       if (positions.has(candidate.context.symbol)) {
-        addBlock(diagnostics, 'buy', 'already_holding');
+        addBlock(diagnostics, 'buy', RejectionReason.ALREADY_HOLDING);
+        rejectedOrders.push({
+          trade_date: currentDate,
+          strategy_key,
+          symbol: candidate.context.symbol,
+          name: candidate.context.name,
+          side: 'buy',
+          reason: RejectionReason.ALREADY_HOLDING,
+        });
         continue;
       }
       const context = contextBySymbol.get(candidate.context.symbol) || candidate.context;
       const bar = context.bars.find(item => dateOnly(item.time) === currentDate);
       if (!bar) {
-        addBlock(diagnostics, 'buy', 'next_bar_missing');
+        addBlock(diagnostics, 'buy', RejectionReason.NEXT_BAR_MISSING);
+        rejectedOrders.push({
+          trade_date: currentDate,
+          strategy_key,
+          symbol: context.symbol,
+          name: context.name,
+          side: 'buy',
+          reason: RejectionReason.NEXT_BAR_MISSING,
+          detail: '次日 bar 缺失，无法执行 pending 买入单',
+        });
         continue;
       }
-      const buyCheck = this.canExecute(bar, 'buy', config);
-      if (!buyCheck.ok) {
-        addBlock(diagnostics, 'buy', buyCheck.reason || 'buy_blocked');
+      const evaluation = constraintEngine.evaluateOrder({
+        side: 'buy',
+        bar,
+        stock_name: context.name,
+        trade_date: currentDate,
+      });
+      if (!evaluation.ok) {
+        const reason = evaluation.reason || 'buy_blocked';
+        addBlock(diagnostics, 'buy', reason);
+        rejectedOrders.push({
+          trade_date: currentDate,
+          strategy_key,
+          symbol: context.symbol,
+          name: context.name,
+          side: 'buy',
+          reason,
+          detail: evaluation.detail,
+          reference_price: Number(bar.close || bar.open) || null,
+        });
         continue;
       }
-      const buyExecution = this.executionPrice(bar, 'buy', config);
+      const buyExecution = constraintEngine.executionPrice(bar, 'buy', config.execution_timing);
       const buyPrice = buyExecution.price;
       const cash = getCash();
       const maxByTurnover = this.maxAmountByTurnover(bar, config);
@@ -487,18 +606,41 @@ export class QuantBacktestEngine {
       const quantity =
         Math.floor(targetAmount / Math.max(buyPrice, 0.01) / config.lot_size) * config.lot_size;
       if (quantity <= 0) {
-        addBlock(diagnostics, 'buy', 'lot_or_cash_too_small');
+        addBlock(diagnostics, 'buy', RejectionReason.LOT_OR_CASH_TOO_SMALL);
+        rejectedOrders.push({
+          trade_date: currentDate,
+          strategy_key,
+          symbol: context.symbol,
+          name: context.name,
+          side: 'buy',
+          reason: RejectionReason.LOT_OR_CASH_TOO_SMALL,
+          detail: `目标金额 ${targetAmount.toFixed(2)} 元不足以买入 1 手 (${
+            config.lot_size
+          } 股 @ ${buyPrice.toFixed(2)} 元)`,
+          reference_price: buyPrice,
+        });
         continue;
       }
       const amount = quantity * buyPrice;
-      const commission = this.commission(amount, config);
-      if (Number.isFinite(cash) && amount + commission > cash) {
-        addBlock(diagnostics, 'buy', 'cash_not_enough');
+      const fees = constraintEngine.computeFees(amount, 'buy');
+      if (Number.isFinite(cash) && amount + fees.total_cost > cash) {
+        addBlock(diagnostics, 'buy', RejectionReason.CASH_NOT_ENOUGH);
+        rejectedOrders.push({
+          trade_date: currentDate,
+          strategy_key,
+          symbol: context.symbol,
+          name: context.name,
+          side: 'buy',
+          reason: RejectionReason.CASH_NOT_ENOUGH,
+          detail: `所需 ${(amount + fees.total_cost).toFixed(2)} 元 > 现金 ${cash.toFixed(2)} 元`,
+          reference_price: buyPrice,
+        });
         continue;
       }
-      applyCashPatch(-(amount + commission));
+      applyCashPatch(-(amount + fees.total_cost));
       diagnostics.buy_fill_count += 1;
-      diagnostics.total_commission += commission;
+      diagnostics.total_commission += fees.commission;
+      diagnostics.total_transfer_fee += fees.transfer_fee;
       diagnostics.total_slippage_cost += buyExecution.slippage_cost * quantity;
       positions.set(candidate.context.symbol, {
         symbol: candidate.context.symbol,
@@ -507,7 +649,8 @@ export class QuantBacktestEngine {
         buy_price: buyPrice,
         buy_date: currentDate,
         entry_reason: (candidate.signal.reasons || []).slice(0, 2).join('；'),
-        buy_commission: commission,
+        // 买入时的佣金 + 过户费一并记入 buy_commission，便于 sell 时计算净 PnL
+        buy_commission: fees.commission + fees.transfer_fee,
         strategy_score: Number(candidate.signal.score || 0),
       });
     }
@@ -522,35 +665,55 @@ export class QuantBacktestEngine {
     strategy_key: string;
     positions: Map<string, OpenPosition>;
     config: ExecutionConfig;
+    constraintEngine: AShareConstraintEngine;
     diagnostics: ExecutionDiagnostics;
     trades: QuantBacktestTradeResult[];
+    rejectedOrders: QuantBacktestRejectedOrder[];
     applyCashPatch: (delta: number) => void;
   }) {
     const open = options.positions.get(options.context.symbol);
     if (!open) return;
     options.diagnostics.sell_attempt_count += 1;
-    if (options.config.enable_t_plus_one && this.diffDays(open.buy_date, options.currentDate) < 1) {
-      addBlock(options.diagnostics, 'sell', 't_plus_one_block');
-      return;
-    }
-    const sellCheck = this.canExecute(options.bar, 'sell', options.config);
-    if (!sellCheck.ok) {
-      addBlock(options.diagnostics, 'sell', sellCheck.reason || 'sell_blocked');
+
+    const evaluation = options.constraintEngine.evaluateOrder({
+      side: 'sell',
+      bar: options.bar,
+      stock_name: options.context.name,
+      buy_date: open.buy_date,
+      trade_date: options.currentDate,
+    });
+    if (!evaluation.ok) {
+      const reason = evaluation.reason || 'sell_blocked';
+      addBlock(options.diagnostics, 'sell', reason);
+      options.rejectedOrders.push({
+        trade_date: options.currentDate,
+        strategy_key: options.strategy_key,
+        symbol: options.context.symbol,
+        name: options.context.name,
+        side: 'sell',
+        reason,
+        detail: evaluation.detail,
+        reference_price: Number(options.bar.close || options.bar.open) || null,
+      });
       return;
     }
 
-    const executionPrice = this.executionPrice(options.bar, 'sell', options.config);
+    const executionPrice = options.constraintEngine.executionPrice(
+      options.bar,
+      'sell',
+      options.config.execution_timing
+    );
     const sellPrice = executionPrice.price;
     const amount = sellPrice * open.quantity;
-    const commission = this.commission(amount, options.config);
-    const stampTax = amount * options.config.stamp_tax_rate;
-    const cost = commission + stampTax;
-    const pnl = amount - cost - open.buy_price * open.quantity - (open.buy_commission || 0);
+    const fees = options.constraintEngine.computeFees(amount, 'sell');
+    const pnl =
+      amount - fees.total_cost - open.buy_price * open.quantity - (open.buy_commission || 0);
 
-    options.applyCashPatch(amount - cost);
+    options.applyCashPatch(amount - fees.total_cost);
     options.diagnostics.sell_fill_count += 1;
-    options.diagnostics.total_commission += commission;
-    options.diagnostics.total_stamp_tax += stampTax;
+    options.diagnostics.total_commission += fees.commission;
+    options.diagnostics.total_stamp_tax += fees.stamp_tax;
+    options.diagnostics.total_transfer_fee += fees.transfer_fee;
     options.diagnostics.total_slippage_cost += executionPrice.slippage_cost * open.quantity;
     options.trades.push({
       strategy_key: options.strategy_key,
@@ -571,49 +734,6 @@ export class QuantBacktestEngine {
     options.positions.delete(options.context.symbol);
   }
 
-  private canExecute(
-    bar: QuantBar,
-    side: TradeSide,
-    config: ExecutionConfig
-  ): { ok: boolean; reason?: string } {
-    if (config.block_suspended && this.isSuspended(bar))
-      return { ok: false, reason: 'suspended_or_zero_volume' };
-    const changePercent = this.resolveChangePercent(bar);
-    if (side === 'buy' && config.block_limit_up && changePercent >= config.limit_up_pct) {
-      return { ok: false, reason: 'limit_up_block_buy' };
-    }
-    if (side === 'sell' && config.block_limit_down && changePercent <= config.limit_down_pct) {
-      return { ok: false, reason: 'limit_down_block_sell' };
-    }
-    if (config.min_turnover_yuan > 0 && this.resolveTurnover(bar) < config.min_turnover_yuan) {
-      return { ok: false, reason: 'turnover_below_threshold' };
-    }
-    return { ok: true };
-  }
-
-  private executionPrice(bar: QuantBar, side: TradeSide, config: ExecutionConfig) {
-    const basePrice =
-      config.execution_timing === 'next_open'
-        ? Number(bar.open || bar.close)
-        : Number(bar.close || bar.open);
-    const slippageRate = this.resolveSlippageRate(bar, config);
-    const price = basePrice * (side === 'buy' ? 1 + slippageRate : 1 - slippageRate);
-    return {
-      price,
-      slippage_rate: slippageRate,
-      slippage_cost: Math.abs(price - basePrice),
-    };
-  }
-
-  private resolveSlippageRate(bar: QuantBar, config: ExecutionConfig) {
-    if (!config.dynamic_slippage) return config.slippage_rate;
-    const turnover = this.resolveTurnover(bar);
-    if (turnover <= 0) return config.slippage_rate * 2;
-    if (turnover < 30000000) return config.slippage_rate * 1.8;
-    if (turnover < 100000000) return config.slippage_rate * 1.25;
-    return config.slippage_rate;
-  }
-
   private maxAmountByTurnover(bar: QuantBar, config: ExecutionConfig) {
     const turnover = this.resolveTurnover(bar);
     if (turnover <= 0) return Number.POSITIVE_INFINITY;
@@ -621,27 +741,19 @@ export class QuantBacktestEngine {
   }
 
   private resolveTurnover(bar: QuantBar): number {
-    const persistedTurnover = toNumber(bar.turnover ?? bar.amount, 0);
-    if (persistedTurnover > 0) return persistedTurnover;
+    const persistedTurnover = Number(bar.turnover ?? bar.amount ?? 0);
+    if (Number.isFinite(persistedTurnover) && persistedTurnover > 0) return persistedTurnover;
 
-    const volume = toNumber(bar.volume, 0);
-    const close = toNumber(bar.close || bar.open, 0);
+    const volume = Number(bar.volume || 0);
+    const close = Number(bar.close || bar.open || 0);
     if (volume > 0 && close > 0) return volume * close;
     return 0;
   }
 
-  private resolveChangePercent(bar: QuantBar): number {
-    return toNumber(bar.change_percent, 0);
-  }
-
   private isSuspended(bar: QuantBar): boolean {
-    const volume = toNumber(bar.volume, 0);
+    const volume = Number(bar.volume || 0);
     const turnover = this.resolveTurnover(bar);
     return volume <= 0 && turnover <= 0;
-  }
-
-  private commission(amount: number, config: ExecutionConfig): number {
-    return Math.max(amount * config.commission_rate, config.min_commission);
   }
 
   private resolveExitReason(

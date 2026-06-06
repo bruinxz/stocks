@@ -89,7 +89,7 @@ export interface QuantBacktestOptions {
   min_commission?: number;
   slippage_rate?: number;
   stamp_tax_rate?: number;
-  execution_timing?: 'next_open' | 'same_close';
+  execution_timing?: 'next_open' | 'same_close' | 'twap_proxy';
   enable_t_plus_one?: boolean;
   lot_size?: number;
   limit_up_pct?: number;
@@ -97,6 +97,10 @@ export interface QuantBacktestOptions {
   block_limit_up?: boolean;
   block_limit_down?: boolean;
   block_suspended?: boolean;
+  /** US-014：是否过滤 ST / *ST 股，默认 true */
+  block_st_stocks?: boolean;
+  /** US-014：过户费率（双边），默认 0.00001（万 0.1） */
+  transfer_fee_rate?: number;
   min_turnover_yuan?: number;
   max_trade_amount_pct_of_turnover?: number;
   dynamic_slippage?: boolean;
@@ -146,6 +150,28 @@ export interface QuantBacktestTradeResult {
   exit_reason?: string;
 }
 
+/**
+ * 被 AShareConstraintEngine 拦截的订单（US-014）。
+ * 与 trades 并行保存到 QuantBacktestResult.rejected_orders_json，便于
+ * 复盘"如果没有 T+1/涨停等约束，回测能成多少单"。
+ */
+export interface QuantBacktestRejectedOrder {
+  /** 拒单发生的交易日 */
+  trade_date: string;
+  /** 当时正在执行的策略 key */
+  strategy_key: string;
+  /** 股票代码 */
+  symbol: string;
+  name?: string;
+  side: 'buy' | 'sell';
+  /** 原因码（来自 RejectionReason enum，便于聚合统计） */
+  reason: string;
+  /** 人类可读补充（"涨幅 9.95% ≥ 阈值 9.8%" 等） */
+  detail?: string;
+  /** 拒单时的参考价（next_open 价 / same_close 价等） */
+  reference_price?: number | null;
+}
+
 export interface QuantBacktestStrategyResult {
   strategy_key: string;
   strategy_name: string;
@@ -163,4 +189,6 @@ export interface QuantBacktestStrategyResult {
   equity_curve: QuantEquityPoint[];
   drawdown_curve: Array<{ date: string; drawdown_pct: number }>;
   trades: QuantBacktestTradeResult[];
+  /** US-014：被 A 股约束引擎拦截的订单明细 */
+  rejected_orders?: QuantBacktestRejectedOrder[];
 }

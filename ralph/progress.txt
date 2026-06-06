@@ -62,6 +62,16 @@
 - **Event-driven strategies (US-013) — sparse-day return is NORMAL**: 业绩预告一年只有 4 个集中披露期，平日 generateSignals 返回 `eligible_count=0` 是预期行为，不要把"无信号日"当成数据缺失告警，否则告警噪音淹没真正问题。事件触发 + 多源双确认的策略统一在 DataSource 接口里给每个数据源独立 `loadXxx()`，单测可独立 mock。判定顺序遵循"早过滤先做"：事件源 → 元数据 → 多源历史回看，避免反向次序浪费 IO。
 - **Report-period-keyed data sources (US-013 业绩预告)**: AKShare `stock_yjyg_em` / `stock_yjbb_em` / `stock_yjkb_em` 按 **报告期** 检索（不是公告日）。Sync 服务对应 `syncReportPeriod(period)`，模型 PK 包含 `report_period` 字段（3-tuple）；CLI 暴露 `--year=YYYY` 一键展开 4 个季度末。**业务超预期判定（is_surprise）留 TS 服务**，符合"Python 是 dumb fetcher / 业务规则可演化留 TS"的统一切分。
 
+### Backtest engine — A 股执行约束 (US-014+)
+- **`AShareConstraintEngine` 是无状态纯模块** at `backend/src/quant/backtest/AShareConstraintEngine.ts`。三个方法：`evaluateOrder(ctx)` 返回 `{ok, reason?, detail?}` 决定能否成交（T+1 / 涨跌停 / 停牌 / ST 过滤 / 流动性门槛）；`computeFees(amount, side)` 返回 commission + stamp_tax + transfer_fee 三段费用 breakdown；`executionPrice(bar, side, timing)` 给三种 timing (next_open / same_close / twap_proxy) 的成交价并附动态滑点。引擎严格无 DB 访问、无状态字段、不修改输入参数——多策略并发跑零状态污染。
+- **`RejectionReason` enum 是统一拒单原因码**。下游 `block_reasons` counter 与 `RejectedOrder.reason` 字段都从同一 enum 取值，UI/聚合统计/告警有单一事实源。新增拒单原因必须先扩 enum 再用（free-text reason 会破坏 aggregation）。**`isSTName` 在 `AShareConstraintEngine.ts` 与 `MultiFactorAlphaStrategy.ts` 各有一份**——任何改判定逻辑必须同步两边。
+- **`rejected_orders` 是 audit trail，`block_reasons` 是 aggregate twin**：每条 rejected_order 含 `{trade_date, strategy_key, symbol, side, reason, detail?, reference_price?}` 写入 `QuantBacktestResult.rejected_orders_json` (US-014 新增列, defaultValue=[] 旧记录 NULL-safe)；同时 `diagnostics.block_reasons` 维护 `Record<reason, count>` 的聚合视图。UI 中"为什么这只票没买/卖成"用 audit；dashboards/heatmaps 用 aggregate。两者并行因消费方不同。
+- **费率默认匹配主流互联网券商 2024-2026**：commission 万 2.5 双边 + min 5 元，stamp tax 千 1 卖出单边，**transfer fee 万 0.1 双边**——过户费是第三方回测最常漏算的项，US-014 强制总是收取。`computeFees()` 一次返回 `FeeBreakdown` 让 caller 清晰看到每段费用，不要再分散在 inline 计算里。
+- **3 种 execution_timing**: `next_open`（次日开盘 + 0.2% 滑点，默认）/ `same_close`（当日收盘 + 滑点）/ `twap_proxy`（(open+high+low+close)/4 + 滑点，简单 VWAP 代理，适合龙头/短线策略）。`twap_proxy` 比 `next_open` 更难"完美捕捉"开盘脉冲，回测结果更保守贴近真实；不强制策略层选 timing，让回测者按策略性质选。动态滑点按 turnover 分段（≤ 0 → ×2，< 30M → ×1.8，< 100M → ×1.25，其他 ×1.0）。
+- **回测引擎仅做撮合调度**：`QuantBacktestEngine` US-014 后只负责日期 loop / 仓位 bookkeeping / 候选排序；约束 + 费率全部 delegate 给 AShareConstraintEngine。每个策略 instantiate 一个 constraintEngine（构造时 copy settings，互不干扰，未来可支持"按策略 override 部分约束"）。
+- **回测测试在 `backend/tests/backtest/`** (新目录, 与 strategies/ 同款约定)，跑法 `npx ts-node --transpile-only tests/backtest/<test>.ts`。Mock 策略直接 extend QuantStrategy + 注册到 strategyRegistry singleton (`ensureRegistered(key, factory)` helper 防 dup register)，避免依赖真实策略产出特定信号——好处：测试可以精准 stub "BUY on day 1, SELL on day 3" 这种行为，对约束引擎做 end-to-end 集成。
+
+
 
 ### Tooling
 - **Frontend node_modules are in the main repo, not the worktree.** Run `ln -s /Users/bytedance/go/src/github.com/bruinxz/stocks/frontend/node_modules frontend/node_modules` inside the worktree before `./node_modules/.bin/tsc --noEmit` or eslint. REMOVE the symlink before `git add` — gitignore matches the directory pattern but not the symlink file.
@@ -1136,5 +1146,143 @@ US-020 (CTA100) / US-021 (SectorRotationLeader) / US-028 (EnsembleStrategy)
   软链接（gitignore 的 `node_modules/` 是目录模式，对软链接文件不生效）。
   `git add` 前一定 `rm backend/node_modules`，否则 git 会跟踪一个指向
   绝对路径的 symlink 入仓。
+
+---
+
+
+## 2026/06/07 - US-014
+
+### What was implemented
+回测引擎升级：支持 A 股真实约束（T+1 / 涨跌停 / 停牌 / ST 过滤）+ 真实费率
+（commission 万 2.5 + min 5 元 / stamp tax 千 1 卖出单边 / **transfer fee 万 0.1
+双边——过户费是第三方回测最常漏算的项**）+ 三种执行价模型（next_open /
+same_close / **twap_proxy** 新增）+ 拒单审计 trail（rejected_orders 写入
+QuantBacktestResult 新增列）。
+
+**核心模块切分**：
+
+把原本散落在 `QuantBacktestEngine` 里 ~300 LOC 的 A 股规则代码全部抽出到
+新模块 `backend/src/quant/backtest/AShareConstraintEngine.ts`（pure、无状态、
+无 DB 访问、无副作用），引擎本身收敛回到撮合 / 仓位调度。三个公开方法：
+
+1. **`evaluateOrder(ctx)` → `{ok, reason?, detail?}`**
+   单一入口判断"能否成交"：T+1 / 涨跌停 / 停牌 / ST 子串识别 / 流动性门槛。
+   `reason` 必须是 `RejectionReason` enum 字面量，下游 `block_reasons` 计数器、
+   `RejectedOrder.reason` 字段、UI 图表共享同一原因码词表。判定按"早过滤先做"
+   顺序：停牌 → ST → 流动性 → 涨跌停 → T+1，最便宜的检查在最前。
+2. **`computeFees(amount, side)` → `FeeBreakdown`**
+   返回 `{amount, commission, stamp_tax, transfer_fee, total_cost}`。买入：
+   `commission + transfer_fee`；卖出：`commission + transfer_fee + stamp_tax`。
+   commission = `max(amount * 0.00025, 5)`；transfer_fee = `amount * 0.00001`；
+   stamp_tax = `(side === 'sell') ? amount * 0.001 : 0`。自定义费率走 constructor
+   注入。
+3. **`executionPrice(bar, side, timing)` → `ExecutionPriceResult`**
+   三种 timing：
+     - `'next_open'`（默认）：bar.open + 滑点（买高卖低）
+     - `'same_close'`：bar.close + 滑点
+     - `'twap_proxy'`：`(open+high+low+close)/4` + 滑点 —— 简单 VWAP 代理，
+       适合龙头/短线策略（比 next_open 更难"完美捕捉开盘脉冲"）
+   动态滑点按 turnover 分段：≤ 0 → ×2，< 30M → ×1.8，< 100M → ×1.25，其他 ×1.0。
+
+**类型 + 持久化扩展**：
+
+- `QuantBacktestRejectedOrder` 接口（QuantTypes.ts）：`{trade_date,
+  strategy_key, symbol, name?, side, reason, detail?, reference_price?}`。
+- `QuantBacktestStrategyResult.rejected_orders?: RejectedOrder[]`（每个策略
+  结果带自己的拒单列表）。
+- `QuantBacktestResult` 模型新增 `rejected_orders_json` JSONB 列（defaultValue
+  = []，旧任务回放 NULL-safe）。`QuantBacktestService.processBacktestTask`
+  persist 时把 `result.rejected_orders || []` 写入。
+- `QuantBacktestOptions` 新增 `block_st_stocks?: boolean`（默认 true）+
+  `transfer_fee_rate?: number`；`execution_timing` 扩展支持 `'twap_proxy'`。
+
+**回测引擎重写**：
+
+`QuantBacktestEngine.buildExecutionConfig` 把 options 合并成三个 settings
+对象（ConstraintSettings / FeeSettings / SlippageSettings），传给每个策略
+独立的 `new AShareConstraintEngine(...)` 实例（构造时 copy settings，多策略
+并发跑无状态污染）。每笔候选订单先调 `evaluateOrder` 决定成交，再调
+`executionPrice` 算价、`computeFees` 算费。被拒订单走 `rejectedOrders.push({...})`
++ 同时 `addBlock(diagnostics, side, reason)` 双写——审计（rejected_orders）
++ 聚合（block_reasons）有各自的消费方。`diagnostics` 新增 `transfer_fee_rate`
+/ `total_transfer_fee` / `block_st_stocks` / `rejected_order_count` 4 个字段。
+
+### Files changed
+- `backend/src/quant/backtest/AShareConstraintEngine.ts` (新, ~370 LOC)
+- `backend/src/quant/backtest/internal/QuantBacktestEngine.ts` (重写, ~640 LOC)
+- `backend/src/quant/types/QuantTypes.ts` (新 RejectedOrder + 新 options 字段
+  + execution_timing 加 'twap_proxy')
+- `backend/src/models/QuantBacktestResult.ts` (新 rejected_orders_json 列)
+- `backend/src/quant/backtest/internal/QuantBacktestService.ts` (持久化新列)
+- `backend/tests/backtest/ashare-constraints.test.ts` (新, 64 个测试用例)
+- `backend/src/quant/CLAUDE.md` (新 'US-014: AShareConstraintEngine' 一节)
+- `ralph/prd.json` (US-014 → passes:true + notes)
+- `ralph/progress.txt` (本条记录 + 新 Codebase Patterns 一节)
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → exit 0 ✅
+- `eslint <5 changed files> --quiet` → exit 0 (2 prettier auto-fixed) ✅
+- `npx ts-node --transpile-only tests/backtest/ashare-constraints.test.ts`
+  → 64 assertions pass < 1s
+  - evaluateOrder 7 维：T+1 + override / 涨停 / 跌停 / 停牌 / ST + 子串识别 +
+    override / 流动性门槛 / happy path
+  - computeFees 4 桶：买入大单（commission >5 元）/ 买入小单（min 5 触发）/
+    卖出大单（含印花税）/ 卖出小单 + 自定义费率（万 5）
+  - executionPrice 4 桶：next_open（base + 滑点）/ same_close / twap_proxy /
+    dynamic 滑点（turnover 100 万 → 滑点 ×1.8）
+  - isSTName 9 边角（复刻 strategy 层逻辑）
+  - 端到端 7 个集成：happy path 1 trade / 涨停拒单写 rejected_orders /
+    ST 过滤 / ST override / 费率累计 / twap_proxy 不抛 / rejected_orders schema
+- 既有 EarningsSurpriseStrategy 测试回归 → 全部通过（类型扩展不破坏既有接口）
+
+### Browser verification
+**N/A** — 后端回测引擎层，无 HTTP 表面。US-015 / US-016 等 UI story 会从
+`/api/quant/backtests/:id` 暴露 `result.rejected_orders` 字段；本 story 仅
+落地引擎实现 + 持久化 + 测试。
+
+### Learnings for future iterations
+- **`AShareConstraintEngine` 是 codebase 第一个"pure rule engine"模式**。
+  之前所有"业务规则"都嵌在 service / strategy / engine 里。pull 出来的
+  收益清晰：(1) 引擎收敛回单一职责（撮合调度），(2) 规则可以零依赖单测，
+  (3) 未来 live trading 守护或策略层 self-check 可复用同一份判定逻辑
+  （而非再 reimplement）。下一个看到"散落多处的相同业务规则"时套这个
+  模式：定 enum + 接口 + pure class，原地 inline 用法替换成 inject。
+- **`RejectionReason` enum 优先扩 enum 再用是硬规则**。在 PR 评审时见过
+  "为了快速调试加个 free-text reason 后忘了删"——这条会破坏所有下游
+  aggregation。eslint 没法捕获这类问题，靠 code review + CLAUDE.md 强提醒。
+- **`rejected_orders` audit + `block_reasons` aggregate 并行设计**：起初
+  想只保留 aggregate（"反正能算出来"），但回测复盘时用户的真实问题是
+  "这只票 06-05 为什么没买到？" —— aggregate 答不了，得 audit 行级数据。
+  双写多花 10 行代码但解锁完全不同的产品体验。原则：consumer drives
+  storage shape，不要 假设 "存这一份就够了"。
+- **`isSTName` 双地点存在是一致性陷阱**。把 strategy 层的实现 verbatim 复制
+  到 engine 层是一种"显式 duplication 优于隐式 dependency"的取舍——共享
+  一个模块意味着 backtest engine 依赖 strategies 模块，反向打破现有的
+  "strategies 用 engine 工具" 单向依赖。CLAUDE.md 显式要求同步两边修改,
+  规模再大就把它升级到 `quant/shared/StockNameFilters.ts` 共享模块。
+- **`twap_proxy` 用 `(open+high+low+close)/4` 而非真实 VWAP**：A 股没有
+  公开的 tick-level VWAP（券商有但要付费），用 4 价均值是"足够好"的代理。
+  写到 jsdoc 标明 "proxy"，避免后人误以为是真 VWAP。
+- **`过户费` 这个项不能漏**：万 0.1 看着小，但活跃账户一年累计能吃掉
+  0.2-0.5% 的收益。互联网券商页面上几乎不显示过户费（藏在"其他费用"），
+  策略回测者第一次实盘对账时常发现"账面比回测少 N 千"——大概率就是过户费。
+  US-014 强制默认收取，并写入 `transfer_fee_rate` 到 diagnostics，让 metrics
+  审计能一眼看到这个口径。
+- **`buy_commission` 字段语义扩展**：原本只存 commission，现在改成
+  `commission + transfer_fee`（买入侧），因为 sell 时算 pnl 必须把买入侧
+  所有费用一起扣掉。如果只存 commission，过户费就被"漏到"sell side 算了,
+  虽然总数对但 pnl 归因到买入/卖出阶段不正确。这是看起来 invisible 但
+  影响"策略归因 vs 实盘对账"的细节。
+- **Mock 策略 `AlwaysBuyOnceStrategy` / `AlwaysSellOnDayThreeStrategy`
+  是回测集成测试的关键** —— 真实策略（如 MultiFactorAlpha）信号产出依赖
+  数据库 / 因子表，根本无法在测试里精准触发"BUY on day 1, SELL on day 3"
+  这种场景。Mock 策略 + `ensureRegistered` helper 让端到端测试有完全可控
+  的信号输入。下一个回测集成测试照搬这个模式。
+- **`execution_timing='same_close'` 是 T+1 路径触发的关键**：next_open 模式
+  下，sell 信号永远在 next-day pending 队列里跨天执行，永远不会触发 T+1
+  拦截（T+1 只挡同日买卖）。同收模式才能真正触发 T+1 路径——所以测试
+  happy path 用 `same_close`，让 BUY + SELL 都在当日 close 上 settle。
+- **Worktree gotcha (still active)**：before `git add`, `rm backend/node_modules`
+  (symlink 污染 git status)。
 
 ---

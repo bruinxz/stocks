@@ -826,6 +826,7 @@ export class QuantBacktestService {
           metrics_json: result.metrics,
           equity_curve_json: result.equity_curve,
           drawdown_curve_json: result.drawdown_curve,
+          rejected_orders_json: result.rejected_orders || [],
         });
         for (const trade of result.trades) {
           await QuantBacktestTrade.create({ task_id: task.id, ...trade });
