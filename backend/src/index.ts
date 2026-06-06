@@ -28,6 +28,7 @@ import reviewRoutes from './api/routes/review.routes';
 import strategyResearchRoutes from './api/routes/strategyResearch.routes';
 import signalTraceRoutes from './api/routes/signalTrace.routes';
 import liveTradingRoutes from './live-trading/routes/liveTrading.routes';
+import factorRoutes from './api/routes/factor.routes';
 import './jobs/dataUpdateWorker'; // 初始化数据更新队列处理器
 import './jobs/aiPollingWorker'; // 初始化 AI 分析轮询队列处理器
 import './jobs/quantBacktestWorker'; // 初始化量化跑分队列处理器
@@ -92,6 +93,7 @@ app.use('/api/review', reviewRoutes);
 app.use('/api/strategy-research', strategyResearchRoutes);
 app.use('/api/signals', signalTraceRoutes);
 app.use('/api/live-trading', liveTradingRoutes);
+app.use('/api/factors', factorRoutes);
 
 import { User } from './models/User';
 import { AIInvestmentSignal } from './models/AIInvestmentSignal';

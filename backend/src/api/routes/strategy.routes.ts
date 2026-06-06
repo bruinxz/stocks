@@ -1,10 +1,13 @@
 import { Router } from 'express';
 import { body } from 'express-validator';
 import { StrategyController } from '../controllers/StrategyController';
+import { factorController } from '../controllers/FactorController';
+import { AuthController } from '../controllers/AuthController';
 import { validateRequest } from '../../middlewares/validateRequest';
 
 const router = Router();
 const strategyController = new StrategyController();
+const authController = new AuthController();
 
 /**
  * @route GET /api/strategies
@@ -12,6 +15,19 @@ const strategyController = new StrategyController();
  * @access Public
  */
 router.get('/', strategyController.getStrategies.bind(strategyController));
+
+/**
+ * @route GET /api/strategies/multi-factor/latest-picks
+ * @desc US-015 多因子策略最近一次调仓结果（target_portfolio + per-stock signal）
+ * @access Authenticated
+ * @note  **Must be registered before /:strategyId** — otherwise Express's
+ *        catchall would consume "multi-factor" as the strategyId param.
+ */
+router.get(
+  '/multi-factor/latest-picks',
+  authController.authenticate,
+  factorController.getMultiFactorLatestPicks.bind(factorController)
+);
 
 /**
  * @route GET /api/strategies/:strategyId

@@ -9,10 +9,13 @@
 - **App.tsx single source of truth** for routes and the top-level menu. The `routeSelectionAliases` array maps legacy paths to the workspace whose sidebar entry should be highlighted; the `<Routes>` block defines the actual `<Navigate>` redirects. Whenever a legacy path is deprecated, update BOTH arrays.
 - **Legacy page imports** are kept (under `/legacy/*` routes) so deep links and embedded iframes still resolve. Only physically delete a page file after all six workspaces have absorbed its functionality (stories US-015..US-018).
 - **Workspace shell CSS lives at the bottom of `frontend/src/index.css`** under a `Workspace shell (US-002)` banner. The shell uses `.workspace-shell`, `.workspace-kpi-bar__inner`, `.workspace-side-tabs`. Media query at 1024px stacks the side rail above content.
+- **Per-workspace `<name>Service.ts` (US-015+) under `frontend/src/services/`** is the API client layer. Each service file co-locates types with the function that uses them (e.g. `FactorOverviewResponse` next to `listFactorsOverview()`). The service layer **unwraps the `{success,data}` envelope** and throws a JS Error on `success=false`, so components consume the inner `data` directly without re-extracting. Bundled `<name>Service` default export sits alongside named exports for tree-shaking. `frontend/src/services/factorService.ts` is the reference (calls `/factors/overview`, `/factors/preview`, `/strategies/multi-factor/latest-picks`).
+- **Workspace data-fetching cadence (US-015 reference):** (1) **Eagerly Promise.all** the data that paints initial KPI + Tab 1 on mount; (2) **lazy-fire** for tabs whose data is triggered by user action (POST `/preview` only when button pressed); (3) keep a **single top-level `loadError`** that replaces the entire body when set — avoids per-tab empty-state misdirection. Don't refetch on tab-switch alone.
 
 ### Backend
 - **PaperTrading services live under `backend/src/portfolio/internal/`**, not `backend/src/services/` (US-003 refactor). The public surface is `backend/src/portfolio/PaperTradingFacade.ts` exposing **exactly 7 methods**: `getPortfolio`, `placeOrder`, `closePosition`, `getDailySnapshot`, `attributePnl`, `applyAutomation`, `getRiskProfile`. Controllers MUST only import the facade. Other services/scripts/jobs may still import from `internal/` directly (the facade-only constraint is the controller boundary).
 - **When adding a new paper-trading action**, extend the discriminator union (e.g. `ApplyAutomationAction`) inside `PaperTradingFacade.ts` — do NOT add an 8th method. The `switch` blocks use a `never`-typed default branch to catch missing cases at compile time.
+- **Endpoint sub-resources MUST be registered before `:param` catchall (US-015 lesson)**: Express routes are matched top-down, so `GET /api/strategies/multi-factor/latest-picks` MUST be `router.get('/multi-factor/latest-picks', …)` BEFORE `router.get('/:strategyId', …)`. Otherwise the param catchall consumes "multi-factor" as `strategyId` and returns 404 from the unrelated handler. Any new sub-resource on an existing `:param`-style router needs the same upfront placement — add a comment "Must be registered before /:strategyId" so future contributors don't reorder it for "alphabetical neatness".
 - **Constants re-exported by facade:** `DEFAULT_PAPER_TRADING_INITIAL_CAPITAL`, `AUTONOMOUS_PORTFOLIO_NAME`, `DEFAULT_AUTONOMOUS_INITIAL_CAPITAL`, `QUANT_ONLY_PORTFOLIO_NAME`. These were previously exported from `PaperTradingAutomationService` and `PaperTradingDashboardService`; controllers/tests now pull them from `../../portfolio/PaperTradingFacade`.
 - **Quant services live under `backend/src/quant/{engine,backtest,performance,health}/internal/`** (US-004 refactor). The public surface is **exactly 5 classes**: `StrategyEngine` + `SignalEngine` (engine/), `BacktestEngine` (backtest/), `PerformanceReporter` (performance/), `QuantHealthMonitor` (health/). Controllers MUST only import these 5 facades; non-controller code (Scheduler, Jobs, sibling Services) may still reach into `internal/`. The facade design and method index live in `backend/src/quant/CLAUDE.md` — update that, not this file, when adding new facade methods.
 - **Cross-layer sibling imports inside quant** use explicit `../../<layer>/internal/...` paths (e.g. `engine/internal/QuantFusionService` imports `quantRuntimeHealthService` from `../../health/internal/QuantRuntimeHealthService`). Don't add wildcards or re-export barrels — staying explicit makes the inter-layer graph visible to future readers.
@@ -1284,5 +1287,135 @@ QuantBacktestResult 新增列）。
   happy path 用 `same_close`，让 BUY + SELL 都在当日 close 上 settle。
 - **Worktree gotcha (still active)**：before `git add`, `rm backend/node_modules`
   (symlink 污染 git status)。
+
+---
+
+
+## 2026/06/07 - US-015
+
+### What was implemented
+前端 `选股因子` 工作区（/workspace/factors）完整落地 + 后端 3 个端点。
+PRD 把 US-009/010/011 (因子基础设施 + 8 因子 + MFA 策略) 的成果暴露给最终用户：
+看见每个因子最新覆盖、调权重预览选股、查看 MFA 最近调仓。
+
+**后端**（`backend/src/api/controllers/FactorController.ts`）— 3 端点：
+
+1. `GET /api/factors/overview`
+   - 列出所有注册因子 + 每个因子的 (latest_trade_date, universe_size,
+     non_neutral_count)。一次 MAX(trade_date) 查整张表 + 一次按
+     factor_name group 查每因子最新日 + per-factor 横截面 Promise.all
+     (COUNT + COUNT WHERE raw_value IS NOT NULL)。
+   - 边缘：factor_scores 为空 → 全 0 + latest_trade_date=null。
+
+2. `POST /api/factors/preview` （body 全字段可选）
+   - 用户传 `{trade_date?, weights?, topN?, industryNeutral?,
+     maxPerIndustry?, excludeST?, excludeNew60d?}` → 用 override 调
+     MultiFactorAlphaStrategy.generateSignals(date, {params}) → 返回
+     完整 signals + filtered + params。
+   - trade_date 缺省 → 自动取 factor_scores 最新一日。
+   - 入参校验：weights 必须是 Record<string, positive number>；
+     topN ∈ [1, 500] 整数；maxPerIndustry 正整数。非法立即 400。
+
+3. `GET /api/strategies/multi-factor/latest-picks`
+   - 取 factor_scores 最新一日 → 调 MFA generateSignals（默认参数权重）
+     → 返回完整结果。
+   - 空表场景返回 200 + `data.note` 解释；不抛错（让前端用 Empty 占位）。
+
+**路由**：
+- 新建 `backend/src/api/routes/factor.routes.ts` （/overview + /preview），
+  在 `src/index.ts` 注册到 `/api/factors/*`。
+- `/api/strategies/multi-factor/latest-picks` 加到既有 `strategy.routes.ts`
+  内，**必须在 `/:strategyId` catchall 之前**（否则 Express 把 'multi-factor'
+  当 strategyId 解析）。jsdoc 标明 "Must be registered before /:strategyId"。
+- 全部 endpoint 走 `authController.authenticate`。
+
+**前端 service**（`frontend/src/services/factorService.ts`）：
+- 3 个函数 + bundled service export 对应 3 个端点。
+- 服务层 unwrap `{success, data}` 信封，`success=false` 抛 JS Error。
+- 完整 TS types （FactorOverviewResponse / FactorPreviewRequest /
+  FactorPreviewResponse / FactorPreviewSignal）让前端 IDE 一键跳转。
+
+**前端 UI**（`frontend/src/pages/workspace/FactorWorkspace.tsx`，~520 LOC）：
+- Tab 1 「因子总览」：响应式 Row[xs 24/sm 12/lg 8/xxl 6] 因子卡片，
+  每张卡 (category 色 Tag + 中文 label / 名称 / description / 最新计算日 /
+  universe_size / 有效覆盖率 % + (non_neutral / universe))。
+- Tab 2 「权重调参」：Row[xs 24/md 12]，每因子 (category Tag + 名 + Slider
+  0-50 step=1 + InputNumber w 80 addonAfter='%')。下方 4 列控制：
+  Top-N InputNumber / 行业中性 Switch / 单行业上限 InputNumber (industryNeutral
+  disabled) / 剔除 ST + 次新 60 日 双 Switch。"预览" 按钮 → POST /preview →
+  下方 Card 显示 KPI strip (target/universe/eligible/trade_date) + 过滤
+  diagnostics Tag + Table top-N (代码/名/行业/composite 排序/信号/每因子 z)。
+- Tab 3 「今日选股清单」：Card 标题 "MultiFactorAlpha · YYYY-MM-DD · N 只"，
+  Table (代码/名称/行业/综合得分排序/上次调仓动作) + expandable row 显示
+  reason + 8 因子 z_score Tag (positive 绿/negative 红)。
+- 顶部 KPI：已注册因子数 / 覆盖股票 (max universe_size) / 最新计算日。
+- 头部 actions: 刷新 Button (loading 状态)。
+- Promise.all 装载 overview + latest-picks；preview 独立 loading。
+- 错误处理：top-level Alert 替换整个 body （避免 tab 各自显示不一致空态）。
+- 空状态：用 antd Empty 显式说明 "请先运行 npm run compute:factors"。
+
+### Files changed
+- `backend/src/api/controllers/FactorController.ts` (新)
+- `backend/src/api/routes/factor.routes.ts` (新)
+- `backend/src/api/routes/strategy.routes.ts` (加 /multi-factor/latest-picks
+  + AuthController + 注释 must-be-before-catchall)
+- `backend/src/index.ts` (import + 挂载 /api/factors)
+- `frontend/src/services/factorService.ts` (新)
+- `frontend/src/pages/workspace/FactorWorkspace.tsx` (rewrite from 占位 to full)
+- `frontend/src/pages/workspace/CLAUDE.md` (加 US-015 服务层 / 多 tab 数据
+  fetch 模式两个 section)
+- `ralph/prd.json` (US-015 → passes:true + notes)
+- `ralph/progress.txt` (this entry + 两条新 Codebase Patterns)
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → exit 0 ✅
+- `cd frontend && ./node_modules/.bin/tsc --noEmit` → exit 0 ✅
+- `eslint backend FactorController + factor.routes + strategy.routes + index --quiet` → exit 0 (1 prettier auto-fixed)
+- `eslint frontend FactorWorkspace + factorService --quiet --fix` → exit 0
+- 回归：MFA 17 tests / AShareConstraintEngine 64 tests 全部仍然通过
+
+### Browser verification
+**未执行** — 本环境没有 dev-browser MCP skill。手验建议：
+1. cd backend && npm run dev （需 PostgreSQL + factor_scores 有数据）
+2. cd frontend && npm start，登录后访问 /workspace/factors
+3. 期望 Tab 1 显示 8 张因子卡片 + 顶部 KPI 显示正确数字
+4. Tab 2 拖滑块 + 点 "预览" → 下方 Card 展示 top-N 列表
+5. Tab 3 → 显示 MFA 最新调仓 Table，展开行看 8 因子 z_score Tag
+
+### Learnings for future iterations
+- **Express 路由次序陷阱 (US-015 第一坑)**：`/:strategyId` 是 catchall
+  param 而非字面量；任何 `/strategies/<sub-resource>/...` 必须在 catchall
+  之前注册。这条规则适用于所有 router 文件 — 加新 sub-resource 时
+  先 grep `:param` 找到 catchall 位置，再决定 insert 在何处。我加了
+  注释 "Must be registered before /:strategyId" 让未来 contributor 不会
+  为 "字母序整洁" 而上调位置。
+- **service 层 unwrap `{success, data}` 信封**比 "组件层每次 await
+  res.data.data" 干净得多。代价：service 函数 throw JS Error 时组件需要
+  try/catch（marketService.ts 旧模式直接返回整个信封让组件 if/else）。
+  US-015 选 throw + 组件 catch，让 happy path 代码直接拿到 typed payload。
+  下一个 service 应当沿用，不要新创 "返回 payload" vs "返回信封" 的
+  双标准。
+- **factor_scores 表空 = 200 + note，而不是 4xx**：前端用 Empty 占位比
+  "弹出 message.error 然后空 Table" 友好；后端响应 shape 多一个 `note`
+  字段（前端 service 类型上是 `note?: string`）让 latest-picks 与 preview
+  共享同一类型，前端只在 picks 处分支判断。
+- **Workspace KPI 条不要用 mock 数据**：MultiFactorAlpha 之前 Statistic
+  写 value={0}。换成真实 overview.factors.length / max(universe_size) /
+  latest_trade_date 后立刻让用户感知到 "系统是不是真的有数据"。每个
+  workspace 在 US-015..US-018 完成后都应该有 ≥3 个真实指标的 KPI 条。
+- **避免双重并发 fetch**：FactorWorkspace 装载用 Promise.all（一个
+  Spinner），不要每个 tab 切换时再 fetch（会让用户在 tab 之间反复加载）。
+  preview 是用户 explicit 触发因此独立 loading。这条规则在
+  CLAUDE.md "Multi-tab data fetching pattern" 一节明确写下。
+- **响应式因子卡片网格**：xs={24}/sm={12}/lg={8}/xxl={6} 让 8 张卡在
+  桌面 (xxl ≥ 1600px) 显示 4×2 网格，超大屏不会过宽空荡，手机端 1 列
+  栈叠。比硬编码 `style={{width:300}}` 友好得多。后续 workspace 卡片
+  网格统一这个断点。
+- **CLAUDE.md 维护 = 1 个文件 + 多个 section** 比每个目录散落更好。
+  frontend/src/pages/workspace/CLAUDE.md 现在涵盖 layout 契约 / KPI
+  约定 / service 层 / 多 tab fetch 4 大主题；下一个 workspace 实现时
+  优先扩这一个文件而不是新建散落 README。
+- **Worktree gotcha (still active)**: rm frontend/node_modules + backend/node_modules
+  before git add (两个都是软链接污染 git status)。
 
 ---
