@@ -1,8 +1,10 @@
-# Factor 基础设施 (US-009)
+# Factor 基础设施 (US-009 + US-010)
 
 `backend/src/quant/factors/` 是 A 股多因子打分体系的基础设施层。US-009
-落地了**注册中心 + 横截面 pipeline + 标准化工具 + FactorScore 模型**，
-US-010+ 在 `library/` 下添加具体因子实现。
+落地了**注册中心 + 横截面 pipeline + 标准化工具 + FactorScore 模型**；
+US-010 在 `library/` 下注册了 **8 个基础因子**（`value` / `quality` / `growth` /
+`momentum` / `low_vol` / `northbound` / `money_flow` / `dragon_tiger`）。后续
+story 在 `library/` 下追加新文件即可，无需改 Pipeline / Registry。
 
 ## 目录约定
 
@@ -15,8 +17,16 @@ backend/src/quant/factors/
 ├── index.ts                ← 模块出口（re-export 上面 4 个）
 └── library/
     ├── index.ts            ← import-time 把每个因子文件 import 进来（自我登记）
+    ├── _helpers.ts         ← library 内部共享 helper（前缀 `_` = "仅 library 用"）
+    │                        提供 stripSuffix / inferStockSymbol / loadStocksByCodes /
+    │                        isFiniteNumber / lookbackStartDate
     └── <NameFactor>.ts     ← 一个文件 = 一个因子（US-010+ 添加）
 ```
+
+**`_helpers.ts` 是 library 内部约定**——前缀 `_` 表示它不应被 library 之外
+的代码 import；因子基础设施的对外契约只通过 `quant/factors/index.ts` 暴露。
+新增因子要复用 `loadStocksByCodes(codes, attrs)` / `stripSuffix(symbol)` /
+`lookbackStartDate(asOf, days)`，不要 inline 同样的 5 行。
 
 ## 添加新因子的步骤（US-010+）
 
@@ -111,3 +121,52 @@ backend/src/quant/factors/
   的 `stock_code` 已经是无后缀形式（与 FactorScore.stock_code 直接 join）。
 - **缺数据 ≠ 因子失效**：缺数据返回稀疏 Map；因子失效（例如 PE<=0）应该
   `continue` 不写入这只股票，让 Pipeline 把它当作中性。
+
+## US-010 落地的 8 个基础因子（参考实现）
+
+| 因子 name | 类别 | 数据源 | 失效条件 |
+|---|---|---|---|
+| `value` | value | StockValuationFactor | PE-TTM ≤ 0 / PB ≤ 0 / 任一缺 |
+| `quality` | quality | StockFundamentalFactor | ROE 观测 < 2 个 |
+| `growth` | growth | StockFundamentalFactor | net_profit_growth 与 revenue_growth 都缺 |
+| `momentum` | momentum | DailyBar (经 Stock.id 解析) | bars < 121 |
+| `low_vol` | volatility | DailyBar (同上) | bars < 121 或 stddev = 0 |
+| `northbound` | flow | NorthboundHolding | 当日无数据，或窗口内仅 1 条 |
+| `money_flow` | flow | StockMoneyFlowFactor + Stock | 窗口内无累计、或 circulating_market_cap ≤ 0 |
+| `dragon_tiger` | flow | DragonTigerBoard | 窗口内无 famous_yz 且 net_amount > 0 的行 |
+
+**典型查询模式（US-029+ 添加新因子可直接复制）**：
+
+- "时序聚合" 类（quality / growth）：拉 `factor_date ∈ [as_of - N天, as_of]`
+  全集 → 按 symbol 分组 in-memory 聚合 → stripSuffix 输出
+- "时序 + 截面" 类（momentum / low_vol）：先 `loadStocksByCodes(universe)`
+  拿 `Stock.id`，再用 `Op.in: stock_ids` + time range 拉 DailyBar；按
+  `stock_id` 分组 + `arr.sort((a,b)=>a.time-b.time)` 后从尾部计数对齐
+- "纯无后缀表" 类（northbound / dragon_tiger）：直接 `Op.in: ctx.universe`
+  + trade_date 窗口；stock_code 字段就是输出 key，**不需要走 Stock 表**
+
+**横截面 z-score 友好的 raw_value 形态**（重要！）：
+
+- ✅ `dragon_tiger` 用 "天数" 而非 "笔数"：龙虎榜笛卡尔展开下 "笔数" 噪音
+  巨大，"独立日数 ∈ [0, 20]" 是更稳健的连续量。
+- ✅ `dragon_tiger` 不在 Map 里写 0（让 Pipeline 中性补全为 percentile=0.5）：
+  "未上榜" 与 "上榜但被卖" 语义不同；强行写 0 会让大量股票挤在 raw=0，
+  把横截面均值拖向 0、zscore 分布失真。
+- ✅ `low_vol` 取 `-stddev` 而不是 `1/stddev`：避免分母趋零放大噪音；
+  zscore 后高分仍代表低波动股。
+- ✅ `value` 用 `1/PE + 1/PB` 而非 `-PE - PB`：分母倒数无量纲、自然加权
+  (二者都在 0..1 区间)；直接相加避免一只股票 PE=100 完全淹没 PB。
+- ✅ `momentum` 用 `close[T-20]/close[T-120] - 1` 比值差：避免对数收益的
+  极端值；截尾后的 zscore 已经能让横截面稳定。
+
+## 添加新因子的 checklist (US-029+)
+
+每加一个 `<NameFactor>.ts`，必做：
+
+1. 文件尾部 `factorRegistry.register(factor)`；
+2. 在 `library/index.ts` 按字母序追加 `import './<NameFactor>';`；
+3. compute() 内部**不要**做 zscore / winsorize；
+4. 复用 `_helpers.ts` 的 `stripSuffix` / `loadStocksByCodes` / `lookbackStartDate`；
+5. 缺数据 → 不入 Map（让 Pipeline 补中性，避免污染横截面均值）；
+6. 在本 CLAUDE.md "8 个基础因子" 表格追加一行（数据源 + 失效条件）；
+7. 跑 `./node_modules/.bin/ts-node --transpile-only -e "import('./src/quant/factors/library').then(()=>import('./src/quant/factors/FactorRegistry').then(r=>console.log(r.factorRegistry.listNames())))"` 验证新因子出现。

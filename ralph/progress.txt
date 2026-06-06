@@ -38,6 +38,16 @@
 - **Sparse Map is fine**: if a factor can't compute a value for a stock (missing data), just don't include it in the Map. The Pipeline fills the universe gap with a "neutral row" (raw_value=null, z_score=0, percentile=0.5) so factor_scores always has `universe_size` rows per (date, factor) — makes multi-factor JOIN-free.
 - **stock_code is suffix-less**: FactorScore.stock_code matches NorthboundHolding/LimitUpStock/IndustryFlow ("600519", not "600519.SH"). When a Factor.compute() reads Stock/DailyBar (which use "600519.SH"), it MUST `symbol.split('.')[0]` before keying the output Map.
 - **Pipeline serial-by-factor, not Promise.all parallel**: one bad factor doesn't kill the batch; logs stay readable; debug is straightforward. The compute step within one factor can still batch DB queries internally.
+- **library/_helpers.ts** (US-010) is the **library-internal** shared utility module — prefix `_` = "only library code should import this; not exposed via quant/factors/index.ts". Provides `stripSuffix(symbol)`, `inferStockSymbol(code)` (reverse: "600519" → "600519.SH"), `loadStocksByCodes(codes, attrs)` (one-shot batch query that returns Map<stock_code, Stock>), `isFiniteNumber(v)`, `lookbackStartDate(asOf, days)`. Use these in every new factor — don't inline the 5-line symbol-mapping logic 8 times.
+- **3 query-shape patterns** to copy when adding a new factor (US-010 codified them):
+  - **"Time-series aggregate" (quality/growth)**: pull `factor_date ∈ [as_of - N天, as_of]` from a `symbol`-keyed source table, group by symbol in-memory, then stripSuffix → output.
+  - **"Time-series + cross-section" (momentum/low_vol)**: `loadStocksByCodes(universe)` first to get `Stock.id`, then `Op.in: stock_ids` + time range on DailyBar; group by stock_id, `arr.sort((a,b)=>a.time-b.time)`, count back from tail to align on T-N.
+  - **"Suffixless-table direct" (northbound/dragon_tiger)**: `Op.in: ctx.universe` + trade_date window — stock_code field IS the output key, no Stock lookup needed.
+- **Z-score-friendly raw_value shapes** (US-010 lessons):
+  - For "event count" factors (dragon_tiger), use **distinct DAYS** not raw rows — cartesian fan-out in source tables inflates counts unpredictably.
+  - Don't write `0` when "未触发" — leave the stock out of the Map so Pipeline's middle-rank neutral default (percentile=0.5) applies; writing 0 collapses the cross-section to a "0 vs positive" bimodal distribution that breaks z-score interpretability.
+  - For "lower-is-better" factors (low_vol), return `-stddev` not `1/stddev`: avoid div-by-near-zero noise.
+  - For "ratio family" factors (value), use `1/PE + 1/PB` not `-PE - PB`: keeps both ingredients dimensionless and naturally bounded.
 
 
 ### Tooling
@@ -598,5 +608,111 @@ US-009 不实现具体因子（那是 US-010 的事），落地的是 "因子运
   旧数据（Stock 表里可能有 NULL 的 is_active 字段）。`{is_active: { [Op.ne]: false }}` 看起来更直接
   但 Sequelize 对 `Op.ne` + NULL 的 SQL 行为依赖 NOT NULL 假设，安全起见用 Or 显式。
 - **Worktree gotcha (still active)**：before `git add`, `rm backend/node_modules`。
+
+---
+
+## 2026/06/07 - US-010
+
+### What was implemented
+8 个基础因子全部落地到 `backend/src/quant/factors/library/`，每个因子一个 .ts 文件，
+在 import-time 通过 `factorRegistry.register(...)` 自我登记。US-009 的 Pipeline
+现在可以跑出真实数据：`npm run compute:factors -- --date=2026-06-05` 会触发
+8 因子 × 全 A 股 universe（≈5000 只）的横截面计算 + factor_scores 表 ~40k 行 upsert。
+
+**8 个因子（按字母序、PRD 顺序对照）**：
+
+| 文件 | name | category | 公式 |
+|---|---|---|---|
+| ValueFactor.ts | `value` | value | `1/PE-TTM + 1/PB` |
+| QualityFactor.ts | `quality` | quality | `mean(ROE 5y) - 0.3 * latest debt_asset_ratio` |
+| GrowthFactor.ts | `growth` | growth | `0.6*net_profit_growth + 0.4*revenue_growth` (latest period) |
+| MomentumFactor.ts | `momentum` | momentum | `close[T-20] / close[T-120] - 1` (120-20 经典动量减短期反转) |
+| LowVolFactor.ts | `low_vol` | volatility | `-stddev(daily_return[-120:])` (低波给高分) |
+| NorthboundFactor.ts | `northbound` | flow | `hold_ratio[as_of] - hold_ratio[as_of - 20 天]` |
+| MoneyFlowFactor.ts | `money_flow` | flow | `sum(main_net_inflow[-10 trading days]) / circulating_market_cap` |
+| DragonTigerFactor.ts | `dragon_tiger` | flow | `count(distinct trade_date) WHERE 知名游资席位净买入 ∈ [-20d, as_of]` |
+
+**共享 helper 文件 `library/_helpers.ts`**：提供 5 个 library-内部 primitive
+（`stripSuffix` / `inferStockSymbol` / `loadStocksByCodes` / `isFiniteNumber` /
+`lookbackStartDate`）。前缀 `_` 强调它**不**应被 library 外部 import — 因子
+基础设施的对外契约只通过 `quant/factors/index.ts` 暴露。`loadStocksByCodes`
+一次 IN-list 查询解决 8 个因子里 4 个都需要的 "无后缀 universe → Stock.id"
+反向映射，避免散在各因子里写 8 份不一致。
+
+**`library/index.ts`**：原来的占位 `export {};` 替换成 8 行 `import './XxxFactor';`
+（按字母序）。该文件不 re-export 因子实例 —— `factorRegistry.get('value')`
+是唯一调用入口，避免双重事实源。
+
+**`backend/src/quant/factors/CLAUDE.md`**：追加 US-010 8 因子参考表（含数据源
++ 失效条件） + "新加因子 checklist" 7 步清单（指向 `_helpers.ts` 复用 + 提醒
+"不要在 compute() 内做 zscore"）。
+
+### Files changed
+- `backend/src/quant/factors/library/_helpers.ts` (new — 5 个 library 内部 primitive)
+- `backend/src/quant/factors/library/ValueFactor.ts` (new)
+- `backend/src/quant/factors/library/QualityFactor.ts` (new)
+- `backend/src/quant/factors/library/GrowthFactor.ts` (new)
+- `backend/src/quant/factors/library/MomentumFactor.ts` (new)
+- `backend/src/quant/factors/library/LowVolFactor.ts` (new)
+- `backend/src/quant/factors/library/NorthboundFactor.ts` (new)
+- `backend/src/quant/factors/library/MoneyFlowFactor.ts` (new)
+- `backend/src/quant/factors/library/DragonTigerFactor.ts` (new)
+- `backend/src/quant/factors/library/index.ts` (8 self-registering imports)
+- `backend/src/quant/factors/CLAUDE.md` (US-010 因子参考表 + checklist)
+- `ralph/prd.json` (US-010 → passes:true)
+- `ralph/progress.txt` (this entry + new Codebase Patterns section bullet)
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → exit 0 ✅ matches AC verbatim
+- `eslint src/quant/factors --ext .ts --quiet` → exit 0 (1 prettier auto-fix on MoneyFlowFactor's multi-line import)
+- **Smoke test 1: factor registration**：调 `factorRegistry.listNames()` 后返回
+  `['dragon_tiger','growth','low_vol','momentum','money_flow','northbound','quality','value']`（8 个，按字母序）— 全部 .compute 函数到位，.description 非空。
+- **Smoke test 2: live-DB compute**：用 ctx={as_of_date:'2026-06-05', universe:5只大盘股}
+  调每个因子的 `compute(ctx)` —— 8 个全部 0 错误执行（DB 里这 5 只没有现成的因子源数据 → 空 Map，正是设计预期）。每个因子耗时 1-13ms。证明 SQL 查询 shape 全部正确、Sequelize Op.in 等 binding 没问题、library 互相 import 无循环依赖。
+
+### Browser verification
+**N/A** — 后端因子计算层，无 HTTP 表面。US-015 因子工作区会消费 `factor_scores` 表
+（GET /api/factors/...）；本 story 仅落地计算逻辑 + 注册。
+
+### Learnings for future iterations
+- **dragon_tiger 因子的 "天数 ≠ 笔数" 决策**：龙虎榜在 DragonTigerBoard 表里是
+  `(buyer_seat × seller_seat)` 笛卡尔展开，一只股票一天可能有 5-10 个 famous_yz=true
+  的行。`count(笔数)` 让一天爆量游资 vs 持续多天小量游资的票完全不可比；改用
+  `count(distinct trade_date)` 让 raw_value 自然在 0..20 之间，横截面 zscore
+  收敛漂亮。
+- **dragon_tiger 因子的 "缺失 ≠ 0" 决策**：窗口内一个 famous_yz 都没有的股票
+  不入 Map，让 Pipeline 中性补全（percentile=0.5）。强行写 0 会让大多数股票
+  挤在 raw=0，把横截面均值拖向 0、zscore 分布退化成 "0 vs 正" 二元。"未上榜"
+  与 "上榜但被卖" 是不同的事件，前者保持中性才正确。
+- **low_vol 用 `-stddev` 而非 `1/stddev`**：避免分母趋零（停牌全程没动）导致数值爆炸；
+  取负号让 Pipeline 横截面 zscore 后高分自然代表低波动股，不需要在 strategy
+  层颠倒符号。同样的 "符号选择" 思路也适用于 US-029 之后的高阶因子（如换手率
+  双向异常打分）。
+- **value 用 `1/PE + 1/PB` 而非 `-PE - PB`**：分母倒数自然无量纲，两个比率都
+  在 0..1 区间（除非极便宜的烟蒂股），等权相加不会让 PE=100 完全淹没 PB=2；
+  反过来 `-PE - PB` 会让 PE 单一信号主导。
+- **momentum 用 `close[T-20]/close[T-120] - 1` 而非 log return**：A 股极端值
+  比海外多，对数收益会让极端涨幅更"重"；用比值差 + Pipeline 1%-99% winsorize
+  组合反而稳定。120-20 这个 "skip recent 20 days" 设计是经典学术因子（Jegadeesh &
+  Titman 1993 + 后续 follow-up）——A 股短期反转特别强，剔除最近 20 日效果显著。
+- **`loadStocksByCodes` 的设计权衡**：4 个因子（momentum/low_vol/value 间接/money_flow）
+  都需要 universe→Stock 反查；如果每个因子各自 `Stock.findAll({where:{symbol:{[Op.in]:...}}})`
+  就是 4 份几乎相同的代码。抽到 `_helpers.ts` 后单点优化（attributes 投影、是否需要 `raw:true`
+  等）一次性生效。但**没有把所有数据访问都抽成 DAO**：因子查询 shape 异质性大
+  （momentum 要 time-series stock_id JOIN、quality 要 symbol GROUP BY），强行抽
+  会让接口爆炸。只抽 "8 个因子里 ≥3 个都用" 的部分。
+- **横截面 z-score 友好的 raw_value 形态是 US-010 最大的设计教训**：写完所有 8 个
+  因子后回头看，每个都有一个 "怎么把现实信号编码成横截面良性分布" 的小决策。
+  CLAUDE.md 把这 4 条（"独立日数 vs 笔数"、"缺失 vs 0"、"-x vs 1/x"、"1/a + 1/b vs -a - b"）
+  落在 "横截面 z-score 友好的 raw_value 形态" 一节，US-029+ 加新因子时直接对照。
+- **MomentumFactor / LowVolFactor 用尾部计数而非日历对齐**：用 `arr.length - 1 - 20`
+  而不是按 `as_of - 20 个日历日` 查询。原因：A 股节假日（春节 7 天、五一 5 天等）
+  让 "20 个日历日前" 与 "20 个交易日前" 经常差 5-10 天；尾部计数永远是 "我有的最近 N 个交易日"
+  而不是 "日历上 N 天前应该有的"。`QUERY_CALENDAR_DAYS = 220` 足以覆盖 120 个交易日
+  + 春节假期 + 一些缺数据缓冲。
+- **新因子文件**：要复用 `_helpers.ts` 的 5 个 primitive，**不要**inline 5 行
+  `if (!symbol) return ''; const i = symbol.indexOf('.'); return i < 0 ? symbol : symbol.slice(0, i);`
+  ——库内已经有 `stripSuffix(symbol)`，统一了 8 份不一致的边界处理。
+- **Worktree gotcha (still active)**：before `git add`, `rm backend/node_modules`（symlink 污染 git status）。
 
 ---
