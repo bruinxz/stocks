@@ -121,6 +121,12 @@
 - **`Omit<Options, 'X' | 'Y'>` 的 base_config 模式 (US-037)**: `GridSearchInput.base_config: Omit<QuantBacktestOptions, 'strategy_keys' | 'params_by_strategy'>` —— 优化器自己负责往每个 combo 注入 `strategy_keys: [key]` + `params_by_strategy: {[key]: params}`，caller 不要管。避免了"caller 预填了 X 让 optimizer 再加导致 dup"的 bug。任何"caller 传 base 配置 + 框架按组合扩展"的 API 复用此模式。
 - **Lazy-import 重量级子系统 (US-037 defaultBacktestRunner)**: `GridSearchOptimizer.ts` 被 CLI / 未来 controller / 单测 import。如果顶层 `import { quantBacktestEngine } from './internal/...'`，会让 fake-runner 单测也付出加载整个 quant 子系统 (160 文件深) 的代价。Default runner 内部用 `require()` 把这个 import 延迟到 production 调用时。**任何"默认实现拉重量级依赖"的 injectable function 都应该 lazy-import**。
 - **`Object.freeze(DEFAULT_*_CONFIG)` 防默认值被意外 mutation (US-037)**: 任何 module-level "默认配置" 常量都 `Object.freeze()`。避免 `DEFAULT_COMPOSITE_WEIGHTS.sharpe = 2.0` 这种偶发 mutation 静默影响后续所有 caller。
+- **嵌入式优化器复用模式 (US-039 WalkForwardValidator)**: 当一个模块需要在内部多次调用另一个模块（WalkForward 在每个 train 窗口跑 GridSearchOptimizer），通过 `interface EmbeddedOptimizer { optimize: SourceOptimizer['optimize'] }` 提取接口，options 接受注入。生产默认走 singleton；测试注入 fake 完全脱离 DB。**不要**用 `extends` / 子类化，因为 caller 关心的只是"能跑 optimize"这一个能力，不是继承体系。父类被复用为内部依赖时只 import 其类型签名而非实现。同款模式适用于未来 US-043 蒙特卡洛嵌入 backtestRunner / US-044 portfolio optimizer 嵌入 single-strategy backtest。
+- **滚动窗口算法的 testMonths-as-stride 不变量 (US-039)**: 任何"train/test 滚动"的设计（不只 walk-forward，未来 US-040 regime-segmented backtest 也涉及）必须 step = testMonths（让 test 不重叠）而非 step = trainMonths。在 jsdoc + CLAUDE.md + 单测 `w${i}.test_start > w${i-1}.test_end` 三处强制约束。**测试 windows count 时**：必须在注释里列 w0..wN 的 train_start/test_start/test_end 表，然后才写数字。盲猜数字几乎一定 off-by-one；141 个测试有 4 个一开始就 wrong，全是因为没画时间轴。
+- **discriminator-keyed parent table + N-level nesting (US-039 强化 US-037+US-038)**: OptimizationRun.optimizer_type 字段在 US-038 已让 grid/bayesian 共享表；US-039 扩展为 **两级嵌套** — walk_forward 父 run 内部嵌入 grid_search 子 runs（通过 WalkForwardResult.train_run_id 关联）。**deleteRun / cleanupOlderThan 必须递归清理嵌套子 runs/results 避免孤儿数据**。未来任何"嵌入式优化器"模式都按此 cleanup 模板：先 SELECT 收集 child_run_ids 再 DESTROY in IN-list。`backend/src/quant/backtest/WalkForwardValidator.ts deleteRun/cleanupOlderThan` 是参考实现。
+- **best_result_id 跨 optimizer_type 语义差异 (US-039)**: 同一字段在不同 optimizer_type 下指向不同表（grid/bayesian → OptimizationResult.id, walk_forward → WalkForwardResult.id —— 后者的"冠军"是单个窗口而非单个 combo）。**消费方按 optimizer_type switch 解释 best_result_id**，写到 jsdoc + CLAUDE.md。未来 US-016 跨类型 UI 必须先分支。这是"共享父表 + 子表语义不同"模式的代价；好处是不需要单独再起一张 walk_forward_runs 表（UI 视图、状态机、cleanup 工具都能复用）。
+- **isoDateAddMonths 月末 clamp 的标准实现 (US-039)**: 任何月度滚动算法（quarterly rebalance / annual review / walk-forward window）的 addMonths 必须 clamp day 到新月 daysInMonth：`new Date(Date.UTC(year, month, 0)).getUTCDate()` 是最简单 robust 写法（month 1-indexed，传 0 day 返回上月最后一天，因 JS Date 月份是 0-indexed）。手算 6 个边界测试是回归保险栓：1-31→闰年 2-29 / 1-31→平年 2-28 / 12-15→1-15 跨年 / 1-15→4-15 普通 +3 月 / 2-15→1-15 -1 月 / -12 月跨年。下次任何月份算法变更先跑这 6 个。
+- **out_of_sample_decay 是 walk-forward 唯一价值输出 (US-039)**: `aggregateWindowMetrics()` 的 `out_of_sample_decay = mean(train_sharpe - test_sharpe)`。>0 表示过拟合（in-sample 高 out-of-sample 低），>1 严重，>2 灾难。**做 walk-forward 的目的就是看这个指标**，不是看 mean_test_sharpe；否则不如直接跑 GridSearch 省 50% 时间。下游产出 walk-forward 报告时必须把 decay 标在最显眼位置（红色高亮 > 0），UI dashboard 同款。
 
 
 
@@ -3921,4 +3927,45 @@ Factor self-registers to `factorRegistry` as `name='gradual_breakout'`, `categor
 - **失败点不进训练集 (US-038)**: GP / Bayesian / 其他"数据驱动的 acquisition function" 模块必须 try/catch per iter + 失败时记 status='failed' 但不 push 到 GP observations。NaN 进入 K 矩阵会让 Cholesky 抛"非正定"错，污染整轮采样。
 - **维度复杂度退化策略 (US-038)**: D ≤ 3 cartesian (gridSize^D); D ≥ 4 退化为随机采样 min(N_max, gridSize × D × 4)。任何"对每维做全展开"的算法都要在 jsdoc 顶部 + CLAUDE.md 写显式维度上限，让用户知道何时切退化路径。
 - **复用既有 API 而非平行写**: 第二种"同类操作不同算法"模块（如 US-038 第二种 optimizer）必须 import 共享 API (BacktestRunner / OptimizationResultRecord / sortByCompositeScoreDesc / computeCompositeScore) 而非平行定义 type / function。判据：新模块在概念上是"换算法保接口"时拒绝重复实现，保单一事实源。
+---
+
+## 2026/06/07 - US-039
+
+### What was implemented
+Built the **WalkForwardValidator** — the third member of the parameter-optimization triad (after US-037 GridSearchOptimizer and US-038 BayesianOptimizer). Rolling train → embedded grid search → test → roll forward → aggregate. The core anti-overfit detector: a strategy that's in-sample sharpe 1.8 but out-of-sample 0.3 gets caught here.
+
+### Files changed
+- `backend/src/models/WalkForwardResult.ts` (new, 229 lines) — Sequelize model with all train/test metrics + status + train_run_id FK
+- `backend/src/quant/backtest/WalkForwardValidator.ts` (new, ~840 lines) — pure helpers (isoDateAddDays/isoDateAddMonths/compareIsoDate/sampleStddev/generateWalkForwardWindows/aggregateWindowMetrics) + WalkForwardValidator class with validate() + 4 admin methods
+- `backend/src/scripts/run-walk-forward.ts` (new, ~290 lines) — CLI with optimize / --list / --show / --cleanup-days modes
+- `backend/src/models/index.ts` + `backend/src/config/database.ts` — register WalkForwardResult
+- `backend/package.json` — add `run:walk-forward` script
+- `backend/tests/backtest/walk-forward-validator.test.ts` (new, ~1000 lines) — 141 unit tests covering 6 pure helpers + 17 e2e scenarios; uses fake optimizer + fake testRunner double-injection to stay DB-free
+- `backend/src/quant/CLAUDE.md` — append 'US-039: WalkForwardValidator' section with three-way comparison table (GridSearch / Bayesian / WalkForward), 9 design constraints, expansion guidance, test patterns
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → exit 0
+- `eslint src/models/WalkForwardResult.ts src/quant/backtest/WalkForwardValidator.ts src/scripts/run-walk-forward.ts src/models/index.ts src/config/database.ts --quiet --fix` → exit 0 (13 prettier auto-fixed)
+- `npx ts-node tests/backtest/walk-forward-validator.test.ts` → 141 pass / 0 fail in <1s
+- Regression: grid-search-optimizer (100 ok) / bayesian-optimizer (161 ok) / ashare-constraints (64 ok) / MultiFactorAlphaStrategy / EnsembleStrategy / EarningsSurpriseFactor → all still pass
+- CLI `npm run run:walk-forward -- --help` boots cleanly
+
+### Learnings for future iterations
+- **Walk-forward = test_months 是滚动步长不是 train_months**: train 窗口可以重叠（相邻窗口共享 train 数据没关系），但 test 窗口必须完全不重叠（否则样本外信号重复污染）。所以 step = testMonths，不是 trainMonths。这点在 jsdoc 顶部明确强调，且测试用例 `w${i} test_start > w${i - 1} test_end` 是回归基线。
+- **isoDateAddMonths 闰年月末 clamp** (1-31 → 闰年 2-29 / 平年 2-28) 是经典 off-by-one 大坑——任何月度滚动算法都必须处理。用 `Date.UTC(year, month, 0)` 算 daysInMonth 是最简单 robust 的写法（month 是 1-indexed，传 0 day 返回上月最后一天）。手算 10 个边界测试是回归保险栓。
+- **共享 OptimizationRun 表 + 多 optimizer_type 的两年级嵌套**: walk-forward 的 父 run.optimizer_type='walk_forward'，**但**每个 train 窗口又通过嵌入式 GridSearchOptimizer 创建一个 *子* OptimizationRun.optimizer_type='grid_search'。两级嵌套是同表 + 不同 type，通过 `WalkForwardResult.train_run_id` 关联。`deleteRun` / `cleanupOlderThan` 必须递归清理子 runs，否则孤儿数据。
+- **best_result_id 字段在父 run 上的语义因 optimizer_type 而不同**: GridSearch/Bayesian 父 run.best_result_id 指向 OptimizationResult.id（最好的 combo）；WalkForward 父 run.best_result_id 指向 WalkForwardResult.id（最好的窗口）。**消费方必须按 optimizer_type 分支处理**，写到了 jsdoc + CLAUDE.md。未来 US-016 UI 跨 type 列出 best 时要先 switch。
+- **错误隔离 per-window 模式**: 与 strategies/ 的 per-block error fallback 同款。train_failed / test_failed 是两个独立错误状态——train 全 combo 失败 vs test backtest 抛错——分别记录让 ops 一眼看出窗口是因数据不足（test 缺数据）还是参数空间不当（train 全失败）。
+- **`aggregateWindowMetrics` 的 out_of_sample_decay 是 walk-forward 最有诊断价值的输出**：mean(train_sharpe - test_sharpe)。>0 表示过拟合（in-sample 高 out-of-sample 低），>1 是严重，>2 是灾难。**做 walk-forward 的目的就是看这个指标**，不是看 mean_test_sharpe，否则不如直接跑 GridSearch。
+- **DataSource 双注入（optimizer + testRunner）让单测毫秒级运行**: 测试可同时注入 fake EmbeddedOptimizer (返回固定 best_params) + fake BacktestRunner (返回固定 test_sharpe)，141 个测试 < 1s。`makeFakeOptimizer(pickByStart)` 让不同 train_start 返回不同 params + sharpe，模拟真实 walk-forward 在不同时段选不同 params 的行为；`makeFakeTestRunner(bySharpe)` 同样按 (params, startDate) 分发，让 best_window / win_ratio 等聚合断言可预测。
+- **CLI npm script naming follows `run:` prefix convention** (与 run:grid-search / run:bayesian-opt 同款)。新加任何"长时间任务"CLI 都用此前缀。`sync:` 前缀留给数据同步类。
+- **Test count assertions 数字 hardcoded 而非动态算 — 必须用 explicit 算式注释**: 几个 windows count 测试一开始 wrong，因为我没在脑子里精确算 cartesian 而是猜的。修复后每个数字旁边都加了 explicit 注释（"24m / train=12 test=3 → 4 windows" + 详细的 w0..w3 train_start/test_start 列表）。下次写滚动测试先在注释里画时间轴再写数字。
+
+### Codebase Patterns added (consolidated to top Codebase Patterns section)
+- 嵌入式优化器复用模式 (US-039 EmbeddedOptimizer interface)
+- 滚动窗口算法的 testMonths-as-stride 不变量
+- discriminator-keyed parent table + N-level nesting (递归 cleanup 模式)
+- best_result_id 跨 optimizer_type 语义差异
+- isoDateAddMonths 月末 clamp 标准实现
+- out_of_sample_decay 是 walk-forward 唯一价值输出
 ---

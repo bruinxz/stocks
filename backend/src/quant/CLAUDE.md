@@ -324,3 +324,114 @@ const out = await bayesianOptimizer.optimize(
   断言每个元素 + 验证 L*L^T 重构 = K。同样为非正定矩阵手动断言抛错。下次
   改 GP 实现时 Cholesky 测试就是回归基线。
 
+## US-039: WalkForwardValidator — 滚动 walk-forward 验证
+
+`backend/src/quant/backtest/WalkForwardValidator.ts` 是 US-037/US-038 三件套
+中的第三个：参数调优的"反过拟合检测器"。**走 train 窗口找 best params → 用该
+params 在紧接的 test 窗口跑样本外 backtest → 窗口向前滚动**。一个策略 in-sample
+sharpe 1.8 / out-of-sample 0.3 是经典过拟合，本验证器是把它揪出来的工具。
+
+```ts
+import { walkForwardValidator } from './backtest/WalkForwardValidator';
+const out = await walkForwardValidator.validate(
+  {
+    strategy_key: 'multi_factor_alpha',
+    param_grid: { topN: [20, 30, 50], industryNeutral: [true, false] },
+    base_config: { initial_capital: 1_000_000, benchmark_symbol: 'sh.000300' },
+    train_months: 12,
+    test_months: 3,
+    start_date: '2023-01-01',
+    end_date: '2025-12-31',
+  },
+  { persist: true, train_concurrency: 1, persist_train: true }
+);
+// out.summary.mean_test_sharpe / win_ratio / out_of_sample_decay 是核心输出
+```
+
+### 与 GridSearch / Bayesian 的关系（三件套对比）
+
+| 维度 | GridSearch | Bayesian | WalkForward |
+| ---- | ---- | ---- | ---- |
+| 找什么 | 单个最优参数（in-sample） | 单个最优参数（in-sample，高效） | K 个不重叠时段各自最优（泛化稳定性） |
+| 时间维度 | 固定区间 | 固定区间 | K 个滚动窗口 |
+| 主要输出 | best params + composite_score | best params + composite_score | mean/std/min/max **test_sharpe** + win_ratio + decay |
+| 子任务 | 跑 N combo backtest | 跑 N iter backtest | K 次 train + K 次 test backtest（嵌入 GridSearch） |
+| 用途 | "什么参数好？" | "什么参数好（搜索快）？" | "这参数能稳定盈利吗？" |
+
+### Design constraints
+
+- **嵌入式 GridSearchOptimizer 复用而非重写**：WalkForwardOptions 接受
+  `optimizer: EmbeddedOptimizer` 注入；默认 `gridSearchOptimizer`。每个
+  train 窗口创建一个子 OptimizationRun（optimizer_type='grid_search'），
+  父 walk-forward run 通过 `WalkForwardResult.train_run_id` 关联回去。
+  审计可追溯 "本窗口最优参数是从哪 N 个 combo 里挑出来的"。
+- **共享 OptimizationRun 表 + 新 optimizer_type='walk_forward'**：避免引入第
+  3 张 run 表。在父 run 上，`param_grid_json` 承载完整 walk-forward 配置
+  `{ train_months, test_months, start_date, end_date, param_grid }`，而不是
+  单纯参数网格；`backtest_config_json` 仍是通用 baseConfig。`listRuns()` /
+  `deleteRun()` / `cleanupOlderThan()` 默认只过滤 `optimizer_type='walk_forward'`
+  防与 grid/bayesian 历史串扰。
+- **`best_result_id` 在父 run 上指向 WalkForwardResult.id 而不是 OptimizationResult.id**：
+  walk-forward 的"冠军"是 test_sharpe 最高的单个 *窗口*，不是单个 combo。
+  这是 walk-forward 与 GridSearch/Bayesian 父 run 的语义差异，**消费方
+  必须按 optimizer_type 分支处理 best_result_id 的指向**。
+- **错误隔离 per-window**：train 阶段全部 combo 失败 → status='train_failed'，
+  跳过 test；train 成功但 test 抛错 → status='test_failed'，记录 best_params
+  但 test_* 为 NULL。任一窗口失败不影响后续窗口——与 GridSearch 内部
+  per-combo 失败隔离同款模式。
+- **DataSource 双注入（optimizer + testRunner）**：测试可注入 fake optimizer
+  完全脱离 DB / 网络；同时注入 fake testRunner 让 test 阶段也脱离 DB。
+  生产环境两者都默认走 `gridSearchOptimizer` / `defaultBacktestRunner`。
+- **`generateWalkForwardWindows()` 纯函数 export**：滚动算法独立于 DB / 业务
+  逻辑，可直接单测覆盖 train=12/test=3、不足区间 → []、边界恰好够 1 窗口、
+  跨年滚动 5 窗口等所有边界形态。`isoDateAddMonths()` 单独处理月末 clamp
+  （1-31 → 闰年 2-29 / 平年 2-28）。
+- **滚动步长 = `testMonths`（让 test 窗口不重叠；train 窗口可以重叠）**——
+  这是 walk-forward 的标准设计。相邻 train 窗口共享大部分历史数据但 test
+  窗口完全独立，保证样本外信号互不重复污染。
+- **`aggregateWindowMetrics()` 纯函数**：mean/std/min/max test_sharpe + win_ratio
+  + out_of_sample_decay 都按"剔除 NaN/null"算；train_failed 窗口不参与
+  统计（test_sharpe=null）；std 单样本返回 null。`out_of_sample_decay` 是
+  walk-forward 最有诊断价值的输出（>0 = 过拟合，绝对值越大越严重）。
+- **`persist_train` 选项**：默认 true 让 train 阶段子 OptimizationRun + 全部
+  combo Results 都落库（审计完整）；set false 大幅减少 DB 写入（仅父 run
+  + WalkForwardResult 行），适合 K=20 窗口 × 100 combo = 2000 行不愿持久化
+  的场景。**`deleteRun` 与 `cleanupOlderThan` 递归清理 train_run_id 关联的
+  子 runs/results** 避免孤儿数据。
+
+### 何时扩展 WalkForwardValidator
+
+- 加滚动 anchored window（train 起点固定，window 累积加长）→ 加
+  `WalkForwardInput.window_mode: 'rolling' | 'anchored'`（默认 rolling），
+  仅修改 `generateWalkForwardWindows()` 的 trainStart 计算。不要改父 run
+  schema，因 window 数与时长之间的关系会被汇总指标自动反映。
+- 加自定义嵌入式 optimizer（如把每个 train 窗口换成 BayesianOptimizer）→
+  `WalkForwardOptions.optimizer` 接口已是 `EmbeddedOptimizer`（只需要 `optimize()`），
+  注入 bayesianOptimizer 实例即可。**但**贝叶斯在 train 窗口上的 max_combos
+  默认 256 偏多，建议先扩 EmbeddedOptimizer 加 `optimize()` 方法的 iterations
+  参数定制选项。
+- 加多基准对比（每个窗口 sharpe vs 基准 sharpe）→ 不要扩本类，让 US-045
+  BenchmarkAttributionService 在 walk-forward run 完成后 JOIN
+  WalkForwardResult.test_start_date..test_end_date 计算 beta/alpha。
+- 加交易日历感知的 month 边界（"3 个月" = 60-63 个交易日）→ 不要改本类，
+  让 `generateWalkForwardWindows()` 接受 `windowCalendar: 'natural' | 'trading'`
+  参数，新模式仍输出 isoDate 字符串，后续 backtest 引擎自然消化。
+
+### 测试模式
+
+- `walk-forward-validator.test.ts` 141 用例覆盖 6 个纯函数（isoDateAddDays
+  / isoDateAddMonths / compareIsoDate / sampleStddev / generateWalkForwardWindows
+  / aggregateWindowMetrics）+ 17 个 end-to-end validate() 场景。包括：
+  happy 4 windows 全 completed / train_failed 隔离 / test_failed 隔离 /
+  全部 train_failed / 总区间不足抛错 / 注入 testRunner 跳过 strategyRegistry
+  校验 / param_grid 透传 / weights 透传 / best_window tie-break / 失败后续
+  窗口仍正常。
+- **关键 fake**：`makeFakeOptimizer(pickByStart)` 让单测能给每个 train_start
+  指定不同的"最优"参数 + sharpe，模拟 walk-forward 在不同时段选不同 params
+  的真实行为；`makeFakeTestRunner(bySharpe)` 同样按 (params, startDate)
+  分发 test_sharpe，让 best_window / win_ratio 等聚合断言可预测。
+- **isoDateAddMonths 闰年 / 月末 clamp 测试**：手算 1-31 → 闰年 2-29 / 平年
+  2-28、跨年 12-15 → 1-15 都有 explicit 断言。下次改月份算法时这些就是回
+  归基线，避免静默 off-by-one bug。
+
+

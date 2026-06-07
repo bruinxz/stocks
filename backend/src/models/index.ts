@@ -54,3 +54,4 @@ export * from './StockSentiment';
 export * from './ShareholderCount';
 export * from './OptimizationRun';
 export * from './OptimizationResult';
+export * from './WalkForwardResult';

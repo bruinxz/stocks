@@ -54,6 +54,7 @@ import { StockSentiment } from '../models/StockSentiment';
 import { ShareholderCount } from '../models/ShareholderCount';
 import { OptimizationRun } from '../models/OptimizationRun';
 import { OptimizationResult } from '../models/OptimizationResult';
+import { WalkForwardResult } from '../models/WalkForwardResult';
 import { LiveBrokerAccount } from '../models/LiveBrokerAccount';
 import { LiveAccountSnapshot } from '../models/LiveAccountSnapshot';
 import { LivePosition } from '../models/LivePosition';
@@ -137,6 +138,7 @@ const sequelize = new Sequelize({
     ShareholderCount,
     OptimizationRun,
     OptimizationResult,
+    WalkForwardResult,
     LiveBrokerAccount,
     LiveAccountSnapshot,
     LivePosition,
