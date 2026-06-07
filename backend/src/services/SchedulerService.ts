@@ -19,6 +19,7 @@ import { paperTradingAttributionService } from '../portfolio/internal/PaperTradi
 import { paperTradingPlanService } from '../portfolio/internal/PaperTradingPlanService';
 import { paperTradingOrderIntentService } from '../portfolio/internal/PaperTradingOrderIntentService';
 import { paperTradingTuningApplyService } from '../portfolio/internal/PaperTradingTuningApplyService';
+import { trailingStopGuard } from '../portfolio/risk/TrailingStopGuard';
 import { benchmarkIndexService } from './BenchmarkIndexService';
 import { automatedRecommendationLoopService } from './AutomatedRecommendationLoopService';
 import { recommendationTradeOutcomeService } from './RecommendationTradeOutcomeService';
@@ -1659,6 +1660,80 @@ class SchedulerService {
 
         logger.info(
           `模拟盘风控检查完成。检查 ${result.checked}，退出 ${result.exited}，预演 ${result.planned}，继续持有 ${result.held}`
+        );
+      } else if (task.type === 'PAPER_TRADING_TRAILING_STOP_UPDATE') {
+        // US-048 — 每日收盘后定时任务：刷新所有用户的持仓 highest_price
+        // 与 trailing_stop_price。`user_id` 参数可选；不传 = 扫描所有有
+        // PaperTradingPortfolio 的用户。
+        const targetUserId = parameters.user_id || parameters.userId;
+        const result = await trailingStopGuard.updatePositionsAfterClose({
+          user_id: targetUserId ? Number(targetUserId) : undefined,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: result.total_positions,
+          completed_items: result.updated_positions,
+          failed_items: result.skipped_positions,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: null,
+          result_summary: {
+            scenario: 'paper_trading_trailing_stop_update',
+            scanned_users: result.scanned_users,
+            total_positions: result.total_positions,
+            updated_positions: result.updated_positions,
+            skipped_positions: result.skipped_positions,
+            per_user_errors: result.per_user
+              .filter(u => u.error)
+              .map(u => ({ user_id: u.user_id, error: u.error })),
+          },
+        });
+        logger.info(
+          `追踪止损刷新完成。扫描用户 ${result.scanned_users}，` +
+            `持仓 ${result.total_positions}，更新 ${result.updated_positions}，` +
+            `跳过 ${result.skipped_positions}`
+        );
+      } else if (task.type === 'PAPER_TRADING_TRAILING_STOP_CHECK') {
+        // US-048 — 次日开盘前定时任务：检查 prev_close ≤ trailing_stop_price
+        // 触发 SELL 信号，写 RiskAlert(level='HIGH')。
+        const targetUserId = parameters.user_id || parameters.userId;
+        const dryRun =
+          parameters.dry_run !== undefined
+            ? Boolean(parameters.dry_run)
+            : parameters.dryRun !== undefined
+            ? Boolean(parameters.dryRun)
+            : false;
+        const result = await trailingStopGuard.evaluateNextDayTriggers({
+          user_id: targetUserId ? Number(targetUserId) : undefined,
+          dry_run: dryRun,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: result.total_positions,
+          completed_items: result.triggered_positions,
+          failed_items: result.per_user_errors.length,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: null,
+          result_summary: {
+            scenario: 'paper_trading_trailing_stop_check',
+            scanned_users: result.scanned_users,
+            total_positions: result.total_positions,
+            triggered_positions: result.triggered_positions,
+            dry_run: dryRun,
+            per_user_errors: result.per_user_errors,
+            triggers: result.triggers.map(t => ({
+              user_id: t.user_id,
+              symbol: t.symbol,
+              prev_close: t.prev_close,
+              highest_price: t.highest_price,
+              trailing_stop_price: t.trailing_stop_price,
+              effective_pct: t.effective_pct,
+            })),
+          },
+        });
+        logger.info(
+          `追踪止损检查完成。扫描用户 ${result.scanned_users}，` +
+            `持仓 ${result.total_positions}，触发 ${result.triggered_positions}` +
+            (dryRun ? '（dry-run，未写 RiskAlert）' : '')
         );
       } else if (task.type === 'PAPER_TRADING_ATTRIBUTION_REPORT') {
         const result = await paperTradingAttributionService.getAttribution({

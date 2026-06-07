@@ -1,18 +1,19 @@
 import { Request, Response, NextFunction } from 'express';
 import { positionLimitGuard } from '../../portfolio/risk/PositionLimitGuard';
+import { trailingStopGuard } from '../../portfolio/risk/TrailingStopGuard';
 import { logger } from '../../utils/logger';
 
 /**
- * RiskController — US-047
+ * RiskController — US-047 (position limits) + US-048 (trailing stop)
  *
- * Exposes the position-limit (and future risk-policy) configuration to the
- * client.  Mounted at `/api/risk/*` from `index.ts`.
+ * Exposes the pre-trade risk-policy configuration to the client.  Mounted at
+ * `/api/risk/*` from `index.ts`.
  *
  * Why not folded into `RiskAlertController`?  That controller is concerned
  * with consuming/clearing already-emitted alerts (the bell view).  Position
- * limits are a separate, *pre*-trade policy surface — keeping them in their
- * own controller makes the route map (`/api/risk-alerts` vs `/api/risk`)
- * easy to scan.
+ * limits + trailing stop are separate, *pre*-trade policy surfaces — keeping
+ * them in their own controller makes the route map (`/api/risk-alerts` vs
+ * `/api/risk`) easy to scan.
  */
 export class RiskController {
   /**
@@ -44,6 +45,39 @@ export class RiskController {
       res.json({ success: true, data: saved, message: '仓位限制已保存' });
     } catch (error: any) {
       logger.error('更新仓位限制配置失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * GET /api/risk/trailing-stop  (US-048)
+   * Return the user's effective trailing-stop config (defaults: enabled=true,
+   * pct=0.10 when not customized).
+   */
+  async getTrailingStop(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user.id;
+      const config = await trailingStopGuard.getConfig(user_id);
+      res.json({ success: true, data: config });
+    } catch (error: any) {
+      logger.error('获取追踪止损配置失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * PUT /api/risk/trailing-stop  (US-048)
+   * Persist user's trailing-stop config — input normalized
+   * (`normalizeTrailingStopConfig`) so invalid `pct`/`enabled` silently
+   * revert to defaults instead of corrupting `User.risk_config`.
+   */
+  async updateTrailingStop(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user.id;
+      const saved = await trailingStopGuard.updateConfig(user_id, req.body || {});
+      res.json({ success: true, data: saved, message: '追踪止损配置已保存' });
+    } catch (error: any) {
+      logger.error('更新追踪止损配置失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   }

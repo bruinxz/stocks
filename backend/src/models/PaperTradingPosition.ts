@@ -106,6 +106,53 @@ export class PaperTradingPosition extends Model {
   })
   declare stop_loss_price: number | null;
 
+  /**
+   * 追踪止损 — 持仓期间观察到的最高收盘价 (US-048)。
+   *
+   * 每日收盘后由 TrailingStopGuard.updatePositionsAfterClose() 更新：
+   * `highest_price = max(highest_price, today_close)`。初次建仓时由
+   * scheduler 任务回填为 `avg_cost`（建仓成本价）。NULL = 尚未建立 high
+   * 水位（新开仓后第一次定时任务跑之前的窗口）。
+   */
+  @Column({
+    type: DataType.DECIMAL(10, 3),
+    allowNull: true,
+    field: 'highest_price',
+    comment: '建仓后观察到的最高收盘价（追踪止损水位）',
+  })
+  declare highest_price: number | null;
+
+  /**
+   * 追踪止损 — 回撤比例 (US-048)。0-1 之间，默认 0.10 (10%)。
+   *
+   * 计算 trailing_stop_price = highest_price * (1 - trailing_stop_pct)。
+   * NULL 表示该持仓回退到用户的全局配置 (User.risk_config.trailing_stop.pct
+   * 默认 0.10)；策略层可在开仓时为这只票单独设置一个更紧/更松的值。
+   */
+  @Column({
+    type: DataType.DECIMAL(6, 4),
+    allowNull: true,
+    field: 'trailing_stop_pct',
+    comment: '追踪止损回撤比例 0-1（NULL=继承用户全局配置）',
+  })
+  declare trailing_stop_pct: number | null;
+
+  /**
+   * 追踪止损 — 触发价 (US-048)。
+   *
+   * 由 updatePositionsAfterClose() 与 highest_price 同步重算：
+   * `trailing_stop_price = highest_price * (1 - effective_pct)`。
+   * 次日开盘前若 prev_close ≤ trailing_stop_price 则触发 SELL 信号。
+   * NULL 与 highest_price 同步（尚未建立 high 水位）。
+   */
+  @Column({
+    type: DataType.DECIMAL(10, 3),
+    allowNull: true,
+    field: 'trailing_stop_price',
+    comment: '追踪止损触发价 = highest_price * (1 - pct)',
+  })
+  declare trailing_stop_price: number | null;
+
   @CreatedAt
   @Column({ field: 'created_at' })
   declare created_at: Date;

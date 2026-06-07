@@ -11,7 +11,8 @@ portfolio/
 ├── PaperTradingFacade.ts          # 7-method public surface — controllers import this
 ├── PortfolioReturnSimulator.ts    # standalone return simulator (pre-existing)
 ├── risk/                          # pre-trade risk gates — US-047+
-│   └── PositionLimitGuard.ts      # max positions + single-stock + single-industry caps
+│   ├── PositionLimitGuard.ts      # max positions + single-stock + single-industry caps
+│   └── TrailingStopGuard.ts       # 追踪止损 — daily highest_price + next-day SELL trigger
 └── internal/                      # private — only the facade may import from here
     ├── PaperTradingAttributionService.ts
     ├── PaperTradingAutomationService.ts
@@ -96,3 +97,55 @@ strategy` and `factor diagnostic` patterns:
    alongside `/api/risk-alerts`).  `RiskController` is intentionally
    separate from `RiskAlertController`: the former is *pre-trade policy*,
    the latter is *post-trade consumption*.
+
+## `risk/TrailingStopGuard` — US-048 specifics
+
+The trailing-stop guard introduces a **two-phase scheduled** shape that
+future drawdown / per-stock stop-loss / circuit-breaker guards can reuse.
+Unlike `PositionLimitGuard` (single sync call inside `placeOrder`), it
+runs in two cron-scheduled phases plus the same GET/PUT config endpoints:
+
+1. **`updatePositionsAfterClose(user_id?)`** — post-close cron. Pulls each
+   open position's DailyBar.close for `asOfDate`, recomputes
+   `highest_price = max(prior_highest ?? avg_cost, today_close)` and
+   `trailing_stop_price = highest * (1 - effective_pct)`, then writes both
+   back via the DataSource.  Default scope = all users with portfolios
+   (per-user `try/catch` isolation).  `user_id` parameter narrows to one
+   user for ops backfills / re-runs.
+2. **`evaluateNextDayTriggers(user_id?, dry_run?)`** — pre-open cron.
+   Re-fetches DailyBar.close (= prev_close for the next trading day), and
+   if `prev_close ≤ trailing_stop_price` returns a `TrailingStopTrigger`
+   AND writes a `RiskAlert(level='HIGH')`.  The guard does NOT call
+   `facade.placeOrder` — it surfaces structured triggers and lets the
+   caller (the automation service / dashboard / human) decide the
+   execution timing.  This preserves the facade's 7-method invariant and
+   keeps "decide what to sell" decoupled from "execute the SELL".
+
+Patterns codified in US-048 that future guards (US-049 drawdown,
+US-051 per-stock stop-loss, US-052 industry rebalancer, ...) should follow:
+
+- **`effective_pct` 三级覆盖**: `position.trailing_stop_pct` (策略层覆盖)
+  → `user.risk_config.trailing_stop.pct` (用户全局)
+  → `DEFAULT_TRAILING_STOP_CONFIG.pct` (兜底 0.10).  `pickEffectivePct()`
+  is the reference helper — any guard that allows both per-position and
+  per-user overrides should copy this 3-level shape rather than reinvent.
+- **`highest_price` 初始化用 `avg_cost` 而非 `today_close`**: 开仓首日如果
+  `today_close < avg_cost`, 直接用 close 当 high 会让追踪止损在第一根 bar
+  就跳水触发.  `computeNewHighestPrice(null, close, avg_cost)` 永远先用
+  `avg_cost` 作 floor, 同款思路适用未来"加仓后 high 水位重算" / "止损价
+  跟随 avg_cost" 类逻辑.
+- **触发判定用 `≤`，单股仓位用 `>`**: 保护性硬触发用 `≤` 包含 boundary
+  (命中立即止血), 风控上限用 `>` 不含 boundary (恰好触线还可以). 这与
+  US-047 PositionLimitGuard 单股 `>` 镜像反向 — 防御 vs 限制是 2 种 boundary
+  语义, 写新 guard 时先想清楚自己是哪一种再选边.
+- **数据缺失时安全 HOLD 而非 fallback**: DailyBar 缺当日 close →
+  `skipped_no_bar`, 不退回 `current_price`.  current_price 会被 facade
+  下单流程 mutate, fallback 会让 highest 突然跳水触发误平.  US-026 RSI
+  bar-shortage guard 同款"数据不足 ≠ 信号"原则.
+- **写 RiskAlert + 返回 trigger 同时做**: 调用方既能立即从 RiskAlert UI
+  bell 看到, 也能从 evaluateNextDayTriggers 返回值拿到结构化 list 决定撮合.
+  RiskAlert 写入 try/catch + logger.warn, 失败不掩盖 trigger 返回 — 同 US-047.
+- **SchedulerService 双 task type**: `PAPER_TRADING_TRAILING_STOP_UPDATE`
+  (收盘后) + `PAPER_TRADING_TRAILING_STOP_CHECK` (开盘前).  Cron 在 DB 表
+  `scheduled_tasks` 配置 (不在代码硬编码), ops 可以按市场假期自定义.
+  `dry_run=true` 参数让 UI dashboard 能"预演今日 trigger" 不写真实 alert.

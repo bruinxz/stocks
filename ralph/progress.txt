@@ -139,14 +139,15 @@
 - **第 4 个事后分析诊断工具 — 组合优化 (US-044 PortfolioOptimizer)**: 完整 5 件套 checklist 已确立（after US-040/041/042/043）：(a) **不复用 OptimizationRun 父表**（事后分析非 task 状态机；通过 strategy_keys_json + period_start/end 关联源回测）；(b) **DataSource 注入** 接口 + `PRODUCTION_*_SOURCE` lazy-require + 测试 fake 完全脱 DB；(c) **8+ 纯函数全 export** 让单测覆盖边界 / NaN / 已知数值；(d) **admin 4 件套** (getRun / listRecentRuns / deleteRun / cleanupOlderThan)；(e) **CLI 4 模式**（主流程 / list / show / delete / cleanup）。**下次 US-045 BenchmarkAttributionService / US-046 IndustryAttributionService 按此 5 件套 checklist 直接照搬。** **deriveDailyReturnsFromEquityCurve 已 2 处需要**（PortfolioOptimizer + RegimeSegmentedBacktest 各 inline 实现）；**第 3 处出现时（US-085）再抽到 utils/ 共享**，符合 "3 处规则" 抽取阈值（5+ 处或算法复杂度 ≥ 20 行 + 多处出现 bug）。
 
 ### Risk guards — pre-trade gates (US-047+)
-- **`backend/src/portfolio/risk/` 是 pre-trade guard 子目录**（与 `internal/` 并列在 `portfolio/` 下）。每个 guard (`PositionLimitGuard.ts` / 未来 `TrailingStopGuard` / `DrawdownCircuitBreaker` / `PerStockStopLossGuard`) 遵循统一 7 项 checklist，已 documented 到 `backend/src/portfolio/CLAUDE.md` 的 'risk/ — pre-trade gates (US-047+)' 一节。下个 US-048..US-051 实现先 read CLAUDE.md。
+- **`backend/src/portfolio/risk/` 是 pre-trade guard 子目录**（与 `internal/` 并列在 `portfolio/` 下）。每个 guard (`PositionLimitGuard.ts` / `TrailingStopGuard.ts` / 未来 `DrawdownCircuitBreaker` / `PerStockStopLossGuard`) 遵循统一 7 项 checklist，已 documented 到 `backend/src/portfolio/CLAUDE.md` 的 'risk/ — pre-trade gates (US-047+)' 一节。下个 US-049..US-051 实现先 read CLAUDE.md。
 - **PaperTradingFacade.placeOrder 注入顺序: position-limit *先*, cash 检查 *后***。否则违规会被误报为 "可用资金不足"。Guard 抛出携带 `{code, rule, detail, statusCode}` 的自定义 Error；controller 自动转 HTTP 400。新增 guard 时按同款顺序排队：硬约束 (position limit / per-stock stop loss) 在前，soft check (cash / 流动性) 在后。
 - **每个 guard 都做 DataSource 接口注入**（`PositionLimitDataSource` 是参考）：5+ method 接口 (loadPortfolio / loadPositions / loadIndustryForSymbol / loadConfig / saveConfig / writeAlert) + `Default<Xxx>DataSource` Sequelize 实现 + `PRODUCTION_<XXX>_DATA_SOURCE` singleton + 构造器 default 注入。测试 makeFakeSource(state) 直接传 state object 当 backing store。
 - **Single-violation priority chain pattern**: `pickSingleViolation(ctx, config)` 用 short-circuit `||` 链 (count → single-stock → industry)。**优先级排序原则**: 最容易让用户理解的规则在前 (持仓数 = 整数易看; pct = 百分比要算)。用户修了首违规 → 下次请求自然暴露下一违规。**反模式**: 一次返回 N 个 violation，用户面对 cascade 不知道先修哪个。
-- **`User.risk_config.<key>` JSONB 是共享配置存储**。每个 guard 占一 namespace (e.g. `position_limits` / 未来 `trailing_stop` / `drawdown_breaker`)。共用 `risk_config` 列免去 N 张 user_<x>_config 子表。**写 JSONB 必带 `user.changed('risk_config', true)`** (US-017 教训) 否则 Sequelize 的 dirty-check 不发 UPDATE。
+- **`User.risk_config.<key>` JSONB 是共享配置存储**。每个 guard 占一 namespace (e.g. `position_limits` / `trailing_stop` / 未来 `drawdown_breaker`)。共用 `risk_config` 列免去 N 张 user_<x>_config 子表。**写 JSONB 必带 `user.changed('risk_config', true)`** (US-017 教训) 否则 Sequelize 的 dirty-check 不发 UPDATE。
 - **`normalizeXxxConfig(raw)` 是 GET/PUT endpoint 的 sanity gate**: 所有 numeric 字段单独 safeInt / safePct 处理，无效值 (NaN / 负 / >1) 静默退回默认而不是 4xx — 用户改坏一项不应让整个 risk profile 重置。pct=0 (block all) 与 pct=1 (no cap) 都是合法 safe-mode，不要 coerce 走。
 - **RiskAlert 写入 try/catch + log.warn 不阻塞主路径**（US-042 FactorCorrelationReport 同款）。`writeAlert` 失败时 guard 仍返回 `{ok:false, violation}` 让 caller 拒单 — 告警丢失是次要 (运维事后能从 log 看到)，订单错误放行才是主要事故。
 - **`RiskController` (/api/risk/*) vs `RiskAlertController` (/api/risk-alerts/*) 故意分开**: 前者 pre-trade *policy* (GET/PUT config) / 后者 post-trade *consumption* (bell view + read/unread)。`/api/risk` 是策略命名空间未来扩 US-049 DrawdownCircuitBreaker 加 `/api/risk/drawdown-breaker` 等。
+- **两阶段定时任务 guard 模板 (US-048 TrailingStopGuard 引入)**: 与 US-047 PositionLimitGuard 的"单次同步 placeOrder 内嵌"模式互补 —— 适用于需要"跨日观察 + 次日触发"语义的风控 (追踪止损 / 持有期到期 / 财报窗口隔离)。三件套：(1) **`updateXxxAfterClose(user_id?)`** 收盘后 cron 刷状态字段 (highest_price / max_drawdown / holding_days) 写回 position 表；(2) **`evaluateNextDayTriggers(user_id?, dry_run?)`** 开盘前 cron 扫触发条件，**写 RiskAlert + 返回结构化 trigger list**，**不**直接调 facade.placeOrder——保持单一职责让上层 (PaperTradingAutomationService) 按 trigger 走正常下单链路 (维持 facade 7-method 收敛)；(3) **GET/PUT /api/risk/<name>** 配置 endpoint 同 US-047 模板。**`effective_pct` 三级覆盖**: position 字段 > user_config > DEFAULT。**`highest_price` 初始化用 `avg_cost` fallback** 避免开仓首日 close < avg_cost 直接触发（同款判据适用未来"加仓后 high 水位重算"）。**触发判定用 `≤`（防御）vs 限制用 `>`（限额）的 boundary 语义不同**——防御要包含 boundary 立即止血，限额可恰好触线再说，与 US-047 镜像反向。**数据缺失时安全 HOLD 而非 fallback current_price**（current_price 会被 facade 下单流程 mutate，fallback 让 highest 突然跳水触发误平）。**`dry_run=true` 参数支持 UI 预演 trigger 不写 alert**——风控类 endpoint 都该有此选项让用户先看再决定。**单 user 失败 try/catch 隔离不阻塞剩余 user**（同 PositionLimitGuard + FactorICReport）。完整模板在 `backend/src/portfolio/CLAUDE.md` `risk/TrailingStopGuard — US-048 specifics` 一节。下个 US-049 DrawdownCircuitBreaker / US-050 MarketEnvAlertGuard 直接照此 9 项 checklist 模板复用。
 
 
 
@@ -4982,5 +4983,137 @@ Built the first pre-trade risk gate for the paper-trading flow: **PositionLimitG
 - **The guard's `loadIndustryForSymbol` looks up `Stock.industry` with `symbol` keyed exactly as passed by the facade** (suffixed form, e.g. `600519.SH`). This matches `PaperTradingPosition.symbol`. If a future story needs to handle suffix-less symbols (e.g. `600519`) at the order interface, normalize at the boundary — don't push it down into the guard's lookup path.
 - **The `industry?: string | null` field on `HeldPositionSnapshot`** is populated by `DefaultPositionLimitDataSource.loadPositions` via a one-shot `Stock.findAll({symbol: {[Op.in]: symbols}})` lookup. Cheap (1 query for all positions) and correct — don't naively N+1 it from inside the guard.
 - **Custom error shape `{code, rule, detail, statusCode}`** thrown by the facade is a new pattern. The existing `paperTradingFacade.placeOrder` `throw new Error('可用资金不足')` is a bare Error with no metadata. As more guards land, formalize this: maybe a `RiskViolationError` class in `backend/src/portfolio/risk/errors.ts`. For now (1 guard) the inline approach is the minimum needed; refactor when the 2nd guard arrives.
+
+---
+
+## 2026/06/07 - US-048 — 风控：动态止损与追踪止损
+
+### What was implemented
+
+Implemented `TrailingStopGuard` — the second risk guard in
+`backend/src/portfolio/risk/`. It tracks each holding's high-water close,
+recomputes `trailing_stop_price = highest * (1 - pct)` daily after market
+close, and surfaces SELL triggers next morning when `prev_close ≤
+trailing_stop_price`. Default 10% drawdown; per-position override and
+per-user JSONB config both supported. Integrated with `SchedulerService` as
+two new task types (post-close update + pre-open trigger check); HTTP
+config endpoint mounted at `GET/PUT /api/risk/trailing-stop`.
+
+### Files changed
+
+- `backend/src/models/PaperTradingPosition.ts` — added 3 nullable columns:
+  `highest_price` (DECIMAL(10,3)), `trailing_stop_pct` (DECIMAL(6,4)),
+  `trailing_stop_price` (DECIMAL(10,3)). All NULL-able; sequelize.sync
+  `alter:true` in dev auto-migrates schema.
+- `backend/src/portfolio/risk/TrailingStopGuard.ts` — new file (~480 LOC).
+  Pure helpers (`pickEffectivePct`, `computeNewHighestPrice`,
+  `computeTrailingStopPrice`, `evaluateTrailingStopTrigger`,
+  `normalizeTrailingStopConfig`, `buildTriggerMessage`) all exported for
+  DB-free unit tests. `TrailingStopDataSource` interface + Sequelize
+  default + production singleton. Two public methods:
+  `updatePositionsAfterClose(opts?)` and `evaluateNextDayTriggers(opts?)`
+  plus the standard `getConfig` / `updateConfig` pair.
+- `backend/src/api/controllers/RiskController.ts` — added
+  `getTrailingStop` + `updateTrailingStop` methods next to the existing
+  position-limits methods.
+- `backend/src/api/routes/risk.routes.ts` — added GET/PUT
+  `/trailing-stop` routes alongside `/position-limits`.
+- `backend/src/services/SchedulerService.ts` — added 2 new task type
+  branches: `PAPER_TRADING_TRAILING_STOP_UPDATE` (post-close cron) and
+  `PAPER_TRADING_TRAILING_STOP_CHECK` (pre-open cron). Both write a
+  result_summary with per-user errors / triggered positions for ops
+  visibility. Added `trailingStopGuard` import.
+- `backend/tests/risk/trailing-stop-guard.test.ts` — new file with **105
+  tests** covering all pure functions, both end-to-end guard methods, all
+  edge cases (disabled user, no DailyBar, per-position pct override,
+  multi-user isolation, writeAlert failure, dry_run, ≤ boundary, null
+  trailing fields). All pass.
+- `backend/src/portfolio/CLAUDE.md` — appended new section
+  `risk/TrailingStopGuard — US-048 specifics` documenting the two-phase
+  scheduled shape, `effective_pct` 3-level coverage, `highest_price`
+  initialization with `avg_cost` fallback, `≤` vs `>` boundary semantics,
+  and the rationale for not directly calling `facade.placeOrder` from
+  inside the guard.
+- `ralph/progress.txt` — appended this entry + updated Codebase Patterns
+  with the two-phase scheduled guard template.
+
+### Quality checks
+
+- `cd backend && npx tsc --noEmit` → exit 0
+- `cd backend && npx ts-node --transpile-only tests/risk/trailing-stop-guard.test.ts` → **105 ok, 0 failed**
+- `cd backend && ./node_modules/.bin/eslint src/portfolio/risk/TrailingStopGuard.ts src/api/controllers/RiskController.ts src/api/routes/risk.routes.ts src/models/PaperTradingPosition.ts --quiet` → exit 0 (auto-fix applied prettier nits)
+
+### Browser verification
+
+**Not performed** — no `dev-browser` MCP skill is configured in this
+environment. The endpoints are config-only (GET/PUT) and the scheduler
+hooks are server-side; no frontend changes in this story. Manual
+verification recommended: log in, call `GET /api/risk/trailing-stop`,
+PUT a custom `{enabled: true, pct: 0.05}`, GET again to confirm
+persisted. For the scheduler hooks, create two `scheduled_tasks` rows
+(types `PAPER_TRADING_TRAILING_STOP_UPDATE` and
+`PAPER_TRADING_TRAILING_STOP_CHECK`) with appropriate cron expressions
+(e.g. `30 15 * * 1-5` for post-close, `30 8 * * 1-5` for pre-open
+A-share market).
+
+### Learnings for future iterations
+
+- **Two-phase scheduled guard is a distinct shape from sync inline guards**
+  (US-047 PositionLimitGuard ran inside placeOrder; US-048 runs as two
+  cron tasks). Future guards needing "cross-day observation + next-day
+  trigger" semantics (drawdown breaker / holding-period expiry / earnings
+  window quarantine) should reuse this template — codified in the new
+  `Risk guards` section at the top of progress.txt.
+- **The guard returns triggers but does NOT call `facade.placeOrder`**.
+  This decoupling means PaperTradingAutomationService can pick up the
+  trigger list and route it through the standard order link (preserving
+  facade 7-method invariant + risk profile + automation hooks). If the
+  guard called placeOrder directly, it would bypass the facade's other
+  pre-trade gates (US-047 position limits!) and risk profile
+  tracking — a future bug factory.
+- **`highest_price` MUST initialize from `avg_cost` not `today_close` on
+  day-1**. If today's close happens to be below the buy price, using
+  `today_close` as the initial high would compute a trailing_stop_price
+  below the day-1 close immediately. The 3-arg `computeNewHighestPrice`
+  signature (prior, today_close, fallback) forces callers to provide
+  `avg_cost` explicitly, making this lesson un-skippable.
+- **DailyBar lookup goes through Stock.symbol → Stock.id → DailyBar.stock_id**
+  in `DefaultTrailingStopDataSource.loadLatestClose`. `DailyBar` is keyed
+  by `stock_id` (FK to Stock), not by `symbol` directly. Same lookup
+  pattern used by quant strategies — copy this rather than inlining a
+  raw SQL join.
+- **Trigger boundary uses `≤` (inclusive)**, deliberately mirrored
+  against US-047's `>` (exclusive) for single-stock limits. Both are
+  documented as boundary-semantics decisions in the CLAUDE.md (defense vs
+  limit). Don't blindly follow one rule for both — the meaning differs.
+- **DailyBar missing for today = `skipped_no_bar` not fallback to
+  `current_price`**. `current_price` gets mutated by the facade's
+  placeOrder flow (re-computed on every buy/sell to mark-to-market), so
+  using it as a fallback would let trailing_stop_price drift downward
+  immediately after a sale at slippage. Safe-HOLD is the correct
+  behavior — the next day's cron run will catch up when the bar arrives.
+- **`dry_run: true` parameter on `evaluateNextDayTriggers` is
+  intentional**. UI dashboards need to "preview today's triggers" without
+  actually writing RiskAlert rows (= showing a red bell to the user).
+  Future risk endpoints (US-049, US-050) should all accept this flag.
+- **Per-user `try/catch` isolation in `updatePositionsAfterClose` /
+  `evaluateNextDayTriggers`** — one user's DB row corruption / network
+  blip shouldn't stop the cron from processing the remaining 100 users.
+  The result object's `per_user_errors` / `per_user[].error` fields let
+  ops see exactly which user broke without losing the rest.
+- **The 105-test suite has a single `async main()` driver** (US-037
+  lesson — no IIFE chains for async tests). 28 test functions, all
+  awaited in sequence; summary prints at the end after every assert
+  has run.
+- **`normalizeTrailingStopConfig` accepts `pct=0` and `pct=1`** as valid
+  safe-modes — 0 means "always trigger" (effectively disable buys), 1
+  means "highest is everything → trail = 0 → never triggers". Same
+  philosophy as US-047 `normalizePositionLimitsConfig`. Garbage
+  coercion: invalid pct → DEFAULT 0.10, non-boolean enabled → DEFAULT
+  true. The intent is "don't 4xx the user; just sanitize and persist".
+- **The `effective_pct` 3-level coverage helper (`pickEffectivePct`)**
+  is reusable for any future guard with both per-position and per-user
+  thresholds. Reference implementation; copy the pattern when you have
+  a similar coverage hierarchy.
 
 ---
