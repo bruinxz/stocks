@@ -40,4 +40,16 @@ router.get('/snowball-keywords', authController.authenticate, (req, res) => {
   void sentimentController.getSnowballKeywords(req, res);
 });
 
+/**
+ * @route GET /api/sentiment/qa-topics
+ * @desc US-060 — 某只股票最近 N 周的投资者问答 NLP 聚合 (按 week × topic 分组)
+ *   Query params:
+ *     - stock_code  6 位股票代码 (必填, 接受 sh./sz./bj. 前缀, 内部 strip)
+ *     - weeks       回看周数 (默认 26, max 104)
+ * @access Private
+ */
+router.get('/qa-topics', authController.authenticate, (req, res) => {
+  void sentimentController.getQATopics(req, res);
+});
+
 export default router;

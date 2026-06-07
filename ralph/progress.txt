@@ -170,6 +170,9 @@
 - **list + latest 端点分工范式 (US-057 引入)**: 存储 heavy 字段 (JSONB / 大 text) 的实体, list endpoint (GET /resource?days=N) 返回**轻量 array 不带 JSONB** (减少时序图 payload, 10x 体积差异); latest endpoint (GET /resource/latest) 返回**单条 + 完整 JSONB** 供详情页 drill-down。下次任何 "时序 + 详情" 类 endpoint (US-058 雪球热词 / US-067 KOL 告警 list / US-073 复盘日记 list) 都按此分工避免 payload 膨胀。
 - **"启发式 + 可选 AI" 双路 NLP 范式 (US-059 AnnouncementNLPService 引入)**: 高吞吐文本 NLP (公告 / 问答 / KOL 评论 ~ 几千条/日) 默认走启发式 (关键词字典 + 正则) ≈ 1ms/条免远端调用; UI 主动"详细解读"才设 `extract_with_ai=true` 调远端 30s+。**双路设计 4 要点**: (1) summarize(row, {extract_with_ai}) 单方法两路, caller 不感知 dispatch; (2) AI 失败时 buildNLPResultFromPayload 内 fallback 启发式 + `status='partial'` + `nlp_engine='heuristic_fallback'` 让用户看到部分结果; (3) 启发式字典 (TOPIC_KEYWORDS / ANN_SENTIMENT_KEYWORDS) 全 export 供单测 + 未来按业务调字典只改常量; (4) batch sync 内 for-loop 串行调 summarize (启发式快; AI 路径串行避免远端限流), 不要 Promise.all。下次 US-060 东财问答 NLP / US-061 K 线解读 / US-074 黑天鹅监测同款双路。
 - **NLP `status` (completed/partial/failed/pending) × `nlp_engine` (trading_agents/heuristic_fallback/openai) 双列范式 (US-059 引入)**: status 标记**结果状态**, nlp_engine 标记**抽取引擎**, 两列正交。让 ops 同时看"成败率"和"AI 调用占比"两个独立维度: `status='partial' AND nlp_engine='heuristic_fallback'` = AI 失败 fallback, `status='completed' AND nlp_engine='trading_agents'` = AI 成功。**避免合并成单列 ('completed_ai'/'failed_heur'/'partial_ai_fallback')** — 6 个 enum 组合不仅难列举还失去独立筛选能力。下次 US-060 / US-061 / US-062 任何 AI 抽取都按此双列。
+- **ISO 周聚合 `computeWeekStart(date)` 范式 (US-060 EastMoneyQATopicService 引入)**: 任何"按周聚合"逻辑 (问答主题统计 / 周报 / 风控周阈值 / 策略周再平衡) 复用 `computeWeekStart` 不要重写。**5 大边界 must-cover**: (a) 周一 self / (b) 周日 → 上周一 (ISO-8601 周日是 day 7 不是 day 0); (c) 跨月 (周日 06-29 → 周一 06-29); (d) 跨年 (周四 01-01 → 周一 12-29); (e) 带 'YYYY-MM-DD HH:mm:ss' 后缀的字符串 (cninfo `question_time` 实际格式). **实现关键**: 用 `getUTCDay() === 0 ? 7 : utcDay` 把 JS 周日的 0 翻成 ISO 的 7, 再减 (isoWeekday - 1) 得周一; 全程 UTC 处理避免本地时区让"周日 23:00" 算到下周一去。**N-tuple PK 用 `(stock_code, week_start, topic)` 复合 UNIQUE**: 同一只股票同周同 topic 只一行, bulkCreate updateOnDuplicate 直接刷新 mention_count + sentiment_score (避免重复 sync 累加污染)。下次 US-061 K 线周技术信号 / US-067 KOL 周观点聚合 / US-088 持仓周变化 都按此 (entity, week_start, dimension) 3-tuple PK。
+- **`parseRemoteClassify` AI payload 4 条防御 (US-060 引入)**: 解析远端 AI 返回结构化 (topic / score) 时必 4 条 guard: (1) `status === 'FAILED'` → null (调用方 fallback 启发式); (2) `!data` → null; (3) `sentiment_score` 非 finite (NaN / Infinity) → 0; (4) `sentiment_score` 超 [-1, +1] 范围 → clamp 而非 throw / null。**不要相信远端守 schema** — 任一缺失都让"远端胡说"污染聚合 (e.g. score=5.0 让平均分爆到 1.5 破坏后续阈值判断)。下次 US-061 K 线解读 / US-074 黑天鹅 NLP / US-067 KOL AI 评分都套此 4 条 guard。
+- **DataSource fake `Set<key>` 粒度 vs boolean 全开关 (US-060 测试引入)**: 批量 sync 测试 (syncStocks 多只股票) 需要"600519 OK 但 000001 throws"的混合 case — 仅一个 `fetchShouldThrow: boolean` 全 throw / 全 OK 二选一无法覆盖 continue_on_error 真路径。**通用模式**: fake DataSource 状态字段优先 `fetchShouldThrowFor: Set<string>` 粒度而非单 boolean, 让测试能精准模拟 per-entity partial failure。下次任何 batch syncN / persistN / classifyN service 测试都按此粒度设计 fake。
 
 
 
@@ -5818,4 +5821,70 @@ cd backend && npm run sync:announcements -- --date=2026-06-06
 - **AKShare 全市场公告日内有时间戳列**: AKShare stock_notice_report 返回的 `公告日期` 字段实际是 'YYYY-MM-DD HH:MM:SS' 而非纯日期。Python helper 必须 `announce_date_raw.split(' ')[0]` 取日期部分; 不然 ISO 化失败回退到入参 date (虽然结果正确但浪费一次回退判断)。**通用经验**: AKShare 返回的"日期"字段未必都是纯 DATE — 写 col_map 时先 print(df.head()) 看清字段形态 (string / datetime / 'YYYYMMDD' / 'YYYY-MM-DD' / 'YYYY-MM-DD HH:MM:SS')。
 - **UNIQUE 复合索引含 STRING 长字段的取舍** (US-059 引入): `announcement_summaries_date_code_title_uniq` 是 (DATE, STRING(10), STRING(500)) 三列复合 UNIQUE。STRING 500 在 PostgreSQL B-tree 索引中实际 key size 上限 ~2700 bytes，按 UTF-8 中文 3 字节计算 500 字符 = 1500 字节 — 远小于上限, 安全。**判定**: PG 复合 UNIQUE 中含 TEXT / 长 STRING 时, 算上 multi-byte 后留 30% buffer 即可; 真担心溢出时改用 (date, code, MD5(title)) 替代。
 - **`status` 字段独立于 `nlp_engine` 字段** (US-059 引入, US-060+ 复用): `status` 4 个枚举 (completed / partial / failed / pending) 标记 NLP **结果状态**; `nlp_engine` (trading_agents / heuristic_fallback / openai) 标记**抽取引擎**。两者正交: 启发式可以 completed (无 AI 调用), 也可以是 partial (AI 失败 fallback) — 让 ops 同时看到 "成败率" 和 "AI 调用占比" 两个独立维度。**下次 US-060 / US-061 / US-062 任何 AI 抽取都拆这两列**, 不要合并成单列省事。
+---
+
+## 2026/06/08 - US-060
+
+### What was implemented
+**AI: 东财问答 NLP 与个股关注度** — 按 ISO 周聚合的散户问答 NLP 主题统计 (财务 / 产品 / 订单 / 人事 / 政策 / 其它 6 类 + 情绪倾向)。前置 commit fc68017 已落地多数 artifact (模型 / 客户端 / service / sync 脚本 / controller / route / Python helper)，本 commit 补齐 **AC 第 5 项要求的单元测试**并 (a) 通过 lint 修复 (5 处 prettier 错误) (b) 验证全部 187 个测试 case 通过 (c) tsc --noEmit 干净。
+
+**核心模式 — "启发式默认 + 可选 AI" 双路 NLP** (US-059 AnnouncementNLPService 同款):
+- 单股 syncStock 调 `StockQAClient.fetchForStock(stock_code, limit)` 拉 cninfo IRM 全部历史问答 (默认 200 条);
+- 默认 extract_with_ai=false 走启发式 → `classifyTopic(question)` + `scoreSentiment(question)` 全字典命中 1ms/条;
+- extract_with_ai=true 时每条问题串行调 `callRemoteClassify(question, ctx)` 调远端 TradingAgents `/api/nlp-qa-topic` 占位 endpoint;
+- 远端 throw 或返回 FAILED → service 内层 try/catch fallback 启发式 (双重防御);
+- 按 ISO 周聚合 `computeWeekStart(question_time)` (周一日期), 同周同 topic 多条问题 → `mention_count` + 平均 `sentiment_score` + `sentiment_breakdown` 5 档统计落 raw_payload;
+- bulkCreate upsert by (stock_code, week_start, topic) 复合 UNIQUE, 触发 updateOnDuplicate 包含 mention_count / sentiment_score / nlp_engine / raw_payload / updated_at.
+
+**AC endpoint substitution 范式** (US-034 / US-035 同款 — 前置 commit 已记录于 model jsdoc 和 client jsdoc):
+- AC 文字: "东财问答" (东方财富股吧 Q&A);
+- 实际数据源: AKShare `stock_irm_cninfo(symbol=<6-digit>)` 巨潮资讯-互动易-投资者问答;
+- 选择理由: 东方财富股吧在 AKShare 中无任何 per-stock Q&A endpoint (`stock_guba_em` 不存在, US-034 已验证); cninfo 互动易与东财股吧同属"投资者-上市公司 Q&A"领域, 数据语义 100% 对齐;
+- 类名 / 表名 / API 命名保留 EastMoney 命名与 AC 一致, jsdoc 说明实际数据源 + 升级路径.
+
+**HTTP endpoint**:
+- `GET /api/sentiment/qa-topics?stock_code=000001[&weeks=12]` — 返回某只股票最近 N 周 (默认 26, 上限 104) 的投资者问答 NLP 聚合，每行 (week_start × topic) 含 mention_count / sentiment_score / nlp_engine / raw_payload;
+- 注册在 `/api/sentiment` 路由, 复用 authController.authenticate.
+
+**CLI**:
+- `npm run sync:qa-topics -- --stock=600519` 单股;
+- `--stocks=600519,000001` 多股;
+- `--all [--listed-before=YYYY-MM-DD]` 全 A 股扫描 (cninfo 限流默认 500ms 节流);
+- `--with-ai` 启 AI 路径 (慢 + 贵);
+- `--dry-run` 不写库;
+- `--since=YYYY-MM-DD` 仅聚合此日之后的问题;
+- `--limit=N` 单股拉取上限 (默认 200);
+
+### Files changed
+**Added**:
+- `backend/tests/services/east-money-qa-topic-service.test.ts` (187 assertions, 全部 pass) — DataSource fake + 模型 monkey-patch + 33 个 case 覆盖纯函数 / sync e2e / list e2e 全路径
+
+**Pre-staged (前置 iteration; 本 commit 一并 fix 5 处 prettier lint)**:
+- `backend/src/models/EastMoneyQATopic.ts` — Sequelize 模型 (5 列业务 + raw_payload JSONB + 复合 UNIQUE)
+- `backend/src/data/sources/StockQAClient.ts` — Python 子进程 wrapper
+- `backend/src/services/EastMoneyQATopicService.ts` — 主服务 (DataSource DI + 7 纯函数 export + sync e2e)
+- `backend/src/scripts/sync-qa-topics.ts` — CLI
+- `backend/src/api/controllers/SentimentController.ts` — getQATopics() endpoint
+- `backend/src/api/routes/sentiment.routes.ts` — GET /qa-topics 路由
+- `backend/src/config/database.ts` + `backend/src/models/index.ts` — 模型注册
+- `backend/python/akshare_helper.py` — get_stock_qa_topics Python helper
+- `backend/package.json` — `sync:qa-topics` npm script
+
+### Quality checks
+- `npx tsc --noEmit` → exit 0 (clean) ✅
+- `./node_modules/.bin/eslint --quiet src/{models,data/sources,services,scripts,api}/...` → exit 0 (5 prettier errors auto-fixed) ✅
+- `npx ts-node --transpile-only tests/services/east-money-qa-topic-service.test.ts` → 187 ok, 0 failed ✅
+- 既有 5 个 service test suite 全部仍 pass (133 + 151 + 141 + 129 + 68 = 622 既有) → no regression ✅
+
+### Browser verification
+**N/A** — 后端 only. UI 消费在未来 US-073 (AI 摘要卡片) 接入。
+
+### Learnings for future iterations
+- **187 个测试 全部脱离 DB / Python 子进程 / TradingAgents 远端** (with `installModelStubs()` monkey-patch + fake `EastMoneyQATopicDataSource`)。Service tests in `backend/tests/services/` are the canonical home (与 announcement-nlp-service / kol-aggregator / market-sentiment-index / snowball-hot-keyword-sync / ai-advisor-service 并列), Node 直接跑 `npx ts-node --transpile-only tests/services/<Name>.test.ts`。**与 backend/tests/risk / strategies / backtest / factors / performance 子目录平行**；`tests/` 不在 tsconfig include 内所以 `npx tsc --noEmit` 不会扫描 — 测试用 `transpile-only` 避免引入 strict-check 噪音。
+- **monkey-patch Sequelize Model 静态方法 + Symbol-key Op operator 反射** 模式 (US-059 引入, 本 story 再次应用): Sequelize raw `Op.gte / Op.lte / Op.gt / Op.lt` 是 `Symbol` 而不是字符串, fake `findAll` 必须用 `Object.getOwnPropertySymbols(where.field)` 反射出来 + `.toString().includes('gte')` 之类做 dispatch。下个 service test 复用此模式：(a) `installModelStubs()` 顶部声明 `let store: FakeRowState[] = []` + `nextId = 1` + `resetStore()` 单测之间隔离 (b) `bulkCreate` 用 (PK 组合) 做 upsert 检测 (c) `findAll` 支持 where string / Op symbol 范围 / order / limit 子集 — 不要过度实现 Sequelize 全 API, 只 cover 当前 service 真正用到的形态。
+- **`sentiment_score: number` 单测预期值要根据真实字典命中算, 不能"差不多就行"** (本 story 修了 4 处假设错的 assertion): 写聚合 / 平均值 / breakdown 类 assertion 之前先手工逐条用字典函数算一遍 — `aggregateWeekly` 内部用的是 `scoreSentiment` 真实字典 (强空 -1.0 / 弱空 -0.5 / 中性 0 / 弱多 +0.5 / 强多 +1.0), 写 "营收预期" 期望 0 是错的 (`"预期"` 在 weakPos 字典里 → 0.5)。下个 service test 写 fixture 前先列 (question → expected topic + expected sentiment) 表格手算 — 别直接猜。
+- **Topic 优先级 `(命中数 desc + TOPIC_PRIORITY asc)` 双键排序** 必须显式覆盖测试: 平手时 FINANCE > ORDER > PRODUCT > POLICY > PERSONNEL > OTHER 这条隐式契约容易在重构时被破坏 (e.g. 字典加新词 / 改 TOPIC_PRIORITY 值)。本 story 测试了 3 组平手 case ("营收+产品" / "订单+产品" / "政策+人事") 锁定该契约。下次任何 multi-key 排序 (factor topN / strategy candidate / risk priority) 都做同款 boundary test 覆盖键 1 平手时键 2 的行为, 避免 silent reorder。
+- **`computeWeekStart` 必须覆盖 5 边界**: 周一 self / 周日 (上周) / 跨月 / 跨年 / 带 'HH:mm:ss' 后缀。ISO-8601 用 `getUTCDay() === 0 ? 7 : utcDay` 把周日的 0 翻成 7, 再减 (isoWeekday - 1) 得周一。**注意 cninfo 返回 question_time 带秒** ('YYYY-MM-DD HH:mm:ss') — slice(0, 10) 取日期部分; 输入 Date 对象也支持但要 UTC 处理 (避免本地时区让"周日 23:00" 算到下周一去)。下次任何"按周聚合"逻辑 (周报 / 风控周阈值 / 策略周再平衡) 都复用 `computeWeekStart` 不要重写。
+- **DataSource fake 必须独立 throwForFor Set** 而非 boolean (本 story 引入 `fetchShouldThrowFor: Set<string>`): 批量 syncStocks 测试需要"600519 OK 但 000001 throws"的混合 case — 仅一个 boolean 全 throw / 全 OK 二选一无法覆盖。**通用模式**: fake DataSource 状态字段优先 `Set<key>` 颗粒度而非 boolean 全开关, 让测试能精准模拟 partial failure。
+- **`parseRemoteClassify` 4 条防御**: (1) `status === 'FAILED'` → null; (2) `!data` → null; (3) `sentiment_score` 非 finite → 0; (4) `sentiment_score` 超 [-1, +1] → clamp。任一缺失都让"远端胡说" 污染聚合。下次任何 "AI 返回结构化分类 / 评分" 解析函数 (US-061 K 线解读 / US-074 黑天鹅 NLP) 都套此 4 条 — 别相信远端会守 schema。
 ---

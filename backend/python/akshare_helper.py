@@ -3709,6 +3709,140 @@ def get_announcement_report(date: str, symbol: str = "全部") -> List[Dict[str,
         return []
 
 
+def get_stock_qa_topics(stock_code: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+    """
+    Fetch A-share investor Q&A entries for a single stock — used by
+    EastMoneyQATopicService (US-060) to aggregate weekly retail topic mentions.
+
+    ── AC endpoint substitution (US-034/US-035 同款范式) ──
+
+    AC 文字提到 "东财问答" (东方财富股吧 Q&A); 但东方财富股吧在 AKShare 中
+    **无任何 per-stock Q&A endpoint**:
+      - stock_guba_em 在 AKShare 中根本不存在 (US-034 已验证空架子);
+      - stock_news_em 只返回新闻不返回 Q&A;
+      - 爬取 https://guba.eastmoney.com/list,<code>.html 反爬严格.
+
+    选定替代: AKShare `stock_irm_cninfo(symbol=<6-digit>)`
+        巨潮资讯 - 互动易 - 投资者问答 (投资者向上市公司提问, 公司可选回答)
+        https://irm.cninfo.com.cn/ircs/question/questionDetail
+
+    巨潮资讯互动易与东财股吧 **同属"投资者-上市公司 Q&A"领域**, 数据语义
+    100% 对齐 (用户提问 → 公司回答, 关注的话题域相同). 类名 / 表名保留
+    EastMoney 命名与 AC 一致.
+
+    Returns:
+        List of question records sorted by 提问时间 desc. Returns [] on
+        error / empty AKShare response (caller can checkpoint without aborting).
+        Each row keys: stock_code / stock_name / industry / question /
+        questioner / source / question_time / question_id / answer / raw_payload.
+    """
+    try:
+        pure_code = str(stock_code).strip().zfill(6)
+        if not pure_code.isdigit() or len(pure_code) != 6:
+            print(f'Invalid stock_code format: {stock_code}', file=sys.stderr)
+            return []
+
+        print(f'Fetching investor Q&A for stock={pure_code} (cninfo IRM)...', file=sys.stderr)
+
+        fn = getattr(ak, 'stock_irm_cninfo', None)
+        if fn is None:
+            print('AKShare has no stock_irm_cninfo function', file=sys.stderr)
+            return []
+
+        try:
+            df = fn(symbol=pure_code)
+        except TypeError:
+            df = fn(pure_code)
+        except Exception as e:
+            print(f'stock_irm_cninfo({pure_code}) failed: {e}', file=sys.stderr)
+            return []
+
+        if df is None or df.empty:
+            print(f'AKShare returned empty IRM dataframe for {pure_code}', file=sys.stderr)
+            return []
+
+        # ----- 柔性列名映射 (AKShare 列名跨版本飘移; 保留兜底字段) -----
+        col_map: Dict[str, str] = {}
+        for col in df.columns:
+            col_s = str(col)
+            if col_s in ('股票代码',):
+                col_map['stock_code'] = col_s
+            elif col_s in ('公司简称', '股票简称'):
+                col_map['stock_name'] = col_s
+            elif col_s in ('行业',):
+                col_map['industry'] = col_s
+            elif col_s in ('问题',):
+                col_map['question'] = col_s
+            elif col_s in ('提问者',):
+                col_map['questioner'] = col_s
+            elif col_s in ('来源',):
+                col_map['source'] = col_s
+            elif col_s in ('提问时间',):
+                col_map['question_time'] = col_s
+            elif col_s in ('问题编号',):
+                col_map['question_id'] = col_s
+            elif col_s in ('回答内容',):
+                col_map['answer'] = col_s
+            elif col_s in ('回答者',):
+                col_map['answerer'] = col_s
+
+        if not col_map.get('question') or not col_map.get('question_time'):
+            print(
+                f'Missing required col mapping for IRM ({pure_code}). '
+                f'cols={list(df.columns)[:8]}',
+                file=sys.stderr,
+            )
+            return []
+
+        results: List[Dict[str, Any]] = []
+        seen_qids: set = set()  # 同 question_id 偶发 dup — 保留首条
+        columns = list(df.columns)
+        for _, row in df.iterrows():
+            qtext = _cell_str(row, col_map.get('question'))
+            if not qtext:
+                continue
+            qtime = _cell_str(row, col_map.get('question_time'))
+            if not qtime:
+                continue
+            qid = _cell_str(row, col_map.get('question_id'))
+            # 兜底: 若 question_id 缺失, 用 (time, hash(question[:50])) 拼一个
+            if not qid:
+                qid = f'{qtime}::{hash(qtext[:50]) & 0xFFFFFFFF:x}'
+            if qid in seen_qids:
+                continue
+            seen_qids.add(qid)
+
+            results.append({
+                'stock_code': _cell_str(row, col_map.get('stock_code')) or pure_code,
+                'stock_name': _cell_str(row, col_map.get('stock_name')),
+                'industry': _cell_str(row, col_map.get('industry')),
+                'question': qtext,
+                'questioner': _cell_str(row, col_map.get('questioner')),
+                'source': _cell_str(row, col_map.get('source')),
+                'question_time': qtime,
+                'question_id': qid,
+                'answer': _cell_str(row, col_map.get('answer')),
+                'answerer': _cell_str(row, col_map.get('answerer')),
+                'raw_payload': _row_to_jsonable(row, columns),
+            })
+
+        # AKShare 返回顺序通常已是 desc by time; 防御性 sort
+        results.sort(key=lambda r: r.get('question_time') or '', reverse=True)
+
+        if limit is not None and limit > 0:
+            results = results[:limit]
+
+        print(
+            f'Parsed {len(results)} IRM Q&A rows for stock={pure_code}',
+            file=sys.stderr,
+        )
+        return results
+    except Exception as e:
+        print(f'Error getting IRM Q&A for {stock_code}: {e}', file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return []
+
+
 def main():
     """Main entry point for command line calls"""
     if len(sys.argv) < 2:
@@ -3928,6 +4062,20 @@ def main():
             date = sys.argv[2]
             symbol = sys.argv[3] if len(sys.argv) >= 4 and sys.argv[3] not in ('', '-', 'null') else '全部'
             result = get_announcement_report(date=date, symbol=symbol)
+
+        elif command == "get_stock_qa_topics":
+            # Args: <stock_code> [limit]
+            if len(sys.argv) < 3:
+                print(json.dumps({"error": "Missing stock_code for get_stock_qa_topics"}), file=sys.stderr)
+                sys.exit(1)
+            stock_code = sys.argv[2]
+            limit: Optional[int] = None
+            if len(sys.argv) >= 4 and sys.argv[3] not in ('', '-', 'null'):
+                try:
+                    limit = int(sys.argv[3])
+                except (ValueError, TypeError):
+                    limit = None
+            result = get_stock_qa_topics(stock_code=stock_code, limit=limit)
 
         else:
             print(json.dumps({"error": f"Unknown command: {command}"}), file=sys.stderr)

@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { marketSentimentIndexService } from '../../services/MarketSentimentIndexService';
 import { MarketSentimentIndex } from '../../models/MarketSentimentIndex';
 import { snowballHotKeywordSyncService } from '../../data/services/SnowballHotKeywordSyncService';
+import { eastMoneyQATopicService } from '../../services/EastMoneyQATopicService';
 import { logger } from '../../utils/logger';
 
 /**
@@ -18,6 +19,10 @@ import { logger } from '../../utils/logger';
  *   US-058 雪球热词:
  *     - GET  /api/sentiment/snowball-keywords?date=YYYY-MM-DD[&only_new=true&limit=N]
  *            某日雪球热词榜 (默认取最近一日有数据; only_new=true 只看相对前一日新进)
+ *
+ *   US-060 东财问答 NLP 主题:
+ *     - GET  /api/sentiment/qa-topics?stock_code=000001[&weeks=12]
+ *            某只股票最近 N 周的投资者问答 NLP 聚合 (按 week_start × topic 分组).
  */
 export class SentimentController {
   /**
@@ -187,6 +192,70 @@ export class SentimentController {
       });
     } catch (error: any) {
       logger.error('获取雪球热词榜失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * GET /api/sentiment/qa-topics?stock_code=000001[&weeks=12]
+   *
+   * 返回某只股票最近 N 周 (默认 26, 上限 104) 的投资者问答 NLP 聚合 (US-060).
+   *
+   * 每行 = (week_start, topic) 的一条聚合记录, 含:
+   *   - topic              主题分类 (财务 / 产品 / 订单 / 人事 / 政策 / 其它)
+   *   - mention_count      该周该 topic 的问题数
+   *   - sentiment_score    该周该 topic 的平均情绪分 ∈ [-1, +1]
+   *   - nlp_engine         NLP 引擎标签 (heuristic_fallback / trading_agents)
+   *
+   * 客户端可按 (week_start, topic) 自由分组绘热力图或趋势线.
+   */
+  async getQATopics(req: Request, res: Response) {
+    try {
+      const stockCodeRaw =
+        typeof req.query.stock_code === 'string' ? req.query.stock_code.trim() : '';
+      if (!stockCodeRaw) {
+        res.status(400).json({ success: false, message: 'stock_code 参数必填' });
+        return;
+      }
+      // 去掉 sh. / sz. / bj. 前缀, 6 位纯代码
+      const pure = stockCodeRaw.replace(/^(sh|sz|bj)\./i, '').trim();
+      if (!/^\d{6}$/.test(pure)) {
+        res.status(400).json({ success: false, message: 'stock_code 必须是 6 位数字' });
+        return;
+      }
+
+      let weeks = 26;
+      if (req.query.weeks !== undefined) {
+        const parsed = Number(req.query.weeks);
+        if (Number.isFinite(parsed) && parsed > 0) {
+          weeks = Math.min(104, Math.floor(parsed));
+        }
+      }
+
+      const rows = await eastMoneyQATopicService.listByStock(pure, weeks);
+
+      res.json({
+        success: true,
+        data: {
+          stock_code: pure,
+          weeks,
+          count: rows.length,
+          items: rows.map(r => ({
+            id: r.id,
+            stock_code: r.stock_code,
+            stock_name: r.stock_name,
+            week_start: r.week_start,
+            topic: r.topic,
+            mention_count: r.mention_count,
+            sentiment_score: r.sentiment_score === null ? null : Number(r.sentiment_score),
+            nlp_engine: r.nlp_engine,
+            raw_payload: r.raw_payload,
+            updated_at: r.updated_at,
+          })),
+        },
+      });
+    } catch (error: any) {
+      logger.error('获取问答 NLP 主题失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   }

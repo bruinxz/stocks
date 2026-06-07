@@ -68,6 +68,7 @@ import { KOLOpinion } from '../models/KOLOpinion';
 import { MarketSentimentIndex } from '../models/MarketSentimentIndex';
 import { SnowballHotKeyword } from '../models/SnowballHotKeyword';
 import { AnnouncementSummary } from '../models/AnnouncementSummary';
+import { EastMoneyQATopic } from '../models/EastMoneyQATopic';
 import { LiveBrokerAccount } from '../models/LiveBrokerAccount';
 import { LiveAccountSnapshot } from '../models/LiveAccountSnapshot';
 import { LivePosition } from '../models/LivePosition';
@@ -165,6 +166,7 @@ const sequelize = new Sequelize({
     MarketSentimentIndex,
     SnowballHotKeyword,
     AnnouncementSummary,
+    EastMoneyQATopic,
     LiveBrokerAccount,
     LiveAccountSnapshot,
     LivePosition,
