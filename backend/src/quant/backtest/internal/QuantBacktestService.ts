@@ -864,6 +864,14 @@ export class QuantBacktestService {
         });
       }
 
+      // US-046 hook: 同款 fire-and-forget 触发行业归因（按行业拆解 contribution / win_rate）。
+      // 与 US-045 并列；同一 createdResultIds 各跑一次 per result。
+      if (createdResultIds.length > 0) {
+        setImmediate(() => {
+          this.triggerIndustryAttributionAsync(createdResultIds, task.id);
+        });
+      }
+
       return {
         task: await this.getBacktest(task.id),
         summary: {
@@ -1135,6 +1143,39 @@ export class QuantBacktestService {
     ).catch(err => {
       logger.warn(
         `[backtest-hook] benchmark attribution batch failed (task #${task_id}): ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    });
+  }
+
+  /**
+   * US-046 hook：异步触发对每个 QuantBacktestResult 的行业归因计算。
+   * Fire-and-forget — 与 US-045 同款错误隔离 + lazy require 模式；失败只写 warning。
+   */
+  private triggerIndustryAttributionAsync(result_ids: number[], task_id: number): void {
+    // lazy require — 同 triggerBenchmarkAttributionAsync 范式
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const industryModule = require('../../performance/IndustryAttributionService');
+    const { industryAttributionService } = industryModule;
+    Promise.all(
+      result_ids.map(async result_id => {
+        try {
+          await industryAttributionService.computeAttribution(
+            { quant_backtest_result_id: result_id },
+            { persist: true, source: 'backtest_hook' }
+          );
+        } catch (err) {
+          logger.warn(
+            `[backtest-hook] industry attribution failed for result #${result_id} (task #${task_id}): ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          );
+        }
+      })
+    ).catch(err => {
+      logger.warn(
+        `[backtest-hook] industry attribution batch failed (task #${task_id}): ${
           err instanceof Error ? err.message : String(err)
         }`
       );

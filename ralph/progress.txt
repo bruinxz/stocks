@@ -4817,3 +4817,98 @@ US-016 策略实验室 '基准对比' tab 可以通过 quant controller 调 faca
 facade 模式让 controller 直接可用）。
 
 ---
+
+## 2026/06/07 22:23 - US-046
+
+### 实施内容（分行业归因分析）
+
+**End-to-end pipeline 5 件套（与 US-045 BenchmarkAttribution 严格镜像，第二个 quant/performance/ 公共类）**：
+
+1. **Sequelize 模型** `backend/src/models/IndustryAttributionResult.ts`：
+   - 4-tuple PK `(run_id, industry_code, period_start, period_end)` — 与 US-041/US-042/US-045 同款"事后分析" 4-tuple 范式，允许重跑同 (run, industry) 在不同区间存独立行。
+   - AC 字段：`run_id` / `industry_code` / `industry_name` / `contribution_pct` / `win_rate` / `avg_hold_days` / `trade_count` 全部覆盖。
+   - 诊断字段（让 ops 看是真信号还是噪音）：`winning_count` / `losing_count` / `total_pnl` / `total_volume` / `strategy_key` 物化（避免 JOIN 父表的跨 run 聚合）/ `period_start` / `period_end` / `computed_at` / `source`。
+   - 6 indexes 覆盖 `run_id` / `(run_id,industry_code)` / 4-tuple unique / `(strategy_key,industry_code)` / `industry_code` / `period_end` 共 6 种典型查询模式。
+   - 注册到 `backend/src/models/index.ts` + `backend/src/config/database.ts` → `sync({alter:true})` auto-create in dev。
+
+2. **核心服务** `backend/src/quant/performance/IndustryAttributionService.ts` (~620 LOC)：
+   - **6 个 export 纯函数**（完全脱 DB，独立单测）：`normalizeIndustryName(name)` / `isClosedTrade(trade)` / `deriveHoldingDays(trade)` / `aggregateTradesByIndustry(trades, industry_map)` / `computeContributionMetrics(group, initial_capital)` / `sortAttributionsByContribution(attributions)` + 内部 `roundTo(n, decimals)` helper（不导出，service-internal）。
+   - **DataSource DI**：`IndustryDataSource` interface（单方法 `loadAttributionContext`）+ `PRODUCTION_INDUSTRY_DATA_SOURCE` lazy require QuantBacktestResult+QuantBacktestTrade+QuantBacktestTask+Stock。测试注入 fake source 完全脱 DB。**与 US-040..US-045 6 个分析模块同款 DI 范式**。
+   - **三种入参形态优先级**：in-memory `trades + initial_capital + symbol_to_industry` > `quant_backtest_result_id` 从 DB 读 > 完全无效 → 抛错。同时提供 in-memory 与 result_id 时取 in-memory 但保留 result_id 写到 run_id（让 caller 仍能追踪父回测）。
+   - **核心算法**：trades → isClosedTrade 过滤未平仓 → aggregateTradesByIndustry 按 Stock.industry 中文名分组累加 → computeContributionMetrics per group → sortAttributionsByContribution → 可选 upsert by 4-tuple PK。
+   - **Admin 6 方法**（与 PortfolioOptimizer / BenchmarkAttributionService 同款）：`getRun` / `getResultsForRun(run_id)` / `listRecentRuns(limit)` / `deleteRun(id)` / `deleteRunByRunId(run_id)` / `cleanupOlderThan(days)`。
+
+3. **CLI** `backend/src/scripts/run-industry-attribution.ts`：
+   - 主流程 `--backtest-result-id=<n>` (with `--no-persist`) + 4 admin 模式 `--list` / `--show=<run_id>` / `--delete-run=<run_id>` / `--cleanup-days=<n>`。
+   - 退出码 0/2（success/hard-fail），输出按 |contribution| 降序 + ↑/↓/· 方向箭头 + win_rate/avg_hold/volume 详细。
+   - npm script `run:industry-attribution` 加入 `backend/package.json`。
+
+4. **QuantBacktestService 完成 hook**（`backend/src/quant/backtest/internal/QuantBacktestService.ts`）：
+   - 在 task.update('COMPLETED') 后 `setImmediate(() => triggerIndustryAttributionAsync(result_ids, task_id))` 异步触发。
+   - Fire-and-forget 不 await 单回测完成不被归因耗时阻塞；per-result 失败隔离（try/catch + warning log）；多策略回测 = 多个 QuantBacktestResult rows = 多个 hook 触发。
+   - **与 BenchmarkAttribution hook 并列**：两个 hook 互不影响、互不阻塞，回测主流程不被任一归因耗时拖累。
+
+5. **PerformanceReporter facade 扩展**（`backend/src/quant/performance/PerformanceReporter.ts`）：
+   - 新增 2 个 public 方法：`computeIndustryAttribution(input, options?)` + `getIndustryAttributionResultsForRun(run_id)`。
+   - Controllers/UI 通过 facade 调用，不直接 import IndustryAttributionService（符合 US-004 公共 facade 收敛原则）。
+
+### 测试（backend/tests/performance/industry-attribution-service.test.ts）
+
+**111 个测试 / 0 failed / <1s**，覆盖：
+
+- **2 个常量校验**：UNKNOWN_INDUSTRY_LABEL='其他' / DEFAULT_SOURCE。
+- **6 个纯函数 helper 测试**：
+  - `normalizeIndustryName` 9 边角：null/undefined/空/全空格/正常/前后空格 trim/非 string 类型（number/object/array）。
+  - `isClosedTrade` 8 边角：正常 closed/未平仓/null pnl/NaN pnl/空 sell_date/undefined sell_date/pnl=0 算 closed/负 pnl 算 closed。
+  - `deriveHoldingDays` 5 边角：holding_days 字段优先/null 派生/未平仓 0/负差值 clamp 到 0/非法日期。
+  - `aggregateTradesByIndustry` 多场景：3 行业（银行+半导体+其他）+ 未平仓忽略 + industry_map 值 trim + industry_code==industry_name + 空 trades + 全未平仓。
+  - `computeContributionMetrics` 多场景：正常 5% / 空 group null win_rate+null avg_hold / initial_capital=0 → contribution=0 / 负 initial_capital → 0 / 负 contribution（亏损行业）。
+  - `sortAttributionsByContribution` 含 |降序| + ASC tie-break + 不 mutate 输入 + 空数组 + 单元素。
+- **13 个 end-to-end `computeAttribution()` 场景**：
+  - in-memory happy path 3 行业 + sorted by |contribution| / 银行 win_rate=0.5 / avg_hold=4。
+  - 未平仓 trade 不计入。
+  - NaN pnl + null pnl 不计入。
+  - 全未平仓 → 0 attributions + total_contribution=0。
+  - 缺 initial_capital 抛错 + 缺 input 抛错。
+  - period_start/end 自动从 trades 派生。
+  - 空 trades + 无 period → 抛错。
+  - DataSource 注入 + fake source 返回 null 抛错 + source initial_capital 无效抛错 + input.strategy_key override source。
+  - **in-memory 优先于 result_id 但保留 run_id 字段**（让 caller 仍能追踪父回测）。
+- **1 个 cleanupOlderThan 参数校验**：days=0/-5/NaN/Infinity 4 边角全部抛错。
+
+### Files changed
+
+- `backend/src/models/IndustryAttributionResult.ts` (new, ~220 LOC)
+- `backend/src/quant/performance/IndustryAttributionService.ts` (new, ~740 LOC)
+- `backend/src/scripts/run-industry-attribution.ts` (new, ~195 LOC)
+- `backend/tests/performance/industry-attribution-service.test.ts` (new, ~735 LOC)
+- `backend/src/models/index.ts` (added 1 export)
+- `backend/src/config/database.ts` (added 1 import + 1 models entry)
+- `backend/src/quant/backtest/internal/QuantBacktestService.ts` (added 1 hook trigger + 1 private method)
+- `backend/src/quant/performance/PerformanceReporter.ts` (added 2 public facade methods)
+- `backend/package.json` (added 1 npm script)
+- `backend/src/quant/CLAUDE.md` (added US-046 section with 6 family comparison + 9 design constraints + 4 upgrade paths + test pattern + key fake)
+
+### Quality checks
+
+- `cd backend && npx tsc --noEmit` → exit 0
+- `npx eslint <7 changed files> --quiet` → exit 0
+- `npx ts-node tests/performance/industry-attribution-service.test.ts` → 111 ok / 0 failed
+- CLI `--help` boots cleanly
+- 回归测试：`benchmark-attribution-service.test.ts` (171 ok) / `ashare-constraints.test.ts` (ALL PASS) / `monte-carlo-stress-test.test.ts` (144 ok) / `portfolio-optimizer.test.ts` (127 ok) 全部仍通过 → 无 schema 兼容性破坏。
+
+### Learnings for future iterations
+
+- **第二个 "回测完成 hook"** 完全镜像 US-045 同款 setImmediate fire-and-forget 模式。**未来 US-085 CostSensitivity / US-090+ 策略上线门槛检查** 任何"回测完成后自动跑事后分析"都可以照搬：
+  - `setImmediate(() => triggerXxxAsync(result_ids, task_id))` 不 await 不阻塞主流程。
+  - `private triggerXxxAsync(result_ids, task_id)` 用 lazy require 避免循环依赖。
+  - `Promise.all(result_ids.map(async result_id => try/catch + warning log))` per-result 失败隔离。
+  - 外层 `.catch(err => logger.warn(...))` 兜底防 unhandled rejection。
+- **6 事后分析家族对比表已固定** (US-040 RegimeSegmented / US-041 FactorIC / US-042 FactorCorrelation / US-043 MonteCarlo / US-044 PortfolioOpt / US-045 Benchmark / US-046 Industry)。新增第 7 个事后分析工具时直接照搬 9 项约束 + 与既有 6 家族列对比表。
+- **industry_code = industry_name 当前实现是临时方案**：Stock 模型当前只有 `industry` 中文名字段，没有独立的 BK 编码列（如 BK1024）。未来 Stock 引入 BK 后切换 DataSource 内部 `symbol_to_industry` 返回 shape 即可，本表 schema 不变；这是 future-proof 的设计。
+- **未平仓 trade 不计入归因**与 US-040 RegimeSegmentedBacktest 同款判据：浮盈在 equity_curve 已经反映，重复算成 trade 会双计。**任何按 trade 拆解的事后分析都要遵守这个判据**。
+- **"per-X 失败隔离" 在某些场景是 over-engineering**：US-045 BenchmarkAttribution 需要 per-benchmark try/catch 因为每个 benchmark 都要外部 source 调用；US-046 Industry 不需要 per-industry try/catch 因为行业归因只在 industry 字符串处理层操作（无外部 source 调用），失败模式只能是数据本身缺失 → 该行业 trade_count=0 + 全 null 而非抛错。**判据**：当 per-X 处理涉及 IO/外部数据时才需要 per-X try/catch。
+- **`industry_code = industry_name` 决策在模型 jsdoc 与服务 jsdoc 双地点文档化**让未来 BK 切换时 ops 知道改哪里：模型 jsdoc 解释当前 schema 含义，服务 jsdoc 解释切换路径（"未来 Stock 引入 BK 后切换 DataSource 内部 join 逻辑即可"）。
+- **6 个 admin 方法是事后分析模块的标准 admin 套件**：`getRun` / `getResultsForRun(parent_id)` / `listRecentRuns(limit)` / `deleteRun(id)` / `deleteRunByParentId(parent_id)` / `cleanupOlderThan(days)`。**第 7 个事后分析模块直接照搬这 6 个方法签名**，让 CLI 和 UI 调用模式统一。
+
+---

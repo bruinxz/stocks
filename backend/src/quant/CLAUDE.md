@@ -849,3 +849,120 @@ results），per-result 失败隔离。
   benchmark series 完全脱 DB；`makeReturnPoints(start, returns)` /
   `makeEquityCurve(start, returns, startValue)` fixture helpers 减少测试样板。
 
+## US-046: IndustryAttributionService — 分行业归因分析
+
+`backend/src/quant/performance/IndustryAttributionService.ts` 是第二个 `quant/performance/`
+公共类（与 US-045 BenchmarkAttributionService 并列；都通过 PerformanceReporter facade 暴露）。
+对一次完成的回测（QuantBacktestResult.id 或 in-memory trades + initial_capital）按行业分组
+计算每个行业的 contribution_pct / win_rate / avg_hold_days / trade_count，让 ops 一眼看出
+"策略 alpha 是哪些行业贡献的"。
+
+### 6 事后分析家族对比（US-040..US-046）
+
+| 模块 | 输入维度 | 输出维度 | 关键问题 |
+|------|---------|---------|---------|
+| US-040 RegimeSegmented | equity_curve + market regime | per-regime sharpe / annual / dd | 哪种市场环境策略表现好 |
+| US-041 FactorIC | factor_scores + forward_returns | per-factor IC mean/std/IR/decay | 哪些因子真有信号 |
+| US-042 FactorCorrelation | factor_scores 横截面 | per-factor-pair Spearman 相关 | 哪些因子冗余 |
+| US-043 MonteCarlo | trade returns reshuffle | 收益/dd/sharpe 分位数 | 历史表现是不是巧合 |
+| US-044 PortfolioOptimizer | multi-strategy daily returns | 最优权重 + 组合 sharpe | 怎么组合多个策略最优 |
+| US-045 Benchmark | equity_curve + benchmark | alpha/beta/IR/excess | 是 alpha 还是 beta |
+| **US-046 Industry** | **trades + Stock.industry** | **per-industry contribution/win_rate** | **alpha 来自哪些行业** |
+
+### 9 个 design constraints（与既有 5 个分析模块判据一致）
+
+1. **trade 归属以 sell_date 为准** — 与 US-040 RegimeSegmentedBacktest 同款判据。未平仓
+   trade 不计入归因 — 浮盈在 equity_curve 已经反映，重复算成 trade 会双计。
+2. **未识别行业归为 "其他"** — Stock.industry 缺失或 trim 后为空 → 归到 UNKNOWN_INDUSTRY_LABEL
+   ("其他") 而非丢失数据，让 ops 看到「有多少 pnl 没法归到具体行业」。
+3. **`industry_code = industry_name` 当前实现** — Stock 模型当前只有 `industry` (中文名)
+   字段；未来引入独立 BK 编码后切换 DataSource 内部 join 逻辑即可，本表 schema 不变。
+4. **win_rate 阈值: pnl > 0 算胜，pnl ≤ 0 算负** — pnl=0 偏保守归到 losing。trade_count = 0
+   时 win_rate / avg_hold_days = null（与 IC 报告 sample_count<MIN 同款 'null vs 0' 策略）。
+5. **contribution_pct 分母用 initial_capital** — `industry_pnl / initial_capital × 100`，
+   所有行业相加 ≈ 策略总收益率（不考虑费率），符合「贡献分解」直觉。
+6. **DataSource DI 注入** — `PRODUCTION_INDUSTRY_DATA_SOURCE` 用 lazy require 从
+   QuantBacktestTrade + QuantBacktestResult + QuantBacktestTask + Stock 读数据；
+   测试注入 fake source 完全脱 DB（与 US-040..US-045 6 个模块同款 DI 范式）。
+7. **三种入参形态优先级**（与 US-045 同款）: in-memory `trades + initial_capital +
+   symbol_to_industry` > `quant_backtest_result_id` 从 DB 读 > 完全无效 → 抛错。同时提供
+   in-memory 与 result_id 时取 in-memory，但保留 result_id 写到 run_id 字段。
+8. **4-tuple PK upsert idempotent** — `(run_id, industry_code, period_start, period_end)`
+   主键。与 US-041 FactorICResult / US-042 FactorCorrelationResult / US-045
+   BenchmarkAttributionResult 同款 4-tuple PK 范式。重跑同 (run, industry, 区间) 直接覆盖。
+9. **per-industry 失败隔离不显式做** — 与 BenchmarkAttributionService 不同：行业归因的
+   "失败" 只能发生在 industry 字符串处理层，没有外部数据源调用，所以无需 try/catch
+   per industry。Trade 数据缺失会让该行业 trade_count=0 + 全 null 而非整体抛错。
+
+### Backtest 完成 hook（与 US-045 并列）
+
+`QuantBacktestService.runBacktest()` 在成功完成 + 创建 results 后 setImmediate
+**fire-and-forget** 触发 `triggerIndustryAttributionAsync(result_ids, task_id)` —
+对每个 QuantBacktestResult.id 调用 `industryAttributionService.computeAttribution`
+(`source: 'backtest_hook'`)。**与 BenchmarkAttribution hook 并列**：两个 hook 互不影响、
+互不阻塞，回测主流程不被任一归因耗时拖累。任一 result 失败只写 warning，其他 results
+继续。批量级别再加一层 `.catch(err => logger.warn(...))` 兜底防 unhandled rejection。
+
+### 7 个纯函数 helper（全 export，独立单测）
+
+- `normalizeIndustryName(name)` — 中文名 trim + null/empty → "其他"。
+- `isClosedTrade(trade)` — 已完成交易判定（sell_date 非空 + pnl 是有效数字）。
+- `deriveHoldingDays(trade)` — 持仓天数派生（优先 trade.holding_days，缺则从 buy/sell 派生）。
+- `aggregateTradesByIndustry(trades, industry_map)` — 按行业 Map<industry_code, IndustryGroup>。
+- `computeContributionMetrics(group, initial_capital)` — 单行业 metrics 计算。
+- `sortAttributionsByContribution(attributions)` — 按 |contribution_pct| 降序排序
+  （UI 友好：贡献最大/拖累最大的一目了然），industry_code ASC tie-break 保证 deterministic。
+- `roundTo(n, decimals)` — service-internal 4 位 round（避免浮点累计误差让 DB 写入失败）；
+  不导出（与 BenchmarkAttributionService.roundTo 同款）。
+
+### Admin 5 件套 + CLI
+
+`IndustryAttributionService` 提供 `getRun / getResultsForRun / listRecentRuns /
+deleteRun / deleteRunByRunId / cleanupOlderThan` —— 与 PortfolioOptimizer /
+BenchmarkAttributionService 同款 admin 范式。
+
+CLI `backend/src/scripts/run-industry-attribution.ts` (npm `run:industry-attribution`)
+支持 5 模式：主流程 `--backtest-result-id=<n>` (with `--no-persist`) + 4 admin
+(`--list` / `--show=<run_id>` / `--delete-run=<run_id>` / `--cleanup-days=<n>`)。
+退出码 0/2 (success/hard-fail)。输出按 |contribution| 降序，正向行业 ↑ 反向 ↓ 中性 ·。
+
+### PerformanceReporter facade 扩展
+
+`backend/src/quant/performance/PerformanceReporter.ts` 新增 2 个 public 方法：
+- `computeIndustryAttribution(input, options?)` — 调用 IndustryAttributionService.computeAttribution
+- `getIndustryAttributionResultsForRun(run_id)` — 按 run_id 查全部行业归因结果
+
+Controllers / UI 通过 facade 调用，不直接 import IndustryAttributionService（符合 US-004
+公共 facade 收敛原则）。
+
+### 测试模式（111 个测试 / 全脱 DB）
+
+`backend/tests/performance/industry-attribution-service.test.ts`：
+- **2 个常量校验** (UNKNOWN_INDUSTRY_LABEL='其他' / DEFAULT_SOURCE)。
+- **6 个纯函数 helper 测试**（normalizeIndustryName 9 边角含 null/undefined/空/全空格/正常/前后空格 trim/非 string 类型 /
+  isClosedTrade 8 边角含正常 closed/未平仓/null pnl/NaN pnl/空 sell_date/undefined sell_date/pnl=0 closed/负 pnl closed /
+  deriveHoldingDays 5 边角含 holding_days 优先/null 派生/未平仓 0/负差值 clamp/非法日期 /
+  aggregateTradesByIndustry 多场景含 3 行业 + 未平仓忽略 + map 值 trim + industry_code==industry_name + 空 trades + 全未平仓 /
+  computeContributionMetrics 多场景含正常 5% / 空 group null / initial_capital=0 / 负数 / 负 contribution /
+  sortAttributionsByContribution 含 \|降序\| + ASC tie-break + 不 mutate + 空数组 + 单元素）。
+- **13 个 end-to-end computeAttribution() 场景**（happy 3 行业 / 未平仓不计入 / NaN pnl 不计入 /
+  全未平仓 0 attributions / 缺 initial_capital 抛错 / 缺 input 抛错 / period 派生 /
+  空 trades + 无 period 抛错 / DataSource 注入 / source 返回 null 抛错 / source initial_capital 无效 抛错 /
+  input.strategy_key override source / in-memory 优先于 result_id 但保留 run_id 字段）。
+- **1 个 cleanupOlderThan 参数校验** 含 days=0 / days=-5 / NaN / Infinity 4 边角。
+- **关键 fake**: 自定义 fake DataSource per-test 注入 `loadAttributionContext` 返回任意
+  fixture context，配合 in-memory 模式让全部测试零 DB 依赖。
+
+### 何时扩展 IndustryAttributionService
+
+1. **支持独立 industry_code (BK 编码)** — Stock 引入 BK 字段后切换 DataSource 的
+   `symbol_to_industry` 返回为 `{symbol: {code: 'BK1024', name: '银行'}}`；computeMetrics
+   保留 industry_name 作为 UI 展示文本，industry_code 用 BK 做主键。本表 schema 不变。
+2. **支持行业 sub-attribution（行业内 top N 持仓）** — 当前是按行业聚合；未来 UI 想看
+   "银行行业 +5% 主要是 招行+3% / 平安+1% / 兴业+1%" → 新建 IndustryStockAttributionResult
+   表（4-tuple PK + stock_code），在 IndustryAttributionService 之外单独算（不污染本类）。
+3. **支持行业相对超额（vs 行业 ETF）** — alpha 是「该策略在银行行业 vs 银行指数」的超额。
+   需要 join 银行 ETF/指数 daily_returns。建议新建 IndustryRelativeAttributionService
+   而非扩本类（避免本类公式从「绝对贡献」变到「相对超额」）。
+4. **支持多区间归因（季度/月度对比）** — 当前 period_start/end 是单区间。多区间用 caller
+   多次调用本类，每次传不同区间，本表 4-tuple PK 天然支持多行存储不冲突。

@@ -9,6 +9,12 @@ import {
   BenchmarkAttributionOptions,
   BenchmarkAttributionRunResult,
 } from './BenchmarkAttributionService';
+import {
+  industryAttributionService,
+  IndustryAttributionInput,
+  IndustryAttributionOptions,
+  IndustryAttributionRunResult,
+} from './IndustryAttributionService';
 
 export class PerformanceReporter {
   getIndicatorCatalog() {
@@ -33,6 +39,22 @@ export class PerformanceReporter {
   /** US-045：按 run_id 查某次回测的全部基准归因结果（一次回测对 N 个基准 → N 行）。 */
   getBenchmarkAttributionResultsForRun(run_id: number) {
     return benchmarkAttributionService.getResultsForRun(run_id);
+  }
+
+  /**
+   * US-046：对一次完成的回测做行业归因（按行业拆解 contribution / win_rate / avg_hold_days）。
+   * 返回每个行业的贡献百分比、胜率、平均持仓天数、交易数；按 |contribution_pct| 降序。
+   */
+  computeIndustryAttribution(
+    input: IndustryAttributionInput,
+    options?: IndustryAttributionOptions
+  ): Promise<IndustryAttributionRunResult> {
+    return industryAttributionService.computeAttribution(input, options);
+  }
+
+  /** US-046：按 run_id 查某次回测的全部行业归因结果（一次回测 → N 个行业 → N 行）。 */
+  getIndustryAttributionResultsForRun(run_id: number) {
+    return industryAttributionService.getResultsForRun(run_id);
   }
 }
 
