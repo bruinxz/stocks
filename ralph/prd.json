@@ -1063,8 +1063,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 62,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026-06-08. Backend StrategyCopilotService follows the 6-item AI feature checklist (DataSource DI / pure helpers全export / plain-object return type / status='partial' fallback / fail-OPEN on save / 双重防御 try/catch). 4 意图分类 (explain_backtest / suggest_params / generate_draft / general) — normalizeIntent regex 强类(generate_draft) > 普通类(suggest_params/explain_backtest) > general 兜底。Prompt 模板: System + Strategy + Description + Default params + Recent backtests (last N) + User intent + User question 顺序固定。启发式 fallback 按 intent 分支生成 (sharpe 强弱分级 / drawdown stop loss / generate 提示 universe/entry/exit / general 列 3 能力)。3 个 endpoints: POST /api/ai/strategy-copilot (sync) + GET /strategy-copilot/stream (SSE) + GET /strategy-copilot/context (lazy load 上下文)。Frontend StrategyCopilotPanel: FloatButton + Drawer (480px) 浮在 LabWorkspace 右下角; 3 个 quick-prompt tags + TextArea (Cmd/Ctrl+Enter 发送) + 消息列表 (ChatBubble 子组件) + 参数 diff Table + 草案 pre 代码块 + 复制按钮。LabWorkspace 集成: onApplySuggestedParams 把建议参数 merge 进 params_text JSON 并切到新建回测 tab。205-assertion test (覆盖 6 个 pure 模块边界 + askCopilot 8 个 e2e 路径)。tsc + lint 全 clean。"
     },
     {
       "id": "US-063",

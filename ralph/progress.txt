@@ -176,6 +176,8 @@
 - **24h TTL 缓存范式 (US-061 TechnicalAnalysisService 引入)**: 高成本 + 短时效 (AI K 线解读 / AI 复盘日记 / KOL 观点聚合) 类 service 的存储模式：(1) **不复用 (stock, day) UNIQUE**——同一只股票一天可能多次请求, 应该 hit cache 而非 conflict; (2) **PK = autoIncrement id + 索引 (stock_code, lookback_days, expires_at)** — 旧 cache 行作为历史快照保留 (UI 可回查"上次解读说了什么"), 新 cache 行 INSERT 不 UPDATE; (3) **`expires_at = generated_at + 24h` 列由 service 写入**, 读端 `where expires_at > now() order by generated_at desc limit 1`; (4) **`force_refresh=true` 参数跳过 cache 直接生成** (UI 刷新按钮触发); (5) **缓存查询失败必须 try/catch + warn 不阻塞主流程** (cache miss + 网络问题不应让用户拿不到新结果)。下次 US-067 KOL 观点聚合 / US-073 复盘日记 AI / US-074 黑天鹅监测都按此 5 项 checklist。
 - **AI service 复用 QuantMath 而非内置指标 (US-061 引入)**: AI 解读类 service 计算 MACD / RSI / 布林 / 量比 时必须 `import { sma, ema, rsi, macd, bollinger } from '../quant/engine/QuantMath'`, 不要内置或 copy 同算法到 service 层。**理由**: backtest / strategies / AI 解读三处指标口径必须一致, 否则用户在策略实验室看的 RSI=70 和 AI 弹窗里看的 RSI=68 是不同公式 — 信任崩塌。本范式与 US-009 FactorPipeline 复用 QuantMath 一脉相承; 下次 US-074 黑天鹅 / US-091 综合健康度任何用技术指标的地方都从 QuantMath 取。
 - **启发式 fallback "强信号 + momentum 兜底" 趋势判定 (US-061 引入)**: 任何"趋势判断"启发式 (uptrend/downtrend/sideways) 不能只看 MACD hist 符号 — MACD 在长期单边行情末段会出现 hist 反弹（DIF/DEA 收敛）但价格仍在下方，单看 MACD 会误判 sideways。**正确逻辑**: (1) 优先 MACD hist + 布林 mid **同向**的强信号 (hist > 0 AND close > mid → uptrend); (2) 强信号缺失时用 N 日 momentum_pct **兜底** (|momentum| > 5% 判方向)。**测试 must-cover 末段 hist 反弹场景** (drift -1% × 60 日的下降趋势，末日 MACD hist 已转正但 momentum 仍 -45%)。下次 US-074 黑天鹅 / US-091 风险评分任何"趋势/方向"判定都套此双层兜底, 不要单维度判定。
+- **第 7 个 AI feature — Copilot meta-AI / 自由文本 prompt 范式 (US-062 引入)**: 与前 6 个 AI feature (US-055 单股深度问答 / US-056 KOL / US-057 情绪指数 / US-058 雪球热词 / US-059 公告 NLP / US-060 东财问答 NLP / US-061 K 线解读) 都是 "固定输入 → 结构化输出" 不同，Copilot 是 **"自由文本 prompt → 4 种意图分类 → 分支响应"** 的 meta 形态。**6 项核心模式**: (1) **强→弱 intent 正则优先级**（generate_draft > suggest_params > explain_backtest > general）— 强类必须在弱类之前，否则 "写策略，解释 sharpe" 会被错分到 explain_backtest; 同 US-055 normalizeRecommendation strong_buy > buy 模式; (2) **prompt 模板顺序固定**（System + Strategy + Description + Default params + Recent backtests + User intent + User question）方便后续 prompt tuning 对比; (3) **启发式 fallback 4 种 intent 各自分支文案**（不是一句通用 "AI 不可达请重试" 兜底）; (4) **conversation_id 续接对话上下文**（COP-{YYYYMMDDHHmmss}-{rand4} 业务 ID，前端多轮对话可传同一 ID）; (5) **saveConversation 默认 noop**（每问独立上下文，会话历史价值低；未来引入加密会话表只改 DefaultDataSource）— 与 US-055/061 强制 saveReport 的有结构数据存储相反; (6) **suggested_params + extractKeyDelta 跨 tab 数据流**（Copilot 建议 → diff Table → "应用并去新建回测" 把 params merge 进表单 JSON 不覆盖既有手动改动）。**判据：何时不缓存 (vs US-061 24h TTL)**: 输入维度数少且离散 (stock_code + lookback_days 2 维) → TTL 缓存; 维度多且开放 (prompt 自由文本 + intent + strategy + history) → 不缓存。下次任何"自由文本输入 + 多意图分类 + 跨 tab 上下文" 类 AI feature（US-073 复盘日记 AI 自生成 / 未来"组合优化助手"）按此 6 项模板。
+- **Frontend FloatButton + Drawer 聊天模板 (US-062 引入)**: 工作区右下角浮聊天面板的标准布局：`<FloatButton type="primary" icon={<RobotOutlined />} style={{ insetInlineEnd: 32, bottom: 32 }} />` 触发 `<Drawer placement="right" width={480} />`。**关键 styling**: `styles={{ body: { display: 'flex', flexDirection: 'column', padding: 0 } }}` 让内部 4 块（顶部 context / quick-prompts / 消息列表 flex 1 / 输入框）撑满。**ChatBubble 子组件**: 用户右对齐 + 蓝底白字 + UserOutlined; 助手左对齐 + 白底 + RobotOutlined; pending 显 `<Spin />` + "正在思考..."。**消息列表 background = #f6f8fa** chat 体感一致 (类 Slack/微信)。**跨 tab 应用模式**: onApply 回调 = merge-not-overwrite (`{...existingJSON, ...suggestedParams}`) + setActiveKey 切到目标 tab + message.success 反馈。下次 US-074 黑天鹅"AI 风控提示弹层" / US-091 系统健康度浮窗 / 任何"AI 助手 panel"都复用此 5 件套模板（FloatButton + Drawer + ChatBubble + merge-not-overwrite + tab 切换）。
 
 
 
@@ -5956,3 +5958,62 @@ cd backend && npm run sync:announcements -- --date=2026-06-06
 - **DECIMAL / JSONB 数字 Number() 包装 (US-040 codebase pattern 复用)**: Sequelize JSONB 列里包 number 经 PostgreSQL 协议来回可能被序列化成 string; cacheRowToResult 内 `buy_zone: row.buy_zone.map(n => Number(n))` 是 belt-and-suspenders。本 story 测试已覆盖 `confidence: '85.00'` (DECIMAL 来自 DB 是 string) 和 `buy_zone: ['9.4', '9.6']` (JSONB number[] 来自 DB 是 string[]) 两种 boundary, 验证 Number() 包装。下次任何 "JSONB / DECIMAL 数字字段读出后" 都 Number() 包装不要相信 schema 类型。
 - **TradingAgents endpoint 命名一致性** (本 story 第 6 个 AI feature): `/api/nlp-technical-analysis` 与既有 `/api/nlp-summary` (US-059) / `/api/nlp-qa-topic` (US-060) 都是 `/api/nlp-<feature>` 模式。**下次 US-074 黑天鹅 / US-091 健康度评分调远端**也按 `/api/nlp-<feature>` 命名让 ops 看 nginx log 知道是 NLP 类型 endpoint。
 ---
+
+## 2026/06/08 - US-062
+
+### What was implemented
+**第 7 个 AI feature — 策略 Copilot (人机协同)** — 在 `/workspace/lab` 右下角浮聊天面板，用户可自然语言：
+1. **解释**：上一次回测 sharpe 这么低是为什么？
+2. **调参**：把 multi_factor 的 topN 改成 30，预期会怎样？（自动生成参数 diff 表 + "应用并去新建回测"按钮）
+3. **生成**：帮我写一个"周线 RSI 超卖反弹"的策略草案（输出 TS 代码草案 + 复制按钮）
+4. **通用问答**：自由问题兜底
+
+### Files changed
+- **NEW** `backend/src/services/StrategyCopilotService.ts` (878 lines)
+  - `COPILOT_INTENTS` (4 种: explain_backtest / suggest_params / generate_draft / general) + `NLP_ENGINES` 常量
+  - `StrategyCopilotDataSource` 接口 (4 方法: loadStrategy / loadRecentBacktests / callRemoteCopilot / saveConversation)
+  - `DefaultStrategyCopilotDataSource` 生产实现 (Sequelize + TradingAgents axios)
+  - 14 个 export 纯函数 (nullableNumber / normalizeBacktestLookback / normalizeIntent / formatBacktestSummary / safeJsonStringify / parseStrategyDraft / buildPromptContext / buildPromptText / buildHeuristicFallback / buildResponseFromPayload / extractKeyDelta / buildConversationId)
+  - `StrategyCopilotService.askCopilot(prompt, options)` 主入口 + `loadContext()` 辅助方法
+  - 启发式 fallback 4 种 intent 分支 (sharpe 4 档分级 / drawdown stop loss / generate 提示 universe+entry+exit / general 列 3 能力)
+- **MODIFIED** `backend/src/api/controllers/AIAdvisorController.ts` (+243 lines)
+  - 新增 3 个 method: `askStrategyCopilot` (sync POST) + `streamStrategyCopilot` (SSE) + `getStrategyCopilotContext` (lazy load)
+- **MODIFIED** `backend/src/api/routes/ai.routes.ts` (+36 lines)
+  - 3 新路由: POST `/strategy-copilot` (Private) + GET `/strategy-copilot/stream` (Public for EventSource) + GET `/strategy-copilot/context` (Private)
+- **NEW** `frontend/src/services/strategyCopilotService.ts` (149 lines)
+  - 类型 mirror backend (CopilotIntent / BacktestSummary / StrategyMeta / CopilotContext / CopilotResponse)
+  - `askStrategyCopilot` / `loadStrategyCopilotContext` axios + `diffSuggestedParams` 纯函数
+- **NEW** `frontend/src/components/trading/StrategyCopilotPanel.tsx` (539 lines)
+  - FloatButton 右下角触发 + Drawer (480px) 聊天面板
+  - 顶部 context 区 (策略名 + 类别 + risk + 最近 sharpe)
+  - 快捷意图按钮 (3 个 QUICK_PROMPTS Tag)
+  - 消息列表 (ChatBubble 子组件区分 user/assistant + pending Spin + intent Tag + 启发式兜底 Tag + 失败 Tag)
+  - 参数 diff Table (key / before / after + "应用并去新建回测"按钮)
+  - 策略草案 pre 代码块 + 复制按钮
+  - TextArea (Cmd/Ctrl+Enter 发送)
+- **MODIFIED** `frontend/src/pages/workspace/LabWorkspace.tsx` (+30 lines)
+  - import + render `<StrategyCopilotPanel currentStrategyKey={seedStrategyKey} onApplySuggestedParams={...} />`
+  - onApplySuggestedParams: 合并 suggested_params 进 params_text JSON + 切到新建回测 tab
+- **NEW** `backend/tests/services/strategy-copilot-service.test.ts` (685 lines, 205 assertions, 0 failed)
+  - 12 个纯函数测试 (normalizeIntent 11 case / formatBacktestSummary 7 case / buildPromptText / buildHeuristicFallback 9 case 含 4 intent 分支 / buildResponseFromPayload 10 case / extractKeyDelta 8 case / buildConversationId / parseStrategyDraft 9 case / safeJsonStringify 循环引用 / nullableNumber 10 case / normalizeBacktestLookback 10 case)
+  - 9 个 service.askCopilot e2e (success / remote FAILED → partial / remote throws → 双重防御 / dry_run=true 不写表 / saveConversation throws → fail-OPEN + metadata.save_error / 无 strategy_key 跳 load / intent_override 优先 / conversation_id 续接 / context load 失败仍能调远端)
+  - 1 个 loadContext e2e (default lookback / custom lookback / null strategy_key 跳 DataSource)
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` ✓ clean
+- `cd backend && ./node_modules/.bin/eslint src/services/StrategyCopilotService.ts src/api/controllers/AIAdvisorController.ts src/api/routes/ai.routes.ts --quiet` ✓ clean (3 prettier 格式 auto-fixed)
+- `cd frontend && ./node_modules/.bin/tsc --noEmit` ✓ clean
+- `cd frontend && ./node_modules/.bin/eslint src/services/strategyCopilotService.ts src/components/trading/StrategyCopilotPanel.tsx src/pages/workspace/LabWorkspace.tsx --ext .ts,.tsx --quiet` ✓ clean
+- `cd backend && npx ts-node --transpile-only tests/services/strategy-copilot-service.test.ts` ✓ 205 passed, 0 failed
+- Browser verification: 手动 (no dev-browser MCP available in this environment)
+
+### Learnings for future iterations
+- **Copilot vs 单次 K 线解读的存储差异 — 不复用 US-061 24h TTL 缓存**: K 线解读 (US-061) 同 stock+lookback 24h 内重复请求很常见 (用户重看历史), 缓存命中率高且安全。Copilot 对话**每条问句都是独立上下文** (prompt 字符 + strategy + 回测数据 + intent 全不同), 缓存命中率近 0 且会误导用户 (旧问题的旧答案配在新 prompt 上)。**判据**: AI feature 缓存模式按"输入维度数" 选 — 维度少且离散 (stock_code + lookback_days 2 维) → 走 TTL 缓存; 维度多且开放 (prompt 自由文本 + intent + strategy_key + history) → 不缓存每次新调远端。下次 US-067 KOL 观点聚合 (维度: stock_code 1 维) 复用 TTL; US-074 黑天鹅监测 (持仓 array) 也不缓存。
+- **强意图正则 must 在弱意图正则之前 (normalizeIntent 实现教训)**: "帮我写一个策略，能解释 sharpe" 同时含 generate_draft 关键词 (写策略) 和 explain_backtest 关键词 (解释 sharpe)。**用户写"策略"是动作宾语，"解释"只是修饰意图** — 必须先 match generate_draft 再 fallthrough。**正确顺序**: generate_draft > suggest_params > explain_backtest > general (强 → 弱 → 兜底)。同款规则在 US-055 normalizeRecommendation (strong_buy 在 buy 前 / strong_sell 在 sell 前) 已确立 — Copilot intent classification 走同款。**编 regex 时**：(1) 写测试覆盖混合场景 (`'写策略，解释 sharpe'` 必须 match generate_draft), (2) regex 优先级 = if-return 顺序, 不要用 switch (switch 内多 regex 互不区分优先级), (3) 改 regex 后必须跑 mixed-keyword 测试断言强类胜出。下次 US-074 / US-091 任何 AI feature 加 intent 分类按此 3 项。
+- **`nullableNumber` 必须显式过滤空字符串** (本 story 重大教训): `Number('') === 0` 是 JS 大坑 — Sequelize 读 nullable DECIMAL 列可能返回 `''` (而非 null), 不过滤会让"未填收益"算成"0% 收益"误导用户。**正确实现**: `if (typeof raw === 'string' && raw.trim() === '') return null` 必须在 `Number(raw)` 之前。同款已在 US-031 Number(null)===0 教训确立，本 story 进一步细化为"空字符串也要 fail-fast"。下次任何 nullable numeric 处理都加 trim()==='' 显式过滤。
+- **SSE 透传上游 + 同步 final fallback 模式 (US-055 streamSingleStockAnalysis 复用)**: Copilot 的 streamStrategyCopilot endpoint 完全照搬 US-055 的 SSE 透传范式 — 上游 TradingAgents SSE 可达时透传 raw chunks，最后一次 sync `askCopilot` 落库 + 发 'completed' event 给前端拿 structured result。**关键设计**: (1) 上游 SSE 不可用时 `.catch(() => null)` 优雅降级（不让 axios 抛出阻塞整个 endpoint）; (2) 最后必须一次 sync 调用确保数据库有记录 + 前端拿 structured result (即使上游 raw event 内容已透传); (3) SSE endpoint 不挂 auth (EventSource 无法方便传 Bearer Header), 这是 US-055 已建立的约定。下次任何 AI feature 需要 SSE (US-065/067 实时推送 / US-074 黑天鹅监测) 都照搬此 3 项模式。
+- **Frontend FloatButton + Drawer 模式 (本 story 首次引入)**: 工作区右下角浮聊天面板 = `<FloatButton icon={<RobotOutlined />} type="primary" />` 触发 `<Drawer placement="right" width={480} />`。**关键 styling**: `styles={{ body: { display: 'flex', flexDirection: 'column', padding: 0 } }}` 让 Drawer 内 4 块 (context / quick-prompts / 消息 / 输入) 用 flex 1 撑开占满，输入框 sticky 在底部。**消息列表 background = `#f6f8fa`** 与 chat 体感一致 (类 Slack/微信)。**ChatBubble 子组件**: 用户消息右对齐 + 蓝底白字 + UserOutlined; 助手左对齐 + 白底 + RobotOutlined; pending 时显示 `<Spin />` + "正在思考..." 文案。下次 US-074 黑天鹅 / US-091 系统健康度的"AI 提示弹层"都可复用此模板。
+- **跨 tab 数据流: Copilot → 新建回测 (本 story 引入)**: 用户在 Copilot 里点"应用建议参数"时，**不要直接覆盖 params_text** —— 而是与既有 `existingRaw` JSON merge (`{...existing, ...params}`) 让用户的手动改动不被覆盖。如果 existingRaw 解析失败就 fall back 直接用建议参数。同时 setSeedStrategyKey + setActiveKey('new') 让 UI 立刻切到新建回测 tab。下次任何"AI 建议 → 表单回写"的工作流 (US-065 邮件周报 AI 建议 → 调仓表单 / US-067 KOL 建议 → 关注列表) 都按此 merge-not-overwrite + 切 tab 模板。
+- **DataSource saveConversation noop 默认 (本 story 引入)**: 与 US-055 / US-061 saveReport 落库不同，Copilot 对话**默认不持久化** (DefaultStrategyCopilotDataSource.saveConversation 是 noop)，原因: (1) 用户每次问话独立上下文，会话历史价值低; (2) 自由文本 prompt 容易包含敏感策略参数，落库需考虑加密; (3) 未来引入会话历史表只需改 DefaultStrategyCopilotDataSource 不影响 service / 单测 fake。**fail-OPEN on saveConversation throw**: 即便未来引入会话表，DB 写失败也必须 catch + warn + `metadata.save_error` 不阻塞 UI 拿到 reply。同款 fail-OPEN 已在 US-055/056/061 落库 throw 时确立。
+---
+
