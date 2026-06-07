@@ -46,3 +46,4 @@ export * from './LimitUpStock';
 export * from './IndustryFlow';
 export * from './FactorScore';
 export * from './EarningsForecast';
+export * from './IndexComponent';

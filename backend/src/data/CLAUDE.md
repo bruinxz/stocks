@@ -187,6 +187,42 @@ Implications:
   log a warn but don't reject. Some upstream calendars publish off-quarter
   revisions; future proofing.
 
+## Reference / index data (US-020 IndexComponent)
+
+Some AKShare endpoints serve **slow-changing reference data** — index
+constituents, famous-trader seat lists, sector classifications. They follow
+the "real-time snapshot, date is a label" pattern from US-008 industry-flow,
+**plus** an extra subtlety: callers usually want "the latest known snapshot
+≤ asOfDate", not "today's data". Strategies should query with `Op.lte` ordering
+DESC to grab the latest snapshot, accepting a few days of staleness.
+
+Concrete US-020 example: `IndexComponent` table holds (trade_date, index_code,
+stock_code) constituent snapshots. `CTA100MomentumStrategy.loadIndexUniverse()`
+queries `IndexComponent.findOne({ trade_date: { Op.lte: asOfDate }, index_code:
+'000852' }, order: [['trade_date','DESC']])` to find the most recent sync,
+then loads all rows for that `(snapshot_date, index_code)` as the universe.
+
+Implications:
+
+- **Multi-index support via composite PK**: `(trade_date, index_code, stock_code)`
+  lets one snapshot date hold N indexes (000300/000852/000905 etc.) — callers
+  filter by `index_code` to select universe.
+- **CLI exposes both `--index=<code>` and `--indexes=<codes>` flags** so cron
+  can sync multiple indexes for the same date in one invocation; the service's
+  `syncIndexes` loops with per-index `skipExisting` checkpoint.
+- **`raw_payload` keeps the source df row** + the AKShare helper attempts the
+  best-effort weight endpoint (`index_stock_cons_weight_csindex`) on CSI series;
+  failing it returns `weight=null` per row rather than failing the whole sync.
+  Many use cases (CTA100 momentum) don't need weight.
+- **Index code normalization**: 6-digit code without suffix (`000852`, not
+  `000852.SH` or `CSI1000`); matches the `stock_code` convention in 5 sibling
+  tables (NorthboundHolding / DragonTigerBoard / LimitUpStock / IndustryFlow /
+  FactorScore).
+- **`_KNOWN_INDEX_NAMES` Python dict** fallback: if AKShare's df doesn't carry
+  Chinese name (some endpoints don't), the helper hard-codes a short list
+  (000016 上证 50, 000300 沪深 300, 000852 中证 1000, etc.) so `index_name`
+  is rarely null for mainstream indexes.
+
 ## Worktree gotcha (still active as of US-005)
 
 The git worktree has no `backend/node_modules`. Symlink before typecheck:

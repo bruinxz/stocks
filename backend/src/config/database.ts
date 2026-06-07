@@ -46,6 +46,7 @@ import { LimitUpStock } from '../models/LimitUpStock';
 import { IndustryFlow } from '../models/IndustryFlow';
 import { FactorScore } from '../models/FactorScore';
 import { EarningsForecast } from '../models/EarningsForecast';
+import { IndexComponent } from '../models/IndexComponent';
 import { LiveBrokerAccount } from '../models/LiveBrokerAccount';
 import { LiveAccountSnapshot } from '../models/LiveAccountSnapshot';
 import { LivePosition } from '../models/LivePosition';
@@ -121,6 +122,7 @@ const sequelize = new Sequelize({
     IndustryFlow,
     FactorScore,
     EarningsForecast,
+    IndexComponent,
     LiveBrokerAccount,
     LiveAccountSnapshot,
     LivePosition,

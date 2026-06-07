@@ -1735,6 +1735,168 @@ def _row_to_jsonable(row, columns) -> Dict[str, Any]:
     return raw
 
 
+# 已知 A 股主流指数 → 中文名（用于在 raw_payload 缺名称时兜底）
+_KNOWN_INDEX_NAMES: Dict[str, str] = {
+    '000016': '上证50',
+    '000300': '沪深300',
+    '000905': '中证500',
+    '000852': '中证1000',
+    '000688': '科创50',
+    '399006': '创业板指',
+    '399330': '深证100',
+}
+
+
+def get_index_components(index_code: str, trade_date: str) -> List[Dict[str, Any]]:
+    """
+    Fetch the current constituents of an A-share stock index.
+
+    Used by US-020 (CTA100MomentumStrategy reads index_code='000852' = 中证 1000)
+    plus future stories US-021 / US-028 that need other indexes. The output is
+    stamped with `trade_date` so callers can snapshot the universe daily even
+    though AKShare returns the "current" constituents (it has no historical
+    constituent endpoint — date is a label, not a filter, same convention as
+    industry-flow in US-008).
+
+    Strategy:
+      Primary endpoint = `ak.index_stock_cons_sina(symbol=<index_code>)`
+        - Returns: 品种代码 / 品种名称 / 纳入日期 (sometimes) / industry classification
+        - Most reliable cross-index coverage; works for 000300/000852/000905/000016.
+      Fallback endpoint = `ak.index_stock_cons(symbol=<index_code>)`
+        - Plain wrapper; called only if sina endpoint dies (rare API outage).
+      Weights endpoint (best-effort) = `ak.index_stock_cons_weight_csindex(symbol=...)`
+        - 中证指数公司提供权重，但只对 CSI 系列有效 (000300/000852/000905 等)
+        - Failing this endpoint is non-fatal — we just emit rows with weight=None.
+
+    Args:
+        index_code: 6-digit index code without suffix, e.g. '000852' = 中证 1000.
+        trade_date: ISO YYYY-MM-DD or YYYYMMDD. Stamped onto every output row.
+
+    Returns:
+        List of dicts: {trade_date, index_code, index_name, stock_code, stock_name,
+        weight, raw_payload}. Returns [] on empty / error so caller can
+        checkpoint a "tried" date.
+    """
+    try:
+        pure_date = trade_date.replace('-', '')
+        iso_date = _format_iso_date(pure_date)
+
+        print(f"Fetching index components for {index_code} (stamp={iso_date})...", file=sys.stderr)
+
+        # ----- 1) Primary: index_stock_cons_sina -----
+        df_cons = None
+        for fn_name, fn in [
+            ('index_stock_cons_sina', getattr(ak, 'index_stock_cons_sina', None)),
+            ('index_stock_cons', getattr(ak, 'index_stock_cons', None)),
+        ]:
+            if fn is None:
+                continue
+            try:
+                df_cons = fn(symbol=index_code)
+            except TypeError:
+                try:
+                    df_cons = fn(index_code)
+                except Exception as e:
+                    print(f"{fn_name}({index_code}) failed: {e}", file=sys.stderr)
+                    df_cons = None
+            except Exception as e:
+                print(f"{fn_name}({index_code}) failed: {e}", file=sys.stderr)
+                df_cons = None
+
+            if df_cons is not None and not df_cons.empty:
+                print(f"Got {len(df_cons)} rows from {fn_name}", file=sys.stderr)
+                break
+
+        if df_cons is None or df_cons.empty:
+            print(f"All AKShare constituent endpoints empty for {index_code}", file=sys.stderr)
+            return []
+
+        # ----- 2) Best-effort: 权重表 (CSI 系列) -----
+        weights_by_code: Dict[str, float] = {}
+        weight_fn = getattr(ak, 'index_stock_cons_weight_csindex', None)
+        if weight_fn is not None:
+            try:
+                df_w = weight_fn(symbol=index_code)
+                if df_w is not None and not df_w.empty:
+                    # 列名搜索 '成份券代码' / '股票代码' / 'code'，权重列 '权重' / 'weight'
+                    code_col = None
+                    weight_col = None
+                    for col in df_w.columns:
+                        col_s = str(col)
+                        if col_s in ('成份券代码', '股票代码', '证券代码', 'code') and not code_col:
+                            code_col = col_s
+                        if col_s in ('权重', '权重(%)', 'weight') and not weight_col:
+                            weight_col = col_s
+                    if code_col and weight_col:
+                        for _, wr in df_w.iterrows():
+                            raw_c = wr.get(code_col)
+                            if raw_c is None or pd.isna(raw_c):
+                                continue
+                            c_str = str(raw_c).strip().zfill(6)
+                            w_val = safe_float_value(wr.get(weight_col))
+                            if w_val is not None:
+                                weights_by_code[c_str] = w_val
+                        print(f"Loaded {len(weights_by_code)} weights from csindex", file=sys.stderr)
+            except Exception as e:
+                # 非致命；权重缺失就发 None
+                print(f"Weight endpoint failed (non-fatal): {e}", file=sys.stderr)
+
+        # ----- 3) 列名柔性映射 -----
+        code_col: Optional[str] = None
+        name_col: Optional[str] = None
+        for col in df_cons.columns:
+            col_s = str(col)
+            if col_s in ('品种代码', '股票代码', '证券代码', 'code', 'symbol') and not code_col:
+                code_col = col_s
+            if col_s in ('品种名称', '股票名称', '证券简称', 'name', '股票简称') and not name_col:
+                name_col = col_s
+
+        if not code_col:
+            print(f"Cannot locate stock_code column in df_cons. cols={list(df_cons.columns)}", file=sys.stderr)
+            return []
+
+        index_name = _KNOWN_INDEX_NAMES.get(index_code)
+
+        result: List[Dict[str, Any]] = []
+        seen_codes = set()
+        for _, row in df_cons.iterrows():
+            raw_code = row.get(code_col)
+            if raw_code is None or pd.isna(raw_code):
+                continue
+            stock_code = str(raw_code).strip().zfill(6)
+            # 跳过已重复或非数字代码（部分接口含非 A 股标的）
+            if not stock_code.isdigit() or len(stock_code) != 6:
+                continue
+            if stock_code in seen_codes:
+                continue
+            seen_codes.add(stock_code)
+
+            stock_name = None
+            if name_col:
+                raw_n = row.get(name_col)
+                if raw_n is not None and not pd.isna(raw_n):
+                    stock_name = str(raw_n).strip() or None
+
+            weight = weights_by_code.get(stock_code)
+
+            result.append({
+                "trade_date": iso_date,
+                "index_code": index_code,
+                "index_name": index_name,
+                "stock_code": stock_code,
+                "stock_name": stock_name,
+                "weight": weight,
+                "raw_payload": _row_to_jsonable(row, df_cons.columns),
+            })
+
+        print(f"Parsed {len(result)} index constituents for {index_code}", file=sys.stderr)
+        return result
+    except Exception as e:
+        print(f"Error getting index components for {index_code}: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return []
+
+
 def main():
     """Main entry point for command line calls"""
     if len(sys.argv) < 2:
@@ -1837,6 +1999,15 @@ def main():
 
             report_period = sys.argv[2]
             result = get_earnings_forecast(report_period)
+
+        elif command == "get_index_components":
+            if len(sys.argv) < 4:
+                print(json.dumps({"error": "Missing index_code or trade_date for get_index_components"}), file=sys.stderr)
+                sys.exit(1)
+
+            index_code = sys.argv[2]
+            trade_date = sys.argv[3]
+            result = get_index_components(index_code, trade_date)
 
         else:
             print(json.dumps({"error": f"Unknown command: {command}"}), file=sys.stderr)

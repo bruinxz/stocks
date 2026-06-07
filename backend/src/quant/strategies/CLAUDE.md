@@ -33,14 +33,15 @@ evaluate 模型表达不出。
 - 入参：交易日 + 可选 `{ params?, previousSelection? }`
 - 出参：`{ target_portfolio, signals: BUY/SELL/HOLD[], filtered, params, ... }`
 
-典型例子（截至 US-019 共 4 个）：
+典型例子（截至 US-020 共 5 个）：
 - `MultiFactorAlphaStrategy`（多因子 alpha 月度轮动）
 - `DragonHeadMomentumStrategy`（短线龙头战法 — 事件驱动每日）
 - `EarningsSurpriseStrategy`（业绩预告超预期 + 北向加仓双确认 — 事件驱动）
 - `NorthboundFollowStrategy`（北向资金大幅加仓跟随 — 中线每日扫描全市场）
+- `CTA100MomentumStrategy`（中证 1000 动量 — 指数受限 universe + 月度调仓）
 
-后续 story 中其他组合级策略：US-020 CTA100MomentumStrategy、
-US-021 SectorRotationLeaderStrategy、US-028 EnsembleStrategy 等。
+后续 story 中其他组合级策略：US-021 SectorRotationLeaderStrategy、
+US-022 HighDividendValueStrategy、US-028 EnsembleStrategy 等。
 
 ## 组合级策略的设计约定（US-011 制定）
 
@@ -216,3 +217,52 @@ entry 判定（delta ≥ 0.5%）又给 exit 判定（delta ≤ -0.3%）。**生�
 guard——这是跟随策略的命脉。US-019 的优先级 A→B→C（到期 > 止损 >
 北向减仓）让"硬约束"优先于"软信号"，避免短期减仓噪音过早赶走还在
 浮盈的持仓。
+
+## 指数受限 universe（US-020 CTA100MomentumStrategy）
+
+某些策略**不在全市场扫描，也不在事件源里扫描，而是限定在一个指数的成份股
+集合内**做横截面打分。CTA100 = 中证 1000 (000852) 成份股是第一个例子；
+未来 US-022 HighDividendValue 可能限 沪深 300，US-026 LeftSideReversal
+可能限 中证 500，等等。
+
+DataSource 接口的设计：
+
+```ts
+loadIndexUniverse(asOfDate, indexCode): Promise<IndexUniverseSnapshot>
+loadMomentumBars(asOfDate, stockCodes, minTradingDays): Promise<Map<...>>
+loadStockMeta(stockCodes): Promise<Map<...>>
+```
+
+**关键约定**：
+- **`loadIndexUniverse` 返回 `≤ asOfDate` 的最新一日 snapshot**（不要求
+  asOfDate 当日必须有 sync）。因为指数成份**月内变化稀少**（季度调样），
+  上次 sync 早一周也无伤大雅；如果硬要"当日必须有"会让月初调仓时正好
+  遇到周末缺数据就崩。同款的"允许小幅 staleness"逻辑可以照搬到
+  US-021 行业轮动选龙头、US-088 龙虎榜机构分类等"参考数据"场景。
+- **`IndexUniverseSnapshot` 同时返回 `snapshot_date`**，让日志能审计
+  "今天用的是哪一天的成份"。如果 snapshot_date 落后超过 30 天就该
+  告警，月度调仓策略不应该用 3 个月前的成份。
+- **历史 bar 拉取按交易日计算，不按日历日**。`minTradingDays = lookbackDays +
+  skipRecentDays + 2`（+2 buffer），转日历日窗口用 `× 2 + 30` 覆盖春节
+  + 十一假期。bars 升序后从尾部 indexing (`bars[length - 1 - N]`) 比
+  按日期匹配更稳。
+- **`loadMomentumBars` 接口让单测可以精准注入** "61/65/66 条 bar" 边界用
+  例验证 `fail_insufficient_history` 判定，避免依赖 DailyBar 真实数据。
+
+**指数受限 vs 全市场扫描 vs 事件驱动 的对比**：
+
+| 维度 | 全市场 (MultiFactor) | 事件驱动 (EarningsSurprise) | 指数受限 (CTA100) |
+|------|--------------------|----------------------------|------------------|
+| Universe 来源 | factor_scores 全集 | 当日 forecast 公告 | (asOfDate, indexCode) 成份 |
+| Universe 大小 | ~5000 | 0-50 | 100-1000 |
+| 更新频率 | 每日 | 报告期密集时段 | 季度（月度感知 OK） |
+| eligible=0 含义 | 数据问题 | 当日无事件（正常） | sync 没跑（异常） |
+| Universe loader 接受 stockCodes | 否 | 否（自带过滤） | 否（自带过滤） |
+
+**新增动量公式不依赖 factor_scores 的设计**：CTA100 把动量计算
+（close[T-5]/close[T-60] - 1）写死在策略内，**不通过 FactorPipeline**。原因：
+(1) FactorPipeline 的 MomentumFactor 是横截面 z_score 标准化后的产物，
+对 CTA100 这种"指数内打分"不友好（每日横截面应是中证 1000 内的相对动量，
+不是全市场）；(2) 让 CTA100 在 factor_scores 表还没回填的历史窗口里也能跑，
+便于回测验证。如果未来要做"指数内多因子"，应当在 FactorPipeline 里加
+`universe='000852'` 参数让 z_score 按指数内截面算，而不是强行复用全市场 z。

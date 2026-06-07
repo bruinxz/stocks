@@ -26,6 +26,7 @@
     "sync:limit-up": "ts-node src/scripts/sync-limit-up.ts",
     "sync:industry-flow": "ts-node src/scripts/sync-industry-flow.ts",
     "sync:earnings-forecast": "ts-node src/scripts/sync-earnings-forecast.ts",
+    "sync:index-components": "ts-node src/scripts/sync-index-components.ts",
     "compute:factors": "ts-node src/scripts/compute-factors.ts",
     "paper:reset-and-run-quant": "ts-node src/scripts/reset-paper-trading-and-run-quant.ts",
     "seed:mock": "ts-node src/scripts/seed-mock-data.ts",

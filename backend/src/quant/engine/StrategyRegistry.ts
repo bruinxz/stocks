@@ -19,6 +19,7 @@ import { MultiFactorAlphaStrategy } from '../strategies/MultiFactorAlphaStrategy
 import { DragonHeadMomentumStrategy } from '../strategies/DragonHeadMomentumStrategy';
 import { EarningsSurpriseStrategy } from '../strategies/EarningsSurpriseStrategy';
 import { NorthboundFollowStrategy } from '../strategies/NorthboundFollowStrategy';
+import { CTA100MomentumStrategy } from '../strategies/CTA100MomentumStrategy';
 import { QuantStrategyDefinition } from '../types/QuantTypes';
 
 export class StrategyRegistry {
@@ -45,6 +46,7 @@ export class StrategyRegistry {
     this.register(new DragonHeadMomentumStrategy());
     this.register(new EarningsSurpriseStrategy());
     this.register(new NorthboundFollowStrategy());
+    this.register(new CTA100MomentumStrategy());
   }
 
   register(strategy: QuantStrategy) {
