@@ -1,12 +1,14 @@
-# Factor 基础设施 (US-009 + US-010 + US-029 + US-030)
+# Factor 基础设施 (US-009 + US-010 + US-029 + US-030 + US-031)
 
 `backend/src/quant/factors/` 是 A 股多因子打分体系的基础设施层。US-009
 落地了**注册中心 + 横截面 pipeline + 标准化工具 + FactorScore 模型**；
 US-010 在 `library/` 下注册了 **8 个基础因子**（`value` / `quality` / `growth` /
 `momentum` / `low_vol` / `northbound` / `money_flow` / `dragon_tiger`）；
 US-029 增加了第 9 个 `liquidity` 因子（流动性 U 形评分）；US-030 增加了
-第 10 个 `analyst_consensus` 因子（分析师 EPS 一致预期上修方向）。后续 story
-在 `library/` 下追加新文件即可，无需改 Pipeline / Registry。
+第 10 个 `analyst_consensus` 因子（分析师 EPS 一致预期上修方向）；US-031
+增加了第 11 个 `quality_high` 因子（高阶质量 = ROIC 代理 + 毛利率稳定性 +
+净利率代理 等权合成）。后续 story 在 `library/` 下追加新文件即可，无需改
+Pipeline / Registry。
 
 ## 目录约定
 
@@ -138,7 +140,7 @@ US-033 等"贴现 / 偏离"类因子按此例外处理；普通线性因子仍�
 - **缺数据 ≠ 因子失效**：缺数据返回稀疏 Map；因子失效（例如 PE<=0）应该
   `continue` 不写入这只股票，让 Pipeline 把它当作中性。
 
-## US-010 落地的 8 个基础因子 + US-029 LiquidityFactor + US-030 AnalystConsensusFactor (参考实现)
+## US-010 落地的 8 个基础因子 + US-029 LiquidityFactor + US-030 AnalystConsensusFactor + US-031 QualityHighFactor (参考实现)
 
 | 因子 name | 类别 | 数据源 | 失效条件 |
 |---|---|---|---|
@@ -152,6 +154,7 @@ US-033 等"贴现 / 偏离"类因子按此例外处理；普通线性因子仍�
 | `dragon_tiger` | flow | DragonTigerBoard | 窗口内无 famous_yz 且 net_amount > 0 的行 |
 | `liquidity` | liquidity | DailyBar.turnover_rate | 单只股票有效 turnover_rate < 10 个 / 全市场样本 < 2 |
 | `analyst_consensus` | sentiment | AnalystForecast (US-030) | 90 日窗口内有效研报 < 5 / 任一年度 recent\|baseline 空 / baseline avg ≈ 0 |
+| `quality_high` | quality | FinancialReport(年报)+StockFundamentalFactor.gross_margin | 任一子分量缺失：年报缺 / gross_margin 观测 < 5 / revenue ≤ 0 |
 
 **典型查询模式（US-029+ 添加新因子可直接复制）**：
 
@@ -189,6 +192,34 @@ US-033 等"贴现 / 偏离"类因子按此例外处理；普通线性因子仍�
   纯函数 helper（mean / isoDateMinusDays / computeRevisionPerYear / aggregateRevisions）
   全部 `export`，单测可独立调用不走 DB。属"绝对业务量"因子（per-stock 自身新旧
   EPS 之比），走标准模式 — 不属 LiquidityFactor 横截面参照例外。
+- ✅ `quality_high` (US-031) 用 **3 子分量等权合成**：ROIC 代理 (FinancialReport.roe 最新年报)
+  + 毛利率 5 年稳定性 (1/sd, sd clamp 到 MIN_GROSS_MARGIN_SD=0.05% 防爆炸) + 净利率代理
+  (net_profit/revenue × 100)。**任一子分量缺失 → 整体 null**（与 quality 缺 debt 仍能算
+  ROE 的"宽容"策略不同 —— 3 维度异构，缺一项用 0 代入会让另两项被人为放大）。**纯函数
+  helper（sampleStddev / computeGrossMarginStability / computeNetMargin / combineQualityHigh）
+  全 export，单测独立调用不走 DB。属"绝对业务量"因子（per-stock 自身 3 个财务量），
+  走标准模式。
+
+### 关键代理记号（US-031 引入 "AC 数学公式 ≠ 数据可得" 的处理范式）
+
+当 AC 指定的公式所需字段在当前数据模型不可得（如 NOPAT / 投入资本 /
+自由现金流 / 资本支出），**先用学术认可的代理替代 + 把代理标注在 description
+与 jsdoc 顶部，不要默默改公式名**。判据：
+
+1. **代理必须有学术 / 实证依据**：ROE 与 ROIC 在 A 股相关性 0.85+ (Fama-French
+   类研究)；净利率与 FCF/Revenue 在稳态企业相关性 0.6+。不要瞎编代理。
+2. **factor.name 保留 AC 命名**（如 `quality_high`），不要悄悄改成 `quality_proxy`
+   或 `quality_high_v0` —— 既污染 FactorRegistry 命名空间，下游又要做映射。
+3. **description 字段显式包含"代理"字样**（如 "ROIC 代理(ROE 最新年报)"），
+   让前端 / 报告 / FactorIC 自动暴露代理事实。
+4. **jsdoc 写清三件事**：(a) AC 原始公式 (b) 当前数据不可得的具体字段 (c) 选定的
+   学术代理与系数 (d) 未来引入完整数据后的"升级路径"（如"US-034+ 引入现金流量表后
+   可换 FCF/Revenue 真公式"）。
+5. **TS factor 文件 + 本 CLAUDE.md 同时记录**，让下游策略接入新因子时一眼看到代理边界。
+
+任何后续 story 遇到"AC 指定字段不可得"都按此范式处理；不要硬塞 placeholder
+（如 `roic = 0`）或 NOPAT 用净利润替代（差异太大不算合理代理）。`quality_high`
+的 jsdoc 顶部 70 行是参考实现。
 
 ## 添加新因子的 checklist (US-029+)
 

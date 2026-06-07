@@ -13,9 +13,9 @@
  *      避免双重事实源；类型在 quant/factors/index.ts 已暴露。
  *
  * US-010 注册的 8 个基础因子 + US-029 流动性因子 + US-030 分析师一致预期因子
- * （顺序按文件名字母序，与 .listNames() 排序一致）：
+ * + US-031 高阶质量因子（顺序按文件名字母序，与 .listNames() 排序一致）：
  *   analyst_consensus / dragon_tiger / growth / liquidity / low_vol / momentum /
- *   money_flow / northbound / quality / value
+ *   money_flow / northbound / quality / quality_high / value
  */
 
 import './AnalystConsensusFactor';
@@ -27,6 +27,7 @@ import './MomentumFactor';
 import './MoneyFlowFactor';
 import './NorthboundFactor';
 import './QualityFactor';
+import './QualityHighFactor';
 import './ValueFactor';
 
 export {}; // 保留 ESM 模块标记

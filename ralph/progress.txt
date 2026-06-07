@@ -58,6 +58,10 @@
 - **横截面参照 U 形评分例外 (US-029 LiquidityFactor)** — 设计约束 #1 "因子不做归一化" 的明确例外：当因子的**经济意义本身**就需要一个横截面参照点（U 形评分 / 距均值偏离 / 横截面贴现），在 compute() 内做*单点参照*的简单变换（如 `-|(value - P30)/sd|`）属于因子语义本体，不属"额外标准化"。判据：参照统计量是因子语义的一部分（"过低过高都减分"没有 P30/sd 表达不出）就属此例外；只是"想让分布更好看"则属普通归一化，仍禁止内置。Pipeline 后续仍照常 winsorize+zscore，跨因子可比性维持不变。复杂因子的 pure-math helper（quantileAtSortedAsc / sampleStddev / liquidityPenaltyScore / computeAvgTurnoverFromBars）抽成 `export function`，让单测可独立调用纯函数 — 不要把所有逻辑塞进 compute() 内闭包。后续 US-031 / US-033 等"贴现 / 偏离"类因子按此例外处理。
 - **时序窗口因子必须防 lookahead bias (US-030 AnalystConsensusFactor)**：任何走 `[as_of - N days, as_of]` 时间窗的因子，**必须**在 compute() / pure helper 内显式 `if (row_date > as_of_date) continue;`。理由：回测引擎可能在数据库装载新数据后才回放历史，stage 间 timing 错位让 "未来" 行混进窗口。单测必须显式构造一条 `row_date > as_of_date` 的极端值（如 999.0），断言 revision 不被污染。所有走时序窗口的因子都应有此测试 — 少一道防御就成 lookahead bias 灾难。
 - **绝对业务量 vs 横截面参照量 二分类 (US-030 起明确化)**：US-029 LiquidityFactor 引入了"横截面参照量"例外（设计约束 #1 的例外）。US-030 AnalystConsensusFactor 计算 per-stock 自身新旧 EPS 之比，**完全不参照横截面**——属第一类（绝对业务量），走标准模式。**判据**：raw_value 公式里是否出现"全市场 X 的分位 / 均值 / sd"？是 → 例外类（compute() 内可做单点参照变换）；否（只看本股自己历史 / 自己同年度数据）→ 标准类（compute() 内**禁止**任何归一化变换）。下次新因子设计时先做此分类。
+- **AC 字段不可得时的代理替代范式 (US-031 引入)**：当 AC 指定的公式所需字段在当前数据模型不可得（NOPAT / 投入资本 / 自由现金流 / 资本支出 / 税率明细），按 5 步处理：(1) **代理必须有学术 / 实证依据** (ROE↔ROIC 0.85+ 相关性 / 净利率↔FCF/Rev 0.6+，不要瞎编代理)；(2) **factor.name 保留 AC 命名**（不要悄悄改成 `_proxy` / `_v0` 污染 Registry 命名空间）；(3) **description 字段显式包含 "代理" 字样**（让前端 / 报告 / FactorIC 自动暴露）；(4) **jsdoc 写清四件事**：(a) AC 原始公式 (b) 当前数据不可得的字段 (c) 选定代理与系数 (d) 升级路径；(5) **TS factor + factors/CLAUDE.md 同时记录** 让下游策略接入新因子时一眼看到代理边界。`quality_high` 的 jsdoc 顶部 70 行是参考实现 — US-032 (EarningsSurpriseFactor) / US-033 / US-035 / US-036 同步走此范式，不要硬塞 placeholder。
+- **`Number(null) === 0` 是 JS 大坑，nullable 字段必须 fail-fast (US-031)**：Sequelize raw 模式取 DECIMAL nullable 字段可能是 `null`，`Number(null) === 0` 通过 `isFiniteNumber` 检查但会算出 "净利率 = 0 / rev = 0%" 误导下游。**任何 nullable 字段的因子运算都必须在 `Number()` 之前显式 `if (x === null || x === undefined) return null`**。`QualityHighFactor.computeNetMargin` 是参考实现；下次新因子在 Sequelize raw 取 DECIMAL nullable 字段后**先 null/undefined 检查再 Number 转换**。
+- **"任一子分量缺失 → 整体 null" vs "缺一项用 0 代入" 的判定 (US-031 引入)**：组合因子 (`quality_high` 3 子分量 / `growth` 2 子分量 / `dragon_tiger` 多日聚合) 缺数据时有两种处理路径：(A) **整体 null** (不入 Map) — 子分量来自异质维度，缺一项的 "0 代入" 会让另两项的方向被人为放大破坏因子语义。`quality_high` (盈利能力 + 稳定性 + 转化率 异质) 走此路径。(B) **缺一项用 0 代入** — 所有子分量同维度同量纲，0 代入语义合理 = "该维度未知"，不破坏因子方向。`growth` (净利润 + 营收 都是 "%" 增长率 同维) 走此路径。**判据**：子分量是否同维度同量纲 → 是用 0 代入 / 否走 null。新组合因子设计时先做此分类。
+- **复用既有 service 同款数据源 = 跨因子口径一致 (US-031 强化)**：US-031 ROIC proxy 用 `FinancialReport.roe + report_type='年报'`，与 GARPStrategy (US-024) loadRoe5yAvg 完全相同的查询条件 — 保证用户看 quality + quality_high + GARPStrategy 三处的 ROE 数字完全对应。**新因子优先复用既有 service / strategy 同款数据源**（不要平行写第二份查询），引入新数据修正时一处改全部对齐，单测共享 fixture 生成逻辑。**factor 内多源合成时 stripSuffix 模式**：`FinancialReport.stock_code` 已无后缀（与 ctx.universe 一致）；`StockFundamentalFactor.symbol` 是 "600519.SH" 形式 — 同 compute() 内混用时注释写明每张表 key 形态避免 reviewer 误判。
 - **3 query-shape patterns** to copy when adding a new factor (US-010 codified them):
   - **"Time-series aggregate" (quality/growth)**: pull `factor_date ∈ [as_of - N天, as_of]` from a `symbol`-keyed source table, group by symbol in-memory, then stripSuffix → output.
   - **"Time-series + cross-section" (momentum/low_vol)**: `loadStocksByCodes(universe)` first to get `Stock.id`, then `Op.in: stock_ids` + time range on DailyBar; group by stock_id, `arr.sort((a,b)=>a.time-b.time)`, count back from tail to align on T-N.
@@ -3256,5 +3260,125 @@ Not applicable — backend-only story (data ingestion + factor computation, no U
   失效路径，让"因子覆盖率 30%"现象有可追溯解释 — 不是"代码 bug 漏算"。
   下个新因子 (US-031 QualityHigh) 沿用此风格：每条失效都列入 jsdoc + 1 个
   覆盖测试。
+
+---
+
+## 2026/06/07 - US-031
+
+### What was implemented
+**第 11 个因子** in `backend/src/quant/factors/library/` (after value / quality / growth /
+momentum / low_vol / northbound / money_flow / dragon_tiger / liquidity /
+analyst_consensus). **`quality_high` 高阶质量因子** — 3 子分量等权重合成的
+'稳定盈利质量' 维度，与 quality (US-010 关注当前 ROE + 杠杆) 形成互补。
+
+公式：`raw_value = (Z_roic + Z_gmStability + Z_netMargin) / 3`
+
+3 子分量：
+1. **ROIC 代理** = 最近一份年报 ROE (%)。**核心代理 (data-availability 约束驱动)**：
+   AC 原始公式 NOPAT / 投入资本，但本仓库当前没有 NOPAT / invested_capital /
+   税率明细字段（也没有现金流量表落库）。学术研究里 ROE 与 ROIC 在 A 股长期
+   相关性 0.85+；既有 QualityFactor (US-010) / GARPStrategy (US-024) 都用
+   ROE 衡量盈利能力。复用 GARP 同款数据源 FinancialReport.roe + report_type='年报'
+   保证 quality + quality_high 两因子在年报口径一致。
+2. **毛利率 5 年标准差倒数** = `1 / sd(gross_margin_5y, n-1)`。数据源
+   StockFundamentalFactor.gross_margin（DECIMAL(12,4)，% 形式）。取 ctx.as_of_date
+   之前 5 年（自然日 1825 天）的 gross_margin 时序，n-1 样本标准差。倒数让
+   "波动小（稳定）→ 高分"。MIN_GROSS_MARGIN_OBSERVATIONS=5 最少有效观测；
+   MIN_GROSS_MARGIN_SD=0.05 clamp 下限防 1/sd 爆炸。
+3. **FCF/营收 比率代理** = `net_profit / revenue × 100`。**第二个代理**：AC 原始
+   公式 FCF / 营收，但本仓库当前不提供经营性现金流 / 资本支出。净利率是
+   FCF/Revenue 的常用代理（实证 0.6+ 相关性）。数据源 FinancialReport.net_profit +
+   FinancialReport.revenue（同样取 report_type='年报' 最近一份，与 ROIC 同期）。
+   revenue ≤ 0 跳过（亏损股/数据异常）；净利率可能为负不强行 clamp；单位 %
+   与 ROE 同口径直接相加合成。
+
+**等权重合成约束**：任一子分量缺失 → 整体 null（让 Pipeline 中性补全）。与
+QualityFactor 缺 debt 容忍（仍能算 ROE）的"宽容"策略不同 —— 3 维度异构，
+缺一项用 0 代入会让另两项的方向被人为放大，破坏 quality_high "高阶"语义。
+
+**关于"因子不做归一化"约束 #1**：本因子是绝对业务量（per-stock 自身 3 个
+财务量），不参照横截面统计 — 走标准模式（不属 LiquidityFactor 横截面参照例外）。
+Pipeline 后续仍做 winsorize + zscore，跨因子可比性维持不变。3 子分量等权重相加
+是因子语义本体（不是归一化），与 GrowthFactor 0.6*np + 0.4*rev 同性质。
+
+### Files changed
+- `backend/src/quant/factors/library/QualityHighFactor.ts` (new) — 240 行：jsdoc 70 行
+  详细说明 2 个代理 + AC 原始公式 + 数据不可得字段 + 升级路径；4 个 export 纯函数
+  (sampleStddev / computeGrossMarginStability / computeNetMargin / combineQualityHigh)
+  让单测可独立调用不走 DB；compute() 35 行胶水 (FinancialReport 取 latest 年报 +
+  StockFundamentalFactor 取 5 年 gross_margin 时序 + 调纯函数合成)。
+- `backend/src/quant/factors/library/index.ts` — 在 `QualityFactor` 与 `ValueFactor`
+  之间按字母序加 `import './QualityHighFactor';`；更新顶部 jsdoc 列表为 11 因子。
+- `backend/tests/factors/QualityHighFactor.test.ts` (new) — 54 用例 / 54 通过 < 1s：
+  纯函数边角覆盖完整 + Factor metadata + 常量校验 + compute(empty universe) 安全路径。
+- `backend/src/quant/factors/CLAUDE.md` — 标题改为 US-009+US-010+US-029+US-030+US-031；
+  11 因子参考实现表新增 quality_high 行；z-score-friendly 形态新增 ✅ quality_high 条目；
+  **新增 "关键代理记号" 章节** 文档化 "AC 公式所需字段不可得时的代理替代范式" 5 条。
+- `ralph/prd.json` — US-031 passes=true + 详细 notes。
+- `ralph/progress.txt` — 本条目 + Codebase Patterns 追加。
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → exit 0
+- `eslint QualityHighFactor.ts + library/index.ts --quiet --fix` → exit 0
+  (3 prettier auto-fixed: 长 if 条件单行化 / lookbackStartDate 同行 / attributes 数组单行化)
+- `npx ts-node --transpile-only tests/factors/QualityHighFactor.test.ts` → 54 passed
+- 回归：`npx ts-node tests/factors/LiquidityFactor.test.ts` → 53 passed
+- 回归：`npx ts-node tests/factors/AnalystConsensusFactor.test.ts` → all pass
+- Registry smoke：`factorRegistry.listNames().length === 11` 含 `quality_high`
+
+### 关键代理记号范式（新模式，US-031 引入）
+
+当 AC 指定的公式所需字段在当前数据模型不可得（如 NOPAT / 投入资本 / 自由现金流 /
+资本支出 / 税率明细），处理范式：
+
+1. **代理必须有学术 / 实证依据**：ROE↔ROIC 相关性 0.85+ (Fama-French 类研究)；
+   净利率↔FCF/Revenue 相关性 0.6+ (稳态企业)。不要瞎编代理。
+2. **factor.name 保留 AC 命名**（如 `quality_high`），不要悄悄改成 `quality_proxy`
+   或 `quality_high_v0` —— 既污染 FactorRegistry 命名空间，下游又要做映射。
+3. **description 字段显式包含"代理"字样**（"高阶质量 = ROIC 代理(ROE 最新年报) +
+   毛利率 5 年稳定性(1/sd) + 净利率代理 等权合成"），让前端 / 报告 / FactorIC
+   自动暴露代理事实。
+4. **jsdoc 写清四件事**：(a) AC 原始公式 (b) 当前数据不可得的具体字段 (c) 选定的
+   学术代理与系数 (d) 未来引入完整数据后的"升级路径"（如 "US-034+ 引入现金流量表
+   后可换 FCF/Revenue 真公式"）。
+5. **TS factor 文件 + factors/CLAUDE.md 同时记录**，让下游策略接入新因子时
+   一眼看到代理边界。
+
+后续 US-032 (EarningsSurpriseFactor) / US-033 (MomentumReversalFactor) /
+US-035 (ShareholderConcentrationFactor) / US-036 (GradualBreakoutFactor) 等遇到
+"AC 字段不可得"按此范式处理；不要硬塞 placeholder（如 `roic = 0`）或硬替（如
+"NOPAT 用净利润替代" — 差异太大不算合理代理）。
+
+### Learnings for future iterations
+
+- **`Number(null) === 0` 是 JS 大坑，FinancialReport.* nullable 字段必须 fail-fast**：
+  `Number(null) === 0` 通过 `isFiniteNumber` 检查但会算出 "净利率 = 0 / rev = 0%"
+  误导下游。`computeNetMargin` 必须在 `Number()` 之前显式
+  `if (x === null || x === undefined) return null`。**任何 nullable 字段的因子运算
+  都必须做此 guard**。下次新因子 (US-032/033/035) 在 Sequelize raw 取出 DECIMAL/
+  nullable 字段后，**先 null/undefined 检查再 Number 转换**。
+- **复用既有 service 同款数据源 = 跨因子口径一致**：US-031 ROIC proxy 用
+  FinancialReport.roe + report_type='年报'，与 GARPStrategy (US-024) loadRoe5yAvg
+  完全相同的查询条件。好处：(a) 用户看 quality + quality_high + GARP 三处的 ROE
+  数字完全对应得上 (b) 引入新数据修正时一处改全部对齐 (c) 单测共享 fixture 数据生成
+  逻辑。**新因子优先复用既有 service / strategy 同款数据源**，不要平行写第二份查询。
+- **factor 内多源合成时 stripSuffix 模式**：FinancialReport.stock_code 已经是无后缀
+  （与 ctx.universe 一致），不需 stripSuffix；StockFundamentalFactor.symbol 是
+  "600519.SH" 形式，必须 stripSuffix。在同一个 compute() 内部混用两张表时，**注释
+  写明每张表的 key 形态**，避免 reviewer 误判。
+- **纯函数 helper 全 export 的 3 个理由**（强化 US-029 引入的模式）：(a) 单测可
+  独立调用，不需 mock Sequelize / FactorContext (b) Pipeline 集成测试可复用
+  helper (c) 未来扩展子策略可以拼装这些 pure helper 不重写。**判据**：因子里
+  ≥ 2 段独立数学逻辑就抽 `export function`；compute() 内只做 "DB query → 调
+  pure 函数 → set 进 Map" 3 步胶水。
+- **"任一子分量缺失 → 整体 null" vs "缺一项用 0 代入" 的判定**：
+  - **整体 null**（不入 Map）：3 个子分量来自异质维度（盈利能力 / 稳定性 / 转化率），
+    缺一项的"0 代入"会让另两项的方向被人为放大，破坏因子语义。`quality_high` 走此路径。
+  - **缺一项用 0 代入**：所有子分量同一维度同一量纲（如 GrowthFactor 净利润增长 +
+    营收增长都是 "%" 形式的增长率），0 代入语义合理（= "该维度未知"，不破坏因子方向）。
+    GrowthFactor 走此路径。**判据**：子分量是否同维度同量纲 → 是用 0 代入 / 否走 null。
+- **`sampleStddev` 第二处独立实现是 YAGNI 边界**：因子库内 LiquidityFactor 和
+  QualityHighFactor 都各自实现了一份 `sampleStddev`。**等第 3 处出现时统一抽到
+  `_helpers.ts`**（YAGNI 阶段不抽，避免过度设计）。注释里已记录此判定。
 
 ---
