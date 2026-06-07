@@ -162,6 +162,10 @@
 - **跨 workspace 共享 Modal 组件范式 (US-055 引入 AIStockAnalysisModal)**：组件放在 `frontend/src/components/trading/`，3 个 workspace (Portfolio / Factor / Today) 各自管理 `aiTarget` state 控制 Modal open + 关闭后清空。Modal 自管 `selectedDims / loading / result / error` 不需要从 workspace 父组件透传。**task_label** 字段让 backend 区分入口 (`'portfolio_position'` / `'factor_pick'` / `'today_signal_buy'` / `'today_signal_sell'`)，metadata 可统计每个入口使用次数。**initialDimensions prop** 让父组件可定制化默认勾选维度 (PortfolioWorkspace 全 5 维度 / FactorWorkspace 仅 fundamental+technical 等)。**loading 期间禁用关闭按钮** 防 user 误关丢失尚未返回的结果；**failed / partial / pending 仍渲染** key_points (空 dim 显示 "（暂无信息）") 让 user 看到部分结果。下次任何跨 workspace 共享 UI feature (US-067 KOL 观点弹窗 / US-073 复盘日记弹窗) 都按此模板。
 - **TradingAgents URL env 引用约定 (US-055 跨 service 复用)**: `process.env.TRADING_AGENTS_URL || 'http://47.93.224.109:8000'` — service 层不硬编码 URL，所有 AI feature 调用 `axios.post(${TRADING_AGENTS_URL}/...)` 引用 env，方便 ops 通过 env 切换 staging / prod TradingAgents 实例。下次 US-056..US-065 AI service 全部按此 env 引用。
 - **`backend/tests/services/` 测试目录 (US-055 新建)**: 与既有 `tests/risk/` / `tests/strategies/` / `tests/backtest/` / `tests/factors/` / `tests/performance/` 并列。**所有 AI / 通用 service 测试都进此目录**——下次 US-056 KOLAggregatorService / US-057 MarketSentimentIndexService / US-059 AnnouncementNLPService 测试统一进 `tests/services/`。Node 直接跑 `npx ts-node --transpile-only tests/services/<Name>.test.ts`，不在 tsconfig include 内所以 `npx tsc --noEmit` 不扫描。
+- **市场级聚合指数 sigmoid 归一化范式 (US-057 MarketSentimentIndexService 引入)**: 任何 N 维度加权聚合指数 (情绪 / 健康度 / 风险评分) 用 `100 / (1 + exp(-raw/scale))` 自然压扁到 [0,100]，无须 clip/clamp。**scale=30** 让 raw=±30 落在 ~27/73，scale 越大曲线越平。**raw=NaN/Infinity → 50 中性**（早返回防溢出）。**scale ≤ 0 → 50** 防参数错误炸服务。极端值 (|raw/scale| > 50) 提前饱和到 0/100 防 exp 溢出。下次 US-091 因子风险评分 / US-095 系统健康度评分都按此 sigmoid 归一化模式。
+- **z-score 横截面算法的 `STDDEV_NEAR_ZERO = 1e-9` 防爆护栏 (US-057 跨 US-035 范式)**: 常数序列 (lookback 全部相同值) stddev=0 → 除零 NaN/Infinity；computeZScore 用 `sd < 1e-9` 阈值返回 null (caller 退化为 0 中性贡献)。同款已在 US-035 FactorICReport / US-038 BootstrapResample 引入。**测试时务必构造非线性时序** (e.g. `[100, 110, 130, 160, 200, ...]` 不等间隔) 否则 diff 序列全相同 z=null 永远过不了非空检查。**`minObservations` 默认 5** (< 此数样本不足返回 null) 与统计学惯例对齐。
+- **day-to-day diff 推算"净买入"模式 (US-057 引入)**: 累计型指标 (NorthboundHolding 累计持股 / 融资余额 / 总账户数) 需要 day-to-day diff 才能得到"今日增量"; `computeDailyDiffs(series)` 返回 length-1 数组 (第一日无 diff), 配套 `target = series[last]; history = series.slice(0,-1)` 用。**指标特性 → 是否 diff 的决策树**: 累计量 → 必须 diff (持仓/余额/总数); 流量/事件计数 → 直接用值 (post_count/news_count/订单数)。**Python 层已预算的 net 字段 (US-057 MarginBalance rz_net_buy_yi) 优先用**, 不要 TS 层再 diff (避免双重转换误差)。下次 US-088 持仓变化 / US-092 资金流入累计追踪都按此 diff 决策树。
+- **list + latest 端点分工范式 (US-057 引入)**: 存储 heavy 字段 (JSONB / 大 text) 的实体, list endpoint (GET /resource?days=N) 返回**轻量 array 不带 JSONB** (减少时序图 payload, 10x 体积差异); latest endpoint (GET /resource/latest) 返回**单条 + 完整 JSONB** 供详情页 drill-down。下次任何 "时序 + 详情" 类 endpoint (US-058 雪球热词 / US-067 KOL 告警 list / US-073 复盘日记 list) 都按此分工避免 payload 膨胀。
 
 
 
@@ -5614,3 +5618,61 @@ post-close cron entry point — supports `user_id` / `dry_run` /
 - **kol_opinions 表与未来故事**：US-067 (KOL 观点告警) / US-082 (周报 KOL 摘要) / US-088 (前端 stock-profile "他人在看" 卡片) 都将直接读 kol_opinions，**不再单独写新表**。KOL 观点聚合 + 持久化是单一入口；下游 story 只读不写。如未来引入第三方 API (Wind / 雪球开放数据 / TuShare Pro 新闻情感) 提供真实 xueqiu / guba 评论，将 KOLAggregatorService 内 fetcher 插入对应 source，**model / 因子 / endpoint 不变** (kol_source 列扩展 union)。这个"代理→真值"的升级路径是与 US-034 数据列保持 schema-stable 同款 — 让下游消费者无须配合升级。
 - **CLI `--all` 模式扫全 A 股的 throttle 节流默认 300ms**：AKShare 对个股端点 (stock_hot_keyword_em / stock_news_em) 有限流。**300ms intervalMs 是 AKShare 友好 throttle 实测值** (DragonTiger / NorthboundDataClient 也用 200-300ms 系列)。如果未来发现某 endpoint 限流更严，加 INTERVAL_MS_OVERRIDE env 而非改默认。
 ---
+
+## 2026/06/08 03:50 - US-057 AI: 市场情绪量化指数
+
+### What was implemented
+按 AC 实现"全市场每日情绪量化指数"4 维度加权 + sigmoid 归一化到 0-100:
+- **MarketSentimentIndex 模型** (PK=trade_date 单字段, 一日一行): 9 列 — index_value DECIMAL(6,3) / raw_score / 4 维度 (limit_up/limit_down/north_z/margin_z/qa_heat_z) / components_json JSONB / status enum / message TEXT
+- **MarketSentimentIndexService** (713 行) computeAndPersist + listRecentIndex 2 method
+  - AC 公式: `raw = (涨停-跌停)*0.3 + 北向z*0.3 + 融资z*0.2 + 问答z*0.2`
+  - sigmoid: `index_value = 100 / (1 + exp(-raw/scale))`, scale=30 默认
+  - 4 维度并发 Promise.all + safeAwait per-source fallback (单失败不阻塞)
+  - status: 4/4=ok, 1-3/4=partial, 0/4=failed (全 persist 让 ops 看到尝试)
+- **2 个新 DataClient**:
+  - `LimitDownClient` 调 stock_zt_pool_dtgc_em (US-057 仅用行数, 不入库个股)
+  - `MarginBalanceClient` 调 stock_margin_account_info 全量切片 (单位亿元)
+- **Python helper 2 个新函数**: get_margin_balance + get_limit_down_pool
+- **3 个 endpoint** (`/api/sentiment/*`):
+  - GET /index?days=30 时序图
+  - GET /index/latest (含 components_json 明细)
+  - POST /index/compute (admin 手动 + dry_run)
+- **CLI 脚本** sync-market-sentiment.ts + npm script, 支持 --date / --lookback-days / --backfill=start,end / --dry-run
+- **单元测试** tests/services/market-sentiment-index-service.test.ts (740 行 / 129 passed / 0 failed)
+
+### Files changed
+- `backend/src/models/MarketSentimentIndex.ts` (new, 157 lines)
+- `backend/src/services/MarketSentimentIndexService.ts` (new, 713 lines)
+- `backend/src/data/sources/LimitDownClient.ts` (new, 125 lines)
+- `backend/src/data/sources/MarginBalanceClient.ts` (new, 130 lines)
+- `backend/src/api/controllers/SentimentController.ts` (new, 129 lines)
+- `backend/src/api/routes/sentiment.routes.ts` (new, 31 lines)
+- `backend/src/scripts/sync-market-sentiment.ts` (new, 154 lines)
+- `backend/python/akshare_helper.py` (added 2 functions + dispatcher cases, ~250 lines)
+- `backend/src/models/index.ts` (export + 1 line)
+- `backend/src/config/database.ts` (register + 2 lines)
+- `backend/src/index.ts` (mount /api/sentiment + 2 lines)
+- `backend/package.json` (sync:market-sentiment script + 1 line)
+- `backend/tests/services/market-sentiment-index-service.test.ts` (new, 740 lines)
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → exit 0
+- `eslint` 全 7 个新 .ts 文件 → 0 errors (auto-fix 1 prettier issue in sync script)
+- `npx ts-node --transpile-only tests/services/market-sentiment-index-service.test.ts` → 129 passed, 0 failed
+- 回归测试: kol-aggregator (141 ok) + ai-advisor (133 ok) + black-swan (135 ok) 全通过 — 无回归
+
+### Browser verification
+**Not performed** — UI 改动在前端故事 (本 story 仅 backend); 后续 US-072 / US-088 在前端用此 endpoint 时再验证。可手动 curl 验证:
+```
+curl -H "Authorization: Bearer $TOKEN" http://localhost:3000/api/sentiment/index?days=30
+```
+
+### Learnings for future iterations
+- **第 5 个 AI feature 范式 (MarketSentimentIndexService 引入)** — 与 US-055/056 同款 6 项 checklist (DataSource DI + Default + PRODUCTION singleton + 8+ 个 export 纯函数 + plain-object 返回类型 with persisted/dry_run + status='partial'/'failed' 仍 persist + fail-OPEN on saveIndex)。后续 US-058 雪球热词 / US-059 公告 NLP / US-060 问答 NLP 全照此 checklist 复用。
+- **市场级聚合指数 sigmoid 归一化模式**：raw_score 是 N 维度加权和理论无界 → sigmoid `100/(1+exp(-raw/scale))` 自然压扁到 [0, 100]，无须 clip / clamp。**scale=30** 让中等极值 (raw ± 30) 落在 ~27/73，scale 越大曲线越平 (raw ± 60 才显著)。**raw=NaN/Infinity → 50 中性**（早返回防溢出）。**scale ≤ 0 → 50** 防参数错误炸服务。下次 US-091 因子风险评分 / US-095 健康度评分都按此 sigmoid 归一化模式。
+- **z-score 算法的 stddev < 1e-9 防爆护栏**：常数序列 (lookback 全部相同值) stddev=0 → 除零；用 `STDDEV_NEAR_ZERO = 1e-9` 阈值返回 null (caller 退化为 0 中性贡献)。同款已在 US-035 FactorICReport 引入；任何横截面 z-score 算法都按此模板防 NaN/Infinity 污染。**测试时务必构造非线性时序** (e.g. `[10, 20, 30, 40, ...]` linear → diff=10 常数; 用 `[100, 110, 130, 160, 200, ...]` 不等间隔) 否则 z=null 永远过不了非空检查。
+- **day-to-day diff 推算"净买入"模式**：NorthboundHolding 是累计持股市值 (累计指标, 不是日度增量)，需要 day-to-day diff 才能得到"今日净买入 ≈ today.total - yesterday.total"。`computeDailyDiffs(series)` 返回 length-1 数组 (第一日无 diff)，与 `target = series[last]; history = series.slice(0,-1)` 配套使用。下次 US-058 雪球热词增量 / US-088 持仓变化都按此 diff 模式。**注意**：MarginBalance 在 Python 层已直接预算 `rz_net_buy = rzmre - rqmcl` (融资买入 - 融券卖出)，不需要再 diff；问答热度直接用当日 post_count 总和也不需要 diff (它本就是日度独立计数)。**指标特性 → 是否 diff 的决策树**：累计量 → 必须 diff; 流量/事件计数 → 直接用值。
+- **2 endpoint 维度分工范式**：list 端点 (GET /index?days=N) 返回轻量 array 用于时序图，**不带 components_json** (减少 payload);  latest 端点 (GET /index/latest) 返回单条 + **完整 components_json** 供单股详情页 drill-down。下次任何"列表 + 详情"对存储重的 endpoint 都按此分工。
+- **跌停 vs 涨停的数据语义不对称**：US-007 LimitUpStock 是"涨停 1-3 板梯队龙头" per-stock 建模 (用于短线策略选股); US-057 跌停只用 stock_zt_pool_dtgc_em 行数作为"市场情绪信号"不入库个股 (因没有"跌停接力"策略需求)。如果未来 US-094 有"行业级跌停分析"需求，再加 LimitDownStock 模型 + sync 服务，**先服务后建表**避免 schema 冗余。
+- **--backfill=start,end 范围参数 CLI 模板**：逐日串行 + interval-ms throttle (默认 200ms) 对 AKShare 限流友好; expandDateRange 自然日展开 (不区分交易日, AKShare 接口非交易日返回空也安全 → status=partial 不阻塞)。下次任何"按交易日重算"的 CLI 工具 (US-067 KOL 告警回填 / US-095 健康度补算) 都按此 backfill 模板。
+- **sync({alter:true}) 自动建表的"先注册 model 后跑迁移"流程**：新 model 必须同时在 `models/index.ts` (export) + `config/database.ts` (sequelize 实例 `models` 数组) 注册才会被 sync 创建。下次任何新 model 都需要 update 这 2 处, 否则 endpoint 调 findAll 会报 'table does not exist'。

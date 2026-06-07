@@ -33,6 +33,7 @@
     "sync:stock-sentiment": "ts-node src/scripts/sync-stock-sentiment.ts",
     "sync:shareholder-count": "ts-node src/scripts/sync-shareholder-count.ts",
     "sync:kol-opinions": "ts-node src/scripts/sync-kol-opinions.ts",
+    "sync:market-sentiment": "ts-node src/scripts/sync-market-sentiment.ts",
     "compute:factors": "ts-node src/scripts/compute-factors.ts",
     "compute:factor-ic": "ts-node src/scripts/compute-factor-ic.ts",
     "compute:factor-correlation": "ts-node src/scripts/compute-factor-correlation.ts",

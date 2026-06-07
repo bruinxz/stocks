@@ -3147,6 +3147,264 @@ def get_stock_hot_concepts(stock_code: str, limit: int = 5) -> List[Dict[str, An
         return []
 
 
+def get_margin_balance(start_date: Optional[str] = None, end_date: Optional[str] = None) -> List[Dict[str, Any]]:
+    """
+    Fetch 融资融券账户统计 — 全市场融资余额 / 融券余额 / 融资买入额 / 融券卖出额日度时序 — US-057.
+
+    Endpoint: AKShare `stock_margin_account_info()`
+        东方财富网 - 数据中心 - 融资融券 - 融资融券账户统计 - 两融账户信息
+        https://data.eastmoney.com/rzrq/zhtjday.html
+        无参数,一次返回 ~3300 行全历史 (从 2010 年至今,每日一行)。
+
+    Columns returned by AKShare (单位:亿元):
+        日期 / 融资余额 / 融券余额 / 融资买入额 / 融券卖出额 / 证券公司数量 /
+        营业部数量 / 个人投资者数量 / 机构投资者数量 / 参与交易的投资者数量 /
+        有融资融券负债的投资者数量 / 担保物总价值 / 平均维持担保比例
+
+    US-057 MarketSentimentIndex 使用 `融资买入额 - 融券卖出额` 作为"融资净买入"
+    (取代不可得的"两市融资净买入余额变化"),再做近 60 日横截面 z-score 归一化。
+    `融资余额` 列保留供未来 US-058+ 趋势分析。
+
+    Args:
+        start_date: 'YYYY-MM-DD' or 'YYYYMMDD' (optional). 若提供 → 仅返回 ≥ 该日的行。
+        end_date: 'YYYY-MM-DD' or 'YYYYMMDD' (optional). 若提供 → 仅返回 ≤ 该日的行。
+
+    Returns:
+        List of dicts, sorted by 日期 asc. Each row:
+            - date            'YYYY-MM-DD'
+            - rzye_yi         融资余额 (亿元) — float
+            - rqye_yi         融券余额 (亿元) — float
+            - rzmre_yi        融资买入额 (亿元) — float
+            - rqmcl_yi        融券卖出额 (亿元) — float
+            - rz_net_buy_yi   融资净买入 = rzmre - rqmcl (亿元) — float (cached for US-057)
+            - raw_payload     原始 AKShare 行
+        Returns [] on error / empty.
+    """
+    try:
+        fn = getattr(ak, 'stock_margin_account_info', None)
+        if fn is None:
+            print('AKShare missing stock_margin_account_info', file=sys.stderr)
+            return []
+
+        try:
+            df = fn()
+        except Exception as e:
+            print(f'stock_margin_account_info() failed: {e}', file=sys.stderr)
+            return []
+
+        if df is None or df.empty:
+            print('AKShare returned empty margin_account_info dataframe', file=sys.stderr)
+            return []
+
+        col_map: Dict[str, str] = {}
+        for col in df.columns:
+            col_s = str(col)
+            if col_s in ('日期',):
+                col_map['date'] = col_s
+            elif col_s in ('融资余额',):
+                col_map['rzye'] = col_s
+            elif col_s in ('融券余额',):
+                col_map['rqye'] = col_s
+            elif col_s in ('融资买入额',):
+                col_map['rzmre'] = col_s
+            elif col_s in ('融券卖出额',):
+                col_map['rqmcl'] = col_s
+
+        if not col_map.get('date') or not col_map.get('rzmre'):
+            print('margin_account_info missing essential columns', file=sys.stderr)
+            return []
+
+        # 规范化日期过滤参数 (柔性: YYYY-MM-DD or YYYYMMDD)
+        def _parse_filter_date(d: Optional[str]) -> Optional[str]:
+            if not d:
+                return None
+            try:
+                pure = str(d).replace('-', '')
+                if len(pure) != 8 or not pure.isdigit():
+                    return None
+                return f'{pure[0:4]}-{pure[4:6]}-{pure[6:8]}'
+            except Exception:
+                return None
+
+        start_iso = _parse_filter_date(start_date)
+        end_iso = _parse_filter_date(end_date)
+
+        # 升序排,便于 caller 横截面 / 时序计算
+        df = df.sort_values(by=col_map['date'], ascending=True).reset_index(drop=True)
+
+        results: List[Dict[str, Any]] = []
+        for _, row in df.iterrows():
+            d_raw = _cell_str(row, col_map.get('date'))
+            if not d_raw:
+                continue
+            # AKShare 日期已是 'YYYY-MM-DD' 字符串
+            d_iso = d_raw if len(d_raw) == 10 and d_raw[4] == '-' else _format_iso_date(str(d_raw).replace('-', ''))
+            if not d_iso:
+                continue
+            if start_iso and d_iso < start_iso:
+                continue
+            if end_iso and d_iso > end_iso:
+                continue
+
+            rzye = _cell_float(row, col_map.get('rzye'))
+            rqye = _cell_float(row, col_map.get('rqye'))
+            rzmre = _cell_float(row, col_map.get('rzmre'))
+            rqmcl = _cell_float(row, col_map.get('rqmcl'))
+            rz_net = None
+            if rzmre is not None and rqmcl is not None:
+                rz_net = rzmre - rqmcl
+
+            results.append({
+                'date': d_iso,
+                'rzye_yi': rzye,
+                'rqye_yi': rqye,
+                'rzmre_yi': rzmre,
+                'rqmcl_yi': rqmcl,
+                'rz_net_buy_yi': rz_net,
+                'raw_payload': _row_to_jsonable(row, df.columns),
+            })
+
+        print(f'Parsed {len(results)} margin_balance rows', file=sys.stderr)
+        return results
+    except Exception as e:
+        print(f'Error getting stock_margin_account_info: {e}', file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return []
+
+
+def get_limit_down_pool(date: str) -> List[Dict[str, Any]]:
+    """
+    Fetch 跌停股池 (limit-down pool) for a single trading day — US-057.
+
+    Endpoint: AKShare `stock_zt_pool_dtgc_em(date='YYYYMMDD')`
+        东方财富网 - 行情中心 - 涨停板行情 - 跌停股池
+        https://quote.eastmoney.com/ztb/detail#type=dtgc
+        Returns 11-30 行 (per day) covering 跌停 + 强势跌势 个股.
+
+    Columns returned by AKShare:
+        序号 / 代码 / 名称 / 涨跌幅 / 最新价 / 成交额 / 流通市值 / 总市值 /
+        动态市盈率 / 换手率 / 封单资金 / 最后封板时间 / 板上成交额 / 连续跌停 /
+        开板次数 / 所属行业
+
+    US-057 MarketSentimentIndex 只用本接口的 **行数** 作为"跌停数"信号
+    (与 stock_zt_pool_em 涨停数对应),不入库个股明细 (与 LimitUpStock 模型语义不同
+    后者是"涨停" 1-3 板梯队龙头建模)。下游若有 US-058+ 行业级跌停分析需求,
+    可入新 LimitDownStock 模型。
+
+    Args:
+        date: 'YYYY-MM-DD' or 'YYYYMMDD' (single trading day).
+
+    Returns:
+        List of dicts, one row per limit-down stock. Each row:
+            - trade_date      'YYYY-MM-DD'
+            - stock_code      '000001'
+            - stock_name      '平安银行'
+            - pct_change      -10.0 (DECIMAL)
+            - latest_price    float
+            - turnover        float (成交额, 元)
+            - circ_market_cap float (流通市值, 元)
+            - total_market_cap float (总市值, 元)
+            - turnover_ratio  float (换手率, %)
+            - seal_amount     float (封单资金)
+            - last_seal_time  '14:55:33' or '145533'
+            - continuous_days int (连续跌停天数)
+            - open_times      int (开板次数)
+            - industry        str (所属行业)
+            - raw_payload     原始 AKShare 行
+        Returns [] on error / empty (e.g. holiday / non-trading day).
+    """
+    try:
+        pure_date = parse_date(date).replace('-', '')
+        if len(pure_date) != 8:
+            print(f'Invalid date format: {date}', file=sys.stderr)
+            return []
+        iso_date = _format_iso_date(pure_date)
+
+        fn = getattr(ak, 'stock_zt_pool_dtgc_em', None)
+        if fn is None:
+            print('AKShare missing stock_zt_pool_dtgc_em', file=sys.stderr)
+            return []
+
+        try:
+            df = fn(date=pure_date)
+        except TypeError:
+            df = fn(pure_date)
+        except Exception as e:
+            print(f'stock_zt_pool_dtgc_em({pure_date}) failed: {e}', file=sys.stderr)
+            return []
+
+        if df is None or df.empty:
+            print(f'AKShare returned empty limit_down pool for {pure_date}', file=sys.stderr)
+            return []
+
+        col_map: Dict[str, str] = {}
+        for col in df.columns:
+            col_s = str(col)
+            if col_s in ('代码', '股票代码'):
+                col_map['code'] = col_s
+            elif col_s in ('名称', '股票名称'):
+                col_map['name'] = col_s
+            elif col_s in ('涨跌幅',):
+                col_map['pct'] = col_s
+            elif col_s in ('最新价',):
+                col_map['price'] = col_s
+            elif col_s in ('成交额',):
+                col_map['turnover'] = col_s
+            elif col_s in ('流通市值',):
+                col_map['circ_cap'] = col_s
+            elif col_s in ('总市值',):
+                col_map['total_cap'] = col_s
+            elif col_s in ('换手率',):
+                col_map['turnover_ratio'] = col_s
+            elif col_s in ('封单资金',):
+                col_map['seal_amount'] = col_s
+            elif col_s in ('最后封板时间',):
+                col_map['seal_time'] = col_s
+            elif col_s in ('连续跌停',):
+                col_map['continuous_days'] = col_s
+            elif col_s in ('开板次数',):
+                col_map['open_times'] = col_s
+            elif col_s in ('所属行业',):
+                col_map['industry'] = col_s
+
+        if not col_map.get('code'):
+            print('limit_down pool missing 代码 column', file=sys.stderr)
+            return []
+
+        results: List[Dict[str, Any]] = []
+        for _, row in df.iterrows():
+            code = _cell_str(row, col_map.get('code'))
+            if not code:
+                continue
+            code = ''.join(ch for ch in str(code) if ch.isdigit())
+            if len(code) != 6:
+                continue
+            results.append({
+                'trade_date': iso_date,
+                'stock_code': code,
+                'stock_name': _cell_str(row, col_map.get('name')),
+                'pct_change': _cell_float(row, col_map.get('pct')),
+                'latest_price': _cell_float(row, col_map.get('price')),
+                'turnover': _cell_float(row, col_map.get('turnover')),
+                'circ_market_cap': _cell_float(row, col_map.get('circ_cap')),
+                'total_market_cap': _cell_float(row, col_map.get('total_cap')),
+                'turnover_ratio': _cell_float(row, col_map.get('turnover_ratio')),
+                'seal_amount': _cell_float(row, col_map.get('seal_amount')),
+                'last_seal_time': _cell_str(row, col_map.get('seal_time')),
+                'continuous_days': _cell_int(row, col_map.get('continuous_days')),
+                'open_times': _cell_int(row, col_map.get('open_times')),
+                'industry': _cell_str(row, col_map.get('industry')),
+                'raw_payload': _row_to_jsonable(row, df.columns),
+            })
+
+        print(f'Parsed {len(results)} limit_down rows for {iso_date}', file=sys.stderr)
+        return results
+    except Exception as e:
+        print(f'Error getting stock_zt_pool_dtgc_em({date}): {e}', file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return []
+
+
 def main():
     """Main entry point for command line calls"""
     if len(sys.argv) < 2:
@@ -3332,6 +3590,19 @@ def main():
                 except (ValueError, TypeError):
                     limit = 5
             result = get_stock_hot_concepts(stock_code, limit)
+
+        elif command == "get_margin_balance":
+            start = sys.argv[2] if len(sys.argv) >= 3 and sys.argv[2] not in ('', '-', 'null') else None
+            end = sys.argv[3] if len(sys.argv) >= 4 and sys.argv[3] not in ('', '-', 'null') else None
+            result = get_margin_balance(start, end)
+
+        elif command == "get_limit_down_pool":
+            if len(sys.argv) < 3:
+                print(json.dumps({"error": "Missing date for get_limit_down_pool"}), file=sys.stderr)
+                sys.exit(1)
+
+            date = sys.argv[2]
+            result = get_limit_down_pool(date)
 
         else:
             print(json.dumps({"error": f"Unknown command: {command}"}), file=sys.stderr)

@@ -65,3 +65,4 @@ export * from './IndustryAttributionResult';
 export * from './MorningRiskCheckup';
 export * from './AIStockAnalysisReport';
 export * from './KOLOpinion';
+export * from './MarketSentimentIndex';
