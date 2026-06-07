@@ -354,6 +354,47 @@ yield_pct compute). target_price is a future-expansion placeholder column;
 forecast_eps revision logic lives entirely in the factor (`AnalystConsensusFactor.compute()`)
 so the factor stays re-runnable without re-syncing data.
 
+## Per-stock sync with dual proxy substitution (US-034 StockSentiment)
+
+When AC specifies endpoints / fields that **do not exist or are unreachable** in
+the public data sources (US-034: AC asks for `stock_guba_em` 发帖数+浏览量 —
+`stock_guba_em` is not in AKShare; guba 网页有反爬严格无 API；
+`stock_hot_rank_em` returns only today's top 100, no history), use the same
+**double-proxy substitution** pattern from US-031/US-032 but at the **data layer**
+(not just the factor layer):
+
+1. **Substitute the endpoint**: pick the closest historical per-stock endpoint
+   (here: `stock_hot_rank_detail_em(symbol='SH600519'|'SZ000001')` returning
+   ~365-day timeline of rank + 新晋粉丝 + 铁杆粉丝 ratios).
+2. **Materialize the proxy field in DB at sync time** — not in factor. The
+   StockSentiment model stores `post_count` as **round(100000 / rank)**, `view_count`
+   as **round((new_fan + hardcore_fan) × 1000)**, `heat_score` as composite. This
+   lets the factor read a stable `post_count` column without knowing the proxy
+   semantics (so when US-090+ introduces real post counts from XQ/TuShare Pro, the
+   factor doesn't change — just the sync code writes the real number into the
+   same column).
+3. **Document the proxy fact** in 4 places (US-031 范式 strict adherence):
+   - Sequelize model column comment ("发帖数代理：1/rank × 100000")
+   - Python helper `get_stock_sentiment` docstring (full algebra + theoretical basis)
+   - TS Client jsdoc ("AC 提到的端点不存在；用 X 替代；Python 内部做双重代理")
+   - Factor jsdoc ("post_count 实为 rank 倒数代理 — 详见模型 docstring")
+
+**API class naming may keep the original AC term** (e.g. `EastMoneyQAClient` for
+US-034 even though it doesn't touch the Q&A 股吧 endpoint) — keeps continuity
+with the user story title and downstream references. Add a one-line jsdoc note
+at the top explaining "类名沿用 AC 命名，实际数据源是 X 而非 Q&A".
+
+**The factor formula reads materialized columns, not proxy semantics** — `east_money_qa`
+just computes `avg(post_count[recent]) / avg(post_count[baseline])`. The proxy
+constants `100000` / `1000` are scale-only and 5d/30d ratio is invariant to that
+scaling. This means the factor will keep working when the proxy is later replaced
+by real data, as long as the new data is written to the same `post_count` column.
+
+**Friendly throttle 200ms** (default; configurable via `EAST_MONEY_QA_TIMEOUT_MS`
+env / `--interval-ms` CLI flag), `EAST_MONEY_QA_TIMEOUT_MS=90000` (90s default —
+faster than analyst_forecast 120s because hot_rank_detail has lighter response
+than research_report).
+
 ## Worktree gotcha (still active as of US-005)
 
 The git worktree has no `backend/node_modules`. Symlink before typecheck:

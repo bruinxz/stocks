@@ -440,10 +440,10 @@ assert("既有 'quality_high' 仍注册", factorRegistry.has('quality_high'));
 assert("既有 'value' 仍注册", factorRegistry.has('value'));
 assert("既有 'liquidity' 仍注册", factorRegistry.has('liquidity'));
 
-// 注册后总数 = 13 (8 base + liquidity + analyst_consensus + quality_high + earnings_surprise + momentum_reversal)
+// 注册后总数 = 14 (8 base + liquidity + analyst_consensus + quality_high + earnings_surprise + momentum_reversal + east_money_qa)
 {
   const names = factorRegistry.listNames();
-  assert(`registry 共 13 个因子 (实际 ${names.length})`, names.length === 13, names.join(', '));
+  assert(`registry 共 14 个因子 (实际 ${names.length})`, names.length === 14, names.join(', '));
 }
 
 console.log('\n## 端到端：空 universe → 空 Map');

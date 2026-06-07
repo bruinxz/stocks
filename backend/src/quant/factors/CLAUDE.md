@@ -1,4 +1,4 @@
-# Factor 基础设施 (US-009 + US-010 + US-029 + US-030 + US-031 + US-032 + US-033)
+# Factor 基础设施 (US-009 + US-010 + US-029 + US-030 + US-031 + US-032 + US-033 + US-034)
 
 `backend/src/quant/factors/` 是 A 股多因子打分体系的基础设施层。US-009
 落地了**注册中心 + 横截面 pipeline + 标准化工具 + FactorScore 模型**；
@@ -10,8 +10,9 @@ US-029 增加了第 9 个 `liquidity` 因子（流动性 U 形评分）；US-030
 净利率代理 等权合成）；US-032 增加了第 12 个 `earnings_surprise` 因子（盈利
 惊喜代理 = (actual EPS - 一致预期 EPS) / |一致预期 EPS|）；US-033 增加了
 第 13 个 `momentum_reversal` 因子（动量反转 = 120 日动量 - 5 日动量，正值
-代表趋势延续、负值代表短期超涨反转）。后续 story 在 `library/` 下追加新
-文件即可，无需改 Pipeline / Registry。
+代表趋势延续、负值代表短期超涨反转）；US-034 增加了第 14 个 `east_money_qa`
+因子（东财问答热度 = 近 5 日 / 近 30 日 post_count 比率，散户关注度变化
+代理）。后续 story 在 `library/` 下追加新文件即可，无需改 Pipeline / Registry。
 
 ## 目录约定
 
@@ -143,7 +144,7 @@ US-033 等"贴现 / 偏离"类因子按此例外处理；普通线性因子仍�
 - **缺数据 ≠ 因子失效**：缺数据返回稀疏 Map；因子失效（例如 PE<=0）应该
   `continue` 不写入这只股票，让 Pipeline 把它当作中性。
 
-## US-010 落地的 8 个基础因子 + US-029 LiquidityFactor + US-030 AnalystConsensusFactor + US-031 QualityHighFactor + US-032 EarningsSurpriseFactor + US-033 MomentumReversalFactor (参考实现)
+## US-010 落地的 8 个基础因子 + US-029 LiquidityFactor + US-030 AnalystConsensusFactor + US-031 QualityHighFactor + US-032 EarningsSurpriseFactor + US-033 MomentumReversalFactor + US-034 EastMoneyQAFactor (参考实现)
 
 | 因子 name | 类别 | 数据源 | 失效条件 |
 |---|---|---|---|
@@ -160,6 +161,7 @@ US-033 等"贴现 / 偏离"类因子按此例外处理；普通线性因子仍�
 | `quality_high` | quality | FinancialReport(年报)+StockFundamentalFactor.gross_margin | 任一子分量缺失：年报缺 / gross_margin 观测 < 5 / revenue ≤ 0 |
 | `earnings_surprise` | event | FinancialReport + AnalystForecast (US-030) + StockFundamentalFactor.eps | 最近财报 > 180 自然日 / 财报前研报 < 3 / 缺 actual eps / `|consensus|` < 0.01 元/股 |
 | `momentum_reversal` | momentum | DailyBar (与 momentum / low_vol 同表) | bars < LONG_MOMENTUM_WINDOW+1=121 / close ≤ 0 (T / T-5 / T-120 任一) |
+| `east_money_qa` | sentiment | StockSentiment (US-034) | 30 日窗口内有效 post_count < 10 / recent\|baseline 空 / baseline avg < 1.0 |
 
 **典型查询模式（US-029+ 添加新因子可直接复制）**：
 
@@ -233,6 +235,23 @@ US-033 等"贴现 / 偏离"类因子按此例外处理；普通线性因子仍�
   不属 LiquidityFactor 横截面参照例外。**tail-index bar 对齐**（close[len-1] /
   close[len-1-window]）与 momentum / low_vol 同款，自然消化春节/十一节假日 gap，不
   按日历日对齐。
+- ✅ `east_money_qa` (US-034) 用 **avg(post_count[recent 5d]) / avg(post_count[total 30d 内 baseline 25d])**
+  捕捉散户关注度的近期变化方向。ratio > 1 = 关注度上升 (短期资金涌入信号)；ratio < 1 =
+  关注度回落。**双重代理（按 US-031/US-032 范式）**：(1) AC 期望 post_count = 东方财富股吧
+  每日发帖数 — AKShare 中 `stock_guba_em` **根本不存在**，guba 网页无公开 API；选 EastMoney
+  人气榜 rank 倒数 **(round(100000 / rank))** 作为 post_count 代理（rank 是综合 click/post/
+  favorite/search 后排名，与发帖数高度相关）。(2) AC 期望 stock_guba_em / stock_hot_rank_em
+  — 前者不存在；后者只返回**当日 top 100**实时榜（无历史，无法建因子）。选 `stock_hot_rank_detail_em`
+  提供 per-stock 365 日历史（rank + 粉丝占比）。代理已在 Python 端落库到 StockSentiment.post_count
+  物化列，因子层读 column 不读源，**升级路径**: 若未来引入 XQ / TuShare Pro 真实发帖数，
+  仅需 sync 阶段填入该列，因子无需改动。**纯函数 helper** (mean / isoDateMinusDays /
+  computePostCountRatio + RatioBreakdown 结构) 全 export，单测独立调用不走 DB
+  （76 用例 + 1 异步，覆盖边界 / null/NaN/string 数据卫生 / 超窗剔除 / lookahead bias guard
+  / 5 个典型 ratio 数值场景）。属"绝对业务量"因子（per-stock 自身新旧 post_count 之比），
+  走标准模式 — 不属 LiquidityFactor 横截面参照例外。**与既有因子的相关性预估**：与
+  liquidity (换手率) ~0.3-0.5（非冗余 — 换手反映真实交易，本因子反映情绪关注，前者更
+  早信号但易因机构盘磨蚀波动）；与 money_flow (主力净流入) ~0.1-0.2（主力是机构资金，
+  与散户情绪不同维度）。FactorIC (US-041) 上线后可验证。
 
 ### 关键代理记号（US-031 引入 "AC 数学公式 ≠ 数据可得" 的处理范式）
 

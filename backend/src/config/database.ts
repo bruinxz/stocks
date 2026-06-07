@@ -50,6 +50,7 @@ import { IndexComponent } from '../models/IndexComponent';
 import { DividendHistory } from '../models/DividendHistory';
 import { FinancialReport } from '../models/FinancialReport';
 import { AnalystForecast } from '../models/AnalystForecast';
+import { StockSentiment } from '../models/StockSentiment';
 import { LiveBrokerAccount } from '../models/LiveBrokerAccount';
 import { LiveAccountSnapshot } from '../models/LiveAccountSnapshot';
 import { LivePosition } from '../models/LivePosition';
@@ -129,6 +130,7 @@ const sequelize = new Sequelize({
     DividendHistory,
     FinancialReport,
     AnalystForecast,
+    StockSentiment,
     LiveBrokerAccount,
     LiveAccountSnapshot,
     LivePosition,

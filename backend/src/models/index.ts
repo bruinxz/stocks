@@ -50,3 +50,4 @@ export * from './IndexComponent';
 export * from './DividendHistory';
 export * from './FinancialReport';
 export * from './AnalystForecast';
+export * from './StockSentiment';

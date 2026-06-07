@@ -65,6 +65,7 @@
 - **复用既有 service 同款数据源 = 跨因子口径一致 (US-031 强化)**：US-031 ROIC proxy 用 `FinancialReport.roe + report_type='年报'`，与 GARPStrategy (US-024) loadRoe5yAvg 完全相同的查询条件 — 保证用户看 quality + quality_high + GARPStrategy 三处的 ROE 数字完全对应。**新因子优先复用既有 service / strategy 同款数据源**（不要平行写第二份查询），引入新数据修正时一处改全部对齐，单测共享 fixture 生成逻辑。**factor 内多源合成时 stripSuffix 模式**：`FinancialReport.stock_code` 已无后缀（与 ctx.universe 一致）；`StockFundamentalFactor.symbol` 是 "600519.SH" 形式 — 同 compute() 内混用时注释写明每张表 key 形态避免 reviewer 误判。
 - **差值因子（mom_long - mom_short）vs 单一因子的设计判定 (US-033 引入)**：两个因子读相同数据列 (DailyBar.close) 也能**非冗余**——只要公式不同。Asness-style 单一动量 `close[T-skip]/close[T-lookback] - 1` 输出单一值正负代表"涨/跌"；差值因子 `close[T]/close[T-long] - close[T]/close[T-short]` 因 close[T] 在两段都出现，差值消去了 close[T] 的方向，**正负代表"长 vs 短"对比** 不是涨跌。两个因子相关性预计 0.3-0.5 (非冗余)。**新因子设计时检查与既有因子相关性是否真的 ≥ 0.7**，不要因"读相同表"就以为冗余。**纯函数 helper 全 export 是测试的关键**：computeWindowMomentum / combineMomentumReversal / extractSortedCloses 三个 helper 让 74 个测试覆盖窗口边界 / NaN / 真实场景的同时完全脱离 DB。
 - **`Number.isInteger` vs `Number.isFinite` 语义差异 (US-033)**：window-size / period / lookback days 类参数必须用 `Number.isInteger` guard，单用 `isFinite` 接受 `3.5` 这种非整数会让 idx 计算静默取整产生错误 base。下次任何 window-based 因子 / 策略加上这道 guard，不要等出 bug。
+- **端点替代 + 物化代理列模式 (US-034 数据层 enrichment 的 dual-proxy 范式)**：当 AC 指定的端点 / 字段在数据层**完全不可得**（不是难算，是真的没 API），data-layer 也按 US-031/US-032 物化范式处理：(1) **替代端点**用尽量接近的 historical per-stock endpoint (US-034 案例：AC 期望 stock_guba_em — AKShare 中根本不存在；stock_hot_rank_em 只有当日 top 100；选 stock_hot_rank_detail_em 提供 365 日 per-stock 历史)；(2) **代理列在 sync 时落库，不在 factor 计算时换算** — StockSentiment.post_count 列直接物化 `round(100000/rank)`，因子读列不读源，未来引入真实数据只改 sync 一处；(3) **API class name 保留 AC 命名** (`EastMoneyQAClient` 即便底层不是 Q&A endpoint) — 减少跨 story 命名漂移，但 jsdoc 一行说明"实际数据源是 X 而非 Q&A"；(4) **代理事实必须在 4 处文档同步**：model 列 comment / Python helper docstring / TS Client jsdoc / Factor jsdoc。**因子 scale-invariant 保证升级路径**：因子计算用 ratio (post_count[recent]/post_count[baseline])，代理的 ×100000 / ×1000 scaling 在 ratio 内相消 — 这意味着未来 sync 写入真实 post_count (无 scale) 后因子的输出连数值范围都不会变。后续 US-035 / US-036 / US-090+ 任何 AC 字段不可得的因子直接复用此 6 项 checklist。
 - **3 query-shape patterns** to copy when adding a new factor (US-010 codified them):
   - **"Time-series aggregate" (quality/growth)**: pull `factor_date ∈ [as_of - N天, as_of]` from a `symbol`-keyed source table, group by symbol in-memory, then stripSuffix → output.
   - **"Time-series + cross-section" (momentum/low_vol/momentum_reversal)**: `loadStocksByCodes(universe)` first to get `Stock.id`, then `Op.in: stock_ids` + time range on DailyBar; group by stock_id, `arr.sort((a,b)=>a.time-b.time)`, count back from tail to align on T-N.
@@ -3622,4 +3623,50 @@ rather than "up vs down".
   alphabetical order matching `factorRegistry.listNames()` output makes mental verification trivial
   when adding a new factor. The 8 → 9 → 10 → 11 → 12 → 13 lineage is preserved.
 
+---
+
+## 2026/06/07 - US-034
+
+### What was implemented
+新增第 14 个因子 **EastMoneyQAFactor (东财问答热度 / 散户关注度变化)** + 全套数据落地链路（Sequelize 模型 + Python helper + Client + SyncService + CLI）。AC 名义上要求 `stock_guba_em` / `stock_hot_rank_em` 端点 — 前者**在 AKShare 中根本不存在**（dir(ak) 验证），后者只返回**当日 top 100 实时榜**无法建因子。改用 `stock_hot_rank_detail_em(symbol='SH600519'|'SZ000001')` 提供 per-stock 365 日历史的 (排名, 新晋粉丝, 铁杆粉丝) 数据，配合 **双重数据代理** 物化到 StockSentiment.post_count / view_count / heat_score 三列。
+
+### Files changed
+- `backend/src/models/StockSentiment.ts` (新建)
+- `backend/src/models/index.ts` (+1 export line)
+- `backend/src/config/database.ts` (+1 import + +1 models 入项)
+- `backend/python/akshare_helper.py` (+ `_infer_exchange_prefix` helper + `get_stock_sentiment(stock_code)` 函数 + dispatcher case `get_stock_sentiment`)
+- `backend/src/data/sources/EastMoneyQAClient.ts` (新建)
+- `backend/src/data/services/StockSentimentSyncService.ts` (新建)
+- `backend/src/scripts/sync-stock-sentiment.ts` (新建)
+- `backend/package.json` (+1 npm script `sync:stock-sentiment`)
+- `backend/src/quant/factors/library/EastMoneyQAFactor.ts` (新建)
+- `backend/src/quant/factors/library/index.ts` (+1 import + 注释更新)
+- `backend/tests/factors/EastMoneyQAFactor.test.ts` (新建)
+- `backend/tests/factors/EarningsSurpriseFactor.test.ts` (1 处 count 13 → 14 修正)
+- `backend/src/quant/factors/CLAUDE.md` (标题更新 + 因子参考实现表 + z-score-friendly 形态列表新增 east_money_qa 详细条目)
+- `backend/src/data/CLAUDE.md` (新增 "Per-stock sync with dual proxy substitution (US-034 StockSentiment)" 段，文档化 endpoint-substitution + materialized-proxy-column + 4 处文档约束 + API class name 保留 AC 命名约定)
+- `ralph/prd.json` (US-034 → passes:true + 详细 notes)
+- `ralph/progress.txt` (本条目 + 新 Codebase Patterns 1 条)
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → exit 0
+- `cd backend && ./node_modules/.bin/eslint src/models/StockSentiment.ts src/data/sources/EastMoneyQAClient.ts src/data/services/StockSentimentSyncService.ts src/scripts/sync-stock-sentiment.ts src/quant/factors/library/EastMoneyQAFactor.ts src/quant/factors/library/index.ts src/config/database.ts src/models/index.ts --quiet` → exit 0 (3 prettier auto-fixed in --fix pass)
+- `cd backend && npx ts-node --transpile-only tests/factors/EastMoneyQAFactor.test.ts` → 76 ok + 1 async = 77 总数, 0 failures < 1s
+- 6 个因子测试回归: AnalystConsensus 54 + EarningsSurprise 77 + EastMoneyQA 77 + Liquidity 53 + MomentumReversal 74 + QualityHigh 54 = **389 ok / 0 failures**
+- MultiFactorAlphaStrategy 测试回归: pass (新因子加入不破坏 8-factor 合成)
+- CLI: `npx ts-node src/scripts/sync-stock-sentiment.ts --help` 启动干净
+- Python helper live AKShare smoke: `python3 backend/python/akshare_helper.py get_stock_sentiment 000725` 返回 366 sentiment 行，post_count/view_count/heat_score 代理计算正确
+
+### Browser verification
+**N/A** — backend-only story (data sync + factor 计算，无 UI 触点)。
+
+### Learnings for future iterations
+- **AC 端点 / 字段名先 verify 再写代码**：本 story 的 AC 写"调用 stock_guba_em 或 stock_hot_rank_em"，但 `stock_guba_em` 根本不存在 (`dir(ak)` 验证 0 个匹配)，`stock_hot_rank_em` 只返回当日 top 100 没历史。**写新数据源前先 `/usr/bin/python3 -c "import akshare as ak; help(ak.<fn_name>); df = ak.<fn_name>(); print(df.shape, df.columns)"` 验证 endpoint 真实存在 + 数据形态**，再决定 schema。AC 是"目标语言"，数据源真实情况是"实现语言"，二者偏差是常态。
+- **`stock_hot_rank_detail_em(symbol='SH600519'|'SZ000001')` 是 EastMoney 真正的 per-stock 历史人气 endpoint**：返回 365 日 (时间, 排名, 证券代码, 新晋粉丝, 铁杆粉丝)；symbol 要求带 EastMoney 风格的 SH/SZ 前缀（不是 .SH 后缀 — 与 Stock.symbol 形式不同）。新增了 `_infer_exchange_prefix` helper 从 6-digit 代码反推前缀，复用于本 story 同款 endpoint family（stock_hot_rank_relate_em / stock_hot_rank_latest_em / stock_hot_keyword_em 都用同样 symbol 形式）。
+- **双重代理 (US-031/US-032 范式) 扩展到 data-layer**：之前 US-031 quality_high / US-032 earnings_surprise 把代理逻辑放在 factor 里；US-034 把代理逻辑**下沉到 sync 阶段写入物化列** — 因为 post_count = round(100000/rank) 是 per-row 算式 (不依赖横截面 / 时序状态)，Python 端一次算好让 TS 端 bulkCreate，因子层读 column 不读源。**优势**：(1) 未来引入真实数据只改 sync 一处，因子文件不动；(2) 用户 query StockSentiment.post_count 直接看到代理值，不会出现"模型字段不带代理含义"的 confusion。**判定**：若代理算式是 per-row 纯函数 → 落物化列；若代理需要跨期/跨股 aggregate → 留 factor 内。
+- **API class name 沿用 AC 历史命名 + jsdoc 注解实际数据源**：`EastMoneyQAClient` 即便底层不是 股吧 Q&A endpoint。好处：(1) 跨 story 引用链稳定 (PRD / 测试 / 下游报告引用 `EastMoneyQAClient` 不变)；(2) AC vs 实际的 gap 通过 jsdoc 一句话补全。下次任何"AC endpoint 不存在 → 替代 endpoint"的 story 都按此处理。
+- **Edit 同名函数易触发 Python 大坑**：写 Python helper 时无意中触发了 `_parse_date_cell` 函数重复 + 两个 `def main()` 错乱。Edit 的 `replace_all=false` 单点替换在长文件里很难 disambiguate。**下次大改 Python helper 用 Read + 手动确认行号范围 → 然后用唯一 anchor 字串做 Edit**，或直接 Write 整段子模块。
+- **Scale-invariant ratio 因子的优势**：本因子 raw_value = recent/baseline 比率，对 post_count 的 absolute scale 完全不敏感 (×100000 / ×1000 缩放在 ratio 内相消)。这意味着未来真实 post_count 写入同一列（绝对单位 = 帖子数量），因子输出的数值范围 / zscore 分布完全不变，**完整保持 backtest / FactorIC 历史可比**。如果改成 absolute 量纲（如 "近 5 日 post_count 总和"），数据源切换后 zscore 失效，必须重跑整个历史。**ratio-family 因子在双重代理升级路径上天然鲁棒** — 下次代理类因子优先选 ratio 形式。
+- **Pure-function-first factor design** (US-029/US-030/US-031/US-032/US-033 lineage continues): 14 个因子全部把 ALL non-DB logic 抽 `export function`s, `compute()` 只是 thin DB-query + assemble layer。让 77 个测试 1s 跑完不走 Sequelize。这个 lineage 是因子库的核心约定，新加因子 **不要把复杂数学塞 compute() 闭包里**，先抽 helper 再写 compute。
+- **新增因子要 grep `names.length === <N>` 检查既有 factor count 断言**：本次 EarningsSurpriseFactor.test.ts 有硬编码 count=13，US-034 加因子后该 test 红了一个 assertion，需手动改 13→14。**未来 US-035 / US-036 加因子前 `grep "names.length === " backend/tests/factors/`** 一次，预先发现所有 count 类断言；最终更佳是把这类断言改成 ">= N" 或 "包含 X" — 但当前快速增量先保持单调更新模式。
 ---

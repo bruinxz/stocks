@@ -2506,6 +2506,178 @@ def _parse_date_cell(row, col: Optional[str]) -> Optional[str]:
     return None
 
 
+def _infer_exchange_prefix(pure_code: str) -> Optional[str]:
+    """从 6 位股票代码推断 EastMoney 人气榜 API 所需的交易所前缀.
+
+    EastMoney `stock_hot_rank_detail_em` 要求 symbol = 'SH600519' / 'SZ000001' 这种
+    带 2 位交易所前缀的形式（与 Stock.symbol 的 '.SH' / '.SZ' 后缀不同）。
+
+    映射规则（与因子库 _helpers.ts inferStockSymbol 同款，但前缀位置不同）：
+      6      -> SH  (沪市主板 / 科创板)
+      0 / 3  -> SZ  (深市主板 / 中小板 / 创业板)
+      4 / 8 / 9 -> BJ  (北交所；EastMoney 通常返回空，这里保留 BJ 兼容)
+    其他    -> None (无法识别)
+    """
+    if not pure_code or not pure_code.isdigit() or len(pure_code) != 6:
+        return None
+    head = pure_code[0]
+    if head == '6':
+        return 'SH'
+    if head in ('0', '3'):
+        return 'SZ'
+    if head in ('4', '8', '9'):
+        return 'BJ'
+    return None
+
+
+def get_stock_sentiment(stock_code: str) -> List[Dict[str, Any]]:
+    """
+    Fetch A-share retail sentiment / hot rank for a single stock — used by
+    EastMoneyQAFactor (US-034) to track近 5 日 vs 近 30 日 retail attention shift.
+
+    Uses AKShare `stock_hot_rank_detail_em(symbol='SH600519' | 'SZ000001')`:
+        东方财富网 - 个股人气榜 - 历史趋势及粉丝特征
+        https://guba.eastmoney.com/rank/stock?code=<6-digit>
+
+    Returns ONE row per trading day per stock (≈ 365 days back, daily timeline)
+    with columns: 时间 / 排名 / 证券代码 / 新晋粉丝 / 铁杆粉丝.
+
+    ── 双重代理：post_count / view_count / heat_score ──
+
+    AC 期望字段 (post_count / view_count) 在 AKShare 中**不可得**：
+      - EastMoney 股吧的发帖数与浏览量只在网页前端展示，无 API。
+      - stock_guba_em 在 AKShare 中根本不存在（命名是空架子）。
+      - stock_hot_rank_em 只返回当日 top 100 实时榜（无历史）。
+
+    选定代理（在 Python 端完成，让 TS 直接 bulkCreate）：
+      - **post_count** = round(100000 / max(rank, 1))
+          rank=1 → 100000 (全市场最热); rank=100 → 1000; rank=1000 → 100
+          理论根据：股吧发帖数与人气排名高度相关，EastMoney 用排名汇总用户活跃度
+          (含 click / post / favorite / search)，rank 倒数是发帖数的合理代理。
+          × 100000 保证数值落在 100-100000 区间，因子层 5d/30d 比率计算
+          与原始 post_count 同量纲。
+      - **view_count** = round((new_fan_ratio + hardcore_fan_ratio) × 1000)
+          AKShare 返回的是粉丝占比 (求和 ≈ 1.0)，× 1000 让数值落在 ~1000 上下。
+          对因子 5d/30d 比率无影响（scale 相消）。
+      - **heat_score** = 0.7 × post_count + 0.3 × view_count
+          综合分；因子层不直接用，留给 US-058 异常情绪监测。
+
+    Args:
+        stock_code: 6-digit code (e.g. '600519' / '000001'), suffixless.
+
+    Returns:
+        List sorted by trade_date ascending. Returns [] on error / unrecognized
+        exchange prefix / empty AKShare response, so the caller can checkpoint
+        a "tried" stock without aborting batch sync.
+    """
+    try:
+        pure_code = str(stock_code).strip().zfill(6)
+        if not pure_code.isdigit() or len(pure_code) != 6:
+            print(f"Invalid stock_code format: {stock_code}", file=sys.stderr)
+            return []
+
+        prefix = _infer_exchange_prefix(pure_code)
+        if prefix is None:
+            print(f"Cannot infer exchange prefix for stock_code={pure_code}", file=sys.stderr)
+            return []
+        # 北交所多数股票 EastMoney 人气榜不收录；保留尝试，但若失败也 graceful
+        symbol = f"{prefix}{pure_code}"
+        print(f"Fetching stock sentiment for symbol={symbol}...", file=sys.stderr)
+
+        fn = getattr(ak, 'stock_hot_rank_detail_em', None)
+        if fn is None:
+            print("AKShare has no stock_hot_rank_detail_em function", file=sys.stderr)
+            return []
+
+        try:
+            df = fn(symbol=symbol)
+        except TypeError:
+            df = fn(symbol)
+        except Exception as e:
+            print(f"stock_hot_rank_detail_em({symbol}) failed: {e}", file=sys.stderr)
+            return []
+
+        if df is None or df.empty:
+            print(f"AKShare returned empty hot_rank_detail dataframe for {symbol}", file=sys.stderr)
+            return []
+
+        # ----- 列名柔性映射 -----
+        col_map: Dict[str, str] = {}
+        for col in df.columns:
+            col_s = str(col)
+            if col_s in ('时间', '日期', '交易日'):
+                col_map['trade_date'] = col_s
+            elif col_s in ('排名', '人气榜排名', '当前排名'):
+                col_map['rank'] = col_s
+            elif col_s in ('证券代码', '股票代码'):
+                col_map['stock_code'] = col_s
+            elif col_s in ('新晋粉丝', '新晋粉丝占比'):
+                col_map['new_fan_ratio'] = col_s
+            elif col_s in ('铁杆粉丝', '铁杆粉丝占比'):
+                col_map['hardcore_fan_ratio'] = col_s
+
+        if not col_map.get('trade_date') or not col_map.get('rank'):
+            print(
+                f"Missing required col mapping for hot_rank_detail ({symbol}). "
+                f"cols={list(df.columns)[:8]}",
+                file=sys.stderr,
+            )
+            return []
+
+        results: List[Dict[str, Any]] = []
+        seen_dates: set = set()  # 同一 (date, stock) AKShare 偶发 duplicate 行 — 保留首条
+        for _, row in df.iterrows():
+            trade_iso = _parse_date_cell(row, col_map['trade_date'])
+            if not trade_iso:
+                continue
+            if trade_iso in seen_dates:
+                continue
+            seen_dates.add(trade_iso)
+
+            rank_val = _cell_int(row, col_map.get('rank'))
+            if rank_val is None or rank_val <= 0:
+                # AKShare 偶有 0 / 负数 rank，无意义跳过
+                continue
+            new_fan = _cell_float(row, col_map.get('new_fan_ratio'))
+            hardcore_fan = _cell_float(row, col_map.get('hardcore_fan_ratio'))
+
+            # ── 代理计算（见函数 docstring） ──
+            post_count = int(round(100000.0 / max(rank_val, 1)))
+            # 粉丝两列若都缺 → view_count = None；任一缺则按 0 替代
+            if new_fan is None and hardcore_fan is None:
+                view_count: Optional[int] = None
+            else:
+                view_count = int(round(((new_fan or 0.0) + (hardcore_fan or 0.0)) * 1000.0))
+            # heat_score：若 view_count 缺，退化为 post_count
+            if view_count is None:
+                heat_score = float(post_count)
+            else:
+                heat_score = round(0.7 * post_count + 0.3 * view_count, 4)
+
+            raw_payload = _row_to_jsonable(row, df.columns)
+
+            results.append({
+                'trade_date': trade_iso,
+                'stock_code': pure_code,
+                'post_count': post_count,
+                'view_count': view_count,
+                'heat_score': heat_score,
+                'rank': rank_val,
+                'new_fan_ratio': new_fan,
+                'hardcore_fan_ratio': hardcore_fan,
+                'raw_payload': raw_payload,
+            })
+
+        # 按 trade_date 升序，便于 TS 端按时间排查
+        results.sort(key=lambda r: r['trade_date'])
+        print(f"Parsed {len(results)} sentiment rows for {symbol}", file=sys.stderr)
+        return results
+    except Exception as e:
+        print(f"Error getting stock sentiment for {stock_code}: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return []
+
+
 def main():
     """Main entry point for command line calls"""
     if len(sys.argv) < 2:
@@ -2641,6 +2813,14 @@ def main():
 
             stock_code = sys.argv[2]
             result = get_analyst_forecast(stock_code)
+
+        elif command == "get_stock_sentiment":
+            if len(sys.argv) < 3:
+                print(json.dumps({"error": "Missing stock_code for get_stock_sentiment"}), file=sys.stderr)
+                sys.exit(1)
+
+            stock_code = sys.argv[2]
+            result = get_stock_sentiment(stock_code)
 
         else:
             print(json.dumps({"error": f"Unknown command: {command}"}), file=sys.stderr)

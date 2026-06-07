@@ -30,6 +30,7 @@
     "sync:dividend-history": "ts-node src/scripts/sync-dividend-history.ts",
     "sync:financial-report": "ts-node src/scripts/sync-financial-report.ts",
     "sync:analyst-forecast": "ts-node src/scripts/sync-analyst-forecast.ts",
+    "sync:stock-sentiment": "ts-node src/scripts/sync-stock-sentiment.ts",
     "compute:factors": "ts-node src/scripts/compute-factors.ts",
     "paper:reset-and-run-quant": "ts-node src/scripts/reset-paper-trading-and-run-quant.ts",
     "seed:mock": "ts-node src/scripts/seed-mock-data.ts",
