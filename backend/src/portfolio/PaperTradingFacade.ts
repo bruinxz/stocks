@@ -47,6 +47,7 @@ import { paperTradingRiskProfileService } from './internal/PaperTradingRiskProfi
 import { paperTradingOrderIntentService } from './internal/PaperTradingOrderIntentService';
 import { paperTradingTuningApplyService } from './internal/PaperTradingTuningApplyService';
 import { recommendationTradeOutcomeService } from '../services/RecommendationTradeOutcomeService';
+import { positionLimitGuard } from './risk/PositionLimitGuard';
 
 // Re-export the small set of constants the controller still needs literal access
 // to (default capital, portfolio name keys for downstream services).  This is the
@@ -317,6 +318,26 @@ export class PaperTradingFacade {
       const cost = execute_price * quantity;
       const commission = cost * commissionRate;
       const totalCost = cost + commission;
+
+      // ---- US-047: Position limit guard ----
+      // Run BEFORE the cash check so that a position-limit violation is
+      // reported as a "仓位上限" issue rather than an "可用资金不足" one.
+      // `cost` (execute_price × quantity, ex-commission) is the right
+      // notional to compare against `max_single_stock_pct` since commission
+      // doesn't accrue to the position's market value.
+      const guardResult = await positionLimitGuard.checkBuyOrder({
+        user_id,
+        symbol,
+        proposed_value: cost,
+      });
+      if (!guardResult.ok && guardResult.violation) {
+        const err: any = new Error(guardResult.violation.message);
+        err.statusCode = 400;
+        err.code = 'POSITION_LIMIT_VIOLATION';
+        err.rule = guardResult.violation.rule;
+        err.detail = guardResult.violation.detail;
+        throw err;
+      }
 
       if (portfolio.current_cash < totalCost) {
         throw new Error('可用资金不足');

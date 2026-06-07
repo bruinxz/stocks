@@ -138,6 +138,16 @@
 - **优化问题求解器范式 (US-044 PortfolioOptimizer 引入)**: 当 AC 给出 "在约束 X 下最大化目标 Y" 的优化问题，2 件套通用方案：(1) **投影梯度上升 (PGA)** — 数值梯度（中心差分 `eps=1e-5` 防解析推导出错）+ 每次更新后 `projector(w)` 投影回约束集 + 多起点（equal_weight + R 个 seeded random）择最优 + 收敛 tolerance（如 1e-6）+ 最大迭代上限保护（5000）；(2) **baseline solver**（equal_weight / random / static 等）— 让用户能快速对比 "PGA 比 naive baseline 强多少"。**baseline must trivial** (5 行内) 便于审计。**simplex + box constraint 投影 (sum(w)=1, w_i ∈ [min, max]) 的 bisection 算法**: `clip(w+λ, min, max).sum()` 是 λ 的单调非降函数 → bisection 必收敛（100 次迭代到 1e-10 精度）；**关键约束可行性提前 throw**（max*N<1 / min*N>1 / min<0 / max<min）友好提示而不是等到投影内部抛错。**未来 US-049 DrawdownCircuitBreaker / US-086 仓位再平衡引擎 / US-085 交易成本敏感性分析**遇到优化问题按此 2 件套范式。
 - **第 4 个事后分析诊断工具 — 组合优化 (US-044 PortfolioOptimizer)**: 完整 5 件套 checklist 已确立（after US-040/041/042/043）：(a) **不复用 OptimizationRun 父表**（事后分析非 task 状态机；通过 strategy_keys_json + period_start/end 关联源回测）；(b) **DataSource 注入** 接口 + `PRODUCTION_*_SOURCE` lazy-require + 测试 fake 完全脱 DB；(c) **8+ 纯函数全 export** 让单测覆盖边界 / NaN / 已知数值；(d) **admin 4 件套** (getRun / listRecentRuns / deleteRun / cleanupOlderThan)；(e) **CLI 4 模式**（主流程 / list / show / delete / cleanup）。**下次 US-045 BenchmarkAttributionService / US-046 IndustryAttributionService 按此 5 件套 checklist 直接照搬。** **deriveDailyReturnsFromEquityCurve 已 2 处需要**（PortfolioOptimizer + RegimeSegmentedBacktest 各 inline 实现）；**第 3 处出现时（US-085）再抽到 utils/ 共享**，符合 "3 处规则" 抽取阈值（5+ 处或算法复杂度 ≥ 20 行 + 多处出现 bug）。
 
+### Risk guards — pre-trade gates (US-047+)
+- **`backend/src/portfolio/risk/` 是 pre-trade guard 子目录**（与 `internal/` 并列在 `portfolio/` 下）。每个 guard (`PositionLimitGuard.ts` / 未来 `TrailingStopGuard` / `DrawdownCircuitBreaker` / `PerStockStopLossGuard`) 遵循统一 7 项 checklist，已 documented 到 `backend/src/portfolio/CLAUDE.md` 的 'risk/ — pre-trade gates (US-047+)' 一节。下个 US-048..US-051 实现先 read CLAUDE.md。
+- **PaperTradingFacade.placeOrder 注入顺序: position-limit *先*, cash 检查 *后***。否则违规会被误报为 "可用资金不足"。Guard 抛出携带 `{code, rule, detail, statusCode}` 的自定义 Error；controller 自动转 HTTP 400。新增 guard 时按同款顺序排队：硬约束 (position limit / per-stock stop loss) 在前，soft check (cash / 流动性) 在后。
+- **每个 guard 都做 DataSource 接口注入**（`PositionLimitDataSource` 是参考）：5+ method 接口 (loadPortfolio / loadPositions / loadIndustryForSymbol / loadConfig / saveConfig / writeAlert) + `Default<Xxx>DataSource` Sequelize 实现 + `PRODUCTION_<XXX>_DATA_SOURCE` singleton + 构造器 default 注入。测试 makeFakeSource(state) 直接传 state object 当 backing store。
+- **Single-violation priority chain pattern**: `pickSingleViolation(ctx, config)` 用 short-circuit `||` 链 (count → single-stock → industry)。**优先级排序原则**: 最容易让用户理解的规则在前 (持仓数 = 整数易看; pct = 百分比要算)。用户修了首违规 → 下次请求自然暴露下一违规。**反模式**: 一次返回 N 个 violation，用户面对 cascade 不知道先修哪个。
+- **`User.risk_config.<key>` JSONB 是共享配置存储**。每个 guard 占一 namespace (e.g. `position_limits` / 未来 `trailing_stop` / `drawdown_breaker`)。共用 `risk_config` 列免去 N 张 user_<x>_config 子表。**写 JSONB 必带 `user.changed('risk_config', true)`** (US-017 教训) 否则 Sequelize 的 dirty-check 不发 UPDATE。
+- **`normalizeXxxConfig(raw)` 是 GET/PUT endpoint 的 sanity gate**: 所有 numeric 字段单独 safeInt / safePct 处理，无效值 (NaN / 负 / >1) 静默退回默认而不是 4xx — 用户改坏一项不应让整个 risk profile 重置。pct=0 (block all) 与 pct=1 (no cap) 都是合法 safe-mode，不要 coerce 走。
+- **RiskAlert 写入 try/catch + log.warn 不阻塞主路径**（US-042 FactorCorrelationReport 同款）。`writeAlert` 失败时 guard 仍返回 `{ok:false, violation}` 让 caller 拒单 — 告警丢失是次要 (运维事后能从 log 看到)，订单错误放行才是主要事故。
+- **`RiskController` (/api/risk/*) vs `RiskAlertController` (/api/risk-alerts/*) 故意分开**: 前者 pre-trade *policy* (GET/PUT config) / 后者 post-trade *consumption* (bell view + read/unread)。`/api/risk` 是策略命名空间未来扩 US-049 DrawdownCircuitBreaker 加 `/api/risk/drawdown-breaker` 等。
+
 
 
 ### Tooling
@@ -4910,5 +4920,67 @@ facade 模式让 controller 直接可用）。
 - **"per-X 失败隔离" 在某些场景是 over-engineering**：US-045 BenchmarkAttribution 需要 per-benchmark try/catch 因为每个 benchmark 都要外部 source 调用；US-046 Industry 不需要 per-industry try/catch 因为行业归因只在 industry 字符串处理层操作（无外部 source 调用），失败模式只能是数据本身缺失 → 该行业 trade_count=0 + 全 null 而非抛错。**判据**：当 per-X 处理涉及 IO/外部数据时才需要 per-X try/catch。
 - **`industry_code = industry_name` 决策在模型 jsdoc 与服务 jsdoc 双地点文档化**让未来 BK 切换时 ops 知道改哪里：模型 jsdoc 解释当前 schema 含义，服务 jsdoc 解释切换路径（"未来 Stock 引入 BK 后切换 DataSource 内部 join 逻辑即可"）。
 - **6 个 admin 方法是事后分析模块的标准 admin 套件**：`getRun` / `getResultsForRun(parent_id)` / `listRecentRuns(limit)` / `deleteRun(id)` / `deleteRunByParentId(parent_id)` / `cleanupOlderThan(days)`。**第 7 个事后分析模块直接照搬这 6 个方法签名**，让 CLI 和 UI 调用模式统一。
+
+---
+
+## 2026/06/07 - US-047
+
+### What was implemented
+Built the first pre-trade risk gate for the paper-trading flow: **PositionLimitGuard** enforces the global "最大持仓数 + 单股仓位上限 + 单行业仓位上限" policy on every BUY before the cash check fires.
+
+- **`backend/src/portfolio/risk/PositionLimitGuard.ts`** (new, ~430 LOC):
+  - `DEFAULT_POSITION_LIMITS = Object.freeze({max_positions:20, max_single_stock_pct:0.1, max_single_industry_pct:0.3})` per AC.
+  - 6 exported pure helpers (`isNewHolding`, `evaluatePositionCount`, `evaluateSingleStock`, `evaluateSingleIndustry`, `pickSingleViolation`, `normalizePositionLimitsConfig`) — each tested independently without booting the guard.
+  - `PositionLimitDataSource` interface + `DefaultPositionLimitDataSource` Sequelize impl + `PRODUCTION_POSITION_LIMIT_DATA_SOURCE` singleton + constructor override — tests inject a fake snapshot and run zero-DB.
+  - `PositionLimitGuard` class with `checkBuyOrder`, `getConfig`, `updateConfig`. Single-violation priority chain: count → single-stock → industry.
+  - Persists violations as `RiskAlert(level='HIGH')` via the DataSource; failures caught + warn-logged but do NOT mask the violation.
+- **`backend/src/portfolio/PaperTradingFacade.ts`** (placeOrder hook):
+  - Inside the BUY branch, after `cost`/`commission` are computed but BEFORE the `current_cash < totalCost` check, we now call `positionLimitGuard.checkBuyOrder({user_id, symbol, proposed_value:cost})`.
+  - On violation, throw an `Error` carrying `code='POSITION_LIMIT_VIOLATION'`, `rule`, `detail`, `statusCode=400` so the controller transparently turns it into HTTP 400.
+  - Ordering matters: position-limit FIRST so users see "仓位上限" rather than the misleading "可用资金不足".
+- **`backend/src/api/controllers/RiskController.ts` + `routes/risk.routes.ts`** (new):
+  - `GET /api/risk/position-limits` returns `positionLimitGuard.getConfig(user_id)` (defaults when never customized).
+  - `PUT /api/risk/position-limits` calls `positionLimitGuard.updateConfig(user_id, body)` — normalized via `normalizePositionLimitsConfig` so garbage input falls back to defaults without poisoning persistent state.
+- **`backend/src/index.ts`**: mount `app.use('/api/risk', riskRoutes)` immediately after `/api/risk-alerts`.
+- **`backend/src/portfolio/CLAUDE.md`**: documented the new `risk/` subdirectory + the 7-item checklist that future risk guards (US-048..US-051) must follow.
+
+### Files changed
+- `backend/src/portfolio/risk/PositionLimitGuard.ts` (new)
+- `backend/src/portfolio/PaperTradingFacade.ts` (+1 import, +18-line guard call inside BUY)
+- `backend/src/api/controllers/RiskController.ts` (new)
+- `backend/src/api/routes/risk.routes.ts` (new)
+- `backend/src/index.ts` (+1 import, +1 route mount)
+- `backend/src/portfolio/CLAUDE.md` (+ `risk/` tree entry + new section)
+- `backend/tests/risk/position-limit-guard.test.ts` (new, 83 tests)
+- `ralph/prd.json` (US-047 → passes:true)
+- `ralph/progress.txt` (this entry + new Codebase Patterns section)
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → exit 0
+- `cd backend && ./node_modules/.bin/eslint src/portfolio/risk src/api/controllers/RiskController.ts src/api/routes/risk.routes.ts src/portfolio/PaperTradingFacade.ts src/index.ts --ext .ts --quiet` → exit 0 (after `--fix` for prettier whitespace)
+- `cd backend && npx ts-node --transpile-only tests/risk/position-limit-guard.test.ts` → **83 ok, 0 failed** in <1s
+- Regression smoke: `MultiFactorAlphaStrategy.test.ts` still all pass.
+
+### Browser verification
+**N/A** — backend-only feature. Manual smoke-test path (after `npm start`):
+1. `GET /api/risk/position-limits` (auth header) → returns `{max_positions:20, max_single_stock_pct:0.1, max_single_industry_pct:0.3}` for a fresh user.
+2. `PUT /api/risk/position-limits {max_positions:5}` → saves the new cap.
+3. `POST /api/paper-trading/trade {symbol:"600519.SH", direction:"BUY", quantity:1000}` on a portfolio already holding 5 distinct stocks → HTTP 400 with `message='持仓数量达到上限 5 只...'` AND a new `RiskAlert(level='HIGH')` row visible in the bell view (`GET /api/risk-alerts`).
+
+### Learnings for future iterations
+- **`backend/src/portfolio/risk/` is now the canonical home for pre-trade gates.** US-048 (TrailingStopGuard) / US-049 (DrawdownCircuitBreaker) / US-050 (MarketRegimeAlertService) / US-051 (PerStockStopLossGuard) all belong here and should match this guard's shape verbatim — DataSource DI, pure-function exports, `Object.freeze` defaults, `User.risk_config.<namespace>` JSONB persistence, single-violation priority chain, `RiskAlert(level='HIGH')` write with isolated failure handling.
+- **Hook ordering in `placeOrder` is significant.** Position-limit BEFORE cash check. When you add TrailingStopGuard (US-048) it runs on a *daily-close* hook (not at order time), so the placement is different — but for any future *order-time* guard (e.g. US-051 per-stock stop loss applied to BUY), inject it BEFORE the cash check too. Document the hook ordering in `PaperTradingFacade.placeOrder` as more guards land.
+- **`User.risk_config` is a shared JSONB blob.** Namespace each guard's config under a distinct key (`position_limits` / `trailing_stop` / `drawdown_breaker`) so different settings don't clobber each other. The existing `stop_loss_percent` / `take_profit_percent` / `enableVolumeAlert` / `enableTechnicalAlert` keys live at the top of the same blob — leave them alone. **JSONB writes ALWAYS require `user.changed('risk_config', true)`** (US-017) or Sequelize won't emit the UPDATE.
+- **`pickSingleViolation` short-circuit is intentional, not a missing feature.** Returning all 3 violations would force the user to mentally decompose a cascade. Return one; the next request surfaces the next. **Reuse this exact pattern in DrawdownCircuitBreaker (US-049 LEVEL_1/2/3 trigger chain)** — only ONE level fires per evaluation, the higher one wins.
+- **Strict `>` not `≥` for percent thresholds.** Project-wide convention (US-025 boundary section). 10% spot-on is allowed; 10.0001% is rejected. Mirrored across all 3 evaluators — when you add a new guard, follow the same rule and add a `boundary == threshold` test case to prove it.
+- **`RiskController` is intentionally NOT folded into `RiskAlertController`.** Former is pre-trade *policy* (config CRUD), latter is post-trade *consumption* (bell view, read/unread). `/api/risk/*` is the policy namespace; `/api/risk-alerts/*` is the alert namespace. When US-049 lands, mount `/api/risk/drawdown-breaker/*` under the same `risk.routes.ts` or create a sibling — but DO NOT merge into `riskAlert.routes.ts`.
+- **`writeAlert` failure must NOT mask the violation.** The fake DataSource has `writeAlertShouldThrow: true` for a test case that proves this. If the DB is down, we still reject the order; the alert is lost (recoverable from log warnings, not the end of the world) but the user is safe from over-concentration.
+- **`saveConfig` in the prod DataSource calls `user.changed('risk_config', true)` after the JSONB merge.** This is the US-017 lesson — Sequelize's dirty-check on JSONB columns doesn't auto-detect in-place mutations. Without this line, `PUT /api/risk/position-limits` would silently no-op on re-saves.
+- **`normalizePositionLimitsConfig(raw)` is the sanity gate for both `updateConfig` AND `loadConfig`.** A user might have a stale or garbage `risk_config.position_limits` from an earlier broken release; loading it through `normalize` ensures we never feed an invalid config into the evaluators. Same pattern when you add `trailing_stop` / `drawdown_breaker` configs.
+- **Test driver uses `async main()` not IIFE chains** (US-037 lesson). 83 tests are run sequentially in `main()` so the `console.log` summary at the end reflects the full run.
+- **`tests/risk/` is outside `tsconfig.json`'s `include`** (matches `tests/strategies/` / `tests/factors/` / `tests/backtest/` / `tests/performance/`). `npx tsc --noEmit` and `eslint src/` both skip it. Run tests with `npx ts-node --transpile-only`. Don't add `tests/**` to tsconfig — it would break the existing convention used by 200+ tests.
+- **The guard's `loadIndustryForSymbol` looks up `Stock.industry` with `symbol` keyed exactly as passed by the facade** (suffixed form, e.g. `600519.SH`). This matches `PaperTradingPosition.symbol`. If a future story needs to handle suffix-less symbols (e.g. `600519`) at the order interface, normalize at the boundary — don't push it down into the guard's lookup path.
+- **The `industry?: string | null` field on `HeldPositionSnapshot`** is populated by `DefaultPositionLimitDataSource.loadPositions` via a one-shot `Stock.findAll({symbol: {[Op.in]: symbols}})` lookup. Cheap (1 query for all positions) and correct — don't naively N+1 it from inside the guard.
+- **Custom error shape `{code, rule, detail, statusCode}`** thrown by the facade is a new pattern. The existing `paperTradingFacade.placeOrder` `throw new Error('可用资金不足')` is a bare Error with no metadata. As more guards land, formalize this: maybe a `RiskViolationError` class in `backend/src/portfolio/risk/errors.ts`. For now (1 guard) the inline approach is the minimum needed; refactor when the 2nd guard arrives.
 
 ---

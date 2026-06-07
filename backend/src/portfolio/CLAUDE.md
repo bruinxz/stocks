@@ -10,6 +10,8 @@ rather than reaching into individual `internal/` services.
 portfolio/
 ├── PaperTradingFacade.ts          # 7-method public surface — controllers import this
 ├── PortfolioReturnSimulator.ts    # standalone return simulator (pre-existing)
+├── risk/                          # pre-trade risk gates — US-047+
+│   └── PositionLimitGuard.ts      # max positions + single-stock + single-industry caps
 └── internal/                      # private — only the facade may import from here
     ├── PaperTradingAttributionService.ts
     ├── PaperTradingAutomationService.ts
@@ -59,3 +61,38 @@ portfolio/
   signature as long as the facade's contract stays the same.
 - Removing/renaming a re-exported constant → must update both the controller
   and any tests that still reference the old name.
+
+## `risk/` — pre-trade gates (US-047+)
+
+A `risk/` subdirectory hosts pre-trade guards that the facade calls **inline
+before** ordering side effects.  Guards follow the project's `組合級
+strategy` and `factor diagnostic` patterns:
+
+1. **DataSource interface injection** — every guard exposes a
+   `Xxx<DataSource>` interface + `Default<Xxx>DataSource` Sequelize impl +
+   `PRODUCTION_<XXX>_DATA_SOURCE` singleton + a constructor that accepts an
+   override, so tests can drive the guard with synthetic snapshots and **zero
+   DB**.
+2. **Pure-function helpers all exported** (`evaluatePositionCount`,
+   `evaluateSingleStock`, `evaluateSingleIndustry`, `pickSingleViolation`,
+   `normalizePositionLimitsConfig`) — single tests can hit boundaries / NaN
+   / zero cases without booting the guard.
+3. **Config lives in `User.risk_config.<key>` JSONB** + a project-wide
+   `Object.freeze`'d default constant (e.g. `DEFAULT_POSITION_LIMITS`).
+   Guards expose `getConfig(user_id)` and `updateConfig(user_id, raw)`;
+   the latter normalizes invalid input back to defaults before persisting.
+   Persisting JSONB requires `user.changed('risk_config', true)` (US-017).
+4. **Violations are `RiskAlert(level='HIGH')` rows** written via the
+   DataSource.  `writeAlert` failures are caught + logged but MUST NOT mask
+   the violation itself — the caller still rejects the order.
+5. **Single-violation priority chain** — `pickSingleViolation` short-circuits
+   on the first failing rule so the user sees one clear reason, not a
+   cascade.  Fix the first → next attempt surfaces the next.
+6. **Facade integration**: the guard is called BEFORE the cash check inside
+   `placeOrder` so a position-limit violation is reported as "仓位上限"
+   rather than misleadingly as "可用资金不足".  Errors carry `code`,
+   `rule`, `detail`, and `statusCode=400` for the controller layer.
+7. **HTTP surface lives at `/api/risk/<resource>`** (mounted in `index.ts`
+   alongside `/api/risk-alerts`).  `RiskController` is intentionally
+   separate from `RiskAlertController`: the former is *pre-trade policy*,
+   the latter is *post-trade consumption*.
