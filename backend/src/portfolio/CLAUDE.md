@@ -12,7 +12,8 @@ portfolio/
 ├── PortfolioReturnSimulator.ts    # standalone return simulator (pre-existing)
 ├── risk/                          # pre-trade risk gates — US-047+
 │   ├── PositionLimitGuard.ts      # max positions + single-stock + single-industry caps
-│   └── TrailingStopGuard.ts       # 追踪止损 — daily highest_price + next-day SELL trigger
+│   ├── TrailingStopGuard.ts       # 追踪止损 — daily highest_price + next-day SELL trigger
+│   └── DrawdownCircuitBreaker.ts  # 组合级回撤熔断 — LEVEL_1/2/3 cascade + 24h pause
 └── internal/                      # private — only the facade may import from here
     ├── PaperTradingAttributionService.ts
     ├── PaperTradingAutomationService.ts
@@ -149,3 +150,79 @@ US-051 per-stock stop-loss, US-052 industry rebalancer, ...) should follow:
   (收盘后) + `PAPER_TRADING_TRAILING_STOP_CHECK` (开盘前).  Cron 在 DB 表
   `scheduled_tasks` 配置 (不在代码硬编码), ops 可以按市场假期自定义.
   `dry_run=true` 参数让 UI dashboard 能"预演今日 trigger" 不写真实 alert.
+
+## `risk/DrawdownCircuitBreaker` — US-049 specifics
+
+The drawdown circuit breaker introduces the **third risk-guard shape** —
+**portfolio-level cascading levels** (not per-position).  Where
+`PositionLimitGuard` (sync inline) and `TrailingStopGuard` (two-phase cron)
+target individual orders or positions, this guard watches the WHOLE
+portfolio against its historical peak.
+
+1. **`evaluateAfterClose(user_id?, dry_run?)`** — post-close cron.  Computes
+   `peak_value = max(snapshots.total_value, current.total_value)` over the
+   lookback (default 365d), then `drawdown_pct = (peak − current) / peak`.
+   `pickDrawdownLevel()` picks **one** level via short-circuit chain
+   (LEVEL_3 ≥ 20% > LEVEL_2 ≥ 15% > LEVEL_1 ≥ 10%), mirroring US-047's
+   `pickSingleViolation`.  Side effects per level:
+   - **LEVEL_1** — writes `User.risk_config.drawdown_breaker.paused_until`
+     (24h ISO timestamp); the next BUY hits the inline `checkBuyAllowed`
+     hook and is blocked.
+   - **LEVEL_2** — emits `DrawdownSellTrigger[]` for the top 50% by
+     `gain_ratio` (using `Math.ceil(N/2)` for the strong-disposal path —
+     N=3 sells 2, N=1 sells 1).  Does NOT call `facade.placeOrder`;
+     surfaces structured triggers + `RiskAlert(level='HIGH')`.
+   - **LEVEL_3** — emits triggers for ALL open positions (清仓).
+2. **`checkBuyAllowed(user_id, symbol)`** — `placeOrder` inline hook
+   (placed BEFORE position-limit guard).  Blocks only when (a) pause is
+   active AND (b) `symbol` isn't already in the user's open positions
+   (so add-on to existing positions still works during a pause).  SELL
+   never invokes this hook — closing positions during a pause is always
+   allowed.  **Failure mode: fail-OPEN.**  DB outage in the guard simply
+   lets the order proceed (`positionLimitGuard` + cash check still gate
+   it).  Don't let risk-guard DB issues block all trading.
+3. **`clearPause(user_id)`** — admin/operator override that clears the
+   `paused_until` early (used when the drawdown turned out to be a
+   benchmark dislocation rather than a real strategy issue).
+
+Patterns codified in US-049 that future risk guards should follow:
+
+- **LEVEL cascade pick (single-level short-circuit)** mirrors
+  `pickSingleViolation` (US-047) — one cascading guard returns ONE event,
+  the highest-severity one wins.  Cascading multiple LEVEL_X simultaneously
+  would force operators to mentally decompose; sequential one-at-a-time
+  preserves clarity.
+- **`peak_value` includes current实时值, not just snapshots**.  EOD
+  snapshots can lag intra-day evaluation.  Letting peak fall behind
+  current would zero-out drawdown for the window before the next
+  snapshot lands, then re-trigger when it does.  Belt-and-suspenders
+  pattern reusable for any "lookback metric vs realtime" comparison.
+- **`gain_ratio` sort: gain desc, symbol asc (stable tie-break)** — same
+  as US-025 GameTraderRelay's stable sort discipline.  V8 sort isn't
+  stable; explicit secondary key prevents monthly-rebalance picks from
+  drifting across runs.
+- **`Math.ceil(N/2)` is the strong-disposal path** — N=3 → 2 sold (more
+  conservative is N=1; the strong path matches "减仓 *至* 50%" wording
+  better than "减仓 *了* 50%").  Apply same shape to any future "keep
+  the smaller half" / "trim the larger half" disposal logic.
+- **`paused_until` is ISO timestamp string, not epoch ms** — audits are
+  more readable, JS `new Date(s).getTime()` makes timezone-safe
+  comparisons trivial.  `isPauseActive(pausedUntil, nowMs)` is the
+  single read-side helper; never inline-compare `Date.now() < s`.
+- **`≥` includes boundary (defensive硬触发)** vs PositionLimitGuard's
+  `>` for limits.  US-048 / US-049 both use `≥` for triggers; US-047
+  uses `>` for caps.  Decide upfront which side your guard sits on
+  before writing comparisons.
+- **Guard output ≠ order execution** — `evaluateAfterClose` returns
+  `triggers: DrawdownSellTrigger[]` to the caller; the actual SELL
+  is dispatched by `PaperTradingAutomationService` (or human approval)
+  via `paperTradingFacade.placeOrder` like any other order.  This keeps
+  the facade's 7-method invariant intact and matches US-048's pattern.
+- **`SchedulerService` single task type**:
+  `PAPER_TRADING_DRAWDOWN_BREAKER_CHECK` (post-close).  Unlike US-048
+  there's no separate pre-open phase — `checkBuyAllowed` is the inline
+  guard that consumes the pause state.  `dry_run=true` parameter for
+  UI dashboard "predict today's triggers" preview.
+- **HTTP surface**: 3 endpoints under `/api/risk/drawdown-breaker/*` —
+  `GET` (read config), `PUT` (update config), `POST /clear-pause`
+  (admin override).  All require auth.  Same namespace as US-047/US-048.

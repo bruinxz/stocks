@@ -838,8 +838,8 @@
         "Tests pass"
       ],
       "priority": 49,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026/06/07. DrawdownCircuitBreaker.ts (819 lines) with DataSource DI seam, pure-function helpers (computePeakValue / computeDrawdownPct / pickDrawdownLevel / pickLevel2TrimTargets / pickLevel3LiquidateTargets / normalizeDrawdownBreakerConfig / isPauseActive), 3 levels with priority short-circuit chain (LEVEL_3 > LEVEL_2 > LEVEL_1), `peak_value = max(snapshots, current)` to avoid lag, `Math.ceil(N/2)` strong-disposal for LEVEL_2, `paused_until` ISO timestamp + 24h pause window. PaperTradingFacade.placeOrder integration via `checkBuyAllowed` hook (placed BEFORE position-limit guard); fail-open on DB outage to preserve trading flow. RiskController endpoints: GET/PUT /api/risk/drawdown-breaker + POST /api/risk/drawdown-breaker/clear-pause. SchedulerService task type PAPER_TRADING_DRAWDOWN_BREAKER_CHECK (post-close). 161 unit tests pass (full DB-free with fake DataSource). Typecheck + lint pass (touched files only)."
     },
     {
       "id": "US-050",

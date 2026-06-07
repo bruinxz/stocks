@@ -33,4 +33,29 @@ router.get('/trailing-stop', authController.authenticate, riskController.getTrai
  */
 router.put('/trailing-stop', authController.authenticate, riskController.updateTrailingStop);
 
+/**
+ * @route GET /api/risk/drawdown-breaker
+ * @desc 获取当前用户的组合回撤熔断配置 (US-049)
+ * @access Private
+ */
+router.get('/drawdown-breaker', authController.authenticate, riskController.getDrawdownBreaker);
+
+/**
+ * @route PUT /api/risk/drawdown-breaker
+ * @desc 更新当前用户的组合回撤熔断配置 (US-049)
+ * @access Private
+ */
+router.put('/drawdown-breaker', authController.authenticate, riskController.updateDrawdownBreaker);
+
+/**
+ * @route POST /api/risk/drawdown-breaker/clear-pause
+ * @desc 手动解除当前用户的 LEVEL_1 暂停状态 (US-049)
+ * @access Private
+ */
+router.post(
+  '/drawdown-breaker/clear-pause',
+  authController.authenticate,
+  riskController.clearDrawdownBreakerPause
+);
+
 export default router;

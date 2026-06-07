@@ -148,6 +148,7 @@
 - **RiskAlert 写入 try/catch + log.warn 不阻塞主路径**（US-042 FactorCorrelationReport 同款）。`writeAlert` 失败时 guard 仍返回 `{ok:false, violation}` 让 caller 拒单 — 告警丢失是次要 (运维事后能从 log 看到)，订单错误放行才是主要事故。
 - **`RiskController` (/api/risk/*) vs `RiskAlertController` (/api/risk-alerts/*) 故意分开**: 前者 pre-trade *policy* (GET/PUT config) / 后者 post-trade *consumption* (bell view + read/unread)。`/api/risk` 是策略命名空间未来扩 US-049 DrawdownCircuitBreaker 加 `/api/risk/drawdown-breaker` 等。
 - **两阶段定时任务 guard 模板 (US-048 TrailingStopGuard 引入)**: 与 US-047 PositionLimitGuard 的"单次同步 placeOrder 内嵌"模式互补 —— 适用于需要"跨日观察 + 次日触发"语义的风控 (追踪止损 / 持有期到期 / 财报窗口隔离)。三件套：(1) **`updateXxxAfterClose(user_id?)`** 收盘后 cron 刷状态字段 (highest_price / max_drawdown / holding_days) 写回 position 表；(2) **`evaluateNextDayTriggers(user_id?, dry_run?)`** 开盘前 cron 扫触发条件，**写 RiskAlert + 返回结构化 trigger list**，**不**直接调 facade.placeOrder——保持单一职责让上层 (PaperTradingAutomationService) 按 trigger 走正常下单链路 (维持 facade 7-method 收敛)；(3) **GET/PUT /api/risk/<name>** 配置 endpoint 同 US-047 模板。**`effective_pct` 三级覆盖**: position 字段 > user_config > DEFAULT。**`highest_price` 初始化用 `avg_cost` fallback** 避免开仓首日 close < avg_cost 直接触发（同款判据适用未来"加仓后 high 水位重算"）。**触发判定用 `≤`（防御）vs 限制用 `>`（限额）的 boundary 语义不同**——防御要包含 boundary 立即止血，限额可恰好触线再说，与 US-047 镜像反向。**数据缺失时安全 HOLD 而非 fallback current_price**（current_price 会被 facade 下单流程 mutate，fallback 让 highest 突然跳水触发误平）。**`dry_run=true` 参数支持 UI 预演 trigger 不写 alert**——风控类 endpoint 都该有此选项让用户先看再决定。**单 user 失败 try/catch 隔离不阻塞剩余 user**（同 PositionLimitGuard + FactorICReport）。完整模板在 `backend/src/portfolio/CLAUDE.md` `risk/TrailingStopGuard — US-048 specifics` 一节。下个 US-049 DrawdownCircuitBreaker / US-050 MarketEnvAlertGuard 直接照此 9 项 checklist 模板复用。
+- **第 3 种风控形态：组合级 LEVEL cascade (US-049 DrawdownCircuitBreaker 引入)**: 与 US-047 (per-order inline)、US-048 (per-position two-phase cron) 互补 —— 本 guard 操作的是**整个组合的 total_value vs 历史 peak**。AC 给的 3 级阈值 (10% / 15% / 20%) **必须按 LEVEL_3 > LEVEL_2 > LEVEL_1 短路 pick 单一 level**（同 US-047 `pickSingleViolation` 模式），不要 cascade 三件套混淆决策。**`peak_value` 必须取 `max(snapshots, current.total_value)` 不能只看 EOD snapshots** —— EOD snapshots 滞后于实时评估窗口，否则 peak 滞后让 drawdown 永远 0 直到下次 snapshot 落库。**LEVEL_1 用 `paused_until` ISO timestamp 落库** (`User.risk_config.drawdown_breaker.paused_until`)，下次 BUY 走 placeOrder inline `checkBuyAllowed(user_id, symbol)` hook 检查暂停期；**SELL 永远放行** + **加仓既有持仓放行**（仅阻断新开仓，避免误伤策略 add-on）。**LEVEL_2 用 `Math.ceil(N/2)` 强 disposal 路径**（N=3 卖 2 / N=1 卖 1） 匹配 "减仓 *至* 50%" 而非 "减仓 *了* 50%" 的语义。**guard 输出 trigger ≠ 真实下单**（同 US-048）——`evaluateAfterClose` 返回 `triggers: DrawdownSellTrigger[]`，调用方 (`PaperTradingAutomationService` / 人工 / UI) 决定撮合时机，维持 facade 7-method 收敛。**`paused_until` 用 ISO timestamp string 不要 epoch ms**——审计可读 + JS `new Date(s).getTime()` 跨时区安全。**`isPauseActive(pausedUntil, nowMs)` 是唯一 read-side helper**，禁止 caller 直接 `Date.now() < s` 内联比较（漏掉 null / 非法字符串 / 非有限值的边界）。**`checkBuyAllowed` 失败 fail-OPEN**——风控不该因 DB 故障一刀切阻断所有交易（上层 cash check + position-limit guard 兜底）。**单 task type `PAPER_TRADING_DRAWDOWN_BREAKER_CHECK`**（仅 post-close，没有 pre-open phase —— `checkBuyAllowed` 是 inline 消费 pause 状态）。完整模板在 `backend/src/portfolio/CLAUDE.md` `risk/DrawdownCircuitBreaker — US-049 specifics` 一节。下个 US-050 MarketRegimeAlertService (market-level，再上一层抽象 —— 输入是大盘指数 bars 而非用户持仓) 仍可复用 LEVEL cascade pick + `≥` boundary + `SchedulerService` task type 模板。
 
 
 
@@ -5115,5 +5116,156 @@ A-share market).
   is reusable for any future guard with both per-position and per-user
   thresholds. Reference implementation; copy the pattern when you have
   a similar coverage hierarchy.
+
+---
+
+---
+
+## 2026/06/07 - US-049
+
+### What was implemented
+
+Implemented portfolio-level **DrawdownCircuitBreaker** — third risk-guard
+shape (after US-047 per-order inline and US-048 per-position two-phase
+cron). Watches the whole portfolio's `total_value` vs its historical peak
+and triggers a cascading LEVEL_1 / LEVEL_2 / LEVEL_3 response:
+
+- **LEVEL_1 (drawdown ≥ 10%)**: writes `paused_until = now + 24h` to
+  `User.risk_config.drawdown_breaker.paused_until`. The next `BUY` in
+  `PaperTradingFacade.placeOrder` hits the inline `checkBuyAllowed`
+  hook (placed BEFORE the existing position-limit guard) and is
+  rejected with `code='DRAWDOWN_BREAKER_PAUSED'`. SELL and add-on to
+  existing positions are always allowed.
+- **LEVEL_2 (drawdown ≥ 15%)**: surfaces `DrawdownSellTrigger[]` for
+  the top `ceil(N/2)` holdings ranked by `gain_ratio` desc + symbol asc
+  (stable tie-break). `Math.ceil(N/2)` matches "减仓 *至* 50%" (N=3 sells
+  2; N=1 sells 1).
+- **LEVEL_3 (drawdown ≥ 20%)**: surfaces triggers for ALL open positions.
+
+All levels write `RiskAlert(level='HIGH', symbol='SYSTEM:DRAWDOWN_LEVEL_X')`
+via the DataSource (failure caught + `logger.warn`, doesn't mask
+the trigger return). The guard does NOT call `facade.placeOrder` —
+output is structured triggers that the caller (Automation /
+human / UI) dispatches via the facade like any other order.
+
+**HTTP surface** at `/api/risk/drawdown-breaker/*`: `GET` / `PUT` for
+config (enabled, level1/2/3 pct, pause_ms), `POST /clear-pause` for
+admin override to clear an active LEVEL_1 pause early.
+
+**SchedulerService task** `PAPER_TRADING_DRAWDOWN_BREAKER_CHECK` is the
+post-close cron entry point — supports `user_id` / `dry_run` /
+`lookback_days` parameters in the existing `scheduled_tasks` table.
+
+### Files changed
+
+- `backend/src/portfolio/risk/DrawdownCircuitBreaker.ts` (NEW, 819
+  lines): config + types + 9 exported pure-function helpers
+  (`computePeakValue`, `computeDrawdownPct`, `pickDrawdownLevel`,
+  `computeGainRatio`, `pickLevel2TrimTargets`,
+  `pickLevel3LiquidateTargets`, `normalizeDrawdownBreakerConfig`,
+  `buildDrawdownMessage`, `isPauseActive`) + `DrawdownBreakerDataSource`
+  interface + `DefaultDrawdownBreakerDataSource` (Sequelize) +
+  `PRODUCTION_DRAWDOWN_BREAKER_DATA_SOURCE` singleton +
+  `DrawdownCircuitBreaker` class (`evaluateAfterClose`,
+  `checkBuyAllowed`, `getConfig`, `updateConfig`, `clearPause`) +
+  `drawdownCircuitBreaker` singleton.
+- `backend/src/portfolio/PaperTradingFacade.ts` (+20 lines): added
+  `checkBuyAllowed` hook inside `placeOrder` BEFORE the position-limit
+  guard so a drawdown-breaker pause surfaces as "组合回撤熔断暂停期"
+  rather than "可用资金不足".
+- `backend/src/api/controllers/RiskController.ts` (+54 lines):
+  `getDrawdownBreaker` / `updateDrawdownBreaker` /
+  `clearDrawdownBreakerPause` methods.
+- `backend/src/api/routes/risk.routes.ts` (+25 lines): three new routes
+  under `/api/risk/drawdown-breaker/*`.
+- `backend/src/services/SchedulerService.ts` (+60 lines): handler for
+  `PAPER_TRADING_DRAWDOWN_BREAKER_CHECK` task type — calls
+  `drawdownCircuitBreaker.evaluateAfterClose()`, writes summary +
+  per-user results into the existing execution-log shape.
+- `backend/tests/risk/drawdown-circuit-breaker.test.ts` (NEW, 996
+  lines): **161 assertions across 36 test groups** covering all pure
+  functions, `evaluateAfterClose` happy paths (LEVEL_1 / 2 / 3 / NONE),
+  boundary cases (drawdown == 10% / 15% / 20% all hit `≥`), single-user
+  failure isolation (`loadConfig` / `loadPortfolio` throws caught),
+  `writeAlert` / `savePausedUntil` failure doesn't mask trigger return,
+  `dry_run=true` skips both writes, multi-level priority (LEVEL_3
+  supersedes LEVEL_2 supersedes LEVEL_1), `checkBuyAllowed` 7 paths
+  (no pause / active pause + new holding / active pause + existing
+  holding / expired pause / null pausedUntil / DB outage fail-open /
+  disabled config), and `clearPause` round-trip. Uses fake
+  `DrawdownBreakerDataSource` — fully DB-free.
+- `backend/src/portfolio/CLAUDE.md`: appended `risk/
+  DrawdownCircuitBreaker — US-049 specifics` section documenting the
+  3 entry points + 7 reusable patterns for future risk guards.
+
+### Quality checks
+
+- `cd backend && npx tsc --noEmit` → exit 0 (clean)
+- `cd backend && npx ts-node --transpile-only tests/risk/drawdown-circuit-breaker.test.ts`
+  → `161 ok, 0 failed (of 161)`
+- `cd backend && ./node_modules/.bin/eslint src/portfolio/risk/DrawdownCircuitBreaker.ts
+  src/portfolio/PaperTradingFacade.ts src/api/controllers/RiskController.ts
+  src/api/routes/risk.routes.ts --quiet` → exit 0 (no errors)
+- `SchedulerService.ts` lint: my US-049 added range (lines 1736-1800) is
+  clean; all 16 reported prettier errors are outside the diff (pre-existing
+  in unrelated sections — same convention used in US-047/US-048).
+
+### Learnings for future iterations
+
+- **3 种 risk guard 形态已确立**: (1) US-047 per-order inline (sync gate
+  inside `placeOrder`), (2) US-048 per-position two-phase cron (post-close
+  state refresh + pre-open trigger evaluation), (3) US-049 portfolio-level
+  cascading LEVEL_1/2/3 (post-close evaluation + inline `checkBuyAllowed`
+  for pause enforcement). US-050 MarketRegimeAlertService introduces the
+  **4th** shape — **market-level** (input is benchmark index bars, not
+  user positions). All future risk guards should classify into one of
+  these 4 shapes before writing code; the reusable patterns differ.
+- **`peak_value = max(snapshots, current.total_value)` not snapshots-only.**
+  EOD snapshots lag intra-day evaluation windows. Letting peak fall behind
+  current would zero-out drawdown for the entire window before the next
+  snapshot lands, then re-trigger when it does — confusing operators and
+  breaking continuous-evaluation semantics. Same idea reusable for any
+  "lookback metric vs realtime comparison" pattern.
+- **`Math.ceil(N/2)` is the strong-disposal path** matching "减仓 *至* 50%"
+  semantics (the alternative `Math.floor(N/2)` matches "减仓 *了* 50%"
+  which is more conservative). Pick consciously based on AC wording.
+  N=3 → sell 2; N=1 → sell 1; N=0 → return empty (no error).
+- **`paused_until` is ISO timestamp string, not epoch ms.** Audits become
+  human-readable; JS `new Date(s).getTime()` keeps timezone-safe
+  comparisons trivial. `isPauseActive(pausedUntil, nowMs)` is the
+  single read-side helper — never `Date.now() < s` inline (loses null /
+  non-string / non-finite-value defenses).
+- **`checkBuyAllowed` fail-OPEN on DB outage.** Risk guards shouldn't
+  one-strike-out all trading when a DB hiccup happens — upstream cash
+  check + position-limit guard still gate the order. Log + return
+  `{ok:true}`. Apply same to any future "pre-trade inline guard that
+  reads DB state": never fail-CLOSED unless the AC explicitly says so.
+- **SELL is always allowed during pause + add-on to existing positions
+  is always allowed.** A LEVEL_1 pause should NOT prevent operators
+  from closing losers or letting strategies do their normal top-up
+  flow. Only NEW openings get blocked. The `hasExistingPosition`
+  check is critical — without it, strategy add-on becomes a UX
+  nightmare during pauses.
+- **Guard output ≠ order execution (consistent with US-048).**
+  `evaluateAfterClose` returns `DrawdownSellTrigger[]`, never calls
+  `facade.placeOrder` directly. This preserves the facade's 7-method
+  invariant and decouples "what to sell" (risk policy) from "how to
+  execute" (facade automation / human approval). Future US-051+ risk
+  guards should follow this pattern.
+- **LEVEL cascade short-circuits to ONE level** (LEVEL_3 > LEVEL_2 >
+  LEVEL_1) — mirrors US-047's `pickSingleViolation` and US-048's
+  single-trigger-per-position discipline. Returning multiple
+  cascade levels would force operators to mentally decompose; pick
+  the worst, fix it, the next request surfaces the next-worst.
+- **`SchedulerService` task type `PAPER_TRADING_DRAWDOWN_BREAKER_CHECK`**
+  registered alongside US-048's `PAPER_TRADING_TRAILING_STOP_*`
+  family — accepts `user_id` (optional, defaults to all users),
+  `dry_run` (boolean, skips RiskAlert/paused_until writes), and
+  `lookback_days` (overrides 365d default). The cron schedule itself
+  is configured per-deployment in the `scheduled_tasks` table.
+- **`hasExistingPosition` is a 1-line DataSource method, not a sql
+  inside the guard logic.** Keeps the guard testable with `Set<symbol>`
+  state in fakes. Same shape applies to future "is X open / pending /
+  blocked" lookup helpers — push them into the DataSource interface.
 
 ---

@@ -48,6 +48,7 @@ import { paperTradingOrderIntentService } from './internal/PaperTradingOrderInte
 import { paperTradingTuningApplyService } from './internal/PaperTradingTuningApplyService';
 import { recommendationTradeOutcomeService } from '../services/RecommendationTradeOutcomeService';
 import { positionLimitGuard } from './risk/PositionLimitGuard';
+import { drawdownCircuitBreaker } from './risk/DrawdownCircuitBreaker';
 
 // Re-export the small set of constants the controller still needs literal access
 // to (default capital, portfolio name keys for downstream services).  This is the
@@ -318,6 +319,25 @@ export class PaperTradingFacade {
       const cost = execute_price * quantity;
       const commission = cost * commissionRate;
       const totalCost = cost + commission;
+
+      // ---- US-049: Drawdown circuit breaker LEVEL_1 pause ----
+      // If the portfolio is in an active LEVEL_1 pause window (peak-drawdown
+      // ≥ 10% triggered by the EOD evaluator), block NEW openings.  Adding to
+      // existing positions is allowed (covers策略 add-on without forcing
+      // operators to manually clear the pause for every routine top-up).
+      // Failure-open: a DB outage in the guard simply lets the order proceed —
+      // upstream `cash check` + `position-limit guard` still gate it.
+      const breakerResult = await drawdownCircuitBreaker.checkBuyAllowed({
+        user_id,
+        symbol,
+      });
+      if (!breakerResult.ok && breakerResult.reason) {
+        const err: any = new Error(breakerResult.reason);
+        err.statusCode = 400;
+        err.code = 'DRAWDOWN_BREAKER_PAUSED';
+        err.paused_until = breakerResult.paused_until;
+        throw err;
+      }
 
       // ---- US-047: Position limit guard ----
       // Run BEFORE the cash check so that a position-limit violation is

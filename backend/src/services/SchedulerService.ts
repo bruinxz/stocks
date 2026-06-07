@@ -20,6 +20,7 @@ import { paperTradingPlanService } from '../portfolio/internal/PaperTradingPlanS
 import { paperTradingOrderIntentService } from '../portfolio/internal/PaperTradingOrderIntentService';
 import { paperTradingTuningApplyService } from '../portfolio/internal/PaperTradingTuningApplyService';
 import { trailingStopGuard } from '../portfolio/risk/TrailingStopGuard';
+import { drawdownCircuitBreaker } from '../portfolio/risk/DrawdownCircuitBreaker';
 import { benchmarkIndexService } from './BenchmarkIndexService';
 import { automatedRecommendationLoopService } from './AutomatedRecommendationLoopService';
 import { recommendationTradeOutcomeService } from './RecommendationTradeOutcomeService';
@@ -1733,6 +1734,65 @@ class SchedulerService {
         logger.info(
           `追踪止损检查完成。扫描用户 ${result.scanned_users}，` +
             `持仓 ${result.total_positions}，触发 ${result.triggered_positions}` +
+            (dryRun ? '（dry-run，未写 RiskAlert）' : '')
+        );
+      } else if (task.type === 'PAPER_TRADING_DRAWDOWN_BREAKER_CHECK') {
+        // US-049 — 每日收盘后定时任务：评估所有用户的组合回撤等级
+        // (LEVEL_1 / LEVEL_2 / LEVEL_3) 并触发对应风控动作（暂停 24h /
+        // 减仓 50% / 清仓）。`user_id` 参数可选；不传 = 扫描所有有
+        // PaperTradingPortfolio 的用户。`dry_run` 让 UI dashboard 能
+        // "预演今日 trigger" 不写 RiskAlert / paused_until。
+        const targetUserId = parameters.user_id || parameters.userId;
+        const dryRun =
+          parameters.dry_run !== undefined
+            ? Boolean(parameters.dry_run)
+            : parameters.dryRun !== undefined
+            ? Boolean(parameters.dryRun)
+            : false;
+        const lookbackDays =
+          parameters.lookback_days !== undefined
+            ? Number(parameters.lookback_days)
+            : parameters.lookbackDays !== undefined
+            ? Number(parameters.lookbackDays)
+            : undefined;
+        const result = await drawdownCircuitBreaker.evaluateAfterClose({
+          user_id: targetUserId ? Number(targetUserId) : undefined,
+          dry_run: dryRun,
+          lookback_days: lookbackDays,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: result.scanned_users,
+          completed_items: result.triggered_users,
+          failed_items: result.per_user.filter(u => u.error).length,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: null,
+          result_summary: {
+            scenario: 'paper_trading_drawdown_breaker_check',
+            scanned_users: result.scanned_users,
+            triggered_users: result.triggered_users,
+            dry_run: dryRun,
+            triggers: result.triggers.map(t => ({
+              user_id: t.user_id,
+              symbol: t.symbol,
+              quantity: t.quantity,
+              gain_ratio: t.gain_ratio,
+              reason: t.reason,
+            })),
+            per_user_summary: result.per_user.map(u => ({
+              user_id: u.user_id,
+              level: u.level,
+              drawdown_pct: u.drawdown_pct,
+              peak_value: u.peak_value,
+              current_value: u.current_value,
+              paused_until: u.paused_until,
+              error: u.error,
+            })),
+          },
+        });
+        logger.info(
+          `组合回撤熔断评估完成。扫描用户 ${result.scanned_users}，` +
+            `触发 ${result.triggered_users}` +
             (dryRun ? '（dry-run，未写 RiskAlert）' : '')
         );
       } else if (task.type === 'PAPER_TRADING_ATTRIBUTION_REPORT') {
