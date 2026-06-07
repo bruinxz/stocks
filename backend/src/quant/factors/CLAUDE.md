@@ -1,4 +1,4 @@
-# Factor 基础设施 (US-009 + US-010 + US-029 + US-030 + US-031 + US-032 + US-033 + US-034 + US-035)
+# Factor 基础设施 (US-009 + US-010 + US-029 + US-030 + US-031 + US-032 + US-033 + US-034 + US-035 + US-036)
 
 `backend/src/quant/factors/` 是 A 股多因子打分体系的基础设施层。US-009
 落地了**注册中心 + 横截面 pipeline + 标准化工具 + FactorScore 模型**；
@@ -12,7 +12,11 @@ US-029 增加了第 9 个 `liquidity` 因子（流动性 U 形评分）；US-030
 第 13 个 `momentum_reversal` 因子（动量反转 = 120 日动量 - 5 日动量，正值
 代表趋势延续、负值代表短期超涨反转）；US-034 增加了第 14 个 `east_money_qa`
 因子（东财问答热度 = 近 5 日 / 近 30 日 post_count 比率，散户关注度变化
-代理）。后续 story 在 `library/` 下追加新文件即可，无需改 Pipeline / Registry。
+代理）；US-035 增加了第 15 个 `shareholder_concentration` 因子（股东户数
+环比变化 = -(latest - prev) / prev，集中度变化）；US-036 增加了第 16 个
+`gradual_breakout` 因子（渐进强爆 = 近 30 日 Σ(daily_volume / avg_60d_volume - 1) ×
+sign(涨跌幅)，温和放量逐步走强的价量配合累计）。后续 story 在 `library/`
+下追加新文件即可，无需改 Pipeline / Registry。
 
 ## 目录约定
 
@@ -144,7 +148,7 @@ US-033 等"贴现 / 偏离"类因子按此例外处理；普通线性因子仍�
 - **缺数据 ≠ 因子失效**：缺数据返回稀疏 Map；因子失效（例如 PE<=0）应该
   `continue` 不写入这只股票，让 Pipeline 把它当作中性。
 
-## US-010 落地的 8 个基础因子 + US-029 LiquidityFactor + US-030 AnalystConsensusFactor + US-031 QualityHighFactor + US-032 EarningsSurpriseFactor + US-033 MomentumReversalFactor + US-034 EastMoneyQAFactor + US-035 ShareholderConcentrationFactor (参考实现)
+## US-010 落地的 8 个基础因子 + US-029 LiquidityFactor + US-030 AnalystConsensusFactor + US-031 QualityHighFactor + US-032 EarningsSurpriseFactor + US-033 MomentumReversalFactor + US-034 EastMoneyQAFactor + US-035 ShareholderConcentrationFactor + US-036 GradualBreakoutFactor (参考实现)
 
 | 因子 name | 类别 | 数据源 | 失效条件 |
 |---|---|---|---|
@@ -163,6 +167,7 @@ US-033 等"贴现 / 偏离"类因子按此例外处理；普通线性因子仍�
 | `momentum_reversal` | momentum | DailyBar (与 momentum / low_vol 同表) | bars < LONG_MOMENTUM_WINDOW+1=121 / close ≤ 0 (T / T-5 / T-120 任一) |
 | `east_money_qa` | sentiment | StockSentiment (US-034) | 30 日窗口内有效 post_count < 10 / recent\|baseline 空 / baseline avg < 1.0 |
 | `shareholder_concentration` | flow | ShareholderCount (US-035) | 200 日窗口内有效快照 < 2 / 最新一期 share_change != 0 (默认过滤) / holder_count_prev ≤ 0 |
+| `gradual_breakout` | momentum | DailyBar (close + volume) | bars < VOLUME_BASELINE_DAYS+1=61 / 60 日均量有效观测 < 30 / 近 30 日内有效贡献天 < 21 |
 
 **典型查询模式（US-029+ 添加新因子可直接复制）**：
 
@@ -274,6 +279,29 @@ US-033 等"贴现 / 偏离"类因子按此例外处理；普通线性因子仍�
   因子的相关性预估**：与 money_flow (US-010, 主力净流入) ~0.3-0.4（都反映"机构吸筹"，
   但 money_flow 高频日级 / 本因子低频季度级，可同时启用）；与 northbound (US-010,
   北向持股) ~0.1-0.2（境内 vs 境外机构行为，维度不同）。FactorIC (US-041) 上线后可验证。
+- ✅ `gradual_breakout` (US-036) 用 **Σ_{近 30 个有效交易日} (daily_volume / avg_60d_volume - 1) × sign(close[T]-close[T-1])**
+  累计因子捕捉"温和放量逐步走强"的价量配合 alpha。**业务方向 4 象限**：(1) 价涨 + 量增
+  → 正贡献（渐进建仓信号）；(2) 价涨 + 量减 → 负贡献（量价背离，警惕拉高出货）；
+  (3) 价跌 + 量减 → 正贡献（缩量调整不杀伤，主力惜筹）；(4) 价跌 + 量增 → 负贡献
+  （恐慌出货）；(0) 平盘 → 0 贡献。**与既有 momentum / momentum_reversal 因子的关键
+  区别**：momentum (US-010) / momentum_reversal (US-033) 是纯价格因子，本因子是
+  **价 + 量配合**累计因子 — 同样的"涨"在"放量涨" vs "缩量涨" 给出截然不同的得分，
+  捕捉的 alpha 维度完全不同（量价背离 vs 量价配合）；与 liquidity (US-029) 也不同：
+  liquidity 是 U 形评分不关心价格方向，本因子要 vol/baseline × sign(close)，价量必须
+  同向才正。三个因子相关性预计 < 0.5（非冗余），FactorIC (US-041) 上线后可验证。
+  **`change_pct` 从 close[T]/close[T-1]-1 自算，不直接读 DailyBar.change_percent 列**：
+  change_percent 是 nullable 列缺失率较高；本因子已经必须读 close 算累计的 ratio，
+  额外 sign 在内存计算开销 0；同时避开 "change_percent 数据流入 DB 是 % 还是小数" 的
+  歧义。**纯函数 helper** (extractSortedBars / computeChangeSigns / compute60dAvgVolumes
+  / computeGradualBreakoutScore 全 export 含 BreakdownInterface) 让 105 个测试覆盖
+  4 业务象限 + 数据卫生 + 滑动 baseline 算法精确性 + tail-index 对齐的同时完全脱离 DB。
+  **failure modes (3 个 guard 协同)**: (i) bars < VOLUME_BASELINE_DAYS+1=61 → 跳过
+  （次新股，无足够基线）; (ii) 60 日均量有效观测 < MIN_VOLUME_BASELINE_OBS=30 → baseline
+  null（交易不活跃）; (iii) 近 30 日内 effective 贡献天 < MIN_RECENT_DAYS_FOR_VALID=21
+  (= 30 × 70%) → null（停牌过多累计无业务意义）。属"绝对业务量"因子（per-stock 自身
+  价量配合累计），走标准模式 — 不属 LiquidityFactor 横截面参照例外。tail-index 对齐
+  （recent = bars[length-recentDays..length-1]）与 momentum / low_vol / momentum_reversal
+  同款，自然消化春节/十一节假日 gap，不按日历日对齐。
 
 ### 关键代理记号（US-031 引入 "AC 数学公式 ≠ 数据可得" 的处理范式）
 

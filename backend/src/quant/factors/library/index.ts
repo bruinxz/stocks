@@ -14,17 +14,19 @@
  *
  * US-010 注册的 8 个基础因子 + US-029 流动性因子 + US-030 分析师一致预期因子
  * + US-031 高阶质量因子 + US-032 盈利惊喜因子 + US-033 动量反转因子 + US-034
- * 东财问答热度因子 + US-035 股东户数环比变化因子（顺序按文件名字母序，与
- * .listNames() 排序一致）：
+ * 东财问答热度因子 + US-035 股东户数环比变化因子 + US-036 渐进强爆因子（顺序按
+ * 文件名字母序，与 .listNames() 排序一致）：
  *   analyst_consensus / dragon_tiger / earnings_surprise / east_money_qa /
- *   growth / liquidity / low_vol / momentum / momentum_reversal / money_flow /
- *   northbound / quality / quality_high / shareholder_concentration / value
+ *   gradual_breakout / growth / liquidity / low_vol / momentum /
+ *   momentum_reversal / money_flow / northbound / quality / quality_high /
+ *   shareholder_concentration / value
  */
 
 import './AnalystConsensusFactor';
 import './DragonTigerFactor';
 import './EarningsSurpriseFactor';
 import './EastMoneyQAFactor';
+import './GradualBreakoutFactor';
 import './GrowthFactor';
 import './LiquidityFactor';
 import './LowVolFactor';

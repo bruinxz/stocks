@@ -454,6 +454,7 @@ const expectedFactors = [
   'dragon_tiger',
   'earnings_surprise',
   'east_money_qa',
+  'gradual_breakout',
   'growth',
   'liquidity',
   'low_vol',

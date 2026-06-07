@@ -3726,3 +3726,59 @@ rather than "up vs down".
 - **DECIMAL column type choice matters for `total_shares`**: started with `INTEGER` then switched to `BIGINT` — total_shares for large caps (贵州茅台 / 工商银行) exceeds 2^31-1 (~2.1B). Always use `BIGINT` for "股数" / "shares" columns. Caveat: Sequelize BIGINT becomes a string in some dialects; if anyone needs arithmetic they should `Number()` it explicitly (factor doesn't use this column so safe).
 - **Factor count assertion update is now a checklist item**: 2 stale assertions in 2 test files needed updating. **`grep "names.length === " backend/tests/factors/`** before committing any new factor. (Mentioned in US-034 learning but kept hitting it; codifying here as the explicit pre-commit grep.)
 ---
+
+## 2026/06/07 - US-036
+
+### What was implemented
+Added the **16th factor** `gradual_breakout` in `backend/src/quant/factors/library/GradualBreakoutFactor.ts` — a 价 + 量 配合累计因子capturing "渐进强爆" (温和放量逐步走强) signal per the AC formula:
+
+  `raw_value = Σ_{近 30 个有效交易日} (daily_volume[i] / avg_60d_volume[i] - 1) × sign(close[i] - close[i-1])`
+
+Constants: `RECENT_WINDOW_DAYS=30`, `VOLUME_BASELINE_DAYS=60`, `QUERY_CALENDAR_DAYS=150`, `MIN_VOLUME_BASELINE_OBS=30`, `MIN_RECENT_DAYS_FOR_VALID=21`.
+
+**4 业务象限 (sign × ratio)**:
+1. 价涨 + 量增 → **正贡献** (渐进建仓)
+2. 价涨 + 量减 → 负贡献 (量价背离 / 拉高出货预警)
+3. 价跌 + 量减 → **正贡献** (缩量调整不杀伤)
+4. 价跌 + 量增 → 负贡献 (恐慌出货)
+
+**Pure-function helpers all exported** (per the US-029+ factor test pattern): `extractSortedBars` / `computeChangeSigns` / `compute60dAvgVolumes` / `computeGradualBreakoutScore` + `SortedBar` / `BreakoutBreakdown` interfaces. Lets the 105-assertion test suite cover 4 business 象限 + sliding-baseline algorithm precision + tail-index alignment + data hygiene without touching the DB.
+
+**Key design choices** (all documented in factor jsdoc):
+- `change_pct` computed from `close[T]/close[T-1]-1` directly, **NOT read from `DailyBar.change_percent`** — that column is nullable and inconsistently backfilled across sync tasks; we already need `close` to compute the volume ratio anyway, so sign calculation is free.
+- `sign()` is three-state `{-1, 0, +1}` not `Math.sign()` (latter would technically work since both produce 3 states at 0 boundary, but explicit branching makes the intent — and the "数据异常 close ≤ 0 → sign=0" defensive fallback — clearer at the call site).
+- `baseline` is 60 prior days **excluding the current day** (`base[i] = mean(volume[i-60..i-1])`), the standard practice — including current day in baseline would bias the ratio.
+- tail-index alignment: take last 30 bars from `bars[length-30..length-1]` clamped to `bars[length-baselineDays..length-1]` to ensure each `i` has a valid baseline; identical to `momentum` / `momentum_reversal` (US-010 / US-033) tail-index pattern; absorbs holiday gaps naturally without calendar arithmetic.
+- 3 失效 guards 协同: bars 不足 `VOLUME_BASELINE_DAYS+1=61` → skip; 60 日有效 volume < 30 → baseline null; 30 日内有效贡献天 < 21 (= 30×70%) → return null (stop loss for 停牌过多 stocks).
+
+Factor self-registers to `factorRegistry` as `name='gradual_breakout'`, `category='momentum'`. Library `index.ts` imports it alphabetically (between `EastMoneyQAFactor` and `GrowthFactor`).
+
+### Files changed
+- `backend/src/quant/factors/library/GradualBreakoutFactor.ts` (new, ~270 LOC including docstring + pure helpers + Factor body + register)
+- `backend/src/quant/factors/library/index.ts` (added import + updated top-of-file factor count comment)
+- `backend/src/quant/factors/CLAUDE.md` (title 15→16 factors; segment lede; factor reference table row; z-score-friendly bullet list entry)
+- `backend/tests/factors/GradualBreakoutFactor.test.ts` (new, 105 assertions covering constants + 3 pure helpers + 4 business 象限 + 数据卫生 + metadata + 16-factor count assertion + 空 universe path)
+- `backend/tests/factors/EastMoneyQAFactor.test.ts` (synced 15→16: added 'gradual_breakout' to expectedFactors array)
+- `backend/tests/factors/ShareholderConcentrationFactor.test.ts` (synced 15→16: same)
+- `backend/tests/factors/EarningsSurpriseFactor.test.ts` (synced 15→16: count comment + assertion)
+- `ralph/prd.json` (US-036 → passes:true + detailed notes)
+- `ralph/progress.txt` (this entry)
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → exit 0 (clean)
+- `cd backend && ./node_modules/.bin/eslint src/quant/factors/library/GradualBreakoutFactor.ts src/quant/factors/library/index.ts --quiet --fix` → exit 0 (1 prettier auto-fix to GradualBreakoutFactor.ts)
+- `cd backend && npx ts-node --transpile-only tests/factors/GradualBreakoutFactor.test.ts` → **105 passed, 0 failed** < 1s
+- All 7 existing factor tests + MultiFactorAlphaStrategy + AShareConstraintEngine regression suites still pass:
+  - AnalystConsensus 54 / EarningsSurprise 77 / EastMoneyQA 78 / Liquidity 53 / MomentumReversal 74 / QualityHigh 54 / ShareholderConcentration 85 = **475 ok / 0 failed**
+  - GradualBreakout 105 ok = total 580 factor assertions
+- Registry smoke: `factorRegistry.listNames().length === 16` including 'gradual_breakout'
+
+### Browser verification
+**Not applicable** — backend-only story (factor library addition, no UI). The factor will auto-appear in `/workspace/factors` when listed via `GET /api/factors/overview` (US-015 reads the registry).
+
+### Learnings for future iterations
+- **Sliding baseline ≠ static baseline**: my first test cut of "场景 2 价涨量减 score = -5" was wrong because `avg_60d_volume[i]` is a sliding window — as low-volume recent days slide into the past, the baseline at later `i` is lower, making the ratio less negative. **The test must compute expected values dynamically with a loop matching the sliding algorithm**: `for k=0..9, baseline_k = (high_vol*(60-k) + low_vol*k)/60`. The factor is correct; the test's mental model wasn't. Hand-calculated constants are fine for static baselines (e.g. always-2000); for true sliding windows, write a tiny reference impl inside the test that exercises the same arithmetic the factor does. (Catches errors in **both** sides — if both match, you've verified the algorithm conceptually rather than memorized a constant.)
+- **`change_percent` column avoidance is reusable**: `DailyBar.change_percent` is nullable + inconsistently backfilled across sync tasks (per US-005..US-008 lessons). When a factor needs sign(daily change), compute it from close[T]/close[T-1]-1 in memory — we already pulled `close` for any momentum/volume factor, and the in-loop arithmetic cost is zero. Don't depend on `change_percent` unless the factor truly only needs the percentage value (not just the sign) and the data source for this factor is guaranteed to have it populated. (Documented in factor jsdoc; codify here.)
+- **价+量配合因子 vs 纯价格因子 vs 纯成交量因子 — 三类不冗余**: `momentum` / `momentum_reversal` are pure-price (sign of return); `liquidity` is pure-volume (turnover rate magnitude); `gradual_breakout` is the price-volume composite. Same raw close+volume data but the three formulas extract different alpha: pure-momentum says "is it trending"; pure-liquidity says "is it liquid"; gradual_breakout says "do price and volume agree". Estimated correlation < 0.5 (FactorIC US-041 will verify). When a new factor reads only `close + volume`, ask first whether one of these three covers its hypothesis before defaulting to "let's combine these differently".
+- **Factor count assertion pre-commit grep**: Already a documented pattern (US-034 learning) but worth restating — `grep -n "names.length === \|expectedFactors\.length === \|共 15 个" backend/tests/factors/` (substitute the previous count) catches stale `===` constants. US-036 hit 3 files needing sync; US-035 hit 2. The number keeps growing because every new factor is bumped.
+---
