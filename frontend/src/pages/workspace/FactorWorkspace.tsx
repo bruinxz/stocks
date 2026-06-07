@@ -22,9 +22,11 @@ import {
   SlidersOutlined,
   OrderedListOutlined,
   ReloadOutlined,
+  RobotOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
+import AIStockAnalysisModal from '../../components/trading/AIStockAnalysisModal';
 import {
   factorService,
   FactorOverviewItem,
@@ -391,6 +393,8 @@ const WeightsTab: React.FC<WeightsTabProps> = ({
   onPreview,
   onReset,
 }) => {
+  const [aiTarget, setAiTarget] = useState<{ symbol: string; name: string | null } | null>(null);
+
   if (factors.length === 0) {
     return (
       <Card>
@@ -398,7 +402,11 @@ const WeightsTab: React.FC<WeightsTabProps> = ({
       </Card>
     );
   }
-  const previewColumns = buildPreviewColumns(Object.keys(weights).filter(k => weights[k] > 0));
+  const previewColumns = buildPreviewColumns(
+    Object.keys(weights).filter(k => weights[k] > 0),
+    (row: FactorPreviewSignal) =>
+      setAiTarget({ symbol: row.stock_code, name: row.name || null })
+  );
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       <Card
@@ -540,6 +548,15 @@ const WeightsTab: React.FC<WeightsTabProps> = ({
           </>
         )}
       </Card>
+      {aiTarget && (
+        <AIStockAnalysisModal
+          open={!!aiTarget}
+          onClose={() => setAiTarget(null)}
+          stockCode={aiTarget.symbol}
+          stockName={aiTarget.name}
+          taskLabel="factor_preview"
+        />
+      )}
     </Space>
   );
 };
@@ -552,6 +569,8 @@ const PicksTab: React.FC<{
   picks: FactorPreviewResponse | null;
   loading: boolean;
 }> = ({ picks, loading }) => {
+  const [aiTarget, setAiTarget] = useState<{ symbol: string; name: string | null } | null>(null);
+
   if (loading && !picks) {
     return (
       <Card>
@@ -576,7 +595,9 @@ const PicksTab: React.FC<{
   const factorNames = picks.params
     ? Object.keys(picks.params.weights).filter(name => picks.params!.weights[name] > 0)
     : [];
-  const columns = buildLatestPickColumns(factorNames);
+  const columns = buildLatestPickColumns(factorNames, (row: FactorPreviewSignal) =>
+    setAiTarget({ symbol: row.stock_code, name: row.name || null })
+  );
   return (
     <Card
       title={
@@ -617,6 +638,15 @@ const PicksTab: React.FC<{
         }}
         scroll={{ x: 'max-content' }}
       />
+      {aiTarget && (
+        <AIStockAnalysisModal
+          open={!!aiTarget}
+          onClose={() => setAiTarget(null)}
+          stockCode={aiTarget.symbol}
+          stockName={aiTarget.name}
+          taskLabel="factor_latest_pick"
+        />
+      )}
     </Card>
   );
 };
@@ -625,7 +655,10 @@ const PicksTab: React.FC<{
 // Shared column builders
 // ============================================================================
 
-function buildPreviewColumns(factorNames: string[]) {
+function buildPreviewColumns(
+  factorNames: string[],
+  onAnalyze?: (row: FactorPreviewSignal) => void
+) {
   return [
     {
       title: '代码',
@@ -677,10 +710,33 @@ function buildPreviewColumns(factorNames: string[]) {
         );
       },
     })),
+    ...(onAnalyze
+      ? [
+          {
+            title: 'AI 解读',
+            key: 'ai_analyze',
+            width: 110,
+            fixed: 'right' as const,
+            render: (_: unknown, record: FactorPreviewSignal) => (
+              <Button
+                size="small"
+                icon={<RobotOutlined />}
+                onClick={() => onAnalyze(record)}
+                title="AI 解读：基本面 / 技术面 / 资金面 / 新闻面 / 情绪面"
+              >
+                AI 解读
+              </Button>
+            ),
+          },
+        ]
+      : []),
   ];
 }
 
-function buildLatestPickColumns(_factorNames: string[]) {
+function buildLatestPickColumns(
+  _factorNames: string[],
+  onAnalyze?: (row: FactorPreviewSignal) => void
+) {
   return [
     {
       title: '代码',
@@ -719,6 +775,26 @@ function buildLatestPickColumns(_factorNames: string[]) {
           <Tag color="blue">持有</Tag>
         ),
     },
+    ...(onAnalyze
+      ? [
+          {
+            title: 'AI 解读',
+            key: 'ai_analyze',
+            width: 110,
+            fixed: 'right' as const,
+            render: (_: unknown, record: FactorPreviewSignal) => (
+              <Button
+                size="small"
+                icon={<RobotOutlined />}
+                onClick={() => onAnalyze(record)}
+                title="AI 解读：基本面 / 技术面 / 资金面 / 新闻面 / 情绪面"
+              >
+                AI 解读
+              </Button>
+            ),
+          },
+        ]
+      : []),
   ];
 }
 

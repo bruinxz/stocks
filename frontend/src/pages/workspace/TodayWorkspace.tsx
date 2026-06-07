@@ -25,11 +25,13 @@ import {
   FundOutlined,
   ReloadOutlined,
   RiseOutlined,
+  RobotOutlined,
   ThunderboltOutlined,
   WarningOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
+import AIStockAnalysisModal from '../../components/trading/AIStockAnalysisModal';
 import {
   todayWorkspaceService,
   TodaySignalsData,
@@ -345,6 +347,7 @@ const MultiFactorCard: React.FC<{
   keeps: number;
   error?: string;
 }> = ({ tradeDate, signals, newPicks, drops, keeps, error }) => {
+  const [aiTarget, setAiTarget] = useState<{ symbol: string; name: string | null } | null>(null);
   const buys = signals.filter(s => s.signal === 'buy').slice(0, 8);
   const sells = signals.filter(s => s.signal === 'sell').slice(0, 4);
   return (
@@ -413,6 +416,25 @@ const MultiFactorCard: React.FC<{
                     align: 'right' as const,
                     render: (v: number) => <Text strong>{v?.toFixed(2)}</Text>,
                   },
+                  {
+                    title: 'AI',
+                    key: 'ai',
+                    width: 90,
+                    render: (_: unknown, row: MultiFactorAlphaSignal) => (
+                      <Button
+                        size="small"
+                        icon={<RobotOutlined />}
+                        onClick={() =>
+                          setAiTarget({
+                            symbol: row.stock_code,
+                            name: row.name || null,
+                          })
+                        }
+                      >
+                        AI 解读
+                      </Button>
+                    ),
+                  },
                 ]}
               />
             </>
@@ -440,6 +462,15 @@ const MultiFactorCard: React.FC<{
             <Empty description="今日无调仓变动" image={Empty.PRESENTED_IMAGE_SIMPLE} />
           )}
         </Space>
+      )}
+      {aiTarget && (
+        <AIStockAnalysisModal
+          open={!!aiTarget}
+          onClose={() => setAiTarget(null)}
+          stockCode={aiTarget.symbol}
+          stockName={aiTarget.name}
+          taskLabel="today_multifactor_pick"
+        />
       )}
     </Card>
   );

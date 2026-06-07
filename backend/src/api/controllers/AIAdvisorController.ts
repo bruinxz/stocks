@@ -1,5 +1,10 @@
 import { Request, Response, NextFunction } from 'express';
-import { aiAdvisorService } from '../../services/AIAdvisorService';
+import {
+  aiAdvisorService,
+  normalizeAnalysisDimensions,
+  AnalysisDimension,
+} from '../../services/AIAdvisorService';
+import { AIStockAnalysisReport } from '../../models/AIStockAnalysisReport';
 import { logger } from '../../utils/logger';
 import { Stock } from '../../models/Stock';
 import { Op } from 'sequelize';
@@ -18,6 +23,10 @@ export class AIAdvisorController {
     this.getTask = this.getTask.bind(this);
     this.getHealth = this.getHealth.bind(this);
     this.resolveTicker = this.resolveTicker.bind(this);
+    this.analyzeSingleStock = this.analyzeSingleStock.bind(this);
+    this.streamSingleStockAnalysis = this.streamSingleStockAnalysis.bind(this);
+    this.getReportById = this.getReportById.bind(this);
+    this.listReports = this.listReports.bind(this);
   }
 
   /**
@@ -242,6 +251,258 @@ export class AIAdvisorController {
       if (!res.headersSent) {
         res.status(500).json({ success: false, message: '无法建立 AI 分析数据流' });
       }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  //  US-055 — 单股深度问答
+  // ---------------------------------------------------------------------------
+
+  /**
+   * POST /api/ai/analyze-stock — 单股深度分析（普通 JSON 返回）。
+   *
+   * Body:
+   *   - stock_code:   股票代码或名称（必填）
+   *   - dimensions:   要分析的维度子集；不传或空数组 = 全 5 维度
+   *   - target_date:  目标日期（YYYY-MM-DD）；不传则取当日
+   *   - dry_run:      不写表，仅返回结果（前端预览用）
+   *   - is_async:     异步任务模式（TradingAgents 后台跑，立即返回 task_id）
+   *   - task_label:   任务来源标签（PortfolioWorkspace / FactorWorkspace 等）
+   */
+  async analyzeSingleStock(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { stock_code, dimensions, target_date, dry_run, is_async, task_label, stock_name } =
+        req.body || {};
+
+      if (!stock_code || typeof stock_code !== 'string') {
+        return res
+          .status(400)
+          .json({ success: false, message: 'stock_code 不能为空（股票代码或名称）' });
+      }
+
+      const resolvedTicker = await this.resolveTicker(stock_code);
+      if (!resolvedTicker) {
+        return res.status(404).json({ success: false, message: `无法识别股票: ${stock_code}` });
+      }
+
+      const normalizedDimensions: AnalysisDimension[] = normalizeAnalysisDimensions(dimensions);
+
+      const userId = (req as any).user?.id;
+
+      const result = await aiAdvisorService.analyzeSingleStock(resolvedTicker, {
+        dimensions: normalizedDimensions,
+        target_date: typeof target_date === 'string' ? target_date : undefined,
+        dry_run: dry_run === true,
+        is_async: is_async === true,
+        task_label: typeof task_label === 'string' ? task_label : undefined,
+        stock_name: typeof stock_name === 'string' ? stock_name : undefined,
+        user_id: typeof userId === 'number' ? userId : undefined,
+      });
+
+      return res.json({ success: true, data: result });
+    } catch (error: any) {
+      logger.error('analyzeSingleStock 失败:', error);
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * GET /api/ai/analyze-stock/stream — 单股深度分析（SSE 流式返回）。
+   *
+   * Query params:
+   *   - stock_code:   股票代码或名称（必填）
+   *   - dimensions:   逗号分隔的维度（e.g. "fundamental,technical"）；不传 = 全 5 维度
+   *   - target_date:  目标日期（YYYY-MM-DD）；不传则取当日
+   *   - task_label:   任务来源标签
+   *
+   * Stream events (newline-delimited):
+   *   - event: status, data: {phase: "calling_tradingagents"}
+   *   - event: payload, data: <raw TradingAgents SSE payload>
+   *   - event: completed, data: <AnalyzeSingleStockResult>
+   *   - event: error, data: {message}
+   */
+  async streamSingleStockAnalysis(req: Request, res: Response, next: NextFunction) {
+    try {
+      const stockCodeInput = req.query.stock_code as string;
+      if (!stockCodeInput) {
+        return res
+          .status(400)
+          .json({ success: false, message: 'stock_code 不能为空（股票代码或名称）' });
+      }
+
+      const resolvedTicker = await this.resolveTicker(stockCodeInput);
+      if (!resolvedTicker) {
+        return res.status(404).json({ success: false, message: `无法识别股票: ${stockCodeInput}` });
+      }
+
+      const dimensions = normalizeAnalysisDimensions(
+        typeof req.query.dimensions === 'string'
+          ? (req.query.dimensions as string).split(',')
+          : undefined
+      );
+
+      const targetDate = req.query.target_date as string | undefined;
+      const taskLabel = (req.query.task_label as string) || 'single_stock_stream';
+
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.flushHeaders?.();
+
+      const sendEvent = (event: string, data: any) => {
+        res.write(`event: ${event}\n`);
+        res.write(`data: ${JSON.stringify(data)}\n\n`);
+      };
+
+      sendEvent('status', {
+        phase: 'starting',
+        stock_code: resolvedTicker,
+        dimensions,
+      });
+
+      // 透传上游 TradingAgents SSE，最后用一次同步 analyzeSingleStock 落库 & 给前端 completed 事件
+      try {
+        let url = `${TRADING_AGENTS_URL}/api/analyze/stream?ticker=${resolvedTicker}`;
+        if (targetDate) {
+          url += `&target_date=${targetDate}`;
+        }
+
+        const streamResponse = await axios
+          .get(url, {
+            responseType: 'stream',
+            timeout: 1200000,
+            headers: { Accept: 'text/event-stream' },
+          })
+          .catch((err: any) => {
+            // 上游 SSE 不可用时退回同步路径
+            logger.warn(`TradingAgents SSE unavailable, falling back to sync: ${err.message}`);
+            return null;
+          });
+
+        let streamedBuffer = '';
+        let upstreamClosed = false;
+
+        if (streamResponse) {
+          streamResponse.data.on('data', (chunk: Buffer) => {
+            const text = chunk.toString('utf8');
+            streamedBuffer += text;
+            const events = streamedBuffer.split('\n\n');
+            streamedBuffer = events.pop() || '';
+            for (const evt of events) {
+              const dataLine = evt.split('\n').find(line => line.startsWith('data:'));
+              if (!dataLine) continue;
+              const payloadStr = dataLine.replace(/^data:\s*/, '');
+              try {
+                const parsed = JSON.parse(payloadStr);
+                sendEvent('payload', parsed);
+              } catch {
+                // 无法解析的片段透传成 raw
+                sendEvent('payload', { raw: payloadStr });
+              }
+            }
+          });
+
+          await new Promise<void>(resolve => {
+            streamResponse.data.on('end', () => {
+              upstreamClosed = true;
+              resolve();
+            });
+            streamResponse.data.on('error', (err: any) => {
+              logger.warn(`Upstream SSE error: ${err.message}`);
+              upstreamClosed = true;
+              resolve();
+            });
+            req.on('close', () => {
+              streamResponse.data.destroy();
+              upstreamClosed = true;
+              resolve();
+            });
+          });
+        }
+
+        // 最终一次 sync 调用拉回 final result + 落库
+        sendEvent('status', { phase: 'finalizing' });
+        const userId = (req as any).user?.id;
+        const finalResult = await aiAdvisorService.analyzeSingleStock(resolvedTicker, {
+          dimensions,
+          target_date: targetDate,
+          task_label: taskLabel,
+          user_id: typeof userId === 'number' ? userId : undefined,
+        });
+
+        sendEvent('completed', finalResult);
+        res.end();
+      } catch (innerErr: any) {
+        logger.error('streamSingleStockAnalysis upstream error:', innerErr);
+        sendEvent('error', { message: innerErr.message || '上游 SSE 失败' });
+        res.end();
+      }
+    } catch (error: any) {
+      logger.error('streamSingleStockAnalysis 失败:', error);
+      if (!res.headersSent) {
+        res.status(500).json({ success: false, message: error.message });
+      } else {
+        try {
+          res.write(`event: error\n`);
+          res.write(`data: ${JSON.stringify({ message: error.message })}\n\n`);
+          res.end();
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  }
+
+  /**
+   * GET /api/ai/analyze-stock/reports/:reportId — 单条 AI 分析报告详情。
+   */
+  async getReportById(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { reportId } = req.params;
+      if (!reportId) {
+        return res.status(400).json({ success: false, message: 'reportId 不能为空' });
+      }
+      const row = await AIStockAnalysisReport.findOne({ where: { report_id: reportId } });
+      if (!row) {
+        return res
+          .status(404)
+          .json({ success: false, message: `未找到 report_id=${reportId} 的分析报告` });
+      }
+      return res.json({ success: true, data: row });
+    } catch (error: any) {
+      logger.error('getReportById 失败:', error);
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * GET /api/ai/analyze-stock/reports — 列表查询（按 stock_code / 时间倒序）。
+   */
+  async listReports(req: Request, res: Response, next: NextFunction) {
+    try {
+      const stockCodeQuery = req.query.stock_code as string | undefined;
+      const limit = Math.min(
+        Math.max(parseInt((req.query.limit as string) || '20', 10) || 20, 1),
+        200
+      );
+      const offset = Math.max(parseInt((req.query.offset as string) || '0', 10) || 0, 0);
+
+      const where: any = {};
+      if (stockCodeQuery) {
+        const resolved = await this.resolveTicker(stockCodeQuery);
+        where.stock_code = resolved || stockCodeQuery;
+      }
+
+      const rows = await AIStockAnalysisReport.findAll({
+        where,
+        order: [['generated_at', 'DESC']],
+        limit,
+        offset,
+      });
+      return res.json({ success: true, data: rows });
+    } catch (error: any) {
+      logger.error('listReports 失败:', error);
+      return res.status(500).json({ success: false, message: error.message });
     }
   }
 }

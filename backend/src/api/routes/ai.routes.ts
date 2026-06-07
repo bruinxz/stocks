@@ -24,6 +24,39 @@ router.get('/health', authController.authenticate, aiAdvisorController.getHealth
 router.post('/analyze', authController.authenticate, aiAdvisorController.analyze);
 
 /**
+ * @route POST /api/ai/analyze-stock
+ * @desc US-055 单股深度分析（5 大维度：基本面/技术面/资金面/新闻面/情绪面）
+ * @access Private
+ */
+router.post('/analyze-stock', authController.authenticate, aiAdvisorController.analyzeSingleStock);
+
+/**
+ * @route GET /api/ai/analyze-stock/stream
+ * @desc US-055 单股深度分析 SSE 流式返回
+ * @access Public（EventSource 无法方便传 Bearer Header）
+ */
+router.get('/analyze-stock/stream', aiAdvisorController.streamSingleStockAnalysis);
+
+/**
+ * @route GET /api/ai/analyze-stock/reports/:reportId
+ * @desc US-055 单条 AI 分析报告详情
+ * @access Private
+ * **NOTE**: 必须在 /reports（list）之前注册，否则 :reportId 会吃掉 "reports" 路径段。
+ */
+router.get(
+  '/analyze-stock/reports/:reportId',
+  authController.authenticate,
+  aiAdvisorController.getReportById
+);
+
+/**
+ * @route GET /api/ai/analyze-stock/reports
+ * @desc US-055 AI 分析报告列表（按 stock_code 过滤、时间倒序）
+ * @access Private
+ */
+router.get('/analyze-stock/reports', authController.authenticate, aiAdvisorController.listReports);
+
+/**
  * @route GET /api/ai/tasks/:taskId
  * @desc 获取 AI 分析异步任务的状态
  * @access Private

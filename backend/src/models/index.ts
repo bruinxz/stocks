@@ -63,3 +63,4 @@ export * from './StrategyPortfolioResult';
 export * from './BenchmarkAttributionResult';
 export * from './IndustryAttributionResult';
 export * from './MorningRiskCheckup';
+export * from './AIStockAnalysisReport';

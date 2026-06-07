@@ -31,6 +31,7 @@ import {
   LineChartOutlined,
   ReadOutlined,
   ReloadOutlined,
+  RobotOutlined,
   StopOutlined,
   UnorderedListOutlined,
   WalletOutlined,
@@ -47,6 +48,7 @@ import {
 } from 'recharts';
 import dayjs, { Dayjs } from 'dayjs';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
+import AIStockAnalysisModal from '../../components/trading/AIStockAnalysisModal';
 import {
   portfolioWorkspaceService,
   PortfolioWithPositions,
@@ -273,6 +275,8 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
   const [editingValue, setEditingValue] = useState<number | null>(null);
   const [savingStopLoss, setSavingStopLoss] = useState(false);
   const [closingSymbol, setClosingSymbol] = useState<string | null>(null);
+  // US-055 — AI 解读 modal target
+  const [aiTarget, setAiTarget] = useState<{ symbol: string; name: string | null } | null>(null);
 
   const positions = data?.positions || [];
   const totalValue = Number(data?.portfolio.total_value || 0);
@@ -504,24 +508,34 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
     {
       title: '操作',
       key: 'actions',
-      width: 110,
+      width: 200,
       render: (_: any, row: PositionRow) => (
-        <Popconfirm
-          title={`确认平仓 ${row.name || row.symbol} 全部 ${row.quantity.toLocaleString()} 股？`}
-          okText="平仓"
-          cancelText="取消"
-          okButtonProps={{ danger: true }}
-          onConfirm={() => void handleClosePosition(row)}
-        >
+        <Space size="small">
           <Button
             size="small"
-            danger
-            icon={<StopOutlined />}
-            loading={closingSymbol === row.symbol}
+            icon={<RobotOutlined />}
+            onClick={() => setAiTarget({ symbol: row.symbol, name: row.name || null })}
+            title="AI 解读：基本面 / 技术面 / 资金面 / 新闻面 / 情绪面"
           >
-            平仓
+            AI 解读
           </Button>
-        </Popconfirm>
+          <Popconfirm
+            title={`确认平仓 ${row.name || row.symbol} 全部 ${row.quantity.toLocaleString()} 股？`}
+            okText="平仓"
+            cancelText="取消"
+            okButtonProps={{ danger: true }}
+            onConfirm={() => void handleClosePosition(row)}
+          >
+            <Button
+              size="small"
+              danger
+              icon={<StopOutlined />}
+              loading={closingSymbol === row.symbol}
+            >
+              平仓
+            </Button>
+          </Popconfirm>
+        </Space>
       ),
     },
   ];
@@ -546,8 +560,17 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
         dataSource={positions}
         columns={columns as any}
         pagination={false}
-        scroll={{ x: 1180 }}
+        scroll={{ x: 1280 }}
       />
+      {aiTarget && (
+        <AIStockAnalysisModal
+          open={!!aiTarget}
+          onClose={() => setAiTarget(null)}
+          stockCode={aiTarget.symbol}
+          stockName={aiTarget.name}
+          taskLabel="portfolio_position"
+        />
+      )}
     </Card>
   );
 };
