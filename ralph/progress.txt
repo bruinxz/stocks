@@ -185,6 +185,12 @@
 - **Modal.confirm 二次确认对真实外部发送 (US-063 引入)**: 任何"按钮点了 → 实际外部副作用（发邮件 / 推送飞书 / 调起短信 / 调用第三方 API）" 都必须 `Modal.confirm({title, content, okButtonProps:{type:'primary'}, onOk: async()=>{...}})` 二次确认，纯前端 / dry-run / 本地 state 修改不需要。下次 US-064/065/066/067 都用此规则。
 - **`per_user` 长度 = 1 当 user_id filter (US-063 引入)**: `sendXxxDigests({user_id})` 让 service 过滤到单用户，per_user 数组长度恰好 1（或 0 如果该 user 不存在）。前端 single-user 触发 endpoint 直接 `result.per_user[0]` 取 single result；admin 多用户批量 endpoint 不传 user_id 拿全数组。**service 层不区分单/多 user 模式**，只看是否传 user_id；controller 决定单/多语义。下次任何 single-user 触发的批量类 endpoint (US-064 EarningsForecastWatcher / US-067 RealtimeAlertDispatcher) 按此 controller 收敛单 user 模式。
 - **`react/no-unescaped-entities` 中文 JSX 双引号必须 `&quot;` (US-063 lint 教训)**: `"立即推送"` 在 JSX 文本节点会被 ESLint react/no-unescaped-entities 拦截。**解决**: 用 `&quot;` HTML entity 或换全角引号 `「」`/`『』`。**判据**: 任何 JSX 文本含 `"` / `'` 立即转义，不要等 lint 报错重跑（prettier 还会自作主张转换单/双引号造成死循环）。
+- **2 cron path 模式 — held 即时 + watchlist 盘后聚合 (US-064 引入)**: 同类数据 (业绩预告 / 风控告警 / 异动事件) 因用户决策延迟容忍度不同走两条 path。**判据**: (a) 持仓相关 → 必须当日内反应 (e.g. 持仓股财报超预期能涨停) → 即时 cron `*/15 9-15 * * 1-5` + 每条独立 card; (b) 自选/未持仓 → 盘后聚合可接受 → 盘后 cron `35 15 * * 1-5` + 一条 digest card 汇总。**实现**: 同 service 两个 method (`scanHeldStocks` / `scanWatchlistStocks`) 共享 DataSource + 私有 helpers；单 scheduler task type 带 `mode='held'|'watchlist'|'both'` parameter 多态化。**核心约束**: `pickForecastsForWatchers(forecasts, watchedSet, heldSet)` 必须传 heldSet 参数, filter 排除持仓股避免双推 (held path 已即时发了一条独立 card)。下次 US-067 HIGH 告警即时 + MEDIUM 聚合 / US-091 异动事件持仓即时 + 全市场盘后 复用此双 cron 模式。
+- **dedup buffer FIFO LRU 200 条 — JSONB 持久化 (US-053 BlackSwanWatchdog + US-064 EarningsForecastWatcher 第 2 处)**: 高频 cron (每 15 min) 需要持久化 dedup 防重复推送，不能用 in-memory Set (process restart 丢失)。**正确做法**: `User.risk_config.<namespace>_seen` JSONB array 存 signature 字符串，FIFO LRU bump 重复 signature 到末尾，超过 200 条 drop 老的。`mergeSeenSignatures(existing, newOnes, limit)` 是 pure function 让单测覆盖 LRU 边界 / 重复 signature 不增长 / limit 边界。**Signature 设计原则**: 业务唯一性维度全部进 signature (e.g. `${path}::ANN::${stock_code}::${announce_date}::${report_period}`)，修订公告 = 不同 announce_date = 新 signature = 允许再发 (业务正确)。下次 US-067 风控告警 (`{level}::ALERT::${rule_id}::${alert_date}`) / US-091 健康度评分 (`HEALTH::${component}::${check_date}`) 都按此模板。
+- **DataSource method 拆分原则 (US-064 引入)**: 一个 DB query / 一个外部调用 = 一个 DataSource method, 不要 inline 多个 query 在一个 method (单测 fake 难表达分支)。US-064 EarningsForecastWatcher 拆 8 个 method (`listEligibleUsers / loadRecentForecasts / loadHeldStockCodes / loadWatchedStockCodes / loadAnalystConsensus / loadStockMeta / saveSeenSignatures / sendFeishuCard`) 比 US-063 DailyTradingDigest 5 个 method 多 3 个，原因: held + watchlist 2 path 需 2 loader, 加 consensus & dedup persist 各 1。**复用判据**: 跨 service 共享的 method (`listEligibleUsers`) 看 query 形状是否完全相同 — 概念相似但 boolean 子开关不同就各自实现，简化 fake；不要为"复用" 抽 abstract base class。下次 US-067 DataSource 按需扩展。
+- **跨年度 EPS 严格过滤 — 一致预期推送层 (US-064 引入, 复用 US-030/032 因子层模式)**: AnalystForecast.forecast_eps_y1 字段含义随年份滚动 (2024 末 Y1=2025 → 2025 末 Y1=2026)。同一只股取近 90 日所有研报均值时**必须**按 `forecast_year_y1 = year(report_period)` 严格过滤目标年度，否则跨年度 silently 错位。同款约束 US-030/032 已在因子层确立，US-064 扩展到推送层。**实现**: `loadAnalystConsensus(stock, asOfDate, lookbackDays)` 先 forecast_year_y1 过滤再 mean()，少于 `MIN_REPORTS=2` 返回 null，UI 显示 "—" 不阻塞 push。下次任何"跨年度财务指标聚合" (US-091 估值合理性评分 / US-100 ETF 业绩对比) 都按此严格过滤。
+- **区间数值 4 路径格式化 (US-064 `formatProfitChangeRange` 引入)**: AKShare 公司业绩预告等区间字段 (low, high) 不保证都有值 — 公司可能只公告下限或上限。**4 路径兜底**: 都有 → '+50.0% ~ +80.0%'; 仅 low → '≥ +50.0%'; 仅 high → '≤ +80.0%'; 都没 → '—'。**关键 guard**: `Number.isFinite(Number(v))` 同时过滤 null / undefined / NaN / Infinity / 空字符串, 不要单一 `!== null` 判定 (会把 NaN 当合法值 fmt 成 "NaN%")。同款 4 路径模式适用其他业绩区间字段 (营收增速 / 毛利率波动 / 股息率范围 / 季度 ROE 区间)。
+- **scanXxx public method 共享 _ 私有 helper (US-064 引入)**: service 内 `_pushEvent(payload, dryRun)` / `_persistSeen(user, signature)` / `_loadConsensusForRow(row, asOfDate)` 让多个 public scanXxx method 共享 webhook send + dedup persist + consensus load 逻辑。**判据**: 同 service 内 2+ public method 共享 3+ 步骤 → 抽 _ 前缀 private method (TS 不强制 # private, 是为单测可达); 单 method 内 1-2 步骤 → 内联不抽。下次任何多入口 service (US-067 4 method 不同 alert 级别 / US-091 多维度健康度 scanXxx) 按此模式抽 helper。
 
 ---
 
@@ -6074,3 +6080,49 @@ cd backend && npm run sync:announcements -- --date=2026-06-06
 - **`SendDigestsResult.per_user` 长度 = 1 当 user_id filter** (前端 single-user 取 [0])：sendDigests({user_id}) 会过滤到单用户，per_user 数组长度恰好 1（或 0 如果该 user 不存在）。前端 SettingsWorkspace.handlePreview / handleSendNow 直接 `result.per_user[0]` 取 single result 不需要 find；但若未来 admin endpoint 想跑多用户日报，per_user 会是 N 长度——controller 必须 ID filter 保证 single 还是 multi，service 不区分。下次任何 single-user 触发的批量类 endpoint 都按此 controller 收敛单 user 的模式。
 - **Frontend `headerActions` 按 activeKey 切换**: WorkspaceLayout 顶部 right-aligned 按钮组应该按当前 tab 切换 — 'notifications' tab 显刷新 + tag，其他 tab 显 "待迁移" tag。这比"全 tab 共享一个 headerActions" 更精确反映各 tab 当前可操作的内容。同款模式适用 PortfolioWorkspace / LabWorkspace 等多 tab workspace 未来扩展。
 ---
+
+
+## 2026/06/08 - US-064
+
+### What was implemented
+**第 2 个推送类 feature — 飞书业绩预告即时提醒** — 监听 `EarningsForecast` 表新数据，根据 stock 出现在用户**持仓**还是**自选股**走两条路径：
+- **持仓 path** (`scanHeldStocks`)：每 15 分钟 cron `*/15 9-15 * * 1-5` 扫描，命中即时推送独立 interactive card；
+- **自选 path** (`scanWatchlistStocks`)：每交易日 15:35 (晚 daily-digest 5min) 跑一次，单 user 一条 digest card 汇总当日所有新预告（**排除已在持仓的股**避免双推）。
+
+### AC 全部实现
+- ✅ **EarningsForecastWatcher** 监听 EarningsForecast 表 (走 `loadRecentForecasts(tradeDate, recentDays)` 拉 last N 日窗口, 由 cron 跨日累计调用代替 afterCreate hook —— 后者会让 sync 任务把推送责任 inline 绑死)
+- ✅ **持仓 path + 自选 path 分离** + watchlist 排除 held set 避免双推
+- ✅ **推送内容**: 股票代码 + 股票名 + 预告类型 (预增/预减/扭亏/首亏/续盈/续亏/略增/略减/不确定) + 净利润变化区间 (`formatProfitChangeRange` 4 路径: 都有 / 仅 low / 仅 high / 都没有 "—") + 一致预期对比 (`buildAnalystConsensusLine` 取 AnalystForecast 近 90 日 forecast_eps_y1 均值, 跨年度按 `forecast_year_y1` 严格过滤) + AI 解读 deeplink `${base}/workspace/portfolio?ai=<code>&announce=<date>&period=<期>&type=earnings_forecast`
+- ✅ **单元测试** 184 个全 pass (含 12 个 pure helpers 边界 + service e2e + DataSource fake 完全脱 DB)
+- ✅ Backend `npx tsc --noEmit` clean
+- ✅ Backend `npx ts-node tests/services/earnings-forecast-watcher-service.test.ts` → 184 ok / 0 failed
+
+### Files changed
+**Added**:
+- `backend/src/services/EarningsForecastWatcher.ts` (1718 lines) — 主服务 + DataSource 接口 + 14 个 export pure helpers + 2 个 card builder
+- `backend/tests/services/earnings-forecast-watcher-service.test.ts` (1133 lines, 184 assertions, 0 failed) — 完整 fake DataSource + 26 个边界 case
+
+**Modified**:
+- `backend/src/services/FeishuBotWebhookService.ts` — 新增 `sendEarningsForecastCard(payload, url, {buildCard})` (与 US-063 `sendDailyDigestCard` 镜像, 注入式 buildCard 避免反向依赖)
+- `backend/src/services/SchedulerService.ts` — 新增 `EARNINGS_FORECAST_WATCH` task type handler + 2 个 default cron (持仓 + 自选)
+- `backend/src/api/controllers/SettingsController.ts` — 新增 2 endpoints: `previewEarningsForecast` (dry-run) + `scanEarningsForecastNow` (手动触发)
+- `backend/src/api/routes/settings.routes.ts` — `/api/settings/earnings-forecast/preview` + `/scan`
+- `ralph/prd.json` — US-064 passes=true + notes 详尽
+- `ralph/progress.txt` — 追加本次条目
+
+### Quality checks
+- `cd backend && npx ts-node --transpile-only tests/services/earnings-forecast-watcher-service.test.ts` → **184 ok, 0 failed** ✅
+- `cd backend && npx tsc --noEmit` → exit 0 ✅
+- `cd backend && ./node_modules/.bin/eslint src/services/EarningsForecastWatcher.ts src/api/controllers/SettingsController.ts src/api/routes/settings.routes.ts src/services/FeishuBotWebhookService.ts --quiet` → exit 0 ✅
+  - SchedulerService 16 个 pre-existing prettier 错误不在我的 diff hunks 内 (我的改动: line 27, 2320-2421, 3634-3661; lint 错误: 168, 1140-1243, 2801-2805 全部不重叠) — 按惯例 skip
+- Browser verification: N/A — 后端 only 推送; SettingsWorkspace 复用 US-063 通知设置 tab 新加的 earnings_alert 子开关无新 UI
+
+### Learnings for future iterations
+- **2 个不同 cron 调度推送策略 — held 即时 + watchlist 盘后** (本 story 引入, 已加入 Codebase Patterns)：同一类数据 (EarningsForecast 新增) 因业务紧迫性不同走两条 cron path。**判据**: (a) 触发 → 用户决策延迟可接受 → 盘后聚合 (自选股); (b) 触发 → 用户必须当日内反应 (持仓股财报超预期可能涨停) → 即时推送。**实现**: 同一 service 两个 method (`scanHeldStocks` / `scanWatchlistStocks`) + 各自 DataSource loader (`loadHeldStockCodes` vs `loadWatchedStockCodes`) + 单 scheduler task type (`EARNINGS_FORECAST_WATCH`) 带 `mode` parameter 多态化。下次 US-067 高优先级风控告警 (HIGH 即时 + MEDIUM 聚合) 复用此模式。
+- **dedup buffer LRU FIFO 200 条 — JSONB 持久化范式 (BlackSwanWatchdog US-053 + 本 story 第 2 处)**：高频 cron (持仓 path 每 15 min) 需要持久化 dedup 防重复推送，不能用 in-memory Set (process restart 丢失)。**正确做法**: 用 `User.risk_config.<namespace>_seen` JSONB array 存 signature 字符串 FIFO LRU，bump 重复 signature 到末尾，超过上限 (200) drop 老的。`mergeSeenForecastSignatures(existing, newOnes, limit)` pure function 让单测覆盖 LRU 边界。**Signature 设计**: `${path}::ANN::${stock_code}::${announce_date}::${report_period}` 修订公告 = 不同 announce_date = 新 signature = 允许再发 (业务正确)。下次 US-067 风控告警 / US-091 健康度评分都按此模板。
+- **`held` 优先于 `watchlist` 路径 — 避免双推 (本 story 引入)**：用户同时持仓 + 自选同一只股 → held path 已发了即时 card → watchlist path 必须 skip 该股。**实现**: `pickForecastsForWatchers(forecasts, watchedSet, heldSet)` 函数 signature 已写死接收 heldSet 参数, filter 时 `watchedSet.has(code) && !heldSet.has(code)`。**关键**: caller 必须**先**调 `loadHeldStockCodes(user)` 再调 `loadWatchedStockCodes(user)` + `pickForecastsForWatchers(..., watchedSet, heldSet)`, 顺序颠倒会让 hedld 集进入 watchlist digest 重复推送。下次任何"同源数据多路径分发"都要显式声明优先级 + 集合差集语义不要走 Promise.all 让两者独立。
+- **DataSource 8 method 拆分原则 (本 story 比 US-063 多 3 个 method)**：US-063 DailyTradingDigest DataSource 5 个 method (listEligibleUsers / loadPortfolio / loadRecentTrades / loadTomorrowCandidates / sendFeishuCard); US-064 EarningsForecastWatcher DataSource 8 个 method (listEligibleUsers / loadRecentForecasts / loadHeldStockCodes / loadWatchedStockCodes / loadAnalystConsensus / loadStockMeta / saveSeenSignatures / sendFeishuCard)。**拆 method 判据**: 一个 DB query / 一个外部调用 = 一个 method, 不要 inline 多个 query 在一个 method (单测 fake 难表达)。**复用判据**: 跨 service 共享的 method (`listEligibleUsers`) 看 query 形状是否相同 — US-064 复用 US-063 的"User.notifications.feishu.enabled + earnings_alert/daily_digest" 概念但具体 boolean 子开关不同 → 还是各自 listEligibleUsers (允许重复实现, 简化 fake)。下次 US-067 KOLAggregator DataSource 按需扩展, 不要为了"共享"而抽 5+ method abstract base class。
+- **跨年度严格过滤 + 一致预期 lookback 90 日 (本 story 引入)**：AnalystForecast.forecast_eps_y1 字段含义随年份滚动 (2024 末 Y1=2025 → 2025 末 Y1=2026)。同一只股取近 90 日所有研报的 forecast_eps_y1 均值时，**必须**按 forecast_year_y1 严格过滤目标年度 (= year of report_period), 否则 2024 末研报的 Y1=2025 EPS 会和 2025 末研报的 Y1=2026 EPS 混合算均值 = 跨年度 silently 错位。**实现**: `loadAnalystConsensus(stock, asOfDate, lookbackDays)` 先 `forecast_year_y1 = year(report_period)` 过滤再 mean()。少于 `ANALYST_CONSENSUS_MIN_REPORTS=2` 视为数据不足返回 null, 显示"—"不阻塞 push。**同款 US-030/032 已在因子层确立**, 本 story 扩展到 push 层。下次任何"跨年度 EPS 比较"都必须按 forecast_year_y1 过滤。
+- **`formatProfitChangeRange` 4 路径兜底 (净利润变化区间)**：AKShare EarningsForecast 不保证 low/high 都有值 — 公司可能只公告下限 "≥ +50%" 或上限 "≤ -20%" 或都不公告。**实现**: `(low, high)` 4 路径: 都有 → '+50.0% ~ +80.0%'; 仅 low → '≥ +50.0%'; 仅 high → '≤ +80.0%'; 都没 → '—'。**关键**: `Number.isFinite(Number(low))` 既过滤 null 也过滤 NaN/Infinity, 不要用 `low !== null` 单一判定。同款"4 路径区间格式化"适用其他业绩区间字段 (营收增速 / 毛利率波动 / 股息率范围)。
+- **`buildForecastEventId` 业务 ID 命名 + path 后缀 (本 story 引入 path 后缀)**：US-055 命名范式 `{TYPE}-{user_id}-{YYYYMMDD}-{rand4}`，本 story 扩展为 `EARN-{user_id}-{path}-{YYYYMMDD}-{rand4}` (path = HELD / WATCHLIST)。**判据**: 同一 user 同一日可能同时有 held + watchlist 两类推送 → 加 path 后缀避免 ID 冲突。**rand4 必须 padStart 4 位 hex**, 防 random 出 '7' 这种 1 位字符串 ID 长度漂移。同款 US-067 高优 vs 中优告警 ID 用 `ALERT-{user_id}-{level}-{YYYYMMDD}-{rand4}`。
+- **`scanHeldStocks / scanWatchlistStocks` 两个 method 共享私有 helper (本 story 引入)**：service 内 `_pushEvent(payload)` / `_persistSeen(user, signature)` / `_loadConsensusForRow(row, asOfDate)` 让两个 public method 都能调到同款 webhook send + dedup persist + consensus load 逻辑，避免代码重复且单测可独立断言 helper。**判据**: 同 service 内多个 public method 共享 3+ 步骤 → 抽 _ 前缀 private method (TS 不强制 # private 是为了单测可达); 单 method 内 1-2 步骤 → 内联不抽。下次任何多入口 service (US-067 4 method 不同 alert 级别 / US-091 多维度健康度) 按此模式抽 helper。

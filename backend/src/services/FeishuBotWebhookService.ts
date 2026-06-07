@@ -186,6 +186,84 @@ class FeishuBotWebhookService {
     }
   }
 
+  /**
+   * US-064 — 发送业绩预告即时提醒 interactive card。
+   *
+   * 与 `sendDailyDigestCard` 完全镜像（同 `msg_type='interactive'` schema +
+   * caller 注入 buildCard helper 避免反向依赖）。`EarningsForecastWatcher`
+   * 用同一 channel adapter 但走自己的 card schema（buildEarningsForecastCard
+   * 单事件 / buildEarningsForecastDigestCard 自选股汇总）。
+   *
+   * Caller (`EarningsForecastWatcher.sendFeishuCard` /
+   * `sendFeishuDigestCard`) 通过 `options.buildCard` 注入卡片构造函数；本
+   * adapter 不知道 card 内部 schema —— 只负责 dispatch + dispatch 错误处理。
+   *
+   * 与 sendDailyDigestCard 同款 fail-OPEN：失败返回 `{success:false, message}`
+   * 不 throw —— 让 caller 收到结果决定如何记录 (per-event status='failed' /
+   * 'partial' / 'sent'), 不污染 scheduler 主路径。
+   */
+  async sendEarningsForecastCard(
+    payload: any,
+    webhookUrl?: string,
+    options?: { buildCard?: (payload: any) => any }
+  ): Promise<FeishuBotWebhookSendResult> {
+    const targetUrl = firstText(webhookUrl, this.getWebhookUrl());
+    if (toBoolean(process.env.DISABLE_FEISHU_BOT_WEBHOOK, false)) {
+      return {
+        success: false,
+        skipped: true,
+        message: '飞书机器人 webhook 已通过环境变量禁用',
+      };
+    }
+    if (!targetUrl) {
+      return {
+        success: false,
+        skipped: true,
+        message: '飞书机器人 webhook 未配置，已跳过业绩预告推送',
+      };
+    }
+    if (!payload || typeof payload !== 'object') {
+      return {
+        success: false,
+        message: '业绩预告 payload 不能为空',
+      };
+    }
+    if (!options?.buildCard || typeof options.buildCard !== 'function') {
+      return {
+        success: false,
+        message: 'sendEarningsForecastCard 必须提供 options.buildCard 以构造卡片 JSON',
+      };
+    }
+
+    let cardBody: any;
+    try {
+      cardBody = options.buildCard(payload);
+    } catch (err: any) {
+      logger.warn(`飞书业绩预告 buildCard 异常: ${err?.message || err}`);
+      return { success: false, message: `buildCard 异常: ${err?.message || err}` };
+    }
+
+    try {
+      const response = await this.http.post(targetUrl, cardBody);
+      const body = response.data || {};
+      const rawCode = body.code ?? body.StatusCode ?? body.status_code ?? 0;
+      const code = Number(rawCode);
+      if (Number.isFinite(code) && code !== 0) {
+        const message = body.msg || body.message || body.StatusMessage || '飞书机器人返回失败';
+        logger.warn(`飞书业绩预告推送失败: code=${code}, message=${message}`);
+        return { success: false, message, data: body };
+      }
+      const sym = payload.symbol ?? payload.event_id ?? '?';
+      const uid = payload.user_id ?? '?';
+      logger.info(`飞书业绩预告已推送 (user=${uid}, event=${sym})`);
+      return { success: true, data: body };
+    } catch (error: any) {
+      const message = error?.response?.data?.msg || error?.message || '飞书业绩预告推送异常';
+      logger.warn(`飞书业绩预告推送异常: ${message}`);
+      return { success: false, message };
+    }
+  }
+
   async sendRecommendationSummary(
     payload: FeishuRecommendationSummaryPayload
   ): Promise<FeishuBotWebhookSendResult> {

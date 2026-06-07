@@ -24,6 +24,7 @@ import { drawdownCircuitBreaker } from '../portfolio/risk/DrawdownCircuitBreaker
 import { marketRegimeAlertService } from '../portfolio/risk/MarketRegimeAlertService';
 import { perStockStopLossGuard } from '../portfolio/risk/PerStockStopLossGuard';
 import { dailyTradingDigestService } from './DailyTradingDigestService';
+import { earningsForecastWatcher } from './EarningsForecastWatcher';
 import { benchmarkIndexService } from './BenchmarkIndexService';
 import { automatedRecommendationLoopService } from './AutomatedRecommendationLoopService';
 import { recommendationTradeOutcomeService } from './RecommendationTradeOutcomeService';
@@ -2316,6 +2317,107 @@ class SchedulerService {
             `失败 ${digestResult.failed_count}` +
             (dryRun ? '（dry-run，未实际推送）' : '')
         );
+      } else if (task.type === 'EARNINGS_FORECAST_WATCH') {
+        // US-064 — 业绩预告即时提醒。`mode` 参数控制走持仓即时 (held) 还是自选
+        // 盘后汇总 (watchlist)，缺省 = 'both' (持仓 + 自选都跑)。
+        // `user_id` 可选 (扫单用户)；`dry_run`=true 仅预演不推送。
+        const targetUserId = parameters.user_id || parameters.userId;
+        const dryRun =
+          parameters.dry_run !== undefined
+            ? Boolean(parameters.dry_run)
+            : parameters.dryRun !== undefined
+            ? Boolean(parameters.dryRun)
+            : false;
+        const recentDays =
+          parameters.recent_days !== undefined
+            ? Number(parameters.recent_days)
+            : parameters.recentDays !== undefined
+            ? Number(parameters.recentDays)
+            : undefined;
+        const mode = String(parameters.mode || 'both').toLowerCase();
+        const runHeld = mode === 'both' || mode === 'held';
+        const runWatchlist = mode === 'both' || mode === 'watchlist';
+
+        const heldResult = runHeld
+          ? await earningsForecastWatcher.scanHeldStocks({
+              user_id: targetUserId ? Number(targetUserId) : undefined,
+              trade_date: parameters.trade_date || parameters.tradeDate,
+              dry_run: dryRun,
+              recent_days: recentDays,
+            })
+          : null;
+        const watchlistResult = runWatchlist
+          ? await earningsForecastWatcher.scanWatchlistStocks({
+              user_id: targetUserId ? Number(targetUserId) : undefined,
+              trade_date: parameters.trade_date || parameters.tradeDate,
+              dry_run: dryRun,
+              recent_days: recentDays,
+            })
+          : null;
+
+        const totalSent = (heldResult?.sent_count ?? 0) + (watchlistResult?.sent_count ?? 0);
+        const totalSkipped =
+          (heldResult?.skipped_count ?? 0) + (watchlistResult?.skipped_count ?? 0);
+        const totalFailed = (heldResult?.failed_count ?? 0) + (watchlistResult?.failed_count ?? 0);
+        const totalScanned = Math.max(
+          heldResult?.scanned_users ?? 0,
+          watchlistResult?.scanned_users ?? 0
+        );
+
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items:
+            (heldResult?.scanned_forecasts ?? 0) + (watchlistResult?.scanned_forecasts ?? 0),
+          completed_items: totalSent,
+          failed_items: totalFailed,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: null,
+          result_summary: {
+            scenario: 'earnings_forecast_watch',
+            mode,
+            trade_date: heldResult?.trade_date || watchlistResult?.trade_date,
+            scanned_users: totalScanned,
+            held: heldResult
+              ? {
+                  scanned_forecasts: heldResult.scanned_forecasts,
+                  sent_count: heldResult.sent_count,
+                  skipped_count: heldResult.skipped_count,
+                  failed_count: heldResult.failed_count,
+                  events: heldResult.per_event.map(e => ({
+                    event_id: e.event_id,
+                    symbol: e.symbol,
+                    user_id: e.user_id,
+                    status: e.status,
+                    sent: e.sent,
+                    error: e.error,
+                    skip_reason: e.skip_reason,
+                  })),
+                }
+              : null,
+            watchlist: watchlistResult
+              ? {
+                  scanned_forecasts: watchlistResult.scanned_forecasts,
+                  sent_count: watchlistResult.sent_count,
+                  skipped_count: watchlistResult.skipped_count,
+                  failed_count: watchlistResult.failed_count,
+                  per_user: watchlistResult.per_user.map(u => ({
+                    event_id: u.event_id,
+                    user_id: u.user_id,
+                    forecast_count: u.forecast_count,
+                    status: u.status,
+                    sent: u.sent,
+                    error: u.error,
+                    skip_reason: u.skip_reason,
+                  })),
+                }
+              : null,
+            dry_run: dryRun,
+          },
+        });
+        logger.info(
+          `业绩预告推送完成。mode=${mode}，已发 ${totalSent}，跳过 ${totalSkipped}，失败 ${totalFailed}` +
+            (dryRun ? '（dry-run，未实际推送）' : '')
+        );
       } else if (task.type === 'AUTO_RECOMMENDATION_LOOP') {
         const result = await automatedRecommendationLoopService.run({
           username: parameters.username || 'lym',
@@ -3527,6 +3629,33 @@ class SchedulerService {
           dry_run: false,
           per_strategy_limit: 5,
           per_direction_trade_limit: 3,
+        },
+      },
+      {
+        // US-064 — 业绩预告即时提醒（持仓 path）。每 15 分钟跑一次仅扫持仓股，
+        // 命中即时推送（dedup buffer 防重复）。
+        name: '业绩预告持仓即时提醒',
+        type: 'EARNINGS_FORECAST_WATCH',
+        cron_expression: '*/15 9-15 * * 1-5',
+        is_active: true,
+        parameters: {
+          dry_run: false,
+          mode: 'held',
+          recent_days: 7,
+        },
+      },
+      {
+        // US-064 — 业绩预告自选股盘后汇总（watchlist path）。每个交易日 15:35
+        // 跑一次（晚 daily-digest 5min），单 user 一条 digest card 汇总所有
+        // 自选股当日新预告。
+        name: '业绩预告自选盘后汇总',
+        type: 'EARNINGS_FORECAST_WATCH',
+        cron_expression: '35 15 * * 1-5',
+        is_active: true,
+        parameters: {
+          dry_run: false,
+          mode: 'watchlist',
+          recent_days: 7,
         },
       },
     ];

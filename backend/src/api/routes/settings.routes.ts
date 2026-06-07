@@ -57,4 +57,26 @@ router.post(
   settingsController.sendDailyDigestNow
 );
 
+/**
+ * @route POST /api/settings/earnings-forecast/preview
+ * @desc dry-run 预览当日业绩预告推送 payload（持仓 + 自选两组），不实际推送 (US-064)
+ * @access Private
+ */
+router.post(
+  '/earnings-forecast/preview',
+  authController.authenticate,
+  settingsController.previewEarningsForecast
+);
+
+/**
+ * @route POST /api/settings/earnings-forecast/scan
+ * @desc 立即扫描当前用户持仓 + 自选股业绩预告并实际推送 (US-064)
+ * @access Private
+ */
+router.post(
+  '/earnings-forecast/scan',
+  authController.authenticate,
+  settingsController.scanEarningsForecastNow
+);
+
 export default router;

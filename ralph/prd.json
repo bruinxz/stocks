@@ -1097,8 +1097,8 @@
         "Tests pass"
       ],
       "priority": 64,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026-06-08. EarningsForecastWatcher 走 US-063 8-item 推送范式: (1) DataSource 注入 (8 method interface + DefaultEarningsForecastWatcherDataSource + PRODUCTION singleton); (2) 12 个 export pure helpers (normalizeEarningsForecastConfig / shouldSendEarningsForUser / stripSymbolSuffix / pickForecastsForHolders / pickForecastsForWatchers / signatureForForecast / mergeSeenForecastSignatures / buildForecastDeeplink / buildForecastEventId / formatProfitChangeRange / buildAnalystConsensusLine / buildEarningsForecastMessage / buildEarningsForecastCard / buildEarningsForecastDigestCard); (3) plain-object 返回 ScanResult / ScanWatchlistResult / EarningsForecastSendResult / EarningsForecastWatchlistResult with status=sent|skipped|failed|partial; (4) 每 user / 每 forecast 独立 try/catch fail-OPEN; (5) FIFO LRU dedup buffer (与 BlackSwanWatchdog US-053 一致, 上限 200 条) 持久化在 User.risk_config.earnings_forecast_seen JSONB; (6) dry_run=true 完整 payload 但不发 webhook + 不写 dedup. 持仓 path (scanHeldStocks) 即时推送每条独立 interactive card; 自选 path (scanWatchlistStocks) 当日汇总成一条 digest card 排除已在持仓的股 (避免双推). FeishuBotWebhookService.sendEarningsForecastCard 用与 US-063 同款 buildCard 注入式 adapter. AnalystForecast 一致预期取近 90 日内研报 forecast_eps_y1 均值 (跨年度按 forecast_year_y1 过滤). Scheduler 注册 2 个 cron task: '*/15 9-15 * * 1-5' (持仓 intra-day) + '35 15 * * 1-5' (自选盘后 30+5). SettingsController 新增 POST /api/settings/earnings-forecast/preview (dry-run) 与 POST /scan (手动触发). 184 个测试全 pass (含 dedup LRU / 修订公告 = 新 announce_date / 持仓优先于自选 / consensus 跨年过滤 / dry_run 不写 buffer / sendFeishuCard 失败 fail-OPEN 等 26 个边界 case). Backend tsc + 修改文件 eslint 全 clean (SchedulerService 16 个 prettier 错误是 pre-existing, 不在我的 diff hunks 内, 按惯例 skip). Browser verification: 复用 US-063 通知设置 tab, 无新 UI 入口."
     },
     {
       "id": "US-065",

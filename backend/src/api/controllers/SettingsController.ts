@@ -1,9 +1,10 @@
 import { Request, Response, NextFunction } from 'express';
 import { dailyTradingDigestService } from '../../services/DailyTradingDigestService';
+import { earningsForecastWatcher } from '../../services/EarningsForecastWatcher';
 import { logger } from '../../utils/logger';
 
 /**
- * SettingsController — US-063 通知通道配置
+ * SettingsController — US-063 / US-064 通知通道配置
  *
  * Mounted at `/api/settings/*`. 与 `RiskController`（/api/risk）平行：风控配置
  * 是 pre-trade policy 关于*交易决策*；通知通道是 *消息触达* 维度，分开命名空间。
@@ -14,6 +15,10 @@ import { logger } from '../../utils/logger';
  * Endpoints:
  *   GET /api/settings/notification-channels — 取当前用户的 normalized 配置
  *   POST /api/settings/notification-channels — merge + 落盘（normalize 静默丢非法字段）
+ *   POST /api/settings/daily-digest/preview — dry-run preview 当日日报
+ *   POST /api/settings/daily-digest/send — 立即推送当日日报
+ *   POST /api/settings/earnings-forecast/scan — 立即扫描持仓 + 自选股推送 (US-064)
+ *   POST /api/settings/earnings-forecast/preview — dry-run preview 业绩预告推送 (US-064)
  */
 export class SettingsController {
   /**
@@ -86,6 +91,78 @@ export class SettingsController {
       res.json({ success: true, data: result, message: '当日日报已触发推送' });
     } catch (error: any) {
       logger.error('手动触发日报失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * POST /api/settings/earnings-forecast/preview (US-064)
+   * dry_run 预演当前用户当日的业绩预告推送 payload：
+   *   - 扫持仓股 (held path) — 返回每条 forecast 的 single-card payload；
+   *   - 扫自选股 (watchlist path) — 返回合并的 digest payload；
+   * 不实际推送 webhook + 不写 dedup buffer，让用户多次预演。
+   */
+  async previewEarningsForecast(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user.id;
+      const body = req.body || {};
+      const heldResult = await earningsForecastWatcher.scanHeldStocks({
+        user_id,
+        dry_run: true,
+        trade_date: body.trade_date,
+        recent_days: body.recent_days,
+        frontend_base_url: body.frontend_base_url,
+      });
+      const watchlistResult = await earningsForecastWatcher.scanWatchlistStocks({
+        user_id,
+        dry_run: true,
+        trade_date: body.trade_date,
+        recent_days: body.recent_days,
+        frontend_base_url: body.frontend_base_url,
+      });
+      res.json({
+        success: true,
+        data: {
+          held: heldResult,
+          watchlist: watchlistResult,
+        },
+      });
+    } catch (error: any) {
+      logger.error('预览业绩预告推送失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * POST /api/settings/earnings-forecast/scan (US-064)
+   * 立即扫描当前用户的持仓 + 自选股业绩预告并实际推送（同 scheduler cron 流程）。
+   * dedup buffer 会被更新避免下次重发；适用于手动触发或冒烟测试。
+   */
+  async scanEarningsForecastNow(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user.id;
+      const body = req.body || {};
+      const heldResult = await earningsForecastWatcher.scanHeldStocks({
+        user_id,
+        dry_run: false,
+        trade_date: body.trade_date,
+        recent_days: body.recent_days,
+        frontend_base_url: body.frontend_base_url,
+      });
+      const watchlistResult = await earningsForecastWatcher.scanWatchlistStocks({
+        user_id,
+        dry_run: false,
+        trade_date: body.trade_date,
+        recent_days: body.recent_days,
+        frontend_base_url: body.frontend_base_url,
+      });
+      res.json({
+        success: true,
+        data: { held: heldResult, watchlist: watchlistResult },
+        message: '业绩预告扫描完成',
+      });
+    } catch (error: any) {
+      logger.error('手动触发业绩预告扫描失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   }
