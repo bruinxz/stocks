@@ -5,12 +5,14 @@ import { drawdownCircuitBreaker } from '../../portfolio/risk/DrawdownCircuitBrea
 import { marketRegimeAlertService } from '../../portfolio/risk/MarketRegimeAlertService';
 import { perStockStopLossGuard } from '../../portfolio/risk/PerStockStopLossGuard';
 import { industryConcentrationGuard } from '../../portfolio/risk/IndustryConcentrationGuard';
+import { blackSwanWatchdog } from '../../portfolio/risk/BlackSwanWatchdog';
 import { logger } from '../../utils/logger';
 
 /**
  * RiskController — US-047 (position limits) + US-048 (trailing stop)
  *   + US-049 (drawdown circuit breaker) + US-050 (market regime alert)
  *   + US-051 (per-stock stop loss) + US-052 (industry concentration)
+ *   + US-053 (black-swan watchdog)
  *
  * Exposes the pre-trade risk-policy configuration to the client.  Mounted at
  * `/api/risk/*` from `index.ts`.
@@ -18,8 +20,8 @@ import { logger } from '../../utils/logger';
  * Why not folded into `RiskAlertController`?  That controller is concerned
  * with consuming/clearing already-emitted alerts (the bell view).  Position
  * limits + trailing stop + drawdown breaker + market regime + per-stock stop
- * loss + industry concentration are separate, *pre*-trade policy surfaces —
- * keeping them in their own controller makes the route map
+ * loss + industry concentration + black-swan watchdog are separate, *pre*-trade
+ * policy surfaces — keeping them in their own controller makes the route map
  * (`/api/risk-alerts` vs `/api/risk`) easy to scan.
  */
 export class RiskController {
@@ -267,6 +269,42 @@ export class RiskController {
       res.json({ success: true, data: saved, message: '行业集中度配置已保存' });
     } catch (error: any) {
       logger.error('更新行业集中度配置失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * GET /api/risk/black-swan  (US-053)
+   * Return the user's effective black-swan watchdog config (defaults: enabled=true,
+   * scan_st / scan_suspended / scan_news / dedupe_enabled = true,
+   * news_keywords = [立案/退市/重大违规/处罚/问询函], news_lookback_hours=24,
+   * news_per_stock_limit=50 when not customized).
+   */
+  async getBlackSwan(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user.id;
+      const config = await blackSwanWatchdog.getConfig(user_id);
+      res.json({ success: true, data: config });
+    } catch (error: any) {
+      logger.error('获取黑天鹅监控配置失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * PUT /api/risk/black-swan  (US-053)
+   * Persist user's black-swan config — input normalized
+   * (`normalizeBlackSwanConfig`) so invalid scan_* / keywords / lookback /
+   * dedupe / enabled silently revert to defaults instead of corrupting
+   * `User.risk_config`.
+   */
+  async updateBlackSwan(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user.id;
+      const saved = await blackSwanWatchdog.updateConfig(user_id, req.body || {});
+      res.json({ success: true, data: saved, message: '黑天鹅监控配置已保存' });
+    } catch (error: any) {
+      logger.error('更新黑天鹅监控配置失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   }

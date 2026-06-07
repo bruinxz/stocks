@@ -2833,6 +2833,215 @@ def get_shareholder_count(stock_code: str) -> List[Dict[str, Any]]:
         return []
 
 
+def get_st_stocks() -> List[Dict[str, Any]]:
+    """
+    Fetch the current A-share ST / *ST list — used by BlackSwanWatchdog (US-053)
+    to detect newly-flagged holding-period names.
+
+    Endpoint: AKShare `stock_zh_a_st_em()` (东方财富 -> 风险警示板) —
+    returns one row per ST-flagged stock (currently ~100-200 rows).
+
+    Returns:
+        List of `{stock_code, stock_name, latest_price, change_pct, raw_payload}`.
+        `stock_code` is the 6-digit pure code (suffixless) to match
+        BlackSwanWatchdog's symbol-bucket logic. Returns [] on AKShare
+        failure / empty response so the TS layer treats it as "no new ST
+        flags today" rather than crashing the daily cron.
+    """
+    try:
+        fn = getattr(ak, 'stock_zh_a_st_em', None)
+        if fn is None:
+            print('AKShare missing stock_zh_a_st_em', file=sys.stderr)
+            return []
+        df = fn()
+        if df is None or df.empty:
+            print('AKShare returned empty ST dataframe', file=sys.stderr)
+            return []
+
+        col_map: Dict[str, str] = {}
+        for col in df.columns:
+            col_s = str(col)
+            if col_s in ('代码', '股票代码'):
+                col_map['stock_code'] = col_s
+            elif col_s in ('名称', '股票名称'):
+                col_map['stock_name'] = col_s
+            elif col_s in ('最新价', '最新价格'):
+                col_map['latest_price'] = col_s
+            elif col_s == '涨跌幅':
+                col_map['change_pct'] = col_s
+
+        results: List[Dict[str, Any]] = []
+        for _, row in df.iterrows():
+            code = _cell_str(row, col_map.get('stock_code'))
+            if not code:
+                continue
+            pure = ''.join(ch for ch in str(code) if ch.isdigit())
+            if len(pure) != 6:
+                continue
+            results.append({
+                'stock_code': pure,
+                'stock_name': _cell_str(row, col_map.get('stock_name')),
+                'latest_price': _cell_float(row, col_map.get('latest_price')),
+                'change_pct': _cell_float(row, col_map.get('change_pct')),
+                'raw_payload': _row_to_jsonable(row, df.columns),
+            })
+
+        print(f'Parsed {len(results)} ST stocks', file=sys.stderr)
+        return results
+    except Exception as e:
+        print(f'Error getting ST stocks: {e}', file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return []
+
+
+def get_suspended_stocks() -> List[Dict[str, Any]]:
+    """
+    Fetch the current A-share suspended (停牌) stock list — used by
+    BlackSwanWatchdog (US-053) to detect holding-period names that suddenly
+    halt trading.
+
+    Endpoint: AKShare `stock_zh_a_stop_em()` (东方财富 -> 停牌板块) —
+    returns one row per suspended stock (currently ~200-300 rows).
+
+    Returns:
+        List of `{stock_code, stock_name, latest_price, change_pct,
+                  raw_payload}`. `stock_code` is the 6-digit pure code.
+        Returns [] on AKShare failure / empty response.
+    """
+    try:
+        fn = getattr(ak, 'stock_zh_a_stop_em', None)
+        if fn is None:
+            print('AKShare missing stock_zh_a_stop_em', file=sys.stderr)
+            return []
+        df = fn()
+        if df is None or df.empty:
+            print('AKShare returned empty suspended dataframe', file=sys.stderr)
+            return []
+
+        col_map: Dict[str, str] = {}
+        for col in df.columns:
+            col_s = str(col)
+            if col_s in ('代码', '股票代码'):
+                col_map['stock_code'] = col_s
+            elif col_s in ('名称', '股票名称'):
+                col_map['stock_name'] = col_s
+            elif col_s in ('最新价', '最新价格'):
+                col_map['latest_price'] = col_s
+            elif col_s == '涨跌幅':
+                col_map['change_pct'] = col_s
+
+        results: List[Dict[str, Any]] = []
+        for _, row in df.iterrows():
+            code = _cell_str(row, col_map.get('stock_code'))
+            if not code:
+                continue
+            pure = ''.join(ch for ch in str(code) if ch.isdigit())
+            if len(pure) != 6:
+                continue
+            results.append({
+                'stock_code': pure,
+                'stock_name': _cell_str(row, col_map.get('stock_name')),
+                'latest_price': _cell_float(row, col_map.get('latest_price')),
+                'change_pct': _cell_float(row, col_map.get('change_pct')),
+                'raw_payload': _row_to_jsonable(row, df.columns),
+            })
+
+        print(f'Parsed {len(results)} suspended stocks', file=sys.stderr)
+        return results
+    except Exception as e:
+        print(f'Error getting suspended stocks: {e}', file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return []
+
+
+def get_stock_news_em(stock_code: str, limit: int = 100) -> List[Dict[str, Any]]:
+    """
+    Fetch per-stock recent news (last ~100 headlines) — used by
+    BlackSwanWatchdog (US-053) to scan for '立案' / '退市' / '重大违规' keywords.
+
+    Endpoint: AKShare `stock_news_em(symbol='600519')` (东方财富个股新闻) —
+    returns one row per news item (10-100 most recent).
+
+    NOTE the AC text mentions `stock_news_main_cx_em` (which doesn't exist in
+    AKShare — actual symbol is `stock_news_main_cx` which returns a portal-wide
+    weekly digest, NOT per-stock). The right per-stock endpoint is
+    `stock_news_em`. Same 4-place documentation note applies as US-034:
+        model column comment / Python helper docstring / TS Client jsdoc / Factor jsdoc.
+
+    Args:
+        stock_code: 6-digit pure code (e.g. '600519').
+        limit: max rows returned (default 100). AKShare returns ~10 most-recent
+               by default; the upper bound primarily guards against future
+               endpoint changes returning massive backlogs.
+
+    Returns:
+        List sorted by publish_time DESC (newest first). Fields:
+            `title`, `content`, `publish_time` (ISO 'YYYY-MM-DD HH:mm:ss'),
+            `source`, `url`, `raw_payload`. Returns [] on error / empty.
+    """
+    try:
+        pure = ''.join(ch for ch in str(stock_code) if ch.isdigit())
+        if len(pure) != 6:
+            print(f'Invalid stock_code format: {stock_code}', file=sys.stderr)
+            return []
+
+        fn = getattr(ak, 'stock_news_em', None)
+        if fn is None:
+            print('AKShare missing stock_news_em', file=sys.stderr)
+            return []
+
+        try:
+            df = fn(symbol=pure)
+        except TypeError:
+            df = fn(pure)
+        except Exception as e:
+            print(f'stock_news_em({pure}) failed: {e}', file=sys.stderr)
+            return []
+
+        if df is None or df.empty:
+            print(f'AKShare returned empty news dataframe for {pure}', file=sys.stderr)
+            return []
+
+        col_map: Dict[str, str] = {}
+        for col in df.columns:
+            col_s = str(col)
+            if col_s in ('新闻标题', '标题'):
+                col_map['title'] = col_s
+            elif col_s in ('新闻内容', '内容', '摘要'):
+                col_map['content'] = col_s
+            elif col_s in ('发布时间', '日期', '时间'):
+                col_map['publish_time'] = col_s
+            elif col_s in ('文章来源', '来源'):
+                col_map['source'] = col_s
+            elif col_s in ('新闻链接', '链接', 'url'):
+                col_map['url'] = col_s
+
+        results: List[Dict[str, Any]] = []
+        for _, row in df.iterrows():
+            title = _cell_str(row, col_map.get('title'))
+            if not title:
+                continue
+            publish_time_raw = _cell_str(row, col_map.get('publish_time'))
+            results.append({
+                'title': title,
+                'content': _cell_str(row, col_map.get('content')),
+                'publish_time': publish_time_raw,
+                'source': _cell_str(row, col_map.get('source')),
+                'url': _cell_str(row, col_map.get('url')),
+                'raw_payload': _row_to_jsonable(row, df.columns),
+            })
+            if len(results) >= limit:
+                break
+
+        # 倒序：AKShare 已是 DESC，保留原序避免增加成本
+        print(f'Parsed {len(results)} news rows for {pure}', file=sys.stderr)
+        return results
+    except Exception as e:
+        print(f'Error getting stock_news_em for {stock_code}: {e}', file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return []
+
+
 def main():
     """Main entry point for command line calls"""
     if len(sys.argv) < 2:
@@ -2984,6 +3193,26 @@ def main():
 
             stock_code = sys.argv[2]
             result = get_shareholder_count(stock_code)
+
+        elif command == "get_st_stocks":
+            result = get_st_stocks()
+
+        elif command == "get_suspended_stocks":
+            result = get_suspended_stocks()
+
+        elif command == "get_stock_news_em":
+            if len(sys.argv) < 3:
+                print(json.dumps({"error": "Missing stock_code for get_stock_news_em"}), file=sys.stderr)
+                sys.exit(1)
+
+            stock_code = sys.argv[2]
+            limit = 100
+            if len(sys.argv) >= 4:
+                try:
+                    limit = int(sys.argv[3])
+                except (ValueError, TypeError):
+                    limit = 100
+            result = get_stock_news_em(stock_code, limit)
 
         else:
             print(json.dumps({"error": f"Unknown command: {command}"}), file=sys.stderr)

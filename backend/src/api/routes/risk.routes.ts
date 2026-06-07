@@ -124,4 +124,18 @@ router.put(
   riskController.updateIndustryConcentration
 );
 
+/**
+ * @route GET /api/risk/black-swan
+ * @desc 获取当前用户的黑天鹅监控配置 (US-053)
+ * @access Private
+ */
+router.get('/black-swan', authController.authenticate, riskController.getBlackSwan);
+
+/**
+ * @route PUT /api/risk/black-swan
+ * @desc 更新当前用户的黑天鹅监控配置 (US-053)
+ * @access Private
+ */
+router.put('/black-swan', authController.authenticate, riskController.updateBlackSwan);
+
 export default router;

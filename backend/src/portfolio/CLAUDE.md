@@ -489,3 +489,85 @@ should follow:
     "rebalance-industry" as the `:id` param).
   - `GET /api/risk/industry-concentration` (config read).
   - `PUT /api/risk/industry-concentration` (config write).
+
+## `risk/BlackSwanWatchdog` — US-053 specifics
+
+US-053 introduces the **7th risk guard** and first **event-driven** one:
+the prior 6 (US-047..US-052) all consume *user-owned* data (positions /
+portfolio / market index). **BlackSwanWatchdog consumes external event
+sources** (AKShare ST list / 停牌 list / 个股新闻) and intersects them
+with user holdings.
+
+Three event types, all logged to `RiskAlert(level='HIGH')` + notified
+via the `notify(payload)` DataSource hook (current stub logs only; the
+real feishu / email / wechat routing lands with US-080):
+
+  - **`ST`** — A-share 风险警示板 (`stock_zh_a_st_em`); persists as
+    long as the stock is on the ST list (signature = `ST::<code>`).
+  - **`SUSPENDED`** — A-share 停牌列表 (`stock_zh_a_stop_em`); persists
+    as long as the stock is suspended (signature = `SUSPENDED::<code>`).
+  - **`NEWS_KEYWORD`** — `stock_news_em(symbol)` per-stock news scan
+    intersected with default keywords `[立案, 退市, 重大违规, 处罚, 问询函]`;
+    signature includes title hash so distinct articles with the same
+    keyword can each fire.
+
+Patterns codified in US-053 that future event-driven guards (US-067 KOL
+opinion alerts, US-068 sentiment shock detector, ...) should follow:
+
+- **AC endpoint substitution — `stock_news_main_cx_em` ≠ `stock_news_em`**:
+  AC text references `stock_news_main_cx_em` (which does NOT exist in
+  AKShare — the closest `stock_news_main_cx` is a portal-wide weekly
+  digest, NOT per-stock). The correct per-stock endpoint is
+  `stock_news_em(symbol=6-digit)`. **4-place doc sync (US-034 / US-035
+  范式)**: Python helper docstring / TS Client jsdoc / BlackSwanWatchdog
+  jsdoc / (BlackSwanEvent model column comment when added). Future
+  event-driven guards facing the same "AC names an endpoint that
+  doesn't exist" trap follow the same substitution + 4-place pattern.
+- **Shared market snapshot fetched ONCE per cron run** — ST list and
+  suspended list don't differ per user, so `evaluateAfterOpen` fetches
+  each exactly once and threads the resulting `Map<code, Row>` into
+  every user's evaluation. Tests assert `stFetchCalls === 1` and
+  `suspendedFetchCalls === 1` regardless of user count.
+- **Per-stock news fetch is per-user-position** — news IS per-symbol
+  so the AKShare cost is `O(unique positions across all users)`. The
+  `news_per_stock_limit` (default 50) caps individual fetches, but
+  guard does NOT (yet) deduplicate news fetches across users that
+  hold the same stock — first optimization opportunity when this grows.
+- **LRU dedup buffer in `User.risk_config.black_swan_seen` (200 entries)**:
+  Signatures persist across cron runs to suppress repeat alerts for
+  ongoing events (a stock that stays ST for 6 months fires alert ONCE,
+  not 180 times). When a stock leaves the ST list and re-enters later
+  (the signature ages out via LRU + repeated re-evaluations of other
+  events), the alert fires again. Same JSONB column as other guards;
+  `user.changed('risk_config', true)` mandatory (US-017 lesson).
+- **Event priority chain — first hit wins per position** — within one
+  position, ST > SUSPENDED > NEWS_KEYWORD. The thinking is that a
+  single position should produce ONE bell-style alert per scan run, not
+  3. If the user wants to act on the news independently of the ST, the
+  audit trail (`detail` field on the trigger) still records all the
+  evidence.
+- **fail-OPEN on data source failure** — if `fetchSTList()` throws,
+  the production `DefaultBlackSwanDataSource` catches + returns `[]`
+  (logged as warn) so the daily cron continues. Suspended check and
+  news check are independent: ST fetch failure doesn't skip them.
+- **News recency window `≤ 24h`** — old news doesn't repeatedly trigger
+  alerts when a stock's news feed is sparse. The `news_lookback_hours`
+  is configurable per user; default 24h.
+- **Case-insensitive keyword matching with `String.includes()`** — A-share
+  news is predominantly Chinese, but English fragments (e.g. SEC notices,
+  delisting risk announcements) occasionally appear. Normalize both sides
+  to lowercase before substring matching.
+- **`dry_run=true` returns triggers without writing alerts** — supports
+  UI preview pattern (same as US-048 trailing stop + US-052 industry
+  rebalance). Seen-sig persistence is also skipped in dry_run so a
+  preview doesn't accidentally suppress the real alert later.
+- **Per-user try/catch isolation** — single user's portfolio load failure
+  doesn't abort the batch (same as US-047/048/049/051/052). The failed
+  user's result has `error: <message>` set; downstream consumers can
+  filter and retry that user later.
+- **HTTP surfaces**:
+  - `GET /api/risk/black-swan` (config read).
+  - `PUT /api/risk/black-swan` (config write).
+  - No POST-style trigger endpoint (yet) — the cron is the entry point;
+    when US-067 / US-068 add manual "re-scan now" buttons, this guard
+    should follow the same `POST /api/risk/black-swan/scan` shape.
