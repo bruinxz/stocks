@@ -95,12 +95,19 @@ for i in $(seq 1 $MAX_ITERATIONS); do
     OUTPUT=$(claude --dangerously-skip-permissions --print < "$SCRIPT_DIR/CLAUDE.md" 2>&1 | tee /dev/stderr) || true
   fi
   
-  # Check for completion signal
+  # Check for completion signal — must also verify in prd.json that NO story has passes:false
   if echo "$OUTPUT" | grep -q "<promise>COMPLETE</promise>"; then
-    echo ""
-    echo "Ralph completed all tasks!"
-    echo "Completed at iteration $i of $MAX_ITERATIONS"
-    exit 0
+    REMAINING=$(jq '[.userStories[] | select(.passes == false)] | length' "$PRD_FILE" 2>/dev/null || echo "0")
+    if [ "$REMAINING" = "0" ]; then
+      echo ""
+      echo "Ralph completed all tasks (verified prd.json: 0 remaining)!"
+      echo "Completed at iteration $i of $MAX_ITERATIONS"
+      exit 0
+    else
+      echo ""
+      echo "⚠ Got COMPLETE marker but $REMAINING stories still have passes:false in prd.json."
+      echo "  This is a false-positive — claude hallucinated completion. Continuing..."
+    fi
   fi
   
   echo "Iteration $i complete. Continuing..."
