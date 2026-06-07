@@ -52,3 +52,5 @@ export * from './FinancialReport';
 export * from './AnalystForecast';
 export * from './StockSentiment';
 export * from './ShareholderCount';
+export * from './OptimizationRun';
+export * from './OptimizationResult';

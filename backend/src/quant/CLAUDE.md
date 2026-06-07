@@ -175,3 +175,65 @@ reference_price?}`. The UI uses this to answer "为什么这只票今天没买/�
 成?". The `diagnostics.block_reasons: Record<reason, count>` counter is the
 aggregate twin — both views are kept because aggregation (heatmaps,
 dashboards) and audit (per-row drill-down) have different consumers.
+
+## US-037: GridSearchOptimizer — 参数网格调优
+
+`backend/src/quant/backtest/GridSearchOptimizer.ts` is a 公共 class（与
+`AShareConstraintEngine` 一样在 `backtest/` 顶级，不在 `internal/`），提供 grid
+search 入口：
+
+```ts
+import { gridSearchOptimizer } from './backtest/GridSearchOptimizer';
+const out = await gridSearchOptimizer.optimize(
+  {
+    strategy_key: 'multi_factor_alpha',
+    param_grid: { topN: [10, 20, 30, 50], stopLossPct: [-5, -7, -10] },
+    base_config: { start_date, end_date, initial_capital, benchmark_symbol },
+  },
+  { weights: { drawdown: 1.0 }, persist: true, concurrency: 1 }
+);
+```
+
+### Design constraints
+
+- **DataSource 注入与 strategies/ 一致**：`BacktestRunner` 是一个 `(combo,
+  options) => Promise<BacktestSummary>` 函数式接口；默认实现 `defaultBacktestRunner`
+  走 `quantBacktestEngine.run()` + `quantDataService.getContexts()`，单测通过
+  `options.runner` 注入 fake 实现完全脱离 DB / 网络 / strategyRegistry。
+- **persist=false 返回 plain `OptimizationResultRecord[]`**（非 Sequelize Model
+  实例）：让单测无需启动 Sequelize 即可断言全部字段。`getRunResults()` 内部把 DB
+  拉出的 model 通过 `modelToRecord()` 转成同样的 plain 形态——caller 只关心一
+  个返回类型。
+- **失败隔离 per-combo try/catch**：单个 combo 抛错只标该行 `status='failed' +
+  error_message`，不中断其他 combo（与 strategies/ 中 per-block error fallback
+  模式一致）。顶层 try/catch 仅捕获 worker 自身 bug（不该发生）。
+- **多目标排序公式纯函数 export**：`computeCompositeScore({sharpe,
+  annual_return, max_drawdown}, weights)` 让 UI 也能复算分数；权重可 partial
+  override。`sortByCompositeScoreDesc(rows)` 同样是 export 纯函数，null 推到
+  最末，同分时按 `combo_index ASC` 稳定 tie-break。
+- **strategy_key 校验仅在未注入 runner 时执行**——caller 注入 fake runner 时
+  自然不需要 StrategyRegistry，让单测可以用 `'test_strategy'` 这种假 key。
+- **OptimizationRun + OptimizationResult 两张表**（PK + FK）；删除 run 时手动
+  先删 results（没设 cascade，避免 ORM 行为差异）。`cleanupOlderThan(days)` 按
+  `created_at` 批量删。
+
+### 与 `QuantBacktestService.createParameterGridBacktests` 的关系
+
+老的 `createParameterGridBacktests`（US-014 之前）走 Bull 队列异步任务，每个
+combo 一条 `QuantBacktestTask`；GridSearchOptimizer 走**同步 in-process**，
+适合：CLI 单次跑分、嵌入式 walk-forward 子 grid（US-039）、贝叶斯 baseline
+对照（US-038）。两者并存：前者适合 UI 长时间任务（用户可关页面后台跑），
+后者适合可编排的脚本化场景。**两者用不同的 DB 表**（`quant_backtest_tasks/
+results` vs `optimization_runs/results`），互不污染。
+
+### 何时扩展 GridSearchOptimizer
+
+- 加新排序维度（如 calmar / sortino）→ 扩 `BacktestSummary` interface + 加新
+  weight 到 `CompositeScoreWeights`，写 `computeCompositeScore` 新 branch；保
+  持纯函数。
+- 加新并发后端（Bull queue / Worker thread）→ 不要内嵌到 GridSearchOptimizer，
+  写一个新 `BulkBacktestRunner` 实现 `BacktestRunner` 接口，caller 通过
+  `options.runner` 切换。让 optimizer 本体保持简单。
+- 加贝叶斯优化（US-038）→ 新建 `BayesianOptimizer.ts`，共享同一组 model 表
+  （`OptimizationRun + OptimizationResult`），不要在 GridSearchOptimizer 内
+  加 mode 切换分支。
