@@ -1897,6 +1897,187 @@ def get_index_components(index_code: str, trade_date: str) -> List[Dict[str, Any
         return []
 
 
+def get_dividend_history(stock_code: str) -> List[Dict[str, Any]]:
+    """
+    Fetch A-share dividend history for a single stock.
+
+    Used by US-022 HighDividendValueStrategy: needs近 3 年股息率 ≥ 4% gate.
+    AKShare endpoint `stock_history_dividend_detail(symbol)` returns the full
+    历史 dividend timeline for that 6-digit code; the result is per-event
+    not per-year, so the TS service computes the 3-year average yield itself.
+
+    Endpoint:
+      Primary  = `ak.stock_history_dividend_detail(symbol=<6-digit>, indicator='分红')`
+      Fallback = `ak.stock_history_dividend_detail(symbol=<6-digit>)`  (no indicator)
+
+    The dataframe columns differ across AKShare versions; we柔性 map to
+    {announce_date, ex_date, dividend_per_share, bonus_per_10, transfer_per_10,
+     progress, record_date, pay_date}. The 派息日 / 进度 / 股权登记日 columns
+    are not always present — they're nullable in the model.
+
+    A typical row looks like:
+      报告期    公告日期    送股 转增 派息 进度 除权除息日 股权登记日 派息日
+      2023-12-31 2024-04-15  0    0    5.0  实施  2024-06-20  2024-06-19  2024-06-21
+
+    The "派息" column carries the per-10-shares cash dividend amount; we
+    divide by 10 to get dividend_per_share.
+
+    Args:
+        stock_code: 6-digit stock code without market suffix (e.g. '600519').
+
+    Returns:
+        List of dicts: {announce_date, ex_date, stock_code, dividend_per_share,
+        bonus_per_10, transfer_per_10, progress, record_date, pay_date,
+        raw_payload}. Returns [] on empty / error so caller can checkpoint a
+        "tried" stock.
+
+        Filtering rules:
+          - Rows missing both announce_date AND ex_date are dropped (no usable
+            timeline anchor).
+          - Rows where progress ≠ '实施' may be kept (董事会预案 / 股东大会决议
+            also有用for forward-looking signals) — keep them all, let the TS
+            策略 decide based on progress field.
+    """
+    try:
+        # AKShare expects 6-digit code, no suffix
+        pure_code = str(stock_code).strip().zfill(6)
+        if not pure_code.isdigit() or len(pure_code) != 6:
+            print(f"Invalid stock_code format: {stock_code}", file=sys.stderr)
+            return []
+
+        print(f"Fetching dividend history for stock={pure_code}...", file=sys.stderr)
+
+        df = None
+        fn = getattr(ak, 'stock_history_dividend_detail', None)
+        if fn is None:
+            print(f"AKShare has no stock_history_dividend_detail function", file=sys.stderr)
+            return []
+
+        # Try indicator='分红' first (newer akshare versions split 分红 vs 配股)
+        for kwargs in [
+            {'symbol': pure_code, 'indicator': '分红'},
+            {'symbol': pure_code},
+        ]:
+            try:
+                df = fn(**kwargs)
+                if df is not None and not df.empty:
+                    break
+            except TypeError:
+                # Old positional signature
+                try:
+                    df = fn(pure_code)
+                    if df is not None and not df.empty:
+                        break
+                except Exception as e2:
+                    print(f"stock_history_dividend_detail({pure_code}) positional failed: {e2}", file=sys.stderr)
+            except Exception as e:
+                print(f"stock_history_dividend_detail({pure_code}) failed: {e}", file=sys.stderr)
+                df = None
+
+        if df is None or df.empty:
+            print(f"AKShare returned empty for {pure_code}", file=sys.stderr)
+            return []
+
+        # ----- 列名柔性映射（AKShare 中文列名 / 版本飘移）-----
+        col_map: Dict[str, str] = {}
+        for col in df.columns:
+            col_s = str(col)
+            if col_s in ('公告日期', '预案公告日') and 'announce_date' not in col_map:
+                col_map['announce_date'] = col_s
+            elif col_s in ('除权除息日', '除息日') and 'ex_date' not in col_map:
+                col_map['ex_date'] = col_s
+            elif col_s in ('股权登记日',) and 'record_date' not in col_map:
+                col_map['record_date'] = col_s
+            elif col_s in ('派息日',) and 'pay_date' not in col_map:
+                col_map['pay_date'] = col_s
+            elif col_s in ('进度', '方案进度') and 'progress' not in col_map:
+                col_map['progress'] = col_s
+            # 派息 列名：每 10 股派现 (元)
+            elif col_s in ('派息', '派息(元)', '现金分红', '派现') and 'dividend' not in col_map:
+                col_map['dividend'] = col_s
+            # 送股 列名：每 10 股送股 (股)
+            elif col_s in ('送股', '送股(股)') and 'bonus' not in col_map:
+                col_map['bonus'] = col_s
+            # 转增 列名：每 10 股转增 (股)
+            elif col_s in ('转增', '转增(股)') and 'transfer' not in col_map:
+                col_map['transfer'] = col_s
+
+        # 公司可能没有任何分红记录 — 接口仍会返回空 dataframe 或带占位行
+        if 'announce_date' not in col_map and 'ex_date' not in col_map:
+            print(f"No usable date columns for {pure_code}. cols={list(df.columns)}", file=sys.stderr)
+            return []
+
+        results: List[Dict[str, Any]] = []
+        for _, row in df.iterrows():
+            announce_iso = _parse_date_cell(row, col_map.get('announce_date'))
+            ex_iso = _parse_date_cell(row, col_map.get('ex_date'))
+
+            # Both dates missing → no usable timeline anchor, drop
+            if not announce_iso and not ex_iso:
+                continue
+            # If only one date is present, mirror it to the other so we have a PK
+            if not announce_iso:
+                announce_iso = ex_iso
+            if not ex_iso:
+                ex_iso = announce_iso
+
+            div_per_10 = _cell_float(row, col_map.get('dividend'))
+            bonus_per_10 = _cell_float(row, col_map.get('bonus'))
+            transfer_per_10 = _cell_float(row, col_map.get('transfer'))
+
+            # 每股派息 = 每 10 股派现 / 10
+            dividend_per_share: Optional[float] = None
+            if div_per_10 is not None and div_per_10 >= 0:
+                dividend_per_share = round(div_per_10 / 10.0, 6)
+
+            progress = _cell_str(row, col_map.get('progress'))
+            record_iso = _parse_date_cell(row, col_map.get('record_date'))
+            pay_iso = _parse_date_cell(row, col_map.get('pay_date'))
+
+            raw_payload = _row_to_jsonable(row, df.columns)
+
+            results.append({
+                'announce_date': announce_iso,
+                'ex_date': ex_iso,
+                'stock_code': pure_code,
+                'dividend_per_share': dividend_per_share,
+                'bonus_per_10': bonus_per_10,
+                'transfer_per_10': transfer_per_10,
+                'progress': progress,
+                'record_date': record_iso,
+                'pay_date': pay_iso,
+                'raw_payload': raw_payload,
+            })
+
+        print(f"Parsed {len(results)} dividend rows for {pure_code}", file=sys.stderr)
+        return results
+    except Exception as e:
+        print(f"Error getting dividend history for {stock_code}: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return []
+
+
+def _parse_date_cell(row, col: Optional[str]) -> Optional[str]:
+    """安全把一格日期转 ISO YYYY-MM-DD；空/nan/异常 → None"""
+    if not col:
+        return None
+    val = row.get(col)
+    if val is None or pd.isna(val):
+        return None
+    # pandas Timestamp / datetime / 字符串 都先 str 再 parse
+    s = str(val).strip()
+    if not s or s.lower() == 'nan':
+        return None
+    # 'YYYY-MM-DD' 或 'YYYY/MM/DD'
+    if len(s) >= 10 and (s[4] == '-' or s[4] == '/'):
+        return s[0:10].replace('/', '-')
+    # 'YYYYMMDD'
+    digits = ''.join(c for c in s[:8] if c.isdigit())
+    if len(digits) == 8:
+        return _format_iso_date(digits)
+    return None
+
+
 def main():
     """Main entry point for command line calls"""
     if len(sys.argv) < 2:
@@ -2008,6 +2189,14 @@ def main():
             index_code = sys.argv[2]
             trade_date = sys.argv[3]
             result = get_index_components(index_code, trade_date)
+
+        elif command == "get_dividend_history":
+            if len(sys.argv) < 3:
+                print(json.dumps({"error": "Missing stock_code for get_dividend_history"}), file=sys.stderr)
+                sys.exit(1)
+
+            stock_code = sys.argv[2]
+            result = get_dividend_history(stock_code)
 
         else:
             print(json.dumps({"error": f"Unknown command: {command}"}), file=sys.stderr)

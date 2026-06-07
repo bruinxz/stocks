@@ -223,6 +223,40 @@ Implications:
   (000016 上证 50, 000300 沪深 300, 000852 中证 1000, etc.) so `index_name`
   is rarely null for mainstream indexes.
 
+## Per-stock sync (US-022 DividendHistory)
+
+A subset of AKShare endpoints — `stock_history_dividend_detail` (分红派息明细),
+个股股东户数, 个股财报历史 — are **per-stock historical timelines**, not per-day
+snapshots. One call returns the full multi-year history for ONE stock (typically
+10-30 dividend records covering 10-20 years), so sync is keyed on `stock_code`
+not `trade_date`. The sync service has `syncStock(stockCode)` + `syncStocks(codes[])`
+instead of `syncDate(date)` + `syncRange(start, end)`.
+
+Implications:
+
+- **`syncStocks` accepts `--all` to sweep all listed A-shares** + `--listed-before`
+  to filter out IPOs younger than N years (no dividend history yet). Add a
+  `--interval-ms` (default 200ms) friendly throttle for AKShare — per-stock fetch
+  is 1-3s, and a 5000-stock sweep without throttle gets blocked within minutes.
+- **Skip-existing is per-stock**: if a stock already has any dividend_histories
+  row, the whole stock is skipped. Re-running after a few months catches the
+  1-2 new records added in the interim via `--force` (re-fetches and `bulkCreate +
+  updateOnDuplicate` upserts everything for the stock).
+- **Cross-table derived fields (e.g. `yield_pct` = dividend_per_share / ex_date 前一日
+  close) belong in the TS service**, same rule as `is_famous_yz` / `continuous_days`.
+  The service queries DailyBar after each `fetchForStock` returns, computes
+  yield_pct per ex_date row (linear scan since `dividend rows < 50`), and includes
+  it in the bulkCreate payload. Missing DailyBar data → `yield_pct = null`,
+  策略 layer treats null as "skip this dividend event".
+- **dividend_per_share semantics**: AKShare's 派息 column is "每 10 股派现金额（元）";
+  the Python helper does the `/10` conversion so TS sees "每股派息金额".
+  Document this in the model's column comment + client jsdoc — easy to mis-multiply
+  by 10 again downstream and break yield calculations.
+- **Python helper柔性 col_map**: column names like 派息 vs 派息(元) vs 现金分红
+  drift across AKShare versions; 公告日期 vs 预案公告日 vs 除权除息日 vs 除息日
+  similarly. New stories adding per-stock historical sync (财报 / 股东户数) should
+  copy the same dict-build-then-iterrows pattern from `get_dividend_history`.
+
 ## Worktree gotcha (still active as of US-005)
 
 The git worktree has no `backend/node_modules`. Symlink before typecheck:

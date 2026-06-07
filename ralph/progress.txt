@@ -78,7 +78,9 @@
 - **跟随类组合级策略 vs 事件驱动 (US-019)**: 跟随类（北向 / 主力资金 / 融资余额）的触发源是"每日全市场都有的连续信号"，所以 DataSource 接口的 `loadCandidateXxx(asOfDate, params)` **不接受 stockCodes 列表**——它自己输出 universe。同源数据（如 ratio 快照）必须在主流程 `generateSignals()` 里拉一次然后传递给 `evaluateEntries` / `evaluateExits`，**不要**在两个 evaluate 内部各自重复 fetch。跟随类策略**必须**有 "反向信号出场线"（北向减仓 → SELL）；少了它就退化为"被动止损 + 持有期到期"，丢失 alpha 来源。出场优先级 A→B→C = 硬约束（到期 / 止损）> 软信号（北向减仓），避免短期噪音过早赶走浮盈持仓。完整 4 strategy 对比表在 `backend/src/quant/strategies/CLAUDE.md`。
 - **指数受限 universe 模式 (US-020 CTA100Momentum)**: 与"全市场扫描"和"事件触发"并列的第 3 种 universe 形态。Universe loader 写成 `loadIndexUniverse(asOfDate, indexCode): Promise<{snapshot_date, stock_codes[]}>` —— **必须查 `≤ asOfDate` 的最新一日快照** (不是当日)，因指数成份月内/季内变化稀少 (季度调样)，强制"当日有 sync"会让月初调仓时遇周末就崩。`snapshot_date` 一并返回供日志审计 ("今天 universe 用的是哪天的成份")。**动量 / 价格类计算写死在策略内**而不走 FactorPipeline：(1) Pipeline 的横截面 z 是全市场尺度，不适合"指数内相对动量"；(2) 让策略在 factor_scores 还没回填的历史窗口能跑。**Tail-index bar 查询** (`bars[length-1-N]` after sorted ascending) 比按日历日匹配更稳——A 股节假日 gap 已被升序 bars 自然吸收。完整 3 种 universe 对比表在 `backend/src/quant/strategies/CLAUDE.md`。
 - **Reference data 的 latest-snapshot-le-asOfDate 模式 (US-020 IndexComponent)**: 一类专门服务策略 "查询时间"的慢变数据 (指数成份 / 营业部分类 / 行业分类)，与"实时快照 + 当日同步" (US-008 北向/龙虎榜) 数据形态明显不同。3 个特征：(1) 模型 PK 含 trade_date 但允许 staleness；(2) 客户端查询用 `Op.lte: asOfDate + order DESC + limit 1` 找最新 snapshot；(3) sync 不需要"每日跑"，月度/季度跑即可，但跑时仍可同步多个 (indexCode/seat-list/sector) 用 `syncMulti(codes[], date)`。CLI 双暴露 `--index=<code>` (单个) + `--indexes=<csv>` (多个)，service 的 syncIndexes 走 per-index skip-existing 检查点。raw_payload 保留源 df row + 最佳努力 (CSI 权重接口) 失败时 weight=null per row。**Index code 命名约定**: 6 位数字无后缀 (`000852`, 不带 `.SH` / `CSI1000`)，与其他 5 张新表 stock_code 命名一致。
-- **两阶段筛选 universe 模式 (US-021 SectorRotationLeader)**: 与全市场/事件/指数受限并列的**第 4 种 universe 形态**。先在 group ranking (行业 / 概念 / 主题) 里选 top N → 再在每个 group 内选 top M 成员，candidate 大小 = N × M (~500)，介于全市场 (5000+) 和指数受限 (100-1000) 之间。**DataSource 双 loader 同份数据共享**: `loadGroupRanking()` 返回全集排序后，entry slice top N / exit slice top N+gap 共享；`loadGroupMemberMetrics(groupNames[])` 返回 `Map<group, members[]>` 已按 metric 降序，entry slice top M / exit slice top M+gap 共享。**Position 必带 `entry_<dimension>` 字段**记录进场时分组归属，exit 阶段以该字段为准查 "我的分组是否还在 top N+gap"——Stock.industry 可能调整，以 entry_industry 为准是 "进场时判断为准" 原则 (同 CTA100 `entry_index_snapshot_date`)。**entry vs exit 阈值留 30%-50% 宽度差** (top 10 / 15, top 2 / 5)——过窄换手率爆炸，过宽 alpha 流失。**implicit cap = N × M 不要 maxPositions 参数**——两阶段 selection 天然封顶，加 explicit maxPositions 会产生 inconsistent state。**5 日累计窗口用 distinct trade_date** 不要按日历日切窗口 (周末/节假日会吃掉有效交易日): `Set(rows.map(r => r.trade_date)).sort().slice(-N)`，拉 `lookbackDays × 3` 自然日 buffer 覆盖春节/十一。**行业 metric 缺失时安全 HOLD 不 SELL**——metric pipeline 短暂抖动不应该被当成"个股已掉出 top N" 批量误平。完整 4 种 universe 对比表在 `backend/src/quant/strategies/CLAUDE.md`。下个两阶段策略 (US-022 HighDividendValue 沪深 300、US-026 LeftSideReversal 中证 500) 直接照搬。
+- **两阶段筛选 universe 模式 (US-021 SectorRotationLeader)**: 与全市场/事件/指数受限并列的**第 4 种 universe 形态**。先在 group ranking (行业 / 概念 / 主题) 里选 top N → 再在每个 group 内选 top M 成员，candidate 大小 = N × M (~500)，介于全市场 (5000+) 和指数受限 (100-1000) 之间。**DataSource 双 loader 同份数据共享**: `loadGroupRanking()` 返回全集排序后，entry slice top N / exit slice top N+gap 共享；`loadGroupMemberMetrics(groupNames[])` 返回 `Map<group, members[]>` 已按 metric 降序，entry slice top M / exit slice top M+gap 共享。**Position 必带 `entry_<dimension>` 字段**记录进场时分组归属，exit 阶段以该字段为准查 "我的分组是否还在 top N+gap"——Stock.industry 可能调整，以 entry_industry 为准是 "进场时判断为准" 原则 (同 CTA100 `entry_index_snapshot_date`)。**entry vs exit 阈值留 30%-50% 宽度差** (top 10 / 15, top 2 / 5)——过窄换手率爆炸，过宽 alpha 流失。**implicit cap = N × M 不要 maxPositions 参数**——两阶段 selection 天然封顶，加 explicit maxPositions 会产生 inconsistent state。**5 日累计窗口用 distinct trade_date** 不要按日历日切窗口 (周末/节假日会吃掉有效交易日): `Set(rows.map(r => r.trade_date)).sort().slice(-N)`，拉 `lookbackDays × 3` 自然日 buffer 覆盖春节/十一。**行业 metric 缺失时安全 HOLD 不 SELL**——metric pipeline 短暂抖动不应该被当成"个股已掉出 top N" 批量误平。完整 4 种 universe 对比表在 `backend/src/quant/strategies/CLAUDE.md`。下个两阶段策略 (US-026 LeftSideReversal 中证 500) 直接照搬。
+- **长线季度调仓 universe 模式 (US-022 HighDividendValue)**: 与全市场/事件驱动/指数受限/两阶段并列的**第 5 种 universe 形态**。3 个关键差异：(1) **调仓日 gate 在 DataSource 内部，不在调用方**——`isFirstTradingDayOfQuarter(tradeDate)` 让前端/调度器 fearlessly 每日调用本策略而无副作用 (非调仓日返回 hold-only)；(2) **无显式 stopLossPct**——长线持有靠下季度自然换仓出场，真要止损归 portfolio 层 (US-049 DrawdownCircuitBreaker)，策略层 stopLoss 反映"个股出场" / portfolio 层 stopLoss 反映"组合保护"，职责不同；(3) **4 维 AND 过滤**+ 每维独立 fail_xxx 计数，让 ops 一眼看出"本季度选不出 30 只"是因为哪个维度过滤多 (诊断粒度做到维度级别)。**Position schema 用 string[]** (与 MultiFactorAlpha 一致) 长线无 per-position state 需求。**调仓日判定不要 ISO 硬编码** (4-01 可能周末)，必须查 DailyBar 全市场 trade_dates。**市值双源 fallback 新模式**: valuation.total_market_cap (可能落后 3 个月) 优先 + Stock.total_market_cap (最新已知) 兜底；同款回退可用于 PE 双源等。完整 5 种 universe 对比表在 `backend/src/quant/strategies/CLAUDE.md`。
+- **per-stock historical sync 模式 (US-022 DividendHistory)**: AKShare 一类接口 (stock_history_dividend_detail / 股东户数 / 财报历史) 是 "per-stock 多年时间线"，一次返回 ONE stock 全部历史；sync 服务用 `syncStock(code)` + `syncStocks(codes[])` 而非 `syncDate(date)` + `syncRange()`。--all 模式扫全 A 股要 friendly throttle (200ms 默认，否则秒级被封)；--listed-before flag 跳过 IPO 不足 N 年的新股（无历史可拉）。yield_pct 在 TS 服务里计算（基于 DailyBar ex_date 前日 close，cross-table join belongs TS-side）。**dividend_per_share semantics caveat**: AKShare 派息列是 "每 10 股派现金额（元）"，Python helper 做 /10 让 TS 见 "每股派息金额"；model column comment + jsdoc 必须显式标注否则下游容易再乘 10 倍。新故事 US-090 / US-091 / US-031 也属此模式可照搬。
 
 ### Backtest engine — A 股执行约束 (US-014+)
 - **`AShareConstraintEngine` 是无状态纯模块** at `backend/src/quant/backtest/AShareConstraintEngine.ts`。三个方法：`evaluateOrder(ctx)` 返回 `{ok, reason?, detail?}` 决定能否成交（T+1 / 涨跌停 / 停牌 / ST 过滤 / 流动性门槛）；`computeFees(amount, side)` 返回 commission + stamp_tax + transfer_fee 三段费用 breakdown；`executionPrice(bar, side, timing)` 给三种 timing (next_open / same_close / twap_proxy) 的成交价并附动态滑点。引擎严格无 DB 访问、无状态字段、不修改输入参数——多策略并发跑零状态污染。
@@ -2221,3 +2223,71 @@ EarningsSurprise / NorthboundFollow / AShareConstraintEngine / **SectorRotation*
 当数量到 8+ 时启动重构 (现在 6 处还在阈值内不要急)。
 
 ---
+
+## 2026/06/07 - US-022
+
+### What was implemented
+HighDividendValueStrategy — 第 7 个组合级策略 (after MultiFactorAlpha + DragonHead + EarningsSurprise + NorthboundFollow + CTA100 + SectorRotationLeader)，引入两个新模式：**长线 + 季度调仓** + **per-stock historical sync**。
+
+**End-to-end pipeline** (5 layers, 6 files added):
+1. **Model** — `backend/src/models/DividendHistory.ts` with composite 3-tuple PK `(announce_date, stock_code, ex_date)` — one stock can have multiple events per year (annual+interim), same announce_date may涉及 multiple events (利润分配 + 资本公积转增). Fields: stock_name / dividend_per_share / bonus_per_10 / transfer_per_10 / yield_pct / progress / record_date / pay_date + standard source/raw_payload/timestamps. Registered in models/index.ts + config/database.ts.
+2. **Python helper** — `get_dividend_history(stock_code)` added to `backend/python/akshare_helper.py` calling `stock_history_dividend_detail(symbol=<6digit>, indicator='分红')` with 柔性 col_map (派息 vs 派息(元) vs 现金分红 / 公告日期 vs 预案公告日 / 除权除息日 vs 除息日 drift across AKShare versions). **dividend_per_share computed in Python as 派息(每10股) / 10** so TS sees per-share单位. Robust `_parse_date_cell` handles Timestamp/datetime/str/digits-only formats. Dispatcher case added.
+3. **Client** — `backend/src/data/sources/DividendHistoryClient.ts` mirroring EarningsForecastClient pattern (spawn + {success,data} JSON contract, 120s timeout via DIVIDEND_HISTORY_TIMEOUT_MS env).
+4. **Service** — `backend/src/data/services/DividendHistorySyncService.ts` with `syncStock(code)` + `syncStocks(codes[])` (NOT syncDate — per-stock historical timeline is **new sync pattern**). **yield_pct computed in TS service** (cross-table join with DailyBar belongs TS-side per codebase rule): for each interesting dividend row (dividend_per_share > 0), query DailyBar [minEx-10d, maxEx] window, then `findLatestBeforeDate(sorted trade_dates, ex_date)` to get基准 close, compute `yield_pct = dividend_per_share / base_close * 100`. Skip-existing per-stock + 200ms友好 throttle for AKShare. Idempotent reruns via bulkCreate + updateOnDuplicate.
+5. **CLI** — `backend/src/scripts/sync-dividend-history.ts` + npm script `sync:dividend-history`: `--stock=<6digit>` / `--stocks=<csv>` / `--all` + `--listed-before` / `--interval-ms` / `--force` flags. Auto-runs sequelize.sync({alter:true}) in non-prod.
+
+**Strategy** — `backend/src/quant/strategies/HighDividendValueStrategy.ts` (~720 LOC including生产 DataSource):
+- **Entry (4 维 AND)**: (1) 近 lookbackYears(3) 年 yield_pct 均值 ≥ minAvgDividendYield(4%); (2) PE-TTM ≤ maxPE(15) from StockValuationFactor (亏损股 PE ≤ 0 剔除); (3) ROE 5 年均值 ≥ minROE(10%) from StockFundamentalFactor.roe (≥2 观测要求 同 QualityFactor); (4) total_market_cap > minTotalMarketCap(200亿) from StockValuationFactor with Stock.total_market_cap兜底; ST 过滤先做 (excludeST default true).
+- **新 universe 形态 第 5 种 = 长线季度调仓 with 调仓日 gate**: 不像其他策略调用方负责调仓日判定，HighDividendValue **DataSource.isFirstTradingDayOfQuarter(tradeDate) 内部判定** — 生产实现查 DailyBar 全市场 [quarterStart, quarterStart+7d] 范围找最早 ≥ quarterStart 的 ISO date 与 tradeDate 比较 (4 月 1 日如果是周日则真正调仓日是 4 月 2 日, 不能 ISO-hardcode). 非调仓日返回 `{is_rebalance_day:false, target_portfolio:[...previousSelection], signals:[]}` 完全 noop — 调用方可放心每日调用。
+- **Exit**: 无显式 stopLoss — 长线持有, 调仓日重新跑筛选, 掉出 top N 自然 SELL; 真要止损归 portfolio 层 (US-049 DrawdownCircuitBreaker).
+- **previousSelection schema 用 string[]** (与 MultiFactorAlpha 一致), 长线无 per-position state 需求。
+- **排序**: 股息率降 → PE 升 → stock_code 升序稳定 tie-break.
+- **topN cap + industryNeutral (可选, 默认 false) maxPerIndustry=5**.
+- **DataSource 接口 6 loader + 1 调仓日 gate**: loadCandidateUniverse / loadAvgDividendYield / loadValuationSnapshot / loadRoe5yAvg / loadStockMeta / loadDailyClose + isFirstTradingDayOfQuarter; DefaultHighDividendValueDataSource 走 Sequelize, fake 测试完全脱离 DB.
+- **market_cap 双源 fallback 新模式**: valuation.total_market_cap 优先, 缺则 Stock.total_market_cap 兜底 (可复用到 PE 双源等).
+- 注册到 backend/src/quant/engine/StrategyRegistry.ts (strategy_key='high_dividend_value', category='multi_factor', risk_level='low', tags=['价值','股息','低 PE','长线','季度调仓'], 当前 23 strategies)
+
+### Files changed
+- `backend/src/models/DividendHistory.ts` (new, 165 lines)
+- `backend/src/models/index.ts` (1 line added)
+- `backend/src/config/database.ts` (2 lines added — import + models[])
+- `backend/python/akshare_helper.py` (added get_dividend_history function ~180 lines + _parse_date_cell helper + dispatcher case)
+- `backend/src/data/sources/DividendHistoryClient.ts` (new, ~140 lines)
+- `backend/src/data/services/DividendHistorySyncService.ts` (new, ~310 lines)
+- `backend/src/scripts/sync-dividend-history.ts` (new, ~130 lines)
+- `backend/src/quant/strategies/HighDividendValueStrategy.ts` (new, ~720 lines)
+- `backend/src/quant/engine/StrategyRegistry.ts` (2 lines — import + register)
+- `backend/tests/strategies/HighDividendValueStrategy.test.ts` (new, ~600 lines / 36 tests / 95+ asserts)
+- `backend/package.json` (1 line — sync:dividend-history npm script)
+- `backend/src/data/CLAUDE.md` (new section: 'Per-stock sync (US-022 DividendHistory)')
+- `backend/src/quant/strategies/CLAUDE.md` (new section: '长线 + 季度调仓 (US-022 HighDividendValueStrategy)' + 5-strategy comparison table)
+- `ralph/prd.json` (US-022 → passes:true)
+- `ralph/progress.txt` (this entry + Codebase Patterns addition)
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → exit 0
+- `./node_modules/.bin/eslint <8 changed files> --quiet --fix` → exit 0 (15 prettier auto-fixed)
+- `npx ts-node --transpile-only tests/strategies/HighDividendValueStrategy.test.ts` → 36 tests / 95+ asserts pass < 1s
+- Regression: all 6 既有 strategy tests (MultiFactorAlpha / DragonHead / EarningsSurprise / NorthboundFollow / CTA100 / SectorRotationLeader) + AShareConstraintEngine 全部仍通过
+- Python syntax: `python3 -c "import ast; ast.parse(...)"` → OK
+- Registry smoke: 23 strategies total (含 high_dividend_value), category=multi_factor, risk_level=low
+
+### Browser verification
+N/A — this is a backend strategy + data layer story with no UI.
+
+### Learnings for future iterations
+
+- **第 5 种 universe 形态 = 长线季度调仓 with 调仓日 gate**: 与全市场/事件驱动/指数受限/两阶段并列。**关键差异**: 调仓日判定不在调用方，而在 DataSource.isFirstTradingDayOfQuarter(tradeDate) 内部 — 让前端/调度器可 fearlessly 每日调用本策略而无副作用。同款模式可复用到 US-024 GARP (半年度调仓) / US-028 EnsembleStrategy。
+- **长线策略无显式 stopLoss**: 长线价值持有的本质是接受 30% 回撤是市场波动而非择时信号；真要止损归 portfolio 层 (US-049 DrawdownCircuitBreaker)。判据：策略层 stopLoss 反映"个股出场"，portfolio 层 stopLoss 反映"组合保护" — 两者职责不同。
+- **per-stock historical sync 模式**: AKShare 一类接口 (stock_history_dividend_detail / 股东户数 / 财报) 是 "per-stock 多年时间线"，一次返回 ONE stock 全部历史；sync 服务用 `syncStock(code)` + `syncStocks(codes[])` 而非 `syncDate(date)` + `syncRange()`。--all 模式扫全 A 股要 friendly throttle (200ms 默认，否则秒级被封)。新故事 US-090 (股东增减持) / US-091 (融资融券) 也属此模式可照搬。
+- **dividend_per_share semantics**: AKShare 派息列是 "每 10 股派现金额（元）"；Python helper 做 /10 转换让 TS 见 "每股派息金额"。**关键 caveat**: model column comment + client jsdoc 必须显式标注，否则下游容易再乘 10 倍 (yield_pct 算错 10 倍)。
+- **市值双源 fallback 模式**: StockValuationFactor.total_market_cap (最新一日 valuation, 可能落后 3 个月) 优先 + Stock.total_market_cap (最新已知) 兜底。同款回退可用于 PE-TTM 优先 valuation 缺则 DailyBar.pe 兜底等场景 — 长线策略的特点是接受 staleness，比短线策略选择面更宽。
+- **调仓日判定不要 ISO 硬编码**: 季度起点 (4-01 / 7-01) 可能是周末，真正调仓日是下个周一；不查 DailyBar 全市场 trade_dates 就判断错误。DataSource.isFirstTradingDayOfQuarter() 是生产代码必须查 DailyBar，fake/测试可直接 return true/false 跳过。**未来 US-039 walk-forward 验证可能跨季度边界，调仓日判定必须 robust to leap year / Chinese New Year (春节 1-2 月浮动)**。
+- **filtered stats 命名要诊断友好**: `fail_dividend` / `fail_pe` / `fail_roe` / `fail_market_cap` 独立计数让 ops 一眼看出 "本季度选不出 30 只" 是因为哪个维度过滤多 (Q4 末市场普跌时可能 PE-TTM 几乎所有股票都 ≤ 15 而 fail_pe ≈ 0; 但牛市末期可能 fail_pe = 4000 — 把诊断粒度做到维度级别是 ops 痛点)。
+- **--listed-before flag 重要性**: --all 扫全 A 股遇到很多 2024-2025 新股 (IPO < 1 年没有 3 年股息历史)，sync 这些是浪费；--listed-before 让 ops 跳过新股, 显著缩短全量 sync 时间。其他 per-stock historical sync (财报历史 / 股东户数) 都该加这个 flag。
+- **测试 Fake DataSource 默认 isRebalanceDay=true**: 让大多数测试免去显式设置；只有专门测试非调仓日的用例 explicit set false。这种 "fixture 默认值优化常用路径" 模式可加速所有 7 个组合级 strategy 的测试编写。
+- **第 7 处 isSTName 实现**: US-022 引入第 7 处 isSTName: MultiFactorAlpha / DragonHead / EarningsSurprise / NorthboundFollow / AShareConstraintEngine / SectorRotation / **HighDividendValue** = 7 处。仍在阈值内 (8+ 启动 backend/src/utils/stNameUtils.ts 抽取重构)。下个组合级策略 = 8 处 → 启动重构。
+- **typo 防御**: Write tool 路径用 `bruinxz/score` 而非 `bruinxz/stocks` 导致文件写错地方；root cause = 多句路径手敲。**修正方法**: Bash `mv` 把文件移到正确位置 + `rm -rf` 清理 stray dir + Bash 验证。**避免方法**: 对长路径优先用 Edit (基于已 Read 文件) 而非 Write，或在 Write 前用 Read 验证目录存在。
+
+---
+

@@ -33,16 +33,16 @@ evaluate 模型表达不出。
 - 入参：交易日 + 可选 `{ params?, previousSelection? }`
 - 出参：`{ target_portfolio, signals: BUY/SELL/HOLD[], filtered, params, ... }`
 
-典型例子（截至 US-021 共 6 个）：
+典型例子（截至 US-022 共 7 个）：
 - `MultiFactorAlphaStrategy`（多因子 alpha 月度轮动）
 - `DragonHeadMomentumStrategy`（短线龙头战法 — 事件驱动每日）
 - `EarningsSurpriseStrategy`（业绩预告超预期 + 北向加仓双确认 — 事件驱动）
 - `NorthboundFollowStrategy`（北向资金大幅加仓跟随 — 中线每日扫描全市场）
 - `CTA100MomentumStrategy`（中证 1000 动量 — 指数受限 universe + 月度调仓）
 - `SectorRotationLeaderStrategy`（行业龙头轮动 — 两阶段强势行业内挑龙头）
+- `HighDividendValueStrategy`（高分红低 PE 长线价值 — 季度调仓 + 4 维 AND）
 
-后续 story 中其他组合级策略：US-022 HighDividendValueStrategy、
-US-028 EnsembleStrategy 等。
+后续 story 中其他组合级策略：US-028 EnsembleStrategy 等。
 
 ## 组合级策略的设计约定（US-011 制定）
 
@@ -339,3 +339,80 @@ hold_ratio 变化"是同一思路。DataSource 内部用 `Set(allDates).sort().s
    `Map<group_name, members[]>`，members 已排序便于 caller slice。
 4. entry vs exit 阈值留 30%-50% 宽度差，避免短期震荡过度交易。
 5. implicit cap = group_count × per_group_count，无需独立 maxPositions 参数。
+
+## 长线 + 季度调仓（US-022 HighDividendValueStrategy）
+
+第 7 个组合级策略，引入两个新模式：
+
+### 1. 季度调仓的"调仓日 gate"
+
+不像 MultiFactorAlpha 每月跑 / DragonHead 每日跑，长线价值策略只在
+**每季度的第 1 个交易日** 调仓。调用方理论上每个交易日都可以传，但
+`generateSignals(tradeDate)` 会内部判定：
+
+- 非调仓日 → 返回 `{is_rebalance_day:false, target_portfolio:[...previousSelection],
+  signals:[]}`，**完全不动持仓**。这意味着前端 / 调度器可以 fearlessly
+  每日调用本策略而不会引发任何无意义的 BUY/SELL。
+- 调仓日 → 走完整 4 维筛选 → 输出 BUY/SELL/HOLD 增量。
+
+调仓日判定 (`isFirstTradingDayOfQuarter`) 走 DataSource — 生产实现查 DailyBar
+在 `[quarterStart, quarterStart+7d]` 范围内的 distinct trade_dates，取最早一个 ≥
+quarterStart 的 ISO date，与 tradeDate 比较。**重要：不要按 ISO 日期硬编码
+"4 月 1 日"**——4 月 1 日可能是周日，那真正的调仓日是 4 月 2 日；不查
+DailyBar 就判定错误。Fake DataSource 在测试中可直接返回 true/false 跳过这个查询。
+
+类似模式可复用到 US-024 GARP 策略（半年度调仓）、US-028 EnsembleStrategy（按市场环境
+切换子策略时跨调仓周期感知）。
+
+### 2. 4 维 AND 过滤无止损出场
+
+不同于 DragonHead/EarningsSurprise/NorthboundFollow 的"持有期 + 止损 + 反向信号"
+3 类出场，**长线价值持有无显式 stopLoss**：调仓日重新跑筛选，掉出 top N 自然 SELL；
+非调仓日不动。这是策略性质决定的——长线持有者认 30% 回撤是市场波动而非择时信号；
+真要止损就该走 portfolio 层的 DrawdownCircuitBreaker (US-049) 而非策略层。
+
+因此 Position schema 用最简单的 `string[]` （与 MultiFactorAlpha 一致），不需要
+`entry_date` / `entry_price` / `half_exited`。**判据**：调仓决策只依赖 "是否在 top N
+里"，不依赖 per-position state → 用 `string[]`，保持 schema 最小化。
+
+### 3. 多源 4 维数据（DividendHistory + 2 valuation tables + Stock meta）
+
+`HighDividendValueDataSource` 暴露 6 个 loader：
+- `loadCandidateUniverse(asOfDate)` — 全 A 股 is_listed=true
+- `loadAvgDividendYield(asOfDate, lookbackYears, codes)` — 近 N 年 yield_pct 均值
+- `loadValuationSnapshot(asOfDate, codes)` — 最新 pe_ttm + total_market_cap
+- `loadRoe5yAvg(asOfDate, codes)` — ROE 5 年均值（≥2 观测）
+- `loadStockMeta(codes)` — name/industry/fallback total_market_cap
+- `loadDailyClose(asOfDate, codes)` — BUY reference_price
+- `isFirstTradingDayOfQuarter(tradeDate)` — 调仓日 gate
+
+**market_cap 双源 fallback 模式**：StockValuationFactor.total_market_cap 是
+"最新一日 valuation 数据"，可能落后 3 个月；Stock.total_market_cap 是
+"最新已知" — 优先 valuation，缺则 meta 兜底。同款双源回退可用于其他指标
+（PE-TTM 优先 valuation 缺则 DailyBar.pe 兜底）。
+
+### 4 种 universe + 长线季度调仓 形态对比
+
+截至 US-022：
+
+| 维度 | 全市场 (MultiFactor) | 事件驱动 (EarningsSurprise) | 指数受限 (CTA100) | 两阶段 (SectorRotation) | 长线季度 (HighDividendValue) |
+|------|--------------------|---------------------------|-----------------|---------------------|------------------------|
+| 触发频率 | 月度 | 每日（稀疏事件） | 月度 | 每日 | **季度**（调仓日 gate）|
+| 调仓日判定 | 调用方负责 | 调用方负责 | 调用方负责 | 调用方负责 | **DataSource 判定**|
+| Universe 来源 | factor_scores 全集 | 当日 forecast | (asOfDate, indexCode) 成份 | 行业 ranking × 行业成份 | 全 A 股 (is_listed=true) |
+| 入场维度 | 8 因子合成 z_score | 业绩 + 北向 双确认 | 60-5 momentum | 行业 + 个股 双 ranking | **4 维 AND**（股息+PE+ROE+市值）|
+| Position schema | string[] | EarningsSurprisePosition | string[] | SectorRotationPosition | **string[]**|
+| 止损 | 无 | -10% | 无 | 无 | **无**（长线靠下季度自然换仓）|
+| 行业中性 | 强制 (每行业≤3) | 不需 | 强制 | 隐式（两阶段 cap）| **可选 (默认 false)** |
+| 典型 holding period | 30 天 | 60 天 | 30 天 | 10-30 天 | **90+ 天** |
+
+**写新长线季度调仓策略的 checklist**：
+1. DataSource 暴露 `isFirstTradingDayOfQuarter(tradeDate)` 让策略自治判定调仓日；
+   不要把 gate 放在调用方（会出现 N 个调用方写出 N 份不一致的 gate 逻辑）。
+2. 非调仓日 `generateSignals` 返回 `is_rebalance_day=false` + `target_portfolio=previousSelection` +
+   `signals=[]` —— 完全 noop。前端调度器可放心每日调用。
+3. Position schema 用 `string[]` 即可（长线无 per-position state 需求）；如果
+   未来加入分批建仓 / 持仓期目标价等才扩成 structured Position。
+4. 无显式 stopLossPct 参数 — 长线策略止损归 portfolio 层 (US-049 DrawdownCircuitBreaker)。
+5. 4 维 AND 过滤的统计字段（fail_dividend / fail_pe / fail_roe / fail_market_cap）独立
+   计入 filtered，便于诊断 "为什么本季度只选出 5 只而不是 30 只"。
