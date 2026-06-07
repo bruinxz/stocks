@@ -60,3 +60,4 @@ export * from './FactorICResult';
 export * from './FactorCorrelationResult';
 export * from './MonteCarloResult';
 export * from './StrategyPortfolioResult';
+export * from './BenchmarkAttributionResult';

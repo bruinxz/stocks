@@ -733,3 +733,119 @@ min<0 / max<min）友好提示，不让 PGA 内部 simplex 投影时崩。
 - **关键 fake**: `makeFakeSource(returns)` 让测试注入任意 strategy_returns
   完全脱 DB；`generateRandomReturns(N, mean, std, seed)` 用 Box-Muller
   转换让测试有可复现的"近正态"日收益序列。
+
+---
+
+## US-045: BenchmarkAttributionService — 基准比较与超额收益拆解
+
+`backend/src/quant/performance/BenchmarkAttributionService.ts` 对一次完成的回测
+（QuantBacktestResult.id 或 in-memory equity_curve）vs **N 个基准（默认 HS300 +
+CSI500 + CSI1000）** 算出 CAPM alpha + beta + IR + excess_return + excess_drawdown，
+回答策略到底是 lucky（beta 蹭大盘）还是 skilled（alpha 真信号）。
+**首个 `backend/src/quant/performance/` 公共类**（与既有 `performance/internal/`
+QuantPerformanceDashboardService 平级，对外通过 `PerformanceReporter` facade 暴露 — 见 US-004）。
+
+### 与既有事后分析家族对比
+
+| 工具                | 输入                  | 输出维度                                                |
+| ------------------- | --------------------- | ------------------------------------------------------- |
+| US-040 RegimeSegmented | equity_curve + trades | per-regime 切片 (bull/bear/range/volatile) 的 return/sharpe/dd |
+| US-041 FactorIC     | (factor_scores, forward_returns) | per-factor IC mean/std/IR/positive_ratio + 衰减   |
+| US-042 FactorCorrelation | factor_scores 宽表    | per-pair Spearman 相关 + redundancy 告警            |
+| US-043 MonteCarlo   | trade_returns_pct     | 1000 次重排的 return/dd/sharpe 分布分位数            |
+| US-044 PortfolioOpt | N 个策略 daily_returns | 最优权重组合 + 组合 sharpe/annual/dd                 |
+| **US-045 Benchmark**| equity_curve + benchmark_returns | **per-benchmark alpha/beta/IR/excess_return/dd** |
+
+**5 个事后分析家族都不复用 OptimizationRun 父表**（与 US-040/041/042/043/044
+判据一致）：归因/分析是"对已完成回测做事后统计"，不是新的优化任务；通过 `run_id`
+直接引用 `QuantBacktestResult.id` 即可。
+
+### 8 个 design constraints (要遵守)
+
+1. **共享 8 个纯函数** — `deriveDailyReturnsFromEquityCurve` /
+   `alignReturnSeries` / `computeMean` / `computeStddev` / `linearRegression` /
+   `computeInformationRatio` / `computeCumulativeReturn` /
+   `computeExcessDrawdown` 全 export 独立单测；模式与 US-040 RegimeSegmented /
+   US-041 FactorIC / US-043 MonteCarlo / US-044 Portfolio 一致。
+2. **BenchmarkReturnSource DI 模式** — PRODUCTION 走 DailyBar + Stock lazy
+   require 避免单测拉重量级 DB stack；测试注入 fake source 完全脱 DB。与
+   GridSearchOptimizer.BacktestRunner / RegimeSegmented.RegimeSource /
+   MonteCarloStressTest.TradeReturnSource / PortfolioOptimizer.StrategyReturnSource
+   同款 DI 范式。
+3. **三种入参形态 + 优先级** —
+   `strategy_daily_returns` > `equity_curve` > `quant_backtest_result_id`。CLI /
+   hook 走 result_id；in-memory 单测 / 嵌入式调用走数组形态。同时提供时取最高优先级。
+4. **MIN_SAMPLE_COUNT = 5** — 对齐后日收益少于 5 时不做回归，但仍可算累计收益
+   + excess_return（让 caller 看到"短回测虽不能算 alpha 但能算超额"），写
+   `error` 字段提示。与 US-040 sharpe<5→null 同款"数据不足直接 null + 不阻塞"策略。
+5. **per-benchmark 失败隔离** — 单基准 source 抛错 / 数据缺失 → 该 attribution
+   `sample_count=0` + 全 null + `error` 字段记录；其他基准照常计算。
+6. **IR std=0 浮点阈值** — `IR_STD_EPSILON=1e-10` 防止 strategy=benchmark+常数
+   时浮点累计误差让 std≈1e-17 → IR 爆为天文数字。1e-10 远小于真实 daily return
+   noise floor（实测 std > 0.1）→ 不误杀有意义 IR。
+7. **`alpha_annual_pct = alpha_intercept × 252`** — 与 MonteCarloStressTest /
+   PortfolioOptimizer 同款年化系数。IR 同样用 `* sqrt(252)` annualize。
+8. **4-tuple PK upsert (run_id, benchmark_symbol, period_start, period_end)** —
+   同一回测对同一基准重跑 idempotent 覆盖；不同 period 区间 = 不同行（让
+   "3 月 1 日跑过一次 / 5 月 1 日重跑" 历史可保留）。与 US-041 FactorICResult /
+   US-042 FactorCorrelationResult 4-tuple PK 范式一致。
+
+### Backtest 完成 hook（fire-and-forget）
+
+`QuantBacktestService.runBacktest()` 在 `task.update('COMPLETED')` 后通过
+`setImmediate(() => this.triggerBenchmarkAttributionAsync(result_ids, task_id))`
+异步触发 — **不 await，单回测完成不被归因耗时阻塞**；归因失败仅写 warning 日志
+不污染回测主流程。每个 `QuantBacktestResult` 行独立触发（多策略回测 = 多个
+results），per-result 失败隔离。
+
+### admin 4 件套 + CLI 5 模式（与 US-040/041/042/043/044 同款）
+
+- **admin**: `getRun(id)` / `getResultsForRun(run_id)` / `listRecentRuns(limit)` /
+  `deleteRun(id)` / `deleteRunByRunId(run_id)` / `cleanupOlderThan(days)`。
+- **CLI**: 主流程 `--backtest-result-id=<n>` + `--benchmarks=<csv>` /
+  `--no-persist` + admin `--list` / `--show=<run_id>` /
+  `--delete-run=<run_id>` / `--cleanup-days=<n>`。
+- **CLI 输出按 KPI 分组**: per-benchmark `alpha_annual` / `beta` /
+  `information_ratio` / `excess_return` / `excess_drawdown` / `r_squared` /
+  `samples` / `strategy_return` / `benchmark_return` / `period` 一组 9 行
+  + 自然语言提示（"IR>0.5 值得继续" / "beta > 1 = 放大基准"）让 ops 一眼看懂。
+
+### 何时扩展 BenchmarkAttributionService
+
+- **多因子模型基准（Fama-French / Carhart）**: 当前 CAPM 单因子。未来扩
+  `RegressionMode: 'capm' | 'fama_french_3' | 'carhart_4'`，让 alpha 排除 SMB/HML/MOM 后
+  的真"残差 alpha"。
+- **滚动窗口 alpha/beta**: 当前一次回归整段。扩 `RollingBenchmarkAttribution`
+  滑动 60-90 日窗口逐窗算 alpha/beta，输出 alpha_series / beta_series 看
+  随时间漂移（策略风格是否稳定）。
+- **行业归因联表（US-046 IndustryAttribution）**: US-046 IndustryAttributionService
+  会把策略收益拆到每个行业贡献。可与 US-045 联表得到"行业 alpha vs 整体 alpha"
+  对比视图（哪些行业是 alpha 来源、哪些是 beta drift）。
+- **基准列表 dynamic per-strategy（US-084 BenchmarkSelector）**: 当前默认 3 大基准。
+  US-084 BenchmarkSelector 会按策略风格（small_cap_growth / sector_rotation）
+  自动选基准；本 service 的 `benchmark_symbols` input 已经支持自定义透传，
+  US-084 实现后只需在 hook 调用前调 `BenchmarkSelector.select(strategy_key)`
+  传给 input。
+
+### 测试模式（171 个测试 / 全脱 DB）
+
+`backend/tests/performance/benchmark-attribution-service.test.ts`：
+- **5 个常量校验** (DEFAULT_BENCHMARK_SYMBOLS / BENCHMARK_NAME_MAP 7 项 /
+  MIN_SAMPLE_COUNT=5 / ANNUALIZATION_FACTOR=252 / SHARPE_ANNUALIZATION_SQRT)。
+- **8 个纯函数 helper 测试**（deriveDailyReturnsFromEquityCurve 7 边角 含
+  null/NaN/Infinity/负 value/string 转换 / alignReturnSeries 8 边角 含
+  部分重叠/无共同日/NaN 剔除/乱序输入按 ISO 升序 / computeMean+Stddev 8 边角 含
+  全 NaN/n-1 公式精确 / linearRegression 10 边角 含完美线性/x 全相等→null/y 全相等→r² null /
+  computeInformationRatio 5 边角 含完美 follow→null/IR 实际公式验算/NaN 剔除 /
+  computeCumulativeReturn 7 边角 含爆仓-100% short-circuit / computeExcessDrawdown
+  5 边角 含 strategy=benchmark→0/先赢后输 dd 精确验算）。
+- **13 个 end-to-end computeAttribution() 场景**（happy 3 默认基准 / 自定义
+  benchmark_symbols 透传 / 单基准缺数据隔离 / 不足 MIN sample 仍能算累计收益 +
+  error 字段 / 三种入参形态优先级 / 三种入参全缺失抛错 / 空 returns 抛错 /
+  equity_curve 派生模式 / 完美相关 beta=1/alpha=0/IR null / zero beta strategy
+  全 0 / source 抛错 per-benchmark 隔离 / cleanupOlderThan 参数校验 4 边角 /
+  computeSingleBenchmark 直接测 4 场景）。
+- **关键 fake**: `makeFakeReturnSource(returnsBySymbol)` 让单测注入任意
+  benchmark series 完全脱 DB；`makeReturnPoints(start, returns)` /
+  `makeEquityCurve(start, returns, startValue)` fixture helpers 减少测试样板。
+

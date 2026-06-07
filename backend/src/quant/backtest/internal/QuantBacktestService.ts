@@ -808,8 +808,9 @@ export class QuantBacktestService {
       } as any);
       await QuantBacktestResult.destroy({ where: { task_id: task.id } });
       await QuantBacktestTrade.destroy({ where: { task_id: task.id } });
+      const createdResultIds: number[] = [];
       for (const result of resultsWithValidation) {
-        await QuantBacktestResult.create({
+        const createdResult = await QuantBacktestResult.create({
           task_id: task.id,
           strategy_key: result.strategy_key,
           strategy_name: result.strategy_name,
@@ -828,6 +829,7 @@ export class QuantBacktestService {
           drawdown_curve_json: result.drawdown_curve,
           rejected_orders_json: result.rejected_orders || [],
         });
+        createdResultIds.push(createdResult.id);
         for (const trade of result.trades) {
           await QuantBacktestTrade.create({ task_id: task.id, ...trade });
         }
@@ -852,6 +854,16 @@ export class QuantBacktestService {
         },
       } as any);
       const experimentResult = await quantStrategyExperimentService.recordBacktestTask(task.id);
+
+      // US-045 hook: fire-and-forget 触发基准归因（HS300 / CSI500 / CSI1000）。
+      // 异步不 await — 单次回测完成不应被归因耗时阻塞；归因失败也不影响回测主流程。
+      // 走 setImmediate 让 task.update('COMPLETED') 已完全 flush 后再开始。
+      if (createdResultIds.length > 0) {
+        setImmediate(() => {
+          this.triggerBenchmarkAttributionAsync(createdResultIds, task.id);
+        });
+      }
+
       return {
         task: await this.getBacktest(task.id),
         summary: {
@@ -1094,6 +1106,39 @@ export class QuantBacktestService {
       logger.warn(`量化跑分基准收益计算失败，降级为绝对收益: ${error?.message || error}`);
       return null;
     }
+  }
+
+  /**
+   * US-045 hook：异步触发对每个 QuantBacktestResult 的基准归因计算（HS300 / CSI500 / CSI1000）。
+   * Fire-and-forget — 错误隔离不抛错以免污染回测主流程；失败只写 warning 日志。
+   */
+  private triggerBenchmarkAttributionAsync(result_ids: number[], task_id: number): void {
+    // lazy require — 避免顶层 import 让本服务测试 boot 整个 performance 子系统的代价
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const benchmarkModule = require('../../performance/BenchmarkAttributionService');
+    const { benchmarkAttributionService } = benchmarkModule;
+    Promise.all(
+      result_ids.map(async result_id => {
+        try {
+          await benchmarkAttributionService.computeAttribution(
+            { quant_backtest_result_id: result_id },
+            { persist: true, source: 'backtest_hook' }
+          );
+        } catch (err) {
+          logger.warn(
+            `[backtest-hook] benchmark attribution failed for result #${result_id} (task #${task_id}): ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          );
+        }
+      })
+    ).catch(err => {
+      logger.warn(
+        `[backtest-hook] benchmark attribution batch failed (task #${task_id}): ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    });
   }
 }
 

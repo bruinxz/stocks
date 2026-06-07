@@ -41,6 +41,7 @@
     "run:regime-backtest": "ts-node src/scripts/run-regime-backtest.ts",
     "run:monte-carlo": "ts-node src/scripts/run-monte-carlo.ts",
     "optimize:portfolio": "ts-node src/scripts/optimize-portfolio.ts",
+    "run:benchmark-attribution": "ts-node src/scripts/run-benchmark-attribution.ts",
     "paper:reset-and-run-quant": "ts-node src/scripts/reset-paper-trading-and-run-quant.ts",
     "seed:mock": "ts-node src/scripts/seed-mock-data.ts",
     "data:status": "ts-node src/scripts/data-cli.ts status"

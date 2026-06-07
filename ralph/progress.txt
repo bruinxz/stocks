@@ -4724,3 +4724,96 @@ max_weight=0.4 防全押单策略退化。
   时崩。**测试用 expectThrowAsync 覆盖这种 boundary**（test_optimize_max_weight_too_small）。
 
 ---
+
+## 2026/06/07 21:50 - US-045 — 回测体系：基准比较与超额收益拆解
+
+**What was implemented**: 首个 `backend/src/quant/performance/` 公共类
+`BenchmarkAttributionService` 对一次完成的回测（QuantBacktestResult.id 或
+in-memory equity_curve）vs **N 个基准（默认 HS300 / CSI500 / CSI1000）** 算出
+CAPM alpha + beta + IR + excess_return + excess_drawdown，回答策略到底是 lucky
+（beta 蹭大盘）还是 skilled（alpha 真信号）。
+
+**Files changed (7)**:
+- 新增 `backend/src/models/BenchmarkAttributionResult.ts` — 4-tuple PK
+  (run_id, benchmark_symbol, period_start, period_end) Sequelize 模型 + 6 indexes
+- 新增 `backend/src/quant/performance/BenchmarkAttributionService.ts` — 主模块
+  (~910 LOC, 8 export 纯函数 + 主类 + DataSource 注入 + admin 5 方法)
+- 新增 `backend/src/scripts/run-benchmark-attribution.ts` — CLI 5 模式
+- 新增 `backend/tests/performance/benchmark-attribution-service.test.ts` —
+  171 ok / 0 failed 测试
+- 改 `backend/src/quant/performance/PerformanceReporter.ts` — facade 扩 2 方法
+- 改 `backend/src/quant/backtest/internal/QuantBacktestService.ts` — 完成 hook
+  (setImmediate fire-and-forget per-result 失败隔离)
+- 改 `backend/src/models/index.ts` + `backend/src/config/database.ts` — 模型注册
+- 改 `backend/package.json` — 新增 `run:benchmark-attribution` npm script
+- 改 `backend/src/quant/CLAUDE.md` — 新增 'US-045: BenchmarkAttributionService'
+  section（与 US-040/041/042/043/044 五事后分析家族对比 + 8 design constraints
+  + Backtest 完成 hook 模式 + admin 4 件套 + CLI 5 模式 + 4 个升级路径 + 测试
+  模式说明 + 关键 fake）
+
+**Quality**:
+- cd backend && npx tsc --noEmit → exit 0
+- eslint 7 changed files --quiet → exit 0 (1 prettier 修复后手动调整 require
+  destructure 让 eslint-disable 注释覆盖到正确行)
+- npx ts-node tests/performance/benchmark-attribution-service.test.ts → 171 ok
+  / 0 failed < 1s
+- CLI --help boots cleanly
+- regression — 既有 backtest tests (ashare-constraints + monte-carlo) +
+  MultiFactorAlphaStrategy 全部仍通过 (无 schema 兼容性破坏)
+
+**Learnings for future iterations**:
+
+- **`quant/performance/` 公共类层范式**：先前 quant/performance/ 仅有 internal/
+  + PerformanceReporter facade。**US-045 BenchmarkAttributionService 是首个公共类
+  (与 internal/QuantPerformanceDashboardService 平级)**。这个层级的依据：service
+  是"对回测结果做分析" 的复用单元，**不能** 直接放 internal/ 否则 controllers
+  没法 import；放在 performance/ 公共类层 + PerformanceReporter facade 重导出，
+  保持 US-004 公共 facade 收敛约定。**US-046 IndustryAttributionService 应放同位置**。
+- **5 个事后分析家族 design constraint 镜像范式**：US-040 RegimeSegmented /
+  US-041 FactorIC / US-042 FactorCorrelation / US-043 MonteCarlo / US-044
+  PortfolioOpt 都共享同款 8 项约束（共享纯函数全 export / DataSource DI /
+  per-X 失败隔离 / MIN_X 不阻塞 + error 字段 / 不复用 OptimizationRun 父表 /
+  4-tuple PK upsert / 测试 fake source 完全脱 DB / 串行 await 命名 async function）。
+  **新增第 6 个事后分析工具时直接照搬这 8 项约束 + 与既有 5 家族列对比表**。
+- **Backtest 完成 hook = setImmediate fire-and-forget**：在 `task.update(COMPLETED)`
+  后 setImmediate(() => triggerXxx()) 异步触发归因/分析；**不 await**（单回测完成
+  不被归因耗时阻塞）；归因失败仅写 warning 日志不污染回测主流程。同款模式可复
+  用到 US-046 IndustryAttribution / US-085 CostSensitivity 等任何"回测完成后自动
+  跑事后分析"的钩子。**Per-result 失败隔离 try/catch 包在 Promise.all 内**让一
+  个 result 失败不影响其他 results。
+- **IR std=0 浮点累计误差陷阱**：当 strategy = benchmark + 常数（如固定 0.5
+  daily alpha），理论 excess std = 0。但浮点累计后 std 可能是 ~1e-17 让
+  IR = mean / std 爆为天文数字（"IR=5e16"）。**必须用 IR_STD_EPSILON=1e-10
+  阈值判定而非严格 ===0**；1e-10 远小于真实 daily return noise floor（实测 std
+  > 0.1）→ 不误杀有意义 IR。**任何含 mean / std 比值的指标都要这样防御**
+  （Sharpe ratio / Sortino ratio / Information ratio 都会遇到）。
+- **CAPM 回归用日级 vs 月级 sample**：A 股回测通常 6 个月起，日收益 ~120 个
+  样本足够回归稳定；月收益只 6 个样本，回归极不稳。**MIN_SAMPLE_COUNT=5** 是
+  "短回测可显示累计但不显示 alpha" 的合理下限，与 US-040 sharpe<5→null 同款
+  "数据不足直接 null + error 字段" 策略。
+- **三种入参形态 + 优先级范式**：`strategy_daily_returns > equity_curve >
+  quant_backtest_result_id`。理由：(1) CLI / 完成 hook 走 result_id（最常见）；
+  (2) in-memory 嵌入式调用方已有 equity 序列直接传；(3) 已派生好的 daily returns
+  跳过 equity → returns 转换让单测最简洁。**同款"三种入参 + 优先级"范式可复用
+  到 US-046 IndustryAttribution / US-085 CostSensitivity**。
+- **prd.json 注释中的中文「」括号 vs 英文 "" 引号**：JSON 字符串中的 "..."
+  会破坏 JSON parsing。**长 notes 字段内引用术语时优先用 中文「」 / 全角"" /
+  日文『』** 而非英文 ""。Python json.load 的报错信息会指出 line + char column
+  让定位精确。**此类问题会在 ralph CI 自动 parse 时炸出来**，留 native ASCII ""
+  会让 PRD 状态读取失败导致 Ralph 重复跑相同 story。
+- **eslint-disable 注释 + 多行 require destructure 冲突**：prettier 把
+  `const { x } = require('...')` 拆成 4 行后，eslint-disable-next-line 应用的
+  是 next *statement* 而非 next visible line — 拆行后整个 4-line statement 的
+  起点不在 disable 后那一行让 lint 失败。**修复**：拆 require 与 destructure
+  为两行：`const mod = require('...'); const { x } = mod;` —— `require` 单行 +
+  disable 注释紧邻。同款问题可能出现在 quant/factors/internal/QuantBacktestService
+  之外的任何用 lazy require 的地方。
+
+**关于 controllers 层暴露 endpoint**：AC 提"在 BacktestResult 完成 hook 中触发
+计算"已通过 QuantBacktestService.runBacktest() 完成 hook + setImmediate 模式
+实现。PerformanceReporter.computeBenchmarkAttribution 公共方法已暴露，未来
+US-016 策略实验室 '基准对比' tab 可以通过 quant controller 调 facade 取回归因
+结果展示多基准对比表（不需要本 story 单独写 endpoint，因 PerformanceReporter
+facade 模式让 controller 直接可用）。
+
+---
