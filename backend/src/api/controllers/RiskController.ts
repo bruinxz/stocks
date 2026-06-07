@@ -6,13 +6,14 @@ import { marketRegimeAlertService } from '../../portfolio/risk/MarketRegimeAlert
 import { perStockStopLossGuard } from '../../portfolio/risk/PerStockStopLossGuard';
 import { industryConcentrationGuard } from '../../portfolio/risk/IndustryConcentrationGuard';
 import { blackSwanWatchdog } from '../../portfolio/risk/BlackSwanWatchdog';
+import { morningRiskCheckupService } from '../../portfolio/risk/MorningRiskCheckupService';
 import { logger } from '../../utils/logger';
 
 /**
  * RiskController — US-047 (position limits) + US-048 (trailing stop)
  *   + US-049 (drawdown circuit breaker) + US-050 (market regime alert)
  *   + US-051 (per-stock stop loss) + US-052 (industry concentration)
- *   + US-053 (black-swan watchdog)
+ *   + US-053 (black-swan watchdog) + US-054 (morning risk checkup)
  *
  * Exposes the pre-trade risk-policy configuration to the client.  Mounted at
  * `/api/risk/*` from `index.ts`.
@@ -20,9 +21,9 @@ import { logger } from '../../utils/logger';
  * Why not folded into `RiskAlertController`?  That controller is concerned
  * with consuming/clearing already-emitted alerts (the bell view).  Position
  * limits + trailing stop + drawdown breaker + market regime + per-stock stop
- * loss + industry concentration + black-swan watchdog are separate, *pre*-trade
- * policy surfaces — keeping them in their own controller makes the route map
- * (`/api/risk-alerts` vs `/api/risk`) easy to scan.
+ * loss + industry concentration + black-swan watchdog + morning checkup are
+ * separate, *pre*-trade policy surfaces — keeping them in their own controller
+ * makes the route map (`/api/risk-alerts` vs `/api/risk`) easy to scan.
  */
 export class RiskController {
   /**
@@ -305,6 +306,60 @@ export class RiskController {
       res.json({ success: true, data: saved, message: '黑天鹅监控配置已保存' });
     } catch (error: any) {
       logger.error('更新黑天鹅监控配置失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * GET /api/risk/morning-checkup/today  (US-054)
+   * Return the user's latest morning risk checkup (preferring today's row when
+   * available, falling back to the most recent persisted row otherwise).  The
+   * payload includes the 6 core metrics (positions / max single / max industry /
+   * drawdown / weekly return / unresolved alerts) plus a rendered Chinese
+   * message ready for UI display.  Returns `data: null` when the user has
+   * never had a checkup row (new account / cron has not yet fired).
+   */
+  async getMorningCheckupToday(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user.id;
+      const row = await morningRiskCheckupService.getTodayCheckup(user_id);
+      res.json({ success: true, data: row });
+    } catch (error: any) {
+      logger.error('获取开盘前风险体检报告失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * GET /api/risk/morning-checkup  (US-054)
+   * Return the user's effective morning-checkup config (defaults: enabled=true,
+   * weekly_lookback_days=7, drawdown_lookback_days=365,
+   * include_breakdown_in_message=true when not customized).
+   */
+  async getMorningCheckupConfig(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user.id;
+      const config = await morningRiskCheckupService.getConfig(user_id);
+      res.json({ success: true, data: config });
+    } catch (error: any) {
+      logger.error('获取开盘前风险体检配置失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * PUT /api/risk/morning-checkup  (US-054)
+   * Persist user's morning-checkup config — input normalized
+   * (`normalizeMorningRiskCheckupConfig`) so invalid days / enabled silently
+   * revert to defaults instead of corrupting `User.risk_config`.
+   */
+  async updateMorningCheckupConfig(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user.id;
+      const saved = await morningRiskCheckupService.updateConfig(user_id, req.body || {});
+      res.json({ success: true, data: saved, message: '开盘前风险体检配置已保存' });
+    } catch (error: any) {
+      logger.error('更新开盘前风险体检配置失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   }

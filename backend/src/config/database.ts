@@ -62,6 +62,7 @@ import { MonteCarloResult } from '../models/MonteCarloResult';
 import { StrategyPortfolioResult } from '../models/StrategyPortfolioResult';
 import { BenchmarkAttributionResult } from '../models/BenchmarkAttributionResult';
 import { IndustryAttributionResult } from '../models/IndustryAttributionResult';
+import { MorningRiskCheckup } from '../models/MorningRiskCheckup';
 import { LiveBrokerAccount } from '../models/LiveBrokerAccount';
 import { LiveAccountSnapshot } from '../models/LiveAccountSnapshot';
 import { LivePosition } from '../models/LivePosition';
@@ -153,6 +154,7 @@ const sequelize = new Sequelize({
     StrategyPortfolioResult,
     BenchmarkAttributionResult,
     IndustryAttributionResult,
+    MorningRiskCheckup,
     LiveBrokerAccount,
     LiveAccountSnapshot,
     LivePosition,

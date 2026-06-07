@@ -571,3 +571,105 @@ opinion alerts, US-068 sentiment shock detector, ...) should follow:
   - No POST-style trigger endpoint (yet) — the cron is the entry point;
     when US-067 / US-068 add manual "re-scan now" buttons, this guard
     should follow the same `POST /api/risk/black-swan/scan` shape.
+
+## `risk/MorningRiskCheckupService` — US-054 specifics
+
+US-054 introduces the **8th risk-management form** and first **snapshot
+form** — distinct from the prior 7 *trigger-style* guards (US-047..US-053
+all produce `RiskAlert` rows when "something bad happened"). MorningRiskCheckup
+runs *every morning 8:30* (cron) and **folds the current portfolio panorama
+into a single readable markdown line** for the user to consume *before the
+open*. It is **not a new alert** — it is a daily aggregation of *existing*
+risk alerts + positional exposure + drawdown that ships to feishu / email
+via US-080 NotificationService.
+
+Six dimensions per AC, persisted to `morning_risk_checkups` (`(user_id, date)`
+UNIQUE — UPSERT semantics):
+
+  1. **`positions_count`** — open positions (quantity > 0).
+  2. **`max_single_pct`** + `max_single_symbol` — biggest single-stock
+     weight = `market_value / sum(market_values)` (same denominator as
+     US-052 IndustryConcentrationGuard — cash excluded).
+  3. **`max_industry_pct`** + `max_industry_name` — biggest industry
+     weight, via `aggregateByIndustry` imported from US-052 (same bucket
+     map + `UNKNOWN_INDUSTRY_SENTINEL` for unclassified positions).
+  4. **`drawdown_pct`** + `peak_value` — current drawdown vs historical
+     peak, via `computePeakValue` + `computeDrawdownPct` imported from
+     US-049 (`peak = max(snapshots, current_total_value)`).
+  5. **`weekly_return_pct`** — `(current - baseline) / baseline` where
+     `baseline = most recent snapshot.date ≤ (asOf - 7 days)`. Null when
+     snapshot history < 7 days (new account / IPO < 1 week).
+  6. **`unresolved_alerts_count`** — `RiskAlert.count({user_id, is_read=false})`.
+
+Patterns codified in US-054 that future *snapshot-style* services (US-082
+weekly recap, US-091 monthly review, ...) should follow:
+
+- **Cross-service helper reuse → number alignment guarantee**: by directly
+  importing `aggregateByIndustry` (US-052) and `computePeakValue` /
+  `computeDrawdownPct` (US-049), the MorningRiskCheckup's industry pct and
+  drawdown pct are **guaranteed identical** to what users see in the
+  IndustryConcentrationGuard alert + DrawdownCircuitBreaker alert. Avoids
+  the cardinal "three places say three different numbers" UX failure.
+  **Rule**: when a snapshot service needs a number that already exists in
+  a trigger guard, *import the pure helper* — do NOT re-implement the
+  formula even when the math is trivial.
+- **Snapshot vs trigger form decision tree**:
+  - *Trigger form* (RiskAlert) → user needs to know *just happened* / *requires
+    action* (止损 / 减仓 / 拒单);
+  - *Snapshot form* (MorningRiskCheckup) → user needs to know *current state*
+    (健康度仪表盘 / 开盘前体检 / 周报). No "act now" implied.
+  - Both forms coexist. A drawdown of 12% writes both a DrawdownCircuitBreaker
+    `LEVEL_1` RiskAlert *and* appears as `drawdown_pct=0.12` in the
+    morning checkup row. Different ingestion timing → different UX layers.
+- **`null` for "数据不足" not 0**: `max_single_pct` / `max_industry_pct` /
+  `drawdown_pct` (when `peak_value ≤ 0`) / `weekly_return_pct` (when snapshot
+  history < lookback days) all return **null** rather than 0. The reason: a
+  brand-new account legitimately has 0 drawdown — but rendering "0%" suggests
+  "perfectly healthy"; rendering "—" tells the user "not enough data, don't
+  trust this column yet." Snapshot UIs render null differently from 0.
+  Same range applies to weekly_return: a stable account with 0 change
+  legitimately reads 0%, but a *new* account with no baseline should read
+  "—" to avoid implying "no movement" when really there is "no history".
+- **fail-OPEN on persistence failure**: `upsertCheckup` throws → in-memory
+  `MorningRiskCheckupResult` still returned with `error: <msg>` + `persisted:
+  false`. Same fail-OPEN philosophy as US-052 writeAlert: never let a DB
+  outage hide the calculation from caller (UI dashboard / preview consumer).
+- **UPSERT semantics on `(user_id, date)`**: same user same day always
+  overwrites (admin re-runs the morning task / ops re-scans). `dispatch_status`
+  is NOT touched on update — US-080 owns its lifecycle, so a sent-and-then-
+  re-computed row stays `'sent'` (the user already saw the morning report;
+  the re-compute is silent).
+- **`dispatch_status` three-state**: `'pending'` (calculated, awaiting US-080
+  push) / `'sent'` (US-080 successfully pushed) / `'failed'` (US-080 tried but
+  failed). MorningRiskCheckupService **never** pushes — it only writes
+  `'pending'` on insert. **Decoupling compute from delivery** so US-080's
+  channel logic (feishu rate limits / email retries / wechat) is independent
+  of the calc pipeline.
+- **`dry_run=true` returns full result without persisting** — supports UI
+  preview pattern (same as US-048 / US-052 / US-053). `persisted=false` in
+  dry_run; `result.checked_users` still increments (caller wants to know how
+  many users *would have been* checked).
+- **`Promise.all` for per-user fan-out within `checkupOneUser`**: positions /
+  snapshots / unresolved-alerts are independent queries — parallelism saves
+  ~70ms per user. Compare to US-049/US-052 which is one big `loadOpenPositions`
+  call (positions only, no parallel ops).
+- **Top-N breakdown in JSONB**: `breakdown.top_positions` (top 3 by mv pct) +
+  `breakdown.top_industries` (top 3 by aggregated pct) materialize for UI
+  charts without re-fetching all positions. The render budget for the morning
+  push is ~10 lines of text — top 3 each fits comfortably.
+- **HTTP route order rule** (US-015 lesson reinforced): `GET /morning-checkup/today`
+  must be registered **before** `GET /morning-checkup` (the bare config GET) —
+  Express matches top-down, so the more-specific path goes first. The base
+  config route would NOT have caught `/today` (no param), but adding a
+  `:date` route later would silently shadow `/today` if not careful. The
+  jsdoc on the route file says so explicitly.
+- **No SchedulerService hook in US-054** (matches US-052/US-053 batch — the
+  task type registration is deferred until US-080 NotificationService lands,
+  at which point cron + push are wired together). Production deployment of
+  US-054 thus requires either US-080 *or* a manual ops cron task with `type =
+  'PAPER_TRADING_MORNING_CHECKUP'` calling `morningRiskCheckupService.runMorningCheckup()`.
+- **HTTP surfaces**:
+  - `GET /api/risk/morning-checkup/today` — UI fetches today's row (or latest
+    fallback) for the "今日体检" dashboard widget.
+  - `GET /api/risk/morning-checkup` (config read).
+  - `PUT /api/risk/morning-checkup` (config write).

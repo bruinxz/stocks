@@ -62,3 +62,4 @@ export * from './MonteCarloResult';
 export * from './StrategyPortfolioResult';
 export * from './BenchmarkAttributionResult';
 export * from './IndustryAttributionResult';
+export * from './MorningRiskCheckup';

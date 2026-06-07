@@ -138,4 +138,38 @@ router.get('/black-swan', authController.authenticate, riskController.getBlackSw
  */
 router.put('/black-swan', authController.authenticate, riskController.updateBlackSwan);
 
+/**
+ * @route GET /api/risk/morning-checkup/today
+ * @desc 获取今日开盘前风险体检报告（无则回退到最新一条）(US-054)
+ *
+ * NOTE: must register `morning-checkup/today` BEFORE `morning-checkup`
+ * (Express routes match top-down — same registration-order rule as
+ * `/multi-factor/latest-picks` vs `/:strategyId` in US-015 codebase pattern).
+ *
+ * @access Private
+ */
+router.get(
+  '/morning-checkup/today',
+  authController.authenticate,
+  riskController.getMorningCheckupToday
+);
+
+/**
+ * @route GET /api/risk/morning-checkup
+ * @desc 获取当前用户的开盘前风险体检配置 (US-054)
+ * @access Private
+ */
+router.get('/morning-checkup', authController.authenticate, riskController.getMorningCheckupConfig);
+
+/**
+ * @route PUT /api/risk/morning-checkup
+ * @desc 更新当前用户的开盘前风险体检配置 (US-054)
+ * @access Private
+ */
+router.put(
+  '/morning-checkup',
+  authController.authenticate,
+  riskController.updateMorningCheckupConfig
+);
+
 export default router;
