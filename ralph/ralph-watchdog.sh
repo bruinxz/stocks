@@ -46,7 +46,9 @@ while true; do
     CLAUDE_PIDS=$(pgrep -f "claude --dangerously" 2>/dev/null)
     KILLED_ANY=""
     for pid in $CLAUDE_PIDS; do
-      proc_cwd=$(lsof -p "$pid" -d cwd -F n 2>/dev/null | awk 'NR==2{sub(/^n/,"");print}')
+      # macOS lsof: -p 必须配合 -a 才能按 PID 过滤；用列模式拿 cwd
+      # 列 1-8 是 COMMAND/PID/USER/FD/TYPE/DEVICE/SIZE/NODE，列 9+ 是 NAME（可能含空格）
+      proc_cwd=$(lsof -a -p "$pid" -d cwd 2>/dev/null | awk 'NR==2{$1=$2=$3=$4=$5=$6=$7=$8=""; sub(/^ +/,""); print}')
       if [[ "$proc_cwd" == "$WORKTREE_PATH"* ]]; then
         echo "[$(date)] ⚠ Ralph stuck for ${IDLE_MIN} min. Killing claude PID ${pid} (cwd=$proc_cwd)."
         kill "$pid" 2>/dev/null
@@ -58,7 +60,7 @@ while true; do
       sleep 5
       for pid in $CLAUDE_PIDS; do
         if kill -0 "$pid" 2>/dev/null; then
-          proc_cwd=$(lsof -p "$pid" -d cwd -F n 2>/dev/null | awk 'NR==2{sub(/^n/,"");print}')
+          proc_cwd=$(lsof -a -p "$pid" -d cwd 2>/dev/null | awk 'NR==2{$1=$2=$3=$4=$5=$6=$7=$8=""; sub(/^ +/,""); print}')
           if [[ "$proc_cwd" == "$WORKTREE_PATH"* ]]; then
             echo "[$(date)] Forcing kill -9 ${pid}"
             kill -9 "$pid" 2>/dev/null
