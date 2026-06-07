@@ -89,6 +89,7 @@
 - **游资接力 — 多日累计 + 反向数据信号 exit (US-025 GameTraderRelayStrategy)**: 第 10 个组合级策略，与 DragonHead 互补 (DragonHead 抓涨停板内梯队龙头 / GameTraderRelay 抓涨停板外游资暗中建仓)。3 个新模式：(1) **多日累计 + 接力天数双门槛**：入场不止要 `accumulated_net_buy > 5000 万`，还要 `relay_day_count >= min(2, lookbackDays)` —— 单日大单不算接力，必须 ≥2 个 distinct trade_date 都有 famous_yz 净买入 > 0 才入选，过滤"孤胆英雄"信号。(2) **反向数据信号 D 类作为 exit**：与 US-019 NorthboundFollow 的"北向减仓 SELL"并列，构成"硬约束 > 反向数据信号 > 技术信号"3 大 exit 信号系列。**跟随类 / 接力类策略必须有反向数据信号 exit**，否则退化为被动持有失去 alpha。(3) **严格边界条件 vs ≥ fuzzy floor 判据**：硬数字阈值 (5000 万 / 5% / 市值范围) 用严格 > (entry 要明确达到，消除 boundary 噪音)，止损 + 次日大跌用 ≤ (止损要敏感)；fuzzy floor 类阈值 (北向 0.5pp 业务定义) 用 ≥ 包含边界。**写新短线策略前确认你的入场阈值是 hard cutoff 还是 fuzzy floor**。完整 8 种 universe 对比表在 `backend/src/quant/strategies/CLAUDE.md`。
 - **左侧反转 — 超跌反弹 + RSI 上穿 + sell_half 落袋 (US-026 LeftSideReversalStrategy)**: 第 11 个组合级策略，与 BreakoutStrategy (US-023) 完全镜像——Breakout 抓 60 日新高做趋势延续，本策略抓 20 日大跌做反转。**5 维 AND 入场** (跌幅 + 反弹 + 主力净流入 + RSI 上穿 + 流通市值) 是目前组合级策略中**入场维度最多**的；fail_xxx 计数器达 11 个。**4 种边界 strict 类型共存**: 业务语言"跌幅 ≥ 30%"用 ≤ -threshold 包含边界 (业务为准)；"反弹 > 5%"/"市值 > 50 亿"/"净流入 > 0" 用严格 > (消除 boundary 噪音)；"止损 ≤ -7%"/"持有 ≥ 15 天" 用 ≤ / ≥ (保护性出场即刻触发)；"RSI 上穿 25" 用 yesterday < AND today ≥ (双边严格)。**判据**：jsdoc 必须列清每个阈值的边界处理 + 每个 boundary 都加测试。**入场排序 drop_pct ASC** (跌得最惨在前) 与 BreakoutStrategy volume_ratio DESC (放量最猛) 完全镜像——反转策略 mean-reversion thesis vs 趋势策略 momentum thesis，**不能混用**。**sell_half 与 DragonHead 语义差异**: DragonHead = 次日开盘高开 ≥5% (动量延续兑现)，LeftSideReversal = 5 日内 max(close)/entry > 15% (反弹落袋防回中继再跌)。**jsdoc + reason 必须明示语义关键词** ("高开"/"落袋")，让审计日志能区分两策略的减半事件。**`half_exited` 标记的 3 个处理点**: exit 阶段判 (`!pos.half_exited && holdingDays >= 1`)、kept 阶段用 spread 不 mutate (`kept.push({...pos, half_exited: true})`)、进场首日排除 (`holdingDays >= 1` 否则 max() = entry_price)。**RSI 用上穿不用单点 < 阈值**——单点值会卡在超卖区漂移多日产生重复信号，上穿排除持续低位无趋势的票。**DataSource minBarCount 由策略层精确计算并透传**: `minBarsForEntry = max(dropLookbackDays+1, rsiPeriod+2)` —— RSI 上穿要算 yesterday+today 两个 RSI，每个需 period+1 close, 共 period+2 bar。**反转策略市值门槛比趋势更严格**——50 亿过滤掉超跌小盘股 (流动性陷阱 / 退市风险假反弹)；趋势策略选 60 日新高天然偏中大盘，市值门槛影响小。完整 9 种 universe 对比表在 `backend/src/quant/strategies/CLAUDE.md`。
 - **行业联动 — 涨停龙头触发 + 题材外溢 + C 类涨停止盈 (US-027 LinkageStrategy)**: 第 12 个组合级策略，与 SectorRotationLeader 完全**镜像**——SectorRotation 在强势行业里选龙头（已涨幅在前），LinkageStrategy 在有涨停龙头的行业里选**非龙头未启动联动股**（未来涨幅靠 catch-up）。两策略合起来覆盖同行业的多空策略对。**第 10 种 universe 形态 — 行业题材联动**：与 DragonHead / GameTraderRelay / SectorRotationLeader 共享"行业 / 涨停 / 短线"关键词，但触发逻辑完全不同（详见 strategies/CLAUDE.md 4 维对比表）。**5 维 AND 入场（与 LeftSideReversal 并列最多）**: 候选股所属行业当日有涨幅 > 9% 涨停龙头 + 候选股昨日涨幅 < 5% + 候选股流通市值 < 龙头流通市值 + 候选股今日开盘高开 < 3% + 非 ST。**"C 类涨停止盈"是 LinkageStrategy 引入的新出场范式**：与既有"持有期 / 止损 / 反向数据信号 / 技术信号" 4 大出场系列并列形成第 5 大系列。判定标志：策略目的是"等价格 hit 某事件后立即兑现"（涨停 / 跌停 / 业绩公告 → SELL），**不区分 holdingDays 即时触发**（当日 BUY 当日涨停 SELL 是完美兑现，不是误平，与 D 类严格 holdingDays >= 1 区分）。**DataSource 5 个 loader 是新最高记录** (DragonHead 5 / GameTraderRelay 4 / LeftSideReversal 4)：loadIndustryLimitUpStocks（触发源按行业归组）+ loadIndustryConstituents（**含 excludeLimitUpStocks: Set<string> 参数让 DataSource 层直接剔除涨停股**避免 service 重查涨停表 — "service 知道 X → 立即把 X 传给下一个需要 ¬X 的 loader" 是新模式）+ loadDailyQuotes（today + yesterday + day-before-yesterday 三日 close）+ loadLimitUpStocksOnDate（exit C 类单独 Set 接口不复用 entry 的 loadIndustryLimitUpStocks 因数据形状不同）。> 5 个 loader 是 smell — 下次到 6 个就反思能否复用 / 简化。**"龙头自己缺市值 → 候选保守剔除"是新过滤模式**：之前的策略都是"候选缺数据 → 剔除"，本策略增加"参照物缺数据 → 候选保守剔除"（fail_cap_not_below_leader）。适用于任何"相对值"判定（X 相对 Y）：cap vs leader / PE vs industry avg / vol vs historical。**同股归属多个热门行业要在 service 层 dedup**（罕见但需要 — Stock.industry 与 IndustryFlow.industry_name 来源不同 sync 难免空格不一致或重映射）：用 `seen: Set<string>` 在 5 维过滤 loop 顶部判定 + skip。**排序：leader_change DESC → cand_cap ASC → open_gap ASC → stock_code ASC** — 4 级稳定排序。leader_change DESC 跨行业选最强题材；cand_cap ASC 行业内挑弹性最大小盘（与 SectorRotation leader change DESC 选龙头镜像，本策略 cap ASC 选非龙头小盘 = 联动股定义）。**Position structured 必带 entry_industry + entry_leader_code**（debug 用 — 出场时关联当时题材）。**isSTName 共享模块第 11 个调用方**: 直接 `import` from `backend/src/utils/stNameUtils.ts` + re-export shim。完整 10 种 universe 对比表在 `backend/src/quant/strategies/CLAUDE.md`。
+- **多策略融合 — 市场环境自适应 meta-策略 (US-028 EnsembleStrategy)**: 第 13 个组合级策略，**形态完全不同于前 12 个**：所有前序策略都是"单一选股逻辑"（多因子/事件/动量/反转/题材...），EnsembleStrategy 是 **meta-策略** —— 不直接选股，而是根据当日市场环境（bull/bear/range/volatile）**动态选择一组子策略 + 权重**，把它们的 target_portfolio **用加权投票融合**成统一持仓。**核心模式 — meta-策略**: 构造器接受 `substrategies: EnsembleSubstrategy[]` 数组（默认 8 个生产子策略 + adaptStrategy 包装；测试可注入 fake 完全脱离 DB）；evaluate() 同其他组合级一样退化为信息性 hold；真正入口是 async generateSignals(tradeDate, {params?, previousSelection?, marketRegimeOverride?})。**Market regime 检测复用 MarketEnvironmentService**(已有 service)：getEnvironmentForStock('sh.000300') 返回 6 种 raw regime → mapToEnsembleRegime() 映射到 AC 的 4 种 (bull→bull / bear→bear / range→range / rebound→range / stress→volatile / unknown→range)。**4 种环境的默认 allocation (AC 指定 + 已 Object.freeze)**: bull = MFA 0.4 + DragonHead 0.3 + Breakout 0.3; bear = HighDividend 0.6 + LowVol 0.4 (未实现, 自动降级); range = SectorRotation 0.4 + LeftSideReversal 0.3 + EarningsSurprise 0.3; volatile = GARP 0.5 + HighDividend 0.5. **"融合"语义 = 加权投票而非仓位配额**: vote = sum(weight 当该股在子策略 target 内), top-N 按 vote_score 降序 + stock_code 升序稳定 tie-break。比 quota 更稳健: 处理子策略输出股票数不等 / 子策略全空回退 / 多策略推荐同一只票加分。**LowVol 缺失降级模式 (US-029+ 之前的过渡)**: 默认 rebalanceMissingWeights=true 把 LowVol 0.4 权重按比例合并到 HDV (合计 1.0); 通过 degraded_substitutions 字段告知调用方降级路径 (missing_strategy / original_weight / redistributed_to)。设 false 则缺失权重作废（仍归一化但 redistributed_to=[]）—— 生产用 true 对照实验用 false。US-029 LowVol 实现后自动消失降级路径。**EnsembleSubstrategy 接口**: { strategy_key: string, generateSignals(date, options?): Promise<Result> }; **extractTargetStockCodes** 统一处理两种 shape (target_portfolio: string[] vs target_positions: {stock_code}[])，让 ensemble 不关心子策略选哪种 schema; **adaptStrategy(QuantStrategy)** 适配器把任意子策略实例包装成 EnsembleSubstrategy。**子策略调用并发 + 失败隔离**: Promise.all 跑所有 effective substrategies, 每个 try/catch 失败时该子策略 target_size=0 + error 字段记录, 剩余子策略不受影响。**子策略 BUY/SELL/HOLD 在 ensemble 层重新算**: 忽略子策略各自的 BUY/SELL/HOLD（基于子策略自己的 previousSelection 视角），重新基于 ensemble 的 previousSelection 算 target vs prev 增量。**marketRegimeOverride 参数**让测试跳过 MarketEnvironmentService DB 调用; 生产环境不应传。**Position schema = string[]**（meta-策略只关心选哪些股，仓位大小留给下游 PaperTradingFacade）。**写新 meta-策略的 checklist**：构造器接受 substrategies 数组不要硬编码子策略；extractTargetStockCodes 兼容两种 shape；子策略失败必须 isolate (try/catch + diagnostics)；ensemble 层重新算 BUY/SELL/HOLD 不透传；marketRegimeOverride 参数让测试跳过 DB；degraded_substitutions 记录权重重分配路径让审计可追溯。完整 11 种 universe + meta-策略对比表在 `backend/src/quant/strategies/CLAUDE.md`。
 
 ### Backtest engine — A 股执行约束 (US-014+)
 - **`AShareConstraintEngine` 是无状态纯模块** at `backend/src/quant/backtest/AShareConstraintEngine.ts`。三个方法：`evaluateOrder(ctx)` 返回 `{ok, reason?, detail?}` 决定能否成交（T+1 / 涨跌停 / 停牌 / ST 过滤 / 流动性门槛）；`computeFees(amount, side)` 返回 commission + stamp_tax + transfer_fee 三段费用 breakdown；`executionPrice(bar, side, timing)` 给三种 timing (next_open / same_close / twap_proxy) 的成交价并附动态滑点。引擎严格无 DB 访问、无状态字段、不修改输入参数——多策略并发跑零状态污染。
@@ -2824,7 +2825,215 @@ N/A — backend-only story (新策略 + DataSource + 测试，无 UI 变更)。
   (5) Position structured 必带 entry_<dimension> 字段
   (6) 5 维入场是上限
   (7) 题材性短线 holding period 短（3 天强制平仓）
-- **isSTName 共享模块第 11 个调用方**: backend/src/utils/stNameUtils.ts 共享 + LinkageStrategy 
+- **isSTName 共享模块第 11 个调用方**: backend/src/utils/stNameUtils.ts 共享 + LinkageStrategy
   re-export shim. 既有 10 处全部受益于 US-025 重构。下次再有新策略也直接 `import` from 共享。
 
 ---
+
+## 2026/06/07 - US-028
+
+### What was implemented
+
+**EnsembleStrategy** — 第 13 个组合级策略（多策略融合 meta-策略）。**形态完全不同于
+前 12 个组合级策略**：所有前序策略都是"单一选股逻辑"（多因子/事件/动量/反转/题材...），
+EnsembleStrategy **不直接选股**，而是根据当日市场环境（bull/bear/range/volatile）
+**动态选择一组子策略 + 权重**，把它们的 target_portfolio **用加权投票融合**成统一持仓。
+
+**Market regime 检测复用 MarketEnvironmentService**（已有 service，无需新建）：
+传入 sh.000300 基准 → service 返回 6 种 raw regime（bull/bear/range/rebound/stress/unknown）→
+mapToEnsembleRegime() 映射到 AC 的 4 种：
+- bull → bull / bear → bear / range → range
+- rebound → range（弱反弹按震荡处理）
+- stress → volatile（高压力 / 大回撤当作高波动）
+- unknown → range（数据不足时按震荡，最中性的策略组合）
+
+**4 种环境的默认 allocation（AC 指定，已 Object.freeze）**：
+
+| 环境       | 子策略 + 权重                                              |
+|------------|----------------------------------------------------------|
+| bull       | MultiFactorAlpha 0.40 + DragonHead 0.30 + Breakout 0.30   |
+| bear       | HighDividendValue 0.60 + LowVol 0.40 (未实现, 自动降级)    |
+| range      | SectorRotationLeader 0.40 + LeftSideReversal 0.30 + EarningsSurprise 0.30 |
+| volatile   | GARPStrategy 0.50 + HighDividendValue 0.50               |
+
+**"融合"语义 = 加权投票而非仓位配额**：vote = sum(weight 当该股出现在子策略 target
+内)，top-N 按 vote_score 降序 + stock_code 升序稳定 tie-break。**比 quota 更稳健**：
+处理子策略输出股票数不等（MFA 30 只 vs DragonHead 5 只）/ 子策略全空回退 /
+多策略推荐同一只票加分。
+
+**LowVol 缺失降级模式（US-029+ 之前的过渡）**：默认 8 个生产子策略池不含 LowVol → bear
+环境的 low_vol_strategy 缺失 → 触发 degraded_substitutions 路径：默认
+rebalanceMissingWeights=true 把 LowVol 0.4 权重按比例合并到 HDV（合计 1.0）+
+通过 `degraded_substitutions: [{missing_strategy, original_weight, redistributed_to}]`
+告知调用方降级路径。设 false 则缺失权重作废（仍归一化到 1.0 但 redistributed_to=[]）—
+**生产用 true，对照实验用 false**（可量化 LowVol 缺失带来多少 alpha 损失）。
+US-029 LowVol 实现后自动消失降级路径。
+
+**EnsembleSubstrategy 接口**：
+
+```ts
+interface EnsembleSubstrategy {
+  strategy_key: string;
+  generateSignals(date, options?): Promise<EnsembleSubstrategyResult>;
+}
+```
+
+- `extractTargetStockCodes` 统一处理两种 shape（`target_portfolio: string[]` vs
+  `target_positions: {stock_code}[]`），让 ensemble 不关心子策略选哪种 schema。
+- `adaptStrategy(QuantStrategy)` 适配器把任意子策略实例包装成 EnsembleSubstrategy
+  （顶层 strategy_key + generateSignals 方法），让构造器代码干净。
+
+**子策略调用并发 + 失败隔离**：`Promise.all` 跑所有 effective substrategies，每个
+try/catch 失败时该子策略 target_size=0 + error 字段记录，剩余子策略不受影响。
+**一个子策略数据缺失不让整个 ensemble 不出信号**。
+
+**子策略 BUY/SELL/HOLD 在 ensemble 层重新算**：忽略子策略各自的 BUY/SELL/HOLD（基于
+子策略自己的 previousSelection 视角），重新基于 ensemble 的 previousSelection 算
+target vs prev 增量。**避免子策略 history 状态不一致带来的矛盾信号**。
+
+**marketRegimeOverride 参数**：测试跳过 MarketEnvironmentService DB 调用；生产不传。
+
+**Position schema = string[]**（meta-策略只关心选哪些股，仓位大小留给下游 PaperTradingFacade）。
+
+注册到 `backend/src/quant/engine/StrategyRegistry.ts`（strategy_key='ensemble_strategy',
+category='multi_factor', risk_level='medium', tags=['集成','元策略','市场环境','自适应权重','加权投票']）。
+**当前 29 strategies total**。
+
+### Files changed
+
+- `backend/src/quant/strategies/EnsembleStrategy.ts` (new, ~570 LOC incl. helpers)
+- `backend/src/quant/engine/StrategyRegistry.ts` (+2 lines: import + register)
+- `backend/src/quant/strategies/CLAUDE.md` (+135 LOC: '多策略融合 — 市场环境自适应
+  meta-策略 (US-028 EnsembleStrategy)' 新节, 含 4 种环境的 allocation / meta vs
+  单一选股对比表 / vote vs quota 设计判据 / LowVol 缺失降级模式 / 11 种 universe
+  对比表 / 写新 meta-策略 6 条 checklist)
+- `backend/tests/strategies/EnsembleStrategy.test.ts` (new, ~620 LOC, 30 测试场景 / 100+ 断言)
+- `ralph/prd.json` US-028 → passes:true + 详细 notes
+- `ralph/progress.txt` (this entry + Codebase Patterns addition)
+
+### Quality checks
+
+- `cd backend && npx tsc --noEmit` → exit 0 (clean)
+- `./node_modules/.bin/eslint src/quant/strategies/EnsembleStrategy.ts
+  src/quant/engine/StrategyRegistry.ts --ext .ts --quiet --fix` → exit 0
+- `npx ts-node --transpile-only tests/strategies/EnsembleStrategy.test.ts`
+  → **all 30 scenarios pass < 1s, 100+ ok / 0 failures**
+- 既有 12 个组合级 strategy 测试（MFA / DragonHead / EarningsSurprise / NorthboundFollow /
+  CTA100 / SectorRotation / HighDividend / Breakout / GARP / GameTraderRelay /
+  LeftSideReversal / Linkage）+ AShareConstraintEngine 集成测试 — 全部仍通过
+  （无 schema 兼容性破坏）
+- Registry smoke: 29 strategies total (含 `ensemble_strategy`)
+
+### Browser verification
+
+N/A — backend-only story (新策略 + 单测 + 文档，无 UI 变更)。
+
+### Learnings for future iterations
+
+**1. Meta-策略 vs 单一选股策略：核心架构差异**
+
+| 维度 | 前 12 个组合级策略 | EnsembleStrategy (meta) |
+|------|------------------|-------------------------|
+| 选股逻辑 | 单一（多因子/事件/动量/反转/题材...） | meta：组合子策略输出 |
+| DataSource 注入 | 必须，每个策略自己的接口 | **不需要**（子策略自己注入）|
+| 直接访问 DB | 是 | **否**（仅通过子策略间接访问）|
+| 入场过滤维度 | 4-5 维 AND | **无**（vote 排序）|
+| 调仓日 gate | 部分有 | **无**（每日可调用 = 子策略各自的 gate 起作用）|
+| Position schema | string[] 或 structured | **string[]**（meta 只关心"选哪些股"）|
+| 排序 | 自定 metric DESC + stock_code | **vote_score DESC + stock_code** |
+| previousSelection | 自己使用 | **透传给所有子策略 + ensemble 层重新算** |
+
+**写新 meta-策略（如未来 EnsembleV2 按 IC 动态调权重）的 checklist**：
+1. **构造器接受 substrategies 数组**（实现 EnsembleSubstrategy 接口），不要硬编码
+   `new XxxStrategy()` 否则测试无法 mock 完全脱离 DB。
+2. **`extractTargetStockCodes`** 兼容 string[] 与 Position[] 两种 shape。
+3. **子策略失败必须 isolate**（try/catch + diagnostics 字段），单个子策略不能拖垮整体。
+4. **子策略 BUY/SELL/HOLD 在 ensemble 层重新算**，不要透传子策略的 signal 数组
+   （子策略的 prev 视角与 ensemble 的不一致会产生矛盾信号）。
+5. **`marketRegimeOverride` 参数让测试跳过 MarketEnvironmentService**（DB 调用），
+   生产不传。
+6. **degraded_substitutions 记录权重重分配路径**（不是简单 "missing strategies"
+   列表），让审计可追溯"LowVol 缺失时它的 0.4 权重去了哪里"。
+
+**2. 加权投票 vs 仓位配额（设计权衡）**
+
+加权投票：vote = sum(weight 当该股在子策略 target 内)，top-N 按 vote 排序。
+仓位配额：按权重把 topN 仓位切分给每个子策略（MFA 拿 12 只 / DragonHead 拿 9 只 / ...）。
+
+**判据**：选 vote 而非 quota，因为 quota 在多种边界情况下失效：
+- 子策略输出 < 配额（如 DragonHead 当日只有 3 只候选 vs 配额 9 只）：剩余 6 只
+  仓位怎么分？让其他子策略代填？破坏权重？
+- 多策略推荐同一只票：算谁的？双计还是单计？vote 自然加分，quota 必须先 dedup。
+- 子策略全空（数据缺失）：quota 必须重新分配 100% 给其他子策略，复杂度爆炸。
+
+vote 让"集体表决"自然产生 + 多策略一致看好的票 vote 高（自然优先）+ 单策略推荐的票
+vote 低（次优）。仓位大小（per-position size）留给下游 PaperTradingFacade 按统一
+权重处理（如等权 / 等风险 / 按 vote 加权等）。
+
+**3. degraded_substitutions 的设计哲学**
+
+简单做法："missing": ["low_vol_strategy"] —— 只告知"哪些子策略不在"。
+本策略做法：每个 degraded 项包含 `missing_strategy` / `original_weight` /
+`redistributed_to`（数组）—— 完整记录"该缺失权重被合并到了哪些子策略"。
+
+**判据**：当 ensemble 在生产环境跑出"bear 环境意外地 HDV 100% 仓位"，audit log
+能追溯到"是因为 LowVol 0.4 权重在 2026-06-05 被全部合并到 HDV，因为 LowVol 策略
+尚未在 substrategy 池注册"。下次写 meta-策略遇到子策略不可用时，diagnostics 必须
+包含"原因 + 影响范围"两层信息，不是简单 boolean flag。
+
+**4. 子策略调用并发 + 失败隔离的实现细节**
+
+- `Promise.all(callPromises)` 并发跑所有 effective substrategies，wall-time = max(子策略耗时)。
+- 每个子策略调用包在 `async () => try { ... } catch { ... }` 内：成功时填充
+  `substrategyTargets.set(key, Set)` + `diagnostics.push({...无 error})`；失败时
+  `substrategyTargets.set(key, new Set())` + `diagnostics.push({...error: msg})`。
+- 一个子策略数据缺失 / DB 超时不阻塞其他子策略 —— 这是 ensemble 的核心稳定性保证。
+- 子策略 catch 后不会重抛 —— 在 generateSignals 主流程里继续往下走，最终 vote 累加
+  时缺失的子策略相当于"全 0 票"，对最终 ranking 无负面影响（vote 不会减分，只会缺贡献）。
+
+**5. ensemble 层重新算 BUY/SELL/HOLD vs 透传子策略**
+
+**判据**：如果透传子策略的 BUY/SELL/HOLD，会出现以下矛盾：
+- MFA 推荐 [A,B,C]，prev=[A,B] → MFA 算 A=HOLD, B=HOLD, C=BUY
+- DragonHead 推荐 [B,D]，prev=[A,B] → DragonHead 算 B=HOLD, D=BUY, A=SELL（不在 DragonHead target 内）
+
+如果透传子策略 signals，A 同时收到 HOLD (MFA) + SELL (DragonHead)，调用方
+无所适从。**ensemble 层重新算**：基于 ensemble 自己的 target_portfolio [A,B,C,D] vs
+prev=[A,B]：A=HOLD, B=HOLD, C=BUY, D=BUY —— 单一一致视角。
+
+**6. marketRegimeOverride 参数的测试用途**
+
+正常情况下 `marketRegimeOverride` 不传，generateSignals 内部调
+`marketEnvironmentService.getEnvironmentForStock('sh.000300')` —— 这是个 DB-heavy
+调用（要查 sh.000300 的 140 天 DailyBar + 全市场宽度数据）。测试场景下传
+`{ marketRegimeOverride: 'bull' }` 跳过这层 DB 调用，直接用 fake regime 测试
+ensemble 的核心逻辑（4 种环境 × 加权投票 × 增量信号）。**生产不应传**，否则
+等于绕过 market environment 检测让 ensemble "无脑选 bull"。
+
+**7. EnsembleSubstrategyResult 是 8 种 result type 的 union**
+
+由于 8 个子策略 result type 各异（target_portfolio: string[] vs target_positions:
+Position[]），EnsembleSubstrategyResult = MFA | DragonHead | Breakout | HighDividend |
+SectorRotation | LeftSideReversal | EarningsSurprise | GARP。**extractTargetStockCodes**
+用 in 操作符做 type narrowing：`'target_portfolio' in result` vs `'target_positions' in
+result` —— 类型安全提取 stock_code 数组。未来加新子策略只需扩 union type + 函数
+内部 if 分支。
+
+**8. adaptStrategy(QuantStrategy) 适配器的存在理由**
+
+子策略类（如 MultiFactorAlphaStrategy）的 strategy_key 在 `definition.strategy_key`
+里（顶层属性），但 EnsembleSubstrategy 接口要求 `strategy_key: string` 作为顶层
+属性。直接 `new MultiFactorAlphaStrategy()` 不满足接口 → 编译错误。adaptStrategy
+包装层把 instance.definition.strategy_key 提到顶层 + 转发 generateSignals 方法。
+**好处**：构造器代码干净（`adaptStrategy(new MFA())` 一行）+ 子策略本身的实现
+不需要为 ensemble 单独加属性 + 适配器隔离了 ensemble 对子策略内部 API 的依赖。
+
+**9. 测试用 IIFE 模式的边角**
+
+每个 test case 用 `(async function testXxx() { ... })()` 立即执行。所有 IIFE 启动
+后用 `await new Promise(resolve => setImmediate(resolve)) + 100ms setTimeout` 等待
+所有 async 完成再退出。这是 node-direct + no-jest 模式下处理多个并发 async tests
+的简单办法（vs 把所有 test 串成一个大 main async function，那样 stack trace 差）。
+
+---
+
