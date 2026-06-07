@@ -34,6 +34,7 @@
     "sync:shareholder-count": "ts-node src/scripts/sync-shareholder-count.ts",
     "compute:factors": "ts-node src/scripts/compute-factors.ts",
     "run:grid-search": "ts-node src/scripts/run-grid-search.ts",
+    "run:bayesian-opt": "ts-node src/scripts/run-bayesian-opt.ts",
     "paper:reset-and-run-quant": "ts-node src/scripts/reset-paper-trading-and-run-quant.ts",
     "seed:mock": "ts-node src/scripts/seed-mock-data.ts",
     "data:status": "ts-node src/scripts/data-cli.ts status"

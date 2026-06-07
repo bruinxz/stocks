@@ -1,22 +1,25 @@
 import { Table, Column, Model, DataType, CreatedAt, UpdatedAt } from 'sequelize-typescript';
 
 /**
- * GridSearchOptimizer 主表（US-037）
+ * Optimization 主表（US-037 GridSearch + US-038 Bayesian 共享）
  *
- * 每次 grid search 调用 = 一行 OptimizationRun。`param_grid_json` 是输入网格
- * （形如 `{ topN: [10,20,30,50], stopLossPct: [-5,-7,-10] }`），`status` 跟踪
- * 整个网格的执行进度（pending → running → completed / failed），`total_combos`
- * 与 `completed_combos` 让 UI 可显示 `进度 3 / 12`。
+ * 每次优化器调用 = 一行 OptimizationRun。`optimizer_type` 区分 grid_search vs
+ * bayesian（US-038 新增）；`param_grid_json` JSONB 列在两种优化器下承载不同 shape：
+ *   - grid_search：参数网格 `{ topN: [10,20,30,50], stopLossPct: [-5,-7,-10] }`
+ *   - bayesian：参数边界 `{ topN: {min:10, max:50, integer:true}, stopLossPct: {min:-15, max:-3} }`
  *
- * `backtest_config_json` 冷藏一份本轮 grid search 的 backtest config（除参数维
- * 度外的所有字段：start_date / end_date / initial_capital / universe / ...），
- * 便于事后复算或对比。
+ * `status` 跟踪整个执行进度（pending → running → completed / failed），
+ * `total_combos` 与 `completed_combos` 让 UI 可显示 `进度 3 / 12`。
+ *
+ * `backtest_config_json` 冷藏一份本轮的 backtest config（除参数维度外的所有字段：
+ * start_date / end_date / initial_capital / universe / ...），便于事后复算或对比。
  *
  * `best_result_id` 是最高 composite_score 那条 OptimizationResult 的 FK 快捷
  * 入口（结束后回写），让"最优参数"查询不必每次都 ORDER BY 排一遍。
  *
  * 主要消费方：
- *   - run-grid-search.ts CLI
+ *   - run-grid-search.ts CLI（US-037）
+ *   - run-bayesian-opt.ts CLI（US-038）
  *   - 未来 US-016 策略实验室 "参数调优" tab
  *   - WalkForwardValidator (US-039) 嵌入子 grid 时也会创建 run 行
  */
@@ -29,11 +32,22 @@ import { Table, Column, Model, DataType, CreatedAt, UpdatedAt } from 'sequelize-
     { fields: ['status'] },
     { fields: ['created_by'] },
     { fields: ['created_at'] },
+    { fields: ['optimizer_type'] },
   ],
 })
 export class OptimizationRun extends Model {
   @Column({ type: DataType.INTEGER, primaryKey: true, autoIncrement: true })
   declare id: number;
+
+  @Column({
+    type: DataType.STRING(20),
+    allowNull: false,
+    defaultValue: 'grid_search',
+    field: 'optimizer_type',
+    comment:
+      '优化器类型：grid_search (US-037) / bayesian (US-038)；DB 旧行 defaultValue 兜底为 grid_search，保证向后兼容',
+  })
+  declare optimizer_type: string;
 
   @Column({
     type: DataType.STRING(80),
@@ -48,9 +62,10 @@ export class OptimizationRun extends Model {
     allowNull: false,
     defaultValue: {},
     field: 'param_grid_json',
-    comment: '输入参数网格，形如 { topN: [10,20,30,50], stopLossPct: [-5,-7,-10] }',
+    comment:
+      'JSONB 列在两种优化器下承载不同 shape：grid_search 是参数网格 `{topN:[10,20]}`，bayesian 是参数边界 `{topN:{min:10,max:50,integer:true}}`',
   })
-  declare param_grid_json: Record<string, any[]>;
+  declare param_grid_json: Record<string, any>;
 
   @Column({
     type: DataType.JSONB,

@@ -234,6 +234,93 @@ results` vs `optimization_runs/results`），互不污染。
 - 加新并发后端（Bull queue / Worker thread）→ 不要内嵌到 GridSearchOptimizer，
   写一个新 `BulkBacktestRunner` 实现 `BacktestRunner` 接口，caller 通过
   `options.runner` 切换。让 optimizer 本体保持简单。
-- 加贝叶斯优化（US-038）→ 新建 `BayesianOptimizer.ts`，共享同一组 model 表
-  （`OptimizationRun + OptimizationResult`），不要在 GridSearchOptimizer 内
-  加 mode 切换分支。
+- 加贝叶斯优化（US-038）→ 已实现，见下节。
+
+## US-038: BayesianOptimizer — 贝叶斯（高斯过程 + EI）参数搜索
+
+`backend/src/quant/backtest/BayesianOptimizer.ts` 是 US-037 GridSearchOptimizer
+的姐妹模块：同样的公共 class、同样在 `backtest/` 顶级（不在 `internal/`）。两
+者的**互补关系**：
+
+| 维度 | GridSearchOptimizer | BayesianOptimizer |
+| ---- | ---- | ---- |
+| 搜索空间 | 离散 cartesian product | 连续 / 整数 bounds (min/max) |
+| 适合维度 | 1-3 维 / 每维 5 取值 | 3-8 维 / 大空间 |
+| 信息利用 | 无（穷举） | 有（GP 后验 + EI 引导） |
+| 复现性 | 完全确定 | 同 seed 完全确定 |
+| 共享表 | ✅ optimization_runs / results | ✅ 同表，optimizer_type='bayesian' |
+| 共享 API | OptimizationResultRecord / BacktestRunner / CompositeScoreWeights / computeCompositeScore / sortByCompositeScoreDesc | 全部 import 自 GridSearchOptimizer |
+
+```ts
+import { bayesianOptimizer } from './backtest/BayesianOptimizer';
+const out = await bayesianOptimizer.optimize(
+  {
+    strategy_key: 'multi_factor_alpha',
+    param_bounds: {
+      topN: { min: 10, max: 50, integer: true },
+      stopLossPct: { min: -15, max: -3 },
+    },
+    base_config: { start_date, end_date, initial_capital, benchmark_symbol },
+  },
+  {
+    iterations: 30,        // 总采样数（含 init_points）
+    init_points: 8,        // 初始拟随机均匀采样（默认 max(5, 2*D)）
+    exploration_xi: 0.01,  // EI exploration factor
+    kernel_length_scale: 0.3, // RBF kernel 平滑度（归一化空间）
+    seed: 42,              // 同 seed → 完全相同的采样序列
+    persist: true,
+  }
+);
+```
+
+### Design constraints
+
+- **共享 OptimizationRun + OptimizationResult 表**：OptimizationRun 加了
+  `optimizer_type` 字段（'grid_search' / 'bayesian'），区分两种优化器历史。
+  `BayesianOptimizer.listRuns()` 默认只列 bayesian 行；GridSearchOptimizer.
+  listRuns() 不过滤（兼容旧代码，旧行 defaultValue='grid_search'）。
+- **自实现 EI + GP 而非 npm 依赖**：`bayesian-optimization` 包近 4 年未更新且
+  依赖 ml-matrix（多 MB）；EI + RBF GP 的核心数学 < 200 行，自实现可保持纯函
+  数 + 可单测。所有数学函数（normalCDF / normalPDF / rbfKernel /
+  choleskyDecompose / solveLowerTriangular / solveUpperTriangular /
+  gaussianProcessPosterior / expectedImprovement）都是 `export function` 让
+  bayesian-optimizer.test.ts 可在毫秒级跑完 161 测试。
+- **归一化到 [0,1]^D 空间**：RBF kernel length scale 与维度无关（原始空间下
+  stopLossPct ∈ [-15,-3] 和 topN ∈ [10,50] 的 distance 完全不可比）。
+  `normalizeParams` / `denormalizeParams` 是 export 纯函数，integer bounds
+  在 denormalize 时 Math.round。
+- **失败点不进入 GP 训练集**：单 iter 失败时记 `status='failed' +
+  error_message`，但 observations 数组只 push 成功且 composite_score 有限的
+  点。NaN 进 GP 会让 Cholesky 协方差矩阵不可逆，必须严格过滤。
+- **SeededRandom (Park-Miller LCG)** 替代 Math.random()：同 seed + 同 bounds
+  + 同 runner → 完全相同的采样序列。单测可断言精确的 x 序列，回测可复算论文
+  结果。**永不引入 Math.random** 到优化器代码（已在 jsdoc 顶部强制约定）。
+- **EI candidate 网格策略**：D ≤ 3 用 cartesian (gridSize^D)；D ≥ 4 退化为
+  随机采样 min(50_000, gridSize * D * 4) 个点避免内存爆炸。当前最优点周围
+  加密 32 个 jittered 候选实现 local refinement。
+- **strategy_key 校验仅在未注入 runner 时执行**——与 GridSearchOptimizer 同款
+  约定。caller 注入 fake runner 时自然不需要 StrategyRegistry。
+
+### 何时扩展 BayesianOptimizer
+
+- 加新 acquisition function (UCB / PI)→ 抽出 `acquisitionFunction` 函数式接
+  口，let optimize() 接受 options.acquisition；保持 EI 为默认。**不要**在 EI
+  公式内 if/else 切换。
+- 加 categorical 维度（非连续 / 非整数）→ 扩 ParamBound interface 加
+  `type: 'continuous' | 'integer' | 'categorical'` 字段，bayesian 需要在归一化
+  空间上做特殊的 one-hot embed 而非直接 round；categorical 维度上 GP 不合
+  适，考虑 fall back 到 random sampling。
+- 加多目标 Pareto front（不是 composite_score 单标量）→ 不要扩本类，新建
+  `MultiObjectiveBayesianOptimizer.ts` 用 NSGA-II 风格采样，共享 optimization
+  _runs 表但加新 `objectives_json` 列。复杂度跨度太大不宜混 EI 同款 API。
+
+### 测试模式
+
+- `bayesian-optimizer.test.ts` 161 用例覆盖 8 个 export 纯函数 + 14 个端到端
+  集成场景。包括"在 [0,10] 找 target=7 的连续优化 25 iter 收敛到 ±1.5"和
+  "2D 在 (3,7) 25 iter 收敛到 ±2.5" 的合成 benchmark — 让数学正确性 + 算
+  法收敛性都有 explicit 断言不只是 happy-path。
+- **GP 数学的 Cholesky 测试**：手算 K=[[4,2],[2,3]] 的 L = [[2,0],[1,√2]]，
+  断言每个元素 + 验证 L*L^T 重构 = K。同样为非正定矩阵手动断言抛错。下次
+  改 GP 实现时 Cholesky 测试就是回归基线。
+

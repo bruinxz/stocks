@@ -3846,3 +3846,79 @@ Factor self-registers to `factorRegistry` as `name='gradual_breakout'`, `categor
 - strategy_key validation gated by `!options.runner` for test-friendliness
 
 ---
+
+## 2026/06/07 - US-038
+
+### What was implemented
+**贝叶斯（高斯过程 + EI）参数搜索优化器** — US-037 GridSearchOptimizer 的姐妹模块，专为连续 / 整数参数空间的高效搜索设计。
+
+**核心架构选择**：自实现 EI + RBF GP 而非引入 npm 包：
+- `bayesian-optimization` 包近 4 年未更新且依赖 ml-matrix（多 MB）
+- EI + RBF GP 的核心数学不超过 200 行，自实现可保持纯函数 + 可独立单测
+- 同 seed → 完全相同的采样序列，测试 / 回测复现性 100%
+
+**端到端管道**：
+1. **Schema** — `OptimizationRun` 加 `optimizer_type` STRING(20) defaultValue='grid_search' 字段区分两种优化器；`param_grid_json` 类型 `Record<string, any[]>` → `Record<string, any>` 让 JSONB 列承载 grid 网格 (数组) 和 bayesian bounds (对象) 两种 shape
+2. **核心模块** `backend/src/quant/backtest/BayesianOptimizer.ts` (~750 LOC) — 8 个 export 纯函数 + `BayesianOptimizer` class with `optimize()` 入口 + 4 个 admin 方法 (getRunResults / listRuns / deleteRun / cleanupOlderThan)，全部 import 自 GridSearchOptimizer 的共享 API (BacktestRunner / OptimizationResultRecord / CompositeScoreWeights / computeCompositeScore / sortByCompositeScoreDesc / defaultBacktestRunner)
+3. **CLI** `backend/src/scripts/run-bayesian-opt.ts` (~270 LOC) + `npm run run:bayesian-opt` 支持 4 模式 (optimize / --list / --show / --cleanup-days)
+4. **Tests** `backend/tests/backtest/bayesian-optimizer.test.ts` (~830 LOC) **161 ok / 0 failed in ~830ms**
+
+### Files changed
+- **New**: `backend/src/quant/backtest/BayesianOptimizer.ts` (核心模块)
+- **New**: `backend/src/scripts/run-bayesian-opt.ts` (CLI)
+- **New**: `backend/tests/backtest/bayesian-optimizer.test.ts` (161 测试)
+- **Edit**: `backend/src/models/OptimizationRun.ts` (加 optimizer_type 字段 + 调整 param_grid_json 类型)
+- **Edit**: `backend/package.json` (加 run:bayesian-opt npm script)
+- **Edit**: `backend/src/quant/CLAUDE.md` (新增 US-038 一节：对比表 + 6 设计约束 + 扩展指南 + 测试模式)
+- **Edit**: `ralph/prd.json` (US-038 → passes:true)
+- **Edit**: `ralph/progress.txt` (本条目 + 新增 Codebase Patterns)
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → **exit 0** (clean)
+- `cd backend && ./node_modules/.bin/eslint src/quant/backtest/BayesianOptimizer.ts src/scripts/run-bayesian-opt.ts src/models/OptimizationRun.ts --ext .ts --quiet --fix` → **exit 0** (prettier auto-fixed)
+- `cd backend && npx ts-node --transpile-only tests/backtest/bayesian-optimizer.test.ts` → **161 ok / 0 fail** in ~830ms
+- **Regression**: grid-search-optimizer.test.ts (100 ok) + ashare-constraints.test.ts (64 ok) 全部仍通过
+- CLI smoke: `npx ts-node src/scripts/run-bayesian-opt.ts --help` → boots cleanly with full option list
+
+### Browser verification
+**N/A** — backend-only feature (CLI + DB pipeline + 数学模块，无 UI 表面)。
+
+### Learnings for future iterations
+
+**核心技术学习 — 数学算法的纯函数化**：
+- 自实现的数学算法（EI / RBF kernel / Cholesky / GP posterior）全部 `export function`，让单测可在 ms 级跑完 161 用例不走 DB。回想 US-029 LiquidityFactor 的 quantileAtSortedAsc + sampleStddev 抽出 export 模式，这次扩到 8 个 helper —— 复杂数学算法的 helper 不能塞进 class private method，否则单测无法精确断言（手算 Cholesky [[4,2],[2,3]] → [[2,0],[1,√2]] 这种关键回归测试只能 export 后才能写）。
+- **手算回归测试是数学正确性的金标准**：把已知公式的精确解写成 expectClose 测试（如 normalCDF(1.96)≈0.975 / Cholesky [[4,2],[2,3]] / EI std=0→0）。下次改 GP 实现时，回归测试就是保险栓。
+
+**复现性原则 — SeededRandom 替代 Math.random**：
+- US-038 deliberately **never** introduces Math.random into optimizer code。同 seed + 同 bounds + 同 runner → 100% identical 采样序列。这让：
+  - 单测可以断言"第 7 个采样点 x = 7.234"这种精确值，不需要 fuzzy "x ≈ 7"
+  - 回测可复算论文结果（人间无 Math.random）
+  - 失败追踪：用户报 "种子 999 跑出来奇怪结果"，开发者跑同 seed 立刻复现
+- Park-Miller LCG 周期 2^31-1 对贝叶斯优化 ~100 次采样完全够；不要为了"更高质量随机"换 Mersenne Twister （引入复杂度无收益）。
+- **下次任何需要"随机但可复现"的算法（蒙特卡洛 US-043 / 多策略组合采样 US-044 / 因子 walk-forward US-039）都用 SeededRandom**。
+
+**复用既有 API 而非重新实现**：
+- BayesianOptimizer **没有** 重新定义 BacktestRunner / OptimizationResultRecord / CompositeScoreWeights / computeCompositeScore / sortByCompositeScoreDesc / defaultBacktestRunner —— 全部 import 自 GridSearchOptimizer。理由：
+  - 让 caller 用同一段代码消费两种优化器输出（CLI 报告 / UI 表格 / WalkForward 嵌套）
+  - 让 sort + score 公式有单一事实源，加新维度（如 sortino）只在 GridSearchOptimizer 一处加
+  - 减少 750 LOC → ~600 LOC（节省 150 LOC pure code reuse）
+- **判据**：当新模块在概念上是"同类操作不同算法"时（两种 optimizer / 两种 sampler / 两种 scoring）— 拒绝平行写第二份 type / function，全部 import 共享。
+
+**Sequelize alter 兼容范式**：
+- 给已有表加新列（OptimizationRun.optimizer_type）必须有 `defaultValue='grid_search'` 让旧行迁移后自动归类，不需 backfill。新插行 (bayesian) 走 `optimizer_type: 'bayesian'`。`listRuns({ include_all_types: true })` 让"我所有调优历史"视图能跨两种优化器。
+- 改既有列类型（JSONB Record<string, any[]> → Record<string, any>）是**类型扩窄而非扩宽**，向下兼容（之前的数组值是 any 的子集）。下次类似改动先确认是 extends 不是 narrows。
+
+**GP 数学的"失败点不进训练集"约束**：
+- NaN 进入 K 矩阵会让 Cholesky 抛"非正定"错；让一次 sync 失败的 iter 污染后续所有 EI 选点是灾难。所以 BayesianOptimizer 显式：(1) try/catch per iter; (2) 失败时 status='failed' + error_message 写入 results 数组但 (3) 不 push 到 observations。下次任何"数据驱动的 acquisition function"（Thompson sampling / GP-UCB / NSGA-II crossover）都要复用此 guard。
+
+**EI candidate 网格的维度退化**：
+- 用户传 5 维 bounds 时全 cartesian (gridSize^5 = 64^5 ≈ 10^9 内存爆炸)。BayesianOptimizer 在 D ≥ 4 时退化为 random sampling min(50_000, gridSize × D × 4)。**新算法引入时务必显式做维度复杂度分析**，写在 jsdoc 顶部和 CLAUDE.md，让用户知道"我能跑多少维"。
+
+### Codebase Patterns added (to consolidated section at top)
+- **共享 model 表 + 新 discriminator 字段范式** (US-037 + US-038): 当两个相关模块（grid vs bayesian / 同步 vs 异步 / regime A vs regime B）应该共享同一组 DB 表时，加一个 STRING(20) discriminator 字段（如 `optimizer_type`）+ defaultValue 让旧行自动归类，避免新增平行表。listXxx() 默认 filter by discriminator，但提供 `include_all_types=true` 让"全部历史"视图能跨类型。Sequelize alter 自动加列零迁移成本。
+- **SeededRandom 替代 Math.random**: 所有需要"随机但可复现"的算法（贝叶斯优化 / 蒙特卡洛 / Walk-forward 子集采样 / 多策略权重扰动）都用 `SeededRandom` (Park-Miller LCG)。**永不引入 `Math.random`** 到任何 backtest / optimizer / 评估代码——会让测试 / 论文复现 / 用户报错追踪都失败。
+- **数学算法 export function 全开放**: 像 BayesianOptimizer 的 normalCDF / rbfKernel / choleskyDecompose / gaussianProcessPosterior / expectedImprovement / pickNextByEI 这些数学 helper 全部 `export function`，让单测能在 ms 级跑过 100+ 数学边界。**手算关键回归测试是金标准**：写 expectClose(normalCDF(1.96), 0.975) / Cholesky [[4,2],[2,3]] → [[2,0],[1,√2]] / EI std=0 → 0 这种已知答案，下次改实现就有保险栓。
+- **失败点不进训练集 (US-038)**: GP / Bayesian / 其他"数据驱动的 acquisition function" 模块必须 try/catch per iter + 失败时记 status='failed' 但不 push 到 GP observations。NaN 进入 K 矩阵会让 Cholesky 抛"非正定"错，污染整轮采样。
+- **维度复杂度退化策略 (US-038)**: D ≤ 3 cartesian (gridSize^D); D ≥ 4 退化为随机采样 min(N_max, gridSize × D × 4)。任何"对每维做全展开"的算法都要在 jsdoc 顶部 + CLAUDE.md 写显式维度上限，让用户知道何时切退化路径。
+- **复用既有 API 而非平行写**: 第二种"同类操作不同算法"模块（如 US-038 第二种 optimizer）必须 import 共享 API (BacktestRunner / OptimizationResultRecord / sortByCompositeScoreDesc / computeCompositeScore) 而非平行定义 type / function。判据：新模块在概念上是"换算法保接口"时拒绝重复实现，保单一事实源。
+---
