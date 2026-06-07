@@ -33,15 +33,16 @@ evaluate 模型表达不出。
 - 入参：交易日 + 可选 `{ params?, previousSelection? }`
 - 出参：`{ target_portfolio, signals: BUY/SELL/HOLD[], filtered, params, ... }`
 
-典型例子（截至 US-020 共 5 个）：
+典型例子（截至 US-021 共 6 个）：
 - `MultiFactorAlphaStrategy`（多因子 alpha 月度轮动）
 - `DragonHeadMomentumStrategy`（短线龙头战法 — 事件驱动每日）
 - `EarningsSurpriseStrategy`（业绩预告超预期 + 北向加仓双确认 — 事件驱动）
 - `NorthboundFollowStrategy`（北向资金大幅加仓跟随 — 中线每日扫描全市场）
 - `CTA100MomentumStrategy`（中证 1000 动量 — 指数受限 universe + 月度调仓）
+- `SectorRotationLeaderStrategy`（行业龙头轮动 — 两阶段强势行业内挑龙头）
 
-后续 story 中其他组合级策略：US-021 SectorRotationLeaderStrategy、
-US-022 HighDividendValueStrategy、US-028 EnsembleStrategy 等。
+后续 story 中其他组合级策略：US-022 HighDividendValueStrategy、
+US-028 EnsembleStrategy 等。
 
 ## 组合级策略的设计约定（US-011 制定）
 
@@ -266,3 +267,75 @@ loadStockMeta(stockCodes): Promise<Map<...>>
 不是全市场）；(2) 让 CTA100 在 factor_scores 表还没回填的历史窗口里也能跑，
 便于回测验证。如果未来要做"指数内多因子"，应当在 FactorPipeline 里加
 `universe='000852'` 参数让 z_score 按指数内截面算，而不是强行复用全市场 z。
+
+## 两阶段筛选 — 行业 × 行业内龙头（US-021 SectorRotationLeaderStrategy）
+
+**第 4 种 universe 形态**：先筛"行业组"再筛"行业内成员"，两层结构都是
+"取 top N"。与"全市场扫描"/"事件驱动"/"指数受限"的差异：单源数据
+（IndustryFlow + Stock + DailyBar）能完成"行业排名 → 行业内排名"两次
+打分；不需要 forecast 触发，也不依赖固定的 index 成份集合。
+
+DataSource 接口的 3 个 loader 体现"两阶段一份数据"的原则：
+
+```ts
+loadIndustryRanking(asOfDate, lookbackDays): Promise<Array<{industry_name, cumulative_inflow}>>
+loadIndustryConstituentMetrics(asOfDate, industryNames): Promise<Map<industry, StockMetric[]>>
+loadDailyClose(asOfDate, stockCodes): Promise<Map<stock_code, close>>
+```
+
+**关键约定**：
+
+- **DataSource 返回"全集 + 已排序"，不在数据层做 top-N slice**。
+  `loadIndustryRanking` 返回 *全部* 有 cumulative_inflow 的行业（按降序），
+  让 caller 自己 `slice(0, topIndustries)` 用作 entry 入选 + `slice(0, exitIndustryTopN)`
+  用作 exit 容忍域，**同份数据双用**。这与 US-019 NorthboundFollow 的"同源数据
+  在 entry + exit 复用"原则一致——避免多个查询查同样的东西。
+
+- **`loadIndustryConstituentMetrics` 的 list 已按 change_pct 降序排好**。
+  避免策略层在每个行业 entry / 每只 currentPosition exit 内反复对几十个成份股
+  re-sort（生产环境 86 个行业 × 平均 50 成份股 = 4300+ rows，每次扫描重排
+  开销不必要）。把 sort 沉到 DataSource 让生产 SQL 也可以用 ORDER BY 优化。
+
+- **持仓必须携带 `entry_industry` 字段**。因为 exit 阶段 "我的行业排名第几"
+  / "我在我的行业内排名第几" 都依赖 *进场时* 的行业归属。Stock.industry 字段
+  极少变动但理论可能调整；以 entry_industry 为准而非每日查 Stock.industry，
+  是"以进场时的判断为准"原则。同 CTA100 的 `entry_index_snapshot_date`
+  设计动机一致。
+
+- **entry vs exit 阈值有意宽窄差**。entry topIndustries=10 / exitIndustryTopN=15
+  让行业排名小幅震荡（11→13）不立即赶人；entry stocksPerIndustry=2 /
+  exitStockTopN=5 同理给个股短期回调容错。**约 50% 宽度差** 是经验值，
+  实测过窄会"上车下车太勤"换手率爆炸，过宽会"该止损没止损"持仓质量下滑。
+
+- **implicit cap = topIndustries × stocksPerIndustry**。AC 没给独立的
+  `maxPositions` 参数（NorthboundFollow / DragonHead 有），因为两阶段
+  selection 天然封顶。HOLD 占满后新 BUY = 0，与 NorthboundFollow 的
+  remainingSlots = maxPositions - kept.length 行为模式一致。
+
+**4 种 universe 形态对比表**：
+
+| 维度 | 全市场 (MultiFactor) | 事件驱动 (EarningsSurprise) | 指数受限 (CTA100) | 两阶段 (SectorRotation) |
+|------|--------------------|----------------------------|------------------|----------------------|
+| Universe 来源 | factor_scores 全集 | 当日 forecast 公告 | (asOfDate, indexCode) 成份 | 行业 ranking × 行业成份 |
+| Universe 大小 | ~5000 | 0-50 | 100-1000 | ~10 行业 × 50 成份 = 500 |
+| 更新频率 | 每日 | 报告期密集时段 | 季度（月度感知 OK） | 每日（IndustryFlow） |
+| eligible=0 含义 | 数据问题 | 当日无事件（正常） | sync 没跑（异常） | IndustryFlow 当日缺失（异常） |
+| Position schema | string[] | EarningsSurprisePosition | string[] | SectorRotationPosition (entry_industry) |
+| Cap 形态 | maxPositions 显式 | maxPositions 显式 | topN 显式 | topIndustries × stocksPerIndustry 隐式 |
+
+**5 日累计 main_inflow 的设计哲学**：
+单日资金流噪音大（一天 main_inflow 受当日大单买卖、龙虎榜异常资金影响），
+所以入场看"连续 5 个交易日累计"而非单日；这与 NorthboundFollow 看"5 日累计
+hold_ratio 变化"是同一思路。DataSource 内部用 `Set(allDates).sort().slice(-lookbackDays)`
+拿最近 N 个 distinct trade_date，对周末 / 节假日 gap 自动鲁棒；不要按日历日
+窗口 `now - N` 计算否则会把周末/假日空 N 天放进去。
+
+**写新两阶段策略的 checklist**：
+1. Position schema 包含 `entry_<dimension>`（entry_industry / entry_sector_id / ...）记录
+   选股时的分类归属，exit 阶段以该字段为准查"我的分组是否还在"。
+2. DataSource 第一个 loader 返回 *全集排序后*，让 caller slice 两次（entry topN /
+   exit toleranceN）共用一份数据。
+3. DataSource 第二个 loader 接受第一个的输出（分组名集合），返回
+   `Map<group_name, members[]>`，members 已排序便于 caller slice。
+4. entry vs exit 阈值留 30%-50% 宽度差，避免短期震荡过度交易。
+5. implicit cap = group_count × per_group_count，无需独立 maxPositions 参数。
