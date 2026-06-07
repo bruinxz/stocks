@@ -88,6 +88,7 @@
 - **isSTName 抽取完成 (US-025 同步重构)**: US-024 时已是第 9 处实现，US-025 之前抽取到 `backend/src/utils/stNameUtils.ts` 共享模块。10 个调用方 (9 个 strategy + AShareConstraintEngine) 改为 `import { isSTName } from '../../utils/stNameUtils'; export { isSTName };` —— 保留 re-export shim 让既有 10 处 test 的 `import { isSTName } from '../../src/quant/strategies/<Name>'` 仍可用，无须同步修改 test 文件。改判定逻辑只改共享模块。**下次再加新策略只需 `import` from 共享模块，**不要再 copy/paste**。
 - **游资接力 — 多日累计 + 反向数据信号 exit (US-025 GameTraderRelayStrategy)**: 第 10 个组合级策略，与 DragonHead 互补 (DragonHead 抓涨停板内梯队龙头 / GameTraderRelay 抓涨停板外游资暗中建仓)。3 个新模式：(1) **多日累计 + 接力天数双门槛**：入场不止要 `accumulated_net_buy > 5000 万`，还要 `relay_day_count >= min(2, lookbackDays)` —— 单日大单不算接力，必须 ≥2 个 distinct trade_date 都有 famous_yz 净买入 > 0 才入选，过滤"孤胆英雄"信号。(2) **反向数据信号 D 类作为 exit**：与 US-019 NorthboundFollow 的"北向减仓 SELL"并列，构成"硬约束 > 反向数据信号 > 技术信号"3 大 exit 信号系列。**跟随类 / 接力类策略必须有反向数据信号 exit**，否则退化为被动持有失去 alpha。(3) **严格边界条件 vs ≥ fuzzy floor 判据**：硬数字阈值 (5000 万 / 5% / 市值范围) 用严格 > (entry 要明确达到，消除 boundary 噪音)，止损 + 次日大跌用 ≤ (止损要敏感)；fuzzy floor 类阈值 (北向 0.5pp 业务定义) 用 ≥ 包含边界。**写新短线策略前确认你的入场阈值是 hard cutoff 还是 fuzzy floor**。完整 8 种 universe 对比表在 `backend/src/quant/strategies/CLAUDE.md`。
 - **左侧反转 — 超跌反弹 + RSI 上穿 + sell_half 落袋 (US-026 LeftSideReversalStrategy)**: 第 11 个组合级策略，与 BreakoutStrategy (US-023) 完全镜像——Breakout 抓 60 日新高做趋势延续，本策略抓 20 日大跌做反转。**5 维 AND 入场** (跌幅 + 反弹 + 主力净流入 + RSI 上穿 + 流通市值) 是目前组合级策略中**入场维度最多**的；fail_xxx 计数器达 11 个。**4 种边界 strict 类型共存**: 业务语言"跌幅 ≥ 30%"用 ≤ -threshold 包含边界 (业务为准)；"反弹 > 5%"/"市值 > 50 亿"/"净流入 > 0" 用严格 > (消除 boundary 噪音)；"止损 ≤ -7%"/"持有 ≥ 15 天" 用 ≤ / ≥ (保护性出场即刻触发)；"RSI 上穿 25" 用 yesterday < AND today ≥ (双边严格)。**判据**：jsdoc 必须列清每个阈值的边界处理 + 每个 boundary 都加测试。**入场排序 drop_pct ASC** (跌得最惨在前) 与 BreakoutStrategy volume_ratio DESC (放量最猛) 完全镜像——反转策略 mean-reversion thesis vs 趋势策略 momentum thesis，**不能混用**。**sell_half 与 DragonHead 语义差异**: DragonHead = 次日开盘高开 ≥5% (动量延续兑现)，LeftSideReversal = 5 日内 max(close)/entry > 15% (反弹落袋防回中继再跌)。**jsdoc + reason 必须明示语义关键词** ("高开"/"落袋")，让审计日志能区分两策略的减半事件。**`half_exited` 标记的 3 个处理点**: exit 阶段判 (`!pos.half_exited && holdingDays >= 1`)、kept 阶段用 spread 不 mutate (`kept.push({...pos, half_exited: true})`)、进场首日排除 (`holdingDays >= 1` 否则 max() = entry_price)。**RSI 用上穿不用单点 < 阈值**——单点值会卡在超卖区漂移多日产生重复信号，上穿排除持续低位无趋势的票。**DataSource minBarCount 由策略层精确计算并透传**: `minBarsForEntry = max(dropLookbackDays+1, rsiPeriod+2)` —— RSI 上穿要算 yesterday+today 两个 RSI，每个需 period+1 close, 共 period+2 bar。**反转策略市值门槛比趋势更严格**——50 亿过滤掉超跌小盘股 (流动性陷阱 / 退市风险假反弹)；趋势策略选 60 日新高天然偏中大盘，市值门槛影响小。完整 9 种 universe 对比表在 `backend/src/quant/strategies/CLAUDE.md`。
+- **行业联动 — 涨停龙头触发 + 题材外溢 + C 类涨停止盈 (US-027 LinkageStrategy)**: 第 12 个组合级策略，与 SectorRotationLeader 完全**镜像**——SectorRotation 在强势行业里选龙头（已涨幅在前），LinkageStrategy 在有涨停龙头的行业里选**非龙头未启动联动股**（未来涨幅靠 catch-up）。两策略合起来覆盖同行业的多空策略对。**第 10 种 universe 形态 — 行业题材联动**：与 DragonHead / GameTraderRelay / SectorRotationLeader 共享"行业 / 涨停 / 短线"关键词，但触发逻辑完全不同（详见 strategies/CLAUDE.md 4 维对比表）。**5 维 AND 入场（与 LeftSideReversal 并列最多）**: 候选股所属行业当日有涨幅 > 9% 涨停龙头 + 候选股昨日涨幅 < 5% + 候选股流通市值 < 龙头流通市值 + 候选股今日开盘高开 < 3% + 非 ST。**"C 类涨停止盈"是 LinkageStrategy 引入的新出场范式**：与既有"持有期 / 止损 / 反向数据信号 / 技术信号" 4 大出场系列并列形成第 5 大系列。判定标志：策略目的是"等价格 hit 某事件后立即兑现"（涨停 / 跌停 / 业绩公告 → SELL），**不区分 holdingDays 即时触发**（当日 BUY 当日涨停 SELL 是完美兑现，不是误平，与 D 类严格 holdingDays >= 1 区分）。**DataSource 5 个 loader 是新最高记录** (DragonHead 5 / GameTraderRelay 4 / LeftSideReversal 4)：loadIndustryLimitUpStocks（触发源按行业归组）+ loadIndustryConstituents（**含 excludeLimitUpStocks: Set<string> 参数让 DataSource 层直接剔除涨停股**避免 service 重查涨停表 — "service 知道 X → 立即把 X 传给下一个需要 ¬X 的 loader" 是新模式）+ loadDailyQuotes（today + yesterday + day-before-yesterday 三日 close）+ loadLimitUpStocksOnDate（exit C 类单独 Set 接口不复用 entry 的 loadIndustryLimitUpStocks 因数据形状不同）。> 5 个 loader 是 smell — 下次到 6 个就反思能否复用 / 简化。**"龙头自己缺市值 → 候选保守剔除"是新过滤模式**：之前的策略都是"候选缺数据 → 剔除"，本策略增加"参照物缺数据 → 候选保守剔除"（fail_cap_not_below_leader）。适用于任何"相对值"判定（X 相对 Y）：cap vs leader / PE vs industry avg / vol vs historical。**同股归属多个热门行业要在 service 层 dedup**（罕见但需要 — Stock.industry 与 IndustryFlow.industry_name 来源不同 sync 难免空格不一致或重映射）：用 `seen: Set<string>` 在 5 维过滤 loop 顶部判定 + skip。**排序：leader_change DESC → cand_cap ASC → open_gap ASC → stock_code ASC** — 4 级稳定排序。leader_change DESC 跨行业选最强题材；cand_cap ASC 行业内挑弹性最大小盘（与 SectorRotation leader change DESC 选龙头镜像，本策略 cap ASC 选非龙头小盘 = 联动股定义）。**Position structured 必带 entry_industry + entry_leader_code**（debug 用 — 出场时关联当时题材）。**isSTName 共享模块第 11 个调用方**: 直接 `import` from `backend/src/utils/stNameUtils.ts` + re-export shim。完整 10 种 universe 对比表在 `backend/src/quant/strategies/CLAUDE.md`。
 
 ### Backtest engine — A 股执行约束 (US-014+)
 - **`AShareConstraintEngine` 是无状态纯模块** at `backend/src/quant/backtest/AShareConstraintEngine.ts`。三个方法：`evaluateOrder(ctx)` 返回 `{ok, reason?, detail?}` 决定能否成交（T+1 / 涨跌停 / 停牌 / ST 过滤 / 流动性门槛）；`computeFees(amount, side)` 返回 commission + stamp_tax + transfer_fee 三段费用 breakdown；`executionPrice(bar, side, timing)` 给三种 timing (next_open / same_close / twap_proxy) 的成交价并附动态滑点。引擎严格无 DB 访问、无状态字段、不修改输入参数——多策略并发跑零状态污染。
@@ -2756,3 +2757,74 @@ N/A — backend-only story (新策略 + DataSource + 测试，无 UI 变更)。
   4 种 strict 类型共存时, jsdoc 必须列清每个阈值的边界处理 + 测试每个 boundary
   用例都加 (LeftSideReversalStrategy.test.ts 有 6 个 boundary 测试用例)。
 
+
+---
+
+## 2026/06/07 - US-027
+
+### What was implemented
+**LinkageStrategy** — 第 12 个组合级策略（行业题材联动 / 涨停股外溢补涨）。
+- 入场 5 维 AND：候选股所属行业当日有涨幅 > 9% 的涨停龙头 + 候选股昨日涨幅 < 5% +
+  候选股流通市值 < 龙头流通市值 + 候选股今日开盘高开 < 3% + 非 ST。
+- 出场 4 类（A → D 优先级）：A 持有 ≥ 3 自然日, B 止损 -7%, **C 当日涨停止盈**
+  （联动已实现 — 不区分 holdingDays，本策略 unique 的止盈范式），D 持仓首日后次日大跌 -3%。
+- DataSource 5 个 loader（截至 US-027 最多）：loadIndustryLimitUpStocks +
+  loadIndustryConstituents（含 excludeLimitUpStocks 参数自动剔除涨停股）+
+  loadDailyQuotes（today + yesterday + day-before-yesterday）+ loadLimitUpStocksOnDate。
+- Position schema 必带 entry_industry + entry_leader_code（debug 用）。
+
+### Files changed
+- `backend/src/quant/strategies/LinkageStrategy.ts` (new, ~700 LOC 含生产 DataSource)
+- `backend/src/quant/engine/StrategyRegistry.ts` (+2 行：import + register)
+- `backend/src/quant/strategies/CLAUDE.md` (新增 US-027 章节 + 10 种 universe 对比表)
+- `backend/tests/strategies/LinkageStrategy.test.ts` (new, 48 测试用例 / 130+ 断言)
+- `ralph/prd.json` (US-027 → passes:true + 详细 notes)
+- `ralph/progress.txt` (本条目)
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → exit 0 (clean)
+- `cd backend && ./node_modules/.bin/eslint src/quant/strategies/LinkageStrategy.ts src/quant/engine/StrategyRegistry.ts --ext .ts --quiet --fix` → exit 0
+  (11 prettier auto-fixed; 0 errors after)
+- `cd backend && npx ts-node --transpile-only tests/strategies/LinkageStrategy.test.ts` → **all 48 pass**
+- Regression: 11 既有组合级 strategy 测试 (MFA/DragonHead/EarningsSurprise/NorthboundFollow/
+  CTA100/SectorRotation/HighDividend/Breakout/GARP/GameTraderRelay/LeftSideReversal) +
+  AShareConstraintEngine 集成测试 → 全部仍通过
+
+### Learnings for future iterations
+
+- **第 12 个组合级策略 — 现在 strategies/ 共 28 个策略**（17 个 per-stock + 12 个组合级 — 含本次新增）。
+- **"C 类涨停止盈"是 LinkageStrategy 独有的出场范式**：与既有"持有期 / 止损 / 反向数据信号 /
+  技术信号"4 大出场系列并列形成第 5 大系列。判定标志：策略目的是"等价格 hit 某事件后兑现"
+  （涨停 / 跌停 / 涨停板 / 业绩公告 → SELL），不区分 holdingDays 即时触发。未来 US-058 雪球
+  热词、US-064 业绩预告即时提醒等可参考此模式做"事件 trigger → 即时 take profit"。
+- **DataSource 5 个 loader 是新最高记录**（DragonHead 5, GameTraderRelay 4, LeftSideReversal 4）：
+  说明本策略数据需求最复杂（涨停股 + 行业成份股 + 双日行情 + exit 反向涨停 Set）。
+  写新策略时如果 loader 数 > 5 是个 smell —— 应该考虑 (1) 复用现有 loader 是否可行 / 
+  (2) 是否数据需求过度复杂可以简化。本策略 5 个 loader 是上限，下次到 6 个就反思。
+- **"龙头本身排除候选"必须由 DataSource 层完成**：
+  `loadIndustryConstituents(industries, excludeLimitUpStocks: Set<string>)` 这个签名
+  避免 service 重新查涨停表。**关键原则：service 知道 X (从 loadXxx 返回) → 立即把 X 传给
+  下一个需要 ¬X 的 loader**。同款"参数传递避免重复查询"原则适用 US-064 等场景。
+- **同股归属多个行业要在 service 层 dedup**（罕见但需要）：行业划分通常 1 对 1，但
+  Stock.industry 字段可能与 IndustryFlow.industry_name 来源不同 sync 导致同股出现在
+  两个行业的成份股列表。用 `seen: Set<string>` 在 service 5 维过滤 loop 顶部判定 + skip。
+  写过的人都知道一次卡这里调几小时。
+- **"龙头自己缺市值 → 候选剔除（保守）"是新的过滤模式**：
+  之前的策略都是"候选缺数据 → 剔除"，本策略增加了"参照物缺数据 → 候选保守剔除"。
+  适用于任何"相对值"判定（X 相对 Y, Y 是参照物）：cap relative to leader / 
+  PE relative to industry avg / vol relative to historical等。
+- **5 维 AND 入场目前与 LeftSideReversal 持平为最多入场维度**：
+  fail_xxx 计数器达 10 个 (限制比 LeftSideReversal 的 11 个少 1)。
+  > 5 维入场是 smell：每维过滤都让 eligible_count 指数收缩，且 ops 看 fail_xxx 难诊断。
+- **写"题材扩散 / 联动股"策略的 checklist** (已写入 strategies/CLAUDE.md US-027 节)：
+  (1) DataSource 至少 4-5 loader 不要为 DRY 合并不同形状数据
+  (2) 龙头/触发源本身排除候选用 excludeXxx 参数传递
+  (3) C 类止盈不区分 holdingDays（即时兑现）
+  (4) 同股归属多个 group 要 dedup
+  (5) Position structured 必带 entry_<dimension> 字段
+  (6) 5 维入场是上限
+  (7) 题材性短线 holding period 短（3 天强制平仓）
+- **isSTName 共享模块第 11 个调用方**: backend/src/utils/stNameUtils.ts 共享 + LinkageStrategy 
+  re-export shim. 既有 10 处全部受益于 US-025 重构。下次再有新策略也直接 `import` from 共享。
+
+---

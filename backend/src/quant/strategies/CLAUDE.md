@@ -1,6 +1,6 @@
 # Quant 策略层 (`backend/src/quant/strategies/`)
 
-A 股量化策略的实现集合。截至 US-011 共两类策略并存：
+A 股量化策略的实现集合。截至 US-027 共两类策略并存：
 
 ## 两种策略形态
 
@@ -33,7 +33,7 @@ evaluate 模型表达不出。
 - 入参：交易日 + 可选 `{ params?, previousSelection? }`
 - 出参：`{ target_portfolio, signals: BUY/SELL/HOLD[], filtered, params, ... }`
 
-典型例子（截至 US-026 共 11 个）：
+典型例子（截至 US-027 共 12 个）：
 - `MultiFactorAlphaStrategy`（多因子 alpha 月度轮动）
 - `DragonHeadMomentumStrategy`（短线龙头战法 — 事件驱动每日）
 - `EarningsSurpriseStrategy`（业绩预告超预期 + 北向加仓双确认 — 事件驱动）
@@ -45,6 +45,7 @@ evaluate 模型表达不出。
 - `GARPStrategy`（业绩稳定增长 GARP — 半年度调仓 + 4 维 AND 含 PEG）
 - `GameTraderRelayStrategy`（游资接力 — 多日累计 + 接力天数双门槛 + 反向数据信号 exit）
 - `LeftSideReversalStrategy`（左侧反转 — 5 维超跌反弹 + RSI 上穿 + sell_half 落袋）
+- `LinkageStrategy`（行业联动 — 涨停龙头触发 + 同行业未启动联动股 + 涨停止盈 exit）
 
 后续 story 中其他组合级策略：US-028 EnsembleStrategy 等。
 
@@ -818,6 +819,99 @@ max(21, 32) = 32 — DataSource 的最小 bar 数需求由策略层精确计算�
    Stage 0 提前过滤（已实现）减少 Stage 1 的内存压力。
 7. **市值门槛对反转策略尤其重要**：超跌小盘股可能因流动性陷阱 / 退市风险（如 US-074 退市预警）
    导致"反弹"假信号；强制 > 50 亿（AC 默认）规避此风险。
+
+## 行业联动 — 涨停龙头触发 + 题材外溢（US-027 LinkageStrategy）
+
+第 12 个组合级策略，与 DragonHead / GameTraderRelay / SectorRotationLeader 共享"行业 / 涨停 / 短线"
+关键词但触发逻辑完全不同：
+
+| 策略 | 触发源 | 候选池 |
+|------|--------|---------|
+| DragonHeadMomentum | 当日涨停 + 连板梯队 | **涨停股本身（一二三连板）** |
+| SectorRotationLeader | 行业 5 日累计 main_inflow top N | 强势行业内龙头股 |
+| LinkageStrategy | **行业内有涨停龙头（涨幅 > 9%）** | **同行业 ≠ 涨停股 ≠ 龙头本身**（联动滞涨股） |
+| GameTraderRelay | famous_yz 累计买入门槛 | 龙虎榜出现的票 |
+
+**关键概念**：题材扩散 / 资金外溢 — 行业龙头涨停后，剩余资金会去同行业未启动股找
+"补涨"机会。本策略抓的就是这种"昨天未涨 + 今天未启动 + 行业刚被点燃"的票。
+
+**第 10 种 universe 形态 — 行业题材联动**：与 SectorRotationLeader 的"两阶段选股"
+（强势行业 → 内挑龙头）镜像 — 后者选"已启动龙头"，本策略选"未启动联动股"。
+两者用的都是 LimitUpStock + Stock 表，但完全相反的入选条件构成同行业完整的多空策略对。
+
+**5 维 AND 入场（目前共享 LeftSideReversal 的"最多"称号）**：
+1. 行业内有股票涨停 且 涨幅 > 9% （leaderMinChangePct）— 题材点燃确认
+2. 候选股昨日涨幅 < 5% （candidateMaxYesterdayChangePct）— "未启动"标的
+3. 候选股流通市值 < 龙头流通市值 — "联动股 = 体量小于龙头的同行业股"
+4. 候选股今日开盘高开 < 3% （candidateMaxOpenGapPct）— 避开抢筹标的
+5. 非 ST
+
+**4 类出场（按 A→D 优先级）**：
+- A. 持有 ≥ 3 自然日（holdingDaysLimit）→ SELL 全部
+- B. pnl ≤ -7%（stopLossPct）→ SELL 止损
+- C. **当日 hit 涨停 → SELL 止盈**（联动已实现！这是本策略 unique 的"止盈"信号 — DragonHead
+  和其他短线策略没有这条，因 DragonHead 本身就建仓涨停股）
+- D. 持仓首日后，change_pct ≤ -3%（exitNextDayDropPct）→ SELL 次日大跌
+
+**关键设计决策**：
+
+1. **5 个 loader DataSource**（最多的策略，vs DragonHead 5 / GameTraderRelay 4）—
+   `loadIndustryLimitUpStocks` + `loadIndustryConstituents` 必须分开（前者是
+   触发信号，后者是候选池，数据形状不同）；`loadDailyQuotes` 同时返回 today + yesterday
+   （5 维入场需要 today open/close + yesterday change 双日）；
+   `loadLimitUpStocksOnDate` 给 exit C 类涨停止盈用，单独的 Set 接口，
+   不要复用 entry 的 `loadIndustryLimitUpStocks`（数据形状不同）。
+
+2. **龙头本身排除候选**：`loadIndustryConstituents` 接收 `excludeLimitUpStocks: Set<string>`
+   —— DataSource 层负责把当日涨停股从候选池里剔除，避免 service 重新查涨停表
+   （`loadIndustryLimitUpStocks` 调用方已知所有涨停股代码）。
+
+3. **同股归属多个热门行业要 dedup**（罕见但需要）：实现层用 `seen: Set<string>` 防重复，
+   边缘情况但写过的人都知道一次卡这里调几小时。
+
+4. **龙头自己缺市值 → 候选剔除（保守）**：无法判定"小于龙头"则不放过，
+   `fail_cap_not_below_leader` 计数加 1。
+
+5. **排序：leader_change DESC → cand_cap ASC → open_gap ASC → stock_code ASC**
+   — 4 级稳定排序。leader_change DESC：跨行业选最强题材；cand_cap ASC：行业内挑
+   弹性最大的小盘（与 SectorRotation 镜像，后者按 leader change DESC，这里按
+   candidate cap ASC 因为我们要的是非龙头股）；open_gap ASC：高开越小越好（抢筹少）。
+
+6. **C 类涨停止盈触发不区分 holdingDays**（即使进场首日也能触发）：因为联动
+   策略的核心目标就是"等联动到涨停立刻兑现"，如果当天 BUY 当天涨停立刻 SELL
+   不属于"误平"而是"完美兑现"。这与 D 类（次日大跌）严格要求 holdingDays ≥ 1 不同。
+
+7. **同 isSTName 共享模块 + naturalDaysBetween 同款**：US-025 抽取后第 11 个调用方，
+   直接 `import { isSTName } from '../../utils/stNameUtils'` + re-export shim。
+
+### 10 种 universe + 题材联动对比表（截至 US-027）
+
+| 维度 | MFA | EarningsSurprise | CTA100 | SectorRotation | HighDividend | Breakout | GARP | GameTraderRelay | LeftSideReversal | **Linkage** |
+|------|-----|------------------|--------|----------------|--------------|----------|------|----------------|------------------|----------|
+| 触发频率 | 月度 | 每日（稀疏）| 月度 | 每日 | 季度（gate）| 每日 | 半年度（gate）| 每日（短线）| 每日（短中线）| **每日（短线）** |
+| 入场维度 | 8 因子 | 业绩+北向 | 60-5 mom | 行业+个股 | 4维 | 4维 | 4维 | 4维 | 5 维 | **5 维（含独特"行业有涨停龙头"维）** |
+| 入场方向 | 横截面 | 事件 | 动量 | 行业内 | 长线 | 趋势延续 | GARP | 接力 | 趋势反转 | **题材扩散** |
+| 入场触发源 | factor_scores | EarningsForecast | DailyBar | IndustryFlow | DividendHistory | DailyBar | FinancialReport | DragonTigerBoard | DailyBar + MoneyFlow | **LimitUpStock + Stock** |
+| Position schema | string[] | ESPosition | string[] | SRPosition | string[] | BreakoutPosition | string[] | GTRPosition | LSRPosition（half_exited!）| **LinkagePosition（entry_industry+entry_leader_code）** |
+| 止损 | 无 | -10% | 无 | 无 | 无 | -15% | 无 | -7% | -7% | **-7%** |
+| **独特止盈**| 无 | 无 | 无 | 无 | 无 | 无 | 无 | 无 | sell_half rapid_gain | **C 类：当日涨停 SELL！**  |
+| 软出场 | 无 | 无 | 无 | 行业掉出 top | 无 | 跌破 MA20 | 无 | 接力中断 | sell_half | **D 类：次日大跌 -3%** |
+| 候选池规模 | 全市场 | 公告稀疏 | 1000 内 | 行业 × 龙头 | 全市场 | 全市场 | 全市场 | 龙虎榜 | 全市场 | **同行业去涨停股**  |
+| 排序方向 | composite DESC | profit_change DESC | momentum DESC | inflow DESC | dividend DESC | volume_ratio DESC | yoy DESC | acc_net_buy DESC | drop ASC | **leader_change DESC → cap ASC** |
+| holding period | 30 天 | 60 天 | 30 天 | 10-30 天 | 90+ 天 | 10-60 天 | 180+ 天 | 3 天 | 5-15 天 | **3 天（最短之一）** |
+
+**写新"题材扩散 / 联动股"策略的 checklist**：
+1. **DataSource 至少 4-5 个 loader**：触发源（涨停 / 资金 / 公告）+ 候选池 + 量化指标 + exit 反向信号 —
+   不要为 DRY 合并，每个 loader 数据形状不同硬合并会产生 union type 噩梦。
+2. **龙头本身必须排除候选**（已涨停 → 无法买入）：用 `excludeLimitUpStocks: Set<string>`
+   参数在 DataSource 层完成，避免 service 再查一次涨停表。
+3. **C 类止盈不区分 holdingDays**：联动策略目标就是"兑现题材扩散"，当日涨停立刻
+   SELL 不算误平。与 D 类（次日大跌）严格 `holdingDays >= 1` 区分。
+4. **同股归属多个热门行业要 dedup**（罕见但代码必须写）：`seen: Set<string>`。
+5. **Position structured schema 必带 entry_industry**（debug 用 — 出场时关联当时的题材）。
+6. **5 维入场目前是上限**（与 LeftSideReversal 持平）；> 5 维 fail_xxx 计数器太多
+   ops 难诊断，且每维过滤都增加候选剔除概率，eligible_count 会指数收缩。
+7. **3 自然日强制平仓**：联动是题材性短线，3 天后题材热度通常已散，不要恋战。
 
 
 
