@@ -55,6 +55,7 @@ import { ShareholderCount } from '../models/ShareholderCount';
 import { OptimizationRun } from '../models/OptimizationRun';
 import { OptimizationResult } from '../models/OptimizationResult';
 import { WalkForwardResult } from '../models/WalkForwardResult';
+import { RegimeBacktestResult } from '../models/RegimeBacktestResult';
 import { LiveBrokerAccount } from '../models/LiveBrokerAccount';
 import { LiveAccountSnapshot } from '../models/LiveAccountSnapshot';
 import { LivePosition } from '../models/LivePosition';
@@ -139,6 +140,7 @@ const sequelize = new Sequelize({
     OptimizationRun,
     OptimizationResult,
     WalkForwardResult,
+    RegimeBacktestResult,
     LiveBrokerAccount,
     LiveAccountSnapshot,
     LivePosition,

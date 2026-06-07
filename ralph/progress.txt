@@ -127,6 +127,12 @@
 - **best_result_id 跨 optimizer_type 语义差异 (US-039)**: 同一字段在不同 optimizer_type 下指向不同表（grid/bayesian → OptimizationResult.id, walk_forward → WalkForwardResult.id —— 后者的"冠军"是单个窗口而非单个 combo）。**消费方按 optimizer_type switch 解释 best_result_id**，写到 jsdoc + CLAUDE.md。未来 US-016 跨类型 UI 必须先分支。这是"共享父表 + 子表语义不同"模式的代价；好处是不需要单独再起一张 walk_forward_runs 表（UI 视图、状态机、cleanup 工具都能复用）。
 - **isoDateAddMonths 月末 clamp 的标准实现 (US-039)**: 任何月度滚动算法（quarterly rebalance / annual review / walk-forward window）的 addMonths 必须 clamp day 到新月 daysInMonth：`new Date(Date.UTC(year, month, 0)).getUTCDate()` 是最简单 robust 写法（month 1-indexed，传 0 day 返回上月最后一天，因 JS Date 月份是 0-indexed）。手算 6 个边界测试是回归保险栓：1-31→闰年 2-29 / 1-31→平年 2-28 / 12-15→1-15 跨年 / 1-15→4-15 普通 +3 月 / 2-15→1-15 -1 月 / -12 月跨年。下次任何月份算法变更先跑这 6 个。
 - **out_of_sample_decay 是 walk-forward 唯一价值输出 (US-039)**: `aggregateWindowMetrics()` 的 `out_of_sample_decay = mean(train_sharpe - test_sharpe)`。>0 表示过拟合（in-sample 高 out-of-sample 低），>1 严重，>2 灾难。**做 walk-forward 的目的就是看这个指标**，不是看 mean_test_sharpe；否则不如直接跑 GridSearch 省 50% 时间。下游产出 walk-forward 报告时必须把 decay 标在最显眼位置（红色高亮 > 0），UI dashboard 同款。
+- **事后分析 vs 优化任务 — 不复用 OptimizationRun 父表的判据 (US-040)**: 数据建模的"何时新表 vs 何时共享"原则。判据：**"这是一个 'task'（有 status 状态机：pending → running → completed/failed）还是一个 'snapshot'（对已完成任务的派生统计）？"** Task 走 OptimizationRun 共享父表（US-037/038/039 都是 task）；snapshot 直接通过 FK 引用源 task 的 id（US-040 RegimeSegmentedBacktest 直接 `run_id` 引用 QuantBacktestResult.id）。盲目新建第 N+1 张 run 表会让 UI 视图 / 状态机 / cleanup 工具被迫支持 N 种不同 schema；盲目复用又会把"事后分析"硬塞进 status='completed' 的 task 行污染状态机。下次 US-041 IC report / US-042 correlation / US-043 monte-carlo / US-045 benchmark attribution 都属"对已完成 backtest 做派生统计"，**全部直接引用源 id 不新建 run 表**。
+- **跨模块反向依赖避免：独立实现 vs import (US-040 RegimeSegmentedBacktest 引入)**: quant/backtest/RegimeSegmentedBacktest 需要"raw → segment regime 4 分类映射"逻辑，但该逻辑首次实现在 quant/strategies/EnsembleStrategy.mapToEnsembleRegime。**不要 import** 即便完全一致 — 那会让 quant/backtest → quant/strategies 反向依赖。**独立实现 + jsdoc 标注 "语义 100% 镜像 EnsembleStrategy.mapToEnsembleRegime"** 让 reviewer 一眼看到双地点同步约束。同款规则适用 quant/backtest/maxDrawdownPctFromEquity 不 import quant/engine/QuantMath.maxDrawdownFromValues (虽然算法相同 — 用百分数返回 vs 小数返回还有细微差异)。**规则边界**: 共享的 utility (isSTName 自 US-025 起在 utils/stNameUtils.ts) 是 *根目录* 工具不属于某 layer，可以被多 layer import；layer-specific 实现 (strategy 的 mapToEnsembleRegime / engine 的 QuantMath) 不能跨 layer reach。
+- **RegimeSource 接口模式 = WalkForward EmbeddedOptimizer 的副本 (US-040)**: 任何"需要查外部状态 (DB / 网络 / 服务) 但又必须可测" 的模块都按此范式: (1) 定义 `interface XxxSource { resolveYyy(params): Promise<Result> }`; (2) 提供 `PRODUCTION_XXX_SOURCE` singleton 走真实数据源 *并自带 try/catch fallback 兜底*；(3) options.<xxx>_source 默认走 PRODUCTION_XXX_SOURCE; (4) 测试 makeFakeXxxSource(stamps: Record<key, value>) 让单测能给每个 key 指定确定的 return value。**关键约束**: PRODUCTION 实现必须自己兜底失败（不要让 single-day failure 阻塞 batch），因 caller 没办法在抽象 source 接口层加 try/catch（每个 source 可能有不同的"什么算失败 / 兜底值是什么"语义）。同款模式适用未来 US-041 IC report (factor return source) / US-043 monte-carlo (return distribution source) / US-046 industry attribution (sector code source)。
+- **per-stamp 串行 await 而非 Promise.all 的判据 (US-040)**: 对 200-500 个连续日逐日 resolveRegime 时用 `for...of await` 串行而非 `Promise.all`。3 个理由: (1) MarketEnvironmentService 有 15min 内存 cache (cacheKey 含 asOfDate)，并发 N 个不同 asOfDate 撞不到 cache 反而 N 倍 DB 查询; (2) 单测时 fake source 是同步 Map lookup，串行/并行无差异; (3) 串行天然保持输入顺序与输出顺序对齐 (后续 mergeAdjacentSegments 严格依赖 stamps[i] 按 date 升序)。**判据**: 上游有 cache / 顺序敏感 / 单次调用快 (< 100ms) 用串行; 上游真正独立 + 单次慢 (> 500ms) 用 parallel。下次 US-041 IC 计算每个 trade_date 取 forward return 也属"顺序敏感"走串行。
+- **trade 段归属以 sell_date 为准 (US-040 trade attribution 模式)**: 段内成交统计 (`segment.trade_count` / `win_rate`) 必须以 sell_date 落在段内为判定。3 个理由: (1) `pnl` 在 sell 时才确定，bull 段买入 + bear 段卖出的 trade，盈亏归属于 bear 段才对应"该段实际兑现"; (2) 未平仓 trade (sell_date 未定义) 不计入任何段 — 浮盈在 equity_curve 里已经反映，重复计算成 trade 会双计; (3) `entry_reason` 在 buy_date 已确定，但段归属看 sell_date 不看 entry_reason，避免"业绩超预期入场但行情转熊期卖出"被归错到入场逻辑所属 regime。**未来 US-046 IndustryAttributionService 同款判据**: 行业归因也以 sell_date 时的行业为准 (即使持有期间行业分类调整过)。
+- **JSONB equity_curve 读出时的 Number() 包装 (US-040)**: Sequelize JSONB 列即便 schema 说是 number，从 DB 读出来某些字段也可能被序列化成 string (DECIMAL 类经过 PostgreSQL 协议来回往往这样)。任何 `Number(point.total_value)` 包装是 belt-and-suspenders — 已存 number 时 Number() 是 no-op，已存 string 时正常解析。**规则**: 任何"JSONB 列里包数字" 的读出端 (equity_curve / drawdown_curve / metrics_json 里的数值) 都用 Number() 包装，不要相信 schema 类型。同样适用 US-014 rejected_orders_json 内 reference_price。
 
 
 
@@ -3968,4 +3974,184 @@ Built the **WalkForwardValidator** — the third member of the parameter-optimiz
 - best_result_id 跨 optimizer_type 语义差异
 - isoDateAddMonths 月末 clamp 标准实现
 - out_of_sample_decay 是 walk-forward 唯一价值输出
+---
+
+## 2026/06/07 - US-040
+
+### What was implemented
+
+US-040 — **回测体系：分段市场环境回测报告**：拿一次已完成回测的 equity_curve +
+trades，按市场环境（bull / bear / range / volatile）切成 N 个连续段，对每段独
+立算 收益 / 夏普 / 最大回撤 / 胜率 / 成交数。回答"这个策略到底在哪种行情下赚
+钱、在哪种行情下亏钱"这个 walk-forward 看不到的视角。
+
+**End-to-end pipeline**:
+
+1. **Sequelize 模型** `backend/src/models/RegimeBacktestResult.ts` — 字段：
+   id / **run_id** (引用 QuantBacktestResult.id) / segment_index / strategy_key /
+   benchmark_symbol / regime / start_date / end_date / day_count /
+   return_pct / sharpe / drawdown_pct / win_rate / trade_count /
+   equity_start / equity_end + 6 个 indexes (run_id, run_id+segment_index
+   unique, run_id+regime, strategy_key+regime, regime, start_date)。**strategy_key
+   + benchmark_symbol 物化** 让"multi_factor_alpha 在 bull regime 历次回测
+   的平均表现"跨 run 聚合查询不必 JOIN 父表。Registered in models/index.ts
+   + config/database.ts。
+2. **核心模块** `backend/src/quant/backtest/RegimeSegmentedBacktest.ts`
+   (~570 LOC) — `RegimeSegmentedBacktest` class with `segment(input, options?)`
+   主入口 + 4 个 admin (`getRunSegments` / `deleteRun` / `cleanupOlderThan`
+   / `listRecentRuns`)；**7 个 export 纯函数** (mapRawRegimeToSegmentRegime
+   / mergeAdjacentSegments / sampleStddev / mean / maxDrawdownPctFromEquity
+   / computeSegmentMetrics / aggregateRegimeSegments) 独立单测。
+3. **RegimeSource 接口注入** (与 WalkForward.EmbeddedOptimizer 对齐): 生产
+   `PRODUCTION_REGIME_SOURCE` 走 `marketEnvironmentService.getEnvironmentForStock(
+   benchmark, {as_of: <date>})` per-day 采样自带 try/catch 兜底 'range'；
+   测试注入 `makeFakeRegimeSource(stamps: Record<date, regime>)` 完全脱离
+   MarketEnvironmentService + DB。
+4. **CLI** `backend/src/scripts/run-regime-backtest.ts` (~200 LOC) 支持 5 模式：
+   主流程 `--backtest-result-id=<n>` (with `--benchmark` / `--no-persist` /
+   `--no-replace`) + 4 个 admin (`--list` / `--show=<n>` / `--delete-run=<n>`
+   / `--cleanup-days=<n>`)；退出码 0=成功 / 2=严重错误。npm script
+   `run:regime-backtest`。
+
+**核心算法**：equity_curve 每个 date → resolveRegime → DailyRegimeStamp →
+`mergeAdjacentSegments` (run-length encode) → per-segment equity slice +
+trades slice → `computeSegmentMetrics` → `aggregateRegimeSegments`。
+
+**关键设计决策**:
+
+1. **不复用 OptimizationRun 父表** — 与 US-037/US-038/US-039 不同，US-040 是
+   "对一次已完成 backtest 做事后分析"，不是优化任务，直接通过 run_id 引用
+   QuantBacktestResult.id 即可。引入第 4 张 run 表既无必要也违背"只有真正
+   不同 schema 才新表"原则。
+2. **4 种 regime 是单一事实源** — 与 EnsembleStrategy.EnsembleMarketRegime
+   完全一致 (bull/bear/range/volatile)；`mapRawRegimeToSegmentRegime` 独立
+   实现 (不 import 自 strategies/) 避免 quant/backtest → quant/strategies
+   反向依赖，但 jsdoc 明示语义 100% 镜像。
+3. **trade 关联以 sell_date 为准** — 段内成交统计反映"该段实际兑现的盈亏"。
+   入场跨段、出场在该段的 trade 也算入该段；未平仓 trade (sell_date 未定义)
+   不计入任何段。
+4. **sharpe 不足 5 个日收益时为 null** — 段太短无统计意义，写 null 让下游
+   aggregate avg_sharpe 自动过滤。
+5. **drawdown_pct 永远是正数** (与 WalkForwardResult / QuantBacktestResult
+   同口径，跨表 SUM/MAX 无需 ABS())。
+6. **`replace_existing=true` 默认覆盖式重算** — 同 run_id 已有 segments 时
+   先 destroy 避免历史段+新段混在一起；CLI `--no-replace` 关闭。
+7. **持久化 vs in-memory 模式并存** — `equity_curve+trades` 直接传 in-memory
+   跳过 DB round-trip (嵌入式调用/单测)，`quant_backtest_result_id` 走 DB
+   (CLI/UI)，同一 `segment()` 入口两种入参形态。
+8. **per-day 串行 await** (非 Promise.all) — 避免 MarketEnvironmentService
+   并发查 DB 撞 cache，且回测期间通常 200-500 个交易日单次跑可控。
+9. **`maxDrawdownPctFromEquity` 独立实现** (不 import QuantMath) — 避免
+   quant/backtest → quant/engine 反向依赖；返回百分数 (非小数)，与
+   RegimeBacktestResult 列单位一致。
+10. **strategy_key 缺失时退化为 'unknown' + warning** — 让 in-memory 模式
+    没强制传 strategy_key 仍能跑通，但 warning 提示跨 run 聚合查询将无效。
+
+### Files changed
+
+**Added**
+- `backend/src/models/RegimeBacktestResult.ts` (new)
+- `backend/src/quant/backtest/RegimeSegmentedBacktest.ts` (new)
+- `backend/src/scripts/run-regime-backtest.ts` (new)
+- `backend/tests/backtest/regime-segmented-backtest.test.ts` (new, 136 ok)
+
+**Modified**
+- `backend/src/models/index.ts` (+1 export)
+- `backend/src/config/database.ts` (+1 import + 1 model entry)
+- `backend/package.json` (+1 npm script `run:regime-backtest`)
+- `backend/src/quant/CLAUDE.md` (+'US-040: RegimeSegmentedBacktest' 一节)
+- `ralph/prd.json` (US-040 → passes:true + 详细 notes)
+
+### Quality checks
+
+- `cd backend && npx tsc --noEmit` → exit 0 (clean)
+- `cd backend && ./node_modules/.bin/eslint --quiet --fix src/models/RegimeBacktestResult.ts
+  src/quant/backtest/RegimeSegmentedBacktest.ts src/scripts/run-regime-backtest.ts
+  src/models/index.ts src/config/database.ts` → exit 0 (2 prettier auto-fixed in
+  the new modules)
+- `npx ts-node --transpile-only tests/backtest/regime-segmented-backtest.test.ts`
+  → **136 ok / 0 failed** (< 50ms)
+- **Regression** (与 US-040 无 schema 冲突)：
+  - `tests/backtest/walk-forward-validator.test.ts` → 141 ok
+  - `tests/backtest/grid-search-optimizer.test.ts` → 100 ok
+  - `tests/backtest/bayesian-optimizer.test.ts` → 161 ok
+  - `tests/backtest/ashare-constraints.test.ts` → all pass
+- CLI `--help` boots cleanly (含 5 modes 说明)
+
+### Browser verification
+
+**N/A** — backend-only feature；前端 US-016 策略实验室 "环境分段表现" tab
+尚未实现 (本 story 是数据 + 算法层)。CLI 端到端 smoke 因本地 DB 没有
+backtest results 跳过；生产 deployment 后 ops 可跑 `npm run run:regime-backtest
+-- --backtest-result-id=<id> --no-persist` 验证。
+
+### Learnings for future iterations
+
+- **事后分析 vs 优化任务 — 表结构判据 (US-040 关键模式)**: 数据建模的"何时
+  新表 vs 何时共享父表"原则。判据：**"这是一个 'task'（有 status 状态机：pending
+  → running → completed/failed）还是一个 'snapshot'（对已完成任务的派生统计）？"**
+  Task 走 OptimizationRun 共享父表；snapshot 直接通过 FK 引用源 task 的 id。
+  盲目新建第 N+1 张 run 表会让 UI 视图 / 状态机 / cleanup 工具被迫支持 N
+  种 schema；盲目复用又会让"事后分析"硬塞进 status='completed' 的 task 行
+  污染状态机。**未来 US-041 IC report / US-042 correlation / US-043 monte-carlo
+  / US-045 benchmark attribution 都是"对已完成 backtest 做派生统计"模式**，
+  全部直接引用源 id 不新建 run 表，本 story 是参考。
+- **跨模块反向依赖避免：独立实现 vs import (US-040)**: 即便算法完全一致，
+  quant/backtest 不 import 自 quant/strategies (会成反向依赖) / 不 import
+  自 quant/engine (反向依赖)。**独立实现 + jsdoc 标注"语义 100% 镜像 X 模块的 Y
+  函数"** 让 reviewer 一眼看到双地点同步约束。规则边界：根目录 utility
+  (utils/stNameUtils.ts 自 US-025 起) 可被多 layer import；layer-specific
+  实现 (strategies/mapToEnsembleRegime / engine/QuantMath) 不能跨 layer reach。
+- **RegimeSource 接口模式 = WalkForward EmbeddedOptimizer 的副本**: 任何
+  "需要查外部状态 (DB / 网络 / 服务) 但又必须可测" 的模块按此 4 步范式 ([1]
+  XxxSource 接口 + [2] PRODUCTION_XXX_SOURCE 自带兜底 + [3] options.xxx_source
+  默认 PRODUCTION + [4] fake source 通过 Record<key, value> 注入)。**PRODUCTION
+  实现必须自己兜底失败** — caller 没办法在抽象 source 接口层加 try/catch
+  （每个 source 可能有不同的"什么算失败 / 兜底值是什么"语义）。未来 US-041
+  IC report (factor return source) / US-043 monte-carlo (return distribution
+  source) / US-046 industry attribution (sector code source) 同款。
+- **per-stamp 串行 await 而非 Promise.all 的判据 (US-040)**: 对 200-500 个连
+  续日逐日 resolveRegime 时用 `for...of await` 串行而非 `Promise.all`。3
+  个理由: (a) MarketEnvironmentService 有 15min 内存 cache (cacheKey 含
+  asOfDate)，并发 N 个不同 asOfDate 撞不到 cache 反而 N 倍 DB 查询; (b)
+  单测时 fake source 是同步 Map lookup，串/并无差异; (c) 串行天然保持输入
+  顺序与输出顺序对齐 (mergeAdjacentSegments 严格依赖 stamps[i] 按 date 升
+  序)。**判据**: 上游有 cache / 顺序敏感 / 单次调用快 (< 100ms) 用串行；
+  上游真正独立 + 单次慢 (> 500ms) 用 parallel。
+- **trade 段归属以 sell_date 为准的 3 个理由 (US-040)**: (a) pnl 在 sell
+  时才确定，bull 段买入 + bear 段卖出的 trade，盈亏归属于 bear 段才对应
+  "该段实际兑现"; (b) 未平仓 trade (sell_date 未定义) 不计入任何段 — 浮盈
+  在 equity_curve 里已经反映，重复计算成 trade 会双计; (c) entry_reason 在
+  buy_date 已确定，但段归属看 sell_date 不看 entry_reason，避免"业绩超预期
+  入场但行情转熊期卖出"被归错到入场逻辑所属 regime。**未来 US-046 行业归
+  因同款判据** (行业归因也以 sell_date 时的行业为准)。
+- **JSONB equity_curve 读出时的 Number() 包装 (US-040)**: Sequelize JSONB
+  列即便 schema 是 number，从 DB 读出某些字段也可能被序列化成 string (DECIMAL
+  类经过 PostgreSQL 协议来回往往这样)。任何 `Number(point.total_value)` 包
+  装是 belt-and-suspenders — 已存 number 时 Number() 是 no-op，已存 string
+  时正常解析。**规则**: 任何"JSONB 列里包数字" 的读出端 (equity_curve /
+  drawdown_curve / metrics_json 里的数值) 都用 Number() 包装，不要相信
+  schema 类型。同样适用 US-014 rejected_orders_json 内 reference_price。
+- **`mergeAdjacentSegments` 失败模式覆盖 = 单测覆盖率的 6 维**: 空数组 / 单
+  天 / 全同 regime / 多 regime 全不同 / 同 regime 不相邻 (bull→bear→bull
+  三段不合并) / 4 regime 全出现。看似简单的 run-length encode 算法因"同 regime
+  不相邻"判定容易写错 (顺手写成 `if (regime in seen)` 而非 `if (regime ===
+  current)`) — 单测显式 5 个 stamps `bull bear bull` 断言 length=3 防止
+  退化合并。下次任何 run-length encode 算法测试照搬这 6 维。
+- **Sequelize raw query for distinct + group + max 的 escape hatch (US-040
+  `listRecentRuns`)**: ORM 不直接支持 "distinct 多列 + count(*) + max(date)
+  group by + order"。在不引入巨型 query-builder 依赖的前提下，本地化用
+  `sequelize.query(<SQL>, {replacements, type: 'SELECT'})`。**约束**: (a)
+  替换值用 `:limit` named replacement 而非字符串拼接防 injection; (b) 返
+  回 raw rows 自己 Number() / String() 包装类型 (Postgres 协议给的可能都
+  是 string); (c) SQL 注释里说明这是 ORM 不支持的特殊查询 — 让 reviewer
+  知道不是懒。下次 US-041 / US-042 需要类似 "list distinct (factor_name,
+  look_forward_days) 最近 N 个" 时可复用。
+- **136 个测试 < 50ms 的关键 = fake source + in-memory equity_curve fixture**:
+  全套测试不碰 DB 不碰 MarketEnvironmentService 不碰真实 RegimeBacktestResult
+  写库。`makeEquityCurve(startDate, count, startValue, growthPerDay)` fixture
+  避免在每个测试里手写 10 个 QuantEquityPoint 字面量；`growthPerDay=0.01`
+  让 sharpe 测试有充足日收益 (≥5 个)，`growthPerDay=0.001` 让短窗口测试
+  sharpe=null。**未来任何 backtest 派生模块的测试都按此结构**: fake source
+  + in-memory fixture + < 100ms 总耗时。
 ---

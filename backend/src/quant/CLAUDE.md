@@ -435,3 +435,79 @@ const out = await walkForwardValidator.validate(
   归基线，避免静默 off-by-one bug。
 
 
+
+## US-040: RegimeSegmentedBacktest — 分段市场环境回测报告
+
+`backend/src/quant/backtest/RegimeSegmentedBacktest.ts` 是事后分析工具：拿一次
+已完成的回测的 equity_curve + trades，按市场环境（bull / bear / range / volatile）
+切成 N 个连续段，对每段独立算 收益 / 夏普 / 最大回撤 / 胜率 / 成交数。回答"这个
+策略到底在哪种行情下赚钱、在哪种行情下亏钱"这个 walk-forward 看不到的视角。
+
+### 与 GridSearch / Bayesian / WalkForward 的关系
+
+|              | 优化任务（找最优参数）            | 事后分析（已完成 backtest）         |
+| ------------ | --------------------------------- | ----------------------------------- |
+| US-037 Grid  | ✅ in-sample 全网格               | ❌                                  |
+| US-038 Bayes | ✅ in-sample GP + EI              | ❌                                  |
+| US-039 WF    | ✅ in-sample → out-of-sample 滚动 | ❌                                  |
+| **US-040 Regime** | ❌                          | ✅ 按市场环境切片重算指标            |
+
+**所以 US-040 不复用 OptimizationRun 父表**：它不是"长时间参数搜索任务"，是对
+一次已 completed 的 QuantBacktestResult 做派生统计，直接通过 `run_id` 引用
+QuantBacktestResult.id 就够了，无需引入第 N+1 张 run 表 / 状态机。
+
+### Design constraints
+
+1. **段必须连续覆盖整个回测期间，不留空隙** — 每个 equity_curve point 必须落入
+   某段。run-length-encode 算法天然保证此性质，只要 caller 没在 equity_curve
+   里留空白日期就 OK；防御性 `equity.sort()` 处理乱序输入。
+2. **同 regime 的不相邻段视为两条独立记录** — bull → bear → bull → 三条记录，
+   而非合并成"bull 段总数 2"。前端图表 / 历史时间轴展示需要保留时间顺序。
+3. **RegimeSource 注入（与 WalkForward.EmbeddedOptimizer 对齐）** — 生产环境
+   走 `marketEnvironmentService.getEnvironmentForStock(benchmark, {as_of: <date>})`
+   逐日采样，测试注入 fake `RegimeSource` 完全脱离 MarketEnvironmentService
+   与 DB。**单日 regime 检测失败必须由 source 自己 try/catch 兜底为 `'range'`**
+   （`PRODUCTION_REGIME_SOURCE` 已实现），让单日失败不阻塞整个 run。
+4. **4 种 regime 是单一事实源** —  与 `EnsembleStrategy.EnsembleMarketRegime`
+   完全一致（bull / bear / range / volatile）。`mapRawRegimeToSegmentRegime`
+   独立实现（不 import 自 strategies/）避免反向依赖，但语义 100% 镜像；如果
+   未来策略层 ensemble 调整 regime 折叠规则，这里也要同步。
+5. **trade 关联以 `sell_date` 为准** — 段内成交统计应反映"该段实际兑现的盈亏"，
+   入场跨段、出场在该段的 trade 也算入该段。未平仓 trade（sell_date 未定义）
+   不计入任何段。这与 BacktestEngine 的 trade.pnl 计算口径一致。
+6. **`sharpe` 不足 5 个日收益时为 null** — 段太短没有统计意义；写 null 比写 0
+   清晰，下游聚合 `avg_sharpe_by_regime` 也会 `mean()` 自动过滤 null。
+7. **`drawdown_pct` 永远是正数** — 段内最大回撤的绝对值。与 WalkForwardResult /
+   QuantBacktestResult 同口径，保证跨表 SUM/MAX 聚合不需 ABS()。
+8. **`replace_existing=true` 默认覆盖式重算** — 同 `run_id` 已有 segments 时
+   先 `destroy`，避免历史段与新段混在一起。CLI `--no-replace` 可关闭。
+9. **`持久化` 与 `in-memory` 模式并存** — `equity_curve + trades` 直接传 in-memory
+   跳过 DB round-trip（适合嵌入式调用 / 单测）；`quant_backtest_result_id` 走
+   DB（CLI / UI 最常见入参）。两种入参形态同一 `segment()` 入口。
+
+### 何时扩展 RegimeSegmentedBacktest
+
+- **新 regime 维度**（如行业 regime / 板块 regime / 流动性 regime）—— 扩
+  `RegimeSource` 接口为 `RegimeSource & IndustryRegimeSource`，让一个段可以
+  按多维度切片，给前端类似"行业 × 市场" 4×4 矩阵展示。
+- **per-stock 分段 attribution** —— 当前是组合级（单一 equity_curve），未来
+  US-046 IndustryAttributionService 可能 join 本表把段拆到每只票贡献。
+- **更细粒度的 regime 切片** —— 当前是日级（每日采样），如果需要月度 / 周度
+  采样，调整 segment() 内部的 `for (const p of equity_curve)` 循环（采样间隔）。
+
+### 测试模式
+
+- `regime-segmented-backtest.test.ts` 136 ok / 0 failed —— 覆盖 7 个纯函数
+  （mapRawRegimeToSegmentRegime / mergeAdjacentSegments / sampleStddev /
+   mean / maxDrawdownPctFromEquity / computeSegmentMetrics /
+   aggregateRegimeSegments）+ 12 个 end-to-end segment() 场景。
+- **关键 fake**：`makeFakeRegimeSource(stamps: Record<date, regime>)` 让单测
+  能给每个 asOfDate 指定确定的 regime，模拟"市场 1-5 日是 bull, 6-10 日是 bear"
+  这种典型分段；`makeThrowingRegimeSource(throwOn)` 验证 source 兜底为
+  `'range'` 时下游 segment 生成正确（不会单日抛错让整个 run 失败）。
+- **`makeEquityCurve(startDate, count, startValue, growthPerDay)` 是
+  fixture helper** — 生成连续日 equity 序列，避免在每个测试里手写 10 个
+  `QuantEquityPoint` 字面量。`growthPerDay=0.01` 让 sharpe 测试有充足
+  日收益（≥5 个），`growthPerDay=0.001` 让短窗口测试 sharpe=null。
+
+
