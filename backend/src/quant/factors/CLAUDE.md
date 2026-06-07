@@ -1,4 +1,4 @@
-# Factor 基础设施 (US-009 + US-010 + US-029 + US-030 + US-031 + US-032)
+# Factor 基础设施 (US-009 + US-010 + US-029 + US-030 + US-031 + US-032 + US-033)
 
 `backend/src/quant/factors/` 是 A 股多因子打分体系的基础设施层。US-009
 落地了**注册中心 + 横截面 pipeline + 标准化工具 + FactorScore 模型**；
@@ -8,8 +8,10 @@ US-029 增加了第 9 个 `liquidity` 因子（流动性 U 形评分）；US-030
 第 10 个 `analyst_consensus` 因子（分析师 EPS 一致预期上修方向）；US-031
 增加了第 11 个 `quality_high` 因子（高阶质量 = ROIC 代理 + 毛利率稳定性 +
 净利率代理 等权合成）；US-032 增加了第 12 个 `earnings_surprise` 因子（盈利
-惊喜代理 = (actual EPS - 一致预期 EPS) / |一致预期 EPS|）。后续 story 在
-`library/` 下追加新文件即可，无需改 Pipeline / Registry。
+惊喜代理 = (actual EPS - 一致预期 EPS) / |一致预期 EPS|）；US-033 增加了
+第 13 个 `momentum_reversal` 因子（动量反转 = 120 日动量 - 5 日动量，正值
+代表趋势延续、负值代表短期超涨反转）。后续 story 在 `library/` 下追加新
+文件即可，无需改 Pipeline / Registry。
 
 ## 目录约定
 
@@ -141,7 +143,7 @@ US-033 等"贴现 / 偏离"类因子按此例外处理；普通线性因子仍�
 - **缺数据 ≠ 因子失效**：缺数据返回稀疏 Map；因子失效（例如 PE<=0）应该
   `continue` 不写入这只股票，让 Pipeline 把它当作中性。
 
-## US-010 落地的 8 个基础因子 + US-029 LiquidityFactor + US-030 AnalystConsensusFactor + US-031 QualityHighFactor + US-032 EarningsSurpriseFactor (参考实现)
+## US-010 落地的 8 个基础因子 + US-029 LiquidityFactor + US-030 AnalystConsensusFactor + US-031 QualityHighFactor + US-032 EarningsSurpriseFactor + US-033 MomentumReversalFactor (参考实现)
 
 | 因子 name | 类别 | 数据源 | 失效条件 |
 |---|---|---|---|
@@ -157,6 +159,7 @@ US-033 等"贴现 / 偏离"类因子按此例外处理；普通线性因子仍�
 | `analyst_consensus` | sentiment | AnalystForecast (US-030) | 90 日窗口内有效研报 < 5 / 任一年度 recent\|baseline 空 / baseline avg ≈ 0 |
 | `quality_high` | quality | FinancialReport(年报)+StockFundamentalFactor.gross_margin | 任一子分量缺失：年报缺 / gross_margin 观测 < 5 / revenue ≤ 0 |
 | `earnings_surprise` | event | FinancialReport + AnalystForecast (US-030) + StockFundamentalFactor.eps | 最近财报 > 180 自然日 / 财报前研报 < 3 / 缺 actual eps / `|consensus|` < 0.01 元/股 |
+| `momentum_reversal` | momentum | DailyBar (与 momentum / low_vol 同表) | bars < LONG_MOMENTUM_WINDOW+1=121 / close ≤ 0 (T / T-5 / T-120 任一) |
 
 **典型查询模式（US-029+ 添加新因子可直接复制）**：
 
@@ -214,6 +217,22 @@ US-033 等"贴现 / 偏离"类因子按此例外处理；普通线性因子仍�
   isoDateMinusDays / isoDatePlusDays / yearOfIsoDate / computeSurprise / selectFreshestReport
   / buildConsensusEps) 全 export，单测独立调用不走 DB。属"绝对业务量"因子（per-stock
   自身 actual vs consensus 之比），走标准模式 — 不属 LiquidityFactor 横截面参照例外。
+- ✅ `momentum_reversal` (US-033) 用 **mom_120 - mom_5** 长短动量差值：正值代表
+  "中长期动量强、短期动量弱"= 趋势延续信号（长期稳健上涨 + 短期健康回调）；负值
+  代表"短期动量强但中长期一般"= 反转 / 超涨信号（短期过热脉冲，未来均值回归概率高）。
+  **与既有 momentum (US-010) 的关键区别**：momentum 用 `close[T-20] / close[T-120] - 1`
+  是 Asness 风格 12-1 月动量（剔除短反转），输出**单一动量值**，正负只代表"涨/跌"；
+  momentum_reversal 是**长短两段动量的差值**（两段都包含 close[T]，差值消去 close[T]
+  方向，只保留"长 vs 短"对比），正负代表"延续 vs 反转"。两个因子相关性预计
+  0.3-0.5（非冗余）；FactorIC (US-041) 上线后可监测，> 0.7 再考虑剔除。**纯函数
+  helper** (computeWindowMomentum / combineMomentumReversal / extractSortedCloses) 全
+  export，单测独立调用不走 DB（74 用例覆盖窗口大小 / 边界 close / NaN / 时间排序 /
+  端到端"延续 vs 反转"三个真实场景）。**"任一窗口缺失 → 整体 null"**（与 quality_high
+  同款判定：两段同维度 "涨幅 %"，但缺一段后 "0 代入" 让另一段被当作 spread 主体，
+  因子语义崩坏）。属"绝对业务量"因子（per-stock 自身两段动量的差值），走标准模式 —
+  不属 LiquidityFactor 横截面参照例外。**tail-index bar 对齐**（close[len-1] /
+  close[len-1-window]）与 momentum / low_vol 同款，自然消化春节/十一节假日 gap，不
+  按日历日对齐。
 
 ### 关键代理记号（US-031 引入 "AC 数学公式 ≠ 数据可得" 的处理范式）
 

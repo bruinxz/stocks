@@ -63,9 +63,11 @@
 - **`Number(null) === 0` 是 JS 大坑，nullable 字段必须 fail-fast (US-031)**：Sequelize raw 模式取 DECIMAL nullable 字段可能是 `null`，`Number(null) === 0` 通过 `isFiniteNumber` 检查但会算出 "净利率 = 0 / rev = 0%" 误导下游。**任何 nullable 字段的因子运算都必须在 `Number()` 之前显式 `if (x === null || x === undefined) return null`**。`QualityHighFactor.computeNetMargin` 是参考实现；下次新因子在 Sequelize raw 取 DECIMAL nullable 字段后**先 null/undefined 检查再 Number 转换**。
 - **"任一子分量缺失 → 整体 null" vs "缺一项用 0 代入" 的判定 (US-031 引入)**：组合因子 (`quality_high` 3 子分量 / `growth` 2 子分量 / `dragon_tiger` 多日聚合) 缺数据时有两种处理路径：(A) **整体 null** (不入 Map) — 子分量来自异质维度，缺一项的 "0 代入" 会让另两项的方向被人为放大破坏因子语义。`quality_high` (盈利能力 + 稳定性 + 转化率 异质) 走此路径。(B) **缺一项用 0 代入** — 所有子分量同维度同量纲，0 代入语义合理 = "该维度未知"，不破坏因子方向。`growth` (净利润 + 营收 都是 "%" 增长率 同维) 走此路径。**判据**：子分量是否同维度同量纲 → 是用 0 代入 / 否走 null。新组合因子设计时先做此分类。
 - **复用既有 service 同款数据源 = 跨因子口径一致 (US-031 强化)**：US-031 ROIC proxy 用 `FinancialReport.roe + report_type='年报'`，与 GARPStrategy (US-024) loadRoe5yAvg 完全相同的查询条件 — 保证用户看 quality + quality_high + GARPStrategy 三处的 ROE 数字完全对应。**新因子优先复用既有 service / strategy 同款数据源**（不要平行写第二份查询），引入新数据修正时一处改全部对齐，单测共享 fixture 生成逻辑。**factor 内多源合成时 stripSuffix 模式**：`FinancialReport.stock_code` 已无后缀（与 ctx.universe 一致）；`StockFundamentalFactor.symbol` 是 "600519.SH" 形式 — 同 compute() 内混用时注释写明每张表 key 形态避免 reviewer 误判。
+- **差值因子（mom_long - mom_short）vs 单一因子的设计判定 (US-033 引入)**：两个因子读相同数据列 (DailyBar.close) 也能**非冗余**——只要公式不同。Asness-style 单一动量 `close[T-skip]/close[T-lookback] - 1` 输出单一值正负代表"涨/跌"；差值因子 `close[T]/close[T-long] - close[T]/close[T-short]` 因 close[T] 在两段都出现，差值消去了 close[T] 的方向，**正负代表"长 vs 短"对比** 不是涨跌。两个因子相关性预计 0.3-0.5 (非冗余)。**新因子设计时检查与既有因子相关性是否真的 ≥ 0.7**，不要因"读相同表"就以为冗余。**纯函数 helper 全 export 是测试的关键**：computeWindowMomentum / combineMomentumReversal / extractSortedCloses 三个 helper 让 74 个测试覆盖窗口边界 / NaN / 真实场景的同时完全脱离 DB。
+- **`Number.isInteger` vs `Number.isFinite` 语义差异 (US-033)**：window-size / period / lookback days 类参数必须用 `Number.isInteger` guard，单用 `isFinite` 接受 `3.5` 这种非整数会让 idx 计算静默取整产生错误 base。下次任何 window-based 因子 / 策略加上这道 guard，不要等出 bug。
 - **3 query-shape patterns** to copy when adding a new factor (US-010 codified them):
   - **"Time-series aggregate" (quality/growth)**: pull `factor_date ∈ [as_of - N天, as_of]` from a `symbol`-keyed source table, group by symbol in-memory, then stripSuffix → output.
-  - **"Time-series + cross-section" (momentum/low_vol)**: `loadStocksByCodes(universe)` first to get `Stock.id`, then `Op.in: stock_ids` + time range on DailyBar; group by stock_id, `arr.sort((a,b)=>a.time-b.time)`, count back from tail to align on T-N.
+  - **"Time-series + cross-section" (momentum/low_vol/momentum_reversal)**: `loadStocksByCodes(universe)` first to get `Stock.id`, then `Op.in: stock_ids` + time range on DailyBar; group by stock_id, `arr.sort((a,b)=>a.time-b.time)`, count back from tail to align on T-N.
   - **"Suffixless-table direct" (northbound/dragon_tiger)**: `Op.in: ctx.universe` + trade_date window — stock_code field IS the output key, no Stock lookup needed.
 - **Z-score-friendly raw_value shapes** (US-010 lessons):
   - For "event count" factors (dragon_tiger), use **distinct DAYS** not raw rows — cartesian fan-out in source tables inflates counts unpredictably.
@@ -3484,5 +3486,140 @@ selectFreshestReport / buildConsensusEps 共 7 个 helper，单测可在不走 D
   字符是有意的，避免下游用 `surprise` 当 ground truth 做交易决策。
 ---
 
+
+---
+
+## 2026/06/07 - US-033
+
+### What was implemented
+
+13th factor in `backend/src/quant/factors/library/`: **`MomentumReversalFactor`** — long-short
+momentum spread (`mom_120 - mom_5`) that distinguishes trend continuation from short-term
+overheating reversal. **Differentiates from既有 `momentum` (US-010)** which is Asness-style
+单一 12-1 month momentum: momentum_reversal is **a difference** of two windows (both anchored
+at close[T]), so the close[T] term cancels out and the sign captures "long vs short" comparison
+rather than "up vs down".
+
+### Files changed
+
+- `backend/src/quant/factors/library/MomentumReversalFactor.ts` (new, ~165 LOC including jsdoc):
+  - Pure helpers all `export function` for unit tests:
+    - `computeWindowMomentum(sortedCloses, window)`: returns `closes[len-1] / closes[len-1-window] - 1`,
+      null on insufficient length / window ≤ 0 / non-integer window / close ≤ 0 / NaN
+    - `combineMomentumReversal(momLong, momShort)`: `momLong - momShort`, null on任一 input null
+      or non-finite (与 quality_high "任一子分量缺失整体 null" 同款判定 — 两段同维度 "涨幅 %"
+      但缺一段后 "0 代入" 让另一段被当作 spread 主体破坏语义)
+    - `extractSortedCloses(rows)`: DailyBar rows → ascending close array; skips close ≤ 0 / NaN /
+      undefined; non-finite timestamps skipped; handles Date / string / number time formats
+  - Constants: `LONG_MOMENTUM_WINDOW=120` / `SHORT_MOMENTUM_WINDOW=5` /
+    `MOMENTUM_REVERSAL_QUERY_CALENDAR_DAYS=220` (= 120 交易日 ≈ 175 自然日 + 春节/十一 buffer)
+  - `momentumReversalFactor.compute(ctx)`: standard 3-query-shape pattern: (a) `loadStocksByCodes`
+    for universe → stock_id mapping; (b) one IN-list query for all DailyBar rows in window;
+    (c) per-stock close extraction → computeWindowMomentum twice → combineMomentumReversal →
+    add to output Map (skip sparse for不足数据，让 Pipeline 中性补全)。
+  - `factorRegistry.register(momentumReversalFactor)` at file bottom (import-time self-registration).
+
+- `backend/src/quant/factors/library/index.ts`:
+  - Added `import './MomentumReversalFactor';` alphabetically (between MomentumFactor and
+    MoneyFlowFactor).
+  - Updated header comment listing all 13 registered factors.
+
+- `backend/tests/factors/MomentumReversalFactor.test.ts` (new, ~290 LOC):
+  - **74 test cases / 74 passing** in < 1s, completely DB-free
+  - Coverage by helper:
+    - `computeWindowMomentum` (16 cases): length boundaries, window boundaries (0 / -1 / 3.5),
+      close = 0 / -10 / NaN / Infinity, real-world 120-day 50% rally, 5-day window with tail offsets
+    - `combineMomentumReversal` (13 cases): null + null / null + 数 / NaN / Infinity safety,
+      positive/negative/zero results, mixed sign scenarios
+    - `extractSortedCloses` (24 cases): empty, ascending in/out, descending in → ascending out,
+      close ≤ 0 / NaN / missing field skipped, non-finite time, 3 time formats (Date / string /
+      number), string close → Number coercion
+  - Factor metadata (name='momentum_reversal' / category='momentum' / description contains
+    '120' / '5' / 延续 or 反转 keyword / compute is function / registered globally / listNames
+    includes / get returns same instance / existing momentum & low_vol factors not broken)
+  - 3 constants validated
+  - 4 end-to-end semantic scenarios verifying the "trend continuation vs reversal" semantic:
+    (1) linear growth → reversal > 0 (long > short)
+    (2) flat-then-rally → long still dominates with this construction
+    (3) slow growth + 5-day surge → reversal slightly positive (still long > short because of累涨)
+    (4) long decline + sharp rebound → reversal < 0 (short > long, classic reversal signal)
+  - Empty universe path (`compute(universe=[])` → empty Map, no DB call)
+
+- `backend/tests/factors/EarningsSurpriseFactor.test.ts`:
+  - Updated hardcoded factor count assertion from `12 → 13` (line 446) to account for new
+    `momentum_reversal` factor. All 77 assertions now pass.
+
+- `backend/src/quant/factors/CLAUDE.md`:
+  - Updated title to include US-033
+  - Header paragraph extended to describe the 13th factor + key differentiation from既有
+    momentum factor
+  - Reference table 13 factors gained `momentum_reversal` row (数据源 = DailyBar / 失效条件
+    = bars < 121 或 close ≤ 0)
+  - z-score-friendly raw_value section gained ✅ momentum_reversal bullet (详细说明长短差值
+    vs 单一动量 + 与 momentum 互补性 + 纯函数 helper 全 export 模式 + '任一缺失整体 null'
+    判据 + tail-index bar 对齐)
+
+- `ralph/prd.json`: US-033 → passes: true with full implementation notes
+- `ralph/progress.txt`: this entry
+
+### Quality checks
+
+- `cd backend && npx tsc --noEmit` → exit 0 (clean)
+- `cd backend && ./node_modules/.bin/eslint src/quant/factors/library/MomentumReversalFactor.ts
+  src/quant/factors/library/index.ts --quiet --fix` → exit 0 (4 prettier formatting issues
+  auto-resolved)
+- `cd backend && npx ts-node --transpile-only tests/factors/MomentumReversalFactor.test.ts`
+  → 74 ok / 0 failures in < 1s
+- Regression:
+  - `tests/factors/LiquidityFactor.test.ts` → 53 ok
+  - `tests/factors/AnalystConsensusFactor.test.ts` → 54 ok
+  - `tests/factors/QualityHighFactor.test.ts` → 54 ok
+  - `tests/factors/EarningsSurpriseFactor.test.ts` → 77 ok (after count update from 12 → 13)
+  - `tests/strategies/MultiFactorAlphaStrategy.test.ts` → all pass (no per-factor weights broken
+    by 13-factor population)
+- Registry smoke: `factorRegistry.listNames()` returns 13 factors in alphabetical order
+  including `momentum_reversal`
+
+### Browser verification
+
+**Not applicable** — backend-only story (factor library addition, no UI surface).
+
+### Learnings for future iterations
+
+- **Differential momentum (mom_long - mom_short) vs single momentum (close[T-N]/close[T-M]-1)
+  are non-redundant by construction.** In the differential form, close[T] appears in BOTH terms
+  and the sign of close[T] direction is canceled — only the "long vs short" comparison survives.
+  This is why momentum_reversal can coexist with既有 momentum even though both read the same
+  DailyBar.close column: they answer different questions ("did the stock go up?" vs "is the
+  long-term trend stronger than the short-term?"). Cross-correlation predicted 0.3-0.5; FactorIC
+  (US-041) will confirm in production.
+- **`computeWindowMomentum` uses `Number.isInteger(window)` guard not just `window > 0`** —
+  protects against accidental `window=3.5` from caller bug or DECIMAL-from-DB; non-integer
+  windows would silently truncate at idx and produce wrong base. Future window-based factors
+  should add this guard upfront, not after seeing a bug.
+- **Test "trend continuation vs reversal" semantics with REAL price sequences** — not just
+  unit-arithmetic on already-computed momentum values. Building synthetic close arrays (linear
+  growth / flat-then-rally / slow-then-surge / long-decline-short-rebound) and verifying
+  reversal sign + magnitude catches subtle composition bugs that pure helper tests miss. For
+  scenario B (flat-then-rally) and scenario C (slow-then-surge), the "long still dominates" result
+  is correct because cumulative price change > short-term burst even when burst is sharp — only
+  scenario D (long decline + sharp rebound) produces the textbook "reversal < 0" signal. Encode
+  this insight in test comments so future readers understand why "rally" alone doesn't flip the sign.
+- **当 factor count is asserted in another test, the new factor breaks it** — `EarningsSurpriseFactor.test.ts`
+  had `names.length === 12`; adding the 13th factor failed that assertion silently in CI. Lesson:
+  **avoid hardcoding global registry counts in per-factor tests** (better: assert "≥ N" or "contains
+  these names"). For now, just bump the count alongside the new factor. Future US-034/US-035/US-036
+  may need similar updates — grep for `names.length === \d+` before commit.
+- **Pure-function-first factor design** (US-029/US-030/US-031/US-032 lineage continues): every new
+  factor extracts ALL non-DB logic into `export function`s, keeps `compute()` as a thin DB-query
+  + assemble layer. Lets tests cover 74 cases in 1 second without spinning up Sequelize. New factors
+  should follow this template — if you find yourself writing complex logic INSIDE `compute()`, pause
+  and extract the math first.
+- **`Number.isFinite` vs `Number.isInteger` semantic gap** — many people use isFinite as a NaN/Infinity
+  guard but forget it accepts `3.5` (non-integer) as finite. Window-size validation needs
+  `Number.isInteger` specifically. Same applies to lookback day counts, period parameters, etc.
+- **The library/index.ts comment header** is the lightweight registry doc — keeping it in
+  alphabetical order matching `factorRegistry.listNames()` output makes mental verification trivial
+  when adding a new factor. The 8 → 9 → 10 → 11 → 12 → 13 lineage is preserved.
 
 ---
