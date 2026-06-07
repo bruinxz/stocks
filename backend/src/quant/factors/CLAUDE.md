@@ -1,10 +1,11 @@
-# Factor 基础设施 (US-009 + US-010)
+# Factor 基础设施 (US-009 + US-010 + US-029)
 
 `backend/src/quant/factors/` 是 A 股多因子打分体系的基础设施层。US-009
 落地了**注册中心 + 横截面 pipeline + 标准化工具 + FactorScore 模型**；
 US-010 在 `library/` 下注册了 **8 个基础因子**（`value` / `quality` / `growth` /
-`momentum` / `low_vol` / `northbound` / `money_flow` / `dragon_tiger`）。后续
-story 在 `library/` 下追加新文件即可，无需改 Pipeline / Registry。
+`momentum` / `low_vol` / `northbound` / `money_flow` / `dragon_tiger`）；
+US-029 增加了第 9 个 `liquidity` 因子（流动性 U 形评分）。后续 story 在
+`library/` 下追加新文件即可，无需改 Pipeline / Registry。
 
 ## 目录约定
 
@@ -73,6 +74,14 @@ backend/src/quant/factors/
 因子内部**不要**自己做 winsorize / z-score / 归一化。`FactorPipeline` 会统一做，
 否则跨因子 z_score 不可比，多因子加权也失去意义。
 
+**例外（US-029 LiquidityFactor 引入）**：当因子的经济意义**本身**就要求一个
+横截面参照点（U 形评分、距均值偏离、横截面贴现等），可以在 compute() 内做
+*单点参照* 的简单变换，但仍**不要**做 winsorize / zscore（Pipeline 后续会做）。
+判据：参照统计量是因子语义的一部分（无法外推到调用方），就属此例外；只是
+"想让分布更好看"则属普通归一化，禁止内置。LiquidityFactor 的 `-|(turn - P30)/sd|`
+变换满足前者（"过低过高都减分"的语义没有 P30/sd 表达不出）。后续 US-031 /
+US-033 等"贴现 / 偏离"类因子按此例外处理；普通线性因子仍走标准模式。
+
 ### 2. 因子返回稀疏 Map 即可
 
 缺数据的股票不需要出现在返回 Map 中——Pipeline 会自动补 "中性行"
@@ -109,6 +118,12 @@ backend/src/quant/factors/
   通过 `new FactorRegistry()`（注意：构造 FactorRegistry 实例而不是用单例）
   注册，再传 `new FactorPipeline(registry)` 调 `runForDate`。
 - 测试 winsorize / zscore / percentileRanks 直接调 `normalization.ts`，不需 DB。
+- **因子测试统一放 `backend/tests/factors/<NameFactor>.test.ts`**（US-029 新建目录，
+  与 `backend/tests/strategies/` / `backend/tests/backtest/` 同款约定）。跑法：
+  `cd backend && npx ts-node --transpile-only tests/factors/<Name>Factor.test.ts`。
+  目录在 tsconfig `include` (`src/**/*`) 之外，typecheck 不扫；测试只断言纯函数 +
+  Map metadata + 空 universe 路径，**不**走 DB / 不 mock Sequelize（成本/复杂度
+  与因子简单语义不匹配）。需要端到端走 DB 的，写到 `backend/scripts/` 当作冒烟脚本。
 
 ## US-010 一定会踩的坑
 
@@ -122,7 +137,7 @@ backend/src/quant/factors/
 - **缺数据 ≠ 因子失效**：缺数据返回稀疏 Map；因子失效（例如 PE<=0）应该
   `continue` 不写入这只股票，让 Pipeline 把它当作中性。
 
-## US-010 落地的 8 个基础因子（参考实现）
+## US-010 落地的 8 个基础因子 + US-029 LiquidityFactor (参考实现)
 
 | 因子 name | 类别 | 数据源 | 失效条件 |
 |---|---|---|---|
@@ -134,6 +149,7 @@ backend/src/quant/factors/
 | `northbound` | flow | NorthboundHolding | 当日无数据，或窗口内仅 1 条 |
 | `money_flow` | flow | StockMoneyFlowFactor + Stock | 窗口内无累计、或 circulating_market_cap ≤ 0 |
 | `dragon_tiger` | flow | DragonTigerBoard | 窗口内无 famous_yz 且 net_amount > 0 的行 |
+| `liquidity` | liquidity | DailyBar.turnover_rate | 单只股票有效 turnover_rate < 10 个 / 全市场样本 < 2 |
 
 **典型查询模式（US-029+ 添加新因子可直接复制）**：
 
@@ -158,6 +174,11 @@ backend/src/quant/factors/
   (二者都在 0..1 区间)；直接相加避免一只股票 PE=100 完全淹没 PB。
 - ✅ `momentum` 用 `close[T-20]/close[T-120] - 1` 比值差：避免对数收益的
   极端值；截尾后的 zscore 已经能让横截面稳定。
+- ✅ `liquidity` (US-029) 用 **-|(avg_turnover_20 - P30) / sd|** U 形评分：捕捉
+  "过低 = 僵尸 / 过高 = 拥挤"双侧惩罚；P30 + sd 是因子语义本体（参见上面
+  "设计约束 #1 的例外"）。**纯数学 helper（quantileAtSortedAsc / sampleStddev /
+  liquidityPenaltyScore / computeAvgTurnoverFromBars）抽成 `export function` 让
+  单测可独立 ↑** —— 复杂因子按此模式拆分。
 
 ## 添加新因子的 checklist (US-029+)
 

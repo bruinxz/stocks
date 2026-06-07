@@ -53,6 +53,7 @@
 - **stock_code is suffix-less**: FactorScore.stock_code matches NorthboundHolding/LimitUpStock/IndustryFlow ("600519", not "600519.SH"). When a Factor.compute() reads Stock/DailyBar (which use "600519.SH"), it MUST `symbol.split('.')[0]` before keying the output Map.
 - **Pipeline serial-by-factor, not Promise.all parallel**: one bad factor doesn't kill the batch; logs stay readable; debug is straightforward. The compute step within one factor can still batch DB queries internally.
 - **library/_helpers.ts** (US-010) is the **library-internal** shared utility module — prefix `_` = "only library code should import this; not exposed via quant/factors/index.ts". Provides `stripSuffix(symbol)`, `inferStockSymbol(code)` (reverse: "600519" → "600519.SH"), `loadStocksByCodes(codes, attrs)` (one-shot batch query that returns Map<stock_code, Stock>), `isFiniteNumber(v)`, `lookbackStartDate(asOf, days)`. Use these in every new factor — don't inline the 5-line symbol-mapping logic 8 times.
+- **横截面参照 U 形评分例外 (US-029 LiquidityFactor)** — 设计约束 #1 "因子不做归一化" 的明确例外：当因子的**经济意义本身**就需要一个横截面参照点（U 形评分 / 距均值偏离 / 横截面贴现），在 compute() 内做*单点参照*的简单变换（如 `-|(value - P30)/sd|`）属于因子语义本体，不属"额外标准化"。判据：参照统计量是因子语义的一部分（"过低过高都减分"没有 P30/sd 表达不出）就属此例外；只是"想让分布更好看"则属普通归一化，仍禁止内置。Pipeline 后续仍照常 winsorize+zscore，跨因子可比性维持不变。复杂因子的 pure-math helper（quantileAtSortedAsc / sampleStddev / liquidityPenaltyScore / computeAvgTurnoverFromBars）抽成 `export function`，让单测可独立调用纯函数 — 不要把所有逻辑塞进 compute() 内闭包。后续 US-031 / US-033 等"贴现 / 偏离"类因子按此例外处理。
 - **3 query-shape patterns** to copy when adding a new factor (US-010 codified them):
   - **"Time-series aggregate" (quality/growth)**: pull `factor_date ∈ [as_of - N天, as_of]` from a `symbol`-keyed source table, group by symbol in-memory, then stripSuffix → output.
   - **"Time-series + cross-section" (momentum/low_vol)**: `loadStocksByCodes(universe)` first to get `Stock.id`, then `Op.in: stock_ids` + time range on DailyBar; group by stock_id, `arr.sort((a,b)=>a.time-b.time)`, count back from tail to align on T-N.
@@ -109,6 +110,7 @@
 - **Backend lint command:** `cd backend && ./node_modules/.bin/eslint src --ext .ts --quiet`. NOTE: the repo currently has ~500+ pre-existing prettier formatting errors in unrelated files — running `--fix` repo-wide would create churn. When changing a file, only fix lint errors that touch your diff.
 - **Backend typecheck command:** `cd backend && npx tsc --noEmit` (exits 0 = clean).
 - **Browser verification:** No `dev-browser` MCP skill is configured in this environment. UI stories should fall back to manual verification and note that in progress.txt.
+- **Factor unit tests live in `backend/tests/factors/`** (US-029, mirroring `backend/tests/strategies/` and `backend/tests/backtest/`). Run via `cd backend && npx ts-node --transpile-only tests/factors/<Name>Factor.test.ts`. The dir is outside tsconfig `include` so `tsc --noEmit` doesn't scan it; tests stay DB-free (assert pure functions + Map metadata + empty-universe path).
 
 ---
 
@@ -3037,3 +3039,88 @@ result` —— 类型安全提取 stock_code 数组。未来加新子策略只�
 
 ---
 
+
+## 2026/06/07 - US-029
+
+### What was implemented
+
+第 9 个因子 `liquidity` (流动性 U 形评分)，注册到 `factorRegistry`。公式：
+`raw_value = -|(avg_turnover_20 - P30(cross-section)) / sd(cross-section)|`
+
+- `avg_turnover_20`：单只股票近 20 个有效 `DailyBar.turnover_rate` 算术均值
+  （turnover_rate ≤ 0 / NaN / 缺都剔除——`turnover_rate=0` 表示当日无成交，
+  按 0 平均会扭曲均值，剔除更稳健）
+- `P30`：当日全市场 universe 内有效 `avg_turnover_20` 的 30 % 分位（线性插值）
+- `sd`：当日全市场 `avg_turnover_20` 的样本标准差 (n-1)
+- 取负绝对值：过低（僵尸股 / 无人问津）与过高（过度拥挤 / 接近顶部）两端都减分；
+  避免线性"换手率高 = 好" 或 "换手率低 = 好" 这种单调误判
+
+**经济意义**：低换手 = Amihud 流动性折价 / 机构难进出；极高换手 = 散户主导 /
+过度交易 / 接近泡沫顶部。P30 是 A 股实证里的健康流动性档（参考国内 broker 报告）。
+
+### Files changed
+
+- 新增 `backend/src/quant/factors/library/LiquidityFactor.ts` — Factor 主体 + 4 个
+  pure-math helper (`quantileAtSortedAsc` / `sampleStddev` / `liquidityPenaltyScore` /
+  `computeAvgTurnoverFromBars`) 全部 `export function` 便于单测
+- 编辑 `backend/src/quant/factors/library/index.ts` — 按字母序追加
+  `import './LiquidityFactor';`（位于 LowVolFactor 之前）
+- 新增 `backend/tests/factors/LiquidityFactor.test.ts` — **新建 backend/tests/factors/
+  目录**（mirrors backend/tests/strategies/ + backend/tests/backtest/）；53 个用例覆盖
+  纯函数边界 + factor metadata + U 形评分端到端业务校验
+- 编辑 `backend/src/quant/factors/CLAUDE.md`：
+  - 标题改为 'US-009 + US-010 + US-029'
+  - 设计约束 #1 新增 '例外（US-029 LiquidityFactor 引入）' 段落 — 文档化"参照
+    横截面统计点是因子语义本体不属归一化"
+  - 9 因子参考实现表新增 `liquidity` 行
+  - z-score-friendly 形态列表新增 `✅ liquidity` 条目（含 helper 抽取约定）
+  - 测试模式新节文档化 backend/tests/factors/ 约定
+
+### Quality checks
+
+- `cd backend && npx tsc --noEmit` → exit 0
+- `cd backend && ./node_modules/.bin/eslint src/quant/factors/library/LiquidityFactor.ts
+  src/quant/factors/library/index.ts --quiet --fix` → exit 0 (2 prettier auto-fixed)
+- `cd backend && npx ts-node --transpile-only tests/factors/LiquidityFactor.test.ts`
+  → 53 passed, 0 failed
+- 既有 MultiFactorAlphaStrategy 测试回归 → 全部仍通过（新因子未破坏 8 因子合成）
+- 冒烟：`factorRegistry.listNames()` 输出 `["dragon_tiger","growth","liquidity",
+  "low_vol","momentum","money_flow","northbound","quality","value"]` — 9 个因子全部
+  按字母序就位
+
+### Learnings for future iterations
+
+- **设计约束 #1 的精确划线**：US-029 之前所有因子的 raw 都是绝对业务量
+  （PE 倒数、ROE 均值、动量、波动率），完全不参照任何横截面统计。LiquidityFactor
+  是首个需要 P30 + sd 作为参照点的因子。这**不**是"额外标准化"——P30 + sd 是
+  这个因子的经济意义本体，没有它表达不出"U 形评分"。Pipeline 后续仍照常 winsorize
+  + zscore，跨因子可比性维持不变。**判据**：参照统计量是因子语义的一部分就属
+  此例外；只是"想让分布更好看"则属普通归一化，仍禁止内置。
+- **复杂因子的 pure-math helper 抽 export function 模式**：把
+  `quantileAtSortedAsc` / `sampleStddev` / `liquidityPenaltyScore` /
+  `computeAvgTurnoverFromBars` 全部以 `export function` 暴露在 LiquidityFactor.ts
+  顶部，让单测 53 个用例**完全脱离 DB 与 Sequelize mock**就能跑完业务校验。
+  对比同类做法：MultiFactorAlpha 走 DataSource 接口注入；LiquidityFactor 因
+  compute() 只对 `DailyBar.findAll` 一次查询，没必要引入注入接口——纯函数抽取
+  + compute 内部胶水的做法对简单因子更直接。**下次：**因子里只要有 ≥ 2 段独立
+  数学逻辑就抽 export function；只有一次查 + 一段映射的简单因子继续内联。
+- **`turnover_rate = 0` 的语义陷阱**：DailyBar.turnover_rate=0 在 A 股数据里
+  意味着 "停牌 / 一字板 / 当日无成交"，对 "近 20 日平均换手率" 的语义贡献是
+  0 反而会扭曲均值（实际"无信息"而非"换手率确实是 0"）。剔除（视同缺数据）
+  比纳入计算更稳健。同款判据适用未来 US-030+ 任何 "成交量 / 换手 / 资金流"
+  指标——0 != "0 值"，要先想清是 missing 还是 actual。
+- **`backend/tests/factors/` 新目录约定**：与 backend/tests/strategies/ +
+  backend/tests/backtest/ 平级，承接因子单测。**目录在 tsconfig include
+  (`src/**/*`) 之外**，typecheck 不扫；测试只断言纯函数 + Map metadata + 空
+  universe 路径，**不**走 DB / 不 mock Sequelize（成本/复杂度与因子简单语义
+  不匹配）。需要端到端走 DB 的，写到 backend/scripts/ 当作冒烟脚本。
+- **`sampleStddev` 是 n-1 不是 n**：第一次写测试时 expectClose 拿了 population
+  stddev (n divisor) 的预期值（=2），实际 sampleStddev (n-1) 返回 √(32/7) ≈ 2.138。
+  与 normalization.ts 的 stddev 同口径（n-1）。**下次写 stddev 测试**：先在
+  Python `numpy.std([..], ddof=1)` 算一遍预期值，别凭印象写 "2"。
+- **Factor 注册必须走 library/index.ts**：纯写 `factorRegistry.register(...)`
+  在 LiquidityFactor.ts 内不会被 Pipeline 看见——必须在 library/index.ts 按
+  字母序追加 `import './LiquidityFactor';` 触发 import-time 副作用。
+  库入口 import 后 `factorRegistry.listNames()` 才会出现 `liquidity`。
+  CLAUDE.md 已说明此约定但容易遗忘，本次实现按 checklist 第 2 步 ✅。
+---
