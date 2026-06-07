@@ -2,20 +2,21 @@ import { Request, Response, NextFunction } from 'express';
 import { positionLimitGuard } from '../../portfolio/risk/PositionLimitGuard';
 import { trailingStopGuard } from '../../portfolio/risk/TrailingStopGuard';
 import { drawdownCircuitBreaker } from '../../portfolio/risk/DrawdownCircuitBreaker';
+import { marketRegimeAlertService } from '../../portfolio/risk/MarketRegimeAlertService';
 import { logger } from '../../utils/logger';
 
 /**
  * RiskController — US-047 (position limits) + US-048 (trailing stop)
- *   + US-049 (drawdown circuit breaker)
+ *   + US-049 (drawdown circuit breaker) + US-050 (market regime alert)
  *
  * Exposes the pre-trade risk-policy configuration to the client.  Mounted at
  * `/api/risk/*` from `index.ts`.
  *
  * Why not folded into `RiskAlertController`?  That controller is concerned
  * with consuming/clearing already-emitted alerts (the bell view).  Position
- * limits + trailing stop + drawdown breaker are separate, *pre*-trade policy
- * surfaces — keeping them in their own controller makes the route map
- * (`/api/risk-alerts` vs `/api/risk`) easy to scan.
+ * limits + trailing stop + drawdown breaker + market regime are separate,
+ * *pre*-trade policy surfaces — keeping them in their own controller makes
+ * the route map (`/api/risk-alerts` vs `/api/risk`) easy to scan.
  */
 export class RiskController {
   /**
@@ -129,6 +130,72 @@ export class RiskController {
       res.json({ success: true, message: '已解除组合回撤熔断暂停状态' });
     } catch (error: any) {
       logger.error('清除组合回撤熔断暂停失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * GET /api/risk/market-regime-status  (US-050)
+   * Return the **current** market-regime snapshot (latest close, 3-day / 20-day
+   * return, MA20 vs MA60, death-cross status, and the alerts that would fire
+   * given the caller's effective config).  Read-only — does NOT write RiskAlert
+   * rows.  Used by the UI dashboard / 风控面板 to render real-time market
+   * health.  Optional `?as_of=YYYY-MM-DD` and `?lookback_days=N` query params
+   * support historical replay / debugging.
+   */
+  async getMarketRegimeStatus(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user.id;
+      const asOfQuery = (req.query.as_of as string | undefined) ?? undefined;
+      const lookbackQuery = (req.query.lookback_days as string | undefined) ?? undefined;
+      const asOfDate = asOfQuery ? new Date(asOfQuery) : undefined;
+      // 防 NaN / invalid date — fall through to default by treating as undefined.
+      const safeAsOf = asOfDate && !Number.isNaN(asOfDate.getTime()) ? asOfDate : undefined;
+      const lookbackParsed = lookbackQuery !== undefined ? Number(lookbackQuery) : NaN;
+      const safeLookback =
+        Number.isInteger(lookbackParsed) && lookbackParsed > 0 ? lookbackParsed : undefined;
+      const status = await marketRegimeAlertService.getMarketRegimeStatus({
+        user_id,
+        asOfDate: safeAsOf,
+        lookback_days: safeLookback,
+      });
+      res.json({ success: true, data: status });
+    } catch (error: any) {
+      logger.error('获取市场环境预警状态失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * GET /api/risk/market-regime  (US-050)
+   * Return the user's effective market-regime alert config (defaults if the
+   * user has never customized it).
+   */
+  async getMarketRegimeConfig(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user.id;
+      const config = await marketRegimeAlertService.getConfig(user_id);
+      res.json({ success: true, data: config });
+    } catch (error: any) {
+      logger.error('获取市场环境预警配置失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * PUT /api/risk/market-regime  (US-050)
+   * Persist user's market-regime alert config — input normalized
+   * (`normalizeMarketRegimeAlertConfig`) so invalid pct / benchmark_symbol /
+   * enabled / enable_death_cross silently revert to defaults instead of
+   * corrupting `User.risk_config`.
+   */
+  async updateMarketRegimeConfig(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user.id;
+      const saved = await marketRegimeAlertService.updateConfig(user_id, req.body || {});
+      res.json({ success: true, data: saved, message: '市场环境预警配置已保存' });
+    } catch (error: any) {
+      logger.error('更新市场环境预警配置失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   }

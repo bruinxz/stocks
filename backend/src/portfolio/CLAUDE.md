@@ -13,7 +13,8 @@ portfolio/
 ├── risk/                          # pre-trade risk gates — US-047+
 │   ├── PositionLimitGuard.ts      # max positions + single-stock + single-industry caps
 │   ├── TrailingStopGuard.ts       # 追踪止损 — daily highest_price + next-day SELL trigger
-│   └── DrawdownCircuitBreaker.ts  # 组合级回撤熔断 — LEVEL_1/2/3 cascade + 24h pause
+│   ├── DrawdownCircuitBreaker.ts  # 组合级回撤熔断 — LEVEL_1/2/3 cascade + 24h pause
+│   └── MarketRegimeAlertService.ts # 市场级环境预警 — 指数 3 日/月度跌幅 + MA20/MA60 死叉
 └── internal/                      # private — only the facade may import from here
     ├── PaperTradingAttributionService.ts
     ├── PaperTradingAutomationService.ts
@@ -226,3 +227,89 @@ Patterns codified in US-049 that future risk guards should follow:
 - **HTTP surface**: 3 endpoints under `/api/risk/drawdown-breaker/*` —
   `GET` (read config), `PUT` (update config), `POST /clear-pause`
   (admin override).  All require auth.  Same namespace as US-047/US-048.
+
+## `risk/MarketRegimeAlertService` — US-050 specifics
+
+The market-regime alert service introduces the **fourth risk-guard shape** —
+**market-level signals** (indicator-driven, no user positions involved).
+Where the prior three guards ran on user data (positions / portfolio peak),
+this one runs purely on benchmark index bars and fans the resulting alerts
+out to every user with a portfolio.
+
+1. **`getMarketRegimeStatus(options)`** — read-only HTTP query.  Computes
+   3-day cumulative return, 20-day cumulative return, MA20 today vs
+   yesterday, MA60 today vs yesterday, and the death-cross flag in one
+   pass.  Returns a `MarketRegimeStatus` snapshot with all fields plus the
+   alerts that *would* fire (already-evaluated by `pickRegimeAlerts`).
+   Used by the UI dashboard / 风控面板 for live display.  Does **not**
+   write any RiskAlert row.
+2. **`evaluateAfterOpen(options)`** — post-open cron.  Internally calls
+   `getMarketRegimeStatus`, then fans the same alerts out as one RiskAlert
+   per (user × alert) pair.  Sentinel symbol `SYSTEM:MARKET_REGIME_<TYPE>`
+   matches US-042 / US-049 convention so the front-end can filter
+   组合级/系统级 alerts apart from per-stock alerts.  `dry_run=true` skips
+   the writes but still populates `per_user[*].alerts_written` for preview.
+3. **`getConfig(user_id)` / `updateConfig(user_id, raw)`** — same shape as
+   US-047/US-048/US-049 config CRUD; backed by `User.risk_config.market_regime`
+   JSONB + `Object.freeze`'d `DEFAULT_MARKET_REGIME_ALERT_CONFIG`.
+
+Patterns codified in US-050 that future market-level guards should follow:
+
+- **Multiple parallel signals per evaluation** — unlike US-049's
+  single-level cascade, market-regime emits 0..N alerts simultaneously
+  (3-day drop AND 20-day drop AND death-cross can all hit at once). The
+  rationale: 市场综合状态 inherently requires N independent signals; the
+  user wants to see "what's broken" not just "the most severe thing
+  broken". `pickRegimeAlerts` returns `RegimeAlert[]` not a single pick.
+- **`SYSTEM:` sentinel symbol prefix** — re-uses US-042 / US-049 convention.
+  Front-end filters `symbol.startsWith('SYSTEM:')` to bucket
+  组合级/系统级 alerts away from per-stock alerts. The per-type discriminator
+  (`SYSTEM:MARKET_REGIME_DROP_3D`, `…_DROP_20D`, `…_DEATH_CROSS`) lets the
+  bell view collapse same-day repeats by SQL `DISTINCT symbol`.
+- **`≤ -threshold_pct` for drop boundaries** mirrors US-049's `≥ +x` for
+  upside / drawdown thresholds. Both include the boundary (defensive硬触发).
+  When pct is the drop magnitude (positive number), compare the actual
+  return to `-pct` and use `≤` — `return_pct <= -config.drop_3d_pct`.
+  Never mix `Math.abs(return)` with `≥ pct` — boundary semantics differ
+  by one tick and the test boundary cases break.
+- **Strict `<` for MA death-cross** — yesterday `MA20 ≥ MA60` (inclusive
+  baseline) + today `MA20 < MA60` (strict穿越). Loose `≤` would re-fire
+  on every flat day where the two MAs equal then re-equal; the strict
+  穿越 rule is what separates "death cross today" from "below for the
+  last 30 days". Same shape as US-026 RSI 上穿 detection.
+- **Insufficient data ≠ negative signal** — `closes.length < period`
+  → MA returns `null`, return calculations return `null`; `pickRegimeAlerts`
+  treats each `null` as "this signal can't be evaluated" and skips it
+  silently. Same `data-shortage = safe HOLD` principle as US-048
+  (DailyBar missing → skip) and US-026 (bar < period → no RSI signal).
+- **`prior <= 0` defensive divisor guard** — `computeReturnPct(latest, prior)`
+  returns `null` for `prior=0 / prior<0 / NaN`. The benchmark close shouldn't
+  ever be ≤0 in practice, but a single corrupted bar shouldn't cascade-fire
+  +∞% gain/loss across all 3 signals. Same `分母接近 0 跳过` pattern as
+  US-032's `CONSENSUS_NEAR_ZERO_THRESHOLD`.
+- **DataSource `loadBenchmarkBars` fail → `status.error` set but no throw**
+  — same fail-open pattern as US-049's `checkBuyAllowed`. A risk-guard DB
+  outage must NEVER crash the scheduler task or 502 the dashboard endpoint.
+  Caller sees `error: 'fake bar load outage'` + `bar_count: 0` + empty
+  `alerts: []` and decides whether to surface to the user (UI) or log+continue
+  (cron).
+- **`benchmark_name` lookup is separate from `loadBenchmarkBars`** — keeps
+  the bar loader pure (one query) and lets the name fetch fail
+  independently (falls back to the symbol). Future: if the index name
+  becomes a config knob, the name source doesn't have to be a DB row.
+- **`per_user` write isolation** — same as US-049: each user wrapped in
+  try/catch so one user's permission or DB issue doesn't block the rest.
+  `loadConfig` failure for user N → `per_user[N].error` set; other users
+  fan-out continues.
+- **`SchedulerService` single task type**: `PAPER_TRADING_MARKET_REGIME_CHECK`
+  (post-open). Same `dry_run` / `user_id` / `lookback_days` parameter shape
+  as US-049, so ops scripts and cron configs follow one parameter dialect.
+- **HTTP surface**: 3 endpoints under `/api/risk/market-regime*` —
+  `GET /api/risk/market-regime-status` (live snapshot, no writes),
+  `GET /api/risk/market-regime` (read config),
+  `PUT /api/risk/market-regime` (update config). `market-regime-status` is
+  the AC-specified endpoint; the other two follow the US-047/048/049 config
+  CRUD convention for consistency. **`market-regime-status` accepts
+  optional `?as_of=YYYY-MM-DD&lookback_days=N` query params** for historical
+  replay / debugging — invalid dates fall back to `now()` silently, never
+  4xx (same lenient-normalize philosophy as `normalizeMarketRegimeAlertConfig`).

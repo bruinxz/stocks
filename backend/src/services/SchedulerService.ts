@@ -21,6 +21,7 @@ import { paperTradingOrderIntentService } from '../portfolio/internal/PaperTradi
 import { paperTradingTuningApplyService } from '../portfolio/internal/PaperTradingTuningApplyService';
 import { trailingStopGuard } from '../portfolio/risk/TrailingStopGuard';
 import { drawdownCircuitBreaker } from '../portfolio/risk/DrawdownCircuitBreaker';
+import { marketRegimeAlertService } from '../portfolio/risk/MarketRegimeAlertService';
 import { benchmarkIndexService } from './BenchmarkIndexService';
 import { automatedRecommendationLoopService } from './AutomatedRecommendationLoopService';
 import { recommendationTradeOutcomeService } from './RecommendationTradeOutcomeService';
@@ -1793,6 +1794,65 @@ class SchedulerService {
         logger.info(
           `组合回撤熔断评估完成。扫描用户 ${result.scanned_users}，` +
             `触发 ${result.triggered_users}` +
+            (dryRun ? '（dry-run，未写 RiskAlert）' : '')
+        );
+      } else if (task.type === 'PAPER_TRADING_MARKET_REGIME_CHECK') {
+        // US-050 — 每日开盘后定时任务：扫描上证指数(默认)的市场环境信号
+        // (DROP_3D MEDIUM / DROP_20D HIGH / DEATH_CROSS MEDIUM) 并给所有
+        // 有 PaperTradingPortfolio 的用户写一条 RiskAlert（每信号一行）。
+        // `user_id` 参数可选；不传 = 扫描所有用户。`dry_run` 让 UI dashboard
+        // 能"预演今日 trigger" 不写 RiskAlert。
+        const targetUserId = parameters.user_id || parameters.userId;
+        const dryRun =
+          parameters.dry_run !== undefined
+            ? Boolean(parameters.dry_run)
+            : parameters.dryRun !== undefined
+            ? Boolean(parameters.dryRun)
+            : false;
+        const lookbackDays =
+          parameters.lookback_days !== undefined
+            ? Number(parameters.lookback_days)
+            : parameters.lookbackDays !== undefined
+            ? Number(parameters.lookbackDays)
+            : undefined;
+        const result = await marketRegimeAlertService.evaluateAfterOpen({
+          user_id: targetUserId ? Number(targetUserId) : undefined,
+          dry_run: dryRun,
+          lookback_days: lookbackDays,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: result.scanned_users,
+          completed_items: result.alerted_users,
+          failed_items: result.per_user.filter(u => u.error).length,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: null,
+          result_summary: {
+            scenario: 'paper_trading_market_regime_check',
+            scanned_users: result.scanned_users,
+            alerted_users: result.alerted_users,
+            dry_run: dryRun,
+            benchmark_symbol: result.status.benchmark_symbol,
+            as_of: result.status.as_of,
+            return_3d_pct: result.status.return_3d_pct,
+            return_20d_pct: result.status.return_20d_pct,
+            cross_signal: result.status.cross_signal,
+            alerts: result.status.alerts.map(a => ({
+              type: a.type,
+              level: a.level,
+              symbol: a.symbol,
+            })),
+            per_user_summary: result.per_user.map(u => ({
+              user_id: u.user_id,
+              alerts_written: u.alerts_written,
+              error: u.error,
+            })),
+          },
+        });
+        logger.info(
+          `市场环境预警评估完成。扫描用户 ${result.scanned_users}，` +
+            `触发告警 ${result.alerted_users}，` +
+            `信号 [${result.status.alerts.map(a => a.type).join(',') || '无'}]` +
             (dryRun ? '（dry-run，未写 RiskAlert）' : '')
         );
       } else if (task.type === 'PAPER_TRADING_ATTRIBUTION_REPORT') {

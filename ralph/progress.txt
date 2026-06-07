@@ -149,6 +149,7 @@
 - **`RiskController` (/api/risk/*) vs `RiskAlertController` (/api/risk-alerts/*) 故意分开**: 前者 pre-trade *policy* (GET/PUT config) / 后者 post-trade *consumption* (bell view + read/unread)。`/api/risk` 是策略命名空间未来扩 US-049 DrawdownCircuitBreaker 加 `/api/risk/drawdown-breaker` 等。
 - **两阶段定时任务 guard 模板 (US-048 TrailingStopGuard 引入)**: 与 US-047 PositionLimitGuard 的"单次同步 placeOrder 内嵌"模式互补 —— 适用于需要"跨日观察 + 次日触发"语义的风控 (追踪止损 / 持有期到期 / 财报窗口隔离)。三件套：(1) **`updateXxxAfterClose(user_id?)`** 收盘后 cron 刷状态字段 (highest_price / max_drawdown / holding_days) 写回 position 表；(2) **`evaluateNextDayTriggers(user_id?, dry_run?)`** 开盘前 cron 扫触发条件，**写 RiskAlert + 返回结构化 trigger list**，**不**直接调 facade.placeOrder——保持单一职责让上层 (PaperTradingAutomationService) 按 trigger 走正常下单链路 (维持 facade 7-method 收敛)；(3) **GET/PUT /api/risk/<name>** 配置 endpoint 同 US-047 模板。**`effective_pct` 三级覆盖**: position 字段 > user_config > DEFAULT。**`highest_price` 初始化用 `avg_cost` fallback** 避免开仓首日 close < avg_cost 直接触发（同款判据适用未来"加仓后 high 水位重算"）。**触发判定用 `≤`（防御）vs 限制用 `>`（限额）的 boundary 语义不同**——防御要包含 boundary 立即止血，限额可恰好触线再说，与 US-047 镜像反向。**数据缺失时安全 HOLD 而非 fallback current_price**（current_price 会被 facade 下单流程 mutate，fallback 让 highest 突然跳水触发误平）。**`dry_run=true` 参数支持 UI 预演 trigger 不写 alert**——风控类 endpoint 都该有此选项让用户先看再决定。**单 user 失败 try/catch 隔离不阻塞剩余 user**（同 PositionLimitGuard + FactorICReport）。完整模板在 `backend/src/portfolio/CLAUDE.md` `risk/TrailingStopGuard — US-048 specifics` 一节。下个 US-049 DrawdownCircuitBreaker / US-050 MarketEnvAlertGuard 直接照此 9 项 checklist 模板复用。
 - **第 3 种风控形态：组合级 LEVEL cascade (US-049 DrawdownCircuitBreaker 引入)**: 与 US-047 (per-order inline)、US-048 (per-position two-phase cron) 互补 —— 本 guard 操作的是**整个组合的 total_value vs 历史 peak**。AC 给的 3 级阈值 (10% / 15% / 20%) **必须按 LEVEL_3 > LEVEL_2 > LEVEL_1 短路 pick 单一 level**（同 US-047 `pickSingleViolation` 模式），不要 cascade 三件套混淆决策。**`peak_value` 必须取 `max(snapshots, current.total_value)` 不能只看 EOD snapshots** —— EOD snapshots 滞后于实时评估窗口，否则 peak 滞后让 drawdown 永远 0 直到下次 snapshot 落库。**LEVEL_1 用 `paused_until` ISO timestamp 落库** (`User.risk_config.drawdown_breaker.paused_until`)，下次 BUY 走 placeOrder inline `checkBuyAllowed(user_id, symbol)` hook 检查暂停期；**SELL 永远放行** + **加仓既有持仓放行**（仅阻断新开仓，避免误伤策略 add-on）。**LEVEL_2 用 `Math.ceil(N/2)` 强 disposal 路径**（N=3 卖 2 / N=1 卖 1） 匹配 "减仓 *至* 50%" 而非 "减仓 *了* 50%" 的语义。**guard 输出 trigger ≠ 真实下单**（同 US-048）——`evaluateAfterClose` 返回 `triggers: DrawdownSellTrigger[]`，调用方 (`PaperTradingAutomationService` / 人工 / UI) 决定撮合时机，维持 facade 7-method 收敛。**`paused_until` 用 ISO timestamp string 不要 epoch ms**——审计可读 + JS `new Date(s).getTime()` 跨时区安全。**`isPauseActive(pausedUntil, nowMs)` 是唯一 read-side helper**，禁止 caller 直接 `Date.now() < s` 内联比较（漏掉 null / 非法字符串 / 非有限值的边界）。**`checkBuyAllowed` 失败 fail-OPEN**——风控不该因 DB 故障一刀切阻断所有交易（上层 cash check + position-limit guard 兜底）。**单 task type `PAPER_TRADING_DRAWDOWN_BREAKER_CHECK`**（仅 post-close，没有 pre-open phase —— `checkBuyAllowed` 是 inline 消费 pause 状态）。完整模板在 `backend/src/portfolio/CLAUDE.md` `risk/DrawdownCircuitBreaker — US-049 specifics` 一节。下个 US-050 MarketRegimeAlertService (market-level，再上一层抽象 —— 输入是大盘指数 bars 而非用户持仓) 仍可复用 LEVEL cascade pick + `≥` boundary + `SchedulerService` task type 模板。
+- **第 4 种风控形态：market-level / index-driven (US-050 MarketRegimeAlertService 引入)**: 与 US-047/048/049 用户数据驱动 (持仓 / portfolio peak) 互补 —— 本 guard 完全无 user state，输入是大盘指数 bars，输出"市场告警"再 fan-out 到所有有 portfolio 的用户。**"多信号并列" vs "single-level cascade" 判定原则**：信号代表"同一维度的不同严重程度档位"（如 drawdown 10/15/20%）→ cascade pick 一个；代表"互相独立的检测维度"（如跌幅 + 死叉）→ 多信号并列，可同时触发产 N 条独立告警。US-050 3 信号（DROP_3D / DROP_20D / DEATH_CROSS）属并列，市场综合状态本就由多维度独立刻画。**`≤ -pct` boundary 写法**：跌幅类阈值用 `≤ -drop_pct` 包含 boundary（保护性硬触发，5% 跌幅恰好触发）；上升类阈值用 `≥ +x` 同款包含。**禁止** `Math.abs(return) ≥ pct` —— boundary 语义差一个 tick。**MA 死叉用严格 `<` + 昨日 `≥`**：双边 `<` 每天 flat 都会触发；双边 `≤` 在 MA 平移交叉日重复触发。"昨日 ≥ + 今日 严格 <" 才是真正的 crossover detection，同 US-026 RSI 上穿模式。未来任何 MA/RSI/MACD 类 crossover detect 全按此 boundary 规则写。**数据不足 → `null` → 安全 HOLD 不告警**：MA20 / MA60 / 3 日 return / 月度 return 在 bars 数量不足时 helper 返回 `null`，pickRegimeAlerts 把每个 `null` 当"该信号不可评估"静默跳过（新股 / 上市不足 60 日指数不会误报死叉）。**`prior <= 0` 防御性除零 guard**：`computeReturnPct` 在 `prior=0 / prior<0 / NaN` 返回 `null`。**`SYSTEM:` sentinel 前缀** 复用 US-042 / US-049 约定，前端按 prefix bucket 系统级 / 个股 alert。**HTTP query 参数松解析**：`as_of=invalid-date` / `lookback_days=abc` 静默 fall through 到 default（new Date NaN check + Number.isInteger guard），同 normalize 风格。**单 task type** `PAPER_TRADING_MARKET_REGIME_CHECK` 参数与 US-049 完全一致（user_id / dry_run / lookback_days）。完整模板在 `backend/src/portfolio/CLAUDE.md` `risk/MarketRegimeAlertService — US-050 specifics` 一节。下个 US-052 行业集中度 / US-053 黑天鹅同属市场/系统级 broadcast，照搬此 fan-out 模板。
 
 
 
@@ -5268,4 +5269,104 @@ post-close cron entry point — supports `user_id` / `dry_run` /
   state in fakes. Same shape applies to future "is X open / pending /
   blocked" lookup helpers — push them into the DataSource interface.
 
+---
+
+## 2026/06/07 - US-050 风控：市场环境预警与降仓
+- 实现内容：新增 backend/src/portfolio/risk/MarketRegimeAlertService.ts 作为
+  **第 4 类风控形态：market-level / index-driven** (前 3 类: US-047 PositionLimitGuard
+  sync-inline per-order / US-048 TrailingStopGuard two-phase per-position cron /
+  US-049 DrawdownCircuitBreaker portfolio-peak cascade)。
+  - **Service 两个公共方法**：
+    - `getMarketRegimeStatus(options)` — 只读快照（HTTP endpoint 用 +
+      `evaluateAfterOpen` 内部调用）；返回 latest_close / return_3d_pct /
+      return_20d_pct / ma20/60 today/yesterday / cross_signal / alerts[]
+      / bar_count / error?；带 `as_of` 和 `lookback_days` 可选参数支持历史回放。
+    - `evaluateAfterOpen(options)` — post-open cron；内部走 status →
+      多 user fan-out 写 RiskAlert（每个 user × 每个 alert 一行）；
+      支持 `dry_run` / `user_id` 收窄 / `lookback_days` 覆盖。
+  - **3 类信号并列触发（不 cascade）**：DROP_3D（3 日累计跌幅 ≤ -5% → MEDIUM）/
+    DROP_20D（20 交易日累计跌幅 ≤ -15% → HIGH）/ DEATH_CROSS（MA20 < MA60 +
+    yesterday MA20 ≥ MA60 严格穿越 → MEDIUM）。与 US-049 single-level cascade
+    形成对比：市场综合状态本就需要 N 个独立信号告警（用户想看"哪些坏了"，
+    不是"最严重的那个"）；3 信号可同时触发产 3 条独立告警。
+  - **6 pure helpers 全 export 让单测脱离 DB**：computeReturnPct /
+    computeMovingAverage / detectDeathCross / pickRegimeAlerts /
+    normalizeMarketRegimeAlertConfig / buildAlertMessage。
+  - **配置**：`MarketRegimeAlertConfig` 持久化在 `User.risk_config.market_regime`
+    JSONB；默认值 `DEFAULT_MARKET_REGIME_ALERT_CONFIG` `Object.freeze`。
+    支持 enabled / benchmark_symbol / drop_3d_pct / drop_20d_pct /
+    enable_death_cross / reduce_position_pct 6 个字段；normalize 函数把
+    非有限/负/>1/非 boolean 静默退回默认（同 US-047/048/049）。
+  - **告警写入语义**：sentinel symbol `SYSTEM:MARKET_REGIME_<TYPE>` 与
+    US-042 / US-049 SYSTEM: 前缀约定一致；message 含 benchmark name +
+    跌幅/MA 数值 + "建议降仓 30%"；**不**调用 `facade.placeOrder`（alert-only
+    符合 AC "仅 alert，不强制"，与 US-049 LEVEL_2/3 trigger 模式一致）。
+  - **DataSource 接口注入** + Default Sequelize 实现 + production singleton +
+    constructor override → 单测注 fake bag 跑 0 DB。User.risk_config JSONB
+    写入用 `user.changed('risk_config', true)` 符合 US-017 codebase pattern。
+  - **HTTP 入口** (RiskController + risk.routes.ts)：
+    - `GET /api/risk/market-regime-status`（AC 指定，只读快照；带可选
+      `?as_of=YYYY-MM-DD&lookback_days=N` query 参数支持历史回放，
+      非法值静默退回默认）
+    - `GET /api/risk/market-regime`（读 config）
+    - `PUT /api/risk/market-regime`（写 config，normalize 后入库）
+  - **SchedulerService 单 task type** `PAPER_TRADING_MARKET_REGIME_CHECK`：
+    参数形态与 US-049 完全一致（user_id / dry_run / lookback_days），ops
+    脚本和 cron 配置走同一套参数 dialect。
+  - **错误处理**：`loadBenchmarkBars` 故障 → `status.error` 设置但不抛
+    （fail-open，scheduler 不该 crash）；单 user `loadConfig` 或
+    `writeAlert` 故障 → try/catch 隔离不阻塞其他 user。
+- Files changed:
+  - 新增：backend/src/portfolio/risk/MarketRegimeAlertService.ts (791 lines)
+  - 新增：backend/tests/risk/market-regime-alert-service.test.ts (832 lines)
+  - 修改：backend/src/api/controllers/RiskController.ts（加 3 个方法）
+  - 修改：backend/src/api/routes/risk.routes.ts（加 3 条 route）
+  - 修改：backend/src/services/SchedulerService.ts（加 import + 1 个 task case）
+  - 修改：backend/src/portfolio/CLAUDE.md（加 US-050 patterns 章节）
+- Quality checks:
+  - cd backend && npx tsc --noEmit → ✅ clean
+  - npx eslint src/api/controllers/RiskController.ts src/api/routes/risk.routes.ts
+    src/portfolio/risk/MarketRegimeAlertService.ts → ✅ no errors
+    (SchedulerService 16 个 prettier errors 全部在我未编辑的行 1240 / 2580-2584)
+  - npx ts-node --transpile-only tests/risk/market-regime-alert-service.test.ts
+    → ✅ 139 ok, 0 failed of 139
+- **Learnings for future iterations:**
+  - **第 4 类风控形态：market-level / index-driven**。US-047/048/049 都在用户
+    数据上跑（持仓 / portfolio peak），US-050 完全无 user state（输入是指数
+    bars），告警再 fan-out 到所有用户。新模式：单源信号 × N user broadcast。
+    未来 US-052 行业集中度 / US-053 黑天鹅都属此类（system-level → 多 user 广播）。
+  - **"多信号并列" vs "single-level cascade"判定**：US-049 一个组合在一次评估
+    应该只产 1 个 level（最严重的）。US-050 一次评估可产多达 3 个独立信号
+    （3 日跌幅 + 月跌幅 + 死叉），因市场综合状态本就由多维度独立刻画。
+    **判据**：如果信号代表"同一维度的不同严重程度档位"→ cascade pick；
+    如果代表"互相独立的检测维度"→ 多信号并列。未来新 guard 设计时先做此判定。
+  - **`≤ -pct` vs `≥ +pct` boundary 写法 (US-050 强化)**：跌幅类阈值用
+    `≤ -drop_pct` 包含 boundary（保护性硬触发，5% 跌幅恰好触发）；上升类
+    阈值用 `≥ +x` 同款包含。**禁止** `Math.abs(return) ≥ pct` —— boundary
+    语义差一个 tick 测试会挂。US-049 用 `≥` 在 drawdown；US-050 用 `≤ -` 在
+    跌幅。同款 boundary 在 US-048（保护性硬触发 `≤`） / US-047（风控上限 `>`
+    不含 boundary）已确立，US-050 在跌幅维度扩展该规则。
+  - **MA 死叉用 严格 `<` + 昨日 `≥`** 而不是双边 `≤` / 双边 `<`：双边 `<`
+    每天 flat 都会触发；双边 `≤` 会在 MA 平移交叉日重复触发。"昨日 ≥ +
+    今日 严格 <" 才是真正的 crossover detection，同 US-026 RSI 上穿模式。
+    未来任何 MA / RSI / MACD 类 crossover detect 全按此 boundary 规则写。
+  - **数据不足时 `null` → 安全 HOLD 不告警**：MA20 需要至少 20 个 close，
+    MA60 需要 60；3 日 return 需要 4 bar；月度需要 21 bar。bars 数量不足
+    时 helper 返回 `null`，pickRegimeAlerts 把每个 `null` 当"该信号不可
+    评估"静默跳过。新股 / 上市不足 60 日的指数自然跳过死叉判定不会误报。
+    同款 `data-shortage = safe HOLD` 已在 US-048（DailyBar 缺当日 close）
+    / US-026（bar < period 无 RSI）确立。
+  - **`prior <= 0` 防御性除零 guard**：`computeReturnPct(latest, prior)` 在
+    `prior=0 / prior<0 / NaN` 都返回 `null`。指数 close 实务上不会 ≤ 0，
+    但单根 corrupted bar 不应该级联触发 +∞% 跨 3 信号。同款"分母接近 0 跳过"
+    已在 US-032 EarningsSurpriseFactor 用 `CONSENSUS_NEAR_ZERO_THRESHOLD`
+    确立，US-050 在 return 计算扩展该规则。
+  - **`SYSTEM:` 前缀 sentinel symbol** 复用 US-042 / US-049 约定，前端按
+    `symbol.startsWith('SYSTEM:')` bucket 组合级/系统级 alert 与个股 alert
+    分开。per-type discriminator (`SYSTEM:MARKET_REGIME_DROP_3D` etc.) 让
+    bell view 按 `DISTINCT symbol` 折叠同日重复。
+  - **HTTP query 参数松解析** 与 normalize 同款"沉默退回默认不 4xx"：
+    `as_of=invalid-date` / `lookback_days=abc` 全部 fall through 到 default
+    （`new Date('xx').getTime()` NaN check + `Number.isInteger` guard）。
+    UI 不需要先做客户端校验，传啥都不会挂，对应配置正常推荐路径不变。
 ---

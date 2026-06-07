@@ -58,4 +58,30 @@ router.post(
   riskController.clearDrawdownBreakerPause
 );
 
+/**
+ * @route GET /api/risk/market-regime-status
+ * @desc 当前市场环境实时快照（指数收盘 + 3 日/月度涨跌 + MA20 vs MA60 +
+ *       已触发的市场预警告警）— 只读，不写 RiskAlert (US-050)
+ * @access Private
+ */
+router.get(
+  '/market-regime-status',
+  authController.authenticate,
+  riskController.getMarketRegimeStatus
+);
+
+/**
+ * @route GET /api/risk/market-regime
+ * @desc 获取当前用户的市场环境预警配置 (US-050)
+ * @access Private
+ */
+router.get('/market-regime', authController.authenticate, riskController.getMarketRegimeConfig);
+
+/**
+ * @route PUT /api/risk/market-regime
+ * @desc 更新当前用户的市场环境预警配置 (US-050)
+ * @access Private
+ */
+router.put('/market-regime', authController.authenticate, riskController.updateMarketRegimeConfig);
+
 export default router;

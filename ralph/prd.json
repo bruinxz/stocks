@@ -855,8 +855,8 @@
         "Tests pass"
       ],
       "priority": 50,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026/06/07. Added backend/src/portfolio/risk/MarketRegimeAlertService.ts as the 4th risk-guard shape (market-level / index-driven). Service exposes `getMarketRegimeStatus()` (read-only snapshot used by HTTP endpoint + dashboard) and `evaluateAfterOpen()` (post-open cron — fans alerts out to all users with portfolios, sentinel symbol SYSTEM:MARKET_REGIME_<TYPE>). 3 signals evaluated in parallel (not cascade): DROP_3D (3 日累计 ≤ -5% → MEDIUM), DROP_20D (20 交易日 ≤ -15% → HIGH), DEATH_CROSS (MA20 死叉 MA60 → MEDIUM). All produce alert message containing benchmark name + 跌幅 + 建议降仓 30% (alert-only, no facade.placeOrder calls). 6 pure helpers exported for unit-test isolation (computeReturnPct / computeMovingAverage / detectDeathCross / pickRegimeAlerts / normalizeMarketRegimeAlertConfig / buildAlertMessage). DataSource interface + Default Sequelize impl + production singleton + constructor override so tests run with zero DB. RiskController extended with 3 new methods (getMarketRegimeStatus + getMarketRegimeConfig + updateMarketRegimeConfig); risk.routes.ts mounts 3 new endpoints (GET /api/risk/market-regime-status [AC-specified] + GET/PUT /api/risk/market-regime). SchedulerService PAPER_TRADING_MARKET_REGIME_CHECK task type added (dry_run + user_id + lookback_days parameter shape matching US-049). Tests: backend/tests/risk/market-regime-alert-service.test.ts — 139 ok, 0 failed, covering constants / 6 pure helpers / status no-bars + insufficient-bars + each-signal-trigger + multi-signal + disabled + DB-fail / evaluateAfterOpen fan-out + dry_run + write-fail isolation + config-outage isolation + user-disabled / config CRUD garbage-in normalization. cd backend && npx tsc --noEmit passes clean."
     },
     {
       "id": "US-051",
