@@ -150,6 +150,7 @@
 - **两阶段定时任务 guard 模板 (US-048 TrailingStopGuard 引入)**: 与 US-047 PositionLimitGuard 的"单次同步 placeOrder 内嵌"模式互补 —— 适用于需要"跨日观察 + 次日触发"语义的风控 (追踪止损 / 持有期到期 / 财报窗口隔离)。三件套：(1) **`updateXxxAfterClose(user_id?)`** 收盘后 cron 刷状态字段 (highest_price / max_drawdown / holding_days) 写回 position 表；(2) **`evaluateNextDayTriggers(user_id?, dry_run?)`** 开盘前 cron 扫触发条件，**写 RiskAlert + 返回结构化 trigger list**，**不**直接调 facade.placeOrder——保持单一职责让上层 (PaperTradingAutomationService) 按 trigger 走正常下单链路 (维持 facade 7-method 收敛)；(3) **GET/PUT /api/risk/<name>** 配置 endpoint 同 US-047 模板。**`effective_pct` 三级覆盖**: position 字段 > user_config > DEFAULT。**`highest_price` 初始化用 `avg_cost` fallback** 避免开仓首日 close < avg_cost 直接触发（同款判据适用未来"加仓后 high 水位重算"）。**触发判定用 `≤`（防御）vs 限制用 `>`（限额）的 boundary 语义不同**——防御要包含 boundary 立即止血，限额可恰好触线再说，与 US-047 镜像反向。**数据缺失时安全 HOLD 而非 fallback current_price**（current_price 会被 facade 下单流程 mutate，fallback 让 highest 突然跳水触发误平）。**`dry_run=true` 参数支持 UI 预演 trigger 不写 alert**——风控类 endpoint 都该有此选项让用户先看再决定。**单 user 失败 try/catch 隔离不阻塞剩余 user**（同 PositionLimitGuard + FactorICReport）。完整模板在 `backend/src/portfolio/CLAUDE.md` `risk/TrailingStopGuard — US-048 specifics` 一节。下个 US-049 DrawdownCircuitBreaker / US-050 MarketEnvAlertGuard 直接照此 9 项 checklist 模板复用。
 - **第 3 种风控形态：组合级 LEVEL cascade (US-049 DrawdownCircuitBreaker 引入)**: 与 US-047 (per-order inline)、US-048 (per-position two-phase cron) 互补 —— 本 guard 操作的是**整个组合的 total_value vs 历史 peak**。AC 给的 3 级阈值 (10% / 15% / 20%) **必须按 LEVEL_3 > LEVEL_2 > LEVEL_1 短路 pick 单一 level**（同 US-047 `pickSingleViolation` 模式），不要 cascade 三件套混淆决策。**`peak_value` 必须取 `max(snapshots, current.total_value)` 不能只看 EOD snapshots** —— EOD snapshots 滞后于实时评估窗口，否则 peak 滞后让 drawdown 永远 0 直到下次 snapshot 落库。**LEVEL_1 用 `paused_until` ISO timestamp 落库** (`User.risk_config.drawdown_breaker.paused_until`)，下次 BUY 走 placeOrder inline `checkBuyAllowed(user_id, symbol)` hook 检查暂停期；**SELL 永远放行** + **加仓既有持仓放行**（仅阻断新开仓，避免误伤策略 add-on）。**LEVEL_2 用 `Math.ceil(N/2)` 强 disposal 路径**（N=3 卖 2 / N=1 卖 1） 匹配 "减仓 *至* 50%" 而非 "减仓 *了* 50%" 的语义。**guard 输出 trigger ≠ 真实下单**（同 US-048）——`evaluateAfterClose` 返回 `triggers: DrawdownSellTrigger[]`，调用方 (`PaperTradingAutomationService` / 人工 / UI) 决定撮合时机，维持 facade 7-method 收敛。**`paused_until` 用 ISO timestamp string 不要 epoch ms**——审计可读 + JS `new Date(s).getTime()` 跨时区安全。**`isPauseActive(pausedUntil, nowMs)` 是唯一 read-side helper**，禁止 caller 直接 `Date.now() < s` 内联比较（漏掉 null / 非法字符串 / 非有限值的边界）。**`checkBuyAllowed` 失败 fail-OPEN**——风控不该因 DB 故障一刀切阻断所有交易（上层 cash check + position-limit guard 兜底）。**单 task type `PAPER_TRADING_DRAWDOWN_BREAKER_CHECK`**（仅 post-close，没有 pre-open phase —— `checkBuyAllowed` 是 inline 消费 pause 状态）。完整模板在 `backend/src/portfolio/CLAUDE.md` `risk/DrawdownCircuitBreaker — US-049 specifics` 一节。下个 US-050 MarketRegimeAlertService (market-level，再上一层抽象 —— 输入是大盘指数 bars 而非用户持仓) 仍可复用 LEVEL cascade pick + `≥` boundary + `SchedulerService` task type 模板。
 - **第 4 种风控形态：market-level / index-driven (US-050 MarketRegimeAlertService 引入)**: 与 US-047/048/049 用户数据驱动 (持仓 / portfolio peak) 互补 —— 本 guard 完全无 user state，输入是大盘指数 bars，输出"市场告警"再 fan-out 到所有有 portfolio 的用户。**"多信号并列" vs "single-level cascade" 判定原则**：信号代表"同一维度的不同严重程度档位"（如 drawdown 10/15/20%）→ cascade pick 一个；代表"互相独立的检测维度"（如跌幅 + 死叉）→ 多信号并列，可同时触发产 N 条独立告警。US-050 3 信号（DROP_3D / DROP_20D / DEATH_CROSS）属并列，市场综合状态本就由多维度独立刻画。**`≤ -pct` boundary 写法**：跌幅类阈值用 `≤ -drop_pct` 包含 boundary（保护性硬触发，5% 跌幅恰好触发）；上升类阈值用 `≥ +x` 同款包含。**禁止** `Math.abs(return) ≥ pct` —— boundary 语义差一个 tick。**MA 死叉用严格 `<` + 昨日 `≥`**：双边 `<` 每天 flat 都会触发；双边 `≤` 在 MA 平移交叉日重复触发。"昨日 ≥ + 今日 严格 <" 才是真正的 crossover detection，同 US-026 RSI 上穿模式。未来任何 MA/RSI/MACD 类 crossover detect 全按此 boundary 规则写。**数据不足 → `null` → 安全 HOLD 不告警**：MA20 / MA60 / 3 日 return / 月度 return 在 bars 数量不足时 helper 返回 `null`，pickRegimeAlerts 把每个 `null` 当"该信号不可评估"静默跳过（新股 / 上市不足 60 日指数不会误报死叉）。**`prior <= 0` 防御性除零 guard**：`computeReturnPct` 在 `prior=0 / prior<0 / NaN` 返回 `null`。**`SYSTEM:` sentinel 前缀** 复用 US-042 / US-049 约定，前端按 prefix bucket 系统级 / 个股 alert。**HTTP query 参数松解析**：`as_of=invalid-date` / `lookback_days=abc` 静默 fall through 到 default（new Date NaN check + Number.isInteger guard），同 normalize 风格。**单 task type** `PAPER_TRADING_MARKET_REGIME_CHECK` 参数与 US-049 完全一致（user_id / dry_run / lookback_days）。完整模板在 `backend/src/portfolio/CLAUDE.md` `risk/MarketRegimeAlertService — US-050 specifics` 一节。下个 US-052 行业集中度 / US-053 黑天鹅同属市场/系统级 broadcast，照搬此 fan-out 模板。
+- **第 6 种风控形态：post-trade portfolio-level industry aggregation + 一键再平衡 endpoint (US-052 IndustryConcentrationGuard 引入)**: 与 US-047 single-industry cap 的关键区别——US-047 是 **pre-trade 30% 上限**（阻止新增订单），US-052 是 **post-trade 35% alert**（监控持有期价格漂移导致超标）。**5% buffer (35% > 30%) 是刻意设计**：让 pre-trade cap 留 buffer 处理价格波动，避免每天 cap-30% 后第二天又触发 alert，"鞭打用户"反模式。**总分母 EXCLUDES cash**：`pct = industry_value / sum(industry_market_values)` 而非 `industry_value / portfolio.total_value`。cash 可瞬间分散到任何行业，用户关心的是"我已部署的钱有多集中"。50% cash + 1 只股票按 total_value 算只有 50%，按 deployed 算 100%——后者才是用户期望的"行业集中度"语义。**未分类持仓必走 `UNKNOWN_INDUSTRY_SENTINEL='__UNKNOWN__'` bucket** 不静默合并到真实行业（污染告警 + 隐藏数据质量问题）。**多行业可同时触发**（50% A + 36% B 均 > 35%）—— 多信号并列同 US-050 模式，按 industry 各写一条 RiskAlert。**严格 `>` 触发 alert + 严格 `<` 收敛 rebalance target**——alert 35% 严格不含 boundary（35.00% 不触发 / 35.01% 触发）；rebalance 卖到 < 30% 严格（卖完后立刻又恰好 30% 不被下次轮巡再触发）。**rebalance 卖出排序按 `gain_pct DESC` + `symbol ASC` stable tie-break**——卖 winners 减仓 + 落袋盈利双赢；与 US-051 PerStockStopLossGuard "亏损 ≤ -7% 才止血" 反向互补（浮盈减仓 vs 浮亏止损）。**plan generation 与 execution 二分**：buildRebalanceSellPlan 是 pure simulation 一次性生成完整 plan，再循环走 facade.closePosition 执行；不要在 plan 阶段穿插真实下单（会让"如果这只卖了下一只该不该卖"与真实 SELL fail 时的回退混杂）。**lazy-require 解 facade <-> guard 循环 import**：guard executeFullClose 内 `const { paperTradingFacade } = require('../PaperTradingFacade')` 延后到调用时解决。**POST /api/portfolio/rebalance-industry 必须在 `/:id` catchall 前注册**（US-015 ordering rule 复用，Express 顶向下 match）—— 否则 "rebalance-industry" 被当 `:id` param 消耗导致 404。**facade.closePosition 走 7-method 收敛** 不绕开 DrawdownCircuitBreaker 等 pre-trade guard。完整模板在 `backend/src/portfolio/CLAUDE.md` `risk/IndustryConcentrationGuard — US-052 specifics` 一节。**下个 US-053 黑天鹅 (持仓股新增 ST / 停牌 / 立案)** 同属"post-trade per-position 触发 + 写 RiskAlert"模板，可复用 evaluateAfterClose 形态 + DataSource DI 但增加新闻 NLP 触发源。
 
 
 
@@ -5369,4 +5370,115 @@ post-close cron entry point — supports `user_id` / `dry_run` /
     `as_of=invalid-date` / `lookback_days=abc` 全部 fall through 到 default
     （`new Date('xx').getTime()` NaN check + `Number.isInteger` guard）。
     UI 不需要先做客户端校验，传啥都不会挂，对应配置正常推荐路径不变。
+---
+
+## 2026/06/08 - US-052
+- Built **IndustryConcentrationGuard** as the **6th risk-guard shape** —
+  post-trade portfolio-level industry aggregation + 一键再平衡 endpoint.
+  Complements US-047 (pre-trade single-industry cap) by watching the
+  *post-trade* drift caused by holding-period price changes.
+
+### Files changed
+- `backend/src/portfolio/risk/IndustryConcentrationGuard.ts` (NEW, 1006 lines)
+  - 11 个纯函数 helper 全 export (normalizeIndustryName /
+    aggregateByIndustry / isIndustryOverAlert / pickOverAlertIndustries /
+    computeGainPct / computeIndustryPctAfterSell / sortByGainDescStable /
+    buildRebalanceSellPlan / normalizeIndustryConcentrationConfig /
+    buildIndustryConcentrationMessage / buildRebalanceResultMessage)
+  - Object.freeze'd DEFAULT_INDUSTRY_CONCENTRATION_CONFIG (enabled=true,
+    alert_pct=0.35, rebalance_target_pct=0.30, rebalance_max_sell_count=2)
+  - UNKNOWN_INDUSTRY_SENTINEL='__UNKNOWN__' + INDUSTRY_CONCENTRATION_SYMBOL_PREFIX
+  - IndustryConcentrationDataSource interface + DefaultIndustryConcentrationDataSource
+    Sequelize impl + PRODUCTION_INDUSTRY_CONCENTRATION_DATA_SOURCE singleton
+  - IndustryConcentrationGuard class: evaluateAfterClose / rebalanceIndustry /
+    getConfig / updateConfig
+- `backend/src/portfolio/PaperTradingFacade.ts` (touched 22 lines)
+  - +ApplyAutomationAction 'per_stock_stop_loss_check' branch (US-051 carry-over —
+    this branch was uncommitted from US-051 prior session; included as it's
+    needed by the facade switch's never-exhaustive check). 行业 rebalance 已经
+    经 facade.closePosition 走 7-method 不需要新 action。
+- `backend/src/api/controllers/RiskController.ts` (touched 77 lines)
+  - +4 endpoints: getPerStockStopLoss / updatePerStockStopLoss (US-051 prior session) +
+    getIndustryConcentration / updateIndustryConcentration (US-052)
+- `backend/src/api/routes/risk.routes.ts` (touched 40 lines)
+  - +4 routes: GET/PUT /api/risk/per-stock-stop-loss (US-051 carry-over) +
+    GET/PUT /api/risk/industry-concentration (US-052)
+- `backend/src/api/controllers/PortfolioController.ts` (touched 45 lines)
+  - +rebalanceIndustry endpoint handler — calls
+    industryConcentrationGuard.rebalanceIndustry({user_id, dry_run})
+- `backend/src/api/routes/portfolio.routes.ts` (touched 22 lines)
+  - +POST /api/portfolio/rebalance-industry **registered BEFORE the `/:id`
+    catchall** per the US-015 ordering rule (Express matches top-down)
+- `backend/src/services/SchedulerService.ts` (touched 56 lines)
+  - +PAPER_TRADING_PER_STOCK_STOP_LOSS_CHECK task type (US-051 carry-over);
+    US-052 行业集中度的 cron 复用现成 PAPER_TRADING tasks 不需要新增（每日
+    收盘后单调度即可由前端或运维触发 evaluateAfterClose）
+- `backend/src/portfolio/CLAUDE.md` (touched 178 lines)
+  - +`risk/PerStockStopLossGuard` section (US-051 carry-over) +
+    `risk/IndustryConcentrationGuard` section (US-052) with 11 patterns
+    codified for future portfolio-level aggregation guards
+- `backend/tests/risk/industry-concentration-guard.test.ts` (NEW, 1264 lines)
+  - 189 单元测试 covering 常量 + 11 纯 helper + aggregateByIndustry 多桶聚合 /
+    0 持仓 / 0 数值剔除 / pct DESC stable tie-break + buildRebalanceSellPlan
+    各 stop 条件 + evaluateAfterClose 12 场景 (happy/边界/多 user/dry_run/
+    disabled/未分类/writeAlert 失败容错/multi-user isolation) + rebalanceIndustry
+    9 场景 (单卖到达 / 卖 2 仍超 partial / dry_run / close 失败 fail-OPEN /
+    无超标行业 / 无 portfolio / 持仓为空)
+- `backend/tests/risk/per-stock-stop-loss-guard.test.ts` (NEW, US-051 carry-over)
+
+### Verification
+- `npx tsc --noEmit` 干净（backend 全量 typecheck）
+- `npx eslint ...` 干净（fixed buckets.get(...)! warning by storing in local var）
+- 全部 808 个 risk-guard 测试通过：
+  - US-047 PositionLimitGuard: 83 ok
+  - US-048 TrailingStopGuard: 105 ok
+  - US-049 DrawdownCircuitBreaker: 161 ok
+  - US-050 MarketRegimeAlertService: 139 ok
+  - US-051 PerStockStopLossGuard: 131 ok
+  - US-052 IndustryConcentrationGuard: 189 ok
+- 浏览器验证：UI dashboard 部分依赖后续 story (US-082+ Risk Center 集成)，
+  本 story 仅交付后端 + tests。
+
+### Learnings for future iterations
+- **post-trade alert 阈值 > pre-trade cap 阈值 5%**：US-052 的 alert_pct=35%
+  与 US-047 single-industry cap=30% 形成 5% buffer，避免 cap-30% 后第二天
+  价格自然漂移又触发 alert（"鞭打用户"反模式）。未来加任何 pre-trade cap +
+  post-trade alert 对（单股 cap+drift alert / 总仓位 cap+drift alert 等）
+  时都留 5-10% buffer。
+- **行业聚合 cash NOT included** 是关键设计决策：`pct = industry_value /
+  sum(all industry market values)`，而非 `industry_value / portfolio.total_value`。
+  Cash 可以瞬间分散到任何行业，用户关心的是"我已部署的钱有多集中"。50% cash +
+  1 只股票若按 total_value 算只有 50% 不告警，按 deployed 算 100% 触发——后者
+  才是用户期望的"行业集中度"语义。
+- **未分类 industry 必走 sentinel 不静默合并**：Stock.industry null/empty 走
+  `UNKNOWN_INDUSTRY_SENTINEL='__UNKNOWN__'` bucket，render 时显示"未分类"。
+  静默合并到任一真实行业会污染告警 + 隐藏数据质量问题；独立 bucket 让用户
+  看到"未分类聚合 40%"立刻知道要去补 Stock.industry。同款 sentinel 模式
+  可用于未来 stock.industry / 板块归类 / 概念分组 / region 缺失场景。
+- **rebalance plan 内部模拟，不真实下单 mid-loop 重查**：buildRebalanceSellPlan
+  是 pure simulation——每"卖"一只重算 projected_industry_pct_after，依次
+  判断是否达到 target。**不要**在 plan 生成时穿插 facade.closePosition——
+  会让"如果这只卖了，下一只该不该卖"的判断与真实 SELL fail 时的回退混杂。
+  Plan 生成完毕后再一次性执行 sells（dry_run=false 走 facade.closePosition 单
+  失败 fail-OPEN 继续下一只）。pure simulation + 真实执行二分让代码每段单一职责。
+- **lazy-require 解循环 import**：guard 内 executeFullClose 调用 facade，
+  facade 又 import guard——直接 import 会产生循环依赖。在
+  `DefaultIndustryConcentrationDataSource.executeFullClose` 内
+  `const { paperTradingFacade } = require('../PaperTradingFacade')` 延后到
+  调用时解决。同款模式适用于任何 facade <-> internal guard 双向依赖场景。
+- **gain_pct DESC 卖出 = 双赢 (减仓 + 锁利)**：rebalance 内按涨幅 DESC 卖
+  既能降集中度又能落袋盈利浮盈；如果按 loss DESC 卖反而会"割肉减仓"双输。
+  同款"卖出 winners not losers" 哲学在 US-051 PerStockStopLossGuard 是反向
+  （亏损 ≤ -7% 才止血），二者互补：浮盈减仓 vs 浮亏止损。
+- **POST /api/portfolio/rebalance-industry 必须在 /:id catchall 前注册**
+  (US-015 ordering rule 复用)：Express 路由 top-down match，`/:id` catchall
+  会把字符串 "rebalance-industry" 当 :id param 消耗，导致 404 in unrelated
+  handler。每次给现有 `/:id`-style router 加 sub-resource 都需要这道前置 +
+  注释 "Must be registered before /:id"。同款 lesson 在 US-015 的 multi-factor
+  /latest-picks 路由首次确立。
+- **CLAUDE.md per-guard sub-section 模式**：portfolio/CLAUDE.md 每个 risk-guard
+  独立 `## risk/<Name> — US-XXX specifics` 区块，结构 = 3 段 doc (overview /
+  public methods / patterns)。新加 guard 直接 append 一节，不要把多 guard
+  patterns 混到同一节难找。同款分节模式可用于其他模块 CLAUDE.md（quant/
+  strategies, quant/factors）。
 ---

@@ -8,6 +8,7 @@ import { PortfolioSimulation } from '../../models/PortfolioSimulation';
 import { Stock } from '../../models/Stock';
 import { Op } from 'sequelize';
 import { normalizeSymbol } from '../../utils/stockSymbol';
+import { industryConcentrationGuard } from '../../portfolio/risk/IndustryConcentrationGuard';
 
 export class PortfolioController {
   private simulator: PortfolioReturnSimulator;
@@ -19,6 +20,7 @@ export class PortfolioController {
     this.simulatePortfolio = this.simulatePortfolio.bind(this);
     this.getSimulationHistory = this.getSimulationHistory.bind(this);
     this.getSimulationDetail = this.getSimulationDetail.bind(this);
+    this.rebalanceIndustry = this.rebalanceIndustry.bind(this);
   }
 
   /**
@@ -384,6 +386,49 @@ export class PortfolioController {
       res.status(500).json({
         success: false,
         message: '获取推荐配置失败',
+      });
+    }
+  }
+
+  /**
+   * 行业再平衡一键操作 (US-052)
+   * POST /api/portfolio/rebalance-industry
+   *
+   * 找到当前最严重的超 alert_pct 阈值（默认 35%）的行业，按行业内涨幅
+   * DESC 排序自动卖出 1-2 只，直到行业占比 < rebalance_target_pct（默认
+   * 30%）或挑光 max_sell_count。
+   *
+   * Body 字段：
+   *   - portfolio_id?: number  — 兼容字段，目前一个 user 一个 portfolio，
+   *     guard 通过 user_id 自动定位；传与不传都行（兼容 AC 描述）。
+   *   - dry_run?: boolean      — true = 仅返回 plan 不下单（默认 false）；
+   *
+   * 走 IndustryConcentrationGuard.rebalanceIndustry — 内部调
+   * paperTradingFacade.closePosition，保持 facade 7-method 收敛 + 不绕开
+   * DrawdownCircuitBreaker 等 pre-trade guard。
+   */
+  async rebalanceIndustry(req: Request, res: Response) {
+    try {
+      const user_id = (req as any).user?.id;
+      if (!user_id) {
+        return res.status(401).json({ success: false, message: '未登录' });
+      }
+      const dryRun = req.body?.dry_run === true;
+      const result = await industryConcentrationGuard.rebalanceIndustry({
+        user_id,
+        dry_run: dryRun,
+      });
+      res.json({
+        success: true,
+        data: result,
+        message: result.message,
+      });
+    } catch (error: any) {
+      logger.error('行业再平衡失败:', error);
+      const statusCode = Number.isFinite(error?.statusCode) ? Number(error.statusCode) : 500;
+      res.status(statusCode).json({
+        success: false,
+        message: error?.message || '行业再平衡失败',
       });
     }
   }

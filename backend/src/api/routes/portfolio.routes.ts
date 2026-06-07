@@ -69,6 +69,28 @@ router.get(
 router.get('/recommended-config', portfolioController.getRecommendedConfig);
 
 /**
+ * @route POST /api/portfolio/rebalance-industry
+ * @desc 行业集中度一键再平衡（US-052）— 找到最严重的超 35% 阈值行业，
+ *       按行业内涨幅 DESC 卖出 1-2 只让行业占比 < 30%。
+ *       Body 字段：{ portfolio_id?: number, dry_run?: boolean }。
+ *       走 IndustryConcentrationGuard.rebalanceIndustry 内部经
+ *       paperTradingFacade.closePosition，保持 facade 收敛 + 不绕开 pre-trade
+ *       guard 链路。
+ *
+ *       IMPORTANT: registered BEFORE the `/:id` catchall route per the
+ *       US-015 ordering rule (Express matches top-down — `/:id` would
+ *       otherwise consume "rebalance-industry" as a `:id` param).
+ * @access Private
+ */
+router.post(
+  '/rebalance-industry',
+  authController.authenticate,
+  [body('portfolio_id').optional().isInt({ min: 1 }), body('dry_run').optional().isBoolean()],
+  validateRequest,
+  portfolioController.rebalanceIndustry
+);
+
+/**
  * @route GET /api/portfolio/:id
  * @desc 获取投资组合模拟详情
  * @access Private

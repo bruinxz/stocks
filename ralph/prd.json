@@ -873,8 +873,8 @@
         "Tests pass"
       ],
       "priority": 51,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026/06/08. Built backend/src/portfolio/risk/PerStockStopLossGuard.ts as the 5th risk-guard (after PositionLimit/TrailingStop/DrawdownBreaker/MarketRegime) with the canonical 7-checklist: DataSource interface DI + pure helpers all exported + Object.freeze defaults + RiskAlert(level='HIGH') writes + per-user try/catch isolation + 3-level pct override (position.stop_loss_pct ← currently aliased to position.trailing_stop_pct column → user.risk_config.per_stock_stop_loss.pct → DEFAULT 0.07). Trigger boundary uses `loss_ratio ≤ -effective_pct` (≤ inclusive, same as US-048/US-049 protective触发 boundary). Mass-trigger fires a single portfolio-level SYSTEM:PER_STOCK_STOP_LOSS_MASS alert when `triggered_count ≥ Math.ceil(open_count × mass_threshold_ratio)` (default 50%). Facade integration via new `applyAutomation` action `per_stock_stop_loss_check` (preserves the 7-method invariant). Scheduler task PAPER_TRADING_PER_STOCK_STOP_LOSS_CHECK. HTTP: GET/PUT /api/risk/per-stock-stop-loss. 131 unit tests pass (constants + 7 pure helpers + 18 evaluateAfterClose scenarios covering happy paths, boundary, per-position pct override tighter/looser, mass at various ratios, custom thresholds, missing bar, bad cost, zero qty, disabled, dry-run, alert failure tolerance, multi-user isolation, no-portfolio, config CRUD + normalize garbage). All 619 risk-guard tests (US-047/048/049/050/051) pass; full backend typecheck clean."
     },
     {
       "id": "US-052",
@@ -889,8 +889,8 @@
         "Tests pass"
       ],
       "priority": 52,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026/06/08. Built backend/src/portfolio/risk/IndustryConcentrationGuard.ts as the 6th risk-guard (after PositionLimit/TrailingStop/Drawdown/MarketRegime/PerStockStopLoss) — first **post-trade portfolio-level industry aggregation**形态. 沿用 7-checklist (DataSource DI + 11 个纯函数 helper 全 export + Object.freeze defaults + per-user try/catch isolation + JSONB save 用 changed('risk_config',true) + RiskAlert(level='MEDIUM',symbol='SYSTEM:INDUSTRY_CONCENTRATION:<industry>') + fail-OPEN). 与 US-047 single-industry cap 区分: US-047 是 pre-trade 30% 上限 (阻止新增订单)，US-052 是 post-trade 35% alert (监控价格漂移导致超标) — 5% buffer 避免 cap-30% 后第二天又触发. 一键再平衡 POST /api/portfolio/rebalance-industry: 找最严重超 35% 行业 → 行业内 gain_pct DESC 排序 → 卖 1-2 只到 <30%, dry_run=true 仅 plan / dry_run=false 走 paperTradingFacade.closePosition (保持 facade 7-method 收敛 + 不绕开 DrawdownCircuitBreaker pre-trade guard). 边界: alert 严格 > (35.00% 不触发 / 35.01% 触发), rebalance 严格 < (收敛到 30% 才停止). 未分类持仓 (industry=null/empty) 走 UNKNOWN_INDUSTRY_SENTINEL='__UNKNOWN__' 聚合不静默合并到真实行业. total_position_value=sum(market_value) **不含 cash** — pct 是 '行业占持仓比' 不是 '行业占总账户比' (cash 可随时分散). 多行业可同时超标 → 多条 RiskAlert. HTTP: GET/PUT /api/risk/industry-concentration (config CRUD) + POST /api/portfolio/rebalance-industry (一键再平衡). 189 单元测试通过 (常量 + 11 个纯 helper + aggregateByIndustry 多桶聚合 / 0 持仓 / 0 数值剔除 / pct DESC stable tie-break + buildRebalanceSellPlan 各 stop 条件 + evaluateAfterClose 12 场景 covering happy/边界/多 user/dry_run/disabled/未分类/writeAlert 失败容错/multi-user isolation + rebalanceIndustry 9 场景 covering 单卖到达 / 卖 2 仍超 partial / dry_run / close 失败 fail-OPEN / 无超标行业 / 无 portfolio / 持仓为空). 全部 808 个 risk-guard 测试 (US-047/048/049/050/051/052) 通过；backend typecheck 干净；lint 干净。"
     },
     {
       "id": "US-053",

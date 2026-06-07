@@ -49,6 +49,7 @@ import { paperTradingTuningApplyService } from './internal/PaperTradingTuningApp
 import { recommendationTradeOutcomeService } from '../services/RecommendationTradeOutcomeService';
 import { positionLimitGuard } from './risk/PositionLimitGuard';
 import { drawdownCircuitBreaker } from './risk/DrawdownCircuitBreaker';
+import { perStockStopLossGuard } from './risk/PerStockStopLossGuard';
 
 // Re-export the small set of constants the controller still needs literal access
 // to (default capital, portfolio name keys for downstream services).  This is the
@@ -122,7 +123,8 @@ export type ApplyAutomationAction =
   | 'tuning_apply'
   | 'tuning_rollback'
   | 'hindsight_refresh'
-  | 'set_stop_loss';
+  | 'set_stop_loss'
+  | 'per_stock_stop_loss_check';
 
 export interface ApplyAutomationOptions {
   action: ApplyAutomationAction;
@@ -789,6 +791,24 @@ export class PaperTradingFacade {
           stop_loss_price: position.stop_loss_price,
           current_price: position.current_price,
         };
+      }
+
+      case 'per_stock_stop_loss_check': {
+        // US-051 — 每股止损评估。Body 可选 dry_run / as_of。
+        // 用户作用域：默认仅当前 user（body.scope='all' 走批量扫描所有用户）。
+        // 返回结构化 trigger + per-user 结果，调用方决定撮合时机（保持
+        // facade 7-method 收敛，与 US-048 / US-049 同款"guard 输出 trigger /
+        // caller 决定执行"模式）。
+        const dryRun = body.dry_run === undefined ? false : Boolean(body.dry_run);
+        const asOfStr = typeof body.as_of === 'string' ? body.as_of : undefined;
+        const parsedAsOf = asOfStr ? new Date(asOfStr) : undefined;
+        const safeAsOf = parsedAsOf && !Number.isNaN(parsedAsOf.getTime()) ? parsedAsOf : undefined;
+        const scope = body.scope === 'all' ? 'all' : 'self';
+        return perStockStopLossGuard.evaluateAfterClose({
+          user_id: scope === 'self' ? user_id : undefined,
+          asOfDate: safeAsOf,
+          dry_run: dryRun,
+        });
       }
 
       default: {

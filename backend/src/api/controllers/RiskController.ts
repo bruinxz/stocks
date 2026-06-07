@@ -3,20 +3,24 @@ import { positionLimitGuard } from '../../portfolio/risk/PositionLimitGuard';
 import { trailingStopGuard } from '../../portfolio/risk/TrailingStopGuard';
 import { drawdownCircuitBreaker } from '../../portfolio/risk/DrawdownCircuitBreaker';
 import { marketRegimeAlertService } from '../../portfolio/risk/MarketRegimeAlertService';
+import { perStockStopLossGuard } from '../../portfolio/risk/PerStockStopLossGuard';
+import { industryConcentrationGuard } from '../../portfolio/risk/IndustryConcentrationGuard';
 import { logger } from '../../utils/logger';
 
 /**
  * RiskController — US-047 (position limits) + US-048 (trailing stop)
  *   + US-049 (drawdown circuit breaker) + US-050 (market regime alert)
+ *   + US-051 (per-stock stop loss) + US-052 (industry concentration)
  *
  * Exposes the pre-trade risk-policy configuration to the client.  Mounted at
  * `/api/risk/*` from `index.ts`.
  *
  * Why not folded into `RiskAlertController`?  That controller is concerned
  * with consuming/clearing already-emitted alerts (the bell view).  Position
- * limits + trailing stop + drawdown breaker + market regime are separate,
- * *pre*-trade policy surfaces — keeping them in their own controller makes
- * the route map (`/api/risk-alerts` vs `/api/risk`) easy to scan.
+ * limits + trailing stop + drawdown breaker + market regime + per-stock stop
+ * loss + industry concentration are separate, *pre*-trade policy surfaces —
+ * keeping them in their own controller makes the route map
+ * (`/api/risk-alerts` vs `/api/risk`) easy to scan.
  */
 export class RiskController {
   /**
@@ -196,6 +200,73 @@ export class RiskController {
       res.json({ success: true, data: saved, message: '市场环境预警配置已保存' });
     } catch (error: any) {
       logger.error('更新市场环境预警配置失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * GET /api/risk/per-stock-stop-loss  (US-051)
+   * Return the user's effective per-stock stop-loss config (defaults: enabled=true,
+   * pct=0.07, mass_threshold_ratio=0.5 when not customized).
+   */
+  async getPerStockStopLoss(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user.id;
+      const config = await perStockStopLossGuard.getConfig(user_id);
+      res.json({ success: true, data: config });
+    } catch (error: any) {
+      logger.error('获取每股止损配置失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * PUT /api/risk/per-stock-stop-loss  (US-051)
+   * Persist user's per-stock stop-loss config — input normalized
+   * (`normalizePerStockStopLossConfig`) so invalid pct / mass_threshold_ratio /
+   * enabled silently revert to defaults instead of corrupting `User.risk_config`.
+   */
+  async updatePerStockStopLoss(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user.id;
+      const saved = await perStockStopLossGuard.updateConfig(user_id, req.body || {});
+      res.json({ success: true, data: saved, message: '每股止损配置已保存' });
+    } catch (error: any) {
+      logger.error('更新每股止损配置失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * GET /api/risk/industry-concentration  (US-052)
+   * Return the user's effective industry-concentration config (defaults:
+   * enabled=true, alert_pct=0.35, rebalance_target_pct=0.30,
+   * rebalance_max_sell_count=2 when not customized).
+   */
+  async getIndustryConcentration(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user.id;
+      const config = await industryConcentrationGuard.getConfig(user_id);
+      res.json({ success: true, data: config });
+    } catch (error: any) {
+      logger.error('获取行业集中度配置失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * PUT /api/risk/industry-concentration  (US-052)
+   * Persist user's industry-concentration config — input normalized
+   * (`normalizeIndustryConcentrationConfig`) so invalid pct / max_sell_count /
+   * enabled silently revert to defaults instead of corrupting `User.risk_config`.
+   */
+  async updateIndustryConcentration(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user.id;
+      const saved = await industryConcentrationGuard.updateConfig(user_id, req.body || {});
+      res.json({ success: true, data: saved, message: '行业集中度配置已保存' });
+    } catch (error: any) {
+      logger.error('更新行业集中度配置失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   }

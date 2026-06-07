@@ -14,7 +14,9 @@ portfolio/
 │   ├── PositionLimitGuard.ts      # max positions + single-stock + single-industry caps
 │   ├── TrailingStopGuard.ts       # 追踪止损 — daily highest_price + next-day SELL trigger
 │   ├── DrawdownCircuitBreaker.ts  # 组合级回撤熔断 — LEVEL_1/2/3 cascade + 24h pause
-│   └── MarketRegimeAlertService.ts # 市场级环境预警 — 指数 3 日/月度跌幅 + MA20/MA60 死叉
+│   ├── MarketRegimeAlertService.ts # 市场级环境预警 — 指数 3 日/月度跌幅 + MA20/MA60 死叉
+│   ├── PerStockStopLossGuard.ts   # 每股止损 — close vs avg_cost loss ≤ -7% + 50% mass alert
+│   └── IndustryConcentrationGuard.ts # 行业集中度 — post-trade > 35% alert + 一键再平衡
 └── internal/                      # private — only the facade may import from here
     ├── PaperTradingAttributionService.ts
     ├── PaperTradingAutomationService.ts
@@ -313,3 +315,177 @@ Patterns codified in US-050 that future market-level guards should follow:
   optional `?as_of=YYYY-MM-DD&lookback_days=N` query params** for historical
   replay / debugging — invalid dates fall back to `now()` silently, never
   4xx (same lenient-normalize philosophy as `normalizeMarketRegimeAlertConfig`).
+
+## `risk/PerStockStopLossGuard` — US-051 specifics
+
+The per-stock stop-loss guard introduces the **fifth risk-guard shape** —
+**per-position aggregated to portfolio-level**. Where TrailingStopGuard
+watches `from peak drawdown` (保利润逃顶) per position, this guard watches
+`from entry cost loss` (硬保本) per position. The two are complementary
+and intentionally coexist: profitable positions ride the trailing stop,
+freshly-opened positions rely on the cost-based stop.
+
+1. **`evaluateAfterClose(user_id?, asOfDate?, dry_run?)`** — post-close cron.
+   For each open position, computes `loss_ratio = (close - avg_cost) / avg_cost`
+   and triggers if `loss_ratio ≤ -effective_pct` (default -7%). The
+   **per-position triggers** are surfaced as `PerStockStopLossTrigger[]`
+   AND written as `RiskAlert(level='HIGH', symbol=position.symbol)`.
+   Additionally, if `triggered_count ≥ Math.ceil(open_count × mass_threshold_ratio)`
+   (default 50%), a **portfolio-level "LEVEL_2" mass alert** fires via a
+   single sentinel `RiskAlert(level='HIGH', symbol='SYSTEM:PER_STOCK_STOP_LOSS_MASS')`.
+   The guard does NOT call `facade.placeOrder` — surfaces structured
+   triggers + lets the caller (automation service / dashboard / human) decide
+   execution timing. Same pattern as US-048 / US-049.
+2. **`getConfig(user_id)` / `updateConfig(user_id, raw)`** — config CRUD
+   backed by `User.risk_config.per_stock_stop_loss` JSONB +
+   `Object.freeze`'d `DEFAULT_PER_STOCK_STOP_LOSS_CONFIG`. Same shape as
+   US-047/US-048/US-049/US-050.
+
+Patterns codified in US-051 that future per-position-aggregated guards
+should follow:
+
+- **`effective_pct` 三级覆盖 reuses US-048's `pickEffectivePct` shape** —
+  `position.stop_loss_pct` (策略层覆盖) → `user.risk_config.per_stock_stop_loss.pct`
+  (用户全局) → `DEFAULT_PER_STOCK_STOP_LOSS_CONFIG.pct` (兜底 0.07).
+  **Note**: the per-position column is currently `trailing_stop_pct` (alias-reused
+  since per-stock stop-loss + trailing-stop pct share the same semantic field).
+  Future升级: add a dedicated `stop_loss_pct` column when the two need
+  independent values.
+- **`Math.ceil(N × ratio)` for mass-trigger threshold** mirrors US-049's
+  `pickLevel2TrimTargets` strong-disposal path. `1/2 = ceil(1) = 1 → mass`,
+  `1/3 = ceil(1.5) = 2 → NOT mass`. **Boundary is "ratio inclusive"** —
+  exactly 50% triggers count as mass. This matches the "硬触发用 ≤" convention.
+- **Mass alert uses single `SYSTEM:` sentinel symbol** (matches US-049/US-050
+  convention) — `SYSTEM:PER_STOCK_STOP_LOSS_MASS`. Front-end filters
+  `symbol.startsWith('SYSTEM:')` to bucket 组合级/系统级 alerts away from
+  per-stock alerts. Only ONE mass alert per user per evaluation (not N) so
+  the bell doesn't flood when many users hit mass at the same moment.
+- **3-tier per-user level: NONE / INDIVIDUAL / MASS** — same shape as US-049's
+  `DrawdownLevel`. `NONE = no triggers`, `INDIVIDUAL = some triggers but
+  below mass threshold`, `MASS = ≥ threshold ratio triggered`. Operators
+  see one clear status per user.
+- **`SchedulerService` single task type**: `PAPER_TRADING_PER_STOCK_STOP_LOSS_CHECK`
+  (post-close). Same `dry_run` / `user_id` parameter shape as US-049/US-050.
+- **`facade.applyAutomation` action `per_stock_stop_loss_check`** —
+  controllers can trigger evaluation through the facade (preserves the
+  7-method invariant + reuses the existing automation routing). Body
+  options: `{dry_run?: boolean, as_of?: 'YYYY-MM-DD', scope?: 'self'|'all'}`.
+- **HTTP surface**: 2 endpoints under `/api/risk/per-stock-stop-loss` —
+  `GET` (read config), `PUT` (update config). Same namespace as US-047/048/049/050.
+- **Boundary `≤ -pct` for triggers** mirrors US-048 / US-049 protective硬触发
+  semantics. **Defense-side guards use `≤`** (catch the boundary);
+  **limit-side guards use `>`** (PositionLimitGuard's strict inequality).
+  Always pick boundary direction by guard semantic intent before writing
+  comparison.
+- **`avg_cost ≤ 0` → `skipped_bad_cost`** (defensive divide-by-zero guard) —
+  same pattern as US-049's `computeGainRatio` cost_basis check. Bad data
+  shouldn't cascade-fire bogus triggers.
+- **`DailyBar` missing → `skipped_no_bar`** (data-shortage = safe HOLD) —
+  do NOT fall back to `current_price` (facade SELL mutates it, fallback
+  causes drift / false triggers). Matches US-048 trailing-stop and US-026
+  RSI bar-shortage guards.
+
+## `risk/IndustryConcentrationGuard` — US-052 specifics
+
+The industry-concentration guard introduces the **sixth risk-guard shape** —
+**portfolio-level industry aggregation + forced rebalance endpoint**. Where
+PositionLimitGuard (US-047) blocks NEW orders pre-trade from pushing an
+industry past its 30% cap, this guard watches the *post-trade* drift caused
+by holding-period price changes (an industry's pct grows as those positions
+rally even without new orders) and surfaces alerts + a one-click rebalance.
+
+The two industry-related guards are intentionally complementary, not
+redundant:
+
+  - **US-047 — pre-trade single-industry cap = 30%** (strict `>` boundary,
+    blocks the *new* BUY that would push the sum past 30%).
+  - **US-052 — post-trade industry alert = 35%** (strict `>` boundary,
+    fires MEDIUM RiskAlert when held positions drift past 35%).
+
+The 5% buffer (35% > 30%) is deliberate: the pre-trade cap leaves the
+post-trade alert with breathing room so a normal day's price action
+doesn't immediately re-fire the alert after the user just rebalanced.
+
+1. **`evaluateAfterClose(user_id?, dry_run?)`** — post-close cron.  For
+   each user, aggregates positions by industry (cash NOT included — pct
+   is "industry share of held positions" not "industry share of total
+   account"), then emits one `RiskAlert(level='MEDIUM', symbol='SYSTEM:
+   INDUSTRY_CONCENTRATION:<industry>')` per industry exceeding `alert_pct`
+   (default 35%). Multiple industries may trigger simultaneously (parallel
+   signals, NOT cascade — same shape as US-050 multi-signal regime).
+   Unclassified positions (Stock.industry null/empty) aggregate under a
+   sentinel `__UNKNOWN__` bucket — message renders as "未分类" to user.
+2. **`rebalanceIndustry(user_id, options?)`** — one-click rebalance
+   endpoint (POST /api/portfolio/rebalance-industry).  Finds the worst
+   over-alert industry, sorts its positions by `gain_pct DESC` (sell
+   highest-gainers first → realize profit while reducing concentration),
+   simulates per-position sells until projected industry pct < 30% or
+   `rebalance_max_sell_count` (default 2) is reached.  `dry_run=true`
+   returns the plan without calling facade.closePosition; `dry_run=false`
+   actually closes positions via the facade (preserves the 7-method
+   invariant + chains through DrawdownCircuitBreaker / other pre-trade
+   guards). Sell failures (停牌 / cash error) record `status='failed'`
+   and continue with the next planned position (fail-OPEN — partial
+   results returned for human follow-up).
+3. **`getConfig(user_id)` / `updateConfig(user_id, raw)`** — config CRUD
+   backed by `User.risk_config.industry_concentration` JSONB +
+   `Object.freeze`'d `DEFAULT_INDUSTRY_CONCENTRATION_CONFIG`. Same shape
+   as US-047/US-048/US-049/US-050/US-051.
+
+Patterns codified in US-052 that future portfolio-level aggregation guards
+should follow:
+
+- **Total denominator EXCLUDES cash** — `pct = industry_value / sum(all
+  industry market values)`, not `industry_value / portfolio.total_value`.
+  Rationale: cash can be redeployed to any industry instantly, so a user
+  with 50% cash + 1 stock cares that "100% of my deployed capital is in
+  one industry" (which the cash-exclusive ratio correctly surfaces) and
+  not that "I'm 50% in that industry by total account" (which would
+  under-represent the concentration risk). Future US-053 black-swan /
+  US-086 portfolio rebalancing also follow this rule.
+- **Multi-alert parallel signals** (NOT cascade) — like US-050 market
+  regime. An industry can be in multiple alert states simultaneously
+  (50% A AND 36% B both > 35%); both produce independent RiskAlert rows
+  so the user sees the full picture rather than "the worst one this run".
+- **Sentinel bucket for unclassified data** (`__UNKNOWN__`) — never
+  silently merge unclassified positions into a real industry (would
+  hide the data quality issue + corrupt the alert math). Surface as
+  its own bucket; render as "未分类" in messages so the user knows to
+  go fix the missing Stock.industry classifications upstream.
+- **Strict `>` for alerts, strict `<` for rebalance target** — alert at
+  35% strict means exactly 35% doesn't fire; rebalance to "< 30% strict"
+  means we sell until the projected pct is strictly below 30%, not just
+  ≤ 30% (would let the very next day's tiny price tick fire the alert
+  again). The 5% gap between thresholds is the buffer; the strict-vs-strict
+  boundary keeps the buffer intact.
+- **Sort by `gain_pct DESC` + `symbol ASC` stable tie-break** in
+  rebalance plan — sell the highest-gainers first to harvest profits
+  AND reduce industry exposure in one move. The stable secondary key is
+  the same V8-sort-isn't-stable defense codified by US-025 / US-049.
+- **Plan cap at `max_sell_count=2`** even when target unreached — AC
+  says "1-2 只". If 2 sales still don't get the industry < 30%, return
+  `partial=true` for human follow-up rather than aggressively clearing
+  more of the industry (small accounts could have an industry entirely
+  liquidated by the algorithm, which is rarely the user's intent —
+  human inspection makes the right call there).
+- **Rebalance goes through `facade.closePosition`** — keeps the 7-method
+  invariant intact + means the SELL still flows through pre-trade guards
+  (e.g. DrawdownCircuitBreaker — though SELL is never blocked there).
+  The DataSource exposes `executeFullClose` which lazy-imports the
+  facade to avoid circular import (facade → guard → facade).
+- **`dry_run=true` returns plan without execution** — supports UI "preview
+  what would happen" pattern. Each plan entry includes the projected
+  industry pct after that sell, so the dashboard can show "after 2
+  sells you'd be at 33%".
+- **Single user / fail-OPEN policy** — `rebalanceIndustry` per-symbol sell
+  failures don't abort the rest of the plan (status='failed' + continue);
+  `evaluateAfterClose` per-user errors don't abort the batch (try/catch
+  isolation, same as US-047/048/049/050/051).
+- **HTTP surfaces**:
+  - `POST /api/portfolio/rebalance-industry` (AC-specified) — one-click
+    rebalance, body `{portfolio_id?: number, dry_run?: boolean}`. Routed
+    in `portfolio.routes.ts` and MUST be registered BEFORE the `/:id`
+    catchall (US-015 ordering rule — otherwise Express matches
+    "rebalance-industry" as the `:id` param).
+  - `GET /api/risk/industry-concentration` (config read).
+  - `PUT /api/risk/industry-concentration` (config write).

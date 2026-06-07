@@ -84,4 +84,44 @@ router.get('/market-regime', authController.authenticate, riskController.getMark
  */
 router.put('/market-regime', authController.authenticate, riskController.updateMarketRegimeConfig);
 
+/**
+ * @route GET /api/risk/per-stock-stop-loss
+ * @desc 获取当前用户的每股止损配置 (US-051)
+ * @access Private
+ */
+router.get('/per-stock-stop-loss', authController.authenticate, riskController.getPerStockStopLoss);
+
+/**
+ * @route PUT /api/risk/per-stock-stop-loss
+ * @desc 更新当前用户的每股止损配置 (US-051)
+ * @access Private
+ */
+router.put(
+  '/per-stock-stop-loss',
+  authController.authenticate,
+  riskController.updatePerStockStopLoss
+);
+
+/**
+ * @route GET /api/risk/industry-concentration
+ * @desc 获取当前用户的行业集中度配置 (US-052)
+ * @access Private
+ */
+router.get(
+  '/industry-concentration',
+  authController.authenticate,
+  riskController.getIndustryConcentration
+);
+
+/**
+ * @route PUT /api/risk/industry-concentration
+ * @desc 更新当前用户的行业集中度配置 (US-052)
+ * @access Private
+ */
+router.put(
+  '/industry-concentration',
+  authController.authenticate,
+  riskController.updateIndustryConcentration
+);
+
 export default router;

@@ -22,6 +22,7 @@ import { paperTradingTuningApplyService } from '../portfolio/internal/PaperTradi
 import { trailingStopGuard } from '../portfolio/risk/TrailingStopGuard';
 import { drawdownCircuitBreaker } from '../portfolio/risk/DrawdownCircuitBreaker';
 import { marketRegimeAlertService } from '../portfolio/risk/MarketRegimeAlertService';
+import { perStockStopLossGuard } from '../portfolio/risk/PerStockStopLossGuard';
 import { benchmarkIndexService } from './BenchmarkIndexService';
 import { automatedRecommendationLoopService } from './AutomatedRecommendationLoopService';
 import { recommendationTradeOutcomeService } from './RecommendationTradeOutcomeService';
@@ -1853,6 +1854,61 @@ class SchedulerService {
           `市场环境预警评估完成。扫描用户 ${result.scanned_users}，` +
             `触发告警 ${result.alerted_users}，` +
             `信号 [${result.status.alerts.map(a => a.type).join(',') || '无'}]` +
+            (dryRun ? '（dry-run，未写 RiskAlert）' : '')
+        );
+      } else if (task.type === 'PAPER_TRADING_PER_STOCK_STOP_LOSS_CHECK') {
+        // US-051 — 每日收盘后定时任务：扫描所有持仓，若 (close - avg_cost) /
+        // avg_cost ≤ -effective_pct（默认 -7%）触发 RiskAlert(level='HIGH',
+        // symbol=持仓 symbol)；若一个用户的触发数 ≥ Math.ceil(open_count * 0.5)
+        // 额外写一行 RiskAlert(symbol='SYSTEM:PER_STOCK_STOP_LOSS_MASS') 标识
+        // 组合级 LEVEL_2 群体止损事件。`user_id` 参数可选；不传 = 扫描所有用户。
+        // `dry_run` 让 UI dashboard "预演今日 trigger" 不写 RiskAlert。
+        const targetUserId = parameters.user_id || parameters.userId;
+        const dryRun =
+          parameters.dry_run !== undefined
+            ? Boolean(parameters.dry_run)
+            : parameters.dryRun !== undefined
+            ? Boolean(parameters.dryRun)
+            : false;
+        const result = await perStockStopLossGuard.evaluateAfterClose({
+          user_id: targetUserId ? Number(targetUserId) : undefined,
+          dry_run: dryRun,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: result.scanned_users,
+          completed_items: result.triggered_users,
+          failed_items: result.per_user.filter(u => u.error).length,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: null,
+          result_summary: {
+            scenario: 'paper_trading_per_stock_stop_loss_check',
+            scanned_users: result.scanned_users,
+            triggered_users: result.triggered_users,
+            dry_run: dryRun,
+            triggers: result.triggers.map(t => ({
+              user_id: t.user_id,
+              symbol: t.symbol,
+              quantity: t.quantity,
+              loss_ratio: t.loss_ratio,
+              effective_pct: t.effective_pct,
+              today_close: t.today_close,
+              avg_cost: t.avg_cost,
+            })),
+            per_user_summary: result.per_user.map(u => ({
+              user_id: u.user_id,
+              level: u.level,
+              open_positions_count: u.open_positions_count,
+              triggered_count: u.triggered_count,
+              mass_message: u.mass_message,
+              error: u.error,
+            })),
+          },
+        });
+        logger.info(
+          `每股止损评估完成。扫描用户 ${result.scanned_users}，` +
+            `触发用户 ${result.triggered_users}，` +
+            `总 trigger ${result.triggers.length}` +
             (dryRun ? '（dry-run，未写 RiskAlert）' : '')
         );
       } else if (task.type === 'PAPER_TRADING_ATTRIBUTION_REPORT') {
