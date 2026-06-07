@@ -1,4 +1,4 @@
-# Factor 基础设施 (US-009 + US-010 + US-029 + US-030 + US-031)
+# Factor 基础设施 (US-009 + US-010 + US-029 + US-030 + US-031 + US-032)
 
 `backend/src/quant/factors/` 是 A 股多因子打分体系的基础设施层。US-009
 落地了**注册中心 + 横截面 pipeline + 标准化工具 + FactorScore 模型**；
@@ -7,8 +7,9 @@ US-010 在 `library/` 下注册了 **8 个基础因子**（`value` / `quality` /
 US-029 增加了第 9 个 `liquidity` 因子（流动性 U 形评分）；US-030 增加了
 第 10 个 `analyst_consensus` 因子（分析师 EPS 一致预期上修方向）；US-031
 增加了第 11 个 `quality_high` 因子（高阶质量 = ROIC 代理 + 毛利率稳定性 +
-净利率代理 等权合成）。后续 story 在 `library/` 下追加新文件即可，无需改
-Pipeline / Registry。
+净利率代理 等权合成）；US-032 增加了第 12 个 `earnings_surprise` 因子（盈利
+惊喜代理 = (actual EPS - 一致预期 EPS) / |一致预期 EPS|）。后续 story 在
+`library/` 下追加新文件即可，无需改 Pipeline / Registry。
 
 ## 目录约定
 
@@ -140,7 +141,7 @@ US-033 等"贴现 / 偏离"类因子按此例外处理；普通线性因子仍�
 - **缺数据 ≠ 因子失效**：缺数据返回稀疏 Map；因子失效（例如 PE<=0）应该
   `continue` 不写入这只股票，让 Pipeline 把它当作中性。
 
-## US-010 落地的 8 个基础因子 + US-029 LiquidityFactor + US-030 AnalystConsensusFactor + US-031 QualityHighFactor (参考实现)
+## US-010 落地的 8 个基础因子 + US-029 LiquidityFactor + US-030 AnalystConsensusFactor + US-031 QualityHighFactor + US-032 EarningsSurpriseFactor (参考实现)
 
 | 因子 name | 类别 | 数据源 | 失效条件 |
 |---|---|---|---|
@@ -155,6 +156,7 @@ US-033 等"贴现 / 偏离"类因子按此例外处理；普通线性因子仍�
 | `liquidity` | liquidity | DailyBar.turnover_rate | 单只股票有效 turnover_rate < 10 个 / 全市场样本 < 2 |
 | `analyst_consensus` | sentiment | AnalystForecast (US-030) | 90 日窗口内有效研报 < 5 / 任一年度 recent\|baseline 空 / baseline avg ≈ 0 |
 | `quality_high` | quality | FinancialReport(年报)+StockFundamentalFactor.gross_margin | 任一子分量缺失：年报缺 / gross_margin 观测 < 5 / revenue ≤ 0 |
+| `earnings_surprise` | event | FinancialReport + AnalystForecast (US-030) + StockFundamentalFactor.eps | 最近财报 > 180 自然日 / 财报前研报 < 3 / 缺 actual eps / `|consensus|` < 0.01 元/股 |
 
 **典型查询模式（US-029+ 添加新因子可直接复制）**：
 
@@ -199,6 +201,19 @@ US-033 等"贴现 / 偏离"类因子按此例外处理；普通线性因子仍�
   helper（sampleStddev / computeGrossMarginStability / computeNetMargin / combineQualityHigh）
   全 export，单测独立调用不走 DB。属"绝对业务量"因子（per-stock 自身 3 个财务量），
   走标准模式。
+- ✅ `earnings_surprise` (US-032) 用 **(actual_eps - consensus_eps_avg) / |consensus_eps_avg|**
+  捕捉 PEAD (Post-Earnings Announcement Drift) alpha。**双重代理（按 US-031 范式）**：(1)
+  AC 原始公式用 net_profit，但 AnalystForecast 不提供 net profit 预测且本仓库无 total_shares
+  无法 EPS→net_profit 互转 — 用 EPS 维度双向比较替代 (forecast_eps_y1 ↔ StockFundamentalFactor.eps)；
+  (2) AC 原始公式用 announce_date + 60 交易日窗口，但 FinancialReport 无 announce_date —
+  用 `report_date + 180 自然日` 窗口替代（覆盖 announce delay 上限 ~90d + PEAD drift ~90d）。
+  **关键约束**：consensus 构造时 forecast.report_date 必须 **严格小于** actual report_date
+  （分析师在公司报告 *之前* 发研报才算 forecast，否则是事后 review）；forecast_year_y1
+  必须 == year(actual report_date)（同年度才可比，US-030 同款跨年禁止约束）；|consensus|
+  < 0.01 元/股（亏损股/微利股）跳过避免分母噪音爆炸。**纯函数 helper** (mean /
+  isoDateMinusDays / isoDatePlusDays / yearOfIsoDate / computeSurprise / selectFreshestReport
+  / buildConsensusEps) 全 export，单测独立调用不走 DB。属"绝对业务量"因子（per-stock
+  自身 actual vs consensus 之比），走标准模式 — 不属 LiquidityFactor 横截面参照例外。
 
 ### 关键代理记号（US-031 引入 "AC 数学公式 ≠ 数据可得" 的处理范式）
 

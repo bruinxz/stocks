@@ -59,6 +59,7 @@
 - **时序窗口因子必须防 lookahead bias (US-030 AnalystConsensusFactor)**：任何走 `[as_of - N days, as_of]` 时间窗的因子，**必须**在 compute() / pure helper 内显式 `if (row_date > as_of_date) continue;`。理由：回测引擎可能在数据库装载新数据后才回放历史，stage 间 timing 错位让 "未来" 行混进窗口。单测必须显式构造一条 `row_date > as_of_date` 的极端值（如 999.0），断言 revision 不被污染。所有走时序窗口的因子都应有此测试 — 少一道防御就成 lookahead bias 灾难。
 - **绝对业务量 vs 横截面参照量 二分类 (US-030 起明确化)**：US-029 LiquidityFactor 引入了"横截面参照量"例外（设计约束 #1 的例外）。US-030 AnalystConsensusFactor 计算 per-stock 自身新旧 EPS 之比，**完全不参照横截面**——属第一类（绝对业务量），走标准模式。**判据**：raw_value 公式里是否出现"全市场 X 的分位 / 均值 / sd"？是 → 例外类（compute() 内可做单点参照变换）；否（只看本股自己历史 / 自己同年度数据）→ 标准类（compute() 内**禁止**任何归一化变换）。下次新因子设计时先做此分类。
 - **AC 字段不可得时的代理替代范式 (US-031 引入)**：当 AC 指定的公式所需字段在当前数据模型不可得（NOPAT / 投入资本 / 自由现金流 / 资本支出 / 税率明细），按 5 步处理：(1) **代理必须有学术 / 实证依据** (ROE↔ROIC 0.85+ 相关性 / 净利率↔FCF/Rev 0.6+，不要瞎编代理)；(2) **factor.name 保留 AC 命名**（不要悄悄改成 `_proxy` / `_v0` 污染 Registry 命名空间）；(3) **description 字段显式包含 "代理" 字样**（让前端 / 报告 / FactorIC 自动暴露）；(4) **jsdoc 写清四件事**：(a) AC 原始公式 (b) 当前数据不可得的字段 (c) 选定代理与系数 (d) 升级路径；(5) **TS factor + factors/CLAUDE.md 同时记录** 让下游策略接入新因子时一眼看到代理边界。`quality_high` 的 jsdoc 顶部 70 行是参考实现 — US-032 (EarningsSurpriseFactor) / US-033 / US-035 / US-036 同步走此范式，不要硬塞 placeholder。
+- **双重代理处理范式 (US-032 EarningsSurpriseFactor 强化)**：一个因子同时需要两个 AC 不可得字段时（净利润维度 + announce_date），每个代理都按 US-031 范式独立标注 (a) AC 原始字段 (b) 不可得原因 (c) 选定代理 (d) 升级路径，**不要在 jsdoc 里合并简写**。EarningsSurprise 的 jsdoc 把 "EPS 维度代理 net_profit" 与 "report_date + 180d 窗口代理 announce_date + 60 交易日" 分开列出 — 下游若引入 total_shares 字段可以独立切换 EPS→net_profit 代理 (升级路径 a)，与是否引入 announce_date (升级路径 b) 互不影响。**关键约束 1：consensus 时间窗严格小于 actual report_date**（分析师在公司报告 *之前* 发研报才算 forecast，否则是事后 review），boundary `forecast.report_date < actualReportDate` 必须用严格 `<` 不能用 `≤`，配合测试用例覆盖 boundary。**关键约束 2：跨年度禁止 (US-030 同款约束)** — 因为 AnalystForecast.forecast_year_y1 的列名跨年滚动 (e.g. 2024 末 Y1=2025 → 2025 末 Y1=2026)，buildConsensus 必须按 `forecast_year_y1 == year(actualReportDate)` 过滤，跨年度 EPS 比较无意义。**关键约束 3：consensus 分母接近 0 跳过** (CONSENSUS_NEAR_ZERO_THRESHOLD=0.01 元/股 ≈ 1 分钱) — 亏损股 / 微利股 EPS 接近 0，比率分母会让 surprise 爆炸到几千倍，破坏横截面 zscore 分布。**关键约束 4：actual EPS 取 StockFundamentalFactor.eps 优先匹配 report_period == report_date**（同期口径精确对齐），缺则 fallback factor_date >= report_date 的最早一条 — 这是 "首选精确匹配 + 时间最近兜底" 模式，下次跨表对齐财报数据可复用。
 - **`Number(null) === 0` 是 JS 大坑，nullable 字段必须 fail-fast (US-031)**：Sequelize raw 模式取 DECIMAL nullable 字段可能是 `null`，`Number(null) === 0` 通过 `isFiniteNumber` 检查但会算出 "净利率 = 0 / rev = 0%" 误导下游。**任何 nullable 字段的因子运算都必须在 `Number()` 之前显式 `if (x === null || x === undefined) return null`**。`QualityHighFactor.computeNetMargin` 是参考实现；下次新因子在 Sequelize raw 取 DECIMAL nullable 字段后**先 null/undefined 检查再 Number 转换**。
 - **"任一子分量缺失 → 整体 null" vs "缺一项用 0 代入" 的判定 (US-031 引入)**：组合因子 (`quality_high` 3 子分量 / `growth` 2 子分量 / `dragon_tiger` 多日聚合) 缺数据时有两种处理路径：(A) **整体 null** (不入 Map) — 子分量来自异质维度，缺一项的 "0 代入" 会让另两项的方向被人为放大破坏因子语义。`quality_high` (盈利能力 + 稳定性 + 转化率 异质) 走此路径。(B) **缺一项用 0 代入** — 所有子分量同维度同量纲，0 代入语义合理 = "该维度未知"，不破坏因子方向。`growth` (净利润 + 营收 都是 "%" 增长率 同维) 走此路径。**判据**：子分量是否同维度同量纲 → 是用 0 代入 / 否走 null。新组合因子设计时先做此分类。
 - **复用既有 service 同款数据源 = 跨因子口径一致 (US-031 强化)**：US-031 ROIC proxy 用 `FinancialReport.roe + report_type='年报'`，与 GARPStrategy (US-024) loadRoe5yAvg 完全相同的查询条件 — 保证用户看 quality + quality_high + GARPStrategy 三处的 ROE 数字完全对应。**新因子优先复用既有 service / strategy 同款数据源**（不要平行写第二份查询），引入新数据修正时一处改全部对齐，单测共享 fixture 生成逻辑。**factor 内多源合成时 stripSuffix 模式**：`FinancialReport.stock_code` 已无后缀（与 ctx.universe 一致）；`StockFundamentalFactor.symbol` 是 "600519.SH" 形式 — 同 compute() 内混用时注释写明每张表 key 形态避免 reviewer 误判。
@@ -3380,5 +3381,108 @@ US-035 (ShareholderConcentrationFactor) / US-036 (GradualBreakoutFactor) 等遇�
 - **`sampleStddev` 第二处独立实现是 YAGNI 边界**：因子库内 LiquidityFactor 和
   QualityHighFactor 都各自实现了一份 `sampleStddev`。**等第 3 处出现时统一抽到
   `_helpers.ts`**（YAGNI 阶段不抽，避免过度设计）。注释里已记录此判定。
+
+---
+
+## 2026/06/07 - US-032
+
+### What was implemented
+
+**新因子 EarningsSurpriseFactor (第 12 个 factor)** — Post-Earnings Announcement
+Drift (PEAD) alpha 捕捉的 event-class 因子：
+
+  raw_value = (actual_eps - consensus_eps_avg) / |consensus_eps_avg|
+
+  - 正值 → 实际 EPS 超过卖方一致预期（PEAD 看涨拐点）
+  - 负值 → 实际不及预期（miss）
+
+**双重代理（按 US-031 范式 + 双重代理新模式）**：
+
+  (a) **EPS 维度替代 net_profit 维度**：AC 原始公式用 net_profit，但
+      AnalystForecast 不提供 net_profit 预测，且本仓库无 total_shares 字段
+      无法 EPS↔net_profit 互转。actual EPS 取 StockFundamentalFactor.eps，
+      consensus 取 AnalystForecast.forecast_eps_y1 同年度均值。两侧单位
+      (元/股) 一致，比率天然无量纲。**升级路径**：US-090+ 引入 total_shares 后
+      可切换为净利润维度。
+
+  (b) **`report_date + 180 自然日` 窗口替代 `announce_date + 60 交易日`**：
+      AC 原始公式用 announce_date，但 FinancialReport 没有此字段。
+      180 自然日 ≈ ~90d announce delay 上限 + ~90d PEAD drift。
+      **升级路径**：FinancialReport 引入 announce_date 后改成
+      `tradingDaysBetween(announce_date, as_of_date) ≤ 60`。
+
+**4 个关键设计约束** (全部有专用单测覆盖)：
+
+  1. consensus 构造时 `forecast.report_date < actual.report_date` **严格小于**
+     — 分析师在公司报告 *之前* 发研报才算 forecast，否则是事后 review。
+  2. consensus 构造时 `forecast_year_y1 == year(actual.report_date)` — 跨年度
+     禁止 (与 US-030 同款约束)，AKShare 列名年份滚动会让跨年比较成噪音。
+  3. `|consensus_eps_avg| < 0.01 元/股` (亏损股 / 微利股) 跳过 — 否则分母放大
+     噪音让 surprise 爆炸破坏横截面 zscore。
+  4. actual EPS 优先 `report_period == report_date` 精确匹配，缺则 fallback
+     `factor_date >= report_date` 的最早一条（最接近公告日的 actual 数据）。
+
+**纯函数 helper 全 export 单测独立调用**（按 US-029 / US-030 / US-031 同款模式）：
+mean / isoDateMinusDays / isoDatePlusDays / yearOfIsoDate / computeSurprise /
+selectFreshestReport / buildConsensusEps 共 7 个 helper，单测可在不走 DB 的
+情况下覆盖所有边界。
+
+### Files changed
+- `backend/src/quant/factors/library/EarningsSurpriseFactor.ts` (新)
+- `backend/src/quant/factors/library/index.ts` (按字母序追加 `import './EarningsSurpriseFactor';`)
+- `backend/src/quant/factors/CLAUDE.md` (标题改为 +US-032 / 12 因子参考实现表新增 earnings_surprise 行 / z-score-friendly 形态列表新增 ✅ earnings_surprise 条目说明双重代理 + 4 约束)
+- `backend/tests/factors/EarningsSurpriseFactor.test.ts` (新, 77 个断言)
+- `ralph/prd.json` (US-032 → passes:true + 详细 notes)
+- `ralph/progress.txt` (本条目 + Codebase Patterns 新增"双重代理处理范式")
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → exit 0
+- `cd backend && ./node_modules/.bin/eslint src/quant/factors/library/EarningsSurpriseFactor.ts src/quant/factors/library/index.ts --quiet --fix` → exit 0
+- `npx ts-node --transpile-only tests/factors/EarningsSurpriseFactor.test.ts` → 77 passed, 0 failed
+- 既有 factor 测试回归: QualityHighFactor (54), AnalystConsensusFactor (54), LiquidityFactor (53) 全部仍通过
+- 既有 strategy 回归: MultiFactorAlphaStrategy 全部仍通过 (新增因子不破坏 8-factor 合成)
+- Registry smoke: `factorRegistry.listNames()` 返回 12 因子，含 `earnings_surprise`
+
+### Browser verification
+**Not applicable** — backend-only story (event-driven factor + 已有数据源).
+没有 UI 变更，不需要浏览器验证。
+
+### Learnings for future iterations
+
+- **双重代理的 jsdoc 不要合并简写**：因子同时需要两个 AC 不可得字段（净利润 +
+  announce_date）时，每个代理都按 US-031 范式 4 步独立标注 (a)(b)(c)(d)，因为
+  两个代理的升级路径独立 —— 引入 total_shares 不影响 announce_date 状态，反之
+  亦然。`EarningsSurpriseFactor.ts` 顶部 50+ 行的 jsdoc 是参考实现。
+- **PEAD 因子的 consensus 时间窗必须严格小于 actual report_date**：分析师在
+  公司报告 *之前* 发研报才算 forecast，否则是事后 review。boundary 必须严格 `<`
+  不能用 `≤`。配测试用例 `report_date == actualReportDate` 应被排除，明确化
+  这条 invariant。
+- **跨年度 EPS 比较 = 噪音**：AKShare 的 `{Y}-盈利预测-收益` 列名跨年滚动
+  （2024 末 Y1=2025 / 2025 末 Y1=2026）；构造 consensus 必须按
+  `forecast_year_y1 == year(actual.report_date)` 过滤。US-030 已踩坑，US-032
+  按 forecast_year_y1 / actualReportDate 年份匹配复用此约束。下次新因子涉及
+  跨年度 forecast 数据时统一按此处理。
+- **`|consensus| < 0.01 元/股` 阈值的取值依据**：A 股 EPS 中位数约 0.3-0.5 元/股，
+  亏损股 EPS 接近 0；0.01 元/股 = 1 分钱 是亏损股/微利股的分界。若放宽到 0.001
+  (千分位)，部分本来微利股的 surprise 会被算成几千倍。配置 `CONSENSUS_NEAR_ZERO_THRESHOLD`
+  默认 0.01 满足大部分场景；computeSurprise 支持自定义参数让特殊场景可调。
+- **actual EPS 匹配"首选精确 + 时间最近兜底" 模式**：StockFundamentalFactor 有
+  `report_period` 字段精确标注 EPS 对应哪期财报，应优先匹配 `report_period ==
+  report_date_str`；缺则 fallback `factor_date >= report_date` 最早一条。这是
+  跨表对齐财报数据的通用模式，下次类似场景（例如美股 EPS 对齐 / 港股财报对齐）
+  可复用。
+- **`yearOfIsoDate` 的正则严格性**：用 `/^(\d{4})-\d{2}-\d{2}$/` 而非 `\d{4}`
+  从字符串首部截取，避免接受 `'24-12-31'` 这种短年格式或 `'20241231'` 紧凑格式。
+  测试用例覆盖了这三种非法格式。
+- **测试中边界条件单独写用例**：所有"严格小于"vs"严格大于等于" boundary 都
+  有专属测试用例（`distance == windowDays` → 包含 / `report_date == actualReportDate`
+  → 排除 / `cons == 0.005 < 0.01 threshold` → null）。后续 boundary 修改时
+  这些测试会立刻 fail，避免 silent 行为漂移。
+- **`description` 字段显式含"代理"字样的好处**：FactorIC (US-041) 报告、前端
+  因子卡片、策略 backtester 配置面板都会展示 `description`，让"这个因子是代理"
+  的事实自动浮到 ops/用户面前，无需额外文档。US-032 的 description 长达 200+
+  字符是有意的，避免下游用 `surprise` 当 ground truth 做交易决策。
+---
+
 
 ---

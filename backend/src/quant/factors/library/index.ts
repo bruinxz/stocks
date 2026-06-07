@@ -13,13 +13,15 @@
  *      避免双重事实源；类型在 quant/factors/index.ts 已暴露。
  *
  * US-010 注册的 8 个基础因子 + US-029 流动性因子 + US-030 分析师一致预期因子
- * + US-031 高阶质量因子（顺序按文件名字母序，与 .listNames() 排序一致）：
- *   analyst_consensus / dragon_tiger / growth / liquidity / low_vol / momentum /
- *   money_flow / northbound / quality / quality_high / value
+ * + US-031 高阶质量因子 + US-032 盈利惊喜因子（顺序按文件名字母序，与
+ * .listNames() 排序一致）：
+ *   analyst_consensus / dragon_tiger / earnings_surprise / growth / liquidity /
+ *   low_vol / momentum / money_flow / northbound / quality / quality_high / value
  */
 
 import './AnalystConsensusFactor';
 import './DragonTigerFactor';
+import './EarningsSurpriseFactor';
 import './GrowthFactor';
 import './LiquidityFactor';
 import './LowVolFactor';
