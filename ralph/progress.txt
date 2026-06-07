@@ -87,6 +87,7 @@
 - **多端点 Python 合并模式 (US-024 FinancialReport)**: US-022 per-stock sync 模式的扩展 —— 当一个数据领域需要 raw 金额 (stock_financial_abstract wide-format) *和* 预算好的比率 (stock_financial_analysis_indicator long-format)，**Python 端按 report_date 索引合并 → 返回 normalized rows**。不要返回两个 array 让 TS 合并 —— TS 重建 pandas 语义在 Map<...> 里痛苦, quirks 还得复制两遍。同款模式可复用到 US-030 AnalystForecast (research_report + earnings_forecast 合并) / US-031 QualityHigh (多张利润表合并)。**`report_type` 由 `report_date` MMDD 推断** (03-31=一季报 / 06-30=半年报 / 09-30=三季报 / 12-31=年报)，不依赖 AKShare 单独字段命名漂移。**helper timeout 默认 180s** (vs 120s 单端点)，throttle 默认 300ms (vs 200ms) —— 两端点 + Python 合并比单端点慢 1.5-2x。
 - **isSTName 抽取完成 (US-025 同步重构)**: US-024 时已是第 9 处实现，US-025 之前抽取到 `backend/src/utils/stNameUtils.ts` 共享模块。10 个调用方 (9 个 strategy + AShareConstraintEngine) 改为 `import { isSTName } from '../../utils/stNameUtils'; export { isSTName };` —— 保留 re-export shim 让既有 10 处 test 的 `import { isSTName } from '../../src/quant/strategies/<Name>'` 仍可用，无须同步修改 test 文件。改判定逻辑只改共享模块。**下次再加新策略只需 `import` from 共享模块，**不要再 copy/paste**。
 - **游资接力 — 多日累计 + 反向数据信号 exit (US-025 GameTraderRelayStrategy)**: 第 10 个组合级策略，与 DragonHead 互补 (DragonHead 抓涨停板内梯队龙头 / GameTraderRelay 抓涨停板外游资暗中建仓)。3 个新模式：(1) **多日累计 + 接力天数双门槛**：入场不止要 `accumulated_net_buy > 5000 万`，还要 `relay_day_count >= min(2, lookbackDays)` —— 单日大单不算接力，必须 ≥2 个 distinct trade_date 都有 famous_yz 净买入 > 0 才入选，过滤"孤胆英雄"信号。(2) **反向数据信号 D 类作为 exit**：与 US-019 NorthboundFollow 的"北向减仓 SELL"并列，构成"硬约束 > 反向数据信号 > 技术信号"3 大 exit 信号系列。**跟随类 / 接力类策略必须有反向数据信号 exit**，否则退化为被动持有失去 alpha。(3) **严格边界条件 vs ≥ fuzzy floor 判据**：硬数字阈值 (5000 万 / 5% / 市值范围) 用严格 > (entry 要明确达到，消除 boundary 噪音)，止损 + 次日大跌用 ≤ (止损要敏感)；fuzzy floor 类阈值 (北向 0.5pp 业务定义) 用 ≥ 包含边界。**写新短线策略前确认你的入场阈值是 hard cutoff 还是 fuzzy floor**。完整 8 种 universe 对比表在 `backend/src/quant/strategies/CLAUDE.md`。
+- **左侧反转 — 超跌反弹 + RSI 上穿 + sell_half 落袋 (US-026 LeftSideReversalStrategy)**: 第 11 个组合级策略，与 BreakoutStrategy (US-023) 完全镜像——Breakout 抓 60 日新高做趋势延续，本策略抓 20 日大跌做反转。**5 维 AND 入场** (跌幅 + 反弹 + 主力净流入 + RSI 上穿 + 流通市值) 是目前组合级策略中**入场维度最多**的；fail_xxx 计数器达 11 个。**4 种边界 strict 类型共存**: 业务语言"跌幅 ≥ 30%"用 ≤ -threshold 包含边界 (业务为准)；"反弹 > 5%"/"市值 > 50 亿"/"净流入 > 0" 用严格 > (消除 boundary 噪音)；"止损 ≤ -7%"/"持有 ≥ 15 天" 用 ≤ / ≥ (保护性出场即刻触发)；"RSI 上穿 25" 用 yesterday < AND today ≥ (双边严格)。**判据**：jsdoc 必须列清每个阈值的边界处理 + 每个 boundary 都加测试。**入场排序 drop_pct ASC** (跌得最惨在前) 与 BreakoutStrategy volume_ratio DESC (放量最猛) 完全镜像——反转策略 mean-reversion thesis vs 趋势策略 momentum thesis，**不能混用**。**sell_half 与 DragonHead 语义差异**: DragonHead = 次日开盘高开 ≥5% (动量延续兑现)，LeftSideReversal = 5 日内 max(close)/entry > 15% (反弹落袋防回中继再跌)。**jsdoc + reason 必须明示语义关键词** ("高开"/"落袋")，让审计日志能区分两策略的减半事件。**`half_exited` 标记的 3 个处理点**: exit 阶段判 (`!pos.half_exited && holdingDays >= 1`)、kept 阶段用 spread 不 mutate (`kept.push({...pos, half_exited: true})`)、进场首日排除 (`holdingDays >= 1` 否则 max() = entry_price)。**RSI 用上穿不用单点 < 阈值**——单点值会卡在超卖区漂移多日产生重复信号，上穿排除持续低位无趋势的票。**DataSource minBarCount 由策略层精确计算并透传**: `minBarsForEntry = max(dropLookbackDays+1, rsiPeriod+2)` —— RSI 上穿要算 yesterday+today 两个 RSI，每个需 period+1 close, 共 period+2 bar。**反转策略市值门槛比趋势更严格**——50 亿过滤掉超跌小盘股 (流动性陷阱 / 退市风险假反弹)；趋势策略选 60 日新高天然偏中大盘，市值门槛影响小。完整 9 种 universe 对比表在 `backend/src/quant/strategies/CLAUDE.md`。
 
 ### Backtest engine — A 股执行约束 (US-014+)
 - **`AShareConstraintEngine` 是无状态纯模块** at `backend/src/quant/backtest/AShareConstraintEngine.ts`。三个方法：`evaluateOrder(ctx)` 返回 `{ok, reason?, detail?}` 决定能否成交（T+1 / 涨跌停 / 停牌 / ST 过滤 / 流动性门槛）；`computeFees(amount, side)` 返回 commission + stamp_tax + transfer_fee 三段费用 breakdown；`executionPrice(bar, side, timing)` 给三种 timing (next_open / same_close / twap_proxy) 的成交价并附动态滑点。引擎严格无 DB 访问、无状态字段、不修改输入参数——多策略并发跑零状态污染。
@@ -2626,3 +2627,132 @@ the 阈值 已达).
 - 测试时同时用所有形态校验，确保抽取没漏边角（GameTraderRelay test_helper_isSTName 有 9 个边角）。
 
 ---
+
+## 2026/06/07 - US-026
+
+### What was implemented
+
+**11th 组合级策略** — `LeftSideReversalStrategy`（左侧反转）。第一个 5 维 AND 入场 +
+sell_half "落袋为安"语义 + RSI 上穿信号的组合级策略。
+
+继承 `QuantStrategy`（registry 契约），`evaluate()` 返回信息性 `hold`；真正入口
+`generateSignals(tradeDate, { params?, currentPositions? })` 异步。
+
+**入场（5 维 AND，所有维度独立 fail_xxx 计数）**：
+1. `close[T] / close[T - dropLookbackDays(20)] - 1 ≤ -dropPctThreshold(0.30)` ——
+   近 20 日跌幅 ≥ 30%（业务语言"跌幅"对应数学 ≤ -threshold，包含边界）
+2. `(close[T] - close[T-1]) / close[T-1] > minDailyReboundPct(0.05)` ——
+   当日反弹严格 > 5%（恰等于不入选）
+3. `StockMoneyFlowFactor.main_net_inflow > 0` —— 严格 >（boundary fail）
+4. RSI(rsiPeriod=14) **上穿**：yesterday rsi < rsiThreshold(25) AND today rsi ≥ 25
+   （双边严格，避免持续低位漂移误信号）
+5. `circulating_market_cap > minCirculatingMarketCap(50亿)` —— 严格 >
+   （**反转策略特别重要**：避开小盘股流动性陷阱 / 退市风险假反弹）
+- 附加：`!isSTName(name)` if `excludeST=true`（默认 true）
+
+**出场（按优先级 A → D，最先命中触发）**：
+- A. `holdingDays ≥ holdingDaysLimit(15 自然日)` → `sell`（硬时间限制）
+- B. `(close - entry) / entry ≤ stopLossPct(-7%)` → `sell`（硬损失限制）
+- C. `holdingDays ≥ 1 AND !half_exited AND max(close[bars where date > entry]) / entry - 1 > rapidGainPct(15%)`
+  → `sell_half`（**5 日内累计涨幅 > 15% 落袋**，与 DragonHead "次日开盘高开 5%" sell_half 触发不同）
+- D. HOLD
+
+**关键设计决策**：
+- **5 维 AND 是入场维度上限** — 超过 5 维 fail_xxx 计数器过多 ops 难以诊断；
+  ST 提前到 Stage 0（meta 拉取后立刻过滤）避免 Stage 1 内存压力
+- **入场排序 drop_pct 升序（跌得最惨在前）** — 反转策略 mean-reversion thesis
+  ("跌得越深反弹越大") 与 BreakoutStrategy 趋势力度 DESC 完全镜像
+- **sell_half + half_exited 标记** — `kept.push({ ...pos, half_exited: true })`
+  保留入 target_positions 防重复触发减半；reason 包含"落袋"关键词便于审计
+- **DataSource 4 loader**（与 BreakoutStrategy 同形）：
+  - `loadCandidateBars` 全市场扫描（universe-wide）
+  - `loadPositionBars` 持仓子集（可能含停牌/已退市，分开两个 loader 不为 DRY 合并）
+  - `loadMoneyFlowToday` 当日全市场 main_net_inflow Map
+  - `loadStockMeta` 含 circulating_market_cap（市值过滤）
+- **`minBarsForEntry = max(dropLookbackDays + 1, rsiPeriod + 2)`** ——
+  RSI 上穿要算 yesterday + today 两个 RSI，每个 RSI 至少 rsiPeriod+1 个 close，
+  共 rsiPeriod+2 bar；默认 max(21, 16) = 21
+- **classic Wilder RSI 用 SMA 简化版** —— `computeRSI(closes, period)` 给定 N+1
+  close 用 SMA 算 N 期；与传统指数平滑 Wilder RSI 差异在窗口边缘，但策略层只关心
+  "上穿阈值"是相对判断 + SMA 让测试可手动复算
+
+注册到 `backend/src/quant/engine/StrategyRegistry.ts`：
+- `strategy_key = 'left_side_reversal'`
+- `category = 'multi_factor'`（5 维入场 ≠ 单一动量）
+- `risk_level = 'high'`（短中线 + 反转博弈 + 个股止损 -7%）
+- `tags = ['反转', '超跌', 'RSI', '资金流', '短中线']`
+- 当前总数 **27 strategies**
+
+### Files changed
+
+- `backend/src/quant/strategies/LeftSideReversalStrategy.ts` (new, ~750 LOC)
+- `backend/src/quant/strategies/CLAUDE.md` (+135 LOC: '左侧反转 — 超跌反弹 + RSI
+  上穿 + sell_half' 新节, 与 BreakoutStrategy 镜像表, 与 DragonHead sell_half
+  触发语义对比表, 9 种 universe 对比, 写新 '趋势反转 + sell_half' 策略 7 条 checklist)
+- `backend/src/quant/engine/StrategyRegistry.ts` (+2 lines: import + register)
+- `backend/tests/strategies/LeftSideReversalStrategy.test.ts` (new, ~770 LOC,
+  40 用例 / 136 断言)
+- `ralph/prd.json` US-026 → passes:true + 详细 notes
+- `ralph/progress.txt` (this entry + Codebase Patterns addition)
+
+### Quality checks
+
+- `cd backend && npx tsc --noEmit` → exit 0 (clean)
+- `./node_modules/.bin/eslint src/quant/strategies/LeftSideReversalStrategy.ts
+  src/quant/engine/StrategyRegistry.ts --quiet --fix` → exit 0 (7 prettier
+  auto-fixed: line break placement in long string concatenation + initializer
+  formatting; semantic unchanged)
+- `npx ts-node --transpile-only tests/strategies/LeftSideReversalStrategy.test.ts`
+  → **136 ok / 0 failures, 40 个 test scenario 全部通过 < 1s**
+- 既有 10 个组合级 strategy 测试（MFA / DragonHead / EarningsSurprise / NorthboundFollow
+  / CTA100 / SectorRotationLeader / HighDividendValue / Breakout / GARP / GameTraderRelay）
+  + AShareConstraintEngine 集成测试 — 全部仍通过（无 schema 兼容性破坏）
+- Registry smoke: 27 strategies total (含 `left_side_reversal`)
+
+### Browser verification
+
+N/A — backend-only story (新策略 + DataSource + 测试，无 UI 变更)。
+
+### Learnings for future iterations
+
+- **5 维 AND 入场是组合级策略上限 — 超过 fail_xxx 计数器过多 ops 难诊断**：
+  US-026 是目前 11 个组合级策略中入场维度最多的（5 维超过 Breakout/GARP 的 4 维），
+  filtered stat 已有 11 个独立字段（含 candidate_pool / already_held / insufficient_history
+  等结构维度）。未来如果有 6+ 维需求，应当考虑：(a) 把多个相关维度合成 composite_score
+  替代逐个 boolean 检查；(b) 把 ST/缺数据等"结构性 fail"提前到 Stage 0 显式过滤
+  减少 Stage 1 工作量。
+- **趋势策略 vs 反转策略的排序方向完全镜像**：
+  Breakout 选"放量最猛"（DESC volume_ratio）= 趋势力度 metric
+  LeftSideReversal 选"跌得最惨"（ASC drop_pct）= mean-reversion 空间 metric
+  **不要混用** — 排序方向直接反映 thesis；mean-reversion 策略用 DESC 排序会优先选"跌得不多
+  反弹却强"的票（噪音信号），违背反转策略选股逻辑。
+- **sell_half 信号有多种触发语义，jsdoc + reason 必须明示**：
+  DragonHead sell_half = 次日开盘高开 ≥ 5%（动量延续兑现，reason 含"高开"）
+  LeftSideReversal sell_half = 5 日内 max(close) / entry > 15%（反弹落袋，reason 含"落袋"）
+  审计日志靠 reason 关键词区分两策略减半事件 — 写新 sell_half 策略时务必让 reason
+  包含语义关键词，否则 portfolio attribution 报表无法区分"两次 sell_half 都是同一原因吗"。
+- **`half_exited` 标记的处理点**：
+  - exit 阶段：`if (!pos.half_exited && holdingDays >= 1)` 才进入 rapid_gain 判定
+  - kept 阶段：`kept.push({ ...pos, half_exited: true })` 用 spread 而非 mutate
+    （避免污染原 currentPositions 数组 — calling code 可能复用该数组）
+  - 进场首日：`holdingDays >= 1` 排除掉刚开仓当日（max() 必然 = entry_price）
+- **RSI 用"上穿"而非"≤ 阈值"作为入场信号**：
+  单点值 `rsi < 25` 容易卡在超卖区漂移多日产生重复信号；上穿确认
+  `yesterday < 25 AND today ≥ 25` 排除掉持续低位无趋势的票。未来其他技术指标
+  策略（MACD / KDJ / 布林带）做入场判定时优先考虑"上穿/下穿/突破"信号而非单点比较。
+- **计算两个 RSI 时 DataSource minBarCount 由策略层精确传入**：
+  Strategy 计算 `minBarsForEntry = max(dropLookbackDays + 1, rsiPeriod + 2)`，
+  传给 `loadCandidateBars(asOfDate, minBarCount)`。DataSource 不知道策略的 RSI 上穿
+  需求 → 策略层负责算 + 透传，DataSource 层只保证"返回 ≥ minBarCount 的股票"。
+- **反转策略的市值门槛比趋势策略更严格**：
+  超跌小盘股可能因流动性陷阱 / 退市风险 / 财务问题导致"假反弹"（一日反弹后继续大跌
+  到退市），50 亿流通市值门槛过滤掉绝大多数 ST 候补。趋势策略选"突破新高"的票
+  天然偏中大盘（小盘很难破 60 日新高且有放量），市值门槛影响小。
+- **"trigger=≤ 包含边界"vs"trigger=严格 >"的语义判据**：
+  - 业务用 "跌幅 ≥ 30%" 表达 → 数学 dropPct ≤ -0.30 用**包含边界**（业务语言为准）
+  - "反弹 > 5%" / "市值 > 50 亿" / "净流入 > 0" → 数学**严格大于**（避免 boundary 噪音）
+  - "止损 ≤ -7%" / "持有 ≥ 15 天" → **包含边界**（保护性出场一旦达到立即触发）
+  - RSI 上穿 "yesterday < AND today ≥" → **双边严格**（明确穿越事件）
+  4 种 strict 类型共存时, jsdoc 必须列清每个阈值的边界处理 + 测试每个 boundary
+  用例都加 (LeftSideReversalStrategy.test.ts 有 6 个 boundary 测试用例)。
+

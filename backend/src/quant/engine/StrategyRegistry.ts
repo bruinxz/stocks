@@ -25,6 +25,7 @@ import { HighDividendValueStrategy } from '../strategies/HighDividendValueStrate
 import { BreakoutStrategy } from '../strategies/BreakoutStrategy';
 import { GARPStrategy } from '../strategies/GARPStrategy';
 import { GameTraderRelayStrategy } from '../strategies/GameTraderRelayStrategy';
+import { LeftSideReversalStrategy } from '../strategies/LeftSideReversalStrategy';
 import { QuantStrategyDefinition } from '../types/QuantTypes';
 
 export class StrategyRegistry {
@@ -57,6 +58,7 @@ export class StrategyRegistry {
     this.register(new BreakoutStrategy());
     this.register(new GARPStrategy());
     this.register(new GameTraderRelayStrategy());
+    this.register(new LeftSideReversalStrategy());
   }
 
   register(strategy: QuantStrategy) {

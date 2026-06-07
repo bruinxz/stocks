@@ -33,7 +33,7 @@ evaluate 模型表达不出。
 - 入参：交易日 + 可选 `{ params?, previousSelection? }`
 - 出参：`{ target_portfolio, signals: BUY/SELL/HOLD[], filtered, params, ... }`
 
-典型例子（截至 US-024 共 9 个）：
+典型例子（截至 US-026 共 11 个）：
 - `MultiFactorAlphaStrategy`（多因子 alpha 月度轮动）
 - `DragonHeadMomentumStrategy`（短线龙头战法 — 事件驱动每日）
 - `EarningsSurpriseStrategy`（业绩预告超预期 + 北向加仓双确认 — 事件驱动）
@@ -43,6 +43,8 @@ evaluate 模型表达不出。
 - `HighDividendValueStrategy`（高分红低 PE 长线价值 — 季度调仓 + 4 维 AND）
 - `BreakoutStrategy`（60 日新高突破 — 价量突破 + MA20 技术信号 exit）
 - `GARPStrategy`（业绩稳定增长 GARP — 半年度调仓 + 4 维 AND 含 PEG）
+- `GameTraderRelayStrategy`（游资接力 — 多日累计 + 接力天数双门槛 + 反向数据信号 exit）
+- `LeftSideReversalStrategy`（左侧反转 — 5 维超跌反弹 + RSI 上穿 + sell_half 落袋）
 
 后续 story 中其他组合级策略：US-028 EnsembleStrategy 等。
 
@@ -685,6 +687,138 @@ US-025 触达 10 处实际抽取）。抽取时**必须保留各源文件的 re-
 5. **边界条件**：入场用严格 > 消除 boundary 噪音；止损用 ≤ 一旦达到立即触发。
 6. **isSTName 用共享模块** `import { isSTName } from '../../utils/stNameUtils'`，
    不要再 copy/paste。
+
+## 左侧反转 — 超跌反弹 + RSI 上穿 + sell_half（US-026 LeftSideReversalStrategy）
+
+第 11 个组合级策略，第 4 个"短中线 + 结构化持仓"形态（与 DragonHead/Breakout/GameTraderRelay
+并列）。**第一个把 sell_half 信号用在"减仓落袋为安"而非"动量延续减仓"的策略**。
+
+### 与 BreakoutStrategy（US-023）的镜像关系
+
+| 维度 | BreakoutStrategy（趋势延续）| LeftSideReversalStrategy（趋势反转）|
+|------|---------------------------|----------------------------------|
+| 入场判定方向 | 突破 60 日新高（上行） | 近 20 日大跌 30%（下行） |
+| 反弹/确认信号 | 成交额放大 1.5x | 当日反弹 > 5% |
+| 资金面信号 | 行业 main_inflow > 0 | 个股 main_net_inflow > 0 |
+| RSI 用法 | 无 | **RSI(14) 从超卖区上穿 25** |
+| 市值门槛 | 无（隐式靠行业） | 流通市值 > 50 亿（避开小盘股流动性陷阱）|
+| C 类出场 | close < MA20（趋势破位）| **5 日内涨幅 > 15% sell_half（落袋）**|
+| 止损 | -15%（趋势策略宽止损）| -7%（反转策略快速止损）|
+| Holding period | 60 自然日（中长期）| 15 自然日（短中线）|
+
+**判据**：所有趋势策略可以加一个反向版本；架构同形态（DataSource 4 loader 模式 + structured
+Position + 3-tier exit），关键差异在阈值方向和参数严格性。同 NorthboundFollow 加仓策略
+未来可考虑加 "NorthboundOutflowReversal 北向流出后回流" 镜像版。
+
+### 与 DragonHeadMomentumStrategy（US-012）的 sell_half 对比
+
+两者都使用 `sell_half` 信号 + `half_exited` 标记防重复减半，但触发语义不同：
+
+| 维度 | DragonHead sell_half | LeftSideReversal sell_half |
+|------|---------------------|--------------------------|
+| 触发条件 | 次日 open / prev_close ≥ 5%（**高开**） | 5 日内 max(close) / entry > 15%（**累计涨幅**） |
+| 时间窗口 | 单日（次日 open） | rapidGainLookbackDays(5) 日滚动 |
+| 业务语义 | 动量延续，借高开兑现 | 反弹兑现落袋，防回中继转再跌 |
+| 计算的 close 来源 | `lastBar.open` vs prev_close | `max(close[bars where date > entry])` |
+
+**判据**：sell_half 信号的具体触发逻辑要写在 jsdoc 上明示（"sell half on high open" vs
+"sell half on peak gain"），单测 reason 字段要包含识别关键词（"高开" / "落袋"），让审计
+日志可以一眼区分两策略的减半事件。
+
+### 1. 全市场扫描 + 5 维 AND 入场（最长入场过滤链）
+
+US-026 是目前 9 个组合级策略中**入场维度最多**的（5 维，超过 BreakoutStrategy/GARP 的 4 维）。
+判定顺序遵循"早过滤先做"：
+
+1. 历史 bar 不足 → 单 Map size 检查，~ns
+2. stale bar（最后一条 != asOfDate）→ 单字段比对
+3. 20 日跌幅 → 单 close[T-20] vs close[T] 比例
+4. 当日反弹 → 单 close[T-1] vs close[T] 比例
+5. RSI 上穿 → 计算两个 RSI（昨天 + 今天）— 最贵
+6. 元数据查询（Stage 2 全部一次性 loadStockMeta + 主力资金 Map 查找）
+
+**fail_xxx 维度分别计数**（candidate_pool_size / fail_drop_insufficient /
+fail_rebound_insufficient / fail_rsi_not_crossing_up / fail_money_flow_negative /
+fail_market_cap_insufficient / fail_meta_missing / fail_st / fail_already_held /
+fail_insufficient_history / fail_stale_bar = 11 个独立计数）。当生产环境 eligible=0
+时 ops 可以一眼看出"是 RSI 上穿太严" or "是市值门槛过滤太多" — 诊断粒度的价值
+随策略复杂度增长而 super-linear。
+
+### 2. 入场排序：drop_pct 升序（跌得最惨在前）
+
+不像 BreakoutStrategy 的"放量最猛在前"（趋势力度 metric），左侧反转优先选**跌幅最深**的：
+
+```ts
+candidates.sort((a, b) => {
+  if (a.drop_pct !== b.drop_pct) return a.drop_pct - b.drop_pct; // 升序（更负在前）
+  if (a.rebound_pct !== b.rebound_pct) return b.rebound_pct - a.rebound_pct;
+  return a.stock_code.localeCompare(b.stock_code);
+});
+```
+
+**判据**：反转策略相信"跌得越多反弹空间越大"（mean-reversion thesis）；趋势策略相信
+"涨得越猛趋势越强"（momentum thesis）。两种 thesis 对应两种排序方向，**不要混用**。
+
+### 3. 边界条件 — 多种 strict 语义并存
+
+US-026 同时用到 4 种边界 strict 类型：
+
+| 条件 | 阈值类型 | 边界处理 | 例子 |
+|------|----------|----------|------|
+| 跌幅 ≥ 30% | hard cutoff | dropPct ≤ -threshold（**包含边界**） | -30% 触发 |
+| 反弹 > 5% | hard cutoff | reboundPct > threshold（**严格大于**） | 恰 5% 不入 |
+| RSI < 25 → ≥ 25 | 上穿信号 | yesterdayRsi < t AND todayRsi >= t | 双边严格 |
+| 流通市值 > 50 亿 | hard cutoff | cap > threshold（**严格大于**） | 恰 50 亿不入 |
+| 主力净流入 > 0 | hard cutoff | inflow > 0（**严格大于**） | 恰 0 不入 |
+| 止损 ≤ -7% | 保护性出场 | pnlPct <= threshold（**包含边界**） | -7% 触发 |
+| 持有 ≥ 15 天 | 时间约束 | holdingDays >= limit（**包含边界**） | 第 15 天触发 |
+
+**判据**：
+- 入场用**严格 >** 消除 boundary 噪音 + 让阈值的"达到"语义明确
+- 出场（止损/持有期）用 **≥ / ≤** 一旦达到立即触发，不留余地
+- 跌幅类是个例外（用 ≤ -threshold），因为业务表达 "跌幅 ≥ 30%" 在数学上等价于
+  "回报率 ≤ -30%"，写边界时按业务语言而非数学语言更直观
+
+### 4. DataSource 4 loader（与 BreakoutStrategy 同形）
+
+- `loadCandidateBars(asOfDate, minBarCount)` — 全市场扫描
+- `loadPositionBars(asOfDate, stockCodes, minBarCount)` — 持仓子集（可能含停牌）
+- `loadMoneyFlowToday(asOfDate)` — 当日全市场 main_net_inflow Map
+- `loadStockMeta(stockCodes)` — name / industry / **circulating_market_cap**
+
+**关键 minBarCount = max(dropLookbackDays + 1, rsiPeriod + 2)** ——
+RSI 上穿判定要算 yesterday + today 两个 RSI，每个 RSI 至少 rsiPeriod+1 个 close，
+加起来要 rsiPeriod+2 个 bar。默认参数下 max(21, 16) = 21；rsiPeriod=30 时
+max(21, 32) = 32 — DataSource 的最小 bar 数需求由策略层精确计算并透传。
+
+### 9 种 universe + 短中线反转对比表（截至 US-026）
+
+| 维度 | MultiFactor | EarningsSurprise | CTA100 | SectorRotation | HighDividend | Breakout | GARP | GameTraderRelay | **LeftSideReversal** |
+|------|-------------|------------------|--------|----------------|--------------|----------|------|----------------|------------------|
+| 触发频率 | 月度 | 每日（稀疏）| 月度 | 每日 | 季度（gate）| 每日 | 半年度（gate）| 每日（短线）| **每日（短中线）** |
+| 入场维度 | 8 因子 | 业绩+北向 | 60-5 mom | 行业+个股 | 4维 | 4维 | 4维 | 4维 | **5 维（最多）** |
+| 入场方向 | 横截面打分 | 事件 + 双确认 | 动量延续 | 强势行业内 | 长线 value | **趋势延续**| GARP | 短线接力 | **趋势反转** |
+| Position schema | string[] | EarningsSurprisePosition | string[] | SectorRotationPosition | string[] | BreakoutPosition | string[] | GameTraderRelayPosition | **LeftSideReversalPosition (half_exited!)**|
+| 止损 | 无 | -10% | 无 | 无 | 无 | -15% | 无 | -7% | **-7%** |
+| 软出场 (C) | 无 | 无 | 无 | 行业掉出 top | 无 | 跌破 MA20 | 无 | 接力中断 | **5 日涨 > 15% sell_half** |
+| RSI 用法 | 无 | 无 | 无 | 无 | 无 | 无 | 无 | 无 | **上穿 25** |
+| 排序方向 | composite DESC | profit_change DESC | momentum DESC | inflow DESC | dividend DESC | volume_ratio DESC | yoy DESC | acc_net_buy DESC | **drop ASC（最跌）**|
+| 典型 holding period | 30 天 | 60 天 | 30 天 | 10-30 天 | 90+ 天 | 10-60 天 | 180+ 天 | 3 天 | **5-15 天** |
+
+**写新"趋势反转 + sell_half"策略的 checklist**：
+1. 入场方向用"跌幅"而非"涨幅"，DataSource loader 返回 close 序列即可（无需复杂计算）。
+2. 排序方向反过来：**最负的 drop_pct 升序在前**，体现"跌得越深反弹越大"的 mean-reversion thesis。
+3. sell_half 信号必须 + `half_exited` flag 防重复减半 — schema 是 `LeftSideReversalPosition`，
+   `kept.push({...pos, half_exited: true})` 标记后保留入 target_positions。
+4. RSI（或其他技术指标）作为入场维度时必须用 "**上穿**" 而非 "≤ 阈值" — 单点值容易卡在
+   超卖区漂移，"昨天 < + 今天 ≥" 的上穿确认排除掉持续低位无趋势的票。
+5. 计算 RSI 时 minBarCount 需要算两个 RSI（yesterday + today），各需 period+1 close，
+   总共 period+2 — DataSource 接口的 minBarCount 由策略层精确传入。
+6. **5 维 AND 入场**是上限，超过会让 fail_xxx 计数器过多 ops 难诊断；可以把 ST 提前到
+   Stage 0 提前过滤（已实现）减少 Stage 1 的内存压力。
+7. **市值门槛对反转策略尤其重要**：超跌小盘股可能因流动性陷阱 / 退市风险（如 US-074 退市预警）
+   导致"反弹"假信号；强制 > 50 亿（AC 默认）规避此风险。
+
 
 
 
