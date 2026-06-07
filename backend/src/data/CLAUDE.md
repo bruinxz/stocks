@@ -257,6 +257,50 @@ Implications:
   similarly. New stories adding per-stock historical sync (财报 / 股东户数) should
   copy the same dict-build-then-iterrows pattern from `get_dividend_history`.
 
+## Per-stock sync, multi-endpoint merge (US-024 FinancialReport)
+
+US-024 introduces a **二级扩展模式** to the per-stock sync template (US-022): the
+Python helper fetches data from **multiple AKShare endpoints** and merges them
+into one normalized row payload before returning. Specifically `get_financial_report`
+combines:
+
+- `stock_financial_analysis_indicator(symbol, start_year)` — per-period rows
+  with ratios (净利润 yoy / 营收 yoy / ROE / 资产负债率)
+- `stock_financial_abstract(symbol)` — wide-format dataframe with raw amounts
+  (归母净利润 / 营业总收入)
+
+Both endpoints are keyed by `report_date` (YYYY-MM-DD), so the Python merge is
+deterministic — index the abstract `df` by `YYYYMMDD` column, lookup per
+`indicator_row.date`, build the joined row. The merge happens in **Python, not TS**
+because:
+
+1. The two endpoints have inconsistent shapes (long-form vs wide-form) and pandas
+   handles wide-form column lookup naturally.
+2. Per-version 列名 quirks (`归母净利润` vs `净利润` vs `归属于母公司股东的净利润`)
+   live in the helper anyway — keeping all merge code there localizes the
+   "data shape glue" layer.
+
+**Implications for TS layer**:
+- `FinancialReport.report_type` field is **inferred from `report_date` MMDD** in
+  Python (`03-31 = 一季报`, `06-30 = 半年报`, `09-30 = 三季报`, `12-31 = 年报`),
+  not parsed from a separate AKShare field. Reduces dependency on field naming
+  drift. **Sync service does NOT recompute report_type from report_date** — trust
+  the helper.
+- **No yield_pct-style cross-table TS computation** in this story (unlike US-022
+  DividendHistory's TS-side yield calc). All fields are already in the raw response
+  or computable inside Python without DailyBar joins.
+- **Helper timeout = 180s default** (vs 120s for dividend) because two endpoints
+  + Python merge takes ~2-3s/stock. Set via `FINANCIAL_REPORT_TIMEOUT_MS` env.
+- **Sync throttle = 300ms default** (vs 200ms for dividend) for same reason —
+  AKShare two endpoints back-to-back is harsher on rate limits.
+
+For future stories needing multi-endpoint Python merges (US-030 AnalystForecast =
+research_report + earnings_forecast, US-031 QualityHigh = multiple income statement
+pieces), copy this merge-in-Python pattern: each endpoint as a separate `df = fn(...)`
+fetch, dictionary index by shared key, single-pass merge per row. **Don't return
+two arrays and merge in TS** — TS rebuilding pandas semantics in Map<...> is
+painful and quirks have to be replicated twice.
+
 ## Worktree gotcha (still active as of US-005)
 
 The git worktree has no `backend/node_modules`. Symlink before typecheck:

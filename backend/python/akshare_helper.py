@@ -2057,6 +2057,255 @@ def get_dividend_history(stock_code: str) -> List[Dict[str, Any]]:
         return []
 
 
+# ---------------------------------------------------------------------------
+# Inferred report-type 中文 string from ISO 日期月份/日
+# ---------------------------------------------------------------------------
+def _infer_report_type(report_date_iso: str) -> Optional[str]:
+    """
+    Map report_date YYYY-MM-DD → 中文 report_type.
+
+      03-31 → 一季报
+      06-30 → 半年报
+      09-30 → 三季报
+      12-31 → 年报
+      其他   → None（罕见，AKShare 数据偶尔有非标准日期）
+    """
+    if not report_date_iso or len(report_date_iso) < 10:
+        return None
+    mmdd = report_date_iso[5:10]
+    if mmdd == '03-31':
+        return '一季报'
+    if mmdd == '06-30':
+        return '半年报'
+    if mmdd == '09-30':
+        return '三季报'
+    if mmdd == '12-31':
+        return '年报'
+    return None
+
+
+def get_financial_report(stock_code: str) -> List[Dict[str, Any]]:
+    """
+    Fetch A-share financial report history for a single stock — annual + quarterly
+    indicators needed by 价值/成长 strategies (US-024 GARP and others).
+
+    Combines TWO AKShare endpoints into one normalized row-per-report payload:
+
+      A) `ak.stock_financial_analysis_indicator(symbol=<6-digit>, start_year=YYYY)`
+         — returns per-period 综合指标 dataframe, ONE row per report_date
+         (4 rows per year × N years).  Provides 净利润增长率 / 主营业务收入增长率 /
+         净资产收益率 / 加权净资产收益率 / 资产负债率 (ALL ratio fields GARP needs).
+
+      B) `ak.stock_financial_abstract(symbol=<6-digit>)`
+         — returns wide-format dataframe (rows=指标, columns=YYYYMMDD).  We
+         transpose to grab 归母净利润 + 营业总收入 raw values per period.
+
+    Output row schema (per report_date):
+      {
+        report_date:        ISO YYYY-MM-DD,
+        stock_code:         6-digit code,
+        report_type:        '年报' / '半年报' / '一季报' / '三季报' / None,
+        net_profit:         归母净利润 (元, nullable),
+        net_profit_yoy:     净利润增长率 (%, nullable),
+        revenue:            营业总收入 (元, nullable),
+        revenue_yoy:        主营业务收入增长率 (%, nullable),
+        roe:                净资产收益率 (%, nullable),
+        debt_ratio:         资产负债率 (%, nullable),
+        raw_payload:        union of both source rows + abstract raw items
+      }
+
+    Why merge in Python:
+      - The two endpoints have inconsistent shapes (long-form vs wide-form),
+        so the merge code stays where the per-version 列名 quirks live.
+      - The merge KEY is `report_date` (ISO) — 100% deterministic.
+      - GARP strategy only cares about annual rows but other strategies may
+        want quarterly granularity, so we ship all rows and let the TS layer
+        filter on report_type=年报.
+
+    Returns:
+        List sorted by report_date descending (newest first). Returns [] on
+        error so the caller can checkpoint a "tried" stock without aborting
+        batch.
+    """
+    try:
+        # AKShare expects 6-digit code, no suffix
+        pure_code = str(stock_code).strip().zfill(6)
+        if not pure_code.isdigit() or len(pure_code) != 6:
+            print(f"Invalid stock_code format: {stock_code}", file=sys.stderr)
+            return []
+
+        print(f"Fetching financial report for stock={pure_code}...", file=sys.stderr)
+
+        # ----- A) 综合指标 (per-period rows) -----
+        df_ind = None
+        fn_ind = getattr(ak, 'stock_financial_analysis_indicator', None)
+        if fn_ind is None:
+            print(f"AKShare has no stock_financial_analysis_indicator function", file=sys.stderr)
+            return []
+
+        for kwargs in [
+            {'symbol': pure_code, 'start_year': '2015'},  # 10+ years of history
+            {'symbol': pure_code},  # let akshare default to its own start_year
+        ]:
+            try:
+                df_ind = fn_ind(**kwargs)
+                if df_ind is not None and not df_ind.empty:
+                    break
+            except TypeError:
+                # Old positional signature
+                try:
+                    df_ind = fn_ind(pure_code)
+                    if df_ind is not None and not df_ind.empty:
+                        break
+                except Exception as e2:
+                    print(f"stock_financial_analysis_indicator({pure_code}) positional failed: {e2}", file=sys.stderr)
+            except Exception as e:
+                print(f"stock_financial_analysis_indicator({pure_code}) failed: {e}", file=sys.stderr)
+                df_ind = None
+
+        if df_ind is None or df_ind.empty:
+            print(f"AKShare analysis_indicator returned empty for {pure_code}", file=sys.stderr)
+            return []
+
+        # ----- 列名柔性映射 (analysis_indicator) -----
+        # 不同年份/接口版本中文列名略有差异，统一映射到一组英文 key
+        ind_col_map: Dict[str, str] = {}
+        for col in df_ind.columns:
+            col_s = str(col)
+            if col_s in ('日期',) and 'date' not in ind_col_map:
+                ind_col_map['date'] = col_s
+            elif col_s in ('净利润增长率(%)', '净利润增长率') and 'np_yoy' not in ind_col_map:
+                ind_col_map['np_yoy'] = col_s
+            elif col_s in ('主营业务收入增长率(%)', '营业收入增长率(%)', '营业总收入增长率(%)') and 'rev_yoy' not in ind_col_map:
+                ind_col_map['rev_yoy'] = col_s
+            # ROE 优先用加权净资产收益率（更准确反映期内回报），缺则用净资产收益率
+            elif col_s in ('加权净资产收益率(%)',) and 'roe_weighted' not in ind_col_map:
+                ind_col_map['roe_weighted'] = col_s
+            elif col_s in ('净资产收益率(%)',) and 'roe' not in ind_col_map:
+                ind_col_map['roe'] = col_s
+            elif col_s in ('资产负债率(%)',) and 'debt' not in ind_col_map:
+                ind_col_map['debt'] = col_s
+
+        if 'date' not in ind_col_map:
+            print(f"No usable date column in analysis_indicator for {pure_code}. cols={list(df_ind.columns)[:10]}", file=sys.stderr)
+            return []
+
+        # 按 report_date 索引
+        by_date: Dict[str, Dict[str, Any]] = {}
+        for _, row in df_ind.iterrows():
+            date_iso = _parse_date_cell(row, ind_col_map.get('date'))
+            if not date_iso:
+                continue
+            np_yoy = _cell_float(row, ind_col_map.get('np_yoy'))
+            rev_yoy = _cell_float(row, ind_col_map.get('rev_yoy'))
+            # ROE: 优先加权，缺则用基础
+            roe_w = _cell_float(row, ind_col_map.get('roe_weighted'))
+            roe_b = _cell_float(row, ind_col_map.get('roe'))
+            roe = roe_w if roe_w is not None else roe_b
+            debt = _cell_float(row, ind_col_map.get('debt'))
+            by_date[date_iso] = {
+                'net_profit_yoy': np_yoy,
+                'revenue_yoy': rev_yoy,
+                'roe': roe,
+                'debt_ratio': debt,
+                'raw_indicator_row': _row_to_jsonable(row, df_ind.columns),
+            }
+
+        # ----- B) 财务摘要 (wide: row=指标, col=YYYYMMDD) for net_profit + revenue raw values -----
+        df_abs = None
+        fn_abs = getattr(ak, 'stock_financial_abstract', None)
+        if fn_abs is not None:
+            try:
+                df_abs = fn_abs(symbol=pure_code)
+            except TypeError:
+                try:
+                    df_abs = fn_abs(pure_code)
+                except Exception as e:
+                    print(f"stock_financial_abstract({pure_code}) positional failed: {e}", file=sys.stderr)
+                    df_abs = None
+            except Exception as e:
+                print(f"stock_financial_abstract({pure_code}) failed: {e}", file=sys.stderr)
+                df_abs = None
+
+        # abstract 解析: 找 指标 列与 YYYYMMDD 列，按行筛 归母净利润 / 营业总收入
+        raw_abs_by_date: Dict[str, Dict[str, Any]] = {}
+        if df_abs is not None and not df_abs.empty:
+            indicator_col = None
+            for cand in ('指标', '报告期', 'item'):
+                if cand in df_abs.columns:
+                    indicator_col = cand
+                    break
+            date_cols = [c for c in df_abs.columns if isinstance(c, str) and len(c) == 8 and c.isdigit()]
+
+            if indicator_col is not None and date_cols:
+                # 找 归母净利润 / 营业总收入 这两行
+                target_indicators = {
+                    'net_profit': ['归母净利润', '净利润', '归属于母公司股东的净利润'],
+                    'revenue': ['营业总收入', '营业收入'],
+                }
+                row_idx_by_field: Dict[str, int] = {}
+                for field, names in target_indicators.items():
+                    for name in names:
+                        mask = df_abs[indicator_col].astype(str).str.contains(name, na=False, regex=False)
+                        if mask.any():
+                            row_idx_by_field[field] = df_abs.index[mask][0]
+                            break
+
+                for date_col in date_cols:
+                    iso_date = _format_iso_date(date_col)
+                    if iso_date == date_col:  # 不是 8 位数字格式，跳过
+                        continue
+                    entry: Dict[str, Any] = {}
+                    for field, idx in row_idx_by_field.items():
+                        val = df_abs.at[idx, date_col]
+                        if val is None or pd.isna(val):
+                            entry[field] = None
+                        else:
+                            try:
+                                f = float(val)
+                                # filter NaN explicitly (NaN != NaN)
+                                entry[field] = f if f == f else None
+                            except (TypeError, ValueError):
+                                entry[field] = None
+                    raw_abs_by_date[iso_date] = entry
+
+        # ----- Merge by report_date -----
+        results: List[Dict[str, Any]] = []
+        for date_iso, ind_data in by_date.items():
+            abs_data = raw_abs_by_date.get(date_iso, {})
+            net_profit = abs_data.get('net_profit')
+            revenue = abs_data.get('revenue')
+            report_type = _infer_report_type(date_iso)
+
+            raw_payload: Dict[str, Any] = {
+                'indicator_row': ind_data.get('raw_indicator_row', {}),
+                'abstract_row': abs_data,
+            }
+
+            results.append({
+                'report_date': date_iso,
+                'stock_code': pure_code,
+                'report_type': report_type,
+                'net_profit': net_profit,
+                'net_profit_yoy': ind_data['net_profit_yoy'],
+                'revenue': revenue,
+                'revenue_yoy': ind_data['revenue_yoy'],
+                'roe': ind_data['roe'],
+                'debt_ratio': ind_data['debt_ratio'],
+                'raw_payload': raw_payload,
+            })
+
+        # Sort newest first (descending) so caller sees latest report first
+        results.sort(key=lambda r: r['report_date'], reverse=True)
+
+        print(f"Parsed {len(results)} financial report rows for {pure_code}", file=sys.stderr)
+        return results
+    except Exception as e:
+        print(f"Error getting financial report for {stock_code}: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return []
+
+
 def _parse_date_cell(row, col: Optional[str]) -> Optional[str]:
     """安全把一格日期转 ISO YYYY-MM-DD；空/nan/异常 → None"""
     if not col:
@@ -2197,6 +2446,14 @@ def main():
 
             stock_code = sys.argv[2]
             result = get_dividend_history(stock_code)
+
+        elif command == "get_financial_report":
+            if len(sys.argv) < 3:
+                print(json.dumps({"error": "Missing stock_code for get_financial_report"}), file=sys.stderr)
+                sys.exit(1)
+
+            stock_code = sys.argv[2]
+            result = get_financial_report(stock_code)
 
         else:
             print(json.dumps({"error": f"Unknown command: {command}"}), file=sys.stderr)

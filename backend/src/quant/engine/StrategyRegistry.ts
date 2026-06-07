@@ -23,6 +23,7 @@ import { CTA100MomentumStrategy } from '../strategies/CTA100MomentumStrategy';
 import { SectorRotationLeaderStrategy } from '../strategies/SectorRotationLeaderStrategy';
 import { HighDividendValueStrategy } from '../strategies/HighDividendValueStrategy';
 import { BreakoutStrategy } from '../strategies/BreakoutStrategy';
+import { GARPStrategy } from '../strategies/GARPStrategy';
 import { QuantStrategyDefinition } from '../types/QuantTypes';
 
 export class StrategyRegistry {
@@ -53,6 +54,7 @@ export class StrategyRegistry {
     this.register(new SectorRotationLeaderStrategy());
     this.register(new HighDividendValueStrategy());
     this.register(new BreakoutStrategy());
+    this.register(new GARPStrategy());
   }
 
   register(strategy: QuantStrategy) {

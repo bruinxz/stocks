@@ -83,6 +83,9 @@
 - **per-stock historical sync 模式 (US-022 DividendHistory)**: AKShare 一类接口 (stock_history_dividend_detail / 股东户数 / 财报历史) 是 "per-stock 多年时间线"，一次返回 ONE stock 全部历史；sync 服务用 `syncStock(code)` + `syncStocks(codes[])` 而非 `syncDate(date)` + `syncRange()`。--all 模式扫全 A 股要 friendly throttle (200ms 默认，否则秒级被封)；--listed-before flag 跳过 IPO 不足 N 年的新股（无历史可拉）。yield_pct 在 TS 服务里计算（基于 DailyBar ex_date 前日 close，cross-table join belongs TS-side）。**dividend_per_share semantics caveat**: AKShare 派息列是 "每 10 股派现金额（元）"，Python helper 做 /10 让 TS 见 "每股派息金额"；model column comment + jsdoc 必须显式标注否则下游容易再乘 10 倍。新故事 US-090 / US-091 / US-031 也属此模式可照搬。
 - **价量突破 + 技术信号 exit 模式 (US-023 BreakoutStrategy)**: 与全市场/事件驱动/指数受限/两阶段/长线季度并列的**第 6 种 universe 形态**。3 个新模式：(1) **DataSource 双 bars loader (loadCandidateBars universe-wide vs loadPositionBars 持仓子集) 分开**——前者要 `is_listed=true` 全市场扫，后者可能含已退市/已停牌股票不能依赖 universe 过滤；不要为了 DRY 合并。(2) **技术信号 exit (close < MA20) 第一次正式引入**——与 NorthboundFollow 反向数据信号 (北向减仓) 出场范式并列。**技术指标计算前置 guard**：bars 不足 ma20Period → 安全 HOLD 而非 SELL（**数据不足 ≠ 破位信号**），开仓初期不能误把"还没数据"判为"已跌破均线"；未来 US-026 RSI / US-027 MACD 类技术策略全部照搬此 guard。(3) **边界条件严格 > vs ≤ 的语义对齐**：突破 / 放量 / 行业流入 用 严格 > (明确穿越才算)；止损 ≤ (一旦达到立即止血)；跌破均线 严格 < (轻擦不算破)。**Position schema 用 structured BreakoutPosition** (entry_date 给 A 持有期 / entry_price 给 B 止损 / 后两字段纯 debug)。**5 日窗口内有零成交日 → 整只剔除** (不用"有几天算几天的均值"兜底，因 multiplier 触发阈值的严格性会被破坏)。**industry name 容错 .trim()** (Stock.industry vs IndustryFlow.industry_name 来源不同 sync 难免空格不一致)。完整 6 种 universe 对比表在 `backend/src/quant/strategies/CLAUDE.md`。
 - **第 8 处 isSTName — 启动重构阈值 (US-023)**: MultiFactorAlpha / DragonHead / EarningsSurprise / NorthboundFollow / AShareConstraintEngine / SectorRotation / HighDividendValue / **Breakout** = 8 处。**阈值已达**: 下个组合级策略 (US-025 GameTraderRelay 或 US-026 LeftSideReversal) 之前先抽取到 `backend/src/utils/stNameUtils.ts` 统一导出 `isSTName(name?)` + `STRICT_ST_PATTERNS` enum，让 9+ 处实现合并为 1 处。重构时保持各策略的 `import { isSTName } from './<StrategyName>'` 仍可用 (re-export shim)，避免破坏现有测试 import 路径。重构可作独立 chore commit (not a story) 但 US-025 / US-026 实现前必做以避免再加一处。
+- **价值成长 + PEG 双维度 + 半年度调仓 (US-024 GARPStrategy)**: 与全市场/事件驱动/指数受限/两阶段/长线季度/价量突破并列的**第 7 种 universe 形态**。3 个新模式：(1) **半年度调仓 gate 命名扩展** —— 沿用 US-022 quarterly gate 模式，命名约定 `isFirstTradingDayOf<Period>` (Quarter / SemiAnnual / Year)；未来 US-091 年度策略 / US-095 双年策略直接照搬此命名。(2) **PEG 组合指标 (PE / 增速) 必须在策略内置 guard**：因 PEG 要求 latestYoy > 0 (除以负数无意义)，策略 *先* 验证增长维度通过 *再* 算 PEG —— caller 不可能从外部传 "PE 但已确保增速 > 0" 这种 precondition。同款 "组合指标必须在策略 guard" 原则适用 US-031 QualityHigh (毛利率稳定性，要原始序列) / US-033 MomentumReversal (多期动量分离，要原始序列)。(3) **`loadXxxSeries` 返回 raw 数组而非 boolean** —— 当策略需要 "连续 N 个观测都满足" 或 "5 期波动率"，DataSource 必须返回 raw 序列让策略层判定 "够 N 个观测吗 / 全部满足吗"，把 boolean 形式 ("是否连续 N 年正增长") 硬编码进 DataSource 让单测/重构成本翻倍。完整 7 种 universe 对比表在 `backend/src/quant/strategies/CLAUDE.md`。
+- **多端点 Python 合并模式 (US-024 FinancialReport)**: US-022 per-stock sync 模式的扩展 —— 当一个数据领域需要 raw 金额 (stock_financial_abstract wide-format) *和* 预算好的比率 (stock_financial_analysis_indicator long-format)，**Python 端按 report_date 索引合并 → 返回 normalized rows**。不要返回两个 array 让 TS 合并 —— TS 重建 pandas 语义在 Map<...> 里痛苦, quirks 还得复制两遍。同款模式可复用到 US-030 AnalystForecast (research_report + earnings_forecast 合并) / US-031 QualityHigh (多张利润表合并)。**`report_type` 由 `report_date` MMDD 推断** (03-31=一季报 / 06-30=半年报 / 09-30=三季报 / 12-31=年报)，不依赖 AKShare 单独字段命名漂移。**helper timeout 默认 180s** (vs 120s 单端点)，throttle 默认 300ms (vs 200ms) —— 两端点 + Python 合并比单端点慢 1.5-2x。
+- **第 9 处 isSTName 实现 (US-024)**: MultiFactorAlpha / DragonHead / EarningsSurprise / NorthboundFollow / AShareConstraintEngine / SectorRotation / HighDividendValue / Breakout / **GARP** = 9 处。本 story 未做 extract 是为了保持改动聚焦 (extract 需独立 chore commit + re-export shim 维持向后兼容)。下个组合级策略 (US-025/US-026) 必做 extract 否则 = 10 处。
 
 ### Backtest engine — A 股执行约束 (US-014+)
 - **`AShareConstraintEngine` 是无状态纯模块** at `backend/src/quant/backtest/AShareConstraintEngine.ts`。三个方法：`evaluateOrder(ctx)` 返回 `{ok, reason?, detail?}` 决定能否成交（T+1 / 涨跌停 / 停牌 / ST 过滤 / 流动性门槛）；`computeFees(amount, side)` 返回 commission + stamp_tax + transfer_fee 三段费用 breakdown；`executionPrice(bar, side, timing)` 给三种 timing (next_open / same_close / twap_proxy) 的成交价并附动态滑点。引擎严格无 DB 访问、无状态字段、不修改输入参数——多策略并发跑零状态污染。
@@ -2383,5 +2386,126 @@ N/A (策略层代码，无 UI 变更)
 - **阈值已达**: 下个组合级策略 (US-025 GameTraderRelay 或 US-026 LeftSideReversal) 之前应该启动重构 — 抽取到 `backend/src/utils/stNameUtils.ts` 统一导出 `isSTName(name?)` + `STRICT_ST_PATTERNS` enum，让 9+ 处实现合并为 1 处。
 - 重构时**保持各策略的 `import { isSTName } from './<StrategyName>'` 仍可用** (re-export shim)，避免破坏现有测试用例 import 路径。
 - 重构本身可作为独立 chore commit (not a story)，但 US-025 / US-026 实现前先做以避免再加一处。
+
+---
+
+## 2026/06/07 - US-024
+
+### What was implemented
+
+**9th 组合级 strategy** in `backend/src/quant/strategies/` — 业绩稳定增长 GARP (Growth At Reasonable Price)
+策略, complete end-to-end pipeline (model + Python helper + sync service + CLI + strategy + tests).
+
+**Data layer (model + sync)**:
+- `backend/src/models/FinancialReport.ts` — composite PK (report_date, stock_code), fields:
+  `stock_name / report_type (年报/半年报/一季报/三季报) / net_profit / net_profit_yoy /
+  revenue / revenue_yoy / roe / debt_ratio + source / raw_payload / timestamps`.
+  Registered in `models/index.ts` + `config/database.ts`.
+- `backend/python/akshare_helper.py` — new `get_financial_report(stock_code)` command
+  merging TWO AKShare endpoints:
+  - `stock_financial_analysis_indicator(symbol, start_year)` → per-period ratios
+    (净利润 yoy / 营收 yoy / ROE 加权或基础 / 资产负债率)
+  - `stock_financial_abstract(symbol)` → wide-format raw amounts (归母净利润, 营业总收入)
+  Merge keyed on `report_date` ISO. `report_type` inferred from MMDD (03-31=一季报 etc.).
+  Verified runtime against 600519 + 000001 → 45 rows each (11 annual reports).
+- `backend/src/data/sources/FinancialReportClient.ts` (180s timeout, env override) mirrors
+  DividendHistoryClient.
+- `backend/src/data/services/FinancialReportSyncService.ts` — `syncStock` + `syncStocks`
+  per-stock pattern (US-022 reused), 300ms friendly throttle, skip-existing checkpoint
+  via `FINANCIAL_REPORT_SKIP_EXISTING` env.
+- `backend/src/scripts/sync-financial-report.ts` CLI + `npm run sync:financial-report` script.
+
+**Strategy** (`backend/src/quant/strategies/GARPStrategy.ts`, ~830 LOC):
+- Continues `QuantStrategy` for registry; `evaluate()` informational hold;
+  real entry is `async generateSignals(tradeDate, {params?, previousSelection?, forceRebalance?})`.
+- **Entry (4 维 AND)**:
+  1. 连续 `lookbackYears` (默认 3) 年净利润 yoy ≥ `minNetProfitYoy` (15%) — 序列必须 *全部* ≥ 阈值
+  2. PEG = PE-TTM / 最新年报增速 ≤ `maxPEG` (1.0) — 通过 #1 保证 latestYoy > 0 再算
+  3. ROE 5y avg ≥ `minROE` (12%) from FinancialReport.roe annual
+  4. latest debt_ratio ≤ `maxDebtRatio` (60%) from FinancialReport.debt_ratio (任何 report_type)
+- **半年度调仓 gate** in DataSource: `isFirstTradingDayOfSemiAnnual(tradeDate)` 查 DailyBar
+  `[halfStart, halfStart + 10d]` 找最早交易日 (1 月 / 7 月)。 调用方/调度器可放心每日调用。
+- **排序**: yoy 降 → PEG 升 → stock_code 升序稳定 tie-break.
+- **Position schema 用 `string[]`** (与 MultiFactorAlpha / HighDividendValue 一致) — 长线无 per-position state.
+- **6 loader DataSource**: loadCandidateUniverse / loadAnnualNetProfitYoySeries / loadLatestPETTM /
+  loadRoe5yAvg / loadLatestDebtRatio / loadStockMeta / loadDailyClose + isFirstTradingDayOfSemiAnnual.
+  `DefaultGARPDataSource` 走 Sequelize, fake DataSource 测试完全脱离 DB.
+- **关键 API 设计**: `loadAnnualNetProfitYoySeries` 返回 `Map<code, number[]>` 而非
+  `Map<code, boolean>` — 序列才能让策略层判定 "恰好 N 个观测 + 全部 ≥ 阈值"，把判定
+  硬编码进 DataSource 让单测/重构成本翻倍。
+- Registered in `backend/src/quant/engine/StrategyRegistry.ts` (strategy_key='garp_strategy',
+  category='multi_factor', risk_level='medium', tags=['价值','成长','GARP','PEG','半年度调仓']).
+  Registry smoke confirms 25 strategies total.
+
+**Tests** (`backend/tests/strategies/GARPStrategy.test.ts`, 42 cases / 114 assertions):
+默认参数 AC 校验 + strategy_definition 元数据 + 入场 4 维全通过 + 各维度独立失败 + 边界 +
+调仓日判定 + forceRebalance 覆盖 + 排序 + tie-break + topN cap + industryNeutral cap +
+BUY/HOLD/SELL 增量 + evaluate 信息性 hold + isSTName + invalid trade_date + 空 universe +
+custom params override + mixed 4 股票场景 + ST 提前过滤优化 + universe_size 记录 +
+negative yoy 拒绝 + PEG 精确计算 + 排序按 latest yoy 而非均值。
+
+### Files changed
+
+**New**:
+- `backend/src/models/FinancialReport.ts`
+- `backend/src/data/sources/FinancialReportClient.ts`
+- `backend/src/data/services/FinancialReportSyncService.ts`
+- `backend/src/scripts/sync-financial-report.ts`
+- `backend/src/quant/strategies/GARPStrategy.ts`
+- `backend/tests/strategies/GARPStrategy.test.ts`
+
+**Modified**:
+- `backend/python/akshare_helper.py` (added `_infer_report_type` + `get_financial_report` + dispatcher case)
+- `backend/src/models/index.ts` (export FinancialReport)
+- `backend/src/config/database.ts` (register FinancialReport in `models[]`)
+- `backend/src/quant/engine/StrategyRegistry.ts` (register `new GARPStrategy()`)
+- `backend/package.json` (`sync:financial-report` npm script)
+- `backend/src/quant/strategies/CLAUDE.md` (new section "价值成长 + PEG 双维度 + 半年度调仓 (US-024 GARPStrategy)")
+- `backend/src/data/CLAUDE.md` (new section "Per-stock sync, multi-endpoint merge (US-024 FinancialReport)")
+- `ralph/prd.json` (US-024 → passes:true with detailed notes)
+
+### Quality checks
+
+- `cd backend && npx tsc --noEmit` → exit 0
+- `./node_modules/.bin/eslint <changed-files> --quiet --fix` → exit 0 (prettier auto-fixed)
+- `npx ts-node --transpile-only tests/strategies/GARPStrategy.test.ts` → 114 ok / 0 failures < 1s
+- Regression: `MultiFactorAlphaStrategy.test.ts` / `HighDividendValueStrategy.test.ts` /
+  `BreakoutStrategy.test.ts` → all still pass.
+- Registry smoke test: 25 strategies total, `garp_strategy` present with correct metadata.
+- CLI `--help` boots cleanly.
+- Python helper smoke test (against 600519, 000001) confirms real AKShare data flows.
+
+### Learnings for future iterations
+
+**Pattern reuse**: Two new patterns codified that future stories can borrow:
+
+1. **Per-stock multi-endpoint Python merge (US-024 expands on US-022 single-endpoint per-stock sync)**.
+   When a single data domain needs raw amounts (从 stock_financial_abstract wide-format) *and*
+   pre-computed ratios (从 stock_financial_analysis_indicator long-format), merge them in Python
+   indexed by a shared key (report_date). Don't return two arrays and merge in TS — TS rebuilding
+   pandas semantics in Map<...> is painful. Reusable for US-030 AnalystForecast (research_report +
+   earnings_forecast merge), US-031 QualityHigh (multiple income statement pieces).
+
+2. **`loadXxxSeries` returns raw arrays, not boolean / single value**. When strategy needs to
+   judge "连续 N 个观测都满足" or "5 期波动率", DataSource MUST return the raw series so the
+   strategy layer can re-judge with different N / criterion via params override. Encoding judgment
+   into DataSource (boolean) freezes the criterion and forces DB change for parameter sweeps.
+   Reusable for US-031 QualityHigh, US-033 MomentumReversal, US-091 双年价值.
+
+**Half-yearly gate naming convention**: extended HighDividend's quarterly gate pattern to
+half-yearly via `isFirstTradingDayOfSemiAnnual` — consistent naming pattern
+`isFirstTradingDayOf<Period>` lets future long-horizon strategies (US-091 annual /
+US-095 双年) pick a name without bikeshedding.
+
+**isSTName count = 9 处 — refactor still pending** (US-023 already noted threshold).
+Did NOT refactor as part of US-024 to keep this commit focused (and the refactor needs
+its own chore commit with re-export shims for backward compat). Next strategy story
+(US-025 GameTraderRelay or US-026 LeftSideReversal) MUST do the extraction first
+before adding the 10th instance.
+
+**Existing data dependency caveat**: GARP `evaluate*Candidates` 在生产环境跑前需要
+- `npm run sync:financial-report -- --all --listed-before=2020-01-01` 灌入 5 年财报历史
+- `npm run sync:northbound` / `npm run compute:factors` 等其他 sync 不直接需要 (GARP 不依赖它们)
+非首次跑且只有 ≥ 2 年财报历史的新股会自动 fail_growth (因连续 lookbackYears 不达成)。
 
 ---

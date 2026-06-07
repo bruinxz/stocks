@@ -48,6 +48,7 @@ import { FactorScore } from '../models/FactorScore';
 import { EarningsForecast } from '../models/EarningsForecast';
 import { IndexComponent } from '../models/IndexComponent';
 import { DividendHistory } from '../models/DividendHistory';
+import { FinancialReport } from '../models/FinancialReport';
 import { LiveBrokerAccount } from '../models/LiveBrokerAccount';
 import { LiveAccountSnapshot } from '../models/LiveAccountSnapshot';
 import { LivePosition } from '../models/LivePosition';
@@ -125,6 +126,7 @@ const sequelize = new Sequelize({
     EarningsForecast,
     IndexComponent,
     DividendHistory,
+    FinancialReport,
     LiveBrokerAccount,
     LiveAccountSnapshot,
     LivePosition,

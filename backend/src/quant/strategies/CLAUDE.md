@@ -33,7 +33,7 @@ evaluate 模型表达不出。
 - 入参：交易日 + 可选 `{ params?, previousSelection? }`
 - 出参：`{ target_portfolio, signals: BUY/SELL/HOLD[], filtered, params, ... }`
 
-典型例子（截至 US-023 共 8 个）：
+典型例子（截至 US-024 共 9 个）：
 - `MultiFactorAlphaStrategy`（多因子 alpha 月度轮动）
 - `DragonHeadMomentumStrategy`（短线龙头战法 — 事件驱动每日）
 - `EarningsSurpriseStrategy`（业绩预告超预期 + 北向加仓双确认 — 事件驱动）
@@ -42,6 +42,7 @@ evaluate 模型表达不出。
 - `SectorRotationLeaderStrategy`（行业龙头轮动 — 两阶段强势行业内挑龙头）
 - `HighDividendValueStrategy`（高分红低 PE 长线价值 — 季度调仓 + 4 维 AND）
 - `BreakoutStrategy`（60 日新高突破 — 价量突破 + MA20 技术信号 exit）
+- `GARPStrategy`（业绩稳定增长 GARP — 半年度调仓 + 4 维 AND 含 PEG）
 
 后续 story 中其他组合级策略：US-028 EnsembleStrategy 等。
 
@@ -506,4 +507,78 @@ loadStockMeta(stockCodes)                             // 元数据
 3. DataSource 把 `loadCandidateBars`（universe-wide）与 `loadPositionBars`（持仓子集）分开 — 不要为了 DRY 合并。
 4. 技术指标计算前置 guard：bars 不足 ma20Period → 安全 HOLD 不当 SELL（数据不足 ≠ 破位信号）。
 5. 行业 name 容错：DataSource 内部 `.trim()` 处理 industry 字段两端空格 — Stock.industry 与 IndustryFlow.industry_name 的来源不同 sync，难免有不一致。
+
+## 价值成长 + PEG 双维度 + 半年度调仓（US-024 GARPStrategy）
+
+第 9 个组合级策略，引入两个新模式：
+
+### 1. 半年度调仓的"调仓日 gate"扩展
+
+延续 US-022 HighDividendValueStrategy 的"调仓日 gate 在 DataSource 内部判定"模式，
+但周期是**半年度**（1 月 / 7 月第 1 个交易日）而非季度。`DefaultGARPDataSource.isFirstTradingDayOfSemiAnnual`
+查 DailyBar `[halfStart, halfStart + 10d]` 范围内的最早交易日（比季度版的 +7d 略宽，
+留更多 buffer 给假期）。**判据**：
+
+- 季度调仓 / 半年度调仓 / 年度调仓 都应**在 DataSource 内部判定**，不在调用方；
+  让前端 / 调度器可以 fearlessly 每日调用本策略而无副作用。
+- 命名约定：`isFirstTradingDayOf<Period>` — `Quarter` / `SemiAnnual` / `Year`。
+  下个长线策略（US-091 年度大盘价值 / US-095 双年价值）直接照搬此命名。
+
+### 2. PEG 因子的双维度（成长 + 估值）入场
+
+GARP 入场是 **4 维 AND 中包含 PEG = PE / 最新年报净利润增速**，比单维度（HighDividend
+看股息率单维度 / Northbound 看资金流单维度）更动态：
+
+- **成长维度**（连续 N 年净利润 yoy ≥ 阈值）+ **估值维度**（PE ≤ 上限）单独检查是
+  传统多因子做法。GARP 把两者**乘起来当一个维度算**（PEG），让"高增速 + 高估值"
+  与"低增速 + 低估值"在同一坐标系比较——这是 Peter Lynch 的核心洞察。
+- 因 PEG 依赖 latestYoy > 0（除以负数无意义），策略内部判定逻辑必须先验证
+  "连续 N 年都 ≥ minNetProfitYoy ≥ 0"再计算 PEG。**判据**：组合指标（PEG/PS-G/PB-G）
+  类型的因子都要在策略内置 guard——caller 不可能从外部传"PE 但已确保增速 > 0"
+  这种 precondition。
+
+### 3. 4 维 AND 过滤 + 6 loader DataSource
+
+DataSource 暴露 6 个 loader（vs HighDividendValue 的 5 个 — GARP 多一个 loadAnnualNetProfitYoySeries 因连续 N 年增长是序列判定不是均值）：
+
+- `loadCandidateUniverse(asOfDate)` — 全 A 股 is_listed=true
+- `loadAnnualNetProfitYoySeries(asOfDate, lookbackYears, codes)` — 近 N 个年报的
+  净利润 yoy **序列**（按 report_date 降序 / 最新在前）
+- `loadLatestPETTM(asOfDate, codes)` — 最新 pe_ttm（已过滤 pe ≤ 0）
+- `loadRoe5yAvg(asOfDate, codes)` — ROE 5 年均值（≥2 观测）
+- `loadLatestDebtRatio(asOfDate, codes)` — 最近一期 debt_ratio（任何 report_type）
+- `loadStockMeta(codes)` — name / industry
+- `loadDailyClose(tradeDate, codes)` — BUY reference_price
+- `isFirstTradingDayOfSemiAnnual(tradeDate)` — 调仓日 gate
+
+**关键 API 设计**：`loadAnnualNetProfitYoySeries` 返回 `Map<stock_code, number[]>`
+而非 `Map<stock_code, boolean>`（"是否连续 N 年正增长"）——序列才能让策略层判定
+"恰好 N 个观测 + 全部 ≥ 阈值"，而 boolean 把判定逻辑硬编码进 DataSource 让
+单测/重构成本翻倍。同款"返回 raw 序列让策略判定"原则可复用到 US-031 QualityHigh
+（5 年毛利率波动率，要序列）/ US-033 MomentumReversal（多期动量分离，要序列）。
+
+### 7 种 universe + 长线 + GARP 形态对比
+
+截至 US-024：
+
+| 维度 | 全市场 (MultiFactor) | 事件驱动 (EarningsSurprise) | 指数受限 (CTA100) | 两阶段 (SectorRotation) | 长线季度 (HighDividendValue) | 价量突破 (Breakout) | GARP (US-024) |
+|------|--------------------|---------------------------|-----------------|---------------------|------------------------|------------------|---------------|
+| 触发频率 | 月度 | 每日（稀疏） | 月度 | 每日 | 季度（gate）| 每日 | **半年度（gate）**|
+| 入场维度 | 8 因子 z_score | 业绩 + 北向 双确认 | 60-5 momentum | 行业 + 个股 双 ranking | 4 维（股息+PE+ROE+市值）| 4 维（新高+放量+流入+非ST）| **4 维（增长序列+PEG+ROE+负债）**|
+| Position schema | string[] | EarningsSurprisePosition | string[] | SectorRotationPosition | string[] | BreakoutPosition | **string[]**（同 HighDividend）|
+| 止损 | 无 | -10% | 无 | 无 | 无 | -15% | **无**（长线靠下半年度自然换仓）|
+| 行业中性 | 强制 | 不需 | 强制 | 隐式（两阶段 cap）| 可选 | 不强制 | **可选**（默认 false）|
+| 数据源依赖 | factor_scores | EarningsForecast + NorthboundHolding | IndexComponent + DailyBar | IndustryFlow + Stock | DividendHistory + valuation | DailyBar + IndustryFlow | **FinancialReport + valuation**|
+| 典型 holding period | 30 天 | 60 天 | 30 天 | 10-30 天 | 90+ 天 | 10-60 天 | **180+ 天**|
+
+**写新"组合指标 + 长线"策略的 checklist**：
+1. 组合指标（PEG / PS-G / Graham number）的计算前置 guard 必写在策略内部，不依赖
+   DataSource 帮忙做 precondition 过滤（DataSource 应保持 "返回 raw 数据" 的纯粹性）。
+2. 序列类数据（"连续 N 年 ≥ X"）loader 返回数组，让策略判定 "够 N 个观测吗 / 全部满足吗"。
+3. 半年度 / 年度调仓的 gate 都放 DataSource，命名 `isFirstTradingDayOf<Period>`。
+4. 长线策略（≥ 180 天 holding）的 Position schema 用 `string[]`，不需要 entry_price /
+   entry_date（无止损 / 不按持有期出场）。
+5. 4 维 AND 过滤的 fail_xxx 计数独立存，便于诊断 "本期为什么只选出 5 只" 是哪个维度
+   过严（典型 GARP 在牛市 PEG 会大量超 1.0，fail_peg 飙升 → 提示用户参数调整或换策略）。
+
 

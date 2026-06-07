@@ -48,3 +48,4 @@ export * from './FactorScore';
 export * from './EarningsForecast';
 export * from './IndexComponent';
 export * from './DividendHistory';
+export * from './FinancialReport';
