@@ -3405,6 +3405,153 @@ def get_limit_down_pool(date: str) -> List[Dict[str, Any]]:
         return []
 
 
+def get_snowball_hot_keywords(symbol: str = "最热门", trade_date: Optional[str] = None, limit: int = 200) -> List[Dict[str, Any]]:
+    """
+    Fetch 雪球热度榜 / 全市场关注度排行 (snowball hot follow ranking) — US-058.
+
+    Endpoint: AKShare `stock_hot_follow_xq(symbol='最热门' | '本周新增')`
+        雪球-沪深股市-热度排行榜-关注排行榜
+        https://xueqiu.com/hq
+        无日期参数; 返回**当下时刻**全市场被雪球用户关注最多的股票排行 (~5600 行)。
+
+    Columns returned by AKShare:
+        股票代码 (SH600519 / SZ000001) / 股票简称 / 关注 (整数, 关注人数) / 最新价
+
+    ── AC 字段 vs 实际可得字段 (US-034 / US-056 同款代理范式) ──
+
+    AC 文字: "新增 SnowballHotKeywordClient 抓取雪球热门话题"
+    AC 文字: "新增模型 SnowballHotKeyword (trade_date, keyword, heat_score, related_stocks_json)"
+
+    雪球公开 AKShare endpoint 中**没有任何"话题/题材"维度的数据**, 只有按"股票"
+    维度的关注 / 讨论 / 分享交易排行榜:
+        - stock_hot_follow_xq   (关注排行)  本次选定 → keyword=股票简称
+        - stock_hot_tweet_xq    (讨论排行)  备选
+        - stock_hot_deal_xq     (分享交易排行)  备选
+
+    选定代理:
+        - **keyword = 股票简称** ("贵州茅台" / "京东方A")
+          —— 雪球用户关注/讨论的对象本身就是"股票", 关注度可视为对该股票
+          (作为"市场热词")的全网热议程度代理。
+        - **heat_score = 关注人数** (整数原始字段, 直接代表市场关注度)。
+
+    real-time 数据特性: 与 US-008 (industry flow 实时快照) 同款,本接口当天调用
+    返回"now"的关注度,日期字段是 caller 传入的 trade_date 标签 (服务层在
+    盘后定时调度, 当天调度的雪球关注度数据贴标当天 trade_date)。
+
+    Args:
+        symbol: '最热门' (默认, 全市场最热门排行) or '本周新增' (本周新增关注排行)
+        trade_date: 'YYYY-MM-DD' 标签 (默认 None → 由 caller 服务层标记)
+        limit: 返回行数上限 (默认 200, AKShare 全量 ~5600 但前 200 已涵盖核心热词)
+
+    Returns:
+        List of dicts sorted by 关注 desc. Each row:
+            - trade_date         caller 传入或 None
+            - keyword            股票简称 (热词)
+            - stock_code         6-digit 纯代码 (无前缀)
+            - stock_name         股票简称 (= keyword)
+            - heat_score         整数 (关注人数)
+            - latest_price       最新价 (float, optional)
+            - rank               当下榜内排名 (1-based)
+            - source             'xueqiu_follow' (默认) / 'xueqiu_tweet' / 'xueqiu_deal'
+            - raw_payload        原始 AKShare 行
+        Returns [] on error / empty.
+    """
+    try:
+        fn_name_map = {
+            '最热门': 'stock_hot_follow_xq',
+            '本周新增': 'stock_hot_follow_xq',
+            'tweet': 'stock_hot_tweet_xq',
+            'deal': 'stock_hot_deal_xq',
+        }
+        source_label_map = {
+            '最热门': 'xueqiu_follow',
+            '本周新增': 'xueqiu_follow',
+            'tweet': 'xueqiu_tweet',
+            'deal': 'xueqiu_deal',
+        }
+        # 默认走 stock_hot_follow_xq + symbol='最热门'
+        ak_fn_name = fn_name_map.get(symbol, 'stock_hot_follow_xq')
+        source_label = source_label_map.get(symbol, 'xueqiu_follow')
+
+        fn = getattr(ak, ak_fn_name, None)
+        if fn is None:
+            print(f'AKShare missing {ak_fn_name}', file=sys.stderr)
+            return []
+
+        # symbol 仅当走 stock_hot_follow_xq 时传入 (其它 ak_fn 不接受 symbol 参数或语义不同)
+        try:
+            if ak_fn_name == 'stock_hot_follow_xq' and symbol in ('最热门', '本周新增'):
+                df = fn(symbol=symbol)
+            else:
+                df = fn()
+        except TypeError:
+            try:
+                df = fn(symbol)
+            except Exception:
+                df = fn()
+        except Exception as e:
+            print(f'{ak_fn_name} failed: {e}', file=sys.stderr)
+            return []
+
+        if df is None or df.empty:
+            print(f'AKShare returned empty hot_follow dataframe', file=sys.stderr)
+            return []
+
+        col_map: Dict[str, str] = {}
+        for col in df.columns:
+            col_s = str(col)
+            if col_s in ('股票代码', '代码'):
+                col_map['code'] = col_s
+            elif col_s in ('股票简称', '名称'):
+                col_map['name'] = col_s
+            elif col_s in ('关注', '关注数', '热度'):
+                col_map['heat'] = col_s
+            elif col_s in ('最新价',):
+                col_map['price'] = col_s
+
+        if not col_map.get('code') or not col_map.get('name'):
+            print('hot_follow_xq missing essential columns', file=sys.stderr)
+            return []
+
+        # 已按关注 desc, 但显式 sort 防 endpoint 漂移
+        if col_map.get('heat'):
+            df = df.sort_values(by=col_map['heat'], ascending=False).reset_index(drop=True)
+
+        results: List[Dict[str, Any]] = []
+        for _, row in df.iterrows():
+            raw_code = _cell_str(row, col_map.get('code'))
+            name = _cell_str(row, col_map.get('name'))
+            if not name or not raw_code:
+                continue
+            # 抽取 6-digit 纯代码 (去掉 SH / SZ / BJ 前缀)
+            pure = ''.join(ch for ch in str(raw_code) if ch.isdigit())
+            if len(pure) != 6:
+                continue
+            heat = _cell_int(row, col_map.get('heat'))
+            if heat is None:
+                continue
+            results.append({
+                'trade_date': trade_date,
+                'keyword': name,
+                'stock_code': pure,
+                'stock_name': name,
+                'heat_score': int(heat),
+                'latest_price': _cell_float(row, col_map.get('price')),
+                'rank': len(results) + 1,
+                'source': source_label,
+                'raw_payload': _row_to_jsonable(row, df.columns),
+            })
+            if len(results) >= limit:
+                break
+
+        print(f'Parsed {len(results)} snowball hot_follow rows (symbol={symbol})', file=sys.stderr)
+        return results
+    except Exception as e:
+        print(f'Error getting snowball hot keywords ({symbol}): {e}', file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return []
+
+
 def main():
     """Main entry point for command line calls"""
     if len(sys.argv) < 2:
@@ -3603,6 +3750,18 @@ def main():
 
             date = sys.argv[2]
             result = get_limit_down_pool(date)
+
+        elif command == "get_snowball_hot_keywords":
+            # Args: [symbol] [trade_date] [limit]  — all optional
+            symbol = sys.argv[2] if len(sys.argv) >= 3 and sys.argv[2] not in ('', '-', 'null') else '最热门'
+            trade_date = sys.argv[3] if len(sys.argv) >= 4 and sys.argv[3] not in ('', '-', 'null') else None
+            limit = 200
+            if len(sys.argv) >= 5 and sys.argv[4] not in ('', '-', 'null'):
+                try:
+                    limit = int(sys.argv[4])
+                except (ValueError, TypeError):
+                    limit = 200
+            result = get_snowball_hot_keywords(symbol=symbol, trade_date=trade_date, limit=limit)
 
         else:
             print(json.dumps({"error": f"Unknown command: {command}"}), file=sys.stderr)

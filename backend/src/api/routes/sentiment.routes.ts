@@ -27,4 +27,17 @@ router.get('/index', authController.authenticate, (req, res) => {
   void sentimentController.getIndexSeries(req, res);
 });
 
+/**
+ * @route GET /api/sentiment/snowball-keywords
+ * @desc US-058 — 某交易日的雪球热词榜
+ *   Query params:
+ *     - date     'YYYY-MM-DD' (默认: 最近一日有数据)
+ *     - only_new true/1 时只返回相对前一日 baseline 的新进关键词 (默认 false)
+ *     - limit    返回上限 (默认 200, max 1000)
+ * @access Private
+ */
+router.get('/snowball-keywords', authController.authenticate, (req, res) => {
+  void sentimentController.getSnowballKeywords(req, res);
+});
+
 export default router;

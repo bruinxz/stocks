@@ -1,17 +1,23 @@
 import { Request, Response } from 'express';
 import { marketSentimentIndexService } from '../../services/MarketSentimentIndexService';
 import { MarketSentimentIndex } from '../../models/MarketSentimentIndex';
+import { snowballHotKeywordSyncService } from '../../data/services/SnowballHotKeywordSyncService';
 import { logger } from '../../utils/logger';
 
 /**
- * SentimentController — US-057 市场情绪量化指数 endpoint。
+ * SentimentController — 市场情绪相关 endpoint.
  *
  * 路由前缀：`/api/sentiment`
  *
  * Endpoints:
- *   - GET  /api/sentiment/index?days=30        最近 N 天指数时序
- *   - GET  /api/sentiment/index/latest          最近一天指数 (含 components)
- *   - POST /api/sentiment/index/compute         手动触发当日 / 指定日计算 (admin)
+ *   US-057 市场情绪量化指数:
+ *     - GET  /api/sentiment/index?days=30        最近 N 天指数时序
+ *     - GET  /api/sentiment/index/latest          最近一天指数 (含 components)
+ *     - POST /api/sentiment/index/compute         手动触发当日 / 指定日计算 (admin)
+ *
+ *   US-058 雪球热词:
+ *     - GET  /api/sentiment/snowball-keywords?date=YYYY-MM-DD[&only_new=true&limit=N]
+ *            某日雪球热词榜 (默认取最近一日有数据; only_new=true 只看相对前一日新进)
  */
 export class SentimentController {
   /**
@@ -120,6 +126,67 @@ export class SentimentController {
       res.json({ success: true, data: result });
     } catch (error: any) {
       logger.error('计算市场情绪指数失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * GET /api/sentiment/snowball-keywords?date=YYYY-MM-DD[&only_new=true&limit=N]
+   *
+   * 返回某交易日的雪球热词榜。date 缺省时取最近一日有数据。
+   * only_new=true 时只返回相对上一日 baseline 的新进关键词。
+   *
+   * Response:
+   *   {
+   *     trade_date: 'YYYY-MM-DD',
+   *     count: N,
+   *     only_new: boolean,
+   *     items: [{
+   *       keyword, heat_score, rank, related_stocks_json, source, is_new, updated_at
+   *     }]
+   *   }
+   */
+  async getSnowballKeywords(req: Request, res: Response) {
+    try {
+      const dateRaw = typeof req.query.date === 'string' ? req.query.date.trim() : '';
+      const onlyNewRaw = req.query.only_new;
+      const onlyNew = onlyNewRaw === 'true' || onlyNewRaw === '1';
+      const limitRaw = req.query.limit;
+      let limit = 200;
+      if (limitRaw !== undefined) {
+        const parsed = Number(limitRaw);
+        if (Number.isFinite(parsed) && parsed > 0) {
+          limit = Math.min(1000, Math.floor(parsed));
+        }
+      }
+      // 校验 date 格式 (YYYY-MM-DD)
+      let date: string | undefined = undefined;
+      if (dateRaw && /^\d{4}-\d{2}-\d{2}$/.test(dateRaw)) {
+        date = dateRaw;
+      }
+
+      const rows = await snowballHotKeywordSyncService.listByDate(date, onlyNew, limit);
+
+      res.json({
+        success: true,
+        data: {
+          trade_date: rows.length > 0 ? rows[0].trade_date : date ?? null,
+          count: rows.length,
+          only_new: onlyNew,
+          limit,
+          items: rows.map(r => ({
+            keyword: r.keyword,
+            heat_score: r.heat_score,
+            rank: r.rank,
+            related_stocks_json: r.related_stocks_json,
+            source: r.source,
+            is_new: r.is_new,
+            updated_at: r.updated_at,
+          })),
+        },
+      });
+    } catch (error: any) {
+      logger.error('获取雪球热词榜失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   }

@@ -37,6 +37,8 @@
 - **New data sources live in 3 paired files**: `backend/src/models/<Source>.ts` (Sequelize model, register in `models/index.ts` AND `config/database.ts`), `backend/src/data/sources/<Source>Client.ts` (Python helper wrapper), `backend/src/data/services/<Source>SyncService.ts` (DB write + range/checkpoint). Add a CLI under `backend/src/scripts/sync-<source>.ts` and a `sync:<source>` npm script. The northbound trio is the canonical reference.
 - **AKShare Python commands live in `backend/python/akshare_helper.py`**. Add a new function + a dispatcher case in `main()`. Always (1) accept both `YYYY-MM-DD` and `YYYYMMDD` and convert internally, (2) build a柔性 col_map (Chinese column headers drift between akshare versions), (3) include the full original row as `raw_payload` for audit, (4) return `[]` (not raise) on empty data so the TS layer can checkpoint a "tried but empty" day separately from a hard failure.
 - **Idempotent reruns = composite-PK + `bulkCreate` + `updateOnDuplicate`**. Always include `updated_at` in `updateOnDuplicate` so ops can see refresh times. Default `syncRange` to skip-existing for cheap catch-up; expose `--force` for backfills.
+- **AKShare real-time-only endpoints (US-008 IndustryFlow / US-058 SnowballHotKeyword)**: 一类 endpoint 无日期参数，调用返回 "now" 数据；trade_date 是 caller 服务层在盘后调度时贴上的**标签**。写入 Model / Client / SyncService 三处 jsdoc 都要明确标注此限制，让 maintainer 不被 `--date / --backfill` 误导。回填历史日只是改标签，内容仍是当下快照。
+- **"相对前一日新进" baseline 应找最近有效交易日, 不简单取 -1 日** (US-058 SnowballHotKeyword 引入): 春节 / 国庆等长假上一日无数据，简单 `trade_date - 1` 找 baseline 会假信号化全部行 (`is_new=true`)。`loadPreviousKeywords(tradeDate, lookbackDays=14)` 取最近 ≤ trade_date - 1 且有数据的 keyword Set 作为 baseline; 无 baseline 时 (首次同步) 全部 `is_new=false` 不强行标新。默认 `lookbackDays=14` 覆盖中国 A 股最长连休 (春节 7-9 天 + 周末)。同款 baseline-search 模式用于未来 US-088 新增持仓标记 / 任何"相对前一日变化"的 boolean 字段。
 - **Multi-record-per-stock (US-006 龙虎榜) ⇒ N-tuple PK**: when one stock spawns many rows per day (e.g. `buyer_seat × seller_seat`), the model PK is a 3-/4-tuple. Do the cartesian fan-out IN the Python helper so the TS service stays a clean `bulkCreate`. Keep both halves in `raw_payload` (`{list_row, buyer_row, seller_row}`) for audit.
 - **Business-logic tagging (e.g. `is_famous_yz`) belongs in the TS service**, NOT the Python helper. Python is the dumb fetcher; TS owns whitelists like `backend/src/constants/famousSeats.ts` so the rule can evolve without re-running Python.
 - **Cross-day derived fields (e.g. `continuous_days` 连板天数) belong in the TS service** — `LimitUpSyncService.syncDate` looks back 5 calendar days of LimitUpStock history before each `bulkCreate` and recomputes `CD = yesterday.CD + 1` (max with akshare's own value as a floor). Pattern for any field that depends on previous-day records: `loadRecentHistory()` → map override → bulkCreate.
@@ -5676,3 +5678,62 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:3000/api/sentiment/index
 - **跌停 vs 涨停的数据语义不对称**：US-007 LimitUpStock 是"涨停 1-3 板梯队龙头" per-stock 建模 (用于短线策略选股); US-057 跌停只用 stock_zt_pool_dtgc_em 行数作为"市场情绪信号"不入库个股 (因没有"跌停接力"策略需求)。如果未来 US-094 有"行业级跌停分析"需求，再加 LimitDownStock 模型 + sync 服务，**先服务后建表**避免 schema 冗余。
 - **--backfill=start,end 范围参数 CLI 模板**：逐日串行 + interval-ms throttle (默认 200ms) 对 AKShare 限流友好; expandDateRange 自然日展开 (不区分交易日, AKShare 接口非交易日返回空也安全 → status=partial 不阻塞)。下次任何"按交易日重算"的 CLI 工具 (US-067 KOL 告警回填 / US-095 健康度补算) 都按此 backfill 模板。
 - **sync({alter:true}) 自动建表的"先注册 model 后跑迁移"流程**：新 model 必须同时在 `models/index.ts` (export) + `config/database.ts` (sequelize 实例 `models` 数组) 注册才会被 sync 创建。下次任何新 model 都需要 update 这 2 处, 否则 endpoint 调 findAll 会报 'table does not exist'。
+
+## 2026/06/08 04:25 - US-058 AI: 雪球热词与突变事件抓取
+
+### What was implemented
+完整后端实现 (无前端 — 前端消费在后续 stories) 的「雪球热词榜每日同步 + 新进关键词标记 + 读端 endpoint」:
+- **SnowballHotKeyword 模型** (PK=(trade_date, keyword) 复合): 9 列 — heat_score INT / rank INT / related_stocks_json JSONB[]（保留数组形态便于未来真热词数据源升级） / source STRING(40) 默认 'xueqiu_follow' / is_new BOOLEAN / raw_payload JSONB; 4 indexes: trade_date / keyword / (trade_date,rank) / (trade_date,is_new) — 排序查询 + only_new 过滤都走 B-tree。
+- **SnowballHotKeywordClient** TS 客户端 (138 行): 通过 spawn python3 调 akshare_helper.py get_snowball_hot_keywords 拉雪球关注度排行 (~5600 行, 默认截前 200)。{success,data} 契约 + SNOWBALL_KEYWORD_TIMEOUT_MS env (默认 120s)。**代理范式 (US-034/056 同款)**: AKShare 无 '话题' 维度 endpoint, keyword 映射为股票简称, heat_score 用关注人数。
+- **Python helper get_snowball_hot_keywords** (akshare_helper.py +145 行): 4 个 symbol enum (`最热门` / `本周新增` / `tweet` / `deal`) 路由到 stock_hot_follow_xq / stock_hot_tweet_xq / stock_hot_deal_xq。柔性 col_map (兼容列名漂移) + TypeError fallback (有些 endpoint 不接受 symbol 参数) + 5600 行截 limit + 关注人数 desc 排序 + rank 列计算。
+- **SnowballHotKeywordSyncService** (336 行) 5 个公开方法:
+  - `syncDate(date, options)`: 拉行 → loadPreviousKeywords 找上一有数据交易日 → 标 is_new boolean → bulkCreate updateOnDuplicate upsert; 失败返回 SyncDateResult.error 不抛 (与 IndustrySyncService 同款); 默认 symbol='最热门' / limit=200 (clamp [1,1000]) / baselineLookbackDays=14 (覆盖春节最长假期)。
+  - `syncRange(start, end, options)`: 闭区间逐日 + skipExisting 断点续传默认 true (SNOWBALL_KEYWORD_SKIP_EXISTING env override) + intervalMs 默认 3000 节流 AKShare + 单日失败不阻塞其他日 (容错聚合 details + succeeded/failed/skipped counts)。
+  - `loadPreviousKeywords(tradeDate, lookbackDays)`: 取**最近 ≤ trade_date - 1 且有数据**的 keyword Set 作为 baseline (节假日跳到 ≤14 自然日内最近有效日; 无 baseline 时 is_new 全部 false 不假信号)。
+  - `listByDate(date?, onlyNew?, limit?)`: 读路径 (默认取最近一日有数据 + rank ASC 排序 + limit clamp [1,1000] 防滥用)。
+  - `parseIsoDate` / `sleep` 公开 helpers 供测试断言。
+- **GET /api/sentiment/snowball-keywords**: SentimentController +getSnowballKeywords (复用现有 controller 同前缀 /api/sentiment), query: date YYYY-MM-DD 校验 (regex `/^\d{4}-\d{2}-\d{2}$/` 不匹配回 fallback 默认最近日) / only_new=true|1 / limit 默认 200 上限 1000 防滥用; sentiment.routes.ts +GET /snowball-keywords auth-private (复用 AuthController.authenticate)。
+- **CLI 脚本** sync-snowball-keywords.ts + npm run sync:snowball-keywords: 支持 --date / --symbol=最热门|本周新增 / --limit / --baseline-lookback / --backfill=start,end / --force (覆盖已存在) / --interval-ms (默认 3000 AKShare-friendly)。**AKShare 实时快照特性**：与 US-008 IndustryFlow 同款,接口无日期参数,--date / --backfill 中的日期只是给行打标签。
+- **单元测试** tests/services/snowball-hot-keyword-sync-service.test.ts (615 行 / **68 个测试 / 0 失败**)。In-memory model monkey-patch + fake DataSource — 完全脱 DB + 脱 Python 子进程。覆盖 parseIsoDate (有效 + gibberish RangeError) + sleep + syncDate happy / withBaseline / clientThrows / emptyRows / customOptions / limitClamp + loadPreviousKeywords none / happy / skipsHoliday + syncRange invalid / multiDays / skipExisting / singleDayFailsButContinues + listByDate default / onlyNew / limitClamp / noMatch。
+
+### Files changed
+- `backend/src/models/SnowballHotKeyword.ts` (new, 159 lines)
+- `backend/src/data/sources/SnowballHotKeywordClient.ts` (new, 137 lines)
+- `backend/src/data/services/SnowballHotKeywordSyncService.ts` (new, 336 lines)
+- `backend/src/scripts/sync-snowball-keywords.ts` (new, 145 lines)
+- `backend/src/api/controllers/SentimentController.ts` (+62 lines getSnowballKeywords handler + doc update)
+- `backend/src/api/routes/sentiment.routes.ts` (+13 lines route)
+- `backend/python/akshare_helper.py` (+145 lines get_snowball_hot_keywords + main dispatcher case)
+- `backend/src/models/index.ts` (+1 line export SnowballHotKeyword)
+- `backend/src/config/database.ts` (+2 lines import + register in models[])
+- `backend/package.json` (+1 line sync:snowball-keywords npm script)
+- `backend/tests/services/snowball-hot-keyword-sync-service.test.ts` (new, 615 lines)
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → exit 0 ✅
+- `cd backend && npx eslint src/models/SnowballHotKeyword.ts src/data/sources/SnowballHotKeywordClient.ts src/data/services/SnowballHotKeywordSyncService.ts src/scripts/sync-snowball-keywords.ts src/api/controllers/SentimentController.ts src/api/routes/sentiment.routes.ts` → 0 errors (auto-fix 5 prettier issues during dev) ✅
+- `npx ts-node --transpile-only tests/services/snowball-hot-keyword-sync-service.test.ts` → **68 ok / 0 failed** ✅
+- 回归测试: market-sentiment-index-service (129 ok) + kol-aggregator-service (141 ok) 全通过 — 无回归 ✅
+
+### Browser verification
+**Not performed** — UI 改动在后续 stories (US-088 前端 stock-profile)。可手动 curl 验证:
+```
+# 当日热词榜
+curl -H "Authorization: Bearer $TOKEN" 'http://localhost:3000/api/sentiment/snowball-keywords?date=2026-06-08'
+
+# 只看新进关键词
+curl -H "Authorization: Bearer $TOKEN" 'http://localhost:3000/api/sentiment/snowball-keywords?date=2026-06-08&only_new=true'
+
+# 同步当日数据
+cd backend && npm run sync:snowball-keywords -- --date=2026-06-08
+```
+
+### Learnings for future iterations
+- **"代理范式 + AC 字段无法直接满足" 文档同步 4 处** (US-034 / 056 / 058 一致): AC 写 "雪球热门话题"但 AKShare 无任何"话题"维度 endpoint, 只有按"股票"维度的关注/讨论/分享排行。选定股票简称代理 keyword 后 4 处文档同步标注: (1) Python helper docstring (含 AC 原字段 + 不可得原因 + 选定代理 + 升级路径); (2) TS Client jsdoc; (3) 模型字段 comment; (4) Service jsdoc + sync 范围 readme。**列出明确的"升级路径"** 让未来引入真热词数据源时只需扩 source enum + 加 mapper, 不动模型 schema 与下游 endpoint。
+- **"新进关键词" baseline 找最近有效日, 不简单取 trade_date - 1** (US-058 引入): 春节 / 国庆等节假日上一日无数据, 若简单按 trade_date - 1 找 baseline 会全部标 is_new=true 假信号。**loadPreviousKeywords(tradeDate, lookbackDays=14)** 取最近 ≤ trade_date - 1 且有数据的 keyword 集合, 无 baseline 时全部标 is_new=false (不强行标新进)。下次任何"相对前一日变化"的 boolean 标记 (US-088 新增持仓 / 重大事件突现) 都按此 baseline-search 模式, 不简单 -1 日。
+- **AKShare 实时快照型数据 (no date param) 写库范式** (US-008 IndustryFlow / US-058 SnowballHotKeyword 共享):  接口无日期参数, 返回"now"的数据;  trade_date 是 caller 服务层在盘后调度时贴上的**标签**。写入模型/Client/Service 的 jsdoc 都明确标注此限制让后续 maintainer 不误用。同款已在 US-008 确立, US-058 是第 2 个例子, 后续 US-088 用户持仓快照同款。
+- **JSONB 数组保留单元素形态便于未来扩展** (related_stocks_json) — 当下数据源每 keyword 对应 1 只股票, 数组长度始终 1; 但 schema 用 array 而非 object 让未来"一个话题关联多只股票" 真热词数据源升级时**模型不变 + endpoint 不变**, 仅 sync 服务里 mapper 改成多元素 push。同款 schema-stable 范式见 US-034 数据列保持兼容 / 任何"未来可能扩展数量"的字段都建议先 array 再 object 单元素。
+- **service 层 DataSource DI 注入测试范式** (US-055/056/057/058 一致): SyncService 构造函数注入 client (单测脱网络) + Sequelize Model 静态方法 monkey-patch 替换成 in-memory store (单测脱 DB)。**完全 unit 测试 / 0 真实 IO** 让 CI 不需 DB / Python / AKShare network。下次 US-059 公告 NLP / US-060 问答 NLP 全照此 DI + monkey-patch 模式。
+- **GET endpoint query param 松解析模式重申** (US-050 / 058 一致): date 不匹配 `^\d{4}-\d{2}-\d{2}$` regex → fall through 到 default (取最近一日有数据), only_new=true|1 才认 true 其他都 false, limit 非有限正数 → 默认 200。**UI 不需要先做客户端校验, 传啥都不会 4xx 挂**。未来任何"参数缺省 / 错误降级"的 GET endpoint 都按此模板。
+- **`updated_at` ALWAYS 加入 updateOnDuplicate 列表**: bulkCreate updateOnDuplicate 显式列出列名时容易漏 updated_at, 导致 upsert 的行 updated_at 永远是首次 create 时间, ops 无法判断"上次刷新时间"。SnowballHotKeyword.bulkCreate 列表加 'updated_at' 是修正模式。下次任何 upsert 都加。
+- **`baselineLookbackDays = 14` 默认值的选择**: 中国 A 股最长假期=春节 7-9 天 + 春节前后周末 → 极端连休 14 天。lookback=14 保证春节后第一个交易日仍能找到节前的 baseline。下次任何"找上一个有效日"逻辑都用此 14 默认 (除非业务上明确说不需要跨节假日)。
