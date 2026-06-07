@@ -81,6 +81,8 @@
 - **两阶段筛选 universe 模式 (US-021 SectorRotationLeader)**: 与全市场/事件/指数受限并列的**第 4 种 universe 形态**。先在 group ranking (行业 / 概念 / 主题) 里选 top N → 再在每个 group 内选 top M 成员，candidate 大小 = N × M (~500)，介于全市场 (5000+) 和指数受限 (100-1000) 之间。**DataSource 双 loader 同份数据共享**: `loadGroupRanking()` 返回全集排序后，entry slice top N / exit slice top N+gap 共享；`loadGroupMemberMetrics(groupNames[])` 返回 `Map<group, members[]>` 已按 metric 降序，entry slice top M / exit slice top M+gap 共享。**Position 必带 `entry_<dimension>` 字段**记录进场时分组归属，exit 阶段以该字段为准查 "我的分组是否还在 top N+gap"——Stock.industry 可能调整，以 entry_industry 为准是 "进场时判断为准" 原则 (同 CTA100 `entry_index_snapshot_date`)。**entry vs exit 阈值留 30%-50% 宽度差** (top 10 / 15, top 2 / 5)——过窄换手率爆炸，过宽 alpha 流失。**implicit cap = N × M 不要 maxPositions 参数**——两阶段 selection 天然封顶，加 explicit maxPositions 会产生 inconsistent state。**5 日累计窗口用 distinct trade_date** 不要按日历日切窗口 (周末/节假日会吃掉有效交易日): `Set(rows.map(r => r.trade_date)).sort().slice(-N)`，拉 `lookbackDays × 3` 自然日 buffer 覆盖春节/十一。**行业 metric 缺失时安全 HOLD 不 SELL**——metric pipeline 短暂抖动不应该被当成"个股已掉出 top N" 批量误平。完整 4 种 universe 对比表在 `backend/src/quant/strategies/CLAUDE.md`。下个两阶段策略 (US-026 LeftSideReversal 中证 500) 直接照搬。
 - **长线季度调仓 universe 模式 (US-022 HighDividendValue)**: 与全市场/事件驱动/指数受限/两阶段并列的**第 5 种 universe 形态**。3 个关键差异：(1) **调仓日 gate 在 DataSource 内部，不在调用方**——`isFirstTradingDayOfQuarter(tradeDate)` 让前端/调度器 fearlessly 每日调用本策略而无副作用 (非调仓日返回 hold-only)；(2) **无显式 stopLossPct**——长线持有靠下季度自然换仓出场，真要止损归 portfolio 层 (US-049 DrawdownCircuitBreaker)，策略层 stopLoss 反映"个股出场" / portfolio 层 stopLoss 反映"组合保护"，职责不同；(3) **4 维 AND 过滤**+ 每维独立 fail_xxx 计数，让 ops 一眼看出"本季度选不出 30 只"是因为哪个维度过滤多 (诊断粒度做到维度级别)。**Position schema 用 string[]** (与 MultiFactorAlpha 一致) 长线无 per-position state 需求。**调仓日判定不要 ISO 硬编码** (4-01 可能周末)，必须查 DailyBar 全市场 trade_dates。**市值双源 fallback 新模式**: valuation.total_market_cap (可能落后 3 个月) 优先 + Stock.total_market_cap (最新已知) 兜底；同款回退可用于 PE 双源等。完整 5 种 universe 对比表在 `backend/src/quant/strategies/CLAUDE.md`。
 - **per-stock historical sync 模式 (US-022 DividendHistory)**: AKShare 一类接口 (stock_history_dividend_detail / 股东户数 / 财报历史) 是 "per-stock 多年时间线"，一次返回 ONE stock 全部历史；sync 服务用 `syncStock(code)` + `syncStocks(codes[])` 而非 `syncDate(date)` + `syncRange()`。--all 模式扫全 A 股要 friendly throttle (200ms 默认，否则秒级被封)；--listed-before flag 跳过 IPO 不足 N 年的新股（无历史可拉）。yield_pct 在 TS 服务里计算（基于 DailyBar ex_date 前日 close，cross-table join belongs TS-side）。**dividend_per_share semantics caveat**: AKShare 派息列是 "每 10 股派现金额（元）"，Python helper 做 /10 让 TS 见 "每股派息金额"；model column comment + jsdoc 必须显式标注否则下游容易再乘 10 倍。新故事 US-090 / US-091 / US-031 也属此模式可照搬。
+- **价量突破 + 技术信号 exit 模式 (US-023 BreakoutStrategy)**: 与全市场/事件驱动/指数受限/两阶段/长线季度并列的**第 6 种 universe 形态**。3 个新模式：(1) **DataSource 双 bars loader (loadCandidateBars universe-wide vs loadPositionBars 持仓子集) 分开**——前者要 `is_listed=true` 全市场扫，后者可能含已退市/已停牌股票不能依赖 universe 过滤；不要为了 DRY 合并。(2) **技术信号 exit (close < MA20) 第一次正式引入**——与 NorthboundFollow 反向数据信号 (北向减仓) 出场范式并列。**技术指标计算前置 guard**：bars 不足 ma20Period → 安全 HOLD 而非 SELL（**数据不足 ≠ 破位信号**），开仓初期不能误把"还没数据"判为"已跌破均线"；未来 US-026 RSI / US-027 MACD 类技术策略全部照搬此 guard。(3) **边界条件严格 > vs ≤ 的语义对齐**：突破 / 放量 / 行业流入 用 严格 > (明确穿越才算)；止损 ≤ (一旦达到立即止血)；跌破均线 严格 < (轻擦不算破)。**Position schema 用 structured BreakoutPosition** (entry_date 给 A 持有期 / entry_price 给 B 止损 / 后两字段纯 debug)。**5 日窗口内有零成交日 → 整只剔除** (不用"有几天算几天的均值"兜底，因 multiplier 触发阈值的严格性会被破坏)。**industry name 容错 .trim()** (Stock.industry vs IndustryFlow.industry_name 来源不同 sync 难免空格不一致)。完整 6 种 universe 对比表在 `backend/src/quant/strategies/CLAUDE.md`。
+- **第 8 处 isSTName — 启动重构阈值 (US-023)**: MultiFactorAlpha / DragonHead / EarningsSurprise / NorthboundFollow / AShareConstraintEngine / SectorRotation / HighDividendValue / **Breakout** = 8 处。**阈值已达**: 下个组合级策略 (US-025 GameTraderRelay 或 US-026 LeftSideReversal) 之前先抽取到 `backend/src/utils/stNameUtils.ts` 统一导出 `isSTName(name?)` + `STRICT_ST_PATTERNS` enum，让 9+ 处实现合并为 1 处。重构时保持各策略的 `import { isSTName } from './<StrategyName>'` 仍可用 (re-export shim)，避免破坏现有测试 import 路径。重构可作独立 chore commit (not a story) 但 US-025 / US-026 实现前必做以避免再加一处。
 
 ### Backtest engine — A 股执行约束 (US-014+)
 - **`AShareConstraintEngine` 是无状态纯模块** at `backend/src/quant/backtest/AShareConstraintEngine.ts`。三个方法：`evaluateOrder(ctx)` 返回 `{ok, reason?, detail?}` 决定能否成交（T+1 / 涨跌停 / 停牌 / ST 过滤 / 流动性门槛）；`computeFees(amount, side)` 返回 commission + stamp_tax + transfer_fee 三段费用 breakdown；`executionPrice(bar, side, timing)` 给三种 timing (next_open / same_close / twap_proxy) 的成交价并附动态滑点。引擎严格无 DB 访问、无状态字段、不修改输入参数——多策略并发跑零状态污染。
@@ -2291,3 +2293,95 @@ N/A — this is a backend strategy + data layer story with no UI.
 
 ---
 
+
+## 2026/06/07 - US-023
+
+### What was implemented
+**8th 组合级 strategy** — `BreakoutStrategy` (60 日新高突破 + MA20 技术信号 exit) — second momentum strategy after CTA100. 引入第 6 种 universe 形态 "价量突破" 与 **"技术信号 exit"** 新出场模式 (前 7 个策略全部是"硬约束 + 软数据信号"出场，没有走过技术指标线)。
+
+**入场 (4 维 AND)**:
+1. 当日 close > max(close[-60..-1]) — 突破 60 日新高 (严格 >)
+2. 当日 turnover > avg(turnover[-5..-1]) × 1.5 — 成交额放大 (严格 >)
+3. IndustryFlow.main_inflow > 0 — 行业资金面配合 (严格 >)
+4. 非 ST
+
+**出场 (按 A → C 优先级)**:
+- A. 持有 ≥ 60 自然日 → SELL (硬时间限制)
+- B. (close - entry) / entry ≤ -15% → SELL (硬损失限制)
+- C. close < MA20 → SELL (技术信号)
+- D. HOLD
+
+**Position schema 用 structured `BreakoutPosition`** (与 NorthboundFollow / DragonHead 一致，因 A + B 都需要 entry_date / entry_price)。
+
+### Files changed
+- `backend/src/quant/strategies/BreakoutStrategy.ts` (new, ~820 LOC 包括 DefaultBreakoutDataSource)
+- `backend/src/quant/engine/StrategyRegistry.ts` (+2 行 import + register)
+- `backend/tests/strategies/BreakoutStrategy.test.ts` (new, 40 scenarios / 123 assertions)
+- `backend/src/quant/strategies/CLAUDE.md` (新增 'US-023 BreakoutStrategy' section + 6 种 universe 对比表更新 + 写新技术信号 exit 策略 5 条 checklist)
+- `ralph/prd.json` (US-023 passes:true + notes)
+- `ralph/progress.txt` (本条目)
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → exit 0
+- `eslint BreakoutStrategy.ts + StrategyRegistry.ts --quiet --fix` → exit 0 (4 prettier auto-fixed)
+- `npx ts-node tests/strategies/BreakoutStrategy.test.ts` → 40 scenarios / 123 ok / 0 FAIL, <1s
+- 7 个既有组合级 strategy 测试 + AShareConstraintEngine 全部仍通过 (regression OK)
+- Registry smoke: 24 strategies total (含 breakout_strategy)，category=momentum/risk_level=medium
+
+### Browser verification
+N/A (策略层代码，无 UI 变更)
+
+### Learnings for future iterations
+
+**新 pattern: "技术信号 exit" (US-023 BreakoutStrategy)**:
+- 与 NorthboundFollow / EarningsSurprise 走"反向数据信号"(北向减仓 / 业绩反向) 出场不同，趋势策略走"技术指标线" (MA20 / 布林带下轨) 出场是经典做法。Breakout 是第 1 个，**未来 US-026 LeftSideReversal RSI 反弹 / US-027 LinkageStrategy MACD 死叉** 都可走此 pattern。
+- **技术指标计算前置 guard 模式**：bars 不足 ma20Period → 安全 HOLD 而非 SELL。**数据不足 ≠ 破位信号**。新仓建仓初期 ma20 算不出，绝对不能误把"还没数据"判为"已跌破均线"出场 — 那会导致开仓次日全部被假信号清空。**未来所有用 RSI / MACD / 布林带的技术信号策略都必须前置此 guard**。
+
+**边界条件设计 (严格 > vs ≤ 的语义对齐)**:
+- 突破 / 新高用 **严格 >**: close = priorHigh 不入选 — 突破需要"明确穿越"才算数，boundary 噪音 (高位震荡) 会带来一堆假信号。
+- 成交量放大用 **严格 >**: turnover = avg5 × multiplier 不入选 — 放量是"明确异常"，恰好等于"平均水平"不算。
+- 止损用 **≤ 不严格**: pnl = stopLossPct 触发 — "一旦达到立即止血"，留半个 BP 余地都可能下一日跳空亏穿。
+- 跌破均线用 **严格 <**: close = ma20 不触发 — "轻擦均线不算破"，否则横盘几天每日都触发 SELL 然后 BUY 来回换手。
+- **这是趋势策略边界条件的标准语义对齐**，未来 US-024 GARP / US-026 LeftSideReversal / US-027 Linkage 等趋势 / 反转策略全部照搬。
+
+**DataSource 双 loader 设计 (loadCandidateBars vs loadPositionBars 分开)**:
+- candidate 是**全市场扫描** (5000 股 × 61 bar = 300K rows)，必须 `is_listed=true` 过滤
+- position 可能包含**已退市 / 已停牌**股票，**不能依赖 universe 过滤** (否则停牌持仓在 exit 阶段"消失"无法判定)；而且数量小 (≤ maxPositions)，可一次性 `stock_id IN (...)` 高效拉
+- 两者**业务语义不同**，不要为了 DRY 合并 — 任何"持仓数据 vs 候选数据"的分离场景都该独立 loader
+
+**5 日窗口内零成交日的处理**:
+- 当 5 日窗口里有任意一天 turnover = 0 (停牌) → 视为成交结构异常，整只股票本日不入选
+- **不要**用 "有几天算几天的均值" 兜底 — 因为"3 天均值 vs 5 天均值"会改变 multiplier 触发阈值的实际严格性，破坏成交量放大判定的可比性
+- 这与 NorthboundFollow 的"近 5 日数据完整才入候选"是同款约定 — **数据稀疏的股票不该硬塞入决策池**
+
+**industry name 前后空格容错**:
+- Stock.industry (来自 sync-stocks) 与 IndustryFlow.industry_name (来自 sync-industry-flow) 是**两个独立 sync 链路**, 字符串两端空格不一定一致 ("银行" vs "银行 ")
+- DataSource 内部统一 `.trim()` 处理 — 一行代码避免 entry 维度悄无声息地从 50% 候选缩到 10%
+- 同款 trim 防御应用于所有"跨 sync 链路的字符串 join"
+
+**Position schema 判据 (再次确认)**:
+- Position schema 决定于 exit 规则需要哪些 per-position state：
+  - 持有期到期 → 需要 `entry_date`
+  - 止损 → 需要 `entry_price`
+  - 防重复减半 → 需要 `half_exited` (DragonHead)
+  - 反向数据信号 → 需要查源数据 (NorthboundFollow ratio_delta 实时查)
+- BreakoutPosition 用 `{stock_code, entry_date, entry_price, entry_industry?, entry_60d_high?}` —— 前两个必需 (A + B 出场)，后两个纯 debug
+
+**Filtered stats early-exit 设计**:
+- 当一只股票同时具备多个失败维度 (未突破 + 成交不足 + 行业流出 + ST) 时，**只统计最早被检测到的维度**
+- 这是 evaluateEntries 内部 `continue` 控制流的自然结果 — 不要为了"完整诊断"硬塞每个维度都检查一遍
+- 早过滤先做的顺序: 候选池过滤 (universe) → 历史 / stale → 价量 (内存 arithmetic) → 元数据 (DB IO) → 行业流入 (Map) — IO 最贵的放最后
+
+**typo 防御 (回到 US-022 同款问题)**:
+- Write tool 路径用 `bruinxz/zen` 而非 `bruinxz/stocks` 第二次重演了，仍未根治
+- 修正流程: Bash `mv` + 清理 stray dir 是 same 流程
+- **明确防御**: 长路径优先用 Edit (基于已 Read 文件) 而非 Write，或在 Write 之前 ls 验证 parent dir 存在
+- **future agent 注意**: bruinxz 的 git repo name 是 `stocks`，绝对路径必须包含 `/stocks/`
+
+**第 8 处 isSTName 实现 (启动重构阈值)**:
+- US-023 引入第 8 处 isSTName 实现 (BreakoutStrategy.ts)。计数: MultiFactorAlpha / DragonHead / EarningsSurprise / NorthboundFollow / AShareConstraintEngine / SectorRotation / HighDividendValue / **Breakout** = 8 处。
+- **阈值已达**: 下个组合级策略 (US-025 GameTraderRelay 或 US-026 LeftSideReversal) 之前应该启动重构 — 抽取到 `backend/src/utils/stNameUtils.ts` 统一导出 `isSTName(name?)` + `STRICT_ST_PATTERNS` enum，让 9+ 处实现合并为 1 处。
+- 重构时**保持各策略的 `import { isSTName } from './<StrategyName>'` 仍可用** (re-export shim)，避免破坏现有测试用例 import 路径。
+- 重构本身可作为独立 chore commit (not a story)，但 US-025 / US-026 实现前先做以避免再加一处。
+
+---

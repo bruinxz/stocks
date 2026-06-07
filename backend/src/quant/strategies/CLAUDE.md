@@ -33,7 +33,7 @@ evaluate 模型表达不出。
 - 入参：交易日 + 可选 `{ params?, previousSelection? }`
 - 出参：`{ target_portfolio, signals: BUY/SELL/HOLD[], filtered, params, ... }`
 
-典型例子（截至 US-022 共 7 个）：
+典型例子（截至 US-023 共 8 个）：
 - `MultiFactorAlphaStrategy`（多因子 alpha 月度轮动）
 - `DragonHeadMomentumStrategy`（短线龙头战法 — 事件驱动每日）
 - `EarningsSurpriseStrategy`（业绩预告超预期 + 北向加仓双确认 — 事件驱动）
@@ -41,6 +41,7 @@ evaluate 模型表达不出。
 - `CTA100MomentumStrategy`（中证 1000 动量 — 指数受限 universe + 月度调仓）
 - `SectorRotationLeaderStrategy`（行业龙头轮动 — 两阶段强势行业内挑龙头）
 - `HighDividendValueStrategy`（高分红低 PE 长线价值 — 季度调仓 + 4 维 AND）
+- `BreakoutStrategy`（60 日新高突破 — 价量突破 + MA20 技术信号 exit）
 
 后续 story 中其他组合级策略：US-028 EnsembleStrategy 等。
 
@@ -416,3 +417,93 @@ DailyBar 就判定错误。Fake DataSource 在测试中可直接返回 true/fals
 4. 无显式 stopLossPct 参数 — 长线策略止损归 portfolio 层 (US-049 DrawdownCircuitBreaker)。
 5. 4 维 AND 过滤的统计字段（fail_dividend / fail_pe / fail_roe / fail_market_cap）独立
    计入 filtered，便于诊断 "为什么本季度只选出 5 只而不是 30 只"。
+
+## 突破 + 技术信号 exit（US-023 BreakoutStrategy）
+
+第 8 个组合级策略，引入 **"技术信号 exit"** 的新出场模式：
+
+### 1. 全市场扫描 + 4 维 AND 入场
+
+与 NorthboundFollow / EarningsSurprise 一样走全市场扫描，但触发源是**价量行为
+本身**（不是北向资金 / 业绩预告这种"外部输入"）：
+
+- `loadCandidateBars(asOfDate, minBarCount)` 一次拉全市场近 N 天 OHLCV（最便宜的
+  方式：让 DataSource 自动剔除 bar 数 < minBarCount 的股票）
+- 入场 4 维 AND：突破 60 日新高 + 成交额放大 1.5x + 行业资金净流入 > 0 + 非 ST
+- 排序：volume_ratio 降序 → industry_inflow 降序 → stock_code 稳定 tie-break
+
+**关键设计：边界条件全部严格 >**：close > priorHigh（不能等于），turnover > avg × multiplier
+（不能等于）— 突破需要"明确穿越"才算数，否则 boundary 噪音会带来一堆假信号。
+止损用 ≤（pnl = stopLossPct 触发），跌破均线用 严格 <（close = ma20 不触发）—
+分别对应"立即止血"vs"轻度收回不算破位"的语义直觉。
+
+### 2. 3 类出场按优先级 A → C（硬约束优先）
+
+与 NorthboundFollow 同款"3-tier 优先级"模式，差异在 **C 是技术信号而非反向数据信号**：
+
+- **A. 持有 ≥ 60 自然日**（硬时间限制）→ SELL 不论盈亏 / 技术形态
+- **B. (close - entry) / entry ≤ -15%**（硬损失限制）→ SELL 不论是否还在均线之上
+- **C. close < MA20**（技术信号）→ SELL — 趋势策略最经典的"破位出场"
+- **D. 默认 HOLD**
+
+C 走"技术信号"而非"反向资金信号"（vs NorthboundFollow C = 北向减仓 / EarningsSurprise C = 无）—
+这是趋势策略的典型出场设计：进场看突破，出场看趋势是否还在均线之上。
+
+**bars 不足 ma20Period → 安全 HOLD**：刚开仓 5 天 ma20 算不出，**不能误把"数据不足"
+当成"破位出场"**。这是 BreakoutStrategy 第一次正式引入"技术指标计算前置 guard"
+的范式 — 未来 RSI / MACD / 布林带 类技术信号策略 (US-026 LeftSideReversal 用 RSI)
+直接照搬。
+
+### 3. Position schema 用 structured `BreakoutPosition`
+
+不像 MultiFactorAlpha / CTA100 / HighDividendValue 用 `string[]`，本策略必须用
+`{stock_code, entry_date, entry_price, entry_industry?, entry_60d_high?}`：
+
+- entry_date：A 出场（60 自然日到期）需要
+- entry_price：B 出场（-15% 止损）需要
+- entry_industry / entry_60d_high：纯 debug 用 — 复盘"我是在哪只行业突破时进场的"
+  / "突破点是多少"，对策略逻辑无影响
+
+判据仍是策略级一致的：**调仓决策依赖什么 per-position state，就放什么字段**。
+
+### 4. DataSource 4 loader 设计 — `loadPositionBars` 独立于 `loadCandidateBars`
+
+```ts
+loadCandidateBars(asOfDate, minBarCount)              // 全市场扫描（universe-wide）
+loadPositionBars(asOfDate, stockCodes, minBarCount)   // 持仓子集（小集合精准拉）
+loadIndustryNetInflow(asOfDate)                       // 当日行业全量 Map
+loadStockMeta(stockCodes)                             // 元数据
+```
+
+为什么 candidate 和 position bars 分开两个 loader：
+- candidate 是**全市场扫描**（5000 股 × 61 bar = 300K rows），需要 `is_listed=true` 过滤
+- position 可能包含**已退市 / 已停牌**股票（持仓股有可能停牌后还挂在 portfolio 里），
+  不能依赖 universe 集合；而且数量小（≤ maxPositions），可以直接 `stock_id IN (...)`
+  一次性拉，效率高
+
+如果两者合并成一个 loader，要么 candidate 要带 stockCodes 参数（破坏全市场扫描语义），
+要么 position 走 universe 过滤（停牌持仓会"消失"，exit 逻辑无法判定）。**两个 loader
+就两个 loader**，不要为了 DRY 而合并 — 业务语义不同。
+
+### 6 种 universe + 长线 + 技术 exit 形态对比
+
+截至 US-023：
+
+| 维度 | 全市场 (MultiFactor) | 事件驱动 (EarningsSurprise) | 指数受限 (CTA100) | 两阶段 (SectorRotation) | 长线季度 (HighDividendValue) | 价量突破 (Breakout) |
+|------|--------------------|---------------------------|-----------------|---------------------|------------------------|------------------|
+| 触发源 | factor_scores 全集 | 当日 forecast | (asOfDate, indexCode) 成份 | 行业 ranking × 行业成份 | 全 A 股 | **当日价量行为**（60 日新高 + 放量）|
+| 触发频率 | 月度 | 每日（稀疏） | 月度 | 每日 | 季度（gate）| **每日** |
+| 入场维度 | 8 因子 z_score | 业绩 + 北向 双确认 | 60-5 momentum | 行业 + 个股 双 ranking | 4 维 AND（股息+PE+ROE+市值）| **4 维 AND**（新高+放量+行业流入+非 ST）|
+| Position schema | string[] | EarningsSurprisePosition | string[] | SectorRotationPosition | string[] | **BreakoutPosition** |
+| 止损（B）| 无 | -10% | 无 | 无 | 无 | **-15%（较宽）** |
+| 软出场（C）| 无 | 无 | 无 | 行业 / 个股掉出 top N | 无 | **跌破 MA20**（技术信号）|
+| 行业中性 | 强制 | 不需 | 强制 | 隐式（两阶段 cap）| 可选 | **不强制**（隐式靠 industry_inflow > 0）|
+| 典型 holding period | 30 天 | 60 天 | 30 天 | 10-30 天 | 90+ 天 | **10-60 天** |
+
+**写新"技术信号 exit"趋势策略的 checklist**：
+1. 边界条件设计：突破 / 新高用 严格 >，止损用 ≤，跌破均线用 严格 <（语义对齐：突破要明确，止损不留余地，均线轻擦不算破）。
+2. Position schema 用 structured `{entry_date, entry_price}` —— 时间限制 + 止损都需要。
+3. DataSource 把 `loadCandidateBars`（universe-wide）与 `loadPositionBars`（持仓子集）分开 — 不要为了 DRY 合并。
+4. 技术指标计算前置 guard：bars 不足 ma20Period → 安全 HOLD 不当 SELL（数据不足 ≠ 破位信号）。
+5. 行业 name 容错：DataSource 内部 `.trim()` 处理 industry 字段两端空格 — Stock.industry 与 IndustryFlow.industry_name 的来源不同 sync，难免有不一致。
+
