@@ -620,3 +620,116 @@ alpha，还是历史成功靠少数几笔超额交易碰巧落在了正确的位
 
 
 
+
+
+
+## US-044: PortfolioOptimizer — 多策略组合权重优化
+
+`backend/src/quant/backtest/PortfolioOptimizer.ts` 是事后分析工具：拿 N 个已完成
+回测的**日收益序列**（从 `QuantBacktestResult.equity_curve_json` 派生），求解一
+组权重 (w_1, …, w_N) 使得组合的夏普比率最大化，约束 sum(w_i)=1 且每个 w_i ∈
+[min_weight, max_weight]（AC 默认 max=0.4 防全押单策略退化）。
+
+### 与 GridSearch / Bayesian / WalkForward / Regime / MC 的关系
+
+|                  | 优化任务（找最优参数）            | 事后分析（已完成 backtest）            |
+| ---------------- | --------------------------------- | -------------------------------------- |
+| US-037 Grid      | ✅ 单策略 in-sample 全网格        | ❌                                     |
+| US-038 Bayes     | ✅ 单策略 in-sample GP + EI       | ❌                                     |
+| US-039 WF        | ✅ 单策略 in-sample → OOS 滚动    | ❌                                     |
+| US-040 Regime    | ❌                                | ✅ 单回测按市场环境切片重算指标         |
+| US-041 IC        | ❌                                | ✅ 因子 IC 衰减统计                    |
+| US-042 Corr      | ❌                                | ✅ 因子相关性矩阵                      |
+| US-043 MC        | ❌                                | ✅ 单回测按 N=1000 重排算路径分布      |
+| **US-044 Port** | ❌                                | ✅ **N 个回测求最优权重组合**           |
+
+**所以 US-044 也不复用 OptimizationRun 父表**（与 US-040/041/042/043 判据一致）：
+它是对 *N 个* 已 completed 的 QuantBacktestResult 做派生求解，结果通过
+`strategy_keys_json` + `period_start/end` 关联源回测。`StrategyPortfolioResult`
+用 `id` 自增 PK；每次跑都新增一行（不 upsert），让用户能保留"不同 max_weight
+约束下的多次求解"做对比。
+
+### 求解器：projected_gradient（默认）+ equal_weight（baseline）
+
+**Projected Gradient Ascent (PGA)** 范式：
+1. 初始化多个起点（`equal_weight` + R 个 `seeded random`）
+2. 每个起点：
+   - 计算数值梯度 `g = computeSharpeGradient(returnMatrix, w, eps=1e-5)`
+   - `w_new = projector(w + learningRate * g)` — 投影回约束集
+   - 若 `|sharpe_new - sharpe_old| < tolerance` 即收敛
+3. 选所有起点中 `sharpe` 最大者输出
+
+**simplex + box constraint 投影 (`{w: sum(w)=1, w_i ∈ [min, max]}`)** 的 bisection
+算法：`clip(w + λ, min, max).sum()` 是 λ 的单调非降函数 → bisection 一定收敛
+（100 次迭代到 1e-10 精度）。**关键约束可行性提前 throw**（max*N<1 / min*N>1 /
+min<0 / max<min）友好提示，不让 PGA 内部 simplex 投影时崩。
+
+**`equal_weight` baseline solver** 必须 trivial（5 行内），让用户能 sanity check
+"我这个 PGA 比 naive 等权强多少"。任何后续优化器（US-049 DrawdownCircuitBreaker
+/ US-086 仓位再平衡引擎）都应该提供 baseline 对照。
+
+### 关键设计判据（10 个）
+
+1. **不复用 OptimizationRun 父表**（与 US-040/041/042/043 判据一致）。
+2. **N ≥ 2 才有意义**：N=1 throw（无组合）。
+3. **8+ 纯函数全 export**：`alignDailyReturns` / `computePortfolioDailyReturns` /
+   `computeMean` / `computeStddev` / `computeAnnualizedSharpe` /
+   `computeAnnualizedReturn` / `computeMaxDrawdownPct` / `projectOntoSimplexWithBox` /
+   `computeSharpeGradient` / `deriveDailyReturnsFromEquityCurve` 让单测脱离 DB。
+4. **StrategyReturnSource DI 注入**：`PRODUCTION_STRATEGY_RETURN_SOURCE` lazy
+   require QuantBacktestResult 避免 fake-source 单测拉重量级 DB stack；测试
+   注入 fake 完全脱 DB。
+5. **in-memory + DB 两种入参**：`strategy_returns[]` 优先级高于
+   `quant_backtest_result_ids[]`，CLI / 单测 / 嵌入式调用方都能用。
+6. **多起点 PGA**：`equal_weight + R seeded random` 起点中择最优；R 默认 2。
+   纯单一起点的 PGA 容易困在 saddle point 或 local optima。
+7. **数值梯度而非解析梯度**：sharpe 的 dSharpe/dw_i 涉及 std 导数 + quotient
+   rule 复杂，中心差分 eps=1e-5 简单可靠。每次 PGA 迭代 N+1 次 sharpe 评估，
+   对 N=10 / 1000 daily returns 每秒可跑 1000+ 次评估足够。
+8. **约束可行性提前 throw**：max*N<1 / min*N>1 / min<0 / max<min 全部在
+   `optimize()` 入口 throw 友好提示，不让 PGA 内部 simplex 投影时崩。
+9. **lookback_days 截尾**：求解所用日收益窗口可选；None = 用全部对齐后日。
+   trailing 60 / 90 / 120 日窗口让权重对近期表现更敏感（避免远期 regime 已变
+   仍按全部历史均权）。
+10. **PRD 默认 max_weight=0.4**：单策略上限 40% 防"全押单策略"退化为非组合。
+
+### admin 4 件套 + CLI 4 模式（与 US-040/041/042/043 同款）
+
+- **admin**: `getRun(id)` / `listRecentRuns(limit)` / `deleteRun(id)` /
+  `cleanupOlderThan(days)`。
+- **CLI**: 主流程 `--backtest-result-ids=<csv>` + `--max-weight` / `--solver`
+  / `--lookback-days` / `--seed` / `--no-persist` / `--notes` + admin
+  `--list` / `--show=<id>` / `--delete-run=<id>` / `--cleanup-days=<n>`。
+- **CLI 输出按 KPI 分组**: 最优权重 (per-strategy 一行) + 组合指标 (sharpe /
+  annual / max_dd) + 求解器元信息 (solver / converged / iterations /
+  daily_returns / period)。
+
+### 何时扩展 PortfolioOptimizer
+
+- **凸 QP 解析解**: 当 N 增长到 100+ 策略，PGA 的 N+1 次 sharpe 评估变成瓶颈。
+  考虑引入 quadprog WASM 或调用 cvxpy 服务，把数值梯度换成解析 QP。但目前
+  N=2-10 用 PGA 足够（1 秒收敛）。
+- **min-variance / max-return 等其他目标**: 当前只支持最大化夏普。扩 `objective:
+  'sharpe' | 'sortino' | 'min_variance'` 选项；每个 objective 用对应的
+  `compute<objective>` 替换 `computeAnnualizedSharpe`。**注意**: min_variance 的
+  解析解（mean-variance 椭圆 + simplex 切线）有 closed-form，不必 PGA。
+- **多周期再平衡（multi-period optimization）**: 当前一次求解返回一组静态权重。
+  未来 US-086 仓位再平衡引擎可能需要"按周/月动态调整权重"，扩
+  `RollingPortfolioOptimizer` 滑动窗口逐期求解。
+- **整数权重约束（实盘整手买入）**: 当前权重是 continuous。实盘下到券商系统
+  时要换算成"100 股的整数倍"，那是 PaperTradingFacade.placeOrder 的边界
+  对齐问题，不属于本优化器的 scope。
+
+### 测试模式（127 个测试 / 全脱 DB）
+
+`backend/tests/backtest/portfolio-optimizer.test.ts`：
+- **10 个常量校验** + **10 个纯函数测试**（覆盖空 / 单值 / NaN / Infinity /
+  边界 / 已知数值 / 多日 / 极端值）。
+- **18 个 end-to-end optimize() 场景**（in-memory + fake source 两种入参 /
+  equal_weight + PGA 两种 solver / seed 复现性 / lookback_days 截尾 /
+  max_weight 约束生效 / N=2 max=0.4 抛错 / 共同日少于 MIN 抛错 / N=1 抛错 /
+  缺 input 抛错 / fake source 错传播 / notes 透传 / period 字段 / min_weight
+  多元化 / 权重 6 位 round / in-memory 优先 DB）。
+- **关键 fake**: `makeFakeSource(returns)` 让测试注入任意 strategy_returns
+  完全脱 DB；`generateRandomReturns(N, mean, std, seed)` 用 Box-Muller
+  转换让测试有可复现的"近正态"日收益序列。

@@ -59,6 +59,7 @@ import { RegimeBacktestResult } from '../models/RegimeBacktestResult';
 import { FactorICResult } from '../models/FactorICResult';
 import { FactorCorrelationResult } from '../models/FactorCorrelationResult';
 import { MonteCarloResult } from '../models/MonteCarloResult';
+import { StrategyPortfolioResult } from '../models/StrategyPortfolioResult';
 import { LiveBrokerAccount } from '../models/LiveBrokerAccount';
 import { LiveAccountSnapshot } from '../models/LiveAccountSnapshot';
 import { LivePosition } from '../models/LivePosition';
@@ -147,6 +148,7 @@ const sequelize = new Sequelize({
     FactorICResult,
     FactorCorrelationResult,
     MonteCarloResult,
+    StrategyPortfolioResult,
     LiveBrokerAccount,
     LiveAccountSnapshot,
     LivePosition,

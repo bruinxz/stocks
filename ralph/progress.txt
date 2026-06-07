@@ -135,6 +135,8 @@
 - **JSONB equity_curve 读出时的 Number() 包装 (US-040)**: Sequelize JSONB 列即便 schema 说是 number，从 DB 读出来某些字段也可能被序列化成 string (DECIMAL 类经过 PostgreSQL 协议来回往往这样)。任何 `Number(point.total_value)` 包装是 belt-and-suspenders — 已存 number 时 Number() 是 no-op，已存 string 时正常解析。**规则**: 任何"JSONB 列里包数字" 的读出端 (equity_curve / drawdown_curve / metrics_json 里的数值) 都用 Number() 包装，不要相信 schema 类型。同样适用 US-014 rejected_orders_json 内 reference_price。
 - **诊断工具 — IC 报告 (US-041 FactorICReport)**: quant/factors/ 下首个**诊断工具**（不是新因子）。模式与 US-040 RegimeSegmentedBacktest 高度相似但生活在 factors/ 而非 backtest/，因为它是 "对已有 FactorScore 做事后分析" 不是 "回测/优化"。**关键设计判据 9 个** 已文档化到 `backend/src/quant/factors/CLAUDE.md` 的 "因子诊断工具" 一节: Spearman 而非 Pearson (rank-based 抗异常 + AC 要求) / MIN_CROSS_SECTION_SIZE = 30 (与 US-040 sharpe < 5 → null 同款 "数据不足直接 null") / 4-tuple PK (factor_name, look_forward_days, period_start, period_end) idempotent upsert / **不复用 OptimizationRun 父表 (与 US-040 同款 "事后分析 vs 优化任务" 判据)** / per-day 串行 await (cache-friendly) / DataSource 接口注入 (生产 DefaultFactorICDataSource + 测试 fake) / factor_name 校验仅在未注入 DataSource 时执行 (同 GridSearch/Bayesian/WalkForward fake mode) / **lookahead bias guard** (base_date + lookForward * 1.5 > end_date → 该日跳过，与 US-030 AnalystConsensus 因子内 `row_date > as_of_date` skip 同款时序窗口防 lookahead 范式) / Number(null) === 0 陷阱防御 (DataSource 读 raw DECIMAL 前先 `Number.isFinite()` check)。**纯函数测试模式**: `rankAscending` / `spearmanCorrelation` / `mean` / `sampleStddev` / `aggregateICSeries` 全 export，单测可独立断言 NaN / 边界 / 已知 corr 数值 / tie 处理 (Spearman 标准 "average rank")。**fake DataSource 模式**: 构造 `{ trade_dates, cross_sections, forward_returns }` 配置注入 → 完全脱离 DB；`makeCorrelatedCrossSection(35)` / `makeAnticorrelatedCrossSection(35)` / `makeSmallCrossSection(5)` 三个 fixture helper 覆盖 IC=+1 / -1 / < MIN reject 三大路径。**因子失效阈值在 CLAUDE.md 中明确**: IC mean < 0.02 持续多次 → 剔除；IC_IR < 0.3 → 不稳定；跨 period 持续衰减 > 70% → 信号短期化。下游 US-042 因子相关性 / US-044 PortfolioOptimizer / US-016 FactorWorkspace 都将消费 `factor_ic_results` 表。
 - **第二个事后分析诊断工具 — 因子相关性矩阵 (US-042 FactorCorrelationReport)**: 模式与 US-041 IC 报告几乎一对一镜像（同样在 quant/factors/、同样 DataSource 注入、同样 4-tuple PK、同样不复用 OptimizationRun 父表），但有 4 处**故意差异**化解相关性问题的特殊性: (1) **共用 US-041 spearmanCorrelation / rankAscending / mean / sampleStddev**——避免代码复制，通过 quant/factors/FactorICReport 的 export 直接复用；**跨模块复用判据**：同一目录下相同语义层（事后分析）的纯函数可以单边 import，不会破坏 layer 边界。下次 US-043 蒙特卡洛 也应共用 mean/sampleStddev；US-044 PortfolioOptimizer 也可以共用 Spearman 算因子加权后的相关。(2) **上三角去重**——`(a, b)` 与 `(b, a)` 完全对称，本表只存 `factor_a < factor_b` 的字典序一半（C(N, 2) 行而非 N²）；`dedupPairsToUpperTriangle(factor_names)` 单独 export 的纯函数保证顺序稳定 + 去重。这与 IC 报告 "每因子单独一行" 模式不同，因 IC 不对称。(3) **REDUNDANCY_THRESHOLD = 0.7 用绝对值判定**——强负相关也算共线（一个是另一个的反向版本，组合优化里一加一减相当于没加）；is_redundant=true 是物化字段方便 UI 热力图直接 filter。(4) **无 lookahead bias guard**——相关性只在同一交易日的横截面计算，`factor_score[T] vs factor_score[T]` 无未来信息；与 IC 涉及 forward return 完全不同。**告警 schema 借用 RiskAlert 现有字段**: `symbol='SYSTEM:FACTOR_CORR'` 系统级告警 sentinel + `name=`${factor_a} vs ${factor_b}`` + `level='HIGH'` + 中文 message 含 corr 值 + 区间。前端 UI 按 `symbol` prefix 过滤区分股票告警 vs 系统告警。**RiskAlert per-user write 失败隔离**: writeRedundancyAlerts 单用户失败 try/catch 不阻塞后续用户（同 US-040 RegimeSource try/catch 模式）。**132 个测试 / 全部脱离 DB**: 3 个 export 纯函数 (dedupPairsToUpperTriangle / computeDailyCorrelation / aggregateCorrelationSeries) + end-to-end fake DataSource 覆盖所有路径（独立因子 / 反向因子 / 多日均值 / 双有效股票 < MIN / 横截面为空 / 上三角 dedup / 4 因子 C(4,2)=6 对 / 自定义阈值 / NaN/Inf 过滤 / 跨方向对称）。**做新因子诊断工具 (US-042 之后的 US-043 蒙特卡洛 / US-046 行业归因) 一律照此 9 项 checklist**: ① 共用 US-041 纯函数 ② 4-tuple PK + factor_name 校验跳过 fake mode ③ DataSource 接口 + Default + PRODUCTION + 测试 fake ④ per-pair 串行 await ⑤ ≥30 阈值标准 ⑥ 失效阈值文档化到 CLAUDE.md ⑦ 告警写入按 user_id 数组 + try/catch isolation ⑧ persist 选项默认 true 但 sample_count=0 跳过 ⑨ CLI dual-mode (主流程 / admin list/show/cleanup)。
+- **优化问题求解器范式 (US-044 PortfolioOptimizer 引入)**: 当 AC 给出 "在约束 X 下最大化目标 Y" 的优化问题，2 件套通用方案：(1) **投影梯度上升 (PGA)** — 数值梯度（中心差分 `eps=1e-5` 防解析推导出错）+ 每次更新后 `projector(w)` 投影回约束集 + 多起点（equal_weight + R 个 seeded random）择最优 + 收敛 tolerance（如 1e-6）+ 最大迭代上限保护（5000）；(2) **baseline solver**（equal_weight / random / static 等）— 让用户能快速对比 "PGA 比 naive baseline 强多少"。**baseline must trivial** (5 行内) 便于审计。**simplex + box constraint 投影 (sum(w)=1, w_i ∈ [min, max]) 的 bisection 算法**: `clip(w+λ, min, max).sum()` 是 λ 的单调非降函数 → bisection 必收敛（100 次迭代到 1e-10 精度）；**关键约束可行性提前 throw**（max*N<1 / min*N>1 / min<0 / max<min）友好提示而不是等到投影内部抛错。**未来 US-049 DrawdownCircuitBreaker / US-086 仓位再平衡引擎 / US-085 交易成本敏感性分析**遇到优化问题按此 2 件套范式。
+- **第 4 个事后分析诊断工具 — 组合优化 (US-044 PortfolioOptimizer)**: 完整 5 件套 checklist 已确立（after US-040/041/042/043）：(a) **不复用 OptimizationRun 父表**（事后分析非 task 状态机；通过 strategy_keys_json + period_start/end 关联源回测）；(b) **DataSource 注入** 接口 + `PRODUCTION_*_SOURCE` lazy-require + 测试 fake 完全脱 DB；(c) **8+ 纯函数全 export** 让单测覆盖边界 / NaN / 已知数值；(d) **admin 4 件套** (getRun / listRecentRuns / deleteRun / cleanupOlderThan)；(e) **CLI 4 模式**（主流程 / list / show / delete / cleanup）。**下次 US-045 BenchmarkAttributionService / US-046 IndustryAttributionService 按此 5 件套 checklist 直接照搬。** **deriveDailyReturnsFromEquityCurve 已 2 处需要**（PortfolioOptimizer + RegimeSegmentedBacktest 各 inline 实现）；**第 3 处出现时（US-085）再抽到 utils/ 共享**，符合 "3 处规则" 抽取阈值（5+ 处或算法复杂度 ≥ 20 行 + 多处出现 bug）。
 
 
 
@@ -4599,5 +4601,126 @@ N/A — 后端因子诊断层无 HTTP 表面。未来 US-016 FactorWorkspace 因
   3 组（最终收益分布 / 最大回撤+夏普分布 / 诊断）让 ops 看一眼能 scan 到关心
   的字段。前 5 个事后分析 CLI (regime / IC / correlation / 现在 MC) 也都这样
   做了 — **下次 US-045 / US-046 CLI 继续此模式**。
+
+---
+
+## 2026/06/07 - US-044 — 回测体系：多策略组合优化
+
+### What was implemented
+**PortfolioOptimizer** — 第 4 个事后分析诊断工具（after US-040 RegimeSegmentedBacktest +
+US-041 FactorICReport + US-042 FactorCorrelationReport + US-043 MonteCarloStressTest）。
+输入 N 个策略的历史日收益序列，求解 sum=1 + 单策略权重 ∈ [min, max] 约束下使
+组合夏普最大化的权重向量，输出组合年化收益 / 夏普 / 最大回撤。AC 默认
+max_weight=0.4 防全押单策略退化。
+
+- **`backend/src/models/StrategyPortfolioResult.ts`** (new): 单表存储一次组合优化
+  结果（strategy_keys_json + weights_json 严格 index 对齐；solver / iterations /
+  converged 求解器元信息；max_weight / min_weight 约束元信息；lookback_days /
+  period_start / period_end / daily_return_count 诊断字段；不复用 OptimizationRun
+  父表与 US-040/041/042/043 判据一致）。
+- **`backend/src/quant/backtest/PortfolioOptimizer.ts`** (new, ~830 lines): 主类
+  暴露 `optimize(input, options)` + 4 件套 admin (getRun / listRecentRuns /
+  deleteRun / cleanupOlderThan)；2 个求解器 `projected_gradient`（默认）/
+  `equal_weight`（baseline）；10 个纯函数 helper 全 export 让 127 个测试脱 DB：
+  - `deriveDailyReturnsFromEquityCurve` — 把 QuantBacktestResult.equity_curve_json
+    转换成 (date, return_decimal) 数组（dedup by date + total_value 兜底）。
+  - `alignDailyReturns` — N 个策略 → 共同日期交集 + T×N matrix。
+  - `computePortfolioDailyReturns` — 每日加权和（row-wise）。
+  - `computeMean / computeStddev` — 基础统计。
+  - `computeAnnualizedSharpe` — mean/std * sqrt(252)。
+  - `computeAnnualizedReturn` — (geometric_total_growth) ^ (252/N) - 1。
+  - `computeMaxDrawdownPct` — 复利权益曲线最大回撤。
+  - `projectOntoSimplexWithBox` — 投影到 {w: sum(w)=1, w_i ∈ [min, max]}；
+    bisection on lambda 算法（单调性保证收敛）。
+  - `computeSharpeGradient` — 中心差分数值梯度。
+- **DataSource 注入模式**（与 US-040/041/042/043 同款）：`StrategyReturnSource`
+  接口 + `PRODUCTION_STRATEGY_RETURN_SOURCE` lazy-require QuantBacktestResult；
+  测试注入 fake 完全脱 DB；同时支持 in-memory 直接传 strategy_returns 数组
+  （CLI + 单测两用）。
+- **多起点 PGA**: equal_weight + R 个 seeded random 起点，每个起点跑 PGA 直到
+  收敛或 5000 次迭代，最后选 sharpe 最大者。学习率 0.001 保守 + tolerance 1e-6。
+- **约束可行性提前 throw**: `max_weight*N < 1` / `min_weight*N > 1` / `min<0` /
+  `max<min` 全部在 optimize() 开头 throw 友好提示（不等到 simplex 投影时抛错）。
+- **CLI** `backend/src/scripts/optimize-portfolio.ts` + `npm run optimize:portfolio`
+  支持 4 模式：主流程 (`--backtest-result-ids` / `--max-weight` / `--solver` /
+  `--lookback-days` / `--learning-rate` / `--seed` / `--no-persist` / `--notes`)
+  + admin (`--list` / `--show=<id>` / `--delete-run=<id>` / `--cleanup-days=<n>`);
+  输出 3 组 KPI（最优权重 / 组合指标 / 求解器元信息）；2 档退出码。
+- **测试** `backend/tests/backtest/portfolio-optimizer.test.ts` — **127 ok / 0
+  failed < 1s**。覆盖 10 个常量 + 10 个纯函数 + 18 个端到端 `optimize()` 场景
+  （in-memory + fake source 两种入参 / equal_weight + PGA 两种 solver / seed
+  复现性 / lookback_days 截尾 / max_weight 约束生效 / 共同日少于 MIN 抛错 /
+  N=1 抛错 / fake source 错传播 / notes 透传 / period 字段 / min_weight 多元化）。
+
+### Files changed
+- `backend/src/models/StrategyPortfolioResult.ts` (new, ~190 lines)
+- `backend/src/models/index.ts` (+1 export)
+- `backend/src/config/database.ts` (+1 import +1 model entry)
+- `backend/src/quant/backtest/PortfolioOptimizer.ts` (new, ~830 lines)
+- `backend/src/scripts/optimize-portfolio.ts` (new, ~260 lines)
+- `backend/package.json` (+1 npm script `optimize:portfolio`)
+- `backend/tests/backtest/portfolio-optimizer.test.ts` (new, ~810 lines)
+- `ralph/prd.json` (US-044 → passes:true + 详细 notes)
+- `ralph/progress.txt` (this entry)
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → exit 0
+- `cd backend && ./node_modules/.bin/eslint <changed-files> --quiet` → exit 0
+  (23 prettier auto-fixed via --fix)
+- `cd backend && npx ts-node --transpile-only tests/backtest/portfolio-optimizer.test.ts`
+  → 127 ok / 0 failed < 1s
+- **Regression**: 既有 monte-carlo-stress-test test 仍通过 144 ok（无破坏性变更）。
+- **DB 验证**: 跑 `npm run optimize:portfolio -- --backtest-result-ids=...`（依
+  赖实际 DB 数据）未在本环境执行（无 Postgres 连接）；模型注册 +
+  `sync({alter:true})` 路径会在 dev 启动时自动创表。
+
+### Learnings for future iterations
+- **第 4 个事后分析诊断工具确立完整 5 件套 checklist**（after US-040/041/042/043）：
+  (a) **不复用 OptimizationRun 父表**（与"事后分析"判据一致——非 task 状态机；
+  通过 strategy_keys_json + period_start/end 关联源回测，不需要 status 流转）；
+  (b) **DataSource 注入** 接口 + `PRODUCTION_*_SOURCE` lazy-require + 测试 fake
+  完全脱 DB；(c) **8+ 纯函数全 export** 让单测覆盖边界 / NaN / 已知数值；
+  (d) **admin 4 件套**（getRun / listRecentRuns / deleteRun / cleanupOlderThan）
+  + (e) **CLI 4 模式**（主流程 / list / show / delete / cleanup）。**下次 US-045
+  BenchmarkAttributionService / US-046 IndustryAttributionService 按此 5 件套
+  checklist。**
+- **优化问题的求解器范式**：当 AC 给出"在约束下最大化 X"的优化问题，2 件套通
+  用方案：(1) **投影梯度上升 (PGA)** — 数值梯度（中心差分防解析推导出错）+
+  约束投影器 + 多起点择最优 + 收敛阈值 + 最大迭代上限保护；(2) **baseline
+  solver**（equal_weight 等） — 让用户能快速对比 "我这个优化器到底比 naive
+  baseline 强多少"。**baseline 实现 must trivial**（5 行内），便于审计。
+- **simplex + box constraint 投影的 bisection 算法**：`{w: sum(w)=1, w_i ∈ [min,
+  max]}` 的投影没有解析解但有简单 bisection 算法：clip(w+lambda, min, max) 的
+  sum 是 lambda 的单调非降函数 → bisection 必收敛。100 次迭代收敛到 1e-10
+  精度。**关键约束可行性提前 throw**（max*N<1 / min*N>1 / min<0 / max<min）
+  友好提示用户为什么求解失败，而不是等到投影器内崩。**任何凸投影问题都按此
+  范式**：先 feasibility check，再 bisection / closed-form。
+- **数值梯度 (中心差分) 比解析梯度安全**：dSharpe/dw_i 解析公式涉及 std 的导数
+  和 ratio 的 quotient rule，容易推导出错。eps=1e-5 + 中心差分 (sharpe(w+e) -
+  sharpe(w-e)) / (2e) 是 O(N×2) 评估，每次 PGA 迭代 N+1 次 sharpe 评估，对 N=10
+  / 1000 daily returns 来说每秒可以跑 1000+ 次评估，完全够用。**优化模块默认
+  数值梯度，除非有强需求才上解析梯度**。
+- **2 个 reference table for upper bound on weight 的 tradeoff**：单一 max_weight
+  能表达大多数风控场景（不过份集中单策略），但部分场景需要 "long-only +
+  total leverage ≤ 1"（min=0, max=1）或 "long-short market neutral"（min=-0.5,
+  max=0.5, sum=0）。**当前实现只支持单一 max_weight + sum=1**，未来需要扩展时
+  通过 options 参数加 `sum_constraint=1` 默认 + `allow_short=false` 默认即可。
+- **lazy require 适用于 production source 但不适用于普通 imports**：
+  `PRODUCTION_STRATEGY_RETURN_SOURCE.loadStrategyReturns` 内用 `require()` 而非
+  顶层 `import`，让 fake-source 单测不付出加载 QuantBacktestResult 模型的代价。
+  **判据**: 只在 production 路径才用到的重量级依赖，用 lazy require；测试 +
+  生产都会用到的轻量依赖（utils 类）直接 import。
+- **deriveDailyReturnsFromEquityCurve 是 cross-module shared logic 候选**：
+  从 equity_curve_json 派生 daily returns 的逻辑（dedup by date + 排序 +
+  Number() 包装 + 爆仓跳过）在 RegimeSegmentedBacktest 也实现过（computeSegmentMetrics
+  内），现在 PortfolioOptimizer 也需要。**暂未抽取**因 (a) 各自 inline 实现有
+  10 行，(b) 函数签名略有差异（Regime 内嵌于段处理；Portfolio 输出 (date,
+  return) tuple），(c) 强行抽到 utils 会产生不必要 cross-layer reach。**下次
+  第 3 处出现时（US-085 交易成本敏感性分析）再抽。**
+- **N=2 + max_weight=0.4 是个"易踩"约束陷阱**：用户直觉上"两个策略组合"会用
+  AC 默认 max=0.4，但 max*N=0.8 < 1 无可行解。**任何"AC 默认值 + 接口约束"
+  组合的策略必须 上面 throw 友好提示**（"max_weight=0.4 * N=2 = 0.8 < 1，无
+  可行解，请提高 max_weight 或增加策略数"），不要等到 PGA 内部 simplex 投影
+  时崩。**测试用 expectThrowAsync 覆盖这种 boundary**（test_optimize_max_weight_too_small）。
 
 ---

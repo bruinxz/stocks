@@ -746,8 +746,8 @@
         "Tests pass"
       ],
       "priority": 44,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "PortfolioOptimizer implemented with projected gradient ascent (PGA) solver + equal_weight baseline; supports max_weight/min_weight box constraints + sum=1 simplex projection; persists to strategy_portfolio_results table; 127 unit tests, no DB dependency; npm run optimize:portfolio CLI."
     },
     {
       "id": "US-045",
