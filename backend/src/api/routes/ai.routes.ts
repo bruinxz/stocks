@@ -285,4 +285,13 @@ router.get('/screener', authController.authenticate, screenerController.getDaily
  */
 router.get('/screener/:id', authController.authenticate, screenerController.getDailyScreenerDetail);
 
+/**
+ * @route GET /api/ai/kol-opinions
+ * @desc US-056 — 行业大 V / 券商 / 媒体 / 集体市场对某只股票的最新观点聚合
+ *       (券商研报 + 个股新闻 + 热门概念代理 3 来源)。
+ *       Query: stock_code (必填), limit (1-50, 默认 10), refresh ('true' 主动刷新)
+ * @access Private
+ */
+router.get('/kol-opinions', authController.authenticate, aiAdvisorController.getKOLOpinions);
+
 export default router;

@@ -5,6 +5,7 @@ import {
   AnalysisDimension,
 } from '../../services/AIAdvisorService';
 import { AIStockAnalysisReport } from '../../models/AIStockAnalysisReport';
+import { kolAggregatorService } from '../../services/KOLAggregatorService';
 import { logger } from '../../utils/logger';
 import { Stock } from '../../models/Stock';
 import { Op } from 'sequelize';
@@ -27,6 +28,7 @@ export class AIAdvisorController {
     this.streamSingleStockAnalysis = this.streamSingleStockAnalysis.bind(this);
     this.getReportById = this.getReportById.bind(this);
     this.listReports = this.listReports.bind(this);
+    this.getKOLOpinions = this.getKOLOpinions.bind(this);
   }
 
   /**
@@ -502,6 +504,96 @@ export class AIAdvisorController {
       return res.json({ success: true, data: rows });
     } catch (error: any) {
       logger.error('listReports 失败:', error);
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * GET /api/ai/kol-opinions?stock_code=000001&limit=10&refresh=false
+   *
+   * US-056 — 返回某只股票最新 N 条 KOL 观点 (券商研报 / 个股新闻 / 热门概念代理)。
+   *
+   * Query 参数:
+   *   stock_code  6 位代码 / sh.600519 / 股票名称 — 必填
+   *   limit       返回行数 (默认 10, 范围 1-50)
+   *   refresh     'true' 时主动跑 KOLAggregatorService.aggregateForStock 拉取最新 +
+   *               落库 + 返回; 默认 false 仅从已落库的 KOLOpinion 表查询。
+   *               refresh 模式可能耗时 5-15s (Python 子进程 + 远端 API)。
+   *
+   * 返回 schema:
+   *   { success, data: { stock_code, total, opinions: KOLOpinion[], refreshed: boolean } }
+   *
+   * **不抛 500 给前端**: refresh 失败时降级为已落库数据 + warning 字段。
+   */
+  async getKOLOpinions(req: Request, res: Response, next: NextFunction) {
+    try {
+      const stockCodeQuery = (req.query.stock_code as string | undefined)?.trim();
+      if (!stockCodeQuery) {
+        return res.status(400).json({ success: false, message: 'stock_code query 参数不能为空' });
+      }
+      const limit = Math.min(
+        Math.max(parseInt((req.query.limit as string) || '10', 10) || 10, 1),
+        50
+      );
+      const refresh = String(req.query.refresh || '').toLowerCase() === 'true';
+
+      // 把 sh.600519 / 股票名称 转成 6 位 pure code
+      let pureCode: string;
+      if (/^\d{6}$/.test(stockCodeQuery)) {
+        pureCode = stockCodeQuery;
+      } else {
+        const resolved = await this.resolveTicker(stockCodeQuery);
+        if (!resolved) {
+          return res
+            .status(404)
+            .json({ success: false, message: `无法识别股票: ${stockCodeQuery}` });
+        }
+        // resolved 形如 sh.600519 / sz.000001 → 取最后 6 位
+        const m = resolved.match(/(\d{6})$/);
+        if (!m) {
+          return res.status(400).json({
+            success: false,
+            message: `无法从 ${resolved} 中提取 6 位股票代码`,
+          });
+        }
+        pureCode = m[1];
+      }
+
+      let warning: string | undefined;
+      let refreshed = false;
+      if (refresh) {
+        try {
+          const aggResult = await kolAggregatorService.aggregateForStock(pureCode, {
+            limit,
+          });
+          refreshed = aggResult.persisted;
+          if (aggResult.error) {
+            warning = `刷新失败 (已降级为已落库数据): ${aggResult.error}`;
+          }
+        } catch (refreshError) {
+          // catch-all fallback (service 一般自己 catch, 这里是双重防御)
+          warning = `刷新失败 (已降级): ${(refreshError as Error).message}`;
+          logger.warn(
+            `getKOLOpinions refresh(${pureCode}) outer-catch: ${(refreshError as Error).message}`
+          );
+        }
+      }
+
+      // 读取已落库数据 (refresh 落库后也走同一路径，保证 UI 一致性)
+      const opinions = await kolAggregatorService.listOpinions(pureCode, limit);
+
+      return res.json({
+        success: true,
+        data: {
+          stock_code: pureCode,
+          total: opinions.length,
+          opinions,
+          refreshed,
+          warning,
+        },
+      });
+    } catch (error: any) {
+      logger.error('getKOLOpinions 失败:', error);
       return res.status(500).json({ success: false, message: error.message });
     }
   }

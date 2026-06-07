@@ -64,3 +64,4 @@ export * from './BenchmarkAttributionResult';
 export * from './IndustryAttributionResult';
 export * from './MorningRiskCheckup';
 export * from './AIStockAnalysisReport';
+export * from './KOLOpinion';

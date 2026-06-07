@@ -5562,3 +5562,55 @@ post-close cron entry point — supports `user_id` / `dry_run` /
 - **TradingAgents URL 默认 `http://47.93.224.109:8000`** 是写死的固定服务端 (env `TRADING_AGENTS_URL` 可 override)。**别在 service 内部硬编码 URL**——所有 AI feature 的 service 都应通过 axios.post(${TRADING_AGENTS_URL}/...) 引用 env，下次 US-056 KOL aggregator 调用 TradingAgents 也按此 env 引用，方便 ops 通过 env 切换 staging / prod TradingAgents 实例。
 - **`normalizeRecommendation` 优先级很关键**：`/(strong[_\-\s]*buy|强烈[买推])/` 必须在 `/(buy|加仓|增持|推荐)/` **之前**测试，否则 "强烈推荐" 会被错识别为 'buy' 而非 'strong_buy'。同款"强烈类先于普通类"原则也适用 strong_sell vs sell。**任何 string 映射函数都用 if-return 链而不是 switch**——多模式 regex 在 switch case 里写不开。
 ---
+
+## 2026/06/08 — US-056 AI：KOL 观点聚合
+
+### Implemented
+- 新增 Sequelize 模型 `backend/src/models/KOLOpinion.ts` (kol_opinions 表)：composite PK = (stock_code, kol_name, opinion_date)，列：kol_source / opinion_summary / sentiment_score (DECIMAL(6,4) [-1, +1]) / url / raw_payload (JSONB)。索引：stock_code / opinion_date / (stock_code, opinion_date) / kol_source / (stock_code, kol_source) / (stock_code, opinion_date, kol_source)。Model jsdoc 长达 80 行，详细记录 3 个 kol_source enum + AC 不可得数据的代理范式 (xueqiu 评论 → hot_concept / guba 高赞 → news source) + 升级路径。
+- 新增 `backend/src/services/KOLAggregatorService.ts` (821 行)：
+  - 3 大类来源聚合：(1) `research_report` 复用 AnalystForecast 已落库数据 (US-030)，不重复 fetch；(2) `east_money_news` 走 Python helper `get_stock_news_em` (US-053 BlackSwanWatchdog 已建)；(3) `xq_hot_concept` 走新增 Python helper `get_stock_hot_concepts`。
+  - DataSource DI 接口 `KOLAggregatorDataSource` 4 个 method (fetchNews / fetchHotConcepts / loadResearchReports / saveOpinions) + DefaultKOLAggregatorDataSource Sequelize + Python 实现 + PRODUCTION singleton + 单测注入 fake fully 脱 DB 与 子进程 (同 US-055 AIAdvisorService DI 范式)。
+  - 8 个 export 纯函数：`ratingToSentiment` (7 档评级 + 模糊匹配) / `scoreNewsSentiment` (4 档关键词字典扫描 + 优先级 强空>强多>弱空>弱多) / `conceptRankToSentiment` (rank → [0.1, 0.5]) / `normalizeDateOnly` (多格式) / `isoDateMinusDays` / `dedupeAndSort` (composite PK 去重 + 时间 desc + source priority) / `mapResearchToOpinions` / `mapNewsToOpinions` / `mapHotConceptsToOpinions` / `todayLocalIso`。**评级映射 RATING_SENTIMENT_MAP + SENTIMENT_KEYWORDS 用 Object.freeze 防误改**。
+  - 公开类 `KOLAggregatorService`：`aggregateForStock(stockCode, options)` (返回 `AggregateResult` plain-object, **不抛**，fail-OPEN on saveOpinions) / `aggregateForStocks(stockCodes[], options)` (批量串行 + intervalMs throttle) / `listOpinions(stockCode, limit)` (前端读路径，**不触发 fetch**)。**写多读少分离**：CLI / cron 触发 fetch + 落库；endpoint 只 SELECT。**3 来源并发 fetch (Promise.all) + per-source safeFetch* 内层 catch**：任一来源失败用 [] fallback，不阻塞其余。**dedupe + sort + slice 后限制 limit (默认 10, AC: 5-10) + lookback window 过滤 (默认 90 天)**。
+- 新增 Python helper command `get_stock_hot_concepts(stock_code, limit)` in `backend/python/akshare_helper.py`：调 AKShare `stock_hot_keyword_em(symbol='SH600519')` 拉该股的所有热门概念。柔性 col_map (兼容 "时间/更新时间", "概念名称/概念/关键词") + 热度 desc 排序 + rank 列计算 + jsdoc 标注 "代理 xueqiu KOL 范式" (US-034 同款)。
+- 新增 endpoint `GET /api/ai/kol-opinions?stock_code=000001&limit=10&refresh=false` in `backend/src/api/controllers/AIAdvisorController.ts`：
+  - `getKOLOpinions` handler 解析 stock_code (支持 6 位 / sh.600519 / 股票名称 via resolveTicker) → 提取 6 位 pure code。
+  - `refresh=true` 时主动跑 `KOLAggregatorService.aggregateForStock(code)` 拉取最新 + 落库；任何失败转 warning 字段不抛 500。
+  - 始终走 `kolAggregatorService.listOpinions(code, limit)` 读已落库数据 (refresh 后也走同一路径保 UI 一致)。返回 `{stock_code, total, opinions, refreshed, warning}`。
+- 新增 route `router.get('/kol-opinions', ...)` in `backend/src/api/routes/ai.routes.ts`，私有 auth (与其他 AI endpoint 一致)。
+- 新增 CLI 脚本 `backend/src/scripts/sync-kol-opinions.ts` + `npm run sync:kol-opinions`：支持 `--stock=<code>` / `--stocks=<csv>` / `--all` (全 A 股 is_listed) / `--favorites` (仅用户收藏) / `--limit=<n>` (默认 10) / `--lookback-days=<n>` / `--interval-ms=<n>` (AKShare 限流) / `--dry-run` (不写库)。
+- 新增单元测试 `backend/tests/services/kol-aggregator-service.test.ts` (940 行, **141 个测试 / 0 失败**)：
+  - 11 类测试：constants / ratingToSentiment / scoreNewsSentiment / conceptRankToSentiment / normalizeDateOnly / isoDateMinusDays / dedupeAndSort / mapResearchToOpinions / mapNewsToOpinions / mapHotConceptsToOpinions / aggregateForStock end-to-end (happy / dryRun / 单源失败 / 全源失败 / lookback / limit / 无效 code / saveFail fail-OPEN / asOfDate / by_source counter) / aggregateForStocks (批量) / todayLocalIso。
+  - **完全脱 DB + 脱 Python**: fake `KOLAggregatorDataSource` 让所有 e2e 跑在内存。
+- Model 注册到 `backend/src/models/index.ts` + `backend/src/config/database.ts`，让 `sync({alter:true})` 在 dev 自动建 `kol_opinions` 表。
+
+### Files changed
+- `backend/python/akshare_helper.py` (+105 行新增 `get_stock_hot_concepts` + main dispatcher case)
+- `backend/src/api/controllers/AIAdvisorController.ts` (+90 行 getKOLOpinions handler)
+- `backend/src/api/routes/ai.routes.ts` (+9 行 route)
+- `backend/src/config/database.ts` (+2 行注册 KOLOpinion)
+- `backend/src/models/index.ts` (+1 行 export)
+- `backend/src/models/KOLOpinion.ts` (新文件, 177 行)
+- `backend/src/scripts/sync-kol-opinions.ts` (新文件, 158 行)
+- `backend/src/services/KOLAggregatorService.ts` (新文件, 821 行)
+- `backend/tests/services/kol-aggregator-service.test.ts` (新文件, 940 行)
+- `backend/package.json` (+1 行 sync:kol-opinions npm script)
+
+### Verification
+- `cd backend && npx tsc --noEmit` → ✅ exit 0
+- `cd backend && npx eslint src/services/KOLAggregatorService.ts src/models/KOLOpinion.ts src/scripts/sync-kol-opinions.ts src/api/controllers/AIAdvisorController.ts src/api/routes/ai.routes.ts` → ✅ 0 errors (10 warnings, 9 是 US-055 既有 next param warnings + 1 是新 getKOLOpinions handler 同款 next 未用 — 与既有 controller 范式一致)
+- `cd backend && npx ts-node --transpile-only tests/services/kol-aggregator-service.test.ts` → ✅ **141 passed / 0 failed**
+- AI advisor service tests 重跑 → ✅ **133 passed / 0 failed** (US-055 既有测试无回归)
+- 全部 8 个 risk-guard test files 重跑均通过 (1049 既有测试无回归)
+- 浏览器验证：**not performed** (no dev-browser MCP, endpoint 验证只能 manual: curl '/api/ai/kol-opinions?stock_code=600519&refresh=true' 应返回 5-10 条 opinions JSON)
+
+### Learnings for future iterations
+- **多源聚合 + 已落库数据复用范式 (KOL aggregator)**：当一个 service 需要聚合多种数据源 (券商研报 / 新闻 / 概念热度)，**优先复用已经落库的数据** (AnalystForecast 已有研报)，**新数据走 Python helper 现 fetch**。不要为了"一站式聚合"重复 fetch 同份数据 —— 既慢又有数据一致性问题。这是与 US-031..US-035 因子层"读 model 列而非 fetch"同款理念，但应用到 service 层。每个 source 用一个独立 mapper (`mapResearchToOpinions` / `mapNewsToOpinions` / `mapHotConceptsToOpinions`) 输出统一形状 `KOLOpinionRecord`，再走 `dedupeAndSort` 合并 — 让新增第 4 / 5 个 source 时只加 mapper 不动其他。
+- **写多读少分离架构 (US-056 标准范式)**：`aggregateForStock` 写 (fetch + 落库)，`listOpinions` 读 (纯 SELECT)。**endpoint 默认走读路径秒级响应**，refresh=true 才触发慢的 fetch + 落库再回读 — 让 UI 加载不被 Python 子进程拖慢。这是 paper-trading facade "写时落库 + 读时秒级" 在 AI 聚合层的应用。后续 US-058 (雪球热词) / US-060 (东财问答) / US-067 (KOL 告警) 都按此分工：CLI / cron 写库；endpoint 只读。
+- **AC 不可得数据的代理范式 (US-031 / US-034 / US-035 / US-056 一致)**：US-056 AC 指定 "雪球热门评论 + 东财股吧高赞" 但 AKShare 中**完全不可得** — 选定 (a) 热门概念 top N 代理"集体市场观点" (b) 新闻来源机构代理"KOL 立场"。**4 处文档同步标注**: Python docstring / TS Client jsdoc / 模型字段 comment / Service jsdoc, 每处都写清 (a) AC 原字段 (b) 不可得原因 (c) 选定代理 (d) 升级路径。**kol_source enum 显式列出 "xq_hot_concept" / "east_money_news" / "research_report"** 让前端 / 报告显示就能知道这条记录是真 KOL 还是代理 KOL，避免误导。后续任何 AI / 数据聚合 story 凡 AC 字段不可得直接复用此 6 项 checklist。
+- **DECIMAL sentiment_score 列 [-1, +1] 区间设计**：用 `DataType.DECIMAL(6, 4)` 而不是 FLOAT 防舍入累积。情绪分允许 null (无评级 / 无法判定) 让前端展示为 "—" 而不被强制 0 误导 ("未评级" ≠ "中性")。下次任何"+1 to -1 范围 + 可能未知" 的因子 / 情绪列都用此 schema (rating / sentiment / consensus delta 等)。
+- **关键词字典扫描的优先级判定 (scoreNewsSentiment)**：**强空 > 强多 > 弱空 > 弱多** — 强空在最前是"安全派"，宁可错杀正面新闻不漏报负面 (用户对负面信号敏感度更高)。同时命中正负词时按此优先级取第一个。**Object.freeze SENTIMENT_KEYWORDS** 防运行时误改。新增关键词时只动这 4 个 list，不动主逻辑，方便快速调优。
+- **composite PK 去重的 preferRecord 规则**：信息量更高的覆盖：(1) sentiment_score 非 null 优先 ("有明确观点 > 无观点的兜底"); (2) opinion_summary 长度更长优先 (信息密度); (3) 后出现的覆盖前出现的 (与 bulkCreate updateOnDuplicate 行为一致)。这是与 US-030 AnalystForecast preferRow 同款 "信息量更丰富的优先" 范式 — 任何 composite PK + 单次 batch 内可能 duplicate keys 的数据写入都应用此模式。
+- **kol_opinions 表与未来故事**：US-067 (KOL 观点告警) / US-082 (周报 KOL 摘要) / US-088 (前端 stock-profile "他人在看" 卡片) 都将直接读 kol_opinions，**不再单独写新表**。KOL 观点聚合 + 持久化是单一入口；下游 story 只读不写。如未来引入第三方 API (Wind / 雪球开放数据 / TuShare Pro 新闻情感) 提供真实 xueqiu / guba 评论，将 KOLAggregatorService 内 fetcher 插入对应 source，**model / 因子 / endpoint 不变** (kol_source 列扩展 union)。这个"代理→真值"的升级路径是与 US-034 数据列保持 schema-stable 同款 — 让下游消费者无须配合升级。
+- **CLI `--all` 模式扫全 A 股的 throttle 节流默认 300ms**：AKShare 对个股端点 (stock_hot_keyword_em / stock_news_em) 有限流。**300ms intervalMs 是 AKShare 友好 throttle 实测值** (DragonTiger / NorthboundDataClient 也用 200-300ms 系列)。如果未来发现某 endpoint 限流更严，加 INTERVAL_MS_OVERRIDE env 而非改默认。
+---

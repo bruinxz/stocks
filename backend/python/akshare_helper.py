@@ -3042,6 +3042,111 @@ def get_stock_news_em(stock_code: str, limit: int = 100) -> List[Dict[str, Any]]
         return []
 
 
+def get_stock_hot_concepts(stock_code: str, limit: int = 5) -> List[Dict[str, Any]]:
+    """
+    Fetch per-stock hot concept tags (which 概念板块 the stock belongs to and
+    其当下热度排名) — used by US-056 KOLAggregatorService as a proxy for "market
+    KOL consensus topics" since AKShare has no direct xueqiu / guba KOL endpoint.
+
+    Endpoint: AKShare `stock_hot_keyword_em(symbol='SH600519' | 'SZ000001')`
+        东方财富网 - 个股资讯 - 热门概念
+        返回该股票所属的所有热门概念，按热度值 desc。
+
+    Returns ONE row per concept tag, sorted by 热度 desc. Each row:
+        - 时间          抓取时间（精确到分秒）
+        - 股票代码      'SH600519'
+        - 概念名称      '白酒' / '电商概念' / '茅指数' / ...
+        - 概念代码      'BK0896'
+        - 热度          整数（数千~万级）
+
+    AC 字段 (xueqiu hot comments / guba KOL posts) 在 AKShare 中**不可得**：
+        - 雪球 (XueQiu) 评论数据 AKShare 无 endpoint；
+        - 东方财富股吧高赞作者同样无 endpoint；stock_guba_em 是空架子。
+
+    选定代理 (与 US-034 EastMoneyQAFactor 同款 endpoint 替代范式):
+        - 热门概念 top N 反映"市场对该股的集体关注角度"，作为"KOL 集体声音" 代理。
+        - 热度排名越前 → "市场热议程度" 越高 → 间接代理 KOL 关注。
+
+    Args:
+        stock_code: 6-digit pure code (e.g. '600519').
+        limit: max concept rows returned (default 5; AKShare 一般 5-15 个概念).
+
+    Returns:
+        List sorted by 热度 desc. Fields:
+            `snapshot_time` (ISO 'YYYY-MM-DD HH:mm:ss'),
+            `concept_name`, `concept_code`, `heat`, `rank` (1-based),
+            `raw_payload`. Returns [] on error / empty / unrecognized prefix.
+    """
+    try:
+        pure = ''.join(ch for ch in str(stock_code) if ch.isdigit())
+        if len(pure) != 6:
+            print(f'Invalid stock_code format: {stock_code}', file=sys.stderr)
+            return []
+
+        prefix = _infer_exchange_prefix(pure)
+        if not prefix:
+            print(f'Cannot infer exchange prefix for {pure}', file=sys.stderr)
+            return []
+        symbol = f'{prefix}{pure}'
+
+        fn = getattr(ak, 'stock_hot_keyword_em', None)
+        if fn is None:
+            print('AKShare missing stock_hot_keyword_em', file=sys.stderr)
+            return []
+
+        try:
+            df = fn(symbol=symbol)
+        except TypeError:
+            df = fn(symbol)
+        except Exception as e:
+            print(f'stock_hot_keyword_em({symbol}) failed: {e}', file=sys.stderr)
+            return []
+
+        if df is None or df.empty:
+            print(f'AKShare returned empty hot_keyword dataframe for {symbol}', file=sys.stderr)
+            return []
+
+        col_map: Dict[str, str] = {}
+        for col in df.columns:
+            col_s = str(col)
+            if col_s in ('时间', '更新时间', '抓取时间'):
+                col_map['snapshot_time'] = col_s
+            elif col_s in ('概念名称', '概念', '关键词'):
+                col_map['concept_name'] = col_s
+            elif col_s in ('概念代码',):
+                col_map['concept_code'] = col_s
+            elif col_s in ('热度',):
+                col_map['heat'] = col_s
+
+        # AKShare 已按 热度 desc, 但显式 sort 防 endpoint 漂移
+        if col_map.get('heat'):
+            df = df.sort_values(by=col_map['heat'], ascending=False).reset_index(drop=True)
+
+        results: List[Dict[str, Any]] = []
+        for idx, row in df.iterrows():
+            concept_name = _cell_str(row, col_map.get('concept_name'))
+            if not concept_name:
+                continue
+            snapshot_time = _cell_str(row, col_map.get('snapshot_time'))
+            results.append({
+                'snapshot_time': snapshot_time,
+                'concept_name': concept_name,
+                'concept_code': _cell_str(row, col_map.get('concept_code')),
+                'heat': _cell_int(row, col_map.get('heat')),
+                'rank': len(results) + 1,
+                'raw_payload': _row_to_jsonable(row, df.columns),
+            })
+            if len(results) >= limit:
+                break
+
+        print(f'Parsed {len(results)} hot_concept rows for {pure}', file=sys.stderr)
+        return results
+    except Exception as e:
+        print(f'Error getting stock_hot_keyword_em for {stock_code}: {e}', file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return []
+
+
 def main():
     """Main entry point for command line calls"""
     if len(sys.argv) < 2:
@@ -3213,6 +3318,20 @@ def main():
                 except (ValueError, TypeError):
                     limit = 100
             result = get_stock_news_em(stock_code, limit)
+
+        elif command == "get_stock_hot_concepts":
+            if len(sys.argv) < 3:
+                print(json.dumps({"error": "Missing stock_code for get_stock_hot_concepts"}), file=sys.stderr)
+                sys.exit(1)
+
+            stock_code = sys.argv[2]
+            limit = 5
+            if len(sys.argv) >= 4:
+                try:
+                    limit = int(sys.argv[3])
+                except (ValueError, TypeError):
+                    limit = 5
+            result = get_stock_hot_concepts(stock_code, limit)
 
         else:
             print(json.dumps({"error": f"Unknown command: {command}"}), file=sys.stderr)
