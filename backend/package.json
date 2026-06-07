@@ -39,6 +39,7 @@
     "run:bayesian-opt": "ts-node src/scripts/run-bayesian-opt.ts",
     "run:walk-forward": "ts-node src/scripts/run-walk-forward.ts",
     "run:regime-backtest": "ts-node src/scripts/run-regime-backtest.ts",
+    "run:monte-carlo": "ts-node src/scripts/run-monte-carlo.ts",
     "paper:reset-and-run-quant": "ts-node src/scripts/reset-paper-trading-and-run-quant.ts",
     "seed:mock": "ts-node src/scripts/seed-mock-data.ts",
     "data:status": "ts-node src/scripts/data-cli.ts status"

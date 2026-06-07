@@ -58,3 +58,4 @@ export * from './WalkForwardResult';
 export * from './RegimeBacktestResult';
 export * from './FactorICResult';
 export * from './FactorCorrelationResult';
+export * from './MonteCarloResult';

@@ -511,3 +511,112 @@ QuantBacktestResult.id 就够了，无需引入第 N+1 张 run 表 / 状态机�
   日收益（≥5 个），`growthPerDay=0.001` 让短窗口测试 sharpe=null。
 
 
+
+## US-043: MonteCarloStressTest — 蒙特卡洛压力测试
+
+`backend/src/quant/backtest/MonteCarloStressTest.ts` 是事后分析工具：拿一次已完成
+回测的 trade returns（`return_pct` 序列），随机重排 N=1000 次复利得到 N 条模拟资金
+曲线，输出最终收益 / 最大回撤 / 夏普的**分位数分布**。回答"我这个策略到底是真有
+alpha，还是历史成功靠少数几笔超额交易碰巧落在了正确的位置"——这是 walk-forward
+和 regime-segmented 都看不到的视角。
+
+### 与 GridSearch / Bayesian / WalkForward / Regime 的关系
+
+|                | 优化任务（找最优参数）            | 事后分析（已完成 backtest）         |
+| -------------- | --------------------------------- | ----------------------------------- |
+| US-037 Grid    | ✅ in-sample 全网格               | ❌                                  |
+| US-038 Bayes   | ✅ in-sample GP + EI              | ❌                                  |
+| US-039 WF      | ✅ in-sample → out-of-sample 滚动 | ❌                                  |
+| US-040 Regime  | ❌                                | ✅ 按市场环境切片重算指标            |
+| **US-043 MC**  | ❌                                | ✅ 按 N=1000 重排算路径敏感性分布    |
+
+**所以 US-043 也不复用 OptimizationRun 父表**（与 US-040/US-041/US-042 判据一致）：
+它是对一次已 completed 的 QuantBacktestResult 做派生统计，直接通过 `base_run_id`
+引用 QuantBacktestResult.id。`MonteCarloResult` 用 2-tuple PK `(base_run_id, seed)`
+让同一回测可以跑多个 seed 做敏感性对比。
+
+### Design constraints
+
+1. **共用 BayesianOptimizer.SeededRandom（Park-Miller LCG）**——同 seed + 同
+   trades → 完全可复现的 shuffle 序列。**永不引入 `Math.random()` 到 Monte Carlo
+   代码**（同 BayesianOptimizer 约束）；单测可断言精确 outcome 序列，论文/报告
+   结果可重算，ops 可重跑出"我上周看到的同一份图"。
+2. **Fisher-Yates 无放回重排 vs 有放回 bootstrap 的判定**——AC 用语"随机重排"
+   暗示无放回（同样的 N 笔 returns 重新排列；mean/std 不变只有顺序变），让
+   sharpe/drawdown 的分布变化纯粹来自顺序敏感性。未来若需要 classical bootstrap
+   with replacement，扩 `mode: 'shuffle' | 'with_replacement'` 参数即可；不要默
+   认改语义。
+3. **TradeReturnSource DI 与 GridSearchOptimizer.BacktestRunner /
+   RegimeSegmentedBacktest.RegimeSource 同款**——生产 `PRODUCTION_TRADE_RETURN_SOURCE`
+   用 `require()` lazy 加载 QuantBacktestTrade / QuantBacktestResult（避免单测拉
+   重量级 DB stack）；测试注入 fake source 完全脱离 DB。**in-memory 模式优先于
+   source 模式**：caller 同时传 `trade_returns_pct` 与 `quant_backtest_result_id`
+   时使用 in-memory（in-memory 数据本就是 source of truth）。
+4. **6 个 export 纯函数 — 测试关键**：`computeQuantile / bootstrapResample /
+   computeSimulationFinalReturn / computeSimulationMaxDrawdown /
+   computeSimulationSharpe / aggregateSimulations` 全 export，让 144 个测试覆盖
+   纯算法 + 边界 + 业务方向的同时完全脱离 DB。**`mean`/`sampleStddev` 与
+   `RegimeSegmentedBacktest` 同名，独立实现而非 import**——避免 quant/backtest/MC
+   反向依赖 quant/backtest/Regime（同 US-040 "跨模块反向依赖避免" 范式；同一目录
+   下不同模块也保持独立，因 import 链稳定性比代码复用更重要）。
+5. **MIN_TRADES_FOR_BOOTSTRAP=2 抛错**——少于 2 笔交易没有重排意义。
+   `MIN_SIMULATION_COUNT=1`（debug 用）/ `MAX_SIMULATION_COUNT=100_000`（OOM 防护）。
+   `simulation_count > MAX_SIMULATION_COUNT` 直接抛错而非 silent clamp，让用户
+   明确知道自己设错了参数（与 walk-forward 的 trainMonths > 已写入历史长度 抛错
+   一致）。
+6. **NaN/Infinity 自动剔除而非抛错**——单笔 return_pct NaN 在 source 层是
+   常见（数据缺/计算异常），**不阻塞整个 run**；过滤后若仍 ≥ MIN_TRADES 继续，
+   否则抛错。同款"丢卫生数据但不杀整 run"模式可复用到 US-044 PortfolioOptimizer
+   单 series NaN / US-045 Benchmark NaN。
+7. **爆仓处理：单笔 ≤ -100% return → final = -100% + dd = 100%**——
+   `factor = 1 + r/100 ≤ 0` 直接 short-circuit 避免 log/sqrt 错误传播。理论上 A
+   股不会出现 -100% trade（涨跌停限制），但用户可能传 fake/test 数据；语义清晰
+   优于 NaN 污染下游聚合。
+8. **简易模式 sharpe 假设必须文档化**——把 trade returns 当成"每个 trade 一个
+   时间单位"算 sharpe 不是真正的"日级 sharpe"，`SHARPE_ANNUALIZATION_FACTOR=sqrt(252)`
+   是 nominal 缩放让数字与传统 sharpe 在同一量级。**`MonteCarloResult.sharpe_p5`
+   不可直接对比 `QuantBacktestResult.sharpe_ratio`**——后者基于日级 equity 序列；
+   MC 中分位数 sharpe 仅用于 *相对比较* 不同模拟之间的稳健性。这一假设 jsdoc
+   顶部 + computeSimulationSharpe 函数 doc + CLAUDE.md 三处同步说明。
+9. **upsert by `(base_run_id, seed)`**——同 base_run_id + 同 seed → 覆盖
+   （findOne → update if exists, else create）。不同 seed 互不冲突（用户可同时
+   跑 seed=42 + seed=100 对比稳健性 / 第二意见）。`simulation_count` / 分位数都
+   是 "summary 性质"不进入 PK。
+
+### 何时扩展 MonteCarloStressTest
+
+- **bootstrap with replacement** —— 扩 `mode: 'shuffle' | 'with_replacement'`
+  让 `bootstrapResample` 走不同分支。AC 默认 'shuffle' 不变。
+- **block bootstrap（保留连续 K 笔的局部相关性）** —— 适合 trade 之间有自相关
+  的策略（如 trend following 多笔同方向 trade 簇）；扩 `block_size: number` 参数。
+- **VaR / CVaR / 半方差** —— 当前已有 `return_p5`（≈ 95% VaR 业务）；如需正式
+  CVaR (TailMean below p5) 加 `aggregateSimulations` 内一行 mean(returns < p5)。
+- **多策略并行 MC**（组合级蒙特卡洛） —— 不要在本模块扩展，新建
+  `PortfolioMonteCarloStressTest`（US-044 之后），输入是 N 个策略的 trade 序列
+  + 权重，分别 shuffle + 加权合成 portfolio 曲线。本模块严格单策略保持简单。
+
+### 测试模式
+
+- `monte-carlo-stress-test.test.ts` 144 ok / 0 failed —— 覆盖 7 个常量 +
+  6 个纯函数（computeQuantile 14 case / bootstrapResample 8 case /
+  computeSimulationFinalReturn 9 case / computeSimulationMaxDrawdown 11 case /
+  computeSimulationSharpe 7 case / aggregateSimulations 18 case）+ 17 个
+  end-to-end run() 场景。
+- **关键 fake**：`makeFakeSource(returns, strategyKey)` 让单测注入任意 returns
+  数组完全脱离 DB；`SeededRandom(42)` 是默认 seed 让所有"业务方向"测试
+  （全负 → positive_ratio=0 / 全正 → dd=0）有可复现的 outcomes 序列。
+- **复利顺序无关性是关键回归保护**：所有重排后的最终复利收益必须完全相等
+  （`expectEqual('复利顺序无关 → 所有 final_return 相同', uniqueFinals.size, 1)`），
+  这同时验证了 (a) Fisher-Yates 不复制元素 (b) computeSimulationFinalReturn 是
+  正确的复利公式 (c) NaN 过滤不漏不重。任何未来改 `bootstrapResample` 或复利
+  公式的修改都会立即触发此断言失败。
+- **同 seed 复现序列断言**：`expectEqual('同 seed 复现 dd 序列', dds1, dds2)`
+  确保 SeededRandom 没被 Math.random() 偷偷替代——任何未来引入 Math.random
+  的修改都会立即触发此断言失败。
+- **测试 sharpe 精确值**：用 5 个非全等 returns 手算 mean/std/sharpe 完整公式
+  让 sharpe 实现的 n-1 公式 + sqrt(252) 年化因子双重锁定。
+- **极端值不爆**：单笔 -100% / 含 Infinity / 全 NaN 用例显式验证 short-circuit
+  分支 + 不污染下游聚合。
+
+
+

@@ -4473,3 +4473,131 @@ N/A — 后端因子诊断层无 HTTP 表面。未来 US-016 FactorWorkspace 因
 热力图 / US-018 TodayWorkspace 风控告警面板会消费 `factor_correlation_results`
 表和 RiskAlert（`symbol='SYSTEM:FACTOR_CORR'`）。
 ---
+
+## 2026/06/07 - US-043 — 回测体系：蒙特卡洛压力测试
+
+### What was implemented
+- **Sequelize 模型** `backend/src/models/MonteCarloResult.ts` — 2-tuple PK
+  `(base_run_id, seed)` 让同一回测可以跑多个 seed 做敏感性对比。Fields:
+  AC 必须（return_p5/p50/p95 / drawdown_p95 / sharpe_p5 / simulation_count
+  / base_run_id）+ 诊断字段（return_mean/std / drawdown_mean / sharpe_mean
+  / positive_simulation_ratio / strategy_key 物化避 JOIN / computed_at /
+  source / trade_count）。3 indexes。注册到 `models/index.ts` +
+  `config/database.ts` 让 `sync({alter:true})` 自动创表。
+- **核心模块** `backend/src/quant/backtest/MonteCarloStressTest.ts` (~640 LOC)
+  完全镜像 US-040 RegimeSegmentedBacktest 的事后分析诊断工具模式：
+  - 6 个 export 纯函数 (`computeQuantile` / `bootstrapResample` /
+    `computeSimulationFinalReturn` / `computeSimulationMaxDrawdown` /
+    `computeSimulationSharpe` / `aggregateSimulations`) + 主类 `MonteCarloStressTest`
+    + `TradeReturnSource` interface DI 注入 + `PRODUCTION_TRADE_RETURN_SOURCE`
+    生产实现（lazy `require()` 避免单测拉 DB stack）+ admin 方法
+    （getRunResult / getRunResults / deleteRun / cleanupOlderThan /
+    listRecentRuns）。
+  - **共用 BayesianOptimizer.SeededRandom**（Park-Miller LCG）— 同 seed +
+    同 trades → 完全可复现的 outcomes 序列；永不引入 `Math.random()`。
+  - **公式**: 每次模拟 = `bootstrapResample(returns_pct, rng)`（Fisher-Yates
+    洗牌返回新数组不 mutate）→ `computeSimulationFinalReturn`（复利）+
+    `computeSimulationMaxDrawdown`（累积权益曲线最大回撤百分比）+
+    `computeSimulationSharpe`（mean/std × sqrt(252)）。`aggregateSimulations`
+    把 N outcomes 聚合成 `DistributionSummary` (sortAsc 后 `computeQuantile`
+    0.05/0.5/0.95 + return_mean / std + positive_ratio)。
+  - **mean / sampleStddev 独立实现而非 import** `RegimeSegmentedBacktest` 同名
+    函数 — 避免 quant/backtest/MC ↔ quant/backtest/Regime 相互依赖（同 US-040
+    "跨模块反向依赖避免" 范式；同目录下不同模块也保持独立，因 import 链稳定
+    性比代码复用更重要）。
+- **CLI** `backend/src/scripts/run-monte-carlo.ts` + `npm run run:monte-carlo`
+  支持 4 模式：主流程 (`--backtest-result-id` / `--simulations` / `--seed`
+  / `--no-persist`) + 3 admin (`--list` / `--show=<id>` / `--delete-run=<id>`
+  / `--cleanup-days=<n>`)；输出友好分三组 '最终收益分布' / '最大回撤/夏普分布'
+  / '诊断'；2 档退出码 (0=success / 2=hard-fail)。
+- **测试** `backend/tests/backtest/monte-carlo-stress-test.test.ts` — **144 ok / 0 failed < 1s**。
+  覆盖 7 个常量 + 6 个纯函数 (92 case) + 17 个端到端 `run()` 场景。
+- **CLAUDE.md** 更新 `backend/src/quant/CLAUDE.md` 新增 `## US-043:
+  MonteCarloStressTest — 蒙特卡洛压力测试` 一节: 5 列对比表（与 GridSearch/
+  Bayesian/WalkForward/Regime "优化任务 vs 事后分析" 区分）+ 9 个 design
+  constraints + 4 个升级路径（bootstrap with replacement / block bootstrap /
+  VaR-CVaR / 多策略 portfolio MC）+ 测试模式（关键 fake 模式 + 复利顺序无关性
+  断言 + 同 seed 复现序列断言）。
+
+### Files changed
+- `backend/src/models/MonteCarloResult.ts` (new, 184 lines)
+- `backend/src/models/index.ts` (+1 export)
+- `backend/src/config/database.ts` (+1 import +1 model entry)
+- `backend/src/quant/backtest/MonteCarloStressTest.ts` (new, ~640 lines)
+- `backend/src/scripts/run-monte-carlo.ts` (new, ~210 lines)
+- `backend/package.json` (+1 npm script `run:monte-carlo`)
+- `backend/src/quant/CLAUDE.md` (+1 section ~110 lines)
+- `backend/tests/backtest/monte-carlo-stress-test.test.ts` (new, ~660 lines)
+- `ralph/prd.json` (US-043 → passes:true + 详细 notes)
+- `ralph/progress.txt` (this entry)
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → exit 0
+- `cd backend && ./node_modules/.bin/eslint <changed-files> --quiet` → exit 0
+  (4 prettier auto-fixed via --fix)
+- `cd backend && npx ts-node --transpile-only tests/backtest/monte-carlo-stress-test.test.ts`
+  → 144 ok / 0 failed < 1s
+- CLI smoke: `npx ts-node --transpile-only src/scripts/run-monte-carlo.ts --help`
+  boots cleanly
+- **Regression**: 既有 5 个 backtest test (ashare-constraints 64 + grid-search
+  100 + bayesian 161 + walk-forward 141 + regime-segmented 136 = 602 总) +
+  13 个 strategy test + 9 个 factor test (含 factor-ic-report 118 +
+  factor-correlation-report 132) 全部仍通过 (无 schema 兼容性破坏)。
+- **DB 验证**: 跑 `npm run run:monte-carlo -- --backtest-result-id=42`（依赖
+  实际 DB 数据）未在本环境执行（无 Postgres 连接）；模型注册 +
+  `sync({alter:true})` 路径会在 dev 启动时自动创表。
+
+### Learnings for future iterations
+- **第 3 个事后分析诊断工具**（after US-040 RegimeSegmentedBacktest +
+  US-041 FactorICReport + US-042 FactorCorrelationReport）—— 模式已成定式：
+  (a) 不复用 OptimizationRun 父表 (与 US-040 判据一致); (b) 直接通过 FK
+  引用源 task id; (c) DataSource 注入 + 生产 lazy-require + 测试 fake;
+  (d) 5+ 个纯函数全 export 让单测脱 DB; (e) admin 方法 4 件套（getRunResult /
+  deleteRun / cleanupOlderThan / listRecentRuns）+ CLI 4 模式
+  （主流程 / list / show / delete / cleanup）。**下次 US-045 BenchmarkAttributionService
+  / US-046 IndustryAttributionService 都按此 5 件套 checklist。**
+- **复利顺序无关性是 MC 的 critical invariant**: shuffle 100 次后所有 final
+  returns 必须完全相等（差异只在 dd/sharpe 中体现）—— 这同时验证了 (a)
+  Fisher-Yates 不复制元素 (b) computeSimulationFinalReturn 是正确的复利公式
+  (c) NaN 过滤不漏不重。任何未来改 `bootstrapResample` 或复利公式都会立即触发
+  此断言失败 — **这是测试设计的金标准**，找一个"不变量"作为最强断言。
+- **同 seed 完全复现序列断言是防 Math.random 偷偷引入的最有效护栏**：
+  `expectEqual('同 seed 复现 dd 序列', dds1, dds2)` 任何未来"觉得 SeededRandom
+  慢/复杂顺手换成 Math.random" 的修改都会立即让此断言失败。**任何使用 PRNG 的
+  模块都应该有这个断言**（BayesianOptimizer 已有，MonteCarlo 现在也有，未来
+  US-088 reinforcement learning 模块也按此模式）。
+- **`mean` / `sampleStddev` 在 quant/backtest/ 里出现第 2 次（US-040 一次 + US-043
+  一次），且 quant/factors/ 也有第 3 次（US-041 FactorICReport）**: 已达 3 处。
+  **暂不抽到 utils/** —— 因 (a) 函数太简单 (10 行)，(b) 跨 layer reach 不构成
+  抽取理由 (跨模块反向依赖避免范式说"不要互相 import"，不是说"必须有共享文件"),
+  (c) 抽取后会让 utils/ 慢慢成为 "杂项工具堆"。**抽取阈值**: 5+ 处实现 + 算法
+  复杂度 ≥ 20 行 (如 maxDrawdownPctFromEquity / Spearman) + 多处实现已出现 bug
+  需要同步修复。当前 mean/sampleStddev 都不满足。
+- **2-tuple PK 让 MC 允许多 seed 对比**: 单 seed PK 的话用户得 "覆盖前一个跑"
+  做敏感性分析，不友好。2-tuple `(base_run_id, seed)` 让同一回测可同时挂多
+  个 seed 的结果在表里，UI 可以画 "seed=42 vs seed=100 vs seed=999 的 dd
+  分布对比图"。**未来类似事后分析工具**有可调参数 (e.g. US-044 PortfolioOptimizer
+  可能有不同 max_weight 约束) 都考虑 2-tuple PK 模式保留多版本对比能力。
+- **简易 sharpe 假设必须文档化在 3 处**（jsdoc 顶部 + 函数 doc + CLAUDE.md）—
+  否则下游用户会理所当然把 `MonteCarloResult.sharpe_p5` 与
+  `QuantBacktestResult.sharpe_ratio` 直接对比（同名字段不同口径）。**任何近似
+  / 简化模型的假设都必须 3 处同步**: TS jsdoc / 函数 doc / CLAUDE.md。
+- **AC `pct return` 是 trade-level return_pct (单笔盈亏 %)** 而不是 daily
+  return。读 `QuantBacktestTrade.return_pct` 列（DECIMAL(12,4) nullable），过滤
+  `sell_date IS NOT NULL`（未平仓 trade 浮盈不算）+ `return_pct IS NOT NULL`
+  （计算异常 trade 跳过）。这与 RegimeSegmentedBacktest 用 `equity_curve` 日级
+  序列不同 — MC 视 trade 为离散事件，Regime 视 equity 为连续日级。**两套数据
+  源同时存在，按用途选**: 路径敏感性测试用 trade-level（每个 trade 是独立可
+  重排单位），时间分段用日级（equity 必须连续）。
+- **mean/sampleStddev 独立实现而非 import 同类模块**（不 import
+  RegimeSegmentedBacktest 的 mean 即便完全相同）—— 同 US-040 "跨模块反向依赖
+  避免" 范式，**同 layer 同目录下不同模块也保持独立**，因 import 链稳定性
+  比代码复用更重要 (今天 MC 依赖 Regime，明天 Regime 重构改了 mean signature，
+  MC 编译失败)。判据: 共享 util 应该走 `backend/src/utils/` (如 isSTName from
+  US-025) 而非跨模块 reach。
+- **CLI 输出按 KPI 主题分组比 1 行密集打印好读**: 我把 distribution 拆成
+  3 组（最终收益分布 / 最大回撤+夏普分布 / 诊断）让 ops 看一眼能 scan 到关心
+  的字段。前 5 个事后分析 CLI (regime / IC / correlation / 现在 MC) 也都这样
+  做了 — **下次 US-045 / US-046 CLI 继续此模式**。
+
+---
