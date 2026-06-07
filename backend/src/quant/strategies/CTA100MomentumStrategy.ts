@@ -10,6 +10,7 @@ import { IndexComponent } from '../../models/IndexComponent';
 import { Stock } from '../../models/Stock';
 import { DailyBar } from '../../models/DailyBar';
 import { logger } from '../../utils/logger';
+import { isSTName } from '../../utils/stNameUtils';
 
 /**
  * CTA100MomentumStrategy — 中证 1000 成份股动量策略（US-020）
@@ -552,25 +553,10 @@ export class CTA100MomentumStrategy extends QuantStrategy {
 // ---------------------------------------------------------------------------
 
 /**
- * ST 名称判定（与 MultiFactorAlpha / EarningsSurprise / NorthboundFollow
- * 的 isSTName 逻辑一致；这里单独实现避免跨策略文件相互依赖。
- *
- * 注意：若 ST 判定规则变化需要同步 5 处（4 个组合级策略 +
- * AShareConstraintEngine.ts）。这个 trade-off 是为换取测试隔离。
+ * ST 名称判定 — 重新导出自 `backend/src/utils/stNameUtils.ts`（US-025 抽取）。
+ * 任何判定逻辑变更只改共享模块。
  */
-export function isSTName(name?: string | null): boolean {
-  if (!name) return false;
-  const compact = name.replace(/\s+/g, '');
-  if (!compact) return false;
-  const upper = compact.toUpperCase();
-  if (upper.startsWith('ST')) return true;
-  if (upper.startsWith('*ST')) return true;
-  if (upper.startsWith('S') && upper.indexOf('ST') >= 0 && upper.indexOf('ST') <= 3) {
-    return true;
-  }
-  if (/^S[^A-Z0-9]/.test(upper)) return true;
-  return false;
-}
+export { isSTName };
 
 function stripSuffix(symbol: string | null | undefined): string {
   if (!symbol) return '';

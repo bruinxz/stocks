@@ -85,11 +85,12 @@
 - **第 8 处 isSTName — 启动重构阈值 (US-023)**: MultiFactorAlpha / DragonHead / EarningsSurprise / NorthboundFollow / AShareConstraintEngine / SectorRotation / HighDividendValue / **Breakout** = 8 处。**阈值已达**: 下个组合级策略 (US-025 GameTraderRelay 或 US-026 LeftSideReversal) 之前先抽取到 `backend/src/utils/stNameUtils.ts` 统一导出 `isSTName(name?)` + `STRICT_ST_PATTERNS` enum，让 9+ 处实现合并为 1 处。重构时保持各策略的 `import { isSTName } from './<StrategyName>'` 仍可用 (re-export shim)，避免破坏现有测试 import 路径。重构可作独立 chore commit (not a story) 但 US-025 / US-026 实现前必做以避免再加一处。
 - **价值成长 + PEG 双维度 + 半年度调仓 (US-024 GARPStrategy)**: 与全市场/事件驱动/指数受限/两阶段/长线季度/价量突破并列的**第 7 种 universe 形态**。3 个新模式：(1) **半年度调仓 gate 命名扩展** —— 沿用 US-022 quarterly gate 模式，命名约定 `isFirstTradingDayOf<Period>` (Quarter / SemiAnnual / Year)；未来 US-091 年度策略 / US-095 双年策略直接照搬此命名。(2) **PEG 组合指标 (PE / 增速) 必须在策略内置 guard**：因 PEG 要求 latestYoy > 0 (除以负数无意义)，策略 *先* 验证增长维度通过 *再* 算 PEG —— caller 不可能从外部传 "PE 但已确保增速 > 0" 这种 precondition。同款 "组合指标必须在策略 guard" 原则适用 US-031 QualityHigh (毛利率稳定性，要原始序列) / US-033 MomentumReversal (多期动量分离，要原始序列)。(3) **`loadXxxSeries` 返回 raw 数组而非 boolean** —— 当策略需要 "连续 N 个观测都满足" 或 "5 期波动率"，DataSource 必须返回 raw 序列让策略层判定 "够 N 个观测吗 / 全部满足吗"，把 boolean 形式 ("是否连续 N 年正增长") 硬编码进 DataSource 让单测/重构成本翻倍。完整 7 种 universe 对比表在 `backend/src/quant/strategies/CLAUDE.md`。
 - **多端点 Python 合并模式 (US-024 FinancialReport)**: US-022 per-stock sync 模式的扩展 —— 当一个数据领域需要 raw 金额 (stock_financial_abstract wide-format) *和* 预算好的比率 (stock_financial_analysis_indicator long-format)，**Python 端按 report_date 索引合并 → 返回 normalized rows**。不要返回两个 array 让 TS 合并 —— TS 重建 pandas 语义在 Map<...> 里痛苦, quirks 还得复制两遍。同款模式可复用到 US-030 AnalystForecast (research_report + earnings_forecast 合并) / US-031 QualityHigh (多张利润表合并)。**`report_type` 由 `report_date` MMDD 推断** (03-31=一季报 / 06-30=半年报 / 09-30=三季报 / 12-31=年报)，不依赖 AKShare 单独字段命名漂移。**helper timeout 默认 180s** (vs 120s 单端点)，throttle 默认 300ms (vs 200ms) —— 两端点 + Python 合并比单端点慢 1.5-2x。
-- **第 9 处 isSTName 实现 (US-024)**: MultiFactorAlpha / DragonHead / EarningsSurprise / NorthboundFollow / AShareConstraintEngine / SectorRotation / HighDividendValue / Breakout / **GARP** = 9 处。本 story 未做 extract 是为了保持改动聚焦 (extract 需独立 chore commit + re-export shim 维持向后兼容)。下个组合级策略 (US-025/US-026) 必做 extract 否则 = 10 处。
+- **isSTName 抽取完成 (US-025 同步重构)**: US-024 时已是第 9 处实现，US-025 之前抽取到 `backend/src/utils/stNameUtils.ts` 共享模块。10 个调用方 (9 个 strategy + AShareConstraintEngine) 改为 `import { isSTName } from '../../utils/stNameUtils'; export { isSTName };` —— 保留 re-export shim 让既有 10 处 test 的 `import { isSTName } from '../../src/quant/strategies/<Name>'` 仍可用，无须同步修改 test 文件。改判定逻辑只改共享模块。**下次再加新策略只需 `import` from 共享模块，**不要再 copy/paste**。
+- **游资接力 — 多日累计 + 反向数据信号 exit (US-025 GameTraderRelayStrategy)**: 第 10 个组合级策略，与 DragonHead 互补 (DragonHead 抓涨停板内梯队龙头 / GameTraderRelay 抓涨停板外游资暗中建仓)。3 个新模式：(1) **多日累计 + 接力天数双门槛**：入场不止要 `accumulated_net_buy > 5000 万`，还要 `relay_day_count >= min(2, lookbackDays)` —— 单日大单不算接力，必须 ≥2 个 distinct trade_date 都有 famous_yz 净买入 > 0 才入选，过滤"孤胆英雄"信号。(2) **反向数据信号 D 类作为 exit**：与 US-019 NorthboundFollow 的"北向减仓 SELL"并列，构成"硬约束 > 反向数据信号 > 技术信号"3 大 exit 信号系列。**跟随类 / 接力类策略必须有反向数据信号 exit**，否则退化为被动持有失去 alpha。(3) **严格边界条件 vs ≥ fuzzy floor 判据**：硬数字阈值 (5000 万 / 5% / 市值范围) 用严格 > (entry 要明确达到，消除 boundary 噪音)，止损 + 次日大跌用 ≤ (止损要敏感)；fuzzy floor 类阈值 (北向 0.5pp 业务定义) 用 ≥ 包含边界。**写新短线策略前确认你的入场阈值是 hard cutoff 还是 fuzzy floor**。完整 8 种 universe 对比表在 `backend/src/quant/strategies/CLAUDE.md`。
 
 ### Backtest engine — A 股执行约束 (US-014+)
 - **`AShareConstraintEngine` 是无状态纯模块** at `backend/src/quant/backtest/AShareConstraintEngine.ts`。三个方法：`evaluateOrder(ctx)` 返回 `{ok, reason?, detail?}` 决定能否成交（T+1 / 涨跌停 / 停牌 / ST 过滤 / 流动性门槛）；`computeFees(amount, side)` 返回 commission + stamp_tax + transfer_fee 三段费用 breakdown；`executionPrice(bar, side, timing)` 给三种 timing (next_open / same_close / twap_proxy) 的成交价并附动态滑点。引擎严格无 DB 访问、无状态字段、不修改输入参数——多策略并发跑零状态污染。
-- **`RejectionReason` enum 是统一拒单原因码**。下游 `block_reasons` counter 与 `RejectedOrder.reason` 字段都从同一 enum 取值，UI/聚合统计/告警有单一事实源。新增拒单原因必须先扩 enum 再用（free-text reason 会破坏 aggregation）。**`isSTName` 在 `AShareConstraintEngine.ts` 与 `MultiFactorAlphaStrategy.ts` 各有一份**——任何改判定逻辑必须同步两边。
+- **`RejectionReason` enum 是统一拒单原因码**。下游 `block_reasons` counter 与 `RejectedOrder.reason` 字段都从同一 enum 取值，UI/聚合统计/告警有单一事实源。新增拒单原因必须先扩 enum 再用（free-text reason 会破坏 aggregation）。**`isSTName` 自 US-025 抽取到 `backend/src/utils/stNameUtils.ts` 共享模块**——10 个调用方（9 个 strategy + `AShareConstraintEngine.ts`）都 `import { isSTName } from '../../utils/stNameUtils'` + 保留 re-export shim 维持向后兼容。改判定逻辑只改共享模块。
 - **`rejected_orders` 是 audit trail，`block_reasons` 是 aggregate twin**：每条 rejected_order 含 `{trade_date, strategy_key, symbol, side, reason, detail?, reference_price?}` 写入 `QuantBacktestResult.rejected_orders_json` (US-014 新增列, defaultValue=[] 旧记录 NULL-safe)；同时 `diagnostics.block_reasons` 维护 `Record<reason, count>` 的聚合视图。UI 中"为什么这只票没买/卖成"用 audit；dashboards/heatmaps 用 aggregate。两者并行因消费方不同。
 - **费率默认匹配主流互联网券商 2024-2026**：commission 万 2.5 双边 + min 5 元，stamp tax 千 1 卖出单边，**transfer fee 万 0.1 双边**——过户费是第三方回测最常漏算的项，US-014 强制总是收取。`computeFees()` 一次返回 `FeeBreakdown` 让 caller 清晰看到每段费用，不要再分散在 inline 计算里。
 - **3 种 execution_timing**: `next_open`（次日开盘 + 0.2% 滑点，默认）/ `same_close`（当日收盘 + 滑点）/ `twap_proxy`（(open+high+low+close)/4 + 滑点，简单 VWAP 代理，适合龙头/短线策略）。`twap_proxy` 比 `next_open` 更难"完美捕捉"开盘脉冲，回测结果更保守贴近真实；不强制策略层选 timing，让回测者按策略性质选。动态滑点按 turnover 分段（≤ 0 → ×2，< 30M → ×1.8，< 100M → ×1.25，其他 ×1.0）。
@@ -2507,5 +2508,121 @@ before adding the 10th instance.
 - `npm run sync:financial-report -- --all --listed-before=2020-01-01` 灌入 5 年财报历史
 - `npm run sync:northbound` / `npm run compute:factors` 等其他 sync 不直接需要 (GARP 不依赖它们)
 非首次跑且只有 ≥ 2 年财报历史的新股会自动 fail_growth (因连续 lookbackYears 不达成)。
+
+---
+
+## 2026/06/07 - US-025
+
+### What was implemented
+
+Added the **10th 组合级 strategy** `GameTraderRelayStrategy` (游资接力), and as a sync
+refactor finally extracted `isSTName` to a shared utility module (US-023 had documented
+the 阈值 已达).
+
+#### 1. isSTName extraction (chore, done as part of US-025)
+
+- **New file** `backend/src/utils/stNameUtils.ts` — single canonical implementation.
+- **All 9 prior copies** (8 组合级 strategies + `AShareConstraintEngine`) now do:
+  ```ts
+  import { isSTName } from '../../utils/stNameUtils';
+  // ...
+  export { isSTName };   // re-export shim — keeps existing test imports working
+  ```
+- Existing test files reference `isSTName` via per-strategy imports (e.g.
+  `import { isSTName } from '../../src/quant/strategies/MultiFactorAlphaStrategy'`).
+  The re-export shim means those continue to resolve — no test churn.
+
+#### 2. GameTraderRelayStrategy (US-025)
+
+- **File**: `backend/src/quant/strategies/GameTraderRelayStrategy.ts` (~664 LOC w/ DS).
+- **Registered** in `backend/src/quant/engine/StrategyRegistry.ts` as
+  `game_trader_relay` — registry now has 26 strategies (was 25).
+- **Entry (4 维 AND)**: (1) lookback(2) 日累计 famous_yz 净买入 > 5000 万 AND
+  接力天数 ≥ min(2, lookbackDays) (单日大单不算接力); (2) 当日涨幅 > 5%;
+  (3) 流通市值 ∈ [30 亿, 150 亿]; (4) 非 ST (excludeST default true).
+- **Exit (按优先级 A→D)**: A. 持有 ≥ 3 自然日 → SELL; B. (close-entry)/entry ≤ -7%
+  → SELL (个股止损); C. 持仓首日后 change_pct ≤ -3% → SELL (次日大跌);
+  D. 持仓首日后 famous_yz 净买入 ≤ 0 或缺失 → SELL (接力中断); E. HOLD.
+- **DataSource 4 loader**: `loadFamousYzAggregates` (universe-wide lookback 累计 +
+  接力天数), `loadStockMeta` (cap + ST 过滤), `loadDailyQuotes` (entry change_pct +
+  exit next-day drop), `loadFamousYzNetBuyToday` (exit D 接力中断判定).
+- **Position schema**: `{stock_code, entry_date, entry_price, entry_accumulated_net_buy?}`
+  — stop_loss + holding_days 都需要 entry_*; entry_accumulated_net_buy 纯 debug。
+- **排序**: accumulated_net_buy 降序 → change_pct 降序 → stock_code 升序 stable tie-break.
+
+### Files changed
+
+**New**:
+- `backend/src/utils/stNameUtils.ts` — shared isSTName module (52 LOC)
+- `backend/src/quant/strategies/GameTraderRelayStrategy.ts` — US-025 main strategy (~664 LOC)
+- `backend/tests/strategies/GameTraderRelayStrategy.test.ts` — 40 test scenarios
+
+**Modified (isSTName extraction shim)**:
+- `backend/src/quant/strategies/MultiFactorAlphaStrategy.ts`
+- `backend/src/quant/strategies/DragonHeadMomentumStrategy.ts` (already used import directly — only re-export shim)
+- `backend/src/quant/strategies/EarningsSurpriseStrategy.ts`
+- `backend/src/quant/strategies/NorthboundFollowStrategy.ts`
+- `backend/src/quant/strategies/CTA100MomentumStrategy.ts`
+- `backend/src/quant/strategies/SectorRotationLeaderStrategy.ts`
+- `backend/src/quant/strategies/HighDividendValueStrategy.ts`
+- `backend/src/quant/strategies/BreakoutStrategy.ts`
+- `backend/src/quant/strategies/GARPStrategy.ts`
+- `backend/src/quant/backtest/AShareConstraintEngine.ts`
+
+**Modified (registration + docs)**:
+- `backend/src/quant/engine/StrategyRegistry.ts` (+import + this.register)
+- `backend/src/quant/strategies/CLAUDE.md` (+ US-025 section + 8 种 universe 对比表)
+- `ralph/prd.json` (US-025 → passes:true)
+- `ralph/progress.txt` (this entry + Codebase Patterns update + isSTName status)
+
+### Quality checks
+
+- `cd backend && npx tsc --noEmit` → exit 0 ✓
+- `cd backend && eslint <changed files> --quiet --fix` → exit 0 (5 prettier auto-fixed) ✓
+- `npx ts-node tests/strategies/GameTraderRelayStrategy.test.ts` → 40 scenarios pass < 1s ✓
+- **Regression**: all 11 existing test suites (10 strategy + 1 backtest) still pass ✓
+- Registry smoke: 26 strategies (includes `game_trader_relay`) ✓
+
+### Learnings for future iterations
+
+#### isSTName extraction pattern
+
+- **抽取阈值**: 6+ copies is the trigger to extract; US-025 actually did it at 9 copies
+  (one delayed too many — should've done at 6).
+- **保留 re-export shim** at each call site keeps existing imports working:
+  ```ts
+  import { isSTName } from '../../utils/stNameUtils';
+  export { isSTName };
+  ```
+  This is the **cheap migration path** — don't churn 10 test files just to switch
+  imports; the re-export costs 1 line per file.
+- **DragonHeadMomentumStrategy** is the only strategy that **didn't have inline isSTName** —
+  it filters via Stock.industry (not name), so wasn't touched by US-019 / US-020 wave.
+
+#### GameTraderRelayStrategy design pattern
+
+- **入场严格 > vs 出场 ≤ 边界语义对齐**:
+  - 入场用 `>` (entry 要明确达到，消除 boundary 噪音) — `accumulated_net_buy > 5000 万`,
+    `change_pct > 5%`, market_cap in `[min, max]` 闭区间。
+  - 出场用 `≤` (止损要敏感，一旦达到立即触发) — `pnl ≤ stopLossPct`,
+    `change_pct ≤ exitNextDayDropPct`。
+  - 跟随类 NorthboundFollow 的 entry minIncreasePct ≥ (包含边界) 例外 — 因 0.5pp 是
+    fuzzy 业务定义。**写新短线策略前确认是 hard cutoff 还是 fuzzy floor**。
+- **多日累计 + 接力天数双门槛**：累计金额够但只有 1 天有 famous_yz = 孤胆英雄 ≠ 接力。
+  `min(2, lookbackDays)` 写法让 lookbackDays=1 退化为单日入场（参数灵活性）。
+- **反向数据信号 D 类 exit**：与 NorthboundFollow 北向减仓 + BreakoutStrategy 跌破 MA20
+  构成 3 大 exit 信号系列。**跟随类 / 接力类必须有此 D 类**否则退化为被动持有。
+- **退出优先级 A > B > C > D**：硬约束（持有期 / 止损）排前，软信号（次日大跌 / 接力中断）
+  排后 — 避免短期噪音过早赶走浮盈持仓。
+- **DataSource 与 DragonHead 的差异（不要照搬）**：
+  - 不需要 `loadLimitUpStocks`（不依赖涨停）+ `loadTopIndustries`（不要求强势行业）
+  - 需要 `loadFamousYzNetBuyToday`（单日切片，exit D 用，与 entry 用的 lookback 累计 loader 是不同切片）
+  - 4 loader vs DragonHead 5 loader
+
+#### A 股 ST 名称识别（shared）
+
+- 共享 `backend/src/utils/stNameUtils.ts` 的 `isSTName` 涵盖 5 种形态：
+  `ST...` / `*ST...` / `S*ST.../SST.../S ST...` / `S<非ASCII>...`（旧 S 股；避免误判 SAMSUNG）。
+- 测试时同时用所有形态校验，确保抽取没漏边角（GameTraderRelay test_helper_isSTName 有 9 个边角）。
 
 ---

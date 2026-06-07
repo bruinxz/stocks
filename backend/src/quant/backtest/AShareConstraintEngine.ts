@@ -37,6 +37,7 @@
  */
 
 import type { QuantBar } from '../types/QuantTypes';
+import { isSTName } from '../../utils/stNameUtils';
 
 // ---------------------------------------------------------------- 类型与常量
 
@@ -201,23 +202,10 @@ function diffDaysISO(start: string, end: string): number {
 }
 
 /**
- * ST 名称检测。与 MultiFactorAlphaStrategy.isSTName 对齐 ——
- * 共享一份判定逻辑，避免回测引擎和策略层对 "什么是 ST" 判定不一致。
- * 任何一边修改判定逻辑必须同步另一边。
+ * ST 名称检测 — 重新导出自 `backend/src/utils/stNameUtils.ts`（US-025 抽取）。
+ * 任何判定逻辑变更只改共享模块；回测引擎与策略层保持判定一致。
  */
-export function isSTName(name?: string | null): boolean {
-  if (!name) return false;
-  const compact = name.replace(/\s+/g, '');
-  if (!compact) return false;
-  const upper = compact.toUpperCase();
-  if (upper.startsWith('ST')) return true;
-  if (upper.startsWith('*ST')) return true;
-  if (upper.startsWith('S') && upper.indexOf('ST') >= 0 && upper.indexOf('ST') <= 3) {
-    return true;
-  }
-  if (/^S[^A-Z0-9]/.test(upper)) return true;
-  return false;
-}
+export { isSTName };
 
 // ---------------------------------------------------------------- 引擎
 

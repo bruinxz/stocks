@@ -9,6 +9,7 @@ import {
 import { FactorScore } from '../../models/FactorScore';
 import { Stock } from '../../models/Stock';
 import { logger } from '../../utils/logger';
+import { isSTName } from '../../utils/stNameUtils';
 
 /**
  * MultiFactorAlphaStrategy — 8 因子加权多因子选股策略（US-011）
@@ -498,35 +499,15 @@ function normalizeWeights(weights: Record<string, number>): Record<string, numbe
 }
 
 /**
- * 名称 ST 判定（粗粒度，足够多因子选股层使用）：
+ * 名称 ST 判定 — 重新导出自 `backend/src/utils/stNameUtils.ts`（US-025 抽取）。
  *
- *   - "ST华信"     → true
- *   - "*ST天夏"    → true（退市风险警示）
- *   - "S*ST石岘"   → true（既未股改 + 退市风险警示，2007 前历史样本）
- *   - "SST 海能达" → true（罕见组合，兜底）
- *   - "S 石化"     → true（旧 S 股，未股改）
- *   - "贵州茅台"   → false
+ * 历史背景：US-011..US-024 期间，同一份 isSTName 实现被 9 次 copy/paste
+ * 到 8 个组合级 strategy + AShareConstraintEngine。US-025 之前抽取成
+ * 共享模块；本处 re-export 保持向后兼容，让既有测试 import 路径不必修改。
  *
- * 实现思路：去掉空格 + toUpperCase 后，凡是包含 "ST" 子串且开头是
- * S / * 的（即非 "FSTQUERY" 之类正常英文名），都视为 ST。A 股股票名
- * 几乎全为中文，含 "ST" 子串的几乎一定是 ST 类。
+ * 任何判定逻辑变更只改 `backend/src/utils/stNameUtils.ts`。
  */
-export function isSTName(name?: string | null): boolean {
-  if (!name) return false;
-  const compact = name.replace(/\s+/g, '');
-  if (!compact) return false;
-  const upper = compact.toUpperCase();
-  // 直接前缀命中（最常见）
-  if (upper.startsWith('ST')) return true;
-  if (upper.startsWith('*ST')) return true;
-  if (upper.startsWith('S') && upper.indexOf('ST') >= 0 && upper.indexOf('ST') <= 3) {
-    // "S*ST..." / "SST..." / "S ST..."（已 compact 掉空格）
-    return true;
-  }
-  // 旧 S 股（"S 石化"），紧跟非 ASCII 字母（避免误判 SAMSUNG）
-  if (/^S[^A-Z0-9]/.test(upper)) return true;
-  return false;
-}
+export { isSTName };
 
 /** listing_date 距 tradeDate ≤ thresholdDays 自然日视为次新股 */
 export function isNewerThan(

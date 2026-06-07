@@ -11,6 +11,7 @@ import { StockValuationFactor } from '../../models/StockValuationFactor';
 import { Stock } from '../../models/Stock';
 import { DailyBar } from '../../models/DailyBar';
 import { logger } from '../../utils/logger';
+import { isSTName } from '../../utils/stNameUtils';
 
 /**
  * GARPStrategy — 业绩稳定增长 GARP (Growth At Reasonable Price) 策略（US-024）。
@@ -888,25 +889,10 @@ function emptyFilteredStats(): GARPFilteredStats {
 }
 
 /**
- * ST 名称判定（与 MultiFactorAlphaStrategy / HighDividendValueStrategy / 其他 8 处
- * 逻辑一致；这里单独实现避免跨策略文件相互依赖，便于测试隔离）。
- *
- * NOTE: 第 9 处实现 — 见 progress.txt 的 isSTName 抽取建议（US-023 阈值已达）。
- * 抽取重构时本函数 re-export 自 backend/src/utils/stNameUtils.ts 以兼容 import 路径。
+ * ST 名称判定 — 重新导出自 `backend/src/utils/stNameUtils.ts`（US-025 抽取）。
+ * 任何判定逻辑变更只改共享模块。
  */
-export function isSTName(name?: string | null): boolean {
-  if (!name) return false;
-  const compact = name.replace(/\s+/g, '');
-  if (!compact) return false;
-  const upper = compact.toUpperCase();
-  if (upper.startsWith('ST')) return true;
-  if (upper.startsWith('*ST')) return true;
-  if (upper.startsWith('S') && upper.indexOf('ST') >= 0 && upper.indexOf('ST') <= 3) {
-    return true;
-  }
-  if (/^S[^A-Z0-9]/.test(upper)) return true;
-  return false;
-}
+export { isSTName };
 
 function stripSuffix(symbol: string | null | undefined): string {
   if (!symbol) return '';

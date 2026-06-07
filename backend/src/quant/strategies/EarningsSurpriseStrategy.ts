@@ -11,6 +11,7 @@ import { NorthboundHolding } from '../../models/NorthboundHolding';
 import { Stock } from '../../models/Stock';
 import { DailyBar } from '../../models/DailyBar';
 import { logger } from '../../utils/logger';
+import { isSTName } from '../../utils/stNameUtils';
 
 /**
  * EarningsSurpriseStrategy — 业绩预告超预期 + 北向加仓双确认（US-013）
@@ -737,22 +738,10 @@ export function naturalDaysBetween(entryDate: string, tradeDate: string): number
 }
 
 /**
- * ST 名称判定（与 MultiFactorAlphaStrategy.isSTName 逻辑一致；这里单独
- * 实现避免跨策略文件相互依赖，便于测试隔离）。
+ * ST 名称判定 — 重新导出自 `backend/src/utils/stNameUtils.ts`（US-025 抽取）。
+ * 任何判定逻辑变更只改共享模块。
  */
-export function isSTName(name?: string | null): boolean {
-  if (!name) return false;
-  const compact = name.replace(/\s+/g, '');
-  if (!compact) return false;
-  const upper = compact.toUpperCase();
-  if (upper.startsWith('ST')) return true;
-  if (upper.startsWith('*ST')) return true;
-  if (upper.startsWith('S') && upper.indexOf('ST') >= 0 && upper.indexOf('ST') <= 3) {
-    return true;
-  }
-  if (/^S[^A-Z0-9]/.test(upper)) return true;
-  return false;
-}
+export { isSTName };
 
 function stripSuffix(symbol: string | null | undefined): string {
   if (!symbol) return '';

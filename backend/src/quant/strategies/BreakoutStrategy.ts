@@ -10,6 +10,7 @@ import { Stock } from '../../models/Stock';
 import { DailyBar } from '../../models/DailyBar';
 import { IndustryFlow } from '../../models/IndustryFlow';
 import { logger } from '../../utils/logger';
+import { isSTName } from '../../utils/stNameUtils';
 
 /**
  * BreakoutStrategy — 60 日新高突破策略（US-023）
@@ -855,26 +856,10 @@ export function naturalDaysBetween(entryDate: string, tradeDate: string): number
 }
 
 /**
- * ST 名称判定（与 MultiFactorAlphaStrategy / EarningsSurpriseStrategy /
- * NorthboundFollowStrategy / SectorRotationLeaderStrategy /
- * AShareConstraintEngine 的 isSTName 逻辑一致）。
- *
- * 注意：若 ST 判定规则变化，需要同步更新 6 处。这是单独实现以换取测试隔离
- * 与各策略独立演进能力的 trade-off。
+ * ST 名称判定 — 重新导出自 `backend/src/utils/stNameUtils.ts`（US-025 抽取）。
+ * 任何判定逻辑变更只改共享模块。
  */
-export function isSTName(name?: string | null): boolean {
-  if (!name) return false;
-  const compact = name.replace(/\s+/g, '');
-  if (!compact) return false;
-  const upper = compact.toUpperCase();
-  if (upper.startsWith('ST')) return true;
-  if (upper.startsWith('*ST')) return true;
-  if (upper.startsWith('S') && upper.indexOf('ST') >= 0 && upper.indexOf('ST') <= 3) {
-    return true;
-  }
-  if (/^S[^A-Z0-9]/.test(upper)) return true;
-  return false;
-}
+export { isSTName };
 
 function stripSuffix(symbol: string | null | undefined): string {
   if (!symbol) return '';

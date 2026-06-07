@@ -581,4 +581,110 @@ DataSource 暴露 6 个 loader（vs HighDividendValue 的 5 个 — GARP 多一�
 5. 4 维 AND 过滤的 fail_xxx 计数独立存，便于诊断 "本期为什么只选出 5 只" 是哪个维度
    过严（典型 GARP 在牛市 PEG 会大量超 1.0，fail_peg 飙升 → 提示用户参数调整或换策略）。
 
+## 游资接力 — 多日累计 + 反向数据信号 exit（US-025 GameTraderRelayStrategy）
+
+第 10 个组合级策略。短线游资接力策略，与 DragonHead 短线龙头是同一资金面议
+（famous_yz 席位）但触发条件完全不同：
+
+### 与 DragonHead 的关键差异
+
+| 维度 | DragonHead（短线龙头） | GameTraderRelay（短线接力）|
+|------|--------------------|--------------------------|
+| 入场触发 | **当日涨停** + famous_yz 净买入 > 0 | **当日涨幅 > 5%**（不要求涨停）+ N 日**累计** famous_yz 净买入 > 5000 万 |
+| 持仓 / 候选规模 | 5 只 / 强势行业 top10 内梯队龙头 | 5 只 / 多日席位接力 |
+| 出场 D 类型 | 高开 ≥ 5% sell_half（减半信号） | 接力中断（次日 famous_yz 消失 → 全平）|
+| Position schema | `{entry_date, entry_price, half_exited?}` | `{entry_date, entry_price}` —— 无 half 概念 |
+| 题材覆盖 | 涨停板内梯队 | 涨停板外补涨 / 游资暗中建仓 |
+
+**判据**：DragonHead 抓"游资单日抢筹明牌大单"；GameTraderRelay 抓"游资多日蛰
+伏建仓"。两者的资金面信号叠加 = 短线"游资动向板块" 完整覆盖。
+
+### 1. 多日累计 + 接力天数双门槛
+
+入场条件 1 = `accumulated_net_buy > netBuyThreshold(5000万) AND relay_day_count ≥
+min(2, lookbackDays)`。`relay_day_count` = lookback 窗口内 famous_yz 净买入 > 0 的
+**distinct trade_date 数**。**判据**：累计金额够但只有单日大单（如 lookback=2 但只有
+1 天有 famous_yz）= "孤胆英雄"不是接力，应当过滤。`min(2, lookbackDays)` 的写法让
+lookbackDays=1 时退化为允许单日入场（不强制接力天数 ≥ 2），保留参数灵活性。
+
+### 2. "反向数据信号"作为 exit 第 D 类（接力中断）
+
+GameTraderRelay 的 exit 排序：A 持有期 → B 止损 → C 次日大跌 → **D 次日 famous_yz
+席位消失（接力中断）**。D 类是反向数据信号 exit 第 2 次出现（第 1 次是 US-019
+NorthboundFollow 的"近 5 日北向减仓 → SELL"）—— 与 BreakoutStrategy（US-023）的
+"close < MA20 技术信号 exit" 并列为 3 大 exit 信号系列：
+
+| 信号类 | 例子 | 触发即出场判据 |
+|--------|------|--------------|
+| **硬约束**（A 持有期 / B 止损）| 全部组合级策略 | 不容讨价还价（绝对金额 / 自然日数）|
+| **反向数据信号** | US-019 NorthboundFollow 北向减仓 / **US-025 GameTraderRelay famous_yz 消失** | 入场依赖的资金面信号反向 |
+| **技术信号** | US-023 BreakoutStrategy 跌破 MA20 | 价量结构破位 |
+
+**判据**：跟随类 / 接力类策略**必须**有反向数据信号 exit，否则退化为"被动止损 +
+持有期到期"，失去 alpha 来源。
+
+### 3. DataSource 4 loader 设计
+
+`GameTraderRelayDataSource` 4 个 loader：
+
+- `loadFamousYzAggregates(asOfDate, lookbackDays)` — universe-wide 扫描，返回所有在
+  lookback 窗口内至少出现一次 famous_yz 净买入的股票 `{accumulated_net_buy, relay_day_count}`。
+  无 stockCodes 参数（跟随类不预 universe，由 famous_yz 触发本身定 universe）。
+- `loadStockMeta(stockCodes)` — name / industry / circulating_market_cap（市值过滤 + ST 提前过滤）。
+- `loadDailyQuotes(tradeDate, stockCodes)` — 当日 `{open, close, prev_close, change_pct}`，
+  入场用 change_pct 判定涨幅 > 5%；出场用 change_pct 判定 next-day drop。
+- `loadFamousYzNetBuyToday(tradeDate, stockCodes)` — 当日单日 famous_yz 净买入聚合（不是累计），
+  exit 规则 D 判定接力是否中断。
+
+**与 DragonHead 5 loader 的关键差异**：不要 `loadLimitUpStocks`（入场不依赖涨停）
++ 不要 `loadTopIndustries`（不要求强势行业）；新增 `loadFamousYzNetBuyToday`（单日 vs
+DragonHead 用累计的不同切片）。
+
+### 4. 严格边界条件
+
+入场用**严格 >**（净买入 > 5000 万、涨幅 > 5%、市值在 [30, 150] 闭区间）；止损用
+**≤**（一旦达到立即止血）；次日大跌用 **≤**（边界精度对齐 stop_loss）。**判据**：
+入场要明确"达到了"（严格大于消除 boundary 噪音），出场要敏感（≤ 哪怕碰到边界都触发）。
+跟随类 NorthboundFollow 的 entry minIncreasePct ≥（包含边界）相反 —— 因北向加仓阈值
+是 0.5pp 的 fuzzy 业务定义，不像 5000 万这种"营业部统计上限"硬数字，可以用 ≥ 包含
+边界。**写新短线策略前确认**：你的入场阈值是 hard cutoff（用 >）还是 fuzzy floor（用 ≥）？
+
+### 5. isSTName 共享模块抽取（US-025 同步重构）
+
+US-011..US-024 期间，9 份 `isSTName` 实现 copy/paste 散落在 8 个 strategy + 1 个
+backtest engine。US-025 之前抽取到 `backend/src/utils/stNameUtils.ts`，原 9 处改为
+`import { isSTName } from '../../utils/stNameUtils'; export { isSTName };`（**保留
+重新导出**）以维持向后兼容 —— 既有测试的 `import { isSTName } from
+'../../src/quant/strategies/<Name>'` 仍可用，不必同步修改 10 处 test imports。
+
+**判据**：跨多个文件复制粘贴的函数，达到 6+ 次复制就启动抽取（US-023 推荐过；
+US-025 触达 10 处实际抽取）。抽取时**必须保留各源文件的 re-export shim**，避免
+破坏既有 import 路径。
+
+### 8 种 universe + 短线接力对比
+
+截至 US-025：
+
+| 维度 | 全市场 (MultiFactor) | 事件驱动 (EarningsSurprise) | 指数受限 (CTA100) | 两阶段 (SectorRotation) | 长线季度 (HighDividendValue) | 价量突破 (Breakout) | GARP (US-024) | **GameTraderRelay (US-025)** |
+|------|--------------------|---------------------------|-----------------|---------------------|------------------------|------------------|---------------|------------------------------|
+| 触发频率 | 月度 | 每日（稀疏） | 月度 | 每日 | 季度（gate）| 每日 | 半年度（gate）| **每日（短线）** |
+| 入场维度 | 8 因子 z_score | 业绩 + 北向 双确认 | 60-5 momentum | 行业 + 个股 双 ranking | 4 维（股息+PE+ROE+市值）| 4 维（新高+放量+流入+非ST）| 4 维（增长+PEG+ROE+负债）| **4 维（累计净买入+接力天数+涨幅+市值）** |
+| Position schema | string[] | EarningsSurprisePosition | string[] | SectorRotationPosition | string[] | BreakoutPosition | string[] | **GameTraderRelayPosition**（entry_date/entry_price/entry_acc_net_buy）|
+| 止损 | 无 | -10% | 无 | 无 | 无 | -15% | 无 | **-7%** |
+| 退出反向信号 | 无 | 无 | 无 | 行业掉出 top 15 | 无 | 跌破 MA20 | 无 | **famous_yz 消失（接力中断）**|
+| 行业中性 | 强制 | 不需 | 强制 | 隐式 | 可选 | 不强制 | 可选 | **不需** |
+| 数据源依赖 | factor_scores | EarningsForecast + NorthboundHolding | IndexComponent | IndustryFlow + Stock | DividendHistory + valuation | DailyBar + IndustryFlow | FinancialReport + valuation | **DragonTigerBoard + DailyBar** |
+| 典型 holding period | 30 天 | 60 天 | 30 天 | 10-30 天 | 90+ 天 | 10-60 天 | 180+ 天 | **3 天**（最短）|
+
+**写新"短线接力 / 跟随"策略的 checklist**：
+1. 触发源是连续信号（资金流/北向/famous_yz）→ DataSource `loadCandidateXxx` 不接受
+   stockCodes，universe 由触发本身定义。
+2. 入场必须有"累计 + 接力天数双门槛"避免单日大单造成的孤胆英雄信号被误信。
+3. Exit 必须有**反向数据信号 D 类**（席位消失 / 减仓 / 资金流出），否则退化为被动持有。
+4. 退出优先级 A 硬约束 > B 止损 > C 价格信号 > D 数据信号 —— 把"必须出场"放最前面。
+5. **边界条件**：入场用严格 > 消除 boundary 噪音；止损用 ≤ 一旦达到立即触发。
+6. **isSTName 用共享模块** `import { isSTName } from '../../utils/stNameUtils'`，
+   不要再 copy/paste。
+
+
 
