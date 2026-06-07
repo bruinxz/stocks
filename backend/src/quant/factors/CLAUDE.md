@@ -1,4 +1,4 @@
-# Factor 基础设施 (US-009 + US-010 + US-029 + US-030 + US-031 + US-032 + US-033 + US-034)
+# Factor 基础设施 (US-009 + US-010 + US-029 + US-030 + US-031 + US-032 + US-033 + US-034 + US-035)
 
 `backend/src/quant/factors/` 是 A 股多因子打分体系的基础设施层。US-009
 落地了**注册中心 + 横截面 pipeline + 标准化工具 + FactorScore 模型**；
@@ -144,7 +144,7 @@ US-033 等"贴现 / 偏离"类因子按此例外处理；普通线性因子仍�
 - **缺数据 ≠ 因子失效**：缺数据返回稀疏 Map；因子失效（例如 PE<=0）应该
   `continue` 不写入这只股票，让 Pipeline 把它当作中性。
 
-## US-010 落地的 8 个基础因子 + US-029 LiquidityFactor + US-030 AnalystConsensusFactor + US-031 QualityHighFactor + US-032 EarningsSurpriseFactor + US-033 MomentumReversalFactor + US-034 EastMoneyQAFactor (参考实现)
+## US-010 落地的 8 个基础因子 + US-029 LiquidityFactor + US-030 AnalystConsensusFactor + US-031 QualityHighFactor + US-032 EarningsSurpriseFactor + US-033 MomentumReversalFactor + US-034 EastMoneyQAFactor + US-035 ShareholderConcentrationFactor (参考实现)
 
 | 因子 name | 类别 | 数据源 | 失效条件 |
 |---|---|---|---|
@@ -162,6 +162,7 @@ US-033 等"贴现 / 偏离"类因子按此例外处理；普通线性因子仍�
 | `earnings_surprise` | event | FinancialReport + AnalystForecast (US-030) + StockFundamentalFactor.eps | 最近财报 > 180 自然日 / 财报前研报 < 3 / 缺 actual eps / `|consensus|` < 0.01 元/股 |
 | `momentum_reversal` | momentum | DailyBar (与 momentum / low_vol 同表) | bars < LONG_MOMENTUM_WINDOW+1=121 / close ≤ 0 (T / T-5 / T-120 任一) |
 | `east_money_qa` | sentiment | StockSentiment (US-034) | 30 日窗口内有效 post_count < 10 / recent\|baseline 空 / baseline avg < 1.0 |
+| `shareholder_concentration` | flow | ShareholderCount (US-035) | 200 日窗口内有效快照 < 2 / 最新一期 share_change != 0 (默认过滤) / holder_count_prev ≤ 0 |
 
 **典型查询模式（US-029+ 添加新因子可直接复制）**：
 
@@ -252,6 +253,27 @@ US-033 等"贴现 / 偏离"类因子按此例外处理；普通线性因子仍�
   liquidity (换手率) ~0.3-0.5（非冗余 — 换手反映真实交易，本因子反映情绪关注，前者更
   早信号但易因机构盘磨蚀波动）；与 money_flow (主力净流入) ~0.1-0.2（主力是机构资金，
   与散户情绪不同维度）。FactorIC (US-041) 上线后可验证。
+- ✅ `shareholder_concentration` (US-035) 用 **-(holder_count[latest] - holder_count[prev]) / holder_count[prev]**
+  捕捉筹码集中度环比变化。**取负**：holder_count 下降（集中）→ 正分（机构 / 大户吸筹的
+  buy signal）；上升（分散）→ 负分（散户接盘加剧的 sell signal）。**新 guard 模式 —
+  "data-condition-based exclusion"**：默认 `EXCLUDE_SHARE_CHANGE_PERIODS=true` 时，
+  最新一期 share_change != 0（送转股 / 增发）→ 整只股票跳过 — 因为股本变动后 holder_count
+  自然增加，环比 % 无业务意义。**这是首个"按业务条件而非数据卫生过滤"的因子**：以往的
+  null/NaN/边界值过滤是"数据本身不能用"，本 guard 是"数据能算但语义被破坏"。下次有
+  类似场景（如送转后股价基准重置、停牌前后 close 比较、分红前后 PE 比较）可复用此 pattern。
+  **失效条件 (4 个 guard 协同)**: (i) MIN_OBSERVATIONS_TOTAL=2（季度低频数据，2 期已是
+  最低环比要求 — 与之前因子 5-10 期阈值差异显著，因数据本身只 ~4 期/年）; (ii) holder_count
+  ≤ 0 / null/NaN 全部剔除（数据卫生）; (iii) holder_count_prev > 0 paranoid check 防分母
+  爆炸; (iv) lookahead bias guard `report_date > as_of_date` 剔除（US-030 范式）。
+  **LOOKBACK_DAYS=200 自然日的设计权衡**: 覆盖 2 个季度披露周期 + 公告滞后 30 天 +
+  春节/十一假期；上限 200 防止把 12 个月前的快照当 "prev" 失去时效性。**纯函数 helper**
+  (computeConcentrationChange + ShareholderObservation/ConcentrationBreakdown interface 全
+  export) 让 84 个测试覆盖 share_change 5 边角 + 业务方向 + lookahead guard + 多期排序 +
+  端到端机构吸筹/散户接盘场景的同时完全脱离 DB。属"绝对业务量"因子（per-stock 自身
+  新旧 holder_count 之比），走标准模式 — 不属 LiquidityFactor 横截面参照例外。**与既有
+  因子的相关性预估**：与 money_flow (US-010, 主力净流入) ~0.3-0.4（都反映"机构吸筹"，
+  但 money_flow 高频日级 / 本因子低频季度级，可同时启用）；与 northbound (US-010,
+  北向持股) ~0.1-0.2（境内 vs 境外机构行为，维度不同）。FactorIC (US-041) 上线后可验证。
 
 ### 关键代理记号（US-031 引入 "AC 数学公式 ≠ 数据可得" 的处理范式）
 

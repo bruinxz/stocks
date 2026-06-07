@@ -395,6 +395,45 @@ env / `--interval-ms` CLI flag), `EAST_MONEY_QA_TIMEOUT_MS=90000` (90s default �
 faster than analyst_forecast 120s because hot_rank_detail has lighter response
 than research_report).
 
+## Per-stock historical with endpoint substitution (US-035 ShareholderCount)
+
+`ShareholderCount` (US-035) sources shareholder count history via AKShare. PRD AC
+names `stock_zh_a_gdhs`, but **that endpoint only accepts `symbol='最新'` or a
+single `'YYYYMMDD'` date** — returns one snapshot for the whole market, not a
+per-stock time series. The actual endpoint that fits the factor's needs is
+`stock_zh_a_gdhs_detail_em(symbol=<6-digit>)`, which returns the full per-stock
+historical timeline (~50-70 quarterly snapshots / 10+ years on a listed name).
+
+**Endpoint substitution checklist (extends the US-034 dual-proxy pattern):**
+1. **Document the substitution in 4 places**: Python helper docstring + TS Client
+   jsdoc + Sync service jsdoc + Factor jsdoc (`ShareholderConcentrationFactor`
+   doesn't re-document at the factor level since the factor only reads a column;
+   the substitution surfaces at the sync layer).
+2. **Same output shape**: as long as the substitute returns
+   `[{report_date, stock_code, holder_count, share_change, ...}, ...]`, downstream
+   bulkCreate + factor compute() see no difference.
+3. **Upgrade path clear**: if AKShare adds per-stock history to `stock_zh_a_gdhs`
+   later, swap the call inside `get_shareholder_count` — sync service / model /
+   factor / tests need zero changes.
+4. **Sync service stays dumb**: business-condition filters (e.g. "skip rows where
+   share_change != 0") belong in the factor layer where they can evolve without
+   re-running sync. Same divider as US-006 famous_seat / US-013 is_surprise /
+   US-022 yield_pct.
+
+**New TS factor pattern introduced: "business-condition exclusion" guard**: the
+`ShareholderConcentrationFactor` skips a stock when the latest snapshot has
+`share_change != 0` (送转股 / 增发 makes holder_count environmentally
+incomparable to the prior quarter). This is the first "filter by business
+semantic" guard — previous factor guards only filtered for data hygiene
+(null / NaN / 边界值). Reuse this pattern in future stories where the data
+itself is computable but its meaning is broken (ex-dividend close comparisons,
+suspension-bridged price ratios, post-split PE).
+
+**Friendly throttle 200ms** (same default as US-022/US-024/US-030/US-034);
+`SHAREHOLDER_COUNT_TIMEOUT_MS=90000` (90s; same as east_money_qa — per-stock
+single-endpoint call); `SHAREHOLDER_COUNT_SKIP_EXISTING=0` equivalent to
+`--force` on the CLI.
+
 ## Worktree gotcha (still active as of US-005)
 
 The git worktree has no `backend/node_modules`. Symlink before typecheck:

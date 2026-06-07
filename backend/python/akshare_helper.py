@@ -2678,6 +2678,161 @@ def get_stock_sentiment(stock_code: str) -> List[Dict[str, Any]]:
         return []
 
 
+def get_shareholder_count(stock_code: str) -> List[Dict[str, Any]]:
+    """
+    Fetch A-share shareholder count (股东户数) historical timeline for a single
+    stock — used by ShareholderConcentrationFactor (US-035) to detect 筹码集中
+    度环比变化 (holder_count 下降 = 筹码集中 = 正分；上升 = 分散 = 负分).
+
+    Uses AKShare `stock_zh_a_gdhs_detail_em(symbol=<6-digit>)`:
+        东方财富网-数据中心-特色数据-股东户数详情
+        https://data.eastmoney.com/gdhs/detail/000002.html
+        返回该股票全部历史"股东户数统计截止日"为粒度的快照（季度末为主，偶有
+        额外披露），约 50-70 条 (上市以来 ~10+ 年 × 4 季度)。
+
+    Returns ONE row per (stock_code, report_date) snapshot.
+
+    AKShare 返回列 (2026 年版本):
+        股东户数统计截止日 / 区间涨跌幅 / 股东户数-本次 / 股东户数-上次 /
+        股东户数-增减 / 股东户数-增减比例 / 户均持股市值 / 户均持股数量 /
+        总市值 / 总股本 / 股本变动 / 股本变动原因 / 股东户数公告日期 / 代码 / 名称
+
+    其中：
+      - "股东户数-本次" = 当期 holder_count（PRD AC 的核心字段）
+      - "股东户数-增减比例" = AKShare 已计算好的环比 %（vs "上次"）— 我们保留它做
+        sanity check / fallback，但因子的 "最新一期 vs 上一期" 比较仍在 TS 因子层
+        重新计算（不依赖 AKShare 算法，保持 self-contained + 可重算）。
+      - "户均持股市值"/"户均持股数量" = derived 字段，供未来 US-036+ 复用
+      - "股本变动" 出现非零（送转股 / 增发）会让 holder_count 环比含噪音；TS 因子
+        层可酌情按 "股本变动 == 0" 过滤；本 helper 不过滤（dumb fetcher，规则留
+        TS 层 — 同 famous_seat / is_surprise / is_one_word_board 模式）。
+
+    Args:
+        stock_code: 6-digit code (e.g. '600519' / '000001'), suffixless.
+
+    Returns:
+        List sorted by report_date ascending (oldest first). Returns []
+        on error so the caller can checkpoint a "tried" stock without
+        aborting batch sync.
+    """
+    try:
+        pure_code = str(stock_code).strip().zfill(6)
+        if not pure_code.isdigit() or len(pure_code) != 6:
+            print(f"Invalid stock_code format: {stock_code}", file=sys.stderr)
+            return []
+
+        print(f"Fetching shareholder count history for stock={pure_code}...", file=sys.stderr)
+
+        fn = getattr(ak, 'stock_zh_a_gdhs_detail_em', None)
+        if fn is None:
+            print(f"AKShare has no stock_zh_a_gdhs_detail_em function", file=sys.stderr)
+            return []
+
+        try:
+            df = fn(symbol=pure_code)
+        except TypeError:
+            df = fn(pure_code)
+        except Exception as e:
+            print(f"stock_zh_a_gdhs_detail_em({pure_code}) failed: {e}", file=sys.stderr)
+            return []
+
+        if df is None or df.empty:
+            print(f"AKShare returned empty gdhs dataframe for {pure_code}", file=sys.stderr)
+            return []
+
+        # ----- 列名柔性映射 (与 US-022 dividend / US-024 financial / US-030 analyst 同款) -----
+        col_map: Dict[str, str] = {}
+        for col in df.columns:
+            col_s = str(col)
+            if col_s in ('股东户数统计截止日', '截止日', '统计截止日'):
+                col_map['report_date'] = col_s
+            elif col_s in ('股东户数公告日期', '公告日期'):
+                col_map['announce_date'] = col_s
+            elif col_s in ('股东户数-本次', '股东户数本次', '股东户数（本次）', '股东户数'):
+                col_map['holder_count'] = col_s
+            elif col_s in ('股东户数-上次', '股东户数上次', '股东户数（上次）'):
+                col_map['holder_count_prev'] = col_s
+            elif col_s in ('股东户数-增减', '股东户数增减'):
+                col_map['holder_count_change'] = col_s
+            elif col_s in ('股东户数-增减比例', '股东户数增减比例', '增减比例(%)', '增减比例'):
+                col_map['holder_count_change_pct'] = col_s
+            elif col_s in ('区间涨跌幅', '区间涨跌幅(%)'):
+                col_map['interval_change_pct'] = col_s
+            elif col_s in ('户均持股市值', '户均持股市值(元)'):
+                col_map['avg_holder_market_cap'] = col_s
+            elif col_s in ('户均持股数量', '户均持股数量(股)'):
+                col_map['avg_holder_shares'] = col_s
+            elif col_s in ('总市值', '总市值(元)'):
+                col_map['total_market_cap'] = col_s
+            elif col_s in ('总股本', '总股本(股)'):
+                col_map['total_shares'] = col_s
+            elif col_s in ('股本变动', '股本变动(股)'):
+                col_map['share_change'] = col_s
+            elif col_s in ('股本变动原因', '股本变动说明'):
+                col_map['share_change_reason'] = col_s
+            elif col_s in ('代码', '股票代码'):
+                col_map['stock_code'] = col_s
+            elif col_s in ('名称', '股票简称'):
+                col_map['stock_name'] = col_s
+
+        if not col_map.get('report_date') or not col_map.get('holder_count'):
+            print(
+                f"Missing required col mapping for gdhs ({pure_code}). "
+                f"cols={list(df.columns)[:8]}",
+                file=sys.stderr,
+            )
+            return []
+
+        results: List[Dict[str, Any]] = []
+        seen_dates: set = set()
+        for _, row in df.iterrows():
+            report_iso = _parse_date_cell(row, col_map.get('report_date'))
+            if not report_iso:
+                continue
+            if report_iso in seen_dates:
+                # 同一只股票同一截止日理论上唯一；保险起见去重保留第一条
+                continue
+            seen_dates.add(report_iso)
+
+            holder_count = _cell_int(row, col_map.get('holder_count'))
+            if holder_count is None or holder_count <= 0:
+                # holder_count <= 0 数据异常 (退市 / 数据漏)
+                continue
+
+            announce_iso = _parse_date_cell(row, col_map.get('announce_date'))
+            stock_name = _cell_str(row, col_map.get('stock_name'))
+
+            raw_payload = _row_to_jsonable(row, df.columns)
+
+            results.append({
+                'report_date': report_iso,
+                'stock_code': pure_code,
+                'stock_name': stock_name,
+                'holder_count': holder_count,
+                'holder_count_prev': _cell_int(row, col_map.get('holder_count_prev')),
+                'holder_count_change': _cell_int(row, col_map.get('holder_count_change')),
+                'holder_count_change_pct': _cell_float(row, col_map.get('holder_count_change_pct')),
+                'interval_change_pct': _cell_float(row, col_map.get('interval_change_pct')),
+                'avg_holder_market_cap': _cell_float(row, col_map.get('avg_holder_market_cap')),
+                'avg_holder_shares': _cell_float(row, col_map.get('avg_holder_shares')),
+                'total_market_cap': _cell_float(row, col_map.get('total_market_cap')),
+                'total_shares': _cell_int(row, col_map.get('total_shares')),
+                'share_change': _cell_int(row, col_map.get('share_change')),
+                'share_change_reason': _cell_str(row, col_map.get('share_change_reason')),
+                'announce_date': announce_iso,
+                'raw_payload': raw_payload,
+            })
+
+        # 按 report_date 升序，便于 TS 端按时间排查
+        results.sort(key=lambda r: r['report_date'])
+        print(f"Parsed {len(results)} gdhs rows for {pure_code}", file=sys.stderr)
+        return results
+    except Exception as e:
+        print(f"Error getting shareholder count for {stock_code}: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return []
+
+
 def main():
     """Main entry point for command line calls"""
     if len(sys.argv) < 2:
@@ -2821,6 +2976,14 @@ def main():
 
             stock_code = sys.argv[2]
             result = get_stock_sentiment(stock_code)
+
+        elif command == "get_shareholder_count":
+            if len(sys.argv) < 3:
+                print(json.dumps({"error": "Missing stock_code for get_shareholder_count"}), file=sys.stderr)
+                sys.exit(1)
+
+            stock_code = sys.argv[2]
+            result = get_shareholder_count(stock_code)
 
         else:
             print(json.dumps({"error": f"Unknown command: {command}"}), file=sys.stderr)

@@ -463,6 +463,7 @@ const expectedFactors = [
   'northbound',
   'quality',
   'quality_high',
+  'shareholder_concentration',
   'value',
 ];
 for (const f of expectedFactors) {

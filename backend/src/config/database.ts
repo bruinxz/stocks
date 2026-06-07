@@ -51,6 +51,7 @@ import { DividendHistory } from '../models/DividendHistory';
 import { FinancialReport } from '../models/FinancialReport';
 import { AnalystForecast } from '../models/AnalystForecast';
 import { StockSentiment } from '../models/StockSentiment';
+import { ShareholderCount } from '../models/ShareholderCount';
 import { LiveBrokerAccount } from '../models/LiveBrokerAccount';
 import { LiveAccountSnapshot } from '../models/LiveAccountSnapshot';
 import { LivePosition } from '../models/LivePosition';
@@ -131,6 +132,7 @@ const sequelize = new Sequelize({
     FinancialReport,
     AnalystForecast,
     StockSentiment,
+    ShareholderCount,
     LiveBrokerAccount,
     LiveAccountSnapshot,
     LivePosition,
