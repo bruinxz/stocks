@@ -179,6 +179,15 @@
 - **第 7 个 AI feature — Copilot meta-AI / 自由文本 prompt 范式 (US-062 引入)**: 与前 6 个 AI feature (US-055 单股深度问答 / US-056 KOL / US-057 情绪指数 / US-058 雪球热词 / US-059 公告 NLP / US-060 东财问答 NLP / US-061 K 线解读) 都是 "固定输入 → 结构化输出" 不同，Copilot 是 **"自由文本 prompt → 4 种意图分类 → 分支响应"** 的 meta 形态。**6 项核心模式**: (1) **强→弱 intent 正则优先级**（generate_draft > suggest_params > explain_backtest > general）— 强类必须在弱类之前，否则 "写策略，解释 sharpe" 会被错分到 explain_backtest; 同 US-055 normalizeRecommendation strong_buy > buy 模式; (2) **prompt 模板顺序固定**（System + Strategy + Description + Default params + Recent backtests + User intent + User question）方便后续 prompt tuning 对比; (3) **启发式 fallback 4 种 intent 各自分支文案**（不是一句通用 "AI 不可达请重试" 兜底）; (4) **conversation_id 续接对话上下文**（COP-{YYYYMMDDHHmmss}-{rand4} 业务 ID，前端多轮对话可传同一 ID）; (5) **saveConversation 默认 noop**（每问独立上下文，会话历史价值低；未来引入加密会话表只改 DefaultDataSource）— 与 US-055/061 强制 saveReport 的有结构数据存储相反; (6) **suggested_params + extractKeyDelta 跨 tab 数据流**（Copilot 建议 → diff Table → "应用并去新建回测" 把 params merge 进表单 JSON 不覆盖既有手动改动）。**判据：何时不缓存 (vs US-061 24h TTL)**: 输入维度数少且离散 (stock_code + lookback_days 2 维) → TTL 缓存; 维度多且开放 (prompt 自由文本 + intent + strategy + history) → 不缓存。下次任何"自由文本输入 + 多意图分类 + 跨 tab 上下文" 类 AI feature（US-073 复盘日记 AI 自生成 / 未来"组合优化助手"）按此 6 项模板。
 - **Frontend FloatButton + Drawer 聊天模板 (US-062 引入)**: 工作区右下角浮聊天面板的标准布局：`<FloatButton type="primary" icon={<RobotOutlined />} style={{ insetInlineEnd: 32, bottom: 32 }} />` 触发 `<Drawer placement="right" width={480} />`。**关键 styling**: `styles={{ body: { display: 'flex', flexDirection: 'column', padding: 0 } }}` 让内部 4 块（顶部 context / quick-prompts / 消息列表 flex 1 / 输入框）撑满。**ChatBubble 子组件**: 用户右对齐 + 蓝底白字 + UserOutlined; 助手左对齐 + 白底 + RobotOutlined; pending 显 `<Spin />` + "正在思考..."。**消息列表 background = #f6f8fa** chat 体感一致 (类 Slack/微信)。**跨 tab 应用模式**: onApply 回调 = merge-not-overwrite (`{...existingJSON, ...suggestedParams}`) + setActiveKey 切到目标 tab + message.success 反馈。下次 US-074 黑天鹅"AI 风控提示弹层" / US-091 系统健康度浮窗 / 任何"AI 助手 panel"都复用此 5 件套模板（FloatButton + Drawer + ChatBubble + merge-not-overwrite + tab 切换）。
 
+### Push notifications — outbound channels (US-063+)
+- **第 1 个推送类 feature 模板 (US-063 DailyTradingDigestService 引入)**: 后续 US-064 (飞书业绩预告即时提醒) / US-065 (邮件周报 SMTP) / US-066 (微信公众号订阅消息) / US-067 (高优先级 RiskAlert 三通道并行) 全部按此 8 项 checklist：(1) **`User.risk_config.notification_channels` JSONB namespace 共享**（与 position_limits / trailing_stop / drawdown_breaker 并列，免去新表，复用 US-017 `.changed('risk_config', true)` JSONB mutation 模式）。`feishu` / `email` / `wechat` 三个子对象。(2) **`normalizeNotificationConfig(raw)` 静默退回默认**（与 US-047..US-055 normalizeXxxConfig 一致）— 用户改坏一项不让整 service 4xx。(3) **`shouldSendForUser(config, hasEnvFallback)` 多路径 gate** 至少含 "通道未启用 / 该类消息关闭 / 缺少接收地址 + env fallback" 3 路径。(4) **DataSource 注入式 send**（`sendXxxCard(payload, url)` / `sendEmail(payload, addr)` / `sendWeChatMessage(payload, openid)`）— 实际 webhook/SMTP/微信调用走 DataSource 接口，单测 fake 完全脱外部依赖。(5) **每用户独立 try/catch**: per-user 串行 await + outer try/catch wrap，单用户失败不阻塞批量。(6) **`dry_run=true` 选项**: 让 UI 预览 payload 不实际推送；前端配合 "预览 + Modal.confirm 二次确认推送" 双层 UX 保护。(7) **业务 ID `{TYPE}-{user_id}-{YYYYMMDD}-{rand4}`** 与 US-055 命名范式一致 (`DIGEST-` / `EARN-` / `WEEKLY-` / `WECHAT-` / `ALERT-` 前缀)。(8) **scheduler cron + manual trigger 双入口**: cron 走 SchedulerService 一个 task type (`PAPER_TRADING_DAILY_DIGEST` / `EARNINGS_FORECAST_PUSH` / `WEEKLY_REVIEW_EMAIL` 等)；manual 走 SettingsController POST endpoint；**共用同一 service.sendXxx() 方法**保证 cron 跑出与用户手动跑出的结果完全一致。完整参考实现：`backend/src/services/DailyTradingDigestService.ts`。
+- **`sendXxxCard(payload, url, {buildCard})` 注入式 buildCard 范式 (US-063 引入)**: FeishuBotWebhookService / EmailNotificationService / WeChatOAService 共享底层 channel adapter，但每种 card/邮件/消息模板的 JSON 结构由 caller (DailyTradingDigestService / EarningsForecastWatcher / WeeklyReviewReportService) 决定。**正确做法**: caller 把 `buildCard(payload): cardJSON` 函数传进 adapter，adapter 只负责"调 buildCard + 调远端 + 解析 code/msg + fail-OPEN 返回"，避免反向依赖。否则 adapter 必须 import 所有 caller 形成 N×M cycle。下次 US-064/065/066/067 加新 card/email/message 类型，FeishuBotWebhookService / EmailNotificationService 不用改一行。
+- **Modal.confirm 二次确认对真实外部发送 (US-063 引入)**: 任何"按钮点了 → 实际外部副作用（发邮件 / 推送飞书 / 调起短信 / 调用第三方 API）" 都必须 `Modal.confirm({title, content, okButtonProps:{type:'primary'}, onOk: async()=>{...}})` 二次确认，纯前端 / dry-run / 本地 state 修改不需要。下次 US-064/065/066/067 都用此规则。
+- **`per_user` 长度 = 1 当 user_id filter (US-063 引入)**: `sendXxxDigests({user_id})` 让 service 过滤到单用户，per_user 数组长度恰好 1（或 0 如果该 user 不存在）。前端 single-user 触发 endpoint 直接 `result.per_user[0]` 取 single result；admin 多用户批量 endpoint 不传 user_id 拿全数组。**service 层不区分单/多 user 模式**，只看是否传 user_id；controller 决定单/多语义。下次任何 single-user 触发的批量类 endpoint (US-064 EarningsForecastWatcher / US-067 RealtimeAlertDispatcher) 按此 controller 收敛单 user 模式。
+- **`react/no-unescaped-entities` 中文 JSX 双引号必须 `&quot;` (US-063 lint 教训)**: `"立即推送"` 在 JSX 文本节点会被 ESLint react/no-unescaped-entities 拦截。**解决**: 用 `&quot;` HTML entity 或换全角引号 `「」`/`『』`。**判据**: 任何 JSX 文本含 `"` / `'` 立即转义，不要等 lint 报错重跑（prettier 还会自作主张转换单/双引号造成死循环）。
+
+---
+
 
 
 ### Tooling
@@ -6017,3 +6026,51 @@ cd backend && npm run sync:announcements -- --date=2026-06-06
 - **DataSource saveConversation noop 默认 (本 story 引入)**: 与 US-055 / US-061 saveReport 落库不同，Copilot 对话**默认不持久化** (DefaultStrategyCopilotDataSource.saveConversation 是 noop)，原因: (1) 用户每次问话独立上下文，会话历史价值低; (2) 自由文本 prompt 容易包含敏感策略参数，落库需考虑加密; (3) 未来引入会话历史表只需改 DefaultStrategyCopilotDataSource 不影响 service / 单测 fake。**fail-OPEN on saveConversation throw**: 即便未来引入会话表，DB 写失败也必须 catch + warn + `metadata.save_error` 不阻塞 UI 拿到 reply。同款 fail-OPEN 已在 US-055/056/061 落库 throw 时确立。
 ---
 
+
+## 2026/06/08 - US-063
+
+### What was implemented
+**第 1 个推送类 feature — 飞书机器人当日交易日报** — 每个交易日 15:30 (盘后 30 分钟) cron 触发，给所有 `User.risk_config.notification_channels.feishu.daily_digest=true` 的用户发飞书 interactive card：账户当日盈亏 (绝对+百分比) + 新增 BUY/SELL 前 3 笔 + 明日 3 策略候选 top 5。
+
+### AC 全部实现
+- ✅ 复用 FeishuBotWebhookService (sendDailyDigestCard 新方法 + 注入式 buildCard 避免反向依赖)
+- ✅ DailyTradingDigestService 在 cron `30 15 * * 1-5` 触发 (Scheduler 注册 PAPER_TRADING_DAILY_DIGEST task type)
+- ✅ Interactive card 包含 PnL / 总资产 / 持仓市值 / 可用现金 / 昨收 / BUY top 3 / SELL top 3 / 明日候选 / footer 时间戳
+- ✅ SettingsWorkspace `通知设置` tab：飞书 webhook URL + 3 个 Switch (daily_digest / earnings_alert / risk_alert) + 保存/预览/立即推送 3 按钮
+- ✅ GET/POST `/api/settings/notification-channels` + bonus 2 endpoints (POST `/daily-digest/preview` dry-run + POST `/daily-digest/send` 手动)
+- ✅ 174 个单元测试覆盖 (DataSource fake 完全脱 DB; 12 个 pure helper + 15 个 service e2e)
+- ✅ Backend tsc + eslint 全 clean (lint 跑了我创建/修改的文件，pre-existing SchedulerService prettier 错误不在本次 diff 内)
+- ✅ Frontend tsc + eslint 全 clean
+
+### Files changed
+**Added**:
+- `backend/src/services/DailyTradingDigestService.ts` (1180 lines) — 服务主入口
+- `backend/src/api/controllers/SettingsController.ts` (95 lines) — 4 endpoints
+- `backend/src/api/routes/settings.routes.ts` (60 lines) — /api/settings/* 路由
+- `backend/tests/services/daily-trading-digest-service.test.ts` (1040 lines) — 174 assertions
+- `frontend/src/services/settingsService.ts` (167 lines) — 4 API 函数 + 完整 TS 类型
+
+**Modified**:
+- `backend/src/index.ts` — import + mount settingsRoutes
+- `backend/src/services/FeishuBotWebhookService.ts` — 新增 sendDailyDigestCard (76 lines)
+- `backend/src/services/SchedulerService.ts` — PAPER_TRADING_DAILY_DIGEST task handler + cron 注册
+- `frontend/src/pages/workspace/SettingsWorkspace.tsx` — 从 50 行占位 → 510 行完整通知设置 + 预览 Modal
+
+### Quality checks
+- `cd backend && npx ts-node --transpile-only tests/services/daily-trading-digest-service.test.ts` → **174 ok, 0 failed** ✅
+- `cd backend && npx tsc --noEmit` → exit 0 ✅
+- `cd backend && ./node_modules/.bin/eslint src/services/DailyTradingDigestService.ts src/services/FeishuBotWebhookService.ts src/api/controllers/SettingsController.ts src/api/routes/settings.routes.ts src/index.ts --quiet` → exit 0 ✅
+  - SchedulerService 已有 16 个 pre-existing prettier 错误 (not in my diff)；CLAUDE.md 约定 "When changing a file, only fix lint errors that touch your diff" — skip
+- `cd frontend && ./node_modules/.bin/tsc --noEmit` → exit 0 ✅
+- `cd frontend && ./node_modules/.bin/eslint src/services/settingsService.ts src/pages/workspace/SettingsWorkspace.tsx --ext .ts,.tsx --quiet` → exit 0 ✅ (fix 1: 中文双引号在 JSX 文本内必须改成 `&quot;` 否则 react/no-unescaped-entities)
+- Browser verification: 手动 — 无 dev-browser MCP
+
+### Learnings for future iterations
+- **第 1 个推送类 feature 模板 (本 story 引入, 已加入 Codebase Patterns)**: 后续 US-064 (飞书业绩预告) / US-065 (邮件周报) / US-066 (微信公众号) / US-067 (高优先级告警) 全部按此 8 项 checklist：(1) **共用 `User.risk_config.notification_channels` JSONB namespace** — 与 position_limits / trailing_stop / drawdown_breaker 并列，免去新表；(2) **normalizeNotificationConfig 静默退回默认** — 用户改坏一项不该让整 service 4xx (与 US-047..US-055 同款 normalize 风格)；(3) **shouldSendXxxForUser 多路径 gate** — 包括"通道未启用 / 该类消息关闭 / 缺少接收地址" 至少 3 路径 + env fallback；(4) **DataSource 注入式 send** — 实际 webhook/SMTP 调用走 DataSource 接口，单测 fake 完全脱外部依赖；(5) **每用户独立 try/catch** — 单用户失败不阻塞批量 (per-user 串行 await + outer try/catch wrap)；(6) **dry_run=true 选项** — 让 UI 预览 payload 不实际推送，配合"预览 + Modal.confirm 二次确认推送" UX；(7) **业务 ID 命名 `{TYPE}-{user_id}-{YYYYMMDD}-{rand4}`** (与 US-055 命名范式一致)；(8) **scheduler cron + manual trigger 双入口** — cron 用 SchedulerService.PAPER_TRADING_DAILY_DIGEST task type；manual trigger 走 SettingsController.POST endpoint，**共用同一 service.sendDigests() 方法**保证 cron 跑出和用户手动跑出的结果完全一致。完整模板在 `backend/src/services/DailyTradingDigestService.ts` 顶部 jsdoc。下次 US-064 EarningsForecastWatcher 复用此 8 项，主要差异只在 trigger source (DB afterCreate hook vs cron) 和 candidates loader (持仓股 EarningsForecast 表新增数据)。
+- **`sendDailyDigestCard(payload, url, {buildCard})` 注入式 buildCard 避免反向依赖**: FeishuBotWebhookService 在 services/ 顶层，DailyTradingDigestService 也在 services/。如果 FeishuBotWebhookService 内 `import { buildDigestCard } from './DailyTradingDigestService'`，会让 FeishuBotWebhookService → DailyTradingDigestService → ... → FeishuBotWebhookService 形成 cycle 风险，未来加新 card 类型 (US-064 EarningsAlertCard / US-067 RiskAlertCard) 也会让 FeishuBotWebhookService 必须知道所有 caller。**正确做法**: caller 传 buildCard 函数进来，FeishuBotWebhookService 只负责"调用 buildCard + axios.post + 解析 code/msg + fail-OPEN 返回" 这一统一流程。下次 US-064/067 加新 card 类型，FeishuBotWebhookService 不用改一行。
+- **Modal.confirm 二次确认对真实外部发送**: SettingsWorkspace 的"立即推送一条日报"按钮不是 onClick={handleSendNow} 直接执行，而是 `Modal.confirm({title, content, okButtonProps: {type: 'primary'}, onOk: async () => {...}})` 让用户必须再点一次"推送"才真发。**判据**: 任何"按钮点了 → 实际外部副作用 (发邮件 / 推送飞书 / 调起短信 / 调用第三方 API)" 都必须 Modal.confirm 二次确认；纯前端 / dry-run / 本地 state 修改不需要。下次 US-064/065/066/067 都用此规则保护用户。
+- **`renderNotifications()` vs `renderPlaceholder()` activeKey 分支**: SettingsWorkspace 4 个 tab 只有 'notifications' 是真实实现，其余 3 个 (profile/keys/users) 仍是 placeholder。**判据**: WorkspaceLayout 内 `{activeKey === 'notifications' ? renderNotifications() : renderPlaceholder()}` 三元分支比给每个 tab 写独立 sub-component (3 个 placeholder 重复) 更紧凑。同款分支 render 模式适用其他增量实现 workspace 的过渡期 (US-068+ 运维 workspace / US-091+ 系统健康度)。
+- **`react/no-unescaped-entities` 中文 JSX 双引号必须 `&quot;`**: `"立即推送"` 在 JSX 文本节点会被 ESLint react/no-unescaped-entities 拦截，无论是英文 ASCII 双引号还是中文「」全角双引号。**解决**: 用 `&quot;` HTML entity 或换用全角引号 `「」`/`『』`。本 story 已用 `&quot;`。下次任何 JSX 文本含 `"` 都立即转义而不要等 lint 报错重跑 — 还可避免 prettier 自作主张把 `"立即推送"` 转成 `'立即推送'` (但 prettier 内单引号在 JSX text 又会被 react/no-unescaped-entities 拦截 — 死循环)。
+- **`SendDigestsResult.per_user` 长度 = 1 当 user_id filter** (前端 single-user 取 [0])：sendDigests({user_id}) 会过滤到单用户，per_user 数组长度恰好 1（或 0 如果该 user 不存在）。前端 SettingsWorkspace.handlePreview / handleSendNow 直接 `result.per_user[0]` 取 single result 不需要 find；但若未来 admin endpoint 想跑多用户日报，per_user 会是 N 长度——controller 必须 ID filter 保证 single 还是 multi，service 不区分。下次任何 single-user 触发的批量类 endpoint 都按此 controller 收敛单 user 的模式。
+- **Frontend `headerActions` 按 activeKey 切换**: WorkspaceLayout 顶部 right-aligned 按钮组应该按当前 tab 切换 — 'notifications' tab 显刷新 + tag，其他 tab 显 "待迁移" tag。这比"全 tab 共享一个 headerActions" 更精确反映各 tab 当前可操作的内容。同款模式适用 PortfolioWorkspace / LabWorkspace 等多 tab workspace 未来扩展。
+---

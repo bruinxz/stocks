@@ -110,6 +110,82 @@ class FeishuBotWebhookService {
     return Boolean(this.getWebhookUrl());
   }
 
+  /**
+   * US-063 — 发送当日交易日报 interactive card。
+   *
+   * 与 `sendRecommendationSummary` 互补：那是 `msg_type='post'` 富文本，本方法走
+   * `msg_type='interactive'` card schema（DailyTradingDigestService.buildDigestCard
+   * 输出的 JSON）让 PnL / 买入 / 卖出 / 明日候选分块更醒目。
+   *
+   * 默认走 daily-digest 自带的 buildCard helper（避免本 service 反向依赖
+   * `DailyTradingDigestService` —— layer 内不 cross-import）。若 caller 想测试或
+   * 自定义 card，可注入 `options.buildCard`；payload shape 由 caller 自己保证。
+   *
+   * 与 sendRecommendationSummary 同款 fail-OPEN：失败返回 `{success:false, message}`
+   * 不 throw —— 让 scheduler 不挂、上层 service 收到结果再决定怎么记录。
+   */
+  async sendDailyDigestCard(
+    payload: any,
+    webhookUrl?: string,
+    options?: { buildCard?: (payload: any) => any }
+  ): Promise<FeishuBotWebhookSendResult> {
+    const targetUrl = firstText(webhookUrl, this.getWebhookUrl());
+    if (toBoolean(process.env.DISABLE_FEISHU_BOT_WEBHOOK, false)) {
+      return {
+        success: false,
+        skipped: true,
+        message: '飞书机器人 webhook 已通过环境变量禁用',
+      };
+    }
+    if (!targetUrl) {
+      return {
+        success: false,
+        skipped: true,
+        message: '飞书机器人 webhook 未配置，已跳过日报推送',
+      };
+    }
+    if (!payload || typeof payload !== 'object') {
+      return {
+        success: false,
+        message: '日报 payload 不能为空',
+      };
+    }
+    if (!options?.buildCard || typeof options.buildCard !== 'function') {
+      return {
+        success: false,
+        message: 'sendDailyDigestCard 必须提供 options.buildCard 以构造卡片 JSON',
+      };
+    }
+
+    let cardBody: any;
+    try {
+      cardBody = options.buildCard(payload);
+    } catch (err: any) {
+      logger.warn(`飞书日报 buildCard 异常: ${err?.message || err}`);
+      return { success: false, message: `buildCard 异常: ${err?.message || err}` };
+    }
+
+    try {
+      const response = await this.http.post(targetUrl, cardBody);
+      const body = response.data || {};
+      const rawCode = body.code ?? body.StatusCode ?? body.status_code ?? 0;
+      const code = Number(rawCode);
+      if (Number.isFinite(code) && code !== 0) {
+        const message = body.msg || body.message || body.StatusMessage || '飞书机器人返回失败';
+        logger.warn(`飞书日报推送失败: code=${code}, message=${message}`);
+        return { success: false, message, data: body };
+      }
+      logger.info(
+        `飞书日报已推送 (user=${payload.user_id ?? '?'}, trade_date=${payload.trade_date ?? '?'})`
+      );
+      return { success: true, data: body };
+    } catch (error: any) {
+      const message = error?.response?.data?.msg || error?.message || '飞书日报推送异常';
+      logger.warn(`飞书日报推送异常: ${message}`);
+      return { success: false, message };
+    }
+  }
+
   async sendRecommendationSummary(
     payload: FeishuRecommendationSummaryPayload
   ): Promise<FeishuBotWebhookSendResult> {

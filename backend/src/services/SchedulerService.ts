@@ -23,6 +23,7 @@ import { trailingStopGuard } from '../portfolio/risk/TrailingStopGuard';
 import { drawdownCircuitBreaker } from '../portfolio/risk/DrawdownCircuitBreaker';
 import { marketRegimeAlertService } from '../portfolio/risk/MarketRegimeAlertService';
 import { perStockStopLossGuard } from '../portfolio/risk/PerStockStopLossGuard';
+import { dailyTradingDigestService } from './DailyTradingDigestService';
 import { benchmarkIndexService } from './BenchmarkIndexService';
 import { automatedRecommendationLoopService } from './AutomatedRecommendationLoopService';
 import { recommendationTradeOutcomeService } from './RecommendationTradeOutcomeService';
@@ -2253,6 +2254,68 @@ class SchedulerService {
             hindsightRefresh?.refreshed_count ?? 0
           }，Canary快照 ${canarySnapshot?.snapshot_capture?.snapshot_id || '无'}`
         );
+      } else if (task.type === 'PAPER_TRADING_DAILY_DIGEST') {
+        // US-063 — 每日收盘后 (默认 15:30) 给所有 notification_channels.feishu.daily_digest=true
+        // 的用户发飞书 interactive card 日报（PnL / 新增 BUY/SELL / 明日候选）。
+        // `user_id` 可选；不传 = 扫所有 is_active=true 用户。`dry_run`=true 让 ops 预演 payload
+        // 不真发 webhook。`per_strategy_limit` 控制明日候选 cap（默认 5）。
+        const targetUserId = parameters.user_id || parameters.userId;
+        const dryRun =
+          parameters.dry_run !== undefined
+            ? Boolean(parameters.dry_run)
+            : parameters.dryRun !== undefined
+            ? Boolean(parameters.dryRun)
+            : false;
+        const perStrategyLimit =
+          parameters.per_strategy_limit !== undefined
+            ? Number(parameters.per_strategy_limit)
+            : parameters.perStrategyLimit !== undefined
+            ? Number(parameters.perStrategyLimit)
+            : undefined;
+        const perDirectionTradeLimit =
+          parameters.per_direction_trade_limit !== undefined
+            ? Number(parameters.per_direction_trade_limit)
+            : parameters.perDirectionTradeLimit !== undefined
+            ? Number(parameters.perDirectionTradeLimit)
+            : undefined;
+        const digestResult = await dailyTradingDigestService.sendDigests({
+          user_id: targetUserId ? Number(targetUserId) : undefined,
+          trade_date: parameters.trade_date || parameters.tradeDate,
+          dry_run: dryRun,
+          per_strategy_limit: perStrategyLimit,
+          per_direction_trade_limit: perDirectionTradeLimit,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: digestResult.scanned_users,
+          completed_items: digestResult.sent_count,
+          failed_items: digestResult.failed_count,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: null,
+          result_summary: {
+            scenario: 'paper_trading_daily_digest',
+            trade_date: digestResult.trade_date,
+            scanned_users: digestResult.scanned_users,
+            sent_count: digestResult.sent_count,
+            skipped_count: digestResult.skipped_count,
+            failed_count: digestResult.failed_count,
+            dry_run: dryRun,
+            per_user_summary: digestResult.per_user.map(u => ({
+              user_id: u.user_id,
+              username: u.username,
+              status: u.status,
+              sent: u.sent,
+              skip_reason: u.skip_reason,
+              error: u.error,
+            })),
+          },
+        });
+        logger.info(
+          `当日交易日报推送完成。扫描用户 ${digestResult.scanned_users}，` +
+            `已发 ${digestResult.sent_count}，跳过 ${digestResult.skipped_count}，` +
+            `失败 ${digestResult.failed_count}` +
+            (dryRun ? '（dry-run，未实际推送）' : '')
+        );
       } else if (task.type === 'AUTO_RECOMMENDATION_LOOP') {
         const result = await automatedRecommendationLoopService.run({
           username: parameters.username || 'lym',
@@ -3451,6 +3514,19 @@ class SchedulerService {
           sell_signal_source_type: 'all',
           report_to_feishu: true,
           capture_canary_snapshot: true,
+        },
+      },
+      {
+        // US-063 — 每个交易日 15:30 给所有 notification_channels.feishu.daily_digest=true
+        // 的用户发飞书 interactive card 日报。
+        name: '飞书当日交易日报',
+        type: 'PAPER_TRADING_DAILY_DIGEST',
+        cron_expression: '30 15 * * 1-5',
+        is_active: true,
+        parameters: {
+          dry_run: false,
+          per_strategy_limit: 5,
+          per_direction_trade_limit: 3,
         },
       },
     ];
