@@ -1045,8 +1045,8 @@
         "Tests pass"
       ],
       "priority": 61,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026-06-08. POST /api/ai/technical-analysis endpoint accepts stock_code + lookback_days (60 default, 20-250 clamp). Service composes recent N OHLCV bars + MACD(12,26,9) + RSI(14) + Bollinger(20,2σ) + 5-day volume ratio via QuantMath, calls TradingAgents AI; on failure falls back to heuristic (MACD+布林 strong signal OR momentum_pct > 5%). 24h TTL cache via TechnicalAnalysisReport with id PK + (stock_code, lookback_days, expires_at) index; cache miss writes new row preserving old as snapshot; force_refresh=true skips cache. 189-assertion test suite covers all 13 pure helpers (normalizeLookbackDays / clampConfidence / extractLastValues / normalizeTrend / normalizePriceArray / normalizePriceZone / parseRemoteAnalysis / buildIndicatorContext / buildHeuristicFallback / formatSummary / formatHeuristicSummary / isCacheActive / cacheRowToResult) + 12 service e2e cases (cache hit/miss / force_refresh / dry_run / insufficient bars / remote FAILED / remote throw / save throw / cache throw / refresh alias / findActiveCache read-only). tsc clean + lint clean."
     },
     {
       "id": "US-062",

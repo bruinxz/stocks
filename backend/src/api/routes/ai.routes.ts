@@ -294,4 +294,19 @@ router.get('/screener/:id', authController.authenticate, screenerController.getD
  */
 router.get('/kol-opinions', authController.authenticate, aiAdvisorController.getKOLOpinions);
 
+/**
+ * @route POST /api/ai/technical-analysis
+ * @desc US-061 — 大模型技术面 K 线解读
+ *       Body: { stock_code (必填), lookback_days (默认 60, 20-250),
+ *               force_refresh (默认 false), dry_run (默认 false), task_label }
+ *       Returns: { trend, support_levels, resistance_levels, buy_zone,
+ *                  sell_zone, summary, confidence, ... 24h 缓存 TTL }
+ * @access Private
+ */
+router.post(
+  '/technical-analysis',
+  authController.authenticate,
+  aiAdvisorController.getTechnicalAnalysis
+);
+
 export default router;

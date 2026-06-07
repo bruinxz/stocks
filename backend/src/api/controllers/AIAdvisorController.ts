@@ -14,6 +14,10 @@ import {
   aiInvestmentSignalService,
   inferAgentSession,
 } from '../../services/AIInvestmentSignalService';
+import {
+  technicalAnalysisService,
+  normalizeLookbackDays,
+} from '../../services/TechnicalAnalysisService';
 
 const TRADING_AGENTS_URL = process.env.TRADING_AGENTS_URL || 'http://47.93.224.109:8000';
 
@@ -29,6 +33,7 @@ export class AIAdvisorController {
     this.getReportById = this.getReportById.bind(this);
     this.listReports = this.listReports.bind(this);
     this.getKOLOpinions = this.getKOLOpinions.bind(this);
+    this.getTechnicalAnalysis = this.getTechnicalAnalysis.bind(this);
   }
 
   /**
@@ -594,6 +599,65 @@ export class AIAdvisorController {
       });
     } catch (error: any) {
       logger.error('getKOLOpinions 失败:', error);
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  //  US-061 — AI 大模型技术面 K 线解读
+  // ---------------------------------------------------------------------------
+
+  /**
+   * POST /api/ai/technical-analysis
+   *
+   * Body:
+   *   - stock_code:    股票代码 / 名称 (必填)
+   *   - lookback_days: K 线回看天数 (默认 60, 范围 20-250, service 层 clamp)
+   *   - force_refresh: 强制刷新跳过 24h 缓存 (默认 false)
+   *   - dry_run:       不写表 (默认 false, 前端预览用)
+   *   - task_label:    任务来源标签 (写入 metadata)
+   *
+   * Returns:
+   *   { success: true, data: {
+   *       stock_code, stock_name, lookback_days,
+   *       trend, support_levels, resistance_levels,
+   *       buy_zone, sell_zone, summary, confidence,
+   *       status, nlp_engine, indicators_snapshot,
+   *       from_cache, persisted, generated_at, expires_at, error, metadata
+   *   } }
+   */
+  async getTechnicalAnalysis(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const body = req.body || {};
+      const stockCodeInput = typeof body.stock_code === 'string' ? body.stock_code.trim() : '';
+      if (!stockCodeInput) {
+        return res
+          .status(400)
+          .json({ success: false, message: 'stock_code 不能为空（股票代码或名称）' });
+      }
+
+      const resolvedTicker = await this.resolveTicker(stockCodeInput);
+      if (!resolvedTicker) {
+        return res.status(404).json({
+          success: false,
+          message: `无法识别股票: ${stockCodeInput}`,
+        });
+      }
+
+      // 静默退回默认而不 4xx (与 normalizeXxxConfig 模式一致)
+      const lookbackDays = normalizeLookbackDays(body.lookback_days);
+
+      const userId = (req as any).user?.id;
+      const result = await technicalAnalysisService.analyze(resolvedTicker, lookbackDays, {
+        force_refresh: body.force_refresh === true,
+        dry_run: body.dry_run === true,
+        task_label: typeof body.task_label === 'string' ? body.task_label : undefined,
+        user_id: typeof userId === 'number' ? userId : undefined,
+      });
+
+      return res.json({ success: true, data: result });
+    } catch (error: any) {
+      logger.error('getTechnicalAnalysis 失败:', error);
       return res.status(500).json({ success: false, message: error.message });
     }
   }

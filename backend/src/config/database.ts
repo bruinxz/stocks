@@ -69,6 +69,7 @@ import { MarketSentimentIndex } from '../models/MarketSentimentIndex';
 import { SnowballHotKeyword } from '../models/SnowballHotKeyword';
 import { AnnouncementSummary } from '../models/AnnouncementSummary';
 import { EastMoneyQATopic } from '../models/EastMoneyQATopic';
+import { TechnicalAnalysisReport } from '../models/TechnicalAnalysisReport';
 import { LiveBrokerAccount } from '../models/LiveBrokerAccount';
 import { LiveAccountSnapshot } from '../models/LiveAccountSnapshot';
 import { LivePosition } from '../models/LivePosition';
@@ -167,6 +168,7 @@ const sequelize = new Sequelize({
     SnowballHotKeyword,
     AnnouncementSummary,
     EastMoneyQATopic,
+    TechnicalAnalysisReport,
     LiveBrokerAccount,
     LiveAccountSnapshot,
     LivePosition,

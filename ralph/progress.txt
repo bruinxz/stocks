@@ -173,6 +173,9 @@
 - **ISO 周聚合 `computeWeekStart(date)` 范式 (US-060 EastMoneyQATopicService 引入)**: 任何"按周聚合"逻辑 (问答主题统计 / 周报 / 风控周阈值 / 策略周再平衡) 复用 `computeWeekStart` 不要重写。**5 大边界 must-cover**: (a) 周一 self / (b) 周日 → 上周一 (ISO-8601 周日是 day 7 不是 day 0); (c) 跨月 (周日 06-29 → 周一 06-29); (d) 跨年 (周四 01-01 → 周一 12-29); (e) 带 'YYYY-MM-DD HH:mm:ss' 后缀的字符串 (cninfo `question_time` 实际格式). **实现关键**: 用 `getUTCDay() === 0 ? 7 : utcDay` 把 JS 周日的 0 翻成 ISO 的 7, 再减 (isoWeekday - 1) 得周一; 全程 UTC 处理避免本地时区让"周日 23:00" 算到下周一去。**N-tuple PK 用 `(stock_code, week_start, topic)` 复合 UNIQUE**: 同一只股票同周同 topic 只一行, bulkCreate updateOnDuplicate 直接刷新 mention_count + sentiment_score (避免重复 sync 累加污染)。下次 US-061 K 线周技术信号 / US-067 KOL 周观点聚合 / US-088 持仓周变化 都按此 (entity, week_start, dimension) 3-tuple PK。
 - **`parseRemoteClassify` AI payload 4 条防御 (US-060 引入)**: 解析远端 AI 返回结构化 (topic / score) 时必 4 条 guard: (1) `status === 'FAILED'` → null (调用方 fallback 启发式); (2) `!data` → null; (3) `sentiment_score` 非 finite (NaN / Infinity) → 0; (4) `sentiment_score` 超 [-1, +1] 范围 → clamp 而非 throw / null。**不要相信远端守 schema** — 任一缺失都让"远端胡说"污染聚合 (e.g. score=5.0 让平均分爆到 1.5 破坏后续阈值判断)。下次 US-061 K 线解读 / US-074 黑天鹅 NLP / US-067 KOL AI 评分都套此 4 条 guard。
 - **DataSource fake `Set<key>` 粒度 vs boolean 全开关 (US-060 测试引入)**: 批量 sync 测试 (syncStocks 多只股票) 需要"600519 OK 但 000001 throws"的混合 case — 仅一个 `fetchShouldThrow: boolean` 全 throw / 全 OK 二选一无法覆盖 continue_on_error 真路径。**通用模式**: fake DataSource 状态字段优先 `fetchShouldThrowFor: Set<string>` 粒度而非单 boolean, 让测试能精准模拟 per-entity partial failure。下次任何 batch syncN / persistN / classifyN service 测试都按此粒度设计 fake。
+- **24h TTL 缓存范式 (US-061 TechnicalAnalysisService 引入)**: 高成本 + 短时效 (AI K 线解读 / AI 复盘日记 / KOL 观点聚合) 类 service 的存储模式：(1) **不复用 (stock, day) UNIQUE**——同一只股票一天可能多次请求, 应该 hit cache 而非 conflict; (2) **PK = autoIncrement id + 索引 (stock_code, lookback_days, expires_at)** — 旧 cache 行作为历史快照保留 (UI 可回查"上次解读说了什么"), 新 cache 行 INSERT 不 UPDATE; (3) **`expires_at = generated_at + 24h` 列由 service 写入**, 读端 `where expires_at > now() order by generated_at desc limit 1`; (4) **`force_refresh=true` 参数跳过 cache 直接生成** (UI 刷新按钮触发); (5) **缓存查询失败必须 try/catch + warn 不阻塞主流程** (cache miss + 网络问题不应让用户拿不到新结果)。下次 US-067 KOL 观点聚合 / US-073 复盘日记 AI / US-074 黑天鹅监测都按此 5 项 checklist。
+- **AI service 复用 QuantMath 而非内置指标 (US-061 引入)**: AI 解读类 service 计算 MACD / RSI / 布林 / 量比 时必须 `import { sma, ema, rsi, macd, bollinger } from '../quant/engine/QuantMath'`, 不要内置或 copy 同算法到 service 层。**理由**: backtest / strategies / AI 解读三处指标口径必须一致, 否则用户在策略实验室看的 RSI=70 和 AI 弹窗里看的 RSI=68 是不同公式 — 信任崩塌。本范式与 US-009 FactorPipeline 复用 QuantMath 一脉相承; 下次 US-074 黑天鹅 / US-091 综合健康度任何用技术指标的地方都从 QuantMath 取。
+- **启发式 fallback "强信号 + momentum 兜底" 趋势判定 (US-061 引入)**: 任何"趋势判断"启发式 (uptrend/downtrend/sideways) 不能只看 MACD hist 符号 — MACD 在长期单边行情末段会出现 hist 反弹（DIF/DEA 收敛）但价格仍在下方，单看 MACD 会误判 sideways。**正确逻辑**: (1) 优先 MACD hist + 布林 mid **同向**的强信号 (hist > 0 AND close > mid → uptrend); (2) 强信号缺失时用 N 日 momentum_pct **兜底** (|momentum| > 5% 判方向)。**测试 must-cover 末段 hist 反弹场景** (drift -1% × 60 日的下降趋势，末日 MACD hist 已转正但 momentum 仍 -45%)。下次 US-074 黑天鹅 / US-091 风险评分任何"趋势/方向"判定都套此双层兜底, 不要单维度判定。
 
 
 
@@ -5887,4 +5890,69 @@ cd backend && npm run sync:announcements -- --date=2026-06-06
 - **`computeWeekStart` 必须覆盖 5 边界**: 周一 self / 周日 (上周) / 跨月 / 跨年 / 带 'HH:mm:ss' 后缀。ISO-8601 用 `getUTCDay() === 0 ? 7 : utcDay` 把周日的 0 翻成 7, 再减 (isoWeekday - 1) 得周一。**注意 cninfo 返回 question_time 带秒** ('YYYY-MM-DD HH:mm:ss') — slice(0, 10) 取日期部分; 输入 Date 对象也支持但要 UTC 处理 (避免本地时区让"周日 23:00" 算到下周一去)。下次任何"按周聚合"逻辑 (周报 / 风控周阈值 / 策略周再平衡) 都复用 `computeWeekStart` 不要重写。
 - **DataSource fake 必须独立 throwForFor Set** 而非 boolean (本 story 引入 `fetchShouldThrowFor: Set<string>`): 批量 syncStocks 测试需要"600519 OK 但 000001 throws"的混合 case — 仅一个 boolean 全 throw / 全 OK 二选一无法覆盖。**通用模式**: fake DataSource 状态字段优先 `Set<key>` 颗粒度而非 boolean 全开关, 让测试能精准模拟 partial failure。
 - **`parseRemoteClassify` 4 条防御**: (1) `status === 'FAILED'` → null; (2) `!data` → null; (3) `sentiment_score` 非 finite → 0; (4) `sentiment_score` 超 [-1, +1] → clamp。任一缺失都让"远端胡说" 污染聚合。下次任何 "AI 返回结构化分类 / 评分" 解析函数 (US-061 K 线解读 / US-074 黑天鹅 NLP) 都套此 4 条 — 别相信远端会守 schema。
+---
+
+## 2026-06-08 — US-061 AI：大模型技术面 K 线解读
+
+### What was implemented
+**US-061 AC 全部实现**: POST `/api/ai/technical-analysis` 端点, 入参 `{stock_code, lookback_days}`, 后端拼接近 N 日 OHLCV + MACD + RSI + 布林带 + 量比, 调 TradingAgents AI (失败 fallback 启发式) 返回 `{trend, support_levels, resistance_levels, buy_zone, sell_zone, summary, confidence}`, 结果缓存 24h 进 `TechnicalAnalysisReport`. 全程脱离 DB 单测覆盖.
+
+**核心契约**:
+- `TechnicalAnalysisService.analyze(stockCode, lookbackDays, options)` — 主流程: cache hit / miss / force_refresh / dry_run / 远端 FAILED / save fail-OPEN 6 条路径全 covered;
+- `TechnicalAnalysisService.findActiveCache(stockCode, lookbackDays)` — 只读, 不触发新生成;
+- `TechnicalAnalysisService.refresh(stockCode, lookbackDays)` — force_refresh=true 别名;
+- DataSource 接口 5 方法: loadBars / resolveStockName / callRemoteAnalyze / findActiveCache / saveReport;
+- 13 个纯函数全 export: normalizeLookbackDays / clampConfidence / extractLastValues / normalizeTrend / normalizePriceArray / normalizePriceZone / parseRemoteAnalysis / buildIndicatorContext / buildHeuristicFallback / formatSummary / formatHeuristicSummary / isCacheActive / cacheRowToResult.
+
+**指标计算复用 QuantMath**:
+- `sma / ema / rsi / macd / bollinger` 全部从 `backend/src/quant/engine/QuantMath.ts` import, 不内置 — 保持 backtest / strategies / AI 解读三处指标口径一致;
+- MACD(12, 26, 9) / RSI(14) / 布林(20, 2σ) / 量比 = 当日volume / 近5日均;
+- bars 不足时各指标独立判 null (不抛), AI 远端仍可接收剩余 ctx 字段.
+
+**24h TTL 缓存**:
+- `expires_at = generated_at + 24h` 由 service 写入;
+- 读端 `findActiveCache` = `where expires_at > now() order by generated_at desc limit 1`;
+- 每次 cache miss 写**新行**不 update 旧行 — 旧行作为历史快照供 UI 回看;
+- `force_refresh=true` 跳过 cache (UI 刷新按钮触发);
+- 缓存查询失败 try/catch + warn 不阻塞主流程.
+
+**AI vs 启发式 fallback 双路** (与 US-059 AnnouncementNLP 同款双路范式):
+- 默认调 TradingAgents `/api/nlp-technical-analysis` 远端 (AC 指定);
+- 远端 throw / FAILED → 启发式兜底 `buildHeuristicFallback(ctx)` 给出 status='partial' 结果 + nlp_engine='heuristic_fallback';
+- 启发式 trend 判定: 优先 MACD hist + 布林 mid 同向 (强信号); 缺失 → N 日 momentum_pct 兜底 (|momentum| > 5%).
+
+**HTTP endpoint**:
+- `POST /api/ai/technical-analysis` — body `{stock_code, lookback_days, force_refresh?, dry_run?, task_label?}`;
+- resolveTicker 接受 6 位数字 / sh.xxxxx / 中文名称;
+- normalizeLookbackDays 静默 clamp 到 [20, 250] 区间, 无效退回默认 60.
+
+### Files changed
+**Added**:
+- `backend/src/models/TechnicalAnalysisReport.ts` — Sequelize 模型 (trend / support_levels / resistance_levels / buy_zone / sell_zone JSONB number[] / confidence / status / nlp_engine / indicators_snapshot JSONB / expires_at TTL 列)
+- `backend/src/services/TechnicalAnalysisService.ts` — 主服务 (DataSource DI + 13 纯函数 export + analyze/refresh/findActiveCache e2e + 24h TTL 缓存)
+- `backend/tests/services/technical-analysis-service.test.ts` — 189 assertion 单测 (DataSource fake + 模型 monkey-patch + 12 个 service e2e case)
+
+**Modified**:
+- `backend/src/models/index.ts` — export TechnicalAnalysisReport
+- `backend/src/config/database.ts` — 注册到 sequelize models 数组
+- `backend/src/api/controllers/AIAdvisorController.ts` — 新增 `getTechnicalAnalysis` 方法, bind 到 this
+- `backend/src/api/routes/ai.routes.ts` — POST `/technical-analysis` 路由 + auth middleware
+
+### Quality checks
+- `npx tsc --noEmit` → exit 0 (clean) ✅
+- `npx eslint --fix src/{models,services,api}/...TechnicalAnalysis*` → exit 0 (4 prettier errors auto-fixed) ✅
+- `npx ts-node --transpile-only tests/services/technical-analysis-service.test.ts` → 189 ok, 0 failed ✅
+- 既有 east-money-qa-topic-service + ai-advisor-service test suite 全部仍 pass (133 + 187 = 320 既有) → no regression ✅
+
+### Browser verification
+**N/A** — 后端 only. 前端 UI 消费在未来 story 接入 (StockDetail 抽屉 / TodayWorkspace K 线弹窗).
+
+### Learnings for future iterations
+- **24h TTL 缓存范式** (本 story 新建, 已加入 Codebase Patterns): AI service 高成本 + 短时效的存储模式不同于 (stock, day) UNIQUE 普通 sync; 5 项 checklist (id PK + 索引 stock+window+expires + 写新行不 update + force_refresh 跳过 + cache 失败不阻塞主流程).
+- **AI service 必须复用 QuantMath 不自建技术指标**: backtest / strategies / AI 解读三处口径一致是用户信任的前提, 不能让"策略实验室看的 RSI=70" 和 "AI 弹窗看的 RSI=68"是不同公式。
+- **启发式 trend 判定不能只看 MACD**: 长期单边行情末段 MACD hist 反弹 (DIF/DEA 收敛) 但价格仍在下方 — 单看 MACD 会误判 sideways。正确逻辑: 优先 MACD+布林**同向**强信号, 缺失 → momentum_pct 兜底。本 story 调试时发现 drift -1% × 60 日的下降趋势, 末日 MACD hist 已转正但 momentum 仍 -45% — 必须用 momentum 校正。下次任何"趋势/方向"判定都套此双层兜底。
+- **指标 helper `extractLastValues(arr, n=1)`** — 通用尾值提取 (RSI / EMA / SMA tail), NaN/Infinity 过滤后 slice 末 N 个。下次任何 series → tail value 的场景 (US-074 黑天鹅 SMA 检测 / US-091 健康度评分) 复用此 helper。
+- **`_emaTail / _smaTail` 内部 helper `_` 前缀 export** (本 story 引入命名约定): 内部 / 服务私有 helper 但仍要 export 给单测时用 `_` 前缀, 暗示 "stable API 不保证"。下次任何 service 写出半私有 helper 都按此命名。
+- **DECIMAL / JSONB 数字 Number() 包装 (US-040 codebase pattern 复用)**: Sequelize JSONB 列里包 number 经 PostgreSQL 协议来回可能被序列化成 string; cacheRowToResult 内 `buy_zone: row.buy_zone.map(n => Number(n))` 是 belt-and-suspenders。本 story 测试已覆盖 `confidence: '85.00'` (DECIMAL 来自 DB 是 string) 和 `buy_zone: ['9.4', '9.6']` (JSONB number[] 来自 DB 是 string[]) 两种 boundary, 验证 Number() 包装。下次任何 "JSONB / DECIMAL 数字字段读出后" 都 Number() 包装不要相信 schema 类型。
+- **TradingAgents endpoint 命名一致性** (本 story 第 6 个 AI feature): `/api/nlp-technical-analysis` 与既有 `/api/nlp-summary` (US-059) / `/api/nlp-qa-topic` (US-060) 都是 `/api/nlp-<feature>` 模式。**下次 US-074 黑天鹅 / US-091 健康度评分调远端**也按 `/api/nlp-<feature>` 命名让 ops 看 nginx log 知道是 NLP 类型 endpoint。
 ---
