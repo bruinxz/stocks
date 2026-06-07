@@ -40,22 +40,33 @@ while true; do
   IDLE_MIN=$((IDLE_SEC / 60))
 
   if [ $IDLE_MIN -ge $STUCK_MINUTES ]; then
-    # 卡了，找子 claude 杀掉
-    CLAUDE_PID=$(pgrep -P "$RALPH_PID" -f "claude --dangerously" || true)
-    if [ -n "$CLAUDE_PID" ]; then
-      echo "[$(date)] ⚠ Ralph stuck for ${IDLE_MIN} min. Killing child claude PID ${CLAUDE_PID}."
-      kill "$CLAUDE_PID" 2>/dev/null || true
-      sleep 5
-      # 如果还在就 -9
-      if kill -0 "$CLAUDE_PID" 2>/dev/null; then
-        echo "[$(date)] Forcing kill -9 ${CLAUDE_PID}"
-        kill -9 "$CLAUDE_PID" 2>/dev/null || true
+    # 卡了，找当前 worktree 路径下所有 claude --dangerously 进程
+    # （ralph.sh -> 子 bash -> claude，所以 pgrep -P 找不到，用 pwdx/cwd 匹配 worktree 路径）
+    WORKTREE_PATH="/Users/bytedance/go/src/github.com/bruinxz/stocks/.claude/worktrees/zen-khorana-13679b"
+    CLAUDE_PIDS=$(pgrep -f "claude --dangerously" || true)
+    KILLED_ANY=""
+    for pid in $CLAUDE_PIDS; do
+      # 检查这个 claude 进程的 CWD 是不是在我们的 worktree 下
+      proc_cwd=$(lsof -p "$pid" -d cwd -F n 2>/dev/null | awk 'NR==2{sub(/^n/,"");print}')
+      if [[ "$proc_cwd" == "$WORKTREE_PATH"* ]]; then
+        echo "[$(date)] ⚠ Ralph stuck for ${IDLE_MIN} min. Killing claude PID ${pid} (cwd=$proc_cwd)."
+        kill "$pid" 2>/dev/null || true
+        KILLED_ANY="yes"
       fi
-      # 给 ralph 主循环时间进入下一轮
+    done
+
+    if [ -n "$KILLED_ANY" ]; then
+      sleep 5
+      for pid in $CLAUDE_PIDS; do
+        if kill -0 "$pid" 2>/dev/null; then
+          echo "[$(date)] Forcing kill -9 ${pid}"
+          kill -9 "$pid" 2>/dev/null || true
+        fi
+      done
       sleep 10
       echo "[$(date)] Watchdog action complete. Ralph should advance to next iteration."
     else
-      echo "[$(date)] Log idle ${IDLE_MIN} min but no child claude found, skip."
+      echo "[$(date)] Log idle ${IDLE_MIN} min but no matching claude found in worktree, skip."
     fi
   fi
 done
