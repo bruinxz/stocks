@@ -35,6 +35,7 @@
     "sync:kol-opinions": "ts-node src/scripts/sync-kol-opinions.ts",
     "sync:market-sentiment": "ts-node src/scripts/sync-market-sentiment.ts",
     "sync:snowball-keywords": "ts-node src/scripts/sync-snowball-keywords.ts",
+    "sync:announcements": "ts-node src/scripts/sync-announcements.ts",
     "compute:factors": "ts-node src/scripts/compute-factors.ts",
     "compute:factor-ic": "ts-node src/scripts/compute-factor-ic.ts",
     "compute:factor-correlation": "ts-node src/scripts/compute-factor-correlation.ts",

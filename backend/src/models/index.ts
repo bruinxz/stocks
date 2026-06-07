@@ -67,3 +67,4 @@ export * from './AIStockAnalysisReport';
 export * from './KOLOpinion';
 export * from './MarketSentimentIndex';
 export * from './SnowballHotKeyword';
+export * from './AnnouncementSummary';

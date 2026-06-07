@@ -168,6 +168,8 @@
 - **z-score 横截面算法的 `STDDEV_NEAR_ZERO = 1e-9` 防爆护栏 (US-057 跨 US-035 范式)**: 常数序列 (lookback 全部相同值) stddev=0 → 除零 NaN/Infinity；computeZScore 用 `sd < 1e-9` 阈值返回 null (caller 退化为 0 中性贡献)。同款已在 US-035 FactorICReport / US-038 BootstrapResample 引入。**测试时务必构造非线性时序** (e.g. `[100, 110, 130, 160, 200, ...]` 不等间隔) 否则 diff 序列全相同 z=null 永远过不了非空检查。**`minObservations` 默认 5** (< 此数样本不足返回 null) 与统计学惯例对齐。
 - **day-to-day diff 推算"净买入"模式 (US-057 引入)**: 累计型指标 (NorthboundHolding 累计持股 / 融资余额 / 总账户数) 需要 day-to-day diff 才能得到"今日增量"; `computeDailyDiffs(series)` 返回 length-1 数组 (第一日无 diff), 配套 `target = series[last]; history = series.slice(0,-1)` 用。**指标特性 → 是否 diff 的决策树**: 累计量 → 必须 diff (持仓/余额/总数); 流量/事件计数 → 直接用值 (post_count/news_count/订单数)。**Python 层已预算的 net 字段 (US-057 MarginBalance rz_net_buy_yi) 优先用**, 不要 TS 层再 diff (避免双重转换误差)。下次 US-088 持仓变化 / US-092 资金流入累计追踪都按此 diff 决策树。
 - **list + latest 端点分工范式 (US-057 引入)**: 存储 heavy 字段 (JSONB / 大 text) 的实体, list endpoint (GET /resource?days=N) 返回**轻量 array 不带 JSONB** (减少时序图 payload, 10x 体积差异); latest endpoint (GET /resource/latest) 返回**单条 + 完整 JSONB** 供详情页 drill-down。下次任何 "时序 + 详情" 类 endpoint (US-058 雪球热词 / US-067 KOL 告警 list / US-073 复盘日记 list) 都按此分工避免 payload 膨胀。
+- **"启发式 + 可选 AI" 双路 NLP 范式 (US-059 AnnouncementNLPService 引入)**: 高吞吐文本 NLP (公告 / 问答 / KOL 评论 ~ 几千条/日) 默认走启发式 (关键词字典 + 正则) ≈ 1ms/条免远端调用; UI 主动"详细解读"才设 `extract_with_ai=true` 调远端 30s+。**双路设计 4 要点**: (1) summarize(row, {extract_with_ai}) 单方法两路, caller 不感知 dispatch; (2) AI 失败时 buildNLPResultFromPayload 内 fallback 启发式 + `status='partial'` + `nlp_engine='heuristic_fallback'` 让用户看到部分结果; (3) 启发式字典 (TOPIC_KEYWORDS / ANN_SENTIMENT_KEYWORDS) 全 export 供单测 + 未来按业务调字典只改常量; (4) batch sync 内 for-loop 串行调 summarize (启发式快; AI 路径串行避免远端限流), 不要 Promise.all。下次 US-060 东财问答 NLP / US-061 K 线解读 / US-074 黑天鹅监测同款双路。
+- **NLP `status` (completed/partial/failed/pending) × `nlp_engine` (trading_agents/heuristic_fallback/openai) 双列范式 (US-059 引入)**: status 标记**结果状态**, nlp_engine 标记**抽取引擎**, 两列正交。让 ops 同时看"成败率"和"AI 调用占比"两个独立维度: `status='partial' AND nlp_engine='heuristic_fallback'` = AI 失败 fallback, `status='completed' AND nlp_engine='trading_agents'` = AI 成功。**避免合并成单列 ('completed_ai'/'failed_heur'/'partial_ai_fallback')** — 6 个 enum 组合不仅难列举还失去独立筛选能力。下次 US-060 / US-061 / US-062 任何 AI 抽取都按此双列。
 
 
 
@@ -5737,3 +5739,83 @@ cd backend && npm run sync:snowball-keywords -- --date=2026-06-08
 - **GET endpoint query param 松解析模式重申** (US-050 / 058 一致): date 不匹配 `^\d{4}-\d{2}-\d{2}$` regex → fall through 到 default (取最近一日有数据), only_new=true|1 才认 true 其他都 false, limit 非有限正数 → 默认 200。**UI 不需要先做客户端校验, 传啥都不会 4xx 挂**。未来任何"参数缺省 / 错误降级"的 GET endpoint 都按此模板。
 - **`updated_at` ALWAYS 加入 updateOnDuplicate 列表**: bulkCreate updateOnDuplicate 显式列出列名时容易漏 updated_at, 导致 upsert 的行 updated_at 永远是首次 create 时间, ops 无法判断"上次刷新时间"。SnowballHotKeyword.bulkCreate 列表加 'updated_at' 是修正模式。下次任何 upsert 都加。
 - **`baselineLookbackDays = 14` 默认值的选择**: 中国 A 股最长假期=春节 7-9 天 + 春节前后周末 → 极端连休 14 天。lookback=14 保证春节后第一个交易日仍能找到节前的 baseline。下次任何"找上一个有效日"逻辑都用此 14 默认 (除非业务上明确说不需要跨节假日)。
+
+## 2026/06/08 04:55 - US-059 AI: 公告 NLP 关键信息提取
+
+### What was implemented
+完整后端实现（无前端 — 前端消费在后续 stories）的「公司公告每日同步 + AI/启发式 NLP 抽取 + 按股票 / 按日查询 endpoint」：
+- **AnnouncementSummary 模型**（PK=自增 id, UNIQUE (announce_date, stock_code, original_title) 复合）: 14 列 — announce_date / stock_code (6 位纯码) / stock_name / original_title (STRING 500) / announcement_type (50+ 细分类型) / url / summary TEXT (AI 抽取) / sentiment STRING 10 ('正面' / '中性' / '负面' / null) / key_amounts_json JSONB ([{label, amount, unit}]) / key_topics_json JSONB (string[]) / status (completed / partial / failed / pending) / nlp_engine STRING / error TEXT / raw_payload JSONB; 5 indexes: UNIQUE date+code+title / (stock_code,announce_date) / announce_date / sentiment / announcement_type — 用户主流查询路径都走 B-tree。
+- **AnnouncementClient** TS 客户端 (141 行): spawn python3 调 akshare_helper.py get_announcement_report 拉东财沪深京 A 股公告 (~1000-3000 行/活跃交易日)。{success,data} 契约 + ANNOUNCEMENT_TIMEOUT_MS env (默认 180s)。
+- **Python helper get_announcement_report** (akshare_helper.py +163 行): 调用 ak.stock_notice_report(symbol, date='YYYYMMDD') + symbol 白名单 (8 类: 全部/重大事项/财务报告/融资公告/风险提示/资产重组/信息变更/持股变动) + TypeError fallback (兼容 keyword/positional 调用) + 柔性 col_map (跨版本列名漂移) + 6 位纯代码抽取 (去 SH/SZ 前缀) + 公告日期归一化 (兼容含时间戳) + 同标题去重 + stock_code asc 排序。
+- **AnnouncementNLPService** (903 行, 含 AnnouncementClient 类型导入) — 6 项 checklist (US-055 同款):
+  - `summarize(row, options)`: 单条公告 NLP — extract_with_ai=true 调远端 + 失败 fallback 启发式 / extract_with_ai=false 直走启发式 (默认, 几千条 < 1s);
+  - `syncDate(date, options)`: 拉当日全部 → 逐条 NLP → bulkCreate upsert; **fail-OPEN**: fetch / save 失败均不抛, 返回 SyncDateResult.error;
+  - `syncRange(start, end, options)`: 闭区间逐日 + skipExisting (ANNOUNCEMENT_SKIP_EXISTING env override) + intervalMs 默认 5000 节流 AKShare + 单日失败不阻塞其他日;
+  - `listByStock(stock_code, days, limit)`: 读端 (默认 days=30 上限 365, limit=200 上限 1000);
+  - `listByDate(date, sentiment?, limit)`: 按日全市场公告 (UI: 公告流);
+  - **8 个 pure helpers 全 export**: parseIsoDate / sleep / heuristicSentiment / extractAmounts (中文金额单位正则) / extractTopics (25+ 行业字典) / heuristicSummarize / normalizeSentiment / buildHeuristicNLPResult / buildNLPResultFromPayload — 全脱 DB / 远端可测;
+  - **status='partial'/'failed' 仍 persist** — 失败仍落库 original_title 让 UI 显示, 不反复触发同一标题 NLP;
+  - **双重防御 try/catch** — DataSource 内 catch + service 层再 catch。
+- **AnnouncementController** (191 行) + announcement.routes.ts (60 行):
+  - GET /api/announcements?stock_code=000001&days=30 — listByStock + 6 位代码 strict 校验 (去 sh./sz. 前缀) + days/limit clamp;
+  - GET /api/announcements/by-date?date=2026-06-06&sentiment=正面 — listByDate + sentiment 白名单过滤;
+  - POST /api/announcements/sync — admin 手动触发同步 (body: date/symbol/extract_with_ai/dry_run)。
+  - 全部 auth-private (复用 AuthController.authenticate)。
+- **CLI 脚本** sync-announcements.ts (141 行) + npm run sync:announcements: 支持 --date / --symbol=全部|... / --with-ai (启用远端 AI) / --backfill=start,end / --force / --interval-ms / --dry-run。建议每日盘后 17:00 跑。
+- **单元测试** tests/services/announcement-nlp-service.test.ts (988 行 / **151 个测试 / 0 失败**)。In-memory model monkey-patch (count / findAll / bulkCreate) + fake DataSource — 完全脱 DB + 脱 Python 子进程 + 脱远端 TradingAgents。覆盖维度:
+  - parseIsoDate (有效 + RangeError) + sleep + heuristicSentiment (4 档优先级 + null) + extractAmounts (多金额 + 单位 + 上限) + extractTopics (字典命中 + 去重 + 上限) + heuristicSummarize (短/长/null) + normalizeSentiment (中文 + 英文 + 大小写) + buildHeuristicNLPResult / buildNLPResultFromPayload (成功 + 失败 fallback);
+  - summarize: useAI=false 启发式 / useAI=true 成功 (engine=trading_agents) / useAI=true 失败 fallback (engine=heuristic_fallback) / 远端 throw 双重防御 catch;
+  - syncDate: happy 3 行 / dry_run / fetch throws → error 返回 / 空数据 → ok+0 / saveSummaries throw → fail-OPEN / useAI 路径 every row 调远端;
+  - syncRange: start>end → throw / 多日 intervalMs=0 / skipExisting / 单日失败不阻塞;
+  - listByStock / listByDate: days/limit clamp + 空 stock_code → [] + 无效 date → [] + sentiment filter。
+
+### Files changed
+- `backend/src/models/AnnouncementSummary.ts` (new, 196 lines)
+- `backend/src/data/sources/AnnouncementClient.ts` (new, 141 lines)
+- `backend/src/services/AnnouncementNLPService.ts` (new, 891 lines)
+- `backend/src/scripts/sync-announcements.ts` (new, 141 lines)
+- `backend/src/api/controllers/AnnouncementController.ts` (new, 191 lines)
+- `backend/src/api/routes/announcement.routes.ts` (new, 60 lines)
+- `backend/tests/services/announcement-nlp-service.test.ts` (new, 988 lines)
+- `backend/python/akshare_helper.py` (+163 lines get_announcement_report + main dispatcher case)
+- `backend/src/models/index.ts` (+1 line export AnnouncementSummary)
+- `backend/src/config/database.ts` (+2 lines import + register in models[])
+- `backend/src/index.ts` (+2 lines route import + app.use)
+- `backend/package.json` (+1 line sync:announcements npm script)
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → exit 0 ✅
+- `cd backend && npx eslint src/models/AnnouncementSummary.ts src/data/sources/AnnouncementClient.ts src/services/AnnouncementNLPService.ts src/scripts/sync-announcements.ts src/api/controllers/AnnouncementController.ts src/api/routes/announcement.routes.ts` → 0 errors (auto-fix 8 prettier issues during dev) ✅
+- `npx ts-node --transpile-only tests/services/announcement-nlp-service.test.ts` → **151 ok / 0 failed** ✅
+- 回归测试: snowball-hot-keyword-sync-service (68 ok) — 无回归 ✅
+
+### Browser verification
+**Not performed** — UI 改动在后续 stories (US-088 前端 stock-profile 抽屉)。可手动 curl 验证:
+```
+# 某股票最近 30 天公告
+curl -H "Authorization: Bearer $TOKEN" 'http://localhost:3000/api/announcements?stock_code=000001&days=30'
+
+# 某日全市场公告 (只看正面)
+curl -H "Authorization: Bearer $TOKEN" 'http://localhost:3000/api/announcements/by-date?date=2026-06-06&sentiment=正面'
+
+# 手动触发同步
+curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+     -d '{"date":"2026-06-06","symbol":"全部"}' \
+     http://localhost:3000/api/announcements/sync
+
+# CLI 同步
+cd backend && npm run sync:announcements -- --date=2026-06-06
+```
+
+### Learnings for future iterations
+- **"启发式 + 可选 AI" 双路 NLP 模式** (US-059 引入): AI 抽取昂贵（每条 30s+ + 远端调用费）, 批量同步 (几千条/日) 走启发式 (关键词字典 + 正则) 是平衡正确率 / 时延 / 成本的实用方案。**实现要点**: (1) 默认 `extract_with_ai=false` 全走启发式 → 1ms/条; (2) UI 主动触发"详细解读"才设 true; (3) AI 路径失败时 fallback 启发式 + status='partial' (不让用户因 AI 故障看不到任何摘要); (4) 启发式覆盖率 ~70% 业务场景, 命中率不够再升级 AI 是渐进式上线。下次 US-060 东财问答 NLP / US-061 K 线解读同款双路设计。
+- **status='partial' / 'failed' 仍 persist 的设计哲学** (US-055 AIAdvisor 同款, US-059 强化): AI 调用失败不能让原始数据丢失。落库 original_title + sentiment=null + nlp_engine='heuristic_fallback' + error=远端错误描述 让 UI 仍能展示标题让用户手动点 PDF 链接, 避免反复触发同一标题的 NLP 浪费 quota。**避免**: catch 失败后 return 不写库 — 这会让 sync 重跑时再调一次远端浪费成本 + 用户看不到这条公告"是 AI 失败" vs "源头没数据"。
+- **dumb fetcher + 业务推理 TS 分工再强化** (US-006 / US-058 / US-059 三方一致): Python helper 只做 (1) AKShare 调用 + (2) 字段映射 + (3) 6 位纯代码归一化 + (4) 标题去重 — 完全不调 AI / 不做 sentiment 判断 / 不抽 amounts / topics。TS NLP service 内做所有"业务智能"。这让 Python helper 可以 1 条命令独立跑通验证数据源 (`python3 akshare_helper.py get_announcement_report 20260606`), AI 链路全权交 TS 控制。**判定**: 任何"规则会演化"的逻辑 (sentiment 字典 / topic 字典 / fallback 策略) 都在 TS; 只有"数据源稳定字段映射 + JSON 净化"在 Python。
+- **NLP 启发式金额 + topic 抽取范式** (US-059 引入 - 可复用至 US-074 黑天鹅 / US-088 持仓事件):
+  - **金额正则**: `/(\d+(?:\.\d+)?)\s*(亿元|万元|元|万股|股)/g` 覆盖中文常见金融单位 5 种; **保留原文单位**不归一化 (UI 显示"1.2 亿元"比"120000000 元"友好); **label 字段截取金额前 6 个字符做上下文** (e.g. "募集资金 1.2 亿元" → label="募集资金"); 同一标题最多 3 个金额防误匹配电话号 / 编号;
+  - **topic 字典**: 25+ 行业 / 业务关键词数组 (新能源 / 光伏 / 半导体 / 海外订单 / 业绩快报...) + Set 去重 + 上限 5 个;
+  - **字典在常量 export** (TOPIC_KEYWORDS / ANN_SENTIMENT_KEYWORDS): 让单元测试可独立断言每个词命中, 也让未来扩展 (新增行业关键词 / 调优 weight) 只改字典而非函数。
+- **AKShare 全市场公告日内有时间戳列**: AKShare stock_notice_report 返回的 `公告日期` 字段实际是 'YYYY-MM-DD HH:MM:SS' 而非纯日期。Python helper 必须 `announce_date_raw.split(' ')[0]` 取日期部分; 不然 ISO 化失败回退到入参 date (虽然结果正确但浪费一次回退判断)。**通用经验**: AKShare 返回的"日期"字段未必都是纯 DATE — 写 col_map 时先 print(df.head()) 看清字段形态 (string / datetime / 'YYYYMMDD' / 'YYYY-MM-DD' / 'YYYY-MM-DD HH:MM:SS')。
+- **UNIQUE 复合索引含 STRING 长字段的取舍** (US-059 引入): `announcement_summaries_date_code_title_uniq` 是 (DATE, STRING(10), STRING(500)) 三列复合 UNIQUE。STRING 500 在 PostgreSQL B-tree 索引中实际 key size 上限 ~2700 bytes，按 UTF-8 中文 3 字节计算 500 字符 = 1500 字节 — 远小于上限, 安全。**判定**: PG 复合 UNIQUE 中含 TEXT / 长 STRING 时, 算上 multi-byte 后留 30% buffer 即可; 真担心溢出时改用 (date, code, MD5(title)) 替代。
+- **`status` 字段独立于 `nlp_engine` 字段** (US-059 引入, US-060+ 复用): `status` 4 个枚举 (completed / partial / failed / pending) 标记 NLP **结果状态**; `nlp_engine` (trading_agents / heuristic_fallback / openai) 标记**抽取引擎**。两者正交: 启发式可以 completed (无 AI 调用), 也可以是 partial (AI 失败 fallback) — 让 ops 同时看到 "成败率" 和 "AI 调用占比" 两个独立维度。**下次 US-060 / US-061 / US-062 任何 AI 抽取都拆这两列**, 不要合并成单列省事。
+---

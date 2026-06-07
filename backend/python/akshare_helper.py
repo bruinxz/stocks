@@ -3552,6 +3552,163 @@ def get_snowball_hot_keywords(symbol: str = "最热门", trade_date: Optional[st
         return []
 
 
+def get_announcement_report(date: str, symbol: str = "全部") -> List[Dict[str, Any]]:
+    """
+    Fetch A-share company announcements (沪深京 A 股公告) for a specific date — US-059.
+
+    Endpoint: AKShare `stock_notice_report(symbol='全部'|'重大事项'|..., date='YYYYMMDD')`
+        东方财富网-数据中心-公告大全-沪深京 A 股公告
+        https://data.eastmoney.com/notices/hsa/5.html
+
+    Returns the full per-day list of announcements (~1000-3000 rows per active
+    trading day). Each row contains the company code/name, the original title,
+    the announcement type (重大事项 / 财务报告 / 融资公告 / 风险提示 /
+    资产重组 / 信息变更 / 持股变动), the announce date, and a URL to the
+    detail page on East Money.
+
+    AC field mapping (PRD US-059 → output dict):
+        - announce_date     公告日期 → ISO YYYY-MM-DD
+        - stock_code        代码    → 6-digit pure code (no sh./sz. prefix)
+        - stock_name        名称
+        - original_title    公告标题
+        - announcement_type 公告类型
+        - url               网址
+        - raw_payload       full original row (JSON-safe) for audit
+
+    AI summary / sentiment / key_amounts / key_topics 由 TS 层 (AnnouncementNLPService)
+    在落库前调用 AI 抽取, Python helper 仅做原始数据拉取 (与 LimitUp.is_famous_yz /
+    SnowballHotKeyword.is_new 同款"Python dumb fetcher + TS 业务推理"分工).
+
+    Args:
+        date: 公告日期 (YYYY-MM-DD 或 YYYYMMDD, 二者皆接受).
+        symbol: 公告类型过滤 (默认 '全部', 也可传 '重大事项' / '财务报告' 等).
+
+    Returns:
+        List of dicts sorted by stock_code asc. Empty list on error or no data.
+        (Returns [] not raise so the TS service can checkpoint "tried but empty".)
+    """
+    try:
+        pure_date = date.replace('-', '')
+        if len(pure_date) != 8 or not pure_date.isdigit():
+            print(f'Invalid date for get_announcement_report: {date}', file=sys.stderr)
+            return []
+        iso_date = _format_iso_date(pure_date)
+
+        # symbol 白名单 (东财接口仅接受这 8 个值)
+        valid_symbols = {
+            '全部', '重大事项', '财务报告', '融资公告', '风险提示',
+            '资产重组', '信息变更', '持股变动',
+        }
+        if symbol not in valid_symbols:
+            print(
+                f'Unknown announcement symbol "{symbol}", defaulting to 全部',
+                file=sys.stderr,
+            )
+            symbol = '全部'
+
+        print(
+            f'Fetching announcements for date={pure_date}, symbol={symbol}...',
+            file=sys.stderr,
+        )
+        try:
+            df = ak.stock_notice_report(symbol=symbol, date=pure_date)
+        except TypeError:
+            df = ak.stock_notice_report(symbol, pure_date)
+        except Exception as e:
+            print(
+                f'stock_notice_report failed for {pure_date} (symbol={symbol}): {e}',
+                file=sys.stderr,
+            )
+            return []
+
+        if df is None or df.empty:
+            print(
+                f'AKShare returned empty announcements dataframe for {pure_date}',
+                file=sys.stderr,
+            )
+            return []
+
+        # 列名柔性映射 (AKShare 列名跨版本漂移防御)
+        col_map: Dict[str, str] = {}
+        for col in df.columns:
+            col_s = str(col)
+            if col_s in ('代码', '股票代码', 'code'):
+                col_map['stock_code'] = col_s
+            elif col_s in ('名称', '股票简称', '股票名称', 'name'):
+                col_map['stock_name'] = col_s
+            elif col_s in ('公告标题', '标题', 'title'):
+                col_map['title'] = col_s
+            elif col_s in ('公告类型', '分类', 'type'):
+                col_map['announcement_type'] = col_s
+            elif col_s in ('公告日期', '发布日期', 'announce_date', 'date'):
+                col_map['announce_date'] = col_s
+            elif col_s in ('网址', 'url', '链接', 'link'):
+                col_map['url'] = col_s
+
+        if not col_map.get('stock_code') or not col_map.get('title'):
+            print(
+                f'stock_notice_report missing essential columns: {df.columns.tolist()}',
+                file=sys.stderr,
+            )
+            return []
+
+        results: List[Dict[str, Any]] = []
+        seen_keys: set = set()
+        for _, row in df.iterrows():
+            raw_code = _cell_str(row, col_map.get('stock_code'))
+            title = _cell_str(row, col_map.get('title'))
+            if not raw_code or not title:
+                continue
+
+            # 抽取 6-digit 纯代码 (去掉 SH/SZ/BJ 前缀)
+            pure = ''.join(ch for ch in str(raw_code) if ch.isdigit())
+            if len(pure) != 6:
+                continue
+
+            # 公告日期 (AKShare 通常返回 'YYYY-MM-DD' 字符串; 兜底用入参)
+            announce_date_raw = _cell_str(row, col_map.get('announce_date'))
+            if announce_date_raw:
+                # 去掉时间部分 (如 '2026-06-06 09:00:00')
+                announce_date_only = announce_date_raw.split(' ')[0]
+                if len(announce_date_only) == 10 and announce_date_only.count('-') == 2:
+                    announce_iso = announce_date_only
+                elif len(announce_date_only) == 8 and announce_date_only.isdigit():
+                    announce_iso = _format_iso_date(announce_date_only)
+                else:
+                    announce_iso = iso_date
+            else:
+                announce_iso = iso_date
+
+            # 去重 (一只股票同一天同一标题只保留一行)
+            dedup_key = f'{announce_iso}|{pure}|{title}'
+            if dedup_key in seen_keys:
+                continue
+            seen_keys.add(dedup_key)
+
+            results.append({
+                'announce_date': announce_iso,
+                'stock_code': pure,
+                'stock_name': _cell_str(row, col_map.get('stock_name')),
+                'original_title': title,
+                'announcement_type': _cell_str(row, col_map.get('announcement_type')),
+                'url': _cell_str(row, col_map.get('url')),
+                'raw_payload': _row_to_jsonable(row, df.columns),
+            })
+
+        # 按 stock_code asc 排序 (稳定 + 便于 UI 分组浏览)
+        results.sort(key=lambda r: (r['stock_code'], r['original_title']))
+
+        print(
+            f'Parsed {len(results)} announcement rows for {pure_date} (symbol={symbol})',
+            file=sys.stderr,
+        )
+        return results
+    except Exception as e:
+        print(f'Error getting announcement report ({date}, {symbol}): {e}', file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return []
+
+
 def main():
     """Main entry point for command line calls"""
     if len(sys.argv) < 2:
@@ -3762,6 +3919,15 @@ def main():
                 except (ValueError, TypeError):
                     limit = 200
             result = get_snowball_hot_keywords(symbol=symbol, trade_date=trade_date, limit=limit)
+
+        elif command == "get_announcement_report":
+            # Args: <date> [symbol]
+            if len(sys.argv) < 3:
+                print(json.dumps({"error": "Missing date for get_announcement_report"}), file=sys.stderr)
+                sys.exit(1)
+            date = sys.argv[2]
+            symbol = sys.argv[3] if len(sys.argv) >= 4 and sys.argv[3] not in ('', '-', 'null') else '全部'
+            result = get_announcement_report(date=date, symbol=symbol)
 
         else:
             print(json.dumps({"error": f"Unknown command: {command}"}), file=sys.stderr)
