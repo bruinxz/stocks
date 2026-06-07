@@ -133,6 +133,8 @@
 - **per-stamp 串行 await 而非 Promise.all 的判据 (US-040)**: 对 200-500 个连续日逐日 resolveRegime 时用 `for...of await` 串行而非 `Promise.all`。3 个理由: (1) MarketEnvironmentService 有 15min 内存 cache (cacheKey 含 asOfDate)，并发 N 个不同 asOfDate 撞不到 cache 反而 N 倍 DB 查询; (2) 单测时 fake source 是同步 Map lookup，串行/并行无差异; (3) 串行天然保持输入顺序与输出顺序对齐 (后续 mergeAdjacentSegments 严格依赖 stamps[i] 按 date 升序)。**判据**: 上游有 cache / 顺序敏感 / 单次调用快 (< 100ms) 用串行; 上游真正独立 + 单次慢 (> 500ms) 用 parallel。下次 US-041 IC 计算每个 trade_date 取 forward return 也属"顺序敏感"走串行。
 - **trade 段归属以 sell_date 为准 (US-040 trade attribution 模式)**: 段内成交统计 (`segment.trade_count` / `win_rate`) 必须以 sell_date 落在段内为判定。3 个理由: (1) `pnl` 在 sell 时才确定，bull 段买入 + bear 段卖出的 trade，盈亏归属于 bear 段才对应"该段实际兑现"; (2) 未平仓 trade (sell_date 未定义) 不计入任何段 — 浮盈在 equity_curve 里已经反映，重复计算成 trade 会双计; (3) `entry_reason` 在 buy_date 已确定，但段归属看 sell_date 不看 entry_reason，避免"业绩超预期入场但行情转熊期卖出"被归错到入场逻辑所属 regime。**未来 US-046 IndustryAttributionService 同款判据**: 行业归因也以 sell_date 时的行业为准 (即使持有期间行业分类调整过)。
 - **JSONB equity_curve 读出时的 Number() 包装 (US-040)**: Sequelize JSONB 列即便 schema 说是 number，从 DB 读出来某些字段也可能被序列化成 string (DECIMAL 类经过 PostgreSQL 协议来回往往这样)。任何 `Number(point.total_value)` 包装是 belt-and-suspenders — 已存 number 时 Number() 是 no-op，已存 string 时正常解析。**规则**: 任何"JSONB 列里包数字" 的读出端 (equity_curve / drawdown_curve / metrics_json 里的数值) 都用 Number() 包装，不要相信 schema 类型。同样适用 US-014 rejected_orders_json 内 reference_price。
+- **诊断工具 — IC 报告 (US-041 FactorICReport)**: quant/factors/ 下首个**诊断工具**（不是新因子）。模式与 US-040 RegimeSegmentedBacktest 高度相似但生活在 factors/ 而非 backtest/，因为它是 "对已有 FactorScore 做事后分析" 不是 "回测/优化"。**关键设计判据 9 个** 已文档化到 `backend/src/quant/factors/CLAUDE.md` 的 "因子诊断工具" 一节: Spearman 而非 Pearson (rank-based 抗异常 + AC 要求) / MIN_CROSS_SECTION_SIZE = 30 (与 US-040 sharpe < 5 → null 同款 "数据不足直接 null") / 4-tuple PK (factor_name, look_forward_days, period_start, period_end) idempotent upsert / **不复用 OptimizationRun 父表 (与 US-040 同款 "事后分析 vs 优化任务" 判据)** / per-day 串行 await (cache-friendly) / DataSource 接口注入 (生产 DefaultFactorICDataSource + 测试 fake) / factor_name 校验仅在未注入 DataSource 时执行 (同 GridSearch/Bayesian/WalkForward fake mode) / **lookahead bias guard** (base_date + lookForward * 1.5 > end_date → 该日跳过，与 US-030 AnalystConsensus 因子内 `row_date > as_of_date` skip 同款时序窗口防 lookahead 范式) / Number(null) === 0 陷阱防御 (DataSource 读 raw DECIMAL 前先 `Number.isFinite()` check)。**纯函数测试模式**: `rankAscending` / `spearmanCorrelation` / `mean` / `sampleStddev` / `aggregateICSeries` 全 export，单测可独立断言 NaN / 边界 / 已知 corr 数值 / tie 处理 (Spearman 标准 "average rank")。**fake DataSource 模式**: 构造 `{ trade_dates, cross_sections, forward_returns }` 配置注入 → 完全脱离 DB；`makeCorrelatedCrossSection(35)` / `makeAnticorrelatedCrossSection(35)` / `makeSmallCrossSection(5)` 三个 fixture helper 覆盖 IC=+1 / -1 / < MIN reject 三大路径。**因子失效阈值在 CLAUDE.md 中明确**: IC mean < 0.02 持续多次 → 剔除；IC_IR < 0.3 → 不稳定；跨 period 持续衰减 > 70% → 信号短期化。下游 US-042 因子相关性 / US-044 PortfolioOptimizer / US-016 FactorWorkspace 都将消费 `factor_ic_results` 表。
+- **第二个事后分析诊断工具 — 因子相关性矩阵 (US-042 FactorCorrelationReport)**: 模式与 US-041 IC 报告几乎一对一镜像（同样在 quant/factors/、同样 DataSource 注入、同样 4-tuple PK、同样不复用 OptimizationRun 父表），但有 4 处**故意差异**化解相关性问题的特殊性: (1) **共用 US-041 spearmanCorrelation / rankAscending / mean / sampleStddev**——避免代码复制，通过 quant/factors/FactorICReport 的 export 直接复用；**跨模块复用判据**：同一目录下相同语义层（事后分析）的纯函数可以单边 import，不会破坏 layer 边界。下次 US-043 蒙特卡洛 也应共用 mean/sampleStddev；US-044 PortfolioOptimizer 也可以共用 Spearman 算因子加权后的相关。(2) **上三角去重**——`(a, b)` 与 `(b, a)` 完全对称，本表只存 `factor_a < factor_b` 的字典序一半（C(N, 2) 行而非 N²）；`dedupPairsToUpperTriangle(factor_names)` 单独 export 的纯函数保证顺序稳定 + 去重。这与 IC 报告 "每因子单独一行" 模式不同，因 IC 不对称。(3) **REDUNDANCY_THRESHOLD = 0.7 用绝对值判定**——强负相关也算共线（一个是另一个的反向版本，组合优化里一加一减相当于没加）；is_redundant=true 是物化字段方便 UI 热力图直接 filter。(4) **无 lookahead bias guard**——相关性只在同一交易日的横截面计算，`factor_score[T] vs factor_score[T]` 无未来信息；与 IC 涉及 forward return 完全不同。**告警 schema 借用 RiskAlert 现有字段**: `symbol='SYSTEM:FACTOR_CORR'` 系统级告警 sentinel + `name=`${factor_a} vs ${factor_b}`` + `level='HIGH'` + 中文 message 含 corr 值 + 区间。前端 UI 按 `symbol` prefix 过滤区分股票告警 vs 系统告警。**RiskAlert per-user write 失败隔离**: writeRedundancyAlerts 单用户失败 try/catch 不阻塞后续用户（同 US-040 RegimeSource try/catch 模式）。**132 个测试 / 全部脱离 DB**: 3 个 export 纯函数 (dedupPairsToUpperTriangle / computeDailyCorrelation / aggregateCorrelationSeries) + end-to-end fake DataSource 覆盖所有路径（独立因子 / 反向因子 / 多日均值 / 双有效股票 < MIN / 横截面为空 / 上三角 dedup / 4 因子 C(4,2)=6 对 / 自定义阈值 / NaN/Inf 过滤 / 跨方向对称）。**做新因子诊断工具 (US-042 之后的 US-043 蒙特卡洛 / US-046 行业归因) 一律照此 9 项 checklist**: ① 共用 US-041 纯函数 ② 4-tuple PK + factor_name 校验跳过 fake mode ③ DataSource 接口 + Default + PRODUCTION + 测试 fake ④ per-pair 串行 await ⑤ ≥30 阈值标准 ⑥ 失效阈值文档化到 CLAUDE.md ⑦ 告警写入按 user_id 数组 + try/catch isolation ⑧ persist 选项默认 true 但 sample_count=0 跳过 ⑨ CLI dual-mode (主流程 / admin list/show/cleanup)。
 
 
 
@@ -4154,4 +4156,320 @@ backtest results 跳过；生产 deployment 后 ops 可跑 `npm run run:regime-b
   让 sharpe 测试有充足日收益 (≥5 个)，`growthPerDay=0.001` 让短窗口测试
   sharpe=null。**未来任何 backtest 派生模块的测试都按此结构**: fake source
   + in-memory fixture + < 100ms 总耗时。
+---
+
+
+## 2026/06/07 - US-041
+
+### What was implemented
+
+US-041 因子 IC 报告与 IC 衰减分析 — 在 `quant/factors/` 引入了首个**诊断工具**
+（不是新因子）`FactorICReport`：对已落库的 FactorScore 与 DailyBar 数据做事后
+分析，按 lookForwardDays = 1/5/10/20/60 多窗口计算每日 Spearman 秩相关（IC）
+并聚合成 mean / std / IR / positive_ratio 时序统计，把结果落库到 4-tuple
+PK `factor_ic_results` 表供策略开发者判断"哪个因子真有 alpha / 哪个该淘汰"。
+
+### Files changed (10)
+
+**新增 4**:
+- `backend/src/models/FactorICResult.ts` — 新 Sequelize 模型，4-tuple PK
+  (factor_name, look_forward_days, period_start, period_end)；含 ic_mean /
+  ic_std / ic_ir / ic_positive_ratio (AC 必须 4 字段) + sample_count /
+  universe_avg_size (诊断扩展) + computed_at / source / created_at / updated_at。
+  5 个 index 覆盖 factor_name / (factor_name, look_forward_days) /
+  look_forward_days / period_end / (factor_name, period_end) 5 种查询模式。
+- `backend/src/quant/factors/FactorICReport.ts` (~620 行) — 主模块。导出
+  5 个纯函数 (`rankAscending` / `spearmanCorrelation` / `mean` /
+  `sampleStddev` / `aggregateICSeries`) + 1 个 class FactorICReport 含
+  4 个方法 (generate / getResults / deleteResults / cleanupOlderThan) +
+  DataSource 接口注入 (`DefaultFactorICDataSource` + `PRODUCTION_FACTOR_IC_DATA_SOURCE`)。
+- `backend/src/scripts/compute-factor-ic.ts` (~280 行) — CLI 含主流程
+  (`--factor` / `--factors` / `--start` / `--end` / `--windows` /
+  `--universe` / `--no-persist`) + 3 个 admin 模式 (`--list` / `--show` /
+  `--cleanup-days`)；退出码 0=全成功 / 1=部分失败但有结果 / 2=严重错误。
+- `backend/tests/factors/factor-ic-report.test.ts` (~700 行) — 118 个
+  测试 / 全部脱离 DB。覆盖 4 个纯函数 (rankAscending 10 边角 / spearman
+  15 边角含 tie/异常值/已知 0.8 数值 / mean+sampleStddev 14 边角 /
+  aggregateICSeries 10 边角) + 16 个 end-to-end 场景 (happy 单/多窗口 /
+  lookahead bias guard / < MIN cross-section / 空 trade_dates / 自定义
+  windows / factor 未注册 ±dataSource / start>=end 抛错 / lookForward<=0
+  抛错 / 空 list 抛错 / 非法日期 / 空 factor_name / period_start/end
+  字段 / 严格单调 IC=1 / 混合正负聚合 / 真实因子名 / persist 默认 true
+  但 sample_count=0 时跳过)。
+
+**修改 6**:
+- `backend/src/models/index.ts` — 新增 `export * from ./FactorICResult;`
+- `backend/src/config/database.ts` — 新增 import + 注册到 models 数组（让
+  `sequelize.sync({alter:true})` 在 dev 模式自动建表）
+- `backend/src/quant/factors/index.ts` — re-export FactorICReport 公共
+  API (class / singleton / DataSource / 纯函数 / 常量 / 类型)
+- `backend/package.json` — 新增 `"compute:factor-ic": "ts-node src/scripts/compute-factor-ic.ts"`
+- `backend/src/quant/factors/CLAUDE.md` — 标题加 "US-041" + 新增"因子诊断
+  工具 (US-041 FactorICReport)" 一节文档化 9 个 design constraints + 因子
+  失效阈值 + 何时扩展指南 + 测试模式
+- `ralph/progress.txt` — 顶部 Codebase Patterns 新增 "诊断工具 — IC 报告
+  (US-041 FactorICReport)" 一节（条目融合 9 个设计判据）
+
+### Quality checks
+
+- `cd backend && npx tsc --noEmit` → exit 0
+- `cd backend && ./node_modules/.bin/eslint <6 changed files> --quiet --fix`
+  → exit 0 (prettier auto-formatting applied to 3 files)
+- `npx ts-node --transpile-only tests/factors/factor-ic-report.test.ts` →
+  118 ok / 0 failed < 1s
+- **Regression** all pass:
+  - 8 既有 factor tests (Analyst 54 + EarningsSurprise 77 + EastMoneyQA 77
+    + GradualBreakout 105 + Liquidity 53 + MomentumReversal 74 +
+    QualityHigh 54 + ShareholderConcentration 85)
+  - 5 既有 backtest tests (ashare-constraints / bayesian 161 / grid-search
+    100 / regime-segmented 136 / walk-forward 141)
+  - 13 既有 strategy tests 全部通过
+- CLI `--help` 启动 clean exit 0
+
+### Browser verification
+
+**Not applicable** — backend-only story（数据诊断工具 + CLI；无 UI）。
+
+### Learnings for future iterations
+
+- **诊断工具放在 `quant/factors/` 还是 `quant/backtest/`**: 判据 = "分析对象
+  是因子还是回测"。US-041 分析对象是 FactorScore（已计算的因子值），所以
+  放 quant/factors/ 与 FactorPipeline 平级。未来 US-042 因子相关性矩阵
+  同款放 quant/factors/；US-043 蒙特卡洛压力测试 / US-045 基准归因 / US-046
+  行业归因都分析"已完成的回测"，放 quant/backtest/。
+- **`MIN_CROSS_SECTION_SIZE = 30` 与 US-040 `sharpe_min_samples = 5` 同款
+  "数据不足直接 null"**: 不要写 0 或 placeholder 让下游 mean/avg 静默被
+  污染。整个项目所有"统计聚合不足样本"路径都按此约定。
+- **lookahead bias guard 是事后分析工具的必备**: factor IC 必须保证
+  forward_close 真的在 base_date 之后。base_date + lookForward * 1.5 自
+  然日（含周末/节假日 buffer）> end_date 则跳过该日，let DataSource 兜底
+  返回空 Map 作为 safety net。与 US-030 `analyst_consensus` 因子内 `row_date
+  > as_of_date skip` 是同款防护范式 — **所有时序窗口工具都必须显式 guard**。
+- **`Number(null) === 0` 陷阱（US-031 复习）**: DataSource 实现读 Sequelize
+  raw DECIMAL 列时，`Number(null) === 0` 通过 `isFiniteNumber` check 但会
+  让"NULL" 被当 0 进入计算。**必须先 null check 再 Number 转换**；
+  `DefaultFactorICDataSource.loadFactorCrossSection` 用 `raw_value:
+  { [Op.ne]: null }` 在 DB 层就过滤掉中性补全行避免下游误用。
+- **DataSource 注入模式 = US-040 RegimeSource 副本**: 任何"需要查外部状态
+  (DB / 网络 / 服务) 但又必须可测" 的模块都按 4 件套: 接口 / 默认生产实现
+  + PRODUCTION 单例 / options 注入 / fake 实现脱离 DB。US-041 是第 5 个
+  应用此模式的模块（前 4 个: GridSearch.BacktestRunner / Bayesian /
+  WalkForward.EmbeddedOptimizer / RegimeSegmented.RegimeSource）。
+- **复合 PK upsert pattern 升级 — 4-tuple**: US-035 / US-037 已用过
+  3-tuple；US-041 是项目首个 4-tuple PK 模型。`FactorICResult.upsert(...)`
+  + Sequelize 自动按全部 PK 匹配。alter 兼容: 新行 `defaultValue=0/null`
+  让旧 DB 无缝升级。**消费方注意**: 4-tuple PK 表 `bulkCreate +
+  updateOnDuplicate` 时 updateOnDuplicate 数组**不要**含 PK 字段，否则
+  Sequelize 抛 ambiguous error；改用 `upsert` 单行写入更安全（生命周期一致）。
+- **纯函数模块边界（同 US-029+ 模式）**: rankAscending / spearmanCorrelation
+  / mean / sampleStddev / aggregateICSeries 全部 export，单测可独立断言。
+  本模块独立实现 mean / sampleStddev 而不 import RegimeSegmentedBacktest
+  的同名函数，遵循 US-040 "跨模块反向依赖避免" 范式（quant/factors/ 不能
+  import quant/backtest/）。
+- **测试 fixture 设计**: 3 个 helper (`makeCorrelatedCrossSection(35)` IC=1 /
+  `makeAnticorrelatedCrossSection(35)` IC=-1 / `makeSmallCrossSection(5)` <
+  MIN reject) 让 16 个 end-to-end 场景能在毫秒级跑完。**线性同序 Map 构造
+  让 Spearman 严格 = ±1** 是因子诊断工具单测的灵魂技巧；下次 US-042
+  因子相关性矩阵 / US-046 行业归因测试同款。
+- **CLI 退出码 3 档（同 US-037+ 模式）**: 0=全成功 / 1=部分失败但有结果
+  ／ 2=严重错误。让 cron + CI 可以区分"今天 10 个因子 9 个成功 1 个失败"
+  (exit 1，alert MEDIUM) vs "DB 挂了全失败" (exit 2，alert HIGH)。
+- **CLI admin 模式互斥串行优先级**: 主流程参数 (`--factor` / `--start` /
+  `--end`) vs admin (`--list` / `--show` / `--cleanup-days`) 在同一 action
+  handler 内用 if-return 序列分支判断；admin 优先，主流程兜底。这避免了
+  commander 的 subcommand 重写（增加 CLI 复杂度）。
+---
+
+## 2026/06/07 - US-042 — 回测体系：因子相关性矩阵与因子聚类
+
+### What was implemented
+
+`backend/src/quant/factors/` 下第 2 个**诊断工具** —— `FactorCorrelationReport`
+负责计算因子两两 Spearman 相关性矩阵，识别高度共线（|corr| > 0.7）的因子对，
+自动标记 + 可选写入 RiskAlert 供 ops 关注。完整 end-to-end pipeline：
+- **Sequelize 模型** `backend/src/models/FactorCorrelationResult.ts` 4-tuple
+  复合 PK `(factor_a, factor_b, period_start, period_end)`，**只存上三角**
+  (factor_a < factor_b 字典序去重 C(N,2) 行 vs N²)。诊断字段 `is_redundant`
+  让 UI 热力图直接按字段筛选，不需 abs() 在 SQL 内重算。
+- **主模块** `backend/src/quant/factors/FactorCorrelationReport.ts` (~620 行)
+  3 个 export 纯函数 + 主类 + DataSource 接口注入：
+  - `dedupPairsToUpperTriangle(factor_names)` — N → C(N,2) 上三角 pair；去重 + 排序
+  - `computeDailyCorrelation(crossA, crossB, minPairSize)` — 单日双因子相关
+    （含双有效过滤 + < MIN_PAIR_SIZE 返回 null + NaN/Inf filter）
+  - `aggregateCorrelationSeries(dailyCorrelations)` — 日度→ statistics 聚合
+  - `FactorCorrelationDataSource` 接口 2 个 loader (loadTradeDatesInRange /
+    loadFactorCrossSection) — 后者直接复用 US-041 cross-section 加载语义
+  - `DefaultFactorCorrelationDataSource` 走 FactorScore 表（过滤
+    `raw_value IS NOT NULL` 中性补全行不进相关计算 — 避免大批"无信号"行
+    把相关性向 0 漂移）
+  - `class FactorCorrelationReport` 4 方法 (generate / getResults / deleteResults /
+    cleanupOlderThan)
+- **共用 US-041 spearmanCorrelation / rankAscending / mean / sampleStddev**
+  直接 import — 跨模块复用判据：同一目录下相同语义层（事后分析）的纯函数
+  可以单边 import，不会破坏 layer 边界。
+- **CLI** `backend/src/scripts/compute-factor-correlation.ts` (~280 行)：
+  - 主流程：`--factors=<csv>` (默认注册表全部) + `--start --end` (必填) +
+    `--threshold=0.8` (默认 0.7) + `--alert-admin` (自动查所有 role=admin 用户
+    写 RiskAlert) + `--no-persist` (dry-run)
+  - 3 个 admin 模式：`--list` (最近 30 条) + `--list-redundant` (当前所有
+    redundant pair) + `--show=<factor_name>` (单因子参与的全部 pair，按
+    |corr| 降序) + `--cleanup-days=<n>`
+  - 退出码：0/1/2 三档同 US-037+。
+- **告警** `RiskAlert` 复用现有 model；schema: `symbol='SYSTEM:FACTOR_CORR'`
+  (系统级告警 sentinel，前端按此 prefix 区分股票告警 vs 系统告警) +
+  `name=`${factor_a} vs ${factor_b}`` + `level='HIGH'` + 中文 message 含
+  correlation 值 + 区间 + sample_count + universe_avg。**per-user write 失败
+  isolation** (try/catch 单用户失败不阻塞后续) 同 US-040 RegimeSource 模式。
+
+### Files changed
+
+- `backend/src/models/FactorCorrelationResult.ts` (new)
+- `backend/src/models/index.ts` (added `export * from './FactorCorrelationResult'`)
+- `backend/src/config/database.ts` (import + models[] += FactorCorrelationResult)
+- `backend/src/quant/factors/FactorCorrelationReport.ts` (new)
+- `backend/src/quant/factors/index.ts` (re-export FactorCorrelationReport + types)
+- `backend/src/scripts/compute-factor-correlation.ts` (new)
+- `backend/src/quant/factors/CLAUDE.md` (新增 '因子相关性矩阵 (US-042)' 一节 +
+  与 US-041 IC 报告的关系对比表 + 10 个设计判据 + 失效阈值约定 + 测试模式)
+- `backend/tests/factors/factor-correlation-report.test.ts` (new, ~700 行)
+- `backend/package.json` (npm script `compute:factor-correlation`)
+- `ralph/prd.json` (set US-042 `passes: true` + notes)
+- `ralph/progress.txt` (this entry + 新 Codebase Patterns)
+
+### Quality checks
+
+- `cd backend && npx tsc --noEmit` → exit 0
+- `cd backend && ./node_modules/.bin/eslint src/models/FactorCorrelationResult.ts src/quant/factors/FactorCorrelationReport.ts src/quant/factors/index.ts src/models/index.ts src/config/database.ts src/scripts/compute-factor-correlation.ts --quiet --fix` → exit 0 (3 prettier auto-fixed)
+- `npx ts-node --transpile-only tests/factors/factor-correlation-report.test.ts` → **132 ok / 0 failed** < 1s
+- Regression: `tests/factors/factor-ic-report.test.ts` → **118 ok / 0 failed** (FactorICReport 共享纯函数仍通过)
+- CLI smoke: `npx ts-node --transpile-only src/scripts/compute-factor-correlation.ts --help` → 正常输出 + exit 0
+- Registry smoke: 16 因子在 factorRegistry 仍正确（library import 自我登记不破坏）
+
+### Test coverage (132 ok)
+
+**3 纯函数 (60+ assertions 脱离 DB)**:
+- `dedupPairsToUpperTriangle`: 空 / 单元素 / 2/3/4 元素 / 重复因子去重 /
+  空字符串过滤 / 真实因子名 (value/quality/momentum)
+- `computeDailyCorrelation`: 双空 / 单空 / 完美 ±1 / 一边全相等 → null /
+  自定义 minPairSize / 部分股票双有效 / NaN+Inf 过滤 / 对称性 (swap 顺序符号
+  对齐)
+- `aggregateCorrelationSeries`: 空 / 全 null / 单日 / 两日 same value → std=0 /
+  NaN 跳过 / 精确 std (0.1, 0.2, 0.3) / 负相关均值
+
+**End-to-end (72+ assertions 注入 FakeFactorCorrelationDataSource 完全脱离 DB)**:
+- happy 3 因子 → 3 pair（同序 +1 / 反序 -1 / 跨对都 redundant）
+- 独立因子 |corr| < 0.7 + not redundant
+- 自定义 redundancy_threshold (默认 0.7 / 提高 0.99 / 降低 0.3) 3 路径
+- 双因子横截面 < MIN_PAIR_SIZE 跳过 + reason 含 pair_size_lt_min
+- 某日某因子横截面为空 → 该日 null + reason 含 empty_cross_section
+- 全区间无 trade_dates → sample_count=0 / not redundant
+- period_start/end 取自 valid days (头两天 small 跳过，3/4/5 天 valid)
+- factor_names < 2 抛错 (empty + single)
+- factor 未注册 + 未注入 DataSource → 抛错 + 注入 DataSource → 不抛错（fake mode）
+- start >= end 抛错
+- redundancy_threshold < 0 / > 1 / NaN 抛错
+- start_date / end_date 非 ISO 抛错
+- pair_results 结构完整 (factor_a/b/statistics/daily_correlations/period_start/end/is_redundant 字段都在)
+- REDUNDANCY_THRESHOLD = 0.7 (AC 指定) + MIN_PAIR_SIZE = 30 常量值校验
+- factor_names 内含重复时去重 (5 个名 → 2 unique → 1 pair)
+- 多日相关性平均（含 cross-day 变化，1+(-1)+1)/3 = 0.333 not redundant）
+- 4 因子 → C(4,2) = 6 pair 全部 +1 redundant
+- 不传 alert_user_ids → alert_count = 0 但仍标 is_redundant
+- daily_correlations 保留全部日（含 null 记录用于诊断）
+
+### Learnings for future iterations
+
+**Patterns discovered (写入 Codebase Patterns):**
+
+- **第二个事后分析诊断工具范式 (US-042 FactorCorrelationReport)**: 模式与
+  US-041 IC 报告几乎一对一镜像（同样 quant/factors/ + DataSource 注入 +
+  4-tuple PK + 不复用 OptimizationRun 父表），但有 4 处**故意差异**：
+  (1) **共用 US-041 spearman/rankAscending/mean/sampleStddev** —— 同一目录下
+  相同语义层（事后分析）的纯函数可以单边 import，不会破坏 layer 边界；
+  下次 US-043 蒙特卡洛、US-044 PortfolioOptimizer 都应共用这些纯函数。
+  (2) **上三角去重** —— `(a, b)` 与 `(b, a)` 对称，本表只存 factor_a <
+  factor_b 字典序的一半（C(N, 2) 行 vs N²）；`dedupPairsToUpperTriangle`
+  纯函数 export 保证顺序稳定 + 去重。这与 IC 报告 "每因子单独一行" 模式
+  不同，因 IC 不对称。
+  (3) **REDUNDANCY_THRESHOLD = 0.7 用绝对值判定** —— 强负相关也算共线
+  (一个是另一个的反向版本)。`is_redundant=true` 物化字段方便 UI 热力图直接
+  filter。
+  (4) **无 lookahead bias guard** —— 相关性只在同一交易日的横截面计算，
+  无未来信息。与 IC 涉及 forward return 完全不同。
+
+- **告警 schema 借用 RiskAlert 现有字段 (US-042 SYSTEM:FACTOR_CORR sentinel)**:
+  `symbol='SYSTEM:FACTOR_CORR'` 系统级告警 sentinel +
+  `name=`${factor_a} vs ${factor_b}`` + `level='HIGH'` + 中文 message。
+  前端 UI 按 `symbol` prefix 过滤区分股票告警 vs 系统告警。
+  **未来 US-049/050/051 (DrawdownCircuitBreaker / MarketRegimeAlert / 单股止损)
+  类似系统级告警都按 SYSTEM:<CATEGORY> sentinel 命名**，让 RiskAlert 表
+  天然支持多种告警源不需要 schema 改动。
+
+- **per-user write 失败 isolation 模式 (US-042 writeRedundancyAlerts)**:
+  写 N 个 user 各一条告警时，每个 user 独立 try/catch 失败记 log 但不阻塞后续
+  user。同 US-040 RegimeSource try/catch 模式。**判据**: 任何 fan-out per-entity
+  操作（per-user / per-stock / per-strategy）都按此模式，避免单点失败爆全部。
+
+- **跨模块纯函数复用判据 (US-042 强化 US-040 范式)**: 同 layer 同目录的纯函数
+  可以单边 import (US-042 import US-041 spearmanCorrelation OK)；
+  跨 layer 跨目录 (US-040 backtest/ 想 import strategies/) 不能 import 必须
+  独立实现 + jsdoc 标注 "语义 100% 镜像 X.Y"。**规则边界**: 共享 utility
+  (isSTName 在 utils/stNameUtils.ts) 是 *根目录* 工具不属于某 layer，
+  可以被多 layer import。
+
+**Gotchas encountered:**
+
+- **`computeDailyCorrelation` 内部不能 swap crossA/crossB 顺序** — 即便看似
+  symmetric 优化（"用 smaller.size 的 Map 遍历"），swap 会让 xs/ys 错位导致
+  相关性符号反转。**必须按 crossA.keys() 遍历然后 has-check 另一边**。
+  测试用 "swap 顺序输出对称值" 验证此约束。
+
+- **lint 自动 fix 会修改 3 个文件**：FactorCorrelationReport / FactorCorrelationResult /
+  compute-factor-correlation。lint --fix 后必须再跑测试 + tsc 确认 prettier
+  没破坏类型推导（实际 OK，但 belt-and-suspenders）。
+
+- **测试里的 `void` 防 unused-variable lint 警告**：测试文件 import 了
+  DailyCorrelationRecord 类型但只在类型注释里用，eslint 会报 unused。
+  解决方案：文件底部 `void (null as unknown as DailyCorrelationRecord);` 一行
+  让 import 被 "使用"。或在 import 上加 `// eslint-disable-next-line` 注释。
+
+- **`Number(null) === 0` 陷阱再次出现 (US-031/US-041 同款)**：
+  DefaultFactorCorrelationDataSource 读 FactorScore.z_score (DECIMAL nullable)
+  必须先 `Number.isFinite(z)` check 才 set 入 Map，否则 null 行会成 z=0
+  进入相关计算把 corr 拉向 0。同时 DB 层 WHERE `raw_value: { [Op.ne]: null }`
+  双重保险过滤中性补全行。
+
+- **TypeScript Op.or 类型问题**: Sequelize where 子句用 `Op.or: [{factor_a:
+  name}, {factor_b: name}]` 时，static typing 会要求 where 是 plain object
+  index signature；用 `where[Op.or] = [...]` 写法时把 where 声明为 `any`
+  避免 type 噩梦（与 US-041 同款模式）。
+
+**Useful context for future stories:**
+
+- **US-043 蒙特卡洛 / US-044 PortfolioOptimizer / US-046 IndustryAttribution
+  全部按 US-042 模式 + 共用 US-041 纯函数实现**: 这 3 个也是"对已完成 backtest
+  做派生统计" 都不复用 OptimizationRun 父表，都按 4-tuple PK + DataSource
+  接口 + per-day 串行 await。US-044 PortfolioOptimizer 还可以 join
+  factor_ic_results + factor_correlation_results 两表做 "高 IC + 低相关"
+  组合策略权重先验。
+
+- **`factor_correlation_results` 表是热力图基础**: 未来 US-016 FactorWorkspace
+  画因子相关性热力图时 SQL 查：`SELECT * FROM factor_correlation_results
+  WHERE period_end = (latest) ORDER BY factor_a, factor_b` → 拼成 NxN 矩阵
+  (`b vs a` 反向 lookup 同一行)。**UI 单元格颜色**: |corr| > 0.7 = red,
+  |corr| ∈ [0.5, 0.7] = orange, < 0.3 = green, 其他 = white。
+
+- **MultiFactorAlphaStrategy (US-011) 引入新因子前先跑相关性检查**: 任何新
+  factor 通过 US-009 Pipeline 落库后，跑 compute-factor-correlation 验证
+  与既有 8 因子的相关性 < 0.7，避免引入冗余信号污染加权。
+
+- **redundancy_threshold 选项 customizable (默认 0.7)**: AC 是 0.7，但审计 /
+  特殊场景下可传 0.5 (更严格剔除) 或 0.9 (放宽接受)。CLI 通过 `--threshold`
+  暴露；programmatic 调用通过 options.redundancy_threshold 覆盖。
+
+### Browser verification
+
+N/A — 后端因子诊断层无 HTTP 表面。未来 US-016 FactorWorkspace 因子相关性
+热力图 / US-018 TodayWorkspace 风控告警面板会消费 `factor_correlation_results`
+表和 RiskAlert（`symbol='SYSTEM:FACTOR_CORR'`）。
 ---

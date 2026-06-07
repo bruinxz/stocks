@@ -33,6 +33,8 @@
     "sync:stock-sentiment": "ts-node src/scripts/sync-stock-sentiment.ts",
     "sync:shareholder-count": "ts-node src/scripts/sync-shareholder-count.ts",
     "compute:factors": "ts-node src/scripts/compute-factors.ts",
+    "compute:factor-ic": "ts-node src/scripts/compute-factor-ic.ts",
+    "compute:factor-correlation": "ts-node src/scripts/compute-factor-correlation.ts",
     "run:grid-search": "ts-node src/scripts/run-grid-search.ts",
     "run:bayesian-opt": "ts-node src/scripts/run-bayesian-opt.ts",
     "run:walk-forward": "ts-node src/scripts/run-walk-forward.ts",

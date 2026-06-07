@@ -56,6 +56,8 @@ import { OptimizationRun } from '../models/OptimizationRun';
 import { OptimizationResult } from '../models/OptimizationResult';
 import { WalkForwardResult } from '../models/WalkForwardResult';
 import { RegimeBacktestResult } from '../models/RegimeBacktestResult';
+import { FactorICResult } from '../models/FactorICResult';
+import { FactorCorrelationResult } from '../models/FactorCorrelationResult';
 import { LiveBrokerAccount } from '../models/LiveBrokerAccount';
 import { LiveAccountSnapshot } from '../models/LiveAccountSnapshot';
 import { LivePosition } from '../models/LivePosition';
@@ -141,6 +143,8 @@ const sequelize = new Sequelize({
     OptimizationResult,
     WalkForwardResult,
     RegimeBacktestResult,
+    FactorICResult,
+    FactorCorrelationResult,
     LiveBrokerAccount,
     LiveAccountSnapshot,
     LivePosition,

@@ -1,4 +1,4 @@
-# Factor 基础设施 (US-009 + US-010 + US-029 + US-030 + US-031 + US-032 + US-033 + US-034 + US-035 + US-036)
+# Factor 基础设施 (US-009 + US-010 + US-029 + US-030 + US-031 + US-032 + US-033 + US-034 + US-035 + US-036 + US-041 + US-042)
 
 `backend/src/quant/factors/` 是 A 股多因子打分体系的基础设施层。US-009
 落地了**注册中心 + 横截面 pipeline + 标准化工具 + FactorScore 模型**；
@@ -335,3 +335,196 @@ US-033 等"贴现 / 偏离"类因子按此例外处理；普通线性因子仍�
 5. 缺数据 → 不入 Map（让 Pipeline 补中性，避免污染横截面均值）；
 6. 在本 CLAUDE.md "8 个基础因子" 表格追加一行（数据源 + 失效条件）；
 7. 跑 `./node_modules/.bin/ts-node --transpile-only -e "import('./src/quant/factors/library').then(()=>import('./src/quant/factors/FactorRegistry').then(r=>console.log(r.factorRegistry.listNames())))"` 验证新因子出现。
+
+## 因子诊断工具 (US-041 FactorICReport)
+
+US-041 在 `quant/factors/` 引入了第一个**诊断工具**（不是新因子）：`FactorICReport`
+负责计算每个因子的 IC、IC_IR、IC 衰减；落库到 `factor_ic_results` 表供
+策略开发者判断"哪个因子真有 alpha / 哪个该淘汰"。
+
+### 公共 API
+
+```ts
+import { factorICReport, FactorICReport, DEFAULT_LOOK_FORWARD_DAYS,
+  rankAscending, spearmanCorrelation, aggregateICSeries
+} from '../quant/factors';
+
+// 主流程
+const out = await factorICReport.generate({
+  factor_name: 'value',
+  start_date: '2024-01-01',
+  end_date: '2026-06-05',
+  look_forward_days_list: [1, 5, 10, 20, 60], // 默认即 AC 指定
+});
+// → { results_by_window: [{ look_forward_days, statistics: ICStatistics, ... }, ...] }
+
+// admin
+await factorICReport.getResults({ factor_name: 'value' });
+await factorICReport.cleanupOlderThan(30);
+```
+
+### 关键设计判据
+
+1. **Spearman 而非 Pearson**：AC 明确要求；抗异常值（小盘股单日 forward return
+   +100% 让 Pearson 失真）；rank-based 相关天然无量纲。
+2. **MIN_CROSS_SECTION_SIZE = 30**：单日横截面 < 30 只股票时整日 IC = null 不进
+   入聚合，因 < 30 的横截面 IC 统计意义弱（噪音大）。**与 US-040
+   `sample_count < 5 → sharpe=null` 同款思路** — 数据不足直接为 null 让下游
+   automatic 跳过，不要写 0 或 placeholder。
+3. **4-tuple PK `(factor_name, look_forward_days, period_start, period_end)`**：
+   ops 重跑同 (因子, 窗口, 区间) 直接 idempotent upsert 覆盖最新统计而非堆 N 行；
+   AC 提的 `computed_at` 是 "什么时候跑的" 信息，不该作为唯一性键。
+4. **不复用 OptimizationRun 父表** — IC 报告是 "对已有 FactorScore 做事后分析"，
+   不是优化任务，与 US-040 RegimeSegmentedBacktest 同款判据。直接 4-tuple PK
+   独立写本表。
+5. **per-day 串行 await**（同 US-040 cache-friendly 模式）：DailyBar 有 stock_id
+   索引单查询 < 50ms；并发收益小，串行让日志可读、单日失败不影响后续。
+6. **DataSource 接口注入**（与 GridSearchOptimizer.BacktestRunner /
+   RegimeSegmentedBacktest.RegimeSource 同模式）：生产环境走
+   `DefaultFactorICDataSource` 读 FactorScore + DailyBar + Stock；测试注入
+   fake 完全脱离 DB / 网络。
+7. **factor_name 校验仅在未注入 DataSource 时执行**（同 GridSearch/Bayesian/
+   WalkForward 测试 fake mode 跳过 registry 的模式）。
+8. **lookahead bias guard**：base_date + lookForwardDays 落在 end_date 之外 →
+   该日跳过。factor_scores 必须严格早于 future_close 的 trade_date —— 这与
+   `analyst_consensus` (US-030) 因子内部 `row_date > as_of_date` skip 是同款
+   时序窗口防 lookahead 范式，**所有事后分析工具都要有此 guard**。
+9. **`Number(null) === 0` 陷阱**（同 US-031）：DataSource 实现读 Sequelize raw
+   DECIMAL 列时务必先 `Number.isFinite()` check 再 push 入数组，否则 NaN 值会
+   破坏 Spearman 计算。
+
+### 因子失效判定阈值
+
+策略开发者用 IC report 判断因子是否要剔除：
+
+- **IC mean < 0.02** 持续多次 → 因子失效，从 MultiFactorAlpha 权重剔除
+- **IC_IR < 0.3** → 因子不稳定，单独跑 backtest 验证后再上线
+- **跨多次 period 持续衰减**（lookForward 5d → 60d 衰减 > 70%）→ 信号过于
+  短期化，不适合中长线策略
+
+### 何时扩展
+
+- **新 lookForward 窗口**（如 120d / 240d）：传入 `look_forward_days_list`
+  即可，无需改 DataSource。
+- **加新指标**（如 IC_t-stat / IC_significant_p_value）：在
+  `ICStatistics` 接口和 `aggregateICSeries` 加字段；DB 列同步扩展。
+- **分组 IC**（如 行业内 IC / 市值分桶 IC）：新建 `FactorICReportV2` 类
+  vs 加 `group_by` 入参；前者更清晰，后者偶然耦合度高。
+
+### 测试模式
+
+- **纯函数（`rankAscending` / `spearmanCorrelation` / `mean` / `sampleStddev` /
+  `aggregateICSeries`）必须 export**，单测可独立调用，断言 NaN / 边界 / 已知值
+  / tie 处理（同 US-029+ 复杂因子 helper 全 export 模式）。
+- **end-to-end `generate()` 测试通过 fake DataSource 完全脱离 DB**：构造
+  `{ trade_dates, cross_sections, forward_returns }` 配置 + 注入
+  `data_source` 选项 + `persist: false` 跳过 DB upsert。`backend/tests/factors/
+  factor-ic-report.test.ts` 是参考实现（118 个测试 / 全部脱离 DB）。
+- **构造横截面 ≥ MIN_CROSS_SECTION_SIZE (30)** 的 helper：
+  `makeCorrelatedCrossSection(35)` / `makeAnticorrelatedCrossSection(35)` 让
+  IC 严格 ±1（line-test 业务方向）；`makeSmallCrossSection(5)` 用来测 < MIN
+  的 reject 路径。
+
+## 因子相关性矩阵 (US-042 FactorCorrelationReport)
+
+US-042 在 `quant/factors/` 引入了第 2 个**诊断工具**：`FactorCorrelationReport`
+负责计算因子两两 Spearman 相关性矩阵 + 共线性诊断，落库到
+`factor_correlation_results` 表，**|corr| > 0.7** 的对自动标记 `is_redundant=true`
+并可选写入 RiskAlert。
+
+### 公共 API
+
+```ts
+import { factorCorrelationReport, FactorCorrelationReport,
+  REDUNDANCY_THRESHOLD, MIN_PAIR_SIZE,
+  dedupPairsToUpperTriangle, computeDailyCorrelation, aggregateCorrelationSeries
+} from '../quant/factors';
+
+// 主流程
+const out = await factorCorrelationReport.generate({
+  factor_names: ['value', 'quality', 'momentum'],
+  start_date: '2024-01-01',
+  end_date: '2026-06-05',
+}, {
+  alert_user_ids: [adminUserId1, adminUserId2], // 可选 → redundant pair 发告警
+});
+// → { pair_results: [{ factor_a, factor_b, statistics, is_redundant, ... }, ...] }
+
+// admin
+await factorCorrelationReport.getResults({ is_redundant: true });
+await factorCorrelationReport.getResults({ factor_name: 'value' }); // 匹配 a 或 b
+await factorCorrelationReport.cleanupOlderThan(30);
+```
+
+### 与 US-041 FactorICReport 的关系
+
+| 维度 | FactorICReport (US-041) | FactorCorrelationReport (US-042) |
+|---|---|---|
+| 分析对象 | factor.z_score vs forward return | factor_a.z_score vs factor_b.z_score |
+| 时序窗口 | 多个 lookForwardDays（衰减分析） | 同一交易日横截面（无 lookahead 概念） |
+| 输入 | 1 个 factor_name | ≥ 2 个 factor_names（对称矩阵上三角） |
+| 阈值/告警 | IC mean < 0.02 → 失效（人工判定） | \|corr\| > 0.7 → 自动 is_redundant=true + RiskAlert |
+| 单位写入 | 1 行 / (factor, lookForward, period) | 1 行 / (factor_a, factor_b, period) 上三角 |
+| **共用基础设施** | rankAscending / spearmanCorrelation / mean / sampleStddev 全部从 FactorICReport export | ← FactorCorrelationReport import 复用 |
+
+### 关键设计判据
+
+1. **上三角去重**：`(a, b)` 与 `(b, a)` 完全对称，本表只存 `factor_a < factor_b`
+   字典序的一半（C(N, 2) 行而非 N²）。下游查 b vs a 时反向 lookup 同一行。
+   `dedupPairsToUpperTriangle(factor_names)` 是单独 export 的纯函数，保证
+   顺序稳定 + 去重。
+2. **MIN_PAIR_SIZE = 30**：与 US-041 MIN_CROSS_SECTION_SIZE 同款阈值；双因子
+   横截面交集 < 30 整日 corr=null 不进聚合。同一份"横截面统计要有意义"判据。
+3. **REDUNDANCY_THRESHOLD = 0.7**（AC 指定）：**用绝对值** —— 强负相关也算共线
+   （一个是另一个的反向版本，组合优化里一加一减相当于没加）。
+4. **无 lookahead bias guard**：与 IC 不同，相关性不涉及 forward return，
+   只在同一交易日的横截面计算 —— `factor_score[T] vs factor_score[T]` 无未来信息。
+5. **不复用 OptimizationRun 父表**（与 US-040 / US-041 同款判据）：相关性矩阵
+   是"对已有 FactorScore 做事后分析"，不是优化任务。
+6. **DataSource 接口注入**（同 US-041）：只需 2 个 loader
+   （`loadTradeDatesInRange` + `loadFactorCrossSection` — 后者直接复用 US-041
+   的 cross-section 加载语义）；测试 fake 完全脱离 DB。
+7. **per-pair 串行 await**（同 US-041 模式）：N 因子 → C(N, 2) pair，每对内部
+   再 per-day 串行；总调用次数 = pairs × days × 2（loadFactorCrossSection），
+   上游 DB cache 可命中相同 (factor, date) 组合。
+8. **共用 US-041 spearmanCorrelation / rankAscending / mean / sampleStddev**：
+   避免代码复制；通过 `quant/factors/FactorICReport.ts` 的 export 直接 import。
+   **跨模块复用判据**：US-041 和 US-042 都是事后分析（同一模块目录、相同语义
+   层），spearman 等纯函数从 US-041 拿即可。不要再复制到 US-042。
+9. **`Number(null) === 0` 陷阱防御**（同 US-031/US-041）：DataSource 读 Sequelize
+   raw DECIMAL 列时先 `Number.isFinite()` check。
+10. **告警 schema 借用 RiskAlert 现有字段**：`symbol='SYSTEM:FACTOR_CORR'`
+    (系统级告警 sentinel)；`name=`${factor_a} vs ${factor_b}``；`level='HIGH'`；
+    `message` 中文含 correlation 值 + 区间。前端 UI 按 `symbol` prefix
+    过滤区分股票告警 vs 系统告警。
+
+### 失效阈值约定（与因子失效判定阈值并列）
+
+策略开发者用 correlation report 判断"哪两个因子需要二选一"：
+
+- **|corr| > 0.7**：高度共线 → 必须移除其一（自动 is_redundant=true）
+- **|corr| ∈ [0.5, 0.7]**：注意，可同时使用但权重要倾向 IC_IR 更高的那个
+- **|corr| < 0.5**：因子独立性好，可同时进入多因子模型
+
+### 何时扩展
+
+- **行业内 / 市值分桶相关性**：新建 `FactorCorrelationReportV2` 类，加 `group_by` 入参
+  会让单表 schema 膨胀（多一维 group_key 复合主键）。
+- **新阈值（如 |corr| > 0.5 提示）**：传入 `redundancy_threshold: 0.5` 选项即可。
+- **告警目标扩展（非 user_id，而是 Slack 或 webhook）**：在 RiskAlert 之外加
+  独立 `factor_correlation_webhook_dispatch.ts`，不污染本模块；本模块只负责
+  "标 is_redundant + 写 user-scoped RiskAlert"。
+
+### 测试模式
+
+- **3 个纯函数 export**：`dedupPairsToUpperTriangle` / `computeDailyCorrelation`
+  / `aggregateCorrelationSeries` 全部 export，单测可独立调用（132 用例覆盖
+  对称性 / 双有效过滤 / NaN/Inf 防御 / tie-break / 跨因子方向 / 自定义
+  minPairSize）。
+- **end-to-end `generate()` 通过 fake DataSource 完全脱离 DB**：构造
+  `{ trade_dates, cross_sections }` 配置 + `data_source: new FakeFactorCorrelationDataSource(cfg)`
+  + `persist: false`。`backend/tests/factors/factor-correlation-report.test.ts`
+  是参考实现。
+- **`makeLinearCrossSection(35, 1)` + `makeLinearCrossSection(35, -1)`** 构造
+  完美 ±1 相关的因子对，`makeQuasiRandomCrossSection(35)` 构造 |corr| < 0.7
+  的独立因子对——前者验 is_redundant=true 路径，后者验 false 路径。
