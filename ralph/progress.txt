@@ -45,6 +45,8 @@
 - **Helper micro-functions to copy across AKShare commands**: `_cell_str / _cell_float / _cell_int / _row_to_jsonable / _format_iso_date` in `akshare_helper.py` — defined once for US-007, reuse them in future commands (`get_industry_flow`, `get_earnings_forecast`, etc.) instead of repeating `safe_float_value(row.get(col)) if col else None`.
 - **Multi-endpoint join WITHOUT a shared key (US-008 行业资金流)**: `stock_sector_fund_flow_rank` has metrics but no board code; `stock_board_industry_name_em` has the code but joins by Chinese 板块名称. Indexing the smaller "name→code+metadata" df into a Python dict, joining per row, and emitting `industry_code = "FALLBACK-<name>"` for unmapped names keeps rankings intact. **Cross-DB joins (e.g. `limit_up_count` requires JOIN-ing LimitUpStock by industry name) belong in the TS service, not Python** — same divider as `is_famous_yz` and `continuous_days`.
 - **Real-time-only snapshots (US-008 fund_flow / name / cons family)**: a subset of AKShare endpoints CANNOT replay history; you only get "now". The `date` param becomes a `trade_date` LABEL stamped onto each output row by Python — the data is still today's. Document this on the client jsdoc + service jsdoc; don't pretend `--start=2023-01-01` does what it appears to. Schedule once per day post-close; the `INDUSTRY_FLOW_TIMEOUT_MS` default is 240s because per-board `cons_em` fetches dominate (~86 boards × AKShare rate-limit).
+- **Dynamic year-suffix column discovery (US-030 AnalystForecast)**: AKShare endpoints occasionally have column names containing a year (e.g. `2026-盈利预测-收益` / `2027-盈利预测-收益`). The year part rolls forward each January as analysts publish new forward forecasts. **Never hard-code year literals in `col_map`** — use a regex like `r'^(\d{4})-盈利预测-收益$'`, collect `(year, col_name)` tuples, sort ascending, then map the closest forward year to `forecast_eps_y1`, second-closest to `_y2`, etc. **Store the resolved year alongside the value** in the model (`forecast_year_y1` SMALLINT column) — the factor layer needs explicit year tracking to group / align时序对比 correctly (cross-year naive comparison = silent garbage). Pattern applies to any future story with YYYY-suffixed columns (业绩快报 by report year / 现金分红时序 / 港股 EPS).
+- **Composite PK + in-memory dedup before bulkCreate (US-030 AnalystForecast)**: when an N-tuple PK is the *natural* unique key for a row but the data source occasionally emits duplicate keys in a single fetch (same firm publishes 2 distinct reports same day), `bulkCreate + updateOnDuplicate` behavior on in-batch dups is **dialect-dependent** (Postgres silently keeps "latest insert", MySQL may error). **Dedupe in the service layer with a deterministic `preferRow(a, b)` policy** (information-richer row wins: EPS present > rating present > longer title > later in input). Returns are dialect-independent and predictable for ops. Always log `dedup_dropped` count in `SyncStockResult` so ops can see when it triggers. Same pattern for future US-031 / US-035 etc.
 
 ### Quant factor infrastructure (US-009+)
 - **Factor module tree** lives at `backend/src/quant/factors/` and is the **only** place where factor logic exists: `types.ts` (Factor interface + FactorContext), `FactorRegistry.ts` (singleton — same dedupe-on-register pattern as StrategyRegistry), `FactorPipeline.ts` (cross-sectional batch processor), `normalization.ts` (winsorize/zscore/percentileRanks — **cross-sectional** helpers, NOT to be confused with quant/engine/QuantMath.ts which is time-series). `library/index.ts` is the import-time aggregator: each factor file self-registers via `factorRegistry.register(...)` and gets pulled in by `library/index.ts` so callers only need `import '../quant/factors/library'` once.
@@ -54,6 +56,8 @@
 - **Pipeline serial-by-factor, not Promise.all parallel**: one bad factor doesn't kill the batch; logs stay readable; debug is straightforward. The compute step within one factor can still batch DB queries internally.
 - **library/_helpers.ts** (US-010) is the **library-internal** shared utility module — prefix `_` = "only library code should import this; not exposed via quant/factors/index.ts". Provides `stripSuffix(symbol)`, `inferStockSymbol(code)` (reverse: "600519" → "600519.SH"), `loadStocksByCodes(codes, attrs)` (one-shot batch query that returns Map<stock_code, Stock>), `isFiniteNumber(v)`, `lookbackStartDate(asOf, days)`. Use these in every new factor — don't inline the 5-line symbol-mapping logic 8 times.
 - **横截面参照 U 形评分例外 (US-029 LiquidityFactor)** — 设计约束 #1 "因子不做归一化" 的明确例外：当因子的**经济意义本身**就需要一个横截面参照点（U 形评分 / 距均值偏离 / 横截面贴现），在 compute() 内做*单点参照*的简单变换（如 `-|(value - P30)/sd|`）属于因子语义本体，不属"额外标准化"。判据：参照统计量是因子语义的一部分（"过低过高都减分"没有 P30/sd 表达不出）就属此例外；只是"想让分布更好看"则属普通归一化，仍禁止内置。Pipeline 后续仍照常 winsorize+zscore，跨因子可比性维持不变。复杂因子的 pure-math helper（quantileAtSortedAsc / sampleStddev / liquidityPenaltyScore / computeAvgTurnoverFromBars）抽成 `export function`，让单测可独立调用纯函数 — 不要把所有逻辑塞进 compute() 内闭包。后续 US-031 / US-033 等"贴现 / 偏离"类因子按此例外处理。
+- **时序窗口因子必须防 lookahead bias (US-030 AnalystConsensusFactor)**：任何走 `[as_of - N days, as_of]` 时间窗的因子，**必须**在 compute() / pure helper 内显式 `if (row_date > as_of_date) continue;`。理由：回测引擎可能在数据库装载新数据后才回放历史，stage 间 timing 错位让 "未来" 行混进窗口。单测必须显式构造一条 `row_date > as_of_date` 的极端值（如 999.0），断言 revision 不被污染。所有走时序窗口的因子都应有此测试 — 少一道防御就成 lookahead bias 灾难。
+- **绝对业务量 vs 横截面参照量 二分类 (US-030 起明确化)**：US-029 LiquidityFactor 引入了"横截面参照量"例外（设计约束 #1 的例外）。US-030 AnalystConsensusFactor 计算 per-stock 自身新旧 EPS 之比，**完全不参照横截面**——属第一类（绝对业务量），走标准模式。**判据**：raw_value 公式里是否出现"全市场 X 的分位 / 均值 / sd"？是 → 例外类（compute() 内可做单点参照变换）；否（只看本股自己历史 / 自己同年度数据）→ 标准类（compute() 内**禁止**任何归一化变换）。下次新因子设计时先做此分类。
 - **3 query-shape patterns** to copy when adding a new factor (US-010 codified them):
   - **"Time-series aggregate" (quality/growth)**: pull `factor_date ∈ [as_of - N天, as_of]` from a `symbol`-keyed source table, group by symbol in-memory, then stripSuffix → output.
   - **"Time-series + cross-section" (momentum/low_vol)**: `loadStocksByCodes(universe)` first to get `Stock.id`, then `Op.in: stock_ids` + time range on DailyBar; group by stock_id, `arr.sort((a,b)=>a.time-b.time)`, count back from tail to align on T-N.
@@ -3123,4 +3127,134 @@ result` —— 类型安全提取 stock_code 数组。未来加新子策略只�
   字母序追加 `import './LiquidityFactor';` 触发 import-time 副作用。
   库入口 import 后 `factorRegistry.listNames()` 才会出现 `liquidity`。
   CLAUDE.md 已说明此约定但容易遗忘，本次实现按 checklist 第 2 步 ✅。
+---
+
+## 2026/06/07 - US-030
+
+### What was implemented
+
+Built the **AnalystForecast** end-to-end data + factor pipeline — the 10th
+factor in the library. AKShare `stock_research_report_em(symbol)` returns
+all historical analyst research reports for a single stock (typically several
+hundred rows per stock), each with EPS forecasts for the **next 1-3 forward
+years** (column names contain dynamic year suffixes). The AnalystConsensusFactor
+turns the 90-day window of those forecasts into a per-stock alpha signal:
+"how much did卖方一致预期 upgrade vs 60 days ago?"
+
+**Data layer (per-stock historical sync, US-022/US-024 pattern)**:
+- `backend/src/models/AnalystForecast.ts` — Sequelize model, composite 3-tuple
+  PK `(report_date, stock_code, analyst_firm)`. Fields: stock_name, target_price
+  (nullable, AKShare endpoint doesn't provide it but kept for future expansion),
+  rating, forecast_eps_y1/y2/y3, forecast_year_y1/y2/y3, analyst_count,
+  report_title, industry, report_pdf_url + raw_payload/source/timestamps.
+- `backend/python/akshare_helper.py` — added `get_analyst_forecast(stock_code)`
+  helper + dispatcher case + `import re` at top.
+- `backend/src/data/sources/AnalystForecastClient.ts` — Python helper wrapper,
+  120s default timeout via `ANALYST_FORECAST_TIMEOUT_MS`.
+- `backend/src/data/services/AnalystForecastSyncService.ts` — per-stock sync
+  with in-memory dedup before bulkCreate (rare duplicate `(date, firm)` case).
+- `backend/src/scripts/sync-analyst-forecast.ts` — CLI w/ --stock / --stocks /
+  --all / --listed-before / --interval-ms / --force; npm script `sync:analyst-forecast`.
+- Registered in `models/index.ts` + `config/database.ts` so dev `sync({alter:true})`
+  auto-creates the table.
+
+**Factor**:
+- `backend/src/quant/factors/library/AnalystConsensusFactor.ts` — 10th factor
+  (`analyst_consensus`, category=`sentiment`). Computes per-year EPS revision
+  ratios over the 90-day window, then averages across years for the stock's
+  final raw_value.
+- Self-registers via the `library/index.ts` import-time side-effect; the new
+  factor is alphabetically listed first now (`analyst_consensus / dragon_tiger / …`).
+
+### Files changed
+
+- `backend/src/models/AnalystForecast.ts` (new)
+- `backend/src/models/index.ts` (+1 line: re-export)
+- `backend/src/config/database.ts` (+1 line import, +1 model array entry)
+- `backend/python/akshare_helper.py` (+1 line `import re`; +~180 lines for
+  `get_analyst_forecast` + 1 dispatcher case)
+- `backend/src/data/sources/AnalystForecastClient.ts` (new)
+- `backend/src/data/services/AnalystForecastSyncService.ts` (new)
+- `backend/src/scripts/sync-analyst-forecast.ts` (new)
+- `backend/package.json` (+1 line: `sync:analyst-forecast` script)
+- `backend/src/quant/factors/library/AnalystConsensusFactor.ts` (new)
+- `backend/src/quant/factors/library/index.ts` (+1 line: import + header update)
+- `backend/tests/factors/AnalystConsensusFactor.test.ts` (new, 54 sync + 1 async)
+- `backend/src/quant/factors/CLAUDE.md` (title + 8-factor table row + bullet for US-030)
+- `backend/src/data/CLAUDE.md` (new section: per-stock sync with dynamic
+  column-year mapping + composite PK in-memory dedup)
+- `ralph/prd.json` (US-030 → passes:true + notes)
+
+### Quality checks
+
+- `cd backend && npx tsc --noEmit` → exit 0
+- `cd backend && ./node_modules/.bin/eslint <8 changed files> --quiet --fix` →
+  exit 0 (3 prettier auto-fixed)
+- `npx ts-node tests/factors/AnalystConsensusFactor.test.ts` → 54 sync + 1 async ok
+- `npx ts-node tests/factors/LiquidityFactor.test.ts` → 53 ok (regression)
+- All 12 existing 组合级 strategy tests + AShareConstraintEngine integration
+  test → still pass (no schema breakage)
+- Registry smoke: `factorRegistry.listNames()` outputs
+  `["analyst_consensus","dragon_tiger","growth","liquidity","low_vol",
+  "momentum","money_flow","northbound","quality","value"]` — 10 factors total
+- CLI `--help` boots cleanly
+- **Live AKShare smoke**: `/usr/bin/python3 backend/python/akshare_helper.py
+  get_analyst_forecast 600519` → 759 rows fetched, first row 2026-05-25 诚通证券
+  rating=买入 / forecast_eps_y1=66.68 / forecast_year_y1=2026 (matches column
+  scheme). 1 duplicate `(date, firm)` tuple detected — `dedupReportsByPk` handles it.
+
+### Browser verification
+
+Not applicable — backend-only story (data ingestion + factor computation, no UI).
+
+### Learnings for future iterations
+
+- **AKShare 列名带年份后缀的处理范式**：`stock_research_report_em` 的
+  forecast 列名 `2026-盈利预测-收益` / `2027-盈利预测-收益` 每年 1 月会
+  自动向后滚动（Y1 从 2025 → 2026）。**绝对不要硬编码年份字面量** — 用正则
+  `r'^(\d{4})-盈利预测-收益$'` 发现 + 按年份升序排序，把"最近期前向年"
+  映射到 forecast_eps_y1。同款模式适用任何 AKShare YYYY 前缀字段（业绩快报
+  按报告年 / 现金分红时序 / 港股 EPS 预测）。**绝对要把解析后的 year
+  存进 model 表（forecast_year_y1）** — 因子层做时序对比需要按 year 分组才能
+  align 跨年滚动（不分组会把 "2024 末的 2025E" 与 "2025 末的 2026E" 直接比较
+  得无意义噪音）。
+- **复合 PK + bulkCreate 的 in-memory dedup 模式**：3-tuple PK
+  `(report_date, stock_code, analyst_firm)` 是分析师研报的自然主键，但偶有同
+  firm 同日发深度 + 点评双份研报现象。`bulkCreate + updateOnDuplicate` 处理
+  in-batch duplicate PKs 的行为 **dialect-dependent**（Postgres 静默保留最新，
+  MySQL 可能报错）。**service 层在 bulkCreate 之前 in-memory dedup** 用
+  `preferRow(a,b)` 确定性策略（EPS 在 > rating 在 > title 更长 > 后出现者
+  胜），让上层行为脱离 dialect 决定，ops 日志 `dedup_dropped` 字段记录触发
+  次数。同款适用未来 US-031 / US-035 等含潜在 in-batch 重复键的 per-stock 流水。
+- **因子的"绝对业务量" vs "横截面参照量" 二分类**：US-029 LiquidityFactor 引入
+  了"横截面参照量"例外类别（设计约束 #1 的例外，P30 + sd 是因子语义本体）。
+  US-030 AnalystConsensusFactor 计算的是 per-stock 自身新旧 EPS 之比，**完全
+  不参照横截面**——属第一类（绝对业务量），走标准模式。**判据**：raw_value
+  公式里是否出现"全市场 X 的分位 / 均值 / sd"？是 → 例外类；否（只看本股
+  自己历史 / 自己同年度数据）→ 标准类。下次新因子设计时先做此分类，决定
+  compute() 内能否做单点参照变换。
+- **"未来日期防 lookahead"测试是因子单测的硬要求**：computeRevisionPerYear
+  里加了 `if (r.report_date > asOfDate) continue;` 防止未来研报数据被纳入。
+  对应测试用例显式构造一条 `report_date=2026-06-10 > as_of=2026-06-07` 的
+  极端值 999，断言 revision 仍然 = +10%（未被污染）。**所有走时序窗口的因子
+  都应有此测试** — 回测 / 实盘里数据库可能含未来日期（如果 sync 时间窗与
+  回测时间窗 misaligned），少一道防御就成 lookahead bias 灾难。
+- **复杂因子的 pure-helper export 模式（US-029 来）持续适用**：
+  AnalystConsensusFactor 暴露 `mean / isoDateMinusDays / computeRevisionPerYear
+  / aggregateRevisions` 4 个 export function，让单测 54 个用例完全脱离 DB
+  跑完业务校验。**判据**：因子里 ≥ 2 段独立数学逻辑就抽 export function；
+  compute() 内只做"DB query → 调 pure 函数 → set 进 Map"3 步胶水。
+- **`target_price` 是占位列的处理 + 永远在 jsdoc 里写明 "当前接口不提供"**：
+  AC 列出 `target_price` 字段但 AKShare `stock_research_report_em` 不提供。
+  保留 nullable 列方便将来切换接口 / 叠加另一源；model jsdoc + Python helper
+  注释里都明确写 "AKShare endpoint 不提供，保留列待将来扩展"。下次审计
+  发现 nullable 字段长期都是 NULL，**先读 jsdoc 看 'why nullable'** 再决定
+  能否删列 — 漫不经心删了将来再加列就要 migrate 数据。
+- **因子失效条件的设计原则**：4 条独立失效（< 5 reports / 任一年度 recent
+  空 / 任一年度 baseline 空 / baseline avg ≈ 0），每条都有清晰的业务理由
+  + 测试用例。**散户股 / 北交所新股 / 亏损股** 三类 systematically 触发不同
+  失效路径，让"因子覆盖率 30%"现象有可追溯解释 — 不是"代码 bug 漏算"。
+  下个新因子 (US-031 QualityHigh) 沿用此风格：每条失效都列入 jsdoc + 1 个
+  覆盖测试。
+
 ---

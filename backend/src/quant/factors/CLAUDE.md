@@ -1,11 +1,12 @@
-# Factor 基础设施 (US-009 + US-010 + US-029)
+# Factor 基础设施 (US-009 + US-010 + US-029 + US-030)
 
 `backend/src/quant/factors/` 是 A 股多因子打分体系的基础设施层。US-009
 落地了**注册中心 + 横截面 pipeline + 标准化工具 + FactorScore 模型**；
 US-010 在 `library/` 下注册了 **8 个基础因子**（`value` / `quality` / `growth` /
 `momentum` / `low_vol` / `northbound` / `money_flow` / `dragon_tiger`）；
-US-029 增加了第 9 个 `liquidity` 因子（流动性 U 形评分）。后续 story 在
-`library/` 下追加新文件即可，无需改 Pipeline / Registry。
+US-029 增加了第 9 个 `liquidity` 因子（流动性 U 形评分）；US-030 增加了
+第 10 个 `analyst_consensus` 因子（分析师 EPS 一致预期上修方向）。后续 story
+在 `library/` 下追加新文件即可，无需改 Pipeline / Registry。
 
 ## 目录约定
 
@@ -137,7 +138,7 @@ US-033 等"贴现 / 偏离"类因子按此例外处理；普通线性因子仍�
 - **缺数据 ≠ 因子失效**：缺数据返回稀疏 Map；因子失效（例如 PE<=0）应该
   `continue` 不写入这只股票，让 Pipeline 把它当作中性。
 
-## US-010 落地的 8 个基础因子 + US-029 LiquidityFactor (参考实现)
+## US-010 落地的 8 个基础因子 + US-029 LiquidityFactor + US-030 AnalystConsensusFactor (参考实现)
 
 | 因子 name | 类别 | 数据源 | 失效条件 |
 |---|---|---|---|
@@ -150,6 +151,7 @@ US-033 等"贴现 / 偏离"类因子按此例外处理；普通线性因子仍�
 | `money_flow` | flow | StockMoneyFlowFactor + Stock | 窗口内无累计、或 circulating_market_cap ≤ 0 |
 | `dragon_tiger` | flow | DragonTigerBoard | 窗口内无 famous_yz 且 net_amount > 0 的行 |
 | `liquidity` | liquidity | DailyBar.turnover_rate | 单只股票有效 turnover_rate < 10 个 / 全市场样本 < 2 |
+| `analyst_consensus` | sentiment | AnalystForecast (US-030) | 90 日窗口内有效研报 < 5 / 任一年度 recent\|baseline 空 / baseline avg ≈ 0 |
 
 **典型查询模式（US-029+ 添加新因子可直接复制）**：
 
@@ -179,6 +181,14 @@ US-033 等"贴现 / 偏离"类因子按此例外处理；普通线性因子仍�
   "设计约束 #1 的例外"）。**纯数学 helper（quantileAtSortedAsc / sampleStddev /
   liquidityPenaltyScore / computeAvgTurnoverFromBars）抽成 `export function` 让
   单测可独立 ↑** —— 复杂因子按此模式拆分。
+- ✅ `analyst_consensus` (US-030) 用 **per-year revision = (recent_avg - baseline_avg) / |baseline_avg|**
+  然后跨年度算数均值：抓"卖方一致预期上修"的 alpha 信号。**按 `forecast_year_y1` 分组
+  极其关键** —— AKShare 的 "{Y}-盈利预测-收益" 列名年份跨年滚动；不分组会拿
+  "2024 末的 2025E EPS" 直接对比 "2025 末的 2026E EPS"，得无意义噪音。**baseline 接近 0
+  时跳过该年度**（亏损股的微小 EPS 变化会让 revision 爆炸到百分之几千）。同样把
+  纯函数 helper（mean / isoDateMinusDays / computeRevisionPerYear / aggregateRevisions）
+  全部 `export`，单测可独立调用不走 DB。属"绝对业务量"因子（per-stock 自身新旧
+  EPS 之比），走标准模式 — 不属 LiquidityFactor 横截面参照例外。
 
 ## 添加新因子的 checklist (US-029+)
 

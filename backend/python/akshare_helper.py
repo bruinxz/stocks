@@ -10,6 +10,7 @@ import traceback
 import time
 import os
 import random
+import re
 import requests
 import threading
 import urllib.request
@@ -2306,6 +2307,184 @@ def get_financial_report(stock_code: str) -> List[Dict[str, Any]]:
         return []
 
 
+def get_analyst_forecast(stock_code: str) -> List[Dict[str, Any]]:
+    """
+    Fetch A-share analyst research reports (个股研报 / 卖方研报) for a single
+    stock — used by AnalystConsensusFactor (US-030) to track forecast EPS
+    upgrades over a rolling 90-day window.
+
+    Uses AKShare `stock_research_report_em(symbol=<6-digit>)`:
+        东方财富网-数据中心-研究报告-个股研报
+        https://data.eastmoney.com/report/stock.jshtml
+
+    Returns ONE row per analyst report (one firm × one date × one stock).
+    AKShare typically returns several hundred historical reports per stock,
+    sorted by 日期 desc (newest first).
+
+    AKShare 返回列名 (2026 年版本，年份动态向后滚动):
+        序号 / 股票代码 / 股票简称 / 报告名称 / 东财评级 / 机构 /
+        近一月个股研报数 /
+        {Y1}-盈利预测-收益  / {Y1}-盈利预测-市盈率 /
+        {Y2}-盈利预测-收益  / {Y2}-盈利预测-市盈率 /
+        {Y3}-盈利预测-收益  / {Y3}-盈利预测-市盈率 /
+        行业 / 日期 / 报告PDF链接
+
+    其中 Y1/Y2/Y3 是 **动态** 的前向 1-3 年（2025 年看时是 2025-2027，2026 年
+    看时是 2026-2028）。我们用正则 r"^\\d{4}-盈利预测-收益$" 识别这类列，按
+    年份升序排序，把最近的 3 个年份分别映射到 forecast_eps_y1/y2/y3 +
+    forecast_year_y1/y2/y3，让 TS 层无需关心列名漂移。
+
+    Args:
+        stock_code: 6-digit code (e.g. '600519' / '000001'), suffixless.
+
+    Returns:
+        List sorted by report_date descending (newest first). Returns []
+        on error so the caller can checkpoint a "tried" stock without
+        aborting batch sync.
+    """
+    try:
+        pure_code = str(stock_code).strip().zfill(6)
+        if not pure_code.isdigit() or len(pure_code) != 6:
+            print(f"Invalid stock_code format: {stock_code}", file=sys.stderr)
+            return []
+
+        print(f"Fetching analyst research reports for stock={pure_code}...", file=sys.stderr)
+
+        fn = getattr(ak, 'stock_research_report_em', None)
+        if fn is None:
+            print(f"AKShare has no stock_research_report_em function", file=sys.stderr)
+            return []
+
+        try:
+            df = fn(symbol=pure_code)
+        except TypeError:
+            df = fn(pure_code)
+        except Exception as e:
+            print(f"stock_research_report_em({pure_code}) failed: {e}", file=sys.stderr)
+            return []
+
+        if df is None or df.empty:
+            print(f"AKShare returned empty research_report dataframe for {pure_code}", file=sys.stderr)
+            return []
+
+        # ----- 列名柔性映射 -----
+        col_map: Dict[str, str] = {}
+        # 动态识别 "{YYYY}-盈利预测-收益" / "{YYYY}-盈利预测-市盈率" 列
+        year_eps_cols: List[tuple] = []   # [(year, col_name), ...]
+        year_pe_cols: List[tuple] = []
+        eps_re = re.compile(r'^(\d{4})-盈利预测-收益$')
+        pe_re = re.compile(r'^(\d{4})-盈利预测-市盈率$')
+
+        for col in df.columns:
+            col_s = str(col)
+            if col_s in ('股票代码',):
+                col_map['stock_code'] = col_s
+            elif col_s in ('股票简称', '股票名称'):
+                col_map['stock_name'] = col_s
+            elif col_s in ('报告名称',):
+                col_map['report_title'] = col_s
+            elif col_s in ('东财评级', '评级'):
+                col_map['rating'] = col_s
+            elif col_s in ('机构', '分析师机构', '研究机构'):
+                col_map['analyst_firm'] = col_s
+            elif col_s in ('近一月个股研报数', '近一月研报数'):
+                col_map['analyst_count'] = col_s
+            elif col_s in ('行业',):
+                col_map['industry'] = col_s
+            elif col_s in ('日期', '研报日期', '发布日期'):
+                col_map['report_date'] = col_s
+            elif col_s in ('报告PDF链接', 'PDF链接', '报告链接'):
+                col_map['report_pdf_url'] = col_s
+            else:
+                m = eps_re.match(col_s)
+                if m:
+                    year_eps_cols.append((int(m.group(1)), col_s))
+                    continue
+                m = pe_re.match(col_s)
+                if m:
+                    year_pe_cols.append((int(m.group(1)), col_s))
+
+        # 按年份升序排序 — y1 = 最近的前向年, y2 = 第二近, y3 = 第三近
+        year_eps_cols.sort(key=lambda x: x[0])
+        year_pe_cols.sort(key=lambda x: x[0])
+        if not col_map.get('stock_code') or not col_map.get('report_date'):
+            print(
+                f"Missing required col mapping for research_report ({pure_code}). "
+                f"cols={list(df.columns)[:8]}",
+                file=sys.stderr,
+            )
+            return []
+
+        results: List[Dict[str, Any]] = []
+        for _, row in df.iterrows():
+            raw_code = row.get(col_map['stock_code'])
+            if pd.isna(raw_code):
+                continue
+            row_code = str(raw_code).strip().zfill(6)
+            if row_code != pure_code:
+                # AKShare 偶尔返回串板数据 — 严格按入参 stock_code 过滤
+                continue
+
+            report_iso = _parse_date_cell(row, col_map.get('report_date'))
+            if not report_iso:
+                continue
+
+            stock_name = _cell_str(row, col_map.get('stock_name'))
+            rating = _cell_str(row, col_map.get('rating'))
+            analyst_firm = _cell_str(row, col_map.get('analyst_firm')) or 'UNKNOWN'
+            analyst_count = _cell_int(row, col_map.get('analyst_count'))
+            report_title = _cell_str(row, col_map.get('report_title'))
+            industry = _cell_str(row, col_map.get('industry'))
+            report_pdf_url = _cell_str(row, col_map.get('report_pdf_url'))
+
+            # 取前 3 个最近年度的 EPS 预测
+            forecast_eps_y1 = None
+            forecast_eps_y2 = None
+            forecast_eps_y3 = None
+            forecast_year_y1 = None
+            forecast_year_y2 = None
+            forecast_year_y3 = None
+            if len(year_eps_cols) >= 1:
+                forecast_year_y1 = year_eps_cols[0][0]
+                forecast_eps_y1 = _cell_float(row, year_eps_cols[0][1])
+            if len(year_eps_cols) >= 2:
+                forecast_year_y2 = year_eps_cols[1][0]
+                forecast_eps_y2 = _cell_float(row, year_eps_cols[1][1])
+            if len(year_eps_cols) >= 3:
+                forecast_year_y3 = year_eps_cols[2][0]
+                forecast_eps_y3 = _cell_float(row, year_eps_cols[2][1])
+
+            raw_payload = _row_to_jsonable(row, df.columns)
+
+            results.append({
+                'report_date': report_iso,
+                'stock_code': pure_code,
+                'analyst_firm': analyst_firm,
+                'stock_name': stock_name,
+                'target_price': None,  # 当前接口不提供
+                'rating': rating,
+                'forecast_eps_y1': forecast_eps_y1,
+                'forecast_eps_y2': forecast_eps_y2,
+                'forecast_eps_y3': forecast_eps_y3,
+                'forecast_year_y1': forecast_year_y1,
+                'forecast_year_y2': forecast_year_y2,
+                'forecast_year_y3': forecast_year_y3,
+                'analyst_count': analyst_count,
+                'report_title': report_title,
+                'industry': industry,
+                'report_pdf_url': report_pdf_url,
+                'raw_payload': raw_payload,
+            })
+
+        # 已是 desc by 日期 — 但 AKShare 偶有顺序异常，TS 层不依赖顺序
+        print(f"Parsed {len(results)} analyst-report rows for {pure_code}", file=sys.stderr)
+        return results
+    except Exception as e:
+        print(f"Error getting analyst forecast for {stock_code}: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return []
+
+
 def _parse_date_cell(row, col: Optional[str]) -> Optional[str]:
     """安全把一格日期转 ISO YYYY-MM-DD；空/nan/异常 → None"""
     if not col:
@@ -2454,6 +2633,14 @@ def main():
 
             stock_code = sys.argv[2]
             result = get_financial_report(stock_code)
+
+        elif command == "get_analyst_forecast":
+            if len(sys.argv) < 3:
+                print(json.dumps({"error": "Missing stock_code for get_analyst_forecast"}), file=sys.stderr)
+                sys.exit(1)
+
+            stock_code = sys.argv[2]
+            result = get_analyst_forecast(stock_code)
 
         else:
             print(json.dumps({"error": f"Unknown command: {command}"}), file=sys.stderr)

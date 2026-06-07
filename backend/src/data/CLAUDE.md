@@ -301,6 +301,59 @@ fetch, dictionary index by shared key, single-pass merge per row. **Don't return
 two arrays and merge in TS** — TS rebuilding pandas semantics in Map<...> is
 painful and quirks have to be replicated twice.
 
+## Per-stock sync with dynamic column-year mapping (US-030 AnalystForecast)
+
+US-030 introduces a **new wrinkle** to the per-stock sync template (US-022 / US-024):
+AKShare's `stock_research_report_em(symbol)` returns columns whose names contain
+the **forecast year as a dynamic suffix** — e.g. `2026-盈利预测-收益`,
+`2027-盈利预测-收益`, `2028-盈利预测-收益`. The year part **rolls forward every
+new calendar year** as analysts publish forecasts for additional years.
+
+Hard-coding column names like `2026-盈利预测-收益` would silently zero-out the
+forecast every January. The Python helper handles this with a **regex column
+discovery pass**:
+
+```python
+year_eps_cols = []   # [(year, col_name), ...]
+eps_re = re.compile(r'^(\d{4})-盈利预测-收益$')
+for col in df.columns:
+    m = eps_re.match(str(col))
+    if m:
+        year_eps_cols.append((int(m.group(1)), str(col)))
+year_eps_cols.sort(key=lambda x: x[0])   # ascending → y1 = nearest forward year
+```
+
+Then `forecast_eps_y1 / forecast_year_y1` are mapped to the **first** (nearest)
+year column, `_y2 / _year_y2` to the second, etc. The TS layer sees stable column
+names `forecast_eps_y{1,2,3}` and a separate `forecast_year_y{1,2,3}` so the
+factor layer can group by forecast year (critical for the AnalystConsensusFactor:
+跨年时 2024 末的"2025E EPS"不能与 2025 末的"2026E EPS"直接对比).
+
+**Implications for future stories**:
+- Any AKShare endpoint with `YYYY` substring in column names (盈利预测,
+  现金分红时间序列, 业绩快报 by report year) should use this regex-discover-+-sort
+  pattern. **Don't hard-code year literals.**
+- Store the resolved year alongside the value (`forecast_year_y1` column in
+  AnalystForecast). The factor layer needs the year to group / align时序对比
+  correctly. Cross-year comparisons without explicit year tracking are silent
+  garbage.
+
+**Composite PK + in-memory dedup before bulkCreate**: 3-tuple PK
+`(report_date, stock_code, analyst_firm)` is the natural unique key for analyst
+reports, BUT one firm occasionally publishes 2 distinct reports (深度 + 点评)
+on the same day for the same stock. With `bulkCreate + updateOnDuplicate`, the
+in-batch behavior on duplicate PKs is dialect-dependent — Postgres silently keeps
+"the latest insert", MySQL may error. **The service layer dedups in-memory before
+bulkCreate** with a deterministic `preferRow(a, b)` policy (EPS present > rating
+present > longer title > later in input), making the upsert dialect-independent
+and predictable for ops. `dedup_dropped` is reported in `SyncStockResult` so the
+log line shows when it triggered.
+
+**No business derivation in this sync service** (unlike US-022 DividendHistory's
+yield_pct compute). target_price is a future-expansion placeholder column;
+forecast_eps revision logic lives entirely in the factor (`AnalystConsensusFactor.compute()`)
+so the factor stays re-runnable without re-syncing data.
+
 ## Worktree gotcha (still active as of US-005)
 
 The git worktree has no `backend/node_modules`. Symlink before typecheck:
