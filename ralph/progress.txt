@@ -6969,3 +6969,74 @@ N/A — 工程内无 `dev-browser` MCP skill。手动验证途径：
 ### CLAUDE.md updates
 N/A — 本次的"inline 编辑跨 field 共享 (rowId, field) tuple" 模式可在下次第 3 处出现时再统一 codify 到 Codebase Patterns；AC 颜色语义解释属故事级一次性判断，无须 codify。后端 facade ApplyAutomationAction 扩 action union 已在 Codebase Patterns 第 34 行确立 (US-017 同款)，本次照搬。
 ---
+
+## 2026/06/08 - US-077 — 前端：风控告警中心
+### What was implemented
+完整 4-tab TodayWorkspace 第 4 tab 「风控中心」 + 后端 2 个新 endpoint。用户进 TodayWorkspace → 切到「风控中心」tab → 分页表格展示所有 RiskAlert（支持级别 / 类型 / 日期范围 / 已读状态 / 模糊搜索 5 维过滤）→ 多选 + 「标记选中已读」批量操作 → 顶部 KPI 条未读徽标自动刷新。
+
+### Backend (RiskAlertController + routes)
+- **新 endpoint 1**: `GET /api/risk-alerts/list?level=&type=&date_from=&date_to=&is_read=&search=&page=&limit=`
+  - 5 维过滤 + 分页（默认 page=1, limit=30, max 200）
+  - 返回 `{ items: RiskAlert[] + category, total, page, limit, unread_count }`
+  - **type 派生**: SQL where 端不支持（type 不是 model 字段），由 rule_id + symbol 前缀派生：
+    - rule_id ∈ {position_limit, industry_concentration, drawdown_breaker, trailing_stop, per_stock_stop_loss} → `position`
+    - rule_id ∈ {market_regime_alert, factor_correlation, black_swan} → `market`
+    - symbol 以 `SYSTEM:` 开头 → `market`
+    - 其他 → `individual`
+  - type 过滤时先拉全集再内存 filter（user 告警数最多几百条无性能问题），分页 total 准确
+  - 无 type 过滤走 SQL `findAndCountAll`
+- **新 endpoint 2**: `PUT /api/risk-alerts/mark-read` body `{ ids: number[] }`
+  - 单次最多 200 个 ID，去重 + 过滤非整数
+  - SQL `RiskAlert.update({ is_read: true }, { where: { id: IN ids, user_id: req.user.id, is_read: false } })`
+  - 返回 `{ updated: N }`
+- **路由顺序**: `/list` 和 `/mark-read` 都注册在 `/:id/read` catchall 之前（Codebase Patterns 第 27 行规则——同段深度的 const 段必须先于 `:param`）
+- **既有 4 endpoint 保持不变**: GET `/`、PUT `/read-all`、PUT `/:id/read`、PUT `/config` 维持向后兼容（RiskAlerts.tsx 旧页面 & TodaySignalsService 5-条预览不动）
+- **export `deriveAlertCategory`**: 前端复用同款分类逻辑
+
+### Frontend
+- **`frontend/src/services/riskAlertService.ts` (NEW)**: 5 个 API 方法 + 4 个 TS interface + `ALERT_CATEGORY_LABEL` / `ALERT_LEVEL_LABEL` 常量 + `deriveAlertCategory` 兜底
+- **`TodayWorkspace.tsx`** 4-tab 扩展:
+  - tabs += `{ key: 'risk_center', label: '风控中心', icon: <SafetyCertificateOutlined /> }`
+  - 新增 `RiskAlertCenterPanel` 组件（私有，文件内）— 包含完整过滤栏 / 表格 / 批量操作
+  - **filter 6 件套**: Select(level) + Select(type) + RangePicker + Select(读取状态) + Search 输入框 + 重置按钮
+  - **rowSelection multiple**: getCheckboxProps disabled 已读行（防呆）；切换分页 / 过滤自动清空 selectedIds（防跨页选 ID 误标）
+  - **3 件操作按钮**: 刷新（重拉当前分页）/ 标记选中已读 (N)（disabled if N=0）/ 一键全部已读（Popconfirm 二次确认 + disabled if unread_count=0）
+  - **pagination**: showSizeChanger=true [20/30/50/100] + showTotal "共 N 条，当前 X-Y"
+  - **table columns**: 级别 (filter+tag) / 类型 (tag) / 代码+名称 (Space vertical) / 内容 (ellipsis+Tooltip) / 规则 (purple tag) / 时间 (sorter, default desc) / 状态 (red Tag 未读 / default Tag 已读)
+  - **未读 KPI 自动刷新**: `onUnreadCountChange` callback passed to panel → 标记完已读后 panel 调 `refresh()`（TodayWorkspace 主 state refresh）让顶部 KPI 条 unread_count 同步
+
+### Files changed
+- `backend/src/api/controllers/RiskAlertController.ts` — 重写：+ `deriveAlertCategory` export + `listAlerts` (5 维过滤 + 分页) + `markIdsAsRead` (批量 ID 已读) + 4 个 safeXxx normalize helper
+- `backend/src/api/routes/riskAlert.routes.ts` — +2 route 注册 + 2 完整 `@openapi` JSDoc 块；route 顺序 `/`→`/list`→`/read-all`→`/mark-read`→`/config`→`/:id/read`
+- `frontend/src/services/riskAlertService.ts` — NEW (167 行)
+- `frontend/src/pages/workspace/TodayWorkspace.tsx` — +`SafetyCertificateOutlined` icon / +`Select, Input, DatePicker, TableRowSelection` 导入 / +`riskAlertService` 导入 / +`dayjs, Dayjs` 导入 / tabs += 风控中心 / body switch += `risk_center` 分支 / +`RiskAlertCenterPanel` 子组件 (~290 行) / +`categoryTag` helper
+- `ralph/prd.json` — US-077 → passes:true + notes
+- `ralph/progress.txt` — this entry
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → exit 0
+- `cd frontend && npx tsc --noEmit` → exit 0
+- `cd backend && npx eslint src/api/controllers/RiskAlertController.ts src/api/routes/riskAlert.routes.ts --quiet` → exit 0
+- `cd frontend && npx eslint src/services/riskAlertService.ts src/pages/workspace/TodayWorkspace.tsx --quiet` → exit 0
+
+### Browser verification
+N/A — 工程内无 `dev-browser` MCP skill。手动验证途径：
+1. `cd backend && npm run dev` + `cd frontend && npm start` → 登录
+2. `/workspace/today` → 切到「风控中心」tab → 应看到分页表格 + 顶部过滤栏 + 操作按钮
+3. 选级别=HIGH → 列表只显示 HIGH；切类型=持仓 → 进一步过滤；选日期范围 → 只显示该范围；改读取状态=未读 → 只显示未读
+4. 全选当前页（非已读）→ 「标记选中已读」按钮 enabled with 计数 → 点击 → 应 message.success + 列表 reload + 顶部 KPI 未读数 -N
+5. 点「一键全部已读」→ Popconfirm 二次确认 → message.success + 列表 reload + 顶部 KPI 未读数 = 0
+6. 点重置过滤 → 5 维 filter 全部清空 → 分页回到第 1 页 → 全集列表
+
+### Learnings for future iterations
+- **route 同段深度 const vs `:param` 仍需 reorder (US-015 / US-052 既有规则的扩展)**: Express path-to-regexp 不仅"sub-resource deeper-segment before catchall" (如 `/foo/:id/X` vs `/foo/:id` 因深度不同自动 OK)，**同深度** const 段 (`/mark-read` / `/list`) 与 `:param` 段 (`/:id/read` 等价同深度 2 段后跟 const 段) **必须 const 段在前**。否则 "mark-read" 会被吃成 `:id` 参数走 markAsRead 报 404。本 US-077 把 `/list` 和 `/mark-read` 注册在 `/:id/read` 之前是同款约束。下次任何 sub-resource path 与 `:id/X` 同深度时检查 reorder。
+- **派生字段 SQL filter 三选一模式**：派生字段 (e.g. 此故事的 category) 在 SQL where 表达不出时 3 种处理路径：(A) **新增物化列** + sync hook 写入 — 高 throughput 大表 (factor_scores) 必走；(B) **内存全集 filter + 分页** — 表小 (单 user 几百条) + 分页 total 准确性 critical 时走，本故事的选择；(C) **数据库 view + 自定义 raw query** — 中等表 + 派生逻辑稳定时走。**判据**: 单 user 数据量 < 1000 用 (B)；1000-10000 评估 (C)；> 10000 必 (A)。下次 US-094 异动事件 / US-095 KOL 观点同款 type 派生过滤都按此 3 选一。
+- **batch ID endpoint 4 件套防御**: `markIdsAsRead` 接受用户 IDs 数组时必须：(1) `Array.isArray(raw)` 防 raw=null/string/object 4xx; (2) Set dedup 防同 ID 重复; (3) `Number.isInteger` 过滤非整数防 SQL injection / NaN; (4) **max length cap** (本故事 200) 防恶意 100k ID 数组撑爆 SQL `IN`。下次任何 batch 操作 endpoint (US-088 批量 close / US-097 批量删除任务) 复用 4 件套。
+- **rowSelection getCheckboxProps disabled 防呆**: Table multi-select 时已经 done 的行 (已读告警 / 已平仓持仓 / 已完成任务) 应 `getCheckboxProps: row => ({ disabled: row.is_read })`。否则用户选了已读告警去标记已读 → SQL `update where is_read=false` 一行不更新 → UI 显示"已标记 0 条"用户困惑。**判据**: rowSelection 触发的 action 本身有 idempotent guard (本故事 SQL where 已加 `is_read=false`) 仍要 disabled 已 done 行 — 防呆比兜底重要。下次 US-088 批量 close / US-097 批量删除任务都加此 disabled guard。
+- **分页 / 过滤变更自动 clearSelection**: `load()` 内 `setSelectedIds([])` 清空选中。否则跨页选 ID (page 1 选 [10, 11] → 切 page 2 → 显示选了 0 但内存仍有 [10, 11] → 标记会跨页执行) 会产生"看不见的批量"灾难。**判据**: rowSelection state 跟 table data 一一对应时，data 变了必清 selection — table re-fetch / filter change / page change 三处都 trigger。下次任何 rowSelection + pagination 组合都套此模式。
+- **`onUnreadCountChange` 回调驱动祖父 state refresh**: 子组件 (`RiskAlertCenterPanel`) 的 action (标记已读) 影响祖父组件 (`TodayWorkspace`) 的 state (KPI 未读 badge)；通过 prop `onUnreadCountChange?: () => void` 让子组件触发祖父 refresh 而不耦合具体 state shape。**反模式**: 祖父把 `setUnreadCount` 直接传给子 → 子知道祖父 state shape → 重构祖父破子；或全局 store (redux/zustand) → over-engineering 单点交互。下次任何"子组件 action 影响祖父 KPI / counter"（US-088 平仓影响账户净值 / US-097 删任务影响 task count）都用 callback 模式。
+- **Dayjs RangePicker `Dayjs | null` 二维 tuple state**: antd RangePicker 的 `value` 是 `[Dayjs | null, Dayjs | null] | null`，组件层 `useState<[Dayjs | null, Dayjs | null] | null>(null)`。onChange 时强转 `dates as [Dayjs | null, Dayjs | null] | null`（antd 类型签名是 `RangePickerProps['onChange']` 但实际 generic 推断有时丢失）。**format 处提 YYYY-MM-DD** 传后端 (后端 safeIsoDate 会接收并 setUTCHours 0,0,0,0 / 23,59,59,999 边界扩展) 不要传 ISO 时间戳避免时区错位。下次任何前端 date range filter → 后端 SQL 范围都按此约定。
+
+### CLAUDE.md updates
+N/A — 本次"route 同段 const 段在前"是 Codebase Patterns 第 27 行规则的常规应用；"派生字段 filter 三选一" + "batch ID 4 件套" + "rowSelection getCheckboxProps disabled" + "分页/过滤 clearSelection" + "onUnreadCountChange callback" 5 项 learnings 已 codify 进本 progress.txt，下次第 2-3 处出现时再统一抽到 Codebase Patterns 顶部。
+---

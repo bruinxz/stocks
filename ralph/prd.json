@@ -1305,8 +1305,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 77,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Done 2026/06/08. Backend: extended RiskAlertController with listAlerts (level/type/date/is_read/search/page/limit filters) + markIdsAsRead (batch by IDs, max 200) + deriveAlertCategory helper. New routes /api/risk-alerts/list (GET) + /api/risk-alerts/mark-read (PUT) — registered BEFORE /:id/read catchall. Frontend: new riskAlertService.ts (5 API methods + types + ALERT_CATEGORY_LABEL); TodayWorkspace.tsx new 4th tab 风控中心 with filters (level/type/RangePicker/is_read/search), batch row selection + mark-read + 一键全部已读 Popconfirm, paginated Table with sortable created_at. KPI 未读 badge auto-refresh via onUnreadCountChange callback. Tabs are now 4: 今日信号/关键事件/风险提醒/风控中心."
     },
     {
       "id": "US-078",

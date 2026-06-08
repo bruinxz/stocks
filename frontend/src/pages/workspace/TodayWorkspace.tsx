@@ -4,11 +4,14 @@ import {
   Button,
   Card,
   Col,
+  DatePicker,
   Empty,
+  Input,
   List,
   Modal,
   Popconfirm,
   Row,
+  Select,
   Space,
   Spin,
   Statistic,
@@ -18,6 +21,7 @@ import {
   Typography,
   message,
 } from 'antd';
+import type { TableRowSelection } from 'antd/es/table/interface';
 import {
   AlertOutlined,
   BellOutlined,
@@ -27,12 +31,14 @@ import {
   ReloadOutlined,
   RiseOutlined,
   RobotOutlined,
+  SafetyCertificateOutlined,
   ThunderboltOutlined,
   WarningOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
 import AIStockAnalysisModal from '../../components/trading/AIStockAnalysisModal';
+import dayjs, { Dayjs } from 'dayjs';
 import {
   todayWorkspaceService,
   TodaySignalsData,
@@ -44,8 +50,18 @@ import {
   UnreadRiskAlertItem,
 } from '../../services/todayWorkspaceService';
 import { getMarketBriefToday, MarketBriefResult } from '../../services/marketBriefService';
+import {
+  listRiskAlerts,
+  markAlertsAsRead,
+  markAllRiskAlertsRead,
+  RiskAlertItem,
+  RiskAlertListParams,
+  AlertCategory,
+  ALERT_CATEGORY_LABEL,
+} from '../../services/riskAlertService';
 
 const { Text, Paragraph } = Typography;
+const { RangePicker } = DatePicker;
 
 /**
  * 今日作战 (Today Workspace) — US-018 完整实现。
@@ -66,6 +82,7 @@ const TodayWorkspace: React.FC = () => {
     { key: 'signals', label: '今日信号', icon: <ThunderboltOutlined /> },
     { key: 'events', label: '关键事件', icon: <BellOutlined /> },
     { key: 'alerts', label: '风险提醒', icon: <AlertOutlined /> },
+    { key: 'risk_center', label: '风控中心', icon: <SafetyCertificateOutlined /> },
   ];
   const [activeKey, setActiveKey] = useState('signals');
 
@@ -236,6 +253,8 @@ const TodayWorkspace: React.FC = () => {
     body = (
       <AlertsPanel alerts={data.unread_alerts} totalCount={data.unread_alert_count} />
     );
+  } else if (activeKey === 'risk_center') {
+    body = <RiskAlertCenterPanel onUnreadCountChange={refresh} />;
   }
 
   const subtitle = data?.trade_date
@@ -972,6 +991,391 @@ const RiskAlertsList: React.FC<{ alerts: UnreadRiskAlertItem[]; compact?: boolea
 };
 
 // ---------------------------------------------------------------------------
+// US-077 RiskAlertCenterPanel — 风控告警中心（分页 + 过滤 + 批量已读）
+// ---------------------------------------------------------------------------
+
+/**
+ * 风控告警中心 sub-tab。
+ *
+ * 与 `AlertsPanel`（前 3 tab 的未读预览）的区别：
+ *   - AlertsPanel = 来自 /api/today/signals 的最近 N 条未读 list view（只展示）；
+ *   - 本组件 = 来自 /api/risk-alerts/list 的全量分页 table（可过滤 / 批量已读）。
+ *
+ * Filter：level (HIGH/MEDIUM/LOW) / type (持仓/市场/单股) / date range / is_read。
+ * 批量已读：表格 rowSelection multiple → 顶部按钮 "标记选中已读 (N)"；
+ *           标记完后自动 reload 当前分页，并通过 `onUnreadCountChange` 让父组件
+ *           更新 KPI 条的未读徽标。
+ *
+ * 错误处理：单 try/catch + 顶部 Alert + 重试按钮（同 SignalsPanel / AlertsPanel）。
+ */
+const RiskAlertCenterPanel: React.FC<{ onUnreadCountChange?: () => void }> = ({
+  onUnreadCountChange,
+}) => {
+  const [items, setItems] = useState<RiskAlertItem[]>([]);
+  const [total, setTotal] = useState(0);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(30);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const [filterLevel, setFilterLevel] = useState<'HIGH' | 'MEDIUM' | 'LOW' | undefined>(undefined);
+  const [filterType, setFilterType] = useState<AlertCategory | undefined>(undefined);
+  const [filterDateRange, setFilterDateRange] = useState<[Dayjs | null, Dayjs | null] | null>(null);
+  const [filterIsRead, setFilterIsRead] = useState<boolean | undefined>(undefined);
+  const [filterSearch, setFilterSearch] = useState<string>('');
+
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [marking, setMarking] = useState(false);
+
+  // 组装 query — useMemo 让 effect deps 稳定
+  const queryParams = useMemo<RiskAlertListParams>(() => {
+    const params: RiskAlertListParams = { page, limit: pageSize };
+    if (filterLevel) params.level = filterLevel;
+    if (filterType) params.type = filterType;
+    if (filterIsRead !== undefined) params.is_read = filterIsRead;
+    if (filterSearch.trim()) params.search = filterSearch.trim();
+    if (filterDateRange?.[0]) params.date_from = filterDateRange[0].format('YYYY-MM-DD');
+    if (filterDateRange?.[1]) params.date_to = filterDateRange[1].format('YYYY-MM-DD');
+    return params;
+  }, [page, pageSize, filterLevel, filterType, filterIsRead, filterSearch, filterDateRange]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await listRiskAlerts(queryParams);
+      setItems(res.items);
+      setTotal(res.total);
+      setUnreadCount(res.unread_count);
+      // 切换分页 / 过滤后清空选中（防止跨页选 ID 误标）
+      setSelectedIds([]);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg);
+    } finally {
+      setLoading(false);
+    }
+  }, [queryParams]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const handleMarkSelected = useCallback(async () => {
+    if (selectedIds.length === 0) {
+      message.info('请先选择告警');
+      return;
+    }
+    setMarking(true);
+    try {
+      const res = await markAlertsAsRead(selectedIds);
+      message.success(`已标记 ${res.updated} 条告警为已读`);
+      setSelectedIds([]);
+      await load();
+      onUnreadCountChange?.();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      message.error(`批量标记失败：${msg}`);
+    } finally {
+      setMarking(false);
+    }
+  }, [selectedIds, load, onUnreadCountChange]);
+
+  const handleMarkAll = useCallback(async () => {
+    setMarking(true);
+    try {
+      await markAllRiskAlertsRead();
+      message.success('已将全部未读告警标记为已读');
+      await load();
+      onUnreadCountChange?.();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      message.error(`一键已读失败：${msg}`);
+    } finally {
+      setMarking(false);
+    }
+  }, [load, onUnreadCountChange]);
+
+  const handleResetFilters = useCallback(() => {
+    setFilterLevel(undefined);
+    setFilterType(undefined);
+    setFilterDateRange(null);
+    setFilterIsRead(undefined);
+    setFilterSearch('');
+    setPage(1);
+  }, []);
+
+  const rowSelection: TableRowSelection<RiskAlertItem> = {
+    selectedRowKeys: selectedIds,
+    onChange: keys => setSelectedIds(keys.map(k => Number(k))),
+    getCheckboxProps: row => ({
+      // 已读告警不需要再次标记 (post-action 状态防呆)
+      disabled: row.is_read,
+    }),
+  };
+
+  // 当前分页内的未读条数（用于 "已全选" 边界感知）
+  const unreadOnPage = useMemo(() => items.filter(i => !i.is_read).length, [items]);
+
+  return (
+    <Card
+      size="small"
+      title={
+        <Space>
+          <SafetyCertificateOutlined style={{ color: '#722ed1' }} />
+          <span>风控告警中心</span>
+          <Tag color={unreadCount > 0 ? 'red' : 'green'}>未读 {unreadCount}</Tag>
+          <Tag color="default">总计 {total}</Tag>
+        </Space>
+      }
+      extra={
+        <Space>
+          <Button
+            icon={<ReloadOutlined />}
+            onClick={() => void load()}
+            loading={loading}
+            size="small"
+          >
+            刷新
+          </Button>
+          <Button
+            type="primary"
+            icon={<CheckCircleOutlined />}
+            disabled={selectedIds.length === 0 || marking}
+            loading={marking && selectedIds.length > 0}
+            onClick={() => void handleMarkSelected()}
+            size="small"
+          >
+            标记选中已读 ({selectedIds.length})
+          </Button>
+          <Popconfirm
+            title="将所有未读告警标记为已读？"
+            description={`此操作会更新 ${unreadCount} 条未读告警，无法撤销`}
+            okText="确认"
+            cancelText="取消"
+            onConfirm={handleMarkAll}
+            disabled={unreadCount === 0 || marking}
+          >
+            <Button
+              danger
+              disabled={unreadCount === 0 || marking}
+              loading={marking && selectedIds.length === 0}
+              size="small"
+            >
+              一键全部已读
+            </Button>
+          </Popconfirm>
+        </Space>
+      }
+    >
+      <Space direction="vertical" size={12} style={{ width: '100%' }}>
+        {error && (
+          <Alert
+            type="error"
+            showIcon
+            message="加载失败"
+            description={error}
+            action={
+              <Button size="small" onClick={() => void load()}>
+                重试
+              </Button>
+            }
+          />
+        )}
+
+        {/* 过滤栏 */}
+        <Row gutter={[8, 8]} align="middle">
+          <Col xs={12} md={4}>
+            <Select<'HIGH' | 'MEDIUM' | 'LOW'>
+              placeholder="级别"
+              allowClear
+              style={{ width: '100%' }}
+              value={filterLevel}
+              onChange={v => {
+                setFilterLevel(v);
+                setPage(1);
+              }}
+              options={[
+                { label: '高 (HIGH)', value: 'HIGH' },
+                { label: '中 (MEDIUM)', value: 'MEDIUM' },
+                { label: '低 (LOW)', value: 'LOW' },
+              ]}
+            />
+          </Col>
+          <Col xs={12} md={4}>
+            <Select<AlertCategory>
+              placeholder="类型"
+              allowClear
+              style={{ width: '100%' }}
+              value={filterType}
+              onChange={v => {
+                setFilterType(v);
+                setPage(1);
+              }}
+              options={[
+                { label: '持仓', value: 'position' },
+                { label: '市场', value: 'market' },
+                { label: '单股', value: 'individual' },
+              ]}
+            />
+          </Col>
+          <Col xs={24} md={7}>
+            <RangePicker
+              style={{ width: '100%' }}
+              value={filterDateRange ?? undefined}
+              onChange={dates => {
+                setFilterDateRange(dates as [Dayjs | null, Dayjs | null] | null);
+                setPage(1);
+              }}
+              placeholder={['开始日期', '结束日期']}
+            />
+          </Col>
+          <Col xs={12} md={4}>
+            <Select<'all' | 'unread' | 'read'>
+              placeholder="读取状态"
+              style={{ width: '100%' }}
+              value={
+                filterIsRead === undefined ? 'all' : filterIsRead ? 'read' : 'unread'
+              }
+              onChange={v => {
+                setFilterIsRead(v === 'all' ? undefined : v === 'read');
+                setPage(1);
+              }}
+              options={[
+                { label: '全部', value: 'all' },
+                { label: '未读', value: 'unread' },
+                { label: '已读', value: 'read' },
+              ]}
+            />
+          </Col>
+          <Col xs={24} md={5}>
+            <Input.Search
+              placeholder="代码/名称模糊搜索"
+              allowClear
+              value={filterSearch}
+              onChange={e => setFilterSearch(e.target.value)}
+              onSearch={() => setPage(1)}
+            />
+          </Col>
+          <Col xs={24} md={24}>
+            <Space>
+              <Button size="small" onClick={handleResetFilters}>
+                重置过滤
+              </Button>
+              {selectedIds.length > 0 && (
+                <Text type="secondary">
+                  已选 {selectedIds.length} 条（当前页未读 {unreadOnPage} 条）
+                </Text>
+              )}
+            </Space>
+          </Col>
+        </Row>
+
+        <Table<RiskAlertItem>
+          size="small"
+          rowKey="id"
+          loading={loading}
+          dataSource={items}
+          rowSelection={rowSelection}
+          pagination={{
+            current: page,
+            pageSize,
+            total,
+            showSizeChanger: true,
+            pageSizeOptions: ['20', '30', '50', '100'],
+            showTotal: (n, range) => `共 ${n} 条，当前 ${range[0]}-${range[1]}`,
+            onChange: (p, ps) => {
+              setPage(p);
+              if (ps !== pageSize) setPageSize(ps);
+            },
+          }}
+          locale={{ emptyText: <Empty description="无符合过滤条件的告警" /> }}
+          columns={[
+            {
+              title: '级别',
+              dataIndex: 'level',
+              width: 80,
+              render: (v: string) => levelTag(v),
+              filters: [
+                { text: '高', value: 'HIGH' },
+                { text: '中', value: 'MEDIUM' },
+                { text: '低', value: 'LOW' },
+              ],
+              onFilter: (val, row) => row.level === val,
+            },
+            {
+              title: '类型',
+              dataIndex: 'category',
+              width: 80,
+              render: (v: AlertCategory) => categoryTag(v),
+            },
+            {
+              title: '代码 / 名称',
+              key: 'symbol_name',
+              width: 240,
+              render: (_: unknown, row: RiskAlertItem) => (
+                <Space direction="vertical" size={0}>
+                  <Text code style={{ fontSize: 12 }}>
+                    {row.symbol}
+                  </Text>
+                  <Text strong>{row.name}</Text>
+                </Space>
+              ),
+            },
+            {
+              title: '内容',
+              dataIndex: 'message',
+              ellipsis: { showTitle: false },
+              render: (v: string) => (
+                <Tooltip title={v} placement="topLeft">
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {v}
+                  </Text>
+                </Tooltip>
+              ),
+            },
+            {
+              title: '规则',
+              dataIndex: 'rule_id',
+              width: 140,
+              ellipsis: true,
+              render: (v: string | null | undefined) =>
+                v ? (
+                  <Tag color="purple" style={{ fontSize: 11 }}>
+                    {v}
+                  </Tag>
+                ) : (
+                  <Text type="secondary">—</Text>
+                ),
+            },
+            {
+              title: '时间',
+              dataIndex: 'created_at',
+              width: 150,
+              render: (v: string) => (
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {dayjs(v).format('MM-DD HH:mm:ss')}
+                </Text>
+              ),
+              sorter: (a, b) => dayjs(a.created_at).valueOf() - dayjs(b.created_at).valueOf(),
+              defaultSortOrder: 'descend',
+            },
+            {
+              title: '状态',
+              dataIndex: 'is_read',
+              width: 70,
+              render: (v: boolean) =>
+                v ? <Tag color="default">已读</Tag> : <Tag color="red">未读</Tag>,
+            },
+          ]}
+        />
+      </Space>
+    </Card>
+  );
+};
+
+// ---------------------------------------------------------------------------
 // 下单结果 modal
 // ---------------------------------------------------------------------------
 
@@ -1091,6 +1495,13 @@ function levelIcon(level: string): React.ReactNode {
   const upper = (level || '').toUpperCase();
   if (upper === 'HIGH') return <WarningOutlined style={{ color: '#f5222d' }} />;
   return <AlertOutlined style={{ color: '#fa8c16' }} />;
+}
+
+/** US-077 风控中心 — 告警类别 tag */
+function categoryTag(category: AlertCategory): React.ReactNode {
+  if (category === 'position') return <Tag color="blue">{ALERT_CATEGORY_LABEL.position}</Tag>;
+  if (category === 'market') return <Tag color="purple">{ALERT_CATEGORY_LABEL.market}</Tag>;
+  return <Tag color="cyan">{ALERT_CATEGORY_LABEL.individual}</Tag>;
 }
 
 function strategyTag(strategy: string): React.ReactNode {
