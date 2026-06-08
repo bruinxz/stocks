@@ -1466,8 +1466,8 @@
         "Tests pass"
       ],
       "priority": 87,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026/06/09. EnhancedTradingJournalService (1481 lines) with DataSource DI, 14 pure exported helpers, double-defense (remote AI throw → heuristic_fallback; saveJournal throw → fail-OPEN), preserves user_notes (US-017), supports dry_run/overwrite_hand_edited/skip_ai. SchedulerService registers ENHANCED_TRADING_JOURNAL_GENERATE task type + default cron '40 15 * * 1-5' (post digest 15:30 / earnings 15:35). 152 unit tests pass covering pure functions + e2e + error paths + multi-user isolation. Frontend PortfolioWorkspace 复盘日记 tab already exists (US-017), auto-renders trading_journals rows."
     },
     {
       "id": "US-088",

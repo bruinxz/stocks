@@ -7554,3 +7554,111 @@ PaperTradingFacade.placeOrder 保留 7-method facade 收敛）。
   并列）。risk/ 限定 pre-trade / post-trade guard；internal/ 限定 facade 私有实现。
 
 ---
+
+## 2026/06/09 03:05 - US-087
+
+**AI 复盘日记 AI 自动生成升级。**
+
+### What was implemented
+
+- 新增 `backend/src/services/EnhancedTradingJournalService.ts` (1481 行)
+  - DataSource DI 模式：`EnhancedTradingJournalDataSource` interface +
+    `DefaultEnhancedTradingJournalDataSource` 真实实现 +
+    `PRODUCTION_ENHANCED_TRADING_JOURNAL_DATA_SOURCE` 单例 + 测试 fake
+  - 14 个 export 纯函数（safeMoney / safePct / pickTopTrades / pickTopAlerts /
+    computeJournalPnLSummary / computeIndustryAttribution / buildJournalId /
+    buildAIPrompt / buildHeuristicMarkdown / pickHeuristicMood /
+    buildHeuristicTags / normalizeAIPayload / parseMarkdownSections /
+    splitMarkdownToFields）—— 严格遵循 US-055 AI feature 6 项 checklist
+  - `generateForAll()` 主流程：扫 is_active 用户 → 拉 portfolio/trades/snapshots/
+    market/alerts/candidates → buildAIPrompt → callRemoteAI(TradingAgents) →
+    fallback heuristic → splitMarkdownToFields → upsert TradingJournal
+  - 双重防御 fail-OPEN：远端 AI throw → heuristic_fallback；saveJournal throw →
+    `status='failed'` + 仍 return result let caller 看到尝试
+  - 保留 `user_notes` (US-017 用户手记字段) 不清空；只覆盖主字段
+  - `overwrite_hand_edited=false` 时跳过用户手编的同日 journal
+    (mood != 'AI' && mood != '未生成' 视为 hand-edited)
+  - `dry_run=true` 让 ops 预演 markdown 不实际写表
+
+- 新增 `backend/tests/services/enhanced-trading-journal-service.test.ts` (1046 行)
+  - 152 个 assert 全部通过 (`152 ok, 0 failed`)
+  - 不依赖 jest / DB / 网络 — 完全 fake DataSource
+  - 覆盖维度：常量冻结、所有纯函数边界（含 NaN/0/负数/empty/cap/tie-break）、
+    e2e service（9 个场景）、异常路径（listEligibleUsers throw / portfolio throw /
+    callRemoteAI throw / saveJournal throw）、multi-user 不串扰
+
+- 修改 `backend/src/services/SchedulerService.ts` (+83 行)
+  - 注册 `ENHANCED_TRADING_JOURNAL_GENERATE` 任务类型分支
+  - 默认任务 'AI 复盘日记日度生成' cron `'40 15 * * 1-5'`
+    (晚于 daily_digest 15:30 与 earnings_forecast 15:35，让 journal 能反映已生成的
+    digest/告警)
+  - 支持 dry_run / overwrite_hand_edited / skip_ai / user_id 参数（snake/camel 都吃）
+
+### Files changed
+- backend/src/services/EnhancedTradingJournalService.ts (new, 1481 lines)
+- backend/tests/services/enhanced-trading-journal-service.test.ts (new, 1046 lines)
+- backend/src/services/SchedulerService.ts (modified, +83 lines)
+
+### Quality
+- `cd backend && npx tsc --noEmit` → **PASS** (no output)
+- `npx ts-node --transpile-only tests/services/enhanced-trading-journal-service.test.ts`
+  → **152 ok, 0 failed**
+- 前端 PortfolioWorkspace 复盘日记 tab 已存在 (US-017)，TradingJournal 行写入后
+  自动渲染，无需改前端。
+
+### Learnings for future iterations
+
+- **AI feature 6 项 checklist（US-055 → US-063 → US-073 → US-087 已 4 次复用）固化为
+  AI 类故事 default skeleton**。任何"调用远端 AI + fallback 启发式 + 持久化"类故事按
+  此 6 项写：(1) DataSource DI；(2) 8+ 个 export 纯函数；(3) plain-object 返回类型；
+  (4) status 多分支 (generated/partial/failed/skipped) 仍 persist；(5) 双重防御
+  fail-OPEN（远端 throw / DB throw）；(6) 双层 try/catch（DataSource + service 顶层）。
+  6 项任何一项缺失都不算合格，会在异常路径漏 panic 或测试漏覆盖。
+- **AI 自动生成 vs 用户手编的字段保护模式**：upsert 时 only 覆盖 AI 生成字段
+  (market_summary / portfolio_analysis / action_plan / mood / tags)，**不动**
+  `user_notes` 字段（用户手记空间）。`overwrite_hand_edited=false` 时如果用户
+  mood 字段已经 != 'AI' 且 != '未生成' 视为 hand-edited，跳过整行（标
+  `status='skipped'` skip_reason='已被用户编辑'）。**判据**：未来 AI 自动写入用户文档
+  类故事（如 AI 周报 / AI 持仓评论）都按此双层保护，避免 cron 把用户手编内容覆盖。
+- **5 段 markdown → DB 3 字段映射拆分模式**：output markdown 用 `## 标题` 5 段 (今日战报
+  / 操作复盘 / 市场观察 / 明日策略 / 风险提醒) 让 LLM prompt 与人读友好；持久化时通过
+  `splitMarkdownToFields()` 映射到 trading_journals 表已有的 3 字段
+  (market_summary / portfolio_analysis / action_plan) —— 不新建字段也不改表结构。
+  规则：战报 + 市场观察 → market_summary；操作复盘 → portfolio_analysis；明日策略 +
+  风险提醒 → action_plan。**判据**：未来 AI 生成类故事如果新模板字段数 ≠ DB schema 字段
+  数，优先用 `splitXxxToFields()` 映射函数而不是改表 — 表结构改动会影响所有依赖
+  controller / 前端。
+- **AI prompt 模板必须含 username + trade_date + 5 段标题占位**（buildAIPrompt 测试断言）：
+  让远端 AI 知道这是给具体用户、具体日期的复盘，不是泛化的市场评论；5 段标题占位
+  让 AI 严格输出 5 段，否则 parseMarkdownSections 会漏段触发 normalizeAIPayload 启
+  发式 fallback。**判据**：所有 AI prompt build 函数都要测 "prompt 含 username +
+  trade_date + 所有期望章节标题" — 这 3 项任一漏掉都会让远端 AI 输出不可解析。
+- **`pickHeuristicMood` 与 `buildHeuristicTags` 是 AI fallback 的"情绪/标签"补全**：
+  即使远端 AI 失败，TradingJournal 行的 mood 与 tags 字段仍要填（不能空字符串/空数
+  组，前端会显示丑陋的空 Tag）。`pickHeuristicMood(pnl)` 按 pct 阈值映射（兴奋/开心/
+  平静/焦虑/低落/未知），`buildHeuristicTags(input)` 按是否有 buy/sell/profit/drawdown/
+  high_risk/observation 复合产生 1-4 个 tag。**判据**：未来任何"AI 生成 + 持久化带分类
+  字段"的故事都要写 heuristic 补全函数，避免数据库出现 mood='' / tags=[]。
+- **`buildJournalId(user_id, trade_date, rand4)` 拆 YYYYMMDD + 4 位随机**：journal_id
+  格式 `J<userid>-<YYYYMMDD>-<XXXX>` (如 `J1-20260609-A3F7`) 让 ID 即可见 / 用户日期。
+  rand4 通过 `padStart(4, '0')` 保证恒 4 字符，避免短随机的"J1-20260609-7"形态。
+  **判据**：所有持久化业务实体（journal / report / alert）的 ID 都用"业务前缀 + 关键
+  日期 + 短随机"模式，可读性 > 全 UUID。
+- **测试规模 = 152 个 assert vs US-086 158 个 / US-085 118 个**：AI 类故事测试以 "纯函
+  数边界 + e2e service + 异常 + multi-user" 4 维度合算；纯函数测试占大头（~100
+  assert），e2e + 异常 占 ~50。**LOC 比 ~0.71:1**（1046 test / 1481 src），低于
+  rebalance 引擎类（1.45:1）因 src 包含 1 大段 DefaultDataSource SQL/Sequelize 实现
+  （240 行）+ 1 大段 buildAIPrompt 模板（120 行）这类不易拆纯函数的代码；下次类似
+  "AI service + 大段实战 prompt + 大段 Sequelize 拼装" 类故事按 0.7:1 预算 test LOC。
+- **PortfolioWorkspace 复盘日记 tab 已存在 (US-017) — 自动生成 cron 不需改前端**：
+  US-017 已把 journal list + 创建 / 编辑 UI 接好，trading_journals 表 upsert 后下次
+  fetch 即可见。**判据**：前端早期实现的工作区（US-015..US-018）大量预留了 AI 自动写
+  入的 hook（journal_id / mood / tags 字段都已展示），后端 AI 故事不需要在前端重复
+  "新增 tab / 新增 list"工作；只确认 list 渲染逻辑能识别空 user_notes / AI mood 即可。
+- **Default cron 时间窗口约定 `15:30 / 15:35 / 15:40 / 15:45 ...`**：收盘后 cron 任务
+  以 5 分钟为间隔串行触发，让前一个任务产出数据可被后一个任务消费。当前序列：
+  daily_digest(15:30) → earnings_forecast watchlist(15:35) → enhanced_trading_journal(15:40)。
+  **判据**：未来新增"收盘后 AI/聚合"类 cron 在 15:45 / 15:50 / 15:55 顺延填位，
+  prompt/汇总输入数据保持时序无 race。
+
+---
