@@ -17,7 +17,10 @@ portfolio/
 │   ├── DrawdownCircuitBreaker.ts  # 组合级回撤熔断 — LEVEL_1/2/3 cascade + 24h pause
 │   ├── MarketRegimeAlertService.ts # 市场级环境预警 — 指数 3 日/月度跌幅 + MA20/MA60 死叉
 │   ├── PerStockStopLossGuard.ts   # 每股止损 — close vs avg_cost loss ≤ -7% + 50% mass alert
-│   └── IndustryConcentrationGuard.ts # 行业集中度 — post-trade > 35% alert + 一键再平衡
+│   ├── IndustryConcentrationGuard.ts # 行业集中度 — post-trade > 35% alert + 一键再平衡
+│   ├── BlackSwanWatchdog.ts       # 个股黑天鹅 — US-053
+│   ├── MorningRiskCheckupService.ts # 开盘前体检快照 — US-054
+│   └── RestrictedShareWatchdog.ts # 限售解禁前瞻预警 — US-089
 └── internal/                      # private — only the facade may import from here
     ├── PaperTradingAttributionService.ts
     ├── PaperTradingAutomationService.ts
@@ -677,6 +680,100 @@ weekly recap, US-091 monthly review, ...) should follow:
 
 ---
 
+## `risk/RestrictedShareWatchdog` — US-089 specifics
+
+US-089 introduces the **9th risk-management form** and first **proactive event-driven**
+form (forward-looking, complementary to US-053 BlackSwanWatchdog which is **reactive
+event-driven** looking at yesterday's bad news). Both share the same "event-driven"
+shape (DataSource fetches external calendar / news rows, aggregates per-stock, writes
+RiskAlert), but the **time direction is opposite**:
+
+|                         | US-053 BlackSwanWatchdog          | US-089 RestrictedShareWatchdog       |
+|------------------------|------------------------------------|---------------------------------------|
+| 时间方向                | 反应式（昨日已发生）              | 预警式（未来 5 个交易日即将发生）    |
+| 事件源                  | ST / 停牌 / 公告 NLP              | 限售解禁日历                          |
+| AC RiskAlert level     | HIGH                              | MEDIUM                                |
+| Window 计算            | 单点（昨日发生事件）              | 时间窗（asOfDate..asOfDate+7 天）    |
+| Signature lifetime      | 长效（事件 ID 一次性）            | 与窗口绑定（窗口推进 → 重新触发）    |
+| RiskAlert.rule_id      | `black_swan`                      | `restricted_share`                    |
+| Fail-mode              | fail-OPEN（数据缺失继续）         | fail-OPEN（同款）                     |
+
+设计点 / 与现有 watchdog 复用的 patterns（同样 7 项 checklist 已被 US-047 ... US-054
+codified）：
+- **DataSource 接口注入**（生产 Sequelize + RestrictedShareClient + 测试 fake）；
+- **纯函数 helper 全 export 让单测无需 DB / 无需 AKShare**（
+  `normalizeRestrictedShareConfig` / `computeWindowEndDate` / `aggregateReleaseByStock` /
+  `computeReleaseRatio` / `signatureForRelease` / `mergeSeenSignatures` /
+  `buildRestrictedShareMessage` / `stripSymbolSuffix` 8 个 helper）；
+- **配置在 `User.risk_config.restricted_share` JSONB** + Object.freeze 默认配置；
+- **trigger → `RiskAlert(level='MEDIUM')`**（轻量预警；区别 US-053 黑天鹅 HIGH —
+  解禁是"提前预警"非"已经发生"，level 降一档）；
+- **writeAlert 失败 try/catch + logger.warn** 不掩盖 trigger 返回；
+- **单 user 失败 try/catch 隔离** 不阻塞剩余 user；
+- **不破坏 facade 收敛** — guard 只输出 alert，调用方决定是否撮合 / 推送。
+
+US-089-specific 新模式 / 注意点：
+
+1. **前瞻型窗口计算的非精确性是 by design**——`computeWindowEndDate(asOfDate,
+   lookforwardTradingDays)` 用 `ceil(N * 7/5)` 自然日近似覆盖 N 个交易日（不查
+   交易日历）。春节十一长假可能多算 1-2 个交易日，但 watchdog 是宽松预警 ——
+   宁可多报不可漏报；与 US-058 "lookbackDays=14 覆盖长假" 同款 trade-off。
+2. **窗口绑定 signature**——`RESTRICTED::<symbol>::<window_end>`。同窗口同股不
+   重复推；窗口推进自然让 signature 改变恢复触发（不像 US-053 ST signature
+   是事件 ID 长效）。**判据**：proactive 类预警的 signature 必须随窗口推进自然
+   失效，否则用户在长仓位上只能收到一次预警；reactive 类才用长效 signature。
+3. **跨用户共享 fetchReleasesInWindow**——所有用户共用同一 default 窗口的解禁
+   快照（fetchReleasesInWindow 仅 1 次远端调用 vs N 个 user × 1 次）。`evaluateAfterOpen`
+   主循环外做一次 fetch，per-user 只跑聚合 + 阈值判定，与 US-050 cross-user
+   shared MarketEnvironmentService 同款 share pattern；下次任何前瞻型 watchdog
+   按此 pattern 减少远端 N→1。
+4. **当前流通市值缺失 = conservative skip**（status='missing_market_cap'）——
+   无法计算解禁/流通比例时绝不发 alert，避免误报。同 US-049 cap_ratio_unknown
+   skip 模式。
+5. **AKShare release_pct_of_float 不直接信任**——AKShare 自带"占解禁前流通
+   市值比例"字段，但口径是"解禁前"流通市值，与"当前"流通市值可能不同
+   （股价行情驱动 market cap 漂移）。watchdog 重新用 `release_market_value /
+   stock.circulating_market_cap` 算 ratio 保持口径一致。**判据**：源数据自带的
+   比例 / 比率字段，若分母可能与 watchdog 期望口径不同（"当前" vs "事件前"），
+   都重新算。
+6. **PK 三元组 (ex_date, stock_code, shareholder_name)**——同日同股可能多种限售
+   股类型 / 多个股东，PK 必须含 shareholder_name 三元组才能 idempotent upsert；
+   同 US-006 DragonTigerBoard 多 row per stock 模式。
+7. **本地 DB 优先 + client fallback** in `DefaultRestrictedShareDataSource.
+   fetchReleasesInWindow()` —— 优先从 `RestrictedShareRelease` 表读（CLI 已
+   sync 入库），表为空时 best-effort 走 RestrictedShareClient 拉一次；同 US-050
+   "本地优先 + 远端兜底" 模式。
+8. **AC endpoint substitution**：AC 指定 `stock_restricted_release_queue` 是
+   per-stock 历史端点（per-stock × 5000 调用效率极低），实际选用同领域的
+   `stock_restricted_release_detail_em(start_date, end_date)` 一次返回日期范围
+   内全市场所有解禁批次。4 处文档同步标注 (Python helper docstring / Client
+   jsdoc / SyncService jsdoc / Watchdog jsdoc)。同 US-034 / US-035 / US-053
+   endpoint substitution 范式。
+
+`risk_config.restricted_share` JSONB schema：
+```json
+{
+  "enabled": true,
+  "release_threshold": 0.10,
+  "lookforward_trading_days": 5,
+  "dedupe_enabled": true
+}
+```
+
+**No HTTP / config endpoint in US-089** — 与 US-054 / US-067 不同，US-089 AC
+仅要求"风控 watchdog 在 5 个交易日内解禁市值 > 10% 触发 MEDIUM 告警 + 单元
+测试"，未指定 controller / route。未来若需要"用户在 UI 上调阈值"，新增
+`GET/PUT /api/risk/restricted-share` endpoint，复用 `DefaultRestrictedShareDataSource.
+loadConfig/saveConfig`。
+
+**No SchedulerService hook in US-089** — guard 主入口 `evaluateAfterOpen()`
+设计为可被 (a) scheduler cron 调用、(b) 一键 dashboard 按钮调用、(c) 集成 smoke
+test 调用 3 种方式触发，US-089 不指定 cron 接入；未来运维若需要每日定时跑，
+在 SchedulerService 注册 `type = 'RESTRICTED_SHARE_WATCHDOG'` cron + 调
+`restrictedShareWatchdog.evaluateAfterOpen()`。
+
+---
+
 ## risk/ — RiskAlert.rule_id 写入约定 (US-067 引入)
 
 `RiskAlert.rule_id` 由 US-067 新增。**所有 guard `DefaultXxxDataSource.writeAlert()`
@@ -696,6 +793,7 @@ weekly recap, US-091 monthly review, ...) should follow:
 | IndustryConcentrationGuard (US-052)| `industry_concentration`|
 | BlackSwanWatchdog (US-053)        | `black_swan`             |
 | FactorCorrelationReport (US-042)  | `factor_correlation`     |
+| RestrictedShareWatchdog (US-089)  | `restricted_share`       |
 
 新 guard / 新事后分析告警写入 `RiskAlert.create()` 必带 `rule_id`，命名遵循
 `snake_case`、与 guard 文件名简写一致。同 guard 内部多种告警子类型（如

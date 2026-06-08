@@ -3843,6 +3843,166 @@ def get_stock_qa_topics(stock_code: str, limit: Optional[int] = None) -> List[Di
         return []
 
 
+def get_restricted_release(start_date: str, end_date: str) -> List[Dict[str, Any]]:
+    """
+    Fetch A-share restricted-share release calendar (限售解禁日历) — US-089.
+
+    ── AC endpoint substitution (US-034 / US-035 同款范式) ──
+
+    AC 文字提到 `stock_restricted_release_queue`; AKShare 中实际函数名是
+    `stock_restricted_release_queue_em` (sina 版本 *_sina 已死) 是 per-stock
+    历史接口，输入 6 位股票代码，返回该股全部解禁批次时间线。
+
+    本服务面向"未来 X 天解禁日历"扫描全市场，per-stock 调用一次只能拿到 ONE
+    股票的所有解禁批次，对 5000 只 A 股 × 一次扫描 = 5000 次远端调用，效率
+    远低于按日期范围一次性拉取。
+
+    选定替代：AKShare `stock_restricted_release_detail_em(start_date, end_date)`
+        东方财富网 - 数据中心 - 限售股解禁 - 解禁详情一览
+        https://data.eastmoney.com/dxf/detail.html
+        Returns 该日期范围内全市场所有解禁批次，一次调用覆盖。
+
+    数据语义 100% 对齐 (queue 与 detail 都是按"解禁批次"建模)；输出字段
+    略有差异 (detail 缺"解禁股东数 / 未解禁数量"; 多出"实际解禁数量 /
+    解禁后 20 日涨跌幅")。AC 必需字段 (ex_date / stock_code /
+    release_shares / release_market_value / shareholder_name) detail_em
+    全部覆盖。
+
+    Returns:
+        List of dicts: {ex_date, stock_code, stock_name, shareholder_name,
+        release_shares, release_actual_shares, release_market_value,
+        release_pct_of_float, prev_close_price, prev_20d_change_pct,
+        post_20d_change_pct, raw_payload}.
+        Returns [] on empty / error so caller can checkpoint a "tried"
+        date range without aborting batch.
+
+    Args:
+        start_date: ISO YYYY-MM-DD or YYYYMMDD (inclusive)
+        end_date:   ISO YYYY-MM-DD or YYYYMMDD (inclusive)
+    """
+    try:
+        pure_start = start_date.replace('-', '')
+        pure_end = end_date.replace('-', '')
+        if len(pure_start) != 8 or len(pure_end) != 8:
+            print(
+                f'Invalid date format: start={start_date} end={end_date}',
+                file=sys.stderr,
+            )
+            return []
+
+        print(
+            f'Fetching restricted-share release detail for {pure_start}..{pure_end}',
+            file=sys.stderr,
+        )
+
+        fn = getattr(ak, 'stock_restricted_release_detail_em', None)
+        if fn is None:
+            print('AKShare missing stock_restricted_release_detail_em', file=sys.stderr)
+            return []
+
+        try:
+            df = fn(start_date=pure_start, end_date=pure_end)
+        except TypeError:
+            df = fn(pure_start, pure_end)
+        except Exception as e:
+            print(
+                f'stock_restricted_release_detail_em({pure_start}..{pure_end}) failed: {e}',
+                file=sys.stderr,
+            )
+            return []
+
+        if df is None or df.empty:
+            print(
+                f'AKShare returned empty restricted-release df for {pure_start}..{pure_end}',
+                file=sys.stderr,
+            )
+            return []
+
+        # ----- 列名柔性映射 (AKShare 列名跨版本飘移) -----
+        col_map: Dict[str, str] = {}
+        for col in df.columns:
+            col_s = str(col)
+            if col_s in ('股票代码', '代码'):
+                col_map['stock_code'] = col_s
+            elif col_s in ('股票简称', '名称', '股票名称'):
+                col_map['stock_name'] = col_s
+            elif col_s in ('解禁时间', '解禁日期'):
+                col_map['ex_date'] = col_s
+            elif col_s in ('限售股类型',):
+                col_map['shareholder_name'] = col_s
+            elif col_s in ('解禁数量',):
+                col_map['release_shares'] = col_s
+            elif col_s in ('实际解禁数量',):
+                col_map['release_actual_shares'] = col_s
+            elif col_s in ('实际解禁市值', '解禁市值'):
+                col_map['release_market_value'] = col_s
+            elif col_s in ('占解禁前流通市值比例', '占流通市值比例'):
+                col_map['release_pct_of_float'] = col_s
+            elif col_s in ('解禁前一交易日收盘价',):
+                col_map['prev_close_price'] = col_s
+            elif col_s in ('解禁前20日涨跌幅',):
+                col_map['prev_20d_change_pct'] = col_s
+            elif col_s in ('解禁后20日涨跌幅',):
+                col_map['post_20d_change_pct'] = col_s
+
+        if not col_map.get('stock_code') or not col_map.get('ex_date'):
+            print(
+                f'Missing required col mapping (stock_code/ex_date). cols={list(df.columns)[:8]}',
+                file=sys.stderr,
+            )
+            return []
+
+        results: List[Dict[str, Any]] = []
+        columns = list(df.columns)
+        for _, row in df.iterrows():
+            raw_code = row.get(col_map['stock_code'])
+            if pd.isna(raw_code):
+                continue
+            stock_code = str(raw_code).strip().zfill(6)
+            if not stock_code or stock_code.lower() == 'nan':
+                continue
+
+            ex_date_raw = row.get(col_map['ex_date'])
+            ex_date_iso = _parse_date_cell(row, col_map.get('ex_date'))
+            if not ex_date_iso:
+                # 兜底: 直接尝试 str(ex_date_raw) parse
+                if ex_date_raw is not None and not pd.isna(ex_date_raw):
+                    s = str(ex_date_raw).strip()
+                    if len(s) >= 10 and s[4] in ('-', '/'):
+                        ex_date_iso = s[0:10].replace('/', '-')
+                    elif len(s) >= 8 and s[:8].isdigit():
+                        ex_date_iso = _format_iso_date(s[:8])
+            if not ex_date_iso:
+                continue
+
+            shareholder_name = _cell_str(row, col_map.get('shareholder_name')) or '未分类'
+
+            results.append({
+                'ex_date': ex_date_iso,
+                'stock_code': stock_code,
+                'stock_name': _cell_str(row, col_map.get('stock_name')),
+                'shareholder_name': shareholder_name,
+                'release_shares': _cell_float(row, col_map.get('release_shares')),
+                'release_actual_shares': _cell_float(row, col_map.get('release_actual_shares')),
+                'release_market_value': _cell_float(row, col_map.get('release_market_value')),
+                'release_pct_of_float': _cell_float(row, col_map.get('release_pct_of_float')),
+                'prev_close_price': _cell_float(row, col_map.get('prev_close_price')),
+                'prev_20d_change_pct': _cell_float(row, col_map.get('prev_20d_change_pct')),
+                'post_20d_change_pct': _cell_float(row, col_map.get('post_20d_change_pct')),
+                'raw_payload': _row_to_jsonable(row, columns),
+            })
+
+        print(
+            f'Parsed {len(results)} restricted-release rows for {pure_start}..{pure_end}',
+            file=sys.stderr,
+        )
+        return results
+    except Exception as e:
+        print(f'Error getting restricted-share release for {start_date}..{end_date}: {e}', file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return []
+
+
 def main():
     """Main entry point for command line calls"""
     if len(sys.argv) < 2:
@@ -4076,6 +4236,15 @@ def main():
                 except (ValueError, TypeError):
                     limit = None
             result = get_stock_qa_topics(stock_code=stock_code, limit=limit)
+
+        elif command == "get_restricted_release":
+            # Args: <start_date> <end_date>
+            if len(sys.argv) < 4:
+                print(json.dumps({"error": "Missing start_date / end_date for get_restricted_release"}), file=sys.stderr)
+                sys.exit(1)
+            start_date = sys.argv[2]
+            end_date = sys.argv[3]
+            result = get_restricted_release(start_date=start_date, end_date=end_date)
 
         else:
             print(json.dumps({"error": f"Unknown command: {command}"}), file=sys.stderr)

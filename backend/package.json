@@ -41,6 +41,7 @@
     "sync:snowball-keywords": "ts-node src/scripts/sync-snowball-keywords.ts",
     "sync:announcements": "ts-node src/scripts/sync-announcements.ts",
     "sync:qa-topics": "ts-node src/scripts/sync-qa-topics.ts",
+    "sync:restricted-share": "ts-node src/scripts/sync-restricted-share.ts",
     "compute:factors": "ts-node src/scripts/compute-factors.ts",
     "compute:factor-ic": "ts-node src/scripts/compute-factor-ic.ts",
     "compute:factor-correlation": "ts-node src/scripts/compute-factor-correlation.ts",

@@ -72,3 +72,4 @@ export * from './SnowballHotKeyword';
 export * from './AnnouncementSummary';
 export * from './EastMoneyQATopic';
 export * from './TechnicalAnalysisReport';
+export * from './RestrictedShareRelease';

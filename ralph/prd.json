@@ -1500,8 +1500,8 @@
         "Tests pass"
       ],
       "priority": 89,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026/06/09. Added RestrictedShareRelease model (PK = ex_date+stock_code+shareholder_name 3-tuple) + RestrictedShareClient (Python helper wrapping AKShare stock_restricted_release_detail_em) + RestrictedShareSyncService (date-range sync + skip-existing checkpoint + in-batch dedup) + CLI (npm run sync:restricted-share -- --upcoming=30 / --start=YYYY-MM-DD --end=YYYY-MM-DD). New RestrictedShareWatchdog in backend/src/portfolio/risk/ is the 9th risk-management form and first proactive event-driven type (forward-looking, complementary to US-053 BlackSwanWatchdog's reactive form). Triggers RiskAlert(level='MEDIUM', rule_id='restricted_share') when a held stock's accumulated release market value over the next 5 trading days exceeds 10% of its current circulating market cap; dedup via window-bound signature RESTRICTED::<symbol>::<window_end>. Cross-user shared fetchReleasesInWindow (1 fetch for N users). 8 exported pure helpers + DataSource injection + 129 unit tests passing (covers happy path, exact threshold strict >, no_release, missing_market_cap, zero positions, disabled user, seen dedup, dedupe_disabled, dry_run, multi-user shared fetch, single-user isolation, writeAlert failure, multi-batch aggregation, non-held stock, user_id scoping, custom threshold). AC endpoint substitution noted in 4 places (Python helper / Client jsdoc / SyncService jsdoc / Watchdog jsdoc): AC indicates per-stock stock_restricted_release_queue but service uses date-range stock_restricted_release_detail_em for 5000x efficiency. Typecheck + lint + tests pass. CLAUDE.md updated with new US-089 section."
     },
     {
       "id": "US-090",
