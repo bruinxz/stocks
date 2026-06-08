@@ -1449,8 +1449,8 @@
         "Tests pass"
       ],
       "priority": 86,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026/06/09. Added backend/src/portfolio/RebalanceEngine.ts (565 lines) with class RebalanceEngine + rebalance(portfolio_id, targetWeights, options?). Algorithm: per stock in target ∪ held, compute diff_value = total_value × target_weight − current_value; |diff_pct| < minTradePct → HOLD; BUY uses floor lot rounding (防 cash 超支), SELL uses ceil up to held qty (避免 tail position). 100-share A-share lot enforced via MIN_TRADE_LOT_SIZE constant. minTradePct default 0.5% honored via DEFAULT_REBALANCE_OPTIONS (Object.freeze). dryRun default=true (safe by default; caller passes execute=true to actually place orders). Orders sorted SELL→BUY→HOLD so撮合 layer releases cash before buying. Real execution delegated to PaperTradingFacade.placeOrder (preserves 7-method facade invariant). DataSource接口注入 enables fake-injection unit tests with zero DB. 7 pure-function helpers全 export (normalizeRebalanceOptions / normalizeTargetWeights / quantizeBuyQuantity / quantizeSellQuantity / classifyOrderSide / sortRebalanceOrders / computeTradePlan). Added backend/tests/portfolio/rebalance-engine.test.ts (820 lines, 158 tests all passing) covering constants / pure functions / engine end-to-end (happy / empty-target = 全清仓 / missing portfolio / missing price / execute mode / partial failure isolation / custom minTradePct / execute flag override / Record vs Map input / negative-weight rejection / message format). cd backend && npx tsc --noEmit → EXIT=0. cd backend && npx eslint src/portfolio/RebalanceEngine.ts → clean. Regression smoke: tests/risk/industry-concentration-guard.test.ts → 189 ok / 0 failed."
     },
     {
       "id": "US-087",

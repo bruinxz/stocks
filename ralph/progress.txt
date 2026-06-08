@@ -117,6 +117,7 @@
 - **跨 layer model 复用模式 (US-081 引入 FactorICResult 跨 quant/factors → quant/strategies)**: quant/factors/ 与 quant/strategies/ 互不依赖（不能反向 import service），但都可以**直接 import model 类**（FactorICResult / Stock / DailyBar）做 Sequelize 查询。**判据**: 同样的事实表（IC 结果 / 收益归因 / 风险评分）可被多 layer 消费时，**model 是 layer-neutral 的事实源**，service 层是 layer-specific 的业务封装；下游想用同样的事实但走不同的 lens（write 走 service / read 直走 model）是合理的。**注意**: read 端 query shape 要在调用方写清楚（哪些字段 + ORDER BY 决定），避免重复 service 层的查询逻辑；service 仍是 write 单一入口。未来 US-084 BenchmarkSelector 读 RegimeBacktestResult / US-086 RebalanceEngine 读 PortfolioOptimizerResult 同款 pattern。
 - **组合级策略 "市场闸门" 单点拦截范式 (US-082 引入)**: 当一个策略的入场逻辑因"市场宏观状态"（情绪冰点 / 大盘破位 / 流动性危机）应该被全局关闭时，按 5 项 checklist: (1) **Step A.5 单点闸门**——在 generateSignals 的 `Exit 流程之后 / Entry 流程之前` 插入 `read 状态 → 决定 sentimentBlocked` 一段判断，blocked=true 走 `skipXxxDueToYyy()` 短路 helper（不调 evaluateEntries 节省 DB query）。(2) **Exit 流程必须完全不受闸门影响**——保护性平仓（止损 / 持有期 / 炸板 / 高开减半）任何宏观状态下都该触发，否则情绪冰点时本该止损的票被冻在持仓里更糟。(3) **fail-OPEN on missing data**——指数缺失 / 读取失败 → 继续入场流程（数据缺失不阻断业务）；fail-CLOSE 反而会让数据短暂缺失打挂策略。(4) **filtered.<dim>_blocked 计数器 + result.<dim> 出参三件套 {value, blocked, threshold}** 让 UI / 审计 / 推送一眼看清闸门状态——诊断粒度需要保留即使路径短路（不要简单 return zero candidates，刻意 load 涨停池大小让 limit_up_pool_size 与 sentiment_blocked 有意义）。(5) **DataSource 接口加 loadXxx(): Promise<number | null>**——精确匹配 by tradeDate，不做 latest-le-asOfDate fallback（daily-cron 产物"今天没有"代表数据缺失而非"用昨天兜底"，让策略 fail-OPEN 通过更安全）。**适用范围**：未来 US-083 dryRun 模式 / 大盘破位关闭趋势策略入场 / 行业流动性枯竭关闭行业策略入场 / 任何"宏观状态 → 关闭整策略入场"类宏观闸门照搬。DragonHeadMomentumStrategy (US-012 → US-082) 是参考实现。**边界 strict <  vs ≤ 判据**: "合格线"用严格 `<`（threshold=60 时 sentiment=60 通过 / 59.99 阻断，与默认"中性=50/偏多=60"语义一致）；"触发线"用 `≤`（与止损 ≤ -7% 同款）。新加任何阈值类参数先想清楚是合格线还是触发线。
 - **"per-instance flag + runtime override + DB 持久化" 三层策略级开关模板 (US-083 引入)**: 当一个开关同时需要 (a) 在策略 instance 上做长效状态 / (b) 单次 evaluate / generateSignals 临时 override / (c) 从 DB 配置同步过来，按 4 项 checklist：(1) **基类 public 字段 `xxx: boolean = false` 默认安全态**——QuantStrategy.dryRun = false 默认实盘；setter 方法 `setXxx(value: unknown)` 用白名单 `=== true || === 'true'` 强制类型转换（不能用 `Boolean(value)` 否则 JSONB 里写 `{}` / `[]` 会让策略意外进入 dry-run，**持久化配置字段的 boolean 强制类型应该严格而非宽容**——与 HTTP 临时参数用 `Boolean(body.dry_run)` 是相反语境）。(2) **getter `isXxx(options?)` 严格优先 options**——`options?.xxx !== undefined ? Boolean(options.xxx) : this.xxx`，不能用 `||` 否则 `options.xxx === false` 会被静默吞掉无法 override 实例的 true。(3) **两个独立 export 纯函数**：`pickXxxKeysFromRecords(records)` 从 DB records 提取符合条件的 strategy_keys（让 Engine.getXxxKeys 拿去用），`signalIsXxxByStrategy(signal, keys)` 检查信号是否属于某 key 集合（让下游 facade 调度）。**判据**：DB 同步与运行时调度分两个纯函数比一个混合方法易测；前者覆盖"JSONB 兼容 + strategy_key trim/dedup"，后者覆盖"set 语义 + metadata 多路径命中"。(4) **set-membership 语义 ≠ filter 语义**：`signalIsXxxByStrategy([], signal) === false`（空集合 = 没人是 xxx = 全走 default）；`signalMatchesXxxKeys([], signal) === true`（空集合 = 不过滤 = 全通过）。**判据**：未来任何 "set-based gating" 决策都要明确空集合的语义（default-allow vs default-deny），不能与 filter 函数合并。**适用范围**：未来 US-086 仓位再平衡引擎 "rebalance 锁定策略集" / US-XXX 策略级最大仓位 / 策略级风险等级等"策略级长效开关 + 单次 override"类参数。QuantStrategy.dryRun + pickDryRunStrategyKeysFromRecords + signalIsDryRunByStrategy (US-083) 是参考实现。完整单测在 `backend/tests/strategies/QuantStrategyDryRun.test.ts` 覆盖 45 项。
+- **通用目标权重再平衡引擎 — dryRun + execute 双 flag (US-086 引入)**: portfolio/ 目录新增第 2 个"rebalance surface"（与 US-052 IndustryConcentrationGuard.rebalanceIndustry 互补）：行业 guard 适合系统自动应急、引擎适合用户/策略主动调仓。3 大设计取舍: (1) **dryRun 默认 true vs false 由风险面决定** — 系统应急触发 + 单一行业 + 已超阈值（明确异常）→ 默认执行（US-052）；用户/策略触发 + 多 stock + 可能 ~100% 改变 portfolio → 默认 dry-run（US-086），caller 显式 `execute=true` 才下单。(2) **`dryRun: boolean` (持久化字段) + `execute: boolean` (一次性 convenience flag) 双字段** — execute 优先级最高；execute=true 比 dryRun=false 在 API site 更易读。(3) **BUY 用 floor / SELL 用 ceil 的 rounding bias** — BUY floor 防 cash 超支；SELL ceil 上限 held quantity 避免 tail position 卡 < 100 股。**判据**：rounding 方向应让算法误差**收敛**到约束允许的方向（BUY 约束 = cash 不能超 / SELL 约束 = 不能 < 0 持仓）。**`targetWeights.size === 0` 语义 = 全清仓** (与 US-083 set-membership default-deny 同款)；jsdoc 顶部必须显式标注此反差。**适用范围**：未来任何 portfolio/ 下"算 + 下单"引擎（tax-loss harvest / drift rebalance / 波动率均等再平衡）按此模板设计。**lazy-require facade 解循环 import 已在 US-052 IndustryConcentrationGuard / US-086 RebalanceEngine 两处验证**——portfolio/ 下任何子模块走 facade.placeOrder 都按 `// eslint-disable-next-line @typescript-eslint/no-var-requires` + `require('./PaperTradingFacade')` 模板，**不要**清成顶层 import 引入循环。RebalanceEngine.ts (US-086, 565 行 + 820 测试行, 158 测试) 是参考实现。
 
 ### Backtest engine — A 股执行约束 (US-014+)
 - **`AShareConstraintEngine` 是无状态纯模块** at `backend/src/quant/backtest/AShareConstraintEngine.ts`。三个方法：`evaluateOrder(ctx)` 返回 `{ok, reason?, detail?}` 决定能否成交（T+1 / 涨跌停 / 停牌 / ST 过滤 / 流动性门槛）；`computeFees(amount, side)` 返回 commission + stamp_tax + transfer_fee 三段费用 breakdown；`executionPrice(bar, side, timing)` 给三种 timing (next_open / same_close / twap_proxy) 的成交价并附动态滑点。引擎严格无 DB 访问、无状态字段、不修改输入参数——多策略并发跑零状态污染。
@@ -7429,5 +7430,127 @@ public surface 收敛。
   且 jsdoc 顶部标注这一约束。**判据**：任何"按位置推断业务语义" 的常量数组都要 jsdoc 双层
   防御：(a) 标注顺序约束 (b) 单测断言常量与预期顺序一致（本 story 测试 "COST_LEVELS sorted
   ascending" 是参考实现）。下次 US-XXX 滑点档位 / 资金规模档位 等同款。
+
+---
+
+## 2026/06/09 - US-086 风控：仓位再平衡引擎
+
+### 实现
+新增 `backend/src/portfolio/RebalanceEngine.ts`（统一的目标权重再平衡引擎）—— 接受
+`portfolio_id + targetWeights: Map<stock_code, weight>`，生成最小化交易量的 BUY / SELL /
+HOLD 订单列表，按 A 股 100 股最小交易单位自动取整，可选 dry-run 或真实下单（走
+PaperTradingFacade.placeOrder 保留 7-method facade 收敛）。
+
+**与现有 rebalance 表面的关系**：
+- US-052 `IndustryConcentrationGuard.rebalanceIndustry` 是"行业级一键再平衡"，只针对
+  超标行业自动卖最大涨幅 1-2 只到 < 30%；
+- 本 US-086 `RebalanceEngine.rebalance` 是"通用"目标权重再平衡，caller 提供完整
+  目标权重 Map，引擎生成完整 BUY/SELL/HOLD 列表（未在 Map 内的持仓 = 清仓）。
+两者互补 —— 行业 guard 适合系统自动应急，通用引擎适合策略调仓 / 用户手动 rebalance
+/ 组合优化结果落地。
+
+**关键设计**：
+1. **`MIN_TRADE_LOT_SIZE = 100`** 常量 + `DEFAULT_REBALANCE_OPTIONS Object.freeze`
+   （minTradePct=0.005, dryRun=true）—— 默认 dry-run 安全，caller 显式 `execute=true`
+   才下单。
+2. **算法**：对每只 stock ∈ target ∪ held：
+   - target_value = total_value × weight, current_value = position.market_value;
+   - diff_value / diff_pct → 若 |diff_pct| < minTradePct → HOLD;
+   - 否则 BUY 用 floor 100-shares 取整（防 cash 超支），SELL 用 ceil 上限 held quantity
+     （宁可多卖防超目标 weight）；
+   - 取整后 quantity == 0 → HOLD 标 reason='below_one_lot'。
+3. **7 个纯函数 helper 全 export** 易单测：
+   - `normalizeRebalanceOptions(input)` —— 容错 partial input，garbage 退回默认；
+   - `normalizeTargetWeights(input)` —— Map / Record 兼容输入，负数 / NaN / Infinity 抛错；
+   - `quantizeBuyQuantity(value, price)` —— floor 100 shares；
+   - `quantizeSellQuantity(value, price, held)` —— ceil 上限 held；
+   - `classifyOrderSide(diff, pct, minPct)` —— BUY / SELL / HOLD 判定；
+   - `sortRebalanceOrders(orders)` —— SELL → BUY → HOLD 排序 + 稳定 tie-break
+     （symbol.localeCompare）；
+   - `computeTradePlan(input)` —— 纯函数核心，所有 helper 协作生成 RebalanceOrder[]。
+4. **DataSource 接口注入**（生产 Sequelize + 测试 fake）—— 4 个 method:
+   loadPortfolio / loadOpenPositions / loadLatestPrices / executeOrder。生产
+   `executeOrder` 调 PaperTradingFacade.placeOrder（不绕开 facade）。
+5. **3 种执行模式**：
+   - 默认 dryRun=true → execution_status='skipped_dry_run' 不下单；
+   - `options.dryRun=false` → 真实下单；
+   - `options.execute=true` → 是 dryRun=false 的便捷别名（caller 显式"真的下单"）；
+     execute 优先级高于 dryRun 字段。
+6. **partial result + 错误隔离**：单笔 executeOrder 抛错 → execution_status='failed' +
+   execution_error 记录 + logger.warn，其他 order 继续执行（与 US-052 close failure
+   continue 同款）。
+7. **空 target = 全清仓** 语义（与 US-083 "set-membership default-deny" 同款）——
+   jsdoc + 测试显式覆盖此反差，避免误用。
+
+### 文件改动
+- backend/src/portfolio/RebalanceEngine.ts (A, 565 行)
+- backend/tests/portfolio/rebalance-engine.test.ts (A, 820 行) — 158 测试全过
+- ralph/prd.json (M) — US-086 passes=true + notes
+- ralph/progress.txt (M) — 本条 + 学习沉淀
+
+### 质量检查
+- `cd backend && npx tsc --noEmit` → EXIT=0 clean
+- `cd backend && npx eslint src/portfolio/RebalanceEngine.ts` → 0 errors / 0 warnings
+- `npx ts-node --transpile-only tests/portfolio/rebalance-engine.test.ts` → 158 pass / 0 fail
+- 回归 smoke：`npx ts-node --transpile-only tests/risk/industry-concentration-guard.test.ts`
+  → 189 pass / 0 fail（行业级再平衡 surface 未被影响）
+
+### Learnings for future iterations
+- **第 2 个"通用再平衡 surface"完成对偶**：US-052 行业级 vs US-086 通用权重级。**判据**：
+  rebalance 入口先想清楚是"系统自动应急（一键 / scheduler 触发）"还是"用户/策略主动
+  调仓（caller 提供完整目标）"——前者用 IndustryConcentrationGuard 模式（窄入口 + 强
+  默认 + 自动执行），后者用 RebalanceEngine 模式（宽输入 + dryRun 默认 + 显式 execute）。
+  下次 US-XXX "tax-loss harvest 再平衡" / "波动率均等再平衡" / "风险平价再平衡"
+  按此 dual-mode 模板选择基础范式。
+- **dryRun 默认 true vs false 的判据**：US-052 industry rebalance dryRun=false（系统
+  应急触发自动卖），US-086 portfolio rebalance dryRun=true（用户调仓需 review）。
+  **判据 = 风险面**：(a) 自动触发 + 单一行业 + 已超阈值（明确异常）→ 默认执行；
+  (b) 用户/策略触发 + 多 stock + 可能 ~100% 改变 portfolio（影响面大）→ 默认 dry-run，
+  caller 显式 `execute=true` 才执行。下次 US-XXX 自动调仓类故事按此 5W 风险面判定
+  默认值，避免设错给用户 surprise。
+- **BUY 用 floor / SELL 用 ceil 的 rounding bias 设计**：BUY 用 floor 防 cash 超支
+  （宁少买 1 手不要超 cash），SELL 用 ceil 上限 held quantity（宁多卖 1 手避免
+  tail position 卡 < 100 股无法交易）。**判据**：rounding 方向应该让算法误差**收敛**
+  到约束允许的方向 —— BUY 的约束是"cash 不能超"，SELL 的约束是"不能 < 0 持仓"。
+  下次 US-XXX 任何"价格 × 数量 = 金额"取整类操作（再平衡 / 减仓 / 调样）按此
+  bias 方向判据。
+- **`targetWeights.size === 0` 语义判定**：选 default-deny（= 全清仓）而非 default-allow
+  （= 维持当前）。**理由 1**：调用方传 Map 是"声明意图"行为，空 Map = 声明"没有任何
+  stock 应保留"语义清晰一致；**理由 2**：default-allow 会让 caller 误以为"我什么
+  都没传 = 安全没动作"，但 default-deny 让 caller 必须显式 dryRun=true 才能"看一眼
+  不动"，更安全。jsdoc 顶部必须显式标注此反差。**判据**：set-based 决策（filter /
+  gating / target）的"空集合默认行为"必须 jsdoc + 测试同时覆盖 default-deny vs
+  default-allow，照搬 US-083 同款判定模板。
+- **lazy-require 解循环依赖 + eslint-disable 标注**：RebalanceEngine 内
+  `require('./PaperTradingFacade')` 同 US-052 IndustryConcentrationGuard 同款，避免
+  facade ↔ engine 循环 import；ESLint `@typescript-eslint/no-var-requires` 必须
+  `// eslint-disable-next-line` 标注 + 注释说明"为什么 require 而非 import"，
+  让 reviewer 不要"清理"成 import 又把循环 import 引回来。**判据**：portfolio/
+  下任何子模块如果要走 facade.placeOrder 都 lazy-require，因 facade.ts 会 import 大量
+  internal/ 服务带 model 副作用。
+- **执行模式的 3 元参数设计**：`dryRun: boolean` (持久化字段 / strict boolean) +
+  `execute: boolean` (一次性 convenience flag) 共存，execute 优先级最高。**判据**：
+  当一个 option 同时需要 (a) 持久化默认值 (b) 单次 override (c) 用户语义意图明显
+  的快捷开关，用 dryRun + execute 双字段比单 dryRun 表达性强。`execute=true` 比
+  `dryRun=false` 在 API 调用 site 更易读 —— caller 一眼看到"真的下单"而不需要
+  推理"!dryRun"。下次任何"默认安全 + 用户 opt-in 危险操作"类 API 按此 dual-flag
+  模式。
+- **测试规模 = 158 项**比 US-085 cost-sensitivity 118 项多 ~35%，因 rebalance 引擎
+  覆盖多 stock 多 side（BUY/SELL/HOLD）+ 4 种 lot rounding 边界 + 3 种执行模式 +
+  错误隔离 + 多种 input 类型（Map vs Record）独立分支。**纯函数 unit test：service
+  unit test 比例 = ~100:58**（80 个纯函数边界覆盖 + 13 个 engine end-to-end）；
+  下次类似"算法引擎 + DataSource 注入" 类故事按此比例预算 LOC（test 与 src 大小
+  比 ~ 1.45:1，本 story 820 test / 565 src = 1.45:1，与 US-085 1.44:1 持平）。
+- **`quantizeSellQuantity` 边界：held < lot_size → 0 整 lot 可卖**：held 99 股
+  的零碎持仓（A 股从港股转回 / 复权除息后 fractional shares）卖不掉 100 整数倍 ≤ held
+  → return 0；caller 看到 HOLD reason='below_one_lot' 知道"这个零碎持仓需要走特殊渠道
+  清理"。**未来 US-XXX 处理零碎股清理**（如 OTC 撮合 / 协议转让 / 等待资金回收）按此
+  signal 设计专门入口而非硬塞进通用 rebalance 引擎。
+- **portfolio/ 目录的"engine"类模块命名约定建立**：第一个非 facade / 非 risk-guard 的
+  执行型引擎放在 portfolio/ 顶层（而非 risk/ 或 internal/），因为 rebalance 不是
+  pre-trade guard（不阻止订单）也不是 facade 多路复用（不是 7 method 之一）。**判据**：
+  portfolio/ 下未来若有 "tax-loss harvest engine" / "drift-rebalance engine" 等同样
+  "接收意图 → 生成动作列表 → 走 facade 执行"类模块都放顶层（与 PortfolioReturnSimulator.ts
+  并列）。risk/ 限定 pre-trade / post-trade guard；internal/ 限定 facade 私有实现。
 
 ---

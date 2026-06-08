@@ -10,6 +10,7 @@ rather than reaching into individual `internal/` services.
 portfolio/
 ├── PaperTradingFacade.ts          # 7-method public surface — controllers import this
 ├── PortfolioReturnSimulator.ts    # standalone return simulator (pre-existing)
+├── RebalanceEngine.ts             # 通用目标权重再平衡引擎 — US-086
 ├── risk/                          # pre-trade risk gates — US-047+
 │   ├── PositionLimitGuard.ts      # max positions + single-stock + single-industry caps
 │   ├── TrailingStopGuard.ts       # 追踪止损 — daily highest_price + next-day SELL trigger
@@ -715,3 +716,79 @@ DrawdownCircuitBreaker 的 LEVEL_1/2/3）共享一个 rule_id（因为它们语�
 - **lazy-require dispatcher**：避免 RiskAlert model 反向依赖 services 层。
 - **level !== 'HIGH' 直接 skip**：MEDIUM/LOW 不推（保留给未来 cron 聚合 US 扩展）。
 - **fire-and-forget**：不 await，主流程 0 增加延迟。
+
+## `RebalanceEngine.ts` — US-086 specifics
+
+US-086 introduces the **2nd rebalance surface** living at the portfolio top
+level (next to `PortfolioReturnSimulator.ts`). It is **complementary, NOT
+overlapping**, with US-052 `IndustryConcentrationGuard.rebalanceIndustry`:
+
+|                       | US-052 行业级一键再平衡            | US-086 通用目标权重再平衡         |
+|----------------------|-----------------------------------|-----------------------------------|
+| 触发方式             | 系统自动应急（cron / 一键按钮）   | 用户/策略调仓                     |
+| 输入                 | 无（自动找超 35% 行业）           | `Map<stock_code, weight>` (完整) |
+| 操作范围             | 仅超标行业内 1-2 只               | 全 portfolio (target ∪ held)     |
+| 默认执行             | `dry_run=false`（应急直接卖）     | `dryRun=true`（要求 review 后下单）|
+| Lives at             | `risk/IndustryConcentrationGuard` | `RebalanceEngine.ts`             |
+| HTTP endpoint        | POST /api/portfolio/rebalance-industry | (待 controller 故事接入) |
+
+Both rebalance surfaces share these invariants:
+- Execute leg **always** goes through `paperTradingFacade.placeOrder` /
+  `.closePosition` (preserves 7-method facade invariant + chains pre-trade
+  guards: PositionLimit / DrawdownCircuitBreaker).
+- DataSource interface injection for tests (PRODUCTION singleton + fake for
+  unit tests with zero DB).
+- Pure-function helpers all exported for surface unit-testing.
+- 失败隔离：per-symbol execute throws → `status='failed'` + continue
+  (matches US-052 close-failure pattern).
+
+`RebalanceEngine` design choices specific to "通用" 模式:
+
+1. **dry_run 默认 true** — 用户/策略调仓 可能影响多只股票，强制 caller 显式
+   `execute=true` 才下单。与 US-052 反向（系统应急默认执行）。
+2. **`targetWeights.size === 0` 语义 = 全清仓**（与 US-083 set-membership
+   default-deny 同款）。caller 想"不动" → 传 dryRun=true 而非空 Map。
+   jsdoc 顶部 + 单测必须显式覆盖此反差。
+3. **`minTradePct` 默认 0.5%** — 低于该偏差 → HOLD，避免无意义微调换手。
+   严格 `<` 边界（< minTradePct → HOLD，== minTradePct → 仍 trade，与
+   US-082 "合格线用严格 <" 同款）。
+4. **100 股最小交易单位**硬编码 `MIN_TRADE_LOT_SIZE = 100`；未来支持北交所
+   （5 股 / 10 股阶梯）时再扩 lot_size 参数。BUY 用 floor（防 cash 超支），
+   SELL 用 ceil 上限 held quantity（避免 tail 卡 < 100 股的零碎持仓）。
+5. **执行排序 SELL → BUY → HOLD** — 撮合层先卖出释放 cash，再 BUY，避免
+   "BUY 时 cash 不够 → 拒单 → 漏调仓"的链式失败。
+6. **`execute: true` 是 `dryRun: false` 的 convenience alias** —— caller
+   显式表达"真的下单"的语义比 `dryRun: false` 在 API site 更易读。execute
+   优先级高于 dryRun 字段；两者都不传 = dryRun=true 默认安全。
+7. **lazy-require facade 解循环 import** — `executeOrder` 内
+   `require('./PaperTradingFacade')` 而非顶层 `import`，因 facade.ts 会
+   import 大量 internal/ 服务。同 US-052 `IndustryConcentrationGuard.
+   executeFullClose` 同款；下次任何 portfolio/ 子模块走 facade 都按此
+   pattern + `// eslint-disable-next-line @typescript-eslint/no-var-requires`
+   显式标注（避免被未来 reviewer 当 lint warning 清掉）。
+
+7 个 export 纯函数:
+- `normalizeRebalanceOptions(input)` — partial → 完整 options + garbage 容错；
+- `normalizeTargetWeights(input)` — Map / Record 兼容输入 + 负数 / NaN 抛错；
+- `quantizeBuyQuantity(value, price)` — floor 100 shares；
+- `quantizeSellQuantity(value, price, held)` — ceil 上限 held；
+- `classifyOrderSide(diff, pct, minPct)` — BUY / SELL / HOLD 判定；
+- `sortRebalanceOrders(orders)` — SELL → BUY → HOLD + 稳定 tie-break；
+- `computeTradePlan(input)` — 纯函数核心。
+
+HTTP / facade integration: 目前 RebalanceEngine **不直接绑定 HTTP route**
+（与 US-052 不同）—— 设计为可被 (a) controller endpoint 直接调用（未来故事
+落地）、(b) 策略层 `generateSignals` 输出直接调用、(c) PortfolioOptimizer
+事后分析结果落地调用 这 3 种 caller 共享。caller 决定是否 audit log + 是否
+推送（webhook / 飞书），引擎只负责"算 + 下单"。
+
+### Engine 类的命名约定 (US-086 引入)
+
+portfolio/ 目录新增"engine"类模块的命名 / 放置规则：
+- **顶层放置**：非 facade、非 risk-guard、非 internal 的"算 + 下单"型
+  模块（RebalanceEngine / 未来 TaxLossHarvestEngine / DriftRebalanceEngine）
+  放在 portfolio/ 顶层（与 PortfolioReturnSimulator.ts 并列），不要塞进 risk/
+  或 internal/。
+- **risk/ 限定**：pre-trade / post-trade guards（阻止订单 / 监控持仓 / 写
+  RiskAlert）。
+- **internal/ 限定**：facade 私有实现（不能被外部 controller 直接 import）。
