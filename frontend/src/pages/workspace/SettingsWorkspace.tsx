@@ -3,6 +3,7 @@ import {
   Alert,
   Button,
   Card,
+  Checkbox,
   Col,
   Divider,
   Empty,
@@ -23,6 +24,7 @@ import {
   UserOutlined,
   KeyOutlined,
   BellOutlined,
+  NotificationOutlined,
   TeamOutlined,
   EyeOutlined,
   SendOutlined,
@@ -32,6 +34,9 @@ import {
   DisconnectOutlined,
   CheckCircleOutlined,
   ExperimentOutlined,
+  WechatOutlined,
+  MailOutlined,
+  MessageOutlined,
 } from '@ant-design/icons';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
 import {
@@ -49,7 +54,12 @@ import {
   sendWeChatTestMessage,
   updateSmsConfig,
   sendRealtimeAlertTest,
+  loadNotificationConfig,
+  updateNotificationConfig,
   NotificationChannelsConfig,
+  NotificationConfigMatrixView,
+  NotificationEventKey,
+  NotificationChannelKey,
   SendDigestsResult,
   DigestForUserResult,
   SendWeeklyReviewResult,
@@ -59,7 +69,7 @@ import {
   RealtimeAlertDispatchResult,
 } from '../../services/settingsService';
 
-const { Text, Paragraph, Link } = Typography;
+const { Text, Paragraph } = Typography;
 
 /**
  * 账号设置 (Settings Workspace).
@@ -99,10 +109,11 @@ const SettingsWorkspace: React.FC = () => {
   const tabs: WorkspaceTab[] = [
     { key: 'profile', label: '个人资料', icon: <UserOutlined /> },
     { key: 'keys', label: 'API 密钥', icon: <KeyOutlined /> },
+    { key: 'push-channels', label: '推送渠道', icon: <NotificationOutlined /> },
     { key: 'notifications', label: '通知设置', icon: <BellOutlined /> },
     { key: 'users', label: '用户管理', icon: <TeamOutlined /> },
   ];
-  const [activeKey, setActiveKey] = useState('notifications');
+  const [activeKey, setActiveKey] = useState('push-channels');
 
   // --- 通知设置 state -----------------------------------------------------
   const [config, setConfig] = useState<NotificationChannelsConfig | null>(null);
@@ -143,6 +154,15 @@ const SettingsWorkspace: React.FC = () => {
   const [realtimeAlertTestResult, setRealtimeAlertTestResult] =
     useState<RealtimeAlertDispatchResult | null>(null);
 
+  // ---- US-080 推送渠道矩阵视图 state -------------------------------------
+  const [pushView, setPushView] = useState<NotificationConfigMatrixView | null>(null);
+  const [pushLoading, setPushLoading] = useState(false);
+  const [pushError, setPushError] = useState<string | null>(null);
+  const [pushSaving, setPushSaving] = useState(false);
+  /** 矩阵 + 渠道字段的本地草稿；保存按钮 PUT 时一次性 diff */
+  const [pushDraft, setPushDraft] = useState<NotificationConfigMatrixView | null>(null);
+  const [pushFeishuTesting, setPushFeishuTesting] = useState(false);
+
   const refresh = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
@@ -160,28 +180,66 @@ const SettingsWorkspace: React.FC = () => {
     void refresh();
   }, [refresh]);
 
+  // ---- US-080 推送渠道矩阵视图 加载 -------------------------------------
+  const refreshPushChannels = useCallback(async () => {
+    setPushLoading(true);
+    setPushError(null);
+    try {
+      const view = await loadNotificationConfig();
+      setPushView(view);
+      setPushDraft(view);
+    } catch (err) {
+      setPushError(err instanceof Error ? err.message : '加载推送渠道矩阵失败');
+    } finally {
+      setPushLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    // lazy-load: 仅当用户切到 push-channels 才拉
+    if (activeKey !== 'push-channels') return;
+    if (pushView || pushLoading || pushError) return;
+    void refreshPushChannels();
+  }, [activeKey, pushView, pushLoading, pushError, refreshPushChannels]);
+
   // KPI 统计 — 渠道启用计数 + 日报开关状态
   const kpiSlot = useMemo(() => {
-    const active = config
+    // 推送渠道页用 pushView 数据；其他 tab 用 config (走 /notification-channels)
+    const cfgForKpi: NotificationChannelsConfig | null =
+      activeKey === 'push-channels' ? pushView?.raw || null : config;
+    const active = cfgForKpi
       ? [
-          config.feishu.enabled ? '飞书' : null,
-          config.email.enabled ? '邮件' : null,
-          config.wechat.enabled ? '微信' : null,
-          config.sms.enabled ? '短信' : null,
+          cfgForKpi.feishu.enabled ? '飞书' : null,
+          cfgForKpi.email.enabled ? '邮件' : null,
+          cfgForKpi.wechat.enabled ? '微信' : null,
+          cfgForKpi.sms.enabled ? '短信' : null,
         ].filter(Boolean).length
       : 0;
+    // 推送渠道页额外显示"已订阅事件数"——所有矩阵格中 enabled=true 的总数
+    let subscribedCount = 0;
+    if (activeKey === 'push-channels' && pushView) {
+      for (const event of Object.values(pushView.matrix)) {
+        for (const cell of Object.values(event)) {
+          if (cell.applicable && cell.enabled) subscribedCount += 1;
+        }
+      }
+    }
     return (
       <Space size={32}>
         <Statistic title="账号角色" value="—" />
         <Statistic title="启用通道" value={active} suffix="个" />
-        <Statistic
-          title="飞书日报"
-          value={config?.feishu.daily_digest ? '开启' : '关闭'}
-          valueStyle={{ color: config?.feishu.daily_digest ? '#3f8600' : '#999' }}
-        />
+        {activeKey === 'push-channels' ? (
+          <Statistic title="已订阅事件" value={subscribedCount} suffix="项" />
+        ) : (
+          <Statistic
+            title="飞书日报"
+            value={cfgForKpi?.feishu.daily_digest ? '开启' : '关闭'}
+            valueStyle={{ color: cfgForKpi?.feishu.daily_digest ? '#3f8600' : '#999' }}
+          />
+        )}
       </Space>
     );
-  }, [config]);
+  }, [activeKey, config, pushView]);
 
   const headerActions =
     activeKey === 'notifications' ? (
@@ -190,6 +248,17 @@ const SettingsWorkspace: React.FC = () => {
           刷新
         </Button>
         <Tag color="processing">US-063 通知通道</Tag>
+      </Space>
+    ) : activeKey === 'push-channels' ? (
+      <Space>
+        <Button
+          icon={<ReloadOutlined />}
+          onClick={() => void refreshPushChannels()}
+          loading={pushLoading}
+        >
+          刷新
+        </Button>
+        <Tag color="purple">US-080 推送渠道</Tag>
       </Space>
     ) : (
       <Tag color="processing">待迁移现有个人中心 / 用户管理页</Tag>
@@ -507,6 +576,159 @@ const SettingsWorkspace: React.FC = () => {
       setRealtimeAlertTesting(false);
     }
   }, []);
+
+  // ---- US-080 推送渠道 draft 编辑 + 保存 handlers -----------------------
+
+  /** 矩阵格 toggle —— 只改本地 draft，提交时一次 PUT */
+  const togglePushMatrix = useCallback(
+    (event: NotificationEventKey, channel: NotificationChannelKey, next: boolean) => {
+      setPushDraft(prev => {
+        if (!prev) return prev;
+        const cell = prev.matrix[event]?.[channel];
+        if (!cell || !cell.applicable) return prev;
+        return {
+          ...prev,
+          matrix: {
+            ...prev.matrix,
+            [event]: {
+              ...prev.matrix[event],
+              [channel]: { applicable: true, enabled: next },
+            },
+          },
+        };
+      });
+    },
+    []
+  );
+
+  /** 顶部 3 个 Card 字段编辑（webhook_url / address / channel.enabled） */
+  const patchPushChannelField = useCallback(
+    (channel: NotificationChannelKey, patch: Record<string, any>) => {
+      setPushDraft(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          channels: {
+            ...prev.channels,
+            [channel]: { ...(prev.channels as any)[channel], ...patch },
+          },
+        };
+      });
+    },
+    []
+  );
+
+  /**
+   * 推送渠道"保存"按钮 —— diff draft vs view，把 matrix + channel 顶部字段一起
+   * 打成 PUT /api/settings/notification-config 的两份 patch；返回 view 再回灌。
+   */
+  const handlePushSave = useCallback(async () => {
+    if (!pushDraft || !pushView) return;
+    setPushSaving(true);
+    try {
+      // 1. matrix_updates: 只发与 view 不同的 cell
+      const matrixUpdates: Partial<
+        Record<NotificationEventKey, Partial<Record<NotificationChannelKey, boolean>>>
+      > = {};
+      const events: NotificationEventKey[] = [
+        'daily_digest',
+        'earnings_alert',
+        'risk_alert',
+        'weekly_review',
+      ];
+      const channels: NotificationChannelKey[] = ['feishu', 'email', 'wechat', 'sms'];
+      for (const ev of events) {
+        for (const ch of channels) {
+          const draftCell = pushDraft.matrix[ev]?.[ch];
+          const viewCell = pushView.matrix[ev]?.[ch];
+          if (!draftCell?.applicable) continue;
+          if (draftCell.enabled !== viewCell?.enabled) {
+            matrixUpdates[ev] = matrixUpdates[ev] || {};
+            (matrixUpdates[ev] as any)[ch] = draftCell.enabled;
+          }
+        }
+      }
+      // 2. channels_updates: 只发顶部 Card 字段（webhook_url / address / channel.enabled / phone）
+      const channelsUpdates: any = {};
+      if (pushDraft.channels.feishu.enabled !== pushView.channels.feishu.enabled) {
+        channelsUpdates.feishu = { enabled: pushDraft.channels.feishu.enabled };
+      }
+      if (pushDraft.channels.feishu.webhook_url !== pushView.channels.feishu.webhook_url) {
+        channelsUpdates.feishu = {
+          ...(channelsUpdates.feishu || {}),
+          webhook_url: pushDraft.channels.feishu.webhook_url,
+        };
+      }
+      if (pushDraft.channels.email.enabled !== pushView.channels.email.enabled) {
+        channelsUpdates.email = { enabled: pushDraft.channels.email.enabled };
+      }
+      if (pushDraft.channels.email.address !== pushView.channels.email.address) {
+        channelsUpdates.email = {
+          ...(channelsUpdates.email || {}),
+          address: pushDraft.channels.email.address,
+        };
+      }
+      if (pushDraft.channels.wechat.enabled !== pushView.channels.wechat.enabled) {
+        channelsUpdates.wechat = { enabled: pushDraft.channels.wechat.enabled };
+      }
+      if (pushDraft.channels.sms.enabled !== pushView.channels.sms.enabled) {
+        channelsUpdates.sms = { enabled: pushDraft.channels.sms.enabled };
+      }
+      if (pushDraft.channels.sms.phone !== pushView.channels.sms.phone) {
+        channelsUpdates.sms = {
+          ...(channelsUpdates.sms || {}),
+          phone: pushDraft.channels.sms.phone,
+        };
+      }
+      const view = await updateNotificationConfig({
+        matrix_updates: matrixUpdates,
+        channels_updates: channelsUpdates,
+      });
+      setPushView(view);
+      setPushDraft(view);
+      // 同步刷新 notifications tab 的 config —— 共用底层存储
+      setConfig(view.raw);
+      message.success('推送渠道配置已保存');
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '保存失败');
+    } finally {
+      setPushSaving(false);
+    }
+  }, [pushDraft, pushView]);
+
+  /**
+   * 推送渠道的"飞书测试发送"按钮 —— 走与 notifications tab 同款 daily-digest
+   * preview endpoint（dry-run）拿到 payload + webhook 配置反馈，让用户验证
+   * webhook URL 配置正确。点击后 message 提示结果。
+   */
+  const handlePushFeishuTest = useCallback(async () => {
+    setPushFeishuTesting(true);
+    try {
+      const result = await previewDailyDigest();
+      const own = result.per_user[0];
+      if (own?.status === 'sent') {
+        message.success('飞书 webhook 测试发送成功（dry-run）');
+      } else if (own?.skip_reason) {
+        message.warning(`测试跳过：${own.skip_reason}`);
+      } else if (own?.error) {
+        message.error(`测试失败：${own.error}`);
+      } else {
+        message.info('测试已完成，无具体反馈');
+      }
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '测试发送失败');
+    } finally {
+      setPushFeishuTesting(false);
+    }
+  }, []);
+
+  /** 计算 draft vs view 是否有未保存变更 —— "保存"按钮 disabled 判定 */
+  const pushHasChanges = useMemo(() => {
+    if (!pushDraft || !pushView) return false;
+    if (JSON.stringify(pushDraft.matrix) !== JSON.stringify(pushView.matrix)) return true;
+    if (JSON.stringify(pushDraft.channels) !== JSON.stringify(pushView.channels)) return true;
+    return false;
+  }, [pushDraft, pushView]);
 
   // ---- 渲染 --------------------------------------------------------------
 
@@ -1036,6 +1258,298 @@ const SettingsWorkspace: React.FC = () => {
     );
   };
 
+  const renderPushChannels = () => {
+    if (pushLoading && !pushView) {
+      return (
+        <Card>
+          <div style={{ textAlign: 'center', padding: 48 }}>
+            <Spin tip="加载推送渠道矩阵…" />
+          </div>
+        </Card>
+      );
+    }
+    if (pushError) {
+      return (
+        <Alert
+          type="error"
+          message="加载失败"
+          description={pushError}
+          showIcon
+          action={
+            <Button size="small" onClick={() => void refreshPushChannels()}>
+              重试
+            </Button>
+          }
+        />
+      );
+    }
+    if (!pushDraft) {
+      return <Empty description="暂无推送渠道配置数据" />;
+    }
+
+    const draft = pushDraft;
+    const EVENTS: Array<{ key: NotificationEventKey; label: string; hint: string }> = [
+      { key: 'daily_digest', label: '当日交易日报', hint: '15:30 收盘后推送' },
+      { key: 'earnings_alert', label: '业绩预告即时提醒', hint: '持仓股 + 自选股' },
+      { key: 'risk_alert', label: '高优先级风控告警', hint: 'HIGH 级实时分发' },
+      { key: 'weekly_review', label: '上周复盘报告', hint: '周一 08:00 HTML 邮件' },
+    ];
+    const CHANNELS: Array<{
+      key: NotificationChannelKey;
+      label: string;
+    }> = [
+      { key: 'feishu', label: '飞书机器人' },
+      { key: 'email', label: '邮件' },
+      { key: 'wechat', label: '微信公众号' },
+      { key: 'sms', label: '阿里云短信' },
+    ];
+
+    return (
+      <Space direction="vertical" size="large" style={{ width: '100%' }}>
+        <Alert
+          type="info"
+          showIcon
+          message="推送渠道配置（US-080）"
+          description={
+            <Space direction="vertical" size={4}>
+              <Text>
+                把消息触达拆分成 4 个独立通道（飞书 / 邮件 / 微信 / 短信）与 4 类事件（当日日报 /
+                业绩预告 / 风控告警 / 上周复盘）。
+                上方分块配置每个通道的连接参数，下方矩阵勾选每类事件走哪些通道。
+                顶部「保存全部」按钮一次落盘所有改动。
+              </Text>
+              <Text type="secondary">
+                单元格灰色 &quot;—&quot; 表示该通道当前架构下不支持该事件类型（如短信不支持非告警类
+                富文本）。完整文档：通知设置 tab 内每个 Card 顶部 Alert。
+              </Text>
+            </Space>
+          }
+        />
+
+        {/* 顶部 3 个 Card：飞书 webhook URL / 邮件地址 / 微信绑定状态。
+            注意：AC 列了 3 个 Card，但我们已实现 4 个通道，多展示一张 SMS 卡保持完整。 */}
+        <Row gutter={[16, 16]}>
+          <Col xs={24} lg={8}>
+            <Card
+              size="small"
+              title={
+                <Space>
+                  <SendOutlined />
+                  <span>飞书 webhook</span>
+                </Space>
+              }
+              extra={
+                <Switch
+                  size="small"
+                  checked={draft.channels.feishu.enabled}
+                  onChange={v => patchPushChannelField('feishu', { enabled: v })}
+                />
+              }
+            >
+              <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                <Input
+                  placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/xxxx"
+                  value={draft.channels.feishu.webhook_url}
+                  onChange={e => patchPushChannelField('feishu', { webhook_url: e.target.value })}
+                  disabled={!draft.channels.feishu.enabled}
+                  allowClear
+                />
+                <Space>
+                  {draft.channels.feishu.configured ? (
+                    <Tag icon={<CheckCircleOutlined />} color="success">
+                      已配置
+                    </Tag>
+                  ) : (
+                    <Tag color="default">未配置 — 将退回环境变量</Tag>
+                  )}
+                  <Button
+                    size="small"
+                    icon={<ExperimentOutlined />}
+                    loading={pushFeishuTesting}
+                    onClick={() => void handlePushFeishuTest()}
+                    disabled={!draft.channels.feishu.enabled}
+                  >
+                    测试发送
+                  </Button>
+                </Space>
+              </Space>
+            </Card>
+          </Col>
+          <Col xs={24} lg={8}>
+            <Card
+              size="small"
+              title={
+                <Space>
+                  <MailOutlined />
+                  <span>邮件接收地址</span>
+                </Space>
+              }
+              extra={
+                <Switch
+                  size="small"
+                  checked={draft.channels.email.enabled}
+                  onChange={v => patchPushChannelField('email', { enabled: v })}
+                />
+              }
+            >
+              <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                <Input
+                  placeholder="example@domain.com"
+                  value={draft.channels.email.address}
+                  onChange={e => patchPushChannelField('email', { address: e.target.value })}
+                  disabled={!draft.channels.email.enabled}
+                  allowClear
+                />
+                {draft.channels.email.configured ? (
+                  <Tag icon={<CheckCircleOutlined />} color="success">
+                    已配置 — SMTP 走后端 env
+                  </Tag>
+                ) : (
+                  <Tag color="default">未配置 — 周报 / 风控邮件无法投递</Tag>
+                )}
+              </Space>
+            </Card>
+          </Col>
+          <Col xs={24} lg={8}>
+            <Card
+              size="small"
+              title={
+                <Space>
+                  <WechatOutlined />
+                  <span>微信公众号绑定</span>
+                </Space>
+              }
+              extra={
+                <Switch
+                  size="small"
+                  checked={draft.channels.wechat.enabled}
+                  onChange={v => patchPushChannelField('wechat', { enabled: v })}
+                />
+              }
+            >
+              <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                {draft.channels.wechat.bound ? (
+                  <Space direction="vertical" size={2}>
+                    <Tag icon={<CheckCircleOutlined />} color="success">
+                      已绑定
+                    </Tag>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      openid: {draft.channels.wechat.openid.slice(0, 12)}…
+                    </Text>
+                    {draft.channels.wechat.bound_at && (
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        绑定于: {draft.channels.wechat.bound_at.slice(0, 19).replace('T', ' ')}
+                      </Text>
+                    )}
+                  </Space>
+                ) : (
+                  <Space direction="vertical" size={4}>
+                    <Tag icon={<QrcodeOutlined />} color="default">
+                      未绑定
+                    </Tag>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      切到「通知设置」tab → 微信卡片 → 「扫码绑定」生成二维码。
+                    </Text>
+                  </Space>
+                )}
+                <Button
+                  size="small"
+                  type="link"
+                  icon={<QrcodeOutlined />}
+                  onClick={() => setActiveKey('notifications')}
+                  style={{ paddingLeft: 0 }}
+                >
+                  打开扫码界面 →
+                </Button>
+              </Space>
+            </Card>
+          </Col>
+        </Row>
+
+        {/* 矩阵：事件 × 通道。 不 applicable 的格显示 — */}
+        <Card
+          title={
+            <Space>
+              <NotificationOutlined />
+              <span>事件 × 渠道订阅矩阵</span>
+            </Space>
+          }
+          extra={
+            <Space>
+              {pushHasChanges && <Tag color="warning">有未保存的改动</Tag>}
+              <Button
+                type="primary"
+                icon={<SaveOutlined />}
+                loading={pushSaving}
+                disabled={!pushHasChanges}
+                onClick={() => void handlePushSave()}
+              >
+                保存全部
+              </Button>
+            </Space>
+          }
+        >
+          <Table
+            size="small"
+            rowKey="key"
+            dataSource={EVENTS}
+            pagination={false}
+            bordered
+            columns={[
+              {
+                title: '事件类型',
+                dataIndex: 'label',
+                width: 220,
+                fixed: 'left',
+                render: (label: string, row) => (
+                  <Space direction="vertical" size={0}>
+                    <Text strong>{label}</Text>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      {row.hint}
+                    </Text>
+                  </Space>
+                ),
+              },
+              ...CHANNELS.map(ch => ({
+                title: (
+                  <Space size={4}>
+                    {ch.key === 'feishu' && <SendOutlined />}
+                    {ch.key === 'email' && <MailOutlined />}
+                    {ch.key === 'wechat' && <WechatOutlined />}
+                    {ch.key === 'sms' && <MessageOutlined />}
+                    <span>{ch.label}</span>
+                  </Space>
+                ),
+                key: ch.key,
+                align: 'center' as const,
+                render: (_: unknown, row: { key: NotificationEventKey }) => {
+                  const cell = draft.matrix[row.key]?.[ch.key];
+                  if (!cell?.applicable) {
+                    return <Text type="secondary">—</Text>;
+                  }
+                  const channelEnabled = draft.channels[ch.key].enabled;
+                  return (
+                    <Checkbox
+                      checked={cell.enabled}
+                      onChange={e => togglePushMatrix(row.key, ch.key, e.target.checked)}
+                      disabled={!channelEnabled}
+                    />
+                  );
+                },
+              })),
+            ]}
+          />
+          <Divider style={{ margin: '12px 0' }} />
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            提示：单元格灰色 &quot;—&quot; 表示该通道当前架构下不支持该事件类型。通道总开关
+            关闭时（顶部 Card 右上 Switch）所有事件勾选都不会生效——保存后仍会 disabled。
+            订阅事件总数与右上角 KPI 同步。
+          </Text>
+        </Card>
+      </Space>
+    );
+  };
+
   const renderPlaceholder = () => (
     <Card>
       <Empty description={`Settings Workspace · ${activeKey} 占位 — 后续聚合个人中心 / 用户管理`} />
@@ -1052,7 +1566,11 @@ const SettingsWorkspace: React.FC = () => {
       kpiSlot={kpiSlot}
       headerActions={headerActions}
     >
-      {activeKey === 'notifications' ? renderNotifications() : renderPlaceholder()}
+      {activeKey === 'notifications'
+        ? renderNotifications()
+        : activeKey === 'push-channels'
+        ? renderPushChannels()
+        : renderPlaceholder()}
       <DigestPreviewModal
         open={previewOpen}
         result={previewResult}

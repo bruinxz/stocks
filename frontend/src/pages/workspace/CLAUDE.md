@@ -136,3 +136,29 @@ Each策略 Card depends on a distinct upstream table that ingests via its own cr
 | MultiFactorAlpha     | `factor_scores`                                                      | `npm run compute:factors`         |
 | DragonHeadMomentum   | `limit_up_stocks` + `industry_flows` + `dragon_tiger_boards`         | US-006/007/008 sync scripts       |
 | EarningsSurprise     | `earnings_forecasts` (is_surprise=true) + `northbound_holdings`      | US-005/013 sync scripts           |
+
+## Draft/view 双状态 + 矩阵格批量保存 pattern (US-080 — SettingsWorkspace 推送渠道)
+
+矩阵 / 多 cell 同时编辑 + 一次性保存的 tab 用 **`view: T | null` + `draft: T | null`** 双状态，而不是直接编辑 view。
+
+1. **`view`** = 服务器最近一次返回的"真实状态"；`draft` = 用户本地未提交的修改副本。两者都从 `loadXxx()` 初始化（`setView(v); setDraft(v)`）。
+2. **每个 cell toggle / 字段输入** 只更新 `draft`（`setDraft(prev => ...)`）；UI 渲染始终基于 `draft`，所以即使保存失败用户输入也不丢。
+3. **保存按钮做 `draft vs view` diff** 只发改动字段 → PUT 一次 → 成功后 `setView(server_response); setDraft(server_response)`（同步重置两者，避免 stale draft）。失败保留 `draft` 让用户重试。
+4. **"有未保存改动" 提示** 用 `useMemo(() => JSON.stringify(draft) !== JSON.stringify(view), [...])` 计算，给 Save 按钮 `disabled={!hasChanges}` + Tag 显示 "有未保存的改动"。
+5. **同源数据多个 tab 同步**：US-080 的 push-channels 与 notifications tab 共用底层 `risk_config.notification_channels` JSONB，保存后 `setConfig(view.raw)` 把刚拉的最新数据回灌到另一个 tab 的 state，避免用户切 tab 看到旧数据。
+
+适用场景：矩阵编辑（事件×渠道）、表格批量勾选 / 拖拽排序、Form 多字段批量更新、任何 "改一堆字段最后一次提交" 的 UX。**不适用**：单字段实时同步的场景（输入→自动保存），那种用 debounce + 单字段 endpoint 即可，不需要 draft 影子状态。
+
+## Lazy-load tab data 三态判定 (US-074 → US-080 复用)
+
+新 tab 数据是独立 endpoint 时：
+
+```ts
+useEffect(() => {
+  if (activeKey !== 'X') return;        // 1. 当前不是 X tab → 跳过
+  if (data || loading || error) return; // 2. 已加载 / 正在加载 / 之前失败 → 跳过
+  void load();                          // 3. 首次进入且无 data 无 error → fire
+}, [activeKey, data, loading, error, load]);
+```
+
+刷新按钮单独调 `load()`；错误重试也调 `load()`。"是否要 fire" 逻辑统一收敛在 useEffect，按钮只直接调 load。US-080 push-channels tab 复用此范式（避免一进 SettingsWorkspace 就拉两套 notification config，只在用户真正切到 push-channels 才拉矩阵视图）。

@@ -1353,7 +1353,7 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 80,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {

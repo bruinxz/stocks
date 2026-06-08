@@ -58,6 +58,58 @@ router.post(
 
 /**
  * @openapi
+ * /api/settings/notification-config:
+ *   get:
+ *     tags: [设置 Settings]
+ *     summary: 获取推送渠道矩阵视图 (US-080)
+ *     description: |
+ *       返回 channels 顶部摘要（启用 / 绑定 / 配置）+ matrix 4×4 (event × channel)。
+ *       与 GET /notification-channels 共用底层 JSONB 存储，只是视图形态不同。
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: 矩阵视图, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessResponse' } } } }
+ *       401: { description: 未授权 }
+ */
+router.get(
+  '/notification-config',
+  authController.authenticate,
+  settingsController.getNotificationConfig
+);
+
+/**
+ * @openapi
+ * /api/settings/notification-config:
+ *   put:
+ *     tags: [设置 Settings]
+ *     summary: 批量保存推送渠道矩阵 + 渠道字段 (US-080)
+ *     description: |
+ *       Body 同时支持两种 patch 形态：
+ *         - matrix_updates: { event: { channel: bool } } —— 矩阵格反向 patch；
+ *         - channels_updates: { feishu?: { enabled?, webhook_url? }, email?: { ... }, wechat?: { ... }, sms?: { ... } }
+ *       两份 patch 合并后走 dailyTradingDigestService.updateNotificationConfig。
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               matrix_updates: { type: object }
+ *               channels_updates: { type: object }
+ *     responses:
+ *       200: { description: 保存成功 + 返回最新矩阵视图, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessResponse' } } } }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
+ */
+router.put(
+  '/notification-config',
+  authController.authenticate,
+  settingsController.updateNotificationConfig
+);
+
+/**
+ * @openapi
  * /api/settings/daily-digest/preview:
  *   post:
  *     tags: [设置 Settings]

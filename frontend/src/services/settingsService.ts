@@ -511,9 +511,99 @@ export async function sendRealtimeAlertTest(
   return res.data.data as RealtimeAlertDispatchResult;
 }
 
+// ---------- US-080 推送渠道矩阵视图 ----------------------------------------
+
+/**
+ * US-080 — 事件类型 ↔ 渠道矩阵的事件 / 渠道 enum。
+ *   - daily_digest: 当日交易日报 (15:30 飞书 + 微信)
+ *   - earnings_alert: 业绩预告即时提醒 (持仓股 / 自选股)
+ *   - risk_alert: HIGH 级风控告警 (实时多通道)
+ *   - weekly_review: 上周复盘报告 (周一 08:00 邮件)
+ */
+export type NotificationEventKey =
+  | 'daily_digest'
+  | 'earnings_alert'
+  | 'risk_alert'
+  | 'weekly_review';
+
+export type NotificationChannelKey = 'feishu' | 'email' | 'wechat' | 'sms';
+
+export interface NotificationMatrixCell {
+  /** 该 (event, channel) 组合是否受架构支持；false → UI 渲染为 "—"，PUT 时被忽略 */
+  applicable: boolean;
+  /** 该格当前是否启用 = (channel.enabled) && (channel.<event_field>) */
+  enabled: boolean;
+}
+
+export interface NotificationConfigMatrixView {
+  channels: {
+    feishu: { enabled: boolean; webhook_url: string; configured: boolean };
+    email: { enabled: boolean; address: string; configured: boolean };
+    wechat: {
+      enabled: boolean;
+      openid: string;
+      bound_at: string;
+      bound: boolean;
+    };
+    sms: { enabled: boolean; phone: string; configured: boolean };
+  };
+  matrix: Record<NotificationEventKey, Record<NotificationChannelKey, NotificationMatrixCell>>;
+  raw: NotificationChannelsConfig;
+}
+
+/**
+ * US-080 — PUT /api/settings/notification-config 请求 body。
+ *
+ * 两份 patch 可同时存在：
+ *   - `matrix_updates` 矩阵反向 patch（事件订阅开关）；
+ *   - `channels_updates` 顶部 3 个 Card 的单字段同步（webhook_url / address /
+ *     channel.enabled 等）。
+ *
+ * 后端合并后走 dailyTradingDigestService.updateNotificationConfig，与 POST
+ * /notification-channels 完全等价。
+ */
+export interface NotificationConfigMatrixPatch {
+  matrix_updates?: Partial<
+    Record<NotificationEventKey, Partial<Record<NotificationChannelKey, boolean>>>
+  >;
+  channels_updates?: Partial<{
+    feishu: Partial<FeishuChannelConfig>;
+    email: Partial<EmailChannelConfig>;
+    wechat: Partial<WeChatChannelConfig>;
+    sms: Partial<SmsChannelConfig>;
+  }>;
+}
+
+/**
+ * US-080 — 拉取推送渠道矩阵视图（GET /api/settings/notification-config）。
+ */
+export async function loadNotificationConfig(): Promise<NotificationConfigMatrixView> {
+  const res = await api.get('/settings/notification-config');
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || '获取推送渠道配置失败');
+  }
+  return res.data.data as NotificationConfigMatrixView;
+}
+
+/**
+ * US-080 — 推送渠道批量保存（PUT /api/settings/notification-config）。
+ * 支持矩阵开关 + 单字段同步同时传入；返回最新矩阵视图供前端 setView。
+ */
+export async function updateNotificationConfig(
+  patch: NotificationConfigMatrixPatch
+): Promise<NotificationConfigMatrixView> {
+  const res = await api.put('/settings/notification-config', patch);
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || '保存推送渠道配置失败');
+  }
+  return res.data.data as NotificationConfigMatrixView;
+}
+
 const settingsService = {
   loadNotificationChannels,
   updateNotificationChannels,
+  loadNotificationConfig,
+  updateNotificationConfig,
   updateEmailConfig,
   previewDailyDigest,
   sendDailyDigestNow,

@@ -1,5 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
-import { dailyTradingDigestService } from '../../services/DailyTradingDigestService';
+import {
+  dailyTradingDigestService,
+  NotificationChannelsConfig,
+} from '../../services/DailyTradingDigestService';
 import { earningsForecastWatcher } from '../../services/EarningsForecastWatcher';
 import { weeklyReviewReportService } from '../../services/WeeklyReviewReportService';
 import { weChatOAService } from '../../services/WeChatOAService';
@@ -7,7 +10,191 @@ import { realtimeAlertDispatcher } from '../../services/RealtimeAlertDispatcher'
 import { logger } from '../../utils/logger';
 
 /**
- * SettingsController — US-063 / US-064 / US-065 / US-066 通知通道配置
+ * US-080 — 推送渠道 (push-channels) 矩阵视图。
+ *
+ * 把 NotificationChannelsConfig 的 4 个 channel 拍平成 4 × 4 矩阵：
+ *   - 行 = 事件类型 (daily_digest / earnings_alert / risk_alert / weekly_review)
+ *   - 列 = 渠道 (feishu / email / wechat / sms)
+ *
+ * 单元格三态：
+ *   - `applicable=true`：该 (event, channel) 组合受支持，`enabled` 是当前开关；
+ *   - `applicable=false`：该组合在当前架构下不支持（例如 sms.daily_digest），
+ *     UI 显示为"—"，PUT 时被忽略。
+ *
+ * 设计逻辑见 `NotificationConfigMatrixView` jsdoc。
+ */
+type NotificationEventKey = 'daily_digest' | 'earnings_alert' | 'risk_alert' | 'weekly_review';
+type NotificationChannelKey = 'feishu' | 'email' | 'wechat' | 'sms';
+
+interface MatrixCell {
+  applicable: boolean;
+  enabled: boolean;
+}
+
+/**
+ * applicable 表 —— (event, channel) -> 是否支持。
+ *
+ * 业务约束：weekly_review 当前只有 email 通道（HTML 邮件复盘报告，飞书/微信/短信
+ * 无 HTML 富文本能力）。Daily/earnings 在 feishu+wechat 支持但 email/sms 不支持
+ * (避免邮件轰炸 + 短信成本控制)。risk_alert 在 4 通道全开（实时告警是 multi-pipe）。
+ *
+ * 改动 applicable 集合需要同步：
+ *   - DailyTradingDigestService.listEligibleUsers (daily_digest 通道选择)
+ *   - EmailNotificationService (weekly_review 通道选择)
+ *   - WeChatOAService (各模板支持的事件)
+ *   - RealtimeAlertDispatcher (risk_alert 4 通道分发)
+ *
+ * 单测可以 import 这两个常量验证业务约束没被人误改：US-080 test 覆盖一个
+ * representative 对断言（e.g. sms.daily_digest = false，email.weekly_review = true）。
+ */
+export const NOTIFICATION_APPLICABLE_MATRIX: Record<
+  NotificationEventKey,
+  Record<NotificationChannelKey, boolean>
+> = {
+  daily_digest: { feishu: true, email: false, wechat: true, sms: false },
+  earnings_alert: { feishu: true, email: false, wechat: true, sms: false },
+  risk_alert: { feishu: true, email: true, wechat: true, sms: true },
+  weekly_review: { feishu: false, email: true, wechat: false, sms: false },
+};
+
+const APPLICABLE_MATRIX = NOTIFICATION_APPLICABLE_MATRIX;
+
+const EVENT_ORDER: NotificationEventKey[] = [
+  'daily_digest',
+  'earnings_alert',
+  'risk_alert',
+  'weekly_review',
+];
+
+const CHANNEL_ORDER: NotificationChannelKey[] = ['feishu', 'email', 'wechat', 'sms'];
+
+/**
+ * NotificationConfigMatrixView — GET /api/settings/notification-config 返回结构。
+ *
+ * `channels` 段：每个 channel 的"是否启用 + 是否配置完整"概览，供前端推送渠道页
+ * 顶部 3 个 Card 显示绑定状态（不含细节字段，需 PUT 走 /notification-channels）。
+ *
+ * `matrix` 段：4 × 4 矩阵 (event × channel)，每格 `{applicable, enabled}`。前端用
+ * antd Table + Checkbox 渲染，PUT 时通过 `matrix_updates` 字段反向写回。
+ *
+ * `raw` 段：底层的 NotificationChannelsConfig，避免前端为了拿 webhook_url / address
+ * 再发一次 GET。
+ */
+export interface NotificationConfigMatrixView {
+  channels: {
+    feishu: { enabled: boolean; webhook_url: string; configured: boolean };
+    email: { enabled: boolean; address: string; configured: boolean };
+    wechat: {
+      enabled: boolean;
+      openid: string;
+      bound_at: string;
+      bound: boolean;
+    };
+    sms: { enabled: boolean; phone: string; configured: boolean };
+  };
+  matrix: Record<NotificationEventKey, Record<NotificationChannelKey, MatrixCell>>;
+  raw: NotificationChannelsConfig;
+}
+
+/**
+ * 把 NotificationChannelsConfig 编译成矩阵视图。
+ *
+ * 单元格 `enabled` 严格 = (该 channel 总开关 enabled) && (该 channel.<event> 开关).
+ * 这避免 UI 让用户在 channel.enabled=false 的情况下勾上事件订阅但不生效造成困惑。
+ */
+export function buildMatrixView(cfg: NotificationChannelsConfig): NotificationConfigMatrixView {
+  const eventToChannelField: Record<
+    NotificationEventKey,
+    Partial<Record<NotificationChannelKey, string>>
+  > = {
+    daily_digest: { feishu: 'daily_digest', wechat: 'daily_digest' },
+    earnings_alert: { feishu: 'earnings_alert', wechat: 'earnings_alert' },
+    risk_alert: {
+      feishu: 'risk_alert',
+      email: 'risk_alert',
+      wechat: 'risk_alert',
+      sms: 'risk_alert',
+    },
+    weekly_review: { email: 'weekly_review' },
+  };
+
+  const matrix = {} as Record<NotificationEventKey, Record<NotificationChannelKey, MatrixCell>>;
+  for (const event of EVENT_ORDER) {
+    const row = {} as Record<NotificationChannelKey, MatrixCell>;
+    for (const channel of CHANNEL_ORDER) {
+      const applicable = APPLICABLE_MATRIX[event][channel];
+      let enabled = false;
+      if (applicable) {
+        const channelEnabled = (cfg as any)[channel]?.enabled === true;
+        const field = eventToChannelField[event][channel];
+        const fieldOn = field ? (cfg as any)[channel]?.[field] === true : false;
+        enabled = channelEnabled && fieldOn;
+      }
+      row[channel] = { applicable, enabled };
+    }
+    matrix[event] = row;
+  }
+
+  return {
+    channels: {
+      feishu: {
+        enabled: cfg.feishu.enabled,
+        webhook_url: cfg.feishu.webhook_url || '',
+        configured: !!(cfg.feishu.webhook_url || '').trim(),
+      },
+      email: {
+        enabled: cfg.email.enabled,
+        address: cfg.email.address || '',
+        configured: !!(cfg.email.address || '').trim(),
+      },
+      wechat: {
+        enabled: cfg.wechat.enabled,
+        openid: cfg.wechat.openid || '',
+        bound_at: cfg.wechat.bound_at || '',
+        bound: !!(cfg.wechat.openid || '').trim(),
+      },
+      sms: {
+        enabled: cfg.sms.enabled,
+        phone: cfg.sms.phone || '',
+        configured: !!(cfg.sms.phone || '').trim(),
+      },
+    },
+    matrix,
+    raw: cfg,
+  };
+}
+
+/**
+ * 把前端传来的 `{ matrix_updates: { event: { channel: boolean } } }` patch
+ * 翻译成 NotificationChannelsConfig 的 partial patch（只覆盖 applicable 的格子，
+ * 非 applicable 静默忽略；不动 channel.enabled / webhook_url / address 等字段）。
+ */
+export function matrixUpdatesToConfigPatch(updates: any): Partial<NotificationChannelsConfig> {
+  if (!updates || typeof updates !== 'object') return {};
+  const patch: any = {};
+  for (const event of EVENT_ORDER) {
+    const row = updates[event];
+    if (!row || typeof row !== 'object') continue;
+    for (const channel of CHANNEL_ORDER) {
+      if (!APPLICABLE_MATRIX[event][channel]) continue;
+      const v = row[channel];
+      if (v !== true && v !== false) continue;
+      // 把矩阵格映射回 config 字段（与 buildMatrixView 的 eventToChannelField 互补）
+      const fieldByEvent: Record<NotificationEventKey, string> = {
+        daily_digest: 'daily_digest',
+        earnings_alert: 'earnings_alert',
+        risk_alert: 'risk_alert',
+        weekly_review: 'weekly_review',
+      };
+      const field = fieldByEvent[event];
+      patch[channel] = { ...(patch[channel] || {}), [field]: v };
+    }
+  }
+  return patch as Partial<NotificationChannelsConfig>;
+}
+
+/**
+ * SettingsController — US-063 / US-064 / US-065 / US-066 / US-067 / US-080 通知通道配置
  *
  * Mounted at `/api/settings/*`. 与 `RiskController`（/api/risk）平行：风控配置
  * 是 pre-trade policy 关于*交易决策*；通知通道是 *消息触达* 维度，分开命名空间。
@@ -18,6 +205,8 @@ import { logger } from '../../utils/logger';
  * Endpoints:
  *   GET /api/settings/notification-channels — 取当前用户的 normalized 配置
  *   POST /api/settings/notification-channels — merge + 落盘（normalize 静默丢非法字段）
+ *   GET /api/settings/notification-config — US-080 矩阵视图 (event × channel)
+ *   PUT /api/settings/notification-config — US-080 矩阵反向 patch + 单字段同步
  *   POST /api/settings/daily-digest/preview — dry-run preview 当日日报
  *   POST /api/settings/daily-digest/send — 立即推送当日日报
  *   POST /api/settings/earnings-forecast/scan — 立即扫描持仓 + 自选股推送 (US-064)
@@ -30,6 +219,8 @@ import { logger } from '../../utils/logger';
  *   POST /api/settings/wechat-config — 更新 wechat 通道开关 / 3 类订阅消息开关 (US-066)
  *   POST /api/settings/wechat-unbind — 解除微信绑定 (US-066)
  *   POST /api/settings/wechat-test — 立即发一条测试微信订阅消息 (US-066)
+ *   POST /api/settings/sms-config — 更新 SMS 通道开关 / 接收手机号 (US-067)
+ *   POST /api/settings/sms-test — 冒烟测试一条 HIGH 级风控告警 (US-067)
  */
 export class SettingsController {
   /**
@@ -63,6 +254,66 @@ export class SettingsController {
       res.json({ success: true, data: saved, message: '通知通道配置已保存' });
     } catch (error: any) {
       logger.error('更新通知通道配置失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * GET /api/settings/notification-config (US-080)
+   *
+   * 返回 "推送渠道" 工作台的矩阵视图 —— 把 NotificationChannelsConfig 的 4 个
+   * channel × 4 个事件类型拍平成 4 × 4 矩阵。前端用 antd Table + Checkbox 渲染，
+   * 上方 3 个 Card 显示每个 channel 的绑定/配置状态摘要。
+   *
+   * Response: `NotificationConfigMatrixView` （含 channels 概览 / matrix 4×4 / raw 原始 config）
+   */
+  async getNotificationConfig(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user.id;
+      const cfg = await dailyTradingDigestService.getNotificationConfig(user_id);
+      const view = buildMatrixView(cfg);
+      res.json({ success: true, data: view });
+    } catch (error: any) {
+      logger.error('获取通知矩阵配置失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * PUT /api/settings/notification-config (US-080)
+   *
+   * 推送渠道工作台的"批量保存"端点 —— 支持两种 payload 形态共存于同一 body：
+   *   - `matrix_updates: { event: { channel: bool } }` —— 矩阵格反向 patch；
+   *     非 applicable 格静默忽略；该 cell 翻译回 `channel.<event_field>` 后 merge。
+   *   - `channels_updates: { feishu?: { enabled?, webhook_url? }, email?: { ... } }`
+   *     —— 顶部 3 个 Card 的单字段同步（webhook URL / email address / channel.enabled）。
+   *
+   * 两种 patch 都走相同的 `dailyTradingDigestService.updateNotificationConfig`
+   * (merge + normalize + JSONB 落盘)，保证与 POST /notification-channels 完全等价。
+   * 返回最新的矩阵视图，前端可直接 setView。
+   */
+  async updateNotificationConfig(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user.id;
+      const body = req.body || {};
+      // 翻译两种 patch 形态 → 一份合并的 Partial<NotificationChannelsConfig>
+      const matrixPatch = matrixUpdatesToConfigPatch(body.matrix_updates);
+      const channelsPatch: any =
+        body.channels_updates && typeof body.channels_updates === 'object'
+          ? body.channels_updates
+          : {};
+      // matrix 优先级最低 —— channel-level（webhook_url / address）显式 patch 覆盖矩阵开关
+      const merged: any = {};
+      for (const ch of ['feishu', 'email', 'wechat', 'sms']) {
+        const m = (matrixPatch as any)[ch];
+        const c = channelsPatch[ch];
+        if (m || c) merged[ch] = { ...(m || {}), ...(c || {}) };
+      }
+      const saved = await dailyTradingDigestService.updateNotificationConfig(user_id, merged);
+      const view = buildMatrixView(saved);
+      res.json({ success: true, data: view, message: '推送渠道配置已保存' });
+    } catch (error: any) {
+      logger.error('更新通知矩阵配置失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   }

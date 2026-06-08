@@ -7110,3 +7110,44 @@ N/A — 本次"route 同段 const 段在前"是 Codebase Patterns 第 27 行规�
 - **手动触发只放行 daily 类**：周期性 / per-stock 同步（财报 by stock_code 历史批量）单次按钮触发要么阻塞 30+ 分钟要么资源耗尽，应走运维 CLI (`npm run sync:financial-report -- --code=600519`)。Controller 校验"已知 source 但非 daily 类" → 400 友好提示 + CLI 命令；完全未知 source → 404。
 - **日期归一化必须分流 string/Date/null** (US-079)：Sequelize DATEONLY 列在不同 dialect 返回 string 或 Date，`normalizeDateOnly()` 双分支兜底；未来任何跨表 MAX(date) 聚合的 controller / service 都应抽 helper 不要每处现写 typeof 检查。
 ---
+
+## 2026-06-08 23:55 - US-080
+- 实现：前端设置页新增"推送渠道"子 tab + 后端矩阵视图 GET/PUT endpoint。
+- 后端 `backend/src/api/controllers/SettingsController.ts`：
+  - 导出 `NOTIFICATION_APPLICABLE_MATRIX` (event × channel) 业务约束表（weekly_review 只 email / risk_alert 4 通道全开 / sms 仅 risk_alert / daily_digest+earnings_alert 在 email/sms 关闭）
+  - `buildMatrixView(cfg)` 把 `NotificationChannelsConfig` 投影成 `NotificationConfigMatrixView`（channels 顶部摘要 + matrix 4×4 + raw 原始 config）
+  - `matrixUpdatesToConfigPatch(updates)` 把矩阵格反向 patch 翻译回 channel.<event_field>，非 applicable / 非 boolean 静默忽略
+  - 新增 `getNotificationConfig` / `updateNotificationConfig` controller，PUT 支持 matrix_updates + channels_updates 两种 patch 共存
+- 后端 `backend/src/api/routes/settings.routes.ts`：新增 GET/PUT /api/settings/notification-config 路由 + OpenAPI 注释
+- 前端 `frontend/src/services/settingsService.ts`：新增 `loadNotificationConfig` / `updateNotificationConfig` + 完整 type 导出
+- 前端 `frontend/src/pages/workspace/SettingsWorkspace.tsx`：
+  - 新增 "推送渠道" tab（NotificationOutlined icon），设为默认 activeKey
+  - 顶部 3 个 Card：飞书 webhook URL + 测试发送、邮件接收地址、微信公众号绑定状态
+  - 下方 antd Table 矩阵：4 事件 × 4 渠道，每格 Checkbox；非 applicable 格显示 "—"；channel.enabled=false 时矩阵 Checkbox 被 disabled
+  - draft/view 双 state pattern：所有编辑只改 draft，"保存全部" 按钮做 diff 后一次 PUT
+  - lazy-load：只在 activeKey === 'push-channels' 时拉数据
+  - KPI 强化：push-channels tab 显示"已订阅事件"数（所有 matrix 格 enabled=true 的总数）
+  - 保存成功后同步刷新 notifications tab 的 config state（避免切 tab 看到旧数据）
+- 后端测试 `backend/tests/settings/notification-config-matrix.test.ts`：纯函数单测覆盖
+  - applicable 矩阵的业务约束
+  - buildMatrixView 投影正确性 (cell.enabled = channel.enabled && channel.<field>)
+  - matrixUpdatesToConfigPatch 反向翻译 + 非 applicable / 非 boolean 静默忽略
+  - 空 / 非法 patch 容错
+  - wechat bound 状态、sms.configured 投影
+- 文件变动：
+  - backend/src/api/controllers/SettingsController.ts (M)
+  - backend/src/api/routes/settings.routes.ts (M)
+  - backend/tests/settings/notification-config-matrix.test.ts (A)
+  - frontend/src/services/settingsService.ts (M)
+  - frontend/src/pages/workspace/SettingsWorkspace.tsx (M)
+  - frontend/src/pages/workspace/CLAUDE.md (M — 加 draft/view + lazy-load pattern doc)
+- 质量检查：backend tsc + frontend tsc + 双方 eslint + ts-node 跑 matrix test 全绿
+- **Learnings for future iterations:**
+  - **NotificationChannelsConfig 多 tab 共用 JSONB 模式**：push-channels tab 与 notifications tab 共用 `user_settings.risk_config.notification_channels` 单条 JSONB 记录。任何一处保存后必须 setConfig(view.raw) 同步另一处 state，否则切 tab 看旧数据。
+  - **applicable 矩阵是业务约束的单一事实源**：`NOTIFICATION_APPLICABLE_MATRIX` 决定哪些 (event, channel) 组合 UI 可勾选。改它要同步：`DailyTradingDigestService.listEligibleUsers`、`EmailNotificationService.sendWeeklyReview`、`WeChatOAService` 各模板、`RealtimeAlertDispatcher` 4 通道分发逻辑。
+  - **Cell enabled 双重锁**：`cell.enabled = channel.enabled && channel.<event_field>`，channel 总开关关闭时所有事件勾选都不生效。前端表格 Checkbox `disabled={!channelEnabled}` 是 UX 体现，后端 buildMatrixView 强制把 cell.enabled 算成 false 是数据语义保证。
+  - **Draft/view 双 state pattern**（已加到 `frontend/src/pages/workspace/CLAUDE.md`）：矩阵 / 多 cell 同时编辑 + 一次性保存的 tab 用 `view + draft` 双 state，保存按钮做 diff 一次 PUT；适用矩阵编辑、表格批量勾选、Form 多字段批量更新。
+  - **Lazy-load tab 三态判定**（已加到 CLAUDE.md）：`if (activeKey !== 'X' || data || loading || error) return;` 在 useEffect 收敛 fire 判定，按钮直接调 load。
+  - **添加 antd Icon 易忘**：Checkbox 是 antd 组件，从 antd 导入；NotificationOutlined / MailOutlined / WechatOutlined / MessageOutlined 是 ant-design/icons 导入。混淆会编译失败。
+  - **测试纯函数**：buildMatrixView 和 matrixUpdatesToConfigPatch 都是纯函数（不依赖 service / DB），把它们 export 出来后写 ts-node 单测最简单，不必拉 jest。Backend tests/settings/ 这个 pattern 可复用给后续 controller 内部纯逻辑（pre-trade policy / risk gate 之类）。
+---
