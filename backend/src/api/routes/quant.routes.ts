@@ -25,6 +25,39 @@ router.get(
 
 /**
  * @openapi
+ * /api/quant/strategies/{strategy_key}/detail:
+ *   get:
+ *     tags: [量化 Quant]
+ *     summary: 单只策略详情（US-078）— 元数据 + 近 10 次回测 + 最新 IC + 实盘绑定状态
+ *     description: |
+ *       聚合返回 4 类数据：(1) strategy 行（含 default_params / execution_policy 等），
+ *       (2) backtests 近 10 次包含该策略的回测（含该策略自身 KPI 与冠军 KPI），
+ *       (3) latest_ic 最近一次因子 IC 报告（按 factor_name=strategy_key 匹配），
+ *       (4) live_binding 简化版实盘绑定（enabled flag + 近 7 日是否有信号）。
+ *       任一子查询失败用 fallback 不阻塞。
+ *
+ *       Must be registered before PATCH /strategies/:strategy_key — Express 同方法优先，
+ *       但加 GET 子资源在 catchall 之前是更通用的安全做法。
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: strategy_key
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200: { description: 策略详情 }
+ *       400: { description: 缺少 strategy_key }
+ *       401: { description: 未授权 }
+ *       404: { description: 策略不存在 }
+ */
+router.get(
+  '/strategies/:strategy_key/detail',
+  authController.authenticate,
+  quantController.getStrategyDetail.bind(quantController)
+);
+
+/**
+ * @openapi
  * /api/quant/strategies/{strategy_key}:
  *   patch:
  *     tags: [量化 Quant]

@@ -18,6 +18,28 @@ export class QuantController {
     }
   }
 
+  /**
+   * US-078: 策略详情页 — 单只策略元数据 + 近 10 次回测 + 最新 IC + 实盘绑定。
+   * 路由 `/api/quant/strategies/:strategy_key/detail` 必须注册在 PATCH `/strategies/:strategy_key`
+   * 之前，避免 Express 把 "detail" 解释成 sub-resource 之外的歧义路径（见 quant.routes.ts 注释）。
+   */
+  async getStrategyDetail(req: Request, res: Response) {
+    try {
+      const strategyKey = String(req.params.strategy_key || '').trim();
+      if (!strategyKey) {
+        return res.status(400).json({ success: false, message: '缺少 strategy_key' });
+      }
+      const data = await strategyEngine.getStrategyDetail(strategyKey);
+      if (!data) {
+        return res.status(404).json({ success: false, message: '策略不存在' });
+      }
+      res.json({ success: true, data });
+    } catch (error: any) {
+      logger.error('获取量化策略详情失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
   async updateStrategyConfig(req: AuthenticatedRequest, res: Response) {
     try {
       const default_params =

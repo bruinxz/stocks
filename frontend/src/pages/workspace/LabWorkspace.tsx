@@ -32,6 +32,7 @@ import {
   PlayCircleOutlined,
   PlusSquareOutlined,
   ReloadOutlined,
+  RightOutlined,
   SwapOutlined,
 } from '@ant-design/icons';
 import {
@@ -49,6 +50,7 @@ import {
 } from 'recharts';
 import ReactECharts from 'echarts-for-react';
 import dayjs, { Dayjs } from 'dayjs';
+import { useLocation, useNavigate } from 'react-router-dom';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
 import {
   labService,
@@ -92,6 +94,10 @@ const LabWorkspace: React.FC = () => {
     { key: 'compare', label: '回测对比', icon: <SwapOutlined /> },
   ];
   const [activeKey, setActiveKey] = useState('mine');
+
+  // US-078: 从策略详情页跳回来时携带 location.state，自动触发 clone/edit/newRun
+  const location = useLocation();
+  const navigate = useNavigate();
 
   // ---- 主数据：策略列表 + 回测任务列表 ----
   const [strategies, setStrategies] = useState<QuantStrategyItem[]>([]);
@@ -175,10 +181,39 @@ const LabWorkspace: React.FC = () => {
       });
       setSeedStrategyKey(strategy.strategy_key);
       setActiveKey('new');
-      message.info(`已加载策略 "${strategy.name || strategy.strategy_key}" 的默认参数到新建回测表单`);
+      message.info(
+        `已加载策略 "${strategy.name || strategy.strategy_key}" 的默认参数到新建回测表单`
+      );
     },
     [form]
   );
+
+  // US-078: 详情页通过 navigate('/workspace/lab', { state: { seedStrategyKey, intent } }) 触发回流，
+  // 等 strategies 列表装载完成后定位到对应 strategy 自动执行 clone/edit/newRun，然后 clear state
+  // 避免回退键 / 刷新时重复触发。
+  useEffect(() => {
+    const state = location.state as {
+      seedStrategyKey?: string;
+      intent?: 'clone' | 'edit' | 'newRun';
+    } | null;
+    if (!state?.seedStrategyKey || !state?.intent) return;
+    if (strategies.length === 0) return; // 等 refresh 完成
+    const target = strategies.find(s => s.strategy_key === state.seedStrategyKey);
+    if (!target) {
+      message.warning(`未找到策略 "${state.seedStrategyKey}"，无法 ${state.intent}`);
+      navigate(location.pathname, { replace: true, state: null });
+      return;
+    }
+    if (state.intent === 'clone') {
+      handleClone(target);
+    } else if (state.intent === 'edit') {
+      setEditingStrategy(target);
+    } else if (state.intent === 'newRun') {
+      // newRun 与 clone 共享相同的"预填表单"路径，只是语义上"立即去跑"
+      handleClone(target);
+    }
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location, navigate, strategies, handleClone]);
 
   const handleSubmitBacktest = useCallback(async () => {
     try {
@@ -280,8 +315,7 @@ const LabWorkspace: React.FC = () => {
     [tasks]
   );
   const runningTasks = useMemo(
-    () =>
-      tasks.filter(t => ['RUNNING', 'QUEUED'].includes(String(t.status || '').toUpperCase())),
+    () => tasks.filter(t => ['RUNNING', 'QUEUED'].includes(String(t.status || '').toUpperCase())),
     [tasks]
   );
   const last7DaysCount = useMemo(() => {
@@ -326,6 +360,9 @@ const LabWorkspace: React.FC = () => {
         loading={loading}
         onClone={handleClone}
         onEdit={setEditingStrategy}
+        onOpenDetail={s =>
+          navigate(`/workspace/lab/strategies/${encodeURIComponent(s.strategy_key)}`)
+        }
       />
     );
   } else if (activeKey === 'new') {
@@ -475,7 +512,8 @@ const MyStrategiesTab: React.FC<{
   loading: boolean;
   onClone: (s: QuantStrategyItem) => void;
   onEdit: (s: QuantStrategyItem) => void;
-}> = ({ strategies, loading, onClone, onEdit }) => {
+  onOpenDetail: (s: QuantStrategyItem) => void;
+}> = ({ strategies, loading, onClone, onEdit, onOpenDetail }) => {
   if (loading && strategies.length === 0) {
     return (
       <Card>
@@ -496,7 +534,8 @@ const MyStrategiesTab: React.FC<{
     <Row gutter={[16, 16]}>
       {strategies.map(strategy => {
         const category =
-          STRATEGY_CATEGORY_DISPLAY[strategy.category || 'other'] ?? STRATEGY_CATEGORY_DISPLAY.other;
+          STRATEGY_CATEGORY_DISPLAY[strategy.category || 'other'] ??
+          STRATEGY_CATEGORY_DISPLAY.other;
         const risk = STRATEGY_RISK_DISPLAY[strategy.risk_level || 'medium'];
         return (
           <Col xs={24} sm={12} lg={8} xxl={6} key={strategy.strategy_key}>
@@ -505,7 +544,11 @@ const MyStrategiesTab: React.FC<{
               style={{ height: '100%' }}
               title={
                 <Space size={6}>
-                  <Text strong>{strategy.name || strategy.display_name || strategy.strategy_key}</Text>
+                  <a onClick={() => onOpenDetail(strategy)} style={{ color: 'inherit' }}>
+                    <Text strong>
+                      {strategy.name || strategy.display_name || strategy.strategy_key}
+                    </Text>
+                  </a>
                   {strategy.enabled === false && <Tag>停用</Tag>}
                 </Space>
               }
@@ -516,6 +559,14 @@ const MyStrategiesTab: React.FC<{
                 </Space>
               }
               actions={[
+                <Tooltip
+                  key="detail-tooltip"
+                  title="进入策略详情页 — 含历史回测列表与实盘绑定状态（US-078）"
+                >
+                  <a key="detail" onClick={() => onOpenDetail(strategy)}>
+                    <RightOutlined /> 详情
+                  </a>
+                </Tooltip>,
                 <Tooltip key="clone-tooltip" title="基于此策略的默认参数预填新建回测表单">
                   <a key="clone" onClick={() => onClone(strategy)}>
                     <CopyOutlined /> 克隆
@@ -654,7 +705,9 @@ const NewBacktestTab: React.FC<{
                   placeholder="选择 1 个或多个策略（多个会并行跑分，便于横向对比）"
                   showSearch
                   filterOption={(input, option) =>
-                    String(option?.label || '').toLowerCase().includes(input.toLowerCase())
+                    String(option?.label || '')
+                      .toLowerCase()
+                      .includes(input.toLowerCase())
                   }
                   options={strategies.map(s => ({
                     value: s.strategy_key,
@@ -768,7 +821,14 @@ const CompareTab: React.FC<{
   compareLoading: boolean;
   compareResult: BacktestCompareResponse | null;
   onCompare: () => void;
-}> = ({ completedTasks, selectedIds, onSelectionChange, compareLoading, compareResult, onCompare }) => {
+}> = ({
+  completedTasks,
+  selectedIds,
+  onSelectionChange,
+  compareLoading,
+  compareResult,
+  onCompare,
+}) => {
   // ----- US-075: 子图数据 (回撤 / 月度热力 / 滚动夏普) -----
   // 一次 compare 之后并发拉这三套 series；任一失败的 task 在本地保留 error 字段，
   // 各子卡片自己降级渲染 (Alert)，不阻塞其他 task 显示。
@@ -987,12 +1047,11 @@ const CompareChartCard: React.FC<{ items: BacktestCompareItem[] }> = ({ items })
         if (!dateMap.has(date)) dateMap.set(date, { date });
         const row = dateMap.get(date)!;
         const total = Number(point?.total_value || 0);
-        const cum =
-          Number.isFinite(Number(point?.cumulative_return_pct))
-            ? Number(point.cumulative_return_pct)
-            : total > 0 && initial > 0
-            ? (total / initial - 1) * 100
-            : 0;
+        const cum = Number.isFinite(Number(point?.cumulative_return_pct))
+          ? Number(point.cumulative_return_pct)
+          : total > 0 && initial > 0
+          ? (total / initial - 1) * 100
+          : 0;
         row[`task_${item.task_id}`] = Number(cum.toFixed(2));
       });
     });
@@ -1065,9 +1124,7 @@ function mergeSeriesByDate<T extends { date: string }>(
       row[`task_${taskId}`] = pickValue(p);
     }
   }
-  return Array.from(dateMap.values()).sort((a, b) =>
-    String(a.date).localeCompare(String(b.date))
-  );
+  return Array.from(dateMap.values()).sort((a, b) => String(a.date).localeCompare(String(b.date)));
 }
 
 const CompareDrawdownCard: React.FC<{
@@ -1082,7 +1139,10 @@ const CompareDrawdownCard: React.FC<{
         .map(it => {
           const r = data.get(it.task_id);
           return r
-            ? { taskId: it.task_id, series: r.series.map(p => ({ ...p, drawdown_pct: -Math.abs(p.drawdown_pct) })) }
+            ? {
+                taskId: it.task_id,
+                series: r.series.map(p => ({ ...p, drawdown_pct: -Math.abs(p.drawdown_pct) })),
+              }
             : null;
         })
         .filter((x): x is { taskId: number; series: any[] } => x !== null),
@@ -1119,7 +1179,9 @@ const CompareDrawdownCard: React.FC<{
             showIcon
             style={{ marginBottom: 12 }}
             message="部分任务回撤数据加载失败"
-            description={errorAlerts.map(e => `#${e.task_id} ${e.task_name}: ${e.message}`).join('；')}
+            description={errorAlerts
+              .map(e => `#${e.task_id} ${e.task_name}: ${e.message}`)
+              .join('；')}
           />
         )}
         <Empty description="所选回测都没有回撤数据" />
@@ -1134,7 +1196,9 @@ const CompareDrawdownCard: React.FC<{
           showIcon
           style={{ marginBottom: 12 }}
           message="部分任务回撤数据加载失败"
-          description={errorAlerts.map(e => `#${e.task_id} ${e.task_name}: ${e.message}`).join('；')}
+          description={errorAlerts
+            .map(e => `#${e.task_id} ${e.task_name}: ${e.message}`)
+            .join('；')}
         />
       )}
       <div style={{ width: '100%', height: 320 }}>
@@ -1142,14 +1206,8 @@ const CompareDrawdownCard: React.FC<{
           <AreaChart data={merged}>
             <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
             <XAxis dataKey="date" tick={{ fontSize: 11 }} minTickGap={30} />
-            <YAxis
-              tickFormatter={v => `${v}%`}
-              tick={{ fontSize: 11 }}
-              domain={['auto', 0]}
-            />
-            <RechartsTooltip
-              formatter={(value: any) => [`${Number(value).toFixed(2)}%`, '回撤']}
-            />
+            <YAxis tickFormatter={v => `${v}%`} tick={{ fontSize: 11 }} domain={['auto', 0]} />
+            <RechartsTooltip formatter={(value: any) => [`${Number(value).toFixed(2)}%`, '回撤']} />
             <ReferenceLine y={0} stroke="#999" />
             <Legend />
             {items.map((item, idx) => {
@@ -1236,7 +1294,9 @@ const CompareRollingSharpeCard: React.FC<{
             showIcon
             style={{ marginBottom: 12 }}
             message="部分任务滚动夏普数据加载失败"
-            description={errorAlerts.map(e => `#${e.task_id} ${e.task_name}: ${e.message}`).join('；')}
+            description={errorAlerts
+              .map(e => `#${e.task_id} ${e.task_name}: ${e.message}`)
+              .join('；')}
           />
         )}
         <Empty description="所选回测都没有滚动夏普数据" />
@@ -1258,7 +1318,9 @@ const CompareRollingSharpeCard: React.FC<{
           showIcon
           style={{ marginBottom: 12 }}
           message="部分任务滚动夏普数据加载失败"
-          description={errorAlerts.map(e => `#${e.task_id} ${e.task_name}: ${e.message}`).join('；')}
+          description={errorAlerts
+            .map(e => `#${e.task_id} ${e.task_name}: ${e.message}`)
+            .join('；')}
         />
       )}
       <div style={{ width: '100%', height: 320 }}>
@@ -1334,7 +1396,9 @@ const CompareMonthlyReturnsCard: React.FC<{
             showIcon
             style={{ marginBottom: 12 }}
             message="部分任务月度收益数据加载失败"
-            description={errorAlerts.map(e => `#${e.task_id} ${e.task_name}: ${e.message}`).join('；')}
+            description={errorAlerts
+              .map(e => `#${e.task_id} ${e.task_name}: ${e.message}`)
+              .join('；')}
           />
         )}
         <Empty description="所选回测都没有月度收益数据" />
@@ -1349,7 +1413,9 @@ const CompareMonthlyReturnsCard: React.FC<{
           showIcon
           style={{ marginBottom: 12 }}
           message="部分任务月度收益数据加载失败"
-          description={errorAlerts.map(e => `#${e.task_id} ${e.task_name}: ${e.message}`).join('；')}
+          description={errorAlerts
+            .map(e => `#${e.task_id} ${e.task_name}: ${e.message}`)
+            .join('；')}
         />
       )}
       <Row gutter={[16, 16]}>
@@ -1386,7 +1452,10 @@ const CompareMonthlyReturnsCard: React.FC<{
 
 const MonthlyHeatmap: React.FC<{ response: BacktestMonthlyReturnsResponse }> = ({ response }) => {
   const { years, cells } = response;
-  const months = response.months && response.months.length ? response.months : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+  const months =
+    response.months && response.months.length
+      ? response.months
+      : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 
   const option = useMemo(() => {
     if (!cells.length || !years.length) return null;
@@ -1421,9 +1490,9 @@ const MonthlyHeatmap: React.FC<{ response: BacktestMonthlyReturnsResponse }> = (
           const y = years[yi];
           if (m === undefined || y === undefined) return '';
           const color = v >= 0 ? '#cf1322' : '#0f8f6b';
-          return `<b>${y}年${m}月</b><br/><span style="color:${color}">${
-            v >= 0 ? '+' : ''
-          }${Number(v).toFixed(2)}%</span>`;
+          return `<b>${y}年${m}月</b><br/><span style="color:${color}">${v >= 0 ? '+' : ''}${Number(
+            v
+          ).toFixed(2)}%</span>`;
         },
       },
       grid: { left: 60, right: 24, top: 16, bottom: 56 },
@@ -1618,12 +1687,7 @@ const CompareTableCard: React.FC<{ result: BacktestCompareResponse }> = ({ resul
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       <Card title="任务总览（按冠军策略 KPI）">
-        <Table
-          size="small"
-          pagination={false}
-          columns={taskColumns}
-          dataSource={taskSummaryRows}
-        />
+        <Table size="small" pagination={false} columns={taskColumns} dataSource={taskSummaryRows} />
       </Card>
       <Card title={`每策略横向对比（${result.strategy_comparison.length} 个策略）`}>
         <Table

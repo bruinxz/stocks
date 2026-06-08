@@ -302,6 +302,78 @@ export async function getBacktestRollingSharpeSeries(
   return res.data.data as BacktestRollingSharpeResponse;
 }
 
+// ---------- /api/quant/strategies/:id/detail (US-078) ----------------------
+
+export interface StrategyDetailBacktest {
+  id: number;
+  task_name: string;
+  status: string;
+  created_at: string;
+  start_date: string;
+  end_date: string;
+  strategy_keys?: string[];
+  initial_capital: number;
+  run_summary: {
+    best_strategy_key: string | null;
+    best_strategy_name: string | null;
+    best_return_pct: number;
+    best_max_drawdown_pct: number;
+    best_sharpe_ratio: number;
+    best_trade_count: number;
+  } | null;
+  strategy_metrics:
+    | {
+        present: true;
+        total_return_pct: number;
+        annual_return_pct: number;
+        excess_return_pct: number;
+        sharpe_ratio: number;
+        max_drawdown_pct: number;
+        win_rate: number;
+        trade_count: number;
+        is_champion: boolean;
+      }
+    | { present: false };
+}
+
+export interface StrategyDetailLatestIC {
+  factor_name: string;
+  look_forward_days: number;
+  ic_mean: number | null;
+  ic_ir: number | null;
+  ic_positive_ratio: number | null;
+  sample_count: number;
+  computed_at: string;
+  period_start: string;
+  period_end: string;
+}
+
+export interface StrategyDetailLiveBinding {
+  enabled: boolean;
+  recent_signal_count: number;
+  last_signal_date: string | null;
+}
+
+export interface StrategyDetailResponse {
+  strategy: QuantStrategyItem & {
+    execution_policy?: Record<string, any>;
+    environment_policy?: Record<string, any>;
+    lifecycle_policy?: Record<string, any>;
+    notes?: string | null;
+  };
+  backtests: StrategyDetailBacktest[];
+  latest_ic: StrategyDetailLatestIC | null;
+  live_binding: StrategyDetailLiveBinding;
+}
+
+export async function getStrategyDetail(strategyKey: string): Promise<StrategyDetailResponse> {
+  const res = await api.get(`/quant/strategies/${encodeURIComponent(strategyKey)}/detail`);
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || '获取策略详情失败');
+  }
+  return res.data.data as StrategyDetailResponse;
+}
+
 // ---------- bundled export -------------------------------------------------
 
 export const labService = {
@@ -313,6 +385,7 @@ export const labService = {
   getBacktestDrawdownSeries,
   getBacktestMonthlyReturns,
   getBacktestRollingSharpeSeries,
+  getStrategyDetail,
 };
 
 export default labService;

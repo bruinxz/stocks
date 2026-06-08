@@ -31,6 +31,14 @@ export class StrategyEngine {
     return quantStrategyService.updateStrategyConfig(strategyKey, payload);
   }
 
+  /**
+   * US-078：单只策略详情聚合 —— 元数据 + 近 10 次回测（带该策略的 KPI）+ 最新 IC + 实盘绑定。
+   * 4 类子查询任一失败用 fallback，不阻塞页面渲染。
+   */
+  getStrategyDetail(strategyKey: string) {
+    return quantStrategyService.getStrategyDetail(strategyKey);
+  }
+
   resolveStrategyKeys(input: any) {
     return quantStrategyService.resolveStrategyKeys(input);
   }

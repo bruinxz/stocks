@@ -1321,8 +1321,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 78,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": " | 2026-06-08 完成：路由 /workspace/lab/strategies/:id + 后端 GET /api/quant/strategies/:key/detail + 三动作回流 LabWorkspace."
     },
     {
       "id": "US-079",

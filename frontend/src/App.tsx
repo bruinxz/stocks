@@ -44,6 +44,7 @@ const SystemLogs = lazy(() => import('./pages/SystemLogs'));
 const TodayWorkspace = lazy(() => import('./pages/workspace/TodayWorkspace'));
 const FactorWorkspace = lazy(() => import('./pages/workspace/FactorWorkspace'));
 const LabWorkspace = lazy(() => import('./pages/workspace/LabWorkspace'));
+const LabStrategyDetail = lazy(() => import('./pages/workspace/LabStrategyDetail'));
 const PortfolioWorkspace = lazy(() => import('./pages/workspace/PortfolioWorkspace'));
 const DataWorkspace = lazy(() => import('./pages/workspace/DataWorkspace'));
 const SettingsWorkspace = lazy(() => import('./pages/workspace/SettingsWorkspace'));
@@ -101,6 +102,8 @@ const routeSelectionAliases: Array<[RegExp, string]> = [
     /^\/quant\/(research|signals|backtests|strategies|experiments|dashboard)(\/.*)?$/,
     '/workspace/lab',
   ],
+  // US-078: 策略详情子路由也归属"策略实验室"
+  [/^\/workspace\/lab\/strategies(\/.*)?$/, '/workspace/lab'],
   [
     /^\/strategy-research(\/(optimization|versions|experiments|weights|event-results))?(\/.*)?$/,
     '/workspace/lab',
@@ -356,6 +359,15 @@ const AppContent: React.FC = () => {
                 element={
                   <ProtectedRoute>
                     <LabWorkspace />
+                  </ProtectedRoute>
+                }
+              />
+              {/* US-078: 策略详情页 — 嵌在 LabWorkspace 概念下（侧边栏仍高亮"策略实验室"） */}
+              <Route
+                path="/workspace/lab/strategies/:id"
+                element={
+                  <ProtectedRoute>
+                    <LabStrategyDetail />
                   </ProtectedRoute>
                 }
               />

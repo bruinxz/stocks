@@ -20,6 +20,8 @@
 - **跨工作区跳转用 `useNavigate('/workspace/portfolio')`** (US-018 first usage): react-router v6 模式，从 react-router-dom 直接 import `{ useNavigate }`。一键操作 → 弹 Modal 展示明细 → 2 秒延时 `setTimeout(() => navigate(...), 1800)` 跳转，让用户看到结果。**不要用 `window.location.href`** — 会触发 full-page reload 丢失 SPA state（包括 Redux store + antd ConfigProvider 等）。
 - **echarts 是 heatmap / 矩阵可视化的指定库** (US-074 引入): `echarts ^6.1.0` + `echarts-for-react ^3.0.6` 已经在 `frontend/package.json`，使用模式 `import ReactECharts from 'echarts-for-react'` + 把 option 算在 `useMemo` 里 + `<ReactECharts option={option} style={{ width:'100%', height: dynamicHeight }} notMerge opts={{ renderer:'canvas' }} />`。**与 Recharts 分工**：折线/面积/柱状继续走 Recharts (已大量使用)，**只有热力图 / 矩阵 / 树图 / 桑基** 这类 Recharts 无原生 component 的才引入 echarts。这样避免两套 chart 大量并存。**A 股色彩语义**：visualMap inRange 用 `['#d73027' ... '#1a9850']` (红→白→绿)，z 正 = 因子高 = 看多 = 绿；不要照搬 echarts 官方示例的"蓝→红"——A 股用户看会反过来。
 - **Lazy-load tab 数据 cache 三态判定** (US-074): tab 内容是单独 endpoint 时 `useEffect(() => { if (activeKey !== 'X') return; if (data || loading || error) return; void load(); }, [activeKey, data, loading, error, load])`。三态 (data 已得 / 正在拉 / 已错过) 都 short-circuit，只有"首次进 + 无 data 无 error"才发请求。刷新按钮单独走 load()，错误重试也走 load()——把"是否要 fire"逻辑收敛在 effect，按钮只调 load。
+- **JSX 属性含 ASCII 双引号必须 JSX 表达式包裹** (US-078): 中文段落中嵌入英文双引号（如 `description="...点"启动"..."`）会被 TS 解释成 attribute terminator，报 TS1003 / TS1382。要么用 JSX expression `description={'...点"启动"...'}`，要么用全角引号 `""`，要么 `&quot;`。**新写 React 文本前查一下 ASCII 双引号是否在 JSX attribute value 内**。
+- **页面间 state-payload 跳转模式** (US-078): 跨页面/子路由共享操作（如 LabStrategyDetail 的"克隆/编辑/启动新回测"按钮回到 LabWorkspace 复用 form/drawer），用 `navigate('/workspace/lab', { state: { seedStrategyKey, intent } })` 携带 state，目标页面 `useEffect` 监听 `location.state`，匹配后**必须**调 `navigate(pathname, { replace: true, state: null })` 清空 state——否则浏览器后退到该 URL 时 state 还在，会重复触发副作用。三个 intent 复用 `handleClone` / `setEditingStrategy` 已有 handler，避免在子页面重写 form/drawer 实现。
 
 ### Backend
 - **PaperTrading services live under `backend/src/portfolio/internal/`**, not `backend/src/services/` (US-003 refactor). The public surface is `backend/src/portfolio/PaperTradingFacade.ts` exposing **exactly 7 methods**: `getPortfolio`, `placeOrder`, `closePosition`, `getDailySnapshot`, `attributePnl`, `applyAutomation`, `getRiskProfile`. Controllers MUST only import the facade. Other services/scripts/jobs may still import from `internal/` directly (the facade-only constraint is the controller boundary).
@@ -7039,4 +7041,45 @@ N/A — 工程内无 `dev-browser` MCP skill。手动验证途径：
 
 ### CLAUDE.md updates
 N/A — 本次"route 同段 const 段在前"是 Codebase Patterns 第 27 行规则的常规应用；"派生字段 filter 三选一" + "batch ID 4 件套" + "rowSelection getCheckboxProps disabled" + "分页/过滤 clearSelection" + "onUnreadCountChange callback" 5 项 learnings 已 codify 进本 progress.txt，下次第 2-3 处出现时再统一抽到 Codebase Patterns 顶部。
+---
+
+## 2026/06/08 — US-078 前端：策略详情页（含历史回测列表）
+- **路由**：新增 `/workspace/lab/strategies/:id`（在 `frontend/src/App.tsx` 的 protected route 区注册，并加入 `routeSelectionAliases` 以保持侧栏高亮"策略实验室"）。
+- **页面**：`frontend/src/pages/workspace/LabStrategyDetail.tsx`（628 行）。复用 `WorkspaceLayout` chrome；4 个子卡片：
+  1. `StrategyMetaCard` — 描述/标签/分类/风险/启用 + `default_params` + `execution_policy` 两个 JSON 预览。
+  2. `LiveBindingCard` — 启用状态 + 近 7 日信号数 + 最近一次信号日期，三色 Tag 判定"实盘运行中 / 启用待信号 / 已停用"。
+  3. `BacktestListCard` — 近 10 次回测表格：本策略 KPI（收益/年化/夏普/最大回撤/交易笔数）+ "是否冠军" 角标，每行链接到 `/legacy/backtest/:id`。
+  4. `LatestICCard` — `factor_name = strategy_key` 匹配的最新 IC 摘要（IC_mean / IC_IR / 正比例 / 样本数 + 区间），按钮跳到因子工作区。
+- **3 个动作按钮（克隆/编辑参数/启动新回测）** 都走 `navigate('/workspace/lab', { state: { seedStrategyKey, intent } })` 回流到 LabWorkspace，复用现有 form/drawer，避免重写。
+- **后端聚合 API**：`GET /api/quant/strategies/:strategy_key/detail`（注册在 PATCH 之前，避免 Express 子资源歧义）。`QuantStrategyService.getStrategyDetail()` 用 4 个独立 try/catch 子查询：
+  - A. 近 200 条 BacktestTask 在内存里 filter `strategy_keys.includes(key)` 取前 10（避免跨方言 JSONB @> 差异），关联 `QuantBacktestResult` 取该 strategy 自身 KPI 与该任务的冠军 KPI（按 `total_return_pct` 最高）。
+  - B. `FactorICResult` 按 `factor_name = strategy_key + computed_at DESC` 取最新一行。
+  - C. `QuantSignal` 按 `strategy_key + trade_date >= today - 7d` 计数 + 最近一次 `trade_date`，作为"实盘绑定"启发式。
+- **入口点**：`LabWorkspace.tsx` 的"我的策略" tab 卡片增加：①标题中的策略名是 `<a onClick={onOpenDetail}>` 可点击进入详情；②卡片底部新增"详情"action。
+- **回流逻辑**：`LabWorkspace.tsx` 新增 `useEffect` 监听 `location.state`，当 `strategies` 加载完成且 state 携带 `{seedStrategyKey, intent}` 时，自动定位策略并触发 `handleClone` / `setEditingStrategy` / `handleClone`（newRun 与 clone 同路径，语义不同），完成后 `navigate(pathname, { replace: true, state: null })` 清空 state 避免回退键 / 刷新重复触发。
+- **类型支持**：`frontend/src/services/labService.ts` 新增 `StrategyDetailResponse / StrategyDetailBacktest / StrategyDetailLatestIC / StrategyDetailLiveBinding` 接口与 `getStrategyDetail()` API 调用。
+
+### 文件改动
+- `backend/src/api/controllers/QuantController.ts` — 新增 `getStrategyDetail()` action（+22 行）
+- `backend/src/api/routes/quant.routes.ts` — 注册 `/strategies/:strategy_key/detail` 路由 + OpenAPI 注解（+33 行）
+- `backend/src/quant/engine/StrategyEngine.ts` — 暴露 `getStrategyDetail` 委派（+8 行）
+- `backend/src/quant/engine/internal/QuantStrategyService.ts` — 4 子查询聚合实现（+165 行）
+- `frontend/src/App.tsx` — 新增 lazy import + Route + selectionAliases（+12 行）
+- `frontend/src/pages/workspace/LabWorkspace.tsx` — 添加 onOpenDetail prop + 回流 effect（+32 行）
+- `frontend/src/pages/workspace/LabStrategyDetail.tsx` — 新增页面文件（628 行）
+- `frontend/src/services/labService.ts` — 4 个接口 + getStrategyDetail API（+73 行）
+
+### 质量检查
+- `frontend && tsc --noEmit` ✓ 通过
+- `backend && tsc --noEmit` ✓ 通过
+- `frontend && eslint` — 仅剩 prettier 美化 warnings（自动 fix 后从 48 个减少到 8 个），无 error
+- `backend && eslint` — 3 个 prettier error 是 pre-existing（lines 379/393/408 inline 404 返回），与本次改动无关
+
+### Learnings for future iterations
+- **Express 路由顺序**：当新增子资源（如 `/strategies/:key/detail`）时必须注册在 PATCH/PUT `/strategies/:key` **之前**。Express 同方法按注册顺序匹配，加 GET 子资源在 catchall 之前是最稳妥的做法。
+- **JSX 属性中含 ASCII 双引号会被解释成 attribute terminator**——如 `description="文本"快捷键"内容"` 会被 TS 报 TS1003/TS1382。中文段落中要嵌入英文引号，要么用 `&quot;` / 全角引号 `""`，要么改用 `description={'...'}` JSX expression 包裹。
+- **JSONB 含元素查询的跨方言陷阱**：PG 用 `@>`、MySQL 用 `JSON_CONTAINS`，Sequelize 不能跨方言统一。当总量 < 几百时，用 `findAll({limit:200})` + 内存 `Array.filter` 更靠谱。如果将来量级上千需要 PG 子查询优化，写 raw SQL with `WHERE strategy_keys @> ARRAY[?]::jsonb`，但要在 dialect=='postgres' 分支里。
+- **"实盘绑定"的启发式判定**：本系统没有显式的 portfolio-strategy mapping 表。判定一只策略"是否在跑实盘"的简化方法：`enabled = true` 且 `QuantSignal 表中 strategy_key 在最近 7 个交易日有信号`。> 0 即视为绑定。对于事件驱动 / 月度调仓策略可能漏判，UI 上用"启用但 7 日无信号"的中性 Tag 区分。
+- **react-router-dom v6 location.state 清空模式**：当 effect 处理完 state 后必须 `navigate(pathname, { replace: true, state: null })` 清空，否则浏览器后退到该 URL 时 state 还在，会导致 effect 重复触发副作用。
+- **聚合 API 4 子查询独立 try/catch**：与 US-018 同款 per-block error 范式。任一子查询挂了用 fallback（空数组 / null / 默认对象），不阻塞主响应，UI 端只在对应卡片显示 Empty 而不是整页报错。
 ---
