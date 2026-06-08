@@ -6453,3 +6453,33 @@ backend/src/portfolio/CLAUDE.md 同步新增 "risk/ — RiskAlert.rule_id 写入
 - 未更新 `backend/CLAUDE.md` 或 `frontend/CLAUDE.md`：本 story 仅添加 GitHub Actions infra，不属于任一模块的代码约定。Codebase Patterns 更适合作为收纳点。
 
 ---
+
+## 2026/06/08 - US-068 (verification + commit)
+
+### Context
+US-068 work was implemented in a prior iteration but **never committed** — `EnvValidator.ts` / `check-env.ts` / `tests/config/env-validator.test.ts` were left as untracked files, and PRD `passes` flag was still `false`. This iteration re-verified the implementation, confirmed all quality gates, then committed everything as a single `feat: US-068` commit.
+
+### Verification (this iteration)
+- `npx ts-node --transpile-only tests/config/env-validator.test.ts` → **107/107 ok** (untouched test file)
+- `npx tsc --noEmit` → **clean** (no errors)
+- `npx eslint src/config/EnvValidator.ts src/scripts/check-env.ts src/index.ts` → **0 errors** (1 pre-existing warning in index.ts about unused 'path' import — unrelated to US-068)
+- `npm run check-env` in worktree → correctly reports 7 required errors + exits 1 (DB_HOST / DB_NAME / DB_USER / DB_PASSWORD / REDIS_HOST / JWT_SECRET / TRADING_AGENTS_URL all missing because worktree has no .env)
+
+### Files newly tracked by this commit
+- `backend/src/config/EnvValidator.ts` (254 LOC) — joi-based env validator (`validateEnv` / `shouldExitOnFailure` / `formatErrorReport` / `formatWarningReport` + 5 helpers + 5 frozen constants)
+- `backend/src/scripts/check-env.ts` (43 LOC) — CLI entry point that prints structured report + exits 0/1
+- `backend/tests/config/env-validator.test.ts` (380 LOC) — 107 node-direct tests covering 30 categories
+- `backend/.env.example` (rewritten 36 → 95 LOC) — full env template with annotated sections per channel
+- `backend/package.json` (+1 script: `check-env`)
+- `backend/src/index.ts` (+22 LOC env validation block, dotenv → validate → exit-on-failure)
+- `ralph/prd.json` — US-068 passes=true + notes filled
+- `ralph/progress.txt` — this verification note
+
+### Learnings for future iterations
+- **Always check `git status` + `prd.json` passes flag BEFORE coding**: a prior ralph iteration can leave finished work as untracked files (no commit) + unflipped passes flag. Re-implementing it would waste effort and risk overwriting better existing code. **Pattern**: at the very start of each iteration, after reading `prd.json` to find the highest-priority `passes: false` story, immediately `git status -s | grep -E "<EXPECTED_FILES>"` for the files the AC mentions. If they already exist as `??` (untracked) or ` M` (modified-but-uncommitted), the work is done — just verify + commit + flip the flag. Saves a full re-implementation cycle.
+- **Verify the implementation actually works before committing someone else's untracked code**: don't assume "it's already there → just commit". Run the tests + typecheck + CLI exercise before staging — past iterations sometimes left partial work that fails its own tests. US-068's 107 tests + tsc clean + CLI exit code 1 in worktree without .env are the four green lights that gate this commit.
+
+### CLAUDE.md updates
+- None this iteration — the prior US-068 iteration already added `### Ops — env validation / startup gates (US-068+)` to Codebase Patterns at the top of progress.txt (5 items). No new patterns surfaced from the verify-and-commit work.
+
+---

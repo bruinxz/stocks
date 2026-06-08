@@ -2,6 +2,28 @@ import dotenv from 'dotenv';
 // Load environment variables immediately to ensure config is available for imports
 dotenv.config();
 
+// US-068 环境一致性校验 —— 必须在所有其他 import 之前执行（除 dotenv），
+// 因为下游 service / config / queue 在 import-time 就读 process.env。
+// production 模式下任何缺失立即 exit；development 模式下打印 errors+warnings 继续。
+import {
+  validateEnv,
+  shouldExitOnFailure,
+  formatErrorReport,
+  formatWarningReport,
+} from './config/EnvValidator';
+
+const __envValidationResult = validateEnv();
+if (__envValidationResult.errors.length > 0) {
+  console.error(formatErrorReport(__envValidationResult));
+}
+if (__envValidationResult.warnings.length > 0) {
+  console.warn(formatWarningReport(__envValidationResult));
+}
+if (shouldExitOnFailure(__envValidationResult)) {
+  console.error('Refusing to start: environment validation failed in production mode');
+  process.exit(1);
+}
+
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
