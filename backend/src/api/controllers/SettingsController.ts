@@ -2,10 +2,11 @@ import { Request, Response, NextFunction } from 'express';
 import { dailyTradingDigestService } from '../../services/DailyTradingDigestService';
 import { earningsForecastWatcher } from '../../services/EarningsForecastWatcher';
 import { weeklyReviewReportService } from '../../services/WeeklyReviewReportService';
+import { weChatOAService } from '../../services/WeChatOAService';
 import { logger } from '../../utils/logger';
 
 /**
- * SettingsController — US-063 / US-064 / US-065 通知通道配置
+ * SettingsController — US-063 / US-064 / US-065 / US-066 通知通道配置
  *
  * Mounted at `/api/settings/*`. 与 `RiskController`（/api/risk）平行：风控配置
  * 是 pre-trade policy 关于*交易决策*；通知通道是 *消息触达* 维度，分开命名空间。
@@ -23,6 +24,11 @@ import { logger } from '../../utils/logger';
  *   POST /api/settings/email-config — 更新邮件通道开关 / 接收地址 / weekly_review 开关 (US-065)
  *   POST /api/settings/weekly-review/preview — dry-run preview 上周复盘邮件 payload (US-065)
  *   POST /api/settings/weekly-review/send — 立即发上周复盘邮件 (US-065)
+ *   GET  /api/settings/wechat-bind-qrcode — 生成微信公众号参数二维码 + 落 scene_str (US-066)
+ *   POST /api/settings/wechat-bind-confirm — 轮询确认绑定状态 (US-066)
+ *   POST /api/settings/wechat-config — 更新 wechat 通道开关 / 3 类订阅消息开关 (US-066)
+ *   POST /api/settings/wechat-unbind — 解除微信绑定 (US-066)
+ *   POST /api/settings/wechat-test — 立即发一条测试微信订阅消息 (US-066)
  */
 export class SettingsController {
   /**
@@ -237,6 +243,197 @@ export class SettingsController {
       res.json({ success: true, data: result, message: '上周复盘邮件已触发推送' });
     } catch (error: any) {
       logger.error('手动触发周报失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * GET /api/settings/wechat-bind-qrcode (US-066)
+   *
+   * 生成微信公众号参数二维码 —— 后端调 weixin qrcode/create 接口拿 ticket 与
+   * 跳转 url，把 scene_str 持久化到 user.wechat.bind_scene_str，前端拿到
+   * qrcode_image_url 后用 <img> 直接显示让用户扫码。
+   */
+  async getWeChatBindQrCode(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user.id;
+      const result = await weChatOAService.getBindQrCode(user_id);
+      res.json({ success: true, data: result });
+    } catch (error: any) {
+      logger.error('生成微信绑定二维码失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * POST /api/settings/wechat-bind-confirm (US-066)
+   *
+   * 前端轮询：检查当前 user 的 wechat.openid 是否已通过 webhook SCAN 事件写入。
+   * 返回 `{bound: true}` 后前端关闭轮询并刷新 notification-channels。
+   */
+  async confirmWeChatBind(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user.id;
+      const body = req.body || {};
+      const result = await weChatOAService.confirmBind(user_id, body.scene_str);
+      res.json({ success: true, data: result });
+    } catch (error: any) {
+      logger.error('确认微信绑定状态失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * POST /api/settings/wechat-config (US-066)
+   *
+   * 更新当前用户的 wechat 通道 4 个开关：enabled / daily_digest / earnings_alert /
+   * risk_alert。openid / bind_scene_str / bound_at 不可手动改，靠 webhook 写入。
+   *
+   * Body: { enabled?, daily_digest?, earnings_alert?, risk_alert? }
+   *
+   * 与 POST /api/settings/notification-channels 互补 —— 后者支持任意 channel 的
+   * 批量 patch；本 endpoint 是 wechat channel 的专用语义化 endpoint，让前端 UI
+   * 表单代码更紧凑，与 POST /api/settings/email-config 同款 sub-resource 范式。
+   */
+  async updateWeChatConfig(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user.id;
+      const body = req.body || {};
+      const patch: any = {};
+      if (body.enabled !== undefined) patch.enabled = body.enabled;
+      if (body.daily_digest !== undefined) patch.daily_digest = body.daily_digest;
+      if (body.earnings_alert !== undefined) patch.earnings_alert = body.earnings_alert;
+      if (body.risk_alert !== undefined) patch.risk_alert = body.risk_alert;
+      const saved = await weChatOAService.updateWeChatConfig(user_id, patch);
+      res.json({ success: true, data: saved, message: '微信通道配置已保存' });
+    } catch (error: any) {
+      logger.error('更新微信通道配置失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * POST /api/settings/wechat-unbind (US-066)
+   *
+   * 解除微信绑定 —— 清空 openid / bind_scene_str / bound_at，保留 enabled /
+   * alert 开关让用户重新扫码绑定即可继续。
+   */
+  async unbindWeChat(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user.id;
+      const saved = await weChatOAService.unbindWeChat(user_id);
+      res.json({ success: true, data: saved, message: '微信绑定已解除' });
+    } catch (error: any) {
+      logger.error('解除微信绑定失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * POST /api/settings/wechat-test (US-066)
+   *
+   * 给当前用户发一条测试订阅消息（默认 daily_digest 模板），用于冒烟测试 access_token
+   * + 模板 id + 用户 openid 是否畅通。Body 接受 `template_kind: 'daily_digest' |
+   * 'earnings_alert' | 'risk_alert'`，缺省 daily_digest；`dry_run: true` 则不真发，
+   * 只返回组装好的 data 字段供前端 Modal 预览。
+   */
+  async testWeChatMessage(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user.id;
+      const body = req.body || {};
+      const dryRun = body.dry_run === true || body.dry_run === 'true';
+      const kind = String(body.template_kind || 'daily_digest').toLowerCase();
+      let result;
+      if (kind === 'earnings_alert' || kind === 'earnings_forecast') {
+        result = await weChatOAService.sendEarningsForecast({
+          user_id,
+          dry_run: dryRun,
+          url: body.url,
+          payload: body.payload || {
+            symbol: '600519',
+            name: '贵州茅台',
+            forecast_type: '预增',
+            profit_change_text: '+50.0% ~ +80.0%',
+            report_period: '2026Q1',
+            announce_date: '2026-04-10',
+          },
+        });
+      } else if (kind === 'risk_alert') {
+        result = await weChatOAService.sendRiskAlert({
+          user_id,
+          dry_run: dryRun,
+          url: body.url,
+          payload: body.payload || {
+            level: 'HIGH',
+            title: '测试风控告警',
+            detail: '这是一条来自 wechat-test 端点的冒烟测试告警',
+            triggered_at: new Date().toISOString(),
+            symbol: '600519',
+          },
+        });
+      } else {
+        result = await weChatOAService.sendDailyDigest({
+          user_id,
+          dry_run: dryRun,
+          url: body.url,
+          payload: body.payload || {
+            user_id,
+            username: 'test',
+            trade_date: new Date().toISOString().slice(0, 10),
+            pnl: {
+              total_value: 100000,
+              prev_total_value: 99000,
+              pnl_today: 1000,
+              pnl_today_pct: 1.0,
+              position_value: 50000,
+              current_cash: 50000,
+            },
+            trades_today_buy: [],
+            trades_today_sell: [],
+            trades_today_buy_count: 0,
+            trades_today_sell_count: 0,
+            candidates_tomorrow: [],
+          },
+        });
+      }
+      res.json({ success: true, data: result, message: '微信测试消息已派发' });
+    } catch (error: any) {
+      logger.error('发送测试微信消息失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * POST /api/settings/wechat-bind-simulate (US-066)
+   *
+   * 仅供本地开发 / 单测使用的"模拟微信扫码事件"端点：在生产 webhook 没接入时
+   * 让前端 + 后端走通端到端绑定流程（直接调用 service.handleBindEventFromWebhook
+   * 落 openid）。生产环境应由 WechatEventController 解析微信 XML 调用同一 method。
+   *
+   * Body: { scene_str: string, openid: string }
+   */
+  async simulateWeChatBindEvent(req: Request, res: Response, _next: NextFunction) {
+    try {
+      // 安全护栏：本端点仅用于本地开发 / 单测，生产环境一律 404 让攻击者拿不到任何反馈，
+      // 避免恶意 user A 拿 B 的 scene_str 偷绑 B 的微信账号。
+      if (
+        process.env.NODE_ENV === 'production' ||
+        String(process.env.ALLOW_WECHAT_BIND_SIMULATE || '').toLowerCase() !== 'true'
+      ) {
+        return res.status(404).json({ success: false, message: 'Not Found' });
+      }
+      const body = req.body || {};
+      if (!body.scene_str || !body.openid) {
+        return res.status(400).json({ success: false, message: 'scene_str + openid 必填' });
+      }
+      const result = await weChatOAService.handleBindEventFromWebhook({
+        sceneStr: String(body.scene_str),
+        openid: String(body.openid),
+        eventAt: body.event_at,
+      });
+      res.json({ success: true, data: result, message: '微信绑定事件已应用' });
+    } catch (error: any) {
+      logger.error('模拟微信绑定事件失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   }

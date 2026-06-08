@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Button,
@@ -28,6 +28,10 @@ import {
   SendOutlined,
   SaveOutlined,
   ReloadOutlined,
+  QrcodeOutlined,
+  DisconnectOutlined,
+  CheckCircleOutlined,
+  ExperimentOutlined,
 } from '@ant-design/icons';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
 import {
@@ -38,11 +42,18 @@ import {
   sendDailyDigestNow,
   previewWeeklyReview,
   sendWeeklyReviewNow,
+  getWeChatBindQrCode,
+  confirmWeChatBind,
+  updateWeChatConfig,
+  unbindWeChat,
+  sendWeChatTestMessage,
   NotificationChannelsConfig,
   SendDigestsResult,
   DigestForUserResult,
   SendWeeklyReviewResult,
   WeeklyReviewForUserResult,
+  WeChatBindQrCodeResult,
+  WeChatTestKind,
 } from '../../services/settingsService';
 
 const { Text, Paragraph, Link } = Typography;
@@ -65,7 +76,15 @@ const DEFAULT_CONFIG: NotificationChannelsConfig = {
     risk_alert: true,
   },
   email: { enabled: false, address: '', weekly_review: false },
-  wechat: { enabled: false, openid: '', daily_digest: false },
+  wechat: {
+    enabled: false,
+    openid: '',
+    bind_scene_str: '',
+    bound_at: '',
+    daily_digest: false,
+    earnings_alert: false,
+    risk_alert: false,
+  },
 };
 
 const SettingsWorkspace: React.FC = () => {
@@ -95,6 +114,20 @@ const SettingsWorkspace: React.FC = () => {
     null
   );
   const [weeklyPreviewOpen, setWeeklyPreviewOpen] = useState(false);
+
+  // ---- 微信绑定 state (US-066) ------------------------------------------
+  const [wechatSaving, setWeChatSaving] = useState(false);
+  const [wechatBindLoading, setWeChatBindLoading] = useState(false);
+  const [wechatBindOpen, setWeChatBindOpen] = useState(false);
+  const [wechatBindResult, setWeChatBindResult] = useState<WeChatBindQrCodeResult | null>(null);
+  /** 绑定状态：null=尚未生成 QR；'pending'=等待扫码；'bound'=已绑定；'expired'=过期 */
+  const [wechatBindStatus, setWeChatBindStatus] = useState<null | 'pending' | 'bound' | 'expired'>(
+    null
+  );
+  const [wechatUnbinding, setWeChatUnbinding] = useState(false);
+  const [wechatTesting, setWeChatTesting] = useState(false);
+  /** 微信 confirm 轮询 setInterval id —— 模态框关闭 / 已绑定时清掉 */
+  const wechatPollRef = useRef<number | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -292,6 +325,125 @@ const SettingsWorkspace: React.FC = () => {
         }
       },
     });
+  }, []);
+
+  // ---- US-066 微信 handlers --------------------------------------------
+
+  /** 停掉轮询 + 关闭模态 + 清状态 */
+  const stopWeChatPolling = useCallback(() => {
+    if (wechatPollRef.current !== null) {
+      window.clearInterval(wechatPollRef.current);
+      wechatPollRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => stopWeChatPolling();
+  }, [stopWeChatPolling]);
+
+  const handleWeChatBindStart = useCallback(async () => {
+    setWeChatBindLoading(true);
+    setWeChatBindResult(null);
+    setWeChatBindStatus(null);
+    try {
+      const qr = await getWeChatBindQrCode();
+      setWeChatBindResult(qr);
+      setWeChatBindStatus('pending');
+      setWeChatBindOpen(true);
+
+      // 开 3 秒轮询；最多轮询 2 分钟（40 次）就停（让用户主动关闭/重启）
+      let ticks = 0;
+      stopWeChatPolling();
+      wechatPollRef.current = window.setInterval(async () => {
+        ticks += 1;
+        if (ticks > 40) {
+          stopWeChatPolling();
+          setWeChatBindStatus('expired');
+          return;
+        }
+        try {
+          const r = await confirmWeChatBind(qr.scene_str);
+          if (r.bound) {
+            stopWeChatPolling();
+            setWeChatBindStatus('bound');
+            message.success('微信公众号已绑定');
+            void refresh();
+          }
+        } catch {
+          // 轮询单次失败不告警；下次继续
+        }
+      }, 3000);
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '生成二维码失败');
+    } finally {
+      setWeChatBindLoading(false);
+    }
+  }, [refresh, stopWeChatPolling]);
+
+  const handleWeChatBindClose = useCallback(() => {
+    stopWeChatPolling();
+    setWeChatBindOpen(false);
+    setWeChatBindResult(null);
+    setWeChatBindStatus(null);
+  }, [stopWeChatPolling]);
+
+  const handleWeChatSave = useCallback(async () => {
+    if (!config) return;
+    setWeChatSaving(true);
+    try {
+      const saved = await updateWeChatConfig({
+        enabled: config.wechat.enabled,
+        daily_digest: config.wechat.daily_digest,
+        earnings_alert: config.wechat.earnings_alert,
+        risk_alert: config.wechat.risk_alert,
+      });
+      setConfig(saved);
+      message.success('微信通道配置已保存');
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '保存失败');
+    } finally {
+      setWeChatSaving(false);
+    }
+  }, [config]);
+
+  const handleWeChatUnbind = useCallback(async () => {
+    Modal.confirm({
+      title: '解除微信公众号绑定？',
+      content: '解除后将停止向微信公众号推送当日日报 / 业绩预告 / 风控告警。可随时重新扫码绑定。',
+      okText: '解除绑定',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: async () => {
+        setWeChatUnbinding(true);
+        try {
+          const saved = await unbindWeChat();
+          setConfig(saved);
+          message.success('微信绑定已解除');
+        } catch (err) {
+          message.error(err instanceof Error ? err.message : '解除失败');
+        } finally {
+          setWeChatUnbinding(false);
+        }
+      },
+    });
+  }, []);
+
+  const handleWeChatTest = useCallback(async (kind: WeChatTestKind) => {
+    setWeChatTesting(true);
+    try {
+      const r = await sendWeChatTestMessage(kind, /* dryRun */ false);
+      if (r.status === 'sent') {
+        message.success(`已向微信公众号发送 ${kind} 测试消息`);
+      } else if (r.status === 'skipped') {
+        message.warning(`已跳过：${r.skip_reason || '未配置 / 开关关闭'}`);
+      } else {
+        message.error(`发送失败：${r.error || '未知原因'}`);
+      }
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '发送失败');
+    } finally {
+      setWeChatTesting(false);
+    }
   }, []);
 
   // ---- 渲染 --------------------------------------------------------------
@@ -531,25 +683,161 @@ const SettingsWorkspace: React.FC = () => {
           </Form>
         </Card>
 
-        <Card title="微信公众号" extra={<Tag color="default">US-066 启用后开放</Tag>}>
-          <Form layout="vertical" disabled>
+        <Card
+          title="微信公众号（订阅消息）"
+          extra={
+            <Switch
+              checked={cfg.wechat.enabled}
+              checkedChildren="启用"
+              unCheckedChildren="关闭"
+              onChange={v => patchConfig({ ...cfg, wechat: { ...cfg.wechat, enabled: v } })}
+            />
+          }
+        >
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message="微信公众号订阅消息推送"
+            description={
+              <Space direction="vertical" size={4}>
+                <Text>
+                  通过微信公众号订阅 3 类模板消息：当日日报、业绩预告即时提醒、高优先级风控告警。
+                  <Text strong>无需打开飞书</Text>，扫码关注公众号即可收到推送。
+                </Text>
+                <Text type="secondary">
+                  后端需配置 env：<Text code>WECHAT_OA_APPID</Text> /
+                  <Text code>WECHAT_OA_APPSECRET</Text> 及 3 个模板 id（
+                  <Text code>WECHAT_TEMPLATE_DAILY_DIGEST</Text> /
+                  <Text code>WECHAT_TEMPLATE_EARNINGS_FORECAST</Text> /
+                  <Text code>WECHAT_TEMPLATE_RISK_ALERT</Text>）。
+                </Text>
+              </Space>
+            }
+          />
+
+          <Form layout="vertical" disabled={!cfg.wechat.enabled}>
             <Row gutter={16}>
-              <Col span={6}>
-                <Form.Item label="启用">
-                  <Switch checked={cfg.wechat.enabled} disabled />
+              <Col xs={24} md={12}>
+                <Form.Item label="绑定状态">
+                  {cfg.wechat.openid ? (
+                    <Space>
+                      <Tag icon={<CheckCircleOutlined />} color="success">
+                        已绑定
+                      </Tag>
+                      <Text type="secondary" copyable={{ tooltips: ['复制 openid', '已复制'] }}>
+                        {cfg.wechat.openid}
+                      </Text>
+                      {cfg.wechat.bound_at && (
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                          ({cfg.wechat.bound_at.slice(0, 19).replace('T', ' ')})
+                        </Text>
+                      )}
+                    </Space>
+                  ) : (
+                    <Tag color="default">未绑定 — 点击「扫码绑定」开始</Tag>
+                  )}
                 </Form.Item>
               </Col>
-              <Col span={12}>
-                <Form.Item label="OpenID（扫码绑定后自动填写）">
-                  <Input value={cfg.wechat.openid || ''} disabled />
-                </Form.Item>
-              </Col>
-              <Col span={6}>
-                <Form.Item label="每日日报">
-                  <Switch checked={cfg.wechat.daily_digest} disabled />
+              <Col xs={24} md={12} style={{ textAlign: 'right' }}>
+                <Form.Item label=" ">
+                  <Space>
+                    <Button
+                      type={cfg.wechat.openid ? 'default' : 'primary'}
+                      icon={<QrcodeOutlined />}
+                      loading={wechatBindLoading}
+                      onClick={() => void handleWeChatBindStart()}
+                      disabled={!cfg.wechat.enabled}
+                    >
+                      {cfg.wechat.openid ? '重新扫码' : '扫码绑定'}
+                    </Button>
+                    {cfg.wechat.openid && (
+                      <Button
+                        danger
+                        icon={<DisconnectOutlined />}
+                        loading={wechatUnbinding}
+                        onClick={handleWeChatUnbind}
+                      >
+                        解除绑定
+                      </Button>
+                    )}
+                  </Space>
                 </Form.Item>
               </Col>
             </Row>
+
+            <Divider style={{ margin: '12px 0' }} />
+            <Row gutter={16}>
+              <Col span={8}>
+                <Form.Item label="当日交易日报" tooltip="盘后 15:30 推送（与飞书并发）">
+                  <Switch
+                    checked={cfg.wechat.daily_digest}
+                    onChange={v =>
+                      patchConfig({ ...cfg, wechat: { ...cfg.wechat, daily_digest: v } })
+                    }
+                  />
+                </Form.Item>
+              </Col>
+              <Col span={8}>
+                <Form.Item label="业绩预告即时提醒" tooltip="持仓股 15 分钟级 + 自选盘后汇总">
+                  <Switch
+                    checked={cfg.wechat.earnings_alert}
+                    onChange={v =>
+                      patchConfig({ ...cfg, wechat: { ...cfg.wechat, earnings_alert: v } })
+                    }
+                  />
+                </Form.Item>
+              </Col>
+              <Col span={8}>
+                <Form.Item
+                  label="高优先级风控告警"
+                  tooltip="HIGH 级即时 / MEDIUM 聚合（US-067 同步开放）"
+                >
+                  <Switch
+                    checked={cfg.wechat.risk_alert}
+                    onChange={v =>
+                      patchConfig({ ...cfg, wechat: { ...cfg.wechat, risk_alert: v } })
+                    }
+                  />
+                </Form.Item>
+              </Col>
+            </Row>
+
+            <Divider style={{ margin: '12px 0' }} />
+            <Space wrap>
+              <Button
+                type="primary"
+                icon={<SaveOutlined />}
+                loading={wechatSaving}
+                onClick={() => void handleWeChatSave()}
+              >
+                保存微信配置
+              </Button>
+              <Button
+                icon={<ExperimentOutlined />}
+                loading={wechatTesting}
+                disabled={!cfg.wechat.enabled || !cfg.wechat.openid || !cfg.wechat.daily_digest}
+                onClick={() => void handleWeChatTest('daily_digest')}
+              >
+                测试·当日日报
+              </Button>
+              <Button
+                icon={<ExperimentOutlined />}
+                loading={wechatTesting}
+                disabled={!cfg.wechat.enabled || !cfg.wechat.openid || !cfg.wechat.earnings_alert}
+                onClick={() => void handleWeChatTest('earnings_alert')}
+              >
+                测试·业绩预告
+              </Button>
+              <Button
+                icon={<ExperimentOutlined />}
+                loading={wechatTesting}
+                disabled={!cfg.wechat.enabled || !cfg.wechat.openid || !cfg.wechat.risk_alert}
+                onClick={() => void handleWeChatTest('risk_alert')}
+              >
+                测试·风控告警
+              </Button>
+            </Space>
           </Form>
         </Card>
       </Space>
@@ -582,6 +870,13 @@ const SettingsWorkspace: React.FC = () => {
         open={weeklyPreviewOpen}
         result={weeklyPreviewResult}
         onClose={() => setWeeklyPreviewOpen(false)}
+      />
+      <WeChatBindModal
+        open={wechatBindOpen}
+        result={wechatBindResult}
+        status={wechatBindStatus}
+        onClose={handleWeChatBindClose}
+        onRetry={() => void handleWeChatBindStart()}
       />
     </WorkspaceLayout>
   );
@@ -997,6 +1292,104 @@ const WeeklyReviewPreviewModal: React.FC<WeeklyReviewPreviewModalProps> = ({
             预览不发送邮件；点 &quot;立即发送一封周报&quot; 按钮才真实发送。Report ID:{' '}
             <Text code>{result.report_id}</Text>
           </Paragraph>
+        </Space>
+      )}
+    </Modal>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// 微信绑定 Modal (US-066)
+// ---------------------------------------------------------------------------
+
+interface WeChatBindModalProps {
+  open: boolean;
+  result: WeChatBindQrCodeResult | null;
+  status: null | 'pending' | 'bound' | 'expired';
+  onClose: () => void;
+  onRetry: () => void;
+}
+
+const WeChatBindModal: React.FC<WeChatBindModalProps> = ({
+  open,
+  result,
+  status,
+  onClose,
+  onRetry,
+}) => {
+  return (
+    <Modal
+      title="扫码绑定微信公众号"
+      open={open}
+      onCancel={onClose}
+      footer={null}
+      width={520}
+      destroyOnClose
+    >
+      {!result ? (
+        <div style={{ textAlign: 'center', padding: 32 }}>
+          <Spin tip="生成微信参数二维码…" />
+        </div>
+      ) : (
+        <Space direction="vertical" size="middle" align="center" style={{ width: '100%' }}>
+          <Alert
+            type={status === 'bound' ? 'success' : status === 'expired' ? 'warning' : 'info'}
+            showIcon
+            style={{ width: '100%' }}
+            message={
+              status === 'bound'
+                ? '已成功绑定！'
+                : status === 'expired'
+                ? '轮询超时（2 分钟），可点击"重新生成"再试'
+                : '请用微信扫码 → 关注公众号 → 自动绑定（页面会自动刷新）'
+            }
+            description={
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                Scene: <Text code>{result.scene_str}</Text> | 有效期:{' '}
+                {Math.round(result.expire_seconds / 86400)} 天
+              </Text>
+            }
+          />
+
+          {result.qrcode_image_url ? (
+            <img
+              src={result.qrcode_image_url}
+              alt="微信公众号绑定二维码"
+              style={{
+                width: 240,
+                height: 240,
+                border: '1px solid #f0f0f0',
+                borderRadius: 8,
+                padding: 8,
+              }}
+            />
+          ) : (
+            <Empty description="二维码图片地址缺失" />
+          )}
+
+          {result.current_openid && status !== 'bound' && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ width: '100%' }}
+              message="该账号已存在绑定"
+              description={
+                <Text style={{ fontSize: 12 }}>
+                  当前 openid: <Text code>{result.current_openid}</Text>
+                  。新扫码会覆盖旧绑定（同一 user 同一时刻只能保留一个 openid）。
+                </Text>
+              }
+            />
+          )}
+
+          <Space>
+            <Button onClick={onClose}>{status === 'bound' ? '完成' : '稍后再试'}</Button>
+            {status !== 'bound' && (
+              <Button type="primary" icon={<ReloadOutlined />} onClick={onRetry}>
+                重新生成
+              </Button>
+            )}
+          </Space>
         </Space>
       )}
     </Modal>

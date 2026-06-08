@@ -74,7 +74,15 @@ export interface NotificationChannelsConfig {
   wechat: {
     enabled: boolean;
     openid?: string;
+    /** US-066 — 绑定时生成的 scene_str (`bind-{user_id}-{rand6}`)，扫码事件回调时反查用户 */
+    bind_scene_str?: string;
+    /** US-066 — 绑定时间 ISO 字符串；空 = 未绑定 */
+    bound_at?: string;
     daily_digest: boolean;
+    /** US-066 — 业绩预告即时提醒模板订阅 */
+    earnings_alert: boolean;
+    /** US-066 — 高优先级风控告警模板订阅 */
+    risk_alert: boolean;
   };
 }
 
@@ -94,7 +102,11 @@ export const DEFAULT_NOTIFICATION_CONFIG: NotificationChannelsConfig = Object.fr
   wechat: {
     enabled: false,
     openid: '',
+    bind_scene_str: '',
+    bound_at: '',
     daily_digest: false,
+    earnings_alert: false,
+    risk_alert: false,
   },
 }) as NotificationChannelsConfig;
 
@@ -267,10 +279,17 @@ export function normalizeNotificationConfig(raw: any): NotificationChannelsConfi
     wechat: {
       enabled: safeBoolean(wechatRaw.enabled, DEFAULT_NOTIFICATION_CONFIG.wechat.enabled),
       openid: safeString(wechatRaw.openid),
+      bind_scene_str: safeString(wechatRaw.bind_scene_str),
+      bound_at: safeString(wechatRaw.bound_at),
       daily_digest: safeBoolean(
         wechatRaw.daily_digest,
         DEFAULT_NOTIFICATION_CONFIG.wechat.daily_digest
       ),
+      earnings_alert: safeBoolean(
+        wechatRaw.earnings_alert,
+        DEFAULT_NOTIFICATION_CONFIG.wechat.earnings_alert
+      ),
+      risk_alert: safeBoolean(wechatRaw.risk_alert, DEFAULT_NOTIFICATION_CONFIG.wechat.risk_alert),
     },
   };
 }

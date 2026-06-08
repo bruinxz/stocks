@@ -33,7 +33,15 @@ export interface EmailChannelConfig {
 export interface WeChatChannelConfig {
   enabled: boolean;
   openid?: string;
+  /** US-066 — 绑定 scene_str（扫码事件 webhook 用） */
+  bind_scene_str?: string;
+  /** US-066 — 绑定时间 ISO；空 = 未绑定 */
+  bound_at?: string;
   daily_digest: boolean;
+  /** US-066 — 业绩预告即时提醒模板订阅 */
+  earnings_alert: boolean;
+  /** US-066 — 高优先级风控告警模板订阅 */
+  risk_alert: boolean;
 }
 
 export interface NotificationChannelsConfig {
@@ -297,6 +305,125 @@ export async function sendWeeklyReviewNow(
   return res.data.data as SendWeeklyReviewResult;
 }
 
+// ---------- US-066 微信公众号绑定与配置 ------------------------------------
+
+export interface WeChatBindQrCodeResult {
+  bind_id: string;
+  user_id: number;
+  scene_str: string;
+  /** showqrcode 接口直链，前端 <img src="..."> 直接可显示 */
+  qrcode_image_url: string;
+  /** 用户扫码跳转的 url；showqrcode 已包含图片本身，正常不用 */
+  qrcode_url: string;
+  ticket: string;
+  expire_seconds: number;
+  /** ISO 字符串，过期时刻；前端展示倒计时 */
+  expire_at: string;
+  /** 当前 user 已绑定的 openid（若已绑定）；前端展示提示已重新生成 */
+  current_openid?: string;
+  current_bound_at?: string;
+}
+
+export interface WeChatBindConfirmResult {
+  bound: boolean;
+  bind_id: string;
+  user_id: number;
+  scene_str: string;
+  openid?: string;
+  bound_at?: string;
+  message?: string;
+}
+
+export type WeChatTestKind = 'daily_digest' | 'earnings_alert' | 'risk_alert';
+
+export interface WeChatSendResult {
+  message_id: string;
+  status: 'sent' | 'skipped' | 'failed';
+  sent: boolean;
+  user_id: number;
+  template_kind: string;
+  template_id?: string;
+  openid?: string;
+  message?: string;
+  skip_reason?: string;
+  error?: string;
+  response?: any;
+}
+
+/**
+ * US-066 — 生成微信公众号参数二维码 + 落 scene_str 到用户 wechat config。
+ * 后端调 weixin qrcode/create 接口拿 ticket 与跳转 url，前端拿到 qrcode_image_url
+ * 后用 <img> 直接显示让用户扫码 → 关注公众号 → 后端 webhook 写入 openid → 前端
+ * 轮询 confirmWeChatBind 看到 bound:true。
+ */
+export async function getWeChatBindQrCode(): Promise<WeChatBindQrCodeResult> {
+  const res = await api.get('/settings/wechat-bind-qrcode');
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || '生成微信绑定二维码失败');
+  }
+  return res.data.data as WeChatBindQrCodeResult;
+}
+
+/**
+ * US-066 — 轮询确认微信绑定状态。
+ * 前端展示二维码后每 3 秒轮询一次，bound:true 关闭轮询并刷新 notification-channels。
+ *
+ * @param sceneStr 可选 —— 传入后端会与最近一次生成的 scene_str 比对，不匹配返回提示
+ */
+export async function confirmWeChatBind(sceneStr?: string): Promise<WeChatBindConfirmResult> {
+  const body: any = {};
+  if (sceneStr) body.scene_str = sceneStr;
+  const res = await api.post('/settings/wechat-bind-confirm', body);
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || '确认微信绑定状态失败');
+  }
+  return res.data.data as WeChatBindConfirmResult;
+}
+
+/**
+ * US-066 — 更新当前用户的 wechat 通道 4 个开关。
+ * Body: { enabled?, daily_digest?, earnings_alert?, risk_alert? }
+ */
+export async function updateWeChatConfig(patch: {
+  enabled?: boolean;
+  daily_digest?: boolean;
+  earnings_alert?: boolean;
+  risk_alert?: boolean;
+}): Promise<NotificationChannelsConfig> {
+  const res = await api.post('/settings/wechat-config', patch);
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || '保存微信通道配置失败');
+  }
+  return res.data.data as NotificationChannelsConfig;
+}
+
+/**
+ * US-066 — 解除微信绑定（清空 openid / bind_scene_str / bound_at；保留 enabled / 各开关）。
+ */
+export async function unbindWeChat(): Promise<NotificationChannelsConfig> {
+  const res = await api.post('/settings/wechat-unbind', {});
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || '解除微信绑定失败');
+  }
+  return res.data.data as NotificationChannelsConfig;
+}
+
+/**
+ * US-066 — 给当前用户发一条测试订阅消息（冒烟测试 access_token + template_id + openid 是否畅通）。
+ * @param kind 模板类型，缺省 daily_digest
+ * @param dryRun 不真发，只返回组装好的 data 字段供 UI 预览
+ */
+export async function sendWeChatTestMessage(
+  kind: WeChatTestKind = 'daily_digest',
+  dryRun = false
+): Promise<WeChatSendResult> {
+  const res = await api.post('/settings/wechat-test', { template_kind: kind, dry_run: dryRun });
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || '发送测试微信消息失败');
+  }
+  return res.data.data as WeChatSendResult;
+}
+
 const settingsService = {
   loadNotificationChannels,
   updateNotificationChannels,
@@ -305,6 +432,11 @@ const settingsService = {
   sendDailyDigestNow,
   previewWeeklyReview,
   sendWeeklyReviewNow,
+  getWeChatBindQrCode,
+  confirmWeChatBind,
+  updateWeChatConfig,
+  unbindWeChat,
+  sendWeChatTestMessage,
 };
 
 export default settingsService;
