@@ -75,6 +75,15 @@ When a table cell needs in-place edit (止损价 / 止盈线 / 备注):
 3. On confirm: call the service, optimistically update the parent's state via `onChangeData(next)` (parent passes mutator down), `message.success` + clear editing state. On failure: keep the edit row open with `message.error` so the user can retry without retyping.
 4. Tooltip on display-mode Tag should show contextual data (距现价 N%, 触发条件) — use this to nudge the user toward sensible values without blocking them.
 
+## Multi-field inline-edit per row pattern (US-076 — stop-loss + take-profit in PositionsTab)
+
+When the same table row has **N independently editable inline fields** (止损价 + 止盈价 / 行情价 + 数量 / 起始日 + 结束日):
+
+1. **Use a `(rowId, field)` tuple state** instead of N independent `editingXxxId / editingYyyId` states. The PositionsTab carries `editingPositionId: number | null` + `editingField: 'stop_loss' | 'take_profit' | null` + a single `editingValue` shared across both fields. Switching from止损 ✏ → 止盈 ✏ on the same row naturally replaces the previous edit (rowId same / field changes / value re-initialized from the new field's current value).
+2. **Why this matters**: With independent state buckets, clicking ✏ on field B while field A's edit is open leaves both fields in edit mode simultaneously — the user faces two ✓ buttons in one row and can't tell which saves which. The tuple state collapses this into a single source of truth.
+3. **Each field still has its own `handleSave<Field>` async function** — the save logic per field is field-specific (different endpoint, different validation, different success message). What's shared is the *editing UX state*.
+4. **Cell render branches on both id AND field**: `if (editingPositionId === row.id && editingField === 'stop_loss')` — only render the edit UI for the cell that matches both. The other field renders as read-only Tag even when the row has an open edit.
+
 ## Inline confirm + execute pattern (US-017 — close position)
 
 For destructive actions on a table row (一键平仓 / 删除信号 / 关闭实验):

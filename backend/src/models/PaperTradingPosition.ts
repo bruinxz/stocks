@@ -107,6 +107,22 @@ export class PaperTradingPosition extends Model {
   declare stop_loss_price: number | null;
 
   /**
+   * 用户手动设置的止盈价 (US-076)。
+   *
+   * 与 stop_loss_price 对偶：UI 在持仓表里用绿色提示"现价 ≥ 止盈价"，
+   * 提示用户达到目标可考虑减仓 / 平仓。本列同样允许 NULL —— null 表示
+   * 用户未设置硬止盈（仅依赖策略级 take_profit_pct）。具体的触发撮合
+   * 行为由后续 take-profit guard 或用户手动决策完成。
+   */
+  @Column({
+    type: DataType.DECIMAL(10, 3),
+    allowNull: true,
+    field: 'take_profit_price',
+    comment: '用户设置的止盈价（NULL=未设置）',
+  })
+  declare take_profit_price: number | null;
+
+  /**
    * 追踪止损 — 持仓期间观察到的最高收盘价 (US-048)。
    *
    * 每日收盘后由 TrailingStopGuard.updatePositionsAfterClose() 更新：

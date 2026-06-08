@@ -148,8 +148,7 @@ const PortfolioWorkspace: React.FC = () => {
         : 0;
     const totalReturnPct =
       snapshots.length >= 2
-        ? (Number(snapshots[snapshots.length - 1].total_value) /
-            Number(snapshots[0].total_value) -
+        ? (Number(snapshots[snapshots.length - 1].total_value) / Number(snapshots[0].total_value) -
             1) *
           100
         : 0;
@@ -271,9 +270,12 @@ interface PositionsTabProps {
 }
 
 const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfterTrade }) => {
+  // US-076 — 编辑 state 扩展为 (positionId, field) tuple，止损与止盈复用同一套
+  // 编辑 / 保存 / 取消机制，避免两个独立 state 各管一边导致同行同时进入两个编辑态。
   const [editingPositionId, setEditingPositionId] = useState<number | null>(null);
+  const [editingField, setEditingField] = useState<'stop_loss' | 'take_profit' | null>(null);
   const [editingValue, setEditingValue] = useState<number | null>(null);
-  const [savingStopLoss, setSavingStopLoss] = useState(false);
+  const [savingLimit, setSavingLimit] = useState(false);
   const [closingSymbol, setClosingSymbol] = useState<string | null>(null);
   // US-055 — AI 解读 modal target
   const [aiTarget, setAiTarget] = useState<{ symbol: string; name: string | null } | null>(null);
@@ -281,18 +283,28 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
   const positions = data?.positions || [];
   const totalValue = Number(data?.portfolio.total_value || 0);
 
-  const handleStartEdit = (row: PositionRow) => {
+  const handleStartEdit = (row: PositionRow, field: 'stop_loss' | 'take_profit') => {
     setEditingPositionId(row.id);
-    setEditingValue(row.stop_loss_price !== null ? Number(row.stop_loss_price) : null);
+    setEditingField(field);
+    const initial =
+      field === 'stop_loss'
+        ? row.stop_loss_price !== null
+          ? Number(row.stop_loss_price)
+          : null
+        : row.take_profit_price !== null
+        ? Number(row.take_profit_price)
+        : null;
+    setEditingValue(initial);
   };
 
   const handleCancelEdit = () => {
     setEditingPositionId(null);
+    setEditingField(null);
     setEditingValue(null);
   };
 
   const handleSaveStopLoss = async (row: PositionRow) => {
-    setSavingStopLoss(true);
+    setSavingLimit(true);
     try {
       const result = await portfolioWorkspaceService.setPositionStopLoss(row.id, {
         stop_loss_price: editingValue,
@@ -316,7 +328,36 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
       const messageStr = err instanceof Error ? err.message : String(err);
       message.error(messageStr);
     } finally {
-      setSavingStopLoss(false);
+      setSavingLimit(false);
+    }
+  };
+
+  const handleSaveTakeProfit = async (row: PositionRow) => {
+    setSavingLimit(true);
+    try {
+      const result = await portfolioWorkspaceService.setPositionTakeProfit(row.id, {
+        take_profit_price: editingValue,
+      });
+      if (data) {
+        const next: PortfolioWithPositions = {
+          ...data,
+          positions: data.positions.map(p =>
+            p.id === row.id ? { ...p, take_profit_price: result.take_profit_price } : p
+          ),
+        };
+        onChangeData(next);
+      }
+      message.success(
+        result.take_profit_price === null
+          ? '已清除止盈价'
+          : `${row.name || row.symbol} 止盈价 ¥${result.take_profit_price}`
+      );
+      handleCancelEdit();
+    } catch (err: unknown) {
+      const messageStr = err instanceof Error ? err.message : String(err);
+      message.error(messageStr);
+    } finally {
+      setSavingLimit(false);
     }
   };
 
@@ -446,7 +487,7 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
       width: 200,
       render: (_: any, row: PositionRow) => {
         const currentPrice = Number(row.current_price);
-        if (editingPositionId === row.id) {
+        if (editingPositionId === row.id && editingField === 'stop_loss') {
           return (
             <Space size={4}>
               <InputNumber
@@ -463,7 +504,7 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
                 size="small"
                 type="primary"
                 icon={<CheckOutlined />}
-                loading={savingStopLoss}
+                loading={savingLimit}
                 onClick={() => void handleSaveStopLoss(row)}
               />
               <Button size="small" icon={<CloseOutlined />} onClick={handleCancelEdit} />
@@ -471,6 +512,7 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
           );
         }
         const stopLoss = row.stop_loss_price !== null ? Number(row.stop_loss_price) : null;
+        // 止损价 ≥ 现价 = 警告（下一交易日开盘可能立即触发）
         const isAboveCurrent = stopLoss !== null && stopLoss >= currentPrice;
         return (
           <Space size={4}>
@@ -491,7 +533,66 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
               size="small"
               type="text"
               icon={<EditOutlined />}
-              onClick={() => handleStartEdit(row)}
+              onClick={() => handleStartEdit(row, 'stop_loss')}
+            />
+          </Space>
+        );
+      },
+    },
+    {
+      // US-076 — 止盈价：止损的对偶，现价 ≥ 止盈价时变绿提示用户考虑减仓
+      title: '止盈价',
+      key: 'take_profit',
+      width: 200,
+      render: (_: any, row: PositionRow) => {
+        const currentPrice = Number(row.current_price);
+        if (editingPositionId === row.id && editingField === 'take_profit') {
+          return (
+            <Space size={4}>
+              <InputNumber
+                value={editingValue}
+                onChange={v => setEditingValue(v as number | null)}
+                min={0}
+                step={0.01}
+                precision={2}
+                placeholder="留空清除"
+                style={{ width: 110 }}
+                size="small"
+              />
+              <Button
+                size="small"
+                type="primary"
+                icon={<CheckOutlined />}
+                loading={savingLimit}
+                onClick={() => void handleSaveTakeProfit(row)}
+              />
+              <Button size="small" icon={<CloseOutlined />} onClick={handleCancelEdit} />
+            </Space>
+          );
+        }
+        const takeProfit = row.take_profit_price !== null ? Number(row.take_profit_price) : null;
+        // 止盈价 ≤ 现价 = 绿色提示（目标已达 / 应考虑减仓）
+        const isReached = takeProfit !== null && takeProfit <= currentPrice;
+        return (
+          <Space size={4}>
+            {takeProfit === null ? (
+              <Text type="secondary">未设置</Text>
+            ) : (
+              <Tooltip
+                title={
+                  isReached
+                    ? '现价已 ≥ 止盈价，目标已达成，可考虑减仓或平仓'
+                    : `距现价 ${(((takeProfit - currentPrice) / currentPrice) * 100).toFixed(2)}%`
+                }
+              >
+                <Tag color={isReached ? 'green' : 'blue'}>¥{takeProfit.toFixed(2)}</Tag>
+              </Tooltip>
+            )}
+            <Button
+              size="small"
+              type="text"
+              icon={<EditOutlined />}
+              onClick={() => handleStartEdit(row, 'take_profit')}
             />
           </Space>
         );
@@ -547,8 +648,7 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
           <WalletOutlined />
           <span>当前持仓 · {positions.length} 只</span>
           <Tag color="blue">
-            总市值 ¥
-            {positions.reduce((acc, p) => acc + Number(p.market_value), 0).toLocaleString()}
+            总市值 ¥{positions.reduce((acc, p) => acc + Number(p.market_value), 0).toLocaleString()}
           </Tag>
           <Tag>现金 ¥{Number(data?.portfolio.current_cash || 0).toLocaleString()}</Tag>
         </Space>
@@ -560,7 +660,7 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
         dataSource={positions}
         columns={columns as any}
         pagination={false}
-        scroll={{ x: 1280 }}
+        scroll={{ x: 1480 }}
       />
       {aiTarget && (
         <AIStockAnalysisModal
@@ -1083,9 +1183,7 @@ const JournalTab: React.FC<JournalTabProps> = ({ list, onListRefresh }) => {
               description={
                 <Space direction="vertical" align="center">
                   <Text type="secondary">该日期还没有复盘记录。</Text>
-                  <Text type="secondary">
-                    AI 自动复盘待 US-087 实现；在下方输入手记即可建档。
-                  </Text>
+                  <Text type="secondary">AI 自动复盘待 US-087 实现；在下方输入手记即可建档。</Text>
                 </Space>
               }
             />
@@ -1226,10 +1324,7 @@ function annualizeReturnPct(snapshots: SnapshotRow[]): number {
   const first = Number(snapshots[0].total_value);
   const last = Number(snapshots[snapshots.length - 1].total_value);
   if (first <= 0) return 0;
-  const days = dayjs(snapshots[snapshots.length - 1].date).diff(
-    dayjs(snapshots[0].date),
-    'day'
-  );
+  const days = dayjs(snapshots[snapshots.length - 1].date).diff(dayjs(snapshots[0].date), 'day');
   if (days <= 0) return 0;
   const totalReturn = last / first;
   if (totalReturn <= 0) return 0;
@@ -1240,8 +1335,7 @@ function annualizeReturnPct(snapshots: SnapshotRow[]): number {
 function sliceSnapshotsByWindow(snapshots: SnapshotRow[], window: WindowKey): SnapshotRow[] {
   if (window === 'all' || snapshots.length === 0) return snapshots;
   const lastDate = dayjs(snapshots[snapshots.length - 1].date);
-  const lookback =
-    window === '30d' ? 30 : window === '90d' ? 90 : window === '1y' ? 365 : 0;
+  const lookback = window === '30d' ? 30 : window === '90d' ? 90 : window === '1y' ? 365 : 0;
   if (lookback === 0) return snapshots;
   const cutoff = lastDate.subtract(lookback, 'day');
   return snapshots.filter(s => !dayjs(s.date).isBefore(cutoff));

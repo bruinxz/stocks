@@ -125,6 +125,7 @@ export type ApplyAutomationAction =
   | 'tuning_rollback'
   | 'hindsight_refresh'
   | 'set_stop_loss'
+  | 'set_take_profit'
   | 'per_stock_stop_loss_check';
 
 export interface ApplyAutomationOptions {
@@ -828,6 +829,52 @@ export class PaperTradingFacade {
           position_id: position.id,
           symbol: position.symbol,
           stop_loss_price: position.stop_loss_price,
+          current_price: position.current_price,
+        };
+      }
+
+      case 'set_take_profit': {
+        // US-076 — UI lets the user set a hard take-profit price per position.
+        // Body shape: { position_id: number, take_profit_price: number | null }.
+        // Mirrors set_stop_loss validation; verifies position ownership before write.
+        const positionId = Number(body.position_id);
+        if (!Number.isFinite(positionId) || positionId <= 0) {
+          const err: any = new Error('position_id 无效');
+          err.statusCode = 400;
+          throw err;
+        }
+        const takeProfitPrice =
+          body.take_profit_price === null || body.take_profit_price === undefined
+            ? null
+            : Number(body.take_profit_price);
+        if (
+          takeProfitPrice !== null &&
+          (!Number.isFinite(takeProfitPrice) || takeProfitPrice <= 0)
+        ) {
+          const err: any = new Error('take_profit_price 必须是正数或 null');
+          err.statusCode = 400;
+          throw err;
+        }
+        const portfolio = await PaperTradingPortfolio.findOne({ where: { user_id } });
+        if (!portfolio) {
+          const err: any = new Error('未找到模拟盘');
+          err.statusCode = 404;
+          throw err;
+        }
+        const position = await PaperTradingPosition.findOne({
+          where: { id: positionId, portfolio_id: portfolio.id },
+        });
+        if (!position) {
+          const err: any = new Error('未找到该持仓');
+          err.statusCode = 404;
+          throw err;
+        }
+        position.take_profit_price = takeProfitPrice;
+        await position.save();
+        return {
+          position_id: position.id,
+          symbol: position.symbol,
+          take_profit_price: position.take_profit_price,
           current_price: position.current_price,
         };
       }

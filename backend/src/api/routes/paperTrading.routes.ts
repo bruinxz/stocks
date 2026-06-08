@@ -578,4 +578,36 @@ router.put(
   paperTradingController.setPositionStopLoss
 );
 
+/**
+ * @openapi
+ * /api/paper-trading/positions/{id}/take-profit:
+ *   put:
+ *     tags: [模拟交易 PaperTrading]
+ *     summary: 设置/清除指定持仓的硬止盈价 (US-076)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               take_profit_price: { type: number, nullable: true }
+ *     responses:
+ *       200: { description: 设置结果 }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
+ *       404: { description: 未找到持仓 }
+ */
+router.put(
+  '/positions/:id/take-profit',
+  authController.authenticate,
+  paperTradingController.setPositionTakeProfit
+);
+
 export default router;

@@ -3,12 +3,13 @@ import api from './api';
 /**
  * US-017 持仓与复盘工作区前端 API 客户端。
  *
- * 包装既有 PaperTrading + Journal 端点 + US-017 新增的 2 个 endpoint：
+ * 包装既有 PaperTrading + Journal 端点 + US-017 / US-076 新增的 endpoint：
  *   - GET  /paper-trading                               → getPortfolio()
  *   - GET  /paper-trading/snapshots                     → getSnapshots()
  *   - GET  /paper-trading/history                       → getTradeHistory()
  *   - POST /paper-trading/trade                         → placeTrade() (用于一键平仓)
  *   - PUT  /paper-trading/positions/:id/stop-loss       → setPositionStopLoss()  ← US-017 新增
+ *   - PUT  /paper-trading/positions/:id/take-profit     → setPositionTakeProfit() ← US-076 新增
  *   - GET  /journals                                    → listJournals()
  *   - GET  /journals/:date                              → getJournalDetail()
  *   - POST /journals/:date/notes                        → appendJournalNote()    ← US-017 新增
@@ -40,6 +41,7 @@ export interface PositionRow {
   market_value: number;
   unrealized_pnl: number;
   stop_loss_price: number | null;
+  take_profit_price: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -113,6 +115,18 @@ export interface SetStopLossResponse {
   current_price: number;
 }
 
+export interface SetTakeProfitPayload {
+  /** null 表示清除止盈 */
+  take_profit_price: number | null;
+}
+
+export interface SetTakeProfitResponse {
+  position_id: number;
+  symbol: string;
+  take_profit_price: number | null;
+  current_price: number;
+}
+
 export interface AppendJournalNoteResponse {
   date: string;
   user_notes: JournalUserNote[];
@@ -136,7 +150,10 @@ export interface PlaceTradeResponse {
 
 // ---------- API 函数 ----------
 
-function unwrap<T>(res: { data?: { success?: boolean; data?: T; message?: string } }, fallback: string): T {
+function unwrap<T>(
+  res: { data?: { success?: boolean; data?: T; message?: string } },
+  fallback: string
+): T {
   if (!res.data?.success) {
     throw new Error(res.data?.message || fallback);
   }
@@ -169,6 +186,14 @@ export async function setPositionStopLoss(
 ): Promise<SetStopLossResponse> {
   const res = await api.put(`/paper-trading/positions/${positionId}/stop-loss`, payload);
   return unwrap<SetStopLossResponse>(res, '设置止损价失败');
+}
+
+export async function setPositionTakeProfit(
+  positionId: number,
+  payload: SetTakeProfitPayload
+): Promise<SetTakeProfitResponse> {
+  const res = await api.put(`/paper-trading/positions/${positionId}/take-profit`, payload);
+  return unwrap<SetTakeProfitResponse>(res, '设置止盈价失败');
 }
 
 export async function listJournals(): Promise<JournalSummary[]> {
@@ -239,6 +264,7 @@ export const portfolioWorkspaceService = {
   getTradeHistory,
   placeTrade,
   setPositionStopLoss,
+  setPositionTakeProfit,
   listJournals,
   getJournalDetail,
   appendJournalNote,

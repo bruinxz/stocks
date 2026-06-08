@@ -639,6 +639,31 @@ export class PaperTradingController {
       sendError(res, error, '设置持仓止损价失败');
     }
   };
+
+  // US-076 — 设置/清除持仓的硬止盈价
+  setPositionTakeProfit = async (req: Request, res: Response, _next: NextFunction) => {
+    try {
+      const user = (req as any).user;
+      const positionId = Number(req.params.id);
+      const { take_profit_price } = req.body as { take_profit_price: number | null };
+      const result: any = await paperTradingFacade.applyAutomation({
+        action: 'set_take_profit',
+        user_id: user.id,
+        username: user.username || user.nickname,
+        body: { position_id: positionId, take_profit_price },
+      });
+      res.json({
+        success: true,
+        data: result,
+        message:
+          result.take_profit_price === null
+            ? `已清除 ${result.symbol} 的止盈价`
+            : `${result.symbol} 止盈价设为 ¥${result.take_profit_price}`,
+      });
+    } catch (error: any) {
+      sendError(res, error, '设置持仓止盈价失败');
+    }
+  };
 }
 
 export const paperTradingController = new PaperTradingController();

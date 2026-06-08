@@ -6910,3 +6910,62 @@ N/A — 工程内无 `dev-browser` MCP skill。手动验证途径：
 ### CLAUDE.md updates
 N/A — 此次的"per-task per-sub-series 隔离失败"模式 + "stable compareKey" + "cancelled flag" 都已 codify 进 `## Codebase Patterns ### Frontend` (本文件顶部)，无需单独 CLAUDE.md；后端只新加 3 个 route 注册，无新设计需 codify。
 ---
+
+## 2026/06/08 - US-076 — 前端：持仓页快速止盈止损设置
+### What was implemented
+本故事是 US-017 (持仓页 inline 设置硬止损价) 的镜像/对偶：在 PortfolioWorkspace 当前持仓表里把"止损价"列对应增加一个"止盈价"列，复用 US-017 已经搭好的 inline 编辑机制 (editingPositionId + editingValue + savingLimit + Tag/Edit 三件套)。同时 backend 镜像扩出 `set_take_profit` action + take_profit_price 列 + PUT /api/paper-trading/positions/:id/take-profit endpoint。
+
+US-076 在 ralph 上一次"rescue uncommitted work"提交时已被部分实现但未提交，本次主要做：
+1. 把已实现的 6 个修改文件 typecheck + lint 验证 → 全 pass
+2. 走 eslint --fix 清理几个 prettier warning（不是 US-076 引入的，是历史遗留）
+3. 进一步把 UI 编辑 state 从 US-017 单字段扩成 `(positionId, field)` tuple，避免同行同时进入两个编辑态
+4. PRD passes=true + progress.txt entry
+
+### Backend changes
+- `backend/src/models/PaperTradingPosition.ts` — 新增 `take_profit_price DECIMAL(10,3) NULL` 列 + jsdoc 注释 (与 stop_loss_price 对偶；NULL = 用户未设置硬止盈)
+- `backend/src/portfolio/PaperTradingFacade.ts` — `ApplyAutomationAction` 联合类型扩 `'set_take_profit'` + `switch` 新增对应 case (镜像 set_stop_loss 验证：position_id 合法 + take_profit_price 正数或 null + 校验 portfolio 归属当前 user)
+- `backend/src/api/controllers/PaperTradingController.ts` — 新 `setPositionTakeProfit` controller method (镜像 setPositionStopLoss 形态)
+- `backend/src/api/routes/paperTrading.routes.ts` — PUT `/positions/:id/take-profit` 路由注册 + 完整 @openapi JSDoc
+
+### Frontend changes
+- `frontend/src/services/portfolioWorkspaceService.ts` — `SetTakeProfitPayload` / `SetTakeProfitResponse` interfaces + `setPositionTakeProfit(positionId, payload)` 方法 + bundle export
+- `frontend/src/pages/workspace/PortfolioWorkspace.tsx`:
+  - PositionRow type 扩 `take_profit_price: number | null`
+  - 编辑 state 从单 `editingPositionId` 扩成 `editingPositionId + editingField` tuple 让止损 / 止盈共享一套编辑 hook 避免同行双编辑
+  - 新增 `handleSaveTakeProfit(row)` (镜像 handleSaveStopLoss)
+  - 表格新增"止盈价"列 (在"止损价"之后，"所属策略"之前)：未设置 → "未设置"文字 + ✏ 按钮；已设置 → Tag (green=已达成 / blue=未达成) + Tooltip (距现价百分比) + ✏ 按钮；编辑模式 InputNumber + ✓ 保存 + ✗ 取消
+  - **AC 颜色规则**：止损价 ≥ 现价 → 红 Tag (warning, 下一交易日开盘可能立即触发)；止盈价 ≤ 现价 → 绿 Tag (目标已达成，可考虑减仓)
+
+### Files changed (6 total + PRD + progress)
+- `backend/src/api/controllers/PaperTradingController.ts`
+- `backend/src/api/routes/paperTrading.routes.ts`
+- `backend/src/models/PaperTradingPosition.ts`
+- `backend/src/portfolio/PaperTradingFacade.ts`
+- `frontend/src/pages/workspace/PortfolioWorkspace.tsx`
+- `frontend/src/services/portfolioWorkspaceService.ts`
+- `ralph/prd.json` (US-076 → passes:true + notes)
+- `ralph/progress.txt` (this entry)
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → exit 0
+- `cd frontend && npx tsc --noEmit` → exit 0
+- `cd backend && npx eslint src/api/controllers/PaperTradingController.ts src/api/routes/paperTrading.routes.ts src/models/PaperTradingPosition.ts src/portfolio/PaperTradingFacade.ts` → exit 0
+- `cd frontend && npx eslint src/pages/workspace/PortfolioWorkspace.tsx src/services/portfolioWorkspaceService.ts` → exit 0 (0 errors after --fix)
+
+### Browser verification
+N/A — 工程内无 `dev-browser` MCP skill。手动验证途径：
+1. `cd backend && npm run dev` + `cd frontend && npm start` → 登录
+2. `/workspace/portfolio` → 「当前持仓」 tab
+3. 选一只持仓股票，止盈价列点 ✏ → 输入比当前价高的数字 (e.g. 现价 ¥10 → 止盈价 ¥15) → ✓ 保存 → Tag 应为 blue ¥15.00 + tooltip 显示"距现价 50.00%"
+4. 再点 ✏ → 输入比当前价低的数字 (e.g. ¥8) → ✓ 保存 → Tag 应为 green ¥8.00 + tooltip 显示"现价已 ≥ 止盈价，目标已达成，可考虑减仓或平仓"
+5. 再点 ✏ → 留空 → ✓ 保存 → 应清除显示"未设置"
+6. 止损价同 US-017 已有验证路径
+
+### Learnings for future iterations
+- **inline 编辑跨 field 共享 state 用 `(rowId, field)` tuple 而非 N 个独立 state**：US-076 加止盈价时如果用第二个 `editingPositionId_TP / editingValue_TP / savingLimit_TP` 全套独立 state，同行可以同时进入两个编辑态（用户一脸懵：到底哪个 ✓ 是保存哪个）。**正确做法**：把 US-017 的 `editingPositionId` 扩成 `(editingPositionId, editingField)` tuple，editingValue 仍单一字段。同行点止损 ✏ 后点止盈 ✏，会自动覆盖前者 (rowId 相同 / field 不同 / 仍单值)。同款模式适用任何"同一行有 N 个 inline 可编辑字段"的场景。
+- **AC 颜色语义文字可能误导，实现应按 UX 最有用解释**：US-076 AC "止损价 < 现价 警告显示，止盈价 > 现价 显示绿色" 字面上感觉是说"正常时也要染色"，但 UX 上"止损价 ≥ 现价" 才是真正的危险信号 (下一交易日开盘可能立即触发) / "止盈价 ≤ 现价" 才是真正的好消息 (目标已达成)，实现按这个语义更有用。**判据**：AC 文字若字面理解会产生"染色无信息量 / 触发频率反直觉"的体验，与 PM/QA 确认实际意图后按 UX 最有用解释；jsdoc 注释明确说明 (`// 止损价 ≥ 现价 = 警告（下一交易日开盘可能立即触发）`) 让 reviewer 理解为何不按 AC 字面写。
+- **rescue commit 后的 follow-up 故事流程**：当 `git log` 有 `feat: rescue uncommitted ralph work` 这种合并多个故事的 commit 时，后续故事 (US-076 / US-070 等) 在 PRD 里仍然 `passes:false`。本次流程：先 grep 找到该故事的实现已经在 working tree / 已 commit，跑 typecheck/lint 验证仍 pass，可能小补一两处 (本次 inline 编辑 state tuple 化)，再 PRD passes=true + progress.txt entry + commit。**不要重写已实现的代码**，避免引入回归。
+
+### CLAUDE.md updates
+N/A — 本次的"inline 编辑跨 field 共享 (rowId, field) tuple" 模式可在下次第 3 处出现时再统一 codify 到 Codebase Patterns；AC 颜色语义解释属故事级一次性判断，无须 codify。后端 facade ApplyAutomationAction 扩 action union 已在 Codebase Patterns 第 34 行确立 (US-017 同款)，本次照搬。
+---

@@ -1289,8 +1289,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 76,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented: PaperTradingFacade.set_take_profit action, take_profit_price column on PaperTradingPosition, PUT /api/paper-trading/positions/:id/take-profit endpoint, PortfolioWorkspace UI inline edit with color hints (red when stop>=current, green when take<=current)."
     },
     {
       "id": "US-077",
