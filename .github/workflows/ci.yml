@@ -1,0 +1,204 @@
+# GitHub Actions CI 流水线 (US-069)
+#
+# 触发：push 到任何分支 + PR 到 main
+# 两个 job 并行（互不阻塞）:
+#   - backend-check: typecheck + lint + test
+#   - frontend-check: typecheck + lint
+#
+# 设计原则：
+#   - PR 提早暴露问题（包括 push 到 feature 分支也跑，避免 PR 时才发现）
+#   - 缓存 npm 依赖按 package-lock.json hash（actions/setup-node 的 cache 选项）
+#   - 任一 job 失败必须有 PR 评论附关键错误片段，方便开发者一眼看到失败位置
+#   - backend-check 不依赖 PG/Redis：所有测试遵循 DB-less 单测约定（fake DataSource）
+#   - paths-filter：仅当对应目录文件变更时跑对应 job，省 CI 时间（main/PR 总是跑）
+#
+# 历史：security-lint.yml 是另一个独立 workflow（无关 typecheck/lint/test）共存即可。
+
+name: CI
+
+on:
+  push:
+    branches:
+      - '**'  # 任何分支 push 都跑
+  pull_request:
+    branches:
+      - main
+
+# 同分支重复 push 取消旧的跑（节省 CI runner 时间）
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # --------------------------------------------------------------------------
+  # 路径过滤：探测哪些目录发生变更，让下游 job 决定是否跑
+  # --------------------------------------------------------------------------
+  detect-changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+              - '.github/workflows/ci.yml'
+            frontend:
+              - 'frontend/**'
+              - '.github/workflows/ci.yml'
+
+  # --------------------------------------------------------------------------
+  # backend-check: cd backend && npm ci && npx tsc --noEmit && npm run lint && npm test
+  # --------------------------------------------------------------------------
+  backend-check:
+    name: Backend check (typecheck + lint + test)
+    needs: detect-changes
+    # 当 backend 有变更，或事件是 PR 时总是跑（PR 必须全绿才能合并）
+    if: needs.detect-changes.outputs.backend == 'true' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          # 按 backend/package-lock.json hash 缓存 ~/.npm
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck (tsc --noEmit)
+        id: typecheck
+        run: npx tsc --noEmit 2>&1 | tee ../backend-typecheck.log
+        continue-on-error: false
+
+      - name: Lint (eslint)
+        id: lint
+        run: npm run lint 2>&1 | tee ../backend-lint.log
+        continue-on-error: false
+
+      - name: Test
+        id: test
+        run: npm test 2>&1 | tee ../backend-test.log
+        continue-on-error: false
+
+      # 失败时上传日志 + 在 PR 上评论关键错误片段
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-logs
+          path: |
+            backend-typecheck.log
+            backend-lint.log
+            backend-test.log
+          retention-days: 7
+
+      - name: Comment on PR with errors
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const logs = ['typecheck', 'lint', 'test'];
+            const sections = [];
+            for (const name of logs) {
+              const filePath = path.join(process.env.GITHUB_WORKSPACE, `backend-${name}.log`);
+              if (!fs.existsSync(filePath)) continue;
+              const content = fs.readFileSync(filePath, 'utf-8');
+              // 取尾部 60 行（错误一般在尾部）
+              const tail = content.split('\n').slice(-60).join('\n');
+              sections.push(`<details><summary><b>backend ${name}</b> (tail 60 lines)</summary>\n\n\`\`\`\n${tail}\n\`\`\`\n\n</details>`);
+            }
+            const body = `## ❌ Backend CI failed\n\n${sections.join('\n\n')}\n\n_See full logs in [workflow run](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID})._`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
+  # --------------------------------------------------------------------------
+  # frontend-check: cd frontend && npm ci && tsc --noEmit && npm run lint
+  # --------------------------------------------------------------------------
+  frontend-check:
+    name: Frontend check (typecheck + lint)
+    needs: detect-changes
+    if: needs.detect-changes.outputs.frontend == 'true' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck (tsc --noEmit)
+        id: typecheck
+        run: npx tsc --noEmit 2>&1 | tee ../frontend-typecheck.log
+        continue-on-error: false
+
+      - name: Lint (eslint)
+        id: lint
+        run: npm run lint 2>&1 | tee ../frontend-lint.log
+        continue-on-error: false
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-logs
+          path: |
+            frontend-typecheck.log
+            frontend-lint.log
+          retention-days: 7
+
+      - name: Comment on PR with errors
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const logs = ['typecheck', 'lint'];
+            const sections = [];
+            for (const name of logs) {
+              const filePath = path.join(process.env.GITHUB_WORKSPACE, `frontend-${name}.log`);
+              if (!fs.existsSync(filePath)) continue;
+              const content = fs.readFileSync(filePath, 'utf-8');
+              const tail = content.split('\n').slice(-60).join('\n');
+              sections.push(`<details><summary><b>frontend ${name}</b> (tail 60 lines)</summary>\n\n\`\`\`\n${tail}\n\`\`\`\n\n</details>`);
+            }
+            const body = `## ❌ Frontend CI failed\n\n${sections.join('\n\n')}\n\n_See full logs in [workflow run](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID})._`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });

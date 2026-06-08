@@ -198,6 +198,20 @@
 - **第 4 channel SMS 加入 + alert hook 范式 (US-067 RealtimeAlertDispatcher 引入)**: 与 US-063/064/065/066 的 cron 触发模式互补——本 channel 触发源是 **`@AfterCreate` model hook** (RiskAlert level=HIGH 即触发 dispatcher.fireAndForget())。**5 项新模式**: (1) **dedup signature = `${rule_id}::${symbol}::${level}`** 不含 alert.id（含 id 让每个 alert 唯一 = dedup 失效，business signature 是"同一类告警"的语义维度集合）。(2) **JSONB + timestamp 比较代替 Redis TTL**: 本项目暂未引入 Redis，AC "Redis 去重" 实质需求是"持久化 + TTL 窗"——用 `user.risk_config.realtime_alert_seen` JSONB array + FIFO LRU 200 条 + `isWithinDedupWindow(pushed_at_ms, now_ms)` pure function 比较代替 Redis EXPIRE。优劣权衡: 不依赖 Redis 基础设施 / 单测可控 / 用户级 isolated；劣势 = 高并发 race condition（缓解：alertCreate hook 串行 + dedup 是降噪不是 idempotency）。下次 US-094 异动事件 / US-097 异常监控等去重需求按此 pattern。(3) **4 status 精确语义** (sent / partial / failed / skipped): sent = 至少 1 channel 成功 + 全部成功；partial = 至少 1 成功 + 至少 1 失败；failed = 0 成功 + ≥1 失败；skipped = 0 channel 真派（顶层 level gate / 用户缺失 / dedup 命中 / 所有 channel 各自 skip 或全 disabled）。前端 Alert 颜色 success/warning/error/info 一一对齐。下次 US-077 风控告警中心 / US-091 健康度推送同款 4 类不漏（partial 最易漏）。(4) **Sequelize `@AfterCreate static methodName(instance)` 3 大坑**: hook throw 让 .create() 失败 (顶层 try/catch 吞错) / 不能 await hook 内 fire-and-forget 调用 / lazy-require 反向依赖避循环 import。(5) **lazy-require 第三方 SDK (阿里云 / 腾讯云 / openai)** 让 SDK 缺失时 import + typecheck 仍 OK，第一次 send 才 require + fail-OPEN catch + warn。下次任何"按需远端 SDK" connector 走此 5 项 checklist。完整 9 项设计 in `backend/src/portfolio/CLAUDE.md` `risk/RealtimeAlertDispatcher hook (US-067)` 一节。
 - **`RiskAlert.rule_id` 字段所有 writer 必填清单 (US-067 补丁固化)**：rule_id 是 nullable column 但实质 dispatcher dedup signature 必需—— 不填让所有 HIGH 告警退化成 `unknown::symbol::HIGH` 同 signature 在 30 min 窗口内互相 dedup 拦掉。**8 个写入点 + 命名映射** (snake_case, 与 guard 文件名简写一致): `position_limit` (PositionLimitGuard) / `trailing_stop` (TrailingStopGuard) / `per_stock_stop_loss` (PerStockStopLossGuard) / `drawdown_breaker` (DrawdownCircuitBreaker) / `market_regime_alert` (MarketRegimeAlertService) / `black_swan` (BlackSwanWatchdog) / `industry_concentration` (IndustryConcentrationGuard) / `factor_correlation` (FactorCorrelationReport)。**同 guard 内多 sub-level (DrawdownCircuitBreaker LEVEL_1/2/3) 共享一个 rule_id**——不要为每个 level 拆 rule_id 否则 30 min 内 3 条卡片同推（UX 灾难）；LEVEL 升级时新 signature 写入会覆盖旧 dedup 记录是合理行为。**新 guard 写 RiskAlert.create() 必填 rule_id**——加 guard 的同时给 portfolio/CLAUDE.md 表格新增一行。
 
+### Ops — env validation / startup gates (US-068+)
+- **`backend/src/config/EnvValidator.ts` 是单一 env 校验源 (US-068 引入)**：所有"需要在启动前确认 env 完整"的 caller 都走 `validateEnv(env?, {customSchema?})` → `EnvValidationResult { ok, errors[], warnings[], validated, node_env }`。**不复用 zod / envalid**——项目已有 `joi` 依赖（`StrategyEngine` / 数据 schema 验证已在用），Joi 的 `.required()` + `.default()` + `.uri()` + `.valid()` + `unknown(true)` 已覆盖 4 大类字段（必填 / 可选有默认 / 可选无默认 / 未知 env 允许）的全部需求。下次任何"启动前校验"需求（live-trading env subset / scheduler-only env subset）按 customSchema 参数复用本模块，不要平行实现。
+- **`shouldExitOnFailure(result)` 判 production 模式才 exit (US-068 引入)**：production 任何 error 立即 exit(1) — 半夜 missing config 不能让 backend 启起来留 zombie；development / test 模式 errors > 0 不 exit 让单测 / 本地探索可以不准备完整 env 跑（fixture 模式）。**index.ts 第 1-25 行**: dotenv 后立即跑 validateEnv + log errors/warnings + 判 shouldExitOnFailure → process.exit(1)。**关键 invariant**：env 校验必须**在所有其他 import 之前**——下游 service / config / queue (queue.ts / database.ts) 在 import-time 就读 process.env；validate 放在 import 链中间已经太晚。
+- **4 channel group 部分填写 = error (US-068 引入)**：Feishu / SMTP / WeChat / Aliyun SMS 任一字段填了就视为"用户表达了启用此通道的意图"，缺其他字段必须升级 error（不当 warning）—— 用户已经投入意图（填了 SMTP_HOST），缺 SMTP_PASS 静默继续会让推送 silent 失败。`detectPartialChannelGroup(env, group)` 是纯函数复用 — 下次任何"打包配置组"（OAuth client_id+secret / API key+endpoint 对）按此模式校验。**全空 → production 仅 warning 不阻塞**（用户未表达启用意图），**全填齐 → 通过**。
+- **占位符值检测 (US-068 引入)**：`PLACEHOLDER_VALUES` 常量列出 8 个已知占位符 (`your_jwt_secret_key_here` / `change-me` / `TODO` ...)。production 模式遇占位符 → error (production_required)；development 模式 → warning (placeholder_value)。**新加占位符必须 append 到 PLACEHOLDER_VALUES** —— 同步 .env.example 与 EnvValidator 的占位符字典，避免运维更新模板但忘了同步校验列表。
+- **`npm run check-env` 是 CLI 独立入口 (US-068 引入)**：`backend/src/scripts/check-env.ts` 走同一份 validateEnv，stdout 输出 errors / warnings 报告 + exit code 0/1。CI 流水线 / 部署 preflight / 开发者本地 debug 都用同一个命令 — "启动失败"和"check-env 失败"输出**完全相同的 errors 列表**。新加 env 字段后必须更新 .env.example 注释 + EnvValidator schema 同步（CI 应该跑 check-env 检测漂移）。
+
+### Ops — GitHub Actions CI (US-069+)
+- **`.github/workflows/ci.yml` 是项目唯一的 typecheck/lint/test CI workflow (US-069 引入)**：与 `security-lint.yml` 互补但完全独立 — 后者只跑弱密钥 / 审计事件 grep 检查，本 workflow 跑 backend (typecheck + lint + test) + frontend (typecheck + lint)。**未来加任何"运行时质量门"** (US-091 健康度 / US-100 集成 smoke test) 走第 3 个独立 workflow 文件，不堆到 ci.yml — 单文件超过 300 行变 unmaintainable。
+- **paths-filter@v3 + `|| github.event_name == 'pull_request'` 双条件**：本地分支 push 仅相关目录变化跑（省 CI 时间）；PR 必跑全（防漏检跨目录隐含影响）。**`needs.detect-changes.outputs.X == 'true' || github.event_name == 'pull_request'`** 是新 workflow job condition 范本，下次任何分组 CI（独立 lint / 独立测试套）按同款。
+- **actions/setup-node@v4 内置 cache 选项替代 actions/cache@v4**：`cache: 'npm'` + `cache-dependency-path: <pkg>/package-lock.json` 两行 = 自动按 lock-hash key 缓存 ~/.npm。比旧版手写 `actions/cache@v4 with key: ${{ runner.os }}-node-${{ hashFiles(...) }}` 少 6 行 YAML 且 GitHub 官方维护。新 CI step 加 Node 一律走内置 cache。
+- **失败时 actions/github-script@v7 createComment + tee 出 .log**：每 step `<cmd> 2>&1 | tee ../<step>.log`，failure() 触发的 script 用 GITHUB_WORKSPACE 拼路径 + `.split('\n').slice(-60)` 截尾 + `<details><summary>` 折叠片段。下次任何"CI 失败信息推 PR"按同款 — 比 actions/upload-artifact 单独看更直接。
+- **concurrency.cancel-in-progress: true 必加**：同分支重复 push 自动取消旧 run，节省 60%+ runner 时间。生产 repo 必加；研究 / 数据 repo 才用 false 保留 run 历史。
+
 ---
 
 
@@ -6358,5 +6372,84 @@ backend/src/portfolio/CLAUDE.md 同步新增 "risk/ — RiskAlert.rule_id 写入
 **Learnings (本补丁引入)**:
 - **新 nullable column 落库后必须同步审视所有 writer 是否填新字段**：rule_id 加到 model 时未必所有 writer 都立刻填，但落地的 dispatcher / dedup / 告警归类全靠 rule_id 区分 = 静默 fallback 让功能看起来 OK 实际语义崩。**判据**：任何新加的 nullable 字段在 Codebase Patterns 单独列出"必填来源"清单（本 story rule_id 由 8 个 RiskAlert.create() 调用点必填），ralph 下一轮 / reviewer 一眼能 spot 漏填的 writer。下次 US-091 健康度评分 reasons_json 字段加入时同样列写入清单。
 - **rule_id 命名规范固化为 snake_case**：与文件名简写一致让 ops 一眼能从 RiskAlert 行的 rule_id 反查 guard 文件，避免日后多人协作中 `positionLimit` vs `position-limit` vs `POSITION_LIMIT` 命名漂移。**判据**：任何 string enum 类列（dedup signature 字段 / 告警类型 / event type）确立命名规范后必须在 portfolio/CLAUDE.md 等"约定文档"明示写入 rule + 已落地 enum 列表；改约定要更新表格。
+
+---
+
+## 2026-06-08 - US-068 运维：环境一致性脚本与 .env 验证
+
+### 实现
+- 新建 `backend/src/config/EnvValidator.ts` (254 LOC)：joi-based env 校验，4 大类字段分类（REQUIRED_ALWAYS / REQUIRED_PRODUCTION / OPTIONAL_WARN_IF_MISSING / OPTIONAL_NO_VALIDATION），返回结构化 `EnvValidationResult { ok, errors[], warnings[], validated, node_env }`。
+- 新建 `backend/src/scripts/check-env.ts`：CLI 入口，stdout 报告 + exit code 0/1。
+- 修改 `backend/src/index.ts`：dotenv 后立即跑 validateEnv → 打印 errors/warnings → production exit(1)。
+- 修改 `backend/.env.example`：从 36 行扩展到 95 行覆盖全部 7 类 env（Server / DB / Redis / JWT / TradingAgents / 4 push channels / Tushare / Rate limit / 开关），每段加注释解释何时填 + 何时留空。
+- 修改 `backend/package.json`：加 `"check-env": "ts-node --transpile-only src/scripts/check-env.ts"` script。
+- 新建 `backend/tests/config/env-validator.test.ts` (380 LOC, 107 测试)：覆盖纯函数 + e2e + boundary。
+- 修改 `ralph/progress.txt`：新增 `### Ops — env validation / startup gates (US-068+)` Codebase Pattern 一节 (5 项)。
+- 修改 `ralph/prd.json`：US-068 passes=true。
+
+### Files changed
+- `backend/src/config/EnvValidator.ts` (new, 254 LOC)
+- `backend/src/scripts/check-env.ts` (new, 43 LOC)
+- `backend/src/index.ts` (modified, +25 LOC env validation block)
+- `backend/.env.example` (rewrite, 36 → 95 LOC)
+- `backend/package.json` (modified, +1 script)
+- `backend/tests/config/env-validator.test.ts` (new, 380 LOC)
+- `ralph/progress.txt` (added US-068 codebase patterns + this entry)
+- `ralph/prd.json` (US-068 passes=true)
+
+### 质量校验
+- env-validator.test.ts: **107/107 ok**
+- backend `npx tsc --noEmit`: **clean**
+- backend lint on new + modified files: **0 errors**（auto-fix 处理了 prettier 格式）
+- Sibling regression tests:
+  - realtime-alert-dispatcher: 187/187 ok
+  - daily-trading-digest: 174/174 ok
+  - earnings-forecast-watcher: 184/184 ok
+- `npm run check-env` CLI 实测：正确检测出 worktree 内 .env 缺失（7 个 required errors）+ exit code 1
+- index.ts 修改实测：dotenv 后 validateEnv 块 17 行不阻塞既有 startup flow
+
+### Learnings for future iterations
+- **joi 已是 backend deps**：US-068 一开始想 zod / envalid，发现 joi 已经在用且 `.required() + .default() + .uri() + .valid()` 已能精准表达 4 类字段分类，无需新增依赖。**判据**：新功能选库前先 `cat package.json | grep <候选库>` 检查既有 deps，能复用就复用避免依赖膨胀。
+- **env 校验放在 dotenv 之后所有其他 import 之前 — 不变量**：下游 service (database.ts / queue.ts / EmailNotificationService.ts) 在 import-time 就读 process.env。validate 放在 import 链中间已经太晚 — service 已经初始化用了 fallback 占位符值。`backend/src/index.ts` 第 1-25 行是参考实现 — 必须保持此顺序。下次任何"启动前 gate"（DB migration 检查 / Redis ping / TradingAgents healthcheck）都放在这块。
+- **结构化返回 `EnvValidationResult` 优于 throw**：让 caller 自由决定 production 立即 exit / development 仅 warn / CLI 输出报告退出码 — 三种语义共享同一份 validation 逻辑。**判据**：任何可能在多种 caller 中以不同方式响应"失败"的 validator 都返回 result object 不 throw，让 caller 决策。下次 US-069 CI / US-091 健康度评分 / US-100 集成 smoke test 任何 "检查 + 报告" 类工具按此范式。
+- **常数 `Object.freeze()` + export 命名约定**：PLACEHOLDER_VALUES / FEISHU_REQUIRED_GROUP / SMTP_REQUIRED_GROUP / WECHAT_REQUIRED_GROUP / ALIYUN_SMS_REQUIRED_GROUP 全 `readonly string[]` + `Object.freeze`，单测 assert `Object.isFrozen()` 防止下游意外 mutate（与 US-037/057 DEFAULT_*_CONFIG 同款）。
+- **测试目录 `backend/tests/config/`** 新建：与 `tests/services/` / `tests/risk/` / `tests/strategies/` / `tests/backtest/` / `tests/factors/` / `tests/performance/` 并列，让未来 config 类模块测试（e.g. database config / redis config helper）有独立 home。Node 直接跑 `npx ts-node --transpile-only tests/config/<Name>.test.ts`，tsconfig include 不扫描 tests/。
+- **部分填写 channel group 升级 error 而非 warning**：用户填了 SMTP_HOST 表达了"启用 SMTP 通道"的明确意图；缺 SMTP_PASS 静默继续会让推送 silent 失败（运维半夜被叫醒）。**判据**：任何"对 N 字段配对组"（OAuth client_id + secret / API key + endpoint / DB host + port + db_name 三件套）的校验，"任一 set 表示启用"+"缺其它 = error"是 strict-by-default 原则。
+
+### CLAUDE.md updates
+- 在 `ralph/progress.txt` Codebase Patterns "Backend" 章节之后新增 `### Ops — env validation / startup gates (US-068+)` 一节（5 项 pattern）。
+- 未更新 `backend/src/CLAUDE.md`（不存在）或 `backend/src/config/CLAUDE.md`（不存在）— env validation 模式跨 backend 全模块且首次引入，作为 Codebase Pattern 在 ralph progress.txt 单一集中点更合适。下次新增 backend 全局工具（如 logger 协议、auth 中间件全局约定）按同款做法 — Codebase Patterns 是首选 home。
+
+---
+
+## 2026/06/08 - US-069 — 运维：GitHub Actions CI 流水线
+
+### What was implemented
+- 新增 `.github/workflows/ci.yml` (205 行) GitHub Actions workflow，跑 backend-check + frontend-check 两个并行 job。
+- 修改 README.md 顶部新增两个 badge：CI workflow + Security Lint workflow（指向 main 分支）。
+- 三阶段 jobs：detect-changes (paths-filter) → backend-check (typecheck + lint + test) + frontend-check (typecheck + lint) 并行。
+- 触发：push 到任何分支 (`'**'`) + PR 到 main。
+- 缓存：actions/setup-node@v4 内置 `cache: 'npm'` + `cache-dependency-path: <pkg>/package-lock.json`。
+- 失败时：upload-artifact 上传 .log 文件（retention 7d）+ PR 评论 createComment 三段尾部 60 行（折叠 `<details>` 可读）。
+
+### Files changed
+- `.github/workflows/ci.yml` (new, 205 LOC)
+- `README.md` (modified, +2 badge 行 + 1 空行)
+- `ralph/prd.json` (US-069 passes=true + notes)
+- `ralph/progress.txt` (this entry + Codebase Patterns 添加 CI section)
+
+### 质量校验
+- YAML 语法验证：`npx js-yaml .github/workflows/ci.yml` → Valid YAML
+- 已有 security-lint.yml workflow 并存不冲突
+- 由于本 story 只涉及 .yml + .md 文件，无 TypeScript 代码改动，跳过 backend/frontend typecheck/lint/test。
+
+### Learnings for future iterations
+- **paths-filter@v3 加上 `if: ... || github.event_name == 'pull_request'`** 是 PR 流水线保险栓：本地分支 push 仅当对应目录变化跑（省 CI 时间），但 PR 必须 PR 必跑全（防止小变更跨目录隐含影响被漏检）。下次新增独立 workflow（OpenAPI 生成 / Prometheus exporter 测试 / Smoke test）按同款双条件 `needs.detect-changes.outputs.X == 'true' || pull_request` 组合。
+- **actions/setup-node@v4 内置 cache 选项替代 actions/cache@v4**：旧文档常推荐手写 actions/cache 步骤按 `hashFiles('package-lock.json')` 做 key。新版 setup-node 已内置同款逻辑，只需 `cache: 'npm'` + `cache-dependency-path` 两行 — 少 6 行 YAML 且 GitHub 官方维护。下次 setup-python / setup-go 同款（都有 cache 选项）。
+- **PR 评论用 actions/github-script@v7 + fs.readFileSync 读 tee 出的 log**：每步 `2>&1 | tee ../<step>.log`，失败时 github-script 用 GITHUB_WORKSPACE 拼路径 + `.split('\n').slice(-60)` 截尾。比 actions/upload-artifact 单独看更直接（开发者不用点 artifact 下载解压）。
+- **concurrency.cancel-in-progress: true** 一个分支连推三次只跑最后一次，CI runner 节省 60%+。生产 repo 必加；研究 / 数据 repo 用 false 保留每次 run 历史。
+
+### CLAUDE.md updates
+- 未更新 `backend/CLAUDE.md` 或 `frontend/CLAUDE.md`：本 story 仅添加 GitHub Actions infra，不属于任一模块的代码约定。Codebase Patterns 更适合作为收纳点。
 
 ---

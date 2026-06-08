@@ -1183,8 +1183,8 @@
         "新增 README 徽章"
       ],
       "priority": 69,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026/06/08. 单一 workflow 文件 .github/workflows/ci.yml (205 行) + README 双徽章。三大设计点: (1) 双 job (backend-check / frontend-check) 并行通过 detect-changes job (dorny/paths-filter@v3) 仅对相关目录变更跑 — main/PR 总是跑全；(2) 缓存使用 actions/setup-node@v4 的内置 cache 选项按 package-lock.json hash key 缓存 ~/.npm；(3) 失败时同时 upload-artifact (retention 7d) + actions/github-script@v7 在 PR 自动 createComment 三段尾部 60 行日志 (<details> 折叠)。concurrency.cancel-in-progress 自动取消同分支旧跑节省 runner。security-lint.yml 是独立 workflow，互不影响。README 顶部加 CI + Security Lint 两个 badge (badge.svg?branch=main)。"
     },
     {
       "id": "US-070",

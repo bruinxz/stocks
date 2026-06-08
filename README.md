@@ -1,5 +1,8 @@
 # A股股票回测系统
 
+[![CI](https://github.com/bruinxz/stocks/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/bruinxz/stocks/actions/workflows/ci.yml)
+[![Security Lint](https://github.com/bruinxz/stocks/actions/workflows/security-lint.yml/badge.svg?branch=main)](https://github.com/bruinxz/stocks/actions/workflows/security-lint.yml)
+
 ## 项目概述
 构建完整的A股股票回测系统与智能辅助决策平台，包含网页操作界面。支持历史数据回测、策略定义、性能分析和可视化展示，并深度集成了多智能体大模型（TradingAgents）以提供个股分析与买卖建议。
 
