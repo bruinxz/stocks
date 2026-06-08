@@ -4003,6 +4003,243 @@ def get_restricted_release(start_date: str, end_date: str) -> List[Dict[str, Any
         return []
 
 
+def get_shareholder_trade(symbol: str = '全部') -> List[Dict[str, Any]]:
+    """
+    Fetch A-share shareholder increase/decrease trade records (股东增减持公告) — US-090.
+
+    Endpoint: AKShare `stock_ggcg_em(symbol='全部'|'股东增持'|'股东减持')`
+        东方财富网 - 数据中心 - 特色数据 - 高管持股
+        https://data.eastmoney.com/executive/gdzjc.html
+
+    Returns the **current visible snapshot** of recent N months全市场 shareholder
+    transaction announcements (~140k rows for symbol='全部', covers ~3-6 months
+    window). The endpoint takes ~90 seconds because it paginates through ~290
+    pages internally.
+
+    Real-time-only semantics (US-008 IndustryFlow / US-058 SnowballHotKeyword
+    同款): No date parameter — caller cannot replay historical snapshots.
+    `announce_date` per row is the actual public announcement date (parsed from
+    AKShare "公告日"), so each row IS dated; but the FULL TABLE is "what is
+    publicly visible today". 老旧公告会随时间退出窗口, 历史回填仅靠每日抓取累积.
+
+    AKShare 返回列 (16 个):
+        代码 / 名称 / 最新价 / 涨跌幅 / 股东名称 /
+        持股变动信息-增减 / 持股变动信息-变动数量 / 持股变动信息-占总股本比例 /
+        持股变动信息-占流通股比例 /
+        变动后持股情况-持股总数 / 变动后持股情况-占总股本比例 /
+        变动后持股情况-持流通股数 / 变动后持股情况-占流通股比例 /
+        变动开始日 / 变动截止日 / 公告日
+
+    AC 字段映射 (PRD US-090 → output dict):
+        - announce_date         公告日       → ISO YYYY-MM-DD
+        - stock_code            代码         → 6-digit pure code (no sh./sz. prefix)
+        - shareholder_name      股东名称     → 原文
+        - trade_direction       持股变动信息-增减 → '增持' | '减持'
+        - trade_shares          持股变动信息-变动数量 (万股) × 10000 → 股
+        - trade_amount          代理 = trade_shares × 最新价 (AKShare 不提供成交均价,
+                                只有最新价 + 变动股数; 用最新价 × shares 做粗略市值
+                                代理. 真实公告日价格在回测期内不可得, 此代理仅用作
+                                横截面排序 / 量级判断)
+        - stock_name            名称
+        - latest_price          最新价
+        - pct_of_total_shares   持股变动信息-占总股本比例 (%)
+        - pct_of_float_shares   持股变动信息-占流通股比例 (%)
+        - post_hold_shares      变动后持股情况-持股总数 (万股) × 10000 → 股
+        - change_start_date     变动开始日   → ISO YYYY-MM-DD
+        - change_end_date       变动截止日   → ISO YYYY-MM-DD
+        - raw_payload           full original row (JSON-safe)
+
+    shareholder_type 字段不在 Python helper 中生成 — 由 TS 层 (ShareholderTradeSyncService)
+    从 shareholder_name 模式启发式分类 (机构投资者 / 自然人 / 高管 / 其他).
+    分工同款 "TS 业务推理 + Python dumb fetcher" 范式见 US-006 is_famous_yz /
+    US-088 seat_type — Python 只 fetch, 规则演化在 TS 不需要重新调用 AKShare.
+
+    Args:
+        symbol: 增减方向过滤, '全部' | '股东增持' | '股东减持' (默认 '全部').
+                业务默认走 '全部' 一次性入库, 通过 trade_direction 列分流查询.
+
+    Returns:
+        List of dicts. Returns [] on empty / error (so TS layer can checkpoint
+        a "tried but empty" sync without aborting batch).
+    """
+    try:
+        valid_symbols = {'全部', '股东增持', '股东减持'}
+        if symbol not in valid_symbols:
+            print(
+                f'Unknown shareholder trade symbol "{symbol}", defaulting to 全部',
+                file=sys.stderr,
+            )
+            symbol = '全部'
+
+        print(
+            f'Fetching shareholder trade records (symbol={symbol}); '
+            f'this paginates ~290 pages and may take ~90s...',
+            file=sys.stderr,
+        )
+
+        fn = getattr(ak, 'stock_ggcg_em', None)
+        if fn is None:
+            print('AKShare missing stock_ggcg_em', file=sys.stderr)
+            return []
+
+        try:
+            df = fn(symbol=symbol)
+        except TypeError:
+            df = fn(symbol)
+        except Exception as e:
+            print(f'stock_ggcg_em(symbol={symbol}) failed: {e}', file=sys.stderr)
+            return []
+
+        if df is None or df.empty:
+            print(
+                f'AKShare returned empty shareholder-trade df for symbol={symbol}',
+                file=sys.stderr,
+            )
+            return []
+
+        # ----- 列名柔性映射 (AKShare 列名跨版本飘移) -----
+        col_map: Dict[str, str] = {}
+        for col in df.columns:
+            col_s = str(col)
+            if col_s in ('代码', '股票代码'):
+                col_map['stock_code'] = col_s
+            elif col_s in ('名称', '股票简称', '股票名称'):
+                col_map['stock_name'] = col_s
+            elif col_s in ('最新价',):
+                col_map['latest_price'] = col_s
+            elif col_s in ('股东名称',):
+                col_map['shareholder_name'] = col_s
+            elif col_s in ('持股变动信息-增减', '增减'):
+                col_map['trade_direction'] = col_s
+            elif col_s in ('持股变动信息-变动数量', '变动数量'):
+                col_map['trade_shares_wan'] = col_s  # 单位是万股, 后面 ×10000
+            elif col_s in ('持股变动信息-占总股本比例', '占总股本比例'):
+                col_map['pct_of_total_shares'] = col_s
+            elif col_s in ('持股变动信息-占流通股比例', '占流通股比例'):
+                col_map['pct_of_float_shares'] = col_s
+            elif col_s in ('变动后持股情况-持股总数', '持股总数'):
+                col_map['post_hold_shares_wan'] = col_s  # 单位是万股
+            elif col_s in ('变动开始日',):
+                col_map['change_start_date'] = col_s
+            elif col_s in ('变动截止日',):
+                col_map['change_end_date'] = col_s
+            elif col_s in ('公告日', '公告日期'):
+                col_map['announce_date'] = col_s
+
+        if (
+            not col_map.get('stock_code')
+            or not col_map.get('announce_date')
+            or not col_map.get('shareholder_name')
+            or not col_map.get('trade_direction')
+        ):
+            print(
+                f'Missing required col mapping (stock_code/announce_date/'
+                f'shareholder_name/trade_direction). cols={list(df.columns)[:10]}',
+                file=sys.stderr,
+            )
+            return []
+
+        results: List[Dict[str, Any]] = []
+        columns = list(df.columns)
+        for _, row in df.iterrows():
+            # ----- stock_code: 6 位强制 zfill -----
+            raw_code = row.get(col_map['stock_code'])
+            if pd.isna(raw_code):
+                continue
+            stock_code = str(raw_code).strip().zfill(6)
+            if not stock_code or stock_code.lower() == 'nan' or not stock_code.isdigit():
+                continue
+
+            # ----- announce_date: ISO YYYY-MM-DD -----
+            announce_iso = _parse_date_cell(row, col_map.get('announce_date'))
+            if not announce_iso:
+                # 兜底: 直接 str parse
+                announce_raw = row.get(col_map['announce_date'])
+                if announce_raw is not None and not pd.isna(announce_raw):
+                    s = str(announce_raw).strip()
+                    if len(s) >= 10 and s[4] in ('-', '/'):
+                        announce_iso = s[0:10].replace('/', '-')
+                    elif len(s) >= 8 and s[:8].isdigit():
+                        announce_iso = _format_iso_date(s[:8])
+            if not announce_iso:
+                continue
+
+            # ----- shareholder_name + trade_direction: 必填 -----
+            shareholder_name = _cell_str(row, col_map.get('shareholder_name'))
+            if not shareholder_name:
+                continue
+            trade_direction = _cell_str(row, col_map.get('trade_direction'))
+            if not trade_direction or trade_direction not in ('增持', '减持'):
+                continue
+
+            # ----- trade_shares: 万股 × 10000 -----
+            shares_wan = _cell_float(row, col_map.get('trade_shares_wan'))
+            trade_shares: Optional[float] = None
+            if shares_wan is not None and shares_wan >= 0:
+                trade_shares = round(shares_wan * 10000.0, 4)
+
+            # ----- latest_price: 元 -----
+            latest_price = _cell_float(row, col_map.get('latest_price'))
+
+            # ----- trade_amount 代理: trade_shares × latest_price -----
+            trade_amount: Optional[float] = None
+            if (
+                trade_shares is not None
+                and latest_price is not None
+                and latest_price > 0
+            ):
+                trade_amount = round(trade_shares * latest_price, 4)
+
+            # ----- post_hold_shares: 万股 × 10000 -----
+            post_wan = _cell_float(row, col_map.get('post_hold_shares_wan'))
+            post_hold_shares: Optional[float] = None
+            if post_wan is not None and post_wan >= 0:
+                post_hold_shares = round(post_wan * 10000.0, 4)
+
+            # ----- change_start_date / change_end_date: ISO -----
+            start_iso = _parse_date_cell(row, col_map.get('change_start_date'))
+            if not start_iso:
+                start_raw = row.get(col_map.get('change_start_date')) if col_map.get('change_start_date') else None
+                if start_raw is not None and not pd.isna(start_raw):
+                    s = str(start_raw).strip()
+                    if len(s) >= 10 and s[4] in ('-', '/'):
+                        start_iso = s[0:10].replace('/', '-')
+            end_iso = _parse_date_cell(row, col_map.get('change_end_date'))
+            if not end_iso:
+                end_raw = row.get(col_map.get('change_end_date')) if col_map.get('change_end_date') else None
+                if end_raw is not None and not pd.isna(end_raw):
+                    s = str(end_raw).strip()
+                    if len(s) >= 10 and s[4] in ('-', '/'):
+                        end_iso = s[0:10].replace('/', '-')
+
+            results.append({
+                'announce_date': announce_iso,
+                'stock_code': stock_code,
+                'stock_name': _cell_str(row, col_map.get('stock_name')),
+                'shareholder_name': shareholder_name,
+                'trade_direction': trade_direction,
+                'trade_shares': trade_shares,
+                'trade_amount': trade_amount,
+                'latest_price': latest_price,
+                'pct_of_total_shares': _cell_float(row, col_map.get('pct_of_total_shares')),
+                'pct_of_float_shares': _cell_float(row, col_map.get('pct_of_float_shares')),
+                'post_hold_shares': post_hold_shares,
+                'change_start_date': start_iso,
+                'change_end_date': end_iso,
+                'raw_payload': _row_to_jsonable(row, columns),
+            })
+
+        print(
+            f'Parsed {len(results)} shareholder-trade rows for symbol={symbol}',
+            file=sys.stderr,
+        )
+        return results
+    except Exception as e:
+        print(f'Error getting shareholder trade for symbol={symbol}: {e}', file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return []
+
+
 def main():
     """Main entry point for command line calls"""
     if len(sys.argv) < 2:
@@ -4245,6 +4482,13 @@ def main():
             start_date = sys.argv[2]
             end_date = sys.argv[3]
             result = get_restricted_release(start_date=start_date, end_date=end_date)
+
+        elif command == "get_shareholder_trade":
+            # Args: [symbol]  (symbol default '全部'; choices: '全部'|'股东增持'|'股东减持')
+            symbol = '全部'
+            if len(sys.argv) >= 3 and sys.argv[2] not in ('', '-', 'null'):
+                symbol = sys.argv[2]
+            result = get_shareholder_trade(symbol=symbol)
 
         else:
             print(json.dumps({"error": f"Unknown command: {command}"}), file=sys.stderr)

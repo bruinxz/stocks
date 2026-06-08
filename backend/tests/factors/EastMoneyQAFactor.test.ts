@@ -456,6 +456,7 @@ const expectedFactors = [
   'east_money_qa',
   'gradual_breakout',
   'growth',
+  'insider_trade',
   'liquidity',
   'low_vol',
   'momentum',

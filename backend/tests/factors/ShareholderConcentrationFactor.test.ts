@@ -373,7 +373,7 @@ assert(
   `actual=${EXCLUDE_SHARE_CHANGE_PERIODS}`
 );
 
-console.log('\n## 16 个因子全部存在');
+console.log('\n## 17 个因子全部存在');
 {
   const expectedFactors = [
     'analyst_consensus',
@@ -382,6 +382,7 @@ console.log('\n## 16 个因子全部存在');
     'east_money_qa',
     'gradual_breakout',
     'growth',
+    'insider_trade',
     'liquidity',
     'low_vol',
     'momentum',
@@ -395,8 +396,8 @@ console.log('\n## 16 个因子全部存在');
   ];
   const registered = factorRegistry.listNames().sort();
   assert(
-    `共 16 个因子注册`,
-    registered.length === 16,
+    `共 17 个因子注册`,
+    registered.length === 17,
     `actual=${registered.length}: [${registered.join(', ')}]`
   );
   for (const f of expectedFactors) {

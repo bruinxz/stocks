@@ -7710,3 +7710,58 @@ PaperTradingFacade.placeOrder 保留 7-method facade 收敛）。
   - **RiskAlert.rule_id 命名表**：US-067 引入 rule_id 后所有 guard writeAlert 必须显式带 rule_id (不传 = null → dispatcher dedup 退化为 unknown::symbol::level 30 min 内所有 HIGH 互相 dedup)。已更新 portfolio/CLAUDE.md 的 rule_id 表加 `restricted_share`。下次新 guard / 新事后分析告警必带 snake_case rule_id，与文件名简写一致。
   - **数据层 + 风控层联动可一个 story 完成**：US-089 同时改 data/（model + client + sync）+ portfolio/risk/（watchdog 消费数据）+ scripts/（CLI）+ tests/。**判据**：AC 已经把"数据 + 应用"绑死在一起且应用层只是 thin orchestration（无新算法），同 story 合并比拆 2 story 更 clean (避免半个 story 没人消费数据)。下次 AC 出现 "新 X 数据源 + 用 X 数据触发 Y 风控" 模式都按一个 story 合并实施。
 ---
+
+## 2026/06/09 - US-090 数据：股东增减持公告入库 + InsiderTradeFactor
+
+### What was implemented
+- Sequelize model `backend/src/models/ShareholderTradeRecord.ts` with **5-tuple composite PK** `(announce_date, stock_code, shareholder_name, trade_direction, change_start_date)` — 一份公告可能列 N 个股东 (董监高同步) → shareholder_name 入 PK；同股东 N 月内可能多次增减交替 → trade_direction 入 PK；同股东同公告若分批 → change_start_date 入 PK；announce_date 是时序入口 (与 EarningsForecast / RestrictedShareRelease 同款"事件型"表设计)。
+- `ShareholderTradeClient` (`backend/src/data/sources/`) wraps AKShare `stock_ggcg_em` via 新 python helper command `get_shareholder_trade` — **real-time-only snapshot semantics**: 端点 takes no date parameter, single call returns "当下可见的近 N 月全市场" snapshot (~140k rows, ~290 pages internally, ~90s). announce_date IS per-row dated, but FULL TABLE 窗口随调用时刻 slides. 与 US-008 IndustryFlow / US-058 SnowballHotKeyword 同款 real-time-only 模式.
+- `ShareholderTradeSyncService` (`backend/src/data/services/`) with `syncSnapshot(symbol)` method:
+  - Service-layer in-memory 5-tuple dedup (Map + key concat) → dialect-independent idempotent bulkCreate + updateOnDuplicate (与 US-030 AnalystForecast 同款 cross-dialect pattern)
+  - `classifyShareholderType(name)` 4-tier short-circuit 启发式分类: 空/null/单字 → '其他' → 命中 25 个 institution 关键词 (基金/信托/资本/合伙企业/QFII/RQFII/capital/fund/...) → '机构投资者' → 全中文 2-4 字 (`^[一-鿿]{2,4}$`) → '自然人' → fallback → '其他'
+  - '高管' tier 保留在 type signature 但 **永不返回** (upgrade path: 当 AKShare 后续 ships 高管职务 字段时启用); 同款"preserve schema for future-extension" pattern
+- CLI: `npm run sync:shareholder-trade [-- --symbol=全部|股东增持|股东减持]` (默认 '全部' 走单次全市场快照, 按 trade_direction 列分流查询; 单方向 backfill 仅在需要时使用). 无 `--start`/`--end` 因为 endpoint real-time-only.
+- **InsiderTradeFactor** (`backend/src/quant/factors/library/InsiderTradeFactor.ts`) — 第 17 个注册因子: `raw_value = (Σ buy_amount - Σ sell_amount) / circulating_market_cap`. WINDOW_DAYS=60 自然日 (覆盖公告→价格反应中线窗口, 30-90 日实证最优区间中点). 纯函数 `computeNetInsiderInflow(trades, asOfDate)` 完整 export 让单测脱 DB. Lookahead bias guard (announce_date > as_of_date → skip). 稀疏 Map (失败 → Pipeline 中性补全 — 不写 0 — 防止横截面均值漂移).
+- Tests: `backend/tests/factors/InsiderTradeFactor.test.ts` (106 assertions): 边界 / 数据卫生 (NaN/null/string/负值/未知 direction) / 业务方向 (增持→正/减持→负/进退两难→0) / lookahead bias guard / classifyShareholderType 8 个机构关键词 + 自然人 + 其他边界 / Factor metadata / Registry 集成 / WINDOW_DAYS / 17-因子全注册 / 端到端 1 亿 / 1.8 亿 业务场景 / 空 universe — 全部 pass.
+- Updated 3 个既有 factor test files (EarningsSurprise / EastMoneyQA / ShareholderConcentration) 把 16-count 因子注册断言改成 17.
+- Documented in 2 CLAUDE.md 文件: `backend/src/quant/factors/CLAUDE.md` (新增 InsiderTradeFactor 行到表格 + 详细设计 block 含相关性预估) + `backend/src/data/CLAUDE.md` (新增 "Real-time snapshot + N-tuple PK + TS-side classifier" 章节, 整合 US-008/US-058 real-time + US-006/US-088 multi-record + US-031/US-034 proxy 三大 pattern).
+
+### Files changed (10 changes / 6 new)
+- **New files**:
+  - `backend/src/models/ShareholderTradeRecord.ts`
+  - `backend/src/data/sources/ShareholderTradeClient.ts`
+  - `backend/src/data/services/ShareholderTradeSyncService.ts`
+  - `backend/src/quant/factors/library/InsiderTradeFactor.ts`
+  - `backend/src/scripts/sync-shareholder-trade.ts`
+  - `backend/tests/factors/InsiderTradeFactor.test.ts`
+- **Modified**:
+  - `backend/src/models/index.ts` (export ShareholderTradeRecord)
+  - `backend/src/config/database.ts` (register in `models:` array)
+  - `backend/src/quant/factors/library/index.ts` (add `import './InsiderTradeFactor';` alphabetically)
+  - `backend/python/akshare_helper.py` (add `get_shareholder_trade` function + dispatcher case, ~240 LOC)
+  - `backend/package.json` (add `sync:shareholder-trade` npm script)
+  - `backend/tests/factors/EarningsSurpriseFactor.test.ts` (16 → 17 registry count)
+  - `backend/tests/factors/EastMoneyQAFactor.test.ts` (add 'insider_trade' to expected list)
+  - `backend/tests/factors/ShareholderConcentrationFactor.test.ts` (16 → 17 registry count, add 'insider_trade' to expected list)
+  - `backend/src/quant/factors/CLAUDE.md` (new factor row in table + design block + heading version bump to US-090)
+  - `backend/src/data/CLAUDE.md` (new section "Real-time snapshot + N-tuple PK + TS-side classifier (US-090 ShareholderTradeRecord)")
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → exit 0 (clean)
+- `eslint` on 6 new + modified files → exit 0
+- `npx ts-node --transpile-only tests/factors/InsiderTradeFactor.test.ts` → 106 ok / 0 failed
+- `npx ts-node --transpile-only tests/factors/EarningsSurpriseFactor.test.ts` → 77 passed
+- `npx ts-node --transpile-only tests/factors/EastMoneyQAFactor.test.ts` → 79 passed
+- `npx ts-node --transpile-only tests/factors/ShareholderConcentrationFactor.test.ts` → 86 ok / 0 failed
+
+### **Learnings for future iterations:**
+
+- **N-tuple PK pattern for event-style "one announcement, N participants, multiple replays" data** (US-006 dragon-tiger 2-tuple → US-089 RestrictedShareRelease 3-tuple → **US-090 ShareholderTrade 5-tuple**): when AKShare endpoint returns "一份公告 N 个角色 + 同角色多日多方向", composite PK 应该把所有"语义独立维度"全部塞进去. 不要试图用 surrogate ID + UNIQUE constraint; 直接 sequelize-typescript `@Column({primaryKey: true})` 标多个列, dedup 在服务层 `Map<concat-string, row>` 做. 同一 dialect-independent idempotent bulkCreate.
+- **当 PK 字段允许 NULL 时, 用 epoch sentinel 而不是 NULL**: change_start_date 在 AKShare 偶有空值, 但 NULL 在复合 PK 里会让 unique constraint 行为 dialect-dependent (Postgres: NULL ≠ NULL → 重复行不报错; MySQL/SQLite: NULL = NULL → 报错). 用 `defaultValue: '1970-01-01'` 把 NULL 转成 sentinel epoch — 跨方言行为一致.
+- **Real-time-only AKShare endpoint 的 CLI 不要给 `--start` / `--end` 假象**: 与 US-008 IndustryFlow / US-058 SnowballHotKeyword 同款, 端点 takes no date param → CLI 也只给 `--symbol` 这类业务参数. 用户期待"按日期回填"会被坑.
+- **TS-side heuristic classifier 必须先 short-circuit 边界 case**: classifyShareholderType 的 4-tier 顺序固定为 (1) null/empty/单字 → 其他 (2) 机构关键词 → 机构投资者 (3) 全中文 2-4 字 → 自然人 (4) fallback → 其他. 不能颠倒 2 和 3 — "中信证券" 是 4 个中文字, 若先走 (3) 会误判成 '自然人'. 单测必须覆盖每个 tier 的命中.
+- **"类型签名保留 + 永不返回" 的 upgrade path 模式**: 当 AC 期望返回 N 类但数据源只能稳定识别 M 类 (M < N), `'高管' | '机构投资者' | '自然人' | '其他'` 全部保留在 type union, 但 classifier 仅返回 M 类. 给未来 AKShare 升级留缝隙. 单测显式 assert "当前永不返回 X" 锁定行为 — 防止后续逻辑改动时悄悄把没想清楚的 fallback 改成返回 X.
+- **trade_amount 代理范式 (US-031/US-032/US-034 → US-090 拓展)**: 当 AC 指定字段在 AKShare 端点不可得 (此处: 真实成交均价不在 `stock_ggcg_em`), 用学术 / 业务可接受的代理 + 4 处文档化 (Sequelize 列 comment + Python helper docstring + TS Client jsdoc + Factor jsdoc); 因子设计成 **scale-invariant ratio** 让代理的系统性偏差在横截面下消失 (`net_inflow / circulating_market_cap`); upgrade path 写明 "AKShare 加 X 字段后改 sync 一行即可". 与 US-034 east_money_qa post_count 是 `100000/rank` 代理 而因子是 `recent/baseline` ratio 完全同款.
+- **Factor 添加新文件后必须更新 *所有* registry-count 测试**: `library/` 下新增 1 个因子, 必须同时改 `EarningsSurpriseFactor.test.ts` / `EastMoneyQAFactor.test.ts` / `ShareholderConcentrationFactor.test.ts` 等"列出 expected 因子名 + assert 总数 = N"的测试. 这些测试是"添加新因子的检测网"—— 提醒未来 PR 不要悄悄改 registry. 改的时候要同步 (a) length 断言 (b) expected names list. 否则一改就红.
+- **`Number(null) === 0` JS 大坑再次出现**: ShareholderTradeRecord.trade_amount 是 DECIMAL nullable 列, raw fetch 后必须先检查 `=== null || === undefined`, 再 `Number()` + `isFiniteNumber()`. 写在 InsiderTradeFactor compute() 拉 row 后的解析里, computeNetInsiderInflow 入参签名也用 `number | null | undefined` 显式承认 nullable. 这是 US-031 起累计的第 N+1 次该坑 — 凡 raw DB DECIMAL 出来都必须先 null-check 再 number-cast.
+---

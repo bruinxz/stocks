@@ -488,6 +488,70 @@ calls). `SNOWBALL_KEYWORD_TIMEOUT_MS=120000` (120s; per-call returns ~5600
 rows so a touch slower than US-034). `SNOWBALL_KEYWORD_SKIP_EXISTING=0`
 equivalent to `--force` on the CLI for re-pulling existing days.
 
+## Real-time snapshot + N-tuple PK + TS-side classifier (US-090 ShareholderTradeRecord)
+
+`ShareholderTradeRecord` (PK = `(announce_date, stock_code, shareholder_name,
+trade_direction, change_start_date)` 五元组) covers股东增减持公告 (insider trades
+by major shareholders / executives / institutions). Three patterns combine in
+one model — each is independently reusable for future event-style sources.
+
+**Real-time-only snapshot semantics (US-008/US-058 pattern reaffirmed)**:
+AKShare `stock_ggcg_em(symbol='全部'|'股东增持'|'股东减持')` takes no date
+parameter — single call returns "当下可见的近 N 月全市场" snapshot (~140k rows,
+~290 pages internally, ~90 seconds). Per-row `announce_date` IS dated, but the
+FULL TABLE window slides with calling time. Historical backfill only accrues
+via daily scheduled syncs. Same 3-spot doc convention: model jsdoc + Client
+jsdoc + SyncService jsdoc all warn about the slide.
+
+**N-tuple PK for multi-shareholder events (extends US-006 dragon-tiger
+multi-record pattern)**: a single announcement (announce_date + stock_code)
+typically lists N shareholders simultaneously (e.g. all 董监高 announcing in
+sync). Same shareholder can flip 增持/减持 within N months, can split a single
+announcement into multiple batches (different change_start_date). So PK = 5
+fields not 2. The Python helper does NO fan-out for this case — it returns one
+row per (announcement, shareholder, direction, batch) tuple as AKShare already
+fans them, and the service-layer `Map<5tuple, row>` in-memory dedup makes
+bulkCreate + updateOnDuplicate dialect-independent (same US-030 AnalystForecast
+范式: Postgres silent-overwrite vs MySQL dup-error). `change_start_date` has a
+`'1970-01-01'` default for the rare row where AKShare's "变动开始日" is empty —
+NULL would break the composite PK.
+
+**TS-side heuristic classifier (US-006/US-088 范式 extended)**: AKShare's
+`stock_ggcg_em` returns only `股东名称` — no structured 股东类型 field.
+`ShareholderTradeSyncService.classifyShareholderType(name)` reads the name with
+a 4-tier short-circuit chain:
+1. null / empty / single-char → '其他'
+2. 命中 `INSTITUTION_KEYWORDS` (25 关键词: 基金/信托/资本/合伙企业/QFII/RQFII/
+   capital/fund/...) → '机构投资者'
+3. 全中文 2-4 字 (typical 自然人 name pattern `^[一-鿿]{2,4}$`) → '自然人'
+4. fallback → '其他'
+
+The '高管' tier is **declared in the type signature but never returned** — the
+endpoint exposes no "高管职务" field today; preserving the type is the
+**upgrade path** for when AKShare adds it (sync service swaps one branch, no
+downstream consumer changes). This is the standard "preserve schema for
+future-extension" pattern — same as US-007 leader_stock_change_pct field
+existing in IndustryFlow before any factor reads it. Classifier lives entirely
+in the service (not the Python helper) so rule evolution doesn't trigger a
+re-fetch.
+
+**Trade amount proxy (US-031/US-032/US-034 proxy 范式)**: AKShare exposes only
+`最新价` + `变动股数` — no `成交均价`. Sync writes `trade_amount = trade_shares
+× latest_price` as a **粗略市值代理**. Document in 4 places: model field comment
++ Python helper docstring + TS Client jsdoc + InsiderTradeFactor jsdoc. The
+factor's `net_inflow / circulating_market_cap` ratio is **scale-invariant** in
+the横截面 — the systematic latest-price bias affects all stocks similarly so
+ranks survive (same logic as US-034 east_money_qa post_count rank-倒数代理).
+Upgrade path: if AKShare ships 成交均价 later, replace one line in
+`get_shareholder_trade` Python; no factor / model / test change.
+
+**Throttle & CLI**: `--symbol=全部|股东增持|股东减持` (default '全部' — business
+runs full sync once daily then splits by trade_direction column at query time;
+single-direction backfills only when needed). `SHAREHOLDER_TRADE_TIMEOUT_MS=240000`
+(240s; longer than other clients because 290-page AKShare internal pagination
+~90s and we want generous headroom for retries). No `--start`/`--end` flags —
+the endpoint is real-time-only, range queries are meaningless.
+
 ## Worktree gotcha (still active as of US-005)
 
 The git worktree has no `backend/node_modules`. Symlink before typecheck:

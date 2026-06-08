@@ -1,4 +1,4 @@
-# Factor 基础设施 (US-009 + US-010 + US-029 + US-030 + US-031 + US-032 + US-033 + US-034 + US-035 + US-036 + US-041 + US-042)
+# Factor 基础设施 (US-009 + US-010 + US-029 + US-030 + US-031 + US-032 + US-033 + US-034 + US-035 + US-036 + US-041 + US-042 + US-090)
 
 `backend/src/quant/factors/` 是 A 股多因子打分体系的基础设施层。US-009
 落地了**注册中心 + 横截面 pipeline + 标准化工具 + FactorScore 模型**；
@@ -15,7 +15,9 @@ US-029 增加了第 9 个 `liquidity` 因子（流动性 U 形评分）；US-030
 代理）；US-035 增加了第 15 个 `shareholder_concentration` 因子（股东户数
 环比变化 = -(latest - prev) / prev，集中度变化）；US-036 增加了第 16 个
 `gradual_breakout` 因子（渐进强爆 = 近 30 日 Σ(daily_volume / avg_60d_volume - 1) ×
-sign(涨跌幅)，温和放量逐步走强的价量配合累计）。后续 story 在 `library/`
+sign(涨跌幅)，温和放量逐步走强的价量配合累计）；US-090 增加了第 17 个
+`insider_trade` 因子（内部人净买入 = 近 60 日 (Σ增持金额 - Σ减持金额) /
+流通市值，董监高/大股东主动买卖的 alpha 信号）。后续 story 在 `library/`
 下追加新文件即可，无需改 Pipeline / Registry。
 
 ## 目录约定
@@ -168,6 +170,7 @@ US-033 等"贴现 / 偏离"类因子按此例外处理；普通线性因子仍�
 | `east_money_qa` | sentiment | StockSentiment (US-034) | 30 日窗口内有效 post_count < 10 / recent\|baseline 空 / baseline avg < 1.0 |
 | `shareholder_concentration` | flow | ShareholderCount (US-035) | 200 日窗口内有效快照 < 2 / 最新一期 share_change != 0 (默认过滤) / holder_count_prev ≤ 0 |
 | `gradual_breakout` | momentum | DailyBar (close + volume) | bars < VOLUME_BASELINE_DAYS+1=61 / 60 日均量有效观测 < 30 / 近 30 日内有效贡献天 < 21 |
+| `insider_trade` | flow | ShareholderTradeRecord (US-090) + Stock.circulating_market_cap | 60 日窗口内无有效公告 / 流通市值 ≤ 0 / 全部 announce_date > as_of_date (lookahead) |
 
 **典型查询模式（US-029+ 添加新因子可直接复制）**：
 
@@ -302,6 +305,31 @@ US-033 等"贴现 / 偏离"类因子按此例外处理；普通线性因子仍�
   价量配合累计），走标准模式 — 不属 LiquidityFactor 横截面参照例外。tail-index 对齐
   （recent = bars[length-recentDays..length-1]）与 momentum / low_vol / momentum_reversal
   同款，自然消化春节/十一节假日 gap，不按日历日对齐。
+- ✅ `insider_trade` (US-090) 用 **(Σ trade_amount where direction=增持 - Σ trade_amount where direction=减持) /
+  circulating_market_cap** 捕捉 "内部人 (董监高 / 大股东 / 机构投资者) 主动买卖" 的 alpha 信号
+  (实证依据: 国泰君安《内部人交易因子有效性研究》2017, Lakonishok & Lee 1998
+  "Are Insider Trades Informative?")。**关键代理（按 US-031 范式）**：AC 期望
+  trade_amount = 真实成交均价 × 变动股数，但 AKShare `stock_ggcg_em` 不提供成交均价
+  仅最新价 + 变动股数，采用 `trade_shares × latest_price` 作为粗略市值代理（在
+  Python 端落库到 `ShareholderTradeRecord.trade_amount`）。**scale-invariant 保证**：
+  因子用 ratio (净买入 / 流通市值)，代理的系统性偏差 (latest_price vs 真实价) 在
+  横截面下基本对齐 (各股都用最新价)，不影响 zscore / percentile 排序 — 与 US-034
+  EastMoneyQAFactor 代理升级路径同款。**升级路径**: 若未来 AKShare 给端点补
+  "成交均价" 列, sync 服务替换 trade_amount 公式即可，因子无需改动。**60 日自然日
+  窗口设计**：内部人交易披露时效性 T+3 (减持) / T+15 (增持) 已有滞后，再要给
+  市场时间反应到价格，60 日覆盖 "公告 → 价格反应" 的中线窗口（30-90 日实证最优区间
+  的中点）。**不区分股东类型权重** (机构 vs 自然人 vs 高管)：实证显示信息含量接近，
+  区分反而引入噪音；shareholder_type 字段保留供未来 v2 优化。**纯函数 helper**
+  (computeNetInsiderInflow 含 TradeObservation / NetInflowBreakdown interface 全
+  export) 让 106 个测试覆盖业务方向 (增持→正/减持→负/进退两难→0) + lookahead bias
+  guard + 数据卫生 (NaN/null/string/负值/未知 direction) + classifyShareholderType
+  8 个机构关键词命中 + 自然人/边界 + 端到端 1 亿/1.8 亿场景的同时完全脱离 DB。属
+  "绝对业务量" 因子 (per-stock 自身买卖累计 / 自身市值)，走标准模式 — 不属
+  LiquidityFactor 横截面参照例外。**与既有因子的相关性预估**：与 money_flow (US-010,
+  主力净流入) ~0.2-0.3（盘中主力席位高频日级 vs 公告披露内部人决策低频公告级，
+  维度互补）；与 shareholder_concentration (US-035, 户数环比) ~0.2-0.3（户数广度
+  季度披露 vs 金额强度公告级，互补）；与 northbound (US-010, 北向持股) ~0.1（外资
+  被动持仓 vs 境内主动决策，维度不同）。FactorIC (US-041) 上线后可验证。
 
 ### 关键代理记号（US-031 引入 "AC 数学公式 ≠ 数据可得" 的处理范式）
 
