@@ -43,6 +43,32 @@ function asObject(value: any): Record<string, any> {
   return value;
 }
 
+/**
+ * US-083: 纯函数从一组 strategy 记录中筛选 dry-run 策略的 strategy_key。
+ *
+ * 单测可直接用此函数验证 lifecycle_policy.dry_run 的解析规则：
+ *   - dry_run === true              → 入选
+ *   - dry_run === 'true' (字符串)   → 入选（JSONB 旧记录可能存字符串）
+ *   - dry_run === false / undefined → 不入选
+ *   - lifecycle_policy 非对象        → 不入选
+ *
+ * 不调用 DB，是 getDryRunStrategyKeys() 的纯函数核心，便于覆盖边界。
+ */
+export function pickDryRunStrategyKeysFromRecords(
+  records: Array<{ strategy_key: string; lifecycle_policy?: any }>
+): string[] {
+  const keys: string[] = [];
+  for (const record of records || []) {
+    const lifecycle = asObject(record.lifecycle_policy);
+    if (lifecycle.dry_run === true || lifecycle.dry_run === 'true') {
+      const key = String(record.strategy_key || '').trim();
+      if (key) keys.push(key);
+    }
+  }
+  // dedupe preserving order
+  return Array.from(new Set(keys));
+}
+
 export class QuantStrategyService {
   private defaultExecutionPolicy(definition: any) {
     return {
@@ -209,6 +235,29 @@ export class QuantStrategyService {
     return enabledKeys.length > 0
       ? enabledKeys
       : strategyRegistry.enabled().map(strategy => strategy.definition.strategy_key);
+  }
+
+  /**
+   * US-083: 返回所有 `lifecycle_policy.dry_run === true` 的策略 key 集合。
+   *
+   * 由 PaperTradingFacade.applyAutomation 调用，把结果传给
+   * `paperTradingAutomationService.autoBuyFromSignals({ dry_run_strategy_keys })`
+   * 让这些策略的信号走 planned-only 路径（信号仍写 QuantSignal 表，不实际下单）。
+   *
+   * 故障兜底：DB 查询失败时返回空数组（fail-OPEN —— 风控宁可让 dry-run 策略真实下单，
+   * 也不要因 DB 故障让全部策略都被误判为 dry-run）。同款 fail-OPEN 模式见 US-082
+   * MarketSentimentIndex / US-049 DrawdownCircuitBreaker.checkBuyAllowed。
+   *
+   * 返回值是 string[]，调用方可以直接传给 `dry_run_strategy_keys` 参数。
+   */
+  async getDryRunStrategyKeys(): Promise<string[]> {
+    try {
+      await this.syncRegistry();
+      const records = await QuantStrategyModel.findAll({});
+      return pickDryRunStrategyKeysFromRecords(records);
+    } catch {
+      return [];
+    }
   }
 
   async getDefaultParamsByStrategy(strategy_keys?: string[] | string) {

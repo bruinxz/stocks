@@ -150,6 +150,16 @@ export interface PaperTradingAutoOptions {
   strategy_keys?: string[] | string;
   strategy_family_key?: string;
   dry_run?: boolean;
+  /**
+   * US-083 per-strategy dry-run override.  Signals whose strategy_key is in this
+   * set are forced through the dry-run path (status='planned' intent, no createBuyTrade),
+   * even when `dry_run` is false at the request level.  Allows operators to put
+   * a single strategy in observation mode without touching the rest.
+   *
+   * Caller (PaperTradingFacade.applyAutomation) populates from
+   * QuantStrategyModel.lifecycle_policy.dry_run === true.
+   */
+  dry_run_strategy_keys?: string[] | string;
   report_to_feishu?: boolean;
   notify_to_feishu_bot?: boolean;
   signal_date_start?: string;
@@ -786,6 +796,26 @@ function signalMatchesStrategyKeys(signal: AIInvestmentSignal, strategyKeys: str
   return strategyKeysFromSignalMetadata(metadata).some(key => allowed.has(key));
 }
 
+/**
+ * US-083: 检查信号是否属于"dry-run 策略"集合 —— 若是，则该信号在 autoBuyFromSignals
+ * 流程中强制走 planned 路径（不调用 createBuyTrade，仅记录 order_intent 与 QuantSignal）。
+ *
+ * 与 `signalMatchesStrategyKeys` 的语义差异：后者用于 "include filter"（空集合 = 全通过），
+ * 本函数用于 "dry-run match"（空集合 = 都不是 dry-run = 全部走真实下单）。两者不能合并。
+ *
+ * Export 为纯函数让单测可独立断言：(空集合不匹配 / 单 key 匹配 / 多 key 匹配 / signal 无
+ * strategy_key 元数据时不匹配)。
+ */
+export function signalIsDryRunByStrategy(
+  signal: AIInvestmentSignal,
+  dryRunStrategyKeys: string[]
+): boolean {
+  if (!dryRunStrategyKeys.length) return false;
+  const dryRunSet = new Set(dryRunStrategyKeys);
+  const metadata = asPlainObject(signal.metadata);
+  return strategyKeysFromSignalMetadata(metadata).some(key => dryRunSet.has(key));
+}
+
 function normalizeBudgetActionKey(value: any): string {
   const normalized = String(value || '')
     .trim()
@@ -1040,6 +1070,11 @@ class PaperTradingAutomationService {
 
   async autoBuyFromSignals(options: PaperTradingAutoOptions = {}): Promise<PaperTradingAutoResult> {
     const dry_run = toBoolean(options.dry_run, false);
+    // US-083: per-strategy dry-run override.  Signals tagged with any key in this set
+    // bypass createBuyTrade (no actual order placement) while still recording an
+    // order_intent (status='planned') and leaving the QuantSignal row untouched.
+    // dry_run (request-level) wins if true; otherwise per-signal check runs in-loop.
+    const dryRunStrategyKeys = normalizeStringArray(options.dry_run_strategy_keys);
     const report_to_feishu = toBoolean(options.report_to_feishu, true);
     const limit = toPositiveInt(options.limit, 5, 20);
     const scan_limit = toPositiveInt(options.scan_limit, Math.max(limit * 8, 40), 300);
@@ -1385,6 +1420,10 @@ class PaperTradingAutomationService {
       const itemBase = this.buildTradeItemBase(signal);
       const symbol = normalizeSymbol(signal.symbol);
       const metadata = asPlainObject(signal.metadata);
+      // US-083: per-signal dry-run resolution.  Request-level `dry_run` wins (already
+      // covers everything); otherwise check whether this signal's strategy is in the
+      // dry-run set (loaded by PaperTradingFacade from QuantStrategyModel.lifecycle_policy).
+      const signalDryRun = dry_run || signalIsDryRunByStrategy(signal, dryRunStrategyKeys);
       const paperTradingMeta = paperTradingMetaForPortfolio(metadata, portfolio.id);
       const action = String(metadata.action || '').toLowerCase();
       const dataQuality = asPlainObject(metadata.data_quality);
@@ -1883,7 +1922,10 @@ class PaperTradingAutomationService {
       eligible++;
       const tradePayload: PaperTradingAutoTradeItem = {
         ...itemBase,
-        status: dry_run ? 'planned' : 'executed',
+        // US-083: use signalDryRun (per-signal) instead of dry_run (request-level) so
+        // strategies flagged dry_run get planned-only intents even if other signals
+        // in the same batch get executed normally.
+        status: signalDryRun ? 'planned' : 'executed',
         action,
         action_label: metadata.action_label,
         environment_multiplier: environmentPolicy.position_multiplier,
@@ -2019,7 +2061,10 @@ class PaperTradingAutomationService {
         low_quality_forced_sample_reason: lowQualityForcedSampleReason || undefined,
       };
 
-      if (!dry_run) {
+      // US-083: signalDryRun replaces dry_run so per-strategy dry-run bypasses
+      // createBuyTrade for this specific signal only.  QuantSignal row already
+      // persisted upstream by SignalEngine — only the order-placement side effect skipped.
+      if (!signalDryRun) {
         const trade = await this.createBuyTrade({
           portfolio,
           signal,
@@ -2193,8 +2238,12 @@ class PaperTradingAutomationService {
       source_type,
       scanned: candidateSignals.length,
       eligible,
-      executed: dry_run ? 0 : trades.length,
-      planned: dry_run ? trades.length : 0,
+      // US-083: count by tradePayload.status (not by request-level dry_run) so
+      // per-strategy dry-run signals correctly land in `planned` even when
+      // dry_run=false at the request level.  When dry_run=true (request-level),
+      // all signals are planned and this matches the old behavior.
+      executed: trades.filter(t => t.status === 'executed').length,
+      planned: trades.filter(t => t.status === 'planned').length,
       skipped: skipped_items.length,
       trades,
       skipped_items: skipped_items.slice(0, 30),

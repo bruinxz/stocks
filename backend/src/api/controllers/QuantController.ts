@@ -48,6 +48,26 @@ export class QuantController {
           : req.body?.defaultParams !== undefined
           ? req.body.defaultParams
           : undefined;
+      // US-083: typed shortcut — UI sends {dry_run: true/false} at top level
+      // (instead of {lifecycle_policy: {dry_run: ...}}).  We merge into
+      // lifecycle_policy so the existing JSONB patch path handles persistence.
+      // body.lifecycle_policy still wins if both are sent — explicit wins over shortcut.
+      const lifecyclePolicyPatch =
+        req.body?.lifecycle_policy !== undefined
+          ? req.body.lifecycle_policy
+          : req.body?.lifecyclePolicy !== undefined
+          ? req.body.lifecyclePolicy
+          : undefined;
+      const dryRunShortcut =
+        req.body?.dry_run !== undefined
+          ? Boolean(req.body.dry_run)
+          : req.body?.dryRun !== undefined
+          ? Boolean(req.body.dryRun)
+          : undefined;
+      const mergedLifecyclePolicy: Record<string, any> | undefined =
+        dryRunShortcut === undefined
+          ? lifecyclePolicyPatch
+          : { ...(lifecyclePolicyPatch || {}), dry_run: dryRunShortcut };
       const strategy = await strategyEngine.updateStrategyConfig(req.params.strategy_key, {
         enabled:
           req.body?.enabled === undefined || req.body?.enabled === null
@@ -66,12 +86,7 @@ export class QuantController {
             : req.body?.environmentPolicy !== undefined
             ? req.body.environmentPolicy
             : undefined,
-        lifecycle_policy:
-          req.body?.lifecycle_policy !== undefined
-            ? req.body.lifecycle_policy
-            : req.body?.lifecyclePolicy !== undefined
-            ? req.body.lifecyclePolicy
-            : undefined,
+        lifecycle_policy: mergedLifecyclePolicy,
         notes: req.body?.notes !== undefined ? String(req.body.notes || '') : undefined,
         display_order:
           req.body?.display_order !== undefined

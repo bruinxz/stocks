@@ -43,6 +43,16 @@ export class StrategyEngine {
     return quantStrategyService.resolveStrategyKeys(input);
   }
 
+  /**
+   * US-083: 返回所有标记为 dry-run 的策略 key（`lifecycle_policy.dry_run === true`）。
+   * PaperTradingFacade.applyAutomation 调用此方法，把结果传给 AutomationService
+   * 让这些策略的信号走 planned-only 路径（仍写 QuantSignal，不实际下单）。
+   * DB 故障 fail-OPEN 返回空数组（让 dry-run 策略真实下单也不让全部策略被误判 dry-run）。
+   */
+  getDryRunStrategyKeys() {
+    return quantStrategyService.getDryRunStrategyKeys();
+  }
+
   getDefaultParamsByStrategy(strategyKeys: string[]) {
     return quantStrategyService.getDefaultParamsByStrategy(strategyKeys);
   }

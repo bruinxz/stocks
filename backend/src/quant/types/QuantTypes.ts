@@ -75,6 +75,13 @@ export interface QuantStrategyDefinition {
 export interface QuantStrategyRuntimeOptions {
   params?: Record<string, any>;
   as_of?: string;
+  /**
+   * US-083 dry-run 模式：一次性 override 策略实例的 dryRun 标志。
+   * 当 true 时，PaperTradingFacade.applyAutomation 只把信号写入 QuantSignal 表，
+   * 不调用 placeOrder 真实下单。未传时回落到策略实例的 dryRun 字段（持久化在
+   * QuantStrategyModel.lifecycle_policy.dry_run）。
+   */
+  dryRun?: boolean;
 }
 
 export interface QuantBacktestOptions {

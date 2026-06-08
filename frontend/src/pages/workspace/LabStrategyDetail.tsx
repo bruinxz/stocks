@@ -6,10 +6,13 @@ import {
   Col,
   Descriptions,
   Empty,
+  message,
+  Modal,
   Row,
   Space,
   Spin,
   Statistic,
+  Switch,
   Table,
   Tag,
   Tooltip,
@@ -21,6 +24,7 @@ import {
   CloseCircleOutlined,
   CopyOutlined,
   EditOutlined,
+  ExperimentOutlined,
   LinkOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
@@ -183,7 +187,7 @@ const LabStrategyDetail: React.FC = () => {
   } else {
     body = (
       <Space direction="vertical" size={16} style={{ width: '100%' }}>
-        <StrategyMetaCard detail={detail} />
+        <StrategyMetaCard detail={detail} onUpdated={refresh} />
         <LiveBindingCard detail={detail} />
         <BacktestListCard backtests={detail.backtests} />
         <LatestICCard detail={detail} />
@@ -233,15 +237,92 @@ const STRATEGY_RISK_DISPLAY: Record<string, { label: string; color: string }> = 
   high: { label: '高风险', color: 'red' },
 };
 
-const StrategyMetaCard: React.FC<{ detail: StrategyDetailResponse }> = ({ detail }) => {
+const StrategyMetaCard: React.FC<{
+  detail: StrategyDetailResponse;
+  onUpdated?: () => void | Promise<void>;
+}> = ({ detail, onUpdated }) => {
   const { strategy } = detail;
   const category =
     STRATEGY_CATEGORY_DISPLAY[strategy.category || 'other'] ?? STRATEGY_CATEGORY_DISPLAY.other;
   const risk = STRATEGY_RISK_DISPLAY[strategy.risk_level || 'medium'];
   const defaultParams = strategy.default_params || {};
   const executionPolicy = strategy.execution_policy || {};
+  // US-083: dry-run 标志存储在 lifecycle_policy.dry_run（JSONB 子字段）。
+  // 后端 PaperTradingFacade.applyAutomation 会读取此字段，dry-run=true 时该策略的信号
+  // 只写 QuantSignal 表，不实际下单。前端用 antd Switch 让用户开/关，loading 期间禁用
+  // 避免多次点击触发竞态；toggle 成功后通过 onUpdated 回调刷新整页保证 UI 与后端一致。
+  const dryRun = strategy.lifecycle_policy?.dry_run === true;
+  const [toggling, setToggling] = useState(false);
+
+  const handleToggleDryRun = useCallback(
+    (next: boolean) => {
+      const verb = next ? '开启' : '关闭';
+      Modal.confirm({
+        title: `确认${verb} dry-run 模式？`,
+        content: next
+          ? '开启后，本策略产生的信号将写入信号表但不会真实下单。适合先观察一段时间再决定是否启用真实跟单。'
+          : '关闭后，本策略产生的信号将恢复正常自动跟单流程（PaperTradingFacade.applyAutomation 会调 placeOrder 真实下单）。',
+        okText: `${verb} dry-run`,
+        okButtonProps: { type: 'primary', danger: !next },
+        cancelText: '取消',
+        onOk: async () => {
+          setToggling(true);
+          try {
+            await labService.setStrategyDryRun(strategy.strategy_key, next);
+            message.success(`已${verb} dry-run 模式：${strategy.name || strategy.strategy_key}`);
+            if (onUpdated) {
+              await onUpdated();
+            }
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            message.error(`${verb} dry-run 失败：${msg}`);
+          } finally {
+            setToggling(false);
+          }
+        },
+      });
+    },
+    [strategy.strategy_key, strategy.name, onUpdated]
+  );
+
   return (
-    <Card title="策略描述与默认参数">
+    <Card
+      title="策略描述与默认参数"
+      extra={
+        <Space size={12}>
+          <Tooltip
+            title={
+              dryRun
+                ? '当前为 dry-run 模式：信号只写入 QuantSignal 表，不调用 placeOrder 真实下单。'
+                : '当前为实盘模式：策略信号会触发真实自动跟单。'
+            }
+          >
+            <Space size={6}>
+              <ExperimentOutlined style={{ color: dryRun ? '#fa8c16' : '#999' }} />
+              <Text type={dryRun ? 'warning' : 'secondary'} strong={dryRun}>
+                dry-run
+              </Text>
+              <Switch
+                checked={dryRun}
+                loading={toggling}
+                onChange={handleToggleDryRun}
+                checkedChildren="开"
+                unCheckedChildren="关"
+              />
+            </Space>
+          </Tooltip>
+        </Space>
+      }
+    >
+      {dryRun ? (
+        <Alert
+          type="warning"
+          showIcon
+          message="dry-run 模式已开启"
+          description="本策略产生的信号会照常写入信号表，但 PaperTradingFacade 不会触发 placeOrder 真实下单。可先观察策略表现一段时间，再决定是否关闭 dry-run 启用真实跟单。"
+          style={{ marginBottom: 12 }}
+        />
+      ) : null}
       <Descriptions column={2} size="small" bordered>
         <Descriptions.Item label="分类">
           <Tag color={category.color}>{category.label}</Tag>

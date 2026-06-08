@@ -667,19 +667,46 @@ export class PaperTradingFacade {
   async applyAutomation(options: ApplyAutomationOptions) {
     const { action, user_id, username, body = {} } = options;
 
+    // US-083: pre-resolve per-strategy dry-run list (策略 v2 dry-run 模式).  Any strategy
+    // with lifecycle_policy.dry_run === true → its signals get planned-only treatment
+    // in autoBuyFromSignals (no createBuyTrade, just order_intent + QuantSignal row).
+    // Lazy-require to avoid pulling the entire quant/engine subsystem into facade load.
+    // Fail-OPEN on DB issues (empty array) — same risk-bias as US-049/US-082.
+    const resolveDryRunStrategyKeys = async (): Promise<string[]> => {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { strategyEngine } = require('../quant/engine/StrategyEngine');
+        const keys = await strategyEngine.getDryRunStrategyKeys();
+        return Array.isArray(keys) ? keys : [];
+      } catch (error: any) {
+        logger.warn(
+          `applyAutomation: 加载 dry-run 策略列表失败: ${error?.message || error}（fail-OPEN，按非 dry-run 处理）`
+        );
+        return [];
+      }
+    };
+
     switch (action) {
-      case 'auto_buy':
+      case 'auto_buy': {
+        // Skip the DB lookup entirely when the caller already forces dry_run=true —
+        // every signal is dry-run anyway, so the per-strategy list adds nothing.
+        const dryRunStrategyKeys = body.dry_run === true ? [] : await resolveDryRunStrategyKeys();
         return paperTradingAutomationService.autoBuyFromSignals({
           ...body,
+          dry_run_strategy_keys: dryRunStrategyKeys,
           user_id,
         });
+      }
 
-      case 'auto_sync':
+      case 'auto_sync': {
+        const dryRunStrategyKeys = body.dry_run === true ? [] : await resolveDryRunStrategyKeys();
         return paperTradingAutomationService.runAutoSync({
           ...body,
+          dry_run_strategy_keys: dryRunStrategyKeys,
           user_id,
           refresh_recommendations: body.refresh_recommendations ?? true,
         });
+      }
 
       case 'risk_check':
         return paperTradingAutomationService.runRiskCheck({
@@ -688,6 +715,8 @@ export class PaperTradingFacade {
         });
 
       case 'autonomous_auto_sync': {
+        // US-083: autonomous variant also honors per-strategy dry-run.
+        const dryRunStrategyKeys = body.dry_run === true ? [] : await resolveDryRunStrategyKeys();
         const execution = await paperTradingAutomationService.runAutoSync(
           withAutonomousPortfolio({
             refresh_recommendations: true,
@@ -706,6 +735,7 @@ export class PaperTradingFacade {
             use_profit_gate: true,
             use_outcome_feedback: true,
             report_to_feishu: true,
+            dry_run_strategy_keys: dryRunStrategyKeys,
             ...body,
             user_id,
             username,

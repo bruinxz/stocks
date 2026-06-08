@@ -374,6 +374,31 @@ export async function getStrategyDetail(strategyKey: string): Promise<StrategyDe
   return res.data.data as StrategyDetailResponse;
 }
 
+// ---------- /api/quant/strategies/:id PATCH (US-083 dry-run toggle) --------
+
+/**
+ * US-083: 切换策略 dry-run 开关。
+ *
+ * 后端 QuantController.updateStrategyConfig 接受顶层 `dry_run` 字段（typed shortcut），
+ * 会自动 merge 到 lifecycle_policy.dry_run JSONB 子字段。dry-run 策略的信号仍正常
+ * 写入 QuantSignal 表，但 PaperTradingFacade.applyAutomation 不会为这些信号调用
+ * placeOrder/createBuyTrade —— 用户可以先观察一段时间策略产出信号，再决定是否启用真实下单。
+ *
+ * 返回更新后的策略对象（含 lifecycle_policy.dry_run = 最新值）。
+ */
+export async function setStrategyDryRun(
+  strategyKey: string,
+  dryRun: boolean
+): Promise<QuantStrategyItem & { lifecycle_policy?: Record<string, any> }> {
+  const res = await api.patch(`/quant/strategies/${encodeURIComponent(strategyKey)}`, {
+    dry_run: dryRun,
+  });
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || '更新策略 dry-run 模式失败');
+  }
+  return res.data.data;
+}
+
 // ---------- bundled export -------------------------------------------------
 
 export const labService = {
@@ -386,6 +411,7 @@ export const labService = {
   getBacktestMonthlyReturns,
   getBacktestRollingSharpeSeries,
   getStrategyDetail,
+  setStrategyDryRun,
 };
 
 export default labService;

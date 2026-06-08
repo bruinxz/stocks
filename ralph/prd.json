@@ -1368,8 +1368,8 @@
         "Tests pass"
       ],
       "priority": 81,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026/06/09. Expanded DEFAULT_MULTI_FACTOR_ALPHA_WEIGHTS from 8 → 12 factors (added quality_high/analyst_consensus/east_money_qa/momentum_reversal at 0.07/0.07/0.06/0.08; rebalanced 8 老因子 to 0.10/0.08; sum still =1.0). Added MultiFactorAlphaWeightMode union ('static'|'equal'|'ic_weighted') + 3 new params (weightMode default 'static' → 完全向后兼容; icLookForwardDays=20; icLookbackDays=90). Extended MultiFactorAlphaDataSource with loadRecentFactorICs(); DefaultMultiFactorAlphaDataSource implements it via single FactorICResult.findAll (12 因子一次 round-trip) ordered period_end DESC + computed_at DESC. Exported pure function computeEffectiveWeights(staticWeights, mode, icMap?) — static = identity / equal = uniform / ic_weighted = max(0, IC) with per-factor fallback to static when IC missing + 整体 fallback to static when all IC ≤ 0. Updated 3 existing tests + added 6 new US-081 tests (default coherent / equal uniform / ic_weighted dynamic / all-negative fallback / pure function 3-mode + 边界 / overrides lookback). All 91 assertions pass; typecheck clean; lint clean for changed files; EnsembleStrategy.test.ts (downstream consumer) still passes."
     },
     {
       "id": "US-082",
@@ -1383,8 +1383,8 @@
         "Tests pass"
       ],
       "priority": 82,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026/06/09. Added minMarketSentiment=60 to DEFAULT_DRAGON_HEAD_PARAMS / DragonHeadParams interface / resolveParams. Extended DragonHeadDataSource with loadMarketSentimentIndex(tradeDate): Promise<number | null> (6th loader); DefaultDragonHeadDataSource queries MarketSentimentIndex.findOne by trade_date only — no latest-le-asOfDate fallback (cron product, missing = data gap not stale OK), try/catch returns null (fail-OPEN). generateSignals 新增 Step A.5：read sentiment value 后 sentimentBlocked = (value !== null && value < threshold)，blocked=true 时跳过 evaluateEntries 调用 → 走 skipEntriesDueToSentiment 路径只取 limit_up_pool_size 让 filtered.sentiment_blocked = pool_size。**Exit 流程 (止损/持有期/炸板/高开减半) 不受闸门影响** — 已有持仓的保护性平仓任何情绪下都必须正常触发。新增 DragonHeadFilteredStats.sentiment_blocked 计数字段 + DragonHeadSignalsResult.market_sentiment={value, blocked, threshold} 出参三件套让 UI/审计一眼看清闸门状态。**Fail-OPEN on missing index**（数据缺失继续入场，与 logger.warn 配合让 ops 看到 sentiment=(missing)）。新增 7 个 US-082 测试（above_threshold / at_threshold boundary / below_threshold blocks / missing fail-OPEN / held positions still exit when blocked / custom threshold override / threshold=0 disables filter）+ 修改 test_default_params_match_AC 添加 minMarketSentiment 断言。所有 32 个测试通过；DragonHead typecheck/lint clean；EnsembleStrategy（DragonHead 的下游消费方）测试仍通过；MultiFactorAlpha 测试无回归。"
     },
     {
       "id": "US-083",
@@ -1399,7 +1399,7 @@
         "Tests pass"
       ],
       "priority": 83,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {
