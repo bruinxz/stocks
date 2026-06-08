@@ -134,3 +134,7 @@ config.json
 data_completeness_report.json
 # Codex desktop local state
 .bridge-state/
+
+# Database backups (US-071)
+backups/
+*.sql.gz

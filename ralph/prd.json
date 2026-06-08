@@ -1198,7 +1198,7 @@
         "Typecheck passes"
       ],
       "priority": 70,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {
@@ -1212,8 +1212,8 @@
         "新增 npm script: npm run db:backup 和 npm run db:restore -- --date=2026-06-06"
       ],
       "priority": 71,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026/06/08. Created scripts/backup-db.sh (pg_dump → gzip → backups/YYYY-MM-DD.sql.gz with FIFO retention, default 30 days, RETENTION_DAYS env-overridable; atomic tmp→rename; YYYY-MM-DD-anchored find -mtime cleanup that only touches dated .sql.gz files) and scripts/restore-db.sh (--date=YYYY-MM-DD | --file=<path> mutex args, strict YYYY-MM-DD regex, mandatory YES confirmation w/ --yes opt-out for automation, optional --drop-create for clean restore via postgres admin db, --target-db one-shot DB override, ON_ERROR_STOP=1 + --no-owner --no-privileges for portable restores). Added npm scripts db:backup / db:restore in backend/package.json (use `--` to pass args through, e.g. npm run db:restore -- --date=2026-06-06). Added README §数据库备份与恢复 (US-071) with env-var table, cron example for 03:15 daily backup, troubleshooting & failure-recovery operator playbook. Added backups/ + *.sql.gz to .gitignore. All scripts chmod +x; bash -n syntax-OK; backend typecheck + lint pass clean (0 errors)."
     },
     {
       "id": "US-072",

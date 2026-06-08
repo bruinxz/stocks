@@ -212,6 +212,15 @@
 - **失败时 actions/github-script@v7 createComment + tee 出 .log**：每 step `<cmd> 2>&1 | tee ../<step>.log`，failure() 触发的 script 用 GITHUB_WORKSPACE 拼路径 + `.split('\n').slice(-60)` 截尾 + `<details><summary>` 折叠片段。下次任何"CI 失败信息推 PR"按同款 — 比 actions/upload-artifact 单独看更直接。
 - **concurrency.cancel-in-progress: true 必加**：同分支重复 push 自动取消旧 run，节省 60%+ runner 时间。生产 repo 必加；研究 / 数据 repo 才用 false 保留 run 历史。
 
+### Ops — backup / restore shell scripts (US-071+)
+- **运维脚本 = 仓库根 `scripts/<task>-<resource>.sh` (US-071 引入)**：所有"管理员手动 / cron 触发"的运维脚本放在仓库根 `scripts/` 目录（与 `scripts/deployment/` / `scripts/setup_and_db/` 既有子目录并列），命名形如 `<verb>-<resource>.sh` (`backup-db.sh` / `restore-db.sh` / 未来 `rotate-logs.sh` / `purge-cache.sh`)。不要放进 `backend/src/scripts/`——后者是 `ts-node` 跑的开发期 CLI（同步数据 / 计算因子 / 跑回测）需要 backend 的 TS 上下文，运维脚本是纯 shell 不该绑 ts-node。**npm script 入口在 `backend/package.json`** 走 `bash ../scripts/<x>.sh`（相对路径 from `backend/`），让 `npm run db:backup` / `npm run db:restore -- --date=...` 与同目录 `db:reset` / `db:migrate` 体感一致。**用户可以直接 `bash scripts/<x>.sh`（仓库根）或 `npm run`（backend/）** 二选一，文档同时给两种用法。
+- **shell 脚本通用 8 项 checklist (US-071 引入)**: 任何运维 shell 脚本走此 8 项: (1) **`#!/usr/bin/env bash` + `set -euo pipefail`** 强制 fail-fast (任一 cmd 失败 / 未定义变量 / pipe 中段失败立即退出); (2) **顶部 docstring 包含**: 功能说明 / 环境变量 / 选项 / 使用范例 / cron 范例; (3) **依赖工具用 `command -v <tool>` 校验 + 友好 ERROR 退出** (不要让脚本跑到一半因 pg_dump not found 给出 cryptic exit 127); (4) **绝对路径解析**: `SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"` + `REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"` 让 cron 在任意 cwd 下都能找路径; (5) **可覆盖环境变量配置**: `${VAR:-default}` 范式，每个 env var 在 docstring 列默认值 + 含义; (6) **`for arg in "$@"; case "$arg" in --flag=*) VAR="${arg#--flag=}";;` 解析参数** + 强制 `print_usage` + `-h|--help` 路径; (7) **危险操作 (delete / overwrite / drop) 必须二次确认** + `--yes` 跳过确认让自动化能跑; (8) **临时文件 trap cleanup + 原子 rename**: `TMP="$OUT.tmp.$$"; trap 'rm -f "$TMP"' EXIT; do_work > "$TMP"; mv "$TMP" "$OUT"; trap - EXIT` —— 避免备份中途被 cron / 读端见到半成品。**`backup-db.sh` 与 `restore-db.sh` 是参考实现**，下次任何 ops 脚本 (US-076+ 日志轮转 / 缓存清理 / 数据归档) 按此 8 项照搬。
+- **PostgreSQL `pg_dump` / `psql` 通过 `PGPASSWORD` env 传密码 (US-071 引入)**：不要走 `-W` 交互式输入 (cron 不可用) 不要走 `~/.pgpass` (跨服务器迁移要 sync 多个文件)。`PGPASSWORD="$DB_PASSWORD" pg_dump ...` 是 cron-friendly 唯一安全做法。**`pg_dump` 必带 `--no-owner --no-privileges`** 让 restore 跨机器 (生产 DB 用户名是 `prod_app`, 恢复到 dev 用户名是 `postgres`) 不会因 role 不存在报错。**`psql restore` 必带 `-v ON_ERROR_STOP=1`** 否则中间一行 SQL 失败后续 SQL 继续跑产生半 restore 库 (静默灾难)。
+- **`find -mtime +N` cleanup 必须 anchor 文件名 pattern 避免误删 (US-071 引入)**：`find "$BACKUP_DIR" -maxdepth 1 -type f -name '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].sql.gz' -mtime "+${RETENTION_DAYS}"` —— anchor `YYYY-MM-DD.sql.gz` glob 让脚本只动**自己创建的**备份文件，不动用户手动放的 `manual-snapshot.sql.gz` / `pre-upgrade.tar.gz`。**单纯 `find -mtime +30 -delete`** 是运维灾难 (会顺手删 README / 配置文件 / 用户副本)。RETENTION_DAYS=0 关闭清理用 `if [ "$RETENTION_DAYS" -gt 0 ]` 包住。**`while IFS= read -r -d '' f; do ...; done < <(find ... -print0)`** 是文件名含空格也安全的 find 迭代范式 (`-print0` + `-d ''` null-delimited)。
+- **二次确认 + `--yes` 双路径 (US-071 引入)**: 默认要 `read -r CONFIRM` + `if [ "$CONFIRM" != "YES" ] then exit`; CI / cron / 自动化场景加 `--yes` 跳过。**判据**: 操作"可能丢失或覆盖**用户数据**"必走此模板 (restore-db / drop-table / purge-cache); 操作只生成新文件不动既有数据 (backup-db) 不需要。**确认词用 `YES` 全大写** 而非 `y/yes`——降低误按回车造成的 false-confirm。
+- **`backups/` + `*.sql.gz` 加 .gitignore (US-071 引入)**: 备份产物绝对不能进 git (含敏感生产数据 + 文件体量大)。**判据**: 任何 "脚本输出 + 永远不该 commit" 的目录或扩展名一并加 .gitignore (logs/ / coverage/ / dist/ 已经在; backups/ + *.sql.gz 是 US-071 新增)。下次 US-072 Prometheus exporter / US-075 集成测试产物等"运行时产物" 同款。
+- **README §运维章节模板 (US-071 引入)**: 任何"运维脚本对外文档"走此 6-section 模板: 立即触发 (示例命令 + 产物路径) / 环境变量表 (表格列出每个 var + 默认 + 用途) / 完整参数 (--flag=value 含义 + 互斥关系) / Cron 配置 (具体 `m h * * * cmd` 行 + PATH= 故障排查) / 故障操作指南 (5 步式恢复 SOP) / 注意事项 (安全 / 权限 / 依赖工具安装)。**判据**: 任何"个数 ≥ 2 的 ops 脚本族"必须挂 README 一节，否则继任运维 6 个月后必踩坑。下次 US-072 / US-075 / US-079 任何 ops 流程同款。
+
 ---
 
 
@@ -6481,5 +6490,175 @@ US-068 work was implemented in a prior iteration but **never committed** — `En
 
 ### CLAUDE.md updates
 - None this iteration — the prior US-068 iteration already added `### Ops — env validation / startup gates (US-068+)` to Codebase Patterns at the top of progress.txt (5 items). No new patterns surfaced from the verify-and-commit work.
+
+---
+
+## 2026/06/08 - US-070
+
+### What was implemented
+**运维：API 接口文档自动生成（OpenAPI）** — 引入 swagger-jsdoc + swagger-ui-express，给 24 个 routes 文件添加 `@openapi` JSDoc，development 模式暴露 Swagger UI 在 `/api-docs`，并提供 CLI 入口 `npm run docs:openapi` 输出 JSON 到 `docs/openapi.json`。
+
+**6 项核心交付**：
+
+1. **`backend/src/config/swagger.ts`** (新) — 集中定义 OpenAPI 3.0 base info（title/version/description）、27 个业务分类 tags、11 个常用 schemas 占位（SuccessResponse / ErrorResponse / Pagination / User / Stock / Portfolio / Position / RiskAlert / Backtest / FactorScore / Journal）、bearerAuth securityScheme。**`buildOpenApiSpec()`** 扫描 `src/api/routes/*.ts` + `src/live-trading/routes/*.ts` 拼装完整 spec；**`shouldExposeSwaggerUI()`** 判定是否暴露 UI（production 默认 false / development true / `ENABLE_SWAGGER_UI=true` 可强制 production 暴露）。
+
+2. **`src/index.ts`** — 在 `app.use('/api/settings', ...)` 之后挂载 swagger UI（仅 development）：
+   - `GET /api-docs` → Swagger UI 交互式页面（`customSiteTitle`，`persistAuthorization: true`）
+   - `GET /api-docs.json` → raw OpenAPI 3.0 JSON 供前端 codegen 工具拉取
+   - 不挂 auth middleware，方便联调
+
+3. **`backend/src/scripts/generate-openapi.ts`** (新, CLI) — `npm run docs:openapi` 入口，不启动 Express 直接调 `buildOpenApiSpec()`，输出到 `docs/openapi.json` (默认) 或 `--out=<path>`，并打印统计（paths / operations / tags / schemas 数量）。包含 0 operations warning 提醒维护者忘了写 JSDoc。
+
+4. **24 个 route 文件 `@openapi` JSDoc 全覆盖** — 给所有 routes 加 OpenAPI 3.0 YAML 形式注释，包含：
+   - `tags`（按业务分类，与 `config/swagger.ts` 中的 OPENAPI_TAGS 对齐）
+   - `summary`（1 行中文）
+   - `security`（`authController.authenticate` 中间件 → `[{ bearerAuth: [] }]`，公开 endpoint → `[]` 覆盖全局）
+   - `parameters`（path/query，`:id` → `{id}` OpenAPI 形式转换）
+   - `requestBody`（POST/PUT/PATCH 带 body 时）
+   - `responses`（200 success + 400/401 等业务错误）
+   - SSE endpoints 用 `security: []` 因为 EventSource 不能携带 Bearer Header
+
+5. **`package.json`** — 新增 `"docs:openapi": "ts-node --transpile-only src/scripts/generate-openapi.ts"` script。
+
+6. **依赖**：新增 `swagger-jsdoc` + `swagger-ui-express` (runtime deps) + `@types/swagger-jsdoc` + `@types/swagger-ui-express` (dev deps)。
+
+### Files changed
+- `backend/src/config/swagger.ts` (new, 220 LOC)
+- `backend/src/scripts/generate-openapi.ts` (new, 70 LOC)
+- `backend/src/index.ts` (+18 lines, swagger UI mount + import)
+- `backend/package.json` (+1 script, +4 deps)
+- `backend/package-lock.json` (deps lock)
+- 21 route files (`src/api/routes/{ai,announcement,auth,backtest,factor,journal,paperTrading,portfolio,quant,review,risk,riskAlert,sentiment,settings,signalTrace,stock,strategy,strategyResearch,task,today,user}.routes.ts`) — 加 `@openapi` JSDoc
+- 1 live-trading route (`src/live-trading/routes/liveTrading.routes.ts`) — 加 `@openapi` JSDoc
+- (`market.routes.ts` / `log.routes.ts` / `internal.routes.ts` 之前已有 `@swagger` 块，不动)
+- `docs/openapi.json` (生成产物, 218.9 KB)
+- `ralph/prd.json` (US-070 → passes:true)
+- `ralph/progress.txt` (this entry)
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → exit 0 ✅ matches AC verbatim
+- `cd backend && ./node_modules/.bin/eslint src/config/swagger.ts src/scripts/generate-openapi.ts src/index.ts --quiet` → exit 0
+- `cd backend && ./node_modules/.bin/eslint src/api/routes/*.ts src/live-trading/routes/*.ts --quiet` → exit 0
+- `npm run docs:openapi` → **paths: 228 | operations: 253 | tags: 27 | schemas: 11** (218.9 KB output)
+- Smoke test: dev/production/`ENABLE_SWAGGER_UI=true` 三种模式 `shouldExposeSwaggerUI()` 都返回正确值
+- Smoke test: dev 模式下 Express + swagger UI 挂载成功（无 throw）
+
+### Browser verification
+**Not performed** —— no `dev-browser` MCP skill in this environment. Manual smoke test recommended：
+
+1. `cd backend && npm run dev` 启动 dev server (NODE_ENV=development)
+2. 浏览器打开 `http://localhost:3000/api-docs` 应该看到 Swagger UI 加载完整 OpenAPI spec
+3. 浏览器打开 `http://localhost:3000/api-docs.json` 应该看到 218 KB JSON
+4. 点击任一 endpoint → "Try it out" → "Execute"，鉴权 endpoint 需先点页面顶部 "Authorize" 按钮粘贴 JWT token
+5. production 模式 (`NODE_ENV=production`) `/api-docs` 应该返回 404
+
+### Learnings for future iterations
+
+- **swagger-jsdoc 接受 `@openapi` 和 `@swagger` 两种 JSDoc 标签**，本项目此前 `market.routes.ts` / `log.routes.ts` / `internal.routes.ts` 已用 `@swagger`，US-070 新加文件统一用 `@openapi`（更明确 OpenAPI 3.0 协议名），两种共存无冲突。**下次新加 route 文件用 `@openapi` 保持新增统一**，不要回头改老的 `@swagger`（避免无意义 churn）。
+
+- **`@openapi` JSDoc 块必须紧贴在 `router.method(...)` 调用之前，不能有空行隔开**——swagger-jsdoc 会扫描 JSDoc 块的内容，但 path/method 信息完全来自 JSDoc 里的 YAML 部分（不依赖 next line 的代码）。即便如此，把 JSDoc 与对应 endpoint 紧贴是可读性约定。**多个 JSDoc 块可同时定义同一 path 不同 method**（如 `GET /api/auth/profile` 和 `PUT /api/auth/profile`），swagger-jsdoc 会自动 merge 到同一 path 下。
+
+- **path 必须包含 router prefix**：JSDoc 里写 `/api/auth/login` 而非 `/login`——因为 router 的 prefix 在 `app.use('/api/auth', authRoutes)` 处定义，不在 router 文件内（swagger-jsdoc 不读 `index.ts`）。**新加 route 文件要在 JSDoc 里手动 prepend prefix**，否则 OpenAPI spec 里 path 缺前缀，UI 显示混乱。
+
+- **path 参数 `:id` 必须改写成 `{id}`**：Express 用 `:id` 风格但 OpenAPI 3.0 用 `{id}` 风格。子 agent 输出 24 个文件时已统一转换，但下次手写 JSDoc 注意此差异。**路径参数同时需要在 `parameters` 数组里声明 `in: path`**（否则 UI "Try it out" 不知道这是路径参数）：
+  ```yaml
+  parameters:
+    - in: path
+      name: id
+      required: true
+      schema: { type: integer }
+  ```
+
+- **`security: []` 是 "覆盖全局 security" 的语法**：global `security: [{ bearerAuth: [] }]` 在 `buildOpenApiSpec()` 内默认开启，单个 endpoint 想标记 "不需鉴权" 必须显式 `security: []` 否则继承全局——SSE endpoint 因 EventSource 不能携带 Bearer Header 必须 `security: []`；公开 endpoint（login / register / refresh）同样 `security: []`；鉴权 endpoint 用 `security: [{ bearerAuth: [] }]` 显式标记（虽然继承全局也能用，显式更易读）。
+
+- **`shouldExposeSwaggerUI()` 而非内联 `process.env.NODE_ENV === 'production'`**：production / development / `ENABLE_SWAGGER_UI=true` 三种模式的判定逻辑统一在 `config/swagger.ts` 函数内。`index.ts` 引用此函数而非自己写 if 判断，下次 ops 想加新 mode（如 staging 也暴露）只改一处。**`ENABLE_SWAGGER_UI=true` 是 production 强制开启逃生舱**——少见但有时 ops 上线后需要快速查文档，比 redeploy / restart with NODE_ENV=development 友好。
+
+- **schemas 占位先粗后细**：11 个 schemas（SuccessResponse / ErrorResponse / Pagination / User / Stock / ...）只列了最核心字段（不是 model 完整 Sequelize 定义）。**复用既有 model + DTO 时直接给 `components.schemas.<ModelName>` 占位即可**，等具体 endpoint 需要 "请求/响应字段精确文档" 时再细化字段。一次性把 80+ model 全 schema 化会拖慢迭代且大部分 schema 不会被引用。
+
+- **dev server boot 不被 swagger UI 拖慢**：swagger UI 只在 `shouldExposeSwaggerUI()=true` 时调用 `buildOpenApiSpec()` 一次（启动时），之后 in-memory 服务 raw JSON / UI HTML，请求时不重复构建 spec。**production 完全不调用 buildOpenApiSpec()**（在 if 分支内），swagger-jsdoc + swagger-ui-express 也不被 require 加载（lazy import 在 if 分支后）——production 启动开销 = 0。
+
+- **`docs/openapi.json` 是 generated 产物但提交进 git**：让 frontend codegen 工具（openapi-typescript-codegen / openapi-generator）的 CI 流水线直接拉 git 文件即可，不依赖运行 backend dev server。**约定：每次 `npm run docs:openapi` 后 commit 同步更新**，未来加 `lint:docs` script 检测 `docs/openapi.json` 是否与代码漂移（`git diff --exit-code docs/openapi.json` after regenerating）。
+
+- **24 routes 文件并行处理用 3 个 subagent batch**：parallel-tool-use 让 3 个 subagent 同时跑 5 + 6 + 10 个文件，wall-clock ≈ slowest single batch（~6min）而非 sum-of-all（~18min）。**下次任何"对 N 个独立文件做同质改动"任务**（比如把所有 routes 加日志中间件 / 给所有 model 加 audit 字段 / 给所有 service 加 telemetry hook）走同款 fan-out。
+
+- **prettier 自动 fix 路径**：每次 lint 报 `prettier/prettier` 错误就 `eslint --fix <file>`，不要手 inline 改 string literal（会陷入 prettier 反复改格式的循环）。本 story 4 个文件 (`swagger.ts` / `generate-openapi.ts` / `index.ts` 新增段落) 一次 `--fix` 解决。
+
+### CLAUDE.md updates
+None this iteration — `swagger.ts` 文件顶部已有完整设计文档，加上本 progress.txt 学习项已涵盖未来维护者所需信息。下一次新增 OpenAPI 相关功能（如 client codegen / schema strict mode / API version negotiation）再考虑加 CLAUDE.md。
+
+---
+
+
+## 2026/06/08 - US-071
+
+### What was implemented
+PostgreSQL 全量备份与恢复运维脚本族：`scripts/backup-db.sh` + `scripts/restore-db.sh` + `npm run db:backup` / `npm run db:restore` + README §数据库备份与恢复 (US-071) + `.gitignore` 加 `backups/` & `*.sql.gz`。
+
+**backup-db.sh 核心特性**：
+- `pg_dump --no-owner --no-privileges --format=plain` → `gzip -9` → `backups/YYYY-MM-DD.sql.gz`
+- 临时文件 `$OUT.tmp.$$` + `trap rm-on-EXIT` + 原子 `mv` 防 cron / restore 读到半成品
+- FIFO 保留 30 天（`RETENTION_DAYS` env 可覆盖；0 关闭清理）
+- `find -name '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].sql.gz' -mtime +N` anchor 文件名 pattern 避免误删用户其他文件
+- `command -v pg_dump / gzip` 工具不存在友好 ERROR 退出
+- env 优先级：`DB_HOST` / `DB_PORT` / `DB_NAME` / `DB_USER` / `DB_PASSWORD` / `BACKUP_DIR` / `RETENTION_DAYS` 全部 `${VAR:-default}` 回退
+
+**restore-db.sh 核心特性**：
+- `--date=YYYY-MM-DD` (从 `BACKUP_DIR/$date.sql.gz` 找) 或 `--file=<path>` (任意路径) 互斥参数
+- 严格 `YYYY-MM-DD` regex 校验（避免 `2026/06/06` 输入静默找不到文件）
+- 默认强制二次确认（必须输入大写 `YES`），`--yes` 跳过确认让 CI / cron / 灾难恢复 SOP 能自动跑
+- `--target-db=<name>` 一次性 DB 覆盖（不污染 env）
+- `--drop-create` 先 `DROP / CREATE DATABASE`（连 `postgres` admin db 执行）再灌, 适合恢复到完全干净的库
+- `psql -v ON_ERROR_STOP=1 --quiet` 让单条 SQL 失败立即整 restore 退出避免半 restore 灾难
+- 备份不存在时列出 `ls $BACKUP_DIR` 所有 .sql.gz 帮助用户定位
+
+**npm script 入口**：
+- `backend/package.json` 加 `"db:backup": "bash ../scripts/backup-db.sh"` + `"db:restore": "bash ../scripts/restore-db.sh"`
+- 与既有 `db:migrate` / `db:seed` / `db:reset` 同 namespace
+- `--` 透传：`npm run db:restore -- --date=2026-06-06 --yes`
+
+**README §数据库备份与恢复 (US-071)** 6 section 模板：
+- 立即备份（命令 + 输出路径）
+- 环境变量表（7 行 markdown 表格列默认值 + 说明）
+- 恢复指定日期（5 种用法变体含 drop-create / target-db / file 路径）
+- Cron 配置（具体 crontab 行 + PATH= 故障排查 + env 注入示例）
+- 故障恢复操作指南（4 步 SOP：stop backend / select snapshot / restore / restart）
+- 注意事项（权限 / 加密 / 跨机器恢复 / 磁盘水位）
+
+### Files changed
+- `scripts/backup-db.sh` (新增, +90 行, chmod +x)
+- `scripts/restore-db.sh` (新增, +160 行, chmod +x)
+- `backend/package.json` (+2 行 npm scripts)
+- `README.md` (+83 行 §数据库备份与恢复 (US-071) 章节)
+- `.gitignore` (+4 行 `backups/` + `*.sql.gz`)
+- `ralph/prd.json` (US-071 `passes: true` + notes)
+- `ralph/progress.txt` (Codebase Patterns 新增 § Ops — backup / restore + 本 entry)
+
+### Quality checks
+- `bash -n scripts/backup-db.sh` → OK
+- `bash -n scripts/restore-db.sh` → OK
+- `bash scripts/restore-db.sh --help` → 正常打印 usage 退出 0
+- `bash scripts/restore-db.sh --date=2099/06/06` → 拒绝非 `YYYY-MM-DD` 格式
+- `bash scripts/restore-db.sh --date=2099-01-01 --file=/tmp/x.sql.gz` → 互斥参数拒绝
+- `bash scripts/restore-db.sh --date=2099-01-01 --yes` → 报告备份不存在 + 列已有备份
+- `env -i PATH=/bin bash scripts/backup-db.sh` → pg_dump 不存在友好退出
+- `npm run db:restore -- --help` → 验证 npm 脚本透传 `--` 后参数
+- `python3 -c "json.load(open('backend/package.json'))"` → JSON 合法
+- `python3 -c "json.load(open('ralph/prd.json'))"` → JSON 合法（100 stories）
+- `cd backend && npx tsc --noEmit` → 0 错误
+- `cd backend && npx eslint src --ext .ts` → 0 错误（171 pre-existing warnings 与本 story 无关）
+
+### Browser verification
+N/A — US-071 是纯运维脚本，无 UI 改动。
+
+### Learnings for future iterations
+- **shell 脚本通用 8 项 checklist** 已 codify 进 `### Ops — backup / restore shell scripts (US-071+)` 一节（顶部 docstring / `set -euo pipefail` / `command -v` 依赖校验 / 绝对路径解析 / env 优先级 / `--flag=value` 解析 / 二次确认 + --yes / 临时文件 trap + 原子 rename）。下次 US-076 日志轮转 / US-079 缓存清理 / US-082 数据归档等运维脚本直接照搬。
+- **`find -name '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].sql.gz' -mtime +N` anchor 文件名 pattern 避免误删**：单纯 `find -mtime +30 -delete` 是运维灾难（会顺手删用户手动放的备份 / 配置 / README）。所有"按时间清理"逻辑必须 anchor 文件名 glob 让脚本只动**自己创建**的文件。
+- **`PGPASSWORD` env + `--no-owner --no-privileges` + `ON_ERROR_STOP=1`** 是 PostgreSQL 自动化备份/恢复三件套必备组合 — 跨机器恢复不报 role 错 / cron 不可交互式输 / 单条 SQL fail 整 restore 立即退出。
+- **运维脚本 vs 开发脚本目录分工**: `scripts/<verb>-<resource>.sh` (仓库根) 是运维 / cron / 管理员触发的纯 shell；`backend/src/scripts/<x>.ts` (backend) 是开发期 `ts-node` 跑的 CLI 需要 TS 上下文。两者不互通也不该互相调用。本 codify 进 `### Ops — backup / restore shell scripts` 一节。
+- **README §运维章节模板 6 section**: 立即触发 / env 变量表 / 完整参数 / Cron 配置 / 故障 SOP / 注意事项 — 任何"个数 ≥ 2 的 ops 脚本族"按此模板挂 README，否则继任运维 6 个月后必踩坑。
+- **npm script `--` 透传约定**: `bash <path-to-script>` 默认 `npm run <name> -- --arg=v` 让 `--` 后参数原样传给脚本（npm 内部约定）。文档同时给两种用法（仓库根直接 `bash scripts/x.sh ...` + `cd backend && npm run x:y -- ...`）让用户选偏好。
+
+### CLAUDE.md updates
+None this iteration — 学习项已全部沉淀到 progress.txt 的 `### Ops — backup / restore shell scripts (US-071+)` 一节供未来运维脚本 story 直接复用；脚本本身有完整顶部 docstring + README 章节，下游维护者所需信息已覆盖。下次有第 2 个运维脚本（US-076 日志轮转 / US-079 缓存清理）出现时再视情况新建 `scripts/CLAUDE.md`。
 
 ---

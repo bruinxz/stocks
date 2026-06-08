@@ -347,6 +347,89 @@ PORT=3001 npm start
 如果您在二次开发时需要查阅或者扩充数据库字段，请查看完整的数据库初始化脚本，该脚本包含了所有的表结构和字段定义：
 👉 [scripts/init-db-full.sql](./scripts/init-db-full.sql)
 
+## 数据库备份与恢复 (US-071)
+
+PostgreSQL 全量备份/恢复脚本位于 `scripts/`，配合 cron 实现每日全量快照与故障恢复。
+
+### 立即备份
+```bash
+# 从仓库根目录:
+bash scripts/backup-db.sh
+
+# 或通过 backend 的 npm script (从 backend/ 目录):
+cd backend && npm run db:backup
+```
+
+产物写入 `<repo-root>/backups/YYYY-MM-DD.sql.gz`，超过 30 天的旧备份自动清理（`RETENTION_DAYS=N` 可覆盖；设为 0 关闭清理）。
+
+环境变量（缺失则回退默认）：
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `DB_HOST` | `localhost` | PostgreSQL 主机 |
+| `DB_PORT` | `5432` | 端口 |
+| `DB_NAME` | `stock_backtest` | 库名 |
+| `DB_USER` | `postgres` | 用户名 |
+| `DB_PASSWORD` | `postgres` | 密码（通过 `PGPASSWORD` 传给 `pg_dump`） |
+| `BACKUP_DIR` | `<repo>/backups` | 备份目录 |
+| `RETENTION_DAYS` | `30` | 旧备份保留天数 |
+
+### 恢复指定日期
+```bash
+# 从仓库根目录:
+bash scripts/restore-db.sh --date=2026-06-06
+
+# 或通过 npm script (注意 --, 它把后续参数透传给脚本):
+cd backend && npm run db:restore -- --date=2026-06-06
+
+# 自动化场景跳过二次确认:
+bash scripts/restore-db.sh --date=2026-06-06 --yes
+
+# 从任意路径恢复 (跳过 BACKUP_DIR 查找):
+bash scripts/restore-db.sh --file=/tmp/snapshot.sql.gz --target-db=stock_backtest_test --yes
+
+# 恢复前先 DROP + CREATE database (清空再灌, 适合恢复到全新空库):
+bash scripts/restore-db.sh --date=2026-06-06 --drop-create --yes
+```
+
+restore 默认要求输入 `YES` 二次确认（覆盖目标库内容前），CI/cron 等场景请加 `--yes`。
+
+### Cron 配置（推荐每日凌晨 03:15 备份）
+
+编辑 crontab：
+```bash
+crontab -e
+```
+
+添加（**绝对路径**避免 cron 找不到 `pg_dump` 与脚本）：
+```cron
+# 每日 03:15 全量备份, 输出追加到日志
+15 3 * * * cd /opt/stocks && /bin/bash scripts/backup-db.sh >> /var/log/stocks-backup.log 2>&1
+```
+
+若 `pg_dump` 不在 cron 的默认 `PATH`：
+```cron
+PATH=/usr/local/bin:/usr/bin:/bin
+15 3 * * * cd /opt/stocks && /bin/bash scripts/backup-db.sh >> /var/log/stocks-backup.log 2>&1
+```
+
+如需切换备份目标或保留策略，临时在 cron 行前导入环境变量即可：
+```cron
+15 3 * * * cd /opt/stocks && DB_HOST=db.prod RETENTION_DAYS=60 /bin/bash scripts/backup-db.sh >> /var/log/stocks-backup.log 2>&1
+```
+
+### 故障恢复操作指南
+1. 停掉 backend 服务（避免恢复中途有写入冲突）：`pm2 stop stock-backend`
+2. 选择最近的有效快照：`ls -lh backups/`
+3. 恢复：`bash scripts/restore-db.sh --date=<YYYY-MM-DD> --drop-create --yes`
+4. 重启 backend：`pm2 restart stock-backend`，Sequelize 会按 `alter:true` 自动对齐 schema
+
+### 注意事项
+- 备份文件**未加密**，请保证 `backups/` 目录权限（建议 `chmod 700`），生产环境结合云端对象存储（OSS/S3）做异地副本
+- `pg_dump` 与 `psql` 是脚本依赖，需安装 `postgresql-client`（macOS: `brew install libpq`；Ubuntu: `apt install postgresql-client`）
+- 备份采用 `--no-owner --no-privileges`，跨机器恢复时不会因 role 不存在报错
+- 大型库建议在备份完成后 `df -h backups/` 监控磁盘水位
+
 ## xz 沙箱开发（服务器 3021 / 3020）
 
 若在独立沙箱环境开发，请阅读 **[docs/DEV_XZ_ONBOARDING.md](./docs/DEV_XZ_ONBOARDING.md)**（Git 分支 `dev_xz`、仅发布 xz 的 `deploy_xz.sh`、与 lym/main 隔离说明）。

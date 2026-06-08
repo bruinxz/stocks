@@ -17,6 +17,8 @@
     "db:migrate": "sequelize-cli db:migrate",
     "db:seed": "sequelize-cli db:seed:all",
     "db:reset": "sequelize-cli db:migrate:undo:all && sequelize-cli db:migrate && sequelize-cli db:seed:all",
+    "db:backup": "bash ../scripts/backup-db.sh",
+    "db:restore": "bash ../scripts/restore-db.sh",
     "data:sync-stocks": "ts-node src/scripts/data-cli.ts sync-stocks",
     "data:sync-history": "ts-node src/scripts/data-cli.ts sync-history",
     "data:sync-batch": "ts-node src/scripts/data-cli.ts sync-batch",
