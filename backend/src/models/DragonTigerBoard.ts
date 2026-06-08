@@ -30,8 +30,10 @@ import { Table, Column, Model, DataType, CreatedAt, UpdatedAt } from 'sequelize-
     { fields: ['buyer_seat'] },
     { fields: ['seller_seat'] },
     { fields: ['is_famous_yz'] },
+    { fields: ['seat_type'] }, // US-088: 按归属机构类型筛查（公募/外资/私募/游资）
     { fields: ['trade_date', 'stock_code'] },
     { fields: ['trade_date', 'is_famous_yz'] },
+    { fields: ['stock_code', 'seat_type'] }, // US-088: 单股归属机构维度过滤
   ],
 })
 export class DragonTigerBoard extends Model {
@@ -118,6 +120,26 @@ export class DragonTigerBoard extends Model {
     comment: '买方营业部是否命中知名游资白名单',
   })
   declare is_famous_yz: boolean;
+
+  /**
+   * US-088: 买方营业部归属机构类型 — public_fund / foreign / private_fund /
+   * famous_yz / unknown。
+   *
+   * 由 `famousSeats.getSeatType(buyer_seat)` 在 sync 时计算并落库。
+   * 短线策略可按 `seat_type='public_fund'` 跟随机构、`seat_type='foreign'`
+   * 跟随外资、`seat_type='famous_yz'` 跟随游资。
+   *
+   * 注意：这是 `buyer_seat` 的归属类型；`seller_seat` 的类型未存储 —
+   * 卖方席位的"跟随"信号意义有限（卖出 = 出货），暂不需要。
+   */
+  @Column({
+    type: DataType.STRING(20),
+    allowNull: false,
+    defaultValue: 'unknown',
+    field: 'seat_type',
+    comment: '买方营业部归属机构类型 (public_fund/foreign/private_fund/famous_yz/unknown)',
+  })
+  declare seat_type: string;
 
   @Column({
     type: DataType.STRING(50),

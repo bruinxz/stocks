@@ -5,7 +5,13 @@ import {
   DragonTigerBoardRow,
   dragonTigerClient,
 } from '../sources/DragonTigerClient';
-import { isFamousYouzi, canonicalSeatName } from '../../constants/famousSeats';
+import {
+  isFamousYouzi,
+  canonicalSeatName,
+  getSeatType,
+  SeatType,
+} from '../../constants/famousSeats';
+import { Op } from 'sequelize';
 
 /**
  * 龙虎榜（Dragon-Tiger Board）日度入库服务
@@ -41,6 +47,44 @@ export interface SyncRangeResult {
   details: SyncDateResult[];
 }
 
+/**
+ * US-088: 龙虎榜查询过滤参数
+ *
+ * 所有字段都是 optional —— 全空时返回最近 7 天的全部龙虎榜行（受 limit 限制）。
+ * stock_code 可加可不加；seat_type 用于按归属机构维度过滤。
+ */
+export interface ListDragonTigerOptions {
+  /** 股票代码（无市场后缀，例如 "600519"），缺省返回全市场 */
+  stock_code?: string;
+  /** 归属机构类型过滤（public_fund / foreign / private_fund / famous_yz / unknown） */
+  seat_type?: SeatType;
+  /** 起始日期 YYYY-MM-DD（含）；缺省 = end-7d */
+  start?: string;
+  /** 结束日期 YYYY-MM-DD（含）；缺省 = 今天 */
+  end?: string;
+  /** 返回行数上限，默认 200，硬上限 1000 防止误用 */
+  limit?: number;
+}
+
+/**
+ * US-088: 龙虎榜查询返回的精简行结构
+ *
+ * 比 Sequelize Model 实例轻量，避免把 raw_payload 等大字段透传给前端。
+ */
+export interface DragonTigerEntry {
+  trade_date: string;
+  stock_code: string;
+  stock_name: string | null;
+  buyer_seat: string;
+  seller_seat: string;
+  reason: string | null;
+  buy_amount: number | null;
+  sell_amount: number | null;
+  net_amount: number | null;
+  is_famous_yz: boolean;
+  seat_type: SeatType;
+}
+
 export class DragonTigerSyncService {
   private client: DragonTigerClient;
 
@@ -68,12 +112,14 @@ export class DragonTigerSyncService {
         };
       }
 
-      // 计算 is_famous_yz 标签并归一席位名（命中别名时落标准名进库）
+      // 计算 is_famous_yz / seat_type 标签并归一席位名（命中别名时落标准名进库）
       let famousHits = 0;
       const records = rows.map((row: DragonTigerBoardRow) => {
         const buyerCanonical = canonicalSeatName(row.buyer_seat);
         const sellerCanonical = canonicalSeatName(row.seller_seat);
         const famous = isFamousYouzi(row.buyer_seat);
+        // US-088: seat_type 用归一后的买方名查 — getSeatType 内部也会兜底原名 / 别名
+        const seatType = getSeatType(buyerCanonical);
         if (famous) famousHits += 1;
 
         return {
@@ -87,6 +133,7 @@ export class DragonTigerSyncService {
           sell_amount: row.sell_amount ?? undefined,
           net_amount: row.net_amount ?? undefined,
           is_famous_yz: famous,
+          seat_type: seatType,
           source: 'akshare',
           raw_payload: row.raw_payload ?? {},
         };
@@ -100,6 +147,7 @@ export class DragonTigerSyncService {
           'sell_amount',
           'net_amount',
           'is_famous_yz',
+          'seat_type',
           'source',
           'raw_payload',
           'updated_at',
@@ -194,6 +242,56 @@ export class DragonTigerSyncService {
       details,
     };
   }
+
+  /**
+   * US-088: 按过滤条件查询龙虎榜行。
+   *
+   * 用于 `GET /api/data/dragon-tiger` 端点 — 短线策略 / 前端面板按
+   * `stock_code` + `seat_type` 拉取最近 N 天的龙虎榜营业部明细。
+   *
+   * 默认行为：
+   *   - 缺省日期范围 = 最近 7 天（含今天）；
+   *   - 缺省 limit = 200；硬上限 1000；
+   *   - 按 `trade_date DESC, net_amount DESC` 排序（最近 + 净买入大的优先）；
+   *   - stock_code 与 seat_type 互不依赖，可任选。
+   *
+   * 返回精简的 `DragonTigerEntry[]`，避免把 `raw_payload` 透传到 HTTP。
+   */
+  async listEntries(options: ListDragonTigerOptions = {}): Promise<DragonTigerEntry[]> {
+    const limit = clampLimit(options.limit);
+    const { start, end } = resolveDateRange(options.start, options.end);
+
+    const where: Record<string, unknown> = {
+      trade_date: { [Op.between]: [start, end] },
+    };
+    if (options.stock_code) where.stock_code = options.stock_code;
+    if (options.seat_type) where.seat_type = options.seat_type;
+
+    const rows = await DragonTigerBoard.findAll({
+      where,
+      order: [
+        ['trade_date', 'DESC'],
+        ['net_amount', 'DESC'],
+      ],
+      limit,
+      raw: true,
+    });
+
+    return rows.map(r => ({
+      trade_date: typeof r.trade_date === 'string' ? r.trade_date : String(r.trade_date),
+      stock_code: r.stock_code,
+      stock_name: r.stock_name ?? null,
+      buyer_seat: r.buyer_seat,
+      seller_seat: r.seller_seat,
+      reason: r.reason ?? null,
+      buy_amount: r.buy_amount === undefined || r.buy_amount === null ? null : Number(r.buy_amount),
+      sell_amount:
+        r.sell_amount === undefined || r.sell_amount === null ? null : Number(r.sell_amount),
+      net_amount: r.net_amount === undefined || r.net_amount === null ? null : Number(r.net_amount),
+      is_famous_yz: Boolean(r.is_famous_yz),
+      seat_type: (r.seat_type as SeatType) || 'unknown',
+    }));
+  }
 }
 
 /** ISO YYYY-MM-DD → Date (UTC midnight)，避免本地时区漂移 */
@@ -203,6 +301,48 @@ function parseIsoDate(iso: string): Date {
   }
   const [y, m, d] = iso.split('-').map(n => parseInt(n, 10));
   return new Date(Date.UTC(y, m - 1, d));
+}
+
+/**
+ * US-088 helper: 限定 limit 在 [1, 1000] 内，默认 200。
+ *
+ * 公开 export 以便单测覆盖（边界 / 负数 / NaN / 超大）。
+ */
+export function clampLimit(raw: unknown, defaultValue = 200): number {
+  const HARD_MAX = 1000;
+  if (raw === undefined || raw === null || raw === '') return defaultValue;
+  const num = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isFinite(num)) return defaultValue;
+  const intVal = Math.floor(num);
+  if (intVal <= 0) return 1;
+  if (intVal > HARD_MAX) return HARD_MAX;
+  return intVal;
+}
+
+/**
+ * US-088 helper: 解析查询日期范围，缺省 end=今天 / start=end-7d。
+ *
+ * 公开 export 以便单测覆盖（缺省 / 单边缺 / 非法格式 fallback）。
+ *
+ * 非法日期 fallback 到缺省值，避免抛错让上层 controller 必须二次校验；
+ * controller 仍可在前置阶段单独 reject 明显非法的 query string。
+ */
+export function resolveDateRange(
+  rawStart?: string,
+  rawEnd?: string,
+  todayIso = new Date().toISOString().slice(0, 10)
+): { start: string; end: string } {
+  const ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
+  const end = rawEnd && ISO_RE.test(rawEnd) ? rawEnd : todayIso;
+
+  if (rawStart && ISO_RE.test(rawStart)) {
+    return { start: rawStart, end };
+  }
+
+  // 默认 = end - 7 天
+  const endDate = new Date(`${end}T00:00:00.000Z`);
+  endDate.setUTCDate(endDate.getUTCDate() - 7);
+  return { start: endDate.toISOString().slice(0, 10), end };
 }
 
 export const dragonTigerSyncService = new DragonTigerSyncService();

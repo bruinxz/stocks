@@ -88,6 +88,18 @@ A boolean tag computed from a whitelist (e.g. `is_famous_yz` against
 `constants/famousSeats.ts`) belongs in the **service**, not the Python helper:
 TS owns business logic, Python is the dumb fetcher.
 
+**US-088 extension**: when a whitelist outgrows a flat `string[]` and needs
+typed metadata (席位归属机构 / 关键词风险等级 / KOL 情绪权重), upgrade it to
+`ReadonlyArray<ProfileType>` (e.g. `SEAT_PROFILES: ReadonlyArray<SeatProfile>`)
+as the single source of truth and **derive** the legacy string array via
+`.filter(...).map(p => p.name)` for backward compat. Ship a `getXxxType(name)`
+function with a multi-tier fallback chain (direct hit → alias normalize →
+keyword fallback → unknown) and an `isValidXxxType(value)` type guard for HTTP
+query validation. The sync service populates the new typed column at write
+time so downstream factor / strategy / UI can group by it without re-running
+the whitelist logic on every read. `famousSeats.ts` + `DragonTigerBoard.seat_type`
++ `DragonTigerSyncService.syncDate` is the canonical reference.
+
 ## Multi-endpoint merge (US-007 涨停 zt_pool + strong_pool)
 
 When AKShare exposes **two endpoints with overlapping rows + each-side-unique

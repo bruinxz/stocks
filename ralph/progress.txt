@@ -37,6 +37,8 @@
 - **工作区聚合 service per-block error fallback** (US-018): `getXxxSignals()` 用 `Promise.all` 并发跑 N 个独立查询，每个 catch 成自己的 fallback object 带 `error?: string` 字段。**任一查询失败不能阻塞其他**——前端按需在该 Card 顶部显示 `<Alert>`。`TodaySignalsService` 是模板：3 策略 + 账户 + 告警 + 事件 = 6 个并发分支，全部 catch fall back。一键操作 endpoint (`applySignals`) 先重新跑一次 `getSignals` 保证下单决策与 UI 一致，再用 `paperTradingFacade.placeOrder` 逐笔下单（不绕开 facade —— 否则 risk profile / automation hook 错位）。**已持有 + 本批次重复都要 skip**，避免一键下三次。
 - **Symlinks for tooling in the worktree** — the worktree has no `backend/node_modules`. Before running typecheck, symlink: `cd backend && ln -s /Users/bytedance/go/src/github.com/bruinxz/stocks/backend/node_modules node_modules`. The repo's `backend/.gitignore` matches `node_modules/` as a directory pattern but the symlink shows up as an untracked symlink — REMOVE it before `git add` to keep the tree clean.
 - **数据源健康看板分类阈值 + lag 计算分流** (US-079 引入): 数据源的"是否落后"判定 **不能一刀切**——daily 行情（0 → green / 1-3 → yellow / >3 → red）≠ 周期披露（30 / 90 → 绿/黄/红）≠ 事件流（7 / 14）。配合 lag 算法分流：daily 走 `computeLagInTradingDays(latest, ref, knownTradeDatesDesc)` 绕开周末 / 节假日；periodic / event 走 `_computeCalendarLag(latest, ref)` 日历日差。`DataHealthStatusService.decideLevel(lag, category)` 是参考实现。新数据源加入注册中心 (`getSourceDefinitions()` array push) 后 service / controller / route / 前端 dashboard 全自动覆盖；前端"手动触发同步"按钮只放行 5 个 daily 类源 (northbound/dragon_tiger/limit_up/industry_flow/snowball_hot)；周期 / per-stock 类返回 400 + 友好 CLI 提示，避免单按钮阻塞 30+ 分钟。
+- **白名单"字段对象数组化"升级范式** (US-088 引入)：原有简单 `ReadonlyArray<string>` 白名单（如 US-006 `FAMOUS_YOUZI_SEATS`）若后续需要分类型元数据（席位归属机构 / 关键词风险等级 / KOL 情绪权重），**新增** `ReadonlyArray<ProfileType>` 作为单一事实源，原 string array 改为 `.filter(...).map(p => p.name)` 派生量。**不要在白名单里塞两份**。再配合 4 项标准设施：(1) `name → profile` 的 Map 索引供 O(1) 查询；(2) 别名归一 `canonicalXxx(name)` 处理数据源拼写漂移；(3) `getXxxType(name)` 的多层兜底链（直接命中 → 别名归一 → 关键词兜底 → unknown），让白名单未覆盖时仍能软分类；(4) `isValidXxxType(value)` 的 type guard 供 controller 校验 query param 返回 400。下次扩展任何"分类标签型"白名单按此 5 件套，保持向后兼容。
+- **Sequelize raw:true + DECIMAL 字段必须 Number() 转换** (US-088 复用 quality_high 教训)：`findAll({ raw: true })` 取 DECIMAL 字段是 string ("1234.5600")，输出 HTTP 前必须 `Number(r.field)`。同时 nullable 字段先 `=== null/undefined` 检查再 Number 避免 `Number(null) === 0` 大坑。**新接口 service 返回 entity[] 时统一过一遍这道转换**，避免前端拿到 "1234.5600" 而不是 1234.56 把图表对比 / 排序搞错。
 
 ### A-share data ingestion (US-005+)
 - **New data sources live in 3 paired files**: `backend/src/models/<Source>.ts` (Sequelize model, register in `models/index.ts` AND `config/database.ts`), `backend/src/data/sources/<Source>Client.ts` (Python helper wrapper), `backend/src/data/services/<Source>SyncService.ts` (DB write + range/checkpoint). Add a CLI under `backend/src/scripts/sync-<source>.ts` and a `sync:<source>` npm script. The northbound trio is the canonical reference.
@@ -7661,4 +7663,23 @@ PaperTradingFacade.placeOrder 保留 7-method facade 收敛）。
   **判据**：未来新增"收盘后 AI/聚合"类 cron 在 15:45 / 15:50 / 15:55 顺延填位，
   prompt/汇总输入数据保持时序无 race。
 
+---
+
+## 2026-06-09 03:15 - US-088
+- 实现"龙虎榜营业部归属机构识别"：扩展 famousSeats.ts 加 SeatProfile 分类（公募/外资/私募/著名游资/unknown）+ 110 个营业部白名单；DragonTigerBoard 模型加 seat_type 列与索引；DragonTigerSyncService 入库时计算并落库 seat_type；新增 GET /api/data/dragon-tiger 端点支持按 stock_code/seat_type/日期范围查询。
+- Files changed:
+  - backend/src/constants/famousSeats.ts  (新增 SeatProfile 类型 / SEAT_PROFILES 110 条 / getSeatType / isValidSeatType / 别名扩展)
+  - backend/src/models/DragonTigerBoard.ts  (新增 seat_type STRING(20) 列 + 两个新索引)
+  - backend/src/data/services/DragonTigerSyncService.ts  (syncDate 内调用 getSeatType 填字段；新增 listEntries / ListDragonTigerOptions / DragonTigerEntry；export 出 clampLimit / resolveDateRange 纯函数 helpers 供单测)
+  - backend/src/api/controllers/DataController.ts  (新增 listDragonTiger handler + seat_type 校验 400)
+  - backend/src/api/routes/data.routes.ts  (注册 GET /dragon-tiger，static route 在 :source catchall 之前)
+  - backend/tests/services/famous-seats.test.ts  (新；47 assertions 覆盖 SEAT_PROFILES 完整性 / isFamousYouzi 向后兼容 / canonicalSeatName / getSeatType 直接命中+别名+兜底+边界 / isValidSeatType)
+  - backend/tests/services/dragon-tiger-sync-service.test.ts  (新；23 assertions 覆盖 clampLimit 边界 / resolveDateRange 缺省+非法+跨月跨年)
+- 质量门：typecheck 通过 / lint 通过 / 全部 65 个 backend 测试通过（含 2 个新增文件 47+23=70 assertions）。
+- **Learnings for future iterations:**
+  - **白名单"扩字段不扩文件"**：US-006 既有 `FAMOUS_YOUZI_SEATS: ReadonlyArray<string>` 已被 isFamousYouzi 使用；US-088 需要分类时**新增** `SEAT_PROFILES: ReadonlyArray<SeatProfile>` (字段对象数组) 作为单一事实源，旧的 string array 改成 `.filter(p => p.type === 'famous_yz').map(p => p.name)` 派生量。这种"原 string 数组 → 升级为字段化对象数组 + 旧 API 派生"的范式既向后兼容 isFamousYouzi 调用方，又让新代码可读多维度元数据。下次同款扩展（如未来 KOL 白名单加情绪权重 / 关键词加风险等级）按此模式：新数组 + 旧数组 derive，不要在白名单里塞两份。
+  - **getSeatType 兜底链**：「白名单标准名 → 别名归一 → 拉萨系兜底 → 沪深港通关键词兜底 → 机构专用关键词兜底 → unknown」这条 5 段兜底链是核心 — 当 AKShare 输出席位名漂移时，关键词兜底（如包含"沪股通"）保证未来扩张外资席位时不必每次都改白名单。**新增分类型字段时同步设计兜底链**，避免"白名单没收录就全部 unknown"。
+  - **新 endpoint 添加套路**：DataController 加 method bind / 加 handler / 校验 query 用专门的 type guard (isValidSeatType) 返回 400；service 层 export 出纯函数 helper (clampLimit / resolveDateRange) 让单测脱离 DB；route 文件按 "static GET 在 :param POST 之前" 顺序注册（沿用 US-015 lesson 的注释提醒）。
+  - **listEntries vs syncDate 同一 service 里**：龙虎榜既有写入（syncDate / syncRange）也需要 web 端查询（listEntries），都放 DragonTigerSyncService 同一 service 而不是再单建 DragonTigerQueryService —— service 类名只是入口，方法各自单测，不必拆。
+  - **raw: true + Sequelize DECIMAL 字段需要 Number() 转换**：findAll({ raw: true }) 拿到的 DECIMAL 字段是 string ("1234.5600")，输出给 HTTP / 前端前必须 `Number(r.buy_amount)`。同时 nullable 字段先 `=== null/undefined` 检查再 Number 避免 Number(null)=0 大坑（已在 quality_high 因子学到，这里复用）。
 ---
