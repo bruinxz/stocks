@@ -27,6 +27,7 @@ import { dailyTradingDigestService } from './DailyTradingDigestService';
 import { earningsForecastWatcher } from './EarningsForecastWatcher';
 import { weeklyReviewReportService } from './WeeklyReviewReportService';
 import { marketBriefService } from './MarketBriefService';
+import { enhancedTradingJournalService } from './EnhancedTradingJournalService';
 import { benchmarkIndexService } from './BenchmarkIndexService';
 import { automatedRecommendationLoopService } from './AutomatedRecommendationLoopService';
 import { recommendationTradeOutcomeService } from './RecommendationTradeOutcomeService';
@@ -2531,6 +2532,71 @@ class SchedulerService {
             `engine=${briefResult.nlp_engine || '—'} persisted=${briefResult.persisted}` +
             (dryRun ? '（dry-run，未写表）' : '')
         );
+      } else if (task.type === 'ENHANCED_TRADING_JOURNAL_GENERATE') {
+        // US-087 — 每个交易日 15:30 收盘后批量生成增强版 AI 复盘日记。
+        // 5 段 markdown 输出：## 今日战报 / ## 操作复盘 / ## 市场观察 / ## 明日策略 / ## 风险提醒。
+        // 写入 trading_journals 表（保留 user_notes 不动）。
+        // `user_id` 缺省 = 扫所有 is_active 用户；`overwrite_hand_edited`=true 让 admin force-regen。
+        // `dry_run`=true 让 ops 预演 markdown 不实际写表。
+        const targetUserId = parameters.user_id || parameters.userId;
+        const journalDryRun =
+          parameters.dry_run !== undefined
+            ? Boolean(parameters.dry_run)
+            : parameters.dryRun !== undefined
+            ? Boolean(parameters.dryRun)
+            : false;
+        const overwriteHandEdited =
+          parameters.overwrite_hand_edited !== undefined
+            ? Boolean(parameters.overwrite_hand_edited)
+            : parameters.overwriteHandEdited !== undefined
+            ? Boolean(parameters.overwriteHandEdited)
+            : false;
+        const journalSkipAI =
+          parameters.skip_ai !== undefined
+            ? Boolean(parameters.skip_ai)
+            : parameters.skipAi !== undefined
+            ? Boolean(parameters.skipAi)
+            : false;
+        const journalResult = await enhancedTradingJournalService.generateForAll({
+          user_id: targetUserId ? Number(targetUserId) : undefined,
+          trade_date: parameters.trade_date || parameters.tradeDate,
+          dry_run: journalDryRun,
+          overwrite_hand_edited: overwriteHandEdited,
+          skip_ai: journalSkipAI,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: journalResult.scanned_users,
+          completed_items: journalResult.generated_count + journalResult.partial_count,
+          failed_items: journalResult.failed_count,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: null,
+          result_summary: {
+            scenario: 'enhanced_trading_journal_generate',
+            trade_date: journalResult.trade_date,
+            scanned_users: journalResult.scanned_users,
+            generated_count: journalResult.generated_count,
+            partial_count: journalResult.partial_count,
+            skipped_count: journalResult.skipped_count,
+            failed_count: journalResult.failed_count,
+            dry_run: journalDryRun,
+            per_user_summary: journalResult.per_user.map(u => ({
+              user_id: u.user_id,
+              username: u.username,
+              status: u.status,
+              persisted: u.persisted,
+              saved_row_id: u.saved_row_id,
+              skip_reason: u.skip_reason,
+              error: u.error,
+            })),
+          },
+        });
+        logger.info(
+          `AI 复盘日记生成完成。trade_date=${journalResult.trade_date} 扫描用户 ${journalResult.scanned_users}，` +
+            `生成 ${journalResult.generated_count}，部分 ${journalResult.partial_count}，` +
+            `跳过 ${journalResult.skipped_count}，失败 ${journalResult.failed_count}` +
+            (journalDryRun ? '（dry-run，未实际写表）' : '')
+        );
       } else if (task.type === 'AUTO_RECOMMENDATION_LOOP') {
         const result = await automatedRecommendationLoopService.run({
           username: parameters.username || 'lym',
@@ -3796,6 +3862,23 @@ class SchedulerService {
         is_active: true,
         parameters: {
           dry_run: false,
+          skip_ai: false,
+        },
+      },
+      {
+        // US-087 — 每个交易日 15:40 收盘后批量生成增强版 AI 复盘日记。
+        // 5 段 markdown 输出（今日战报 / 操作复盘 / 市场观察 / 明日策略 / 风险提醒），
+        // 写入 trading_journals 表，保留用户已追加的 user_notes 不动。
+        // 默认 overwrite_hand_edited=false 不覆盖用户手编版本。
+        // 时间晚于 daily_digest (15:30) 与 earnings_forecast watchlist (15:35)，
+        // 让 journal 能反映当日已生成的 digest / 业绩告警状态。
+        name: 'AI 复盘日记日度生成',
+        type: 'ENHANCED_TRADING_JOURNAL_GENERATE',
+        cron_expression: '40 15 * * 1-5',
+        is_active: true,
+        parameters: {
+          dry_run: false,
+          overwrite_hand_edited: false,
           skip_ai: false,
         },
       },
