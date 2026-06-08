@@ -459,6 +459,7 @@ const expectedFactors = [
   'insider_trade',
   'liquidity',
   'low_vol',
+  'margin_flow',
   'momentum',
   'momentum_reversal',
   'money_flow',

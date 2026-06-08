@@ -403,7 +403,7 @@ assert(
 console.log('\n## 常量校验');
 assert(`WINDOW_DAYS = 60`, WINDOW_DAYS === 60, `actual=${WINDOW_DAYS}`);
 
-console.log('\n## 17 个因子全部存在');
+console.log('\n## 18 个因子全部存在');
 {
   const expectedFactors = [
     'analyst_consensus',
@@ -415,6 +415,7 @@ console.log('\n## 17 个因子全部存在');
     'insider_trade',
     'liquidity',
     'low_vol',
+    'margin_flow',
     'momentum',
     'momentum_reversal',
     'money_flow',
@@ -426,8 +427,8 @@ console.log('\n## 17 个因子全部存在');
   ];
   const registered = factorRegistry.listNames().sort();
   assert(
-    `共 17 个因子注册`,
-    registered.length === 17,
+    `共 18 个因子注册`,
+    registered.length === 18,
     `actual=${registered.length}: [${registered.join(', ')}]`
   );
   for (const f of expectedFactors) {

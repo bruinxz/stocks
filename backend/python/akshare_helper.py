@@ -4240,6 +4240,195 @@ def get_shareholder_trade(symbol: str = '全部') -> List[Dict[str, Any]]:
         return []
 
 
+def get_margin_trading_detail(date: str) -> List[Dict[str, Any]]:
+    """
+    Fetch per-stock 融资融券交易明细 (Margin Trading Detail) for a single trading day — US-091.
+
+    Combines two AKShare endpoints (深交所 + 上交所) into a unified per-stock schema:
+      - `stock_margin_detail_szse(date)` — 深证证券交易所融资融券明细
+      - `stock_margin_detail_sse(date)`  — 上海证券交易所融资融券明细
+
+    两交易所列名不一致, 内部对齐到统一 schema:
+        深交所 (szse): 证券代码 / 证券简称 / 融资买入额 / 融资余额 /
+                       融券卖出量 / 融券余量 / 融券余额 / 融资融券余额
+        上交所 (sse):  信用交易日期 / 标的证券代码 / 标的证券简称 /
+                       融资余额 / 融资买入额 / 融资偿还额 / 融券余量 /
+                       融券卖出量 / 融券偿还量
+
+    缺失字段填 None:
+      - 深交所无 "融资偿还额" → fin_repay_amt=None (TS 服务层 day-to-day diff 推算)
+      - 上交所无 "融券余额"   → short_balance=None (端点限制, 不强行 backfill)
+      - 上交所无 "融资融券余额合计" → total_margin_balance=None
+
+    Args:
+        date: ISO YYYY-MM-DD or YYYYMMDD (单个交易日)
+
+    Returns:
+        List of dicts, one per (stock_code, exchange) combination:
+            {trade_date, stock_code, stock_name, exchange,
+             fin_balance, fin_buy_amt, fin_repay_amt,
+             short_balance, short_sell_vol, short_repay_vol,
+             short_volume, total_margin_balance, raw_payload}
+        Returns [] on empty/error so caller can checkpoint a "tried but empty" day.
+
+    Schedule: T+1 盘后 (AKShare 通常 T+1 09:00 之前更新当日数据).
+    """
+    try:
+        pure_date = str(date).replace('-', '')
+        if len(pure_date) != 8 or not pure_date.isdigit():
+            print(f'Invalid date format for margin trading: {date}', file=sys.stderr)
+            return []
+        iso_date = _format_iso_date(pure_date)
+        if not iso_date:
+            print(f'Failed to format iso date: {pure_date}', file=sys.stderr)
+            return []
+
+        print(f'Fetching margin trading detail for {iso_date}', file=sys.stderr)
+
+        results: List[Dict[str, Any]] = []
+
+        # ----- 深交所 -----
+        fn_szse = getattr(ak, 'stock_margin_detail_szse', None)
+        if fn_szse is None:
+            print('AKShare missing stock_margin_detail_szse', file=sys.stderr)
+        else:
+            try:
+                df_sz = fn_szse(date=pure_date)
+            except TypeError:
+                df_sz = fn_szse(pure_date)
+            except Exception as e:
+                print(f'stock_margin_detail_szse({pure_date}) failed: {e}', file=sys.stderr)
+                df_sz = None
+
+            if df_sz is None or df_sz.empty:
+                print(f'AKShare SZSE margin detail empty for {pure_date}', file=sys.stderr)
+            else:
+                col_map_sz: Dict[str, str] = {}
+                for col in df_sz.columns:
+                    col_s = str(col)
+                    if col_s in ('证券代码', '股票代码'):
+                        col_map_sz['stock_code'] = col_s
+                    elif col_s in ('证券简称', '股票简称'):
+                        col_map_sz['stock_name'] = col_s
+                    elif col_s in ('融资买入额',):
+                        col_map_sz['fin_buy_amt'] = col_s
+                    elif col_s in ('融资余额',):
+                        col_map_sz['fin_balance'] = col_s
+                    elif col_s in ('融券卖出量',):
+                        col_map_sz['short_sell_vol'] = col_s
+                    elif col_s in ('融券余量',):
+                        col_map_sz['short_volume'] = col_s
+                    elif col_s in ('融券余额',):
+                        col_map_sz['short_balance'] = col_s
+                    elif col_s in ('融资融券余额',):
+                        col_map_sz['total_margin_balance'] = col_s
+
+                if col_map_sz.get('stock_code'):
+                    cols_sz = list(df_sz.columns)
+                    for _, row in df_sz.iterrows():
+                        raw_code = row.get(col_map_sz['stock_code'])
+                        if pd.isna(raw_code):
+                            continue
+                        stock_code = str(raw_code).strip().zfill(6)
+                        if not stock_code or stock_code.lower() == 'nan':
+                            continue
+                        results.append({
+                            'trade_date': iso_date,
+                            'stock_code': stock_code,
+                            'stock_name': _cell_str(row, col_map_sz.get('stock_name')),
+                            'exchange': 'SZSE',
+                            'fin_balance': _cell_float(row, col_map_sz.get('fin_balance')),
+                            'fin_buy_amt': _cell_float(row, col_map_sz.get('fin_buy_amt')),
+                            'fin_repay_amt': None,  # 深交所无此字段, TS 服务层 diff 推算
+                            'short_balance': _cell_float(row, col_map_sz.get('short_balance')),
+                            'short_sell_vol': _cell_float(row, col_map_sz.get('short_sell_vol')),
+                            'short_repay_vol': None,  # 深交所无此字段
+                            'short_volume': _cell_float(row, col_map_sz.get('short_volume')),
+                            'total_margin_balance': _cell_float(
+                                row, col_map_sz.get('total_margin_balance')
+                            ),
+                            'raw_payload': _row_to_jsonable(row, cols_sz),
+                        })
+                else:
+                    print(
+                        f'SZSE margin missing essential col mapping. cols={list(df_sz.columns)[:8]}',
+                        file=sys.stderr,
+                    )
+
+        # ----- 上交所 -----
+        fn_sse = getattr(ak, 'stock_margin_detail_sse', None)
+        if fn_sse is None:
+            print('AKShare missing stock_margin_detail_sse', file=sys.stderr)
+        else:
+            try:
+                df_sh = fn_sse(date=pure_date)
+            except TypeError:
+                df_sh = fn_sse(pure_date)
+            except Exception as e:
+                print(f'stock_margin_detail_sse({pure_date}) failed: {e}', file=sys.stderr)
+                df_sh = None
+
+            if df_sh is None or df_sh.empty:
+                print(f'AKShare SSE margin detail empty for {pure_date}', file=sys.stderr)
+            else:
+                col_map_sh: Dict[str, str] = {}
+                for col in df_sh.columns:
+                    col_s = str(col)
+                    if col_s in ('标的证券代码', '证券代码'):
+                        col_map_sh['stock_code'] = col_s
+                    elif col_s in ('标的证券简称', '证券简称'):
+                        col_map_sh['stock_name'] = col_s
+                    elif col_s in ('融资余额',):
+                        col_map_sh['fin_balance'] = col_s
+                    elif col_s in ('融资买入额',):
+                        col_map_sh['fin_buy_amt'] = col_s
+                    elif col_s in ('融资偿还额',):
+                        col_map_sh['fin_repay_amt'] = col_s
+                    elif col_s in ('融券余量',):
+                        col_map_sh['short_volume'] = col_s
+                    elif col_s in ('融券卖出量',):
+                        col_map_sh['short_sell_vol'] = col_s
+                    elif col_s in ('融券偿还量',):
+                        col_map_sh['short_repay_vol'] = col_s
+
+                if col_map_sh.get('stock_code'):
+                    cols_sh = list(df_sh.columns)
+                    for _, row in df_sh.iterrows():
+                        raw_code = row.get(col_map_sh['stock_code'])
+                        if pd.isna(raw_code):
+                            continue
+                        stock_code = str(raw_code).strip().zfill(6)
+                        if not stock_code or stock_code.lower() == 'nan':
+                            continue
+                        results.append({
+                            'trade_date': iso_date,
+                            'stock_code': stock_code,
+                            'stock_name': _cell_str(row, col_map_sh.get('stock_name')),
+                            'exchange': 'SSE',
+                            'fin_balance': _cell_float(row, col_map_sh.get('fin_balance')),
+                            'fin_buy_amt': _cell_float(row, col_map_sh.get('fin_buy_amt')),
+                            'fin_repay_amt': _cell_float(row, col_map_sh.get('fin_repay_amt')),
+                            'short_balance': None,  # 上交所无此字段
+                            'short_sell_vol': _cell_float(row, col_map_sh.get('short_sell_vol')),
+                            'short_repay_vol': _cell_float(row, col_map_sh.get('short_repay_vol')),
+                            'short_volume': _cell_float(row, col_map_sh.get('short_volume')),
+                            'total_margin_balance': None,  # 上交所端点无此聚合字段
+                            'raw_payload': _row_to_jsonable(row, cols_sh),
+                        })
+                else:
+                    print(
+                        f'SSE margin missing essential col mapping. cols={list(df_sh.columns)[:8]}',
+                        file=sys.stderr,
+                    )
+
+        print(f'Parsed {len(results)} margin_trading rows for {pure_date}', file=sys.stderr)
+        return results
+    except Exception as e:
+        print(f'Error getting margin trading detail for {date}: {e}', file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return []
+
+
 def main():
     """Main entry point for command line calls"""
     if len(sys.argv) < 2:
@@ -4489,6 +4678,14 @@ def main():
             if len(sys.argv) >= 3 and sys.argv[2] not in ('', '-', 'null'):
                 symbol = sys.argv[2]
             result = get_shareholder_trade(symbol=symbol)
+
+        elif command == "get_margin_trading_detail":
+            # Args: <date>  (YYYY-MM-DD or YYYYMMDD)
+            if len(sys.argv) < 3:
+                print(json.dumps({"error": "Missing date for get_margin_trading_detail"}), file=sys.stderr)
+                sys.exit(1)
+            date = sys.argv[2]
+            result = get_margin_trading_detail(date)
 
         else:
             print(json.dumps({"error": f"Unknown command: {command}"}), file=sys.stderr)

@@ -443,7 +443,7 @@ assert("既有 'liquidity' 仍注册", factorRegistry.has('liquidity'));
 // 注册后总数 = 17 (8 base + liquidity + analyst_consensus + quality_high + earnings_surprise + momentum_reversal + east_money_qa + shareholder_concentration + gradual_breakout + insider_trade)
 {
   const names = factorRegistry.listNames();
-  assert(`registry 共 17 个因子 (实际 ${names.length})`, names.length === 17, names.join(', '));
+  assert(`registry 共 18 个因子 (实际 ${names.length})`, names.length === 18, names.join(', '));
 }
 
 console.log('\n## 端到端：空 universe → 空 Map');

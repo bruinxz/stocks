@@ -74,3 +74,4 @@ export * from './EastMoneyQATopic';
 export * from './TechnicalAnalysisReport';
 export * from './RestrictedShareRelease';
 export * from './ShareholderTradeRecord';
+export * from './MarginTradingBalance';

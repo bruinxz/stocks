@@ -1,4 +1,4 @@
-# Factor 基础设施 (US-009 + US-010 + US-029 + US-030 + US-031 + US-032 + US-033 + US-034 + US-035 + US-036 + US-041 + US-042 + US-090)
+# Factor 基础设施 (US-009 + US-010 + US-029 + US-030 + US-031 + US-032 + US-033 + US-034 + US-035 + US-036 + US-041 + US-042 + US-090 + US-091)
 
 `backend/src/quant/factors/` 是 A 股多因子打分体系的基础设施层。US-009
 落地了**注册中心 + 横截面 pipeline + 标准化工具 + FactorScore 模型**；
@@ -17,7 +17,10 @@ US-029 增加了第 9 个 `liquidity` 因子（流动性 U 形评分）；US-030
 `gradual_breakout` 因子（渐进强爆 = 近 30 日 Σ(daily_volume / avg_60d_volume - 1) ×
 sign(涨跌幅)，温和放量逐步走强的价量配合累计）；US-090 增加了第 17 个
 `insider_trade` 因子（内部人净买入 = 近 60 日 (Σ增持金额 - Σ减持金额) /
-流通市值，董监高/大股东主动买卖的 alpha 信号）。后续 story 在 `library/`
+流通市值，董监高/大股东主动买卖的 alpha 信号）；US-091 增加了第 18 个
+`margin_flow` 因子（融资余额变化 = (fin_balance[T] - fin_balance[T-5]) /
+fin_balance[T-5]，近 5 个交易日融资余额变化率，杠杆资金方向跟随信号）。
+后续 story 在 `library/`
 下追加新文件即可，无需改 Pipeline / Registry。
 
 ## 目录约定
@@ -171,6 +174,7 @@ US-033 等"贴现 / 偏离"类因子按此例外处理；普通线性因子仍�
 | `shareholder_concentration` | flow | ShareholderCount (US-035) | 200 日窗口内有效快照 < 2 / 最新一期 share_change != 0 (默认过滤) / holder_count_prev ≤ 0 |
 | `gradual_breakout` | momentum | DailyBar (close + volume) | bars < VOLUME_BASELINE_DAYS+1=61 / 60 日均量有效观测 < 30 / 近 30 日内有效贡献天 < 21 |
 | `insider_trade` | flow | ShareholderTradeRecord (US-090) + Stock.circulating_market_cap | 60 日窗口内无有效公告 / 流通市值 ≤ 0 / 全部 announce_date > as_of_date (lookahead) |
+| `margin_flow` | flow | MarginTradingBalance (US-091) | 当日无数据 / 5 个交易日窗口内 < 2 条 / baseline fin_balance ≤ 0 / 全部 trade_date > as_of_date (lookahead) |
 
 **典型查询模式（US-029+ 添加新因子可直接复制）**：
 
@@ -330,6 +334,27 @@ US-033 等"贴现 / 偏离"类因子按此例外处理；普通线性因子仍�
   维度互补）；与 shareholder_concentration (US-035, 户数环比) ~0.2-0.3（户数广度
   季度披露 vs 金额强度公告级，互补）；与 northbound (US-010, 北向持股) ~0.1（外资
   被动持仓 vs 境内主动决策，维度不同）。FactorIC (US-041) 上线后可验证。
+- ✅ `margin_flow` (US-091) 用 **(fin_balance[T] - fin_balance[T-5]) / fin_balance[T-5]**
+  近 5 个交易日融资余额变化率，per-stock 自身环比 ratio。**WINDOW_TRADE_DAYS=5**
+  (近 5 日是 AC 要求, 也是杠杆资金中线追踪窗口的实证最优区间 — 参考: 招商证券
+  《融资融券与个股表现相关性研究》2018, 中信证券《杠杆资金行为与个股短期收益》
+  2020)。**LOOKBACK_CALENDAR_DAYS=15** (5 业务日 ≈ 7 自然日 + 10 长假兜底)。
+  **baseline 选择策略**: 优先取倒数第 (WINDOW_TRADE_DAYS + 1) 条 (即 T-N 日);
+  数据不足时兜底取窗口内最早一条 (与 NorthboundFactor 同款)。**不区分融资 vs
+  融券**: 实证显示融资 (做多) 资金信号强度远高于融券 (做空) 资金, 简化模型只看
+  融资余额变化即可；short_balance 字段保留供未来 v2 优化。**纯函数 helper**
+  (computeFinBalanceChange 含 FinBalanceObservation interface 全 export) 让 62 个
+  测试覆盖纯函数边界 (空 / null / 单条 / windowTradeDays NaN/负/浮点 / lookahead
+  bias / latest≠asOfDate / baseline≤0) + 已知数值 (+20% / -10% / 0%) + baseline
+  选择 (8 条 vs 3 条兜底) + 排序鲁棒性 + 端到端业务场景 (杠杆资金加仓 +30% /
+  撤退 -30%) + 空 universe，完全脱离 DB。属 **"绝对业务量"** 因子 (per-stock 自身
+  环比, 不参照横截面统计量)，走标准模式 — 不属 LiquidityFactor 横截面参照例外。
+  **与既有因子的相关性预估**：与 money_flow (US-010, 主力净流入) ~0.3-0.4 (都是
+  日级资金信号但 money_flow 是盘中主力席位资金, margin_flow 是融资融券账户官方
+  数据, 维度互补)；与 northbound (US-010, 北向 20 日变化) ~0.2-0.4 (前者跟外资,
+  margin_flow 跟境内杠杆资金, 维度互补)；与 insider_trade (US-090, 60 日内部人
+  净买入) ~0.1-0.2 较低 (前者低频公告 周-月级, margin_flow 日级)。三者可同时
+  启用。FactorIC (US-041) 上线后可验证。
 
 ### 关键代理记号（US-031 引入 "AC 数学公式 ≠ 数据可得" 的处理范式）
 

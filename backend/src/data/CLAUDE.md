@@ -552,6 +552,51 @@ single-direction backfills only when needed). `SHAREHOLDER_TRADE_TIMEOUT_MS=2400
 ~90s and we want generous headroom for retries). No `--start`/`--end` flags —
 the endpoint is real-time-only, range queries are meaningless.
 
+## Cross-exchange schema 对齐 + day-to-day diff 推算 (US-091 MarginTradingBalance)
+
+`MarginTradingBalance` (PK = `(trade_date, stock_code)` 二元组) covers 融资融券
+per-stock 日度明细，合并 SZSE + SSE 两个交易所到统一 schema。两套关键 patterns：
+
+**跨交易所 schema 字段差异的 4 处文档同步标注**：AKShare `stock_margin_detail_szse`
+与 `stock_margin_detail_sse` 字段不完全对齐：
+- 深交所有 "融券余额" (元) + "融资融券余额合计"，但无 "融资偿还额"；
+- 上交所有 "融资偿还额"，但无 "融券余额" + "融资融券余额合计"。
+
+Python helper 把两交易所对齐到统一 schema，缺失字段写 None。**4 处文档同步**：
+(1) Sequelize model 列 comment ("仅深交所提供, NULL 兜底" / "Y 交易所无原始列,
+TS 服务层 diff 推算") (2) Python helper docstring (per-endpoint 字段映射 + 缺失
+说明) (3) TS Client `MarginTradingDetailRow` interface jsdoc (per-field 差异说明)
+(4) `MarginTradingSyncService` jsdoc (day-to-day diff 推算策略说明)。同 US-090
+trade_amount 代理 / US-053 endpoint 替代等多处适配落地的"必须 4 处同步"模式。
+
+**day-to-day diff 推算缺失累计字段**：深交所没有 "融资偿还额" 列，但 fin_balance
+是累计型字段，存在会计 identity:
+```
+fin_balance[T] = fin_balance[T-1] + fin_buy_amt[T] - fin_repay_amt[T]
+⇒ fin_repay_amt[T] = max(0, fin_balance[T-1] + fin_buy_amt[T] - fin_balance[T])
+```
+
+`loadPrevDayFinBalanceForCodes(targetDate, codes)` 用 7 自然日缓冲（含周末）拉
+前日深交所 fin_balance, JS 端 reduce 取每 code 最大 trade_date — dialect-
+independent 优于 SQL DISTINCT ON。**max(0, ...)** 保护避免数据噪音让 diff 为负
+（如股东大单回购影响）。同款适用未来任何 "累计型字段 + 流量字段 + identity 关系"
+场景（持仓变动 / 现金流入推算 / 库存进销存）。
+
+**Service-layer 5-tuple Map dedup 兜底 + 单日同股理论唯一**：同股一日理论只
+一行（SZSE / SSE 不重叠 — 单股不可能同时在两交易所挂牌两融名单），dedup 兜底
+"AKShare 异常重复行"。`bulkCreate + updateOnDuplicate` 在 dialect 上行为不同
+(Postgres 静默后者覆盖前者 / MySQL 可能 error)，Map<key, row> dedup 在 service
+内做兜底让所有方言一致。同 US-030 / US-089 / US-090 范式。
+
+**Throttle & CLI**: `--date=YYYY-MM-DD | --start=... --end=... [--force]`。
+`MARGIN_TRADING_TIMEOUT_MS=60000` (60s — 两交易所 ~30s × 1.5x = 多端点合并
+默认估算)。`MARGIN_TRADING_SKIP_EXISTING=0` 环境变量控制断点续传。AKShare 通常
+T+1 09:00 之前更新当日数据，调度建议: 每日盘后 17:30 跑前一交易日。
+
+**与既有 MarginBalanceClient (US-057) 的区分**: 后者是
+`stock_margin_account_info()` (全市场单行汇总)，用于 MarketSentimentIndex 市场
+情绪打分；本表是 per-stock 明细，用于个股级因子。两数据互补不冲突。
+
 ## Worktree gotcha (still active as of US-005)
 
 The git worktree has no `backend/node_modules`. Symlink before typecheck:
