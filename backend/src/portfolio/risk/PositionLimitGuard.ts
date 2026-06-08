@@ -335,6 +335,10 @@ export class DefaultPositionLimitDataSource implements PositionLimitDataSource {
       name: input.name,
       level: 'HIGH',
       message: input.message,
+      // US-067 — RealtimeAlertDispatcher 用 rule_id 作 dedup signature 一部分。
+      // 不同 guard 写入的 rule_id 不同，避免"持仓数上限"和"行业集中度"等不同
+      // 规则的 HIGH 告警被 unknown::symbol::HIGH 同 signature dedup 互相吃掉。
+      rule_id: 'position_limit',
       is_read: false,
     } as any);
   }

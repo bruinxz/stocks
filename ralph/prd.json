@@ -1149,8 +1149,8 @@
         "Tests pass"
       ],
       "priority": 67,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026/06/08. RealtimeAlertDispatcher (960 LOC) + AliyunSmsService (367 LOC) + FeishuBotWebhookService.sendRiskAlertCard + RiskAlert.@AfterCreate hook + rule_id column. 8 risk guards 写 rule_id 让 dedup 区分 (position_limit / trailing_stop / per_stock_stop_loss / drawdown_breaker / market_regime_alert / black_swan / industry_concentration / factor_correlation). Backend: 187 dispatcher tests + 943 risk guard regression + 132 factor-corr + 769 sibling service regression = 2031 全绿. Frontend: SettingsWorkspace SMS Card + email risk_alert switch. Redis 去重用 user.risk_config.realtime_alert_seen JSONB + timestamp 比较代替 (本项目暂未引入 Redis)."
     },
     {
       "id": "US-068",

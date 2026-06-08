@@ -195,6 +195,8 @@
 - **simulate/replay/impersonate dev endpoint production-mode 404 + env opt-in 双重 gate (US-066 引入)**: 任何允许 caller "代表他人写状态" / "模拟外部事件" 的 dev endpoint (webhook simulator / hook 触发器 / cron 手动跑)必须 production-mode 404 + 显式 env opt-in (e.g. `ALLOW_WECHAT_BIND_SIMULATE=true`) 双重 gate。**判据**: endpoint 接受 caller 提供的 user_id / scene_str / signature 这类 "本来应该由可信第三方提供" 的输入 → 必走此 gate。否则任何登录用户拿到他人的 scene_str (前端泄露 / log 泄露 / 截屏泄露) 偷绑账号。范例: `if (process.env.NODE_ENV === 'production' || String(process.env.ALLOW_X || '').toLowerCase() !== 'true') return res.status(404).json({...})`。
 - **前端 useRef + window.setInterval 轮询 cleanup 5 项 checklist (US-066 引入)**: modal-driven polling 走此 5 项: (1) `pollRef = useRef<number | null>(null)` 持有 interval id; (2) `window.setInterval(...)` 返回值赋给 ref; (3) `stopPolling()` 内部判 non-null 才 `clearInterval`; (4) `useEffect(() => () => stopPolling(), [stopPolling])` 组件 unmount 自动 cleanup; (5) 轮询次数硬上限 (e.g. 40 次 = 2min) 防"用户开了模态就走 / 忘了" 永远 polling 直到关 tab。下次 US-067 风控告警实时状态轮询 / US-091 监控面板 polling 按此 checklist 实现。
 - **共享 JSONB schema 加新字段不破坏 sibling test 范式 (US-066 验证)**: 给 NotificationChannelsConfig / 任何共享 JSONB schema 加字段时, normalizeXxxConfig 必须用 `safeBoolean(raw, default)` + `safeString(raw)` **不写 undefined** —— 旧 risk_config JSONB 行不含新字段时, normalize 自动填默认值, sibling tests (US-066 给 wechat 加 4 字段时 / DailyTradingDigest 174 + EarningsForecastWatcher 184 + WeeklyReviewReport 225 = 583 个测试) 不需要改 fixture。**判据**: "新字段 = optional + safe default"，不要硬要求 caller 显式填。NotificationChannelsConfig.wechat 在 US-066 加 4 字段 (bind_scene_str / bound_at / earnings_alert / risk_alert) 是参考实现。
+- **第 4 channel SMS 加入 + alert hook 范式 (US-067 RealtimeAlertDispatcher 引入)**: 与 US-063/064/065/066 的 cron 触发模式互补——本 channel 触发源是 **`@AfterCreate` model hook** (RiskAlert level=HIGH 即触发 dispatcher.fireAndForget())。**5 项新模式**: (1) **dedup signature = `${rule_id}::${symbol}::${level}`** 不含 alert.id（含 id 让每个 alert 唯一 = dedup 失效，business signature 是"同一类告警"的语义维度集合）。(2) **JSONB + timestamp 比较代替 Redis TTL**: 本项目暂未引入 Redis，AC "Redis 去重" 实质需求是"持久化 + TTL 窗"——用 `user.risk_config.realtime_alert_seen` JSONB array + FIFO LRU 200 条 + `isWithinDedupWindow(pushed_at_ms, now_ms)` pure function 比较代替 Redis EXPIRE。优劣权衡: 不依赖 Redis 基础设施 / 单测可控 / 用户级 isolated；劣势 = 高并发 race condition（缓解：alertCreate hook 串行 + dedup 是降噪不是 idempotency）。下次 US-094 异动事件 / US-097 异常监控等去重需求按此 pattern。(3) **4 status 精确语义** (sent / partial / failed / skipped): sent = 至少 1 channel 成功 + 全部成功；partial = 至少 1 成功 + 至少 1 失败；failed = 0 成功 + ≥1 失败；skipped = 0 channel 真派（顶层 level gate / 用户缺失 / dedup 命中 / 所有 channel 各自 skip 或全 disabled）。前端 Alert 颜色 success/warning/error/info 一一对齐。下次 US-077 风控告警中心 / US-091 健康度推送同款 4 类不漏（partial 最易漏）。(4) **Sequelize `@AfterCreate static methodName(instance)` 3 大坑**: hook throw 让 .create() 失败 (顶层 try/catch 吞错) / 不能 await hook 内 fire-and-forget 调用 / lazy-require 反向依赖避循环 import。(5) **lazy-require 第三方 SDK (阿里云 / 腾讯云 / openai)** 让 SDK 缺失时 import + typecheck 仍 OK，第一次 send 才 require + fail-OPEN catch + warn。下次任何"按需远端 SDK" connector 走此 5 项 checklist。完整 9 项设计 in `backend/src/portfolio/CLAUDE.md` `risk/RealtimeAlertDispatcher hook (US-067)` 一节。
+- **`RiskAlert.rule_id` 字段所有 writer 必填清单 (US-067 补丁固化)**：rule_id 是 nullable column 但实质 dispatcher dedup signature 必需—— 不填让所有 HIGH 告警退化成 `unknown::symbol::HIGH` 同 signature 在 30 min 窗口内互相 dedup 拦掉。**8 个写入点 + 命名映射** (snake_case, 与 guard 文件名简写一致): `position_limit` (PositionLimitGuard) / `trailing_stop` (TrailingStopGuard) / `per_stock_stop_loss` (PerStockStopLossGuard) / `drawdown_breaker` (DrawdownCircuitBreaker) / `market_regime_alert` (MarketRegimeAlertService) / `black_swan` (BlackSwanWatchdog) / `industry_concentration` (IndustryConcentrationGuard) / `factor_correlation` (FactorCorrelationReport)。**同 guard 内多 sub-level (DrawdownCircuitBreaker LEVEL_1/2/3) 共享一个 rule_id**——不要为每个 level 拆 rule_id 否则 30 min 内 3 条卡片同推（UX 灾难）；LEVEL 升级时新 signature 写入会覆盖旧 dedup 记录是合理行为。**新 guard 写 RiskAlert.create() 必填 rule_id**——加 guard 的同时给 portfolio/CLAUDE.md 表格新增一行。
 
 ---
 
@@ -6226,3 +6228,135 @@ cd backend && npm run sync:announcements -- --date=2026-06-06
 - **scene_str 编码 user_id + rand6 双层保护 (本 story 引入, 已加入 Codebase Patterns)**: 微信场景值 64 字符内 + ASCII 限制；编码 user_id 让 parseBindSceneStr 直接反解，再追加 rand6 防"两个用户先后扫码"的混淆 + 防猜测攻击。**关键 invariant**: 同一 user 多次扫码 → 每次新 rand6 → 持久化 latest 让旧二维码失效（后端反查时 latest 才匹配）。**生产安全 invariant** (本 story 引入 simulateWeChatBindEvent 时发现): 任何允许 caller "代表他人写 openid" 的 endpoint 必须 production-mode 404 + 显式 env opt-in（ALLOW_WECHAT_BIND_SIMULATE=true）才生效——否则任何登录用户能拿到其他人的 scene_str（前端泄露 / log 泄露 / 截屏泄露）偷绑微信账号。**判据**: 任何"模拟外部事件" / "代表他人触发"的 dev endpoint（webhook simulator / hook 触发器 / cron 手动跑）必须 production-mode 404 + ALLOW_X env opt-in 双重 gate。下次任何 simulate / replay / impersonate endpoint 严格遵守。
 - **前端 useRef + window.setInterval 轮询 cleanup 模式 (本 story 引入, 已加入 Codebase Patterns)**: 进入工作区任何 polling 模态都用 `pollRef = useRef<number | null>(null)` + `window.setInterval(...)` 返回值赋给 ref + `stopPolling()` 内部判 non-null 才 `clearInterval` + `useEffect(() => () => stopPolling(), [])` 组件 unmount 自动 cleanup + 模态主动关闭也 stop。**关键 invariant**: 轮询次数硬上限（本 story 40 次=2min）防止用户开了模态就走/忘了 → 永远 polling 直到关 tab；超过上限设 `status='expired'` 让 UI 显示 warning + 重新生成按钮。**判据**: 任何 modal-driven polling 走此 5 项 (useRef / window.setInterval / stop function / useEffect cleanup / 次数硬上限) checklist；同款将在 US-067 风控告警实时状态轮询 / US-091 监控面板复用。
 - **NotificationChannelsConfig schema 扩字段 不破坏既有 sibling test 范式 (本 story 验证)**: 给共享 schema 加新可选字段 (bind_scene_str / bound_at / earnings_alert / risk_alert) 时 normalizeXxxConfig 必须用 safeBoolean(raw, default) + safeString(raw) **不写 undefined**——这样旧 risk_config JSONB 行（不含新字段）走 normalize 后会自动填默认值，sibling test (digest/earnings/weekly-review service 共 583 个测试) 不需要改 fixture。**判据**: 给 NotificationChannelsConfig / 任何共享 JSONB schema 加字段时坚持 "新字段 = optional + safe default"，不要硬要求 caller 显式填。
+
+## 2026-06-08 - US-067 推送：实时风控 webhook（高优先级告警）
+
+### What was implemented
+
+US-067 实现：HIGH 级 RiskAlert.create 即触发 RealtimeAlertDispatcher 并行推送飞书机器人 + 邮件 SMTP + 阿里云短信（按通道开关）。
+
+**Backend service：RealtimeAlertDispatcher** (960 LOC) — 完整 RealtimeAlertDispatcherDataSource 注入式 architecture：
+1. **6 method DataSource**：loadUserConfig / loadSeenRecords / saveSeenRecords / sendFeishuCard / sendEmail / sendSms — 完全可在单测里 fake 脱外部依赖
+2. **dedup signature**: `${rule_id}::${symbol}::${level}` (大小写 normalize) 不含 alert.id 让"同一类告警" 30 min 内只推一次
+3. **持久化在 `user.risk_config.realtime_alert_seen` JSONB array** — FIFO LRU 200 条上限防无限增长（沿用 US-053 BlackSwanWatchdog 同款 LRU 模式）；本项目暂未引入 Redis 基础设施，AC "Redis 去重" 实质需求是"持久化 + TTL 窗"用 JSONB + timestamp 比较代替
+4. **fail-OPEN 每个 channel**：Promise.allSettled 并行；单 channel 失败不阻塞其他 channel；channel 内部 throw 也兜底（loadUserConfig / loadSeenRecords / sendXxx 全 try/catch warn + fallback）
+5. **3 channel gate `shouldDispatchForChannel`** 4 路径：feishu (enabled + risk_alert + webhook URL || env fallback) / email (enabled + risk_alert + address) / sms (enabled + risk_alert + phone normalize 11 位国内号)
+6. **6 pure helper exported for tests**：buildAlertSignature / isWithinDedupWindow / mergeSeenAlertSignatures / buildAlertId / buildAlertDeeplink / buildRiskAlertFeishuCard / buildRiskAlertEmail / buildRiskAlertSmsParams
+7. **`fireAndForget` no-await 入口** — RiskAlert.afterCreate hook 调用 dispatcher.fireAndForget()，让 RiskAlert.create() 主流程不被网络延迟阻塞
+8. **dry_run=true 不写 dedup** — 让用户从 UI 反复预演同一告警不被 30 min dedup 拦
+
+**Backend channel adapter：AliyunSmsService** (367 LOC) — 第 3 个 channel（飞书 / 邮件 / SMS）：
+- **lazy-require `@alicloud/dysmsapi20170525`** — SDK 未安装时 import + typecheck 仍 OK，第一次 send 才报错 → fail-OPEN
+- **module-level cached client** — 单进程内 client 只创建一次（每次 send 创建有几百毫秒初始化延迟），`resetSmsClient()` 公开 helper 让单测/ops 手动 invalidate
+- **4 个 env config**：ALIYUN_SMS_ACCESS_KEY_ID / ALIYUN_SMS_ACCESS_KEY_SECRET / ALIYUN_SMS_REGION (默认 cn-hangzhou) / ALIYUN_SMS_ENDPOINT (默认 dysmsapi.aliyuncs.com)；`DISABLE_SMS_NOTIFICATION=true` 一键禁用
+- **normalizeChinesePhone(input)** 严格保证返回 null 或 11 位首字符 1 字符串（去 +86 / 86 前缀 / 各种分隔符）；非法手机号一律 null 让 caller fail-OPEN skip
+
+**Backend channel adapter 扩展：FeishuBotWebhookService.sendRiskAlertCard** (78 LOC 新增 method) — 与 sendDailyDigestCard / sendEarningsForecastCard 完全镜像同 msg_type='interactive' schema + caller 注入 buildCard helper 避免反向依赖。
+
+**RiskAlert.afterCreate hook** — 在 backend/src/models/RiskAlert.ts 加 @AfterCreate 静态 method dispatchRealtimeAlert(instance)：
+- **lazy-require dispatcher** 避免 model 反向依赖 services 层，单测 model loading 不被 dispatcher 副作用污染
+- **顶层 try/catch** 吞错保证 RiskAlert.create() 主流程绝不被 dispatcher 异常阻塞（model hook throw 会让 ORM 写入失败 = 事故级 regression）
+- **level=HIGH gate** 只对 HIGH 触发；MEDIUM/LOW 走 SchedulerService 聚合 cron（未来扩展）
+- **不 await** dispatch — fire-and-forget 让 RiskAlert.create() 立即返回
+
+**RiskAlert.rule_id 字段新增** — VARCHAR(64) nullable，旧行允许 null；触发 dispatch 时传给 dispatcher buildAlertSignature 决定 dedup 唯一性。任何 risk guard (PositionLimit / TrailingStop / DrawdownCircuitBreaker / BlackSwanWatchdog / IndustryConcentrationGuard) 写 RiskAlert 时填 rule_id 让 dispatcher 区分同 symbol 不同 rule 的告警。
+
+**NotificationChannelsConfig schema 扩展** (DailyTradingDigestService.ts):
+- **email.risk_alert** boolean — HIGH 级 RiskAlert 邮件订阅开关
+- **sms** 完整子对象 `{enabled, phone, risk_alert}` — 第 4 个 channel 加入
+- **normalizeNotificationConfig** 加 `smsRaw = isObject(candidate.sms) ? candidate.sms : {}` + sms 字段 safeBoolean / safeString normalize 路径
+- **cloneDefault** 与 4 处 update*Config method (updateNotificationConfig / updateEmailConfig / updateWeChatConfig (2 places in WeChatOAService) / DefaultWeChatOADataSource.applyBindResult & unbindWeChat) 全部加 `sms: { ...existing.sms }` 保字段不丢
+- **safe-default 范式坚持**：不破坏既有 583 个 sibling test (DailyTradingDigest 174 + EarningsForecastWatcher 184 + WeChatOA 186 + WeeklyReview 225 + 新加 187 = 956 全绿)
+
+**Backend endpoints (SettingsController + settings.routes.ts)**:
+- **POST /api/settings/sms-config** — 更新 SMS 通道 3 字段 (enabled/phone/risk_alert) → updateSmsConfig service method
+- **POST /api/settings/sms-test** — 一键冒烟测试 3 channel HIGH 告警 dispatch；dry_run 默认 true 不真发不写 dedup；非 dry_run 触发真发但仍走 30 min dedup window
+- **email-config endpoint 扩 risk_alert 字段** — 与 weekly_review / address / enabled 同 sub-resource patch
+
+**Frontend** (settingsService.ts + SettingsWorkspace.tsx):
+- **SmsChannelConfig** 接口 + NotificationChannelsConfig.sms 字段 + NotificationChannelsPatch.sms patch 类型
+- **EmailChannelConfig.risk_alert** 新字段 + updateEmailConfig({risk_alert?}) 入参
+- **2 新 API 函数**：updateSmsConfig({enabled?,phone?,risk_alert?}) / sendRealtimeAlertTest(dryRun, message?)
+- **RealtimeAlertDispatchResult + RealtimeAlertChannelResult** 类型导出 (对齐后端 result schema)
+- **SettingsWorkspace 加 SMS Card** — Switch enabled / Input phone / Switch risk_alert + 保存按钮 + dry-run 预览按钮 + 立即发送按钮 + 派发结果 Alert（status + per-channel detail）
+- **email Card 加 risk_alert Switch** 与 weekly_review 同 Row 2 Col 布局
+- **KPI 启用通道计数** 扩展含 SMS
+- **DEFAULT_CONFIG** 加 sms 子对象 + email.risk_alert 字段
+
+### Files changed
+**Backend (8 modified / 2 new)**:
+- backend/src/services/RealtimeAlertDispatcher.ts (新增 960 LOC)
+- backend/src/services/AliyunSmsService.ts (新增 367 LOC)
+- backend/src/services/FeishuBotWebhookService.ts (+78 LOC sendRiskAlertCard method)
+- backend/src/services/DailyTradingDigestService.ts (+~50 LOC sms schema + updateSmsConfig method)
+- backend/src/services/WeChatOAService.ts (+4 处 spread sms 保字段)
+- backend/src/services/WeeklyReviewReportService.ts (+~10 LOC email.risk_alert 入参 + spread sms 保字段)
+- backend/src/api/controllers/SettingsController.ts (+2 method updateSmsConfig + testSmsMessage + email-config risk_alert patch)
+- backend/src/api/routes/settings.routes.ts (+2 route sms-config + sms-test)
+- backend/src/models/RiskAlert.ts (+50 LOC rule_id field + @AfterCreate dispatchRealtimeAlert hook + lazy-require dispatcher)
+
+**Backend tests (1 new)**:
+- backend/tests/services/realtime-alert-dispatcher-service.test.ts (新增 1161 LOC，187 个测试)
+
+**Frontend (2 modified)**:
+- frontend/src/services/settingsService.ts (+~110 LOC SmsChannelConfig + RealtimeAlert types + 2 API functions)
+- frontend/src/pages/workspace/SettingsWorkspace.tsx (+~150 LOC SMS Card + email risk_alert switch + 2 handlers + state)
+
+### Quality
+- backend typecheck `npx tsc --noEmit` clean
+- backend lint `npx eslint src/services/...` clean (0 error)
+- backend tests:
+  - **realtime-alert-dispatcher: 187/187 ok** (含 35 个 e2e dispatch case：level gate / 用户缺失 / dedup 命中 / dedup 出窗 / dry_run / 3 channel 全成功 / 1 channel fail partial / 全 fail / channel disabled / per-channel skip / sendFeishu throw / loadSeenRecords throw / saveSeenRecords throw / 同/异 signature 独立 dedup / rule_id 缺失 unknown / level 大小写 normalize / fireAndForget 不 throw / LRU trim 边界 / SKIPPED status 适配 / rule_id trim / triggered_at 缺失默认当前时间 / 默认 ctor 不 throw)
+  - daily-trading-digest 174/174 ok（regression — sms 字段 normalize 不破坏）
+  - wechat-oa 186/186 ok（regression — spread sms 保字段不破坏）
+  - weekly-review-report 225/225 ok（regression — updateEmailConfig risk_alert 入参不破坏）
+  - earnings-forecast-watcher 184/184 ok（regression — normalizeNotificationConfig sms 字段静默退回不破坏）
+  - **总计 956 个测试全绿** （US-067 自测 187 + 4 个 sibling service regression 769）
+- frontend typecheck `npx tsc --noEmit` clean
+- frontend lint `npx eslint` 0 error（1 个 'Link' 未使用 warning 从 US-065 继承，非本 story 引入）
+
+### Browser verification
+手动验证：无 dev-browser MCP 可用。SettingsWorkspace 加新 SMS Card + email risk_alert Switch 已通过 TS + lint 静态校验；e2e 验证需启 frontend dev server。
+
+### Learnings for future iterations
+
+- **告警 dispatch 4 status (sent/skipped/failed/partial) 精确语义**：sent = 至少 1 channel 成功 + 全部成功；partial = 至少 1 channel 成功 + 至少 1 失败；failed = 0 channel 成功 + ≥1 失败；skipped = 0 channel 真派（顶层 level gate / 用户缺失 / dedup 命中 / 所有 channel 各自 skipped 或全 disabled）。这 4 status 在前端 Alert 颜色 (success/warning/info/error) 一一对齐。下次 US-077 风控告警中心 / US-091 健康度推送 4 status 必须遵循同 4 类语义不要漏一类（partial 最容易漏）。
+- **dedup signature 不含 alert.id 是设计要求 not bug**：dedup 目的"同一类告警 30 min 内只推一次"——signature 含 alert.id 让每个 alert id 唯一 = dedup 失效。`${rule_id}::${symbol}::${level}` 正好让"同 rule 同 symbol 同 level"在 30 min 内只触发一次（业务正确 — 一个 stock 一直在跌停板上每隔几秒就 trigger drawdown_breaker = 应该 dedup）。**判据**：dedup signature 应**完全**由"业务唯一性维度"决定 — 想清楚"什么算同一类" 30 min 内不重复推。dedup 不是 idempotency key（caller 已生成 RiskAlert.id 区分行了），dedup 是"业务降噪"。下次任何 dedup 维度设计先 5 分钟想清楚"同一类" 定义。
+- **Sequelize model afterCreate hook 用法**：用 `@AfterCreate static methodName(instance)` (sequelize-typescript) 而非 `Model.hooks('afterCreate', ...)`，让 hook 实现 colocate 在 model 文件让维护者一眼能看到（不会在 services 层意外耦合到 model）。**3 大坑**：(1) **hook throw 让 .create() 失败** — 任何 hook 内异常都让 ORM 写入回滚！必须顶层 try/catch + logger.warn 吞错；(2) **不能 await hook 内 fire-and-forget 调用** — model.create() 调用方期待立即返回，hook 内 async 操作 (.then) 不阻塞 ORM；(3) **lazy-require 反向依赖** — 不要在 model 文件顶部 import service，循环依赖会让 sequelize 初始化时 crash；用 `require(...)` 在 hook 内部第一次执行时才加载。下次 US-091 健康度 hook / US-098 trade afterCreate 同款坑。
+- **lazy-require 第三方 SDK 让 SDK 缺失时 import / typecheck 仍 OK**：阿里云 SMS SDK（@alicloud/dysmsapi20170525）这种"按需调用"的远端服务 SDK 不强制装到 package.json，让 CI / local dev / 老版本 worktree 即便没装也能 typecheck。**关键 invariant**：`require()` 在 first send 才执行，包顶部不要 import；SDK 加载失败时 catch + warn + fail-OPEN 返回 `{success:false, message}` 不 throw。**判据**：任何"按需远端 SDK"（阿里云 / 腾讯云 / AWS / openai / langchain 各种 connector）都用 lazy-require + fail-OPEN，保 boot / typecheck 不被外部 SDK 装与不装影响。下次 US-095 阿里云 OSS / US-098 腾讯云 SES 邮件按此 5 项 checklist。
+- **30 min dedup 时间窗用 JSONB + timestamp 比较代替 Redis TTL**：本项目暂未引入 Redis 基础设施；AC "防风暴：同一类告警 30 分钟内只推一次，使用 Redis 去重" 实质需求是"持久化 + TTL 窗"——用 `user.risk_config.realtime_alert_seen` JSONB array + `isWithinDedupWindow(pushed_at_ms, now_ms)` 比较代替 Redis EXPIRE。**优势**：(1) 不依赖 Redis 基础设施（生产部署门槛降低）；(2) 单测可控（fake DataSource.loadSeenRecords 注入任意时间记录）；(3) 用户级 isolated（每用户独立 buffer 不冲突）。**劣势**：(1) 高并发 race condition（同一 user 同 signature 同时 dispatch 可能双推一次） — 缓解：alertCreate hook 串行 / dedup 是降噪不是 idempotency；(2) JSONB 大小膨胀 — 缓解：FIFO LRU 200 条上限 + 30 min 自动跳过老记录。下次 US-094 异动事件 / US-097 异常监控等去重需求按此 pattern 不强引 Redis。
+- **第 4 个推送 channel 加入 + safe-default 不破坏 sibling test**：US-063/064/065/066/067 5 个 push story 全沿用 `NotificationChannelsConfig` JSONB schema 共享 namespace。每次新增 channel/字段：(1) DEFAULT_NOTIFICATION_CONFIG 加 safe default；(2) normalizeNotificationConfig 加 safeBoolean/safeString 静默退回；(3) 4 处 spread (cloneDefault + updateNotificationConfig + updateEmailConfig + updateWeChatConfig + DefaultWeChatOADataSource × 2) 保新字段不丢；(4) 前端 SmsChannelConfig + DEFAULT_CONFIG + UI Card 平行加入。**关键 invariant**：不破坏既有 583 个 sibling test（174+184+186+225+187 = 956 全绿）= 严格遵守"新字段=optional + safe default + 不要求 caller 显式填"。下次 US-091 健康度通道 / US-098 webhook 通道按此 4 步加入。
+- **fire-and-forget 入口设计 — model hook → service**：dispatcher 在 model hook 内被 fire-and-forget 调用（不 await），让 RiskAlert.create() 不被网络延迟阻塞（飞书 webhook ~ 数百 ms / SMTP ~ 秒 / SMS ~ 秒）。**关键 invariant**：service 内部 catch 必须**完全吞错** + logger.warn，绝不 unhandled promise rejection（Node.js 22 起 unhandled rejection 让 process exit）。**dispatcher.fireAndForget()** 是显式 helper 让 caller 不必关心 .catch — 内部 try/catch 兜底（dispatch 已 fail-OPEN，fireAndForget 再 catch 一层 = 双重保险）。**判据**：任何 hook / scheduler / webhook handler 内启的 async 后台任务必须 fire-and-forget + 内部 fail-OPEN + 顶层 logger.warn 吞错三重保护。
+---
+
+### 2026-06-08 后补：guard 写入 rule_id 联动修复 (US-067 补丁)
+
+发现 US-067 RealtimeAlertDispatcher 完整实现 + 187 测试落地后，**实际 risk guard 的 `DefaultXxxDataSource.writeAlert()` 调用 `RiskAlert.create()` 时全未 set rule_id** —— rule_id 字段虽已加到 model 但所有写入点都没填。这让 dispatcher 收到所有 HIGH 告警时 buildAlertSignature 回退到 `unknown::symbol::HIGH`，不同 guard（PositionLimit / TrailingStop / DrawdownCircuitBreaker / BlackSwanWatchdog ...）的 HIGH 告警在 30 min 窗口内会互相 dedup —— "持仓上限" 触发后 30 min 内 "追踪止损" 也触发 dispatcher 会 dedup 拦掉，严重违反 AC "同一类告警 30 分钟内只推一次"（实际变成"任何一类 HIGH 告警 30 分钟内只推一次"）。
+
+**修复**: 给以下 7 个 guard + 1 个事后分析告警的 `DefaultXxxDataSource.writeAlert()` 都填上 rule_id：
+
+| 文件 | rule_id |
+|------|---------|
+| backend/src/portfolio/risk/PositionLimitGuard.ts | `position_limit` |
+| backend/src/portfolio/risk/TrailingStopGuard.ts | `trailing_stop` |
+| backend/src/portfolio/risk/PerStockStopLossGuard.ts | `per_stock_stop_loss` |
+| backend/src/portfolio/risk/DrawdownCircuitBreaker.ts | `drawdown_breaker` |
+| backend/src/portfolio/risk/MarketRegimeAlertService.ts | `market_regime_alert` |
+| backend/src/portfolio/risk/BlackSwanWatchdog.ts | `black_swan` |
+| backend/src/portfolio/risk/IndustryConcentrationGuard.ts | `industry_concentration` |
+| backend/src/quant/factors/FactorCorrelationReport.ts | `factor_correlation` |
+
+backend/src/portfolio/CLAUDE.md 同步新增 "risk/ — RiskAlert.rule_id 写入约定 (US-067 引入)" 一节，将 8 个 rule_id 列表 + dedup 语义解释 + "同 guard 内多 level 共享 rule_id"（避免 LEVEL_1/2/3 拆 rule_id 导致 3 条卡片同推）落地为文档。
+
+**Quality 校验**: 
+- 8 个 risk guard tests 全 ok：position-limit 83 / trailing-stop 105 / per-stock-stop-loss 131 / drawdown-circuit-breaker 161 / market-regime-alert 139 / black-swan-watchdog 135 / industry-concentration 189 = 943 个
+- factor-correlation-report 132/132 ok
+- realtime-alert-dispatcher 187/187 ok
+- backend typecheck `npx tsc --noEmit` clean
+- backend lint 8 个 guard 文件 + FactorCorrelationReport.ts + RealtimeAlertDispatcher.ts 全 clean
+
+**Learnings (本补丁引入)**:
+- **新 nullable column 落库后必须同步审视所有 writer 是否填新字段**：rule_id 加到 model 时未必所有 writer 都立刻填，但落地的 dispatcher / dedup / 告警归类全靠 rule_id 区分 = 静默 fallback 让功能看起来 OK 实际语义崩。**判据**：任何新加的 nullable 字段在 Codebase Patterns 单独列出"必填来源"清单（本 story rule_id 由 8 个 RiskAlert.create() 调用点必填），ralph 下一轮 / reviewer 一眼能 spot 漏填的 writer。下次 US-091 健康度评分 reasons_json 字段加入时同样列写入清单。
+- **rule_id 命名规范固化为 snake_case**：与文件名简写一致让 ops 一眼能从 RiskAlert 行的 rule_id 反查 guard 文件，避免日后多人协作中 `positionLimit` vs `position-limit` vs `POSITION_LIMIT` 命名漂移。**判据**：任何 string enum 类列（dedup signature 字段 / 告警类型 / event type）确立命名规范后必须在 portfolio/CLAUDE.md 等"约定文档"明示写入 rule + 已落地 enum 列表；改约定要更新表格。
+
+---

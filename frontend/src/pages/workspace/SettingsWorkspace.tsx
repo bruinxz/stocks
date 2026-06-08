@@ -47,6 +47,8 @@ import {
   updateWeChatConfig,
   unbindWeChat,
   sendWeChatTestMessage,
+  updateSmsConfig,
+  sendRealtimeAlertTest,
   NotificationChannelsConfig,
   SendDigestsResult,
   DigestForUserResult,
@@ -54,6 +56,7 @@ import {
   WeeklyReviewForUserResult,
   WeChatBindQrCodeResult,
   WeChatTestKind,
+  RealtimeAlertDispatchResult,
 } from '../../services/settingsService';
 
 const { Text, Paragraph, Link } = Typography;
@@ -75,7 +78,7 @@ const DEFAULT_CONFIG: NotificationChannelsConfig = {
     earnings_alert: true,
     risk_alert: true,
   },
-  email: { enabled: false, address: '', weekly_review: false },
+  email: { enabled: false, address: '', weekly_review: false, risk_alert: false },
   wechat: {
     enabled: false,
     openid: '',
@@ -83,6 +86,11 @@ const DEFAULT_CONFIG: NotificationChannelsConfig = {
     bound_at: '',
     daily_digest: false,
     earnings_alert: false,
+    risk_alert: false,
+  },
+  sms: {
+    enabled: false,
+    phone: '',
     risk_alert: false,
   },
 };
@@ -129,6 +137,12 @@ const SettingsWorkspace: React.FC = () => {
   /** 微信 confirm 轮询 setInterval id —— 模态框关闭 / 已绑定时清掉 */
   const wechatPollRef = useRef<number | null>(null);
 
+  // ---- US-067 SMS / 实时风控 webhook state ------------------------------
+  const [smsSaving, setSmsSaving] = useState(false);
+  const [realtimeAlertTesting, setRealtimeAlertTesting] = useState(false);
+  const [realtimeAlertTestResult, setRealtimeAlertTestResult] =
+    useState<RealtimeAlertDispatchResult | null>(null);
+
   const refresh = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
@@ -153,6 +167,7 @@ const SettingsWorkspace: React.FC = () => {
           config.feishu.enabled ? '飞书' : null,
           config.email.enabled ? '邮件' : null,
           config.wechat.enabled ? '微信' : null,
+          config.sms.enabled ? '短信' : null,
         ].filter(Boolean).length
       : 0;
     return (
@@ -265,6 +280,7 @@ const SettingsWorkspace: React.FC = () => {
         enabled: config.email.enabled,
         address: config.email.address,
         weekly_review: config.email.weekly_review,
+        risk_alert: config.email.risk_alert,
       });
       setConfig(saved);
       message.success('邮件通道配置已保存');
@@ -443,6 +459,52 @@ const SettingsWorkspace: React.FC = () => {
       message.error(err instanceof Error ? err.message : '发送失败');
     } finally {
       setWeChatTesting(false);
+    }
+  }, []);
+
+  // ---- US-067 SMS / 实时风控 webhook handlers ---------------------------
+
+  const handleSaveSmsConfig = useCallback(async () => {
+    if (!config) return;
+    setSmsSaving(true);
+    try {
+      const saved = await updateSmsConfig({
+        enabled: config.sms.enabled,
+        phone: config.sms.phone,
+        risk_alert: config.sms.risk_alert,
+      });
+      setConfig(saved);
+      message.success('SMS 通道配置已保存');
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '保存失败');
+    } finally {
+      setSmsSaving(false);
+    }
+  }, [config]);
+
+  /**
+   * 冒烟测试一条 HIGH 级风控告警 —— 三 channel (feishu/email/sms) 全派；
+   * dryRun=true 不真发也不写 dedup，让用户反复点测试不被 30 min dedup 拦。
+   */
+  const handleRealtimeAlertTest = useCallback(async (dryRun: boolean) => {
+    setRealtimeAlertTesting(true);
+    setRealtimeAlertTestResult(null);
+    try {
+      const result = await sendRealtimeAlertTest(dryRun);
+      setRealtimeAlertTestResult(result);
+      if (result.status === 'sent') {
+        message.success('测试告警已派发到全部启用的通道');
+      } else if (result.status === 'partial') {
+        message.warning('部分通道派发失败，详见下方结果');
+      } else if (result.status === 'skipped') {
+        message.info(`已跳过：${result.skip_reason || '所有通道未启用或缺接收地址'}`);
+      } else {
+        message.error('测试告警派发失败，详见下方结果');
+      }
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '测试发送失败');
+    } finally {
+      setRealtimeAlertTesting(false);
     }
   }, []);
 
@@ -653,6 +715,17 @@ const SettingsWorkspace: React.FC = () => {
                   />
                 </Form.Item>
               </Col>
+              <Col span={8}>
+                <Form.Item
+                  label="高优先级风控告警 (US-067)"
+                  tooltip="HIGH 级 RiskAlert 实时邮件推送；同事件 30 min 内只发 1 次去重"
+                >
+                  <Switch
+                    checked={cfg.email.risk_alert}
+                    onChange={v => patchConfig({ ...cfg, email: { ...cfg.email, risk_alert: v } })}
+                  />
+                </Form.Item>
+              </Col>
             </Row>
             <Divider />
             <Space wrap>
@@ -838,6 +911,125 @@ const SettingsWorkspace: React.FC = () => {
                 测试·风控告警
               </Button>
             </Space>
+          </Form>
+        </Card>
+
+        <Card
+          title="阿里云短信（SMS·实时风控告警）"
+          extra={
+            <Switch
+              checked={cfg.sms.enabled}
+              checkedChildren="启用"
+              unCheckedChildren="关闭"
+              onChange={v => patchConfig({ ...cfg, sms: { ...cfg.sms, enabled: v } })}
+            />
+          }
+        >
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message="实时风控 webhook（HIGH 级告警）"
+            description={
+              <Space direction="vertical" size={4}>
+                <Text>
+                  任何 <Text strong>HIGH 级 RiskAlert</Text> 写入即立即并行触发飞书机器人 + 邮件 +
+                  阿里云短信（按通道开关）。 防风暴：同一类告警（rule_id × symbol × level）30
+                  分钟内只推一次。
+                </Text>
+                <Text type="secondary">
+                  后端需配置 env：<Text code>ALIYUN_SMS_ACCESS_KEY_ID</Text> /
+                  <Text code>ALIYUN_SMS_ACCESS_KEY_SECRET</Text> /
+                  <Text code>ALIYUN_SMS_SIGN_NAME</Text> /
+                  <Text code>ALIYUN_SMS_TEMPLATE_RISK_ALERT</Text>； 仅支持 11 位国内手机号（+86）。
+                </Text>
+              </Space>
+            }
+          />
+          <Form layout="vertical" disabled={!cfg.sms.enabled}>
+            <Form.Item
+              label="接收手机号"
+              extra="11 位国内号（如 13800138000），后端会自动 normalize +86 / 86 前缀与分隔符。"
+            >
+              <Input
+                placeholder="13800138000"
+                value={cfg.sms.phone || ''}
+                onChange={e => patchConfig({ ...cfg, sms: { ...cfg.sms, phone: e.target.value } })}
+                allowClear
+                maxLength={20}
+              />
+            </Form.Item>
+            <Row gutter={16}>
+              <Col span={8}>
+                <Form.Item
+                  label="高优先级风控告警"
+                  tooltip="HIGH 级 RiskAlert 实时短信推送；与同事件 30 min dedup 共用"
+                >
+                  <Switch
+                    checked={cfg.sms.risk_alert}
+                    onChange={v => patchConfig({ ...cfg, sms: { ...cfg.sms, risk_alert: v } })}
+                  />
+                </Form.Item>
+              </Col>
+            </Row>
+            <Divider />
+            <Space wrap>
+              <Button
+                type="primary"
+                icon={<SaveOutlined />}
+                loading={smsSaving}
+                onClick={() => void handleSaveSmsConfig()}
+              >
+                保存 SMS 配置
+              </Button>
+              <Button
+                icon={<EyeOutlined />}
+                loading={realtimeAlertTesting}
+                onClick={() => void handleRealtimeAlertTest(true)}
+              >
+                预览测试告警（dry-run）
+              </Button>
+              <Button
+                icon={<SendOutlined />}
+                loading={realtimeAlertTesting}
+                disabled={!cfg.feishu.risk_alert && !cfg.email.risk_alert && !cfg.sms.risk_alert}
+                onClick={() => void handleRealtimeAlertTest(false)}
+              >
+                立即发送一条测试告警（三通道）
+              </Button>
+            </Space>
+            {realtimeAlertTestResult ? (
+              <Alert
+                style={{ marginTop: 12 }}
+                type={
+                  realtimeAlertTestResult.status === 'sent'
+                    ? 'success'
+                    : realtimeAlertTestResult.status === 'partial'
+                    ? 'warning'
+                    : realtimeAlertTestResult.status === 'skipped'
+                    ? 'info'
+                    : 'error'
+                }
+                showIcon
+                message={`派发结果：${realtimeAlertTestResult.status}${
+                  realtimeAlertTestResult.deduped ? '（30 min 内 dedup 命中）' : ''
+                }${realtimeAlertTestResult.dry_run ? ' · dry-run' : ''}`}
+                description={
+                  <Space direction="vertical" size={2}>
+                    {realtimeAlertTestResult.skip_reason ? (
+                      <Text type="secondary">
+                        {`跳过原因：${realtimeAlertTestResult.skip_reason}`}
+                      </Text>
+                    ) : null}
+                    {realtimeAlertTestResult.channels.map(ch => (
+                      <Text key={ch.channel}>
+                        {`· ${ch.channel}：${ch.status}${ch.message ? ' — ' + ch.message : ''}`}
+                      </Text>
+                    ))}
+                  </Space>
+                }
+              />
+            ) : null}
           </Form>
         </Card>
       </Space>

@@ -673,3 +673,45 @@ weekly recap, US-091 monthly review, ...) should follow:
     fallback) for the "今日体检" dashboard widget.
   - `GET /api/risk/morning-checkup` (config read).
   - `PUT /api/risk/morning-checkup` (config write).
+
+---
+
+## risk/ — RiskAlert.rule_id 写入约定 (US-067 引入)
+
+`RiskAlert.rule_id` 由 US-067 新增。**所有 guard `DefaultXxxDataSource.writeAlert()`
+都必须显式 set `rule_id`**（不传 = `null` 让 dispatcher dedup 退化为 `unknown::symbol::level`，
+不同 rule 的 HIGH 告警在 30 min 窗口内互相 dedup —— 等于"任何一类 HIGH 告警 30 分钟
+内只推一次"，严重违反 AC 的"同一类告警 30 分钟内只推一次"语义）。
+
+已落实的 rule_id 命名（保持稳定，前端 / 告警归类 / ops 监控直接依赖此 enum）：
+
+| Guard                              | rule_id                  |
+|-----------------------------------|---------------------------|
+| PositionLimitGuard (US-047)       | `position_limit`         |
+| TrailingStopGuard (US-048)        | `trailing_stop`          |
+| DrawdownCircuitBreaker (US-049)   | `drawdown_breaker`       |
+| MarketRegimeAlertService (US-050) | `market_regime_alert`    |
+| PerStockStopLossGuard (US-051)    | `per_stock_stop_loss`    |
+| IndustryConcentrationGuard (US-052)| `industry_concentration`|
+| BlackSwanWatchdog (US-053)        | `black_swan`             |
+| FactorCorrelationReport (US-042)  | `factor_correlation`     |
+
+新 guard / 新事后分析告警写入 `RiskAlert.create()` 必带 `rule_id`，命名遵循
+`snake_case`、与 guard 文件名简写一致。同 guard 内部多种告警子类型（如
+DrawdownCircuitBreaker 的 LEVEL_1/2/3）共享一个 rule_id（因为它们语义上属于同
+一类"组合回撤"告警，dedup 30 min 是合理的——LEVEL_2 比 LEVEL_1 更严重时仍会
+覆写同 signature 的 dedup 记录）。**不要**为每个 sub-level 拆 rule_id —— 那样会
+让 LEVEL_1 / 2 / 3 在 30 min 内同时推 3 条飞书卡片（用户体验灾难）。
+
+## risk/ — RealtimeAlertDispatcher hook (US-067)
+
+`RiskAlert` model 的 `@AfterCreate` hook (`dispatchRealtimeAlert`) **自动**对
+`level='HIGH'` 行 fire-and-forget 调 `realtimeAlertDispatcher.dispatch(...)`。
+所以 guards 只管写 `RiskAlert` —— 不需要再显式调 dispatcher（避免双重推送）。
+
+设计要点：
+- **hook 顶层 try/catch 吞错**：`RiskAlert.create()` 主流程绝不被推送错误阻塞
+  （否则 webhook 故障 = guards 写入失败 = 业务流程崩）。
+- **lazy-require dispatcher**：避免 RiskAlert model 反向依赖 services 层。
+- **level !== 'HIGH' 直接 skip**：MEDIUM/LOW 不推（保留给未来 cron 聚合 US 扩展）。
+- **fire-and-forget**：不 await，主流程 0 增加延迟。

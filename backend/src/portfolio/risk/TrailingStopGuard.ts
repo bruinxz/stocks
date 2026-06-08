@@ -376,6 +376,9 @@ export class DefaultTrailingStopDataSource implements TrailingStopDataSource {
       name: input.name,
       level: 'HIGH',
       message: input.message,
+      // US-067 — 给 RealtimeAlertDispatcher dedup signature 用，避免不同 guard
+      // 的 HIGH 告警在 30 min 窗口内被 unknown::symbol::HIGH 互相吃掉。
+      rule_id: 'trailing_stop',
       is_read: false,
     } as any);
   }

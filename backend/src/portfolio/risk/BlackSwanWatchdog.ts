@@ -643,6 +643,8 @@ export class DefaultBlackSwanDataSource implements BlackSwanDataSource {
       name: input.name,
       level: 'HIGH',
       message: input.message,
+      // US-067 — 给 RealtimeAlertDispatcher dedup signature 用。
+      rule_id: 'black_swan',
       is_read: false,
     } as any);
   }

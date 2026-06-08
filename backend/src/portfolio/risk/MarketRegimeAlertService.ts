@@ -563,6 +563,8 @@ export class DefaultMarketRegimeAlertDataSource implements MarketRegimeAlertData
       name: input.name,
       level: input.level,
       message: input.message,
+      // US-067 — 给 RealtimeAlertDispatcher dedup signature 用。
+      rule_id: 'market_regime_alert',
       is_read: false,
     } as any);
   }

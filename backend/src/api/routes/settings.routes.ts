@@ -162,4 +162,18 @@ router.post(
   settingsController.simulateWeChatBindEvent
 );
 
+/**
+ * @route POST /api/settings/sms-config
+ * @desc 更新 SMS 通道开关 / 手机号 / risk_alert 订阅开关 (US-067)
+ * @access Private
+ */
+router.post('/sms-config', authController.authenticate, settingsController.updateSmsConfig);
+
+/**
+ * @route POST /api/settings/sms-test
+ * @desc 给当前用户发一条测试短信（冒烟测试阿里云 SMS 是否畅通）(US-067)
+ * @access Private
+ */
+router.post('/sms-test', authController.authenticate, settingsController.testSmsMessage);
+
 export default router;

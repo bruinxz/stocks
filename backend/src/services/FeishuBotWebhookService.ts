@@ -264,6 +264,84 @@ class FeishuBotWebhookService {
     }
   }
 
+  /**
+   * US-067 — 发送高优先级风控告警 interactive card。
+   *
+   * 与 `sendDailyDigestCard` / `sendEarningsForecastCard` 完全镜像（同
+   * `msg_type='interactive'` schema + caller 注入 buildCard helper 避免反向
+   * 依赖）。`RealtimeAlertDispatcher` 用同一 channel adapter 但走自己的 card
+   * schema (HIGH 红 header + 触发时间 + 详情 + symbol + 跳转 deeplink)。
+   *
+   * Caller (`RealtimeAlertDispatcher.dispatch`) 通过 `options.buildCard` 注入
+   * 卡片构造函数；本 adapter 不知道 card 内部 schema —— 只负责 dispatch +
+   * dispatch 错误处理 + fail-OPEN。
+   *
+   * 与 sendDailyDigestCard 同款 fail-OPEN：失败返回 `{success:false, message}`
+   * 不 throw —— 让 caller 收到结果决定如何记录 (per-event status='failed' /
+   * 'partial' / 'sent'), 不污染告警分发主路径。
+   */
+  async sendRiskAlertCard(
+    payload: any,
+    webhookUrl?: string,
+    options?: { buildCard?: (payload: any) => any }
+  ): Promise<FeishuBotWebhookSendResult> {
+    const targetUrl = firstText(webhookUrl, this.getWebhookUrl());
+    if (toBoolean(process.env.DISABLE_FEISHU_BOT_WEBHOOK, false)) {
+      return {
+        success: false,
+        skipped: true,
+        message: '飞书机器人 webhook 已通过环境变量禁用',
+      };
+    }
+    if (!targetUrl) {
+      return {
+        success: false,
+        skipped: true,
+        message: '飞书机器人 webhook 未配置，已跳过风控告警推送',
+      };
+    }
+    if (!payload || typeof payload !== 'object') {
+      return {
+        success: false,
+        message: '风控告警 payload 不能为空',
+      };
+    }
+    if (!options?.buildCard || typeof options.buildCard !== 'function') {
+      return {
+        success: false,
+        message: 'sendRiskAlertCard 必须提供 options.buildCard 以构造卡片 JSON',
+      };
+    }
+
+    let cardBody: any;
+    try {
+      cardBody = options.buildCard(payload);
+    } catch (err: any) {
+      logger.warn(`飞书风控告警 buildCard 异常: ${err?.message || err}`);
+      return { success: false, message: `buildCard 异常: ${err?.message || err}` };
+    }
+
+    try {
+      const response = await this.http.post(targetUrl, cardBody);
+      const body = response.data || {};
+      const rawCode = body.code ?? body.StatusCode ?? body.status_code ?? 0;
+      const code = Number(rawCode);
+      if (Number.isFinite(code) && code !== 0) {
+        const message = body.msg || body.message || body.StatusMessage || '飞书机器人返回失败';
+        logger.warn(`飞书风控告警推送失败: code=${code}, message=${message}`);
+        return { success: false, message, data: body };
+      }
+      const sym = payload.symbol ?? payload.alert_id ?? '?';
+      const uid = payload.user_id ?? '?';
+      logger.info(`飞书风控告警已推送 (user=${uid}, alert=${sym})`);
+      return { success: true, data: body };
+    } catch (error: any) {
+      const message = error?.response?.data?.msg || error?.message || '飞书风控告警推送异常';
+      logger.warn(`飞书风控告警推送异常: ${message}`);
+      return { success: false, message };
+    }
+  }
+
   async sendRecommendationSummary(
     payload: FeishuRecommendationSummaryPayload
   ): Promise<FeishuBotWebhookSendResult> {

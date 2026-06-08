@@ -652,6 +652,9 @@ export class DefaultIndustryConcentrationDataSource implements IndustryConcentra
       name: input.name,
       level: 'MEDIUM',
       message: input.message,
+      // US-067 — 给 RealtimeAlertDispatcher dedup signature 用 (本 guard 写 MEDIUM
+      // 不进 dispatcher 主流程，但保留 rule_id 让数据完整、未来扩 MEDIUM cron 聚合可复用)。
+      rule_id: 'industry_concentration',
       is_read: false,
     } as any);
   }

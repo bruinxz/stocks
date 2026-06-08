@@ -419,6 +419,7 @@ export class DefaultWeChatOADataSource implements WeChatOADataSource {
       feishu: { ...existing.feishu },
       email: { ...existing.email },
       wechat: nextWechat,
+      sms: { ...existing.sms },
     };
     const normalized = normalizeNotificationConfig({ notification_channels: next });
     const rc =
@@ -467,6 +468,7 @@ export class DefaultWeChatOADataSource implements WeChatOADataSource {
       feishu: { ...existing.feishu },
       email: { ...existing.email },
       wechat: nextWechat,
+      sms: { ...existing.sms },
     };
     const normalized = normalizeNotificationConfig({ notification_channels: next });
     const rc =
@@ -862,6 +864,7 @@ export class WeChatOAService {
       feishu: { ...existing.feishu },
       email: { ...existing.email },
       wechat: nextWechat,
+      sms: { ...existing.sms },
     };
     const normalized = normalizeNotificationConfig({ notification_channels: next });
     const rc =
@@ -893,6 +896,7 @@ export class WeChatOAService {
       feishu: { ...existing.feishu },
       email: { ...existing.email },
       wechat: nextWechat,
+      sms: { ...existing.sms },
     };
     const normalized = normalizeNotificationConfig({ notification_channels: next });
     const rc =

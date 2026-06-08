@@ -1320,12 +1320,17 @@ export class WeeklyReviewReportService {
 
   /**
    * AC 必需：POST /api/settings/email-config endpoint 用 ——
-   * 接受 { enabled?, address?, weekly_review? } 三字段 patch，merge 到 user
-   * 的 notification_channels.email 后落盘。
+   * 接受 { enabled?, address?, weekly_review?, risk_alert? } 四字段 patch，merge 到 user
+   * 的 notification_channels.email 后落盘。`risk_alert` 在 US-067 加入。
    */
   async updateEmailConfig(
     user_id: number,
-    patch: Partial<{ enabled: boolean; address: string; weekly_review: boolean }>
+    patch: Partial<{
+      enabled: boolean;
+      address: string;
+      weekly_review: boolean;
+      risk_alert: boolean;
+    }>
   ): Promise<NotificationChannelsConfig> {
     const user = await User.findByPk(user_id);
     if (!user) throw new Error('用户不存在');
@@ -1335,6 +1340,7 @@ export class WeeklyReviewReportService {
       feishu: { ...existing.feishu },
       email: nextEmail,
       wechat: { ...existing.wechat },
+      sms: { ...existing.sms },
     };
     const normalized = normalizeNotificationConfig({ notification_channels: next });
     const rc =

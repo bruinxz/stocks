@@ -442,6 +442,8 @@ export class DefaultPerStockStopLossDataSource implements PerStockStopLossDataSo
       name: input.name,
       level: 'HIGH',
       message: input.message,
+      // US-067 — 给 RealtimeAlertDispatcher dedup signature 用。
+      rule_id: 'per_stock_stop_loss',
       is_read: false,
     } as any);
   }

@@ -3,6 +3,7 @@ import { dailyTradingDigestService } from '../../services/DailyTradingDigestServ
 import { earningsForecastWatcher } from '../../services/EarningsForecastWatcher';
 import { weeklyReviewReportService } from '../../services/WeeklyReviewReportService';
 import { weChatOAService } from '../../services/WeChatOAService';
+import { realtimeAlertDispatcher } from '../../services/RealtimeAlertDispatcher';
 import { logger } from '../../utils/logger';
 
 /**
@@ -196,6 +197,8 @@ export class SettingsController {
       if (body.enabled !== undefined) patch.enabled = body.enabled;
       if (body.address !== undefined) patch.address = body.address;
       if (body.weekly_review !== undefined) patch.weekly_review = body.weekly_review;
+      // US-067 — 邮件高优先级风控告警订阅开关
+      if (body.risk_alert !== undefined) patch.risk_alert = body.risk_alert;
       const saved = await weeklyReviewReportService.updateEmailConfig(user_id, patch);
       res.json({ success: true, data: saved, message: '邮件通道配置已保存' });
     } catch (error: any) {
@@ -434,6 +437,77 @@ export class SettingsController {
       res.json({ success: true, data: result, message: '微信绑定事件已应用' });
     } catch (error: any) {
       logger.error('模拟微信绑定事件失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * POST /api/settings/sms-config (US-067)
+   *
+   * 更新当前用户的 SMS 通道配置：enabled / phone / risk_alert。
+   *
+   * Body: `{ enabled?: boolean, phone?: string, risk_alert?: boolean }`
+   *
+   * 与 POST /api/settings/email-config / wechat-config 同款 sub-resource 范式 ——
+   * 让前端 SettingsWorkspace 的 SMS Card 表单代码不必构造嵌套 patch 对象。
+   *
+   * 后端 phone normalize 由 `normalizeNotificationConfig` (DailyTradingDigestService)
+   * 走 string 安全转换；实际发送时 `AliyunSmsService.normalizeChinesePhone` 会再做
+   * 11 位国内号严格校验 + fail-OPEN（非法手机号 → skip）。
+   */
+  async updateSmsConfig(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user.id;
+      const body = req.body || {};
+      const patch: any = {};
+      if (body.enabled !== undefined) patch.enabled = body.enabled;
+      if (body.phone !== undefined) patch.phone = body.phone;
+      if (body.risk_alert !== undefined) patch.risk_alert = body.risk_alert;
+      const saved = await dailyTradingDigestService.updateSmsConfig(user_id, patch);
+      res.json({ success: true, data: saved, message: 'SMS 通道配置已保存' });
+    } catch (error: any) {
+      logger.error('更新 SMS 通道配置失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * POST /api/settings/sms-test (US-067)
+   *
+   * 给当前用户发一条测试 HIGH 级风控告警，3 channel 全派（dry_run=true 仅返回 payload
+   * 不真发）。让用户在 SettingsWorkspace 一键验证 webhook + SMTP + 阿里云 SMS 是否
+   * 畅通。`dry_run=true` 不写 dedup buffer 让用户可反复测试。
+   *
+   * Body: `{ dry_run?: boolean, message?: string }`
+   */
+  async testSmsMessage(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user.id;
+      const body = req.body || {};
+      const dryRun = body.dry_run === undefined ? true : body.dry_run === true;
+      const result = await realtimeAlertDispatcher.dispatch(
+        {
+          user_id,
+          alert_id: 0, // 0 = 冒烟测试，不对应真实 RiskAlert 行
+          symbol: '600519',
+          name: '贵州茅台',
+          level: 'HIGH',
+          message:
+            typeof body.message === 'string' && body.message.trim()
+              ? body.message.trim()
+              : '【冒烟测试】这是一条来自 settings/sms-test 端点的测试 HIGH 风控告警',
+          rule_id: 'smoke_test',
+          triggered_at: new Date().toISOString(),
+        },
+        { dry_run: dryRun }
+      );
+      res.json({
+        success: true,
+        data: result,
+        message: dryRun ? '已生成测试告警 payload（dry_run）' : '测试告警已派发',
+      });
+    } catch (error: any) {
+      logger.error('发送测试 SMS / 实时告警失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   }

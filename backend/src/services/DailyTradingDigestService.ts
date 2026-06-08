@@ -54,8 +54,8 @@ export const MAX_TOP_TRADES = 10;
 export const MAX_TOP_CANDIDATES = 20;
 
 /**
- * 通知 channel 配置（feishu / email / wechat）— 当前 US-063 只用 feishu.daily_digest。
- * Email / WeChat 留给未来 US-065 / US-066 同 namespace 扩展。
+ * 通知 channel 配置（feishu / email / wechat / sms）— 当前 US-063 只用 feishu.daily_digest。
+ * Email / WeChat / SMS 留给未来 US-065 / US-066 / US-067 同 namespace 扩展。
  */
 export interface NotificationChannelsConfig {
   feishu: {
@@ -70,6 +70,8 @@ export interface NotificationChannelsConfig {
     enabled: boolean;
     address?: string;
     weekly_review: boolean;
+    /** US-067 — 高优先级风控告警邮件订阅 */
+    risk_alert: boolean;
   };
   wechat: {
     enabled: boolean;
@@ -82,6 +84,14 @@ export interface NotificationChannelsConfig {
     /** US-066 — 业绩预告即时提醒模板订阅 */
     earnings_alert: boolean;
     /** US-066 — 高优先级风控告警模板订阅 */
+    risk_alert: boolean;
+  };
+  sms: {
+    /** US-067 — SMS 通道总开关（即使配置了手机号，关 = 不发） */
+    enabled: boolean;
+    /** US-067 — 接收短信的手机号（仅支持 +86 / 11 位国内号） */
+    phone?: string;
+    /** US-067 — 高优先级风控告警短信订阅 */
     risk_alert: boolean;
   };
 }
@@ -98,6 +108,7 @@ export const DEFAULT_NOTIFICATION_CONFIG: NotificationChannelsConfig = Object.fr
     enabled: false,
     address: '',
     weekly_review: false,
+    risk_alert: false,
   },
   wechat: {
     enabled: false,
@@ -106,6 +117,11 @@ export const DEFAULT_NOTIFICATION_CONFIG: NotificationChannelsConfig = Object.fr
     bound_at: '',
     daily_digest: false,
     earnings_alert: false,
+    risk_alert: false,
+  },
+  sms: {
+    enabled: false,
+    phone: '',
     risk_alert: false,
   },
 }) as NotificationChannelsConfig;
@@ -253,6 +269,7 @@ export function normalizeNotificationConfig(raw: any): NotificationChannelsConfi
   const feishuRaw = isObject(candidate.feishu) ? candidate.feishu : {};
   const emailRaw = isObject(candidate.email) ? candidate.email : {};
   const wechatRaw = isObject(candidate.wechat) ? candidate.wechat : {};
+  const smsRaw = isObject(candidate.sms) ? candidate.sms : {};
 
   return {
     feishu: {
@@ -275,6 +292,7 @@ export function normalizeNotificationConfig(raw: any): NotificationChannelsConfi
         emailRaw.weekly_review,
         DEFAULT_NOTIFICATION_CONFIG.email.weekly_review
       ),
+      risk_alert: safeBoolean(emailRaw.risk_alert, DEFAULT_NOTIFICATION_CONFIG.email.risk_alert),
     },
     wechat: {
       enabled: safeBoolean(wechatRaw.enabled, DEFAULT_NOTIFICATION_CONFIG.wechat.enabled),
@@ -290,6 +308,11 @@ export function normalizeNotificationConfig(raw: any): NotificationChannelsConfi
         DEFAULT_NOTIFICATION_CONFIG.wechat.earnings_alert
       ),
       risk_alert: safeBoolean(wechatRaw.risk_alert, DEFAULT_NOTIFICATION_CONFIG.wechat.risk_alert),
+    },
+    sms: {
+      enabled: safeBoolean(smsRaw.enabled, DEFAULT_NOTIFICATION_CONFIG.sms.enabled),
+      phone: safeString(smsRaw.phone),
+      risk_alert: safeBoolean(smsRaw.risk_alert, DEFAULT_NOTIFICATION_CONFIG.sms.risk_alert),
     },
   };
 }
@@ -602,6 +625,7 @@ function cloneDefault(): NotificationChannelsConfig {
     feishu: { ...DEFAULT_NOTIFICATION_CONFIG.feishu },
     email: { ...DEFAULT_NOTIFICATION_CONFIG.email },
     wechat: { ...DEFAULT_NOTIFICATION_CONFIG.wechat },
+    sms: { ...DEFAULT_NOTIFICATION_CONFIG.sms },
   };
 }
 
@@ -1182,6 +1206,47 @@ export class DailyTradingDigestService {
       feishu: { ...existing.feishu, ...(patch.feishu || {}) },
       email: { ...existing.email, ...(patch.email || {}) },
       wechat: { ...existing.wechat, ...(patch.wechat || {}) },
+      sms: { ...existing.sms, ...(patch.sms || {}) },
+    };
+    const normalized = normalizeNotificationConfig({ notification_channels: next });
+    const rc =
+      (user as any).risk_config && typeof (user as any).risk_config === 'object'
+        ? { ...(user as any).risk_config }
+        : {};
+    rc.notification_channels = normalized;
+    (user as any).risk_config = rc;
+    user.changed('risk_config', true);
+    await user.save();
+    return normalized;
+  }
+
+  /**
+   * US-067 — 专用 patch endpoint：merge + 落 user.notification_channels.sms。
+   *
+   * 与 `updateEmailConfig` / `updateWeChatConfig` 同款 sub-resource 范式 —— 让前端
+   * SettingsWorkspace 的 SMS Card 表单代码不必构造嵌套 patch 对象。
+   *
+   * Body 接受 `{ enabled?, phone?, risk_alert? }` 三字段；phone normalize 让 11
+   * 位国内号留下，其他全留给 `RealtimeAlertDispatcher.shouldDispatchForChannel`
+   * 在发送前做最终校验（前端可以保存 + 提示，但发送时 service 会自己拒）。
+   */
+  async updateSmsConfig(
+    user_id: number,
+    patch: Partial<{
+      enabled: boolean;
+      phone: string;
+      risk_alert: boolean;
+    }>
+  ): Promise<NotificationChannelsConfig> {
+    const user = await User.findByPk(user_id);
+    if (!user) throw new Error('用户不存在');
+    const existing = normalizeNotificationConfig((user as any).risk_config);
+    const nextSms = { ...existing.sms, ...(patch || {}) };
+    const next: NotificationChannelsConfig = {
+      feishu: { ...existing.feishu },
+      email: { ...existing.email },
+      wechat: { ...existing.wechat },
+      sms: nextSms,
     };
     const normalized = normalizeNotificationConfig({ notification_channels: next });
     const rc =

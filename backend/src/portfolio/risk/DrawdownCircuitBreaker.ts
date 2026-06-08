@@ -508,6 +508,8 @@ export class DefaultDrawdownBreakerDataSource implements DrawdownBreakerDataSour
       name: input.name,
       level: 'HIGH',
       message: input.message,
+      // US-067 — 给 RealtimeAlertDispatcher dedup signature 用。
+      rule_id: 'drawdown_breaker',
       is_read: false,
     } as any);
   }

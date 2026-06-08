@@ -28,6 +28,8 @@ export interface EmailChannelConfig {
   enabled: boolean;
   address?: string;
   weekly_review: boolean;
+  /** US-067 — 高优先级风控告警邮件订阅 */
+  risk_alert: boolean;
 }
 
 export interface WeChatChannelConfig {
@@ -44,16 +46,28 @@ export interface WeChatChannelConfig {
   risk_alert: boolean;
 }
 
+/** US-067 — 阿里云短信通道；用于 HIGH 级 RiskAlert 实时推送。 */
+export interface SmsChannelConfig {
+  enabled: boolean;
+  /** 11 位国内手机号，前端展示时可加 +86 前缀 */
+  phone?: string;
+  /** 高优先级风控告警短信订阅；与 sms.enabled 同时为 true 才推送 */
+  risk_alert: boolean;
+}
+
 export interface NotificationChannelsConfig {
   feishu: FeishuChannelConfig;
   email: EmailChannelConfig;
   wechat: WeChatChannelConfig;
+  /** US-067 — 阿里云短信通道（高优先级风控告警） */
+  sms: SmsChannelConfig;
 }
 
 export type NotificationChannelsPatch = Partial<{
   feishu: Partial<FeishuChannelConfig>;
   email: Partial<EmailChannelConfig>;
   wechat: Partial<WeChatChannelConfig>;
+  sms: Partial<SmsChannelConfig>;
 }>;
 
 // ---------- 日报预览/发送结果（DigestForUserResult 的 frontend 视角） -------
@@ -258,11 +272,14 @@ export interface SendWeeklyReviewResult {
 
 /**
  * US-065 — 更新邮件通道开关 / 接收地址 / weekly_review 开关。
+ * US-067 — 扩展 risk_alert 字段：HIGH 级 RiskAlert 邮件订阅开关。
  */
 export async function updateEmailConfig(patch: {
   enabled?: boolean;
   address?: string;
   weekly_review?: boolean;
+  /** US-067 — 高优先级风控告警邮件订阅 */
+  risk_alert?: boolean;
 }): Promise<NotificationChannelsConfig> {
   const res = await api.post('/settings/email-config', patch);
   if (!res.data?.success) {
@@ -424,6 +441,76 @@ export async function sendWeChatTestMessage(
   return res.data.data as WeChatSendResult;
 }
 
+// ---------- US-067 阿里云短信通道 (实时风控 webhook) -----------------------
+
+/**
+ * US-067 — 一条 channel 在 dispatcher 里的派发结果（与后端
+ * RealtimeAlertChannelResult 对齐；前端只展示 status / message）。
+ */
+export interface RealtimeAlertChannelResult {
+  channel: 'feishu' | 'email' | 'sms';
+  status: 'sent' | 'skipped' | 'failed' | 'partial';
+  sent: boolean;
+  message?: string;
+  data?: any;
+}
+
+/**
+ * US-067 — dispatcher.dispatch 返回结果（对齐后端
+ * RealtimeAlertDispatchResult）。`channels` 列出 3 个通道（feishu/email/sms）
+ * 各自的派发状态；`status` 是 3 通道整体汇总（sent / skipped / failed / partial）。
+ */
+export interface RealtimeAlertDispatchResult {
+  alert_id_dispatch: string;
+  user_id: number;
+  symbol: string;
+  level: string;
+  rule_id: string;
+  signature: string;
+  status: 'sent' | 'skipped' | 'failed' | 'partial';
+  sent_any: boolean;
+  dry_run: boolean;
+  deduped: boolean;
+  channels: RealtimeAlertChannelResult[];
+  skip_reason?: string;
+}
+
+/**
+ * US-067 — 更新当前用户的 SMS 通道配置（与 updateEmailConfig / updateWeChatConfig
+ * 同款 sub-resource 范式）。Body 接受 3 字段：`enabled` / `phone` / `risk_alert`。
+ */
+export async function updateSmsConfig(patch: {
+  enabled?: boolean;
+  phone?: string;
+  risk_alert?: boolean;
+}): Promise<NotificationChannelsConfig> {
+  const res = await api.post('/settings/sms-config', patch);
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || '保存 SMS 通道配置失败');
+  }
+  return res.data.data as NotificationChannelsConfig;
+}
+
+/**
+ * US-067 — 给当前用户冒烟测试一条 HIGH 风控告警；3 channel 全派
+ * (feishu/email/sms)。`dryRun=true`（默认）只返回 payload 不真发，让用户反复测试
+ * 不触发 30 min dedup。
+ */
+export async function sendRealtimeAlertTest(
+  dryRun = true,
+  message?: string
+): Promise<RealtimeAlertDispatchResult> {
+  const body: any = { dry_run: dryRun };
+  if (typeof message === 'string' && message.trim()) {
+    body.message = message.trim();
+  }
+  const res = await api.post('/settings/sms-test', body);
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || '发送测试实时告警失败');
+  }
+  return res.data.data as RealtimeAlertDispatchResult;
+}
+
 const settingsService = {
   loadNotificationChannels,
   updateNotificationChannels,
@@ -437,6 +524,8 @@ const settingsService = {
   updateWeChatConfig,
   unbindWeChat,
   sendWeChatTestMessage,
+  updateSmsConfig,
+  sendRealtimeAlertTest,
 };
 
 export default settingsService;

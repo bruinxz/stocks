@@ -665,6 +665,9 @@ export class FactorCorrelationReport {
           name: `${pairResult.factor_a} vs ${pairResult.factor_b}`,
           level: 'HIGH',
           message,
+          // US-067 — 给 RealtimeAlertDispatcher dedup signature 用；同 user 同对因子在
+          // 30 min 内的多次报告只推一次。
+          rule_id: 'factor_correlation',
           is_read: false,
         } as any);
         written += 1;
