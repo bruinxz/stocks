@@ -5,23 +5,26 @@ import {
   ScheduleOutlined,
   FileDoneOutlined,
   MonitorOutlined,
+  DashboardOutlined,
 } from '@ant-design/icons';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
+import DataHealthDashboard from '../../components/data/DataHealthDashboard';
 
 /**
  * 数据中心 (Data Workspace) shell.
  *
- * US-002 deliverable: layout + KPI placeholder + per-tab empty state.
- * Tabs will fill in alongside data-pipeline stories (US-005..US-008).
+ * - 'health' tab: US-079 数据健康度看板（卡片网格 + 手动触发同步 + 落后徽章）
+ * - 其他 tab 仍为 US-002 占位，留待后续 story 接入。
  */
 const DataWorkspace: React.FC = () => {
   const tabs: WorkspaceTab[] = [
+    { key: 'health', label: '数据健康', icon: <DashboardOutlined /> },
     { key: 'sync', label: '行情同步', icon: <CloudSyncOutlined /> },
     { key: 'tasks', label: '调度任务', icon: <ScheduleOutlined /> },
     { key: 'logs', label: '系统日志', icon: <FileDoneOutlined /> },
-    { key: 'health', label: '健康监控', icon: <MonitorOutlined /> },
+    { key: 'monitoring', label: '健康监控', icon: <MonitorOutlined /> },
   ];
-  const [activeKey, setActiveKey] = useState('sync');
+  const [activeKey, setActiveKey] = useState('health');
 
   const kpiSlot = (
     <Space size={32}>
@@ -31,7 +34,7 @@ const DataWorkspace: React.FC = () => {
     </Space>
   );
 
-  const headerActions = <Tag color="processing">待 US-005..US-008 接入数据面板</Tag>;
+  const headerActions = <Tag color="processing">US-079 数据健康看板已上线</Tag>;
 
   return (
     <WorkspaceLayout
@@ -43,9 +46,13 @@ const DataWorkspace: React.FC = () => {
       kpiSlot={kpiSlot}
       headerActions={headerActions}
     >
-      <Card>
-        <Empty description={`Data Workspace · ${activeKey} 占位 — 后续 Story 接入数据同步面板`} />
-      </Card>
+      {activeKey === 'health' ? (
+        <DataHealthDashboard />
+      ) : (
+        <Card>
+          <Empty description={`Data Workspace · ${activeKey} 占位 — 后续 Story 接入数据同步面板`} />
+        </Card>
+      )}
     </WorkspaceLayout>
   );
 };
