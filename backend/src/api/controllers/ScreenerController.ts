@@ -54,12 +54,12 @@ export class ScreenerController {
 
       const stockIdToSymbol = new Map(stocks.map(s => [s.id, s.symbol]));
       const symbolToStockId = new Map(stocks.map(s => [s.symbol, s.id]));
-      
+
       const stockIds = stocks.map(s => s.id);
 
       // MySQL/PostgreSQL 中按分组取最近 30 条比较复杂，由于这里只返回用户收藏的几只股票
       // 我们可以在内存中处理，或者对于每个 stockId 并发发起查询，这样比在 map 里逐个 await 性能更好
-      
+
       const enrichedScreeners = await Promise.all(
         screeners.map(async (screener: any) => {
           try {
@@ -72,7 +72,7 @@ export class ScreenerController {
                 attributes: ['time', 'close'],
                 raw: true,
               });
-              
+
               bars.reverse();
               screener.recentTrend = bars;
             } else {

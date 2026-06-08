@@ -133,8 +133,16 @@ class ReviewPerformanceCenterService {
       qualityReport,
     });
     const equityCurve = this.buildEquityCurve(outcomeDashboard?.outcomes || []);
-    const bestSegments = this.pickBestSegments({ outcomeDashboard, qualityReport, agentTailLedger });
-    const weakSegments = this.pickWeakSegments({ outcomeDashboard, qualityReport, agentTailLedger });
+    const bestSegments = this.pickBestSegments({
+      outcomeDashboard,
+      qualityReport,
+      agentTailLedger,
+    });
+    const weakSegments = this.pickWeakSegments({
+      outcomeDashboard,
+      qualityReport,
+      agentTailLedger,
+    });
     const actionItems = this.buildActionItems({
       outcomeDashboard,
       qualityReport,
@@ -177,9 +185,9 @@ class ReviewPerformanceCenterService {
               by_market_regime: (outcomeDashboard.groups.by_market_regime || []).slice(0, 8),
             }
           : null,
-        latest_outcomes: (outcomeDashboard?.outcomes || []).slice(0, 12).map((item: any) =>
-          asPlain(item)
-        ),
+        latest_outcomes: (outcomeDashboard?.outcomes || [])
+          .slice(0, 12)
+          .map((item: any) => asPlain(item)),
       },
       signal_performance: {
         overview: performanceDashboard?.overview || null,
@@ -284,7 +292,9 @@ class ReviewPerformanceCenterService {
       return {
         tone: 'danger',
         headline: '组合风控优先，暂停放大推荐仓位',
-        reason: safeText(riskProfile?.status?.conclusion || '风险画像出现异常，需要先处理持仓风险。'),
+        reason: safeText(
+          riskProfile?.status?.conclusion || '风险画像出现异常，需要先处理持仓风险。'
+        ),
         next_action: '先处理卖出/减仓与现金水位，再继续观察新推荐。',
       };
     }

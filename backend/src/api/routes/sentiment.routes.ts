@@ -6,47 +6,97 @@ const router = Router();
 const authController = new AuthController();
 
 /**
- * @route GET /api/sentiment/index
- * @desc US-057 — 最近 N 天市场情绪指数时序 (days 默认 30, 上限 365)
- * @access Private
- *
- * **NOTE**: /index/latest 与 /index/compute 必须在 /index 之前 (虽然这里没有 :param 冲突,
- *           但按 express 顶向下匹配 GET /index 也会接到 /index/latest 的请求时返回错误)
- *           —— Express 实际上只有 path 完全相等时才匹配 GET '/index',所以此处其实无冲突,
- *           但保留显式顺序便于将来加 :param。
+ * @openapi
+ * /api/sentiment/index/latest:
+ *   get:
+ *     tags: [情绪 Sentiment]
+ *     summary: 获取最新一日市场情绪指数
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: 最新情绪指数, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessResponse' } } } }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.get('/index/latest', authController.authenticate, (req, res) => {
   void sentimentController.getLatestIndex(req, res);
 });
 
+/**
+ * @openapi
+ * /api/sentiment/index/compute:
+ *   post:
+ *     tags: [情绪 Sentiment]
+ *     summary: 触发情绪指数计算
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: false
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               date: { type: string, format: date }
+ *     responses:
+ *       200: { description: 计算完成, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessResponse' } } } }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
+ */
 router.post('/index/compute', authController.authenticate, (req, res) => {
   void sentimentController.compute(req, res);
 });
 
+/**
+ * @openapi
+ * /api/sentiment/index:
+ *   get:
+ *     tags: [情绪 Sentiment]
+ *     summary: 获取最近 N 天市场情绪指数时序 (US-057)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: query, name: days, schema: { type: integer, default: 30, maximum: 365 }, description: 回看天数 }
+ *     responses:
+ *       200: { description: 情绪指数时序, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessResponse' } } } }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
+ */
 router.get('/index', authController.authenticate, (req, res) => {
   void sentimentController.getIndexSeries(req, res);
 });
 
 /**
- * @route GET /api/sentiment/snowball-keywords
- * @desc US-058 — 某交易日的雪球热词榜
- *   Query params:
- *     - date     'YYYY-MM-DD' (默认: 最近一日有数据)
- *     - only_new true/1 时只返回相对前一日 baseline 的新进关键词 (默认 false)
- *     - limit    返回上限 (默认 200, max 1000)
- * @access Private
+ * @openapi
+ * /api/sentiment/snowball-keywords:
+ *   get:
+ *     tags: [情绪 Sentiment]
+ *     summary: 获取某交易日的雪球热词榜 (US-058)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: query, name: date, schema: { type: string, format: date }, description: 'YYYY-MM-DD (默认: 最近一日有数据)' }
+ *       - { in: query, name: only_new, schema: { type: boolean }, description: 只返回相对前一日 baseline 的新进关键词 }
+ *       - { in: query, name: limit, schema: { type: integer, default: 200, maximum: 1000 }, description: 返回上限 }
+ *     responses:
+ *       200: { description: 热词榜, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessResponse' } } } }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.get('/snowball-keywords', authController.authenticate, (req, res) => {
   void sentimentController.getSnowballKeywords(req, res);
 });
 
 /**
- * @route GET /api/sentiment/qa-topics
- * @desc US-060 — 某只股票最近 N 周的投资者问答 NLP 聚合 (按 week × topic 分组)
- *   Query params:
- *     - stock_code  6 位股票代码 (必填, 接受 sh./sz./bj. 前缀, 内部 strip)
- *     - weeks       回看周数 (默认 26, max 104)
- * @access Private
+ * @openapi
+ * /api/sentiment/qa-topics:
+ *   get:
+ *     tags: [情绪 Sentiment]
+ *     summary: 某股票最近 N 周的投资者问答 NLP 聚合 (US-060)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: query, name: stock_code, required: true, schema: { type: string }, description: 6 位股票代码 }
+ *       - { in: query, name: weeks, schema: { type: integer, default: 26, maximum: 104 }, description: 回看周数 }
+ *     responses:
+ *       200: { description: QA 话题聚合, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessResponse' } } } }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.get('/qa-topics', authController.authenticate, (req, res) => {
   void sentimentController.getQATopics(req, res);

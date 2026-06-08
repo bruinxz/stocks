@@ -9,9 +9,33 @@ const portfolioController = new PortfolioController();
 const authController = new AuthController();
 
 /**
- * @route POST /api/portfolio/simulate
- * @desc 运行投资组合收益模拟
- * @access Private
+ * @openapi
+ * /api/portfolio/simulate:
+ *   post:
+ *     tags: [组合 Portfolio]
+ *     summary: 运行投资组合收益模拟
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [symbols, buyDate, days]
+ *             properties:
+ *               name: { type: string, maxLength: 100 }
+ *               description: { type: string, maxLength: 500 }
+ *               symbols: { type: array, minItems: 1, maxItems: 10, items: { type: string } }
+ *               buyDate: { type: string, format: date }
+ *               days: { type: integer, minimum: 1, maximum: 1825 }
+ *               initial_capital: { type: number, minimum: 1000, maximum: 10000000 }
+ *               allocationStrategy: { type: string, enum: [equal, weighted] }
+ *               includeDividends: { type: boolean }
+ *               reinvest: { type: boolean }
+ *     responses:
+ *       200: { description: 模拟结果, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessResponse' } } } }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.post(
   '/simulate',
@@ -44,9 +68,29 @@ router.post(
 );
 
 /**
- * @route GET /api/portfolio/history
- * @desc 获取投资组合模拟历史记录
- * @access Private
+ * @openapi
+ * /api/portfolio/history:
+ *   get:
+ *     tags: [组合 Portfolio]
+ *     summary: 获取投资组合模拟历史记录
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema: { type: integer, minimum: 1 }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, minimum: 1, maximum: 100 }
+ *       - in: query
+ *         name: start_date
+ *         schema: { type: string, format: date }
+ *       - in: query
+ *         name: end_date
+ *         schema: { type: string, format: date }
+ *     responses:
+ *       200: { description: 历史记录列表 }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.get(
   '/history',
@@ -62,25 +106,38 @@ router.get(
 );
 
 /**
- * @route GET /api/portfolio/recommended-config
- * @desc 获取推荐配置
- * @access Public
+ * @openapi
+ * /api/portfolio/recommended-config:
+ *   get:
+ *     tags: [组合 Portfolio]
+ *     summary: 获取推荐配置
+ *     security: []
+ *     responses:
+ *       200: { description: 推荐配置 }
+ *       400: { description: 参数错误 }
  */
 router.get('/recommended-config', portfolioController.getRecommendedConfig);
 
 /**
- * @route POST /api/portfolio/rebalance-industry
- * @desc 行业集中度一键再平衡（US-052）— 找到最严重的超 35% 阈值行业，
- *       按行业内涨幅 DESC 卖出 1-2 只让行业占比 < 30%。
- *       Body 字段：{ portfolio_id?: number, dry_run?: boolean }。
- *       走 IndustryConcentrationGuard.rebalanceIndustry 内部经
- *       paperTradingFacade.closePosition，保持 facade 收敛 + 不绕开 pre-trade
- *       guard 链路。
- *
- *       IMPORTANT: registered BEFORE the `/:id` catchall route per the
- *       US-015 ordering rule (Express matches top-down — `/:id` would
- *       otherwise consume "rebalance-industry" as a `:id` param).
- * @access Private
+ * @openapi
+ * /api/portfolio/rebalance-industry:
+ *   post:
+ *     tags: [组合 Portfolio]
+ *     summary: 行业集中度一键再平衡 (US-052)
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: false
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               portfolio_id: { type: integer, minimum: 1 }
+ *               dry_run: { type: boolean }
+ *     responses:
+ *       200: { description: 再平衡结果 }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.post(
   '/rebalance-industry',
@@ -91,16 +148,45 @@ router.post(
 );
 
 /**
- * @route GET /api/portfolio/:id
- * @desc 获取投资组合模拟详情
- * @access Private
+ * @openapi
+ * /api/portfolio/{id}:
+ *   get:
+ *     tags: [组合 Portfolio]
+ *     summary: 获取投资组合模拟详情
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200: { description: 模拟详情 }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
+ *       404: { description: 未找到 }
  */
 router.get('/:id', authController.authenticate, portfolioController.getSimulationDetail);
 
 /**
- * @route POST /api/portfolio/validate-stocks
- * @desc 批量验证股票
- * @access Private
+ * @openapi
+ * /api/portfolio/validate-stocks:
+ *   post:
+ *     tags: [组合 Portfolio]
+ *     summary: 批量验证股票
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [symbols]
+ *             properties:
+ *               symbols: { type: array, minItems: 1, maxItems: 20, items: { type: string } }
+ *     responses:
+ *       200: { description: 验证结果 }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.post(
   '/validate-stocks',

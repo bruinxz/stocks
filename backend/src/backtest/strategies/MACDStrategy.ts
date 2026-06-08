@@ -36,10 +36,10 @@ export class MACDStrategy extends Strategy {
     });
 
     const macdResult = this.macdIndicator.calculate(this.prices);
-    
+
     // Generate signals
     this.clearSignals();
-    
+
     if (macdResult.signal === 'buy' && this.position !== 'long') {
       this.position = 'long';
       this.addSignal({

@@ -1,7 +1,9 @@
 import { LiveMarketDataProvider, LiveQuoteSnapshot } from './LiveMarketDataProvider';
 
 function normalizeSymbol(symbol: string): string {
-  const value = String(symbol || '').trim().toUpperCase();
+  const value = String(symbol || '')
+    .trim()
+    .toUpperCase();
   if (/^\d{6}\.(SH|SZ|BJ)$/.test(value)) return value;
   if (/^(SH|SZ|BJ)\.\d{6}$/.test(value)) {
     const [market, code] = value.split('.');
@@ -9,7 +11,11 @@ function normalizeSymbol(symbol: string): string {
   }
   if (/^(SH|SZ|BJ)\d{6}$/.test(value)) return `${value.slice(2)}.${value.slice(0, 2)}`;
   if (/^\d{6}$/.test(value)) {
-    const prefix = value.startsWith('6') ? 'SH' : value.startsWith('8') || value.startsWith('4') ? 'BJ' : 'SZ';
+    const prefix = value.startsWith('6')
+      ? 'SH'
+      : value.startsWith('8') || value.startsWith('4')
+      ? 'BJ'
+      : 'SZ';
     return `${value}.${prefix}`;
   }
   return value;
@@ -56,7 +62,8 @@ export class ConfiguredQuoteProvider implements LiveMarketDataProvider {
       provider_key: process.env.LIVE_LICENSED_QUOTE_PROVIDER_KEY || 'configured_quote_provider',
       provider_name: process.env.LIVE_LICENSED_QUOTE_PROVIDER_NAME || '可配置授权行情源',
       realtime_supported: true,
-      licensed_for_external_use: String(process.env.LIVE_LICENSED_QUOTE_AUTHORIZED || '').toLowerCase() === 'true',
+      licensed_for_external_use:
+        String(process.env.LIVE_LICENSED_QUOTE_AUTHORIZED || '').toLowerCase() === 'true',
       notes: [
         '通过 LIVE_LICENSED_QUOTE_URL_TEMPLATE 配置外部授权行情接口。',
         '该 Provider 默认不启用；只有配置 URL 与授权声明后才参与对比。',
@@ -77,10 +84,10 @@ export class ConfiguredQuoteProvider implements LiveMarketDataProvider {
       .replace(/\{code\}/g, encodeURIComponent(normalized.slice(0, 6)));
     const headers: Record<string, string> = { Accept: 'application/json' };
     if (process.env.LIVE_LICENSED_QUOTE_API_KEY) {
-      headers[process.env.LIVE_LICENSED_QUOTE_API_KEY_HEADER || 'Authorization'] =
-        process.env.LIVE_LICENSED_QUOTE_API_KEY_PREFIX
-          ? `${process.env.LIVE_LICENSED_QUOTE_API_KEY_PREFIX}${process.env.LIVE_LICENSED_QUOTE_API_KEY}`
-          : process.env.LIVE_LICENSED_QUOTE_API_KEY;
+      headers[process.env.LIVE_LICENSED_QUOTE_API_KEY_HEADER || 'Authorization'] = process.env
+        .LIVE_LICENSED_QUOTE_API_KEY_PREFIX
+        ? `${process.env.LIVE_LICENSED_QUOTE_API_KEY_PREFIX}${process.env.LIVE_LICENSED_QUOTE_API_KEY}`
+        : process.env.LIVE_LICENSED_QUOTE_API_KEY;
     }
     const timeoutMs = Math.max(Number(process.env.LIVE_LICENSED_QUOTE_TIMEOUT_MS || 3000), 1000);
     const controller = new AbortController();
@@ -104,14 +111,24 @@ export class ConfiguredQuoteProvider implements LiveMarketDataProvider {
           getByPath(dataRoot, 'time')
       );
       return {
-        symbol: String(getByPath(dataRoot, process.env.LIVE_LICENSED_QUOTE_FIELD_SYMBOL || 'symbol') || normalized),
+        symbol: String(
+          getByPath(dataRoot, process.env.LIVE_LICENSED_QUOTE_FIELD_SYMBOL || 'symbol') ||
+            normalized
+        ),
         name: getByPath(dataRoot, process.env.LIVE_LICENSED_QUOTE_FIELD_NAME || 'name'),
         current_price: price,
         change_percent: toNumber(
-          getByPath(dataRoot, process.env.LIVE_LICENSED_QUOTE_FIELD_CHANGE_PERCENT || 'change_percent')
+          getByPath(
+            dataRoot,
+            process.env.LIVE_LICENSED_QUOTE_FIELD_CHANGE_PERCENT || 'change_percent'
+          )
         ),
-        turnover: toNumber(getByPath(dataRoot, process.env.LIVE_LICENSED_QUOTE_FIELD_TURNOVER || 'turnover')),
-        volume: toNumber(getByPath(dataRoot, process.env.LIVE_LICENSED_QUOTE_FIELD_VOLUME || 'volume')),
+        turnover: toNumber(
+          getByPath(dataRoot, process.env.LIVE_LICENSED_QUOTE_FIELD_TURNOVER || 'turnover')
+        ),
+        volume: toNumber(
+          getByPath(dataRoot, process.env.LIVE_LICENSED_QUOTE_FIELD_VOLUME || 'volume')
+        ),
         quote_time: quoteTime,
         source: this.getProviderInfo().provider_key,
         latency_seconds: diffSeconds(quoteTime),

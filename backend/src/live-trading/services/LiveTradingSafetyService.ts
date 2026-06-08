@@ -17,7 +17,8 @@ export class LiveTradingSafetyService {
     const live_order_execution_enabled = envBool('LIVE_ORDER_EXECUTION_ENABLED', false);
     const live_readonly_enabled = envBool('LIVE_READONLY_ENABLED', false);
     const broker_gateway = process.env.LIVE_BROKER_GATEWAY || 'mock_guarded';
-    const market_data_provider = process.env.LIVE_MARKET_DATA_PROVIDER || 'database_realtime_quotes';
+    const market_data_provider =
+      process.env.LIVE_MARKET_DATA_PROVIDER || 'database_realtime_quotes';
     const global_kill_switch = envBool('LIVE_TRADING_KILL_SWITCH', true);
     const allowSandbox = envBool('LIVE_TRADING_SANDBOX_ENABLED', false);
     const shadowAutopilotEnabled = envBool('LIVE_SHADOW_AUTOPILOT_ENABLED', true);
@@ -35,7 +36,11 @@ export class LiveTradingSafetyService {
     if (broker_gateway === 'mock_guarded') blockers.push('当前仍使用安全占位券商网关');
 
     return {
-      mode: can_submit_orders ? 'approval_execution_enabled' : live_readonly_enabled ? 'read_only' : 'simulation_only',
+      mode: can_submit_orders
+        ? 'approval_execution_enabled'
+        : live_readonly_enabled
+        ? 'read_only'
+        : 'simulation_only',
       live_trading_enabled,
       live_readonly_enabled,
       live_order_execution_enabled,

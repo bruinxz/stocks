@@ -90,9 +90,7 @@ class QuantDataFreshnessService {
       }).catch(() => null),
       RecommendationTradeOutcome.count({ where: { trade_status: 'open' } }).catch(() => 0),
       RecommendationTradeOutcome.count({ where: { trade_status: 'closed' } }).catch(() => 0),
-      stockFactorService
-        .getCoverage({ scope: 'market', limit: 180 })
-        .catch(() => null as any),
+      stockFactorService.getCoverage({ scope: 'market', limit: 180 }).catch(() => null as any),
     ]);
 
     const latestQuoteTime = safeDate(latestQuote?.quote_time);
@@ -131,8 +129,12 @@ class QuantDataFreshnessService {
         conclusion:
           factorCoverage && factorLatestDate
             ? factorMinCoverage >= 70
-              ? `因子快照已落盘，最低覆盖率 ${factorMinCoverage.toFixed(1)}%，最新因子日 ${factorLatestDate}。`
-              : `因子快照覆盖偏低，最低覆盖率 ${factorMinCoverage.toFixed(1)}%，建议优先补齐真实/派生因子。`
+              ? `因子快照已落盘，最低覆盖率 ${factorMinCoverage.toFixed(
+                  1
+                )}%，最新因子日 ${factorLatestDate}。`
+              : `因子快照覆盖偏低，最低覆盖率 ${factorMinCoverage.toFixed(
+                  1
+                )}%，建议优先补齐真实/派生因子。`
             : '因子快照暂无有效覆盖，量化分会偏依赖行情特征。',
       },
       realtime_quotes: {

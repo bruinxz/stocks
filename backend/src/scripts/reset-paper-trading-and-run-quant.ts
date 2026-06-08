@@ -47,8 +47,12 @@ async function main() {
   const trade_date =
     argValue('trade-date', process.env.RESET_PAPER_TRADE_DATE) ||
     moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
-  const candidate_limit = Number(argValue('candidate-limit', process.env.RESET_PAPER_CANDIDATE_LIMIT || '360'));
-  const archive_limit = Number(argValue('archive-limit', process.env.RESET_PAPER_ARCHIVE_LIMIT || '60'));
+  const candidate_limit = Number(
+    argValue('candidate-limit', process.env.RESET_PAPER_CANDIDATE_LIMIT || '360')
+  );
+  const archive_limit = Number(
+    argValue('archive-limit', process.env.RESET_PAPER_ARCHIVE_LIMIT || '60')
+  );
   const dry_run = boolArg('dry-run', false);
 
   await sequelize.authenticate();
@@ -123,16 +127,18 @@ async function main() {
       executed: resultAny.paper_trading?.executed,
       skipped: resultAny.paper_trading?.skipped,
     },
-    strategy_portfolio_experiments: (resultAny.strategy_portfolio_experiments || []).map((item: any) => ({
-      key: item.key,
-      label: item.label,
-      portfolio_id: item.result?.portfolio_id,
-      executed: item.result?.executed,
-      planned: item.result?.planned,
-      skipped: item.result?.skipped,
-      matched: item.result?.strategy_filter_policy?.matched,
-      error: item.result?.error,
-    })),
+    strategy_portfolio_experiments: (resultAny.strategy_portfolio_experiments || []).map(
+      (item: any) => ({
+        key: item.key,
+        label: item.label,
+        portfolio_id: item.result?.portfolio_id,
+        executed: item.result?.executed,
+        planned: item.result?.planned,
+        skipped: item.result?.skipped,
+        matched: item.result?.strategy_filter_policy?.matched,
+        error: item.result?.error,
+      })
+    ),
     family_summary: familySummary?.summary,
   };
   console.log(JSON.stringify(overview, null, 2));

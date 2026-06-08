@@ -41,15 +41,17 @@ export class LogController {
       // 逐行读取并过滤
       for await (const line of rl) {
         if (!line.trim()) continue;
-        
+
         // 剥离老日志中可能残留的 ANSI 颜色控制字符（如 [32m 等）
         // \x1b 或 \u001b 表示 ESC，\[ 匹配左括号，[0-9;]* 匹配数字或分号，[a-zA-Z] 匹配结尾的字母(通常是m)
         const cleanLine = line.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
 
         // 简单正则匹配解析 winston printf 格式: `${info.timestamp} ${info.level}: ${info.message}`
         // 例如: "2026-04-20 09:21:31.213 info: 数据更新队列处理器已启动" 或 "2026-04-20 09:21:31:2131 info: ..."
-        const match = cleanLine.match(/^(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}[.:]\d+)\s+([a-zA-Z]+):\s+(.*)$/);
-        
+        const match = cleanLine.match(
+          /^(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}[.:]\d+)\s+([a-zA-Z]+):\s+(.*)$/
+        );
+
         let logEntry;
         if (match) {
           logEntry = {
@@ -125,7 +127,9 @@ export class LogController {
 
       for await (const line of rl) {
         const cleanLine = line.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
-        const match = cleanLine.match(/^(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}[.:]\d+)\s+([a-zA-Z]+):/);
+        const match = cleanLine.match(
+          /^(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}[.:]\d+)\s+([a-zA-Z]+):/
+        );
         if (match) {
           const level = match[2].toLowerCase();
           if (stats[level] !== undefined) {

@@ -61,7 +61,12 @@ export class PaperTradingCanaryReviewSnapshot extends Model {
   @Column({ type: DataType.DECIMAL(10, 4), allowNull: true, field: 'review_score' })
   declare review_score?: number;
 
-  @Column({ type: DataType.BOOLEAN, allowNull: false, defaultValue: false, field: 'ready_for_review' })
+  @Column({
+    type: DataType.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+    field: 'ready_for_review',
+  })
   declare ready_for_review: boolean;
 
   @Column({ type: DataType.STRING(40), allowNull: true, field: 'outcome_tone' })
@@ -97,7 +102,12 @@ export class PaperTradingCanaryReviewSnapshot extends Model {
   @Column({ type: DataType.BOOLEAN, allowNull: true, field: 'drawdown_guard_passed' })
   declare drawdown_guard_passed?: boolean;
 
-  @Column({ type: DataType.JSONB, allowNull: false, defaultValue: [], field: 'selected_parameter_keys' })
+  @Column({
+    type: DataType.JSONB,
+    allowNull: false,
+    defaultValue: [],
+    field: 'selected_parameter_keys',
+  })
   declare selected_parameter_keys: string[];
 
   @Column({ type: DataType.JSONB, allowNull: false, defaultValue: [], field: 'evidence_sources' })

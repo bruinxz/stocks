@@ -16,7 +16,9 @@ export class TushareClient extends PythonMarketDataClient {
 
   private assertEnabled(): void {
     if (!this.isEnabled()) {
-      throw new Error('Tushare is disabled. Set TUSHARE_ENABLED=true and TUSHARE_TOKEN to enable it.');
+      throw new Error(
+        'Tushare is disabled. Set TUSHARE_ENABLED=true and TUSHARE_TOKEN to enable it.'
+      );
     }
   }
 

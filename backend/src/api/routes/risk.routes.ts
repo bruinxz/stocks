@@ -6,51 +6,115 @@ const router = Router();
 const authController = new AuthController();
 
 /**
- * @route GET /api/risk/position-limits
- * @desc 获取当前用户的仓位限制配置 (US-047)
- * @access Private
+ * @openapi
+ * /api/risk/position-limits:
+ *   get:
+ *     tags: [风控 Risk]
+ *     summary: 获取当前用户的仓位限制配置 (US-047)
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: 仓位限制配置 }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.get('/position-limits', authController.authenticate, riskController.getPositionLimits);
 
 /**
- * @route PUT /api/risk/position-limits
- * @desc 更新当前用户的仓位限制配置 (US-047)
- * @access Private
+ * @openapi
+ * /api/risk/position-limits:
+ *   put:
+ *     tags: [风控 Risk]
+ *     summary: 更新当前用户的仓位限制配置 (US-047)
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema: { type: object }
+ *     responses:
+ *       200: { description: 更新结果 }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.put('/position-limits', authController.authenticate, riskController.updatePositionLimits);
 
 /**
- * @route GET /api/risk/trailing-stop
- * @desc 获取当前用户的追踪止损配置 (US-048)
- * @access Private
+ * @openapi
+ * /api/risk/trailing-stop:
+ *   get:
+ *     tags: [风控 Risk]
+ *     summary: 获取当前用户的追踪止损配置 (US-048)
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: 追踪止损配置 }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.get('/trailing-stop', authController.authenticate, riskController.getTrailingStop);
 
 /**
- * @route PUT /api/risk/trailing-stop
- * @desc 更新当前用户的追踪止损配置 (US-048)
- * @access Private
+ * @openapi
+ * /api/risk/trailing-stop:
+ *   put:
+ *     tags: [风控 Risk]
+ *     summary: 更新当前用户的追踪止损配置 (US-048)
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema: { type: object }
+ *     responses:
+ *       200: { description: 更新结果 }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.put('/trailing-stop', authController.authenticate, riskController.updateTrailingStop);
 
 /**
- * @route GET /api/risk/drawdown-breaker
- * @desc 获取当前用户的组合回撤熔断配置 (US-049)
- * @access Private
+ * @openapi
+ * /api/risk/drawdown-breaker:
+ *   get:
+ *     tags: [风控 Risk]
+ *     summary: 获取当前用户的组合回撤熔断配置 (US-049)
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: 回撤熔断配置 }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.get('/drawdown-breaker', authController.authenticate, riskController.getDrawdownBreaker);
 
 /**
- * @route PUT /api/risk/drawdown-breaker
- * @desc 更新当前用户的组合回撤熔断配置 (US-049)
- * @access Private
+ * @openapi
+ * /api/risk/drawdown-breaker:
+ *   put:
+ *     tags: [风控 Risk]
+ *     summary: 更新当前用户的组合回撤熔断配置 (US-049)
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema: { type: object }
+ *     responses:
+ *       200: { description: 更新结果 }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.put('/drawdown-breaker', authController.authenticate, riskController.updateDrawdownBreaker);
 
 /**
- * @route POST /api/risk/drawdown-breaker/clear-pause
- * @desc 手动解除当前用户的 LEVEL_1 暂停状态 (US-049)
- * @access Private
+ * @openapi
+ * /api/risk/drawdown-breaker/clear-pause:
+ *   post:
+ *     tags: [风控 Risk]
+ *     summary: 手动解除当前用户的 LEVEL_1 暂停状态 (US-049)
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: 解除结果 }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.post(
   '/drawdown-breaker/clear-pause',
@@ -59,10 +123,16 @@ router.post(
 );
 
 /**
- * @route GET /api/risk/market-regime-status
- * @desc 当前市场环境实时快照（指数收盘 + 3 日/月度涨跌 + MA20 vs MA60 +
- *       已触发的市场预警告警）— 只读，不写 RiskAlert (US-050)
- * @access Private
+ * @openapi
+ * /api/risk/market-regime-status:
+ *   get:
+ *     tags: [风控 Risk]
+ *     summary: 当前市场环境实时快照（指数收盘 + 涨跌 + MA20 vs MA60 + 已触发告警）只读 (US-050)
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: 市场环境快照 }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.get(
   '/market-regime-status',
@@ -71,30 +141,68 @@ router.get(
 );
 
 /**
- * @route GET /api/risk/market-regime
- * @desc 获取当前用户的市场环境预警配置 (US-050)
- * @access Private
+ * @openapi
+ * /api/risk/market-regime:
+ *   get:
+ *     tags: [风控 Risk]
+ *     summary: 获取当前用户的市场环境预警配置 (US-050)
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: 市场环境预警配置 }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.get('/market-regime', authController.authenticate, riskController.getMarketRegimeConfig);
 
 /**
- * @route PUT /api/risk/market-regime
- * @desc 更新当前用户的市场环境预警配置 (US-050)
- * @access Private
+ * @openapi
+ * /api/risk/market-regime:
+ *   put:
+ *     tags: [风控 Risk]
+ *     summary: 更新当前用户的市场环境预警配置 (US-050)
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema: { type: object }
+ *     responses:
+ *       200: { description: 更新结果 }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.put('/market-regime', authController.authenticate, riskController.updateMarketRegimeConfig);
 
 /**
- * @route GET /api/risk/per-stock-stop-loss
- * @desc 获取当前用户的每股止损配置 (US-051)
- * @access Private
+ * @openapi
+ * /api/risk/per-stock-stop-loss:
+ *   get:
+ *     tags: [风控 Risk]
+ *     summary: 获取当前用户的每股止损配置 (US-051)
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: 每股止损配置 }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.get('/per-stock-stop-loss', authController.authenticate, riskController.getPerStockStopLoss);
 
 /**
- * @route PUT /api/risk/per-stock-stop-loss
- * @desc 更新当前用户的每股止损配置 (US-051)
- * @access Private
+ * @openapi
+ * /api/risk/per-stock-stop-loss:
+ *   put:
+ *     tags: [风控 Risk]
+ *     summary: 更新当前用户的每股止损配置 (US-051)
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema: { type: object }
+ *     responses:
+ *       200: { description: 更新结果 }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.put(
   '/per-stock-stop-loss',
@@ -103,9 +211,16 @@ router.put(
 );
 
 /**
- * @route GET /api/risk/industry-concentration
- * @desc 获取当前用户的行业集中度配置 (US-052)
- * @access Private
+ * @openapi
+ * /api/risk/industry-concentration:
+ *   get:
+ *     tags: [风控 Risk]
+ *     summary: 获取当前用户的行业集中度配置 (US-052)
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: 行业集中度配置 }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.get(
   '/industry-concentration',
@@ -114,9 +229,21 @@ router.get(
 );
 
 /**
- * @route PUT /api/risk/industry-concentration
- * @desc 更新当前用户的行业集中度配置 (US-052)
- * @access Private
+ * @openapi
+ * /api/risk/industry-concentration:
+ *   put:
+ *     tags: [风控 Risk]
+ *     summary: 更新当前用户的行业集中度配置 (US-052)
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema: { type: object }
+ *     responses:
+ *       200: { description: 更新结果 }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.put(
   '/industry-concentration',
@@ -125,28 +252,49 @@ router.put(
 );
 
 /**
- * @route GET /api/risk/black-swan
- * @desc 获取当前用户的黑天鹅监控配置 (US-053)
- * @access Private
+ * @openapi
+ * /api/risk/black-swan:
+ *   get:
+ *     tags: [风控 Risk]
+ *     summary: 获取当前用户的黑天鹅监控配置 (US-053)
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: 黑天鹅配置 }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.get('/black-swan', authController.authenticate, riskController.getBlackSwan);
 
 /**
- * @route PUT /api/risk/black-swan
- * @desc 更新当前用户的黑天鹅监控配置 (US-053)
- * @access Private
+ * @openapi
+ * /api/risk/black-swan:
+ *   put:
+ *     tags: [风控 Risk]
+ *     summary: 更新当前用户的黑天鹅监控配置 (US-053)
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema: { type: object }
+ *     responses:
+ *       200: { description: 更新结果 }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.put('/black-swan', authController.authenticate, riskController.updateBlackSwan);
 
 /**
- * @route GET /api/risk/morning-checkup/today
- * @desc 获取今日开盘前风险体检报告（无则回退到最新一条）(US-054)
- *
- * NOTE: must register `morning-checkup/today` BEFORE `morning-checkup`
- * (Express routes match top-down — same registration-order rule as
- * `/multi-factor/latest-picks` vs `/:strategyId` in US-015 codebase pattern).
- *
- * @access Private
+ * @openapi
+ * /api/risk/morning-checkup/today:
+ *   get:
+ *     tags: [风控 Risk]
+ *     summary: 获取今日开盘前风险体检报告（无则回退到最新一条）(US-054)
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: 今日体检报告 }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.get(
   '/morning-checkup/today',
@@ -155,16 +303,35 @@ router.get(
 );
 
 /**
- * @route GET /api/risk/morning-checkup
- * @desc 获取当前用户的开盘前风险体检配置 (US-054)
- * @access Private
+ * @openapi
+ * /api/risk/morning-checkup:
+ *   get:
+ *     tags: [风控 Risk]
+ *     summary: 获取当前用户的开盘前风险体检配置 (US-054)
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: 体检配置 }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.get('/morning-checkup', authController.authenticate, riskController.getMorningCheckupConfig);
 
 /**
- * @route PUT /api/risk/morning-checkup
- * @desc 更新当前用户的开盘前风险体检配置 (US-054)
- * @access Private
+ * @openapi
+ * /api/risk/morning-checkup:
+ *   put:
+ *     tags: [风控 Risk]
+ *     summary: 更新当前用户的开盘前风险体检配置 (US-054)
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema: { type: object }
+ *     responses:
+ *       200: { description: 更新结果 }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.put(
   '/morning-checkup',

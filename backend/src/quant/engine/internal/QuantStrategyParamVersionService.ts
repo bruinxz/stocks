@@ -491,7 +491,6 @@ function buildEnvironmentAttribution(rows: any[], versionByKey: Map<string, any>
   };
 }
 
-
 function buildParamMaintenanceStatus(options: {
   versions: any[];
   validations: any[];
@@ -1361,10 +1360,9 @@ export class QuantStrategyParamVersionService {
         .map(item => [item.strategy_key, item])
     );
     const strategyRiskByKey = new Map(
-      strategyRegistry.list().map(definition => [
-        definition.strategy_key,
-        normalizeRiskLevel(definition.risk_level),
-      ])
+      strategyRegistry
+        .list()
+        .map(definition => [definition.strategy_key, normalizeRiskLevel(definition.risk_level)])
     );
     const lifecyclePreview = this.buildLifecyclePreview(
       summaryByVersion,
@@ -1445,10 +1443,9 @@ export class QuantStrategyParamVersionService {
     );
     const tradeAttribution = await this.getParamExperimentTradeAttribution();
     const strategyRiskByKey = new Map(
-      strategyRegistry.list().map(definition => [
-        definition.strategy_key,
-        normalizeRiskLevel(definition.risk_level),
-      ])
+      strategyRegistry
+        .list()
+        .map(definition => [definition.strategy_key, normalizeRiskLevel(definition.risk_level)])
     );
     const lifecycle = this.buildLifecyclePreview(
       rows,
@@ -1794,11 +1791,7 @@ export class QuantStrategyParamVersionService {
           ...compact,
           action: 'observe',
           next_status: row.status,
-          reason: `全局指标达标但环境分桶未达推广护栏：优势桶 ${
-            environmentDiagnostics.positive_bucket_count
-          }/${effectivePolicy.min_positive_environment_buckets}，弱势桶 ${
-            environmentDiagnostics.negative_bucket_count
-          }/${effectivePolicy.max_negative_environment_buckets}，继续小仓观察。`,
+          reason: `全局指标达标但环境分桶未达推广护栏：优势桶 ${environmentDiagnostics.positive_bucket_count}/${effectivePolicy.min_positive_environment_buckets}，弱势桶 ${environmentDiagnostics.negative_bucket_count}/${effectivePolicy.max_negative_environment_buckets}，继续小仓观察。`,
         });
         continue;
       }
@@ -1889,7 +1882,9 @@ export class QuantStrategyParamVersionService {
       risk_adjusted_policy: {
         enabled: true,
         low: this.compactLifecyclePolicy(this.buildRiskAdjustedLifecyclePolicy(policy, 'low')),
-        medium: this.compactLifecyclePolicy(this.buildRiskAdjustedLifecyclePolicy(policy, 'medium')),
+        medium: this.compactLifecyclePolicy(
+          this.buildRiskAdjustedLifecyclePolicy(policy, 'medium')
+        ),
         high: this.compactLifecyclePolicy(this.buildRiskAdjustedLifecyclePolicy(policy, 'high')),
       },
       promotions: promotions.sort(sortByImpact),
@@ -2212,21 +2207,27 @@ export class QuantStrategyParamVersionService {
     return '未进入生产扫描候选状态。';
   }
 
-  private explainWhyNotSelected(candidate: QuantStrategyParamVersion, selected: QuantStrategyParamVersion) {
+  private explainWhyNotSelected(
+    candidate: QuantStrategyParamVersion,
+    selected: QuantStrategyParamVersion
+  ) {
     if (!selected) return '无已选版本。';
     const candidatePriority = this.versionPriority(candidate);
     const selectedPriority = this.versionPriority(selected);
     if (candidatePriority < selectedPriority) {
       return `优先级低于已选版本（${candidate.status}/${candidate.version_type} < ${selected.status}/${selected.version_type}）。`;
     }
-    if (candidatePriority > selectedPriority) return '优先级更高但未被排序选中，请检查状态或更新时间。';
+    if (candidatePriority > selectedPriority)
+      return '优先级更高但未被排序选中，请检查状态或更新时间。';
     if (toNumber(candidate.source_rank_score) < toNumber(selected.source_rank_score)) {
       return `rank_score 较低（${toNumber(candidate.source_rank_score, 0)} < ${toNumber(
         selected.source_rank_score,
         0
       )}）。`;
     }
-    if (toNumber(candidate.source_excess_return_pct) < toNumber(selected.source_excess_return_pct)) {
+    if (
+      toNumber(candidate.source_excess_return_pct) < toNumber(selected.source_excess_return_pct)
+    ) {
       return `超额收益较低（${toNumber(candidate.source_excess_return_pct, 0)} < ${toNumber(
         selected.source_excess_return_pct,
         0

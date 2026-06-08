@@ -144,10 +144,7 @@ export class QuantDataService {
           map.set(row.symbol, row);
           continue;
         }
-        if (
-          dateCompare === 0 &&
-          factorSourcePriority(row) > factorSourcePriority(existing)
-        ) {
+        if (dateCompare === 0 && factorSourcePriority(row) > factorSourcePriority(existing)) {
           map.set(row.symbol, row);
         }
       }

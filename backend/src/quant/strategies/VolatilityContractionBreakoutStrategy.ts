@@ -5,7 +5,17 @@ import {
   QuantStrategyDefinition,
   QuantStrategyRuntimeOptions,
 } from '../types/QuantTypes';
-import { average, clamp, last, maxDrawdownFromValues, pct, round, sma, stddev, valueNDaysAgo } from '../engine/QuantMath';
+import {
+  average,
+  clamp,
+  last,
+  maxDrawdownFromValues,
+  pct,
+  round,
+  sma,
+  stddev,
+  valueNDaysAgo,
+} from '../engine/QuantMath';
 
 export class VolatilityContractionBreakoutStrategy extends QuantStrategy {
   readonly definition: QuantStrategyDefinition = {
@@ -35,7 +45,9 @@ export class VolatilityContractionBreakoutStrategy extends QuantStrategy {
     const latestClose = last(closes) || Number(context.latest_price || 0);
     const breakoutWindow = Number(params.breakout_window);
     const contractionWindow = Number(params.contraction_window);
-    const previousHigh = Math.max(...highs.slice(Math.max(0, highs.length - breakoutWindow - 1), -1));
+    const previousHigh = Math.max(
+      ...highs.slice(Math.max(0, highs.length - breakoutWindow - 1), -1)
+    );
     const rangeHigh = Math.max(...highs.slice(-contractionWindow));
     const rangeLow = Math.min(...lows.slice(-contractionWindow));
     const rangePct = latestClose > 0 ? ((rangeHigh - rangeLow) / latestClose) * 100 : 0;

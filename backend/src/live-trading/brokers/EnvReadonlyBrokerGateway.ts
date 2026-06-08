@@ -50,7 +50,10 @@ export class EnvReadonlyBrokerGateway implements BrokerGateway {
   }
 
   async getAccountSnapshot(): Promise<BrokerAccountSnapshot> {
-    const payload = safeJson<Record<string, any>>(process.env.LIVE_BROKER_ACCOUNT_SNAPSHOT_JSON, {});
+    const payload = safeJson<Record<string, any>>(
+      process.env.LIVE_BROKER_ACCOUNT_SNAPSHOT_JSON,
+      {}
+    );
     return {
       total_asset: toNumber(payload.total_asset ?? process.env.LIVE_BROKER_TOTAL_ASSET),
       available_cash: toNumber(payload.available_cash ?? process.env.LIVE_BROKER_AVAILABLE_CASH),

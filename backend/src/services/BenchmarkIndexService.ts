@@ -153,9 +153,8 @@ class BenchmarkIndexService {
     await this.ensureBenchmarkIndices();
     const startDate = moment(start_date).format('YYYY-MM-DD');
     const endDate = moment(end_date).format('YYYY-MM-DD');
-    const symbols = (options.symbols?.length
-      ? options.symbols
-      : DEFAULT_BENCHMARK_INDICES.map(item => item.symbol)
+    const symbols = (
+      options.symbols?.length ? options.symbols : DEFAULT_BENCHMARK_INDICES.map(item => item.symbol)
     )
       .map(symbol => normalizeSymbol(symbol))
       .filter(Boolean);

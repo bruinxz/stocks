@@ -67,7 +67,9 @@ class StrategyResearchController {
       });
     } catch (error: any) {
       logger.error('执行量化开盘安全演练失败:', error);
-      res.status(500).json({ success: false, message: error.message || '执行量化开盘安全演练失败' });
+      res
+        .status(500)
+        .json({ success: false, message: error.message || '执行量化开盘安全演练失败' });
     }
   }
 }

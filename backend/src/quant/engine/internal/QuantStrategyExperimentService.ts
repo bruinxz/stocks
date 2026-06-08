@@ -33,7 +33,9 @@ function shortHash(value: any, length = 12): string {
 }
 
 function paramsForStrategy(parameters: Record<string, any>, strategy_key: string) {
-  const paramsByStrategy = asPlainObject(parameters.params_by_strategy || parameters.paramsByStrategy);
+  const paramsByStrategy = asPlainObject(
+    parameters.params_by_strategy || parameters.paramsByStrategy
+  );
   return asPlainObject(paramsByStrategy[strategy_key]);
 }
 
@@ -174,7 +176,9 @@ export class QuantStrategyExperimentService {
       });
       const best = eligible[0] || rows[0] || null;
       const bestParameters = asPlainObject(best?.parameters_json);
-      const experimentParams = best ? paramsForStrategy(bestParameters, definition.strategy_key) : {};
+      const experimentParams = best
+        ? paramsForStrategy(bestParameters, definition.strategy_key)
+        : {};
       const recommendedParams = {
         ...(definition.default_params || {}),
         ...experimentParams,
@@ -258,8 +262,8 @@ export class QuantStrategyExperimentService {
                 best?.trade_count || 0
               } 笔。`
             : best
-              ? `暂不自动采用：实验分/超额/回撤/稳定性尚未同时达标，当前仅观察。`
-              : '暂无实验样本，继续使用策略默认参数。',
+            ? `暂不自动采用：实验分/超额/回撤/稳定性尚未同时达标，当前仅观察。`
+            : '暂无实验样本，继续使用策略默认参数。',
       };
     });
 
@@ -286,8 +290,8 @@ export class QuantStrategyExperimentService {
           useCount > 0
             ? `已生成 ${useCount} 个可自动用于开盘扫描的策略参数建议，其余策略继续观察或使用默认参数。`
             : experiments.length > 0
-              ? '已有实验样本，但暂未达到自动采用门槛；开盘扫描继续使用默认/手工参数。'
-              : '暂无实验样本；请先完成真实执行跑分以沉淀参数建议。',
+            ? '已有实验样本，但暂未达到自动采用门槛；开盘扫描继续使用默认/手工参数。'
+            : '暂无实验样本；请先完成真实执行跑分以沉淀参数建议。',
       },
     };
   }
@@ -333,7 +337,10 @@ export class QuantStrategyExperimentService {
       toNumber(diagnostics.total_slippage_cost);
     if (toNumber(result.trade_count) <= 0) return '未形成有效交易样本，暂不纳入生产权重。';
     if (rankScore >= 20) {
-      return `可重点观察：超额 ${round(toNumber(result.excess_return_pct), 2)}%，真实执行阻塞 ${blocked} 次，成本约 ${round(cost, 2)} 元。`;
+      return `可重点观察：超额 ${round(
+        toNumber(result.excess_return_pct),
+        2
+      )}%，真实执行阻塞 ${blocked} 次，成本约 ${round(cost, 2)} 元。`;
     }
     if (rankScore >= 8) {
       return `可小仓验证：收益/回撤尚可，真实执行阻塞 ${blocked} 次，需继续扩大样本。`;

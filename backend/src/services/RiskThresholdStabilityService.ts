@@ -71,12 +71,10 @@ class RiskThresholdStabilityService {
   buildConfigFromParameters(parameters: any): Partial<RiskThresholdStabilityConfig> {
     const params = asPlainObject(parameters);
     return {
-      min_consecutive_same_action:
-        params.risk_threshold_stability_min_consecutive_same_action,
+      min_consecutive_same_action: params.risk_threshold_stability_min_consecutive_same_action,
       min_actionable_samples: params.risk_threshold_stability_min_actionable_samples,
       min_protected_runs: params.risk_threshold_stability_min_protected_runs,
-      tighten_min_protection_delta_pct:
-        params.risk_threshold_stability_tighten_min_delta_pct,
+      tighten_min_protection_delta_pct: params.risk_threshold_stability_tighten_min_delta_pct,
       relax_max_protection_delta_pct: params.risk_threshold_stability_relax_max_delta_pct,
     };
   }
@@ -117,8 +115,9 @@ class RiskThresholdStabilityService {
     }
 
     const actionable = ['tighten', 'relax'].includes(latestAction);
-    const actionableSamples = actions.filter(item => ['tighten', 'relax'].includes(item.action))
-      .length;
+    const actionableSamples = actions.filter(item =>
+      ['tighten', 'relax'].includes(item.action)
+    ).length;
     const protectedRuns = Number(evidence.protected_runs || 0);
     const protectionDeltaPct =
       evidence.protection_delta_pct !== undefined
@@ -156,9 +155,7 @@ class RiskThresholdStabilityService {
         ? `保护样本 ${protectedRuns} 次，保护差值 ${roundNumber(protectionDeltaPct, 2)}pct`
         : `保护样本 ${protectedRuns}/${thresholds.min_protected_runs} 次，收益证据不足`;
     const reason = canApply
-      ? `最近 ${consecutiveSameAction} 次风险阈值建议均为${
-          RISK_THRESHOLD_ACTION_LABELS[latestAction]
-        }，且${evidenceText}，可手动预览后应用。`
+      ? `最近 ${consecutiveSameAction} 次风险阈值建议均为${RISK_THRESHOLD_ACTION_LABELS[latestAction]}，且${evidenceText}，可手动预览后应用。`
       : actionable
       ? `最近同向建议 ${consecutiveSameAction} 次，${evidenceText}，暂按观察处理，避免低样本误调参。`
       : latestAction === 'keep'

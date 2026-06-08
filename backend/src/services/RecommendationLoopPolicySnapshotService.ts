@@ -755,7 +755,9 @@ export class RecommendationLoopPolicySnapshotService {
         : 0;
     const fieldGateReason =
       fieldGateDecision?.action && fieldGateDecision.action !== 'insufficient'
-        ? `字段门槛调参后验：${fieldGateDecision.label || fieldGateDecision.action}，${fieldGateDecision.reason}`
+        ? `字段门槛调参后验：${fieldGateDecision.label || fieldGateDecision.action}，${
+            fieldGateDecision.reason
+          }`
         : fieldGateReady && fieldGateDelta >= 0
         ? `字段门槛人工采纳后平均超额提升 ${roundNumber(
             fieldGateDelta,

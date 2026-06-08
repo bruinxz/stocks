@@ -14,6 +14,7 @@ import {
   Statistic,
   Table,
   Tag,
+  Tooltip,
   Typography,
   message,
 } from 'antd';
@@ -42,6 +43,7 @@ import {
   KeyEventItem,
   UnreadRiskAlertItem,
 } from '../../services/todayWorkspaceService';
+import { getMarketBriefToday, MarketBriefResult } from '../../services/marketBriefService';
 
 const { Text, Paragraph } = Typography;
 
@@ -251,7 +253,10 @@ const TodayWorkspace: React.FC = () => {
         kpiSlot={kpiSlot}
         headerActions={headerActions}
       >
-        {body}
+        <Space direction="vertical" size={16} style={{ width: '100%' }}>
+          <MarketBriefCard />
+          {body}
+        </Space>
       </WorkspaceLayout>
       <ApplyResultModal
         result={applyResult}
@@ -262,6 +267,203 @@ const TodayWorkspace: React.FC = () => {
         }}
       />
     </>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// MarketBriefCard (US-073) — 顶部 AI 大盘速读
+// ---------------------------------------------------------------------------
+
+/**
+ * 「AI 大盘速读」开盘前一张卡片。
+ *
+ * 5 个数值 KPI + 1 句 AI 观点 ─ 全部数据由 GET /api/ai/market-brief/today 一次返回。
+ * 后端 SchedulerService 每个交易日 08:30 cron 触发生成；首次访问 / cron miss
+ * 时 controller 走 getTodayBrief 懒求值兜底。
+ *
+ * 状态语义：
+ *   - ok            → 5 维齐全，淡蓝色 banner；
+ *   - partial       → 部分维度缺失，黄色 banner；
+ *   - failed        → 5 维全缺，红色 banner 但 AI heuristic 仍可显示「数据待补」。
+ *
+ * 容错：
+ *   - getMarketBriefToday throw → 卡片内显示 Alert，刷新按钮重试，不影响下方信号面板；
+ *   - components.<x>.error 单项失败 → KPI 渲染「—」，无 tooltip 噪音。
+ */
+const MarketBriefCard: React.FC = () => {
+  const [brief, setBrief] = useState<MarketBriefResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadBrief = useCallback(async (refresh = false) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await getMarketBriefToday({ refresh });
+      setBrief(result);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadBrief();
+  }, [loadBrief]);
+
+  const titleNode = (
+    <Space size={8}>
+      <RobotOutlined style={{ color: '#722ed1' }} />
+      <span>AI 大盘速读</span>
+      {brief?.trade_date && <Tag color="purple">{brief.trade_date}</Tag>}
+      {brief?.status === 'partial' && <Tag color="orange">部分数据待补</Tag>}
+      {brief?.status === 'failed' && <Tag color="red">数据全缺</Tag>}
+      {brief?.nlp_engine && (
+        <Tag color={brief.nlp_engine === 'trading_agents' ? 'blue' : 'default'}>
+          {brief.nlp_engine === 'trading_agents' ? 'TradingAgents' : '启发式兜底'}
+        </Tag>
+      )}
+    </Space>
+  );
+
+  const extra = (
+    <Button
+      size="small"
+      icon={<ReloadOutlined />}
+      loading={loading}
+      onClick={() => void loadBrief(true)}
+    >
+      重新生成
+    </Button>
+  );
+
+  if (loading && !brief) {
+    return (
+      <Card size="small" title={titleNode} extra={extra}>
+        <div style={{ textAlign: 'center', padding: 24 }}>
+          <Spin tip="加载 AI 大盘速读..." />
+        </div>
+      </Card>
+    );
+  }
+
+  if (error && !brief) {
+    return (
+      <Card size="small" title={titleNode} extra={extra}>
+        <Alert
+          type="error"
+          showIcon
+          message="AI 大盘速读加载失败"
+          description={error}
+          action={
+            <Button size="small" onClick={() => void loadBrief()}>
+              重试
+            </Button>
+          }
+        />
+      </Card>
+    );
+  }
+
+  if (!brief) {
+    return (
+      <Card size="small" title={titleNode} extra={extra}>
+        <Empty description="暂无数据" />
+      </Card>
+    );
+  }
+
+  const benchmark = brief.components?.benchmark;
+  const northbound = brief.components?.northbound;
+  const limitUp = brief.components?.limit_up;
+  const aiView = brief.ai_view || '今日观点暂无';
+
+  return (
+    <Card size="small" title={titleNode} extra={extra}>
+      <Space direction="vertical" size={12} style={{ width: '100%' }}>
+        <Row gutter={[24, 8]} align="middle">
+          <Col xs={12} md={8} lg={5}>
+            <Statistic
+              title="上日收盘 (沪深300)"
+              value={brief.prev_close ?? '—'}
+              precision={brief.prev_close == null ? undefined : 2}
+              valueStyle={{ fontSize: 18 }}
+            />
+          </Col>
+          <Col xs={12} md={8} lg={5}>
+            <Tooltip title={benchmark?.error || ''}>
+              <Statistic
+                title={
+                  brief.open_change_pct != null
+                    ? `今日开盘 (${brief.open_change_pct >= 0 ? '+' : ''}${brief.open_change_pct.toFixed(2)}%)`
+                    : '今日开盘'
+                }
+                value={brief.today_open ?? '—'}
+                precision={brief.today_open == null ? undefined : 2}
+                valueStyle={{
+                  fontSize: 18,
+                  color: openChangeColor(brief.open_change_pct),
+                }}
+              />
+            </Tooltip>
+          </Col>
+          <Col xs={12} md={8} lg={5}>
+            <Tooltip title={northbound?.error || ''}>
+              <Statistic
+                title="昨日北向净买入"
+                value={brief.northbound_net_amount ?? '—'}
+                precision={brief.northbound_net_amount == null ? undefined : 2}
+                suffix={brief.northbound_net_amount == null ? '' : ' 亿'}
+                valueStyle={{
+                  fontSize: 18,
+                  color: northboundColor(brief.northbound_net_amount),
+                }}
+              />
+            </Tooltip>
+          </Col>
+          <Col xs={12} md={8} lg={4}>
+            <Tooltip title={limitUp?.error || ''}>
+              <Statistic
+                title="昨日涨停数"
+                value={brief.limit_up_count ?? '—'}
+                suffix={brief.limit_up_count == null ? '' : ' 家'}
+                valueStyle={{
+                  fontSize: 18,
+                  color: limitUpColor(brief.limit_up_count),
+                }}
+              />
+            </Tooltip>
+          </Col>
+          <Col xs={24} md={24} lg={5}>
+            <div style={{ paddingLeft: 8, borderLeft: '3px solid #722ed1' }}>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                AI 一句话观点
+              </Text>
+              <Paragraph
+                style={{
+                  margin: '4px 0 0',
+                  fontSize: 13,
+                  lineHeight: 1.5,
+                  color: '#262626',
+                }}
+              >
+                {aiView}
+              </Paragraph>
+            </div>
+          </Col>
+        </Row>
+        {brief.status !== 'ok' && (
+          <Alert
+            type={brief.status === 'failed' ? 'error' : 'warning'}
+            showIcon
+            message={brief.message}
+            style={{ marginBottom: 0 }}
+          />
+        )}
+      </Space>
+    </Card>
   );
 };
 
@@ -843,6 +1045,26 @@ const ApplyResultModal: React.FC<{
 function pnlColor(value: number | null): string {
   if (value == null || value === 0) return undefined as unknown as string;
   return value > 0 ? '#cf1322' : '#52c41a';
+}
+
+/** US-073 沪深300 开盘涨跌色：>0 红涨，<0 绿跌，0/null 中性 */
+function openChangeColor(value: number | null): string | undefined {
+  if (value == null || !Number.isFinite(value) || value === 0) return undefined;
+  return value > 0 ? '#cf1322' : '#52c41a';
+}
+
+/** US-073 北向资金色：净流入红，净流出绿 */
+function northboundColor(value: number | null): string | undefined {
+  if (value == null || !Number.isFinite(value) || value === 0) return undefined;
+  return value > 0 ? '#cf1322' : '#52c41a';
+}
+
+/** US-073 涨停数色：≥80 红（赚钱效应强），≤30 灰（赚钱效应弱），否则默认 */
+function limitUpColor(value: number | null): string | undefined {
+  if (value == null || !Number.isFinite(value)) return undefined;
+  if (value >= 80) return '#cf1322';
+  if (value <= 30) return '#8c8c8c';
+  return undefined;
 }
 
 function eventTypeTag(t: KeyEventItem['event_type']): React.ReactNode {

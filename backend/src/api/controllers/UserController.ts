@@ -8,7 +8,7 @@ export class UserController {
    */
   async getUsers(req: Request, res: Response, next: NextFunction) {
     try {
-      // @ts-ignore
+      // @ts-expect-error -- req.user augmented by auth middleware, see issues with @types/express
       const currentUserRole = req.user?.role;
       if (currentUserRole !== 'admin') {
         return res.status(403).json({ success: false, message: '权限不足，需要管理员权限' });
@@ -40,7 +40,7 @@ export class UserController {
    */
   async createUser(req: Request, res: Response, next: NextFunction) {
     try {
-      // @ts-ignore
+      // @ts-expect-error -- req.user augmented by auth middleware, see issues with @types/express
       const currentUserRole = req.user?.role;
       if (currentUserRole !== 'admin') {
         return res.status(403).json({ success: false, message: '权限不足，需要管理员权限' });
@@ -85,7 +85,7 @@ export class UserController {
    */
   async updateUser(req: Request, res: Response, next: NextFunction) {
     try {
-      // @ts-ignore
+      // @ts-expect-error -- req.user augmented by auth middleware, see issues with @types/express
       const currentUserRole = req.user?.role;
       if (currentUserRole !== 'admin') {
         return res.status(403).json({ success: false, message: '权限不足，需要管理员权限' });
@@ -136,7 +136,7 @@ export class UserController {
    */
   async changePassword(req: Request, res: Response, next: NextFunction) {
     try {
-      // @ts-ignore
+      // @ts-expect-error -- req.user augmented by auth middleware, see issues with @types/express
       const currentUserRole = req.user?.role;
       if (currentUserRole !== 'admin') {
         return res.status(403).json({ success: false, message: '权限不足，需要管理员权限' });
@@ -173,9 +173,9 @@ export class UserController {
    */
   async deleteUser(req: Request, res: Response, next: NextFunction) {
     try {
-      // @ts-ignore
+      // @ts-expect-error -- req.user augmented by auth middleware, see issues with @types/express
       const currentUserRole = req.user?.role;
-      // @ts-ignore
+      // @ts-expect-error -- req.user augmented by auth middleware, see issues with @types/express
       const currentUserId = req.user?.id;
 
       if (currentUserRole !== 'admin') {

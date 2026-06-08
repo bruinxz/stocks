@@ -16,7 +16,9 @@ export class PythonMarketDataClient {
   protected async callPythonScript(command: string, ...args: string[]): Promise<any> {
     return new Promise((resolve, reject) => {
       const processArgs = [this.scriptPath, command, ...args];
-      logger.debug(`Executing ${this.clientName} Python: ${this.pythonPath} ${processArgs.join(' ')}`);
+      logger.debug(
+        `Executing ${this.clientName} Python: ${this.pythonPath} ${processArgs.join(' ')}`
+      );
 
       const child = spawn(this.pythonPath, processArgs);
       let stdout = '';
@@ -49,7 +51,9 @@ export class PythonMarketDataClient {
           if (result.success) {
             resolve(result.data);
           } else {
-            reject(new Error(result.error || `Unknown error from ${this.clientName} Python script`));
+            reject(
+              new Error(result.error || `Unknown error from ${this.clientName} Python script`)
+            );
           }
         } catch (error: any) {
           logger.error(`Failed to parse ${this.clientName} Python output: ${stdout}`);

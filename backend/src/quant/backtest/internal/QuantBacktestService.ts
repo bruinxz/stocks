@@ -1120,6 +1120,194 @@ export class QuantBacktestService {
     };
   }
 
+  /**
+   * US-075: 取某个回测任务"冠军策略" (best total_return_pct) 的 equity_curve_json，
+   * 派生回撤序列 / 月度收益 / 滚动夏普。三个 endpoint 共享此查询路径。
+   *
+   * 返回 null 表示任务/冠军不存在；返回 {} 表示存在但曲线为空（前端按 Empty 渲染）。
+   */
+  private async getChampionEquityCurve(
+    taskId: number
+  ): Promise<{
+    task: QuantBacktestTask;
+    champion: QuantBacktestResult;
+    curve: Array<{ date: string; total_value: number; drawdown_pct?: number }>;
+  } | null> {
+    const task = await QuantBacktestTask.findByPk(taskId);
+    if (!task) return null;
+    const results = await QuantBacktestResult.findAll({
+      where: { task_id: taskId },
+      order: [['total_return_pct', 'DESC']],
+    });
+    if (results.length === 0) return null;
+    const champion = results[0];
+    const rawCurve = Array.isArray(champion.equity_curve_json) ? champion.equity_curve_json : [];
+    // US-040 教训：JSONB 数值字段读出来可能是 string，Number() 包装 belt-and-suspenders。
+    const curve = rawCurve
+      .map((p: any) => ({
+        date: String(p?.date || ''),
+        total_value: Number(p?.total_value || 0),
+        drawdown_pct: p?.drawdown_pct !== undefined ? Number(p.drawdown_pct) : undefined,
+      }))
+      .filter(p => p.date && Number.isFinite(p.total_value) && p.total_value > 0)
+      .sort((a, b) => a.date.localeCompare(b.date));
+    return { task, champion, curve };
+  }
+
+  /**
+   * US-075: 回撤曲线 series。
+   *
+   * 优先用 equity_curve_json 中预存的 drawdown_pct (回测引擎已经算好)；缺失或不可靠时
+   * 现场从 total_value 序列计算 running peak → (peak - value) / peak * 100。
+   *
+   * 返回每一日：{ date, drawdown_pct (>=0, 越大越深), total_value }。
+   */
+  async getDrawdownSeries(taskId: number) {
+    const data = await this.getChampionEquityCurve(taskId);
+    if (!data) return null;
+    const { task, champion, curve } = data;
+    let peak = -Infinity;
+    const series = curve.map(p => {
+      peak = Math.max(peak, p.total_value);
+      // 优先用 engine 预存的 drawdown_pct；缺失时现场算
+      const stored = p.drawdown_pct;
+      const computed = peak > 0 ? ((peak - p.total_value) / peak) * 100 : 0;
+      const drawdown_pct = Number.isFinite(stored) ? Number(stored) : computed;
+      return {
+        date: p.date,
+        drawdown_pct: round(drawdown_pct, 4),
+        total_value: round(p.total_value, 4),
+      };
+    });
+    return {
+      task_id: task.id,
+      task_name: task.task_name,
+      strategy_key: champion.strategy_key,
+      strategy_name: champion.strategy_name,
+      max_drawdown_pct: round(Number(champion.max_drawdown_pct || 0), 4),
+      point_count: series.length,
+      series,
+    };
+  }
+
+  /**
+   * US-075: 月度收益热力图数据。
+   *
+   * 按 YYYY-MM 分组：每月用 month-end total_value / month-start prev_value - 1 算月度回报。
+   * Month-start 取上月最后一个 trade_date 的 total_value（或本月第一个交易日的 prev_value 估算）。
+   *
+   * 返回每月一行 + years/months 维度便于前端构建 (year × month) 矩阵。
+   */
+  async getMonthlyReturns(taskId: number) {
+    const data = await this.getChampionEquityCurve(taskId);
+    if (!data) return null;
+    const { task, champion, curve } = data;
+    if (curve.length === 0) {
+      return {
+        task_id: task.id,
+        task_name: task.task_name,
+        strategy_key: champion.strategy_key,
+        strategy_name: champion.strategy_name,
+        years: [],
+        months: [],
+        cells: [],
+      };
+    }
+    // 按月分组取每月最后一日的 total_value (= month-end equity)。
+    const monthEnd = new Map<string, number>(); // YYYY-MM → last total_value of that month
+    for (const p of curve) {
+      const ym = p.date.slice(0, 7);
+      monthEnd.set(ym, p.total_value); // 后写入的覆盖前一日（curve 已按 date 升序）
+    }
+    const sortedYms = Array.from(monthEnd.keys()).sort();
+    // 起点 baseline：第一日的开盘价 ≈ 第一日 total_value（A 股回测惯例）
+    // 用 curve[0].total_value 作为 "first-month start" 的 baseline，避免第一月 NaN。
+    const firstBaseline = curve[0].total_value;
+    const cells: Array<{ year: number; month: number; return_pct: number }> = [];
+    let prevValue = firstBaseline;
+    for (const ym of sortedYms) {
+      const endValue = monthEnd.get(ym)!;
+      const returnPct = prevValue > 0 ? (endValue / prevValue - 1) * 100 : 0;
+      const [yStr, mStr] = ym.split('-');
+      cells.push({
+        year: Number(yStr),
+        month: Number(mStr),
+        return_pct: round(returnPct, 4),
+      });
+      prevValue = endValue;
+    }
+    const years = Array.from(new Set(cells.map(c => c.year))).sort();
+    const months = Array.from({ length: 12 }, (_, i) => i + 1);
+    return {
+      task_id: task.id,
+      task_name: task.task_name,
+      strategy_key: champion.strategy_key,
+      strategy_name: champion.strategy_name,
+      years,
+      months,
+      cells,
+    };
+  }
+
+  /**
+   * US-075: 滚动 N 日（默认 90）夏普比率序列。
+   *
+   * 算法：先从 total_value 序列推 daily_return_pct（log/pct 都可，这里用 pct）。
+   * 然后对每个 endIdx >= window-1 取过去 window 天的 returns，算 (mean / sd) * sqrt(252)。
+   *
+   * window 不足时该日返回 null；前端用 connectNulls 跳过空段。
+   */
+  async getRollingSharpeSeries(taskId: number, windowDays = 90) {
+    const data = await this.getChampionEquityCurve(taskId);
+    if (!data) return null;
+    const { task, champion, curve } = data;
+    const window = Math.max(2, Math.min(252, Number(windowDays) || 90));
+    if (curve.length < 2) {
+      return {
+        task_id: task.id,
+        task_name: task.task_name,
+        strategy_key: champion.strategy_key,
+        strategy_name: champion.strategy_name,
+        window_days: window,
+        sharpe_ratio: round(Number(champion.sharpe_ratio || 0), 4),
+        series: [],
+      };
+    }
+    // daily returns
+    const returns: Array<{ date: string; ret: number }> = [];
+    for (let i = 1; i < curve.length; i++) {
+      const prev = curve[i - 1].total_value;
+      const curr = curve[i].total_value;
+      if (prev > 0 && Number.isFinite(curr)) {
+        returns.push({ date: curve[i].date, ret: curr / prev - 1 });
+      }
+    }
+    // rolling sharpe
+    const series: Array<{ date: string; sharpe: number | null }> = [];
+    for (let i = 0; i < returns.length; i++) {
+      if (i + 1 < window) {
+        series.push({ date: returns[i].date, sharpe: null });
+        continue;
+      }
+      const slice = returns.slice(i + 1 - window, i + 1).map(r => r.ret);
+      const mean = slice.reduce((s, v) => s + v, 0) / slice.length;
+      const variance =
+        slice.reduce((s, v) => s + (v - mean) * (v - mean), 0) / (slice.length - 1 || 1);
+      const sd = Math.sqrt(variance);
+      const sharpe = sd > 1e-12 ? (mean / sd) * Math.sqrt(252) : 0;
+      series.push({ date: returns[i].date, sharpe: round(sharpe, 4) });
+    }
+    return {
+      task_id: task.id,
+      task_name: task.task_name,
+      strategy_key: champion.strategy_key,
+      strategy_name: champion.strategy_name,
+      window_days: window,
+      sharpe_ratio: round(Number(champion.sharpe_ratio || 0), 4),
+      series,
+    };
+  }
+
   private async resolveBenchmarkReturn(options: QuantBacktestOptions) {
     try {
       const benchmarkSymbol = options.benchmark_symbol || 'sh.000300';

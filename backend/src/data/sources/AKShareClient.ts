@@ -209,7 +209,7 @@ export class AKShareClient {
    * 轻量健康探测：优先使用历史K线，不调用全市场列表，避免刷新数据源状态时过重。
    */
   async healthCheck(
-    code: string = 'sh.600000',
+    code = 'sh.600000',
     start_date?: string,
     end_date?: string
   ): Promise<{ ok: boolean; bar_count: number; latest_date?: string }> {
@@ -300,7 +300,7 @@ export class AKShareClient {
    * @param period K线周期（如 '1m', '5m', '15m'）
    * @param limit 获取的K线数量（默认 240）
    */
-  async getIntradayBars(code: string, period: string = '1m', limit: number = 240): Promise<any[]> {
+  async getIntradayBars(code: string, period = '1m', limit = 240): Promise<any[]> {
     try {
       logger.info(`Fetching intraday bars for ${code} (${period}) from AKShare`);
       const bars = await this.callPythonScript('get_intraday_bars', code, period, limit.toString());

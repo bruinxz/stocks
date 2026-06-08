@@ -216,6 +216,92 @@ export async function compareBacktests(taskIds: number[]): Promise<BacktestCompa
   return res.data.data as BacktestCompareResponse;
 }
 
+// ---------- /api/quant/backtests/:id/drawdown-series (US-075) --------------
+
+export interface BacktestDrawdownSeriesPoint {
+  date: string;
+  drawdown_pct: number; // >=0, 越大回撤越深
+  total_value: number;
+}
+
+export interface BacktestDrawdownSeriesResponse {
+  task_id: number;
+  task_name: string;
+  strategy_key: string;
+  strategy_name: string;
+  max_drawdown_pct: number;
+  point_count: number;
+  series: BacktestDrawdownSeriesPoint[];
+}
+
+export async function getBacktestDrawdownSeries(
+  taskId: number
+): Promise<BacktestDrawdownSeriesResponse> {
+  const res = await api.get(`/quant/backtests/${taskId}/drawdown-series`);
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || '获取回撤序列失败');
+  }
+  return res.data.data as BacktestDrawdownSeriesResponse;
+}
+
+// ---------- /api/quant/backtests/:id/monthly-returns (US-075) --------------
+
+export interface BacktestMonthlyReturnCell {
+  year: number;
+  month: number; // 1-12
+  return_pct: number;
+}
+
+export interface BacktestMonthlyReturnsResponse {
+  task_id: number;
+  task_name: string;
+  strategy_key: string;
+  strategy_name: string;
+  years: number[];
+  months: number[]; // [1..12]
+  cells: BacktestMonthlyReturnCell[];
+}
+
+export async function getBacktestMonthlyReturns(
+  taskId: number
+): Promise<BacktestMonthlyReturnsResponse> {
+  const res = await api.get(`/quant/backtests/${taskId}/monthly-returns`);
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || '获取月度收益失败');
+  }
+  return res.data.data as BacktestMonthlyReturnsResponse;
+}
+
+// ---------- /api/quant/backtests/:id/rolling-sharpe-series (US-075) --------
+
+export interface BacktestRollingSharpePoint {
+  date: string;
+  sharpe: number | null; // window 不足时为 null
+}
+
+export interface BacktestRollingSharpeResponse {
+  task_id: number;
+  task_name: string;
+  strategy_key: string;
+  strategy_name: string;
+  window_days: number;
+  sharpe_ratio: number; // 整段静态夏普（来自 BacktestResult）
+  series: BacktestRollingSharpePoint[];
+}
+
+export async function getBacktestRollingSharpeSeries(
+  taskId: number,
+  window = 90
+): Promise<BacktestRollingSharpeResponse> {
+  const res = await api.get(`/quant/backtests/${taskId}/rolling-sharpe-series`, {
+    params: { window },
+  });
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || '获取滚动夏普失败');
+  }
+  return res.data.data as BacktestRollingSharpeResponse;
+}
+
 // ---------- bundled export -------------------------------------------------
 
 export const labService = {
@@ -224,6 +310,9 @@ export const labService = {
   getBacktestDetail,
   createBacktestTask,
   compareBacktests,
+  getBacktestDrawdownSeries,
+  getBacktestMonthlyReturns,
+  getBacktestRollingSharpeSeries,
 };
 
 export default labService;

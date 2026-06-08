@@ -561,14 +561,14 @@ class FeishuTaskReportService {
         item.capital_efficiency_score !== undefined
           ? `效率 ${Number(item.capital_efficiency_score).toFixed(1)}`
           : item.avg_excess_return_pct !== undefined
-            ? `超额 ${this.formatPercent(item.avg_excess_return_pct)}`
-            : '';
+          ? `超额 ${this.formatPercent(item.avg_excess_return_pct)}`
+          : '';
       const multiplier =
         item.recommended_budget_multiplier !== undefined
           ? `预算 ${Number(item.recommended_budget_multiplier).toFixed(2)}x`
           : item.position_multiplier !== undefined
-            ? `预算 ${Number(item.position_multiplier).toFixed(2)}x`
-            : '';
+          ? `预算 ${Number(item.position_multiplier).toFixed(2)}x`
+          : '';
       const reason = this.safeText(
         item.budget_action_reason || item.reason || item.resample_decision_reason || '',
         44
@@ -638,8 +638,8 @@ class FeishuTaskReportService {
             riskGatePolicy.action === 'pause'
               ? '暂停新增'
               : riskGatePolicy.action === 'reduce'
-                ? '自动降仓'
-                : '正常放行'
+              ? '自动降仓'
+              : '正常放行'
           }；${this.safeText(
             loopPolicy.risk_gate_feedback_reason || riskGatePolicy.reason || '按组合风险画像执行',
             140
@@ -1123,15 +1123,17 @@ class FeishuTaskReportService {
         archive.total ?? 0
       } 条。`,
       runtimeRiskBlocked
-        ? `- **执行纪律**：运行时健康为 ${runtimeHealth.status || 'risk'}，本轮只归档观察，不执行 Agent 买入/模拟买入；原因：${this.safeText(
+        ? `- **执行纪律**：运行时健康为 ${
+            runtimeHealth.status || 'risk'
+          }，本轮只归档观察，不执行 Agent 买入/模拟买入；原因：${this.safeText(
             runtimeHealth.summary?.conclusion || result?.message || '量化运行时存在风险项',
             140
           )}`
         : runtimeHealth.status
-          ? `- **运行时健康**：${runtimeHealth.status} / ${runtimeHealth.score ?? '-'} 分；因子覆盖 ${
-              runtimeHealth.summary?.factor_min_coverage_rate ?? '-'
-            }%，真实源 ${runtimeHealth.summary?.factor_real_provider_rate ?? '-'}%。`
-          : '',
+        ? `- **运行时健康**：${runtimeHealth.status} / ${runtimeHealth.score ?? '-'} 分；因子覆盖 ${
+            runtimeHealth.summary?.factor_min_coverage_rate ?? '-'
+          }%，真实源 ${runtimeHealth.summary?.factor_real_provider_rate ?? '-'}%。`
+        : '',
       `- **Agent复核**：${
         agent.enabled === false ? '未启用' : `提交 ${submitted} 条，失败 ${failed} 条`
       }。`,
@@ -1308,9 +1310,7 @@ class FeishuTaskReportService {
                 status: runtimeHealth.status,
                 score: runtimeHealth.score,
                 summary: runtimeHealth.summary,
-                checks: Array.isArray(runtimeHealth.checks)
-                  ? runtimeHealth.checks.slice(0, 8)
-                  : [],
+                checks: Array.isArray(runtimeHealth.checks) ? runtimeHealth.checks.slice(0, 8) : [],
               }
             : null,
           runtime_risk_blocked: runtimeRiskBlocked,
@@ -2177,18 +2177,32 @@ class FeishuTaskReportService {
 
     if (result.scenario === 'quant_param_maintenance') {
       lines.push(
-        `- **维护窗口**：${result.signal_window?.start_date || '-'} ~ ${result.signal_window?.end_date || '-'}`,
-        `- **验证样本新增/更新**：${result.created_validations ?? 0}/${result.updated_validations ?? 0}`,
-        `- **收益刷新完成/待完成/无数据**：${result.completed_validations ?? 0}/${result.pending_validations ?? 0}/${result.no_data_validations ?? 0}`,
-        `- **生命周期应用**：${result.lifecycle_applied ?? 0}；推广 ${result.lifecycle_promotion_count ?? 0}、降级 ${result.lifecycle_degradation_count ?? 0}、回滚 ${result.lifecycle_rollback_count ?? 0}`,
-        `- **当前可采用参数**：${result.active_adopted_strategy_count ?? 0} 个策略；冠军 ${result.active_champion_count ?? 0}、候选 ${result.active_candidate_count ?? 0}`
+        `- **维护窗口**：${result.signal_window?.start_date || '-'} ~ ${
+          result.signal_window?.end_date || '-'
+        }`,
+        `- **验证样本新增/更新**：${result.created_validations ?? 0}/${
+          result.updated_validations ?? 0
+        }`,
+        `- **收益刷新完成/待完成/无数据**：${result.completed_validations ?? 0}/${
+          result.pending_validations ?? 0
+        }/${result.no_data_validations ?? 0}`,
+        `- **生命周期应用**：${result.lifecycle_applied ?? 0}；推广 ${
+          result.lifecycle_promotion_count ?? 0
+        }、降级 ${result.lifecycle_degradation_count ?? 0}、回滚 ${
+          result.lifecycle_rollback_count ?? 0
+        }`,
+        `- **当前可采用参数**：${result.active_adopted_strategy_count ?? 0} 个策略；冠军 ${
+          result.active_champion_count ?? 0
+        }、候选 ${result.active_candidate_count ?? 0}`
       );
     }
 
     if (result.scenario === 'realtime_quote_sync') {
       lines.push(
         `- **行情源/范围**：${result.source || '-'} / ${result.universe || '-'}`,
-        `- **请求/落盘/更新股票**：${result.requested_count ?? 0}/${result.persisted_count ?? 0}/${result.updated_stock_count ?? 0}`,
+        `- **请求/落盘/更新股票**：${result.requested_count ?? 0}/${result.persisted_count ?? 0}/${
+          result.updated_stock_count ?? 0
+        }`,
         `- **最新行情时间**：${result.latest_quote_time || '-'}`,
         `- **当日覆盖股票数**：${result.latest_trade_date_symbol_count ?? 0}`,
         `- **新鲜度**：${result.freshness_status || '-'}`
@@ -2227,7 +2241,9 @@ class FeishuTaskReportService {
         `- **影子样本**：总数 ${result.shadow_trade_count ?? 0}，已评估 ${
           result.evaluated_count ?? 0
         }，观察中 ${result.open_count ?? 0}`,
-        `- **收益质量**：胜率 ${this.formatPercent(result.win_rate_pct)}，平均收益 ${this.formatPercent(
+        `- **收益质量**：胜率 ${this.formatPercent(
+          result.win_rate_pct
+        )}，平均收益 ${this.formatPercent(
           result.avg_latest_return_pct
         )}，浮动盈亏 ${this.formatSignedMoney(result.total_latest_pnl)}`,
         `- **基准对比**：模拟盘均收 ${this.formatPercent(
@@ -2309,8 +2325,8 @@ class FeishuTaskReportService {
     const dryRun = Boolean(result?.dry_run);
     const status = options.error ? 'FAILED' : 'COMPLETED';
     const actionCount = dryRun
-      ? (result?.planned ?? trades.length)
-      : (result?.executed ?? trades.length);
+      ? result?.planned ?? trades.length
+      : result?.executed ?? trades.length;
     const skipReasonLines = this.buildCompactSkipReasonLines(result, skippedItems, 3);
 
     const lines = [
@@ -2443,7 +2459,7 @@ class FeishuTaskReportService {
     const riskMetrics = riskProfile?.risk_metrics || {};
     const dryRun = Boolean(result?.dry_run);
     const status = options.error ? 'FAILED' : 'COMPLETED';
-    const exitCount = dryRun ? (result?.planned ?? exits.length) : (result?.exited ?? exits.length);
+    const exitCount = dryRun ? result?.planned ?? exits.length : result?.exited ?? exits.length;
 
     const lines = [
       `## ${recordType}`,

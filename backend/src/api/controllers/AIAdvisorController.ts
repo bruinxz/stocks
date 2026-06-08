@@ -27,6 +27,7 @@ import {
   normalizeIntent,
   buildConversationId,
 } from '../../services/StrategyCopilotService';
+import { marketBriefService } from '../../services/MarketBriefService';
 
 const TRADING_AGENTS_URL = process.env.TRADING_AGENTS_URL || 'http://47.93.224.109:8000';
 
@@ -46,6 +47,7 @@ export class AIAdvisorController {
     this.askStrategyCopilot = this.askStrategyCopilot.bind(this);
     this.streamStrategyCopilot = this.streamStrategyCopilot.bind(this);
     this.getStrategyCopilotContext = this.getStrategyCopilotContext.bind(this);
+    this.getMarketBriefToday = this.getMarketBriefToday.bind(this);
   }
 
   /**
@@ -913,6 +915,35 @@ export class AIAdvisorController {
       return res.json({ success: true, data: context });
     } catch (error: any) {
       logger.error('getStrategyCopilotContext 失败:', error);
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * GET /api/ai/market-brief/today
+   *
+   * US-073 — TodayWorkspace 顶部 AI 大盘速读卡片 的数据源。
+   *
+   * 行为：
+   *   - 优先从 DB 缓存读取当日记录（一日一行，由 SchedulerService 08:30 cron
+   *     生成）；
+   *   - 若当日尚未生成（机器重启 / cron miss / 首次访问） → 懒求值触发
+   *     `computeAndPersist` 同步生成并返回。
+   *
+   * Query 参数：
+   *   - `date=YYYY-MM-DD`：可选，覆盖默认"今日 Asia/Shanghai"；
+   *   - `refresh=true`：强制重新生成（绕过 cache，e.g. ops 重跑）。
+   */
+  async getMarketBriefToday(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const date = (req.query.date as string | undefined)?.trim() || undefined;
+      const refresh = String(req.query.refresh || '').toLowerCase() === 'true';
+      const result = refresh
+        ? await marketBriefService.computeAndPersist({ trade_date: date })
+        : await marketBriefService.getTodayBrief({ trade_date: date });
+      return res.json({ success: true, data: result });
+    } catch (error: any) {
+      logger.error('getMarketBriefToday 失败:', error);
       return res.status(500).json({ success: false, message: error.message });
     }
   }

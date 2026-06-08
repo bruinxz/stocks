@@ -31,9 +31,18 @@ export class DualMomentumRotationStrategy extends QuantStrategy {
     const closes = bars.map(bar => bar.close);
     const volumes = bars.map(bar => Number(bar.volume || 0));
     const latestClose = last(closes) || Number(context.latest_price || 0);
-    const ret20 = pct(latestClose, valueNDaysAgo(closes, Number(params.short_window)) || latestClose);
-    const ret60 = pct(latestClose, valueNDaysAgo(closes, Number(params.middle_window)) || latestClose);
-    const ret120 = pct(latestClose, valueNDaysAgo(closes, Number(params.long_window)) || latestClose);
+    const ret20 = pct(
+      latestClose,
+      valueNDaysAgo(closes, Number(params.short_window)) || latestClose
+    );
+    const ret60 = pct(
+      latestClose,
+      valueNDaysAgo(closes, Number(params.middle_window)) || latestClose
+    );
+    const ret120 = pct(
+      latestClose,
+      valueNDaysAgo(closes, Number(params.long_window)) || latestClose
+    );
     const ma20 = last(sma(closes, 20)) || latestClose;
     const ma60 = last(sma(closes, 60)) || ma20;
     const returns = closes.slice(1).map((value, index) => pct(value, closes[index]));

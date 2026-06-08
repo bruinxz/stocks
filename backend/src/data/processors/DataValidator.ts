@@ -337,7 +337,12 @@ export class DataValidator {
     const continuityResult = this.checkContinuity(bars);
 
     // 检测关键字段的异常值
-    const outlierFields: (keyof DailyBar)[] = ['close', 'volume', 'change_percent', 'turnover_rate'];
+    const outlierFields: (keyof DailyBar)[] = [
+      'close',
+      'volume',
+      'change_percent',
+      'turnover_rate',
+    ];
     const outliers: any = {};
 
     for (const field of outlierFields) {
@@ -379,7 +384,10 @@ export class DataValidator {
     }
 
     // 如果换手率异常，设为null
-    if (fixed.turnover_rate !== undefined && (fixed.turnover_rate < 0 || fixed.turnover_rate > 100)) {
+    if (
+      fixed.turnover_rate !== undefined &&
+      (fixed.turnover_rate < 0 || fixed.turnover_rate > 100)
+    ) {
       fixed.turnover_rate = null as any;
     }
 

@@ -35,15 +35,19 @@ import {
   SwapOutlined,
 } from '@ant-design/icons';
 import {
+  Area,
+  AreaChart,
   CartesianGrid,
   Legend,
   Line,
   LineChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip as RechartsTooltip,
   XAxis,
   YAxis,
 } from 'recharts';
+import ReactECharts from 'echarts-for-react';
 import dayjs, { Dayjs } from 'dayjs';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
 import {
@@ -52,6 +56,9 @@ import {
   BacktestTask,
   BacktestCompareResponse,
   BacktestCompareItem,
+  BacktestDrawdownSeriesResponse,
+  BacktestMonthlyReturnsResponse,
+  BacktestRollingSharpeResponse,
   CreateBacktestPayload,
 } from '../../services/labService';
 import StrategyCopilotPanel from '../../components/trading/StrategyCopilotPanel';
@@ -762,6 +769,79 @@ const CompareTab: React.FC<{
   compareResult: BacktestCompareResponse | null;
   onCompare: () => void;
 }> = ({ completedTasks, selectedIds, onSelectionChange, compareLoading, compareResult, onCompare }) => {
+  // ----- US-075: 子图数据 (回撤 / 月度热力 / 滚动夏普) -----
+  // 一次 compare 之后并发拉这三套 series；任一失败的 task 在本地保留 error 字段，
+  // 各子卡片自己降级渲染 (Alert)，不阻塞其他 task 显示。
+  const [drawdownByTask, setDrawdownByTask] = useState<Map<number, BacktestDrawdownSeriesResponse>>(
+    new Map()
+  );
+  const [monthlyByTask, setMonthlyByTask] = useState<Map<number, BacktestMonthlyReturnsResponse>>(
+    new Map()
+  );
+  const [sharpeByTask, setSharpeByTask] = useState<Map<number, BacktestRollingSharpeResponse>>(
+    new Map()
+  );
+  const [seriesLoading, setSeriesLoading] = useState(false);
+  const [seriesErrors, setSeriesErrors] = useState<Record<number, string>>({});
+
+  const compareKey = useMemo(
+    () => (compareResult?.items || []).map(i => i.task_id).join(','),
+    [compareResult]
+  );
+
+  useEffect(() => {
+    if (!compareResult || compareResult.items.length === 0) {
+      setDrawdownByTask(new Map());
+      setMonthlyByTask(new Map());
+      setSharpeByTask(new Map());
+      setSeriesErrors({});
+      return;
+    }
+    let cancelled = false;
+    setSeriesLoading(true);
+    setSeriesErrors({});
+    const tasks = compareResult.items.map(it => it.task_id);
+    const fetchOne = async (taskId: number) => {
+      const [dd, mm, sh] = await Promise.allSettled([
+        labService.getBacktestDrawdownSeries(taskId),
+        labService.getBacktestMonthlyReturns(taskId),
+        labService.getBacktestRollingSharpeSeries(taskId, 90),
+      ]);
+      return { taskId, dd, mm, sh };
+    };
+    Promise.all(tasks.map(fetchOne))
+      .then(results => {
+        if (cancelled) return;
+        const ddMap = new Map<number, BacktestDrawdownSeriesResponse>();
+        const mmMap = new Map<number, BacktestMonthlyReturnsResponse>();
+        const shMap = new Map<number, BacktestRollingSharpeResponse>();
+        const errMap: Record<number, string> = {};
+        for (const r of results) {
+          const errs: string[] = [];
+          if (r.dd.status === 'fulfilled') ddMap.set(r.taskId, r.dd.value);
+          else errs.push(`回撤: ${r.dd.reason?.message || r.dd.reason || '请求失败'}`);
+          if (r.mm.status === 'fulfilled') mmMap.set(r.taskId, r.mm.value);
+          else errs.push(`月度: ${r.mm.reason?.message || r.mm.reason || '请求失败'}`);
+          if (r.sh.status === 'fulfilled') shMap.set(r.taskId, r.sh.value);
+          else errs.push(`夏普: ${r.sh.reason?.message || r.sh.reason || '请求失败'}`);
+          if (errs.length) errMap[r.taskId] = errs.join(' · ');
+        }
+        setDrawdownByTask(ddMap);
+        setMonthlyByTask(mmMap);
+        setSharpeByTask(shMap);
+        setSeriesErrors(errMap);
+      })
+      .finally(() => {
+        if (!cancelled) setSeriesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // 依赖 compareKey 而非 compareResult — compareResult 引用每次 setCompareResult 都会变，
+    // 但 task_ids 没变就不该重拉 (复合 PK 等价)。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [compareKey]);
+
   const selectionColumns = [
     {
       title: '任务',
@@ -867,6 +947,24 @@ const CompareTab: React.FC<{
       {compareResult && compareResult.items.length > 0 && (
         <>
           <CompareChartCard items={compareResult.items} />
+          <CompareDrawdownCard
+            items={compareResult.items}
+            data={drawdownByTask}
+            loading={seriesLoading}
+            errors={seriesErrors}
+          />
+          <CompareRollingSharpeCard
+            items={compareResult.items}
+            data={sharpeByTask}
+            loading={seriesLoading}
+            errors={seriesErrors}
+          />
+          <CompareMonthlyReturnsCard
+            items={compareResult.items}
+            data={monthlyByTask}
+            loading={seriesLoading}
+            errors={seriesErrors}
+          />
           <CompareTableCard result={compareResult} />
         </>
       )}
@@ -939,6 +1037,461 @@ const CompareChartCard: React.FC<{ items: BacktestCompareItem[] }> = ({ items })
         </ResponsiveContainer>
       </div>
     </Card>
+  );
+};
+
+// ----------------------------------------------------------------------------
+// US-075 (1)/(3) — 回撤曲线 / 滚动夏普曲线（Recharts 多 task 叠加）
+// US-075 (2) — 月度收益热力图（echarts heatmap，每 task 一张矩阵）
+// ----------------------------------------------------------------------------
+
+/**
+ * 把 N 个 task 的 series 合并成 Recharts 单 data array 共享 X 轴 (date)。
+ * 输出 [{ date, task_<id>: <value>|null, ... }, ...]，缺失日期对应 task 列为 null
+ * 让 Recharts <Line connectNulls /> 自然跳过断段。
+ *
+ * Codebase pattern: "Recharts multi-series 必须共享 X 轴" — N 条曲线 ≠ N 个 data array。
+ */
+function mergeSeriesByDate<T extends { date: string }>(
+  taskSeries: Array<{ taskId: number; series: T[] }>,
+  pickValue: (point: T) => number | null
+): Array<Record<string, number | string | null>> {
+  const dateMap = new Map<string, Record<string, number | string | null>>();
+  for (const { taskId, series } of taskSeries) {
+    for (const p of series) {
+      if (!p.date) continue;
+      if (!dateMap.has(p.date)) dateMap.set(p.date, { date: p.date });
+      const row = dateMap.get(p.date)!;
+      row[`task_${taskId}`] = pickValue(p);
+    }
+  }
+  return Array.from(dateMap.values()).sort((a, b) =>
+    String(a.date).localeCompare(String(b.date))
+  );
+}
+
+const CompareDrawdownCard: React.FC<{
+  items: BacktestCompareItem[];
+  data: Map<number, BacktestDrawdownSeriesResponse>;
+  loading: boolean;
+  errors: Record<number, string>;
+}> = ({ items, data, loading, errors }) => {
+  const seriesList = useMemo(
+    () =>
+      items
+        .map(it => {
+          const r = data.get(it.task_id);
+          return r
+            ? { taskId: it.task_id, series: r.series.map(p => ({ ...p, drawdown_pct: -Math.abs(p.drawdown_pct) })) }
+            : null;
+        })
+        .filter((x): x is { taskId: number; series: any[] } => x !== null),
+    [items, data]
+  );
+  const merged = useMemo(
+    () => mergeSeriesByDate(seriesList, (p: any) => Number(p.drawdown_pct ?? 0)),
+    [seriesList]
+  );
+
+  const errorAlerts = items
+    .filter(it => errors[it.task_id]?.includes('回撤'))
+    .map(it => ({
+      task_id: it.task_id,
+      task_name: it.task_name,
+      message: errors[it.task_id]!,
+    }));
+
+  if (loading && merged.length === 0) {
+    return (
+      <Card title="回撤曲线对比（%，往下越深）">
+        <div style={{ display: 'flex', justifyContent: 'center', padding: 48 }}>
+          <Spin tip="加载回撤序列…" />
+        </div>
+      </Card>
+    );
+  }
+  if (merged.length === 0) {
+    return (
+      <Card title="回撤曲线对比（%，往下越深）">
+        {errorAlerts.length > 0 && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message="部分任务回撤数据加载失败"
+            description={errorAlerts.map(e => `#${e.task_id} ${e.task_name}: ${e.message}`).join('；')}
+          />
+        )}
+        <Empty description="所选回测都没有回撤数据" />
+      </Card>
+    );
+  }
+  return (
+    <Card title="回撤曲线对比（%，往下越深 — 冠军策略）">
+      {errorAlerts.length > 0 && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="部分任务回撤数据加载失败"
+          description={errorAlerts.map(e => `#${e.task_id} ${e.task_name}: ${e.message}`).join('；')}
+        />
+      )}
+      <div style={{ width: '100%', height: 320 }}>
+        <ResponsiveContainer>
+          <AreaChart data={merged}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
+            <XAxis dataKey="date" tick={{ fontSize: 11 }} minTickGap={30} />
+            <YAxis
+              tickFormatter={v => `${v}%`}
+              tick={{ fontSize: 11 }}
+              domain={['auto', 0]}
+            />
+            <RechartsTooltip
+              formatter={(value: any) => [`${Number(value).toFixed(2)}%`, '回撤']}
+            />
+            <ReferenceLine y={0} stroke="#999" />
+            <Legend />
+            {items.map((item, idx) => {
+              if (!data.has(item.task_id)) return null;
+              return (
+                <Area
+                  key={item.task_id}
+                  type="monotone"
+                  dataKey={`task_${item.task_id}`}
+                  name={`${item.task_name}${
+                    item.best_strategy_name ? ' · ' + item.best_strategy_name : ''
+                  }`}
+                  stroke={COMPARE_COLORS[idx % COMPARE_COLORS.length]}
+                  fill={COMPARE_COLORS[idx % COMPARE_COLORS.length]}
+                  fillOpacity={0.18}
+                  strokeWidth={2}
+                  isAnimationActive={false}
+                  connectNulls
+                />
+              );
+            })}
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+    </Card>
+  );
+};
+
+const CompareRollingSharpeCard: React.FC<{
+  items: BacktestCompareItem[];
+  data: Map<number, BacktestRollingSharpeResponse>;
+  loading: boolean;
+  errors: Record<number, string>;
+}> = ({ items, data, loading, errors }) => {
+  const windowDays = useMemo(() => {
+    for (const it of items) {
+      const r = data.get(it.task_id);
+      if (r) return r.window_days;
+    }
+    return 90;
+  }, [items, data]);
+
+  const seriesList = useMemo(
+    () =>
+      items
+        .map(it => {
+          const r = data.get(it.task_id);
+          return r ? { taskId: it.task_id, series: r.series } : null;
+        })
+        .filter((x): x is { taskId: number; series: any[] } => x !== null),
+    [items, data]
+  );
+  const merged = useMemo(
+    () =>
+      mergeSeriesByDate(seriesList, (p: any) =>
+        p.sharpe === null || p.sharpe === undefined ? null : Number(p.sharpe)
+      ),
+    [seriesList]
+  );
+
+  const errorAlerts = items
+    .filter(it => errors[it.task_id]?.includes('夏普'))
+    .map(it => ({
+      task_id: it.task_id,
+      task_name: it.task_name,
+      message: errors[it.task_id]!,
+    }));
+
+  if (loading && merged.length === 0) {
+    return (
+      <Card title={`滚动夏普曲线（${windowDays} 日窗口）`}>
+        <div style={{ display: 'flex', justifyContent: 'center', padding: 48 }}>
+          <Spin tip="加载滚动夏普序列…" />
+        </div>
+      </Card>
+    );
+  }
+  if (merged.length === 0) {
+    return (
+      <Card title={`滚动夏普曲线（${windowDays} 日窗口）`}>
+        {errorAlerts.length > 0 && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message="部分任务滚动夏普数据加载失败"
+            description={errorAlerts.map(e => `#${e.task_id} ${e.task_name}: ${e.message}`).join('；')}
+          />
+        )}
+        <Empty description="所选回测都没有滚动夏普数据" />
+      </Card>
+    );
+  }
+  return (
+    <Card
+      title={`滚动夏普曲线（${windowDays} 日窗口 — 冠军策略，越高越稳）`}
+      extra={
+        <Tooltip title="窗口不足的日期不显示（Recharts connectNulls 跳过）。年化系数 sqrt(252)。">
+          <Tag color="cyan">window={windowDays}</Tag>
+        </Tooltip>
+      }
+    >
+      {errorAlerts.length > 0 && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="部分任务滚动夏普数据加载失败"
+          description={errorAlerts.map(e => `#${e.task_id} ${e.task_name}: ${e.message}`).join('；')}
+        />
+      )}
+      <div style={{ width: '100%', height: 320 }}>
+        <ResponsiveContainer>
+          <LineChart data={merged}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
+            <XAxis dataKey="date" tick={{ fontSize: 11 }} minTickGap={30} />
+            <YAxis tick={{ fontSize: 11 }} />
+            <RechartsTooltip
+              formatter={(value: any) =>
+                value === null || value === undefined
+                  ? ['—', '滚动夏普']
+                  : [Number(value).toFixed(2), '滚动夏普']
+              }
+            />
+            <ReferenceLine y={0} stroke="#999" />
+            <Legend />
+            {items.map((item, idx) => {
+              if (!data.has(item.task_id)) return null;
+              return (
+                <Line
+                  key={item.task_id}
+                  type="monotone"
+                  dataKey={`task_${item.task_id}`}
+                  name={`${item.task_name}${
+                    item.best_strategy_name ? ' · ' + item.best_strategy_name : ''
+                  }`}
+                  stroke={COMPARE_COLORS[idx % COMPARE_COLORS.length]}
+                  strokeWidth={2}
+                  dot={false}
+                  connectNulls
+                  isAnimationActive={false}
+                />
+              );
+            })}
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </Card>
+  );
+};
+
+const CompareMonthlyReturnsCard: React.FC<{
+  items: BacktestCompareItem[];
+  data: Map<number, BacktestMonthlyReturnsResponse>;
+  loading: boolean;
+  errors: Record<number, string>;
+}> = ({ items, data, loading, errors }) => {
+  const errorAlerts = items
+    .filter(it => errors[it.task_id]?.includes('月度'))
+    .map(it => ({
+      task_id: it.task_id,
+      task_name: it.task_name,
+      message: errors[it.task_id]!,
+    }));
+
+  if (loading && data.size === 0) {
+    return (
+      <Card title="月度收益热力图（每策略一张）">
+        <div style={{ display: 'flex', justifyContent: 'center', padding: 48 }}>
+          <Spin tip="加载月度收益矩阵…" />
+        </div>
+      </Card>
+    );
+  }
+  const rendered = items.filter(it => data.has(it.task_id));
+  if (rendered.length === 0) {
+    return (
+      <Card title="月度收益热力图（每策略一张）">
+        {errorAlerts.length > 0 && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message="部分任务月度收益数据加载失败"
+            description={errorAlerts.map(e => `#${e.task_id} ${e.task_name}: ${e.message}`).join('；')}
+          />
+        )}
+        <Empty description="所选回测都没有月度收益数据" />
+      </Card>
+    );
+  }
+  return (
+    <Card title="月度收益热力图（每策略一张 — 红涨绿跌，A 股语义）">
+      {errorAlerts.length > 0 && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="部分任务月度收益数据加载失败"
+          description={errorAlerts.map(e => `#${e.task_id} ${e.task_name}: ${e.message}`).join('；')}
+        />
+      )}
+      <Row gutter={[16, 16]}>
+        {rendered.map((item, idx) => {
+          const r = data.get(item.task_id)!;
+          return (
+            <Col xs={24} md={rendered.length === 1 ? 24 : 12} key={item.task_id}>
+              <Card
+                size="small"
+                type="inner"
+                title={
+                  <Space size={6}>
+                    <Tag color={COMPARE_COLORS[idx % COMPARE_COLORS.length]}>#{item.task_id}</Tag>
+                    <Text strong style={{ fontSize: 12 }}>
+                      {item.task_name}
+                    </Text>
+                    {item.best_strategy_name && (
+                      <Text type="secondary" style={{ fontSize: 11 }}>
+                        · {item.best_strategy_name}
+                      </Text>
+                    )}
+                  </Space>
+                }
+              >
+                <MonthlyHeatmap response={r} />
+              </Card>
+            </Col>
+          );
+        })}
+      </Row>
+    </Card>
+  );
+};
+
+const MonthlyHeatmap: React.FC<{ response: BacktestMonthlyReturnsResponse }> = ({ response }) => {
+  const { years, cells } = response;
+  const months = response.months && response.months.length ? response.months : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+
+  const option = useMemo(() => {
+    if (!cells.length || !years.length) return null;
+    // echarts heatmap data: [xIdx, yIdx, value]
+    // xIdx = month index in `months`; yIdx = year index in `years`
+    // 找极值用于 visualMap 对称范围
+    let absMax = 0;
+    cells.forEach(c => {
+      const v = Math.abs(Number(c.return_pct));
+      if (Number.isFinite(v) && v > absMax) absMax = v;
+    });
+    const symMax = Math.max(2, absMax);
+    const monthLabels = months.map(m => `${m}月`);
+    const yearLabels = years.map(y => String(y));
+    const monthIdx = new Map(months.map((m, i) => [m, i]));
+    const yearIdx = new Map(years.map((y, i) => [y, i]));
+    const seriesData = cells
+      .map(c => {
+        const xi = monthIdx.get(c.month);
+        const yi = yearIdx.get(c.year);
+        if (xi === undefined || yi === undefined) return null;
+        return [xi, yi, Number(c.return_pct.toFixed(2))];
+      })
+      .filter(Boolean) as Array<[number, number, number]>;
+
+    return {
+      tooltip: {
+        position: 'top',
+        formatter: (params: any) => {
+          const [xi, yi, v] = params.data || [];
+          const m = months[xi];
+          const y = years[yi];
+          if (m === undefined || y === undefined) return '';
+          const color = v >= 0 ? '#cf1322' : '#0f8f6b';
+          return `<b>${y}年${m}月</b><br/><span style="color:${color}">${
+            v >= 0 ? '+' : ''
+          }${Number(v).toFixed(2)}%</span>`;
+        },
+      },
+      grid: { left: 60, right: 24, top: 16, bottom: 56 },
+      xAxis: {
+        type: 'category',
+        data: monthLabels,
+        splitArea: { show: true },
+        axisLabel: { fontSize: 11 },
+      },
+      yAxis: {
+        type: 'category',
+        data: yearLabels,
+        splitArea: { show: true },
+        axisLabel: { fontSize: 11 },
+      },
+      visualMap: {
+        min: -symMax,
+        max: symMax,
+        calculable: true,
+        orient: 'horizontal',
+        left: 'center',
+        bottom: 4,
+        itemWidth: 14,
+        itemHeight: 110,
+        textStyle: { fontSize: 11 },
+        // A 股语义：red = up（赚钱）, green = down（亏钱）
+        inRange: {
+          color: [
+            '#1a9850',
+            '#66bd63',
+            '#a6d96a',
+            '#d9ef8b',
+            '#ffffff',
+            '#fee08b',
+            '#fdae61',
+            '#f46d43',
+            '#d73027',
+          ],
+        },
+      },
+      series: [
+        {
+          name: '月度收益',
+          type: 'heatmap',
+          data: seriesData,
+          label: {
+            show: true,
+            fontSize: 10,
+            formatter: (p: any) =>
+              p.data?.[2] !== undefined ? `${Number(p.data[2]).toFixed(1)}%` : '',
+          },
+          emphasis: { itemStyle: { shadowBlur: 6, shadowColor: 'rgba(0,0,0,0.4)' } },
+        },
+      ],
+    };
+  }, [cells, years, months]);
+
+  if (!option) {
+    return <Empty description="无月度收益数据" />;
+  }
+  const height = Math.max(180, years.length * 36 + 100);
+  return (
+    <ReactECharts
+      option={option}
+      style={{ width: '100%', height }}
+      notMerge
+      opts={{ renderer: 'canvas' }}
+    />
   );
 };
 

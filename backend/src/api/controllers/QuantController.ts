@@ -347,6 +347,50 @@ export class QuantController {
     }
   }
 
+  /**
+   * US-075：取冠军策略回撤序列（per-day drawdown_pct）。前端 LabWorkspace 回测对比
+   * tab 叠加多任务的曲线。
+   */
+  async getBacktestDrawdownSeries(req: Request, res: Response) {
+    try {
+      const data = await backtestEngine.getDrawdownSeries(Number(req.params.id));
+      if (!data) return res.status(404).json({ success: false, message: '跑分任务不存在或暂无结果' });
+      res.json({ success: true, data });
+    } catch (error: any) {
+      logger.error('获取回测回撤序列失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * US-075：取冠军策略月度收益（year × month 矩阵）。前端用于热力图渲染。
+   */
+  async getBacktestMonthlyReturns(req: Request, res: Response) {
+    try {
+      const data = await backtestEngine.getMonthlyReturns(Number(req.params.id));
+      if (!data) return res.status(404).json({ success: false, message: '跑分任务不存在或暂无结果' });
+      res.json({ success: true, data });
+    } catch (error: any) {
+      logger.error('获取回测月度收益失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * US-075：取冠军策略滚动 N 日（默认 90）夏普序列。?window=N 可调，限制 2-252。
+   */
+  async getBacktestRollingSharpe(req: Request, res: Response) {
+    try {
+      const window = req.query.window ? Number(req.query.window) : 90;
+      const data = await backtestEngine.getRollingSharpeSeries(Number(req.params.id), window);
+      if (!data) return res.status(404).json({ success: false, message: '跑分任务不存在或暂无结果' });
+      res.json({ success: true, data });
+    } catch (error: any) {
+      logger.error('获取回测滚动夏普失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
   async generateSignals(req: AuthenticatedRequest, res: Response) {
     try {
       const strategy_keys = await strategyEngine.resolveStrategyKeys(

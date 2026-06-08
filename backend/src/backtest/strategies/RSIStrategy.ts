@@ -36,17 +36,19 @@ export class RSIStrategy extends Strategy {
     });
 
     const rsiResult = this.rsiIndicator.calculate(this.prices);
-    
+
     // Generate signals
     this.clearSignals();
-    
+
     if (rsiResult.signal === 'buy' && this.position !== 'long') {
       this.position = 'long';
       this.addSignal({
         symbol: this.symbol,
         direction: 'long',
         strength: 1.0,
-        reason: `RSI oversold (${rsiResult.value[rsiResult.value.length - 1].toFixed(2)} <= ${this.config.parameters?.oversold})`,
+        reason: `RSI oversold (${rsiResult.value[rsiResult.value.length - 1].toFixed(2)} <= ${
+          this.config.parameters?.oversold
+        })`,
         strategyId: this.config.id,
       });
     } else if (rsiResult.signal === 'sell' && this.position === 'long') {
@@ -55,7 +57,9 @@ export class RSIStrategy extends Strategy {
         symbol: this.symbol,
         direction: 'exit',
         strength: 1.0,
-        reason: `RSI overbought (${rsiResult.value[rsiResult.value.length - 1].toFixed(2)} >= ${this.config.parameters?.overbought})`,
+        reason: `RSI overbought (${rsiResult.value[rsiResult.value.length - 1].toFixed(2)} >= ${
+          this.config.parameters?.overbought
+        })`,
         strategyId: this.config.id,
       });
     }

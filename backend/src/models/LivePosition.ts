@@ -33,25 +33,55 @@ export class LivePosition extends Model {
   @Column({ type: DataType.INTEGER, allowNull: false, defaultValue: 0 })
   declare quantity: number;
 
-  @Column({ type: DataType.INTEGER, allowNull: false, defaultValue: 0, field: 'available_quantity' })
+  @Column({
+    type: DataType.INTEGER,
+    allowNull: false,
+    defaultValue: 0,
+    field: 'available_quantity',
+  })
   declare available_quantity: number;
 
   @Column({ type: DataType.DECIMAL(12, 4), allowNull: false, defaultValue: 0, field: 'avg_cost' })
   declare avg_cost: number;
 
-  @Column({ type: DataType.DECIMAL(12, 4), allowNull: false, defaultValue: 0, field: 'current_price' })
+  @Column({
+    type: DataType.DECIMAL(12, 4),
+    allowNull: false,
+    defaultValue: 0,
+    field: 'current_price',
+  })
   declare current_price: number;
 
-  @Column({ type: DataType.DECIMAL(18, 2), allowNull: false, defaultValue: 0, field: 'market_value' })
+  @Column({
+    type: DataType.DECIMAL(18, 2),
+    allowNull: false,
+    defaultValue: 0,
+    field: 'market_value',
+  })
   declare market_value: number;
 
-  @Column({ type: DataType.DECIMAL(18, 2), allowNull: false, defaultValue: 0, field: 'unrealized_pnl' })
+  @Column({
+    type: DataType.DECIMAL(18, 2),
+    allowNull: false,
+    defaultValue: 0,
+    field: 'unrealized_pnl',
+  })
   declare unrealized_pnl: number;
 
-  @Column({ type: DataType.DECIMAL(10, 4), allowNull: false, defaultValue: 0, field: 'unrealized_pnl_pct' })
+  @Column({
+    type: DataType.DECIMAL(10, 4),
+    allowNull: false,
+    defaultValue: 0,
+    field: 'unrealized_pnl_pct',
+  })
   declare unrealized_pnl_pct: number;
 
-  @Column({ type: DataType.DECIMAL(10, 4), allowNull: false, defaultValue: 0, field: 'position_pct' })
+  @Column({
+    type: DataType.DECIMAL(10, 4),
+    allowNull: false,
+    defaultValue: 0,
+    field: 'position_pct',
+  })
   declare position_pct: number;
 
   @Column({ type: DataType.DATE, allowNull: true, field: 'quote_time' })

@@ -261,8 +261,7 @@ function buildWeightDecision(params: {
   const avgExcess = toNumber(params.avg_excess_return_pct, 0);
   const avgReturn = toNumber(params.avg_return_pct, 0);
   const winRate = params.win_rate === null ? 50 : toNumber(params.win_rate, 50);
-  const excessWinRate =
-    params.excess_win_rate === null ? 50 : toNumber(params.excess_win_rate, 50);
+  const excessWinRate = params.excess_win_rate === null ? 50 : toNumber(params.excess_win_rate, 50);
   const recentExcess =
     params.recent_avg_excess_return_pct === null
       ? avgExcess
@@ -297,7 +296,12 @@ function buildWeightDecision(params: {
   ) {
     action = 'increase';
     weight = 1.25;
-  } else if (params.quality_score >= 64 && avgExcess >= 0 && winRate >= 48 && !recentDeteriorating) {
+  } else if (
+    params.quality_score >= 64 &&
+    avgExcess >= 0 &&
+    winRate >= 48 &&
+    !recentDeteriorating
+  ) {
     action = 'slight_increase';
     weight = 1.08;
   } else if (params.quality_score >= 45 && !clearUnderperformance) {
@@ -326,19 +330,25 @@ function buildWeightDecision(params: {
   const weakestIndustry = weakestRegime(params.by_industry_regime);
 
   const reasons = compactList([
-    `质量分 ${params.quality_score.toFixed(1)}，${confidence.label}（闭环 ${params.closed_count} 笔）`,
+    `质量分 ${params.quality_score.toFixed(1)}，${confidence.label}（闭环 ${
+      params.closed_count
+    } 笔）`,
     `平均收益 ${pctText(avgReturn)}，超额收益 ${pctText(avgExcess)}，胜率 ${
       params.win_rate === null ? '--' : pctText(params.win_rate, 0)
     }`,
     params.recent_count
       ? `近 ${params.recent_count} 笔超额 ${pctText(params.recent_avg_excess_return_pct)}`
       : undefined,
-    bestMarket ? `优势环境：${bestMarket.label}，超额 ${pctText(bestMarket.avg_excess_return_pct)}` : undefined,
+    bestMarket
+      ? `优势环境：${bestMarket.label}，超额 ${pctText(bestMarket.avg_excess_return_pct)}`
+      : undefined,
   ]);
 
   const risk_notes = compactList(
     [
-      params.closed_count < 8 ? `闭环样本仅 ${params.closed_count} 笔，禁止一次性重仓。` : undefined,
+      params.closed_count < 8
+        ? `闭环样本仅 ${params.closed_count} 笔，禁止一次性重仓。`
+        : undefined,
       downsideGuard
         ? `最差单笔 ${pctText(worstReturn)} / 最大不利波动 ${pctText(-adversePct)}，需压仓位。`
         : undefined,
@@ -699,7 +709,9 @@ export class QuantStrategyFeedbackService {
       const byIndustryRegime = buildRegimeBuckets(records, industryRegimeKey, industryRegimeLabel);
       const recentClosed = recentClosedRecords(closed);
       const recentReturns = recentClosed.map(record => toNumber(record.total_pnl_pct, NaN));
-      const recentExcessReturns = recentClosed.map(record => toNumber(record.excess_return_pct, NaN));
+      const recentExcessReturns = recentClosed.map(record =>
+        toNumber(record.excess_return_pct, NaN)
+      );
       const recentAvgReturn = average(recentReturns);
       const recentAvgExcess = average(recentExcessReturns);
       const bestMarketRegime = bestRegime(byMarketRegime);
@@ -836,7 +848,9 @@ export class QuantStrategyFeedbackService {
       decision: asPlainObject(item.metrics).weight_decision,
     }));
     const highConfidenceCount = sortedWeights.filter(
-      item => toNumber(asPlainObject(asPlainObject(item.metrics).weight_decision).sample_confidence, 0) >= 72
+      item =>
+        toNumber(asPlainObject(asPlainObject(item.metrics).weight_decision).sample_confidence, 0) >=
+        72
     ).length;
     const conclusion = sortedWeights.length
       ? `本轮调权完成：${boostedWeights.length} 个加权、${reducedWeights.length} 个降权/暂停，${highConfidenceCount} 个具备中高置信样本。`
@@ -980,9 +994,7 @@ export class QuantStrategyFeedbackService {
       boosted.length
         ? `加权策略用于开盘候选排序，但单票仍不超过各自 max_single_trade_pct。`
         : '暂无强加权策略，继续按默认权重积累样本。',
-      reduced.length
-        ? `降权/暂停策略只保留观察信号，避免扩大回撤。`
-        : undefined,
+      reduced.length ? `降权/暂停策略只保留观察信号，避免扩大回撤。` : undefined,
       '每日收盘后用真实模拟盘平仓收益自动刷新下一轮预算。',
     ]);
 

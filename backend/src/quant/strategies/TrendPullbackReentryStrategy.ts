@@ -58,7 +58,11 @@ export class TrendPullbackReentryStrategy extends QuantStrategy {
       score += 18;
       reasons.push('价格回踩到20日均线附近，入场位置不过分追高');
     }
-    if (latestRsi >= Number(params.min_rsi) && latestRsi <= Number(params.max_rsi) && latestRsi >= prevRsi) {
+    if (
+      latestRsi >= Number(params.min_rsi) &&
+      latestRsi <= Number(params.max_rsi) &&
+      latestRsi >= prevRsi
+    ) {
       score += 14;
       reasons.push('RSI位于修复区间且开始回升，短线低吸条件改善');
     }

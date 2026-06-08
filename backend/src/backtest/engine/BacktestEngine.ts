@@ -61,7 +61,7 @@ export class BacktestEngine {
   private isRunning = false;
   private eventQueue: Event[] = [];
   private eventHandlers: Map<EventType, ((event: Event) => void)[]> = new Map();
-  private totalEventsCount: number = 0;
+  private totalEventsCount = 0;
 
   constructor(config: BacktestConfig) {
     this.config = config;
@@ -382,7 +382,9 @@ export class BacktestEngine {
    */
   private calculateTotalReturn(): number {
     const metrics = this.portfolio.getMetrics();
-    return ((metrics.total_value - this.config.initial_capital) / this.config.initial_capital) * 100;
+    return (
+      ((metrics.total_value - this.config.initial_capital) / this.config.initial_capital) * 100
+    );
   }
 
   /**

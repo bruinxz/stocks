@@ -25,7 +25,7 @@ export class RiskAlertController {
             take_profit_percent: 10,
             enableVolumeAlert: true,
             enableTechnicalAlert: true,
-          }
+          },
         },
       });
     } catch (error: any) {
@@ -38,7 +38,8 @@ export class RiskAlertController {
   async updateRiskConfig(req: Request, res: Response, next: NextFunction) {
     try {
       const user_id = (req as any).user.id;
-      const { stop_loss_percent, take_profit_percent, enableVolumeAlert, enableTechnicalAlert } = req.body;
+      const { stop_loss_percent, take_profit_percent, enableVolumeAlert, enableTechnicalAlert } =
+        req.body;
 
       const user = await User.findByPk(user_id);
       if (!user) {
@@ -47,10 +48,18 @@ export class RiskAlertController {
 
       user.risk_config = {
         ...user.risk_config,
-        stop_loss_percent: stop_loss_percent !== undefined ? stop_loss_percent : user.risk_config?.stop_loss_percent,
-        take_profit_percent: take_profit_percent !== undefined ? take_profit_percent : user.risk_config?.take_profit_percent,
-        enableVolumeAlert: enableVolumeAlert !== undefined ? enableVolumeAlert : user.risk_config?.enableVolumeAlert,
-        enableTechnicalAlert: enableTechnicalAlert !== undefined ? enableTechnicalAlert : user.risk_config?.enableTechnicalAlert,
+        stop_loss_percent:
+          stop_loss_percent !== undefined ? stop_loss_percent : user.risk_config?.stop_loss_percent,
+        take_profit_percent:
+          take_profit_percent !== undefined
+            ? take_profit_percent
+            : user.risk_config?.take_profit_percent,
+        enableVolumeAlert:
+          enableVolumeAlert !== undefined ? enableVolumeAlert : user.risk_config?.enableVolumeAlert,
+        enableTechnicalAlert:
+          enableTechnicalAlert !== undefined
+            ? enableTechnicalAlert
+            : user.risk_config?.enableTechnicalAlert,
       };
 
       await user.save();
@@ -58,7 +67,7 @@ export class RiskAlertController {
       res.json({
         success: true,
         data: user.risk_config,
-        message: '风控配置已保存'
+        message: '风控配置已保存',
       });
     } catch (error: any) {
       logger.error('更新风控配置失败:', error);
@@ -90,10 +99,7 @@ export class RiskAlertController {
     try {
       const user = (req as any).user;
 
-      await RiskAlert.update(
-        { is_read: true },
-        { where: { user_id: user.id, is_read: false } }
-      );
+      await RiskAlert.update({ is_read: true }, { where: { user_id: user.id, is_read: false } });
 
       res.json({ success: true, message: '所有告警已标记为已读' });
     } catch (error: any) {

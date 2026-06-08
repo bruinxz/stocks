@@ -15,43 +15,84 @@ const authController = new AuthController();
  */
 
 /**
- * @route GET /api/announcements
- * @desc 某只股票最近 N 天的公告 NLP 抽取列表
- * @access Private
- *
- *   Query params:
- *     - stock_code  6 位股票代码 (必填)
- *     - days        回看天数 (默认 30, 上限 365)
- *     - limit       返回上限 (默认 200, 上限 1000)
+ * @openapi
+ * /api/announcements:
+ *   get:
+ *     tags: [公告 Announcements]
+ *     summary: 某只股票最近 N 天的公告 NLP 抽取列表
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: query
+ *         name: stock_code
+ *         schema: { type: string }
+ *         required: true
+ *         description: 6 位股票代码
+ *       - in: query
+ *         name: days
+ *         schema: { type: integer, default: 30, maximum: 365 }
+ *         description: 回看天数
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, default: 200, maximum: 1000 }
+ *     responses:
+ *       200: { description: 操作成功 }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.get('/', authController.authenticate, (req, res) => {
   void announcementController.listByStock(req, res);
 });
 
 /**
- * @route GET /api/announcements/by-date
- * @desc 某交易日全市场公告列表
- * @access Private
- *
- *   Query params:
- *     - date       'YYYY-MM-DD' (必填)
- *     - sentiment  '正面' / '中性' / '负面' (可选 — 过滤情绪)
- *     - limit      上限 (默认 200, 上限 1000)
+ * @openapi
+ * /api/announcements/by-date:
+ *   get:
+ *     tags: [公告 Announcements]
+ *     summary: 某交易日全市场公告列表
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: query
+ *         name: date
+ *         schema: { type: string, format: date }
+ *         required: true
+ *         description: YYYY-MM-DD
+ *       - in: query
+ *         name: sentiment
+ *         schema: { type: string, enum: ['正面', '中性', '负面'] }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, default: 200, maximum: 1000 }
+ *     responses:
+ *       200: { description: 操作成功 }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.get('/by-date', authController.authenticate, (req, res) => {
   void announcementController.listByDate(req, res);
 });
 
 /**
- * @route POST /api/announcements/sync
- * @desc 手动触发某日同步 (admin)
- * @access Private
- *
- *   Body:
- *     - date              'YYYY-MM-DD' (默认今日)
- *     - symbol            '全部' / '重大事项' / ... (默认 '全部')
- *     - extract_with_ai   boolean (默认 false)
- *     - dry_run           boolean (默认 false)
+ * @openapi
+ * /api/announcements/sync:
+ *   post:
+ *     tags: [公告 Announcements]
+ *     summary: 手动触发某日同步 (admin)
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: false
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               date: { type: string, format: date, description: 'YYYY-MM-DD (默认今日)' }
+ *               symbol: { type: string, default: '全部', description: '全部/重大事项/...' }
+ *               extract_with_ai: { type: boolean, default: false }
+ *               dry_run: { type: boolean, default: false }
+ *     responses:
+ *       200: { description: 操作成功 }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.post('/sync', authController.authenticate, (req, res) => {
   void announcementController.triggerSync(req, res);

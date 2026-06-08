@@ -346,4 +346,19 @@ router.get(
   aiAdvisorController.getStrategyCopilotContext
 );
 
+/**
+ * @route GET /api/ai/market-brief/today
+ * @desc US-073 今日大盘 AI 速读卡片（TodayWorkspace 顶部）
+ * @access Private
+ *
+ * 查询参数：
+ *   - date=YYYY-MM-DD: 可选，覆盖默认"今日 Asia/Shanghai"
+ *   - refresh=true: 强制重新生成绕过 cache
+ */
+router.get(
+  '/market-brief/today',
+  authController.authenticate,
+  aiAdvisorController.getMarketBriefToday
+);
+
 export default router;

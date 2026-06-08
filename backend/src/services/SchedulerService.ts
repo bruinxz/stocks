@@ -26,6 +26,7 @@ import { perStockStopLossGuard } from '../portfolio/risk/PerStockStopLossGuard';
 import { dailyTradingDigestService } from './DailyTradingDigestService';
 import { earningsForecastWatcher } from './EarningsForecastWatcher';
 import { weeklyReviewReportService } from './WeeklyReviewReportService';
+import { marketBriefService } from './MarketBriefService';
 import { benchmarkIndexService } from './BenchmarkIndexService';
 import { automatedRecommendationLoopService } from './AutomatedRecommendationLoopService';
 import { recommendationTradeOutcomeService } from './RecommendationTradeOutcomeService';
@@ -2477,6 +2478,59 @@ class SchedulerService {
             `跳过 ${weeklyResult.skipped_count}，失败 ${weeklyResult.failed_count}` +
             (dryRun ? '（dry-run，未实际推送）' : '')
         );
+      } else if (task.type === 'MARKET_BRIEF_GENERATE') {
+        // US-073 — 每个交易日 08:30 生成「AI 大盘速读」当日卡片。
+        // 5 维数据：沪深300 上日收盘 / 今日开盘 / 北向资金 / 涨停数 / AI 一句话观点。
+        // 写入 market_briefs 表（一日一行 UPSERT），前端 TodayWorkspace 顶部
+        // GET /api/ai/market-brief/today 直接读取。
+        const tradeDate = parameters.trade_date || parameters.tradeDate || undefined;
+        const dryRun =
+          parameters.dry_run !== undefined
+            ? Boolean(parameters.dry_run)
+            : parameters.dryRun !== undefined
+              ? Boolean(parameters.dryRun)
+              : false;
+        const skipAI =
+          parameters.skip_ai !== undefined
+            ? Boolean(parameters.skip_ai)
+            : parameters.skipAi !== undefined
+              ? Boolean(parameters.skipAi)
+              : false;
+        const briefResult = await marketBriefService.computeAndPersist({
+          trade_date: tradeDate,
+          dry_run: dryRun,
+          skip_ai: skipAI,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: 5,
+          completed_items:
+            briefResult.status === 'failed' ? 0 : briefResult.status === 'partial' ? 3 : 5,
+          failed_items:
+            briefResult.status === 'failed' ? 5 : briefResult.status === 'partial' ? 2 : 0,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: null,
+          result_summary: {
+            scenario: 'market_brief_generate',
+            trade_date: briefResult.trade_date,
+            status: briefResult.status,
+            persisted: briefResult.persisted,
+            dry_run: briefResult.dry_run,
+            nlp_engine: briefResult.nlp_engine,
+            ai_view_chars: briefResult.ai_view ? briefResult.ai_view.length : 0,
+            prev_close: briefResult.prev_close,
+            today_open: briefResult.today_open,
+            open_change_pct: briefResult.open_change_pct,
+            northbound_net_amount: briefResult.northbound_net_amount,
+            limit_up_count: briefResult.limit_up_count,
+            message: briefResult.message,
+          },
+        });
+        logger.info(
+          `AI 大盘速读生成完成。trade_date=${briefResult.trade_date} status=${briefResult.status} ` +
+            `engine=${briefResult.nlp_engine || '—'} persisted=${briefResult.persisted}` +
+            (dryRun ? '（dry-run，未写表）' : '')
+        );
       } else if (task.type === 'AUTO_RECOMMENDATION_LOOP') {
         const result = await automatedRecommendationLoopService.run({
           username: parameters.username || 'lym',
@@ -3728,6 +3782,21 @@ class SchedulerService {
         parameters: {
           dry_run: false,
           upcoming_lookahead_days: 7,
+        },
+      },
+      {
+        // US-073 — 每个交易日 08:30 (开盘前 30 分钟) 生成「AI 大盘速读」当日卡片。
+        // 5 维数据：沪深300 上日收盘 / 今日开盘 / 北向资金 / 涨停数 / AI 一句话观点。
+        // 写入 market_briefs 表（一日一行 UPSERT），前端 TodayWorkspace 顶部
+        // GET /api/ai/market-brief/today 直接读取；首次访问 / cron miss 时会
+        // 通过 getTodayBrief 触发懒求值兜底。
+        name: 'AI 大盘速读日度生成',
+        type: 'MARKET_BRIEF_GENERATE',
+        cron_expression: '30 8 * * 1-5',
+        is_active: true,
+        parameters: {
+          dry_run: false,
+          skip_ai: false,
         },
       },
     ];

@@ -146,6 +146,27 @@ app.use('/api/sentiment', sentimentRoutes);
 app.use('/api/announcements', announcementRoutes);
 app.use('/api/settings', settingsRoutes);
 
+// US-070 OpenAPI / Swagger UI —— 仅 development 模式暴露 /api-docs（不需鉴权方便联调）
+// production 默认禁用避免泄露内部 endpoint 列表；通过 ENABLE_SWAGGER_UI=true 可强制开启
+import { buildOpenApiSpec, shouldExposeSwaggerUI } from './config/swagger';
+import swaggerUi from 'swagger-ui-express';
+if (shouldExposeSwaggerUI()) {
+  const openApiSpec = buildOpenApiSpec();
+  app.use(
+    '/api-docs',
+    swaggerUi.serve,
+    swaggerUi.setup(openApiSpec, {
+      swaggerOptions: { persistAuthorization: true },
+      customSiteTitle: 'A-Share Quant Platform API Docs',
+    })
+  );
+  // 同时暴露 raw JSON 让客户端 codegen 工具直接拉取
+  app.get('/api-docs.json', (_req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.send(openApiSpec);
+  });
+}
+
 import { User } from './models/User';
 import { AIInvestmentSignal } from './models/AIInvestmentSignal';
 import { RecommendationTradeOutcome } from './models/RecommendationTradeOutcome';

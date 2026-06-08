@@ -127,7 +127,8 @@ export class PerformanceCalculator {
     const start_date = equity_curve[0].date;
     const end_date = equity_curve[equity_curve.length - 1].date;
     const years = (end_date.getTime() - start_date.getTime()) / (1000 * 60 * 60 * 24 * 365.25);
-    const annualized_return = years > 0 ? (Math.pow(1 + total_return / 100, 1 / years) - 1) * 100 : 0;
+    const annualized_return =
+      years > 0 ? (Math.pow(1 + total_return / 100, 1 / years) - 1) * 100 : 0;
 
     // 波动率
     const volatility = this.calculateVolatility(daily_returns);

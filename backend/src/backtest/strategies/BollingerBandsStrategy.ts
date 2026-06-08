@@ -35,10 +35,10 @@ export class BollingerBandsStrategy extends Strategy {
     });
 
     const bbResult = this.bbIndicator.calculate(this.prices);
-    
+
     // Generate signals
     this.clearSignals();
-    
+
     if (bbResult.signal === 'buy' && this.position !== 'long') {
       this.position = 'long';
       this.addSignal({

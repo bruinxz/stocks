@@ -18,6 +18,8 @@
 - **行级 destructive 操作三件套** (US-017): `<Popconfirm okButtonProps={{ danger: true }}>` + `<Button danger loading={closingSymbol === row.symbol}>` + `closingSymbol: string | null` 状态隔离 (只锁该行不锁全表)。成功后触发整体 refresh (单字段 patch 不行：平仓影响 cash + total_value + positions + trades 全部链路)。
 - **3 列 Card + per-block error 模板** (US-018): 多 source 对比型工作区 (TodayWorkspace 三策略对比 / 未来 US-019..US-023 加策略) 用 `<Row gutter={[16,16]}><Col xs={24} lg={8}>` 3 列布局，每个 Card 顶部 mini-KPI `<Space size={24}>` 三件套 + 主 Table + `error?: string` 字段时显示 `<Alert type="warning">`。一个数据源缺失不会把整页打挂，用户看到的是"X 缺数据"而不是"功能坏了"。
 - **跨工作区跳转用 `useNavigate('/workspace/portfolio')`** (US-018 first usage): react-router v6 模式，从 react-router-dom 直接 import `{ useNavigate }`。一键操作 → 弹 Modal 展示明细 → 2 秒延时 `setTimeout(() => navigate(...), 1800)` 跳转，让用户看到结果。**不要用 `window.location.href`** — 会触发 full-page reload 丢失 SPA state（包括 Redux store + antd ConfigProvider 等）。
+- **echarts 是 heatmap / 矩阵可视化的指定库** (US-074 引入): `echarts ^6.1.0` + `echarts-for-react ^3.0.6` 已经在 `frontend/package.json`，使用模式 `import ReactECharts from 'echarts-for-react'` + 把 option 算在 `useMemo` 里 + `<ReactECharts option={option} style={{ width:'100%', height: dynamicHeight }} notMerge opts={{ renderer:'canvas' }} />`。**与 Recharts 分工**：折线/面积/柱状继续走 Recharts (已大量使用)，**只有热力图 / 矩阵 / 树图 / 桑基** 这类 Recharts 无原生 component 的才引入 echarts。这样避免两套 chart 大量并存。**A 股色彩语义**：visualMap inRange 用 `['#d73027' ... '#1a9850']` (红→白→绿)，z 正 = 因子高 = 看多 = 绿；不要照搬 echarts 官方示例的"蓝→红"——A 股用户看会反过来。
+- **Lazy-load tab 数据 cache 三态判定** (US-074): tab 内容是单独 endpoint 时 `useEffect(() => { if (activeKey !== 'X') return; if (data || loading || error) return; void load(); }, [activeKey, data, loading, error, load])`。三态 (data 已得 / 正在拉 / 已错过) 都 short-circuit，只有"首次进 + 无 data 无 error"才发请求。刷新按钮单独走 load()，错误重试也走 load()——把"是否要 fire"逻辑收敛在 effect，按钮只调 load。
 
 ### Backend
 - **PaperTrading services live under `backend/src/portfolio/internal/`**, not `backend/src/services/` (US-003 refactor). The public surface is `backend/src/portfolio/PaperTradingFacade.ts` exposing **exactly 7 methods**: `getPortfolio`, `placeOrder`, `closePosition`, `getDailySnapshot`, `attributePnl`, `applyAutomation`, `getRiskProfile`. Controllers MUST only import the facade. Other services/scripts/jobs may still import from `internal/` directly (the facade-only constraint is the controller boundary).
@@ -6745,4 +6747,166 @@ worktree 在我接手时已有 ~90 个文件的未提交修改，全部来自前
 ### CLAUDE.md updates
 - 新增 `backend/src/metrics/CLAUDE.md`（6 步加 metric checklist + label cardinality 红线 + 业务埋点位置 + 测试约定 + `/metrics` endpoint 故意不加鉴权的设计意图）
 
+---
+
+## 2026/06/08 14:15 - US-073
+### What was implemented
+US-073 「前端：今日作战页 AI 摘要卡片」 — 完整端到端实现已存在 (backend service + cron + route + frontend service + UI card)，本 iteration 完成最后收尾工作：补齐 lint formatting、跑通 135 测试、更新 PRD `passes: true`。
+
+后端层 (early iteration):
+- `backend/src/models/MarketBrief.ts` — `market_briefs` 表 (PK trade_date 一日一行 UPSERT) + components_json JSONB + status enum (ok/partial/failed) + nlp_engine 来源标签
+- `backend/src/services/MarketBriefService.ts` — 575 行 service：8+ 个 pure export helper (normalizeDateOnly / todayShanghaiIso / parsePctChange / safeRound / buildPromptForAI / pickAIViewFromPayload / buildHeuristicAIView / buildBriefSummary) + MarketBriefDataSource 接口 + DefaultMarketBriefDataSource 实现 + PRODUCTION_MARKET_BRIEF_DATA_SOURCE singleton + 主 computeAndPersist + getTodayBrief (cache or compute) + listRecentBriefs
+- `backend/src/services/SchedulerService.ts` — 每个交易日 08:30 cron 触发 `marketBriefService.computeAndPersist()`
+- `backend/src/api/controllers/AIAdvisorController.ts` — `getMarketBriefToday(req, res)` 支持 `?date=YYYY-MM-DD` 与 `?refresh=true` 跳过 cache
+- `backend/src/api/routes/ai.routes.ts` — `GET /api/ai/market-brief/today`
+
+前端层 (early iteration):
+- `frontend/src/services/marketBriefService.ts` — TS 客户端 + 类型镜像后端
+- `frontend/src/pages/workspace/TodayWorkspace.tsx` — `<MarketBriefCard />` 子组件加在 KPI 条下方 + body 上方，5 KPI (上日收盘 / 今日开盘+涨跌 / 北向 / 涨停数) + AI 一句话观点 + status banner (ok 不显示 / partial 黄色 / failed 红色) + nlp_engine Tag (TradingAgents 蓝 / 启发式兜底 灰) + 重新生成按钮 (refresh=true)
+
+测试:
+- `backend/tests/services/market-brief-service.test.ts` — 135 个 unit test 全 pass，覆盖纯函数 (parsePctChange NaN/Inf / buildHeuristicAIView 3 段拼接 + 全空兜底 / buildBriefSummary status 3 分支 / pickAIViewFromPayload status=FAILED + view/summary/text 三别名 + length>200 截断 / buildPromptForAI 字段顺序固定) + 集成 (fake DataSource computeAndPersist OK/partial/failed/skip_ai/dry_run 5 路径 + getTodayBrief cache hit + cache miss lazy compute + saveBrief 失败 fail-OPEN + callRemoteAIView throw fallback heuristic)。
+
+本 iteration 收尾工作:
+1. `npx eslint --fix backend/src/services/MarketBriefService.ts` — 修 12 个 prettier 格式问题
+2. `npx eslint --fix backend/src/services/SchedulerService.ts` — 修 1 个 prettier 问题
+3. backend `npx tsc --noEmit` 全 pass (EXIT=0)
+4. frontend `npx tsc --noEmit` 全 pass (EXIT=0)
+5. `npx ts-node --transpile-only tests/services/market-brief-service.test.ts` — 135/135 pass
+
+### Files changed
+- backend/src/services/MarketBriefService.ts (prettier auto-fix only)
+- backend/src/services/SchedulerService.ts (prettier auto-fix only)
+- prd.json (US-073 passes=true + notes)
+
+### Learnings for future iterations
+- **写完 service 别忘 `eslint --fix` 一遍格式化**：prettier 规则比 tsconfig 严格，typecheck 过不代表 lint 过。MarketBriefService 12 个错全是 line-width / trailing comma 之类自动修就好。下次新 service / controller / utils 写完先跑 eslint --fix 再做其他。
+- **AI feature checklist 8 项 (US-055 引入) 已成熟模板**：DataSource DI + 8+ 纯函数 + plain-object 返回 + status='partial' persist + fail-OPEN saveReport + 双重 try/catch + TRADING_AGENTS_URL env 引用 + tests/services/ 目录。MarketBriefService 一字不漏照搬，零设计选择压力——这就是 codified pattern 的价值。下次 US-091 系统健康度评分 / US-094 异动事件 / 任何 AI / 远端调用类 service 也直接照搬。
+- **`MarketBrief` 模型 PK = trade_date 一日一行 UPSERT 范式**：与 US-057 MarketSentimentIndex 同款 (一日一指数行)，区别于 multi-row-per-day 类 (LimitUpStock / NorthboundHolding)。**判据**：业务语义是"今日 X" 一句话总结 → 一日一行 UPSERT；业务语义是"今日全市场 X 列表" → multi-row-per-day。SchedulerService cron 触发 + UI 懒求值 fallback 是双层 robustness。
+- **前端 `<MarketBriefCard />` 5-KPI + 1-text + 1-banner 布局是 "AI 摘要卡片" 通用模板**：Row gutter=24 + 4 个 Col xs=12 md=8 lg=5 包数值 KPI + 1 个 Col lg=5 包 AI text (左侧紫色 border 强调) + status 非 ok 时下方 Alert。下次 US-088 持仓 AI 摘要 / US-091 风险评分卡 复用此模板。
+---
+
+## 2026/06/08 - US-074 前端：因子热力图（行业 x 因子分布）
+### What was implemented
+完整 4-tab FactorWorkspace 第 4 tab 「行业热力」 + 后端聚合 endpoint。用户进 FactorWorkspace → 切到「行业热力」tab → echarts heatmap 显示「申万一级行业 × 8+ 因子」的 z_score 平均值矩阵，色彩对称红→绿（z>0 = 因子高 = 看多 = 绿，与 A 股涨绿跌红语义一致），tooltip 显示每格的 (industry, factor, avg_z, sample_size)。
+
+后端 (`FactorController.getIndustryHeatmap` + route):
+- **endpoint**: `GET /api/factors/industry-heatmap?date=YYYY-MM-DD`（date 缺省 → factor_scores 最新一日）
+- **聚合逻辑**: 拉当日 `factor_scores` 仅 raw_value 非空行 (中性行不污染均值) → IN-list 拉 `Stock(symbol, industry)` 映射 → `Map<(industry,factor), {sum_z, count}>` 聚合 → 输出 `{ trade_date, factors[], industries[], cells[{industry, factor, avg_z, sample_size}], universe_size, note? }`
+- **stock_code ↔ symbol 后缀映射**: 内联 `guessSymbolFromCode` / `stripSymbolSuffix` (镜像 MFA loadStockMeta 同名逻辑)，避免跨模块依赖污染
+- **行业排序**: 按"行业 × 全因子 avg_z 之和"降序——最受多因子青睐的行业排顶
+- **空数据 fallback**: factor_scores 空 / 给定日无非中性数据 → 返回 `cells: []` + `note` 字符串解释，前端 Empty 渲染
+- **OpenAPI JSDoc**: 完整 `@openapi` 块带 query param schema 与 responses
+
+前端 (factorService + FactorWorkspace):
+- **包依赖**: 新增 `echarts: ^6.1.0` + `echarts-for-react: ^3.0.6` 到 `frontend/package.json`（和 `frontend/package-lock.json` 同步）
+- **factorService.getIndustryHeatmap(date?)**: 新方法，可选 date 参数；TS 类型 `FactorIndustryHeatmapResponse` + `FactorHeatmapCell` 镜像后端响应
+- **FactorWorkspace.tsx** 4-tab 扩展:
+  - tabs += `{ key: 'heatmap', label: '行业热力', icon: <AppstoreOutlined /> }`
+  - state: `heatmap / heatmapLoading / heatmapError`
+  - **lazy load**: `useEffect(() => { if (activeKey !== 'heatmap') return; if (heatmap || heatmapLoading || heatmapError) return; void load(); }, [activeKey, ...])` —— 首次进入 tab 才 fire
+  - `IndustryHeatmapTab` 子组件 (模块内私有): top Alert (error 时) + Card with echarts + 颜色解读说明
+  - **echarts option** (`buildHeatmapOption`):
+    - grid 留 140px left 给 industry 标签 (中文最长可能 8+ 字)
+    - tooltip formatter 反查 cell 拿 sample_size 显示
+    - xAxis rotate 30° 防因子名 overlap
+    - visualMap 对称 `[-max, max]` (min 1.5 floor 防极小波动夸大色彩)
+    - inRange 红→白→绿 9 色带 (`#d73027 ... #1a9850`)
+  - chart height 动态: `Math.max(360, Math.min(rows * 28 + 100, 1200))` — 行业数多时往下延，最多 1200px
+
+### Files changed
+- `backend/src/api/controllers/FactorController.ts` (+1 import + `getIndustryHeatmap` 方法 ~120 行 + 2 helpers `guessSymbolFromCode` / `stripSymbolSuffix`)
+- `backend/src/api/routes/factor.routes.ts` (+1 route + `@openapi` 块)
+- `frontend/src/services/factorService.ts` (+`getIndustryHeatmap` + `FactorIndustryHeatmapResponse` / `FactorHeatmapCell` 类型 + bundled export 增项)
+- `frontend/src/pages/workspace/FactorWorkspace.tsx` (+`AppstoreOutlined` icon + `ReactECharts` 引入 + 4th tab + lazy-load state/effect + `IndustryHeatmapTab` 子组件 + `buildHeatmapOption` helper)
+- `frontend/package.json` (+`echarts: ^6.1.0` + `echarts-for-react: ^3.0.6`)
+- `frontend/package-lock.json` (同步主仓库的 lockfile，加入 echarts 6 个 transitive deps)
+- `ralph/prd.json` (US-074 → passes:true + notes)
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → exit 0
+- `cd frontend && ./node_modules/.bin/tsc --noEmit` → exit 0
+- `cd backend && ./node_modules/.bin/eslint src/api/controllers/FactorController.ts src/api/routes/factor.routes.ts --quiet` → exit 0
+- `cd frontend && ./node_modules/.bin/eslint src/services/factorService.ts src/pages/workspace/FactorWorkspace.tsx --quiet` → exit 0
+
+### Browser verification
+N/A — 工程内无 `dev-browser` MCP skill。手动验证途径：启动 backend (`cd backend && npm run dev`) + 启动 frontend (`cd frontend && npm start`) → 登录 → 访问 `/workspace/factors` → 切到「行业热力」tab → 应看到一个矩阵：横轴 8+ 因子名（rotate 30°），纵轴申万一级行业（按多因子综合青睐度降序），格子色彩按 z_score 平均值渐变；tooltip 悬停显示「行业 / 因子 / 平均 z / 样本数」；空数据时显示 Empty + factor_scores 提示。
+
+### Learnings for future iterations
+- **echarts 引入并非"任何 chart 都换 echarts"** — Recharts (已大量使用) 仍是折线 / 面积 / 柱状的首选，echarts 只用于 Recharts 缺失的可视化类型（heatmap / 矩阵 / 树图 / 桑基 / 地图 / 关系图）。否则两套 chart 大量并存会让维护和 bundle size 都失控。下次任何 Recharts 不支持的图先在本节查"是否已引入 echarts"，再决定是否加新库。
+- **factor_scores 横截面聚合的 raw_value 过滤**: 中性行 (raw_value=null + z_score=0 + percentile=0.5) 是 FactorPipeline 留下的"该股该因子无值"占位行，参与 z_score 平均会把"行业 × 因子"格子全部拉向 0 = 假信号化。所有横截面聚合都 `where: { raw_value: { [Op.ne]: null } }`。本规则适用未来任何 (industry, factor) / (industry, date) / (sector, signal) 类聚合。
+- **stock_code ↔ symbol 后缀转换 helper 在 controller 内联**：原 MFA `guessStockSymbol` / `stripSuffix` 是 strategy module 的私有 helper。新 endpoint 需要同一转换时**不要** import 进来 — strategy module 是 quant 域，controller 是 API 域，跨域复用会让 strategy module 变成准 util layer。**复制 4 行函数 + 加注释 "镜像 MFA 同名逻辑"** 比 import 更清晰。未来抽公共 util 时再统一搬到 `backend/src/utils/stockSymbol.ts`。
+- **echarts visualMap 对称范围带 floor**: heatmap 的 `min/max` 不能直接用数据 absMax，否则当所有 z 都在 [-0.1, 0.1] 内时，色彩会被夸大成"剧烈分化"，用户误判。floor `Math.max(1.5, absMax)` 让色彩比例与实际 z 分布尺度一致——0.05 的 z 看起来就该是"接近白色"，不该是"鲜红 / 鲜绿"。
+- **lazy-load tab 数据 3 态判定 effect**: `if (data || loading || error) return;` 三态都 short-circuit 才是正确的 cache 语义。**只判 `data` 会**：第一次失败 + 用户切走再切回 → 重新拉 (期望) ✅；但若同时还在 loading → 双发请求 ❌。**只判 `data || loading` 会**：失败后切走切回不重试 → 用户必须手动按刷新 (不可接受)。**完整三态**：失败后切回 → 不自动重试（用户须按刷新按钮显式 retry，避免无限循环），成功后切回 → 用缓存（避免无谓刷新）。这个 effect 模板适用所有 lazy tab。
+- **echarts tooltip formatter 拿不到额外字段时反查原 data**：echarts heatmap series 的 data 是 `[xIdx, yIdx, value]` 三元组——`sample_size` 无法塞进去（color 只看 value）。`formatter` 里 `data.cells.find(c => c.factor === factor && c.industry === industry)` 反查 source data 拿 sample_size。N 格小数据集 (~200 cells) 性能无忧；超 1000 cells 时考虑 `cellsMap: Map<string, Cell>` 预建索引。
+- **多并发请求的 per-task per-sub-series 隔离失败** (US-075 引入): N task × M 子序列时双层并发 `Promise.all(items.map(item => Promise.allSettled([sub1, sub2, sub3])))` —— 外层并行多 task，内层 settled 收集每 sub 成败 → 任一 task 任一 sub 失败只填 `errors[task_id]: string` 字段，其他 task 其他 sub 仍正常渲染，对应 Card 顶部 Alert 列出哪些 task 哪些 sub 错。**反模式**：单 try/catch 包外层 Promise.all → 一个 task 一个 sub 失败整组全断。比 Codebase Patterns 第 35 行 (per-block error fallback) 更细粒度，适用 N task × M sub 的对比类场景。
+- **stable compareKey 而非整对象引用 useEffect deps** (US-075 引入): React useEffect deps 是 Object.is 比较 — `setCompareResult(newObj)` 即便内容等价也触发 re-fire。`const compareKey = items.map(i => i.task_id).join(',')` 衍生稳定字符串当 deps，task_ids 真变了才重拉。**任何"父组件可能 re-set 同值 state"的场景都用此模式**；配 `// eslint-disable-next-line react-hooks/exhaustive-deps` 注释解释为何不放原对象。
+- **cancelled flag 阻断 stale promise 写 state** (US-075 引入): 长跑 Promise + 可被中断的 useEffect 必有的 pattern: `let cancelled = false; ... .then(... if (cancelled) return; setX(...)); .finally(() => { if (!cancelled) setLoading(false); }); return () => { cancelled = true; };` —— **finally 块也要判 cancelled**，否则 cleanup 之后 setX 触发 React warning。
+- **Recharts 多 series 叠加 AreaChart 时 fillOpacity ≤ 0.2** (US-075 引入): 4 strategy 各自 fillOpacity=0.5 会在重叠区域完全融合看不清；0.18 让填充淡如水彩 + stroke 仍清晰区分。多线 LineChart 不填充 / `fill='none'`。Recharts AreaChart 默认就是 overlapping 不是 stacked，不需要 `stackOffset` 调整。
+
+### CLAUDE.md updates
+N/A — 新增 echarts 模式已 codify 进 `## Codebase Patterns ### Frontend` 顶部 (本文件)，FactorWorkspace 本身已有内部 jsdoc 说明 4-tab 含义，无需单独 CLAUDE.md。
+---
+
+## 2026/06/08 - US-075 前端：策略实验室回测对比可视化增强
+### What was implemented
+在 LabWorkspace 「回测对比」tab 已有的净值曲线对比之后，新增 3 个对比子图 (回撤曲线 / 月度收益热力图 / 滚动夏普曲线)。后端 3 个新 GET endpoint + 前端 service 3 个方法 + LabWorkspace 3 个新 Card。
+
+**3 个新 endpoint** (后端 service / Engine facade / Controller method **已在 earlier iteration 实现**, 本 iteration 只补 route 注册 + 完整 `@openapi` JSDoc)：
+- `GET /api/quant/backtests/:id/drawdown-series` → 冠军策略每日回撤序列 `{ task_id, task_name, strategy_key, strategy_name, max_drawdown_pct, point_count, series: [{date, drawdown_pct, total_value}] }`
+- `GET /api/quant/backtests/:id/monthly-returns` → 月度收益矩阵 `{ task_id, task_name, strategy_key, strategy_name, years: [], months: [1..12], cells: [{year, month, return_pct}] }`
+- `GET /api/quant/backtests/:id/rolling-sharpe-series?window=N` (window 默认 90，2-252) → 滚动夏普 `{ task_id, ..., window_days, sharpe_ratio, series: [{date, sharpe: number | null}] }`，window 不足的日期 sharpe=null
+
+**Route 注册细节** (Codebase Patterns 第 27 行规则)：3 个新 sub-resource path 是深度 3 (`/backtests/:id/X`)，原 catchall `/backtests/:id` 是深度 2 — Express 路径匹配按段精确不会冲突，理论上不需要"sub-resource before /:id"约束；但仍把 3 个新 route 放在 `/backtests/:id/retry` 之后，与已有 retry 风格一致 (`:id` 后跟 verb 段)。
+
+**前端 labService.ts 3 个新方法**：
+```ts
+getBacktestDrawdownSeries(taskId): Promise<BacktestDrawdownSeriesResponse>
+getBacktestMonthlyReturns(taskId): Promise<BacktestMonthlyReturnsResponse>
+getBacktestRollingSharpeSeries(taskId, window=90): Promise<BacktestRollingSharpeResponse>
+```
+对应 3 个 TS interface 镜像后端响应字段；service 层延续既有 `{success, data}` 信封 unwrap 模式 (失败时 throw)。
+
+**LabWorkspace.tsx `CompareTab` 改动**：
+- 新增 3 个 `useState<Map<task_id, response>>` (drawdownByTask / monthlyByTask / sharpeByTask) + 1 个 `seriesErrors: Record<task_id, string>` 集中收集失败描述
+- 新增 useEffect 监听 `compareKey` (compareResult 中 task_ids 的 join，**故意不监听 compareResult 引用**——同一组 task_ids 不应重拉)，触发 `Promise.all(items.map(fetchOne))` + 每个 fetchOne 内 `Promise.allSettled([drawdown, monthly, sharpe])`。**任一 task 任一子序列失败都只填 errors[task_id]，不抛**，对应 Card 顶部 Alert 显示哪些 task 哪些子序列失败，其他 task 子序列照常渲染。
+- 渲染顺序：`CompareChartCard` (原净值) → `CompareDrawdownCard` (新, 回撤) → `CompareRollingSharpeCard` (新, 滚动夏普) → `CompareMonthlyReturnsCard` (新, 月度热力) → `CompareTableCard` (原表格)
+- 公共 helper `mergeSeriesByDate<T>(taskSeries, pickValue)` 把 N task 的 series 合成 Recharts 标准 multi-series 格式 `[{date, task_<id>: value|null, ...}]`，缺失日期对应 task 列为 null + `<Line connectNulls />` 自然跳过断段——遵循 Codebase Patterns "Recharts multi-series 必须共享 X 轴" (本文件第 16 行)。
+
+**3 个 Card 设计**：
+1. `CompareDrawdownCard` (Recharts AreaChart) — drawdown_pct 取负 `-Math.abs(p.drawdown_pct)` 让线往下走 (越深越糟)，Y 轴 `domain={['auto', 0]}`，4 种 task 用 COMPARE_COLORS 渐变叠加 + fillOpacity=0.18 不互相完全遮挡，ReferenceLine y=0 突显基准。
+2. `CompareRollingSharpeCard` (Recharts LineChart) — 标准多线对比，windowDays Tag 在标题展示，ReferenceLine y=0 标注"夏普为正/负"分界，`connectNulls` 跳过 window 不足段；window 来自后端响应 (统一 90，前端不写死)。
+3. `CompareMonthlyReturnsCard` (echarts heatmap, 每 task 一张矩阵) — Row+Col 布局，1 个 task 占 24 列 / 2-4 个 task 各占 12 列 (md+ 平铺)。子组件 `MonthlyHeatmap` 内：echarts heatmap series.data `[xIdx, yIdx, value]`，xAxis 是 1-12 月 (后端 months=[1..12])，yAxis 是 years 升序；visualMap 对称 `[-symMax, symMax]` (symMax = max(2, absMax 数据极值)，2% 是兜底防数据范围太小色彩夸大)；inRange 9 色带从 `#1a9850` (绿,亏) 到 `#d73027` (红,赚)，遵循 **A 股语义 红涨绿跌** (Codebase Patterns 第 21 行)；每格 label 显示 `<percent>%`；tooltip 反查 `[xi,yi,v]` 还原 `${year}年${month}月`。
+
+### Files changed
+- `backend/src/api/routes/quant.routes.ts` — +3 route 注册 + 3 完整 `@openapi` JSDoc 块 (约 80 新增行)
+- `frontend/src/services/labService.ts` — +3 方法 + 3 TS interface + 3 文档化分节注释 (约 90 新增行)
+- `frontend/src/pages/workspace/LabWorkspace.tsx` — +`Area / AreaChart / ReferenceLine` import / +`ReactECharts` import / +3 type import / CompareTab 新增 4 state + 1 effect + helper mergeSeriesByDate / 3 新 Card 组件 + 1 子组件 MonthlyHeatmap (约 380 新增行)
+- `ralph/prd.json` — US-075 → passes:true + notes
+- `ralph/progress.txt` — this entry
+
+### Quality checks
+- `cd backend && ./node_modules/.bin/tsc --noEmit` → exit 0
+- `cd frontend && ./node_modules/.bin/tsc --noEmit` → exit 0
+- `cd backend && ./node_modules/.bin/eslint src/api/routes/quant.routes.ts --quiet` → exit 0
+- `cd frontend && ./node_modules/.bin/eslint src/pages/workspace/LabWorkspace.tsx src/services/labService.ts --quiet` → exit 0
+
+### Browser verification
+N/A — 工程内无 `dev-browser` MCP skill。手动验证途径：
+1. `cd backend && npm run dev` + `cd frontend && npm start` → 登录
+2. `/workspace/lab` → 「我的策略」 tab 克隆 2-3 个内置策略 (MultiFactorAlpha / DragonHead / EarningsSurprise) 各跑一个 1-2 年的小回测
+3. 跑完后到 「回测对比」 tab 勾选这 2-3 个 task → 点 「开始对比」
+4. 应在原净值曲线下方依次看到：回撤曲线（蓝/绿/橙叠加面积，往下越深）、滚动夏普曲线（90 日窗口，window=90 Tag）、月度收益热力图（每策略一张 矩阵，红格为赚月份）
+5. 若任一 task 任一子序列失败，对应 Card 顶部 Alert 显示哪些 task 哪些子序列错，其他 task 子序列正常显示
+
+### Learnings for future iterations
+- **多并发请求的 "per-task per-subseries 隔离失败" 模式**：N task × M 子序列 (此处 N≤4, M=3) 时用 `Promise.all(items.map(item => Promise.allSettled([sub1, sub2, sub3])))` 双层结构，外层并行多 task，内层 settled 收集每 sub 成功/失败。**任一 task 任一 sub 失败都只填 `errors[task_id]` 字段**，不影响其他 task 其他 sub 渲染——前端按 Card 顶部 Alert 列出哪些 task 哪些 sub 错。**反模式**：单 try/catch 包外层 Promise.all → 一个 task 一个 sub 失败整组全断；同样 service 层抛 vs 返回 `{ok,data,error}` 也不能解决"per-task per-sub 隔离"。这个模式与 Codebase Patterns 第 35 行 (工作区 service per-block error fallback) 同根但更细粒度。
+- **Recharts AreaChart 叠加多策略时 fillOpacity ≤ 0.2**：4 strategy fillOpacity=0.5 会让相邻颜色在重叠区域完全融合，看不清谁是谁。0.18 让每条线的填充淡如水彩，stroke 仍清晰区分。同理多线 LineChart 不填充 / fill='none' / 都不要 stacked area (Recharts 默认就是 overlapping 不是 stacked，可放心)。
+- **`compareKey = task_ids.join(',')` 而非 useEffect 依赖整个 compareResult 引用**：React useEffect deps array 是 Object.is 比较，setCompareResult 即便 task_ids 没变也会触发 re-fire (后端返回新对象引用)。`compareKey` 是稳定字符串，task_ids 真变了才重新拉 series。这种 "stable derived key" 模式适用任何"父组件可能 re-set 同值 state"的场景。**`// eslint-disable-next-line react-hooks/exhaustive-deps` 注释**说明为何不放 `compareResult`，避免下次 reviewer 误以为 bug 加进来。
+- **`cancelled` flag 阻断 stale promise 写 state**：fetch 期间用户切走 tab / 改 selection / unmount → 旧 Promise 仍可能 resolve 然后 setX 旧数据。`let cancelled = false; ... .then(...{ if (cancelled) return; setX(...) }); return () => { cancelled = true; }`。**finally 块里也要判 `if (!cancelled)`** —— 否则 cleanup 之后还会 setSeriesLoading(false) 走 React warning。此模式适用任何"长跑 Promise + 可被中断"的 useEffect。
+- **echarts heatmap 单元格 label 用百分比**：matrix 类可视化用户既要看色彩快速分布，又要看每格精确值。`series.label.show=true + formatter=(p)=>(`${v.toFixed(1)}%`)` 让用户不用 hover 也能读数。10pt 字号 + 7-12 个单元格/行宽度刚好容纳 "+12.3%" 不溢出。**反模式**：只用色彩 → 用户必须每格 hover 才知精确值 → 复盘场景体验差。
+- **后端 Express sub-resource 与 `/:id` 不冲突的两种情形**：(1) `/foo/:id/X` vs `/foo/:id` — Express path-to-regexp 按段精确匹配，深度 3 不会被深度 2 catchall 吃 (不需要 reorder)；(2) `/foo/X` vs `/foo/:id` (同深度，X 是常量段) — **会被 catchall 吃** (Codebase Patterns 第 27 行强调的就是这种)。本 US-075 是情形 (1) 所以路由顺序无 trap，但仍把新 route 放紧贴 `/retry` 后面与同族保持一致。
+
+### CLAUDE.md updates
+N/A — 此次的"per-task per-sub-series 隔离失败"模式 + "stable compareKey" + "cancelled flag" 都已 codify 进 `## Codebase Patterns ### Frontend` (本文件顶部)，无需单独 CLAUDE.md；后端只新加 3 个 route 注册，无新设计需 codify。
 ---

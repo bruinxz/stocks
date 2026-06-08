@@ -154,7 +154,12 @@ class StrategyResearchCenterService {
       optimization,
       mergedStrategies,
     });
-    const nextActions = this.buildNextActions({ summary, optimization, paramDashboard, suggestions });
+    const nextActions = this.buildNextActions({
+      summary,
+      optimization,
+      paramDashboard,
+      suggestions,
+    });
 
     return {
       generated_at: moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm:ss'),
@@ -328,7 +333,8 @@ class StrategyResearchCenterService {
   private buildSummary(payload: Record<string, any>) {
     const strategies = payload.strategies || [];
     const enabledCount = strategies.filter((item: any) => item.enabled).length;
-    const categoryCount = new Set(strategies.map((item: any) => item.category).filter(Boolean)).size;
+    const categoryCount = new Set(strategies.map((item: any) => item.category).filter(Boolean))
+      .size;
     const weights = payload.weights || [];
     const allocation = payload.allocation || {};
     const paramSummary = payload.paramDashboard?.summary || {};
@@ -397,7 +403,10 @@ class StrategyResearchCenterService {
         tone: 'good',
         headline: '已有可晋级策略片段，可进入小幅放大验证',
         reason: bestCombo
-          ? `${bestCombo.label} 平均超额 ${roundNumber(bestCombo.avg_excess_return_pct, 2)}%，闭环 ${bestCombo.closed_count} 笔。`
+          ? `${bestCombo.label} 平均超额 ${roundNumber(
+              bestCombo.avg_excess_return_pct,
+              2
+            )}%，闭环 ${bestCombo.closed_count} 笔。`
           : `参数冠军 ${championCount} 个，策略权重可按收益继续自动反哺。`,
         next_action: '只放大冠军策略/环境组合，弱组合继续冷却。',
       };

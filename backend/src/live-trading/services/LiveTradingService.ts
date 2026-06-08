@@ -38,7 +38,9 @@ function round(value: any, digits = 2): number {
 }
 
 function normalizeSymbol(symbol: string): string {
-  const value = String(symbol || '').trim().toUpperCase();
+  const value = String(symbol || '')
+    .trim()
+    .toUpperCase();
   if (/^\d{6}\.(SH|SZ|BJ)$/.test(value)) return value;
   if (/^(SH|SZ|BJ)\.\d{6}$/.test(value)) {
     const [market, code] = value.split('.');
@@ -46,7 +48,11 @@ function normalizeSymbol(symbol: string): string {
   }
   if (/^(SH|SZ|BJ)\d{6}$/.test(value)) return `${value.slice(2)}.${value.slice(0, 2)}`;
   if (/^\d{6}$/.test(value)) {
-    const prefix = value.startsWith('6') ? 'SH' : value.startsWith('8') || value.startsWith('4') ? 'BJ' : 'SZ';
+    const prefix = value.startsWith('6')
+      ? 'SH'
+      : value.startsWith('8') || value.startsWith('4')
+      ? 'BJ'
+      : 'SZ';
     return `${value}.${prefix}`;
   }
   return value;
@@ -170,12 +176,49 @@ export class LiveTradingService {
       market_data_provider_comparison: providerComparison,
       account_count: accountCount,
       phases: [
-        { key: 'safety_boundary', label: '安全边界', status: 'ready', detail: '默认禁止真实下单，强确认与熔断开关已内置。' },
-        { key: 'market_data', label: '真实行情入口', status: marketDataHealth.status === 'ok' ? 'ready' : marketDataHealth.status === 'empty' ? 'locked' : 'partial', detail: marketDataHealth.conclusion },
-        { key: 'broker_readonly', label: '券商只读', status: safety.can_sync_account ? 'partial' : 'locked', detail: '接口与模型已就绪；真实券商适配器尚未启用。' },
-        { key: 'order_approval', label: '订单审批', status: 'ready', detail: '支持订单草稿、风控说明、强确认；提交券商默认阻断。' },
-        { key: 'shadow_autopilot', label: '无人影子执行', status: safety.shadow_autopilot_enabled ? 'ready' : 'locked', detail: safety.unattended_policy.conclusion },
-        { key: 'execution', label: '真实执行', status: safety.can_submit_orders ? 'restricted' : 'blocked', detail: safety.can_submit_orders ? '仅限受控内部灰度。' : '真实下单被环境开关和 Mock 网关阻断。' },
+        {
+          key: 'safety_boundary',
+          label: '安全边界',
+          status: 'ready',
+          detail: '默认禁止真实下单，强确认与熔断开关已内置。',
+        },
+        {
+          key: 'market_data',
+          label: '真实行情入口',
+          status:
+            marketDataHealth.status === 'ok'
+              ? 'ready'
+              : marketDataHealth.status === 'empty'
+              ? 'locked'
+              : 'partial',
+          detail: marketDataHealth.conclusion,
+        },
+        {
+          key: 'broker_readonly',
+          label: '券商只读',
+          status: safety.can_sync_account ? 'partial' : 'locked',
+          detail: '接口与模型已就绪；真实券商适配器尚未启用。',
+        },
+        {
+          key: 'order_approval',
+          label: '订单审批',
+          status: 'ready',
+          detail: '支持订单草稿、风控说明、强确认；提交券商默认阻断。',
+        },
+        {
+          key: 'shadow_autopilot',
+          label: '无人影子执行',
+          status: safety.shadow_autopilot_enabled ? 'ready' : 'locked',
+          detail: safety.unattended_policy.conclusion,
+        },
+        {
+          key: 'execution',
+          label: '真实执行',
+          status: safety.can_submit_orders ? 'restricted' : 'blocked',
+          detail: safety.can_submit_orders
+            ? '仅限受控内部灰度。'
+            : '真实下单被环境开关和 Mock 网关阻断。',
+        },
       ],
       conclusion: safety.can_submit_orders
         ? '实盘执行开关已开启，但仍必须走订单审批、强确认、风控与审计。'
@@ -238,7 +281,12 @@ export class LiveTradingService {
         can_submit_orders: readiness.safety.can_submit_orders,
         market_data_status: readiness.market_data_health.status,
         market_data_conclusion: readiness.market_data_health.conclusion,
-        mode_label: readiness.safety.mode === 'approval_execution_enabled' ? '实盘审批执行' : readiness.safety.mode === 'read_only' ? '只读实盘观察' : '模拟/安全禁用',
+        mode_label:
+          readiness.safety.mode === 'approval_execution_enabled'
+            ? '实盘审批执行'
+            : readiness.safety.mode === 'read_only'
+            ? '只读实盘观察'
+            : '模拟/安全禁用',
         conclusion: readiness.conclusion,
       },
     };
@@ -480,7 +528,10 @@ export class LiveTradingService {
         const targetGapValue =
           candidate.status === 'paper_only'
             ? toNumber(candidate.paper_market_value)
-            : Math.max(0, toNumber(candidate.paper_market_value) - toNumber(candidate.live_market_value));
+            : Math.max(
+                0,
+                toNumber(candidate.paper_market_value) - toNumber(candidate.live_market_value)
+              );
         const rawQuantity = quotePx > 0 ? Math.floor(targetGapValue / quotePx / 100) * 100 : 0;
         const quantity = Math.max(0, rawQuantity);
         const estimatedAmount = round(quantity * quotePx, 2);
@@ -557,10 +608,14 @@ export class LiveTradingService {
     const symbol = normalizeSymbol(input.symbol);
     if (!symbol) throw new Error('缺少候选股票代码');
     const candidates = await this.getDraftCandidates(user_id, { limit: Number(input.limit || 80) });
-    const candidate = candidates.candidates.find((item: any) => normalizeSymbol(item.symbol) === symbol);
+    const candidate = candidates.candidates.find(
+      (item: any) => normalizeSymbol(item.symbol) === symbol
+    );
     if (!candidate) throw new Error('未找到该股票的策略候选，请先刷新只读对账候选。');
     if (!candidate.eligible) {
-      throw new Error(`该候选暂不可生成实盘草稿：${candidate.block_reason || '未满足风控前置条件'}`);
+      throw new Error(
+        `该候选暂不可生成实盘草稿：${candidate.block_reason || '未满足风控前置条件'}`
+      );
     }
     return this.createDraft(user_id, {
       symbol: candidate.symbol,
@@ -593,7 +648,9 @@ export class LiveTradingService {
       throw new Error('无人影子执行未启用：请设置 LIVE_SHADOW_AUTOPILOT_ENABLED=true。');
     }
 
-    const candidateDashboard = await this.getDraftCandidates(user_id, { limit: Math.max(maxCount, 10) });
+    const candidateDashboard = await this.getDraftCandidates(user_id, {
+      limit: Math.max(maxCount, 10),
+    });
     const candidates = (candidateDashboard.candidates || [])
       .filter((item: any) => item.eligible)
       .slice(0, maxCount);
@@ -638,7 +695,10 @@ export class LiveTradingService {
       results.push(executed);
     }
 
-    const blockedCount = Math.max(0, Number(candidateDashboard.summary.total_count || 0) - candidates.length);
+    const blockedCount = Math.max(
+      0,
+      Number(candidateDashboard.summary.total_count || 0) - candidates.length
+    );
     const summary = {
       dry_run: dryRun,
       selected_count: candidates.length,
@@ -740,12 +800,14 @@ export class LiveTradingService {
         evaluated.length
       : null;
     const winRate = evaluated.length ? (wins.length / evaluated.length) * 100 : null;
-    const best = evaluated
-      .slice()
-      .sort((a, b) => toNumber(b.latest_return_pct) - toNumber(a.latest_return_pct))[0] || null;
-    const worst = evaluated
-      .slice()
-      .sort((a, b) => toNumber(a.latest_return_pct) - toNumber(b.latest_return_pct))[0] || null;
+    const best =
+      evaluated
+        .slice()
+        .sort((a, b) => toNumber(b.latest_return_pct) - toNumber(a.latest_return_pct))[0] || null;
+    const worst =
+      evaluated
+        .slice()
+        .sort((a, b) => toNumber(a.latest_return_pct) - toNumber(b.latest_return_pct))[0] || null;
     const horizonSummary = uniqueHorizons.map(days => {
       const key = `${days}d`;
       const rowsWithHorizon = items.filter(item => item.horizon_returns?.[key]?.evaluable);
@@ -868,10 +930,14 @@ export class LiveTradingService {
         latest_win_rate_pct: latest?.win_rate_pct ?? null,
         latest_recommended_limit: latest?.recommended_limit ?? null,
         latest_budget_label: latest?.budget_label || '',
-        real_order_submitted: points.reduce((sum, item) => sum + toNumber(item.real_order_submitted), 0),
-        conclusion: points.length >= 2
-          ? '影子执行趋势已可观察，用于判断预算是否应继续小流量、降温或扩大。'
-          : '影子执行趋势样本仍少，等待更多定时任务执行日志。',
+        real_order_submitted: points.reduce(
+          (sum, item) => sum + toNumber(item.real_order_submitted),
+          0
+        ),
+        conclusion:
+          points.length >= 2
+            ? '影子执行趋势已可观察，用于判断预算是否应继续小流量、降温或扩大。'
+            : '影子执行趋势样本仍少，等待更多定时任务执行日志。',
       },
     };
   }
@@ -957,7 +1023,10 @@ export class LiveTradingService {
       });
       const sorted = evaluated
         .slice()
-        .sort((left, right) => Number(left.latest_return_pct || 0) - Number(right.latest_return_pct || 0));
+        .sort(
+          (left, right) =>
+            Number(left.latest_return_pct || 0) - Number(right.latest_return_pct || 0)
+        );
       return {
         from: new Date(fromTime).toISOString(),
         to: new Date(toTime).toISOString(),
@@ -966,7 +1035,10 @@ export class LiveTradingService {
         win_count: wins.length,
         win_rate_pct: evaluated.length ? round((wins.length / evaluated.length) * 100, 2) : null,
         avg_latest_return_pct: roundNullable(avgLatest, 4),
-        total_latest_pnl: round(evaluated.reduce((sum, item) => sum + toNumber(item.latest_pnl), 0), 2),
+        total_latest_pnl: round(
+          evaluated.reduce((sum, item) => sum + toNumber(item.latest_pnl), 0),
+          2
+        ),
         best_return_pct: sorted.length
           ? roundNullable(sorted[sorted.length - 1].latest_return_pct, 4)
           : null,
@@ -980,21 +1052,26 @@ export class LiveTradingService {
       const suggestionTime = new Date(suggestion.created_at).getTime();
       const after = asPlainObject(suggestion.after_parameters);
       const suggestedLimit = Number(after.limit ?? after.shadow_budget_advice?.recommended_limit);
-      return appliedRows
-        .filter(row => {
-          const metadata = asPlainObject(row.metadata);
-          const afterParameters = asPlainObject(row.after_parameters);
-          const advice = asPlainObject(afterParameters.shadow_budget_advice);
-          const rowTime = new Date(row.created_at).getTime();
-          if (!Number.isFinite(rowTime) || rowTime < suggestionTime) return false;
-          if (Number(metadata.source_audit_id) === suggestionId) return true;
-          if (Number(advice.source_audit_id) === suggestionId) return true;
-          return (
-            Number(row.task_id) === Number(suggestion.task_id) &&
-            Number(afterParameters.limit) === suggestedLimit
-          );
-        })
-        .sort((left, right) => new Date(left.created_at).getTime() - new Date(right.created_at).getTime())[0] || null;
+      return (
+        appliedRows
+          .filter(row => {
+            const metadata = asPlainObject(row.metadata);
+            const afterParameters = asPlainObject(row.after_parameters);
+            const advice = asPlainObject(afterParameters.shadow_budget_advice);
+            const rowTime = new Date(row.created_at).getTime();
+            if (!Number.isFinite(rowTime) || rowTime < suggestionTime) return false;
+            if (Number(metadata.source_audit_id) === suggestionId) return true;
+            if (Number(advice.source_audit_id) === suggestionId) return true;
+            return (
+              Number(row.task_id) === Number(suggestion.task_id) &&
+              Number(afterParameters.limit) === suggestedLimit
+            );
+          })
+          .sort(
+            (left, right) =>
+              new Date(left.created_at).getTime() - new Date(right.created_at).getTime()
+          )[0] || null
+      );
     };
 
     const periods = suggestions.map(suggestion => {
@@ -1061,7 +1138,9 @@ export class LiveTradingService {
             action: 'neutral',
             label: '效果中性',
             level: 'watch',
-            reason: `应用前后收益变化 ${avgDelta !== null ? round(avgDelta, 2) : '--'}pct，继续观察。`,
+            reason: `应用前后收益变化 ${
+              avgDelta !== null ? round(avgDelta, 2) : '--'
+            }pct，继续观察。`,
           };
 
       return {
@@ -1122,13 +1201,18 @@ export class LiveTradingService {
         latest_delta_avg_return_pct: latest?.delta.avg_latest_return_pct ?? null,
         latest_delta_win_rate_pct: latest?.delta.win_rate_pct ?? null,
         total_shadow_sample_count: outcomes.length,
-        total_evaluated_count: outcomes.filter(item => numberOrNull(item.latest_return_pct) !== null).length,
+        total_evaluated_count: outcomes.filter(
+          item => numberOrNull(item.latest_return_pct) !== null
+        ).length,
         conclusion: summaryConclusion,
       },
     };
   }
 
-  async getMarketDataHealth(symbols?: string[], provider: LiveMarketDataProvider = this.quoteProvider) {
+  async getMarketDataHealth(
+    symbols?: string[],
+    provider: LiveMarketDataProvider = this.quoteProvider
+  ) {
     const providerInfo = provider.getProviderInfo();
     const sla = liveTradingSafetyService.getMarketDataSla();
     const targetSymbols = (symbols || []).length
@@ -1257,7 +1341,10 @@ export class LiveTradingService {
     const stock = await Stock.findOne({ where: { symbol } });
     const quote = await this.quoteProvider.getQuote(symbol);
     const name = input.name || quote?.name || (stock as any)?.name || symbol;
-    const limitPrice = round(input.limit_price || input.limitPrice || quote?.current_price || (stock as any)?.price, 4);
+    const limitPrice = round(
+      input.limit_price || input.limitPrice || quote?.current_price || (stock as any)?.price,
+      4
+    );
     const quantity = Math.max(0, Math.floor(Number(input.quantity || 0) / 100) * 100);
     const overview = await this.getOverview(user_id);
     const accountId = Number(input.account_id || overview.account?.id || 0) || undefined;
@@ -1315,7 +1402,9 @@ export class LiveTradingService {
       draft_id: Number(draft.id),
       event_type: 'live_order_draft_created',
       severity: riskCheck.allowed ? 'info' : 'warning',
-      message: riskCheck.allowed ? '实盘订单草稿已创建，等待用户确认。' : '实盘订单草稿被基础风控阻断。',
+      message: riskCheck.allowed
+        ? '实盘订单草稿已创建，等待用户确认。'
+        : '实盘订单草稿被基础风控阻断。',
       after_state: this.toPlain(draft),
       metadata: { risk_check: riskCheck },
     });
@@ -1327,7 +1416,11 @@ export class LiveTradingService {
     const draft = await LiveOrderDraft.findOne({ where: { id: draft_id, user_id } });
     if (!draft) throw new Error('订单草稿不存在或无权限');
     const before = this.toPlain(draft);
-    await draft.update({ status: 'rejected', rejected_at: new Date(), metadata: { ...(draft as any).metadata, reject_reason: reason || '' } });
+    await draft.update({
+      status: 'rejected',
+      rejected_at: new Date(),
+      metadata: { ...(draft as any).metadata, reject_reason: reason || '' },
+    });
     await this.audit({
       user_id,
       account_id: (draft as any).account_id,
@@ -1503,7 +1596,9 @@ export class LiveTradingService {
   async syncReadonlyAccount(user_id: number, input: any = {}) {
     const safety = liveTradingSafetyService.getStatus();
     if (!safety.can_sync_account) {
-      throw new Error('实盘只读同步未启用：请先设置 LIVE_READONLY_ENABLED=true，并配置真实券商只读网关。');
+      throw new Error(
+        '实盘只读同步未启用：请先设置 LIVE_READONLY_ENABLED=true，并配置真实券商只读网关。'
+      );
     }
     const account = await this.ensureAccount(user_id, input);
     const snapshot = await this.brokerGateway.getAccountSnapshot();
@@ -1535,13 +1630,18 @@ export class LiveTradingService {
         market_value: marketValue,
         unrealized_pnl: position.unrealized_pnl,
         unrealized_pnl_pct: position.unrealized_pnl_pct,
-        position_pct: snapshot.total_asset > 0 ? round((marketValue / snapshot.total_asset) * 100, 4) : 0,
+        position_pct:
+          snapshot.total_asset > 0 ? round((marketValue / snapshot.total_asset) * 100, 4) : 0,
         quote_time: position.quote_time,
         source: this.brokerGateway.getCapabilities().broker_key,
         raw_payload: position.raw_payload || {},
       } as any);
     }
-    await account.update({ last_sync_at: new Date(), readonly_enabled: true, connection_status: 'readonly_synced' });
+    await account.update({
+      last_sync_at: new Date(),
+      readonly_enabled: true,
+      connection_status: 'readonly_synced',
+    });
     await this.audit({
       user_id,
       account_id: Number(account.id),
@@ -1551,7 +1651,11 @@ export class LiveTradingService {
       after_state: this.toPlain(row),
       metadata: { position_count: positions.length },
     });
-    return { account: this.toPlain(account), snapshot: this.toPlain(row), position_count: positions.length };
+    return {
+      account: this.toPlain(account),
+      snapshot: this.toPlain(row),
+      position_count: positions.length,
+    };
   }
 
   async getAuditLogs(user_id: number, limit = 50) {
@@ -1581,7 +1685,9 @@ export class LiveTradingService {
     const symbol = normalizeSymbol((draft as any).symbol);
     const quote = await this.quoteProvider.getQuote(symbol);
     const overview = await this.getOverview(user_id);
-    const position = overview.positions.find((item: any) => normalizeSymbol(item.symbol) === symbol);
+    const position = overview.positions.find(
+      (item: any) => normalizeSymbol(item.symbol) === symbol
+    );
     const latestPrice = quotePrice(quote);
     const limitPrice = toNumber((draft as any).limit_price);
     const riskCheck = liveRiskGuardService.evaluate({
@@ -1693,7 +1799,9 @@ export class LiveTradingService {
           position_value: round(positionValue),
           exposure_pct: totalValue > 0 ? round((positionValue / totalValue) * 100, 4) : 0,
           total_return_pct:
-            initialCapital > 0 ? round(((totalValue - initialCapital) / initialCapital) * 100, 4) : 0,
+            initialCapital > 0
+              ? round(((totalValue - initialCapital) / initialCapital) * 100, 4)
+              : 0,
           open_position_count: positionRows.length,
           latest_trade_at: (latestTrade as any)?.created_at || null,
           positions: positionRows.map(position => ({
@@ -1726,7 +1834,9 @@ export class LiveTradingService {
       return '券商账户已创建但还没有只读快照；请先完成只读同步再评估实盘与模拟盘差异。';
     }
     if (input.status === 'stale') {
-      return `券商快照已超过 ${input.snapshot_age_minutes ?? '-'} 分钟未更新；不要用该快照做实盘决策。`;
+      return `券商快照已超过 ${
+        input.snapshot_age_minutes ?? '-'
+      } 分钟未更新；不要用该快照做实盘决策。`;
     }
     if (input.status === 'aligned') {
       return `实盘与模拟策略账户整体接近，对齐分 ${input.alignment_score}；仍需逐笔人工确认。`;
@@ -1777,7 +1887,8 @@ export class LiveTradingService {
       suggestions.push({
         level: 'warning',
         title: '模拟盘未覆盖当前实盘暴露',
-        detail: '真实持仓未被策略账户覆盖，系统无法用历史策略收益解释当前仓位。请补齐归因或降低仓位。',
+        detail:
+          '真实持仓未被策略账户覆盖，系统无法用历史策略收益解释当前仓位。请补齐归因或降低仓位。',
       });
     }
     if (input.alignment_score < 55 && input.paper_market_value > 0) {
@@ -1802,11 +1913,12 @@ export class LiveTradingService {
       .slice(0, 2)
       .map((item: any) => item.label)
       .join('、');
-    const quoteText = quotePrice(quote) > 0 ? `当前参考价 ¥${round(quotePrice(quote), 2)}` : '暂无可用参考价';
+    const quoteText =
+      quotePrice(quote) > 0 ? `当前参考价 ¥${round(quotePrice(quote), 2)}` : '暂无可用参考价';
     if (candidate.status === 'paper_only') {
-      return `策略模拟账户持有 ${candidate.name || candidate.symbol}，但实盘暂无对应仓位；来源账户：${
-        accounts || '策略模拟盘'
-      }，${quoteText}。`;
+      return `策略模拟账户持有 ${
+        candidate.name || candidate.symbol
+      }，但实盘暂无对应仓位；来源账户：${accounts || '策略模拟盘'}，${quoteText}。`;
     }
     return `实盘仓位低于策略模拟目标，权重差 ${round(candidate.weight_gap_pct, 2)}%；来源账户：${
       accounts || '策略模拟盘'
@@ -1849,7 +1961,9 @@ export class LiveTradingService {
     const latestReturnPct =
       entryPrice && latestPrice ? round(((latestPrice - entryPrice) / entryPrice) * 100, 4) : null;
     const latestPnl =
-      entryPrice && latestPrice && quantity ? round((latestPrice - entryPrice) * quantity, 2) : null;
+      entryPrice && latestPrice && quantity
+        ? round((latestPrice - entryPrice) * quantity, 2)
+        : null;
     const barsAfterEntry = stock?.id
       ? await DailyBar.findAll({
           where: {
@@ -1869,13 +1983,18 @@ export class LiveTradingService {
       const targetBar = normalizedBars[horizon] || null;
       const targetPrice = priceOrNull(targetBar?.close);
       const returnPct =
-        entryPrice && targetPrice ? round(((targetPrice - entryPrice) / entryPrice) * 100, 4) : null;
+        entryPrice && targetPrice
+          ? round(((targetPrice - entryPrice) / entryPrice) * 100, 4)
+          : null;
       horizonReturns[`${horizon}d`] = {
         horizon_days: horizon,
         target_date: targetBar?.time ? localDateKey(targetBar.time) : null,
         price: targetPrice,
         return_pct: returnPct,
-        pnl: entryPrice && targetPrice && quantity ? round((targetPrice - entryPrice) * quantity, 2) : null,
+        pnl:
+          entryPrice && targetPrice && quantity
+            ? round((targetPrice - entryPrice) * quantity, 2)
+            : null,
         evaluable: returnPct !== null,
       };
     }
@@ -1945,12 +2064,21 @@ export class LiveTradingService {
     const avg = Number(input.avg_latest_return_pct || 0);
     const winRate = Number(input.win_rate_pct || 0);
     if (avg > 0 && winRate >= 50) {
-      return `影子执行初步有效：平均收益 ${round(avg, 2)}%，胜率 ${round(winRate, 1)}%${excessText}；下一步继续扩大影子样本并比较基准。`;
+      return `影子执行初步有效：平均收益 ${round(avg, 2)}%，胜率 ${round(
+        winRate,
+        1
+      )}%${excessText}；下一步继续扩大影子样本并比较基准。`;
     }
     if (avg < 0) {
-      return `影子执行暂未证明有效：平均收益 ${round(avg, 2)}%，胜率 ${round(winRate, 1)}%${excessText}；保持真实下单阻断，优先复盘策略来源。`;
+      return `影子执行暂未证明有效：平均收益 ${round(avg, 2)}%，胜率 ${round(
+        winRate,
+        1
+      )}%${excessText}；保持真实下单阻断，优先复盘策略来源。`;
     }
-    return `影子执行收益接近持平：平均收益 ${round(avg, 2)}%，胜率 ${round(winRate, 1)}%${excessText}；继续观察 1/3/5 日收益。`;
+    return `影子执行收益接近持平：平均收益 ${round(avg, 2)}%，胜率 ${round(
+      winRate,
+      1
+    )}%${excessText}；继续观察 1/3/5 日收益。`;
   }
 
   private buildShadowBudgetDecision(input: {
@@ -1970,7 +2098,10 @@ export class LiveTradingService {
         label: '继续影子验证',
         level: 'watch',
         recommended_limit: 2,
-        reason: `可评估样本 ${input.evaluated_count}/${Math.max(input.total_count, 1)}，还不足以判断有效性。`,
+        reason: `可评估样本 ${input.evaluated_count}/${Math.max(
+          input.total_count,
+          1
+        )}，还不足以判断有效性。`,
       };
     }
     if ((avg !== null && avg < -1.5) || (winRate !== null && winRate < 35)) {
@@ -1996,10 +2127,9 @@ export class LiveTradingService {
         label: '可小幅扩大',
         level: 'ok',
         recommended_limit: 3,
-        reason: `影子样本初步跑赢：平均 ${round(avg, 2)}%，胜率 ${round(
-          winRate,
-          1
-        )}%${excessPct !== null ? `，相对模拟盘 ${round(excessPct, 2)}pct` : ''}。`,
+        reason: `影子样本初步跑赢：平均 ${round(avg, 2)}%，胜率 ${round(winRate, 1)}%${
+          excessPct !== null ? `，相对模拟盘 ${round(excessPct, 2)}pct` : ''
+        }。`,
       };
     }
     return {
@@ -2017,7 +2147,9 @@ export class LiveTradingService {
     user_id: number,
     options: { since?: string | Date; limit?: number } = {}
   ) {
-    const since = options.since ? new Date(options.since) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const since = options.since
+      ? new Date(options.since)
+      : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
     const limit = Math.min(Math.max(Number(options.limit || 500), 1), 2000);
     const portfolios = await PaperTradingPortfolio.findAll({
       where: {
@@ -2057,7 +2189,10 @@ export class LiveTradingService {
           entry_price: entryPrice,
           latest_price: latestPrice?.price || null,
           return_pct: returnPct,
-          pnl: entryPrice && latestPrice?.price && quantity ? round((latestPrice.price - entryPrice) * quantity, 2) : null,
+          pnl:
+            entryPrice && latestPrice?.price && quantity
+              ? round((latestPrice.price - entryPrice) * quantity, 2)
+              : null,
           entry_time: trade.created_at,
         };
       })
@@ -2098,20 +2233,29 @@ export class LiveTradingService {
               4
             )
           : null,
-        win_rate_pct: evaluatedPaper.length ? round((paperWinCount / evaluatedPaper.length) * 100, 2) : null,
-        total_pnl: round(evaluatedPaper.reduce((sum, item) => sum + toNumber(item.pnl), 0), 2),
+        win_rate_pct: evaluatedPaper.length
+          ? round((paperWinCount / evaluatedPaper.length) * 100, 2)
+          : null,
+        total_pnl: round(
+          evaluatedPaper.reduce((sum, item) => sum + toNumber(item.pnl), 0),
+          2
+        ),
       },
       signal_forward_returns: {
         sample_count: signalReturns.length,
         avg_return_pct: signalReturns.length
           ? round(signalReturns.reduce((sum, value) => sum + value, 0) / signalReturns.length, 4)
           : null,
-        win_rate_pct: signalReturns.length ? round((signalWinCount / signalReturns.length) * 100, 2) : null,
+        win_rate_pct: signalReturns.length
+          ? round((signalWinCount / signalReturns.length) * 100, 2)
+          : null,
       },
     };
   }
 
-  private async getLatestComparablePrice(symbol: string): Promise<{ price: number; time?: any } | null> {
+  private async getLatestComparablePrice(
+    symbol: string
+  ): Promise<{ price: number; time?: any } | null> {
     const normalized = normalizeSymbol(symbol);
     const quote = await RealtimeQuote.findOne({
       where: { symbol: normalized },

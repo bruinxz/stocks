@@ -271,8 +271,7 @@ function weightedAverage<T>(
   const totalWeight = items.reduce((sum, item) => sum + Math.max(weightFn(item), 0), 0);
   if (totalWeight <= 0) return 0;
   return (
-    items.reduce((sum, item) => sum + valueFn(item) * Math.max(weightFn(item), 0), 0) /
-    totalWeight
+    items.reduce((sum, item) => sum + valueFn(item) * Math.max(weightFn(item), 0), 0) / totalWeight
   );
 }
 
@@ -832,7 +831,9 @@ export class QuantPerformanceDashboardService {
           action,
           reason: `近 ${rows.length} 个回测分片，平均收益 ${
             avgReturn >= 0 ? '+' : ''
-          }${avgReturn}%，超额 ${avgExcess >= 0 ? '+' : ''}${avgExcess}%，买入成交 ${buyFillCount} 次。`,
+          }${avgReturn}%，超额 ${
+            avgExcess >= 0 ? '+' : ''
+          }${avgExcess}%，买入成交 ${buyFillCount} 次。`,
         };
       })
       .sort((a, b) => toNumber(b.avg_excess_return_pct) - toNumber(a.avg_excess_return_pct));

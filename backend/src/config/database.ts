@@ -66,6 +66,7 @@ import { MorningRiskCheckup } from '../models/MorningRiskCheckup';
 import { AIStockAnalysisReport } from '../models/AIStockAnalysisReport';
 import { KOLOpinion } from '../models/KOLOpinion';
 import { MarketSentimentIndex } from '../models/MarketSentimentIndex';
+import { MarketBrief } from '../models/MarketBrief';
 import { SnowballHotKeyword } from '../models/SnowballHotKeyword';
 import { AnnouncementSummary } from '../models/AnnouncementSummary';
 import { EastMoneyQATopic } from '../models/EastMoneyQATopic';
@@ -165,6 +166,7 @@ const sequelize = new Sequelize({
     AIStockAnalysisReport,
     KOLOpinion,
     MarketSentimentIndex,
+    MarketBrief,
     SnowballHotKeyword,
     AnnouncementSummary,
     EastMoneyQATopic,

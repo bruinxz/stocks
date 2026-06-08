@@ -37,7 +37,13 @@ export class LiveRiskGuardService {
     const orderPct = totalAsset > 0 ? round((estimatedAmount / totalAsset) * 100, 4) : 0;
     const projectedPositionPct =
       totalAsset > 0
-        ? round(((Number(input.current_position_value || 0) + (input.side === 'BUY' ? estimatedAmount : 0)) / totalAsset) * 100, 4)
+        ? round(
+            ((Number(input.current_position_value || 0) +
+              (input.side === 'BUY' ? estimatedAmount : 0)) /
+              totalAsset) *
+              100,
+            4
+          )
         : 0;
     const projectedExposurePct = round(
       Number(input.total_exposure_pct || 0) + (input.side === 'BUY' ? orderPct : 0),
@@ -59,7 +65,10 @@ export class LiveRiskGuardService {
         key: 'round_lot',
         passed: quantity > 0 && quantity % 100 === 0,
         label: 'A股整手校验',
-        message: quantity > 0 && quantity % 100 === 0 ? '数量满足 100 股整手规则' : '数量必须为 100 股整数倍',
+        message:
+          quantity > 0 && quantity % 100 === 0
+            ? '数量满足 100 股整手规则'
+            : '数量必须为 100 股整数倍',
       },
       {
         key: 'single_order_pct',
@@ -69,7 +78,8 @@ export class LiveRiskGuardService {
       },
       {
         key: 'single_position_pct',
-        passed: projectedPositionPct === 0 || projectedPositionPct <= limits.max_single_position_pct,
+        passed:
+          projectedPositionPct === 0 || projectedPositionPct <= limits.max_single_position_pct,
         label: '单股仓位上限',
         message: `预计单股仓位 ${projectedPositionPct}% / 上限 ${limits.max_single_position_pct}%`,
       },
@@ -98,7 +108,8 @@ export class LiveRiskGuardService {
         key: 'limit_up_buy',
         passed: !(input.side === 'BUY' && input.is_limit_up),
         label: '涨停买入过滤',
-        message: input.side === 'BUY' && input.is_limit_up ? '涨停买入默认禁止' : '未触发涨停买入限制',
+        message:
+          input.side === 'BUY' && input.is_limit_up ? '涨停买入默认禁止' : '未触发涨停买入限制',
       },
       {
         key: 'price_deviation',
@@ -109,7 +120,9 @@ export class LiveRiskGuardService {
         message:
           input.price_deviation_pct === undefined
             ? '暂无外部参考价偏离数据，仅保留人工确认'
-            : `价格偏离 ${round(input.price_deviation_pct, 4)}% / 上限 ${limits.price_deviation_guard_pct}%`,
+            : `价格偏离 ${round(input.price_deviation_pct, 4)}% / 上限 ${
+                limits.price_deviation_guard_pct
+              }%`,
       },
       {
         key: 'quote_required',
@@ -129,7 +142,9 @@ export class LiveRiskGuardService {
         message:
           input.quote_latency_seconds === undefined
             ? '暂无行情延迟数据，保留人工复核'
-            : `行情延迟 ${Math.round(Number(input.quote_latency_seconds || 0))} 秒 / SLA ${marketSla.max_quote_latency_seconds} 秒`,
+            : `行情延迟 ${Math.round(Number(input.quote_latency_seconds || 0))} 秒 / SLA ${
+                marketSla.max_quote_latency_seconds
+              } 秒`,
       },
       {
         key: 'quote_realtime',

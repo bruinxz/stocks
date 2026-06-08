@@ -384,7 +384,9 @@ export class RealtimeQuoteService {
       Number(process.env.REALTIME_QUOTE_FRESHNESS_MINUTES || 30),
       1
     );
-    const latestTradeDateMatchesSession = latest ? dateOnly(latest.quote_time) === tradeDate : false;
+    const latestTradeDateMatchesSession = latest
+      ? dateOnly(latest.quote_time) === tradeDate
+      : false;
     const hasEnoughSameDaySymbols =
       latestSymbols >= Number(process.env.REALTIME_QUOTE_MIN_SYMBOLS || 50);
     const isIntradayFresh = ageMinutes !== null && ageMinutes <= freshnessThresholdMinutes;

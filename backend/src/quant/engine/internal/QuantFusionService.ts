@@ -348,26 +348,29 @@ function buildStrategyAdmissionGate(
   ).length;
   const coldStart = evidenceCount === 0 || supportedCount === 0;
   const blocked = hasPaused || hasReducedOnly || !hasActionable;
-  const scorePenalty = details.reduce((sum, item) => {
-    if (item.action === 'reduce') return sum + 8;
-    if (item.quality_score < 45) return sum + 5;
-    if (item.closed_count === 0 && item.quality_score <= 50) return sum + 3;
-    if (item.closed_count > 0 && item.closed_count < 3) return sum + 5;
-    const recent = item.recent_backtest;
-    if (recent && recent.task_samples >= 3 && recent.buy_fill_count >= 10) {
-      if (recent.action === 'pause') return sum + 12;
-      if (recent.action === 'reduce') return sum + 8;
-      if (recent.avg_excess_return_pct < -0.5) return sum + 5;
-    }
-    if (
-      item.closed_count >= 3 &&
-      Number.isFinite(item.avg_excess_return_pct) &&
-      item.avg_excess_return_pct < -1
-    ) {
-      return sum + 4;
-    }
-    return sum;
-  }, coldStart ? 8 : 0);
+  const scorePenalty = details.reduce(
+    (sum, item) => {
+      if (item.action === 'reduce') return sum + 8;
+      if (item.quality_score < 45) return sum + 5;
+      if (item.closed_count === 0 && item.quality_score <= 50) return sum + 3;
+      if (item.closed_count > 0 && item.closed_count < 3) return sum + 5;
+      const recent = item.recent_backtest;
+      if (recent && recent.task_samples >= 3 && recent.buy_fill_count >= 10) {
+        if (recent.action === 'pause') return sum + 12;
+        if (recent.action === 'reduce') return sum + 8;
+        if (recent.avg_excess_return_pct < -0.5) return sum + 5;
+      }
+      if (
+        item.closed_count >= 3 &&
+        Number.isFinite(item.avg_excess_return_pct) &&
+        item.avg_excess_return_pct < -1
+      ) {
+        return sum + 4;
+      }
+      return sum;
+    },
+    coldStart ? 8 : 0
+  );
   const reasons = [
     hasPaused ? '包含已暂停策略' : '',
     hasReducedOnly ? '策略全部处于降权状态' : '',
@@ -383,9 +386,7 @@ function buildStrategyAdmissionGate(
       return '';
     })
     .concat(
-      coldStart
-        ? ['策略冷启动：缺少历史/模拟收益样本，本轮只降分观察并允许实验盘小仓采样']
-        : []
+      coldStart ? ['策略冷启动：缺少历史/模拟收益样本，本轮只降分观察并允许实验盘小仓采样'] : []
     )
     .filter(Boolean)
     .slice(0, 4);
@@ -1192,7 +1193,10 @@ export class QuantFusionService {
             safeNumber(options.max_daily_new_exposure_pct, 12)
           ),
           max_total_exposure_pct: Math.min(50, safeNumber(options.max_total_exposure_pct, 60)),
-          max_industry_exposure_pct: Math.min(20, safeNumber(options.max_industry_exposure_pct, 25)),
+          max_industry_exposure_pct: Math.min(
+            20,
+            safeNumber(options.max_industry_exposure_pct, 25)
+          ),
           min_cash_reserve_pct: Math.max(12, safeNumber(options.min_cash_reserve_pct, 8)),
           max_portfolio_drawdown_pct: Math.min(
             10,
@@ -1483,9 +1487,9 @@ export class QuantFusionService {
         .map(row => taskById.get(Number(row.task_id)))
         .filter(Boolean)
         .sort((a, b) => String(b?.created_at || '').localeCompare(String(a?.created_at || '')))[0];
-      const reason = `近${rows.length}个回测分片，平均收益${avgReturn >= 0 ? '+' : ''}${avgReturn}%、超额${
-        avgExcess >= 0 ? '+' : ''
-      }${avgExcess}%、买入${buyFillCount}次`;
+      const reason = `近${rows.length}个回测分片，平均收益${
+        avgReturn >= 0 ? '+' : ''
+      }${avgReturn}%、超额${avgExcess >= 0 ? '+' : ''}${avgExcess}%、买入${buyFillCount}次`;
       performance.set(strategy_key, {
         strategy_key,
         task_samples: rows.length,
@@ -1716,7 +1720,9 @@ export class QuantFusionService {
             (!Number.isFinite(item.avg_excess_return_pct) || item.avg_excess_return_pct >= 0))
       ) ||
       (consensusCount >= 2 &&
-        strategyAdmissionGate.details.some(item => item.closed_count > 0 || item.sample_count >= 3));
+        strategyAdmissionGate.details.some(
+          item => item.closed_count > 0 || item.sample_count >= 3
+        ));
     const recentBacktestSupport = strategyKeys
       .map(key => recentBacktestPerformanceByStrategy.get(key))
       .filter(Boolean) as StrategyRecentBacktestPerformance[];
@@ -1981,8 +1987,7 @@ export class QuantFusionService {
             strategy_budget_discipline: candidate.strategy_budget_discipline,
             market_environment: candidate.factors?.market_environment,
             regime_adjustments: candidate.factors?.regime_adjustments,
-            recent_backtest_performance_gate:
-              candidate.factors?.recent_backtest_performance_gate,
+            recent_backtest_performance_gate: candidate.factors?.recent_backtest_performance_gate,
           },
           market_environment: candidate.factors?.market_environment,
           suggested_position_pct: candidate.suggested_position_pct,
@@ -2013,8 +2018,7 @@ export class QuantFusionService {
             strategy_budget_action: candidate.strategy_budget_action,
             strategy_budget_confidence: candidate.strategy_budget_confidence,
           },
-          recent_backtest_performance_gate:
-            candidate.factors?.recent_backtest_performance_gate,
+          recent_backtest_performance_gate: candidate.factors?.recent_backtest_performance_gate,
           reasons: candidate.reasons,
           warnings: candidate.risk_flags,
           current_price: candidate.current_price,
@@ -2096,14 +2100,13 @@ export class QuantFusionService {
           symbol: candidate.symbol,
           name: candidate.name,
           score: candidate.score,
-          reason:
-            !['buy', 'watch'].includes(candidate.action)
-              ? '不是买入/观察动作'
-              : candidate.score < options.agent_min_score
-              ? `融合分低于Agent阈值 ${options.agent_min_score}`
-              : candidate.risk_level === 'high'
-              ? '风险等级偏高'
-              : '超过Agent提交上限',
+          reason: !['buy', 'watch'].includes(candidate.action)
+            ? '不是买入/观察动作'
+            : candidate.score < options.agent_min_score
+            ? `融合分低于Agent阈值 ${options.agent_min_score}`
+            : candidate.risk_level === 'high'
+            ? '风险等级偏高'
+            : '超过Agent提交上限',
         });
       }
     }
@@ -2151,8 +2154,7 @@ export class QuantFusionService {
               market_environment: candidate.factors?.market_environment,
               regime_adjustments: candidate.factors?.regime_adjustments,
               quant_review_entry_action: candidate.action,
-              recent_backtest_performance_gate:
-                candidate.factors?.recent_backtest_performance_gate,
+              recent_backtest_performance_gate: candidate.factors?.recent_backtest_performance_gate,
             },
             market_environment: candidate.factors?.market_environment,
             agent_session: options.agent_session || 'close',

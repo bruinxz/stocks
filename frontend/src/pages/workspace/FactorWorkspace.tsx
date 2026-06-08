@@ -18,6 +18,7 @@ import {
   message,
 } from 'antd';
 import {
+  AppstoreOutlined,
   FundOutlined,
   SlidersOutlined,
   OrderedListOutlined,
@@ -25,10 +26,12 @@ import {
   RobotOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons';
+import ReactECharts from 'echarts-for-react';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
 import AIStockAnalysisModal from '../../components/trading/AIStockAnalysisModal';
 import {
   factorService,
+  FactorIndustryHeatmapResponse,
   FactorOverviewItem,
   FactorOverviewResponse,
   FactorPreviewResponse,
@@ -38,16 +41,19 @@ import {
 const { Text } = Typography;
 
 /**
- * 选股因子 (Factor Workspace) — US-015 完整实现。
+ * 选股因子 (Factor Workspace) — US-015 + US-074 行业热力 实现。
  *
- * 3 个 tab：
+ * 4 个 tab：
  *  - 因子总览：8 个因子卡片，展示注册元数据 + factor_scores 表覆盖统计
  *  - 权重调参：8 滑块（自动归一化到 100%）+ "预览" 按钮触发 POST /factors/preview
  *  - 今日选股清单：表格展示 MFA 最近一次调仓结果，可折叠看 8 因子 z_score 明细
+ *  - 行业热力 (US-074)：行业 × 因子的 z_score 平均值 echarts 热力图
  *
  * 数据流：
  *   - 装载时并发拉 /factors/overview + /strategies/multi-factor/latest-picks
  *   - 用户在权重调参 tab 点 "预览" 触发 POST /factors/preview （独立请求，不污染主状态）
+ *   - 行业热力 tab 首次进入时 lazy-fire GET /factors/industry-heatmap；缓存结果，
+ *     刷新按钮 / 切换日期才会再次请求
  *   - 上方 KPI 条总是反映 overview 拉到的最新数据
  *
  * 边缘情况：
@@ -86,6 +92,7 @@ const FactorWorkspace: React.FC = () => {
     { key: 'overview', label: '因子总览', icon: <FundOutlined /> },
     { key: 'weights', label: '权重调参', icon: <SlidersOutlined /> },
     { key: 'picks', label: '今日选股清单', icon: <OrderedListOutlined /> },
+    { key: 'heatmap', label: '行业热力', icon: <AppstoreOutlined /> },
   ];
   const [activeKey, setActiveKey] = useState('overview');
 
@@ -184,6 +191,31 @@ const FactorWorkspace: React.FC = () => {
     setExcludeNew60d(true);
   }, []);
 
+  // --- 行业热力 (US-074) — lazy on first tab activation ---
+  const [heatmap, setHeatmap] = useState<FactorIndustryHeatmapResponse | null>(null);
+  const [heatmapLoading, setHeatmapLoading] = useState(false);
+  const [heatmapError, setHeatmapError] = useState<string | null>(null);
+
+  const loadHeatmap = useCallback(async () => {
+    setHeatmapLoading(true);
+    setHeatmapError(null);
+    try {
+      const data = await factorService.getIndustryHeatmap();
+      setHeatmap(data);
+    } catch (err: unknown) {
+      const messageStr = err instanceof Error ? err.message : String(err);
+      setHeatmapError(messageStr);
+    } finally {
+      setHeatmapLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeKey !== 'heatmap') return;
+    if (heatmap || heatmapLoading || heatmapError) return;
+    void loadHeatmap();
+  }, [activeKey, heatmap, heatmapLoading, heatmapError, loadHeatmap]);
+
   // --- KPI 计算 ---
   const totalUniverse = useMemo(() => {
     if (!overview?.factors?.length) return 0;
@@ -247,6 +279,15 @@ const FactorWorkspace: React.FC = () => {
         onExcludeNew60dChange={setExcludeNew60d}
         onPreview={handlePreview}
         onReset={handleResetWeights}
+      />
+    );
+  } else if (activeKey === 'heatmap') {
+    body = (
+      <IndustryHeatmapTab
+        data={heatmap}
+        loading={heatmapLoading}
+        error={heatmapError}
+        onReload={loadHeatmap}
       />
     );
   } else {
@@ -650,6 +691,182 @@ const PicksTab: React.FC<{
     </Card>
   );
 };
+
+// ============================================================================
+// Tab 4 — 行业热力 (US-074)
+// ============================================================================
+
+/**
+ * IndustryHeatmapTab — echarts heatmap：行业 × 因子的 z_score 平均值。
+ *
+ * 视觉编码：
+ *   - 横轴：所有已注册因子（数量与因子总览一致）
+ *   - 纵轴：申万一级行业（按"行业 × 全因子 z 总和"降序——最受多因子青睐的行业排顶）
+ *   - 颜色：z_score 平均值；负值红、正值绿、中性灰白；visualMap 对称 [-1.5, 1.5]
+ *
+ * 边缘情况：
+ *   - factor_scores 表空 / 当日无数据 → 显示 Empty + 后端 note 文案
+ *   - 行业有效格 < 1 → Alert 提示前端只能给出有限信息
+ *   - 加载失败 → 顶部 Alert + 重试按钮（保留旧成功数据以减少闪烁）
+ */
+const IndustryHeatmapTab: React.FC<{
+  data: FactorIndustryHeatmapResponse | null;
+  loading: boolean;
+  error: string | null;
+  onReload: () => void;
+}> = ({ data, loading, error, onReload }) => {
+  // 计算 heatmap 高度：每个行业 ~28px，留 100px 给坐标轴 / 标题，最少 360px
+  const chartHeight = useMemo(() => {
+    const rows = data?.industries.length ?? 0;
+    return Math.max(360, Math.min(rows * 28 + 100, 1200));
+  }, [data?.industries.length]);
+
+  const option = useMemo(() => buildHeatmapOption(data), [data]);
+
+  if (loading && !data) {
+    return (
+      <Card>
+        <div style={{ display: 'flex', justifyContent: 'center', padding: 64 }}>
+          <Spin tip="加载行业热力…" />
+        </div>
+      </Card>
+    );
+  }
+  return (
+    <Space direction="vertical" size={12} style={{ width: '100%' }}>
+      {error && (
+        <Alert
+          type="error"
+          showIcon
+          message="加载行业热力失败"
+          description={error}
+          action={
+            <Button size="small" onClick={onReload}>
+              重试
+            </Button>
+          }
+        />
+      )}
+      <Card
+        title={
+          <Space>
+            <AppstoreOutlined />
+            行业 × 因子热力图
+            {data?.trade_date && <Tag color="blue">{data.trade_date}</Tag>}
+          </Space>
+        }
+        extra={
+          <Space>
+            {data?.universe_size != null && (
+              <Tag color="purple">命中 {data.universe_size} 只</Tag>
+            )}
+            <Button size="small" icon={<ReloadOutlined />} loading={loading} onClick={onReload}>
+              刷新
+            </Button>
+          </Space>
+        }
+      >
+        {!data || data.cells.length === 0 ? (
+          <Empty
+            description={
+              data?.note ||
+              'factor_scores 表为空 — 请先运行 npm run compute:factors -- --date=YYYY-MM-DD'
+            }
+          />
+        ) : (
+          <>
+            <ReactECharts
+              option={option}
+              style={{ width: '100%', height: chartHeight }}
+              notMerge
+              opts={{ renderer: 'canvas' }}
+            />
+            <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 12 }}>
+              颜色越绿 = 该行业在该因子上横截面 z_score 平均值越高；越红越低。
+              所有数值仅基于 raw_value 非空（即该因子有实际计算结果）的股票样本。
+            </Typography.Paragraph>
+          </>
+        )}
+      </Card>
+    </Space>
+  );
+};
+
+/** 构造 echarts heatmap option；data 为 null/空时返回空骨架，避免组件挂载报错 */
+function buildHeatmapOption(data: FactorIndustryHeatmapResponse | null): Record<string, unknown> {
+  if (!data || data.cells.length === 0) {
+    return { series: [] };
+  }
+  const xCategories = data.factors;
+  const yCategories = data.industries;
+  const xIndex = new Map<string, number>();
+  xCategories.forEach((c, i) => xIndex.set(c, i));
+  const yIndex = new Map<string, number>();
+  yCategories.forEach((c, i) => yIndex.set(c, i));
+
+  // 转换成 echarts heatmap 数据：[xIdx, yIdx, value]；过滤越界（防御性）
+  const series: Array<[number, number, number]> = [];
+  let absMax = 0.0001;
+  for (const cell of data.cells) {
+    const x = xIndex.get(cell.factor);
+    const y = yIndex.get(cell.industry);
+    if (x == null || y == null) continue;
+    series.push([x, y, cell.avg_z]);
+    if (Math.abs(cell.avg_z) > absMax) absMax = Math.abs(cell.avg_z);
+  }
+  // visualMap 对称范围：[-max, max]，且最低 1.5（避免极小波动被夸大色彩）
+  const visualBound = Math.max(1.5, Number(absMax.toFixed(2)));
+
+  return {
+    grid: { left: 140, right: 30, top: 50, bottom: 80, containLabel: true },
+    tooltip: {
+      position: 'top',
+      formatter: (params: { value: [number, number, number]; data: [number, number, number] }) => {
+        const [xIdx, yIdx, v] = params.value;
+        const factor = xCategories[xIdx] ?? '';
+        const industry = yCategories[yIdx] ?? '';
+        const cell = data.cells.find(c => c.factor === factor && c.industry === industry);
+        const sample = cell?.sample_size ?? 0;
+        return `${industry}<br/><b>${factor}</b><br/>平均 z = <b>${v.toFixed(3)}</b><br/>样本 ${sample} 只`;
+      },
+    },
+    xAxis: {
+      type: 'category',
+      data: xCategories,
+      splitArea: { show: true },
+      axisLabel: { interval: 0, rotate: 30 },
+    },
+    yAxis: {
+      type: 'category',
+      data: yCategories,
+      splitArea: { show: true },
+      axisLabel: { interval: 0, fontSize: 11 },
+    },
+    visualMap: {
+      min: -visualBound,
+      max: visualBound,
+      calculable: true,
+      orient: 'horizontal',
+      left: 'center',
+      bottom: 10,
+      inRange: {
+        // 红→白→绿 对称色带，与"涨绿跌红"A 股语义保持一致 (z 正 = 因子高 = 看多 = 绿)
+        color: ['#d73027', '#f46d43', '#fdae61', '#fee08b', '#ffffbf', '#d9ef8b', '#a6d96a', '#66bd63', '#1a9850'],
+      },
+    },
+    series: [
+      {
+        name: 'avg_z',
+        type: 'heatmap',
+        data: series,
+        label: { show: false },
+        emphasis: {
+          itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,0,0,0.4)' },
+        },
+      },
+    ],
+  };
+}
 
 // ============================================================================
 // Shared column builders

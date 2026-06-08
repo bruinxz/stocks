@@ -89,7 +89,9 @@ export class TencentFinanceClient {
 
       const payload = response.data;
       if (payload?.code !== 0) {
-        throw new Error(`Tencent Finance API error: code=${payload?.code}, msg=${payload?.msg || ''}`);
+        throw new Error(
+          `Tencent Finance API error: code=${payload?.code}, msg=${payload?.msg || ''}`
+        );
       }
 
       const node = payload?.data?.[tencentCode];
@@ -105,7 +107,10 @@ export class TencentFinanceClient {
       logger.info(`Fetched ${bars.length} daily bars for ${normalizedCode} from Tencent Finance`);
       return bars;
     } catch (error) {
-      logger.error(`Failed to fetch history k data for ${normalizedCode} from Tencent Finance:`, error);
+      logger.error(
+        `Failed to fetch history k data for ${normalizedCode} from Tencent Finance:`,
+        error
+      );
       throw error;
     }
   }

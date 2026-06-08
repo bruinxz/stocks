@@ -14,9 +14,16 @@ const router = Router();
 const authController = new AuthController();
 
 /**
- * @route GET /api/settings/notification-channels
- * @desc 获取当前用户的通知通道配置（飞书 / 邮件 / 微信公众号）(US-063)
- * @access Private
+ * @openapi
+ * /api/settings/notification-channels:
+ *   get:
+ *     tags: [设置 Settings]
+ *     summary: 获取当前用户的通知通道配置 (US-063)
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: 通知通道配置, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessResponse' } } } }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.get(
   '/notification-channels',
@@ -25,9 +32,23 @@ router.get(
 );
 
 /**
- * @route POST /api/settings/notification-channels
- * @desc 更新当前用户的通知通道配置 (US-063)
- * @access Private
+ * @openapi
+ * /api/settings/notification-channels:
+ *   post:
+ *     tags: [设置 Settings]
+ *     summary: 更新当前用户的通知通道配置 (US-063)
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             description: 通知通道配置 (飞书 / 邮件 / 微信)
+ *     responses:
+ *       200: { description: 更新成功, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessResponse' } } } }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.post(
   '/notification-channels',
@@ -36,9 +57,16 @@ router.post(
 );
 
 /**
- * @route POST /api/settings/daily-digest/preview
- * @desc dry-run 预览当前用户当日的飞书日报 payload，不实际推送 (US-063)
- * @access Private
+ * @openapi
+ * /api/settings/daily-digest/preview:
+ *   post:
+ *     tags: [设置 Settings]
+ *     summary: dry-run 预览当日飞书日报 payload (US-063)
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: 预览成功, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessResponse' } } } }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.post(
   '/daily-digest/preview',
@@ -47,9 +75,16 @@ router.post(
 );
 
 /**
- * @route POST /api/settings/daily-digest/send
- * @desc 立即触发推送当前用户当日的飞书日报 (US-063)
- * @access Private
+ * @openapi
+ * /api/settings/daily-digest/send:
+ *   post:
+ *     tags: [设置 Settings]
+ *     summary: 立即触发推送当日飞书日报 (US-063)
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: 推送成功, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessResponse' } } } }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.post(
   '/daily-digest/send',
@@ -58,9 +93,16 @@ router.post(
 );
 
 /**
- * @route POST /api/settings/earnings-forecast/preview
- * @desc dry-run 预览当日业绩预告推送 payload（持仓 + 自选两组），不实际推送 (US-064)
- * @access Private
+ * @openapi
+ * /api/settings/earnings-forecast/preview:
+ *   post:
+ *     tags: [设置 Settings]
+ *     summary: dry-run 预览当日业绩预告推送 payload (US-064)
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: 预览成功, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessResponse' } } } }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.post(
   '/earnings-forecast/preview',
@@ -69,9 +111,16 @@ router.post(
 );
 
 /**
- * @route POST /api/settings/earnings-forecast/scan
- * @desc 立即扫描当前用户持仓 + 自选股业绩预告并实际推送 (US-064)
- * @access Private
+ * @openapi
+ * /api/settings/earnings-forecast/scan:
+ *   post:
+ *     tags: [设置 Settings]
+ *     summary: 扫描持仓与自选股业绩预告并推送 (US-064)
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: 推送成功, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessResponse' } } } }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.post(
   '/earnings-forecast/scan',
@@ -80,16 +129,40 @@ router.post(
 );
 
 /**
- * @route POST /api/settings/email-config
- * @desc 更新邮件通道开关 / 接收地址 / weekly_review 开关 (US-065)
- * @access Private
+ * @openapi
+ * /api/settings/email-config:
+ *   post:
+ *     tags: [设置 Settings]
+ *     summary: 更新邮件通道开关与接收地址 (US-065)
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               enabled: { type: boolean }
+ *               email: { type: string, format: email }
+ *               weekly_review: { type: boolean }
+ *     responses:
+ *       200: { description: 更新成功, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessResponse' } } } }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.post('/email-config', authController.authenticate, settingsController.updateEmailConfig);
 
 /**
- * @route POST /api/settings/weekly-review/preview
- * @desc dry-run 预演上周复盘邮件 payload，不实际发送 (US-065)
- * @access Private
+ * @openapi
+ * /api/settings/weekly-review/preview:
+ *   post:
+ *     tags: [设置 Settings]
+ *     summary: dry-run 预演上周复盘邮件 payload (US-065)
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: 预览成功, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessResponse' } } } }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.post(
   '/weekly-review/preview',
@@ -98,9 +171,16 @@ router.post(
 );
 
 /**
- * @route POST /api/settings/weekly-review/send
- * @desc 立即触发推送上周复盘邮件 (US-065)
- * @access Private
+ * @openapi
+ * /api/settings/weekly-review/send:
+ *   post:
+ *     tags: [设置 Settings]
+ *     summary: 立即触发推送上周复盘邮件 (US-065)
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: 发送成功, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessResponse' } } } }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.post(
   '/weekly-review/send',
@@ -109,9 +189,16 @@ router.post(
 );
 
 /**
- * @route GET /api/settings/wechat-bind-qrcode
- * @desc 生成微信公众号参数二维码 + 落 scene_str 到用户 wechat config (US-066)
- * @access Private
+ * @openapi
+ * /api/settings/wechat-bind-qrcode:
+ *   get:
+ *     tags: [设置 Settings]
+ *     summary: 生成微信公众号绑定参数二维码 (US-066)
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: 二维码 URL 与 scene_str, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessResponse' } } } }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.get(
   '/wechat-bind-qrcode',
@@ -120,9 +207,16 @@ router.get(
 );
 
 /**
- * @route POST /api/settings/wechat-bind-confirm
- * @desc 前端轮询：检查 wechat.openid 是否已被 webhook SCAN 事件填好 (US-066)
- * @access Private
+ * @openapi
+ * /api/settings/wechat-bind-confirm:
+ *   post:
+ *     tags: [设置 Settings]
+ *     summary: 轮询确认微信绑定状态 (US-066)
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: 绑定状态, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessResponse' } } } }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.post(
   '/wechat-bind-confirm',
@@ -131,30 +225,64 @@ router.post(
 );
 
 /**
- * @route POST /api/settings/wechat-config
- * @desc 更新 wechat 通道开关 / 3 类订阅消息开关 (US-066)
- * @access Private
+ * @openapi
+ * /api/settings/wechat-config:
+ *   post:
+ *     tags: [设置 Settings]
+ *     summary: 更新微信通道开关与订阅消息开关 (US-066)
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *     responses:
+ *       200: { description: 更新成功, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessResponse' } } } }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.post('/wechat-config', authController.authenticate, settingsController.updateWeChatConfig);
 
 /**
- * @route POST /api/settings/wechat-unbind
- * @desc 解除微信绑定（清空 openid / bind_scene_str / bound_at）(US-066)
- * @access Private
+ * @openapi
+ * /api/settings/wechat-unbind:
+ *   post:
+ *     tags: [设置 Settings]
+ *     summary: 解除微信绑定 (US-066)
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: 解绑成功, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessResponse' } } } }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.post('/wechat-unbind', authController.authenticate, settingsController.unbindWeChat);
 
 /**
- * @route POST /api/settings/wechat-test
- * @desc 给当前用户发一条测试订阅消息（冒烟测试 access_token + template_id + openid 是否畅通）(US-066)
- * @access Private
+ * @openapi
+ * /api/settings/wechat-test:
+ *   post:
+ *     tags: [设置 Settings]
+ *     summary: 发送测试微信订阅消息 (US-066)
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: 发送成功, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessResponse' } } } }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.post('/wechat-test', authController.authenticate, settingsController.testWeChatMessage);
 
 /**
- * @route POST /api/settings/wechat-bind-simulate
- * @desc 本地开发用：模拟微信扫码 SCAN 事件落 openid（生产由 WechatEventController XML 解析）(US-066)
- * @access Private
+ * @openapi
+ * /api/settings/wechat-bind-simulate:
+ *   post:
+ *     tags: [设置 Settings]
+ *     summary: 本地开发用 - 模拟微信扫码 SCAN 事件 (US-066)
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: 模拟成功, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessResponse' } } } }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.post(
   '/wechat-bind-simulate',
@@ -163,16 +291,40 @@ router.post(
 );
 
 /**
- * @route POST /api/settings/sms-config
- * @desc 更新 SMS 通道开关 / 手机号 / risk_alert 订阅开关 (US-067)
- * @access Private
+ * @openapi
+ * /api/settings/sms-config:
+ *   post:
+ *     tags: [设置 Settings]
+ *     summary: 更新 SMS 通道开关与手机号 (US-067)
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               enabled: { type: boolean }
+ *               phone: { type: string }
+ *               risk_alert: { type: boolean }
+ *     responses:
+ *       200: { description: 更新成功, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessResponse' } } } }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.post('/sms-config', authController.authenticate, settingsController.updateSmsConfig);
 
 /**
- * @route POST /api/settings/sms-test
- * @desc 给当前用户发一条测试短信（冒烟测试阿里云 SMS 是否畅通）(US-067)
- * @access Private
+ * @openapi
+ * /api/settings/sms-test:
+ *   post:
+ *     tags: [设置 Settings]
+ *     summary: 发送测试短信 (US-067)
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: 发送成功, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessResponse' } } } }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
  */
 router.post('/sms-test', authController.authenticate, settingsController.testSmsMessage);
 

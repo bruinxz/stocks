@@ -120,7 +120,11 @@ export class DataService implements IDataService {
   /**
    * 检查是否应该跳过同步（因为最近一次同步返回了空结果）
    */
-  private shouldSkipDueToEmptyResult(symbol: string, start_date: string, end_date: string): boolean {
+  private shouldSkipDueToEmptyResult(
+    symbol: string,
+    start_date: string,
+    end_date: string
+  ): boolean {
     const key = this.getCacheKey(symbol, start_date, end_date);
     const lastEmptyResult = this.emptyResultCache.get(key);
 
@@ -210,7 +214,9 @@ export class DataService implements IDataService {
     }
 
     // 按开始日期排序
-    const sortedRanges = [...ranges].sort((a, b) => a.start_date.getTime() - b.start_date.getTime());
+    const sortedRanges = [...ranges].sort(
+      (a, b) => a.start_date.getTime() - b.start_date.getTime()
+    );
     const merged: { start_date: Date; end_date: Date }[] = [];
     let currentRange = sortedRanges[0];
 
@@ -367,7 +373,11 @@ export class DataService implements IDataService {
     }
   }
 
-  async asyncSupplementMissingData(symbol: string, start_date: Date, end_date: Date): Promise<void> {
+  async asyncSupplementMissingData(
+    symbol: string,
+    start_date: Date,
+    end_date: Date
+  ): Promise<void> {
     try {
       logger.info(`开始异步补充股票 ${symbol} 缺失数据: ${start_date} 到 ${end_date}`);
 

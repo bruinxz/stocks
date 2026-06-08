@@ -32,19 +32,39 @@ export class LiveBrokerAccount extends Model {
   @Column({ type: DataType.STRING(80), allowNull: false, field: 'account_no_masked' })
   declare account_no_masked: string;
 
-  @Column({ type: DataType.STRING(40), allowNull: false, defaultValue: 'read_only', field: 'permission_scope' })
+  @Column({
+    type: DataType.STRING(40),
+    allowNull: false,
+    defaultValue: 'read_only',
+    field: 'permission_scope',
+  })
   declare permission_scope: string;
 
-  @Column({ type: DataType.STRING(40), allowNull: false, defaultValue: 'not_bound', field: 'connection_status' })
+  @Column({
+    type: DataType.STRING(40),
+    allowNull: false,
+    defaultValue: 'not_bound',
+    field: 'connection_status',
+  })
   declare connection_status: string;
 
   @Column({ type: DataType.BOOLEAN, allowNull: false, defaultValue: true, field: 'is_active' })
   declare is_active: boolean;
 
-  @Column({ type: DataType.BOOLEAN, allowNull: false, defaultValue: false, field: 'readonly_enabled' })
+  @Column({
+    type: DataType.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+    field: 'readonly_enabled',
+  })
   declare readonly_enabled: boolean;
 
-  @Column({ type: DataType.BOOLEAN, allowNull: false, defaultValue: false, field: 'trading_enabled' })
+  @Column({
+    type: DataType.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+    field: 'trading_enabled',
+  })
   declare trading_enabled: boolean;
 
   @Column({ type: DataType.DATE, allowNull: true, field: 'last_sync_at' })

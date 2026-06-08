@@ -5,6 +5,7 @@ import { factorRegistry } from '../../quant/factors/FactorRegistry';
 // Side-effect import: register all 8 factors into the singleton (US-010).
 import '../../quant/factors/library';
 import { FactorScore } from '../../models/FactorScore';
+import { Stock } from '../../models/Stock';
 import {
   MultiFactorAlphaStrategy,
   DEFAULT_MULTI_FACTOR_ALPHA_WEIGHTS,
@@ -275,6 +276,190 @@ export class FactorController {
       res.status(500).json({ success: false, message });
     }
   }
+
+  // ---------- GET /api/factors/industry-heatmap ------------------------------
+  /**
+   * 行业 × 因子热力图聚合 (US-074)。
+   *
+   * 给定 trade_date（缺省 = factor_scores 最新一日），返回每个 (industry, factor)
+   * 组合的横截面 z_score 平均值与样本数，前端用 echarts heatmap 渲染。
+   *
+   * Query：
+   *   - date?: YYYY-MM-DD；缺省 = factor_scores 表里最新的 trade_date
+   *
+   * 响应：
+   *   {
+   *     success: true,
+   *     data: {
+   *       trade_date: '2026-06-05' | null,
+   *       factors: string[],              // 横轴（按注册顺序）
+   *       industries: string[],           // 纵轴（按平均分降序，便于"哪个行业最强"扫读）
+   *       cells: [{ industry, factor, avg_z, sample_size }],  // 仅非空格
+   *       universe_size: number,          // 命中 stock_code 数（既在 factor_scores 又在 stocks 表）
+   *       note?: string,                  // factor_scores 为空 / 给定日无数据时的解释
+   *     }
+   *   }
+   *
+   * 设计说明：
+   *   - JOIN factor_scores ↔ stocks 走"在 TS 内 IN-memory 聚合"：当日全市场
+   *     ~4k 股 × 8 因子 = 32k 行 + ~4k 股的 (symbol, industry) 字典，纯
+   *     Sequelize 两次 findAll 足够（毫秒级）。避免 raw SQL 让单元测试用
+   *     fake model 替换更方便。
+   *   - stock_code 与 symbol 的 .SH/.SZ/.BJ 后缀映射复用 MFA 的
+   *     guessStockSymbol → 一处定义、多处使用，与 US-015 的 loadStockMeta
+   *     行为对齐。
+   *   - 行业映射：每个 stock_code 一个 industry 字符串（'其他' 兜底）。无
+   *     industry 字段的股票合并到 '其他' 行，前端 z 值仍参与平均（保留行
+   *     业总览的全集统计）。
+   *   - 排序：横轴按 FactorRegistry 注册顺序（与 overview 一致）；纵轴按
+   *     "全因子平均 z 之和" 降序，让最受多因子青睐的行业排顶。
+   */
+  async getIndustryHeatmap(req: Request, res: Response) {
+    try {
+      // 1) 解析 date 参数
+      const dateParam = typeof req.query.date === 'string' ? req.query.date.trim() : '';
+      let tradeDate: string | null = null;
+      if (dateParam) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
+          res.status(400).json({
+            success: false,
+            message: 'date 必须为 YYYY-MM-DD 格式',
+          });
+          return;
+        }
+        tradeDate = dateParam;
+      } else {
+        tradeDate = await findLatestFactorTradeDate();
+      }
+
+      const registeredFactors = factorRegistry.list().map(f => f.name);
+
+      if (!tradeDate) {
+        res.json({
+          success: true,
+          data: {
+            trade_date: null,
+            factors: registeredFactors,
+            industries: [],
+            cells: [],
+            universe_size: 0,
+            note: 'factor_scores 表为空 — 请先运行 npm run compute:factors -- --date=YYYY-MM-DD',
+          },
+        });
+        return;
+      }
+
+      // 2) 拉当日 factor_scores（仅注册过的因子）
+      const rows = (await FactorScore.findAll({
+        attributes: ['stock_code', 'factor_name', 'z_score'],
+        where: {
+          trade_date: tradeDate,
+          factor_name: { [Op.in]: registeredFactors },
+          raw_value: { [Op.ne]: null }, // 中性行不参与平均
+        },
+        raw: true,
+      })) as unknown as Array<{
+        stock_code: string;
+        factor_name: string;
+        z_score: number | string;
+      }>;
+
+      if (rows.length === 0) {
+        res.json({
+          success: true,
+          data: {
+            trade_date: tradeDate,
+            factors: registeredFactors,
+            industries: [],
+            cells: [],
+            universe_size: 0,
+            note: `${tradeDate} 日 factor_scores 无非中性数据`,
+          },
+        });
+        return;
+      }
+
+      // 3) 拉股票元数据（industry 映射）
+      const uniqueCodes = Array.from(new Set(rows.map(r => r.stock_code)));
+      const symbols = uniqueCodes.map(code => guessSymbolFromCode(code));
+      const stockRows = (await Stock.findAll({
+        attributes: ['symbol', 'industry'],
+        where: { symbol: { [Op.in]: symbols } },
+        raw: true,
+      })) as unknown as Array<{ symbol: string; industry: string | null }>;
+
+      const codeToIndustry = new Map<string, string>();
+      for (const r of stockRows) {
+        const code = stripSymbolSuffix(r.symbol);
+        codeToIndustry.set(code, (r.industry || '').trim() || '其他');
+      }
+
+      // 4) 聚合：(industry, factor) → { sum_z, count }
+      const cellMap = new Map<string, { sum_z: number; count: number }>();
+      const industrySet = new Set<string>();
+      let universeSize = 0;
+      const seenCodes = new Set<string>();
+
+      for (const row of rows) {
+        const industry = codeToIndustry.get(row.stock_code) ?? '其他';
+        industrySet.add(industry);
+        const z = typeof row.z_score === 'string' ? Number(row.z_score) : row.z_score;
+        if (!Number.isFinite(z)) continue;
+        const key = `${industry}|${row.factor_name}`;
+        const prev = cellMap.get(key);
+        if (prev) {
+          prev.sum_z += z;
+          prev.count += 1;
+        } else {
+          cellMap.set(key, { sum_z: z, count: 1 });
+        }
+        if (!seenCodes.has(row.stock_code)) {
+          seenCodes.add(row.stock_code);
+          universeSize += 1;
+        }
+      }
+
+      // 5) 输出 cells + 行业排序（按"行业全因子均值之和"降序）
+      const cells: Array<{
+        industry: string;
+        factor: string;
+        avg_z: number;
+        sample_size: number;
+      }> = [];
+      const industryScoreSum = new Map<string, number>();
+      for (const [key, value] of cellMap.entries()) {
+        const sep = key.indexOf('|');
+        const industry = key.slice(0, sep);
+        const factor = key.slice(sep + 1);
+        const avgZ = value.count > 0 ? value.sum_z / value.count : 0;
+        cells.push({
+          industry,
+          factor,
+          avg_z: Number(avgZ.toFixed(4)),
+          sample_size: value.count,
+        });
+        industryScoreSum.set(industry, (industryScoreSum.get(industry) ?? 0) + avgZ);
+      }
+      const industries = Array.from(industrySet).sort(
+        (a, b) => (industryScoreSum.get(b) ?? 0) - (industryScoreSum.get(a) ?? 0)
+      );
+
+      res.json({
+        success: true,
+        data: {
+          trade_date: tradeDate,
+          factors: registeredFactors,
+          industries,
+          cells,
+          universe_size: universeSize,
+        },
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error('FactorController.getIndustryHeatmap failed:', error);
+      res.status(500).json({ success: false, message });
+    }
+  }
 }
 
 // ---------- helpers --------------------------------------------------------
@@ -317,6 +502,24 @@ function isWeightRecord(value: unknown): value is Record<string, number> {
     if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0) return false;
   }
   return true;
+}
+
+/** "600519" → "600519.SH"，"000001" → "000001.SZ"；已带 . 直接返回。镜像 MFA loadStockMeta 的同名逻辑。 */
+function guessSymbolFromCode(stockCode: string): string {
+  if (!stockCode) return '';
+  if (stockCode.includes('.')) return stockCode;
+  const head = stockCode[0];
+  if (head === '6') return `${stockCode}.SH`;
+  if (head === '0' || head === '3') return `${stockCode}.SZ`;
+  if (head === '4' || head === '8') return `${stockCode}.BJ`;
+  return `${stockCode}.SZ`;
+}
+
+/** "600519.SH" → "600519" */
+function stripSymbolSuffix(symbol: string | null | undefined): string {
+  if (!symbol) return '';
+  const i = symbol.indexOf('.');
+  return i < 0 ? symbol : symbol.slice(0, i);
 }
 
 // Re-export the default weights so factor.routes.ts (and tests) can advertise them

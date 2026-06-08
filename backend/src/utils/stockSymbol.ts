@@ -116,7 +116,11 @@ export function toAKShareDailyCode(symbol: string): string {
     return `sh${normalized}`;
   } else if (normalized.startsWith('0') || normalized.startsWith('3')) {
     return `sz${normalized}`;
-  } else if (normalized.startsWith('8') || normalized.startsWith('4') || normalized.startsWith('9')) {
+  } else if (
+    normalized.startsWith('8') ||
+    normalized.startsWith('4') ||
+    normalized.startsWith('9')
+  ) {
     return `bj${normalized}`;
   }
 
@@ -150,7 +154,11 @@ export function toTushareFormat(symbol: string): string {
     return `${normalized}.SH`;
   } else if (normalized.startsWith('0') || normalized.startsWith('3')) {
     return `${normalized}.SZ`;
-  } else if (normalized.startsWith('8') || normalized.startsWith('4') || normalized.startsWith('9')) {
+  } else if (
+    normalized.startsWith('8') ||
+    normalized.startsWith('4') ||
+    normalized.startsWith('9')
+  ) {
     return `${normalized}.BJ`;
   } else {
     return `${normalized}.SH`;

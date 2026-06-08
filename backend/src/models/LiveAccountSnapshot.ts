@@ -23,16 +23,36 @@ export class LiveAccountSnapshot extends Model {
   @Column({ type: DataType.INTEGER, allowNull: false, field: 'account_id' })
   declare account_id: number;
 
-  @Column({ type: DataType.DECIMAL(18, 2), allowNull: false, defaultValue: 0, field: 'total_asset' })
+  @Column({
+    type: DataType.DECIMAL(18, 2),
+    allowNull: false,
+    defaultValue: 0,
+    field: 'total_asset',
+  })
   declare total_asset: number;
 
-  @Column({ type: DataType.DECIMAL(18, 2), allowNull: false, defaultValue: 0, field: 'available_cash' })
+  @Column({
+    type: DataType.DECIMAL(18, 2),
+    allowNull: false,
+    defaultValue: 0,
+    field: 'available_cash',
+  })
   declare available_cash: number;
 
-  @Column({ type: DataType.DECIMAL(18, 2), allowNull: false, defaultValue: 0, field: 'market_value' })
+  @Column({
+    type: DataType.DECIMAL(18, 2),
+    allowNull: false,
+    defaultValue: 0,
+    field: 'market_value',
+  })
   declare market_value: number;
 
-  @Column({ type: DataType.DECIMAL(18, 2), allowNull: false, defaultValue: 0, field: 'frozen_cash' })
+  @Column({
+    type: DataType.DECIMAL(18, 2),
+    allowNull: false,
+    defaultValue: 0,
+    field: 'frozen_cash',
+  })
   declare frozen_cash: number;
 
   @Column({ type: DataType.DECIMAL(18, 2), allowNull: false, defaultValue: 0, field: 'total_pnl' })

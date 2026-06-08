@@ -271,13 +271,28 @@ function buildExecutionDiscipline(tasks: ScheduledTask[]) {
   for (const task of paramMaintenanceTasks) {
     const params = (task.parameters || {}) as Record<string, any>;
     if (toNumber(params.refresh_limit, 0) < 1000) {
-      addIssue('warn', 'param_refresh_limit_low', `${task.name} 收益刷新上限低于 1000，可能无法覆盖待验证样本。`, task);
+      addIssue(
+        'warn',
+        'param_refresh_limit_low',
+        `${task.name} 收益刷新上限低于 1000，可能无法覆盖待验证样本。`,
+        task
+      );
     }
     if (!Array.isArray(params.horizons) || params.horizons.length < 3) {
-      addIssue('warn', 'param_horizons_incomplete', `${task.name} 未覆盖 1/3/5/10 日等多窗口验证。`, task);
+      addIssue(
+        'warn',
+        'param_horizons_incomplete',
+        `${task.name} 未覆盖 1/3/5/10 日等多窗口验证。`,
+        task
+      );
     }
     if (boolParam(params.dry_run_lifecycle, false)) {
-      addIssue('warn', 'param_lifecycle_dry_run', `${task.name} 生命周期处于 dry-run，不会真正推广/降级/回滚参数。`, task);
+      addIssue(
+        'warn',
+        'param_lifecycle_dry_run',
+        `${task.name} 生命周期处于 dry-run，不会真正推广/降级/回滚参数。`,
+        task
+      );
     }
   }
 
@@ -496,7 +511,14 @@ class QuantRuntimeHealthService {
         })),
       ScheduledTask.findAll({
         where: {
-          type: { [Op.in]: ['QUANT_DAILY_PIPELINE', 'QUANT_OPEN_WATCHDOG', 'REALTIME_QUOTE_SYNC', 'QUANT_PARAM_MAINTENANCE'] },
+          type: {
+            [Op.in]: [
+              'QUANT_DAILY_PIPELINE',
+              'QUANT_OPEN_WATCHDOG',
+              'REALTIME_QUOTE_SYNC',
+              'QUANT_PARAM_MAINTENANCE',
+            ],
+          },
         },
         order: [['cron_expression', 'ASC']],
       }).catch(() => [] as ScheduledTask[]),

@@ -1244,8 +1244,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 73,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026/06/08. MarketBriefService (backend/src/services/MarketBriefService.ts) generates daily AI brief at 08:30 cron + lazy-fill on first access. New MarketBrief model + market_briefs table (one row per trade_date). Routes GET /api/ai/market-brief/today wired in ai.routes.ts → AIAdvisorController.getMarketBriefToday. Frontend services/marketBriefService.ts client + MarketBriefCard component at top of TodayWorkspace shows 5 KPIs (prev_close / today_open / open_pct / northbound / limit_up) + AI one-liner with TradingAgents/heuristic_fallback tag. 135 unit tests pass (fake DataSource isolates DB + axios). Browser verification noted as manual (no dev-browser MCP)."
     },
     {
       "id": "US-074",
@@ -1260,8 +1260,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 74,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026/06/08. Backend: FactorController.getIndustryHeatmap aggregates factor_scores joined with Stock.industry into per-(industry,factor) avg z + sample size; route GET /api/factors/industry-heatmap?date=YYYY-MM-DD wired in factor.routes.ts. Frontend: added echarts ^6.1.0 + echarts-for-react ^3.0.6, factorService.getIndustryHeatmap(), and IndustryHeatmapTab as 4th tab in FactorWorkspace with lazy-load on first activation. Heatmap uses symmetric red-white-green visualMap (z>0 绿 / z<0 红, 与 A 股涨绿跌红语义一致), per-cell tooltip with sample size, industry rows sorted by sum-z-across-factors descending so most-favored industries float to top. Typecheck + lint both exit 0 (backend + frontend). Browser verification noted as manual (no dev-browser MCP)."
     },
     {
       "id": "US-075",
@@ -1274,8 +1274,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 75,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026/06/08. Backend: registered 3 new GET routes ahead of Express's `/backtests/:id/retry` family — `/backtests/:id/drawdown-series`, `/monthly-returns`, `/rolling-sharpe-series?window=N` — wired to existing QuantController.getBacktestDrawdownSeries / getBacktestMonthlyReturns / getBacktestRollingSharpe (already proxied to BacktestEngine → QuantBacktestService.getChampionEquityCurve helpers shipped in earlier iteration). Frontend: extended labService.ts with `getBacktestDrawdownSeries / getBacktestMonthlyReturns / getBacktestRollingSharpeSeries` + 3 typed response interfaces; LabWorkspace `CompareTab` 新增 useEffect 监听 compareResult task_ids 并发 Promise.allSettled 拉 3 套 series（任一 task 失败不阻塞其他，errors map 在对应 Card 顶部 Alert 显示）。3 个新 Card 插在 CompareChartCard 之后 / CompareTableCard 之前：(1) `CompareDrawdownCard` Recharts AreaChart 多 task 叠加 (drawdown_pct 取负显示往下，fillOpacity 0.18，ReferenceLine y=0)；(2) `CompareRollingSharpeCard` Recharts LineChart connectNulls 跳过 window 不足段；(3) `CompareMonthlyReturnsCard` 每 task 一张 echarts heatmap (年×月，红涨绿跌 A 股语义，对称 visualMap 带 floor=2)。共享 helper `mergeSeriesByDate` 把 N task series 合成 Recharts 单 data array (date 共享 X 轴，缺失 null + connectNulls)。Typecheck + lint 全 pass (backend tsc / frontend tsc / eslint quant.routes / eslint labService + LabWorkspace 全 EXIT 0)。Browser verification 手动 (无 dev-browser MCP)。"
     },
     {
       "id": "US-076",

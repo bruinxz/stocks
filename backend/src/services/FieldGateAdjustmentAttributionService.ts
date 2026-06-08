@@ -50,7 +50,9 @@ export class FieldGateAdjustmentAttributionService {
     const delta = after.length && before.length ? afterAvg - beforeAvg : 0;
     const windows = [7, 14, 30].map(days => {
       const end = changedAt + days * 24 * 60 * 60 * 1000;
-      const afterWindow = withTime.filter(item => item.ts >= changedAt && item.ts <= end).slice(0, 20);
+      const afterWindow = withTime
+        .filter(item => item.ts >= changedAt && item.ts <= end)
+        .slice(0, 20);
       const windowAvg = average(afterWindow.map(item => item.excess));
       const windowDelta = afterWindow.length && before.length ? windowAvg - beforeAvg : 0;
       return {
@@ -121,10 +123,9 @@ export class FieldGateAdjustmentAttributionService {
         action: 'caution',
         label: '谨慎沿用',
         confidence: roundNumber(Math.min(0.9, 0.45 + negativeWindows * 0.15), 2),
-        reason: `字段门槛调参后 ${negativeWindows}/${readyWindows.length} 个窗口跑弱，平均变化 ${roundNumber(
-          avgWindowDelta,
-          2
-        )}pct。`,
+        reason: `字段门槛调参后 ${negativeWindows}/${
+          readyWindows.length
+        } 个窗口跑弱，平均变化 ${roundNumber(avgWindowDelta, 2)}pct。`,
       };
     }
     if (positiveWindows >= 2) {
@@ -132,10 +133,9 @@ export class FieldGateAdjustmentAttributionService {
         action: 'support',
         label: '支持沿用',
         confidence: roundNumber(Math.min(0.9, 0.45 + positiveWindows * 0.15), 2),
-        reason: `字段门槛调参后 ${positiveWindows}/${readyWindows.length} 个窗口改善，平均变化 ${roundNumber(
-          avgWindowDelta,
-          2
-        )}pct。`,
+        reason: `字段门槛调参后 ${positiveWindows}/${
+          readyWindows.length
+        } 个窗口改善，平均变化 ${roundNumber(avgWindowDelta, 2)}pct。`,
       };
     }
     return {

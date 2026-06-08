@@ -324,16 +324,16 @@ export class DataUpdateWorker {
     limit = 300
   ): Promise<string[]> {
     try {
-      const targetStart = moment
-        .tz(target_date, 'Asia/Shanghai')
-        .startOf('day')
-        .toDate();
+      const targetStart = moment.tz(target_date, 'Asia/Shanghai').startOf('day').toDate();
       const rows = (await Stock.findAll({
         where: { is_listed: true },
         attributes: [
           'id',
           'symbol',
-          [DailyBar.sequelize!.fn('MAX', DailyBar.sequelize!.col('daily_bars.time')), 'latest_time'],
+          [
+            DailyBar.sequelize!.fn('MAX', DailyBar.sequelize!.col('daily_bars.time')),
+            'latest_time',
+          ],
         ],
         include: [
           {
@@ -962,9 +962,7 @@ export class DataUpdateWorker {
         : totalRows > 0 && noDataRows / totalRows >= 0.35;
 
     if (options.include_no_data === undefined && shouldIncludeNoData) {
-      logger.info(
-        `历史同步检测到行情库覆盖率较低，自动纳入未入库股票: ${noDataRows}/${totalRows}`
-      );
+      logger.info(`历史同步检测到行情库覆盖率较低，自动纳入未入库股票: ${noDataRows}/${totalRows}`);
     }
 
     return rows

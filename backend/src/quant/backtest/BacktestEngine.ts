@@ -69,6 +69,29 @@ export class BacktestEngine {
     return quantBacktestService.compareBacktests(taskIds);
   }
 
+  /**
+   * US-075：回测对比子图 — 冠军策略的回撤序列。
+   * 前端 LabWorkspace "回测对比" tab 下方叠加多任务回撤曲线。
+   */
+  getDrawdownSeries(taskId: number) {
+    return quantBacktestService.getDrawdownSeries(taskId);
+  }
+
+  /**
+   * US-075：回测对比子图 — 冠军策略的月度收益。
+   * 前端按 (year × month) 矩阵渲染热力图。
+   */
+  getMonthlyReturns(taskId: number) {
+    return quantBacktestService.getMonthlyReturns(taskId);
+  }
+
+  /**
+   * US-075：回测对比子图 — 冠军策略的滚动 N 日（默认 90）夏普序列。
+   */
+  getRollingSharpeSeries(taskId: number, windowDays?: number) {
+    return quantBacktestService.getRollingSharpeSeries(taskId, windowDays);
+  }
+
   processTask(
     taskId: number,
     options: any,

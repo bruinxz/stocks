@@ -429,7 +429,7 @@ export class CombinedDataSource {
     end_date: string,
     frequency: 'd' | 'w' | 'm' = 'd',
     adjustflag: '1' | '2' | '3' = '3',
-    preferred_provider: string = 'auto'
+    preferred_provider = 'auto'
   ): Promise<DailyBar[]> {
     const normalizedCode = normalizeSymbol(code);
     const eastMoneyCode = toEastMoneyFormat(normalizedCode);

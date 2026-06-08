@@ -248,11 +248,11 @@ export class SinaFinanceClient {
         const symbol = item.symbol;
         if (!symbol || symbol.length < 6) continue;
 
-        let prefix = symbol.substring(0, 2).toLowerCase();
-        let stockCode = symbol.substring(2);
+        const prefix = symbol.substring(0, 2).toLowerCase();
+        const stockCode = symbol.substring(2);
 
         // Map to our standard format: "sh.600000"
-        let standardCode = `${prefix}.${stockCode}`;
+        const standardCode = `${prefix}.${stockCode}`;
 
         stocks.push({
           code: standardCode,

@@ -4,7 +4,9 @@ import { Stock } from '../../models/Stock';
 import { LiveMarketDataProvider, LiveQuoteSnapshot } from './LiveMarketDataProvider';
 
 function normalizeSymbol(symbol: string): string {
-  const value = String(symbol || '').trim().toUpperCase();
+  const value = String(symbol || '')
+    .trim()
+    .toUpperCase();
   if (/^\d{6}\.(SH|SZ|BJ)$/.test(value)) return value;
   if (/^(SH|SZ|BJ)\.\d{6}$/.test(value)) {
     const [market, code] = value.split('.');
@@ -12,7 +14,11 @@ function normalizeSymbol(symbol: string): string {
   }
   if (/^(SH|SZ|BJ)\d{6}$/.test(value)) return `${value.slice(2)}.${value.slice(0, 2)}`;
   if (/^\d{6}$/.test(value)) {
-    const prefix = value.startsWith('6') ? 'SH' : value.startsWith('8') || value.startsWith('4') ? 'BJ' : 'SZ';
+    const prefix = value.startsWith('6')
+      ? 'SH'
+      : value.startsWith('8') || value.startsWith('4')
+      ? 'BJ'
+      : 'SZ';
     return `${value}.${prefix}`;
   }
   return value;

@@ -7,7 +7,7 @@ async function sync() {
     await sequelize.authenticate();
     await TradingJournal.sync({ alter: true });
     logger.info('TradingJournal synced.');
-    
+
     // Add mock tags and mood to existing journals
     const journals = await TradingJournal.findAll();
     for (const j of journals) {
@@ -15,7 +15,7 @@ async function sync() {
       j.mood = '平静';
       await j.save();
     }
-    
+
     process.exit(0);
   } catch (e) {
     logger.error(e);

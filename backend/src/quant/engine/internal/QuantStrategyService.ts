@@ -11,8 +11,8 @@ function normalizeStrategyKeys(strategy_keys?: string[] | string): string[] {
   const raw = Array.isArray(strategy_keys)
     ? strategy_keys
     : strategy_keys
-      ? String(strategy_keys).split(',')
-      : [];
+    ? String(strategy_keys).split(',')
+    : [];
   return Array.from(
     new Set(raw.map(key => String(key || '').trim()).filter(key => key.length > 0))
   );
@@ -41,12 +41,13 @@ function asObject(value: any): Record<string, any> {
 export class QuantStrategyService {
   private defaultExecutionPolicy(definition: any) {
     return {
-      max_position_pct: definition.risk_level === 'high' ? 4 : definition.risk_level === 'low' ? 8 : 6,
+      max_position_pct:
+        definition.risk_level === 'high' ? 4 : definition.risk_level === 'low' ? 8 : 6,
       default_position_pct: definition.risk_level === 'high' ? 2 : 3,
       candidate_limit: 180,
-      min_score: definition.risk_level === 'high' ? 76 : definition.category === 'multi_factor' ? 68 : 70,
-      allowed_risk_levels:
-        definition.risk_level === 'low' ? ['low', 'medium'] : ['low', 'medium'],
+      min_score:
+        definition.risk_level === 'high' ? 76 : definition.category === 'multi_factor' ? 68 : 70,
+      allowed_risk_levels: definition.risk_level === 'low' ? ['low', 'medium'] : ['low', 'medium'],
     };
   }
 
@@ -70,7 +71,8 @@ export class QuantStrategyService {
       auto_rollback: true,
       promotion_min_completed_samples: definition.risk_level === 'high' ? 18 : 12,
       rollback_min_completed_samples: definition.risk_level === 'high' ? 10 : 8,
-      cooldown_days: definition.risk_level === 'high' ? 20 : definition.risk_level === 'low' ? 10 : 15,
+      cooldown_days:
+        definition.risk_level === 'high' ? 20 : definition.risk_level === 'low' ? 10 : 15,
     };
   }
 

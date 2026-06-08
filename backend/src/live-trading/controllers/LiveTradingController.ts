@@ -38,7 +38,11 @@ class LiveTradingController {
   async getSafety(req: AuthenticatedRequest, res: Response) {
     try {
       const data = liveTradingSafetyService.getStatus();
-      res.json({ success: true, data, message: data.can_submit_orders ? '实盘提交能力处于受限启用状态' : '实盘提交能力默认关闭' });
+      res.json({
+        success: true,
+        data,
+        message: data.can_submit_orders ? '实盘提交能力处于受限启用状态' : '实盘提交能力默认关闭',
+      });
     } catch (error: any) {
       logger.error('获取实盘安全边界失败:', error);
       res.status(500).json({ success: false, message: error.message || '获取实盘安全边界失败' });
@@ -73,7 +77,11 @@ class LiveTradingController {
   async createDraft(req: AuthenticatedRequest, res: Response) {
     try {
       const data = await liveTradingService.createDraft(Number(req.user?.id), req.body || {});
-      res.json({ success: true, data, message: data.risk_check?.conclusion || '实盘订单草稿已创建' });
+      res.json({
+        success: true,
+        data,
+        message: data.risk_check?.conclusion || '实盘订单草稿已创建',
+      });
     } catch (error: any) {
       logger.error('创建实盘订单草稿失败:', error);
       res.status(500).json({ success: false, message: error.message || '创建实盘订单草稿失败' });
@@ -82,11 +90,20 @@ class LiveTradingController {
 
   async createDraftFromCandidate(req: AuthenticatedRequest, res: Response) {
     try {
-      const data = await liveTradingService.createDraftFromCandidate(Number(req.user?.id), req.body || {});
-      res.json({ success: true, data, message: data.risk_check?.conclusion || '策略候选已生成实盘订单草稿' });
+      const data = await liveTradingService.createDraftFromCandidate(
+        Number(req.user?.id),
+        req.body || {}
+      );
+      res.json({
+        success: true,
+        data,
+        message: data.risk_check?.conclusion || '策略候选已生成实盘订单草稿',
+      });
     } catch (error: any) {
       logger.warn('策略候选生成实盘草稿被阻断:', error?.message || error);
-      res.status(400).json({ success: false, message: error.message || '策略候选生成实盘草稿失败' });
+      res
+        .status(400)
+        .json({ success: false, message: error.message || '策略候选生成实盘草稿失败' });
     }
   }
 
@@ -133,7 +150,9 @@ class LiveTradingController {
       res.json({ success: true, data, message: data.summary.conclusion });
     } catch (error: any) {
       logger.error('获取影子执行收益闭环失败:', error);
-      res.status(500).json({ success: false, message: error.message || '获取影子执行收益闭环失败' });
+      res
+        .status(500)
+        .json({ success: false, message: error.message || '获取影子执行收益闭环失败' });
     }
   }
 
@@ -159,13 +178,19 @@ class LiveTradingController {
       res.json({ success: true, data, message: data.summary.conclusion });
     } catch (error: any) {
       logger.error('获取影子预算效果归因失败:', error);
-      res.status(500).json({ success: false, message: error.message || '获取影子预算效果归因失败' });
+      res
+        .status(500)
+        .json({ success: false, message: error.message || '获取影子预算效果归因失败' });
     }
   }
 
   async approveDraft(req: AuthenticatedRequest, res: Response) {
     try {
-      const data = await liveTradingService.approveDraft(Number(req.user?.id), Number(req.params.id), req.body || {});
+      const data = await liveTradingService.approveDraft(
+        Number(req.user?.id),
+        Number(req.params.id),
+        req.body || {}
+      );
       res.json({ success: true, data, message: '实盘订单草稿已确认并提交券商' });
     } catch (error: any) {
       logger.warn('确认实盘订单草稿被阻断:', error?.message || error);
@@ -175,7 +200,11 @@ class LiveTradingController {
 
   async rejectDraft(req: AuthenticatedRequest, res: Response) {
     try {
-      const data = await liveTradingService.rejectDraft(Number(req.user?.id), Number(req.params.id), req.body?.reason);
+      const data = await liveTradingService.rejectDraft(
+        Number(req.user?.id),
+        Number(req.params.id),
+        req.body?.reason
+      );
       res.json({ success: true, data, message: '实盘订单草稿已拒绝' });
     } catch (error: any) {
       logger.error('拒绝实盘订单草稿失败:', error);
@@ -185,7 +214,10 @@ class LiveTradingController {
 
   async syncReadonly(req: AuthenticatedRequest, res: Response) {
     try {
-      const data = await liveTradingService.syncReadonlyAccount(Number(req.user?.id), req.body || {});
+      const data = await liveTradingService.syncReadonlyAccount(
+        Number(req.user?.id),
+        req.body || {}
+      );
       res.json({ success: true, data, message: '实盘只读账户同步完成' });
     } catch (error: any) {
       logger.warn('实盘只读账户同步被阻断:', error?.message || error);
@@ -195,7 +227,10 @@ class LiveTradingController {
 
   async getAuditLogs(req: AuthenticatedRequest, res: Response) {
     try {
-      const data = await liveTradingService.getAuditLogs(Number(req.user?.id), req.query.limit ? Number(req.query.limit) : 50);
+      const data = await liveTradingService.getAuditLogs(
+        Number(req.user?.id),
+        req.query.limit ? Number(req.query.limit) : 50
+      );
       res.json({ success: true, data });
     } catch (error: any) {
       logger.error('获取实盘审计日志失败:', error);

@@ -35,7 +35,9 @@ export class DonchianTrendStrategy extends QuantStrategy {
     const latestClose = last(closes) || Number(context.latest_price || 0);
     const entryWindow = Number(params.entry_window);
     const exitWindow = Number(params.exit_window);
-    const previousEntryHigh = Math.max(...highs.slice(Math.max(0, highs.length - entryWindow - 1), -1));
+    const previousEntryHigh = Math.max(
+      ...highs.slice(Math.max(0, highs.length - entryWindow - 1), -1)
+    );
     const previousExitLow = Math.min(...lows.slice(Math.max(0, lows.length - exitWindow - 1), -1));
     const ma50 = last(sma(closes, 50)) || latestClose;
     const ma100 = last(sma(closes, 100)) || ma50;

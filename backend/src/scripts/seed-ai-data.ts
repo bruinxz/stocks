@@ -30,7 +30,7 @@ async function seedData() {
         score: 95.5,
         rationale: '基本面稳健，Q1业绩超预期，北向资金持续流入，MACD金叉，AI综合评分极高。',
         decision: 'STRONG_BUY',
-        scores: { technical: 95, fundamental: 96, sentiment: 94 }
+        scores: { technical: 95, fundamental: 96, sentiment: 94 },
       },
       {
         date: todayStr,
@@ -39,7 +39,7 @@ async function seedData() {
         score: 88.0,
         rationale: '新能源汽车销量持续霸榜，电池技术有新突破，目前处于技术面支撑位。',
         decision: 'BUY',
-        scores: { technical: 85, fundamental: 92, sentiment: 88 }
+        scores: { technical: 85, fundamental: 92, sentiment: 88 },
       },
       {
         date: todayStr,
@@ -48,7 +48,7 @@ async function seedData() {
         score: 82.5,
         rationale: '寿险改革成效显现，估值处于历史低位，具备较高的安全边际。',
         decision: 'BUY',
-        scores: { technical: 80, fundamental: 85, sentiment: 83 }
+        scores: { technical: 80, fundamental: 85, sentiment: 83 },
       },
       {
         date: todayStr,
@@ -57,8 +57,8 @@ async function seedData() {
         score: 75.0,
         rationale: '消费复苏预期增强，但短期面临库存压力，建议逢低吸纳。',
         decision: 'HOLD',
-        scores: { technical: 70, fundamental: 80, sentiment: 75 }
-      }
+        scores: { technical: 70, fundamental: 80, sentiment: 75 },
+      },
     ]);
     logger.info('Seeded DailyScreener data.');
 
@@ -88,7 +88,7 @@ async function seedData() {
         level: 'HIGH',
         message: '跌破重要支撑位(MA60)，短期趋势可能转弱。',
         is_read: false,
-      }
+      },
     ]);
     logger.info('Seeded RiskAlert data.');
 
@@ -98,17 +98,23 @@ async function seedData() {
       {
         user_id: user.id,
         date: todayStr,
-        market_summary: '今天大盘整体震荡，上证指数微跌0.1%，深证成指上涨0.2%。新能源板块表现活跃，白酒板块出现调整。',
-        portfolio_analysis: '持仓的消费股表现一般，贵州茅台小幅回撤。加仓的比亚迪带来了一定收益。平安银行触发了止损告警，建议关注明日走势，如继续跌破支撑位建议减仓。',
-        action_plan: '1. 密切关注平安银行的走势，跌破10元果断止损；\n2. 观察新能源板块的持续性，寻找加仓机会；\n3. 整体保持5成仓位，控制风险。'
+        market_summary:
+          '今天大盘整体震荡，上证指数微跌0.1%，深证成指上涨0.2%。新能源板块表现活跃，白酒板块出现调整。',
+        portfolio_analysis:
+          '持仓的消费股表现一般，贵州茅台小幅回撤。加仓的比亚迪带来了一定收益。平安银行触发了止损告警，建议关注明日走势，如继续跌破支撑位建议减仓。',
+        action_plan:
+          '1. 密切关注平安银行的走势，跌破10元果断止损；\n2. 观察新能源板块的持续性，寻找加仓机会；\n3. 整体保持5成仓位，控制风险。',
       },
       {
         user_id: user.id,
         date: new Date(today.getTime() - 24 * 60 * 60 * 1000).toISOString().split('T')[0], // 昨天
-        market_summary: '市场情绪有所回暖，北向资金净流入超过50亿。大金融板块护盘，科技股冲高回落。',
-        portfolio_analysis: '按照计划加仓了贵州茅台，成本控制在合理区间。招商银行出现放量上涨，持仓浮盈增加。',
-        action_plan: '1. 贵州茅台继续持有，观察能否突破前期高点；\n2. 部分科技股短期涨幅过大，可能面临回调风险，暂时不碰；\n3. 留意明日宏观经济数据的发布。'
-      }
+        market_summary:
+          '市场情绪有所回暖，北向资金净流入超过50亿。大金融板块护盘，科技股冲高回落。',
+        portfolio_analysis:
+          '按照计划加仓了贵州茅台，成本控制在合理区间。招商银行出现放量上涨，持仓浮盈增加。',
+        action_plan:
+          '1. 贵州茅台继续持有，观察能否突破前期高点；\n2. 部分科技股短期涨幅过大，可能面临回调风险，暂时不碰；\n3. 留意明日宏观经济数据的发布。',
+      },
     ]);
     logger.info('Seeded TradingJournal data.');
 

@@ -33,7 +33,12 @@ export class LiveOrderDraft extends Model {
   @Column({ type: DataType.STRING(10), allowNull: false })
   declare side: 'BUY' | 'SELL';
 
-  @Column({ type: DataType.STRING(30), allowNull: false, defaultValue: 'LIMIT', field: 'order_type' })
+  @Column({
+    type: DataType.STRING(30),
+    allowNull: false,
+    defaultValue: 'LIMIT',
+    field: 'order_type',
+  })
   declare order_type: string;
 
   @Column({ type: DataType.INTEGER, allowNull: false })
@@ -42,13 +47,28 @@ export class LiveOrderDraft extends Model {
   @Column({ type: DataType.DECIMAL(12, 4), allowNull: false, field: 'limit_price' })
   declare limit_price: number;
 
-  @Column({ type: DataType.DECIMAL(18, 2), allowNull: false, defaultValue: 0, field: 'estimated_amount' })
+  @Column({
+    type: DataType.DECIMAL(18, 2),
+    allowNull: false,
+    defaultValue: 0,
+    field: 'estimated_amount',
+  })
   declare estimated_amount: number;
 
-  @Column({ type: DataType.STRING(30), allowNull: false, defaultValue: 'preview', comment: 'preview/pending/approved/rejected/submitted/expired/blocked' })
+  @Column({
+    type: DataType.STRING(30),
+    allowNull: false,
+    defaultValue: 'preview',
+    comment: 'preview/pending/approved/rejected/submitted/expired/blocked',
+  })
   declare status: string;
 
-  @Column({ type: DataType.STRING(50), allowNull: false, defaultValue: 'manual', field: 'source_type' })
+  @Column({
+    type: DataType.STRING(50),
+    allowNull: false,
+    defaultValue: 'manual',
+    field: 'source_type',
+  })
   declare source_type: string;
 
   @Column({ type: DataType.STRING(100), allowNull: true, field: 'source_id' })
@@ -57,7 +77,12 @@ export class LiveOrderDraft extends Model {
   @Column({ type: DataType.TEXT, allowNull: true })
   declare rationale?: string;
 
-  @Column({ type: DataType.STRING(30), allowNull: false, defaultValue: 'medium', field: 'risk_level' })
+  @Column({
+    type: DataType.STRING(30),
+    allowNull: false,
+    defaultValue: 'medium',
+    field: 'risk_level',
+  })
   declare risk_level: string;
 
   @Column({ type: DataType.JSONB, allowNull: false, defaultValue: {}, field: 'risk_check' })
@@ -66,7 +91,12 @@ export class LiveOrderDraft extends Model {
   @Column({ type: DataType.JSONB, allowNull: false, defaultValue: {}, field: 'quote_snapshot' })
   declare quote_snapshot: Record<string, any>;
 
-  @Column({ type: DataType.STRING(80), allowNull: false, defaultValue: 'CONFIRM_LIVE_ORDER', field: 'confirm_text_required' })
+  @Column({
+    type: DataType.STRING(80),
+    allowNull: false,
+    defaultValue: 'CONFIRM_LIVE_ORDER',
+    field: 'confirm_text_required',
+  })
   declare confirm_text_required: string;
 
   @Column({ type: DataType.INTEGER, allowNull: true, field: 'approved_by' })

@@ -95,14 +95,13 @@ dataUpdateQueue.on('completed', (job, result) => {
       );
       const failedItems = Number(result?.failedSyncs ?? result?.failed ?? 0);
       const isSkipped = Boolean(result?.skipped);
-      const completedItems =
-        isSkipped
-          ? 0
-          : result?.successfulSyncs !== undefined
-          ? Number(result.successfulSyncs) + Number(result?.skippedSyncs || 0)
-          : failedItems > 0 && totalItems > 0
-          ? Math.max(totalItems - failedItems, 0)
-          : totalItems;
+      const completedItems = isSkipped
+        ? 0
+        : result?.successfulSyncs !== undefined
+        ? Number(result.successfulSyncs) + Number(result?.skippedSyncs || 0)
+        : failedItems > 0 && totalItems > 0
+        ? Math.max(totalItems - failedItems, 0)
+        : totalItems;
 
       const log = await TaskExecutionLog.findByPk(job.data.execution_log_id);
       if (log) {
@@ -113,12 +112,11 @@ dataUpdateQueue.on('completed', (job, result) => {
           total_items: isSkipped ? 0 : totalItems,
           completed_items: completedItems,
           failed_items: failedItems,
-          error_message:
-            isSkipped
-              ? result?.message || result?.reason || '队列任务已跳过'
-              : failedItems > 0
-              ? `数据更新队列部分失败：${failedItems}/${totalItems}`
-              : null,
+          error_message: isSkipped
+            ? result?.message || result?.reason || '队列任务已跳过'
+            : failedItems > 0
+            ? `数据更新队列部分失败：${failedItems}/${totalItems}`
+            : null,
           completed_at: new Date(),
         });
       }

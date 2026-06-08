@@ -12,7 +12,10 @@ export class StockProfileController {
         return res.status(400).json({ success: false, message: 'symbols 不能为空' });
       }
 
-      const result = await dataSyncService.syncStockProfiles(symbols, Math.min(Number(limit) || 30, 50));
+      const result = await dataSyncService.syncStockProfiles(
+        symbols,
+        Math.min(Number(limit) || 30, 50)
+      );
       res.json({ success: true, data: result });
     } catch (error: any) {
       logger.error('补全股票画像失败:', error);

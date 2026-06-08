@@ -839,8 +839,10 @@ export class TaskAutomationHealthService {
       latestLoop?.risk_profile_gate?.threshold_version || null;
     const fieldGateConfig = this.resolveRiskThresholdFieldGateConfig(tasks);
     const fieldGateAdvice = this.buildRiskThresholdFieldGateAdvice(snapshots, fieldGateConfig);
-    const fieldGateAdjustmentAttribution =
-      this.buildFieldGateAdjustmentAttributionFromSnapshots(tasks, snapshots);
+    const fieldGateAdjustmentAttribution = this.buildFieldGateAdjustmentAttributionFromSnapshots(
+      tasks,
+      snapshots
+    );
     if (!suggestion?.limits || !Object.keys(suggestion.limits).length) {
       return {
         action: 'observe',
@@ -890,7 +892,10 @@ export class TaskAutomationHealthService {
     return riskThresholdStabilityService.buildFromSnapshots(snapshots, {}, config);
   }
 
-  private buildFieldGateAdjustmentAttributionFromSnapshots(tasks: any[] = [], snapshots: any[] = []) {
+  private buildFieldGateAdjustmentAttributionFromSnapshots(
+    tasks: any[] = [],
+    snapshots: any[] = []
+  ) {
     const sourceTask =
       tasks.find(task => task.type === 'AUTO_RECOMMENDATION_LOOP') ||
       tasks.find(task => task.type === 'QUANT_DAILY_PIPELINE') ||
@@ -914,9 +919,7 @@ export class TaskAutomationHealthService {
       const actionable = history.filter(item =>
         ['tighten', 'relax'].includes(String(item.action || ''))
       );
-      const confidences = actionable
-        .map(item => Number(item.confidence))
-        .filter(Number.isFinite);
+      const confidences = actionable.map(item => Number(item.confidence)).filter(Number.isFinite);
       const sampleCounts = actionable
         .map(item => Number(item.sample_count))
         .filter(Number.isFinite);
@@ -970,10 +973,10 @@ export class TaskAutomationHealthService {
           2
         )}、样本 ${roundNumber(avgSampleCount, 1)}），可观察性小幅放松。`;
       } else {
-        reason = `字段信号质量一般（平均置信 ${roundNumber(
-          avgConfidence,
-          2
-        )}、样本 ${roundNumber(avgSampleCount, 1)}），建议保持当前字段级门槛。`;
+        reason = `字段信号质量一般（平均置信 ${roundNumber(avgConfidence, 2)}、样本 ${roundNumber(
+          avgSampleCount,
+          1
+        )}），建议保持当前字段级门槛。`;
       }
 
       return {
@@ -1040,10 +1043,7 @@ export class TaskAutomationHealthService {
         Number.isFinite(minConsecutive) && minConsecutive > 0
           ? Math.floor(minConsecutive)
           : FIELD_STABILITY_MIN_CONSECUTIVE,
-      min_confidence: this.resolvePositiveNumber(
-        params.risk_threshold_field_min_confidence,
-        0.45
-      ),
+      min_confidence: this.resolvePositiveNumber(params.risk_threshold_field_min_confidence, 0.45),
       min_sample_count: this.resolvePositiveInt(params.risk_threshold_field_min_sample_count, 3),
       min_triggered_count: this.resolvePositiveInt(
         params.risk_threshold_field_min_triggered_count,
@@ -1348,7 +1348,9 @@ export class TaskAutomationHealthService {
       {
         level,
         code: 'runtime_schema_health',
-        message: `生产数据库运行时 schema 健康异常：${messages.join('，') || runtimeSchemaHealth.status}`,
+        message: `生产数据库运行时 schema 健康异常：${
+          messages.join('，') || runtimeSchemaHealth.status
+        }`,
       },
     ];
   }
@@ -1365,7 +1367,9 @@ export class TaskAutomationHealthService {
         '先修复生产数据库 public schema / 表 / 序列权限，否则定时任务日志、量化推荐或模拟盘写入可能失败。'
       );
     } else if (runtimeSchemaHealth?.status === 'warning') {
-      actions.push('建议运行数据库权限迁移，消除历史 owner 不一致，降低后续 Sequelize alter 和任务写入噪音。');
+      actions.push(
+        '建议运行数据库权限迁移，消除历史 owner 不一致，降低后续 Sequelize alter 和任务写入噪音。'
+      );
     }
     const criticalChains = chains.filter(item => item.status === 'critical');
     if (criticalChains.length > 0) {

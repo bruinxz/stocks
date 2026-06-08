@@ -145,7 +145,9 @@ class RuntimeSchemaHealthService {
           level: critical ? 'critical' : 'warning',
           code: critical ? 'critical_table_privilege_gap' : 'optional_table_privilege_gap',
           table_name: tableName,
-          message: `${critical ? '关键' : '可选'}运行表权限不足：${tableName} 缺少 ${missingPrivileges
+          message: `${
+            critical ? '关键' : '可选'
+          }运行表权限不足：${tableName} 缺少 ${missingPrivileges
             .map(item => item.toUpperCase())
             .join('/')}`,
         });
@@ -171,7 +173,9 @@ class RuntimeSchemaHealthService {
           code: column.critical ? 'critical_column_missing' : 'optional_column_missing',
           table_name: column.table_name,
           column_name: column.column_name,
-          message: `${column.critical ? '关键' : '可选'}运行字段缺失：${column.table_name}.${column.column_name}`,
+          message: `${column.critical ? '关键' : '可选'}运行字段缺失：${column.table_name}.${
+            column.column_name
+          }`,
         });
       }
     }
