@@ -17,6 +17,7 @@ export class MovingAverageTrendStrategy extends QuantStrategy {
     enabled: true,
     risk_level: 'medium',
     tags: ['趋势', '均线', '右侧'],
+    style: 'momentum',
   };
 
   evaluate(context: QuantStockContext, options?: QuantStrategyRuntimeOptions): QuantSignalResult {

@@ -857,7 +857,7 @@ results），per-result 失败隔离。
 计算每个行业的 contribution_pct / win_rate / avg_hold_days / trade_count，让 ops 一眼看出
 "策略 alpha 是哪些行业贡献的"。
 
-### 6 事后分析家族对比（US-040..US-046）
+### 7 事后分析家族对比（US-040..US-046 + US-085）
 
 | 模块 | 输入维度 | 输出维度 | 关键问题 |
 |------|---------|---------|---------|
@@ -867,6 +867,7 @@ results），per-result 失败隔离。
 | US-043 MonteCarlo | trade returns reshuffle | 收益/dd/sharpe 分位数 | 历史表现是不是巧合 |
 | US-044 PortfolioOptimizer | multi-strategy daily returns | 最优权重 + 组合 sharpe | 怎么组合多个策略最优 |
 | US-045 Benchmark | equity_curve + benchmark | alpha/beta/IR/excess | 是 alpha 还是 beta |
+| **US-085 CostSensitivity** | **base backtest + 3 档 commission** | **per (strategy × cost) annual_return/sharpe/turnover** | **策略对手续费有多敏感** |
 | **US-046 Industry** | **trades + Stock.industry** | **per-industry contribution/win_rate** | **alpha 来自哪些行业** |
 
 ### 9 个 design constraints（与既有 5 个分析模块判据一致）

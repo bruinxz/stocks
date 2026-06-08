@@ -306,6 +306,7 @@ export class CTA100MomentumStrategy extends QuantStrategy {
     enabled: true,
     risk_level: 'high',
     tags: ['中证1000', '小盘', '动量', '月度轮动', '行业中性'],
+    style: 'small_cap_growth',
   };
 
   private readonly dataSource: CTA100MomentumDataSource;

@@ -527,6 +527,7 @@ export class HighDividendValueStrategy extends QuantStrategy {
     enabled: true,
     risk_level: 'low',
     tags: ['价值', '股息', '低 PE', '长线', '季度调仓'],
+    style: 'high_yield_defensive',
   };
 
   private readonly dataSource: HighDividendValueDataSource;

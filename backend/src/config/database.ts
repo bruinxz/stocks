@@ -56,6 +56,7 @@ import { OptimizationRun } from '../models/OptimizationRun';
 import { OptimizationResult } from '../models/OptimizationResult';
 import { WalkForwardResult } from '../models/WalkForwardResult';
 import { RegimeBacktestResult } from '../models/RegimeBacktestResult';
+import { CostSensitivityResult } from '../models/CostSensitivityResult';
 import { FactorICResult } from '../models/FactorICResult';
 import { FactorCorrelationResult } from '../models/FactorCorrelationResult';
 import { MonteCarloResult } from '../models/MonteCarloResult';
@@ -156,6 +157,7 @@ const sequelize = new Sequelize({
     OptimizationResult,
     WalkForwardResult,
     RegimeBacktestResult,
+    CostSensitivityResult,
     FactorICResult,
     FactorCorrelationResult,
     MonteCarloResult,

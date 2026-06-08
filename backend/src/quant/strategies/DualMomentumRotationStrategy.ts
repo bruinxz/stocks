@@ -23,6 +23,7 @@ export class DualMomentumRotationStrategy extends QuantStrategy {
     enabled: true,
     risk_level: 'medium',
     tags: ['双动量', '轮动', '相对强弱'],
+    style: 'momentum',
   };
 
   evaluate(context: QuantStockContext, options?: QuantStrategyRuntimeOptions): QuantSignalResult {

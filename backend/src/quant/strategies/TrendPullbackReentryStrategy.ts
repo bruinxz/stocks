@@ -23,6 +23,7 @@ export class TrendPullbackReentryStrategy extends QuantStrategy {
     enabled: true,
     risk_level: 'medium',
     tags: ['趋势低吸', '均线回踩', 'RSI修复'],
+    style: 'momentum',
   };
 
   evaluate(context: QuantStockContext, options?: QuantStrategyRuntimeOptions): QuantSignalResult {

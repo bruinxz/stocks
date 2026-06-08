@@ -7248,3 +7248,186 @@ US-083 三层 dry-run 模式实现（QuantStrategy 基类 dryRun 字段、QuantS
 ### 后续 stories 待办
 仍有 US-084..US-100 共 17 个 story 待实现，下次 ralph iteration 接 US-084 BenchmarkSelector。
 ---
+
+## 2026/06/09 - US-084 回测：基准动态选择（默认按策略风格自动匹配）
+
+### 实现
+新增 `BenchmarkSelector` 模块，让 `QuantBacktestService.resolveBenchmarkReturn`
+在用户未显式传 `benchmark_symbol` 时按策略风格自动匹配基准指数，停止用沪深 300
+"误参照"中证 1000 / 中证 500 类策略。
+
+**关键设计**:
+1. **`QuantStrategyDefinition.style?: StrategyStyle`** —— 在
+   `backend/src/quant/types/QuantTypes.ts` 新增 12 种风格枚举（large_cap_value /
+   large_cap_growth / small_cap_growth / mid_cap_balanced / sector_rotation /
+   multi_factor_alpha / momentum / mean_reversion / low_volatility /
+   short_term_event_driven / high_yield_defensive / ensemble）作为基准选择的
+   **唯一标准信号**——比 tags 更明确、比 risk_level 粒度更细。**字段为可选**
+   保证既有策略 / 第三方扩展不破坏类型契约。
+2. **`backend/src/quant/backtest/BenchmarkSelector.ts`** 5 个 export：
+   - 常量 `DEFAULT_BENCHMARK_SYMBOL = 'sh.000300'` 和 `STYLE_BENCHMARK_MAP`
+     (12-key freezed Record，map 顺序决定 tie-break 优先级，沪深 300 优先)。
+   - `inferStyleFromTags(tags)`：tags-based heuristic 兜底（强信号 > 弱信号
+     优先级链），找不到返回 null。
+   - `pickBenchmarkForDefinition(def)`：单策略 → benchmark（style 优先 → tags
+     兜底 → DEFAULT）。
+   - `pickBenchmarkForDefinitions(defs[])`：多策略 → benchmark（多数 vote +
+     map 顺序 tie-break）。
+   - `selectBenchmarkForStrategyKeys(keys, dataSource?)`：主入口，DataSource
+     注入式（生产 lazy require `strategyRegistry`；测试用 fake stub 完全脱 DB）。
+3. **`QuantBacktestService.resolveBenchmarkReturn` 改用 `||` 短路**：
+   `options.benchmark_symbol || selectBenchmarkForStrategyKeys(options.strategy_keys)`
+   ——用户显式 override > 自动选 > BenchmarkSelector 内部 fallback DEFAULT。
+4. **29 个策略 definition 全部加 explicit style**：
+   - 小盘 (`small_cap_growth`): cta100_momentum
+   - 短线事件 (`short_term_event_driven`): dragon_head_momentum /
+     game_trader_relay / linkage_strategy
+   - 高股息 (`high_yield_defensive`): high_dividend_value
+   - 行业轮动 (`sector_rotation`): sector_rotation_leader
+   - 多因子 (`multi_factor_alpha`): multi_factor_alpha / multi_factor_ranking /
+     quality_momentum_blend
+   - 低波 (`low_volatility`): low_volatility_quality
+   - 动量 (`momentum`): ma_trend / macd_trend / donchian_trend /
+     minervini_trend_template / turtle_breakout / breakout_atr /
+     breakout_strategy / volatility_contraction_breakout /
+     volume_price_confirmation / relative_strength_momentum /
+     dual_momentum_rotation / trend_pullback_reentry
+   - 反转 (`mean_reversion`): rsi_reversion / bollinger_reversion /
+     left_side_reversal
+   - 中盘事件 (`mid_cap_balanced`): earnings_surprise
+   - 大盘价值 (`large_cap_value`): northbound_follow
+   - 大盘成长 (`large_cap_growth`): garp_strategy
+   - meta (`ensemble`): ensemble_strategy
+
+### 文件改动
+- backend/src/quant/types/QuantTypes.ts (M) - 新增 StrategyStyle 联合类型 + style 字段
+- backend/src/quant/backtest/BenchmarkSelector.ts (A, 175 行)
+- backend/src/quant/backtest/internal/QuantBacktestService.ts (M) - 替换硬编码 'sh.000300'
+- 29 个 strategy file (M) - 各加一行 `style: '...'`
+- backend/src/quant/strategies/CLAUDE.md (M) - 新增 "策略 `style` 字段（US-084）" 一节
+- backend/tests/backtest/benchmark-selector.test.ts (A, 380 行) - 99 测试全过
+
+### 质量检查
+- `cd backend && npx tsc --noEmit` → EXIT=0 clean
+- `npx ts-node --transpile-only tests/backtest/benchmark-selector.test.ts` → 99 pass / 0 fail
+- 回归 smoke：GridSearchOptimizer.test.ts (100/0) / regime-segmented-backtest.test.ts (136/0) /
+  MultiFactorAlphaStrategy.test.ts (all pass) / EnsembleStrategy.test.ts (all ok) /
+  HighDividendValueStrategy.test.ts (0 fail)
+- backend lint 改动文件全绿
+
+### Learnings for future iterations
+- **`style: StrategyStyle` 字段是首个面向"策略元数据驱动行为"的优雅范式**：从前 strategy 元数据只 4 字段（category/risk_level/tags/enabled）都是描述性，无系统语义；style 字段是首个**功能性元数据**——BenchmarkSelector 直接读它选基准，未来 US-XXX 行业归因 / 风格分群 / portfolio 优化都可读它（不再写 N 个 if (strategy_key === 'xxx') 散落到各 service）。**判据**：新加策略元数据字段前先想是否有 ≥ 2 个 service 会消费，是 → 加；否 → 留在 service 内部 lookup 不要污染 definition schema。
+- **DataSource 接口注入 + lazy require strategyRegistry singleton 范式继承自 US-040/041/042/044/081**：BenchmarkSelector 是第 N 个使用此范式的诊断/工具类（自带 fallback singleton + 测试 fake 接口）。**判据**：模块需要查 strategyRegistry / DB / 网络但又必须可单测时 → 必须 DataSource 接口注入；lazy require 避免顶层 import 让测试启动整个 quant 子系统。
+- **多数 vote + tie-break by enum insert order 范式**：多策略选基准的算法启示 → 任何"多投票 + 需要 stable tie-break"决策都用 `STYLE_BENCHMARK_MAP` 的 `Object.values` 数组顺序作为优先级（v8 Map 保留 insert order）而不是字母序。**理由**：业务语义优先（沪深 300 是最通用基准，优先级最高）比字母序更易解释；下次 US-XXX 多策略集成投票 / 多 KOL 一致预期判定 / 多数据源 fallback 排序 都按此模式。
+- **`STYLE_BENCHMARK_MAP` 不用 Map 用 Object.freeze + Record<StrategyStyle, string>**：TS 类型系统能保证 12 个 style 全覆盖（漏一个编译失败），编译期 vs 运行期协作好；用 ES Map 反而失去类型检查。Object.freeze 防 mutation 灾难（同 `DEFAULT_COMPOSITE_WEIGHTS` US-037 模式）。**通用规则**：常量 enum-keyed lookup table 用 `as const` / `Object.freeze` / `Readonly<Record<Enum, T>>` 三件套；可变状态用 Map。
+- **`inferStyleFromTags` 作为 lossy heuristic 文档化兜底意图**：tags 推断永远是 lossy（"价值" 标签 + "股息" 标签的组合可能落到 large_cap_value 也可能 high_yield_defensive 取决于优先级链顺序）。jsdoc 必须明确"永远建议给策略 definition 明确填 style"——未来开发者新加策略时不会被推断误导。**判据**：任何 heuristic / fallback / inference 函数必须在 jsdoc 顶部用一句"this is lossy; prefer X if possible"提醒。
+- **修改 type 后 strategy 文件全量遍历 checklist**：给 QuantStrategyDefinition 加 optional 字段不会破坏既有类型，但**应该回头一次性把所有现有 27+ 个策略 definition 补齐**——optional 字段在后续 ops 工具 / UI / 报表 / 推送中"有就用没有就 fallback" 的散布逻辑会持续累积，不如一次性灌满。本次 29 个 strategy 全部 explicit style 完成，未来不需要单独"补 style" story。**判据**：optional 字段加到 schema 后 24h 内补齐所有现有实例。
+- **resolveBenchmarkReturn 的 `||` 短路保留用户 explicit override**：`options.benchmark_symbol || selectBenchmarkForStrategyKeys(...)` 的 short-circuit pattern 让 explicit 用户输入永远优先 auto-select。**判据**：任何"smart default + user-override" 类决策路径都按此 pattern——user input 在 left side、auto-select 在 right side、用 `||` (truthy fallback) 或 `?? ` (null/undefined fallback) 按字段语义选。空字符串若应该回退 auto，用 `||`；空字符串若应该尊重为 "明确传了 empty"，用 `??`。本 story 用 `||` 因 empty benchmark_symbol = 用户没传。
+- **测试断言所有 29 个策略 (key, style, benchmark) 期望对照成 regression 单测的一部分**：让未来重命名 / 删除 strategy 时直接编译失败（test fixture 含具体 key 名），避免静默 drift。`runRealStrategyMappingTests` 是范本——它通过 fake DataSource 模拟而非调真 PRODUCTION（无 DB / 无 strategyRegistry boot 开销），但保留 key 名与 style 期望对照表，**未来 strategy CRUD 必须同步更新此表**否则测试失败。下次类似 "全集合 invariant" 测试（如 "所有策略都有 default_params"、"所有 strategy key 唯一"）按此模板。
+- **AC "用户仍可在前端手动覆盖" 的实现是 zero-code**：因 `||` short-circuit + `options.benchmark_symbol` 已是既有 API contract（QuantBacktestOptions.benchmark_symbol 一直存在）—— BenchmarkSelector 改动只是 default 替换，user override path 本来就工作。**前端无需新增 UI**——既有 benchmark_symbol 输入框（在 Lab workspace 新建回测表单）原样保留。**判据**：AC 出现"用户可手动覆盖" 时**先看既有 API contract 是否已支持**，多数时候只需要把 default 替换为 smart-default 即可，不要平行加新 endpoint / 新参数。
+---
+
+## 2026/06/09 - US-085 回测：交易成本敏感性分析
+
+### 实现
+新增 `CostSensitivityAnalysis` 模块（事后分析诊断工具，第 5 件套；与 US-040 RegimeSegmentedBacktest /
+US-041 FactorICReport / US-042 FactorCorrelationReport / US-044 PortfolioOptimizer 范式一致），
+对一次已完成回测按 3 档佣金率（万 1.5 / 万 2.5 / 万 5）逐档重跑 quantBacktestEngine，把每档
+annual_return / sharpe / turnover / total_return / max_drawdown / win_rate 落到新建的
+CostSensitivityResult 表，让策略验证者一眼看出"策略对手续费有多敏感"。
+
+**关键设计**:
+1. **新模型 `CostSensitivityResult`**（`base_run_id` FK QuantBacktestResult.id + `cost_level` + `strategy_key`
+   三元唯一索引）— 单变量分析：只改 commission_rate，其他约束保持原回测设置不变。
+2. **常量 `COST_LEVELS` Object.freeze**（3 档升序）— 顺序决定 summary 计算 drop_pct 的 first→last 方向。
+3. **3 个纯函数 helper** 全 export 易单测：
+   - `computeTurnover(trades)` — sum(buy_amount + sell_amount), round-trip 算 2× / 未平仓只算 buy 端，
+     非有限值过滤。
+   - `buildRowFromEngineResult(...)` — engine 输出 + cost level → CostSensitivityRow shape，
+     win_rate=null 当 trade_count=0，max_drawdown 绝对值，metadata 合并。
+   - `summarizeSensitivity(rows)` — per-strategy 衰减摘要：return_drop_pct / sharpe_drop /
+     turnover_avg；不足 2 档 → drop=null；按 strategy_key 字典序输出。
+   - `filterCostLevels(levels, available)` — 用户输入容错（空 / 大小写 / 未知静默回退全部）。
+4. **DataSource 注入式**（6 个 method：loadTask / loadResults / loadContexts / runEngine / destroyExisting /
+   persistRows）— 生产实现 lazy-require quantDataService / quantBacktestEngine 避免顶层 import；
+   测试 fake 完全脱 DB。
+5. **per-level 串行 await**（不 Promise.all）— engine 本身 CPU-heavy 同步循环，并行不加速。
+6. **per-level / per-strategy 错误隔离** — 单档 engine 抛错 → errors[] 记录 + 其他档继续；
+   strategy_key 不在 baseResults map → errors[] + skip。
+7. **persist 失败 fail-OPEN** — rows 仍返回 + persisted=false + persist_error，让 caller 拿到数据
+   （与 US-055 saveReport fail-OPEN 同款）。
+8. **persist=true 时 destroy 先 bulkCreate 后** — 同 (base_run_id, strategy_key, cost_level) 重跑
+   干净 upsert，避免脏读（与 US-044 PortfolioOptimizer 一致）。
+
+**新增 endpoint**: `POST /api/quant/backtests/:id/cost-sensitivity`
+- Body 可选 `cost_levels?` / `dry_run?` / `metadata?`
+- 返回 `{rows, summary, persisted, errors?, persist_error?}`
+- 404 当 task 不存在，500 其他错误
+
+**facade 入口**: `backtestEngine.runCostSensitivityAnalysis(taskId, options?)` 维持 BacktestEngine
+public surface 收敛。
+
+### 文件改动
+- backend/src/models/CostSensitivityResult.ts (A, 184 行)
+- backend/src/quant/backtest/CostSensitivityAnalysis.ts (A, 633 行)
+- backend/src/models/index.ts (M) — export CostSensitivityResult
+- backend/src/config/database.ts (M) — 模型注册到 Sequelize
+- backend/src/quant/backtest/BacktestEngine.ts (M) — runCostSensitivityAnalysis facade 方法
+- backend/src/api/controllers/QuantController.ts (M) — runCostSensitivityAnalysis HTTP handler
+- backend/src/api/routes/quant.routes.ts (M) — POST /backtests/:id/cost-sensitivity route + OpenAPI
+- backend/src/quant/backtest/internal/QuantBacktestService.ts (M) — prettier fix（既有 lint 错误清理）
+- backend/tests/backtest/cost-sensitivity-analysis.test.ts (A, 910 行) — 118 测试全过
+
+### 质量检查
+- `cd backend && npx tsc --noEmit` → EXIT=0 clean
+- `npx ts-node --transpile-only tests/backtest/cost-sensitivity-analysis.test.ts` → 118 pass / 0 fail
+- `npx eslint <changed files>` → 0 errors, 5 warnings (全是 pre-existing non-null assertion warnings)
+- 回归 smoke：
+  - tests/backtest/benchmark-selector.test.ts → 99 pass / 0 fail
+  - tests/backtest/ashare-constraints.test.ts → ALL PASS
+
+### Learnings for future iterations
+- **事后分析诊断工具第 5 件套确立** (US-040/041/042/044/085) 完整 checklist：(a) **不复用
+  OptimizationRun 父表**（事后分析非 task 状态机；通过 FK 引用源 QuantBacktestResult.id /
+  QuantBacktestTask.id 关联）；(b) **DataSource 注入** 接口 + `PRODUCTION_*_DATA_SOURCE`
+  lazy-require + 测试 fake 完全脱 DB；(c) **3+ 纯函数全 export** 让单测覆盖边界 / NaN / 已知数值；
+  (d) **per-row destroy + bulkCreate idempotent upsert**；(e) **per-level / per-strategy 错误隔离**
+  errors[] 不阻塞其他；(f) **persist 失败 fail-OPEN** + persist_error 字段。下次 US-086+
+  RebalanceEngine / US-087 复盘日记 / US-088 龙虎榜营业部归属任何"对已完成 task 做派生统计"
+  按此 6 项 checklist。
+- **单变量敏感性分析的纯度约束**：本模块**只改 commission_rate**，其他约束（印花税 / 过户费 /
+  滑点 / 涨跌停 / T+1）保持原回测设置不变 — 这让分析结果可解释为"佣金对策略的影响"。
+  下次任何敏感性分析（US-XXX 滑点敏感度 / US-XXX 资金规模敏感度）严格遵守"单变量原则"，
+  不要同时变多个变量否则无法归因。`override` 时**精确替换单字段** + 显式 jsdoc 标注。
+- **`runtimeKeys: Set<string>` 过滤 task.parameters 重建 options 范式** — `rebuildBacktestOptions`
+  把 task 元数据（queue_job_id / last_stage / scanned_stocks 等不影响回测结果的字段）过滤
+  掉，否则会被传给 engine 当成"业务参数"误用。**判据**：任何"从 task 重跑 engine" 的工具
+  （cost sensitivity / 滑点敏感度 / 重跑特定时间窗口）都按此 runtimeKeys Set 模式过滤；
+  不要直接 `{...task.parameters}` spread。
+- **`turnover` 定义模糊问题**：在 trades[].amount 字段中存储的是 **sell amount**（sellPrice ×
+  quantity），buy_price × quantity 未单独存储。`computeTurnover` 必须先 buy_price × quantity
+  算买入端（所有 trade 都算），再判 sell_date 是否定义来决定是否累加 amount（sell amount）。
+  未平仓 trade 只算买入端。**这种"字段语义不对称"是 backtest engine 历史遗留**，下次任何
+  跨 round-trip 累计计算（成本 / fee / volume）都要明确"哪个端是哪个字段"，否则会双计或漏计。
+- **`base_run_id` vs `base_task_id` 双 FK 物化** — 本表既存 base_run_id (FK QuantBacktestResult.id)
+  也存 base_task_id (FK QuantBacktestTask.id)，因为 per-strategy × per-cost_level 是 N:1:N 三层结构：
+  分析时按 task 触发，但行级数据按 (run × cost_level) 落库；**两个 FK 物化让查询不需要 JOIN
+  父表**（"查某 task 全部档" 用 base_task_id WHERE，"查某策略某档" 用 base_run_id +
+  cost_level WHERE）。下次任何"父任务 N:M 子结果" 分析表都按此双 FK 物化模式（与
+  US-040 RegimeBacktestResult.run_id 单 FK 不同因为本表的 N:M 更复杂）。
+- **测试规模 = 118 项**比 US-084 benchmark-selector 99 项多 ~20%，因 cost sensitivity 多了
+  per-level 错误隔离 + per-strategy 隔离 + persist 失败 fail-OPEN + multi strategy summary +
+  cost_levels filter 等独立分支。**诊断工具类 service 单测规模目标 80-150**：覆盖
+  纯函数 + DataSource 注入 + 4-6 个 error path + happy path 多变种。下次 US-086+ 按此规模
+  预算 LOC（test 与 src 大小比 ~ 1.4:1，本 story 910 test / 633 src = 1.44:1）。
+- **`prettier/prettier` 错误清理顺路做**：QuantBacktestService.ts:1130 的"Replace with prettier 格式"
+  错误是 US-075 引入但未触发 lint 工具（changed-files-only lint 没扫到）。**判据**：本次 story
+  改了 QuantBacktestService.ts（顺路加 lazy-require）触发 lint 时就清理掉，不要遗留给下个
+  story 当 noise。任何 lint 工具新出 prettier error 都立刻 `--fix` 不延后。
+- **3 档 COST_LEVELS Object.freeze 升序顺序的 summary 推断**：`summarizeSensitivity` 算
+  drop_pct 时假设 [0] 是最低费率，[末位] 是最高费率，所以 `Object.freeze` 顺序必须升序
+  且 jsdoc 顶部标注这一约束。**判据**：任何"按位置推断业务语义" 的常量数组都要 jsdoc 双层
+  防御：(a) 标注顺序约束 (b) 单测断言常量与预期顺序一致（本 story 测试 "COST_LEVELS sorted
+  ascending" 是参考实现）。下次 US-XXX 滑点档位 / 资金规模档位 等同款。
+
+---

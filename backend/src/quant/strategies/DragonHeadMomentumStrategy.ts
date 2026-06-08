@@ -543,6 +543,7 @@ export class DragonHeadMomentumStrategy extends QuantStrategy {
     enabled: true,
     risk_level: 'high',
     tags: ['短线', '龙头', '梯队', '游资', '涨停板'],
+    style: 'short_term_event_driven',
   };
 
   private readonly dataSource: DragonHeadDataSource;

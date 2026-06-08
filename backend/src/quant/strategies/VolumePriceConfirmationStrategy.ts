@@ -34,6 +34,7 @@ export class VolumePriceConfirmationStrategy extends QuantStrategy {
     enabled: true,
     risk_level: 'medium',
     tags: ['量价', '资金确认', '动量过滤'],
+    style: 'momentum',
   };
 
   evaluate(context: QuantStockContext, options?: QuantStrategyRuntimeOptions): QuantSignalResult {

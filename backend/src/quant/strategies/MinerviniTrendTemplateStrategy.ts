@@ -22,6 +22,7 @@ export class MinerviniTrendTemplateStrategy extends QuantStrategy {
     enabled: true,
     risk_level: 'medium',
     tags: ['Minervini', '趋势模板', '强势股'],
+    style: 'momentum',
   };
 
   evaluate(context: QuantStockContext, options?: QuantStrategyRuntimeOptions): QuantSignalResult {

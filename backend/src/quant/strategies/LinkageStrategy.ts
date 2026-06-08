@@ -589,6 +589,7 @@ export class LinkageStrategy extends QuantStrategy {
     enabled: true,
     risk_level: 'high',
     tags: ['短线', '联动', '题材扩散', '涨停', '事件驱动'],
+    style: 'short_term_event_driven',
   };
 
   private readonly dataSource: LinkageDataSource;

@@ -587,6 +587,49 @@ router.get(
 
 /**
  * @openapi
+ * /api/quant/backtests/{id}/cost-sensitivity:
+ *   post:
+ *     tags: [量化 Quant]
+ *     summary: 交易成本敏感性分析（US-085）
+ *     description: |
+ *       对一次已完成的回测，按 3 档佣金费率（万 1.5 / 万 2.5 / 万 5）逐档重跑回测引擎，
+ *       将每档的 annual_return / sharpe / turnover / total_return / max_drawdown / win_rate
+ *       / trade_count 落到 cost_sensitivity_results 表。请求体可选 dry_run=true 仅返回不落库；
+ *       cost_levels=['万2.5'] 仅跑指定档；metadata 任意 JSON 写入 row.metadata_json。
+ *
+ *       同 (base_run_id, strategy_key, cost_level) 重跑会自动 upsert（destroy + bulkCreate）。
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: integer }
+ *     requestBody:
+ *       required: false
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               dry_run: { type: boolean, default: false }
+ *               cost_levels:
+ *                 type: array
+ *                 items: { type: string, enum: [万1.5, 万2.5, 万5] }
+ *               metadata: { type: object }
+ *     responses:
+ *       200: { description: 分析结果（含 rows + summary + persisted） }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
+ *       404: { description: 任务不存在或无 per-strategy 结果 }
+ */
+router.post(
+  '/backtests/:id/cost-sensitivity',
+  authController.authenticate,
+  quantController.runCostSensitivityAnalysis.bind(quantController)
+);
+
+/**
+ * @openapi
  * /api/quant/signals/generate:
  *   post:
  *     tags: [量化 Quant]

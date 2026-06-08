@@ -23,6 +23,7 @@ export class TurtleBreakoutStrategy extends QuantStrategy {
     enabled: true,
     risk_level: 'high',
     tags: ['海龟交易', '20日突破', '55日突破', 'ATR'],
+    style: 'momentum',
   };
 
   evaluate(context: QuantStockContext, options?: QuantStrategyRuntimeOptions): QuantSignalResult {

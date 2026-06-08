@@ -467,6 +467,7 @@ export class GameTraderRelayStrategy extends QuantStrategy {
     enabled: true,
     risk_level: 'high',
     tags: ['短线', '游资', '接力', '龙虎榜', '事件驱动'],
+    style: 'short_term_event_driven',
   };
 
   private readonly dataSource: GameTraderRelayDataSource;

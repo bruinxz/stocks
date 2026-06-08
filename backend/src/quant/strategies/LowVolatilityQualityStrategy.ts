@@ -32,6 +32,7 @@ export class LowVolatilityQualityStrategy extends QuantStrategy {
     enabled: true,
     risk_level: 'low',
     tags: ['低波', '质量', '防守'],
+    style: 'low_volatility',
   };
 
   evaluate(context: QuantStockContext, options?: QuantStrategyRuntimeOptions): QuantSignalResult {

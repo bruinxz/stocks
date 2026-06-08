@@ -397,6 +397,7 @@ export class BreakoutStrategy extends QuantStrategy {
     enabled: true,
     risk_level: 'medium',
     tags: ['趋势', '突破', '成交量', '中线'],
+    style: 'momentum',
   };
 
   private readonly dataSource: BreakoutDataSource;

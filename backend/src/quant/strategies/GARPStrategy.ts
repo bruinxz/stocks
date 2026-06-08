@@ -548,6 +548,7 @@ export class GARPStrategy extends QuantStrategy {
     enabled: true,
     risk_level: 'medium',
     tags: ['价值', '成长', 'GARP', 'PEG', '半年度调仓'],
+    style: 'large_cap_growth',
   };
 
   private readonly dataSource: GARPDataSource;

@@ -17,6 +17,7 @@ export class BreakoutAtrStrategy extends QuantStrategy {
     enabled: true,
     risk_level: 'high',
     tags: ['突破', 'ATR', '启动'],
+    style: 'momentum',
   };
 
   evaluate(context: QuantStockContext, options?: QuantStrategyRuntimeOptions): QuantSignalResult {

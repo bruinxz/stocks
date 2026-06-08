@@ -260,6 +260,7 @@ export class EnsembleStrategy extends QuantStrategy {
     enabled: true,
     risk_level: 'medium',
     tags: ['集成', '元策略', '市场环境', '自适应权重', '加权投票'],
+    style: 'ensemble',
   };
 
   /** 子策略实例池（key → instance）。默认创建生产实例；测试可注入 fakes。 */

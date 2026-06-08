@@ -134,6 +134,30 @@ random tie-break 会让"30 进 5 出"的两次运行选不一样的股。
 注：组合级策略也要注册（满足 registry 契约 + 让前端能列出），但其
 `evaluate()` 走信息性 hold 路径。
 
+## 策略 `style` 字段（US-084）
+
+每个新策略的 `definition` 都应该填一个 `style: StrategyStyle`（在
+`QuantTypes.ts` 的 12 种枚举中选）。**这是 BenchmarkSelector 自动匹配
+基准指数的唯一标准信号**——比 tags 更明确、比 risk_level 粒度更细。
+
+填写指南（与 `quant/backtest/BenchmarkSelector.ts` 的 STYLE_BENCHMARK_MAP 对齐）：
+- **`small_cap_growth`**（→ 中证 1000）：中证 1000 universe / 小盘动量 / 题材外溢小盘
+- **`mid_cap_balanced`**（→ 中证 500）：中证 500 universe / 事件驱动中盘
+- **`large_cap_value`** / **`large_cap_growth`**（→ 沪深 300）：大盘价值 / 大盘成长
+- **`high_yield_defensive`**（→ 上证指数）：高股息长线 / 蓝筹防守
+- **`sector_rotation`**（→ 沪深 300）：行业轮动 / 主力资金跟随
+- **`multi_factor_alpha`**（→ 沪深 300）：因子合成 / 全市场打分
+- **`momentum`**（→ 沪深 300）：趋势 / 突破 / 动量延续
+- **`mean_reversion`**（→ 中证 500）：反转 / 超跌 / RSI 上穿
+- **`low_volatility`**（→ 沪深 300）：低波防守
+- **`short_term_event_driven`**（→ 中证 1000）：短线 / 游资 / 涨停题材
+- **`ensemble`**（→ 沪深 300）：meta 策略 / 多子策略融合
+
+不填 `style` 字段不会编译失败（optional），BenchmarkSelector 会退回到
+`inferStyleFromTags(tags)` 启发式推断；推不出则用沪深 300 作为兜底。**但
+新策略请 **总是** 显式填**——tags 推断会随 tags 改名而漂移，明确的 style
+字段是合同。
+
 ## 引用因子库（US-009 + US-010）
 
 组合级多因子策略**不**重新计算因子；统一读 `factor_scores` 表的 z_score。

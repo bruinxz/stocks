@@ -61,6 +61,42 @@ export interface QuantSignalResult {
   raw?: Record<string, any>;
 }
 
+/**
+ * 策略风格 —— 用于 US-084 BenchmarkSelector 自动匹配基准指数。
+ * 该字段表达策略的"目标 universe / 主战场"，与 category 互补：
+ *   - category（trend/momentum/multi_factor 等）表达**选股逻辑**
+ *   - style 表达**选股目标盘**（大盘 / 小盘 / 行业轮动 / 主题事件等）
+ *
+ * 12 种 style：
+ *   - large_cap_value          —— 大盘价值（沪深 300 基准）
+ *   - large_cap_growth         —— 大盘成长（沪深 300）
+ *   - small_cap_growth         —— 小盘成长（中证 1000）
+ *   - mid_cap_balanced         —— 中盘均衡（中证 500）
+ *   - sector_rotation          —— 行业轮动（沪深 300，行业相对收益更具说服力）
+ *   - multi_factor_alpha       —— 多因子 alpha（沪深 300）
+ *   - momentum                 —— 趋势/动量（沪深 300）
+ *   - mean_reversion           —— 均值回归/反转（中证 500，反转往往在中盘有效）
+ *   - low_volatility           —— 低波防守（沪深 300）
+ *   - short_term_event_driven  —— 短线事件驱动/游资接力（中证 1000）
+ *   - high_yield_defensive     —— 高股息/防守长线（上证指数 sh.000001）
+ *   - ensemble                 —— meta 策略，多子策略融合（沪深 300）
+ *
+ * 字段为可选 —— 不填则 BenchmarkSelector 退回 tags 推断；推断不出走默认 sh.000300。
+ */
+export type StrategyStyle =
+  | 'large_cap_value'
+  | 'large_cap_growth'
+  | 'small_cap_growth'
+  | 'mid_cap_balanced'
+  | 'sector_rotation'
+  | 'multi_factor_alpha'
+  | 'momentum'
+  | 'mean_reversion'
+  | 'low_volatility'
+  | 'short_term_event_driven'
+  | 'high_yield_defensive'
+  | 'ensemble';
+
 export interface QuantStrategyDefinition {
   strategy_key: string;
   name: string;
@@ -70,6 +106,12 @@ export interface QuantStrategyDefinition {
   enabled: boolean;
   risk_level: 'low' | 'medium' | 'high';
   tags: string[];
+  /**
+   * US-084 — 策略风格。用于 BenchmarkSelector 自动匹配基准指数；
+   * 用户手动传入 `options.benchmark_symbol` 会覆盖本字段的推断结果。
+   * 老策略可不填，BenchmarkSelector 退回 tags 推断。
+   */
+  style?: StrategyStyle;
 }
 
 export interface QuantStrategyRuntimeOptions {

@@ -17,6 +17,7 @@ export class MacdTrendStrategy extends QuantStrategy {
     enabled: true,
     risk_level: 'medium',
     tags: ['MACD', '趋势确认'],
+    style: 'momentum',
   };
 
   evaluate(context: QuantStockContext, options?: QuantStrategyRuntimeOptions): QuantSignalResult {

@@ -33,6 +33,7 @@ export class VolatilityContractionBreakoutStrategy extends QuantStrategy {
     enabled: true,
     risk_level: 'high',
     tags: ['波动收缩', '平台突破', 'VCP'],
+    style: 'momentum',
   };
 
   evaluate(context: QuantStockContext, options?: QuantStrategyRuntimeOptions): QuantSignalResult {

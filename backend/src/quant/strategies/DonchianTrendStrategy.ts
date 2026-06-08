@@ -23,6 +23,7 @@ export class DonchianTrendStrategy extends QuantStrategy {
     enabled: true,
     risk_level: 'high',
     tags: ['Donchian', '通道突破', 'ATR风控'],
+    style: 'momentum',
   };
 
   evaluate(context: QuantStockContext, options?: QuantStrategyRuntimeOptions): QuantSignalResult {

@@ -391,7 +391,8 @@ export class QuantController {
   async getBacktestDrawdownSeries(req: Request, res: Response) {
     try {
       const data = await backtestEngine.getDrawdownSeries(Number(req.params.id));
-      if (!data) return res.status(404).json({ success: false, message: '跑分任务不存在或暂无结果' });
+      if (!data)
+        return res.status(404).json({ success: false, message: '跑分任务不存在或暂无结果' });
       res.json({ success: true, data });
     } catch (error: any) {
       logger.error('获取回测回撤序列失败:', error);
@@ -405,7 +406,8 @@ export class QuantController {
   async getBacktestMonthlyReturns(req: Request, res: Response) {
     try {
       const data = await backtestEngine.getMonthlyReturns(Number(req.params.id));
-      if (!data) return res.status(404).json({ success: false, message: '跑分任务不存在或暂无结果' });
+      if (!data)
+        return res.status(404).json({ success: false, message: '跑分任务不存在或暂无结果' });
       res.json({ success: true, data });
     } catch (error: any) {
       logger.error('获取回测月度收益失败:', error);
@@ -420,11 +422,52 @@ export class QuantController {
     try {
       const window = req.query.window ? Number(req.query.window) : 90;
       const data = await backtestEngine.getRollingSharpeSeries(Number(req.params.id), window);
-      if (!data) return res.status(404).json({ success: false, message: '跑分任务不存在或暂无结果' });
+      if (!data)
+        return res.status(404).json({ success: false, message: '跑分任务不存在或暂无结果' });
       res.json({ success: true, data });
     } catch (error: any) {
       logger.error('获取回测滚动夏普失败:', error);
       res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * US-085：交易成本敏感性分析 — 对一个已完成 backtest 按 3 档佣金（万 1.5 /
+   * 万 2.5 / 万 5）重跑，每档写一行 (base_run_id, strategy_key, cost_level)
+   * 到 CostSensitivityResult。
+   *
+   * Body 可选：
+   *   - `cost_levels?: string[]` — 仅分析指定档（默认全部 3 档）
+   *   - `dry_run?: boolean` — 不落库，仅返回结果
+   *   - `metadata?: Record<string, any>` — 写入 row.metadata_json
+   */
+  async runCostSensitivityAnalysis(req: AuthenticatedRequest, res: Response) {
+    try {
+      const taskId = Number(req.params.id);
+      if (!Number.isFinite(taskId) || taskId <= 0) {
+        return res.status(400).json({ success: false, message: 'task id 无效' });
+      }
+      const rawLevels = req.body?.cost_levels ?? req.body?.costLevels;
+      const cost_levels = Array.isArray(rawLevels)
+        ? rawLevels.map((l: any) => String(l).trim()).filter(Boolean)
+        : undefined;
+      const persist = !(req.body?.dry_run === true || req.body?.dryRun === true);
+      const metadata = {
+        ...(req.body?.metadata && typeof req.body.metadata === 'object' ? req.body.metadata : {}),
+        triggered_by_user_id: req.user?.id ?? null,
+        triggered_at: new Date().toISOString(),
+      };
+      const data = await backtestEngine.runCostSensitivityAnalysis(taskId, {
+        cost_levels,
+        persist,
+        metadata,
+      });
+      res.json({ success: true, data });
+    } catch (error: any) {
+      logger.error('交易成本敏感性分析失败:', error);
+      const status =
+        typeof error?.message === 'string' && error.message.includes('不存在') ? 404 : 500;
+      res.status(status).json({ success: false, message: error.message });
     }
   }
 

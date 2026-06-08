@@ -425,6 +425,7 @@ export class SectorRotationLeaderStrategy extends QuantStrategy {
     enabled: true,
     risk_level: 'medium',
     tags: ['行业轮动', '龙头', '主力资金', '中线'],
+    style: 'sector_rotation',
   };
 
   private readonly dataSource: SectorRotationLeaderDataSource;

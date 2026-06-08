@@ -17,6 +17,7 @@ export class RelativeStrengthMomentumStrategy extends QuantStrategy {
     enabled: true,
     risk_level: 'medium',
     tags: ['动量', '相对强弱', '全市场'],
+    style: 'momentum',
   };
 
   evaluate(context: QuantStockContext, options?: QuantStrategyRuntimeOptions): QuantSignalResult {

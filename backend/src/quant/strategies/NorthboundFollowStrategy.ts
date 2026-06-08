@@ -361,6 +361,7 @@ export class NorthboundFollowStrategy extends QuantStrategy {
     enabled: true,
     risk_level: 'medium',
     tags: ['北向资金', '聪明钱', '中线', '跟随'],
+    style: 'large_cap_value',
   };
 
   private readonly dataSource: NorthboundFollowDataSource;

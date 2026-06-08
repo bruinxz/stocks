@@ -427,6 +427,7 @@ export class LeftSideReversalStrategy extends QuantStrategy {
     enabled: true,
     risk_level: 'high',
     tags: ['反转', '超跌', 'RSI', '资金流', '短中线'],
+    style: 'mean_reversion',
   };
 
   private readonly dataSource: LeftSideReversalDataSource;

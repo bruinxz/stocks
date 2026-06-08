@@ -17,6 +17,7 @@ export class RsiMeanReversionStrategy extends QuantStrategy {
     enabled: true,
     risk_level: 'medium',
     tags: ['RSI', '低吸', '均值回归'],
+    style: 'mean_reversion',
   };
 
   evaluate(context: QuantStockContext, options?: QuantStrategyRuntimeOptions): QuantSignalResult {

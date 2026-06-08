@@ -1415,8 +1415,8 @@
         "Tests pass"
       ],
       "priority": 84,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026/06/09. Added `style?: StrategyStyle` field to QuantStrategyDefinition (12-value union: large_cap_value / large_cap_growth / small_cap_growth / mid_cap_balanced / sector_rotation / multi_factor_alpha / momentum / mean_reversion / low_volatility / short_term_event_driven / high_yield_defensive / ensemble). New module backend/src/quant/backtest/BenchmarkSelector.ts exports pure functions (STYLE_BENCHMARK_MAP, inferStyleFromTags, pickBenchmarkForDefinition, pickBenchmarkForDefinitions) + DataSource-injectable selectBenchmarkForStrategyKeys main entrypoint. Style → benchmark mapping: small_cap_growth/short_term_event_driven → 中证 1000 (sh.000852), mid_cap_balanced/mean_reversion → 中证 500 (sh.000905), high_yield_defensive → 上证指数 (sh.000001), 其他 → 沪深 300 (sh.000300). Annotated all 29 registered strategies with explicit style metadata. Wired QuantBacktestService.resolveBenchmarkReturn to call selectBenchmarkForStrategyKeys when options.benchmark_symbol is not provided — user-explicit override always wins. New backend/tests/backtest/benchmark-selector.test.ts: 99 tests passing (constants / freezed map / 14 tag-inference paths / pickBenchmarkForDefinition 9 cases / multi-strategy vote with tie-break / DataSource injection / 29-strategy regression / user-override simulation). cd backend && npx tsc --noEmit clean."
     },
     {
       "id": "US-085",
@@ -1432,7 +1432,7 @@
         "Tests pass"
       ],
       "priority": 85,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {

@@ -379,6 +379,7 @@ export class MultiFactorAlphaStrategy extends QuantStrategy {
     enabled: true,
     risk_level: 'medium',
     tags: ['多因子', 'alpha', '月度轮动', 'factor_scores', '12 因子', 'IC 加权'],
+    style: 'multi_factor_alpha',
   };
 
   private readonly dataSource: MultiFactorAlphaDataSource;

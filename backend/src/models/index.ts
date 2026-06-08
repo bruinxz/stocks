@@ -56,6 +56,7 @@ export * from './OptimizationRun';
 export * from './OptimizationResult';
 export * from './WalkForwardResult';
 export * from './RegimeBacktestResult';
+export * from './CostSensitivityResult';
 export * from './FactorICResult';
 export * from './FactorCorrelationResult';
 export * from './MonteCarloResult';

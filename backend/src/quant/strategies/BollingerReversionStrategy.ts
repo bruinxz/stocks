@@ -17,6 +17,7 @@ export class BollingerReversionStrategy extends QuantStrategy {
     enabled: true,
     risk_level: 'medium',
     tags: ['布林带', '低吸', '震荡'],
+    style: 'mean_reversion',
   };
 
   evaluate(context: QuantStockContext, options?: QuantStrategyRuntimeOptions): QuantSignalResult {

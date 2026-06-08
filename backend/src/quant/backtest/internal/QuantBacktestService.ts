@@ -7,6 +7,7 @@ import { quantBacktestEngine } from './QuantBacktestEngine';
 import { round } from '../../engine/QuantMath';
 import { quantBacktestQueue } from '../../../jobs/quantBacktestQueue';
 import { benchmarkIndexService } from '../../../services/BenchmarkIndexService';
+import { selectBenchmarkForStrategyKeys } from '../BenchmarkSelector';
 import { quantStrategyExperimentService } from '../../engine/internal/QuantStrategyExperimentService';
 import { quantStrategyService } from '../../engine/internal/QuantStrategyService';
 import { logger } from '../../../utils/logger';
@@ -1126,9 +1127,7 @@ export class QuantBacktestService {
    *
    * 返回 null 表示任务/冠军不存在；返回 {} 表示存在但曲线为空（前端按 Empty 渲染）。
    */
-  private async getChampionEquityCurve(
-    taskId: number
-  ): Promise<{
+  private async getChampionEquityCurve(taskId: number): Promise<{
     task: QuantBacktestTask;
     champion: QuantBacktestResult;
     curve: Array<{ date: string; total_value: number; drawdown_pct?: number }>;
@@ -1310,7 +1309,10 @@ export class QuantBacktestService {
 
   private async resolveBenchmarkReturn(options: QuantBacktestOptions) {
     try {
-      const benchmarkSymbol = options.benchmark_symbol || 'sh.000300';
+      // US-084：用户显式指定 benchmark_symbol → 优先用；否则按策略风格自动匹配
+      // （沪深 300 / 中证 500 / 中证 1000 / 上证指数等）。让小盘策略不再被沪深 300 误参照。
+      const benchmarkSymbol =
+        options.benchmark_symbol || selectBenchmarkForStrategyKeys(options.strategy_keys);
       return await benchmarkIndexService.getBenchmarkReturnForStock(
         benchmarkSymbol,
         options.start_date,

@@ -8,6 +8,7 @@
  */
 import { quantBacktestService } from './internal/QuantBacktestService';
 import { quantStrategyService } from '../engine/internal/QuantStrategyService';
+import { costSensitivityAnalysis, CostSensitivityAnalyzeOptions } from './CostSensitivityAnalysis';
 
 async function withResolvedStrategyParams(input: any) {
   const strategy_keys = await quantStrategyService.resolveStrategyKeys(
@@ -90,6 +91,18 @@ export class BacktestEngine {
    */
   getRollingSharpeSeries(taskId: number, windowDays?: number) {
     return quantBacktestService.getRollingSharpeSeries(taskId, windowDays);
+  }
+
+  /**
+   * US-085：交易成本敏感性分析 — 对一个已完成 backtest 按 3 档佣金
+   * （万 1.5 / 万 2.5 / 万 5）重跑，把每档的 annual_return / sharpe /
+   * turnover 落到 CostSensitivityResult。
+   *
+   * 由 POST /api/quant/backtests/:id/cost-sensitivity 调用。controller
+   * 只 import 本 facade —— 与 US-003 facade 收敛规则一致。
+   */
+  runCostSensitivityAnalysis(taskId: number, options?: CostSensitivityAnalyzeOptions) {
+    return costSensitivityAnalysis.analyze(taskId, options);
   }
 
   processTask(

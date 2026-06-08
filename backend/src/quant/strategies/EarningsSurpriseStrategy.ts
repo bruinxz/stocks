@@ -387,6 +387,7 @@ export class EarningsSurpriseStrategy extends QuantStrategy {
     enabled: true,
     risk_level: 'medium',
     tags: ['事件驱动', '业绩预告', '北向资金', '中线'],
+    style: 'mid_cap_balanced',
   };
 
   private readonly dataSource: EarningsSurpriseDataSource;

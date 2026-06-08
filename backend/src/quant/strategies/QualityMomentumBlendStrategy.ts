@@ -32,6 +32,7 @@ export class QualityMomentumBlendStrategy extends QuantStrategy {
     enabled: true,
     risk_level: 'medium',
     tags: ['质量', '动量', '资金流', '多因子'],
+    style: 'multi_factor_alpha',
   };
 
   evaluate(context: QuantStockContext, options?: QuantStrategyRuntimeOptions): QuantSignalResult {

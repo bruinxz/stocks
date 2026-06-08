@@ -31,6 +31,7 @@ export class MultiFactorRankingStrategy extends QuantStrategy {
     enabled: true,
     risk_level: 'medium',
     tags: ['多因子', '全市场', '核心策略'],
+    style: 'multi_factor_alpha',
   };
 
   evaluate(context: QuantStockContext, options?: QuantStrategyRuntimeOptions): QuantSignalResult {
