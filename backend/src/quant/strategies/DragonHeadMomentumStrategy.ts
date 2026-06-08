@@ -11,10 +11,11 @@ import { IndustryFlow } from '../../models/IndustryFlow';
 import { DragonTigerBoard } from '../../models/DragonTigerBoard';
 import { Stock } from '../../models/Stock';
 import { DailyBar } from '../../models/DailyBar';
+import { MarketSentimentIndex } from '../../models/MarketSentimentIndex';
 import { logger } from '../../utils/logger';
 
 /**
- * DragonHeadMomentumStrategy — 短线龙头战法（US-012）
+ * DragonHeadMomentumStrategy — 短线龙头战法（US-012 / US-082 升级）
  *
  * 抓取强势行业内首板 / 低连板（1-3 板）梯队龙头：当日涨停 + 知名游资席位
  * 净买入 + 流通市值 30-200 亿 + 所属行业当日资金流排名前 10。次日开盘
@@ -34,6 +35,7 @@ import { logger } from '../../utils/logger';
  *
  * 默认参数（AC 指定值）：
  *   maxPositions=5  minContinuousDays=1  maxContinuousDays=3  stopLossPct=-0.07
+ *   minMarketSentiment=60（US-082 引入）
  *
  * 入场 5 条件（全部 AND）：
  *   1. 当日涨停（LimitUpStock 表存在记录）
@@ -41,6 +43,12 @@ import { logger } from '../../utils/logger';
  *   3. 所属行业当日 main_inflow 排名 ∈ top topIndustries（默认 10）
  *   4. 龙虎榜出现知名游资席位且 famous_yz 净买入 > 0
  *   5. 流通市值 ∈ [minCirculatingMarketCap, maxCirculatingMarketCap]（默认 30-200 亿）
+ *
+ * **市场情绪闸门（US-082）**：
+ *   入场流程前先读 `MarketSentimentIndex` 当日 `index_value`，若 < `minMarketSentiment`
+ *   则全部跳过新开仓（已有持仓正常走 exit 流程，不影响保护性平仓）。情绪指数缺失
+ *   或读取失败时 **fail-OPEN**（继续入场流程），避免数据短暂缺失让策略全空仓。
+ *   `filtered.sentiment_blocked` 计数器记录"因情绪过滤而跳过的候选数"便于审计。
  *
  * 出场优先级（最先命中即触发；持仓状态决定）：
  *   A. 持有 ≥ holdingDaysLimit（默认 3）个自然日 → SELL 全部
@@ -62,6 +70,7 @@ export const DEFAULT_DRAGON_HEAD_PARAMS: Readonly<Required<DragonHeadParams>> = 
   holdingDaysLimit: 3, // 持有 N 自然日强制 SELL
   highOpenSellHalfPct: 0.05, // 次日开盘高开阈值
   excludeOneWordBoard: true, // 一字板不参与（买不到）
+  minMarketSentiment: 60, // US-082: 市场情绪指数低于该阈值跳过开仓
 });
 
 export interface DragonHeadParams {
@@ -85,6 +94,18 @@ export interface DragonHeadParams {
   highOpenSellHalfPct: number;
   /** 是否排除一字板（默认 true：一字板抢不到货） */
   excludeOneWordBoard: boolean;
+  /**
+   * （US-082）市场情绪指数最低阈值（默认 60）。
+   *
+   * 入场流程开始前读取 `MarketSentimentIndex` 当日 `index_value`：
+   *   - index_value ≥ minMarketSentiment → 正常入场流程；
+   *   - index_value < minMarketSentiment → **跳过新开仓**（已有持仓正常 exit）；
+   *   - 指数缺失 / 读取失败 → **fail-OPEN**（继续入场流程不阻塞）。
+   *
+   * 设置为 0 等价于关闭此过滤（任何指数都通过）。情绪指数定义见
+   * `MarketSentimentIndex` 模型注释：50=中性、>60 偏多、<40 偏空。
+   */
+  minMarketSentiment: number;
 }
 
 /** 单只持仓的结构化记录（exit 规则需要 entry_date / entry_price） */
@@ -134,6 +155,15 @@ export interface DragonHeadFilteredStats {
   fail_market_cap: number;
   /** 没有知名游资净买入剔除数 */
   fail_famous_yz: number;
+  /**
+   * （US-082）市场情绪指数过滤而跳过的候选数。
+   *
+   * 注意：此分支与"5 维 AND 过滤"语义不同——情绪过滤一旦命中，**整批候选**
+   * （pre-5 维 AND）都被跳过；该计数等于"被跳过的涨停池规模 - 一字板数"
+   * （即如果情绪不过滤，原本可能进入 5 维过滤的候选数）。仍用单个字段记录
+   * 是为了让 UI / 报表能一眼看出"今天因情绪冰点空仓"vs"今天 5 维 AND 都没人通过"。
+   */
+  sentiment_blocked: number;
 }
 
 export interface DragonHeadSignalsResult {
@@ -148,6 +178,17 @@ export interface DragonHeadSignalsResult {
   params: DragonHeadParams;
   /** 当日 eligible 入场候选总数（未受 maxPositions cap 前） */
   eligible_count: number;
+  /**
+   * （US-082）当日 MarketSentimentIndex 信息：
+   *   - value: 当日 index_value (null 表示缺失 / 读取失败)
+   *   - blocked: true 表示已触发情绪过滤跳过新开仓
+   *   - threshold: 实际生效的 minMarketSentiment 阈值
+   */
+  market_sentiment: {
+    value: number | null;
+    blocked: boolean;
+    threshold: number;
+  };
 }
 
 export interface DragonHeadGenerateOptions {
@@ -164,7 +205,9 @@ export interface DragonHeadGenerateOptions {
  * 5 个 loader 方法 — 把所有 Sequelize 查询从策略主体抽离，便于单元测试 mock。
  *
  * 生产环境使用 DefaultDragonHeadDataSource（基于 LimitUpStock/IndustryFlow/
- * DragonTigerBoard/Stock/DailyBar）；单元测试传入 FakeDataSource。
+ * DragonTigerBoard/Stock/DailyBar/MarketSentimentIndex）；单元测试传入 FakeDataSource。
+ *
+ * **US-082 升级**：新增第 6 个 loader `loadMarketSentimentIndex` 服务情绪过滤。
  */
 export interface DragonHeadDataSource {
   /** 当日涨停股池（含 continuous_days / industry / is_one_word_board） */
@@ -195,6 +238,15 @@ export interface DragonHeadDataSource {
    * 缺数据的 stock_code 可以不出现在返回 Map 中（出场逻辑会兜底跳过）。
    */
   loadDailyQuote(tradeDate: string, stockCodes: string[]): Promise<Map<string, DragonHeadQuote>>;
+
+  /**
+   * （US-082）取当日市场情绪指数值（0-100，50=中性）。
+   *
+   * 返回 null 表示：当日尚未计算 / 数据库无该日记录 / 读取失败。
+   * 策略层对 null 采取 **fail-OPEN**（继续入场流程），避免数据短暂缺失导致
+   * 整条策略空仓。
+   */
+  loadMarketSentimentIndex(tradeDate: string): Promise<number | null>;
 }
 
 export interface DragonHeadLimitUpRow {
@@ -440,6 +492,38 @@ export class DefaultDragonHeadDataSource implements DragonHeadDataSource {
     }
     return out;
   }
+
+  /**
+   * （US-082）读 MarketSentimentIndex 当日 index_value。
+   *
+   * - 找不到该日记录（情绪指数 cron 尚未跑 / 该日非交易日）→ 返回 null；
+   * - 找到但 index_value 非有限值 → 返回 null；
+   * - 查询抛错 → catch + 返回 null（策略层 fail-OPEN，不阻塞）。
+   *
+   * 仅按 trade_date 精确匹配，不做 latest-le-asOfDate fallback——情绪指数
+   * 是 daily-cron 产物，"今天没有"代表数据缺失而非"用昨天的兜底"。让策略
+   * 显式 fail-OPEN 通过更安全（已有持仓正常 exit，新开仓不受指数影响）。
+   */
+  async loadMarketSentimentIndex(tradeDate: string): Promise<number | null> {
+    try {
+      const row = (await MarketSentimentIndex.findOne({
+        attributes: ['index_value'],
+        where: { trade_date: tradeDate },
+        raw: true,
+      })) as unknown as { index_value: number | string | null } | null;
+      if (!row) return null;
+      const v = typeof row.index_value === 'string' ? Number(row.index_value) : row.index_value;
+      if (v == null || !Number.isFinite(v)) return null;
+      return v;
+    } catch (error) {
+      logger.warn(
+        `DragonHead.loadMarketSentimentIndex(${tradeDate}) failed: ${
+          (error as Error).message
+        } — returning null (fail-OPEN)`
+      );
+      return null;
+    }
+  }
 }
 
 const PRODUCTION_DATA_SOURCE: DragonHeadDataSource = new DefaultDragonHeadDataSource();
@@ -495,7 +579,7 @@ export class DragonHeadMomentumStrategy extends QuantStrategy {
   }
 
   /**
-   * 组合级调仓信号生成 — US-012 主入口。
+   * 组合级调仓信号生成 — US-012 主入口（US-082 加 minMarketSentiment 闸门）。
    *
    * @param tradeDate ISO YYYY-MM-DD，当日交易日
    * @param options.params 覆盖 default_params 的部分字段
@@ -513,19 +597,31 @@ export class DragonHeadMomentumStrategy extends QuantStrategy {
     const currentPositions = options.currentPositions ?? [];
 
     // === Step A: Exit 流程（先处理出场，因为 BUY 用的 slot 数 = maxPositions - 保留 HOLD 数）
+    // **注意**：exit 流程不受市场情绪闸门影响——已有持仓的保护性平仓（止损 / 持有期 /
+    // 炸板）任何情绪下都必须正常触发，否则情绪冰点时本该止损的票被冻在持仓里更糟。
     const exitResults = await this.evaluateExits(tradeDate, currentPositions, params);
 
+    // === Step A.5（US-082）: 市场情绪闸门 — 读 MarketSentimentIndex 当日 index_value
+    // - sentimentValue ≥ minMarketSentiment → 正常入场
+    // - sentimentValue < minMarketSentiment → 跳过入场（sentimentBlocked=true）
+    // - sentimentValue === null → fail-OPEN 继续入场（指数缺失不阻塞策略）
+    const sentimentValue = await this.dataSource.loadMarketSentimentIndex(tradeDate);
+    const sentimentBlocked = sentimentValue !== null && sentimentValue < params.minMarketSentiment;
+
     // === Step B: 入场流程 —— 全市场扫描涨停股 → 5 维 AND 过滤 → 排序 → cap
-    const entryEvaluation = await this.evaluateEntries(
-      tradeDate,
-      params,
-      // 已经 HOLD 的 stock_code 集合：避免重复 BUY
-      new Set(
-        exitResults.signals
-          .filter(s => s.signal === 'hold' || s.signal === 'sell_half')
-          .map(s => s.stock_code)
-      )
-    );
+    // 情绪闸门触发时跳过 evaluateEntries 调用，但仍构造一个空 result + 设 sentiment_blocked 计数。
+    const entryEvaluation = sentimentBlocked
+      ? await this.skipEntriesDueToSentiment(tradeDate)
+      : await this.evaluateEntries(
+          tradeDate,
+          params,
+          // 已经 HOLD 的 stock_code 集合：避免重复 BUY
+          new Set(
+            exitResults.signals
+              .filter(s => s.signal === 'hold' || s.signal === 'sell_half')
+              .map(s => s.stock_code)
+          )
+        );
 
     // === Step C: target_positions = HOLD + SELL_HALF（保留剩余仓位） + 新 BUY，cap 在 maxPositions
     // 出场动作映射：sell → 移除该 position；sell_half → 保留但标 half_exited=true；
@@ -587,7 +683,9 @@ export class DragonHeadMomentumStrategy extends QuantStrategy {
         `held_kept=${kept.length} buy=${buySignals.length} ` +
         `sell=${allSignals.filter(s => s.signal === 'sell').length} ` +
         `sell_half=${allSignals.filter(s => s.signal === 'sell_half').length} ` +
-        `hold=${allSignals.filter(s => s.signal === 'hold').length}`
+        `hold=${allSignals.filter(s => s.signal === 'hold').length} ` +
+        `sentiment=${sentimentValue ?? '(missing)'} ` +
+        `blocked=${sentimentBlocked}`
     );
 
     return {
@@ -597,6 +695,11 @@ export class DragonHeadMomentumStrategy extends QuantStrategy {
       filtered: entryEvaluation.filtered,
       params,
       eligible_count: entryEvaluation.candidates.length,
+      market_sentiment: {
+        value: sentimentValue,
+        blocked: sentimentBlocked,
+        threshold: params.minMarketSentiment,
+      },
     };
   }
 
@@ -629,6 +732,7 @@ export class DragonHeadMomentumStrategy extends QuantStrategy {
       fail_meta_missing: 0,
       fail_market_cap: 0,
       fail_famous_yz: 0,
+      sentiment_blocked: 0,
     };
 
     // 1) 当日涨停池
@@ -726,6 +830,53 @@ export class DragonHeadMomentumStrategy extends QuantStrategy {
     });
 
     return { candidates, filtered };
+  }
+
+  /**
+   * （US-082）情绪闸门触发时构造一个 zero-candidate 入场结果。
+   *
+   * 不调用 evaluateEntries（节省一次涨停池查询 + 5 维过滤），只读涨停池规模
+   * 让 `filtered.limit_up_pool_size` 与 `sentiment_blocked` 有意义—— UI 可以
+   * 在告警上写 "今天涨停 N 只但情绪冰点全部跳过" 的明细。
+   *
+   * 涨停池查询失败时静默回退 limit_up_pool_size=0（fail-OPEN 不阻塞主流程）。
+   */
+  private async skipEntriesDueToSentiment(tradeDate: string): Promise<{
+    candidates: Array<{
+      stock_code: string;
+      limit_up_row: DragonHeadLimitUpRow;
+      meta: DragonHeadStockMeta;
+      industry_rank: number;
+      famous_yz_net_buy: number;
+      reference_price: number;
+    }>;
+    filtered: DragonHeadFilteredStats;
+  }> {
+    let limitUpPoolSize = 0;
+    try {
+      const rows = await this.dataSource.loadLimitUpStocks(tradeDate);
+      limitUpPoolSize = rows.length;
+    } catch (error) {
+      logger.warn(
+        `DragonHead.skipEntriesDueToSentiment(${tradeDate}) loadLimitUpStocks failed: ${
+          (error as Error).message
+        } — using pool_size=0`
+      );
+    }
+    return {
+      candidates: [],
+      filtered: {
+        limit_up_pool_size: limitUpPoolSize,
+        one_word_board: 0,
+        fail_continuous_days: 0,
+        fail_industry_top: 0,
+        fail_industry_unknown: 0,
+        fail_meta_missing: 0,
+        fail_market_cap: 0,
+        fail_famous_yz: 0,
+        sentiment_blocked: limitUpPoolSize,
+      },
+    };
   }
 
   /** Exit 流程：对每只 currentPositions 计算 signal */
@@ -856,6 +1007,7 @@ export class DragonHeadMomentumStrategy extends QuantStrategy {
       holdingDaysLimit: override?.holdingDaysLimit ?? def.holdingDaysLimit,
       highOpenSellHalfPct: override?.highOpenSellHalfPct ?? def.highOpenSellHalfPct,
       excludeOneWordBoard: override?.excludeOneWordBoard ?? def.excludeOneWordBoard,
+      minMarketSentiment: override?.minMarketSentiment ?? def.minMarketSentiment,
     };
   }
 }

@@ -1,5 +1,5 @@
 /**
- * MultiFactorAlphaStrategy 单测（US-011）。
+ * MultiFactorAlphaStrategy 单测（US-011 / US-081）。
  *
  * 不依赖 jest；node 直接跑：
  *   cd backend && npx ts-node --transpile-only tests/strategies/MultiFactorAlphaStrategy.test.ts
@@ -7,7 +7,7 @@
  * 测试用 FakeDataSource 注入到 MultiFactorAlphaStrategy(constructor)，避免任何 DB 依赖。
  * AC 要求至少覆盖 industryNeutral 与 excludeST 两个分支；本文件总共覆盖：
  *   - 默认权重已按 AC 设定 (sum=1.0)
- *   - 8 因子加权合成 composite_score 正确
+ *   - 12 因子加权合成 composite_score 正确（US-081）
  *   - industryNeutral=true 时每行业最多 maxPerIndustry 只
  *   - industryNeutral=false 时不做行业限制
  *   - excludeST=true 剔除 ST/*ST 命名
@@ -18,9 +18,17 @@
  *   - previousSelection 计算 BUY / SELL / HOLD 增量
  *   - 权重归一化：用户传未归一化权重，内部 sum-normalize 到 1.0
  *   - evaluate() 返回信息性 hold 信号
+ *   - （US-081）weightMode='static'（默认）= 等价 US-011 旧行为
+ *   - （US-081）weightMode='equal' = 所有正权重因子 1/N 等权
+ *   - （US-081）weightMode='ic_weighted' = 按 IC 动态加权
+ *   - （US-081）weightMode='ic_weighted' 所有 IC ≤ 0 → 整体回退 static
+ *   - （US-081）computeEffectiveWeights 纯函数 3 mode 边界覆盖
  */
 
 import {
+  computeEffectiveWeights,
+  DEFAULT_IC_LOOK_FORWARD_DAYS,
+  DEFAULT_IC_LOOKBACK_DAYS,
   DEFAULT_MULTI_FACTOR_ALPHA_WEIGHTS,
   isNewerThan,
   isSTName,
@@ -57,13 +65,29 @@ function expectEqual<T>(name: string, actual: T, expected: T, detail = '') {
 /**
  * FakeDataSource 接收两个固定 Map，避免任何 DB / Sequelize 调用。
  * 任何 generateSignals 调用都从内存里读，结果完全确定。
+ *
+ * （US-081）可选注入 icMap 让 weightMode='ic_weighted' 测试可控；
+ * 同时记录 loadRecentFactorICs 调用次数 + 入参，便于断言"static/equal mode
+ * 不该调本接口"。
  */
 class FakeDataSource implements MultiFactorAlphaDataSource {
+  /** loadRecentFactorICs 累计调用次数（US-081 测试用） */
+  public icCallCount = 0;
+  /** loadRecentFactorICs 上一次入参快照（US-081 断言 lookForwardDays / lookbackDays 透传） */
+  public lastIcCallArgs?: {
+    factorNames: string[];
+    asOfDate: string;
+    lookForwardDays: number;
+    lookbackDays: number;
+  };
+
   constructor(
     /** code → factor → z_score；未列出的 factor 默认 0（与生产中性补全一致） */
     private factorMap: Map<string, Map<string, number>>,
     /** code → meta（name / industry / listing_date） */
-    private metaMap: Map<string, StockMeta>
+    private metaMap: Map<string, StockMeta>,
+    /** （US-081）factor_name → ic_mean；未列出的 factor 视为"无 IC 数据"（不返回） */
+    private icMap: Map<string, number> = new Map()
   ) {}
 
   async loadFactorScores(
@@ -91,13 +115,31 @@ class FakeDataSource implements MultiFactorAlphaDataSource {
     }
     return out;
   }
+
+  async loadRecentFactorICs(
+    factorNames: string[],
+    asOfDate: string,
+    lookForwardDays: number,
+    lookbackDays: number
+  ): Promise<Map<string, number>> {
+    this.icCallCount += 1;
+    this.lastIcCallArgs = { factorNames: [...factorNames], asOfDate, lookForwardDays, lookbackDays };
+    // 投影：只返回请求的 factorNames 中 icMap 已配置的项
+    const out = new Map<string, number>();
+    for (const name of factorNames) {
+      const v = this.icMap.get(name);
+      if (v !== undefined) out.set(name, v);
+    }
+    return out;
+  }
 }
 
 /**
- * 构造一个 N 行的 fake 数据集；每只股票 8 因子都有 z_score。
+ * 构造一个 N 行的 fake 数据集；每只股票 12 因子都有 z_score。
  *
  * @param fixtures stocks 数组：{code, name, industry, listing_date?, factor_z?}
  *   factor_z 可只填部分因子，其余默认 0。
+ * @param icMap （US-081）可选：factor_name → ic_mean，用于 weightMode='ic_weighted' 测试
  */
 function buildFakeDataSource(
   fixtures: Array<{
@@ -106,7 +148,8 @@ function buildFakeDataSource(
     industry: string | null;
     listing_date?: string | null;
     factor_z?: Partial<Record<string, number>>;
-  }>
+  }>,
+  icMap?: Map<string, number>
 ): FakeDataSource {
   const factorMap = new Map<string, Map<string, number>>();
   const metaMap = new Map<string, StockMeta>();
@@ -123,7 +166,7 @@ function buildFakeDataSource(
       listing_date: f.listing_date ?? null,
     });
   }
-  return new FakeDataSource(factorMap, metaMap);
+  return new FakeDataSource(factorMap, metaMap, icMap);
 }
 
 // ----------------------------------------------------------------
@@ -132,14 +175,21 @@ function buildFakeDataSource(
 
 async function test_default_weights_match_AC() {
   const weights = DEFAULT_MULTI_FACTOR_ALPHA_WEIGHTS;
-  expectEqual('default weights.value', weights.value, 0.15);
-  expectEqual('default weights.quality', weights.quality, 0.15);
-  expectEqual('default weights.growth', weights.growth, 0.15);
-  expectEqual('default weights.momentum', weights.momentum, 0.15);
-  expectEqual('default weights.low_vol', weights.low_vol, 0.1);
-  expectEqual('default weights.northbound', weights.northbound, 0.1);
-  expectEqual('default weights.money_flow', weights.money_flow, 0.1);
-  expectEqual('default weights.dragon_tiger', weights.dragon_tiger, 0.1);
+  // US-081 升级后的 12 因子默认权重
+  expectEqual('default weights.value', weights.value, 0.1);
+  expectEqual('default weights.quality', weights.quality, 0.1);
+  expectEqual('default weights.growth', weights.growth, 0.1);
+  expectEqual('default weights.momentum', weights.momentum, 0.1);
+  expectEqual('default weights.low_vol', weights.low_vol, 0.08);
+  expectEqual('default weights.northbound', weights.northbound, 0.08);
+  expectEqual('default weights.money_flow', weights.money_flow, 0.08);
+  expectEqual('default weights.dragon_tiger', weights.dragon_tiger, 0.08);
+  // US-081 新增 4 个因子
+  expectEqual('default weights.quality_high', weights.quality_high, 0.07);
+  expectEqual('default weights.analyst_consensus', weights.analyst_consensus, 0.07);
+  expectEqual('default weights.east_money_qa', weights.east_money_qa, 0.06);
+  expectEqual('default weights.momentum_reversal', weights.momentum_reversal, 0.08);
+  expectEqual('US-081: 12 个因子全部都在', Object.keys(weights).length, 12);
   const sum = Object.values(weights).reduce((a, b) => a + b, 0);
   assert('default weights sum to 1.0', Math.abs(sum - 1) < 1e-9, `sum=${sum}`);
 }
@@ -153,10 +203,16 @@ async function test_default_params_are_AC_defaults() {
   expectEqual('default maxPerIndustry', def.maxPerIndustry, 3);
   expectEqual('default excludeST', def.excludeST, true);
   expectEqual('default excludeNew60d', def.excludeNew60d, true);
+  // US-081 新增 3 字段
+  expectEqual('default weightMode', def.weightMode, 'static');
+  expectEqual('default icLookForwardDays', def.icLookForwardDays, DEFAULT_IC_LOOK_FORWARD_DAYS);
+  expectEqual('default icLookbackDays', def.icLookbackDays, DEFAULT_IC_LOOKBACK_DAYS);
+  expectEqual('DEFAULT_IC_LOOK_FORWARD_DAYS = 20', DEFAULT_IC_LOOK_FORWARD_DAYS, 20);
+  expectEqual('DEFAULT_IC_LOOKBACK_DAYS = 90', DEFAULT_IC_LOOKBACK_DAYS, 90);
 }
 
 async function test_composite_score_weighted_sum() {
-  // 构造一只股票：8 因子 z 都是 1.0 → composite_score 应当 = 1.0（weight sum 1.0）
+  // 构造一只股票：12 因子 z 都是 1.0 → composite_score 应当 = 1.0（weight sum 1.0）
   const ds = buildFakeDataSource([
     {
       code: '600519',
@@ -171,6 +227,11 @@ async function test_composite_score_weighted_sum() {
         northbound: 1,
         money_flow: 1,
         dragon_tiger: 1,
+        // US-081 新增 4 个因子也设 z=1
+        quality_high: 1,
+        analyst_consensus: 1,
+        east_money_qa: 1,
+        momentum_reversal: 1,
       },
     },
   ]);
@@ -178,7 +239,7 @@ async function test_composite_score_weighted_sum() {
   const result = await s.generateSignals('2026-06-05');
   expectEqual('全 z=1 → composite=1.0', result.signals[0].composite_score, 1.0);
 
-  // 构造一只股票：value=2.0，其他全 0；权重 0.15 → composite = 2.0 * 0.15 = 0.30
+  // 构造一只股票：value=2.0，其他全 0；权重 0.10 (US-081 新值) → composite = 2.0 * 0.10 = 0.20
   const ds2 = buildFakeDataSource([
     {
       code: '600519',
@@ -191,8 +252,8 @@ async function test_composite_score_weighted_sum() {
   const r2 = await s2.generateSignals('2026-06-05');
   const composite = r2.signals[0].composite_score;
   assert(
-    'value=2, 其余=0 → composite ≈ 0.30',
-    Math.abs(composite - 0.3) < 1e-9,
+    'value=2, 其余=0 → composite ≈ 0.20 (US-081 新权重 0.10)',
+    Math.abs(composite - 0.2) < 1e-9,
     `got ${composite}`
   );
 }
@@ -567,6 +628,297 @@ async function test_topN_caps_output() {
   expectEqual('topN 取 composite top-3', r.target_portfolio, ['A1', 'A2', 'A3']);
 }
 
+// ================================================================
+// US-081: weightMode 测试
+// ================================================================
+
+async function test_weight_mode_static_is_default_equiv_us011() {
+  // weightMode='static'（不传或显式传）应当完全等价 US-011 旧行为
+  // value=10, momentum=10, 其他 0 + default weights (value=0.10, momentum=0.10)
+  // composite = 10 * 0.10 + 10 * 0.10 = 2.0
+  const ds = buildFakeDataSource([
+    {
+      code: '600519',
+      name: '贵州茅台',
+      industry: '食品饮料',
+      factor_z: { value: 10, momentum: 10 },
+    },
+  ]);
+  const s = new MultiFactorAlphaStrategy(ds);
+
+  // 不传 weightMode（默认 'static'）
+  const r1 = await s.generateSignals('2026-06-05');
+  assert(
+    'weightMode 默认 = static',
+    r1.params.weightMode === 'static',
+    `got ${r1.params.weightMode}`
+  );
+  assert(
+    'static (default): composite ≈ 2.0',
+    Math.abs(r1.signals[0].composite_score - 2.0) < 1e-9,
+    `got ${r1.signals[0].composite_score}`
+  );
+
+  // 显式传 weightMode='static' 与默认完全一致
+  const r2 = await s.generateSignals('2026-06-05', { params: { weightMode: 'static' } });
+  assert(
+    'static (explicit): composite 与默认一致',
+    Math.abs(r2.signals[0].composite_score - r1.signals[0].composite_score) < 1e-12
+  );
+
+  // static / equal mode 不查 IC 表
+  expectEqual(
+    'static mode 不调 loadRecentFactorICs',
+    ds.icCallCount,
+    0
+  );
+}
+
+async function test_weight_mode_equal_uniform_weights() {
+  // weightMode='equal' = 12 个正权重因子各 1/12
+  // 12 因子全 z=1 → composite = sum(1 * 1/12) * 12 = 1.0（与 static 全 z=1 结果一致）
+  const ds = buildFakeDataSource([
+    {
+      code: '600519',
+      name: '贵州茅台',
+      industry: '食品饮料',
+      factor_z: {
+        value: 1,
+        quality: 1,
+        growth: 1,
+        momentum: 1,
+        low_vol: 1,
+        northbound: 1,
+        money_flow: 1,
+        dragon_tiger: 1,
+        quality_high: 1,
+        analyst_consensus: 1,
+        east_money_qa: 1,
+        momentum_reversal: 1,
+      },
+    },
+  ]);
+  const s = new MultiFactorAlphaStrategy(ds);
+  const r = await s.generateSignals('2026-06-05', { params: { weightMode: 'equal' } });
+  assert(
+    'equal mode: 全 z=1 → composite=1.0',
+    Math.abs(r.signals[0].composite_score - 1.0) < 1e-9,
+    `got ${r.signals[0].composite_score}`
+  );
+
+  // value=12, 其他 0 + equal mode → composite = 12 * (1/12) = 1.0
+  const ds2 = buildFakeDataSource([
+    {
+      code: '600519',
+      name: '贵州茅台',
+      industry: '食品饮料',
+      factor_z: { value: 12 },
+    },
+  ]);
+  const s2 = new MultiFactorAlphaStrategy(ds2);
+  const r2 = await s2.generateSignals('2026-06-05', { params: { weightMode: 'equal' } });
+  assert(
+    'equal mode: value=12 其他 0 → composite = 12 * 1/12 = 1.0',
+    Math.abs(r2.signals[0].composite_score - 1.0) < 1e-9,
+    `got ${r2.signals[0].composite_score}`
+  );
+
+  // equal mode 不查 IC 表
+  expectEqual(
+    'equal mode 不调 loadRecentFactorICs',
+    ds.icCallCount,
+    0
+  );
+}
+
+async function test_weight_mode_ic_weighted_dynamic_weights() {
+  // weightMode='ic_weighted' + IC: {value: 0.10, momentum: 0.05}（其余因子无 IC 数据，per-factor fallback to static）
+  // 构造股票：value z=10, momentum z=5
+  // computeEffectiveWeights: value=0.10 (来自 IC), momentum=0.05 (来自 IC),
+  //   其余因子 = static weights (quality=0.10, growth=0.10, ..., 12 项)
+  //   注意因 fixture 中其他因子 z=0 → 不贡献 composite
+  // 归一化后 value+momentum 占总权重 = 0.15 / (0.10 + 0.05 + 0.32 [4 老因子 sum] + 0.06 + 0.07*2 + 0.08*4)
+  //   = 0.15 / (0.15 + 0.32 + 0.06 + 0.14 + 0.32) = 0.15 / 0.99 ≈ 0.1515
+  // composite = 10 * (0.10/0.99) + 5 * (0.05/0.99)
+  //           = (1.0 + 0.25) / 0.99 = 1.25 / 0.99 ≈ 1.2626
+  // 实际上 value+momentum 之外的因子 z=0 不贡献 composite，所以最终 composite 只取决于这两个的归一化权重
+  // 重要的是：value 的权重 > momentum 的权重（因 IC 0.10 > 0.05），所以 composite > 单看 momentum
+  const icMap = new Map<string, number>([
+    ['value', 0.1],
+    ['momentum', 0.05],
+  ]);
+  const ds = buildFakeDataSource(
+    [
+      {
+        code: '600519',
+        name: '贵州茅台',
+        industry: '食品饮料',
+        factor_z: { value: 10, momentum: 5 },
+      },
+    ],
+    icMap
+  );
+  const s = new MultiFactorAlphaStrategy(ds);
+  const r = await s.generateSignals('2026-06-05', { params: { weightMode: 'ic_weighted' } });
+
+  // 调了 loadRecentFactorICs 一次
+  expectEqual('ic_weighted mode 调 loadRecentFactorICs', ds.icCallCount, 1);
+  // 入参透传正确
+  assert(
+    'ic_weighted: factorNames 含 value/momentum',
+    !!ds.lastIcCallArgs?.factorNames.includes('value') &&
+      !!ds.lastIcCallArgs?.factorNames.includes('momentum')
+  );
+  expectEqual(
+    'ic_weighted: lookForwardDays 透传 default 20',
+    ds.lastIcCallArgs?.lookForwardDays,
+    20
+  );
+  expectEqual(
+    'ic_weighted: lookbackDays 透传 default 90',
+    ds.lastIcCallArgs?.lookbackDays,
+    90
+  );
+
+  // composite 应当 > 0（IC 用了正值）
+  assert(
+    'ic_weighted: composite > 0',
+    r.signals[0].composite_score > 0,
+    `got ${r.signals[0].composite_score}`
+  );
+
+  // 等价的纯函数验证：computeEffectiveWeights 应当让 value 的 effective weight = 0.10
+  const eff = computeEffectiveWeights(
+    { ...DEFAULT_MULTI_FACTOR_ALPHA_WEIGHTS },
+    'ic_weighted',
+    icMap
+  );
+  expectEqual('ic_weighted effective: value = 0.10 (from IC)', eff.value, 0.1);
+  expectEqual('ic_weighted effective: momentum = 0.05 (from IC)', eff.momentum, 0.05);
+  // 其他因子无 IC 数据 → fallback to static weight
+  expectEqual('ic_weighted effective: quality = 0.10 (fallback static)', eff.quality, 0.1);
+  expectEqual('ic_weighted effective: growth = 0.10 (fallback static)', eff.growth, 0.1);
+  expectEqual(
+    'ic_weighted effective: east_money_qa = 0.06 (fallback static)',
+    eff.east_money_qa,
+    0.06
+  );
+}
+
+async function test_weight_mode_ic_weighted_all_negative_fallback_to_static() {
+  // 所有 IC 都 ≤ 0 → 整体回退到 static weights（不允许 normalize 后全 0）
+  const icMap = new Map<string, number>([
+    ['value', -0.05],
+    ['quality', -0.03],
+    ['growth', 0],
+    ['momentum', -0.01],
+    ['low_vol', 0],
+    ['northbound', -0.02],
+    ['money_flow', 0],
+    ['dragon_tiger', -0.01],
+    ['quality_high', 0],
+    ['analyst_consensus', 0],
+    ['east_money_qa', 0],
+    ['momentum_reversal', 0],
+  ]);
+  const eff = computeEffectiveWeights(
+    { ...DEFAULT_MULTI_FACTOR_ALPHA_WEIGHTS },
+    'ic_weighted',
+    icMap
+  );
+
+  // 整体 fallback：与 static weights 相同
+  expectEqual(
+    'all IC ≤ 0 → fallback static.value',
+    eff.value,
+    DEFAULT_MULTI_FACTOR_ALPHA_WEIGHTS.value
+  );
+  expectEqual(
+    'all IC ≤ 0 → fallback static.momentum_reversal',
+    eff.momentum_reversal,
+    DEFAULT_MULTI_FACTOR_ALPHA_WEIGHTS.momentum_reversal
+  );
+}
+
+async function test_compute_effective_weights_pure_function() {
+  const staticW = { value: 0.5, quality: 0.3, growth: 0.2 };
+
+  // static mode = identity
+  const eStatic = computeEffectiveWeights(staticW, 'static');
+  expectEqual('static mode = identity', eStatic, staticW);
+
+  // equal mode = 所有 > 0 因子赋 1.0（normalize 后等价 1/N）
+  const eEqual = computeEffectiveWeights(staticW, 'equal');
+  expectEqual('equal mode: value = 1.0', eEqual.value, 1.0);
+  expectEqual('equal mode: quality = 1.0', eEqual.quality, 1.0);
+  expectEqual('equal mode: growth = 1.0', eEqual.growth, 1.0);
+
+  // ic_weighted, 全部都有正 IC → 完全用 IC
+  const icAllPositive = new Map<string, number>([
+    ['value', 0.10],
+    ['quality', 0.05],
+    ['growth', 0.02],
+  ]);
+  const eIc = computeEffectiveWeights(staticW, 'ic_weighted', icAllPositive);
+  expectEqual('ic_weighted all positive: value = 0.10', eIc.value, 0.1);
+  expectEqual('ic_weighted all positive: quality = 0.05', eIc.quality, 0.05);
+  expectEqual('ic_weighted all positive: growth = 0.02', eIc.growth, 0.02);
+
+  // ic_weighted, 部分缺失 → 缺的用 static 兜底
+  const icPartial = new Map<string, number>([['value', 0.10]]);
+  const eIcPartial = computeEffectiveWeights(staticW, 'ic_weighted', icPartial);
+  expectEqual('ic_weighted partial: value 用 IC', eIcPartial.value, 0.1);
+  expectEqual('ic_weighted partial: quality fallback static', eIcPartial.quality, 0.3);
+  expectEqual('ic_weighted partial: growth fallback static', eIcPartial.growth, 0.2);
+
+  // ic_weighted, 部分负 IC + 部分正 IC → 负的用 static 兜底，正的用 IC
+  const icMixed = new Map<string, number>([
+    ['value', 0.10],
+    ['quality', -0.05],
+    ['growth', 0],
+  ]);
+  const eIcMixed = computeEffectiveWeights(staticW, 'ic_weighted', icMixed);
+  expectEqual('ic_weighted mixed: value 用正 IC', eIcMixed.value, 0.1);
+  expectEqual('ic_weighted mixed: quality 用 static (因 IC<0)', eIcMixed.quality, 0.3);
+  expectEqual('ic_weighted mixed: growth 用 static (因 IC=0)', eIcMixed.growth, 0.2);
+
+  // ic_weighted, icMap=undefined → 全部 fallback static
+  const eIcMissing = computeEffectiveWeights(staticW, 'ic_weighted');
+  expectEqual('ic_weighted icMap undefined: 全部 fallback static', eIcMissing, staticW);
+
+  // ic_weighted, 全部 IC 都 ≤ 0 → 整体 fallback static
+  const icAllNegative = new Map<string, number>([
+    ['value', -0.10],
+    ['quality', -0.05],
+    ['growth', 0],
+  ]);
+  const eIcAllNeg = computeEffectiveWeights(staticW, 'ic_weighted', icAllNegative);
+  expectEqual('ic_weighted 全负 IC: 整体 fallback static', eIcAllNeg, staticW);
+
+  // 边界：staticW 中权重为 0 / 负 → 在所有 mode 下 effective = 0
+  const staticWithZero = { value: 0.5, quality: 0, growth: -0.1 };
+  const eEqualWithZero = computeEffectiveWeights(staticWithZero, 'equal');
+  expectEqual('equal mode: quality=0 → effective=0', eEqualWithZero.quality, 0);
+  expectEqual('equal mode: growth=-0.1 → effective=0', eEqualWithZero.growth, 0);
+}
+
+async function test_weight_mode_ic_weighted_overrides_lookback() {
+  // 验证 icLookForwardDays / icLookbackDays 参数透传到 DataSource
+  const ds = buildFakeDataSource([
+    { code: '600519', name: '贵州茅台', industry: '食品饮料', factor_z: { value: 5 } },
+  ]);
+  const s = new MultiFactorAlphaStrategy(ds);
+  await s.generateSignals('2026-06-05', {
+    params: {
+      weightMode: 'ic_weighted',
+      icLookForwardDays: 5,
+      icLookbackDays: 30,
+    },
+  });
+  expectEqual('icLookForwardDays 覆盖透传', ds.lastIcCallArgs?.lookForwardDays, 5);
+  expectEqual('icLookbackDays 覆盖透传', ds.lastIcCallArgs?.lookbackDays, 30);
+}
+
 // ----------------------------------------------------------------
 // Runner
 // ----------------------------------------------------------------
@@ -589,6 +941,13 @@ const tests: Array<() => Promise<void>> = [
   test_invalid_trade_date_throws,
   test_empty_universe_returns_empty_portfolio,
   test_topN_caps_output,
+  // US-081
+  test_weight_mode_static_is_default_equiv_us011,
+  test_weight_mode_equal_uniform_weights,
+  test_weight_mode_ic_weighted_dynamic_weights,
+  test_weight_mode_ic_weighted_all_negative_fallback_to_static,
+  test_compute_effective_weights_pure_function,
+  test_weight_mode_ic_weighted_overrides_lookback,
 ];
 
 (async () => {

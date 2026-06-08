@@ -66,6 +66,16 @@ class FakeDataSource implements DragonHeadDataSource {
       famousYzNetBuy?: Map<string, Map<string, number>>;
       stockMeta?: Map<string, DragonHeadStockMeta>;
       dailyQuote?: Map<string, Map<string, DragonHeadQuote>>;
+      /**
+       * （US-082）trade_date → market sentiment index_value（0-100）。
+       * 未设置（state.marketSentiment 缺该日）→ loadMarketSentimentIndex 返回 null
+       * （策略层 fail-OPEN 继续入场）。设置为 0-100 数字让测试可以模拟
+       * "情绪冰点"(< 60) vs "情绪偏多"(≥ 60) 两条路径。
+       *
+       * **测试默认值约定**：FakeDataSource 在构造器里没拿到 marketSentiment 时返回
+       * null（fail-OPEN），让既有 24 个测试不需要修改也能继续走入场流程。
+       */
+      marketSentiment?: Map<string, number>;
     } = {}
   ) {}
 
@@ -105,6 +115,12 @@ class FakeDataSource implements DragonHeadDataSource {
       if (m.has(c)) out.set(c, m.get(c)!);
     }
     return out;
+  }
+
+  async loadMarketSentimentIndex(tradeDate: string): Promise<number | null> {
+    if (!this.state.marketSentiment) return null;
+    const v = this.state.marketSentiment.get(tradeDate);
+    return v === undefined ? null : v;
   }
 }
 
@@ -158,6 +174,7 @@ async function test_default_params_match_AC() {
   expectEqual('holdingDaysLimit=3 (AC 持有 3 日强制)', p.holdingDaysLimit, 3);
   expectEqual('highOpenSellHalfPct=0.05 (AC 高开 5%+)', p.highOpenSellHalfPct, 0.05);
   expectEqual('excludeOneWordBoard=true', p.excludeOneWordBoard, true);
+  expectEqual('US-082 minMarketSentiment=60', p.minMarketSentiment, 60);
 }
 
 async function test_strategy_definition_metadata() {
@@ -807,6 +824,148 @@ async function test_custom_params_override() {
 }
 
 // ----------------------------------------------------------------
+// US-082 — 市场情绪过滤 (minMarketSentiment)
+// ----------------------------------------------------------------
+
+/** 构造一个 5 维全通过的"基础场景"，可被 4 个 US-082 测试复用，只需切 sentiment */
+function buildSentimentScenario(
+  tradeDate: string,
+  sentimentValue: number | null
+): FakeDataSource {
+  const code = '600519';
+  return new FakeDataSource({
+    limitUp: new Map([[tradeDate, [eligibleRow(code, { continuous_days: 2 })]]]),
+    topIndustries: new Map([[tradeDate, ['半导体']]]),
+    famousYzNetBuy: new Map([[tradeDate, new Map([[code, 8000_0000]])]]),
+    stockMeta: new Map([eligibleMeta(code, { circulating_market_cap: 80 * 1e8 })]),
+    dailyQuote: new Map(),
+    marketSentiment: sentimentValue === null ? undefined : new Map([[tradeDate, sentimentValue]]),
+  });
+}
+
+async function test_us082_sentiment_above_threshold_passes() {
+  // 情绪 = 75 > 60 → 正常入场
+  const tradeDate = '2026-06-05';
+  const ds = buildSentimentScenario(tradeDate, 75);
+  const s = new DragonHeadMomentumStrategy(ds);
+  const r = await s.generateSignals(tradeDate);
+  expectEqual('情绪 75 > 60 → BUY 1', r.signals.filter(x => x.signal === 'buy').length, 1);
+  expectEqual('eligible 1', r.eligible_count, 1);
+  expectEqual('market_sentiment.value = 75', r.market_sentiment.value, 75);
+  expectEqual('market_sentiment.blocked = false', r.market_sentiment.blocked, false);
+  expectEqual('market_sentiment.threshold = 60 (default)', r.market_sentiment.threshold, 60);
+  expectEqual('filtered.sentiment_blocked = 0', r.filtered.sentiment_blocked, 0);
+}
+
+async function test_us082_sentiment_at_threshold_passes() {
+  // 边界值: 情绪 = 60 = threshold → 正常入场（≥ 通过，严格 < 才阻断）
+  const tradeDate = '2026-06-05';
+  const ds = buildSentimentScenario(tradeDate, 60);
+  const s = new DragonHeadMomentumStrategy(ds);
+  const r = await s.generateSignals(tradeDate);
+  expectEqual('情绪 == threshold → BUY 1', r.signals.filter(x => x.signal === 'buy').length, 1);
+  expectEqual('blocked = false', r.market_sentiment.blocked, false);
+}
+
+async function test_us082_sentiment_below_threshold_blocks_entry() {
+  // 情绪 = 45 < 60 → 跳过新开仓
+  const tradeDate = '2026-06-05';
+  const ds = buildSentimentScenario(tradeDate, 45);
+  const s = new DragonHeadMomentumStrategy(ds);
+  const r = await s.generateSignals(tradeDate);
+  expectEqual('情绪 45 < 60 → BUY 0', r.signals.filter(x => x.signal === 'buy').length, 0);
+  expectEqual('eligible_count = 0', r.eligible_count, 0);
+  expectEqual('target_positions 空', r.target_positions.length, 0);
+  expectEqual('market_sentiment.value = 45', r.market_sentiment.value, 45);
+  expectEqual('market_sentiment.blocked = true', r.market_sentiment.blocked, true);
+  expectEqual('limit_up_pool_size 仍 = 1', r.filtered.limit_up_pool_size, 1);
+  expectEqual('sentiment_blocked = 1 (1 涨停股被跳过)', r.filtered.sentiment_blocked, 1);
+}
+
+async function test_us082_sentiment_missing_fails_open() {
+  // 情绪指数缺失（marketSentiment 未配置 → loadMarketSentimentIndex 返回 null）
+  // → fail-OPEN 继续入场流程，不阻塞
+  const tradeDate = '2026-06-05';
+  const ds = buildSentimentScenario(tradeDate, null);
+  const s = new DragonHeadMomentumStrategy(ds);
+  const r = await s.generateSignals(tradeDate);
+  expectEqual('缺指数 → fail-OPEN BUY 1', r.signals.filter(x => x.signal === 'buy').length, 1);
+  expectEqual('blocked = false (fail-OPEN)', r.market_sentiment.blocked, false);
+  expectEqual('value = null', r.market_sentiment.value, null);
+}
+
+async function test_us082_held_positions_still_exit_when_blocked() {
+  // 关键测试：情绪冰点时，已有持仓必须正常走 exit 流程（保护性平仓不被情绪闸门压制）
+  // 场景：持有 600100 三日 → 应该触发 holdingDaysLimit=3 强制 SELL
+  //       同时 600519 是涨停候选但被情绪闸门跳过 BUY
+  const tradeDate = '2026-06-05';
+  const heldCode = '600100';
+  const newCode = '600519';
+  const ds = new FakeDataSource({
+    limitUp: new Map([[tradeDate, [eligibleRow(newCode)]]]),
+    topIndustries: new Map([[tradeDate, ['半导体']]]),
+    famousYzNetBuy: new Map([[tradeDate, new Map([[newCode, 1e8]])]]),
+    stockMeta: new Map([eligibleMeta(heldCode), eligibleMeta(newCode)]),
+    dailyQuote: new Map([
+      [
+        tradeDate,
+        new Map([
+          [
+            heldCode,
+            { open: 10.05, close: 10.1, high: 10.2, low: 10.0, prev_close: 10.0, hit_limit_up: false },
+          ],
+        ]),
+      ],
+    ]),
+    // 情绪冰点
+    marketSentiment: new Map([[tradeDate, 20]]),
+  });
+  const pos: DragonHeadPosition = {
+    stock_code: heldCode,
+    entry_date: '2026-06-02', // 持有 3 自然日
+    entry_price: 10.0,
+  };
+  const s = new DragonHeadMomentumStrategy(ds);
+  const r = await s.generateSignals(tradeDate, { currentPositions: [pos] });
+
+  // 持仓 SELL（情绪闸门不影响 exit）
+  const sellSig = r.signals.find(x => x.stock_code === heldCode);
+  expectEqual('持仓 SELL (情绪不影响 exit)', sellSig?.signal, 'sell');
+  // 新候选 BUY 被跳过
+  const buyCount = r.signals.filter(x => x.signal === 'buy').length;
+  expectEqual('新 BUY 被情绪闸门跳过', buyCount, 0);
+  expectEqual('market_sentiment.blocked = true', r.market_sentiment.blocked, true);
+  // target_positions 空 (持仓被 SELL 移除，新 BUY 被跳过)
+  expectEqual('target_positions 空', r.target_positions.length, 0);
+}
+
+async function test_us082_custom_threshold_override() {
+  // override minMarketSentiment=30 → 情绪 45 通过；35 仍被阻
+  const tradeDate = '2026-06-05';
+  const dsPass = buildSentimentScenario(tradeDate, 45);
+  const dsBlock = buildSentimentScenario(tradeDate, 25);
+  const s = new DragonHeadMomentumStrategy(dsPass);
+  const rPass = await s.generateSignals(tradeDate, { params: { minMarketSentiment: 30 } });
+  expectEqual('override 30 → 45 通过 BUY 1', rPass.signals.filter(x => x.signal === 'buy').length, 1);
+  expectEqual('threshold 透传到结果', rPass.market_sentiment.threshold, 30);
+
+  const s2 = new DragonHeadMomentumStrategy(dsBlock);
+  const rBlock = await s2.generateSignals(tradeDate, { params: { minMarketSentiment: 30 } });
+  expectEqual('override 30 → 25 阻 BUY 0', rBlock.signals.filter(x => x.signal === 'buy').length, 0);
+  expectEqual('blocked = true', rBlock.market_sentiment.blocked, true);
+}
+
+async function test_us082_threshold_zero_disables_filter() {
+  // minMarketSentiment=0 → 任何 sentiment 都通过（包括 0），相当于关闭过滤
+  const tradeDate = '2026-06-05';
+  const ds = buildSentimentScenario(tradeDate, 0); // 极度悲观
+  const s = new DragonHeadMomentumStrategy(ds);
+  const r = await s.generateSignals(tradeDate, { params: { minMarketSentiment: 0 } });
+  expectEqual('阈值 0 → 任何情绪都通过 BUY 1', r.signals.filter(x => x.signal === 'buy').length, 1);
+  expectEqual('blocked = false', r.market_sentiment.blocked, false);
+}
+
+// ----------------------------------------------------------------
 // Runner
 // ----------------------------------------------------------------
 
@@ -836,6 +995,14 @@ const tests: Array<() => Promise<void>> = [
   test_invalid_trade_date_throws,
   test_empty_universe_returns_empty,
   test_custom_params_override,
+  // US-082 - 市场情绪过滤
+  test_us082_sentiment_above_threshold_passes,
+  test_us082_sentiment_at_threshold_passes,
+  test_us082_sentiment_below_threshold_blocks_entry,
+  test_us082_sentiment_missing_fails_open,
+  test_us082_held_positions_still_exit_when_blocked,
+  test_us082_custom_threshold_override,
+  test_us082_threshold_zero_disables_filter,
 ];
 
 (async () => {
