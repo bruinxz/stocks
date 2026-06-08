@@ -160,11 +160,151 @@ export async function sendDailyDigestNow(tradeDate?: string): Promise<SendDigest
   return res.data.data as SendDigestsResult;
 }
 
+// ---------- US-065 周报数据形态 ----------------------------------------------
+
+export interface PrevWeekRange {
+  start_date: string;
+  end_date: string;
+  week_id: string;
+}
+
+export interface WeeklyEquityPoint {
+  date: string;
+  total_value: number;
+}
+
+export interface IndustryContributionRow {
+  industry: string;
+  realized_pnl: number;
+  trade_count: number;
+  symbols: string[];
+}
+
+export interface SymbolContributionRow {
+  symbol: string;
+  name: string;
+  industry: string | null;
+  realized_pnl: number;
+  trade_count: number;
+}
+
+export interface UpcomingEventRow {
+  symbol: string;
+  name: string;
+  event_type: 'earnings_forecast' | 'earnings_report';
+  detail: string;
+  announce_date?: string | null;
+}
+
+export interface AIWeeklyOpinion {
+  source: 'remote' | 'heuristic';
+  headline: string;
+  paragraphs: string[];
+}
+
+export interface WeeklyReviewPayload {
+  user_id: number;
+  username: string;
+  week: PrevWeekRange;
+  pnl: {
+    start_value: number;
+    end_value: number;
+    pnl_amount: number;
+    pnl_pct: number | null;
+  };
+  equity_curve: WeeklyEquityPoint[];
+  industry_contribution: IndustryContributionRow[];
+  top_winners: SymbolContributionRow[];
+  top_losers: SymbolContributionRow[];
+  trade_count: number;
+  realized_pnl_total: number;
+  upcoming_events: UpcomingEventRow[];
+  ai_opinion: AIWeeklyOpinion;
+}
+
+export type WeeklyReviewStatus = 'sent' | 'skipped' | 'failed' | 'partial';
+
+export interface WeeklyReviewForUserResult {
+  report_id: string;
+  status: WeeklyReviewStatus;
+  sent: boolean;
+  user_id: number;
+  username: string;
+  week: PrevWeekRange;
+  payload?: WeeklyReviewPayload;
+  email_used?: string;
+  email_response?: any;
+  error?: string;
+  skip_reason?: string;
+}
+
+export interface SendWeeklyReviewResult {
+  week: PrevWeekRange;
+  scanned_users: number;
+  sent_count: number;
+  skipped_count: number;
+  failed_count: number;
+  dry_run: boolean;
+  per_user: WeeklyReviewForUserResult[];
+}
+
+/**
+ * US-065 — 更新邮件通道开关 / 接收地址 / weekly_review 开关。
+ */
+export async function updateEmailConfig(patch: {
+  enabled?: boolean;
+  address?: string;
+  weekly_review?: boolean;
+}): Promise<NotificationChannelsConfig> {
+  const res = await api.post('/settings/email-config', patch);
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || '保存邮件通道配置失败');
+  }
+  return res.data.data as NotificationChannelsConfig;
+}
+
+/**
+ * US-065 — dry_run 预演上周复盘邮件 payload，不实际发送。
+ */
+export async function previewWeeklyReview(
+  referenceDate?: string,
+  upcomingLookaheadDays?: number
+): Promise<SendWeeklyReviewResult> {
+  const body: any = {};
+  if (referenceDate) body.reference_date = referenceDate;
+  if (upcomingLookaheadDays !== undefined) body.upcoming_lookahead_days = upcomingLookaheadDays;
+  const res = await api.post('/settings/weekly-review/preview', body);
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || '预览周报失败');
+  }
+  return res.data.data as SendWeeklyReviewResult;
+}
+
+/**
+ * US-065 — 立即给当前用户发一封上周复盘邮件（非 dry_run）。
+ */
+export async function sendWeeklyReviewNow(
+  referenceDate?: string,
+  upcomingLookaheadDays?: number
+): Promise<SendWeeklyReviewResult> {
+  const body: any = {};
+  if (referenceDate) body.reference_date = referenceDate;
+  if (upcomingLookaheadDays !== undefined) body.upcoming_lookahead_days = upcomingLookaheadDays;
+  const res = await api.post('/settings/weekly-review/send', body);
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || '触发周报推送失败');
+  }
+  return res.data.data as SendWeeklyReviewResult;
+}
+
 const settingsService = {
   loadNotificationChannels,
   updateNotificationChannels,
+  updateEmailConfig,
   previewDailyDigest,
   sendDailyDigestNow,
+  previewWeeklyReview,
+  sendWeeklyReviewNow,
 };
 
 export default settingsService;

@@ -25,6 +25,7 @@ import { marketRegimeAlertService } from '../portfolio/risk/MarketRegimeAlertSer
 import { perStockStopLossGuard } from '../portfolio/risk/PerStockStopLossGuard';
 import { dailyTradingDigestService } from './DailyTradingDigestService';
 import { earningsForecastWatcher } from './EarningsForecastWatcher';
+import { weeklyReviewReportService } from './WeeklyReviewReportService';
 import { benchmarkIndexService } from './BenchmarkIndexService';
 import { automatedRecommendationLoopService } from './AutomatedRecommendationLoopService';
 import { recommendationTradeOutcomeService } from './RecommendationTradeOutcomeService';
@@ -2418,6 +2419,64 @@ class SchedulerService {
           `业绩预告推送完成。mode=${mode}，已发 ${totalSent}，跳过 ${totalSkipped}，失败 ${totalFailed}` +
             (dryRun ? '（dry-run，未实际推送）' : '')
         );
+      } else if (task.type === 'WEEKLY_REVIEW_EMAIL') {
+        // US-065 — 每周一 08:00 发上周复盘邮件（HTML, SMTP via env）。
+        // `user_id` 可选 (扫单用户)；`dry_run`=true 仅预演不推送；
+        // `reference_date` 覆盖基准日（默认 = 上海时区当天）；
+        // `upcoming_lookahead_days` 关注事件向后看天数（默认 7）。
+        const targetUserId = parameters.user_id || parameters.userId;
+        const dryRun =
+          parameters.dry_run !== undefined
+            ? Boolean(parameters.dry_run)
+            : parameters.dryRun !== undefined
+            ? Boolean(parameters.dryRun)
+            : false;
+        const lookahead =
+          parameters.upcoming_lookahead_days !== undefined
+            ? Number(parameters.upcoming_lookahead_days)
+            : parameters.upcomingLookaheadDays !== undefined
+            ? Number(parameters.upcomingLookaheadDays)
+            : undefined;
+        const weeklyResult = await weeklyReviewReportService.sendWeeklyReviewReports({
+          user_id: targetUserId ? Number(targetUserId) : undefined,
+          reference_date: parameters.reference_date || parameters.referenceDate,
+          dry_run: dryRun,
+          upcoming_lookahead_days: lookahead,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: weeklyResult.scanned_users,
+          completed_items: weeklyResult.sent_count,
+          failed_items: weeklyResult.failed_count,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: null,
+          result_summary: {
+            scenario: 'weekly_review_email',
+            week_start: weeklyResult.week.start_date,
+            week_end: weeklyResult.week.end_date,
+            week_id: weeklyResult.week.week_id,
+            scanned_users: weeklyResult.scanned_users,
+            sent_count: weeklyResult.sent_count,
+            skipped_count: weeklyResult.skipped_count,
+            failed_count: weeklyResult.failed_count,
+            dry_run: dryRun,
+            per_user_summary: weeklyResult.per_user.map(u => ({
+              user_id: u.user_id,
+              username: u.username,
+              status: u.status,
+              sent: u.sent,
+              email_used: u.email_used,
+              skip_reason: u.skip_reason,
+              error: u.error,
+            })),
+          },
+        });
+        logger.info(
+          `上周复盘邮件推送完成。week=${weeklyResult.week.start_date}~${weeklyResult.week.end_date}，` +
+            `扫描用户 ${weeklyResult.scanned_users}，已发 ${weeklyResult.sent_count}，` +
+            `跳过 ${weeklyResult.skipped_count}，失败 ${weeklyResult.failed_count}` +
+            (dryRun ? '（dry-run，未实际推送）' : '')
+        );
       } else if (task.type === 'AUTO_RECOMMENDATION_LOOP') {
         const result = await automatedRecommendationLoopService.run({
           username: parameters.username || 'lym',
@@ -3656,6 +3715,19 @@ class SchedulerService {
           dry_run: false,
           mode: 'watchlist',
           recent_days: 7,
+        },
+      },
+      {
+        // US-065 — 每周一 08:00 给所有 notification_channels.email.weekly_review=true
+        // 的用户发上周 (周一-周日) 策略复盘 HTML 邮件 (PnL / 行业贡献 / 关注事件 /
+        // AI 周观点)。SMTP 通过 SMTP_HOST/PORT/USER/PASS/SECURE/FROM env 配置。
+        name: '邮件周度策略复盘',
+        type: 'WEEKLY_REVIEW_EMAIL',
+        cron_expression: '0 8 * * 1',
+        is_active: true,
+        parameters: {
+          dry_run: false,
+          upcoming_lookahead_days: 7,
         },
       },
     ];

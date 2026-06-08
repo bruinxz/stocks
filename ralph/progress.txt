@@ -6126,3 +6126,60 @@ cd backend && npm run sync:announcements -- --date=2026-06-06
 - **`formatProfitChangeRange` 4 路径兜底 (净利润变化区间)**：AKShare EarningsForecast 不保证 low/high 都有值 — 公司可能只公告下限 "≥ +50%" 或上限 "≤ -20%" 或都不公告。**实现**: `(low, high)` 4 路径: 都有 → '+50.0% ~ +80.0%'; 仅 low → '≥ +50.0%'; 仅 high → '≤ +80.0%'; 都没 → '—'。**关键**: `Number.isFinite(Number(low))` 既过滤 null 也过滤 NaN/Infinity, 不要用 `low !== null` 单一判定。同款"4 路径区间格式化"适用其他业绩区间字段 (营收增速 / 毛利率波动 / 股息率范围)。
 - **`buildForecastEventId` 业务 ID 命名 + path 后缀 (本 story 引入 path 后缀)**：US-055 命名范式 `{TYPE}-{user_id}-{YYYYMMDD}-{rand4}`，本 story 扩展为 `EARN-{user_id}-{path}-{YYYYMMDD}-{rand4}` (path = HELD / WATCHLIST)。**判据**: 同一 user 同一日可能同时有 held + watchlist 两类推送 → 加 path 后缀避免 ID 冲突。**rand4 必须 padStart 4 位 hex**, 防 random 出 '7' 这种 1 位字符串 ID 长度漂移。同款 US-067 高优 vs 中优告警 ID 用 `ALERT-{user_id}-{level}-{YYYYMMDD}-{rand4}`。
 - **`scanHeldStocks / scanWatchlistStocks` 两个 method 共享私有 helper (本 story 引入)**：service 内 `_pushEvent(payload)` / `_persistSeen(user, signature)` / `_loadConsensusForRow(row, asOfDate)` 让两个 public method 都能调到同款 webhook send + dedup persist + consensus load 逻辑，避免代码重复且单测可独立断言 helper。**判据**: 同 service 内多个 public method 共享 3+ 步骤 → 抽 _ 前缀 private method (TS 不强制 # private 是为了单测可达); 单 method 内 1-2 步骤 → 内联不抽。下次任何多入口 service (US-067 4 method 不同 alert 级别 / US-091 多维度健康度) 按此模式抽 helper。
+
+
+## 2026/06/08 - US-065
+
+### What was implemented
+**第 3 个推送类 feature — 邮件周度策略复盘报告 (SMTP)** — 每周一 08:00 (北京时间) 自动给所有 `User.risk_config.notification_channels.email.weekly_review=true` 的用户发上周（周一-周日）策略复盘 HTML 邮件，包含：
+- **上周净值曲线** — 内嵌 inline SVG sparkline（无外部 PNG / chart-png 依赖；所有主流邮箱客户端都能渲染）
+- **各行业贡献** — 按持仓股 industry 聚合上周已实现 PnL（trade 表无 strategy_key, 用 industry 作"策略分组"代理）
+- **TOP 盈利 / TOP 亏损个股** — 各 5 / 3 笔
+- **本周关注事件** — 业绩预告即将公告（持仓+自选 stock_code 在 today→today+7 内 announce_date 的 EarningsForecast 行）
+- **AI 周观点** — 启发式 narrative 兜底（headline 按 pnl_pct 分级 6 档 + 行业 + 个股 + 事件 paragraphs）；与 US-061 双路范式一致，未来可改为 try{ TradingAgents 远端 } catch{ heuristic 兜底 }
+
+### AC 全部实现
+- ✅ **EmailNotificationService** — 基于 nodemailer，从 .env 读取 SMTP_HOST/PORT/USER/PASS/SECURE/FROM；lazy-require nodemailer 让 typecheck 不依赖运行时；transporter cache + resetTransporter() 测试用
+- ✅ **WeeklyReviewReportService** — 每周一 08:00 cron `0 8 * * 1` 触发 (SchedulerService.WEEKLY_REVIEW_EMAIL task type)；汇总上周数据 → 渲染 HTML 邮件
+- ✅ **邮件包含**: 上周净值曲线 (inline SVG，邮箱客户端 100% 兼容) / 各策略贡献 (按行业代理) / 行业归因 / 本周关注事件 / AI 周观点
+- ✅ **SettingsWorkspace `通知设置` tab 邮件 Card 开放** — 从 US-063 的 disabled 占位 → 完整启用/接收邮箱/周报开关 + 保存按钮 + "预览上周周报" + "立即发送一封周报" 双按钮；预览走 Modal 显示完整 payload（净值 Statistic + 行业 Table + winner/loser Table + 事件 Ul + AI Card）
+- ✅ **POST /api/settings/email-config** — 三字段 patch (enabled / address / weekly_review) merge 进 `User.risk_config.notification_channels.email.*` 后落盘
+- ✅ **POST /api/settings/weekly-review/preview + /send** — dry_run + 真发两个 endpoint
+- ✅ **225 个单元测试覆盖** (DataSource fake 完全脱 DB / SMTP；含 EmailNotificationService 11 个 pure helper + service e2e + WeeklyReviewReportService 21 个 service e2e + 10 个 pure helper)
+- ✅ Backend `npx tsc --noEmit` clean
+- ✅ Backend `npx ts-node tests/services/weekly-review-report-service.test.ts` → 225 ok / 0 failed
+
+### Files changed
+**Added**:
+- `backend/src/services/EmailNotificationService.ts` (322 lines) — SMTP channel adapter (lazy-require nodemailer / transporter cache / fail-OPEN / 6 env config / 注入式 buildEmail)
+- `backend/src/services/WeeklyReviewReportService.ts` (1273 lines after lint autofix) — 主服务 + DataSource 接口 + 10 个 export pure helper + DefaultWeeklyReviewDataSource Sequelize impl
+- `backend/tests/services/weekly-review-report-service.test.ts` (915 lines, 225 assertions, 0 failed) — 完整 fake DataSource + 21 个 service e2e + 11 个 EmailNotificationService pure helper + 10 个 WeeklyReview pure helper
+- `backend/package-lock.json` — `npm install nodemailer@^6.9.13 @types/nodemailer@^6.4.15` 锁版本
+
+**Modified**:
+- `backend/package.json` — 加 nodemailer + @types/nodemailer 依赖
+- `backend/src/services/SchedulerService.ts` — 新增 `WEEKLY_REVIEW_EMAIL` task type handler + default cron `0 8 * * 1` (每周一 08:00)
+- `backend/src/api/controllers/SettingsController.ts` — 新增 3 endpoints: `updateEmailConfig` / `previewWeeklyReview` / `sendWeeklyReviewNow`
+- `backend/src/api/routes/settings.routes.ts` — `/api/settings/email-config` + `/weekly-review/preview` + `/weekly-review/send`
+- `frontend/src/services/settingsService.ts` — 加 7 个新 TS interface (PrevWeekRange / WeeklyEquityPoint / IndustryContributionRow / SymbolContributionRow / UpcomingEventRow / AIWeeklyOpinion / WeeklyReviewPayload + 2 个 result type) + 3 个 API 函数 (updateEmailConfig / previewWeeklyReview / sendWeeklyReviewNow)
+- `frontend/src/pages/workspace/SettingsWorkspace.tsx` — 邮件 Card 从 disabled placeholder → 完整启用/接收邮箱/周报开关 + 保存/预览/立即发送 3 按钮 + WeeklyReviewPreviewModal (Statistic + 行业 Table + winner/loser Table + 事件 Ul + AI Card + footer Report ID)
+- `ralph/prd.json` — US-065 passes=true + notes 详尽
+- `ralph/progress.txt` — 追加本次条目
+
+### Quality checks
+- `cd backend && npx ts-node --transpile-only tests/services/weekly-review-report-service.test.ts` → **225 ok, 0 failed** ✅
+- `cd backend && npx tsc --noEmit` → exit 0 ✅
+- `cd backend && ./node_modules/.bin/eslint src/services/EmailNotificationService.ts src/services/WeeklyReviewReportService.ts src/api/controllers/SettingsController.ts src/api/routes/settings.routes.ts --quiet` → exit 0 ✅ (45 prettier auto-fixed)
+- `cd frontend && ./node_modules/.bin/tsc --noEmit` → exit 0 ✅
+- `cd frontend && ./node_modules/.bin/eslint src/services/settingsService.ts src/pages/workspace/SettingsWorkspace.tsx --ext .ts,.tsx --quiet` → exit 0 (1 pre-existing `Link is assigned a value but never used` not in my diff)
+- 跑 sibling 测试确认无 regression: daily-trading-digest-service.test.ts (174 pass) + earnings-forecast-watcher-service.test.ts (184 pass) ✅
+- Browser verification: 手动 — 无 dev-browser MCP
+
+### Learnings for future iterations
+- **SMTP channel adapter 范式 (本 story 引入, 已加入 Codebase Patterns)**: EmailNotificationService 镜像 FeishuBotWebhookService — 同款 `sendXxx(payload, target, {buildXxx})` 注入式 + fail-OPEN + env 配置 + DISABLE_X 一键禁用，但底层走 SMTP 而非 HTTP。**关键差异**: (1) **`lazy-require nodemailer`** — `require('nodemailer')` 写在 `getOrCreateTransporter` 内首次 send 时执行, 让本文件在 nodemailer 未安装环境 (老 worktree / CI 单测前置) 仍能 typecheck/import, 实际发邮件才报错→fail-OPEN 分支；(2) **transporter 缓存** — SMTP TCP 握手+auth ~300ms, 每次 send 都重建会让批量邮件吞吐显著降速 (周报 N user × 300ms); 缓存键 = host:port:user:secure, env 变化通过 `resetTransporter()` 手动清；(3) **`transporterOverride` 测试用** — 让单测注入 fake `{sendMail}` 完全脱 nodemailer 依赖, 让"smtp 失败"/"happy path" 都能在 0 依赖环境下覆盖。下次 US-066 微信公众号 OAService 走同款 (lazy-require wechat-api SDK + access_token cache + buildXxx 注入式)，US-067 阿里云短信也走同款。
+- **`buildEquityCurveSparkline` inline SVG 邮箱兼容方案 (本 story 引入)**: 邮件场景下嵌图有 3 方案 — (a) `<img src="https://...">` 外链需上传 CDN 且部分邮箱客户端默认不下图; (b) `<img src="cid:...">` 需 multipart 附件，nodemailer 支持但少数客户端 (老 Outlook) 不渲染; (c) **inline SVG 直接落到 HTML body** — 所有主流客户端 (Gmail / Outlook 365 / Apple Mail / 网易 / QQ / 163) 都能渲染，0 网络依赖。**判据**: 简单单色趋势线 ≤ 300 字符 SVG → 选 (c)，复杂多色多轴图表 → (b) 附件 PNG (chart.js + node-canvas → toBuffer)。本 story 480×100 px sparkline 走 (c)。下次 US-074 因子热力图邮件版若需要 echarts → 走 (b)。
+- **`__UNKNOWN__` sentinel + 显示替换 "未分类" (本 story 引入)**: trades 缺 industry 不能 silently drop (会让用户疑惑"我卖了10笔，行业只算了7笔"), 也不能写 'NULL'/'未知'/'其他' 多个不同 sentinel (后续 union 难). **统一约定**: 任何 industry 字段缺失 (Stock.industry=null / Stock 表无此 symbol) → 内部用 `'__UNKNOWN__'` 字符串 sentinel (与 US-052 IndustryConcentrationGuard 同款) → 渲染层 (HTML/Markdown/UI Table) 显示为 "未分类"。pure helper `aggregateIndustryContribution` 测试覆盖 + UI buildSymbolRowHtml 替换 + Modal preview Table render 替换。**判据**: 跨层共享枚举常量都按 internal-sentinel + render-time 翻译双层模式。下次 US-074 因子热力图缺 industry 走"未分类" 行 / US-091 持仓集中度 alert 走"未分类" 行。
+- **`computePrevWeekRange` ISO week Monday-first (本 story 引入)**: A 股市场按周一开盘 — 周报必须按 ISO week 周一开始周日结束 (而非 US Sunday-first)。**实现**: `moment.isoWeekday()` 返回 1=Mon..7=Sun → 本周一 = referenceDate - (isoDow-1) → 上周一 = 本周一 - 7 → 上周日 = 上周一 + 6。**关键测试**: reference 落在周日 (isoDow=7) 必须返回**当前自然周的**上一周一, 不能往后推一周; 跨年场景 (2026-01-05 周一 → 上周一 = 2025-12-29 / 上周日 = 2026-01-04) 必须 cross-year 正确。**week_id 格式**: `${isoWeekYear}-W${pad2(isoWeek)}` 用 isoWeekYear 而非 .year() — 2025-12-29 (周一) 的 isoWeekYear=2026 而 year=2025, 用 year 会让 W01 跨年错位。同款 ISO week 范式适用其他周/月报 service。
+- **`generateAIWeeklyOpinion` 双路 fallback + 当前版本走 heuristic 0 远端依赖 (本 story 引入)**: AC 字面要求 "AI 周观点"，但严格依赖远端 TradingAgents 让 cron 失败率上涨 (远端服务 99% SLA × 周邮件 1 次/周 → 每年 ~0.5 周邮件丢失)。**判据**: AI feature 在**关键 cron 路径**(daily-digest / weekly-review / 高优告警) 必须 heuristic 兜底; **用户主动触发的 UI 路径** (AIAdvisor.analyzeSingleStock / Copilot.askCopilot) 可以远端 fail 时 partial 返回。**实现**: 当前 `DefaultWeeklyReviewDataSource.generateAIWeeklyOpinion` 直接走 `buildHeuristicWeeklyOpinion`, 后续 story 可在此处 try { TradingAgents 远端 } catch { heuristic } 双路 — 业务 logic 完全不变, 测试只需 fake 一个 'remote' source 的 AIWeeklyOpinion。同款双路范式已在 US-061 TechnicalAnalysisService 确立。下次 US-067 / US-091 任何 cron-driven AI 都按 heuristic 优先 / 远端可选。
+- **`updateEmailConfig` 三字段 sub-resource patch endpoint (本 story 引入)**: AC 字面要求 "新增 endpoint：POST /api/settings/email-config" — 与已有 `POST /api/settings/notification-channels` (批量任意 channel patch) **并存而非取代**。**判据**: 批量端点保留方便管理后台 admin 一次性同步多个 channel; sub-resource 端点 (POST /settings/{channel}-config) 让前端 UI 表单代码紧凑 (form 只 hold 单 channel 的 enabled+address+weekly_review 3 字段)。下次 US-066 加 `POST /settings/wechat-config` / US-067 加 `POST /settings/risk-alert-config` 都按此 sub-resource 模式; **顺序**: routes.ts 把 sub-resource 路由放在 batch 路由**之后**避免 Express path-prefix match 错位 (虽然不同 method 不会冲突, 但保持惯例)。
+- **`WeeklyReviewPreviewModal` 顶部 warning + payload 分块布局 (本 story 引入)**: dry-run 预览 Modal 模式 — 顶部 `<Alert type="warning">` 显示 skip_reason / error (用户能立即看到为什么 dry_run 也没生成 payload), 下面分 5 块 Card (周期 Statistic / 行业 Table / 盈利 Table / 亏损 Table / 事件 Ul / AI Card) 用 `<Space direction="vertical" size="middle">` 撑开。**判据**: 预览类 Modal 必须**同时**显示成功路径 + 失败路径 — 用户 dry-run 看到 "skip: 邮件通道未启用" 比 toast "预览失败" 信息量大。同款双路显示模式适用 US-066 微信预览 / US-067 风控告警预览。

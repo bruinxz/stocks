@@ -79,4 +79,33 @@ router.post(
   settingsController.scanEarningsForecastNow
 );
 
+/**
+ * @route POST /api/settings/email-config
+ * @desc 更新邮件通道开关 / 接收地址 / weekly_review 开关 (US-065)
+ * @access Private
+ */
+router.post('/email-config', authController.authenticate, settingsController.updateEmailConfig);
+
+/**
+ * @route POST /api/settings/weekly-review/preview
+ * @desc dry-run 预演上周复盘邮件 payload，不实际发送 (US-065)
+ * @access Private
+ */
+router.post(
+  '/weekly-review/preview',
+  authController.authenticate,
+  settingsController.previewWeeklyReview
+);
+
+/**
+ * @route POST /api/settings/weekly-review/send
+ * @desc 立即触发推送上周复盘邮件 (US-065)
+ * @access Private
+ */
+router.post(
+  '/weekly-review/send',
+  authController.authenticate,
+  settingsController.sendWeeklyReviewNow
+);
+
 export default router;
