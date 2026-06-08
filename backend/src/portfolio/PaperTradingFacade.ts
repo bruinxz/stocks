@@ -50,6 +50,7 @@ import { recommendationTradeOutcomeService } from '../services/RecommendationTra
 import { positionLimitGuard } from './risk/PositionLimitGuard';
 import { drawdownCircuitBreaker } from './risk/DrawdownCircuitBreaker';
 import { perStockStopLossGuard } from './risk/PerStockStopLossGuard';
+import { incrementOrderTotal } from '../metrics/PrometheusRegistry';
 
 // Re-export the small set of constants the controller still needs literal access
 // to (default capital, portfolio name keys for downstream services).  This is the
@@ -168,6 +169,23 @@ const withAutonomousPortfolio = (payload: Record<string, any> = {}) => ({
   use_autonomous_portfolio: true,
 });
 
+/**
+ * US-072: 把 legacy un-coded throw（`new Error('可用资金不足')` 等）归一化成稳定的
+ * Prometheus label 码 —— 避免 message string 漂移让 `order_total{code=...}` 时间序列
+ * 爆炸。新增 err.code 的 throw 优先用 err.code；只在 fallback 路径才靠 message。
+ */
+export function inferOrderFailureCode(message: unknown): string | null {
+  if (typeof message !== 'string' || !message) return null;
+  if (message.includes('无效的交易参数')) return 'INVALID_PARAMS';
+  if (message.includes('方向必须为')) return 'INVALID_DIRECTION';
+  if (message.includes('无法获取该股票的当前价格')) return 'PRICE_UNAVAILABLE';
+  if (message.includes('可用资金不足')) return 'INSUFFICIENT_FUNDS';
+  if (message.includes('持仓不足')) return 'INSUFFICIENT_HOLDING';
+  if (message.includes('未找到模拟盘')) return 'PORTFOLIO_NOT_FOUND';
+  if (message.includes('无持仓')) return 'NO_POSITION';
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 //  Facade
 // ---------------------------------------------------------------------------
@@ -283,8 +301,29 @@ export class PaperTradingFacade {
    * Place a single BUY or SELL order against the user's portfolio.  Mirrors the
    * legacy `placeTrade` controller method bit-for-bit so the existing
    * `POST /api/paper-trading/trade` endpoint is unchanged.
+   *
+   * US-072: emits `order_total{direction,status,code}` Prometheus counter via the
+   * outer try/catch wrapper.  `code` mirrors the err.code thrown by guards
+   * (POSITION_LIMIT_VIOLATION / DRAWDOWN_BREAKER_PAUSED / PER_STOCK_STOP_LOSS_PAUSED),
+   * or a normalized label inferred from err.message for the legacy un-coded throws.
    */
   async placeOrder(options: PlaceOrderOptions) {
+    const direction = options?.direction || 'unknown';
+    try {
+      const result = await this._placeOrderInner(options);
+      incrementOrderTotal(direction, 'success', 'ok');
+      return result;
+    } catch (error: any) {
+      const code =
+        error?.code ||
+        (error?.statusCode === 404 ? 'NOT_FOUND' : inferOrderFailureCode(error?.message)) ||
+        'unknown';
+      incrementOrderTotal(direction, 'failed', code);
+      throw error;
+    }
+  }
+
+  private async _placeOrderInner(options: PlaceOrderOptions) {
     const { user_id, symbol, direction, quantity } = options;
 
     if (!symbol || !direction || !quantity || quantity <= 0) {

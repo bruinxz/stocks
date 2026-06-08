@@ -11,6 +11,7 @@ import { quantStrategyExperimentService } from '../../engine/internal/QuantStrat
 import { quantStrategyService } from '../../engine/internal/QuantStrategyService';
 import { logger } from '../../../utils/logger';
 import { Op } from 'sequelize';
+import { incrementBacktestTotal } from '../../../metrics/PrometheusRegistry';
 
 function maxSegmentDrawdown(curve: any[]): number {
   let peak = -Infinity;
@@ -855,6 +856,12 @@ export class QuantBacktestService {
       } as any);
       const experimentResult = await quantStrategyExperimentService.recordBacktestTask(task.id);
 
+      // US-072 Prometheus: 每条策略结果各增 1 个 `backtest_total{strategy, result='success'}`
+      // —— 一个 task 可能跑多策略，per-strategy 计数让 Grafana 能按策略看通过率。
+      for (const result of resultsWithValidation) {
+        incrementBacktestTotal(result.strategy_key || 'unknown', 'success');
+      }
+
       // US-045 hook: fire-and-forget 触发基准归因（HS300 / CSI500 / CSI1000）。
       // 异步不 await — 单次回测完成不应被归因耗时阻塞；归因失败也不影响回测主流程。
       // 走 setImmediate 让 task.update('COMPLETED') 已完全 flush 后再开始。
@@ -928,6 +935,21 @@ export class QuantBacktestService {
         last_error: error?.message || String(error),
       },
     } as any);
+    // US-072 Prometheus: 失败 task 可能没有 strategy 结果（在 prepare/contexts 阶段就崩），
+    // 用 task.parameters.strategy_keys 反推；fallback 'unknown' 让告警能看到失败仍然计数。
+    const params: any = task.parameters || {};
+    const strategyKeys: string[] = Array.isArray(params.strategy_keys)
+      ? params.strategy_keys
+      : Array.isArray(params.options?.strategy_keys)
+      ? params.options.strategy_keys
+      : [];
+    if (strategyKeys.length === 0) {
+      incrementBacktestTotal('unknown', 'failed');
+    } else {
+      for (const key of strategyKeys) {
+        incrementBacktestTotal(String(key || 'unknown'), 'failed');
+      }
+    }
   }
 
   async listBacktests(user_id?: number, limit = 30) {

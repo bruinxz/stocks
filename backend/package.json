@@ -88,6 +88,7 @@
     "nodemailer": "^6.10.1",
     "pg": "^8.20.0",
     "pg-hstore": "^2.3.4",
+    "prom-client": "^15.1.0",
     "redis": "^4.6.7",
     "reflect-metadata": "^0.2.2",
     "sequelize": "^6.37.8",

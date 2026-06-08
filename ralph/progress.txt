@@ -221,6 +221,14 @@
 - **`backups/` + `*.sql.gz` 加 .gitignore (US-071 引入)**: 备份产物绝对不能进 git (含敏感生产数据 + 文件体量大)。**判据**: 任何 "脚本输出 + 永远不该 commit" 的目录或扩展名一并加 .gitignore (logs/ / coverage/ / dist/ 已经在; backups/ + *.sql.gz 是 US-071 新增)。下次 US-072 Prometheus exporter / US-075 集成测试产物等"运行时产物" 同款。
 - **README §运维章节模板 (US-071 引入)**: 任何"运维脚本对外文档"走此 6-section 模板: 立即触发 (示例命令 + 产物路径) / 环境变量表 (表格列出每个 var + 默认 + 用途) / 完整参数 (--flag=value 含义 + 互斥关系) / Cron 配置 (具体 `m h * * * cmd` 行 + PATH= 故障排查) / 故障操作指南 (5 步式恢复 SOP) / 注意事项 (安全 / 权限 / 依赖工具安装)。**判据**: 任何"个数 ≥ 2 的 ops 脚本族"必须挂 README 一节，否则继任运维 6 个月后必踩坑。下次 US-072 / US-075 / US-079 任何 ops 流程同款。
 
+### Ops — observability / Prometheus metrics (US-072+)
+- **指标层架构 — 单例 `backend/src/metrics/PrometheusRegistry.ts` (US-072 引入)**: 整个进程一份 `prom-client.Registry`，所有 metric 注册在 `createPrometheusRegistry()` 工厂内一次性完成（避免多模块 new Counter 撞名 `Error: A metric with the name X has already been registered`）。`getPrometheusBundle()` 是 lazy singleton，**业务代码绝不直接 import prom-client**——只 import 一个语义化 helper (`incrementOrderTotal` / `observeAIRequestDuration` / `incrementBacktestTotal`) 在内部 try/catch 兜底。新 metric 加 5 步: (1) 在 `createPrometheusRegistry()` 注册一个新 `Counter` / `Gauge` / `Histogram`; (2) 给 `PrometheusMetricsBundle` 加字段; (3) 加 label 类型别名 (`export type XxxLabel = 'a' | 'b'`); (4) 加业务 helper 包封 `bundle.xxx.inc(...)`; (5) 加单测构造 fresh registry 验证 / 更新 `docs/monitoring.md`。下次 US-094 异动事件计数 / US-097 异常监控 / 任何"新 metric" 按此 5 步。
+- **`/metrics` endpoint 故意不加鉴权 (US-072)**: Prometheus scraper 在内网 + 通过 reverse proxy / firewall 控访问，**任何 auth middleware 都会让 scraping 失败**——抓取端 cardinality 暴跌 → Grafana 全部空。真访问控制由网络层做不由应用做。Content-Type 必须用 `bundle.registry.contentType`（prom-client 规定的 `text/plain; version=0.0.4; charset=utf-8`），不要硬编码。500 路径返回 `# metrics collection error: ...` 注释行（Prometheus 看到 `#` 开头自动跳过保持 scraper 健康）。
+- **label cardinality 红线 — `route` 必须用 Express 模板 (US-072 引入)**: 这是 Prometheus 第一杀手。`resolveRouteLabel(req)` 优先级 `req.route.path + req.baseUrl` (`/api/portfolio/:id` 模板) > `req.baseUrl` (mount path fallback) > `'unmatched'` (兜底 404)。**绝不**用 `req.originalUrl` / `req.url` / `req.path`——含 user_id / stock_code / query string 每个唯一 URL 一个时间序列直接让 Prometheus OOM。同款规则适用 `code` label 用 enum 不用 message 字符串 (`inferOrderFailureCode()` 把 legacy throw 的中文 message 归一化成稳定码 `INSUFFICIENT_FUNDS` / `INVALID_PARAMS`)。**新增 throw 优先 `err.code = 'XXX'`** 直接绕过 message 归一化；只在 fallback 路径才靠 message 模板匹配。下次任何新 label 设计先想"取值集合上限"，超 100 直接拒。
+- **三大业务事件埋点位置定 (US-072)**: (1) **`order_total{direction,status,code}`** 在 `PaperTradingFacade.placeOrder` 外层 try/catch wrapper（`_placeOrderInner` 是私有实现）—— success 路径走 `code='ok'`，failure 路径走 `err.code` 或 `inferOrderFailureCode(err.message)`；(2) **`backtest_total{strategy,result}`** 在 `QuantBacktestService.processBacktestTask` 成功路径按 `resultsWithValidation` 每条 +1（一个 task 多策略 per-strategy 计数），`markTaskFailed` 失败路径用 `task.parameters.strategy_keys` 反推；(3) **`ai_request_duration_seconds{provider,endpoint,status}`** 通过 `timedAIRequest(endpoint, () => axios.post(...))` wrapper 包裹 `AIAdvisorService` 所有远程调用，**失败也 observe duration** 让 Grafana 看到 timeout 类故障的耗时分布。新业务事件按此模板：找最薄的 service-layer 入口点 wrap + try/catch 兜底 + label 用 enum 类型化。
+- **测试 fresh registry 不动 singleton (US-072 引入)**: `backend/tests/metrics/<name>.test.ts` 走与 strategies / factors / risk / services / backtest tests 一致的 node-direct 约定（`npx ts-node --transpile-only tests/metrics/<x>.test.ts` / 不依赖 jest / async function test... + main()）。**关键约束**: 测试**绝不** import singleton bundle，每次 `createPrometheusRegistry()` factory 单独构造 fresh registry，避免测试间互相污染（一次 `inc()` 会污染所有后续 assert）。覆盖维度: 纯函数 (normalizeMethodLabel / normalizeStatusLabel / resolveRouteLabel) / metric 注册存在性 / business helper 调用 + label 值 / NaN/Infinity / unknown fallback / express middleware (用 mock req/res) / Prometheus text 格式输出 (`# HELP` + `# TYPE` + metric 行 + Histogram `_bucket` `_count` `_sum`) / content type。下次任何新 metric 测试照搬此 8 维度模板。
+- **`docs/monitoring.md` 是单一事实源 (US-072 引入)**: 加 metric 必须**同步更新** `docs/monitoring.md` 加 (a) metric 说明表 (label / 含义); (b) 常见 PromQL 查询; (c) alerting rule 建议 (Prometheus rules.yml 格式); (d) 故障排查表行 (例如 "时间序列爆炸 → 检查是否有人用了 req.originalUrl")。**判据**: 一个新 metric 不写到 `monitoring.md` 等于不存在——三个月后没人记得这 metric 怎么查，Grafana 面板做不了，alerting 加不了。docs 与代码必须同期 commit，不能 "后面补"。
+
 ---
 
 
@@ -6660,5 +6668,81 @@ N/A — US-071 是纯运维脚本，无 UI 改动。
 
 ### CLAUDE.md updates
 None this iteration — 学习项已全部沉淀到 progress.txt 的 `### Ops — backup / restore shell scripts (US-071+)` 一节供未来运维脚本 story 直接复用；脚本本身有完整顶部 docstring + README 章节，下游维护者所需信息已覆盖。下次有第 2 个运维脚本（US-076 日志轮转 / US-079 缓存清理）出现时再视情况新建 `scripts/CLAUDE.md`。
+
+---
+
+
+## 2026/06/08 13:27 - US-072
+
+### What was implemented
+**Prometheus 指标埋点 — 完整 observability 闭环**：从代码层 metric 收集到 docs 闭环。
+
+1. **`prom-client ^15.1.0`** 加入 `backend/package.json` + lockfile（带 opentelemetry/bintrees/fast-uri 等 5 个 transitive deps）。
+2. **`backend/src/metrics/PrometheusRegistry.ts`** (~320 LOC) 单例 Registry + 4 个 AC 指定 metric：
+   - `http_requests_total{method, route, status}` Counter — 每个 HTTP 请求
+   - `backtest_total{strategy, result}` Counter — 每个回测策略完成
+   - `ai_request_duration_seconds{provider, endpoint, status}` Histogram (50ms-30s buckets) — 每次 AI 远程调用耗时
+   - `order_total{direction, status, code}` Counter — 每次模拟交易下单
+   配套：`createPrometheusRegistry()` 工厂、`getPrometheusBundle()` lazy singleton、3 个纯函数 helper (`normalizeMethodLabel` / `normalizeStatusLabel` / `resolveRouteLabel`)、`httpMetricsMiddleware` Express middleware、3 个 business helper (`incrementBacktestTotal` / `observeAIRequestDuration` / `incrementOrderTotal`)、`getMetricsContent()` + `getMetricsContentType()` /metrics endpoint contract。所有 helper 内套 try/catch 保证 metric 失败不阻塞主流程。
+3. **`backend/src/index.ts`** wired：`app.use(httpMetricsMiddleware())` 全局挂载（在所有 route 之前）+ `GET /metrics` endpoint（**不加鉴权** — Prometheus scraper 走内网通过 reverse proxy）。
+4. **3 个业务路径埋点**：
+   - `PaperTradingFacade.placeOrder` 外层 try/catch wrapper（`_placeOrderInner` 是私有实现）+ `inferOrderFailureCode(message)` 把 legacy 中文 throw 归一化成稳定 enum (`INSUFFICIENT_FUNDS` / `INVALID_PARAMS` / `PRICE_UNAVAILABLE` / ...)。
+   - `QuantBacktestService.processBacktestTask` 成功路径按 `resultsWithValidation` per-strategy incrementBacktestTotal(...,'success')，`markTaskFailed` 反推 `task.parameters.strategy_keys` per-strategy incrementBacktestTotal(...,'failed')。
+   - `AIAdvisorService.timedAIRequest()` wrapper 包裹所有 axios 调用到 TradingAgents，**失败也 observe** 让 Grafana 看到 timeout 类故障的耗时分布。
+5. **`backend/tests/metrics/prometheus-registry.test.ts`** 73 tests / ~540 LOC，覆盖：
+   - 3 个纯函数 (boundary / undefined / wrong type / casing)
+   - `createPrometheusRegistry` (default metrics on/off)
+   - 4 个业务 helper（label 值、NaN/Infinity 拒绝、unknown fallback）
+   - `httpMetricsMiddleware`（route 模板正确 / unmatched / prom 抛错不泄漏）
+   - **Prometheus text 格式输出**（`# HELP` / `# TYPE` headers / `metric{labels} value` / Histogram `_bucket` `_count` `_sum`）
+   - `getMetricsContentType` (`text/plain; version=0.0.4`)
+   全部 73 测试通过。
+6. **`docs/monitoring.md`** (~260 行) 全文：4 个 metric 详细说明 + 常见 PromQL 查询 + `prometheus.yml` 抓取配置 + alerting rules 示例 (`BackendHighEventLoopLag` / `BackendHigh5xxRate` / `AIRequestP95High` / `OrderRejectionSpike`) + Grafana dashboard 建议 + 扩展新 metric 的 5 步 checklist + 故障排查表（如 "时间序列爆炸 → 检查是否有人用了 req.originalUrl"）。
+7. **`backend/src/metrics/CLAUDE.md`** 新增 — 6 步加 metric checklist + label cardinality 红线 + 业务代码埋点位置 + 测试约定。
+
+### Files changed
+**新增**：
+- `backend/src/metrics/PrometheusRegistry.ts`
+- `backend/src/metrics/CLAUDE.md`
+- `backend/tests/metrics/prometheus-registry.test.ts`
+- `docs/monitoring.md`
+
+**修改**：
+- `backend/package.json`（+`prom-client: ^15.1.0`）
+- `backend/package-lock.json`（prom-client + 4 transitive deps lock）
+- `backend/src/index.ts`（+9 行 import + middleware mount，+12 行 /metrics endpoint）
+- `backend/src/portfolio/PaperTradingFacade.ts`（+`inferOrderFailureCode` export + `_placeOrderInner` 私有方法 + `placeOrder` 改 try/catch wrapper 调 `incrementOrderTotal`）
+- `backend/src/quant/backtest/internal/QuantBacktestService.ts`（成功路径 per-strategy success incrementBacktestTotal + 失败路径 strategy_keys 反推 failed incrementBacktestTotal）
+- `backend/src/services/AIAdvisorService.ts`（+`timedAIRequest` wrapper + 所有 axios 调用走 wrapper）
+- `ralph/prd.json`（US-072 → passes: true + 长 notes）
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → exit 0
+- `cd backend && npx eslint src/metrics --ext .ts` → 0 errors
+- `cd backend && npx ts-node --transpile-only tests/metrics/prometheus-registry.test.ts` → **73 ok, 0 failed**
+- `cd backend && npx eslint src/portfolio/PaperTradingFacade.ts src/quant/backtest/internal/QuantBacktestService.ts src/services/AIAdvisorService.ts src/index.ts` → 0 errors（4 pre-existing 非空断言 warnings 与本 story 无关）
+
+### Browser verification
+N/A — US-072 是后端 metric 埋点 + docs，无 UI 改动。Prometheus 抓取端验证手动：本地启动 backend 后 `curl http://localhost:3000/metrics` 应返回 Prometheus 文本格式（含 `# HELP http_requests_total ...` / `# TYPE ... counter` / `# HELP process_cpu_user_seconds_total ...` 等）。
+
+### Orphaned work NOT included in this commit
+worktree 在我接手时已有 ~90 个文件的未提交修改，全部来自前一 iteration 未提交的 US-070 OpenAPI / Swagger UI 工作（PRD 已标 US-070 passes:true 但代码从未 commit）。其中：
+- `backend/src/index.ts` 含一段 21 行 US-070 OpenAPI/Swagger 块（我从 `index.ts` 中**移除**后只 commit US-072 部分）
+- 23 个 routes 文件全部加了 `@openapi` JSDoc 注释
+- `backend/src/config/swagger.ts` + `backend/src/scripts/generate-openapi.ts` 新增
+- `docs/openapi.json` 新增
+- 另有 ~60 个文件的纯 prettier 格式化变更（行宽 / trailing comma），与 US-070 / US-072 无关
+
+按 Ralph "Keep changes focused and minimal" 准则，本 commit 只包含 US-072 8 个文件，未触碰上述 orphaned 工作。下次 iteration 可以单独 commit US-070 的真实代码（修复 PRD 标 passes:true 但 commit 缺失的不一致），prettier 格式化变更建议作单独 chore commit。
+
+### Learnings for future iterations
+- **指标层架构 6 项最佳实践** 已 codify 到 `### Ops — observability / Prometheus metrics (US-072+)` 一节。下次 US-094 异动事件计数 / US-097 异常监控 / 任何新 metric 按此模板直接照搬。
+- **`req.originalUrl` 是 Prometheus label 第一杀手** — 任何新 endpoint 设计先确认走 Express 标准路由匹配（让 `req.route.path` 是模板），不要走 `app.use(handler)` 跳过路由匹配。否则该流量全归 `unmatched` label 影响排障。
+- **AI duration histogram 必须失败也 observe** — 否则 P95/P99 只反映成功请求耗时，timeout 类故障在 Grafana 上"消失"。同款规则适用未来任何 timing histogram (DB 查询耗时 / 外部 API / 缓存 lookup)。
+- **business helper try/catch 兜底是 belt-and-suspenders**：prom-client 内部极少 throw 但 metric 失败不应该让业务流程崩——所有 helper 内嵌 try/catch。下次任何"侧观察"类代码（监控 / 日志 / 审计） 走此模板。
+- **`/metrics` 不加 auth 是设计意图**，不是疏忽。新 ops endpoint 设计先想"谁会调"——内部 scraper / health check / load balancer 不应该走应用层 auth，应走网络层 ACL。下次 US-097 健康检查 endpoint 同款。
+
+### CLAUDE.md updates
+- 新增 `backend/src/metrics/CLAUDE.md`（6 步加 metric checklist + label cardinality 红线 + 业务埋点位置 + 测试约定 + `/metrics` endpoint 故意不加鉴权的设计意图）
 
 ---

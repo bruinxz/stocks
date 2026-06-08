@@ -4,8 +4,31 @@ import { DataSourceHealthService } from '../data/services/DataSourceHealthServic
 import { AIStockAnalysisReport } from '../models/AIStockAnalysisReport';
 import { Stock } from '../models/Stock';
 import { normalizeSymbol } from '../utils/stockSymbol';
+import { observeAIRequestDuration } from '../metrics/PrometheusRegistry';
 
 const TRADING_AGENTS_URL = process.env.TRADING_AGENTS_URL || 'http://47.93.224.109:8000';
+
+/**
+ * US-072: 把一个 AI 远程调用包成 `ai_request_duration_seconds` Histogram observe 的
+ * 微 wrapper —— 调用方写 `await timedAIRequest('analyze', () => axios.post(...))` 即可。
+ * 失败也记 duration（status='failed'），让 Grafana 看到失败请求的耗时分布
+ * (timeout 类故障 typical → 极长 duration + failed)。
+ */
+async function timedAIRequest<T>(
+  endpoint: string,
+  fn: () => Promise<T>,
+  provider = 'trading_agents'
+): Promise<T> {
+  const start = Date.now();
+  try {
+    const result = await fn();
+    observeAIRequestDuration(provider, endpoint, 'success', (Date.now() - start) / 1000);
+    return result;
+  } catch (err) {
+    observeAIRequestDuration(provider, endpoint, 'failed', (Date.now() - start) / 1000);
+    throw err;
+  }
+}
 
 export function normalizeTradingAgentsError(error: any): string {
   let raw = '';
@@ -507,11 +530,13 @@ class DefaultAIStockAnalysisDataSource implements AIStockAnalysisDataSource {
     isAsync = false
   ): Promise<RemoteAnalyzePayload> {
     try {
-      const response = await axios.post(`${TRADING_AGENTS_URL}/api/analyze`, {
-        ticker,
-        target_date: targetDate,
-        is_async: isAsync,
-      });
+      const response = await timedAIRequest('analyze', () =>
+        axios.post(`${TRADING_AGENTS_URL}/api/analyze`, {
+          ticker,
+          target_date: targetDate,
+          is_async: isAsync,
+        })
+      );
       return response.data;
     } catch (error: any) {
       const message = normalizeTradingAgentsError(error.response?.data?.detail || error);
@@ -619,11 +644,13 @@ export class AIAdvisorService {
    */
   async analyzeStock(ticker: string, targetDate?: string, isAsync = false) {
     try {
-      const response = await axios.post(`${TRADING_AGENTS_URL}/api/analyze`, {
-        ticker,
-        target_date: targetDate,
-        is_async: isAsync,
-      });
+      const response = await timedAIRequest('analyze', () =>
+        axios.post(`${TRADING_AGENTS_URL}/api/analyze`, {
+          ticker,
+          target_date: targetDate,
+          is_async: isAsync,
+        })
+      );
       return response.data;
     } catch (error: any) {
       const message = normalizeTradingAgentsError(error.response?.data?.detail || error);
@@ -637,7 +664,9 @@ export class AIAdvisorService {
    */
   async getTaskStatus(taskId: string) {
     try {
-      const response = await axios.get(`${TRADING_AGENTS_URL}/api/tasks/${taskId}`);
+      const response = await timedAIRequest('task_status', () =>
+        axios.get(`${TRADING_AGENTS_URL}/api/tasks/${taskId}`)
+      );
       return response.data;
     } catch (error: any) {
       const message = normalizeTradingAgentsError(error.response?.data?.detail || error);

@@ -84,6 +84,15 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
+// US-072 Prometheus 指标埋点 —— middleware 必须在所有 route 之前挂载才能拦截每个请求；
+// `res.on('finish')` 是异步触发的，挂在最前面也能拿到 req.route（routing 阶段填充）。
+import {
+  getMetricsContent,
+  getMetricsContentType,
+  httpMetricsMiddleware,
+} from './metrics/PrometheusRegistry';
+app.use(httpMetricsMiddleware());
+
 // Serve static files (like avatars)
 ensureUploadsRuntime();
 app.use('/uploads', express.static(getUploadsRoot()));
@@ -91,6 +100,18 @@ app.use('/uploads', express.static(getUploadsRoot()));
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// US-072 Prometheus /metrics endpoint —— 暴露 Prometheus 抓取端
+// 故意 *不加鉴权*：Prometheus scraper 通常在内网 + 通过 reverse proxy / firewall 控访问；
+// 任何 auth middleware 都会让 scraping 失败。Content-Type 必须按 prom-client 约定。
+app.get('/metrics', async (_req, res) => {
+  try {
+    res.setHeader('Content-Type', getMetricsContentType());
+    res.send(await getMetricsContent());
+  } catch (error: any) {
+    res.status(500).send(`# metrics collection error: ${error?.message || error}`);
+  }
 });
 
 // Basic route
