@@ -149,6 +149,19 @@ Each策略 Card depends on a distinct upstream table that ingests via its own cr
 
 适用场景：矩阵编辑（事件×渠道）、表格批量勾选 / 拖拽排序、Form 多字段批量更新、任何 "改一堆字段最后一次提交" 的 UX。**不适用**：单字段实时同步的场景（输入→自动保存），那种用 debounce + 单字段 endpoint 即可，不需要 draft 影子状态。
 
+## Monaco code viewer 嵌入 pattern (US-093 — LabStrategyDetail 代码视图)
+
+需要在 tab 里展示 .ts / .json / .log 等大段代码 / 文本内容时（只读 viewer 场景）：
+
+1. **复用 `frontend/src/components/monaco/MonacoSourceViewer.tsx`** —— 不要再自己 `import('monaco-editor')`。组件已封装：worker 抑制（noop `MonacoEnvironment` 退化主线程模式）/ 动态 import 让首屏不下 ~1.5MB monaco chunk / TypeScript diagnostics 关闭（无 worker 跑不动会刷 console error）/ dispose on unmount 防泄漏 / `setValue` 替换内容而非重建 editor。
+2. **必须 lazy-load**：`activeTab !== 'source' return` 短路，第一次进 tab 才动态 import monaco。否则 LabStrategyDetail / 任何承载 viewer 的页面 first-load JS 暴增 ~1.5MB。
+3. **Tabs 数据三态独立**：`source` + `sourceLoading` + `sourceError` 三个 state，与 'detail' tab 的数据互不影响（"代码加载失败但回测数据正常" 应允许）。useEffect 监听 `[activeTab, source, sourceLoading, sourceError]` —— 同款 [[lazy-load tab data 三态判定]] 范式。
+4. **切换 strategy 清空 source**：`useEffect([strategyKey], () => setSource(null))` —— 否则切到下一个策略时残留前一策略的源码。
+5. **后端 API 必须 strategy_key 严格白名单** (`^[a-z][a-z0-9_]*$`) + 预扫建立 key→filename map + 文件大小硬上限 (256KB)。**绝不**让前端传任意 path 拼接到 fs.readFile —— path traversal 直接读 /etc/passwd。
+6. **路由 ordering**：`/strategies/:strategy_key/source` GET 必须在 PATCH `/strategies/:strategy_key` 之前注册（即便 HTTP 方法不同，与 `/detail` 同款 ordering 规则，避免后期重构者无意识打乱顺序）。
+
+适用场景：任何 "前端需要查看 / 对比 / 复制" 服务器侧文本的 viewer：策略源码 / 因子定义 JSON / 用户回测日志 / SQL 调试 / config diff。**不适用**：需要编辑回写（这是 v0 只读 viewer 范畴，编辑需开 monaco worker + 后端写回接口 + 权限设计 + 历史版本管理 —— PRD 明确 v0 只读）。
+
 ## Lazy-load tab data 三态判定 (US-074 → US-080 复用)
 
 新 tab 数据是独立 endpoint 时：

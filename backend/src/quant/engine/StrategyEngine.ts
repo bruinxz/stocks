@@ -10,6 +10,7 @@ import { quantStrategyExperimentService } from './internal/QuantStrategyExperime
 import { quantStrategyParamVersionService } from './internal/QuantStrategyParamVersionService';
 import { quantStrategyFeedbackService } from './internal/QuantStrategyFeedbackService';
 import { quantFusionService } from './internal/QuantFusionService';
+import { quantStrategySourceService } from './internal/QuantStrategySourceService';
 
 export interface UpdateStrategyConfigInput {
   enabled?: boolean;
@@ -37,6 +38,15 @@ export class StrategyEngine {
    */
   getStrategyDetail(strategyKey: string) {
     return quantStrategyService.getStrategyDetail(strategyKey);
+  }
+
+  /**
+   * US-093：返回策略源文件（.ts）内容，供前端 Monaco 编辑器只读展示。
+   * strategy_key 严格校验 `^[a-z][a-z0-9_]*$`；按 strategy_key → filename 的缓存查找
+   * 而不是直接拼接路径，杜绝 path traversal。256KB 上限保护后端。
+   */
+  getStrategySource(strategyKey: string) {
+    return quantStrategySourceService.getStrategySource(strategyKey);
   }
 
   resolveStrategyKeys(input: any) {

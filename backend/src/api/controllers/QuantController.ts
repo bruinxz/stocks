@@ -40,6 +40,42 @@ export class QuantController {
     }
   }
 
+  /**
+   * US-093: 返回策略源文件（.ts）内容供前端 Monaco 编辑器只读展示。
+   *
+   * 路由 `/api/quant/strategies/:strategy_key/source` 必须注册在 PATCH
+   * `/strategies/:strategy_key` 之前（与 /detail 同款 ordering 规则，见
+   * quant.routes.ts 注释）。strategy_key 由 service 层严格校验 `^[a-z][a-z0-9_]*$`
+   * 杜绝 path traversal；找不到对应文件返回 404；超 256KB 返回 413。
+   */
+  async getStrategySource(req: Request, res: Response) {
+    try {
+      const strategyKey = String(req.params.strategy_key || '').trim();
+      if (!strategyKey) {
+        return res.status(400).json({ success: false, message: '缺少 strategy_key' });
+      }
+      const data = await strategyEngine.getStrategySource(strategyKey);
+      res.json({ success: true, data });
+    } catch (error: any) {
+      const code = error?.code;
+      if (code === 'INVALID_STRATEGY_KEY') {
+        return res
+          .status(400)
+          .json({ success: false, message: 'strategy_key 格式非法（仅允许小写字母/数字/下划线）' });
+      }
+      if (code === 'STRATEGY_NOT_FOUND') {
+        return res.status(404).json({ success: false, message: '未找到该策略源文件' });
+      }
+      if (code === 'FILE_TOO_LARGE') {
+        return res
+          .status(413)
+          .json({ success: false, message: '源文件过大（>256KB），无法在线展示' });
+      }
+      logger.error('获取量化策略源码失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
   async updateStrategyConfig(req: AuthenticatedRequest, res: Response) {
     try {
       const default_params =

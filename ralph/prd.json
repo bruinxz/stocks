@@ -1566,8 +1566,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 93,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026/06/09. Backend: 新增 QuantStrategySourceService (backend/src/quant/engine/internal/QuantStrategySourceService.ts) 预扫 strategies/ 目录建 strategy_key→filename 缓存 (29 个策略文件), 严格校验 strategy_key=`^[a-z][a-z0-9_]*$` + 白名单查找 + 256KB 硬上限三层防御 path traversal/OOM. StrategyEngine 暴露 getStrategySource facade 方法; QuantController.getStrategySource 处理 400/404/413/500 分级响应. 路由 GET /api/quant/strategies/:strategy_key/source 注册在 PATCH /:strategy_key 之前 (与 /detail 同款 ordering). Frontend: 新增 MonacoSourceViewer (frontend/src/components/monaco/MonacoSourceViewer.tsx) 动态 import monaco-editor v0.41 (只在用户进 '代码视图' tab 才下 1.5MB chunk); 主线程 viewer 模式 (worker 抑制 — noop MonacoEnvironment + 关 TS diagnostics 避免 console error 刷屏); readOnly + lineNumbers='on' + minimap + Cmd/Ctrl+F (find widget) + Cmd/Ctrl+Shift+O (symbol picker) 满足 AC 的 '搜索/跳转到符号/行号高亮'. LabStrategyDetail.tsx 拆成 Tabs (详情 + 代码视图) 两 pane; 代码 pane 用 [[lazy-load tab data 三态判定]] 范式 — 切 strategy 时清空 source 缓存, 切 tab 时按需 fire (source/loading/error 三态短路). 新增 labService.getStrategySource. 40/40 单测 (backend/tests/services/quant-strategy-source-service.test.ts) 覆盖 isValidStrategyKey (12 角度含 path traversal/大写/数字开头/连字符/null/undefined/number)、buildSourceMap 扫真实目录 + 29 个文件 + 8 个 known key 在 map / multi_factor_alpha → MultiFactorAlphaStrategy.ts 映射、getStrategySource happy + invalid + not_found 错误路径 + 缓存命中 + reset+rebuild. Backend tsc/eslint 全过; Frontend tsc/eslint 全过. Browser verify 标记 manual (dev-browser MCP 不可用)."
     },
     {
       "id": "US-094",

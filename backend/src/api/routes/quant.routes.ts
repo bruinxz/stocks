@@ -58,6 +58,38 @@ router.get(
 
 /**
  * @openapi
+ * /api/quant/strategies/{strategy_key}/source:
+ *   get:
+ *     tags: [量化 Quant]
+ *     summary: 策略源码（US-093）— 返回 backend/src/quant/strategies/*.ts 内容，供 Monaco 只读展示
+ *     description: |
+ *       前端在策略详情页 "代码视图" tab 加载 Monaco 编辑器后调用本接口拉取源码。
+ *       严格校验 strategy_key（仅允许 `^[a-z][a-z0-9_]*$`），并通过预扫描建立的
+ *       key→filename 缓存查找，杜绝 path traversal。源文件硬上限 256KB。
+ *
+ *       Must be registered before PATCH /strategies/:strategy_key — 与 /detail 同款
+ *       ordering 规则，避免 Express 把 'source' 错配成 PATCH catchall 的 :strategy_key。
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: strategy_key
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200: { description: 源码内容 + 文件元数据 }
+ *       400: { description: strategy_key 格式非法或缺失 }
+ *       401: { description: 未授权 }
+ *       404: { description: 找不到对应源文件 }
+ *       413: { description: 源文件过大 }
+ */
+router.get(
+  '/strategies/:strategy_key/source',
+  authController.authenticate,
+  quantController.getStrategySource.bind(quantController)
+);
+
+/**
+ * @openapi
  * /api/quant/strategies/{strategy_key}:
  *   patch:
  *     tags: [量化 Quant]

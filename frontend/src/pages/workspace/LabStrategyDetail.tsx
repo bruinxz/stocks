@@ -14,6 +14,7 @@ import {
   Statistic,
   Switch,
   Table,
+  Tabs,
   Tag,
   Tooltip,
   Typography,
@@ -22,9 +23,11 @@ import {
   ArrowLeftOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
+  CodeOutlined,
   CopyOutlined,
   EditOutlined,
   ExperimentOutlined,
+  FileTextOutlined,
   LinkOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
@@ -33,10 +36,12 @@ import {
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import dayjs from 'dayjs';
 import WorkspaceLayout from '../../components/layout/WorkspaceLayout';
+import MonacoSourceViewer from '../../components/monaco/MonacoSourceViewer';
 import {
   labService,
   StrategyDetailBacktest,
   StrategyDetailResponse,
+  StrategySourceResponse,
 } from '../../services/labService';
 
 const { Text, Paragraph } = Typography;
@@ -62,6 +67,13 @@ const LabStrategyDetail: React.FC = () => {
   const [detail, setDetail] = useState<StrategyDetailResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // US-093: 顶层 tab —— 'detail' 复用 US-078 4 卡片；'source' 是 Monaco 只读源码视图。
+  // 默认 'detail' 不预拉源码（节省 ~1.5MB monaco chunk 直到用户主动点击 tab）。
+  const [activeTab, setActiveTab] = useState<'detail' | 'source'>('detail');
+  // 源码 3 态缓存（与 US-074 lazy-load tab 数据范式一致：data 已得 / 正在拉 / 已错过 都 short-circuit）。
+  const [source, setSource] = useState<StrategySourceResponse | null>(null);
+  const [sourceLoading, setSourceLoading] = useState(false);
+  const [sourceError, setSourceError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!strategyKey) return;
@@ -81,6 +93,36 @@ const LabStrategyDetail: React.FC = () => {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // US-093: 源码加载 — 切换 strategy 或首次进入 'source' tab 时按需 fire。
+  // 3 态短路：已得到 / 正在拉 / 已错过都不重复 fetch；强刷靠 reloadSource。
+  const reloadSource = useCallback(async () => {
+    if (!strategyKey) return;
+    setSourceLoading(true);
+    setSourceError(null);
+    try {
+      const data = await labService.getStrategySource(strategyKey);
+      setSource(data);
+    } catch (err: unknown) {
+      const messageStr = err instanceof Error ? err.message : String(err);
+      setSourceError(messageStr);
+    } finally {
+      setSourceLoading(false);
+    }
+  }, [strategyKey]);
+
+  useEffect(() => {
+    // 切换 strategy 时清空源码缓存，下次进 'source' tab 才重新 fetch。
+    setSource(null);
+    setSourceError(null);
+    setSourceLoading(false);
+  }, [strategyKey]);
+
+  useEffect(() => {
+    if (activeTab !== 'source') return;
+    if (source || sourceLoading || sourceError) return;
+    void reloadSource();
+  }, [activeTab, source, sourceLoading, sourceError, reloadSource]);
 
   const handleBackToLab = useCallback(() => navigate('/workspace/lab'), [navigate]);
 
@@ -185,13 +227,53 @@ const LabStrategyDetail: React.FC = () => {
       </Card>
     );
   } else {
-    body = (
+    // US-093: Tabs 切换 — '详情' 复用既有 4 卡片；'代码视图' 内嵌 Monaco 只读编辑器。
+    // 默认 'detail'，'source' 是 lazy-load（用户首次点击才加载源码 + monaco chunk）。
+    const detailPane = (
       <Space direction="vertical" size={16} style={{ width: '100%' }}>
         <StrategyMetaCard detail={detail} onUpdated={refresh} />
         <LiveBindingCard detail={detail} />
         <BacktestListCard backtests={detail.backtests} />
         <LatestICCard detail={detail} />
       </Space>
+    );
+
+    const sourcePane = (
+      <StrategySourceTab
+        loading={sourceLoading}
+        error={sourceError}
+        source={source}
+        onReload={reloadSource}
+      />
+    );
+
+    body = (
+      <Tabs
+        activeKey={activeTab}
+        onChange={key => setActiveTab(key as 'detail' | 'source')}
+        items={[
+          {
+            key: 'detail',
+            label: (
+              <Space size={6}>
+                <FileTextOutlined />
+                详情
+              </Space>
+            ),
+            children: detailPane,
+          },
+          {
+            key: 'source',
+            label: (
+              <Space size={6}>
+                <CodeOutlined />
+                代码视图
+              </Space>
+            ),
+            children: sourcePane,
+          },
+        ]}
+      />
     );
   }
 
@@ -662,6 +744,88 @@ const LatestICCard: React.FC<{ detail: StrategyDetailResponse }> = ({ detail }) 
 // ============================================================================
 // Helpers (duplicated from LabWorkspace 保持自洽，避免循环依赖)
 // ============================================================================
+
+/**
+ * US-093: 代码视图 tab — 加载状态 / 错误 / Monaco 编辑器三态切换。
+ *
+ * - loading：Spin 占位（首次点击 tab 时；包括拉源码 + monaco chunk 加载）
+ * - error：Alert + 重试按钮（403/404/413/500 都走此路径）
+ * - source：MonacoSourceViewer 只读 600px 高度 + 搜索 / 行号 / 符号跳转
+ *
+ * 与 detail tab 分离的卡片设计：source 失败不影响 detail tab 渲染；用户切回
+ * detail tab 仍能查看回测 / IC 等数据。
+ */
+const StrategySourceTab: React.FC<{
+  loading: boolean;
+  error: string | null;
+  source: StrategySourceResponse | null;
+  onReload: () => void | Promise<void>;
+}> = ({ loading, error, source, onReload }) => {
+  if (loading && !source) {
+    return (
+      <Card>
+        <div style={{ display: 'flex', justifyContent: 'center', padding: 64 }}>
+          <Spin tip="加载策略源码…" />
+        </div>
+      </Card>
+    );
+  }
+  if (error) {
+    return (
+      <Alert
+        type="error"
+        showIcon
+        message="加载源码失败"
+        description={error}
+        action={
+          <Button size="small" onClick={() => void onReload()}>
+            重试
+          </Button>
+        }
+      />
+    );
+  }
+  if (!source) {
+    return (
+      <Card>
+        <Empty description="暂无源码内容" />
+      </Card>
+    );
+  }
+  return (
+    <Card
+      title={
+        <Space size={8}>
+          <CodeOutlined />
+          <Text strong>{source.filename}</Text>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            {source.file_path} · {(source.byte_size / 1024).toFixed(1)} KB
+          </Text>
+        </Space>
+      }
+      extra={
+        <Space size={8}>
+          <Tooltip title="Cmd/Ctrl+F 搜索 · Cmd/Ctrl+Shift+O 跳转到符号">
+            <Tag color="blue" style={{ marginInlineEnd: 0 }}>
+              只读
+            </Tag>
+          </Tooltip>
+          <Button size="small" icon={<ReloadOutlined />} onClick={() => void onReload()}>
+            刷新源码
+          </Button>
+        </Space>
+      }
+      bodyStyle={{ padding: 0 }}
+    >
+      <MonacoSourceViewer
+        content={source.content}
+        language="typescript"
+        height={640}
+        filename={source.filename}
+      />
+    </Card>
+  );
+};
 
 function percentTag(value?: number | null) {
   if (value === null || value === undefined || !Number.isFinite(Number(value))) {

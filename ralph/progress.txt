@@ -22,6 +22,7 @@
 - **Lazy-load tab 数据 cache 三态判定** (US-074): tab 内容是单独 endpoint 时 `useEffect(() => { if (activeKey !== 'X') return; if (data || loading || error) return; void load(); }, [activeKey, data, loading, error, load])`。三态 (data 已得 / 正在拉 / 已错过) 都 short-circuit，只有"首次进 + 无 data 无 error"才发请求。刷新按钮单独走 load()，错误重试也走 load()——把"是否要 fire"逻辑收敛在 effect，按钮只调 load。
 - **JSX 属性含 ASCII 双引号必须 JSX 表达式包裹** (US-078): 中文段落中嵌入英文双引号（如 `description="...点"启动"..."`）会被 TS 解释成 attribute terminator，报 TS1003 / TS1382。要么用 JSX expression `description={'...点"启动"...'}`，要么用全角引号 `""`，要么 `&quot;`。**新写 React 文本前查一下 ASCII 双引号是否在 JSX attribute value 内**。
 - **页面间 state-payload 跳转模式** (US-078): 跨页面/子路由共享操作（如 LabStrategyDetail 的"克隆/编辑/启动新回测"按钮回到 LabWorkspace 复用 form/drawer），用 `navigate('/workspace/lab', { state: { seedStrategyKey, intent } })` 携带 state，目标页面 `useEffect` 监听 `location.state`，匹配后**必须**调 `navigate(pathname, { replace: true, state: null })` 清空 state——否则浏览器后退到该 URL 时 state 还在，会重复触发副作用。三个 intent 复用 `handleClone` / `setEditingStrategy` 已有 handler，避免在子页面重写 form/drawer 实现。
+- **Monaco code viewer 嵌入 + lazy-load + worker suppression 模板 (US-093 引入)**: 任何前端只读 viewer 展示 .ts / .json / .log / .sql / .py 大段代码: (a) 复用 `frontend/src/components/monaco/MonacoSourceViewer.tsx` 不要散点 `import('monaco-editor')`; (b) **lazy load** — 切 tab 才动态 import 避免 ~1.5MB monaco chunk 进首屏; (c) **worker 抑制** `self.MonacoEnvironment = { getWorkerUrl: () => '', getWorker: () => noop-shim }` 退化主线程模式 (CRA 默认配置 worker 注入失败), 同时关 TS diagnostics 避免 console error 刷屏; (d) `editor.dispose()` on unmount 防泄漏; (e) `setValue` 替换内容而非重建 editor. **路径白名单 3 层防御 (path traversal / OOM 防御)**: strict pattern `^[a-z][a-z0-9_]*$` validation + 启动时预扫建立 key→filename 白名单 Map + 文件大小硬上限 (256KB); 绝不 `fs.readFile(path.join(baseDir, userPath))` 直接拼接前端 path. Error.code 稳定值映射 HTTP 400/404/413. 同款防御适用未来 US-094 因子定义查看 / 任何"前端按 key 查后端文件"接口.
 
 ### Backend
 - **PaperTrading services live under `backend/src/portfolio/internal/`**, not `backend/src/services/` (US-003 refactor). The public surface is `backend/src/portfolio/PaperTradingFacade.ts` exposing **exactly 7 methods**: `getPortfolio`, `placeOrder`, `closePosition`, `getDailySnapshot`, `attributePnl`, `applyAutomation`, `getRiskProfile`. Controllers MUST only import the facade. Other services/scripts/jobs may still import from `internal/` directly (the facade-only constraint is the controller boundary).
@@ -7872,4 +7873,58 @@ PaperTradingFacade.placeOrder 保留 7-method facade 收敛）。
 - **business white-list vs 分类元数据白名单 (US-088 vs US-092 对比)**: US-088 FAMOUS_YOUZI_PROFILES 是"分类元数据" (席位归属机构 / 风格类型), 数据源仍是全市场, 白名单只用于 *标签化* 已 ingest 的数据 (`isFamousYz=true`). US-092 ETF_PROFILES 是"业务白名单 + 入库 gate", 决定 *是否入库* 该数据 (非白名单 ETF 不写入 DB). 二者命名相似但语义完全不同, 注释里必须说清楚 "白名单是 input gate 还是 classifier". 设计新白名单前先做此分类: input gate → universe 缩小 + 拉数据量减; classifier → universe 不变 + 字段标签化.
 - **ETF 数据时序与个股不同: T+1 才有 EOD 数据 (US-092 学到)**: AKShare ETF 端点通常 T+1 09:00 之前更新前一交易日数据 (基金份额 EOD 上报). 调度建议: 每日盘后 17:30 跑前一交易日 (与个股数据当日 T+0 更新不同). 写新数据源前先确认 "数据上报时序" — 个股行情 / 北向 (T+0 实时) vs 龙虎榜 / 涨停 (T+0 收盘后) vs ETF 申赎 / 财务报表 / 分析师 (T+1 上午). 不同时序的 source 不能放在同一 scheduler job 里, 否则下游 strategy 拿到一半新数据 + 一半旧数据.
 - **第 38 只 ETF 白名单非 32 只 (US-092)**: 写 ETF 白名单时按主题分组维护 (科技/医药/消费/新能源/金融/军工/周期/宽基) 而不是按行业 alphabetical 排序, 因为同一行业可能有多只 ETF (e.g. 半导体有 159995 / 512290 / 512760 / 512480). 主题分组让人工增减更直观, 添加新 ETF 时知道往哪里加. 同 industry 多只 ETF 全部入库 (PK 是 etf_code 不是 industry), listFlow 按 industry 过滤会返回多行 — 前端可按 ETF 区分或按 industry 聚合.
+---
+
+## 2026/06/09 11:30 - US-093 前端：策略实验室策略代码编辑器
+
+### What was implemented
+
+**Backend (新 internal service + facade 方法 + controller + route)**
+- `backend/src/quant/engine/internal/QuantStrategySourceService.ts` (新, ~195 行) — 启动时扫 `backend/src/quant/strategies/` 目录建立 `strategy_key → {filename, absolute_path, relative_path}` Map (匹配 `^\s*strategy_key:\s*'([a-z][a-z0-9_]*)'\s*,?\s*$` 一致 registry 注册时取的字段). 3 路 fallback 找 strategies/ 目录 (cwd / __dirname 向上 / dist 反向). 严格 `^[a-z][a-z0-9_]*$` 校验杜绝 path traversal + 白名单查找文件 + 256KB 硬上限 — 三层防御. 抛错带稳定 `error.code` ('INVALID_STRATEGY_KEY' / 'STRATEGY_NOT_FOUND' / 'FILE_TOO_LARGE') 供 controller 映射 HTTP 状态码. `resetSourceMapCache()` 测试/dev hot-reload 用. `listAvailableStrategyKeys()` 调试/列表用.
+- `backend/src/quant/engine/StrategyEngine.ts` — 加 `getStrategySource(strategyKey)` facade 方法 (与 US-004 5 个公开 facade class 范式一致, 不让 controller 直接 import internal/).
+- `backend/src/api/controllers/QuantController.ts` — `getStrategySource()` handler 处理 400 (invalid/缺失) / 404 (not_found) / 413 (too_large) / 500 分级响应, error.code → HTTP 状态码映射.
+- `backend/src/api/routes/quant.routes.ts` — `GET /api/quant/strategies/:strategy_key/source` 路由 (authenticate middleware), **注册在 PATCH `/strategies/:strategy_key` 之前** (与 /detail 同款 ordering 规则).
+
+**Frontend (新 Monaco 组件 + lab service + LabStrategyDetail tabs)**
+- `frontend/src/components/monaco/MonacoSourceViewer.tsx` (新, ~193 行) — 包装 `monaco-editor` v0.41 (项目已含依赖). 关键设计: **动态 import 让首屏不下 ~1.5MB monaco chunk** (用户进 '代码视图' tab 才触发) / **主线程 viewer 模式抑制 worker** (CRA 默认配置注入 worker 失败; 设 `self.MonacoEnvironment = { getWorkerUrl: () => '', getWorker: () => {noop-postMessage/terminate/addEventListener/removeEventListener} }` 退化主线程) / **关 TypeScript diagnostics** (无 worker 跑不动会刷 console error). readOnly + lineNumbers='on' + minimap + scrollBeyondLastLine=false + 13px SFMono + renderLineHighlight='all'. AC 三能力全 Monaco 内建: 搜索 (Cmd/Ctrl+F find widget) / 跳转到符号 (Cmd/Ctrl+Shift+O outline picker) / 行号高亮 (lineNumbers='on' + cursor jumps + gutter). `editor.dispose()` on unmount 防 canvas/event listeners 泄漏. `setValue` 替换 model 内容而非重建 editor (避免 source 更新时 editor 闪烁).
+- `frontend/src/services/labService.ts` — 加 `StrategySourceResponse` 类型 + `getStrategySource(strategyKey)` 异步函数 + 默认 export 暴露. URI encode strategy_key 防特殊字符.
+- `frontend/src/pages/workspace/LabStrategyDetail.tsx` — 顶层拆 Tabs (`activeTab: 'detail' | 'source'` 默认 'detail'). 'detail' pane = 既有 4 卡片 (StrategyMetaCard + LiveBindingCard + BacktestHistoryCard + LatestICCard) 完整复用. 'source' pane = 新 `StrategySourceTab` 子组件 (3 态: loading Spin / error Alert + 重试 / success MonacoSourceViewer + filename 标题 + KB 大小 + 只读 Tag + 刷新按钮). 数据加载用 [[lazy-load tab data 三态判定]] 范式: useEffect 监听 `[activeTab, source, sourceLoading, sourceError]`, source/loading/error 任一为 truthy 都短路, 否则首次进 'source' tab fire. 切换 strategyKey 清空 source 缓存防残留前一策略源码.
+
+**Tests (单测 40/40 pass)**
+- `backend/tests/services/quant-strategy-source-service.test.ts` (新, ~196 行) — node-direct 测试约定 (与 strategies/factors/risk/services/backtest tests 一致, 不依赖 jest). 覆盖 6 维度:
+  1. `isValidStrategyKey` 12 角度: 合法 (snake_case / 单字母 / abc_123) + 非法 (大写 / path traversal '../etc/passwd' / 数字开头 / 空字符串 / null / undefined / number / 带后缀 .ts / 连字符 -)
+  2. `buildSourceMap` 扫真实 strategies/ 目录: 至少 25 个 key (实际 29) + 8 个 known key (multi_factor_alpha / dragon_head_momentum / earnings_surprise / high_dividend_value / breakout_strategy / ensemble_strategy / garp_strategy / ma_trend) 全部在 map
+  3. 文件名 / 路径合理: multi_factor_alpha → MultiFactorAlphaStrategy.ts + relative_path 形如 src/quant/strategies/* + absolute_path 是绝对路径
+  4. `getStrategySource` happy path: 返回值 5 字段一致 + content 含 'strategy_key' + byte_size ≥ content.length (utf-8 ≥ utf-16 单字符 for ascii)
+  5. `getStrategySource` 错误路径: '../etc/passwd' → INVALID_STRATEGY_KEY / 'Foo' (大写) → INVALID_STRATEGY_KEY / 'definitely_does_not_exist_strategy_xyz' → STRATEGY_NOT_FOUND
+  6. `listAvailableStrategyKeys` 返回数组 + 升序 + 3 字段 / 缓存命中 (2nd 调用 < 200ms) / resetSourceMapCache 后仍可用
+
+### Files changed (5 modified + 3 new)
+- **Modified**:
+  - `backend/src/api/controllers/QuantController.ts` (+36 行)
+  - `backend/src/api/routes/quant.routes.ts` (+32 行)
+  - `backend/src/quant/engine/StrategyEngine.ts` (+10 行)
+  - `frontend/src/pages/workspace/LabStrategyDetail.tsx` (+165 行)
+  - `frontend/src/services/labService.ts` (+27 行)
+  - `frontend/src/pages/workspace/CLAUDE.md` (新增 "Monaco code viewer 嵌入 pattern (US-093)" 一节)
+- **New**:
+  - `backend/src/quant/engine/internal/QuantStrategySourceService.ts` (~195 行)
+  - `backend/tests/services/quant-strategy-source-service.test.ts` (~196 行, 40 assertions)
+  - `frontend/src/components/monaco/MonacoSourceViewer.tsx` (~193 行)
+
+### Quality checks
+- `cd backend && npx tsc --noEmit` → exit 0 (clean)
+- `cd backend && npx eslint src/api/controllers/QuantController.ts src/api/routes/quant.routes.ts src/quant/engine/StrategyEngine.ts src/quant/engine/internal/QuantStrategySourceService.ts --quiet` → exit 0
+- `cd backend && npx ts-node --transpile-only tests/services/quant-strategy-source-service.test.ts` → 40 pass / 0 fail
+- `cd frontend && ./node_modules/.bin/tsc --noEmit` → exit 0 (clean)
+- `cd frontend && ./node_modules/.bin/eslint src/components/monaco/MonacoSourceViewer.tsx src/pages/workspace/LabStrategyDetail.tsx src/services/labService.ts --ext .ts,.tsx --quiet` → exit 0
+- Browser verification: manual (no dev-browser MCP available in this environment)
+
+### **Learnings for future iterations:**
+
+- **Monaco lazy-load + worker-suppression 复用模板 (US-093 引入)**: 任何需要在前端只读 viewer 展示 .ts / .json / .log / .sql / .py 大段代码的 tab, 都按本范式落地: (a) 包装组件 (`frontend/src/components/monaco/MonacoSourceViewer.tsx`) 而非散点 `import('monaco-editor')`; (b) **lazy load** — `useEffect([activeTab], ...)` 短路防 1.5MB monaco chunk 进首屏; (c) **worker suppression** — `self.MonacoEnvironment = { getWorkerUrl: () => '', getWorker: () => noop-shim }` 退化主线程模式 (CRA 默认配置 worker 注入失败), 同时关 TS diagnostics (`monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({noSemanticValidation: true, ...})`) 避免 console error 刷屏; (d) dispose on unmount 防 canvas/event listeners 泄漏; (e) `setValue` 替换内容而非重建 editor. 适用任何 "前端只读查看服务器侧文本" 的 viewer (策略源码 / 因子定义 JSON / 用户回测日志 / SQL 调试 / config diff). **不适用** 编辑场景 (需开 monaco worker + 后端写回 + 权限设计 + 版本历史 — PRD 明确 v0 只读).
+- **路径白名单 + 启动时预扫缓存 防 path traversal (US-093 引入)**: 任何"前端按 key 查后端文件"的 API (策略源码 / 因子定义 / 用户上传文件回显) 必须 3 层防御: (1) **strict pattern validation** (`^[a-z][a-z0-9_]*$` 或同等严格集合); (2) **预扫建立 key → filename 白名单 Map** (启动时一次扫盘); (3) **文件大小硬上限** (256KB) 防 OOM. **绝不**让前端传 path 直接拼接到 `fs.readFile(path.join(baseDir, userPath))` — `userPath = '../etc/passwd'` 直接读系统文件. 错误抛 typed `error.code` 让 controller 映射 HTTP 400/404/413, 不暴露 fs 错误细节. 同款防御未来适用 US-094 因子定义查看 / US-XXX 用户脚本回显.
+- **strategy_key snake_case vs 文件名 PascalCase 映射 (US-093 发现)**: 项目策略 `strategy_key: 'multi_factor_alpha'` (snake_case) 但文件名 `MultiFactorAlphaStrategy.ts` (PascalCase). 直接 `strategiesDir + '/' + strategyKey + '.ts'` 会找不到. 用 `STRATEGY_KEY_LINE = /^\s*strategy_key:\s*'([a-z][a-z0-9_]*)'\s*,?\s*$/m` 扫每个 .ts 文件第一处 `strategy_key:` 字段建立 key → filename 映射, 与 strategy registry 取相同字段保证一致. 同款扫描适用未来 "factor_name → 文件名" / "user_strategy_id → 文件路径".
+- **lazy-load tab 数据范式扩展到 source viewer (US-093 复用 US-074/US-080)**: `useEffect([activeTab, data, loading, error], () => { if (activeTab !== 'X') return; if (data || loading || error) return; void load(); })` 这套 3 态短路在 US-074 / US-080 / US-093 三处复用. **新认知**: 切换上下文 (切 strategy / 切因子 / 切日期) 时必须 `useEffect([contextKey], () => setData(null))` 清空数据缓存, 否则切到下一个上下文时残留前一上下文数据 (US-093 切策略时残留前策略源码就是个 bug 例). 加入 [[Lazy-load tab data 三态判定]] CLAUDE.md 同位置.
+- **Tabs 拆 detail/source 不要 break 既有 helper 复用 (US-093 实践)**: LabStrategyDetail 既有 4 卡片 (StrategyMetaCard / LiveBindingCard / BacktestHistoryCard / LatestICCard) + helpers (percentTag / fmtPct / statusColor / compactDate) 都保持原状, 只在 body 渲染处包一层 `<Tabs>`. 新 `StrategySourceTab` 子组件放在 helpers 区域 (与 percentTag/fmtPct 同位置), 共享 LabStrategyDetail 内的 Spin/Alert/Card antd imports. 这种"加 tab 不动既有内容"的 minimal-diff 添加范式避免重构既有 UI / 影响 US-078 既有功能, 适用所有未来 "给页面加新 tab" 的故事.
 ---

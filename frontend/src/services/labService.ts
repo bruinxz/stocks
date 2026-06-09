@@ -374,6 +374,32 @@ export async function getStrategyDetail(strategyKey: string): Promise<StrategyDe
   return res.data.data as StrategyDetailResponse;
 }
 
+// ---------- /api/quant/strategies/:id/source (US-093) ---------------------
+
+/**
+ * US-093 — 策略源码（.ts 文件）。后端从 `backend/src/quant/strategies/*.ts` 直接读取，
+ * 严格校验 strategy_key（snake_case 字母数字下划线）后通过白名单映射定位文件，
+ * 杜绝 path traversal。前端 Monaco 编辑器只读展示。
+ *
+ * 后端响应包：{ strategy_key, filename, file_path, content, byte_size }。
+ * 错误：400 (strategy_key 非法 / 缺失) / 404 (映射查不到) / 413 (>256KB)。
+ */
+export interface StrategySourceResponse {
+  strategy_key: string;
+  filename: string;
+  file_path: string;
+  content: string;
+  byte_size: number;
+}
+
+export async function getStrategySource(strategyKey: string): Promise<StrategySourceResponse> {
+  const res = await api.get(`/quant/strategies/${encodeURIComponent(strategyKey)}/source`);
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || '获取策略源码失败');
+  }
+  return res.data.data as StrategySourceResponse;
+}
+
 // ---------- /api/quant/strategies/:id PATCH (US-083 dry-run toggle) --------
 
 /**
@@ -411,6 +437,7 @@ export const labService = {
   getBacktestMonthlyReturns,
   getBacktestRollingSharpeSeries,
   getStrategyDetail,
+  getStrategySource,
   setStrategyDryRun,
 };
 
