@@ -8242,3 +8242,75 @@ dry_run=false (scheduler 触发即真执行 — 与 CLI 默认 dry-run 互补). 
   来源不同 (cron shell vs admin CLI vs scheduler). 下次新清理需求先确认是哪类边界,
   不要硬塞进现有工具.
 ---
+
+## 2026/06/09 - US-098
+
+### Implemented
+
+新增 **docs/USER_GUIDE.md** (~530 行) — 用户从空账户到跑出超额收益的 step-by-step 手册。
+分 8 章 + 附录架构索引 + 反馈与下一步。每章节末尾交叉引用源 story (US-XXX) 方便从手册
+跳回设计上下文。8 张 ASCII 占位图 + 10 条 FAQ。
+
+8 章对照 AC:
+1. 启动与登录 (环境 / docker-compose / npm run dev / npm run check-env (US-068) / 主界面)
+2. 数据同步 (推荐顺序 + 21 个 sync:* 命令对照表 + 数据中心健康看板 US-079 + compute:factors)
+3. 选择策略 (13+ 策略速查表 + 策略实验室 US-016 + 跑第一次回测 US-093 表单截图)
+4. 模拟盘开仓 (一键模拟下单 US-018 / 手动下单 US-017 / 风控守门员 4 重检查 US-014/047/049)
+5. 阅读复盘 (持仓 KPI + 段归因 US-040 + 复盘日记 AI 自生成 US-073)
+6. 调参与优化 (GridSearch US-037 + Bayesian US-038 + Walk-forward US-039 + AI Copilot US-062)
+7. 风控配置 (新手保守 vs 老手激进对照表 + 配置界面 + 告警中心 US-077)
+8. 常见问题 (10 FAQ: 数据未同步 / Bull queue 未连接 / lookahead bias / 股票代码格式 /
+   per-block error / 因子权重 / 模拟盘成交价 / Copilot 建议 / cron 任务 / 磁盘清理)
+
+README.md 顶部 (badge 之后, '项目概述' 之前) 加 '📘 入门指南' 章节：
+- 链接 docs/USER_GUIDE.md (本 story)
+- 预占 docs/DEVELOPER_GUIDE.md (US-099 will create)
+
+### Files changed
+
+- `docs/USER_GUIDE.md` (新增, ~530 行)
+- `README.md` (改 — +6 行, 顶部入门指南章节)
+- `ralph/prd.json` — US-098 passes:true + notes
+- `ralph/progress.txt` (本条记录)
+
+### Quality checks
+
+- 本 story 纯文档, AC 显式标注"不需 typecheck"
+- 手册 8 章对照 AC 全部覆盖, 8 张 ASCII 占位图 grep 验证: `grep -c "^\*图 " docs/USER_GUIDE.md` = 8
+- 手册命令对照后端 `backend/package.json` 实际 script 名验证可执行
+- 风控配置章节对照实际 US-047..US-067 guard 名命名
+
+### Learnings for future iterations
+
+- **文档章节末尾交叉引用源 story (US-XXX) 范式 (US-098 引入)**: 每个新功能 introducing
+  story (US-014 A 股约束 / US-018 今日作战 / US-040 段归因 / US-047 持仓上限 / US-067
+  实时告警等) 在手册章节末尾以 `(US-XXX)` 形式标注, 让维护者: (1) 6 个月后看手册某段
+  描述与代码不一致时, 能 ↩ 跳回原 story PRD 验证最初设计意图; (2) 文档更新 PR 能精确
+  定位"我改的是哪个 story 描述的功能, 应该 grep 其他文档同步更新"; (3) 新开发者用手册
+  描述当 starting point, 可直接 grep `US-XXX` 找代码位置 / 测试 / 设计文档。**判据**: 手册
+  描述的所有"具体功能 / 命令 / 表单字段 / 风控规则"都该交叉引用源 story; 通用概念 (登录 /
+  Docker / 浏览器访问) 不需。下次 US-099 DEVELOPER_GUIDE / 任何技术文档都用此模式。
+
+- **ASCII 占位图 vs 真截图的取舍 (US-098 引入)**: AC 明确说"先用占位 ASCII / 文字描述,
+  等 UI 稳定再补真图" — 不要等 UI GA 才写手册, 否则**手册永远滞后产品 3-6 个月**。ASCII
+  占位的优势: (1) 文本可被 grep / 搜索 / 替换, 真截图不可; (2) UI 改色 / 改字体不需要
+  重截图; (3) 远程开发者 / 终端环境能看 (真截图需要浏览器). 劣势: (1) 不够"美观"
+  (运营场景需要真图); (2) 复杂布局 (热力图 / 多图表) ASCII 表达力差。**判据**: 用户实际
+  操作的页面 / 表单 / 弹窗 → ASCII 占位即可; 营销 / 教程类 "看图学习" 必须真截图。本
+  story 8 张图全部 ASCII 占位足够覆盖用户实际操作流程。下次 US-099 同款 ASCII 占位。
+
+- **README 顶部 "入门指南" 章节范式 (US-098 引入)**: 项目 README 的"项目概述"通常面向
+  评估者 / 投资人 / 老用户, **新用户**真正需要的是"我现在怎么开始用"。把 USER_GUIDE
+  链接放 README 顶部 (badge 之后, 项目概述之前) 作为 fast-path entry, 避免新用户被 600 行
+  README 淹没找不到入门指引。**判据**: 任何 ≥ 500 行 README + 有真实 multi-feature 用户
+  界面的项目都该提供"入门指南 fast-path"链接而非把指南直接塞进 README 中。同款适用未来
+  DEVELOPER_GUIDE (US-099) / DEPLOYMENT_GUIDE / TROUBLESHOOTING_GUIDE 等 long-form 文档。
+
+- **FAQ 章节按"用户实际会撞的坑"排序而非按功能分类 (US-098 引入)**: 10 个 FAQ 从"登录后
+  首页空白"(高频) 开始, 到"AI Copilot 建议要听吗"(进阶), 顺序对应**新用户使用过程中
+  按时间顺序遇到的疑问**。**避免**按"前端/后端/数据/AI"功能维度划分 FAQ — 用户不知道
+  自己的问题属哪类。**判据**: FAQ 的目标是 quick lookup, 用户带着"现在卡在 X" 来找答案,
+  按时间 / 频度排比按功能更友好。下次任何 FAQ 文档同款。
+
+---
+

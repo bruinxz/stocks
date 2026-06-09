@@ -1642,8 +1642,8 @@
         "本 story 不需 typecheck（纯文档）"
       ],
       "priority": 98,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026/06/09. 新增 docs/USER_GUIDE.md (~530 行) 完整覆盖 8 章 + 8 ASCII 截图占位 + 10 FAQ。结构对齐项目实际 UI（US-001 6 工作区）+ 命令对齐 backend/package.json sync:* / compute:* / cleanup:* / 风控配置对齐 US-047..US-067 全部 guard。每个章节末尾交叉引用源 story (US-XXX) 方便老用户跳转；FAQ 列出 lookahead bias / Bull queue 未连接 / per-block error fallback / Sharpe > 5 异常 / IC-weighted 因子权重等真实用户会撞的坑。README.md 顶部 (badge 之后, 项目概述之前) 加 '📘 入门指南' 章节链接到 USER_GUIDE.md 和未来 DEVELOPER_GUIDE.md (US-099)。本 story 纯文档无 typecheck/test 需求。"
     },
     {
       "id": "US-099",
