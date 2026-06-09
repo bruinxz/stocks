@@ -238,6 +238,21 @@ fi
 # Activate
 ln -sfn "\$REL" "\$CURRENT"
 echo "  → \$(readlink -f \$CURRENT)"
+
+# Cleanup old releases (keep last 3 with node_modules — anything older only keeps source)
+# Without this, each deploy adds ~1.3GB and the 58GB disk fills up fast.
+RELEASES_DIR="\$ROOT/releases"
+KEEP_COUNT=3
+echo "  cleaning old releases (keeping latest \$KEEP_COUNT)..."
+ls -1dt "\$RELEASES_DIR"/*-${TARGET} 2>/dev/null | tail -n +\$((KEEP_COUNT + 1)) | while read old; do
+  if [ -d "\$old" ] && [ "\$old" != "\$(readlink -f \$CURRENT)" ]; then
+    # Just strip node_modules from old releases — keep code for rollback debug
+    if [ -d "\$old/backend/node_modules" ] || [ -d "\$old/frontend/node_modules" ]; then
+      du -sh "\$old" 2>/dev/null | awk '{print "    pruning node_modules: "\$2" ("\$1")"}'
+      rm -rf "\$old/backend/node_modules" "\$old/frontend/node_modules"
+    fi
+  fi
+done
 EOF
 
 # ---------------------------------------------------------------------------
