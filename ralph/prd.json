@@ -1655,8 +1655,8 @@
         "本 story 不需 typecheck"
       ],
       "priority": 99,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "新建 docs/DEVELOPER_GUIDE.md (1336 行) 含 7 章 + 附录：项目结构 / 添加新数据源 (5 文件清单 + 6 完整文件代码) / 添加新因子 (完整 TS factor 模板含 lookahead guard + 纯函数 export) / 添加新策略 (per-stock + 组合级两种形态各一完整模板) / 编写测试 (IIFE + process.exit 约定 + DataSource 注入测试范式) / 调试技巧 (worktree symlink + 高频场景速查表 + TS/前端常见报错) / 提交规范 (commit format + 7 项 PR checklist + CI lane 说明 + Co-author 标注). 每章交叉引用源 story (US-XXX). README.md 入门指南 link 由 placeholder 升级为 stable link. 50 个 code blocks + 5 个 \"完整代码模板\" 章节 + 附录 A 架构索引 + 附录 B 命令速查."
     },
     {
       "id": "US-100",

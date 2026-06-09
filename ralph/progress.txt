@@ -8314,3 +8314,93 @@ README.md 顶部 (badge 之后, '项目概述' 之前) 加 '📘 入门指南' �
 
 ---
 
+
+## 2026/06/09 - US-099
+
+### Implemented
+
+新增 **docs/DEVELOPER_GUIDE.md** (~1336 行) — 二次开发者从零扩展平台的端到端手册。
+分 7 章 + 附录 A 架构索引 + 附录 B 命令速查。每章节末尾交叉引用源 story (US-XXX)
+让维护者可追溯设计意图。
+
+7 章对照 AC：
+1. **项目结构** — backend / frontend 目录速查 + 3 处必读 CLAUDE.md 索引
+2. **添加新数据源** — 5 文件清单 + 6 个完整文件代码模板 (Python helper / Model /
+   Client / SyncService / CLI / package.json) + 5 个高频踩坑 + 业务 query
+   endpoint 模式 (基于 US-005..US-092 的 22 个数据源累积经验)
+3. **添加新因子** — 完整 TS factor 模板 (TurnoverAccumFactor 示例) 含 lookahead
+   guard / 纯函数 export / library/index.ts 注册 / 验证写入步骤 / 6 个高频踩坑
+   + AC 字段不可得时的因子代理范式 (US-031 规则)
+4. **添加新策略** — per-stock 形态 (RsiOverboughtStrategy 简单示例) + 组合级形态
+   (TopMomentumStrategy 完整 DataSource 注入示例) + 5 个组合级必守约定 (US-011) +
+   6 个高频踩坑
+5. **编写测试** — IIFE + process.exit 约定完整模板 (TurnoverAccumFactor.test.ts) +
+   跑测试命令 + DataSource 注入测试范式 + 5 条最佳实践 + 测试覆盖区域指南
+6. **调试技巧** — logger 用法 / 高频场景速查表 / worktree symlink 注意 /
+   typecheck lint 常见报错 / 前端 dev tools / 性能瓶颈定位
+7. **提交规范** — commit message 格式 + 7 项 PR checklist + CI 流水线说明 +
+   PRD/Story 维护流程 + Co-author 标注 (适用 AI agent commit)
+
+附录 A: 架构索引 (8 个关键文件 / 模块入口)
+附录 B: 常用命令速查 (数据 / 测试 / 类型 / 启动 / 清理 / 健康检查 30+ 命令)
+
+README.md 顶部入门指南章节: 移除 `(US-099)` placeholder, 把 DEVELOPER_GUIDE link
+从"待创建"升级为 stable link, 描述强调"含 7 章完整代码模板, 复制即可"。
+
+### Files changed
+
+- `docs/DEVELOPER_GUIDE.md` (新增, 1336 行)
+- `README.md` (改 — 1 行: placeholder → stable link)
+- `ralph/prd.json` — US-099 passes=true + notes
+- `ralph/progress.txt` (本条记录)
+
+### Quality checks
+
+- 本 story 纯文档, AC 明确"不需 typecheck"
+- 7 章对照 AC grep 验证: `grep -nE "^## [1-7]\. " docs/DEVELOPER_GUIDE.md` = 7 个章节
+- 18 个 §X.Y 二级章节
+- 50 个 fenced code blocks, 5 个"完整代码模板" mark
+- 4 个完整代码模板覆盖 AC 第 2 条"每章给出 1 个完整可复制的代码模板":
+  - §2.2: 数据源 6 文件代码模板
+  - §3.1: TurnoverAccumFactor (因子)
+  - §4.1: RsiOverboughtStrategy (per-stock 策略)
+  - §4.2: TopMomentumStrategy (组合级策略)
+  - §5.1: TurnoverAccumFactor.test.ts (测试)
+- 命令对照后端 `backend/package.json` 实际 script 名验证可执行 (sync:northbound /
+  compute:factors / check-env / cleanup:old-data / lint / test 全部存在)
+- 模板参考实现对照 grep 验证 (NorthboundFactor / GARPStrategy /
+  EarningsSurpriseFactor.test.ts / MultiFactorAlphaStrategy 文件均存在)
+
+### Learnings for future iterations
+
+- **开发者文档的"完整代码模板, 复制即可"范式 (US-099 引入)**: 开发指南最高 ROI
+  内容不是"概念解释"而是"5 文件清单 + 5 个文件完整代码"。新人按 §2.2 6 个完整文件
+  copy-paste 替换字段就能上线新数据源；§4.1/4.2 两种策略形态各一个 200 行完整模板,
+  让新人能在 1 小时内提交一个 working PR 而非"概念上知道"。**判据**: 任何模块化扩展
+  类操作 (新增 endpoint / 新增 model / 新增 worker) 都该提供至少 1 个端到端代码模板,
+  而非散点示例。下次 OPERATIONS_GUIDE / DEPLOY_GUIDE 同款模式。
+
+- **章节末尾交叉引用源 story (US-099 复用 US-098 引入)**: 每个 §X.Y 提及具体功能 /
+  约束 / 教训时, 显式 `(US-XXX)` 标注。让 6 个月后看本指南的人发现描述与代码不一致
+  时, 能立刻 ↩ 跳回原 story PRD 验证最初设计意图。**复用 USER_GUIDE 同款模式
+  保持文档生态一致**。下次任何技术文档都用此模式。
+
+- **"5/6 个高频踩坑" 格式比"踩坑列表" 更可用 (US-099 引入)**: 每章实现后跟一个
+  fixed-size 数字 list (5 个 / 6 个高频踩坑), 让读者扫一眼知道总数 + 心理预期可控。
+  对比 "踩坑列表" (无数量界限) 读者倾向跳过中间项, fixed-size 更易 100% 读完。
+  每条踩坑配源 story (US-XXX) 让读者能回查上下文。下次任何 how-to 类文档同款。
+
+- **README 入门指南 link 从 placeholder → stable 的两步升级路径 (US-098/US-099
+  累积)**: US-098 把 USER_GUIDE link 落地后, README 留了 DEVELOPER_GUIDE 的
+  placeholder (US-099 will create); US-099 完成后再把 placeholder 升级。**判据**:
+  文档间互相引用时, 上游 story 完成时引用项可以是 placeholder 但必须存在 (避免后续
+  忘记关联), 下游 story 完成时把 placeholder 升级为 stable link 并删除 (US-XXX)
+  marker。下次任何"系列文档" (User / Dev / Ops / Deploy) 都按此 incremental 升级模式。
+
+- **附录 B 命令速查 = 跨章节命令的 single-source aggregator (US-099 引入)**:
+  开发者翻一份指南最常用的不是某章里散落的命令, 而是"我现在要跑 X 怎么写"; 附录 B
+  把全文 30+ 命令按场景 (数据 / 测试 / 类型 / 启动 / 清理 / 健康) 聚合排版,
+  让指南本身可作为 cheatsheet 单页使用。**判据**: 任何 ≥ 500 行的 how-to 文档都该
+  提供"命令速查"附录, 让读者不需要 grep / Ctrl-F 也能找到命令。下次任何技术指南同款。
+
+---

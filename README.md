@@ -7,7 +7,7 @@
 
 **新用户从这里开始**：👉 [docs/USER_GUIDE.md](./docs/USER_GUIDE.md) — step-by-step 教你启动系统、同步数据、选策略、跑模拟盘、阅读复盘、调参、配置风控。
 
-开发者扩展（添加新策略 / 新因子 / 新数据源）：👉 [docs/DEVELOPER_GUIDE.md](./docs/DEVELOPER_GUIDE.md)（US-099）。
+**开发者扩展**（添加新策略 / 新因子 / 新数据源 / 编写测试 / 调试技巧 / 提交规范）：👉 [docs/DEVELOPER_GUIDE.md](./docs/DEVELOPER_GUIDE.md) — 含 7 章完整代码模板，复制即可。
 
 ## 项目概述
 构建完整的A股股票回测系统与智能辅助决策平台，包含网页操作界面。支持历史数据回测、策略定义、性能分析和可视化展示，并深度集成了多智能体大模型（TradingAgents）以提供个股分析与买卖建议。
