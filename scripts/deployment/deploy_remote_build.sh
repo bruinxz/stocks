@@ -194,6 +194,8 @@ WORK='$WORK'
 REL='$RELEASE_DIR'
 SHARED='$SHARED'
 CURRENT='$CURRENT'
+ROOT='$ROOT'
+TARGET='$TARGET'
 
 mkdir -p "\$REL"
 
@@ -244,7 +246,7 @@ echo "  → \$(readlink -f \$CURRENT)"
 RELEASES_DIR="\$ROOT/releases"
 KEEP_COUNT=3
 echo "  cleaning old releases (keeping latest \$KEEP_COUNT)..."
-ls -1dt "\$RELEASES_DIR"/*-${TARGET} 2>/dev/null | tail -n +\$((KEEP_COUNT + 1)) | while read old; do
+ls -1dt "\$RELEASES_DIR"/*-\$TARGET 2>/dev/null | tail -n +\$((KEEP_COUNT + 1)) | while read old; do
   if [ -d "\$old" ] && [ "\$old" != "\$(readlink -f \$CURRENT)" ]; then
     # Just strip node_modules from old releases — keep code for rollback debug
     if [ -d "\$old/backend/node_modules" ] || [ -d "\$old/frontend/node_modules" ]; then
