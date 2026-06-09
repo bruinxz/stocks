@@ -983,8 +983,14 @@ export class DefaultWeeklyReviewDataSource implements WeeklyReviewDataSource {
 
 function stripSuffix(symbol: string): string {
   if (!symbol) return '';
-  const idx = symbol.indexOf('.');
-  return idx > 0 ? symbol.slice(0, idx) : symbol;
+  const s = symbol.trim();
+  if (!s) return '';
+  const i = s.indexOf('.');
+  if (i < 0) return s;
+  const before = s.slice(0, i);
+  const after = s.slice(i + 1);
+  if (/^[a-zA-Z]{2}$/.test(before)) return after;
+  return before;
 }
 
 export const PRODUCTION_WEEKLY_REVIEW_DATA_SOURCE: WeeklyReviewDataSource =

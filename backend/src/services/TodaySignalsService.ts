@@ -717,8 +717,16 @@ function errMsg(e: unknown): string {
 }
 
 function stripSuffix(symbol: string): string {
-  const dot = symbol.indexOf('.');
-  return dot > 0 ? symbol.slice(0, dot) : symbol;
+  if (!symbol) return '';
+  const s = symbol.trim();
+  if (!s) return '';
+  const i = s.indexOf('.');
+  if (i < 0) return s;
+  const before = s.slice(0, i);
+  const after = s.slice(i + 1);
+  // 前缀格式 (sh./sz./bj.) — 2 字母 alpha + 数字
+  if (/^[a-zA-Z]{2}$/.test(before)) return after;
+  return before;
 }
 
 /** "600519" → "600519.SH"；"000001" → "000001.SZ"；"688981" → "688981.SH"；"8/4 开头" → ".BJ" */
@@ -726,10 +734,11 @@ function inferSymbol(code: string): string {
   if (code.includes('.')) return code;
   if (!code) return code;
   const first = code.charAt(0);
-  if (first === '6' || first === '9' || first === '7') return `${code}.SH`;
-  if (first === '0' || first === '2' || first === '3') return `${code}.SZ`;
-  if (first === '8' || first === '4') return `${code}.BJ`;
-  return `${code}.SH`;
+  // stocks 表存的是 sh./sz./bj. 前缀格式
+  if (first === '6' || first === '9' || first === '7') return `sh.${code}`;
+  if (first === '0' || first === '2' || first === '3') return `sz.${code}`;
+  if (first === '8' || first === '4') return `bj.${code}`;
+  return `sh.${code}`;
 }
 
 // 单例 — controller 直接 import 使用

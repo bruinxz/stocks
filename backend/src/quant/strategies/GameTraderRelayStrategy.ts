@@ -868,18 +868,27 @@ function formatYi(amountInYuan: number): string {
 
 function stripSuffix(symbol: string | null | undefined): string {
   if (!symbol) return '';
-  const i = symbol.indexOf('.');
-  return i < 0 ? symbol : symbol.slice(0, i);
+  const s = symbol.trim();
+  if (!s) return '';
+  const i = s.indexOf('.');
+  if (i < 0) return s;
+  const before = s.slice(0, i);
+  const after = s.slice(i + 1);
+  // 前缀格式 (sh./sz./bj.) — 2 字母 alpha + 数字
+  if (/^[a-zA-Z]{2}$/.test(before)) return after;
+  // 后缀格式 (.SH/.SZ/.BJ)
+  return before;
 }
 
 function guessStockSymbol(stockCode: string): string {
   if (!stockCode) return '';
   if (stockCode.includes('.')) return stockCode;
   const head = stockCode[0];
-  if (head === '6') return `${stockCode}.SH`;
-  if (head === '0' || head === '3') return `${stockCode}.SZ`;
-  if (head === '4' || head === '8') return `${stockCode}.BJ`;
-  return `${stockCode}.SZ`;
+  // stocks 表存的是 sh./sz./bj. 前缀格式
+  if (head === '6') return `sh.${stockCode}`;
+  if (head === '0' || head === '3') return `sz.${stockCode}`;
+  if (head === '4' || head === '8' || head === '9') return `bj.${stockCode}`;
+  return `sz.${stockCode}`;
 }
 
 /**
