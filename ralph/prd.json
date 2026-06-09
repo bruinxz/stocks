@@ -1581,8 +1581,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 94,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026/06/09. Backend: 新增 FactorDetailService (backend/src/quant/factors/FactorDetailService.ts) — 5 个纯函数 helper (splitIntoQuintiles 按 z_score 升序等分 5 桶 + 余数前移 + tie 按 stock_code stable 排序; quintileAverageReturn 单桶平均 forward return; accumulateNetValue 累乘起点 1.0; buildQuintileTimeSeries 拼合 5 桶时序; formatTradeDate 兼容 string/Date/null) + DataSource 注入式架构 (FactorDetailDataSource 接口 → DefaultFactorDetailDataSource 拉 FactorScore 横截面 + DailyBar tail-index forward return + FactorICResult 历史) + clampLimitDays / clampICLimit 三层防御 (default=120/60, max=250/200, integer check). FactorController.getFactorDetail 严格 snake_case 校验 + 404 unregistered + 500 fallback; 路由 GET /api/factors/:name/detail 注册于 /overview / /preview / /industry-heatmap 之后 (静态优先 / :param 最后 lesson 同 US-015 / US-093). Frontend: FactorWorkspace 因子卡片 onClick → setDrawerOpen(true) + 3 态短路 lazy fetch (已缓存/正在拉/已错过都不重复); 抽屉宽 720px 含 Descriptions (描述/分类/数据窗口/有效交易日) + IC 曲线 (recharts LineChart 双线 ic_mean 蓝实 + ic_ir 紫虚 + y=0 reference) + 5 等分净值曲线 (Q1=红空头/Q5=深绿多头/中间灰阶 + y=1 reference). 107/107 单测全过 (backend/tests/factors/factor-detail-service.test.ts) 覆盖纯函数 (空/单/5整除/余数/ties/稳定排序/NaN+Infinity 过滤/长度对齐/clamp边界) + e2e getDetail (happy 25 股 3 日 + factor 未注册抛错 + 注入 DS 绕过 registry + 空 trade_dates + 全日 cross-section<MIN + mixed valid/small + IC history + limit_days clamp 50/默认 120/超 max 250). Backend tsc/eslint 全过; Frontend tsc/eslint 全过 (新增代码 0 warning; pre-existing 1 个非空断言 warning 留原样). Browser verify 标记 manual (dev-browser MCP 不可用)."
     },
     {
       "id": "US-095",

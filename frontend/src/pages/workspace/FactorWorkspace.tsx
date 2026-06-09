@@ -4,6 +4,8 @@ import {
   Button,
   Card,
   Col,
+  Descriptions,
+  Drawer,
   Empty,
   InputNumber,
   Row,
@@ -27,10 +29,22 @@ import {
   ThunderboltOutlined,
 } from '@ant-design/icons';
 import ReactECharts from 'echarts-for-react';
+import {
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
 import AIStockAnalysisModal from '../../components/trading/AIStockAnalysisModal';
 import {
   factorService,
+  FactorDetailResponse,
   FactorIndustryHeatmapResponse,
   FactorOverviewItem,
   FactorOverviewResponse,
@@ -216,6 +230,48 @@ const FactorWorkspace: React.FC = () => {
     void loadHeatmap();
   }, [activeKey, heatmap, heatmapLoading, heatmapError, loadHeatmap]);
 
+  // --- US-094 因子详情抽屉 ---
+  // 点击因子卡片 → 弹出 Drawer 展示：因子描述 / IC 历史曲线 / 5 等分组合净值曲线。
+  // detail 数据缓存为 (factor_name → response) 一次拉取后切换其它卡片再回来不重复 fetch；
+  // refresh 按钮 / 手动重试触发 reload。
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerFactor, setDrawerFactor] = useState<string | null>(null);
+  const [detailCache, setDetailCache] = useState<Record<string, FactorDetailResponse>>({});
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+
+  const loadFactorDetail = useCallback(async (name: string) => {
+    setDetailLoading(true);
+    setDetailError(null);
+    try {
+      const data = await factorService.getFactorDetail(name);
+      setDetailCache(prev => ({ ...prev, [name]: data }));
+    } catch (err: unknown) {
+      const messageStr = err instanceof Error ? err.message : String(err);
+      setDetailError(messageStr);
+    } finally {
+      setDetailLoading(false);
+    }
+  }, []);
+
+  const handleCardClick = useCallback(
+    (factor: FactorOverviewItem) => {
+      setDrawerFactor(factor.name);
+      setDrawerOpen(true);
+      // 3 态短路（与 US-074 lazy-load 范式一致）：已在缓存 / 正在拉 / 已错过都不重复 fetch
+      if (detailCache[factor.name] || detailLoading) return;
+      void loadFactorDetail(factor.name);
+    },
+    [detailCache, detailLoading, loadFactorDetail]
+  );
+
+  const handleDrawerClose = useCallback(() => {
+    setDrawerOpen(false);
+    // 关闭后不立即清 factor name —— 让 Drawer 退场动画期间内容仍可见，避免闪烁
+  }, []);
+
+  const drawerDetail = drawerFactor ? detailCache[drawerFactor] : null;
+
   // --- KPI 计算 ---
   const totalUniverse = useMemo(() => {
     if (!overview?.factors?.length) return 0;
@@ -255,7 +311,13 @@ const FactorWorkspace: React.FC = () => {
       />
     );
   } else if (activeKey === 'overview') {
-    body = <FactorOverviewTab factors={overview?.factors ?? []} loading={loading} />;
+    body = (
+      <FactorOverviewTab
+        factors={overview?.factors ?? []}
+        loading={loading}
+        onCardClick={handleCardClick}
+      />
+    );
   } else if (activeKey === 'weights') {
     body = (
       <WeightsTab
@@ -296,17 +358,28 @@ const FactorWorkspace: React.FC = () => {
   }
 
   return (
-    <WorkspaceLayout
-      title="选股因子"
-      subtitle="统一管理因子库、权重调参与多因子选股结果。"
-      tabs={tabs}
-      activeKey={activeKey}
-      onTabChange={setActiveKey}
-      kpiSlot={kpiSlot}
-      headerActions={headerActions}
-    >
-      {body}
-    </WorkspaceLayout>
+    <>
+      <WorkspaceLayout
+        title="选股因子"
+        subtitle="统一管理因子库、权重调参与多因子选股结果。"
+        tabs={tabs}
+        activeKey={activeKey}
+        onTabChange={setActiveKey}
+        kpiSlot={kpiSlot}
+        headerActions={headerActions}
+      >
+        {body}
+      </WorkspaceLayout>
+      <FactorDetailDrawer
+        open={drawerOpen}
+        onClose={handleDrawerClose}
+        factorName={drawerFactor}
+        detail={drawerDetail}
+        loading={detailLoading}
+        error={detailError}
+        onRetry={drawerFactor ? () => loadFactorDetail(drawerFactor) : undefined}
+      />
+    </>
   );
 };
 
@@ -317,7 +390,8 @@ const FactorWorkspace: React.FC = () => {
 const FactorOverviewTab: React.FC<{
   factors: FactorOverviewItem[];
   loading: boolean;
-}> = ({ factors, loading }) => {
+  onCardClick?: (factor: FactorOverviewItem) => void;
+}> = ({ factors, loading, onCardClick }) => {
   if (loading && factors.length === 0) {
     return (
       <Card>
@@ -344,7 +418,8 @@ const FactorOverviewTab: React.FC<{
           <Col xs={24} sm={12} lg={8} xxl={6} key={factor.name}>
             <Card
               hoverable
-              style={{ height: '100%' }}
+              style={{ height: '100%', cursor: onCardClick ? 'pointer' : 'default' }}
+              onClick={onCardClick ? () => onCardClick(factor) : undefined}
               title={
                 <Space>
                   <Text strong>{factor.name}</Text>
@@ -445,8 +520,7 @@ const WeightsTab: React.FC<WeightsTabProps> = ({
   }
   const previewColumns = buildPreviewColumns(
     Object.keys(weights).filter(k => weights[k] > 0),
-    (row: FactorPreviewSignal) =>
-      setAiTarget({ symbol: row.stock_code, name: row.name || null })
+    (row: FactorPreviewSignal) => setAiTarget({ symbol: row.stock_code, name: row.name || null })
   );
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
@@ -757,9 +831,7 @@ const IndustryHeatmapTab: React.FC<{
         }
         extra={
           <Space>
-            {data?.universe_size != null && (
-              <Tag color="purple">命中 {data.universe_size} 只</Tag>
-            )}
+            {data?.universe_size != null && <Tag color="purple">命中 {data.universe_size} 只</Tag>}
             <Button size="small" icon={<ReloadOutlined />} loading={loading} onClick={onReload}>
               刷新
             </Button>
@@ -782,8 +854,8 @@ const IndustryHeatmapTab: React.FC<{
               opts={{ renderer: 'canvas' }}
             />
             <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 12 }}>
-              颜色越绿 = 该行业在该因子上横截面 z_score 平均值越高；越红越低。
-              所有数值仅基于 raw_value 非空（即该因子有实际计算结果）的股票样本。
+              颜色越绿 = 该行业在该因子上横截面 z_score 平均值越高；越红越低。 所有数值仅基于
+              raw_value 非空（即该因子有实际计算结果）的股票样本。
             </Typography.Paragraph>
           </>
         )}
@@ -827,7 +899,9 @@ function buildHeatmapOption(data: FactorIndustryHeatmapResponse | null): Record<
         const industry = yCategories[yIdx] ?? '';
         const cell = data.cells.find(c => c.factor === factor && c.industry === industry);
         const sample = cell?.sample_size ?? 0;
-        return `${industry}<br/><b>${factor}</b><br/>平均 z = <b>${v.toFixed(3)}</b><br/>样本 ${sample} 只`;
+        return `${industry}<br/><b>${factor}</b><br/>平均 z = <b>${v.toFixed(
+          3
+        )}</b><br/>样本 ${sample} 只`;
       },
     },
     xAxis: {
@@ -851,7 +925,17 @@ function buildHeatmapOption(data: FactorIndustryHeatmapResponse | null): Record<
       bottom: 10,
       inRange: {
         // 红→白→绿 对称色带，与"涨绿跌红"A 股语义保持一致 (z 正 = 因子高 = 看多 = 绿)
-        color: ['#d73027', '#f46d43', '#fdae61', '#fee08b', '#ffffbf', '#d9ef8b', '#a6d96a', '#66bd63', '#1a9850'],
+        color: [
+          '#d73027',
+          '#f46d43',
+          '#fdae61',
+          '#fee08b',
+          '#ffffbf',
+          '#d9ef8b',
+          '#a6d96a',
+          '#66bd63',
+          '#1a9850',
+        ],
       },
     },
     series: [
@@ -1016,3 +1100,229 @@ function buildLatestPickColumns(
 }
 
 export default FactorWorkspace;
+
+// ============================================================================
+// FactorDetailDrawer (US-094) — 点击因子卡片打开
+// ============================================================================
+
+/**
+ * FactorDetailDrawer — 因子详情抽屉。
+ *
+ * 3 段内容：
+ *   - 因子元数据（name / category / description / period / effective_trade_days）
+ *   - IC 历史曲线（recharts LineChart；X = period_end，Y = ic_mean）
+ *   - 5 等分组合累计净值曲线 Q1..Q5（recharts LineChart；起点 1.0；Q5=多头组绿，
+ *     Q1=空头组红，中间灰阶；按 trade_date ASC）
+ *
+ * 设计选择：
+ *   - 用 recharts 不用 echarts —— FactorWorkspace 已用了 echarts (行业热力)；这里
+ *     用 recharts 跟 BacktestResults / LiveTrading / QuantBacktestLab 一致 (项目里
+ *     时序曲线主选 recharts；热力图主选 echarts)，降低样式认知。
+ *   - 480px 宽 drawer 与项目其它 Drawer 模板 (US-062 Copilot) 一致；中等宽足以
+ *     放下双图表 + 描述。
+ *   - 4 态短路：loading / error+retry / empty (note) / success；同 US-074 lazy
+ *     load 范式。空 data 仍渲染 Drawer skeleton，避免闪烁。
+ */
+interface FactorDetailDrawerProps {
+  open: boolean;
+  onClose: () => void;
+  factorName: string | null;
+  detail: FactorDetailResponse | null;
+  loading: boolean;
+  error: string | null;
+  onRetry?: () => void;
+}
+
+const QUINTILE_COLORS: Record<'Q1' | 'Q2' | 'Q3' | 'Q4' | 'Q5', string> = {
+  Q1: '#f5222d', // 空头组 红
+  Q2: '#fa8c16',
+  Q3: '#bfbfbf', // 中性 灰
+  Q4: '#73d13d',
+  Q5: '#52c41a', // 多头组 深绿
+};
+
+const FactorDetailDrawer: React.FC<FactorDetailDrawerProps> = ({
+  open,
+  onClose,
+  factorName,
+  detail,
+  loading,
+  error,
+  onRetry,
+}) => {
+  const category = detail
+    ? CATEGORY_DISPLAY[detail.category] ?? CATEGORY_DISPLAY.other
+    : CATEGORY_DISPLAY.other;
+
+  return (
+    <Drawer
+      title={
+        <Space>
+          <FundOutlined />
+          <Text strong>{factorName ?? '因子详情'}</Text>
+          {detail && <Tag color={category.color}>{category.label}</Tag>}
+        </Space>
+      }
+      placement="right"
+      width={720}
+      open={open}
+      onClose={onClose}
+      destroyOnClose={false}
+    >
+      {loading && (
+        <div style={{ display: 'flex', justifyContent: 'center', padding: 64 }}>
+          <Spin tip="加载因子详情…" />
+        </div>
+      )}
+      {!loading && error && (
+        <Alert
+          type="error"
+          showIcon
+          message="加载失败"
+          description={error}
+          action={
+            onRetry && (
+              <Button size="small" onClick={onRetry}>
+                重试
+              </Button>
+            )
+          }
+        />
+      )}
+      {!loading && !error && detail && (
+        <Space direction="vertical" size={16} style={{ width: '100%' }}>
+          <Descriptions size="small" column={1} bordered>
+            <Descriptions.Item label="描述">
+              {detail.description || <Text type="secondary">（无描述）</Text>}
+            </Descriptions.Item>
+            <Descriptions.Item label="分类">
+              <Tag color={category.color}>{category.label}</Tag>
+              <Text type="secondary">{detail.category}</Text>
+            </Descriptions.Item>
+            <Descriptions.Item label="数据窗口">
+              {detail.period_start && detail.period_end
+                ? `${detail.period_start} ~ ${detail.period_end}`
+                : '—'}
+            </Descriptions.Item>
+            <Descriptions.Item label="有效交易日">
+              {detail.effective_trade_days} / {detail.quintile_curves.length}
+            </Descriptions.Item>
+          </Descriptions>
+
+          {detail.note && <Alert type="info" showIcon message={detail.note} />}
+
+          <Card
+            size="small"
+            title={
+              <Space>
+                <Text strong>IC 历史曲线</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  （rank IC，正值越大因子有效；接近 0 = 失效）
+                </Text>
+              </Space>
+            }
+          >
+            {detail.ic_history.length === 0 ? (
+              <Empty
+                description="尚无 IC 数据 — 请先运行 npm run report:factor-ic"
+                imageStyle={{ height: 60 }}
+              />
+            ) : (
+              <ResponsiveContainer width="100%" height={220}>
+                <LineChart
+                  data={detail.ic_history}
+                  margin={{ top: 8, right: 16, left: 0, bottom: 8 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
+                  <XAxis dataKey="period_end" tick={{ fontSize: 11 }} />
+                  <YAxis tick={{ fontSize: 11 }} domain={['auto', 'auto']} />
+                  <Tooltip
+                    formatter={(value: number, name: string) => [
+                      value != null ? value.toFixed(4) : '—',
+                      name,
+                    ]}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
+                  <ReferenceLine y={0} stroke="#999" strokeDasharray="2 2" />
+                  <Line
+                    type="monotone"
+                    dataKey="ic_mean"
+                    name="IC 均值"
+                    stroke="#1890ff"
+                    strokeWidth={2}
+                    dot={false}
+                    isAnimationActive={false}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="ic_ir"
+                    name="IC IR"
+                    stroke="#722ed1"
+                    strokeWidth={1.5}
+                    strokeDasharray="4 2"
+                    dot={false}
+                    isAnimationActive={false}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+          </Card>
+
+          <Card
+            size="small"
+            title={
+              <Space>
+                <Text strong>5 等分组合累计净值</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  （Q5 = 高分多头组，Q1 = 低分空头组；起点 1.0）
+                </Text>
+              </Space>
+            }
+          >
+            {detail.quintile_curves.length === 0 ? (
+              <Empty
+                description="尚无横截面数据 — 请先运行 npm run compute:factors"
+                imageStyle={{ height: 60 }}
+              />
+            ) : (
+              <ResponsiveContainer width="100%" height={280}>
+                <LineChart
+                  data={detail.quintile_curves}
+                  margin={{ top: 8, right: 16, left: 0, bottom: 8 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
+                  <XAxis dataKey="trade_date" tick={{ fontSize: 11 }} minTickGap={32} />
+                  <YAxis
+                    tick={{ fontSize: 11 }}
+                    domain={['auto', 'auto']}
+                    tickFormatter={v => Number(v).toFixed(3)}
+                  />
+                  <Tooltip
+                    formatter={(value: number, name: string) => [
+                      value != null ? Number(value).toFixed(4) : '—',
+                      name,
+                    ]}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
+                  <ReferenceLine y={1} stroke="#999" strokeDasharray="2 2" />
+                  {(['Q1', 'Q2', 'Q3', 'Q4', 'Q5'] as const).map(q => (
+                    <Line
+                      key={q}
+                      type="monotone"
+                      dataKey={q}
+                      stroke={QUINTILE_COLORS[q]}
+                      strokeWidth={q === 'Q1' || q === 'Q5' ? 2 : 1.2}
+                      dot={false}
+                      isAnimationActive={false}
+                    />
+                  ))}
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+          </Card>
+        </Space>
+      )}
+      {!loading && !error && !detail && factorName && <Empty description="尚未加载因子详情" />}
+    </Drawer>
+  );
+};

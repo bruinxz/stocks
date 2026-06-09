@@ -129,9 +129,7 @@ export interface FactorIndustryHeatmapResponse {
   note?: string;
 }
 
-export async function getIndustryHeatmap(
-  date?: string
-): Promise<FactorIndustryHeatmapResponse> {
+export async function getIndustryHeatmap(date?: string): Promise<FactorIndustryHeatmapResponse> {
   const res = await api.get('/factors/industry-heatmap', {
     params: date ? { date } : undefined,
   });
@@ -141,6 +139,61 @@ export async function getIndustryHeatmap(
   return res.data.data as FactorIndustryHeatmapResponse;
 }
 
+// ---------- /api/factors/:name/detail (US-094) -----------------------------
+
+export interface FactorICHistoryPoint {
+  period_end: string;
+  ic_mean: number | null;
+  ic_ir: number | null;
+  look_forward_days: number;
+}
+
+export interface FactorQuintileNetValuePoint {
+  trade_date: string;
+  Q1: number;
+  Q2: number;
+  Q3: number;
+  Q4: number;
+  Q5: number;
+}
+
+export interface FactorDetailResponse {
+  name: string;
+  description: string;
+  category: string;
+  period_start: string | null;
+  period_end: string | null;
+  effective_trade_days: number;
+  ic_history: FactorICHistoryPoint[];
+  quintile_curves: FactorQuintileNetValuePoint[];
+  note?: string;
+}
+
+/**
+ * US-094 单因子详情：IC 历史曲线 + 5 等分组合累计净值（Q1..Q5）。
+ *
+ * 点击 FactorWorkspace 因子卡片打开抽屉时使用。
+ *
+ * 参数：
+ *   - limitDays?: 1..250；默认 120（约半年 A 股交易日）。
+ *   - icLimit?:   1..200；默认 60。
+ */
+export async function getFactorDetail(
+  name: string,
+  options?: { limitDays?: number; icLimit?: number }
+): Promise<FactorDetailResponse> {
+  const params: Record<string, number> = {};
+  if (options?.limitDays != null) params.limit_days = options.limitDays;
+  if (options?.icLimit != null) params.ic_limit = options.icLimit;
+  const res = await api.get(`/factors/${encodeURIComponent(name)}/detail`, {
+    params: Object.keys(params).length > 0 ? params : undefined,
+  });
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || `获取因子 ${name} 详情失败`);
+  }
+  return res.data.data as FactorDetailResponse;
+}
+
 // ---------- bundled export ------------------------------------------------
 
 export const factorService = {
@@ -148,6 +201,7 @@ export const factorService = {
   previewFactorSelection,
   getLatestMultiFactorPicks,
   getIndustryHeatmap,
+  getFactorDetail,
 };
 
 export default factorService;

@@ -11,6 +11,11 @@ import {
   DEFAULT_MULTI_FACTOR_ALPHA_WEIGHTS,
   MultiFactorAlphaParams,
 } from '../../quant/strategies/MultiFactorAlphaStrategy';
+import {
+  factorDetailService,
+  clampLimitDays,
+  clampICLimit,
+} from '../../quant/factors/FactorDetailService';
 
 /**
  * FactorController — US-015 因子选股工作区后端
@@ -457,6 +462,63 @@ export class FactorController {
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       logger.error('FactorController.getIndustryHeatmap failed:', error);
+      res.status(500).json({ success: false, message });
+    }
+  }
+
+  // ---------- GET /api/factors/:name/detail ----------------------------------
+  /**
+   * 因子详情聚合 — US-094 因子卡片"点击 → 弹出抽屉"使用。
+   *
+   * 返回 3 段数据：
+   *   - 因子元信息（name / description / category，从 FactorRegistry 拿）
+   *   - IC 历史曲线（按 period_end ASC，默认取最近 60 条 lookForward=1 的 IC）
+   *   - 5 等分组合累计净值曲线 Q1..Q5（默认最近 120 个交易日，起点 1.0）
+   *
+   * Query：
+   *   - limit_days?: 1..250；缺省 = 120
+   *   - ic_limit?:   1..200；缺省 = 60
+   *
+   * 路由顺序约束：必须在 factor.routes.ts 中 `/overview` / `/preview` / `/industry-heatmap`
+   * 之后注册（否则 :name 通配会吞这些静态路径）。同 US-015 / US-093 的"静态优先 + :param
+   * 最后"模式。
+   *
+   * 错误：
+   *   - 400 factor name 校验（非 snake_case / 空 / 含特殊字符）；
+   *   - 400 limit_days / ic_limit 非整数（service 内自动 clamp，controller 只校验 name）；
+   *   - 404 factor 未注册（registry.has=false）；
+   *   - 500 DB / 内部错误。
+   */
+  async getFactorDetail(req: Request, res: Response) {
+    try {
+      const name = String(req.params.name || '').trim();
+      // 与 strategy_key 同款严格 pattern：snake_case，避免 path traversal / 引号注入
+      if (!/^[a-z][a-z0-9_]*$/.test(name)) {
+        res.status(400).json({
+          success: false,
+          message: `factor name 必须为 snake_case（^[a-z][a-z0-9_]*$），收到："${name}"`,
+        });
+        return;
+      }
+      if (!factorRegistry.has(name)) {
+        res.status(404).json({
+          success: false,
+          message: `factor "${name}" 未注册。已知因子：${
+            factorRegistry.listNames().join(', ') || '(empty)'
+          }`,
+        });
+        return;
+      }
+      const limitDays = clampLimitDays(req.query.limit_days);
+      const icLimit = clampICLimit(req.query.ic_limit);
+      const detail = await factorDetailService.getDetail(name, {
+        limit_days: limitDays,
+        ic_limit: icLimit,
+      });
+      res.json({ success: true, data: detail });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error('FactorController.getFactorDetail failed:', error);
       res.status(500).json({ success: false, message });
     }
   }
