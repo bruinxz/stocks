@@ -1,6 +1,8 @@
-import React, { useMemo } from 'react';
-import { Card, Menu, Space, Typography } from 'antd';
+import React, { useMemo, useState } from 'react';
+import { Button, Card, Drawer, Menu, Space, Typography } from 'antd';
+import { MenuOutlined } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
+import { useIsMobile } from '../../hooks/useIsMobile';
 
 const { Title, Paragraph } = Typography;
 
@@ -41,7 +43,7 @@ export interface WorkspaceLayoutProps {
 /**
  * Shared shell for the 6 unified workspaces introduced in US-002.
  *
- * Layout:
+ * Layout (desktop, ≥ 768px):
  *   ┌──────────── KPI bar (96px) ──────────────────────┐
  *   │ title / subtitle │ kpiSlot │ headerActions       │
  *   ├──────────┬───────────────────────────────────────┤
@@ -49,6 +51,13 @@ export interface WorkspaceLayoutProps {
  *   │ tabs     │   children                            │
  *   │ rail     │                                       │
  *   └──────────┴───────────────────────────────────────┘
+ *
+ * Mobile (< 768px, US-095):
+ *   - Left-rail Menu is hidden; a 「☰ 标签」button appears at top-left of the
+ *     content area which opens a top-anchored Drawer with the same Menu.
+ *   - Tab selection closes the Drawer automatically (tap-then-go UX).
+ *   - KPI bar wraps onto multiple lines; the inner flex collapses gracefully
+ *     via `.workspace-kpi-bar__inner` media query in index.css.
  *
  * The shell deliberately stays presentational — tab content is fully owned by
  * the parent workspace page. Workspace shells that don't need secondary nav
@@ -64,6 +73,9 @@ const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
   headerActions,
   children,
 }) => {
+  const isMobile = useIsMobile();
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
+
   const menuItems: MenuProps['items'] = useMemo(
     () =>
       (tabs || []).map(tab => ({
@@ -76,13 +88,23 @@ const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
   );
 
   const hasTabs = Boolean(tabs && tabs.length > 0);
+  const activeTab = useMemo(
+    () => (tabs || []).find(t => t.key === activeKey),
+    [tabs, activeKey]
+  );
+
+  // Tap-then-go: when user taps a tab in the mobile drawer, switch + close.
+  const handleMobileMenuClick: MenuProps['onClick'] = ({ key }) => {
+    onTabChange?.(String(key));
+    setMobileDrawerOpen(false);
+  };
 
   return (
     <div className="workspace-shell">
       <Card
         className="workspace-kpi-bar"
         bodyStyle={{ padding: '16px 24px', height: '100%' }}
-        style={{ height: 96, marginBottom: 16 }}
+        style={{ height: isMobile ? 'auto' : 96, marginBottom: 16 }}
       >
         <div className="workspace-kpi-bar__inner">
           <div className="workspace-kpi-bar__title">
@@ -102,11 +124,27 @@ const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
         </div>
       </Card>
 
+      {hasTabs && isMobile ? (
+        <div className="workspace-mobile-tab-bar">
+          <Button
+            icon={<MenuOutlined />}
+            onClick={() => setMobileDrawerOpen(true)}
+            size="large"
+            block
+            style={{ textAlign: 'left' }}
+          >
+            <span style={{ marginLeft: 8 }}>
+              切换标签{activeTab ? ` · ${activeTab.label}` : ''}
+            </span>
+          </Button>
+        </div>
+      ) : null}
+
       <div
         className="workspace-body"
         style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}
       >
-        {hasTabs ? (
+        {hasTabs && !isMobile ? (
           <Card
             className="workspace-side-tabs"
             bodyStyle={{ padding: 8 }}
@@ -125,6 +163,26 @@ const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
           {children}
         </div>
       </div>
+
+      {hasTabs ? (
+        <Drawer
+          title="工作区标签"
+          placement="top"
+          height="auto"
+          open={mobileDrawerOpen}
+          onClose={() => setMobileDrawerOpen(false)}
+          styles={{ body: { padding: 8 } }}
+          className="workspace-mobile-drawer"
+        >
+          <Menu
+            mode="inline"
+            selectedKeys={activeKey ? [activeKey] : []}
+            onClick={handleMobileMenuClick}
+            items={menuItems}
+            style={{ border: 'none', background: 'transparent' }}
+          />
+        </Drawer>
+      ) : null}
     </div>
   );
 };

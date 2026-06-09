@@ -175,3 +175,16 @@ useEffect(() => {
 ```
 
 刷新按钮单独调 `load()`；错误重试也调 `load()`。"是否要 fire" 逻辑统一收敛在 useEffect，按钮只直接调 load。US-080 push-channels tab 复用此范式（避免一进 SettingsWorkspace 就拉两套 notification config，只在用户真正切到 push-channels 才拉矩阵视图）。
+
+## Mobile-responsive table-to-card pattern (US-095)
+
+When a workspace renders a wide antd `<Table>` (many columns, `scroll={{x: 1000+}}`) and is supposed to be browse-able on a < 768px phone screen:
+
+1. **`import { useIsMobile } from '../../hooks/useIsMobile';`** — single hook, no antd Grid dependency, matches `(max-width: 767px)`.
+2. **Conditional render `isMobile ? <CardList /> : <Table />`**, NOT a single render that depends on CSS hiding. CSS-only "hide columns at mobile" leaves the user with a horizontally-scrollable table where they can't see most data at once; replace the whole representation.
+3. **Card sub-component per row** (`PositionMobileCard` / `TradeMobileCard` / etc) lives in same file, takes the same row + all the event handlers the table cell `render()` callbacks need, and stacks labels vertically with the shared CSS class `workspace-mobile-card-list` + `workspace-mobile-card-row` (defined in `frontend/src/index.css`).
+4. **Touch-target sizing**: action buttons in card footers use `workspace-mobile-card-actions` which sets `height: 38px` + `flex: 1` (so two side-by-side buttons evenly fill row width). Don't keep `size="small"` for primary actions on mobile — 24px Buttons are not finger-tappable.
+5. **Editing UI inside a card row** keeps `Space size={4}` with `<InputNumber size="small">` + ✓/✗ buttons — short widget chain still fits a 320px-wide phone if the label is on its own line above.
+6. **WorkspaceLayout drawer auto-handles the secondary nav** (mobile = top-anchored Drawer triggered by 「☰ 切换标签」button, desktop = 220px left rail). Workspaces don't have to manage drawer state themselves.
+
+Reference implementations: `PortfolioWorkspace.PositionsTab` + `PositionMobileCard`, `PortfolioWorkspace.TradesTab` + `TradeMobileCard`, `TodayWorkspace.{MultiFactorCard,DragonHeadCard,EarningsSurpriseCard}` — all read `useIsMobile()` once and branch the inner `<Table>` rendering. Next mobile responsiveness story should reuse `workspace-mobile-card-list` CSS classes and the same `useIsMobile()` hook, NOT introduce a new media-query approach.

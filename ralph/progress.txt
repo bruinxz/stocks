@@ -26,6 +26,7 @@
 - **5 等分组合净值曲线纯函数 4 件套 (US-094 引入)**: 任何"因子分组测试 / 策略分桶回测 / 信号有效性 quintile 分析"按 4 个纯函数解耦后端 DB 与算法: (1) `splitIntoQuintiles(zMap)` → `Map<code, 1..5>` 升序排 + 5 等分 + 余数前 (n%5) 桶各 +1 让 Q5 多头组最干净 + tie 按 stock_code.localeCompare stable; (2) `quintileAverageReturn(quintileMap, returnMap, q)` → 单桶平均 return，缺数据不计入分母同 IC 报告"双有效"过滤；(3) `accumulateNetValue(returns)` → 累乘起点 1.0 的净值序列 + 每步 `Number(nv.toFixed(6))` 截断防长期浮点 drift; (4) `buildQuintileTimeSeries(perDayQuintiles, perDayReturns)` → `{Q1..Q5: number[]}` 拼合 + 长度对齐校验。**每个函数独立单测覆盖**：空入/单元素/整除/余数/ties/NaN-Infinity 过滤/桶不存在/长度不一致抛错 8+ 角度。**DataSource 注入式架构**：`FactorDetailDataSource` 接口 4 method (loadRecentTradeDates / loadFactorCrossSection / loadForwardReturns / loadICHistory) → `DefaultFactorDetailDataSource` 接 Sequelize；测试时注入 `FakeDataSource` 让 e2e getDetail 完全脱 DB。**关键 lookahead bias guard**：base_date 的 forward return 必须实际存在（DailyBar 后续有 forward_days+1 条 bar），否则该日跳过该股票不参与该桶 avg；同 FactorICReport tail-index 模式。下次任何"分桶回测 / IC 加强版 / 单因子多策略平台" 直接复用 4 件套 + DataSource 接口。
 - **recharts vs echarts 分工 (US-094 reinforces US-074 lesson)**: 时序曲线 (净值/价格/IC 历史) 主选 `recharts` ResponsiveContainer + LineChart，与 BacktestResults / LiveTrading / QuantBacktestLab / AutonomousTradingOverview 一致；**热力图 / 矩阵 / 桑基 / 树图** 主选 `echarts-for-react` (Recharts 缺原生 component)。**单文件混用 OK**：FactorWorkspace 行业热力 tab 用 echarts + 因子详情抽屉用 recharts，按"用最少复杂度的库"原则取舍而非"统一全用某一库"。**多线时序的 dataKey 命名**：5 等分 Q1..Q5、20/60/120 日均线 ma_20 等 — 用同一 data array 多 `<Line dataKey="Qx" />` 不要 5 个 array; ReferenceLine y=0/y=1 加水平基准线让用户一眼看出超 base 与否。**颜色语义对齐 A 股**：Q5 多头 = 深绿 `#52c41a`，Q1 空头 = 红 `#f5222d`，中间灰阶；不要照搬 echarts 官方"蓝→红"。
 - **antd Drawer 详情面板与 Lazy-fetch 缓存 3 态 (US-094 reinforces US-074)**: 任何"列表项点击 → 弹抽屉看详情" UI 复用此 5 件套：(1) `detailCache: Record<key, response>` Map 存已拉数据，切换不同 item 再切回不重复 fetch；(2) `handleClick` 入口先 `setOpen(true) + setActiveKey(key)`，再判 `if (cache[key] || loading) return; void load(key)` — UI 先动起来再发请求；(3) `onClose` 不立即清 key 让 Drawer 退场动画期间内容仍可见，避免闪烁；(4) Drawer body 内 4 态短路 render: `loading` Spin / `error + retry` Alert / `empty(note)` Empty / `success` 主内容 — 同 US-074 IndustryHeatmapTab 范式；(5) Drawer width 480-720px：480 适合 chat panel (US-062)，720 适合多图表 + Descriptions 详情 (US-094 因子详情)。下次 US-095 移动端 / 任何"列表 → 详情" 复用此模板。
+- **移动端响应式 table-to-card 转换 + Drawer-as-mobile-nav 范式 (US-095 引入)**：< 768px 移动端不可读宽表必须**整套切换**到 Card 列表，不能仅 CSS 隐藏列（CSS 隐藏后用户横向滚动看不到列名 / antd scroll x 占用 DOM 触发 page 横滚 / 编辑 Popconfirm 在压缩 cell 内不可操作）。**5 件套**：(1) `useIsMobile(768)` hook (新增 `frontend/src/hooks/useIsMobile.ts`) 单 breakpoint matchMedia，SSR-safe + Safari < 14 fallback；(2) `isMobile ? <CardList /> : <Table />` 直接两种 React 元素切换；(3) per-row card 子组件（PositionMobileCard / TradeMobileCard）放同文件，复用 desktop 同款 handler / state（编辑 / 平仓 / AI 解读语义 100% 一致）；(4) 共享 CSS class `.workspace-mobile-card-list / .workspace-mobile-card-row / .workspace-mobile-card-actions` 在 index.css 定义，新 mobile-card 直接复用不重写；(5) WorkspaceLayout 在 < 768px 把左侧 220px Tab 栏自动收进顶部 Drawer (placement="top" height="auto") + 触发按钮「☰ 切换标签 · <当前 tab>」block-full —— workspaces 不需要 state 也不监听 isMobile (drawer 状态 internal 到 WorkspaceLayout)。**判据**：表格 > 5 列或 scroll x > 800 时必须切 mobile card；< 5 列 / 简单文本只用 CSS 隐藏即可。**Drawer placement 决策**：mobile + 短列表 → top auto-height (二级导航 / quick menu)；mobile + 大量内容 → bottom full-screen；desktop + 详情 → right 480-720。下次任何 mobile 响应式工作（FactorWorkspace 因子卡片 / DataWorkspace 数据源 / SettingsWorkspace 表单）按此 5 件套直接复用 hook + CSS class + Drawer 模式。
 
 ### Backend
 - **PaperTrading services live under `backend/src/portfolio/internal/`**, not `backend/src/services/` (US-003 refactor). The public surface is `backend/src/portfolio/PaperTradingFacade.ts` exposing **exactly 7 methods**: `getPortfolio`, `placeOrder`, `closePosition`, `getDailySnapshot`, `attributePnl`, `applyAutomation`, `getRiskProfile`. Controllers MUST only import the facade. Other services/scripts/jobs may still import from `internal/` directly (the facade-only constraint is the controller boundary).
@@ -7985,4 +7986,84 @@ PaperTradingFacade.placeOrder 保留 7-method facade 收敛）。
 - **`raw_value IS NOT NULL` 过滤是 factor cross-section 加载的标配 (US-094 复用 IC 报告模式)**: FactorScore 表里某只股票的 raw_value=null 表示该因子计算时缺数据 (e.g. 该股票未披露季报 / ETF 没融资融券)，但 z_score 仍可能被 industry-neutral 横截面填了一个值。统计因子真实有效性时必须 `where: { raw_value: { [Op.ne]: null } }` 过滤掉这些"占位 z_score"，否则 quintile 分组会被噪声拉偏。同款过滤已在 US-074 行业热力 backendController.getIndustryHeatmap 用过，US-094 继续沿用；下次任何 "FactorScore 表横截面统计" (US-022 高分红低 PE / US-XXX 因子有效性扫描) 都必须加此过滤。
 - **frontend node_modules 在 worktree 缺失时 symlink 主仓 (worktree gotcha)**: 本 worktree `frontend/node_modules/` 不存在 (worktree 创建时只 checkout 源码, 不复制 deps), 导致 `npx tsc` 找不到 typescript 本地版本会去 npx 仓拉远端最新版报错 "This is not the tsc command you are looking for"。**最简解**: `cd <worktree>/frontend && ln -s /Users/bytedance/go/src/github.com/bruinxz/stocks/frontend/node_modules node_modules` 把主仓 deps 软链过来。backend 同理 (但当前 backend 在 worktree 里已有 node_modules 不用处理)。**判据**：任何 worktree 跑 frontend tsc/eslint/jest 报"command not found" 第一步 symlink node_modules，省 4-5 分钟 `npm install`。下次任何 ralph 新 worktree 跑 frontend 检查时复用此命令。
 - **Codebase Patterns 维护**：本轮新增 4 条到顶部 Codebase Patterns Frontend 板块（5 等分 4 件套 / recharts vs echarts / Drawer lazy-cache 3 态 / monaco viewer 复用模板已存在但加了 US-094 引用)。后续 US-095 移动端响应式可参考其中 Drawer + recharts 模式。
+---
+
+## 2026/06/09 - US-095 前端：移动端响应式适配（基础）
+
+### What was implemented
+
+**1. `frontend/src/hooks/useIsMobile.ts`** (new, 56 行) — 单一 `useIsMobile(breakpoint=768)` hook 基于 `window.matchMedia('(max-width: <breakpoint-1>px)')`：
+- SSR-safe（`typeof window === 'undefined'` 兜底 false）
+- Safari < 14 fallback (`addListener / removeListener`)
+- Re-subscribes on breakpoint change，重渲染 / 缩放窗口都正确响应
+- 故意**不**复用 antd Grid 的 `useBreakpoint()`：返回 6 个 boolean 太重；US-095 只需要单 768 边界
+
+**2. `frontend/src/components/layout/WorkspaceLayout.tsx`** — 移动端 Drawer 替换左侧 220px Tab 栏：
+- `< 768px` 时左侧 Card 隐藏；改在 KPI 条下方插入「☰ 切换标签 · <当前 tab>」block-full 大按钮
+- 顶部 anchored Drawer（`placement="top" height="auto"`），点击其中 Menu item → `onTabChange(...) + setMobileDrawerOpen(false)` 即时收起（tap-then-go UX）
+- Drawer 始终存在（不取消挂载），由 `mobileDrawerOpen` state 控开关；desktop 用户永远看不见
+- KPI 条在移动端取消 96px 固定高度（`height: isMobile ? 'auto' : 96`），让多个 Statistic wrap 不挤压
+- 「workspaces 不需要管 drawer state」是关键设计 — 6 个 workspace 全部沿用既有 `<WorkspaceLayout tabs={...} activeKey={...} onTabChange={...}>` API 无侵入
+
+**3. `frontend/src/pages/workspace/PortfolioWorkspace.tsx`** — 持仓 & 交易明细两个 tab 加移动端卡片渲染：
+- `PositionsTab`: 持仓表格 8 列宽 1480px 在 < 768px 完全不可读 → `isMobile ? <PositionMobileCard /> : <Table />` 分支
+- `PositionMobileCard` (new sub-component, 195 行) per-row 垂直卡片：
+  - 标题：名称（大号粗体）+ 股票代码（code 小号）
+  - 6 个 label-value row：浮盈（+ 百分比 Tag）/ 买入价→现价 / 数量·占比 / 买入日 / 止损价（inline 可编辑）/ 止盈价（inline 可编辑）
+  - 操作 row：「AI 解读」+「平仓」按钮各占 50% 宽，min-height 38px（手指可触）
+  - inline 编辑 UI 复用 InputNumber + ✓/✗ 一致 desktop 模式（不重写编辑逻辑，避免双地点 drift）
+- `TradesTab`: 交易明细同样 isMobile 分支；移动端按时间倒序展示最近 50 笔（剩下提示用户切桌面端看完整分页）
+- `TradeMobileCard` (new sub-component) per-row 卡片：方向 Tag + 名称 + 代码 / 时间 / 成交价×数量 / 金额 / 手续费 / 实现盈亏（有则染色）
+
+**4. `frontend/src/pages/workspace/TodayWorkspace.tsx`** — 三策略 Card 内嵌 Table 加移动端卡片：
+- `MultiFactorCard`: BUY 列表 isMobile → 卡片（名称 + 代码 + 行业 + 总分 + AI 解读按钮）
+- `DragonHeadCard`: 候选列表 isMobile → 卡片（名称 + 代码 + 连板 Tag + 行业 Tag + reason 多行展示）
+- `EarningsSurpriseCard`: 候选列表 isMobile → 卡片（名称 + 代码 + 增幅 Tag + 预告类型 + reason）
+- 三个卡片本来就已经 `<Col xs={24} lg={8}>`（lg 三列 / xs 单列），所以 mobile 主布局已 OK，本次只解决内嵌表格
+
+**5. `frontend/src/index.css`** — 新增 80+ 行 mobile-responsive CSS：
+- `.workspace-mobile-tab-bar` + 内含 Button 44px 高度（drawer 触发器）
+- `.workspace-mobile-drawer .ant-menu-item` 44px 行高（drawer 内 menu 大触控）
+- `.workspace-mobile-card-list` + `.workspace-mobile-card-row` + `.workspace-mobile-card-actions` 三个共享 class 让 PositionMobileCard / TradeMobileCard / 未来任何 mobile-card 组件复用一致样式
+- `@media (max-width: 767px)` 增加 KPI metrics Space wrap + KPI bar height: auto 保险
+- 保留既有 `@media (max-width: 1024px)` 不动（不影响 tablet 体验）
+
+**6. `frontend/src/pages/workspace/CLAUDE.md`** — 新增 "Mobile-responsive table-to-card pattern (US-095)" 一节文档 6 项 checklist 给下次故事复用
+
+### Files changed (4 modified + 2 new)
+
+- **New**:
+  - `frontend/src/hooks/useIsMobile.ts` (56 行)
+  - `frontend/src/pages/workspace/CLAUDE.md` (新增 1 节, ~18 行)
+- **Modified**:
+  - `frontend/src/components/layout/WorkspaceLayout.tsx` (+72 行 / -16 行 — Drawer 分支 + state)
+  - `frontend/src/index.css` (+80 行 mobile CSS)
+  - `frontend/src/pages/workspace/PortfolioWorkspace.tsx` (+265 行 — PositionMobileCard + TradeMobileCard + isMobile 分支)
+  - `frontend/src/pages/workspace/TodayWorkspace.tsx` (+110 行 — 3 个策略 card 内 isMobile 分支)
+- `ralph/prd.json` (US-095 passes=true)
+- `ralph/progress.txt` (本条记录 + 1 条新 Codebase Patterns)
+
+### Quality checks
+
+- `cd frontend && ./node_modules/.bin/tsc --noEmit` → exit 0 ✓
+- `cd frontend && ./node_modules/.bin/eslint src --ext .ts,.tsx --quiet` → exit 0 (clean，全量) ✓
+- `cd frontend && ./node_modules/.bin/eslint src/components/layout/WorkspaceLayout.tsx src/hooks/useIsMobile.ts src/pages/workspace/PortfolioWorkspace.tsx src/pages/workspace/TodayWorkspace.tsx --ext .ts,.tsx --quiet` → exit 0 ✓
+- **Browser verification**: manual (no dev-browser MCP available in this environment); 手动验证步骤：
+  1. Chrome DevTools → Toggle device toolbar → iPhone 12 Pro (390×844)
+  2. 进入 `/workspace/today`：确认顶部「☰ 切换标签」按钮出现，点击弹出 Drawer 列出 4 个 tab，选择后 Drawer 收起 + tab 切换
+  3. 进入 `/workspace/portfolio`：持仓 tab 应渲染为垂直卡片列表（不是横向滚动表格），可点 AI 解读 / 平仓按钮，点止损价 ✏ 可 inline 编辑
+  4. 切到「交易明细」tab：同样卡片列表，按时间倒序
+  5. 切到「今日作战」tab `signals`：三策略 Card 上下排列（不再三列），内部候选列表为卡片
+  6. 桌面端（>= 768px）回到 Table 渲染 — 无回归
+
+### **Learnings for future iterations:**
+
+- **`useIsMobile` 单 breakpoint hook vs antd `useBreakpoint()` 多 breakpoint 选择判据 (US-095 引入)**：当本次响应式需求只有**一道分界线**（mobile 768 / tablet 1024 / desktop 1280 任一），写专用 `useXxx` hook 比 import antd Grid 的 `useBreakpoint()` 更轻；后者返回 6 个 boolean，每个 breakpoint 跨越都触发重渲染，而你只关心一个分界。**判据**：组件内是否只读 1-2 个 boolean？是 → 单 hook；要做 sm/md/lg 复杂网格 → 用 antd grid + responsive props 或 useBreakpoint。`frontend/src/hooks/useIsMobile.ts` 是参考实现，SSR-safe + Safari < 14 fallback 都已覆盖。下次任何"是否手机"判断直接 import 复用，不要重复 matchMedia。
+- **Table → Card 移动端转换的正确做法 (US-095 引入)**：宽表（`scroll={{x: 1480}}`）在 < 768px **必须**整套切换到 Card 列表，**不能**仅用 CSS 隐藏列。理由：(a) CSS 隐藏列后用户横向滚动看不到列名（columns header 不会跟随滚动）；(b) 编辑 / Popconfirm / 弹窗在压缩 cell 内无法操作；(c) `scroll={{x: 1480}}` 必须的 antd 宽度仍然占用 1480px DOM，触发 page 横滚条让整页变难用。**正确做法**：`{isMobile ? <CardList /> : <Table />}` 直接换两种 React 元素。Card 列表中所有交互（编辑 / 按钮 / Tag）保留 desktop 同款语义，只换布局形态。**判据**：表格 > 5 列或 scroll x > 800 时必须切 mobile card。**共享 CSS class** `.workspace-mobile-card-list` / `.workspace-mobile-card-row` / `.workspace-mobile-card-actions` 在 index.css 已定义，后续 mobile-card 直接复用不要新建。
+- **antd Drawer 顶部 placement 用于 secondary nav 而非 detail panel (US-095 reinforces US-094)**：US-094 引入 Drawer right (480-720px) 用于"列表项点击 → 详情" UX；US-095 引入 Drawer top (height='auto') 用于"按钮触发 → 多 tab 选择" 二级导航。两种 placement 各有适用：(a) **right 720** 配多图表 + Descriptions 详情面板；(b) **right 480** 配 chat panel / form panel；(c) **top auto-height** 配 mobile secondary nav menu / quick action menu。**绝不**在桌面用 top placement（视觉重，遮挡 KPI bar），也不在 mobile 用 right（手机屏 480px right drawer 几乎覆盖全屏失去 drawer 意义）。下次任何 Drawer 决策：mobile + 短列表 → top auto；mobile + 大量内容 → bottom full screen；desktop + 详情 → right。
+- **`isMobile ? <CardList /> : <Table />` 分支时事件 handler 复用模式 (US-095 引入)**：mobile card 内的按钮事件 / 编辑 state 与 desktop table 完全一致（编辑止损价用同一个 handleSaveStopLoss / handleCancelEdit / 同一个 editingValue state），**绝不**在 card 组件里重写 handler。子组件接受 handler props 即可。这样未来加新功能（如平仓二次确认改 Modal）只改一处。**判据**：mobile/desktop 切换前后用户做"同一动作"语义不变 → handler 必须复用；若 mobile 故意简化（如不允许编辑）→ 可在 card 子组件硬编码 read-only 不传 handler。PositionsTab + PositionMobileCard 是参考。
+- **Drawer placement="top" height="auto" 的 anti-pattern (US-095 验证)**：height="auto" 是必需的（让 antd 根据内容自适应），但有些 antd 版本对 height="auto" + top placement 处理不佳（Drawer 高度算成 0 不显示）。**解决方案**：保留 `height="auto"` 但加 `styles={{ body: { padding: 8 } }}` 给 body 撑出有效高度。若仍闪烁，回退到具体 `height={300}` 数字。当前 antd 5.x 实测 OK。
+- **`workspace-mobile-card-list` 共享 CSS class 范式 (US-095 引入)**：让多个工作区的 mobile 卡片列表共享样式 = 设计一致 + 改样式只改一处。本次 PositionMobileCard / TradeMobileCard / TodayWorkspace 三个内嵌 Card 全部用 `<div className="workspace-mobile-card-list">{cards}</div>` 包裹，内部用 `.workspace-mobile-card-row` + `.workspace-mobile-card-actions` 子类。**判据**：下次需要 mobile 卡片列表的工作区（FactorWorkspace 因子列表 / DataWorkspace 数据源 / SettingsWorkspace 设置项）直接复用三个 class 不要新建。改样式（间距 / 颜色 / 圆角）只改 index.css 内对应 class。
+- **WorkspaceLayout 移动端 Drawer 是平台级 (US-095 reinforces US-002)**：US-002 引入的 WorkspaceLayout 已经包揽 KPI + 左侧 Tab + headerActions 三部分 chrome；US-095 在同一文件加 mobile drawer 不破坏既有 6 个 workspace 的 API（tabs / activeKey / onTabChange / kpiSlot / headerActions 5 个 prop 全兼容）。**关键约束**：drawer 状态完全 internal 到 WorkspaceLayout，不外泄到 workspace 层 — workspaces 不需要 useState mobileDrawerOpen 也不需要监听 isMobile。下次 WorkspaceLayout 加新 chrome（user breadcrumb / 全局搜索 / 通知中心）都按此模式：state internal + prop API 兼容。
+- **frontend node_modules worktree symlink + 删除时机 (US-094 reinforces, US-095 复用)**：worktree 首次跑 frontend tsc 需要 `cd frontend && ln -s <main-repo>/frontend/node_modules node_modules`；commit 前必须 `rm frontend/node_modules` 否则 git 会跟踪软链文件（.gitignore 只匹配目录 pattern 不匹配 symlink）。这是 US-094 学到 + US-095 再次验证的 worktree gotcha；写到 ralph/CLAUDE.md 已经太晚（CLAUDE.md 检查会卡 commit），就近的 progress.txt + frontend/CLAUDE.md（如有）更合适。
 ---

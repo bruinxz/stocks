@@ -14076,6 +14076,80 @@ a {
   border-radius: 8px;
 }
 
+/* US-095 — mobile drawer trigger button + responsive card lists.
+ * Hidden on desktop (display:none in the shell when isMobile=false), so this
+ * block only controls visual polish at <768px.
+ */
+.workspace-mobile-tab-bar {
+  margin-bottom: 12px;
+}
+
+.workspace-mobile-tab-bar .ant-btn {
+  border-radius: 10px;
+  height: 44px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.workspace-mobile-drawer .ant-menu-item {
+  height: 44px;
+  line-height: 44px;
+  border-radius: 8px;
+  margin-block: 4px;
+}
+
+/* Card-list rendering replaces tables at <768px in the 2 key workspaces
+ * (TodayWorkspace, PortfolioWorkspace) per US-095. Larger touch targets,
+ * stacked KPI labels, action buttons fill row width.
+ */
+.workspace-mobile-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.workspace-mobile-card-list .ant-card {
+  border-radius: 12px;
+}
+
+.workspace-mobile-card-list .ant-card-body {
+  padding: 14px 16px;
+}
+
+.workspace-mobile-card-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  margin-block: 4px;
+}
+
+.workspace-mobile-card-row .label {
+  color: rgba(0, 0, 0, 0.55);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.workspace-mobile-card-row .value {
+  font-size: 13px;
+  font-weight: 500;
+  text-align: right;
+  word-break: break-word;
+}
+
+.workspace-mobile-card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.workspace-mobile-card-actions .ant-btn {
+  flex: 1;
+  height: 38px;
+  font-size: 13px;
+  border-radius: 8px;
+}
+
 @media (max-width: 1024px) {
   .workspace-kpi-bar__inner {
     flex-wrap: wrap;
@@ -14092,6 +14166,29 @@ a {
 
   .workspace-side-tabs {
     width: 100% !important;
+  }
+}
+
+@media (max-width: 767px) {
+  /* On mobile, KPI metrics inside `workspace-kpi-bar__metrics` (often a
+   * <Space>) should wrap and stay readable; antd Space wrap=false by default
+   * so we coerce wrapping at the container level. */
+  .workspace-kpi-bar__metrics > .ant-space {
+    flex-wrap: wrap;
+    row-gap: 8px;
+    column-gap: 16px !important;
+  }
+
+  /* Allow KPI bar to grow with content (no fixed 96px height). The inline
+   * style on the Card is already set to 'auto' by WorkspaceLayout when
+   * isMobile; this rule covers cases where parent overrides happen. */
+  .workspace-kpi-bar {
+    height: auto !important;
+  }
+
+  /* Mobile-friendly action buttons in the KPI bar */
+  .workspace-kpi-bar__actions .ant-btn {
+    min-height: 38px;
   }
 }
 

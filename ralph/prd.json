@@ -1595,8 +1595,8 @@
         "Verify in browser using dev-browser skill (使用 Chrome devtools 移动端模式)"
       ],
       "priority": 95,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "前端：WorkspaceLayout 在 < 768px 时左侧 Tab 收进顶部 Drawer；新增 useIsMobile hook（matchMedia 单 breakpoint）；PortfolioWorkspace 持仓 + 交易明细两表 isMobile 分支渲染为卡片列表（PositionMobileCard / TradeMobileCard）；TodayWorkspace 三策略卡片（MultiFactor / DragonHead / EarningsSurprise）的内嵌 Table 同样卡片化；新增 .workspace-mobile-card-list / .workspace-mobile-card-row / .workspace-mobile-card-actions 共享 CSS + 矩阵规则；workspace CLAUDE.md 加 Mobile-responsive table-to-card pattern 一节。Typecheck + 全量 ESLint 通过。"
     },
     {
       "id": "US-096",

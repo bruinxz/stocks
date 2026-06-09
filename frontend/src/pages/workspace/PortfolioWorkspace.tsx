@@ -49,6 +49,7 @@ import {
 import dayjs, { Dayjs } from 'dayjs';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
 import AIStockAnalysisModal from '../../components/trading/AIStockAnalysisModal';
+import { useIsMobile } from '../../hooks/useIsMobile';
 import {
   portfolioWorkspaceService,
   PortfolioWithPositions,
@@ -270,6 +271,7 @@ interface PositionsTabProps {
 }
 
 const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfterTrade }) => {
+  const isMobile = useIsMobile();
   // US-076 — 编辑 state 扩展为 (positionId, field) tuple，止损与止盈复用同一套
   // 编辑 / 保存 / 取消机制，避免两个独立 state 各管一边导致同行同时进入两个编辑态。
   const [editingPositionId, setEditingPositionId] = useState<number | null>(null);
@@ -654,14 +656,38 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
         </Space>
       }
     >
-      <Table<PositionRow>
-        rowKey="id"
-        size="middle"
-        dataSource={positions}
-        columns={columns as any}
-        pagination={false}
-        scroll={{ x: 1480 }}
-      />
+      {isMobile ? (
+        <div className="workspace-mobile-card-list">
+          {positions.map(row => (
+            <PositionMobileCard
+              key={row.id}
+              row={row}
+              totalValue={totalValue}
+              editingPositionId={editingPositionId}
+              editingField={editingField}
+              editingValue={editingValue}
+              setEditingValue={setEditingValue}
+              savingLimit={savingLimit}
+              closingSymbol={closingSymbol}
+              handleStartEdit={handleStartEdit}
+              handleCancelEdit={handleCancelEdit}
+              handleSaveStopLoss={handleSaveStopLoss}
+              handleSaveTakeProfit={handleSaveTakeProfit}
+              handleClosePosition={handleClosePosition}
+              onOpenAI={() => setAiTarget({ symbol: row.symbol, name: row.name || null })}
+            />
+          ))}
+        </div>
+      ) : (
+        <Table<PositionRow>
+          rowKey="id"
+          size="middle"
+          dataSource={positions}
+          columns={columns as any}
+          pagination={false}
+          scroll={{ x: 1480 }}
+        />
+      )}
       {aiTarget && (
         <AIStockAnalysisModal
           open={!!aiTarget}
@@ -671,6 +697,210 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
           taskLabel="portfolio_position"
         />
       )}
+    </Card>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// PositionMobileCard (US-095) — mobile-only card rendering for a single
+// position row. Replaces the wide desktop table when window < 768px. Keeps
+// the same edit / close / AI buttons but stacks them vertically so labels
+// stay readable and tap targets are ≥ 38px tall.
+// ---------------------------------------------------------------------------
+interface PositionMobileCardProps {
+  row: PositionRow;
+  totalValue: number;
+  editingPositionId: number | null;
+  editingField: 'stop_loss' | 'take_profit' | null;
+  editingValue: number | null;
+  setEditingValue: (v: number | null) => void;
+  savingLimit: boolean;
+  closingSymbol: string | null;
+  handleStartEdit: (row: PositionRow, field: 'stop_loss' | 'take_profit') => void;
+  handleCancelEdit: () => void;
+  handleSaveStopLoss: (row: PositionRow) => Promise<void>;
+  handleSaveTakeProfit: (row: PositionRow) => Promise<void>;
+  handleClosePosition: (row: PositionRow) => Promise<void>;
+  onOpenAI: () => void;
+}
+
+const PositionMobileCard: React.FC<PositionMobileCardProps> = ({
+  row,
+  totalValue,
+  editingPositionId,
+  editingField,
+  editingValue,
+  setEditingValue,
+  savingLimit,
+  closingSymbol,
+  handleStartEdit,
+  handleCancelEdit,
+  handleSaveStopLoss,
+  handleSaveTakeProfit,
+  handleClosePosition,
+  onOpenAI,
+}) => {
+  const pnl = Number(row.unrealized_pnl);
+  const cost = Number(row.avg_cost) * Number(row.quantity);
+  const pct = cost > 0 ? (pnl / cost) * 100 : 0;
+  const weightPct = totalValue > 0 ? (Number(row.market_value) / totalValue) * 100 : 0;
+  const currentPrice = Number(row.current_price);
+  const stopLoss = row.stop_loss_price !== null ? Number(row.stop_loss_price) : null;
+  const takeProfit = row.take_profit_price !== null ? Number(row.take_profit_price) : null;
+  const stopLossAboveCurrent = stopLoss !== null && stopLoss >= currentPrice;
+  const takeProfitReached = takeProfit !== null && takeProfit <= currentPrice;
+  const isEditingStop = editingPositionId === row.id && editingField === 'stop_loss';
+  const isEditingTake = editingPositionId === row.id && editingField === 'take_profit';
+
+  return (
+    <Card size="small">
+      <Space direction="vertical" size={2} style={{ width: '100%' }}>
+        <Space size={8} align="center" style={{ marginBottom: 6 }}>
+          <Text strong style={{ fontSize: 15 }}>
+            {row.name || row.symbol}
+          </Text>
+          <Text code style={{ fontSize: 12 }}>
+            {row.symbol}
+          </Text>
+        </Space>
+
+        <div className="workspace-mobile-card-row">
+          <span className="label">浮盈</span>
+          <span
+            className="value"
+            style={{ color: pnlColor(pnl), fontWeight: 600 }}
+          >
+            {pnl >= 0 ? '+' : ''}¥{pnl.toFixed(2)}{' '}
+            <Tag color={pnl >= 0 ? 'green' : 'red'} style={{ marginLeft: 4 }}>
+              {pct >= 0 ? '+' : ''}
+              {pct.toFixed(2)}%
+            </Tag>
+          </span>
+        </div>
+
+        <div className="workspace-mobile-card-row">
+          <span className="label">买入价 / 现价</span>
+          <span className="value">
+            ¥{Number(row.avg_cost).toFixed(2)} → ¥{currentPrice.toFixed(2)}
+          </span>
+        </div>
+
+        <div className="workspace-mobile-card-row">
+          <span className="label">数量 / 占比</span>
+          <span className="value">
+            {row.quantity.toLocaleString()} 股 · {weightPct.toFixed(2)}%
+          </span>
+        </div>
+
+        <div className="workspace-mobile-card-row">
+          <span className="label">买入日</span>
+          <span className="value">{row.created_at ? dayjs(row.created_at).format('YYYY-MM-DD') : '-'}</span>
+        </div>
+
+        <div className="workspace-mobile-card-row">
+          <span className="label">止损价</span>
+          {isEditingStop ? (
+            <Space size={4}>
+              <InputNumber
+                value={editingValue}
+                onChange={v => setEditingValue(v as number | null)}
+                min={0}
+                step={0.01}
+                precision={2}
+                placeholder="留空清除"
+                style={{ width: 110 }}
+                size="small"
+              />
+              <Button
+                size="small"
+                type="primary"
+                icon={<CheckOutlined />}
+                loading={savingLimit}
+                onClick={() => void handleSaveStopLoss(row)}
+              />
+              <Button size="small" icon={<CloseOutlined />} onClick={handleCancelEdit} />
+            </Space>
+          ) : (
+            <span className="value">
+              {stopLoss === null ? (
+                <Text type="secondary">未设置</Text>
+              ) : (
+                <Tag color={stopLossAboveCurrent ? 'red' : 'orange'}>¥{stopLoss.toFixed(2)}</Tag>
+              )}
+              <Button
+                size="small"
+                type="text"
+                icon={<EditOutlined />}
+                onClick={() => handleStartEdit(row, 'stop_loss')}
+                style={{ marginLeft: 4 }}
+              />
+            </span>
+          )}
+        </div>
+
+        <div className="workspace-mobile-card-row">
+          <span className="label">止盈价</span>
+          {isEditingTake ? (
+            <Space size={4}>
+              <InputNumber
+                value={editingValue}
+                onChange={v => setEditingValue(v as number | null)}
+                min={0}
+                step={0.01}
+                precision={2}
+                placeholder="留空清除"
+                style={{ width: 110 }}
+                size="small"
+              />
+              <Button
+                size="small"
+                type="primary"
+                icon={<CheckOutlined />}
+                loading={savingLimit}
+                onClick={() => void handleSaveTakeProfit(row)}
+              />
+              <Button size="small" icon={<CloseOutlined />} onClick={handleCancelEdit} />
+            </Space>
+          ) : (
+            <span className="value">
+              {takeProfit === null ? (
+                <Text type="secondary">未设置</Text>
+              ) : (
+                <Tag color={takeProfitReached ? 'green' : 'blue'}>¥{takeProfit.toFixed(2)}</Tag>
+              )}
+              <Button
+                size="small"
+                type="text"
+                icon={<EditOutlined />}
+                onClick={() => handleStartEdit(row, 'take_profit')}
+                style={{ marginLeft: 4 }}
+              />
+            </span>
+          )}
+        </div>
+
+        <div className="workspace-mobile-card-actions">
+          <Button icon={<RobotOutlined />} onClick={onOpenAI} size="middle">
+            AI 解读
+          </Button>
+          <Popconfirm
+            title={`确认平仓 ${row.name || row.symbol} 全部 ${row.quantity.toLocaleString()} 股？`}
+            okText="平仓"
+            cancelText="取消"
+            okButtonProps={{ danger: true }}
+            onConfirm={() => void handleClosePosition(row)}
+          >
+            <Button
+              danger
+              icon={<StopOutlined />}
+              loading={closingSymbol === row.symbol}
+              size="middle"
+            >
+              平仓
+            </Button>
+          </Popconfirm>
+        </div>
+      </Space>
     </Card>
   );
 };
@@ -884,6 +1114,7 @@ interface TradesTabProps {
 }
 
 const TradesTab: React.FC<TradesTabProps> = ({ trades }) => {
+  const isMobile = useIsMobile();
   const [directionFilter, setDirectionFilter] = useState<'all' | 'BUY' | 'SELL'>('all');
   const [dateRange, setDateRange] = useState<[Dayjs | null, Dayjs | null] | null>(null);
   const [strategyFilter, setStrategyFilter] = useState<string>('all');
@@ -1038,7 +1269,84 @@ const TradesTab: React.FC<TradesTabProps> = ({ trades }) => {
         columns={columns as any}
         scroll={{ x: 1010 }}
         pagination={{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }}
+        style={{ display: isMobile ? 'none' : undefined }}
       />
+      {isMobile && (
+        <div className="workspace-mobile-card-list">
+          {filtered
+            .slice()
+            .sort((a, b) => dayjs(b.created_at).valueOf() - dayjs(a.created_at).valueOf())
+            .slice(0, 50)
+            .map(row => (
+              <TradeMobileCard key={row.id} row={row} />
+            ))}
+          {filtered.length > 50 && (
+            <Text type="secondary" style={{ textAlign: 'center', display: 'block', padding: 12 }}>
+              已展示最近 50 笔，桌面端可查看完整分页表格
+            </Text>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// TradeMobileCard (US-095) — mobile-only render for a single trade row.
+// ---------------------------------------------------------------------------
+const TradeMobileCard: React.FC<{ row: TradeRow }> = ({ row }) => {
+  const realizedPnl = row.realized_pnl;
+  return (
+    <Card size="small">
+      <Space direction="vertical" size={2} style={{ width: '100%' }}>
+        <Space size={8} align="center" style={{ marginBottom: 4 }}>
+          {row.direction === 'BUY' ? (
+            <Tag color="green">买入</Tag>
+          ) : (
+            <Tag color="red">卖出</Tag>
+          )}
+          <Text strong style={{ fontSize: 14 }}>
+            {row.name || row.symbol}
+          </Text>
+          <Text code style={{ fontSize: 11 }}>
+            {row.symbol}
+          </Text>
+        </Space>
+
+        <div className="workspace-mobile-card-row">
+          <span className="label">时间</span>
+          <span className="value">{dayjs(row.created_at).format('YYYY-MM-DD HH:mm')}</span>
+        </div>
+
+        <div className="workspace-mobile-card-row">
+          <span className="label">成交价 × 数量</span>
+          <span className="value">
+            ¥{Number(row.execute_price).toFixed(2)} × {row.quantity.toLocaleString()}
+          </span>
+        </div>
+
+        <div className="workspace-mobile-card-row">
+          <span className="label">金额</span>
+          <span className="value">¥{Number(row.amount).toLocaleString()}</span>
+        </div>
+
+        <div className="workspace-mobile-card-row">
+          <span className="label">手续费</span>
+          <span className="value">¥{Number(row.commission).toFixed(2)}</span>
+        </div>
+
+        {realizedPnl !== null && realizedPnl !== undefined && (
+          <div className="workspace-mobile-card-row">
+            <span className="label">实现盈亏</span>
+            <span
+              className="value"
+              style={{ color: pnlColor(Number(realizedPnl)), fontWeight: 600 }}
+            >
+              {Number(realizedPnl) >= 0 ? '+' : ''}¥{Number(realizedPnl).toFixed(2)}
+            </span>
+          </div>
+        )}
+      </Space>
     </Card>
   );
 };

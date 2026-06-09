@@ -38,6 +38,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
 import AIStockAnalysisModal from '../../components/trading/AIStockAnalysisModal';
+import { useIsMobile } from '../../hooks/useIsMobile';
 import dayjs, { Dayjs } from 'dayjs';
 import {
   todayWorkspaceService,
@@ -568,6 +569,7 @@ const MultiFactorCard: React.FC<{
   keeps: number;
   error?: string;
 }> = ({ tradeDate, signals, newPicks, drops, keeps, error }) => {
+  const isMobile = useIsMobile();
   const [aiTarget, setAiTarget] = useState<{ symbol: string; name: string | null } | null>(null);
   const buys = signals.filter(s => s.signal === 'buy').slice(0, 8);
   const sells = signals.filter(s => s.signal === 'sell').slice(0, 4);
@@ -604,60 +606,99 @@ const MultiFactorCard: React.FC<{
               <Text strong style={{ fontSize: 12 }}>
                 新进入选 (top {buys.length})
               </Text>
-              <Table
-                size="small"
-                rowKey="stock_code"
-                dataSource={buys}
-                pagination={false}
-                columns={[
-                  {
-                    title: '代码',
-                    dataIndex: 'stock_code',
-                    width: 80,
-                    render: (v: string) => <Text code>{v}</Text>,
-                  },
-                  {
-                    title: '名称',
-                    dataIndex: 'name',
-                    ellipsis: true,
-                    render: (v: string | null | undefined) => v ?? '—',
-                  },
-                  {
-                    title: '行业',
-                    dataIndex: 'industry',
-                    width: 80,
-                    ellipsis: true,
-                    render: (v: string | null | undefined) =>
-                      v ? <Tag color="geekblue">{v}</Tag> : '—',
-                  },
-                  {
-                    title: '总分',
-                    dataIndex: 'composite_score',
-                    width: 60,
-                    align: 'right' as const,
-                    render: (v: number) => <Text strong>{v?.toFixed(2)}</Text>,
-                  },
-                  {
-                    title: 'AI',
-                    key: 'ai',
-                    width: 90,
-                    render: (_: unknown, row: MultiFactorAlphaSignal) => (
-                      <Button
-                        size="small"
-                        icon={<RobotOutlined />}
-                        onClick={() =>
-                          setAiTarget({
-                            symbol: row.stock_code,
-                            name: row.name || null,
-                          })
-                        }
-                      >
-                        AI 解读
-                      </Button>
-                    ),
-                  },
-                ]}
-              />
+              {isMobile ? (
+                <div className="workspace-mobile-card-list">
+                  {buys.map(row => (
+                    <Card key={row.stock_code} size="small">
+                      <Space direction="vertical" size={2} style={{ width: '100%' }}>
+                        <Space size={8}>
+                          <Text strong style={{ fontSize: 14 }}>
+                            {row.name ?? row.stock_code}
+                          </Text>
+                          <Text code style={{ fontSize: 11 }}>
+                            {row.stock_code}
+                          </Text>
+                          {row.industry && <Tag color="geekblue">{row.industry}</Tag>}
+                        </Space>
+                        <div className="workspace-mobile-card-row">
+                          <span className="label">总分</span>
+                          <span className="value">
+                            <Text strong>{row.composite_score?.toFixed(2)}</Text>
+                          </span>
+                        </div>
+                        <div className="workspace-mobile-card-actions">
+                          <Button
+                            icon={<RobotOutlined />}
+                            onClick={() =>
+                              setAiTarget({
+                                symbol: row.stock_code,
+                                name: row.name || null,
+                              })
+                            }
+                          >
+                            AI 解读
+                          </Button>
+                        </div>
+                      </Space>
+                    </Card>
+                  ))}
+                </div>
+              ) : (
+                <Table
+                  size="small"
+                  rowKey="stock_code"
+                  dataSource={buys}
+                  pagination={false}
+                  columns={[
+                    {
+                      title: '代码',
+                      dataIndex: 'stock_code',
+                      width: 80,
+                      render: (v: string) => <Text code>{v}</Text>,
+                    },
+                    {
+                      title: '名称',
+                      dataIndex: 'name',
+                      ellipsis: true,
+                      render: (v: string | null | undefined) => v ?? '—',
+                    },
+                    {
+                      title: '行业',
+                      dataIndex: 'industry',
+                      width: 80,
+                      ellipsis: true,
+                      render: (v: string | null | undefined) =>
+                        v ? <Tag color="geekblue">{v}</Tag> : '—',
+                    },
+                    {
+                      title: '总分',
+                      dataIndex: 'composite_score',
+                      width: 60,
+                      align: 'right' as const,
+                      render: (v: number) => <Text strong>{v?.toFixed(2)}</Text>,
+                    },
+                    {
+                      title: 'AI',
+                      key: 'ai',
+                      width: 90,
+                      render: (_: unknown, row: MultiFactorAlphaSignal) => (
+                        <Button
+                          size="small"
+                          icon={<RobotOutlined />}
+                          onClick={() =>
+                            setAiTarget({
+                              symbol: row.stock_code,
+                              name: row.name || null,
+                            })
+                          }
+                        >
+                          AI 解读
+                        </Button>
+                      ),
+                    },
+                  ]}
+                />
+              )}
             </>
           )}
           {sells.length > 0 && (
@@ -703,6 +744,7 @@ const DragonHeadCard: React.FC<{
   eligibleCount: number;
   error?: string;
 }> = ({ tradeDate, candidates, eligibleCount, error }) => {
+  const isMobile = useIsMobile();
   return (
     <Card
       size="small"
@@ -732,6 +774,35 @@ const DragonHeadCard: React.FC<{
           </Space>
           {candidates.length === 0 ? (
             <Empty description="今日无符合条件的龙头候选" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+          ) : isMobile ? (
+            <div className="workspace-mobile-card-list">
+              {candidates.map(row => (
+                <Card key={row.stock_code} size="small">
+                  <Space direction="vertical" size={2} style={{ width: '100%' }}>
+                    <Space size={8}>
+                      <Text strong style={{ fontSize: 14 }}>
+                        {row.name ?? row.stock_code}
+                      </Text>
+                      <Text code style={{ fontSize: 11 }}>
+                        {row.stock_code}
+                      </Text>
+                      {row.continuous_days != null && (
+                        <Tag color="red">{row.continuous_days}板</Tag>
+                      )}
+                      {row.industry && <Tag color="geekblue">{row.industry}</Tag>}
+                    </Space>
+                    {row.reason && (
+                      <Paragraph
+                        style={{ margin: '4px 0 0 0', fontSize: 12 }}
+                        type="secondary"
+                      >
+                        {row.reason}
+                      </Paragraph>
+                    )}
+                  </Space>
+                </Card>
+              ))}
+            </div>
           ) : (
             <Table
               size="small"
@@ -791,6 +862,7 @@ const EarningsSurpriseCard: React.FC<{
   eligibleCount: number;
   error?: string;
 }> = ({ tradeDate, candidates, forecastPoolSize, eligibleCount, error }) => {
+  const isMobile = useIsMobile();
   return (
     <Card
       size="small"
@@ -828,6 +900,35 @@ const EarningsSurpriseCard: React.FC<{
               description="今日无通过双确认的业绩超预期入选"
               image={Empty.PRESENTED_IMAGE_SIMPLE}
             />
+          ) : isMobile ? (
+            <div className="workspace-mobile-card-list">
+              {candidates.map(row => (
+                <Card key={row.stock_code} size="small">
+                  <Space direction="vertical" size={2} style={{ width: '100%' }}>
+                    <Space size={8}>
+                      <Text strong style={{ fontSize: 14 }}>
+                        {row.name ?? row.stock_code}
+                      </Text>
+                      <Text code style={{ fontSize: 11 }}>
+                        {row.stock_code}
+                      </Text>
+                      {row.profit_change_low != null && (
+                        <Tag color="red">{`${Math.round(row.profit_change_low)}%+`}</Tag>
+                      )}
+                      {row.forecast_type && <Tag color="green">{row.forecast_type}</Tag>}
+                    </Space>
+                    {row.reason && (
+                      <Paragraph
+                        style={{ margin: '4px 0 0 0', fontSize: 12 }}
+                        type="secondary"
+                      >
+                        {row.reason}
+                      </Paragraph>
+                    )}
+                  </Space>
+                </Card>
+              ))}
+            </div>
           ) : (
             <Table
               size="small"
