@@ -495,7 +495,7 @@ const SignalsPanel: React.FC<{ data: TodaySignalsData }> = ({ data }) => {
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       <Row gutter={[16, 16]}>
-        <Col xs={24} lg={8}>
+        <Col xs={24}>
           <MultiFactorCard
             tradeDate={data.multi_factor.trade_date}
             signals={data.multi_factor.signals}
@@ -505,7 +505,7 @@ const SignalsPanel: React.FC<{ data: TodaySignalsData }> = ({ data }) => {
             error={data.multi_factor.error}
           />
         </Col>
-        <Col xs={24} lg={8}>
+        <Col xs={24} lg={12}>
           <DragonHeadCard
             tradeDate={data.dragon_head.trade_date}
             candidates={data.dragon_head.candidates}
@@ -513,7 +513,7 @@ const SignalsPanel: React.FC<{ data: TodaySignalsData }> = ({ data }) => {
             error={data.dragon_head.error}
           />
         </Col>
-        <Col xs={24} lg={8}>
+        <Col xs={24} lg={12}>
           <EarningsSurpriseCard
             tradeDate={data.earnings_surprise.trade_date}
             candidates={data.earnings_surprise.candidates}
@@ -570,9 +570,10 @@ const MultiFactorCard: React.FC<{
   error?: string;
 }> = ({ tradeDate, signals, newPicks, drops, keeps, error }) => {
   const isMobile = useIsMobile();
+  const navigate = useNavigate();
   const [aiTarget, setAiTarget] = useState<{ symbol: string; name: string | null } | null>(null);
-  const buys = signals.filter(s => s.signal === 'buy').slice(0, 8);
-  const sells = signals.filter(s => s.signal === 'sell').slice(0, 4);
+  const buys = signals.filter(s => s.signal === 'buy').slice(0, 30);
+  const sells = signals.filter(s => s.signal === 'sell').slice(0, 10);
   return (
     <Card
       size="small"
@@ -649,51 +650,95 @@ const MultiFactorCard: React.FC<{
                   rowKey="stock_code"
                   dataSource={buys}
                   pagination={false}
+                  scroll={{ x: 'max-content' }}
                   columns={[
                     {
                       title: '代码',
                       dataIndex: 'stock_code',
-                      width: 80,
-                      render: (v: string) => <Text code>{v}</Text>,
+                      width: 92,
+                      render: (v: string) => (
+                        <a onClick={() => navigate(`/stock/${v}`)}>
+                          <Text code>{v}</Text>
+                        </a>
+                      ),
                     },
                     {
                       title: '名称',
                       dataIndex: 'name',
-                      ellipsis: true,
-                      render: (v: string | null | undefined) => v ?? '—',
+                      width: 110,
+                      render: (v: string | null | undefined, row: MultiFactorAlphaSignal) =>
+                        v ? <a onClick={() => navigate(`/stock/${row.stock_code}`)}>{v}</a> : '—',
                     },
                     {
                       title: '行业',
                       dataIndex: 'industry',
-                      width: 80,
-                      ellipsis: true,
+                      width: 110,
                       render: (v: string | null | undefined) =>
                         v ? <Tag color="geekblue">{v}</Tag> : '—',
                     },
                     {
-                      title: '总分',
+                      title: '综合分',
                       dataIndex: 'composite_score',
-                      width: 60,
+                      width: 78,
                       align: 'right' as const,
-                      render: (v: number) => <Text strong>{v?.toFixed(2)}</Text>,
+                      sorter: (a: MultiFactorAlphaSignal, b: MultiFactorAlphaSignal) =>
+                        (a.composite_score ?? 0) - (b.composite_score ?? 0),
+                      render: (v: number) => (
+                        <Text strong style={{ color: '#cf1322' }}>{v?.toFixed(3)}</Text>
+                      ),
                     },
                     {
-                      title: 'AI',
-                      key: 'ai',
-                      width: 90,
+                      title: '主要因子',
+                      key: 'top_factors',
+                      width: 220,
+                      render: (_: unknown, row: MultiFactorAlphaSignal) => {
+                        const zs = row.factor_z_scores || {};
+                        const sorted = Object.entries(zs)
+                          .filter(([_k, v]) => typeof v === 'number' && Math.abs(v as number) > 0.5)
+                          .sort((a, b) => Math.abs(b[1] as number) - Math.abs(a[1] as number))
+                          .slice(0, 3);
+                        if (!sorted.length) return <Text type="secondary">—</Text>;
+                        return (
+                          <Space size={4} wrap>
+                            {sorted.map(([k, v]) => (
+                              <Tag
+                                key={k}
+                                color={(v as number) > 0 ? 'red' : 'green'}
+                              >
+                                {k}: {(v as number).toFixed(2)}
+                              </Tag>
+                            ))}
+                          </Space>
+                        );
+                      },
+                    },
+                    {
+                      title: '操作',
+                      key: 'actions',
+                      width: 160,
+                      fixed: 'right' as const,
                       render: (_: unknown, row: MultiFactorAlphaSignal) => (
-                        <Button
-                          size="small"
-                          icon={<RobotOutlined />}
-                          onClick={() =>
-                            setAiTarget({
-                              symbol: row.stock_code,
-                              name: row.name || null,
-                            })
-                          }
-                        >
-                          AI 解读
-                        </Button>
+                        <Space size={4}>
+                          <Button
+                            size="small"
+                            type="link"
+                            onClick={() => navigate(`/stock/${row.stock_code}`)}
+                          >
+                            趋势
+                          </Button>
+                          <Button
+                            size="small"
+                            icon={<RobotOutlined />}
+                            onClick={() =>
+                              setAiTarget({
+                                symbol: row.stock_code,
+                                name: row.name || null,
+                              })
+                            }
+                          >
+                            AI
+                          </Button>
+                        </Space>
                       ),
                     },
                   ]}

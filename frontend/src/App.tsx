@@ -39,6 +39,7 @@ const LiveTrading = lazy(() => import('./pages/LiveTrading'));
 const QuantResearchWorkbench = lazy(() => import('./pages/QuantResearchWorkbench'));
 const RiskAlerts = lazy(() => import('./pages/RiskAlerts'));
 const SystemLogs = lazy(() => import('./pages/SystemLogs'));
+const StockDetail = lazy(() => import('./pages/StockDetail'));
 
 // 6 unified workspace shells (US-001/US-002)
 const TodayWorkspace = lazy(() => import('./pages/workspace/TodayWorkspace'));
@@ -392,6 +393,24 @@ const AppContent: React.FC = () => {
                 element={
                   <ProtectedRoute>
                     <SettingsWorkspace />
+                  </ProtectedRoute>
+                }
+              />
+
+              {/* 个股详情页 — 含 K 线、公司信息、历史明细 + AI 解读 */}
+              <Route
+                path="/stock/:symbol"
+                element={
+                  <ProtectedRoute>
+                    <StockDetail />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/stocks/:symbol"
+                element={
+                  <ProtectedRoute>
+                    <StockDetail />
                   </ProtectedRoute>
                 }
               />

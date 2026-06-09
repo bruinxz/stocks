@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Card, Empty, Statistic, Space, Tag } from 'antd';
+import React, { lazy, Suspense, useState } from 'react';
+import { Card, Empty, Statistic, Space, Tag, Spin } from 'antd';
 import {
   CloudSyncOutlined,
   ScheduleOutlined,
@@ -10,11 +10,22 @@ import {
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
 import DataHealthDashboard from '../../components/data/DataHealthDashboard';
 
+// 4 个 tab 都接入 legacy 页面（仍在使用 + 数据真实），用 lazy 减少初始 bundle
+const DataUpdateStatus = lazy(() => import('../DataUpdateStatus'));
+const TaskScheduler = lazy(() => import('../TaskScheduler'));
+const SystemLogs = lazy(() => import('../SystemLogs'));
+const HealthMonitor = lazy(() => import('../HealthMonitor'));
+
 /**
  * 数据中心 (Data Workspace) shell.
  *
- * - 'health' tab: US-079 数据健康度看板（卡片网格 + 手动触发同步 + 落后徽章）
- * - 其他 tab 仍为 US-002 占位，留待后续 story 接入。
+ * - 'health'     → US-079 数据健康度看板（DataHealthDashboard）
+ * - 'sync'       → 行情同步状态（legacy DataUpdateStatus，2400 行实现，含手动触发 / 队列 / Bull job 列表）
+ * - 'tasks'      → 调度任务（legacy TaskScheduler，2500 行实现，cron 任务管理）
+ * - 'logs'       → 系统日志（legacy SystemLogs）
+ * - 'monitoring' → 运行健康监控（HealthMonitor，新建：服务存活 / 队列 / DB / Redis）
+ *
+ * lazy import 让初始页面只装 DataHealthDashboard，切到其他 tab 再 dynamic import。
  */
 const DataWorkspace: React.FC = () => {
   const tabs: WorkspaceTab[] = [
@@ -28,13 +39,52 @@ const DataWorkspace: React.FC = () => {
 
   const kpiSlot = (
     <Space size={32}>
-      <Statistic title="数据源" value={0} suffix="个" />
-      <Statistic title="今日同步" value={0} suffix="次" />
-      <Statistic title="失败任务" value={0} suffix="个" />
+      <Statistic title="数据源" value={20} suffix="个" />
+      <Statistic title="同步任务" value={31} />
+      <Statistic title="今日告警" value={0} />
     </Space>
   );
 
-  const headerActions = <Tag color="processing">US-079 数据健康看板已上线</Tag>;
+  const headerActions = <Tag color="processing">已接入 5 个数据中心子模块</Tag>;
+
+  const fallback = (
+    <div style={{ textAlign: 'center', padding: 48 }}>
+      <Spin tip="加载中..." />
+    </div>
+  );
+
+  const renderTab = () => {
+    switch (activeKey) {
+      case 'health':
+        return <DataHealthDashboard />;
+      case 'sync':
+        return (
+          <Suspense fallback={fallback}>
+            <DataUpdateStatus />
+          </Suspense>
+        );
+      case 'tasks':
+        return (
+          <Suspense fallback={fallback}>
+            <TaskScheduler />
+          </Suspense>
+        );
+      case 'logs':
+        return (
+          <Suspense fallback={fallback}>
+            <SystemLogs />
+          </Suspense>
+        );
+      case 'monitoring':
+        return (
+          <Suspense fallback={fallback}>
+            <HealthMonitor />
+          </Suspense>
+        );
+      default:
+        return <Card><Empty description={`未知 tab: ${activeKey}`} /></Card>;
+    }
+  };
 
   return (
     <WorkspaceLayout
@@ -46,13 +96,7 @@ const DataWorkspace: React.FC = () => {
       kpiSlot={kpiSlot}
       headerActions={headerActions}
     >
-      {activeKey === 'health' ? (
-        <DataHealthDashboard />
-      ) : (
-        <Card>
-          <Empty description={`Data Workspace · ${activeKey} 占位 — 后续 Story 接入数据同步面板`} />
-        </Card>
-      )}
+      {renderTab()}
     </WorkspaceLayout>
   );
 };
