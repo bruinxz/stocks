@@ -45,7 +45,7 @@ import { FactorICResult } from '../../models/FactorICResult';
 import { DailyBar } from '../../models/DailyBar';
 import { Stock } from '../../models/Stock';
 import { factorRegistry } from './FactorRegistry';
-import { inferStockSymbol } from './library/_helpers';
+import { inferStockSymbol, stripSuffix } from './library/_helpers';
 
 // ============================================================
 // 常量
@@ -347,7 +347,7 @@ export class DefaultFactorDetailDataSource implements FactorDetailDataSource {
     const stockIdToCode = new Map<number, string>();
     const stockIds: number[] = [];
     for (const s of stockRows) {
-      const code = s.symbol.split('.')[0];
+      const code = stripSuffix(s.symbol);
       if (code) {
         stockIdToCode.set(s.id, code);
         stockIds.push(s.id);

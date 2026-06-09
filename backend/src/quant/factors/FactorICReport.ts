@@ -75,7 +75,7 @@ import { FactorScore } from '../../models/FactorScore';
 import { DailyBar } from '../../models/DailyBar';
 import { Stock } from '../../models/Stock';
 import { factorRegistry } from './FactorRegistry';
-import { inferStockSymbol } from './library/_helpers';
+import { inferStockSymbol, stripSuffix } from './library/_helpers';
 
 // ============================================================
 // 常量
@@ -439,7 +439,8 @@ export class DefaultFactorICDataSource implements FactorICDataSource {
     const stockIdToCode = new Map<number, string>();
     const stockIds: number[] = [];
     for (const s of stockRows) {
-      const code = s.symbol.split('.')[0];
+      // stripSuffix 处理两种格式：sh.600519 / 600519.SH 都能正确取出 600519
+      const code = stripSuffix(s.symbol);
       if (code) {
         stockIdToCode.set(s.id, code);
         stockIds.push(s.id);

@@ -164,8 +164,16 @@ program
 
 function stripSuffix(symbol: string | null | undefined): string {
   if (!symbol) return '';
-  const i = symbol.indexOf('.');
-  return i < 0 ? symbol : symbol.slice(0, i);
+  const s = symbol.trim();
+  if (!s) return '';
+  const i = s.indexOf('.');
+  if (i < 0) return s;
+  const before = s.slice(0, i);
+  const after = s.slice(i + 1);
+  // 前缀格式 (sh./sz./bj.) — 2 字母 alpha + 数字
+  if (/^[a-zA-Z]{2}$/.test(before)) return after;
+  // 后缀格式 (.SH/.SZ/.BJ)
+  return before;
 }
 
 program.parseAsync(process.argv);
