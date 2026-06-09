@@ -1672,8 +1672,8 @@
         "Tests pass"
       ],
       "priority": 100,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026/06/09. Added backend/src/scripts/integration-smoke-test.ts (624 lines) — 6 steps (SYNC / FACTORS / SIGNALS / ORDERS / RISK / NOTIFY), commander CLI with --date / --skip-sync / --skip-orders / --skip-risk / --skip-notify / --user / --order-quantity flags; runStep helper times each step + structured StepRecord output with status (success | skipped | failed) and immediate exit(1) on first failure. NOTIFY step force-sets DISABLE_FEISHU_BOT_WEBHOOK=1 so推送 dry-run 不实际外发. SYNC chains 3 sync services (NorthboundSyncService / DragonTigerSyncService / LimitUpSyncService) with per-source upserted/fetched counts. ORDERS auto-creates smoke_test user + portfolio if no portfolio exists; uses inferSymbolFromCode (6→.SH, 0/3→.SZ, fallback .SZ). RISK calls positionLimitGuard.checkBuyOrder + drawdownCircuitBreaker.evaluateAfterClose dry-run. Added backend/tests/services/integration-smoke-test.test.ts (60 tests pass) covering pure helpers + runStep status/timing/error paths. Added 'smoke-test' npm script. Added README '快速验证' section with table of 6 steps + skip flags + 输出 example + unit test command. Backend npx tsc --noEmit passes clean. CLAUDE.md additions: pattern '健康/依赖探活接口范式' (US-096) already covered the dry-run + Promise.allSettled style this script reuses (NotifyDryRun + per-step try/catch fallthrough), no new pattern needed beyond the existing one."
     }
   ]
 }

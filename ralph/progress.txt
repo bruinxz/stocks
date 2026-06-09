@@ -8404,3 +8404,64 @@ README.md 顶部入门指南章节: 移除 `(US-099)` placeholder, 把 DEVELOPER
   提供"命令速查"附录, 让读者不需要 grep / Ctrl-F 也能找到命令。下次任何技术指南同款。
 
 ---
+
+## 2026/06/09 - US-100
+- 全链路集成验证脚本 (端到端 smoke test): 同步 → 因子 → 信号 → 模拟下单 → 风控 → 推送 dry-run 6 步一条龙
+- Files changed:
+  - backend/src/scripts/integration-smoke-test.ts (NEW, 624 行)
+  - backend/tests/services/integration-smoke-test.test.ts (NEW, 60 tests pass)
+  - backend/package.json (添加 "smoke-test" npm script)
+  - README.md (添加 "快速验证" 章节, 含 6 步表格 + 跳过开关 + 输出示例 + 单测命令)
+  - ralph/prd.json (US-100 passes: true + notes)
+
+- **Learnings for future iterations:**
+  - **6-step orchestrator + 跳过开关 + dry-run 模板** (US-100 引入): 端到端 smoke
+    test 不是要测正确性 (那是单测的事), 是验证 "组件间能互通" (factor pipeline 调出
+    signal → signal 喂得进 placeOrder → placeOrder 调得通 risk guard → 数据流过
+    notify)。所以 每步**软容错**: 库内数据不足时 step 4 ORDERS 拿不到 buy 候选 ->
+    走"skipped" 分支返回 OK (不是 fail), 验证管道通畅即可。每步独立 try/catch
+    包在 runStep helper 内, 失败收集到 StepRecord.error 字段, 主流程靠
+    record.status 判断是否 exit(1)。 此模板适用任何 "上线前巡检 / on-call 自检 /
+    周期性集成测试" 脚本, 5 件套: (1) 每步 SmokeStep 结构 (name / status /
+    duration_ms / detail / error); (2) runStep helper 统一 try/catch + 计时 + 状态归一;
+    (3) `--skip-X` 开关让 ops 在某些 dep 不可用时仍能跑其他步骤; (4) 推送类 step
+    强制 dry-run 通过 env (DISABLE_FEISHU_BOT_WEBHOOK=1) 不真实外发; (5)
+    模块化加载时 `if (require.main === module)` 包 CLI 入口让单测 import 不触发
+    sequelize.authenticate.
+
+  - **smoke 测试用户的"懒创建"模式** (US-100 引入): 跑端到端测试时无法假定库内
+    已有 portfolio (新环境 / CI / 全清后), `resolveSmokeUserPortfolio` 三级回退:
+    (1) 用 options.userId 显式指定; (2) 取第一个有 portfolio 的 user; (3) 创建
+    username='smoke_test' 的 user + Smoke Test Portfolio (initial_capital 用
+    DEFAULT_PAPER_TRADING_INITIAL_CAPITAL = facade 公开常量)。**永远不操作生产
+    portfolio**, 让 smoke test 在任何环境都能立即跑通。同款"懒创建测试 user/portfolio"
+    模式适用未来 US-CI 自动化 smoke run / 部署前预检 / 任何"需要写库但不该污染
+    生产数据"的脚本。
+
+  - **inferSymbolFromCode pure helper 模板** (US-100 引入): `stock_code` (无后缀,
+    e.g. "600519") → `symbol` (带后缀, e.g. "600519.SH") 的反推转换是跨多个
+    上下文常用的转换 (信号系统用 stock_code, Stock model + placeOrder 用 symbol)。
+    规则: 6 → .SH, 0/3 → .SZ, 4/8 → .SZ 兜底, 已带 "." 直接 return。**写成纯函数
+    export + 单测覆盖 8 个 case** (6 开头 / 0 开头 / 3 开头 / 已带 .SH 后缀 /
+    已带 .SZ 后缀 / 空串 / null / 4/8 兜底), 下次 US-CI 集成测试 / 任何 stock_code
+    ↔ symbol 转换处直接 import。新交易所板块代码 (北交所 BJ 后缀 etc.) 加入时
+    扩此函数 + 加单测 case。
+
+  - **README "快速验证" 章节 = 上线前自检的 single-entry doc** (US-100 引入):
+    README 必须有一节告诉新用户 / on-call "怎么 5 秒内确认系统能工作"。本节内容:
+    (1) 一条 npm command (`cd backend && npm run smoke-test`); (2) 6 步表格让读者
+    一眼知道脚本干啥 + 每步可跳过开关; (3) 真实输出 example 让读者预期 "OK / FAIL
+    / SKIP" 三种 prefix; (4) 单测命令做 fallback 验证 (不需 DB 就能跑)。**判据**:
+    任何"端到端测试 / 启动自检 / 部署前预检" 类脚本必须在 README 有独立小节,
+    用户不应需要阅读源码或 grep package.json 才知道脚本存在。下次 US-CI Pipeline
+    / 部署 health check 同款。
+
+  - **进程 env flag 短暂覆盖 + try/finally 还原模板** (US-100 NOTIFY 步骤引入):
+    smoke test 推送 step 想强制 dry-run 但不污染 caller env: `const prev =
+    process.env.DISABLE_FEISHU_BOT_WEBHOOK; process.env.DISABLE_FEISHU_BOT_WEBHOOK
+    = '1'; try { ... } finally { if (prev === undefined) delete ...; else
+    process.env.X = prev; }`. **try/finally 包覆盖 + 还原是必须的**, 异常路径下
+    省略 finally 会让后续同进程跑的代码持续被该 flag 污染 (e.g. test runner 跑
+    多个 case)。同款 env 临时覆盖模式适用未来 US-CI 集成测试 / 任何"调用第三方
+    service 但要 dry-run/mock 模式"的封装。
+---

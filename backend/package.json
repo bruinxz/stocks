@@ -59,7 +59,8 @@
     "run:industry-attribution": "ts-node src/scripts/run-industry-attribution.ts",
     "paper:reset-and-run-quant": "ts-node src/scripts/reset-paper-trading-and-run-quant.ts",
     "seed:mock": "ts-node src/scripts/seed-mock-data.ts",
-    "data:status": "ts-node src/scripts/data-cli.ts status"
+    "data:status": "ts-node src/scripts/data-cli.ts status",
+    "smoke-test": "ts-node --transpile-only src/scripts/integration-smoke-test.ts"
   },
   "keywords": [
     "stock",

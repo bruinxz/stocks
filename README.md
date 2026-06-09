@@ -349,6 +349,68 @@ PORT=3001 npm start
 
 ---
 
+## 快速验证 (US-100 端到端 Smoke Test)
+
+一键跑通业务全链路：**同步 → 因子 → 信号 → 模拟下单 → 风控 → 推送 dry-run** 6 步。
+适合上线前、升级后或 on-call 巡检快速确认"系统真的能工作"（而不是各组件单测都通过却跑不起来）。
+
+### 基本用法
+
+```bash
+# 从 backend/ 目录:
+cd backend && npm run smoke-test
+
+# 指定交易日:
+npm run smoke-test -- --date=2026-06-05
+
+# 跳过外网同步, 用库内现有数据:
+npm run smoke-test -- --skip-sync
+
+# 只读模式 (不真实下单):
+npm run smoke-test -- --skip-orders
+
+# 指定模拟盘用户:
+npm run smoke-test -- --user=2 --order-quantity=200
+```
+
+### 6 步内容
+
+| 步骤 | 名称 | 内容 | 跳过开关 |
+| --- | --- | --- | --- |
+| 1 | SYNC | 调 `sync-northbound` / `sync-dragon-tiger` / `sync-limit-up` 拉最近一日数据 | `--skip-sync` |
+| 2 | FACTORS | 跑 `factorPipeline.runForDate()` 计算因子 | - |
+| 3 | SIGNALS | 跑 `MultiFactorAlphaStrategy.generateSignals()` 产出 buy/hold/sell 信号 | - |
+| 4 | ORDERS | 调 `PaperTradingFacade.placeOrder` 模拟下 3 单（取信号前 3 只 buy） | `--skip-orders` |
+| 5 | RISK | 调 `positionLimitGuard.checkBuyOrder` + `drawdownCircuitBreaker.evaluateAfterClose` 风控校验 | `--skip-risk` |
+| 6 | NOTIFY | 调 `feishuBotWebhookService.sendRecommendationSummary` 推送 dry-run（强制 `DISABLE_FEISHU_BOT_WEBHOOK=1`） | `--skip-notify` |
+
+每步打印执行时间与结果计数；**任一步失败立即退出（exit code 1）+ 打印错误**；全部成功（或 `--skip-*` 主动跳过）退出码 0。
+
+### 输出示例
+
+```text
+[smoke-test] starting full-stack integration test (trade_date=2026-06-09)
+[smoke-test] step summary:
+  OK    SYNC          1.23s :: northbound=120/120 dragon_tiger=42/42 limit_up=53/53
+  OK    FACTORS       3.45s :: universe=4523 factors=8 upserted=36184 failed=0
+  OK    SIGNALS       2.10s :: target_portfolio=20 signals=4523 (buy=37) eligible=4421/4523
+  OK    ORDERS         652ms :: user=2 attempted=3 ordered=3 failed=0
+  OK    RISK           413ms :: position_limit=pass drawdown=level=safe drawdown=2.34%
+  OK    NOTIFY         128ms :: notify_dry_run=skipped (DISABLE_FEISHU_BOT_WEBHOOK=1) buy_signals_in_payload=37
+[smoke-test] overall=PASS steps=6 total=8.06s
+```
+
+### 单元测试
+
+脚本内的纯函数（`formatDuration` / `pickTopBuyCandidates` / `safeTradeDate` /
+`inferSymbolFromCode` / `runStep`）有独立单测 60+ 用例，无需 DB 即可运行：
+
+```bash
+cd backend && npx ts-node --transpile-only tests/services/integration-smoke-test.test.ts
+```
+
+---
+
 ## 数据库字典 (Schema)
 如果您在二次开发时需要查阅或者扩充数据库字段，请查看完整的数据库初始化脚本，该脚本包含了所有的表结构和字段定义：
 👉 [scripts/init-db-full.sql](./scripts/init-db-full.sql)
