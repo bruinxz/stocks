@@ -139,7 +139,27 @@ export class DragonTigerSyncService {
         };
       });
 
-      await DragonTigerBoard.bulkCreate(records, {
+      // In-memory dedup by composite PK (trade_date, stock_code, buyer_seat, seller_seat).
+      // AKShare occasionally returns dup rows for the same seat pair (e.g. when 营业部 has
+      // multiple sub-account entries that we cannot distinguish), and canonicalSeatName
+      // may also collapse alias variants onto the same canonical name. Either case causes
+      // "ON CONFLICT DO UPDATE command cannot affect row a second time" on bulkCreate.
+      // Keep the last occurrence (most recent in AKShare ordering wins).
+      const dedupMap = new Map<string, (typeof records)[number]>();
+      for (const rec of records) {
+        const key = `${rec.trade_date}|${rec.stock_code}|${rec.buyer_seat}|${rec.seller_seat}`;
+        dedupMap.set(key, rec);
+      }
+      const dedupedRecords = Array.from(dedupMap.values());
+      const droppedDup = records.length - dedupedRecords.length;
+      if (droppedDup > 0) {
+        logger.info(
+          `DragonTiger: deduped ${droppedDup} duplicate seat-pair rows for ${date} ` +
+            `(${records.length} → ${dedupedRecords.length})`
+        );
+      }
+
+      await DragonTigerBoard.bulkCreate(dedupedRecords, {
         updateOnDuplicate: [
           'stock_name',
           'reason',
@@ -155,12 +175,12 @@ export class DragonTigerSyncService {
       });
 
       logger.info(
-        `DragonTiger: upserted ${records.length} rows for ${date} (famous_yz hits=${famousHits})`
+        `DragonTiger: upserted ${dedupedRecords.length} rows for ${date} (famous_yz hits=${famousHits})`
       );
       return {
         trade_date: date,
         fetched: rows.length,
-        upserted: records.length,
+        upserted: dedupedRecords.length,
         famous_hits: famousHits,
         skipped: false,
       };

@@ -118,7 +118,27 @@ export class EarningsForecastSyncService {
         };
       });
 
-      await EarningsForecast.bulkCreate(records, {
+      // In-memory dedup by composite PK (announce_date, stock_code, report_period).
+      // AKShare's stock_yjyg_em sometimes returns multiple rows for the same
+      // (stock, announce_date, period) when a company files corrections on the same day
+      // — the upstream listing is by 实际公告日 which can repeat. Without dedup,
+      // bulkCreate fails with "ON CONFLICT DO UPDATE command cannot affect row a second time".
+      // Keep the last occurrence (the latest/corrected forecast wins).
+      const dedupMap = new Map<string, (typeof records)[number]>();
+      for (const rec of records) {
+        const key = `${rec.announce_date}|${rec.stock_code}|${rec.report_period}`;
+        dedupMap.set(key, rec);
+      }
+      const dedupedRecords = Array.from(dedupMap.values());
+      const droppedDup = records.length - dedupedRecords.length;
+      if (droppedDup > 0) {
+        logger.info(
+          `EarningsForecast: deduped ${droppedDup} duplicate forecasts for report_period=${reportPeriod} ` +
+            `(${records.length} → ${dedupedRecords.length})`
+        );
+      }
+
+      await EarningsForecast.bulkCreate(dedupedRecords, {
         updateOnDuplicate: [
           'stock_name',
           'forecast_type',
@@ -135,13 +155,13 @@ export class EarningsForecastSyncService {
       });
 
       logger.info(
-        `EarningsForecast: upserted ${records.length} rows for report_period=${reportPeriod} ` +
+        `EarningsForecast: upserted ${dedupedRecords.length} rows for report_period=${reportPeriod} ` +
           `(surprise=${surpriseCount})`
       );
       return {
         report_period: reportPeriod,
         fetched: rows.length,
-        upserted: records.length,
+        upserted: dedupedRecords.length,
         surprise_count: surpriseCount,
         skipped: false,
       };
