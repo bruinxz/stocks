@@ -103,6 +103,40 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// US-096 运维：系统启动自检页 —— /health/detail
+// 5 个外部依赖 + uptime；each timeout protected；总永远 200，正文表达失败。
+// 设计 / 单测 见 src/services/SystemHealthDetailService.ts。
+import axios from 'axios';
+import {
+  buildDefaultProbeFns,
+  collectSystemHealthDetail,
+} from './services/SystemHealthDetailService';
+import { redisLock } from './utils/redisLock';
+app.get('/health/detail', async (_req, res) => {
+  try {
+    const probes = buildDefaultProbeFns({
+      sequelize: { query: (sql: string) => sequelize.query(sql) },
+      redisHealthCheck: () => redisLock.healthCheck(),
+      httpGet: (url, opts) => axios.get(url, { timeout: opts.timeout }),
+      tradingAgentsUrl: process.env.TRADING_AGENTS_URL || 'http://47.93.224.109:8000',
+    });
+    const detail = await collectSystemHealthDetail(probes);
+    res.json(detail);
+  } catch (error: any) {
+    // 保守兜底：collectSystemHealthDetail 内部不应抛出，但若构造 probes 时配置严重缺失
+    // 仍可能炸 —— 返回 200 + 全 fail，让监控显示"自检本身坏了"。
+    res.json({
+      db: 'fail',
+      redis: 'fail',
+      tradingAgents: 'fail',
+      akshare: 'fail',
+      feishu: 'fail',
+      uptime_seconds: Math.floor(process.uptime()),
+      probe_construction_error: String(error?.message || error),
+    });
+  }
+});
+
 // US-072 Prometheus /metrics endpoint —— 暴露 Prometheus 抓取端
 // 故意 *不加鉴权*：Prometheus scraper 通常在内网 + 通过 reverse proxy / firewall 控访问；
 // 任何 auth middleware 都会让 scraping 失败。Content-Type 必须按 prom-client 约定。

@@ -1611,8 +1611,8 @@
         "Tests pass"
       ],
       "priority": 96,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026/06/09. 新增 backend/src/services/SystemHealthDetailService.ts (export collectSystemHealthDetail / buildDefaultProbeFns / withTimeout / determineFeishuStatus / assembleDetail / probeAkshareViaPython 6 个 pure helper) + GET /health/detail 路由 in src/index.ts。5 个依赖并发 Promise.allSettled 探活 + 每项 timeout 兜底 (DB 1500ms / Redis 1500ms / TA 3500ms / AKShare 5000ms)。Feishu 通过 env 配置检测 (避免发真消息噪音)。AKShare 通过 spawn python3 -c 'import akshare' 探包安装而非调真 endpoint 防限速。Probe 工厂模式 (ProbeFns 接口 + DI) 让单测完全脱离 DB/Redis/HTTP。新增 tests/services/system-health-detail-service.test.ts (36 个 assertion 覆盖 6 个 helper + 整 pipeline + 9 种 dep 失败场景)。/health 原路径未变 (k8s readiness 仍用 /health)。npm test --filter=system-health 通过。npx tsc --noEmit 通过。"
     },
     {
       "id": "US-097",

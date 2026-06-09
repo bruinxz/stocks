@@ -44,6 +44,7 @@
 - **数据源健康看板分类阈值 + lag 计算分流** (US-079 引入): 数据源的"是否落后"判定 **不能一刀切**——daily 行情（0 → green / 1-3 → yellow / >3 → red）≠ 周期披露（30 / 90 → 绿/黄/红）≠ 事件流（7 / 14）。配合 lag 算法分流：daily 走 `computeLagInTradingDays(latest, ref, knownTradeDatesDesc)` 绕开周末 / 节假日；periodic / event 走 `_computeCalendarLag(latest, ref)` 日历日差。`DataHealthStatusService.decideLevel(lag, category)` 是参考实现。新数据源加入注册中心 (`getSourceDefinitions()` array push) 后 service / controller / route / 前端 dashboard 全自动覆盖；前端"手动触发同步"按钮只放行 5 个 daily 类源 (northbound/dragon_tiger/limit_up/industry_flow/snowball_hot)；周期 / per-stock 类返回 400 + 友好 CLI 提示，避免单按钮阻塞 30+ 分钟。
 - **白名单"字段对象数组化"升级范式** (US-088 引入)：原有简单 `ReadonlyArray<string>` 白名单（如 US-006 `FAMOUS_YOUZI_SEATS`）若后续需要分类型元数据（席位归属机构 / 关键词风险等级 / KOL 情绪权重），**新增** `ReadonlyArray<ProfileType>` 作为单一事实源，原 string array 改为 `.filter(...).map(p => p.name)` 派生量。**不要在白名单里塞两份**。再配合 4 项标准设施：(1) `name → profile` 的 Map 索引供 O(1) 查询；(2) 别名归一 `canonicalXxx(name)` 处理数据源拼写漂移；(3) `getXxxType(name)` 的多层兜底链（直接命中 → 别名归一 → 关键词兜底 → unknown），让白名单未覆盖时仍能软分类；(4) `isValidXxxType(value)` 的 type guard 供 controller 校验 query param 返回 400。下次扩展任何"分类标签型"白名单按此 5 件套，保持向后兼容。
 - **Sequelize raw:true + DECIMAL 字段必须 Number() 转换** (US-088 复用 quality_high 教训)：`findAll({ raw: true })` 取 DECIMAL 字段是 string ("1234.5600")，输出 HTTP 前必须 `Number(r.field)`。同时 nullable 字段先 `=== null/undefined` 检查再 Number 避免 `Number(null) === 0` 大坑。**新接口 service 返回 entity[] 时统一过一遍这道转换**，避免前端拿到 "1234.5600" 而不是 1234.56 把图表对比 / 排序搞错。
+- **健康/依赖探活接口范式 (US-096 引入)**: 监控告警精准 = 永远 200 + 正文表达失败 (5xx 让 scraper 无从区分 "我的请求失败" vs "被探测系统的某个 dep 失败")。5 件套: (1) `ProbeFns` 接口定义所有 dep 探活函数 each returns `'ok' | 'fail' | 'not_configured'`; (2) `buildDefaultProbeFns(deps)` 工厂注入真实 client; (3) `collect*(probes)` orchestrator 用 `Promise.allSettled` 并发跑 (单点失败不阻塞); (4) 每 probe 自带 timeout `withTimeout(fn, ms, fallback)` 防慢 dep 卡死; (5) endpoint 外层 try/catch 兜底返回全 fail JSON 避免连 endpoint 都 5xx. **`/health` vs `/health/detail` 分流**: `/health` 给 k8s readiness / load balancer 只看进程在跑 (绝不依赖 dep, 否则 dep 慢 → pod 被错杀); `/health/detail` 给 Prometheus / on-call 把所有 dep 状态串起来. **不调真实业务 endpoint** 探活避免限速 / 推真消息 / 污染 metrics—— 4 种替代: 包安装校验 (AKShare `python3 -c 'import akshare'`) / 配置存在校验 (Feishu env webhook 非空) / 服务专用 /health endpoint (TradingAgents `GET /health`) / 底层最小 query (DB SELECT 1 / Redis PING). **第三种状态 `'not_configured'`** 给可选 dep 用 (Feishu / SMTP / WeChat OA / SMS), dashboard 灰色显示告警 `not(status in ['ok', 'not_configured'])` 准确过滤. **`SystemHealthDetailService` 6 个 pure helper 全 export** 让单测脱 DB / Redis / HTTP / Python 完全 fake (DI 模式), 是参考实现; 下次任何 health endpoint 或 "集成多个 backing service" 服务按此 5 件套, 新增 dep 只加一个 probe method 不破坏既有结构.
 
 ### A-share data ingestion (US-005+)
 - **New data sources live in 3 paired files**: `backend/src/models/<Source>.ts` (Sequelize model, register in `models/index.ts` AND `config/database.ts`), `backend/src/data/sources/<Source>Client.ts` (Python helper wrapper), `backend/src/data/services/<Source>SyncService.ts` (DB write + range/checkpoint). Add a CLI under `backend/src/scripts/sync-<source>.ts` and a `sync:<source>` npm script. The northbound trio is the canonical reference.
@@ -8066,4 +8067,63 @@ PaperTradingFacade.placeOrder 保留 7-method facade 收敛）。
 - **`workspace-mobile-card-list` 共享 CSS class 范式 (US-095 引入)**：让多个工作区的 mobile 卡片列表共享样式 = 设计一致 + 改样式只改一处。本次 PositionMobileCard / TradeMobileCard / TodayWorkspace 三个内嵌 Card 全部用 `<div className="workspace-mobile-card-list">{cards}</div>` 包裹，内部用 `.workspace-mobile-card-row` + `.workspace-mobile-card-actions` 子类。**判据**：下次需要 mobile 卡片列表的工作区（FactorWorkspace 因子列表 / DataWorkspace 数据源 / SettingsWorkspace 设置项）直接复用三个 class 不要新建。改样式（间距 / 颜色 / 圆角）只改 index.css 内对应 class。
 - **WorkspaceLayout 移动端 Drawer 是平台级 (US-095 reinforces US-002)**：US-002 引入的 WorkspaceLayout 已经包揽 KPI + 左侧 Tab + headerActions 三部分 chrome；US-095 在同一文件加 mobile drawer 不破坏既有 6 个 workspace 的 API（tabs / activeKey / onTabChange / kpiSlot / headerActions 5 个 prop 全兼容）。**关键约束**：drawer 状态完全 internal 到 WorkspaceLayout，不外泄到 workspace 层 — workspaces 不需要 useState mobileDrawerOpen 也不需要监听 isMobile。下次 WorkspaceLayout 加新 chrome（user breadcrumb / 全局搜索 / 通知中心）都按此模式：state internal + prop API 兼容。
 - **frontend node_modules worktree symlink + 删除时机 (US-094 reinforces, US-095 复用)**：worktree 首次跑 frontend tsc 需要 `cd frontend && ln -s <main-repo>/frontend/node_modules node_modules`；commit 前必须 `rm frontend/node_modules` 否则 git 会跟踪软链文件（.gitignore 只匹配目录 pattern 不匹配 symlink）。这是 US-094 学到 + US-095 再次验证的 worktree gotcha；写到 ralph/CLAUDE.md 已经太晚（CLAUDE.md 检查会卡 commit），就近的 progress.txt + frontend/CLAUDE.md（如有）更合适。
+---
+
+## 2026/06/09 — US-096 运维：系统启动自检页
+
+### What was implemented
+
+`/health` 已存在但只返回 `{status: 'ok'}`（k8s readiness 用），监控告警需要更细的依赖状态。新增 `/health/detail` 接口返回 5 个外部依赖 (DB / Redis / TradingAgents / AKShare / Feishu) + uptime_seconds。
+
+**核心架构 = ProbeFns 接口 + DI**：
+- `HealthProbeFns` 接口定义 6 个 method（5 个 probe + 1 个 uptime），让单测注入 fake 完全脱离真实 DB / Redis / HTTP / Python。
+- `buildDefaultProbeFns(deps)` 工厂：production 时由 `src/index.ts` 装配 sequelize / redisLock / axios / TRADING_AGENTS_URL 注入。
+- `collectSystemHealthDetail(probes)` orchestrator：Promise.allSettled 并发跑 5 个 probe，独立 timeout 不阻塞，return DTO。
+
+**5 个 probe 实现细节**：
+1. **db**: `sequelize.query('SELECT 1')` + 1500ms timeout（任何 sql 都能验证连接 + 服务在响应）。
+2. **redis**: `redisLock.healthCheck()` (内部调 `redisClient.ping()`) + 1500ms timeout。
+3. **tradingAgents**: `axios.get(${TRADING_AGENTS_URL}/health, { timeout: 3000 })` + 3500ms outer timeout，2xx/3xx → ok / 其他（含 throw / timeout）→ fail。
+4. **akshare**: `spawn('python3', ['-c', 'import akshare'])` exit 0 → ok / 其他 → fail。**不调 AKShare 真实 endpoint** —— AKShare 严格限速，频繁调会被限制；只验"python3 + akshare 包安装"=最小有效信号。
+5. **feishu**: 读 env 三个 webhook key (FEISHU_BOT_WEBHOOK / FEISHU_RECOMMENDATION_BOT_WEBHOOK / FEISHU_DAILY_DIGEST_WEBHOOK)，任一非空 → 'ok' / 全空 → 'not_configured'。**不发真消息** —— 发空载消息会推真实噪音到群里；只校验"配了"。
+
+**timeout 兜底范式**：`withTimeout(fn, ms, fallbackValue)` pure helper — Promise + setTimeout race，超时返回 fallback；late resolve 不污染结果。export 让 caller 看到 timeout 行为可单测。
+
+**6 个 pure helper 全 export 让单测脱 DB**：
+- `withTimeout` (通用超时包装)
+- `determineFeishuStatus(env)` (纯 env 判定)
+- `assembleDetail(settledResults, uptime)` (PromiseSettledResult → DTO)
+- `collectSystemHealthDetail(probes)` (整 pipeline)
+- `buildDefaultProbeFns(deps)` (production probe 装配)
+- `probeAkshareViaPython(timeoutMs)` (spawn + 超时管理)
+
+**Endpoint 设计原则**：永远返回 200 + 正文表达失败（不要 5xx），让监控 scraper 不被 HTTP 层失败掩盖具体 dep 状态。即使 buildDefaultProbeFns 构造时炸（配置严重缺失），外层 try/catch 也返回 200 + 全 fail + probe_construction_error 字段。
+
+### Files changed (1 new service + 1 new test + 1 modified route)
+
+- **New**:
+  - `backend/src/services/SystemHealthDetailService.ts` (272 行 — 类型 + 6 个 pure helper + 默认 probe 装配)
+  - `backend/tests/services/system-health-detail-service.test.ts` (363 行 — 36 assertion 覆盖 6 helper + 整 pipeline + 9 种失败场景)
+- **Modified**:
+  - `backend/src/index.ts` (+34 行 — 3 个 import + GET /health/detail handler with outer try/catch)
+- `ralph/prd.json` (US-096 passes=true)
+- `ralph/progress.txt` (本条记录)
+
+### Quality checks
+
+- `cd backend && npx tsc --noEmit` → exit 0 ✓
+- `cd backend && npx eslint src/services/SystemHealthDetailService.ts src/index.ts` → 0 errors, 1 pre-existing warning (path unused at line 30, predates this story) ✓
+- `cd backend && npm test -- --quiet --filter=system-health` → 36 assertions pass, 0 fail ✓
+- `cd backend && npm test -- --quiet` → 71/72 pass (1 pre-existing failure tests/factors/GradualBreakoutFactor.test.ts 期望 16 factor 实有 18 — 与本 story 完全无关，git stash 验证) ✓
+- **Endpoint verification**: 因 worktree 无 Postgres / Redis 真实启动，未跑 server 端到端验证；但所有 probe 已通过 fake DI 在单测验证。生产部署后 `curl http://localhost:3000/health/detail` 应返回 JSON 形如 `{db:'ok', redis:'ok', tradingAgents:'ok', akshare:'ok', feishu:'not_configured', uptime_seconds:123}`。
+
+### **Learnings for future iterations:**
+
+- **Health/dependency probe 的标准范式 (US-096 引入)**：监控告警精准 = 不要全 catch 成 5xx 让 Prometheus 看到 HTTP 失败但不知哪个 dep 挂了。**5 件套**：(1) `ProbeFns` 接口定义所有 dep 探活函数 (each returns `'ok' | 'fail' | 'not_configured'`)；(2) `buildDefaultProbeFns(deps)` 工厂注入真实 client；(3) `collectXxx(probes)` orchestrator 用 Promise.allSettled 并发跑 (单点失败不阻塞)；(4) 每 probe 自带 timeout (`withTimeout` 包装) 让慢探活也不阻塞；(5) endpoint 永远返回 200 + 正文表达失败 (5xx 让 scraper 无从区分"我的请求失败"vs"被探测系统的某个 dep 失败")。下次任何 health endpoint 按此 5 件套，新增 dep 只加一个 probe method + 一个 case，不破坏既有结构。
+- **不调真实外部 endpoint 的探活策略 (US-096 引入)**：高频探活若调真实业务 endpoint 会被限速（AKShare）/ 推真实消息（Feishu webhook）/ 污染 metrics（POST analyze 任务）。**4 种替代**：(1) **包安装校验** (AKShare 用 `python3 -c 'import akshare'`) — 验证依赖装好，不调 API；(2) **配置存在校验** (Feishu 用 env 读 webhook URL 非空) — 不发消息只看是否配；(3) **专用 /health endpoint** (TradingAgents 用 `GET /health`) — 远端服务自己提供轻量探活；(4) **SELECT 1 / PING** (DB / Redis) — 用底层最小 query。**绝不**用业务 endpoint 探活，下次新依赖按此 4 种之一选择。
+- **`withTimeout` 通用超时包装范式 (US-096 引入)**：任何 Promise 都套 timeout 保护，避免 monitoring scraper 因单个慢 dep 卡死。**关键约束**：late resolve（fn 在 timeout 后才返回）不能污染外部结果 — 用 `settled` boolean flag + setTimeout/clearTimeout 双控。export 让单测可独立验证超时行为不需启真 server。下次任何需"快速失败"的探活/批处理/定时任务可复用 `withTimeout(fn, ms, fallback)`。
+- **`/health` vs `/health/detail` 用途分流 (US-096 reinforces ops convention)**：`/health` 给 k8s readiness / load balancer / nginx upstream check — 只看进程是否在跑，**绝不**依赖外部 dep（外部 dep 慢→pod 被错杀重启循环）；`/health/detail` 给 Prometheus / on-call dashboard — 把所有 dep 状态串起来探。**不要**把两者合并 — 监控目标根本不同。下次任何 health endpoint 加新依赖 → 加到 /health/detail 不要加到 /health。
+- **DI for testability of dep-heavy services (US-096 reinforces)**：本 service 依赖 sequelize / redisLock / axios / python spawn —— 全 hard-import 会让单测必须启 4 个外部 service。**接口 + 工厂注入**让单测 fake 任意场景（db throw / redis return false / http 404 / http hang / python ok）。`HealthProbeFns + buildDefaultProbeFns(deps)` 是参考实现；下次任何"集成多个 backing service"的 service 都按此模式 — 接口定义 + 工厂注入 + 单测 fake，覆盖率从 0% → 80%+ 不需 mock framework。
+- **Spawn-based external probe 必须双重 timeout (US-096 引入)**：`child.kill('SIGKILL')` 后 child.on('exit') 触发的 finish 可能晚于 setTimeout 的 finish；`settled` flag 防重复 resolve。再加 `withTimeout` outer wrapper 双重兜底（spawn 内部 timeout 失效仍能 fallback）。下次任何 spawn-based 操作复用此双层保护。
+- **`'not_configured'` 作为第三种状态比 `'fail'` 更精准 (US-096 引入)**：Feishu 未配置 webhook 不该报警 'fail'（运维明确说"暂不接 Feishu"是合法状态），但也不能 'ok'（没配就是没启用，监控要清晰区分）。引入 `'not_configured'` 让 dashboard 用灰色而非红色显示，告警规则可 `not(status in ['ok', 'not_configured'])` 准确过滤。下次任何"可选 dep"（如 Email SMTP / WeChat OA / Aliyun SMS）按此第三种状态模式。
 ---
