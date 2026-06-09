@@ -1628,8 +1628,8 @@
         "Tests pass"
       ],
       "priority": 97,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026/06/09. 新增 backend/src/services/CleanupOldDataService.ts (DataSource 注入式 + 9 个 pure helper export: normalizeThresholdDays / computeCutoffDate / toIsoDate / isWhitelistedTask / normalizeWhitelistStrategies / partitionBacktestTasksByWhitelist + 3 default 常量). 4 个 cleanup target: quant_backtest_tasks (90d 默认 + cascade trades + results) / data_update_logs (180d) / task_execution_logs (180d) / risk_alerts where is_read=true (30d). per-target try/catch fail-isolation + 整体 errors[] 列失败. 白名单按 strategy_keys ∩ 非空判定 (空 whitelist = 不豁免, 同 US-083 default-allow set semantics). 新增 backend/src/scripts/cleanup-old-data.ts CLI (npm run cleanup:old-data, 默认 dry-run, 必须 --confirm 才真删; --backtest-days / --log-days / --alert-days / --whitelist-strategy 可重复). 在 SchedulerService 注册 CLEANUP_OLD_DATA task type (cron '0 3 * * 0' 每周日 03:00, dry_run=false scheduler 触发即真执行). 新增 backend/tests/services/cleanup-old-data-service.test.ts 106 个 assertion 覆盖 6 个 pure helper 边界 + 12 个 e2e 场景 (dryRun true/false / whitelist / cascade / 失败隔离 / 阈值 fallback / strict < 边界 / 未读告警不清). npx tsc --noEmit 通过. npm test --filter=cleanup 通过."
     },
     {
       "id": "US-098",

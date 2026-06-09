@@ -28,6 +28,7 @@ import { earningsForecastWatcher } from './EarningsForecastWatcher';
 import { weeklyReviewReportService } from './WeeklyReviewReportService';
 import { marketBriefService } from './MarketBriefService';
 import { enhancedTradingJournalService } from './EnhancedTradingJournalService';
+import { cleanupOldDataService } from './CleanupOldDataService';
 import { benchmarkIndexService } from './BenchmarkIndexService';
 import { automatedRecommendationLoopService } from './AutomatedRecommendationLoopService';
 import { recommendationTradeOutcomeService } from './RecommendationTradeOutcomeService';
@@ -168,8 +169,7 @@ function buildLiveShadowAutopilotLogSummary(result: any, outcomes: any) {
     outcome_total_latest_pnl: outcomeSummary.total_latest_pnl,
     paper_baseline_avg_return_pct: outcomeSummary.baseline?.paper_trading?.avg_latest_return_pct,
     paper_baseline_win_rate_pct: outcomeSummary.baseline?.paper_trading?.win_rate_pct,
-    signal_baseline_avg_return_pct:
-      outcomeSummary.baseline?.signal_forward_returns?.avg_return_pct,
+    signal_baseline_avg_return_pct: outcomeSummary.baseline?.signal_forward_returns?.avg_return_pct,
     baseline_since: outcomeSummary.baseline?.since,
     budget_action: outcomeSummary.budget_decision?.action,
     budget_label: outcomeSummary.budget_decision?.label,
@@ -1140,7 +1140,11 @@ class SchedulerService {
               user_id: userId,
               username,
               trade_date: parameters.trade_date || parameters.tradeDate || today,
-              factor_limit: this.toPositiveInt(parameters.factor_limit || parameters.factorLimit, 220, 1000),
+              factor_limit: this.toPositiveInt(
+                parameters.factor_limit || parameters.factorLimit,
+                220,
+                1000
+              ),
               use_cache: parameters.use_cache !== false && parameters.useCache !== false,
               cache_ttl_ms: this.toPositiveInt(
                 parameters.cache_ttl_ms || parameters.cacheTtlMs,
@@ -1150,16 +1154,15 @@ class SchedulerService {
             })
           : null;
         const readinessBlocked =
-          readiness && (readiness.status === 'blocked' || (!allowDegraded && readiness.status !== 'ready'));
+          readiness &&
+          (readiness.status === 'blocked' || (!allowDegraded && readiness.status !== 'ready'));
         let result: any;
         if (readinessBlocked) {
           result = {
             generated_at: new Date().toISOString(),
             mode: 'shadow_only',
             skipped: true,
-            reason:
-              readiness?.conclusion ||
-              '开盘就绪门禁未通过，本轮不生成新的影子成交样本。',
+            reason: readiness?.conclusion || '开盘就绪门禁未通过，本轮不生成新的影子成交样本。',
             readiness: readiness
               ? {
                   status: readiness.status,
@@ -1174,8 +1177,7 @@ class SchedulerService {
               blocked_count: 0,
               real_order_submitted: 0,
               conclusion:
-                readiness?.conclusion ||
-                '开盘就绪门禁未通过，本轮不生成新的影子成交样本。',
+                readiness?.conclusion || '开盘就绪门禁未通过，本轮不生成新的影子成交样本。',
             },
           };
         } else {
@@ -1238,12 +1240,15 @@ class SchedulerService {
           where: { type: 'LIVE_SHADOW_AUTOPILOT', is_active: true },
           order: [['id', 'ASC']],
         });
-        const outcomes = await liveTradingService.getShadowAutopilotOutcomes(Number((user as any).id), {
-          limit: this.toPositiveInt(parameters.outcome_limit || parameters.outcomeLimit, 80, 200),
-          horizons: Array.isArray(parameters.horizons)
-            ? parameters.horizons.map((item: any) => Number(item)).filter(Number.isFinite)
-            : [1, 3, 5],
-        });
+        const outcomes = await liveTradingService.getShadowAutopilotOutcomes(
+          Number((user as any).id),
+          {
+            limit: this.toPositiveInt(parameters.outcome_limit || parameters.outcomeLimit, 80, 200),
+            horizons: Array.isArray(parameters.horizons)
+              ? parameters.horizons.map((item: any) => Number(item)).filter(Number.isFinite)
+              : [1, 3, 5],
+          }
+        );
         const resultSummary: any = buildLiveShadowWeeklyReviewLogSummary(outcomes);
         if (shadowTask && outcomes.summary?.budget_decision) {
           const beforeParameters = { ...((shadowTask as any).parameters || {}) };
@@ -2489,14 +2494,14 @@ class SchedulerService {
           parameters.dry_run !== undefined
             ? Boolean(parameters.dry_run)
             : parameters.dryRun !== undefined
-              ? Boolean(parameters.dryRun)
-              : false;
+            ? Boolean(parameters.dryRun)
+            : false;
         const skipAI =
           parameters.skip_ai !== undefined
             ? Boolean(parameters.skip_ai)
             : parameters.skipAi !== undefined
-              ? Boolean(parameters.skipAi)
-              : false;
+            ? Boolean(parameters.skipAi)
+            : false;
         const briefResult = await marketBriefService.computeAndPersist({
           trade_date: tradeDate,
           dry_run: dryRun,
@@ -2956,6 +2961,69 @@ class SchedulerService {
             result: { message: '无候选股票成功提交 AI 分析任务', submitted: count, failed },
           });
         }
+      } else if (task.type === 'CLEANUP_OLD_DATA') {
+        // US-097 — 每周日凌晨 3 点跑旧数据清理:
+        //   - quant_backtest_tasks + cascade results/trades (默认 90 天)
+        //   - data_update_logs (默认 180 天)
+        //   - task_execution_logs (默认 180 天)
+        //   - risk_alerts where is_read=true (默认 30 天)
+        // 默认 dry_run=false (scheduler 触发是为了真正清理); 手动 CLI 默认
+        // dry_run=true (CLI 必须 --confirm 才执行).
+        // 白名单 whitelist_strategies 跳过 strategy_keys 交集非空的 backtest task.
+        const dryRunForCleanup =
+          parameters.dry_run !== undefined
+            ? Boolean(parameters.dry_run)
+            : parameters.dryRun !== undefined
+            ? Boolean(parameters.dryRun)
+            : false;
+        const cleanupResult = await cleanupOldDataService.cleanup({
+          backtestRetentionDays:
+            parameters.backtest_retention_days ?? parameters.backtestRetentionDays,
+          logRetentionDays: parameters.log_retention_days ?? parameters.logRetentionDays,
+          alertRetentionDays: parameters.alert_retention_days ?? parameters.alertRetentionDays,
+          whitelistStrategies: Array.isArray(parameters.whitelist_strategies)
+            ? parameters.whitelist_strategies
+            : Array.isArray(parameters.whitelistStrategies)
+            ? parameters.whitelistStrategies
+            : [],
+          dryRun: dryRunForCleanup,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: cleanupResult.targets.length,
+          completed_items: cleanupResult.targets.length - cleanupResult.errors.length,
+          failed_items: cleanupResult.errors.length,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message:
+            cleanupResult.errors.length > 0
+              ? `${cleanupResult.errors.length} target(s) failed: ${cleanupResult.errors.join(
+                  ', '
+                )}`
+              : null,
+          result_summary: {
+            scenario: 'cleanup_old_data',
+            as_of: cleanupResult.as_of,
+            mode: cleanupResult.mode,
+            total_count: cleanupResult.total_count,
+            total_cascade_count: cleanupResult.total_cascade_count,
+            whitelist_skipped_total: cleanupResult.whitelist_skipped_total,
+            errors: cleanupResult.errors,
+            targets: cleanupResult.targets.map(t => ({
+              target: t.target,
+              count: t.count,
+              cascade_count: t.cascade_count,
+              cutoff: t.cutoff,
+              executed: t.executed,
+              whitelist_skipped: t.whitelist_skipped,
+              error: t.error,
+            })),
+          },
+        });
+        logger.info(
+          `[CLEANUP_OLD_DATA] mode=${cleanupResult.mode} total_count=${cleanupResult.total_count} ` +
+            `total_cascade=${cleanupResult.total_cascade_count} ` +
+            `whitelist_skipped=${cleanupResult.whitelist_skipped_total} errors=${cleanupResult.errors.length}`
+        );
       } else {
         throw new Error(`Unsupported task type: ${task.type}`);
       }
@@ -2977,11 +3045,13 @@ class SchedulerService {
     return await this._executeTaskLogic(task, true);
   }
 
-  async applyLiveShadowBudgetSuggestion(options: {
-    audit_id?: number;
-    dry_run?: boolean;
-    operator?: { user_id?: number; username?: string };
-  } = {}) {
+  async applyLiveShadowBudgetSuggestion(
+    options: {
+      audit_id?: number;
+      dry_run?: boolean;
+      operator?: { user_id?: number; username?: string };
+    } = {}
+  ) {
     const dryRun = options.dry_run !== false;
     const audit = options.audit_id
       ? await taskParameterAuditService
@@ -3880,6 +3950,23 @@ class SchedulerService {
           dry_run: false,
           overwrite_hand_edited: false,
           skip_ai: false,
+        },
+      },
+      {
+        // US-097 — 每周日凌晨 3 点清理 90 天前回测 / 180 天前日志 / 30 天前已读告警。
+        // dry_run=false → scheduler 触发是为了真正删 (CLI 手动入口默认 dry-run + --confirm 才删).
+        // whitelist_strategies 默认 [] (不豁免); 维护者可加 'multi_factor_alpha' 等保留长期对照样本.
+        name: '旧数据清理',
+        type: 'CLEANUP_OLD_DATA',
+        cron_expression: '0 3 * * 0',
+        is_active: true,
+        parameters: {
+          backtest_retention_days: 90,
+          log_retention_days: 180,
+          alert_retention_days: 30,
+          whitelist_strategies: [],
+          dry_run: false,
+          report_to_feishu: true,
         },
       },
     ];

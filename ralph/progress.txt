@@ -8127,3 +8127,118 @@ PaperTradingFacade.placeOrder 保留 7-method facade 收敛）。
 - **Spawn-based external probe 必须双重 timeout (US-096 引入)**：`child.kill('SIGKILL')` 后 child.on('exit') 触发的 finish 可能晚于 setTimeout 的 finish；`settled` flag 防重复 resolve。再加 `withTimeout` outer wrapper 双重兜底（spawn 内部 timeout 失效仍能 fallback）。下次任何 spawn-based 操作复用此双层保护。
 - **`'not_configured'` 作为第三种状态比 `'fail'` 更精准 (US-096 引入)**：Feishu 未配置 webhook 不该报警 'fail'（运维明确说"暂不接 Feishu"是合法状态），但也不能 'ok'（没配就是没启用，监控要清晰区分）。引入 `'not_configured'` 让 dashboard 用灰色而非红色显示，告警规则可 `not(status in ['ok', 'not_configured'])` 准确过滤。下次任何"可选 dep"（如 Email SMTP / WeChat OA / Aliyun SMS）按此第三种状态模式。
 ---
+
+## 2026/06/09 - US-097
+
+### Implemented
+
+新增 **CleanupOldDataService** + CLI + scheduler 集成 = "旧数据周期清理" 完整闭环。4 张
+"会爆库"的表按可配置阈值清理: (1) `quant_backtest_tasks` (默认 90d) + cascade DELETE
+`quant_backtest_results` + `quant_backtest_trades`; (2) `data_update_logs` (默认 180d);
+(3) `task_execution_logs` (默认 180d); (4) `risk_alerts where is_read=true` (默认 30d,
+未读告警永不清).
+
+设计采纳前序 story 累积的 8 大模式:
+- **DataSource 注入式** (US-094 FactorDetailDataSource / US-081 IC source 同款) — 接口
+  抽 9 个 method (find/count/delete 各表), production singleton 接 Sequelize, 测试注入
+  fake `Map<table, rows>` 完全脱 DB.
+- **dryRun 默认 true** (US-086 RebalanceEngine 同款风险面) — 4 张表 + 可能数十万行
+  DELETE, caller 必须显式 `dryRun: false` 才执行. 与 US-052 IndustryConcentrationGuard
+  (系统应急, 默认执行) 形成对比.
+- **白名单按 strategy_key 跳过 backtest** (US-083 dryRun set semantics 同款) — 空 whitelist
+  = 不豁免 (默认 default-allow), 任一 strategy_key ∈ whitelist → 整 task (含 results/trades)
+  跳过.
+- **per-target try/catch fail-isolation** (US-018 TodaySignalsService / US-096
+  SystemHealthDetailService 同款) — 任一 target DB 锁 / 异常, 其他 target 继续, 最终
+  `errors[]` 列失败 target.
+- **cascade DELETE 按业务顺序而非 DB constraint** — quant_backtest_tasks 无 FK CASCADE 到
+  results/trades, 服务层手动: 1) 找 stale task_ids; 2) DELETE trades WHERE task_id IN;
+  3) DELETE results WHERE task_id IN; 4) DELETE tasks. 顺序反了 = 孤儿数据.
+- **阈值正整数 normalize** — `normalizeThresholdDays(value, fallback)` 接受 number /
+  numeric string / float, fallback NaN / Infinity / ≤0 / 非法 string 到默认值. 同 US-039
+  isoDateAddMonths + US-083 boolean coerce 风格 (严格白名单 + safe default).
+- **cutoff strict `<` 边界** (US-082 闸门"合格线"同款) — cutoff = asOf - days, 删
+  `created_at < cutoff` 的行; created_at 恰等于 cutoff 不删, 避免跨日精度 (DATE vs
+  DATETIME) 对齐失误.
+- **报告条数 + cascade 明细分开** — `TargetCleanupResult.count` 是主表行数,
+  `.cascade_count` 是 cascade 表行数 (回测场景: count=N tasks / cascade=M results+trades),
+  让用户一眼看出"会清 10 个 task + 自动带走 5000 个 trade".
+
+CLI: `npm run cleanup:old-data` 默认 dry-run; `npm run cleanup:old-data -- --confirm`
+真删. 参数: `--backtest-days=N` / `--log-days=N` / `--alert-days=N` /
+`--whitelist-strategy=key` (可重复). 输出箱线总览 + 每 target 一行 + 总计 + 白名单跳过
++ exit code (0 全成功 / 1 fatal / 2 部分 target 失败).
+
+Scheduler: `CLEANUP_OLD_DATA` task type, default `'0 3 * * 0'` 每周日 03:00 北京时间,
+dry_run=false (scheduler 触发即真执行 — 与 CLI 默认 dry-run 互补). `report_to_feishu: true`
+让运维收到飞书通知.
+
+### Files changed
+
+- `backend/src/services/CleanupOldDataService.ts` (新增, 565 行) — 服务主体 + DataSource
+  接口 + 9 export pure helper + production singleton.
+- `backend/src/scripts/cleanup-old-data.ts` (新增, 130 行) — commander CLI.
+- `backend/src/services/SchedulerService.ts` (改 — +71 行) — import + CLEANUP_OLD_DATA
+  branch + default task 注册.
+- `backend/package.json` (改 — +1 行) — `cleanup:old-data` npm script.
+- `backend/tests/services/cleanup-old-data-service.test.ts` (新增, ~470 行) — 106 个
+  assertion 覆盖 6 个 pure helper 边界 (NaN / Infinity / float / negative / 空数组 /
+  trim / dedup) + 12 个 e2e 场景 (dryRun true/false / whitelist / cascade / 失败隔离 /
+  阈值 fallback / strict < 边界 / 未读告警不清).
+- `ralph/prd.json` — US-097 passes:true + notes.
+- `ralph/progress.txt` (本条记录).
+
+### Quality checks
+
+- `cd backend && npx tsc --noEmit` → exit 0 ✓
+- `cd backend && npx eslint src/services/CleanupOldDataService.ts src/scripts/cleanup-old-data.ts src/services/SchedulerService.ts` → 0 errors ✓
+- `cd backend && npx ts-node --transpile-only tests/services/cleanup-old-data-service.test.ts` → 106/0 ✓
+- `cd backend && npm test -- --filter=cleanup --quiet` → 1/1 file pass ✓
+- `cd backend && npx ts-node --transpile-only src/scripts/cleanup-old-data.ts --help` → CLI 输出正常 ✓
+- **Live DB verification skipped**: 不接生产 DB 真跑 DELETE; 但 fake DataSource 已经覆盖
+  所有 cascade 路径. 生产部署后第一次 `npm run cleanup:old-data` (默认 dry-run) 预览数字
+  正常再加 `--confirm`.
+
+### Learnings for future iterations
+
+- **运维/清理类服务的标准范式 (US-097 引入)**: 把"会爆库"的多张表清理收敛在单一服务里,
+  而不是每张表独立 cron + 各自一份 DELETE 脚本. **5 件套**: (1) DataSource 注入式接口
+  把 N 张表的 count/delete 抽 N*2 个 method, production singleton 接 Sequelize 测试
+  fake in-memory; (2) **每 target 独立 try/catch + errors[]** — 一表锁住不阻塞其他;
+  (3) **dryRun 默认 true** — 破坏性多张表场景, caller 必须显式翻转 (CLI `--confirm` /
+  scheduler `dry_run: false`); (4) **cascade DELETE 按业务顺序手动**, 不依赖 DB FK
+  CASCADE (历史表常不带 cascade); (5) **报告分主表 count + cascade_count + whitelist_skipped
+  3 维度**, 让用户一眼看清"主清 N 行 + 带走 M 行 + 豁免 K 个". 下次 US-X 任何"DB 容量
+  治理 / 旧数据归档 / 周期数据清理"按此 5 件套 + 加新 target 只需 1) DataSource 接口加
+  2 method 2) service 加 1 个 cleanupSimpleTable 调用.
+- **scheduler dry_run 默认值与 CLI dry_run 默认值刻意相反 (US-097 引入)**: 同一服务的两
+  种调用入口语义恰恰相反 — CLI 是"手动 ops 工具", 用户可能误触 (`npm run cleanup` 不带
+  flag), 默认 dry-run 防误删; scheduler 是"已配置的自动任务", 运维定调 cron 就是为了
+  真执行, 默认 dry_run=false. **判据**: 触发源是"人手动跑" → 默认安全 (dry-run);
+  触发源是"机器按 cron 跑" → 默认有效 (executed). 下次任何同时暴露 CLI + scheduler 的
+  破坏性操作 (rebalance / migrate / archive) 按此 dual-default 设计.
+- **whitelist 空集合 = default-allow vs default-deny 的语义对齐 (US-097 复用 US-083 lesson)**:
+  `whitelistStrategies = []` 在本服务 = "不豁免" (按 cutoff 全清), 与 US-083 dryRun
+  strategy_keys set 的 default-allow semantics 一致 (空 set = 全允许而非全拒). 反例:
+  filter 类 (`signalMatchesXxxKeys([])` = true 全通过) 走 default-allow; gate 类
+  (`signalIsDryRunByStrategy([])` = false 全走 default) 走 default-deny. **判据**:
+  空集合是"过滤器" → true 全通过; 空集合是"标识器" → false 全走非标识路径. 下次任何 set
+  参数的 service 必须在 jsdoc 顶部显式标注空集合语义.
+- **测试: fake DataSource 让"破坏性 + 多表 + 跨表 join" 类服务 100% 脱 DB (US-097 强化)**:
+  CleanupOldDataService 涉及 6 张表 + cascade DELETE + 跨表查询, 走纯 Sequelize 单测
+  会要起真实 Postgres + 装 6 表 schema. 走 DataSource 接口注入只需 fake 9 个 method
+  实现 (in-memory `{backtests: [], dataUpdateLogs: [], ...}` + 按 cutoff 过滤 array 即可).
+  对比 etf-flow-sync-service.test.ts 走 Sequelize 静态方法 monkey-patch 风格的成本 (300+
+  行的 in-memory 模拟 + Sequelize Op symbol 解析逻辑), DataSource 注入式只需 ~80 行 fake
+  实现. **下次任何"破坏性 + 跨多张表"的 service 设计时**先确认是否走 DataSource 接口,
+  不要直接调 Model 静态方法 — 不然单测成本会爆.
+- **`scripts/backup-db.sh` + `WalkForwardValidator.cleanupOlderThan` + CleanupOldDataService
+  三层 cleanup 边界 (US-097 梳理)**: 项目有 3 套清理工具, 各管不同维度: (a) shell 脚本
+  `scripts/backup-db.sh` (US-071) 清 30 天前 .sql.gz 备份文件 — 只管 filesystem, 不管 DB
+  行; (b) `WalkForwardValidator.cleanupOlderThan` (US-039) 清 walk-forward 嵌套父子
+  optimization_runs — 只管"嵌入式优化器"产物; (c) CleanupOldDataService (US-097) 清
+  通用回测 / 日志 / 告警 — 主清产线日常累积. **3 个工具互不重叠不要合并** — 维度不同
+  (file vs nested-task vs flat-table), 调度周期不同 (daily vs ad-hoc vs weekly), 触发
+  来源不同 (cron shell vs admin CLI vs scheduler). 下次新清理需求先确认是哪类边界,
+  不要硬塞进现有工具.
+---
