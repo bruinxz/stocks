@@ -271,7 +271,7 @@ export class FactorPipeline {
   }
 
   /**
-   * 默认股票池 = stocks 表中 is_active=true 的全部股票（无市场前缀的 symbol）。
+   * 默认股票池 = stocks 表中 is_listed=true 的全部股票（无市场前缀的 symbol）。
    *
    * Stock.symbol 在该 codebase 里是 "600519.SH" / "000001.SZ" 形式，截掉 .SH/.SZ
    * 得到本表用的 stock_code 形式（与 NorthboundHolding / LimitUpStock / IndustryFlow
@@ -281,9 +281,9 @@ export class FactorPipeline {
     const rows = (await Stock.findAll({
       attributes: ['symbol'],
       where: {
-        // Stock 表中 is_active 字段在大部分数据流程里默认 true；
-        // 用 Op.or 兜底为 null（旧数据）也算 active
-        [Op.or]: [{ is_active: true }, { is_active: null }],
+        // Stock 表只有 is_listed 字段（无 is_active）；用 Op.or 兜底 null = 已上市
+        // （旧数据该字段默认 NULL 但实际都在交易），与 sync-* 脚本的 --all 过滤一致
+        [Op.or]: [{ is_listed: true }, { is_listed: null }],
       },
       raw: true,
     })) as unknown as Array<{ symbol: string }>;
