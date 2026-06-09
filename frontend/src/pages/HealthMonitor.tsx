@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Card, Row, Col, Statistic, Tag, Space, Spin, Alert, Button, Descriptions, Empty } from 'antd';
 import { ReloadOutlined, HeartOutlined, DatabaseOutlined, ApiOutlined, CloudOutlined } from '@ant-design/icons';
-import { api } from '../services/api';
+import api from '../services/api';
 
 interface HealthDetail {
   db: 'ok' | 'fail' | 'unknown';

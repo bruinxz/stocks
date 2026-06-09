@@ -26,7 +26,7 @@ import {
   ProfileOutlined,
 } from '@ant-design/icons';
 import ReactECharts from 'echarts-for-react';
-import { api } from '../services/api';
+import api from '../services/api';
 import AIStockAnalysisModal from '../components/trading/AIStockAnalysisModal';
 
 const { Text, Title } = Typography;
