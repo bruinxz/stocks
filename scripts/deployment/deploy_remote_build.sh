@@ -207,13 +207,14 @@ rsync -a --delete \\
   --exclude='.artifacts' \\
   "\$WORK/" "\$REL/"
 
-# Symlink node_modules to point at the build workspace (avoid duplicating 1+GB)
-# Next deploy's reuse will copy these to the new workspace.
+# Copy node_modules into release dir (NOT symlink — systemd PrivateTmp=true
+# isolates /tmp from the service user, so symlinks pointing into /tmp/stocks_remote_build_*
+# become invisible to the running process and dotenv/etc fail to load).
 if [ -d "\$WORK/backend/node_modules" ]; then
-  ln -sfn "\$WORK/backend/node_modules" "\$REL/backend/node_modules"
+  cp -a "\$WORK/backend/node_modules" "\$REL/backend/node_modules"
 fi
 if [ -d "\$WORK/frontend/node_modules" ]; then
-  ln -sfn "\$WORK/frontend/node_modules" "\$REL/frontend/node_modules"
+  cp -a "\$WORK/frontend/node_modules" "\$REL/frontend/node_modules"
 fi
 
 # Wire in shared env files
