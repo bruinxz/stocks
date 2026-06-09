@@ -97,7 +97,7 @@ ssh_ops() {
 
 # Confirm branch reachable on remote git (deploy account)
 echo ""
-echo "▶ [1/7] Confirm branch '$BRANCH' is reachable on GitHub from server..."
+echo "▶ [1/8] Confirm branch '$BRANCH' is reachable on GitHub from server..."
 ssh_deploy "git ls-remote --heads '$GIT_REPO_URL' '$BRANCH' | grep -q '$BRANCH'" \
   || { echo "ERROR: branch '$BRANCH' not found on remote $GIT_REPO_URL" >&2; exit 1; }
 echo "  ✓ branch reachable"
@@ -107,7 +107,7 @@ echo "  ✓ branch reachable"
 # ---------------------------------------------------------------------------
 if [[ "$TARGET" == "main" && "${SKIP_DB_BACKUP:-false}" != "true" ]]; then
   echo ""
-  echo "▶ [2/7] Backing up production DB before main deploy..."
+  echo "▶ [2/8] Backing up production DB before main deploy..."
   ssh_ops "bash -c '
     set -e
     BACKUP_DIR=/var/backups/stocks
@@ -126,14 +126,14 @@ if [[ "$TARGET" == "main" && "${SKIP_DB_BACKUP:-false}" != "true" ]]; then
   echo "  ✓ DB backed up"
 else
   echo ""
-  echo "▶ [2/7] Skipping DB backup (target=$TARGET or SKIP_DB_BACKUP=true)"
+  echo "▶ [2/8] Skipping DB backup (target=$TARGET or SKIP_DB_BACKUP=true)"
 fi
 
 # ---------------------------------------------------------------------------
 # Remote clone + build + release
 # ---------------------------------------------------------------------------
 echo ""
-echo "▶ [3/7] Remote clone + checkout..."
+echo "▶ [3/8] Remote clone + checkout..."
 ssh_deploy "bash -s" <<EOF
 set -euo pipefail
 WORK='$WORK'
@@ -154,7 +154,7 @@ echo "  HEAD: \$(git rev-parse --short HEAD) \$(git log -1 --pretty='%s' | head 
 EOF
 
 echo ""
-echo "▶ [4/7] Remote install + build..."
+echo "▶ [4/8] Remote install + build..."
 ssh_deploy "bash -s" <<EOF
 set -euo pipefail
 WORK='$WORK'
@@ -187,7 +187,7 @@ CI=false NODE_OPTIONS=--max-old-space-size=4096 ./node_modules/.bin/react-script
 EOF
 
 echo ""
-echo "▶ [5/7] Create release dir + activate symlink..."
+echo "▶ [5/8] Create release dir + activate symlink..."
 ssh_deploy "bash -s" <<EOF
 set -euo pipefail
 WORK='$WORK'
@@ -244,18 +244,62 @@ EOF
 # Restart systemd
 # ---------------------------------------------------------------------------
 echo ""
-echo "▶ [6/7] Restart $SERVICE (sudo via ops)..."
+echo "▶ [6/8] Restart $SERVICE (sudo via ops)..."
 ssh_ops "echo '$OPS_PASSWORD' | sudo -S systemctl restart $SERVICE" 2>&1 | tail -5
 sleep 3
 ssh_ops "echo '$OPS_PASSWORD' | sudo -S systemctl is-active $SERVICE" || \
   { echo "ERROR: service failed to start" >&2; exit 1; }
 
 # ---------------------------------------------------------------------------
+# Sync Sequelize schema (creates missing tables for new models)
+# Disabled by default; enable with SYNC_SCHEMA=true (typically when deploying
+# a release that introduces new models).
+# ---------------------------------------------------------------------------
+if [[ "${SYNC_SCHEMA:-false}" == "true" ]]; then
+  echo ""
+  echo "▶ [7/8] Sync Sequelize schema (creating any missing tables)..."
+  ssh_deploy "bash -s" <<EOF
+set -euo pipefail
+CURRENT='$CURRENT'
+
+cat > /tmp/sync-schema-${TARGET}.js <<'NODEEOF'
+require('dotenv').config({ path: process.env.STOCKS_BACKEND_ENV });
+const path = require('path');
+const cwd = process.env.STOCKS_BACKEND_CWD;
+process.chdir(cwd);
+require(path.join(cwd, 'dist/models/index.js'));
+const { sequelize } = require(path.join(cwd, 'dist/config/database.js'));
+(async () => {
+  try {
+    await sequelize.authenticate();
+    console.log('▶ Running sequelize.sync({alter:true})...');
+    await sequelize.sync({ alter: true });
+    console.log('✅ Schema sync complete');
+    await sequelize.close();
+    process.exit(0);
+  } catch (err) {
+    console.error('❌ Schema sync failed:', err.message);
+    process.exit(1);
+  }
+})();
+NODEEOF
+
+NODE_PATH=\$CURRENT/backend/node_modules \\
+STOCKS_BACKEND_ENV=\$CURRENT/backend/.env \\
+STOCKS_BACKEND_CWD=\$CURRENT/backend \\
+/usr/bin/node /tmp/sync-schema-${TARGET}.js 2>&1 | tail -30
+EOF
+else
+  echo ""
+  echo "▶ [7/8] Skipping schema sync (set SYNC_SCHEMA=true to enable)"
+fi
+
+# ---------------------------------------------------------------------------
 # Health gate
 # ---------------------------------------------------------------------------
 if [[ "${SKIP_HEALTH_GATE:-false}" != "true" ]]; then
   echo ""
-  echo "▶ [7/7] Run health gate..."
+  echo "▶ [8/8] Run health gate..."
   ssh_deploy "
     if [ -f $CURRENT/scripts/deployment/release_health_gate.js ]; then
       cd $CURRENT && node scripts/deployment/release_health_gate.js 2>&1 | tail -30
@@ -271,7 +315,7 @@ if [[ "${SKIP_HEALTH_GATE:-false}" != "true" ]]; then
   "
 else
   echo ""
-  echo "▶ [7/7] Skipped health gate (SKIP_HEALTH_GATE=true)"
+  echo "▶ [8/8] Skipped health gate (SKIP_HEALTH_GATE=true)"
 fi
 
 echo ""
