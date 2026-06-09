@@ -597,6 +597,57 @@ T+1 09:00 之前更新当日数据，调度建议: 每日盘后 17:30 跑前一�
 `stock_margin_account_info()` (全市场单行汇总)，用于 MarketSentimentIndex 市场
 情绪打分；本表是 per-stock 明细，用于个股级因子。两数据互补不冲突。
 
+## Whitelist-scoped multi-endpoint per-ETF sync + query endpoint (US-092 ETFFlow)
+
+ETFFlow (US-092) introduces a新 pattern: **whitelist-bounded universe + multi-
+endpoint per-item merge + dedicated query controller**. Differences from既有
+sync 模式：
+
+- **Whitelist universe (not full market scan)**: `constants/etfIndustry.ts`
+  maintains 30+ 主流行业 ETF; sync 服务只拉白名单内代码 (caller 把 `codes_csv`
+  推给 Python helper), 不扫全 ETF 市场避免货币 / 债券 / 黄金 ETF 噪音, 也避免
+  5000+ ETF 拉数据耗时. 同款 universe-scoping 思路适用未来"概念 ETF" /
+  "国家 / 主题 ETF" 等需要业务白名单的数据源.
+- **AC endpoint substitution (4 处文档同步同 US-091 / US-090 / US-034 同款)**:
+  AKShare 没有 per-ETF 申赎金额 / AUM 时序端点 (`fund_etf_scale_*` 是季度规模
+  快照, 非日度时序). 选 `fund_etf_fund_daily_em` (全市场 NAV + 份额) +
+  `fund_etf_hist_em(per-ETF)` (close + 成交额) 双端点合并代理.
+  - AUM proxy = `share_count × nav`
+  - net_inflow proxy = `(share_count[T] - share_count[T-1]) × nav[T]`
+    (与 US-091 day-to-day diff 推算 fin_repay_amt 同款 identity 反推)
+  - 升级路径: 若 AKShare 未来加 `fund_etf_subscription_em` 类原生申赎端点, 仅
+    换 Python helper + SyncService 写入逻辑, model schema 不变.
+- **Service-layer DECIMAL → number coercion**: `toNullableNumber(v)` helper
+  统一处理 raw:true DECIMAL string 转 number + null/undefined/NaN/Infinity 兜底.
+  这是 US-088 codified pattern 的复用 (`raw:true + DECIMAL 必须 Number()`); 把
+  helper 写在 service module export 是为了让单测能直接验证转换语义 (110/110
+  tests cover both happy path + the `Number(null) === 0` trap).
+- **Query controller (`GET /api/data/etf-flow`)**: 第一次让 `data/services/*`
+  直接被 `data.routes.ts` 通过 controller 暴露成业务 endpoint (既有 sync
+  services 主要被 scheduler / CLI 消费). controller 把 service.listFlow 包装成
+  `{success, count, filters, industries, data}` 结构, `industries` 字段供前端
+  下拉选项. `industry` 与 `etf_code` 互斥 (industry 优先), 非白名单 industry
+  返回 `count=0` 不 4xx (与 normalize 风格一致). 路由顺序提醒: 新静态 GET 端点
+  必须在 `:source` POST catchall 前 (与 US-088 dragon-tiger 同款 lesson).
+- **Whitelist helpers structure** (`constants/etfIndustry.ts`): `ETF_PROFILES`
+  array (code/name/industry 三元组) → `ETF_PROFILE_INDEX` Map 用于 O(1) 查询 →
+  `getETFProfile / isWhitelistedETF / getAllWhitelistedETFCodes /
+  getETFCodesByIndustry / getAllETFIndustries` 5 个 helpers. 与 US-088
+  FAMOUS_YOUZI_PROFILES 同款"字段对象数组化"模式; 下次任何业务白名单按此 5 件套
+  封装 helper.
+
+**Throttle & CLI**: `--date=YYYY-MM-DD | --start=... --end=... [--force]`.
+`ETF_FLOW_TIMEOUT_MS=120000` (120s — 30+ 只 ETF 顺序 fund_etf_hist_em 拉 ~30-60s
++ fund_etf_fund_daily_em 一次性 ~10s, 留 2x buffer). `ETF_FLOW_SKIP_EXISTING=0`
+环境变量控制断点续传. 调度建议: 每日盘后 17:30 跑前一交易日 (T+1 数据可用).
+
+**与既有 IndustryFlow (US-008) 的区分**: IndustryFlow 是 *个股聚合的主力净流入*
+(二级市场买盘), ETFFlow 是 ETF 产品本身的申赎 (一级市场资金真实流入流出). 两者
+配合验证则信号更强 — IndustryFlow 显示 "今天医药板块主力净买入 5 亿"，ETFFlow
+显示 "医药 ETF 5 日累计净申购 +10 亿"，则 high-conviction 看多信号. 未来可作为
+"外资 / 杠杆 / ETF" 三资金 pillar 之一与 NorthboundHolding / MarginTradingBalance
+联合形成 quant 因子.
+
 ## Worktree gotcha (still active as of US-005)
 
 The git worktree has no `backend/node_modules`. Symlink before typecheck:

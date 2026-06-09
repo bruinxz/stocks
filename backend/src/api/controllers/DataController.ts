@@ -8,15 +8,18 @@ import {
 import { LimitUpSyncService } from '../../data/services/LimitUpSyncService';
 import { IndustrySyncService } from '../../data/services/IndustrySyncService';
 import { SnowballHotKeywordSyncService } from '../../data/services/SnowballHotKeywordSyncService';
+import { ETFFlowSyncService, ListFlowOptions } from '../../data/services/ETFFlowSyncService';
+import { getAllETFIndustries } from '../../constants/etfIndustry';
 import { isValidSeatType, SeatType } from '../../constants/famousSeats';
 import { logger } from '../../utils/logger';
 
 /**
- * US-079 数据健康度看板控制器（US-088 扩展龙虎榜查询端点）
+ * US-079 数据健康度看板控制器（US-088 扩展龙虎榜查询端点 / US-092 扩展 ETF 资金流查询端点）
  *
  * - GET /api/data/health-status                          → 聚合所有数据源最新同步状态
  * - POST /api/data/sync/:source                          → 手动触发指定数据源的同步任务
  * - GET /api/data/dragon-tiger?stock_code=&seat_type=…   → US-088: 按归属机构查询龙虎榜
+ * - GET /api/data/etf-flow?industry=&days=…              → US-092: 行业 ETF 资金流查询
  *
  * 手动触发只覆盖"日级 syncDate(date)"类数据源（北向 / 龙虎榜 / 涨停 / 行业流 /
  * 雪球热词）；周期性数据源（财报 / 业绩预告 / 分析师 / 分红 / 股东户数）和
@@ -28,6 +31,7 @@ export class DataController {
     this.getHealthStatus = this.getHealthStatus.bind(this);
     this.triggerSync = this.triggerSync.bind(this);
     this.listDragonTiger = this.listDragonTiger.bind(this);
+    this.listEtfFlow = this.listEtfFlow.bind(this);
   }
 
   /**
@@ -195,6 +199,83 @@ export class DataController {
       return res.status(500).json({
         success: false,
         error: error?.message ?? '龙虎榜查询失败',
+      });
+    }
+  }
+
+  /**
+   * US-092: GET /api/data/etf-flow
+   *
+   * 行业 ETF 资金流入流出查询. 前端"数据中心 / 行业研究"页面据此展示
+   * "近 30 日哪些行业被资金大额申购 / 赎回".
+   *
+   * Query 参数 (industry 与 etf_code 互斥, industry 优先):
+   *   - `industry` (optional) 行业标签 (e.g. "半导体" / "医药"), 必须在白名单内
+   *   - `etf_code` (optional) ETF 代码 (e.g. "159995")
+   *   - `days`     (optional) 回看自然日数, 默认 30, max 365
+   *   - `end`      (optional) 终止日 YYYY-MM-DD, 默认今天
+   *   - `limit`    (optional) 行数上限, 默认 5000, max 50000
+   *
+   * 返回结构:
+   *   {
+   *     success: true, count, filters,
+   *     industries: string[]  ← 全部白名单行业 (供前端下拉)
+   *     data: FlowEntry[]    ← (trade_date DESC, etf_code ASC) 排序
+   *   }
+   *
+   * industry 非白名单值不会 4xx, 直接返回 count=0 (与 normalize 风格一致).
+   */
+  async listEtfFlow(req: Request, res: Response) {
+    const industry =
+      typeof req.query.industry === 'string' && req.query.industry.trim()
+        ? String(req.query.industry).trim()
+        : undefined;
+    const etfCode =
+      typeof req.query.etf_code === 'string' && req.query.etf_code.trim()
+        ? String(req.query.etf_code).trim()
+        : undefined;
+    const daysRaw =
+      typeof req.query.days === 'string' && req.query.days.trim()
+        ? Number(req.query.days)
+        : undefined;
+    const endRaw =
+      typeof req.query.end === 'string' && req.query.end.trim()
+        ? String(req.query.end).trim()
+        : undefined;
+    const limitRaw =
+      typeof req.query.limit === 'string' && req.query.limit.trim()
+        ? Number(req.query.limit)
+        : undefined;
+
+    const options: ListFlowOptions = {
+      industry,
+      etf_code: etfCode,
+      days: daysRaw,
+      end: endRaw,
+      limit: limitRaw,
+    };
+
+    try {
+      const service = new ETFFlowSyncService();
+      const data = await service.listFlow(options);
+      return res.json({
+        success: true,
+        count: data.length,
+        filters: {
+          industry: industry ?? null,
+          etf_code: etfCode ?? null,
+          days: daysRaw ?? null,
+          end: endRaw ?? null,
+          limit: limitRaw ?? null,
+        },
+        industries: getAllETFIndustries(),
+        data,
+      });
+    } catch (error: any) {
+      logger.error(`DataController.listEtfFlow failed: ${error?.message ?? error}`);
+      return res.status(500).json({
+        success: false,
+        error: error?.message ?? 'ETF 资金流查询失败',
       });
     }
   }

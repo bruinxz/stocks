@@ -75,6 +75,7 @@ import { TechnicalAnalysisReport } from '../models/TechnicalAnalysisReport';
 import { RestrictedShareRelease } from '../models/RestrictedShareRelease';
 import { ShareholderTradeRecord } from '../models/ShareholderTradeRecord';
 import { MarginTradingBalance } from '../models/MarginTradingBalance';
+import { ETFFlow } from '../models/ETFFlow';
 import { LiveBrokerAccount } from '../models/LiveBrokerAccount';
 import { LiveAccountSnapshot } from '../models/LiveAccountSnapshot';
 import { LivePosition } from '../models/LivePosition';
@@ -179,6 +180,7 @@ const sequelize = new Sequelize({
     RestrictedShareRelease,
     ShareholderTradeRecord,
     MarginTradingBalance,
+    ETFFlow,
     LiveBrokerAccount,
     LiveAccountSnapshot,
     LivePosition,

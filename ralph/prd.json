@@ -1551,8 +1551,8 @@
         "Tests pass"
       ],
       "priority": 92,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented 2026/06/09. Whitelist 38 ETFs in constants/etfIndustry.ts (含医药/半导体/新能源车/消费/银行/军工/光伏/煤炭/钢铁 + 宽基). Sequelize model ETFFlow (PK: trade_date, etf_code) + 8 字段含 nav/share_count/secondary_turnover/close_price 扩展字段. Python helper get_etf_flow(date, codes_csv) 合并 fund_etf_fund_daily_em (全市场 NAV+份额) + fund_etf_hist_em (per-ETF close+成交额) 双端点. SyncService syncDate/syncRange/listFlow 三方法; day-to-day diff 推算 net_inflow = (share[T]-share[T-1])×nav[T] + AUM = share×nav (同 US-091 identity 反推模式). CLI npm run sync:etf-flow -- --date=2026-06-08. GET /api/data/etf-flow?industry=半导体&days=30 端点 (industry/etf_code/days/end/limit query 参数 + industry 非白名单返回 count=0 不 4xx). 110/110 单测覆盖 parseIsoDate/normalizePositiveInt/toNullableNumber 纯函数 + whitelist helpers + syncDate 11 场景 (happy/filtered_out/2nd-day net_inflow/赎回/share_count null/nav null/throw/empty/dedup) + syncRange 5 场景 + listFlow 6 场景. typecheck + eslint 全通过."
     },
     {
       "id": "US-093",

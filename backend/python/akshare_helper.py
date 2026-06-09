@@ -4429,6 +4429,204 @@ def get_margin_trading_detail(date: str) -> List[Dict[str, Any]]:
         return []
 
 
+def get_etf_flow(date: str, codes_csv: str) -> List[Dict[str, Any]]:
+    """
+    Fetch per-ETF 行业 ETF 资金流 daily snapshot for a specified date — US-092.
+
+    AC endpoint substitution (US-034 / US-035 / US-053 同款范式):
+        AKShare 没有直接的 per-ETF 申赎金额 / AUM 时序端点 (fund_etf_scale_szse/_sse
+        是季度规模快照, 非日度时序). 选用以下替代组合:
+          - `fund_etf_hist_em(symbol, period='daily', start, end)` 拿每日行情
+            (close / 成交额 / 换手率) ;
+          - `fund_etf_fund_daily_em()` 拿全市场 ETF 日度净值 + 单位净值 + 基金份额.
+
+        说明:
+            - share_count: 来自 fund_etf_fund_daily_em "基金份额" (份, 部分接口
+              单位是万份, 部分原始份; 内部统一存入 share_count 字段, TS 服务层不
+              另做单位换算 - 同一 ETF 字段连续性更重要, 跨 ETF 比较需各自归一);
+            - nav: 来自 fund_etf_fund_daily_em "单位净值" (元/份);
+            - AUM = share_count × nav (元), 在 TS service 计算;
+            - net_inflow proxy: TS service 端 day-to-day diff = (share_count[T] -
+              share_count[T-1]) × nav[T].
+
+        升级路径: 若 AKShare 未来增加 per-ETF 申赎金额 endpoint (e.g.
+        fund_etf_subscription_em), 仅替换本函数 + SyncService 写入逻辑, model
+        schema 不变.
+
+    4 处文档同步标注 (与 US-091 同款):
+        - 本 docstring / akshare_helper.py
+        - TS Client jsdoc (ETFFlowClient.ts)
+        - SyncService jsdoc (ETFFlowSyncService.ts)
+        - Model column comment (ETFFlow.ts)
+
+    Args:
+        date: ISO YYYY-MM-DD or YYYYMMDD (单个交易日)
+        codes_csv: 逗号分隔的 ETF 代码列表 (e.g. "159995,512290,512760"),
+                   只拉取这些 ETF 的数据. 由 TS 调用方传入白名单代码列表.
+
+    Returns:
+        List of dicts, one per (etf_code) for the date:
+            {trade_date, etf_code, etf_name, nav, share_count,
+             secondary_turnover, close_price, raw_payload}
+        缺失字段填 None; raw_payload 含原始两个端点合并后的字段供回溯.
+        Returns [] on empty/error so caller can checkpoint a "tried but empty" day.
+
+    Schedule: T+1 盘后 (AKShare ETF 数据通常 T+1 上午更新).
+    Performance: per-ETF fund_etf_hist_em 每只 ~0.5-1.5s, 30+ 只 ETF 顺序拉
+        ~30-60s, 加上 fund_etf_fund_daily_em 一次性 ~10s; 总 timeout ~120s 充裕.
+    """
+    try:
+        pure_date = str(date).replace('-', '')
+        if len(pure_date) != 8 or not pure_date.isdigit():
+            print(f'Invalid date format for etf flow: {date}', file=sys.stderr)
+            return []
+        iso_date = _format_iso_date(pure_date)
+        if not iso_date:
+            print(f'Failed to format iso date: {pure_date}', file=sys.stderr)
+            return []
+
+        codes = [c.strip() for c in str(codes_csv).split(',') if c.strip()]
+        if not codes:
+            print('No ETF codes provided', file=sys.stderr)
+            return []
+
+        print(f'Fetching ETF flow for {iso_date}, {len(codes)} codes', file=sys.stderr)
+
+        # ----- 拉取全市场 ETF 日度份额 + 净值 (一次性) -----
+        nav_share_by_code: Dict[str, Dict[str, Any]] = {}
+        fn_daily = getattr(ak, 'fund_etf_fund_daily_em', None)
+        if fn_daily is None:
+            print('AKShare missing fund_etf_fund_daily_em', file=sys.stderr)
+        else:
+            try:
+                df_daily = fn_daily()
+            except Exception as e:
+                print(f'fund_etf_fund_daily_em() failed: {e}', file=sys.stderr)
+                df_daily = None
+
+            if df_daily is None or df_daily.empty:
+                print(f'fund_etf_fund_daily_em empty', file=sys.stderr)
+            else:
+                # 列名识别 - AKShare 有时返回 "{date}-单位净值" 这种带日期的列
+                col_code: Optional[str] = None
+                col_name: Optional[str] = None
+                col_nav: Optional[str] = None
+                col_shares: Optional[str] = None
+                for col in df_daily.columns:
+                    col_s = str(col)
+                    if col_code is None and col_s in ('基金代码', '代码'):
+                        col_code = col_s
+                    elif col_name is None and col_s in ('基金简称', '名称'):
+                        col_name = col_s
+                    elif col_nav is None and (
+                        col_s == '单位净值'
+                        or col_s.endswith('-单位净值')
+                        or '单位净值' in col_s
+                    ):
+                        col_nav = col_s
+                    elif col_shares is None and col_s in (
+                        '基金份额',
+                        '份额',
+                        '场内规模',
+                        '场内份额',
+                    ):
+                        col_shares = col_s
+
+                if col_code:
+                    for _, row in df_daily.iterrows():
+                        raw_code = row.get(col_code)
+                        if pd.isna(raw_code):
+                            continue
+                        code = str(raw_code).strip().zfill(6)
+                        if not code or code.lower() == 'nan':
+                            continue
+                        nav_share_by_code[code] = {
+                            'etf_name': _cell_str(row, col_name),
+                            'nav': _cell_float(row, col_nav),
+                            'share_count': _cell_float(row, col_shares),
+                            'raw_daily': _row_to_jsonable(row, list(df_daily.columns)),
+                        }
+                else:
+                    print(
+                        f'fund_etf_fund_daily_em missing code col. cols={list(df_daily.columns)[:8]}',
+                        file=sys.stderr,
+                    )
+
+        # ----- 逐只 ETF 拉历史行情取当日 close + 成交额 -----
+        fn_hist = getattr(ak, 'fund_etf_hist_em', None)
+        results: List[Dict[str, Any]] = []
+        if fn_hist is None:
+            print('AKShare missing fund_etf_hist_em', file=sys.stderr)
+            return results
+
+        for code in codes:
+            close_price: Optional[float] = None
+            secondary_turnover: Optional[float] = None
+            raw_hist: Optional[Dict[str, Any]] = None
+            try:
+                df_hist = fn_hist(
+                    symbol=code,
+                    period='daily',
+                    start_date=pure_date,
+                    end_date=pure_date,
+                    adjust='',
+                )
+            except Exception as e:
+                print(f'fund_etf_hist_em({code}) failed: {e}', file=sys.stderr)
+                df_hist = None
+
+            if df_hist is not None and not df_hist.empty:
+                # 找到精确匹配 date 的行 (若多行随手取最后一条更稳)
+                col_d = None
+                col_close = None
+                col_turn = None
+                for col in df_hist.columns:
+                    col_s = str(col)
+                    if col_d is None and col_s in ('日期',):
+                        col_d = col_s
+                    elif col_close is None and col_s in ('收盘',):
+                        col_close = col_s
+                    elif col_turn is None and col_s in ('成交额',):
+                        col_turn = col_s
+
+                # filter to exact date if 日期 col present (defensive)
+                if col_d is not None:
+                    matched = df_hist[df_hist[col_d].astype(str).str.startswith(iso_date)]
+                    if not matched.empty:
+                        row = matched.iloc[-1]
+                        close_price = _cell_float(row, col_close)
+                        secondary_turnover = _cell_float(row, col_turn)
+                        raw_hist = _row_to_jsonable(row, list(df_hist.columns))
+                else:
+                    # 列识别失败 fall through 用第一行
+                    row = df_hist.iloc[0]
+                    close_price = _cell_float(row, col_close)
+                    secondary_turnover = _cell_float(row, col_turn)
+                    raw_hist = _row_to_jsonable(row, list(df_hist.columns))
+
+            daily_row = nav_share_by_code.get(code, {})
+            results.append({
+                'trade_date': iso_date,
+                'etf_code': code,
+                'etf_name': daily_row.get('etf_name'),
+                'nav': daily_row.get('nav'),
+                'share_count': daily_row.get('share_count'),
+                'close_price': close_price,
+                'secondary_turnover': secondary_turnover,
+                'raw_payload': {
+                    'daily': daily_row.get('raw_daily'),
+                    'hist': raw_hist,
+                },
+            })
+
+        print(f'Parsed {len(results)} etf_flow rows for {pure_date}', file=sys.stderr)
+        return results
+    except Exception as e:
+        print(f'Error getting etf flow for {date}: {e}', file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return []
+
+
 def main():
     """Main entry point for command line calls"""
     if len(sys.argv) < 2:
@@ -4686,6 +4884,18 @@ def main():
                 sys.exit(1)
             date = sys.argv[2]
             result = get_margin_trading_detail(date)
+
+        elif command == "get_etf_flow":
+            # Args: <date> <codes_csv>  US-092
+            if len(sys.argv) < 4:
+                print(
+                    json.dumps({"error": "Missing date or codes_csv for get_etf_flow"}),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            date = sys.argv[2]
+            codes_csv = sys.argv[3]
+            result = get_etf_flow(date, codes_csv)
 
         else:
             print(json.dumps({"error": f"Unknown command: {command}"}), file=sys.stderr)
