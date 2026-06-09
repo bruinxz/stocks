@@ -16,23 +16,47 @@
 import { Op } from 'sequelize';
 import { Stock } from '../../../models/Stock';
 
-/** 把 "600519.SH" → "600519"；输入若已无后缀直接返回 */
+/**
+ * 把任意格式的 stock symbol 归一为无前后缀的纯 6 位 code:
+ *   - "600519.SH"  → "600519"  (老 suffix 格式)
+ *   - "sh.600519"  → "600519"  (新 prefix 格式 - akshare/tushare)
+ *   - "bj.920003"  → "920003"  (北交所)
+ *   - "600519"     → "600519"  (已无后缀直接返回)
+ *
+ * 这里同时兼容两种格式是因为 stocks 表里历史上既存过 .SH/.SZ 后缀也存过
+ * sh./sz./bj. 前缀（取决于哪个时期的 ingest 脚本入的）。FactorScore.stock_code
+ * 统一是纯 6 位 code，与 NorthboundHolding / LimitUpStock 等同款。
+ */
 export function stripSuffix(symbol: string | null | undefined): string {
   if (!symbol) return '';
-  const i = symbol.indexOf('.');
-  return i < 0 ? symbol : symbol.slice(0, i);
+  const s = symbol.trim();
+  if (!s) return '';
+  const i = s.indexOf('.');
+  if (i < 0) return s;
+  const before = s.slice(0, i);
+  const after = s.slice(i + 1);
+  // 前缀格式: prefix 是 "sh"/"sz"/"bj" (2 char alpha)，code 在 after
+  if (/^[a-zA-Z]{2}$/.test(before)) return after;
+  // 后缀格式: code 在 before
+  return before;
 }
 
-/** 反向：把 "600519" 还原为 Stock.symbol 形式（6 → SH，0/3 → SZ，4/8 → BJ） */
+/** 反向：把 "600519" 还原为 Stock.symbol 形式
+ *
+ * 当前 stocks 表里全部 5500+ 行用的是 `sh.600519` / `sz.000001` / `bj.920003`
+ * 前缀格式（AKShare ingest 留下的），所以 inferStockSymbol 也用前缀格式输出。
+ * 老的后缀格式 `600519.SH` 已不存在于表里，但 stripSuffix 仍兼容它以防回滚。
+ */
 export function inferStockSymbol(code: string): string {
   if (!code) return '';
-  if (code.includes('.')) return code; // 已带后缀直接返回
+  // 已带前缀或后缀直接返回
+  if (code.includes('.')) return code;
   const head = code[0];
-  if (head === '6') return `${code}.SH`;
-  if (head === '0' || head === '3') return `${code}.SZ`;
-  if (head === '4' || head === '8') return `${code}.BJ`;
-  // 北交所新股 92x、退市 9 开头也并入 BJ；兜底 .SZ 保证 Stock 查询不空
-  return `${code}.SZ`;
+  if (head === '6') return `sh.${code}`;
+  if (head === '0' || head === '3') return `sz.${code}`;
+  if (head === '4' || head === '8' || head === '9') return `bj.${code}`;
+  // 兜底 .sz 保证 Stock 查询不空
+  return `sz.${code}`;
 }
 
 /**

@@ -3,6 +3,7 @@ import { FactorScore } from '../../models/FactorScore';
 import { Stock } from '../../models/Stock';
 import { logger } from '../../utils/logger';
 import { factorRegistry, FactorRegistry } from './FactorRegistry';
+import { stripSuffix } from './library/_helpers';
 import { Factor, FactorComputeOutput, FactorContext } from './types';
 import { winsorize, zscore, percentileRanks } from './normalization';
 
@@ -292,8 +293,8 @@ export class FactorPipeline {
     for (const row of rows) {
       const symbol = row.symbol?.trim();
       if (!symbol) continue;
-      // 截掉 .SH / .SZ / .BJ 后缀
-      const code = symbol.split('.')[0];
+      // stripSuffix 处理双格式: "600519.SH" 截后缀 + "sh.600519" 截前缀
+      const code = stripSuffix(symbol);
       if (code) codes.add(code);
     }
     return Array.from(codes).sort();
