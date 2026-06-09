@@ -552,9 +552,7 @@ const program = new Command();
 
 program
   .name('integration-smoke-test')
-  .description(
-    '全链路集成验证 (US-100): 同步 → 因子 → 信号 → 模拟下单 → 风控 → 推送 dry-run'
-  )
+  .description('全链路集成验证 (US-100): 同步 → 因子 → 信号 → 模拟下单 → 风控 → 推送 dry-run')
   .option('--date <date>', '目标交易日 (YYYY-MM-DD); 缺省 = 今天')
   .option('--skip-sync', '跳过第 1 步同步 (库内已有数据时用)', false)
   .option('--skip-orders', '跳过第 4 步模拟下单 (只读模式)', false)
@@ -593,9 +591,9 @@ program
       // 打印摘要表
       logger.info('[smoke-test] step summary:');
       for (const r of records) {
-        const tag =
-          r.status === 'success' ? 'OK   ' : r.status === 'skipped' ? 'SKIP ' : 'FAIL ';
-        const line = `  ${tag} ${r.name.padEnd(8)} ${formatDuration(r.duration_ms).padStart(8)}` +
+        const tag = r.status === 'success' ? 'OK   ' : r.status === 'skipped' ? 'SKIP ' : 'FAIL ';
+        const line =
+          `  ${tag} ${r.name.padEnd(8)} ${formatDuration(r.duration_ms).padStart(8)}` +
           (r.detail ? ` :: ${r.detail}` : '') +
           (r.error ? ` :: ERROR ${r.error}` : '');
         if (r.status === 'failed') {

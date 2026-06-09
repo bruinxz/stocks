@@ -680,7 +680,9 @@ export class PaperTradingFacade {
         return Array.isArray(keys) ? keys : [];
       } catch (error: any) {
         logger.warn(
-          `applyAutomation: 加载 dry-run 策略列表失败: ${error?.message || error}（fail-OPEN，按非 dry-run 处理）`
+          `applyAutomation: 加载 dry-run 策略列表失败: ${
+            error?.message || error
+          }（fail-OPEN，按非 dry-run 处理）`
         );
         return [];
       }

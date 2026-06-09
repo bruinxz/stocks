@@ -28,7 +28,7 @@ export abstract class QuantStrategy {
    * 当 dryRun=true 时，PaperTradingFacade.applyAutomation 检测到后，
    * 只将策略产生的信号写入 QuantSignal 表，不调用 placeOrder 实际下单。
    */
-  public dryRun: boolean = false;
+  public dryRun = false;
 
   abstract evaluate(
     context: QuantStockContext,
