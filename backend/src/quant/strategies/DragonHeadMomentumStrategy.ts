@@ -794,12 +794,18 @@ export class DragonHeadMomentumStrategy extends QuantStrategy {
 
     for (const row of stage1) {
       const meta = metaMap.get(row.stock_code);
-      if (!meta || meta.circulating_market_cap == null) {
+      // 容忍 meta 缺失或 cap 缺失 (fail-OPEN): 当全市场 stocks.circulating_market_cap
+      // 未灌入时，整条策略会全部 fail。市值是辅助过滤，不应阻塞所有信号。
+      // 真正缺数据时设 cap=null，让下面的 cap 比较跳过（视为通过）。
+      let cap: number | null = null;
+      if (!meta) {
         filtered.fail_meta_missing += 1;
-        continue;
+        // 仍然继续，但 cap=null
+      } else {
+        cap = meta.circulating_market_cap;
       }
-      const cap = meta.circulating_market_cap;
-      if (cap < params.minCirculatingMarketCap || cap > params.maxCirculatingMarketCap) {
+      // 仅在 cap 有真实值时才做市值过滤
+      if (cap != null && (cap < params.minCirculatingMarketCap || cap > params.maxCirculatingMarketCap)) {
         filtered.fail_market_cap += 1;
         continue;
       }

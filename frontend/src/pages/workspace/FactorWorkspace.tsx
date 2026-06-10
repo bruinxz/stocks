@@ -789,6 +789,9 @@ const IndustryHeatmapTab: React.FC<{
   error: string | null;
   onReload: () => void;
 }> = ({ data, loading, error, onReload }) => {
+  const [viewMode, setViewMode] = useState<'chart' | 'table'>('table');
+  const [sortFactor, setSortFactor] = useState<string>('');
+
   // 计算 heatmap 高度：每个行业 ~28px，留 100px 给坐标轴 / 标题，最少 360px
   const chartHeight = useMemo(() => {
     const rows = data?.industries.length ?? 0;
@@ -796,6 +799,58 @@ const IndustryHeatmapTab: React.FC<{
   }, [data?.industries.length]);
 
   const option = useMemo(() => buildHeatmapOption(data), [data]);
+
+  // 构造 table 数据：每行 = 一个行业，列 = 各因子的平均 z_score
+  const tableRows = useMemo(() => {
+    if (!data) return [];
+    const cellMap = new Map<string, number>(); // key = `${industry}|${factor}`
+    const sampleMap = new Map<string, number>();
+    for (const c of data.cells) {
+      const k = `${c.industry}|${c.factor}`;
+      cellMap.set(k, c.avg_z);
+      sampleMap.set(k, c.sample_count ?? 0);
+    }
+    return data.industries.map((ind) => {
+      const row: Record<string, any> = { industry: ind };
+      let totalSample = 0;
+      let factorSum = 0;
+      let factorN = 0;
+      for (const f of data.factors) {
+        const k = `${ind}|${f}`;
+        const z = cellMap.get(k);
+        row[f] = z != null ? Number(z.toFixed(2)) : null;
+        if (z != null) {
+          factorSum += Math.abs(z);
+          factorN += 1;
+        }
+        totalSample += sampleMap.get(k) || 0;
+      }
+      row._sample_count = totalSample > 0 ? Math.round(totalSample / Math.max(1, data.factors.length)) : 0;
+      row._intensity = factorN > 0 ? factorSum / factorN : 0;
+      return row;
+    });
+  }, [data]);
+
+  const sortedRows = useMemo(() => {
+    if (!sortFactor || sortFactor === '_intensity') {
+      return [...tableRows].sort((a, b) => (b._intensity || 0) - (a._intensity || 0));
+    }
+    return [...tableRows].sort((a, b) => (b[sortFactor] ?? -Infinity) - (a[sortFactor] ?? -Infinity));
+  }, [tableRows, sortFactor]);
+
+  // 颜色映射: z 越正越红, 越负越绿
+  const zColor = (z: number | null): string => {
+    if (z == null) return '#f5f5f5';
+    const clamped = Math.max(-2, Math.min(2, z));
+    const intensity = Math.abs(clamped) / 2; // 0..1
+    if (clamped >= 0) {
+      // 红色系: rgba(207, 19, 34, 0..0.8)
+      return `rgba(207, 19, 34, ${0.1 + intensity * 0.5})`;
+    } else {
+      // 绿色系
+      return `rgba(20, 177, 67, ${0.1 + intensity * 0.5})`;
+    }
+  };
 
   if (loading && !data) {
     return (
@@ -825,13 +880,23 @@ const IndustryHeatmapTab: React.FC<{
         title={
           <Space>
             <AppstoreOutlined />
-            行业 × 因子热力图
+            行业 × 因子热力
             {data?.trade_date && <Tag color="blue">{data.trade_date}</Tag>}
+            <Tag>{data?.industries.length || 0} 个行业</Tag>
+            <Tag>{data?.factors.length || 0} 个因子</Tag>
           </Space>
         }
         extra={
           <Space>
             {data?.universe_size != null && <Tag color="purple">命中 {data.universe_size} 只</Tag>}
+            <Button.Group size="small">
+              <Button type={viewMode === 'table' ? 'primary' : 'default'} onClick={() => setViewMode('table')}>
+                表格
+              </Button>
+              <Button type={viewMode === 'chart' ? 'primary' : 'default'} onClick={() => setViewMode('chart')}>
+                热力图
+              </Button>
+            </Button.Group>
             <Button size="small" icon={<ReloadOutlined />} loading={loading} onClick={onReload}>
               刷新
             </Button>
@@ -845,7 +910,7 @@ const IndustryHeatmapTab: React.FC<{
               'factor_scores 表为空 — 请先运行 npm run compute:factors -- --date=YYYY-MM-DD'
             }
           />
-        ) : (
+        ) : viewMode === 'chart' ? (
           <>
             <ReactECharts
               option={option}
@@ -854,8 +919,76 @@ const IndustryHeatmapTab: React.FC<{
               opts={{ renderer: 'canvas' }}
             />
             <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 12 }}>
-              颜色越绿 = 该行业在该因子上横截面 z_score 平均值越高；越红越低。 所有数值仅基于
-              raw_value 非空（即该因子有实际计算结果）的股票样本。
+              颜色越红 = 该行业在该因子上横截面 z_score 平均值越高；越绿越低。
+            </Typography.Paragraph>
+          </>
+        ) : (
+          <>
+            <Space style={{ marginBottom: 12 }} wrap>
+              <span style={{ fontSize: 12, color: '#666' }}>排序：</span>
+              <Button.Group size="small">
+                <Button
+                  type={sortFactor === '_intensity' || !sortFactor ? 'primary' : 'default'}
+                  onClick={() => setSortFactor('_intensity')}
+                >
+                  综合强度
+                </Button>
+                {data.factors.slice(0, 8).map((f) => (
+                  <Button
+                    key={f}
+                    type={sortFactor === f ? 'primary' : 'default'}
+                    onClick={() => setSortFactor(f)}
+                  >
+                    {f}
+                  </Button>
+                ))}
+              </Button.Group>
+            </Space>
+            <Table
+              size="small"
+              rowKey="industry"
+              dataSource={sortedRows}
+              pagination={{ pageSize: 30, size: 'small', showSizeChanger: true, pageSizeOptions: ['20', '30', '50', '100'] }}
+              scroll={{ x: 'max-content', y: 600 }}
+              columns={[
+                {
+                  title: '行业',
+                  dataIndex: 'industry',
+                  width: 130,
+                  fixed: 'left',
+                  render: (v: string, r: any) => (
+                    <div>
+                      <div style={{ fontWeight: 500 }}>{v}</div>
+                      <div style={{ fontSize: 11, color: '#999' }}>{r._sample_count} 只样本</div>
+                    </div>
+                  ),
+                },
+                ...data.factors.map((f) => ({
+                  title: <span style={{ fontSize: 12 }}>{f}</span>,
+                  dataIndex: f,
+                  width: 78,
+                  align: 'center' as const,
+                  sorter: (a: any, b: any) => (a[f] ?? -Infinity) - (b[f] ?? -Infinity),
+                  render: (z: number | null) => (
+                    <div
+                      style={{
+                        background: zColor(z),
+                        padding: '4px 6px',
+                        borderRadius: 3,
+                        textAlign: 'center',
+                        fontSize: 12,
+                        fontWeight: z != null && Math.abs(z) > 1 ? 600 : 400,
+                        color: z != null && Math.abs(z) > 1.5 ? '#fff' : '#333',
+                      }}
+                    >
+                      {z != null ? z.toFixed(2) : '—'}
+                    </div>
+                  ),
+                })),
+              ]}
+            />
+            <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 12 }}>
+              单元格颜色越红 = z_score 越正（行业在该因子上整体占优），越绿 = 越负。点击表头排序。
             </Typography.Paragraph>
           </>
         )}

@@ -199,6 +199,13 @@ export interface EarningsSurpriseStockMeta {
 
 export class DefaultEarningsSurpriseDataSource implements EarningsSurpriseDataSource {
   async loadAnnouncedForecasts(tradeDate: string): Promise<EarningsForecastRow[]> {
+    // 业绩预告披露稀疏（一年仅 4 个集中期），严格 announce_date == tradeDate 大多数日返回空。
+    // 改为：拉过去 30 个自然日的预告，对同一 stock_code 取最新一条（按 announce_date DESC）。
+    // 这样在披露空窗期仍能复用近期预告做"业绩超预期"筛选。
+    const lookbackStart = new Date(`${tradeDate}T00:00:00Z`);
+    lookbackStart.setUTCDate(lookbackStart.getUTCDate() - 30);
+    const startIso = lookbackStart.toISOString().slice(0, 10);
+
     const rows = (await EarningsForecast.findAll({
       attributes: [
         'stock_code',
@@ -207,8 +214,14 @@ export class DefaultEarningsSurpriseDataSource implements EarningsSurpriseDataSo
         'profit_change_low',
         'profit_change_high',
         'report_period',
+        'announce_date',
       ],
-      where: { announce_date: tradeDate },
+      where: {
+        announce_date: {
+          [Op.between]: [startIso, tradeDate],
+        },
+      },
+      order: [['announce_date', 'DESC']],
       raw: true,
     })) as unknown as Array<{
       stock_code: string;
@@ -217,8 +230,19 @@ export class DefaultEarningsSurpriseDataSource implements EarningsSurpriseDataSo
       profit_change_low: number | string | null;
       profit_change_high: number | string | null;
       report_period: string;
+      announce_date: string;
     }>;
-    return rows.map(r => ({
+
+    // 按 stock_code 去重（保留最新 announce_date 的那条）
+    const seen = new Set<string>();
+    const deduped: typeof rows = [];
+    for (const r of rows) {
+      if (seen.has(r.stock_code)) continue;
+      seen.add(r.stock_code);
+      deduped.push(r);
+    }
+
+    return deduped.map(r => ({
       stock_code: r.stock_code,
       stock_name: r.stock_name,
       forecast_type: r.forecast_type,
@@ -598,20 +622,23 @@ export class EarningsSurpriseStrategy extends QuantStrategy {
         continue;
       }
       const delta = northboundDeltas.get(f.stock_code);
-      if (delta == null || !Number.isFinite(delta)) {
-        filtered.fail_northbound_missing += 1;
-        continue;
-      }
-      if (delta <= 0) {
+      // 容忍北向缺失 (fail-OPEN): 当全市场 northbound_holdings 表为空（AKShare 接口失效）时，
+      // 整条策略会全部 fail。北向是双确认，缺数据时降级为单确认（业绩超预期）即可入场。
+      // 真有数据时仍要求 delta > 0；只有 null/undefined 才放行。
+      if (delta != null && Number.isFinite(delta) && delta <= 0) {
         filtered.fail_northbound_not_increased += 1;
         continue;
+      }
+      if (delta == null || !Number.isFinite(delta)) {
+        filtered.fail_northbound_missing += 1;
+        // 不再 continue —— 缺数据降级放行
       }
       const ref = closeMap.get(f.stock_code) ?? 0;
       candidates.push({
         stock_code: f.stock_code,
         forecast: f,
         meta,
-        northbound_delta: delta,
+        northbound_delta: delta ?? 0,  // 缺数据时用 0 占位
         reference_price: ref,
       });
     }

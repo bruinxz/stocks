@@ -14,11 +14,15 @@ interface HealthDetail {
 }
 
 interface DataHealth {
-  source: string;
-  latest_date: string | null;
-  rows_today: number;
-  status: 'green' | 'yellow' | 'red';
-  lag_days: number | null;
+  key: string;
+  display_name: string;
+  category?: string;
+  latest_data_date: string | null;
+  last_sync_at: string | null;
+  record_count: number;
+  lag_trading_days: number | null;
+  level: 'green' | 'yellow' | 'red' | 'unknown';
+  description?: string;
 }
 
 const statusTag = (s: 'ok' | 'fail' | 'unknown') => {
@@ -46,16 +50,23 @@ const HealthMonitor: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      // /health/detail 是无认证的，可以直接 fetch（绕开 api wrapper）
-      const detailResp = await fetch(
-        `${(api.defaults.baseURL || '').replace(/\/api$/, '')}/health/detail`
-      );
-      const detail = await detailResp.json();
+      // /health/detail 是无认证、不在 /api 前缀下的。axios baseURL 设的是 /api，
+      // 用相对 url 会拼成 /api/health/detail (404 HTML)。手动算根 url。
+      const apiBase = (api.defaults.baseURL || '').replace(/\/api\/?$/, '');
+      const detailResp = await fetch(`${apiBase}/health/detail`);
+      if (!detailResp.ok) throw new Error(`/health/detail HTTP ${detailResp.status}`);
+      const detailText = await detailResp.text();
+      let detail: HealthDetail;
+      try {
+        detail = JSON.parse(detailText);
+      } catch (e) {
+        throw new Error('/health/detail returned non-JSON (server may be misrouting)');
+      }
       setHealth(detail);
 
       // 数据源健康
       const dh = await api.get('/data/health-status');
-      const arr = (dh.data?.data?.records || dh.data?.data || []) as any[];
+      const arr = (dh.data?.data?.cards || dh.data?.data?.records || dh.data?.data || []) as any[];
       setDataHealth(arr);
     } catch (err: any) {
       setError(err?.message || String(err));
@@ -195,29 +206,38 @@ const HealthMonitor: React.FC = () => {
           <Empty description="暂无数据源健康记录" />
         ) : (
           <Row gutter={[12, 12]}>
-            {dataHealth.map((d) => (
-              <Col xs={12} sm={8} md={6} key={d.source}>
-                <Card
-                  size="small"
-                  title={d.source}
-                  extra={
-                    d.status === 'green' ? <Tag color="green">正常</Tag> :
-                    d.status === 'yellow' ? <Tag color="orange">滞后</Tag> :
-                    <Tag color="red">异常</Tag>
-                  }
-                >
-                  <Statistic title="最新日期" value={d.latest_date || '—'} valueStyle={{ fontSize: 14 }} />
-                  <div style={{ marginTop: 8 }}>
-                    <Space>
-                      <span>滞后</span>
-                      <Tag color={d.lag_days && d.lag_days > 3 ? 'red' : 'blue'}>
-                        {d.lag_days != null ? `${d.lag_days} 天` : '—'}
-                      </Tag>
-                    </Space>
-                  </div>
-                </Card>
-              </Col>
-            ))}
+            {[...dataHealth]
+              .sort((a, b) => {
+                const order = { red: 0, yellow: 1, unknown: 2, green: 3 };
+                return (order[a.level] ?? 9) - (order[b.level] ?? 9);
+              })
+              .map((d) => (
+                <Col xs={12} sm={8} md={6} key={d.key}>
+                  <Card
+                    size="small"
+                    title={<span style={{ fontSize: 13 }}>{d.display_name}</span>}
+                    extra={
+                      d.level === 'green' ? <Tag color="green">正常</Tag> :
+                      d.level === 'yellow' ? <Tag color="orange">滞后</Tag> :
+                      d.level === 'red' ? <Tag color="red">严重</Tag> :
+                      <Tag>未知</Tag>
+                    }
+                  >
+                    <Statistic title="最新数据日" value={d.latest_data_date || '—'} valueStyle={{ fontSize: 13 }} />
+                    <div style={{ marginTop: 6 }}>
+                      <Space size={4}>
+                        <span style={{ fontSize: 12 }}>滞后</span>
+                        <Tag color={d.lag_trading_days != null && d.lag_trading_days > 3 ? 'red' : d.lag_trading_days != null && d.lag_trading_days > 0 ? 'orange' : 'blue'} style={{ fontSize: 11 }}>
+                          {d.lag_trading_days != null ? `${d.lag_trading_days} 个交易日` : '—'}
+                        </Tag>
+                      </Space>
+                    </div>
+                    <div style={{ marginTop: 4, fontSize: 11, color: '#999' }}>
+                      行数：{d.record_count.toLocaleString()}
+                    </div>
+                  </Card>
+                </Col>
+              ))}
           </Row>
         )}
       </Card>
