@@ -3024,6 +3024,51 @@ class SchedulerService {
             `total_cascade=${cleanupResult.total_cascade_count} ` +
             `whitelist_skipped=${cleanupResult.whitelist_skipped_total} errors=${cleanupResult.errors.length}`
         );
+      } else if (task.type === 'EXTRA_DIMS_SYNC') {
+        // 新维度同步 — 走 child_process 调用 sync:extra-dims CLI 复用既有逻辑
+        const dims: string[] = Array.isArray(parameters.dims)
+          ? parameters.dims
+          : ['macro', 'qvix', 'block'];
+        const blockDays: number = this.toPositiveInt(parameters.block_days, 7, 60);
+        const results: Record<string, string> = {};
+        const { spawnSync } = require('child_process');
+        const path = require('path');
+        const scriptPath = path.resolve(
+          __dirname,
+          '..',
+          'scripts',
+          'sync-extra-dims.ts'
+        );
+        for (const dim of dims) {
+          const args = ['node_modules/.bin/ts-node', '--transpile-only', scriptPath, `--dim=${dim}`];
+          if (dim === 'block') {
+            const today = moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
+            const start = moment().tz('Asia/Shanghai').subtract(blockDays, 'days').format('YYYY-MM-DD');
+            args.push(`--start=${start}`, `--end=${today}`);
+          }
+          const t0 = Date.now();
+          const r = spawnSync('/usr/bin/node', args, {
+            cwd: path.resolve(__dirname, '..', '..'),
+            encoding: 'utf-8',
+            timeout: 10 * 60_000,
+            maxBuffer: 64 * 1024 * 1024,
+          });
+          const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+          if (r.status === 0) {
+            results[dim] = `OK ${elapsed}s`;
+            logger.info(`[EXTRA_DIMS_SYNC] ${dim} OK ${elapsed}s`);
+          } else {
+            results[dim] = `FAIL status=${r.status} ${(r.stderr || '').substring(0, 200)}`;
+            logger.warn(`[EXTRA_DIMS_SYNC] ${dim} FAIL status=${r.status}`);
+          }
+        }
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: dims.length,
+          success_count: Object.values(results).filter(v => v.startsWith('OK')).length,
+          failed_count: Object.values(results).filter(v => !v.startsWith('OK')).length,
+          result_summary: { scenario: 'extra_dims_sync', dims, results },
+        });
+        logger.info(`[EXTRA_DIMS_SYNC] done: ${JSON.stringify(results)}`);
       } else {
         throw new Error(`Unsupported task type: ${task.type}`);
       }
@@ -3967,6 +4012,19 @@ class SchedulerService {
           whitelist_strategies: [],
           dry_run: false,
           report_to_feishu: true,
+        },
+      },
+      {
+        // 新维度数据同步（宏观/期权波动率/大宗交易）
+        // 每个交易日盘后 16:30 跑，足够覆盖当日宏观/QVIX 更新
+        // fund 维度需要 --year 参数，单独手动 / 季报披露后跑
+        name: '新维度数据同步',
+        type: 'EXTRA_DIMS_SYNC',
+        cron_expression: '30 16 * * 1-5',
+        is_active: true,
+        parameters: {
+          dims: ['macro', 'qvix', 'block'],
+          block_days: 7,
         },
       },
     ];
