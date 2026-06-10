@@ -70,11 +70,21 @@ class RealtimeIndexService {
     const low = Number(fields[5]);
     const volume = Number(fields[8]);
     const amount = Number(fields[9]);
-    // 新浪指数：date 在倒数第 3 (有可能尾部有 "00,")，time 倒数第 2
-    // 实测格式 "...,2026-06-10,14:49:14,00,"
-    const trailing = fields.slice(-4);
-    const date = trailing[1] || '';
-    const time = trailing[2] || '';
+    // 新浪指数尾部固定: ...,date,time,00,
+    // split 后会有空字符串结尾 → 过滤
+    const cleanFields = fields.filter((_, i) => i === 0 || fields[i] !== '');
+    // 找 YYYY-MM-DD 格式的 date 索引
+    let dateIdx = -1;
+    for (let i = cleanFields.length - 1; i >= 0; i--) {
+      if (/^\d{4}-\d{2}-\d{2}$/.test(cleanFields[i])) {
+        dateIdx = i;
+        break;
+      }
+    }
+    const date = dateIdx >= 0 ? cleanFields[dateIdx] : '';
+    const time = dateIdx >= 0 && cleanFields[dateIdx + 1] && /^\d{1,2}:\d{2}/.test(cleanFields[dateIdx + 1])
+      ? cleanFields[dateIdx + 1]
+      : '';
 
     if (!Number.isFinite(current) || !Number.isFinite(prevClose) || prevClose === 0) {
       return null;
