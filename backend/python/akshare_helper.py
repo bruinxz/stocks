@@ -4772,7 +4772,7 @@ def get_block_trades(start_date: str, end_date: str) -> List[Dict[str, Any]]:
                     'price': price,
                     'close_price': close,
                     'volume': safe_float_value(r.get('成交量')),
-                    'amount': safe_float_value(r.get('成交金额')),
+                    'amount': safe_float_value(r.get('成交额')),  # AKShare 实际列名是 "成交额" 而非 "成交金额"
                     'premium_pct': premium_pct,
                     'buyer': str(r.get('买方营业部', '')).strip(),
                     'seller': str(r.get('卖方营业部', '')).strip(),
