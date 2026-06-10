@@ -229,8 +229,14 @@ const opts = program.opts();
       total += await syncBlockTrades(opts.start, opts.end);
     }
     if (opts.dim === 'fund') {
-      const codes = (opts.funds || '').split(',').map((s: string) => s.trim()).filter(Boolean);
-      if (codes.length === 0) throw new Error('--funds=<csv> 必须指定');
+      // 默认 universe = 12 只有代表性的主动权益/灵活配置基金
+      const DEFAULT_FUNDS = [
+        '110011', '161725', '519005', '001186', '005827', '270002',
+        '003095', '163406', '002251', '519066', '110022', '161005',
+      ];
+      const codes = opts.funds
+        ? String(opts.funds).split(',').map((s: string) => s.trim()).filter(Boolean)
+        : DEFAULT_FUNDS;
       total += await syncFundHoldings(codes, opts.date);
     }
     logger.info(`✅ sync-extra-dims done, total upserted: ${total}`);
