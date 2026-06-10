@@ -135,7 +135,7 @@ class FeishuTaskReportService {
 
   async reportQuantDailyPipeline(
     _result: any,
-    _options: { task_type?: string; error?: any } = {}
+    _options: { task_type?: string; record_type?: string; error?: any } = {}
   ): Promise<null> {
     this.logOnce('reportQuantDailyPipeline');
     return null;
@@ -143,7 +143,7 @@ class FeishuTaskReportService {
 
   async reportQuantOpenWatchdog(
     _result: any,
-    _options: { task_type?: string; error?: any } = {}
+    _options: { task_type?: string; record_type?: string; error?: any } = {}
   ): Promise<null> {
     this.logOnce('reportQuantOpenWatchdog');
     return null;
@@ -151,7 +151,7 @@ class FeishuTaskReportService {
 
   async reportPaperTradingAutomation(
     _result: any,
-    _options: { task_type?: string; error?: any } = {}
+    _options: { task_type?: string; record_type?: string; error?: any } = {}
   ): Promise<null> {
     this.logOnce('reportPaperTradingAutomation');
     return null;
@@ -159,7 +159,7 @@ class FeishuTaskReportService {
 
   async reportPaperTradingRiskCheck(
     _result: any,
-    _options: { task_type?: string; error?: any } = {}
+    _options: { task_type?: string; record_type?: string; error?: any } = {}
   ): Promise<null> {
     this.logOnce('reportPaperTradingRiskCheck');
     return null;
@@ -167,7 +167,7 @@ class FeishuTaskReportService {
 
   async reportPaperTradingAttribution(
     _result: any,
-    _options: { task_type?: string; error?: any } = {}
+    _options: { task_type?: string; record_type?: string; error?: any } = {}
   ): Promise<null> {
     this.logOnce('reportPaperTradingAttribution');
     return null;
@@ -175,7 +175,7 @@ class FeishuTaskReportService {
 
   async reportRecommendationTradeOutcomes(
     _result: any,
-    _options: { record_type?: string; error?: any } = {}
+    _options: { record_type?: string; task_type?: string; error?: any } = {}
   ): Promise<null> {
     this.logOnce('reportRecommendationTradeOutcomes');
     return null;
