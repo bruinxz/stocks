@@ -2,6 +2,8 @@ import { Op } from 'sequelize';
 import moment from 'moment-timezone';
 import { Stock } from '../models/Stock';
 import { DailyBar } from '../models/DailyBar';
+import { MacroIndicator } from '../models/MacroIndicator';
+import { OptionQvix } from '../models/OptionQvix';
 import { DEFAULT_BENCHMARK_INDICES, benchmarkIndexService } from './BenchmarkIndexService';
 import { logger } from '../utils/logger';
 
@@ -55,6 +57,22 @@ export interface MarketEnvironmentSnapshot {
     above_ma20_ratio: number;
     strong_industry_count: number;
     weak_industry_count: number;
+  };
+  /** 新增：宏观经济指标快照 — PMI / M2 增速 / 10Y 国债 / SHIBOR */
+  macro?: {
+    pmi_latest: number | null;          // 最新 PMI 值 (50 是荣枯线)
+    pmi_change_3m: number | null;        // 近 3 个月 PMI 变化 (+/-)
+    m2_yoy: number | null;               // M2 同比 (%)
+    treasury_10y: number | null;         // 10Y 国债收益率 (%)
+    shibor_overnight: number | null;     // 隔夜 shibor (%)
+    cpi_yoy: number | null;              // CPI 同比 (%)
+  };
+  /** 新增：QVIX 期权波动率指数 — 300ETF QVIX 是 A 股"恐慌指数" */
+  qvix?: {
+    qvix_300etf_latest: number | null;       // 最新 300ETF QVIX
+    qvix_300etf_change_5d_pct: number | null; // 近 5 日变化 %
+    qvix_300etf_percentile_60d: number | null; // 近 60 日分位 (0-100)
+    is_panic: boolean;                        // QVIX 显著上行 → 恐慌信号
   };
   industry?: {
     name?: string;
@@ -136,13 +154,33 @@ class MarketEnvironmentService {
     const vsMa20 = ma20 > 0 ? pct(latest, ma20) : 0;
     const vsMa60 = ma60 > 0 ? pct(latest, ma60) : 0;
     const drawdown = maxDrawdown(closes.slice(-60));
-    const breadth = await this.resolveBreadth(endDate, ret20);
+    const [breadth, macro, qvix] = await Promise.all([
+      this.resolveBreadth(endDate, ret20),
+      this.resolveMacroFeatures(endDate),
+      this.resolveQvixFeatures(endDate),
+    ]);
 
     let regime: MarketEnvironmentSnapshot['market_regime'] = 'range';
     if (!latest || closes.length < 20) regime = 'unknown';
-    else if (ret20 <= -6 || drawdown <= -12) regime = 'stress';
+    // === stress 触发条件升级 ===
+    // 原有: ret20 ≤ -6% 或 drawdown ≤ -12% 触发
+    // 新增: QVIX 飙升 → 隐含波动率提升 → 市场恐慌（先行指标，比 ret20 更早）
+    else if (
+      ret20 <= -6 ||
+      drawdown <= -12 ||
+      (qvix?.is_panic && ret20 <= -2) // QVIX 恐慌 + 已经有 2% 跌幅，确认 stress
+    )
+      regime = 'stress';
     else if (ret60 < -8 && vsMa60 < -3) regime = 'bear';
-    else if (ret20 > 5 && vsMa20 > 1.5 && breadth.up_20d_ratio >= 48) regime = 'bull';
+    // === bull 触发条件保守化 ===
+    // PMI < 50（经济收缩）时即使指数涨也别 bull
+    else if (
+      ret20 > 5 &&
+      vsMa20 > 1.5 &&
+      breadth.up_20d_ratio >= 48 &&
+      !(macro?.pmi_latest != null && macro.pmi_latest < 49)
+    )
+      regime = 'bull';
     else if (ret20 > 2 && ret60 < 0) regime = 'rebound';
 
     return {
@@ -158,7 +196,113 @@ class MarketEnvironmentService {
       benchmark_price_vs_ma20_pct: roundNumber(vsMa20, 4),
       benchmark_price_vs_ma60_pct: roundNumber(vsMa60, 4),
       breadth,
+      macro: macro || undefined,
+      qvix: qvix || undefined,
     };
+  }
+
+  /**
+   * 拉宏观指标快照（PMI / M2 / 10Y国债 / SHIBOR / CPI）
+   * 容错：任一指标缺失 → null，不阻塞其他.
+   * 数据来源：MacroIndicator 表（npm run sync:extra-dims --dim=macro 同步）.
+   */
+  private async resolveMacroFeatures(asOf: string): Promise<{
+    pmi_latest: number | null;
+    pmi_change_3m: number | null;
+    m2_yoy: number | null;
+    treasury_10y: number | null;
+    shibor_overnight: number | null;
+    cpi_yoy: number | null;
+  } | null> {
+    try {
+      const fetchLatest = async (key: string) => {
+        const row = (await MacroIndicator.findOne({
+          where: { indicator_key: key, observation_date: { [Op.lte]: asOf } },
+          order: [['observation_date', 'DESC']],
+          raw: true,
+        })) as any;
+        return row ? { value: Number(row.value), date: row.observation_date, yoy: row.yoy_pct } : null;
+      };
+      const fetchNthBefore = async (key: string, n: number) => {
+        const rows = (await MacroIndicator.findAll({
+          where: { indicator_key: key, observation_date: { [Op.lte]: asOf } },
+          order: [['observation_date', 'DESC']],
+          limit: n + 1,
+          raw: true,
+        })) as any[];
+        return rows[n] ? Number(rows[n].value) : null;
+      };
+
+      const [pmi, pmi3m, m2, treas10y, shibor, cpi] = await Promise.all([
+        fetchLatest('pmi'),
+        fetchNthBefore('pmi', 3),
+        fetchLatest('m2'),
+        fetchLatest('treasury_10y_china'),
+        fetchLatest('shibor_overnight'),
+        fetchLatest('cpi'),
+      ]);
+
+      return {
+        pmi_latest: pmi ? roundNumber(pmi.value, 2) : null,
+        pmi_change_3m:
+          pmi && pmi3m != null ? roundNumber(pmi.value - pmi3m, 2) : null,
+        m2_yoy: m2 && m2.yoy != null ? roundNumber(Number(m2.yoy), 2) : null,
+        treasury_10y: treas10y ? roundNumber(treas10y.value, 4) : null,
+        shibor_overnight: shibor ? roundNumber(shibor.value, 4) : null,
+        cpi_yoy: cpi ? roundNumber(cpi.value, 2) : null,
+      };
+    } catch (err: any) {
+      logger.debug(`resolveMacroFeatures failed: ${err?.message || err}`);
+      return null;
+    }
+  }
+
+  /**
+   * QVIX 期权波动率指数 — 300ETF QVIX 作为 A 股恐慌指数
+   * - latest：最新一日
+   * - change_5d_pct：近 5 日 QVIX 变化
+   * - percentile_60d：近 60 日分位 (0-100)
+   * - is_panic：QVIX 处于 60 日内 80% 分位 + 近 5 日上升 > 10%
+   */
+  private async resolveQvixFeatures(asOf: string): Promise<{
+    qvix_300etf_latest: number | null;
+    qvix_300etf_change_5d_pct: number | null;
+    qvix_300etf_percentile_60d: number | null;
+    is_panic: boolean;
+  } | null> {
+    try {
+      const rows = (await OptionQvix.findAll({
+        where: { underlying: '300etf', observation_date: { [Op.lte]: asOf } },
+        order: [['observation_date', 'DESC']],
+        limit: 60,
+        raw: true,
+      })) as any[];
+      if (rows.length === 0) return null;
+      const closes = rows.map(r => Number(r.close)).filter(Number.isFinite);
+      if (closes.length === 0) return null;
+
+      const latest = closes[0];
+      const fiveDayAgo = closes[5];
+      const change5dPct =
+        fiveDayAgo && fiveDayAgo > 0 ? ((latest - fiveDayAgo) / fiveDayAgo) * 100 : null;
+
+      // 60日分位
+      const sortedAsc = [...closes].sort((a, b) => a - b);
+      const idx = sortedAsc.findIndex(v => v >= latest);
+      const percentile60d = idx >= 0 ? (idx / sortedAsc.length) * 100 : 100;
+
+      const isPanic = percentile60d >= 80 && (change5dPct ?? 0) >= 10;
+
+      return {
+        qvix_300etf_latest: roundNumber(latest, 2),
+        qvix_300etf_change_5d_pct: change5dPct != null ? roundNumber(change5dPct, 2) : null,
+        qvix_300etf_percentile_60d: roundNumber(percentile60d, 1),
+        is_panic: isPanic,
+      };
+    } catch (err: any) {
+      logger.debug(`resolveQvixFeatures failed: ${err?.message || err}`);
+      return null;
+    }
   }
 
   private async resolveIndustryState(
