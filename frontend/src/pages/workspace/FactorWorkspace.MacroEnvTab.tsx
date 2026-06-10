@@ -33,7 +33,13 @@ interface RegimeSnapshot {
   benchmark_drawdown_60d_pct: number;
   macro?: any;
   qvix?: any;
-  breadth: { up_20d_ratio: number; above_ma20_ratio: number; sample_count: number };
+  breadth: {
+    up_20d_ratio: number;
+    above_ma20_ratio: number;
+    sample_count: number;
+    strong_industry_count?: number;
+    weak_industry_count?: number;
+  };
 }
 
 const INDICATOR_LABELS: Record<string, string> = {
