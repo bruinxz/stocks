@@ -141,9 +141,10 @@ function buildBaseSchema(): Joi.ObjectSchema {
     // ----------- 可选: Feishu Bot -----------
     FEISHU_APP_ID: Joi.string().allow('').optional(),
     FEISHU_APP_SECRET: Joi.string().allow('').optional(),
-    FEISHU_BITABLE_APP_TOKEN: Joi.string().allow('').optional(),
-    FEISHU_BITABLE_TABLE_ID: Joi.string().allow('').optional(),
-    FEISHU_BITABLE_URL: Joi.string().allow('').optional(),
+    // 多维表格 (Bitable) 已弃用 — 改走 webhook 卡片统一推送
+    FEISHU_BITABLE_APP_TOKEN: Joi.string().allow('').optional().strip(),
+    FEISHU_BITABLE_TABLE_ID: Joi.string().allow('').optional().strip(),
+    FEISHU_BITABLE_URL: Joi.string().allow('').optional().strip(),
     FEISHU_MESSAGE_MAX_LENGTH: Joi.number().integer().min(100).max(50000).default(12000),
     FEISHU_RECOMMENDATION_BOT_WEBHOOK: Joi.string().uri().allow('').optional(),
     FEISHU_BOT_WEBHOOK: Joi.string().uri().allow('').optional(),

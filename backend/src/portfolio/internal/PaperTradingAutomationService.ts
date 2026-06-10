@@ -2362,8 +2362,10 @@ class PaperTradingAutomationService {
       archive,
     };
 
+    // 自动跟单结果默认不推 webhook 摘要（用户已从 DailyTradingDigest 收到当日成交）
+    // 仅当 caller 显式 report_to_feishu=true 才推
     if (
-      toBoolean(options.report_to_feishu, true) &&
+      toBoolean(options.report_to_feishu, false) &&
       options.notify_to_feishu_bot !== false &&
       (refreshRecommendations || Array.isArray((syncResult as any).generated?.recommendations))
     ) {
@@ -2759,7 +2761,9 @@ class PaperTradingAutomationService {
         record_type: dry_run ? '模拟盘风控预演' : '模拟盘风控退出',
       });
 
-      if (options.notify_to_feishu_bot !== false) {
+      // 风控退出摘要：默认不推（风控触发本身已经通过 RiskAlert HIGH webhook 推过了）
+      // 仅当 caller 显式 notify_to_feishu_bot=true 才发整体汇总
+      if (options.notify_to_feishu_bot === true) {
         await feishuBotWebhookService.sendRecommendationSummary({
           scenario: 'paper_trading_risk_check',
           record_type: dry_run ? '模拟盘风控预演' : '模拟盘风控退出',

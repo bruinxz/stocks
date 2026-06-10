@@ -754,7 +754,9 @@ export class QuantFusionService {
         strategy_allocation_policy: strategyAllocationPolicy,
         message: '量化运行时存在风险项，本轮只归档观察信号，不执行模拟买入。',
       };
-      if (options.report_to_feishu !== false && options.notify_to_feishu_bot !== false) {
+      // 量化扫描摘要默认不推；用户已经从 PAPER_TRADING_DAILY_DIGEST (15:30) 收到当日核心信息
+      // 仅当 caller 显式 report_to_feishu=true 才发，避免 noise
+      if (options.report_to_feishu === true && options.notify_to_feishu_bot !== false) {
         await feishuBotWebhookService.sendRecommendationSummary({
           scenario: 'quant_daily_pipeline',
           record_type: '量化交易场景推荐',
@@ -1096,7 +1098,8 @@ export class QuantFusionService {
       }),
     };
 
-    if (options.report_to_feishu !== false && options.notify_to_feishu_bot !== false) {
+    // 同上：默认不推，仅显式 true 才发
+    if (options.report_to_feishu === true && options.notify_to_feishu_bot !== false) {
       await feishuBotWebhookService.sendRecommendationSummary({
         scenario: 'quant_daily_pipeline',
         record_type: '量化交易场景推荐',

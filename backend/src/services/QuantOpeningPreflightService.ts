@@ -201,11 +201,7 @@ class QuantOpeningPreflightService {
       toNumber(factorCoverage.coverage_rate.money_flow),
       toNumber(factorCoverage.coverage_rate.fundamental)
     );
-    const feishuTableConfigured = Boolean(
-      process.env.FEISHU_APP_TOKEN ||
-        process.env.FEISHU_BITABLE_APP_TOKEN ||
-        process.env.FEISHU_BASE_APP_TOKEN
-    );
+    const feishuTableConfigured = true; // 多维表格已弃用，永远 true
     const feishuBotConfigured = Boolean(process.env.FEISHU_RECOMMENDATION_BOT_WEBHOOK);
     const feishuBotDisabled = process.env.DISABLE_FEISHU_BOT_WEBHOOK === 'true';
     const adoptedCount = toNumber((activeScanParams as any)?.summary?.adopted_strategy_count);

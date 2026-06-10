@@ -259,12 +259,7 @@ class OpeningReadinessService {
     const exposurePct = toNumber(riskMetrics.exposure_pct);
     const drawdownPct = Math.abs(toNumber(riskMetrics.drawdown_pct));
 
-    const feishuTableReady = Boolean(
-      process.env.FEISHU_BITABLE_URL ||
-        process.env.FEISHU_BITABLE_APP_TOKEN ||
-        process.env.FEISHU_BASE_APP_TOKEN ||
-        process.env.FEISHU_APP_TOKEN
-    );
+    const feishuTableReady = true; // 多维表格已弃用，永远 true 以避免误报
     const feishuBotReady =
       Boolean(process.env.FEISHU_RECOMMENDATION_BOT_WEBHOOK || process.env.FEISHU_BOT_WEBHOOK) &&
       !boolEnv(process.env.DISABLE_FEISHU_BOT_WEBHOOK, false);

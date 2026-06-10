@@ -1973,7 +1973,8 @@ class AutomatedRecommendationLoopService {
         }
       : null;
 
-    if (options.report_to_feishu !== false) {
+    // bitable 写入已 stub no-op；webhook 摘要默认关，仅 caller 显式 true 才推
+    if (options.report_to_feishu === true) {
       await feishuTaskReportService.reportAutomatedRecommendationLoop(result, {
         record_type: options.record_type || '全市场荐股闭环',
       });

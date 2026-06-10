@@ -211,8 +211,7 @@ const SettingsWorkspace: React.FC = () => {
       ? [
           cfgForKpi.feishu.enabled ? '飞书' : null,
           cfgForKpi.email.enabled ? '邮件' : null,
-          cfgForKpi.wechat.enabled ? '微信' : null,
-          cfgForKpi.sms.enabled ? '短信' : null,
+          // wechat / sms 后端 dispatch 暂未接入，不参与 KPI 计数
         ].filter(Boolean).length
       : 0;
     // 推送渠道页额外显示"已订阅事件数"——所有矩阵格中 enabled=true 的总数
@@ -1300,8 +1299,10 @@ const SettingsWorkspace: React.FC = () => {
     }> = [
       { key: 'feishu', label: '飞书机器人' },
       { key: 'email', label: '邮件' },
-      { key: 'wechat', label: '微信公众号' },
-      { key: 'sms', label: '阿里云短信' },
+      // 微信公众号 / 阿里云短信 后端 dispatch 路径未接入，暂时从矩阵 UI 隐藏
+      // （绑定 / 测试入口仍保留在 '通知设置' tab，等接入后再放回来）
+      // { key: 'wechat', label: '微信公众号' },
+      // { key: 'sms', label: '阿里云短信' },
     ];
 
     return (
