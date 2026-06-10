@@ -510,6 +510,10 @@ const SignalsPanel: React.FC<{ data: TodaySignalsData }> = ({ data }) => {
             tradeDate={data.dragon_head.trade_date}
             candidates={data.dragon_head.candidates}
             eligibleCount={data.dragon_head.eligible_count}
+            limitUpPoolSize={data.dragon_head.limit_up_pool_size}
+            marketSentimentValue={data.dragon_head.market_sentiment_value}
+            marketSentimentBlocked={data.dragon_head.market_sentiment_blocked}
+            filterStats={data.dragon_head.filter_stats}
             error={data.dragon_head.error}
           />
         </Col>
@@ -787,9 +791,43 @@ const DragonHeadCard: React.FC<{
   tradeDate: string | null;
   candidates: DragonHeadSignal[];
   eligibleCount: number;
+  limitUpPoolSize?: number;
+  marketSentimentValue?: number | null;
+  marketSentimentBlocked?: boolean;
+  filterStats?: Record<string, number>;
   error?: string;
-}> = ({ tradeDate, candidates, eligibleCount, error }) => {
+}> = ({ tradeDate, candidates, eligibleCount, limitUpPoolSize, marketSentimentValue, marketSentimentBlocked, filterStats, error }) => {
   const isMobile = useIsMobile();
+  // 自动诊断 0 候选原因
+  const diagnosisReason = useMemo(() => {
+    if (candidates.length > 0) return null;
+    if (marketSentimentBlocked) {
+      return `市场情绪指数 ${marketSentimentValue?.toFixed(1)} 低于阈值，已暂停新开仓。已有持仓正常出场。`;
+    }
+    if (limitUpPoolSize === 0) {
+      return `当日无涨停股。等待今日盘后龙虎榜 + 涨停板数据同步。`;
+    }
+    if (filterStats) {
+      const topFail = Object.entries(filterStats)
+        .filter(([, v]) => v > 0)
+        .sort((a, b) => b[1] - a[1])[0];
+      if (topFail) {
+        const labelMap: Record<string, string> = {
+          fail_industry_top: '行业不在 top10',
+          fail_industry_unknown: '股票行业未知',
+          fail_continuous_days: '连板数超范围',
+          fail_meta_missing: '缺市值数据',
+          fail_market_cap: '市值不在 30-200 亿',
+          fail_famous_yz: '无游资席位净流入',
+          one_word_board: '一字板（无法参与）',
+          sentiment_blocked: '市场情绪低被阻塞',
+        };
+        return `涨停池 ${limitUpPoolSize} 股，全部被过滤。主要原因: ${labelMap[topFail[0]] || topFail[0]}（${topFail[1]} 只）`;
+      }
+    }
+    return null;
+  }, [candidates.length, limitUpPoolSize, marketSentimentBlocked, marketSentimentValue, filterStats]);
+
   return (
     <Card
       size="small"
@@ -798,6 +836,13 @@ const DragonHeadCard: React.FC<{
           <RiseOutlined style={{ color: '#fa541c' }} />
           <span>短线龙头候选</span>
           {tradeDate && <Tag color="orange">{tradeDate}</Tag>}
+          {marketSentimentValue != null && (
+            <Tooltip title={`市场情绪 ${marketSentimentValue.toFixed(1)} / 阈值 30`}>
+              <Tag color={marketSentimentBlocked ? 'red' : 'green'}>
+                情绪 {marketSentimentValue.toFixed(1)}
+              </Tag>
+            </Tooltip>
+          )}
         </Space>
       }
     >
@@ -812,11 +857,25 @@ const DragonHeadCard: React.FC<{
               valueStyle={{ color: '#cf1322', fontSize: 18 }}
             />
             <Statistic
-              title="过滤前候选"
+              title="涨停池"
+              value={limitUpPoolSize ?? 0}
+              suffix="只"
+              valueStyle={{ color: '#999', fontSize: 18 }}
+            />
+            <Statistic
+              title="通过 5 维"
               value={eligibleCount}
               valueStyle={{ color: '#999', fontSize: 18 }}
             />
           </Space>
+          {diagnosisReason && (
+            <Alert
+              type={marketSentimentBlocked ? 'info' : 'warning'}
+              message={diagnosisReason}
+              showIcon
+              style={{ fontSize: 12 }}
+            />
+          )}
           {candidates.length === 0 ? (
             <Empty description="今日无符合条件的龙头候选" image={Empty.PRESENTED_IMAGE_SIMPLE} />
           ) : isMobile ? (

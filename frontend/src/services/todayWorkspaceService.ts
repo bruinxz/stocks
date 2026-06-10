@@ -83,6 +83,10 @@ export interface DragonHeadBlock {
   trade_date: string | null;
   candidates: DragonHeadSignal[];
   eligible_count: number;
+  limit_up_pool_size?: number;
+  market_sentiment_value?: number | null;
+  market_sentiment_blocked?: boolean;
+  filter_stats?: Record<string, number>;
   error?: string;
 }
 
@@ -91,6 +95,8 @@ export interface EarningsSurpriseBlock {
   candidates: EarningsSurpriseSignal[];
   forecast_pool_size: number;
   eligible_count: number;
+  northbound_missing?: boolean;
+  filter_stats?: Record<string, number>;
   error?: string;
 }
 

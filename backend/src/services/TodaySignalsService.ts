@@ -98,6 +98,14 @@ export interface DragonHeadBlock {
   candidates: DragonHeadSignal[];
   /** 候选过滤过程中"通过 5 维过滤"的总数（未 cap 前） */
   eligible_count: number;
+  /** 涨停池总数（filtered.limit_up_pool_size） */
+  limit_up_pool_size?: number;
+  /** 当日市场情绪指数（用于判定是否被闸门阻塞） */
+  market_sentiment_value?: number | null;
+  /** 是否被市场情绪闸门阻塞 */
+  market_sentiment_blocked?: boolean;
+  /** 各维度过滤计数（用于诊断为何 0 信号） */
+  filter_stats?: Record<string, number>;
   error?: string;
 }
 
@@ -109,6 +117,10 @@ export interface EarningsSurpriseBlock {
   forecast_pool_size: number;
   /** 通过双确认的候选总数（未 cap 前） */
   eligible_count: number;
+  /** 北向数据是否缺失 — 缺失时已 fail-OPEN 但提示用户 */
+  northbound_missing?: boolean;
+  /** 各维度过滤计数 */
+  filter_stats?: Record<string, number>;
   error?: string;
 }
 
@@ -476,6 +488,19 @@ export class TodaySignalsService {
       trade_date: result.trade_date,
       candidates: buys,
       eligible_count: result.eligible_count,
+      limit_up_pool_size: result.filtered?.limit_up_pool_size ?? 0,
+      market_sentiment_value: result.market_sentiment?.value ?? null,
+      market_sentiment_blocked: result.market_sentiment?.blocked ?? false,
+      filter_stats: {
+        one_word_board: result.filtered?.one_word_board ?? 0,
+        fail_continuous_days: result.filtered?.fail_continuous_days ?? 0,
+        fail_industry_top: result.filtered?.fail_industry_top ?? 0,
+        fail_industry_unknown: result.filtered?.fail_industry_unknown ?? 0,
+        fail_meta_missing: result.filtered?.fail_meta_missing ?? 0,
+        fail_market_cap: result.filtered?.fail_market_cap ?? 0,
+        fail_famous_yz: result.filtered?.fail_famous_yz ?? 0,
+        sentiment_blocked: result.filtered?.sentiment_blocked ?? 0,
+      },
     };
   }
 

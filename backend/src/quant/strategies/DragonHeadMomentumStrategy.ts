@@ -70,7 +70,7 @@ export const DEFAULT_DRAGON_HEAD_PARAMS: Readonly<Required<DragonHeadParams>> = 
   holdingDaysLimit: 3, // 持有 N 自然日强制 SELL
   highOpenSellHalfPct: 0.05, // 次日开盘高开阈值
   excludeOneWordBoard: true, // 一字板不参与（买不到）
-  minMarketSentiment: 60, // US-082: 市场情绪指数低于该阈值跳过开仓
+  minMarketSentiment: 30, // US-082: 市场情绪指数低于该阈值跳过开仓（默认 30 = 只在极冷市场阻塞）
 });
 
 export interface DragonHeadParams {
