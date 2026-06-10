@@ -76,3 +76,8 @@ export * from './RestrictedShareRelease';
 export * from './ShareholderTradeRecord';
 export * from './MarginTradingBalance';
 export * from './ETFFlow';
+// 2026-06-11 新增数据维度
+export * from './MacroIndicator';
+export * from './FundTopHolding';
+export * from './OptionQvix';
+export * from './BlockTrade';

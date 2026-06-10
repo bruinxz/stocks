@@ -76,6 +76,11 @@ import { RestrictedShareRelease } from '../models/RestrictedShareRelease';
 import { ShareholderTradeRecord } from '../models/ShareholderTradeRecord';
 import { MarginTradingBalance } from '../models/MarginTradingBalance';
 import { ETFFlow } from '../models/ETFFlow';
+// 2026-06-11 新增 4 个数据维度
+import { MacroIndicator } from '../models/MacroIndicator';
+import { FundTopHolding } from '../models/FundTopHolding';
+import { OptionQvix } from '../models/OptionQvix';
+import { BlockTrade } from '../models/BlockTrade';
 import { LiveBrokerAccount } from '../models/LiveBrokerAccount';
 import { LiveAccountSnapshot } from '../models/LiveAccountSnapshot';
 import { LivePosition } from '../models/LivePosition';
@@ -181,6 +186,11 @@ const sequelize = new Sequelize({
     ShareholderTradeRecord,
     MarginTradingBalance,
     ETFFlow,
+    // 2026-06-11 新增 4 个数据维度
+    MacroIndicator,
+    FundTopHolding,
+    OptionQvix,
+    BlockTrade,
     LiveBrokerAccount,
     LiveAccountSnapshot,
     LivePosition,

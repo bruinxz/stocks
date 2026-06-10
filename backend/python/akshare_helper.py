@@ -4627,6 +4627,194 @@ def get_etf_flow(date: str, codes_csv: str) -> List[Dict[str, Any]]:
         return []
 
 
+# ============================================================================
+# 新维度 (2026-06-11 补充)：宏观 / 期权波动率 / 大宗交易 / 基金重仓
+# ============================================================================
+
+def get_macro_indicators() -> Dict[str, Any]:
+    """拉所有宏观经济指标。返回 dict 含 6 个 series:
+    pmi, cpi, m2, shibor_overnight, treasury_10y, gdp_yearly。
+    Each series 是 List[{date, value, ...}].
+    """
+    result: Dict[str, Any] = {}
+
+    try:
+        df = ak.macro_china_pmi_yearly()
+        result['pmi'] = [
+            {'date': str(r.get('日期', '')), 'value': safe_float_value(r.get('今值'))}
+            for _, r in df.iterrows() if pd.notna(r.get('今值'))
+        ]
+    except Exception as e:
+        print(f'macro pmi FAIL: {e}', file=sys.stderr)
+        result['pmi'] = []
+
+    try:
+        df = ak.macro_china_cpi_monthly()
+        result['cpi'] = [
+            {'date': str(r.get('日期', '')), 'value': safe_float_value(r.get('今值'))}
+            for _, r in df.iterrows() if pd.notna(r.get('今值'))
+        ]
+    except Exception as e:
+        print(f'macro cpi FAIL: {e}', file=sys.stderr)
+        result['cpi'] = []
+
+    try:
+        df = ak.macro_china_money_supply()
+        # 列: 月份 / 货币和准货币(M2)-数量(亿元) / 货币和准货币(M2)-同比增长 / 货币和准货币(M2)-环比增长 / 货币(M1)-数量(亿元) ...
+        result['m2'] = [
+            {
+                'date': str(r.get('月份', '')),
+                'm2_value': safe_float_value(r.get('货币和准货币(M2)-数量(亿元)')),
+                'm2_yoy': safe_float_value(r.get('货币和准货币(M2)-同比增长')),
+                'm1_value': safe_float_value(r.get('货币(M1)-数量(亿元)')),
+            }
+            for _, r in df.iterrows() if pd.notna(r.get('货币和准货币(M2)-数量(亿元)'))
+        ]
+    except Exception as e:
+        print(f'macro m2 FAIL: {e}', file=sys.stderr)
+        result['m2'] = []
+
+    try:
+        df = ak.rate_interbank(market='上海银行同业拆借市场', symbol='Shibor人民币', indicator='隔夜')
+        result['shibor_overnight'] = [
+            {'date': str(r.get('报告日', '')), 'rate': safe_float_value(r.get('利率'))}
+            for _, r in df.tail(500).iterrows() if pd.notna(r.get('利率'))
+        ]
+    except Exception as e:
+        print(f'macro shibor FAIL: {e}', file=sys.stderr)
+        result['shibor_overnight'] = []
+
+    try:
+        df = ak.bond_zh_us_rate()
+        # 拿 10 年期中国国债（"中国国债收益率10年"）+ 美国 10 年期对比（已含）
+        result['treasury_10y'] = [
+            {
+                'date': str(r.get('日期', '')),
+                'china_10y': safe_float_value(r.get('中国国债收益率10年')),
+                'china_2y': safe_float_value(r.get('中国国债收益率2年')),
+                'us_10y': safe_float_value(r.get('美国国债收益率10年')),
+            }
+            for _, r in df.tail(500).iterrows() if pd.notna(r.get('中国国债收益率10年'))
+        ]
+    except Exception as e:
+        print(f'macro treasury_10y FAIL: {e}', file=sys.stderr)
+        result['treasury_10y'] = []
+
+    try:
+        df = ak.macro_china_gdp_yearly()
+        result['gdp_yearly'] = [
+            {'date': str(r.get('日期', '')), 'value': safe_float_value(r.get('今值'))}
+            for _, r in df.iterrows() if pd.notna(r.get('今值'))
+        ]
+    except Exception as e:
+        print(f'macro gdp FAIL: {e}', file=sys.stderr)
+        result['gdp_yearly'] = []
+
+    return result
+
+
+def get_option_qvix() -> Dict[str, Any]:
+    """拉 4 个期权波动率指数 (类似 VIX) 日度数据。"""
+    out: Dict[str, Any] = {}
+    series = [
+        ('50etf', 'index_option_50etf_qvix'),
+        ('300etf', 'index_option_300etf_qvix'),
+        ('500etf', 'index_option_500etf_qvix'),
+        ('cyb', 'index_option_cyb_qvix'),  # 创业板
+    ]
+    for key, fn_name in series:
+        try:
+            fn = getattr(ak, fn_name)
+            df = fn()
+            out[key] = [
+                {
+                    'date': str(r.get('date', '')),
+                    'open': safe_float_value(r.get('open')),
+                    'high': safe_float_value(r.get('high')),
+                    'low': safe_float_value(r.get('low')),
+                    'close': safe_float_value(r.get('close')),
+                }
+                for _, r in df.iterrows() if pd.notna(r.get('close'))
+            ]
+        except Exception as e:
+            print(f'qvix {key} FAIL: {e}', file=sys.stderr)
+            out[key] = []
+    return out
+
+
+def get_block_trades(start_date: str, end_date: str) -> List[Dict[str, Any]]:
+    """拉大宗交易明细 [start, end] 区间内全市场。"""
+    try:
+        pure_start = start_date.replace('-', '')
+        pure_end = end_date.replace('-', '')
+        df = ak.stock_dzjy_mrmx(symbol='A股', start_date=pure_start, end_date=pure_end)
+        if df is None or df.empty:
+            return []
+        result = []
+        for _, r in df.iterrows():
+            try:
+                trade_date_raw = r.get('交易日期')
+                if pd.isna(trade_date_raw):
+                    continue
+                trade_date = str(trade_date_raw)[:10] if hasattr(trade_date_raw, 'strftime') else str(trade_date_raw)
+                code = str(r.get('证券代码', '')).strip()
+                if not code or len(code) < 6:
+                    continue
+                # 折溢价率：成交价 vs 收盘价
+                close = safe_float_value(r.get('收盘价'))
+                price = safe_float_value(r.get('成交价'))
+                premium_pct = ((price - close) / close * 100.0) if close > 0 else None
+
+                result.append({
+                    'trade_date': trade_date,
+                    'stock_code': code[-6:],  # 标准化为 6 位
+                    'stock_name': str(r.get('证券简称', '')).strip(),
+                    'price': price,
+                    'close_price': close,
+                    'volume': safe_float_value(r.get('成交量')),
+                    'amount': safe_float_value(r.get('成交金额')),
+                    'premium_pct': premium_pct,
+                    'buyer': str(r.get('买方营业部', '')).strip(),
+                    'seller': str(r.get('卖方营业部', '')).strip(),
+                    'change_pct': safe_float_value(r.get('涨跌幅')),
+                })
+            except Exception:
+                continue
+        return result
+    except Exception as e:
+        print(f'block_trades FAIL: {e}', file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return []
+
+
+def get_fund_top_holdings(fund_codes_csv: str, date: str) -> List[Dict[str, Any]]:
+    """拉指定 N 个公募基金的重仓股，扁平化返回 (fund_code, stock_code, ratio_pct, ...)"""
+    codes = [c.strip() for c in fund_codes_csv.split(',') if c.strip()]
+    out = []
+    for code in codes[:50]:  # 上限 50 个基金避免 timeout
+        try:
+            df = ak.fund_portfolio_hold_em(symbol=code, date=date)
+            if df is None or df.empty:
+                continue
+            for _, r in df.iterrows():
+                stock_code = str(r.get('股票代码', '')).strip()
+                if not stock_code or len(stock_code) < 6:
+                    continue
+                out.append({
+                    'fund_code': code,
+                    'stock_code': stock_code[-6:],
+                    'stock_name': str(r.get('股票名称', '')).strip(),
+                    'ratio_pct': safe_float_value(r.get('占净值比例')),
+                    'shares': safe_float_value(r.get('持股数')),
+                    'market_value': safe_float_value(r.get('持仓市值')),
+                    'report_date': date,
+                })
+        except Exception as e:
+            print(f'fund {code} FAIL: {e}', file=sys.stderr)
+            continue
+    return out
+
+
 def main():
     """Main entry point for command line calls"""
     if len(sys.argv) < 2:
@@ -4896,6 +5084,35 @@ def main():
             date = sys.argv[2]
             codes_csv = sys.argv[3]
             result = get_etf_flow(date, codes_csv)
+
+        elif command == "get_macro_indicators":
+            # 拉所有宏观指标 (PMI / CPI / M2 / SHIBOR / 10Y国债 / GDP)
+            # Returns: 5 个 series 合并
+            result = get_macro_indicators()
+
+        elif command == "get_option_qvix":
+            # 期权波动率指数 50ETF + 300ETF + 500ETF + 创业板
+            result = get_option_qvix()
+
+        elif command == "get_block_trades":
+            # 大宗交易明细
+            # Args: <start_date> <end_date>
+            if len(sys.argv) < 4:
+                print(json.dumps({"error": "Missing date for get_block_trades"}), file=sys.stderr)
+                sys.exit(1)
+            start_date = sys.argv[2]
+            end_date = sys.argv[3]
+            result = get_block_trades(start_date, end_date)
+
+        elif command == "get_fund_top_holdings":
+            # 公募基金重仓股汇总 (按基金代码列表查)
+            # Args: <fund_codes_csv> <date>  (date e.g. '2025' 或 '20250630')
+            if len(sys.argv) < 4:
+                print(json.dumps({"error": "Missing fund_codes_csv or date"}), file=sys.stderr)
+                sys.exit(1)
+            fund_codes_csv = sys.argv[2]
+            date = sys.argv[3]
+            result = get_fund_top_holdings(fund_codes_csv, date)
 
         else:
             print(json.dumps({"error": f"Unknown command: {command}"}), file=sys.stderr)

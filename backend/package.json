@@ -45,6 +45,7 @@
     "sync:shareholder-trade": "ts-node src/scripts/sync-shareholder-trade.ts",
     "sync:margin-trading": "ts-node src/scripts/sync-margin-trading.ts",
     "sync:etf-flow": "ts-node src/scripts/sync-etf-flow.ts",
+    "sync:extra-dims": "ts-node src/scripts/sync-extra-dims.ts",
     "cleanup:old-data": "ts-node src/scripts/cleanup-old-data.ts",
     "compute:factors": "ts-node src/scripts/compute-factors.ts",
     "compute:factor-ic": "ts-node src/scripts/compute-factor-ic.ts",
