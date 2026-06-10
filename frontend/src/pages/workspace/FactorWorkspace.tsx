@@ -42,6 +42,7 @@ import {
 } from 'recharts';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
 import AIStockAnalysisModal from '../../components/trading/AIStockAnalysisModal';
+import MacroEnvTab from './FactorWorkspace.MacroEnvTab';
 import {
   factorService,
   FactorDetailResponse,
@@ -107,6 +108,7 @@ const FactorWorkspace: React.FC = () => {
     { key: 'weights', label: '权重调参', icon: <SlidersOutlined /> },
     { key: 'picks', label: '今日选股清单', icon: <OrderedListOutlined /> },
     { key: 'heatmap', label: '行业热力', icon: <AppstoreOutlined /> },
+    { key: 'macro', label: '宏观环境', icon: <FundOutlined /> },
   ];
   const [activeKey, setActiveKey] = useState('overview');
 
@@ -352,6 +354,8 @@ const FactorWorkspace: React.FC = () => {
         onReload={loadHeatmap}
       />
     );
+  } else if (activeKey === 'macro') {
+    body = <MacroEnvTab />;
   } else {
     // 'picks'
     body = <PicksTab picks={latestPicks} loading={loading} />;

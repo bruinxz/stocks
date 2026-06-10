@@ -56,6 +56,7 @@ import sentimentRoutes from './api/routes/sentiment.routes';
 import announcementRoutes from './api/routes/announcement.routes';
 import settingsRoutes from './api/routes/settings.routes';
 import dataRoutes from './api/routes/data.routes';
+import macroRoutes from './api/routes/macro.routes';
 import './jobs/dataUpdateWorker'; // 初始化数据更新队列处理器
 import './jobs/aiPollingWorker'; // 初始化 AI 分析轮询队列处理器
 import './jobs/quantBacktestWorker'; // 初始化量化跑分队列处理器
@@ -181,6 +182,7 @@ app.use('/api/sentiment', sentimentRoutes);
 app.use('/api/announcements', announcementRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/data', dataRoutes);
+app.use('/api/macro', macroRoutes);
 
 // US-070 OpenAPI / Swagger UI —— 仅 development 模式暴露 /api-docs（不需鉴权方便联调）
 // production 默认禁用避免泄露内部 endpoint 列表；通过 ENABLE_SWAGGER_UI=true 可强制开启
