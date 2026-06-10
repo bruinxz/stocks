@@ -51,6 +51,7 @@ import {
   UnreadRiskAlertItem,
 } from '../../services/todayWorkspaceService';
 import { getMarketBriefToday, MarketBriefResult } from '../../services/marketBriefService';
+import api from '../../services/api';
 import {
   listRiskAlerts,
   markAlertsAsRead,
@@ -314,6 +315,13 @@ const MarketBriefCard: React.FC = () => {
   const [brief, setBrief] = useState<MarketBriefResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [realtimeHs300, setRealtimeHs300] = useState<{
+    current: number;
+    change_pct: number;
+    high: number;
+    low: number;
+    time: string;
+  } | null>(null);
 
   const loadBrief = useCallback(async (refresh = false) => {
     setLoading(true);
@@ -332,6 +340,31 @@ const MarketBriefCard: React.FC = () => {
   useEffect(() => {
     void loadBrief();
   }, [loadBrief]);
+
+  // 实时拉沪深 300 现价（每 15s 一次，交易时段才有意义）
+  useEffect(() => {
+    const fetchRealtime = async () => {
+      try {
+        const resp = await api.get('/market/realtime-indexes?symbols=sh.000300');
+        const arr = resp.data?.data?.indexes || [];
+        if (arr.length > 0) {
+          const hs = arr[0];
+          setRealtimeHs300({
+            current: hs.current,
+            change_pct: hs.change_pct,
+            high: hs.high,
+            low: hs.low,
+            time: hs.time,
+          });
+        }
+      } catch {
+        // 静默，保留上次数据
+      }
+    };
+    void fetchRealtime();
+    const tm = setInterval(fetchRealtime, 15_000);
+    return () => clearInterval(tm);
+  }, []);
 
   const titleNode = (
     <Space size={8}>
@@ -413,18 +446,54 @@ const MarketBriefCard: React.FC = () => {
             />
           </Col>
           <Col xs={12} md={8} lg={5}>
-            <Tooltip title={benchmark?.error || ''}>
+            <Tooltip
+              title={
+                <>
+                  {benchmark?.error ? <div>{benchmark.error}</div> : null}
+                  <div>今日开盘: {brief.today_open?.toFixed(2) ?? '—'}</div>
+                  {realtimeHs300 && (
+                    <>
+                      <div>今日高: {realtimeHs300.high.toFixed(2)}</div>
+                      <div>今日低: {realtimeHs300.low.toFixed(2)}</div>
+                      <div>更新时间: {realtimeHs300.time}</div>
+                    </>
+                  )}
+                </>
+              }
+            >
               <Statistic
                 title={
-                  brief.open_change_pct != null
-                    ? `今日开盘 (${brief.open_change_pct >= 0 ? '+' : ''}${brief.open_change_pct.toFixed(2)}%)`
-                    : '今日开盘'
+                  realtimeHs300 ? (
+                    <Space size={4}>
+                      <span>沪深300 实时</span>
+                      <Tag color="green" style={{ marginLeft: 0, fontSize: 10, padding: '0 4px', lineHeight: '16px' }}>
+                        LIVE {realtimeHs300.time?.substring(0, 5)}
+                      </Tag>
+                    </Space>
+                  ) : brief.open_change_pct != null ? (
+                    `今日开盘 (${brief.open_change_pct >= 0 ? '+' : ''}${brief.open_change_pct.toFixed(2)}%)`
+                  ) : (
+                    '今日开盘'
+                  )
                 }
-                value={brief.today_open ?? '—'}
-                precision={brief.today_open == null ? undefined : 2}
+                value={realtimeHs300?.current ?? brief.today_open ?? '—'}
+                precision={2}
+                suffix={
+                  realtimeHs300 ? (
+                    <span style={{
+                      fontSize: 13,
+                      marginLeft: 8,
+                      color: realtimeHs300.change_pct >= 0 ? '#cf1322' : '#3f8600',
+                    }}>
+                      {realtimeHs300.change_pct >= 0 ? '+' : ''}{realtimeHs300.change_pct.toFixed(2)}%
+                    </span>
+                  ) : undefined
+                }
                 valueStyle={{
                   fontSize: 18,
-                  color: openChangeColor(brief.open_change_pct),
+                  color: realtimeHs300
+                    ? (realtimeHs300.change_pct >= 0 ? '#cf1322' : '#3f8600')
+                    : openChangeColor(brief.open_change_pct),
                 }}
               />
             </Tooltip>

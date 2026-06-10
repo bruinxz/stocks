@@ -28,6 +28,22 @@ const authController = new AuthController();
 router.get('/overview', authController.authenticate, marketController.getMarketOverview);
 
 /**
+ * @openapi
+ * /api/market/realtime-indexes:
+ *   get:
+ *     tags: [Market]
+ *     summary: 拉取指数实时报价 (新浪 hq.sinajs.cn，5s 缓存)
+ *     parameters:
+ *       - in: query
+ *         name: symbols
+ *         schema: { type: string }
+ *         description: 逗号分隔的 symbol 列表 (如 'sh.000300,sh.000001,sz.399001,sz.399006')；默认 hs300+上证+深证+创业板
+ *     responses:
+ *       200: { description: 实时报价 }
+ */
+router.get('/realtime-indexes', authController.authenticate, marketController.getRealtimeIndexes);
+
+/**
  * @swagger
  * /api/market/search:
  *   get:

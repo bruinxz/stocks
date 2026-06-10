@@ -8,6 +8,7 @@ import { DataSyncService } from '../../data/services/DataSyncService';
 import { DataSourceHealthService } from '../../data/services/DataSourceHealthService';
 import { stockFactorService } from '../../data/services/StockFactorService';
 import { dataQualityService } from '../../services/DataQualityService';
+import { realtimeIndexService } from '../../services/RealtimeIndexService';
 import { dataUpdateQueue } from '../../jobs/dataUpdateQueue';
 import { dataUpdateWorker } from '../../jobs/dataUpdateWorker';
 import { redisLock, LockKeys } from '../../utils/redisLock';
@@ -128,6 +129,25 @@ export class MarketController {
       });
     } catch (error: any) {
       logger.error('获取大盘概览失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
+  /**
+   * GET /api/market/realtime-indexes
+   * 拉取指数实时报价（新浪源，5s 缓存）。
+   * Query: ?symbols=sh.000300,sh.000001,sz.399001,sz.399006
+   * Default: 沪深300 + 上证 + 深证 + 创业板
+   */
+  getRealtimeIndexes = async (req: Request, res: Response) => {
+    try {
+      const raw = (req.query.symbols as string) || '';
+      const symbols = raw
+        ? raw.split(',').map(s => s.trim()).filter(Boolean)
+        : ['sh.000300', 'sh.000001', 'sz.399001', 'sz.399006'];
+      const arr = await realtimeIndexService.fetchIndexes(symbols);
+      res.json({ success: true, data: { indexes: arr } });
+    } catch (error: any) {
       res.status(500).json({ success: false, message: error.message });
     }
   };
