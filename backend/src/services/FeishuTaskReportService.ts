@@ -79,7 +79,8 @@ class FeishuTaskReportService {
 
   async reportTaskExecutionLog(
     _log: TaskLogLike,
-    _options: { task_type?: string; error?: any } = {}
+    // 接受任意 options（caller 在 SchedulerService 各 cron 传 record_type / result / error / task_type / 等等）
+    _options: Record<string, any> = {}
   ): Promise<null> {
     this.logOnce('reportTaskExecutionLog');
     return null;
