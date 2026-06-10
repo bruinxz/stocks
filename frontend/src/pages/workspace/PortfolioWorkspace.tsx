@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Alert,
   Button,
@@ -272,6 +273,7 @@ interface PositionsTabProps {
 
 const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfterTrade }) => {
   const isMobile = useIsMobile();
+  const navigate = useNavigate();
   // US-076 — 编辑 state 扩展为 (positionId, field) tuple，止损与止盈复用同一套
   // 编辑 / 保存 / 取消机制，避免两个独立 state 各管一边导致同行同时进入两个编辑态。
   const [editingPositionId, setEditingPositionId] = useState<number | null>(null);
@@ -409,14 +411,19 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
       dataIndex: 'symbol',
       key: 'symbol',
       width: 110,
-      render: (v: string) => <Text code>{v}</Text>,
+      render: (v: string) => (
+        <a onClick={() => navigate(`/stock/${v}`)}>
+          <Text code>{v}</Text>
+        </a>
+      ),
     },
     {
       title: '名称',
       dataIndex: 'name',
       key: 'name',
       width: 120,
-      render: (v: string | null, row: PositionRow) => v || row.symbol,
+      render: (v: string | null, row: PositionRow) =>
+        v ? <a onClick={() => navigate(`/stock/${row.symbol}`)}>{v}</a> : row.symbol,
     },
     {
       title: '买入日',
@@ -1115,6 +1122,7 @@ interface TradesTabProps {
 
 const TradesTab: React.FC<TradesTabProps> = ({ trades }) => {
   const isMobile = useIsMobile();
+  const navigate = useNavigate();
   const [directionFilter, setDirectionFilter] = useState<'all' | 'BUY' | 'SELL'>('all');
   const [dateRange, setDateRange] = useState<[Dayjs | null, Dayjs | null] | null>(null);
   const [strategyFilter, setStrategyFilter] = useState<string>('all');
@@ -1157,13 +1165,19 @@ const TradesTab: React.FC<TradesTabProps> = ({ trades }) => {
       dataIndex: 'symbol',
       key: 'symbol',
       width: 110,
-      render: (v: string) => <Text code>{v}</Text>,
+      render: (v: string) => (
+        <a onClick={() => navigate(`/stock/${v}`)}>
+          <Text code>{v}</Text>
+        </a>
+      ),
     },
     {
       title: '名称',
       dataIndex: 'name',
       key: 'name',
       width: 120,
+      render: (v: string, row: TradeRow) =>
+        v ? <a onClick={() => navigate(`/stock/${row.symbol}`)}>{v}</a> : '—',
     },
     {
       title: '方向',

@@ -346,8 +346,18 @@ const MarketBriefCard: React.FC = () => {
     void loadBrief();
   }, [loadBrief]);
 
-  // 实时拉 4 个主要指数（每 15s 一次，交易时段才有意义）
+  // 实时拉 4 个主要指数。
+  // 交易时段（周一-周五 9:25-15:05）每 15s 一次；非交易时段每 5min 一次（拿收盘价）。
   useEffect(() => {
+    const isTradingHours = (): boolean => {
+      const now = dayjs();
+      const day = now.day(); // 0=Sun, 6=Sat
+      if (day === 0 || day === 6) return false;
+      const minutes = now.hour() * 60 + now.minute();
+      // 9:25-11:35 或 12:55-15:05（盘前/盘后留几分钟买卖单结算）
+      return (minutes >= 565 && minutes <= 695) || (minutes >= 775 && minutes <= 905);
+    };
+
     const fetchRealtime = async () => {
       try {
         const resp = await api.get(
@@ -374,8 +384,10 @@ const MarketBriefCard: React.FC = () => {
         // 静默，保留上次数据
       }
     };
+
     void fetchRealtime();
-    const tm = setInterval(fetchRealtime, 15_000);
+    const interval = isTradingHours() ? 15_000 : 300_000; // 交易时段 15s / 非交易时段 5min
+    const tm = setInterval(fetchRealtime, interval);
     return () => clearInterval(tm);
   }, []);
 
@@ -921,6 +933,7 @@ const DragonHeadCard: React.FC<{
   error?: string;
 }> = ({ tradeDate, candidates, eligibleCount, limitUpPoolSize, marketSentimentValue, marketSentimentBlocked, filterStats, error }) => {
   const isMobile = useIsMobile();
+  const navigate = useNavigate();
   // 自动诊断 0 候选原因
   const diagnosisReason = useMemo(() => {
     if (candidates.length > 0) return null;
@@ -1040,14 +1053,20 @@ const DragonHeadCard: React.FC<{
                 {
                   title: '代码',
                   dataIndex: 'stock_code',
-                  width: 80,
-                  render: (v: string) => <Text code>{v}</Text>,
+                  width: 90,
+                  render: (v: string) => (
+                    <a onClick={() => navigate(`/stock/${v}`)}>
+                      <Text code>{v}</Text>
+                    </a>
+                  ),
                 },
                 {
                   title: '名称',
                   dataIndex: 'name',
+                  width: 110,
                   ellipsis: true,
-                  render: (v: string | null | undefined) => v ?? '—',
+                  render: (v: string | null | undefined, row: any) =>
+                    v ? <a onClick={() => navigate(`/stock/${row.stock_code}`)}>{v}</a> : '—',
                 },
                 {
                   title: '连板',
@@ -1090,6 +1109,7 @@ const EarningsSurpriseCard: React.FC<{
   error?: string;
 }> = ({ tradeDate, candidates, forecastPoolSize, eligibleCount, error }) => {
   const isMobile = useIsMobile();
+  const navigate = useNavigate();
   return (
     <Card
       size="small"
@@ -1166,14 +1186,20 @@ const EarningsSurpriseCard: React.FC<{
                 {
                   title: '代码',
                   dataIndex: 'stock_code',
-                  width: 80,
-                  render: (v: string) => <Text code>{v}</Text>,
+                  width: 90,
+                  render: (v: string) => (
+                    <a onClick={() => navigate(`/stock/${v}`)}>
+                      <Text code>{v}</Text>
+                    </a>
+                  ),
                 },
                 {
                   title: '名称',
                   dataIndex: 'name',
+                  width: 110,
                   ellipsis: true,
-                  render: (v: string | null | undefined) => v ?? '—',
+                  render: (v: string | null | undefined, row: any) =>
+                    v ? <a onClick={() => navigate(`/stock/${row.stock_code}`)}>{v}</a> : '—',
                 },
                 {
                   title: '预告',

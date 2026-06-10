@@ -141,10 +141,18 @@ const LabWorkspace: React.FC = () => {
   const [compareLoading, setCompareLoading] = useState(false);
   const [compareResult, setCompareResult] = useState<BacktestCompareResponse | null>(null);
 
-  // ---- 轮询任务进度直至 COMPLETED/FAILED ----
+  // ---- 轮询任务进度直至 COMPLETED/FAILED；带超时保护，避免 worker 挂掉永久 polling ----
   useEffect(() => {
     if (!pollingTaskId) return undefined;
+    const startedAt = Date.now();
+    const MAX_POLL_MS = 10 * 60 * 1000; // 10 分钟超时
     const timer = window.setInterval(async () => {
+      // 超时退出
+      if (Date.now() - startedAt > MAX_POLL_MS) {
+        setPollingTaskId(null);
+        message.warning('回测运行已超过 10 分钟，停止轮询。请手动点列表刷新查看最新状态。');
+        return;
+      }
       try {
         const detail = await labService.getBacktestDetail(pollingTaskId);
         const status = detail?.task?.status;

@@ -19,6 +19,7 @@ import {
 import {
   CheckCircleOutlined,
   CloudSyncOutlined,
+  CopyOutlined,
   ExclamationCircleOutlined,
   QuestionCircleOutlined,
   ReloadOutlined,
@@ -125,6 +126,11 @@ const DataHealthDashboard: React.FC = () => {
 
   useEffect(() => {
     void load(false);
+    // 每 60s 静默刷新（不显示 loading）— 让后台 sync 完成后用户能自动看到状态变化
+    const tm = setInterval(() => {
+      void load(true);
+    }, 60_000);
+    return () => clearInterval(tm);
   }, [load]);
 
   const handleSync = useCallback(
@@ -355,6 +361,30 @@ const DAILY_SYNC_KEYS = new Set([
   'snowball_hot',
 ]);
 
+/** 各数据源对应的 CLI 命令 — 用于按钮 disabled 时提示运维命令 */
+const CLI_COMMANDS: Record<string, string> = {
+  northbound: 'npm run sync:northbound -- --date=YYYY-MM-DD',
+  dragon_tiger: 'npm run sync:dragon-tiger -- --date=YYYY-MM-DD',
+  limit_up: 'npm run sync:limit-up -- --date=YYYY-MM-DD',
+  industry_flow: 'npm run sync:industry-flow -- --date=YYYY-MM-DD',
+  snowball_hot: 'npm run sync:snowball-keywords',
+  earnings_forecast: 'npm run sync:earnings-forecast -- --report-period=YYYY-MM-DD',
+  financial_report: 'npm run sync:financial-report -- --stock=600519',
+  dividend_history: 'npm run sync:dividend-history -- --stock=600519',
+  analyst_forecast: 'npm run sync:analyst-forecast -- --stock=600519',
+  shareholder_count: 'npm run sync:shareholder-count -- --stock=600519',
+  shareholder_trade: 'npm run sync:shareholder-trade',
+  restricted_share: 'npm run sync:restricted-share',
+  margin_trading: 'npm run sync:margin-trading -- --date=YYYY-MM-DD',
+  etf_flow: 'npm run sync:etf-flow -- --date=YYYY-MM-DD',
+  announcements: 'npm run sync:announcements -- --date=YYYY-MM-DD',
+  qa_topics: 'npm run sync:qa-topics -- --stock=600519',
+  index_components: 'npm run sync:index-components -- --index=000300 --date=YYYY-MM-DD',
+  market_sentiment: 'npm run sync:market-sentiment',
+  kol_opinions: 'npm run sync:kol-opinions',
+  stock_sentiment: 'npm run sync:stock-sentiment',
+};
+
 const DataHealthCard: React.FC<DataHealthCardProps> = ({ card, syncing, syncDisabled, onSync }) => {
   const meta = LEVEL_META[card.level];
   const canManualSync = DAILY_SYNC_KEYS.has(card.sync_source);
@@ -439,9 +469,39 @@ const DataHealthCard: React.FC<DataHealthCardProps> = ({ card, syncing, syncDisa
             {syncing ? '同步中...' : '手动触发同步'}
           </Button>
         ) : (
-          <Tooltip title="周期性 / per-stock 数据源请运维 CLI 触发">
-            <Button size="small" disabled>
-              CLI 同步
+          <Tooltip
+            title={
+              <div style={{ maxWidth: 360 }}>
+                <div style={{ marginBottom: 6 }}>本数据源需在服务器上执行 CLI：</div>
+                <code
+                  style={{
+                    fontSize: 11,
+                    background: 'rgba(255,255,255,0.15)',
+                    padding: '4px 6px',
+                    borderRadius: 3,
+                    display: 'block',
+                    userSelect: 'all',
+                    cursor: 'text',
+                  }}
+                >
+                  {CLI_COMMANDS[card.sync_source] || `npm run sync:${card.sync_source}`}
+                </code>
+                <div style={{ marginTop: 6, fontSize: 10, opacity: 0.7 }}>
+                  在 /opt/stocks/current/backend 目录执行
+                </div>
+              </div>
+            }
+          >
+            <Button
+              size="small"
+              icon={<CopyOutlined />}
+              onClick={(e) => {
+                e.stopPropagation();
+                const cmd = CLI_COMMANDS[card.sync_source] || `npm run sync:${card.sync_source}`;
+                navigator.clipboard?.writeText(cmd).catch(() => {});
+              }}
+            >
+              复制 CLI
             </Button>
           </Tooltip>
         )}

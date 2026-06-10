@@ -1550,11 +1550,48 @@ const SettingsWorkspace: React.FC = () => {
     );
   };
 
-  const renderPlaceholder = () => (
-    <Card>
-      <Empty description={`Settings Workspace · ${activeKey} 占位 — 后续聚合个人中心 / 用户管理`} />
-    </Card>
-  );
+  const renderPlaceholder = () => {
+    // 各占位 tab 给一个具体引导到 legacy 实现页
+    const links: Record<string, { url: string; label: string; desc: string }> = {
+      profile: {
+        url: '/legacy/profile',
+        label: '个人资料',
+        desc: '修改密码 / 头像 / 邮箱 / 风险偏好',
+      },
+      keys: {
+        url: '/legacy/profile#api-keys',
+        label: 'API 密钥',
+        desc: '管理 OpenAI / DeepSeek / Anthropic API key',
+      },
+      users: {
+        url: '/legacy/user-management',
+        label: '用户管理',
+        desc: '管理员添加 / 禁用其它用户账号',
+      },
+    };
+    const target = links[activeKey];
+    return (
+      <Card>
+        <Empty
+          description={
+            target ? (
+              <Space direction="vertical" align="center">
+                <span style={{ fontSize: 13, color: '#666' }}>
+                  本 tab 待整合，请暂时去旧版 {target.label} 页面操作：
+                </span>
+                <span style={{ fontSize: 12, color: '#999' }}>{target.desc}</span>
+                <Button type="primary" href={target.url}>
+                  前往旧版 {target.label}
+                </Button>
+              </Space>
+            ) : (
+              `Settings Workspace · ${activeKey} 占位`
+            )
+          }
+        />
+      </Card>
+    );
+  };
 
   return (
     <WorkspaceLayout

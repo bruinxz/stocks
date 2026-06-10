@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useState } from 'react';
 import { Card, Empty, Statistic, Space, Tag, Spin } from 'antd';
 import {
   CloudSyncOutlined,
@@ -11,6 +11,7 @@ import {
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
 import DataHealthDashboard from '../../components/data/DataHealthDashboard';
 import StockExplorer from '../../components/data/StockExplorer';
+import { getDataHealthStatus } from '../../services/dataHealthService';
 
 // 4 个 tab 都接入 legacy 页面（仍在使用 + 数据真实），用 lazy 减少初始 bundle
 const DataUpdateStatus = lazy(() => import('../DataUpdateStatus'));
@@ -28,7 +29,7 @@ const HealthMonitor = lazy(() => import('../HealthMonitor'));
  * - 'logs'       → 系统日志（legacy SystemLogs）
  * - 'monitoring' → 运行健康监控（HealthMonitor）
  *
- * lazy import 让初始页面只装 DataHealthDashboard + StockExplorer，切到其他 tab 再 dynamic import。
+ * KPI 从 /api/data/health-status 实时计算，不再 hardcode。
  */
 const DataWorkspace: React.FC = () => {
   const tabs: WorkspaceTab[] = [
@@ -40,16 +41,52 @@ const DataWorkspace: React.FC = () => {
     { key: 'monitoring', label: '健康监控', icon: <MonitorOutlined /> },
   ];
   const [activeKey, setActiveKey] = useState('health');
+  const [kpi, setKpi] = useState<{ total: number; red: number; yellow: number }>({
+    total: 0,
+    red: 0,
+    yellow: 0,
+  });
+
+  useEffect(() => {
+    getDataHealthStatus()
+      .then((data) => {
+        const cards = data?.cards || [];
+        setKpi({
+          total: cards.length,
+          red: cards.filter((c) => c.level === 'red').length,
+          yellow: cards.filter((c) => c.level === 'yellow').length,
+        });
+      })
+      .catch(() => {
+        // 失败保持 0；DataHealthDashboard 自己也会显示错误
+      });
+  }, []);
 
   const kpiSlot = (
     <Space size={32}>
-      <Statistic title="数据源" value={20} suffix="个" />
-      <Statistic title="同步任务" value={31} />
-      <Statistic title="今日告警" value={0} />
+      <Statistic title="数据源" value={kpi.total} suffix="个" />
+      <Statistic
+        title="严重滞后"
+        value={kpi.red}
+        valueStyle={{ color: kpi.red > 0 ? '#cf1322' : '#3f8600' }}
+      />
+      <Statistic
+        title="轻微滞后"
+        value={kpi.yellow}
+        valueStyle={{ color: kpi.yellow > 0 ? '#fa8c16' : '#3f8600' }}
+      />
     </Space>
   );
 
-  const headerActions = <Tag color="processing">已接入 6 个数据中心子模块</Tag>;
+  const headerActions = (
+    <Tag color={kpi.red > 0 ? 'red' : kpi.yellow > 0 ? 'orange' : 'green'}>
+      {kpi.red > 0
+        ? `${kpi.red} 个数据源严重滞后`
+        : kpi.yellow > 0
+        ? `${kpi.yellow} 个数据源待补`
+        : '全部数据源正常'}
+    </Tag>
+  );
 
   const fallback = (
     <div style={{ textAlign: 'center', padding: 48 }}>
