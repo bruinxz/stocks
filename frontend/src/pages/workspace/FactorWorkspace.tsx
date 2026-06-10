@@ -808,7 +808,7 @@ const IndustryHeatmapTab: React.FC<{
     for (const c of data.cells) {
       const k = `${c.industry}|${c.factor}`;
       cellMap.set(k, c.avg_z);
-      sampleMap.set(k, c.sample_count ?? 0);
+      sampleMap.set(k, c.sample_size ?? 0);
     }
     return data.industries.map((ind) => {
       const row: Record<string, any> = { industry: ind };
