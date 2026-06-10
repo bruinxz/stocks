@@ -13,9 +13,7 @@
  * feishuBotWebhookService.sendXxxCard，不要再走多维表格。
  */
 
-import type { Job } from 'bull';
 import { TaskExecutionLog } from '../models/TaskExecutionLog';
-import type { DataUpdateJobData } from '../jobs/dataUpdateQueue';
 import type { AIPollingJobData } from '../jobs/aiPollingQueue';
 import { logger } from '../utils/logger';
 
@@ -72,9 +70,10 @@ class FeishuTaskReportService {
     logger.debug(`[FeishuTaskReport] ${method} called (bitable disabled, no-op)`);
   }
 
-  async reportStockAnalysis(_payload: StockAnalysisReportPayload): Promise<null> {
+  async reportStockAnalysis(_payload: StockAnalysisReportPayload): Promise<{ success: boolean; message?: string }> {
     this.logOnce('reportStockAnalysis');
-    return null;
+    // 返回 success=true 让旧 caller (NotificationService) 不会误报失败
+    return { success: true };
   }
 
   async reportTaskExecutionLog(
@@ -86,9 +85,12 @@ class FeishuTaskReportService {
     return null;
   }
 
+  // reportQueueJobCompletion 历史 caller 有 3-arg + 4-arg 两种用法（dataUpdateQueue.on('completed'/'failed')）
   async reportQueueJobCompletion(
-    _job: Job<DataUpdateJobData>,
-    _options: { status?: 'success' | 'failed'; error?: any; result?: any } = {}
+    _source: any,
+    _job?: any,
+    _result?: any,
+    _error?: any
   ): Promise<null> {
     this.logOnce('reportQueueJobCompletion');
     return null;
