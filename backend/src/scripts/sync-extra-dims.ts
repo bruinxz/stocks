@@ -185,20 +185,34 @@ async function syncFundHoldings(fundCodes: string[], date: string) {
   }
   const reportDate =
     date.length === 4 ? `${date}-12-31` : (date.length === 8 ? `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}` : date);
-  const records = rows.map((r) => ({
-    fund_code: r.fund_code,
-    stock_code: r.stock_code,
-    stock_name: r.stock_name || null,
-    report_date: reportDate,
-    ratio_pct: r.ratio_pct,
-    shares: r.shares,
-    market_value: r.market_value,
-    source: 'akshare',
-  }));
+  // 去重: 同一 (fund_code, stock_code, report_date) 在 helper 返回里可能有多条
+  // (不同季报披露顺序), 同 batch 内 PK 冲突会触发 ON CONFLICT DO UPDATE row affected 2 times
+  const seenPK = new Set<string>();
+  const records: any[] = [];
+  for (const r of rows) {
+    if (!r.fund_code || !r.stock_code) continue;
+    const pk = `${r.fund_code}|${r.stock_code}|${reportDate}`;
+    if (seenPK.has(pk)) continue;
+    seenPK.add(pk);
+    records.push({
+      fund_code: r.fund_code,
+      stock_code: r.stock_code,
+      stock_name: r.stock_name || null,
+      report_date: reportDate,
+      ratio_pct: r.ratio_pct,
+      shares: r.shares,
+      market_value: r.market_value,
+      source: 'akshare',
+    });
+  }
+  if (records.length === 0) {
+    logger.warn('  无有效记录');
+    return 0;
+  }
   await FundTopHolding.bulkCreate(records, {
     updateOnDuplicate: ['stock_name', 'ratio_pct', 'shares', 'market_value', 'updated_at'],
   });
-  logger.info(`  fund_top_holdings: upserted ${records.length}`);
+  logger.info(`  fund_top_holdings: upserted ${records.length} (去重前 ${rows.length})`);
   return records.length;
 }
 
