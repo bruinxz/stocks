@@ -498,7 +498,9 @@ const DataHealthCard: React.FC<DataHealthCardProps> = ({ card, syncing, syncDisa
               onClick={(e) => {
                 e.stopPropagation();
                 const cmd = CLI_COMMANDS[card.sync_source] || `npm run sync:${card.sync_source}`;
-                navigator.clipboard?.writeText(cmd).catch(() => {});
+                navigator.clipboard?.writeText(cmd).catch(() => {
+                  /* silent: 浏览器不支持或权限拒绝时静默退出 */
+                });
               }}
             >
               复制 CLI
