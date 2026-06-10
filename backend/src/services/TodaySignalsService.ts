@@ -516,7 +516,29 @@ export class TodaySignalsService {
         error: '缺少 trade_date',
       };
     }
-    const result = await this.dragonHeadStrategy.generateSignals(tradeDate, {
+
+    // DragonHead 依赖 limit_up_stocks (push2.eastmoney 数据滞后于 factor_scores)。
+    // 用 limit_up_stocks 表自己的最新 trade_date，而不是全局 tradeDate。
+    let effectiveDate = tradeDate;
+    try {
+      const latestRow: any = await LimitUpStock.findOne({
+        attributes: [[fn('MAX', col('trade_date')), 'd']],
+        where: { trade_date: { [Op.lte]: tradeDate } },
+        raw: true,
+      });
+      const latest = latestRow?.d;
+      if (latest) {
+        if (typeof latest === 'string') {
+          effectiveDate = latest.slice(0, 10);
+        } else if (latest instanceof Date) {
+          effectiveDate = latest.toISOString().slice(0, 10);
+        }
+      }
+    } catch (e) {
+      // 失败回退到 tradeDate
+    }
+
+    const result = await this.dragonHeadStrategy.generateSignals(effectiveDate, {
       currentPositions: [],
     });
     const buys = result.signals.filter(s => s.signal === 'buy').slice(0, limit);
