@@ -34,6 +34,30 @@ import {
  *      strategy.routes.ts 负责。
  */
 export class FactorController {
+  /**
+   * In-memory 缓存：overview / industry-heatmap / factor-detail 5min TTL。
+   * 因子分数一天才跑一次，没必要每次重算。
+   */
+  private cache = new Map<string, { expiresAt: number; payload: any }>();
+  private readonly CACHE_TTL_MS = 5 * 60_000;
+
+  private getCached<T>(key: string): T | null {
+    const hit = this.cache.get(key);
+    if (hit && hit.expiresAt > Date.now()) return hit.payload as T;
+    if (hit) this.cache.delete(key);
+    return null;
+  }
+
+  private setCached(key: string, payload: any) {
+    this.cache.set(key, { expiresAt: Date.now() + this.CACHE_TTL_MS, payload });
+    if (this.cache.size > 100) {
+      const now = Date.now();
+      for (const [k, v] of this.cache) {
+        if (v.expiresAt < now) this.cache.delete(k);
+      }
+    }
+  }
+
   private readonly multiFactorStrategy = new MultiFactorAlphaStrategy();
 
   // ---------- GET /api/factors/overview --------------------------------------
@@ -60,6 +84,12 @@ export class FactorController {
    */
   async getOverview(_req: Request, res: Response) {
     try {
+      // 缓存命中（5min）
+      const cached = this.getCached<any>('overview');
+      if (cached) {
+        return res.json({ success: true, data: cached });
+      }
+
       const factors = factorRegistry.list();
       const factorNames = factors.map(f => f.name);
 
@@ -136,13 +166,12 @@ export class FactorController {
         })
       );
 
-      res.json({
-        success: true,
-        data: {
-          latest_trade_date: latestDateIso,
-          factors: factorStats,
-        },
-      });
+      const payload = {
+        latest_trade_date: latestDateIso,
+        factors: factorStats,
+      };
+      this.setCached('overview', payload);
+      res.json({ success: true, data: payload });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       logger.error('FactorController.getOverview failed:', error);
@@ -323,6 +352,14 @@ export class FactorController {
     try {
       // 1) 解析 date 参数
       const dateParam = typeof req.query.date === 'string' ? req.query.date.trim() : '';
+
+      // 缓存命中（5min）
+      const cacheKey = `heatmap:${dateParam || 'auto'}`;
+      const cached = this.getCached<any>(cacheKey);
+      if (cached) {
+        return res.json({ success: true, data: cached });
+      }
+
       let tradeDate: string | null = null;
       if (dateParam) {
         if (!/^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
@@ -449,16 +486,15 @@ export class FactorController {
         (a, b) => (industryScoreSum.get(b) ?? 0) - (industryScoreSum.get(a) ?? 0)
       );
 
-      res.json({
-        success: true,
-        data: {
-          trade_date: tradeDate,
-          factors: registeredFactors,
-          industries,
-          cells,
-          universe_size: universeSize,
-        },
-      });
+      const payload = {
+        trade_date: tradeDate,
+        factors: registeredFactors,
+        industries,
+        cells,
+        universe_size: universeSize,
+      };
+      this.setCached(cacheKey, payload);
+      res.json({ success: true, data: payload });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       logger.error('FactorController.getIndustryHeatmap failed:', error);

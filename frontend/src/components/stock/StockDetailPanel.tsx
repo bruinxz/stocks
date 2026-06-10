@@ -197,7 +197,15 @@ const StockDetailPanel: React.FC<Props> = ({ symbol: rawSymbol, showBack = false
                 ) : visibleHistory.length === 0 ? (
                   <Empty description="暂无 K 线数据" />
                 ) : (
-                  <ReactECharts option={klineOption} style={{ height: chartHeight }} notMerge lazyUpdate />
+                  <ReactECharts
+                    /* key 强制 remount: dataZoom inside 类型 echarts 会保留之前 zoom state,
+                       窗口切换时 setOption 不重置；用 key=symbol+windowDays 强制全新 instance */
+                    key={`${symbol}-${windowDays}`}
+                    option={klineOption}
+                    style={{ height: chartHeight }}
+                    notMerge
+                    lazyUpdate
+                  />
                 )}
               </>
             ),

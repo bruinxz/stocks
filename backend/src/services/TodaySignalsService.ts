@@ -204,6 +204,14 @@ export class TodaySignalsService {
   private readonly dragonHeadStrategy: DragonHeadMomentumStrategy;
   private readonly earningsSurpriseStrategy: EarningsSurpriseStrategy;
 
+  /**
+   * In-memory cache for /today/signals — TTL 90s.
+   * Key: `${trade_date_override||'auto'}|${user_id||0}|${dragonLimit}|${earningsLimit}|${alertsLimit}`
+   * 一日内同一用户的相同参数请求直接返回 cached（量化 pipeline 一天才跑一次，没必要每次重算）。
+   */
+  private cache = new Map<string, { expiresAt: number; payload: TodaySignalsResult }>();
+  private readonly CACHE_TTL_MS = 90_000;
+
   constructor() {
     this.multiFactorStrategy = new MultiFactorAlphaStrategy();
     this.dragonHeadStrategy = new DragonHeadMomentumStrategy();
@@ -218,6 +226,17 @@ export class TodaySignalsService {
     const dragonHeadLimit = clampInt(options.dragon_head_limit, 5, 1, 50);
     const earningsLimit = clampInt(options.earnings_limit, 3, 1, 10);
     const alertsLimit = clampInt(options.alerts_limit, 20, 1, 100);
+
+    // 缓存命中检查 — 90s TTL；refresh=true 或显式 use_cache=false 跳过
+    const useCache = (options as any).use_cache !== false && !(options as any).refresh;
+    const cacheKey = `${options.trade_date || 'auto'}|${options.user_id || 0}|${dragonHeadLimit}|${earningsLimit}|${alertsLimit}`;
+    if (useCache) {
+      const hit = this.cache.get(cacheKey);
+      if (hit && hit.expiresAt > Date.now()) {
+        logger.debug(`[TodaySignals] cache HIT ${cacheKey}`);
+        return hit.payload;
+      }
+    }
 
     const userId = options.user_id;
     const portfolio = userId
@@ -270,7 +289,7 @@ export class TodaySignalsService {
         }) as Promise<KeyEventItem[]>,
       ]);
 
-    return {
+    const payload: TodaySignalsResult = {
       trade_date: tradeDate,
       account: accountSummary,
       unread_alerts: alerts.rows,
@@ -280,6 +299,23 @@ export class TodaySignalsService {
       earnings_surprise: earningsBlock,
       key_events: keyEvents,
     };
+
+    // 写入缓存（90s TTL）
+    if (useCache) {
+      this.cache.set(cacheKey, {
+        expiresAt: Date.now() + this.CACHE_TTL_MS,
+        payload,
+      });
+      // 简单 GC：cache 超过 50 条时清理过期项
+      if (this.cache.size > 50) {
+        const now = Date.now();
+        for (const [k, v] of this.cache) {
+          if (v.expiresAt < now) this.cache.delete(k);
+        }
+      }
+    }
+
+    return payload;
   }
 
   /**
