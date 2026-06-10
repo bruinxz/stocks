@@ -334,6 +334,36 @@ export class PaperTradingFacade {
       throw new Error('交易方向必须为 BUY 或 SELL');
     }
 
+    // ============= 交易时段 guard =============
+    // 模拟盘按 daily_bar.close 撮合 → 必须在合法时间内调用：
+    //   (a) 工作日（周一到周五，非节假日 — 简化：只判断周末）
+    //   (b) 09:00 - 16:00 Asia/Shanghai (盘前 09:00 ~ 收盘后 1 小时缓冲)
+    //   (c) 允许 bypass：options.bypass_trading_hours=true（手动测试/历史回填用）
+    if (!(options as any).bypass_trading_hours) {
+      const now = new Date();
+      // Asia/Shanghai = UTC+8
+      const shanghaiOffset = 8 * 60 * 60 * 1000;
+      const shanghai = new Date(now.getTime() + shanghaiOffset);
+      const day = shanghai.getUTCDay(); // 0=Sun, 6=Sat
+      const hour = shanghai.getUTCHours();
+      if (day === 0 || day === 6) {
+        const err: any = new Error(
+          `当前为周末（${day === 0 ? '周日' : '周六'}，Asia/Shanghai），A 股不开市；如需手动测试请加 bypass_trading_hours=true`
+        );
+        err.code = 'NON_TRADING_HOURS_WEEKEND';
+        err.statusCode = 400;
+        throw err;
+      }
+      if (hour < 9 || hour >= 16) {
+        const err: any = new Error(
+          `当前 ${shanghai.toISOString().substring(11, 16)} (Asia/Shanghai) 在 A 股交易时段 (09:00-16:00) 外；如需手动测试请加 bypass_trading_hours=true`
+        );
+        err.code = 'NON_TRADING_HOURS_OFF_HOURS';
+        err.statusCode = 400;
+        throw err;
+      }
+    }
+
     const portfolio = await PaperTradingPortfolio.findOne({ where: { user_id } });
     if (!portfolio) {
       const err: any = new Error('未找到模拟盘，请先刷新页面');
