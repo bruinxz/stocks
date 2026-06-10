@@ -897,7 +897,7 @@ const MultiFactorCard: React.FC<{
                   <List.Item style={{ padding: '4px 0' }}>
                     <Space>
                       <Text code>{item.stock_code}</Text>
-                      <Text type="secondary">{item.name ?? ''}</Text>
+                      <Text type="secondary">{item.name || '—'}</Text>
                     </Space>
                   </List.Item>
                 )}
@@ -1328,7 +1328,7 @@ const RiskAlertsList: React.FC<{ alerts: UnreadRiskAlertItem[]; compact?: boolea
             <div style={{ flex: 1 }}>
               <Space>
                 <Text code>{item.symbol}</Text>
-                <Text strong>{item.name}</Text>
+                <Text strong>{item.name || '—'}</Text>
                 {levelTag(item.level)}
               </Space>
               <div>
@@ -1673,7 +1673,7 @@ const RiskAlertCenterPanel: React.FC<{ onUnreadCountChange?: () => void }> = ({
                   <Text code style={{ fontSize: 12 }}>
                     {row.symbol}
                   </Text>
-                  <Text strong>{row.name}</Text>
+                  <Text strong>{row.name || '—'}</Text>
                 </Space>
               ),
             },

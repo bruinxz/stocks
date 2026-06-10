@@ -656,7 +656,7 @@ export function buildEarningsForecastDigestCard(payload: EarningsForecastWatchli
     const range = formatProfitChangeRange(f.profit_change_low, f.profit_change_high);
     const surpriseTag = f.is_surprise ? ' 🚀' : '';
     const lineContent =
-      `**${f.stock_code} ${f.stock_name || ''}${surpriseTag}** · ${
+      `**${f.stock_code} ${f.stock_name || f.stock_code}${surpriseTag}** · ${
         f.forecast_type || '未知'
       } · ${range}\n` +
       `_${f.report_period} · ${buildAnalystConsensusLine(row.analyst_consensus)}_\n` +

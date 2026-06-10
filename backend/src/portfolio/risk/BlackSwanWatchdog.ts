@@ -986,7 +986,7 @@ export class BlackSwanWatchdog {
           await this.source.writeAlert({
             user_id,
             symbol: t.symbol,
-            name: `黑天鹅 - ${t.name}`,
+            name: `黑天鹅 - ${t.name || t.symbol}`,
             message: t.message,
           });
         } catch (err) {

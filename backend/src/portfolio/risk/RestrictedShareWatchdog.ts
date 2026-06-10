@@ -924,7 +924,7 @@ export class RestrictedShareWatchdog {
           await this.source.writeAlert({
             user_id: t.user_id,
             symbol: t.symbol,
-            name: t.name,
+            name: t.name || t.symbol,
             message: t.message,
           });
         } catch (err) {

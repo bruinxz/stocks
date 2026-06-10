@@ -33,6 +33,7 @@ import { PaperTradingPortfolio } from '../models/PaperTradingPortfolio';
 import { PaperTradingPosition } from '../models/PaperTradingPosition';
 import { PaperTradingTrade } from '../models/PaperTradingTrade';
 import { PaperTradingSnapshot } from '../models/PaperTradingSnapshot';
+import { Stock } from '../models/Stock';
 import { feishuBotWebhookService, FeishuBotWebhookSendResult } from './FeishuBotWebhookService';
 
 // ---------------------------------------------------------------------------
@@ -795,7 +796,9 @@ export class DefaultDailyTradingDigestDataSource implements DailyTradingDigestDa
       out.push({
         strategy: 'multi_factor',
         symbol: String(s.stock_code || s.symbol || '').trim(),
-        name: s.stock_name || null,
+        // 上游 strategy 返回 `name`，老代码用 `stock_name` 一直 null —
+        // 优先 `name`，然后 `stock_name` 兼容。
+        name: s.name || s.stock_name || null,
         score: Number.isFinite(Number(s.composite_score))
           ? Number(s.composite_score)
           : Number.isFinite(Number(s.score))
@@ -812,7 +815,7 @@ export class DefaultDailyTradingDigestDataSource implements DailyTradingDigestDa
       out.push({
         strategy: 'dragon_head',
         symbol: String(c.stock_code || c.symbol || '').trim(),
-        name: c.stock_name || null,
+        name: c.name || c.stock_name || null,
         score: Number.isFinite(Number(c.entry_signal_strength))
           ? Number(c.entry_signal_strength)
           : Number.isFinite(Number(c.famous_yz_net_buy))
@@ -829,7 +832,7 @@ export class DefaultDailyTradingDigestDataSource implements DailyTradingDigestDa
       out.push({
         strategy: 'earnings_surprise',
         symbol: String(c.stock_code || c.symbol || '').trim(),
-        name: c.stock_name || null,
+        name: c.name || c.stock_name || null,
         score: Number.isFinite(Number(c.surprise_score))
           ? Number(c.surprise_score)
           : Number.isFinite(Number(c.forecast_change_low))
@@ -838,6 +841,40 @@ export class DefaultDailyTradingDigestDataSource implements DailyTradingDigestDa
         reason: c.reason || c.forecast_type || null,
       });
     }
+    // 兜底：strategy 没填 name 时按 stock_code 批量回查 Stock 表填回去
+    const missingNameCodes = out.filter(r => !r.name && r.symbol).map(r => r.symbol);
+    if (missingNameCodes.length > 0) {
+      try {
+        const stockRows: any[] = await Stock.findAll({
+          attributes: ['symbol', 'name'],
+          // Stock.symbol 形如 'sh.600519'，stock_code 是 '600519'
+          where: {
+            [Op.or]: [
+              { symbol: { [Op.in]: missingNameCodes } },
+              ...missingNameCodes.map(c => ({
+                symbol: { [Op.like]: `%.${c}` },
+              })),
+            ],
+          },
+          raw: true,
+        });
+        const nameMap = new Map<string, string>();
+        for (const r of stockRows) {
+          const symbol: string = r.symbol;
+          // 去前缀 sh./sz./bj. 当 code 用
+          const pureCode = symbol.includes('.') ? symbol.split('.').pop() || symbol : symbol;
+          if (r.name) nameMap.set(pureCode, r.name);
+        }
+        for (const row of out) {
+          if (!row.name && nameMap.has(row.symbol)) {
+            row.name = nameMap.get(row.symbol) || null;
+          }
+        }
+      } catch (err: any) {
+        logger.debug(`[DailyTradingDigest] 回查 Stock 名称失败: ${err?.message || err}`);
+      }
+    }
+
     return out.filter(r => !!r.symbol);
   }
 

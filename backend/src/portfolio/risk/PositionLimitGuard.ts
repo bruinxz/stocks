@@ -329,10 +329,25 @@ export class DefaultPositionLimitDataSource implements PositionLimitDataSource {
   }
 
   async writeAlert(input: { user_id: number; symbol: string; name: string; message: string }) {
+    // 拿 stock_name 拼到 RiskAlert.name，让飞书卡片/UI 显示"贵州茅台 仓位限制告警 - single_industry_cap"
+    // 而不只是"600519 仓位限制告警 - single_industry_cap"
+    let stockName = '';
+    try {
+      const { Stock } = require('../../models/Stock');
+      const stock = await Stock.findOne({
+        where: { symbol: input.symbol },
+        attributes: ['name'],
+        raw: true,
+      });
+      if (stock?.name) stockName = stock.name;
+    } catch {
+      // 静默：拿不到 stock_name 不影响 alert 写入
+    }
+    const enrichedName = stockName ? `${stockName} · ${input.name}` : input.name;
     await RiskAlert.create({
       user_id: input.user_id,
       symbol: input.symbol,
-      name: input.name,
+      name: enrichedName,
       level: 'HIGH',
       message: input.message,
       // US-067 — RealtimeAlertDispatcher 用 rule_id 作 dedup signature 一部分。
