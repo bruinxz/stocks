@@ -6,9 +6,11 @@ import {
   FileDoneOutlined,
   MonitorOutlined,
   DashboardOutlined,
+  StockOutlined,
 } from '@ant-design/icons';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
 import DataHealthDashboard from '../../components/data/DataHealthDashboard';
+import StockExplorer from '../../components/data/StockExplorer';
 
 // 4 个 tab 都接入 legacy 页面（仍在使用 + 数据真实），用 lazy 减少初始 bundle
 const DataUpdateStatus = lazy(() => import('../DataUpdateStatus'));
@@ -20,16 +22,18 @@ const HealthMonitor = lazy(() => import('../HealthMonitor'));
  * 数据中心 (Data Workspace) shell.
  *
  * - 'health'     → US-079 数据健康度看板（DataHealthDashboard）
- * - 'sync'       → 行情同步状态（legacy DataUpdateStatus，2400 行实现，含手动触发 / 队列 / Bull job 列表）
- * - 'tasks'      → 调度任务（legacy TaskScheduler，2500 行实现，cron 任务管理）
+ * - 'stocks'     → 个股趋势浏览器（StockExplorer，左列表 + 右 K 线）
+ * - 'sync'       → 行情同步状态（legacy DataUpdateStatus）
+ * - 'tasks'      → 调度任务（legacy TaskScheduler）
  * - 'logs'       → 系统日志（legacy SystemLogs）
- * - 'monitoring' → 运行健康监控（HealthMonitor，新建：服务存活 / 队列 / DB / Redis）
+ * - 'monitoring' → 运行健康监控（HealthMonitor）
  *
- * lazy import 让初始页面只装 DataHealthDashboard，切到其他 tab 再 dynamic import。
+ * lazy import 让初始页面只装 DataHealthDashboard + StockExplorer，切到其他 tab 再 dynamic import。
  */
 const DataWorkspace: React.FC = () => {
   const tabs: WorkspaceTab[] = [
     { key: 'health', label: '数据健康', icon: <DashboardOutlined /> },
+    { key: 'stocks', label: '个股趋势', icon: <StockOutlined /> },
     { key: 'sync', label: '行情同步', icon: <CloudSyncOutlined /> },
     { key: 'tasks', label: '调度任务', icon: <ScheduleOutlined /> },
     { key: 'logs', label: '系统日志', icon: <FileDoneOutlined /> },
@@ -45,7 +49,7 @@ const DataWorkspace: React.FC = () => {
     </Space>
   );
 
-  const headerActions = <Tag color="processing">已接入 5 个数据中心子模块</Tag>;
+  const headerActions = <Tag color="processing">已接入 6 个数据中心子模块</Tag>;
 
   const fallback = (
     <div style={{ textAlign: 'center', padding: 48 }}>
@@ -57,6 +61,8 @@ const DataWorkspace: React.FC = () => {
     switch (activeKey) {
       case 'health':
         return <DataHealthDashboard />;
+      case 'stocks':
+        return <StockExplorer />;
       case 'sync':
         return (
           <Suspense fallback={fallback}>
