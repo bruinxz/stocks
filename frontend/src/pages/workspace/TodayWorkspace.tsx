@@ -315,13 +315,18 @@ const MarketBriefCard: React.FC = () => {
   const [brief, setBrief] = useState<MarketBriefResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [realtimeHs300, setRealtimeHs300] = useState<{
+  const [realtimeIndexes, setRealtimeIndexes] = useState<Array<{
+    symbol: string;
+    name: string;
     current: number;
     change_pct: number;
+    change: number;
+    open: number;
     high: number;
     low: number;
+    prev_close: number;
     time: string;
-  } | null>(null);
+  }>>([]);
 
   const loadBrief = useCallback(async (refresh = false) => {
     setLoading(true);
@@ -341,21 +346,29 @@ const MarketBriefCard: React.FC = () => {
     void loadBrief();
   }, [loadBrief]);
 
-  // 实时拉沪深 300 现价（每 15s 一次，交易时段才有意义）
+  // 实时拉 4 个主要指数（每 15s 一次，交易时段才有意义）
   useEffect(() => {
     const fetchRealtime = async () => {
       try {
-        const resp = await api.get('/market/realtime-indexes?symbols=sh.000300');
+        const resp = await api.get(
+          '/market/realtime-indexes?symbols=sh.000300,sh.000001,sz.399001,sz.399006'
+        );
         const arr = resp.data?.data?.indexes || [];
         if (arr.length > 0) {
-          const hs = arr[0];
-          setRealtimeHs300({
-            current: hs.current,
-            change_pct: hs.change_pct,
-            high: hs.high,
-            low: hs.low,
-            time: hs.time,
-          });
+          setRealtimeIndexes(
+            arr.map((hs: any) => ({
+              symbol: hs.symbol,
+              name: hs.name,
+              current: hs.current,
+              change_pct: hs.change_pct,
+              change: hs.change,
+              open: hs.open,
+              high: hs.high,
+              low: hs.low,
+              prev_close: hs.prev_close,
+              time: hs.time,
+            }))
+          );
         }
       } catch {
         // 静默，保留上次数据
@@ -436,69 +449,126 @@ const MarketBriefCard: React.FC = () => {
   return (
     <Card size="small" title={titleNode} extra={extra}>
       <Space direction="vertical" size={12} style={{ width: '100%' }}>
-        <Row gutter={[24, 8]} align="middle">
-          <Col xs={12} md={8} lg={5}>
-            <Statistic
-              title="上日收盘 (沪深300)"
-              value={brief.prev_close ?? '—'}
-              precision={brief.prev_close == null ? undefined : 2}
-              valueStyle={{ fontSize: 18 }}
-            />
-          </Col>
-          <Col xs={12} md={8} lg={5}>
-            <Tooltip
-              title={
-                <>
-                  {benchmark?.error ? <div>{benchmark.error}</div> : null}
-                  <div>今日开盘: {brief.today_open?.toFixed(2) ?? '—'}</div>
-                  {realtimeHs300 && (
-                    <>
-                      <div>今日高: {realtimeHs300.high.toFixed(2)}</div>
-                      <div>今日低: {realtimeHs300.low.toFixed(2)}</div>
-                      <div>更新时间: {realtimeHs300.time}</div>
-                    </>
-                  )}
-                </>
-              }
-            >
-              <Statistic
-                title={
-                  realtimeHs300 ? (
-                    <Space size={4}>
-                      <span>沪深300 实时</span>
-                      <Tag color="green" style={{ marginLeft: 0, fontSize: 10, padding: '0 4px', lineHeight: '16px' }}>
-                        LIVE {realtimeHs300.time?.substring(0, 5)}
-                      </Tag>
-                    </Space>
-                  ) : brief.open_change_pct != null ? (
-                    `今日开盘 (${brief.open_change_pct >= 0 ? '+' : ''}${brief.open_change_pct.toFixed(2)}%)`
-                  ) : (
-                    '今日开盘'
-                  )
-                }
-                value={realtimeHs300?.current ?? brief.today_open ?? '—'}
-                precision={2}
-                suffix={
-                  realtimeHs300 ? (
-                    <span style={{
+        {/* 第一行：4 个指数实时报价 + AI 观点 */}
+        <Row gutter={[12, 8]} align="middle">
+          {realtimeIndexes.length > 0 ? (
+            <>
+              {realtimeIndexes.map((idx) => (
+                <Col xs={12} md={6} lg={4} key={idx.symbol}>
+                  <Tooltip
+                    title={
+                      <>
+                        <div>今开: {idx.open.toFixed(2)}</div>
+                        <div>昨收: {idx.prev_close.toFixed(2)}</div>
+                        <div>今高: {idx.high.toFixed(2)}</div>
+                        <div>今低: {idx.low.toFixed(2)}</div>
+                        <div>更新: {idx.time}</div>
+                      </>
+                    }
+                  >
+                    <Statistic
+                      title={
+                        <Space size={4}>
+                          <span style={{ fontSize: 12 }}>{idx.name}</span>
+                          <Tag
+                            color="green"
+                            style={{
+                              marginLeft: 0,
+                              fontSize: 9,
+                              padding: '0 4px',
+                              lineHeight: '14px',
+                            }}
+                          >
+                            LIVE
+                          </Tag>
+                        </Space>
+                      }
+                      value={idx.current}
+                      precision={2}
+                      suffix={
+                        <span
+                          style={{
+                            fontSize: 12,
+                            marginLeft: 6,
+                            color: idx.change_pct >= 0 ? '#cf1322' : '#3f8600',
+                          }}
+                        >
+                          {idx.change_pct >= 0 ? '+' : ''}
+                          {idx.change_pct.toFixed(2)}%
+                        </span>
+                      }
+                      valueStyle={{
+                        fontSize: 16,
+                        fontWeight: 600,
+                        color: idx.change_pct >= 0 ? '#cf1322' : '#3f8600',
+                      }}
+                    />
+                  </Tooltip>
+                </Col>
+              ))}
+              <Col xs={24} lg={8}>
+                <div style={{ paddingLeft: 8, borderLeft: '3px solid #722ed1' }}>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    AI 一句话观点
+                  </Text>
+                  <Paragraph
+                    style={{
+                      margin: '4px 0 0',
                       fontSize: 13,
-                      marginLeft: 8,
-                      color: realtimeHs300.change_pct >= 0 ? '#cf1322' : '#3f8600',
-                    }}>
-                      {realtimeHs300.change_pct >= 0 ? '+' : ''}{realtimeHs300.change_pct.toFixed(2)}%
-                    </span>
-                  ) : undefined
-                }
-                valueStyle={{
-                  fontSize: 18,
-                  color: realtimeHs300
-                    ? (realtimeHs300.change_pct >= 0 ? '#cf1322' : '#3f8600')
-                    : openChangeColor(brief.open_change_pct),
-                }}
-              />
-            </Tooltip>
-          </Col>
-          <Col xs={12} md={8} lg={5}>
+                      lineHeight: 1.5,
+                      color: '#262626',
+                    }}
+                  >
+                    {aiView}
+                  </Paragraph>
+                </div>
+              </Col>
+            </>
+          ) : (
+            // 实时数据未拉到时的兜底：用 brief 静态数据
+            <>
+              <Col xs={12} md={8} lg={5}>
+                <Statistic
+                  title="上日收盘 (沪深300)"
+                  value={brief.prev_close ?? '—'}
+                  precision={brief.prev_close == null ? undefined : 2}
+                  valueStyle={{ fontSize: 18 }}
+                />
+              </Col>
+              <Col xs={12} md={8} lg={5}>
+                <Tooltip title={benchmark?.error || ''}>
+                  <Statistic
+                    title={
+                      brief.open_change_pct != null
+                        ? `今日开盘 (${brief.open_change_pct >= 0 ? '+' : ''}${brief.open_change_pct.toFixed(2)}%)`
+                        : '今日开盘'
+                    }
+                    value={brief.today_open ?? '—'}
+                    precision={brief.today_open == null ? undefined : 2}
+                    valueStyle={{
+                      fontSize: 18,
+                      color: openChangeColor(brief.open_change_pct),
+                    }}
+                  />
+                </Tooltip>
+              </Col>
+              <Col xs={24} md={24} lg={14}>
+                <div style={{ paddingLeft: 8, borderLeft: '3px solid #722ed1' }}>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    AI 一句话观点
+                  </Text>
+                  <Paragraph style={{ margin: '4px 0 0', fontSize: 13, lineHeight: 1.5 }}>
+                    {aiView}
+                  </Paragraph>
+                </div>
+              </Col>
+            </>
+          )}
+        </Row>
+
+        {/* 第二行：北向 + 涨停 (昨日静态数据) */}
+        <Row gutter={[12, 8]} align="middle">
+          <Col xs={12} md={8} lg={6}>
             <Tooltip title={northbound?.error || ''}>
               <Statistic
                 title="昨日北向净买入"
@@ -506,43 +576,27 @@ const MarketBriefCard: React.FC = () => {
                 precision={brief.northbound_net_amount == null ? undefined : 2}
                 suffix={brief.northbound_net_amount == null ? '' : ' 亿'}
                 valueStyle={{
-                  fontSize: 18,
+                  fontSize: 16,
                   color: northboundColor(brief.northbound_net_amount),
                 }}
               />
             </Tooltip>
           </Col>
-          <Col xs={12} md={8} lg={4}>
+          <Col xs={12} md={8} lg={6}>
             <Tooltip title={limitUp?.error || ''}>
               <Statistic
                 title="昨日涨停数"
                 value={brief.limit_up_count ?? '—'}
                 suffix={brief.limit_up_count == null ? '' : ' 家'}
                 valueStyle={{
-                  fontSize: 18,
+                  fontSize: 16,
                   color: limitUpColor(brief.limit_up_count),
                 }}
               />
             </Tooltip>
           </Col>
-          <Col xs={24} md={24} lg={5}>
-            <div style={{ paddingLeft: 8, borderLeft: '3px solid #722ed1' }}>
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                AI 一句话观点
-              </Text>
-              <Paragraph
-                style={{
-                  margin: '4px 0 0',
-                  fontSize: 13,
-                  lineHeight: 1.5,
-                  color: '#262626',
-                }}
-              >
-                {aiView}
-              </Paragraph>
-            </div>
-          </Col>
         </Row>
+
         {brief.status !== 'ok' && (
           <Alert
             type={brief.status === 'failed' ? 'error' : 'warning'}
