@@ -337,7 +337,9 @@ export class PaperTradingFacade {
     // ============= 交易时段 guard =============
     // 模拟盘按 daily_bar.close 撮合 → 必须在合法时间内调用：
     //   (a) 工作日（周一到周五，非节假日 — 简化：只判断周末）
-    //   (b) 09:00 - 16:00 Asia/Shanghai (盘前 09:00 ~ 收盘后 1 小时缓冲)
+    //   (b) 09:30 - 15:00 Asia/Shanghai (真实开盘到收盘)
+    //       注意：09:00-09:30 是集合竞价时段，真实撮合 09:25，不允许下单
+    //       午休 11:30-13:00 也不允许（实盘也不撮合）
     //   (c) 允许 bypass：options.bypass_trading_hours=true（手动测试/历史回填用）
     if (!(options as any).bypass_trading_hours) {
       const now = new Date();
@@ -346,6 +348,13 @@ export class PaperTradingFacade {
       const shanghai = new Date(now.getTime() + shanghaiOffset);
       const day = shanghai.getUTCDay(); // 0=Sun, 6=Sat
       const hour = shanghai.getUTCHours();
+      const minute = shanghai.getUTCMinutes();
+      const totalMinutes = hour * 60 + minute;
+      // A 股交易时段（Asia/Shanghai）：09:30-11:30 + 13:00-15:00
+      const MORNING_START = 9 * 60 + 30; // 09:30
+      const MORNING_END = 11 * 60 + 30; // 11:30
+      const AFTERNOON_START = 13 * 60; // 13:00
+      const AFTERNOON_END = 15 * 60; // 15:00
       if (day === 0 || day === 6) {
         const err: any = new Error(
           `当前为周末（${day === 0 ? '周日' : '周六'}，Asia/Shanghai），A 股不开市；如需手动测试请加 bypass_trading_hours=true`
@@ -354,9 +363,18 @@ export class PaperTradingFacade {
         err.statusCode = 400;
         throw err;
       }
-      if (hour < 9 || hour >= 16) {
+      const inMorning = totalMinutes >= MORNING_START && totalMinutes < MORNING_END;
+      const inAfternoon = totalMinutes >= AFTERNOON_START && totalMinutes < AFTERNOON_END;
+      if (!inMorning && !inAfternoon) {
+        const hh = String(hour).padStart(2, '0');
+        const mm = String(minute).padStart(2, '0');
+        let reason = '在 A 股交易时段 (09:30-11:30 / 13:00-15:00) 外';
+        if (totalMinutes >= 9 * 60 && totalMinutes < MORNING_START) reason = '集合竞价时段 (09:00-09:30)，等待 09:30 开盘后再下单';
+        else if (totalMinutes >= MORNING_END && totalMinutes < AFTERNOON_START) reason = '午休时段 (11:30-13:00)';
+        else if (totalMinutes >= AFTERNOON_END) reason = '已收盘 (>15:00)';
+        else if (totalMinutes < 9 * 60) reason = '尚未开盘 (<09:00)';
         const err: any = new Error(
-          `当前 ${shanghai.toISOString().substring(11, 16)} (Asia/Shanghai) 在 A 股交易时段 (09:00-16:00) 外；如需手动测试请加 bypass_trading_hours=true`
+          `当前 ${hh}:${mm} (Asia/Shanghai) ${reason}；如需手动测试请加 bypass_trading_hours=true`
         );
         err.code = 'NON_TRADING_HOURS_OFF_HOURS';
         err.statusCode = 400;

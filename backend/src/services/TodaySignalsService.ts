@@ -409,8 +409,36 @@ export class TodaySignalsService {
       }
       seenInBatch.add(c.symbol);
 
-      // 估算 quantity：reference_price 优先；否则按 10 元/股粗算（placeOrder 会用实时价精算）
-      const priceHint = c.reference_price && c.reference_price > 0 ? c.reference_price : 10;
+      // 估算 quantity：reference_price 优先；否则从最新 daily_bar 拉真实价（避免用 10 元假设导致超买）
+      let priceHint = c.reference_price && c.reference_price > 0 ? c.reference_price : null;
+      if (!priceHint) {
+        try {
+          // 拉最新一天 daily_bar.close
+          const { DailyBar } = require('../models/DailyBar');
+          const { Stock } = require('../models/Stock');
+          const stock = await Stock.findOne({ where: { symbol: c.symbol }, raw: true });
+          if (stock) {
+            const lastBar = await DailyBar.findOne({
+              where: { stock_id: stock.id },
+              order: [['time', 'DESC']],
+              raw: true,
+            });
+            if (lastBar && lastBar.close > 0) priceHint = Number(lastBar.close);
+          }
+        } catch {
+          // ignore
+        }
+      }
+      if (!priceHint || priceHint <= 0) {
+        // 兜底跳过 — 不能用 10 元假设否则会下单 500 股 = 数万实际金额
+        orders.push({
+          strategy: c.strategy, symbol: c.symbol, name: c.name,
+          quantity: 0, expected_amount: 0, status: 'skipped',
+          reason: '无法获取真实价格，跳过避免超买',
+        });
+        skipped += 1;
+        continue;
+      }
       const rawQty = Math.floor(perOrderAmount / priceHint);
       const quantity = Math.max(100, Math.floor(rawQty / 100) * 100);
 

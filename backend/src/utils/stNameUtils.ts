@@ -37,5 +37,16 @@ export function isSTName(name?: string | null): boolean {
   }
   // 旧 S 股（"S 石化"），紧跟非 ASCII 字母（避免误判 SAMSUNG）
   if (/^S[^A-Z0-9]/.test(upper)) return true;
+  // 退市股 — "退市XX" / "XX退" 中文前后缀（A 股退市风险板）
+  if (compact.startsWith('退市') || compact.endsWith('退')) return true;
+  // PT 板（暂停上市）
+  if (upper.startsWith('PT')) return true;
   return false;
+}
+
+/**
+ * 兼容别名 — 是否为不可交易股票 (ST + 退市 + PT).
+ */
+export function isUntradableName(name?: string | null): boolean {
+  return isSTName(name);
 }
