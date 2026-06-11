@@ -615,6 +615,50 @@ export class QuantController {
       res.status(500).json({ success: false, message: error.message });
     }
   }
+
+  /**
+   * GET /api/quant/strategy-leaderboard
+   * 策略排行榜：按 sharpe / annual_return / max_drawdown 综合排序所有策略
+   * 每个策略取它最新的 backtest 结果
+   */
+  async getStrategyLeaderboard(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { QuantBacktestResult } = require('../../models/QuantBacktestResult');
+      const sortBy = (req.query.sort_by as string) || 'sharpe';
+      // 取每个 strategy_key 最新的 backtest
+      const rows = await QuantBacktestResult.findAll({
+        attributes: [
+          'strategy_key', 'task_id', 'total_return_pct', 'annual_return_pct',
+          'max_drawdown_pct', 'sharpe_ratio', 'win_rate_pct',
+          'trade_count', 'created_at',
+        ],
+        order: [['created_at', 'DESC']],
+        raw: true,
+        limit: 500,
+      });
+      // 按 strategy_key 去重，保留最新
+      const latestByKey = new Map<string, any>();
+      for (const r of rows as any[]) {
+        if (!latestByKey.has(r.strategy_key)) {
+          latestByKey.set(r.strategy_key, r);
+        }
+      }
+      const items = Array.from(latestByKey.values()).filter(r => {
+        const v = Number(r[sortBy === 'annual' ? 'annual_return_pct' : sortBy === 'sharpe' ? 'sharpe_ratio' : 'total_return_pct']);
+        return Number.isFinite(v);
+      });
+      // 排序
+      items.sort((a, b) => {
+        const va = Number(a[sortBy === 'annual' ? 'annual_return_pct' : sortBy === 'sharpe' ? 'sharpe_ratio' : 'total_return_pct']) || 0;
+        const vb = Number(b[sortBy === 'annual' ? 'annual_return_pct' : sortBy === 'sharpe' ? 'sharpe_ratio' : 'total_return_pct']) || 0;
+        return vb - va;
+      });
+      res.json({ success: true, data: { items, sort_by: sortBy, count: items.length } });
+    } catch (error: any) {
+      logger.error('获取策略排行榜失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
 }
 
 export const quantController = new QuantController();

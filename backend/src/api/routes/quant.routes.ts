@@ -809,4 +809,23 @@ router.get(
   quantController.getRankings.bind(quantController)
 );
 
+/**
+ * @openapi
+ * /api/quant/strategy-leaderboard:
+ *   get:
+ *     tags: [量化 Quant]
+ *     summary: 策略排行榜（按 sharpe / annual / total 排序，每策略最新一次回测）
+ *     parameters:
+ *       - in: query
+ *         name: sort_by
+ *         schema: { type: string, enum: [sharpe, annual, total] }
+ *     responses:
+ *       200: { description: 排序后的策略列表 }
+ */
+router.get(
+  '/strategy-leaderboard',
+  authController.authenticate,
+  quantController.getStrategyLeaderboard.bind(quantController)
+);
+
 export default router;

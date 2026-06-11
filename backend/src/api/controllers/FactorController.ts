@@ -558,6 +558,62 @@ export class FactorController {
       res.status(500).json({ success: false, message });
     }
   }
+
+  /**
+   * GET /api/factors/stock/:stock_code
+   * 单股横截面因子分数：返回该股票在最新一天所有因子的 z_score / percentile.
+   * Pure code (6 digits) only, e.g. 600519.
+   */
+  async getStockFactors(req: Request, res: Response) {
+    try {
+      const rawCode = String(req.params.stock_code || '').trim();
+      const code = rawCode.replace(/[a-z]+\.?/i, '');
+      if (!/^\d{6}$/.test(code)) {
+        return res.status(400).json({ success: false, message: 'stock_code 必须是 6 位数字' });
+      }
+      // 找最新 trade_date
+      const latestRow = await FactorScore.findOne({
+        where: { stock_code: code },
+        attributes: [[fn('MAX', col('trade_date')), 'latest_trade_date']],
+        raw: true,
+      });
+      const latest = (latestRow as any)?.latest_trade_date;
+      if (!latest) {
+        return res.json({ success: true, data: { stock_code: code, trade_date: null, factors: [] } });
+      }
+      const tradeDate = normalizeDateIso(latest);
+      const rows = await FactorScore.findAll({
+        where: { stock_code: code, trade_date: tradeDate },
+        attributes: ['factor_name', 'z_score', 'percentile', 'raw_value'],
+        raw: true,
+      });
+      // join factor metadata (description / category)
+      const allFactors = factorRegistry.list();
+      const metaMap = new Map(allFactors.map(f => [f.name, f]));
+      const items = (rows as any[]).map(r => {
+        const meta = metaMap.get(r.factor_name);
+        return {
+          factor_name: r.factor_name,
+          description: meta?.description || '',
+          category: meta?.category || 'other',
+          z_score: r.z_score != null ? Number(r.z_score) : null,
+          percentile: r.percentile != null ? Number(r.percentile) : null,
+          raw_value: r.raw_value != null ? Number(r.raw_value) : null,
+        };
+      });
+      // sort by |z_score| desc
+      items.sort((a, b) => Math.abs(b.z_score ?? 0) - Math.abs(a.z_score ?? 0));
+      res.json({
+        success: true,
+        data: { stock_code: code, trade_date: tradeDate, factors: items },
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error('FactorController.getStockFactors failed:', error);
+      res.status(500).json({ success: false, message });
+    }
+  }
+  }
 }
 
 // ---------- helpers --------------------------------------------------------

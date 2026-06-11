@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Card, Row, Col, Statistic, Tag, Space, Spin, Alert, Button, Tabs, Empty, Descriptions, Table, Typography, Radio } from 'antd';
-import { ReloadOutlined, RobotOutlined, LineChartOutlined, FundOutlined, ProfileOutlined } from '@ant-design/icons';
+import { ReloadOutlined, RobotOutlined, LineChartOutlined, FundOutlined, ProfileOutlined, BarChartOutlined } from '@ant-design/icons';
 import ReactECharts from 'echarts-for-react';
 import api from '../../services/api';
 import AIStockAnalysisModal from '../trading/AIStockAnalysisModal';
@@ -54,6 +54,9 @@ const StockDetailPanel: React.FC<Props> = ({ symbol: rawSymbol, showBack = false
   const [windowDays, setWindowDays] = useState<number>(60);
   const [aiOpen, setAiOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('chart');
+  const [factors, setFactors] = useState<Array<{ factor_name: string; description: string; category: string; z_score: number | null; percentile: number | null; raw_value: number | null }>>([]);
+  const [factorsLoading, setFactorsLoading] = useState(false);
+  const [factorsTradeDate, setFactorsTradeDate] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!symbol) return;
@@ -73,6 +76,22 @@ const StockDetailPanel: React.FC<Props> = ({ symbol: rawSymbol, showBack = false
   }, [symbol]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // 因子 — 仅在 factors tab 激活且首次访问时加载
+  useEffect(() => {
+    if (activeTab !== 'factors') return;
+    if (factors.length > 0 || factorsLoading) return;
+    if (!displayCode || !/^\d{6}$/.test(displayCode)) return;
+    setFactorsLoading(true);
+    api.get(`/factors/stock/${displayCode}`)
+      .then((r: any) => {
+        const data = r.data?.data;
+        setFactors(data?.factors || []);
+        setFactorsTradeDate(data?.trade_date || null);
+      })
+      .catch(() => setFactors([]))
+      .finally(() => setFactorsLoading(false));
+  }, [activeTab, displayCode, factors.length, factorsLoading]);
 
   const visibleHistory = useMemo(() => (windowDays >= history.length ? history : history.slice(-windowDays)), [history, windowDays]);
 
@@ -241,6 +260,70 @@ const StockDetailPanel: React.FC<Props> = ({ symbol: rawSymbol, showBack = false
                 { title: '成交量', dataIndex: 'volume', width: 100, align: 'right', render: (v: number) => (v / 10000).toFixed(0) + ' 万' },
                 { title: '成交额', dataIndex: 'amount', width: 100, align: 'right', render: (v: number) => v ? `${(v / 1e8).toFixed(2)} 亿` : '—' },
               ]} />
+            ),
+          },
+          {
+            key: 'factors',
+            label: <Space size={4}><BarChartOutlined />因子分数</Space>,
+            children: factorsLoading ? (
+              <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
+            ) : factors.length === 0 ? (
+              <Empty description={`该股票 ${displayCode} 暂无因子分数（可能未被横截面纳入）`} />
+            ) : (
+              <>
+                <div style={{ marginBottom: 8, fontSize: 12, color: '#999' }}>
+                  trade_date: <Tag color="blue">{factorsTradeDate || '—'}</Tag>
+                  共 {factors.length} 个因子（按 |z_score| 降序）
+                </div>
+                <Table
+                  size="small"
+                  rowKey="factor_name"
+                  dataSource={factors}
+                  pagination={false}
+                  scroll={{ x: 'max-content' }}
+                  columns={[
+                    { title: '因子', dataIndex: 'factor_name', width: 150,
+                      render: (v: string, r: any) => (
+                        <div>
+                          <Text strong>{v}</Text>
+                          <div style={{ fontSize: 10, color: '#999', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {r.description || ''}
+                          </div>
+                        </div>
+                      ),
+                    },
+                    { title: '类别', dataIndex: 'category', width: 80,
+                      render: (v: string) => <Tag color="geekblue">{v}</Tag>,
+                    },
+                    { title: 'Z-Score', dataIndex: 'z_score', width: 100, align: 'right',
+                      sorter: (a: any, b: any) => (a.z_score ?? 0) - (b.z_score ?? 0),
+                      render: (v: number | null) => {
+                        if (v == null) return <Text type="secondary">—</Text>;
+                        const intensity = Math.min(Math.abs(v) / 2, 1);
+                        const bg = v >= 0 ? `rgba(207, 19, 34, ${0.1 + intensity * 0.5})` : `rgba(20, 177, 67, ${0.1 + intensity * 0.5})`;
+                        return (
+                          <div style={{ background: bg, padding: '2px 8px', borderRadius: 3, textAlign: 'right', fontWeight: Math.abs(v) > 1 ? 600 : 400 }}>
+                            {v >= 0 ? '+' : ''}{v.toFixed(2)}
+                          </div>
+                        );
+                      },
+                    },
+                    { title: '分位 %', dataIndex: 'percentile', width: 90, align: 'right',
+                      render: (v: number | null) => {
+                        if (v == null) return <Text type="secondary">—</Text>;
+                        const pct = v * 100;
+                        return <Text style={{ color: pct >= 50 ? '#cf1322' : '#3f8600' }}>{pct.toFixed(1)}%</Text>;
+                      },
+                    },
+                    { title: '原值', dataIndex: 'raw_value', width: 100, align: 'right',
+                      render: (v: number | null) => v != null ? Number(v).toFixed(4) : '—',
+                    },
+                  ]}
+                />
+                <div style={{ marginTop: 12, fontSize: 11, color: '#999' }}>
+                  说明：z_score 横截面标准化 (整个 A 股池). |z| &gt; 1.5 = 极端值. 红色 = 高于均值, 绿色 = 低于均值.
+                </div>
+              </>
             ),
           },
         ]} />

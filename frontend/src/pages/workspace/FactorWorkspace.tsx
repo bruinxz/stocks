@@ -43,6 +43,7 @@ import {
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
 import AIStockAnalysisModal from '../../components/trading/AIStockAnalysisModal';
 import MacroEnvTab from './FactorWorkspace.MacroEnvTab';
+import BlockTradesTab from './FactorWorkspace.BlockTradesTab';
 import {
   factorService,
   FactorDetailResponse,
@@ -109,6 +110,7 @@ const FactorWorkspace: React.FC = () => {
     { key: 'picks', label: '今日选股清单', icon: <OrderedListOutlined /> },
     { key: 'heatmap', label: '行业热力', icon: <AppstoreOutlined /> },
     { key: 'macro', label: '宏观环境', icon: <FundOutlined /> },
+    { key: 'block', label: '大宗交易', icon: <FundOutlined /> },
   ];
   const [activeKey, setActiveKey] = useState('overview');
 
@@ -356,6 +358,8 @@ const FactorWorkspace: React.FC = () => {
     );
   } else if (activeKey === 'macro') {
     body = <MacroEnvTab />;
+  } else if (activeKey === 'block') {
+    body = <BlockTradesTab />;
   } else {
     // 'picks'
     body = <PicksTab picks={latestPicks} loading={loading} />;

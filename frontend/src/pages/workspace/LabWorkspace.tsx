@@ -29,6 +29,7 @@ import {
   CopyOutlined,
   EditOutlined,
   ExperimentOutlined,
+  TrophyOutlined,
   PlayCircleOutlined,
   PlusSquareOutlined,
   ReloadOutlined,
@@ -52,6 +53,7 @@ import ReactECharts from 'echarts-for-react';
 import dayjs, { Dayjs } from 'dayjs';
 import { useLocation, useNavigate } from 'react-router-dom';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
+import LeaderboardTab from './LabWorkspace.LeaderboardTab';
 import {
   labService,
   QuantStrategyItem,
@@ -90,6 +92,7 @@ const POLL_INTERVAL_MS = 3000;
 const LabWorkspace: React.FC = () => {
   const tabs: WorkspaceTab[] = [
     { key: 'mine', label: '我的策略', icon: <ExperimentOutlined /> },
+    { key: 'leaderboard', label: '策略排行', icon: <TrophyOutlined /> },
     { key: 'new', label: '新建回测', icon: <PlusSquareOutlined /> },
     { key: 'compare', label: '回测对比', icon: <SwapOutlined /> },
   ];
@@ -371,6 +374,15 @@ const LabWorkspace: React.FC = () => {
         onOpenDetail={s =>
           navigate(`/workspace/lab/strategies/${encodeURIComponent(s.strategy_key)}`)
         }
+      />
+    );
+  } else if (activeKey === 'leaderboard') {
+    body = (
+      <LeaderboardTab
+        strategiesMeta={strategies.map(s => ({
+          strategy_key: s.strategy_key,
+          name: (s as any).name || s.strategy_key,
+        }))}
       />
     );
   } else if (activeKey === 'new') {

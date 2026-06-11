@@ -95,6 +95,28 @@ router.get(
 
 /**
  * @openapi
+ * /api/factors/stock/{stock_code}:
+ *   get:
+ *     tags: [因子 Factors]
+ *     summary: 单股横截面因子分数 (z_score + percentile, 最新一天)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: stock_code
+ *         required: true
+ *         schema: { type: string, pattern: '^\d{6}$' }
+ *     responses:
+ *       200: { description: 该股票当日所有因子的 z_score / percentile }
+ *       400: { description: stock_code 必须是 6 位数字 }
+ */
+router.get(
+  '/stock/:stock_code',
+  authController.authenticate,
+  factorController.getStockFactors.bind(factorController)
+);
+
+/**
+ * @openapi
  * /api/factors/{name}/detail:
  *   get:
  *     tags: [因子 Factors]
