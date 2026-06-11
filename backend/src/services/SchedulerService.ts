@@ -3094,6 +3094,64 @@ class SchedulerService {
           result_summary: { scenario: 'extra_dims_sync', dims, results },
         });
         logger.info(`[EXTRA_DIMS_SYNC] done: ${JSON.stringify(results)}`);
+      } else if (task.type === 'FACTOR_IC_COMPUTE') {
+        // Phase 3: 每日因子 IC 计算 — 走 child_process 调用 compute-factor-ic CLI
+        // 默认跑过去 90 天 + 默认 forwardDays=[1,5,10,20,60]，覆盖 5 个时间窗口的衰减分析
+        const { spawnSync } = require('child_process');
+        const path = require('path');
+        const scriptPath = path.resolve(__dirname, '..', 'scripts', 'compute-factor-ic.ts');
+        const lookbackDays: number = this.toPositiveInt(parameters.lookback_days, 90, 365);
+        const today = moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
+        const start = moment()
+          .tz('Asia/Shanghai')
+          .subtract(lookbackDays, 'days')
+          .format('YYYY-MM-DD');
+        const factorNames: string[] = Array.isArray(parameters.factor_names)
+          ? parameters.factor_names
+          : []; // 空 → CLI 跑全部
+        const args = [
+          'node_modules/.bin/ts-node',
+          '--transpile-only',
+          scriptPath,
+          `--start=${start}`,
+          `--end=${today}`,
+        ];
+        if (factorNames.length) args.push(`--factors=${factorNames.join(',')}`);
+        const t0 = Date.now();
+        const r = spawnSync('/usr/bin/node', args, {
+          cwd: path.resolve(__dirname, '..', '..'),
+          encoding: 'utf-8',
+          timeout: 30 * 60_000, // IC 计算可能跑 5-15 分钟
+          maxBuffer: 128 * 1024 * 1024,
+        });
+        const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+        const ok = r.status === 0;
+        if (ok) {
+          logger.info(
+            `[FACTOR_IC_COMPUTE] done in ${elapsed}s for ${
+              factorNames.length || 'all'
+            } factors over ${start}..${today}`
+          );
+        } else {
+          logger.warn(
+            `[FACTOR_IC_COMPUTE] failed status=${r.status} after ${elapsed}s: ${(
+              r.stderr || ''
+            ).substring(0, 200)}`
+          );
+        }
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: factorNames.length || 1,
+          success_count: ok ? factorNames.length || 1 : 0,
+          failed_count: ok ? 0 : 1,
+          result_summary: {
+            scenario: 'factor_ic_compute',
+            lookback_days: lookbackDays,
+            range: `${start}..${today}`,
+            factor_names: factorNames,
+            elapsed_seconds: Number(elapsed),
+            exit_status: r.status,
+          },
+        });
       } else if (task.type === 'DRAGON_TIGER_SYNC') {
         // 龙虎榜独立 cron — 收盘后 16:30 拉今日（如有上榜）
         const { spawnSync } = require('child_process');
@@ -4098,6 +4156,20 @@ class SchedulerService {
         parameters: {
           dims: ['macro', 'qvix', 'block'],
           block_days: 7,
+        },
+      },
+      {
+        // Phase 3: 每日因子 IC 自动计算 — 周一到周五盘后 19:00 (各 sync 跑完之后)
+        // 默认 lookback 90 天 + 全部 18 个因子 + 5 个 forward 窗口 (1/5/10/20/60)
+        // 跑完后 UI FactorWorkspace 因子卡 + LabWorkspace 都能拉到最新 IC 数据
+        // CPU 占用：~10-15 分钟（取决于因子数 + 横截面大小）
+        name: '因子 IC 自动计算',
+        type: 'FACTOR_IC_COMPUTE',
+        cron_expression: '0 19 * * 1-5',
+        is_active: true,
+        parameters: {
+          lookback_days: 90,
+          factor_names: [],  // 空 = 跑全部已注册因子
         },
       },
       {
