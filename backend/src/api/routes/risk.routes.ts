@@ -339,4 +339,46 @@ router.put(
   riskController.updateMorningCheckupConfig
 );
 
+// ============================================================
+// Phase 2: Position Sizing Policy
+// ============================================================
+
+/**
+ * @openapi
+ * /api/risk/sizing-policy:
+ *   get:
+ *     tags: [风控 Risk]
+ *     summary: (Phase 2) 获取用户 sizing 配置 (含 default 对比)
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: 当前 sizing 配置 + defaults }
+ */
+router.get('/sizing-policy', authController.authenticate, riskController.getSizingPolicy);
+
+/**
+ * @openapi
+ * /api/risk/sizing-policy:
+ *   put:
+ *     tags: [风控 Risk]
+ *     summary: (Phase 2) 更新 sizing 配置
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               method: { type: string, enum: [equal_pct, vol_target, atr_based] }
+ *               base_position_pct: { type: number }
+ *               max_position_pct: { type: number }
+ *               vol_target_pct: { type: number }
+ *               vol_max_lookback_days: { type: integer }
+ *               atr_risk_pct: { type: number }
+ *               atr_period: { type: integer }
+ *     responses:
+ *       200: { description: 已保存 }
+ */
+router.put('/sizing-policy', authController.authenticate, riskController.updateSizingPolicy);
+
 export default router;

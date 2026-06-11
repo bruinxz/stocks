@@ -7,6 +7,7 @@ import { perStockStopLossGuard } from '../../portfolio/risk/PerStockStopLossGuar
 import { industryConcentrationGuard } from '../../portfolio/risk/IndustryConcentrationGuard';
 import { blackSwanWatchdog } from '../../portfolio/risk/BlackSwanWatchdog';
 import { morningRiskCheckupService } from '../../portfolio/risk/MorningRiskCheckupService';
+import { sizingPolicyService } from '../../portfolio/risk/SizingPolicyService';
 import { logger } from '../../utils/logger';
 
 /**
@@ -360,6 +361,40 @@ export class RiskController {
       res.json({ success: true, data: saved, message: '开盘前风险体检配置已保存' });
     } catch (error: any) {
       logger.error('更新开盘前风险体检配置失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  // ============================================================
+  // Phase 2: Position Sizing Policy
+  // ============================================================
+
+  /**
+   * GET /api/risk/sizing-policy  (Phase 2)
+   * 返回用户当前 sizing 配置 (含 default 对比，方便 UI "恢复默认" 按钮)
+   */
+  async getSizingPolicy(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user.id;
+      const data = await sizingPolicyService.getConfigWithDefaults(user_id);
+      res.json({ success: true, data });
+    } catch (error: any) {
+      logger.error('获取 sizing policy 失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * PUT /api/risk/sizing-policy  (Phase 2)
+   * 更新用户 sizing 配置 — input 经 normalize 防脏数据。
+   */
+  async updateSizingPolicy(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user.id;
+      const saved = await sizingPolicyService.updateConfig(user_id, req.body || {});
+      res.json({ success: true, data: saved, message: 'Sizing 配置已保存' });
+    } catch (error: any) {
+      logger.error('更新 sizing policy 失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   }
