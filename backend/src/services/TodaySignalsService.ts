@@ -652,11 +652,15 @@ export class TodaySignalsService {
     let pnlMonthToDate: number | null = null;
 
     if (recent.length > 0) {
-      // 昨日：取最新一条 snapshot 与今值差额
-      const latest = recent[0];
-      const latestValue = Number(latest.total_value);
-      if (Number.isFinite(latestValue)) {
-        pnlYesterday = Math.round((totalValue - latestValue) * 100) / 100;
+      // 昨日：取**昨日及之前**最新一条 snapshot 与今值差额
+      // (排除今天本身——否则今值-今值=0，"昨日盈亏" 总是 0)
+      const todayIso = new Date().toISOString().slice(0, 10);
+      const yesterdayOrEarlier = recent.find(r => String(r.date) < todayIso);
+      if (yesterdayOrEarlier) {
+        const latestValue = Number(yesterdayOrEarlier.total_value);
+        if (Number.isFinite(latestValue)) {
+          pnlYesterday = Math.round((totalValue - latestValue) * 100) / 100;
+        }
       }
 
       // 当月初：找当月第一条 snapshot
