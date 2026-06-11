@@ -101,7 +101,13 @@ function healthCheck(target) {
     const defaultSmokeUser = target.key === 'xz' ? 'xz' : 'lym';
     const username =
       process.env.RELEASE_SMOKE_USERNAME || process.env.SMOKE_USERNAME || defaultSmokeUser;
-    const password = process.env.RELEASE_SMOKE_PASSWORD || process.env.SMOKE_PASSWORD || '666';
+    // P0 launch-helper：禁止 '666' 默认密码
+    const password = process.env.RELEASE_SMOKE_PASSWORD || process.env.SMOKE_PASSWORD || '';
+    if (!password) {
+      throw new Error(
+        'RELEASE_SMOKE_PASSWORD (or SMOKE_PASSWORD) is required; "666" fallback removed.'
+      );
+    }
     run(
       `cd ${sh(`${target.root}/current`)} && SMOKE_BASE_URL=${sh(
         target.backend_url

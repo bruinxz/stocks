@@ -17,9 +17,19 @@ export class AuthController {
   private readonly refreshTokenExpiry = '7d';
 
   constructor() {
-    this.jwtSecret = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
-    this.refreshTokenSecret =
-      process.env.JWT_REFRESH_SECRET || 'your-refresh-secret-key-change-in-production';
+    // P0 review：生产环境绝不允许 JWT_SECRET / JWT_REFRESH_SECRET 使用硬编码兜底。
+    // 否则任何人都能拿到 fallback secret 自签 admin token。
+    const isProd = process.env.NODE_ENV === 'production';
+    const fallbackAccess = isProd ? '' : (process.env.LIVE_DEV_JWT_SECRET || 'dev-only-access-secret');
+    const fallbackRefresh = isProd ? '' : (process.env.LIVE_DEV_JWT_REFRESH_SECRET || 'dev-only-refresh-secret');
+    this.jwtSecret = process.env.JWT_SECRET || fallbackAccess;
+    this.refreshTokenSecret = process.env.JWT_REFRESH_SECRET || fallbackRefresh;
+    if (!this.jwtSecret || !this.refreshTokenSecret) {
+      // 生产环境硬阻断启动后续行为：让 sign/verify 全部失败，避免任何人用兜底 secret 拿 admin token。
+      logger.error(
+        '[AuthController] JWT_SECRET / JWT_REFRESH_SECRET 未在生产环境配置；所有 token 签发与校验将失败。'
+      );
+    }
 
     // 绑定方法以确保正确的this上下文
     this.register = this.register.bind(this);
@@ -36,10 +46,26 @@ export class AuthController {
 
   private async initDefaultUsers() {
     try {
-      const defaultUsers = [
-        { username: 'xz', password_hash: '666', email: 'xz@example.com' },
-        { username: 'lym', password_hash: '666', email: 'lym@example.com' },
-      ];
+      // P0 launch-helper：硬编码 '666' admin 密码是上线最大后门。
+      // production 环境必须显式 LIVE_ADMIN_BOOTSTRAP_PASSWORD 才创建默认 admin；
+      // dev 环境可继续用 '666' 方便联调，但所有走 NODE_ENV=production 的部署都会被拦下。
+      const isProd = process.env.NODE_ENV === 'production';
+      const bootstrapPassword = process.env.LIVE_ADMIN_BOOTSTRAP_PASSWORD || '';
+      if (isProd && !bootstrapPassword) {
+        logger.warn(
+          '[AuthController] production 环境未设置 LIVE_ADMIN_BOOTSTRAP_PASSWORD，跳过默认 admin 创建。' +
+            ' 如需 bootstrap 第一个 admin，请通过 SQL 直接 INSERT 一条 role=admin 用户并用 bcrypt 哈希密码。'
+        );
+        return;
+      }
+      const defaultUsers = isProd
+        ? [
+            { username: 'lym', password_hash: bootstrapPassword, email: 'lym@example.com' },
+          ]
+        : [
+            { username: 'xz', password_hash: '666', email: 'xz@example.com' },
+            { username: 'lym', password_hash: '666', email: 'lym@example.com' },
+          ];
 
       for (const u of defaultUsers) {
         const existingUser = await User.findOne({ where: { username: u.username } });
@@ -51,7 +77,9 @@ export class AuthController {
             role: 'admin',
             is_active: true,
           });
-          logger.info(`Default user ${u.username} created.`);
+          logger.info(
+            `Default user ${u.username} created (env=${process.env.NODE_ENV || 'development'}).`
+          );
         }
       }
     } catch (err) {
@@ -98,7 +126,7 @@ export class AuthController {
       // 设置HttpOnly cookie
       res.cookie('refreshToken', refreshToken, {
         httpOnly: true,
-        secure: false, // 因为目前部署在 HTTP 下，如果是 true 会导致浏览器静默拦截 Cookie
+        secure: process.env.NODE_ENV === 'production', // production 强制 HTTPS Secure cookie；dev/HTTP 下保留宽松行为
         sameSite: 'strict',
         path: '/',
         maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
@@ -155,7 +183,7 @@ export class AuthController {
       // 设置HttpOnly cookie
       res.cookie('refreshToken', refreshToken, {
         httpOnly: true,
-        secure: false, // 因为目前部署在 HTTP 下，如果是 true 会导致浏览器静默拦截 Cookie
+        secure: process.env.NODE_ENV === 'production', // production 强制 HTTPS Secure cookie；dev/HTTP 下保留宽松行为
         sameSite: 'strict',
         path: '/',
         maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
@@ -219,7 +247,7 @@ export class AuthController {
       // 设置新的HttpOnly cookie
       res.cookie('refreshToken', newRefreshToken, {
         httpOnly: true,
-        secure: false, // 禁用 secure 使得 HTTP 也能收发 Cookie
+        secure: process.env.NODE_ENV === 'production', // production 强制 HTTPS Secure cookie
         sameSite: 'strict',
         path: '/',
         maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
@@ -246,7 +274,7 @@ export class AuthController {
       // 清除HttpOnly cookie中的refreshToken
       res.clearCookie('refreshToken', {
         httpOnly: true,
-        secure: false, // 必须和 setCookie 时的配置保持一致才能清除成功
+        secure: process.env.NODE_ENV === 'production', // 与 setCookie 时保持一致；prod=true / dev=false
         sameSite: 'strict',
         path: '/',
       });

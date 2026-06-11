@@ -138,3 +138,6 @@ data_completeness_report.json
 # Database backups (US-071)
 backups/
 *.sql.gz
+
+# Local runtime artifacts (server backups, rescue snapshots, test reports)
+.artifacts/

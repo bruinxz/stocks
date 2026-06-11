@@ -47,7 +47,19 @@ export const authenticate = (req: AuthenticatedRequest, res: Response, next: Nex
   }
 
   try {
-    const secret = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
+    // P0 review：JWT_SECRET 必须在环境变量里显式配置；
+    // 不再回退到硬编码字符串 —— 否则任何人都能用 'your-secret-key-change-in-production' 自签 admin token。
+    // 仅 NODE_ENV !== production 时为了兼容本地脚本，允许显式使用 LIVE_DEV_JWT_SECRET（仍要求非空）。
+    const secret =
+      process.env.JWT_SECRET ||
+      (process.env.NODE_ENV !== 'production' ? process.env.LIVE_DEV_JWT_SECRET : '');
+    if (!secret) {
+      logger.error('JWT_SECRET 未配置，拒绝校验 token');
+      return res.status(500).json({
+        success: false,
+        error: '服务端未配置 JWT_SECRET，拒绝验证 token',
+      });
+    }
     const decoded = jwt.verify(token, secret) as any;
     // decoded 可能是 { user_id: 1, username: 'xz', role: 'admin', iat: ..., exp: ... } 或者嵌套在 user 中
     req.user = decoded.user || {

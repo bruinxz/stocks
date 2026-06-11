@@ -1,0 +1,22 @@
+name: Security Lint
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  weak-secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+
+      - name: Check weak secrets / passwords
+        run: bash scripts/ci/check_weak_secrets.sh
+
+      - name: Check audit events enumeration
+        run: bash scripts/ci/check_audit_events.sh

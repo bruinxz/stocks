@@ -2,6 +2,7 @@ import cron, { ScheduledTask as CronScheduledTask } from 'node-cron';
 import { ScheduledTask } from '../models/ScheduledTask';
 import { TaskExecutionLog } from '../models/TaskExecutionLog';
 import { logger } from '../utils/logger';
+import { LIVE_AUDIT_EVENT_TYPES } from '../live-trading/auditEvents';
 import { dataUpdateQueue } from '../jobs/dataUpdateQueue';
 import { aiPollingQueue } from '../jobs/aiPollingQueue';
 import { aiAdvisorService } from './AIAdvisorService';
@@ -1304,7 +1305,7 @@ class SchedulerService {
           if (changedKeys.length > 0) {
             await taskParameterAuditService.record({
               task: shadowTask,
-              event_type: 'live_shadow_budget_suggestion',
+              event_type: LIVE_AUDIT_EVENT_TYPES.SHADOW_BUDGET_SUGGESTION,
               before_parameters: beforeParameters,
               after_parameters: suggestedParameters,
               changed_keys: changedKeys,
@@ -3177,14 +3178,14 @@ class SchedulerService {
     const audit = options.audit_id
       ? await taskParameterAuditService
           .list({
-            event_type: 'live_shadow_budget_suggestion',
+            event_type: LIVE_AUDIT_EVENT_TYPES.SHADOW_BUDGET_SUGGESTION,
             limit: 100,
             watched_only: false,
           })
           .then(rows => rows.find((row: any) => Number(row.id) === Number(options.audit_id)))
       : await taskParameterAuditService
           .list({
-            event_type: 'live_shadow_budget_suggestion',
+            event_type: LIVE_AUDIT_EVENT_TYPES.SHADOW_BUDGET_SUGGESTION,
             limit: 1,
             watched_only: false,
           })
@@ -3245,7 +3246,7 @@ class SchedulerService {
       await task.update({ parameters: afterParameters });
       await taskParameterAuditService.record({
         task,
-        event_type: 'live_shadow_budget_applied',
+        event_type: LIVE_AUDIT_EVENT_TYPES.SHADOW_BUDGET_APPLIED,
         before_parameters: beforeParameters,
         after_parameters: afterParameters,
         changed_keys: changedKeys,
@@ -3442,8 +3443,6 @@ class SchedulerService {
             'multi_factor_ranking',
             'relative_strength_momentum',
             'ma_trend',
-            'macd_trend',
-            'breakout_atr',
             'volume_price_confirmation',
             'low_volatility_quality',
           ],
@@ -3458,19 +3457,19 @@ class SchedulerService {
           factor_sync_skip_if_real_provider_rate_gte: 65,
           quote_sync_limit: 360,
           realtime_quote_source: 'auto',
-          min_score: 55,
-          archive_limit: 30,
-          max_industry_candidates: 4,
-          max_strategy_candidates: 8,
+          min_score: 70,
+          archive_limit: 20,
+          max_industry_candidates: 3,
+          max_strategy_candidates: 5,
           submit_agent_analysis: true,
           agent_max_count: 5,
-          agent_min_score: 72,
-          agent_paper_trade_min_score: 54,
+          agent_min_score: 76,
+          agent_paper_trade_min_score: 68,
           agent_session: 'close',
           agent_auto_paper_trade: true,
           run_paper_trading: true,
           dry_run: false,
-          paper_trade_limit: 3,
+          paper_trade_limit: 2,
           paper_trade_scan_limit: 100,
           max_positions: 8,
           default_position_pct: 5,
@@ -3478,8 +3477,8 @@ class SchedulerService {
           min_trade_amount: 3000,
           strategy_weight_lookback_days: 365,
           use_entry_risk_guard: true,
-          max_daily_new_positions: 3,
-          max_daily_new_exposure_pct: 12,
+          max_daily_new_positions: 2,
+          max_daily_new_exposure_pct: 8,
           max_total_exposure_pct: 60,
           max_industry_exposure_pct: 25,
           min_cash_reserve_pct: 8,
@@ -3530,8 +3529,6 @@ class SchedulerService {
             'multi_factor_ranking',
             'relative_strength_momentum',
             'ma_trend',
-            'macd_trend',
-            'breakout_atr',
             'volume_price_confirmation',
             'low_volatility_quality',
           ],
@@ -3546,19 +3543,19 @@ class SchedulerService {
           factor_sync_skip_if_real_provider_rate_gte: 65,
           quote_sync_limit: 360,
           realtime_quote_source: 'auto',
-          min_score: 55,
-          archive_limit: 30,
-          max_industry_candidates: 4,
-          max_strategy_candidates: 8,
+          min_score: 70,
+          archive_limit: 20,
+          max_industry_candidates: 3,
+          max_strategy_candidates: 5,
           submit_agent_analysis: true,
           agent_max_count: 5,
-          agent_min_score: 72,
-          agent_paper_trade_min_score: 54,
+          agent_min_score: 76,
+          agent_paper_trade_min_score: 68,
           agent_session: 'open',
           agent_auto_paper_trade: true,
           run_paper_trading: true,
           dry_run: false,
-          paper_trade_limit: 3,
+          paper_trade_limit: 2,
           paper_trade_scan_limit: 100,
           max_positions: 8,
           default_position_pct: 4,
@@ -3566,8 +3563,8 @@ class SchedulerService {
           min_trade_amount: 3000,
           strategy_weight_lookback_days: 365,
           use_entry_risk_guard: true,
-          max_daily_new_positions: 3,
-          max_daily_new_exposure_pct: 12,
+          max_daily_new_positions: 2,
+          max_daily_new_exposure_pct: 8,
           max_total_exposure_pct: 60,
           max_industry_exposure_pct: 25,
           min_cash_reserve_pct: 8,

@@ -1,4 +1,4 @@
-import { Table, Column, Model, DataType, CreatedAt, UpdatedAt, Index } from 'sequelize-typescript';
+import { Table, Column, Model, DataType, CreatedAt, UpdatedAt } from 'sequelize-typescript';
 
 @Table({
   tableName: 'live_trades',
@@ -10,13 +10,15 @@ import { Table, Column, Model, DataType, CreatedAt, UpdatedAt, Index } from 'seq
     { fields: ['order_id'] },
     { fields: ['symbol'] },
     { fields: ['trade_time'] },
+    // broker_trade_id 业务唯一：bridge 重传同 trade 必须被 DB 兜底拒收
+    // PG/SQLite 都允许多 NULL，所以无需 partial WHERE 条件
+    { unique: true, fields: ['broker_trade_id'], name: 'idx_live_trades_broker_trade_id_unique' },
   ],
 })
 export class LiveTrade extends Model {
   @Column({ type: DataType.INTEGER, primaryKey: true, autoIncrement: true })
   declare id: number;
 
-  @Index
   @Column({ type: DataType.INTEGER, allowNull: false, field: 'user_id' })
   declare user_id: number;
 
