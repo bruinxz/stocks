@@ -34,6 +34,7 @@ import {
   PlusSquareOutlined,
   ReloadOutlined,
   RightOutlined,
+  SafetyCertificateOutlined,
   SwapOutlined,
 } from '@ant-design/icons';
 import {
@@ -54,6 +55,7 @@ import dayjs, { Dayjs } from 'dayjs';
 import { useLocation, useNavigate } from 'react-router-dom';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
 import LeaderboardTab from './LabWorkspace.LeaderboardTab';
+import WalkForwardTab from './LabWorkspace.WalkForwardTab';
 import {
   labService,
   QuantStrategyItem,
@@ -95,6 +97,7 @@ const LabWorkspace: React.FC = () => {
     { key: 'leaderboard', label: '策略排行', icon: <TrophyOutlined /> },
     { key: 'new', label: '新建回测', icon: <PlusSquareOutlined /> },
     { key: 'compare', label: '回测对比', icon: <SwapOutlined /> },
+    { key: 'walk_forward', label: 'Walk-Forward', icon: <SafetyCertificateOutlined /> },
   ];
   const [activeKey, setActiveKey] = useState('mine');
 
@@ -397,6 +400,8 @@ const LabWorkspace: React.FC = () => {
         tasks={tasks}
       />
     );
+  } else if (activeKey === 'walk_forward') {
+    body = <WalkForwardTab strategies={strategies} />;
   } else {
     body = (
       <CompareTab

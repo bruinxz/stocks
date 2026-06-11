@@ -425,6 +425,138 @@ export async function setStrategyDryRun(
   return res.data.data;
 }
 
+// ---------- Phase 1: Walk-Forward Validation ------------------------------
+
+export interface WalkForwardSummary {
+  total_windows: number;
+  completed_windows: number;
+  failed_windows: number;
+  mean_test_sharpe: number | null;
+  std_test_sharpe: number | null;
+  min_test_sharpe: number | null;
+  max_test_sharpe: number | null;
+  mean_test_return: number | null;
+  mean_test_drawdown: number | null;
+  win_ratio: number | null;
+  out_of_sample_decay: number | null;
+  dsr?: number | null;
+  pbo?: number | null;
+  verdict?: 'PASS' | 'FAIL' | 'INSUFFICIENT' | null;
+  total_test_days?: number | null;
+  num_trials?: number | null;
+}
+
+export interface WalkForwardWindowResult {
+  id: number;
+  run_id: number;
+  window_index: number;
+  train_start_date: string;
+  train_end_date: string;
+  test_start_date: string;
+  test_end_date: string;
+  best_params_json: Record<string, any>;
+  train_composite_score: number | null;
+  train_sharpe: number | null;
+  test_sharpe: number | null;
+  test_return: number | null;
+  test_drawdown: number | null;
+  test_total_return: number | null;
+  test_win_rate: number | null;
+  test_trade_count: number | null;
+  train_run_id: number | null;
+  train_combos_count: number | null;
+  train_failed_combos: number | null;
+  status: 'pending' | 'completed' | 'train_failed' | 'test_failed';
+  error_message: string | null;
+  duration_seconds: number | null;
+  dsr?: number | null;
+  verdict?: 'PASS' | 'FAIL' | 'INSUFFICIENT' | null;
+  test_regime_breakdown_json?: any;
+  path_index?: number | null;
+  train_skip_dates_count?: number | null;
+}
+
+export interface WalkForwardRunRow {
+  id: number;
+  optimizer_type: string;
+  strategy_name: string;
+  status: 'running' | 'completed' | 'failed';
+  total_combos: number;
+  completed_combos: number;
+  failed_combos: number;
+  best_result_id: number | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  metadata_json?: { wf_summary?: WalkForwardSummary };
+  param_grid_json?: any;
+  backtest_config_json?: any;
+}
+
+export interface RunWalkForwardPayload {
+  strategy_key: string;
+  param_grid?: Record<string, any[]>;
+  param_bounds?: Record<string, { min: number; max: number; integer?: boolean }>;
+  base_config?: Record<string, any>;
+  train_months?: number;
+  test_months?: number;
+  start_date: string;
+  end_date: string;
+  scheme?: 'rolling' | 'cpcv';
+  optimizer_type?: 'grid_search' | 'bayesian';
+  purging?: { label_horizon_days: number; embargo_days: number } | null;
+  cpcv?: { n_groups: number; k_test_groups: number };
+  max_combos?: number;
+  persist?: boolean;
+}
+
+export interface RunWalkForwardResponse {
+  run_id: number | null;
+  summary: WalkForwardSummary;
+  windows: WalkForwardWindowResult[];
+  best_window: WalkForwardWindowResult | null;
+}
+
+export async function runWalkForwardValidation(
+  payload: RunWalkForwardPayload
+): Promise<RunWalkForwardResponse> {
+  const res = await api.post('/quant/walk-forward', payload);
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || 'Walk-forward 验证失败');
+  }
+  return res.data.data as RunWalkForwardResponse;
+}
+
+export async function listWalkForwardRuns(
+  options: { strategy_name?: string; limit?: number } = {}
+): Promise<WalkForwardRunRow[]> {
+  const res = await api.get('/quant/walk-forward/runs', {
+    params: {
+      strategy_name: options.strategy_name,
+      limit: options.limit ?? 30,
+    },
+  });
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || '查询 walk-forward 列表失败');
+  }
+  return (res.data.data || []) as WalkForwardRunRow[];
+}
+
+export async function getWalkForwardWindows(runId: number): Promise<WalkForwardWindowResult[]> {
+  const res = await api.get(`/quant/walk-forward/runs/${runId}/windows`);
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || '查询窗口失败');
+  }
+  return (res.data.data || []) as WalkForwardWindowResult[];
+}
+
+export async function deleteWalkForwardRun(runId: number): Promise<void> {
+  const res = await api.delete(`/quant/walk-forward/runs/${runId}`);
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || '删除失败');
+  }
+}
+
 // ---------- bundled export -------------------------------------------------
 
 export const labService = {
@@ -439,6 +571,11 @@ export const labService = {
   getStrategyDetail,
   getStrategySource,
   setStrategyDryRun,
+  // Phase 1: walk-forward
+  runWalkForwardValidation,
+  listWalkForwardRuns,
+  getWalkForwardWindows,
+  deleteWalkForwardRun,
 };
 
 export default labService;
