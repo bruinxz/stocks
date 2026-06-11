@@ -3122,10 +3122,12 @@ class SchedulerService {
         // 收盘后给所有 paper_trading_portfolio 生成日 snapshot
         // 让"昨日盈亏 / 当月收益 / 最大回撤" 能正常显示历史
         const { paperTradingAutomationService } = require('../portfolio/internal/PaperTradingAutomationService');
-        const portfolios = await sequelize.query(
-          "SELECT id, user_id FROM paper_trading_portfolios WHERE is_active=true",
-          { type: 'SELECT' as any }
-        );
+        const { PaperTradingPortfolio } = require('../models/PaperTradingPortfolio');
+        const portfolios = await PaperTradingPortfolio.findAll({
+          where: { is_active: true },
+          attributes: ['id', 'user_id'],
+          raw: true,
+        });
         let ok = 0, failed = 0;
         for (const p of portfolios as any[]) {
           try {
