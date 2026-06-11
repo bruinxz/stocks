@@ -3069,6 +3069,31 @@ class SchedulerService {
           result_summary: { scenario: 'extra_dims_sync', dims, results },
         });
         logger.info(`[EXTRA_DIMS_SYNC] done: ${JSON.stringify(results)}`);
+      } else if (task.type === 'DRAGON_TIGER_SYNC') {
+        // 龙虎榜独立 cron — 收盘后 16:30 拉今日（如有上榜）
+        const { spawnSync } = require('child_process');
+        const path = require('path');
+        const today = moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
+        const start = parameters.start || today;
+        const end = parameters.end || today;
+        const scriptPath = path.resolve(__dirname, '..', 'scripts', 'sync-dragon-tiger.ts');
+        const args = ['node_modules/.bin/ts-node', '--transpile-only', scriptPath, `--start=${start}`, `--end=${end}`];
+        const t0 = Date.now();
+        const r = spawnSync('/usr/bin/node', args, {
+          cwd: path.resolve(__dirname, '..', '..'),
+          encoding: 'utf-8',
+          timeout: 10 * 60_000,
+          maxBuffer: 64 * 1024 * 1024,
+        });
+        const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+        const ok = r.status === 0;
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: 1,
+          success_count: ok ? 1 : 0,
+          failed_count: ok ? 0 : 1,
+          result_summary: { scenario: 'dragon_tiger_sync', start, end, elapsed_s: elapsed, status: r.status },
+        });
+        logger.info(`[DRAGON_TIGER_SYNC] ${start}~${end} ${ok ? 'OK' : 'FAIL'} ${elapsed}s`);
       } else {
         throw new Error(`Unsupported task type: ${task.type}`);
       }
@@ -4026,6 +4051,15 @@ class SchedulerService {
           dims: ['macro', 'qvix', 'block'],
           block_days: 7,
         },
+      },
+      {
+        // 龙虎榜独立 cron — 收盘后 16:45 拉今日上榜
+        // 沪深交易所通常 16:00 前披露，留 45min buffer
+        name: '龙虎榜同步',
+        type: 'DRAGON_TIGER_SYNC',
+        cron_expression: '45 16 * * 1-5',
+        is_active: true,
+        parameters: {},
       },
     ];
 
