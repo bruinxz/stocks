@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Card, Row, Col, Statistic, Tag, Space, Spin, Alert, Button, Tabs, Empty, Descriptions, Table, Typography, Radio } from 'antd';
-import { ReloadOutlined, RobotOutlined, LineChartOutlined, FundOutlined, ProfileOutlined, BarChartOutlined } from '@ant-design/icons';
+import { ReloadOutlined, RobotOutlined, LineChartOutlined, FundOutlined, ProfileOutlined, BarChartOutlined, BulbOutlined } from '@ant-design/icons';
 import ReactECharts from 'echarts-for-react';
 import api from '../../services/api';
 import AIStockAnalysisModal from '../trading/AIStockAnalysisModal';
+import { listReports, RECOMMENDATION_LABELS, RECOMMENDATION_COLORS } from '../../services/aiStockAnalysisService';
 
 const { Text, Title } = Typography;
 
@@ -57,6 +58,8 @@ const StockDetailPanel: React.FC<Props> = ({ symbol: rawSymbol, showBack = false
   const [factors, setFactors] = useState<Array<{ factor_name: string; description: string; category: string; z_score: number | null; percentile: number | null; raw_value: number | null }>>([]);
   const [factorsLoading, setFactorsLoading] = useState(false);
   const [factorsTradeDate, setFactorsTradeDate] = useState<string | null>(null);
+  const [aiReports, setAiReports] = useState<any[]>([]);
+  const [aiReportsLoading, setAiReportsLoading] = useState(false);
 
   const load = useCallback(async () => {
     if (!symbol) return;
@@ -92,6 +95,24 @@ const StockDetailPanel: React.FC<Props> = ({ symbol: rawSymbol, showBack = false
       .catch(() => setFactors([]))
       .finally(() => setFactorsLoading(false));
   }, [activeTab, displayCode, factors.length, factorsLoading]);
+
+  // AI 解读历史 — 仅在 ai-history tab 激活且首次访问时加载
+  useEffect(() => {
+    if (activeTab !== 'ai-history') return;
+    if (aiReports.length > 0 || aiReportsLoading) return;
+    if (!displayCode) return;
+    setAiReportsLoading(true);
+    listReports({ stock_code: displayCode, limit: 20 })
+      .then(setAiReports)
+      .catch(() => setAiReports([]))
+      .finally(() => setAiReportsLoading(false));
+  }, [activeTab, displayCode, aiReports.length, aiReportsLoading]);
+
+  // 切换 stock 时清空两个 tab 缓存
+  useEffect(() => {
+    setFactors([]);
+    setAiReports([]);
+  }, [symbol]);
 
   const visibleHistory = useMemo(() => (windowDays >= history.length ? history : history.slice(-windowDays)), [history, windowDays]);
 
@@ -324,6 +345,65 @@ const StockDetailPanel: React.FC<Props> = ({ symbol: rawSymbol, showBack = false
                   说明：z_score 横截面标准化 (整个 A 股池). |z| &gt; 1.5 = 极端值. 红色 = 高于均值, 绿色 = 低于均值.
                 </div>
               </>
+            ),
+          },
+          {
+            key: 'ai-history',
+            label: <Space size={4}><BulbOutlined />AI 解读历史</Space>,
+            children: aiReportsLoading ? (
+              <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
+            ) : aiReports.length === 0 ? (
+              <Empty description="该股票暂无 AI 解读记录。点上方 'AI 解读' 按钮生成一次后此处会出现。" />
+            ) : (
+              <Table
+                size="small"
+                rowKey={(r: any) => r.report_id || r.id}
+                dataSource={aiReports}
+                pagination={{ pageSize: 10 }}
+                scroll={{ x: 'max-content' }}
+                expandable={{
+                  expandedRowRender: (r: any) => (
+                    <div style={{ padding: 8, background: '#fafafa' }}>
+                      <div style={{ marginBottom: 8 }}>
+                        <Text strong>摘要：</Text>
+                        <div style={{ marginTop: 4 }}>{r.summary || '—'}</div>
+                      </div>
+                      {r.key_points_json && Object.keys(r.key_points_json).length > 0 && (
+                        <div>
+                          <Text strong>关键要点：</Text>
+                          <pre style={{ marginTop: 4, fontSize: 11, maxHeight: 200, overflow: 'auto' }}>
+                            {JSON.stringify(r.key_points_json, null, 2)}
+                          </pre>
+                        </div>
+                      )}
+                    </div>
+                  ),
+                }}
+                columns={[
+                  { title: '时间', dataIndex: 'generated_at', width: 140,
+                    render: (v: string) => v ? new Date(v).toLocaleString('zh-CN', { hour12: false }) : '—',
+                  },
+                  { title: '建议', dataIndex: 'recommendation', width: 80,
+                    render: (v: string) => {
+                      const color = RECOMMENDATION_COLORS[v as keyof typeof RECOMMENDATION_COLORS] || 'default';
+                      const label = RECOMMENDATION_LABELS[v as keyof typeof RECOMMENDATION_LABELS] || v;
+                      return <Tag color={color}>{label}</Tag>;
+                    },
+                  },
+                  { title: '置信度', dataIndex: 'confidence_score', width: 80, align: 'right',
+                    render: (v: number | null) => v != null ? `${(Number(v) * 100).toFixed(0)}%` : '—',
+                  },
+                  { title: '风险', dataIndex: 'risk_level', width: 70,
+                    render: (v: string | null) => v ? <Tag color={v === 'high' ? 'red' : v === 'medium' ? 'orange' : 'green'}>{v}</Tag> : '—',
+                  },
+                  { title: '维度', dataIndex: 'dimensions', width: 120,
+                    render: (v: string[]) => v && v.length ? <Text style={{ fontSize: 11 }}>{v.join(', ')}</Text> : '—',
+                  },
+                  { title: '摘要', dataIndex: 'summary', ellipsis: true,
+                    render: (v: string | null) => v ? <Text style={{ fontSize: 11 }}>{v.substring(0, 80)}{v.length > 80 ? '…' : ''}</Text> : '—',
+                  },
+                ]}
+              />
             ),
           },
         ]} />
