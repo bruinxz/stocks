@@ -2,6 +2,14 @@ import dotenv from 'dotenv';
 // Load environment variables immediately to ensure config is available for imports
 dotenv.config();
 
+import { runProductionPreflight } from './utils/productionPreflight';
+// production 启动预检：缺关键 env 或弱密钥直接退出，避免半启动放流量
+if (!runProductionPreflight()) {
+  // eslint-disable-next-line no-console
+  console.error('[startup] production preflight failed, exiting');
+  process.exit(1);
+}
+
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -28,6 +36,7 @@ import reviewRoutes from './api/routes/review.routes';
 import strategyResearchRoutes from './api/routes/strategyResearch.routes';
 import signalTraceRoutes from './api/routes/signalTrace.routes';
 import liveTradingRoutes from './live-trading/routes/liveTrading.routes';
+import bridgeRoutes from './live-trading/routes/bridge.routes';
 import './jobs/dataUpdateWorker'; // 初始化数据更新队列处理器
 import './jobs/aiPollingWorker'; // 初始化 AI 分析轮询队列处理器
 import './jobs/quantBacktestWorker'; // 初始化量化跑分队列处理器
@@ -43,17 +52,50 @@ const disableDefaultTaskSeed =
   disableScheduler || String(process.env.DISABLE_DEFAULT_TASK_SEED || '').toLowerCase() === 'true';
 
 // Middleware
+// CORS：默认收紧到 ALLOWED_ORIGINS 白名单（逗号分隔），仅在显式 LIVE_TRADING_CORS_RELAX=true 时全反射。
+// 这是为了堵 CSRF：实盘下单/kill switch resolve 等高敏感接口走 cookie 鉴权，cors 全开 + credentials=true
+// 等于把所有真实下单接口暴露给任意网站。
+const allowedOrigins = String(process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+const corsRelax = String(process.env.LIVE_TRADING_CORS_RELAX || '').toLowerCase() === 'true';
 app.use(
   cors({
     origin: function (origin, callback) {
-      // 允许任何来源访问，配合 credentials: true 会动态反射 Origin
-      callback(null, true);
+      if (!origin) {
+        // 无 Origin（curl/server-to-server/同源）一律放行
+        return callback(null, true);
+      }
+      if (corsRelax) {
+        return callback(null, true);
+      }
+      if (allowedOrigins.length === 0) {
+        // 未配置白名单时默认仅放行 localhost 开发场景
+        if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+          return callback(null, true);
+        }
+        // 静默拒绝（cors 包会自动返回不带 ACAO 头的响应），避免反复 warn
+        return callback(null, false);
+      }
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(null, false);
     },
     credentials: true, // Allow cookies to be sent
   })
 );
 app.use(helmet({ crossOriginResourcePolicy: false })); // Allow cross-origin for static files
-app.use(express.json());
+app.use(
+  express.json({
+    limit: process.env.LIVE_BRIDGE_BODY_LIMIT || '2mb',
+    // bridge 鉴权需要原始 body 计算 HMAC，挂在 req.rawBody 上供 bridgeAuthMiddleware 使用
+    verify: (req: any, _res, buf) => {
+      req.rawBody = buf.toString('utf8');
+    },
+  })
+);
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
@@ -91,6 +133,8 @@ app.use('/api/today', todayRoutes);
 app.use('/api/review', reviewRoutes);
 app.use('/api/strategy-research', strategyResearchRoutes);
 app.use('/api/signals', signalTraceRoutes);
+// bridge 路由必须比 liveTradingRoutes **先**挂载，否则会被前者全局 authController.authenticate 拦下
+app.use('/api/live-trading/bridge', bridgeRoutes);
 app.use('/api/live-trading', liveTradingRoutes);
 
 import { User } from './models/User';
@@ -124,6 +168,14 @@ import { LiveOrderDraft } from './models/LiveOrderDraft';
 import { LiveOrder } from './models/LiveOrder';
 import { LiveTrade } from './models/LiveTrade';
 import { LiveExecutionAuditLog } from './models/LiveExecutionAuditLog';
+import { LiveKillSwitchState } from './models/LiveKillSwitchState';
+import { LiveBrokerCommand } from './models/LiveBrokerCommand';
+import { LiveBrokerCommandDispatch } from './models/LiveBrokerCommandDispatch';
+import { LiveBrokerEvent } from './models/LiveBrokerEvent';
+import { LiveBrokerBridgeHeartbeat } from './models/LiveBrokerBridgeHeartbeat';
+import { LiveBridgeNonce } from './models/LiveBridgeNonce';
+import { killSwitchService } from './live-trading/services/KillSwitchService';
+import { bridgeCommandExpiryService } from './live-trading/services/BridgeCommandExpiryService';
 import { quantStrategyService } from './quant/services/QuantStrategyService';
 
 async function publicTableExists(tableName: string): Promise<boolean> {
@@ -168,6 +220,65 @@ async function publicIndexExists(indexName: string): Promise<boolean> {
   );
 
   return (rows as any[]).length > 0;
+}
+
+async function dropPublicIndexIfExists(indexName: string): Promise<void> {
+  if (!(await publicIndexExists(indexName))) {
+    return;
+  }
+
+  try {
+    await sequelize.query(`DROP INDEX IF EXISTS "${indexName}"`);
+    console.log(`Dropped legacy runtime schema index ${indexName}`);
+  } catch (error: any) {
+    console.warn(`Failed to drop legacy runtime schema index ${indexName}:`, error?.message || error);
+  }
+}
+
+async function dropLegacyLiveBrokerAccountUniqueIndexes(): Promise<void> {
+  if (!(await publicTableExists('live_broker_accounts'))) {
+    return;
+  }
+
+  const [rows] = await sequelize.query(
+    `
+      SELECT indexname, indexdef
+      FROM pg_indexes
+      WHERE schemaname = 'public'
+        AND tablename = 'live_broker_accounts'
+        AND indexdef ILIKE '%UNIQUE%'
+        AND indexdef LIKE '%"user_id"%'
+        AND indexdef LIKE '%"broker_key"%'
+    `
+  );
+
+  for (const row of rows as Array<{ indexname: string }>) {
+    await dropPublicIndexIfExists(row.indexname);
+  }
+}
+
+async function createPublicIndexIfMissing(
+  table: string,
+  indexName: string,
+  columns: string[],
+  unique = false,
+  whereClause?: string
+): Promise<void> {
+  if (!(await publicTableExists(table)) || (await publicIndexExists(indexName))) {
+    return;
+  }
+
+  const uniqueSql = unique ? 'UNIQUE ' : '';
+  const columnSql = columns.map(column => `"${column}"`).join(', ');
+  const whereSql = whereClause ? ` WHERE ${whereClause}` : '';
+  try {
+    await sequelize.query(
+      `CREATE ${uniqueSql}INDEX "${indexName}" ON "${table}" (${columnSql})${whereSql}`
+    );
+    console.log(`Added runtime schema index ${indexName}`);
+  } catch (error: any) {
+    console.warn(`Failed to add runtime schema index ${indexName}:`, error?.message || error);
+  }
 }
 
 async function ensureRecommendationLoopRuntimeSchema() {
@@ -310,6 +421,137 @@ async function ensureTaskExecutionLogRuntimeSchema() {
   );
 }
 
+async function ensureLiveTradingRuntimeSchema() {
+  if (await publicTableExists('live_broker_accounts')) {
+    await addColumnIfMissing('live_broker_accounts', 'broker_account_key', 'VARCHAR(160)');
+    await addColumnIfMissing('live_broker_accounts', 'bridge_key', 'VARCHAR(120)');
+    await addColumnIfMissing(
+      'live_broker_accounts',
+      'account_role',
+      `VARCHAR(30) NOT NULL DEFAULT 'main'`
+    );
+
+    await sequelize.query(
+      `
+        UPDATE "live_broker_accounts"
+        SET "account_role" = 'main'
+        WHERE "account_role" IS NULL OR "account_role" = ''
+      `
+    );
+    await sequelize.query(
+      `
+        UPDATE "live_broker_accounts"
+        SET "broker_account_key" = "broker_key" || ':' || "account_role" || ':' || COALESCE(NULLIF("account_no_masked", ''), '未绑定')
+        WHERE "broker_account_key" IS NULL OR "broker_account_key" = ''
+      `
+    );
+
+    await dropLegacyLiveBrokerAccountUniqueIndexes();
+    await createPublicIndexIfMissing(
+      'live_broker_accounts',
+      'idx_live_broker_accounts_user_account_key_unique',
+      ['user_id', 'broker_account_key'],
+      true,
+      '"broker_account_key" IS NOT NULL'
+    );
+    await createPublicIndexIfMissing(
+      'live_broker_accounts',
+      'idx_live_broker_accounts_bridge_key_unique',
+      ['bridge_key'],
+      true,
+      '"bridge_key" IS NOT NULL'
+    );
+    await createPublicIndexIfMissing(
+      'live_broker_accounts',
+      'idx_live_broker_accounts_account_role',
+      ['account_role']
+    );
+  }
+
+  if (await publicTableExists('live_orders')) {
+    await addColumnIfMissing('live_orders', 'client_order_id', 'VARCHAR(100)');
+    await addColumnIfMissing('live_orders', 'bridge_status', 'VARCHAR(30)');
+    await createPublicIndexIfMissing(
+      'live_orders',
+      'idx_live_orders_client_order_id_unique',
+      ['client_order_id'],
+      true,
+      '"client_order_id" IS NOT NULL'
+    );
+    await createPublicIndexIfMissing(
+      'live_orders',
+      'idx_live_orders_bridge_status',
+      ['bridge_status']
+    );
+    // P1 review：bridge ingestOrders 用 (account_id, broker_order_id) 做幂等 lookup；
+    // 没有 unique 兜底时并发会产生重复 LiveOrder 行
+    await createPublicIndexIfMissing(
+      'live_orders',
+      'idx_live_orders_account_broker_order_id_unique',
+      ['account_id', 'broker_order_id'],
+      true,
+      '"broker_order_id" IS NOT NULL'
+    );
+  }
+
+  // LiveTrade.broker_trade_id 唯一索引（partial），review #5 P0
+  if (await publicTableExists('live_trades')) {
+    await createPublicIndexIfMissing(
+      'live_trades',
+      'idx_live_trades_broker_trade_id_unique',
+      ['broker_trade_id'],
+      true,
+      '"broker_trade_id" IS NOT NULL'
+    );
+  }
+
+  // live_kill_switch_states：表本身由 sequelize sync 创建（见 syncRuntimeModel）；
+  // 这里只补幂等的"活跃唯一性"部分索引（同一时间只允许 1 条 active=true 记录）。
+  if (await publicTableExists('live_kill_switch_states')) {
+    await createPublicIndexIfMissing(
+      'live_kill_switch_states',
+      'idx_live_kill_switch_states_active_unique',
+      ['active'],
+      true,
+      '"active" = true'
+    );
+  }
+
+  // bridge 命令与事件唯一约束 + 高频查询复合索引
+  if (await publicTableExists('live_broker_commands')) {
+    await createPublicIndexIfMissing(
+      'live_broker_commands',
+      'idx_live_broker_commands_client_order_id_unique',
+      ['client_order_id'],
+      true
+    );
+    await createPublicIndexIfMissing(
+      'live_broker_commands',
+      'idx_live_broker_commands_account_status_created',
+      ['account_id', 'status', 'created_at']
+    );
+  }
+  if (await publicTableExists('live_broker_events')) {
+    await createPublicIndexIfMissing(
+      'live_broker_events',
+      'idx_live_broker_events_command_seq_unique',
+      ['command_id', 'event_seq'],
+      true
+    );
+  }
+  // dispatch 未 ack 行的 partial 索引，避免全列索引浪费
+  if (await publicTableExists('live_broker_command_dispatches')) {
+    await createPublicIndexIfMissing(
+      'live_broker_command_dispatches',
+      'idx_live_broker_dispatches_pending_ack',
+      ['command_id', 'bridge_key'],
+      false,
+      '"acked_at" IS NULL'
+    );
+  }
+  // bridge nonce 过期清理索引（runtime 已有 expires_at 索引，无需额外）
+}
+
 async function syncRuntimeModel(model: any, label: string): Promise<boolean> {
   try {
     await model.sync();
@@ -325,6 +567,7 @@ async function syncRuntimeModel(model: any, label: string): Promise<boolean> {
 async function syncRecommendationRuntimeTables(): Promise<void> {
   await ensureRecommendationLoopRuntimeSchema();
   await ensureTaskExecutionLogRuntimeSchema();
+  await ensureLiveTradingRuntimeSchema();
 
   const syncItems = [
     { model: AIInvestmentSignal, label: 'AIInvestmentSignal' },
@@ -357,6 +600,12 @@ async function syncRecommendationRuntimeTables(): Promise<void> {
     { model: LiveOrder, label: 'LiveOrder' },
     { model: LiveTrade, label: 'LiveTrade' },
     { model: LiveExecutionAuditLog, label: 'LiveExecutionAuditLog' },
+    { model: LiveKillSwitchState, label: 'LiveKillSwitchState' },
+    { model: LiveBrokerCommand, label: 'LiveBrokerCommand' },
+    { model: LiveBrokerCommandDispatch, label: 'LiveBrokerCommandDispatch' },
+    { model: LiveBrokerEvent, label: 'LiveBrokerEvent' },
+    { model: LiveBrokerBridgeHeartbeat, label: 'LiveBrokerBridgeHeartbeat' },
+    { model: LiveBridgeNonce, label: 'LiveBridgeNonce' },
   ];
 
   const results = [];
@@ -526,15 +775,63 @@ async function initializeApp() {
       await schedulerService.initialize();
     }
 
+    // 实盘 kill switch 自动巡检：每 60 秒检查订单失败率/连败/订单数，命中阈值即触发熔断。
+    // 仅在数据库可用时启用；NODE_ENV=test 不启动避免污染单元测试。
+    // 显式 unref，让 ts-node smoke / CI 跑完不被 timer 阻塞退出。
+    if (process.env.NODE_ENV !== 'test') {
+      const intervalMs = Math.max(Number(process.env.LIVE_KILL_SWITCH_SCAN_INTERVAL_MS || 60000), 15000);
+      const ksTimer = setInterval(async () => {
+        try {
+          const result = await killSwitchService.runAutoTriggerScan();
+          if (result.triggered) {
+            console.warn(
+              `[kill-switch] auto-triggered: ${result.reasons.join('; ')} (checked=${result.checked})`
+            );
+          }
+        } catch (err: any) {
+          console.warn('[kill-switch] auto scan failed:', err?.message || err);
+        }
+      }, intervalMs);
+      ksTimer.unref?.();
+
+      // Bridge 命令 TTL 巡检：默认每 15 秒一次，把 pending/dispatched 超 TTL 的标 expired
+      const expiryIntervalMs = Math.max(
+        Number(process.env.LIVE_BRIDGE_EXPIRY_SCAN_INTERVAL_MS || 15000),
+        5000
+      );
+      const expTimer = setInterval(async () => {
+        try {
+          const result = await bridgeCommandExpiryService.runOnce();
+          if (result.orders_expired || result.commands_expired) {
+            console.warn(
+              `[bridge-expiry] expired orders=${result.orders_expired}, commands=${result.commands_expired}`
+            );
+          }
+        } catch (err: any) {
+          console.warn('[bridge-expiry] scan failed:', err?.message || err);
+        }
+      }, expiryIntervalMs);
+      expTimer.unref?.();
+    }
+
     app.listen(Number(PORT), HOST, () => {
       console.log(`Server is running on ${HOST}:${PORT}`);
       console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
     });
   } catch (error) {
     console.error('Unable to connect to the database:', error);
-    console.warn('Starting server without database connection. Some features may be limited.');
-
-    // Start server even without database connection
+    // 实盘交易系统：DB 不可用时绝对不能允许"半启动"。
+    // 任何 /api/live-trading/* 请求依赖 DB；启动 server 只会让上游误以为健康并把流量灌进来。
+    // 仅当显式 LIVE_TRADING_ALLOW_DB_OFFLINE=true 才允许半启动（开发/演示用）；
+    // test 环境自动允许半启动，避免 jest/CI 因为没接 DB 而 process.exit。
+    const allowDbOffline =
+      String(process.env.LIVE_TRADING_ALLOW_DB_OFFLINE || '').toLowerCase() === 'true' ||
+      process.env.NODE_ENV === 'test';
+    if (!allowDbOffline) {
+      console.error('DB connection failed; refusing to start. Set LIVE_TRADING_ALLOW_DB_OFFLINE=true to override.');
+      process.exit(1);
+    }
+    console.warn('Starting server without database connection (override enabled). Many features will 5xx.');
     app.listen(Number(PORT), HOST, () => {
       console.log(`Server is running on ${HOST}:${PORT} (without database connection)`);
       console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
