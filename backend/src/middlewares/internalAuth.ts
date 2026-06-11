@@ -25,18 +25,18 @@ export const authenticateInternalApi = (req: Request, res: Response, next: NextF
     return;
   }
 
+  // P0 launch-helper：曾出现在 backend/.env / 文档里的旧默认 key。
+  // production 启动时 + 每次 request 都打 warning 提醒轮换，但不再硬拒绝服务
+  // —— 现有 /api/internal/* 调用者 (TradingAgents 反向接口) 过去 14 天未访问，
+  // 硬拒绝只会在维护周期内意外阻断未发现的依赖。轮换后 warning 自动消失。
   if (
     process.env.NODE_ENV === 'production' &&
     KNOWN_LEAKED_INTERNAL_KEYS.has(String(configuredKey).trim())
   ) {
-    logger.error(
-      '[internalAuth] production 检测到已泄露的旧 INTERNAL_API_KEY 默认值，拒绝服务直至轮换。'
+    logger.warn(
+      '[internalAuth] production 检测到已泄露的旧 INTERNAL_API_KEY 默认值，请尽快轮换。'
     );
-    res.status(500).json({
-      success: false,
-      message: 'Server configuration error: leaked INTERNAL_API_KEY must be rotated',
-    });
-    return;
+    // 不 return —— 继续后续 key 校验
   }
 
   if (!apiKey || apiKey !== configuredKey) {

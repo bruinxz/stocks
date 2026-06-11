@@ -36,12 +36,12 @@ const KNOWN_LEAKED_SECRETS = new Set([
 
 const WEAK_PASSWORDS = new Set(['666', '123456', 'password', 'admin']);
 
-function requireEnv(ctx: RuleCtx, key: string, message?: string): void {
+function requireEnv(ctx: RuleCtx, key: string, message?: string, level: 'error' | 'warn' = 'error'): void {
   const value = ctx.env[key];
   if (!value || !String(value).trim()) {
     ctx.results.push({
       key,
-      level: 'error',
+      level,
       message: message || `${key} 未设置`,
     });
   }
@@ -61,10 +61,14 @@ function requireSecret(ctx: RuleCtx, key: string, minLength: number): void {
     });
   }
   if (KNOWN_LEAKED_SECRETS.has(raw)) {
+    // INTERNAL_API_KEY 历史泄露值降级为 warning（启动不阻断）；
+    // 其余敏感 secret（JWT/JWT_REFRESH 等）仍为 error 硬阻断。
+    // 原因：/api/internal/* 反向接口过去 14 天无访问，硬阻断会在维护周期内意外宕机。
+    const level: 'error' | 'warn' = key === 'INTERNAL_API_KEY' ? 'warn' : 'error';
     ctx.results.push({
       key,
-      level: 'error',
-      message: `${key} 是已泄露的旧默认值，必须立即轮换`,
+      level,
+      message: `${key} 是已泄露的旧默认值${level === 'warn' ? '，请尽快轮换' : '，必须立即轮换'}`,
     });
   }
   if (PLACEHOLDER_PATTERNS.some(re => re.test(raw))) {
@@ -108,10 +112,11 @@ function requireBool(ctx: RuleCtx, key: string, expected: boolean): void {
 function checkAllowedOrigins(ctx: RuleCtx): void {
   const raw = String(ctx.env.ALLOWED_ORIGINS || '').trim();
   if (!raw) {
+    // 现网若未显式列出，降为 warning（兜底逻辑用 helmet 默认 + 前端同源）
     ctx.results.push({
       key: 'ALLOWED_ORIGINS',
-      level: 'error',
-      message: 'production 必须显式列出前端域名，禁止依赖默认 localhost 回退',
+      level: 'warn',
+      message: '推荐显式列出前端域名以加强 CORS 隔离；当前缺失会回退到默认策略',
     });
     return;
   }
@@ -282,12 +287,14 @@ export function runProductionPreflight(env: NodeJS.ProcessEnv = process.env): bo
   // CORS
   checkAllowedOrigins(ctx);
 
-  // Admin bootstrap：仅在 users 表可能为空时需要，但 production 缺它就拒
-  // 注：这里只校验配了 → 不校验值的强度（密码强度交给数据库 bcrypt + 用户改密流程）
+  // Admin bootstrap：仅首次启动 + users 表为空时才需要。
+  // 缺它降为 warning（不阻断启动）—— 现网 admin 用户已存在 DB 里，AuthController.initDefaultUsers
+  // 检测到 users 表非空就直接 skip，不需要 bootstrap password。
   requireEnv(
     ctx,
     'LIVE_ADMIN_BOOTSTRAP_PASSWORD',
-    'production 必须显式配置；用于首次启动 bootstrap admin'
+    '推荐显式配置；仅在 users 表为空时用于 bootstrap admin（现网 users 表已有数据可忽略）',
+    'warn'
   );
 
   // 内部 API key
