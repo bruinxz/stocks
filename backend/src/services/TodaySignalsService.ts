@@ -440,7 +440,18 @@ export class TodaySignalsService {
         continue;
       }
       const rawQty = Math.floor(perOrderAmount / priceHint);
-      const quantity = Math.max(100, Math.floor(rawQty / 100) * 100);
+      // 100 股是 A 股最小手数。如果 perOrderAmount 不够买 100 股 → 跳过避免超买
+      // (历史 bug: max(100, 0) 强制 100 股，单价 320 元股变成 32000 元下单触发风控)
+      if (rawQty < 100) {
+        orders.push({
+          strategy: c.strategy, symbol: c.symbol, name: c.name,
+          quantity: 0, expected_amount: 0, status: 'skipped',
+          reason: `单价 ¥${priceHint.toFixed(2)} 过高, perOrderAmount ¥${perOrderAmount} 不够买 100 股 (需 ¥${(priceHint * 100).toFixed(0)})`,
+        });
+        skipped += 1;
+        continue;
+      }
+      const quantity = Math.floor(rawQty / 100) * 100;
 
       try {
         const result = await paperTradingFacade.placeOrder({
