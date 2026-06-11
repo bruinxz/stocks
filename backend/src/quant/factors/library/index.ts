@@ -24,9 +24,11 @@
  */
 
 import './AnalystConsensusFactor';
+import './BlockTradeSignalFactor';
 import './DragonTigerFactor';
 import './EarningsSurpriseFactor';
 import './EastMoneyQAFactor';
+import './FundConsensusFactor';
 import './GradualBreakoutFactor';
 import './GrowthFactor';
 import './InsiderTradeFactor';
