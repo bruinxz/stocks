@@ -25,6 +25,11 @@ import {
   recommendationScorePositionLabel,
   recommendationStrategyKeyLabel,
 } from '../utils/recommendationStrategyVariant';
+// Phase 5: 自动归类 trade root_cause (10 级优先级链)
+import {
+  classifyTradeRootCause,
+  TradeRootCauseInput,
+} from './TradeRootCauseClassifier';
 
 export interface RecommendationTradeOutcomeRefreshOptions {
   user_id?: number;
@@ -2910,8 +2915,40 @@ export class RecommendationTradeOutcomeService {
       stock,
       entry_date: entryDate,
       exit_date: effectiveExitDate,
-      total_pnl_pct: totalPnlPct,
-    });
+      total_pnl_pct: totalPnlPct,    });
+
+    // Phase 5: 自动归类 root_cause
+    // 输入收集 (有什么用什么，全部 optional)
+    const signalMetadataForRc = asPlainObject(metadata.signal_metadata);
+    const rootCauseInput: TradeRootCauseInput = {
+      return_pct: totalPnlPct,
+      holding_days: toNumber(
+        paperTrading.holding_days,
+        holdingDays(entryDate, exitDate || effectiveExitDate)
+      ),
+      exit_reason: paperTrading.exit_reason || null,
+      entry_price: entryPrice,
+      exit_price: exitPrice || latestPrice,
+      market_regime_at_entry:
+        asPlainObject(signalMetadataForRc.market_environment).market_regime ||
+        asPlainObject(metadata.market_environment).market_regime ||
+        null,
+      // 卖出时 regime 在 outcome 没有持久化；先用 entry regime 兜底 (相同 = 不算 wrong_regime)
+      market_regime_at_exit:
+        asPlainObject(metadata.exit_market_environment).market_regime ||
+        asPlainObject(signalMetadataForRc.market_environment).market_regime ||
+        asPlainObject(metadata.market_environment).market_regime ||
+        null,
+      signal_catalyst:
+        (metadata.signal_catalyst as string) ||
+        (signal.source_type as string) ||
+        null,
+      max_drawdown_during_hold_pct:
+        Math.abs(Number(mfeMae.max_adverse_excursion_pct) || 0) || undefined,
+      // strategy_stop_loss_pct / strategy_max_holding_days / backtest_expected
+      // 暂时不传 (后续可从 strategy_variant 或 latest_metrics 拉)
+    };
+    const rcResult = classifyTradeRootCause(rootCauseInput);
 
     const payload: Record<string, any> = {
       portfolio_id,
@@ -2965,8 +3002,18 @@ export class RecommendationTradeOutcomeService {
           : undefined,
       exit_reason: paperTrading.exit_reason,
       exit_reason_label: paperTrading.exit_reason_label,
+      // Phase 5: root cause 三件套
+      root_cause: rcResult.root_cause,
+      root_cause_label: rcResult.root_cause_label,
+      root_cause_confidence: rcResult.confidence,
       metadata: {
         strategy_key: strategyKey,
+        // Phase 5: 把 root cause 的 matched_rule + input snapshot 一起放 metadata，
+        // 方便人工 review 时知道 classifier 是怎么判的
+        root_cause_diagnostics: {
+          matched_rule: rcResult.matched_rule,
+          input_snapshot: rootCauseInput,
+        },
         strategy_variant: Object.keys(strategyVariant).length
           ? strategyVariant
           : asPlainObject(paperTrading.strategy_variant),
