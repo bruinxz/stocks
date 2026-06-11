@@ -134,3 +134,6 @@ config.json
 data_completeness_report.json
 # Codex desktop local state
 .bridge-state/
+
+# Local runtime artifacts (server backups, rescue snapshots, test reports)
+.artifacts/

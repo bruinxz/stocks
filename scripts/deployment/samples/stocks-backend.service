@@ -1,0 +1,59 @@
+# systemd unit for stocks backend (main target).
+#
+# 上线 launch-helper：把 §1.2 EnvironmentFile 落实成可用 unit。
+# lym sandbox 复制成 stocks-backend-lym.service 即可，端口走 release_targets.js 里的 3010。
+#
+# 安装：
+#   sudo cp scripts/deployment/samples/stocks-backend.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now stocks-backend.service
+#   sudo systemctl status stocks-backend.service
+#
+# 重启 / 看日志：
+#   sudo systemctl restart stocks-backend
+#   sudo journalctl -u stocks-backend -f
+#
+# env 改完不要 reload，必须 restart。
+
+[Unit]
+Description=Stocks backend (main)
+After=network-online.target postgresql.service redis.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ops
+Group=ops
+WorkingDirectory=/opt/stocks/current/backend
+# .env 放在 shared/ 目录下，不会被 deploy 覆盖
+EnvironmentFile=/opt/stocks/shared/backend.env
+# Node 二进制路径：
+#   - apt 装：/usr/bin/node（推荐线上）
+#   - nvm 装：/home/ops/.nvm/versions/node/vXX/bin/node（写绝对路径，systemd 不读 nvm 的 PATH）
+#   - nodesource deb 装：/usr/bin/node
+# 用 `which node` 查实际路径再填
+ExecStart=/usr/bin/node /opt/stocks/current/backend/dist/index.js
+
+Restart=on-failure
+RestartSec=5s
+
+# 内存上限：8G 进程被 OOM 杀掉系统自动重启
+MemoryMax=8G
+
+# 文件描述符：bridge 长轮询会维持大量连接
+LimitNOFILE=65535
+
+# 日志走 journald，方便 journalctl/loki 接入
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=stocks-backend
+
+# 安全加固
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/stocks/current/backend /opt/stocks/shared /var/log/stocks
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

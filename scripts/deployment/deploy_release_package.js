@@ -160,11 +160,15 @@ function rsyncPackage(packagePath) {
 
 function buildPackage() {
   if (String(process.env.DEPLOY_SKIP_BUILD || '').toLowerCase() !== 'true') {
+    // 走 PATH 里的 node + 仓内 typescript / react-scripts
+    // 之前硬编码了 /Applications/Codex.app/... 路径，导致 Ubuntu / 其它 macOS 都跑不了
+    // DEPLOY_NODE_BIN 可在特殊环境显式覆盖（默认 "node"）
+    const nodeBin = process.env.DEPLOY_NODE_BIN || 'node';
     run(
-      `/Applications/Codex.app/Contents/Resources/node backend/node_modules/typescript/bin/tsc -p backend/tsconfig.json --pretty false`
+      `${nodeBin} backend/node_modules/typescript/bin/tsc -p backend/tsconfig.json --pretty false`
     );
     run(
-      `cd frontend && CI=false /Applications/Codex.app/Contents/Resources/node node_modules/react-scripts/bin/react-scripts.js build`
+      `cd frontend && CI=false ${nodeBin} node_modules/react-scripts/bin/react-scripts.js build`
     );
   }
 
@@ -218,13 +222,22 @@ function main() {
   const smokeUsername =
     process.env.RELEASE_SMOKE_USERNAME ||
     (healthGateTarget.key === 'xz' ? 'xz' : 'lym');
+  // P0 launch-helper：禁止再用 '666' 默认密码做 smoke。
+  // 必须显式 RELEASE_SMOKE_PASSWORD 注入；缺失即拒绝部署。
+  const smokePassword = process.env.RELEASE_SMOKE_PASSWORD || '';
+  if (!smokePassword) {
+    throw new Error(
+      'RELEASE_SMOKE_PASSWORD is required for deploy (no more "666" fallback). 上线 admin 密码已收紧，' +
+        '请在部署环境注入 smoke 专用账号密码。'
+    );
+  }
   runRemoteAsOpsWithSudo(
     `env RELEASE_TARGETS=${shellQuote(targetKeys.join(','))} RELEASE_RUN_SMOKE=${shellQuote(
       process.env.RELEASE_RUN_SMOKE || 'true'
     )} RELEASE_AUTO_ROLLBACK=${shellQuote(
       process.env.RELEASE_AUTO_ROLLBACK || 'true'
     )} RELEASE_SMOKE_USERNAME=${shellQuote(smokeUsername)} RELEASE_SMOKE_PASSWORD=${shellQuote(
-      process.env.RELEASE_SMOKE_PASSWORD || '666'
+      smokePassword
     )} node ${shellQuote(healthGateScriptForTarget(healthGateTarget))}`
   );
   console.log('\n✅ release package deployment completed');
