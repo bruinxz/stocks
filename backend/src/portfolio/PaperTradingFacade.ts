@@ -336,8 +336,8 @@ export class PaperTradingFacade {
 
     // ============= 交易时段 guard =============
     // 模拟盘按 daily_bar.close 撮合 → 必须在合法时间内调用：
-    //   (a) 工作日（周一到周五，非节假日 — 简化：只判断周末）
-    //   (b) 09:30 - 15:00 Asia/Shanghai (真实开盘到收盘)
+    //   (a) A 股交易日（工作日 + 非节假日, 用 tradingCalendar 判断）
+    //   (b) 09:30 - 11:30 + 13:00 - 15:00 Asia/Shanghai (真实开盘到收盘)
     //       注意：09:00-09:30 是集合竞价时段，真实撮合 09:25，不允许下单
     //       午休 11:30-13:00 也不允许（实盘也不撮合）
     //   (c) 允许 bypass：options.bypass_trading_hours=true（手动测试/历史回填用）
@@ -346,7 +346,6 @@ export class PaperTradingFacade {
       // Asia/Shanghai = UTC+8
       const shanghaiOffset = 8 * 60 * 60 * 1000;
       const shanghai = new Date(now.getTime() + shanghaiOffset);
-      const day = shanghai.getUTCDay(); // 0=Sun, 6=Sat
       const hour = shanghai.getUTCHours();
       const minute = shanghai.getUTCMinutes();
       const totalMinutes = hour * 60 + minute;
@@ -355,14 +354,27 @@ export class PaperTradingFacade {
       const MORNING_END = 11 * 60 + 30; // 11:30
       const AFTERNOON_START = 13 * 60; // 13:00
       const AFTERNOON_END = 15 * 60; // 15:00
-      if (day === 0 || day === 6) {
+      // 1. 节假日 / 周末感知（用 tradingCalendar 比单纯判周末更准）
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { isAShareTradeDay, explainNonTradeDay } = require('../utils/tradingCalendar');
+      if (!isAShareTradeDay(now)) {
+        const reason = explainNonTradeDay(now) || '非 A 股交易日';
         const err: any = new Error(
-          `当前为周末（${day === 0 ? '周日' : '周六'}，Asia/Shanghai），A 股不开市；如需手动测试请加 bypass_trading_hours=true`
+          `${reason}, A 股不开市; 如需手动测试请加 bypass_trading_hours=true`
         );
-        err.code = 'NON_TRADING_HOURS_WEEKEND';
+        err.code = 'NON_TRADING_HOURS_HOLIDAY';
         err.statusCode = 400;
         throw err;
       }
+      const inMorning = totalMinutes >= MORNING_START && totalMinutes < MORNING_END;
+      const inAfternoon = totalMinutes >= AFTERNOON_START && totalMinutes < AFTERNOON_END;
+      if (!inMorning && !inAfternoon) {
+        const hh = String(hour).padStart(2, '0');
+        const mm = String(minute).padStart(2, '0'); A 股交易时段（Asia/Shanghai）：09:30-11:30 + 13:00-15:00
+      const MORNING_START = 9 * 60 + 30; // 09:30
+      const MORNING_END = 11 * 60 + 30; // 11:30
+      const AFTERNOON_START = 13 * 60; // 13:00
+      const AFTERNOON_END = 15 * 60; // 15:00
       const inMorning = totalMinutes >= MORNING_START && totalMinutes < MORNING_END;
       const inAfternoon = totalMinutes >= AFTERNOON_START && totalMinutes < AFTERNOON_END;
       if (!inMorning && !inAfternoon) {
