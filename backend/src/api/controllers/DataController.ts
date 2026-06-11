@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { Op } from 'sequelize';
 import { dataHealthStatusService, listDataSources } from '../../services/DataHealthStatusService';
 import { NorthboundSyncService } from '../../data/services/NorthboundSyncService';
 import {
@@ -12,6 +13,7 @@ import { ETFFlowSyncService, ListFlowOptions } from '../../data/services/ETFFlow
 import { getAllETFIndustries } from '../../constants/etfIndustry';
 import { isValidSeatType, SeatType } from '../../constants/famousSeats';
 import { logger } from '../../utils/logger';
+import { sequelize } from '../../config/database';
 
 /**
  * US-079 数据健康度看板控制器（US-088 扩展龙虎榜查询端点 / US-092 扩展 ETF 资金流查询端点）
@@ -29,6 +31,7 @@ import { logger } from '../../utils/logger';
 export class DataController {
   constructor() {
     this.getHealthStatus = this.getHealthStatus.bind(this);
+    this.getSystemTopology = this.getSystemTopology.bind(this);
     this.triggerSync = this.triggerSync.bind(this);
     this.listDragonTiger = this.listDragonTiger.bind(this);
     this.listEtfFlow = this.listEtfFlow.bind(this);
@@ -48,6 +51,172 @@ export class DataController {
         success: false,
         error: error?.message ?? '获取数据源健康状态失败',
       });
+    }
+  }
+
+  /**
+   * GET /api/data/system-topology
+   * 返回系统架构拓扑图数据：9 个节点 + 连线 + 每个节点的真实健康状态和最近决策
+   */
+  async getSystemTopology(_req: Request, res: Response) {
+    try {
+      const today = todayIso();
+      const q = async (sql: string) => {
+        const [[row]] = await sequelize.query(sql);
+        return row as any;
+      };
+
+      // ---- 各模块真实状态采集 ----
+      const [taskRows] = await sequelize.query(
+        "SELECT type, name, last_run_at, last_run_status FROM scheduled_tasks WHERE is_active=true"
+      ) as [any[], any];
+
+      const taskStatus = (types: string[]) => {
+        const matching = taskRows.filter((t: any) => types.includes(t.type));
+        if (!matching.length) return { status: 'gray', lastRun: null, lastStatus: 'NEVER' };
+        const statuses = matching.map((t: any) => t.last_run_status || 'NEVER');
+        const lastRun = matching
+          .filter((t: any) => t.last_run_at)
+          .sort((a: any, b: any) => new Date(b.last_run_at).getTime() - new Date(a.last_run_at).getTime())[0];
+        const hasFailure = statuses.some((s: string) => s === 'FAILED');
+        const allNever = statuses.every((s: string) => s === 'NEVER');
+        return {
+          status: allNever ? 'gray' : hasFailure ? 'yellow' : 'green',
+          lastRun: lastRun?.last_run_at?.toISOString?.()?.slice(0, 19) || null,
+          lastStatus: lastRun?.last_run_status || 'NEVER',
+          taskName: lastRun?.name || matching[0]?.name,
+        };
+      };
+
+      // 1. 数据采集
+      const healthResult = await dataHealthStatusService.getHealthStatus();
+      const cards = healthResult?.cards || [];
+      const greenCount = cards.filter((c: any) => c.level === 'green').length;
+      const redCount = cards.filter((c: any) => c.level === 'red').length;
+      const yellowCount = cards.filter((c: any) => c.level === 'yellow').length;
+      const dataStatus = redCount > 0 ? 'red' : yellowCount > 0 ? 'yellow' : 'green';
+
+      // 2. 因子引擎
+      const factorRow = await q("SELECT COUNT(DISTINCT factor_name)::int AS n, MAX(trade_date)::date AS d FROM factor_scores");
+      const factorLag = factorRow.d ? Math.floor((Date.now() - new Date(factorRow.d).getTime()) / 86400000) : 999;
+      const factorStatus = factorLag > 3 ? 'red' : factorLag > 1 ? 'yellow' : 'green';
+
+      // 3. 策略引擎
+      const sigRow = await q("SELECT COUNT(*)::int AS n FROM quant_signals WHERE trade_date::date = CURRENT_DATE");
+      const sigTotal = await q("SELECT COUNT(DISTINCT strategy_key)::int AS n FROM quant_signals WHERE trade_date >= (CURRENT_DATE - 7)");
+      const strategyStatus = sigRow.n > 0 ? 'green' : sigTotal.n > 0 ? 'yellow' : 'red';
+
+      // 4. 宏观环境
+      const macroRow = await q("SELECT MAX(observation_date)::date AS d FROM macro_indicators");
+      const qvixRow = await q("SELECT MAX(observation_date)::date AS d FROM option_qvix");
+      const macroLag = macroRow.d ? Math.floor((Date.now() - new Date(macroRow.d).getTime()) / 86400000) : 999;
+      const macroStatus = macroLag > 7 ? 'red' : macroLag > 2 ? 'yellow' : 'green';
+
+      // 5. 自主决策
+      const autopilotTask = taskStatus(['PAPER_TRADING_AUTO_SYNC']);
+
+      // 6. 风控
+      const riskTask = taskStatus(['PAPER_TRADING_RISK_CHECK', 'PAPER_TRADING_MARKET_REGIME_CHECK']);
+      const alertRow = await q("SELECT COUNT(*)::int AS n FROM risk_alerts WHERE user_id=4 AND created_at > NOW() - INTERVAL '24 hours'");
+
+      // 7. 模拟盘
+      const pfRow = await q("SELECT current_cash, total_value FROM paper_trading_portfolios WHERE user_id=4 LIMIT 1");
+      const posRow = await q("SELECT COUNT(*)::int AS n FROM paper_trading_positions WHERE portfolio_id IN (SELECT id FROM paper_trading_portfolios WHERE user_id=4)");
+      const tradeRow = await q("SELECT symbol, name, direction, created_at FROM paper_trading_trades WHERE portfolio_id IN (SELECT id FROM paper_trading_portfolios WHERE user_id=4) ORDER BY created_at DESC LIMIT 1");
+
+      // 8. 通知
+      const webhookOk = !!(process.env.FEISHU_RECOMMENDATION_BOT_WEBHOOK || process.env.FEISHU_BOT_WEBHOOK);
+      const webhookDisabled = String(process.env.DISABLE_FEISHU_BOT_WEBHOOK) === 'true';
+
+      // ---- 构建节点 ----
+      const nodes = [
+        {
+          id: 'quant_system', label: '量化推荐系统', category: 'core',
+          status: [dataStatus, factorStatus, strategyStatus, autopilotTask.status].includes('red') ? 'red' :
+                  [dataStatus, factorStatus, strategyStatus, autopilotTask.status].includes('yellow') ? 'yellow' : 'green',
+          stats: { activeModules: 6, totalCrons: taskRows.length },
+          lastAction: `${cards.length} 数据源 / ${factorRow.n} 因子 / ${sigTotal.n} 策略`,
+        },
+        {
+          id: 'data_collection', label: '数据采集层', category: 'data',
+          status: dataStatus,
+          stats: { sources: cards.length, green: greenCount, yellow: yellowCount, red: redCount },
+          lastAction: `${greenCount}✅ ${yellowCount}⚠️ ${redCount}❌ (共${cards.length}源)`,
+        },
+        {
+          id: 'macro_env', label: '宏观环境', category: 'data',
+          status: macroStatus,
+          stats: { macroLatest: macroRow.d, qvixLatest: qvixRow.d },
+          lastAction: `macro=${macroRow.d || '—'} qvix=${qvixRow.d || '—'}`,
+        },
+        {
+          id: 'factor_engine', label: '因子引擎', category: 'compute',
+          status: factorStatus,
+          stats: { factorCount: factorRow.n, latest: factorRow.d, lag: factorLag },
+          lastAction: `${factorRow.n} 因子 latest=${factorRow.d || '—'} lag=${factorLag}d`,
+        },
+        {
+          id: 'strategy_engine', label: '策略引擎', category: 'compute',
+          status: strategyStatus,
+          stats: { todaySignals: sigRow.n, activeStrategies: sigTotal.n },
+          lastAction: `今日 ${sigRow.n} 信号 / ${sigTotal.n} 策略活跃`,
+        },
+        {
+          id: 'autopilot', label: '自主决策', category: 'decision',
+          status: autopilotTask.status,
+          stats: { lastRun: autopilotTask.lastRun, lastStatus: autopilotTask.lastStatus },
+          lastAction: autopilotTask.lastRun ? `${autopilotTask.lastStatus} @ ${autopilotTask.lastRun?.slice(11, 16)}` : '等待首次运行',
+        },
+        {
+          id: 'risk_control', label: '风控系统', category: 'decision',
+          status: riskTask.status === 'gray' && alertRow.n === 0 ? 'green' : riskTask.status,
+          stats: { alerts24h: alertRow.n, lastRun: riskTask.lastRun },
+          lastAction: `${alertRow.n} 告警/24h` + (riskTask.lastRun ? ` 上次=${riskTask.lastRun?.slice(11, 16)}` : ''),
+        },
+        {
+          id: 'portfolio', label: '模拟盘', category: 'execution',
+          status: pfRow ? 'green' : 'gray',
+          stats: {
+            totalValue: pfRow ? Number(pfRow.total_value) : 0,
+            positions: posRow.n,
+            cash: pfRow ? Number(pfRow.current_cash) : 0,
+          },
+          lastAction: pfRow
+            ? `¥${Number(pfRow.total_value).toLocaleString()} / ${posRow.n}只持仓`
+            : '未创建',
+          lastTrade: tradeRow
+            ? `${tradeRow.direction} ${tradeRow.name || tradeRow.symbol} @ ${tradeRow.created_at?.toISOString?.()?.slice(11, 16) || ''}`
+            : null,
+        },
+        {
+          id: 'notification', label: '通知推送', category: 'output',
+          status: webhookOk && !webhookDisabled ? 'green' : webhookDisabled ? 'gray' : 'red',
+          stats: { feishu: webhookOk, disabled: webhookDisabled },
+          lastAction: webhookOk ? (webhookDisabled ? '已禁用' : '飞书 webhook 就绪') : '未配置',
+        },
+      ];
+
+      // ---- 构建连线 ----
+      const edges = [
+        { source: 'data_collection', target: 'factor_engine', label: 'K线+行情' },
+        { source: 'data_collection', target: 'macro_env', label: '宏观+QVIX' },
+        { source: 'macro_env', target: 'strategy_engine', label: 'regime 环境' },
+        { source: 'factor_engine', target: 'strategy_engine', label: '因子分数' },
+        { source: 'strategy_engine', target: 'autopilot', label: 'quant signals' },
+        { source: 'macro_env', target: 'risk_control', label: '恐慌预警' },
+        { source: 'autopilot', target: 'portfolio', label: 'BUY 指令' },
+        { source: 'risk_control', target: 'portfolio', label: 'SELL 指令' },
+        { source: 'portfolio', target: 'notification', label: '交易通知' },
+        { source: 'autopilot', target: 'notification', label: '买入推送' },
+        { source: 'risk_control', target: 'notification', label: '告警推送' },
+        { source: 'quant_system', target: 'data_collection', label: '调度' },
+        { source: 'quant_system', target: 'macro_env', label: '调度' },
+      ];
+
+      return res.json({ success: true, data: { nodes, edges, generated_at: new Date().toISOString() } });
+    } catch (error: any) {
+      logger.error(`DataController.getSystemTopology failed: ${error?.message ?? error}`);
+      return res.status(500).json({ success: false, error: error?.message ?? '获取系统拓扑失败' });
     }
   }
 
