@@ -439,19 +439,23 @@ export class TodaySignalsService {
         skipped += 1;
         continue;
       }
-      const rawQty = Math.floor(perOrderAmount / priceHint);
-      // 100 股是 A 股最小手数。如果 perOrderAmount 不够买 100 股 → 跳过避免超买
-      // (历史 bug: max(100, 0) 强制 100 股，单价 320 元股变成 32000 元下单触发风控)
-      if (rawQty < 100) {
+      // 100 股是 A 股最小手数。
+      // 策略：100 股最少 = priceHint × 100；若 < perOrderAmount × 3 (容忍 3 倍)，按 100 股下单
+      // 若 > perOrderAmount × 3 (太贵 → 仓位会超 max_single_stock_pct 10%) 则跳过
+      const min100Cost = priceHint * 100;
+      const MAX_OVER_RATIO = 3; // 100 股最大相比 perOrderAmount 的倍数（5000 × 3 = 15000，对应 7.5% 仓位 / 200k 总值）
+      if (min100Cost > perOrderAmount * MAX_OVER_RATIO) {
         orders.push({
           strategy: c.strategy, symbol: c.symbol, name: c.name,
           quantity: 0, expected_amount: 0, status: 'skipped',
-          reason: `单价 ¥${priceHint.toFixed(2)} 过高, perOrderAmount ¥${perOrderAmount} 不够买 100 股 (需 ¥${(priceHint * 100).toFixed(0)})`,
+          reason: `单价 ¥${priceHint.toFixed(2)} 过高 (100 股 ¥${min100Cost.toFixed(0)} > 3 × ¥${perOrderAmount}), 跳过避免仓位过大`,
         });
         skipped += 1;
         continue;
       }
-      const quantity = Math.floor(rawQty / 100) * 100;
+      // 优先按 perOrderAmount 整 100 股；不够 100 股就用最小 100
+      const rawQty = Math.floor(perOrderAmount / priceHint);
+      const quantity = rawQty >= 100 ? Math.floor(rawQty / 100) * 100 : 100;
 
       try {
         const result = await paperTradingFacade.placeOrder({
