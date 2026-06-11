@@ -10,9 +10,10 @@
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { Card, Row, Col, Statistic, Tag, Space, Spin, Alert, Empty, Typography, Tooltip } from 'antd';
+import { Card, Row, Col, Statistic, Tag, Space, Spin, Alert, Empty, Typography, Tooltip, Table } from 'antd';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer } from 'recharts';
 import api from '../../services/api';
+import { useNavigate } from 'react-router-dom';
 
 const { Text, Paragraph } = Typography;
 
@@ -67,10 +68,25 @@ const QVIX_LABELS: Record<string, string> = {
   cyb: '创业板',
 };
 
+interface BlockTrade {
+  trade_date: string;
+  stock_code: string;
+  stock_name: string | null;
+  price: number;
+  close_price: number;
+  amount: number;
+  premium_pct: number | null;
+  change_pct: number | null;
+  buyer: string;
+  seller: string;
+}
+
 const MacroEnvTab: React.FC = () => {
+  const navigate = useNavigate();
   const [indicators, setIndicators] = useState<MacroIndicatorsResponse | null>(null);
   const [qvix, setQvix] = useState<QvixResponse | null>(null);
   const [regime, setRegime] = useState<RegimeSnapshot | null>(null);
+  const [blockTrades, setBlockTrades] = useState<BlockTrade[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -78,14 +94,16 @@ const MacroEnvTab: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const [ind, qv, rg] = await Promise.all([
+      const [ind, qv, rg, bt] = await Promise.all([
         api.get('/macro/indicators?days=1095').then(r => r.data?.data),
         api.get('/macro/qvix?days=90').then(r => r.data?.data),
         api.get('/macro/regime-snapshot').then(r => r.data?.data),
+        api.get('/macro/block-trades?days=7&limit=100').then(r => r.data?.data),
       ]);
       setIndicators(ind);
       setQvix(qv);
       setRegime(rg);
+      setBlockTrades(bt?.items || []);
     } catch (e: any) {
       setError(e?.response?.data?.message || e?.message || String(e));
     } finally {
@@ -239,6 +257,119 @@ const MacroEnvTab: React.FC = () => {
           )}
         </Card>
       )}
+
+      {/* 大宗交易 */}
+      <Card
+        size="small"
+        title={
+          <Space>
+            <span>近 7 日大宗交易</span>
+            <Tag>{blockTrades.length} 笔</Tag>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              折溢价 &gt; 5% 通常是机构操作信号
+            </Text>
+          </Space>
+        }
+      >
+        {blockTrades.length === 0 ? (
+          <Empty description="暂无大宗交易数据" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+        ) : (
+          <Table
+            size="small"
+            rowKey={(r: any) => `${r.trade_date}-${r.stock_code}-${r.buyer}-${r.amount}`}
+            dataSource={blockTrades}
+            pagination={{ pageSize: 15, size: 'small' }}
+            scroll={{ x: 'max-content' }}
+            columns={[
+              { title: '日期', dataIndex: 'trade_date', width: 100 },
+              {
+                title: '代码',
+                dataIndex: 'stock_code',
+                width: 92,
+                render: (v: string) => (
+                  <a onClick={() => navigate(`/stock/${v}`)}>
+                    <Text code style={{ fontSize: 11 }}>{v}</Text>
+                  </a>
+                ),
+              },
+              {
+                title: '名称',
+                dataIndex: 'stock_name',
+                width: 110,
+                render: (v: string | null, row: BlockTrade) =>
+                  v ? <a onClick={() => navigate(`/stock/${row.stock_code}`)}>{v}</a> : '—',
+              },
+              {
+                title: '成交价',
+                dataIndex: 'price',
+                width: 80,
+                align: 'right' as const,
+                render: (v: number) => `¥${Number(v).toFixed(2)}`,
+              },
+              {
+                title: '收盘价',
+                dataIndex: 'close_price',
+                width: 80,
+                align: 'right' as const,
+                render: (v: number) => `¥${Number(v).toFixed(2)}`,
+              },
+              {
+                title: '折溢价',
+                dataIndex: 'premium_pct',
+                width: 90,
+                align: 'right' as const,
+                sorter: (a: BlockTrade, b: BlockTrade) => (a.premium_pct ?? 0) - (b.premium_pct ?? 0),
+                render: (v: number | null) => {
+                  if (v == null) return '—';
+                  const color = v >= 0 ? '#cf1322' : '#3f8600';
+                  const label = v >= 0 ? '溢价' : '折价';
+                  return (
+                    <Tag color={Math.abs(v) > 5 ? (v > 0 ? 'red' : 'green') : 'default'}>
+                      {label} {v >= 0 ? '+' : ''}{v.toFixed(2)}%
+                    </Tag>
+                  );
+                },
+              },
+              {
+                title: '成交额',
+                dataIndex: 'amount',
+                width: 100,
+                align: 'right' as const,
+                sorter: (a: BlockTrade, b: BlockTrade) => a.amount - b.amount,
+                render: (v: number) => `¥${(v / 10000).toFixed(0)} 万`,
+              },
+              {
+                title: '当日涨跌',
+                dataIndex: 'change_pct',
+                width: 90,
+                align: 'right' as const,
+                render: (v: number | null) => {
+                  if (v == null) return '—';
+                  return (
+                    <span style={{ color: v >= 0 ? '#cf1322' : '#3f8600', fontSize: 12 }}>
+                      {v >= 0 ? '+' : ''}{v.toFixed(2)}%
+                    </span>
+                  );
+                },
+              },
+              {
+                title: '买方',
+                dataIndex: 'buyer',
+                width: 200,
+                ellipsis: true,
+                render: (v: string) => <Text style={{ fontSize: 11 }}>{v || '—'}</Text>,
+              },
+              {
+                title: '卖方',
+                dataIndex: 'seller',
+                width: 200,
+                ellipsis: true,
+                render: (v: string) => <Text style={{ fontSize: 11 }}>{v || '—'}</Text>,
+              },
+            ]}
+          />
+        )}
+      </Card>
     </Space>
   );
 };
