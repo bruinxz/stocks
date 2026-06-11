@@ -126,6 +126,8 @@ export class QuantStrategyService {
           risk_level: definition.risk_level,
           tags: definition.tags,
           latest_metrics: {},
+          // Phase 4: 内置 edge_hypothesis 默认值 (用户后续可通过 PATCH 替换)
+          edge_hypothesis: definition.edge_hypothesis || {},
         },
       });
       const patch: any = {
@@ -151,6 +153,12 @@ export class QuantStrategyService {
         risk_level: definition.risk_level,
         tags: definition.tags,
       };
+      // Phase 4: 仅在 record 上 edge_hypothesis 为空 (用户没改过) 时才用 definition 兜底
+      // 避免覆盖用户已经 PATCH 编辑过的 hypothesis
+      const existingHypo = asObject(record.edge_hypothesis) || {};
+      if (Object.keys(existingHypo).length === 0 && definition.edge_hypothesis) {
+        patch.edge_hypothesis = definition.edge_hypothesis;
+      }
       if (record.enabled === null || record.enabled === undefined)
         patch.enabled = definition.enabled;
       await record.update(patch);

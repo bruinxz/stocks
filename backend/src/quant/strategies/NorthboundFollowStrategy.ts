@@ -362,6 +362,22 @@ export class NorthboundFollowStrategy extends QuantStrategy {
     risk_level: 'medium',
     tags: ['北向资金', '聪明钱', '中线', '跟随'],
     style: 'large_cap_value',
+    edge_hypothesis: {
+      thesis:
+        '北向加仓跟随：当日北向资金 ratio_delta > 0.5pp 入场 + 5 日累计 ratio 持续上升 + maxPositions=20，反向减仓 ratio_delta < -0.3pp 触发退出',
+      category: 'sentiment',
+      expected_edge_pct: 7.0,
+      expected_holding_days: 30,
+      key_factors: ['northbound_ratio_delta_1d', 'northbound_ratio_delta_5d'],
+      evidence_link: '外资择股能力研究 - 国金证券 2019',
+      failure_modes: [
+        '北向被动减仓 (指数调仓)',
+        '北向资金统计延迟',
+        '热点切换 (北向开始减仓时已晚',
+      ],
+      kill_switch_metric: 'win_rate_30d',
+      kill_switch_threshold: 0.48,
+    },
   };
 
   private readonly dataSource: NorthboundFollowDataSource;

@@ -468,6 +468,21 @@ export class GameTraderRelayStrategy extends QuantStrategy {
     risk_level: 'high',
     tags: ['短线', '游资', '接力', '龙虎榜', '事件驱动'],
     style: 'short_term_event_driven',
+    edge_hypothesis: {
+      thesis:
+        '游资接力：famous_yz lookback N 日累计净买入 > 5000 万 + relay_day_count ≥ 2 + 当日涨幅 > 5% + 市值 [30亿, 150亿]，3 自然日 -7% 止损，接力中断退出',
+      category: 'momentum',
+      expected_edge_pct: 13.0,
+      expected_holding_days: 3,
+      key_factors: ['famous_yz_accumulated_net_buy', 'relay_day_count', 'today_change_pct', 'circulating_market_cap'],
+      failure_modes: [
+        '游资接力中断 (席位反向)',
+        '高位炸板',
+        '次日大跌 (>-3%)',
+      ],
+      kill_switch_metric: 'win_rate_5d',
+      kill_switch_threshold: 0.45,
+    },
   };
 
   private readonly dataSource: GameTraderRelayDataSource;

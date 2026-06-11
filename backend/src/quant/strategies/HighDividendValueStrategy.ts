@@ -528,6 +528,21 @@ export class HighDividendValueStrategy extends QuantStrategy {
     risk_level: 'low',
     tags: ['价值', '股息', '低 PE', '长线', '季度调仓'],
     style: 'high_yield_defensive',
+    edge_hypothesis: {
+      thesis:
+        '高股息低 PE 长线价值：近 3 年股息率均值 ≥ 4% + PE ≤ 15 + 5 年 ROE 均值 ≥ 8% + 流通市值 ≥ 200 亿，季度调仓',
+      category: 'structural',
+      expected_edge_pct: 6.0,
+      expected_holding_days: 90,
+      key_factors: ['avg_dividend_yield_3y', 'pe_ttm', 'roe_5y_avg', 'circulating_market_cap'],
+      failure_modes: [
+        '高股息陷阱 (股价下跌导致股息率被动升高)',
+        '蓝筹股估值切换 (2017→2018 蓝筹周期)',
+        '加息周期股息股跑输成长股',
+      ],
+      kill_switch_metric: 'annual_return_pct',
+      kill_switch_threshold: 3.0,
+    },
   };
 
   private readonly dataSource: HighDividendValueDataSource;

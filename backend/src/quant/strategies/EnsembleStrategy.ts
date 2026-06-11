@@ -261,6 +261,21 @@ export class EnsembleStrategy extends QuantStrategy {
     risk_level: 'medium',
     tags: ['集成', '元策略', '市场环境', '自适应权重', '加权投票'],
     style: 'ensemble',
+    edge_hypothesis: {
+      thesis:
+        '多策略融合 (regime-adaptive)：按市场环境 (bull/bear/range/volatile) 动态选 2-3 个子策略加权投票，让子策略各取所长',
+      category: 'structural',
+      expected_edge_pct: 8.0,
+      expected_holding_days: 30,
+      key_factors: ['market_regime', 'sub_strategy_weights', 'voting_consensus'],
+      failure_modes: [
+        'regime 误判 (transition phase)',
+        '子策略集体亏损 (系统性风险)',
+        'LowVol 缺失时 bear 退化为单策略',
+      ],
+      kill_switch_metric: 'mean_test_sharpe_30d',
+      kill_switch_threshold: 0.3,
+    },
   };
 
   /** 子策略实例池（key → instance）。默认创建生产实例；测试可注入 fakes。 */

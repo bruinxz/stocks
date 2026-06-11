@@ -428,6 +428,22 @@ export class LeftSideReversalStrategy extends QuantStrategy {
     risk_level: 'high',
     tags: ['反转', '超跌', 'RSI', '资金流', '短中线'],
     style: 'mean_reversion',
+    edge_hypothesis: {
+      thesis:
+        '左侧反转：20 日跌 ≥ 30% + 当日反弹 > 5% + RSI(14) 从 < 25 上穿 25 + 主力 main_net_inflow > 0 + 流通市值 > 50 亿，15 自然日 -7% 止损',
+      category: 'mean_reversion',
+      expected_edge_pct: 10.0,
+      expected_holding_days: 15,
+      key_factors: ['drop_pct_20d', 'rebound_pct_today', 'rsi_14', 'main_net_inflow'],
+      evidence_link: 'Lo & MacKinlay 1990 mean reversion / De Bondt & Thaler 1985',
+      failure_modes: [
+        '退市风险股 (超跌但基本面恶化)',
+        '小盘股流动性陷阱',
+        '主跌段反弹 (反弹后继续下跌)',
+      ],
+      kill_switch_metric: 'win_rate_30d',
+      kill_switch_threshold: 0.4,
+    },
   };
 
   private readonly dataSource: LeftSideReversalDataSource;

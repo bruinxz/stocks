@@ -380,6 +380,22 @@ export class MultiFactorAlphaStrategy extends QuantStrategy {
     risk_level: 'medium',
     tags: ['多因子', 'alpha', '月度轮动', 'factor_scores', '12 因子', 'IC 加权'],
     style: 'multi_factor_alpha',
+    edge_hypothesis: {
+      thesis:
+        '多因子选股 alpha：12 个独立因子按 IC 加权合成横截面 z_score，月度调仓 top-30，行业中性化，长期年化 5-8%',
+      category: 'structural',
+      expected_edge_pct: 6.0,
+      expected_holding_days: 22,
+      key_factors: ['pe_ttm', 'roe', 'momentum_5d', 'turnover_rate', 'analyst_consensus'],
+      evidence_link: 'Fama & French 1992 / Asness 1994',
+      failure_modes: [
+        '小市值因子失效期 (2017-2018 蓝筹白马年)',
+        '动量因子失效期 (2020 Q1 风格切换)',
+        '财报披露期前后的均值回归',
+      ],
+      kill_switch_metric: 'mean_test_sharpe_30d',
+      kill_switch_threshold: 0.3,
+    },
   };
 
   private readonly dataSource: MultiFactorAlphaDataSource;

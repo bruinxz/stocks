@@ -549,6 +549,22 @@ export class GARPStrategy extends QuantStrategy {
     risk_level: 'medium',
     tags: ['价值', '成长', 'GARP', 'PEG', '半年度调仓'],
     style: 'large_cap_growth',
+    edge_hypothesis: {
+      thesis:
+        'GARP (Growth at Reasonable Price): 连续 3 年净利润 yoy ≥ 15% + PE ≤ 25 + 5 年 ROE 均值 ≥ 12% + 负债率 ≤ 60%，半年度调仓',
+      category: 'structural',
+      expected_edge_pct: 8.0,
+      expected_holding_days: 180,
+      key_factors: ['net_profit_yoy_3y', 'pe_ttm', 'roe_5y_avg', 'debt_ratio'],
+      evidence_link: 'Peter Lynch / Beating the Street 1993',
+      failure_modes: [
+        '业绩增速失速 (企业进入成熟期)',
+        'PE 不再 reasonable (估值切换)',
+        '高负债率股在加息周期跑输',
+      ],
+      kill_switch_metric: 'annual_return_pct',
+      kill_switch_threshold: 5.0,
+    },
   };
 
   private readonly dataSource: GARPDataSource;

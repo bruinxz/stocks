@@ -590,6 +590,21 @@ export class LinkageStrategy extends QuantStrategy {
     risk_level: 'high',
     tags: ['短线', '联动', '题材扩散', '涨停', '事件驱动'],
     style: 'short_term_event_driven',
+    edge_hypothesis: {
+      thesis:
+        '行业联动：行业内有股票涨停 (>9%) + 候选昨涨幅 < 5% + 候选市值 < 龙头市值 + 高开 < 3% + 非 ST，3 自然日内出场或当日涨停止盈',
+      category: 'momentum',
+      expected_edge_pct: 14.0,
+      expected_holding_days: 3,
+      key_factors: ['industry_limit_up_leader', 'yesterday_change_pct', 'open_gap_pct'],
+      failure_modes: [
+        '题材热度散去 (1-2 天后联动失效)',
+        '龙头炸板带崩联动股',
+        '联动股本身有利空',
+      ],
+      kill_switch_metric: 'win_rate_5d',
+      kill_switch_threshold: 0.45,
+    },
   };
 
   private readonly dataSource: LinkageDataSource;

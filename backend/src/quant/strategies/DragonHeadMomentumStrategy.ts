@@ -544,6 +544,21 @@ export class DragonHeadMomentumStrategy extends QuantStrategy {
     risk_level: 'high',
     tags: ['短线', '龙头', '梯队', '游资', '涨停板'],
     style: 'short_term_event_driven',
+    edge_hypothesis: {
+      thesis:
+        '短线龙头战法：当日涨停 + famous_yz 净买入 > 0 入场，连板梯队选首板/二板/三板龙头，3 自然日内出场或减半',
+      category: 'momentum',
+      expected_edge_pct: 12.0,
+      expected_holding_days: 3,
+      key_factors: ['limit_up', 'famous_yz_net_buy', 'industry_leader_rank'],
+      failure_modes: [
+        '一字板 (无法买入)',
+        '高位炸板',
+        '题材切换 (今日热门明日不热)',
+      ],
+      kill_switch_metric: 'win_rate_5d',
+      kill_switch_threshold: 0.45,
+    },
   };
 
   private readonly dataSource: DragonHeadDataSource;

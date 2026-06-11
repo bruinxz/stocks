@@ -112,6 +112,28 @@ export interface QuantStrategyDefinition {
    * 老策略可不填，BenchmarkSelector 退回 tags 推断。
    */
   style?: StrategyStyle;
+  /**
+   * Phase 4 — Edge hypothesis (可证伪 alpha 假设)
+   *
+   * 内置策略应该填写：thesis (≥10 字符) + category + expected_edge_pct +
+   * key_factors + kill_switch_metric + kill_switch_threshold + failure_modes
+   *
+   * 老策略可不填 (default_params 默认空 → promotion 会拒)；ralph 自动迭代出来
+   * 的策略需要在创建时立刻填写否则 ParamVersion promote 流程会一直被门禁拦截
+   *
+   * See QuantStrategyModel.edge_hypothesis for full schema.
+   */
+  edge_hypothesis?: {
+    thesis: string;
+    category?: 'mean_reversion' | 'momentum' | 'sentiment' | 'event' | 'structural';
+    expected_edge_pct?: number;
+    expected_holding_days?: number;
+    key_factors?: string[];
+    evidence_link?: string;
+    failure_modes?: string[];
+    kill_switch_metric?: string;
+    kill_switch_threshold?: number;
+  };
 }
 
 export interface QuantStrategyRuntimeOptions {

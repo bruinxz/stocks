@@ -412,6 +412,22 @@ export class EarningsSurpriseStrategy extends QuantStrategy {
     risk_level: 'medium',
     tags: ['事件驱动', '业绩预告', '北向资金', '中线'],
     style: 'mid_cap_balanced',
+    edge_hypothesis: {
+      thesis:
+        '业绩预告超预期 + 北向加仓双确认：profit_change_low ≥ 30% 且过去 5 日北向 ratio_delta > 0 入场，60 自然日 -10% 止损',
+      category: 'event',
+      expected_edge_pct: 15.0,
+      expected_holding_days: 60,
+      key_factors: ['earnings_forecast.profit_change_low', 'northbound_ratio_delta'],
+      evidence_link: 'PEAD (Post-Earnings Announcement Drift) - Bernard & Thomas 1989',
+      failure_modes: [
+        '业绩预告兑现失败 (实际财报低于预告)',
+        '宏观风险事件击穿单股 alpha',
+        '北向资金被动减仓 (非主动信号)',
+      ],
+      kill_switch_metric: 'win_rate_30d',
+      kill_switch_threshold: 0.5,
+    },
   };
 
   private readonly dataSource: EarningsSurpriseDataSource;

@@ -426,6 +426,21 @@ export class SectorRotationLeaderStrategy extends QuantStrategy {
     risk_level: 'medium',
     tags: ['行业轮动', '龙头', '主力资金', '中线'],
     style: 'sector_rotation',
+    edge_hypothesis: {
+      thesis:
+        '行业龙头轮动：行业 5 日累计 main_inflow top-10 → 行业内 change_pct top-2 龙头，每日扫描，掉出 top 15 / top 5 时退出',
+      category: 'momentum',
+      expected_edge_pct: 10.0,
+      expected_holding_days: 20,
+      key_factors: ['industry_5d_main_inflow', 'stock_change_pct_in_industry'],
+      failure_modes: [
+        '热门行业切换',
+        '行业内龙头切换 (今日龙头明日不再是)',
+        '主力资金统计偏差',
+      ],
+      kill_switch_metric: 'win_rate_30d',
+      kill_switch_threshold: 0.45,
+    },
   };
 
   private readonly dataSource: SectorRotationLeaderDataSource;

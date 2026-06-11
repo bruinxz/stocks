@@ -398,6 +398,22 @@ export class BreakoutStrategy extends QuantStrategy {
     risk_level: 'medium',
     tags: ['趋势', '突破', '成交量', '中线'],
     style: 'momentum',
+    edge_hypothesis: {
+      thesis:
+        '60 日新高突破：close 严格 > 60d_high + 当日成交额 > 1.5x avg_20d + 所属行业 main_inflow > 0 + 非 ST，跌破 MA20 退出',
+      category: 'momentum',
+      expected_edge_pct: 9.0,
+      expected_holding_days: 30,
+      key_factors: ['close_vs_60d_high', 'volume_ratio_20d', 'industry_main_inflow', 'ma20'],
+      evidence_link: 'Donchian Channel / Turtle Trading - Richard Dennis',
+      failure_modes: [
+        '假突破后快速回落 (无量假突破)',
+        '突破后无后续买盘 (个股流动性不足)',
+        '突破在 stress regime 中容易亏损',
+      ],
+      kill_switch_metric: 'win_rate_30d',
+      kill_switch_threshold: 0.4,
+    },
   };
 
   private readonly dataSource: BreakoutDataSource;

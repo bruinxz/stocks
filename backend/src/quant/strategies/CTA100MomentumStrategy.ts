@@ -307,6 +307,22 @@ export class CTA100MomentumStrategy extends QuantStrategy {
     risk_level: 'high',
     tags: ['中证1000', '小盘', '动量', '月度轮动', '行业中性'],
     style: 'small_cap_growth',
+    edge_hypothesis: {
+      thesis:
+        '中证 1000 (000852) 成份股动量：close[T-5]/close[T-60] - 1 排名 top-N，月度调仓，限定指数成份股池',
+      category: 'momentum',
+      expected_edge_pct: 8.0,
+      expected_holding_days: 22,
+      key_factors: ['momentum_60_minus_5', 'index_membership_csi1000'],
+      evidence_link: 'Jegadeesh & Titman 1993 momentum',
+      failure_modes: [
+        '动量切换期 (高 dispersion)',
+        '小盘股集体崩盘',
+        '指数调仓期成份股变动大',
+      ],
+      kill_switch_metric: 'mean_test_sharpe_30d',
+      kill_switch_threshold: 0.3,
+    },
   };
 
   private readonly dataSource: CTA100MomentumDataSource;
