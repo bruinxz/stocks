@@ -2104,6 +2104,22 @@ class PaperTradingAutomationService {
           total_cost,
         });
         tradePayload.trade_id = trade.id;
+
+        // ========== 即时飞书推送：自主买入通知 ==========
+        try {
+          const { feishuBotWebhookService } = require('../../services/FeishuBotWebhookService');
+          const webhookUrl = process.env.FEISHU_RECOMMENDATION_BOT_WEBHOOK || process.env.FEISHU_BOT_WEBHOOK;
+          if (webhookUrl && String(process.env.DISABLE_FEISHU_BOT_WEBHOOK) !== 'true') {
+            const stockName = signal.name || quote.name || symbol;
+            const positionPct = ((total_cost / toNumber(portfolio.total_value, 200000)) * 100).toFixed(1);
+            feishuBotWebhookService.sendRecommendationSummary({
+              title: `🟢 自主买入 ${stockName} (${symbol})`,
+              summary: `得分 ${toNumber(signal.confidence_score, 0).toFixed(0)} | ${quantity}股 × ¥${execute_price.toFixed(2)} = ¥${amount.toFixed(0)} (${positionPct}%仓位)`,
+              webhook_url: webhookUrl,
+            }).catch(() => { /* 静默 */ });
+          }
+        } catch { /* 静默 */ }
+
         await this.markSignalExecuted(signal, {
           portfolio_id: portfolio.id,
           trade_id: trade.id,
@@ -2736,6 +2752,24 @@ class PaperTradingAutomationService {
           realized_pnl,
         });
         exitItem.trade_id = trade.id;
+
+        // ========== 即时飞书推送：自主卖出通知 ==========
+        try {
+          const { feishuBotWebhookService } = require('../../services/FeishuBotWebhookService');
+          const webhookUrl = process.env.FEISHU_RECOMMENDATION_BOT_WEBHOOK || process.env.FEISHU_BOT_WEBHOOK;
+          if (webhookUrl && String(process.env.DISABLE_FEISHU_BOT_WEBHOOK) !== 'true') {
+            const stockName = exitItem.name || symbol;
+            const pnlSign = realized_pnl >= 0 ? '+' : '';
+            const reasonText = riskReasonLabel(exitReason);
+            const icon = realized_pnl >= 0 ? '🟢' : '🔴';
+            feishuBotWebhookService.sendRecommendationSummary({
+              title: `${icon} 自主卖出 ${stockName} (${symbol}) — ${reasonText}`,
+              summary: `${pnlSign}¥${realized_pnl.toFixed(2)} | ${quantity}股 × ¥${execute_price.toFixed(2)} = ¥${amount.toFixed(0)} | 持有${holdingDays}天`,
+              webhook_url: webhookUrl,
+            }).catch(() => { /* 静默 */ });
+          }
+        } catch { /* 静默 */ }
+
         await recordSellIntent('executed', riskReasonLabel(exitReason), {
           trade_id: trade.id,
           execute_price,
