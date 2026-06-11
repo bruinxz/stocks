@@ -613,7 +613,6 @@ export class FactorController {
       res.status(500).json({ success: false, message });
     }
   }
-  }
 }
 
 // ---------- helpers --------------------------------------------------------
