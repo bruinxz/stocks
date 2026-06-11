@@ -590,6 +590,26 @@ export function buildDigestCard(payload: DigestPayload): {
     elements.push({ tag: 'div', text: { tag: 'lark_md', content: '_今日策略无候选_' } });
   }
 
+  // Section 5: 宏观环境 (从 payload.macro_snapshot 取 — caller 提前拉好)
+  if ((payload as any).macro_snapshot) {
+    const snap = (payload as any).macro_snapshot;
+    elements.push({ tag: 'hr' });
+    const regimeIcon = snap.market_regime === 'bull' ? '🟢' : snap.market_regime === 'bear' || snap.market_regime === 'stress' ? '🔴' : '🟡';
+    const macroLines: string[] = [`${regimeIcon} **市场环境: ${snap.market_regime_label || snap.market_regime}**`];
+    macroLines.push(`沪深300 20日: ${snap.benchmark_return_20d_pct?.toFixed?.(2) ?? snap.benchmark_return_20d_pct ?? '—'}% | 60日回撤: ${snap.benchmark_drawdown_60d_pct?.toFixed?.(2) ?? '—'}%`);
+    if (snap.macro) {
+      macroLines.push(`PMI: ${snap.macro.pmi_latest ?? '—'} | M2: ${snap.macro.m2_yoy ?? '—'}% | 10Y国债: ${snap.macro.treasury_10y ?? '—'}%`);
+    }
+    if (snap.qvix) {
+      const panicTag = snap.qvix.is_panic ? ' ⚠️恐慌' : '';
+      macroLines.push(`QVIX(300ETF): ${snap.qvix.qvix_300etf_latest} (60d ${snap.qvix.qvix_300etf_percentile_60d}%分位)${panicTag}`);
+    }
+    elements.push({
+      tag: 'div',
+      text: { tag: 'lark_md', content: macroLines.join('\n') },
+    });
+  }
+
   // Footer
   const ts = moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm');
   elements.push({
@@ -1140,6 +1160,19 @@ export class DailyTradingDigestService {
       trades_today_sell_count: sellCount,
       candidates_tomorrow: candidates,
     };
+
+    // 加宏观环境 snapshot（fail-safe: 拉不到不影响日报）
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { marketEnvironmentService } = require('./MarketEnvironmentService');
+      const snap = await marketEnvironmentService.getEnvironmentForStock('sh.000300', {
+        use_cache: true,
+        as_of: trade_date,
+      });
+      if (snap) (payload as any).macro_snapshot = snap;
+    } catch {
+      // 静默
+    }
 
     if (dry_run) {
       return {
