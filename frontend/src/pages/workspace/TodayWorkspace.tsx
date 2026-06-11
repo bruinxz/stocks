@@ -195,23 +195,9 @@ const TodayWorkspace: React.FC = () => {
       <Button icon={<ReloadOutlined />} onClick={() => void refresh()} loading={loading}>
         刷新
       </Button>
-      <Popconfirm
-        title="一键应用全部信号到模拟盘"
-        description={`将下单 ${totalBuyCount} 条 BUY 信号（每笔 5000 元，已持有跳过），下单后跳转持仓页`}
-        okText="确认下单"
-        cancelText="取消"
-        disabled={!data || totalBuyCount === 0 || applying}
-        onConfirm={handleApplyAll}
-      >
-        <Button
-          type="primary"
-          icon={<CheckCircleOutlined />}
-          loading={applying}
-          disabled={!data || totalBuyCount === 0}
-        >
-          一键应用全部信号 ({totalBuyCount})
-        </Button>
-      </Popconfirm>
+      {/* 系统自主决策：每日 14:35 cron 按 score>75 + 风控 8 道 guard 自动下单；
+          不再需要"一键应用"暴力全买。用户可在"持仓与复盘"查看结果。
+          保留 apply 逻辑但不显示按钮。*/}
     </Space>
   );
 
