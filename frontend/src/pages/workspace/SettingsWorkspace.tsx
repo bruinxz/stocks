@@ -37,8 +37,10 @@ import {
   WechatOutlined,
   MailOutlined,
   MessageOutlined,
+  CalculatorOutlined,
 } from '@ant-design/icons';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
+import SizingPolicyTab from './SettingsWorkspace.SizingPolicyTab';
 import {
   loadNotificationChannels,
   updateNotificationChannels,
@@ -111,6 +113,7 @@ const SettingsWorkspace: React.FC = () => {
     { key: 'keys', label: 'API 密钥', icon: <KeyOutlined /> },
     { key: 'push-channels', label: '推送渠道', icon: <NotificationOutlined /> },
     { key: 'notifications', label: '通知设置', icon: <BellOutlined /> },
+    { key: 'sizing', label: '仓位策略', icon: <CalculatorOutlined /> },
     { key: 'users', label: '用户管理', icon: <TeamOutlined /> },
   ];
   const [activeKey, setActiveKey] = useState('push-channels');
@@ -1608,6 +1611,8 @@ const SettingsWorkspace: React.FC = () => {
         ? renderNotifications()
         : activeKey === 'push-channels'
         ? renderPushChannels()
+        : activeKey === 'sizing'
+        ? <SizingPolicyTab />
         : renderPlaceholder()}
       <DigestPreviewModal
         open={previewOpen}

@@ -359,6 +359,7 @@ export interface StrategyDetailResponse {
     execution_policy?: Record<string, any>;
     environment_policy?: Record<string, any>;
     lifecycle_policy?: Record<string, any>;
+    edge_hypothesis?: Record<string, any>;
     notes?: string | null;
   };
   backtests: StrategyDetailBacktest[];

@@ -13,6 +13,7 @@ import {
   Statistic,
   Table,
   Tag,
+  Tooltip,
   Typography,
 } from 'antd';
 import {
@@ -117,6 +118,10 @@ interface TradeOutcome {
   benchmark_return_pct?: number;
   excess_return_pct?: number;
   exit_reason_label?: string;
+  // Phase 5: 自动归类根因
+  root_cause?: string;
+  root_cause_label?: string;
+  root_cause_confidence?: number;
   metadata?: {
     signal_metadata?: {
       consensus_count?: number;
@@ -595,6 +600,36 @@ const RecommendationTradeOutcomes: React.FC = () => {
       width: 140,
       render: (_: any, record: TradeOutcome) =>
         record.exit_reason_label || record.action_label || '-',
+    },
+    // Phase 5: 根因归类
+    {
+      title: '根因',
+      width: 130,
+      render: (_: any, record: TradeOutcome) => {
+        if (!record.root_cause) return <Text type="secondary">-</Text>;
+        const colorMap: Record<string, string> = {
+          profit_take: 'success',
+          stop_loss: 'red',
+          time_stop: 'orange',
+          wrong_entry: 'volcano',
+          wrong_regime: 'magenta',
+          catalyst_failed: 'gold',
+          data_quality: 'purple',
+          backtest_drift: 'cyan',
+          risk_kill_switch: 'red',
+          unknown: 'default',
+        };
+        const tooltip = record.root_cause_confidence !== undefined
+          ? `${record.root_cause} (置信度 ${(record.root_cause_confidence * 100).toFixed(0)}%)`
+          : record.root_cause;
+        return (
+          <Tooltip title={tooltip}>
+            <Tag color={colorMap[record.root_cause] || 'default'} style={{ fontSize: 11 }}>
+              {record.root_cause_label || record.root_cause}
+            </Tag>
+          </Tooltip>
+        );
+      },
     },
     {
       title: '链路',

@@ -475,6 +475,116 @@ const StrategyMetaCard: React.FC<{
           </Card>
         </Col>
       </Row>
+
+      {/* Phase 4: Edge Hypothesis 卡片 */}
+      <EdgeHypothesisCard hypothesis={strategy.edge_hypothesis} />
+    </Card>
+  );
+};
+
+/**
+ * Phase 4: 策略 edge_hypothesis 展示卡片
+ * 显示 thesis / category / expected_edge / kill_switch_metric / failure_modes 等
+ * 让用户一眼看清这个策略的"alpha 假设"
+ */
+const EdgeHypothesisCard: React.FC<{ hypothesis?: Record<string, any> }> = ({ hypothesis }) => {
+  const hypo = hypothesis || {};
+  const hasContent = hypo && typeof hypo === 'object' && Object.keys(hypo).length > 0;
+  if (!hasContent) {
+    return (
+      <Alert
+        style={{ marginTop: 16 }}
+        type="warning"
+        showIcon
+        message="缺少 Edge Hypothesis"
+        description="本策略尚未填写可证伪的 alpha 假设。Phase 4 promotion 门禁要求所有策略必须填写 edge_hypothesis.thesis (≥10 字符) 才能 promote 成 champion。"
+      />
+    );
+  }
+  const thesis = String(hypo.thesis || '').trim();
+  const category = hypo.category || null;
+  const expectedEdge = typeof hypo.expected_edge_pct === 'number' ? hypo.expected_edge_pct : null;
+  const expectedHolding = typeof hypo.expected_holding_days === 'number' ? hypo.expected_holding_days : null;
+  const keyFactors = Array.isArray(hypo.key_factors) ? hypo.key_factors : [];
+  const failureModes = Array.isArray(hypo.failure_modes) ? hypo.failure_modes : [];
+  const killMetric = hypo.kill_switch_metric || null;
+  const killThreshold = typeof hypo.kill_switch_threshold === 'number' ? hypo.kill_switch_threshold : null;
+  const evidence = hypo.evidence_link || null;
+
+  return (
+    <Card
+      type="inner"
+      size="small"
+      style={{ marginTop: 16 }}
+      title={
+        <Space>
+          <Text strong>Edge Hypothesis (alpha 假设)</Text>
+          <Tag color="processing">Phase 4</Tag>
+        </Space>
+      }
+    >
+      {thesis && (
+        <Paragraph style={{ marginBottom: 12, fontSize: 14, lineHeight: 1.6 }}>
+          <Text type="secondary">假设：</Text>
+          <Text strong>{thesis}</Text>
+        </Paragraph>
+      )}
+      <Row gutter={[16, 8]}>
+        {category && (
+          <Col xs={12} md={6}>
+            <Text type="secondary">类别：</Text>
+            <Tag color="blue">{category}</Tag>
+          </Col>
+        )}
+        {expectedEdge !== null && (
+          <Col xs={12} md={6}>
+            <Text type="secondary">预期年化 alpha：</Text>
+            <Text strong style={{ color: expectedEdge > 0 ? '#3f8600' : '#cf1322' }}>
+              {expectedEdge.toFixed(1)}%
+            </Text>
+          </Col>
+        )}
+        {expectedHolding !== null && (
+          <Col xs={12} md={6}>
+            <Text type="secondary">预期持仓：</Text>
+            <Text strong>{expectedHolding} 天</Text>
+          </Col>
+        )}
+        {killMetric && (
+          <Col xs={12} md={6}>
+            <Text type="secondary">熔断指标：</Text>
+            <Tag color="red">
+              {killMetric} {killThreshold !== null ? `< ${killThreshold}` : ''}
+            </Tag>
+          </Col>
+        )}
+      </Row>
+      {keyFactors.length > 0 && (
+        <div style={{ marginTop: 8 }}>
+          <Text type="secondary">关键因子：</Text>
+          <Space size={[4, 4]} wrap>
+            {keyFactors.map((f: string) => (
+              <Tag key={f}>{f}</Tag>
+            ))}
+          </Space>
+        </div>
+      )}
+      {failureModes.length > 0 && (
+        <div style={{ marginTop: 8 }}>
+          <Text type="secondary">已知失效场景：</Text>
+          <ul style={{ marginBottom: 0, paddingLeft: 20, color: '#666' }}>
+            {failureModes.map((m: string, i: number) => (
+              <li key={i} style={{ fontSize: 13 }}>{m}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {evidence && (
+        <div style={{ marginTop: 8 }}>
+          <Text type="secondary">学术引用：</Text>
+          <Text code>{evidence}</Text>
+        </div>
+      )}
     </Card>
   );
 };
