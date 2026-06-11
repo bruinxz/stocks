@@ -397,6 +397,112 @@ router.post(
   quantController.createWalkForwardBacktests.bind(quantController)
 );
 
+// ============================================================
+// Phase 1: Walk-Forward Validation (in-process, with DSR/PBO)
+// ============================================================
+
+/**
+ * @openapi
+ * /api/quant/walk-forward:
+ *   post:
+ *     tags: [量化 Quant]
+ *     summary: (Phase 1) 触发 walk-forward 验证 — in-process 实现 + DSR/PBO 过拟合检测
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               strategy_key: { type: string }
+ *               param_grid: { type: object, description: 'grid_search 模式用' }
+ *               param_bounds: { type: object, description: 'bayesian 模式用' }
+ *               base_config: { type: object }
+ *               train_months: { type: integer, default: 12 }
+ *               test_months: { type: integer, default: 3 }
+ *               start_date: { type: string, format: date }
+ *               end_date: { type: string, format: date }
+ *               scheme: { type: string, enum: [rolling, cpcv], default: rolling }
+ *               optimizer_type: { type: string, enum: [grid_search, bayesian], default: grid_search }
+ *               purging:
+ *                 type: object
+ *                 properties:
+ *                   label_horizon_days: { type: integer }
+ *                   embargo_days: { type: integer }
+ *               cpcv:
+ *                 type: object
+ *                 properties:
+ *                   n_groups: { type: integer, default: 6 }
+ *                   k_test_groups: { type: integer, default: 2 }
+ *     responses:
+ *       200: { description: 验证完成 }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
+ */
+router.post(
+  '/walk-forward',
+  authController.authenticate,
+  quantController.runWalkForwardValidation.bind(quantController)
+);
+
+/**
+ * @openapi
+ * /api/quant/walk-forward/runs:
+ *   get:
+ *     tags: [量化 Quant]
+ *     summary: (Phase 1) 列出最近的 walk-forward run
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: query, name: strategy_name, schema: { type: string } }
+ *       - { in: query, name: limit, schema: { type: integer, default: 30 } }
+ *     responses:
+ *       200: { description: run 列表 }
+ */
+router.get(
+  '/walk-forward/runs',
+  authController.authenticate,
+  quantController.listWalkForwardRuns.bind(quantController)
+);
+
+/**
+ * @openapi
+ * /api/quant/walk-forward/runs/{id}/windows:
+ *   get:
+ *     tags: [量化 Quant]
+ *     summary: (Phase 1) 拿一个 walk-forward run 的所有 windows
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: id, required: true, schema: { type: integer } }
+ *     responses:
+ *       200: { description: windows 列表 }
+ *       400: { description: 参数错误 }
+ */
+router.get(
+  '/walk-forward/runs/:id/windows',
+  authController.authenticate,
+  quantController.getWalkForwardWindows.bind(quantController)
+);
+
+/**
+ * @openapi
+ * /api/quant/walk-forward/runs/{id}:
+ *   delete:
+ *     tags: [量化 Quant]
+ *     summary: (Phase 1) 删除一个 walk-forward run
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: id, required: true, schema: { type: integer } }
+ *     responses:
+ *       200: { description: 删除成功 }
+ *       400: { description: 参数错误 }
+ */
+router.delete(
+  '/walk-forward/runs/:id',
+  authController.authenticate,
+  quantController.deleteWalkForwardRun.bind(quantController)
+);
+
 /**
  * @openapi
  * /api/quant/backtests/grid-search:

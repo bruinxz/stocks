@@ -88,6 +88,14 @@ program
   .option('--show <run_id>', '展示指定 run 的全部 windows')
   .option('--cleanup-days <n>', '删除 N 天前的所有 walk-forward run')
   .option('--user-id <n>', '触发者 user_id（落库 OptimizationRun.created_by）')
+  // Phase 1: 新增选项
+  .option('--scheme <type>', 'rolling 或 cpcv (Phase 1; 默认 rolling)', 'rolling')
+  .option('--cpcv-n <n>', 'CPCV 总分区数 (scheme=cpcv 时；默认 6)', '6')
+  .option('--cpcv-k <n>', 'CPCV 每路径 test 组数 (默认 2 → C(6,2)=15 paths)', '2')
+  .option('--purge-days <n>', 'purging label_horizon_days (默认 0=关闭；推荐 5)', '0')
+  .option('--embargo-days <n>', 'embargo 天数 (默认 0=关闭；推荐 2)', '0')
+  .option('--optimizer <type>', 'grid_search 或 bayesian (默认 grid_search)', 'grid_search')
+  .option('--bounds <json>', 'optimizer=bayesian 时的 param_bounds JSON e.g. \'{"topN":{"min":10,"max":50,"integer":true}}\'')
   .action(async opts => {
     try {
       await sequelize.authenticate();
@@ -178,16 +186,45 @@ program
         logger.error('[walk-forward] --start 与 --end 必填');
         process.exit(2);
       }
-      if (!opts.grid) {
-        logger.error('[walk-forward] --grid 必填，JSON 字符串');
+
+      // Phase 1: 校验 scheme + optimizer + 互斥参数
+      const scheme = String(opts.scheme || 'rolling').toLowerCase();
+      if (!['rolling', 'cpcv'].includes(scheme)) {
+        logger.error(`[walk-forward] --scheme 必须 rolling 或 cpcv，收到 '${opts.scheme}'`);
         process.exit(2);
       }
-      let paramGrid: Record<string, any[]>;
-      try {
-        paramGrid = JSON.parse(opts.grid);
-      } catch (err) {
-        logger.error(`[walk-forward] --grid 解析失败: ${(err as Error).message}`);
+      const optimizerType = String(opts.optimizer || 'grid_search').toLowerCase();
+      if (!['grid_search', 'bayesian'].includes(optimizerType)) {
+        logger.error(`[walk-forward] --optimizer 必须 grid_search 或 bayesian，收到 '${opts.optimizer}'`);
         process.exit(2);
+      }
+
+      let paramGrid: Record<string, any[]> | undefined;
+      let paramBounds: Record<string, { min: number; max: number; integer?: boolean }> | undefined;
+
+      if (optimizerType === 'grid_search') {
+        if (!opts.grid) {
+          logger.error('[walk-forward] --grid 必填 (optimizer=grid_search)，JSON 字符串');
+          process.exit(2);
+        }
+        try {
+          paramGrid = JSON.parse(opts.grid);
+        } catch (err) {
+          logger.error(`[walk-forward] --grid 解析失败: ${(err as Error).message}`);
+          process.exit(2);
+        }
+      } else {
+        // bayesian
+        if (!opts.bounds) {
+          logger.error('[walk-forward] --bounds 必填 (optimizer=bayesian)，JSON 字符串');
+          process.exit(2);
+        }
+        try {
+          paramBounds = JSON.parse(opts.bounds);
+        } catch (err) {
+          logger.error(`[walk-forward] --bounds 解析失败: ${(err as Error).message}`);
+          process.exit(2);
+        }
       }
 
       const trainMonths = parseInt(opts.trainMonths || '12', 10);
@@ -200,6 +237,19 @@ program
         logger.error(`[walk-forward] --test-months 必须 >= 1, 收到 '${opts.testMonths}'`);
         process.exit(2);
       }
+
+      // Phase 1: purging config
+      const purgeDays = parseInt(opts.purgeDays || '0', 10);
+      const embargoDays = parseInt(opts.embargoDays || '0', 10);
+      const purging =
+        purgeDays > 0 || embargoDays > 0
+          ? { label_horizon_days: purgeDays, embargo_days: embargoDays }
+          : null;
+
+      // Phase 1: cpcv config
+      const cpcvN = parseInt(opts.cpcvN || '6', 10);
+      const cpcvK = parseInt(opts.cpcvK || '2', 10);
+      const cpcvConfig = { n_groups: cpcvN, k_test_groups: cpcvK };
 
       const symbols = opts.symbols
         ? String(opts.symbols)
@@ -215,13 +265,17 @@ program
 
       logger.info(
         `[walk-forward] start: strategy=${opts.strategy} range=${opts.start}..${opts.end} ` +
-          `train=${trainMonths}m test=${testMonths}m grid=${opts.grid}`
+          `scheme=${scheme} optimizer=${optimizerType} ` +
+          `train=${trainMonths}m test=${testMonths}m ` +
+          `purging=${purging ? `label_h=${purgeDays}/embargo=${embargoDays}` : 'OFF'} ` +
+          (optimizerType === 'grid_search' ? `grid=${opts.grid}` : `bounds=${opts.bounds}`)
       );
       const t0 = Date.now();
       const out = await walkForwardValidator.validate(
         {
           strategy_key: opts.strategy,
           param_grid: paramGrid,
+          param_bounds: paramBounds,
           base_config: {
             initial_capital: Number(opts.capital || 1_000_000),
             benchmark_symbol: opts.benchmark,
@@ -232,6 +286,11 @@ program
           test_months: testMonths,
           start_date: opts.start,
           end_date: opts.end,
+          // Phase 1 新参数
+          scheme: scheme as any,
+          optimizer_type: optimizerType as any,
+          purging,
+          cpcv: scheme === 'cpcv' ? cpcvConfig : undefined,
         },
         {
           weights: Object.keys(weights).length ? weights : undefined,
@@ -262,6 +321,19 @@ program
             s.out_of_sample_decay?.toFixed(3) ?? 'NaN'
           }`
       );
+      // Phase 1: 单独一行展示过拟合诊断指标
+      logger.info(
+        `[walk-forward] overfit metrics: DSR=${s.dsr?.toFixed(3) ?? 'NaN'} ` +
+          `PBO=${s.pbo?.toFixed(3) ?? 'NaN'} verdict=${s.verdict ?? 'INSUFFICIENT'} ` +
+          `(total_test_days=${s.total_test_days ?? 0} num_trials=${s.num_trials ?? 0})`
+      );
+      if (s.verdict === 'PASS') {
+        logger.info(`[walk-forward] ✅ verdict PASS — 策略通过过拟合检测，可推进 promotion`);
+      } else if (s.verdict === 'FAIL') {
+        logger.warn(`[walk-forward] ❌ verdict FAIL — 大概率过拟合，不建议 promote`);
+      } else {
+        logger.info(`[walk-forward] ⚠ verdict INSUFFICIENT — 样本不足，再多跑几轮`);
+      }
       if (out.best_window) {
         logger.info(
           `[walk-forward] 🏆 best window #${out.best_window.window_index}: ` +

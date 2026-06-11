@@ -9,6 +9,11 @@
 import { quantBacktestService } from './internal/QuantBacktestService';
 import { quantStrategyService } from '../engine/internal/QuantStrategyService';
 import { costSensitivityAnalysis, CostSensitivityAnalyzeOptions } from './CostSensitivityAnalysis';
+import {
+  walkForwardValidator,
+  WalkForwardInput,
+  WalkForwardOptions,
+} from './WalkForwardValidator';
 
 async function withResolvedStrategyParams(input: any) {
   const strategy_keys = await quantStrategyService.resolveStrategyKeys(
@@ -103,6 +108,43 @@ export class BacktestEngine {
    */
   runCostSensitivityAnalysis(taskId: number, options?: CostSensitivityAnalyzeOptions) {
     return costSensitivityAnalysis.analyze(taskId, options);
+  }
+
+  /**
+   * Phase 1: Walk-Forward 验证 — in-process 实现 (US-039+ 升级版)
+   *
+   * 与 `createWalkForward()` 不同：后者走 Bull queue 并发跑多个 backtest tasks
+   * （兼容旧 UI），前者走单进程 walkForwardValidator 自带的 train/test 流水线
+   * 加 DSR/PBO/CPCV/Bayesian 严谨性升级。
+   *
+   * 由 POST /api/quant/walk-forward 调用。
+   */
+  runWalkForwardValidation(input: WalkForwardInput, options?: WalkForwardOptions) {
+    return walkForwardValidator.validate(input, options);
+  }
+
+  /**
+   * Phase 1: 列出最近的 walk-forward run
+   * 由 GET /api/quant/walk-forward/runs 调用。
+   */
+  listWalkForwardRuns(options?: { strategy_name?: string; limit?: number; user_id?: number }) {
+    return walkForwardValidator.listRuns(options);
+  }
+
+  /**
+   * Phase 1: 拿一个 walk-forward run 的所有 windows
+   * 由 GET /api/quant/walk-forward/runs/:id/windows 调用。
+   */
+  getWalkForwardWindows(run_id: number) {
+    return walkForwardValidator.getRunWindows(run_id);
+  }
+
+  /**
+   * Phase 1: 删除一个 walk-forward run
+   * 由 DELETE /api/quant/walk-forward/runs/:id 调用。
+   */
+  deleteWalkForwardRun(run_id: number) {
+    return walkForwardValidator.deleteRun(run_id);
   }
 
   processTask(

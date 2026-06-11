@@ -340,6 +340,129 @@ export class QuantController {
     }
   }
 
+  // ============================================================
+  // Phase 1: Walk-Forward Validation (in-process, with DSR/PBO)
+  // ============================================================
+
+  /**
+   * Phase 1: POST /api/quant/walk-forward
+   * 触发一次完整 walk-forward 验证。同步返回（请求里建议设较长 timeout）。
+   *
+   * 请求体支持：
+   *   - strategy_key (必填)
+   *   - param_grid 或 param_bounds (取决于 optimizer_type)
+   *   - base_config: { initial_capital, benchmark_symbol, universe, symbols, ... }
+   *   - train_months / test_months / start_date / end_date
+   *   - scheme: 'rolling' | 'cpcv' (默认 'rolling')
+   *   - optimizer_type: 'grid_search' | 'bayesian' (默认 'grid_search')
+   *   - purging: { label_horizon_days, embargo_days } | null
+   *   - cpcv: { n_groups, k_test_groups }
+   *
+   * 返回 { run, windows, summary, best_window }
+   */
+  async runWalkForwardValidation(req: AuthenticatedRequest, res: Response) {
+    try {
+      const body = req.body || {};
+      if (!body.strategy_key) {
+        return res.status(400).json({ success: false, message: '缺少 strategy_key' });
+      }
+      if (!body.start_date || !body.end_date) {
+        return res
+          .status(400)
+          .json({ success: false, message: '缺少 start_date 或 end_date' });
+      }
+      const result = await backtestEngine.runWalkForwardValidation(
+        {
+          strategy_key: body.strategy_key,
+          param_grid: body.param_grid,
+          param_bounds: body.param_bounds,
+          base_config: body.base_config || {},
+          train_months: body.train_months ?? 12,
+          test_months: body.test_months ?? 3,
+          start_date: body.start_date,
+          end_date: body.end_date,
+          scheme: body.scheme,
+          optimizer_type: body.optimizer_type,
+          purging: body.purging,
+          cpcv: body.cpcv,
+        },
+        {
+          weights: body.weights,
+          persist: body.persist !== false,
+          persist_train: body.persist_train !== false,
+          train_concurrency: body.train_concurrency,
+          max_combos: body.max_combos,
+          user_id: req.user?.id,
+        }
+      );
+      res.json({
+        success: true,
+        data: {
+          run_id: result.run?.id ?? null,
+          summary: result.summary,
+          windows: result.windows,
+          best_window: result.best_window,
+        },
+        message: `Walk-forward 完成，${result.summary.completed_windows}/${result.summary.total_windows} 窗口通过，verdict=${result.summary.verdict}`,
+      });
+    } catch (error: any) {
+      logger.error('Walk-forward 验证失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * Phase 1: GET /api/quant/walk-forward/runs
+   * Query: ?strategy_name=xxx&limit=30
+   */
+  async listWalkForwardRuns(req: AuthenticatedRequest, res: Response) {
+    try {
+      const runs = await backtestEngine.listWalkForwardRuns({
+        strategy_name: req.query.strategy_name as string | undefined,
+        limit: req.query.limit ? Number(req.query.limit) : 30,
+        user_id: req.query.user_id ? Number(req.query.user_id) : undefined,
+      });
+      res.json({ success: true, data: runs });
+    } catch (error: any) {
+      logger.error('查询 walk-forward runs 失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * Phase 1: GET /api/quant/walk-forward/runs/:id/windows
+   */
+  async getWalkForwardWindows(req: AuthenticatedRequest, res: Response) {
+    try {
+      const runId = parseInt(req.params.id, 10);
+      if (!Number.isFinite(runId)) {
+        return res.status(400).json({ success: false, message: '非法 run_id' });
+      }
+      const windows = await backtestEngine.getWalkForwardWindows(runId);
+      res.json({ success: true, data: windows });
+    } catch (error: any) {
+      logger.error('查询 walk-forward windows 失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * Phase 1: DELETE /api/quant/walk-forward/runs/:id
+   */
+  async deleteWalkForwardRun(req: AuthenticatedRequest, res: Response) {
+    try {
+      const runId = parseInt(req.params.id, 10);
+      if (!Number.isFinite(runId)) {
+        return res.status(400).json({ success: false, message: '非法 run_id' });
+      }
+      const result = await backtestEngine.deleteWalkForwardRun(runId);
+      res.json({ success: true, data: result, message: '已删除 walk-forward run' });
+    } catch (error: any) {
+      logger.error('删除 walk-forward run 失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
   async createParameterGridBacktests(req: AuthenticatedRequest, res: Response) {
     try {
       const result = await backtestEngine.createParameterGrid(req.body, req.user?.id);
