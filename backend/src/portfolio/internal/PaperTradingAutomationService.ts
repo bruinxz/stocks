@@ -2619,21 +2619,32 @@ class PaperTradingAutomationService {
 
       // ========== 智能卖出 — 高级操盘手规则 ==========
       // 规则 5: 技术破位（跌破 MA20 + 放量确认）
-      if (!exitReason && trailingStats.bars_since_entry >= 10) {
+      if (!exitReason && holdingDays >= 10) {
         try {
-          const recentBars = trailingStats.recent_bars || [];
-          if (recentBars.length >= 20) {
-            const closes20 = recentBars.slice(-20).map((b: any) => Number(b.close));
-            const ma20 = closes20.reduce((s: number, v: number) => s + v, 0) / 20;
-            const todayClose = closes20[closes20.length - 1];
-            const todayVolume = Number(recentBars[recentBars.length - 1]?.volume || 0);
-            const avgVolume = recentBars.slice(-20).reduce((s: number, b: any) => s + Number(b.volume || 0), 0) / 20;
-            // 跌破 MA20 + 成交额放大 1.3 倍 → 技术破位
-            if (todayClose < ma20 * 0.99 && todayVolume > avgVolume * 1.3) {
-              exitReason = 'technical_breakdown';
+          const { DailyBar: DBar } = require('../../models/DailyBar');
+          const { Stock: StockModel } = require('../../models/Stock');
+          const stockRow = await StockModel.findOne({ where: { symbol }, raw: true });
+          if (stockRow) {
+            const recentBars: any[] = await DBar.findAll({
+              where: { stock_id: stockRow.id },
+              order: [['time', 'DESC']],
+              limit: 25,
+              raw: true,
+            });
+            if (recentBars.length >= 20) {
+              const bars20 = recentBars.slice(0, 20).reverse(); // 按时间升序
+              const closes20 = bars20.map((b: any) => Number(b.close));
+              const ma20 = closes20.reduce((s: number, v: number) => s + v, 0) / 20;
+              const todayClose = closes20[closes20.length - 1];
+              const todayVolume = Number(bars20[bars20.length - 1]?.volume || 0);
+              const avgVolume = bars20.reduce((s: number, b: any) => s + Number(b.volume || 0), 0) / 20;
+              // 跌破 MA20 1%+ 且成交额放大 1.3 倍 → 技术破位
+              if (todayClose < ma20 * 0.99 && todayVolume > avgVolume * 1.3) {
+                exitReason = 'technical_breakdown';
+              }
             }
           }
-        } catch { /* 安全跳过 */ }
+        } catch { /* 安全跳过 — 拿不到 bar 不影响其他规则 */ }
       }
 
       // 规则 6: 阶梯式获利兑现（涨 15%+ 开始分批减仓，涨 25%+ 清仓）
