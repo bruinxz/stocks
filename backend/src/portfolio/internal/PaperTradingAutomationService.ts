@@ -24,6 +24,13 @@ import { feishuBotWebhookService } from '../../services/FeishuBotWebhookService'
 import { normalizeSymbol } from '../../utils/stockSymbol';
 import { logger } from '../../utils/logger';
 import { realtimeQuoteService } from '../../data/services/RealtimeQuoteService';
+// Phase 2: 多元化仓位 sizing
+import {
+  decideSizing,
+  DEFAULT_SIZING_POLICY,
+  normalizeSizingPolicyConfig,
+  SizingDecision,
+} from '../PositionSizingPolicy';
 
 export const DEFAULT_PAPER_TRADING_INITIAL_CAPITAL = 200000;
 
@@ -1792,6 +1799,40 @@ class PaperTradingAutomationService {
           )}%`;
         }
       }
+
+      // Phase 2 接入：并行计算 PositionSizingPolicy 决策 (shadow mode)
+      // 现阶段不替换 effectiveTargetPct，只记录到日志 + metadata 供对比验证。
+      // 等观察 1-2 周后再做硬切换。
+      let shadowSizingDecision: SizingDecision | null = null;
+      try {
+        const sizingPolicy = await this.loadUserSizingPolicy(portfolio.user_id);
+        if (sizingPolicy.method !== 'equal_pct') {
+          // 仅在用户主动启用 vol_target/atr_based 时才计算（节省开销）
+          shadowSizingDecision = decideSizing(sizingPolicy, {
+            equity: totalValue,
+            available_cash: availableCash,
+            current_price: execute_price,
+            // vol/atr 暂未注入 (待 future story 接 RealtimeQuoteService 计算)
+            // 缺失时 policy 会自动 fallback 到 base_position_pct
+            vol_annualized: undefined,
+            atr: undefined,
+            max_position_pct: strategyPositionCap,
+            min_trade_amount: min_trade_amount,
+            conviction_multiplier: 1.0,
+          });
+          logger.info(
+            `[shadow-sizing] user=${portfolio.user_id} symbol=${signal.symbol} ` +
+              `method=${sizingPolicy.method} actual_pct=${roundNumber(effectiveTargetPct, 2)}% ` +
+              `shadow_pct=${roundNumber(shadowSizingDecision.position_pct, 2)}% ` +
+              `delta=${roundNumber(shadowSizingDecision.position_pct - effectiveTargetPct, 2)}% ` +
+              `reason="${shadowSizingDecision.reason}"`
+          );
+        }
+      } catch (err: any) {
+        // shadow 不影响主流程，失败仅 warn
+        logger.warn(`[shadow-sizing] failed: ${err?.message || err}`);
+      }
+
       const tradeRisk = this.evaluateEntryRiskGuard({
         guard: entryRiskGuard,
         profile: await this.enrichEntryMarketProfileRisk(
@@ -5369,6 +5410,26 @@ class PaperTradingAutomationService {
     const baseUrl = String(process.env.FRONTEND_BASE_URL || '').replace(/\/+$/, '');
     const path = `/signals/${signal_id}/trace`;
     return baseUrl ? `${baseUrl}${path}` : path;
+  }
+
+  /**
+   * Phase 2: 加载用户的 sizing policy (User.risk_config.sizing_policy)
+   * 缺失字段 fallback 到 DEFAULT_SIZING_POLICY (method='equal_pct' = Phase 0 行为)
+   * lazy require 避免循环依赖
+   */
+  private async loadUserSizingPolicy(userId: number) {
+    if (!userId) return { ...DEFAULT_SIZING_POLICY };
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { User } = require('../../models/User');
+      const user = await User.findByPk(userId);
+      if (!user) return { ...DEFAULT_SIZING_POLICY };
+      const raw = (user.risk_config || {})['sizing_policy'];
+      return normalizeSizingPolicyConfig(raw);
+    } catch (err: any) {
+      logger.warn(`loadUserSizingPolicy user=${userId} failed: ${err?.message || err}`);
+      return { ...DEFAULT_SIZING_POLICY };
+    }
   }
 }
 
