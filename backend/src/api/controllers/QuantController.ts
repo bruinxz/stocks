@@ -628,9 +628,9 @@ export class QuantController {
       // 取每个 strategy_key 最新的 backtest
       const rows = await QuantBacktestResult.findAll({
         attributes: [
-          'strategy_key', 'task_id', 'total_return_pct', 'annual_return_pct',
-          'max_drawdown_pct', 'sharpe_ratio', 'win_rate_pct',
-          'trade_count', 'created_at',
+          'strategy_key', 'strategy_name', 'task_id', 'total_return_pct', 'annual_return_pct',
+          'max_drawdown_pct', 'sharpe_ratio', 'win_rate', 'profit_factor',
+          'trade_count', 'benchmark_return_pct', 'excess_return_pct', 'created_at',
         ],
         order: [['created_at', 'DESC']],
         raw: true,

@@ -16,13 +16,17 @@ const { Text } = Typography;
 
 interface LeaderboardItem {
   strategy_key: string;
+  strategy_name?: string;
   task_id: number;
   total_return_pct: number | string | null;
   annual_return_pct: number | string | null;
   max_drawdown_pct: number | string | null;
   sharpe_ratio: number | string | null;
-  win_rate_pct: number | string | null;
+  win_rate: number | string | null;
+  profit_factor?: number | string | null;
   trade_count: number;
+  benchmark_return_pct?: number | string | null;
+  excess_return_pct?: number | string | null;
   created_at: string;
 }
 
@@ -167,14 +171,16 @@ const LeaderboardTab: React.FC<{
             },
             {
               title: '胜率',
-              dataIndex: 'win_rate_pct',
+              dataIndex: 'win_rate',
               width: 80,
               align: 'right' as const,
               render: (v: any) => {
                 const n = num(v);
                 if (n == null) return <Text type="secondary">—</Text>;
-                const color = n >= 60 ? '#cf1322' : n >= 50 ? '#fa8c16' : '#3f8600';
-                return <Text style={{ color }}>{n.toFixed(1)}%</Text>;
+                // win_rate 可能是 0-1 或 0-100, 兼容
+                const pct = n > 1 ? n : n * 100;
+                const color = pct >= 60 ? '#cf1322' : pct >= 50 ? '#fa8c16' : '#3f8600';
+                return <Text style={{ color }}>{pct.toFixed(1)}%</Text>;
               },
             },
             {
