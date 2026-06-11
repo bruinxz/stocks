@@ -34,7 +34,12 @@ type RiskExitReason =
   | 'take_profit'
   | 'trailing_take_profit'
   | 'sell_signal'
-  | 'max_hold_days';
+  | 'max_hold_days'
+  // 高级操盘手新增
+  | 'technical_breakdown'    // 跌破 MA20 + 放量确认
+  | 'profit_target_high'     // 涨幅 ≥ 25% 清仓兑现
+  | 'profit_pullback'        // 涨 15%+ 后见顶回落 3%+ 兑现
+  | 'underperform_swap';     // 持仓 30 天+ 收益 < 3% 换仓
 
 type ExecutionSide = 'BUY' | 'SELL';
 type OrderIntentStatus = 'planned' | 'executed' | 'rejected' | 'skipped' | 'held';
@@ -935,6 +940,10 @@ function riskReasonLabel(reason: RiskExitReason): string {
     trailing_take_profit: '移动止盈',
     sell_signal: '出现卖出信号',
     max_hold_days: '达到最长持有期',
+    technical_breakdown: '技术破位（跌破MA20+放量）',
+    profit_target_high: '高位止盈（涨幅≥25%）',
+    profit_pullback: '获利回吐（涨15%+后见顶回落）',
+    underperform_swap: '低效换仓（持仓30天+收益<3%）',
   };
   return labels[reason] || reason;
 }
@@ -1680,6 +1689,23 @@ class PaperTradingAutomationService {
         1,
         strategyPositionCap
       );
+
+      // ========== 动态仓位 — 高级操盘手：置信度 → 仓位比例 ==========
+      // 高分(>90) → 1.5× 仓位，中分(75-90) → 1.0×，低分(60-75) → 0.6×
+      // 这让高确信度信号获得更大仓位，低确信度信号只做试探性建仓
+      const confidenceScore = toNumber(signal.confidence_score, 75);
+      const confidenceMultiplier =
+        confidenceScore >= 90 ? 1.5 :
+        confidenceScore >= 80 ? 1.2 :
+        confidenceScore >= 75 ? 1.0 :
+        confidenceScore >= 65 ? 0.7 :
+        0.5;
+      const confidenceAdjustedPct = clamp(
+        suggestedPct * confidenceMultiplier,
+        1,
+        strategyPositionCap
+      );
+
       const outcomePositionMultiplier = Number.isFinite(
         Number(outcomeFeedbackPolicy.effective_position_multiplier)
       )
@@ -1692,7 +1718,7 @@ class PaperTradingAutomationService {
           ? toNumber(dataQuality.position_multiplier, 0.75)
           : toNumber(dataQuality.position_multiplier, 0.35);
       const gatedSuggestedPct = clamp(
-        suggestedPct *
+        confidenceAdjustedPct *
           profitGatePolicy.effective_position_multiplier *
           outcomePositionMultiplier *
           dataQualityPositionMultiplier *
@@ -2589,6 +2615,40 @@ class PaperTradingAutomationService {
         if (sellSignal) {
           exitReason = 'sell_signal';
         }
+      }
+
+      // ========== 智能卖出 — 高级操盘手规则 ==========
+      // 规则 5: 技术破位（跌破 MA20 + 放量确认）
+      if (!exitReason && trailingStats.bars_since_entry >= 10) {
+        try {
+          const recentBars = trailingStats.recent_bars || [];
+          if (recentBars.length >= 20) {
+            const closes20 = recentBars.slice(-20).map((b: any) => Number(b.close));
+            const ma20 = closes20.reduce((s: number, v: number) => s + v, 0) / 20;
+            const todayClose = closes20[closes20.length - 1];
+            const todayVolume = Number(recentBars[recentBars.length - 1]?.volume || 0);
+            const avgVolume = recentBars.slice(-20).reduce((s: number, b: any) => s + Number(b.volume || 0), 0) / 20;
+            // 跌破 MA20 + 成交额放大 1.3 倍 → 技术破位
+            if (todayClose < ma20 * 0.99 && todayVolume > avgVolume * 1.3) {
+              exitReason = 'technical_breakdown';
+            }
+          }
+        } catch { /* 安全跳过 */ }
+      }
+
+      // 规则 6: 阶梯式获利兑现（涨 15%+ 开始分批减仓，涨 25%+ 清仓）
+      if (!exitReason && pnlPct >= 25) {
+        exitReason = 'profit_target_high';
+      } else if (!exitReason && pnlPct >= 15 && holdingDays >= 5) {
+        // 涨 15%-25%：如果持有 > 5 天 + 开始见顶（近 3 日回落），兑现
+        if (trailingStats.max_profit_pct - pnlPct > 3) {
+          exitReason = 'profit_pullback';
+        }
+      }
+
+      // 规则 7: 持仓超 30 天 + 收益 < 3% → 换仓（释放资金给更好机会）
+      if (!exitReason && holdingDays >= 30 && pnlPct < 3 && pnlPct > -stopLossPct) {
+        exitReason = 'underperform_swap';
       }
 
       if (
