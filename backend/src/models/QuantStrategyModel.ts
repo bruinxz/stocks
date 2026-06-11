@@ -50,6 +50,44 @@ export class QuantStrategyModel extends Model {
   @Column({ type: DataType.JSONB, allowNull: false, defaultValue: {}, field: 'latest_metrics' })
   declare latest_metrics: Record<string, any>;
 
+  /**
+   * Phase 4: Edge Hypothesis — 策略 "为什么应该有 alpha" 的可证伪假设
+   *
+   * 结构示例:
+   *   ```jsonc
+   *   {
+   *     "thesis": "短期超跌反弹：RSI<30 且成交量缩量到 20 日均量 60% 以下时，反弹概率 > 60%",
+   *     "category": "mean_reversion",  // mean_reversion / momentum / sentiment / event / structural
+   *     "expected_edge_pct": 1.5,       // 预期年化 alpha
+   *     "expected_holding_days": 5,     // 预期持仓周期
+   *     "key_factors": ["rsi_14", "volume_ratio_20d"],
+   *     "evidence_link": "https://...",  // 学术论文 / 研报 / backtest 链接
+   *     "failure_modes": [               // 已知该 edge 失效的场景
+   *       "牛市末期 RSI 长期低位",
+   *       "成交量结构性萎缩 (例：节假日前)"
+   *     ],
+   *     "kill_switch_metric": "win_rate_30d",  // 哪个指标低于阈值就回滚
+   *     "kill_switch_threshold": 0.45,
+   *     "created_at": "2026-06-12",
+   *     "last_validated_at": "2026-06-10"  // 最近一次验证（可关联 WF run）
+   *   }
+   *   ```
+   *
+   * 为什么需要这个字段:
+   *   - 没有 edge hypothesis 的策略 = 数据挖掘的过拟合垃圾
+   *   - 强制策略作者写出来 → 同行 review 时能挑战逻辑
+   *   - kill_switch_metric 让 lifecycle policy 能精确指标驱动回滚（不只是看 sharpe）
+   *   - Phase 4 promotion 门禁会要求该字段非空
+   */
+  @Column({
+    type: DataType.JSONB,
+    allowNull: false,
+    defaultValue: {},
+    field: 'edge_hypothesis',
+    comment: 'Phase 4: 可证伪 edge 假设 (thesis / failure_modes / kill_switch_metric)',
+  })
+  declare edge_hypothesis: Record<string, any>;
+
   @Column({ type: DataType.TEXT, allowNull: true })
   declare notes?: string;
 

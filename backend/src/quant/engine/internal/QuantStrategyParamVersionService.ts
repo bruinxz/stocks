@@ -9,6 +9,7 @@ import { RecommendationTradeOutcome } from '../../../models/RecommendationTradeO
 import { PaperTradingPortfolio } from '../../../models/PaperTradingPortfolio';
 import { Stock } from '../../../models/Stock';
 import { OptimizationRun } from '../../../models/OptimizationRun';
+import { QuantStrategyModel } from '../../../models/QuantStrategyModel';
 import { benchmarkIndexService } from '../../../services/BenchmarkIndexService';
 import { PARAM_EXPERIMENT_PORTFOLIO_NAME } from '../../../portfolio/internal/PaperTradingDashboardService';
 import { normalizeSymbol } from '../../../utils/stockSymbol';
@@ -79,6 +80,9 @@ type ParamVersionLifecyclePolicy = {
   wf_max_age_days: number;
   /** WF 必须达到的 verdict 才放行 promote (默认 'PASS') */
   wf_required_verdict: 'PASS' | 'PASS_OR_INSUFFICIENT';
+  // Phase 4: Edge Hypothesis 门禁
+  /** 是否要求 promote 前必须有非空 edge_hypothesis.thesis (默认 true) */
+  edge_hypothesis_required: boolean;
 };
 
 type StrategyRiskLevel = 'low' | 'medium' | 'high';
@@ -121,6 +125,8 @@ const DEFAULT_LIFECYCLE_POLICY: ParamVersionLifecyclePolicy = {
   wf_required: true,
   wf_max_age_days: 90,
   wf_required_verdict: 'PASS',
+  // Phase 4: Edge Hypothesis 默认要求非空
+  edge_hypothesis_required: true,
 };
 
 function asPlainObject(value: any): Record<string, any> {
@@ -1395,7 +1401,8 @@ export class QuantStrategyParamVersionService {
       undefined,
       undefined,
       strategyRiskByKey,
-      undefined  // Phase 1: wf 验证暂不在 dashboard preview 中要求（避免阻塞展示），lifecycle apply 时才强制
+      undefined,  // Phase 1: wf 验证暂不在 dashboard preview 中要求（避免阻塞展示），lifecycle apply 时才强制
+      undefined  // Phase 4: edge_hypothesis 同理
     );
     const environmentAttribution = buildEnvironmentAttribution(plainValidations, versionByKey);
     const champion =
@@ -1480,6 +1487,11 @@ export class QuantStrategyParamVersionService {
       policyForLoad.wf_max_age_days
     );
 
+    // Phase 4: 加载所有涉及策略的 edge_hypothesis
+    const edgeHypotheses = await this.loadStrategyEdgeHypotheses(
+      rows.map((r: any) => r.strategy_key)
+    );
+
     const lifecycle = this.buildLifecyclePreview(
       rows,
       defaultByStrategy,
@@ -1487,7 +1499,8 @@ export class QuantStrategyParamVersionService {
       dashboard.environment_attribution,
       tradeAttribution,
       strategyRiskByKey,
-      wfVerdicts
+      wfVerdicts,
+      edgeHypotheses
     );
     if (options.dry_run) {
       return {
@@ -1658,6 +1671,56 @@ export class QuantStrategyParamVersionService {
     return result;
   }
 
+  /**
+   * Phase 4: 加载多个 strategy 的 edge_hypothesis JSONB 字段
+   *
+   * @returns Map<strategy_key, edge_hypothesis Record>；缺失策略 / 缺失字段不在 map 里
+   */
+  private async loadStrategyEdgeHypotheses(
+    strategyKeys: string[]
+  ): Promise<Map<string, Record<string, any>>> {
+    const result = new Map<string, Record<string, any>>();
+    if (!strategyKeys.length) return result;
+    const uniqueKeys = Array.from(new Set(strategyKeys.filter(Boolean)));
+    if (!uniqueKeys.length) return result;
+
+    try {
+      const rows = await QuantStrategyModel.findAll({
+        where: { strategy_key: { [Op.in]: uniqueKeys } },
+        attributes: ['strategy_key', 'edge_hypothesis'],
+      });
+      for (const row of rows) {
+        const hypo = (row as any).edge_hypothesis || {};
+        if (hypo && typeof hypo === 'object' && Object.keys(hypo).length) {
+          result.set(String(row.strategy_key), hypo);
+        }
+      }
+    } catch (error: any) {
+      logger.warn(
+        `[ParamVersionService] loadStrategyEdgeHypotheses 失败: ${error?.message || error}`
+      );
+      // 失败时返回空 map，promotion 门禁会按 "缺少 edge_hypothesis" 拒绝（保守失败）
+    }
+    return result;
+  }
+
+  /**
+   * Phase 4: 把 edge_hypothesis JSONB 压缩成 UI 友好的摘要 (供 compact 字段渲染)
+   */
+  private summarizeEdgeHypothesis(hypo?: Record<string, any>): any {
+    if (!hypo || typeof hypo !== 'object') {
+      return { present: false };
+    }
+    const thesis = typeof hypo.thesis === 'string' ? hypo.thesis.trim() : '';
+    return {
+      present: thesis.length > 0,
+      thesis_preview: thesis.slice(0, 80),
+      category: hypo.category || null,
+      expected_edge_pct: typeof hypo.expected_edge_pct === 'number' ? hypo.expected_edge_pct : null,
+      kill_switch_metric: hypo.kill_switch_metric || null,
+    };
+  }
+
   private async getParamExperimentTradeAttribution() {
     try {
       const portfolios = await PaperTradingPortfolio.findAll({
@@ -1743,7 +1806,9 @@ export class QuantStrategyParamVersionService {
     tradeAttribution?: any,
     strategyRiskByKey?: Map<string, StrategyRiskLevel>,
     // Phase 1: 每个 strategy_key 最近的 walk-forward verdict
-    wfVerdicts?: Map<string, WalkForwardVerdictInfo>
+    wfVerdicts?: Map<string, WalkForwardVerdictInfo>,
+    // Phase 4: 每个 strategy_key 的 edge_hypothesis (无效或空字典即视为缺失)
+    edgeHypotheses?: Map<string, Record<string, any>>
   ) {
     const policy = mergeLifecyclePolicy(policyInput);
     const promotions: any[] = [];
@@ -1817,6 +1882,8 @@ export class QuantStrategyParamVersionService {
         trade_diagnostics: tradeDiagnostics,
         // Phase 1: 当前 strategy 最近的 walk-forward verdict
         wf_verdict: wfVerdicts?.get(row.strategy_key) || null,
+        // Phase 4: 当前 strategy 的 edge_hypothesis 是否存在 + 摘要
+        edge_hypothesis: this.summarizeEdgeHypothesis(edgeHypotheses?.get(row.strategy_key)),
       };
       const envSatisfied =
         environmentDiagnostics.positive_bucket_count >=
@@ -1882,6 +1949,23 @@ export class QuantStrategyParamVersionService {
         }
       }
 
+      // Phase 4: Edge Hypothesis 门禁
+      // 当 edge_hypothesis_required=true 时，策略必须有非空 edge_hypothesis.thesis
+      // 防止 "数据挖掘策略" 没人能解释为什么会工作的就上线
+      const edgeHypo = edgeHypotheses?.get(row.strategy_key) || null;
+      let edgeGateSatisfied = true;
+      let edgeBlockReason: string | null = null;
+      if (effectivePolicy.edge_hypothesis_required) {
+        const hasThesis =
+          edgeHypo && typeof edgeHypo === 'object' &&
+          typeof edgeHypo.thesis === 'string' &&
+          edgeHypo.thesis.trim().length >= 10;
+        if (!hasThesis) {
+          edgeGateSatisfied = false;
+          edgeBlockReason = '缺少 edge_hypothesis.thesis (至少 10 字)';
+        }
+      }
+
       const canPromote =
         ['active_candidate', 'observing'].includes(status) &&
         completedCount >= effectivePolicy.min_completed_samples &&
@@ -1891,11 +1975,13 @@ export class QuantStrategyParamVersionService {
         excessDelta >= effectivePolicy.min_default_excess_delta_pct &&
         envSatisfied &&
         !tradeShouldDegrade &&
-        wfGateSatisfied;
+        wfGateSatisfied &&
+        edgeGateSatisfied;
       if (canPromote) {
         const wfNote = wfInfo
           ? `walk-forward ${wfInfo.verdict} (DSR ${wfInfo.dsr?.toFixed(3) ?? 'NaN'})`
           : 'walk-forward 门禁未启用';
+        const edgeNote = edgeHypo?.thesis ? `edge: "${String(edgeHypo.thesis).slice(0, 40)}..."` : 'edge 门禁未启用';
         promotions.push({
           ...compact,
           action: 'promote',
@@ -1905,14 +1991,14 @@ export class QuantStrategyParamVersionService {
             2
           )}%，胜率 ${round(winRate, 1)}%，较默认参数超额 +${round(excessDelta, 2)}%，环境优势桶 ${
             environmentDiagnostics.positive_bucket_count
-          } 个，策略风险级别 ${riskLevel} 已通过自适应护栏，${wfNote}。`,
+          } 个，策略风险级别 ${riskLevel} 已通过自适应护栏，${wfNote}，${edgeNote}。`,
         });
         continue;
       }
 
-      // Phase 1: 如果只是 wf 门禁挡住，把它降级为 observe 而不是 silently 跳过
-      // 让 UI 能看到 "其他都通过了，只差 walk-forward"
-      if (
+      // Phase 1+4: 如果只是 wf / edge 门禁挡住，把它降级为 observe 而不是 silently 跳过
+      // 让 UI 能看到 "其他都通过了，只差 walk-forward 或 edge_hypothesis"
+      const onlyWfOrEdgeBlocking =
         ['active_candidate', 'observing'].includes(status) &&
         completedCount >= effectivePolicy.min_completed_samples &&
         avgExcess >= effectivePolicy.min_avg_excess_return_pct &&
@@ -1921,13 +2007,16 @@ export class QuantStrategyParamVersionService {
         excessDelta >= effectivePolicy.min_default_excess_delta_pct &&
         envSatisfied &&
         !tradeShouldDegrade &&
-        !wfGateSatisfied
-      ) {
+        (!wfGateSatisfied || !edgeGateSatisfied);
+      if (onlyWfOrEdgeBlocking) {
+        const blockers: string[] = [];
+        if (wfBlockReason) blockers.push(wfBlockReason);
+        if (edgeBlockReason) blockers.push(edgeBlockReason);
         observations.push({
           ...compact,
           action: 'observe',
           next_status: row.status,
-          reason: `所有业务指标已达标，但 ${wfBlockReason}。请运行 npm run walk-forward -- --strategy=${row.strategy_key} 后再 promote。`,
+          reason: `所有业务指标已达标，但：${blockers.join('；')}。请先解决上述门禁。`,
         });
         continue;
       }
@@ -2206,6 +2295,8 @@ export class QuantStrategyParamVersionService {
       wf_required: policy.wf_required,
       wf_max_age_days: policy.wf_max_age_days,
       wf_required_verdict: policy.wf_required_verdict,
+      // Phase 4: edge_hypothesis 门禁配置
+      edge_hypothesis_required: policy.edge_hypothesis_required,
     };
   }
 

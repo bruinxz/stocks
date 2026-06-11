@@ -123,6 +123,13 @@ export class QuantController {
             ? req.body.environmentPolicy
             : undefined,
         lifecycle_policy: mergedLifecyclePolicy,
+        // Phase 4: edge_hypothesis (replace-not-merge semantics)
+        edge_hypothesis:
+          req.body?.edge_hypothesis !== undefined
+            ? req.body.edge_hypothesis
+            : req.body?.edgeHypothesis !== undefined
+            ? req.body.edgeHypothesis
+            : undefined,
         notes: req.body?.notes !== undefined ? String(req.body.notes || '') : undefined,
         display_order:
           req.body?.display_order !== undefined

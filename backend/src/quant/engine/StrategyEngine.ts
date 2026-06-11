@@ -18,6 +18,8 @@ export interface UpdateStrategyConfigInput {
   execution_policy?: any;
   environment_policy?: any;
   lifecycle_policy?: any;
+  /** Phase 4: 策略的可证伪 edge 假设 (替换式更新) */
+  edge_hypothesis?: any;
   notes?: string;
   display_order?: number;
 }

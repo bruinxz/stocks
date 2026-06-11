@@ -178,6 +178,7 @@ export class QuantStrategyService {
       execution_policy?: Record<string, any>;
       environment_policy?: Record<string, any>;
       lifecycle_policy?: Record<string, any>;
+      edge_hypothesis?: Record<string, any>;
       notes?: string;
       display_order?: number;
     }
@@ -211,6 +212,11 @@ export class QuantStrategyService {
         ...(asObject(record.lifecycle_policy) || {}),
         ...normalizeParams(patch.lifecycle_policy),
       };
+    }
+    // Phase 4: edge_hypothesis 用 replace-not-merge 语义
+    // —— hypothesis 是一个完整说法的整体，merge 字段会产生半旧半新的不一致版本
+    if (patch.edge_hypothesis !== undefined) {
+      nextPatch.edge_hypothesis = asObject(patch.edge_hypothesis) || {};
     }
     if (patch.notes !== undefined) nextPatch.notes = patch.notes;
     if (patch.display_order !== undefined) nextPatch.display_order = patch.display_order;
