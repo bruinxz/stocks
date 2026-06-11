@@ -469,6 +469,30 @@ class SchedulerService {
       const portfolioParams = this.resolvePortfolioParams(parameters);
       const today = this.getChinaDate();
 
+      // 节假日感知 — 工作日 cron 触发但今天是节假日 → 跳过
+      // (CLEANUP_OLD_DATA / WEEKLY_REVIEW_EMAIL / 等周末 / 跨日 cron 不受影响, 它们的 cron 表达式本身就允许周末)
+      // (isManual=true 用户手动触发时不跳过, 允许补跑)
+      const requireTradingDay = (parameters as any).require_trading_day !== false;
+      if (!isManual && requireTradingDay) {
+        const { isAShareTradeDay, explainNonTradeDay } = require('../utils/tradingCalendar');
+        const isWeekdayCron = /\* \* 1-5$/.test(task.cron_expression || '');
+        // 只对 1-5 (周一到周五) 类型 cron 加节假日 guard
+        if (isWeekdayCron && !isAShareTradeDay(timestamp)) {
+          const reason = explainNonTradeDay(timestamp) || 'A 股节假日';
+          logger.info(
+            `[trading-calendar] task=${task.name} type=${task.type} 跳过 — 今天是 ${reason}`
+          );
+          await this.safeUpdateExecutionLog(executionLog, {
+            success_count: 0,
+            failed_count: 0,
+            total_items: 0,
+            result_summary: { skipped: true, reason: reason, scenario: 'non_trading_day' },
+          });
+          await this.markTaskFinished(task, 'SUCCESS');
+          return { success: true, message: `skipped: ${reason}` };
+        }
+      }
+
       if (task.type === 'DAILY_UPDATE') {
         await this.enqueueDataUpdateJob(
           task,
@@ -3094,6 +3118,31 @@ class SchedulerService {
           result_summary: { scenario: 'dragon_tiger_sync', start, end, elapsed_s: elapsed, status: r.status },
         });
         logger.info(`[DRAGON_TIGER_SYNC] ${start}~${end} ${ok ? 'OK' : 'FAIL'} ${elapsed}s`);
+      } else if (task.type === 'PAPER_TRADING_DAILY_SNAPSHOT') {
+        // 收盘后给所有 paper_trading_portfolio 生成日 snapshot
+        // 让"昨日盈亏 / 当月收益 / 最大回撤" 能正常显示历史
+        const { paperTradingAutomationService } = require('../portfolio/internal/PaperTradingAutomationService');
+        const portfolios = await sequelize.query(
+          "SELECT id, user_id FROM paper_trading_portfolios WHERE is_active=true",
+          { type: 'SELECT' as any }
+        );
+        let ok = 0, failed = 0;
+        for (const p of portfolios as any[]) {
+          try {
+            await paperTradingAutomationService.syncLatestPricesAndSnapshot(p.id);
+            ok++;
+          } catch (e: any) {
+            logger.warn(`[PAPER_TRADING_DAILY_SNAPSHOT] portfolio=${p.id} FAIL: ${e?.message || e}`);
+            failed++;
+          }
+        }
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: portfolios.length,
+          success_count: ok,
+          failed_count: failed,
+          result_summary: { scenario: 'paper_trading_daily_snapshot', total: portfolios.length, ok, failed },
+        });
+        logger.info(`[PAPER_TRADING_DAILY_SNAPSHOT] ${ok}/${portfolios.length} OK`);
       } else {
         throw new Error(`Unsupported task type: ${task.type}`);
       }
@@ -4058,6 +4107,15 @@ class SchedulerService {
         name: '龙虎榜同步',
         type: 'DRAGON_TIGER_SYNC',
         cron_expression: '45 16 * * 1-5',
+        is_active: true,
+        parameters: {},
+      },
+      {
+        // 模拟盘日 snapshot — 每个交易日 16:00 跑
+        // 让"昨日盈亏 / 当月收益 / 最大回撤"等指标能正常显示历史曲线
+        name: '模拟盘日 snapshot',
+        type: 'PAPER_TRADING_DAILY_SNAPSHOT',
+        cron_expression: '0 16 * * 1-5',
         is_active: true,
         parameters: {},
       },
