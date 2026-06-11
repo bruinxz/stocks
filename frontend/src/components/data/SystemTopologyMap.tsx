@@ -1,23 +1,39 @@
 /**
- * SystemTopologyMap — 系统架构拓扑图 (纯 CSS/SVG 版本)
+ * SystemTopologyMap — 系统架构拓扑图 (横向 Pipeline 视觉)
  *
  * 设计原则:
- * - 5 层从上到下的清晰层级 (数据层 → 计算层 → 决策层 → 执行层 → 输出层)
- * - 每个节点是 antd Card 风格的卡片 (icon + 标题 + 状态指示灯 + 最近动作)
- * - SVG 连线 + CSS @keyframes 做流动粒子动画
- * - 状态颜色: 绿色脉冲 = 正常, 黄色 = 警告, 红色闪烁 = 异常, 灰色 = 未启动
+ * - Hero banner 横跨顶部，承担"系统总览 + 汇总状态"
+ * - 5 列横向 stage (数据 → 计算 → 决策 → 执行 → 输出) 清晰单向流
+ * - 节点：白底 .modern-card 风格 + 左侧 4px 状态色条 + 右上 antd 状态 Tag，
+ *   不再整卡变色，跟同 tab 的 DataHealthDashboard 视觉对齐
+ * - SVG 流线只画跨 stage 的关键连线，颜色用项目 --primary 低饱和版本，
+ *   贝塞尔水平进出 (cpx 控制点 0.4*dx)，流动动画 2.5s 缓速
+ * - 移动端 useIsMobile() 切回纵向堆叠 + 隐藏 SVG，stage 之间用下箭头分隔
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Card, Spin, Alert, Button, Space, Tag, Tooltip } from 'antd';
-import { ReloadOutlined, DeploymentUnitOutlined } from '@ant-design/icons';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Card, Spin, Alert, Button, Space, Tag, Tooltip, Statistic, Row, Col } from 'antd';
+import {
+  ReloadOutlined,
+  DeploymentUnitOutlined,
+  ArrowDownOutlined,
+  CheckCircleOutlined,
+  WarningOutlined,
+  ExclamationCircleOutlined,
+  QuestionCircleOutlined,
+} from '@ant-design/icons';
 import api from '../../services/api';
+import { useIsMobile } from '../../hooks/useIsMobile';
+
+// ---------- types ----------
+
+type StatusKey = 'green' | 'yellow' | 'red' | 'gray';
 
 interface TopologyNode {
   id: string;
   label: string;
   category: string;
-  status: 'green' | 'yellow' | 'red' | 'gray';
+  status: StatusKey;
   stats: Record<string, any>;
   lastAction: string;
   lastTrade?: string | null;
@@ -35,11 +51,46 @@ interface TopologyData {
   generated_at: string;
 }
 
-const STATUS_CONFIG: Record<string, { color: string; bg: string; border: string; label: string; pulse: boolean }> = {
-  green: { color: '#52c41a', bg: '#f6ffed', border: '#b7eb8f', label: '正常', pulse: true },
-  yellow: { color: '#faad14', bg: '#fffbe6', border: '#ffe58f', label: '警告', pulse: false },
-  red: { color: '#f5222d', bg: '#fff2f0', border: '#ffa39e', label: '异常', pulse: true },
-  gray: { color: '#8c8c8c', bg: '#fafafa', border: '#d9d9d9', label: '未启动', pulse: false },
+// ---------- visual tokens ----------
+
+const STATUS_TOKENS: Record<
+  StatusKey,
+  {
+    color: string; // 状态色条 / 文字颜色
+    bg: string; // 状态色条背景的低饱和回声 (用于 banner 左边大色条 inset)
+    tag: 'success' | 'warning' | 'error' | 'default';
+    label: string;
+    icon: React.ReactNode;
+  }
+> = {
+  green: {
+    color: 'var(--success)',
+    bg: 'rgba(0, 143, 107, 0.12)',
+    tag: 'success',
+    label: '正常',
+    icon: <CheckCircleOutlined />,
+  },
+  yellow: {
+    color: 'var(--warning)',
+    bg: 'rgba(183, 121, 31, 0.12)',
+    tag: 'warning',
+    label: '警告',
+    icon: <WarningOutlined />,
+  },
+  red: {
+    color: 'var(--danger)',
+    bg: 'rgba(209, 67, 67, 0.12)',
+    tag: 'error',
+    label: '异常',
+    icon: <ExclamationCircleOutlined />,
+  },
+  gray: {
+    color: '#bfbfbf',
+    bg: 'rgba(191, 191, 191, 0.16)',
+    tag: 'default',
+    label: '未启',
+    icon: <QuestionCircleOutlined />,
+  },
 };
 
 const ICONS: Record<string, string> = {
@@ -54,222 +105,427 @@ const ICONS: Record<string, string> = {
   notification: '🔔',
 };
 
-const LAYER_LABELS = ['核心', '数据层', '计算层', '决策层', '执行层'];
-
-// 5 层布局: 每层的节点 id
-const LAYERS: string[][] = [
-  ['quant_system'],
-  ['data_collection', 'macro_env'],
-  ['factor_engine', 'strategy_engine'],
-  ['autopilot', 'risk_control'],
-  ['portfolio', 'notification'],
+// 横向 5-stage 布局
+const STAGES: { key: string; label: string; sub: string; nodes: string[] }[] = [
+  { key: 'data', label: '数据', sub: 'Data', nodes: ['data_collection', 'macro_env'] },
+  { key: 'compute', label: '计算', sub: 'Compute', nodes: ['factor_engine', 'strategy_engine'] },
+  { key: 'decision', label: '决策', sub: 'Decision', nodes: ['autopilot', 'risk_control'] },
+  { key: 'execution', label: '执行', sub: 'Execute', nodes: ['portfolio'] },
+  { key: 'output', label: '输出', sub: 'Output', nodes: ['notification'] },
 ];
 
-// 节点在 grid 中的 (col, row) — 用于 SVG 连线计算
-const NODE_POS: Record<string, { col: number; row: number }> = {
-  quant_system:    { col: 1, row: 0 },
-  data_collection: { col: 0, row: 1 },
-  macro_env:       { col: 2, row: 1 },
-  factor_engine:   { col: 0, row: 2 },
-  strategy_engine: { col: 2, row: 2 },
-  autopilot:       { col: 0, row: 3 },
-  risk_control:    { col: 2, row: 3 },
-  portfolio:       { col: 0, row: 4 },
-  notification:    { col: 2, row: 4 },
-};
+// 节点 -> 所在 stage 的 index (用于 SVG 跨列连线过滤)
+const NODE_STAGE: Record<string, number> = (() => {
+  const out: Record<string, number> = {};
+  STAGES.forEach((s, si) =>
+    s.nodes.forEach(id => {
+      out[id] = si;
+    })
+  );
+  return out;
+})();
 
-// ===== CSS-in-JS styles =====
-const styles: Record<string, React.CSSProperties> = {
-  container: {
-    position: 'relative',
-    width: '100%',
-    minHeight: 680,
-    background: 'linear-gradient(180deg, #f0f5ff 0%, #f5f5f5 100%)',
-    borderRadius: 8,
-    padding: '24px 16px',
-    overflow: 'hidden',
-  },
-  layerRow: {
-    display: 'flex',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 32,
-    marginBottom: 20,
-    position: 'relative',
-    zIndex: 2,
-  },
-  nodeCard: {
-    width: 200,
-    borderRadius: 12,
-    cursor: 'pointer',
-    transition: 'all 0.3s ease',
-    position: 'relative',
-    overflow: 'visible',
-  },
-  statusDot: {
-    width: 10,
-    height: 10,
-    borderRadius: '50%',
-    display: 'inline-block',
-    marginRight: 6,
-  },
-  svgOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    width: '100%',
-    height: '100%',
-    pointerEvents: 'none',
-    zIndex: 1,
-  },
-};
+// ---------- styles (内联 + ensureKeyframes 注入全局动画) ----------
 
-// 流动粒子 CSS keyframes (注入一次)
 const KEYFRAMES_ID = 'topology-flow-keyframes';
 function ensureKeyframes() {
   if (typeof document === 'undefined') return;
   if (document.getElementById(KEYFRAMES_ID)) return;
   const style = document.createElement('style');
   style.id = KEYFRAMES_ID;
+  // 流动粒子：缓 (2.5s) + dasharray 4 6 比之前 8 4 更细密
+  // 节点 hover：translateY(-1px) 跟项目通用微交互一致
+  // banner 警示脉冲：仅 status=red 时给 hero banner 用
   style.textContent = `
     @keyframes topology-flow {
-      0% { stroke-dashoffset: 24; }
+      0% { stroke-dashoffset: 10; }
       100% { stroke-dashoffset: 0; }
     }
-    @keyframes topology-pulse {
-      0%, 100% { box-shadow: 0 0 0 0 rgba(82, 196, 26, 0.4); }
-      50% { box-shadow: 0 0 0 6px rgba(82, 196, 26, 0); }
+    @keyframes topology-banner-pulse-red {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(209, 67, 67, 0.35); }
+      50% { box-shadow: 0 0 0 8px rgba(209, 67, 67, 0); }
     }
-    @keyframes topology-pulse-red {
-      0%, 100% { box-shadow: 0 0 0 0 rgba(245, 34, 45, 0.4); }
-      50% { box-shadow: 0 0 0 8px rgba(245, 34, 45, 0); }
+    .topology-node {
+      transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
     }
     .topology-node:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 8px 24px rgba(0,0,0,0.12) !important;
+      transform: translateY(-1px);
+      box-shadow: 0 14px 32px rgba(18, 36, 63, 0.11) !important;
     }
     .topology-flow-line {
-      stroke-dasharray: 8 4;
-      animation: topology-flow 1.5s linear infinite;
+      stroke-dasharray: 4 6;
+      animation: topology-flow 2.5s linear infinite;
+    }
+    .topology-stage__index {
+      width: 22px; height: 22px; border-radius: 50%;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 11px; font-weight: 600;
+      background: var(--primary-soft);
+      color: var(--primary-strong);
+      margin-right: 8px;
+    }
+    .topology-stage__divider {
+      height: 1px;
+      background: linear-gradient(90deg, rgba(39, 100, 184, 0.18), rgba(39, 100, 184, 0.04) 70%, transparent);
+      margin: 6px 0 14px;
     }
   `;
   document.head.appendChild(style);
 }
 
-// 节点卡片组件
-const NodeCard: React.FC<{ node: TopologyNode }> = ({ node }) => {
-  const cfg = STATUS_CONFIG[node.status] || STATUS_CONFIG.gray;
-  const pulseAnim = node.status === 'green' ? 'topology-pulse 2s ease-in-out infinite' :
-                    node.status === 'red' ? 'topology-pulse-red 1s ease-in-out infinite' : 'none';
+// ---------- hero banner ----------
+
+interface HeroBannerProps {
+  node?: TopologyNode;
+  summary: { green: number; yellow: number; red: number; gray: number };
+  generatedAt?: string;
+  onReload: () => void;
+  loading: boolean;
+}
+
+const HeroBanner: React.FC<HeroBannerProps> = ({
+  node,
+  summary,
+  generatedAt,
+  onReload,
+  loading,
+}) => {
+  const tokens = STATUS_TOKENS[node?.status || 'gray'];
+  const isRed = node?.status === 'red';
+
+  // 从 quant_system.stats / lastAction 抽核心数字
+  // lastAction 文本是 "14 数据源 / 20 因子 / 13 策略"，直接用作副标题
+  const stats = node?.stats || {};
+
   return (
-    <Tooltip
-      title={
-        <div>
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>{ICONS[node.id]} {node.label}</div>
-          <div>{node.lastAction}</div>
-          {node.lastTrade && <div style={{ marginTop: 4, color: '#91d5ff' }}>最近交易: {node.lastTrade}</div>}
-          {Object.entries(node.stats || {}).filter(([_, v]) => v != null).map(([k, v]) => (
-            <div key={k} style={{ fontSize: 11 }}>{k}: {typeof v === 'number' ? v.toLocaleString() : String(v)}</div>
+    <div
+      style={{
+        position: 'relative',
+        borderRadius: 14,
+        padding: '18px 22px 18px 26px',
+        marginBottom: 20,
+        background: 'linear-gradient(135deg, rgba(39, 100, 184, 0.04), rgba(15, 166, 166, 0.04))',
+        border: '1px solid rgba(15, 23, 42, 0.06)',
+        boxShadow: '0 6px 18px rgba(18, 36, 63, 0.045)',
+        overflow: 'hidden',
+        animation: isRed ? 'topology-banner-pulse-red 2s ease-in-out infinite' : 'none',
+      }}
+    >
+      {/* 左侧 4px 状态色条 */}
+      <div
+        style={{
+          position: 'absolute',
+          left: 0,
+          top: 0,
+          bottom: 0,
+          width: 4,
+          background: tokens.color,
+        }}
+      />
+      <Row align="middle" gutter={[16, 12]} wrap>
+        {/* 左：图标 + 标题 + 副标题 */}
+        <Col xs={24} sm={24} md={9}>
+          <Space size={14} align="center">
+            <div
+              style={{
+                width: 44,
+                height: 44,
+                borderRadius: 12,
+                background: tokens.bg,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 22,
+              }}
+            >
+              {ICONS.quant_system}
+            </div>
+            <div>
+              <div
+                style={{
+                  fontSize: 17,
+                  fontWeight: 700,
+                  color: 'var(--text-main)',
+                  lineHeight: 1.2,
+                }}
+              >
+                {node?.label || '量化推荐系统'}
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
+                {node?.lastAction || '系统状态汇总'}
+              </div>
+            </div>
+          </Space>
+        </Col>
+
+        {/* 中：4 个 statistic */}
+        <Col xs={24} sm={16} md={11}>
+          <Row gutter={[16, 8]}>
+            <Col span={6}>
+              <Statistic
+                title={<span style={{ fontSize: 11, color: 'var(--text-muted)' }}>数据源</span>}
+                value={
+                  Number(stats.totalSources ?? stats.sources ?? 0) ||
+                  extractNumber(node?.lastAction, /(\d+)\s*数据源/)
+                }
+                valueStyle={{ fontSize: 18, fontWeight: 600, color: 'var(--text-main)' }}
+              />
+            </Col>
+            <Col span={6}>
+              <Statistic
+                title={<span style={{ fontSize: 11, color: 'var(--text-muted)' }}>因子</span>}
+                value={
+                  Number(stats.factorCount ?? 0) || extractNumber(node?.lastAction, /(\d+)\s*因子/)
+                }
+                valueStyle={{ fontSize: 18, fontWeight: 600, color: 'var(--text-main)' }}
+              />
+            </Col>
+            <Col span={6}>
+              <Statistic
+                title={<span style={{ fontSize: 11, color: 'var(--text-muted)' }}>活跃策略</span>}
+                value={
+                  Number(stats.activeModules ?? 0) ||
+                  extractNumber(node?.lastAction, /(\d+)\s*策略/)
+                }
+                valueStyle={{ fontSize: 18, fontWeight: 600, color: 'var(--text-main)' }}
+              />
+            </Col>
+            <Col span={6}>
+              <Statistic
+                title={<span style={{ fontSize: 11, color: 'var(--text-muted)' }}>调度任务</span>}
+                value={Number(stats.totalCrons ?? 0)}
+                valueStyle={{ fontSize: 18, fontWeight: 600, color: 'var(--text-main)' }}
+              />
+            </Col>
+          </Row>
+        </Col>
+
+        {/* 右：汇总状态 Tag + 时间 + 刷新 */}
+        <Col xs={24} sm={8} md={4} style={{ textAlign: 'right' }}>
+          <Space direction="vertical" align="end" size={6} style={{ width: '100%' }}>
+            <Space size={4} wrap>
+              {summary.green > 0 && <Tag color="success">{summary.green} 正常</Tag>}
+              {summary.yellow > 0 && <Tag color="warning">{summary.yellow} 警告</Tag>}
+              {summary.red > 0 && <Tag color="error">{summary.red} 异常</Tag>}
+              {summary.gray > 0 && <Tag>{summary.gray} 未启</Tag>}
+            </Space>
+            <Space size={6}>
+              {generatedAt && (
+                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                  {new Date(generatedAt).toLocaleTimeString('zh-CN', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })}
+                </span>
+              )}
+              <Button size="small" icon={<ReloadOutlined />} loading={loading} onClick={onReload}>
+                刷新
+              </Button>
+            </Space>
+          </Space>
+        </Col>
+      </Row>
+    </div>
+  );
+};
+
+// 从 lastAction 抠数字 (e.g. "14 数据源" => 14) 作为 stats 缺失时的兜底
+function extractNumber(text: string | undefined, pattern: RegExp): number {
+  if (!text) return 0;
+  const m = text.match(pattern);
+  return m ? Number(m[1]) : 0;
+}
+
+// ---------- node card ----------
+
+const NodeCard: React.FC<{ node: TopologyNode; nodeId: string }> = ({ node, nodeId }) => {
+  const tokens = STATUS_TOKENS[node.status];
+
+  // tooltip 内容：精简 - lastAction + 关键 stats (过滤掉 null/undefined)
+  const tooltipStats = Object.entries(node.stats || {})
+    .filter(([_, v]) => v !== null && v !== undefined && v !== '')
+    .slice(0, 6);
+
+  const tooltipContent = (
+    <div style={{ minWidth: 200 }}>
+      <div style={{ fontWeight: 600, marginBottom: 6, fontSize: 13 }}>
+        {ICONS[nodeId]} {node.label}
+      </div>
+      <div style={{ fontSize: 12, marginBottom: 6, opacity: 0.9 }}>{node.lastAction}</div>
+      {node.lastTrade && (
+        <div style={{ marginTop: 4, marginBottom: 6, color: '#91d5ff', fontSize: 12 }}>
+          最近交易: {node.lastTrade}
+        </div>
+      )}
+      {tooltipStats.length > 0 && (
+        <div style={{ borderTop: '1px solid rgba(255,255,255,0.15)', paddingTop: 6, marginTop: 6 }}>
+          {tooltipStats.map(([k, v]) => (
+            <div key={k} style={{ fontSize: 11, opacity: 0.85 }}>
+              {k}: {typeof v === 'number' ? v.toLocaleString() : String(v)}
+            </div>
           ))}
         </div>
-      }
-      placement="right"
-    >
+      )}
+    </div>
+  );
+
+  return (
+    <Tooltip title={tooltipContent} placement="top" mouseEnterDelay={0.2}>
       <div
         className="topology-node"
+        data-node-id={nodeId}
         style={{
-          ...styles.nodeCard,
-          background: cfg.bg,
-          border: `2px solid ${cfg.border}`,
-          padding: '12px 14px',
-          animation: pulseAnim,
+          background:
+            'linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.98))',
+          borderRadius: 12,
+          padding: '12px 14px 12px 14px',
+          border: '1px solid rgba(15, 23, 42, 0.07)',
+          borderLeft: `4px solid ${tokens.color}`,
+          boxShadow: '0 4px 12px rgba(18, 36, 63, 0.05)',
+          cursor: 'default',
+          position: 'relative',
         }}
       >
-        {/* 状态指示灯 */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-          <span style={{ fontSize: 20 }}>{ICONS[node.id] || '📦'}</span>
-          <div style={{ display: 'flex', alignItems: 'center' }}>
-            <span style={{ ...styles.statusDot, backgroundColor: cfg.color }} />
-            <span style={{ fontSize: 11, color: cfg.color, fontWeight: 500 }}>{cfg.label}</span>
-          </div>
+        {/* 顶行：emoji + 名称 + 状态 Tag */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            marginBottom: 6,
+            gap: 6,
+          }}
+        >
+          <Space size={6} align="center" style={{ minWidth: 0, flex: 1 }}>
+            <span style={{ fontSize: 18, flexShrink: 0 }}>{ICONS[nodeId] || '📦'}</span>
+            <span
+              style={{
+                fontSize: 13,
+                fontWeight: 600,
+                color: 'var(--text-main)',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {node.label}
+            </span>
+          </Space>
+          <Tag
+            color={tokens.tag}
+            style={{ marginRight: 0, fontSize: 11, lineHeight: '18px', padding: '0 6px' }}
+          >
+            {tokens.label}
+          </Tag>
         </div>
-        {/* 标题 */}
-        <div style={{ fontSize: 14, fontWeight: 600, color: '#262626', marginBottom: 4 }}>
-          {node.label}
-        </div>
-        {/* 最近动作 */}
-        <div style={{
-          fontSize: 11,
-          color: '#8c8c8c',
-          lineHeight: 1.4,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-        }}>
-          {node.lastAction}
+
+        {/* 中行：lastAction 1 行省略 */}
+        <div
+          style={{
+            fontSize: 11,
+            color: 'var(--text-secondary)',
+            lineHeight: 1.5,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {node.lastAction || '—'}
         </div>
       </div>
     </Tooltip>
   );
 };
 
-// SVG 连线 — 带流动粒子
-const FlowLines: React.FC<{ edges: TopologyEdge[]; containerWidth: number }> = ({ edges, containerWidth }) => {
-  // 计算每个节点的中心坐标 (基于 grid 布局)
-  const nodeWidth = 200;
-  const nodeHeight = 100;
-  const gapX = 32;
-  const rowHeight = 130;
-  const topPadding = 24;
+// ---------- SVG flow lines (desktop only) ----------
 
-  const getNodeCenter = (id: string): { x: number; y: number } => {
-    const pos = NODE_POS[id];
-    if (!pos) return { x: containerWidth / 2, y: 300 };
+// 同列节点 (stage 内) 之间纵向间距 - 给 Space size 用
+const NODE_GAP_Y = 12;
 
-    const layer = LAYERS[pos.row] || [];
-    const layerWidth = layer.length * nodeWidth + (layer.length - 1) * gapX;
-    const layerStartX = (containerWidth - layerWidth) / 2;
+interface FlowLinesProps {
+  edges: TopologyEdge[];
+  stageRefs: Record<string, HTMLDivElement | null>;
+  containerEl: HTMLDivElement | null;
+}
 
-    const colIndex = layer.indexOf(id);
-    const x = layerStartX + colIndex * (nodeWidth + gapX) + nodeWidth / 2;
-    const y = topPadding + pos.row * rowHeight + nodeHeight / 2;
-    return { x, y };
+const FlowLines: React.FC<FlowLinesProps> = ({ edges, stageRefs, containerEl }) => {
+  // 只渲染 跨 stage 的 edge (targetStage > sourceStage)
+  // 同列 edge 视觉冗余，丢掉；从 quant_system 出发的"调度"线丢掉 (banner 已表达了系统层关系)
+  const visibleEdges = edges.filter(e => {
+    const ss = NODE_STAGE[e.source];
+    const ts = NODE_STAGE[e.target];
+    if (ss === undefined || ts === undefined) return false;
+    return ts > ss;
+  });
+
+  // 节点中心坐标：从 DOM 实测，比硬编码 grid 精确 (节点宽度自适应)
+  const getNodeCenter = (id: string): { x: number; y: number } | null => {
+    const el = stageRefs[id];
+    if (!el || !containerEl) return null;
+    const a = el.getBoundingClientRect();
+    const b = containerEl.getBoundingClientRect();
+    return {
+      x: a.left - b.left + a.width / 2,
+      y: a.top - b.top + a.height / 2,
+    };
   };
 
   return (
-    <svg style={styles.svgOverlay}>
+    <svg
+      style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        width: '100%',
+        height: '100%',
+        pointerEvents: 'none',
+        zIndex: 0,
+      }}
+    >
       <defs>
-        <marker id="topology-arrow" viewBox="0 0 10 10" refX="8" refY="5"
-          markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-          <path d="M 0 0 L 10 5 L 0 10 z" fill="#1677ff" opacity="0.6" />
+        <marker
+          id="topology-arrow-v2"
+          viewBox="0 0 10 10"
+          refX="9"
+          refY="5"
+          markerWidth="5"
+          markerHeight="5"
+          orient="auto-start-reverse"
+        >
+          <path d="M 0 1 L 10 5 L 0 9 z" fill="rgba(39, 100, 184, 0.55)" />
         </marker>
       </defs>
-      {edges.map((edge, i) => {
+      {visibleEdges.map((edge, i) => {
         const from = getNodeCenter(edge.source);
         const to = getNodeCenter(edge.target);
-        // 贝塞尔曲线控制点
-        const midY = (from.y + to.y) / 2;
-        const dx = to.x - from.x;
-        const cpx1 = from.x + dx * 0.1;
-        const cpx2 = to.x - dx * 0.1;
-        const path = `M ${from.x} ${from.y + 20} C ${cpx1} ${midY}, ${cpx2} ${midY}, ${to.x} ${to.y - 20}`;
+        if (!from || !to) return null;
+        // 从节点右边出，进左边
+        const fromX = from.x + 0; // 中心
+        const toX = to.x - 0;
+        const dx = toX - fromX;
+        // 水平进出：控制点偏向 0.4*dx 横移
+        const cpx1 = fromX + Math.max(dx * 0.4, 40);
+        const cpx2 = toX - Math.max(dx * 0.4, 40);
+        const path = `M ${fromX} ${from.y} C ${cpx1} ${from.y}, ${cpx2} ${to.y}, ${toX} ${to.y}`;
+
         return (
-          <g key={i}>
-            {/* 底线 (静态) */}
+          <g key={`${edge.source}-${edge.target}-${i}`}>
+            {/* 静态底线 */}
             <path
               d={path}
               fill="none"
-              stroke="#e0e0e0"
+              stroke="rgba(39, 100, 184, 0.14)"
               strokeWidth={2}
-              markerEnd="url(#topology-arrow)"
+              strokeLinecap="round"
             />
-            {/* 流动线 (动态) */}
+            {/* 流动粒子线 */}
             <path
               d={path}
               fill="none"
-              stroke="#1677ff"
+              stroke="rgba(39, 100, 184, 0.55)"
               strokeWidth={2}
-              opacity={0.5}
+              strokeLinecap="round"
+              markerEnd="url(#topology-arrow-v2)"
               className="topology-flow-line"
             />
           </g>
@@ -279,25 +535,32 @@ const FlowLines: React.FC<{ edges: TopologyEdge[]; containerWidth: number }> = (
   );
 };
 
+// ---------- main component ----------
+
 const SystemTopologyMap: React.FC = () => {
   const [data, setData] = useState<TopologyData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [containerWidth, setContainerWidth] = useState(900);
-  const containerRef = React.useRef<HTMLDivElement>(null);
+  const isMobile = useIsMobile();
 
-  useEffect(() => { ensureKeyframes(); }, []);
+  const containerRef = useRef<HTMLDivElement>(null);
+  // 用于 SVG 计算节点位置：key = node id, value = node card DOM
+  const nodeRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  // 触发 SVG 重画的 tick (resize / 数据更新都 ++)
+  const [redrawTick, setRedrawTick] = useState(0);
 
   useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const obs = new ResizeObserver(entries => {
-      for (const entry of entries) setContainerWidth(entry.contentRect.width);
-    });
-    obs.observe(el);
-    setContainerWidth(el.clientWidth);
-    return () => obs.disconnect();
+    ensureKeyframes();
   }, []);
+
+  // 监听容器宽度变化，触发 SVG 重画
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || isMobile) return;
+    const obs = new ResizeObserver(() => setRedrawTick(t => t + 1));
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [isMobile]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -305,6 +568,8 @@ const SystemTopologyMap: React.FC = () => {
     try {
       const resp = await api.get('/data/system-topology');
       setData(resp.data?.data);
+      // 数据加载完后下一帧再触发重画（等节点 DOM 挂载）
+      requestAnimationFrame(() => setRedrawTick(t => t + 1));
     } catch (err: any) {
       setError(err?.response?.data?.message || err?.message || String(err));
     } finally {
@@ -323,84 +588,153 @@ const SystemTopologyMap: React.FC = () => {
     return new Map(data.nodes.map(n => [n.id, n]));
   }, [data]);
 
-  const statusSummary = useMemo(() => {
-    if (!data) return null;
-    return {
-      green: data.nodes.filter(n => n.status === 'green').length,
-      yellow: data.nodes.filter(n => n.status === 'yellow').length,
-      red: data.nodes.filter(n => n.status === 'red').length,
-      gray: data.nodes.filter(n => n.status === 'gray').length,
-    };
+  const summary = useMemo(() => {
+    const init = { green: 0, yellow: 0, red: 0, gray: 0 };
+    if (!data) return init;
+    // 不算 hero 节点 (quant_system) - 它的状态是聚合的，避免双计
+    for (const n of data.nodes) {
+      if (n.id === 'quant_system') continue;
+      if (n.status in init) (init as any)[n.status]++;
+    }
+    return init;
   }, [data]);
+
+  // SVG 用：传入 setNodeRef 让 NodeCard 把自己 DOM 挂上来
+  const setNodeRef = useCallback(
+    (id: string) => (el: HTMLDivElement | null) => {
+      nodeRefs.current[id] = el;
+    },
+    []
+  );
+
+  // ===== render =====
 
   return (
     <Card
+      className="modern-card"
+      variant="borderless"
       size="small"
       title={
         <Space>
-          <DeploymentUnitOutlined style={{ color: '#1677ff' }} />
+          <DeploymentUnitOutlined style={{ color: 'var(--primary)' }} />
           <span style={{ fontWeight: 600 }}>系统架构拓扑</span>
-          {statusSummary && (
-            <>
-              {statusSummary.green > 0 && <Tag color="green">{statusSummary.green} 正常</Tag>}
-              {statusSummary.yellow > 0 && <Tag color="orange">{statusSummary.yellow} 警告</Tag>}
-              {statusSummary.red > 0 && <Tag color="red">{statusSummary.red} 异常</Tag>}
-              {statusSummary.gray > 0 && <Tag>{statusSummary.gray} 未启</Tag>}
-            </>
-          )}
-        </Space>
-      }
-      extra={
-        <Space size={4}>
-          {data?.generated_at && (
-            <span style={{ fontSize: 11, color: '#999' }}>
-              {new Date(data.generated_at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
-            </span>
-          )}
-          <Button size="small" icon={<ReloadOutlined />} loading={loading} onClick={() => void load()}>
-            刷新
-          </Button>
         </Space>
       }
       style={{ marginBottom: 16 }}
+      styles={{ body: { padding: '16px 18px 18px' } }}
     >
       {error && <Alert type="error" message={error} showIcon style={{ marginBottom: 12 }} />}
-      {loading && !data ? (
-        <div style={{ textAlign: 'center', padding: 60 }}><Spin tip="加载系统拓扑..." /></div>
-      ) : data ? (
-        <div ref={containerRef} style={styles.container}>
-          {/* SVG 连线层 */}
-          <FlowLines edges={data.edges} containerWidth={containerWidth} />
 
-          {/* 节点层 */}
-          {LAYERS.map((layerIds, layerIndex) => (
-            <div key={layerIndex} style={{
-              ...styles.layerRow,
-              marginTop: layerIndex === 0 ? 0 : 4,
-            }}>
-              {/* 层级标签 */}
-              {layerIndex > 0 && (
-                <div style={{
-                  position: 'absolute',
-                  left: 8,
-                  top: '50%',
-                  transform: 'translateY(-50%)',
-                  fontSize: 10,
-                  color: '#bfbfbf',
-                  writingMode: 'vertical-rl',
-                  letterSpacing: 2,
-                }}>
-                  {LAYER_LABELS[layerIndex] || ''}
-                </div>
-              )}
-              {layerIds.map(id => {
-                const node = nodeMap.get(id);
-                if (!node) return <div key={id} style={{ width: 200 }} />;
-                return <NodeCard key={id} node={node} />;
-              })}
-            </div>
-          ))}
+      {loading && !data ? (
+        <div style={{ textAlign: 'center', padding: 60 }}>
+          <Spin tip="加载系统拓扑..." />
         </div>
+      ) : data ? (
+        <>
+          {/* Hero banner */}
+          <HeroBanner
+            node={nodeMap.get('quant_system')}
+            summary={summary}
+            generatedAt={data.generated_at}
+            onReload={() => void load()}
+            loading={loading}
+          />
+
+          {isMobile ? (
+            // ---- 移动端：纵向堆叠 + stage 之间下箭头 ----
+            <div>
+              {STAGES.map((stage, si) => (
+                <div key={stage.key} style={{ marginBottom: si < STAGES.length - 1 ? 8 : 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
+                    <span className="topology-stage__index">{si + 1}</span>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-main)' }}>
+                      {stage.label}
+                    </span>
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8 }}>
+                      {stage.sub}
+                    </span>
+                  </div>
+                  <div className="topology-stage__divider" />
+                  <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                    {stage.nodes.map(id => {
+                      const n = nodeMap.get(id);
+                      if (!n) return null;
+                      return (
+                        <div key={id} style={{ width: '100%' }}>
+                          <NodeCard node={n} nodeId={id} />
+                        </div>
+                      );
+                    })}
+                  </Space>
+                  {si < STAGES.length - 1 && (
+                    <div
+                      style={{
+                        textAlign: 'center',
+                        margin: '12px 0 0',
+                        color: 'var(--primary)',
+                        opacity: 0.5,
+                        fontSize: 16,
+                      }}
+                    >
+                      <ArrowDownOutlined />
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            // ---- 桌面端：5 列横向 Pipeline ----
+            <div
+              ref={containerRef}
+              style={{
+                position: 'relative',
+                display: 'grid',
+                gridTemplateColumns: `repeat(${STAGES.length}, 1fr)`,
+                gap: 28,
+                minHeight: 280,
+                padding: '4px 4px 8px',
+              }}
+              data-redraw-tick={redrawTick}
+            >
+              {/* SVG 流线层 */}
+              <FlowLines
+                edges={data.edges}
+                stageRefs={nodeRefs.current}
+                containerEl={containerRef.current}
+              />
+
+              {/* 5 个 stage 列 */}
+              {STAGES.map((stage, si) => (
+                <div key={stage.key} style={{ position: 'relative', zIndex: 1 }}>
+                  {/* stage header */}
+                  <div style={{ display: 'flex', alignItems: 'baseline' }}>
+                    <span className="topology-stage__index">{si + 1}</span>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-main)' }}>
+                      {stage.label}
+                    </span>
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8 }}>
+                      {stage.sub}
+                    </span>
+                  </div>
+                  <div className="topology-stage__divider" />
+
+                  {/* stage 内节点纵向堆叠 */}
+                  <Space direction="vertical" size={NODE_GAP_Y} style={{ width: '100%' }}>
+                    {stage.nodes.map(id => {
+                      const n = nodeMap.get(id);
+                      if (!n) return null;
+                      return (
+                        <div key={id} ref={setNodeRef(id)} style={{ width: '100%' }}>
+                          <NodeCard node={n} nodeId={id} />
+                        </div>
+                      );
+                    })}
+                  </Space>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
       ) : null}
     </Card>
   );
