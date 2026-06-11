@@ -1,26 +1,24 @@
-import { Table, Column, Model, DataType, CreatedAt, UpdatedAt, Index } from 'sequelize-typescript';
+import { Table, Column, Model, DataType, CreatedAt, UpdatedAt } from 'sequelize-typescript';
 
 @Table({
   tableName: 'live_positions',
   timestamps: true,
   underscored: true,
   indexes: [
+    // 业务唯一键：同一账户同一标的只能有一条持仓
     { unique: true, fields: ['account_id', 'symbol'] },
     { fields: ['user_id'] },
     { fields: ['account_id'] },
     { fields: ['symbol'] },
-    { fields: ['account_id', 'symbol'] },
   ],
 })
 export class LivePosition extends Model {
   @Column({ type: DataType.INTEGER, primaryKey: true, autoIncrement: true })
   declare id: number;
 
-  @Index
   @Column({ type: DataType.INTEGER, allowNull: false, field: 'user_id' })
   declare user_id: number;
 
-  @Index
   @Column({ type: DataType.INTEGER, allowNull: false, field: 'account_id' })
   declare account_id: number;
 

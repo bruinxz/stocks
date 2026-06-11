@@ -1,4 +1,4 @@
-import { Table, Column, Model, DataType, CreatedAt, UpdatedAt, Index } from 'sequelize-typescript';
+import { Table, Column, Model, DataType, CreatedAt, UpdatedAt } from 'sequelize-typescript';
 
 @Table({
   tableName: 'live_execution_audit_logs',
@@ -17,7 +17,6 @@ export class LiveExecutionAuditLog extends Model {
   @Column({ type: DataType.INTEGER, primaryKey: true, autoIncrement: true })
   declare id: number;
 
-  @Index
   @Column({ type: DataType.INTEGER, allowNull: true, field: 'user_id' })
   declare user_id?: number;
 

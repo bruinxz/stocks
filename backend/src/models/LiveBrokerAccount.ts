@@ -1,13 +1,15 @@
-import { Table, Column, Model, DataType, CreatedAt, UpdatedAt, Index } from 'sequelize-typescript';
+import { Table, Column, Model, DataType, CreatedAt, UpdatedAt } from 'sequelize-typescript';
 
 @Table({
   tableName: 'live_broker_accounts',
   timestamps: true,
   underscored: true,
   indexes: [
-    { unique: true, fields: ['user_id', 'broker_key'] },
+    // 唯一性由 ensureLiveTradingRuntimeSchema 的部分索引保证（仅对非 NULL 行）
+    // model 里只保留必要的非唯一索引；删除会与 partial unique 重复的复合索引（user_id, broker_account_key）
     { fields: ['user_id'] },
     { fields: ['broker_key'] },
+    { fields: ['account_role'] },
     { fields: ['connection_status'] },
     { fields: ['is_active'] },
   ],
@@ -16,12 +18,17 @@ export class LiveBrokerAccount extends Model {
   @Column({ type: DataType.INTEGER, primaryKey: true, autoIncrement: true })
   declare id: number;
 
-  @Index
   @Column({ type: DataType.INTEGER, allowNull: false, field: 'user_id' })
   declare user_id: number;
 
   @Column({ type: DataType.STRING(80), allowNull: false, field: 'broker_key' })
   declare broker_key: string;
+
+  @Column({ type: DataType.STRING(160), allowNull: true, field: 'broker_account_key' })
+  declare broker_account_key?: string;
+
+  @Column({ type: DataType.STRING(120), allowNull: true, field: 'bridge_key' })
+  declare bridge_key?: string;
 
   @Column({ type: DataType.STRING(120), allowNull: false, field: 'broker_name' })
   declare broker_name: string;
@@ -31,6 +38,9 @@ export class LiveBrokerAccount extends Model {
 
   @Column({ type: DataType.STRING(80), allowNull: false, field: 'account_no_masked' })
   declare account_no_masked: string;
+
+  @Column({ type: DataType.STRING(30), allowNull: false, defaultValue: 'main', field: 'account_role' })
+  declare account_role: string;
 
   @Column({ type: DataType.STRING(40), allowNull: false, defaultValue: 'read_only', field: 'permission_scope' })
   declare permission_scope: string;

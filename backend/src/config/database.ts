@@ -47,6 +47,12 @@ import { LiveOrderDraft } from '../models/LiveOrderDraft';
 import { LiveOrder } from '../models/LiveOrder';
 import { LiveTrade } from '../models/LiveTrade';
 import { LiveExecutionAuditLog } from '../models/LiveExecutionAuditLog';
+import { LiveKillSwitchState } from '../models/LiveKillSwitchState';
+import { LiveBrokerCommand } from '../models/LiveBrokerCommand';
+import { LiveBrokerCommandDispatch } from '../models/LiveBrokerCommandDispatch';
+import { LiveBrokerEvent } from '../models/LiveBrokerEvent';
+import { LiveBrokerBridgeHeartbeat } from '../models/LiveBrokerBridgeHeartbeat';
+import { LiveBridgeNonce } from '../models/LiveBridgeNonce';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -116,6 +122,12 @@ const sequelize = new Sequelize({
     LiveOrder,
     LiveTrade,
     LiveExecutionAuditLog,
+    LiveKillSwitchState,
+    LiveBrokerCommand,
+    LiveBrokerCommandDispatch,
+    LiveBrokerEvent,
+    LiveBrokerBridgeHeartbeat,
+    LiveBridgeNonce,
   ],
   logging: process.env.NODE_ENV === 'development' ? console.log : false,
   pool: {
