@@ -370,15 +370,6 @@ export class PaperTradingFacade {
       const inAfternoon = totalMinutes >= AFTERNOON_START && totalMinutes < AFTERNOON_END;
       if (!inMorning && !inAfternoon) {
         const hh = String(hour).padStart(2, '0');
-        const mm = String(minute).padStart(2, '0'); A 股交易时段（Asia/Shanghai）：09:30-11:30 + 13:00-15:00
-      const MORNING_START = 9 * 60 + 30; // 09:30
-      const MORNING_END = 11 * 60 + 30; // 11:30
-      const AFTERNOON_START = 13 * 60; // 13:00
-      const AFTERNOON_END = 15 * 60; // 15:00
-      const inMorning = totalMinutes >= MORNING_START && totalMinutes < MORNING_END;
-      const inAfternoon = totalMinutes >= AFTERNOON_START && totalMinutes < AFTERNOON_END;
-      if (!inMorning && !inAfternoon) {
-        const hh = String(hour).padStart(2, '0');
         const mm = String(minute).padStart(2, '0');
         let reason = '在 A 股交易时段 (09:30-11:30 / 13:00-15:00) 外';
         if (totalMinutes >= 9 * 60 && totalMinutes < MORNING_START) reason = '集合竞价时段 (09:00-09:30)，等待 09:30 开盘后再下单';
