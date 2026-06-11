@@ -1,4 +1,5 @@
 import { Op } from 'sequelize';
+import { sequelize } from '../../config/database';
 import { LiveBrokerAccount } from '../../models/LiveBrokerAccount';
 import { LiveAccountSnapshot } from '../../models/LiveAccountSnapshot';
 import { LivePosition } from '../../models/LivePosition';
@@ -6,6 +7,7 @@ import { LiveOrderDraft } from '../../models/LiveOrderDraft';
 import { LiveOrder } from '../../models/LiveOrder';
 import { LiveTrade } from '../../models/LiveTrade';
 import { LiveExecutionAuditLog } from '../../models/LiveExecutionAuditLog';
+import { LiveBrokerCommand } from '../../models/LiveBrokerCommand';
 import { PaperTradingPortfolio } from '../../models/PaperTradingPortfolio';
 import { PaperTradingPosition } from '../../models/PaperTradingPosition';
 import { PaperTradingTrade } from '../../models/PaperTradingTrade';
@@ -17,12 +19,17 @@ import { TaskExecutionLog } from '../../models/TaskExecutionLog';
 import { TaskParameterAuditLog } from '../../models/TaskParameterAuditLog';
 import { MockBrokerGateway } from '../brokers/MockBrokerGateway';
 import { EnvReadonlyBrokerGateway } from '../brokers/EnvReadonlyBrokerGateway';
+import { BridgeReadonlyBrokerGateway } from '../brokers/BridgeReadonlyBrokerGateway';
 import { BrokerGateway } from '../brokers/BrokerGateway';
 import { DatabaseQuoteProvider } from '../market-data/DatabaseQuoteProvider';
 import { ConfiguredQuoteProvider } from '../market-data/ConfiguredQuoteProvider';
 import { LiveMarketDataProvider } from '../market-data/LiveMarketDataProvider';
 import { liveRiskGuardService } from './LiveRiskGuardService';
 import { LIVE_ORDER_CONFIRM_TEXT, liveTradingSafetyService } from './LiveTradingSafetyService';
+import { killSwitchService } from './KillSwitchService';
+import { sendLiveAuditAlert } from './LiveAuditAlertService';
+import { LIVE_AUDIT_EVENT_TYPES } from '../auditEvents';
+import { logger } from '../../utils/logger';
 import { PAPER_PORTFOLIO_FAMILIES } from '../../services/PaperTradingPortfolioFamilies';
 
 function toNumber(value: any): number {
@@ -57,6 +64,34 @@ function maskAccountNo(value?: string): string {
   if (!raw) return '未绑定';
   if (raw.length <= 4) return `****${raw}`;
   return `${raw.slice(0, 2)}****${raw.slice(-4)}`;
+}
+
+const ACCOUNT_NO_UNBOUND_PLACEHOLDER = '未绑定';
+
+function isAccountNoBound(masked: string): boolean {
+  return Boolean(masked) && masked !== ACCOUNT_NO_UNBOUND_PLACEHOLDER;
+}
+
+function normalizeAccountRole(value?: string): string {
+  const role = String(value || 'main').trim().toLowerCase();
+  return ['main', 'grayscale', 'readonly', 'sandbox'].includes(role) ? role : 'main';
+}
+
+function normalizePermissionScope(role: string, value?: string): string {
+  const scope = String(value || '').trim().toLowerCase();
+  const allowed = ['read_only', 'trading'];
+  if (allowed.includes(scope)) {
+    // 只有 grayscale / main 允许 trading；readonly / sandbox 永远只读
+    if (scope === 'trading' && !['grayscale', 'main'].includes(role)) {
+      return 'read_only';
+    }
+    return scope;
+  }
+  return 'read_only';
+}
+
+function buildBrokerAccountKey(brokerKey: string, accountRole: string, accountNoMasked: string): string {
+  return `${brokerKey}:${accountRole}:${accountNoMasked || ACCOUNT_NO_UNBOUND_PLACEHOLDER}`;
 }
 
 function quotePrice(quote: any): number {
@@ -137,10 +172,20 @@ export class LiveTradingService {
 
   constructor() {
     const configuredBrokerGateway = process.env.LIVE_BROKER_GATEWAY || 'mock_guarded';
-    this.brokerGateway =
-      configuredBrokerGateway === 'env_readonly'
-        ? new EnvReadonlyBrokerGateway()
-        : new MockBrokerGateway(configuredBrokerGateway);
+    this.brokerGateway = (() => {
+      switch (configuredBrokerGateway) {
+        case 'env_readonly':
+          return new EnvReadonlyBrokerGateway();
+        case 'bridge_readonly':
+          return new BridgeReadonlyBrokerGateway();
+        // qmt_bridge / ptrade_bridge 真实下单网关由 bridge HTTP API 驱动，
+        // 服务端目前没有"直接代调券商"的实现；getCapabilities 由专用类返回，
+        // placeOrder/cancelOrder 走命令队列流程（详见 LiveTradingService.enqueueOrderCommand）。
+        // 此处保持降级到 mock 避免误把 db 当作执行通道。
+        default:
+          return new MockBrokerGateway(configuredBrokerGateway);
+      }
+    })();
     this.databaseQuoteProvider = new DatabaseQuoteProvider();
     this.licensedQuoteProvider = new ConfiguredQuoteProvider();
     this.quoteProvider =
@@ -150,9 +195,27 @@ export class LiveTradingService {
         : this.databaseQuoteProvider;
   }
 
+  getSafetyStatus() {
+    // 同步快照：仅使用 env + capability，不查 DB。
+    // controller GET /safety 走这条；想看 DB kill switch 用 getSafetyStatusAsync。
+    return liveTradingSafetyService.getStatus(this.brokerGateway.getCapabilities());
+  }
+
+  async getSafetyStatusAsync() {
+    const killSwitch = await killSwitchService.getActiveState();
+    return liveTradingSafetyService.getStatus(
+      this.brokerGateway.getCapabilities(),
+      killSwitch ? { active: true, ...killSwitch } : undefined
+    );
+  }
+
   async getReadiness(user_id?: number) {
-    const safety = liveTradingSafetyService.getStatus();
     const broker = this.brokerGateway.getCapabilities();
+    const killSwitch = await killSwitchService.getActiveState();
+    const safety = liveTradingSafetyService.getStatus(
+      broker,
+      killSwitch ? { active: true, ...killSwitch } : undefined
+    );
     const marketData = this.quoteProvider.getProviderInfo();
     const marketDataHealth = await this.getMarketDataHealth();
     const providerComparison = await this.getMarketDataProviderComparison(
@@ -183,10 +246,12 @@ export class LiveTradingService {
     };
   }
 
-  async getOverview(user_id: number) {
+  async getOverview(user_id: number, options: { account_role?: string } = {}) {
     const readiness = await this.getReadiness(user_id);
+    // 默认只看 main 账户，避免 main / grayscale 因 updated_at DESC 互相抖动
+    const accountRole = normalizeAccountRole(options.account_role);
     const account = await LiveBrokerAccount.findOne({
-      where: { user_id, is_active: true },
+      where: { user_id, is_active: true, account_role: accountRole },
       order: [['updated_at', 'DESC']],
     });
     const accountId = account?.id ? Number(account.id) : undefined;
@@ -209,7 +274,7 @@ export class LiveTradingService {
       limit: 10,
     });
     const shadowDashboard = await this.getShadowAutopilotDashboard(user_id, 8);
-    const reconciliation = await this.getReconciliation(user_id);
+    const reconciliation = await this.getReconciliation(user_id, { account_role: accountRole });
     const openDrafts = drafts.filter(item =>
       ['preview', 'pending', 'blocked', 'shadow_executed'].includes(String((item as any).status))
     );
@@ -244,13 +309,14 @@ export class LiveTradingService {
     };
   }
 
-  async getReconciliation(user_id: number) {
+  async getReconciliation(user_id: number, options: { account_role?: string } = {}) {
     const staleThresholdMinutes = Math.max(
       Number(process.env.LIVE_RECONCILIATION_STALE_MINUTES || 180),
       15
     );
+    const accountRole = normalizeAccountRole(options.account_role);
     const account = await LiveBrokerAccount.findOne({
-      where: { user_id, is_active: true },
+      where: { user_id, is_active: true, account_role: accountRole },
       order: [['updated_at', 'DESC']],
     });
     const accountId = account?.id ? Number(account.id) : undefined;
@@ -448,8 +514,9 @@ export class LiveTradingService {
     };
   }
 
-  async getDraftCandidates(user_id: number, options: { limit?: number } = {}) {
-    const reconciliation = await this.getReconciliation(user_id);
+  async getDraftCandidates(user_id: number, options: { limit?: number; account_role?: string } = {}) {
+    const accountRole = options.account_role ? normalizeAccountRole(options.account_role) : 'main';
+    const reconciliation = await this.getReconciliation(user_id, { account_role: accountRole });
     const maxCandidates = Math.min(Math.max(Number(options.limit || 20), 1), 80);
     const accountReady = Boolean(reconciliation.account && reconciliation.latest_snapshot);
     const rawMatches = (reconciliation.position_matches || []).filter((item: any) =>
@@ -556,7 +623,11 @@ export class LiveTradingService {
   async createDraftFromCandidate(user_id: number, input: any) {
     const symbol = normalizeSymbol(input.symbol);
     if (!symbol) throw new Error('缺少候选股票代码');
-    const candidates = await this.getDraftCandidates(user_id, { limit: Number(input.limit || 80) });
+    const accountRole = input.account_role ? normalizeAccountRole(input.account_role) : 'main';
+    const candidates = await this.getDraftCandidates(user_id, {
+      limit: Number(input.limit || 80),
+      account_role: accountRole,
+    });
     const candidate = candidates.candidates.find((item: any) => normalizeSymbol(item.symbol) === symbol);
     if (!candidate) throw new Error('未找到该股票的策略候选，请先刷新只读对账候选。');
     if (!candidate.eligible) {
@@ -573,6 +644,7 @@ export class LiveTradingService {
       rationale:
         input.rationale ||
         `${candidate.rationale} 该操作只生成实盘订单草稿，不会自动下单；确认前会再次复核行情、账户和风控。`,
+      account_role: accountRole,
       metadata: {
         created_from: 'live_reconciliation_candidate',
         candidate,
@@ -583,17 +655,21 @@ export class LiveTradingService {
 
   async runShadowAutopilot(
     user_id: number,
-    options: { limit?: number; source?: string; dry_run?: boolean } = {}
+    options: { limit?: number; source?: string; dry_run?: boolean; account_role?: string } = {}
   ) {
-    const safety = liveTradingSafetyService.getStatus();
+    const safety = await this.getSafetyStatusAsync();
     const maxCount = Math.min(Math.max(Number(options.limit || 3), 1), 10);
+    const accountRole = options.account_role ? normalizeAccountRole(options.account_role) : 'main';
     const dryRun = options.dry_run === true;
 
     if (!safety.shadow_autopilot_enabled) {
       throw new Error('无人影子执行未启用：请设置 LIVE_SHADOW_AUTOPILOT_ENABLED=true。');
     }
 
-    const candidateDashboard = await this.getDraftCandidates(user_id, { limit: Math.max(maxCount, 10) });
+    const candidateDashboard = await this.getDraftCandidates(user_id, {
+      limit: Math.max(maxCount, 10),
+      account_role: accountRole,
+    });
     const candidates = (candidateDashboard.candidates || [])
       .filter((item: any) => item.eligible)
       .slice(0, maxCount);
@@ -623,10 +699,12 @@ export class LiveTradingService {
         source_type: 'shadow_autopilot',
         source_id: `${candidate.candidate_type}:${candidate.symbol}`,
         rationale: `${candidate.rationale} 无人确认模式仅执行影子实盘：记录假设成交与风控审计，不提交真实券商委托。`,
+        account_role: accountRole,
         metadata: {
           created_from: 'live_shadow_autopilot',
           shadow_autopilot: true,
           source: options.source || 'manual_shadow_autopilot',
+          shadow_source: 'server_shadow', // 区分 server_shadow vs bridge_dry_run
           candidate,
           reconciliation_summary: candidateDashboard.reconciliation_summary,
           safety_status: safety,
@@ -693,7 +771,7 @@ export class LiveTradingService {
     const latest = drafts[0] || null;
     return {
       generated_at: new Date().toISOString(),
-      enabled: liveTradingSafetyService.getStatus().shadow_autopilot_enabled,
+      enabled: this.getSafetyStatus().shadow_autopilot_enabled,
       drafts,
       summary: {
         total_count: drafts.length,
@@ -1251,6 +1329,41 @@ export class LiveTradingService {
     return rows.map(item => this.toPlain(item));
   }
 
+  /**
+   * 列出当前用户的实盘委托（LiveOrder）。前端撤单 UI 需要这一份数据。
+   * 默认按 account_role 过滤；不传 active_only=false 时只返回未终态的委托便于撤单。
+   */
+  async listLiveOrders(
+    user_id: number,
+    options: { account_role?: string; active_only?: boolean; limit?: number } = {}
+  ) {
+    const accountRole = options.account_role ? normalizeAccountRole(options.account_role) : 'main';
+    const account = await LiveBrokerAccount.findOne({
+      where: { user_id, is_active: true, account_role: accountRole },
+      order: [['updated_at', 'DESC']],
+    });
+    if (!account) {
+      return { account_role: accountRole, account: null, orders: [] };
+    }
+    const accountId = Number(account.id);
+    const where: any = { user_id, account_id: accountId };
+    if (options.active_only !== false) {
+      where.bridge_status = {
+        [Op.in]: ['pending', 'dispatching', 'dispatched', 'submitted', 'partially_filled'],
+      };
+    }
+    const rows = await LiveOrder.findAll({
+      where,
+      order: [['created_at', 'DESC']],
+      limit: Math.min(Math.max(Number(options.limit || 50), 1), 200),
+    });
+    return {
+      account_role: accountRole,
+      account: this.toPlain(account),
+      orders: rows.map(r => this.toPlain(r)),
+    };
+  }
+
   async createDraft(user_id: number, input: any) {
     const symbol = normalizeSymbol(input.symbol);
     const side = String(input.side || 'BUY').toUpperCase() === 'SELL' ? 'SELL' : 'BUY';
@@ -1259,9 +1372,28 @@ export class LiveTradingService {
     const name = input.name || quote?.name || (stock as any)?.name || symbol;
     const limitPrice = round(input.limit_price || input.limitPrice || quote?.current_price || (stock as any)?.price, 4);
     const quantity = Math.max(0, Math.floor(Number(input.quantity || 0) / 100) * 100);
-    const overview = await this.getOverview(user_id);
+    // 灰度账户 createDraft 必须用 grayscale 视角的 overview，否则风控全用 main 账户算
+    const accountRole = input.account_role ? normalizeAccountRole(input.account_role) : 'main';
+    const overview = await this.getOverview(user_id, { account_role: accountRole });
     const accountId = Number(input.account_id || overview.account?.id || 0) || undefined;
     const position = overview.positions.find((item: any) => item.symbol === symbol);
+    // 灰度账户读其专属 risk_config（路线图 §6.2 / P5）；
+    // 同时校验 account_id 必须属于当前 user 且 role 与 accountRole 一致，
+    // 避免前端误传或恶意传入"main 账户 id + grayscale role"，造成 risk_config 用错或越权
+    const account = accountId ? await LiveBrokerAccount.findByPk(accountId) : null;
+    if (account) {
+      if (Number((account as any).user_id) !== Number(user_id)) {
+        throw new Error('account_id 不属于当前用户');
+      }
+      const accountRoleActual = String((account as any).account_role || 'main');
+      if (accountRoleActual !== accountRole) {
+        throw new Error(
+          `account_id ${accountId} 的角色 ${accountRoleActual} 与请求角色 ${accountRole} 不一致`
+        );
+      }
+    }
+    const accountRiskConfig = account ? (account as any).risk_config : undefined;
+    const accountMaxSingleOrderAmount = accountRiskConfig?.max_single_order_amount;
     const riskCheck = liveRiskGuardService.evaluate({
       side,
       symbol,
@@ -1281,6 +1413,10 @@ export class LiveTradingService {
         quotePrice(quote) > 0 && limitPrice > 0
           ? round(((limitPrice - quotePrice(quote)) / quotePrice(quote)) * 100, 4)
           : undefined,
+      account_risk_config: accountRiskConfig,
+      account_max_single_order_amount: Number.isFinite(Number(accountMaxSingleOrderAmount))
+        ? Number(accountMaxSingleOrderAmount)
+        : undefined,
     });
     const expiresAt = new Date(Date.now() + 20 * 60 * 1000);
     const draft = await LiveOrderDraft.create({
@@ -1305,7 +1441,7 @@ export class LiveTradingService {
       metadata: {
         created_from: 'live_trading_page',
         ...(input.metadata || {}),
-        safety_status: liveTradingSafetyService.getStatus(),
+        safety_status: this.getSafetyStatus(),
       },
     } as any);
 
@@ -1313,7 +1449,7 @@ export class LiveTradingService {
       user_id,
       account_id: accountId,
       draft_id: Number(draft.id),
-      event_type: 'live_order_draft_created',
+      event_type: LIVE_AUDIT_EVENT_TYPES.ORDER_DRAFT_CREATED,
       severity: riskCheck.allowed ? 'info' : 'warning',
       message: riskCheck.allowed ? '实盘订单草稿已创建，等待用户确认。' : '实盘订单草稿被基础风控阻断。',
       after_state: this.toPlain(draft),
@@ -1332,7 +1468,7 @@ export class LiveTradingService {
       user_id,
       account_id: (draft as any).account_id,
       draft_id,
-      event_type: 'live_order_draft_rejected',
+      event_type: LIVE_AUDIT_EVENT_TYPES.ORDER_DRAFT_REJECTED,
       severity: 'info',
       message: '用户已拒绝实盘订单草稿。',
       before_state: before,
@@ -1383,7 +1519,7 @@ export class LiveTradingService {
       user_id,
       account_id: (draft as any).account_id,
       draft_id,
-      event_type: 'live_order_shadow_executed',
+      event_type: LIVE_AUDIT_EVENT_TYPES.ORDER_SHADOW_EXECUTED,
       severity: 'warning',
       message: '无人确认影子执行已记录；真实券商委托提交数为 0。',
       before_state: before,
@@ -1399,25 +1535,37 @@ export class LiveTradingService {
   }
 
   async approveDraft(user_id: number, draft_id: number, input: any) {
-    if (input?.skip_confirmation === true || input?.unattended === true) {
-      await this.audit({
-        user_id,
-        draft_id,
-        event_type: 'live_order_unattended_real_submit_blocked',
-        severity: 'critical',
-        message: '拒绝无人确认真实下单请求；可改用影子执行闭环。',
-        metadata: { input },
-      });
-      throw new Error('真实券商委托不能跳过人工确认；如需无人闭环，请使用影子执行。');
-    }
+    // 鉴权前置（review 修订）：先查 draft 归属，避免攻击者用任意 draft_id 触发 audit 污染
     const draft = await LiveOrderDraft.findOne({ where: { id: draft_id, user_id } });
     if (!draft) throw new Error('订单草稿不存在或无权限');
     const before = this.toPlain(draft);
+
+    if (input?.skip_confirmation === true || input?.unattended === true) {
+      await this.audit({
+        user_id,
+        account_id: (draft as any).account_id,
+        draft_id,
+        event_type: LIVE_AUDIT_EVENT_TYPES.ORDER_UNATTENDED_REAL_SUBMIT_BLOCKED,
+        severity: 'critical',
+        message: '拒绝无人确认真实下单请求；可改用影子执行闭环。',
+        // 不把完整 input 落进 metadata（input 可能含 confirm_text 等敏感字段）
+        metadata: {
+          skip_confirmation: Boolean(input?.skip_confirmation),
+          unattended: Boolean(input?.unattended),
+        },
+      });
+      throw new Error('真实券商委托不能跳过人工确认；如需无人闭环，请使用影子执行。');
+    }
     if (!['pending', 'preview'].includes(String((draft as any).status))) {
       throw new Error(`当前订单草稿状态为 ${(draft as any).status}，不可确认提交。`);
     }
     const riskAllowed = Boolean((draft as any).risk_check?.allowed);
     if (!riskAllowed) throw new Error('订单草稿未通过基础风控，禁止确认提交。');
+
+    // confirm_text 校验也提前；避免 recheck IO 白做
+    if (input?.confirm_text !== LIVE_ORDER_CONFIRM_TEXT) {
+      throw new Error(`实盘下单必须输入强确认文本 ${LIVE_ORDER_CONFIRM_TEXT}`);
+    }
 
     const recheck = await this.recheckDraft(user_id, draft);
     await draft.update({
@@ -1435,7 +1583,7 @@ export class LiveTradingService {
         user_id,
         account_id: (draft as any).account_id,
         draft_id,
-        event_type: 'live_order_pre_submit_recheck_blocked',
+        event_type: LIVE_AUDIT_EVENT_TYPES.ORDER_PRE_SUBMIT_RECHECK_BLOCKED,
         severity: 'warning',
         message: '实盘订单提交前二次行情/账户风控复核未通过。',
         before_state: before,
@@ -1445,14 +1593,21 @@ export class LiveTradingService {
       throw new Error(`提交前二次复核未通过：${recheck.risk_check.conclusion}`);
     }
 
-    liveTradingSafetyService.assertOrderExecutionAllowed(input.confirm_text);
+    liveTradingSafetyService.assertOrderExecutionAllowed(
+      input.confirm_text,
+      this.brokerGateway.getCapabilities(),
+      await (async () => {
+        const ks = await killSwitchService.getActiveState();
+        return ks ? { active: true, ...ks } : undefined;
+      })()
+    );
 
     await draft.update({ status: 'approved', approved_by: user_id, approved_at: new Date() });
     await this.audit({
       user_id,
       account_id: (draft as any).account_id,
       draft_id,
-      event_type: 'live_order_draft_approved',
+      event_type: LIVE_AUDIT_EVENT_TYPES.ORDER_DRAFT_APPROVED,
       severity: 'warning',
       message: '用户强确认实盘订单草稿，准备提交券商。',
       before_state: before,
@@ -1464,93 +1619,307 @@ export class LiveTradingService {
   }
 
   private async submitApprovedDraft(user_id: number, draft: LiveOrderDraft) {
-    const result = await this.brokerGateway.placeOrder({
-      symbol: (draft as any).symbol,
-      side: (draft as any).side,
-      quantity: Number((draft as any).quantity),
-      limit_price: Number((draft as any).limit_price),
-      order_type: (draft as any).order_type || 'LIMIT',
-      client_order_id: `live-draft-${draft.id}`,
-    });
-    const order = await LiveOrder.create({
-      user_id,
-      account_id: (draft as any).account_id,
-      draft_id: Number(draft.id),
-      broker_order_id: result.broker_order_id,
-      symbol: (draft as any).symbol,
-      name: (draft as any).name,
-      side: (draft as any).side,
-      quantity: Number((draft as any).quantity),
-      limit_price: Number((draft as any).limit_price),
-      status: result.status,
-      submitted_at: new Date(),
-      raw_payload: result.raw_payload || {},
-    } as any);
-    await draft.update({ status: 'submitted' });
-    await this.audit({
-      user_id,
-      account_id: (draft as any).account_id,
-      draft_id: Number(draft.id),
-      order_id: Number(order.id),
-      event_type: 'live_order_submitted',
-      severity: 'warning',
-      message: '实盘订单已提交券商。',
-      after_state: this.toPlain(order),
-    });
-    return { draft: this.toPlain(draft), order: this.toPlain(order) };
+    // P0 重构（review 发现 §3.1-3.3）：审批后不再同步调 brokerGateway.placeOrder，
+    // 而是写一条 LiveBrokerCommand 等 bridge 拉取，避免：
+    //   1. 网关 mock/env_readonly/bridge_readonly 抛错让 draft 卡死 approved
+    //   2. requestOrderCancellation 找不到 parent_command_id 的孤儿撤单
+    //   3. 重提产生同 client_order_id 二次下单
+    //
+    // 进一步加固（review 新发现）：整段包事务，order/command/draft 三者必须同生同灭，
+    // 避免任何中间步骤失败留下"draft=approved 但 command 不存在"或"command 已下发但 draft 没 update"。
+    const accountId = Number((draft as any).account_id || 0);
+    if (!accountId) {
+      throw new Error('草稿未绑定 account_id，无法生成 bridge 命令；请先做只读同步');
+    }
+    const clientOrderId = `live-draft-${draft.id}-${Date.now().toString(36)}`;
+    const ttlMs = Math.max(Number(process.env.LIVE_BRIDGE_COMMAND_TTL_SECONDS || 60), 5) * 1000;
+
+    let order: LiveOrder;
+    let command: LiveBrokerCommand;
+    try {
+      const result = await sequelize.transaction(async t => {
+        // 1) 先写 LiveOrder 占位（status=bridge_pending），便于前端列表显示与撤单引用
+        const o = await LiveOrder.create(
+          {
+            user_id,
+            account_id: accountId,
+            draft_id: Number(draft.id),
+            client_order_id: clientOrderId,
+            symbol: (draft as any).symbol,
+            name: (draft as any).name,
+            side: (draft as any).side,
+            quantity: Number((draft as any).quantity),
+            limit_price: Number((draft as any).limit_price),
+            status: 'bridge_pending',
+            bridge_status: 'pending',
+            raw_payload: { created_by: 'submitApprovedDraft', source: 'bridge_command_queue' },
+          } as any,
+          { transaction: t }
+        );
+        // 2) 入命令队列
+        const c = await LiveBrokerCommand.create(
+          {
+            user_id,
+            account_id: accountId,
+            draft_id: Number(draft.id),
+            order_id: Number(o.id),
+            client_order_id: clientOrderId,
+            command_type: 'place_order',
+            status: 'pending',
+            symbol: (draft as any).symbol,
+            side: (draft as any).side,
+            quantity: Number((draft as any).quantity),
+            limit_price: Number((draft as any).limit_price),
+            order_type: (draft as any).order_type || 'LIMIT',
+            server_reference_price: Number(
+              ((draft as any).quote_snapshot && (draft as any).quote_snapshot.current_price) ||
+                (draft as any).limit_price
+            ),
+            expires_at: new Date(Date.now() + ttlMs),
+            filled_quantity: 0,
+            request_payload: {
+              source_draft_id: Number(draft.id),
+              rationale: (draft as any).rationale,
+            },
+            metadata: { source: 'submitApprovedDraft' },
+          } as any,
+          { transaction: t }
+        );
+        // 3) draft 状态推进到 submitted（事务内）
+        await draft.update({ status: 'submitted' }, { transaction: t });
+        return { order: o, command: c };
+      });
+      order = result.order;
+      command = result.command;
+    } catch (err: any) {
+      // 事务回滚后，draft 仍是 approved；audit 不在事务里以确保即便事务回滚也能落审计
+      try {
+        await this.audit({
+          user_id,
+          account_id: accountId,
+          draft_id: Number(draft.id),
+          event_type: LIVE_AUDIT_EVENT_TYPES.ORDER_ENQUEUE_FAILED,
+          severity: 'error',
+          message: `命令入队失败（事务回滚）：${err?.message || err}`,
+          after_state: { client_order_id: clientOrderId },
+        });
+      } catch {}
+      // 把 draft 标 pending 让用户重提（不在事务内）；先 reload 拿最新值避免脏写
+      try {
+        await draft.reload();
+        if (String((draft as any).status) !== 'pending') {
+          await draft.update({ status: 'pending' });
+        }
+      } catch {}
+      throw new Error(`命令入队失败：${err?.message || err}`);
+    }
+
+    // audit 写入失败不影响主流程（事务已提交），但记 warn
+    try {
+      await this.audit({
+        user_id,
+        account_id: accountId,
+        draft_id: Number(draft.id),
+        order_id: Number(order.id),
+        event_type: LIVE_AUDIT_EVENT_TYPES.ORDER_ENQUEUED,
+        severity: 'warning',
+        message: '实盘订单已入命令队列，等待本地桥执行。',
+        after_state: { command_id: Number((command as any).id), client_order_id: clientOrderId },
+        metadata: { ttl_seconds: ttlMs / 1000 },
+      });
+    } catch (err: any) {
+      logger.warn?.('submitApprovedDraft audit failed:', err?.message || err);
+    }
+    return { draft: this.toPlain(draft), order: this.toPlain(order), command: this.toPlain(command) };
   }
 
   async syncReadonlyAccount(user_id: number, input: any = {}) {
-    const safety = liveTradingSafetyService.getStatus();
+    const safety = await this.getSafetyStatusAsync();
     if (!safety.can_sync_account) {
       throw new Error('实盘只读同步未启用：请先设置 LIVE_READONLY_ENABLED=true，并配置真实券商只读网关。');
     }
-    const account = await this.ensureAccount(user_id, input);
-    const snapshot = await this.brokerGateway.getAccountSnapshot();
-    const row = await LiveAccountSnapshot.create({
-      user_id,
-      account_id: Number(account.id),
-      total_asset: snapshot.total_asset,
-      available_cash: snapshot.available_cash,
-      market_value: snapshot.market_value,
-      frozen_cash: snapshot.frozen_cash || 0,
-      total_pnl: snapshot.total_pnl || 0,
-      day_pnl: snapshot.day_pnl || 0,
-      snapshot_time: snapshot.snapshot_time,
-      source: this.brokerGateway.getCapabilities().broker_key,
-      raw_payload: snapshot.raw_payload || {},
-    } as any);
-    const positions = await this.brokerGateway.getPositions();
-    for (const position of positions) {
-      const marketValue = toNumber(position.market_value);
-      await LivePosition.upsert({
+    // 严格白名单：禁止用户透传 bridge_key / broker_account_key 抢占别人绑定，
+    // 也禁止任意改 permission_scope。这些需要走运维接口。
+    const sanitizedInput = {
+      account_no: typeof input.account_no === 'string' ? input.account_no : undefined,
+      account_alias: typeof input.account_alias === 'string' ? input.account_alias : undefined,
+      account_role: typeof input.account_role === 'string' ? input.account_role : undefined,
+    };
+    const account = await this.ensureAccount(user_id, sanitizedInput);
+    const accountId = Number(account.id);
+    const gatewayKey = this.brokerGateway.getCapabilities().broker_key;
+    // bridge_readonly 模式下直接从 DB 读该 account_id 的最新快照（数据由 bridge push 进表）；
+    // 其它模式（env_readonly）仍走 brokerGateway，但会拿到全局 env 数据，多账户场景需配合 LIVE_BROKER_ACCOUNT_SNAPSHOT_JSON 区分
+    const useBridgeReadDb = gatewayKey === 'bridge_readonly';
+    let snapshot: any;
+    let positions: any[] = [];
+    if (useBridgeReadDb) {
+      const latest = await LiveAccountSnapshot.findOne({
+        where: { account_id: accountId },
+        order: [['snapshot_time', 'DESC']],
+      });
+      if (!latest) {
+        // bridge 尚未推送过任何快照，返回空状态而不是用网关 fallback
+        await account.update({ last_sync_at: new Date(), connection_status: 'awaiting_bridge_push' });
+        return {
+          account: this.toPlain(account),
+          snapshot: null,
+          position_count: 0,
+          note: 'bridge_readonly: bridge 尚未 push 任何快照',
+        };
+      }
+      snapshot = {
+        total_asset: toNumber((latest as any).total_asset),
+        available_cash: toNumber((latest as any).available_cash),
+        market_value: toNumber((latest as any).market_value),
+        frozen_cash: toNumber((latest as any).frozen_cash),
+        total_pnl: toNumber((latest as any).total_pnl),
+        day_pnl: toNumber((latest as any).day_pnl),
+        snapshot_time: (latest as any).snapshot_time,
+        raw_payload: (latest as any).raw_payload || {},
+      };
+      const livePos = await LivePosition.findAll({
+        where: { account_id: accountId, quantity: { [Op.gt]: 0 } },
+        order: [['market_value', 'DESC']],
+        limit: 500,
+      });
+      positions = livePos.map((row: any) => ({
+        symbol: String(row.symbol),
+        name: row.name,
+        quantity: toNumber(row.quantity),
+        available_quantity: toNumber(row.available_quantity),
+        avg_cost: toNumber(row.avg_cost),
+        current_price: toNumber(row.current_price),
+        market_value: toNumber(row.market_value),
+        unrealized_pnl: toNumber(row.unrealized_pnl),
+        unrealized_pnl_pct: toNumber(row.unrealized_pnl_pct),
+        quote_time: row.quote_time,
+        raw_payload: row.raw_payload || {},
+      }));
+      // 不在这里再写一次 LiveAccountSnapshot（bridge 已经写了）
+      await account.update({ last_sync_at: new Date(), readonly_enabled: true, connection_status: 'readonly_synced' });
+      await this.audit({
         user_id,
-        account_id: Number(account.id),
-        symbol: normalizeSymbol(position.symbol),
-        name: position.name,
-        quantity: position.quantity,
-        available_quantity: position.available_quantity,
-        avg_cost: position.avg_cost,
-        current_price: position.current_price,
-        market_value: marketValue,
-        unrealized_pnl: position.unrealized_pnl,
-        unrealized_pnl_pct: position.unrealized_pnl_pct,
-        position_pct: snapshot.total_asset > 0 ? round((marketValue / snapshot.total_asset) * 100, 4) : 0,
-        quote_time: position.quote_time,
-        source: this.brokerGateway.getCapabilities().broker_key,
-        raw_payload: position.raw_payload || {},
-      } as any);
+        account_id: accountId,
+        event_type: LIVE_AUDIT_EVENT_TYPES.ACCOUNT_READONLY_SYNCED,
+        severity: 'info',
+        message: 'bridge_readonly 模式：账户视图已刷新（数据来源 live_account_snapshots）。',
+        after_state: { snapshot_id: Number((latest as any).id) },
+        metadata: { position_count: positions.length, source: 'bridge_readonly_db' },
+      });
+      return {
+        account: this.toPlain(account),
+        snapshot: this.toPlain(latest),
+        position_count: positions.length,
+      };
     }
-    await account.update({ last_sync_at: new Date(), readonly_enabled: true, connection_status: 'readonly_synced' });
-    await this.audit({
-      user_id,
-      account_id: Number(account.id),
-      event_type: 'live_account_readonly_synced',
-      severity: 'info',
-      message: '实盘账户只读快照已同步。',
-      after_state: this.toPlain(row),
-      metadata: { position_count: positions.length },
-    });
+    // 其它网关：直接代查（env_readonly 等）—— 把 snapshot 写入 + 持仓 upsert + 幽灵清零包事务
+    snapshot = await this.brokerGateway.getAccountSnapshot();
+    positions = await this.brokerGateway.getPositions();
+    let row: any;
+    try {
+      row = await sequelize.transaction(async t => {
+        const created = await LiveAccountSnapshot.create(
+          {
+            user_id,
+            account_id: accountId,
+            total_asset: snapshot.total_asset,
+            available_cash: snapshot.available_cash,
+            market_value: snapshot.market_value,
+            frozen_cash: snapshot.frozen_cash || 0,
+            total_pnl: snapshot.total_pnl || 0,
+            day_pnl: snapshot.day_pnl || 0,
+            snapshot_time: snapshot.snapshot_time,
+            source: gatewayKey,
+            raw_payload: snapshot.raw_payload || {},
+          } as any,
+          { transaction: t }
+        );
+        const incomingSymbols = new Set<string>();
+        for (const position of positions) {
+          const symbol = normalizeSymbol(position.symbol);
+          incomingSymbols.add(symbol);
+          const marketValue = toNumber(position.market_value);
+          await LivePosition.upsert(
+            {
+              user_id,
+              account_id: accountId,
+              symbol,
+              name: position.name,
+              quantity: position.quantity,
+              available_quantity: position.available_quantity,
+              avg_cost: position.avg_cost,
+              current_price: position.current_price,
+              market_value: marketValue,
+              unrealized_pnl: position.unrealized_pnl,
+              unrealized_pnl_pct: position.unrealized_pnl_pct,
+              position_pct: snapshot.total_asset > 0 ? round((marketValue / snapshot.total_asset) * 100, 4) : 0,
+              quote_time: position.quote_time,
+              source: gatewayKey,
+              raw_payload: position.raw_payload || {},
+            } as any,
+            { transaction: t }
+          );
+        }
+        // 幽灵持仓清理：本账户中 quantity>0 但本次同步没出现的 symbol 全部置零
+        // 注意：incomingSymbols.size==0 时不清零（避免 broker 临时空响应清掉真实持仓）
+        if (incomingSymbols.size > 0) {
+          const ghosts = await LivePosition.findAll({
+            where: {
+              account_id: accountId,
+              quantity: { [Op.gt]: 0 },
+              symbol: { [Op.notIn]: Array.from(incomingSymbols) },
+            },
+            transaction: t,
+          });
+          for (const g of ghosts) {
+            await (g as any).update(
+              {
+                quantity: 0,
+                available_quantity: 0,
+                market_value: 0,
+                source: gatewayKey,
+                raw_payload: {
+                  ...((g as any).raw_payload || {}),
+                  zeroed_by_sync_at: new Date().toISOString(),
+                },
+              },
+              { transaction: t }
+            );
+          }
+        }
+        await account.update(
+          { last_sync_at: new Date(), readonly_enabled: true, connection_status: 'readonly_synced' },
+          { transaction: t }
+        );
+        return created;
+      });
+    } catch (err: any) {
+      // 同步失败：写一条 audit 便于运维查
+      try {
+        await this.audit({
+          user_id,
+          account_id: accountId,
+          event_type: LIVE_AUDIT_EVENT_TYPES.ACCOUNT_READONLY_SYNC_FAILED,
+          severity: 'error',
+          message: `账户同步事务回滚：${err?.message || err}`,
+          after_state: {},
+          metadata: { gateway: gatewayKey, position_count: positions.length },
+        });
+      } catch {}
+      throw new Error(`实盘只读账户同步失败：${err?.message || err}`);
+    }
+    try {
+      await this.audit({
+        user_id,
+        account_id: accountId,
+        event_type: LIVE_AUDIT_EVENT_TYPES.ACCOUNT_READONLY_SYNCED,
+        severity: 'info',
+        message: '实盘账户只读快照已同步。',
+        after_state: this.toPlain(row),
+        metadata: { position_count: positions.length, source: gatewayKey },
+      });
+    } catch {}
     return { account: this.toPlain(account), snapshot: this.toPlain(row), position_count: positions.length };
   }
 
@@ -1580,10 +1949,18 @@ export class LiveTradingService {
   private async recheckDraft(user_id: number, draft: LiveOrderDraft) {
     const symbol = normalizeSymbol((draft as any).symbol);
     const quote = await this.quoteProvider.getQuote(symbol);
-    const overview = await this.getOverview(user_id);
+    // 灰度账户的草稿必须用 grayscale 视角的 overview 复核，否则风控以 main 账户的总资产算
+    const draftAccountId = Number((draft as any).account_id || 0);
+    const draftAccount = draftAccountId ? await LiveBrokerAccount.findByPk(draftAccountId) : null;
+    const accountRole = draftAccount ? String((draftAccount as any).account_role || 'main') : 'main';
+    const overview = await this.getOverview(user_id, { account_role: accountRole });
     const position = overview.positions.find((item: any) => normalizeSymbol(item.symbol) === symbol);
     const latestPrice = quotePrice(quote);
     const limitPrice = toNumber((draft as any).limit_price);
+    const accountId = draftAccountId || Number(overview.account?.id || 0);
+    const account = draftAccount || (accountId ? await LiveBrokerAccount.findByPk(accountId) : null);
+    const accountRiskConfig = account ? (account as any).risk_config : undefined;
+    const accountMaxSingleOrderAmount = accountRiskConfig?.max_single_order_amount;
     const riskCheck = liveRiskGuardService.evaluate({
       side: (draft as any).side,
       symbol,
@@ -1603,28 +1980,77 @@ export class LiveTradingService {
         latestPrice > 0 && limitPrice > 0
           ? round(((limitPrice - latestPrice) / latestPrice) * 100, 4)
           : undefined,
+      account_risk_config: accountRiskConfig,
+      account_max_single_order_amount: Number.isFinite(Number(accountMaxSingleOrderAmount))
+        ? Number(accountMaxSingleOrderAmount)
+        : undefined,
     });
     return { risk_check: riskCheck, quote_snapshot: quote };
   }
 
   private async ensureAccount(user_id: number, input: any = {}) {
-    const [account] = await LiveBrokerAccount.findOrCreate({
-      where: { user_id, broker_key: this.brokerGateway.getCapabilities().broker_key },
-      defaults: {
+    const broker = this.brokerGateway.getCapabilities();
+    const accountRole = normalizeAccountRole(input.account_role);
+    const accountNoMasked = maskAccountNo(input.account_no);
+    // 灰度账户必须显式带上账号，避免占位符 "未绑定" 静默复用其它账户
+    if (accountRole === 'grayscale' && !isAccountNoBound(accountNoMasked)) {
+      throw new Error('灰度账户必须提供 account_no，禁止使用占位符复用其它账户。');
+    }
+    const permissionScope = normalizePermissionScope(accountRole, input.permission_scope);
+    const brokerAccountKey = input.broker_account_key || buildBrokerAccountKey(
+      broker.broker_key,
+      accountRole,
+      accountNoMasked
+    );
+    // bridge_key 是数据库唯一约束字段；只接受运维显式且账号已绑定的情况，避免普通同步接口被滥用抢占
+    const bridgeKeyInput = typeof input.bridge_key === 'string' ? input.bridge_key.trim() : '';
+    const bridgeKey = bridgeKeyInput && isAccountNoBound(accountNoMasked) ? bridgeKeyInput : undefined;
+    const orClauses: any[] = [{ broker_account_key: brokerAccountKey }];
+    if (isAccountNoBound(accountNoMasked)) {
+      orClauses.push({
+        broker_key: broker.broker_key,
+        account_role: accountRole,
+        account_no_masked: accountNoMasked,
+      });
+    }
+    let account = await LiveBrokerAccount.findOne({
+      where: {
         user_id,
-        broker_key: this.brokerGateway.getCapabilities().broker_key,
-        broker_name: this.brokerGateway.getCapabilities().broker_name,
-        account_alias: input.account_alias || '实盘只读账户',
-        account_no_masked: maskAccountNo(input.account_no),
-        permission_scope: 'read_only',
+        [Op.or]: orClauses,
+      },
+    });
+    if (!account) {
+      account = await LiveBrokerAccount.create({
+        user_id,
+        broker_key: broker.broker_key,
+        broker_account_key: brokerAccountKey,
+        bridge_key: bridgeKey,
+        broker_name: broker.broker_name,
+        account_alias: input.account_alias || (accountRole === 'grayscale' ? '实盘灰度账户' : '实盘只读账户'),
+        account_no_masked: accountNoMasked,
+        account_role: accountRole,
+        permission_scope: permissionScope,
         connection_status: 'created',
         is_active: true,
         readonly_enabled: false,
         trading_enabled: false,
         risk_config: liveTradingSafetyService.getDefaultRiskLimits(),
         metadata: { created_by: 'live_trading_service' },
-      } as any,
-    });
+      } as any);
+      return account;
+    }
+    // 已存在账户：禁止改 role（main ↔ grayscale 切换会污染隔离）
+    if ((account as any).account_role && (account as any).account_role !== accountRole) {
+      throw new Error(
+        `账户角色与已绑定记录冲突：当前角色 ${(account as any).account_role}，请求角色 ${accountRole}`
+      );
+    }
+    const patch: Record<string, any> = {};
+    if (!(account as any).broker_account_key) patch.broker_account_key = brokerAccountKey;
+    // bridge_key：只允许首次绑定，绑定后必须走专门的运维接口轮换，禁止本接口覆盖
+    if (bridgeKey && !(account as any).bridge_key) patch.bridge_key = bridgeKey;
+    if (!(account as any).account_role) patch.account_role = accountRole;
+    if (Object.keys(patch).length > 0) await account.update(patch);
     return account;
   }
 
@@ -2147,7 +2573,7 @@ export class LiveTradingService {
     after_state?: Record<string, any>;
     metadata?: Record<string, any>;
   }) {
-    return LiveExecutionAuditLog.create({
+    const row = await LiveExecutionAuditLog.create({
       user_id: input.user_id,
       account_id: input.account_id,
       draft_id: input.draft_id,
@@ -2159,11 +2585,131 @@ export class LiveTradingService {
       after_state: input.after_state || {},
       metadata: input.metadata || {},
     } as any);
+    // 实盘告警 fire-and-forget：仅 critical/error（warning 见 env 开关）
+    sendLiveAuditAlert({
+      event_type: input.event_type,
+      severity: input.severity,
+      message: input.message,
+      user_id: input.user_id,
+      account_id: input.account_id,
+      order_id: input.order_id,
+      draft_id: input.draft_id,
+      metadata: input.metadata,
+    });
+    return row;
   }
 
   private toPlain(record: any) {
     if (!record) return record;
     return typeof record.toJSON === 'function' ? record.toJSON() : record;
+  }
+
+  /**
+   * 用户撤单：找到原 place_order command，新建一条 cancel_order command 等 bridge 拉取。
+   *
+   * - 撤单本质是另一条 command，与原命令通过 parent_command_id 关联（§7.4 撤单语义）；
+   * - 不会同步调券商，只入队；状态推进等 bridge 的 cancel_order/cancel_error 事件；
+   * - 撤单 TTL 独立配置（默认 180s），比下单 TTL 更宽松。
+   */
+  async requestOrderCancellation(
+    user_id: number,
+    order_id: number,
+    options: { reason?: string; account_id?: number } = {}
+  ) {
+    const order = await LiveOrder.findByPk(order_id);
+    if (!order || Number((order as any).user_id) !== user_id) {
+      throw new Error('订单不存在或无权撤单');
+    }
+    if (options.account_id && Number((order as any).account_id) !== Number(options.account_id)) {
+      throw new Error('订单不属于当前选定账户，撤单被拒绝');
+    }
+    const currentStatus = String((order as any).bridge_status || (order as any).status || '').toLowerCase();
+    const cancellable = new Set(['pending', 'dispatched', 'dispatching', 'submitted', 'partially_filled']);
+    if (!cancellable.has(currentStatus)) {
+      throw new Error(`订单当前状态 ${currentStatus} 不可撤单（仅 pending/dispatched/submitted/partially_filled 允许）`);
+    }
+    const brokerOrderId = (order as any).broker_order_id;
+    // dry-run 模拟产生的 broker_order_id 不允许走真实撤单通道
+    if (typeof brokerOrderId === 'string' && brokerOrderId.startsWith('dryrun-')) {
+      throw new Error('该订单是 bridge dry-run 产生的，无真实券商委托号，无需撤单');
+    }
+    const accountId = Number((order as any).account_id || 0);
+    // 找到原 place_order command（可能尚未存在，例如老路径写的 LiveOrder）
+    const parent = await LiveBrokerCommand.findOne({
+      where: { order_id, command_type: 'place_order' },
+      order: [['created_at', 'DESC']],
+    });
+    if (!parent) {
+      throw new Error('该订单没有对应的 bridge place_order 命令，无法走撤单通道；请联系运维');
+    }
+    // 撤单 TTL 独立配置，默认 180s（券商撤单回报通常需要几十秒）
+    const cancelTtlMs = Math.max(
+      Number(process.env.LIVE_BRIDGE_CANCEL_COMMAND_TTL_SECONDS || 180),
+      30
+    ) * 1000;
+    const clientOrderId = `cancel-${order_id}-${Date.now()}`;
+    if (!brokerOrderId) {
+      throw new Error('订单尚未拿到券商委托号，bridge 暂未处理；请等待或直接联系运维');
+    }
+    // P1 review：用户并发点两次撤单按钮会产生两条 cancel command；
+    // 同一 order_id 已存在未终态的 cancel_order 命令时直接复用，避免重复入队
+    const existingCancel = await LiveBrokerCommand.findOne({
+      where: {
+        order_id,
+        command_type: 'cancel_order',
+        status: { [Op.in]: ['pending', 'dispatching', 'dispatched', 'submitted', 'partially_filled'] },
+      },
+      order: [['created_at', 'DESC']],
+    });
+    if (existingCancel) {
+      await this.audit({
+        user_id,
+        account_id: accountId,
+        order_id,
+        event_type: LIVE_AUDIT_EVENT_TYPES.ORDER_CANCEL_DEDUP,
+        severity: 'info',
+        message: `撤单已存在未终态命令 cmd=${(existingCancel as any).id}，复用而不再入队`,
+        before_state: { bridge_status: currentStatus },
+        after_state: { command_id: Number((existingCancel as any).id) },
+        metadata: { reason: options.reason || null },
+      });
+      return { command: this.toPlain(existingCancel), order: this.toPlain(order) };
+    }
+    const cmd = await LiveBrokerCommand.create({
+      user_id,
+      account_id: accountId,
+      order_id,
+      client_order_id: clientOrderId,
+      command_type: 'cancel_order',
+      parent_command_id: Number((parent as any).id),
+      status: 'pending',
+      symbol: (order as any).symbol,
+      side: (order as any).side,
+      quantity: Number((order as any).quantity || 0),
+      limit_price: Number((order as any).limit_price || 0),
+      broker_order_id: brokerOrderId,
+      expires_at: new Date(Date.now() + cancelTtlMs),
+      filled_quantity: 0,
+      request_payload: {
+        broker_order_id: brokerOrderId,
+        reason: options.reason || 'user_requested_cancel',
+      },
+      metadata: { source: 'user_cancel_request' },
+    } as any);
+
+    await this.audit({
+      user_id,
+      account_id: accountId,
+      order_id,
+      event_type: LIVE_AUDIT_EVENT_TYPES.ORDER_CANCEL_REQUESTED,
+      severity: 'warning',
+      message: `用户请求撤单 order=${order_id} broker_order_id=${brokerOrderId}`,
+      before_state: { bridge_status: currentStatus },
+      after_state: { command_id: Number((cmd as any).id), client_order_id: clientOrderId },
+      metadata: { reason: options.reason || null, cancel_ttl_seconds: cancelTtlMs / 1000 },
+    });
+
+    return { command: this.toPlain(cmd), order: this.toPlain(order) };
   }
 }
 

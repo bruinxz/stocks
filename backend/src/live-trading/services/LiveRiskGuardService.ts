@@ -24,11 +24,42 @@ export interface LiveRiskCheckInput {
   quote_latency_seconds?: number;
   quote_is_realtime?: boolean;
   quote_source?: string;
+  /**
+   * 账户级覆盖（路线图 §6.2 / P5 灰度账户独立 risk_config）。
+   * 优先级：account_risk_config > env (LIVE_RISK_*) > 默认值。
+   * 支持 keys：max_single_order_pct / max_single_position_pct / max_total_exposure_pct /
+   * max_daily_new_exposure_pct / max_daily_order_count / price_deviation_guard_pct /
+   * block_st / block_limit_up_buy。
+   */
+  account_risk_config?: Record<string, any>;
+  /** 灰度账户单笔最大金额上限（元）；超出即拒绝 */
+  account_max_single_order_amount?: number;
+}
+
+function mergeLimits(envLimits: Record<string, any>, accountConfig?: Record<string, any>) {
+  if (!accountConfig || typeof accountConfig !== 'object') return envLimits;
+  const merged: Record<string, any> = { ...envLimits };
+  for (const key of [
+    'max_single_order_pct',
+    'max_single_position_pct',
+    'max_total_exposure_pct',
+    'max_daily_new_exposure_pct',
+    'max_daily_order_count',
+    'price_deviation_guard_pct',
+  ]) {
+    const v = Number((accountConfig as any)[key]);
+    if (Number.isFinite(v)) merged[key] = v;
+  }
+  for (const key of ['block_st', 'block_limit_up_buy']) {
+    if (typeof (accountConfig as any)[key] === 'boolean') merged[key] = (accountConfig as any)[key];
+  }
+  return merged;
 }
 
 export class LiveRiskGuardService {
   evaluate(input: LiveRiskCheckInput) {
-    const limits = liveTradingSafetyService.getDefaultRiskLimits();
+    const envLimits = liveTradingSafetyService.getDefaultRiskLimits();
+    const limits = mergeLimits(envLimits, input.account_risk_config);
     const quantity = Math.max(0, Math.floor(Number(input.quantity || 0) / 100) * 100);
     const limitPrice = round(input.limit_price, 4);
     const estimatedAmount = round(quantity * limitPrice, 2);
@@ -90,13 +121,13 @@ export class LiveRiskGuardService {
       },
       {
         key: 'st_filter',
-        passed: !input.is_st,
+        passed: !(limits.block_st !== false && input.is_st),
         label: 'ST/退市风险过滤',
         message: input.is_st ? '疑似 ST/退市风险标的，禁止实盘草稿通过' : '未发现 ST 风险标识',
       },
       {
         key: 'limit_up_buy',
-        passed: !(input.side === 'BUY' && input.is_limit_up),
+        passed: !(limits.block_limit_up_buy !== false && input.side === 'BUY' && input.is_limit_up),
         label: '涨停买入过滤',
         message: input.side === 'BUY' && input.is_limit_up ? '涨停买入默认禁止' : '未触发涨停买入限制',
       },
@@ -145,6 +176,20 @@ export class LiveRiskGuardService {
       },
     ];
 
+    // 灰度账户单笔最大金额上限
+    if (Number.isFinite(Number(input.account_max_single_order_amount))) {
+      const limit = Number(input.account_max_single_order_amount);
+      checks.push({
+        key: 'account_max_single_order_amount',
+        passed: estimatedAmount <= limit,
+        label: '账户单笔金额上限',
+        message:
+          estimatedAmount <= limit
+            ? `预计金额 ¥${estimatedAmount.toLocaleString()} ≤ 账户上限 ¥${limit.toLocaleString()}`
+            : `预计金额 ¥${estimatedAmount.toLocaleString()} 超过账户单笔上限 ¥${limit.toLocaleString()}`,
+      });
+    }
+
     const failed = checks.filter(item => !item.passed);
     return {
       allowed: failed.length === 0,
@@ -154,6 +199,7 @@ export class LiveRiskGuardService {
       projected_position_pct: projectedPositionPct,
       projected_exposure_pct: projectedExposurePct,
       market_data_sla: marketSla,
+      applied_limits: limits,
       checks,
       failed_checks: failed,
       conclusion:

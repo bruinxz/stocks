@@ -420,12 +420,45 @@ const LiveTrading: React.FC = () => {
   const [selectedDraft, setSelectedDraft] = useState<any>(null);
   const [confirmText, setConfirmText] = useState('');
   const [draftForm] = Form.useForm();
+  // 账户角色切换（main / grayscale），URL 不重写，仅前端 query 透传
+  const [accountRole, setAccountRole] = useState<'main' | 'grayscale'>('main');
+  // 服务端 kill switch 状态（DB 层），与 overview.safety.global_kill_switch 是 OR 关系
+  const [killSwitch, setKillSwitch] = useState<{ active: boolean; state: any } | null>(null);
+  // 当前账户的活跃实盘委托（用于撤单 UI）
+  const [liveOrders, setLiveOrders] = useState<any[]>([]);
+  const [liveOrdersLoading, setLiveOrdersLoading] = useState(false);
+
+  const fetchKillSwitch = async () => {
+    try {
+      const resp = await api.get('/live-trading/kill-switch');
+      setKillSwitch(resp.data.data || null);
+    } catch (e: any) {
+      // 非阻塞：失败不要影响主面板
+    }
+  };
+
+  const fetchLiveOrders = async () => {
+    setLiveOrdersLoading(true);
+    try {
+      const resp = await api.get('/live-trading/orders', {
+        params: { account_role: accountRole, active_only: true },
+      });
+      setLiveOrders(resp.data.data?.orders || []);
+    } catch (e: any) {
+      // 非阻塞
+    } finally {
+      setLiveOrdersLoading(false);
+    }
+  };
 
   const fetchOverview = async (silent = false) => {
     setLoading(true);
     try {
-      const response = await api.get('/live-trading/overview');
+      const response = await api.get('/live-trading/overview', {
+        params: { account_role: accountRole },
+      });
       setOverview(response.data.data);
+      await fetchKillSwitch();
       if (!silent) message.success('实盘能力状态已刷新');
     } catch (error: any) {
       message.error(error.response?.data?.message || '获取实盘总览失败');
@@ -438,7 +471,7 @@ const LiveTrading: React.FC = () => {
     setCandidateLoading(true);
     try {
       const response = await api.get('/live-trading/order-draft-candidates', {
-        params: { limit: 20 },
+        params: { limit: 20, account_role: accountRole },
       });
       setDraftCandidates(response.data.data);
       if (!silent) message.success('策略草稿候选已刷新');
@@ -534,7 +567,17 @@ const LiveTrading: React.FC = () => {
     fetchShadowTrend(true);
     fetchShadowBudgetAttribution(true);
     fetchShadowBudgetAudits(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 切换账户角色时：刷新 overview 和受 account_role 影响的 candidates；
+  // shadow/趋势/预算面板暂不强制按 account_role 拉，避免页面抖动太大（后续可加 query 支持）
+  useEffect(() => {
+    fetchOverview(true);
+    fetchDraftCandidates(true);
+    fetchLiveOrders();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accountRole]);
 
   const safety = overview?.readiness?.safety;
   const marketHealth = overview?.readiness?.market_data_health;
@@ -587,7 +630,10 @@ const LiveTrading: React.FC = () => {
     try {
       const values = await draftForm.validateFields();
       setDraftLoading(true);
-      const response = await api.post('/live-trading/order-drafts', values);
+      const response = await api.post('/live-trading/order-drafts', {
+        ...values,
+        account_role: accountRole,
+      });
       message.success(response.data.message || '订单草稿已创建');
       setIsDraftModalOpen(false);
       draftForm.resetFields();
@@ -643,10 +689,14 @@ const LiveTrading: React.FC = () => {
     }
   };
 
-  const syncReadonly = async () => {
+  const syncReadonly = async (extra?: Record<string, any>) => {
     setSyncLoading(true);
     try {
-      await api.post('/live-trading/accounts/sync-readonly', {});
+      // 只读同步带上当前选中的 account_role，避免 grayscale 视图下错把 main 账户刷新
+      await api.post('/live-trading/accounts/sync-readonly', {
+        account_role: accountRole,
+        ...(extra || {}),
+      });
       message.success('只读账户同步完成');
       await fetchOverview(true);
       await fetchDraftCandidates(true);
@@ -657,6 +707,83 @@ const LiveTrading: React.FC = () => {
     }
   };
 
+  // 同步入口：grayscale 角色弹 Modal 收集 account_no 再调 syncReadonly（避免后端必填校验报错）
+  const triggerSync = () => {
+    if (accountRole !== 'grayscale') {
+      syncReadonly();
+      return;
+    }
+    let inputAccountNo = '';
+    let inputAlias = '';
+    Modal.confirm({
+      title: '绑定灰度账户后同步',
+      content: (
+        <div>
+          <p style={{ marginBottom: 8 }}>
+            灰度账户必须显式提供资金账号，避免与主账户复用占位行。
+          </p>
+          <Form layout="vertical">
+            <Form.Item label="资金账号">
+              <Input
+                placeholder="例如 1234567890"
+                onChange={e => {
+                  inputAccountNo = e.target.value.trim();
+                }}
+              />
+            </Form.Item>
+            <Form.Item label="账户别名（可选）">
+              <Input
+                placeholder="灰度小额账户"
+                onChange={e => {
+                  inputAlias = e.target.value.trim();
+                }}
+              />
+            </Form.Item>
+          </Form>
+        </div>
+      ),
+      okText: '同步并绑定',
+      onOk: async () => {
+        if (!inputAccountNo) {
+          message.error('请填写灰度账户的资金账号');
+          throw new Error('missing account_no');
+        }
+        await syncReadonly({ account_no: inputAccountNo, account_alias: inputAlias || undefined });
+      },
+    });
+  };
+
+  /** 用户撤单：调 POST /live-trading/orders/:id/cancel */
+  const cancelLiveOrder = async (order: any) => {
+    Modal.confirm({
+      title: `确认撤单 ${order.symbol}?`,
+      content: `订单 ${order.id} (券商委托号 ${order.broker_order_id || '未知'}) 将通过本地桥撤单通道下发，结果以 trader callback 为准。`,
+      okType: 'danger',
+      okText: '确认撤单',
+      onOk: async () => {
+        // 乐观锁定：立刻把该行 bridge_status 标记为 cancelling，避免用户重复点
+        setLiveOrders(prev =>
+          prev.map(o => (o.id === order.id ? { ...o, bridge_status: 'cancelling' } : o))
+        );
+        try {
+          const resp = await api.post(`/live-trading/orders/${order.id}/cancel`, {
+            account_id: order.account_id,
+            reason: 'user_cancel_from_ui',
+          });
+          message.success(resp.data.message || '撤单已入队');
+          await fetchOverview(true);
+          await fetchLiveOrders();
+        } catch (e: any) {
+          // 失败回滚乐观更新
+          setLiveOrders(prev =>
+            prev.map(o => (o.id === order.id ? { ...o, bridge_status: order.bridge_status } : o))
+          );
+          message.error(e.response?.data?.message || '撤单失败');
+        }
+      },
+    });
+  };
+
   const riskChecks = useMemo(() => selectedDraft?.risk_check?.checks || [], [selectedDraft]);
 
   const createDraftFromCandidate = async (candidate: any) => {
@@ -664,6 +791,7 @@ const LiveTrading: React.FC = () => {
     try {
       const response = await api.post('/live-trading/order-drafts/from-candidate', {
         symbol: candidate.symbol,
+        account_role: accountRole,
       });
       message.success(response.data.message || '策略候选已生成实盘订单草稿');
       await fetchOverview(true);
@@ -681,6 +809,7 @@ const LiveTrading: React.FC = () => {
       const response = await api.post('/live-trading/order-drafts/shadow-autopilot', {
         limit: 3,
         source: 'live_trading_page',
+        account_role: accountRole,
       });
       message.success(response.data.message || '无人影子执行已完成');
       await fetchOverview(true);
@@ -812,6 +941,34 @@ const LiveTrading: React.FC = () => {
           </Text>
         </Space>
       ),
+    },
+    {
+      title: 'Bridge 状态',
+      dataIndex: 'bridge_status',
+      // 来自 live_orders.bridge_status（如果该草稿已经走到 live_orders / live_broker_commands）
+      render: (_: any, record: any) => {
+        const bridgeStatus = record.bridge_status || record.live_order_bridge_status || '-';
+        const colorMap: Record<string, string> = {
+          pending: 'default',
+          dispatched: 'processing',
+          submitted: 'gold',
+          partially_filled: 'cyan',
+          filled: 'green',
+          cancelled: 'orange',
+          failed: 'red',
+          expired: 'magenta',
+        };
+        return (
+          <Space direction="vertical" size={2}>
+            <Tag color={colorMap[bridgeStatus] || 'default'}>{bridgeStatus}</Tag>
+            {record.client_order_id && (
+              <Text type="secondary" copyable={{ text: record.client_order_id }}>
+                {String(record.client_order_id).slice(0, 12)}…
+              </Text>
+            )}
+          </Space>
+        );
+      },
     },
     {
       title: '行情/复核',
@@ -1127,10 +1284,19 @@ const LiveTrading: React.FC = () => {
           </p>
         </div>
         <Space wrap>
+          <Radio.Group
+            value={accountRole}
+            onChange={e => setAccountRole(e.target.value)}
+            optionType="button"
+            buttonStyle="solid"
+          >
+            <Radio.Button value="main">主账户</Radio.Button>
+            <Radio.Button value="grayscale">灰度账户</Radio.Button>
+          </Radio.Group>
           <Button icon={<ReloadOutlined />} onClick={() => fetchOverview(false)} loading={loading}>
             刷新状态
           </Button>
-          <Button icon={<WalletOutlined />} onClick={syncReadonly} loading={syncLoading}>
+          <Button icon={<WalletOutlined />} onClick={triggerSync} loading={syncLoading}>
             只读同步
           </Button>
           <Button
@@ -1142,6 +1308,56 @@ const LiveTrading: React.FC = () => {
           </Button>
         </Space>
       </div>
+
+      {/* Kill switch 状态卡片（env 或 DB 任一熔断即显示红色告警） */}
+      {(killSwitch?.active || safety?.global_kill_switch) && (
+        <Alert
+          type="error"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message={
+            <Space>
+              <strong>Kill switch 已熔断 — 所有真实下单被阻断</strong>
+              {killSwitch?.state?.reason_code && <Tag color="red">{killSwitch.state.reason_code}</Tag>}
+            </Space>
+          }
+          description={
+            <Space direction="vertical" size={4}>
+              {killSwitch?.state?.reason_detail && <Text>{killSwitch.state.reason_detail}</Text>}
+              {killSwitch?.state?.triggered_at && (
+                <Text type="secondary">
+                  触发时间 {new Date(killSwitch.state.triggered_at).toLocaleString()}
+                </Text>
+              )}
+              <Space>
+                <Button
+                  size="small"
+                  danger
+                  onClick={async () => {
+                    Modal.confirm({
+                      title: '解除 Kill switch?',
+                      content: '只有在确认风险已消除后才解除；解除事件会写入审计。',
+                      okType: 'danger',
+                      onOk: async () => {
+                        try {
+                          await api.post('/live-trading/kill-switch/resolve', { note: 'resolved from UI' });
+                          message.success('已解除');
+                          await fetchKillSwitch();
+                          await fetchOverview(true);
+                        } catch (e: any) {
+                          message.error(e.response?.data?.message || '解除失败');
+                        }
+                      },
+                    });
+                  }}
+                >
+                  人工解除
+                </Button>
+              </Space>
+            </Space>
+          }
+        />
+      )}
 
       <Spin spinning={loading}>
         <Alert
@@ -1905,6 +2121,122 @@ const LiveTrading: React.FC = () => {
               )}
             </div>
           </div>
+        </Card>
+
+        <Card
+          className="modern-card"
+          variant="borderless"
+          title="实盘委托（活跃）"
+          extra={
+            <Button size="small" loading={liveOrdersLoading} onClick={() => fetchLiveOrders()}>
+              刷新
+            </Button>
+          }
+          style={{ marginBottom: 16 }}
+        >
+          <Table
+            loading={liveOrdersLoading}
+            dataSource={liveOrders}
+            rowKey="id"
+            pagination={false}
+            scroll={{ x: 'max-content' }}
+            columns={[
+              {
+                title: '标的',
+                render: (_: any, r: any) => (
+                  <Space direction="vertical" size={0}>
+                    <Text strong>{r.name || r.symbol}</Text>
+                    <Text type="secondary">{r.symbol}</Text>
+                  </Space>
+                ),
+              },
+              {
+                title: '方向/数量',
+                render: (_: any, r: any) => (
+                  <Space direction="vertical" size={0}>
+                    <Tag color={r.side === 'BUY' ? 'red' : 'green'}>
+                      {r.side === 'BUY' ? '买入' : '卖出'}
+                    </Tag>
+                    <Text>{Number(r.quantity || 0).toLocaleString()} 股 @ ¥{Number(r.limit_price || 0).toFixed(2)}</Text>
+                  </Space>
+                ),
+              },
+              {
+                title: '券商委托号',
+                dataIndex: 'broker_order_id',
+                render: (value: string) => (
+                  <Text copyable={{ text: value || '' }}>{value || <Text type="secondary">未拿到</Text>}</Text>
+                ),
+              },
+              {
+                title: 'Bridge 状态',
+                dataIndex: 'bridge_status',
+                render: (value: string) => {
+                  const map: Record<string, string> = {
+                    pending: 'default',
+                    dispatching: 'processing',
+                    dispatched: 'processing',
+                    submitted: 'gold',
+                    partially_filled: 'cyan',
+                    filled: 'green',
+                    cancelled: 'orange',
+                    failed: 'red',
+                    expired: 'magenta',
+                  };
+                  return <Tag color={map[value || ''] || 'default'}>{value || '-'}</Tag>;
+                },
+              },
+              {
+                title: '提交时间',
+                dataIndex: 'submitted_at',
+                render: (value: string) =>
+                  value ? new Date(value).toLocaleString() : <Text type="secondary">-</Text>,
+              },
+              {
+                title: '操作',
+                render: (_: any, r: any) => {
+                  const cancellable = new Set([
+                    'pending',
+                    'dispatching',
+                    'dispatched',
+                    'submitted',
+                    'partially_filled',
+                  ]);
+                  const status = String(r.bridge_status || '').toLowerCase();
+                  const isCancelling = status === 'cancelling';
+                  const disabled = !r.broker_order_id || isCancelling || !cancellable.has(status);
+                  return (
+                    <Button
+                      size="small"
+                      danger
+                      loading={isCancelling}
+                      onClick={() => cancelLiveOrder(r)}
+                      disabled={disabled}
+                      title={
+                        isCancelling
+                          ? '撤单请求处理中'
+                          : !r.broker_order_id
+                            ? '尚未拿到券商委托号，无法撤单'
+                            : !cancellable.has(status)
+                              ? `当前状态 ${status} 不可撤单`
+                              : undefined
+                      }
+                    >
+                      撤单
+                    </Button>
+                  );
+                },
+              },
+            ]}
+            locale={{
+              emptyText: (
+                <Empty
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  description="当前账户暂无活跃实盘委托。"
+                />
+              ),
+            }}
+          />
         </Card>
 
         <Card className="modern-card" variant="borderless" title="实盘订单草稿">
