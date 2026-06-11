@@ -189,6 +189,50 @@ export class RecommendationTradeOutcome extends Model {
   @Column({ type: DataType.STRING(100), allowNull: true, field: 'exit_reason_label' })
   declare exit_reason_label?: string;
 
+  /**
+   * Phase 5: Root cause 分类 — 把 trade outcome (尤其是亏损) 归到结构化原因
+   *
+   * 取值 (TRADE_ROOT_CAUSES enum):
+   *   - 'profit_take'      —— 止盈出场，正常
+   *   - 'stop_loss'        —— 止损出场（亏损）
+   *   - 'time_stop'        —— 持仓超过 max holding days
+   *   - 'wrong_entry'      —— 入场时机不对 (买入后立即下跌 > 3% 且无回弹)
+   *   - 'wrong_regime'     —— 触发后市场环境从 bull 转 bear, 策略不适用
+   *   - 'catalyst_failed'  —— 业绩预告超预期 / 利好兑现, 但价格未跟随
+   *   - 'data_quality'     —— 数据缺失或异常导致信号错算
+   *   - 'backtest_drift'   —— 实盘 - 回测 偏离 > 50% (滑点 / 流动性问题)
+   *   - 'risk_kill_switch' —— 风控熔断强制平仓
+   *   - 'unknown'          —— 未能自动归类
+   *
+   * 自动归因规则在 RecommendationTradeOutcomeService.classifyRootCause()
+   * (Phase 5 实现的纯函数 + 单测覆盖)。
+   */
+  @Column({
+    type: DataType.STRING(40),
+    allowNull: true,
+    field: 'root_cause',
+    comment: 'Phase 5: trade 失败/成功根因归类 (枚举见 model jsdoc)',
+  })
+  declare root_cause?: string;
+
+  /** Phase 5: root_cause 的人类可读标签 */
+  @Column({
+    type: DataType.STRING(100),
+    allowNull: true,
+    field: 'root_cause_label',
+    comment: 'Phase 5: root_cause 中文标签',
+  })
+  declare root_cause_label?: string;
+
+  /** Phase 5: 自动归类时的 confidence (0-1)，<0.5 时建议人工 review */
+  @Column({
+    type: DataType.DECIMAL(4, 3),
+    allowNull: true,
+    field: 'root_cause_confidence',
+    comment: 'Phase 5: root_cause 自动归类置信度 (0-1)，<0.5 建议人工 review',
+  })
+  declare root_cause_confidence?: number;
+
   @Column({ type: DataType.JSONB, allowNull: false, defaultValue: {} })
   declare metadata: Record<string, any>;
 
