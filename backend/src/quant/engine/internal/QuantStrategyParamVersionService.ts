@@ -8,6 +8,7 @@ import { QuantStrategyParamVersion } from '../../../models/QuantStrategyParamVer
 import { RecommendationTradeOutcome } from '../../../models/RecommendationTradeOutcome';
 import { PaperTradingPortfolio } from '../../../models/PaperTradingPortfolio';
 import { Stock } from '../../../models/Stock';
+import { OptimizationRun } from '../../../models/OptimizationRun';
 import { benchmarkIndexService } from '../../../services/BenchmarkIndexService';
 import { PARAM_EXPERIMENT_PORTFOLIO_NAME } from '../../../portfolio/internal/PaperTradingDashboardService';
 import { normalizeSymbol } from '../../../utils/stockSymbol';
@@ -71,9 +72,28 @@ type ParamVersionLifecyclePolicy = {
   trade_rollback_min_closed_samples: number;
   trade_rollback_avg_excess_return_pct: number;
   trade_rollback_total_pnl: number;
+  // Phase 1: Walk-Forward 验证门禁
+  /** 是否要求 promote 前必须有最近的 walk-forward 验证 (默认 true) */
+  wf_required: boolean;
+  /** WF 验证最长有效期 (天)，超过这个时间的 WF 视为过期 (默认 90) */
+  wf_max_age_days: number;
+  /** WF 必须达到的 verdict 才放行 promote (默认 'PASS') */
+  wf_required_verdict: 'PASS' | 'PASS_OR_INSUFFICIENT';
 };
 
 type StrategyRiskLevel = 'low' | 'medium' | 'high';
+
+/**
+ * Phase 1: 每个 strategy 最近一次 walk-forward 验证的关键信息
+ */
+type WalkForwardVerdictInfo = {
+  run_id: number;
+  verdict: 'PASS' | 'FAIL' | 'INSUFFICIENT';
+  dsr: number | null;
+  pbo: number | null;
+  age_days: number;
+  scheme: 'rolling' | 'cpcv' | null;
+};
 
 const DEFAULT_LIFECYCLE_POLICY: ParamVersionLifecyclePolicy = {
   min_completed_samples: 12,
@@ -97,6 +117,10 @@ const DEFAULT_LIFECYCLE_POLICY: ParamVersionLifecyclePolicy = {
   trade_rollback_min_closed_samples: 3,
   trade_rollback_avg_excess_return_pct: -1.5,
   trade_rollback_total_pnl: -1200,
+  // Phase 1: Walk-Forward 默认要求 90 天内有 PASS verdict
+  wf_required: true,
+  wf_max_age_days: 90,
+  wf_required_verdict: 'PASS',
 };
 
 function asPlainObject(value: any): Record<string, any> {
@@ -1370,7 +1394,8 @@ export class QuantStrategyParamVersionService {
       undefined,
       undefined,
       undefined,
-      strategyRiskByKey
+      strategyRiskByKey,
+      undefined  // Phase 1: wf 验证暂不在 dashboard preview 中要求（避免阻塞展示），lifecycle apply 时才强制
     );
     const environmentAttribution = buildEnvironmentAttribution(plainValidations, versionByKey);
     const champion =
@@ -1447,13 +1472,22 @@ export class QuantStrategyParamVersionService {
         .list()
         .map(definition => [definition.strategy_key, normalizeRiskLevel(definition.risk_level)])
     );
+
+    // Phase 1: 加载所有涉及策略的最近 walk-forward verdict (按 wf_max_age_days 范围)
+    const policyForLoad = mergeLifecyclePolicy(options.policy);
+    const wfVerdicts = await this.loadRecentWalkForwardVerdicts(
+      rows.map((r: any) => r.strategy_key),
+      policyForLoad.wf_max_age_days
+    );
+
     const lifecycle = this.buildLifecyclePreview(
       rows,
       defaultByStrategy,
       options.policy,
       dashboard.environment_attribution,
       tradeAttribution,
-      strategyRiskByKey
+      strategyRiskByKey,
+      wfVerdicts
     );
     if (options.dry_run) {
       return {
@@ -1561,6 +1595,69 @@ export class QuantStrategyParamVersionService {
     return record;
   }
 
+  /**
+   * Phase 1: 加载多个 strategy 的最近一次 walk-forward verdict
+   *
+   * 查询 OptimizationRun（optimizer_type='walk_forward', status='completed'）
+   * 在过去 maxAgeDays 内 created_at 最近的一行，把它的 metadata_json.wf_summary
+   * 解析成 WalkForwardVerdictInfo。
+   *
+   * 用于 promotion 门禁：strategy 必须有最近的 PASS 才允许 promote champion。
+   *
+   * @returns Map<strategy_key, WalkForwardVerdictInfo>；缺失策略不在 map 里
+   */
+  private async loadRecentWalkForwardVerdicts(
+    strategyKeys: string[],
+    maxAgeDays: number
+  ): Promise<Map<string, WalkForwardVerdictInfo>> {
+    const result = new Map<string, WalkForwardVerdictInfo>();
+    if (!strategyKeys.length) return result;
+    const uniqueKeys = Array.from(new Set(strategyKeys.filter(Boolean)));
+    if (!uniqueKeys.length) return result;
+
+    const cutoff = new Date(Date.now() - Math.max(1, maxAgeDays) * 24 * 3600 * 1000);
+    try {
+      // 拉所有相关 wf runs（按 strategy_name + created_at desc），group-by 取每 strategy 最近一行
+      const rows = await OptimizationRun.findAll({
+        where: {
+          optimizer_type: 'walk_forward',
+          status: 'completed',
+          strategy_name: { [Op.in]: uniqueKeys },
+          created_at: { [Op.gte]: cutoff },
+        },
+        order: [['created_at', 'DESC']],
+        limit: uniqueKeys.length * 5, // 保险：每策略最多取 5 个
+      });
+
+      for (const run of rows) {
+        const key = String(run.strategy_name);
+        if (result.has(key)) continue; // 已有更近的就跳过
+        const meta = (run.metadata_json || {}) as any;
+        const summary = meta.wf_summary || null;
+        const verdict = summary?.verdict;
+        if (verdict !== 'PASS' && verdict !== 'FAIL' && verdict !== 'INSUFFICIENT') {
+          // 旧 run 没写 wf_summary 字段；跳过（视为缺失，下次跑会补上）
+          continue;
+        }
+        const ageMs = Date.now() - new Date(run.created_at).getTime();
+        const ageDays = ageMs / (24 * 3600 * 1000);
+        result.set(key, {
+          run_id: run.id,
+          verdict,
+          dsr: typeof summary?.dsr === 'number' ? summary.dsr : null,
+          pbo: typeof summary?.pbo === 'number' ? summary.pbo : null,
+          age_days: ageDays,
+          scheme: summary?.scheme || null,
+        });
+      }
+    } catch (error: any) {
+      logger.warn(`[ParamVersionService] loadRecentWalkForwardVerdicts 失败: ${error?.message || error}`);
+      // 失败时返回空 map，promotion 门禁会按 "缺少 wf" 拒绝（保守失败）
+    }
+
+    return result;
+  }
+
   private async getParamExperimentTradeAttribution() {
     try {
       const portfolios = await PaperTradingPortfolio.findAll({
@@ -1644,7 +1741,9 @@ export class QuantStrategyParamVersionService {
     policyInput?: Partial<ParamVersionLifecyclePolicy>,
     environmentAttribution?: any,
     tradeAttribution?: any,
-    strategyRiskByKey?: Map<string, StrategyRiskLevel>
+    strategyRiskByKey?: Map<string, StrategyRiskLevel>,
+    // Phase 1: 每个 strategy_key 最近的 walk-forward verdict
+    wfVerdicts?: Map<string, WalkForwardVerdictInfo>
   ) {
     const policy = mergeLifecyclePolicy(policyInput);
     const promotions: any[] = [];
@@ -1716,6 +1815,8 @@ export class QuantStrategyParamVersionService {
         cooldown_reason: cooldown.reason,
         environment_diagnostics: environmentDiagnostics,
         trade_diagnostics: tradeDiagnostics,
+        // Phase 1: 当前 strategy 最近的 walk-forward verdict
+        wf_verdict: wfVerdicts?.get(row.strategy_key) || null,
       };
       const envSatisfied =
         environmentDiagnostics.positive_bucket_count >=
@@ -1754,6 +1855,33 @@ export class QuantStrategyParamVersionService {
         continue;
       }
 
+      // Phase 1: Walk-Forward 门禁
+      // 当 wf_required=true 时，必须有最近 (wf_max_age_days 内) 的 wf verdict 满足要求
+      // 默认 wf_required_verdict='PASS'，可配置为 'PASS_OR_INSUFFICIENT' 给灰度阶段使用
+      const wfInfo = wfVerdicts?.get(row.strategy_key) || null;
+      let wfGateSatisfied = true;
+      let wfBlockReason: string | null = null;
+      if (effectivePolicy.wf_required) {
+        if (!wfInfo) {
+          wfGateSatisfied = false;
+          wfBlockReason = `缺少最近 ${effectivePolicy.wf_max_age_days} 天内的 walk-forward 验证`;
+        } else if (wfInfo.age_days > effectivePolicy.wf_max_age_days) {
+          wfGateSatisfied = false;
+          wfBlockReason = `walk-forward 验证已过期 (${Math.floor(wfInfo.age_days)} 天 > ${effectivePolicy.wf_max_age_days} 天)`;
+        } else {
+          const requiredSet =
+            effectivePolicy.wf_required_verdict === 'PASS_OR_INSUFFICIENT'
+              ? new Set(['PASS', 'INSUFFICIENT'])
+              : new Set(['PASS']);
+          if (!requiredSet.has(wfInfo.verdict)) {
+            wfGateSatisfied = false;
+            const wfDsr = wfInfo.dsr !== null ? wfInfo.dsr.toFixed(3) : 'NaN';
+            const wfPbo = wfInfo.pbo !== null ? wfInfo.pbo.toFixed(3) : 'NaN';
+            wfBlockReason = `walk-forward verdict=${wfInfo.verdict} (DSR ${wfDsr}, PBO ${wfPbo})`;
+          }
+        }
+      }
+
       const canPromote =
         ['active_candidate', 'observing'].includes(status) &&
         completedCount >= effectivePolicy.min_completed_samples &&
@@ -1762,8 +1890,12 @@ export class QuantStrategyParamVersionService {
         rankScore >= effectivePolicy.min_rank_score &&
         excessDelta >= effectivePolicy.min_default_excess_delta_pct &&
         envSatisfied &&
-        !tradeShouldDegrade;
+        !tradeShouldDegrade &&
+        wfGateSatisfied;
       if (canPromote) {
+        const wfNote = wfInfo
+          ? `walk-forward ${wfInfo.verdict} (DSR ${wfInfo.dsr?.toFixed(3) ?? 'NaN'})`
+          : 'walk-forward 门禁未启用';
         promotions.push({
           ...compact,
           action: 'promote',
@@ -1773,7 +1905,29 @@ export class QuantStrategyParamVersionService {
             2
           )}%，胜率 ${round(winRate, 1)}%，较默认参数超额 +${round(excessDelta, 2)}%，环境优势桶 ${
             environmentDiagnostics.positive_bucket_count
-          } 个，策略风险级别 ${riskLevel} 已通过自适应护栏。`,
+          } 个，策略风险级别 ${riskLevel} 已通过自适应护栏，${wfNote}。`,
+        });
+        continue;
+      }
+
+      // Phase 1: 如果只是 wf 门禁挡住，把它降级为 observe 而不是 silently 跳过
+      // 让 UI 能看到 "其他都通过了，只差 walk-forward"
+      if (
+        ['active_candidate', 'observing'].includes(status) &&
+        completedCount >= effectivePolicy.min_completed_samples &&
+        avgExcess >= effectivePolicy.min_avg_excess_return_pct &&
+        winRate >= effectivePolicy.min_win_rate &&
+        rankScore >= effectivePolicy.min_rank_score &&
+        excessDelta >= effectivePolicy.min_default_excess_delta_pct &&
+        envSatisfied &&
+        !tradeShouldDegrade &&
+        !wfGateSatisfied
+      ) {
+        observations.push({
+          ...compact,
+          action: 'observe',
+          next_status: row.status,
+          reason: `所有业务指标已达标，但 ${wfBlockReason}。请运行 npm run walk-forward -- --strategy=${row.strategy_key} 后再 promote。`,
         });
         continue;
       }
@@ -2048,6 +2202,10 @@ export class QuantStrategyParamVersionService {
       trade_degrade_min_closed_samples: policy.trade_degrade_min_closed_samples,
       trade_rollback_min_closed_samples: policy.trade_rollback_min_closed_samples,
       trade_rollback_total_pnl: policy.trade_rollback_total_pnl,
+      // Phase 1: walk-forward 门禁配置
+      wf_required: policy.wf_required,
+      wf_max_age_days: policy.wf_max_age_days,
+      wf_required_verdict: policy.wf_required_verdict,
     };
   }
 

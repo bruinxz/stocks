@@ -219,6 +219,48 @@ export class WalkForwardResult extends Model {
   })
   declare duration_seconds?: number;
 
+  // === Phase 1 新增字段 (DSR + verdict + CPCV + regime breakdown) ===
+
+  @Column({
+    type: DataType.DECIMAL(8, 4),
+    allowNull: true,
+    field: 'dsr',
+    comment: 'Phase 1: 单窗口 Deflated Sharpe Ratio (0-1)，>=0.95 表示统计显著',
+  })
+  declare dsr?: number;
+
+  @Column({
+    type: DataType.STRING(20),
+    allowNull: true,
+    field: 'verdict',
+    comment: 'Phase 1: 单窗口判断 PASS / FAIL / INSUFFICIENT',
+  })
+  declare verdict?: string;
+
+  @Column({
+    type: DataType.JSONB,
+    allowNull: true,
+    field: 'test_regime_breakdown_json',
+    comment: 'Phase 1: test 窗口按 regime 拆分（enable_regime_segmentation=true 才有）',
+  })
+  declare test_regime_breakdown_json?: any;
+
+  @Column({
+    type: DataType.INTEGER,
+    allowNull: true,
+    field: 'path_index',
+    comment: 'Phase 1: CPCV scheme 下的路径序号 (0-based)；rolling 时为 NULL',
+  })
+  declare path_index?: number;
+
+  @Column({
+    type: DataType.INTEGER,
+    allowNull: true,
+    field: 'train_skip_dates_count',
+    comment: 'Phase 1: purging 删了多少个 train 日期 (诊断用)',
+  })
+  declare train_skip_dates_count?: number;
+
   @CreatedAt
   @Column({ field: 'created_at' })
   declare created_at: Date;

@@ -152,6 +152,21 @@ export class OptimizationRun extends Model {
   })
   declare finished_at?: Date;
 
+  /**
+   * Phase 1 新增：扩展元数据字段。当前主要承载 walk-forward 的 wf_summary
+   * (DSR / PBO / verdict / mean_test_sharpe / win_ratio / scheme 等)，
+   * 供 promotion 门禁和 UI 读取。
+   * 未来其他 optimizer 的额外诊断也可放这里，避免再加一列。
+   */
+  @Column({
+    type: DataType.JSONB,
+    allowNull: true,
+    defaultValue: {},
+    field: 'metadata_json',
+    comment: 'Phase 1+ 扩展元数据：wf_summary / dsr / pbo / verdict / ...',
+  })
+  declare metadata_json: Record<string, any>;
+
   @CreatedAt
   @Column({ field: 'created_at' })
   declare created_at: Date;

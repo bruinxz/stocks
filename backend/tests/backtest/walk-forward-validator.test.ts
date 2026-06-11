@@ -34,6 +34,12 @@ import {
   WalkForwardValidator,
   WalkForwardWindowResult,
   EmbeddedOptimizer,
+  // Phase 1 exports
+  daysBetweenInclusive,
+  rankByValueDesc,
+  generateCombinations,
+  purgeTrainingDates,
+  generateCpcvFolds,
 } from '../../src/quant/backtest/WalkForwardValidator';
 import { BacktestRunner } from '../../src/quant/backtest/GridSearchOptimizer';
 
@@ -299,6 +305,90 @@ function runSyncTests() {
   const sumSingle = aggregateWindowMetrics(wsSingle);
   expectClose('single mean', sumSingle.mean_test_sharpe!, 1.2);
   expectEqual('single std null (n<2)', sumSingle.std_test_sharpe, null);
+
+  // ========================================================
+  // Phase 1: 新增纯函数测试
+  // ========================================================
+
+  console.log('\n## Phase 1: daysBetweenInclusive');
+  expectEqual('单日', daysBetweenInclusive('2024-01-15', '2024-01-15'), 1);
+  expectEqual('5 天', daysBetweenInclusive('2024-01-15', '2024-01-19'), 5);
+  expectEqual('跨月 1 月', daysBetweenInclusive('2024-01-01', '2024-01-31'), 31);
+  expectEqual('整年 闰年', daysBetweenInclusive('2024-01-01', '2024-12-31'), 366);
+  expectEqual('整年 平年', daysBetweenInclusive('2023-01-01', '2023-12-31'), 365);
+  expectEqual('end<start → 0', daysBetweenInclusive('2024-02-15', '2024-01-15'), 0);
+
+  console.log('\n## Phase 1: rankByValueDesc');
+  expectEqual('单调降序', rankByValueDesc([3, 2, 1]), [1, 2, 3]);
+  expectEqual('单调升序', rankByValueDesc([1, 2, 3]), [3, 2, 1]);
+  expectEqual('中间 max', rankByValueDesc([1, 3, 2]), [3, 1, 2]);
+  expectEqual('tie 稳定（先出现的拿小 rank）', rankByValueDesc([1, 2, 2, 1]), [3, 1, 2, 4]);
+  expectEqual('单元素', rankByValueDesc([5]), [1]);
+  expectEqual('空数组', rankByValueDesc([]), []);
+
+  console.log('\n## Phase 1: generateCombinations');
+  expectEqual('C(4,2)', generateCombinations(4, 2), [
+    [0, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3],
+  ]);
+  expectEqual('C(3,1)', generateCombinations(3, 1), [[0], [1], [2]]);
+  expectEqual('C(3,3) 单 combo', generateCombinations(3, 3), [[0, 1, 2]]);
+  expectEqual('C(3,0) 单空 combo', generateCombinations(3, 0), [[]]);
+  expectEqual('C(2,5) k>n → 空', generateCombinations(2, 5), []);
+  // C(6,2) = 15 paths
+  const c62 = generateCombinations(6, 2);
+  expectEqual('C(6,2).length = 15', c62.length, 15);
+
+  console.log('\n## Phase 1: purgeTrainingDates');
+  // train 2024-01-01..2024-12-31, test 起 2025-01-01, label horizon 5 天
+  // 应 purge 2024-12-27..2024-12-31 共 5 天 (label 跨入 test)
+  const purgeDates = purgeTrainingDates('2024-01-01', '2024-12-31', '2025-01-01', 5);
+  expectEqual('purge 5 天 (label_horizon=5)', purgeDates.length, 5);
+  expectEqual('第一个 purge 日期', purgeDates[0], '2024-12-27');
+  expectEqual('最后一个 purge 日期', purgeDates[4], '2024-12-31');
+
+  // label horizon 0 → 不 purge
+  expectEqual('label_horizon=0 不 purge', purgeTrainingDates('2024-01-01', '2024-12-31', '2025-01-01', 0).length, 0);
+
+  // train 集太短，全部都要 purge
+  const allPurge = purgeTrainingDates('2024-12-27', '2024-12-31', '2025-01-01', 10);
+  expectEqual('label_horizon 远大于 train 长度 → 全部 purge', allPurge.length, 5);
+
+  // test_start 远离 train_end → 不 purge
+  expectEqual(
+    'test 离 train 远, 不 purge',
+    purgeTrainingDates('2024-01-01', '2024-06-30', '2025-01-01', 5).length,
+    0
+  );
+
+  console.log('\n## Phase 1: generateWalkForwardWindows with embargo');
+  // 默认 embargo=0 应该匹配 US-039 原有行为
+  const wsNoEmbargo = generateWalkForwardWindows('2024-01-01', '2024-12-31', 6, 1);
+  expectEqual('embargo=0 时第一窗 train_end', wsNoEmbargo[0].train_end_date, '2024-06-30');
+  expectEqual('embargo=0 时第一窗 test_start', wsNoEmbargo[0].test_start_date, '2024-07-01');
+
+  // embargo=3 时 test_start 后挪 3 天
+  const wsEmbargo3 = generateWalkForwardWindows('2024-01-01', '2024-12-31', 6, 1, 3);
+  expectEqual('embargo=3 时第一窗 train_end', wsEmbargo3[0].train_end_date, '2024-06-30');
+  expectEqual('embargo=3 时第一窗 test_start', wsEmbargo3[0].test_start_date, '2024-07-04');
+
+  expectThrow('embargo<0 抛错', () => generateWalkForwardWindows('2024-01-01', '2024-12-31', 6, 1, -1));
+
+  console.log('\n## Phase 1: generateCpcvFolds');
+  // 6 个 group, k=2 应有 C(6,2)=15 paths
+  const cpcvFolds = generateCpcvFolds('2024-01-01', '2024-12-31', { n_groups: 6, k_test_groups: 2 });
+  expectEqual('CPCV(6,2) 应有 15 paths', cpcvFolds.length, 15);
+  expectEqual('CPCV 路径每个有 path_index', cpcvFolds[0].path_index, 0);
+  expectEqual('CPCV 路径最后一个 path_index', cpcvFolds[14].path_index, 14);
+  // 路径都应有 train + test 日期
+  for (let i = 0; i < cpcvFolds.length; i++) {
+    assert(`CPCV path[${i}] has train`, cpcvFolds[i].train_start_date.length === 10);
+    assert(`CPCV path[${i}] has test`, cpcvFolds[i].test_start_date.length === 10);
+  }
+
+  expectThrow('CPCV n_groups<2 抛错', () =>
+    generateCpcvFolds('2024-01-01', '2024-12-31', { n_groups: 1, k_test_groups: 1 }));
+  expectThrow('CPCV k>=n 抛错', () =>
+    generateCpcvFolds('2024-01-01', '2024-12-31', { n_groups: 4, k_test_groups: 4 }));
 }
 
 // ============================================================
