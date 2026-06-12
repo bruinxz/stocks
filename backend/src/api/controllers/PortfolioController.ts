@@ -10,6 +10,7 @@ import { Op } from 'sequelize';
 import { normalizeSymbol } from '../../utils/stockSymbol';
 import { industryConcentrationGuard } from '../../portfolio/risk/IndustryConcentrationGuard';
 import { portfolioCorrelationService } from '../../services/PortfolioCorrelationService';
+import { exposureCoachService } from '../../services/ExposureCoachService';
 import { PaperTradingPortfolio } from '../../models/PaperTradingPortfolio';
 
 export class PortfolioController {
@@ -487,6 +488,77 @@ export class PortfolioController {
       res.status(500).json({
         success: false,
         message: error?.message || '获取持仓相关性失败',
+      });
+    }
+  }
+
+  /**
+   * GET /api/portfolio/exposure
+   * Phase 8: 4 维 exposure (gross / net / leverage / β) + warnings
+   *
+   * Query: ?portfolio_id=N (不传则用 user 第一个 portfolio)
+   */
+  async getExposure(req: Request, res: Response) {
+    try {
+      const user_id = (req as any).user?.id;
+      if (!user_id) {
+        return res.status(401).json({ success: false, message: '未登录' });
+      }
+      let portfolioId = req.query.portfolio_id
+        ? parseInt(String(req.query.portfolio_id), 10)
+        : undefined;
+      if (!Number.isFinite(portfolioId)) {
+        const first = await PaperTradingPortfolio.findOne({
+          where: { user_id },
+          attributes: ['id'],
+          order: [['id', 'ASC']],
+        });
+        if (!first) {
+          return res.status(404).json({ success: false, message: '无 portfolio' });
+        }
+        portfolioId = first.id;
+      }
+      const report = await exposureCoachService.getReport(portfolioId as number);
+      if (!report) {
+        return res.status(404).json({ success: false, message: 'portfolio 不存在' });
+      }
+      if (report.user_id !== user_id) {
+        return res.status(403).json({ success: false, message: '无权访问' });
+      }
+      res.json({ success: true, data: report });
+    } catch (error: any) {
+      logger.error('获取 exposure 失败:', error);
+      res.status(500).json({
+        success: false,
+        message: error?.message || '获取 exposure 失败',
+      });
+    }
+  }
+
+  /**
+   * GET /api/portfolio/behavior-bias
+   * Phase 8: 4 种行为偏差诊断 (追涨/过度交易/套牢/落袋为安过早) + health_score
+   *
+   * Query: ?lookback_days=90
+   */
+  async getBehaviorBias(req: Request, res: Response) {
+    try {
+      const user_id = (req as any).user?.id;
+      if (!user_id) {
+        return res.status(401).json({ success: false, message: '未登录' });
+      }
+      const lookbackDays = req.query.lookback_days
+        ? Math.max(7, Math.min(365, parseInt(String(req.query.lookback_days), 10)))
+        : 90;
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { behaviorBiasDetector } = require('../../services/BehaviorBiasDetector');
+      const report = await behaviorBiasDetector.getReport(user_id, lookbackDays);
+      res.json({ success: true, data: report });
+    } catch (error: any) {
+      logger.error('获取 behavior bias 失败:', error);
+      res.status(500).json({
+        success: false,
+        message: error?.message || '获取 behavior bias 失败',
       });
     }
   }

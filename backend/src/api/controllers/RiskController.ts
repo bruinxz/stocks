@@ -446,6 +446,22 @@ export class RiskController {
       res.status(500).json({ success: false, message: error.message });
     }
   }
+
+  /**
+   * GET /api/risk/market-top-status  (Phase 8)
+   * 市场顶部前瞻预警 — 5 维信号 + top_score (0-100)
+   */
+  async getMarketTopStatus(_req: Request, res: Response, _next: NextFunction) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { marketTopDetector } = require('../../services/MarketTopDetector');
+      const data = await marketTopDetector.getReport();
+      res.json({ success: true, data });
+    } catch (error: any) {
+      logger.error('获取 market top status 失败:', error);
+      res.status(500).json({ success: false, message: error?.message || '获取失败' });
+    }
+  }
 }
 
 export const riskController = new RiskController();

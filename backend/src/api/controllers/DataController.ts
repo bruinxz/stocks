@@ -32,6 +32,8 @@ export class DataController {
   constructor() {
     this.getHealthStatus = this.getHealthStatus.bind(this);
     this.getSystemTopology = this.getSystemTopology.bind(this);
+    this.getMarketBreadth = this.getMarketBreadth.bind(this);
+    this.getQualityDeepCheck = this.getQualityDeepCheck.bind(this);
     this.triggerSync = this.triggerSync.bind(this);
     this.listDragonTiger = this.listDragonTiger.bind(this);
     this.listEtfFlow = this.listEtfFlow.bind(this);
@@ -51,6 +53,46 @@ export class DataController {
         success: false,
         error: error?.message ?? '获取数据源健康状态失败',
       });
+    }
+  }
+
+  /**
+   * GET /api/data/market-breadth
+   * Phase 8: 全市场宽度指标 (用户优先级 #8)
+   *
+   * Query: ?days=7  (默认 7 天, max 30)
+   */
+  async getMarketBreadth(req: Request, res: Response) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { marketBreadthService } = require('../../services/MarketBreadthService');
+      const days = req.query.days ? parseInt(String(req.query.days), 10) : 7;
+      const data = await marketBreadthService.getReport(days);
+      res.json({ success: true, data });
+    } catch (error: any) {
+      logger.error('获取 market breadth 失败:', error);
+      res.status(500).json({ success: false, message: error?.message || '获取失败' });
+    }
+  }
+
+  /**
+   * GET /api/data/quality-deep-check
+   * Phase 8: 数据质量深度检查 (用户优先级 #1)
+   *
+   * Query: ?days=30  (检查最近 N 天，max 90)
+   */
+  async getQualityDeepCheck(req: Request, res: Response) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { dataQualityDeepCheckService } = require('../../services/DataQualityDeepCheckService');
+      const days = req.query.days
+        ? Math.max(1, Math.min(90, parseInt(String(req.query.days), 10)))
+        : 30;
+      const data = await dataQualityDeepCheckService.runDeepCheck(days);
+      res.json({ success: true, data });
+    } catch (error: any) {
+      logger.error('获取 quality deep check 失败:', error);
+      res.status(500).json({ success: false, message: error?.message || '获取失败' });
     }
   }
 

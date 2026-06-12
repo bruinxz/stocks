@@ -168,6 +168,12 @@ router.post(
 // IMPORTANT: /correlation 必须在 /:id 之前注册 (Express 顺序匹配，否则被 catchall 拦)
 router.get('/correlation', authController.authenticate, portfolioController.getCorrelation);
 
+// IMPORTANT: /exposure 同理
+router.get('/exposure', authController.authenticate, portfolioController.getExposure);
+
+// IMPORTANT: /behavior-bias 同理
+router.get('/behavior-bias', authController.authenticate, portfolioController.getBehaviorBias);
+
 router.get('/:id', authController.authenticate, portfolioController.getSimulationDetail);
 
 /**

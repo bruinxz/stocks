@@ -313,3 +313,33 @@ export async function getCorrelationReport(params: {
   }
   return res.data.data as CorrelationReport;
 }
+
+// ============================================================
+// Phase 8: Exposure coach (gross / net / leverage / β)
+// ============================================================
+
+export interface ExposureReport {
+  generated_at: string;
+  portfolio_id: number;
+  user_id: number;
+  total_equity: number;
+  current_cash: number;
+  cash_pct: number;
+  position_count: number;
+  gross_exposure: number;
+  net_exposure: number;
+  leverage_ratio: number;
+  beta_exposure: number;
+  beta_missing_count: number;
+  warnings: string[];
+}
+
+export async function getExposureReport(portfolioId?: number): Promise<ExposureReport> {
+  const res = await api.get('/portfolio/exposure', {
+    params: portfolioId ? { portfolio_id: portfolioId } : {},
+  });
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || '获取 exposure 失败');
+  }
+  return res.data.data as ExposureReport;
+}

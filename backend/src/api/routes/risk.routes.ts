@@ -420,4 +420,18 @@ router.get(
   riskController.getKillSwitchStatus
 );
 
+/**
+ * @swagger
+ * /api/risk/market-top-status:
+ *   get:
+ *     summary: Phase 8 市场顶部前瞻预警
+ *     responses:
+ *       200: { description: 5 维信号 + top_score + level }
+ */
+router.get(
+  '/market-top-status',
+  authController.authenticate,
+  riskController.getMarketTopStatus
+);
+
 export default router;
