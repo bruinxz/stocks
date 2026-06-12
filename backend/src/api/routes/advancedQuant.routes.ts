@@ -1,0 +1,80 @@
+/**
+ * Advanced Quant Routes — Sprint 1-3 五大新 service 的 HTTP 路由
+ *
+ * Mount: /api/advanced-quant
+ */
+import { Router } from 'express';
+import { advancedQuantController } from '../controllers/AdvancedQuantController';
+import { AuthController } from '../controllers/AuthController';
+
+const router = Router();
+const authController = new AuthController();
+
+// === Research Integrity (Sprint 1A) ===
+router.post('/research-integrity/audit', authController.authenticate, advancedQuantController.runResearchAudit);
+router.get('/research-integrity/recent', authController.authenticate, advancedQuantController.listResearchAudits);
+router.get(
+  '/research-integrity/by-strategy/:strategy_key',
+  authController.authenticate,
+  advancedQuantController.listResearchAuditsByStrategy
+);
+router.get(
+  '/research-integrity/by-backtest/:source/:backtest_id',
+  authController.authenticate,
+  advancedQuantController.getLatestResearchAuditForBacktest
+);
+
+// === Execution Feasibility (Sprint 1B) ===
+router.post(
+  '/execution-feasibility/check',
+  authController.authenticate,
+  advancedQuantController.checkExecutionFeasibility
+);
+router.post(
+  '/execution-feasibility/batch',
+  authController.authenticate,
+  advancedQuantController.batchExecutionFeasibility
+);
+router.get(
+  '/execution-feasibility/recent',
+  authController.authenticate,
+  advancedQuantController.listExecutionFeasibility
+);
+
+// === Meta-label (Sprint 2A) ===
+router.post('/meta-label/decide', authController.authenticate, advancedQuantController.decideMetaLabel);
+router.post('/meta-label/train', authController.authenticate, advancedQuantController.trainMetaLabel);
+router.get('/meta-label/model', authController.authenticate, advancedQuantController.getMetaLabelModel);
+router.get('/meta-label/recent', authController.authenticate, advancedQuantController.listMetaLabelDecisions);
+
+// === Portfolio Construction (Sprint 2B) ===
+router.post(
+  '/portfolio-construction/construct',
+  authController.authenticate,
+  advancedQuantController.constructPortfolio
+);
+router.get(
+  '/portfolio-construction/recent',
+  authController.authenticate,
+  advancedQuantController.listPortfolioConstructions
+);
+
+// === Equity Curve Governor (Sprint 3) ===
+router.post('/governor/evaluate', authController.authenticate, advancedQuantController.evaluateGovernor);
+router.post(
+  '/governor/evaluate-all',
+  authController.authenticate,
+  advancedQuantController.evaluateGovernorAll
+);
+router.get(
+  '/governor/multiplier/:portfolio_id',
+  authController.authenticate,
+  advancedQuantController.getGovernorMultiplier
+);
+router.get(
+  '/governor/history/:portfolio_id',
+  authController.authenticate,
+  advancedQuantController.getGovernorHistory
+);
+
+export default router;

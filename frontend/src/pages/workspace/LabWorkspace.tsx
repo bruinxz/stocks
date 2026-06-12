@@ -57,6 +57,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
 import LeaderboardTab from './LabWorkspace.LeaderboardTab';
 import WalkForwardTab from './LabWorkspace.WalkForwardTab';
+import AdvancedQuantTab from './LabWorkspace.AdvancedQuantTab';
 import {
   labService,
   QuantStrategyItem,
@@ -101,6 +102,7 @@ const LabWorkspace: React.FC = () => {
     { key: 'compare', label: '回测对比', icon: <SwapOutlined /> },
     { key: 'walk_forward', label: 'Walk-Forward', icon: <SafetyCertificateOutlined /> },
     { key: 'optimization', label: '优化历史', icon: <NodeIndexOutlined /> },
+    { key: 'advanced_quant', label: '高级量化', icon: <SafetyCertificateOutlined /> },
   ];
   const [activeKey, setActiveKey] = useState('mine');
 
@@ -407,6 +409,8 @@ const LabWorkspace: React.FC = () => {
     body = <WalkForwardTab strategies={strategies} />;
   } else if (activeKey === 'optimization') {
     body = <OptimizationRunsTab />;
+  } else if (activeKey === 'advanced_quant') {
+    body = <AdvancedQuantTab />;
   } else {
     body = (
       <CompareTab

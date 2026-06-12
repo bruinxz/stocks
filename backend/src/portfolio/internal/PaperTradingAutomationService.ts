@@ -33,6 +33,8 @@ import {
   SizingDecision,
 } from '../PositionSizingPolicy';
 import { strategyKellyStatsService } from '../../services/StrategyKellyStatsService';
+import { equityCurveGovernorService } from '../../services/governor/EquityCurveGovernorService';
+import { metaLabelService } from '../../services/meta/MetaLabelService';
 
 export const DEFAULT_PAPER_TRADING_INITIAL_CAPITAL = 200000;
 
@@ -1892,7 +1894,27 @@ class PaperTradingAutomationService {
 
           // 硬切换：真正替换 effectiveTargetPct
           if (sizingPolicy.hard_cutover_enabled && shadowSizingDecision.position_pct > 0) {
-            const newPct = shadowSizingDecision.position_pct;
+            let newPct = shadowSizingDecision.position_pct;
+            // Sprint 3: 应用 EquityCurveGovernor multiplier
+            try {
+              const govMult = await equityCurveGovernorService.getCurrentMultiplier(portfolio.id);
+              if (govMult < 1.0 && govMult >= 0) {
+                const beforeGov = newPct;
+                newPct = newPct * govMult;
+                logger.info(
+                  `[governor] user=${portfolio.user_id} symbol=${signal.symbol} ` +
+                    `multiplier=${govMult.toFixed(2)} ${roundNumber(beforeGov, 2)}% → ${roundNumber(newPct, 2)}%`
+                );
+                if (newPct < 0.5) {
+                  await skip(
+                    `EquityCurveGovernor 降权后仓位 ${newPct.toFixed(2)}% 过低（× ${govMult.toFixed(2)})，跳过本笔`
+                  );
+                  continue;
+                }
+              }
+            } catch (err: any) {
+              logger.warn(`[governor] multiplier fetch failed: ${err?.message || err}`);
+            }
             logger.info(
               `[hard-sizing] APPLY user=${portfolio.user_id} symbol=${signal.symbol} ` +
                 `${roundNumber(effectiveTargetPct, 2)}% → ${roundNumber(newPct, 2)}%`

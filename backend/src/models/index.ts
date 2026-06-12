@@ -82,3 +82,13 @@ export * from './MacroIndicator';
 export * from './FundTopHolding';
 export * from './OptionQvix';
 export * from './BlockTrade';
+// Sprint 1A 研究严谨性审计
+export * from './ResearchIntegrityAudit';
+// Sprint 1B 执行可行性评分
+export * from './ExecutionFeasibilityRecord';
+// Sprint 2A Meta-label 决策日志
+export * from './MetaLabelDecision';
+// Sprint 2B 风险预算组合优化结果
+export * from './PortfolioConstructionResult';
+// Sprint 3 资金曲线 governor 状态
+export * from './EquityCurveGovernorState';
