@@ -29,6 +29,7 @@ import {
   CopyOutlined,
   EditOutlined,
   ExperimentOutlined,
+  NodeIndexOutlined,
   TrophyOutlined,
   PlayCircleOutlined,
   PlusSquareOutlined,
@@ -66,6 +67,7 @@ import {
   BacktestMonthlyReturnsResponse,
   BacktestRollingSharpeResponse,
   CreateBacktestPayload,
+  OptimizationRunSummary,
 } from '../../services/labService';
 import StrategyCopilotPanel from '../../components/trading/StrategyCopilotPanel';
 
@@ -98,6 +100,7 @@ const LabWorkspace: React.FC = () => {
     { key: 'new', label: '新建回测', icon: <PlusSquareOutlined /> },
     { key: 'compare', label: '回测对比', icon: <SwapOutlined /> },
     { key: 'walk_forward', label: 'Walk-Forward', icon: <SafetyCertificateOutlined /> },
+    { key: 'optimization', label: '优化历史', icon: <NodeIndexOutlined /> },
   ];
   const [activeKey, setActiveKey] = useState('mine');
 
@@ -402,6 +405,8 @@ const LabWorkspace: React.FC = () => {
     );
   } else if (activeKey === 'walk_forward') {
     body = <WalkForwardTab strategies={strategies} />;
+  } else if (activeKey === 'optimization') {
+    body = <OptimizationRunsTab />;
   } else {
     body = (
       <CompareTab
@@ -1773,5 +1778,279 @@ function statusLabel(status?: string) {
   };
   return labels[String(status || '').toUpperCase()] || status || '—';
 }
+
+// ============================================================
+// Phase 7+: OptimizationRunsTab - 统一 GridSearch / Bayesian / Walk-Forward dashboard
+// ============================================================
+
+const OptimizationRunsTab: React.FC = () => {
+  const [runs, setRuns] = useState<OptimizationRunSummary[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [optimizerType, setOptimizerType] = useState<
+    'all' | 'grid_search' | 'bayesian' | 'walk_forward'
+  >('all');
+  const [strategyFilter, setStrategyFilter] = useState<string>('');
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await labService.listOptimizationRuns({
+        optimizer_type: optimizerType,
+        strategy_name: strategyFilter || undefined,
+        limit: 100,
+      });
+      setRuns(data);
+    } catch (err: any) {
+      setError(err?.message || '加载失败');
+    } finally {
+      setLoading(false);
+    }
+  }, [optimizerType, strategyFilter]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const typeMeta: Record<string, { color: string; label: string }> = {
+    grid_search: { color: 'blue', label: 'Grid Search' },
+    bayesian: { color: 'purple', label: 'Bayesian' },
+    walk_forward: { color: 'volcano', label: 'Walk-Forward' },
+  };
+
+  const verdictMeta: Record<string, { color: string; label: string }> = {
+    PASS: { color: 'green', label: '✅ PASS' },
+    FAIL: { color: 'red', label: '❌ FAIL' },
+    INSUFFICIENT: { color: 'orange', label: '⚠ INSUFFICIENT' },
+  };
+
+  return (
+    <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      <Card
+        size="small"
+        title={
+          <Space>
+            <NodeIndexOutlined />
+            <Text strong>优化历史统一视图</Text>
+            <Tag color="blue">Phase 7+</Tag>
+          </Space>
+        }
+        extra={
+          <Space size={8}>
+            <span style={{ fontSize: 12 }}>类型:</span>
+            <Select
+              size="small"
+              value={optimizerType}
+              onChange={v => setOptimizerType(v)}
+              style={{ width: 140 }}
+              options={[
+                { value: 'all', label: '全部' },
+                { value: 'grid_search', label: 'Grid Search' },
+                { value: 'bayesian', label: 'Bayesian' },
+                { value: 'walk_forward', label: 'Walk-Forward' },
+              ]}
+            />
+            <span style={{ fontSize: 12 }}>策略:</span>
+            <Input
+              size="small"
+              value={strategyFilter}
+              onChange={e => setStrategyFilter(e.target.value)}
+              placeholder="留空 = 全部"
+              style={{ width: 160 }}
+              allowClear
+            />
+            <Button size="small" icon={<ReloadOutlined />} onClick={load} loading={loading}>
+              刷新
+            </Button>
+          </Space>
+        }
+      >
+        {error && <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} />}
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="三种 optimizer 统一视图"
+          description={
+            <Space direction="vertical" size={2}>
+              <Text style={{ fontSize: 12 }}>• <Text code>Grid Search</Text>：穷举参数网格找最优 in-sample 表现</Text>
+              <Text style={{ fontSize: 12 }}>• <Text code>Bayesian</Text>：GP + EI 高效搜索连续参数空间</Text>
+              <Text style={{ fontSize: 12 }}>• <Text code>Walk-Forward</Text>：滚动 train→test 验证 + DSR/PBO 过拟合检测，最严格的真实样本外检验</Text>
+            </Space>
+          }
+        />
+        <Table
+          size="small"
+          dataSource={runs}
+          rowKey="id"
+          loading={loading}
+          pagination={{ pageSize: 20 }}
+          scroll={{ x: 1100 }}
+          columns={[
+            {
+              title: '类型',
+              dataIndex: 'optimizer_type',
+              width: 110,
+              render: (v: string) => {
+                const meta = typeMeta[v] || { color: 'default', label: v };
+                return <Tag color={meta.color}>{meta.label}</Tag>;
+              },
+            },
+            { title: '策略', dataIndex: 'strategy_name', width: 180, ellipsis: true },
+            {
+              title: '状态',
+              dataIndex: 'status',
+              width: 90,
+              render: (s: string) => <Tag color={statusColor(s)}>{statusLabel(s)}</Tag>,
+            },
+            {
+              title: '总组合',
+              dataIndex: 'total_combos',
+              width: 80,
+              render: (v: number) => v ?? '—',
+            },
+            {
+              title: '完成 / 失败',
+              key: 'progress',
+              width: 100,
+              render: (_: any, r: OptimizationRunSummary) => (
+                <span style={{ fontSize: 12 }}>
+                  {r.completed_combos}
+                  <Text type={r.failed_combos > 0 ? 'danger' : 'secondary'}> / {r.failed_combos}</Text>
+                </span>
+              ),
+            },
+            // WF-only 列：verdict / mean_test_sharpe / DSR / PBO
+            {
+              title: 'verdict',
+              key: 'verdict',
+              width: 110,
+              render: (_: any, r: OptimizationRunSummary) => {
+                const v = r.summary?.verdict;
+                if (!v) return '—';
+                const meta = verdictMeta[v] || { color: 'default', label: v };
+                return <Tag color={meta.color}>{meta.label}</Tag>;
+              },
+            },
+            {
+              title: 'mean test sharpe',
+              key: 'mean_sharpe',
+              width: 130,
+              render: (_: any, r: OptimizationRunSummary) => {
+                const v = r.summary?.mean_test_sharpe;
+                if (v === undefined || v === null) return '—';
+                return (
+                  <Text style={{ color: v > 0 ? '#3f8600' : v < 0 ? '#cf1322' : '#888' }}>
+                    {Number(v).toFixed(3)}
+                  </Text>
+                );
+              },
+            },
+            {
+              title: 'DSR',
+              key: 'dsr',
+              width: 80,
+              render: (_: any, r: OptimizationRunSummary) => {
+                const v = r.summary?.dsr;
+                return v === undefined || v === null ? '—' : Number(v).toFixed(3);
+              },
+            },
+            {
+              title: 'PBO',
+              key: 'pbo',
+              width: 80,
+              render: (_: any, r: OptimizationRunSummary) => {
+                const v = r.summary?.pbo;
+                if (v === undefined || v === null) return '—';
+                // PBO > 0.5 表示过拟合可能性高
+                return (
+                  <Text style={{ color: v > 0.5 ? '#cf1322' : '#888' }}>
+                    {Number(v).toFixed(3)}
+                  </Text>
+                );
+              },
+            },
+            {
+              title: '创建时间',
+              dataIndex: 'created_at',
+              width: 140,
+              render: (v: string) =>
+                v ? <span style={{ fontSize: 12 }}>{dayjs(v).format('MM-DD HH:mm')}</span> : '—',
+            },
+            {
+              title: '耗时',
+              key: 'duration',
+              width: 80,
+              render: (_: any, r: OptimizationRunSummary) => {
+                if (!r.started_at || !r.finished_at) return '—';
+                const s = dayjs(r.finished_at).diff(dayjs(r.started_at), 'second');
+                if (s < 60) return `${s}s`;
+                if (s < 3600) return `${Math.round(s / 60)}m`;
+                return `${(s / 3600).toFixed(1)}h`;
+              },
+            },
+          ]}
+          expandable={{
+            expandedRowRender: (r: OptimizationRunSummary) => (
+              <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                <div style={{ fontSize: 12 }}>
+                  <Text strong>backtest_config:</Text>
+                  <pre
+                    style={{
+                      background: '#f8fafc',
+                      padding: 8,
+                      borderRadius: 4,
+                      fontSize: 11,
+                      maxHeight: 200,
+                      overflow: 'auto',
+                    }}
+                  >
+                    {JSON.stringify(r.backtest_config_json || {}, null, 2)}
+                  </pre>
+                </div>
+                {r.summary && (
+                  <div style={{ fontSize: 12 }}>
+                    <Text strong>walk-forward summary:</Text>
+                    <pre
+                      style={{
+                        background: '#f8fafc',
+                        padding: 8,
+                        borderRadius: 4,
+                        fontSize: 11,
+                        maxHeight: 200,
+                        overflow: 'auto',
+                      }}
+                    >
+                      {JSON.stringify(r.summary, null, 2)}
+                    </pre>
+                  </div>
+                )}
+                <div style={{ fontSize: 12 }}>
+                  <Text strong>param 空间:</Text>
+                  <pre
+                    style={{
+                      background: '#f8fafc',
+                      padding: 8,
+                      borderRadius: 4,
+                      fontSize: 11,
+                      maxHeight: 200,
+                      overflow: 'auto',
+                    }}
+                  >
+                    {JSON.stringify(r.param_grid_json || {}, null, 2)}
+                  </pre>
+                </div>
+              </Space>
+            ),
+          }}
+          locale={{
+            emptyText: <Empty description="暂无 optimization run。在 Walk-Forward 或 CLI 触发后会出现。" />,
+          }}
+        />
+      </Card>
+    </Space>
+  );
+};
 
 export default LabWorkspace;

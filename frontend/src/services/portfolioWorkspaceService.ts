@@ -269,6 +269,47 @@ export const portfolioWorkspaceService = {
   getJournalDetail,
   appendJournalNote,
   fetchBenchmarkHistory,
+  getCorrelationReport,
 };
 
 export default portfolioWorkspaceService;
+
+// ============================================================
+// Phase 6: Portfolio correlation matrix + cluster
+// ============================================================
+
+export interface CorrelationCluster {
+  members: string[];
+  avg_correlation: number;
+  total_market_value: number;
+  pct_of_portfolio: number;
+  dominant_industry?: string;
+}
+
+export interface CorrelationReport {
+  generated_at: string;
+  portfolio_id: number;
+  user_id: number;
+  position_count: number;
+  insufficient_data_symbols: string[];
+  lookback_days: number;
+  matrix: {
+    symbols: string[];
+    matrix: Array<Array<number | null>>;
+  };
+  high_correlation_clusters: CorrelationCluster[];
+  avg_off_diagonal_correlation: number | null;
+  diversification_level: 'high' | 'medium' | 'low' | 'insufficient';
+}
+
+export async function getCorrelationReport(params: {
+  portfolio_id?: number;
+  lookback_days?: number;
+  cluster_threshold?: number;
+} = {}): Promise<CorrelationReport> {
+  const res = await api.get('/portfolio/correlation', { params });
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || '获取相关性报告失败');
+  }
+  return res.data.data as CorrelationReport;
+}

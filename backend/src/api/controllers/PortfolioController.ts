@@ -9,6 +9,8 @@ import { Stock } from '../../models/Stock';
 import { Op } from 'sequelize';
 import { normalizeSymbol } from '../../utils/stockSymbol';
 import { industryConcentrationGuard } from '../../portfolio/risk/IndustryConcentrationGuard';
+import { portfolioCorrelationService } from '../../services/PortfolioCorrelationService';
+import { PaperTradingPortfolio } from '../../models/PaperTradingPortfolio';
 
 export class PortfolioController {
   private simulator: PortfolioReturnSimulator;
@@ -429,6 +431,62 @@ export class PortfolioController {
       res.status(statusCode).json({
         success: false,
         message: error?.message || '行业再平衡失败',
+      });
+    }
+  }
+
+  /**
+   * GET /api/portfolio/correlation
+   * Phase 6: 持仓 N×N 相关性热力图 + 高相关 cluster 警告
+   *
+   * Query: ?portfolio_id=N&lookback_days=60&cluster_threshold=0.7
+   * 如果不传 portfolio_id, 自动用 user 的第一个 portfolio。
+   */
+  async getCorrelation(req: Request, res: Response) {
+    try {
+      const user_id = (req as any).user?.id;
+      if (!user_id) {
+        return res.status(401).json({ success: false, message: '未登录' });
+      }
+      let portfolioId = req.query.portfolio_id
+        ? parseInt(String(req.query.portfolio_id), 10)
+        : undefined;
+      // 不传则查 user 的第一个 portfolio
+      if (!Number.isFinite(portfolioId)) {
+        const first = await PaperTradingPortfolio.findOne({
+          where: { user_id },
+          attributes: ['id'],
+          order: [['id', 'ASC']],
+        });
+        if (!first) {
+          return res.status(404).json({ success: false, message: '无 portfolio' });
+        }
+        portfolioId = first.id;
+      }
+      const lookbackDays = req.query.lookback_days
+        ? parseInt(String(req.query.lookback_days), 10)
+        : 60;
+      const clusterThreshold = req.query.cluster_threshold
+        ? Number(req.query.cluster_threshold)
+        : 0.7;
+
+      const report = await portfolioCorrelationService.getReport(portfolioId as number, {
+        lookback_days: lookbackDays,
+        cluster_threshold: clusterThreshold,
+      });
+      if (!report) {
+        return res.status(404).json({ success: false, message: 'portfolio 不存在' });
+      }
+      // 权限检查: report 的 user_id 必须等于请求 user
+      if (report.user_id !== user_id) {
+        return res.status(403).json({ success: false, message: '无权访问' });
+      }
+      res.json({ success: true, data: report });
+    } catch (error: any) {
+      logger.error('获取持仓相关性失败:', error);
+      res.status(500).json({
+        success: false,
+        message: error?.message || '获取持仓相关性失败',
       });
     }
   }

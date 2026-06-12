@@ -29,7 +29,9 @@ import {
   CheckOutlined,
   CloseOutlined,
   EditOutlined,
+  ExclamationCircleOutlined,
   LineChartOutlined,
+  RadarChartOutlined,
   ReadOutlined,
   ReloadOutlined,
   RobotOutlined,
@@ -60,6 +62,8 @@ import {
   JournalSummary,
   JournalDetail,
   BenchmarkHistoryPoint,
+  CorrelationReport,
+  getCorrelationReport,
 } from '../../services/portfolioWorkspaceService';
 
 const { Text, Paragraph } = Typography;
@@ -92,6 +96,7 @@ const PortfolioWorkspace: React.FC = () => {
     { key: 'equity', label: '资金曲线', icon: <LineChartOutlined /> },
     { key: 'trades', label: '交易明细', icon: <UnorderedListOutlined /> },
     { key: 'journal', label: '复盘日记', icon: <ReadOutlined /> },
+    { key: 'correlation', label: '相关性矩阵', icon: <RadarChartOutlined /> },
   ];
   const [activeKey, setActiveKey] = useState<string>('positions');
 
@@ -241,6 +246,8 @@ const PortfolioWorkspace: React.FC = () => {
     body = <TradesTab trades={trades} />;
   } else if (activeKey === 'journal') {
     body = <JournalTab list={journalList} onListRefresh={() => void refresh()} />;
+  } else if (activeKey === 'correlation') {
+    body = <CorrelationTab portfolioId={portfolioData?.portfolio?.id} />;
   } else {
     body = null;
   }
@@ -1662,3 +1669,287 @@ function sliceSnapshotsByWindow(snapshots: SnapshotRow[], window: WindowKey): Sn
   const cutoff = lastDate.subtract(lookback, 'day');
   return snapshots.filter(s => !dayjs(s.date).isBefore(cutoff));
 }
+
+// ============================================================
+// Phase 6: 持仓相关性热力图 + cluster
+// ============================================================
+
+const CorrelationTab: React.FC<{ portfolioId?: number }> = ({ portfolioId }) => {
+  const [report, setReport] = useState<CorrelationReport | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [lookbackDays, setLookbackDays] = useState(60);
+  const [clusterThreshold, setClusterThreshold] = useState(0.7);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const r = await getCorrelationReport({
+        portfolio_id: portfolioId,
+        lookback_days: lookbackDays,
+        cluster_threshold: clusterThreshold,
+      });
+      setReport(r);
+    } catch (err: any) {
+      setError(err?.message || '加载失败');
+      setReport(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [portfolioId, lookbackDays, clusterThreshold]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  // 颜色映射: -1 (深蓝) → 0 (白) → +1 (深红)
+  const corrColor = (v: number | null): string => {
+    if (v === null) return '#f0f0f0';
+    const x = Math.max(-1, Math.min(1, v));
+    if (x >= 0) {
+      // 0→1: white→red
+      const r = 255;
+      const g = Math.round(255 * (1 - x));
+      const b = Math.round(255 * (1 - x));
+      return `rgb(${r},${g},${b})`;
+    }
+    // -1→0: blue→white
+    const r = Math.round(255 * (1 + x));
+    const g = Math.round(255 * (1 + x));
+    const b = 255;
+    return `rgb(${r},${g},${b})`;
+  };
+
+  const levelTag: Record<string, { color: string; label: string }> = {
+    high: { color: 'green', label: '✅ 高分散度' },
+    medium: { color: 'orange', label: '⚠️ 中等分散度' },
+    low: { color: 'red', label: '❌ 低分散度（持仓相关性偏高）' },
+    insufficient: { color: 'default', label: '— 数据不足' },
+  };
+
+  return (
+    <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      <Card
+        size="small"
+        title={
+          <Space>
+            <RadarChartOutlined />
+            <Text strong>持仓相关性矩阵</Text>
+            <Tag color="blue">Phase 6</Tag>
+          </Space>
+        }
+        extra={
+          <Space size={8}>
+            <span style={{ fontSize: 12 }}>回看:</span>
+            <Select
+              size="small"
+              value={lookbackDays}
+              onChange={v => setLookbackDays(v)}
+              options={[
+                { value: 30, label: '30d' },
+                { value: 60, label: '60d' },
+                { value: 90, label: '90d' },
+                { value: 120, label: '120d' },
+              ]}
+              style={{ width: 80 }}
+            />
+            <span style={{ fontSize: 12 }}>阈值:</span>
+            <InputNumber
+              size="small"
+              min={0.3}
+              max={0.95}
+              step={0.05}
+              value={clusterThreshold}
+              onChange={v => setClusterThreshold(typeof v === 'number' ? v : 0.7)}
+              style={{ width: 80 }}
+            />
+            <Button size="small" icon={<ReloadOutlined />} onClick={load} loading={loading}>
+              刷新
+            </Button>
+          </Space>
+        }
+      >
+        {error && <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} />}
+        {loading && !report && <Spin tip="计算中..." />}
+        {report && (
+          <>
+            <Space wrap size={8} style={{ marginBottom: 12 }}>
+              <Tag>持仓数 {report.position_count}</Tag>
+              <Tag color={levelTag[report.diversification_level].color}>
+                {levelTag[report.diversification_level].label}
+              </Tag>
+              {report.avg_off_diagonal_correlation !== null && (
+                <Tag>平均相关性 {report.avg_off_diagonal_correlation.toFixed(3)}</Tag>
+              )}
+              {report.insufficient_data_symbols.length > 0 && (
+                <Tooltip title={report.insufficient_data_symbols.join(', ')}>
+                  <Tag color="default">数据不足 {report.insufficient_data_symbols.length} 只</Tag>
+                </Tooltip>
+              )}
+            </Space>
+
+            {report.matrix.symbols.length >= 2 ? (
+              <div style={{ overflowX: 'auto' }}>
+                <table
+                  style={{
+                    borderCollapse: 'collapse',
+                    fontSize: 11,
+                    width: 'auto',
+                  }}
+                >
+                  <thead>
+                    <tr>
+                      <th
+                        style={{
+                          padding: '4px 8px',
+                          textAlign: 'left',
+                          borderBottom: '1px solid #eee',
+                          fontSize: 11,
+                        }}
+                      >
+                        symbol
+                      </th>
+                      {report.matrix.symbols.map(s => (
+                        <th
+                          key={s}
+                          style={{
+                            padding: '4px 6px',
+                            textAlign: 'center',
+                            borderBottom: '1px solid #eee',
+                            fontSize: 11,
+                            writingMode: 'vertical-rl',
+                            height: 80,
+                          }}
+                        >
+                          {s}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {report.matrix.symbols.map((sRow, i) => (
+                      <tr key={sRow}>
+                        <td
+                          style={{
+                            padding: '4px 8px',
+                            fontWeight: 500,
+                            borderRight: '1px solid #eee',
+                            fontSize: 11,
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {sRow}
+                        </td>
+                        {report.matrix.matrix[i].map((cell, j) => (
+                          <td
+                            key={j}
+                            style={{
+                              padding: '4px 6px',
+                              textAlign: 'center',
+                              background: corrColor(cell),
+                              border: '1px solid #fff',
+                              minWidth: 36,
+                              color: cell !== null && Math.abs(cell) > 0.7 ? '#000' : '#666',
+                              fontWeight: cell !== null && Math.abs(cell) > 0.7 ? 600 : 400,
+                            }}
+                            title={
+                              cell === null
+                                ? '数据不足'
+                                : `corr(${sRow}, ${report.matrix.symbols[j]}) = ${cell.toFixed(3)}`
+                            }
+                          >
+                            {cell === null ? '—' : cell.toFixed(2)}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div
+                  style={{
+                    marginTop: 12,
+                    fontSize: 11,
+                    color: '#888',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                  }}
+                >
+                  色阶:
+                  <span style={{ background: 'rgb(0,0,255)', padding: '2px 8px' }}>-1</span>
+                  <span style={{ background: 'rgb(255,255,255)', padding: '2px 8px', border: '1px solid #ddd' }}>0</span>
+                  <span style={{ background: 'rgb(255,0,0)', padding: '2px 8px' }}>+1</span>
+                </div>
+              </div>
+            ) : (
+              <Alert
+                type="info"
+                showIcon
+                message="持仓数不足或数据缺失"
+                description="需要至少 2 只持仓且每只有 30 日以上 daily close 数据才能算相关性。"
+              />
+            )}
+          </>
+        )}
+      </Card>
+
+      {report && report.high_correlation_clusters.length > 0 && (
+        <Card
+          size="small"
+          title={
+            <Space>
+              <ExclamationCircleOutlined style={{ color: '#cf1322' }} />
+              <Text strong>高相关性 Cluster 警告</Text>
+              <Tag color="error">{report.high_correlation_clusters.length} 个 cluster</Tag>
+            </Space>
+          }
+        >
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message="这些股票走势高度同步 — 系统性 risk-off 时会一起跌"
+            description="建议考虑减仓或加入反向 beta 资产降低组合相关性。"
+          />
+          <Space direction="vertical" size={8} style={{ width: '100%' }}>
+            {report.high_correlation_clusters.map((c, i) => (
+              <Card key={i} size="small" type="inner">
+                <Row gutter={[12, 8]}>
+                  <Col xs={24} md={8}>
+                    <Statistic
+                      title="cluster 成员"
+                      value={c.members.length}
+                      suffix={` 只 (${c.members.join(', ')})`}
+                      valueStyle={{ fontSize: 14 }}
+                    />
+                  </Col>
+                  <Col xs={12} md={5}>
+                    <Statistic
+                      title="平均相关性"
+                      value={c.avg_correlation}
+                      precision={3}
+                      valueStyle={{ fontSize: 14, color: '#cf1322' }}
+                    />
+                  </Col>
+                  <Col xs={12} md={5}>
+                    <Statistic
+                      title="占组合"
+                      value={c.pct_of_portfolio}
+                      suffix="%"
+                      precision={1}
+                      valueStyle={{ fontSize: 14 }}
+                    />
+                  </Col>
+                  <Col xs={24} md={6}>
+                    {c.dominant_industry && <Tag color="volcano">主导行业: {c.dominant_industry}</Tag>}
+                  </Col>
+                </Row>
+              </Card>
+            ))}
+          </Space>
+        </Card>
+      )}
+    </Space>
+  );
+};

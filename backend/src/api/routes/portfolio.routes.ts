@@ -165,6 +165,9 @@ router.post(
  *       401: { description: 未授权 }
  *       404: { description: 未找到 }
  */
+// IMPORTANT: /correlation 必须在 /:id 之前注册 (Express 顺序匹配，否则被 catchall 拦)
+router.get('/correlation', authController.authenticate, portfolioController.getCorrelation);
+
 router.get('/:id', authController.authenticate, portfolioController.getSimulationDetail);
 
 /**

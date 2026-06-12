@@ -132,6 +132,40 @@ export class BacktestEngine {
   }
 
   /**
+   * Phase 7+: 统一列出所有 OptimizationRun (grid_search / bayesian / walk_forward 全部)
+   * 支持按 optimizer_type 过滤；默认 30 条按 created_at desc。
+   * 由 GET /api/quant/optimization-runs 调用。
+   */
+  async listOptimizationRuns(options?: {
+    optimizer_type?: 'grid_search' | 'bayesian' | 'walk_forward' | 'all';
+    strategy_name?: string;
+    limit?: number;
+    user_id?: number;
+  }): Promise<any[]> {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { OptimizationRun } = require('../../models/OptimizationRun');
+    const where: Record<string, any> = {};
+    if (options?.strategy_name) where.strategy_name = options.strategy_name;
+    if (options?.user_id) where.created_by = options.user_id;
+    if (options?.optimizer_type && options.optimizer_type !== 'all') {
+      where.optimizer_type = options.optimizer_type;
+    }
+    const rows = await OptimizationRun.findAll({
+      where,
+      order: [['created_at', 'DESC']],
+      limit: Math.min(Math.max(Number(options?.limit || 30), 1), 200),
+    });
+    // 把 walk-forward run 的 metadata_json.wf_summary 抠到顶层，便于前端 render
+    return rows.map((r: any) => {
+      const plain = r.toJSON();
+      if (plain.optimizer_type === 'walk_forward' && plain.metadata_json?.wf_summary) {
+        plain.summary = plain.metadata_json.wf_summary;
+      }
+      return plain;
+    });
+  }
+
+  /**
    * Phase 1: 拿一个 walk-forward run 的所有 windows
    * 由 GET /api/quant/walk-forward/runs/:id/windows 调用。
    */

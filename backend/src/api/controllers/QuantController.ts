@@ -437,6 +437,33 @@ export class QuantController {
   }
 
   /**
+   * Phase 7+: GET /api/quant/optimization-runs
+   * 统一列出所有 OptimizationRun (grid_search / bayesian / walk_forward)
+   * Query: ?optimizer_type=walk_forward&strategy_name=mfa&limit=50
+   */
+  async listOptimizationRuns(req: AuthenticatedRequest, res: Response) {
+    try {
+      const optimizerType = req.query.optimizer_type
+        ? (String(req.query.optimizer_type) as
+            | 'grid_search'
+            | 'bayesian'
+            | 'walk_forward'
+            | 'all')
+        : 'all';
+      const runs = await backtestEngine.listOptimizationRuns({
+        optimizer_type: optimizerType,
+        strategy_name: req.query.strategy_name as string | undefined,
+        limit: req.query.limit ? Number(req.query.limit) : 30,
+        user_id: req.query.user_id ? Number(req.query.user_id) : undefined,
+      });
+      res.json({ success: true, data: runs });
+    } catch (error: any) {
+      logger.error('查询 optimization runs 失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
    * Phase 1: GET /api/quant/walk-forward/runs/:id/windows
    */
   async getWalkForwardWindows(req: AuthenticatedRequest, res: Response) {

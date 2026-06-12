@@ -609,6 +609,47 @@ export async function deleteWalkForwardRun(runId: number): Promise<void> {
   }
 }
 
+// ---------- Phase 7+: 统一 OptimizationRun listing -----------
+
+export interface OptimizationRunSummary {
+  id: number;
+  optimizer_type: 'grid_search' | 'bayesian' | 'walk_forward';
+  strategy_name: string;
+  status: string;
+  total_combos: number;
+  completed_combos: number;
+  failed_combos: number;
+  best_result_id: number | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  metadata_json?: { wf_summary?: WalkForwardSummary };
+  param_grid_json?: any;
+  backtest_config_json?: any;
+  /** 当 optimizer_type='walk_forward' 时，从 metadata_json.wf_summary 抠到顶层 */
+  summary?: WalkForwardSummary;
+}
+
+export async function listOptimizationRuns(
+  options: {
+    optimizer_type?: 'grid_search' | 'bayesian' | 'walk_forward' | 'all';
+    strategy_name?: string;
+    limit?: number;
+  } = {}
+): Promise<OptimizationRunSummary[]> {
+  const res = await api.get('/quant/optimization-runs', {
+    params: {
+      optimizer_type: options.optimizer_type || 'all',
+      strategy_name: options.strategy_name,
+      limit: options.limit ?? 50,
+    },
+  });
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || '查询 optimization runs 失败');
+  }
+  return (res.data.data || []) as OptimizationRunSummary[];
+}
+
 // ---------- bundled export -------------------------------------------------
 
 export const labService = {
@@ -629,6 +670,7 @@ export const labService = {
   listWalkForwardRuns,
   getWalkForwardWindows,
   deleteWalkForwardRun,
+  listOptimizationRuns,
 };
 
 export default labService;

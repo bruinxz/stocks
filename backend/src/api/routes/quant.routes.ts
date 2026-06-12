@@ -467,6 +467,32 @@ router.get(
 
 /**
  * @openapi
+ * /api/quant/optimization-runs:
+ *   get:
+ *     tags: [量化 Quant]
+ *     summary: (Phase 7+) 统一列出所有 OptimizationRun (grid_search / bayesian / walk_forward)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: query
+ *         name: optimizer_type
+ *         schema: { type: string, enum: [grid_search, bayesian, walk_forward, all] }
+ *       - in: query
+ *         name: strategy_name
+ *         schema: { type: string }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, default: 30, maximum: 200 }
+ *     responses:
+ *       200: { description: OptimizationRun 列表 (统一形态) }
+ */
+router.get(
+  '/optimization-runs',
+  authController.authenticate,
+  quantController.listOptimizationRuns.bind(quantController)
+);
+
+/**
+ * @openapi
  * /api/quant/walk-forward/runs/{id}/windows:
  *   get:
  *     tags: [量化 Quant]
