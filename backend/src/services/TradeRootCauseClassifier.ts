@@ -14,13 +14,19 @@
  *   1. risk_kill_switch (exit_reason 含 kill_switch) → conf=1.0
  *   2. backtest_drift (实盘 vs 回测预期偏离 > 50%) → conf=0.9
  *   3. data_quality (买入价或卖出价 NaN / 0 / impossible) → conf=1.0
- *   4. wrong_regime (买入时是 bull 但卖出时是 bear, 持仓 ≥ 5 天) → conf=0.7
- *   5. catalyst_failed (买入因为业绩预告 catalyst 但卖出时 negative_return) → conf=0.6
- *   6. wrong_entry (买入后第一周内最大回撤 > 5% 且最终 loss) → conf=0.65
+ *   4. wrong_regime (买入/卖出 regime 不同 + 恶化切换 + 持仓 ≥ 3 天 + loss) → conf=0.7
+ *   5. catalyst_failed (event 或 价量类 catalyst 但 return_pct < 0) → conf=0.6
+ *   6. wrong_entry (3 种 pattern: 7 日内 dd>5%, 3 日内 dd>3%, 'dd 远大于实际亏损') → conf=0.55-0.65
  *   7. stop_loss (exit_reason='stop_loss' 或 return_pct ≤ -strategy_stop_pct) → conf=0.95
  *   8. time_stop (持仓天数 ≥ max_holding_days) → conf=0.9
  *   9. profit_take (return_pct > 0 且没匹配上面) → conf=0.8
  *   10. unknown → conf=0.0 (fallback)
+ *
+ * **Phase 5+ 增强 (vs 初版)**:
+ *   - wrong_regime: 持仓阈值 5→3 天 + 加 bull→range / rebound→range 进恶化列表
+ *   - catalyst_failed: 扩 catalyst 关键词到含 breakout/momentum/limit_up/volume_surge
+ *   - wrong_entry: 从单 pattern 扩到 3 个 pattern（短线 + 入场即套）
+ *   - 整体让 unknown 占比预期 < 10% (vs 初版 30%+)
  *
  * **配 confidence 是为了**: <0.5 的可以提示 UI 让用户手工 review；>=0.8 直接信任。
  */
@@ -165,20 +171,24 @@ export function classifyTradeRootCause(input: TradeRootCauseInput): TradeRootCau
     }
   }
 
-  // (4) wrong_regime — 买入和卖出时 regime 不一致 (持仓 >=5 天)
+  // (4) wrong_regime — 买入和卖出时 regime 不一致 (持仓 ≥3 天 + return < 0)
+  // Phase 5+ 增强：
+  //   - 持仓阈值从 5 天降到 3 天（catch 短线 wrong_regime）
+  //   - "恶化"切换扩到含 bull → range（趋势策略在震荡市同样失效）
+  //   - rebound → range 也算（反弹失败转入震荡）
   if (
     input.market_regime_at_entry &&
     input.market_regime_at_exit &&
     input.market_regime_at_entry !== input.market_regime_at_exit &&
-    input.holding_days >= 5 &&
+    input.holding_days >= 3 &&
     input.return_pct < 0
   ) {
     const entry = input.market_regime_at_entry;
     const exit = input.market_regime_at_exit;
-    // 特别针对 bull → bear / range → stress 这种"恶化"切换
+    // 扩 "恶化" 切换列表：包括趋势策略最忌讳的 bull→range
     const isBadShift =
-      (entry === 'bull' && (exit === 'bear' || exit === 'stress')) ||
-      (entry === 'rebound' && (exit === 'bear' || exit === 'stress')) ||
+      (entry === 'bull' && (exit === 'bear' || exit === 'stress' || exit === 'range')) ||
+      (entry === 'rebound' && (exit === 'bear' || exit === 'stress' || exit === 'range')) ||
       (entry === 'range' && exit === 'stress');
     if (isBadShift) {
       return {
@@ -190,11 +200,28 @@ export function classifyTradeRootCause(input: TradeRootCauseInput): TradeRootCau
     }
   }
 
-  // (5) catalyst_failed — 入场是某 catalyst 信号 (earnings_surprise / event) 但 return 为负
-  const eventCatalysts = ['earnings_surprise', 'announcement', 'event', 'block_trade_signal'];
+  // (5) catalyst_failed — 入场是某 catalyst 信号但 return 为负
+  // Phase 5+ 增强：扩到含 momentum/breakout/limit_up 类 catalyst
+  // 不仅 event 类（业绩预告/公告）能 failed，价量类信号失效同样归 catalyst_failed
+  const eventCatalysts = [
+    // 事件驱动
+    'earnings_surprise',
+    'announcement',
+    'event',
+    'block_trade_signal',
+    'dragon_tiger',
+    'northbound_inflow',
+    // 价量类（Phase 5+ NEW）— 突破/动量信号失效也算催化失败
+    'breakout',
+    'momentum',
+    'limit_up',
+    'volume_surge',
+    'volume_spike',
+    'gap_up',
+  ];
   if (
     input.signal_catalyst &&
-    eventCatalysts.some(c => String(input.signal_catalyst).includes(c)) &&
+    eventCatalysts.some(c => String(input.signal_catalyst).toLowerCase().includes(c)) &&
     input.return_pct < 0
   ) {
     return {
@@ -205,19 +232,43 @@ export function classifyTradeRootCause(input: TradeRootCauseInput): TradeRootCau
     };
   }
 
-  // (6) wrong_entry — 持仓期内最大回撤 > 5% 且最终亏损 + 第一周
-  if (
-    input.return_pct < 0 &&
-    input.holding_days <= 7 &&
-    Number.isFinite(input.max_drawdown_during_hold_pct ?? NaN) &&
-    (input.max_drawdown_during_hold_pct as number) > 5
-  ) {
-    return {
-      root_cause: 'wrong_entry',
-      root_cause_label: ROOT_CAUSE_LABELS.wrong_entry,
-      confidence: 0.65,
-      matched_rule: 'first_week_drawdown_over_5pct_with_loss',
-    };
+  // (6) wrong_entry — 入场点不佳的 3 种 pattern
+  // Phase 5+ 增强：原只 catch '7 日内 dd > 5% + loss'；扩 3 种 pattern：
+  //   (a) 第一周内 max_dd > 5% 且最终 loss → 经典 wrong_entry（原规则）
+  //   (b) 持仓 ≤ 3 天 max_dd > 3% 且 loss → 短线追高 wrong_entry
+  //   (c) max_drawdown 大于实际 return 绝对值 1.5x 且 loss → 入场即套（盘中跌幅
+  //       远超最终亏损，说明买在高点；caller 才止损或反弹后卖）
+  if (input.return_pct < 0 && Number.isFinite(input.max_drawdown_during_hold_pct ?? NaN)) {
+    const dd = input.max_drawdown_during_hold_pct as number;
+    const absReturn = Math.abs(input.return_pct);
+
+    // (a) 7 日内 max_dd > 5%
+    if (input.holding_days <= 7 && dd > 5) {
+      return {
+        root_cause: 'wrong_entry',
+        root_cause_label: ROOT_CAUSE_LABELS.wrong_entry,
+        confidence: 0.65,
+        matched_rule: 'first_week_drawdown_over_5pct_with_loss',
+      };
+    }
+    // (b) 3 日内 max_dd > 3% (短线追高 / 抢筹失败)
+    if (input.holding_days <= 3 && dd > 3) {
+      return {
+        root_cause: 'wrong_entry',
+        root_cause_label: ROOT_CAUSE_LABELS.wrong_entry,
+        confidence: 0.6,
+        matched_rule: 'short_term_drawdown_over_3pct_with_loss',
+      };
+    }
+    // (c) max_dd 远大于最终 return 绝对值（"入场即套"）
+    if (dd > absReturn * 1.5 && dd > 4 && input.holding_days >= 2) {
+      return {
+        root_cause: 'wrong_entry',
+        root_cause_label: ROOT_CAUSE_LABELS.wrong_entry,
+        confidence: 0.55,
+        matched_rule: 'max_dd_far_exceeds_final_loss_entry_at_peak',
+      };
+    }
   }
 
   // (7) stop_loss

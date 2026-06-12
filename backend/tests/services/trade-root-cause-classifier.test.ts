@@ -158,14 +158,32 @@ function testWrongRegime() {
     market_regime_at_exit: 'stress',
   }, 'wrong_regime');
 
-  // 持仓 3 天 < 5 不算 wrong_regime (太短)
-  expectRootCause('持仓 3 天不算 wrong_regime', {
+  // Phase 5+ 增强：持仓阈值降到 3 天，bull→bear 立即触发 wrong_regime
+  // 持仓 2 天 < 3 不算 wrong_regime；但 max_dd > 3% 可能触发 (b) 短线 wrong_entry
+  expectRootCause('持仓 2 天 + bull→bear 不算 wrong_regime (太短)', {
+    return_pct: -5,
+    holding_days: 2,
+    market_regime_at_entry: 'bull',
+    market_regime_at_exit: 'bear',
+    max_drawdown_during_hold_pct: 6,  // 触发 wrong_entry (3 日内 dd>3%)
+  }, 'wrong_entry');
+
+  // Phase 5+ 增强：持仓 ≥ 3 天 bull→bear 现在归 wrong_regime（原 5 天阈值已降）
+  expectRootCause('持仓 3 天 + bull→bear → wrong_regime (Phase 5+ 增强)', {
     return_pct: -5,
     holding_days: 3,
     market_regime_at_entry: 'bull',
     market_regime_at_exit: 'bear',
-    max_drawdown_during_hold_pct: 6,  // 触发 wrong_entry
-  }, 'wrong_entry');
+    max_drawdown_during_hold_pct: 6,
+  }, 'wrong_regime');
+
+  // Phase 5+ 增强：bull→range 也算恶化切换（趋势策略在震荡市同样失效）
+  expectRootCause('bull→range + 持仓 5 天 + loss → wrong_regime (Phase 5+ NEW)', {
+    return_pct: -3,
+    holding_days: 5,
+    market_regime_at_entry: 'bull',
+    market_regime_at_exit: 'range',
+  }, 'wrong_regime');
 
   // bull→bull 不算切换
   expectRootCause('regime 不变 不算 wrong_regime', {
@@ -201,6 +219,38 @@ function testCatalystFailed() {
     holding_days: 5,
     signal_catalyst: 'earnings_surprise',
   }, 'profit_take');
+
+  // Phase 5+ 增强：价量类 catalyst 失败也归 catalyst_failed
+  expectRootCause('breakout 突破失败 → catalyst_failed (Phase 5+ NEW)', {
+    return_pct: -4,
+    holding_days: 5,
+    signal_catalyst: 'breakout_strategy',
+  }, 'catalyst_failed');
+
+  expectRootCause('limit_up 涨停跟随失败 → catalyst_failed (Phase 5+ NEW)', {
+    return_pct: -6,
+    holding_days: 3,
+    signal_catalyst: 'limit_up_signal',
+  }, 'catalyst_failed');
+
+  expectRootCause('volume_surge 放量失败 → catalyst_failed (Phase 5+ NEW)', {
+    return_pct: -3,
+    holding_days: 4,
+    signal_catalyst: 'volume_surge_alert',
+  }, 'catalyst_failed');
+
+  expectRootCause('momentum 动量失败 → catalyst_failed (Phase 5+ NEW)', {
+    return_pct: -5,
+    holding_days: 6,
+    signal_catalyst: 'momentum_30d',
+  }, 'catalyst_failed');
+
+  // 大小写不敏感
+  expectRootCause('catalyst 关键字大小写不敏感 → catalyst_failed', {
+    return_pct: -3,
+    holding_days: 4,
+    signal_catalyst: 'BREAKOUT_SIGNAL_HIGH',
+  }, 'catalyst_failed');
 }
 
 // ============================================================
@@ -223,9 +273,37 @@ function testWrongEntry() {
     max_drawdown_during_hold_pct: 4,
   }, 'unknown');
 
-  // 持仓 > 7 天不算
-  expectRootCause('持仓 15 天 不算 wrong_entry', {
+  // Phase 5+ NEW rule (b)：3 日内 max_dd > 3% (短线追高 / 抢筹失败)
+  expectRootCause('短线 2 天 dd 4% → wrong_entry (Phase 5+ NEW rule b)', {
+    return_pct: -2,
+    holding_days: 2,
+    max_drawdown_during_hold_pct: 4,
+  }, 'wrong_entry');
+
+  expectRootCause('短线 1 天 dd 3.5% → wrong_entry (Phase 5+ NEW rule b)', {
+    return_pct: -1,
+    holding_days: 1,
+    max_drawdown_during_hold_pct: 3.5,
+  }, 'wrong_entry');
+
+  // 短线 dd 不超 3% → unknown (b 不触发，原 a 持仓 7 天阈值不变)
+  expectRootCause('短线 2 天 dd 2% → unknown (NEW rule b 阈值守住)', {
+    return_pct: -1,
+    holding_days: 2,
+    max_drawdown_during_hold_pct: 2,
+  }, 'unknown');
+
+  // Phase 5+ 增强：'dd 远大于实际亏损' 规则会 catch 持仓 ≥2 天 + dd>4 + dd>1.5×|return| 的情况
+  // 该用例 dd=8, |return|=3 → dd/|return|=2.67 > 1.5 → 归 wrong_entry (rule c)
+  expectRootCause('持仓 15 天 dd 远大于亏损 → wrong_entry (Phase 5+ NEW rule c)', {
     return_pct: -3,
+    holding_days: 15,
+    max_drawdown_during_hold_pct: 8,
+  }, 'wrong_entry');
+
+  // 但 dd ≈ 实际亏损 + 持仓 > 7 → 仍归 unknown
+  expectRootCause('持仓 15 天 dd ≈ 实际亏损 → unknown', {
+    return_pct: -7,
     holding_days: 15,
     max_drawdown_during_hold_pct: 8,
   }, 'unknown');

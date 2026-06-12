@@ -840,6 +840,93 @@ class FakeSubstrategy implements EnsembleSubstrategy {
 })();
 
 // ----------------------------------------------------------------
+// Phase 4+ NEW: disabled strategy (kill_switch 触发后) 自动跳过 + 走 redistribute
+// ----------------------------------------------------------------
+
+(async function testDisabledStrategySkipped() {
+  console.log('\n[N+1] Phase 4+ kill_switch — disabled 子策略走 redistribute 路径');
+  // bull: MFA 0.4 + DragonHead 0.3 + Breakout 0.3
+  // 模拟 DragonHead 被 kill_switch 触发 enabled=false
+  // 期望: DragonHead 的 0.3 权重 redistribute → MFA 与 Breakout
+  //       degraded_substitutions[0].reason='disabled' (区别 'not_implemented')
+  const ensemble = new EnsembleStrategy(
+    [
+      new FakeSubstrategy('multi_factor_alpha', ['M1', 'M2'], 'portfolio'),
+      new FakeSubstrategy('dragon_head_momentum', ['D1'], 'positions'),
+      new FakeSubstrategy('breakout_strategy', ['B1'], 'positions'),
+    ],
+    async () => new Set(['dragon_head_momentum']) // fake disabled loader
+  );
+  const result = await ensemble.generateSignals('2026-06-05', { marketRegimeOverride: 'bull' });
+  expectEqual('market_regime', result.market_regime, 'bull');
+  // dragon_head 不应该出现在 effective_weights
+  assert(
+    'dragon_head_momentum 不在 effective_weights',
+    result.effective_weights['dragon_head_momentum'] === undefined
+  );
+  // MFA + Breakout 总和 = 1.0
+  const sum =
+    (result.effective_weights['multi_factor_alpha'] ?? 0) +
+    (result.effective_weights['breakout_strategy'] ?? 0);
+  expectEqual('剩余 weights 归一化总和 = 1.0', Math.round(sum * 1000) / 1000, 1.0);
+  // degraded 长度 = 1，reason = 'disabled'
+  expectEqual('degraded.length = 1', result.degraded_substitutions.length, 1);
+  expectEqual(
+    'degraded.missing_strategy = dragon_head_momentum',
+    result.degraded_substitutions[0].missing_strategy,
+    'dragon_head_momentum'
+  );
+  expectEqual(
+    'degraded.reason = "disabled" (Phase 4+)',
+    result.degraded_substitutions[0].reason,
+    'disabled'
+  );
+  assert(
+    'degraded.redistributed_to 含 MFA 与 Breakout',
+    result.degraded_substitutions[0].redistributed_to.includes('multi_factor_alpha') &&
+      result.degraded_substitutions[0].redistributed_to.includes('breakout_strategy')
+  );
+})();
+
+(async function testDisabledLoaderFailsFailsOpen() {
+  console.log('\n[N+2] Phase 4+ kill_switch — disabledLoader 抛错 → fail-OPEN (返回 empty set)');
+  // disabledLoader 抛错 → catch 返回 empty Set → ensemble 不该把任何子策略当 disabled
+  const ensemble = new EnsembleStrategy(
+    [
+      new FakeSubstrategy('multi_factor_alpha', ['M1'], 'portfolio'),
+      new FakeSubstrategy('dragon_head_momentum', ['D1'], 'positions'),
+      new FakeSubstrategy('breakout_strategy', ['B1'], 'positions'),
+    ],
+    async () => {
+      throw new Error('fake DB outage');
+    }
+  );
+  const result = await ensemble.generateSignals('2026-06-05', { marketRegimeOverride: 'bull' });
+  // 3 个子策略都应在 effective_weights
+  expectEqual('effective_weights keys = 3', Object.keys(result.effective_weights).length, 3);
+  expectEqual('degraded.length = 0', result.degraded_substitutions.length, 0);
+})();
+
+(async function testDisabledAndNotImplementedMixed() {
+  console.log('\n[N+3] Phase 4+ kill_switch — mixed disabled + not_implemented (bear 环境)');
+  // bear: HDV 0.6 + LowVol 0.4
+  // LowVol 本就不在 pool (not_implemented)，HDV 又被 disabled
+  // 期望: effective_allocation 为空 → 返回空 target
+  const ensemble = new EnsembleStrategy(
+    [new FakeSubstrategy('high_dividend_value', ['HDV1'], 'portfolio')],
+    async () => new Set(['high_dividend_value'])
+  );
+  const result = await ensemble.generateSignals('2026-06-05', { marketRegimeOverride: 'bear' });
+  expectEqual('target_portfolio empty', result.target_portfolio.length, 0);
+  expectEqual('signals empty (只有 0 个候选)', result.signals.length, 0);
+  expectEqual('degraded.length = 2 (HDV + LowVol)', result.degraded_substitutions.length, 2);
+  const hdvDegraded = result.degraded_substitutions.find(d => d.missing_strategy === 'high_dividend_value');
+  const lvDegraded = result.degraded_substitutions.find(d => d.missing_strategy === 'low_vol_strategy');
+  expectEqual('HDV reason=disabled', hdvDegraded?.reason, 'disabled');
+  expectEqual('LowVol reason=not_implemented', lvDegraded?.reason, 'not_implemented');
+})();
+
+// ----------------------------------------------------------------
 // 测试运行入口
 // ----------------------------------------------------------------
 

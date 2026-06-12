@@ -61,7 +61,22 @@ function testParseMetric() {
   assert('随机字符串 → null', parseMetricName('foo_bar') === null);
   assert('out of range days → null', parseMetricName('sharpe_999999d') === null);
   assert('sharpe 缺数字 → null', parseMetricName('sharpe') === null);
-  assert('未来格式 sortino_30d → null (尚不支持)', parseMetricName('sortino_30d') === null);
+
+  // Phase 4+ NEW: sortino / calmar / profit_factor 新支持
+  const sortino = parseMetricName('sortino_30d');
+  assert('sortino_30d type=sortino', sortino?.type === 'sortino');
+  assert('sortino_30d days=30', sortino?.lookback_days === 30);
+
+  const calmar = parseMetricName('calmar_60d');
+  assert('calmar_60d type=calmar', calmar?.type === 'calmar');
+  assert('calmar_60d days=60', calmar?.lookback_days === 60);
+
+  const pf = parseMetricName('profit_factor_90d');
+  assert('profit_factor_90d type=profit_factor', pf?.type === 'profit_factor');
+  assert('profit_factor_90d days=90', pf?.lookback_days === 90);
+
+  const pfCase = parseMetricName('PROFIT_FACTOR_30D');
+  assert('PROFIT_FACTOR_30D 大小写 → profit_factor', pfCase?.type === 'profit_factor');
 }
 
 function testComputeMetric() {
@@ -142,6 +157,107 @@ function testComputeMetric() {
   // mean=-2.25, var=((0.5625+7.5625+10.5625+0.0625)/3)=6.25, std=2.5
   // sharpe = -2.25/2.5 × sqrt(12) ≈ -3.117
   expectClose('negative sharpe ≈-3.117', neg!, -3.117, 0.01);
+
+  // ============================================================
+  // Phase 4+ NEW: sortino / calmar / profit_factor
+  // ============================================================
+
+  // sortino — 与 sharpe 不同的是 std 只用负样本
+  // pnls: [3, 5, -1, 6, -2]; mean = 11/5 = 2.2
+  // negatives = [-1, -2]; downsideVariance = (1+4)/5 = 1; downsideStd = 1
+  // sortino = 2.2 / 1 × sqrt(12) ≈ 7.622
+  const sortino = computeMetric('sortino', [
+    { total_pnl_pct: 3 },
+    { total_pnl_pct: 5 },
+    { total_pnl_pct: -1 },
+    { total_pnl_pct: 6 },
+    { total_pnl_pct: -2 },
+  ]);
+  expectClose('sortino 5 笔含 2 负 ≈7.62', sortino!, 7.62, 0.01);
+
+  // sortino 全赢 → 大正数 999 (无下行风险)
+  expectClose(
+    'sortino 全赢 → 999',
+    computeMetric('sortino', [{ total_pnl_pct: 3 }, { total_pnl_pct: 5 }])!,
+    999
+  );
+  // sortino 全输 → mean<0 但 negatives 有，正常公式
+  const sortinoAllLoss = computeMetric('sortino', [
+    { total_pnl_pct: -2 },
+    { total_pnl_pct: -3 },
+    { total_pnl_pct: -1 },
+  ]);
+  assert('sortino 全输 → 非 null', sortinoAllLoss !== null && Number.isFinite(sortinoAllLoss));
+  assert('sortino 全输 → 负值', sortinoAllLoss! < 0);
+
+  // sortino 单样本 → null
+  assert('sortino 单样本 → null', computeMetric('sortino', [{ total_pnl_pct: 5 }]) === null);
+
+  // calmar — 累计 equity 曲线算最大回撤
+  // pnls: [10, -5, 3]; equity: 100 → 110 → 104.5 → 107.635
+  // peak=110, trough=104.5, max_dd = (110-104.5)/110 = 0.05
+  // totalReturn = (107.635-100)/100 = 0.07635
+  // annualReturn = (1.07635)^(12/3) - 1 = 1.07635^4 - 1 ≈ 0.3411
+  // calmar = 0.3411 / 0.05 ≈ 6.82
+  const calmar = computeMetric('calmar', [
+    { total_pnl_pct: 10 },
+    { total_pnl_pct: -5 },
+    { total_pnl_pct: 3 },
+  ]);
+  expectClose('calmar 累计 dd 5% / annualReturn ~34% ≈ 6.82', calmar!, 6.82, 0.1);
+
+  // calmar 无回撤 + 正回报 → 999
+  expectClose(
+    'calmar 全赢无回撤 → 999',
+    computeMetric('calmar', [{ total_pnl_pct: 5 }, { total_pnl_pct: 3 }])!,
+    999
+  );
+
+  // calmar 单样本 → null
+  assert('calmar 单样本 → null', computeMetric('calmar', [{ total_pnl_pct: 5 }]) === null);
+
+  // profit_factor — gross_win / |gross_loss|
+  // pnls: [5, 3, -2, 4, -3]; grossWin = 12, grossLoss = 5
+  // profit_factor = 12/5 = 2.4
+  const pf = computeMetric('profit_factor', [
+    { total_pnl_pct: 5 },
+    { total_pnl_pct: 3 },
+    { total_pnl_pct: -2 },
+    { total_pnl_pct: 4 },
+    { total_pnl_pct: -3 },
+  ]);
+  expectClose('profit_factor 12/5 = 2.4', pf!, 2.4);
+
+  // profit_factor 全赢 → 999
+  expectClose(
+    'profit_factor 全赢 → 999',
+    computeMetric('profit_factor', [{ total_pnl_pct: 5 }, { total_pnl_pct: 3 }])!,
+    999
+  );
+
+  // profit_factor 全输 → grossWin=0 → 0
+  expectClose(
+    'profit_factor 全输 → 0',
+    computeMetric('profit_factor', [{ total_pnl_pct: -3 }, { total_pnl_pct: -2 }])!,
+    0
+  );
+
+  // profit_factor 空 → null
+  assert('profit_factor 空 → null', computeMetric('profit_factor', []) === null);
+
+  // NaN 过滤对新 metric 同样有效
+  expectClose(
+    'sortino NaN 过滤',
+    computeMetric('sortino', [
+      { total_pnl_pct: 3 },
+      { total_pnl_pct: NaN as any },
+      { total_pnl_pct: -1 },
+    ])!,
+    // pnls=[3,-1]; mean=1; neg=[-1]; dsVar=1/2=0.5; dsStd=√0.5≈0.707
+    // sortino = 1/0.707 × √12 ≈ 4.899
+    4.9,
+    0.05
+  );
 }
 
 function main() {

@@ -231,7 +231,7 @@ export class StrategyKillSwitchMonitor {
 // 纯函数 helpers (export 让单测脱 DB)
 // ============================================================
 
-export type MetricType = 'sharpe' | 'win_rate';
+export type MetricType = 'sharpe' | 'win_rate' | 'sortino' | 'calmar' | 'profit_factor';
 export interface ParsedMetric {
   type: MetricType;
   lookback_days: number;
@@ -242,6 +242,9 @@ export interface ParsedMetric {
  *   - "sharpe_30d" → {type: 'sharpe', lookback_days: 30}
  *   - "mean_test_sharpe_60d" → {type: 'sharpe', lookback_days: 60}  (alias)
  *   - "win_rate_90d" → {type: 'win_rate', lookback_days: 90}
+ *   - "sortino_30d" → {type: 'sortino', lookback_days: 30}
+ *   - "calmar_60d" → {type: 'calmar', lookback_days: 60}
+ *   - "profit_factor_30d" → {type: 'profit_factor', lookback_days: 30}
  * 返回 null 表示不支持的 metric 名（caller 跳过）。
  */
 export function parseMetricName(metric: string): ParsedMetric | null {
@@ -266,16 +269,47 @@ export function parseMetricName(metric: string): ParsedMetric | null {
     }
   }
 
+  // sortino (downside-deviation-adjusted return)
+  const sortinoMatch = lower.match(/sortino_(\d+)d?$/);
+  if (sortinoMatch) {
+    const days = parseInt(sortinoMatch[1], 10);
+    if (Number.isFinite(days) && days >= 1 && days <= 365) {
+      return { type: 'sortino', lookback_days: days };
+    }
+  }
+
+  // calmar (annualized_return / max_drawdown_pct)
+  const calmarMatch = lower.match(/calmar_(\d+)d?$/);
+  if (calmarMatch) {
+    const days = parseInt(calmarMatch[1], 10);
+    if (Number.isFinite(days) && days >= 1 && days <= 365) {
+      return { type: 'calmar', lookback_days: days };
+    }
+  }
+
+  // profit_factor (sum of wins / abs(sum of losses))
+  const pfMatch = lower.match(/profit_factor_(\d+)d?$/);
+  if (pfMatch) {
+    const days = parseInt(pfMatch[1], 10);
+    if (Number.isFinite(days) && days >= 1 && days <= 365) {
+      return { type: 'profit_factor', lookback_days: days };
+    }
+  }
+
   return null;
 }
 
 /**
  * 从 outcome 行计算指标值（纯函数）。
  *
- * - 'sharpe': 按每笔 pnl_pct 当成一个观测样本，算 mean / std × sqrt(252)
- *   注意: 这是简化 sharpe（用 per-trade 而非日 returns），与 BackTester 的
- *   sharpe 公式有差异，但作为 kill_switch 阈值监控足够。
- * - 'win_rate': wins / total （0-1）
+ * 所有按"每笔 pnl_pct 当成一个观测样本"算（简化口径，与 backtest 日级 sharpe 公式
+ * 有差异，但作为 kill_switch 阈值监控足够）。
+ *
+ * - 'sharpe': mean / std × sqrt(12)
+ * - 'win_rate': wins / total (0-1)
+ * - 'sortino': mean / downside_std × sqrt(12) (只考虑负回报样本的 std)
+ * - 'calmar': annualized_return / max_drawdown_pct (peak-to-trough)
+ * - 'profit_factor': sum(positive) / abs(sum(negative))
  */
 export function computeMetric(
   type: MetricType,
@@ -298,11 +332,63 @@ export function computeMetric(
     const variance = pnls.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / (pnls.length - 1);
     const std = Math.sqrt(variance);
     if (std <= 1e-10) return null; // 全相等
-    // 简化 sharpe 不年化 × sqrt(252)，因 per-trade 不是日级返回
-    // 但仍乘 sqrt(n_per_year) 让数字与传统 sharpe 在同一量级
-    // 这里用 sqrt(12) (假设月均交易 ~12 笔)
     const annualizationFactor = Math.sqrt(12);
     return (mean / std) * annualizationFactor;
+  }
+
+  if (type === 'sortino') {
+    if (pnls.length < 2) return null;
+    const mean = pnls.reduce((s, v) => s + v, 0) / pnls.length;
+    // downside deviation: 只对负样本计算（vs 0 而非 mean，Sortino 经典定义）
+    const negatives = pnls.filter(v => v < 0);
+    if (negatives.length === 0) {
+      // 没有亏损样本 — sortino 理论上为 +∞；返回大正数表示 "无下行风险"
+      return mean > 0 ? 999 : null;
+    }
+    const downsideVariance =
+      negatives.reduce((s, v) => s + v * v, 0) / pnls.length; // 用全体 n 而非 negatives.length (target=0)
+    const downsideStd = Math.sqrt(downsideVariance);
+    if (downsideStd <= 1e-10) return null;
+    const annualizationFactor = Math.sqrt(12);
+    return (mean / downsideStd) * annualizationFactor;
+  }
+
+  if (type === 'calmar') {
+    if (pnls.length < 2) return null;
+    // 按 trade 序列累计算 equity curve，再求 max drawdown
+    let equity = 100; // 起始 100
+    let peak = 100;
+    let maxDd = 0;
+    const eqCurve: number[] = [equity];
+    for (const r of pnls) {
+      equity *= 1 + r / 100;
+      eqCurve.push(equity);
+      if (equity > peak) peak = equity;
+      const dd = (peak - equity) / peak;
+      if (dd > maxDd) maxDd = dd;
+    }
+    const totalReturn = (equity - 100) / 100;
+    // 年化：假设 12 trades/year, annualized_return = (1+totalReturn)^(12/n) - 1
+    const periods = pnls.length;
+    const annualReturn = Math.pow(1 + totalReturn, 12 / periods) - 1;
+    if (maxDd <= 1e-10) {
+      // 无回撤 — calmar 理论 +∞；正回报返大正数，负/零回报返 null
+      return annualReturn > 0 ? 999 : null;
+    }
+    return annualReturn / maxDd;
+  }
+
+  if (type === 'profit_factor') {
+    if (pnls.length === 0) return null;
+    const wins = pnls.filter(v => v > 0);
+    const losses = pnls.filter(v => v < 0);
+    const grossWin = wins.reduce((s, v) => s + v, 0);
+    const grossLoss = Math.abs(losses.reduce((s, v) => s + v, 0));
+    if (grossLoss <= 1e-10) {
+      // 没亏过 — profit_factor 理论 +∞；返大正数表示稳赢
+      return grossWin > 0 ? 999 : null;
+    }
+    return grossWin / grossLoss;
   }
 
   return null;

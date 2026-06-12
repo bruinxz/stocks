@@ -196,6 +196,13 @@ export interface EnsembleSignalsResult {
     original_weight: number;
     /** 该权重被合并到了哪些子策略（按比例分配） */
     redistributed_to: string[];
+    /**
+     * Phase 4+ 区分降级类型：
+     *   - 'not_implemented': 子策略池本就不含（如 low_vol_strategy 尚未实现）
+     *   - 'disabled': 策略被 kill_switch 触发 enabled=false (Phase 4+)
+     * 默认 'not_implemented' (向后兼容)
+     */
+    reason?: 'not_implemented' | 'disabled';
   }>;
   /** 调仓后目标组合（top-N stock_code 列表） */
   target_portfolio: string[];
@@ -281,7 +288,19 @@ export class EnsembleStrategy extends QuantStrategy {
   /** 子策略实例池（key → instance）。默认创建生产实例；测试可注入 fakes。 */
   private readonly substrategies: Map<string, EnsembleSubstrategy>;
 
-  constructor(substrategies?: EnsembleSubstrategy[]) {
+  /**
+   * 可注入的"已禁用策略 keys" loader。
+   * 默认实现查 QuantStrategyModel.findAll({where:{enabled:false}}) 拿被 kill_switch
+   * 触发禁用的策略集合，generateSignals 会把它们从 substrategy pool 临时移除，
+   * 让 resolveEffectiveAllocation 走 missing → redistribute 路径。
+   * 测试用 fake loader 完全脱 DB。
+   */
+  private readonly disabledStrategyLoader: () => Promise<Set<string>>;
+
+  constructor(
+    substrategies?: EnsembleSubstrategy[],
+    disabledStrategyLoader?: () => Promise<Set<string>>
+  ) {
     super();
     this.substrategies = new Map();
     const instances = substrategies ?? this.buildDefaultSubstrategies();
@@ -293,6 +312,7 @@ export class EnsembleStrategy extends QuantStrategy {
       }
       this.substrategies.set(sub.strategy_key, sub);
     }
+    this.disabledStrategyLoader = disabledStrategyLoader ?? PRODUCTION_DISABLED_STRATEGY_LOADER;
   }
 
   /**
@@ -380,15 +400,35 @@ export class EnsembleStrategy extends QuantStrategy {
     }
 
     // 3) 子策略可用性 + 降级
-    const { effectiveAllocation, degraded } = resolveEffectiveAllocation(
+    // Phase 4+: 先用 disabledStrategyLoader 拿到当前被 kill_switch 触发 enabled=false
+    // 的策略集合，把它们从临时 pool 中剔除，让 resolveEffectiveAllocation 走 missing 路径。
+    // 失败时 fallback empty set —— ensemble 不因熔断监控 DB 抖动而崩。
+    const disabledKeys = await this.disabledStrategyLoader().catch(() => new Set<string>());
+    const filteredPool = new Map(this.substrategies);
+    for (const k of disabledKeys) {
+      if (filteredPool.has(k)) filteredPool.delete(k);
+    }
+
+    const { effectiveAllocation, degraded: rawDegraded } = resolveEffectiveAllocation(
       requestedAllocation,
-      this.substrategies,
+      filteredPool,
       params.rebalanceMissingWeights
     );
+
+    // Phase 4+: 标记每个 degraded entry 的 reason
+    // - 在 disabledKeys 内 → 'disabled'
+    // - 仍不在原始 pool 中 → 'not_implemented' (默认)
+    const degraded = rawDegraded.map(d => ({
+      ...d,
+      reason: disabledKeys.has(d.missing_strategy)
+        ? ('disabled' as const)
+        : ('not_implemented' as const),
+    }));
+
     if (effectiveAllocation.length === 0) {
       logger.warn(
         `EnsembleStrategy.generateSignals(${tradeDate}): regime=${regime} has no available substrategies ` +
-          `after degradation (requested=${requestedAllocation.length})`
+          `after degradation (requested=${requestedAllocation.length}; disabled=${disabledKeys.size})`
       );
       return this.buildEmptyResult(
         tradeDate,
@@ -759,3 +799,26 @@ function adaptStrategy(
     generateSignals: (tradeDate, options) => instance.generateSignals(tradeDate, options),
   };
 }
+
+/**
+ * Phase 4+ 接入 kill_switch：默认 disabled strategy loader 查 QuantStrategyModel
+ * 中 enabled=false 的策略 keys 集合。失败时返回空 Set（fail-OPEN 让 ensemble 不
+ * 因熔断监控的暂时性 DB 抖动而崩）。
+ *
+ * Lazy-require QuantStrategyModel 避免 model 反向依赖 strategies 层，且方便单测
+ * 注入 fake loader 完全脱 DB。
+ */
+export const PRODUCTION_DISABLED_STRATEGY_LOADER: () => Promise<Set<string>> = async () => {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { QuantStrategyModel } = require('../../models/QuantStrategyModel');
+    const rows = await QuantStrategyModel.findAll({
+      where: { enabled: false },
+      attributes: ['strategy_key'],
+    });
+    return new Set<string>(rows.map((r: any) => r.strategy_key));
+  } catch (err: any) {
+    logger.warn(`[EnsembleStrategy] PRODUCTION_DISABLED_STRATEGY_LOADER failed: ${err?.message || err}`);
+    return new Set<string>();
+  }
+};
