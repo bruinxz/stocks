@@ -108,10 +108,45 @@ export async function getSizingAudit(params: {
   return res.data.data as SizingAuditReport;
 }
 
+// ============================================================
+// Phase 4+ Strategy kill switch monitor
+// ============================================================
+
+export interface KillSwitchEvaluation {
+  strategy_key: string;
+  metric: string;
+  threshold: number;
+  observed_value: number | null;
+  sample_size: number;
+  triggered: boolean;
+  reason: string;
+}
+
+export interface KillSwitchMonitorResult {
+  generated_at: string;
+  total_strategies: number;
+  evaluated: number;
+  triggered: number;
+  skipped_no_kill_switch: number;
+  skipped_disabled: number;
+  skipped_insufficient_data: number;
+  evaluations: KillSwitchEvaluation[];
+  errors: Array<{ strategy_key: string; message: string }>;
+}
+
+export async function getKillSwitchStatus(dryRun = true): Promise<KillSwitchMonitorResult> {
+  const res = await api.get('/risk/kill-switch-status', {
+    params: { dry_run: dryRun ? 'true' : 'false' },
+  });
+  if (!res.data?.success) throw new Error(res.data?.message || '获取 kill switch 状态失败');
+  return res.data.data as KillSwitchMonitorResult;
+}
+
 export const sizingPolicyService = {
   getSizingPolicy,
   updateSizingPolicy,
   getSizingAudit,
+  getKillSwitchStatus,
 };
 
 export default sizingPolicyService;

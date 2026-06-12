@@ -9,6 +9,7 @@ import { blackSwanWatchdog } from '../../portfolio/risk/BlackSwanWatchdog';
 import { morningRiskCheckupService } from '../../portfolio/risk/MorningRiskCheckupService';
 import { sizingPolicyService } from '../../portfolio/risk/SizingPolicyService';
 import { sizingAuditService } from '../../services/SizingAuditService';
+import { strategyKillSwitchMonitor } from '../../services/StrategyKillSwitchMonitor';
 import { logger } from '../../utils/logger';
 
 /**
@@ -424,6 +425,24 @@ export class RiskController {
       res.json({ success: true, data });
     } catch (error: any) {
       logger.error('获取 sizing audit 报告失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * GET /api/risk/kill-switch-status  (Phase 4+)
+   * 评估所有策略的 kill_switch 状态 (默认 dry_run=true 不真正关闭)
+   *
+   * Query: ?dry_run=false  → 真正禁用触发的策略
+   */
+  async getKillSwitchStatus(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const dryRunParam = req.query.dry_run;
+      const dryRun = dryRunParam === undefined ? true : String(dryRunParam) !== 'false';
+      const data = await strategyKillSwitchMonitor.evaluateAll({ dry_run: dryRun });
+      res.json({ success: true, data });
+    } catch (error: any) {
+      logger.error('评估 kill_switch 状态失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   }

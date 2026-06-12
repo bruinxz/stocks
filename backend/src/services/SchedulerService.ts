@@ -1946,6 +1946,50 @@ class SchedulerService {
             `总 trigger ${result.triggers.length}` +
             (dryRun ? '（dry-run，未写 RiskAlert）' : '')
         );
+      } else if (task.type === 'STRATEGY_KILL_SWITCH_CHECK') {
+        // Phase 4+ 策略熔断监控 — 评估每个策略的 kill_switch_metric (定义在
+        // edge_hypothesis 内)；低于 kill_switch_threshold 触发自动 enabled=false。
+        // `dry_run` 参数默认 true（保守），生产 cron 应配 dry_run=false 让熔断真正生效。
+        const dryRun =
+          parameters.dry_run !== undefined
+            ? Boolean(parameters.dry_run)
+            : parameters.dryRun !== undefined
+            ? Boolean(parameters.dryRun)
+            : true; // 默认 dry_run 避免运维误关
+        const { strategyKillSwitchMonitor } = require('../services/StrategyKillSwitchMonitor');
+        const result = await strategyKillSwitchMonitor.evaluateAll({ dry_run: dryRun });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: result.total_strategies,
+          completed_items: result.evaluated,
+          failed_items: result.errors.length,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: null,
+          result_summary: {
+            scenario: 'strategy_kill_switch_check',
+            total_strategies: result.total_strategies,
+            evaluated: result.evaluated,
+            triggered: result.triggered,
+            skipped_no_kill_switch: result.skipped_no_kill_switch,
+            skipped_disabled: result.skipped_disabled,
+            skipped_insufficient_data: result.skipped_insufficient_data,
+            dry_run: dryRun,
+            triggered_strategies: result.evaluations
+              .filter((e: any) => e.triggered)
+              .map((e: any) => ({
+                strategy_key: e.strategy_key,
+                metric: e.metric,
+                threshold: e.threshold,
+                observed: e.observed_value,
+                reason: e.reason,
+              })),
+          },
+        });
+        logger.info(
+          `策略熔断评估完成。总策略 ${result.total_strategies}，` +
+            `评估 ${result.evaluated}，触发 ${result.triggered}` +
+            (dryRun ? '（dry-run，未真正禁用）' : '（已自动 disable）')
+        );
       } else if (task.type === 'PAPER_TRADING_ATTRIBUTION_REPORT') {
         const result = await paperTradingAttributionService.getAttribution({
           username: parameters.username,

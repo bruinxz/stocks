@@ -38,6 +38,7 @@ import {
   SizingPolicyWithDefaults,
   SizingMethod,
   SizingAuditReport,
+  KillSwitchMonitorResult,
 } from '../../services/sizingPolicyService';
 
 const { Text, Paragraph } = Typography;
@@ -384,6 +385,7 @@ const SizingPolicyTab: React.FC = () => {
       </Card>
 
       <SizingAuditPanel />
+      <KillSwitchPanel />
     </Space>
   );
 };
@@ -633,6 +635,179 @@ const SizingAuditPanel: React.FC = () => {
                 ]}
               />
             </>
+          )}
+        </>
+      )}
+    </Card>
+  );
+};
+
+// ============================================================
+// KillSwitchPanel — Phase 4+ 策略熔断状态面板
+// ============================================================
+
+const KillSwitchPanel: React.FC = () => {
+  const [report, setReport] = useState<KillSwitchMonitorResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [applying, setApplying] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const r = await sizingPolicyService.getKillSwitchStatus(true);
+      setReport(r);
+    } catch (err: any) {
+      setError(err?.message || '加载失败');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const onApply = useCallback(async () => {
+    if (!report || report.triggered === 0) return;
+    setApplying(true);
+    try {
+      const r = await sizingPolicyService.getKillSwitchStatus(false); // 真正禁用
+      setReport(r);
+      message.success(`已禁用 ${r.triggered} 个触发熔断的策略`);
+    } catch (err: any) {
+      message.error(err?.message || '执行失败');
+    } finally {
+      setApplying(false);
+    }
+  }, [report]);
+
+  return (
+    <Card
+      className="modern-card"
+      title="策略熔断监控 (Phase 4+)"
+      extra={
+        <Space>
+          <Button icon={<ReloadOutlined />} onClick={load} loading={loading} size="small">
+            刷新
+          </Button>
+          {report && report.triggered > 0 && (
+            <Button
+              danger
+              type="primary"
+              loading={applying}
+              onClick={onApply}
+              size="small"
+            >
+              立即禁用 {report.triggered} 个触发策略
+            </Button>
+          )}
+        </Space>
+      }
+    >
+      {error && <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} />}
+      {report && (
+        <>
+          <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+            <Col xs={12} sm={8} md={6}>
+              <Statistic title="总策略" value={report.total_strategies} />
+            </Col>
+            <Col xs={12} sm={8} md={6}>
+              <Statistic title="已评估" value={report.evaluated} />
+            </Col>
+            <Col xs={12} sm={8} md={6}>
+              <Statistic
+                title="触发熔断"
+                value={report.triggered}
+                valueStyle={{ color: report.triggered > 0 ? '#cf1322' : '#3f8600' }}
+              />
+            </Col>
+            <Col xs={12} sm={8} md={6}>
+              <Statistic
+                title="样本不足"
+                value={report.skipped_insufficient_data}
+                valueStyle={{ color: '#666' }}
+              />
+            </Col>
+          </Row>
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message={
+              <Space wrap>
+                <span>
+                  共 {report.skipped_no_kill_switch} 个策略未配置 kill_switch
+                </span>
+                <span>·</span>
+                <span>{report.skipped_disabled} 个已禁用</span>
+                <span>·</span>
+                <span>{report.evaluated} 个评估中</span>
+              </Space>
+            }
+          />
+          {report.evaluations.length > 0 && (
+            <Table
+              size="small"
+              dataSource={report.evaluations}
+              rowKey="strategy_key"
+              pagination={false}
+              scroll={{ x: 700 }}
+              columns={[
+                { title: '策略', dataIndex: 'strategy_key', width: 160 },
+                { title: 'metric', dataIndex: 'metric', width: 140 },
+                {
+                  title: '阈值',
+                  dataIndex: 'threshold',
+                  width: 80,
+                  render: (v: number) => v.toFixed(3),
+                },
+                {
+                  title: '观测值',
+                  dataIndex: 'observed_value',
+                  width: 100,
+                  render: (v: number | null) =>
+                    v === null ? <Text type="secondary">—</Text> : v.toFixed(3),
+                },
+                { title: '样本数', dataIndex: 'sample_size', width: 80 },
+                {
+                  title: '状态',
+                  dataIndex: 'triggered',
+                  width: 90,
+                  render: (t: boolean, row: any) =>
+                    t ? (
+                      <Tag color="error">熔断</Tag>
+                    ) : row.reason?.startsWith('skipped') ? (
+                      <Tag color="default">{row.reason.split(':')[0]}</Tag>
+                    ) : (
+                      <Tag color="success">正常</Tag>
+                    ),
+                },
+                {
+                  title: '原因',
+                  dataIndex: 'reason',
+                  ellipsis: true,
+                },
+              ]}
+            />
+          )}
+          {report.errors.length > 0 && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginTop: 12 }}
+              message={`${report.errors.length} 个策略评估出错`}
+              description={
+                <ul style={{ marginBottom: 0, paddingLeft: 20 }}>
+                  {report.errors.slice(0, 5).map(e => (
+                    <li key={e.strategy_key}>
+                      <Text code>{e.strategy_key}</Text>: {e.message}
+                    </li>
+                  ))}
+                </ul>
+              }
+            />
           )}
         </>
       )}

@@ -401,4 +401,23 @@ router.put('/sizing-policy', authController.authenticate, riskController.updateS
  */
 router.get('/sizing-audit', authController.authenticate, riskController.getSizingAudit);
 
+/**
+ * @swagger
+ * /api/risk/kill-switch-status:
+ *   get:
+ *     summary: Phase 4+ 策略熔断状态评估
+ *     parameters:
+ *       - in: query
+ *         name: dry_run
+ *         schema: { type: string, default: "true" }
+ *         description: "true (默认) = 只评估不真正禁用；false = 触发的策略立即禁用"
+ *     responses:
+ *       200: { description: 评估报告 + 触发策略列表 }
+ */
+router.get(
+  '/kill-switch-status',
+  authController.authenticate,
+  riskController.getKillSwitchStatus
+);
+
 export default router;
