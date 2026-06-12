@@ -53,6 +53,7 @@
     "run:grid-search": "ts-node src/scripts/run-grid-search.ts",
     "run:bayesian-opt": "ts-node src/scripts/run-bayesian-opt.ts",
     "run:walk-forward": "ts-node src/scripts/run-walk-forward.ts",
+    "reprocess:root-cause": "ts-node src/scripts/reprocess-outcome-root-cause.ts",
     "run:regime-backtest": "ts-node src/scripts/run-regime-backtest.ts",
     "run:monte-carlo": "ts-node src/scripts/run-monte-carlo.ts",
     "optimize:portfolio": "ts-node src/scripts/optimize-portfolio.ts",
@@ -60,6 +61,9 @@
     "run:industry-attribution": "ts-node src/scripts/run-industry-attribution.ts",
     "paper:reset-and-run-quant": "ts-node src/scripts/reset-paper-trading-and-run-quant.ts",
     "seed:mock": "ts-node src/scripts/seed-mock-data.ts",
+    "report:factor-ic": "ts-node --transpile-only src/scripts/compute-factor-ic.ts",
+    "walk-forward": "ts-node --transpile-only src/scripts/run-walk-forward.ts",
+    "reprocess:root-cause": "ts-node --transpile-only src/scripts/reprocess-outcome-root-cause.ts",
     "data:status": "ts-node src/scripts/data-cli.ts status",
     "smoke-test": "ts-node --transpile-only src/scripts/integration-smoke-test.ts"
   },
