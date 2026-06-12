@@ -100,18 +100,26 @@ const ICONS: Record<string, string> = {
   factor_engine: '🧮',
   strategy_engine: '🎯',
   autopilot: '🤖',
+  sizing_decision: '⚖️', // Phase 2+ Sizing 决策 (Kelly / vol_target / ATR)
   risk_control: '🛡️',
+  kill_switch: '🚨', // Phase 4+ 策略熔断监控
   portfolio: '💰',
+  outcome_analysis: '🔬', // Phase 5+ root_cause + postmortem
   notification: '🔔',
 };
 
-// 横向 5-stage 布局
+// 横向 5-stage 布局 (Phase 2+/4+/5+ 新增节点已并入 decision / output stage)
 const STAGES: { key: string; label: string; sub: string; nodes: string[] }[] = [
   { key: 'data', label: '数据', sub: 'Data', nodes: ['data_collection', 'macro_env'] },
   { key: 'compute', label: '计算', sub: 'Compute', nodes: ['factor_engine', 'strategy_engine'] },
-  { key: 'decision', label: '决策', sub: 'Decision', nodes: ['autopilot', 'risk_control'] },
+  {
+    key: 'decision',
+    label: '决策',
+    sub: 'Decision',
+    nodes: ['autopilot', 'sizing_decision', 'risk_control', 'kill_switch'],
+  },
   { key: 'execution', label: '执行', sub: 'Execute', nodes: ['portfolio'] },
-  { key: 'output', label: '输出', sub: 'Output', nodes: ['notification'] },
+  { key: 'output', label: '输出', sub: 'Output', nodes: ['outcome_analysis', 'notification'] },
 ];
 
 // 节点 -> 所在 stage 的 index (用于 SVG 跨列连线过滤)
