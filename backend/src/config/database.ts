@@ -94,6 +94,12 @@ import { LiveBrokerCommandDispatch } from '../models/LiveBrokerCommandDispatch';
 import { LiveBrokerEvent } from '../models/LiveBrokerEvent';
 import { LiveBrokerBridgeHeartbeat } from '../models/LiveBrokerBridgeHeartbeat';
 import { LiveBridgeNonce } from '../models/LiveBridgeNonce';
+// Sprint 1-3 五大新模块 models
+import { ResearchIntegrityAudit } from '../models/ResearchIntegrityAudit';
+import { ExecutionFeasibilityRecord } from '../models/ExecutionFeasibilityRecord';
+import { MetaLabelDecision } from '../models/MetaLabelDecision';
+import { PortfolioConstructionResult } from '../models/PortfolioConstructionResult';
+import { EquityCurveGovernorState } from '../models/EquityCurveGovernorState';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -210,6 +216,12 @@ const sequelize = new Sequelize({
     LiveBrokerEvent,
     LiveBrokerBridgeHeartbeat,
     LiveBridgeNonce,
+    // Sprint 1-3 五大新模块
+    ResearchIntegrityAudit,
+    ExecutionFeasibilityRecord,
+    MetaLabelDecision,
+    PortfolioConstructionResult,
+    EquityCurveGovernorState,
   ],
   logging: process.env.NODE_ENV === 'development' ? console.log : false,
   pool: {
