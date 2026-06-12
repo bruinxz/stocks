@@ -33,6 +33,22 @@ export class QualityMomentumBlendStrategy extends QuantStrategy {
     risk_level: 'medium',
     tags: ['质量', '动量', '资金流', '多因子'],
     style: 'multi_factor_alpha',
+    edge_hypothesis: {
+      thesis:
+        '质量 × 动量 × 资金流融合：trend(20/60/120 加权)32% + 质量 20% + 资金流 18% + 风险 14% + 估值 10% + 流动性 6%，偏向可持续上涨而非短线追高',
+      category: 'multi_factor',
+      expected_edge_pct: 6.0,
+      expected_holding_days: 22,
+      key_factors: ['return_20d', 'return_60d', 'return_120d', 'quality_score', 'money_flow_score', 'volatility_20d', 'drawdown_60d', 'avg_turnover_20d', 'pe_ttm', 'pb'],
+      evidence_link: 'Quality + Momentum factor blend / AQR Capital - Quality Minus Junk (2013) + Jegadeesh-Titman Momentum',
+      failure_modes: [
+        '质量股估值长期偏贵，PE 拐点出现时压回均值',
+        '20 日波动率 > 5.8 或 60 日回撤 > 22% 时降级但已晚',
+        '短期 ret20 > 42% 加速尾段追高被打',
+      ],
+      kill_switch_metric: 'sharpe_30d',
+      kill_switch_threshold: 0.3,
+    },
   };
 
   evaluate(context: QuantStockContext, options?: QuantStrategyRuntimeOptions): QuantSignalResult {

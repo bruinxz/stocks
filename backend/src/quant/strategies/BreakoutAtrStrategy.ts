@@ -18,6 +18,22 @@ export class BreakoutAtrStrategy extends QuantStrategy {
     risk_level: 'high',
     tags: ['突破', 'ATR', '启动'],
     style: 'momentum',
+    edge_hypothesis: {
+      thesis:
+        'ATR 加权突破：close 突破 N 日新高且突破幅度 >= ATR (有意义的突破，非震荡噪音)，配合放量确认',
+      category: 'breakout',
+      expected_edge_pct: 8.0,
+      expected_holding_days: 15,
+      key_factors: ['close_vs_n_day_high', 'breakout_atr_multiple', 'volume_confirmation'],
+      evidence_link: 'Welles Wilder - ATR (1978) / Turtle Trading',
+      failure_modes: [
+        '低 ATR 期假突破（盘整突破后无后续）',
+        '高 ATR 期突破点已经远离合理入场',
+        '财报/事件驱动的突破缺乏延续性',
+      ],
+      kill_switch_metric: 'win_rate_30d',
+      kill_switch_threshold: 0.4,
+    },
   };
 
   evaluate(context: QuantStockContext, options?: QuantStrategyRuntimeOptions): QuantSignalResult {

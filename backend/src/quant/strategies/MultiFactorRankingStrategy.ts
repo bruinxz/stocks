@@ -32,6 +32,22 @@ export class MultiFactorRankingStrategy extends QuantStrategy {
     risk_level: 'medium',
     tags: ['多因子', '全市场', '核心策略'],
     style: 'multi_factor_alpha',
+    edge_hypothesis: {
+      thesis:
+        '7 维因子加权打分（趋势 25% + 动量 21% + 量能 18% + 风险 14% + 估值 10% + 摆动 8% + 质量 4%）+ ADX/DMI/MFI/OBV/CCI 技术指标交叉确认',
+      category: 'multi_factor',
+      expected_edge_pct: 5.5,
+      expected_holding_days: 20,
+      key_factors: ['trend_score', 'momentum_score', 'volume_score', 'risk_score', 'valuation_score', 'quality_score', 'oscillator_score', 'adx', 'mfi', 'obv_trend'],
+      evidence_link: 'Multi-factor stock selection 经典综合体系 / Barra USE4 / Fama-French',
+      failure_modes: [
+        '因子拥挤：单一因子被市场过度交易后 IC 衰减',
+        '高波动 regime 下风险因子权重 14% 偏低，回撤过大',
+        '20 日成交额 < 2000 万的低流动性票被信号选中后无法执行',
+      ],
+      kill_switch_metric: 'sharpe_30d',
+      kill_switch_threshold: 0.3,
+    },
   };
 
   evaluate(context: QuantStockContext, options?: QuantStrategyRuntimeOptions): QuantSignalResult {

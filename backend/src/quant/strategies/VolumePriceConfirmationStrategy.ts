@@ -35,6 +35,22 @@ export class VolumePriceConfirmationStrategy extends QuantStrategy {
     risk_level: 'medium',
     tags: ['量价', '资金确认', '动量过滤'],
     style: 'momentum',
+    edge_hypothesis: {
+      thesis:
+        '量价同步确认：价格站上 MA10/MA20 + 量比 ∈ [1.08, 3.2]（温和放量非脉冲）+ 换手率 ≥ 1% + MFI ∈ [45, 78] 健康区 + OBV 改善 + ret5 > 0 AND ret20 > 4%',
+      category: 'momentum',
+      expected_edge_pct: 5.5,
+      expected_holding_days: 12,
+      key_factors: ['volume_ratio', 'turnover_rate', 'mfi_14', 'obv_trend_15d', 'adx_dmi', 'return_5d', 'return_20d', 'money_flow_score'],
+      evidence_link: '量价配合经典 / Joseph Granville - OBV / Money Flow Index',
+      failure_modes: [
+        'volume_ratio > 3.2 异常放量是情绪化 short squeeze 而非真趋势',
+        'ret20 > 38% 加速尾段量价配合也是末段追高',
+        'MFI > 85 资金过热拥挤，OBV 同时走弱时背离信号已现',
+      ],
+      kill_switch_metric: 'win_rate_30d',
+      kill_switch_threshold: 0.43,
+    },
   };
 
   evaluate(context: QuantStockContext, options?: QuantStrategyRuntimeOptions): QuantSignalResult {

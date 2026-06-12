@@ -23,6 +23,22 @@ export class MinerviniTrendTemplateStrategy extends QuantStrategy {
     risk_level: 'medium',
     tags: ['Minervini', '趋势模板', '强势股'],
     style: 'momentum',
+    edge_hypothesis: {
+      thesis:
+        'Minervini 趋势模板 8 大条件：价格 > MA50 > MA150 > MA200 + MA200 向上 + 距 52 周低点 ≥ 30% + 距 52 周高点 ≤ 25% + ret60 > 8% + 量能温和放大',
+      category: 'trend',
+      expected_edge_pct: 8.0,
+      expected_holding_days: 25,
+      key_factors: ['ma50_ma150_ma200_stack', 'ma200_slope', 'distance_to_52w_high', 'distance_to_52w_low', 'return_60d', 'volume_5_30_ratio', 'quality_score'],
+      evidence_link: 'Mark Minervini - Trade Like a Stock Market Wizard (2013)',
+      failure_modes: [
+        '大盘 regime 切换到 bear 时所有强势股同步崩塌（系统性 beta）',
+        '突破后 ret20 > 38% 加速尾段，模板信号已严重滞后',
+        '价格跌破 MA50 + ATR 止损区间被洗盘',
+      ],
+      kill_switch_metric: 'win_rate_30d',
+      kill_switch_threshold: 0.42,
+    },
   };
 
   evaluate(context: QuantStockContext, options?: QuantStrategyRuntimeOptions): QuantSignalResult {

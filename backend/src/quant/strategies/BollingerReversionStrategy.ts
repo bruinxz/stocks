@@ -18,6 +18,22 @@ export class BollingerReversionStrategy extends QuantStrategy {
     risk_level: 'medium',
     tags: ['布林带', '低吸', '震荡'],
     style: 'mean_reversion',
+    edge_hypothesis: {
+      thesis:
+        '价格触及布林下轨后修复回归中轨：close 接近 lower band + 当日反弹 (close > prev_close) + 20 日动量未崩塌',
+      category: 'mean_reversion',
+      expected_edge_pct: 5.0,
+      expected_holding_days: 8,
+      key_factors: ['close_vs_bollinger_lower', 'close_vs_bollinger_middle', 'momentum_20d'],
+      evidence_link: 'Bollinger Bands - John Bollinger (1980s)',
+      failure_modes: [
+        '强趋势下行时布林下轨持续下移，反复抄底反复止损',
+        '震荡市晚期高频抖动导致换手率爆炸',
+        '低流动性票布林带不稳，假信号多',
+      ],
+      kill_switch_metric: 'win_rate_30d',
+      kill_switch_threshold: 0.45,
+    },
   };
 
   evaluate(context: QuantStockContext, options?: QuantStrategyRuntimeOptions): QuantSignalResult {

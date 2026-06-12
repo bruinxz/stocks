@@ -33,6 +33,22 @@ export class LowVolatilityQualityStrategy extends QuantStrategy {
     risk_level: 'low',
     tags: ['低波', '质量', '防守'],
     style: 'low_volatility',
+    edge_hypothesis: {
+      thesis:
+        '低波动异象：20 日波动率 ≤ 4.2 + 60 日回撤 ≤ 18% + 价格站上 MA20/MA60 + 估值/质量因子分位较安全，长期年化超额来自风险溢价错配',
+      category: 'risk_control',
+      expected_edge_pct: 4.0,
+      expected_holding_days: 18,
+      key_factors: ['volatility_20d', 'drawdown_60d', 'ma20_vs_ma60', 'avg_turnover_20d', 'valuation_score', 'quality_score'],
+      evidence_link: 'Baker, Bradley, Wurgler - Benchmarks as Limits to Arbitrage (2011) / Low Volatility Anomaly',
+      failure_modes: [
+        '高波动 regime（系统性危机）下"低波"票同步崩跌，相对优势失效',
+        '低波因子拥挤交易：大资金集中流入后 sharpe 大幅压缩',
+        '20 日成交额 < 1500 万的流动性陷阱，离场困难',
+      ],
+      kill_switch_metric: 'sharpe_30d',
+      kill_switch_threshold: 0.2,
+    },
   };
 
   evaluate(context: QuantStockContext, options?: QuantStrategyRuntimeOptions): QuantSignalResult {

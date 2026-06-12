@@ -24,6 +24,22 @@ export class DualMomentumRotationStrategy extends QuantStrategy {
     risk_level: 'medium',
     tags: ['双动量', '轮动', '相对强弱'],
     style: 'momentum',
+    edge_hypothesis: {
+      thesis:
+        '绝对动量 + 相对强弱双确认：ret20 > 5% AND ret60 > 8% AND ret120 > 10%，价格站上 MA20/MA60，20 日波动率 ≤ 6.2 控制风险',
+      category: 'momentum',
+      expected_edge_pct: 6.5,
+      expected_holding_days: 18,
+      key_factors: ['return_20d', 'return_60d', 'return_120d', 'volatility_20d', 'volume_5_30_ratio', 'money_flow_score'],
+      evidence_link: 'Antonacci - Dual Momentum Investing (2014)',
+      failure_modes: [
+        '动量崩塌（regime shift）：bull→bear 切换时全部 ret 转负仍按 momentum 入场',
+        '波动放大到 > 6.2 时降级但仓位未及时缩减',
+        '短期 ret20 > 42% 的加速尾段追高被立即收割',
+      ],
+      kill_switch_metric: 'sharpe_30d',
+      kill_switch_threshold: 0.3,
+    },
   };
 
   evaluate(context: QuantStockContext, options?: QuantStrategyRuntimeOptions): QuantSignalResult {

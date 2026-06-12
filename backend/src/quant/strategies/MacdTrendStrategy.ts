@@ -18,6 +18,22 @@ export class MacdTrendStrategy extends QuantStrategy {
     risk_level: 'medium',
     tags: ['MACD', '趋势确认'],
     style: 'momentum',
+    edge_hypothesis: {
+      thesis:
+        'MACD 趋势确认：DIF > DEA + histogram > 0 + histogram 由负转正（柱状图金叉）+ histogram 持续抬升，捕捉趋势启动后的右侧入场',
+      category: 'trend',
+      expected_edge_pct: 5.5,
+      expected_holding_days: 18,
+      key_factors: ['macd_dif_vs_dea', 'macd_histogram', 'histogram_momentum', 'price_momentum_10d'],
+      evidence_link: 'Gerald Appel - MACD (1970s)',
+      failure_modes: [
+        '震荡市中 DIF/DEA 反复交叉，MACD 信号噪音高',
+        'histogram 转正但价格 momentum10 < -6% 时假信号',
+        '短期 momentum10 > 25% 已加速尾段，MACD 滞后导致追高',
+      ],
+      kill_switch_metric: 'win_rate_30d',
+      kill_switch_threshold: 0.4,
+    },
   };
 
   evaluate(context: QuantStockContext, options?: QuantStrategyRuntimeOptions): QuantSignalResult {

@@ -24,6 +24,22 @@ export class DonchianTrendStrategy extends QuantStrategy {
     risk_level: 'high',
     tags: ['Donchian', '通道突破', 'ATR风控'],
     style: 'momentum',
+    edge_hypothesis: {
+      thesis:
+        'Donchian 55 日上轨突破 + MA50>MA100 多头排列 + 60 日动量 8-65% 区间 + 量能 5/20 日均比 ≥ 1.05 确认；ATR 控制波动风险',
+      category: 'breakout',
+      expected_edge_pct: 7.0,
+      expected_holding_days: 25,
+      key_factors: ['close_vs_donchian_55_high', 'ma50_vs_ma100', 'return_60d', 'atr_pct', 'volume_5_20_ratio'],
+      evidence_link: 'Richard Donchian - 4-week rule (1960s) / Donchian Channel',
+      failure_modes: [
+        '震荡市频繁假突破，ATR 止损反复触发',
+        '高 ATR 区间突破后回撤过深超过 2*ATR',
+        '20 日动量 > 45% 的加速尾段突破后立即回落',
+      ],
+      kill_switch_metric: 'win_rate_30d',
+      kill_switch_threshold: 0.4,
+    },
   };
 
   evaluate(context: QuantStockContext, options?: QuantStrategyRuntimeOptions): QuantSignalResult {

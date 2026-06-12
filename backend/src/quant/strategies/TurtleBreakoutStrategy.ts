@@ -24,6 +24,22 @@ export class TurtleBreakoutStrategy extends QuantStrategy {
     risk_level: 'high',
     tags: ['海龟交易', '20日突破', '55日突破', 'ATR'],
     style: 'momentum',
+    edge_hypothesis: {
+      thesis:
+        '海龟 20/55 日双窗突破：close > 55 日新高（中期）或 > 20 日新高（短期）+ MA20>MA60 顺势 + 量能 3/20 日比 ≥ 1.0 + ATR 控制 N 值',
+      category: 'breakout',
+      expected_edge_pct: 8.0,
+      expected_holding_days: 30,
+      key_factors: ['close_vs_high_20', 'close_vs_high_55', 'ma20_vs_ma60', 'atr_pct', 'volume_3_20_ratio', 'return_60d'],
+      evidence_link: 'Richard Dennis / Bill Eckhardt - Turtle Trading (1983)',
+      failure_modes: [
+        '震荡市 20 日突破频繁失败（whipsaw），ATR 止损反复触发',
+        'ATR/价格比 > 9% 的高波动突破后回撤超过 2N 被止损',
+        'ret20 > 50% 的加速尾段突破后立即回落洗盘',
+      ],
+      kill_switch_metric: 'win_rate_30d',
+      kill_switch_threshold: 0.38,
+    },
   };
 
   evaluate(context: QuantStockContext, options?: QuantStrategyRuntimeOptions): QuantSignalResult {

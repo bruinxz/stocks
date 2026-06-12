@@ -18,6 +18,22 @@ export class MovingAverageTrendStrategy extends QuantStrategy {
     risk_level: 'medium',
     tags: ['趋势', '均线', '右侧'],
     style: 'momentum',
+    edge_hypothesis: {
+      thesis:
+        '双均线右侧入场：价格站上长周期 MA20 + 短 MA5 > 长 MA20 + 短上穿长（金叉）+ 长 MA20 向上 + 量能 ≥ 1.15 均量确认',
+      category: 'trend',
+      expected_edge_pct: 5.0,
+      expected_holding_days: 20,
+      key_factors: ['close_vs_ma_long', 'ma_short_vs_long', 'ma_long_slope', 'volume_ratio', 'price_momentum_20d'],
+      evidence_link: '经典双均线系统 / Stan Weinstein - Secrets For Profiting (1988)',
+      failure_modes: [
+        '震荡市频繁金叉死叉，换手率爆炸 alpha 被费率吞噬',
+        '短期 momentum20 > 35% 加速尾段追高即套',
+        'momentum20 < -8% 时金叉信号是死叉前的最后一弹',
+      ],
+      kill_switch_metric: 'win_rate_30d',
+      kill_switch_threshold: 0.4,
+    },
   };
 
   evaluate(context: QuantStockContext, options?: QuantStrategyRuntimeOptions): QuantSignalResult {

@@ -34,6 +34,22 @@ export class VolatilityContractionBreakoutStrategy extends QuantStrategy {
     risk_level: 'high',
     tags: ['波动收缩', '平台突破', 'VCP'],
     style: 'momentum',
+    edge_hypothesis: {
+      thesis:
+        'VCP 平台突破：10 日波动率 ≤ 60 日波动率 × 0.68（波动收缩）+ 10 日振幅 ≤ 13% + close > 20 日平台高点 + 量能 3/20 日比 ≥ 1.15 放量确认',
+      category: 'breakout',
+      expected_edge_pct: 8.0,
+      expected_holding_days: 16,
+      key_factors: ['vol10_vs_vol60_contraction', 'range_10d_pct', 'close_vs_high_20', 'volume_3_20_ratio', 'ma20_vs_ma60', 'drawdown_60d'],
+      evidence_link: 'Mark Minervini - VCP (Volatility Contraction Pattern) / Trade Like a Stock Market Wizard',
+      failure_modes: [
+        '震荡市平台突破即假突破（false breakout）反向破位',
+        '60 日回撤 > 24% 平台稳定性不足，突破后立刻回落',
+        '量能 > 4 倍异常放大，可能是 short squeeze 而非真趋势',
+      ],
+      kill_switch_metric: 'win_rate_30d',
+      kill_switch_threshold: 0.4,
+    },
   };
 
   evaluate(context: QuantStockContext, options?: QuantStrategyRuntimeOptions): QuantSignalResult {

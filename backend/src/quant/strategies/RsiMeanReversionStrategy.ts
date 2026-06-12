@@ -18,6 +18,22 @@ export class RsiMeanReversionStrategy extends QuantStrategy {
     risk_level: 'medium',
     tags: ['RSI', '低吸', '均值回归'],
     style: 'mean_reversion',
+    edge_hypothesis: {
+      thesis:
+        'RSI 超卖修复：RSI(14) ≤ 35 进入超卖区 + RSI 较前一周期回升（拐头）+ 近 5 日跌幅在 (-18%, -5%) 区间（充分回调但非崩跌）',
+      category: 'mean_reversion',
+      expected_edge_pct: 5.0,
+      expected_holding_days: 10,
+      key_factors: ['rsi_14', 'rsi_rebound', 'price_drop_5d'],
+      evidence_link: 'Welles Wilder - New Concepts in Technical Trading Systems (1978) / RSI',
+      failure_modes: [
+        '强趋势下行时 RSI 长时间钝化在超卖区，反复抄底反复止损',
+        '近 5 日跌幅 ≤ -18% 的崩跌走势，"低吸"实为接飞刀',
+        'RSI 进入超买 ≥ 72 但仓位未及时止盈，盈转亏',
+      ],
+      kill_switch_metric: 'win_rate_30d',
+      kill_switch_threshold: 0.45,
+    },
   };
 
   evaluate(context: QuantStockContext, options?: QuantStrategyRuntimeOptions): QuantSignalResult {

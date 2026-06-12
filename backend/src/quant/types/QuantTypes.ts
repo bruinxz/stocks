@@ -125,7 +125,23 @@ export interface QuantStrategyDefinition {
    */
   edge_hypothesis?: {
     thesis: string;
-    category?: 'mean_reversion' | 'momentum' | 'sentiment' | 'event' | 'structural';
+    /**
+     * 推荐 category 取值。两套语义并存：
+     *   - QuantStrategyCategory (trend/momentum/mean_reversion/breakout/multi_factor/risk_control)
+     *     ——选股逻辑分类，与外层 definition.category 对齐方便检索；
+     *   - sentiment/event/structural ——alpha 来源分类，event 类（业绩超预期）/
+     *     sentiment 类（北向跟随）/ structural 类（多因子合成 / 长线价值）。
+     */
+    category?:
+      | 'trend'
+      | 'momentum'
+      | 'mean_reversion'
+      | 'breakout'
+      | 'multi_factor'
+      | 'risk_control'
+      | 'sentiment'
+      | 'event'
+      | 'structural';
     expected_edge_pct?: number;
     expected_holding_days?: number;
     key_factors?: string[];

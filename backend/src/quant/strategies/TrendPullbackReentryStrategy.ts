@@ -24,6 +24,22 @@ export class TrendPullbackReentryStrategy extends QuantStrategy {
     risk_level: 'medium',
     tags: ['趋势低吸', '均线回踩', 'RSI修复'],
     style: 'momentum',
+    edge_hypothesis: {
+      thesis:
+        '趋势内回踩低吸：MA20>MA60>MA120 多头排列 + ret60 > 6% + 价格距 MA20 在 [-4%, +5%] 区间（回踩到位）+ RSI 在 [38, 62] 修复区间且回升',
+      category: 'mean_reversion',
+      expected_edge_pct: 6.0,
+      expected_holding_days: 14,
+      key_factors: ['ma20_ma60_ma120_stack', 'distance_to_ma20', 'rsi_14_rebound', 'return_5d', 'return_60d', 'volume_3_20_ratio'],
+      evidence_link: 'Buy The Dip in established trend / Stan Weinstein - Stage 2 Pullback',
+      failure_modes: [
+        '价格跌破 MA60 时回踩演变为趋势破坏',
+        'ret5 < -12% 的崩跌型回调，"低吸"实为接刀',
+        'RSI > 72 过热已是趋势末段，回踩信号失效',
+      ],
+      kill_switch_metric: 'win_rate_30d',
+      kill_switch_threshold: 0.45,
+    },
   };
 
   evaluate(context: QuantStockContext, options?: QuantStrategyRuntimeOptions): QuantSignalResult {

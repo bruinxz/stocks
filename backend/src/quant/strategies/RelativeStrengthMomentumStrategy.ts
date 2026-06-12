@@ -18,6 +18,22 @@ export class RelativeStrengthMomentumStrategy extends QuantStrategy {
     risk_level: 'medium',
     tags: ['动量', '相对强弱', '全市场'],
     style: 'momentum',
+    edge_hypothesis: {
+      thesis:
+        '相对强弱动量：ret20 > 8% AND ret60 > 12% + 价格站上 MA20 + 量能 5/20 日比 > 1.08 + 波动率 ≤ 5.5 控制，全市场自动发现主线',
+      category: 'momentum',
+      expected_edge_pct: 6.0,
+      expected_holding_days: 20,
+      key_factors: ['return_20d', 'return_60d', 'volatility_20d', 'volume_5_20_ratio', 'close_vs_ma20'],
+      evidence_link: 'Jegadeesh-Titman - Returns to Buying Winners (1993) / Momentum Anomaly',
+      failure_modes: [
+        '动量崩塌：bull → bear regime shift 时强势股集体下跌',
+        '波动率 > 5.5% 时降级但仓位未及时缩减',
+        'ret20 > 45% 加速尾段追高，回撤 -20%+ 难以扛住',
+      ],
+      kill_switch_metric: 'sharpe_30d',
+      kill_switch_threshold: 0.3,
+    },
   };
 
   evaluate(context: QuantStockContext, options?: QuantStrategyRuntimeOptions): QuantSignalResult {
