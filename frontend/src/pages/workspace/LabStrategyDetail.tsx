@@ -5,10 +5,15 @@ import {
   Card,
   Col,
   Descriptions,
+  Drawer,
   Empty,
+  Form,
+  Input,
+  InputNumber,
   message,
   Modal,
   Row,
+  Select,
   Space,
   Spin,
   Statistic,
@@ -32,6 +37,7 @@ import {
   PlayCircleOutlined,
   ReloadOutlined,
   RightOutlined,
+  SaveOutlined,
 } from '@ant-design/icons';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import dayjs from 'dayjs';
@@ -42,6 +48,7 @@ import {
   StrategyDetailBacktest,
   StrategyDetailResponse,
   StrategySourceResponse,
+  EdgeHypothesisPayload,
 } from '../../services/labService';
 
 const { Text, Paragraph } = Typography;
@@ -477,8 +484,239 @@ const StrategyMetaCard: React.FC<{
       </Row>
 
       {/* Phase 4: Edge Hypothesis 卡片 */}
-      <EdgeHypothesisCard hypothesis={strategy.edge_hypothesis} />
+      <EdgeHypothesisCard
+        strategyKey={strategy.strategy_key}
+        hypothesis={strategy.edge_hypothesis}
+        onUpdated={onUpdated}
+      />
     </Card>
+  );
+};
+
+/**
+ * Phase 4: 策略 edge_hypothesis 编辑 Drawer
+ * 用户/Lab 可在线编辑 thesis / category / expected_edge / kill_switch_metric / failure_modes
+ * 等字段，PATCH /api/quant/strategies/:id 保存。
+ *
+ * **必填字段** (Phase 4 promotion 门禁):
+ *   - thesis (≥10 字符)
+ *   - category
+ *   - kill_switch_metric
+ * 否则会被 PromotionGate 拦截 promote 成 champion。
+ */
+const EdgeHypothesisEditor: React.FC<{
+  open: boolean;
+  strategyKey: string;
+  initial?: Record<string, any>;
+  onClose: () => void;
+  onSaved?: () => void | Promise<void>;
+}> = ({ open, strategyKey, initial, onClose, onSaved }) => {
+  const [form] = Form.useForm();
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      const hypo = initial || {};
+      form.setFieldsValue({
+        thesis: hypo.thesis || '',
+        category: hypo.category || undefined,
+        expected_edge_pct: typeof hypo.expected_edge_pct === 'number' ? hypo.expected_edge_pct : null,
+        expected_holding_days:
+          typeof hypo.expected_holding_days === 'number' ? hypo.expected_holding_days : null,
+        key_factors: Array.isArray(hypo.key_factors) ? hypo.key_factors : [],
+        failure_modes: Array.isArray(hypo.failure_modes) ? hypo.failure_modes : [],
+        kill_switch_metric: hypo.kill_switch_metric || '',
+        kill_switch_threshold:
+          typeof hypo.kill_switch_threshold === 'number' ? hypo.kill_switch_threshold : null,
+        evidence_link: hypo.evidence_link || '',
+      });
+    }
+  }, [open, initial, form]);
+
+  const onSubmit = useCallback(async () => {
+    const values = await form.validateFields().catch(() => null);
+    if (!values) return;
+    setSaving(true);
+    try {
+      const payload: EdgeHypothesisPayload = {
+        thesis: String(values.thesis || '').trim(),
+        category: values.category || undefined,
+        expected_edge_pct:
+          values.expected_edge_pct === null || values.expected_edge_pct === undefined
+            ? undefined
+            : Number(values.expected_edge_pct),
+        expected_holding_days:
+          values.expected_holding_days === null || values.expected_holding_days === undefined
+            ? undefined
+            : Number(values.expected_holding_days),
+        key_factors: Array.isArray(values.key_factors) ? values.key_factors : [],
+        failure_modes: Array.isArray(values.failure_modes) ? values.failure_modes : [],
+        kill_switch_metric: String(values.kill_switch_metric || '').trim() || undefined,
+        kill_switch_threshold:
+          values.kill_switch_threshold === null || values.kill_switch_threshold === undefined
+            ? undefined
+            : Number(values.kill_switch_threshold),
+        evidence_link: String(values.evidence_link || '').trim() || undefined,
+      };
+      await labService.setStrategyEdgeHypothesis(strategyKey, payload);
+      message.success('Edge Hypothesis 已保存');
+      onClose();
+      if (onSaved) await onSaved();
+    } catch (err: any) {
+      message.error(err?.message || '保存失败');
+    } finally {
+      setSaving(false);
+    }
+  }, [form, strategyKey, onClose, onSaved]);
+
+  return (
+    <Drawer
+      title={
+        <Space>
+          <EditOutlined />
+          <Text strong>编辑 Edge Hypothesis</Text>
+          <Tag color="processing">Phase 4</Tag>
+        </Space>
+      }
+      placement="right"
+      width={560}
+      open={open}
+      onClose={onClose}
+      destroyOnClose
+      extra={
+        <Space>
+          <Button onClick={onClose}>取消</Button>
+          <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={onSubmit}>
+            保存
+          </Button>
+        </Space>
+      }
+    >
+      <Alert
+        type="info"
+        showIcon
+        style={{ marginBottom: 16 }}
+        message="Phase 4 promotion 门禁"
+        description="必填字段：thesis (≥10 字符) / category / kill_switch_metric。未填齐这 3 项的策略将被 PromotionGate 拦截，无法 promote 成 champion。"
+      />
+      <Form form={form} layout="vertical">
+        <Form.Item
+          name="thesis"
+          label="假设 (thesis) ★ 必填"
+          rules={[
+            { required: true, message: '必须填写假设' },
+            { min: 10, message: '至少 10 个字符（promotion 门禁要求）' },
+          ]}
+          tooltip="一句话描述这个策略为什么能赚钱。要可证伪，不要写'本策略稳定盈利'。"
+        >
+          <Input.TextArea
+            rows={3}
+            placeholder="e.g. 持有 ROE > 15% 且 PEG < 1 的 GARP 股票，能在 3-6 个月跑赢沪深 300（来源：Fama-French quality factor）"
+            maxLength={500}
+            showCount
+          />
+        </Form.Item>
+
+        <Row gutter={12}>
+          <Col span={12}>
+            <Form.Item
+              name="category"
+              label="类别 ★ 必填"
+              rules={[{ required: true, message: '必须选择类别' }]}
+            >
+              <Select
+                placeholder="选择策略类别"
+                options={[
+                  { value: 'momentum', label: 'momentum (动量)' },
+                  { value: 'mean_reversion', label: 'mean_reversion (均值回归)' },
+                  { value: 'value', label: 'value (价值)' },
+                  { value: 'growth', label: 'growth (成长)' },
+                  { value: 'quality', label: 'quality (质量)' },
+                  { value: 'structural', label: 'structural (结构性, e.g. 多因子)' },
+                  { value: 'event_driven', label: 'event_driven (事件驱动)' },
+                  { value: 'macro', label: 'macro (宏观)' },
+                  { value: 'sentiment', label: 'sentiment (情绪)' },
+                  { value: 'other', label: 'other (其他)' },
+                ]}
+              />
+            </Form.Item>
+          </Col>
+          <Col span={12}>
+            <Form.Item
+              name="kill_switch_metric"
+              label="熔断指标 ★ 必填"
+              rules={[{ required: true, message: '必须填写熔断指标' }]}
+              tooltip="哪个指标低于阈值就停掉这个策略（e.g. sharpe_30d, win_rate, monthly_return）"
+            >
+              <Input placeholder="e.g. sharpe_30d / win_rate_60d" />
+            </Form.Item>
+          </Col>
+        </Row>
+
+        <Row gutter={12}>
+          <Col span={12}>
+            <Form.Item
+              name="expected_edge_pct"
+              label="预期年化 alpha (%)"
+              tooltip="超额收益的预期值（相对基准）。带正负号"
+            >
+              <InputNumber min={-50} max={50} step={0.5} style={{ width: '100%' }} placeholder="3.5" />
+            </Form.Item>
+          </Col>
+          <Col span={12}>
+            <Form.Item
+              name="expected_holding_days"
+              label="预期持仓天数"
+              tooltip="平均持仓周期。短线 1-5 / 中线 20-90 / 长线 180+"
+            >
+              <InputNumber min={1} max={1000} style={{ width: '100%' }} placeholder="30" />
+            </Form.Item>
+          </Col>
+        </Row>
+
+        <Form.Item
+          name="kill_switch_threshold"
+          label="熔断阈值"
+          tooltip="kill_switch_metric 的数值阈值，低于此值触发停用"
+        >
+          <InputNumber step={0.1} style={{ width: '100%' }} placeholder="0.5 (e.g. sharpe<0.5 停用)" />
+        </Form.Item>
+
+        <Form.Item
+          name="key_factors"
+          label="关键因子"
+          tooltip="本策略依赖的核心因子（e.g. roe, peg, volume_ratio）"
+        >
+          <Select
+            mode="tags"
+            placeholder="按 Enter 添加，e.g. roe, peg, momentum_20d"
+            tokenSeparators={[',', '，']}
+            style={{ width: '100%' }}
+          />
+        </Form.Item>
+
+        <Form.Item
+          name="failure_modes"
+          label="已知失效场景"
+          tooltip="哪些市场状态下本策略会跑输（e.g. 熊市/小盘股回撤期）"
+        >
+          <Select
+            mode="tags"
+            placeholder="按 Enter 添加，e.g. 熊市初期, 流动性枯竭, 板块单边下跌"
+            tokenSeparators={[',', '，']}
+            style={{ width: '100%' }}
+          />
+        </Form.Item>
+
+        <Form.Item
+          name="evidence_link"
+          label="学术引用 / 实证链接 (evidence_link)"
+          tooltip="支撑本假设的论文 / 研究报告 URL，便于审核"
+        >
+          <Input placeholder="https://... 或论文标题" />
+        </Form.Item>
+      </Form>
+    </Drawer>
   );
 };
 
@@ -486,19 +724,44 @@ const StrategyMetaCard: React.FC<{
  * Phase 4: 策略 edge_hypothesis 展示卡片
  * 显示 thesis / category / expected_edge / kill_switch_metric / failure_modes 等
  * 让用户一眼看清这个策略的"alpha 假设"
+ * 右上角有"编辑"按钮，打开 EdgeHypothesisEditor Drawer
  */
-const EdgeHypothesisCard: React.FC<{ hypothesis?: Record<string, any> }> = ({ hypothesis }) => {
+const EdgeHypothesisCard: React.FC<{
+  strategyKey: string;
+  hypothesis?: Record<string, any>;
+  onUpdated?: () => void | Promise<void>;
+}> = ({ strategyKey, hypothesis, onUpdated }) => {
+  const [editorOpen, setEditorOpen] = useState(false);
   const hypo = hypothesis || {};
   const hasContent = hypo && typeof hypo === 'object' && Object.keys(hypo).length > 0;
   if (!hasContent) {
     return (
-      <Alert
-        style={{ marginTop: 16 }}
-        type="warning"
-        showIcon
-        message="缺少 Edge Hypothesis"
-        description="本策略尚未填写可证伪的 alpha 假设。Phase 4 promotion 门禁要求所有策略必须填写 edge_hypothesis.thesis (≥10 字符) 才能 promote 成 champion。"
-      />
+      <>
+        <Alert
+          style={{ marginTop: 16 }}
+          type="warning"
+          showIcon
+          message="缺少 Edge Hypothesis"
+          description={
+            <Space direction="vertical" size={8}>
+              <Text>
+                本策略尚未填写可证伪的 alpha 假设。Phase 4 promotion 门禁要求所有策略必须填写
+                edge_hypothesis.thesis (≥10 字符) 才能 promote 成 champion。
+              </Text>
+              <Button type="primary" icon={<EditOutlined />} onClick={() => setEditorOpen(true)}>
+                立即填写
+              </Button>
+            </Space>
+          }
+        />
+        <EdgeHypothesisEditor
+          open={editorOpen}
+          strategyKey={strategyKey}
+          initial={hypo}
+          onClose={() => setEditorOpen(false)}
+          onSaved={onUpdated}
+        />
+      </>
     );
   }
   const thesis = String(hypo.thesis || '').trim();
@@ -512,17 +775,23 @@ const EdgeHypothesisCard: React.FC<{ hypothesis?: Record<string, any> }> = ({ hy
   const evidence = hypo.evidence_link || null;
 
   return (
-    <Card
-      type="inner"
-      size="small"
-      style={{ marginTop: 16 }}
-      title={
-        <Space>
-          <Text strong>Edge Hypothesis (alpha 假设)</Text>
-          <Tag color="processing">Phase 4</Tag>
-        </Space>
-      }
-    >
+    <>
+      <Card
+        type="inner"
+        size="small"
+        style={{ marginTop: 16 }}
+        title={
+          <Space>
+            <Text strong>Edge Hypothesis (alpha 假设)</Text>
+            <Tag color="processing">Phase 4</Tag>
+          </Space>
+        }
+        extra={
+          <Button size="small" icon={<EditOutlined />} onClick={() => setEditorOpen(true)}>
+            编辑
+          </Button>
+        }
+      >
       {thesis && (
         <Paragraph style={{ marginBottom: 12, fontSize: 14, lineHeight: 1.6 }}>
           <Text type="secondary">假设：</Text>
@@ -585,7 +854,15 @@ const EdgeHypothesisCard: React.FC<{ hypothesis?: Record<string, any> }> = ({ hy
           <Text code>{evidence}</Text>
         </div>
       )}
-    </Card>
+      </Card>
+      <EdgeHypothesisEditor
+        open={editorOpen}
+        strategyKey={strategyKey}
+        initial={hypo}
+        onClose={() => setEditorOpen(false)}
+        onSaved={onUpdated}
+      />
+    </>
   );
 };
 

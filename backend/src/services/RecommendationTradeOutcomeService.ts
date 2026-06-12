@@ -106,6 +106,8 @@ export interface RecommendationTradeOutcomeDashboard {
     by_strategy_key: RecommendationTradeOutcomeBucket[];
     by_market_regime: RecommendationTradeOutcomeBucket[];
     by_industry_regime: RecommendationTradeOutcomeBucket[];
+    /** Phase 5+: 按 root_cause 聚合（亏损归因 dashboard 用） */
+    by_root_cause: RecommendationTradeOutcomeBucket[];
     by_environment_policy_version: RecommendationTradeOutcomeBucket[];
     by_environment_strategy_combo: RecommendationTradeOutcomeBucket[];
     by_resample: RecommendationTradeOutcomeBucket[];
@@ -318,6 +320,28 @@ function marketRegimeLabel(key: string): string {
     unknown: '环境未知',
   };
   return labels[key] || key || '环境未知';
+}
+
+/**
+ * Phase 5+: trade root_cause → 中文标签。
+ * 与 TradeRootCauseClassifier 的 10 种 root_cause 严格对齐。
+ */
+function rootCauseLabel(key: string): string {
+  const labels: Record<string, string> = {
+    market_regime_shift: '市场环境逆转',
+    catalyst_failed: '催化剂失效',
+    stop_loss_hit: '硬止损触发',
+    take_profit_hit: '止盈触发',
+    holding_period_expired: '到期清仓',
+    excessive_drawdown: '中途回撤过深',
+    industry_rotation: '行业切换',
+    micro_thesis_broken: '微观逻辑破坏',
+    strategy_drift: '策略漂移',
+    normal_thesis_played_out: '正常兑现',
+    unclassified: '未分类',
+    unknown: '未分类',
+  };
+  return labels[key] || key || '未分类';
 }
 
 function industryRegimeKey(record: RecommendationTradeOutcome): string {
@@ -1203,6 +1227,13 @@ export class RecommendationTradeOutcomeService {
         item => strategyKeyFromOutcome(item),
         recommendationStrategyKeyLabel,
         'strategy_key'
+      ),
+      // Phase 5+: 按 root_cause 聚合 — 让用户看到"哪种亏损/盈利原因占主导"
+      by_root_cause: this.buildBuckets(
+        outcomes,
+        item => (item as any).root_cause || 'unclassified',
+        rootCauseLabel,
+        'root_cause'
       ),
       by_market_regime: this.buildBuckets(
         outcomes,

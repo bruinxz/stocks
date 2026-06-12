@@ -426,6 +426,47 @@ export async function setStrategyDryRun(
   return res.data.data;
 }
 
+// ---------- /api/quant/strategies/:id PATCH (Phase 4 edge_hypothesis editor) ----------
+
+/**
+ * Phase 4: 用户/Lab 编辑 edge_hypothesis (alpha 假设)。
+ *
+ * 后端 QuantController.updateStrategyConfig 支持顶层 `edge_hypothesis` 字段，
+ * replace-not-merge 语义 — 整个 JSON 对象覆盖 strategy.edge_hypothesis 字段。
+ *
+ * Phase 4 promotion 门禁要求所有 promote 成 champion 的策略必须填:
+ *   - thesis (≥10 字符)
+ *   - category
+ *   - kill_switch_metric
+ * 否则会被 PromotionGate 拦截。
+ *
+ * @returns 更新后的策略对象（含新 edge_hypothesis）
+ */
+export interface EdgeHypothesisPayload {
+  thesis?: string;
+  category?: string;
+  expected_edge_pct?: number;
+  expected_holding_days?: number;
+  key_factors?: string[];
+  failure_modes?: string[];
+  kill_switch_metric?: string;
+  kill_switch_threshold?: number;
+  evidence_link?: string;
+}
+
+export async function setStrategyEdgeHypothesis(
+  strategyKey: string,
+  hypothesis: EdgeHypothesisPayload
+): Promise<QuantStrategyItem & { edge_hypothesis?: Record<string, any> }> {
+  const res = await api.patch(`/quant/strategies/${encodeURIComponent(strategyKey)}`, {
+    edge_hypothesis: hypothesis,
+  });
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || '更新 edge_hypothesis 失败');
+  }
+  return res.data.data;
+}
+
 // ---------- Phase 1: Walk-Forward Validation ------------------------------
 
 export interface WalkForwardSummary {
@@ -572,6 +613,7 @@ export const labService = {
   getStrategyDetail,
   getStrategySource,
   setStrategyDryRun,
+  setStrategyEdgeHypothesis,
   // Phase 1: walk-forward
   runWalkForwardValidation,
   listWalkForwardRuns,

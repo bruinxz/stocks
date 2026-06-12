@@ -197,6 +197,8 @@ interface OutcomeDashboard {
     by_consensus?: OutcomeBucket[];
     by_market_regime?: OutcomeBucket[];
     by_industry_regime?: OutcomeBucket[];
+    /** Phase 5+: 按 root_cause 聚合（亏损归因 dashboard） */
+    by_root_cause?: OutcomeBucket[];
   };
   outcomes: TradeOutcome[];
   feedback: {
@@ -369,6 +371,8 @@ const RecommendationTradeOutcomes: React.FC = () => {
     () => dashboard?.groups?.by_industry_regime || [],
     [dashboard]
   );
+  // Phase 5+: 按 root_cause 聚合（亏损/盈利归因 dashboard）
+  const rootCauseBuckets = useMemo(() => dashboard?.groups?.by_root_cause || [], [dashboard]);
   const environmentAttribution = useMemo(() => {
     const bestMarket = [...marketRegimeBuckets]
       .filter(item => item.closed_count > 0)
@@ -950,6 +954,74 @@ const RecommendationTradeOutcomes: React.FC = () => {
                 <Text type="secondary">暂无环境归因样本</Text>
               )}
             </Space>
+          </Col>
+        </Row>
+      </Card>
+
+      {/* Phase 5+: 根因 (root_cause) 归因 dashboard
+          所有闭环 trade 按 10 种 root_cause 聚合，让用户一眼看到：
+            - "中途回撤过深" 占比多少？是不是止损线设得太宽？
+            - "催化剂失效" 多发生在哪种 strategy？说明这类策略 catalyst 选得不准
+            - "正常兑现" 占比理想 (健康策略) vs "硬止损" 占主导 (策略问题)
+      */}
+      <Card className="modern-card root-cause-card" variant="borderless" style={{ marginTop: 16 }}>
+        <Row gutter={[18, 18]} align="middle">
+          <Col xs={24} lg={7}>
+            <div className="outcome-panel-title">
+              <NodeIndexOutlined /> 闭环根因归因（Phase 5）
+            </div>
+            <p>
+              所有闭环 trade 按 10 种 root_cause 聚类。健康策略应当以"正常兑现"+"止盈触发"为主导；
+              如果"催化剂失效"或"中途回撤过深"占比过高，需要回看 strategy 或 sizing 配置。
+            </p>
+          </Col>
+          <Col xs={24} lg={17}>
+            {rootCauseBuckets.length === 0 ? (
+              <Text type="secondary">暂无 root_cause 样本（运行 npm run reprocess:root-cause 回填历史数据）</Text>
+            ) : (
+              <Space wrap size={[8, 8]}>
+                {rootCauseBuckets
+                  .filter(b => b.closed_count > 0)
+                  .sort((a, b) => b.closed_count - a.closed_count)
+                  .map(bucket => {
+                    const pct = (bucket.closed_count / Math.max(1, rootCauseBuckets.reduce((s, b) => s + b.closed_count, 0))) * 100;
+                    const winRate = Number(bucket.win_rate || 0);
+                    const avgReturn = Number(bucket.avg_return_pct || 0);
+                    return (
+                      <Tooltip
+                        key={bucket.key}
+                        title={
+                          <div style={{ minWidth: 180 }}>
+                            <div><b>{bucket.label}</b></div>
+                            <div>闭环 {bucket.closed_count} 笔（{pct.toFixed(1)}%）</div>
+                            <div>胜率 {winRate.toFixed(1)}%</div>
+                            <div>平均回报 {avgReturn.toFixed(2)}%</div>
+                            <div>平均超额 {Number(bucket.avg_excess_return_pct || 0).toFixed(2)}%</div>
+                            <div>持仓 {Number(bucket.avg_holding_days || 0).toFixed(1)} 天</div>
+                          </div>
+                        }
+                      >
+                        <Tag
+                          color={
+                            bucket.key === 'normal_thesis_played_out' || bucket.key === 'take_profit_hit'
+                              ? 'green'
+                              : bucket.key === 'stop_loss_hit' || bucket.key === 'excessive_drawdown'
+                              ? 'red'
+                              : bucket.key === 'catalyst_failed' || bucket.key === 'micro_thesis_broken'
+                              ? 'orange'
+                              : bucket.key === 'market_regime_shift' || bucket.key === 'industry_rotation'
+                              ? 'volcano'
+                              : 'default'
+                          }
+                          style={{ padding: '4px 10px', fontSize: 13 }}
+                        >
+                          {bucket.label} · {bucket.closed_count} ({pct.toFixed(0)}%)
+                        </Tag>
+                      </Tooltip>
+                    );
+                  })}
+              </Space>
+            )}
           </Col>
         </Row>
       </Card>
