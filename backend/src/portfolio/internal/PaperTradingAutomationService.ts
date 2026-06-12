@@ -15,6 +15,7 @@ import { Stock } from '../../models/Stock';
 import { RealtimeQuote } from '../../models/RealtimeQuote';
 import { User } from '../../models/User';
 import { RecommendationTradeOutcome } from '../../models/RecommendationTradeOutcome';
+import { SizingDecisionAudit } from '../../models/SizingDecisionAudit';
 import { quantRecommendationService } from '../../services/QuantRecommendationService';
 import { aiInvestmentSignalService } from '../../services/AIInvestmentSignalService';
 import { feishuTaskReportService } from '../../services/FeishuTaskReportService';
@@ -1848,6 +1849,46 @@ class PaperTradingAutomationService {
               `delta=${roundNumber(shadowSizingDecision.position_pct - effectiveTargetPct, 2)}% ` +
               `reason="${shadowSizingDecision.reason}"`
           );
+
+          // 持久化审计行 (用于 A/B 报告 + 调试)
+          try {
+            await SizingDecisionAudit.create({
+              portfolio_id: portfolio.id,
+              user_id: portfolio.user_id,
+              signal_id: signal.id,
+              symbol: signal.symbol,
+              strategy_key:
+                (signal as any)?.metadata?.strategy_key ||
+                (signal as any)?.metadata?.signal_metadata?.strategy_key ||
+                null,
+              method: sizingPolicy.method,
+              hard_cutover: sizingPolicy.hard_cutover_enabled,
+              actual_pct: effectiveTargetPct,
+              decision_pct: shadowSizingDecision.position_pct,
+              delta: shadowSizingDecision.position_pct - effectiveTargetPct,
+              reason: shadowSizingDecision.reason,
+              capped_by_max: shadowSizingDecision.capped_by_max,
+              capped_by_cash: shadowSizingDecision.capped_by_cash,
+              metadata: {
+                policy: {
+                  method: sizingPolicy.method,
+                  base_position_pct: sizingPolicy.base_position_pct,
+                  max_position_pct: sizingPolicy.max_position_pct,
+                  kelly_fraction_multiplier: sizingPolicy.kelly_fraction_multiplier,
+                  hard_cutover_enabled: sizingPolicy.hard_cutover_enabled,
+                },
+                context: {
+                  equity: roundNumber(totalValue, 2),
+                  available_cash: roundNumber(availableCash, 2),
+                  current_price: execute_price,
+                  max_position_pct: strategyPositionCap,
+                },
+              },
+            });
+          } catch (auditErr: any) {
+            // 审计失败不阻塞主流程
+            logger.warn(`[sizing-audit] persist failed: ${auditErr?.message || auditErr}`);
+          }
 
           // 硬切换：真正替换 effectiveTargetPct
           if (sizingPolicy.hard_cutover_enabled && shadowSizingDecision.position_pct > 0) {

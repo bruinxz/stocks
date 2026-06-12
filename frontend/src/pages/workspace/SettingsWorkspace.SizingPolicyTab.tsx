@@ -23,7 +23,9 @@ import {
   Row,
   Select,
   Space,
+  Statistic,
   Switch,
+  Table,
   Tag,
   Tooltip,
   Typography,
@@ -35,6 +37,7 @@ import {
   SizingPolicyConfig,
   SizingPolicyWithDefaults,
   SizingMethod,
+  SizingAuditReport,
 } from '../../services/sizingPolicyService';
 
 const { Text, Paragraph } = Typography;
@@ -379,8 +382,260 @@ const SizingPolicyTab: React.FC = () => {
           </Space>
         </Form>
       </Card>
+
+      <SizingAuditPanel />
     </Space>
   );
 };
 
 export default SizingPolicyTab;
+
+// ============================================================
+// SizingAuditPanel — Phase 2+ A/B 决策审计面板
+// ============================================================
+
+const SizingAuditPanel: React.FC = () => {
+  const [report, setReport] = useState<SizingAuditReport | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [lookbackDays, setLookbackDays] = useState(30);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const r = await sizingPolicyService.getSizingAudit({ lookback_days: lookbackDays });
+      setReport(r);
+    } catch (err: any) {
+      setError(err?.message || '加载失败');
+    } finally {
+      setLoading(false);
+    }
+  }, [lookbackDays]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const summary = report?.summary;
+  const byStrategy = report?.by_strategy || [];
+  const recentRows = report?.recent_rows || [];
+
+  return (
+    <Card
+      className="modern-card"
+      title="Sizing 决策审计 (Phase 2+)"
+      extra={
+        <Space>
+          <Select
+            size="small"
+            value={lookbackDays}
+            onChange={v => setLookbackDays(v)}
+            options={[
+              { value: 7, label: '7 天' },
+              { value: 30, label: '30 天' },
+              { value: 90, label: '90 天' },
+            ]}
+            style={{ width: 100 }}
+          />
+          <Button icon={<ReloadOutlined />} onClick={load} loading={loading} size="small">
+            刷新
+          </Button>
+        </Space>
+      }
+    >
+      {error && <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} />}
+      {!error && summary && summary.count === 0 && (
+        <Alert
+          type="info"
+          showIcon
+          message="暂无 sizing 决策记录"
+          description="切换 sizing 方法 (vol_target / atr_based / kelly) 后下一笔自动跟单会开始写入决策审计。"
+        />
+      )}
+      {summary && summary.count > 0 && (
+        <>
+          <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+            <Col xs={12} sm={8} md={6}>
+              <Statistic title="决策行数" value={summary.count} />
+            </Col>
+            <Col xs={12} sm={8} md={6}>
+              <Statistic
+                title="硬切换 / Shadow"
+                value={`${summary.hard_cutover_count} / ${summary.shadow_count}`}
+              />
+            </Col>
+            <Col xs={12} sm={8} md={6}>
+              <Statistic
+                title="平均实际仓位 %"
+                value={summary.avg_actual_pct}
+                precision={2}
+                suffix="%"
+              />
+            </Col>
+            <Col xs={12} sm={8} md={6}>
+              <Statistic
+                title="平均决策仓位 %"
+                value={summary.avg_decision_pct}
+                precision={2}
+                suffix="%"
+              />
+            </Col>
+            <Col xs={12} sm={8} md={6}>
+              <Tooltip title="决策 - 实际。正数=sizing 倾向加仓，负数=减仓">
+                <Statistic
+                  title="平均 Δ %"
+                  value={summary.avg_delta_pct}
+                  precision={2}
+                  suffix="%"
+                  valueStyle={{ color: summary.avg_delta_pct > 0 ? '#cf1322' : '#3f8600' }}
+                />
+              </Tooltip>
+            </Col>
+            <Col xs={12} sm={8} md={6}>
+              <Statistic
+                title={`最大 |Δ| (${summary.max_abs_delta_symbol || '—'})`}
+                value={summary.max_abs_delta_pct}
+                precision={2}
+                suffix="%"
+              />
+            </Col>
+            <Col xs={12} sm={8} md={6}>
+              <Statistic
+                title="触顶 max %"
+                value={summary.capped_by_max_pct}
+                precision={1}
+                suffix="%"
+                valueStyle={{ color: summary.capped_by_max_pct > 30 ? '#cf1322' : '#666' }}
+              />
+            </Col>
+            <Col xs={12} sm={8} md={6}>
+              <Statistic
+                title="触顶 cash %"
+                value={summary.capped_by_cash_pct}
+                precision={1}
+                suffix="%"
+                valueStyle={{ color: summary.capped_by_cash_pct > 30 ? '#cf1322' : '#666' }}
+              />
+            </Col>
+          </Row>
+
+          {byStrategy.length > 0 && (
+            <>
+              <Typography.Title level={5} style={{ marginTop: 16 }}>
+                按策略聚合
+              </Typography.Title>
+              <Table
+                size="small"
+                dataSource={byStrategy}
+                rowKey="strategy_key"
+                pagination={false}
+                scroll={{ x: 600 }}
+                columns={[
+                  { title: '策略', dataIndex: 'strategy_key', width: 160 },
+                  { title: '决策数', dataIndex: 'count', width: 80 },
+                  {
+                    title: '平均实际 %',
+                    dataIndex: 'avg_actual_pct',
+                    width: 100,
+                    render: (v: number) => `${v.toFixed(2)}%`,
+                  },
+                  {
+                    title: '平均决策 %',
+                    dataIndex: 'avg_decision_pct',
+                    width: 100,
+                    render: (v: number) => `${v.toFixed(2)}%`,
+                  },
+                  {
+                    title: '平均 Δ %',
+                    dataIndex: 'avg_delta_pct',
+                    width: 100,
+                    render: (v: number) => (
+                      <span style={{ color: v > 0 ? '#cf1322' : '#3f8600' }}>{v.toFixed(2)}%</span>
+                    ),
+                  },
+                  {
+                    title: 'method 分布',
+                    dataIndex: 'method_breakdown',
+                    render: (m: Record<string, number>) => (
+                      <Space size={4}>
+                        {Object.entries(m).map(([k, v]) => (
+                          <Tag key={k} color="blue" style={{ margin: 0 }}>
+                            {k}:{v}
+                          </Tag>
+                        ))}
+                      </Space>
+                    ),
+                  },
+                ]}
+              />
+            </>
+          )}
+
+          {recentRows.length > 0 && (
+            <>
+              <Typography.Title level={5} style={{ marginTop: 16 }}>
+                最近 {recentRows.length} 笔决策
+              </Typography.Title>
+              <Table
+                size="small"
+                dataSource={recentRows}
+                rowKey="id"
+                pagination={{ pageSize: 10 }}
+                scroll={{ x: 800 }}
+                columns={[
+                  {
+                    title: '时间',
+                    dataIndex: 'created_at',
+                    width: 140,
+                    render: (v: string) => new Date(v).toLocaleString('zh-CN'),
+                  },
+                  { title: 'Symbol', dataIndex: 'symbol', width: 100 },
+                  { title: '策略', dataIndex: 'strategy_key', width: 140 },
+                  {
+                    title: '模式',
+                    dataIndex: 'hard_cutover',
+                    width: 80,
+                    render: (v: boolean) =>
+                      v ? <Tag color="red">hard</Tag> : <Tag color="default">shadow</Tag>,
+                  },
+                  { title: 'method', dataIndex: 'method', width: 100 },
+                  {
+                    title: '实际 %',
+                    dataIndex: 'actual_pct',
+                    width: 80,
+                    render: (v: number) => `${Number(v).toFixed(2)}%`,
+                  },
+                  {
+                    title: '决策 %',
+                    dataIndex: 'decision_pct',
+                    width: 80,
+                    render: (v: number) => `${Number(v).toFixed(2)}%`,
+                  },
+                  {
+                    title: 'Δ %',
+                    dataIndex: 'delta',
+                    width: 80,
+                    render: (v: number) => {
+                      const n = Number(v);
+                      return (
+                        <span style={{ color: n > 0 ? '#cf1322' : n < 0 ? '#3f8600' : '#999' }}>
+                          {n.toFixed(2)}%
+                        </span>
+                      );
+                    },
+                  },
+                  {
+                    title: '原因',
+                    dataIndex: 'reason',
+                    ellipsis: true,
+                  },
+                ]}
+              />
+            </>
+          )}
+        </>
+      )}
+    </Card>
+  );
+};

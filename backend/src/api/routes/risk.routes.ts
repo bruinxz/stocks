@@ -381,4 +381,24 @@ router.get('/sizing-policy', authController.authenticate, riskController.getSizi
  */
 router.put('/sizing-policy', authController.authenticate, riskController.updateSizingPolicy);
 
+/**
+ * @swagger
+ * /api/risk/sizing-audit:
+ *   get:
+ *     summary: Phase 2+ sizing 决策 A/B 报告
+ *     parameters:
+ *       - in: query
+ *         name: lookback_days
+ *         schema: { type: integer, default: 30 }
+ *       - in: query
+ *         name: portfolio_id
+ *         schema: { type: integer }
+ *       - in: query
+ *         name: method
+ *         schema: { type: string, enum: [all, equal_pct, vol_target, atr_based, kelly] }
+ *     responses:
+ *       200: { description: 决策聚合报告 + recent rows }
+ */
+router.get('/sizing-audit', authController.authenticate, riskController.getSizingAudit);
+
 export default router;

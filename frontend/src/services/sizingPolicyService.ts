@@ -45,9 +45,73 @@ export async function updateSizingPolicy(payload: Partial<SizingPolicyConfig>): 
   return res.data.data as SizingPolicyConfig;
 }
 
+// ============================================================
+// Phase 2+ sizing 决策审计报告
+// ============================================================
+
+export interface SizingAuditSummary {
+  count: number;
+  hard_cutover_count: number;
+  shadow_count: number;
+  avg_actual_pct: number;
+  avg_decision_pct: number;
+  avg_delta_pct: number;
+  max_abs_delta_pct: number;
+  max_abs_delta_symbol?: string;
+  capped_by_max_pct: number;
+  capped_by_cash_pct: number;
+}
+
+export interface SizingAuditByStrategy {
+  strategy_key: string;
+  count: number;
+  avg_actual_pct: number;
+  avg_decision_pct: number;
+  avg_delta_pct: number;
+  method_breakdown: Record<string, number>;
+}
+
+export interface SizingAuditRow {
+  id: number;
+  symbol: string;
+  strategy_key?: string;
+  method: string;
+  hard_cutover: boolean;
+  actual_pct: number;
+  decision_pct: number;
+  delta: number;
+  reason?: string;
+  created_at: string;
+}
+
+export interface SizingAuditReport {
+  generated_at: string;
+  user_id: number;
+  filter: {
+    portfolio_id?: number;
+    method?: string;
+    lookback_days: number;
+    start_date: string;
+  };
+  summary: SizingAuditSummary;
+  by_strategy: SizingAuditByStrategy[];
+  recent_rows: SizingAuditRow[];
+}
+
+export async function getSizingAudit(params: {
+  lookback_days?: number;
+  portfolio_id?: number;
+  method?: string;
+} = {}): Promise<SizingAuditReport> {
+  const res = await api.get('/risk/sizing-audit', { params });
+  if (!res.data?.success) throw new Error(res.data?.message || '获取 sizing audit 失败');
+  return res.data.data as SizingAuditReport;
+}
+
 export const sizingPolicyService = {
   getSizingPolicy,
   updateSizingPolicy,
+  getSizingAudit,
 };
 
 export default sizingPolicyService;

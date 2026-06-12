@@ -8,6 +8,7 @@ import { industryConcentrationGuard } from '../../portfolio/risk/IndustryConcent
 import { blackSwanWatchdog } from '../../portfolio/risk/BlackSwanWatchdog';
 import { morningRiskCheckupService } from '../../portfolio/risk/MorningRiskCheckupService';
 import { sizingPolicyService } from '../../portfolio/risk/SizingPolicyService';
+import { sizingAuditService } from '../../services/SizingAuditService';
 import { logger } from '../../utils/logger';
 
 /**
@@ -395,6 +396,34 @@ export class RiskController {
       res.json({ success: true, data: saved, message: 'Sizing 配置已保存' });
     } catch (error: any) {
       logger.error('更新 sizing policy 失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * GET /api/risk/sizing-audit  (Phase 2+)
+   * 返回过去 N 天 sizing 决策 A/B 报告 (shadow vs hard / 各 method 对比)
+   *
+   * Query: ?lookback_days=30&portfolio_id=&method=kelly
+   */
+  async getSizingAudit(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user.id;
+      const lookbackDays = req.query.lookback_days
+        ? parseInt(String(req.query.lookback_days), 10)
+        : 30;
+      const portfolioId = req.query.portfolio_id
+        ? parseInt(String(req.query.portfolio_id), 10)
+        : undefined;
+      const method = req.query.method ? String(req.query.method) : undefined;
+      const data = await sizingAuditService.getReport(user_id, {
+        lookback_days: lookbackDays,
+        portfolio_id: Number.isFinite(portfolioId) ? portfolioId : undefined,
+        method,
+      });
+      res.json({ success: true, data });
+    } catch (error: any) {
+      logger.error('获取 sizing audit 报告失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   }

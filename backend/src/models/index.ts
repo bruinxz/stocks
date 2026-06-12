@@ -22,6 +22,7 @@ export * from './PortfolioSimulation';
 export * from './DataSourceHealth';
 export * from './AIInvestmentSignal';
 export * from './RecommendationTradeOutcome';
+export * from './SizingDecisionAudit';
 export * from './RecommendationLoopPolicySnapshot';
 export * from './BudgetPolicyVersionSnapshot';
 export * from './QuantStrategyModel';
