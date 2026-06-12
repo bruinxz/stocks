@@ -134,6 +134,10 @@ function makeFakeSource(state: FakeState): MorningRiskCheckupDataSource {
     async countUnresolvedAlerts(user_id) {
       return state.alertCountByUser[user_id] ?? 0;
     },
+    async loadSystemHealthSnapshot(_user_id) {
+      // 测试默认不注入 system health；如需测试可在某 case 内 monkey-patch
+      return state.systemHealthByUser?.[_user_id] ?? null;
+    },
     async upsertCheckup(input) {
       if (state.upsertShouldThrowForUser === input.user_id) {
         throw new Error(`fake upsert outage user=${input.user_id}`);
@@ -416,6 +420,111 @@ async function testBuildCheckupMessage() {
     include_breakdown: false,
   });
   assert('negative weekly_return rendered with sign', negative.includes('-3.00%'));
+
+  // Phase 2+/4+/5+ system_health 嵌入 message
+  const withHealth = buildCheckupMessage({
+    date,
+    positions_count: 3,
+    max_single_pct: 0.3,
+    max_single_symbol: 'X',
+    max_industry_pct: 0.3,
+    max_industry_name: '银行',
+    drawdown_pct: 0.02,
+    weekly_return_pct: 0.01,
+    unresolved_alerts_count: 0,
+    current_total_value: 1000,
+    include_breakdown: true,
+    system_health: {
+      sizing_7d_count: 5,
+      sizing_7d_hard_count: 2,
+      sizing_methods_active: 'kelly,vol_target',
+      strategies_disabled_count: 1,
+      strategies_with_killswitch: 29,
+      strategies_total: 29,
+      outcomes_closed_count: 20,
+      outcomes_with_root_cause: 18,
+      outcomes_with_postmortem: 5,
+      root_cause_coverage_pct: 90.0,
+    },
+  });
+  assert('system_health section header rendered', withHealth.includes('系统健康（Phase 2/4/5）'));
+  assert('sizing line rendered', withHealth.includes('Sizing：7d 5 决策'));
+  assert('sizing hard count rendered', withHealth.includes('2 hard'));
+  assert('sizing method tag rendered', withHealth.includes('method=kelly,vol_target'));
+  assert('kill_switch disabled warning rendered', withHealth.includes('1/29 策略已禁用'));
+  assert(
+    'root_cause coverage rendered with green tick',
+    withHealth.includes('90.0%') && withHealth.includes('18/20')
+  );
+  assert('postmortem count rendered', withHealth.includes('5 自动复盘'));
+
+  // system_health 但默认 sizing/kill 不动情况
+  const baselineHealth = buildCheckupMessage({
+    date,
+    positions_count: 1,
+    max_single_pct: 1.0,
+    max_single_symbol: 'X',
+    max_industry_pct: 1.0,
+    max_industry_name: '银行',
+    drawdown_pct: 0.0,
+    weekly_return_pct: 0.0,
+    unresolved_alerts_count: 0,
+    current_total_value: 1000,
+    include_breakdown: true,
+    system_health: {
+      sizing_7d_count: 0,
+      sizing_7d_hard_count: 0,
+      sizing_methods_active: '—',
+      strategies_disabled_count: 0,
+      strategies_with_killswitch: 29,
+      strategies_total: 29,
+      outcomes_closed_count: 0,
+      outcomes_with_root_cause: 0,
+      outcomes_with_postmortem: 0,
+      root_cause_coverage_pct: 0,
+    },
+  });
+  assert(
+    'sizing 0 → equal_pct 默认提示',
+    baselineHealth.includes('仍是 equal_pct 默认')
+  );
+  assert(
+    'kill_switch 全正常 → 显示无禁用',
+    baselineHealth.includes('全部正常')
+  );
+  // 0 闭环时不显示 root_cause 行（避免 0% 看起来像 bug）
+  assert(
+    '0 closed 时不显示 root_cause 行',
+    !baselineHealth.includes('根因覆盖')
+  );
+
+  // include_breakdown=false 时 system_health 即使传也不显示（push 短模式）
+  const shortHealth = buildCheckupMessage({
+    date,
+    positions_count: 0,
+    max_single_pct: null,
+    max_single_symbol: null,
+    max_industry_pct: null,
+    max_industry_name: null,
+    drawdown_pct: null,
+    weekly_return_pct: null,
+    unresolved_alerts_count: 0,
+    current_total_value: null,
+    include_breakdown: false,
+    system_health: {
+      sizing_7d_count: 5,
+      sizing_7d_hard_count: 1,
+      sizing_methods_active: 'kelly',
+      strategies_disabled_count: 0,
+      strategies_with_killswitch: 29,
+      strategies_total: 29,
+      outcomes_closed_count: 10,
+      outcomes_with_root_cause: 10,
+      outcomes_with_postmortem: 3,
+      root_cause_coverage_pct: 100,
+    },
+  });
+  assert('short mode 不渲染 system_health', !shortHealth.includes('系统健康'));
 }
 
 async function testBuildTopPositions() {

@@ -58,6 +58,7 @@
  */
 
 import { Op } from 'sequelize';
+import sequelize from '../../config/database';
 import { PaperTradingPosition } from '../../models/PaperTradingPosition';
 import { PaperTradingPortfolio } from '../../models/PaperTradingPortfolio';
 import { PaperTradingSnapshot } from '../../models/PaperTradingSnapshot';
@@ -144,6 +145,27 @@ export interface MorningRiskCheckupResult {
   persisted: boolean;
   /** Error message when calc threw (null when success). */
   error?: string;
+}
+
+/**
+ * Phase 2+/4+/5+ 健康指标（写入 breakdown.system_health 子字段）。
+ *
+ * 不改 SQL schema —— 全部塞 breakdown JSONB 让 UI 直接渲染。
+ */
+export interface SystemHealthSnapshot {
+  // Phase 2+ sizing 7 天活跃度
+  sizing_7d_count: number;
+  sizing_7d_hard_count: number;
+  sizing_methods_active: string;
+  // Phase 4+ kill switch 当前状态
+  strategies_disabled_count: number;
+  strategies_with_killswitch: number;
+  strategies_total: number;
+  // Phase 5+ root_cause 覆盖 + postmortem
+  outcomes_closed_count: number;
+  outcomes_with_root_cause: number;
+  outcomes_with_postmortem: number;
+  root_cause_coverage_pct: number;
 }
 
 /** Aggregate result of batch evaluation across all users. */
@@ -290,6 +312,8 @@ export function buildCheckupMessage(input: {
   include_breakdown: boolean;
   top_positions?: Array<{ symbol: string; pct: number }>;
   top_industries?: Array<{ industry: string; pct: number }>;
+  /** Phase 2+/4+/5+ 整合：sizing / kill switch / outcome 体检；null = 数据源失败 */
+  system_health?: SystemHealthSnapshot | null;
 }): string {
   const fmtPct = (v: number | null) =>
     v === null || !Number.isFinite(v) ? '—' : `${(v * 100).toFixed(2)}%`;
@@ -332,6 +356,39 @@ export function buildCheckupMessage(input: {
     if (input.unresolved_alerts_count > 0) {
       lines.push(`⚠️ 请打开"风控告警"查看未读告警详情。`);
     }
+
+    // Phase 2+/4+/5+ 系统健康 — 只在 include_breakdown 时附加，避免推送内容爆炸
+    if (input.system_health) {
+      const sh = input.system_health;
+      lines.push(''); // 空行分隔
+      lines.push('🔧 系统健康（Phase 2/4/5）:');
+      // Phase 2 sizing
+      if (sh.sizing_7d_count > 0) {
+        const methodTag = sh.sizing_methods_active === '—' ? '' : ` method=${sh.sizing_methods_active}`;
+        const hardTag = sh.sizing_7d_hard_count > 0 ? ` · ${sh.sizing_7d_hard_count} hard` : '';
+        lines.push(`  ⚖️ Sizing：7d ${sh.sizing_7d_count} 决策${hardTag}${methodTag}`);
+      } else {
+        lines.push(`  ⚖️ Sizing：仍是 equal_pct 默认（未开启多元化）`);
+      }
+      // Phase 4 kill switch
+      if (sh.strategies_disabled_count > 0) {
+        lines.push(
+          `  🚨 策略熔断：⚠️ ${sh.strategies_disabled_count}/${sh.strategies_total} 策略已禁用`
+        );
+      } else if (sh.strategies_with_killswitch > 0) {
+        lines.push(
+          `  🚨 策略熔断：${sh.strategies_with_killswitch}/${sh.strategies_total} 策略带 kill_switch · 全部正常`
+        );
+      }
+      // Phase 5 root_cause coverage
+      if (sh.outcomes_closed_count > 0) {
+        const cov = sh.root_cause_coverage_pct;
+        const covTag = cov >= 80 ? '✅' : cov >= 50 ? '⚠️' : '❌';
+        lines.push(
+          `  🔬 根因覆盖：${covTag} ${cov.toFixed(1)}% (${sh.outcomes_with_root_cause}/${sh.outcomes_closed_count} 闭环) · ${sh.outcomes_with_postmortem} 自动复盘`
+        );
+      }
+    }
   }
   return lines.join('\n');
 }
@@ -362,6 +419,11 @@ export interface MorningRiskCheckupDataSource {
   ): Promise<CheckupSnapshotRow[]>;
   /** Count unread RiskAlert rows for this user (all levels). */
   countUnresolvedAlerts(user_id: number): Promise<number>;
+  /**
+   * Phase 2+/4+/5+ 系统健康快照 (sizing audit + kill switch + outcome coverage)。
+   * 失败时返回 null (fail-OPEN，不阻塞主 checkup)。
+   */
+  loadSystemHealthSnapshot(user_id: number): Promise<SystemHealthSnapshot | null>;
   /**
    * Persist one MorningRiskCheckup row (UPSERT on (user_id, date)).
    * `dispatch_status` defaults to 'pending' — US-080 NotificationService updates to
@@ -489,6 +551,76 @@ export class DefaultMorningRiskCheckupDataSource implements MorningRiskCheckupDa
 
   async countUnresolvedAlerts(user_id: number): Promise<number> {
     return await RiskAlert.count({ where: { user_id, is_read: false } });
+  }
+
+  /**
+   * Phase 2+/4+/5+ 系统健康快照：sizing audit + kill switch + outcome coverage。
+   *
+   * 失败时返回 null (fail-OPEN) 不阻塞主 checkup —— 即使新 phase 还没数据，
+   * morning checkup 主流程仍照常出报告。
+   */
+  async loadSystemHealthSnapshot(user_id: number): Promise<SystemHealthSnapshot | null> {
+    try {
+      // 三个查询并行
+      const [sizingRow, killRow, outcomeRow] = await Promise.all([
+        // Phase 2+ sizing — user 自己 7d 决策
+        sequelize
+          .query(
+            `SELECT
+              COUNT(*)::int AS recent_count,
+              COUNT(*) FILTER (WHERE hard_cutover = true)::int AS hard_count,
+              string_agg(DISTINCT method, ',') AS methods
+            FROM sizing_decision_audits
+            WHERE user_id = :uid AND created_at > NOW() - INTERVAL '7 days'`,
+            { replacements: { uid: user_id } }
+          )
+          .then(r => (r[0] as any[])[0] as any)
+          .catch(() => ({})),
+        // Phase 4+ kill switch — 全局 (不分 user)
+        sequelize
+          .query(
+            `SELECT
+              COUNT(*) FILTER (WHERE edge_hypothesis ? 'kill_switch_metric')::int AS with_killswitch,
+              COUNT(*) FILTER (WHERE enabled = false)::int AS disabled,
+              COUNT(*)::int AS total
+            FROM quant_strategies`
+          )
+          .then(r => (r[0] as any[])[0] as any)
+          .catch(() => ({})),
+        // Phase 5+ outcome — user 自己的 portfolio
+        sequelize
+          .query(
+            `SELECT
+              COUNT(*) FILTER (WHERE trade_status = 'closed')::int AS closed,
+              COUNT(*) FILTER (WHERE trade_status = 'closed' AND root_cause IS NOT NULL)::int AS with_rc,
+              COUNT(*) FILTER (WHERE trade_status = 'closed' AND metadata->'postmortem' IS NOT NULL)::int AS with_pm
+            FROM recommendation_trade_outcomes
+            WHERE portfolio_id IN (SELECT id FROM paper_trading_portfolios WHERE user_id = :uid)`,
+            { replacements: { uid: user_id } }
+          )
+          .then(r => (r[0] as any[])[0] as any)
+          .catch(() => ({})),
+      ]);
+
+      const closed = Number(outcomeRow.closed || 0);
+      const wrc = Number(outcomeRow.with_rc || 0);
+
+      return {
+        sizing_7d_count: Number(sizingRow.recent_count || 0),
+        sizing_7d_hard_count: Number(sizingRow.hard_count || 0),
+        sizing_methods_active: sizingRow.methods || '—',
+        strategies_disabled_count: Number(killRow.disabled || 0),
+        strategies_with_killswitch: Number(killRow.with_killswitch || 0),
+        strategies_total: Number(killRow.total || 0),
+        outcomes_closed_count: closed,
+        outcomes_with_root_cause: wrc,
+        outcomes_with_postmortem: Number(outcomeRow.with_pm || 0),
+        root_cause_coverage_pct: closed > 0 ? Math.round((wrc / closed) * 1000) / 10 : 0,
+      };
+    } catch (err: any) {
+      logger.warn(`[morning-checkup] loadSystemHealthSnapshot failed: ${err?.message || err}`);
+      return null;
+    }
   }
 
   async upsertCheckup(input: {
@@ -701,10 +833,12 @@ export class MorningRiskCheckupService {
     }
 
     // Pull the per-user inputs in parallel — each independent of the others.
-    const [positions, snapshots, unresolved_alerts_count] = await Promise.all([
+    const [positions, snapshots, unresolved_alerts_count, system_health] = await Promise.all([
       this.source.loadOpenPositions(user_id),
       this.source.loadRecentSnapshots(header.id, asOfDate, config.drawdown_lookback_days),
       this.source.countUnresolvedAlerts(user_id),
+      // Phase 2+/4+/5+ 系统健康并行拉，失败返回 null 不阻塞主流程
+      this.source.loadSystemHealthSnapshot(user_id).catch(() => null),
     ]);
 
     const positions_count = positions.filter(p => p.quantity > 0).length;
@@ -740,11 +874,14 @@ export class MorningRiskCheckupService {
       include_breakdown: config.include_breakdown_in_message,
       top_positions,
       top_industries,
+      system_health, // Phase 2+/4+/5+ — 整合 sizing/kill/outcome 体检
     });
 
     const breakdown = {
       top_positions,
       top_industries,
+      // Phase 2+/4+/5+ 系统健康嵌入 breakdown JSONB (不动 SQL schema)
+      system_health,
     };
 
     const checkup: MorningRiskCheckupResult = {
