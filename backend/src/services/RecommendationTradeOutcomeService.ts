@@ -30,6 +30,8 @@ import {
   classifyTradeRootCause,
   TradeRootCauseInput,
 } from './TradeRootCauseClassifier';
+// Phase 2+: Kelly sizing 统计聚合（写新 outcome 后 invalidate 缓存）
+import { strategyKellyStatsService } from './StrategyKellyStatsService';
 
 export interface RecommendationTradeOutcomeRefreshOptions {
   user_id?: number;
@@ -3102,10 +3104,15 @@ export class RecommendationTradeOutcomeService {
     });
     if (existing) {
       await existing.update(payload);
+      // Phase 2+ Kelly: invalidate 缓存让下次 sizing 用最新统计
+      strategyKellyStatsService.invalidateAll();
       return existing;
     }
 
-    return RecommendationTradeOutcome.create(payload as any);
+    const created = await RecommendationTradeOutcome.create(payload as any);
+    // Phase 2+ Kelly: invalidate 缓存让下次 sizing 用最新统计
+    strategyKellyStatsService.invalidateAll();
+    return created;
   }
 
   private async resolveBenchmark(params: {

@@ -1,10 +1,11 @@
 /**
  * SettingsWorkspace.SizingPolicyTab — Phase 2 用户 sizing 策略编辑 UI
  *
- * 三种 method:
+ * 四种 method:
  *   - equal_pct (默认, Phase 0 行为): equity * position_pct
  *   - vol_target: 让每个仓位贡献同样年化波动 (RiskParity 简化)
  *   - atr_based: Turtle/Van Tharp ATR 反比 sizing
+ *   - kelly: 分数 Kelly (f* = (pb-q)/b)，依赖策略历史胜率/赔率 + 样本量门槛
  *
  * 编辑后立即 PUT /api/risk/sizing-policy 保存。
  * 当前在 PaperTradingAutomationService 跑 shadow mode (只 log 不替换)，
@@ -52,6 +53,11 @@ const METHOD_OPTIONS: Array<{ value: SizingMethod; label: string; desc: string }
     value: 'atr_based',
     label: 'ATR 反比 (atr_based)',
     desc: 'Turtle/Van Tharp 经典：每笔最多亏 risk_pct，ATR 越大仓位越小。',
+  },
+  {
+    value: 'kelly',
+    label: '分数 Kelly (kelly)',
+    desc: 'Edward Thorp / Ralph Vince 经典。f* = (pb-q)/b × Kelly乘数。需 50+ 笔历史。',
   },
 ];
 
@@ -252,6 +258,47 @@ const SizingPolicyTab: React.FC = () => {
                           tooltip="ATR 用多少日窗口"
                         >
                           <InputNumber min={5} max={60} style={{ width: '100%' }} />
+                        </Form.Item>
+                      </Col>
+                    </Row>
+                  </Card>
+                );
+              }
+              if (method === 'kelly') {
+                return (
+                  <Card size="small" style={{ marginBottom: 12, background: '#fff7e6' }}>
+                    <Text strong>kelly 参数</Text>
+                    <Paragraph style={{ marginTop: 8, marginBottom: 8, fontSize: 12, color: '#666' }}>
+                      <Text strong>公式：</Text>f* = (p×b - q) / b，其中 p=胜率, q=1-p, b=平均盈利/平均亏损。
+                      <br />
+                      <Text strong>实际仓位：</Text>equity × f* × Kelly乘数。业界惯用 0.25 (Quarter Kelly) 或 0.5 (Half Kelly)
+                      因为满 Kelly 波动太大。
+                      <br />
+                      <Text strong>样本量门槛：</Text>历史交易数 &lt; 阈值时自动退化到 base_position_pct，防止数据噪声放大。
+                      胜率/赔率从策略历史 outcome 聚合，定期刷新。
+                    </Paragraph>
+                    <Row gutter={16} style={{ marginTop: 12 }}>
+                      <Col span={12}>
+                        <Form.Item
+                          name="kelly_fraction_multiplier"
+                          label="kelly_fraction_multiplier (Kelly 乘数)"
+                          tooltip="0.25 = 1/4 Kelly (稳健推荐); 0.5 = 1/2 Kelly; 1.0 = 满 Kelly (激进)"
+                        >
+                          <InputNumber
+                            min={0.05}
+                            max={1.0}
+                            step={0.05}
+                            style={{ width: '100%' }}
+                          />
+                        </Form.Item>
+                      </Col>
+                      <Col span={12}>
+                        <Form.Item
+                          name="kelly_min_sample_size"
+                          label="kelly_min_sample_size (最少历史交易数)"
+                          tooltip="低于此样本数退化到 base_position_pct。50 是统计意义最低门槛，100+ 更稳"
+                        >
+                          <InputNumber min={10} max={500} step={5} style={{ width: '100%' }} />
                         </Form.Item>
                       </Col>
                     </Row>

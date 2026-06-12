@@ -31,6 +31,7 @@ import {
   normalizeSizingPolicyConfig,
   SizingDecision,
 } from '../PositionSizingPolicy';
+import { strategyKellyStatsService } from '../../services/StrategyKellyStatsService';
 
 export const DEFAULT_PAPER_TRADING_INITIAL_CAPITAL = 200000;
 
@@ -1807,7 +1808,20 @@ class PaperTradingAutomationService {
       try {
         const sizingPolicy = await this.loadUserSizingPolicy(portfolio.user_id);
         if (sizingPolicy.method !== 'equal_pct') {
-          // 仅在用户主动启用 vol_target/atr_based 时才计算（节省开销）
+          // 仅在用户主动启用 vol_target/atr_based/kelly 时才计算（节省开销）
+
+          // Kelly 模式：从 outcome 聚合 winRate/payoff/sample
+          let kellyStats = null;
+          if (sizingPolicy.method === 'kelly') {
+            const strategyKey =
+              (signal as any)?.metadata?.strategy_key ||
+              (signal as any)?.metadata?.signal_metadata?.strategy_key ||
+              null;
+            if (strategyKey) {
+              kellyStats = await strategyKellyStatsService.getStats(strategyKey).catch(() => null);
+            }
+          }
+
           shadowSizingDecision = decideSizing(sizingPolicy, {
             equity: totalValue,
             available_cash: availableCash,
@@ -1819,6 +1833,9 @@ class PaperTradingAutomationService {
             max_position_pct: strategyPositionCap,
             min_trade_amount: min_trade_amount,
             conviction_multiplier: 1.0,
+            historical_win_rate: kellyStats?.win_rate,
+            historical_payoff_ratio: kellyStats?.payoff_ratio,
+            historical_sample_size: kellyStats?.sample_size,
           });
           logger.info(
             `[shadow-sizing] user=${portfolio.user_id} symbol=${signal.symbol} ` +

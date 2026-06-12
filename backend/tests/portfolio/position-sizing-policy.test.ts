@@ -17,6 +17,8 @@ import {
   normalizeSizingPolicyConfig,
   computeVolTargetSize,
   computeAtrBasedSize,
+  computeKellyFraction,
+  computeKellySize,
   decideSizing,
   DEFAULT_SIZING_POLICY,
   SizingPolicyConfig,
@@ -85,6 +87,23 @@ function testNormalize() {
 
   const nanInput = normalizeSizingPolicyConfig({ base_position_pct: NaN });
   expectClose('NaN → fallback 5', nanInput.base_position_pct, 5);
+
+  const kelly = normalizeSizingPolicyConfig({
+    method: 'kelly',
+    kelly_fraction_multiplier: 0.5,
+    kelly_min_sample_size: 100,
+  });
+  expectEqual('kelly method', kelly.method, 'kelly');
+  expectClose('kelly_fraction_multiplier=0.5', kelly.kelly_fraction_multiplier, 0.5);
+  expectClose('kelly_min_sample_size=100', kelly.kelly_min_sample_size, 100);
+
+  const kellyOOB = normalizeSizingPolicyConfig({
+    method: 'kelly',
+    kelly_fraction_multiplier: 5,  // 越界 (max=1.0)
+    kelly_min_sample_size: 999999, // 越界 (max=500)
+  });
+  expectClose('kelly_fraction_multiplier cap to 1.0', kellyOOB.kelly_fraction_multiplier, 1.0);
+  expectClose('kelly_min_sample_size cap to 500', kellyOOB.kelly_min_sample_size, 500);
 }
 
 // ============================================================
@@ -351,8 +370,190 @@ function testDecideSizingAtrBased() {
 }
 
 // ============================================================
-// 默认配置
+// computeKellyFraction (pure formula)
 // ============================================================
+
+function testComputeKellyFraction() {
+  console.log('\n## computeKellyFraction');
+
+  // 经典例子：p=60%, b=2 (盈/亏 比 2:1)
+  // f* = (0.6 * 2 - 0.4) / 2 = (1.2 - 0.4) / 2 = 0.4 → 40% Kelly
+  expectClose('p=0.6 b=2 → 0.4', computeKellyFraction(0.6, 2), 0.4);
+
+  // p=55%, b=1 (盈 = 亏)
+  // f* = (0.55 * 1 - 0.45) / 1 = 0.1 → 10% Kelly
+  expectClose('p=0.55 b=1 → 0.1', computeKellyFraction(0.55, 1), 0.1);
+
+  // p=50%, b=1 → 无优势
+  // f* = (0.5*1 - 0.5)/1 = 0 → 不下注
+  expectClose('p=0.5 b=1 → 0 (no edge)', computeKellyFraction(0.5, 1), 0);
+
+  // p=40%, b=1 → 负 edge，Kelly 拒绝下注
+  // f* < 0 → 钳到 0
+  expectClose('p=0.4 b=1 → 0 (negative edge)', computeKellyFraction(0.4, 1), 0);
+
+  // 高胜率 + 高赔率 → f* 接近 1
+  // p=0.9 b=10: f* = (0.9*10 - 0.1)/10 = 8.9/10 = 0.89
+  expectClose('p=0.9 b=10 → 0.89', computeKellyFraction(0.9, 10), 0.89);
+
+  // 真正触顶 cap：f* > 1 才会 cap，构造一个边界 case
+  // p=0.5 b 接近 0 时分母小但分子=0.5b-0.5<0 仍负
+  // 真要超 1 实际很罕见；用 p=1 b=0.5: f*=(1*0.5-0)/0.5=1 → cap=1
+  expectClose('p=1 b=0.5 → cap 1.0', computeKellyFraction(1, 0.5), 1.0);
+
+  // b<=0 → 0
+  expectClose('b=0 → 0', computeKellyFraction(0.6, 0), 0);
+  expectClose('b<0 → 0', computeKellyFraction(0.6, -1), 0);
+
+  // p 越界 → 钳到 [0,1] 后算
+  expectClose('p=1.5 → use 1', computeKellyFraction(1.5, 1), 1); // p=1 → f=(1-0)/1=1
+  expectClose('p=-0.5 → use 0 → 0', computeKellyFraction(-0.5, 1), 0);
+
+  // NaN → 0
+  expectClose('NaN winRate → 0', computeKellyFraction(NaN, 1), 0);
+  expectClose('NaN payoff → 0', computeKellyFraction(0.6, NaN), 0);
+}
+
+// ============================================================
+// computeKellySize
+// ============================================================
+
+function testComputeKellySize() {
+  console.log('\n## computeKellySize');
+
+  // 1M equity, p=60%, b=2, sample=100, 1/4 Kelly, min=50, base=5%
+  // f* = 0.4; target = 1M * 0.4 * 0.25 = 100K
+  expectClose(
+    'standard quarter kelly → 100K',
+    computeKellySize(1_000_000, 0.6, 2, 100, 0.25, 50, 5),
+    100_000
+  );
+
+  // 半 Kelly 翻倍
+  expectClose(
+    'half kelly → 200K',
+    computeKellySize(1_000_000, 0.6, 2, 100, 0.5, 50, 5),
+    200_000
+  );
+
+  // 满 Kelly
+  expectClose(
+    'full kelly → 400K',
+    computeKellySize(1_000_000, 0.6, 2, 100, 1.0, 50, 5),
+    400_000
+  );
+
+  // sample < min → 退化到 base 5%
+  expectClose(
+    'sample<min → base 5% = 50K',
+    computeKellySize(1_000_000, 0.6, 2, 40, 0.25, 50, 5),
+    50_000
+  );
+
+  // 负 edge → 不下注 = 0
+  expectClose(
+    'p=0.4 b=1 (negative edge) → 0',
+    computeKellySize(1_000_000, 0.4, 1, 100, 0.25, 50, 5),
+    0
+  );
+
+  // 缺失 winRate → 退化到 base
+  expectClose(
+    'no winRate → base 5%',
+    computeKellySize(1_000_000, undefined, 2, 100, 0.25, 50, 5),
+    50_000
+  );
+
+  // 缺失 payoffRatio → 退化到 base
+  expectClose(
+    'no payoff → base 5%',
+    computeKellySize(1_000_000, 0.6, undefined, 100, 0.25, 50, 5),
+    50_000
+  );
+
+  // payoffRatio<=0 → 退化到 base
+  expectClose(
+    'payoff=0 → base 5%',
+    computeKellySize(1_000_000, 0.6, 0, 100, 0.25, 50, 5),
+    50_000
+  );
+
+  // 缺失 sample → 退化（视作 0 < min）
+  expectClose(
+    'no sample → base 5%',
+    computeKellySize(1_000_000, 0.6, 2, undefined, 0.25, 50, 5),
+    50_000
+  );
+}
+
+// ============================================================
+// decideSizing - kelly
+// ============================================================
+
+function testDecideSizingKelly() {
+  console.log('\n## decideSizing kelly');
+
+  const policy: SizingPolicyConfig = {
+    ...DEFAULT_SIZING_POLICY,
+    method: 'kelly',
+    kelly_fraction_multiplier: 0.25,
+    kelly_min_sample_size: 50,
+    max_position_pct: 12,
+  };
+
+  // p=60% b=2 sample=100, quarter kelly → 100K (1M * 0.4 * 0.25)
+  // max=12% = 120K, 100K 不触顶
+  const d1 = decideSizing(policy, {
+    equity: 1_000_000,
+    available_cash: 500_000,
+    current_price: 10,
+    max_position_pct: 12,
+    historical_win_rate: 0.6,
+    historical_payoff_ratio: 2,
+    historical_sample_size: 100,
+  });
+  expectClose('kelly p=0.6 b=2 sample=100 → 100K', d1.target_amount, 100_000);
+  expectEqual('kelly method', d1.method, 'kelly');
+  assert('kelly not capped by max (100K<120K)', !d1.capped_by_max);
+
+  // 极强 edge → 100% f*，cap to max 12% = 120K
+  const d2 = decideSizing(policy, {
+    equity: 1_000_000,
+    available_cash: 500_000,
+    current_price: 10,
+    max_position_pct: 12,
+    historical_win_rate: 0.95,
+    historical_payoff_ratio: 5,
+    historical_sample_size: 100,
+  });
+  // f* = (0.95*5-0.05)/5 = 4.7/5 = 0.94; target = 1M*0.94*0.25 = 235K → cap 120K
+  expectClose('kelly extreme edge → cap to 120K (12%)', d2.target_amount, 120_000);
+  assert('kelly extreme capped_by_max', d2.capped_by_max);
+
+  // 样本不足 → 退化到 base 5% = 50K
+  const d3 = decideSizing(policy, {
+    equity: 1_000_000,
+    available_cash: 500_000,
+    current_price: 10,
+    max_position_pct: 12,
+    historical_win_rate: 0.6,
+    historical_payoff_ratio: 2,
+    historical_sample_size: 30,  // <50
+  });
+  expectClose('kelly sample<min → base 5% = 50K', d3.target_amount, 50_000);
+
+  // 负 edge → 不下注 → target=0 (min_trade 拒绝)
+  const d4 = decideSizing(policy, {
+    equity: 1_000_000,
+    available_cash: 500_000,
+    current_price: 10,
+    max_position_pct: 12,
+    historical_win_rate: 0.4,
+    historical_payoff_ratio: 1,
+    historical_sample_size: 100,
+  });
+  expectEqual('kelly negative edge → 0', d4.target_amount, 0);
+}
 
 function testConstants() {
   console.log('\n## constants');
@@ -372,9 +573,12 @@ function main() {
   testNormalize();
   testComputeVolTarget();
   testComputeAtrBased();
+  testComputeKellyFraction();
+  testComputeKellySize();
   testDecideSizingEqualPct();
   testDecideSizingVolTarget();
   testDecideSizingAtrBased();
+  testDecideSizingKelly();
 
   console.log(`\n========================================`);
   console.log(`PositionSizingPolicy tests: ${passed} pass / ${failed} fail`);

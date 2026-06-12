@@ -6,7 +6,7 @@
  * 固定百分比 sizing，不考虑信号 conviction 强弱、不考虑标的波动率、不做
  * Kelly 优化。
  *
- * Phase 2 把 sizing 算法抽出成可插拔策略，提供 3 种实现：
+ * Phase 2 把 sizing 算法抽出成可插拔策略，提供 4 种实现：
  *
  *   1. `equal_pct` (默认，向后兼容)
  *      target_amount = equity * position_pct
@@ -23,6 +23,16 @@
  *      每笔交易最多亏 risk_pct (e.g. 1%)，等价于 stop_loss 距离反比 sizing。
  *      引用：Turtle Trader / Van Tharp 经典做法。
  *
+ *   4. `kelly` (分数凯利公式)
+ *      Kelly fraction: f* = (p*b - q) / b
+ *        - p = 历史胜率 (win_rate)
+ *        - q = 1 - p
+ *        - b = 平均盈利金额 / 平均亏损金额 (payoff_ratio)
+ *      target_amount = equity * f* * kelly_fraction_multiplier
+ *      实务中很少用满 Kelly（满 Kelly 波动太大），默认用 1/4 Kelly (multiplier=0.25)
+ *      或 1/2 Kelly。需要策略至少有 50+ 笔历史交易才有统计意义。
+ *      引用：Edward Thorp / Ralph Vince。
+ *
  * **共同约束**：
  *   - 所有算法都受 `max_position_pct` (e.g. 12%) cap 限制
  *   - 受 `min_trade_amount` (现金阈值) 限制
@@ -36,13 +46,15 @@
  * **配置**：User.risk_config.sizing_policy JSONB:
  *   ```jsonc
  *   {
- *     "method": "equal_pct",  // 或 "vol_target" / "atr_based"
- *     "base_position_pct": 5,      // 用于 equal_pct 的基础仓位
- *     "max_position_pct": 12,      // 任何方法都不超过
- *     "vol_target_pct": 0.15,       // vol_target 用：年化目标波动 15%
- *     "vol_max_lookback_days": 20,  // vol 计算回看天数
- *     "atr_risk_pct": 1.0,          // atr_based 用：每笔最多亏 1% equity
- *     "atr_period": 14              // ATR 计算周期
+ *     "method": "equal_pct",  // 或 "vol_target" / "atr_based" / "kelly"
+ *     "base_position_pct": 5,         // 用于 equal_pct 的基础仓位
+ *     "max_position_pct": 12,         // 任何方法都不超过
+ *     "vol_target_pct": 0.15,         // vol_target 用：年化目标波动 15%
+ *     "vol_max_lookback_days": 20,    // vol 计算回看天数
+ *     "atr_risk_pct": 1.0,            // atr_based 用：每笔最多亏 1% equity
+ *     "atr_period": 14,               // ATR 计算周期
+ *     "kelly_fraction_multiplier": 0.25,  // kelly 用：分数凯利 (1/4 Kelly 比较稳)
+ *     "kelly_min_sample_size": 50     // kelly 用：低于这个 sample 数退化到 base
  *   }
  *   ```
  */
@@ -51,7 +63,7 @@
 // Types
 // ============================================================
 
-export type SizingMethod = 'equal_pct' | 'vol_target' | 'atr_based';
+export type SizingMethod = 'equal_pct' | 'vol_target' | 'atr_based' | 'kelly';
 
 /**
  * 单次 sizing 决策的输入上下文。
@@ -73,6 +85,12 @@ export interface SizingContext {
   min_trade_amount?: number;
   /** 单股最大仓位百分比 cap (e.g. 12 = 12%) */
   max_position_pct: number;
+  /** Phase 2+: Kelly sizing 用 — 历史胜率 (0-1)，从策略 outcome 聚合 */
+  historical_win_rate?: number;
+  /** Phase 2+: Kelly sizing 用 — 平均盈利金额 / 平均亏损金额 (>0)，从策略 outcome 聚合 */
+  historical_payoff_ratio?: number;
+  /** Phase 2+: Kelly sizing 用 — 历史交易样本数（< kelly_min_sample_size 退化到 base） */
+  historical_sample_size?: number;
 }
 
 /**
@@ -92,6 +110,10 @@ export interface SizingPolicyConfig {
   atr_risk_pct: number;
   /** ATR 计算周期 (默认 14) */
   atr_period: number;
+  /** kelly 用：分数凯利乘数 (默认 0.25 = 1/4 Kelly，业界稳健选择) */
+  kelly_fraction_multiplier: number;
+  /** kelly 用：低于此样本量退化到 base_position_pct (默认 50 笔) */
+  kelly_min_sample_size: number;
 }
 
 /**
@@ -105,6 +127,8 @@ export const DEFAULT_SIZING_POLICY: Readonly<SizingPolicyConfig> = Object.freeze
   vol_max_lookback_days: 20,
   atr_risk_pct: 1.0,
   atr_period: 14,
+  kelly_fraction_multiplier: 0.25,
+  kelly_min_sample_size: 50,
 });
 
 /**
@@ -138,8 +162,9 @@ export function normalizeSizingPolicyConfig(input: any): SizingPolicyConfig {
     if (!Number.isFinite(n)) return fallback;
     return Math.max(min, Math.min(max, n));
   };
+  const m = input?.method;
   const method: SizingMethod =
-    input?.method === 'vol_target' || input?.method === 'atr_based' ? input.method : 'equal_pct';
+    m === 'vol_target' || m === 'atr_based' || m === 'kelly' ? m : 'equal_pct';
   return {
     method,
     base_position_pct: safe(input?.base_position_pct, 5, 0.5, 30),
@@ -148,6 +173,8 @@ export function normalizeSizingPolicyConfig(input: any): SizingPolicyConfig {
     vol_max_lookback_days: safe(input?.vol_max_lookback_days, 20, 5, 252),
     atr_risk_pct: safe(input?.atr_risk_pct, 1.0, 0.1, 5.0),
     atr_period: safe(input?.atr_period, 14, 5, 60),
+    kelly_fraction_multiplier: safe(input?.kelly_fraction_multiplier, 0.25, 0.05, 1.0),
+    kelly_min_sample_size: safe(input?.kelly_min_sample_size, 50, 10, 500),
   };
 }
 
@@ -213,6 +240,79 @@ export function computeAtrBasedSize(
   return Math.min(equity, Math.max(0, targetAmount));
 }
 
+/**
+ * 计算原始 Kelly 分数 (满 Kelly)。
+ *
+ * 公式：f* = (p*b - q) / b
+ *   p = 胜率 (0-1)
+ *   q = 1 - p (败率)
+ *   b = 平均盈利金额 / 平均亏损金额 (payoff_ratio, >0)
+ *
+ * 解读：
+ *   f* > 0  → 策略有正期望，可以下注
+ *   f* <= 0 → 策略无优势，不要下注（返回 0）
+ *   f* > 1  → 极少见（要求 b 很大且 p 很高），cap 到 1
+ *
+ * 边界：
+ *   - p 越界 → 钳到 [0, 1]
+ *   - b <= 0 或 NaN → 返回 0（无效输入）
+ *   - 输出钳到 [0, 1]（满 Kelly 也不能超过 100%）
+ *
+ * @param winRate       0-1 之间的胜率
+ * @param payoffRatio   平均盈利 / 平均亏损（> 0）
+ * @returns 满 Kelly 分数 (0-1)
+ */
+export function computeKellyFraction(winRate: number, payoffRatio: number): number {
+  if (!Number.isFinite(winRate) || !Number.isFinite(payoffRatio) || payoffRatio <= 0) {
+    return 0;
+  }
+  const p = Math.max(0, Math.min(1, winRate));
+  const q = 1 - p;
+  const f = (p * payoffRatio - q) / payoffRatio;
+  if (!Number.isFinite(f) || f <= 0) return 0;
+  return Math.min(1, f);
+}
+
+/**
+ * 用 Kelly 算 target_amount（分数 Kelly + 样本量门槛）。
+ *
+ * 公式：target_amount = equity * f* * kelly_fraction_multiplier
+ *
+ * 边界：
+ *   - 样本量 < kelly_min_sample_size → 退化到 base_position_pct（数据不足，不能信 Kelly）
+ *   - p / b 缺失或非法 → 退化到 base_position_pct
+ *   - f* = 0 (无正期望) → 返回 0，不下注
+ *   - kelly_fraction_multiplier 用 [0.05, 1.0]，业界惯用 0.25 (Quarter Kelly) 或 0.5 (Half Kelly)
+ *
+ * @returns target_amount (元)，未受 max_position_pct cap 限制
+ */
+export function computeKellySize(
+  equity: number,
+  winRate: number | undefined,
+  payoffRatio: number | undefined,
+  sampleSize: number | undefined,
+  fractionMultiplier: number,
+  minSampleSize: number,
+  basePositionPct: number
+): number {
+  // 样本量太少 → 数据噪声大，退化
+  if (!Number.isFinite(sampleSize as number) || (sampleSize as number) < minSampleSize) {
+    return (equity * basePositionPct) / 100;
+  }
+  // 输入无效 → 退化
+  if (
+    !Number.isFinite(winRate as number) ||
+    !Number.isFinite(payoffRatio as number) ||
+    (payoffRatio as number) <= 0
+  ) {
+    return (equity * basePositionPct) / 100;
+  }
+  const f = computeKellyFraction(winRate as number, payoffRatio as number);
+  if (f <= 0) return 0; // 负期望 → 不下注
+  const safeFraction = Math.max(0.05, Math.min(1.0, fractionMultiplier));
+  return equity * f * safeFraction;
+}
+
 // ============================================================
 // Main entry — choose method and apply caps
 // ============================================================
@@ -269,6 +369,29 @@ export function decideSizing(policy: SizingPolicyConfig, ctx: SizingContext): Si
       reason = ctx.atr
         ? `atr_risk=${policy.atr_risk_pct}% / ATR=${ctx.atr.toFixed(3)} @ price=${ctx.current_price.toFixed(2)}`
         : `ATR 缺失，退化到 base ${policy.base_position_pct}%`;
+      break;
+    }
+    case 'kelly': {
+      rawAmount = computeKellySize(
+        ctx.equity,
+        ctx.historical_win_rate,
+        ctx.historical_payoff_ratio,
+        ctx.historical_sample_size,
+        policy.kelly_fraction_multiplier,
+        policy.kelly_min_sample_size,
+        policy.base_position_pct
+      );
+      const sample = ctx.historical_sample_size ?? 0;
+      const wr = ctx.historical_win_rate;
+      const pr = ctx.historical_payoff_ratio;
+      if (sample < policy.kelly_min_sample_size) {
+        reason = `Kelly 样本不足 (${sample} < ${policy.kelly_min_sample_size})，退化到 base ${policy.base_position_pct}%`;
+      } else if (!Number.isFinite(wr as number) || !Number.isFinite(pr as number)) {
+        reason = `Kelly 输入缺失 (winRate / payoff)，退化到 base ${policy.base_position_pct}%`;
+      } else {
+        const f = computeKellyFraction(wr as number, pr as number);
+        reason = `kelly p=${((wr as number) * 100).toFixed(1)}% b=${(pr as number).toFixed(2)} f*=${(f * 100).toFixed(2)}% × ${(policy.kelly_fraction_multiplier * 100).toFixed(0)}% Kelly`;
+      }
       break;
     }
     case 'equal_pct':

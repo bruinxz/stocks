@@ -5,7 +5,7 @@
  */
 import api from './api';
 
-export type SizingMethod = 'equal_pct' | 'vol_target' | 'atr_based';
+export type SizingMethod = 'equal_pct' | 'vol_target' | 'atr_based' | 'kelly';
 
 export interface SizingPolicyConfig {
   method: SizingMethod;
@@ -15,6 +15,10 @@ export interface SizingPolicyConfig {
   vol_max_lookback_days: number;
   atr_risk_pct: number;
   atr_period: number;
+  /** kelly 用：分数 Kelly 乘数 (0.05-1.0)，默认 0.25 (Quarter Kelly) */
+  kelly_fraction_multiplier: number;
+  /** kelly 用：低于此样本数退化到 base_position_pct */
+  kelly_min_sample_size: number;
 }
 
 export interface SizingPolicyWithDefaults {
