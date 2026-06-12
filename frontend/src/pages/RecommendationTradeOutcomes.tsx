@@ -1005,8 +1005,8 @@ const RecommendationTradeOutcomes: React.FC = () => {
               <NodeIndexOutlined /> 闭环根因归因（Phase 5）
             </div>
             <p>
-              所有闭环 trade 按 10 种 root_cause 聚类。健康策略应当以"正常兑现"+"止盈触发"为主导；
-              如果"催化剂失效"或"中途回撤过深"占比过高，需要回看 strategy 或 sizing 配置。
+              所有闭环 trade 按 10 种 root_cause 聚类。健康策略应当以「正常兑现」+「止盈触发」为主导；
+              如果「催化剂失效」或「中途回撤过深」占比过高，需要回看 strategy 或 sizing 配置。
             </p>
           </Col>
           <Col xs={24} lg={17}>
@@ -1079,7 +1079,7 @@ const RecommendationTradeOutcomes: React.FC = () => {
                 <NodeIndexOutlined /> 策略 × 根因 交叉矩阵
               </div>
               <p>
-                每行一个策略，每列一个根因。cell 显示"笔数 (该策略内占比%)"。
+                每行一个策略，每列一个根因。cell 显示「笔数 (该策略内占比%)」。
                 深红 = 该策略在该根因下占比≥40%（值得回看 strategy thesis 是否对路）。
                 只显示样本量 top 10 的策略。
               </p>

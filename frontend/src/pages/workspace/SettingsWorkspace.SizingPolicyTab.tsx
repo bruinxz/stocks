@@ -148,7 +148,7 @@ const SizingPolicyTab: React.FC = () => {
             <Paragraph style={{ marginBottom: 0 }}>
               选择 vol_target / atr_based / kelly 后，PaperTradingAutomationService 会在每次下单时**并行计算**新 sizing 结果并写入日志
               (<Text code>[shadow-sizing]</Text>)，但**实际下单仍使用现有 equal_pct 行为**。
-              观察 7-14 天后，开启下方"硬切换"开关让 sizing 决策真正生效。
+              观察 7-14 天后，开启下方「硬切换」开关让 sizing 决策真正生效。
             </Paragraph>
           }
         />
