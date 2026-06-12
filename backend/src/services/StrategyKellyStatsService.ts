@@ -87,7 +87,7 @@ export class StrategyKellyStatsService {
       // 读所有 closed trades 一次性聚合（避免 N 次查询）
       const rows = await RecommendationTradeOutcome.findAll({
         where: {
-          status: 'closed',
+          trade_status: 'closed',
           entry_date: { [Op.gte]: sinceStr },
         },
         attributes: ['total_pnl_pct', 'realized_pnl_pct', 'metadata'],

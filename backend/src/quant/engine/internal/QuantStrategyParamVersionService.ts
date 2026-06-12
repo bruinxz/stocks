@@ -1950,19 +1950,27 @@ export class QuantStrategyParamVersionService {
       }
 
       // Phase 4: Edge Hypothesis 门禁
-      // 当 edge_hypothesis_required=true 时，策略必须有非空 edge_hypothesis.thesis
+      // 当 edge_hypothesis_required=true 时，策略必须有完整 edge_hypothesis：
+      //   1. thesis (≥10 字符，强迫团队真正写出可证伪的假设)
+      //   2. category (必填，便于归类聚合)
+      //   3. kill_switch_metric (必填，明确"什么时候停掉这个策略"的客观指标)
       // 防止 "数据挖掘策略" 没人能解释为什么会工作的就上线
       const edgeHypo = edgeHypotheses?.get(row.strategy_key) || null;
       let edgeGateSatisfied = true;
       let edgeBlockReason: string | null = null;
       if (effectivePolicy.edge_hypothesis_required) {
-        const hasThesis =
-          edgeHypo && typeof edgeHypo === 'object' &&
-          typeof edgeHypo.thesis === 'string' &&
-          edgeHypo.thesis.trim().length >= 10;
-        if (!hasThesis) {
+        const hypo = (edgeHypo && typeof edgeHypo === 'object') ? edgeHypo : {};
+        const thesis = typeof hypo.thesis === 'string' ? hypo.thesis.trim() : '';
+        const category = typeof hypo.category === 'string' ? hypo.category.trim() : '';
+        const killSwitch =
+          typeof hypo.kill_switch_metric === 'string' ? hypo.kill_switch_metric.trim() : '';
+        const missing: string[] = [];
+        if (thesis.length < 10) missing.push('thesis ≥10 字');
+        if (!category) missing.push('category');
+        if (!killSwitch) missing.push('kill_switch_metric');
+        if (missing.length > 0) {
           edgeGateSatisfied = false;
-          edgeBlockReason = '缺少 edge_hypothesis.thesis (至少 10 字)';
+          edgeBlockReason = `edge_hypothesis 缺少: ${missing.join(', ')}`;
         }
       }
 

@@ -201,6 +201,19 @@ interface OutcomeDashboard {
     by_root_cause?: OutcomeBucket[];
   };
   outcomes: TradeOutcome[];
+  /** Phase 5+: 策略 × 根因 交叉矩阵 */
+  cross_strategy_root_cause?: Array<{
+    strategy_key: string;
+    strategy_label: string;
+    total_closed: number;
+    by_root_cause: Array<{
+      root_cause: string;
+      root_cause_label: string;
+      count: number;
+      pct: number;
+      avg_return_pct: number;
+    }>;
+  }>;
   feedback: {
     recommended_min_score: number;
     position_multiplier: number;
@@ -373,6 +386,11 @@ const RecommendationTradeOutcomes: React.FC = () => {
   );
   // Phase 5+: 按 root_cause 聚合（亏损/盈利归因 dashboard）
   const rootCauseBuckets = useMemo(() => dashboard?.groups?.by_root_cause || [], [dashboard]);
+  // Phase 5+: 策略 × 根因 交叉矩阵
+  const crossStrategyRootCause = useMemo(
+    () => dashboard?.cross_strategy_root_cause || [],
+    [dashboard]
+  );
   const environmentAttribution = useMemo(() => {
     const bestMarket = [...marketRegimeBuckets]
       .filter(item => item.closed_count > 0)
@@ -1025,6 +1043,171 @@ const RecommendationTradeOutcomes: React.FC = () => {
           </Col>
         </Row>
       </Card>
+
+      {/* Phase 5+: 策略 × 根因 交叉矩阵 — heatmap 让用户一眼看到每个策略的根因分布
+          - 行 = strategy_key (top 10 by closed_count)
+          - 列 = top root_cause types
+          - cell = "count (pct%)"，颜色深浅表示该 strategy 内的占比
+          - 用于回答："multi_factor_alpha 的亏损是 catalyst_failed 还是 stop_loss_hit 多？" */}
+      {crossStrategyRootCause.length > 0 && (
+        <Card
+          className="modern-card cross-strategy-root-cause-card"
+          variant="borderless"
+          style={{ marginTop: 16 }}
+        >
+          <Row gutter={[18, 18]} align="top">
+            <Col xs={24} lg={6}>
+              <div className="outcome-panel-title">
+                <NodeIndexOutlined /> 策略 × 根因 交叉矩阵
+              </div>
+              <p>
+                每行一个策略，每列一个根因。cell 显示"笔数 (该策略内占比%)"。
+                深红 = 该策略在该根因下占比≥40%（值得回看 strategy thesis 是否对路）。
+                只显示样本量 top 10 的策略。
+              </p>
+            </Col>
+            <Col xs={24} lg={18}>
+              <div style={{ overflowX: 'auto' }}>
+                <table
+                  style={{
+                    width: '100%',
+                    borderCollapse: 'collapse',
+                    fontSize: 12,
+                  }}
+                >
+                  <thead>
+                    <tr>
+                      <th style={{ padding: '6px 8px', textAlign: 'left', borderBottom: '1px solid #eee' }}>
+                        策略 (闭环数)
+                      </th>
+                      {/* 取所有策略出现过的 root_cause 集合作为列 */}
+                      {(() => {
+                        const allCauses = new Set<string>();
+                        crossStrategyRootCause.forEach(s =>
+                          s.by_root_cause.forEach(rc => allCauses.add(rc.root_cause))
+                        );
+                        // 按全局 count desc 排序
+                        const causeTotals = new Map<string, number>();
+                        crossStrategyRootCause.forEach(s =>
+                          s.by_root_cause.forEach(rc => {
+                            causeTotals.set(rc.root_cause, (causeTotals.get(rc.root_cause) || 0) + rc.count);
+                          })
+                        );
+                        const sortedCauses = Array.from(allCauses).sort(
+                          (a, b) => (causeTotals.get(b) || 0) - (causeTotals.get(a) || 0)
+                        );
+                        return sortedCauses.map(rc => {
+                          // 找一个 strategy 已有的 label
+                          const label =
+                            crossStrategyRootCause
+                              .flatMap(s => s.by_root_cause)
+                              .find(item => item.root_cause === rc)?.root_cause_label || rc;
+                          return (
+                            <th
+                              key={rc}
+                              style={{
+                                padding: '6px 8px',
+                                textAlign: 'center',
+                                borderBottom: '1px solid #eee',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              {label}
+                            </th>
+                          );
+                        });
+                      })()}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {crossStrategyRootCause.map(row => {
+                      const allCauses = new Set<string>();
+                      crossStrategyRootCause.forEach(s =>
+                        s.by_root_cause.forEach(rc => allCauses.add(rc.root_cause))
+                      );
+                      const causeTotals = new Map<string, number>();
+                      crossStrategyRootCause.forEach(s =>
+                        s.by_root_cause.forEach(rc => {
+                          causeTotals.set(rc.root_cause, (causeTotals.get(rc.root_cause) || 0) + rc.count);
+                        })
+                      );
+                      const sortedCauses = Array.from(allCauses).sort(
+                        (a, b) => (causeTotals.get(b) || 0) - (causeTotals.get(a) || 0)
+                      );
+                      const rcMap = new Map(row.by_root_cause.map(rc => [rc.root_cause, rc]));
+                      return (
+                        <tr key={row.strategy_key}>
+                          <td
+                            style={{
+                              padding: '6px 8px',
+                              borderBottom: '1px solid #f5f5f5',
+                              fontWeight: 500,
+                            }}
+                          >
+                            {row.strategy_label}{' '}
+                            <Text type="secondary" style={{ fontSize: 11 }}>
+                              ({row.total_closed})
+                            </Text>
+                          </td>
+                          {sortedCauses.map(rc => {
+                            const cell = rcMap.get(rc);
+                            if (!cell) {
+                              return (
+                                <td
+                                  key={rc}
+                                  style={{
+                                    padding: '6px 8px',
+                                    textAlign: 'center',
+                                    borderBottom: '1px solid #f5f5f5',
+                                    color: '#bbb',
+                                  }}
+                                >
+                                  —
+                                </td>
+                              );
+                            }
+                            // 颜色映射：占比越高越红
+                            let bg = 'transparent';
+                            let fg = '#333';
+                            if (cell.pct >= 40) {
+                              bg = '#ffccc7';
+                              fg = '#a8071a';
+                            } else if (cell.pct >= 25) {
+                              bg = '#ffe7ba';
+                              fg = '#ad4e00';
+                            } else if (cell.pct >= 10) {
+                              bg = '#fff7e6';
+                              fg = '#874d00';
+                            }
+                            return (
+                              <Tooltip
+                                key={rc}
+                                title={`平均回报 ${cell.avg_return_pct.toFixed(2)}%`}
+                              >
+                                <td
+                                  style={{
+                                    padding: '6px 8px',
+                                    textAlign: 'center',
+                                    borderBottom: '1px solid #f5f5f5',
+                                    background: bg,
+                                    color: fg,
+                                  }}
+                                >
+                                  {cell.count} ({cell.pct.toFixed(0)}%)
+                                </td>
+                              </Tooltip>
+                            );
+                          })}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </Col>
+          </Row>
+        </Card>
+      )}
 
       <Card className="modern-card consensus-attribution-card" variant="borderless">
         <Row gutter={[18, 18]} align="middle">

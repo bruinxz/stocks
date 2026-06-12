@@ -118,6 +118,19 @@ export interface RecommendationTradeOutcomeDashboard {
     by_budget_policy_rollback: RecommendationTradeOutcomeBucket[];
   };
   outcomes: any[];
+  /** Phase 5+: 策略 × 根因 交叉矩阵 — 让用户看到每种策略各种亏损/盈利原因的占比 */
+  cross_strategy_root_cause?: Array<{
+    strategy_key: string;
+    strategy_label: string;
+    total_closed: number;
+    by_root_cause: Array<{
+      root_cause: string;
+      root_cause_label: string;
+      count: number;
+      pct: number;
+      avg_return_pct: number;
+    }>;
+  }>;
   feedback: {
     recommended_min_score: number;
     position_multiplier: number;
@@ -1303,6 +1316,12 @@ export class RecommendationTradeOutcomeService {
       ),
     };
 
+    // Phase 5+: 策略 × 根因 交叉矩阵
+    // 让用户看到 "multi_factor_alpha 这个策略的亏损主要是 catalyst_failed 还是 stop_loss_hit"
+    // 健康策略应当 normal_thesis_played_out + take_profit_hit 占主导；
+    // 如果某个策略的 root_cause 分布异常（e.g. 80% catalyst_failed），需要回看策略 thesis
+    const crossStrategyRootCause = this.buildCrossStrategyRootCause(outcomes);
+
     const dashboard: RecommendationTradeOutcomeDashboard = {
       generated_at: moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm:ss'),
       portfolio_id: portfolio.id,
@@ -1319,6 +1338,7 @@ export class RecommendationTradeOutcomeService {
       },
       summary,
       groups,
+      cross_strategy_root_cause: crossStrategyRootCause,
       outcomes: outcomes.slice(0, 200).map(outcome => {
         const plain = modelToPlain<any>(outcome);
         return {
@@ -3910,6 +3930,69 @@ export class RecommendationTradeOutcomeService {
       best_trade: bestTrade,
       worst_trade: worstTrade,
     };
+  }
+
+  /**
+   * Phase 5+: 构造"策略 × 根因"交叉矩阵
+   *
+   * 对每个 strategy_key 单独按 root_cause 聚合，输出：
+   *   - total_closed: 该策略闭环交易总数
+   *   - by_root_cause[]: 每种 root_cause 的 count/pct/avg_return
+   *     按 count desc 排序
+   *
+   * 只考虑 status='closed' 的 trade；最多取 top 10 个 strategy_key（按 closed_count 降序）
+   * 避免 dashboard JSON 爆炸。
+   */
+  private buildCrossStrategyRootCause(
+    outcomes: RecommendationTradeOutcome[]
+  ): RecommendationTradeOutcomeDashboard['cross_strategy_root_cause'] {
+    const closed = outcomes.filter(o => o.trade_status === 'closed');
+    if (closed.length === 0) return [];
+
+    // 1. 按 strategy_key 分组
+    const byStrategy = new Map<string, RecommendationTradeOutcome[]>();
+    for (const o of closed) {
+      const key = strategyKeyFromOutcome(o) || 'unknown';
+      if (!byStrategy.has(key)) byStrategy.set(key, []);
+      byStrategy.get(key)!.push(o);
+    }
+
+    // 2. 取 top 10 strategy by closed_count desc
+    const topStrategies = Array.from(byStrategy.entries())
+      .sort((a, b) => b[1].length - a[1].length)
+      .slice(0, 10);
+
+    // 3. 对每个 strategy 内部按 root_cause 聚合
+    return topStrategies.map(([strategyKey, rows]) => {
+      const byRC = new Map<string, RecommendationTradeOutcome[]>();
+      for (const r of rows) {
+        const rc = String((r as any).root_cause || 'unclassified');
+        if (!byRC.has(rc)) byRC.set(rc, []);
+        byRC.get(rc)!.push(r);
+      }
+      const totalClosed = rows.length;
+      const byRootCause = Array.from(byRC.entries())
+        .map(([rc, rcRows]) => {
+          const sumReturn = rcRows.reduce(
+            (sum, r) => sum + Number(r.total_pnl_pct ?? r.realized_pnl_pct ?? 0),
+            0
+          );
+          return {
+            root_cause: rc,
+            root_cause_label: rootCauseLabel(rc),
+            count: rcRows.length,
+            pct: (rcRows.length / totalClosed) * 100,
+            avg_return_pct: rcRows.length > 0 ? sumReturn / rcRows.length : 0,
+          };
+        })
+        .sort((a, b) => b.count - a.count);
+      return {
+        strategy_key: strategyKey,
+        strategy_label: recommendationStrategyKeyLabel(strategyKey),
+        total_closed: totalClosed,
+        by_root_cause: byRootCause,
+      };
+    });
   }
 
   private buildBuckets(

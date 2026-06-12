@@ -487,6 +487,7 @@ const StrategyMetaCard: React.FC<{
       <EdgeHypothesisCard
         strategyKey={strategy.strategy_key}
         hypothesis={strategy.edge_hypothesis}
+        gateStatus={detail.promotion_gate?.edge_hypothesis}
         onUpdated={onUpdated}
       />
     </Card>
@@ -725,12 +726,20 @@ const EdgeHypothesisEditor: React.FC<{
  * 显示 thesis / category / expected_edge / kill_switch_metric / failure_modes 等
  * 让用户一眼看清这个策略的"alpha 假设"
  * 右上角有"编辑"按钮，打开 EdgeHypothesisEditor Drawer
+ * 顶部显示 promotion gate 实时状态 (Phase 4 硬门禁)
  */
 const EdgeHypothesisCard: React.FC<{
   strategyKey: string;
   hypothesis?: Record<string, any>;
+  gateStatus?: {
+    thesis_ok: boolean;
+    category_ok: boolean;
+    kill_switch_ok: boolean;
+    all_satisfied: boolean;
+    missing: string[];
+  };
   onUpdated?: () => void | Promise<void>;
-}> = ({ strategyKey, hypothesis, onUpdated }) => {
+}> = ({ strategyKey, hypothesis, gateStatus, onUpdated }) => {
   const [editorOpen, setEditorOpen] = useState(false);
   const hypo = hypothesis || {};
   const hasContent = hypo && typeof hypo === 'object' && Object.keys(hypo).length > 0;
@@ -746,7 +755,7 @@ const EdgeHypothesisCard: React.FC<{
             <Space direction="vertical" size={8}>
               <Text>
                 本策略尚未填写可证伪的 alpha 假设。Phase 4 promotion 门禁要求所有策略必须填写
-                edge_hypothesis.thesis (≥10 字符) 才能 promote 成 champion。
+                edge_hypothesis.thesis (≥10 字符) / category / kill_switch_metric 才能 promote 成 champion。
               </Text>
               <Button type="primary" icon={<EditOutlined />} onClick={() => setEditorOpen(true)}>
                 立即填写
@@ -784,6 +793,21 @@ const EdgeHypothesisCard: React.FC<{
           <Space>
             <Text strong>Edge Hypothesis (alpha 假设)</Text>
             <Tag color="processing">Phase 4</Tag>
+            {gateStatus && (
+              gateStatus.all_satisfied ? (
+                <Tooltip title="所有必填字段已填，promotion 门禁放行">
+                  <Tag color="success" icon={<CheckCircleOutlined />}>
+                    Gate 通过
+                  </Tag>
+                </Tooltip>
+              ) : (
+                <Tooltip title={`promotion 门禁拦截 — 缺少: ${gateStatus.missing.join(', ')}`}>
+                  <Tag color="error" icon={<CloseCircleOutlined />}>
+                    Gate 拦截
+                  </Tag>
+                </Tooltip>
+              )
+            )}
           </Space>
         }
         extra={

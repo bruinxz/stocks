@@ -365,6 +365,16 @@ export interface StrategyDetailResponse {
   backtests: StrategyDetailBacktest[];
   latest_ic: StrategyDetailLatestIC | null;
   live_binding: StrategyDetailLiveBinding;
+  /** Phase 4: 实时计算的 promotion gate 状态（与硬门禁规则 1:1 镜像） */
+  promotion_gate?: {
+    edge_hypothesis: {
+      thesis_ok: boolean;
+      category_ok: boolean;
+      kill_switch_ok: boolean;
+      all_satisfied: boolean;
+      missing: string[];
+    };
+  };
 }
 
 export async function getStrategyDetail(strategyKey: string): Promise<StrategyDetailResponse> {

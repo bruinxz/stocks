@@ -477,11 +477,35 @@ export class QuantStrategyService {
       // keep defaults
     }
 
+    // Phase 4: 实时计算 edge_hypothesis 门禁状态（让 UI 直接显示"还差哪些字段"）
+    // 与 QuantStrategyParamVersionService 的硬门禁规则 1:1 镜像
+    const edgeHypo = (strategy.edge_hypothesis && typeof strategy.edge_hypothesis === 'object')
+      ? strategy.edge_hypothesis as Record<string, any>
+      : {};
+    const edgeHypoCheck = {
+      thesis_ok: typeof edgeHypo.thesis === 'string' && edgeHypo.thesis.trim().length >= 10,
+      category_ok: typeof edgeHypo.category === 'string' && edgeHypo.category.trim().length > 0,
+      kill_switch_ok:
+        typeof edgeHypo.kill_switch_metric === 'string' && edgeHypo.kill_switch_metric.trim().length > 0,
+    };
+    const promotion_gate = {
+      edge_hypothesis: {
+        ...edgeHypoCheck,
+        all_satisfied: edgeHypoCheck.thesis_ok && edgeHypoCheck.category_ok && edgeHypoCheck.kill_switch_ok,
+        missing: [
+          ...(edgeHypoCheck.thesis_ok ? [] : ['thesis ≥10 字']),
+          ...(edgeHypoCheck.category_ok ? [] : ['category']),
+          ...(edgeHypoCheck.kill_switch_ok ? [] : ['kill_switch_metric']),
+        ],
+      },
+    };
+
     return {
       strategy: strategy.toJSON(),
       backtests,
       latest_ic,
       live_binding,
+      promotion_gate,
     };
   }
 }
