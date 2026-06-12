@@ -30,6 +30,8 @@ import {
   classifyTradeRootCause,
   TradeRootCauseInput,
 } from './TradeRootCauseClassifier';
+// Phase 5+: 自动生成事后复盘 (亏损/wrong_entry/wrong_regime 等触发)
+import { tradePostmortemService } from './TradePostmortemService';
 // Phase 2+: Kelly sizing 统计聚合（写新 outcome 后 invalidate 缓存）
 import { strategyKellyStatsService } from './StrategyKellyStatsService';
 
@@ -337,24 +339,23 @@ function marketRegimeLabel(key: string): string {
 
 /**
  * Phase 5+: trade root_cause → 中文标签。
- * 与 TradeRootCauseClassifier 的 10 种 root_cause 严格对齐。
+ * 与 TradeRootCauseClassifier.ROOT_CAUSE_LABELS 严格对齐 (10 种)。
  */
 function rootCauseLabel(key: string): string {
   const labels: Record<string, string> = {
-    market_regime_shift: '市场环境逆转',
-    catalyst_failed: '催化剂失效',
-    stop_loss_hit: '硬止损触发',
-    take_profit_hit: '止盈触发',
-    holding_period_expired: '到期清仓',
-    excessive_drawdown: '中途回撤过深',
-    industry_rotation: '行业切换',
-    micro_thesis_broken: '微观逻辑破坏',
-    strategy_drift: '策略漂移',
-    normal_thesis_played_out: '正常兑现',
-    unclassified: '未分类',
-    unknown: '未分类',
+    profit_take: '止盈出场',
+    stop_loss: '止损触发',
+    time_stop: '持仓超期',
+    wrong_entry: '入场时机不佳',
+    wrong_regime: '市场环境切换',
+    catalyst_failed: '催化兑现失败',
+    data_quality: '数据异常',
+    backtest_drift: '实盘偏离回测',
+    risk_kill_switch: '风控熔断',
+    unknown: '未归类',
+    unclassified: '未归类',
   };
-  return labels[key] || key || '未分类';
+  return labels[key] || key || '未归类';
 }
 
 function industryRegimeKey(record: RecommendationTradeOutcome): string {
@@ -3003,6 +3004,37 @@ export class RecommendationTradeOutcomeService {
     };
     const rcResult = classifyTradeRootCause(rootCauseInput);
 
+    // Phase 5+: 当 root_cause 属于 "可学习" 类别（亏损/wrong_entry/wrong_regime 等）
+    // 时，自动生成结构化复盘 (5-bullet + suggestions + baseline 对比)。
+    // tradePostmortemService.generate() 内部对 profit_take/unknown 返回 null，
+    // 所以失败/盈利 trade 不会被强行生成空 postmortem。
+    let postmortem: any = null;
+    if (tradeStatus === 'closed') {
+      try {
+        postmortem = await tradePostmortemService.generate({
+          strategy_key: strategyKey,
+          root_cause: rcResult.root_cause,
+          root_cause_label: rcResult.root_cause_label,
+          symbol: normalizeSymbol(signal.symbol),
+          total_pnl_pct: totalPnlPct,
+          holding_days: Number(holdingDays || 0),
+          entry_price: Number(entryPrice) || undefined,
+          exit_price: Number(exitPrice) || undefined,
+          max_drawdown_during_hold_pct:
+            Math.abs(Number(mfeMae.max_adverse_excursion_pct) || 0) || undefined,
+          market_regime_at_entry: rootCauseInput.market_regime_at_entry,
+          market_regime_at_exit: rootCauseInput.market_regime_at_exit,
+          signal_catalyst: rootCauseInput.signal_catalyst,
+          exit_reason: rootCauseInput.exit_reason,
+          signal_score: toOptionalNumber(signal.confidence_score),
+          fetch_baseline: true,
+        });
+      } catch (pmErr: any) {
+        // 失败不阻塞主流程
+        logger.warn(`[postmortem] generate failed: ${pmErr?.message || pmErr}`);
+      }
+    }
+
     const payload: Record<string, any> = {
       portfolio_id,
       signal_id: signal.id,
@@ -3067,6 +3099,8 @@ export class RecommendationTradeOutcomeService {
           matched_rule: rcResult.matched_rule,
           input_snapshot: rootCauseInput,
         },
+        // Phase 5+: 5-bullet 复盘 (仅当 root_cause 属于可学习类别时存在)
+        postmortem,
         strategy_variant: Object.keys(strategyVariant).length
           ? strategyVariant
           : asPlainObject(paperTrading.strategy_variant),

@@ -153,6 +153,22 @@ interface TradeOutcome {
       consensus_variants?: string[];
       recommendation_tier_label?: string;
     };
+    /** Phase 5+: 自动复盘 (root_cause 属于亏损/wrong_entry/wrong_regime 等触发) */
+    postmortem?: {
+      generated_at?: string;
+      strategy_key?: string;
+      root_cause?: string;
+      root_cause_label?: string;
+      bullets?: Array<{ title: string; detail: string; data?: Record<string, any> }>;
+      suggestions?: string[];
+      similar_baseline?: {
+        strategy_key: string;
+        sample_size: number;
+        avg_pnl_pct: number;
+        win_rate: number;
+        note: string;
+      };
+    };
   };
   policy_explain?: any;
   updated_at?: string;
@@ -1021,14 +1037,16 @@ const RecommendationTradeOutcomes: React.FC = () => {
                       >
                         <Tag
                           color={
-                            bucket.key === 'normal_thesis_played_out' || bucket.key === 'take_profit_hit'
+                            bucket.key === 'profit_take'
                               ? 'green'
-                              : bucket.key === 'stop_loss_hit' || bucket.key === 'excessive_drawdown'
+                              : bucket.key === 'stop_loss' || bucket.key === 'risk_kill_switch'
                               ? 'red'
-                              : bucket.key === 'catalyst_failed' || bucket.key === 'micro_thesis_broken'
+                              : bucket.key === 'catalyst_failed' || bucket.key === 'wrong_entry'
                               ? 'orange'
-                              : bucket.key === 'market_regime_shift' || bucket.key === 'industry_rotation'
+                              : bucket.key === 'wrong_regime' || bucket.key === 'time_stop'
                               ? 'volcano'
+                              : bucket.key === 'backtest_drift' || bucket.key === 'data_quality'
+                              ? 'magenta'
                               : 'default'
                           }
                           style={{ padding: '4px 10px', fontSize: 13 }}
@@ -1377,15 +1395,83 @@ const RecommendationTradeOutcomes: React.FC = () => {
           pagination={{ pageSize: 12, showSizeChanger: true }}
           scroll={{ x: 1320 }}
           expandable={{
-            expandedRowRender: record => (
-              <TradePolicyExplainPanel
-                policy={record.policy_explain}
-                outcome={record}
-                compact
-                title={`${record.name || record.symbol} 的预算/风控/收益回放`}
-              />
-            ),
-            rowExpandable: record => Boolean(record.policy_explain),
+            expandedRowRender: record => {
+              const postmortem = record.metadata?.postmortem;
+              return (
+                <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                  {postmortem && postmortem.bullets && postmortem.bullets.length > 0 && (
+                    <Card
+                      type="inner"
+                      size="small"
+                      title={
+                        <Space>
+                          <span>📋 自动复盘</span>
+                          <Tag color="orange">Phase 5+</Tag>
+                          {postmortem.root_cause_label && (
+                            <Tag color="error">{postmortem.root_cause_label}</Tag>
+                          )}
+                        </Space>
+                      }
+                    >
+                      <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                        {postmortem.bullets.map((b, i) => (
+                          <div key={i}>
+                            <Text strong>{`${i + 1}. ${b.title}`}</Text>
+                            <div style={{ marginLeft: 16, color: '#555', fontSize: 13 }}>
+                              {b.detail}
+                            </div>
+                          </div>
+                        ))}
+                        {postmortem.suggestions && postmortem.suggestions.length > 0 && (
+                          <div style={{ marginTop: 8 }}>
+                            <Text strong style={{ color: '#1890ff' }}>
+                              💡 改进建议:
+                            </Text>
+                            <ul style={{ marginTop: 4, marginBottom: 0, paddingLeft: 28 }}>
+                              {postmortem.suggestions.map((s, i) => (
+                                <li key={i} style={{ fontSize: 13, color: '#444' }}>
+                                  {s}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {postmortem.similar_baseline && (
+                          <Alert
+                            type="info"
+                            showIcon
+                            style={{ marginTop: 8 }}
+                            message={
+                              <Space wrap>
+                                <span>策略基线:</span>
+                                <Tag>样本 {postmortem.similar_baseline.sample_size}</Tag>
+                                <Tag color="blue">
+                                  平均 pnl {postmortem.similar_baseline.avg_pnl_pct.toFixed(2)}%
+                                </Tag>
+                                <Tag color="purple">
+                                  胜率 {(postmortem.similar_baseline.win_rate * 100).toFixed(1)}%
+                                </Tag>
+                              </Space>
+                            }
+                          />
+                        )}
+                      </Space>
+                    </Card>
+                  )}
+                  {record.policy_explain && (
+                    <TradePolicyExplainPanel
+                      policy={record.policy_explain}
+                      outcome={record}
+                      compact
+                      title={`${record.name || record.symbol} 的预算/风控/收益回放`}
+                    />
+                  )}
+                </Space>
+              );
+            },
+            rowExpandable: record =>
+              Boolean(record.policy_explain) ||
+              Boolean(record.metadata?.postmortem?.bullets?.length),
           }}
           locale={{
             emptyText: (
