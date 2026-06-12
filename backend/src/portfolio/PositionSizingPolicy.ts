@@ -114,6 +114,19 @@ export interface SizingPolicyConfig {
   kelly_fraction_multiplier: number;
   /** kelly 用：低于此样本量退化到 base_position_pct (默认 50 笔) */
   kelly_min_sample_size: number;
+  /**
+   * Phase 2+ 硬切换开关 (默认 false = shadow mode)。
+   *
+   * - false (默认): PaperTradingAutomationService 只计算 sizing 决策并写 log，
+   *   实际下单仍走原有 effectiveTargetPct (equal_pct 行为)。让用户先观察 1-2 周
+   *   shadow 数据对比再决定是否真的切换。
+   * - true: PaperTradingAutomationService 用 decideSizing 计算的 position_pct
+   *   替换 effectiveTargetPct，sizing 决策真正生效。
+   *
+   * 切换路径：先在 SettingsWorkspace 配 method=kelly/vol_target/atr_based 跑 shadow，
+   * 观察 7-14 天 [shadow-sizing] log，确认 delta 合理后再 PATCH hard_cutover_enabled=true。
+   */
+  hard_cutover_enabled: boolean;
 }
 
 /**
@@ -129,6 +142,7 @@ export const DEFAULT_SIZING_POLICY: Readonly<SizingPolicyConfig> = Object.freeze
   atr_period: 14,
   kelly_fraction_multiplier: 0.25,
   kelly_min_sample_size: 50,
+  hard_cutover_enabled: false,
 });
 
 /**
@@ -175,6 +189,8 @@ export function normalizeSizingPolicyConfig(input: any): SizingPolicyConfig {
     atr_period: safe(input?.atr_period, 14, 5, 60),
     kelly_fraction_multiplier: safe(input?.kelly_fraction_multiplier, 0.25, 0.05, 1.0),
     kelly_min_sample_size: safe(input?.kelly_min_sample_size, 50, 10, 500),
+    hard_cutover_enabled:
+      input?.hard_cutover_enabled === true || input?.hard_cutover_enabled === 'true',
   };
 }
 

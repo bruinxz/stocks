@@ -1801,12 +1801,14 @@ class PaperTradingAutomationService {
         }
       }
 
-      // Phase 2 接入：并行计算 PositionSizingPolicy 决策 (shadow mode)
-      // 现阶段不替换 effectiveTargetPct，只记录到日志 + metadata 供对比验证。
-      // 等观察 1-2 周后再做硬切换。
+      // Phase 2 接入：并行计算 PositionSizingPolicy 决策
+      // 默认 shadow mode：只 log 不替换 effectiveTargetPct。
+      // 当用户在 SettingsWorkspace 把 hard_cutover_enabled=true 后才真正生效。
       let shadowSizingDecision: SizingDecision | null = null;
+      let sizingPolicyForLog: ReturnType<typeof normalizeSizingPolicyConfig> | null = null;
       try {
         const sizingPolicy = await this.loadUserSizingPolicy(portfolio.user_id);
+        sizingPolicyForLog = sizingPolicy;
         if (sizingPolicy.method !== 'equal_pct') {
           // 仅在用户主动启用 vol_target/atr_based/kelly 时才计算（节省开销）
 
@@ -1837,17 +1839,38 @@ class PaperTradingAutomationService {
             historical_payoff_ratio: kellyStats?.payoff_ratio,
             historical_sample_size: kellyStats?.sample_size,
           });
+
+          const modeTag = sizingPolicy.hard_cutover_enabled ? 'hard-sizing' : 'shadow-sizing';
           logger.info(
-            `[shadow-sizing] user=${portfolio.user_id} symbol=${signal.symbol} ` +
+            `[${modeTag}] user=${portfolio.user_id} symbol=${signal.symbol} ` +
               `method=${sizingPolicy.method} actual_pct=${roundNumber(effectiveTargetPct, 2)}% ` +
-              `shadow_pct=${roundNumber(shadowSizingDecision.position_pct, 2)}% ` +
+              `decision_pct=${roundNumber(shadowSizingDecision.position_pct, 2)}% ` +
               `delta=${roundNumber(shadowSizingDecision.position_pct - effectiveTargetPct, 2)}% ` +
               `reason="${shadowSizingDecision.reason}"`
           );
+
+          // 硬切换：真正替换 effectiveTargetPct
+          if (sizingPolicy.hard_cutover_enabled && shadowSizingDecision.position_pct > 0) {
+            const newPct = shadowSizingDecision.position_pct;
+            logger.info(
+              `[hard-sizing] APPLY user=${portfolio.user_id} symbol=${signal.symbol} ` +
+                `${roundNumber(effectiveTargetPct, 2)}% → ${roundNumber(newPct, 2)}%`
+            );
+            effectiveTargetPct = newPct;
+          } else if (
+            sizingPolicy.hard_cutover_enabled &&
+            shadowSizingDecision.position_pct <= 0
+          ) {
+            // Kelly 负 edge / 缺数据 → 跳过本笔交易
+            await skip(
+              `${sizingPolicy.method} sizing 决策为 0 仓位：${shadowSizingDecision.reason}`
+            );
+            continue;
+          }
         }
       } catch (err: any) {
-        // shadow 不影响主流程，失败仅 warn
-        logger.warn(`[shadow-sizing] failed: ${err?.message || err}`);
+        // shadow 不影响主流程，失败仅 warn；hard 模式失败 = 用户配置 bug，也走原流程
+        logger.warn(`[sizing] failed: ${err?.message || err}`);
       }
 
       const tradeRisk = this.evaluateEntryRiskGuard({

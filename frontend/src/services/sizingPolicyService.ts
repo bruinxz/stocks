@@ -19,6 +19,13 @@ export interface SizingPolicyConfig {
   kelly_fraction_multiplier: number;
   /** kelly 用：低于此样本数退化到 base_position_pct */
   kelly_min_sample_size: number;
+  /**
+   * Phase 2+ 硬切换开关 (默认 false = shadow mode)。
+   * - false: 只 log 决策，下单仍走 equal_pct
+   * - true: decideSizing 算出的 position_pct 真正替换 effectiveTargetPct
+   * 切换前建议先观察 7-14 天 [shadow-sizing] log 确认 delta 合理。
+   */
+  hard_cutover_enabled: boolean;
 }
 
 export interface SizingPolicyWithDefaults {

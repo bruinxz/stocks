@@ -23,6 +23,7 @@ import {
   Row,
   Select,
   Space,
+  Switch,
   Tag,
   Tooltip,
   Typography,
@@ -121,18 +122,33 @@ const SizingPolicyTab: React.FC = () => {
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
-      <Alert
-        type="info"
-        showIcon
-        message="Phase 2 多元化仓位 sizing — 当前为 shadow mode"
-        description={
-          <Paragraph style={{ marginBottom: 0 }}>
-            选择 vol_target / atr_based 后，PaperTradingAutomationService 会在每次下单时**并行计算**新 sizing 结果并写入日志
-            (<Text code>[shadow-sizing]</Text>)，但**实际下单仍使用现有 equal_pct 行为**。
-            等观察 1-2 周后会切换为硬接入。现在可以提前配置，方便我们对比 shadow 数据。
-          </Paragraph>
-        }
-      />
+      {draft?.hard_cutover_enabled ? (
+        <Alert
+          type="success"
+          showIcon
+          message="Phase 2 硬切换已启用 — 实际下单按 sizing 策略执行"
+          description={
+            <Paragraph style={{ marginBottom: 0 }}>
+              当前 method=<Text code>{draft?.method}</Text>，PaperTradingAutomationService 每笔下单的实际仓位
+              都由 decideSizing 计算后**真正生效** (替换 effectiveTargetPct)。日志 prefix
+              <Text code>[hard-sizing]</Text>。Kelly 负 edge 或决策 = 0 时会跳过该笔交易。
+            </Paragraph>
+          }
+        />
+      ) : (
+        <Alert
+          type="info"
+          showIcon
+          message="Phase 2 多元化仓位 sizing — 当前为 shadow mode"
+          description={
+            <Paragraph style={{ marginBottom: 0 }}>
+              选择 vol_target / atr_based / kelly 后，PaperTradingAutomationService 会在每次下单时**并行计算**新 sizing 结果并写入日志
+              (<Text code>[shadow-sizing]</Text>)，但**实际下单仍使用现有 equal_pct 行为**。
+              观察 7-14 天后，开启下方"硬切换"开关让 sizing 决策真正生效。
+            </Paragraph>
+          }
+        />
+      )}
 
       {error && <Alert type="error" showIcon message={error} />}
 
@@ -180,6 +196,46 @@ const SizingPolicyTab: React.FC = () => {
                 ),
               }))}
             />
+          </Form.Item>
+
+          <Form.Item
+            noStyle
+            shouldUpdate={(prev, curr) => prev.method !== curr.method}
+          >
+            {({ getFieldValue }) => {
+              const method = getFieldValue('method');
+              if (method === 'equal_pct') return null;
+              return (
+                <Card
+                  size="small"
+                  style={{ marginBottom: 12, background: '#fff1f0', border: '1px solid #ffa39e' }}
+                >
+                  <Row align="middle" gutter={16}>
+                    <Col flex="auto">
+                      <Space direction="vertical" size={2}>
+                        <Space>
+                          <Text strong style={{ color: '#a8071a' }}>
+                            ⚠ 硬切换开关 (hard_cutover_enabled)
+                          </Text>
+                          <Tooltip title="false=shadow mode 只 log 不替换；true=sizing 决策真正生效">
+                            <QuestionCircleOutlined style={{ color: '#a8071a' }} />
+                          </Tooltip>
+                        </Space>
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                          开启后，下一笔下单将按所选 sizing 方法实际计算的仓位生效，
+                          不再是 equal_pct 行为。建议先观察 7-14 天 shadow log 后再开。
+                        </Text>
+                      </Space>
+                    </Col>
+                    <Col flex="none">
+                      <Form.Item name="hard_cutover_enabled" valuePropName="checked" noStyle>
+                        <Switch checkedChildren="开" unCheckedChildren="关" />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                </Card>
+              );
+            }}
           </Form.Item>
 
           <Row gutter={16}>
