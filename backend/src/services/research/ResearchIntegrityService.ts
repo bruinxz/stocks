@@ -48,6 +48,12 @@ import {
   DSR_PASS_THRESHOLD,
   PBO_FAIL_THRESHOLD,
 } from '../../quant/backtest/OverfitMetrics';
+import {
+  combinatorialPurgedCV,
+  computePboFromPaths,
+  CpcvSampleEvent,
+  CpcvOptions,
+} from './cpcv';
 import { logger } from '../../utils/logger';
 
 // ============================================================
@@ -734,6 +740,66 @@ export class ResearchIntegrityService {
       where: { created_at: { [Op.lt]: cutoff } },
     });
     return { deleted };
+  }
+
+  /**
+   * v2: CPCV-based PBO estimation
+   *
+   * 给一组 candidate strategies 的 train_metrics + test_metrics (per CPCV path)
+   * 算更稳定的 PBO (比 walk-forward 用 C(N,k) 多 paths)。
+   *
+   * @param input.events 时间序列样本 (entry_time, exit_time)
+   * @param input.candidate_strategies 多个 candidate 的训练 + 测试 metric
+   * @param input.cpcv_options CPCV 配置 (n_groups, k_test, embargo_pct)
+   */
+  async computeCpcvPbo(input: {
+    events: CpcvSampleEvent[];
+    /** evaluator(train_ids, test_ids) → train_metric, test_metric per candidate */
+    evaluator: (
+      train_ids: Array<number | string>,
+      test_ids: Array<number | string>
+    ) => Promise<{ train_metrics: number[]; test_metrics: number[] }>;
+    cpcv_options?: CpcvOptions;
+  }): Promise<{
+    pbo: number;
+    n_paths: number;
+    n_groups: number;
+    k_test: number;
+    avg_train_metric: number;
+    avg_test_metric: number;
+    paths_summary: Array<{ fold: number; train_metrics: number[]; test_metrics: number[] }>;
+  }> {
+    const folds = combinatorialPurgedCV(input.events, input.cpcv_options);
+    if (folds.length === 0) {
+      throw new Error('computeCpcvPbo: no folds generated (check n_groups / k_test)');
+    }
+    const paths: Array<{ train_metrics: number[]; test_metrics: number[] }> = [];
+    for (const fold of folds) {
+      const r = await input.evaluator(fold.train_ids, fold.test_ids);
+      paths.push(r);
+    }
+    const pbo = computePboFromPaths(paths);
+    const allTrainMetrics: number[] = [];
+    const allTestMetrics: number[] = [];
+    for (const p of paths) {
+      allTrainMetrics.push(...p.train_metrics.filter(v => Number.isFinite(v)));
+      allTestMetrics.push(...p.test_metrics.filter(v => Number.isFinite(v)));
+    }
+    const avgTrain = allTrainMetrics.length > 0
+      ? allTrainMetrics.reduce((s, v) => s + v, 0) / allTrainMetrics.length
+      : 0;
+    const avgTest = allTestMetrics.length > 0
+      ? allTestMetrics.reduce((s, v) => s + v, 0) / allTestMetrics.length
+      : 0;
+    return {
+      pbo,
+      n_paths: paths.length,
+      n_groups: input.cpcv_options?.n_groups ?? 10,
+      k_test: input.cpcv_options?.k_test ?? 2,
+      avg_train_metric: avgTrain,
+      avg_test_metric: avgTest,
+      paths_summary: paths.map((p, i) => ({ fold: i, train_metrics: p.train_metrics, test_metrics: p.test_metrics })),
+    };
   }
 }
 

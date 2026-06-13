@@ -39,6 +39,11 @@
 import { Op } from 'sequelize';
 import { ExecutionFeasibilityRecord } from '../../models/ExecutionFeasibilityRecord';
 import { logger } from '../../utils/logger';
+import {
+  expectedImpactCost,
+  impactCostToScore,
+  AlmgrenChrissParams,
+} from './almgren-chriss';
 
 // ============================================================
 // Constants
@@ -111,6 +116,8 @@ export interface ExecutionFeasibilityInput {
 export interface ExecutionFeasibilityOptions {
   persist?: boolean;
   data_source?: ExecutionFeasibilityDataSource;
+  /** v2: 启用 Almgren-Chriss linear impact model (默认 false 保持 v1) */
+  use_almgren_chriss?: boolean;
 }
 
 export interface ExecutionFeasibilityReport {
@@ -210,6 +217,10 @@ export function computeLimitProximityScore(input: {
  *   - 0.01 < ratio ≤ 0.05 (5%) → 50
  *   - 0.05 < ratio ≤ 0.10 (10%) → 20
  *   - ratio > 0.10 → 0
+ *
+ * **v2 注**：本评分基于 participation rate 经验值。更严谨的方法是
+ * computeVolumeCoverageScoreV2 — 用 Almgren-Chriss linear impact model 算
+ * expected_impact_bps 再映射 score。caller 传 use_almgren_chriss=true 启用。
  */
 export function computeVolumeCoverageScore(input: {
   target_qty: number;
@@ -226,6 +237,43 @@ export function computeVolumeCoverageScore(input: {
   if (ratio <= 0.05) return Math.round(80 - ((ratio - 0.01) / 0.04) * 30);
   if (ratio <= 0.10) return Math.round(50 - ((ratio - 0.05) / 0.05) * 30);
   return 0;
+}
+
+/**
+ * v2: Almgren-Chriss linear impact model 的 volume_coverage_score 替代实现
+ *
+ * 用 expected_impact_cost(order_qty, ADV, σ, spread) 算 bps cost，再映射到 0-100。
+ *
+ * 与 v1 区别:
+ *   - v1 只看 ratio (qty / ADV)，不考虑 vol / spread
+ *   - v2 考虑：相同 ratio 但 high-vol 股 impact 更大；high-spread 股 impact 更大
+ *
+ * @returns score 0-100 (越高越易成交) + 详细 breakdown
+ */
+export function computeVolumeCoverageScoreV2(input: {
+  target_qty: number;
+  avg_volume_5d: number | null | undefined;
+  daily_vol: number | null | undefined;
+  spread_pct: number | null | undefined;
+}): { score: number | null; impact_bps: number | null; participation: number | null } {
+  if (input.avg_volume_5d === null || input.avg_volume_5d === undefined || input.avg_volume_5d <= 0) {
+    return { score: null, impact_bps: null, participation: null };
+  }
+  if (input.daily_vol === null || input.daily_vol === undefined || input.daily_vol <= 0) {
+    // 退化到 v1
+    return { score: computeVolumeCoverageScore(input), impact_bps: null, participation: input.target_qty / input.avg_volume_5d };
+  }
+  const ac: AlmgrenChrissParams = {
+    adv: input.avg_volume_5d,
+    daily_vol: input.daily_vol,
+    spread_pct: input.spread_pct ?? 0.001,
+  };
+  const cost = expectedImpactCost(input.target_qty, ac);
+  return {
+    score: impactCostToScore(cost.total_bps),
+    impact_bps: Math.round(cost.total_bps * 100) / 100,
+    participation: cost.participation_rate,
+  };
 }
 
 /**
@@ -498,11 +546,30 @@ export class ExecutionFeasibilityService {
       limit_pct,
     });
 
-    // 2. volume_coverage
-    const volume_coverage_score = computeVolumeCoverageScore({
-      target_qty: input.target_qty,
-      avg_volume_5d: snapshot.avg_volume_5d,
-    });
+    // 2. volume_coverage (v1 or v2 by option)
+    let volume_coverage_score: number | null;
+    let impact_bps_v2: number | null = null;
+    if (options.use_almgren_chriss) {
+      const sigma = snapshot.prev_close && snapshot.prev_close > 0 && snapshot.high && snapshot.low
+        ? (snapshot.high - snapshot.low) / snapshot.prev_close
+        : 0.02;
+      const spread_pct = snapshot.high && snapshot.low && snapshot.close > 0
+        ? (snapshot.high - snapshot.low) / snapshot.close / 2
+        : 0.001;
+      const v2 = computeVolumeCoverageScoreV2({
+        target_qty: input.target_qty,
+        avg_volume_5d: snapshot.avg_volume_5d,
+        daily_vol: sigma,
+        spread_pct,
+      });
+      volume_coverage_score = v2.score;
+      impact_bps_v2 = v2.impact_bps;
+    } else {
+      volume_coverage_score = computeVolumeCoverageScore({
+        target_qty: input.target_qty,
+        avg_volume_5d: snapshot.avg_volume_5d,
+      });
+    }
 
     // 3. spread
     const spread_score = computeSpreadScore({
@@ -559,6 +626,8 @@ export class ExecutionFeasibilityService {
         snapshot_close: snapshot.close,
         snapshot_prev_close: snapshot.prev_close,
         snapshot_avg_volume_5d: snapshot.avg_volume_5d,
+        use_almgren_chriss: options.use_almgren_chriss === true,
+        impact_bps_v2,
       },
       persisted_id: null,
       generated_at: new Date(),

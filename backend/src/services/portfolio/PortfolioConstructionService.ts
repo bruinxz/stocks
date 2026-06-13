@@ -35,6 +35,8 @@
 import { Op } from 'sequelize';
 import { PortfolioConstructionResult } from '../../models/PortfolioConstructionResult';
 import { projectOntoSimplexWithBox } from '../../quant/backtest/PortfolioOptimizer';
+import { ledoitWolfCovariance } from './ledoit-wolf';
+import { hierarchicalRiskParity } from './hrp';
 import { logger } from '../../utils/logger';
 
 // ============================================================
@@ -48,7 +50,10 @@ export const DEFAULT_TOTAL_ALLOCATION = 0.95;
 export const DEFAULT_MAX_ITERATIONS = 500;
 export const DEFAULT_TOLERANCE = 1e-6;
 
-export type ConstructionMethod = 'risk_parity' | 'equal_weight' | 'min_variance' | 'max_sharpe';
+export type ConstructionMethod = 'risk_parity' | 'equal_weight' | 'min_variance' | 'max_sharpe' | 'hrp';
+
+/** 协方差估计方法 (v2) */
+export type CovarianceEstimator = 'sample' | 'ledoit_wolf';
 
 // ============================================================
 // Types
@@ -85,6 +90,8 @@ export interface ConstructionOptions {
   persist?: boolean;
   /** risk aversion λ for max_sharpe (越大越保守) */
   risk_aversion?: number;
+  /** v2: 协方差估计方法 (sample / ledoit_wolf 默认 sample) */
+  cov_estimator?: CovarianceEstimator;
 }
 
 export interface ConstructionResult {
@@ -509,6 +516,7 @@ export class PortfolioConstructionService {
 
     // 准备 cov
     let cov = input.cov_matrix;
+    let covShrinkage: number | null = null;
     if (!cov) {
       const returnsMatrix = input.candidates.map(c => c.daily_returns || []);
       const validLength = returnsMatrix[0].length;
@@ -517,7 +525,24 @@ export class PortfolioConstructionService {
         logger.warn('[portfolio-construction] cov_matrix 缺失，退化到 equal_weight');
         return this.constructEqualWeight(input, options);
       }
-      cov = estimateCovariance(returnsMatrix);
+      // v2: Ledoit-Wolf shrinkage (默认 sample cov)
+      if (options.cov_estimator === 'ledoit_wolf') {
+        // returnsMatrix 是 N×T (每行是一只资产)，LW 需要 T×N
+        const T = validLength;
+        const M = returnsMatrix.length;
+        const xTxN: number[][] = [];
+        for (let t = 0; t < T; t += 1) {
+          const row: number[] = [];
+          for (let i = 0; i < M; i += 1) row.push(returnsMatrix[i][t]);
+          xTxN.push(row);
+        }
+        const lw = ledoitWolfCovariance(xTxN);
+        cov = lw.cov;
+        covShrinkage = lw.shrinkage;
+        logger.info(`[portfolio-construction] Ledoit-Wolf shrinkage applied: δ=${lw.shrinkage.toFixed(4)}, μ=${lw.mu.toFixed(6)}`);
+      } else {
+        cov = estimateCovariance(returnsMatrix);
+      }
     }
 
     // 求解
@@ -528,6 +553,14 @@ export class PortfolioConstructionService {
     if (method === 'equal_weight') {
       weights = new Array(N).fill(1 / N);
       converged = true;
+    } else if (method === 'hrp') {
+      // v2: Hierarchical Risk Parity (López de Prado 2016)
+      // 不需要 max_weight / min_weight 约束（HRP 自然分配，但事后用 simplex 投影 cap）
+      const hrpResult = hierarchicalRiskParity(cov);
+      weights = hrpResult.weights;
+      iterations = 0;
+      converged = true;
+      logger.info(`[portfolio-construction] HRP cluster order: [${hrpResult.cluster_order.join(',')}]`);
     } else if (method === 'risk_parity') {
       const r = solveERC(cov, { max_iterations: maxIter, tolerance });
       weights = r.weights;
@@ -557,8 +590,8 @@ export class PortfolioConstructionService {
 
     // 投影到 [minW, maxW] 简形约束
     try {
-      // 只对 risk_parity 投影；其他算法已在算法内投影
-      if (method === 'risk_parity') {
+      // 对 risk_parity 和 hrp 都做事后投影 (其他算法已在算法内投影)
+      if (method === 'risk_parity' || method === 'hrp') {
         weights = projectOntoSimplexWithBox(weights, minW, maxW);
       }
     } catch (err: any) {
@@ -623,6 +656,12 @@ export class PortfolioConstructionService {
       persisted_id: null,
       generated_at: new Date(),
     };
+
+    // 把 LW shrinkage 信息写到 metadata 让前端 / debug 看到
+    if (covShrinkage !== null) {
+      (result as any).cov_estimator = options.cov_estimator;
+      (result as any).cov_shrinkage = Math.round(covShrinkage * 10000) / 10000;
+    }
 
     if (persist) {
       try {

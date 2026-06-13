@@ -55,6 +55,7 @@ import {
   GovernorHealthTier,
 } from '../../models/EquityCurveGovernorState';
 import { logger } from '../../utils/logger';
+import { continuousMultiplier, applyMultiplierBuffer } from './carver-extensions';
 
 // ============================================================
 // Constants
@@ -133,6 +134,10 @@ export interface EvaluateOptions {
   persist?: boolean;
   data_source?: GovernorDataSource;
   as_of_date?: string;
+  /** v2: 启用 Carver 连续 multiplier (不分档) + buffer zone 防频繁切换 */
+  use_carver_continuous?: boolean;
+  /** v2 only: buffer width (默认 0.08) — multiplier 改变 < buffer 时不调整 */
+  buffer_width?: number;
 }
 
 export interface EvaluateResult {
@@ -444,7 +449,17 @@ export class EquityCurveGovernorService {
     const { tier, trigger_reason } = deriveTier(stats, thresholds);
     const previous_tier = await ds.loadPreviousTier(portfolio.portfolio_id);
     const tier_changed = previous_tier !== null && previous_tier !== tier;
-    const multiplier = TIER_MULTIPLIERS[tier];
+    let multiplier = TIER_MULTIPLIERS[tier];
+
+    // v2: Carver 连续 multiplier + buffer zone
+    if (options.use_carver_continuous) {
+      const rawMult = continuousMultiplier(stats.drawdown_current ?? 0, stats.sharpe_30d);
+      // 找上次实际生效的 multiplier (从最近 state row)
+      const prevMult = previous_tier ? TIER_MULTIPLIERS[previous_tier] : 1.0;
+      multiplier = applyMultiplierBuffer(prevMult, rawMult, options.buffer_width ?? 0.08);
+      // 反向推 tier (展示用)：根据 continuous multiplier 落在哪档
+      // 不影响 multiplier 值本身
+    }
 
     const summary = buildGovernorSummary({
       tier,
