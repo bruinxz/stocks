@@ -1990,6 +1990,108 @@ class SchedulerService {
             `评估 ${result.evaluated}，触发 ${result.triggered}` +
             (dryRun ? '（dry-run，未真正禁用）' : '（已自动 disable）')
         );
+      } else if (task.type === 'EQUITY_CURVE_GOVERNOR_DAILY_EVAL') {
+        // Sprint 3: 资金曲线 Governor 每日评估 — 对所有 portfolio 评估 5 档健康度。
+        // 默认 persist=true，写入 EquityCurveGovernorState，触发档位切换告警。
+        const { equityCurveGovernorService } = require('../services/governor/EquityCurveGovernorService');
+        const result = await equityCurveGovernorService.evaluateAll({
+          persist: parameters.persist !== false,
+          as_of_date: parameters.as_of_date || parameters.asOfDate,
+        });
+        const byTier = result.reduce((acc: Record<string, number>, r: any) => {
+          acc[r.tier] = (acc[r.tier] || 0) + 1;
+          return acc;
+        }, {});
+        const changed = result.filter((r: any) => r.tier_changed).length;
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: result.length,
+          completed_items: result.length,
+          failed_items: 0,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: null,
+          result_summary: {
+            scenario: 'equity_curve_governor_daily_eval',
+            evaluated: result.length,
+            by_tier: byTier,
+            tier_changed: changed,
+            results_sample: result.slice(0, 5).map((r: any) => ({
+              portfolio_id: r.portfolio_id,
+              tier: r.tier,
+              multiplier: r.kelly_multiplier,
+              trigger_reason: r.trigger_reason,
+            })),
+          },
+        });
+        logger.info(
+          `资金曲线 Governor 评估完成。已评估 ${result.length} 个 portfolio, ` +
+            `档位分布: ${JSON.stringify(byTier)}, ` +
+            `档位切换 ${changed} 个`
+        );
+      } else if (task.type === 'RESEARCH_INTEGRITY_BATCH_AUDIT') {
+        // Sprint 1A: ResearchIntegrity 周批量审计 — 扫描近 N 天完成的 QuantBacktestResult，
+        // 对每个跑 audit (DSR / PBO / OOS decay)，FAIL 的 strategy 推到 ops 关注列表。
+        const { researchIntegrityService } = require('../services/research/ResearchIntegrityService');
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { QuantBacktestResult } = require('../models/QuantBacktestResult');
+        const sinceDays = this.toPositiveInt(parameters.since_days || parameters.sinceDays, 7, 90);
+        const cutoff = new Date(Date.now() - sinceDays * 24 * 3600 * 1000);
+        const { Op } = require('sequelize');
+        const results = await QuantBacktestResult.findAll({
+          where: { created_at: { [Op.gte]: cutoff } },
+          order: [['created_at', 'DESC']],
+          limit: 200,
+        });
+        let audited = 0;
+        const verdictDist: Record<string, number> = { PASS: 0, WARN: 0, FAIL: 0, INSUFFICIENT: 0 };
+        const failedStrategies: Array<{ strategy_key: string; verdict: string; reason: string }> = [];
+        for (const r of results) {
+          try {
+            const equity = Array.isArray(r.equity_curve_json) ? r.equity_curve_json : [];
+            const audit = await researchIntegrityService.auditBacktest(
+              {
+                backtest_id: r.id,
+                source: 'quant_backtest_result',
+                strategy_key: r.strategy_key,
+                observed_sharpe: r.sharpe_ratio !== null && r.sharpe_ratio !== undefined ? Number(r.sharpe_ratio) : null,
+                num_trials: 1,
+                sample_length: equity.length,
+              },
+              { persist: true }
+            );
+            audited += 1;
+            verdictDist[audit.verdict] = (verdictDist[audit.verdict] || 0) + 1;
+            if (audit.verdict === 'FAIL') {
+              failedStrategies.push({
+                strategy_key: r.strategy_key,
+                verdict: audit.verdict,
+                reason: audit.summary_message,
+              });
+            }
+          } catch (err: any) {
+            logger.warn(`[research-integrity-batch] audit failed for backtest ${r.id}: ${err?.message}`);
+          }
+        }
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: results.length,
+          completed_items: audited,
+          failed_items: results.length - audited,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: null,
+          result_summary: {
+            scenario: 'research_integrity_batch_audit',
+            since_days: sinceDays,
+            total_backtests: results.length,
+            audited,
+            verdict_distribution: verdictDist,
+            failed_strategies: failedStrategies.slice(0, 20),
+          },
+        });
+        logger.info(
+          `ResearchIntegrity 周批量审计完成: 扫描 ${results.length} 个 backtest, 审计 ${audited}, ` +
+            `verdict 分布: ${JSON.stringify(verdictDist)}, FAIL 策略: ${failedStrategies.length}`
+        );
       } else if (task.type === 'PAPER_TRADING_ATTRIBUTION_REPORT') {
         const result = await paperTradingAttributionService.getAttribution({
           username: parameters.username,

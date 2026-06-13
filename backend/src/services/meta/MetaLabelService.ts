@@ -36,6 +36,8 @@
  */
 
 import { Op } from 'sequelize';
+import * as fs from 'fs';
+import * as path from 'path';
 import { MetaLabelDecision } from '../../models/MetaLabelDecision';
 import { logger } from '../../utils/logger';
 
@@ -366,6 +368,51 @@ export function fallbackConfidence(raw: RawSignalFeatures): {
 
 export class MetaLabelService {
   private currentModel: MetaLabelModel | null = null;
+
+  constructor() {
+    // 启动时从 disk 自动加载模型（如果存在）
+    this.tryLoadModelFromDisk();
+  }
+
+  /**
+   * 默认模型 disk 路径 (CLI train-meta-label 写入此文件)
+   */
+  private getDefaultModelPath(): string {
+    return path.resolve(__dirname, '../../../data/meta-label-model.json');
+  }
+
+  /**
+   * 启动时尝试从 disk 加载持久化的模型 (CLI train 完后写到 data/meta-label-model.json)
+   */
+  private tryLoadModelFromDisk(filePath?: string): void {
+    const p = filePath || this.getDefaultModelPath();
+    try {
+      if (!fs.existsSync(p)) {
+        logger.info(`[meta-label] no disk model at ${p}, fallback rule will be used`);
+        return;
+      }
+      const raw = fs.readFileSync(p, 'utf8');
+      const m = JSON.parse(raw) as MetaLabelModel;
+      if (!m.version || !m.weights || !m.feature_means) {
+        logger.warn(`[meta-label] disk model ${p} invalid schema, ignored`);
+        return;
+      }
+      this.currentModel = m;
+      logger.info(
+        `[meta-label] loaded disk model: ${m.version} (acc=${m.insample_accuracy}, samples=${m.trained_samples})`
+      );
+    } catch (err: any) {
+      logger.warn(`[meta-label] failed to load disk model from ${p}: ${err?.message}`);
+    }
+  }
+
+  /**
+   * 重新从 disk 加载（CLI 训练完后调用此方法可热更新）
+   */
+  reloadFromDisk(filePath?: string): boolean {
+    this.tryLoadModelFromDisk(filePath);
+    return this.currentModel !== null;
+  }
 
   /**
    * 替换当前激活模型（CLI / admin endpoint 训练完后调用）

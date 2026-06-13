@@ -83,6 +83,13 @@ type ParamVersionLifecyclePolicy = {
   // Phase 4: Edge Hypothesis 门禁
   /** 是否要求 promote 前必须有非空 edge_hypothesis.thesis (默认 true) */
   edge_hypothesis_required: boolean;
+  // Sprint 1A: Research Integrity 门禁
+  /** 是否要求 promote 前必须有最近的 research-integrity audit (默认 true) */
+  ri_required: boolean;
+  /** RI 审计最长有效期 (天)，超过这个时间的 audit 视为过期 (默认 30) */
+  ri_max_age_days: number;
+  /** RI 必须达到的 verdict 才放行 promote (默认 'PASS'; 可放宽到 'PASS_OR_WARN') */
+  ri_required_verdict: 'PASS' | 'PASS_OR_WARN';
 };
 
 type StrategyRiskLevel = 'low' | 'medium' | 'high';
@@ -97,6 +104,19 @@ type WalkForwardVerdictInfo = {
   pbo: number | null;
   age_days: number;
   scheme: 'rolling' | 'cpcv' | null;
+};
+
+/**
+ * Sprint 1A: 每个 strategy 最近一次 ResearchIntegrityAudit 的关键信息
+ */
+type ResearchIntegrityVerdictInfo = {
+  audit_id: number;
+  verdict: 'PASS' | 'WARN' | 'FAIL' | 'INSUFFICIENT';
+  dsr: number | null;
+  pbo: number | null;
+  oos_decay: number | null;
+  lookahead_count: number;
+  age_days: number;
 };
 
 const DEFAULT_LIFECYCLE_POLICY: ParamVersionLifecyclePolicy = {
@@ -127,6 +147,10 @@ const DEFAULT_LIFECYCLE_POLICY: ParamVersionLifecyclePolicy = {
   wf_required_verdict: 'PASS',
   // Phase 4: Edge Hypothesis 默认要求非空
   edge_hypothesis_required: true,
+  // Sprint 1A: Research Integrity 默认要求 30 天内有 PASS / WARN 审计
+  ri_required: true,
+  ri_max_age_days: 30,
+  ri_required_verdict: 'PASS',
 };
 
 function asPlainObject(value: any): Record<string, any> {
@@ -1492,6 +1516,12 @@ export class QuantStrategyParamVersionService {
       rows.map((r: any) => r.strategy_key)
     );
 
+    // Sprint 1A: 加载所有涉及策略的最近 research-integrity audit (按 ri_max_age_days 范围)
+    const riVerdicts = await this.loadRecentResearchIntegrityVerdicts(
+      rows.map((r: any) => r.strategy_key),
+      policyForLoad.ri_max_age_days
+    );
+
     const lifecycle = this.buildLifecyclePreview(
       rows,
       defaultByStrategy,
@@ -1500,7 +1530,8 @@ export class QuantStrategyParamVersionService {
       tradeAttribution,
       strategyRiskByKey,
       wfVerdicts,
-      edgeHypotheses
+      edgeHypotheses,
+      riVerdicts
     );
     if (options.dry_run) {
       return {
@@ -1672,6 +1703,53 @@ export class QuantStrategyParamVersionService {
   }
 
   /**
+   * Sprint 1A: 加载多个 strategy 的最近 ResearchIntegrityAudit 记录
+   *
+   * @returns Map<strategy_key, ResearchIntegrityVerdictInfo>；缺失策略不在 map 里
+   */
+  private async loadRecentResearchIntegrityVerdicts(
+    strategyKeys: string[],
+    maxAgeDays: number
+  ): Promise<Map<string, ResearchIntegrityVerdictInfo>> {
+    const result = new Map<string, ResearchIntegrityVerdictInfo>();
+    if (!strategyKeys.length) return result;
+    const uniqueKeys = Array.from(new Set(strategyKeys.filter(Boolean)));
+    if (!uniqueKeys.length) return result;
+
+    const cutoff = new Date(Date.now() - Math.max(1, maxAgeDays) * 24 * 3600 * 1000);
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { ResearchIntegrityAudit } = require('../../../models/ResearchIntegrityAudit');
+      const rows = await ResearchIntegrityAudit.findAll({
+        where: {
+          strategy_key: { [Op.in]: uniqueKeys },
+          created_at: { [Op.gte]: cutoff },
+        },
+        order: [['created_at', 'DESC']],
+        limit: uniqueKeys.length * 5,
+      });
+      for (const row of rows) {
+        const key = String(row.strategy_key || '');
+        if (!key || result.has(key)) continue;
+        const ageMs = Date.now() - new Date(row.created_at).getTime();
+        result.set(key, {
+          audit_id: row.id,
+          verdict: row.verdict,
+          dsr: row.dsr !== null && row.dsr !== undefined ? Number(row.dsr) : null,
+          pbo: row.pbo !== null && row.pbo !== undefined ? Number(row.pbo) : null,
+          oos_decay: row.oos_decay_ratio !== null && row.oos_decay_ratio !== undefined ? Number(row.oos_decay_ratio) : null,
+          lookahead_count: Array.isArray(row.lookahead_issues_json) ? row.lookahead_issues_json.length : 0,
+          age_days: ageMs / (24 * 3600 * 1000),
+        });
+      }
+    } catch (error: any) {
+      logger.warn(`[ParamVersionService] loadRecentResearchIntegrityVerdicts 失败: ${error?.message || error}`);
+    }
+
+    return result;
+  }
+
+  /**
    * Phase 4: 加载多个 strategy 的 edge_hypothesis JSONB 字段
    *
    * @returns Map<strategy_key, edge_hypothesis Record>；缺失策略 / 缺失字段不在 map 里
@@ -1808,7 +1886,9 @@ export class QuantStrategyParamVersionService {
     // Phase 1: 每个 strategy_key 最近的 walk-forward verdict
     wfVerdicts?: Map<string, WalkForwardVerdictInfo>,
     // Phase 4: 每个 strategy_key 的 edge_hypothesis (无效或空字典即视为缺失)
-    edgeHypotheses?: Map<string, Record<string, any>>
+    edgeHypotheses?: Map<string, Record<string, any>>,
+    // Sprint 1A: 每个 strategy_key 最近的 research-integrity audit
+    riVerdicts?: Map<string, ResearchIntegrityVerdictInfo>
   ) {
     const policy = mergeLifecyclePolicy(policyInput);
     const promotions: any[] = [];
@@ -1974,6 +2054,29 @@ export class QuantStrategyParamVersionService {
         }
       }
 
+      // Sprint 1A: Research Integrity 门禁
+      const riInfo = riVerdicts?.get(row.strategy_key) || null;
+      let riGateSatisfied = true;
+      let riBlockReason: string | null = null;
+      if (effectivePolicy.ri_required) {
+        if (!riInfo) {
+          riGateSatisfied = false;
+          riBlockReason = `缺少最近 ${effectivePolicy.ri_max_age_days} 天内的 research-integrity 审计`;
+        } else if (riInfo.age_days > effectivePolicy.ri_max_age_days) {
+          riGateSatisfied = false;
+          riBlockReason = `research-integrity 审计已过期 (${Math.floor(riInfo.age_days)} 天 > ${effectivePolicy.ri_max_age_days} 天)`;
+        } else {
+          const allowedVerdicts =
+            effectivePolicy.ri_required_verdict === 'PASS_OR_WARN'
+              ? new Set(['PASS', 'WARN'])
+              : new Set(['PASS']);
+          if (!allowedVerdicts.has(riInfo.verdict)) {
+            riGateSatisfied = false;
+            riBlockReason = `research-integrity verdict=${riInfo.verdict} (DSR ${riInfo.dsr?.toFixed(3) ?? 'NaN'}, lookahead=${riInfo.lookahead_count})`;
+          }
+        }
+      }
+
       const canPromote =
         ['active_candidate', 'observing'].includes(status) &&
         completedCount >= effectivePolicy.min_completed_samples &&
@@ -1984,12 +2087,16 @@ export class QuantStrategyParamVersionService {
         envSatisfied &&
         !tradeShouldDegrade &&
         wfGateSatisfied &&
-        edgeGateSatisfied;
+        edgeGateSatisfied &&
+        riGateSatisfied;
       if (canPromote) {
         const wfNote = wfInfo
           ? `walk-forward ${wfInfo.verdict} (DSR ${wfInfo.dsr?.toFixed(3) ?? 'NaN'})`
           : 'walk-forward 门禁未启用';
         const edgeNote = edgeHypo?.thesis ? `edge: "${String(edgeHypo.thesis).slice(0, 40)}..."` : 'edge 门禁未启用';
+        const riNote = riInfo
+          ? `RI ${riInfo.verdict} (DSR ${riInfo.dsr?.toFixed(3) ?? 'NaN'}, lookahead=${riInfo.lookahead_count})`
+          : 'RI 门禁未启用';
         promotions.push({
           ...compact,
           action: 'promote',
@@ -1999,13 +2106,12 @@ export class QuantStrategyParamVersionService {
             2
           )}%，胜率 ${round(winRate, 1)}%，较默认参数超额 +${round(excessDelta, 2)}%，环境优势桶 ${
             environmentDiagnostics.positive_bucket_count
-          } 个，策略风险级别 ${riskLevel} 已通过自适应护栏，${wfNote}，${edgeNote}。`,
+          } 个，策略风险级别 ${riskLevel} 已通过自适应护栏，${wfNote}，${edgeNote}，${riNote}。`,
         });
         continue;
       }
 
-      // Phase 1+4: 如果只是 wf / edge 门禁挡住，把它降级为 observe 而不是 silently 跳过
-      // 让 UI 能看到 "其他都通过了，只差 walk-forward 或 edge_hypothesis"
+      // Phase 1+4+Sprint 1A: 如果只是 wf / edge / ri 门禁挡住，把它降级为 observe 而不是 silently 跳过
       const onlyWfOrEdgeBlocking =
         ['active_candidate', 'observing'].includes(status) &&
         completedCount >= effectivePolicy.min_completed_samples &&
@@ -2015,11 +2121,12 @@ export class QuantStrategyParamVersionService {
         excessDelta >= effectivePolicy.min_default_excess_delta_pct &&
         envSatisfied &&
         !tradeShouldDegrade &&
-        (!wfGateSatisfied || !edgeGateSatisfied);
+        (!wfGateSatisfied || !edgeGateSatisfied || !riGateSatisfied);
       if (onlyWfOrEdgeBlocking) {
         const blockers: string[] = [];
         if (wfBlockReason) blockers.push(wfBlockReason);
         if (edgeBlockReason) blockers.push(edgeBlockReason);
+        if (riBlockReason) blockers.push(riBlockReason);
         observations.push({
           ...compact,
           action: 'observe',
@@ -2305,6 +2412,10 @@ export class QuantStrategyParamVersionService {
       wf_required_verdict: policy.wf_required_verdict,
       // Phase 4: edge_hypothesis 门禁配置
       edge_hypothesis_required: policy.edge_hypothesis_required,
+      // Sprint 1A: research-integrity 门禁配置
+      ri_required: policy.ri_required,
+      ri_max_age_days: policy.ri_max_age_days,
+      ri_required_verdict: policy.ri_required_verdict,
     };
   }
 

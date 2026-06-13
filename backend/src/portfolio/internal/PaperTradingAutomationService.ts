@@ -35,6 +35,7 @@ import {
 import { strategyKellyStatsService } from '../../services/StrategyKellyStatsService';
 import { equityCurveGovernorService } from '../../services/governor/EquityCurveGovernorService';
 import { metaLabelService } from '../../services/meta/MetaLabelService';
+import { executionFeasibilityService } from '../../services/execution/ExecutionFeasibilityService';
 
 export const DEFAULT_PAPER_TRADING_INITIAL_CAPITAL = 200000;
 
@@ -1659,6 +1660,50 @@ class PaperTradingAutomationService {
         continue;
       }
 
+      // Sprint 2A: MetaLabel 信号过滤层 — 二层模型决定"这个信号是否该下注"。
+      // 当 confidence < threshold 时 skip。失败时 fail-open。
+      try {
+        const strategyKeyForMeta =
+          (signal as any)?.metadata?.strategy_key ||
+          (signal as any)?.metadata?.signal_metadata?.strategy_key ||
+          'unknown';
+        const signalScoreRaw = Number(
+          (signal as any).confidence_score ?? (signal as any).final_score ?? 75
+        );
+        const regimeForMeta = environmentPolicy.market_regime || 'range';
+        let kellyForMeta: { win_rate?: number; payoff_ratio?: number } | null = null;
+        if (strategyKeyForMeta && strategyKeyForMeta !== 'unknown') {
+          kellyForMeta = await strategyKellyStatsService.getStats(strategyKeyForMeta).catch(() => null);
+        }
+        const metaDecision = await metaLabelService.shouldBet(
+          {
+            signal_id: (signal as any).id,
+            signal_source: (signal as any).source_type || 'unknown',
+            symbol: signal.symbol,
+            strategy_key: strategyKeyForMeta,
+            as_of_date: new Date().toISOString().slice(0, 10),
+            features: {
+              signal_score: Number.isFinite(signalScoreRaw) ? signalScoreRaw : 75,
+              signal_source: (signal as any).source_type || 'unknown',
+              regime: String(regimeForMeta),
+              market_breadth_score: 0,
+              strategy_recent_winrate_30d: Number(kellyForMeta?.win_rate ?? 0.5),
+              strategy_recent_payoff_30d: Number(kellyForMeta?.payoff_ratio ?? 1.0),
+              market_vol_atr: 4,
+            },
+          },
+          { persist: true }
+        );
+        if (metaDecision.decision === 'skip') {
+          await skip(
+            `MetaLabel 决定不下注: confidence=${metaDecision.confidence.toFixed(3)} < threshold=${metaDecision.threshold} (${metaDecision.model_version})`
+          );
+          continue;
+        }
+      } catch (err: any) {
+        logger.warn(`[meta-label] gate failed (fail-open): ${err?.message || err}`);
+      }
+
       const strategyVariant = asPlainObject(metadata.strategy_variant);
       const externalStrategyBudgetDiscipline = asPlainObject(
         asPlainObject(options.external_environment_policy).strategy_budget_discipline
@@ -1802,6 +1847,36 @@ class PaperTradingAutomationService {
             2
           )}%`;
         }
+      }
+
+      // Sprint 1B: ExecutionFeasibility 检查 — 在 sizing 决策前判定订单可否实际成交。
+      // decision='blocked' 直接 skip；decision='risky' 仅 log warning；'fillable' 继续。
+      try {
+        const targetAmount = (totalValue * effectiveTargetPct) / 100;
+        const targetQty = execute_price > 0 ? Math.floor(targetAmount / execute_price / 100) * 100 : 0;
+        if (targetQty >= 100) {
+          const feasibility = await executionFeasibilityService.computeFeasibility({
+            user_id: portfolio.user_id,
+            symbol: signal.symbol,
+            side: 'BUY',
+            target_qty: targetQty,
+            target_price: execute_price,
+            as_of_date: new Date().toISOString().slice(0, 10),
+          }, { persist: true });
+          if (feasibility.decision === 'blocked') {
+            await skip(`ExecutionFeasibility 拒绝下单: ${feasibility.summary} (block_reasons: ${feasibility.block_reasons.join(',')})`);
+            continue;
+          }
+          if (feasibility.decision === 'risky') {
+            logger.warn(
+              `[execution-feasibility] risky 但继续: user=${portfolio.user_id} symbol=${signal.symbol} ` +
+                `score=${feasibility.composite_score} ${feasibility.summary}`
+            );
+          }
+        }
+      } catch (err: any) {
+        // Feasibility 失败不阻塞下单 (fail-open) — 风控有其他 guard 兜底
+        logger.warn(`[execution-feasibility] check failed (fail-open): ${err?.message || err}`);
       }
 
       // Phase 2 接入：并行计算 PositionSizingPolicy 决策

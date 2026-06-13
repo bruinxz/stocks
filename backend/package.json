@@ -57,6 +57,7 @@
     "run:regime-backtest": "ts-node src/scripts/run-regime-backtest.ts",
     "run:monte-carlo": "ts-node src/scripts/run-monte-carlo.ts",
     "optimize:portfolio": "ts-node src/scripts/optimize-portfolio.ts",
+    "train:meta-label": "ts-node src/scripts/train-meta-label.ts",
     "run:benchmark-attribution": "ts-node src/scripts/run-benchmark-attribution.ts",
     "run:industry-attribution": "ts-node src/scripts/run-industry-attribution.ts",
     "paper:reset-and-run-quant": "ts-node src/scripts/reset-paper-trading-and-run-quant.ts",

@@ -368,6 +368,37 @@ export class DataController {
           stats: { feishu: webhookOk, disabled: webhookDisabled },
           lastAction: webhookOk ? (webhookDisabled ? '已禁用' : '飞书 webhook 就绪') : '未配置',
         },
+        // Sprint 1-3 新模块
+        {
+          id: 'meta_label_filter', label: 'MetaLabel 信号过滤', category: 'decision',
+          status: 'green',
+          stats: { layer: 'pre-feasibility', model: 'logistic-regression' },
+          lastAction: '二层模型 confidence 判断是否下注',
+        },
+        {
+          id: 'execution_feasibility', label: '执行可行性评分', category: 'decision',
+          status: 'green',
+          stats: { components: 4, weights: '30/30/20/20' },
+          lastAction: '涨跌停 / 流动性 / spread / T+1 综合评分',
+        },
+        {
+          id: 'portfolio_construction', label: '风险预算组合', category: 'decision',
+          status: 'green',
+          stats: { methods: 4, default: 'risk_parity' },
+          lastAction: 'ERC + 行业约束 + 总仓位约束输出权重',
+        },
+        {
+          id: 'research_integrity', label: '研究严谨性审计', category: 'risk',
+          status: 'green',
+          stats: { detectors: 5, gates: 'wf+edge+ri' },
+          lastAction: 'DSR / PBO / OOS decay / Lookahead / Survivorship',
+        },
+        {
+          id: 'equity_curve_governor', label: '资金曲线 Governor', category: 'risk',
+          status: 'green',
+          stats: { tiers: 5, default_mult: 1.0 },
+          lastAction: '5 档 Kelly 倍数 (healthy → observe_only)',
+        },
       ];
 
       // ---- 构建连线 ----
@@ -400,6 +431,17 @@ export class DataController {
         // 顶层调度
         { source: 'quant_system', target: 'data_collection', label: '调度' },
         { source: 'quant_system', target: 'macro_env', label: '调度' },
+        // Sprint 1-3 新决策层: autopilot → MetaLabel → Feasibility → PortfolioConstruction → sizing
+        { source: 'autopilot', target: 'meta_label_filter', label: '原始信号' },
+        { source: 'meta_label_filter', target: 'execution_feasibility', label: '过滤后 bet 候选' },
+        { source: 'execution_feasibility', target: 'portfolio_construction', label: 'fillable 候选' },
+        { source: 'portfolio_construction', target: 'sizing_decision', label: 'target weights' },
+        // ResearchIntegrity → PromotionGate (strategy_engine)
+        { source: 'research_integrity', target: 'strategy_engine', label: 'PASS 才允许 promote' },
+        { source: 'strategy_engine', target: 'research_integrity', label: '定期审计 (反馈)' },
+        // Governor: 评估 portfolio → sizing 加 multiplier
+        { source: 'portfolio', target: 'equity_curve_governor', label: '健康度评估' },
+        { source: 'equity_curve_governor', target: 'sizing_decision', label: 'Kelly multiplier (反馈)' },
       ];
 
       return res.json({ success: true, data: { nodes, edges, generated_at: new Date().toISOString() } });
