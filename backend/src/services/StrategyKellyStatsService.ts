@@ -149,6 +149,35 @@ export class StrategyKellyStatsService {
       computed_at: new Date(),
     };
   }
+
+  /**
+   * v5 集成: Thompson Sampling-augmented Kelly fraction
+   *
+   * 当 TS_KELLY_ENABLED=true 时:
+   *   - 用 Beta-Bernoulli posterior (α=win_count+1, β=loss_count+1)
+   *   - 采样 100 次 win_rate 样本, 算 90% lower bound
+   *   - 用 lower bound 而非 point estimate (保守 Kelly)
+   *
+   * 优点: 不确定性 (low sample) 时 Kelly 降权; 高 sample 时接近 point estimate.
+   *
+   * @returns adjusted win_rate (90% lower CI from posterior)
+   */
+  async getThompsonSampledWinRate(strategy_key: string, percentile_lower: number = 0.1): Promise<number | null> {
+    const stats = await this.getStats(strategy_key);
+    if (!stats) return null;
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const ts = require('./portfolio/thompson-sampling');
+    const rng = new ts.TSRng(42);
+    const alpha = stats.win_count + 1;
+    const beta = stats.loss_count + 1;
+    const samples: number[] = [];
+    for (let i = 0; i < 100; i += 1) {
+      samples.push(ts.sampleBeta(alpha, beta, rng));
+    }
+    samples.sort((a, b) => a - b);
+    const idx = Math.max(0, Math.floor(percentile_lower * samples.length));
+    return samples[idx]; // 10th percentile = 90% lower confidence
+  }
 }
 
 export const strategyKellyStatsService = new StrategyKellyStatsService();

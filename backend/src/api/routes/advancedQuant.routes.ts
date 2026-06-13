@@ -77,4 +77,8 @@ router.get(
   advancedQuantController.getGovernorHistory
 );
 
+// === v2-v5 Method Config (Prod 3) ===
+router.get('/method-config', authController.authenticate, advancedQuantController.getMethodConfig);
+router.post('/method-config', authController.authenticate, advancedQuantController.setMethodConfig);
+
 export default router;

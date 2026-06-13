@@ -392,6 +392,119 @@ export class AdvancedQuantController {
       res.status(500).json({ success: false, message: err?.message });
     }
   }
+
+  // ============================================================
+  // v2-v5 Method Config (Final Production Switch)
+  // ============================================================
+
+  /**
+   * GET /api/advanced-quant/method-config
+   *
+   * 返回当前激活的 advanced 方法配置 (HMM regime / Thompson Kelly / HRP cov 等).
+   * Ops 可调用此 endpoint 看哪些 v2-v5 模块在用.
+   */
+  async getMethodConfig(_req: Request, res: Response) {
+    try {
+      const config = {
+        v5: {
+          hmm_regime_detection: {
+            enabled: process.env.HMM_REGIME_ENABLED === 'true',
+            env_var: 'HMM_REGIME_ENABLED',
+            description: 'HMM-based regime detection (替代 4-regime hard rules)',
+            paper: 'Hamilton 1989',
+          },
+          thompson_kelly: {
+            enabled: process.env.TS_KELLY_ENABLED === 'true',
+            env_var: 'TS_KELLY_ENABLED',
+            description: 'Thompson Sampling 给 Kelly fraction 加 90% lower confidence',
+            paper: 'Thompson 1933 / Chapelle-Li 2011',
+          },
+        },
+        v4: {
+          almgren_chriss_execution: {
+            enabled_by: 'caller passes use_almgren_chriss=true to ExecutionFeasibility',
+            description: 'Linear impact model: h(v) = ε + η·v + γ·v',
+            paper: 'Almgren-Chriss 2000',
+          },
+          tca_implementation_shortfall: {
+            available: true,
+            description: 'IS = trading_cost + opportunity_cost + fixed_cost + delay_cost',
+            paper: 'Perold 1988',
+          },
+        },
+        v3: {
+          metalabel_online_learning: {
+            available: true,
+            description: 'SGD incremental update for MetaLabel model',
+            paper: 'Robbins-Monro 1951, Bottou 2010',
+          },
+          fractional_diff: {
+            available: true,
+            description: 'Fractional differentiation features (stationary + memory)',
+            paper: 'De Prado AFML Ch.5',
+          },
+        },
+        v2: {
+          hrp_portfolio: {
+            enabled_by: 'caller passes method=hrp to PortfolioConstruction',
+            description: 'Hierarchical Risk Parity (no cov inverse needed)',
+            paper: 'López de Prado 2016',
+          },
+          ledoit_wolf_shrinkage: {
+            enabled_by: 'caller passes cov_estimator=ledoit_wolf',
+            description: 'Shrinkage covariance (small-sample stable)',
+            paper: 'Ledoit-Wolf 2004',
+          },
+          carver_buffer: {
+            enabled_by: 'caller passes use_carver_continuous=true to Governor',
+            description: '5 档 → 连续 multiplier + buffer zone 防频繁切换',
+            paper: 'Carver 2015',
+          },
+        },
+        v6: {
+          pca_fama_french: { available: true, paper: 'Fama-French 1993' },
+          garch_egarch_har: { available: true, paper: 'Bollerslev 1986 / Nelson 1991 / Corsi 2009' },
+          nelson_siegel_vasicek: { available: true, paper: 'Nelson-Siegel 1987 / Vasicek 1977' },
+          bouchaud_square_root_impact: { available: true, paper: 'Bouchaud 2009' },
+          bayesian_model_averaging: { available: true, paper: 'Raftery 1995' },
+        },
+      };
+      res.json({ success: true, data: config });
+    } catch (err: any) {
+      logger.error('[advanced-quant] getMethodConfig failed:', err);
+      res.status(500).json({ success: false, message: err?.message });
+    }
+  }
+
+  /**
+   * POST /api/advanced-quant/method-config
+   *
+   * 设置环境变量级别的 method 开关 (HMM_REGIME_ENABLED / TS_KELLY_ENABLED).
+   * 注意: 重启后失效 (env 写入 process.env, 不持久化). 持久化需修 .env 文件.
+   */
+  async setMethodConfig(req: Request, res: Response) {
+    try {
+      const { hmm_regime_enabled, ts_kelly_enabled } = req.body || {};
+      const changes: Record<string, string> = {};
+      if (typeof hmm_regime_enabled === 'boolean') {
+        process.env.HMM_REGIME_ENABLED = hmm_regime_enabled ? 'true' : 'false';
+        changes.HMM_REGIME_ENABLED = process.env.HMM_REGIME_ENABLED;
+      }
+      if (typeof ts_kelly_enabled === 'boolean') {
+        process.env.TS_KELLY_ENABLED = ts_kelly_enabled ? 'true' : 'false';
+        changes.TS_KELLY_ENABLED = process.env.TS_KELLY_ENABLED;
+      }
+      res.json({
+        success: true,
+        data: {
+          changes,
+          message: '环境变量已更新 (内存级别). 重启后失效, 持久化需修改 .env 文件.',
+        },
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err?.message });
+    }
+  }
 }
 
 export const advancedQuantController = new AdvancedQuantController();

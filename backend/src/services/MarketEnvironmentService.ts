@@ -183,6 +183,40 @@ class MarketEnvironmentService {
       regime = 'bull';
     else if (ret20 > 2 && ret60 < 0) regime = 'rebound';
 
+    // === v5 集成: HMM regime detection (data-driven alternative to hard rules) ===
+    // 当 HMM_REGIME_ENABLED 环境变量打开 + 历史 closes 足够长时，用 HMM 替代上述硬规则
+    if (process.env.HMM_REGIME_ENABLED === 'true' && closes.length >= 60) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const hmm = require('./research/hmm-regime');
+        // 转 close 为日收益序列
+        const returns: number[] = [];
+        for (let i = 1; i < closes.length; i += 1) {
+          if (closes[i - 1] > 0) returns.push(closes[i] / closes[i - 1] - 1);
+        }
+        if (returns.length >= 50) {
+          // 用 4-state HMM (匹配 4 regime: bear, range, bull, volatile)
+          const initial = hmm.initializeHMMParams(returns, 4);
+          const trained = hmm.hmmBaumWelch(returns, initial, { max_iter: 30, tolerance: 1e-4 });
+          const labels = hmm.decodeRegimeLabels(trained.params);
+          // Viterbi 解码最近 state
+          const vit = hmm.hmmViterbi(trained.params, returns);
+          const lastState = vit.states[vit.states.length - 1];
+          const hmmRegime = labels[lastState];
+          // HMM 输出映射回 service 的 regime enum
+          const regimeMap: Record<string, MarketEnvironmentSnapshot['market_regime']> = {
+            bull: 'bull',
+            bear: 'bear',
+            range: 'range',
+            volatile: 'stress', // volatile → stress (语义对齐)
+          };
+          if (regimeMap[hmmRegime]) regime = regimeMap[hmmRegime];
+        }
+      } catch (err) {
+        // HMM 失败回退到原硬规则
+      }
+    }
+
     return {
       as_of: endDate,
       market_regime: regime,
