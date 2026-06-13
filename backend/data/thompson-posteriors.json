@@ -1,0 +1,16 @@
+{
+  "posteriors": {
+    "s1": {
+      "strategy_key": "s1",
+      "n_obs": 0,
+      "observed_mean": 0,
+      "observed_sum_sq_dev": 0,
+      "prior_mu": 0,
+      "prior_var": 1,
+      "obs_var": 0.5,
+      "posterior_mu": 0,
+      "posterior_var": 1
+    }
+  },
+  "persisted_at": "2026-06-13T14:58:01.116Z"
+}

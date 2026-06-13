@@ -1,0 +1,14 @@
+{
+  "model": {
+    "version": "test_v1",
+    "trained_at": "2026-06-13T14:58:01.117Z",
+    "trained_samples": 100,
+    "feature_means": {},
+    "feature_stds": {},
+    "weights": {},
+    "bias": 0,
+    "insample_accuracy": 0.7,
+    "baseline_accuracy": 0.5
+  },
+  "persisted_at": "2026-06-13T14:58:01.117Z"
+}
