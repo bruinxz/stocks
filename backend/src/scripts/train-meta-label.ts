@@ -32,6 +32,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { Op } from 'sequelize';
+// 重要：必须 import database.ts 触发所有 Sequelize model 的注册
+// 否则下面的 RecommendationTradeOutcome.findAll() 会报 "Model not initialized"
+import '../config/database';
 import { RecommendationTradeOutcome } from '../models/RecommendationTradeOutcome';
 import { AIInvestmentSignal } from '../models/AIInvestmentSignal';
 import {
