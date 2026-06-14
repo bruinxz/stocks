@@ -16,6 +16,7 @@ import {
   stddev,
   valueNDaysAgo,
 } from '../engine/QuantMath';
+import { vcpPatternMultiplier, inferLocalRegime } from '../../services/research/pattern-library';
 
 export class VolatilityContractionBreakoutStrategy extends QuantStrategy {
   readonly definition: QuantStrategyDefinition = {
@@ -115,6 +116,18 @@ export class VolatilityContractionBreakoutStrategy extends QuantStrategy {
     }
 
     score = clamp(score);
+
+    // Sprint 24 接入: VCP pattern × regime multiplier
+    const regime = inferLocalRegime(closes);
+    const patternBoost = vcpPatternMultiplier(closes, regime);
+    const scoreBeforePattern = score;
+    score = clamp(score * patternBoost.multiplier);
+    if (patternBoost.detected_patterns.length > 0) {
+      reasons.push(
+        `形态确认 (${regime}市): ${patternBoost.detected_patterns.join(', ')} × ${patternBoost.multiplier.toFixed(2)} → ${scoreBeforePattern.toFixed(0)}→${score.toFixed(0)}`,
+      );
+    }
+
     return {
       strategy_key: this.definition.strategy_key,
       symbol: context.symbol,
@@ -138,6 +151,9 @@ export class VolatilityContractionBreakoutStrategy extends QuantStrategy {
         drawdown60_pct: round(drawdown60, 2),
         ma20: round(ma20, 4),
         ma60: round(ma60, 4),
+        local_regime: regime,
+        pattern_multiplier: round(patternBoost.multiplier, 3),
+        detected_patterns: patternBoost.detected_patterns,
       },
     };
   }

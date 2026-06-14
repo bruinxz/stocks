@@ -6,6 +6,7 @@ import {
   QuantStrategyRuntimeOptions,
 } from '../types/QuantTypes';
 import { atr, average, clamp, last, pct, round, sma, valueNDaysAgo } from '../engine/QuantMath';
+import { donchianBreakoutWithPatternAdjustment, inferLocalRegime } from '../../services/research/pattern-library';
 
 export class DonchianTrendStrategy extends QuantStrategy {
   readonly definition: QuantStrategyDefinition = {
@@ -98,6 +99,19 @@ export class DonchianTrendStrategy extends QuantStrategy {
     }
 
     score = clamp(score);
+
+    // Sprint 24 接入: Donchian breakout × pattern reliability
+    const regime = inferLocalRegime(closes);
+    const donchianCheck = donchianBreakoutWithPatternAdjustment(closes, regime);
+    const patternMul = donchianCheck.pattern_multiplier;
+    const scoreBeforePattern = score;
+    score = clamp(score * patternMul);
+    if (patternMul > 1.0) {
+      reasons.push(`形态确认 (${regime}市): pattern mul ${patternMul.toFixed(2)} → ${scoreBeforePattern.toFixed(0)}→${score.toFixed(0)}`);
+    } else if (patternMul < 1.0) {
+      risk_flags.push(`形态不利 (${regime}市): pattern mul ${patternMul.toFixed(2)} 降权`);
+    }
+
     return {
       strategy_key: this.definition.strategy_key,
       symbol: context.symbol,
@@ -128,6 +142,9 @@ export class DonchianTrendStrategy extends QuantStrategy {
         volume_ratio: round(volumeRatio, 2),
         return20_pct: round(ret20, 2),
         return60_pct: round(ret60, 2),
+        local_regime: regime,
+        donchian_pattern_multiplier: round(patternMul, 3),
+        donchian_buy_signal: donchianCheck.buy_signal,
       },
     };
   }
