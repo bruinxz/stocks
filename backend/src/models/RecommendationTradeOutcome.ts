@@ -1,4 +1,5 @@
-import { Table, Column, Model, DataType, CreatedAt, UpdatedAt, Index } from 'sequelize-typescript';
+import { Table, Column, Model, DataType, CreatedAt, UpdatedAt, Index, AfterUpdate } from 'sequelize-typescript';
+import { logger } from '../utils/logger';
 
 @Table({
   tableName: 'recommendation_trade_outcomes',
@@ -243,4 +244,112 @@ export class RecommendationTradeOutcome extends Model {
   @UpdatedAt
   @Column({ field: 'updated_at' })
   declare updated_at: Date;
+
+  /**
+   * Sprint 24 接入: trade closed 触发 DQS 自动评分 + Wizard 合规检测
+   *
+   * 当 trade_status 从其他状态变为 'closed' 时自动跑:
+   *   1. autoApplyDqsToClosedTrade — 算 Reason Triplet + Postmortem 4 维 → metadata.dqs
+   *   2. checkTradeCompliance — 5 wizard rule violations → metadata.wizard_compliance
+   *   3. emitWizardAlert — Grade D/F 时写 RiskAlert(level='MEDIUM')
+   *
+   * 设计要点 (与 RiskAlert.@AfterCreate 同款 fire-and-forget):
+   *   - lazy-require trader-mind-deep / TradeComplianceChecker 避免循环 import
+   *   - 顶层 try/catch 吞错 — hook 失败绝不让 outcome.update() 回滚
+   *   - 仅在 trade_status 字段发生变化且新值='closed' 时触发 (避免 metadata 自更新递归)
+   *   - 更新 metadata 用 instance.update({metadata: ...}, {hooks: false}) 防递归
+   */
+  @AfterUpdate
+  static async applyDqsAndComplianceHook(instance: RecommendationTradeOutcome): Promise<void> {
+    try {
+      // 只在 trade_status 字段改变且变为 'closed' 时触发
+      if (!instance.changed || typeof instance.changed !== 'function') return;
+      const changedFields = instance.changed();
+      if (!Array.isArray(changedFields) || !changedFields.includes('trade_status')) return;
+      if (instance.trade_status !== 'closed') return;
+
+      // 检查 metadata 是否已有 dqs / 防重复触发
+      const md: any = instance.metadata || {};
+      if (md.dqs && md.wizard_compliance) return;
+
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { autoApplyDqsToClosedTrade } = require('../services/governor/trader-mind-deep');
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { checkTradeCompliance, emitWizardAlert } = require('../services/TradeComplianceChecker');
+
+      // === 1. DQS 自动评分 ===
+      const dqsResult = autoApplyDqsToClosedTrade({
+        entry_date: instance.entry_date,
+        exit_date: instance.exit_date,
+        entry_price: Number(instance.entry_price || 0),
+        exit_price: Number(instance.exit_price || 0),
+        total_pnl_pct: Number(instance.total_pnl_pct || 0),
+        holding_days: Number(instance.holding_days || 0),
+        metadata: md,
+        thesis_recorded_pre_trade: !!(md.edge_hypothesis || md.thesis),
+        data_support_count: Number(md.signal_count || md.data_support || 1),
+        stop_loss_honored: md.stop_loss_honored !== false,
+        conviction_level: Number(md.conviction_level || 5),
+        position_size_pct: Number(md.position_size_pct || 0.05),
+      });
+
+      // === 2. Wizard 合规检测 ===
+      const complianceInput = {
+        realized_pnl_pct: Number(instance.total_pnl_pct || 0) / 100,
+        position_size_pct: Number(md.position_size_pct || 0.05),
+        conviction_level: Number(md.conviction_level || 5),
+        max_drawdown_during_hold_pct: Number(instance.max_adverse_excursion_pct || 0) / 100,
+        closed_pre_weekend: false,
+        held_over_weekend: Number(instance.holding_days || 0) > 5,
+        realized_vol_during_hold: Number(md.realized_vol || 0.2),
+        stop_loss_distance_pct: Number(md.stop_loss_distance_pct || 0.07),
+        market_trend: (md.market_trend || 'sideways') as 'up' | 'down' | 'sideways',
+        trade_direction: 'BUY' as 'BUY' | 'SELL',
+        expected_target_pct: Number(md.expected_target_pct || 0.10),
+        expected_stop_pct: Number(md.stop_loss_distance_pct || 0.07),
+        worst_case_analyzed_pre_trade: !!md.worst_case_analyzed,
+        current_pe: Number(md.current_pe || 15),
+        historical_avg_pe: Number(md.historical_avg_pe || 15),
+        has_specific_catalyst: !!md.has_catalyst,
+      };
+      const complianceResult = checkTradeCompliance(complianceInput);
+
+      // === 3. 写回 metadata (hooks:false 防递归) ===
+      const updatedMetadata = {
+        ...md,
+        dqs: {
+          composite_dqs: dqsResult.triplet?.composite_dqs,
+          entry_score: dqsResult.triplet?.entry_score,
+          exit_score: dqsResult.triplet?.exit_score,
+          size_score: dqsResult.triplet?.size_score,
+          postmortem_summary: dqsResult.postmortem_summary,
+          computed_at: new Date().toISOString(),
+        },
+        wizard_compliance: {
+          grade: complianceResult.rule_compliance_grade,
+          total_violations: complianceResult.total_violations,
+          severity_score: complianceResult.severity_score,
+          violations: complianceResult.violations,
+          summary: complianceResult.summary_message,
+          computed_at: new Date().toISOString(),
+        },
+      };
+      await instance.update({ metadata: updatedMetadata }, { hooks: false });
+
+      // === 4. 严重违规 → RiskAlert (fire-and-forget) ===
+      if (complianceResult.should_alert) {
+        await emitWizardAlert({
+          user_id: 1, // RTO 没有 user_id, 默认 1; 后续按 portfolio_id → user_id 查找
+          outcome_id: instance.id,
+          symbol: instance.symbol,
+          name: instance.symbol,
+          trade_direction: 'BUY',
+          realized_pnl_pct: Number(instance.total_pnl_pct || 0) / 100,
+          result: complianceResult,
+        });
+      }
+    } catch (err: any) {
+      logger.warn(`[RecommendationTradeOutcome.afterUpdate] DQS+Wizard hook failed: ${err?.message || err}`);
+    }
+  }
 }

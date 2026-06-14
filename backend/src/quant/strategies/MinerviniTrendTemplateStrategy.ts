@@ -6,6 +6,7 @@ import {
   QuantStrategyRuntimeOptions,
 } from '../types/QuantTypes';
 import { average, clamp, last, pct, round, sma, valueNDaysAgo } from '../engine/QuantMath';
+import { vcpPatternMultiplier, inferLocalRegime } from '../../services/research/pattern-library';
 
 export class MinerviniTrendTemplateStrategy extends QuantStrategy {
   readonly definition: QuantStrategyDefinition = {
@@ -108,6 +109,19 @@ export class MinerviniTrendTemplateStrategy extends QuantStrategy {
     }
 
     score = clamp(score);
+
+    // Sprint 24 接入: Bulkowski pattern × regime reliability multiplier
+    // Cup-and-Handle / Bullish Flag / Ascending Triangle 检测 + regime 加权
+    const regime = inferLocalRegime(closes);
+    const patternBoost = vcpPatternMultiplier(closes, regime);
+    const scoreBeforePattern = score;
+    score = clamp(score * patternBoost.multiplier);
+    if (patternBoost.detected_patterns.length > 0) {
+      reasons.push(
+        `形态确认 (${regime}市): ${patternBoost.detected_patterns.join(', ')} × ${patternBoost.multiplier.toFixed(2)} → ${scoreBeforePattern.toFixed(0)}→${score.toFixed(0)}`,
+      );
+    }
+
     return {
       strategy_key: this.definition.strategy_key,
       symbol: context.symbol,
@@ -135,6 +149,9 @@ export class MinerviniTrendTemplateStrategy extends QuantStrategy {
         volume_ratio: round(volumeRatio, 2),
         quality_score: round(qualityScore, 2),
         money_flow_score: round(moneyFlowScore, 2),
+        local_regime: regime,
+        pattern_multiplier: round(patternBoost.multiplier, 3),
+        detected_patterns: patternBoost.detected_patterns,
       },
     };
   }

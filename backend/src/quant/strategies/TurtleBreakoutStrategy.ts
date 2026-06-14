@@ -6,6 +6,7 @@ import {
   QuantStrategyRuntimeOptions,
 } from '../types/QuantTypes';
 import { atr, average, clamp, last, pct, round, sma, valueNDaysAgo } from '../engine/QuantMath';
+import { turtleEntryWithPatternFilter, inferLocalRegime } from '../../services/research/pattern-library';
 
 export class TurtleBreakoutStrategy extends QuantStrategy {
   readonly definition: QuantStrategyDefinition = {
@@ -101,6 +102,22 @@ export class TurtleBreakoutStrategy extends QuantStrategy {
     }
 
     score = clamp(score);
+
+    // Sprint 24 接入: Turtle entry × pattern reliability filter
+    // 用 Bulkowski-style 形态置信度调整 score
+    const regime = inferLocalRegime(closes);
+    const turtleCheck = turtleEntryWithPatternFilter(closes, regime);
+    const patternMul = turtleCheck.pattern_validation.multiplier;
+    const scoreBeforePattern = score;
+    score = clamp(score * patternMul);
+    if (!turtleCheck.proceed && score >= 76) {
+      // 形态过滤拦截 — 即使原 score 触发 buy, 形态不通过则降到 watch
+      reasons.push(`形态过滤未通过 (${regime}市, mul=${patternMul.toFixed(2)}), 降级 buy→watch`);
+      score = Math.min(score, 70);
+    } else if (turtleCheck.proceed && patternMul > 1) {
+      reasons.push(`形态确认 (${regime}市): mul ${patternMul.toFixed(2)} → ${scoreBeforePattern.toFixed(0)}→${score.toFixed(0)}`);
+    }
+
     return {
       strategy_key: this.definition.strategy_key,
       symbol: context.symbol,
@@ -132,6 +149,9 @@ export class TurtleBreakoutStrategy extends QuantStrategy {
         volume_ratio: round(volumeRatio, 2),
         return20_pct: round(ret20, 2),
         return60_pct: round(ret60, 2),
+        local_regime: regime,
+        turtle_pattern_multiplier: round(patternMul, 3),
+        turtle_entry_pass: turtleCheck.proceed,
       },
     };
   }

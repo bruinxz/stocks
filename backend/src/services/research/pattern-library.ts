@@ -405,6 +405,37 @@ export function detectBullishPennant(prices: number[], pole_length: number = 5, 
 // ============================================================
 
 /**
+ * Infer local market regime from close-price series (60-day window).
+ *
+ *   - vol > 0.30 annualized → 'volatile'
+ *   - ret60 > +10% AND vol < 0.20 → 'bull'
+ *   - ret60 < -10% AND vol < 0.20 → 'bear'
+ *   - else → 'range'
+ *
+ *   Used when caller has no MarketEnvironmentService context (e.g. inside
+ *   strategy.evaluate() — context.bars is all we have).
+ */
+export function inferLocalRegime(closes: number[], lookback: number = 60): 'bull' | 'bear' | 'range' | 'volatile' {
+  if (closes.length < lookback) return 'range';
+  const slice = closes.slice(-lookback);
+  const start = slice[0];
+  const end = slice[slice.length - 1];
+  const ret = (end - start) / start;
+  const rets: number[] = [];
+  for (let i = 1; i < slice.length; i += 1) {
+    if (slice[i - 1] > 0) rets.push((slice[i] - slice[i - 1]) / slice[i - 1]);
+  }
+  if (rets.length === 0) return 'range';
+  const mean = rets.reduce((s, v) => s + v, 0) / rets.length;
+  const variance = rets.reduce((s, v) => s + (v - mean) ** 2, 0) / Math.max(1, rets.length - 1);
+  const vol_annual = Math.sqrt(variance) * Math.sqrt(252);
+  if (vol_annual > 0.30) return 'volatile';
+  if (ret > 0.10 && vol_annual < 0.20) return 'bull';
+  if (ret < -0.10 && vol_annual < 0.20) return 'bear';
+  return 'range';
+}
+
+/**
  * Pattern × Regime empirical success rates.
  *
  * Source: extended Bulkowski + market regime conditioning (Aronson-style data mining).
