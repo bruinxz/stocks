@@ -505,6 +505,152 @@ export class AdvancedQuantController {
       res.status(500).json({ success: false, message: err?.message });
     }
   }
+
+  // ========================================================================
+  // Sprint 25: Brinson Attribution / MCR / Crowding / Vol-Target
+  // ========================================================================
+
+  /**
+   * POST /api/advanced-quant/attribution/brinson
+   *
+   * Brinson 行业归因 — 分解组合 vs 基准的 active return.
+   * Body: { industries[], portfolio_weights[], benchmark_weights[], stock_returns[] }
+   */
+  async runBrinsonAttribution(req: Request, res: Response) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { brinsonAttribution } = require('../../services/portfolio/brinson-mcr-style-crowding');
+      const result = brinsonAttribution(req.body);
+      res.json({ success: true, data: result });
+    } catch (err: any) {
+      logger.error('[advanced-quant] brinsonAttribution failed:', err);
+      res.status(400).json({ success: false, message: err?.message });
+    }
+  }
+
+  /**
+   * POST /api/advanced-quant/attribution/mcr
+   *
+   * Marginal Contribution to Risk — 每股对组合波动率的边际贡献.
+   * Body: { weights[], cov[][], symbols[]?, top_n?: number }
+   */
+  async runMcr(req: Request, res: Response) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { marginalContributionToRisk, topRiskContributors } = require('../../services/portfolio/brinson-mcr-style-crowding');
+      const { weights, cov, symbols, top_n = 5 } = req.body || {};
+      if (!Array.isArray(weights) || !Array.isArray(cov)) {
+        return res.status(400).json({ success: false, message: 'weights[] 和 cov[][] 必须提供' });
+      }
+      const mcr = marginalContributionToRisk(weights, cov);
+      const top = Array.isArray(symbols)
+        ? topRiskContributors(weights, cov, symbols, top_n)
+        : null;
+      res.json({ success: true, data: { mcr, top_contributors: top?.top_contributors, top_hedgers: top?.top_hedgers } });
+    } catch (err: any) {
+      logger.error('[advanced-quant] MCR failed:', err);
+      res.status(400).json({ success: false, message: err?.message });
+    }
+  }
+
+  /**
+   * POST /api/advanced-quant/attribution/crowding
+   *
+   * Crowding Score — 信号是否被市场广泛持有 (alpha decay 前兆).
+   * Body: { signal[], market_consensus[], fund_concentration_change, margin_balance_change }
+   */
+  async runCrowdingScore(req: Request, res: Response) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { crowdingScore } = require('../../services/portfolio/brinson-mcr-style-crowding');
+      const result = crowdingScore(req.body);
+      res.json({ success: true, data: result });
+    } catch (err: any) {
+      logger.error('[advanced-quant] crowdingScore failed:', err);
+      res.status(400).json({ success: false, message: err?.message });
+    }
+  }
+
+  /**
+   * POST /api/advanced-quant/attribution/vol-target
+   *
+   * 波动率目标缩放 — 根据组合波动率与目标的差距, 调整 leverage.
+   * Body: { weights[], cov[][], vol_target_annual, max_leverage, prev_leverage?, buffer_pct? }
+   */
+  async runVolTargeting(req: Request, res: Response) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { portfolioVolTargeting } = require('../../services/portfolio/brinson-mcr-style-crowding');
+      const result = portfolioVolTargeting(req.body);
+      res.json({ success: true, data: result });
+    } catch (err: any) {
+      logger.error('[advanced-quant] volTargeting failed:', err);
+      res.status(400).json({ success: false, message: err?.message });
+    }
+  }
+
+  // ========================================================================
+  // Sprint 25: Strategy Capacity & Alpha Decay (Sprint 23 接入)
+  // ========================================================================
+
+  /**
+   * POST /api/advanced-quant/strategy-health/capacity
+   *
+   * 策略容量分析 — 给定持仓股的 ADV, 算 bottleneck capacity.
+   * Body: { stock_adv_values[], positions_per_stock_pct, n_holding_days,
+   *         participation_rate, n_trades_per_year }
+   */
+  async estimateCapacity(req: Request, res: Response) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { estimateStrategyCapacity } = require('../../services/research/ashare-pit-capacity');
+      const result = estimateStrategyCapacity(req.body);
+      res.json({ success: true, data: result });
+    } catch (err: any) {
+      logger.error('[advanced-quant] estimateCapacity failed:', err);
+      res.status(400).json({ success: false, message: err?.message });
+    }
+  }
+
+  /**
+   * POST /api/advanced-quant/strategy-health/alpha-decay
+   *
+   * Alpha 衰减监控 — observed half-life vs expected.
+   * Body: { signal_name, observed_ic_series: [{days_after_signal, ic}, ...] }
+   */
+  async monitorDecay(req: Request, res: Response) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { monitorAlphaDecay, SIGNAL_HALF_LIVES } = require('../../services/research/ashare-pit-capacity');
+      const result = monitorAlphaDecay(req.body);
+      res.json({ success: true, data: { ...result, known_signals: Object.keys(SIGNAL_HALF_LIVES) } });
+    } catch (err: any) {
+      logger.error('[advanced-quant] monitorDecay failed:', err);
+      res.status(400).json({ success: false, message: err?.message });
+    }
+  }
+
+  /**
+   * GET /api/advanced-quant/strategy-health/signal-half-lives
+   *
+   * 查 SIGNAL_HALF_LIVES 表 — 已知信号的预期 alpha 半衰期 (天).
+   */
+  async listSignalHalfLives(_req: Request, res: Response) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { SIGNAL_HALF_LIVES, recommendHoldingPeriod } = require('../../services/research/ashare-pit-capacity');
+      const entries = Object.entries(SIGNAL_HALF_LIVES).map(([signal, half_life]) => ({
+        signal_name: signal,
+        expected_half_life_days: half_life,
+        recommended_holding_period: recommendHoldingPeriod
+          ? recommendHoldingPeriod(signal as any)
+          : null,
+      }));
+      res.json({ success: true, data: { signals: entries } });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err?.message });
+    }
+  }
 }
 
 export const advancedQuantController = new AdvancedQuantController();

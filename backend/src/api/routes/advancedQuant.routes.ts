@@ -81,4 +81,15 @@ router.get(
 router.get('/method-config', authController.authenticate, advancedQuantController.getMethodConfig);
 router.post('/method-config', authController.authenticate, advancedQuantController.setMethodConfig);
 
+// === Sprint 25: Attribution (Brinson + MCR + Crowding + Vol-Target) ===
+router.post('/attribution/brinson', authController.authenticate, advancedQuantController.runBrinsonAttribution);
+router.post('/attribution/mcr', authController.authenticate, advancedQuantController.runMcr);
+router.post('/attribution/crowding', authController.authenticate, advancedQuantController.runCrowdingScore);
+router.post('/attribution/vol-target', authController.authenticate, advancedQuantController.runVolTargeting);
+
+// === Sprint 25: Strategy Health (Capacity + Alpha Decay) ===
+router.post('/strategy-health/capacity', authController.authenticate, advancedQuantController.estimateCapacity);
+router.post('/strategy-health/alpha-decay', authController.authenticate, advancedQuantController.monitorDecay);
+router.get('/strategy-health/signal-half-lives', authController.authenticate, advancedQuantController.listSignalHalfLives);
+
 export default router;
