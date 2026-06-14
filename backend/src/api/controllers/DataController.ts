@@ -98,13 +98,19 @@ export class DataController {
 
   /**
    * GET /api/data/system-topology
-   * 返回系统架构拓扑图数据：
-   *   - 9 个核心节点 (data → compute → decision → execution → output)
-   *   - Phase 2+/4+/5+ 后新增 3 个节点:
-   *       sizing_decision (Phase 2 sizing 策略 + 决策审计)
-   *       kill_switch    (Phase 4 策略熔断监控)
-   *       outcome_analysis (Phase 5 root_cause + postmortem 闭环分析)
-   *   - 每个节点的真实健康状态 + 最近决策 + 跨阶段连线
+   * Sprint 26: 拓扑图与 Sprint 24 的 8 层纵向架构对齐
+   *
+   * 返回 L1-L8 决策流水线：
+   *   - L1_data         数据接入 (DailyBar / Macro / PIT / Capacity)
+   *   - L2_signal       策略 + 因子 + 形态 (signals)
+   *   - L3_meta         MetaLabel + Bet Sizing + Autopilot (元决策 + 仓位)
+   *   - L4_construction 组合权重 (B-L / HRP / QP / Risk Parity)
+   *   - L5_feasibility  执行可行性 + 模拟盘 (TCA / 微结构)
+   *   - L6_risk         风控守门 + Kill switch
+   *   - L7_governor     资金曲线治理 (Kelly / fractional)
+   *   - L8_reflection   复盘 + 归因 + 研究严谨性 + 通知输出
+   *
+   * 节点 category 字段直接编码层 ID，前端 STAGES 按之分列。
    */
   async getSystemTopology(_req: Request, res: Response) {
     try {
@@ -260,7 +266,7 @@ export class DataController {
           ? 'yellow'
           : 'green';
 
-      // ---- 构建节点 ----
+      // ---- 构建节点 (Sprint 26: 8 层纵向) ----
       const nodes = [
         {
           id: 'quant_system', label: '量化推荐系统', category: 'core',
@@ -271,32 +277,40 @@ export class DataController {
             activeModules: sigTotal.n,
             totalCrons: taskRows.length,
             // 新增 stats 字段：UI 可扩展显示
-            totalModules: 11, // data×2 + compute×2 + decision×4 + execution×1 + output×2
+            totalModules: 18, // L1×3 + L2×3 + L3×3 + L4×2 + L5×3 + L6×2 + L7×1 + L8×4 - 1 hero = 20-2
             totalSources: cards.length,
             factorCount: factorRow.n,
           },
           lastAction: `${cards.length} 数据源 / ${factorRow.n} 因子 / ${sigTotal.n} 策略 / ${killSwitchStats.total || 0} 策略带 EH`,
         },
+        // ===== L1 — Data 数据接入 =====
         {
-          id: 'data_collection', label: '数据采集层', category: 'data',
+          id: 'data_collection', label: '数据采集层', category: 'L1_data',
           status: dataStatus,
           stats: { sources: cards.length, green: greenCount, yellow: yellowCount, red: redCount },
           lastAction: `${greenCount}✅ ${yellowCount}⚠️ ${redCount}❌ (共${cards.length}源)`,
         },
         {
-          id: 'macro_env', label: '宏观环境', category: 'data',
+          id: 'macro_env', label: '宏观环境', category: 'L1_data',
           status: macroStatus,
           stats: { macroLatest: macroRow.d, qvixLatest: qvixRow.d },
           lastAction: `macro=${macroRow.d || '—'} qvix=${qvixRow.d || '—'}`,
         },
         {
-          id: 'factor_engine', label: '因子引擎', category: 'compute',
+          id: 'capacity_monitor', label: '容量+Alpha衰减监控', category: 'L1_data',
+          status: 'green',
+          stats: { signals_tracked: 6, half_life_method: 'observed/literature' },
+          lastAction: 'A-share PIT + 容量阈值 + 半衰期 (Sprint 23/25)',
+        },
+        // ===== L2 — Signal 策略 + 因子 + 形态 =====
+        {
+          id: 'factor_engine', label: '因子引擎', category: 'L2_signal',
           status: factorStatus,
           stats: { factorCount: factorRow.n, latest: factorRow.d, lag: factorLag },
           lastAction: `${factorRow.n} 因子 latest=${factorRow.d || '—'} lag=${factorLag}d`,
         },
         {
-          id: 'strategy_engine', label: '策略引擎', category: 'compute',
+          id: 'strategy_engine', label: '策略引擎', category: 'L2_signal',
           status: strategyStatus,
           stats: {
             todaySignals: sigRow.n,
@@ -306,14 +320,27 @@ export class DataController {
           lastAction: `今日 ${sigRow.n} 信号 / ${sigTotal.n} 策略活跃 / ${killSwitchStats.total || 0} 总注册`,
         },
         {
-          id: 'autopilot', label: '自主决策', category: 'decision',
+          id: 'pattern_library', label: '形态库', category: 'L2_signal',
+          status: 'green',
+          stats: { patterns: 15, source: 'Bulkowski + Sprint13/21' },
+          lastAction: '15 Bulkowski 形态 + inferLocalRegime',
+        },
+        // ===== L3 — Meta Decision 元决策 + 仓位 =====
+        {
+          id: 'meta_label_filter', label: 'MetaLabel 信号过滤', category: 'L3_meta',
+          status: 'green',
+          stats: { layer: 'pre-feasibility', model: 'logistic-regression' },
+          lastAction: '二层模型 confidence 判断是否下注',
+        },
+        {
+          id: 'autopilot', label: '自主决策', category: 'L3_meta',
           status: autopilotTask.status,
           stats: { lastRun: autopilotTask.lastRun, lastStatus: autopilotTask.lastStatus },
           lastAction: autopilotTask.lastRun ? `${autopilotTask.lastStatus} @ ${autopilotTask.lastRun?.slice(11, 16)}` : '等待首次运行',
         },
         // Phase 2+ NEW: sizing 决策 + 决策审计
         {
-          id: 'sizing_decision', label: 'Sizing 决策', category: 'decision',
+          id: 'sizing_decision', label: 'Sizing 决策', category: 'L3_meta',
           status: sizingStatus,
           stats: sizingStats,
           lastAction:
@@ -321,24 +348,28 @@ export class DataController {
               ? `7d ${sizingStats.recent_count} 决策 (${sizingStats.hard_count} hard) method=${sizingStats.methods}`
               : '尚未触发非 equal_pct sizing',
         },
+        // ===== L4 — Construction 组合权重 =====
         {
-          id: 'risk_control', label: '风控系统', category: 'decision',
-          status: riskTask.status === 'gray' && alertRow.n === 0 ? 'green' : riskTask.status,
-          stats: { alerts24h: alertRow.n, lastRun: riskTask.lastRun },
-          lastAction: `${alertRow.n} 告警/24h` + (riskTask.lastRun ? ` 上次=${riskTask.lastRun?.slice(11, 16)}` : ''),
-        },
-        // Phase 4+ NEW: kill switch 监控
-        {
-          id: 'kill_switch', label: '策略熔断监控', category: 'decision',
-          status: killSwitchStatus,
-          stats: killSwitchStats,
-          lastAction:
-            killSwitchStats.strategies_with_killswitch > 0
-              ? `${killSwitchStats.strategies_with_killswitch}/${killSwitchStats.total} 策略配 kill_switch · ${killSwitchStats.disabled_count} 已禁用`
-              : '尚未配置 kill_switch',
+          id: 'portfolio_construction', label: '风险预算组合', category: 'L4_construction',
+          status: 'green',
+          stats: { methods: 4, default: 'risk_parity' },
+          lastAction: 'ERC + 行业约束 + 总仓位约束输出权重',
         },
         {
-          id: 'portfolio', label: '模拟盘', category: 'execution',
+          id: 'bl_hrp_qp', label: 'B-L / HRP / QP 求解', category: 'L4_construction',
+          status: 'green',
+          stats: { solvers: 'BL+HRP+NCO+QP+ThompsonSampling' },
+          lastAction: 'Black-Litterman / Hierarchical Risk Parity / OSQP-style',
+        },
+        // ===== L5 — Execution Feasibility 执行可行性 =====
+        {
+          id: 'execution_feasibility', label: '执行可行性评分', category: 'L5_feasibility',
+          status: 'green',
+          stats: { components: 4, weights: '30/30/20/20' },
+          lastAction: '涨跌停 / 流动性 / spread / T+1 综合评分',
+        },
+        {
+          id: 'portfolio', label: '模拟盘', category: 'L5_feasibility',
           status: pfRow ? 'green' : 'gray',
           stats: {
             totalValue: pfRow ? Number(pfRow.total_value) : 0,
@@ -352,9 +383,40 @@ export class DataController {
             ? `${tradeRow.direction} ${tradeRow.name || tradeRow.symbol} @ ${tradeRow.created_at?.toISOString?.()?.slice(11, 16) || ''}`
             : null,
         },
+        {
+          id: 'tca_microstructure', label: 'TCA + 微结构', category: 'L5_feasibility',
+          status: 'green',
+          stats: { models: 'AlmgrenChriss+Bouchaud+KyleLambda+GlostenMilgrom' },
+          lastAction: '冲击成本 / Spread / PIN + RL execution',
+        },
+        // ===== L6 — Risk 风控守门 =====
+        {
+          id: 'risk_control', label: '风控系统', category: 'L6_risk',
+          status: riskTask.status === 'gray' && alertRow.n === 0 ? 'green' : riskTask.status,
+          stats: { alerts24h: alertRow.n, lastRun: riskTask.lastRun },
+          lastAction: `${alertRow.n} 告警/24h` + (riskTask.lastRun ? ` 上次=${riskTask.lastRun?.slice(11, 16)}` : ''),
+        },
+        // Phase 4+ NEW: kill switch 监控
+        {
+          id: 'kill_switch', label: '策略熔断监控', category: 'L6_risk',
+          status: killSwitchStatus,
+          stats: killSwitchStats,
+          lastAction:
+            killSwitchStats.strategies_with_killswitch > 0
+              ? `${killSwitchStats.strategies_with_killswitch}/${killSwitchStats.total} 策略配 kill_switch · ${killSwitchStats.disabled_count} 已禁用`
+              : '尚未配置 kill_switch',
+        },
+        // ===== L7 — Governor 资金曲线治理 =====
+        {
+          id: 'equity_curve_governor', label: '资金曲线 Governor', category: 'L7_governor',
+          status: 'green',
+          stats: { tiers: 5, default_mult: 1.0 },
+          lastAction: '5 档 Kelly 倍数 (healthy → observe_only)',
+        },
+        // ===== L8 — Reflection 复盘 + 归因 + 研究严谨性 + 通知输出 =====
         // Phase 5+ NEW: 闭环分析 (root_cause + postmortem)
         {
-          id: 'outcome_analysis', label: '闭环分析', category: 'output',
+          id: 'outcome_analysis', label: '闭环分析', category: 'L8_reflection',
           status: outcomeStatus,
           stats: outcomeStats,
           lastAction:
@@ -363,67 +425,66 @@ export class DataController {
               : '尚无闭环 outcome',
         },
         {
-          id: 'notification', label: '通知推送', category: 'output',
-          status: webhookOk && !webhookDisabled ? 'green' : webhookDisabled ? 'gray' : 'red',
-          stats: { feishu: webhookOk, disabled: webhookDisabled },
-          lastAction: webhookOk ? (webhookDisabled ? '已禁用' : '飞书 webhook 就绪') : '未配置',
-        },
-        // Sprint 1-3 新模块
-        {
-          id: 'meta_label_filter', label: 'MetaLabel 信号过滤', category: 'decision',
+          id: 'attribution_brinson', label: 'Brinson 归因', category: 'L8_reflection',
           status: 'green',
-          stats: { layer: 'pre-feasibility', model: 'logistic-regression' },
-          lastAction: '二层模型 confidence 判断是否下注',
+          stats: { methods: 'Brinson+MCR+Style+Crowding' },
+          lastAction: '行业/风格/拥挤度 归因分解 (Sprint 20/25)',
         },
         {
-          id: 'execution_feasibility', label: '执行可行性评分', category: 'decision',
-          status: 'green',
-          stats: { components: 4, weights: '30/30/20/20' },
-          lastAction: '涨跌停 / 流动性 / spread / T+1 综合评分',
-        },
-        {
-          id: 'portfolio_construction', label: '风险预算组合', category: 'decision',
-          status: 'green',
-          stats: { methods: 4, default: 'risk_parity' },
-          lastAction: 'ERC + 行业约束 + 总仓位约束输出权重',
-        },
-        {
-          id: 'research_integrity', label: '研究严谨性审计', category: 'risk',
+          id: 'research_integrity', label: '研究严谨性审计', category: 'L8_reflection',
           status: 'green',
           stats: { detectors: 5, gates: 'wf+edge+ri' },
           lastAction: 'DSR / PBO / OOS decay / Lookahead / Survivorship',
         },
         {
-          id: 'equity_curve_governor', label: '资金曲线 Governor', category: 'risk',
-          status: 'green',
-          stats: { tiers: 5, default_mult: 1.0 },
-          lastAction: '5 档 Kelly 倍数 (healthy → observe_only)',
+          id: 'notification', label: '通知推送', category: 'L8_reflection',
+          status: webhookOk && !webhookDisabled ? 'green' : webhookDisabled ? 'gray' : 'red',
+          stats: { feishu: webhookOk, disabled: webhookDisabled },
+          lastAction: webhookOk ? (webhookDisabled ? '已禁用' : '飞书 webhook 就绪') : '未配置',
         },
       ];
 
-      // ---- 构建连线 ----
+      // ---- 构建连线 (Sprint 26: 跨层 L1→L2→L3→L4→L5→L6→L7→L8) ----
       const edges = [
-        // 数据 → 计算
+        // L1 → L2 (数据 → 信号)
         { source: 'data_collection', target: 'factor_engine', label: 'K线+行情' },
         { source: 'data_collection', target: 'macro_env', label: '宏观+QVIX' },
-        // 计算内部
+        { source: 'data_collection', target: 'pattern_library', label: 'OHLC 序列' },
+        { source: 'capacity_monitor', target: 'strategy_engine', label: '容量约束 (反馈)' },
+        // L2 内部
         { source: 'macro_env', target: 'strategy_engine', label: 'regime 环境' },
         { source: 'factor_engine', target: 'strategy_engine', label: '因子分数' },
-        // 计算 → 决策
+        { source: 'pattern_library', target: 'strategy_engine', label: '形态可靠度' },
+        // L2 → L3 (信号 → 元决策)
         { source: 'strategy_engine', target: 'autopilot', label: 'quant signals' },
+        { source: 'autopilot', target: 'meta_label_filter', label: '原始信号' },
+        { source: 'meta_label_filter', target: 'sizing_decision', label: '过滤后 bet 候选' },
+        // L3 → L4 (元决策 → 组合)
+        { source: 'sizing_decision', target: 'portfolio_construction', label: 'bet size' },
+        { source: 'portfolio_construction', target: 'bl_hrp_qp', label: '权重求解' },
+        // L4 → L5 (组合 → 执行)
+        { source: 'bl_hrp_qp', target: 'execution_feasibility', label: 'target weights' },
+        { source: 'execution_feasibility', target: 'portfolio', label: 'fillable order' },
+        { source: 'tca_microstructure', target: 'portfolio', label: '成本估计 (反馈)' },
+        // L5 → L6 (执行 → 风控)
+        { source: 'portfolio', target: 'risk_control', label: '持仓快照' },
         { source: 'macro_env', target: 'risk_control', label: '恐慌预警' },
-        // Phase 4+ kill switch 反馈环: 监控 ← 策略；触发禁用 → 策略
+        // L6 反馈环
         { source: 'strategy_engine', target: 'kill_switch', label: '策略列表' },
         { source: 'kill_switch', target: 'strategy_engine', label: '触发禁用 (反馈)' },
-        // Phase 2+ sizing 链: autopilot 决策 → sizing 计算 → 执行
-        { source: 'autopilot', target: 'sizing_decision', label: '候选 BUY' },
-        { source: 'sizing_decision', target: 'portfolio', label: 'sized order' },
-        // 决策 → 执行
         { source: 'risk_control', target: 'portfolio', label: 'SELL 指令' },
-        // Phase 5+ 闭环回流: outcome → 分析 → 反馈 Kelly stats
+        // L6 → L7 (风控 → Governor)
+        { source: 'portfolio', target: 'equity_curve_governor', label: '健康度评估' },
+        { source: 'equity_curve_governor', target: 'sizing_decision', label: 'Kelly multiplier (反馈)' },
+        // L7/L5 → L8 (执行 → 复盘)
         { source: 'portfolio', target: 'outcome_analysis', label: '闭环 trades' },
+        { source: 'portfolio', target: 'attribution_brinson', label: '收益序列' },
         { source: 'outcome_analysis', target: 'sizing_decision', label: 'Kelly 统计 (反馈)' },
-        // 输出
+        { source: 'attribution_brinson', target: 'strategy_engine', label: '归因 (反馈)' },
+        // L8 → L2 反馈 (research integrity gate)
+        { source: 'research_integrity', target: 'strategy_engine', label: 'PASS 才允许 promote' },
+        { source: 'strategy_engine', target: 'research_integrity', label: '定期审计 (反馈)' },
+        // L8 输出 (通知)
         { source: 'portfolio', target: 'notification', label: '交易通知' },
         { source: 'autopilot', target: 'notification', label: '买入推送' },
         { source: 'risk_control', target: 'notification', label: '告警推送' },
@@ -431,17 +492,6 @@ export class DataController {
         // 顶层调度
         { source: 'quant_system', target: 'data_collection', label: '调度' },
         { source: 'quant_system', target: 'macro_env', label: '调度' },
-        // Sprint 1-3 新决策层: autopilot → MetaLabel → Feasibility → PortfolioConstruction → sizing
-        { source: 'autopilot', target: 'meta_label_filter', label: '原始信号' },
-        { source: 'meta_label_filter', target: 'execution_feasibility', label: '过滤后 bet 候选' },
-        { source: 'execution_feasibility', target: 'portfolio_construction', label: 'fillable 候选' },
-        { source: 'portfolio_construction', target: 'sizing_decision', label: 'target weights' },
-        // ResearchIntegrity → PromotionGate (strategy_engine)
-        { source: 'research_integrity', target: 'strategy_engine', label: 'PASS 才允许 promote' },
-        { source: 'strategy_engine', target: 'research_integrity', label: '定期审计 (反馈)' },
-        // Governor: 评估 portfolio → sizing 加 multiplier
-        { source: 'portfolio', target: 'equity_curve_governor', label: '健康度评估' },
-        { source: 'equity_curve_governor', target: 'sizing_decision', label: 'Kelly multiplier (反馈)' },
       ];
 
       return res.json({ success: true, data: { nodes, edges, generated_at: new Date().toISOString() } });

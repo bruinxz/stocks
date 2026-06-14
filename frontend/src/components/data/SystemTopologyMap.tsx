@@ -3,11 +3,13 @@
  *
  * 设计原则:
  * - Hero banner 横跨顶部，承担"系统总览 + 汇总状态"
- * - 5 列横向 stage (数据 → 计算 → 决策 → 执行 → 输出) 清晰单向流
+ * - 8 列横向 stage (L1 数据 - L2 信号 - L3 元决策 - L4 组合 - L5 执行 - L6 风控 - L7 治理 - L8 复盘)
+ *   清晰单向流，对齐 Sprint 24 后端 8 层纵向架构 (backend/src/layers)
  * - 节点：白底 .modern-card 风格 + 左侧 4px 状态色条 + 右上 antd 状态 Tag，
  *   不再整卡变色，跟同 tab 的 DataHealthDashboard 视觉对齐
  * - SVG 流线只画跨 stage 的关键连线，颜色用项目 --primary 低饱和版本，
  *   贝塞尔水平进出 (cpx 控制点 0.4*dx)，流动动画 2.5s 缓速
+ * - 8 列在桌面端较挤：grid gap 18 (原 28) + NODE_GAP_Y 8 (原 12) 压缩纵向
  * - 移动端 useIsMobile() 切回纵向堆叠 + 隐藏 SVG，stage 之间用下箭头分隔
  */
 
@@ -95,31 +97,87 @@ const STATUS_TOKENS: Record<
 
 const ICONS: Record<string, string> = {
   quant_system: '🏛️',
+  // L1 数据
   data_collection: '📊',
   macro_env: '🌍',
+  capacity_monitor: '📈', // Sprint 23/25 — 容量 + Alpha 衰减
+  // L2 信号
   factor_engine: '🧮',
   strategy_engine: '🎯',
+  pattern_library: '🧩', // Sprint 13/21 — Bulkowski 15 形态
+  // L3 元决策 + 仓位
+  meta_label_filter: '🎚️',
   autopilot: '🤖',
-  sizing_decision: '⚖️', // Phase 2+ Sizing 决策 (Kelly / vol_target / ATR)
+  sizing_decision: '⚖️', // Phase 2+ Sizing (Kelly / vol_target / ATR)
+  // L4 组合构建
+  portfolio_construction: '📐',
+  bl_hrp_qp: '🧠', // Sprint 16/19/20 — Black-Litterman + HRP + QP
+  // L5 执行可行性
+  execution_feasibility: '🚦',
+  portfolio: '💰',
+  tca_microstructure: '🔎', // v4/v5 — TCA + Kyle Lambda + RL execution
+  // L6 风控
   risk_control: '🛡️',
   kill_switch: '🚨', // Phase 4+ 策略熔断监控
-  portfolio: '💰',
+  // L7 资金曲线治理
+  equity_curve_governor: '🎛️',
+  // L8 复盘 + 归因 + 输出
   outcome_analysis: '🔬', // Phase 5+ root_cause + postmortem
+  attribution_brinson: '📊', // Sprint 20/25 — Brinson + MCR + Style + Crowding
+  research_integrity: '🧪',
   notification: '🔔',
 };
 
-// 横向 5-stage 布局 (Phase 2+/4+/5+ 新增节点已并入 decision / output stage)
+// 横向 8-stage 布局 — 对齐 Sprint 24 后端 8 层纵向架构 (backend layers L1-L8)
 const STAGES: { key: string; label: string; sub: string; nodes: string[] }[] = [
-  { key: 'data', label: '数据', sub: 'Data', nodes: ['data_collection', 'macro_env'] },
-  { key: 'compute', label: '计算', sub: 'Compute', nodes: ['factor_engine', 'strategy_engine'] },
   {
-    key: 'decision',
-    label: '决策',
-    sub: 'Decision',
-    nodes: ['autopilot', 'sizing_decision', 'risk_control', 'kill_switch'],
+    key: 'L1_data',
+    label: 'L1 数据',
+    sub: 'Data',
+    nodes: ['data_collection', 'macro_env', 'capacity_monitor'],
   },
-  { key: 'execution', label: '执行', sub: 'Execute', nodes: ['portfolio'] },
-  { key: 'output', label: '输出', sub: 'Output', nodes: ['outcome_analysis', 'notification'] },
+  {
+    key: 'L2_signal',
+    label: 'L2 信号',
+    sub: 'Signal',
+    nodes: ['factor_engine', 'strategy_engine', 'pattern_library'],
+  },
+  {
+    key: 'L3_meta',
+    label: 'L3 元决策',
+    sub: 'Meta',
+    nodes: ['meta_label_filter', 'autopilot', 'sizing_decision'],
+  },
+  {
+    key: 'L4_construction',
+    label: 'L4 组合',
+    sub: 'Build',
+    nodes: ['portfolio_construction', 'bl_hrp_qp'],
+  },
+  {
+    key: 'L5_feasibility',
+    label: 'L5 执行',
+    sub: 'Execute',
+    nodes: ['execution_feasibility', 'portfolio', 'tca_microstructure'],
+  },
+  {
+    key: 'L6_risk',
+    label: 'L6 风控',
+    sub: 'Risk',
+    nodes: ['risk_control', 'kill_switch'],
+  },
+  {
+    key: 'L7_governor',
+    label: 'L7 治理',
+    sub: 'Governor',
+    nodes: ['equity_curve_governor'],
+  },
+  {
+    key: 'L8_reflection',
+    label: 'L8 复盘',
+    sub: 'Reflect',
+    nodes: ['outcome_analysis', 'attribution_brinson', 'research_integrity', 'notification'],
+  },
 ];
 
 // 节点 -> 所在 stage 的 index (用于 SVG 跨列连线过滤)
@@ -448,7 +506,8 @@ const NodeCard: React.FC<{ node: TopologyNode; nodeId: string }> = ({ node, node
 // ---------- SVG flow lines (desktop only) ----------
 
 // 同列节点 (stage 内) 之间纵向间距 - 给 Space size 用
-const NODE_GAP_Y = 12;
+// 8 列布局节点密度高，从 12 缩到 8 释放纵向空间
+const NODE_GAP_Y = 8;
 
 interface FlowLinesProps {
   edges: TopologyEdge[];
@@ -691,14 +750,15 @@ const SystemTopologyMap: React.FC = () => {
               ))}
             </div>
           ) : (
-            // ---- 桌面端：5 列横向 Pipeline ----
+            // ---- 桌面端：8 列横向 Pipeline (L1-L8) ----
             <div
               ref={containerRef}
               style={{
                 position: 'relative',
                 display: 'grid',
                 gridTemplateColumns: `repeat(${STAGES.length}, 1fr)`,
-                gap: 28,
+                // 8 列布局：gap 从 28 缩到 18 让列宽 ≥ 节点最小可读宽
+                gap: 18,
                 minHeight: 280,
                 padding: '4px 4px 8px',
               }}
@@ -711,7 +771,7 @@ const SystemTopologyMap: React.FC = () => {
                 containerEl={containerRef.current}
               />
 
-              {/* 5 个 stage 列 */}
+              {/* 8 个 stage 列 (L1..L8) */}
               {STAGES.map((stage, si) => (
                 <div key={stage.key} style={{ position: 'relative', zIndex: 1 }}>
                   {/* stage header */}
