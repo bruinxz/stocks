@@ -1993,7 +1993,9 @@ class SchedulerService {
       } else if (task.type === 'EQUITY_CURVE_GOVERNOR_DAILY_EVAL') {
         // Sprint 3: 资金曲线 Governor 每日评估 — 对所有 portfolio 评估 5 档健康度。
         // 默认 persist=true，写入 EquityCurveGovernorState，触发档位切换告警。
-        const { equityCurveGovernorService } = require('../services/governor/EquityCurveGovernorService');
+        const {
+          equityCurveGovernorService,
+        } = require('../services/governor/EquityCurveGovernorService');
         const result = await equityCurveGovernorService.evaluateAll({
           persist: parameters.persist !== false,
           as_of_date: parameters.as_of_date || parameters.asOfDate,
@@ -2031,7 +2033,9 @@ class SchedulerService {
       } else if (task.type === 'RESEARCH_INTEGRITY_BATCH_AUDIT') {
         // Sprint 1A: ResearchIntegrity 周批量审计 — 扫描近 N 天完成的 QuantBacktestResult，
         // 对每个跑 audit (DSR / PBO / OOS decay)，FAIL 的 strategy 推到 ops 关注列表。
-        const { researchIntegrityService } = require('../services/research/ResearchIntegrityService');
+        const {
+          researchIntegrityService,
+        } = require('../services/research/ResearchIntegrityService');
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         const { QuantBacktestResult } = require('../models/QuantBacktestResult');
         const sinceDays = this.toPositiveInt(parameters.since_days || parameters.sinceDays, 7, 90);
@@ -2044,7 +2048,8 @@ class SchedulerService {
         });
         let audited = 0;
         const verdictDist: Record<string, number> = { PASS: 0, WARN: 0, FAIL: 0, INSUFFICIENT: 0 };
-        const failedStrategies: Array<{ strategy_key: string; verdict: string; reason: string }> = [];
+        const failedStrategies: Array<{ strategy_key: string; verdict: string; reason: string }> =
+          [];
         for (const r of results) {
           try {
             const equity = Array.isArray(r.equity_curve_json) ? r.equity_curve_json : [];
@@ -2053,7 +2058,10 @@ class SchedulerService {
                 backtest_id: r.id,
                 source: 'quant_backtest_result',
                 strategy_key: r.strategy_key,
-                observed_sharpe: r.sharpe_ratio !== null && r.sharpe_ratio !== undefined ? Number(r.sharpe_ratio) : null,
+                observed_sharpe:
+                  r.sharpe_ratio !== null && r.sharpe_ratio !== undefined
+                    ? Number(r.sharpe_ratio)
+                    : null,
                 num_trials: 1,
                 sample_length: equity.length,
               },
@@ -2069,7 +2077,9 @@ class SchedulerService {
               });
             }
           } catch (err: any) {
-            logger.warn(`[research-integrity-batch] audit failed for backtest ${r.id}: ${err?.message}`);
+            logger.warn(
+              `[research-integrity-batch] audit failed for backtest ${r.id}: ${err?.message}`
+            );
           }
         }
         await this.safeUpdateExecutionLog(executionLog, {
@@ -3204,17 +3214,20 @@ class SchedulerService {
         const results: Record<string, string> = {};
         const { spawnSync } = require('child_process');
         const path = require('path');
-        const scriptPath = path.resolve(
-          __dirname,
-          '..',
-          'scripts',
-          'sync-extra-dims.ts'
-        );
+        const scriptPath = path.resolve(__dirname, '..', 'scripts', 'sync-extra-dims.ts');
         for (const dim of dims) {
-          const args = ['node_modules/.bin/ts-node', '--transpile-only', scriptPath, `--dim=${dim}`];
+          const args = [
+            'node_modules/.bin/ts-node',
+            '--transpile-only',
+            scriptPath,
+            `--dim=${dim}`,
+          ];
           if (dim === 'block') {
             const today = moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
-            const start = moment().tz('Asia/Shanghai').subtract(blockDays, 'days').format('YYYY-MM-DD');
+            const start = moment()
+              .tz('Asia/Shanghai')
+              .subtract(blockDays, 'days')
+              .format('YYYY-MM-DD');
             args.push(`--start=${start}`, `--end=${today}`);
           }
           const t0 = Date.now();
@@ -3251,7 +3264,9 @@ class SchedulerService {
         const path = require('path');
         const scriptPath = path.resolve(__dirname, '..', 'scripts', 'compute-factors.ts');
         const date: string =
-          parameters.date || parameters.trade_date || moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
+          parameters.date ||
+          parameters.trade_date ||
+          moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
         const factorNames: string[] = Array.isArray(parameters.factor_names)
           ? parameters.factor_names
           : Array.isArray(parameters.factors)
@@ -3302,6 +3317,160 @@ class SchedulerService {
             ok,
           },
         });
+      } else if (task.type === 'COMPOSITE_REBALANCE') {
+        // Sprint 41-A: 组合级策略 (multi_factor_alpha / ensemble_strategy) 的真实
+        // BUY/SELL/HOLD 调仓任务. 读最新一日 QuantSignal (raw_factors.target_portfolio_size>0
+        // 标记的 composite-level signals), 对每个 portfolio + 每个 composite strategy
+        // 调 CompositeRebalanceService.rebalance() 算 plan.
+        //
+        // 安全配置 (与 PaperTradingAutomationService 默认值保持一致):
+        //   - dry_run 默认 true (只产 plan + persist=true 写 OrderIntent 留审计;
+        //     真下单需要单独 cron 或人工审批触发, 避免组合级调仓首次上线就大额洗仓)
+        //   - max_per_position_pct=0.12 / max_industry_pct=0.25 / max_daily_turnover_pct=0.4
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const {
+          compositeRebalanceService,
+          COMPOSITE_REBALANCE_STRATEGY_KEYS,
+        } = require('../portfolio/internal/CompositeRebalanceService');
+        const { QuantSignal } = require('../models/QuantSignal');
+        const { PaperTradingPortfolio } = require('../models/PaperTradingPortfolio');
+        const { Op } = require('sequelize');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+
+        const tradeDate: string =
+          parameters.trade_date ||
+          parameters.date ||
+          moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
+        const dryRun: boolean = parameters.dry_run !== false; // 默认 true
+        const persist: boolean = parameters.persist !== false; // 默认 true (审计需要)
+        const targetUsername: string = parameters.username || 'stock';
+
+        // 取所有 composite-level signals 当日的 target_portfolio
+        const signals = await QuantSignal.findAll({
+          where: {
+            trade_date: tradeDate,
+            strategy_key: { [Op.in]: COMPOSITE_REBALANCE_STRATEGY_KEYS as string[] },
+          },
+          attributes: ['strategy_key', 'symbol', 'raw_factors'],
+        });
+
+        // 按 strategy_key 聚合 target_portfolio (信号本身的 symbol 集合即等于 target)
+        const targetByStrategy = new Map<string, string[]>();
+        for (const sig of signals as any[]) {
+          const arr = targetByStrategy.get(sig.strategy_key) || [];
+          arr.push(sig.symbol);
+          targetByStrategy.set(sig.strategy_key, arr);
+        }
+
+        if (targetByStrategy.size === 0) {
+          logger.info(`[COMPOSITE_REBALANCE] ${tradeDate} 无 composite-level signals, 跳过`);
+          await this.safeUpdateExecutionLog(executionLog, {
+            total_items: 0,
+            success_count: 0,
+            failed_count: 0,
+            result_summary: {
+              scenario: 'composite_rebalance',
+              trade_date: tradeDate,
+              ok: true,
+              no_signals: true,
+            },
+          });
+        } else {
+          // 找目标 portfolio (优先名为 stock 的 user 的 autonomous portfolio)
+          let portfolioId: number | undefined = parameters.portfolio_id;
+          if (!portfolioId) {
+            try {
+              // eslint-disable-next-line @typescript-eslint/no-var-requires
+              const { User } = require('../models/User');
+              const user = await User.findOne({ where: { username: targetUsername } });
+              if (user) {
+                const portfolio = await PaperTradingPortfolio.findOne({
+                  where: { user_id: (user as any).id },
+                  order: [['created_at', 'ASC']],
+                });
+                portfolioId = portfolio ? (portfolio as any).id : undefined;
+              }
+            } catch (error: any) {
+              logger.warn(
+                `[COMPOSITE_REBALANCE] 自动解析 portfolio 失败 (username=${targetUsername}): ${
+                  error?.message || error
+                }`
+              );
+            }
+          }
+
+          if (!portfolioId) {
+            logger.warn(
+              `[COMPOSITE_REBALANCE] 找不到 portfolio (username=${targetUsername}, portfolio_id 未配), 跳过`
+            );
+            await this.safeUpdateExecutionLog(executionLog, {
+              total_items: targetByStrategy.size,
+              success_count: 0,
+              failed_count: targetByStrategy.size,
+              result_summary: {
+                scenario: 'composite_rebalance',
+                trade_date: tradeDate,
+                ok: false,
+                error: 'portfolio_not_found',
+              },
+            });
+          } else {
+            const t0 = Date.now();
+            const results: any[] = [];
+            for (const [strategyKey, targets] of targetByStrategy) {
+              try {
+                const result = await compositeRebalanceService.rebalance({
+                  portfolio_id: portfolioId,
+                  strategy_key: strategyKey,
+                  target_portfolio: targets,
+                  trade_date: tradeDate,
+                  options: {
+                    dryRun,
+                    persist,
+                  },
+                });
+                results.push({
+                  strategy_key: strategyKey,
+                  target_count: result.diagnostics.target_count,
+                  orders_buy: result.orders.filter((o: any) => o.side === 'BUY').length,
+                  orders_sell: result.orders.filter((o: any) => o.side === 'SELL').length,
+                  orders_hold: result.orders.filter((o: any) => o.side === 'HOLD').length,
+                  filtered_sells: result.filtered_sells.length,
+                  capped_per_position: result.capped_per_position_orders,
+                  capped_industry: result.capped_industry_orders,
+                  capped_turnover: result.capped_turnover_orders,
+                  turnover_pct: result.diagnostics.total_turnover_pct,
+                  persisted: result.persisted,
+                });
+                logger.info(
+                  `[COMPOSITE_REBALANCE] ${strategyKey} portfolio=${portfolioId}: ${result.diagnostics.message}`
+                );
+              } catch (error: any) {
+                logger.warn(
+                  `[COMPOSITE_REBALANCE] ${strategyKey} portfolio=${portfolioId} 失败 (fail-open): ${
+                    error?.message || error
+                  }`
+                );
+                results.push({ strategy_key: strategyKey, error: error?.message || String(error) });
+              }
+            }
+            const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+            await this.safeUpdateExecutionLog(executionLog, {
+              total_items: results.length,
+              success_count: results.filter(r => !r.error).length,
+              failed_count: results.filter(r => r.error).length,
+              result_summary: {
+                scenario: 'composite_rebalance',
+                trade_date: tradeDate,
+                portfolio_id: portfolioId,
+                dry_run: dryRun,
+                persist,
+                elapsed_seconds: Number(elapsed),
+                results,
+              },
+            });
+          }
+        }
       } else if (task.type === 'FACTOR_IC_COMPUTE') {
         // Phase 3: 每日因子 IC 计算 — 走 child_process 调用 compute-factor-ic CLI
         // 默认跑过去 90 天 + 默认 forwardDays=[1,5,10,20,60]，覆盖 5 个时间窗口的衰减分析
@@ -3368,7 +3537,13 @@ class SchedulerService {
         const start = parameters.start || today;
         const end = parameters.end || today;
         const scriptPath = path.resolve(__dirname, '..', 'scripts', 'sync-dragon-tiger.ts');
-        const args = ['node_modules/.bin/ts-node', '--transpile-only', scriptPath, `--start=${start}`, `--end=${end}`];
+        const args = [
+          'node_modules/.bin/ts-node',
+          '--transpile-only',
+          scriptPath,
+          `--start=${start}`,
+          `--end=${end}`,
+        ];
         const t0 = Date.now();
         const r = spawnSync('/usr/bin/node', args, {
           cwd: path.resolve(__dirname, '..', '..'),
@@ -3382,26 +3557,37 @@ class SchedulerService {
           total_items: 1,
           success_count: ok ? 1 : 0,
           failed_count: ok ? 0 : 1,
-          result_summary: { scenario: 'dragon_tiger_sync', start, end, elapsed_s: elapsed, status: r.status },
+          result_summary: {
+            scenario: 'dragon_tiger_sync',
+            start,
+            end,
+            elapsed_s: elapsed,
+            status: r.status,
+          },
         });
         logger.info(`[DRAGON_TIGER_SYNC] ${start}~${end} ${ok ? 'OK' : 'FAIL'} ${elapsed}s`);
       } else if (task.type === 'PAPER_TRADING_DAILY_SNAPSHOT') {
         // 收盘后给所有 paper_trading_portfolio 生成日 snapshot
         // 让"昨日盈亏 / 当月收益 / 最大回撤" 能正常显示历史
-        const { paperTradingAutomationService } = require('../portfolio/internal/PaperTradingAutomationService');
+        const {
+          paperTradingAutomationService,
+        } = require('../portfolio/internal/PaperTradingAutomationService');
         const { PaperTradingPortfolio } = require('../models/PaperTradingPortfolio');
         const portfolios = await PaperTradingPortfolio.findAll({
           where: { is_active: true },
           attributes: ['id', 'user_id'],
           raw: true,
         });
-        let ok = 0, failed = 0;
+        let ok = 0,
+          failed = 0;
         for (const p of portfolios as any[]) {
           try {
             await paperTradingAutomationService.syncLatestPricesAndSnapshot(p.id);
             ok++;
           } catch (e: any) {
-            logger.warn(`[PAPER_TRADING_DAILY_SNAPSHOT] portfolio=${p.id} FAIL: ${e?.message || e}`);
+            logger.warn(
+              `[PAPER_TRADING_DAILY_SNAPSHOT] portfolio=${p.id} FAIL: ${e?.message || e}`
+            );
             failed++;
           }
         }
@@ -3409,7 +3595,12 @@ class SchedulerService {
           total_items: portfolios.length,
           success_count: ok,
           failed_count: failed,
-          result_summary: { scenario: 'paper_trading_daily_snapshot', total: portfolios.length, ok, failed },
+          result_summary: {
+            scenario: 'paper_trading_daily_snapshot',
+            total: portfolios.length,
+            ok,
+            failed,
+          },
         });
         logger.info(`[PAPER_TRADING_DAILY_SNAPSHOT] ${ok}/${portfolios.length} OK`);
       } else {
@@ -4390,6 +4581,22 @@ class SchedulerService {
         },
       },
       {
+        // Sprint 41-A: 组合级策略真实调仓 — 必须晚于 QUANT_DAILY_PIPELINE (15:32)
+        // 给 composite-level signals 落库的时间, 默认 dry_run=true + persist=true
+        // 让运维先看 plan 再决定是否切真下单 (改 task params dry_run=false).
+        // 17:50 = FACTOR_SCORE (17:30) 后 20 分钟, FACTOR_IC (19:00) 之前.
+        name: '组合级策略真实调仓 (composite rebalance)',
+        type: 'COMPOSITE_REBALANCE',
+        cron_expression: '50 17 * * 1-5',
+        is_active: true,
+        parameters: {
+          // trade_date 默认今日 (Asia/Shanghai)
+          username: 'stock',
+          dry_run: true, // 默认 dry-run, 运维确认后改 false
+          persist: true, // 默认 persist plan 留审计
+        },
+      },
+      {
         // Phase 3: 每日因子 IC 自动计算 — 周一到周五盘后 19:00 (各 sync 跑完之后)
         // 默认 lookback 90 天 + 全部 18 个因子 + 5 个 forward 窗口 (1/5/10/20/60)
         // 跑完后 UI FactorWorkspace 因子卡 + LabWorkspace 都能拉到最新 IC 数据
@@ -4400,7 +4607,7 @@ class SchedulerService {
         is_active: true,
         parameters: {
           lookback_days: 90,
-          factor_names: [],  // 空 = 跑全部已注册因子
+          factor_names: [], // 空 = 跑全部已注册因子
         },
       },
       {
