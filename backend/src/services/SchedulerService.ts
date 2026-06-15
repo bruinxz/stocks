@@ -3240,6 +3240,68 @@ class SchedulerService {
           result_summary: { scenario: 'extra_dims_sync', dims, results },
         });
         logger.info(`[EXTRA_DIMS_SYNC] done: ${JSON.stringify(results)}`);
+      } else if (task.type === 'FACTOR_SCORE_COMPUTE') {
+        // Sprint 40 (你提的优先级 #1): 每日盘后 factor_scores 生成任务.
+        // 之前只有 FACTOR_IC_COMPUTE 没有 FACTOR_SCORE_COMPUTE — IC 算的前提是
+        // factor_scores 表已生成. 现在加这个 task, cron 配比 IC 早 30 分钟,
+        // 确保 IC 跑时 factor_scores 已就位.
+        //
+        // 调 compute-factors.ts CLI; date 默认今天, factors 空跑全部 20 个.
+        const { spawnSync } = require('child_process');
+        const path = require('path');
+        const scriptPath = path.resolve(__dirname, '..', 'scripts', 'compute-factors.ts');
+        const date: string =
+          parameters.date || parameters.trade_date || moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
+        const factorNames: string[] = Array.isArray(parameters.factor_names)
+          ? parameters.factor_names
+          : Array.isArray(parameters.factors)
+          ? parameters.factors
+          : [];
+        const args = [
+          'node_modules/.bin/ts-node',
+          '--transpile-only',
+          scriptPath,
+          `--date=${date}`,
+        ];
+        if (factorNames.length) args.push(`--factors=${factorNames.join(',')}`);
+        // 默认 skip 仅在数据缺失时拖整流程的几个事件因子 (用户可在 task params 里 override)
+        const skipFactors: string[] = Array.isArray(parameters.skip) ? parameters.skip : [];
+        if (skipFactors.length) args.push(`--skip=${skipFactors.join(',')}`);
+        const t0 = Date.now();
+        const r = spawnSync('/usr/bin/node', args, {
+          cwd: path.resolve(__dirname, '..', '..'),
+          encoding: 'utf-8',
+          timeout: 30 * 60_000, // 20 个 factor × 上千股, 给 30 min 上限
+          maxBuffer: 128 * 1024 * 1024,
+        });
+        const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+        const ok = r.status === 0;
+        if (ok) {
+          logger.info(
+            `[FACTOR_SCORE_COMPUTE] done in ${elapsed}s for date=${date} factors=${
+              factorNames.length || 'all'
+            }`
+          );
+        } else {
+          logger.warn(
+            `[FACTOR_SCORE_COMPUTE] failed status=${r.status} after ${elapsed}s: ${(
+              r.stderr || ''
+            ).substring(0, 200)}`
+          );
+        }
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: factorNames.length || 1,
+          success_count: ok ? factorNames.length || 1 : 0,
+          failed_count: ok ? 0 : 1,
+          result_summary: {
+            scenario: 'factor_score_compute',
+            date,
+            factor_names: factorNames,
+            skip: skipFactors,
+            elapsed_seconds: Number(elapsed),
+            ok,
+          },
+        });
       } else if (task.type === 'FACTOR_IC_COMPUTE') {
         // Phase 3: 每日因子 IC 计算 — 走 child_process 调用 compute-factor-ic CLI
         // 默认跑过去 90 天 + 默认 forwardDays=[1,5,10,20,60]，覆盖 5 个时间窗口的衰减分析
@@ -3649,6 +3711,13 @@ class SchedulerService {
             'ma_trend',
             'volume_price_confirmation',
             'low_volatility_quality',
+            // Sprint 40 #2: 组合级策略 (generateSignals 入口) 加入每日 pipeline.
+            // QuantSignalService 内部识别这两个 key,跳过 per-stock evaluate loop,
+            // 单独调它们的 generateSignals(date) 把 target_portfolio 转成 QuantSignal
+            // 行入库,让 archive / agent / paper trading 闸门像消费其他 5 个 per-stock
+            // 策略一样消费它们的信号. 用 dist 分位映射 score 到 [60,95] 保证稳定进闸门.
+            'multi_factor_alpha',
+            'ensemble_strategy',
           ],
           lookback_days: 180,
           candidate_limit: 220,
@@ -3735,6 +3804,11 @@ class SchedulerService {
             'ma_trend',
             'volume_price_confirmation',
             'low_volatility_quality',
+            // Sprint 40 #2: 组合级策略也加入开盘扫描. 这俩策略 evaluate() 是 hold,
+            // 真入口 generateSignals(date) 由 QuantSignalService 内部 dispatcher 调用,
+            // 输出转 QuantSignalResult 拼回主 signals 数组共享 archive/paper trading 闸门.
+            'multi_factor_alpha',
+            'ensemble_strategy',
           ],
           lookback_days: 180,
           candidate_limit: 220,
@@ -4302,6 +4376,17 @@ class SchedulerService {
         parameters: {
           dims: ['macro', 'qvix', 'block'],
           block_days: 7,
+        },
+      },
+      {
+        // Sprint 40 (优先级 #1): 每日盘后 factor_scores 生成 — 必须早于 IC.
+        // 17:30 = daily_bar sync 完成 + 龙虎榜 (16:45) 完成之后, IC (19:00) 之前.
+        name: '每日因子分数计算',
+        type: 'FACTOR_SCORE_COMPUTE',
+        cron_expression: '30 17 * * 1-5',
+        is_active: true,
+        parameters: {
+          // date 默认今日 (Asia/Shanghai), 空跑全部 20 个 factor
         },
       },
       {

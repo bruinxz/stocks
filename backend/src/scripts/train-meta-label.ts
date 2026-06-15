@@ -104,6 +104,29 @@ async function loadTrainingRows(sinceDays: number): Promise<TrainingRow[]> {
     }
   }
 
+  // Sprint 40 (优先级 #3): join paper_trading_order_intents 反查 l8_activation,
+  // 让训练样本含真实的 features_used (含 Sprint 34 加的 pre_check_feasibility_score
+  // + 真 ATR + 真 breadth, 不再仅靠 outcome metadata 的旧值).
+  //
+  // Map<(portfolio_id, signal_id), intent.metadata>
+  const intentMetaMap = new Map<string, any>();
+  if (signalIds.length > 0) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { PaperTradingOrderIntent } = require('../models/PaperTradingOrderIntent');
+    const intents = await PaperTradingOrderIntent.findAll({
+      where: { signal_id: { [Op.in]: signalIds } },
+      attributes: ['portfolio_id', 'signal_id', 'metadata'],
+      order: [['id', 'DESC']],  // 最新一条优先
+    });
+    for (const it of intents) {
+      const k = `${(it as any).portfolio_id}::${(it as any).signal_id}`;
+      if (!intentMetaMap.has(k)) {
+        intentMetaMap.set(k, (it as any).metadata || {});
+      }
+    }
+    logger.info(`[train-meta-label] join 到 ${intentMetaMap.size} 条 order_intent metadata (含 l8_activation)`);
+  }
+
   const rows: TrainingRow[] = [];
   for (const o of outcomes) {
     const sig = signalsMap.get(o.signal_id);
@@ -111,15 +134,34 @@ async function loadTrainingRows(sinceDays: number): Promise<TrainingRow[]> {
     if (!Number.isFinite(pnl)) continue;
     const label: 0 | 1 = pnl > 0 ? 1 : 0;
     const meta = sig?.metadata || o.metadata || {};
+    // Sprint 40: 优先取 intent.metadata.l8_activation.L3_meta.detail.features_used
+    // (Sprint 34 起记录的真实 live features, 含 pre_check_feasibility_score + ATR 真值);
+    // 缺失则 fallback 到 outcome / signal metadata 旧路径.
+    const intentMeta = intentMetaMap.get(`${o.portfolio_id}::${o.signal_id}`) || {};
+    const liveFeatures = intentMeta?.l8_activation?.L3_meta?.detail?.features_used || {};
     const signalScore = Number(sig?.confidence_score ?? meta?.final_score ?? meta?.signal_score ?? 75);
     const features: RawSignalFeatures = {
       signal_score: Number.isFinite(signalScore) ? signalScore : 75,
       signal_source: String(sig?.source_type || meta?.signal_source || 'unknown'),
       regime: String(meta?.market_regime || meta?.regime || 'range'),
-      market_breadth_score: Number(meta?.market_breadth_score ?? 0),
-      strategy_recent_winrate_30d: Number(meta?.strategy_recent_winrate ?? 0.5),
-      strategy_recent_payoff_30d: Number(meta?.strategy_recent_payoff ?? 1.0),
-      market_vol_atr: Number(meta?.market_vol_atr ?? 4),
+      // Sprint 40: 优先 live features_used.breadth_score (Sprint 28 起真值)
+      market_breadth_score: Number(
+        liveFeatures.breadth_score ?? meta?.market_breadth_score ?? 0
+      ),
+      strategy_recent_winrate_30d: Number(
+        liveFeatures.winrate ?? meta?.strategy_recent_winrate ?? 0.5
+      ),
+      strategy_recent_payoff_30d: Number(
+        liveFeatures.payoff ?? meta?.strategy_recent_payoff ?? 1.0
+      ),
+      // Sprint 40: 优先 market_vol_atr_used (含 Sprint 34 真 ATR 或 drawdown 兜底)
+      market_vol_atr: Number(
+        liveFeatures.market_vol_atr_used ?? liveFeatures.benchmark_drawdown_pct ?? meta?.market_vol_atr ?? 4
+      ),
+      // Sprint 34: 新增第 13 dim — 该 symbol 历史 feasibility composite_score 均值
+      pre_check_feasibility_score: Number.isFinite(Number(liveFeatures.pre_check_feasibility_score))
+        ? Number(liveFeatures.pre_check_feasibility_score)
+        : 50,
     };
     rows.push({ features, label });
   }

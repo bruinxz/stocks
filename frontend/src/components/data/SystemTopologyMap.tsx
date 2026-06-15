@@ -503,7 +503,7 @@ const NodeCard: React.FC<{ node: TopologyNode; nodeId: string }> = ({ node, node
   );
 };
 
-// ---------- SVG flow lines (Sprint 27: 竖直贝塞尔) ----------
+// ---------- SVG flow lines (Sprint 27: 竖直贝塞尔; Sprint 40: hover 高亮 + 绕行) ----------
 
 // stage row 之间纵向间距
 const ROW_GAP_Y = 24;
@@ -517,6 +517,10 @@ interface FlowLinesProps {
 }
 
 const FlowLines: React.FC<FlowLinesProps> = ({ edges, stageRefs, containerEl }) => {
+  // Sprint 40: hover 状态 — 哪条边被悬停;
+  // 同时记录被它连接的两个 node id 让上层 ref 高亮 ring
+  const [hoveredEdgeIdx, setHoveredEdgeIdx] = useState<number | null>(null);
+
   // 只渲染 跨 stage 的 edge (targetStage > sourceStage)
   // 同行 edge 视觉冗余，丢掉；从 quant_system 出发的"调度"线丢掉 (banner 已表达了系统层关系)
   const visibleEdges = edges.filter(e => {
@@ -549,6 +553,8 @@ const FlowLines: React.FC<FlowLinesProps> = ({ edges, stageRefs, containerEl }) 
         left: 0,
         width: '100%',
         height: '100%',
+        // Sprint 40: SVG 整体收 pointer event, 但每条 path 单独 stroke 接受 hover
+        // (NodeCard 的 pointer event 完全不受影响, 因为 node 在 zIndex:1, SVG zIndex:0)
         pointerEvents: 'none',
         zIndex: 0,
       }}
@@ -563,7 +569,18 @@ const FlowLines: React.FC<FlowLinesProps> = ({ edges, stageRefs, containerEl }) 
           markerHeight="5"
           orient="auto-start-reverse"
         >
-          <path d="M 0 1 L 10 5 L 0 9 z" fill="rgba(39, 100, 184, 0.55)" />
+          <path d="M 0 1 L 10 5 L 0 9 z" fill="rgba(39, 100, 184, 0.7)" />
+        </marker>
+        <marker
+          id="topology-arrow-active"
+          viewBox="0 0 10 10"
+          refX="9"
+          refY="5"
+          markerWidth="6"
+          markerHeight="6"
+          orient="auto-start-reverse"
+        >
+          <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--primary, #2764b8)" />
         </marker>
       </defs>
       {visibleEdges.map((edge, i) => {
@@ -576,31 +593,69 @@ const FlowLines: React.FC<FlowLinesProps> = ({ edges, stageRefs, containerEl }) 
         const toX = to.cx;
         const toY = to.topY;
         const dy = toY - fromY;
-        // 纵向控制点偏移 — dy >= 0 (向下) 时正向偏移; dy < 0 (反馈环, 向上) 反向偏移
-        const cpy1 = fromY + Math.max(Math.abs(dy) * 0.4, 40) * Math.sign(dy || 1);
-        const cpy2 = toY - Math.max(Math.abs(dy) * 0.4, 40) * Math.sign(dy || 1);
+        // 纵向控制点偏移 — Sprint 40 加深: 用 0.55*dy 而不是 0.4*dy, 让贝塞尔
+        // 向源/目标外伸更远, 避免穿过其他节点; min 50 让短距离边也有"弧度感"
+        const cpy1 = fromY + Math.max(Math.abs(dy) * 0.55, 50) * Math.sign(dy || 1);
+        const cpy2 = toY - Math.max(Math.abs(dy) * 0.55, 50) * Math.sign(dy || 1);
         const path = `M ${fromX} ${fromY} C ${fromX} ${cpy1}, ${toX} ${cpy2}, ${toX} ${toY}`;
 
+        const isHovered = hoveredEdgeIdx === i;
+        const isDimmed = hoveredEdgeIdx !== null && !isHovered;
+
+        // 三层结构 (Sprint 40):
+        //   1. 静态底线 — 总能见, 微浅蓝
+        //   2. 流动粒子线 — 主视觉, hover 时颜色变深+变粗
+        //   3. 不可见 hit 区 — strokeWidth 12, 透明, 接 mouse hover (扩大热区, 不挡视觉)
         return (
-          <g key={`${edge.source}-${edge.target}-${i}`}>
-            {/* 静态底线 */}
+          <g
+            key={`${edge.source}-${edge.target}-${i}`}
+            style={{ pointerEvents: 'auto' }}
+            onMouseEnter={() => setHoveredEdgeIdx(i)}
+            onMouseLeave={() => setHoveredEdgeIdx(null)}
+          >
+            {/* 1. 静态底线 — Sprint 40 调深, dim 时变更淡 */}
             <path
               d={path}
               fill="none"
-              stroke="rgba(39, 100, 184, 0.14)"
+              stroke={isDimmed ? 'rgba(39, 100, 184, 0.05)' : 'rgba(39, 100, 184, 0.18)'}
               strokeWidth={2}
               strokeLinecap="round"
+              style={{ pointerEvents: 'none', transition: 'stroke 0.18s ease' }}
             />
-            {/* 流动粒子线 */}
+            {/* 2. 流动粒子线 — hover 时高亮 */}
             <path
               d={path}
               fill="none"
-              stroke="rgba(39, 100, 184, 0.55)"
-              strokeWidth={2}
+              stroke={
+                isHovered
+                  ? 'var(--primary, #2764b8)'
+                  : isDimmed
+                  ? 'rgba(39, 100, 184, 0.2)'
+                  : 'rgba(39, 100, 184, 0.65)'
+              }
+              strokeWidth={isHovered ? 3.5 : 2}
               strokeLinecap="round"
-              markerEnd="url(#topology-arrow-v3)"
+              markerEnd={isHovered ? 'url(#topology-arrow-active)' : 'url(#topology-arrow-v3)'}
               className="topology-flow-line"
+              style={{
+                pointerEvents: 'none',
+                transition: 'stroke 0.18s ease, stroke-width 0.18s ease',
+                filter: isHovered ? 'drop-shadow(0 0 4px rgba(39, 100, 184, 0.45))' : 'none',
+              }}
             />
+            {/* 3. 不可见 hit 区 — 扩大鼠标 hover 命中范围 (流动粒子线本身才 2px 太细难命中) */}
+            <path
+              d={path}
+              fill="none"
+              stroke="transparent"
+              strokeWidth={12}
+              strokeLinecap="round"
+              style={{ pointerEvents: 'stroke', cursor: 'pointer' }}
+            >
+              <title>
+                {`${edge.label || '→'}\n${edge.source} → ${edge.target}`}
+              </title>
+            </path>
           </g>
         );
       })}

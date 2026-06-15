@@ -1,5 +1,6 @@
 import { Op } from 'sequelize';
 import { QuantSignal } from '../../../models/QuantSignal';
+import { DailyBar } from '../../../models/DailyBar';
 import { strategyRegistry } from '../../engine/StrategyRegistry';
 import { quantDataService } from './QuantDataService';
 import { QuantSignalResult, QuantUniverse } from '../../types/QuantTypes';
@@ -9,6 +10,91 @@ import { Stock } from '../../../models/Stock';
 import { logger } from '../../../utils/logger';
 import { realtimeQuoteService } from '../../../data/services/RealtimeQuoteService';
 import { quantStrategyService } from './QuantStrategyService';
+
+/**
+ * Sprint 40 #2: 组合级策略 (multi_factor_alpha / ensemble_strategy) 的 strategy_key 集合.
+ * 这两个策略的 evaluate() 退化为信息性 hold; 真正入口是 generateSignals(date).
+ * 所以在 per-stock loop 里 skip, 单独跑组合级 adapter 把它们的 target_portfolio
+ * 转成 QuantSignalResult[] 拼回主流程, 一起进 archive + paper trading 闸门.
+ */
+const COMPOSITE_LEVEL_STRATEGY_KEYS = new Set(['multi_factor_alpha', 'ensemble_strategy']);
+
+/**
+ * 把单批组合级 signals 的 raw score (MFA composite_score / Ensemble vote_score)
+ * 用 min-max 缩放到 [60, 95]. 让组合级信号每天都能稳定通过 archive_limit / agent_min_score
+ * 闸门 (不被弱信号日的低 z-score 全部过滤掉),同时保留批内相对排序.
+ *
+ * 跨日不可严格对比 (raw 含义随当日分布漂移),但 raw 值同时写入 raw_factors 字段
+ * 供审计回溯.
+ *
+ * 边界: rawValues 长度 ≤ 1 时返回固定 78 分 (居中,避免单点信号无法计算分位).
+ */
+function mapRawToScoreByQuantile(rawValues: number[]): Map<number, number> {
+  const out = new Map<number, number>();
+  if (rawValues.length === 0) return out;
+  if (rawValues.length === 1) {
+    out.set(rawValues[0], 78);
+    return out;
+  }
+  const finite = rawValues.filter(v => Number.isFinite(v));
+  const min = Math.min(...finite);
+  const max = Math.max(...finite);
+  const range = max - min;
+  for (const v of rawValues) {
+    if (!Number.isFinite(v)) {
+      out.set(v, 60);
+      continue;
+    }
+    const normalized = range > 0 ? (v - min) / range : 0.5;
+    out.set(v, round(60 + normalized * 35, 4));
+  }
+  return out;
+}
+
+/**
+ * 批量查 DailyBar 表的指定 trade_date 的 close 价, 作为组合级信号的 entry_price.
+ * MFA/Ensemble 的目标股 (topN=30/5) 大概率落在 getContexts limit=180 之外,
+ * 所以必须独立查 close.
+ *
+ * 走 Stock.id JOIN: DailyBar 表用 stock_id 而非 symbol 作 FK.
+ *
+ * 缺失 (停牌 / 新股 / 数据未同步) 的 symbol 不会出现在返回 Map; caller 自行决定是否兜底.
+ */
+async function loadClosePricesForSymbols(
+  symbols: string[],
+  tradeDate: string
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  if (!symbols.length) return out;
+  try {
+    const stocks = await Stock.findAll({
+      where: { symbol: { [Op.in]: symbols } },
+      attributes: ['id', 'symbol'],
+    });
+    const symbolByStockId = new Map(stocks.map(s => [(s as any).id, (s as any).symbol]));
+    if (!symbolByStockId.size) return out;
+    const tradeDayStart = new Date(`${tradeDate}T00:00:00.000Z`);
+    const tradeDayEnd = new Date(`${tradeDate}T23:59:59.999Z`);
+    const bars = await DailyBar.findAll({
+      where: {
+        stock_id: { [Op.in]: Array.from(symbolByStockId.keys()) },
+        time: { [Op.between]: [tradeDayStart, tradeDayEnd] },
+      },
+      attributes: ['stock_id', 'close'],
+      raw: true,
+    });
+    for (const b of bars as any[]) {
+      const sym = symbolByStockId.get(b.stock_id);
+      const close = typeof b.close === 'string' ? Number(b.close) : b.close;
+      if (sym && Number.isFinite(close)) out.set(sym, close);
+    }
+  } catch (error: any) {
+    logger.warn(
+      `组合级信号 close 价批量查询失败 (trade_date=${tradeDate}): ${error?.message || error}`
+    );
+  }
+  return out;
+}
 
 function dateOnly(value: Date | string): string {
   const date = value instanceof Date ? value : new Date(value);
@@ -105,6 +191,15 @@ export class QuantSignalService {
           : trade_date >= dateOnly(new Date()),
     });
     const strategies = strategyRegistry.resolve(options.strategy_keys);
+    // Sprint 40 #2: 把 strategies 拆成 per-stock (evaluate loop) 与 composite-level
+    // (单独跑 generateSignals) 两组.组合级策略的 evaluate() 退化为 hold,放进 per-stock
+    // loop 会污染 signals 数组,所以这里就 skip 掉.
+    const perStockStrategies = strategies.filter(
+      s => !COMPOSITE_LEVEL_STRATEGY_KEYS.has(s.definition.strategy_key)
+    );
+    const compositeStrategies = strategies.filter(s =>
+      COMPOSITE_LEVEL_STRATEGY_KEYS.has(s.definition.strategy_key)
+    );
     const runtimePoliciesByStrategy = await quantStrategyService.getRuntimePoliciesByStrategy(
       strategies.map(strategy => strategy.definition.strategy_key)
     );
@@ -135,7 +230,7 @@ export class QuantSignalService {
           logger.warn(`量化运行策略市场环境读取失败 ${context.symbol}: ${error?.message || error}`);
         }
       }
-      for (const strategy of strategies) {
+      for (const strategy of perStockStrategies) {
         const strategyKey = strategy.definition.strategy_key;
         const runtimePolicy = runtimePoliciesByStrategy[strategyKey] || {};
         const executionPolicy = asPlainObject(runtimePolicy.execution_policy);
@@ -236,6 +331,38 @@ export class QuantSignalService {
         }
       }
     }
+    // Sprint 40 #2: 组合级策略适配 — 单独调它们的 generateSignals(date), 把
+    // target_portfolio + signals 转成 QuantSignalResult 数组, 拼回主 signals 数组,
+    // 一起进 sort/limit/persist/archive/paper trading 闸门.
+    //
+    // - score 用 batch min-max → [60, 95] 分位映射 (raw 同时存 raw_factors 供审计)
+    // - entry_price 走 DailyBar.close 兜底 (composite target 大概率不在 contexts 内)
+    // - 单策略失败 fail-isolate: 写 warn 不阻塞其他 composite 策略 + 不阻塞主 pipeline
+    const compositeSignals = await this.runCompositeStrategies({
+      strategies: compositeStrategies,
+      trade_date,
+      params_by_strategy: options.params_by_strategy,
+    });
+    if (compositeSignals.length) {
+      signals.push(...compositeSignals);
+      for (const cs of compositeSignals) {
+        if (!policyDiagnostics[cs.strategy_key]) {
+          policyDiagnostics[cs.strategy_key] = {
+            strategy_key: cs.strategy_key,
+            min_score: 0,
+            default_position_pct:
+              runtimePoliciesByStrategy[cs.strategy_key]?.execution_policy?.default_position_pct,
+            max_position_pct:
+              runtimePoliciesByStrategy[cs.strategy_key]?.execution_policy?.max_position_pct,
+            blocked_market_regimes: [],
+            preferred_market_regimes: [],
+            adjusted_signal_count: 0,
+            rejected_by_min_score_count: 0,
+            composite_level: true,
+          };
+        }
+      }
+    }
     signals.sort((a, b) => b.score - a.score);
     const limited = signals.slice(0, Math.min(Number(options.candidate_limit || 100), 1000));
     const contextBySymbol = new Map(contexts.map(context => [context.symbol, context]));
@@ -268,7 +395,7 @@ export class QuantSignalService {
         await QuantSignal.create({
           trade_date,
           symbol: signal.symbol,
-          name: signal.name,
+          name: signal.name || stock?.name,
           strategy_key: signal.strategy_key,
           signal: signal.signal,
           score: round(signal.score, 4),
@@ -343,6 +470,131 @@ export class QuantSignalService {
       by_strategy: grouped,
       signals: limited,
     };
+  }
+
+  /**
+   * Sprint 40 #2: 跑组合级策略 (multi_factor_alpha / ensemble_strategy) 的 generateSignals(),
+   * 把它们的 target_portfolio + per-symbol signals 转成 QuantSignalResult[] 拼回主流程.
+   *
+   * 关键设计:
+   *  - **strategy 级 fail-isolate**: 单个组合策略调用失败 (DB 缺数据 / 子策略全 throw)
+   *    只 warn 不阻塞其他 composite 策略和主 pipeline.
+   *  - **score 用 batch 分位映射**: raw composite/vote 因策略不同含义不同
+   *    (z-score 加权 vs 权重和), 缩放到 [60, 95] 让批内排序保留且能稳定进闸门.
+   *    raw 值同时存 raw_factors 供审计.
+   *  - **entry_price 走 DailyBar.close**: composite topN 大概率不在 contexts 内,
+   *    必须独立批量查 close. 查不到 (停牌/新股) entry_price = undefined,
+   *    paper trading 内部有 fallback.
+   *  - **signal='hold' 也保留**: HOLD 信号让 paper trading 知道 "这只票本期继续持有",
+   *    避免被认为已脱出策略而误平仓.
+   *
+   * 返回的 QuantSignalResult[] 已带 strategy_key, name 字段会在 caller 的 stock map 查询时填.
+   */
+  private async runCompositeStrategies(input: {
+    strategies: any[];
+    trade_date: string;
+    params_by_strategy?: Record<string, Record<string, any>>;
+  }): Promise<QuantSignalResult[]> {
+    const { strategies, trade_date, params_by_strategy } = input;
+    if (!strategies.length) return [];
+
+    const out: QuantSignalResult[] = [];
+    for (const strategy of strategies) {
+      const strategyKey = strategy.definition.strategy_key;
+      const startedAt = Date.now();
+      try {
+        const generateFn = (strategy as any).generateSignals;
+        if (typeof generateFn !== 'function') {
+          logger.warn(
+            `[QuantSignalService] composite strategy ${strategyKey} 缺 generateSignals(date) 方法,跳过`
+          );
+          continue;
+        }
+        const result = await generateFn.call(strategy, trade_date, {
+          params: params_by_strategy?.[strategyKey],
+          // previousSelection 暂传空数组 = 全部目标视为 BUY (首次开仓视角);
+          // 实际持仓增量由下游 paper trading 用 portfolio 现有持仓再算一遍 BUY/SELL/HOLD,
+          // 这里 strategy 内部 BUY/SELL/HOLD 仅影响信号 reason 文案,不影响下单 OR 不下单决策.
+          previousSelection: [],
+        });
+
+        const rawSignals: Array<{
+          stock_code: string;
+          signal: 'buy' | 'sell' | 'hold';
+          composite_score?: number;
+          vote_score?: number;
+          reason?: string;
+          contributing_substrategies?: string[];
+          factor_z_scores?: Record<string, number>;
+        }> = Array.isArray(result?.signals) ? result.signals : [];
+
+        if (!rawSignals.length) {
+          logger.info(
+            `[QuantSignalService] composite ${strategyKey} ${trade_date}: empty signals (耗时 ${
+              Date.now() - startedAt
+            }ms)`
+          );
+          continue;
+        }
+
+        // 收集 raw score (MFA = composite_score, Ensemble = vote_score), 算批内分位
+        const rawValues = rawSignals
+          .map(s => {
+            const v = Number.isFinite(s.composite_score) ? s.composite_score : s.vote_score;
+            return Number.isFinite(v) ? (v as number) : 0;
+          })
+          .filter(v => Number.isFinite(v));
+        const scoreMap = mapRawToScoreByQuantile(rawValues);
+
+        // 批量查 close 兜底 entry_price
+        const symbols = rawSignals.map(s => s.stock_code);
+        const closeMap = await loadClosePricesForSymbols(symbols, trade_date);
+
+        for (const s of rawSignals) {
+          const rawScoreCandidate = Number.isFinite(s.composite_score)
+            ? s.composite_score
+            : s.vote_score;
+          const rawScore = Number.isFinite(rawScoreCandidate) ? (rawScoreCandidate as number) : 0;
+          const mappedScore = scoreMap.get(rawScore) ?? 60;
+          const entryPrice = closeMap.get(s.stock_code);
+          out.push({
+            strategy_key: strategyKey,
+            symbol: s.stock_code,
+            signal: s.signal,
+            score: round(mappedScore, 4),
+            confidence: round(Math.max(50, Math.min(90, mappedScore - 5)), 4),
+            entry_price: entryPrice,
+            reasons: s.reason ? [s.reason] : [],
+            risk_flags: [],
+            factors: {
+              composite_level: true,
+              raw_composite_score: s.composite_score,
+              raw_vote_score: s.vote_score,
+              factor_z_scores: s.factor_z_scores,
+              contributing_substrategies: s.contributing_substrategies,
+              market_regime: (result as any)?.market_regime,
+              effective_weights: (result as any)?.effective_weights,
+              target_portfolio_size: Array.isArray((result as any)?.target_portfolio)
+                ? (result as any).target_portfolio.length
+                : null,
+            },
+          });
+        }
+
+        logger.info(
+          `[QuantSignalService] composite ${strategyKey} ${trade_date}: ${
+            rawSignals.length
+          } signals (耗时 ${Date.now() - startedAt}ms)`
+        );
+      } catch (error: any) {
+        logger.warn(
+          `[QuantSignalService] composite ${strategyKey} ${trade_date} 调用失败,降级跳过: ${
+            error?.message || error
+          }`
+        );
+      }
+    }
+    return out;
   }
 
   async listSignals(options: {

@@ -2117,7 +2117,16 @@ class PaperTradingAutomationService {
             target_price: execute_price,
             as_of_date: new Date().toISOString().slice(0, 10),
             market_snapshot: marketSnapshot,
-          }, { persist: true });
+          }, {
+            persist: true,
+            // Sprint 40 (优先级 #6): 开启 Almgren-Chriss 冲击成本模型.
+            // 让大单 target_qty / 5d ADV 比例高时, impact_bps_v2 会被算出来,
+            // composite_score 反映真实成交摩擦; 之前 v1 只看 qty/ADV ratio, 不考虑
+            // vol + spread 联合效应, 大单冲击被低估.
+            // 短小单 (qty <<< ADV) v1/v2 几乎相同, 不会改变 fillable 判定.
+            // 通过 env ALMGREN_CHRISS_ENABLED=false 可一键回退到 v1.
+            use_almgren_chriss: process.env.ALMGREN_CHRISS_ENABLED !== 'false',
+          });
           // Sprint 27: L5 执行可行性 — 任何 decision 都 reached;
           // blocked → markBlocked; risky/fillable → markContributed (评分确实计算了).
           const feasibilityDetail = {
@@ -2169,14 +2178,82 @@ class PaperTradingAutomationService {
             }
           }
 
+          // Sprint 40 (优先级 #5): 给 sizing 注入真实个股 20 日年化波动率 + 14 日 ATR.
+          // 之前 vol_annualized/atr 都传 undefined → vol_target/atr_based sizing 退化
+          // 到 base_position_pct, 名义上接了但实际等同 equal_pct.
+          //
+          // 数据源: DailyBar 近 30 根 (20 日 vol 用 19 个 daily return; 14 日 ATR 用 14 根).
+          // fail-open: query 失败 → undefined → sizing policy 自己 fallback (与改前同).
+          let vol_annualized: number | undefined;
+          let atr_value: number | undefined;
+          try {
+            const stockForVol = await Stock.findOne({
+              where: { symbol },
+              attributes: ['id'],
+            });
+            if (stockForVol) {
+              const recentBars = (await DailyBar.findAll({
+                where: { stock_id: (stockForVol as any).id },
+                attributes: ['high', 'low', 'close'],
+                order: [['time', 'DESC']],
+                limit: 30,
+                raw: true,
+              })) as any[];
+              if (recentBars.length >= 20) {
+                // bar 是 DESC, 翻转成时间正向算 return
+                recentBars.reverse();
+                // 1) 20 日年化波动率 — log return std × sqrt(252)
+                const closes = recentBars.map(b => Number(b.close)).filter(v => v > 0);
+                if (closes.length >= 20) {
+                  const logReturns: number[] = [];
+                  for (let i = 1; i < closes.length; i += 1) {
+                    if (closes[i - 1] > 0 && closes[i] > 0) {
+                      logReturns.push(Math.log(closes[i] / closes[i - 1]));
+                    }
+                  }
+                  const last20 = logReturns.slice(-19); // 19 个日收益 ≈ 20 日窗口
+                  if (last20.length >= 10) {
+                    const mean = last20.reduce((s, v) => s + v, 0) / last20.length;
+                    const variance =
+                      last20.reduce((s, v) => s + (v - mean) ** 2, 0) / (last20.length - 1);
+                    const daily_std = Math.sqrt(Math.max(variance, 0));
+                    vol_annualized = daily_std * Math.sqrt(252);
+                  }
+                }
+                // 2) 14 日 ATR (Wilder smoothed) — TR = max(high-low, |high-prev_close|, |low-prev_close|)
+                const tr: number[] = [];
+                for (let i = 1; i < recentBars.length; i += 1) {
+                  const h = Number(recentBars[i].high);
+                  const l = Number(recentBars[i].low);
+                  const pc = Number(recentBars[i - 1].close);
+                  if (Number.isFinite(h) && Number.isFinite(l) && Number.isFinite(pc) && pc > 0) {
+                    tr.push(Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc)));
+                  }
+                }
+                if (tr.length >= 14) {
+                  // Wilder 简化版: 头 14 用算术平均, 后续 EMA-style
+                  let atr = tr.slice(0, 14).reduce((s, v) => s + v, 0) / 14;
+                  for (let i = 14; i < tr.length; i += 1) {
+                    atr = (atr * 13 + tr[i]) / 14;
+                  }
+                  if (atr > 0) atr_value = atr;
+                }
+              }
+            }
+          } catch (volErr: any) {
+            logger.warn(
+              `[sizing] vol/atr 计算失败 symbol=${symbol} (fail-open, 退到 base): ${volErr?.message || volErr}`
+            );
+          }
+
           shadowSizingDecision = decideSizing(sizingPolicy, {
             equity: totalValue,
             available_cash: availableCash,
             current_price: execute_price,
-            // vol/atr 暂未注入 (待 future story 接 RealtimeQuoteService 计算)
-            // 缺失时 policy 会自动 fallback 到 base_position_pct
-            vol_annualized: undefined,
-            atr: undefined,
+            // Sprint 40: 真实 20 日年化波动率 + 14 日 ATR (Wilder).
+            // 缺失时 (新股 / 数据少 / query fail) policy 仍自动 fallback 到 base_position_pct.
+            vol_annualized,
+            atr: atr_value,
             max_position_pct: strategyPositionCap,
             min_trade_amount: min_trade_amount,
             conviction_multiplier: 1.0,
