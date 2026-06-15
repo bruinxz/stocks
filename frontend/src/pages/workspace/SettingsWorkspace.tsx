@@ -38,9 +38,11 @@ import {
   MailOutlined,
   MessageOutlined,
   CalculatorOutlined,
+  ApartmentOutlined,
 } from '@ant-design/icons';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
 import SizingPolicyTab from './SettingsWorkspace.SizingPolicyTab';
+import PortfolioConstructionTab from './SettingsWorkspace.PortfolioConstructionTab';
 import {
   loadNotificationChannels,
   updateNotificationChannels,
@@ -114,6 +116,7 @@ const SettingsWorkspace: React.FC = () => {
     { key: 'push-channels', label: '推送渠道', icon: <NotificationOutlined /> },
     { key: 'notifications', label: '通知设置', icon: <BellOutlined /> },
     { key: 'sizing', label: '仓位策略', icon: <CalculatorOutlined /> },
+    { key: 'portfolio-construction', label: '组合构建', icon: <ApartmentOutlined /> },
     { key: 'users', label: '用户管理', icon: <TeamOutlined /> },
   ];
   const [activeKey, setActiveKey] = useState('push-channels');
@@ -1613,6 +1616,8 @@ const SettingsWorkspace: React.FC = () => {
         ? renderPushChannels()
         : activeKey === 'sizing'
         ? <SizingPolicyTab />
+        : activeKey === 'portfolio-construction'
+        ? <PortfolioConstructionTab />
         : renderPlaceholder()}
       <DigestPreviewModal
         open={previewOpen}

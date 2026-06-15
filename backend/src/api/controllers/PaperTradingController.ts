@@ -817,8 +817,9 @@ export class PaperTradingController {
 }
 
 // ---------- ActivationSummary 纯函数 helpers (controller scope, 可单测) ----------
+// Sprint 32: 改 export 让单测可独立调用 (controller methods 不导出, 但 helper 是纯函数)
 
-const ACTIVATION_LAYERS = [
+export const ACTIVATION_LAYERS = [
   'L1_data',
   'L2_signal',
   'L3_meta',
@@ -828,7 +829,7 @@ const ACTIVATION_LAYERS = [
   'L7_governor',
   'L8_reflection',
 ] as const;
-type ActivationLayerKey = typeof ACTIVATION_LAYERS[number];
+export type ActivationLayerKey = typeof ACTIVATION_LAYERS[number];
 
 interface ActivationLayerStat {
   layer: ActivationLayerKey;
@@ -853,6 +854,8 @@ interface ActivationRecentTrade {
   blocked_at: string | null;
   /** 8 个 layer 的简化状态: ✓ reached / ★ contributed / ✗ blocked / — never */
   layer_marks: Record<ActivationLayerKey, '✓' | '★' | '✗' | '—'>;
+  /** Sprint 31: 每层的 detail (来自 activation.<layer>.detail) — 前端 tooltip 展示真实特征 */
+  layer_details: Record<ActivationLayerKey, Record<string, any> | null>;
   reason_text: string | null;
 }
 
@@ -872,7 +875,7 @@ interface ActivationSummary {
   recent_trades: ActivationRecentTrade[];
 }
 
-function buildEmptyActivationSummary(days: number): ActivationSummary {
+export function buildEmptyActivationSummary(days: number): ActivationSummary {
   return {
     window_days: days,
     generated_at: new Date().toISOString(),
@@ -896,7 +899,7 @@ function buildEmptyActivationSummary(days: number): ActivationSummary {
  * 把一个 order_intent.metadata.l8_activation 压成 layer_marks (8 个图标),
  * 用于 recent_trades 行渲染. ★ 优先级 > ✓ > ✗ > —
  */
-function buildLayerMarks(activation: any): Record<ActivationLayerKey, '✓' | '★' | '✗' | '—'> {
+export function buildLayerMarks(activation: any): Record<ActivationLayerKey, '✓' | '★' | '✗' | '—'> {
   const marks: Record<string, '✓' | '★' | '✗' | '—'> = {};
   for (const layer of ACTIVATION_LAYERS) {
     const snap = activation?.[layer];
@@ -913,10 +916,40 @@ function buildLayerMarks(activation: any): Record<ActivationLayerKey, '✓' | '�
 }
 
 /**
+ * Sprint 31: 抽 8 层 detail 给前端 tooltip — null 表示该层未参与或无 detail.
+ * 字段截短 80 字符防止巨型 metadata 撑爆 payload (主要为 reasons 数组场景).
+ */
+export function buildLayerDetails(
+  activation: any
+): Record<ActivationLayerKey, Record<string, any> | null> {
+  const out: Record<string, Record<string, any> | null> = {};
+  for (const layer of ACTIVATION_LAYERS) {
+    const snap = activation?.[layer];
+    if (!snap || typeof snap !== 'object' || !snap.detail) {
+      out[layer] = null;
+      continue;
+    }
+    // 浅拷 + 字符串截断 80 字符防巨型 payload
+    const safeDetail: Record<string, any> = {};
+    for (const [k, v] of Object.entries(snap.detail)) {
+      if (typeof v === 'string' && v.length > 80) {
+        safeDetail[k] = v.slice(0, 80) + '...';
+      } else if (Array.isArray(v) && v.length > 5) {
+        safeDetail[k] = [...v.slice(0, 5), `...${v.length - 5} more`];
+      } else {
+        safeDetail[k] = v;
+      }
+    }
+    out[layer] = safeDetail;
+  }
+  return out as Record<ActivationLayerKey, Record<string, any> | null>;
+}
+
+/**
  * 核心聚合函数 — 纯函数; intents 来自 PaperTradingOrderIntent.findAll(),
  * 但仅依赖 plain object 字段, 可在测试里传 mock 数组.
  */
-function aggregateActivationSummary(intents: any[], days: number): ActivationSummary {
+export function aggregateActivationSummary(intents: any[], days: number): ActivationSummary {
   const layerStats: Record<ActivationLayerKey, { reached: number; blocked: number; contributed: number }> = {
     L1_data: { reached: 0, blocked: 0, contributed: 0 },
     L2_signal: { reached: 0, blocked: 0, contributed: 0 },
@@ -1002,6 +1035,7 @@ function aggregateActivationSummary(intents: any[], days: number): ActivationSum
       reached_layer: activation.reached_layer || null,
       blocked_at: activation.blocked_at || null,
       layer_marks: buildLayerMarks(activation),
+      layer_details: buildLayerDetails(activation),
       reason_text: intent.reason_text ? String(intent.reason_text).slice(0, 200) : null,
     };
   });

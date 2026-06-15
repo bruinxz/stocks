@@ -80,6 +80,8 @@ interface RecentTrade {
   reached_layer: string | null;
   blocked_at: string | null;
   layer_marks: Record<LayerKey, '✓' | '★' | '✗' | '—'>;
+  /** Sprint 31: 每层真实 detail (来自 activation.<layer>.detail) — chip hover tooltip 用 */
+  layer_details?: Record<LayerKey, Record<string, any> | null>;
   reason_text: string | null;
 }
 
@@ -313,8 +315,33 @@ const ActivationDashboard: React.FC = () => {
                   : m === '✗'
                   ? 'var(--danger)'
                   : 'var(--text-muted)';
+              // Sprint 31: tooltip 展示真实 detail (features_used / snapshot_source / multiplier 等)
+              const detail = row.layer_details?.[layer];
+              const tooltipBody = (
+                <div style={{ minWidth: 200, maxWidth: 360 }}>
+                  <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                    {LAYER_LABEL[layer]}: {markMeaning(m)}
+                  </div>
+                  {detail && Object.keys(detail).length > 0 ? (
+                    <div style={{ marginTop: 4, fontSize: 11 }}>
+                      {Object.entries(detail).map(([k, v]) => (
+                        <div key={k} style={{ marginBottom: 2 }}>
+                          <span style={{ color: 'rgba(255,255,255,0.6)' }}>{k}:</span>{' '}
+                          <span style={{ fontFamily: 'monospace' }}>
+                            {formatDetailValue(v)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 11, opacity: 0.7, marginTop: 4 }}>
+                      (此层无 detail 数据)
+                    </div>
+                  )}
+                </div>
+              );
               return (
-                <Tooltip key={layer} title={`${LAYER_LABEL[layer]}: ${markMeaning(m)}`}>
+                <Tooltip key={layer} title={tooltipBody}>
                   <span
                     style={{
                       display: 'inline-flex',
@@ -598,6 +625,29 @@ function markMeaning(m: '✓' | '★' | '✗' | '—'): string {
     default:
       return '未参与 (此信号未走到这层)';
   }
+}
+
+/**
+ * Sprint 31: 把 detail 字段值格式化成可读字符串.
+ * - number: 6 位小数截断 + 千分位
+ * - object: JSON stringify 但取出 嵌套的 1 级 (如 features_used.breadth_score)
+ * - array: 用 , 拼
+ */
+function formatDetailValue(v: any): string {
+  if (v === null || v === undefined) return '—';
+  if (typeof v === 'number') {
+    if (Number.isInteger(v)) return v.toLocaleString();
+    return v.toFixed(Math.min(4, 6));
+  }
+  if (typeof v === 'boolean') return v ? 'true' : 'false';
+  if (Array.isArray(v)) return v.length === 0 ? '[]' : v.map(formatDetailValue).join(', ');
+  if (typeof v === 'object') {
+    const entries = Object.entries(v).slice(0, 4);
+    return entries
+      .map(([k, vv]) => `${k}=${formatDetailValue(vv)}`)
+      .join(' / ');
+  }
+  return String(v);
 }
 
 export default ActivationDashboard;
