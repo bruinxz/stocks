@@ -459,10 +459,16 @@ export const PRODUCTION_EXECUTION_FEASIBILITY_DATA_SOURCE: ExecutionFeasibilityD
       const stock = await Stock.findOne({ where: { symbol: normalized } });
       if (!stock) return null;
 
+      // Sprint 36 fix: DailyBar 字段名是 `time` (DateTime), 不是 `trade_date`.
+      // 之前用 `trade_date` 查询抛 'column DailyBar.trade_date does not exist',
+      // try/catch 吞错返回 null → service 报 no_market_data 拒单.
+      // 5 个真有 daily_bar 的 symbol (sh.600101/600236/600449/600350/600018)
+      // 在 dashboard 看到的 'no_market' 拦截都是这个 bug 导致的.
+      //
       // 近 6 个交易日（含当日；avg_volume_5d 用前 5 个）
       const bars = await DailyBar.findAll({
-        where: { stock_id: stock.id, trade_date: { [Op.lte]: as_of_date } },
-        order: [['trade_date', 'DESC']],
+        where: { stock_id: stock.id, time: { [Op.lte]: as_of_date } },
+        order: [['time', 'DESC']],
         limit: 6,
       });
       if (bars.length === 0) return null;
