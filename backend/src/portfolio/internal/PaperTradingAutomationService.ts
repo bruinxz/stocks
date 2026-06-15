@@ -44,6 +44,13 @@ import {
   setOutcome,
   type L8ActivationRecord,
 } from './l8-activation';
+import {
+  buildPortfolioConstruction,
+  normalizePortfolioConstructionConfig,
+  DEFAULT_PORTFOLIO_CONSTRUCTION_CONFIG,
+  type AdapterResult as PortfolioConstructionAdapterResult,
+  type AdapterCandidate as PortfolioConstructionAdapterCandidate,
+} from './PortfolioConstructionAdapter';
 
 export const DEFAULT_PAPER_TRADING_INITIAL_CAPITAL = 200000;
 
@@ -1342,6 +1349,59 @@ class PaperTradingAutomationService {
       ? signals.filter(signal => signalMatchesStrategyKeys(signal, strategyFilterKeys))
       : signals;
 
+    // Sprint 29: PortfolioConstruction shadow/hard mode 接入 (短板 #1).
+    // 收集所有 candidate signal 一次性 build 组合权重, 然后 loop 内 per-signal
+    // 拿到自己的目标 weight. mode='off' 时直接 null (零行为变化).
+    let portfolioConstructionResult: PortfolioConstructionAdapterResult | null = null;
+    try {
+      const pcConfig = await this.loadUserPortfolioConstructionConfig(portfolio.user_id);
+      if (pcConfig.mode !== 'off' && candidateSignals.length > 0) {
+        const pcCandidates: PortfolioConstructionAdapterCandidate[] = await Promise.all(
+          candidateSignals.map(async sig => {
+            const md = asPlainObject((sig as any).metadata);
+            // 取 stock.industry — best-effort, 失败 fallback null (service 仍能跑)
+            let industry: string | null = null;
+            try {
+              const stk = await Stock.findOne({
+                where: { symbol: normalizeSymbol((sig as any).symbol) },
+                attributes: ['industry'],
+              });
+              industry = (stk as any)?.industry || null;
+            } catch (_e) {
+              // ignore
+            }
+            return {
+              signal_id: (sig as any).id,
+              symbol: (sig as any).symbol,
+              alpha_score: Number(
+                (sig as any).confidence_score ?? (sig as any).final_score ?? md.alpha_score ?? null
+              ),
+              industry,
+            };
+          })
+        );
+        portfolioConstructionResult = await buildPortfolioConstruction({
+          user_id: portfolio.user_id,
+          as_of_date: new Date().toISOString().slice(0, 10),
+          candidates: pcCandidates,
+          config: pcConfig,
+        });
+        if (portfolioConstructionResult) {
+          logger.info(
+            `[portfolio-construction] user=${portfolio.user_id} mode=${pcConfig.mode} ` +
+              `method=${pcConfig.method} candidates=${portfolioConstructionResult.used_candidates}/${candidateSignals.length} ` +
+              `weights_assigned=${portfolioConstructionResult.weights_by_signal_id.size}` +
+              (portfolioConstructionResult.skipped_reason ? ` skipped=${portfolioConstructionResult.skipped_reason}` : '')
+          );
+        }
+      }
+    } catch (pcErr: any) {
+      // fail-open — buy-decision loop 走原 per-signal 流程
+      logger.warn(
+        `[portfolio-construction] adapter failed (fail-open): ${pcErr?.message || pcErr}`
+      );
+    }
+
     const trades: PaperTradingAutoTradeItem[] = [];
     const skipped_items: PaperTradingAutoTradeItem[] = [];
     const seenSymbols = new Set<string>();
@@ -1899,6 +1959,61 @@ class PaperTradingAutomationService {
       let effectiveTargetPct = gatedSuggestedPct;
       let minLotSample = false;
       let minLotSampleReason = '';
+
+      // Sprint 29: L4 组合构建接入 (短板 #1).
+      // 如果 buy-decision loop 入口已 build 出 portfolio weights, 此 signal
+      // 拿到自己的 weight × 100 = targetPct%; shadow mode 只 log + activation
+      // mark, hard mode 替换 effectiveTargetPct (这才是真正的"候选池 → 组合权重
+      // → 调仓订单"形态).
+      if (portfolioConstructionResult && portfolioConstructionResult.mode !== 'off') {
+        const pcWeight = portfolioConstructionResult.weights_by_signal_id.get(
+          (signal as any).id
+        );
+        if (pcWeight !== undefined && Number.isFinite(pcWeight) && pcWeight > 0) {
+          const pcTargetPct = pcWeight * 100;
+          const pcDelta = pcTargetPct - effectiveTargetPct;
+          const pcDetail = {
+            mode: portfolioConstructionResult.mode,
+            method: portfolioConstructionResult.method,
+            weight: roundNumber(pcWeight, 6),
+            target_pct: roundNumber(pcTargetPct, 4),
+            per_signal_target_before_pc: roundNumber(effectiveTargetPct, 4),
+            delta: roundNumber(pcDelta, 4),
+            applied: portfolioConstructionResult.mode === 'hard',
+          };
+          if (portfolioConstructionResult.mode === 'hard') {
+            // Hard mode: 真正替换 effectiveTargetPct
+            logger.info(
+              `[portfolio-construction-HARD] user=${portfolio.user_id} symbol=${signal.symbol} ` +
+                `${roundNumber(effectiveTargetPct, 2)}% → ${roundNumber(pcTargetPct, 2)}% (weight ${(pcWeight * 100).toFixed(2)}%)`
+            );
+            effectiveTargetPct = pcTargetPct;
+            markContributed(activation, 'L4_construction', pcDetail);
+          } else {
+            // Shadow mode: 只 log + activation mark, 不动 effectiveTargetPct
+            logger.info(
+              `[portfolio-construction-SHADOW] user=${portfolio.user_id} symbol=${signal.symbol} ` +
+                `per_signal=${roundNumber(effectiveTargetPct, 2)}% pc_suggests=${roundNumber(pcTargetPct, 2)}% delta=${roundNumber(pcDelta, 2)}%`
+            );
+            markReached(activation, 'L4_construction', pcDetail);
+          }
+        } else if (portfolioConstructionResult.weights_by_signal_id.size > 0) {
+          // 这个 signal 不在 PC 权重表里 → service 给了 0 权重, hard mode 跳过
+          if (portfolioConstructionResult.mode === 'hard') {
+            markBlocked(activation, 'L4_construction', {
+              mode: 'hard',
+              reason: 'pc_weight_zero_or_missing',
+            });
+            await skip('PortfolioConstruction 输出 0 权重 (低于 min_weight 或求解器丢弃)');
+            continue;
+          }
+          markReached(activation, 'L4_construction', {
+            mode: 'shadow',
+            reason: 'pc_weight_zero_or_missing',
+          });
+        }
+      }
+
       if (
         (forcedMinLotEnabled || samplingMinLotEnabled) &&
         gatedSuggestedPct > 0 &&
@@ -5789,6 +5904,27 @@ class PaperTradingAutomationService {
     } catch (err: any) {
       logger.warn(`loadUserSizingPolicy user=${userId} failed: ${err?.message || err}`);
       return { ...DEFAULT_SIZING_POLICY };
+    }
+  }
+
+  /**
+   * Sprint 29: 加载用户 portfolio construction 配置 (默认 mode='off').
+   * 存于 User.risk_config.portfolio_construction JSONB.
+   */
+  private async loadUserPortfolioConstructionConfig(userId: number) {
+    if (!userId) return { ...DEFAULT_PORTFOLIO_CONSTRUCTION_CONFIG };
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { User } = require('../../models/User');
+      const user = await User.findByPk(userId);
+      if (!user) return { ...DEFAULT_PORTFOLIO_CONSTRUCTION_CONFIG };
+      const raw = (user.risk_config || {})['portfolio_construction'];
+      return normalizePortfolioConstructionConfig(raw);
+    } catch (err: any) {
+      logger.warn(
+        `loadUserPortfolioConstructionConfig user=${userId} failed: ${err?.message || err}`
+      );
+      return { ...DEFAULT_PORTFOLIO_CONSTRUCTION_CONFIG };
     }
   }
 }

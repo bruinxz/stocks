@@ -415,6 +415,33 @@ router.get(
 
 /**
  * @openapi
+ * /api/paper-trading/portfolio-construction-config:
+ *   get:
+ *     tags: [模拟交易 PaperTrading]
+ *     summary: 读取 PortfolioConstruction 配置 (Sprint 29)
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: 配置 + 默认值 }
+ *   put:
+ *     tags: [模拟交易 PaperTrading]
+ *     summary: 更新 PortfolioConstruction 模式 (Sprint 29; off/shadow/hard)
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: 已保存 }
+ */
+router.get(
+  '/portfolio-construction-config',
+  authController.authenticate,
+  paperTradingController.getPortfolioConstructionConfig
+);
+router.put(
+  '/portfolio-construction-config',
+  authController.authenticate,
+  paperTradingController.updatePortfolioConstructionConfig
+);
+
+/**
+ * @openapi
  * /api/paper-trading/attribution/report:
  *   post:
  *     tags: [模拟交易 PaperTrading]

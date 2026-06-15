@@ -669,6 +669,77 @@ export class PaperTradingController {
   };
 
   /**
+   * Sprint 29: 读取当前 user 的 PortfolioConstruction 配置 (default off).
+   *
+   * GET /api/paper-trading/portfolio-construction-config
+   */
+  getPortfolioConstructionConfig = async (req: Request, res: Response, _next: NextFunction) => {
+    try {
+      const user = (req as any).user;
+      if (!user?.id) return res.status(401).json({ success: false, message: '未登录' });
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { User } = require('../../models/User');
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const {
+        normalizePortfolioConstructionConfig,
+        DEFAULT_PORTFOLIO_CONSTRUCTION_CONFIG,
+      } = require('../../portfolio/internal/PortfolioConstructionAdapter');
+      const userRow = await User.findByPk(user.id);
+      if (!userRow) return res.status(404).json({ success: false, message: 'user 不存在' });
+      const raw = (userRow.risk_config || {})['portfolio_construction'];
+      const normalized = normalizePortfolioConstructionConfig(raw);
+      return res.json({
+        success: true,
+        data: {
+          config: normalized,
+          is_default: !raw,
+          default: DEFAULT_PORTFOLIO_CONSTRUCTION_CONFIG,
+        },
+      });
+    } catch (error: any) {
+      sendError(res, error, '读取 PortfolioConstruction 配置失败');
+    }
+  };
+
+  /**
+   * Sprint 29: 更新 user 的 PortfolioConstruction 配置.
+   *
+   * PUT /api/paper-trading/portfolio-construction-config
+   *   body: { mode, method, lookback_days, max_candidates, max_weight, max_industry_weight }
+   *   字段都 lenient — invalid 会被 normalize 退到 default.
+   */
+  updatePortfolioConstructionConfig = async (req: Request, res: Response, _next: NextFunction) => {
+    try {
+      const user = (req as any).user;
+      if (!user?.id) return res.status(401).json({ success: false, message: '未登录' });
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { User } = require('../../models/User');
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const {
+        normalizePortfolioConstructionConfig,
+      } = require('../../portfolio/internal/PortfolioConstructionAdapter');
+      const userRow = await User.findByPk(user.id);
+      if (!userRow) return res.status(404).json({ success: false, message: 'user 不存在' });
+      const normalized = normalizePortfolioConstructionConfig(req.body || {});
+      const nextRiskConfig = {
+        ...(userRow.risk_config || {}),
+        portfolio_construction: normalized,
+      };
+      userRow.risk_config = nextRiskConfig;
+      // US-017 lesson: JSONB 改动必须显式 changed()
+      userRow.changed('risk_config', true);
+      await userRow.save();
+      return res.json({
+        success: true,
+        data: { config: normalized },
+        message: `PortfolioConstruction 模式已设为 ${normalized.mode}`,
+      });
+    } catch (error: any) {
+      sendError(res, error, '更新 PortfolioConstruction 配置失败');
+    }
+  };
+
+  /**
    * Sprint 27: L1-L8 Activation Summary
    *
    * GET /api/paper-trading/activation-summary
