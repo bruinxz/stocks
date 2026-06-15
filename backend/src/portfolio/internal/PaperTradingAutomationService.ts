@@ -36,6 +36,14 @@ import { strategyKellyStatsService } from '../../services/StrategyKellyStatsServ
 import { equityCurveGovernorService } from '../../services/governor/EquityCurveGovernorService';
 import { metaLabelService } from '../../services/meta/MetaLabelService';
 import { executionFeasibilityService } from '../../services/execution/ExecutionFeasibilityService';
+import {
+  newActivation,
+  markReached,
+  markBlocked,
+  markContributed,
+  setOutcome,
+  type L8ActivationRecord,
+} from './l8-activation';
 
 export const DEFAULT_PAPER_TRADING_INITIAL_CAPITAL = 200000;
 
@@ -1438,6 +1446,9 @@ class PaperTradingAutomationService {
     }
 
     for (const signal of candidateSignals) {
+      // Sprint 27: per-signal L1-L8 Activation Record — 沿决策流逐 layer mark,
+      // 最终注入 paper_trading_order_intents.metadata.l8_activation 用于 ActivationDashboard.
+      const activation: L8ActivationRecord = newActivation();
       const itemBase = this.buildTradeItemBase(signal);
       const symbol = normalizeSymbol(signal.symbol);
       const metadata = asPlainObject(signal.metadata);
@@ -1473,6 +1484,24 @@ class PaperTradingAutomationService {
         : Array.isArray(dataQuality.warnings)
         ? dataQuality.warnings
         : [];
+
+      // L1 数据 — 此刻 dataQualityBucket / score 已就位即视为"走到了 L1 数据层";
+      // 数据质量本就是 L1 接入的副产品 (DataHealthDashboard 同源).
+      markReached(activation, 'L1_data', {
+        quality_bucket: dataQualityBucket,
+        quality_score: Number.isFinite(dataQualityScore) ? dataQualityScore : null,
+        issues_count: dataQualityIssues.length,
+      });
+      // L2 信号 — 走到 loop 即意味着 L2 已产出 signal (signal.id / strategy_key / score);
+      // 区别于"L2 没出信号"那种情况 (那种情况根本不进 candidateSignals).
+      markReached(activation, 'L2_signal', {
+        strategy_key:
+          (signal as any)?.metadata?.strategy_key ||
+          (signal as any)?.metadata?.signal_metadata?.strategy_key ||
+          'unknown',
+        signal_score: Number((signal as any).confidence_score ?? (signal as any).final_score ?? null),
+        signal_source: (signal as any).source_type || 'unknown',
+      });
 
       const recordBuyIntent = async (
         status: OrderIntentStatus,
@@ -1513,7 +1542,11 @@ class PaperTradingAutomationService {
 
       const skip = async (reason: string, extra: Partial<RecordOrderIntentParams> = {}) => {
         skipped_items.push({ ...itemBase, status: 'skipped', reason });
-        await recordBuyIntent(reason.includes('旧信号') ? 'skipped' : 'rejected', reason, extra);
+        const status: OrderIntentStatus = reason.includes('旧信号') ? 'skipped' : 'rejected';
+        // Sprint 27: 自动注入 activation 到 metadata; outcome 镜像 intent status.
+        setOutcome(activation, status === 'rejected' ? 'rejected' : 'skipped');
+        const mergedMeta = { ...(extra.metadata || {}), l8_activation: activation };
+        await recordBuyIntent(status, reason, { ...extra, metadata: mergedMeta });
       };
 
       if (trades.length >= targetTradeCount) {
@@ -1694,13 +1727,25 @@ class PaperTradingAutomationService {
           },
           { persist: true }
         );
+        // Sprint 27: L3 元决策 - MetaLabel 已运行;
+        // bet → contributed (过了二层模型置信度门槛), skip → blocked.
+        const metaDetail = {
+          meta_label_decision_id: (metaDecision as any).persisted_id || null,
+          confidence: metaDecision.confidence,
+          decision: metaDecision.decision,
+          model_version: metaDecision.model_version,
+          threshold: metaDecision.threshold,
+        };
         if (metaDecision.decision === 'skip') {
+          markBlocked(activation, 'L3_meta', metaDetail);
           await skip(
             `MetaLabel 决定不下注: confidence=${metaDecision.confidence.toFixed(3)} < threshold=${metaDecision.threshold} (${metaDecision.model_version})`
           );
           continue;
         }
+        markContributed(activation, 'L3_meta', metaDetail);
       } catch (err: any) {
+        // fail-open: MetaLabel 失败仅 warn; activation 不 mark (保持 reached=false 以区别"真过了"和"出错跳过").
         logger.warn(`[meta-label] gate failed (fail-open): ${err?.message || err}`);
       }
 
@@ -1863,10 +1908,20 @@ class PaperTradingAutomationService {
             target_price: execute_price,
             as_of_date: new Date().toISOString().slice(0, 10),
           }, { persist: true });
+          // Sprint 27: L5 执行可行性 — 任何 decision 都 reached;
+          // blocked → markBlocked; risky/fillable → markContributed (评分确实计算了).
+          const feasibilityDetail = {
+            feasibility_record_id: (feasibility as any).persisted_id || null,
+            composite_score: feasibility.composite_score,
+            decision: feasibility.decision,
+            block_reasons: feasibility.block_reasons,
+          };
           if (feasibility.decision === 'blocked') {
+            markBlocked(activation, 'L5_feasibility', feasibilityDetail);
             await skip(`ExecutionFeasibility 拒绝下单: ${feasibility.summary} (block_reasons: ${feasibility.block_reasons.join(',')})`);
             continue;
           }
+          markContributed(activation, 'L5_feasibility', feasibilityDetail);
           if (feasibility.decision === 'risky') {
             logger.warn(
               `[execution-feasibility] risky 但继续: user=${portfolio.user_id} symbol=${signal.symbol} ` +
@@ -1928,8 +1983,9 @@ class PaperTradingAutomationService {
           );
 
           // 持久化审计行 (用于 A/B 报告 + 调试)
+          let sizingAuditRowId: number | null = null;
           try {
-            await SizingDecisionAudit.create({
+            const auditRow = await SizingDecisionAudit.create({
               portfolio_id: portfolio.id,
               user_id: portfolio.user_id,
               signal_id: signal.id,
@@ -1962,9 +2018,29 @@ class PaperTradingAutomationService {
                 },
               },
             });
+            sizingAuditRowId = (auditRow as any)?.id || null;
           } catch (auditErr: any) {
             // 审计失败不阻塞主流程
             logger.warn(`[sizing-audit] persist failed: ${auditErr?.message || auditErr}`);
+          }
+          // Sprint 27: L3 sizing — hard_cutover 且 delta != 0 才算"真改了仓位";
+          // shadow 模式 / delta == 0 视为 reached 但 not contributed.
+          const sizingDelta = shadowSizingDecision.position_pct - effectiveTargetPct;
+          const sizingChanged = sizingPolicy.hard_cutover_enabled && Math.abs(sizingDelta) > 0.01;
+          const sizingDetail = {
+            sizing: {
+              audit_id: sizingAuditRowId,
+              method: sizingPolicy.method,
+              hard_cutover: sizingPolicy.hard_cutover_enabled,
+              actual_pct: roundNumber(effectiveTargetPct, 4),
+              decision_pct: roundNumber(shadowSizingDecision.position_pct, 4),
+              delta: roundNumber(sizingDelta, 4),
+            },
+          };
+          if (sizingChanged) {
+            markContributed(activation, 'L3_meta', sizingDetail);
+          } else {
+            markReached(activation, 'L3_meta', sizingDetail);
           }
 
           // 硬切换：真正替换 effectiveTargetPct
@@ -1973,6 +2049,18 @@ class PaperTradingAutomationService {
             // Sprint 3: 应用 EquityCurveGovernor multiplier
             try {
               const govMult = await equityCurveGovernorService.getCurrentMultiplier(portfolio.id);
+              // Sprint 27: L7 治理 — getCurrentMultiplier 走通即视为 reached;
+              // multiplier < 1.0 = 真改了仓位 → contributed.
+              const govDetail = {
+                multiplier: roundNumber(govMult, 4),
+                before_pct: roundNumber(newPct, 4),
+                after_pct: roundNumber(newPct * (govMult >= 0 ? govMult : 1.0), 4),
+              };
+              if (govMult < 1.0 && govMult >= 0) {
+                markContributed(activation, 'L7_governor', govDetail);
+              } else {
+                markReached(activation, 'L7_governor', govDetail);
+              }
               if (govMult < 1.0 && govMult >= 0) {
                 const beforeGov = newPct;
                 newPct = newPct * govMult;
@@ -1988,6 +2076,7 @@ class PaperTradingAutomationService {
                 }
               }
             } catch (err: any) {
+              // fail-open: governor 失败仅 warn; 不 mark activation (保留 reached=false 区别 success).
               logger.warn(`[governor] multiplier fetch failed: ${err?.message || err}`);
             }
             logger.info(
@@ -2022,10 +2111,21 @@ class PaperTradingAutomationService {
         strategy_keys: strategyKeysForBudget,
         strategy_allocation_pct: strategyAllocationPct,
       });
+      // Sprint 27: L6 风控 — tradeRisk 评估即视为 reached;
+      // !allowed → markBlocked, allowed → markReached (no contributed:
+      // 风控通过 = 没改下游, 改的是"是否放行"的二元判定).
       if (!tradeRisk.allowed) {
+        markBlocked(activation, 'L6_risk', {
+          allowed: false,
+          reasons: tradeRisk.reasons,
+        });
         await skip(tradeRisk.reasons.join('；'));
         continue;
       }
+      markReached(activation, 'L6_risk', {
+        allowed: true,
+        reasons: tradeRisk.reasons,
+      });
       const entryRiskGuardDecision = this.buildEntryRiskGuardDecision({
         trade_risk: tradeRisk,
         guard: entryRiskGuard,
@@ -2304,6 +2404,9 @@ class PaperTradingAutomationService {
         min_lot_sample_reason: minLotSampleReason || undefined,
         low_quality_forced_sample: allowLowQualityForcedSample || undefined,
         low_quality_forced_sample_reason: lowQualityForcedSampleReason || undefined,
+        // Sprint 27: L1-L8 激活记录 — ActivationDashboard 后端聚合用此字段.
+        // 注意: skip() 路径已自动注入 activation 到 metadata, 此处为 executed/planned 路径.
+        l8_activation: activation,
       };
 
       // US-083: signalDryRun replaces dry_run so per-strategy dry-run bypasses
@@ -2323,6 +2426,16 @@ class PaperTradingAutomationService {
           total_cost,
         });
         tradePayload.trade_id = trade.id;
+        // Sprint 27: L8 复盘 — 真下单完成即视为走到 L8 (entry_trade_id 已落地,
+        // 后续 outcome / DQS / wizard hook 都将基于此运行).
+        markReached(activation, 'L8_reflection', {
+          trade_id: trade.id,
+          quantity,
+          execute_price,
+          amount,
+          total_cost,
+        });
+        setOutcome(activation, 'executed');
 
         // ========== 即时飞书推送：自主买入通知 ==========
         try {

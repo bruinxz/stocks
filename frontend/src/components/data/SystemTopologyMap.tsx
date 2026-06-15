@@ -1,16 +1,18 @@
 /**
- * SystemTopologyMap — 系统架构拓扑图 (横向 Pipeline 视觉)
+ * SystemTopologyMap — 系统架构拓扑图 (Sprint 27: 纵向 8 行)
  *
  * 设计原则:
  * - Hero banner 横跨顶部，承担"系统总览 + 汇总状态"
- * - 8 列横向 stage (L1 数据 - L2 信号 - L3 元决策 - L4 组合 - L5 执行 - L6 风控 - L7 治理 - L8 复盘)
- *   清晰单向流，对齐 Sprint 24 后端 8 层纵向架构 (backend/src/layers)
+ * - 8 行纵向 stage (L1 数据 → L2 信号 → L3 元决策 → L4 组合 →
+ *   L5 执行 → L6 风控 → L7 治理 → L8 复盘)
+ *   每行 = 一层, 内部用 grid auto-fit minmax(220px) 横排节点 (响应式 + 自动换行)
+ *   对齐 Sprint 24 后端 8 层纵向架构 (backend/src/layers)
+ * - Sprint 26 原为横向 8 列, 因桌面宽度溢出 (L5 仅露半边、L6-L8 溢出滚动)
+ *   Sprint 27 改纵向 — 沿自然滚动方向铺开, 每个节点 ≥ 220px 不再被压扁
  * - 节点：白底 .modern-card 风格 + 左侧 4px 状态色条 + 右上 antd 状态 Tag，
  *   不再整卡变色，跟同 tab 的 DataHealthDashboard 视觉对齐
- * - SVG 流线只画跨 stage 的关键连线，颜色用项目 --primary 低饱和版本，
- *   贝塞尔水平进出 (cpx 控制点 0.4*dx)，流动动画 2.5s 缓速
- * - 8 列在桌面端较挤：grid gap 18 (原 28) + NODE_GAP_Y 8 (原 12) 压缩纵向
- * - 移动端 useIsMobile() 切回纵向堆叠 + 隐藏 SVG，stage 之间用下箭头分隔
+ * - SVG 流线 ↓ 竖直贝塞尔 (cpy 控制点 0.4*dy 纵移), 流动动画 2.5s
+ * - 移动端不再走单独分支 — grid auto-fit minmax 在窄屏下自动收 1 列, 一套布局走天下
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -18,14 +20,12 @@ import { Card, Spin, Alert, Button, Space, Tag, Tooltip, Statistic, Row, Col } f
 import {
   ReloadOutlined,
   DeploymentUnitOutlined,
-  ArrowDownOutlined,
   CheckCircleOutlined,
   WarningOutlined,
   ExclamationCircleOutlined,
   QuestionCircleOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
-import { useIsMobile } from '../../hooks/useIsMobile';
 
 // ---------- types ----------
 
@@ -503,11 +503,12 @@ const NodeCard: React.FC<{ node: TopologyNode; nodeId: string }> = ({ node, node
   );
 };
 
-// ---------- SVG flow lines (desktop only) ----------
+// ---------- SVG flow lines (Sprint 27: 竖直贝塞尔) ----------
 
-// 同列节点 (stage 内) 之间纵向间距 - 给 Space size 用
-// 8 列布局节点密度高，从 12 缩到 8 释放纵向空间
-const NODE_GAP_Y = 8;
+// stage row 之间纵向间距
+const ROW_GAP_Y = 24;
+// 单个 stage row 内, 节点之间横向间距
+const NODE_GAP_X = 12;
 
 interface FlowLinesProps {
   edges: TopologyEdge[];
@@ -517,7 +518,7 @@ interface FlowLinesProps {
 
 const FlowLines: React.FC<FlowLinesProps> = ({ edges, stageRefs, containerEl }) => {
   // 只渲染 跨 stage 的 edge (targetStage > sourceStage)
-  // 同列 edge 视觉冗余，丢掉；从 quant_system 出发的"调度"线丢掉 (banner 已表达了系统层关系)
+  // 同行 edge 视觉冗余，丢掉；从 quant_system 出发的"调度"线丢掉 (banner 已表达了系统层关系)
   const visibleEdges = edges.filter(e => {
     const ss = NODE_STAGE[e.source];
     const ts = NODE_STAGE[e.target];
@@ -525,15 +526,18 @@ const FlowLines: React.FC<FlowLinesProps> = ({ edges, stageRefs, containerEl }) 
     return ts > ss;
   });
 
-  // 节点中心坐标：从 DOM 实测，比硬编码 grid 精确 (节点宽度自适应)
-  const getNodeCenter = (id: string): { x: number; y: number } | null => {
+  // 节点边界 + 中心坐标：从 DOM 实测，比硬编码 grid 精确
+  const getNodeGeo = (
+    id: string
+  ): { cx: number; topY: number; botY: number } | null => {
     const el = stageRefs[id];
     if (!el || !containerEl) return null;
     const a = el.getBoundingClientRect();
     const b = containerEl.getBoundingClientRect();
     return {
-      x: a.left - b.left + a.width / 2,
-      y: a.top - b.top + a.height / 2,
+      cx: a.left - b.left + a.width / 2,
+      topY: a.top - b.top,
+      botY: a.top - b.top + a.height,
     };
   };
 
@@ -551,7 +555,7 @@ const FlowLines: React.FC<FlowLinesProps> = ({ edges, stageRefs, containerEl }) 
     >
       <defs>
         <marker
-          id="topology-arrow-v2"
+          id="topology-arrow-v3"
           viewBox="0 0 10 10"
           refX="9"
           refY="5"
@@ -563,17 +567,19 @@ const FlowLines: React.FC<FlowLinesProps> = ({ edges, stageRefs, containerEl }) 
         </marker>
       </defs>
       {visibleEdges.map((edge, i) => {
-        const from = getNodeCenter(edge.source);
-        const to = getNodeCenter(edge.target);
+        const from = getNodeGeo(edge.source);
+        const to = getNodeGeo(edge.target);
         if (!from || !to) return null;
-        // 从节点右边出，进左边
-        const fromX = from.x + 0; // 中心
-        const toX = to.x - 0;
-        const dx = toX - fromX;
-        // 水平进出：控制点偏向 0.4*dx 横移
-        const cpx1 = fromX + Math.max(dx * 0.4, 40);
-        const cpx2 = toX - Math.max(dx * 0.4, 40);
-        const path = `M ${fromX} ${from.y} C ${cpx1} ${from.y}, ${cpx2} ${to.y}, ${toX} ${to.y}`;
+        // 竖直贝塞尔: source 节点底边出, target 节点顶边进
+        const fromX = from.cx;
+        const fromY = from.botY;
+        const toX = to.cx;
+        const toY = to.topY;
+        const dy = toY - fromY;
+        // 纵向控制点偏移 — dy >= 0 (向下) 时正向偏移; dy < 0 (反馈环, 向上) 反向偏移
+        const cpy1 = fromY + Math.max(Math.abs(dy) * 0.4, 40) * Math.sign(dy || 1);
+        const cpy2 = toY - Math.max(Math.abs(dy) * 0.4, 40) * Math.sign(dy || 1);
+        const path = `M ${fromX} ${fromY} C ${fromX} ${cpy1}, ${toX} ${cpy2}, ${toX} ${toY}`;
 
         return (
           <g key={`${edge.source}-${edge.target}-${i}`}>
@@ -592,7 +598,7 @@ const FlowLines: React.FC<FlowLinesProps> = ({ edges, stageRefs, containerEl }) 
               stroke="rgba(39, 100, 184, 0.55)"
               strokeWidth={2}
               strokeLinecap="round"
-              markerEnd="url(#topology-arrow-v2)"
+              markerEnd="url(#topology-arrow-v3)"
               className="topology-flow-line"
             />
           </g>
@@ -608,7 +614,6 @@ const SystemTopologyMap: React.FC = () => {
   const [data, setData] = useState<TopologyData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const isMobile = useIsMobile();
 
   const containerRef = useRef<HTMLDivElement>(null);
   // 用于 SVG 计算节点位置：key = node id, value = node card DOM
@@ -620,14 +625,14 @@ const SystemTopologyMap: React.FC = () => {
     ensureKeyframes();
   }, []);
 
-  // 监听容器宽度变化，触发 SVG 重画
+  // 监听容器宽度变化，触发 SVG 重画 (节点 grid auto-fit 可能换行 → 节点中心位移)
   useEffect(() => {
     const el = containerRef.current;
-    if (!el || isMobile) return;
+    if (!el) return;
     const obs = new ResizeObserver(() => setRedrawTick(t => t + 1));
     obs.observe(el);
     return () => obs.disconnect();
-  }, [isMobile]);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -707,101 +712,67 @@ const SystemTopologyMap: React.FC = () => {
             loading={loading}
           />
 
-          {isMobile ? (
-            // ---- 移动端：纵向堆叠 + stage 之间下箭头 ----
-            <div>
-              {STAGES.map((stage, si) => (
-                <div key={stage.key} style={{ marginBottom: si < STAGES.length - 1 ? 8 : 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
-                    <span className="topology-stage__index">{si + 1}</span>
-                    <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-main)' }}>
-                      {stage.label}
-                    </span>
-                    <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8 }}>
-                      {stage.sub}
-                    </span>
-                  </div>
-                  <div className="topology-stage__divider" />
-                  <Space direction="vertical" size={8} style={{ width: '100%' }}>
-                    {stage.nodes.map(id => {
-                      const n = nodeMap.get(id);
-                      if (!n) return null;
-                      return (
-                        <div key={id} style={{ width: '100%' }}>
-                          <NodeCard node={n} nodeId={id} />
-                        </div>
-                      );
-                    })}
-                  </Space>
-                  {si < STAGES.length - 1 && (
-                    <div
-                      style={{
-                        textAlign: 'center',
-                        margin: '12px 0 0',
-                        color: 'var(--primary)',
-                        opacity: 0.5,
-                        fontSize: 16,
-                      }}
-                    >
-                      <ArrowDownOutlined />
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          ) : (
-            // ---- 桌面端：8 列横向 Pipeline (L1-L8) ----
-            <div
-              ref={containerRef}
-              style={{
-                position: 'relative',
-                display: 'grid',
-                gridTemplateColumns: `repeat(${STAGES.length}, 1fr)`,
-                // 8 列布局：gap 从 28 缩到 18 让列宽 ≥ 节点最小可读宽
-                gap: 18,
-                minHeight: 280,
-                padding: '4px 4px 8px',
-              }}
-              data-redraw-tick={redrawTick}
-            >
-              {/* SVG 流线层 */}
-              <FlowLines
-                edges={data.edges}
-                stageRefs={nodeRefs.current}
-                containerEl={containerRef.current}
-              />
+          {/* ---- 纵向 8 行 Pipeline (L1..L8) ---- */}
+          <div
+            ref={containerRef}
+            style={{
+              position: 'relative',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: ROW_GAP_Y,
+              padding: '4px 4px 8px',
+            }}
+            data-redraw-tick={redrawTick}
+          >
+            {/* SVG 流线层 (绝对定位铺满整个 container) */}
+            <FlowLines
+              edges={data.edges}
+              stageRefs={nodeRefs.current}
+              containerEl={containerRef.current}
+            />
 
-              {/* 8 个 stage 列 (L1..L8) */}
-              {STAGES.map((stage, si) => (
-                <div key={stage.key} style={{ position: 'relative', zIndex: 1 }}>
-                  {/* stage header */}
-                  <div style={{ display: 'flex', alignItems: 'baseline' }}>
-                    <span className="topology-stage__index">{si + 1}</span>
-                    <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-main)' }}>
-                      {stage.label}
-                    </span>
-                    <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8 }}>
-                      {stage.sub}
-                    </span>
-                  </div>
-                  <div className="topology-stage__divider" />
-
-                  {/* stage 内节点纵向堆叠 */}
-                  <Space direction="vertical" size={NODE_GAP_Y} style={{ width: '100%' }}>
-                    {stage.nodes.map(id => {
-                      const n = nodeMap.get(id);
-                      if (!n) return null;
-                      return (
-                        <div key={id} ref={setNodeRef(id)} style={{ width: '100%' }}>
-                          <NodeCard node={n} nodeId={id} />
-                        </div>
-                      );
-                    })}
-                  </Space>
+            {/* 8 个 stage 行 (L1..L8) */}
+            {STAGES.map((stage, si) => (
+              <div key={stage.key} style={{ position: 'relative', zIndex: 1 }}>
+                {/* stage row header — 左上一排: 圆形 index + 中文名 + 英文 sub */}
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'baseline',
+                    marginBottom: 8,
+                  }}
+                >
+                  <span className="topology-stage__index">{si + 1}</span>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-main)' }}>
+                    {stage.label}
+                  </span>
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8 }}>
+                    {stage.sub}
+                  </span>
                 </div>
-              ))}
-            </div>
-          )}
+
+                {/* stage 内节点 — grid auto-fit minmax 自动换行;
+                    桌面端通常每行 3-4 节点, 窄屏自动收缩到 1-2 节点 */}
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                    gap: NODE_GAP_X,
+                  }}
+                >
+                  {stage.nodes.map(id => {
+                    const n = nodeMap.get(id);
+                    if (!n) return null;
+                    return (
+                      <div key={id} ref={setNodeRef(id)} style={{ width: '100%' }}>
+                        <NodeCard node={n} nodeId={id} />
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
         </>
       ) : null}
     </Card>

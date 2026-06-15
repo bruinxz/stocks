@@ -1,10 +1,13 @@
 import { Request, Response, NextFunction } from 'express';
+import { Op } from 'sequelize';
 import {
   paperTradingFacade,
   AUTONOMOUS_PORTFOLIO_NAME,
   DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
   QUANT_ONLY_PORTFOLIO_NAME,
 } from '../../portfolio/PaperTradingFacade';
+import { PaperTradingPortfolio } from '../../models/PaperTradingPortfolio';
+import { PaperTradingOrderIntent } from '../../models/PaperTradingOrderIntent';
 import { logger } from '../../utils/logger';
 
 // AUTONOMOUS_PORTFOLIO_NAME / DEFAULT_AUTONOMOUS_INITIAL_CAPITAL / QUANT_ONLY_PORTFOLIO_NAME
@@ -663,6 +666,283 @@ export class PaperTradingController {
     } catch (error: any) {
       sendError(res, error, '设置持仓止盈价失败');
     }
+  };
+
+  /**
+   * Sprint 27: L1-L8 Activation Summary
+   *
+   * GET /api/paper-trading/activation-summary
+   *   ?portfolio_id=<id>   可选; 缺省 = 当前 user 所有 portfolio 聚合
+   *   &days=7              可选; 默认 7, 范围 [1, 90]
+   *
+   * 聚合 paper_trading_order_intents.metadata.l8_activation:
+   *   - 总 signal 数 + 三种 outcome (executed/skipped/rejected) 分布
+   *   - 8 层每层 reached / blocked / contributed 计数 + block_rate
+   *   - Top 5 block reasons (按 layer + reason 分组)
+   *   - 最近 10 笔 trade 的逐层激活快照 (用于 dashboard 表)
+   *
+   * 性能: paper_trading_order_intents 每用户每天 ~50-200 行, 7 天 < 2000 行,
+   * 纯 JS reduce 充裕. 后续若日数据量 > 10K 可加 GIN 索引 (metadata->>'l8_activation').
+   */
+  getActivationSummary = async (req: Request, res: Response, _next: NextFunction) => {
+    try {
+      const user = (req as any).user;
+      if (!user?.id) {
+        return res.status(401).json({ success: false, message: '未登录' });
+      }
+
+      // 参数解析
+      const rawDays = req.query.days ? parseInt(String(req.query.days), 10) : 7;
+      const days = Math.max(1, Math.min(90, Number.isFinite(rawDays) ? rawDays : 7));
+      const rawPortfolioId = req.query.portfolio_id ? parseInt(String(req.query.portfolio_id), 10) : null;
+      const explicitPortfolioId = Number.isFinite(rawPortfolioId as any) && (rawPortfolioId as any) > 0
+        ? (rawPortfolioId as number)
+        : null;
+
+      // 解析待查 portfolio_id 集合: 显式传 → 单 id; 否则查用户全部 portfolio.
+      let portfolioIds: number[] = [];
+      if (explicitPortfolioId) {
+        // 安全校验: 显式 id 必须属于当前 user
+        const owned = await PaperTradingPortfolio.findOne({
+          where: { id: explicitPortfolioId, user_id: user.id },
+        });
+        if (!owned) {
+          return res.status(403).json({ success: false, message: '无权访问该模拟盘' });
+        }
+        portfolioIds = [explicitPortfolioId];
+      } else {
+        const rows = await PaperTradingPortfolio.findAll({
+          where: { user_id: user.id },
+          attributes: ['id'],
+        });
+        portfolioIds = rows.map((r: any) => r.id);
+      }
+
+      if (portfolioIds.length === 0) {
+        return res.json({
+          success: true,
+          data: buildEmptyActivationSummary(days),
+        });
+      }
+
+      // 查 N 天内所有 order intents — 仅取必要字段 (避免拉巨型 metadata 全文).
+      const since = new Date(Date.now() - days * 86400_000);
+      const sinceDate = since.toISOString().slice(0, 10);
+      const intents = await PaperTradingOrderIntent.findAll({
+        where: {
+          portfolio_id: { [Op.in]: portfolioIds },
+          intent_date: { [Op.gte]: sinceDate },
+        },
+        attributes: ['id', 'portfolio_id', 'intent_date', 'symbol', 'name', 'status', 'reason_text', 'metadata', 'created_at'],
+        order: [['created_at', 'DESC']],
+      });
+
+      const summary = aggregateActivationSummary(intents as any[], days);
+      return res.json({ success: true, data: summary });
+    } catch (error: any) {
+      sendError(res, error, '获取 L1-L8 激活汇总失败');
+    }
+  };
+}
+
+// ---------- ActivationSummary 纯函数 helpers (controller scope, 可单测) ----------
+
+const ACTIVATION_LAYERS = [
+  'L1_data',
+  'L2_signal',
+  'L3_meta',
+  'L4_construction',
+  'L5_feasibility',
+  'L6_risk',
+  'L7_governor',
+  'L8_reflection',
+] as const;
+type ActivationLayerKey = typeof ACTIVATION_LAYERS[number];
+
+interface ActivationLayerStat {
+  layer: ActivationLayerKey;
+  reached: number;
+  blocked: number;
+  contributed: number;
+  /** reached / total */
+  reach_rate: number;
+  /** blocked / reached (单层"被拦概率"); reached=0 时为 0 */
+  block_rate: number;
+  /** contributed / reached (单层"真改了概率"); reached=0 时为 0 */
+  contribute_rate: number;
+}
+
+interface ActivationRecentTrade {
+  order_intent_id: number;
+  intent_date: string;
+  symbol: string;
+  name: string | null;
+  outcome: 'executed' | 'skipped' | 'rejected' | 'planned' | 'pending' | 'unknown';
+  reached_layer: string | null;
+  blocked_at: string | null;
+  /** 8 个 layer 的简化状态: ✓ reached / ★ contributed / ✗ blocked / — never */
+  layer_marks: Record<ActivationLayerKey, '✓' | '★' | '✗' | '—'>;
+  reason_text: string | null;
+}
+
+interface ActivationBlockReason {
+  layer: ActivationLayerKey;
+  reason: string;
+  count: number;
+}
+
+interface ActivationSummary {
+  window_days: number;
+  generated_at: string;
+  total_signals: number;
+  outcomes: { executed: number; skipped: number; rejected: number; other: number };
+  layer_stats: ActivationLayerStat[];
+  top_block_reasons: ActivationBlockReason[];
+  recent_trades: ActivationRecentTrade[];
+}
+
+function buildEmptyActivationSummary(days: number): ActivationSummary {
+  return {
+    window_days: days,
+    generated_at: new Date().toISOString(),
+    total_signals: 0,
+    outcomes: { executed: 0, skipped: 0, rejected: 0, other: 0 },
+    layer_stats: ACTIVATION_LAYERS.map(layer => ({
+      layer,
+      reached: 0,
+      blocked: 0,
+      contributed: 0,
+      reach_rate: 0,
+      block_rate: 0,
+      contribute_rate: 0,
+    })),
+    top_block_reasons: [],
+    recent_trades: [],
+  };
+}
+
+/**
+ * 把一个 order_intent.metadata.l8_activation 压成 layer_marks (8 个图标),
+ * 用于 recent_trades 行渲染. ★ 优先级 > ✓ > ✗ > —
+ */
+function buildLayerMarks(activation: any): Record<ActivationLayerKey, '✓' | '★' | '✗' | '—'> {
+  const marks: Record<string, '✓' | '★' | '✗' | '—'> = {};
+  for (const layer of ACTIVATION_LAYERS) {
+    const snap = activation?.[layer];
+    if (!snap || typeof snap !== 'object') {
+      marks[layer] = '—';
+      continue;
+    }
+    if (snap.blocked) marks[layer] = '✗';
+    else if (snap.contributed) marks[layer] = '★';
+    else if (snap.reached) marks[layer] = '✓';
+    else marks[layer] = '—';
+  }
+  return marks as Record<ActivationLayerKey, '✓' | '★' | '✗' | '—'>;
+}
+
+/**
+ * 核心聚合函数 — 纯函数; intents 来自 PaperTradingOrderIntent.findAll(),
+ * 但仅依赖 plain object 字段, 可在测试里传 mock 数组.
+ */
+function aggregateActivationSummary(intents: any[], days: number): ActivationSummary {
+  const layerStats: Record<ActivationLayerKey, { reached: number; blocked: number; contributed: number }> = {
+    L1_data: { reached: 0, blocked: 0, contributed: 0 },
+    L2_signal: { reached: 0, blocked: 0, contributed: 0 },
+    L3_meta: { reached: 0, blocked: 0, contributed: 0 },
+    L4_construction: { reached: 0, blocked: 0, contributed: 0 },
+    L5_feasibility: { reached: 0, blocked: 0, contributed: 0 },
+    L6_risk: { reached: 0, blocked: 0, contributed: 0 },
+    L7_governor: { reached: 0, blocked: 0, contributed: 0 },
+    L8_reflection: { reached: 0, blocked: 0, contributed: 0 },
+  };
+  const outcomes = { executed: 0, skipped: 0, rejected: 0, other: 0 };
+  // (layer, reasonKey) → count + 原文 reason_text 样本
+  const blockReasonMap = new Map<string, { layer: ActivationLayerKey; reason: string; count: number }>();
+
+  for (const intent of intents) {
+    const md = intent?.metadata || {};
+    const activation = md.l8_activation;
+    const status = String(intent?.status || '').toLowerCase();
+
+    // outcome 计数 — 优先用 activation.final_outcome (写入时设置), fallback intent.status
+    const finalOutcome = activation?.final_outcome || status;
+    if (finalOutcome === 'executed') outcomes.executed++;
+    else if (finalOutcome === 'skipped') outcomes.skipped++;
+    else if (finalOutcome === 'rejected') outcomes.rejected++;
+    else outcomes.other++;
+
+    if (!activation || typeof activation !== 'object') continue;
+
+    for (const layer of ACTIVATION_LAYERS) {
+      const snap = activation[layer];
+      if (!snap || typeof snap !== 'object') continue;
+      if (snap.reached) layerStats[layer].reached++;
+      if (snap.blocked) layerStats[layer].blocked++;
+      if (snap.contributed) layerStats[layer].contributed++;
+    }
+
+    // block reasons — 用 blocked_at + reason_text 截短 80 字符做聚合 key
+    if (activation.blocked_at) {
+      const blockedLayer = activation.blocked_at as ActivationLayerKey;
+      const reasonText = String(intent?.reason_text || '未知原因').slice(0, 80);
+      const key = `${blockedLayer}::${reasonText}`;
+      const existing = blockReasonMap.get(key);
+      if (existing) {
+        existing.count++;
+      } else {
+        blockReasonMap.set(key, { layer: blockedLayer, reason: reasonText, count: 1 });
+      }
+    }
+  }
+
+  const total = intents.length;
+  const layer_stats: ActivationLayerStat[] = ACTIVATION_LAYERS.map(layer => {
+    const s = layerStats[layer];
+    return {
+      layer,
+      reached: s.reached,
+      blocked: s.blocked,
+      contributed: s.contributed,
+      reach_rate: total > 0 ? Math.round((s.reached / total) * 10000) / 10000 : 0,
+      block_rate: s.reached > 0 ? Math.round((s.blocked / s.reached) * 10000) / 10000 : 0,
+      contribute_rate: s.reached > 0 ? Math.round((s.contributed / s.reached) * 10000) / 10000 : 0,
+    };
+  });
+
+  const top_block_reasons: ActivationBlockReason[] = Array.from(blockReasonMap.values())
+    .sort((a, b) => b.count - a.count || a.layer.localeCompare(b.layer))
+    .slice(0, 5);
+
+  // recent_trades — 最近 10 笔 (intents 已按 created_at DESC sort)
+  const recent_trades: ActivationRecentTrade[] = intents.slice(0, 10).map((intent: any) => {
+    const md = intent?.metadata || {};
+    const activation = md.l8_activation || {};
+    const status = String(intent?.status || '').toLowerCase();
+    const finalOutcome = (activation.final_outcome || status) as ActivationRecentTrade['outcome'];
+    return {
+      order_intent_id: Number(intent.id),
+      intent_date: String(intent.intent_date || ''),
+      symbol: String(intent.symbol || ''),
+      name: intent.name || null,
+      outcome: ['executed', 'skipped', 'rejected', 'planned'].includes(finalOutcome)
+        ? finalOutcome
+        : 'unknown',
+      reached_layer: activation.reached_layer || null,
+      blocked_at: activation.blocked_at || null,
+      layer_marks: buildLayerMarks(activation),
+      reason_text: intent.reason_text ? String(intent.reason_text).slice(0, 200) : null,
+    };
+  });
+
+  return {
+    window_days: days,
+    generated_at: new Date().toISOString(),
+    total_signals: total,
+    outcomes,
+    layer_stats,
+    top_block_reasons,
+    recent_trades,
   };
 }
 

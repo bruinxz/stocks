@@ -384,6 +384,37 @@ router.post(
 
 /**
  * @openapi
+ * /api/paper-trading/activation-summary:
+ *   get:
+ *     tags: [模拟交易 PaperTrading]
+ *     summary: L1-L8 决策链激活汇总 (Sprint 27)
+ *     description: |
+ *       聚合最近 N 天的 paper_trading_order_intents.metadata.l8_activation,
+ *       返回 8 层每层 reached/blocked/contributed 计数 + Top block reasons +
+ *       最近 10 笔 trade 的逐层激活快照. 用于 ActivationDashboard 前端面板.
+ *     parameters:
+ *       - in: query
+ *         name: portfolio_id
+ *         schema: { type: integer }
+ *         description: 可选; 缺省 = 当前 user 全部 portfolio 聚合
+ *       - in: query
+ *         name: days
+ *         schema: { type: integer, default: 7, minimum: 1, maximum: 90 }
+ *         description: 回看天数 (default 7, max 90)
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: 激活汇总 }
+ *       401: { description: 未登录 }
+ *       403: { description: 显式 portfolio_id 不属当前 user }
+ */
+router.get(
+  '/activation-summary',
+  authController.authenticate,
+  paperTradingController.getActivationSummary
+);
+
+/**
+ * @openapi
  * /api/paper-trading/attribution/report:
  *   post:
  *     tags: [模拟交易 PaperTrading]

@@ -12,6 +12,7 @@ import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/Workspace
 import DataHealthDashboard from '../../components/data/DataHealthDashboard';
 import StockExplorer from '../../components/data/StockExplorer';
 import SystemTopologyMap from '../../components/data/SystemTopologyMap';
+import ActivationDashboard from '../../components/data/ActivationDashboard';
 import { getDataHealthStatus } from '../../services/dataHealthService';
 
 // 4 个 tab 都接入 legacy 页面（仍在使用 + 数据真实），用 lazy 减少初始 bundle
@@ -101,6 +102,7 @@ const DataWorkspace: React.FC = () => {
         return (
           <>
             <SystemTopologyMap />
+            <ActivationDashboard />
             <DataHealthDashboard />
           </>
         );
