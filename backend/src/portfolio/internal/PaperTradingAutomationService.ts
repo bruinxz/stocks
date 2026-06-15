@@ -1695,6 +1695,14 @@ class PaperTradingAutomationService {
 
       // Sprint 2A: MetaLabel 信号过滤层 — 二层模型决定"这个信号是否该下注"。
       // 当 confidence < threshold 时 skip。失败时 fail-open。
+      //
+      // Sprint 28: 用真实特征替换之前的固定值 (short-fall #2):
+      //   - market_breadth_score: environmentPolicy.market_environment.breadth.up_20d_ratio
+      //     (0-100, 真实"近 20 日上涨股票占比")
+      //   - market_vol_atr: 用 benchmark 近 60 日最大回撤幅度做市场波动率代理
+      //     (有 ATR 服务前先用这个; 趋势方向相同, 信号判别力同等)
+      //   - strategy_recent_winrate/payoff: KellyStats 已是真实, 改名 _90d 反映底层
+      //     至少 90 天 lookback (StrategyKellyStatsService 强制 MIN_LOOKBACK_DAYS=90).
       try {
         const strategyKeyForMeta =
           (signal as any)?.metadata?.strategy_key ||
@@ -1708,6 +1716,14 @@ class PaperTradingAutomationService {
         if (strategyKeyForMeta && strategyKeyForMeta !== 'unknown') {
           kellyForMeta = await strategyKellyStatsService.getStats(strategyKeyForMeta).catch(() => null);
         }
+        // Sprint 28: 从 environmentPolicy.market_environment 抽真实 breadth + 波动率
+        const envSnapshot = (environmentPolicy as any)?.market_environment || {};
+        const breadthScore = Number(
+          envSnapshot?.breadth?.up_20d_ratio ?? 50
+        );
+        const benchmarkDrawdownPct = Math.abs(
+          Number(envSnapshot?.benchmark_drawdown_60d_pct ?? 0)
+        );
         const metaDecision = await metaLabelService.shouldBet(
           {
             signal_id: (signal as any).id,
@@ -1719,10 +1735,12 @@ class PaperTradingAutomationService {
               signal_score: Number.isFinite(signalScoreRaw) ? signalScoreRaw : 75,
               signal_source: (signal as any).source_type || 'unknown',
               regime: String(regimeForMeta),
-              market_breadth_score: 0,
+              // Sprint 28: 真实市场宽度 (0-100, 上涨股票占比), 不再是固定 0
+              market_breadth_score: Number.isFinite(breadthScore) ? breadthScore : 50,
               strategy_recent_winrate_30d: Number(kellyForMeta?.win_rate ?? 0.5),
               strategy_recent_payoff_30d: Number(kellyForMeta?.payoff_ratio ?? 1.0),
-              market_vol_atr: 4,
+              // Sprint 28: benchmark 60 日回撤幅度 (%) 代理市场波动率, 不再是固定 4
+              market_vol_atr: Number.isFinite(benchmarkDrawdownPct) ? benchmarkDrawdownPct : 4,
             },
           },
           { persist: true }
@@ -1735,6 +1753,15 @@ class PaperTradingAutomationService {
           decision: metaDecision.decision,
           model_version: metaDecision.model_version,
           threshold: metaDecision.threshold,
+          // Sprint 28: 把真实 features 也存到 activation detail, 方便 dashboard 排查
+          features_used: {
+            breadth_score: Number.isFinite(breadthScore) ? breadthScore : 50,
+            benchmark_drawdown_pct: Number.isFinite(benchmarkDrawdownPct)
+              ? benchmarkDrawdownPct
+              : 4,
+            winrate: Number(kellyForMeta?.win_rate ?? 0.5),
+            payoff: Number(kellyForMeta?.payoff_ratio ?? 1.0),
+          },
         };
         if (metaDecision.decision === 'skip') {
           markBlocked(activation, 'L3_meta', metaDetail);
@@ -1896,10 +1923,25 @@ class PaperTradingAutomationService {
 
       // Sprint 1B: ExecutionFeasibility 检查 — 在 sizing 决策前判定订单可否实际成交。
       // decision='blocked' 直接 skip；decision='risky' 仅 log warning；'fillable' 继续。
+      //
+      // Sprint 28: 把 quote 行情快照 (close/open/high/low/volume) 直接传给 feasibility
+      // (short-fall #3). 之前 feasibility 内部自己 fetch DailyBar — 当 quote 来自实时
+      // 行情而 feasibility 用 EOD bar 时会有"用 A 价格决策、用 B 数据判断可成交"的漂移。
       try {
         const targetAmount = (totalValue * effectiveTargetPct) / 100;
         const targetQty = execute_price > 0 ? Math.floor(targetAmount / execute_price / 100) * 100 : 0;
         if (targetQty >= 100) {
+          // 用 quote 字段构 MarketSnapshot — 完全可选, 缺字段时 feasibility 内部 fall back to DB
+          const marketSnapshot =
+            quote.price > 0
+              ? {
+                  close: quote.price,
+                  open: quote.open,
+                  high: quote.high,
+                  low: quote.low,
+                  volume: quote.volume,
+                }
+              : undefined;
           const feasibility = await executionFeasibilityService.computeFeasibility({
             user_id: portfolio.user_id,
             symbol: signal.symbol,
@@ -1907,6 +1949,7 @@ class PaperTradingAutomationService {
             target_qty: targetQty,
             target_price: execute_price,
             as_of_date: new Date().toISOString().slice(0, 10),
+            market_snapshot: marketSnapshot,
           }, { persist: true });
           // Sprint 27: L5 执行可行性 — 任何 decision 都 reached;
           // blocked → markBlocked; risky/fillable → markContributed (评分确实计算了).
@@ -1915,6 +1958,8 @@ class PaperTradingAutomationService {
             composite_score: feasibility.composite_score,
             decision: feasibility.decision,
             block_reasons: feasibility.block_reasons,
+            // Sprint 28: 标记 snapshot 来源 — dashboard 可看出是不是真共用了同源行情
+            snapshot_source: marketSnapshot ? quote.source : 'service_fallback',
           };
           if (feasibility.decision === 'blocked') {
             markBlocked(activation, 'L5_feasibility', feasibilityDetail);
@@ -2044,46 +2089,15 @@ class PaperTradingAutomationService {
           }
 
           // 硬切换：真正替换 effectiveTargetPct
+          // Sprint 28 (short-fall #4): Governor multiplier 从此处移出, 改为对所有
+          // sizing method (含默认 equal_pct) 在 sizing 块外应用. 此处仅保留 hard
+          // cutover 的"用 decided pct 替换 actual pct"逻辑.
           if (sizingPolicy.hard_cutover_enabled && shadowSizingDecision.position_pct > 0) {
-            let newPct = shadowSizingDecision.position_pct;
-            // Sprint 3: 应用 EquityCurveGovernor multiplier
-            try {
-              const govMult = await equityCurveGovernorService.getCurrentMultiplier(portfolio.id);
-              // Sprint 27: L7 治理 — getCurrentMultiplier 走通即视为 reached;
-              // multiplier < 1.0 = 真改了仓位 → contributed.
-              const govDetail = {
-                multiplier: roundNumber(govMult, 4),
-                before_pct: roundNumber(newPct, 4),
-                after_pct: roundNumber(newPct * (govMult >= 0 ? govMult : 1.0), 4),
-              };
-              if (govMult < 1.0 && govMult >= 0) {
-                markContributed(activation, 'L7_governor', govDetail);
-              } else {
-                markReached(activation, 'L7_governor', govDetail);
-              }
-              if (govMult < 1.0 && govMult >= 0) {
-                const beforeGov = newPct;
-                newPct = newPct * govMult;
-                logger.info(
-                  `[governor] user=${portfolio.user_id} symbol=${signal.symbol} ` +
-                    `multiplier=${govMult.toFixed(2)} ${roundNumber(beforeGov, 2)}% → ${roundNumber(newPct, 2)}%`
-                );
-                if (newPct < 0.5) {
-                  await skip(
-                    `EquityCurveGovernor 降权后仓位 ${newPct.toFixed(2)}% 过低（× ${govMult.toFixed(2)})，跳过本笔`
-                  );
-                  continue;
-                }
-              }
-            } catch (err: any) {
-              // fail-open: governor 失败仅 warn; 不 mark activation (保留 reached=false 区别 success).
-              logger.warn(`[governor] multiplier fetch failed: ${err?.message || err}`);
-            }
             logger.info(
               `[hard-sizing] APPLY user=${portfolio.user_id} symbol=${signal.symbol} ` +
-                `${roundNumber(effectiveTargetPct, 2)}% → ${roundNumber(newPct, 2)}%`
+                `${roundNumber(effectiveTargetPct, 2)}% → ${roundNumber(shadowSizingDecision.position_pct, 2)}%`
             );
-            effectiveTargetPct = newPct;
+            effectiveTargetPct = shadowSizingDecision.position_pct;
           } else if (
             sizingPolicy.hard_cutover_enabled &&
             shadowSizingDecision.position_pct <= 0
@@ -2098,6 +2112,38 @@ class PaperTradingAutomationService {
       } catch (err: any) {
         // shadow 不影响主流程，失败仅 warn；hard 模式失败 = 用户配置 bug，也走原流程
         logger.warn(`[sizing] failed: ${err?.message || err}`);
+      }
+
+      // Sprint 28 (short-fall #4): EquityCurveGovernor multiplier 对所有 sizing method
+      // 都生效 (含默认 equal_pct), 不再仅 hard_cutover 分支. 这样大部分账户 (默认 sizing)
+      // 也能获得资金曲线治理保护. fail-open 保持 — 失败时不改 effectiveTargetPct.
+      try {
+        const govMult = await equityCurveGovernorService.getCurrentMultiplier(portfolio.id);
+        const govDetail = {
+          multiplier: roundNumber(govMult, 4),
+          before_pct: roundNumber(effectiveTargetPct, 4),
+          after_pct: roundNumber(effectiveTargetPct * (govMult >= 0 ? govMult : 1.0), 4),
+        };
+        if (govMult < 1.0 && govMult >= 0) {
+          markContributed(activation, 'L7_governor', govDetail);
+          const beforeGov = effectiveTargetPct;
+          effectiveTargetPct = effectiveTargetPct * govMult;
+          logger.info(
+            `[governor] user=${portfolio.user_id} symbol=${signal.symbol} ` +
+              `multiplier=${govMult.toFixed(2)} ${roundNumber(beforeGov, 2)}% → ${roundNumber(effectiveTargetPct, 2)}%`
+          );
+          if (effectiveTargetPct < 0.5) {
+            await skip(
+              `EquityCurveGovernor 降权后仓位 ${effectiveTargetPct.toFixed(2)}% 过低（× ${govMult.toFixed(2)})，跳过本笔`
+            );
+            continue;
+          }
+        } else {
+          markReached(activation, 'L7_governor', govDetail);
+        }
+      } catch (err: any) {
+        // fail-open: governor 失败仅 warn; 不 mark activation (保留 reached=false 区别 success).
+        logger.warn(`[governor] multiplier fetch failed (fail-open): ${err?.message || err}`);
       }
 
       const tradeRisk = this.evaluateEntryRiskGuard({
@@ -3285,6 +3331,15 @@ class PaperTradingAutomationService {
     date?: string;
     source?: string;
     quote_time?: string;
+    // Sprint 28: 扩展返回字段, 让 caller 能把行情快照传给 ExecutionFeasibility
+    // 避免"用 A 价格决策, 用 B 数据判断可成交"的轻微漂移 (短板 #3).
+    open?: number;
+    high?: number;
+    low?: number;
+    prev_close?: number;
+    volume?: number;
+    turnover?: number;
+    change_percent?: number;
   }> {
     const normalizedSymbol = normalizeSymbol(symbol);
     const stock = await Stock.findOne({ where: { symbol: normalizedSymbol } });
@@ -3307,6 +3362,14 @@ class PaperTradingAutomationService {
             : ''),
         source: latestRealtime.source || 'realtime_quote',
         quote_time: latestRealtime.quote_time?.toISOString(),
+        // Sprint 28: realtime 行 — open/high/low/volume/turnover 直接取自 quote 表
+        open: toNumber(latestRealtime.open, undefined as any) || undefined,
+        high: toNumber(latestRealtime.high, undefined as any) || undefined,
+        low: toNumber(latestRealtime.low, undefined as any) || undefined,
+        volume: toNumber(latestRealtime.volume, undefined as any) || undefined,
+        turnover: toNumber(latestRealtime.turnover, undefined as any) || undefined,
+        change_percent:
+          toNumber(latestRealtime.change_percent, undefined as any) || undefined,
       };
     }
 
@@ -3321,6 +3384,12 @@ class PaperTradingAutomationService {
       name: stock.name,
       date: latestBar?.time ? moment(latestBar.time).tz('Asia/Shanghai').format('YYYY-MM-DD') : '',
       source: latestBar ? 'daily_bar' : 'stock_snapshot',
+      // Sprint 28: DailyBar fallback — 同样的快照字段
+      open: latestBar ? toNumber(latestBar.open, undefined as any) || undefined : undefined,
+      high: latestBar ? toNumber(latestBar.high, undefined as any) || undefined : undefined,
+      low: latestBar ? toNumber(latestBar.low, undefined as any) || undefined : undefined,
+      volume: latestBar ? toNumber(latestBar.volume, undefined as any) || undefined : undefined,
+      turnover: latestBar ? toNumber(latestBar.turnover, undefined as any) || undefined : undefined,
     };
   }
 
