@@ -14,6 +14,31 @@ export interface ValidationResult {
   warnings: string[];
 }
 
+// Sprint 38: 抽 3 个 helper return types — `ReturnType<typeof this.xxx>` 在 .d.ts
+// declaration emit 时不能展开 (TS4055), 必须用具体 export interface.
+export interface ValidateDailyBarsResult {
+  valid: Partial<DailyBar>[];
+  invalid: { bar: Partial<DailyBar>; errors: string[] }[];
+  warnings: { bar: Partial<DailyBar>; warnings: string[] }[];
+}
+
+export interface DetectOutliersResult {
+  outliers: DailyBar[];
+  stats: {
+    mean: number;
+    median: number;
+    std: number;
+    min: number;
+    max: number;
+  };
+}
+
+export interface CheckContinuityResult {
+  gaps: { start: Date; end: Date; days: number }[];
+  duplicates: Date[];
+  missingDays: number;
+}
+
 export class DataValidator {
   private toNumber(value: any): number | undefined {
     if (value === undefined || value === null || value === '') {
@@ -172,11 +197,7 @@ export class DataValidator {
   /**
    * 批量验证日线数据
    */
-  validateDailyBars(bars: Partial<DailyBar>[]): {
-    valid: Partial<DailyBar>[];
-    invalid: { bar: Partial<DailyBar>; errors: string[] }[];
-    warnings: { bar: Partial<DailyBar>; warnings: string[] }[];
-  } {
+  validateDailyBars(bars: Partial<DailyBar>[]): ValidateDailyBarsResult {
     const valid: Partial<DailyBar>[] = [];
     const invalid: { bar: Partial<DailyBar>; errors: string[] }[] = [];
     const warnings: { bar: Partial<DailyBar>; warnings: string[] }[] = [];
@@ -212,16 +233,7 @@ export class DataValidator {
   detectOutliers(
     bars: DailyBar[],
     field: keyof DailyBar
-  ): {
-    outliers: DailyBar[];
-    stats: {
-      mean: number;
-      median: number;
-      std: number;
-      min: number;
-      max: number;
-    };
-  } {
+  ): DetectOutliersResult {
     const values = bars
       .map(bar => bar[field] as number)
       .filter(value => value !== null && value !== undefined);
@@ -255,11 +267,7 @@ export class DataValidator {
   /**
    * 检查数据连续性
    */
-  checkContinuity(bars: DailyBar[]): {
-    gaps: { start: Date; end: Date; days: number }[];
-    duplicates: Date[];
-    missingDays: number;
-  } {
+  checkContinuity(bars: DailyBar[]): CheckContinuityResult {
     if (bars.length < 2) {
       return { gaps: [], duplicates: [], missingDays: 0 };
     }
@@ -326,10 +334,10 @@ export class DataValidator {
       duplicateDays: number;
     };
     details: {
-      validation: ReturnType<typeof this.validateDailyBars>;
-      continuity: ReturnType<typeof this.checkContinuity>;
+      validation: ValidateDailyBarsResult;
+      continuity: CheckContinuityResult;
       outliers: {
-        [field in keyof DailyBar]?: ReturnType<typeof this.detectOutliers>;
+        [field in keyof DailyBar]?: DetectOutliersResult;
       };
     };
   } {

@@ -396,9 +396,10 @@ console.log('\n## 18 个因子全部存在');
     'value',
   ];
   const registered = factorRegistry.listNames().sort();
+  // Sprint 38: 不硬编码总数 — 断言"至少含 expected 列表" (后续加 factor 总数会涨)
   assert(
-    `共 18 个因子注册`,
-    registered.length === 18,
+    `registry 至少含 ${expectedFactors.length} 个 expected factors (actual=${registered.length})`,
+    expectedFactors.every(f => registered.includes(f)),
     `actual=${registered.length}: [${registered.join(', ')}]`
   );
   for (const f of expectedFactors) {

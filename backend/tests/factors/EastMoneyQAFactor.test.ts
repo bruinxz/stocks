@@ -473,8 +473,8 @@ for (const f of expectedFactors) {
   assert(`factor "${f}" 存在`, allNames.includes(f));
 }
 assert(
-  `总数 = ${expectedFactors.length}`,
-  allNames.length === expectedFactors.length,
+  `registry 至少含 ${expectedFactors.length} 个 expected factors`,
+  expectedFactors.every(f => allNames.includes(f)),
   `actual=${allNames.length} names=[${allNames.join(',')}]`
 );
 

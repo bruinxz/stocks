@@ -92,7 +92,7 @@ rsync 本地拉取 **事实增量** (skip 已存在文件), 不需要 WAL archiv
 | 最新 `*.dump.sha256` | 同上 | 校验完整性 |
 | 最新 `redis_*.tgz` | 本地 `~/Backups/stocks-prod/redis/` | 恢复 paper trading 状态 |
 | 最新 `backend.env.*.bak` | 本地 `~/Backups/stocks-prod/secrets/` | 恢复 DB 密码 / AI key / 券商 token |
-| `deployment/docker-compose.yml` | git repo | 启服务 |
+| `docker-compose.yml` | git repo | 启服务 |
 | `scripts/setup_and_db/*.sql` | git repo | DB schema (备用, dump 已有) |
 
 ## 关联文档

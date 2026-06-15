@@ -440,10 +440,16 @@ assert("既有 'quality_high' 仍注册", factorRegistry.has('quality_high'));
 assert("既有 'value' 仍注册", factorRegistry.has('value'));
 assert("既有 'liquidity' 仍注册", factorRegistry.has('liquidity'));
 
-// 注册后总数 = 17 (8 base + liquidity + analyst_consensus + quality_high + earnings_surprise + momentum_reversal + east_money_qa + shareholder_concentration + gradual_breakout + insider_trade)
+// Sprint 38: 不硬编码 registry 总数 — 改为断言"至少含 earnings_surprise + 不少于
+// 17 个" (该 test 写于注册 18 个 factor 那个 sprint, 之后陆续加因子总数会涨,
+// 但 earnings_surprise 必须仍在).
 {
   const names = factorRegistry.listNames();
-  assert(`registry 共 18 个因子 (实际 ${names.length})`, names.length === 18, names.join(', '));
+  assert(
+    `registry 含 earnings_surprise + 至少 17 个因子 (实际 ${names.length})`,
+    names.length >= 17 && names.includes('earnings_surprise'),
+    names.join(', ')
+  );
 }
 
 console.log('\n## 端到端：空 universe → 空 Map');

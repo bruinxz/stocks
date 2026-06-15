@@ -41,8 +41,8 @@ tmp="$out.tmp"
 tar -czf "$tmp" -C /data/stocks redis
 mv "$tmp" "$out"
 
-# 4. sha256 + latest symlink
-sha256sum "$out" > "$out.sha256"
+# 4. sha256 + latest symlink (Sprint 38: 写相对路径让异机校验稳)
+( cd "$(dirname "$out")" && sha256sum "$(basename "$out")" > "$(basename "$out").sha256" )
 chown stocks_app:stocks "$out" "$out.sha256" || true
 chmod 640 "$out" "$out.sha256" || true
 ln -sfn "$(basename "$out")" "$BACKUP_DIR/latest.tgz"

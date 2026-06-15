@@ -53,9 +53,9 @@ docker run --rm -i docker.m.daocloud.io/timescale/timescaledb:latest-pg14 \
     exit 1
   }
 
-# 3. 原子 rename + sha256
+# 3. 原子 rename + sha256 (Sprint 38: 用 cd + basename 写相对路径, 异机/异 mount 校验稳)
 mv "$tmp" "$out"
-sha256sum "$out" > "$out.sha256"
+( cd "$(dirname "$out")" && sha256sum "$(basename "$out")" > "$(basename "$out").sha256" )
 chown stocks_app:stocks "$out" "$out.sha256" || true
 chmod 640 "$out" "$out.sha256" || true
 

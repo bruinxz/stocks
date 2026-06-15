@@ -84,7 +84,7 @@ sudo chmod 640 /opt/stocks/shared/backend.env
 ```bash
 cd /opt/stocks/current
 # 注意: 只启数据库容器, 不启 backend (灌完数据后再启)
-docker compose -f deployment/docker-compose.yml up -d stocks-postgres stocks-redis
+docker compose -f docker-compose.yml up -d stocks-postgres stocks-redis
 docker compose ps
 sleep 15  # 等 health
 docker exec stocks-postgres pg_isready -U postgres
@@ -112,17 +112,17 @@ docker exec stocks-postgres psql -U postgres -d stock_backtest -c \
 ### Step 6: 恢复 Redis (1 min)
 ```bash
 # 停 redis, 解压 RDB, 起 redis
-docker compose -f /opt/stocks/current/deployment/docker-compose.yml stop stocks-redis
+docker compose -f /opt/stocks/current/docker-compose.yml stop stocks-redis
 sudo tar -xzf /backup/stocks/restore/最新.tgz -C /data/stocks/
 sudo chown -R 999:999 /data/stocks/redis  # redis 容器 uid
-docker compose -f /opt/stocks/current/deployment/docker-compose.yml start stocks-redis
+docker compose -f /opt/stocks/current/docker-compose.yml start stocks-redis
 docker exec stocks-redis redis-cli DBSIZE
 ```
 
 ### Step 7: 启 backend + 验证 (10 min)
 ```bash
 cd /opt/stocks/current
-docker compose -f deployment/docker-compose.yml up -d
+docker compose -f docker-compose.yml up -d
 docker compose ps
 sleep 10
 curl http://localhost:8080/api/health
