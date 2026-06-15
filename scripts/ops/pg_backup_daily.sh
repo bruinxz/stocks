@@ -67,7 +67,8 @@ ln -sfn "$(basename "$out.sha256")" "$BACKUP_DIR/latest.dump.sha256"
 env_bak="$SECRETS_DIR/backend.env.${ts}.bak"
 cp "$ENV" "$env_bak"
 chown stocks_app:stocks "$env_bak" || true
-chmod 600 "$env_bak"
+# 640: owner + group 可读. ops 在 stocks 组所以 backup-pull 能拉
+chmod 640 "$env_bak"
 ln -sfn "$(basename "$env_bak")" "$SECRETS_DIR/latest.env.bak"
 
 # 6. 清理超 KEEP_DAYS 的, 但永远保留 latest.* symlinks
