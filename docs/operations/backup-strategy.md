@@ -21,6 +21,17 @@
 **全量 vs 增量**: 全量。每份 pg_dump 35 MB (TimescaleDB hypertable 压缩极好), 7 份 = 250 MB, 存储成本忽略。
 rsync 本地拉取 **事实增量** (skip 已存在文件), 不需要 WAL archiving 复杂运维。
 
+## node_modules 共享 (R71 改造)
+
+之前 `deploy_main_release.sh` bug: 每份 release 独立装 1.3GB node_modules → 4 份就 5.2GB
+浪费. 现在改成 `/opt/stocks/shared/node_modules/{backend,frontend}` 单份共享:
+
+- deploy 时比对 `package-lock.json` sha256, 不变直接 symlink, 节省 npm ci 时间
+- 变了才 npm ci 一次到 shared, 写入新 hash
+- 老 release symlink 自动指向最新 shared (回滚需注意 lock 兼容性)
+- 单 release 大小从 1.4GB → 88MB, 7 份保留时占盘从 11GB → 700MB
+- 详见 [scripts/ops/deploy_main_release.sh](../../scripts/ops/deploy_main_release.sh) + [migrate-node-modules-to-shared.sh](../../scripts/ops/migrate-node-modules-to-shared.sh)
+
 ## 服务端备份机制
 
 ### Cron (root, `/etc/cron.d/stocks-backup`)
