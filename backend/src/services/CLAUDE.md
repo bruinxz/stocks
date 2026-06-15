@@ -10,8 +10,8 @@
 | ResearchIntegrityService | `research/` | PromotionGate (QuantStrategyParamVersionService.refreshParamLifecycle) | `research_integrity_audits` |
 | ExecutionFeasibilityService | `execution/` | Buy Gate (PaperTradingAutomationService) | `execution_feasibility_records` |
 | MetaLabelService | `meta/` | 信号过滤 (PaperTradingAutomationService) | `meta_label_decisions` |
-| PortfolioConstructionService | `portfolio/` | HTTP only (TODO: 一键再平衡接入 facade.applyAutomation) | `portfolio_construction_results` |
-| EquityCurveGovernorService | `governor/` | Sizing 最终 multiplier (PaperTradingAutomationService.decideSizing hard cutover) | `equity_curve_governor_states` |
+| PortfolioConstructionService | `portfolio/` | **Sprint 29: buy-decision loop 已接入** (`PortfolioConstructionAdapter.ts`, 默认 mode='off' shadow/hard 用户切换) | `portfolio_construction_results` |
+| EquityCurveGovernorService | `governor/` | **Sprint 28: 全 sizing method 生效** (含默认 equal_pct, 从 hard_cutover 分支移出) | `equity_curve_governor_states` |
 
 ## Service 编写约定（与 risk/ 一致）
 
