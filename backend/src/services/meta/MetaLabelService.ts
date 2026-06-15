@@ -344,9 +344,15 @@ export function predictConfidence(model: MetaLabelModel, raw: RawSignalFeatures)
   let z = model.bias;
   const contributions: Array<{ name: FeatureName; contribution: number; value: number }> = [];
   for (const n of FEATURE_NAMES) {
-    const c = model.weights[n] * x[n];
+    // Sprint 36: 老模型 weights 缺该 dim 时 (比如训练于 Sprint 34 之前没有
+    // pre_check_feasibility_score_z) 默认 0, 不让 NaN 污染 z. 同款 buildFeatureVector
+    // 的 means/stds 缺时也 default 0/1 — 这样新 feature 添加后老模型仍可用,
+    // 仅缺 dim 上的判别力, 不崩.
+    const w = Number.isFinite(model.weights[n]) ? model.weights[n] : 0;
+    const xv = Number.isFinite(x[n]) ? x[n] : 0;
+    const c = w * xv;
     z += c;
-    contributions.push({ name: n, contribution: c, value: x[n] });
+    contributions.push({ name: n, contribution: c, value: xv });
   }
   contributions.sort((a, b) => Math.abs(b.contribution) - Math.abs(a.contribution));
   return {
