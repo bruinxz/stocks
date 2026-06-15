@@ -38,10 +38,40 @@ for pkg in backend frontend; do
   cur_hash=""
   [ -f "$hash_file" ] && cur_hash=$(cat "$hash_file")
 
+  # Sprint 39: shared node_modules health smoke check.
+  # 决定本次是 reuse 还是 npm ci 重装. 两个条件都满足才 reuse:
+  #   (a) lock hash 未变 (常规判断)
+  #   (b) 关键 .bin/ executable 存在 (防 shared dir 被部分删 / 错误覆盖 / 异常中断)
+  #       backend 关键: tsc + ts-node
+  #       frontend 关键: react-scripts
+  # 加 smoke 是因为: 之前我们碰到过 worktree 本地 'react-scripts: command not found'
+  # 错误 — node_modules 看起来在但 .bin 残缺. 生产用 shared 不能踩同样的坑.
+  smoke_ok() {
+    local pkg="$1"
+    case "$pkg" in
+      backend)
+        [ -x "$SHARED_NM/$pkg/.bin/tsc" ] && [ -x "$SHARED_NM/$pkg/.bin/ts-node" ]
+        ;;
+      frontend)
+        [ -x "$SHARED_NM/$pkg/.bin/react-scripts" ]
+        ;;
+      *) return 0 ;;
+    esac
+  }
+
+  reuse_ok=false
   if [ -d "$SHARED_NM/$pkg" ] && [ "$new_hash" = "$cur_hash" ]; then
-    echo "[deploy] $pkg lock unchanged (${new_hash:0:12}), reuse shared node_modules"
+    if smoke_ok "$pkg"; then
+      reuse_ok=true
+    else
+      echo "[deploy] $pkg shared node_modules hash 一致但 .bin/ smoke 失败, 强制重装"
+    fi
+  fi
+
+  if [ "$reuse_ok" = true ]; then
+    echo "[deploy] $pkg lock unchanged (${new_hash:0:12}) + .bin smoke OK, reuse shared node_modules"
   else
-    echo "[deploy] $pkg lock changed or shared missing — npm ci (this will take a few min)"
+    echo "[deploy] $pkg lock changed / shared missing / smoke failed — npm ci (this will take a few min)"
     rm -rf "$SHARED_NM/$pkg"
     mkdir -p "$SHARED_NM/$pkg"
     # npm ci 需要 package.json + lock 都在同目录, 用 tmp 装好再挪
@@ -52,8 +82,15 @@ for pkg in backend frontend; do
     (cd "$TMP_DIR" && npm ci --no-audit --no-fund --legacy-peer-deps)
     rsync -a --delete "$TMP_DIR/node_modules/" "$SHARED_NM/$pkg/"
     rm -rf "$TMP_DIR"
+    # 安装后再 smoke 一遍 — 如果还失败, 说明 lock 本身坏, fail-fast 让运维查
+    if ! smoke_ok "$pkg"; then
+      echo "[deploy] FATAL: $pkg npm ci 完成但 .bin/ smoke 仍失败 — package-lock.json 可能不健全"
+      echo "[deploy]   expected: $([ "$pkg" = backend ] && echo tsc+ts-node || echo react-scripts)"
+      ls -la "$SHARED_NM/$pkg/.bin/" 2>&1 | head -10
+      exit 1
+    fi
     echo "$new_hash" > "$hash_file"
-    echo "[deploy] $pkg shared node_modules refreshed → ${new_hash:0:12}"
+    echo "[deploy] $pkg shared node_modules refreshed → ${new_hash:0:12} + smoke OK"
   fi
 
   # 始终用 symlink (即使老脚本残留真 dir 也覆盖)

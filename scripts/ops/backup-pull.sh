@@ -37,6 +37,22 @@ SSH_OPTS=(-i "${SSH_KEY}" -p "${REMOTE_PORT}" -o StrictHostKeyChecking=accept-ne
 
 log() { echo "[$(date -Iseconds)] $*"; }
 
+# Sprint 39: track 拉取失败计数, 最后 fail-fast — 之前每个 rsync 失败仅 WARN 后
+# 继续, 导致备份静默缺文件. 现在任何文件拉取失败都计入 PULL_FAILED,
+# 脚本最末若 PULL_FAILED > 0 则 exit 1, 让 cron 失败明显可见 (邮件 / 监控可触发).
+PULL_FAILED=0
+pull_or_fail() {
+  local remote_path="$1" local_dir="$2" fname="$3"
+  if rsync -avz --partial -e "ssh ${SSH_OPTS[*]}" \
+      "${REMOTE_HOST}:${remote_path}" "${local_dir}/"; then
+    return 0
+  else
+    log "  ERROR: pull ${fname} failed (will exit non-zero at end)"
+    PULL_FAILED=$((PULL_FAILED + 1))
+    return 1
+  fi
+}
+
 log "=== stocks backup-pull START (keep ${KEEP_DAYS} days local) ==="
 
 if [[ ! -f "${SSH_KEY}" ]]; then
@@ -68,8 +84,7 @@ for f in ${REMOTE_PG} ${REMOTE_PG_SHA}; do
     continue
   fi
   log "  PULL ${f}"
-  rsync -avz --partial -e "ssh ${SSH_OPTS[*]}" \
-    "${REMOTE_HOST}:/backup/stocks/postgres/${f}" "${LOCAL_PG}/" || log "  WARN: pull ${f} failed"
+  pull_or_fail "/backup/stocks/postgres/${f}" "${LOCAL_PG}" "${f}" || true
 done
 
 # 3. 拉 redis snapshot + sha
@@ -79,8 +94,7 @@ for f in ${REMOTE_REDIS} ${REMOTE_REDIS_SHA}; do
     continue
   fi
   log "  PULL ${f}"
-  rsync -avz --partial -e "ssh ${SSH_OPTS[*]}" \
-    "${REMOTE_HOST}:/backup/stocks/redis/${f}" "${LOCAL_REDIS}/" || log "  WARN: pull ${f} failed"
+  pull_or_fail "/backup/stocks/redis/${f}" "${LOCAL_REDIS}" "${f}" || true
 done
 
 # 4. 拉 backend.env 备份
@@ -90,8 +104,7 @@ for f in ${REMOTE_ENV}; do
     continue
   fi
   log "  PULL ${f}"
-  rsync -avz --partial -e "ssh ${SSH_OPTS[*]}" \
-    "${REMOTE_HOST}:/backup/stocks/secrets/${f}" "${LOCAL_SECRETS}/" || log "  WARN: pull ${f} failed"
+  pull_or_fail "/backup/stocks/secrets/${f}" "${LOCAL_SECRETS}" "${f}" || true
 done
 
 # 5. 本地清理 KEEP_DAYS 之前的 + 月度归档
@@ -101,7 +114,7 @@ DEL_REDIS=$(find "${LOCAL_REDIS}" -type f \( -name 'redis_*.tgz' -o -name 'redis
 DEL_ENV=$(find "${LOCAL_SECRETS}" -type f -name 'backend.env.*.bak' -mtime +${KEEP_DAYS} -print -delete | wc -l | tr -d ' ')
 log "  deleted pg=${DEL_PG}, redis=${DEL_REDIS}, env=${DEL_ENV}"
 
-# 月度归档 (每月 1 号执行)
+# 月度归档 (每月 1 号执行) — Sprint 39: 同时复制 .sha256 让归档可独立校验
 DAY=$(date +%d)
 if [[ "${DAY}" == "01" ]]; then
   YEAR_MONTH=$(date +%Y-%m)
@@ -111,10 +124,26 @@ if [[ "${DAY}" == "01" ]]; then
   LATEST_PG=$(ls -t "${LOCAL_PG}/"*.dump 2>/dev/null | head -1 || true)
   LATEST_REDIS=$(ls -t "${LOCAL_REDIS}/"redis_*.tgz 2>/dev/null | head -1 || true)
   LATEST_ENV=$(ls -t "${LOCAL_SECRETS}/"backend.env.*.bak 2>/dev/null | head -1 || true)
-  [[ -n "${LATEST_PG}" ]] && cp "${LATEST_PG}" "${MONTHLY_DIR}/"
-  [[ -n "${LATEST_REDIS}" ]] && cp "${LATEST_REDIS}" "${MONTHLY_DIR}/"
+  # cp 数据文件 + 对应 .sha256 (Sprint 39 修: 归档要能 sha256sum -c 自检)
+  if [[ -n "${LATEST_PG}" ]]; then
+    cp "${LATEST_PG}" "${MONTHLY_DIR}/"
+    [[ -f "${LATEST_PG}.sha256" ]] && cp "${LATEST_PG}.sha256" "${MONTHLY_DIR}/" \
+      || log "  WARN: ${LATEST_PG}.sha256 missing, monthly archive cannot verify checksum"
+  fi
+  if [[ -n "${LATEST_REDIS}" ]]; then
+    cp "${LATEST_REDIS}" "${MONTHLY_DIR}/"
+    [[ -f "${LATEST_REDIS}.sha256" ]] && cp "${LATEST_REDIS}.sha256" "${MONTHLY_DIR}/" \
+      || log "  WARN: ${LATEST_REDIS}.sha256 missing"
+  fi
+  # backend.env.*.bak 一般没有 sha256, 直接 cp 数据
   [[ -n "${LATEST_ENV}" ]] && cp "${LATEST_ENV}" "${MONTHLY_DIR}/"
 fi
 
 log "=== stocks backup-pull DONE ==="
 log "local: $(du -sh "${LOCAL_ROOT}" 2>/dev/null | cut -f1) at ${LOCAL_ROOT}"
+
+# Sprint 39: 任一文件拉取失败 → 整脚本 exit 1, 让 cron 失败明显可见 (不再静默)
+if [[ "${PULL_FAILED}" -gt 0 ]]; then
+  log "ERROR: ${PULL_FAILED} 个文件拉取失败, exit 1"
+  exit 1
+fi
