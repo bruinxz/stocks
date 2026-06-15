@@ -64,6 +64,10 @@ export const FEATURE_NAMES = [
   'strategy_winrate_z',
   'strategy_payoff_z',
   'market_atr_z',
+  // Sprint 34 (短板 #2b): 成交可行性分作为 MetaLabel 特征
+  // 来自上一次 ExecutionFeasibility 该 symbol 7 日均分 (0-100, 0=极差 100=完美).
+  // 新模型训练时会自动学这个 dim 权重; 老模型 weights 缺该 key → 默认 0 不破坏.
+  'pre_check_feasibility_score_z',
 ] as const;
 export type FeatureName = (typeof FEATURE_NAMES)[number];
 
@@ -79,6 +83,12 @@ export interface RawSignalFeatures {
   strategy_recent_winrate_30d: number; // 0-1
   strategy_recent_payoff_30d: number; // >= 0 (loser/winner ratio)
   market_vol_atr: number; // ATR 1-10 范围 normalized
+  /**
+   * Sprint 34 (短板 #2b): 该 symbol 近 N 天 ExecutionFeasibility 平均 composite_score
+   * (0-100). 缺数据 → 50 (中性). caller (PaperTradingAutomationService) 在调
+   * shouldBet 前 query execution_feasibility_records 拿这个值.
+   */
+  pre_check_feasibility_score?: number;
 }
 
 export interface MetaLabelModel {
@@ -176,6 +186,11 @@ export function buildFeatureVector(
   v.strategy_winrate_z = norm('strategy_winrate_z', raw.strategy_recent_winrate_30d);
   v.strategy_payoff_z = norm('strategy_payoff_z', raw.strategy_recent_payoff_30d);
   v.market_atr_z = norm('market_atr_z', raw.market_vol_atr);
+  // Sprint 34 (短板 #2b): pre-check feasibility score; 缺则 50 (中性), z-score 后 ≈ 0
+  v.pre_check_feasibility_score_z = norm(
+    'pre_check_feasibility_score_z',
+    raw.pre_check_feasibility_score ?? 50
+  );
   return v;
 }
 
@@ -198,6 +213,8 @@ export function computeFeatureStats(rawRows: RawSignalFeatures[]): {
     { name: 'strategy_winrate_z', extract: r => r.strategy_recent_winrate_30d },
     { name: 'strategy_payoff_z', extract: r => r.strategy_recent_payoff_30d },
     { name: 'market_atr_z', extract: r => r.market_vol_atr },
+    // Sprint 34: 新 feature; 训练时该 dim 也参与 z-score 标准化
+    { name: 'pre_check_feasibility_score_z', extract: r => r.pre_check_feasibility_score ?? 50 },
   ];
   for (const f of zFields) {
     const vals = rawRows.map(f.extract).filter(v => Number.isFinite(v));

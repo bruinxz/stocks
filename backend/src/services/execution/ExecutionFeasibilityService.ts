@@ -95,6 +95,14 @@ export interface MarketSnapshot {
   is_suspended?: boolean;
   /** 是否 ST */
   is_st?: boolean;
+  /**
+   * Sprint 34 (短板 #3b): 实时盘口 1 档. caller (PaperTradingAutomationService)
+   * 从 RealtimeQuote.raw_payload 抽出. 缺则 spread 评分回退 (high-low)/close 代理.
+   */
+  bid1_price?: number | null;
+  ask1_price?: number | null;
+  bid1_volume?: number | null;
+  ask1_volume?: number | null;
 }
 
 export interface ExecutionFeasibilityInput {
@@ -277,18 +285,50 @@ export function computeVolumeCoverageScoreV2(input: {
 }
 
 /**
- * 价差评分 (用 (high - low) / close 作 proxy):
- *   - proxy ≤ 1% → 100
- *   - 1% < proxy ≤ 3% → 80
- *   - 3% < proxy ≤ 5% → 50
- *   - proxy > 5% → 20
+ * 价差评分.
+ *
+ * Sprint 34 (短板 #3b): 优先用真盘口 bid1/ask1: spread = (ask - bid) / mid;
+ * 缺盘口时 fallback (high - low)/close 代理 (向后兼容).
+ *
+ * 评分曲线:
+ *   - spread ≤ 0.2% (主流标的) → 100
+ *   - 0.2% < spread ≤ 1%       → 100→80 线性
+ *   - 1% < spread ≤ 3%         → 80→50 线性
+ *   - 3% < spread ≤ 5%         → 50→20 线性
+ *   - spread > 5%              → 20
  */
 export function computeSpreadScore(input: {
   high: number | null | undefined;
   low: number | null | undefined;
   close: number;
+  // Sprint 34: 真盘口 (可选)
+  bid1?: number | null;
+  ask1?: number | null;
 }): number | null {
-  const { high, low, close } = input;
+  const { high, low, close, bid1, ask1 } = input;
+  // 优先真盘口
+  if (
+    bid1 !== undefined &&
+    bid1 !== null &&
+    ask1 !== undefined &&
+    ask1 !== null &&
+    Number.isFinite(bid1) &&
+    Number.isFinite(ask1) &&
+    bid1 > 0 &&
+    ask1 > 0 &&
+    ask1 >= bid1
+  ) {
+    const mid = (bid1 + ask1) / 2;
+    if (mid <= 0) return null;
+    const spread = (ask1 - bid1) / mid;
+    if (spread <= 0) return 100;
+    if (spread <= 0.002) return 100;
+    if (spread <= 0.01) return Math.round(100 - ((spread - 0.002) / 0.008) * 20);
+    if (spread <= 0.03) return Math.round(80 - ((spread - 0.01) / 0.02) * 30);
+    if (spread <= 0.05) return Math.round(50 - ((spread - 0.03) / 0.02) * 30);
+    return 20;
+  }
+  // Fallback: high-low/close 代理
   if (high === null || high === undefined || low === null || low === undefined) return null;
   if (!Number.isFinite(high) || !Number.isFinite(low) || !Number.isFinite(close) || close <= 0) return null;
   const proxy = (high - low) / close;
@@ -571,11 +611,13 @@ export class ExecutionFeasibilityService {
       });
     }
 
-    // 3. spread
+    // 3. spread — Sprint 34: 优先用真盘口 bid/ask, 缺则 high-low/close 代理
     const spread_score = computeSpreadScore({
       high: snapshot.high,
       low: snapshot.low,
       close: snapshot.close,
+      bid1: snapshot.bid1_price,
+      ask1: snapshot.ask1_price,
     });
 
     // 4. status
@@ -626,6 +668,11 @@ export class ExecutionFeasibilityService {
         snapshot_close: snapshot.close,
         snapshot_prev_close: snapshot.prev_close,
         snapshot_avg_volume_5d: snapshot.avg_volume_5d,
+        // Sprint 34 (短板 #3b): 真盘口落地, 让 dashboard 能区分 spread 来源
+        snapshot_bid1: snapshot.bid1_price ?? null,
+        snapshot_ask1: snapshot.ask1_price ?? null,
+        spread_source:
+          snapshot.bid1_price && snapshot.ask1_price ? 'real_bid_ask' : 'high_low_proxy',
         use_almgren_chriss: options.use_almgren_chriss === true,
         impact_bps_v2,
       },

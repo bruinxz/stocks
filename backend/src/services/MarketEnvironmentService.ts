@@ -6,6 +6,8 @@ import { MacroIndicator } from '../models/MacroIndicator';
 import { OptionQvix } from '../models/OptionQvix';
 import { DEFAULT_BENCHMARK_INDICES, benchmarkIndexService } from './BenchmarkIndexService';
 import { logger } from '../utils/logger';
+// Sprint 34: 真实 ATR (Wilder) — 不再用 drawdown 代理喂 MetaLabel
+import { atr as wilderAtr } from '../quant/engine/QuantMath';
 
 function toNumber(value: any, fallback = 0): number {
   const num = Number(value);
@@ -51,6 +53,14 @@ export interface MarketEnvironmentSnapshot {
   benchmark_drawdown_60d_pct: number;
   benchmark_price_vs_ma20_pct: number;
   benchmark_price_vs_ma60_pct: number;
+  /**
+   * Sprint 34: 真实 ATR (Wilder smoothed, period=14) — 替代之前 MetaLabel 用
+   * benchmark_drawdown_60d_pct 做的代理. ATR 是 absolute 单位 (与 close 同),
+   * pct 化方便跨指数对比: atr_14d_pct = atr_14d / latest_close × 100.
+   * 缺数据时 = null (调用方应 fallback 到 drawdown 代理).
+   */
+  benchmark_atr_14d: number | null;
+  benchmark_atr_14d_pct: number | null;
   breadth: {
     sample_count: number;
     up_20d_ratio: number;
@@ -154,6 +164,37 @@ class MarketEnvironmentService {
     const vsMa20 = ma20 > 0 ? pct(latest, ma20) : 0;
     const vsMa60 = ma60 > 0 ? pct(latest, ma60) : 0;
     const drawdown = maxDrawdown(closes.slice(-60));
+
+    // Sprint 34: 真实 benchmark ATR (Wilder smoothed, 14日)
+    // 不再用 drawdown_60d 当 vol 代理. ATR 反映"日内波动平均", 是更标准的市场波动率指标.
+    let atr14: number | null = null;
+    let atr14Pct: number | null = null;
+    try {
+      const quantBars = bars
+        .filter(b => Number(b.high) > 0 && Number(b.low) > 0 && Number(b.close) > 0)
+        .map(b => ({
+          time: b.time,
+          open: Number(b.open),
+          high: Number(b.high),
+          low: Number(b.low),
+          close: Number(b.close),
+          volume: Number(b.volume || 0),
+        }));
+      if (quantBars.length >= 16) {
+        // wilderAtr 返回 series; 取最后一个有效值
+        const series = wilderAtr(quantBars as any[], 14);
+        const lastAtr = series.filter(v => Number.isFinite(v) && v > 0).pop();
+        if (lastAtr && lastAtr > 0) {
+          atr14 = lastAtr;
+          atr14Pct = latest > 0 ? (lastAtr / latest) * 100 : null;
+        }
+      }
+    } catch (atrErr: any) {
+      logger.warn(
+        `[market-environment] ATR(14) 计算失败 ${benchmarkSymbol}: ${atrErr?.message || atrErr}`
+      );
+    }
+
     const [breadth, macro, qvix] = await Promise.all([
       this.resolveBreadth(endDate, ret20),
       this.resolveMacroFeatures(endDate),
@@ -229,6 +270,8 @@ class MarketEnvironmentService {
       benchmark_drawdown_60d_pct: roundNumber(drawdown, 4),
       benchmark_price_vs_ma20_pct: roundNumber(vsMa20, 4),
       benchmark_price_vs_ma60_pct: roundNumber(vsMa60, 4),
+      benchmark_atr_14d: atr14 != null ? roundNumber(atr14, 6) : null,
+      benchmark_atr_14d_pct: atr14Pct != null ? roundNumber(atr14Pct, 4) : null,
       breadth,
       macro: macro || undefined,
       qvix: qvix || undefined,

@@ -1777,13 +1777,52 @@ class PaperTradingAutomationService {
           kellyForMeta = await strategyKellyStatsService.getStats(strategyKeyForMeta).catch(() => null);
         }
         // Sprint 28: 从 environmentPolicy.market_environment 抽真实 breadth + 波动率
+        // Sprint 34 (短板 #2a 真生效): 优先用真实 benchmark_atr_14d_pct (Wilder ATR),
+        // 缺数据时 fallback 到 drawdown 代理 (向后兼容).
         const envSnapshot = (environmentPolicy as any)?.market_environment || {};
         const breadthScore = Number(
           envSnapshot?.breadth?.up_20d_ratio ?? 50
         );
+        const realAtrPct = Number(envSnapshot?.benchmark_atr_14d_pct);
         const benchmarkDrawdownPct = Math.abs(
           Number(envSnapshot?.benchmark_drawdown_60d_pct ?? 0)
         );
+        // 真 ATR 在 → 用真 ATR; 缺 → 退回 drawdown 代理 (不是 0!)
+        const marketVolFeature =
+          Number.isFinite(realAtrPct) && realAtrPct > 0
+            ? realAtrPct
+            : Number.isFinite(benchmarkDrawdownPct)
+            ? benchmarkDrawdownPct
+            : 4;
+
+        // Sprint 34 (短板 #2b): 该 symbol 近 7 天 ExecutionFeasibility 平均 composite_score
+        // 作为 MetaLabel pre-check feature. 缺数据 → 50 (中性). fail-open 不阻塞.
+        let preCheckFeasibilityScore = 50;
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const { ExecutionFeasibilityRecord } = require('../../models/ExecutionFeasibilityRecord');
+          const sevenDaysAgo = new Date(Date.now() - 7 * 86400_000).toISOString().slice(0, 10);
+          const recentRecords = await ExecutionFeasibilityRecord.findAll({
+            where: {
+              symbol: signal.symbol,
+              as_of_date: { [Op.gte]: sevenDaysAgo },
+            },
+            attributes: ['composite_score'],
+            order: [['created_at', 'DESC']],
+            limit: 20,
+          });
+          if (recentRecords.length > 0) {
+            const sum = recentRecords.reduce(
+              (s: number, r: any) => s + Number(r.composite_score || 50),
+              0
+            );
+            preCheckFeasibilityScore = sum / recentRecords.length;
+          }
+        } catch (feasFetchErr: any) {
+          logger.warn(
+            `[meta-label] pre-check feasibility fetch failed (默认 50): ${feasFetchErr?.message || feasFetchErr}`
+          );
+        }
         const metaDecision = await metaLabelService.shouldBet(
           {
             signal_id: (signal as any).id,
@@ -1799,8 +1838,10 @@ class PaperTradingAutomationService {
               market_breadth_score: Number.isFinite(breadthScore) ? breadthScore : 50,
               strategy_recent_winrate_30d: Number(kellyForMeta?.win_rate ?? 0.5),
               strategy_recent_payoff_30d: Number(kellyForMeta?.payoff_ratio ?? 1.0),
-              // Sprint 28: benchmark 60 日回撤幅度 (%) 代理市场波动率, 不再是固定 4
-              market_vol_atr: Number.isFinite(benchmarkDrawdownPct) ? benchmarkDrawdownPct : 4,
+              // Sprint 34 (短板 #2a 真生效): 真 Wilder ATR(14) pct, 缺数据退 drawdown 代理
+              market_vol_atr: Number.isFinite(marketVolFeature) ? marketVolFeature : 4,
+              // Sprint 34 (短板 #2b): 该 symbol 近 7d feasibility 平均分作为 pre-check
+              pre_check_feasibility_score: preCheckFeasibilityScore,
             },
           },
           { persist: true }
@@ -1814,13 +1855,19 @@ class PaperTradingAutomationService {
           model_version: metaDecision.model_version,
           threshold: metaDecision.threshold,
           // Sprint 28: 把真实 features 也存到 activation detail, 方便 dashboard 排查
+          // Sprint 34: 补 atr_real / drawdown_proxy 区分两个来源
           features_used: {
             breadth_score: Number.isFinite(breadthScore) ? breadthScore : 50,
+            market_vol_atr_used: Number.isFinite(marketVolFeature) ? marketVolFeature : 4,
+            atr_real_pct: Number.isFinite(realAtrPct) && realAtrPct > 0 ? realAtrPct : null,
             benchmark_drawdown_pct: Number.isFinite(benchmarkDrawdownPct)
               ? benchmarkDrawdownPct
               : 4,
+            vol_source: Number.isFinite(realAtrPct) && realAtrPct > 0 ? 'atr_14d' : 'drawdown_60d_proxy',
             winrate: Number(kellyForMeta?.win_rate ?? 0.5),
             payoff: Number(kellyForMeta?.payoff_ratio ?? 1.0),
+            // Sprint 34 (短板 #2b): pre-check feasibility score 来源 + 值
+            pre_check_feasibility_score: preCheckFeasibilityScore,
           },
         };
         if (metaDecision.decision === 'skip') {
@@ -2047,6 +2094,7 @@ class PaperTradingAutomationService {
         const targetQty = execute_price > 0 ? Math.floor(targetAmount / execute_price / 100) * 100 : 0;
         if (targetQty >= 100) {
           // 用 quote 字段构 MarketSnapshot — 完全可选, 缺字段时 feasibility 内部 fall back to DB
+          // Sprint 34: 加 bid1/ask1 真盘口, 让 spread 评分用 (ask-bid)/mid 而不是 (high-low)/close 代理
           const marketSnapshot =
             quote.price > 0
               ? {
@@ -2055,6 +2103,10 @@ class PaperTradingAutomationService {
                   high: quote.high,
                   low: quote.low,
                   volume: quote.volume,
+                  bid1_price: quote.bid1_price,
+                  ask1_price: quote.ask1_price,
+                  bid1_volume: quote.bid1_volume,
+                  ask1_volume: quote.ask1_volume,
                 }
               : undefined;
           const feasibility = await executionFeasibilityService.computeFeasibility({
@@ -3455,6 +3507,11 @@ class PaperTradingAutomationService {
     volume?: number;
     turnover?: number;
     change_percent?: number;
+    // Sprint 34 (短板 #3b): 盘口 1 档 bid/ask, 给 Feasibility spread 评分用真实数据
+    bid1_price?: number;
+    ask1_price?: number;
+    bid1_volume?: number;
+    ask1_volume?: number;
   }> {
     const normalizedSymbol = normalizeSymbol(symbol);
     const stock = await Stock.findOne({ where: { symbol: normalizedSymbol } });
@@ -3467,6 +3524,24 @@ class PaperTradingAutomationService {
       order: [['quote_time', 'DESC']],
     }).catch(() => null);
     if (latestRealtime?.current_price && toNumber(latestRealtime.current_price, 0) > 0) {
+      // Sprint 34 (短板 #3b): 从 raw_payload 抽 bid/ask (1档).
+      // RealtimeQuoteService.parseTencentRealtimePayload 已 set bid1_price/ask1_price,
+      // 写库时进 raw_payload JSONB 字段.
+      let bid1: number | undefined;
+      let ask1: number | undefined;
+      let bidVol: number | undefined;
+      let askVol: number | undefined;
+      try {
+        const raw: any = latestRealtime.raw_payload || {};
+        if (raw && typeof raw === 'object') {
+          if (Number.isFinite(raw.bid1_price) && raw.bid1_price > 0) bid1 = Number(raw.bid1_price);
+          if (Number.isFinite(raw.ask1_price) && raw.ask1_price > 0) ask1 = Number(raw.ask1_price);
+          if (Number.isFinite(raw.bid1_volume)) bidVol = Number(raw.bid1_volume);
+          if (Number.isFinite(raw.ask1_volume)) askVol = Number(raw.ask1_volume);
+        }
+      } catch (_e) {
+        // raw_payload 异常 silent skip — feasibility 自行 fallback
+      }
       return {
         price: roundNumber(toNumber(latestRealtime.current_price, fallbackPrice), 4),
         name: latestRealtime.name || stock.name,
@@ -3485,6 +3560,11 @@ class PaperTradingAutomationService {
         turnover: toNumber(latestRealtime.turnover, undefined as any) || undefined,
         change_percent:
           toNumber(latestRealtime.change_percent, undefined as any) || undefined,
+        // Sprint 34: 盘口 1 档 (仅 tencent 来源有, akshare/daily_bar fallback 时缺)
+        bid1_price: bid1,
+        ask1_price: ask1,
+        bid1_volume: bidVol,
+        ask1_volume: askVol,
       };
     }
 

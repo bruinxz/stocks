@@ -109,6 +109,11 @@ function parseTencentRealtimePayload(
     const open = toNumber(parts[5]);
     const volumeLots = toNumber(parts[6]);
     const amountWan = toNumber(parts[37]);
+    // Sprint 34 (短板 #3b): Tencent 实时行情盘口 — 5档买卖
+    // parts[9]=bid1_price, parts[10]=bid1_volume, parts[11]=bid2_price, ..., parts[18]=bid5_volume
+    // parts[19]=ask1_price, parts[20]=ask1_volume, ..., parts[28]=ask5_volume
+    const bid1 = toNumber(parts[9]);
+    const ask1 = toNumber(parts[19]);
     result[normalized] = {
       // 不依赖腾讯 GBK 股票名解码，落盘时优先使用 stocks 表里的标准名称。
       current_price: currentPrice,
@@ -120,6 +125,11 @@ function parseTencentRealtimePayload(
       change_percent: toNumber(parts[32]),
       volume: volumeLots === undefined ? undefined : volumeLots * 100,
       turnover: amountWan === undefined ? undefined : amountWan * 10000,
+      // Sprint 34: 盘口 bid/ask (1档), 后续 Feasibility spread 评分用
+      bid1_price: bid1 && bid1 > 0 ? bid1 : undefined,
+      ask1_price: ask1 && ask1 > 0 ? ask1 : undefined,
+      bid1_volume: toNumber(parts[10]),
+      ask1_volume: toNumber(parts[20]),
       timestamp: parseTencentQuoteTimestamp(parts[30]).toISOString(),
       source: 'tencent',
       raw: parts,
