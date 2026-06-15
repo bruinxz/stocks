@@ -14,6 +14,7 @@
     "lint:fix": "eslint src --ext .ts --fix",
     "format": "prettier --write src/**/*.ts",
     "check-env": "ts-node --transpile-only src/scripts/check-env.ts",
+    "check-l8-activation": "ts-node --transpile-only src/scripts/check-l8-activation.ts",
     "db:migrate": "sequelize-cli db:migrate",
     "db:seed": "sequelize-cli db:seed:all",
     "db:reset": "sequelize-cli db:migrate:undo:all && sequelize-cli db:migrate && sequelize-cli db:seed:all",
