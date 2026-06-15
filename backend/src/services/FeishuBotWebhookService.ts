@@ -354,24 +354,19 @@ class FeishuBotWebhookService {
       };
     }
 
-    const post = this.buildRecommendationPost(payload);
-    if (post.content.length === 0) {
+    // Sprint 35: 优先 interactive 卡片 (富文本视觉好); buildRecommendationCard
+    // 内部判 recommendations 是否为空, 空时返回 null 让 caller skip 推送.
+    const card = this.buildRecommendationCard(payload);
+    if (card === null) {
       return {
         success: false,
         skipped: true,
-        message: '荐股摘要为空，已跳过飞书机器人推送',
+        message: '荐股摘要无实质内容 (无推荐 + 无风控提示), 已跳过推送',
       };
     }
 
     try {
-      const response = await this.http.post(webhook, {
-        msg_type: 'post',
-        content: {
-          post: {
-            zh_cn: post,
-          },
-        },
-      });
+      const response = await this.http.post(webhook, card);
       const body = response.data || {};
       const rawCode = body.code ?? body.StatusCode ?? body.status_code ?? 0;
       const code = Number(rawCode);
@@ -381,7 +376,9 @@ class FeishuBotWebhookService {
         return { success: false, message, data: body };
       }
 
-      logger.info(`飞书机器人荐股摘要已推送: ${post.title}`);
+      logger.info(
+        `飞书机器人荐股摘要已推送 (card): ${(card as any).card?.header?.title?.content || 'untitled'}`
+      );
       return { success: true, data: body };
     } catch (error: any) {
       const message = error?.response?.data?.msg || error?.message || '飞书机器人推送异常';
@@ -438,6 +435,229 @@ class FeishuBotWebhookService {
       ],
     };
   }
+
+  /**
+   * Sprint 35: 升级版 — interactive 卡片富文本.
+   * 视觉对比 post 富文本: 有彩色 header (template) / lark_md / fields (双列) / hr 分隔线 / note 脚注,
+   * 飞书移动端 + 桌面端渲染都明显更工整美观.
+   *
+   * 返回 null 时调用方应 skip 推送 — 无实质内容 (无推荐 + 无风控提示) 的摘要属噪声.
+   */
+  private buildRecommendationCard(payload: FeishuRecommendationSummaryPayload): any | null {
+    if (payload.scenario === 'paper_trading_risk_check') {
+      return this.buildRiskCheckCard(payload);
+    }
+
+    const result = payload.result || {};
+    const scenarioLabel = this.getScenarioLabel(payload.scenario, payload.record_type);
+    const title = payload.title || this.getScenarioTitle(payload.scenario, scenarioLabel);
+    const maxItems = Math.max(
+      1,
+      Math.min(
+        8,
+        firstNumber(payload.max_items, process.env.FEISHU_RECOMMENDATION_BOT_MAX_ITEMS) ||
+          DEFAULT_MAX_ITEMS
+      )
+    );
+    const recommendations = this.extractRecommendations(result).slice(0, maxItems);
+    const totalCount = this.resolveTotalRecommendationCount(result, recommendations.length);
+    const paper = this.resolvePaperTrading(result);
+    const riskLine = this.buildRiskLine(result);
+    const scopeLine = this.buildScopeLine(result, payload.scenario);
+    const timeLine = moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm');
+    const runtimeBlockLine = this.buildRuntimeBlockLine(result);
+    const strategyBudgetLine = this.buildStrategyBudgetLine(result);
+    const executed = Number(paper.executed || 0);
+    const planned = Number(paper.planned || 0);
+    const skipped = Number(paper.skipped || 0);
+    const hasActualOrder = executed + planned > 0;
+
+    // skip 无实质内容的摘要 — 0 推荐 + 0 成交 + 无 runtime block = 纯噪声
+    if (recommendations.length === 0 && !hasActualOrder && !runtimeBlockLine) {
+      return null;
+    }
+
+    // header template: 有 executed 用 green, 仅 planned 用 blue, 风控阻断用 orange, 无单 default
+    let template: 'green' | 'blue' | 'orange' | 'turquoise' = 'turquoise';
+    if (executed > 0) template = 'green';
+    else if (planned > 0) template = 'blue';
+    else if (runtimeBlockLine) template = 'orange';
+
+    const elements: any[] = [];
+
+    // 1. 结论行 — 简洁突出
+    const conclusionParts: string[] = [];
+    if (recommendations.length > 0 || totalCount > 0) {
+      conclusionParts.push(`**本轮推荐 ${totalCount} 只**`);
+    }
+    if (executed > 0) conclusionParts.push(`✅ 成交 **${executed}** 笔`);
+    if (planned > 0) conclusionParts.push(`📋 计划 **${planned}** 笔`);
+    if (skipped > 0) conclusionParts.push(`⏭️ 跳过 ${skipped} 条`);
+    if (conclusionParts.length > 0) {
+      elements.push({
+        tag: 'div',
+        text: { tag: 'lark_md', content: conclusionParts.join(' · ') },
+      });
+    }
+
+    // 2. 运行时阻断 (runtime block) — orange / 高优先级
+    if (runtimeBlockLine) {
+      elements.push({
+        tag: 'div',
+        text: { tag: 'lark_md', content: `⚠️ ${runtimeBlockLine}` },
+      });
+    }
+
+    // 3. 范围 / 策略预算
+    if (scopeLine || strategyBudgetLine) {
+      const fields: any[] = [];
+      if (scopeLine) {
+        fields.push({
+          is_short: false,
+          text: { tag: 'lark_md', content: `**范围**\n${scopeLine}` },
+        });
+      }
+      if (strategyBudgetLine) {
+        fields.push({
+          is_short: false,
+          text: { tag: 'lark_md', content: `**策略预算**\n${strategyBudgetLine}` },
+        });
+      }
+      elements.push({ tag: 'div', fields });
+    }
+
+    // 4. 推荐列表 (lark_md table-like)
+    if (recommendations.length > 0) {
+      elements.push({ tag: 'hr' });
+      const recommendationLines = recommendations.map((item, index) => {
+        const idx = `**${index + 1}.**`;
+        const name = String(item.name || item.symbol || '').trim();
+        const symbol = String(item.symbol || '').trim();
+        const price =
+          item.current_price && Number.isFinite(Number(item.current_price))
+            ? `¥${Number(item.current_price).toFixed(2)}`
+            : '现价--';
+        const score = item.score != null ? ` | 分 **${item.score}**` : '';
+        const positionPct =
+          item.position_pct != null
+            ? ` | 仓位 ${Number(item.position_pct).toFixed(1)}%`
+            : '';
+        const actionLabel = item.action_label || item.status || '';
+        const action = actionLabel ? ` | ${actionLabel}` : '';
+        const traceLink = item.trace_url ? ` [详情](${item.trace_url})` : '';
+        return `${idx} ${name} (${symbol}) | ${price}${score}${positionPct}${action}${traceLink}`;
+      });
+      elements.push({
+        tag: 'div',
+        text: { tag: 'lark_md', content: recommendationLines.join('\n') },
+      });
+    }
+
+    // 5. 风控 + 时间 (脚注)
+    elements.push({ tag: 'hr' });
+    elements.push({
+      tag: 'note',
+      elements: [
+        {
+          tag: 'plain_text',
+          content: `${riskLine || '风控正常'} · ${timeLine}`,
+        },
+      ],
+    });
+
+    return {
+      msg_type: 'interactive',
+      card: {
+        config: { wide_screen_mode: true },
+        header: {
+          title: { tag: 'plain_text', content: title },
+          template,
+        },
+        elements,
+      },
+    };
+  }
+
+  /**
+   * Sprint 35: risk_check 场景的 interactive 卡片. 风控退出动作 → red header.
+   * 无退出 + dry_run 时 → 仍推 (操作员要看 dry-run 结果), 但用 turquoise 中性色.
+   */
+  private buildRiskCheckCard(payload: FeishuRecommendationSummaryPayload): any | null {
+    const result = payload.result || {};
+    const scenarioLabel = this.getScenarioLabel(payload.scenario, payload.record_type);
+    const title = payload.title || this.getScenarioTitle(payload.scenario, scenarioLabel);
+    const maxItems = Math.max(
+      1,
+      Math.min(
+        5,
+        firstNumber(payload.max_items, process.env.FEISHU_RECOMMENDATION_BOT_MAX_ITEMS) ||
+          DEFAULT_MAX_ITEMS
+      )
+    );
+    const exits = this.extractRiskExits(result).slice(0, maxItems);
+    const timeLine = moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm');
+    const riskLine = this.buildRiskLine(result);
+
+    const template: 'red' | 'turquoise' = exits.length > 0 ? 'red' : 'turquoise';
+    const elements: any[] = [];
+
+    elements.push({
+      tag: 'div',
+      text: { tag: 'lark_md', content: this.buildRiskCheckConclusionLine(result, exits.length) },
+    });
+
+    const scopeLine = this.buildRiskScopeLine(result);
+    if (scopeLine) {
+      elements.push({
+        tag: 'div',
+        text: { tag: 'lark_md', content: `**范围**: ${scopeLine}` },
+      });
+    }
+
+    if (exits.length > 0) {
+      elements.push({ tag: 'hr' });
+      const exitLines = exits.map((item, index) => {
+        const idx = `**${index + 1}.**`;
+        const name = String(item.name || item.symbol || '').trim();
+        const symbol = String(item.symbol || '').trim();
+        const pnl =
+          item.realized_pnl != null
+            ? `${item.realized_pnl >= 0 ? '+' : ''}¥${Number(item.realized_pnl).toFixed(2)}`
+            : '';
+        const reason = item.reason_label || '';
+        const status = item.status === 'failed' ? ' ❌ 失败' : '';
+        return `${idx} ${name} (${symbol}) | ${pnl} | ${reason}${status}`;
+      });
+      elements.push({
+        tag: 'div',
+        text: { tag: 'lark_md', content: exitLines.join('\n') },
+      });
+    } else {
+      elements.push({
+        tag: 'div',
+        text: { tag: 'lark_md', content: '✅ 持仓全部安全, 暂无触发止损/止盈/卖出信号' },
+      });
+    }
+
+    elements.push({ tag: 'hr' });
+    elements.push({
+      tag: 'note',
+      elements: [{ tag: 'plain_text', content: `${riskLine || '风控正常'} · ${timeLine}` }],
+    });
+
+    return {
+      msg_type: 'interactive',
+      card: {
+        config: { wide_screen_mode: true },
+        header: {
+          title: { tag: 'plain_text', content: title },
+          template,
+        },
+        elements,
+      },
+    };
+  }
+
 
   private buildRiskCheckPost(payload: FeishuRecommendationSummaryPayload): {
     title: string;

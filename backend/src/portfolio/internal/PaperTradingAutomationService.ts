@@ -2650,26 +2650,51 @@ class PaperTradingAutomationService {
         });
         setOutcome(activation, 'executed');
 
-        // ========== 即时飞书推送：自主买入通知 ==========
-        // Sprint 35 fix: 之前调 sendRecommendationSummary 传 {title, summary, webhook_url}
-        // 全是错字段 — sendRecommendationSummary 实际只看 payload.result + scenario,
-        // summary/title 被忽略, 导致推送出"🟢 自主买入 X" 标题 + "本轮暂无可执行推荐"
-        // 矛盾内容 (内部回退到 result 为空的 placeholder).
-        // 改为直接 POST text 类型 webhook, 消息纯粹明确.
+        // ========== 即时飞书推送：自主买入卡片 ==========
+        // Sprint 35: interactive 富文本卡片 (绿色 header), 替代之前的 text/错误模板.
         try {
           const webhookUrl = process.env.FEISHU_RECOMMENDATION_BOT_WEBHOOK || process.env.FEISHU_BOT_WEBHOOK;
           if (webhookUrl && String(process.env.DISABLE_FEISHU_BOT_WEBHOOK) !== 'true') {
             const stockName = signal.name || quote.name || symbol;
             const positionPct = ((total_cost / toNumber(portfolio.total_value, 200000)) * 100).toFixed(1);
-            const text =
-              `🟢 自主买入 ${stockName} (${symbol})\n` +
-              `得分 ${toNumber(signal.confidence_score, 0).toFixed(0)} | ` +
-              `${quantity}股 × ¥${execute_price.toFixed(2)} = ¥${amount.toFixed(0)} ` +
-              `(${positionPct}%仓位)`;
+            const score = toNumber(signal.confidence_score, 0).toFixed(0);
+            const card = {
+              msg_type: 'interactive',
+              card: {
+                config: { wide_screen_mode: true },
+                header: {
+                  title: { tag: 'plain_text', content: `🟢 自主买入 · ${stockName}` },
+                  template: 'green',
+                },
+                elements: [
+                  {
+                    tag: 'div',
+                    fields: [
+                      { is_short: true, text: { tag: 'lark_md', content: `**代码**\n${symbol}` } },
+                      { is_short: true, text: { tag: 'lark_md', content: `**得分**\n${score}` } },
+                      { is_short: true, text: { tag: 'lark_md', content: `**成交价**\n¥${execute_price.toFixed(2)}` } },
+                      { is_short: true, text: { tag: 'lark_md', content: `**数量**\n${quantity} 股` } },
+                      { is_short: true, text: { tag: 'lark_md', content: `**总成本**\n¥${amount.toFixed(0)}` } },
+                      { is_short: true, text: { tag: 'lark_md', content: `**仓位**\n${positionPct}%` } },
+                    ],
+                  },
+                  { tag: 'hr' },
+                  {
+                    tag: 'note',
+                    elements: [
+                      {
+                        tag: 'plain_text',
+                        content: `${moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm')} · ${portfolio.name || 'paper trading'}`,
+                      },
+                    ],
+                  },
+                ],
+              },
+            };
             // eslint-disable-next-line @typescript-eslint/no-var-requires
             const axios = require('axios');
             axios
-              .post(webhookUrl, { msg_type: 'text', content: { text } }, { timeout: 5000 })
+              .post(webhookUrl, card, { timeout: 5000 })
               .catch(() => { /* 静默 — fail-OPEN, 推送失败不阻塞下单主流程 */ });
           }
         } catch { /* 静默 */ }
@@ -2960,10 +2985,21 @@ class PaperTradingAutomationService {
 
     // 自动跟单结果默认不推 webhook 摘要（用户已从 DailyTradingDigest 收到当日成交）
     // 仅当 caller 显式 report_to_feishu=true 才推
+    //
+    // Sprint 35 fix: skip 空摘要 — 当本轮 trades / planned 都=0 且没新增任何买入时,
+    // 推 "本轮推荐 N 只, 模拟盘未新增买入" 这种纯流水汇报对用户毫无价值, 反成噪声.
+    // 仅在 真实成交 或 有 planned (预演) 或 风控加仓警示 时推.
+    const executedCount = (syncResult as any).executed || 0;
+    const plannedCount = (syncResult as any).planned || 0;
+    const hasActualOrder = executedCount + plannedCount > 0;
+    const hasRiskWarning =
+      (syncResult as any).risk_profile_gate?.action === 'pause' ||
+      (syncResult as any).risk_profile_gate?.action === 'restrict';
     if (
       toBoolean(options.report_to_feishu, false) &&
       options.notify_to_feishu_bot !== false &&
-      (refreshRecommendations || Array.isArray((syncResult as any).generated?.recommendations))
+      (refreshRecommendations || Array.isArray((syncResult as any).generated?.recommendations)) &&
+      (hasActualOrder || hasRiskWarning)  // Sprint 35: 仅在有实质内容时推
     ) {
       await feishuBotWebhookService.sendRecommendationSummary({
         scenario: 'paper_trading_auto_sync',
@@ -3307,9 +3343,8 @@ class PaperTradingAutomationService {
         });
         exitItem.trade_id = trade.id;
 
-        // ========== 即时飞书推送：自主卖出通知 ==========
-        // Sprint 35 fix: 与自主买入同款 bug — sendRecommendationSummary 的 payload
-        // schema 不接受 {title, summary, webhook_url}, 改 axios 直推 text.
+        // ========== 即时飞书推送：自主卖出卡片 ==========
+        // Sprint 35: 盈利/亏损用不同 header template (green/red), 卖出原因显示
         try {
           const webhookUrl = process.env.FEISHU_RECOMMENDATION_BOT_WEBHOOK || process.env.FEISHU_BOT_WEBHOOK;
           if (webhookUrl && String(process.env.DISABLE_FEISHU_BOT_WEBHOOK) !== 'true') {
@@ -3317,15 +3352,52 @@ class PaperTradingAutomationService {
             const pnlSign = realized_pnl >= 0 ? '+' : '';
             const reasonText = riskReasonLabel(exitReason);
             const icon = realized_pnl >= 0 ? '🟢' : '🔴';
-            const text =
-              `${icon} 自主卖出 ${stockName} (${symbol}) — ${reasonText}\n` +
-              `${pnlSign}¥${realized_pnl.toFixed(2)} | ` +
-              `${quantity}股 × ¥${execute_price.toFixed(2)} = ¥${amount.toFixed(0)} | ` +
-              `持有${holdingDays}天`;
+            const pnlEmoji = realized_pnl >= 0 ? '💰' : '📉';
+            const headerTemplate = realized_pnl >= 0 ? 'green' : 'red';
+            const card = {
+              msg_type: 'interactive',
+              card: {
+                config: { wide_screen_mode: true },
+                header: {
+                  title: { tag: 'plain_text', content: `${icon} 自主卖出 · ${stockName}` },
+                  template: headerTemplate,
+                },
+                elements: [
+                  {
+                    tag: 'div',
+                    text: {
+                      tag: 'lark_md',
+                      content: `**卖出原因**: ${reasonText}`,
+                    },
+                  },
+                  {
+                    tag: 'div',
+                    fields: [
+                      { is_short: true, text: { tag: 'lark_md', content: `**代码**\n${symbol}` } },
+                      { is_short: true, text: { tag: 'lark_md', content: `**${pnlEmoji} 实现盈亏**\n${pnlSign}¥${realized_pnl.toFixed(2)}` } },
+                      { is_short: true, text: { tag: 'lark_md', content: `**成交价**\n¥${execute_price.toFixed(2)}` } },
+                      { is_short: true, text: { tag: 'lark_md', content: `**数量**\n${quantity} 股` } },
+                      { is_short: true, text: { tag: 'lark_md', content: `**总金额**\n¥${amount.toFixed(0)}` } },
+                      { is_short: true, text: { tag: 'lark_md', content: `**持有天数**\n${holdingDays} 天` } },
+                    ],
+                  },
+                  { tag: 'hr' },
+                  {
+                    tag: 'note',
+                    elements: [
+                      {
+                        tag: 'plain_text',
+                        content: `${moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm')} · ${portfolio.name || 'paper trading'}`,
+                      },
+                    ],
+                  },
+                ],
+              },
+            };
             // eslint-disable-next-line @typescript-eslint/no-var-requires
             const axios = require('axios');
             axios
-              .post(webhookUrl, { msg_type: 'text', content: { text } }, { timeout: 5000 })
+              .post(webhookUrl, card, { timeout: 5000 })
               .catch(() => { /* 静默 */ });
           }
         } catch { /* 静默 */ }
