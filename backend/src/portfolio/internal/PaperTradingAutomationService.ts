@@ -2651,17 +2651,26 @@ class PaperTradingAutomationService {
         setOutcome(activation, 'executed');
 
         // ========== 即时飞书推送：自主买入通知 ==========
+        // Sprint 35 fix: 之前调 sendRecommendationSummary 传 {title, summary, webhook_url}
+        // 全是错字段 — sendRecommendationSummary 实际只看 payload.result + scenario,
+        // summary/title 被忽略, 导致推送出"🟢 自主买入 X" 标题 + "本轮暂无可执行推荐"
+        // 矛盾内容 (内部回退到 result 为空的 placeholder).
+        // 改为直接 POST text 类型 webhook, 消息纯粹明确.
         try {
-          const { feishuBotWebhookService } = require('../../services/FeishuBotWebhookService');
           const webhookUrl = process.env.FEISHU_RECOMMENDATION_BOT_WEBHOOK || process.env.FEISHU_BOT_WEBHOOK;
           if (webhookUrl && String(process.env.DISABLE_FEISHU_BOT_WEBHOOK) !== 'true') {
             const stockName = signal.name || quote.name || symbol;
             const positionPct = ((total_cost / toNumber(portfolio.total_value, 200000)) * 100).toFixed(1);
-            feishuBotWebhookService.sendRecommendationSummary({
-              title: `🟢 自主买入 ${stockName} (${symbol})`,
-              summary: `得分 ${toNumber(signal.confidence_score, 0).toFixed(0)} | ${quantity}股 × ¥${execute_price.toFixed(2)} = ¥${amount.toFixed(0)} (${positionPct}%仓位)`,
-              webhook_url: webhookUrl,
-            }).catch(() => { /* 静默 */ });
+            const text =
+              `🟢 自主买入 ${stockName} (${symbol})\n` +
+              `得分 ${toNumber(signal.confidence_score, 0).toFixed(0)} | ` +
+              `${quantity}股 × ¥${execute_price.toFixed(2)} = ¥${amount.toFixed(0)} ` +
+              `(${positionPct}%仓位)`;
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const axios = require('axios');
+            axios
+              .post(webhookUrl, { msg_type: 'text', content: { text } }, { timeout: 5000 })
+              .catch(() => { /* 静默 — fail-OPEN, 推送失败不阻塞下单主流程 */ });
           }
         } catch { /* 静默 */ }
 
