@@ -3308,19 +3308,25 @@ class PaperTradingAutomationService {
         exitItem.trade_id = trade.id;
 
         // ========== 即时飞书推送：自主卖出通知 ==========
+        // Sprint 35 fix: 与自主买入同款 bug — sendRecommendationSummary 的 payload
+        // schema 不接受 {title, summary, webhook_url}, 改 axios 直推 text.
         try {
-          const { feishuBotWebhookService } = require('../../services/FeishuBotWebhookService');
           const webhookUrl = process.env.FEISHU_RECOMMENDATION_BOT_WEBHOOK || process.env.FEISHU_BOT_WEBHOOK;
           if (webhookUrl && String(process.env.DISABLE_FEISHU_BOT_WEBHOOK) !== 'true') {
             const stockName = exitItem.name || symbol;
             const pnlSign = realized_pnl >= 0 ? '+' : '';
             const reasonText = riskReasonLabel(exitReason);
             const icon = realized_pnl >= 0 ? '🟢' : '🔴';
-            feishuBotWebhookService.sendRecommendationSummary({
-              title: `${icon} 自主卖出 ${stockName} (${symbol}) — ${reasonText}`,
-              summary: `${pnlSign}¥${realized_pnl.toFixed(2)} | ${quantity}股 × ¥${execute_price.toFixed(2)} = ¥${amount.toFixed(0)} | 持有${holdingDays}天`,
-              webhook_url: webhookUrl,
-            }).catch(() => { /* 静默 */ });
+            const text =
+              `${icon} 自主卖出 ${stockName} (${symbol}) — ${reasonText}\n` +
+              `${pnlSign}¥${realized_pnl.toFixed(2)} | ` +
+              `${quantity}股 × ¥${execute_price.toFixed(2)} = ¥${amount.toFixed(0)} | ` +
+              `持有${holdingDays}天`;
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const axios = require('axios');
+            axios
+              .post(webhookUrl, { msg_type: 'text', content: { text } }, { timeout: 5000 })
+              .catch(() => { /* 静默 */ });
           }
         } catch { /* 静默 */ }
 
