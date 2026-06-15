@@ -788,7 +788,7 @@ class SchedulerService {
         });
 
         const result = await quantFusionService.runDailyPipeline({
-          username: parameters.username || 'lym',
+          username: parameters.username || 'stock',
           trade_date: parameters.trade_date || parameters.tradeDate || today,
           target_date: parameters.target_date || parameters.targetDate || today,
           universe: parameters.universe === 'favorites' ? 'favorites' : 'market',
@@ -1144,7 +1144,7 @@ class SchedulerService {
           `基准指数行情同步完成。指数 ${entries.length}，失败 ${failed}，写入/尝试 ${inserted} 条`
         );
       } else if (task.type === 'LIVE_SHADOW_AUTOPILOT') {
-        const username = parameters.username || 'lym';
+        const username = parameters.username || 'stock';
         const user = await User.findOne({ where: { username } });
         if (!user) throw new Error(`未找到影子执行用户：${username}`);
         const userId = Number((user as any).id);
@@ -1258,7 +1258,7 @@ class SchedulerService {
           }`
         );
       } else if (task.type === 'LIVE_SHADOW_WEEKLY_REVIEW') {
-        const username = parameters.username || 'lym';
+        const username = parameters.username || 'stock';
         const user = await User.findOne({ where: { username } });
         if (!user) throw new Error(`未找到影子执行用户：${username}`);
         const shadowTask = await ScheduledTask.findOne({
@@ -2128,7 +2128,7 @@ class SchedulerService {
         );
       } else if (task.type === 'RECOMMENDATION_TRADE_OUTCOME_REFRESH') {
         const result = await recommendationTradeOutcomeService.refreshPortfolioOutcomes({
-          username: parameters.username || 'lym',
+          username: parameters.username || 'stock',
           ...portfolioParams,
           include_open:
             parameters.include_open !== undefined
@@ -2775,7 +2775,7 @@ class SchedulerService {
         );
       } else if (task.type === 'AUTO_RECOMMENDATION_LOOP') {
         const result = await automatedRecommendationLoopService.run({
-          username: parameters.username || 'lym',
+          username: parameters.username || 'stock',
           ...portfolioParams,
           universe: parameters.universe === 'favorites' ? 'favorites' : 'market',
           style: ['balanced', 'momentum', 'value', 'low_risk'].includes(parameters.style)
@@ -3569,7 +3569,7 @@ class SchedulerService {
         cron_expression: '58 9 * * 1-5',
         is_active: true,
         parameters: {
-          username: 'lym',
+          username: 'stock',
           limit: 2,
           outcome_limit: 30,
           horizons: [1, 3, 5],
@@ -3590,7 +3590,7 @@ class SchedulerService {
         cron_expression: '20 16 * * 5',
         is_active: true,
         parameters: {
-          username: 'lym',
+          username: 'stock',
           outcome_limit: 80,
           horizons: [1, 3, 5],
           report_to_feishu: true,
@@ -3638,7 +3638,7 @@ class SchedulerService {
         cron_expression: '32 15 * * 1-5',
         is_active: true,
         parameters: {
-          username: 'lym',
+          username: 'stock',
           use_autonomous_portfolio: true,
           portfolio_name: AUTONOMOUS_PORTFOLIO_NAME,
           initial_capital: DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
@@ -3724,7 +3724,7 @@ class SchedulerService {
         cron_expression: '35 9 * * 1-5',
         is_active: true,
         parameters: {
-          username: 'lym',
+          username: 'stock',
           use_autonomous_portfolio: true,
           portfolio_name: AUTONOMOUS_PORTFOLIO_NAME,
           initial_capital: DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
@@ -3878,7 +3878,7 @@ class SchedulerService {
         cron_expression: '45 15 * * 1-5',
         is_active: true,
         parameters: {
-          username: 'lym',
+          username: 'stock',
           use_autonomous_portfolio: true,
           portfolio_name: AUTONOMOUS_PORTFOLIO_NAME,
           initial_capital: DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
@@ -4001,7 +4001,7 @@ class SchedulerService {
         cron_expression: '40 15 * * 1-5',
         is_active: true,
         parameters: {
-          username: 'lym',
+          username: 'stock',
           use_autonomous_portfolio: true,
           portfolio_name: AUTONOMOUS_PORTFOLIO_NAME,
           initial_capital: DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
@@ -4042,7 +4042,7 @@ class SchedulerService {
         cron_expression: '42 15 * * 1-5',
         is_active: true,
         parameters: {
-          username: 'lym',
+          username: 'stock',
           use_autonomous_portfolio: true,
           portfolio_name: AUTONOMOUS_PORTFOLIO_NAME,
           initial_capital: DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
@@ -4080,7 +4080,7 @@ class SchedulerService {
         cron_expression: '50 15 * * 1-5',
         is_active: true,
         parameters: {
-          username: 'lym',
+          username: 'stock',
           use_autonomous_portfolio: true,
           portfolio_name: AUTONOMOUS_PORTFOLIO_NAME,
           initial_capital: DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
@@ -4110,7 +4110,7 @@ class SchedulerService {
         cron_expression: '5 16 * * 1-5',
         is_active: true,
         parameters: {
-          username: 'lym',
+          username: 'stock',
           use_autonomous_portfolio: true,
           portfolio_name: AUTONOMOUS_PORTFOLIO_NAME,
           initial_capital: DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
@@ -4125,7 +4125,7 @@ class SchedulerService {
         cron_expression: '2 16 * * 1-5',
         is_active: true,
         parameters: {
-          username: 'lym',
+          username: 'stock',
           use_autonomous_portfolio: true,
           portfolio_name: AUTONOMOUS_PORTFOLIO_NAME,
           initial_capital: DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
@@ -4141,7 +4141,7 @@ class SchedulerService {
         cron_expression: '10 16 * * 1-5',
         is_active: true,
         parameters: {
-          username: 'lym',
+          username: 'stock',
           use_autonomous_portfolio: true,
           portfolio_name: AUTONOMOUS_PORTFOLIO_NAME,
           initial_capital: DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,

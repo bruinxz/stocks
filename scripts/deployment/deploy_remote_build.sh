@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Remote-build deployment for stocks-{lym,main,xz}.
+# Remote-build deployment for stocks main (Sprint 37: lym/xz sandbox 已关停).
 #
 # Unlike the legacy local-build flow (deploy_release_package.js), this script
 # does NOT compile anything locally. It only:
@@ -8,8 +8,8 @@
 #   3. SSH'es to ops@103.242.3.87 to restart systemd + run health gate
 #
 # Usage:
-#   bash scripts/deployment/deploy_remote_build.sh <target> [branch]
-#     target: lym | main | xz   (required)
+#   bash scripts/deployment/deploy_remote_build.sh main [branch]
+#     target: main   (required; Sprint 37 后仅 main, lym/xz sandbox 已关停)
 #     branch: git branch/tag/sha (default: current local branch)
 #
 # Required env:
@@ -30,13 +30,14 @@ TARGET="${1:-}"
 BRANCH="${2:-}"
 
 if [[ -z "$TARGET" ]]; then
-  echo "Usage: $0 <lym|main|xz> [branch]" >&2
+  echo "Usage: $0 main [branch]" >&2
+  echo "  (Sprint 37: lym/xz sandbox 已关停, 仅 main 可用)" >&2
   exit 1
 fi
 
 case "$TARGET" in
-  lym|main|xz) ;;
-  *) echo "Invalid target: $TARGET (must be lym|main|xz)" >&2; exit 1 ;;
+  main) ;;
+  *) echo "Invalid target: $TARGET (lym/xz sandbox 已关停, 仅支持 main)" >&2; exit 1 ;;
 esac
 
 # Resolve branch from current local if not given
@@ -57,11 +58,9 @@ SSH_HOST="103.242.3.87"
 SSH_PORT="14126"
 GIT_REPO_URL="${GIT_REPO_URL:-https://github.com/bruinxz/stocks.git}"
 
-# Target → /opt/stocks{,-lym,-xz} + service name
+# Target → /opt/stocks + service name (Sprint 37: 仅 main)
 case "$TARGET" in
   main) ROOT="/opt/stocks"; SERVICE="stocks-backend.service" ;;
-  lym)  ROOT="/opt/stocks-lym"; SERVICE="stocks-backend-lym.service" ;;
-  xz)   ROOT="/opt/stocks-xz";  SERVICE="stocks-backend-xz.service"  ;;
 esac
 
 TS="$(date +%Y%m%d%H%M%S)"
@@ -324,8 +323,6 @@ if [[ "${SKIP_HEALTH_GATE:-false}" != "true" ]]; then
       echo '  no health gate script; doing minimal health check'
       case '$TARGET' in
         main) PORT=3000 ;;
-        lym)  PORT=3010 ;;
-        xz)   PORT=3020 ;;
       esac
       curl -fsS http://127.0.0.1:\$PORT/health
     fi
@@ -341,7 +338,5 @@ echo "  ✅ Deployment to $TARGET complete"
 echo "  Release: $RELEASE_DIR"
 case "$TARGET" in
   main) echo "  → http://$SSH_HOST:3001/" ;;
-  lym)  echo "  → http://$SSH_HOST:3011/" ;;
-  xz)   echo "  → http://$SSH_HOST:3021/" ;;
 esac
 echo "═══════════════════════════════════════════════════════════════"

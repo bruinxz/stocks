@@ -1555,10 +1555,10 @@ export class PaperTradingOrderIntentService {
       if (user) return user;
     }
 
-    const preferredUsername = username || process.env.PAPER_TRADING_DEFAULT_USERNAME || 'lym';
+    const preferredUsername = username || process.env.PAPER_TRADING_DEFAULT_USERNAME || 'stock';
     let user = await User.findOne({ where: { username: preferredUsername } });
-    if (!user && preferredUsername !== 'lym') {
-      user = await User.findOne({ where: { username: 'lym' } });
+    if (!user && preferredUsername !== 'stock') {
+      user = await User.findOne({ where: { username: 'stock' } });
     }
     if (!user) {
       user = await User.findOne({

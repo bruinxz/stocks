@@ -11,7 +11,7 @@
  *
  * Usage:
  *   SMOKE_BASE_URL=http://127.0.0.1:3000 \
- *   SMOKE_USERNAME=lym \
+ *   SMOKE_USERNAME=stock \
  *   SMOKE_PASSWORD=666 \
  *   node scripts/tests/smoke_readonly_core.js
  *
@@ -26,7 +26,7 @@ const baseUrl =
   process.env.API_BASE_URL ||
   "http://127.0.0.1:3000";
 const username =
-  process.env.SMOKE_USERNAME || process.env.ADMIN_USERNAME || "lym";
+  process.env.SMOKE_USERNAME || process.env.ADMIN_USERNAME || "stock";
 const password =
   process.env.SMOKE_PASSWORD || process.env.ADMIN_PASSWORD || "666";
 const timeoutMs = Math.max(Number(process.env.SMOKE_TIMEOUT_MS || 15000), 1000);

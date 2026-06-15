@@ -1,11 +1,11 @@
 /**
- * Release deployment targets (main / lym / xz).
+ * Release deployment target — main only.
  *
- * Isolation principles:
- * - Default deploy set is main + lym only; xz is opt-in via DEPLOY_TARGETS=xz.
- * - Each target has its own /opt/stocks* root, ports, and systemd unit.
- * - Shared Postgres is OK for dev; enable queue workers on at most one sandbox
- *   (lym or xz) and prefer distinct REDIS_DB in shared/backend.env when both run workers.
+ * Sprint 37: lym + xz sandbox 已关停, 只保留 main 生产环境.
+ *
+ * 历史 schema 保留: 单元素 RELEASE_TARGETS map + parseTargetKeys / resolveTargets
+ * 接口形态不变, 让 release_health_gate.js / deploy_release_package.js 等下游
+ * 调用方零修改即可继续工作. 但只接受 'main' 一个 key, 其他 key (lym/xz/...) 报错.
  */
 
 const RELEASE_TARGETS = {
@@ -17,26 +17,10 @@ const RELEASE_TARGETS = {
     backend_url: 'http://127.0.0.1:3000',
     frontend_url: 'http://127.0.0.1:3001',
   },
-  lym: {
-    key: 'lym',
-    root: '/opt/stocks-lym',
-    label: 'lym',
-    service: 'stocks-backend-lym.service',
-    backend_url: 'http://127.0.0.1:3010',
-    frontend_url: 'http://127.0.0.1:3011',
-  },
-  xz: {
-    key: 'xz',
-    root: '/opt/stocks-xz',
-    label: 'xz',
-    service: 'stocks-backend-xz.service',
-    backend_url: 'http://127.0.0.1:3020',
-    frontend_url: 'http://127.0.0.1:3021',
-  },
 };
 
-/** Default: production main + lym sandbox. Does not include xz. */
-const DEFAULT_DEPLOY_TARGET_KEYS = ['main', 'lym'];
+/** Sprint 37: 只剩 main 单 target */
+const DEFAULT_DEPLOY_TARGET_KEYS = ['main'];
 
 function parseTargetKeys(raw, fallbackKeys = DEFAULT_DEPLOY_TARGET_KEYS) {
   const keys = String(raw ?? fallbackKeys.join(','))
@@ -51,7 +35,9 @@ function parseTargetKeys(raw, fallbackKeys = DEFAULT_DEPLOY_TARGET_KEYS) {
   for (const key of keys) {
     if (!RELEASE_TARGETS[key]) {
       const supported = Object.keys(RELEASE_TARGETS).join(', ');
-      throw new Error(`Unsupported deploy target "${key}". Supported: ${supported}`);
+      throw new Error(
+        `Unsupported deploy target "${key}". Supported: ${supported} (lym/xz sandbox 已关停, 仅保留 main)`
+      );
     }
   }
 

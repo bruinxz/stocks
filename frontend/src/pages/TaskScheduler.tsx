@@ -105,7 +105,7 @@ const defaultParametersByType: Record<string, any> = {
     lookback_days: 120,
   },
   AUTO_RECOMMENDATION_LOOP: {
-    username: 'lym',
+    username: 'stock',
     universe: 'market',
     style: 'balanced',
     candidate_limit: 30,
@@ -158,7 +158,7 @@ const defaultParametersByType: Record<string, any> = {
     notify_to_feishu_bot: false,
   },
   QUANT_DAILY_PIPELINE: {
-    username: 'lym',
+    username: 'stock',
     use_autonomous_portfolio: true,
     universe: 'market',
     strategy_keys: [
@@ -204,7 +204,7 @@ const defaultParametersByType: Record<string, any> = {
     report_to_feishu: true,
   },
   PAPER_TRADING_AUTO_SYNC: {
-    username: 'lym',
+    username: 'stock',
     refresh_recommendations: true,
     universe: 'market',
     style: 'balanced',
@@ -214,7 +214,7 @@ const defaultParametersByType: Record<string, any> = {
     report_to_feishu: true,
   },
   PAPER_TRADING_RISK_CHECK: {
-    username: 'lym',
+    username: 'stock',
     enable_stop_loss: true,
     enable_take_profit: true,
     enable_trailing_take_profit: true,
@@ -229,19 +229,19 @@ const defaultParametersByType: Record<string, any> = {
     report_to_feishu: true,
   },
   PAPER_TRADING_ATTRIBUTION_REPORT: {
-    username: 'lym',
+    username: 'stock',
     include_open: true,
     report_to_feishu: true,
   },
   RECOMMENDATION_TRADE_OUTCOME_REFRESH: {
-    username: 'lym',
+    username: 'stock',
     include_open: true,
     lookback_days: 180,
     limit: 2000,
     report_to_feishu: true,
   },
   PAPER_TRADING_DAILY_PLAN: {
-    username: 'lym',
+    username: 'stock',
     include_entries: true,
     include_exits: true,
     include_monitor: true,

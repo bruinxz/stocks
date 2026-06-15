@@ -11,7 +11,7 @@ set -euo pipefail
 # `stocks-postgres` and the web API are available.
 
 BASE_URL="${BASE_URL:-http://127.0.0.1:3001}"
-USERNAME="${STOCKS_USERNAME:-lym}"
+USERNAME="${STOCKS_USERNAME:-stock}"
 PASSWORD="${STOCKS_PASSWORD:-666}"
 TASK_ID="${MARKET_HISTORY_TASK_ID:-2}"
 MAX_MARKET_ROUNDS="${MAX_MARKET_ROUNDS:-80}"
@@ -477,7 +477,7 @@ run_daily_pipeline() {
   payload="$(python3 - "${strategy_json}" <<PY
 import sys,json,os
 payload={
-  "username":"lym",
+  "username":"stock",
   "universe":"market",
   "trade_date": os.environ.get("BACKTEST_END_DATE", "${BACKTEST_END_DATE}"),
   "target_date": os.environ.get("BACKTEST_END_DATE", "${BACKTEST_END_DATE}"),

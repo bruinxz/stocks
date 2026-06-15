@@ -438,7 +438,7 @@ const RecommendationLoopPolicies: React.FC = () => {
   const runSafeLoop = async (mode: 'smoke' | 'promotion') => {
     const advice = dashboard?.promotion;
     const basePayload = {
-      username: 'lym',
+      username: 'stock',
       universe: 'market',
       candidate_limit: mode === 'smoke' ? 5 : 12,
       candidate_pool_limit: mode === 'smoke' ? 80 : 180,

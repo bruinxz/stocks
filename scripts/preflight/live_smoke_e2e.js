@@ -24,7 +24,7 @@
  */
 
 const baseUrl = process.env.SMOKE_BASE_URL || 'http://127.0.0.1:3000';
-const username = process.env.SMOKE_USERNAME || 'xz';
+const username = process.env.SMOKE_USERNAME || 'stock';
 const password = process.env.SMOKE_PASSWORD || '';
 const symbol = process.env.SMOKE_SYMBOL || '600519.SH';
 const quantity = Number(process.env.SMOKE_QUANTITY || 100);

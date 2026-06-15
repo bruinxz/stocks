@@ -250,7 +250,7 @@ export class QuantRecommendationController {
   runAutomatedLoop = async (req: Request, res: Response) => {
     try {
       const result = await automatedRecommendationLoopService.run({
-        username: req.body?.username || 'lym',
+        username: req.body?.username || 'stock',
         universe: req.body?.universe === 'favorites' ? 'favorites' : 'market',
         style: ['balanced', 'momentum', 'value', 'low_risk'].includes(req.body?.style)
           ? req.body.style

@@ -3,17 +3,16 @@
 /**
  * Release-package deployment helper for the current production layout.
  *
- * Default deploy set is main + lym (see release_targets.js). The xz sandbox is opt-in:
- *   DEPLOY_TARGETS=xz
- * or:
- *   bash scripts/deployment/deploy_xz.sh
+ * Sprint 37: lym/xz sandbox 已关停, 仅 main 生产环境.
  *
  * Required env:
  *   DEPLOY_PASSWORD / SSH_PASSWORD     deploy user password
  *   OPS_PASSWORD                       ops sudo password
  *
  * Optional env:
- *   DEPLOY_TARGETS=main,lym            default; add xz only when intended
+ *   DEPLOY_TARGETS=main                default; lym/xz 不再支持
+ *   DEPLOY_SKIP_BUILD=true
+ *   RELEASE_RUN_SMOKE=true
  *   DEPLOY_SKIP_BUILD=true
  *   RELEASE_RUN_SMOKE=true
  */
@@ -221,7 +220,7 @@ function main() {
   const healthGateTarget = targetList[0];
   const smokeUsername =
     process.env.RELEASE_SMOKE_USERNAME ||
-    (healthGateTarget.key === 'xz' ? 'xz' : 'lym');
+    (healthGateTarget.key === 'main' ? 'stock' : 'stock');  // Sprint 37: 只有 main, smoke 用 stock
   // P0 launch-helper：禁止再用 '666' 默认密码做 smoke。
   // 必须显式 RELEASE_SMOKE_PASSWORD 注入；缺失即拒绝部署。
   const smokePassword = process.env.RELEASE_SMOKE_PASSWORD || '';

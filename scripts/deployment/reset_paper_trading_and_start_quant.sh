@@ -2,7 +2,7 @@
 set -euo pipefail
 
 APP_DIR="${APP_DIR:-/opt/stocks/current}"
-USERNAME="${USERNAME:-lym}"
+USERNAME="${USERNAME:-stock}"
 TRADE_DATE="${TRADE_DATE:-}"
 BACKUP_PATH="${BACKUP_PATH:-/tmp/paper_trading_reset_$(date +%Y%m%d%H%M%S).sql}"
 

@@ -13,11 +13,11 @@
  *
  * 使用：
  *   # 仅生成 SQL，不动 DB
- *   node scripts/ops/admin_bootstrap.js --username lym --email lym@example.com
+ *   node scripts/ops/admin_bootstrap.js --username stock --email stock@example.com
  *
  *   # 直接写入 DB
  *   DB_HOST=... DB_USER=... DB_PASSWORD=... \
- *     node scripts/ops/admin_bootstrap.js --username lym --email lym@example.com --apply
+ *     node scripts/ops/admin_bootstrap.js --username stock --email stock@example.com --apply
  *
  * 密码来源（按优先级）：
  *   - --password <value>      显式指定

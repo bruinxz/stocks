@@ -61,7 +61,7 @@ function runPostDeploySmoke(options = {}) {
       env: {
         ...process.env,
         SMOKE_BASE_URL: baseUrl,
-        SMOKE_USERNAME: process.env.DEPLOY_SMOKE_USERNAME || process.env.SMOKE_USERNAME || 'lym',
+        SMOKE_USERNAME: process.env.DEPLOY_SMOKE_USERNAME || process.env.SMOKE_USERNAME || 'stock',
         SMOKE_PASSWORD: process.env.DEPLOY_SMOKE_PASSWORD || process.env.SMOKE_PASSWORD || '666',
         SMOKE_TOKEN: process.env.DEPLOY_SMOKE_TOKEN || process.env.SMOKE_TOKEN || '',
         SMOKE_TIMEOUT_MS: String(timeoutMs),

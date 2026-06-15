@@ -26,7 +26,7 @@ function readBool(value, fallback = false) {
 
 function parseEnvs() {
   if (process.env.RELEASE_TARGET_CONFIG) {
-    const keys = String(process.env.RELEASE_TARGETS || 'main,lym')
+    const keys = String(process.env.RELEASE_TARGETS || 'main')
       .split(',')
       .map(item => item.trim())
       .filter(Boolean);
@@ -98,7 +98,8 @@ function healthCheck(target) {
 
   const smoke = readBool(process.env.RELEASE_RUN_SMOKE, true);
   if (smoke) {
-    const defaultSmokeUser = target.key === 'xz' ? 'xz' : 'lym';
+    // Sprint 37: lym/xz sandbox 已关停, 仅 main 的 stock 用户做 smoke 登录测试
+    const defaultSmokeUser = 'stock';
     const username =
       process.env.RELEASE_SMOKE_USERNAME || process.env.SMOKE_USERNAME || defaultSmokeUser;
     // P0 launch-helper：禁止 '666' 默认密码

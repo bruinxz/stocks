@@ -60,9 +60,11 @@ export class AuthController {
       }
       const defaultUsers = isProd
         ? [
-            { username: 'lym', password_hash: bootstrapPassword, email: 'lym@example.com' },
+            // Sprint 37: prod bootstrap user 改为 'stock' (生产实际跑的 user, 见 /opt/stocks portfolio 24)
+            { username: 'stock', password_hash: bootstrapPassword, email: 'stock@example.com' },
           ]
         : [
+            // dev 环境保留 xz/lym 兼容历史本地数据
             { username: 'xz', password_hash: '666', email: 'xz@example.com' },
             { username: 'lym', password_hash: '666', email: 'lym@example.com' },
           ];

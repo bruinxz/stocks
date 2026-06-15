@@ -43,7 +43,7 @@ async function resetPaperTrading() {
 }
 
 async function main() {
-  const username = argValue('username', process.env.RESET_PAPER_USERNAME || 'lym') || 'lym';
+  const username = argValue('username', process.env.RESET_PAPER_USERNAME || 'stock') || 'stock';
   const trade_date =
     argValue('trade-date', process.env.RESET_PAPER_TRADE_DATE) ||
     moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
