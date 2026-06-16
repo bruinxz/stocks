@@ -2850,6 +2850,39 @@ class PaperTradingAutomationService {
         logger.warn(`[exec-policy] failed (fail-open): ${epErr?.message || epErr}`);
       }
 
+      // Sprint 42-D (新接入): PlaybookGenerator — 把"操盘手盘感"结构化成可学习字段.
+      // 写到 orderIntentMetadata.playbook 让 MetaLabel V2 训练时能拿到这些 feature.
+      // fail-open: 生成失败不阻塞下单.
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { generatePlaybook } = require('../../services/playbook/PlaybookGenerator');
+        const strategyKeyForPlaybook =
+          (signal as any)?.metadata?.strategy_key ||
+          (signal as any)?.metadata?.signal_metadata?.strategy_key ||
+          'unknown';
+        const playbook = generatePlaybook({
+          strategy_key: strategyKeyForPlaybook,
+          symbol: signal.symbol,
+          signal_score: Number((signal as any).confidence_score ?? (signal as any).final_score),
+          market_regime: environmentPolicy.market_regime || 'range',
+          current_drawdown_pct: Number((portfolio as any).drawdown_pct) || 0,
+          position_count: existingPositions.length,
+          max_positions,
+          has_earnings_event: !!(eventFilterResult?.events || []).find(
+            (e: any) => e.event_type === 'earnings_forecast_positive'
+          ),
+          has_northbound_inflow: !!(eventFilterResult?.events || []).find(
+            (e: any) => e.event_type === 'northbound_inflow'
+          ),
+          has_dragon_tiger_inst_buy: !!(eventFilterResult?.events || []).find(
+            (e: any) => e.event_type === 'dragon_tiger_inst_buy'
+          ),
+        });
+        (orderIntentMetadata as any).playbook = playbook;
+      } catch (pbErr: any) {
+        logger.warn(`[playbook] generate failed (fail-open): ${pbErr?.message || pbErr}`);
+      }
+
       // US-083: signalDryRun replaces dry_run so per-strategy dry-run bypasses
       // createBuyTrade for this specific signal only.  QuantSignal row already
       // persisted upstream by SignalEngine — only the order-placement side effect skipped.
