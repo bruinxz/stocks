@@ -391,15 +391,26 @@ export class DefaultPerStockStopLossDataSource implements PerStockStopLossDataSo
   }
 
   async loadPortfolioId(user_id: number): Promise<number | null> {
-    const p = await PaperTradingPortfolio.findOne({ where: { user_id } });
+    // 修复 (2026-06-16, HIGH H2): 兼容旧 caller; 多 portfolio 应改用 loadOpenPositions.
+    const p = await PaperTradingPortfolio.findOne({
+      where: { user_id, is_active: true },
+      order: [['id', 'ASC']],
+    });
     return p ? p.id : null;
   }
 
   async loadOpenPositions(user_id: number): Promise<PositionSnapshot[]> {
-    const portfolio = await PaperTradingPortfolio.findOne({ where: { user_id } });
-    if (!portfolio) return [];
+    // 修复 (HIGH H2): 跨所有 active portfolio 拉持仓
+    const portfolios = await PaperTradingPortfolio.findAll({
+      where: { user_id, is_active: true },
+      attributes: ['id'],
+    });
+    if (portfolios.length === 0) return [];
     const rows = await PaperTradingPosition.findAll({
-      where: { portfolio_id: portfolio.id, quantity: { [Op.gt]: 0 } },
+      where: {
+        portfolio_id: { [Op.in]: portfolios.map(p => p.id) },
+        quantity: { [Op.gt]: 0 },
+      },
     });
     return rows.map<PositionSnapshot>(r => ({
       id: r.id,

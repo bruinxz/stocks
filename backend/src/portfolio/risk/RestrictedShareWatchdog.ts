@@ -518,9 +518,11 @@ export class DefaultRestrictedShareDataSource implements RestrictedShareDataSour
   }
 
   async loadPortfolioId(user_id: number): Promise<number | null> {
+    // 修复 (2026-06-16, HIGH H2)
     const portfolio = await PaperTradingPortfolio.findOne({
-      where: { user_id },
+      where: { user_id, is_active: true },
       attributes: ['id'],
+      order: [['id', 'ASC']],
     });
     return portfolio ? Number(portfolio.id) : null;
   }
@@ -534,14 +536,15 @@ export class DefaultRestrictedShareDataSource implements RestrictedShareDataSour
       circulating_market_cap: number | null;
     }>
   > {
-    const portfolio = await PaperTradingPortfolio.findOne({
-      where: { user_id },
+    // 修复 (HIGH H2): 跨所有 active portfolio
+    const portfolios = await PaperTradingPortfolio.findAll({
+      where: { user_id, is_active: true },
       attributes: ['id'],
     });
-    if (!portfolio) return [];
+    if (portfolios.length === 0) return [];
     const positions = (await PaperTradingPosition.findAll({
       where: {
-        portfolio_id: portfolio.id,
+        portfolio_id: { [Op.in]: portfolios.map(p => p.id) },
         quantity: { [Op.gt]: 0 },
       },
       raw: true,

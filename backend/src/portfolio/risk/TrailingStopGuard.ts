@@ -315,10 +315,17 @@ export class DefaultTrailingStopDataSource implements TrailingStopDataSource {
   }
 
   async loadOpenPositions(user_id: number): Promise<PositionSnapshot[]> {
-    const portfolio = await PaperTradingPortfolio.findOne({ where: { user_id } });
-    if (!portfolio) return [];
+    // 修复 (2026-06-16, HIGH H2): 之前 findOne({user_id}) 只取第一个 portfolio,
+    // user_id=4 有 9 个 portfolio → 永远只扫 portfolio 24 (空仓), 其它 8 个真有持仓盘
+    // 完全没被 trailing stop 监控. 改成 findAll 拉所有 portfolio 的 positions.
+    const portfolios = await PaperTradingPortfolio.findAll({
+      where: { user_id, is_active: true },
+      attributes: ['id'],
+    });
+    if (portfolios.length === 0) return [];
+    const portfolioIds = portfolios.map(p => p.id);
     const rows = await PaperTradingPosition.findAll({
-      where: { portfolio_id: portfolio.id, quantity: { [Op.gt]: 0 } },
+      where: { portfolio_id: { [Op.in]: portfolioIds }, quantity: { [Op.gt]: 0 } },
     });
     return rows.map<PositionSnapshot>(r => ({
       id: r.id,

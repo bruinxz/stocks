@@ -195,6 +195,8 @@ export interface IndustryConcentrationEvaluationResult {
 /** Plan entry for one position to sell during rebalance. */
 export interface RebalanceSellPlan {
   position_id: number;
+  /** portfolio_id 来自源 position; 让 executeFullClose 显式传给 facade 避免串盘 (修复 C2). */
+  portfolio_id: number;
   symbol: string;
   name: string;
   quantity: number;
@@ -433,6 +435,7 @@ export function buildRebalanceSellPlan(
     );
     plan.push({
       position_id: pos.id,
+      portfolio_id: pos.portfolio_id, // 修复 C2: 让 executeFullClose 显式传 portfolio_id
       symbol: pos.symbol,
       name: pos.name || pos.symbol,
       quantity: pos.quantity,
@@ -563,6 +566,8 @@ export interface IndustryConcentrationDataSource {
   executeFullClose(input: {
     user_id: number;
     symbol: string;
+    /** 修复 (2026-06-16, CRITICAL C2): 显式传 portfolio_id 避免 facade 路由错盘 */
+    portfolio_id?: number;
   }): Promise<{ executed_quantity: number; executed_price: number }>;
 }
 
@@ -609,15 +614,26 @@ export class DefaultIndustryConcentrationDataSource implements IndustryConcentra
   }
 
   async loadPortfolioId(user_id: number): Promise<number | null> {
-    const p = await PaperTradingPortfolio.findOne({ where: { user_id } });
+    // 修复 (2026-06-16, HIGH H2): 兼容旧 caller, 显式取 active 集合中 id 最小者.
+    const p = await PaperTradingPortfolio.findOne({
+      where: { user_id, is_active: true },
+      order: [['id', 'ASC']],
+    });
     return p ? p.id : null;
   }
 
   async loadOpenPositions(user_id: number): Promise<IndustryPositionSnapshot[]> {
-    const portfolio = await PaperTradingPortfolio.findOne({ where: { user_id } });
-    if (!portfolio) return [];
+    // 修复 (HIGH H2): 跨所有 active portfolio 拉持仓 (注意行业集中度按聚合算)
+    const portfolios = await PaperTradingPortfolio.findAll({
+      where: { user_id, is_active: true },
+      attributes: ['id'],
+    });
+    if (portfolios.length === 0) return [];
     const rows = await PaperTradingPosition.findAll({
-      where: { portfolio_id: portfolio.id, quantity: { [Op.gt]: 0 } },
+      where: {
+        portfolio_id: { [Op.in]: portfolios.map(p => p.id) },
+        quantity: { [Op.gt]: 0 },
+      },
     });
     if (rows.length === 0) return [];
     const symbols = Array.from(new Set(rows.map(r => r.symbol)));
@@ -662,6 +678,7 @@ export class DefaultIndustryConcentrationDataSource implements IndustryConcentra
   async executeFullClose(input: {
     user_id: number;
     symbol: string;
+    portfolio_id?: number;
   }): Promise<{ executed_quantity: number; executed_price: number }> {
     // Lazy-require to avoid a circular import (facade → guard → facade).
     // The facade is the single ingress for SELL orders so all pre-trade
@@ -670,6 +687,7 @@ export class DefaultIndustryConcentrationDataSource implements IndustryConcentra
     const { paperTradingFacade } = require('../PaperTradingFacade');
     const result = await paperTradingFacade.closePosition({
       user_id: input.user_id,
+      portfolio_id: input.portfolio_id, // 修复 C2: 必传 — 否则 facade fallback 到 first portfolio 错卖
       symbol: input.symbol,
     });
     return {
@@ -939,6 +957,7 @@ export class IndustryConcentrationGuard {
           const res = await this.source.executeFullClose({
             user_id,
             symbol: p.symbol,
+            portfolio_id: p.portfolio_id, // 修复 C2: 显式传 portfolio_id
           });
           sold.push({
             position_id: p.position_id,

@@ -1,4 +1,5 @@
 import { Op } from 'sequelize';
+import { sequelize } from '../../config/database';
 import moment from 'moment-timezone';
 import {
   AIInvestmentSignal,
@@ -4492,7 +4493,10 @@ class PaperTradingAutomationService {
         Math.floor(toNumber(options.requested_max_hold_days, 20))
       );
 
-      const maeBasedStop = avgMaeAbs > 0 ? avgMaeAbs * (weakOutcome ? 0.85 : 1.1) : requestedStop;
+      // 修复 (2026-06-16, HIGH H4): avgMaeAbs 极小 (< 1%) 时, maeBasedStop * 0.5 + requestedStop*0.5 → clamp 4
+      // 让 stop_loss 触发面骤增 (~30% 持仓直接 stop_loss) 这是误触发. 加 floor: avgMaeAbs<1 退回 requestedStop.
+      const maeBasedStop =
+        avgMaeAbs >= 1 ? avgMaeAbs * (weakOutcome ? 0.85 : 1.1) : requestedStop;
       let effectiveStop = clamp((requestedStop + maeBasedStop) / 2, 4, 10);
       let effectiveTake = requestedTake;
       let effectiveTrailActivation = requestedTrailActivation;
@@ -5254,18 +5258,32 @@ class PaperTradingAutomationService {
           })
         : null;
 
+    // 修复 (2026-06-16, HIGH H3): 板块感知涨跌停阈值, 不再硬编码 9.7.
+    // 主板 ±10%, ST 股 ±5%, 科创/创业板 ±20%, 北交所 ±30%.
+    // ST 用 name 字符串识别 (H2 H3 已知缺陷: name 未更新会漏判, 未来用 ST list 同步覆盖).
+    const isStByName = /(^|\*)ST|退/i.test(name);
+    // 简化: 主要板块 sh.6/sz.0/sz.3 是 ±10% 主板, sh.688/sz.300 是 ±20%, bj.* 是 ±30%, ST 是 ±5%
+    let limitPct = 10; // default 主板
+    if (isStByName) limitPct = 5;
+    else if (/^sh\.688/.test(normalizedSymbol) || /^sz\.300/.test(normalizedSymbol)) limitPct = 20;
+    else if (/^bj\./.test(normalizedSymbol)) limitPct = 30;
+    // 触发线用 limitPct * 0.97 (留 3% 缓冲, 与原来 9.7/10=0.97 一致比例)
+    const limitThreshold = limitPct * 0.97;
+
     return {
       symbol: normalizedSymbol,
       name,
       industry: stock?.industry || '未分类',
       market: stock?.market,
       data_status: stock?.data_status,
-      is_st: /(^|\*)ST|退/i.test(name),
+      is_st: isStByName,
       is_suspended: Boolean(latest?.is_suspended),
       is_limit_up:
-        Number.isFinite(Number(latestChangePercent)) && Number(latestChangePercent) >= 9.7,
+        Number.isFinite(Number(latestChangePercent)) &&
+        Number(latestChangePercent) >= limitThreshold,
       is_limit_down:
-        Number.isFinite(Number(latestChangePercent)) && Number(latestChangePercent) <= -9.7,
+        Number.isFinite(Number(latestChangePercent)) &&
+        Number(latestChangePercent) <= -limitThreshold,
       latest_change_percent: latestChangePercent,
       volatility_20d_pct: roundNumber(volatility20d, 2),
       recent_returns_20d: dailyReturns.slice(-20).map(value => roundNumber(value, 4)),
@@ -6430,36 +6448,68 @@ class PaperTradingAutomationService {
       total_cost,
     } = params;
 
-    const position = await PaperTradingPosition.findOne({
-      where: { portfolio_id: portfolio.id, symbol },
-    });
-    if (position) {
-      throw new Error(`模拟盘已持有 ${symbol}，自动跟单拒绝重复加仓`);
-    }
+    // ============= 事务保护 + 锁 (修复 CRITICAL C1/C2/C3) =============
+    // 之前 3 个 write (position.create + portfolio.update + trade.create) 没包 transaction,
+    // 任一步崩溃就产生 "扣了钱没单 / 建了仓没单 / 单写了但 cash 漏更新" ghost state.
+    // 加 SELECT FOR UPDATE 锁 portfolio 行, 防并发 BUY 各扣各的 cash.
+    return await sequelize.transaction(async t => {
+      const lockedPortfolio = await PaperTradingPortfolio.findByPk(portfolio.id, {
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+      if (!lockedPortfolio) {
+        throw new Error(`createBuyTrade: portfolio ${portfolio.id} 不存在`);
+      }
+      const realCash = toNumber(lockedPortfolio.current_cash, 0);
+      if (realCash < total_cost) {
+        throw new Error(
+          `createBuyTrade: portfolio ${portfolio.id} 资金不足 (need=${total_cost.toFixed(2)}, ` +
+            `have=${realCash.toFixed(2)}); 并发 BUY 已占用 cash?`
+        );
+      }
 
-    await PaperTradingPosition.create({
-      portfolio_id: portfolio.id,
-      symbol,
-      name,
-      quantity,
-      avg_cost: execute_price,
-      current_price: latest_price,
-      market_value: roundNumber(quantity * latest_price, 2),
-      unrealized_pnl: roundNumber(quantity * latest_price - amount, 2),
-    });
+      const existingPosition = await PaperTradingPosition.findOne({
+        where: { portfolio_id: portfolio.id, symbol },
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+      if (existingPosition) {
+        throw new Error(`模拟盘已持有 ${symbol}，自动跟单拒绝重复加仓`);
+      }
 
-    const current_cash = roundNumber(toNumber(portfolio.current_cash, 0) - total_cost, 2);
-    await portfolio.update({ current_cash });
+      await PaperTradingPosition.create(
+        {
+          portfolio_id: portfolio.id,
+          symbol,
+          name,
+          quantity,
+          avg_cost: execute_price,
+          current_price: latest_price,
+          market_value: roundNumber(quantity * latest_price, 2),
+          unrealized_pnl: roundNumber(quantity * latest_price - amount, 2),
+        },
+        { transaction: t }
+      );
 
-    return PaperTradingTrade.create({
-      portfolio_id: portfolio.id,
-      symbol,
-      name,
-      direction: 'BUY',
-      execute_price,
-      quantity,
-      amount,
-      commission,
+      const current_cash = roundNumber(realCash - total_cost, 2);
+      await lockedPortfolio.update({ current_cash }, { transaction: t });
+
+      const trade = await PaperTradingTrade.create(
+        {
+          portfolio_id: portfolio.id,
+          symbol,
+          name,
+          direction: 'BUY',
+          execute_price,
+          quantity,
+          amount,
+          commission,
+        },
+        { transaction: t }
+      );
+      // 同步内存里 portfolio 实例的 current_cash, caller 拿到的对象不至于过期
+      portfolio.current_cash = current_cash;
+      return trade;
     });
   }
 
@@ -6488,35 +6538,72 @@ class PaperTradingAutomationService {
       realized_pnl,
     } = params;
 
-    if (toNumber(position.quantity, 0) <= quantity) {
-      await position.destroy();
-    } else {
-      const remainingQuantity = toNumber(position.quantity, 0) - quantity;
-      await position.update({
-        quantity: remainingQuantity,
-        current_price: execute_price,
-        market_value: roundNumber(remainingQuantity * execute_price, 2),
-        unrealized_pnl: roundNumber(
-          remainingQuantity * execute_price - toNumber(position.avg_cost, 0) * remainingQuantity,
-          2
-        ),
+    // ============= 事务保护 + 锁 (修复 CRITICAL C1/C2/C3) =============
+    // SELL 路径写 3 表: position.destroy/update + portfolio.update + trade.create.
+    // 锁 portfolio + position 防止并发 SELL / 同时 BUY 撞 cash.
+    return await sequelize.transaction(async t => {
+      const lockedPortfolio = await PaperTradingPortfolio.findByPk(portfolio.id, {
+        transaction: t,
+        lock: t.LOCK.UPDATE,
       });
-    }
+      if (!lockedPortfolio) {
+        throw new Error(`createSellTrade: portfolio ${portfolio.id} 不存在`);
+      }
+      const lockedPosition = await PaperTradingPosition.findByPk(position.id, {
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+      if (!lockedPosition) {
+        throw new Error(
+          `createSellTrade: position ${position.id} 不存在 (并发 SELL 已删除?)`
+        );
+      }
+      const heldQty = toNumber(lockedPosition.quantity, 0);
+      if (heldQty < quantity) {
+        throw new Error(
+          `createSellTrade: 卖超 (held=${heldQty}, sell=${quantity}); 并发 SELL 已扣减?`
+        );
+      }
+      if (heldQty <= quantity) {
+        await lockedPosition.destroy({ transaction: t });
+      } else {
+        const remainingQuantity = heldQty - quantity;
+        // 部分平仓: 修复 (M1) 不重写 current_price, 保留 quote 同步的最新值, 避免 2 次 sync
+        // 之间瞬时 market_value 偏低. quote 在下次 syncLatestPricesAndSnapshot 会刷新.
+        const remainPrice = toNumber(lockedPosition.current_price, execute_price);
+        await lockedPosition.update(
+          {
+            quantity: remainingQuantity,
+            market_value: roundNumber(remainingQuantity * remainPrice, 2),
+            unrealized_pnl: roundNumber(
+              remainingQuantity *
+                (remainPrice - toNumber(lockedPosition.avg_cost, 0)),
+              2
+            ),
+          },
+          { transaction: t }
+        );
+      }
 
-    await portfolio.update({
-      current_cash: roundNumber(toNumber(portfolio.current_cash, 0) + net_revenue, 2),
-    });
+      const newCash = roundNumber(toNumber(lockedPortfolio.current_cash, 0) + net_revenue, 2);
+      await lockedPortfolio.update({ current_cash: newCash }, { transaction: t });
 
-    return PaperTradingTrade.create({
-      portfolio_id: portfolio.id,
-      symbol,
-      name,
-      direction: 'SELL',
-      execute_price,
-      quantity,
-      amount,
-      commission,
-      realized_pnl,
+      const trade = await PaperTradingTrade.create(
+        {
+          portfolio_id: portfolio.id,
+          symbol,
+          name,
+          direction: 'SELL',
+          execute_price,
+          quantity,
+          amount,
+          commission,
+          realized_pnl,
+        },
+        { transaction: t }
+      );
+      portfolio.current_cash = newCash;
+      return trade;
     });
   }
 

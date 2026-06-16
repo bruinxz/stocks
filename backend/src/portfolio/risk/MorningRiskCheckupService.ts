@@ -494,16 +494,28 @@ export class DefaultMorningRiskCheckupDataSource implements MorningRiskCheckupDa
   }
 
   async loadPortfolioHeader(user_id: number): Promise<{ id: number; total_value: number } | null> {
-    const p = await PaperTradingPortfolio.findOne({ where: { user_id } });
-    if (!p) return null;
-    return { id: p.id, total_value: Number(p.total_value) };
+    // 修复 (2026-06-16, HIGH H2): 聚合所有 active portfolio 的 total_value 给 morning checkup
+    const portfolios = await PaperTradingPortfolio.findAll({
+      where: { user_id, is_active: true },
+      attributes: ['id', 'total_value'],
+    });
+    if (portfolios.length === 0) return null;
+    const totalValue = portfolios.reduce((s, p) => s + Number(p.total_value || 0), 0);
+    return { id: portfolios[0].id, total_value: totalValue };
   }
 
   async loadOpenPositions(user_id: number): Promise<CheckupPositionSnapshot[]> {
-    const portfolio = await PaperTradingPortfolio.findOne({ where: { user_id } });
-    if (!portfolio) return [];
+    // 修复 (HIGH H2): 跨所有 active portfolio
+    const portfolios = await PaperTradingPortfolio.findAll({
+      where: { user_id, is_active: true },
+      attributes: ['id'],
+    });
+    if (portfolios.length === 0) return [];
     const rows = await PaperTradingPosition.findAll({
-      where: { portfolio_id: portfolio.id, quantity: { [Op.gt]: 0 } },
+      where: {
+        portfolio_id: { [Op.in]: portfolios.map(p => p.id) },
+        quantity: { [Op.gt]: 0 },
+      },
     });
     if (rows.length === 0) return [];
     const symbols = Array.from(new Set(rows.map(r => r.symbol)));

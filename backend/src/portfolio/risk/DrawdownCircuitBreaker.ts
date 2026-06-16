@@ -419,9 +419,20 @@ export class DefaultDrawdownBreakerDataSource implements DrawdownBreakerDataSour
   }
 
   async loadPortfolio(user_id: number): Promise<PortfolioHeader | null> {
-    const p = await PaperTradingPortfolio.findOne({ where: { user_id } });
-    if (!p) return null;
-    return { id: p.id, total_value: Number(p.total_value) };
+    // 修复 (2026-06-16, HIGH H2): 之前 findOne 取第一个 portfolio. user_id=4 有 9 portfolio,
+    // 总仅看 portfolio 24 空仓 → 永远 0 drawdown → LEVEL_1/2/3 永不触发 → portfolio 36 跌
+    // 20% 也不暂停 BUY. 改成聚合所有 active portfolio 的 total_value 作为 user 级权益.
+    // (与 user.risk_config.drawdown_breaker.paused_until 是 per-user 的语义保持一致.)
+    const portfolios = await PaperTradingPortfolio.findAll({
+      where: { user_id, is_active: true },
+      attributes: ['id', 'total_value'],
+    });
+    if (portfolios.length === 0) return null;
+    const totalValue = portfolios.reduce((s, p) => s + Number(p.total_value || 0), 0);
+    // id 用第一个 portfolio (向下兼容; 内部 loadRecentSnapshots 需要 portfolio_id 拉 snapshot,
+    // 但这里 portfolio_id 实际不再决定语义, snapshot 也按 user 级聚合更合理). 暂保持单 portfolio
+    // snapshot 路径, 后续优化为 multi-portfolio snapshot 聚合.
+    return { id: portfolios[0].id, total_value: totalValue };
   }
 
   async loadRecentSnapshots(
@@ -448,10 +459,15 @@ export class DefaultDrawdownBreakerDataSource implements DrawdownBreakerDataSour
   }
 
   async loadOpenPositions(user_id: number): Promise<DrawdownPositionSnapshot[]> {
-    const portfolio = await PaperTradingPortfolio.findOne({ where: { user_id } });
-    if (!portfolio) return [];
+    // 修复 (HIGH H2 同款): 跨所有 portfolio 拉 positions, 不再只看 first portfolio.
+    const portfolios = await PaperTradingPortfolio.findAll({
+      where: { user_id, is_active: true },
+      attributes: ['id'],
+    });
+    if (portfolios.length === 0) return [];
+    const portfolioIds = portfolios.map(p => p.id);
     const rows = await PaperTradingPosition.findAll({
-      where: { portfolio_id: portfolio.id, quantity: { [Op.gt]: 0 } },
+      where: { portfolio_id: { [Op.in]: portfolioIds }, quantity: { [Op.gt]: 0 } },
     });
     return rows.map<DrawdownPositionSnapshot>(r => ({
       id: r.id,
@@ -488,10 +504,18 @@ export class DefaultDrawdownBreakerDataSource implements DrawdownBreakerDataSour
   }
 
   async hasExistingPosition(user_id: number, symbol: string): Promise<boolean> {
-    const portfolio = await PaperTradingPortfolio.findOne({ where: { user_id } });
-    if (!portfolio) return false;
+    // 修复 (HIGH H2 同款): 跨所有 portfolio 检查持仓
+    const portfolios = await PaperTradingPortfolio.findAll({
+      where: { user_id, is_active: true },
+      attributes: ['id'],
+    });
+    if (portfolios.length === 0) return false;
     const pos = await PaperTradingPosition.findOne({
-      where: { portfolio_id: portfolio.id, symbol, quantity: { [Op.gt]: 0 } },
+      where: {
+        portfolio_id: { [Op.in]: portfolios.map(p => p.id) },
+        symbol,
+        quantity: { [Op.gt]: 0 },
+      },
     });
     return !!pos;
   }

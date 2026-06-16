@@ -30,6 +30,7 @@ import { PaperTradingSnapshot } from '../models/PaperTradingSnapshot';
 import { Stock } from '../models/Stock';
 import { DataService } from '../data/services/DataService';
 import { logger } from '../utils/logger';
+import { sequelize } from '../config/database';
 
 import {
   paperTradingAutomationService,
@@ -81,11 +82,25 @@ export interface PlaceOrderOptions {
   symbol: string;
   direction: 'BUY' | 'SELL';
   quantity: number;
+  /**
+   * 显式 portfolio_id (强烈建议传). 不传时 facade fallback 到 user 名下第一个 active portfolio,
+   * 多账户多盘场景会串盘. 修复 (2026-06-16): user_id=4 有 9 个 portfolio, 不传 portfolio_id
+   * 会路由到 portfolio 24 系统观测盘(空仓) → 错卖错买.
+   */
+  portfolio_id?: number;
+  /** 跳过交易时段 guard (测试/回填用) */
+  bypass_trading_hours?: boolean;
+  /** 跳过 T+1 拦截 (测试用) */
+  bypass_t_plus_1?: boolean;
 }
 
 export interface ClosePositionOptions {
   user_id: number;
   symbol: string;
+  /** 同 PlaceOrderOptions: 强烈建议显式传 portfolio_id 避免多账户串盘. */
+  portfolio_id?: number;
+  bypass_trading_hours?: boolean;
+  bypass_t_plus_1?: boolean;
 }
 
 export type GetDailySnapshotAction = 'list' | 'trades' | 'refresh';
@@ -388,7 +403,29 @@ export class PaperTradingFacade {
       }
     }
 
-    const portfolio = await PaperTradingPortfolio.findOne({ where: { user_id } });
+    // ============= portfolio 路由 =============
+    // 修复 (2026-06-16, CRITICAL C2): facade 之前 PaperTradingPortfolio.findOne({where:{user_id}})
+    // 不带 order, Sequelize 任意返回第一行. user_id=4 有 9 个 portfolio (24/33-40),
+    // 导致 IndustryConcentrationGuard.rebalanceIndustry(user_id=4) 实际平掉 portfolio 24
+    // (系统观测盘空仓) 而不是当事策略 portfolio. 强制 caller 显式传 portfolio_id, 不传 fallback
+    // 到 (user_id, id ASC) 第一个 — 即"系统观测盘" 路径保留兼容, 但日志告警.
+    let portfolio: PaperTradingPortfolio | null;
+    if (options.portfolio_id) {
+      portfolio = await PaperTradingPortfolio.findOne({
+        where: { id: options.portfolio_id, user_id },
+      });
+    } else {
+      portfolio = await PaperTradingPortfolio.findOne({
+        where: { user_id },
+        order: [['id', 'ASC']],
+      });
+      if (portfolio) {
+        logger.warn(
+          `[facade.placeOrder] user_id=${user_id} 未显式传 portfolio_id, 默认取 portfolio ${portfolio.id} (${portfolio.name}); ` +
+            `多账户多盘场景建议 caller 显式传 portfolio_id 避免串盘`
+        );
+      }
+    }
     if (!portfolio) {
       const err: any = new Error('未找到模拟盘，请先刷新页面');
       err.statusCode = 404;
@@ -459,45 +496,76 @@ export class PaperTradingFacade {
         throw new Error('可用资金不足');
       }
 
-      const position = await PaperTradingPosition.findOne({
-        where: { portfolio_id: portfolio.id, symbol },
-      });
-      if (position) {
-        const totalCostBasis = position.avg_cost * position.quantity + cost;
-        position.quantity += quantity;
-        position.avg_cost = totalCostBasis / position.quantity;
-        position.current_price = current_price;
-        position.market_value = position.quantity * current_price;
-        position.unrealized_pnl = position.market_value - position.avg_cost * position.quantity;
-        await position.save();
-      } else {
-        await PaperTradingPosition.create({
-          portfolio_id: portfolio.id,
-          symbol,
-          name: stockName,
-          quantity,
-          avg_cost: execute_price,
-          current_price,
-          market_value: quantity * current_price,
-          unrealized_pnl: quantity * current_price - cost,
+      // ============= 事务保护 (修复 CRITICAL C1/C3) =============
+      // 之前 position + portfolio + trade 三个 write 没事务, 任一步崩 → 资金/持仓/流水不一致.
+      // 加 SELECT FOR UPDATE 锁 portfolio 避免并发 BUY 共享 stale cash.
+      const result = await sequelize.transaction(async t => {
+        const lockedPortfolio = await PaperTradingPortfolio.findByPk(portfolio.id, {
+          transaction: t,
+          lock: t.LOCK.UPDATE,
         });
-      }
+        if (!lockedPortfolio) throw new Error('facade.placeOrder: portfolio 不存在');
+        const realCash = Number(lockedPortfolio.current_cash) || 0;
+        if (realCash < totalCost) throw new Error('可用资金不足 (并发 BUY 占用)');
 
-      portfolio.current_cash -= totalCost;
-      await portfolio.save();
+        const position = await PaperTradingPosition.findOne({
+          where: { portfolio_id: portfolio.id, symbol },
+          transaction: t,
+          lock: t.LOCK.UPDATE,
+        });
+        if (position) {
+          const totalCostBasis = position.avg_cost * position.quantity + cost;
+          position.quantity += quantity;
+          position.avg_cost = totalCostBasis / position.quantity;
+          position.current_price = current_price;
+          position.market_value = position.quantity * current_price;
+          position.unrealized_pnl = position.market_value - position.avg_cost * position.quantity;
+          // 修复 (H1): 加仓后同步重算 stop_loss_price 让止损线跟随新 avg_cost.
+          // trailing high_price 不动 (历史最高不该回拉).
+          const oldStop = position.stop_loss_price;
+          if (oldStop !== null && oldStop !== undefined && position.avg_cost > 0) {
+            // 按"原 stop_loss 与原 avg_cost 的比例"复用: stop_pct = 1 - oldStop/old_avg_cost
+            // 这里没存 old_avg_cost (已 mutate), 用 7% 默认重算保守做法.
+            // 更精确做法在 PerStockStopLossGuard 后续 evaluate 重算.
+            position.stop_loss_price = Number((position.avg_cost * 0.93).toFixed(4));
+          }
+          await position.save({ transaction: t });
+        } else {
+          await PaperTradingPosition.create(
+            {
+              portfolio_id: portfolio.id,
+              symbol,
+              name: stockName,
+              quantity,
+              avg_cost: execute_price,
+              current_price,
+              market_value: quantity * current_price,
+              unrealized_pnl: quantity * current_price - cost,
+            },
+            { transaction: t }
+          );
+        }
 
-      await PaperTradingTrade.create({
-        portfolio_id: portfolio.id,
-        symbol,
-        name: stockName,
-        direction: 'BUY',
-        execute_price,
-        quantity,
-        amount: cost,
-        commission,
+        lockedPortfolio.current_cash = realCash - totalCost;
+        await lockedPortfolio.save({ transaction: t });
+        portfolio.current_cash = lockedPortfolio.current_cash;
+
+        await PaperTradingTrade.create(
+          {
+            portfolio_id: portfolio.id,
+            symbol,
+            name: stockName,
+            direction: 'BUY',
+            execute_price,
+            quantity,
+            amount: cost,
+            commission,
+          },
+          { transaction: t }
+        );
+        return { direction: 'BUY' as const, symbol, quantity, execute_price, commission };
       });
-
-      return { direction: 'BUY', symbol, quantity, execute_price, commission };
+      return result;
     }
 
     // SELL branch
@@ -508,39 +576,123 @@ export class PaperTradingFacade {
       throw new Error('持仓不足，无法卖出');
     }
 
-    const execute_price = current_price * (1 - slippage);
-    const revenue = execute_price * quantity;
-    const commission = revenue * commissionRate;
-    const netRevenue = revenue - commission;
-    const avg_cost = position.avg_cost;
-
-    if (position.quantity === quantity) {
-      await position.destroy();
-    } else {
-      position.quantity -= quantity;
-      position.current_price = current_price;
-      position.market_value = position.quantity * current_price;
-      position.unrealized_pnl = position.market_value - position.avg_cost * position.quantity;
-      await position.save();
+    // ============= T+1 拦截 (修复 CRITICAL C5) =============
+    // A 股当日 BUY 不可当日 SELL. 用 position.created_at 比当日 (Asia/Shanghai) 起始.
+    // bypass_t_plus_1=true 时跳过 (回测/手动测试).
+    if (!options.bypass_t_plus_1) {
+      const todayStartShanghai = new Date(
+        new Date().toLocaleString('en-US', { timeZone: 'Asia/Shanghai' })
+      );
+      todayStartShanghai.setHours(0, 0, 0, 0);
+      const posCreatedAt = new Date(position.created_at as any);
+      if (posCreatedAt.getTime() >= todayStartShanghai.getTime()) {
+        const err: any = new Error('T+1 violation: 当日 BUY 不可当日 SELL');
+        err.statusCode = 400;
+        err.code = 'T_PLUS_1_VIOLATION';
+        throw err;
+      }
     }
 
-    portfolio.current_cash += netRevenue;
-    await portfolio.save();
+    const execute_price = current_price * (1 - slippage);
+    const revenue = execute_price * quantity;
+    const baseCommission = revenue * commissionRate;
+    // 修复 (CRITICAL C4): A 股 SELL 印花税单边千 1 (BUY 不收). 漏算导致 realized_pnl
+    // 高估 0.1%, EV 反算 edge 偏乐观. SELL commission 包含 broker commission + stamp_tax.
+    const stampTax = revenue * 0.001;
+    const commission = baseCommission + stampTax;
+    const netRevenue = revenue - commission;
+    const avg_cost = position.avg_cost;
+    const positionId = position.id;
+    const positionCreatedAtSnapshot = position.created_at;
 
-    const realized_pnl = revenue - avg_cost * quantity - commission;
-    await PaperTradingTrade.create({
-      portfolio_id: portfolio.id,
-      symbol,
-      name: stockName,
-      direction: 'SELL',
-      execute_price,
-      quantity,
-      amount: revenue,
-      commission,
-      realized_pnl,
+    // ============= 事务保护 (修复 CRITICAL C1/C3) =============
+    const result = await sequelize.transaction(async t => {
+      const lockedPortfolio = await PaperTradingPortfolio.findByPk(portfolio.id, {
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+      if (!lockedPortfolio) throw new Error('facade.placeOrder(SELL): portfolio 不存在');
+      const lockedPosition = await PaperTradingPosition.findByPk(positionId, {
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+      if (!lockedPosition) throw new Error('facade.placeOrder(SELL): position 已被并发删除');
+      if (lockedPosition.quantity < quantity) {
+        throw new Error('持仓不足，无法卖出 (并发 SELL 已扣减)');
+      }
+
+      if (lockedPosition.quantity === quantity) {
+        await lockedPosition.destroy({ transaction: t });
+      } else {
+        lockedPosition.quantity -= quantity;
+        // 修复 (M1): 不写 current_price = execute_price, 保留 quote 同步的最新价
+        lockedPosition.market_value = lockedPosition.quantity * lockedPosition.current_price;
+        lockedPosition.unrealized_pnl =
+          lockedPosition.market_value - lockedPosition.avg_cost * lockedPosition.quantity;
+        await lockedPosition.save({ transaction: t });
+      }
+
+      lockedPortfolio.current_cash = Number(lockedPortfolio.current_cash) + netRevenue;
+      await lockedPortfolio.save({ transaction: t });
+      portfolio.current_cash = lockedPortfolio.current_cash;
+
+      const realized_pnl = revenue - avg_cost * quantity - commission;
+      const trade = await PaperTradingTrade.create(
+        {
+          portfolio_id: portfolio.id,
+          symbol,
+          name: stockName,
+          direction: 'SELL',
+          execute_price,
+          quantity,
+          amount: revenue,
+          commission,
+          realized_pnl,
+        },
+        { transaction: t }
+      );
+      return {
+        direction: 'SELL' as const,
+        symbol,
+        quantity,
+        execute_price,
+        commission,
+        realized_pnl,
+        trade_id: trade.id,
+      };
     });
 
-    return { direction: 'SELL', symbol, quantity, execute_price, commission, realized_pnl };
+    // ============= 修复 (CRITICAL C1): SELL 后触发 outcome 闭环刷新 =============
+    // 之前 facade SELL 不调任何 outcome 更新, UI 手动卖 + 行业再平衡的 outcome 永远 'open'.
+    // fire-and-forget — 失败不阻塞 SELL trade 已落库.
+    try {
+      // 找该 portfolio 对应 symbol 还 open 的 outcome.signal_id, 触发刷新
+      const { RecommendationTradeOutcome } = require('../models/RecommendationTradeOutcome');
+      const openOutcomes = await RecommendationTradeOutcome.findAll({
+        where: { portfolio_id: portfolio.id, symbol, trade_status: 'open' },
+        attributes: ['signal_id'],
+        raw: true,
+        limit: 5,
+      });
+      for (const row of openOutcomes as Array<{ signal_id: number }>) {
+        if (row.signal_id) {
+          recommendationTradeOutcomeService
+            .refreshOutcomeBySignal(row.signal_id)
+            .catch((err: any) =>
+              logger.warn(
+                `[facade SELL] outcome refresh failed (signal=${row.signal_id}): ${
+                  err?.message || err
+                }`
+              )
+            );
+        }
+      }
+    } catch (err: any) {
+      logger.warn(`[facade SELL] outcome refresh lookup failed: ${err?.message || err}`);
+    }
+
+    void positionCreatedAtSnapshot; // (consumed by T+1 guard above)
+    return result;
   }
 
   // -------------------------------------------------------------------------
@@ -551,9 +703,23 @@ export class PaperTradingFacade {
    * price.  Convenience wrapper around `placeOrder({ direction: 'SELL', quantity: full })`.
    */
   async closePosition(options: ClosePositionOptions) {
-    const portfolio = await PaperTradingPortfolio.findOne({
-      where: { user_id: options.user_id },
-    });
+    // 修复 (2026-06-16, CRITICAL C2): 同 placeOrder, 优先 portfolio_id, 缺则 user_id 第一个.
+    let portfolio: PaperTradingPortfolio | null;
+    if (options.portfolio_id) {
+      portfolio = await PaperTradingPortfolio.findOne({
+        where: { id: options.portfolio_id, user_id: options.user_id },
+      });
+    } else {
+      portfolio = await PaperTradingPortfolio.findOne({
+        where: { user_id: options.user_id },
+        order: [['id', 'ASC']],
+      });
+      if (portfolio) {
+        logger.warn(
+          `[facade.closePosition] user_id=${options.user_id} 未传 portfolio_id, 默认 portfolio ${portfolio.id} (${portfolio.name})`
+        );
+      }
+    }
     if (!portfolio) {
       const err: any = new Error('未找到模拟盘');
       err.statusCode = 404;
@@ -567,9 +733,12 @@ export class PaperTradingFacade {
     }
     return this.placeOrder({
       user_id: options.user_id,
+      portfolio_id: portfolio.id, // 显式传, 避免 placeOrder 重新 fallback 路由错盘
       symbol: options.symbol,
       direction: 'SELL',
       quantity: position.quantity,
+      bypass_trading_hours: options.bypass_trading_hours,
+      bypass_t_plus_1: options.bypass_t_plus_1,
     });
   }
 

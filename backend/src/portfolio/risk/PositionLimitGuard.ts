@@ -274,16 +274,28 @@ export interface PositionLimitDataSource {
  */
 export class DefaultPositionLimitDataSource implements PositionLimitDataSource {
   async loadPortfolio(user_id: number) {
-    const p = await PaperTradingPortfolio.findOne({ where: { user_id } });
-    if (!p) return null;
-    return { total_value: Number(p.total_value) };
+    // 修复 (2026-06-16, HIGH H2): 跨所有 active portfolio 聚合 total_value
+    const portfolios = await PaperTradingPortfolio.findAll({
+      where: { user_id, is_active: true },
+      attributes: ['total_value'],
+    });
+    if (portfolios.length === 0) return null;
+    const totalValue = portfolios.reduce((s, p) => s + Number(p.total_value || 0), 0);
+    return { total_value: totalValue };
   }
 
   async loadPositions(user_id: number) {
-    const portfolio = await PaperTradingPortfolio.findOne({ where: { user_id } });
-    if (!portfolio) return [];
+    // 修复 (HIGH H2): 跨所有 active portfolio 拉持仓
+    const portfolios = await PaperTradingPortfolio.findAll({
+      where: { user_id, is_active: true },
+      attributes: ['id'],
+    });
+    if (portfolios.length === 0) return [];
     const rows = await PaperTradingPosition.findAll({
-      where: { portfolio_id: portfolio.id, quantity: { [Op.gt]: 0 } },
+      where: {
+        portfolio_id: { [Op.in]: portfolios.map(p => p.id) },
+        quantity: { [Op.gt]: 0 },
+      },
     });
     if (rows.length === 0) return [];
     const symbols = Array.from(new Set(rows.map(r => r.symbol)));

@@ -554,17 +554,28 @@ export class DefaultBlackSwanDataSource implements BlackSwanDataSource {
   }
 
   async loadPortfolioId(user_id: number): Promise<number | null> {
-    const p = await PaperTradingPortfolio.findOne({ where: { user_id } });
+    // 修复 (2026-06-16, HIGH H2): 显式取 active id 最小者
+    const p = await PaperTradingPortfolio.findOne({
+      where: { user_id, is_active: true },
+      order: [['id', 'ASC']],
+    });
     return p ? p.id : null;
   }
 
   async loadOpenPositions(
     user_id: number
   ): Promise<Array<{ id: number; portfolio_id: number; symbol: string; name: string }>> {
-    const portfolio = await PaperTradingPortfolio.findOne({ where: { user_id } });
-    if (!portfolio) return [];
+    // 修复 (HIGH H2): 跨所有 active portfolio
+    const portfolios = await PaperTradingPortfolio.findAll({
+      where: { user_id, is_active: true },
+      attributes: ['id'],
+    });
+    if (portfolios.length === 0) return [];
     const rows = await PaperTradingPosition.findAll({
-      where: { portfolio_id: portfolio.id, quantity: { [Op.gt]: 0 } },
+      where: {
+        portfolio_id: { [Op.in]: portfolios.map(p => p.id) },
+        quantity: { [Op.gt]: 0 },
+      },
     });
     if (rows.length === 0) return [];
     // Optional name enrichment via Stock — falls back to symbol when missing.
