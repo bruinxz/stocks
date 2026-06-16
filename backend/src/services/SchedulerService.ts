@@ -3550,6 +3550,71 @@ class SchedulerService {
             elapsed_seconds: Number(elapsed),
           },
         });
+      } else if (task.type === 'FACTOR_CORRELATION_WEEKLY') {
+        // Sprint 43-D: 每周日晚跑因子相关性报告 + 拥挤度 / 冗余度诊断.
+        // 走 child_process 调 compute-factor-correlation CLI:
+        //   - 算 N×N Pearson 相关矩阵
+        //   - 找冗余对 (|r| > threshold, 默认 0.7) 写到 factor_correlation_results 表
+        //   - 触发 RiskAlert (compute-factor-correlation CLI 内部已实现)
+        //
+        // 每周日晚 20:30 跑, 给周一开盘前看到本周因子健康度报告.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { spawnSync } = require('child_process');
+        const path = require('path');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const scriptPath = path.resolve(__dirname, '..', 'scripts', 'compute-factor-correlation.ts');
+        const today = moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
+        const lookbackDays: number = this.toPositiveInt(parameters.lookback_days, 30, 365);
+        const startDate = moment(today)
+          .tz('Asia/Shanghai')
+          .subtract(lookbackDays, 'days')
+          .format('YYYY-MM-DD');
+        const threshold: number = Number.isFinite(Number(parameters.threshold))
+          ? Number(parameters.threshold)
+          : 0.7;
+        const args = [
+          'node_modules/.bin/ts-node',
+          '--transpile-only',
+          scriptPath,
+          `--start=${startDate}`,
+          `--end=${today}`,
+          `--threshold=${threshold}`,
+        ];
+        const t0 = Date.now();
+        const r = spawnSync('/usr/bin/node', args, {
+          cwd: path.resolve(__dirname, '..', '..'),
+          encoding: 'utf-8',
+          timeout: 30 * 60_000, // 30 min 上限 (20 因子 × C(20,2)=190 pair)
+          maxBuffer: 128 * 1024 * 1024,
+        });
+        const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+        const ok = r.status === 0;
+        if (ok) {
+          logger.info(
+            `[FACTOR_CORRELATION_WEEKLY] done in ${elapsed}s for ${startDate}..${today} threshold=${threshold}`
+          );
+        } else {
+          logger.warn(
+            `[FACTOR_CORRELATION_WEEKLY] failed status=${r.status} after ${elapsed}s: ${(
+              r.stderr || ''
+            ).substring(0, 300)}`
+          );
+        }
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: 1,
+          success_count: ok ? 1 : 0,
+          failed_count: ok ? 0 : 1,
+          result_summary: {
+            scenario: 'factor_correlation_weekly',
+            start_date: startDate,
+            end_date: today,
+            threshold,
+            elapsed_seconds: Number(elapsed),
+            ok,
+            // 若 CLI 输出 redundant_pairs 数, 抽到 stdout 后简单 parse
+            stdout_tail: (r.stdout || '').slice(-300),
+          },
+        });
       } else if (task.type === 'FACTOR_IC_COMPUTE') {
         // Phase 3: 每日因子 IC 计算 — 走 child_process 调用 compute-factor-ic CLI
         // 默认跑过去 90 天 + 默认 forwardDays=[1,5,10,20,60]，覆盖 5 个时间窗口的衰减分析
@@ -4687,6 +4752,21 @@ class SchedulerService {
         parameters: {
           lookback_days: 30,
           // as_of_date 默认今日 (Asia/Shanghai)
+        },
+      },
+      {
+        // Sprint 43-D: 每周日晚 20:30 跑因子相关性 + 冗余度报告.
+        // - lookback_days=30 (一个月) 滚动窗口算 Pearson 相关
+        // - threshold=0.7 → |r| > 0.7 视为冗余, 写 factor_correlation_results +
+        //   触发 RiskAlert
+        // 周日晚跑给周一开盘前看 dashboard.
+        name: '每周因子相关性报告',
+        type: 'FACTOR_CORRELATION_WEEKLY',
+        cron_expression: '30 20 * * 0', // 每周日晚 20:30
+        is_active: true,
+        parameters: {
+          lookback_days: 30,
+          threshold: 0.7,
         },
       },
       {
