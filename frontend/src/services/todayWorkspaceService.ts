@@ -18,8 +18,15 @@ export interface AccountSummary {
   total_value: number;
   current_cash: number;
   position_value: number;
+  /** 今日盈亏 (相对最近一次 snapshot / 昨日收盘的浮盈) */
   pnl_yesterday: number | null;
   pnl_month_to_date: number | null;
+  /** 期初本金 */
+  initial_capital: number;
+  /** 总收益 = total_value - initial_capital */
+  total_return: number;
+  /** 总收益率 (initial_capital ≤ 0 时为 null) */
+  total_return_pct: number | null;
   portfolio_id: number | null;
 }
 

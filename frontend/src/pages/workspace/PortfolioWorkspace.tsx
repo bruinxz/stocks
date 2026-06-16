@@ -291,7 +291,13 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
   // US-055 — AI 解读 modal target
   const [aiTarget, setAiTarget] = useState<{ symbol: string; name: string | null } | null>(null);
 
-  const positions = data?.positions || [];
+  // 防御性按 id 升序排序：后端 PaperTradingFacade.getPortfolio 已加
+  // `order: [['id','ASC']]`，这里再 useMemo 做一道保险，避免任何中间路径
+  // （e.g. service 转换 / 后续调用方 mutate）把顺序打乱导致表格行次序漂移。
+  const positions = useMemo(() => {
+    const list = data?.positions || [];
+    return [...list].sort((a, b) => Number(a.id) - Number(b.id));
+  }, [data?.positions]);
   const totalValue = Number(data?.portfolio.total_value || 0);
 
   const handleStartEdit = (row: PositionRow, field: 'stop_loss' | 'take_profit') => {

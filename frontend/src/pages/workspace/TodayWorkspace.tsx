@@ -117,11 +117,15 @@ const TodayWorkspace: React.FC = () => {
   const kpiSlot = useMemo(() => {
     const account = data?.account;
     const totalValue = account?.total_value ?? 0;
-    const pnlYesterday = account?.pnl_yesterday ?? null;
+    // 后端 pnl_yesterday = today.total_value - 最近一次 (排除今天) snapshot
+    // = "今日相对昨日收盘的浮盈" → 用户语境下的「今日盈亏」（旧标签 "昨日盈亏" 易误解）
+    const pnlToday = account?.pnl_yesterday ?? null;
     const pnlMonth = account?.pnl_month_to_date ?? null;
+    const totalReturn = account?.total_return ?? null;
+    const totalReturnPct = account?.total_return_pct ?? null;
     const unreadCount = data?.unread_alert_count ?? 0;
     return (
-      <Space size={32}>
+      <Space size={24} wrap>
         <Statistic
           title="账户净值"
           value={totalValue}
@@ -130,12 +134,12 @@ const TodayWorkspace: React.FC = () => {
           valueStyle={{ color: '#1677ff' }}
         />
         <Statistic
-          title="昨日盈亏"
-          value={pnlYesterday ?? 0}
+          title="今日盈亏"
+          value={pnlToday ?? 0}
           precision={2}
-          prefix={pnlYesterday != null ? '¥' : ''}
-          suffix={pnlYesterday == null ? ' —' : ''}
-          valueStyle={{ color: pnlColor(pnlYesterday) }}
+          prefix={pnlToday != null ? '¥' : ''}
+          suffix={pnlToday == null ? ' —' : ''}
+          valueStyle={{ color: pnlColor(pnlToday) }}
         />
         <Statistic
           title="当月收益"
@@ -144,6 +148,20 @@ const TodayWorkspace: React.FC = () => {
           prefix={pnlMonth != null ? '¥' : ''}
           suffix={pnlMonth == null ? ' —' : ''}
           valueStyle={{ color: pnlColor(pnlMonth) }}
+        />
+        <Statistic
+          title="总收益"
+          value={totalReturn ?? 0}
+          precision={2}
+          prefix={totalReturn != null ? '¥' : ''}
+          suffix={
+            totalReturn == null
+              ? ' —'
+              : totalReturnPct != null
+              ? ` (${(totalReturnPct * 100).toFixed(2)}%)`
+              : ''
+          }
+          valueStyle={{ color: pnlColor(totalReturn) }}
         />
         <Statistic
           title="未读风险"

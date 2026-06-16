@@ -60,10 +60,17 @@ export interface AccountSummary {
   current_cash: number;
   /** 持仓市值 */
   position_value: number;
-  /** 昨日盈亏 = today.total_value - yesterday.total_value（无昨日 snapshot 返回 null） */
+  /** 今日盈亏 = today.total_value - 最近一次 snapshot (排除今天本身) 的 total_value。
+   *  即 "今日相对昨日收盘的浮盈"。无 snapshot 历史返回 null。 */
   pnl_yesterday: number | null;
   /** 当月收益 = today.total_value - 月初 snapshot.total_value（无月初 snapshot 返回 null） */
   pnl_month_to_date: number | null;
+  /** 期初本金（portfolio.initial_capital） */
+  initial_capital: number;
+  /** 总收益 = total_value - initial_capital（投入以来累计浮盈） */
+  total_return: number;
+  /** 总收益率 = total_return / initial_capital（initial_capital ≤ 0 时为 null） */
+  total_return_pct: number | null;
   /** portfolio 是否存在 */
   portfolio_id: number | null;
 }
@@ -678,12 +685,20 @@ export class TodaySignalsService {
       }
     }
 
+    const initialCapital = Number(portfolio.initial_capital ?? 0);
+    const totalReturn = totalValue - initialCapital;
+    const totalReturnPct =
+      initialCapital > 0 ? Math.round((totalReturn / initialCapital) * 10000) / 10000 : null;
+
     return {
       total_value: Math.round(totalValue * 100) / 100,
       current_cash: Math.round(currentCash * 100) / 100,
       position_value: Math.round(positionValue * 100) / 100,
       pnl_yesterday: pnlYesterday,
       pnl_month_to_date: pnlMonthToDate,
+      initial_capital: Math.round(initialCapital * 100) / 100,
+      total_return: Math.round(totalReturn * 100) / 100,
+      total_return_pct: totalReturnPct,
       portfolio_id: portfolio.id,
     };
   }

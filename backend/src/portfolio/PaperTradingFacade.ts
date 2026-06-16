@@ -253,6 +253,9 @@ export class PaperTradingFacade {
 
     const positions = await PaperTradingPosition.findAll({
       where: { portfolio_id: portfolio.id },
+      // 按 id ASC 排序保证持仓表显示顺序稳定（开仓时间早→晚）；
+      // PostgreSQL 默认无 stable order，否则前端每次刷新行次序都会变。
+      order: [['id', 'ASC']],
     });
 
     let totalMarketValue = 0;
