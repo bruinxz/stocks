@@ -52,6 +52,8 @@ import { OptimizationRun } from '../../models/OptimizationRun';
 import { OptimizationResult } from '../../models/OptimizationResult';
 import { strategyRegistry } from '../engine/StrategyRegistry';
 import { QuantBacktestOptions } from '../types/QuantTypes';
+// Sprint 43-E: 接入 DSR 防过拟合
+import { deflatedSharpeRatio } from '../../services/research/ResearchValidationService';
 import {
   BacktestRunner,
   OptimizationResultRecord,
@@ -841,13 +843,53 @@ export class BayesianOptimizer {
     const ranked = sortByCompositeScoreDesc(results);
     const best = ranked.find(r => r.status === 'completed' && r.composite_score !== null) || null;
 
+    // Sprint 43-E: DSR 防过拟合 (与 GridSearchOptimizer 同款)
+    let dsrSummary: any = null;
+    try {
+      const completed = results.filter(r => r.status === 'completed' && Number.isFinite(r.sharpe));
+      if (best && completed.length >= 2 && Number.isFinite(best.sharpe)) {
+        const sharpes = completed.map(r => Number(r.sharpe));
+        const meanSharpe = sharpes.reduce((a, b) => a + b, 0) / sharpes.length;
+        const varSharpe =
+          sharpes.reduce((s, v) => s + (v - meanSharpe) ** 2, 0) / Math.max(sharpes.length - 1, 1);
+        const dsr = deflatedSharpeRatio({
+          observed_sharpe: Number(best.sharpe),
+          n_trials: completed.length,
+          variance_of_trials: varSharpe,
+          n_observations: 252,
+          skewness: 0,
+          excess_kurtosis: 0,
+        });
+        dsrSummary = {
+          observed_sharpe: best.sharpe,
+          n_trials: completed.length,
+          variance_of_trials: varSharpe,
+          expected_max_sharpe: dsr.expected_max_sharpe,
+          deflated_sharpe: dsr.deflated_sharpe,
+          is_significant: dsr.is_significant,
+          explanation: dsr.explanation,
+        };
+        logger.info(
+          `[bayesian] DSR for ${input.strategy_key}: best_sharpe=${best.sharpe} N=${
+            completed.length
+          } → DSR=${dsr.deflated_sharpe.toFixed(3)} ${
+            dsr.is_significant ? '✓ 显著' : '✗ 可能过拟合'
+          }`
+        );
+      }
+    } catch (dsrErr: any) {
+      logger.warn(`[bayesian] DSR 计算失败 (fail-open): ${dsrErr?.message || dsrErr}`);
+    }
+
     if (persist && run) {
+      const existingMeta = (run as any).metadata_json || {};
       await run.update({
         status: 'completed',
         completed_combos: results.length,
         failed_combos: failedCount,
         best_result_id: best?.id ?? null,
         finished_at: new Date(),
+        metadata_json: dsrSummary ? { ...existingMeta, deflated_sharpe: dsrSummary } : existingMeta,
       });
     }
 

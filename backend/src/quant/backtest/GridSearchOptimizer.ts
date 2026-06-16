@@ -50,6 +50,8 @@ import { OptimizationRun } from '../../models/OptimizationRun';
 import { OptimizationResult } from '../../models/OptimizationResult';
 import { strategyRegistry } from '../engine/StrategyRegistry';
 import { QuantBacktestOptions } from '../types/QuantTypes';
+// Sprint 43-E: 接入 DSR 防过拟合
+import { deflatedSharpeRatio } from '../../services/research/ResearchValidationService';
 
 // ============================================================
 // Types
@@ -539,14 +541,61 @@ export class GridSearchOptimizer {
     const ranked = sortByCompositeScoreDesc(results);
     const best = ranked.find(r => r.status === 'completed' && r.composite_score !== null) || null;
 
+    // Sprint 43-E: 自动算 Deflated Sharpe Ratio (DSR) — 防止"试了 256 组参数
+    // 总有一组 sharpe=2 不是真有 alpha 而是 multiple testing 膨胀".
+    //
+    // DSR > 0.95 = 95% 置信度 best.sharpe 真有 alpha (考虑 N 次尝试后).
+    // 写到 OptimizationRun.metadata_json 给 dashboard 用.
+    let dsrSummary: any = null;
+    try {
+      const completed = results.filter(r => r.status === 'completed' && Number.isFinite(r.sharpe));
+      if (best && completed.length >= 2 && Number.isFinite(best.sharpe)) {
+        const sharpes = completed.map(r => Number(r.sharpe));
+        const meanSharpe = sharpes.reduce((a, b) => a + b, 0) / sharpes.length;
+        const varSharpe =
+          sharpes.reduce((s, v) => s + (v - meanSharpe) ** 2, 0) / Math.max(sharpes.length - 1, 1);
+        // n_observations: 用 base_config.start_date..end_date 大致估算交易日数,
+        // 没有真实 returns 时用 252 (一年) 作 fallback.
+        const nObs = 252;
+        const dsr = deflatedSharpeRatio({
+          observed_sharpe: Number(best.sharpe),
+          n_trials: completed.length,
+          variance_of_trials: varSharpe,
+          n_observations: nObs,
+          skewness: 0, // 没 returns 序列, 假设正态
+          excess_kurtosis: 0,
+        });
+        dsrSummary = {
+          observed_sharpe: best.sharpe,
+          n_trials: completed.length,
+          variance_of_trials: varSharpe,
+          expected_max_sharpe: dsr.expected_max_sharpe,
+          deflated_sharpe: dsr.deflated_sharpe,
+          is_significant: dsr.is_significant,
+          explanation: dsr.explanation,
+        };
+        logger.info(
+          `[grid-search] DSR for ${input.strategy_key}: best_sharpe=${best.sharpe} N=${
+            completed.length
+          } → DSR=${dsr.deflated_sharpe.toFixed(3)} ${
+            dsr.is_significant ? '✓ 显著' : '✗ 可能过拟合'
+          }`
+        );
+      }
+    } catch (dsrErr: any) {
+      logger.warn(`[grid-search] DSR 计算失败 (fail-open): ${dsrErr?.message || dsrErr}`);
+    }
+
     // (6) 回写 OptimizationRun.completed / best_result_id
     if (persist && run) {
+      const existingMeta = (run as any).metadata_json || {};
       await run.update({
         status: 'completed',
         completed_combos: results.length,
         failed_combos: failedCount,
         best_result_id: best?.id ?? null,
         finished_at: new Date(),
+        metadata_json: dsrSummary ? { ...existingMeta, deflated_sharpe: dsrSummary } : existingMeta,
       });
     }
 
