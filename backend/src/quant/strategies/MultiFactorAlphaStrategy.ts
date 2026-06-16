@@ -11,6 +11,11 @@ import { FactorICResult } from '../../models/FactorICResult';
 import { Stock } from '../../models/Stock';
 import { logger } from '../../utils/logger';
 import { isSTName } from '../../utils/stNameUtils';
+// Sprint 44-B: weightMode='crowding_adjusted' 用 FactorOrthogonalizationService 算降权
+import {
+  computeCrowdingScore,
+  CrowdingResult,
+} from '../../services/factor/FactorOrthogonalizationService';
 
 /**
  * MultiFactorAlphaStrategy — 12 因子加权多因子选股策略（US-011 / US-081 升级）
@@ -101,7 +106,7 @@ export type MultiFactorAlphaRebalancePeriod = 'daily' | 'weekly' | 'monthly';
  *   - 'equal'  = 所有正权重因子一律 1/N（忽略 weights 数值）
  *   - 'ic_weighted' = 按 FactorICResult.ic_mean 动态加权（缺数据回退 static）
  */
-export type MultiFactorAlphaWeightMode = 'static' | 'equal' | 'ic_weighted';
+export type MultiFactorAlphaWeightMode = 'static' | 'equal' | 'ic_weighted' | 'crowding_adjusted';
 
 /** ic_weighted 模式默认查询的 look_forward_days（IC 衰减分析最常用中期窗口） */
 export const DEFAULT_IC_LOOK_FORWARD_DAYS = 20;
@@ -222,6 +227,25 @@ export interface MultiFactorAlphaDataSource {
     lookForwardDays: number,
     lookbackDays: number
   ): Promise<Map<string, number>>;
+
+  /**
+   * Sprint 44-B: 拉因子 IC 时间序列, 用于 weightMode='crowding_adjusted' 算拥挤度.
+   *
+   * @param factorNames 因子名列表
+   * @param asOfDate 截面日
+   * @param recentDays 近期窗口 (默认 30 日)
+   * @param baselineDays 基准期窗口 (默认 90 日, 用 asOfDate-90 ~ asOfDate-30 作 baseline)
+   * @returns Map<factor_name, { recent: number[], baseline: number[] }>
+   *   recent: 近 recentDays 日的 IC 序列
+   *   baseline: 基准期的 IC 序列
+   *   缺数据的 factor 不出现在 Map 中.
+   */
+  loadFactorICTimeSeries?(
+    factorNames: string[],
+    asOfDate: string,
+    recentDays: number,
+    baselineDays: number
+  ): Promise<Map<string, { recent: number[]; baseline: number[] }>>;
 }
 
 export interface StockMeta {
@@ -352,6 +376,60 @@ export class DefaultMultiFactorAlphaDataSource implements MultiFactorAlphaDataSo
     }
     return out;
   }
+
+  /**
+   * Sprint 44-B: 拉因子 IC 时间序列 (recent + baseline 两段) 用于拥挤度算法.
+   * recent: [asOfDate - recentDays, asOfDate]
+   * baseline: [asOfDate - baselineDays, asOfDate - recentDays]
+   */
+  async loadFactorICTimeSeries(
+    factorNames: string[],
+    asOfDate: string,
+    recentDays: number,
+    baselineDays: number
+  ): Promise<Map<string, { recent: number[]; baseline: number[] }>> {
+    const out = new Map<string, { recent: number[]; baseline: number[] }>();
+    if (!factorNames.length) return out;
+
+    const asOf = new Date(`${asOfDate}T00:00:00Z`);
+    if (!Number.isFinite(asOf.getTime())) return out;
+
+    const recentFrom = new Date(asOf);
+    recentFrom.setUTCDate(recentFrom.getUTCDate() - Math.floor(recentDays));
+    const baselineFrom = new Date(asOf);
+    baselineFrom.setUTCDate(baselineFrom.getUTCDate() - Math.floor(baselineDays));
+
+    const baselineFromIso = baselineFrom.toISOString().slice(0, 10);
+    const recentFromIso = recentFrom.toISOString().slice(0, 10);
+
+    const rows = (await FactorICResult.findAll({
+      attributes: ['factor_name', 'ic_mean', 'period_end'],
+      where: {
+        factor_name: { [Op.in]: factorNames },
+        period_end: { [Op.between]: [baselineFromIso, asOfDate] },
+      },
+      order: [['period_end', 'ASC']],
+      raw: true,
+    })) as unknown as Array<{
+      factor_name: string;
+      ic_mean: number | string | null;
+      period_end: string;
+    }>;
+
+    for (const r of rows) {
+      const v = r.ic_mean === null || r.ic_mean === undefined ? NaN : Number(r.ic_mean);
+      if (!Number.isFinite(v)) continue;
+      const entry = out.get(r.factor_name) || { recent: [] as number[], baseline: [] as number[] };
+      // period_end >= recentFromIso → recent; else → baseline
+      if (r.period_end >= recentFromIso) {
+        entry.recent.push(v);
+      } else {
+        entry.baseline.push(v);
+      }
+      out.set(r.factor_name, entry);
+    }
+    return out;
+  }
 }
 
 const PRODUCTION_DATA_SOURCE: MultiFactorAlphaDataSource = new DefaultMultiFactorAlphaDataSource();
@@ -462,7 +540,31 @@ export class MultiFactorAlphaStrategy extends QuantStrategy {
         params.icLookbackDays
       );
     }
-    const effectiveWeights = computeEffectiveWeights(params.weights, params.weightMode, icMap);
+    // Sprint 44-B: weightMode='crowding_adjusted' 加载 IC 时序
+    // (recent 30 日 + baseline 30-90 日) 用于算拥挤度
+    let icTimeSeries: Map<string, { recent: number[]; baseline: number[] }> | undefined;
+    if (params.weightMode === 'crowding_adjusted' && this.dataSource.loadFactorICTimeSeries) {
+      try {
+        icTimeSeries = await this.dataSource.loadFactorICTimeSeries(
+          factorNames,
+          tradeDate,
+          30, // recent 30 日
+          90 // baseline 总窗口 90 日
+        );
+      } catch (err: any) {
+        logger.warn(
+          `[mfa] loadFactorICTimeSeries failed for crowding_adjusted, fallback to static: ${
+            err?.message || err
+          }`
+        );
+      }
+    }
+    const effectiveWeights = computeEffectiveWeights(
+      params.weights,
+      params.weightMode,
+      icMap,
+      icTimeSeries
+    );
     const normalizedWeights = normalizeWeights(effectiveWeights);
 
     // 1) 读因子打分（FactorScore 表）—— 中性行 z_score=0 已经在 Pipeline 写入
@@ -687,7 +789,8 @@ function normalizeWeights(weights: Record<string, number>): Record<string, numbe
 export function computeEffectiveWeights(
   staticWeights: Record<string, number>,
   mode: MultiFactorAlphaWeightMode,
-  icMap?: Map<string, number>
+  icMap?: Map<string, number>,
+  icTimeSeries?: Map<string, { recent: number[]; baseline: number[] }>
 ): Record<string, number> {
   if (mode === 'static') {
     return { ...staticWeights };
@@ -720,6 +823,53 @@ export function computeEffectiveWeights(
     }
     // 整体 fallback: 所有正权重因子都无正 IC → 全部用 static（避免 0/0 normalize 灾难）
     if (!anyPositiveIc) {
+      return { ...staticWeights };
+    }
+    return out;
+  }
+
+  if (mode === 'crowding_adjusted') {
+    // Sprint 44-B: 用 FactorOrthogonalizationService.computeCrowdingScore 算每个因子
+    // 的 crowding score, 再 downweight crowded 因子.
+    //
+    // 数据需求: icTimeSeries 必须含 recent + baseline 两段 IC.
+    //   - 缺 icTimeSeries (caller 没传 / loadFactorICTimeSeries 没实现) → 整体 fallback static
+    //   - 单个因子缺时序数据 → 该因子保留 static weight (不降权)
+    //   - 有时序数据 → 算 crowding score → multiplier ∈ [0.2, 1.0] 乘到 static weight
+    if (!icTimeSeries || icTimeSeries.size === 0) {
+      return { ...staticWeights };
+    }
+    const out: Record<string, number> = {};
+    let anyAdjusted = false;
+    for (const [name, w] of Object.entries(staticWeights)) {
+      if (typeof w !== 'number' || w <= 0) {
+        out[name] = 0;
+        continue;
+      }
+      const ts = icTimeSeries.get(name);
+      if (!ts || ts.recent.length < 5 || ts.baseline.length < 5) {
+        // 数据不足, 保留 static weight 不降权
+        out[name] = w;
+        continue;
+      }
+      const crowding: CrowdingResult = computeCrowdingScore({
+        recent_ic_series: ts.recent,
+        baseline_ic_series: ts.baseline,
+      });
+      // 应用 crowding multiplier (≤ 1.0)
+      out[name] = w * crowding.recommended_weight_multiplier;
+      if (crowding.recommended_weight_multiplier < 1.0) {
+        anyAdjusted = true;
+      }
+    }
+    // 防御: 全部 0 → fallback static (虽然 computeCrowdingScore multiplier 最低 0.2,
+    // 这里不会真为 0, 但保险)
+    const sum = Object.values(out).reduce((s, v) => s + v, 0);
+    if (sum <= 0) {
+      return { ...staticWeights };
+    }
+    // 若没任何因子被降权, 也走 static (避免无意义的浮点累计误差)
+    if (!anyAdjusted) {
       return { ...staticWeights };
     }
     return out;

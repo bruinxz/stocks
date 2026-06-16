@@ -920,6 +920,48 @@ async function test_weight_mode_ic_weighted_overrides_lookback() {
 }
 
 // ----------------------------------------------------------------
+// Sprint 44-B: weightMode='crowding_adjusted' 纯函数测试
+// ----------------------------------------------------------------
+
+async function test_weight_mode_crowding_adjusted_downweights_crowded() {
+  // computeEffectiveWeights(crowding_adjusted) 单测 — IC 衰减严重的因子应被降权
+  // 不依赖 DataSource, 直接传 icTimeSeries.
+  const staticWeights = { value: 0.5, momentum: 0.5 };
+
+  // case 1: 两个因子 IC 都稳定 → 不降权, fallback static
+  const ts1 = new Map<string, { recent: number[]; baseline: number[] }>([
+    ['value', { recent: [0.05, 0.06, 0.05, 0.06, 0.05], baseline: [0.05, 0.06, 0.05, 0.06, 0.05] }],
+    ['momentum', { recent: [0.04, 0.04, 0.04, 0.04, 0.04], baseline: [0.04, 0.04, 0.04, 0.04, 0.04] }],
+  ]);
+  const w1 = computeEffectiveWeights(staticWeights, 'crowding_adjusted', undefined, ts1);
+  expectEqual('IC 稳定 → fallback static', JSON.stringify(w1), JSON.stringify(staticWeights));
+
+  // case 2: momentum IC 严重衰减 (近期 0 / baseline 0.05) → momentum 降权
+  const ts2 = new Map<string, { recent: number[]; baseline: number[] }>([
+    ['value', { recent: [0.05, 0.06, 0.05, 0.06, 0.05], baseline: [0.05, 0.06, 0.05, 0.06, 0.05] }],
+    ['momentum', { recent: [0, 0, 0, 0, 0], baseline: [0.05, 0.05, 0.05, 0.05, 0.05] }],
+  ]);
+  const w2 = computeEffectiveWeights(staticWeights, 'crowding_adjusted', undefined, ts2);
+  expectEqual('momentum 降权后 < 0.5', w2.momentum < 0.5, true);
+  expectEqual('value 不动 = 0.5', w2.value, 0.5);
+
+  // case 3: 数据缺失 (icTimeSeries=undefined) → fallback static
+  const w3 = computeEffectiveWeights(staticWeights, 'crowding_adjusted', undefined, undefined);
+  expectEqual('icTimeSeries=undefined → fallback static', JSON.stringify(w3), JSON.stringify(staticWeights));
+
+  // case 4: 部分因子数据不足 (< 5 个观察值) → 该因子保留 static
+  const ts4 = new Map<string, { recent: number[]; baseline: number[] }>([
+    ['value', { recent: [0.05], baseline: [0.05] }],
+    ['momentum', { recent: [0, 0, 0, 0, 0], baseline: [0.05, 0.05, 0.05, 0.05, 0.05] }],
+  ]);
+  const w4 = computeEffectiveWeights(staticWeights, 'crowding_adjusted', undefined, ts4);
+  // value 样本不足保留 static 0.5
+  expectEqual('value 样本不足保留 0.5', w4.value, 0.5);
+  // momentum 仍降权 (有完整数据)
+  expectEqual('momentum 数据完整降权 < 0.5', w4.momentum < 0.5, true);
+}
+
+// ----------------------------------------------------------------
 // Runner
 // ----------------------------------------------------------------
 
@@ -947,6 +989,8 @@ const tests: Array<() => Promise<void>> = [
   test_weight_mode_ic_weighted_dynamic_weights,
   test_weight_mode_ic_weighted_all_negative_fallback_to_static,
   test_compute_effective_weights_pure_function,
+  // Sprint 44-B
+  test_weight_mode_crowding_adjusted_downweights_crowded,
   test_weight_mode_ic_weighted_overrides_lookback,
 ];
 
