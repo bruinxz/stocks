@@ -100,6 +100,7 @@ import { ExecutionFeasibilityRecord } from '../models/ExecutionFeasibilityRecord
 import { MetaLabelDecision } from '../models/MetaLabelDecision';
 import { PortfolioConstructionResult } from '../models/PortfolioConstructionResult';
 import { EquityCurveGovernorState } from '../models/EquityCurveGovernorState';
+import { StrategyTcaMultiplier } from '../models/StrategyTcaMultiplier';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -222,6 +223,7 @@ const sequelize = new Sequelize({
     MetaLabelDecision,
     PortfolioConstructionResult,
     EquityCurveGovernorState,
+    StrategyTcaMultiplier,
   ],
   logging: process.env.NODE_ENV === 'development' ? console.log : false,
   pool: {

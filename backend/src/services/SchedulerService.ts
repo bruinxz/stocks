@@ -3471,6 +3471,85 @@ class SchedulerService {
             });
           }
         }
+      } else if (task.type === 'TCA_WEEKLY_REPORT') {
+        // Sprint 43-B: 每周 TCA (Transaction Cost Attribution) 报告.
+        // 跑 N 天 lookback 内已 closed trades → 拆 cost 来源 → 算 per-strategy
+        // weight multiplier (entry_slip > 0.5% OR impact > 0.3% → 0.7).
+        //
+        // 写到 StrategyTcaMultiplier 表 (per-strategy 最新 multiplier), 让
+        // StrategyAllocationPolicy / PaperTradingAutomationService 下周读取并应用.
+        // fail-open: 单 trade attribution 失败不阻塞 batch, 整体失败仅 warn.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { tcaService } = require('../services/tca/TCAService');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const lookbackDays: number = this.toPositiveInt(parameters.lookback_days, 30, 365);
+        const asOfDate: string =
+          parameters.as_of_date || moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
+        const t0 = Date.now();
+        let tcaResult: any = { per_trade: [], per_strategy: [], total_trades: 0 };
+        try {
+          tcaResult = await tcaService.runAttribution({
+            lookback_days: lookbackDays,
+            as_of_date: asOfDate,
+          });
+          // 持久化 per-strategy multiplier 到 strategy_tca_multipliers 表 (Sprint 43-B 新建).
+          // 若表不存在 (DB migration 未跑), 仅 warn 不阻塞.
+          try {
+            /* eslint-disable @typescript-eslint/no-var-requires */
+            const { StrategyTcaMultiplier } = require('../models/StrategyTcaMultiplier');
+            /* eslint-enable @typescript-eslint/no-var-requires */
+            for (const s of tcaResult.per_strategy) {
+              await StrategyTcaMultiplier.upsert({
+                strategy_key: s.strategy_key,
+                report_date: asOfDate,
+                lookback_days: lookbackDays,
+                trade_count: s.trade_count,
+                avg_realized_pnl_pct: s.avg_realized_pnl_pct,
+                avg_tracking_error_pct: s.avg_tracking_error_pct,
+                avg_entry_slippage_pct: s.avg_entry_slippage_pct,
+                avg_impact_cost_pct: s.avg_impact_cost_pct,
+                recommended_weight_multiplier: s.recommended_weight_multiplier,
+                warning: s.warning,
+                reason: s.reason,
+              });
+            }
+            logger.info(
+              `[TCA_WEEKLY_REPORT] ${asOfDate} ${tcaResult.per_strategy.length} strategies 持久化`
+            );
+          } catch (persistErr: any) {
+            logger.warn(
+              `[TCA_WEEKLY_REPORT] StrategyTcaMultiplier 持久化失败 (表可能未创建): ${
+                persistErr?.message || persistErr
+              }`
+            );
+          }
+        } catch (e: any) {
+          logger.warn(`[TCA_WEEKLY_REPORT] tcaService 失败: ${e?.message || e}`);
+        }
+        const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: tcaResult.total_trades,
+          success_count: tcaResult.per_strategy.length,
+          failed_count: 0,
+          result_summary: {
+            scenario: 'tca_weekly_report',
+            as_of_date: asOfDate,
+            lookback_days: lookbackDays,
+            total_trades: tcaResult.total_trades,
+            per_strategy_count: tcaResult.per_strategy.length,
+            // 抽 warnings 列表给 dashboard
+            high_cost_strategies: tcaResult.per_strategy
+              .filter((s: any) => s.warning !== 'ok')
+              .map((s: any) => ({
+                strategy_key: s.strategy_key,
+                warning: s.warning,
+                weight: s.recommended_weight_multiplier,
+                avg_entry_slip: s.avg_entry_slippage_pct,
+                avg_impact: s.avg_impact_cost_pct,
+              })),
+            elapsed_seconds: Number(elapsed),
+          },
+        });
       } else if (task.type === 'FACTOR_IC_COMPUTE') {
         // Phase 3: 每日因子 IC 计算 — 走 child_process 调用 compute-factor-ic CLI
         // 默认跑过去 90 天 + 默认 forwardDays=[1,5,10,20,60]，覆盖 5 个时间窗口的衰减分析
@@ -4594,6 +4673,20 @@ class SchedulerService {
           username: 'stock',
           dry_run: true, // 默认 dry-run, 运维确认后改 false
           persist: true, // 默认 persist plan 留审计
+        },
+      },
+      {
+        // Sprint 43-B: 每周一晚 19:30 跑 TCA 报告 — 拆 cost 来源 +
+        // 算 per-strategy multiplier (实盘买不到/滑点大的策略自动降权 0.7 或 0.5).
+        // 与 FACTOR_IC_COMPUTE (周一-五 19:00) 错开 30 分钟避免 DB 争用.
+        // lookback_days=30 让一周数据稍微 smoothing.
+        name: '每周交易成本归因 (TCA)',
+        type: 'TCA_WEEKLY_REPORT',
+        cron_expression: '30 19 * * 1', // 每周一晚 19:30
+        is_active: true,
+        parameters: {
+          lookback_days: 30,
+          // as_of_date 默认今日 (Asia/Shanghai)
         },
       },
       {
