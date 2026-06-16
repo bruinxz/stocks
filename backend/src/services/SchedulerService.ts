@@ -2188,7 +2188,9 @@ class SchedulerService {
         });
 
         logger.info(
-          `推荐交易收益闭环刷新完成。刷新 ${result.refreshed}，写入 ${result.created_or_updated}，闭环 ${result.dashboard.summary.closed_count}，总盈亏 ${result.dashboard.summary.total_pnl}`
+          `推荐交易收益闭环刷新完成。刷新 ${result.refreshed}，写入 ${result.created_or_updated}，闭环 ${
+            (result.dashboard as any)?.summary?.closed_count ?? '—'
+          }，总盈亏 ${(result.dashboard as any)?.summary?.total_pnl ?? '—'}`
         );
       } else if (task.type === 'PAPER_TRADING_DAILY_PLAN') {
         const result = await paperTradingPlanService.generatePlan({

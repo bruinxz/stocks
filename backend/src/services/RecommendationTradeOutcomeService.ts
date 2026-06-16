@@ -2936,6 +2936,17 @@ export class RecommendationTradeOutcomeService {
     const entryTrade = await PaperTradingTrade.findOne({
       where: { id: Number(paperTrading.trade_id), portfolio_id },
     });
+    // 修复 (2026-06-16, task 5/8): 如果 metadata 引用的 trade_id 已不存在 (被回滚/删除),
+    // 不要再创建 outcome 行 — 否则 outcome 表会堆积 "孤儿 outcome" (指向已删 trade),
+    // 污染 EV/TCA 输入. 之前那批 16 笔非交易时段 trade 被回滚后, refresh 重新
+    // upsert 创建了 12 个孤儿 outcome (id 73-84) 就是这个 bug.
+    if (!entryTrade) {
+      logger.debug(
+        `upsertFromExecutedSignal: signal ${signal.id} metadata 引用的 trade_id ${paperTrading.trade_id} ` +
+          `不存在 (portfolio=${portfolio_id}, symbol=${signal.symbol}); 跳过创建 outcome.`
+      );
+      return null;
+    }
     const exitTrade = paperTrading.sell_trade_id
       ? await PaperTradingTrade.findOne({
           where: { id: Number(paperTrading.sell_trade_id), portfolio_id },

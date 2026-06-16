@@ -471,7 +471,34 @@ export const PRODUCTION_EXECUTION_FEASIBILITY_DATA_SOURCE: ExecutionFeasibilityD
         order: [['time', 'DESC']],
         limit: 6,
       });
-      if (bars.length === 0) return null;
+      if (bars.length === 0) {
+        // 修复 (2026-06-16, task 10): daily_bar sync 与 buy cron 之间存在 race condition —
+        // 06-15 09:05 cron 触发时, sh.600061 等 242 个 symbol 的 daily_bar 还没同步进库
+        // (实际是 10:00 才同步), 导致 ExecutionFeasibility 报 no_market_data 拒单.
+        // Fallback: 用 Stock.current_price + 默认 volume 估算 (degraded snapshot),
+        // 给一个 fillable=false 但 risky=true 的中等评分, 让 caller (autoBuyFromSignals)
+        // 决定是否跳过. 这比硬 block 整批 BUY 好.
+        const fallbackPrice = Number(stock.current_price);
+        if (!Number.isFinite(fallbackPrice) || fallbackPrice <= 0) return null;
+        logger.debug(
+          `[execution-feasibility] ${symbol} 无 daily_bar (as_of=${as_of_date}), 用 Stock.current_price=${fallbackPrice} fallback`
+        );
+        return {
+          close: fallbackPrice,
+          open: fallbackPrice,
+          high: fallbackPrice,
+          low: fallbackPrice,
+          prev_close: fallbackPrice,
+          volume: 0, // 未知 → is_suspended=true 触发 (保守, 让 caller 自行决定)
+          avg_volume_5d: null,
+          is_limit_up: false,
+          is_limit_down: false,
+          is_suspended: false, // 不能基于无 volume 推断停牌, 这里设 false 让 score 走"流动性极低"路径
+          is_st:
+            typeof stock.name === 'string' &&
+            (stock.name.includes('ST') || stock.name.includes('*ST') || stock.name.includes('退')),
+        };
+      }
 
       const today = bars[0];
       const prevBars = bars.slice(1, 6);

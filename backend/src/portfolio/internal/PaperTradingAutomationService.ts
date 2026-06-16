@@ -912,6 +912,9 @@ function normalizeSkipReasonCategory(reason?: string): string {
   }
   if (text.includes('最新价格') || text.includes('数据')) return 'market_data';
   if (text.includes('持仓数量') || text.includes('上限')) return 'position_limit';
+  // 'intra_batch_symbol_dedup' = 同一 symbol 多策略多信号取 confidence DESC 第一个后, 其余 skip.
+  // 修复 (2026-06-16): 之前归到 stale_signal 误导诊断 — 实际跟"信号过期"无关.
+  if (text.includes('更新的候选信号')) return 'intra_batch_symbol_dedup';
   if (text.includes('旧信号')) return 'stale_signal';
   return 'other';
 }
@@ -1399,9 +1402,27 @@ class PaperTradingAutomationService {
       ],
       limit: scan_limit,
     });
+    // 修复 (2026-06-16, task 4-D): action='等待确认' / 'avoid' 类信号不应进入下单候选
+    // 它们到下单层只会被 trade_discipline guard 拒掉 (1062 笔/月 ~ 17% 总拒单),
+    // 污染拒单分布让真正的 risk_check 拒单原因不可读.
+    // require_action_buy 默认 true; allow_watch_signals_for_sampling 走另一条路径仍允许 watch.
+    // 这里只做粗筛 (action 是 avoid 直接刨, action 不是 buy/watch 且没有 allowWatchSignalsForSampling 也刨),
+    // 不替代 line 1734-1745 的细粒度判定 — 那里仍负责针对单 signal 的精确 skip 写 OrderIntent.
+    const requireActionBuyFlag = toBoolean(options.require_action_buy, true);
+    const allowWatchSamplingFlag = toBoolean(options.allow_watch_signals_for_sampling, false);
+    const preFiltered = signals.filter(sig => {
+      const meta = asPlainObject(sig.metadata);
+      const action = String(meta.action || '').toLowerCase();
+      if (action === 'avoid') return false;
+      // 允许 buy 始终通过; 允许 watch 仅在 sampling 模式 OR require_action_buy=false 时通过
+      if (action === 'buy') return true;
+      if (action === 'watch') return allowWatchSamplingFlag || !requireActionBuyFlag;
+      // 其它 action (如 '等待确认', 'hold' 等): require_action_buy=true 时 skip
+      return !requireActionBuyFlag;
+    });
     const candidateSignals = strategyFilterKeys.length
-      ? signals.filter(signal => signalMatchesStrategyKeys(signal, strategyFilterKeys))
-      : signals;
+      ? preFiltered.filter(signal => signalMatchesStrategyKeys(signal, strategyFilterKeys))
+      : preFiltered;
 
     // Sprint 29: PortfolioConstruction shadow/hard mode 接入 (短板 #1).
     // 收集所有 candidate signal 一次性 build 组合权重, 然后 loop 内 per-signal
