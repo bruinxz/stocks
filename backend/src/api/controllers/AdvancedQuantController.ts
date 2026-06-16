@@ -794,6 +794,45 @@ export class AdvancedQuantController {
       res.status(500).json({ success: false, message: err?.message });
     }
   }
+
+  /**
+   * Sprint 44-C: GET /api/advanced-quant/tca/strategies
+   *
+   * 列出 strategy_tca_multipliers 表的最近一次报告 per-strategy.
+   * 给 dashboard 显示 "哪些策略实盘成本高被降权".
+   *
+   * Query: { limit?: number (默认 50) }
+   */
+  async listTcaStrategies(req: Request, res: Response) {
+    try {
+      /* eslint-disable @typescript-eslint/no-var-requires */
+      const { StrategyTcaMultiplier } = require('../../models/StrategyTcaMultiplier');
+      const { QueryTypes } = require('sequelize');
+      const sequelize = require('../../config/database').default;
+      /* eslint-enable @typescript-eslint/no-var-requires */
+      const limit = Math.min(Math.max(parseInt(String(req.query.limit || '50'), 10), 1), 500);
+      // 取每个 strategy_key 的最新 report_date 一条
+      const rows = await sequelize.query(
+        `SELECT t.* FROM strategy_tca_multipliers t
+         INNER JOIN (
+           SELECT strategy_key, MAX(report_date) AS max_date
+           FROM strategy_tca_multipliers
+           GROUP BY strategy_key
+         ) latest
+         ON t.strategy_key = latest.strategy_key AND t.report_date = latest.max_date
+         ORDER BY t.recommended_weight_multiplier ASC, t.strategy_key ASC
+         LIMIT :limit`,
+        {
+          replacements: { limit },
+          type: QueryTypes.SELECT,
+        }
+      );
+      res.json({ success: true, data: rows });
+    } catch (err: any) {
+      logger.error('[advanced-quant] listTcaStrategies failed:', err);
+      res.status(500).json({ success: false, message: err?.message });
+    }
+  }
 }
 
 export const advancedQuantController = new AdvancedQuantController();

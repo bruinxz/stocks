@@ -208,3 +208,65 @@ export const getGovernorHistory = (portfolio_id: number, days = 90) =>
   api.get<{ success: boolean; data: GovernorEvaluateResult[] }>(
     `/advanced-quant/governor/history/${portfolio_id}?days=${days}`
   );
+
+// --- Sprint 44-C: TCA per-strategy multiplier ---
+export interface StrategyTcaRow {
+  id: number;
+  strategy_key: string;
+  report_date: string;
+  lookback_days: number;
+  trade_count: number;
+  avg_realized_pnl_pct: number | null;
+  avg_tracking_error_pct: number | null;
+  avg_entry_slippage_pct: number | null;
+  avg_impact_cost_pct: number | null;
+  recommended_weight_multiplier: number;
+  warning: 'ok' | 'high_cost' | 'severe';
+  reason: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export const listTcaStrategies = (limit = 50) =>
+  api.get<{ success: boolean; data: StrategyTcaRow[] }>(
+    `/advanced-quant/tca/strategies?limit=${limit}`
+  );
+
+// --- Sprint 44-C: Composite rebalance admin ---
+export interface CompositeRebalanceStatus {
+  tasks: Array<{
+    id: number;
+    name: string;
+    cron_expression: string;
+    is_active: boolean;
+    parameters: any;
+    updated_at: string;
+  }>;
+  last_execution: {
+    created_at: string;
+    success_count: number;
+    failed_count: number;
+    result_summary: any;
+  } | null;
+}
+
+export const getCompositeRebalanceStatus = () =>
+  api.get<{ success: boolean; data: CompositeRebalanceStatus }>(
+    '/advanced-quant/composite-rebalance/status'
+  );
+
+export const pauseCompositeRebalance = (paused: boolean) =>
+  api.post<{ success: boolean; data: { paused: boolean; affected_count: number; message: string } }>(
+    '/advanced-quant/composite-rebalance/pause',
+    { paused }
+  );
+
+export const runCompositeRebalance = (input: {
+  portfolio_id: number;
+  strategy_key: 'multi_factor_alpha' | 'ensemble_strategy';
+  target_portfolio: string[];
+  trade_date?: string;
+  dry_run?: boolean;
+  persist?: boolean;
+}) =>
+  api.post<{ success: boolean; data: any }>('/advanced-quant/composite-rebalance/run', input);

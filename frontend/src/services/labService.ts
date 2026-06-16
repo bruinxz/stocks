@@ -623,7 +623,19 @@ export interface OptimizationRunSummary {
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
-  metadata_json?: { wf_summary?: WalkForwardSummary };
+  metadata_json?: {
+    wf_summary?: WalkForwardSummary;
+    // Sprint 43-E: GridSearch / Bayesian 算的 DSR (Deflated Sharpe Ratio)
+    deflated_sharpe?: {
+      observed_sharpe: number;
+      n_trials: number;
+      variance_of_trials: number;
+      expected_max_sharpe: number;
+      deflated_sharpe: number;
+      is_significant: boolean;
+      explanation: string;
+    };
+  };
   param_grid_json?: any;
   backtest_config_json?: any;
   /** 当 optimizer_type='walk_forward' 时，从 metadata_json.wf_summary 抠到顶层 */

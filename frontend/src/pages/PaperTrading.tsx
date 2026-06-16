@@ -385,6 +385,39 @@ interface PaperTradingOrderIntentItem {
   reason_text?: string;
   compact_reason?: string;
   created_at?: string;
+  // Sprint 44-C: Sprint 41-43 写入的诊断字段, 让 OrderIntent 可审计完整决策链
+  metadata?: {
+    playbook?: {
+      trade_type?: string;
+      core_catalyst?: string;
+      failure_condition?: string;
+      expected_holding_days?: number;
+      trade_style?: string;
+      is_crowded?: boolean;
+      account_risk_status?: string;
+    };
+    execution_policy?: {
+      policy?: string;
+      slice_count?: number;
+      participation_rate?: number;
+      max_slippage_pct?: number;
+      reason?: string;
+    };
+    event_filter?: {
+      action?: string;
+      score_multiplier?: number;
+      reason?: string;
+    };
+    ev_decision?: {
+      decision?: string;
+      ev?: number;
+      win_prob?: number;
+      avg_win_pct?: number;
+      avg_loss_pct?: number;
+      stats_source?: string;
+    };
+    [key: string]: any;
+  };
 }
 
 interface OrderIntentStableRuleSuggestion {
@@ -2259,6 +2292,51 @@ const PaperTrading: React.FC = () => {
                             </Tag>
                           </Space>
                           <p>{item.compact_reason || item.reason_text || '暂无原因说明'}</p>
+                          {/* Sprint 44-C: 显示 Sprint 41-43 写入的诊断字段 */}
+                          {item.metadata?.playbook && (
+                            <Space size={4} wrap style={{ fontSize: 11, marginBottom: 4 }}>
+                              <Tag color="purple">
+                                {item.metadata.playbook.trade_type || 'unknown'}
+                              </Tag>
+                              <Tag color="cyan">
+                                {item.metadata.playbook.trade_style || '—'}
+                              </Tag>
+                              {item.metadata.playbook.expected_holding_days && (
+                                <Tag>
+                                  持仓 ~{item.metadata.playbook.expected_holding_days}d
+                                </Tag>
+                              )}
+                              {item.metadata.playbook.is_crowded && (
+                                <Tag color="orange">⚠️ 拥挤</Tag>
+                              )}
+                              {item.metadata.playbook.account_risk_status === 'defensive' && (
+                                <Tag color="red">防御</Tag>
+                              )}
+                              {item.metadata.playbook.account_risk_status === 'aggressive' && (
+                                <Tag color="green">进攻</Tag>
+                              )}
+                            </Space>
+                          )}
+                          {item.metadata?.ev_decision && (
+                            <Space size={4} wrap style={{ fontSize: 11, marginBottom: 4 }}>
+                              <Tag color={item.metadata.ev_decision.decision === 'bet' ? 'green' : 'default'}>
+                                EV {((item.metadata.ev_decision.ev || 0) * 100).toFixed(2)}%
+                              </Tag>
+                              <Tag>
+                                胜率 {((item.metadata.ev_decision.win_prob || 0) * 100).toFixed(0)}%
+                              </Tag>
+                              {item.metadata.ev_decision.stats_source && (
+                                <Tag color={item.metadata.ev_decision.stats_source === 'v2_model' ? 'blue' : 'default'}>
+                                  {item.metadata.ev_decision.stats_source}
+                                </Tag>
+                              )}
+                            </Space>
+                          )}
+                          {item.metadata?.execution_policy?.policy && (
+                            <Tag color="geekblue" style={{ fontSize: 11, marginBottom: 4 }}>
+                              {item.metadata.execution_policy.policy}
+                            </Tag>
+                          )}
                         </div>
                         <div className="order-intent-row-meta">
                           <Text>{formatMoney(item.amount)}</Text>

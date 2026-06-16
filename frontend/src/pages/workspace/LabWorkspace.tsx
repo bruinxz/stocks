@@ -1976,6 +1976,26 @@ const OptimizationRunsTab: React.FC = () => {
               },
             },
             {
+              // Sprint 44-C: GridSearch / Bayesian 的 DSR (Deflated Sharpe Ratio)
+              // 显示 P(observed > expected_max | H0). DSR > 0.95 = 95% 置信度真有 alpha.
+              title: 'DSR',
+              key: 'dsr',
+              width: 80,
+              render: (_: any, r: OptimizationRunSummary) => {
+                const v = r.metadata_json?.deflated_sharpe?.deflated_sharpe;
+                if (v === undefined || v === null) return '—';
+                const sig = r.metadata_json?.deflated_sharpe?.is_significant;
+                return (
+                  <Tooltip title={r.metadata_json?.deflated_sharpe?.explanation || ''}>
+                    <Text style={{ color: sig ? '#3f8600' : '#cf1322', fontWeight: sig ? 600 : 400 }}>
+                      {Number(v).toFixed(3)}
+                      {sig ? ' ✓' : ' ✗'}
+                    </Text>
+                  </Tooltip>
+                );
+              },
+            },
+            {
               title: '创建时间',
               dataIndex: 'created_at',
               width: 140,

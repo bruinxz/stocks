@@ -161,4 +161,7 @@ router.get(
   advancedQuantController.getCompositeRebalanceStatus
 );
 
+// === Sprint 44-C: TCA per-strategy multiplier listing ===
+router.get('/tca/strategies', authController.authenticate, advancedQuantController.listTcaStrategies);
+
 export default router;
