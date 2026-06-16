@@ -371,6 +371,54 @@ async function testEV(): Promise<void> {
   // EV = 0.3×0.05 - 0.7×0.03 - 0.003 = 0.015 - 0.021 - 0.003 = -0.009
   close('low p → ev=-0.009', r5.ev, -0.009);
   eq('low p → skip', r5.decision, 'skip');
+
+  // Sprint 44-A: V2 source 优先级测试 — V2 model.ev_stats_by_regime 应优先于 DB strategy_regime stats
+  // 注入 V2 model 到 isotonicCalibrator singleton, 然后调 svc.decide 验证 stats_source='v2_model'
+  /* eslint-disable @typescript-eslint/no-var-requires */
+  const { isotonicCalibrator: ic } = require('../../src/services/meta-v2/IsotonicCalibrator');
+  /* eslint-enable @typescript-eslint/no-var-requires */
+  // 注: setModel 只更新 calibration, V2 完整字段需要走 reloadFromDisk 或直接 hack private 字段.
+  // 测试为简化, 直接调 (ic as any).v2ModelOnDisk 注入 mock V2 model.
+  (ic as any).v2ModelOnDisk = {
+    version: 'v2-test',
+    base_model_version: 'v1-test',
+    calibration: ic.getModel(),
+    barrier_options: { profit_take_pct: 0.05, stop_loss_pct: 0.03, max_holding_days: 15 },
+    label_distribution: { upper: 10, lower: 5, time: 3, no_data: 2 },
+    ev_stats_by_regime: {
+      bull: { avg_win_pct: 0.12, avg_loss_pct: 0.05, n_samples: 30, win_rate: 0.6 },
+    },
+    trained_samples: 20,
+    in_sample_brier: 0.18,
+    trained_at: '2026-06-16T00:00:00Z',
+  };
+  // 即使 DB 主源也有数据, V2 应优先
+  const r6 = await svc1.decide({
+    symbol: '600519',
+    strategy_key: 'mfa',
+    regime: 'bull',
+    calibrated_win_prob: 0.7,
+    as_of_date: '2026-06-16',
+  });
+  eq('V2: stats_source=v2_model (优先于 DB)', r6.stats_source, 'v2_model');
+  close('V2: avg_win=0.12', r6.avg_win_pct, 0.12);
+  close('V2: avg_loss=0.05', r6.avg_loss_pct, 0.05);
+  eq('V2: stats_sample_count=30', r6.stats_sample_count, 30);
+  // EV = 0.7×0.12 - 0.3×0.05 - 0.003 = 0.084 - 0.015 - 0.003 = 0.066
+  close('V2: ev=0.066', r6.ev, 0.066);
+
+  // V2 缺该 regime 应 fallback 到 DB strategy_regime
+  const r7 = await svc1.decide({
+    symbol: '600519',
+    strategy_key: 'mfa',
+    regime: 'volatile', // V2 mock 里没 volatile
+    calibrated_win_prob: 0.7,
+    as_of_date: '2026-06-16',
+  });
+  eq('V2 缺 regime → fallback strategy_regime', r7.stats_source, 'strategy_regime');
+
+  // 清理 V2 mock, 不污染后续 (如果有)
+  (ic as any).v2ModelOnDisk = null;
 }
 
 // ===========================================================================

@@ -67,6 +67,7 @@ import {
   brierScore,
   IsotonicCalibrationModel,
   CalibrationSample,
+  V2ModelOnDisk,
 } from '../services/meta-v2/IsotonicCalibrator';
 import { generatePlaybook } from '../services/playbook/PlaybookGenerator';
 
@@ -102,21 +103,7 @@ function parseArgs(args: string[]): Opts {
   return opts;
 }
 
-interface V2ModelOnDisk {
-  version: string;
-  base_model_version: string;
-  calibration: IsotonicCalibrationModel;
-  barrier_options: TripleBarrierOptions;
-  label_distribution: { upper: number; lower: number; time: number; no_data: number };
-  /** per-regime stats (供 EVDecisionService 用) */
-  ev_stats_by_regime: Record<
-    string,
-    { avg_win_pct: number; avg_loss_pct: number; n_samples: number; win_rate: number }
-  >;
-  trained_samples: number;
-  in_sample_brier: number;
-  trained_at: string;
-}
+// Sprint 44-A: V2ModelOnDisk type 移到 IsotonicCalibrator.ts 共享
 
 async function main(): Promise<void> {
   const opts = parseArgs(process.argv.slice(2));
@@ -296,9 +283,17 @@ async function main(): Promise<void> {
     }
     fs.writeFileSync(opts.outputPath, JSON.stringify(v2Model, null, 2));
     console.log(`✅ V2 model 持久化到 ${opts.outputPath}`);
-    // 热更新 in-process IsotonicCalibrator
-    isotonicCalibrator.setModel(calibration);
-    console.log(`✅ in-process isotonicCalibrator 已加载新校准模型`);
+    // Sprint 44-A: 用 reloadFromDisk 一次性把 V2 model (含 ev_stats_by_regime) 灌进 in-process
+    // singleton, 让 EVDecisionService 立即能拿到 V2 stats. setModel(calibration) 只更新
+    // calibration 部分, V2 模型完整字段拿不到, 所以走 reloadFromDisk.
+    const reloaded = isotonicCalibrator.reloadFromDisk(opts.outputPath);
+    if (reloaded) {
+      console.log(`✅ in-process isotonicCalibrator 已加载新校准模型 (含 ev_stats_by_regime)`);
+    } else {
+      // 兜底: 至少把 calibration 部分塞进去
+      isotonicCalibrator.setModel(calibration);
+      console.log(`✅ in-process isotonicCalibrator 已加载新校准模型 (calibration only)`);
+    }
   } else {
     console.log(`(--no-persist mode) V2 model 未写盘, in_sample_brier=${inSampleBrier.toFixed(4)}`);
   }

@@ -97,7 +97,7 @@ export interface EVDecisionResult {
   threshold: number;
   /** 历史样本数 (用于判断 fallback 是否生效) */
   stats_sample_count: number;
-  stats_source: 'strategy_regime' | 'global_fallback' | 'default_fallback';
+  stats_source: 'v2_model' | 'strategy_regime' | 'global_fallback' | 'default_fallback';
   options: EVDecisionOptions;
   reason: string;
 }
@@ -281,10 +281,11 @@ export class EVDecisionService {
   /**
    * 主决策入口.
    *
-   * 3 级 fallback 拿 avg_win / avg_loss:
-   *   1. per-(strategy, regime) stats (主源)
-   *   2. global stats (fallback when strategy_regime 样本不足)
-   *   3. default fallback (5% / 3%) (fallback when global 也缺)
+   * Sprint 44-A: 4 级 fallback 拿 avg_win / avg_loss:
+   *   1. **V2 model.ev_stats_by_regime** (最优先 — triple-barrier label 比 raw pnl 更准)
+   *   2. per-(strategy, regime) stats (DB 主源)
+   *   3. global stats (DB fallback)
+   *   4. default fallback (5% / 3%)
    */
   async decide(input: EVDecisionInput): Promise<EVDecisionResult> {
     const opts = normalizeEVOptions(input.options);
@@ -293,24 +294,51 @@ export class EVDecisionService {
     let avg_loss_pct = opts.fallback_avg_loss_pct;
     let sample_count = 0;
 
-    // 主源 (strategy + regime)
+    // Sprint 44-A: V2 model.ev_stats_by_regime 最高优先级.
+    // V2 stats 是基于 triple-barrier label (上轨/下轨/时间轨) 算的, 比 raw pnl
+    // 更能反映"路径质量". 缺 (V2 没训过 / 该 regime 无数据) 才退到 DB stats.
     try {
-      const stats = await this.dataSource.loadStrategyRegimeStats(
-        input.strategy_key,
-        input.regime,
-        opts.lookback_days,
-        input.as_of_date
-      );
-      if (stats && stats.sample_count >= opts.min_samples_for_stats) {
-        avg_win_pct = stats.avg_win_pct > 0 ? stats.avg_win_pct : opts.fallback_avg_win_pct;
-        avg_loss_pct = stats.avg_loss_pct > 0 ? stats.avg_loss_pct : opts.fallback_avg_loss_pct;
-        sample_count = stats.sample_count;
-        stats_source = 'strategy_regime';
-      } else if (stats) {
-        sample_count = stats.sample_count;
+      /* eslint-disable @typescript-eslint/no-var-requires */
+      const { isotonicCalibrator } = require('./IsotonicCalibrator');
+      /* eslint-enable @typescript-eslint/no-var-requires */
+      const v2Model = isotonicCalibrator.getV2Model();
+      if (v2Model && v2Model.ev_stats_by_regime) {
+        const regimeStats = v2Model.ev_stats_by_regime[input.regime];
+        if (regimeStats && regimeStats.n_samples >= opts.min_samples_for_stats) {
+          avg_win_pct =
+            regimeStats.avg_win_pct > 0 ? regimeStats.avg_win_pct : opts.fallback_avg_win_pct;
+          avg_loss_pct =
+            regimeStats.avg_loss_pct > 0 ? regimeStats.avg_loss_pct : opts.fallback_avg_loss_pct;
+          sample_count = regimeStats.n_samples;
+          stats_source = 'v2_model';
+        }
       }
     } catch (error: any) {
-      logger.warn(`EVDecision strategy_regime stats 失败 (fail-open): ${error?.message || error}`);
+      logger.warn(`EVDecision V2 model stats 失败 (fail-open): ${error?.message || error}`);
+    }
+
+    // 主源 (strategy + regime DB)
+    if (stats_source === 'default_fallback') {
+      try {
+        const stats = await this.dataSource.loadStrategyRegimeStats(
+          input.strategy_key,
+          input.regime,
+          opts.lookback_days,
+          input.as_of_date
+        );
+        if (stats && stats.sample_count >= opts.min_samples_for_stats) {
+          avg_win_pct = stats.avg_win_pct > 0 ? stats.avg_win_pct : opts.fallback_avg_win_pct;
+          avg_loss_pct = stats.avg_loss_pct > 0 ? stats.avg_loss_pct : opts.fallback_avg_loss_pct;
+          sample_count = stats.sample_count;
+          stats_source = 'strategy_regime';
+        } else if (stats) {
+          sample_count = stats.sample_count;
+        }
+      } catch (error: any) {
+        logger.warn(
+          `EVDecision strategy_regime stats 失败 (fail-open): ${error?.message || error}`
+        );
+      }
     }
 
     // 次源 (global)

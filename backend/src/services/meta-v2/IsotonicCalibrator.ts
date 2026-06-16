@@ -27,6 +27,9 @@
  */
 
 import { logger } from '../../utils/logger';
+// Sprint 44-A: 启动时从 disk 加载 V2 模型 (train-meta-label-v2 CLI 训完写到 data/meta-label-v2-model.json)
+import * as fs from 'fs';
+import * as path from 'path';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -48,6 +51,29 @@ export interface IsotonicCalibrationModel {
   mean_raw_confidence: number;
   /** Mean outcome (i.e. base win rate) in training set */
   base_win_rate: number;
+  trained_at: string;
+}
+
+/**
+ * Sprint 44-A: V2 model 写盘完整 schema (与 train-meta-label-v2.ts CLI 输出一致).
+ * 含 ev_stats_by_regime 给 EVDecisionService 用作 avg_win/loss 的 V2 主源.
+ */
+export interface V2ModelOnDisk {
+  version: string;
+  base_model_version: string;
+  calibration: IsotonicCalibrationModel;
+  barrier_options: {
+    profit_take_pct: number;
+    stop_loss_pct: number;
+    max_holding_days: number;
+  };
+  label_distribution: { upper: number; lower: number; time: number; no_data: number };
+  ev_stats_by_regime: Record<
+    string,
+    { avg_win_pct: number; avg_loss_pct: number; n_samples: number; win_rate: number }
+  >;
+  trained_samples: number;
+  in_sample_brier: number;
   trained_at: string;
 }
 
@@ -235,6 +261,58 @@ export function brierScore(model: IsotonicCalibrationModel, samples: Calibration
 
 export class IsotonicCalibrator {
   private model: IsotonicCalibrationModel = identityCalibrationModel();
+  /** Sprint 44-A: V2 model 完整结构, 含 ev_stats_by_regime (给 EVDecisionService 用) */
+  private v2ModelOnDisk: V2ModelOnDisk | null = null;
+
+  constructor() {
+    // Sprint 44-A: 启动时尝试从 disk 加载 V2 模型 (train-meta-label-v2 CLI 训完后写入)
+    this.tryLoadModelFromDisk();
+  }
+
+  /**
+   * Sprint 44-A: V2 model disk 默认路径 (与 train-meta-label-v2.ts CLI 写入路径一致)
+   */
+  private getDefaultModelPath(): string {
+    return path.resolve(__dirname, '../../../data/meta-label-v2-model.json');
+  }
+
+  /**
+   * Sprint 44-A: 尝试从 disk 加载 V2 模型. 找不到 → 保留 identity model, log 一行.
+   * Schema invalid → log warn 跳过.
+   */
+  private tryLoadModelFromDisk(filePath?: string): void {
+    const p = filePath || this.getDefaultModelPath();
+    try {
+      if (!fs.existsSync(p)) {
+        logger.info(`[isotonic] no V2 disk model at ${p}, using identity calibration`);
+        return;
+      }
+      const raw = fs.readFileSync(p, 'utf8');
+      const m = JSON.parse(raw) as V2ModelOnDisk;
+      if (!m.version || !m.calibration || !Array.isArray(m.calibration.points)) {
+        logger.warn(`[isotonic] disk model ${p} invalid schema, ignored`);
+        return;
+      }
+      this.model = m.calibration;
+      this.v2ModelOnDisk = m;
+      logger.info(
+        `[isotonic] loaded V2 disk model: ${m.version} (base=${m.base_model_version}, ${
+          m.trained_samples
+        } samples, ${m.calibration.points.length} pools, brier=${m.in_sample_brier?.toFixed(4)})`
+      );
+    } catch (err: any) {
+      logger.warn(`[isotonic] failed to load V2 disk model from ${p}: ${err?.message}`);
+    }
+  }
+
+  /**
+   * Sprint 44-A: 重新从 disk 加载 (CLI 训练完后 caller 可调此热更新).
+   * 返回 true 表示加载成功.
+   */
+  reloadFromDisk(filePath?: string): boolean {
+    this.tryLoadModelFromDisk(filePath);
+    return this.v2ModelOnDisk !== null;
+  }
 
   /** 替换当前模型 */
   setModel(model: IsotonicCalibrationModel): void {
@@ -248,6 +326,15 @@ export class IsotonicCalibrator {
 
   getModel(): IsotonicCalibrationModel {
     return this.model;
+  }
+
+  /**
+   * Sprint 44-A: 拿 V2 完整 model (含 ev_stats_by_regime / barrier_options / label_dist).
+   * EVDecisionService 用此优先于 RecommendationTradeOutcome 算 avg_win/loss.
+   * 返回 null 表示当前还没加载 V2 (用 identity calibration).
+   */
+  getV2Model(): V2ModelOnDisk | null {
+    return this.v2ModelOnDisk;
   }
 
   /** 训练并替换模型 */
