@@ -11,8 +11,16 @@ const router = Router();
 const authController = new AuthController();
 
 // === Research Integrity (Sprint 1A) ===
-router.post('/research-integrity/audit', authController.authenticate, advancedQuantController.runResearchAudit);
-router.get('/research-integrity/recent', authController.authenticate, advancedQuantController.listResearchAudits);
+router.post(
+  '/research-integrity/audit',
+  authController.authenticate,
+  advancedQuantController.runResearchAudit
+);
+router.get(
+  '/research-integrity/recent',
+  authController.authenticate,
+  advancedQuantController.listResearchAudits
+);
 router.get(
   '/research-integrity/by-strategy/:strategy_key',
   authController.authenticate,
@@ -42,10 +50,26 @@ router.get(
 );
 
 // === Meta-label (Sprint 2A) ===
-router.post('/meta-label/decide', authController.authenticate, advancedQuantController.decideMetaLabel);
-router.post('/meta-label/train', authController.authenticate, advancedQuantController.trainMetaLabel);
-router.get('/meta-label/model', authController.authenticate, advancedQuantController.getMetaLabelModel);
-router.get('/meta-label/recent', authController.authenticate, advancedQuantController.listMetaLabelDecisions);
+router.post(
+  '/meta-label/decide',
+  authController.authenticate,
+  advancedQuantController.decideMetaLabel
+);
+router.post(
+  '/meta-label/train',
+  authController.authenticate,
+  advancedQuantController.trainMetaLabel
+);
+router.get(
+  '/meta-label/model',
+  authController.authenticate,
+  advancedQuantController.getMetaLabelModel
+);
+router.get(
+  '/meta-label/recent',
+  authController.authenticate,
+  advancedQuantController.listMetaLabelDecisions
+);
 
 // === Portfolio Construction (Sprint 2B) ===
 router.post(
@@ -60,7 +84,11 @@ router.get(
 );
 
 // === Equity Curve Governor (Sprint 3) ===
-router.post('/governor/evaluate', authController.authenticate, advancedQuantController.evaluateGovernor);
+router.post(
+  '/governor/evaluate',
+  authController.authenticate,
+  advancedQuantController.evaluateGovernor
+);
 router.post(
   '/governor/evaluate-all',
   authController.authenticate,
@@ -82,14 +110,55 @@ router.get('/method-config', authController.authenticate, advancedQuantControlle
 router.post('/method-config', authController.authenticate, advancedQuantController.setMethodConfig);
 
 // === Sprint 25: Attribution (Brinson + MCR + Crowding + Vol-Target) ===
-router.post('/attribution/brinson', authController.authenticate, advancedQuantController.runBrinsonAttribution);
+router.post(
+  '/attribution/brinson',
+  authController.authenticate,
+  advancedQuantController.runBrinsonAttribution
+);
 router.post('/attribution/mcr', authController.authenticate, advancedQuantController.runMcr);
-router.post('/attribution/crowding', authController.authenticate, advancedQuantController.runCrowdingScore);
-router.post('/attribution/vol-target', authController.authenticate, advancedQuantController.runVolTargeting);
+router.post(
+  '/attribution/crowding',
+  authController.authenticate,
+  advancedQuantController.runCrowdingScore
+);
+router.post(
+  '/attribution/vol-target',
+  authController.authenticate,
+  advancedQuantController.runVolTargeting
+);
 
 // === Sprint 25: Strategy Health (Capacity + Alpha Decay) ===
-router.post('/strategy-health/capacity', authController.authenticate, advancedQuantController.estimateCapacity);
-router.post('/strategy-health/alpha-decay', authController.authenticate, advancedQuantController.monitorDecay);
-router.get('/strategy-health/signal-half-lives', authController.authenticate, advancedQuantController.listSignalHalfLives);
+router.post(
+  '/strategy-health/capacity',
+  authController.authenticate,
+  advancedQuantController.estimateCapacity
+);
+router.post(
+  '/strategy-health/alpha-decay',
+  authController.authenticate,
+  advancedQuantController.monitorDecay
+);
+router.get(
+  '/strategy-health/signal-half-lives',
+  authController.authenticate,
+  advancedQuantController.listSignalHalfLives
+);
+
+// === Sprint 43-C: Composite Rebalance admin (手动触发 + 一键 pause cron) ===
+router.post(
+  '/composite-rebalance/run',
+  authController.authenticate,
+  advancedQuantController.runCompositeRebalance
+);
+router.post(
+  '/composite-rebalance/pause',
+  authController.authenticate,
+  advancedQuantController.pauseCompositeRebalance
+);
+router.get(
+  '/composite-rebalance/status',
+  authController.authenticate,
+  advancedQuantController.getCompositeRebalanceStatus
+);
 
 export default router;

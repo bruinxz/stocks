@@ -40,6 +40,7 @@ import { executionFeasibilityService } from '../../services/execution/ExecutionF
 import { metaLabelService } from '../../services/meta/MetaLabelService';
 import { portfolioConstructionService } from '../../services/portfolio/PortfolioConstructionService';
 import { equityCurveGovernorService } from '../../services/governor/EquityCurveGovernorService';
+import { compositeRebalanceService } from '../../portfolio/internal/CompositeRebalanceService';
 import { logger } from '../../utils/logger';
 
 export class AdvancedQuantController {
@@ -463,7 +464,10 @@ export class AdvancedQuantController {
         },
         v6: {
           pca_fama_french: { available: true, paper: 'Fama-French 1993' },
-          garch_egarch_har: { available: true, paper: 'Bollerslev 1986 / Nelson 1991 / Corsi 2009' },
+          garch_egarch_har: {
+            available: true,
+            paper: 'Bollerslev 1986 / Nelson 1991 / Corsi 2009',
+          },
           nelson_siegel_vasicek: { available: true, paper: 'Nelson-Siegel 1987 / Vasicek 1977' },
           bouchaud_square_root_impact: { available: true, paper: 'Bouchaud 2009' },
           bayesian_model_averaging: { available: true, paper: 'Raftery 1995' },
@@ -537,16 +541,20 @@ export class AdvancedQuantController {
   async runMcr(req: Request, res: Response) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { marginalContributionToRisk, topRiskContributors } = require('../../services/portfolio/brinson-mcr-style-crowding');
+      const {
+        marginalContributionToRisk,
+        topRiskContributors,
+      } = require('../../services/portfolio/brinson-mcr-style-crowding');
       const { weights, cov, symbols, top_n = 5 } = req.body || {};
       if (!Array.isArray(weights) || !Array.isArray(cov)) {
         return res.status(400).json({ success: false, message: 'weights[] 和 cov[][] 必须提供' });
       }
       const mcr = marginalContributionToRisk(weights, cov);
-      const top = Array.isArray(symbols)
-        ? topRiskContributors(weights, cov, symbols, top_n)
-        : null;
-      res.json({ success: true, data: { mcr, top_contributors: top?.top_contributors, top_hedgers: top?.top_hedgers } });
+      const top = Array.isArray(symbols) ? topRiskContributors(weights, cov, symbols, top_n) : null;
+      res.json({
+        success: true,
+        data: { mcr, top_contributors: top?.top_contributors, top_hedgers: top?.top_hedgers },
+      });
     } catch (err: any) {
       logger.error('[advanced-quant] MCR failed:', err);
       res.status(400).json({ success: false, message: err?.message });
@@ -580,7 +588,9 @@ export class AdvancedQuantController {
   async runVolTargeting(req: Request, res: Response) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { portfolioVolTargeting } = require('../../services/portfolio/brinson-mcr-style-crowding');
+      const {
+        portfolioVolTargeting,
+      } = require('../../services/portfolio/brinson-mcr-style-crowding');
       const result = portfolioVolTargeting(req.body);
       res.json({ success: true, data: result });
     } catch (err: any) {
@@ -621,9 +631,15 @@ export class AdvancedQuantController {
   async monitorDecay(req: Request, res: Response) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { monitorAlphaDecay, SIGNAL_HALF_LIVES } = require('../../services/research/ashare-pit-capacity');
+      const {
+        monitorAlphaDecay,
+        SIGNAL_HALF_LIVES,
+      } = require('../../services/research/ashare-pit-capacity');
       const result = monitorAlphaDecay(req.body);
-      res.json({ success: true, data: { ...result, known_signals: Object.keys(SIGNAL_HALF_LIVES) } });
+      res.json({
+        success: true,
+        data: { ...result, known_signals: Object.keys(SIGNAL_HALF_LIVES) },
+      });
     } catch (err: any) {
       logger.error('[advanced-quant] monitorDecay failed:', err);
       res.status(400).json({ success: false, message: err?.message });
@@ -638,7 +654,10 @@ export class AdvancedQuantController {
   async listSignalHalfLives(_req: Request, res: Response) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { SIGNAL_HALF_LIVES, recommendHoldingPeriod } = require('../../services/research/ashare-pit-capacity');
+      const {
+        SIGNAL_HALF_LIVES,
+        recommendHoldingPeriod,
+      } = require('../../services/research/ashare-pit-capacity');
       const entries = Object.entries(SIGNAL_HALF_LIVES).map(([signal, half_life]) => ({
         signal_name: signal,
         expected_half_life_days: half_life,
@@ -648,6 +667,130 @@ export class AdvancedQuantController {
       }));
       res.json({ success: true, data: { signals: entries } });
     } catch (err: any) {
+      res.status(500).json({ success: false, message: err?.message });
+    }
+  }
+
+  // ============================================================
+  // Sprint 43-C: Composite Rebalance admin endpoints
+  // 让运维手动触发一次 composite 调仓 (dry_run 可选) 并审计 plan,
+  // 不依赖 cron seed 默认配置. 出问题可一键 pause cron task.
+  // ============================================================
+
+  /**
+   * POST /api/advanced-quant/composite-rebalance/run
+   *
+   * Body: {
+   *   portfolio_id: number (必需),
+   *   strategy_key: 'multi_factor_alpha' | 'ensemble_strategy' (必需),
+   *   target_portfolio: string[] (必需 — 目标股票列表),
+   *   trade_date?: string (默认今日),
+   *   dry_run?: boolean (默认 true),
+   *   persist?: boolean (默认 false)
+   * }
+   */
+  async runCompositeRebalance(req: Request, res: Response) {
+    try {
+      const body = req.body || {};
+      const portfolio_id = parseInt(body.portfolio_id, 10);
+      const strategy_key = String(body.strategy_key || '').trim();
+      const target_portfolio = Array.isArray(body.target_portfolio) ? body.target_portfolio : [];
+      if (!Number.isFinite(portfolio_id) || portfolio_id <= 0) {
+        return res.status(400).json({ success: false, message: '缺少有效 portfolio_id' });
+      }
+      if (!strategy_key) {
+        return res.status(400).json({ success: false, message: '缺少 strategy_key' });
+      }
+      if (!target_portfolio.length) {
+        return res.status(400).json({ success: false, message: '缺少 target_portfolio' });
+      }
+      const trade_date = body.trade_date || new Date().toISOString().slice(0, 10);
+      const result = await compositeRebalanceService.rebalance({
+        portfolio_id,
+        strategy_key: strategy_key as any, // service 内部会校验 strategy_key 合法
+        target_portfolio,
+        trade_date,
+        options: {
+          dryRun: body.dry_run !== false, // 默认 true (admin 接口安全保守)
+          persist: body.persist === true,
+        } as any,
+      });
+      res.json({ success: true, data: result });
+    } catch (err: any) {
+      logger.error('[advanced-quant] runCompositeRebalance failed:', err);
+      res.status(400).json({ success: false, message: err?.message });
+    }
+  }
+
+  /**
+   * POST /api/advanced-quant/composite-rebalance/pause
+   *
+   * Body: { paused: boolean }
+   * 把 ScheduledTask WHERE type='COMPOSITE_REBALANCE' is_active 字段切换.
+   * paused=true → 禁用所有 composite cron; paused=false → 重新启用.
+   * 用作"一键回退" — 真下单出问题时立即停所有 cron.
+   */
+  async pauseCompositeRebalance(req: Request, res: Response) {
+    try {
+      const body = req.body || {};
+      const paused = body.paused === true;
+      /* eslint-disable @typescript-eslint/no-var-requires */
+      const { ScheduledTask } = require('../../models/ScheduledTask');
+      /* eslint-enable @typescript-eslint/no-var-requires */
+      const [affectedCount] = await ScheduledTask.update(
+        { is_active: !paused },
+        { where: { type: 'COMPOSITE_REBALANCE' } }
+      );
+      logger.info(
+        `[composite-rebalance] ${paused ? 'PAUSED' : 'RESUMED'} ${affectedCount} cron task(s)`
+      );
+      res.json({
+        success: true,
+        data: {
+          paused,
+          affected_count: affectedCount,
+          message: paused
+            ? `已暂停 ${affectedCount} 个 COMPOSITE_REBALANCE cron 任务`
+            : `已启用 ${affectedCount} 个 COMPOSITE_REBALANCE cron 任务`,
+        },
+      });
+    } catch (err: any) {
+      logger.error('[advanced-quant] pauseCompositeRebalance failed:', err);
+      res.status(500).json({ success: false, message: err?.message });
+    }
+  }
+
+  /**
+   * GET /api/advanced-quant/composite-rebalance/status
+   *
+   * 查看当前 composite cron 状态 (active / paused) + 上次执行时间.
+   */
+  async getCompositeRebalanceStatus(_req: Request, res: Response) {
+    try {
+      /* eslint-disable @typescript-eslint/no-var-requires */
+      const { ScheduledTask } = require('../../models/ScheduledTask');
+      const { ScheduledTaskExecutionLog } = require('../../models/ScheduledTaskExecutionLog');
+      /* eslint-enable @typescript-eslint/no-var-requires */
+      const tasks = await ScheduledTask.findAll({
+        where: { type: 'COMPOSITE_REBALANCE' },
+        attributes: ['id', 'name', 'cron_expression', 'is_active', 'parameters', 'updated_at'],
+        raw: true,
+      });
+      const lastLog = await ScheduledTaskExecutionLog.findOne({
+        where: { task_type: 'COMPOSITE_REBALANCE' },
+        order: [['created_at', 'DESC']],
+        attributes: ['created_at', 'success_count', 'failed_count', 'result_summary'],
+        raw: true,
+      });
+      res.json({
+        success: true,
+        data: {
+          tasks,
+          last_execution: lastLog,
+        },
+      });
+    } catch (err: any) {
+      logger.error('[advanced-quant] getCompositeRebalanceStatus failed:', err);
       res.status(500).json({ success: false, message: err?.message });
     }
   }
