@@ -85,3 +85,76 @@ export function explainNonTradeDay(date: Date | string): string | null {
   }
   return null; // 是交易日
 }
+
+/**
+ * 判断给定时刻是否在 A 股可下单时段 (Asia/Shanghai 09:30-11:30 + 13:00-15:00) 且是交易日.
+ *
+ * 与 PaperTradingFacade._placeOrderInner 的 guard 同源, 抽出来给 autoBuyFromSignals
+ * 这类 "不走 facade 的自动下单链路" 复用, 避免每条信号绕过交易时段限制 (bug: 2026-06-16
+ * 09:20 集合竞价时段下单, 用昨日 close 当成交价).
+ *
+ * @returns { allowed: boolean, reason?: string, code?: string }
+ *   - allowed=true → 当前可下单
+ *   - allowed=false → reason 是中文给用户看的原因, code 是机器读的分类:
+ *     'NON_TRADING_HOURS_HOLIDAY' / 'NON_TRADING_HOURS_PRE_OPEN' / 'NON_TRADING_HOURS_LUNCH' /
+ *     'NON_TRADING_HOURS_AFTER_CLOSE' / 'NON_TRADING_HOURS_EARLY_MORNING'
+ */
+export interface TradingHoursCheck {
+  allowed: boolean;
+  reason?: string;
+  code?:
+    | 'NON_TRADING_HOURS_HOLIDAY'
+    | 'NON_TRADING_HOURS_PRE_OPEN'
+    | 'NON_TRADING_HOURS_LUNCH'
+    | 'NON_TRADING_HOURS_AFTER_CLOSE'
+    | 'NON_TRADING_HOURS_EARLY_MORNING';
+}
+
+export function checkAShareTradingHours(now: Date = new Date()): TradingHoursCheck {
+  // 1. 节假日 / 周末
+  if (!isAShareTradeDay(now)) {
+    const reason = explainNonTradeDay(now) || '非 A 股交易日';
+    return { allowed: false, reason: `${reason}, A 股不开市`, code: 'NON_TRADING_HOURS_HOLIDAY' };
+  }
+  // 2. 时段判定 (Asia/Shanghai = UTC+8)
+  const shanghai = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+  const hour = shanghai.getUTCHours();
+  const minute = shanghai.getUTCMinutes();
+  const totalMinutes = hour * 60 + minute;
+  const MORNING_START = 9 * 60 + 30; // 09:30
+  const MORNING_END = 11 * 60 + 30; // 11:30
+  const AFTERNOON_START = 13 * 60; // 13:00
+  const AFTERNOON_END = 15 * 60; // 15:00
+  const inMorning = totalMinutes >= MORNING_START && totalMinutes < MORNING_END;
+  const inAfternoon = totalMinutes >= AFTERNOON_START && totalMinutes < AFTERNOON_END;
+  if (inMorning || inAfternoon) return { allowed: true };
+  const hh = String(hour).padStart(2, '0');
+  const mm = String(minute).padStart(2, '0');
+  // 集合竞价时段也禁单 — 09:00-09:30, 实际撮合 09:25, 与连续竞价价格语义不同
+  if (totalMinutes >= 9 * 60 && totalMinutes < MORNING_START) {
+    return {
+      allowed: false,
+      reason: `当前 ${hh}:${mm} (Asia/Shanghai) 集合竞价时段 (09:00-09:30), 等待 09:30 开盘`,
+      code: 'NON_TRADING_HOURS_PRE_OPEN',
+    };
+  }
+  if (totalMinutes >= MORNING_END && totalMinutes < AFTERNOON_START) {
+    return {
+      allowed: false,
+      reason: `当前 ${hh}:${mm} (Asia/Shanghai) 午休时段 (11:30-13:00)`,
+      code: 'NON_TRADING_HOURS_LUNCH',
+    };
+  }
+  if (totalMinutes >= AFTERNOON_END) {
+    return {
+      allowed: false,
+      reason: `当前 ${hh}:${mm} (Asia/Shanghai) 已收盘 (>15:00)`,
+      code: 'NON_TRADING_HOURS_AFTER_CLOSE',
+    };
+  }
+  return {
+    allowed: false,
+    reason: `当前 ${hh}:${mm} (Asia/Shanghai) 尚未开盘 (<09:00)`,
+    code: 'NON_TRADING_HOURS_EARLY_MORNING',
+  };
+}

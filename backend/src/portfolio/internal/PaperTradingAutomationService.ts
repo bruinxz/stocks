@@ -24,6 +24,7 @@ import { paperTradingRiskProfileService } from './PaperTradingRiskProfileService
 import { feishuBotWebhookService } from '../../services/FeishuBotWebhookService';
 import { normalizeSymbol } from '../../utils/stockSymbol';
 import { logger } from '../../utils/logger';
+import { checkAShareTradingHours } from '../../utils/tradingCalendar';
 import { realtimeQuoteService } from '../../data/services/RealtimeQuoteService';
 // Phase 2: 多元化仓位 sizing
 import {
@@ -187,6 +188,14 @@ export interface PaperTradingAutoOptions {
   strategy_keys?: string[] | string;
   strategy_family_key?: string;
   dry_run?: boolean;
+  /**
+   * 跳过 A 股交易时段 (09:30-11:30 + 13:00-15:00, 周一到周五非节假日) guard.
+   * 默认 false: 非交易时段调 autoBuyFromSignals 直接 return 跳过, 不下单.
+   *   理由: Codex / AI screener cron 可能在 09:00 / 09:05 等盘前时点 fan-out 触发,
+   *   若不 guard 会用 yesterday's close 当成交价下单 (bug 见 2026-06-16 09:20 事件).
+   * 仅历史回填 / 单元测试 / 手动管理脚本应显式 bypass_trading_hours=true.
+   */
+  bypass_trading_hours?: boolean;
   /**
    * US-083 per-strategy dry-run override.  Signals whose strategy_key is in this
    * set are forced through the dry-run path (status='planned' intent, no createBuyTrade),
@@ -1111,6 +1120,37 @@ class PaperTradingAutomationService {
 
   async autoBuyFromSignals(options: PaperTradingAutoOptions = {}): Promise<PaperTradingAutoResult> {
     const dry_run = toBoolean(options.dry_run, false);
+    // ============= 交易时段 guard (real trades only) =============
+    // 在 A 股交易时段外直接 return 跳过, 不走后面的"signal -> createBuyTrade"链路.
+    //   bug 复现 (修复前): Codex / AI screener cron 在 09:00 / 09:05 fan-out 触发
+    //   autoBuyFromSignals, getLatestPrice 用昨日 close 当成交价下单, 造成 09:20
+    //   "盘前买入" 的异常 trade 行.
+    //
+    //   dry_run 跳过 guard — preview 不写 trade, 反而需要在盘前给用户看"今日计划".
+    //   历史回填 / 单元测试 / 管理脚本走 bypass_trading_hours=true.
+    if (!dry_run && !toBoolean(options.bypass_trading_hours, false)) {
+      const hoursCheck = checkAShareTradingHours(new Date());
+      if (!hoursCheck.allowed) {
+        logger.info(
+          `autoBuyFromSignals 跳过 (非交易时段): ${hoursCheck.code} — ${hoursCheck.reason}`
+        );
+        // 返回最小合法的 PaperTradingAutoResult: portfolio_id=0 + 全 0 计数, 调用方应该
+        // 忽略 portfolio_id; 若需要细化可以让 caller 通过 options.user_id 自行兜底.
+        return {
+          portfolio_id: 0,
+          user_id: toNumber(options.user_id, 0),
+          dry_run,
+          source_type: String(options.source_type || 'unknown'),
+          scanned: 0,
+          eligible: 0,
+          executed: 0,
+          planned: 0,
+          skipped: 0,
+          trades: [],
+          skipped_items: [],
+        };
+      }
+    }
     // US-083: per-strategy dry-run override.  Signals tagged with any key in this set
     // bypass createBuyTrade (no actual order placement) while still recording an
     // order_intent (status='planned') and leaving the QuantSignal row untouched.
