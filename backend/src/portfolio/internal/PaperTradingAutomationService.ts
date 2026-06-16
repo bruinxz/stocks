@@ -2500,6 +2500,64 @@ class PaperTradingAutomationService {
         logger.warn(`[governor] multiplier fetch failed (fail-open): ${err?.message || err}`);
       }
 
+      // Sprint 43-A: RegimeProbabilityService — 把硬分类 regime 升级成概率, 低置信
+      // (regime 切换边界期) 自动降仓位. 与 EquityCurveGovernor 串联 (Governor 已降
+      // 一次, regime 再降一次), 双保险.
+      // fail-open: 失败时 multiplier=1 不动 effectiveTargetPct.
+      try {
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const {
+          regimeProbabilityService,
+        } = require('../../services/regime/RegimeProbabilityService');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const regimeProb = await regimeProbabilityService.classify({
+          lookback_days: 60,
+          as_of_date: new Date().toISOString().slice(0, 10),
+        });
+        const regimeMult = Number(regimeProb.recommended_position_multiplier);
+        if (Number.isFinite(regimeMult) && regimeMult > 0 && regimeMult < 1.0) {
+          const beforeRegime = effectiveTargetPct;
+          effectiveTargetPct = effectiveTargetPct * regimeMult;
+          logger.info(
+            `[regime-prob] user=${portfolio.user_id} symbol=${signal.symbol} ` +
+              `argmax=${regimeProb.argmax_regime} p=${regimeProb.max_probability.toFixed(2)} ` +
+              `confidence=${regimeProb.confidence} multiplier=${regimeMult.toFixed(2)} ` +
+              `${roundNumber(beforeRegime, 2)}% → ${roundNumber(effectiveTargetPct, 2)}%`
+          );
+          // 写到 activation L7_governor.detail 让 dashboard 看到
+          // (regime prob 与 governor 同属"组合级保护"层, 共享同一 activation slot)
+          (activation as any).L7_governor = (activation as any).L7_governor || {
+            reached: true,
+            contributed: true,
+            detail: {},
+          };
+          (activation as any).L7_governor.detail = {
+            ...(((activation as any).L7_governor.detail as object) || {}),
+            regime_prob: {
+              argmax: regimeProb.argmax_regime,
+              max_probability: regimeProb.max_probability,
+              confidence: regimeProb.confidence,
+              multiplier: regimeMult,
+              before_pct: roundNumber(beforeRegime, 4),
+              after_pct: roundNumber(effectiveTargetPct, 4),
+            },
+          };
+          // 与 governor 同款过低 skip 保护
+          if (effectiveTargetPct < 0.5) {
+            await skip(
+              `RegimeProb 低置信降权后仓位 ${effectiveTargetPct.toFixed(
+                2
+              )}% 过低 (× ${regimeMult.toFixed(2)}, regime=${
+                regimeProb.argmax_regime
+              } p=${regimeProb.max_probability.toFixed(2)}), 跳过本笔`
+            );
+            continue;
+          }
+        }
+      } catch (rpErr: any) {
+        logger.warn(`[regime-prob] gate failed (fail-open): ${rpErr?.message || rpErr}`);
+      }
+
       const tradeRisk = this.evaluateEntryRiskGuard({
         guard: entryRiskGuard,
         profile: await this.enrichEntryMarketProfileRisk(
