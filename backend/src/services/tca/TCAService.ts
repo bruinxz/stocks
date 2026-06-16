@@ -274,6 +274,8 @@ export const PRODUCTION_TCA_DATA_SOURCE: TCADataSource = {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { PaperTradingOrderIntent } = require('../../models/PaperTradingOrderIntent');
       // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { PaperTradingTrade } = require('../../models/PaperTradingTrade');
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { Op } = require('sequelize');
       // exit_date 是 DATEONLY string, 与 EVDecisionService 同款时间处理.
       const start = new Date(`${as_of_date}T00:00:00.000Z`);
@@ -286,54 +288,148 @@ export const PRODUCTION_TCA_DATA_SOURCE: TCADataSource = {
           trade_status: 'closed',
           exit_date: { [Op.gte]: startIso },
         },
-        attributes: ['signal_id', 'symbol', 'total_pnl_pct', 'metadata'],
+        attributes: [
+          'id',
+          'signal_id',
+          'symbol',
+          'portfolio_id',
+          'total_pnl_pct',
+          'entry_trade_id',
+          'exit_trade_id',
+          'metadata',
+        ],
         raw: true,
       });
+      if (!outcomes.length) return [];
+
+      // Sprint 44-D: 升级到 "真实成交价归因".
+      //   - 修复前: buy_execute_price = buy_reference_price (signal anchor),
+      //     sell_execute_price = buy_reference_price × (1 + profit_pct/100)
+      //     → entry_slip 恒 0, exit_slip 完全靠 profit_pct 反算, 跟实际 fill 无关.
+      //   - 修复后: outcome.entry_trade_id / exit_trade_id 取真实 PaperTradingTrade.execute_price.
+      //     → entry_slip = (实际 BUY 价 − OrderIntent 参考价) / 参考价  → 真 slippage.
+      //     → sell_reference_price 没有干净的"信号侧目标卖价"来源, 退到 buy_reference_price
+      //       (= 老行为, 中性), 后续可由 signal.target_exit_price 接入.
+
+      // 批量预取 OrderIntent + Trade, 避免 N+1.
+      const signalIds = Array.from(
+        new Set((outcomes as any[]).map(o => o.signal_id).filter(Boolean))
+      ) as number[];
+      const entryTradeIds = Array.from(
+        new Set((outcomes as any[]).map(o => o.entry_trade_id).filter(Boolean))
+      ) as number[];
+      const exitTradeIds = Array.from(
+        new Set((outcomes as any[]).map(o => o.exit_trade_id).filter(Boolean))
+      ) as number[];
+      const allTradeIds = Array.from(new Set([...entryTradeIds, ...exitTradeIds]));
+
+      const [intentRows, tradeRows] = await Promise.all([
+        signalIds.length
+          ? PaperTradingOrderIntent.findAll({
+              where: { signal_id: { [Op.in]: signalIds } },
+              attributes: [
+                'signal_id',
+                'portfolio_id',
+                'side',
+                'reference_price',
+                'execute_price',
+                'metadata',
+                'score',
+              ],
+              raw: true,
+            })
+          : Promise.resolve([] as any[]),
+        allTradeIds.length
+          ? PaperTradingTrade.findAll({
+              where: { id: { [Op.in]: allTradeIds } },
+              attributes: ['id', 'execute_price', 'direction'],
+              raw: true,
+            })
+          : Promise.resolve([] as any[]),
+      ]);
+
+      // Build lookup maps:
+      //  - intentsBySignalSide: '<signal_id>::<BUY|SELL>::<portfolio_id>' → intent (最 specific)
+      //  - intentsBySignal: '<signal_id>::<BUY|SELL>' → 第一条 (portfolio fallback)
+      //  - tradesById: id → trade row
+      const intentsBySignalSidePf = new Map<string, any>();
+      const intentsBySignalSide = new Map<string, any>();
+      for (const intent of intentRows as any[]) {
+        const sId = intent.signal_id;
+        const side = String(intent.side || '').toUpperCase();
+        const pId = intent.portfolio_id;
+        if (!sId || !side) continue;
+        intentsBySignalSidePf.set(`${sId}::${side}::${pId}`, intent);
+        const sigKey = `${sId}::${side}`;
+        if (!intentsBySignalSide.has(sigKey)) intentsBySignalSide.set(sigKey, intent);
+      }
+      const tradesById = new Map<number, any>();
+      for (const trade of tradeRows as any[]) tradesById.set(Number(trade.id), trade);
+
       const out: TCATradeInput[] = [];
       for (const o of outcomes as any[]) {
-        // 用 OrderIntent.metadata 拿 reference_price / execution_policy
-        let buy_reference_price: number | undefined;
-        let estimated_impact_cost_pct: number | undefined;
-        let signal_score: number | undefined;
-        try {
-          if (o.signal_id) {
-            const intent = await PaperTradingOrderIntent.findOne({
-              where: { signal_id: o.signal_id, side: 'BUY' },
-              attributes: ['reference_price', 'metadata', 'score'],
-              raw: true,
-            });
-            if (intent) {
-              buy_reference_price = Number((intent as any).reference_price) || undefined;
-              signal_score = Number((intent as any).score) || undefined;
-              const meta = (intent as any).metadata || {};
-              const policy = meta.execution_policy;
-              if (policy && typeof policy === 'object') {
-                // ExecutionPolicyRouter 估的 max_slippage_pct + 估算 impact
-                estimated_impact_cost_pct = Number(policy.max_slippage_pct) || 0.003;
-              }
-            }
-          }
-        } catch (e: any) {
-          logger.warn(`TCA 反查 OrderIntent 失败 (signal_id=${o.signal_id}): ${e?.message || e}`);
+        const meta = o?.metadata || {};
+        const strategy_key = String(meta.strategy_key || 'unknown');
+
+        // 找 BUY OrderIntent (先按 (signal, side, portfolio) 精确匹配, 退到 (signal, side))
+        const buyIntent =
+          (o.signal_id &&
+            (intentsBySignalSidePf.get(`${o.signal_id}::BUY::${o.portfolio_id}`) ||
+              intentsBySignalSide.get(`${o.signal_id}::BUY`))) ||
+          null;
+        const buy_reference_price = buyIntent
+          ? Number(buyIntent.reference_price) || undefined
+          : undefined;
+        const signal_score = buyIntent ? Number(buyIntent.score) || undefined : undefined;
+        const buyIntentMeta = (buyIntent && buyIntent.metadata) || {};
+        const policy = buyIntentMeta.execution_policy;
+        const estimated_impact_cost_pct =
+          policy && typeof policy === 'object'
+            ? Number(policy.max_slippage_pct) || 0.003
+            : undefined;
+
+        // 真实 BUY fill: 优先 entry_trade.execute_price, 缺 fall back 到 OrderIntent.execute_price.
+        // 再缺 → fall back 到 reference_price (退化到旧行为, 至少不爆 NaN).
+        const entryTrade = o.entry_trade_id ? tradesById.get(Number(o.entry_trade_id)) : null;
+        const buy_execute_price =
+          (entryTrade && Number(entryTrade.execute_price)) ||
+          (buyIntent && Number(buyIntent.execute_price)) ||
+          buy_reference_price ||
+          0;
+
+        // 真实 SELL fill: 优先 exit_trade.execute_price.
+        // 缺则用 total_pnl_pct 反算 (老行为) 或 undefined.
+        const exitTrade = o.exit_trade_id ? tradesById.get(Number(o.exit_trade_id)) : null;
+        let sell_execute_price: number | undefined;
+        if (exitTrade && Number(exitTrade.execute_price) > 0) {
+          sell_execute_price = Number(exitTrade.execute_price);
+        } else if (buy_execute_price > 0 && Number.isFinite(Number(o.total_pnl_pct))) {
+          // 退化: 没有 exit_trade 但 outcome 已 closed 且 total_pnl_pct 存在 →
+          // 反算 sell_execute = buy_execute × (1 + pnl/100). 不理想但不爆.
+          sell_execute_price = buy_execute_price * (1 + Number(o.total_pnl_pct) / 100);
         }
-        // total_pnl_pct 以百分点单位存储 (5 = 5%); profit_pct 是 percent (5 = 5%).
-        const profit_pct = Number(o.total_pnl_pct);
-        if (!Number.isFinite(profit_pct)) continue;
-        const strategy_key = String(o?.metadata?.strategy_key || 'unknown');
-        // 注: PaperTradingTrade 没拆 entry/exit 两条, profit_pct 是已经包含 sell_close 的;
-        // 用 buy_reference_price 与隐含的 buy_execute (= reference + slippage) 算 entry slip,
-        // 没法精确 — 这里先简化: 若 profit_pct 远低于 signal expected, 就算 tracking_error.
-        // 完整版需要 trades 表 join sell trade 拿 sell_execute_price.
+
+        // SELL OrderIntent (目标卖价); 没有则退到 buy_reference_price 保持中性
+        // (不算 exit_slippage; computeExitSlippage 看到 sell_execute === sell_reference 返 0).
+        const sellIntent =
+          (o.signal_id &&
+            (intentsBySignalSidePf.get(`${o.signal_id}::SELL::${o.portfolio_id}`) ||
+              intentsBySignalSide.get(`${o.signal_id}::SELL`))) ||
+          null;
+        const sell_reference_price = sellIntent
+          ? Number(sellIntent.reference_price) || buy_reference_price
+          : buy_reference_price;
+
+        if (!Number.isFinite(buy_execute_price) || buy_execute_price <= 0) continue;
+
         out.push({
+          trade_id: o.entry_trade_id ? Number(o.entry_trade_id) : undefined,
           symbol: o.symbol,
           strategy_key,
-          buy_execute_price: buy_reference_price || 0, // 简化
+          buy_execute_price,
           buy_reference_price,
-          sell_execute_price:
-            buy_reference_price && buy_reference_price > 0
-              ? buy_reference_price * (1 + profit_pct / 100)
-              : undefined,
-          sell_reference_price: buy_reference_price,
+          sell_execute_price,
+          sell_reference_price,
           signal_score,
           estimated_impact_cost_pct,
         });
