@@ -36,6 +36,11 @@ import { strategyKellyStatsService } from '../../services/StrategyKellyStatsServ
 import { equityCurveGovernorService } from '../../services/governor/EquityCurveGovernorService';
 import { metaLabelService } from '../../services/meta/MetaLabelService';
 import { executionFeasibilityService } from '../../services/execution/ExecutionFeasibilityService';
+// Sprint 42-A: wire 6 advanced services into buy pipeline
+import { eventIntelligenceLayer } from '../../services/event-intelligence/EventIntelligenceLayer';
+import { isotonicCalibrator } from '../../services/meta-v2/IsotonicCalibrator';
+import { evDecisionService } from '../../services/meta-v2/EVDecisionService';
+import { executionPolicyRouter } from '../../services/execution/ExecutionPolicyRouter';
 import {
   newActivation,
   markReached,
@@ -63,10 +68,10 @@ type RiskExitReason =
   | 'sell_signal'
   | 'max_hold_days'
   // 高级操盘手新增
-  | 'technical_breakdown'    // 跌破 MA20 + 放量确认
-  | 'profit_target_high'     // 涨幅 ≥ 25% 清仓兑现
-  | 'profit_pullback'        // 涨 15%+ 后见顶回落 3%+ 兑现
-  | 'underperform_swap';     // 持仓 30 天+ 收益 < 3% 换仓
+  | 'technical_breakdown' // 跌破 MA20 + 放量确认
+  | 'profit_target_high' // 涨幅 ≥ 25% 清仓兑现
+  | 'profit_pullback' // 涨 15%+ 后见顶回落 3%+ 兑现
+  | 'underperform_swap'; // 持仓 30 天+ 收益 < 3% 换仓
 
 type ExecutionSide = 'BUY' | 'SELL';
 type OrderIntentStatus = 'planned' | 'executed' | 'rejected' | 'skipped' | 'held';
@@ -1391,7 +1396,9 @@ class PaperTradingAutomationService {
             `[portfolio-construction] user=${portfolio.user_id} mode=${pcConfig.mode} ` +
               `method=${pcConfig.method} candidates=${portfolioConstructionResult.used_candidates}/${candidateSignals.length} ` +
               `weights_assigned=${portfolioConstructionResult.weights_by_signal_id.size}` +
-              (portfolioConstructionResult.skipped_reason ? ` skipped=${portfolioConstructionResult.skipped_reason}` : '')
+              (portfolioConstructionResult.skipped_reason
+                ? ` skipped=${portfolioConstructionResult.skipped_reason}`
+                : '')
           );
         }
       }
@@ -1559,7 +1566,9 @@ class PaperTradingAutomationService {
           (signal as any)?.metadata?.strategy_key ||
           (signal as any)?.metadata?.signal_metadata?.strategy_key ||
           'unknown',
-        signal_score: Number((signal as any).confidence_score ?? (signal as any).final_score ?? null),
+        signal_score: Number(
+          (signal as any).confidence_score ?? (signal as any).final_score ?? null
+        ),
         signal_source: (signal as any).source_type || 'unknown',
       });
 
@@ -1753,6 +1762,34 @@ class PaperTradingAutomationService {
         continue;
       }
 
+      // Sprint 42-A (新接入): EventIntelligenceLayer — 业绩/北向/龙虎榜事件 meta filter
+      // veto (ST/停牌) → skip; delay (业绩公告窗口) → skip 推后处理
+      // boost / dampen → 仅 metadata 记录, 不直接影响 score (留给 EV gate 综合)
+      let eventFilterResult: any = null;
+      let eventFilterMultiplier = 1; // 透传给 EV gate
+      try {
+        eventFilterResult = await eventIntelligenceLayer.filter({
+          symbol: signal.symbol,
+          as_of_date: new Date().toISOString().slice(0, 10),
+        });
+        if (eventFilterResult.action === 'veto') {
+          await skip(`EventIntelligence veto: ${eventFilterResult.reason}`, {
+            metadata: { event_filter: eventFilterResult },
+          });
+          continue;
+        }
+        if (eventFilterResult.action === 'delay') {
+          await skip(
+            `EventIntelligence delay ${eventFilterResult.delay_minutes} 分钟: ${eventFilterResult.reason}`,
+            { metadata: { event_filter: eventFilterResult } }
+          );
+          continue;
+        }
+        eventFilterMultiplier = eventFilterResult.score_multiplier || 1;
+      } catch (eiErr: any) {
+        logger.warn(`[event-intel] gate failed (fail-open): ${eiErr?.message || eiErr}`);
+      }
+
       // Sprint 2A: MetaLabel 信号过滤层 — 二层模型决定"这个信号是否该下注"。
       // 当 confidence < threshold 时 skip。失败时 fail-open。
       //
@@ -1774,19 +1811,17 @@ class PaperTradingAutomationService {
         const regimeForMeta = environmentPolicy.market_regime || 'range';
         let kellyForMeta: { win_rate?: number; payoff_ratio?: number } | null = null;
         if (strategyKeyForMeta && strategyKeyForMeta !== 'unknown') {
-          kellyForMeta = await strategyKellyStatsService.getStats(strategyKeyForMeta).catch(() => null);
+          kellyForMeta = await strategyKellyStatsService
+            .getStats(strategyKeyForMeta)
+            .catch(() => null);
         }
         // Sprint 28: 从 environmentPolicy.market_environment 抽真实 breadth + 波动率
         // Sprint 34 (短板 #2a 真生效): 优先用真实 benchmark_atr_14d_pct (Wilder ATR),
         // 缺数据时 fallback 到 drawdown 代理 (向后兼容).
         const envSnapshot = (environmentPolicy as any)?.market_environment || {};
-        const breadthScore = Number(
-          envSnapshot?.breadth?.up_20d_ratio ?? 50
-        );
+        const breadthScore = Number(envSnapshot?.breadth?.up_20d_ratio ?? 50);
         const realAtrPct = Number(envSnapshot?.benchmark_atr_14d_pct);
-        const benchmarkDrawdownPct = Math.abs(
-          Number(envSnapshot?.benchmark_drawdown_60d_pct ?? 0)
-        );
+        const benchmarkDrawdownPct = Math.abs(Number(envSnapshot?.benchmark_drawdown_60d_pct ?? 0));
         // 真 ATR 在 → 用真 ATR; 缺 → 退回 drawdown 代理 (不是 0!)
         const marketVolFeature =
           Number.isFinite(realAtrPct) && realAtrPct > 0
@@ -1820,7 +1855,9 @@ class PaperTradingAutomationService {
           }
         } catch (feasFetchErr: any) {
           logger.warn(
-            `[meta-label] pre-check feasibility fetch failed (默认 50): ${feasFetchErr?.message || feasFetchErr}`
+            `[meta-label] pre-check feasibility fetch failed (默认 50): ${
+              feasFetchErr?.message || feasFetchErr
+            }`
           );
         }
         const metaDecision = await metaLabelService.shouldBet(
@@ -1863,7 +1900,8 @@ class PaperTradingAutomationService {
             benchmark_drawdown_pct: Number.isFinite(benchmarkDrawdownPct)
               ? benchmarkDrawdownPct
               : 4,
-            vol_source: Number.isFinite(realAtrPct) && realAtrPct > 0 ? 'atr_14d' : 'drawdown_60d_proxy',
+            vol_source:
+              Number.isFinite(realAtrPct) && realAtrPct > 0 ? 'atr_14d' : 'drawdown_60d_proxy',
             winrate: Number(kellyForMeta?.win_rate ?? 0.5),
             payoff: Number(kellyForMeta?.payoff_ratio ?? 1.0),
             // Sprint 34 (短板 #2b): pre-check feasibility score 来源 + 值
@@ -1873,11 +1911,60 @@ class PaperTradingAutomationService {
         if (metaDecision.decision === 'skip') {
           markBlocked(activation, 'L3_meta', metaDetail);
           await skip(
-            `MetaLabel 决定不下注: confidence=${metaDecision.confidence.toFixed(3)} < threshold=${metaDecision.threshold} (${metaDecision.model_version})`
+            `MetaLabel 决定不下注: confidence=${metaDecision.confidence.toFixed(3)} < threshold=${
+              metaDecision.threshold
+            } (${metaDecision.model_version})`
           );
           continue;
         }
         markContributed(activation, 'L3_meta', metaDetail);
+
+        // Sprint 42-A (新接入): IsotonicCalibrator + EVDecisionService
+        // 把 metaDecision.confidence (logistic regression raw) 经 isotonic 校准成真实胜率,
+        // 再算 EV = p × avg_win - (1-p) × avg_loss - cost. 把 event_filter multiplier 直接乘到
+        // calibrated prob 让"有事件加持"提高 EV 通过率.
+        //
+        // 失败时 fail-open (不阻塞下单), 但 EV='skip' 则 hard skip 本 signal.
+        try {
+          const rawConfidence = Number(metaDecision.confidence);
+          const calibratedProb = isotonicCalibrator.calibrate(rawConfidence);
+          // event multiplier 应用到 calibrated prob (clamp [0,1])
+          const finalProb = Math.max(0, Math.min(1, calibratedProb * eventFilterMultiplier));
+          const evResult = await evDecisionService.decide({
+            symbol: signal.symbol,
+            strategy_key: strategyKeyForMeta,
+            regime: String(regimeForMeta),
+            calibrated_win_prob: finalProb,
+            as_of_date: new Date().toISOString().slice(0, 10),
+          });
+          const evDetail = {
+            raw_confidence: rawConfidence,
+            calibrated_prob: calibratedProb,
+            event_filter_multiplier: eventFilterMultiplier,
+            final_prob: finalProb,
+            ev: evResult.ev,
+            avg_win_pct: evResult.avg_win_pct,
+            avg_loss_pct: evResult.avg_loss_pct,
+            cost_pct: evResult.cost_pct,
+            threshold: evResult.threshold,
+            stats_source: evResult.stats_source,
+            stats_sample_count: evResult.stats_sample_count,
+            decision: evResult.decision,
+            reason: evResult.reason,
+          };
+          // EV gate hard skip
+          if (evResult.decision === 'skip') {
+            await skip(`EV 负期望: ${evResult.reason}`, {
+              metadata: { ev_decision: evDetail, event_filter: eventFilterResult },
+            });
+            continue;
+          }
+          // 通过 → 写到 activation L3 detail 给 dashboard
+          (metaDetail as any).ev_decision = evDetail;
+          (metaDetail as any).event_filter = eventFilterResult;
+        } catch (evErr: any) {
+          logger.warn(`[ev-gate] failed (fail-open): ${evErr?.message || evErr}`);
+        }
       } catch (err: any) {
         // fail-open: MetaLabel 失败仅 warn; activation 不 mark (保持 reached=false 以区别"真过了"和"出错跳过").
         logger.warn(`[meta-label] gate failed (fail-open): ${err?.message || err}`);
@@ -1930,11 +2017,15 @@ class PaperTradingAutomationService {
       // 这让高确信度信号获得更大仓位，低确信度信号只做试探性建仓
       const confidenceScore = toNumber(signal.confidence_score, 75);
       const confidenceMultiplier =
-        confidenceScore >= 90 ? 1.5 :
-        confidenceScore >= 80 ? 1.2 :
-        confidenceScore >= 75 ? 1.0 :
-        confidenceScore >= 65 ? 0.7 :
-        0.5;
+        confidenceScore >= 90
+          ? 1.5
+          : confidenceScore >= 80
+          ? 1.2
+          : confidenceScore >= 75
+          ? 1.0
+          : confidenceScore >= 65
+          ? 0.7
+          : 0.5;
       const confidenceAdjustedPct = clamp(
         suggestedPct * confidenceMultiplier,
         1,
@@ -2013,9 +2104,7 @@ class PaperTradingAutomationService {
       // mark, hard mode 替换 effectiveTargetPct (这才是真正的"候选池 → 组合权重
       // → 调仓订单"形态).
       if (portfolioConstructionResult && portfolioConstructionResult.mode !== 'off') {
-        const pcWeight = portfolioConstructionResult.weights_by_signal_id.get(
-          (signal as any).id
-        );
+        const pcWeight = portfolioConstructionResult.weights_by_signal_id.get((signal as any).id);
         if (pcWeight !== undefined && Number.isFinite(pcWeight) && pcWeight > 0) {
           const pcTargetPct = pcWeight * 100;
           const pcDelta = pcTargetPct - effectiveTargetPct;
@@ -2032,7 +2121,10 @@ class PaperTradingAutomationService {
             // Hard mode: 真正替换 effectiveTargetPct
             logger.info(
               `[portfolio-construction-HARD] user=${portfolio.user_id} symbol=${signal.symbol} ` +
-                `${roundNumber(effectiveTargetPct, 2)}% → ${roundNumber(pcTargetPct, 2)}% (weight ${(pcWeight * 100).toFixed(2)}%)`
+                `${roundNumber(effectiveTargetPct, 2)}% → ${roundNumber(
+                  pcTargetPct,
+                  2
+                )}% (weight ${(pcWeight * 100).toFixed(2)}%)`
             );
             effectiveTargetPct = pcTargetPct;
             markContributed(activation, 'L4_construction', pcDetail);
@@ -2040,7 +2132,10 @@ class PaperTradingAutomationService {
             // Shadow mode: 只 log + activation mark, 不动 effectiveTargetPct
             logger.info(
               `[portfolio-construction-SHADOW] user=${portfolio.user_id} symbol=${signal.symbol} ` +
-                `per_signal=${roundNumber(effectiveTargetPct, 2)}% pc_suggests=${roundNumber(pcTargetPct, 2)}% delta=${roundNumber(pcDelta, 2)}%`
+                `per_signal=${roundNumber(effectiveTargetPct, 2)}% pc_suggests=${roundNumber(
+                  pcTargetPct,
+                  2
+                )}% delta=${roundNumber(pcDelta, 2)}%`
             );
             markReached(activation, 'L4_construction', pcDetail);
           }
@@ -2091,7 +2186,8 @@ class PaperTradingAutomationService {
       // 行情而 feasibility 用 EOD bar 时会有"用 A 价格决策、用 B 数据判断可成交"的漂移。
       try {
         const targetAmount = (totalValue * effectiveTargetPct) / 100;
-        const targetQty = execute_price > 0 ? Math.floor(targetAmount / execute_price / 100) * 100 : 0;
+        const targetQty =
+          execute_price > 0 ? Math.floor(targetAmount / execute_price / 100) * 100 : 0;
         if (targetQty >= 100) {
           // 用 quote 字段构 MarketSnapshot — 完全可选, 缺字段时 feasibility 内部 fall back to DB
           // Sprint 34: 加 bid1/ask1 真盘口, 让 spread 评分用 (ask-bid)/mid 而不是 (high-low)/close 代理
@@ -2109,24 +2205,27 @@ class PaperTradingAutomationService {
                   ask1_volume: quote.ask1_volume,
                 }
               : undefined;
-          const feasibility = await executionFeasibilityService.computeFeasibility({
-            user_id: portfolio.user_id,
-            symbol: signal.symbol,
-            side: 'BUY',
-            target_qty: targetQty,
-            target_price: execute_price,
-            as_of_date: new Date().toISOString().slice(0, 10),
-            market_snapshot: marketSnapshot,
-          }, {
-            persist: true,
-            // Sprint 40 (优先级 #6): 开启 Almgren-Chriss 冲击成本模型.
-            // 让大单 target_qty / 5d ADV 比例高时, impact_bps_v2 会被算出来,
-            // composite_score 反映真实成交摩擦; 之前 v1 只看 qty/ADV ratio, 不考虑
-            // vol + spread 联合效应, 大单冲击被低估.
-            // 短小单 (qty <<< ADV) v1/v2 几乎相同, 不会改变 fillable 判定.
-            // 通过 env ALMGREN_CHRISS_ENABLED=false 可一键回退到 v1.
-            use_almgren_chriss: process.env.ALMGREN_CHRISS_ENABLED !== 'false',
-          });
+          const feasibility = await executionFeasibilityService.computeFeasibility(
+            {
+              user_id: portfolio.user_id,
+              symbol: signal.symbol,
+              side: 'BUY',
+              target_qty: targetQty,
+              target_price: execute_price,
+              as_of_date: new Date().toISOString().slice(0, 10),
+              market_snapshot: marketSnapshot,
+            },
+            {
+              persist: true,
+              // Sprint 40 (优先级 #6): 开启 Almgren-Chriss 冲击成本模型.
+              // 让大单 target_qty / 5d ADV 比例高时, impact_bps_v2 会被算出来,
+              // composite_score 反映真实成交摩擦; 之前 v1 只看 qty/ADV ratio, 不考虑
+              // vol + spread 联合效应, 大单冲击被低估.
+              // 短小单 (qty <<< ADV) v1/v2 几乎相同, 不会改变 fillable 判定.
+              // 通过 env ALMGREN_CHRISS_ENABLED=false 可一键回退到 v1.
+              use_almgren_chriss: process.env.ALMGREN_CHRISS_ENABLED !== 'false',
+            }
+          );
           // Sprint 27: L5 执行可行性 — 任何 decision 都 reached;
           // blocked → markBlocked; risky/fillable → markContributed (评分确实计算了).
           const feasibilityDetail = {
@@ -2139,7 +2238,11 @@ class PaperTradingAutomationService {
           };
           if (feasibility.decision === 'blocked') {
             markBlocked(activation, 'L5_feasibility', feasibilityDetail);
-            await skip(`ExecutionFeasibility 拒绝下单: ${feasibility.summary} (block_reasons: ${feasibility.block_reasons.join(',')})`);
+            await skip(
+              `ExecutionFeasibility 拒绝下单: ${
+                feasibility.summary
+              } (block_reasons: ${feasibility.block_reasons.join(',')})`
+            );
             continue;
           }
           markContributed(activation, 'L5_feasibility', feasibilityDetail);
@@ -2242,7 +2345,9 @@ class PaperTradingAutomationService {
             }
           } catch (volErr: any) {
             logger.warn(
-              `[sizing] vol/atr 计算失败 symbol=${symbol} (fail-open, 退到 base): ${volErr?.message || volErr}`
+              `[sizing] vol/atr 计算失败 symbol=${symbol} (fail-open, 退到 base): ${
+                volErr?.message || volErr
+              }`
             );
           }
 
@@ -2339,13 +2444,13 @@ class PaperTradingAutomationService {
           if (sizingPolicy.hard_cutover_enabled && shadowSizingDecision.position_pct > 0) {
             logger.info(
               `[hard-sizing] APPLY user=${portfolio.user_id} symbol=${signal.symbol} ` +
-                `${roundNumber(effectiveTargetPct, 2)}% → ${roundNumber(shadowSizingDecision.position_pct, 2)}%`
+                `${roundNumber(effectiveTargetPct, 2)}% → ${roundNumber(
+                  shadowSizingDecision.position_pct,
+                  2
+                )}%`
             );
             effectiveTargetPct = shadowSizingDecision.position_pct;
-          } else if (
-            sizingPolicy.hard_cutover_enabled &&
-            shadowSizingDecision.position_pct <= 0
-          ) {
+          } else if (sizingPolicy.hard_cutover_enabled && shadowSizingDecision.position_pct <= 0) {
             // Kelly 负 edge / 缺数据 → 跳过本笔交易
             await skip(
               `${sizingPolicy.method} sizing 决策为 0 仓位：${shadowSizingDecision.reason}`
@@ -2374,11 +2479,16 @@ class PaperTradingAutomationService {
           effectiveTargetPct = effectiveTargetPct * govMult;
           logger.info(
             `[governor] user=${portfolio.user_id} symbol=${signal.symbol} ` +
-              `multiplier=${govMult.toFixed(2)} ${roundNumber(beforeGov, 2)}% → ${roundNumber(effectiveTargetPct, 2)}%`
+              `multiplier=${govMult.toFixed(2)} ${roundNumber(beforeGov, 2)}% → ${roundNumber(
+                effectiveTargetPct,
+                2
+              )}%`
           );
           if (effectiveTargetPct < 0.5) {
             await skip(
-              `EquityCurveGovernor 降权后仓位 ${effectiveTargetPct.toFixed(2)}% 过低（× ${govMult.toFixed(2)})，跳过本笔`
+              `EquityCurveGovernor 降权后仓位 ${effectiveTargetPct.toFixed(
+                2
+              )}% 过低（× ${govMult.toFixed(2)})，跳过本笔`
             );
             continue;
           }
@@ -2699,6 +2809,47 @@ class PaperTradingAutomationService {
         l8_activation: activation,
       };
 
+      // Sprint 42-A (新接入): ExecutionPolicyRouter — 给本订单选执行策略 (LIMIT/TWAP/VWAP/POV)
+      // 写到 orderIntent.metadata + tradePayload.metadata, 让下游 (UI / 实盘券商接口) 知道
+      // 该用哪种 algo 单. 当前 paper trading 不真拆单, 只记录 policy + 估算 cost.
+      // policy=SKIP 时直接 skip 本 signal (重复 EI 的硬约束, 双保险).
+      let executionPolicyResult: any = null;
+      try {
+        const avgTurnover = Number(
+          (marketProfileWithPortfolioRisk as any)?.avg_daily_turnover ||
+            (marketProfileWithPortfolioRisk as any)?.market_profile?.avg_daily_turnover ||
+            100_000_000
+        );
+        const currentVol = Number(
+          (marketProfileWithPortfolioRisk as any)?.atr_pct ||
+            (marketProfileWithPortfolioRisk as any)?.recent_volatility_pct ||
+            0.02
+        );
+        const closeToLimit = Number(
+          (marketProfileWithPortfolioRisk as any)?.distance_to_limit_up_pct ?? 0.1
+        );
+        executionPolicyResult = executionPolicyRouter.route({
+          symbol: signal.symbol,
+          side: 'BUY',
+          amount_yuan: amount,
+          avg_daily_turnover: avgTurnover,
+          current_volatility: currentVol,
+          spread_pct: 0.001, // 没有真实 spread, 默认 0.1%
+          is_gap_up: false, // 没有 intraday gap 信号
+          close_to_limit_up_pct: closeToLimit,
+          urgency: 'normal',
+        });
+        if (executionPolicyResult.policy === 'SKIP') {
+          await skip(`ExecutionPolicyRouter SKIP: ${executionPolicyResult.reason}`, {
+            metadata: { execution_policy: executionPolicyResult },
+          });
+          continue;
+        }
+        (orderIntentMetadata as any).execution_policy = executionPolicyResult;
+      } catch (epErr: any) {
+        logger.warn(`[exec-policy] failed (fail-open): ${epErr?.message || epErr}`);
+      }
+
       // US-083: signalDryRun replaces dry_run so per-strategy dry-run bypasses
       // createBuyTrade for this specific signal only.  QuantSignal row already
       // persisted upstream by SignalEngine — only the order-placement side effect skipped.
@@ -2730,10 +2881,14 @@ class PaperTradingAutomationService {
         // ========== 即时飞书推送：自主买入卡片 ==========
         // Sprint 35: interactive 富文本卡片 (绿色 header), 替代之前的 text/错误模板.
         try {
-          const webhookUrl = process.env.FEISHU_RECOMMENDATION_BOT_WEBHOOK || process.env.FEISHU_BOT_WEBHOOK;
+          const webhookUrl =
+            process.env.FEISHU_RECOMMENDATION_BOT_WEBHOOK || process.env.FEISHU_BOT_WEBHOOK;
           if (webhookUrl && String(process.env.DISABLE_FEISHU_BOT_WEBHOOK) !== 'true') {
             const stockName = signal.name || quote.name || symbol;
-            const positionPct = ((total_cost / toNumber(portfolio.total_value, 200000)) * 100).toFixed(1);
+            const positionPct = (
+              (total_cost / toNumber(portfolio.total_value, 200000)) *
+              100
+            ).toFixed(1);
             const score = toNumber(signal.confidence_score, 0).toFixed(0);
             const card = {
               msg_type: 'interactive',
@@ -2749,10 +2904,25 @@ class PaperTradingAutomationService {
                     fields: [
                       { is_short: true, text: { tag: 'lark_md', content: `**代码**\n${symbol}` } },
                       { is_short: true, text: { tag: 'lark_md', content: `**得分**\n${score}` } },
-                      { is_short: true, text: { tag: 'lark_md', content: `**成交价**\n¥${execute_price.toFixed(2)}` } },
-                      { is_short: true, text: { tag: 'lark_md', content: `**数量**\n${quantity} 股` } },
-                      { is_short: true, text: { tag: 'lark_md', content: `**总成本**\n¥${amount.toFixed(0)}` } },
-                      { is_short: true, text: { tag: 'lark_md', content: `**仓位**\n${positionPct}%` } },
+                      {
+                        is_short: true,
+                        text: {
+                          tag: 'lark_md',
+                          content: `**成交价**\n¥${execute_price.toFixed(2)}`,
+                        },
+                      },
+                      {
+                        is_short: true,
+                        text: { tag: 'lark_md', content: `**数量**\n${quantity} 股` },
+                      },
+                      {
+                        is_short: true,
+                        text: { tag: 'lark_md', content: `**总成本**\n¥${amount.toFixed(0)}` },
+                      },
+                      {
+                        is_short: true,
+                        text: { tag: 'lark_md', content: `**仓位**\n${positionPct}%` },
+                      },
                     ],
                   },
                   { tag: 'hr' },
@@ -2761,7 +2931,9 @@ class PaperTradingAutomationService {
                     elements: [
                       {
                         tag: 'plain_text',
-                        content: `${moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm')} · ${portfolio.name || 'paper trading'}`,
+                        content: `${moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm')} · ${
+                          portfolio.name || 'paper trading'
+                        }`,
                       },
                     ],
                   },
@@ -2770,11 +2942,13 @@ class PaperTradingAutomationService {
             };
             // eslint-disable-next-line @typescript-eslint/no-var-requires
             const axios = require('axios');
-            axios
-              .post(webhookUrl, card, { timeout: 5000 })
-              .catch(() => { /* 静默 — fail-OPEN, 推送失败不阻塞下单主流程 */ });
+            axios.post(webhookUrl, card, { timeout: 5000 }).catch(() => {
+              /* 静默 — fail-OPEN, 推送失败不阻塞下单主流程 */
+            });
           }
-        } catch { /* 静默 */ }
+        } catch {
+          /* 静默 */
+        }
 
         await this.markSignalExecuted(signal, {
           portfolio_id: portfolio.id,
@@ -3076,7 +3250,7 @@ class PaperTradingAutomationService {
       toBoolean(options.report_to_feishu, false) &&
       options.notify_to_feishu_bot !== false &&
       (refreshRecommendations || Array.isArray((syncResult as any).generated?.recommendations)) &&
-      (hasActualOrder || hasRiskWarning)  // Sprint 35: 仅在有实质内容时推
+      (hasActualOrder || hasRiskWarning) // Sprint 35: 仅在有实质内容时推
     ) {
       await feishuBotWebhookService.sendRecommendationSummary({
         scenario: 'paper_trading_auto_sync',
@@ -3320,14 +3494,17 @@ class PaperTradingAutomationService {
               const ma20 = closes20.reduce((s: number, v: number) => s + v, 0) / 20;
               const todayClose = closes20[closes20.length - 1];
               const todayVolume = Number(bars20[bars20.length - 1]?.volume || 0);
-              const avgVolume = bars20.reduce((s: number, b: any) => s + Number(b.volume || 0), 0) / 20;
+              const avgVolume =
+                bars20.reduce((s: number, b: any) => s + Number(b.volume || 0), 0) / 20;
               // 跌破 MA20 1%+ 且成交额放大 1.3 倍 → 技术破位
               if (todayClose < ma20 * 0.99 && todayVolume > avgVolume * 1.3) {
                 exitReason = 'technical_breakdown';
               }
             }
           }
-        } catch { /* 安全跳过 — 拿不到 bar 不影响其他规则 */ }
+        } catch {
+          /* 安全跳过 — 拿不到 bar 不影响其他规则 */
+        }
       }
 
       // 规则 6: 阶梯式获利兑现（涨 15%+ 开始分批减仓，涨 25%+ 清仓）
@@ -3423,7 +3600,8 @@ class PaperTradingAutomationService {
         // ========== 即时飞书推送：自主卖出卡片 ==========
         // Sprint 35: 盈利/亏损用不同 header template (green/red), 卖出原因显示
         try {
-          const webhookUrl = process.env.FEISHU_RECOMMENDATION_BOT_WEBHOOK || process.env.FEISHU_BOT_WEBHOOK;
+          const webhookUrl =
+            process.env.FEISHU_RECOMMENDATION_BOT_WEBHOOK || process.env.FEISHU_BOT_WEBHOOK;
           if (webhookUrl && String(process.env.DISABLE_FEISHU_BOT_WEBHOOK) !== 'true') {
             const stockName = exitItem.name || symbol;
             const pnlSign = realized_pnl >= 0 ? '+' : '';
@@ -3451,11 +3629,34 @@ class PaperTradingAutomationService {
                     tag: 'div',
                     fields: [
                       { is_short: true, text: { tag: 'lark_md', content: `**代码**\n${symbol}` } },
-                      { is_short: true, text: { tag: 'lark_md', content: `**${pnlEmoji} 实现盈亏**\n${pnlSign}¥${realized_pnl.toFixed(2)}` } },
-                      { is_short: true, text: { tag: 'lark_md', content: `**成交价**\n¥${execute_price.toFixed(2)}` } },
-                      { is_short: true, text: { tag: 'lark_md', content: `**数量**\n${quantity} 股` } },
-                      { is_short: true, text: { tag: 'lark_md', content: `**总金额**\n¥${amount.toFixed(0)}` } },
-                      { is_short: true, text: { tag: 'lark_md', content: `**持有天数**\n${holdingDays} 天` } },
+                      {
+                        is_short: true,
+                        text: {
+                          tag: 'lark_md',
+                          content: `**${pnlEmoji} 实现盈亏**\n${pnlSign}¥${realized_pnl.toFixed(
+                            2
+                          )}`,
+                        },
+                      },
+                      {
+                        is_short: true,
+                        text: {
+                          tag: 'lark_md',
+                          content: `**成交价**\n¥${execute_price.toFixed(2)}`,
+                        },
+                      },
+                      {
+                        is_short: true,
+                        text: { tag: 'lark_md', content: `**数量**\n${quantity} 股` },
+                      },
+                      {
+                        is_short: true,
+                        text: { tag: 'lark_md', content: `**总金额**\n¥${amount.toFixed(0)}` },
+                      },
+                      {
+                        is_short: true,
+                        text: { tag: 'lark_md', content: `**持有天数**\n${holdingDays} 天` },
+                      },
                     ],
                   },
                   { tag: 'hr' },
@@ -3464,7 +3665,9 @@ class PaperTradingAutomationService {
                     elements: [
                       {
                         tag: 'plain_text',
-                        content: `${moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm')} · ${portfolio.name || 'paper trading'}`,
+                        content: `${moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm')} · ${
+                          portfolio.name || 'paper trading'
+                        }`,
                       },
                     ],
                   },
@@ -3473,11 +3676,13 @@ class PaperTradingAutomationService {
             };
             // eslint-disable-next-line @typescript-eslint/no-var-requires
             const axios = require('axios');
-            axios
-              .post(webhookUrl, card, { timeout: 5000 })
-              .catch(() => { /* 静默 */ });
+            axios.post(webhookUrl, card, { timeout: 5000 }).catch(() => {
+              /* 静默 */
+            });
           }
-        } catch { /* 静默 */ }
+        } catch {
+          /* 静默 */
+        }
 
         await recordSellIntent('executed', riskReasonLabel(exitReason), {
           trade_id: trade.id,
@@ -3722,8 +3927,7 @@ class PaperTradingAutomationService {
         low: toNumber(latestRealtime.low, undefined as any) || undefined,
         volume: toNumber(latestRealtime.volume, undefined as any) || undefined,
         turnover: toNumber(latestRealtime.turnover, undefined as any) || undefined,
-        change_percent:
-          toNumber(latestRealtime.change_percent, undefined as any) || undefined,
+        change_percent: toNumber(latestRealtime.change_percent, undefined as any) || undefined,
         // Sprint 34: 盘口 1 档 (仅 tencent 来源有, akshare/daily_bar fallback 时缺)
         bid1_price: bid1,
         ask1_price: ask1,
