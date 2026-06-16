@@ -275,14 +275,18 @@ export const PRODUCTION_TCA_DATA_SOURCE: TCADataSource = {
       const { PaperTradingOrderIntent } = require('../../models/PaperTradingOrderIntent');
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { Op } = require('sequelize');
+      // exit_date 是 DATEONLY string, 与 EVDecisionService 同款时间处理.
       const start = new Date(`${as_of_date}T00:00:00.000Z`);
-      start.setDate(start.getDate() - lookback_days);
+      start.setUTCDate(start.getUTCDate() - lookback_days);
+      const startIso = start.toISOString().slice(0, 10);
+      // strategy_key 在 metadata.strategy_key JSONB; 直接取 attribute 拿不到, 也无法 where 等值
+      // 过滤 — 这里只按 trade_status + exit_date 范围拉, strategy_key 留给 in-memory.
       const outcomes = await RecommendationTradeOutcome.findAll({
         where: {
-          status: 'closed',
-          closed_at: { [Op.gte]: start },
+          trade_status: 'closed',
+          exit_date: { [Op.gte]: startIso },
         },
-        attributes: ['signal_id', 'symbol', 'strategy_key', 'profit_pct', 'metadata'],
+        attributes: ['signal_id', 'symbol', 'total_pnl_pct', 'metadata'],
         raw: true,
       });
       const out: TCATradeInput[] = [];
@@ -312,15 +316,17 @@ export const PRODUCTION_TCA_DATA_SOURCE: TCADataSource = {
         } catch (e: any) {
           logger.warn(`TCA 反查 OrderIntent 失败 (signal_id=${o.signal_id}): ${e?.message || e}`);
         }
-        const profit_pct = Number(o.profit_pct);
+        // total_pnl_pct 以百分点单位存储 (5 = 5%); profit_pct 是 percent (5 = 5%).
+        const profit_pct = Number(o.total_pnl_pct);
         if (!Number.isFinite(profit_pct)) continue;
+        const strategy_key = String(o?.metadata?.strategy_key || 'unknown');
         // 注: PaperTradingTrade 没拆 entry/exit 两条, profit_pct 是已经包含 sell_close 的;
         // 用 buy_reference_price 与隐含的 buy_execute (= reference + slippage) 算 entry slip,
         // 没法精确 — 这里先简化: 若 profit_pct 远低于 signal expected, 就算 tracking_error.
         // 完整版需要 trades 表 join sell trade 拿 sell_execute_price.
         out.push({
           symbol: o.symbol,
-          strategy_key: o.strategy_key || 'unknown',
+          strategy_key,
           buy_execute_price: buy_reference_price || 0, // 简化
           buy_reference_price,
           sell_execute_price:

@@ -193,30 +193,36 @@ export const PRODUCTION_EV_DECISION_DATA_SOURCE: EVDecisionDataSource = {
       const { RecommendationTradeOutcome } = require('../../models/RecommendationTradeOutcome');
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { Op } = require('sequelize');
+      // exit_date 是 DATEONLY (YYYY-MM-DD string), 用 ISO 字符串比较, 不要传 Date
+      // 否则 Sequelize 自动 toISOString() 多加 "T00:00:00.000Z" 跟 DATEONLY 不匹配.
       const lookbackStart = new Date(`${as_of_date}T00:00:00.000Z`);
-      lookbackStart.setDate(lookbackStart.getDate() - lookback_days);
+      lookbackStart.setUTCDate(lookbackStart.getUTCDate() - lookback_days);
+      const lookbackStartIso = lookbackStart.toISOString().slice(0, 10);
+      // strategy_key 存在 metadata.strategy_key JSONB, 不能在 where 里精确等值过滤;
+      // 改为先按 trade_status + exit_date 过滤, 再 in-memory filter metadata.strategy_key + regime.
       const rows = await RecommendationTradeOutcome.findAll({
         where: {
-          strategy_key,
-          status: 'closed',
-          closed_at: { [Op.gte]: lookbackStart },
+          trade_status: 'closed',
+          exit_date: { [Op.gte]: lookbackStartIso },
         },
-        attributes: ['profit_pct', 'metadata'],
+        attributes: ['total_pnl_pct', 'metadata'],
         raw: true,
       });
-      // regime 在 metadata.market_regime
       const filtered = (rows as any[]).filter(r => {
-        const reg = r?.metadata?.market_regime;
-        return reg && reg === regime;
+        const meta = r?.metadata || {};
+        const sk = meta.strategy_key;
+        const reg = meta.market_regime;
+        return sk === strategy_key && reg === regime;
       });
       if (!filtered.length) return null;
-      const wins = filtered.filter(r => Number(r.profit_pct) > 0);
-      const losses = filtered.filter(r => Number(r.profit_pct) <= 0);
+      const wins = filtered.filter(r => Number(r.total_pnl_pct) > 0);
+      const losses = filtered.filter(r => Number(r.total_pnl_pct) <= 0);
+      // total_pnl_pct 以百分点存储 (5 = 5%), 除以 100 转 fraction (0.05).
       const avg_win_pct = wins.length
-        ? wins.reduce((s, r) => s + Number(r.profit_pct), 0) / wins.length / 100
+        ? wins.reduce((s, r) => s + Number(r.total_pnl_pct), 0) / wins.length / 100
         : 0;
       const avg_loss_pct = losses.length
-        ? -losses.reduce((s, r) => s + Number(r.profit_pct), 0) / losses.length / 100
+        ? -losses.reduce((s, r) => s + Number(r.total_pnl_pct), 0) / losses.length / 100
         : 0;
       return {
         strategy_key,
@@ -243,25 +249,26 @@ export const PRODUCTION_EV_DECISION_DATA_SOURCE: EVDecisionDataSource = {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { Op } = require('sequelize');
       const lookbackStart = new Date(`${as_of_date}T00:00:00.000Z`);
-      lookbackStart.setDate(lookbackStart.getDate() - lookback_days);
+      lookbackStart.setUTCDate(lookbackStart.getUTCDate() - lookback_days);
+      const lookbackStartIso = lookbackStart.toISOString().slice(0, 10);
       const rows = await RecommendationTradeOutcome.findAll({
         where: {
-          status: 'closed',
-          closed_at: { [Op.gte]: lookbackStart },
+          trade_status: 'closed',
+          exit_date: { [Op.gte]: lookbackStartIso },
         },
-        attributes: ['profit_pct'],
+        attributes: ['total_pnl_pct'],
         raw: true,
       });
       if (!rows.length) return null;
-      const wins = (rows as any[]).filter(r => Number(r.profit_pct) > 0);
-      const losses = (rows as any[]).filter(r => Number(r.profit_pct) <= 0);
+      const wins = (rows as any[]).filter(r => Number(r.total_pnl_pct) > 0);
+      const losses = (rows as any[]).filter(r => Number(r.total_pnl_pct) <= 0);
       return {
         sample_count: rows.length,
         avg_win_pct: wins.length
-          ? wins.reduce((s, r) => s + Number(r.profit_pct), 0) / wins.length / 100
+          ? wins.reduce((s, r) => s + Number(r.total_pnl_pct), 0) / wins.length / 100
           : 0,
         avg_loss_pct: losses.length
-          ? -losses.reduce((s, r) => s + Number(r.profit_pct), 0) / losses.length / 100
+          ? -losses.reduce((s, r) => s + Number(r.total_pnl_pct), 0) / losses.length / 100
           : 0,
       };
     } catch (error: any) {
