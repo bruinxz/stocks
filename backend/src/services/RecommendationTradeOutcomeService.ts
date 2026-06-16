@@ -2936,15 +2936,50 @@ export class RecommendationTradeOutcomeService {
     const entryTrade = await PaperTradingTrade.findOne({
       where: { id: Number(paperTrading.trade_id), portfolio_id },
     });
-    // 修复 (2026-06-16, task 5/8): 如果 metadata 引用的 trade_id 已不存在 (被回滚/删除),
-    // 不要再创建 outcome 行 — 否则 outcome 表会堆积 "孤儿 outcome" (指向已删 trade),
-    // 污染 EV/TCA 输入. 之前那批 16 笔非交易时段 trade 被回滚后, refresh 重新
-    // upsert 创建了 12 个孤儿 outcome (id 73-84) 就是这个 bug.
+    // 修复 (2026-06-16, task 5/8 + M5): 如果 metadata 引用的 trade_id 已不存在 (被回滚/删除),
+    // 不要再创建 outcome 行 — 之前会堆积"孤儿 outcome"(指向已删 trade), 污染 EV/TCA 输入.
+    // 同时 self-heal: 把 signal.metadata.paper_trading / paper_trading_by_portfolio[X] 里的
+    // dangling entry 剥掉, 避免下次 refresh cron 再次重建幽灵 outcome (M5 修复).
     if (!entryTrade) {
-      logger.debug(
+      logger.info(
         `upsertFromExecutedSignal: signal ${signal.id} metadata 引用的 trade_id ${paperTrading.trade_id} ` +
-          `不存在 (portfolio=${portfolio_id}, symbol=${signal.symbol}); 跳过创建 outcome.`
+          `不存在 (portfolio=${portfolio_id}, symbol=${signal.symbol}); 跳过创建 outcome + self-heal signal metadata.`
       );
+      try {
+        const rootMeta = asPlainObject(signal.metadata);
+        const byPortfolio = asPlainObject(rootMeta.paper_trading_by_portfolio);
+        const portfolioKey = String(portfolio_id);
+        let modified = false;
+        if (byPortfolio[portfolioKey]) {
+          delete byPortfolio[portfolioKey];
+          modified = true;
+        }
+        // 同步清 legacy paper_trading (only if it's the same dangling trade_id)
+        const legacy = asPlainObject(rootMeta.paper_trading);
+        if (
+          Number(legacy.trade_id) === Number(paperTrading.trade_id) &&
+          Number(legacy.portfolio_id) === Number(portfolio_id)
+        ) {
+          delete rootMeta.paper_trading;
+          modified = true;
+        }
+        if (modified) {
+          if (Object.keys(byPortfolio).length === 0) {
+            delete rootMeta.paper_trading_by_portfolio;
+          } else {
+            rootMeta.paper_trading_by_portfolio = byPortfolio;
+          }
+          signal.metadata = rootMeta;
+          (signal as any).changed?.('metadata', true);
+          await signal.save();
+        }
+      } catch (err: any) {
+        logger.warn(
+          `upsertFromExecutedSignal: self-heal signal ${signal.id} metadata 失败: ${
+            err?.message || err
+          }`
+        );
+      }
       return null;
     }
     const exitTrade = paperTrading.sell_trade_id
@@ -3257,6 +3292,18 @@ export class RecommendationTradeOutcomeService {
           metadata.environment_strategy_capital_efficiency_score,
         signal_metadata: metadata,
         paper_trading: paperTrading,
+        // 修复 (2026-06-16, HIGH H1): outcome.metadata 顶层投影 5 个高级层反馈字段,
+        // 让 EV/TCA/MetaLabel/Playbook 直接 outcome.metadata.X 读取, 不需要钻到
+        // nested signal_metadata. 之前 100% 缺失导致下游统计训练全失效.
+        reason_triplet: metadata.reason_triplet || paperTrading.reason_triplet,
+        dqs: metadata.dqs || paperTrading.dqs,
+        execution_policy: metadata.execution_policy || paperTrading.execution_policy,
+        playbook_id: metadata.playbook_id || paperTrading.playbook_id,
+        feasibility_score:
+          metadata.feasibility_score ??
+          metadata.pre_check_feasibility_score ??
+          paperTrading.feasibility_score,
+        ev_decision: metadata.ev_decision || paperTrading.ev_decision,
         benchmark,
         consensus: {
           consensus_count: toOptionalNumber(metadata.consensus_count),
