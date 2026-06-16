@@ -586,6 +586,15 @@ export interface PaperTradingRiskCheckOptions {
   max_hold_days?: number;
   min_sell_signal_score?: number;
   sell_signal_source_type?: string;
+  /**
+   * 当 true 时, runRiskCheck 自动遍历所有 is_active=true 的 PaperTradingPortfolio,
+   * 对每个 portfolio 各跑一次 runRiskCheck 并聚合结果. portfolio_name 被忽略.
+   *
+   * 修复 (2026-06-16): 之前 PAPER_TRADING_RISK_CHECK cron 只跑 portfolio_name='系统观测盘'
+   * 这一个空仓盘 (portfolio_id=24), 11 个真实有持仓的 Codex 模拟盘 30 天 0 风控扫描,
+   * 导致 -11% 持仓也不触发 stop_loss / trailing_stop.
+   */
+  all_portfolios?: boolean;
 }
 
 export interface PaperTradingRiskExitItem {
@@ -3446,6 +3455,65 @@ class PaperTradingAutomationService {
   async runRiskCheck(
     options: PaperTradingRiskCheckOptions = {}
   ): Promise<PaperTradingRiskCheckResult> {
+    // ============= all_portfolios fan-out =============
+    // 当 cron 配置 all_portfolios=true 时, 对每个 is_active=true portfolio 各跑一次
+    // runRiskCheck. 这是修复 "PAPER_TRADING_RISK_CHECK 只跑 portfolio 24 空仓盘" bug
+    // (2026-06-16) 的关键路径. portfolio_name / user_id / force_new_portfolio 在
+    // all_portfolios 模式下被忽略.
+    if (toBoolean(options.all_portfolios, false)) {
+      const allPortfolios = await PaperTradingPortfolio.findAll({
+        where: { is_active: true },
+        order: [['id', 'ASC']],
+      });
+      const aggregated: PaperTradingRiskCheckResult = {
+        portfolio_id: 0,
+        user_id: 0,
+        dry_run: toBoolean(options.dry_run, false),
+        checked: 0,
+        exit_candidates: 0,
+        exited: 0,
+        planned: 0,
+        held: 0,
+        skipped: 0,
+        exits: [],
+        held_items: [],
+        skipped_items: [],
+      };
+      for (const port of allPortfolios) {
+        try {
+          // 递归调用但 all_portfolios=false + 显式 user_id+portfolio_name 锁定到这个 portfolio
+          const single = await this.runRiskCheck({
+            ...options,
+            all_portfolios: false,
+            user_id: port.user_id,
+            portfolio_name: port.name,
+            force_new_portfolio: false,
+          });
+          aggregated.checked += single.checked;
+          aggregated.exit_candidates += single.exit_candidates;
+          aggregated.exited += single.exited;
+          aggregated.planned += single.planned;
+          aggregated.held += single.held;
+          aggregated.skipped += single.skipped;
+          aggregated.exits.push(...single.exits);
+          aggregated.held_items.push(...single.held_items);
+          aggregated.skipped_items.push(...single.skipped_items);
+        } catch (error: any) {
+          logger.warn(
+            `runRiskCheck all_portfolios: portfolio ${port.id} (${port.name}) 失败: ${
+              error?.message || error
+            }`
+          );
+        }
+      }
+      logger.info(
+        `runRiskCheck all_portfolios 完成: ${allPortfolios.length} portfolios, ` +
+          `checked=${aggregated.checked} exited=${aggregated.exited} ` +
+          `held=${aggregated.held} skipped=${aggregated.skipped}`
+      );
+      return aggregated;
+    }
+
     const dry_run = toBoolean(options.dry_run, false);
     const report_to_feishu = toBoolean(options.report_to_feishu, true);
     const limit = toPositiveInt(options.limit, 20, 100);

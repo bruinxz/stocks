@@ -50,6 +50,16 @@ export interface RecommendationTradeOutcomeRefreshOptions {
   signal_id?: number;
   limit?: number;
   report_to_feishu?: boolean;
+  /**
+   * 当 true 时, refreshPortfolioOutcomes 自动遍历所有 is_active=true PaperTradingPortfolio,
+   * 对每个 portfolio 各调一次 refreshPortfolioOutcomes 并聚合结果. portfolio_name 被忽略.
+   *
+   * 修复 (2026-06-16): 之前 RECOMMENDATION_TRADE_OUTCOME_REFRESH cron 只跑
+   * portfolio_name=AUTONOMOUS_PORTFOLIO_NAME 一个盘 (且 task 19 was is_active=false),
+   * 11 个 Codex 模拟盘 67 个 open outcome 的 latest_price 建仓后从未刷新到 EOD close,
+   * 导致 EV/TCA 输入数据失真 (sh.600105 真涨 9.74% 但 outcome 仍记 0%).
+   */
+  all_portfolios?: boolean;
 }
 
 export interface RecommendationTradeOutcomeQueryOptions
@@ -796,6 +806,75 @@ export class RecommendationTradeOutcomeService {
     outcomes: RecommendationTradeOutcome[];
     dashboard: RecommendationTradeOutcomeDashboard;
   }> {
+    // ============= all_portfolios fan-out =============
+    // 当 cron 配置 all_portfolios=true 时, 对每个 is_active=true portfolio 各跑一次
+    // refreshPortfolioOutcomes 并聚合 counts. portfolio_name / portfolio_id 被忽略.
+    // 这是 latest_price 永不刷新 bug 的修复关键路径.
+    if (toBoolean(options.all_portfolios, false)) {
+      const allPortfolios = await PaperTradingPortfolio.findAll({
+        where: { is_active: true },
+        order: [['id', 'ASC']],
+      });
+      const aggregated = {
+        portfolio_id: 0,
+        user_id: 0,
+        refreshed: 0,
+        created_or_updated: 0,
+        skipped: 0,
+        failed: 0,
+        outcomes: [] as RecommendationTradeOutcome[],
+        // dashboard 在 all_portfolios 模式下没有 single-portfolio 语义, 返回空 dashboard
+        dashboard: {
+          portfolio_id: 0,
+          total_trades: 0,
+          open_trades: 0,
+          closed_trades: 0,
+          total_unrealized_pnl: 0,
+          total_realized_pnl: 0,
+          total_pnl: 0,
+          win_rate: 0,
+          avg_total_pnl_pct: 0,
+          avg_closed_return_pct: 0,
+          avg_excess_return_pct: 0,
+          excess_win_rate: 0,
+          payoff_ratio: 0,
+          profit_factor: 0,
+          updated_at: new Date().toISOString(),
+        } as unknown as RecommendationTradeOutcomeDashboard,
+      };
+      for (const port of allPortfolios) {
+        try {
+          const single = await this.refreshPortfolioOutcomes({
+            ...options,
+            all_portfolios: false,
+            user_id: port.user_id,
+            portfolio_id: port.id,
+            portfolio_name: undefined,
+            force_new_portfolio: false,
+            // 关闭逐 portfolio 飞书通知, 避免 N 个 portfolio 一次推 N 条
+            report_to_feishu: false,
+          });
+          aggregated.refreshed += single.refreshed;
+          aggregated.created_or_updated += single.created_or_updated;
+          aggregated.skipped += single.skipped;
+          aggregated.failed += single.failed;
+          aggregated.outcomes.push(...single.outcomes);
+        } catch (error: any) {
+          logger.warn(
+            `refreshPortfolioOutcomes all_portfolios: portfolio ${port.id} (${port.name}) 失败: ${
+              error?.message || error
+            }`
+          );
+        }
+      }
+      logger.info(
+        `refreshPortfolioOutcomes all_portfolios 完成: ${allPortfolios.length} portfolios, ` +
+          `refreshed=${aggregated.refreshed} created_or_updated=${aggregated.created_or_updated} ` +
+          `failed=${aggregated.failed}`
+      );
+      return aggregated;
+    }
+
     const includeOpen = toBoolean(options.include_open, true);
     const limit = toPositiveInt(options.limit, 2000, 10000);
     const lookbackDays = toPositiveInt(options.lookback_days, 180, 3650);

@@ -1608,6 +1608,14 @@ class SchedulerService {
         const result = await paperTradingAutomationService.runRiskCheck({
           username: parameters.username,
           ...portfolioParams,
+          // 修复 (2026-06-16): all_portfolios=true 让风控扫所有 is_active portfolio,
+          // 而不是只扫 portfolio_name 指定的那一个空仓 "系统观测盘".
+          all_portfolios:
+            parameters.all_portfolios !== undefined
+              ? Boolean(parameters.all_portfolios)
+              : parameters.allPortfolios !== undefined
+              ? Boolean(parameters.allPortfolios)
+              : false,
           dry_run:
             parameters.dry_run !== undefined
               ? Boolean(parameters.dry_run)
@@ -2140,6 +2148,14 @@ class SchedulerService {
         const result = await recommendationTradeOutcomeService.refreshPortfolioOutcomes({
           username: parameters.username || 'stock',
           ...portfolioParams,
+          // 修复 (2026-06-16): all_portfolios=true 让 outcome refresh 遍历所有
+          // is_active portfolio, 不再只盯 portfolio_name 指定那一个.
+          all_portfolios:
+            parameters.all_portfolios !== undefined
+              ? Boolean(parameters.all_portfolios)
+              : parameters.allPortfolios !== undefined
+              ? Boolean(parameters.allPortfolios)
+              : false,
           include_open:
             parameters.include_open !== undefined
               ? Boolean(parameters.include_open)

@@ -211,7 +211,14 @@ export const PRODUCTION_EV_DECISION_DATA_SOURCE: EVDecisionDataSource = {
       const filtered = (rows as any[]).filter(r => {
         const meta = r?.metadata || {};
         const sk = meta.strategy_key;
-        const reg = meta.market_regime;
+        // regime 实际存在 metadata.market_environment.market_regime 或
+        // metadata.signal_metadata.market_environment.market_regime (与 RecommendationTradeOutcomeService.marketRegimeKey 同源).
+        // 之前读 meta.market_regime 永远为空, per-(strategy, regime) 主源永不命中.
+        const signalMeta = meta.signal_metadata || {};
+        const reg =
+          (meta.market_environment && meta.market_environment.market_regime) ||
+          (signalMeta.market_environment && signalMeta.market_environment.market_regime) ||
+          meta.market_regime; // 兜底: 未来若 backfill 把 regime 提到 top-level 也支持
         return sk === strategy_key && reg === regime;
       });
       if (!filtered.length) return null;
