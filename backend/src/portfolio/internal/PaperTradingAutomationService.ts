@@ -4163,7 +4163,20 @@ class PaperTradingAutomationService {
       where: { symbol: normalizedSymbol },
       order: [['quote_time', 'DESC']],
     }).catch(() => null);
-    if (latestRealtime?.current_price && toNumber(latestRealtime.current_price, 0) > 0) {
+    // 修复 (2026-06-16, HIGH H4): 之前没有 staleness check, 8h 前的 quote 也照用作成交价.
+    // 阈值: 30 分钟. 超过 = 视为不可信, 走 DailyBar fallback. 交易时段外 cron 跑时
+    // 自然落到 DailyBar 也合理 (15:30 收盘后 quote 不再变, 用收盘价).
+    const REALTIME_QUOTE_MAX_AGE_MS = 30 * 60 * 1000;
+    const quoteAgeMs =
+      latestRealtime?.quote_time
+        ? Date.now() - new Date(latestRealtime.quote_time).getTime()
+        : Infinity;
+    const realtimeFresh = quoteAgeMs <= REALTIME_QUOTE_MAX_AGE_MS;
+    if (
+      latestRealtime?.current_price &&
+      toNumber(latestRealtime.current_price, 0) > 0 &&
+      realtimeFresh
+    ) {
       // Sprint 34 (短板 #3b): 从 raw_payload 抽 bid/ask (1档).
       // RealtimeQuoteService.parseTencentRealtimePayload 已 set bid1_price/ask1_price,
       // 写库时进 raw_payload JSONB 字段.
