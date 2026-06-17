@@ -23,7 +23,7 @@ import { feishuTaskReportService } from '../../services/FeishuTaskReportService'
 import { marketEnvironmentService } from '../../services/MarketEnvironmentService';
 import { paperTradingRiskProfileService } from './PaperTradingRiskProfileService';
 import { feishuBotWebhookService } from '../../services/FeishuBotWebhookService';
-import { normalizeSymbol } from '../../utils/stockSymbol';
+import { normalizeSymbol, quantizeBuyQuantity } from '../../utils/stockSymbol';
 import { logger } from '../../utils/logger';
 import { checkAShareTradingHours } from '../../utils/tradingCalendar';
 import { realtimeQuoteService } from '../../data/services/RealtimeQuoteService';
@@ -2267,7 +2267,7 @@ class PaperTradingAutomationService {
       try {
         const targetAmount = (totalValue * effectiveTargetPct) / 100;
         const targetQty =
-          execute_price > 0 ? Math.floor(targetAmount / execute_price / 100) * 100 : 0;
+          execute_price > 0 ? quantizeBuyQuantity(targetAmount / execute_price, signal.symbol) : 0;
         if (targetQty >= 100) {
           // 用 quote 字段构 MarketSnapshot — 完全可选, 缺字段时 feasibility 内部 fall back to DB
           // Sprint 34: 加 bid1/ask1 真盘口, 让 spread 评分用 (ask-bid)/mid 而不是 (high-low)/close 代理
@@ -2734,7 +2734,8 @@ class PaperTradingAutomationService {
         continue;
       }
 
-      let quantity = Math.floor(targetAmount / execute_price / 100) * 100;
+      // 修复 HIGH #13 (2026-06-16): 板块感知 quantize (主板 lot=100, 科创 min=200/lot=1, 北交所 min=100/lot=1)
+      let quantity = quantizeBuyQuantity(targetAmount / execute_price, symbol);
       let amount = roundNumber(execute_price * quantity, 2);
       let commission = roundNumber(amount * this.commissionRate, 2);
       let total_cost = roundNumber(amount + commission, 2);

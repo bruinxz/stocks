@@ -271,3 +271,39 @@ export function isValidSymbol(symbol: string): boolean {
 export function normalizeSymbols(symbols: string[]): string[] {
   return symbols.map(symbol => normalizeSymbol(symbol)).filter(symbol => isValidSymbol(symbol));
 }
+
+/**
+ * A 股各板块最小交易单位 / 申报阶梯 (2026-06-16 修复 HIGH #13).
+ *
+ * 板块规则:
+ *   - 主板 (sh.6 sz.0 sz.3):  min_qty=100, lot=100  (≥ 100 股, 100 股阶梯)
+ *   - 科创板 (sh.688 sh.689): min_qty=200, lot=1    (首笔 ≥ 200 股, 之后 1 股阶梯)
+ *   - 北交所 (bj.*):          min_qty=100, lot=1    (≥ 100 股, 1 股阶梯)
+ *
+ * 之前所有 BUY 路径 `quantity = Math.floor(rawQty / 100) * 100` 假设 lot=100,
+ * 北交所浪费 cash (≤99 股的 tail 被丢), 科创板 100 股下单实盘券商直接拒单.
+ *
+ * @param symbol 标准化的股票代码 (sh.XXXXXX / sz.XXXXXX / bj.XXXXXX)
+ * @returns { min_qty, lot }
+ */
+export function lotSizeFor(symbol: string): { min_qty: number; lot: number } {
+  if (!symbol) return { min_qty: 100, lot: 100 };
+  if (symbol.startsWith('bj.')) return { min_qty: 100, lot: 1 };
+  if (symbol.startsWith('sh.688') || symbol.startsWith('sh.689')) {
+    return { min_qty: 200, lot: 1 };
+  }
+  return { min_qty: 100, lot: 100 };
+}
+
+/**
+ * 按板块规则对 raw quantity 取整 (BUY 路径用).
+ *   - 主板: floor(raw/100)*100
+ *   - 科创: floor(raw/1)*1, 但下限 200 否则返 0 (实盘拒单)
+ *   - 北交所: floor(raw/1)*1, 但下限 100 否则返 0
+ */
+export function quantizeBuyQuantity(rawQty: number, symbol: string): number {
+  const { min_qty, lot } = lotSizeFor(symbol);
+  const flooredToLot = Math.floor(rawQty / lot) * lot;
+  if (flooredToLot < min_qty) return 0; // 不满最低申报量 → 无效下单
+  return flooredToLot;
+}

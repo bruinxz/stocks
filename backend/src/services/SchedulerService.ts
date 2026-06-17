@@ -1,6 +1,7 @@
 import cron, { ScheduledTask as CronScheduledTask } from 'node-cron';
 import { ScheduledTask } from '../models/ScheduledTask';
 import { TaskExecutionLog } from '../models/TaskExecutionLog';
+import { PaperTradingPortfolio } from '../models/PaperTradingPortfolio';
 import { logger } from '../utils/logger';
 import { LIVE_AUDIT_EVENT_TYPES } from '../live-trading/auditEvents';
 import { dataUpdateQueue } from '../jobs/dataUpdateQueue';
@@ -1460,9 +1461,18 @@ class SchedulerService {
           `信号质量日报完成。信号 ${result.overview.total_signals}，完成样本 ${result.overview.completed_samples}，质量分 ${result.overview.quality_score}`
         );
       } else if (task.type === 'PAPER_TRADING_AUTO_SYNC') {
-        const result = await paperTradingAutomationService.runAutoSync({
+        // 修复 HIGH #24 (2026-06-16): all_portfolios 模式 — 之前 AUTO_SYNC 只对
+        // parameters.portfolio_name 指定的单 portfolio 跑, 其他 portfolio 永远无 BUY.
+        const allPortfoliosFlag =
+          parameters.all_portfolios !== undefined
+            ? Boolean(parameters.all_portfolios)
+            : parameters.allPortfolios !== undefined
+            ? Boolean(parameters.allPortfolios)
+            : false;
+        const buildSyncOptions = (overrides: any) => ({
           username: parameters.username,
           ...portfolioParams,
+          ...overrides,
           source_type: parameters.source_type || parameters.sourceType,
           limit: this.toPositiveInt(parameters.limit, 5, 20),
           scan_limit: this.toPositiveInt(
@@ -1591,6 +1601,55 @@ class SchedulerService {
             10000
           ),
         });
+
+        let result: any;
+        if (allPortfoliosFlag) {
+          // 跨所有 active portfolio 跑 AUTO_SYNC, 聚合 counts
+          const ports = await PaperTradingPortfolio.findAll({
+            where: { is_active: true },
+            order: [['id', 'ASC']],
+          });
+          const aggregated = {
+            portfolio_id: 0,
+            user_id: 0,
+            dry_run: parameters.dry_run || parameters.dryRun || false,
+            source_type: parameters.source_type || 'unknown',
+            scanned: 0,
+            eligible: 0,
+            executed: 0,
+            planned: 0,
+            skipped: 0,
+            trades: [] as any[],
+            skipped_items: [] as any[],
+          };
+          for (const port of ports) {
+            try {
+              const opts = buildSyncOptions({
+                user_id: port.user_id,
+                portfolio_name: port.name,
+                force_new_portfolio: false,
+              });
+              const r = await paperTradingAutomationService.runAutoSync(opts);
+              aggregated.scanned += r.scanned || 0;
+              aggregated.eligible += r.eligible || 0;
+              aggregated.executed += r.executed || 0;
+              aggregated.planned += r.planned || 0;
+              aggregated.skipped += r.skipped || 0;
+              if (r.trades) aggregated.trades.push(...r.trades);
+              if (r.skipped_items) aggregated.skipped_items.push(...r.skipped_items);
+            } catch (err: any) {
+              logger.warn(
+                `[AUTO_SYNC all_portfolios] portfolio ${port.id} (${port.name}) 失败: ${err?.message || err}`
+              );
+            }
+          }
+          logger.info(
+            `AUTO_SYNC all_portfolios 完成: ${ports.length} portfolios, executed=${aggregated.executed} planned=${aggregated.planned}`
+          );
+          result = aggregated;
+        } else {
+          result = await paperTradingAutomationService.runAutoSync(buildSyncOptions({}));
+        }
 
         await this.safeUpdateExecutionLog(executionLog, {
           total_items: result.scanned,

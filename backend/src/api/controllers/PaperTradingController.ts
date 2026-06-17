@@ -22,6 +22,38 @@ function sendError(res: Response, error: any, fallbackMessage: string) {
 }
 
 export class PaperTradingController {
+  /**
+   * 修复 HIGH #16 (2026-06-16): 客户端可能在 body 里传 bypass_trading_hours /
+   * bypass_t_plus_1 / dry_run 等内部 flag 直接绕过 facade guard. 用户传的 body
+   * 必须先经过这个 sanitizer 把 sensitive flag 剥掉 (除非是 admin).
+   *
+   * 允许从 body 透传的字段白名单: signal_ids / source_type / agent_session / dry_run
+   * (dry_run 是用户合理需求, 比如"预览今天会买啥"). 其他 bypass_* / force_* 仅 admin 可传.
+   */
+  private sanitizeAutomationBody(body: any, user: any): any {
+    if (!body || typeof body !== 'object') return body || {};
+    const isAdmin = user?.role === 'admin';
+    const sensitiveFlags = [
+      'bypass_trading_hours',
+      'bypass_t_plus_1',
+      'force_new_portfolio',
+      'allow_low_data_quality_for_forced_signals',
+      'ignore_profit_gate_for_forced_signals',
+    ];
+    const sanitized = { ...body };
+    if (!isAdmin) {
+      for (const flag of sensitiveFlags) {
+        if (sanitized[flag] !== undefined) {
+          logger.warn(
+            `[sanitizeAutomationBody] user=${user?.id} 非 admin 尝试传 ${flag}=${sanitized[flag]}, 已剥除`
+          );
+          delete sanitized[flag];
+        }
+      }
+    }
+    return sanitized;
+  }
+
   // 获取当前用户的模拟盘及持仓
   getPortfolio = async (req: Request, res: Response, _next: NextFunction) => {
     try {
@@ -90,7 +122,7 @@ export class PaperTradingController {
         action: 'auto_buy',
         user_id: user.id,
         username: user.username || user.nickname,
-        body: req.body,
+        body: this.sanitizeAutomationBody(req.body, (req as any).user),
       });
       res.json({
         success: true,
@@ -112,7 +144,7 @@ export class PaperTradingController {
         action: 'auto_sync',
         user_id: user.id,
         username: user.username || user.nickname,
-        body: req.body,
+        body: this.sanitizeAutomationBody(req.body, (req as any).user),
       });
       res.json({
         success: true,
@@ -148,7 +180,7 @@ export class PaperTradingController {
         action: 'risk_check',
         user_id: user.id,
         username: user.username || user.nickname,
-        body: req.body,
+        body: this.sanitizeAutomationBody(req.body, (req as any).user),
       });
       res.json({
         success: true,
@@ -235,7 +267,7 @@ export class PaperTradingController {
         action: 'autonomous_auto_sync',
         user_id: user.id,
         username: user.username || user.nickname,
-        body: req.body,
+        body: this.sanitizeAutomationBody(req.body, (req as any).user),
       });
       const { execution, dashboard } = result;
       res.json({
@@ -258,7 +290,7 @@ export class PaperTradingController {
         action: 'autonomous_risk_check',
         user_id: user.id,
         username: user.username || user.nickname,
-        body: req.body,
+        body: this.sanitizeAutomationBody(req.body, (req as any).user),
       });
       const { execution, dashboard } = result;
       res.json({
@@ -379,7 +411,7 @@ export class PaperTradingController {
         action: 'hindsight_refresh',
         user_id: user.id,
         username: user.username || user.nickname,
-        body: req.body,
+        body: this.sanitizeAutomationBody(req.body, (req as any).user),
       });
       res.json({ success: true, data: result, message: result.message });
     } catch (error: any) {
@@ -432,7 +464,7 @@ export class PaperTradingController {
       const result: any = await paperTradingFacade.attributePnl({
         action: 'refresh_recommendation_outcomes',
         user_id: user.id,
-        body: req.body,
+        body: this.sanitizeAutomationBody(req.body, (req as any).user),
       });
       res.json({
         success: true,
@@ -451,7 +483,7 @@ export class PaperTradingController {
       const result: any = await paperTradingFacade.attributePnl({
         action: 'report_recommendation_outcomes',
         user_id: user.id,
-        body: req.body,
+        body: this.sanitizeAutomationBody(req.body, (req as any).user),
       });
       res.json({
         success: true,
@@ -470,7 +502,7 @@ export class PaperTradingController {
       const result: any = await paperTradingFacade.attributePnl({
         action: 'report',
         user_id: user.id,
-        body: req.body,
+        body: this.sanitizeAutomationBody(req.body, (req as any).user),
       });
       res.json({
         success: true,
@@ -510,7 +542,7 @@ export class PaperTradingController {
         action: 'plan_report',
         user_id: user.id,
         username: user.username || user.nickname,
-        body: req.body,
+        body: this.sanitizeAutomationBody(req.body, (req as any).user),
       });
       res.json({
         success: true,
@@ -530,7 +562,7 @@ export class PaperTradingController {
         action: 'tuning_apply',
         user_id: user.id,
         username: user.username || user.nickname,
-        body: req.body,
+        body: this.sanitizeAutomationBody(req.body, (req as any).user),
       });
       res.json({ success: true, data: result, message: result.message });
     } catch (error: any) {
@@ -610,7 +642,7 @@ export class PaperTradingController {
         action: 'tuning_rollback',
         user_id: user.id,
         username: user.username || user.nickname,
-        body: req.body,
+        body: this.sanitizeAutomationBody(req.body, (req as any).user),
       });
       res.json({ success: true, data: result, message: result.message });
     } catch (error: any) {
