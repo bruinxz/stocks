@@ -13,23 +13,21 @@ export interface AuthenticatedRequest extends Request {
 
 /**
  * 简单的JWT认证中间件
- * 在开发环境中，如果未提供token，会创建一个模拟用户
+ *
+ * Batch R (2026-06-17, P1-3 fix): 删除 dev demo-user 后门. 旧实现在
+ * NODE_ENV=development 时缺 authHeader 直接注入 user.id=1, 是一颗"上膛的枪" —
+ * 任何 PR 误 import `authenticate` 就让 demo 后门挂上去, 生产 NODE_ENV 漏配
+ * 时也匿名走 user.id=1. 现在统一: 缺 token 直接 401, 没有任何 dev fallback.
+ *
+ * 实际生效的认证由 AuthController.authenticate 提供 (有真实 JWT 校验);
+ * 本 export 仅保留 AuthenticatedRequest 类型 + requireRole helper, 不要再调
+ * `authenticate` 入口 — 未来如需 dev mock 应在测试 setup 里注入 jwt, 而不是
+ * 在生产代码里留后门.
  */
 export const authenticate = (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const authHeader = req.headers.authorization;
 
-  // 开发环境：如果没有token，使用模拟用户
-  if (process.env.NODE_ENV === 'development' && !authHeader) {
-    req.user = {
-      id: 1,
-      username: 'demo',
-      email: 'demo@example.com',
-      role: 'user',
-    };
-    logger.debug('Using demo user in development mode');
-    return next();
-  }
-
+  // Batch R (2026-06-17): 删除原 dev demo-user 注入分支. 缺 token 一律 401.
   if (!authHeader) {
     return res.status(401).json({
       success: false,

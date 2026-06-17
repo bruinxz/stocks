@@ -205,6 +205,17 @@ app.get('/', (req, res) => {
 });
 
 // API routes
+// Batch R (2026-06-17, P1-2): /api/auth/login + /api/auth/refresh 加 IP 维度限流
+// 防暴破. 每 IP 5 分钟最多 20 次. 多副本部署不共享但配合 nginx ip_hash 已够灰度.
+import { ipRateLimit } from './middlewares/globalErrorAndRateLimit';
+app.use(
+  '/api/auth/login',
+  ipRateLimit({ name: 'auth_login', windowMs: 5 * 60 * 1000, max: 20 })
+);
+app.use(
+  '/api/auth/refresh',
+  ipRateLimit({ name: 'auth_refresh', windowMs: 5 * 60 * 1000, max: 30 })
+);
 app.use('/api/auth', authRoutes);
 app.use('/api/stocks', stockRoutes);
 app.use('/api/backtests', backtestRoutes);
@@ -962,6 +973,13 @@ async function initializeApp() {
       expTimer.unref?.();
     }
 
+    // Batch R (2026-06-17, P1-2): 全局 error handler middleware — 放在 app.listen 前,
+    // 把任何 controller throw / next(err) 序列化成统一 JSON 响应. 之前 controller 杂用
+    // res.status(500)/next(err)/throw, 前端 axios interceptor 不能稳定 catch.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { globalErrorHandler } = require('./middlewares/globalErrorAndRateLimit');
+    app.use(globalErrorHandler);
+
     app.listen(Number(PORT), HOST, () => {
       console.log(`Server is running on ${HOST}:${PORT}`);
       console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
@@ -980,6 +998,10 @@ async function initializeApp() {
       process.exit(1);
     }
     console.warn('Starting server without database connection (override enabled). Many features will 5xx.');
+    // Batch R (2026-06-17, P1-2): override 路径下也挂 globalErrorHandler.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { globalErrorHandler: globalErrorHandlerOverride } = require('./middlewares/globalErrorAndRateLimit');
+    app.use(globalErrorHandlerOverride);
     app.listen(Number(PORT), HOST, () => {
       console.log(`Server is running on ${HOST}:${PORT} (without database connection)`);
       console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);

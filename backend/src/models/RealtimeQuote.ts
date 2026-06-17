@@ -18,7 +18,11 @@ import { Stock } from './Stock';
     { fields: ['symbol'] },
     { fields: ['quote_time'] },
     { fields: ['trade_date'] },
-    { fields: ['symbol', 'quote_time'] },
+    // Batch R (2026-06-17, P1-9 fix): 加 (symbol, quote_time) UNIQUE 防 cron 高频
+    // (15/30/60s) 同 quote_time bulkCreate 重复行. 之前一年累积数千万 dup row,
+    // (symbol, quote_time) 索引膨胀, getLatestQuotes limit 被 dup 耗光. 配合
+    // bulkCreate({ignoreDuplicates: true}) 一起做.
+    { fields: ['symbol', 'quote_time'], unique: true, name: 'uniq_realtime_quote_symbol_time' },
     { fields: ['symbol', 'trade_date'] },
   ],
 })

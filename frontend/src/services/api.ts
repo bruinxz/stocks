@@ -21,8 +21,14 @@ const api = axios.create({
 
 // 是否正在刷新的标记
 let isRefreshing = false;
-// 重试队列，每一项将是一个待执行的函数(存有config, resolve, reject)
-let requests: ((token: string) => void)[] = [];
+// Batch R (2026-06-17, P1-1 fix): 重试队列每项含 resolve + reject 两个 callback,
+// 让 refresh 失败时能 reject 所有 queued promise (旧实现 requests=[]; 清空数组让
+// queued promise 永远 pending, 配合 SPA 不跳页时 memory leak + loading 圈卡死).
+type QueuedRequest = {
+  resolve: (token: string) => void;
+  reject: (reason: any) => void;
+};
+let requests: QueuedRequest[] = [];
 
 // 请求拦截器
 api.interceptors.request.use(
@@ -72,12 +78,18 @@ api.interceptors.response.use(
             originalRequest.headers.Authorization = `Bearer ${accessToken}`;
 
             // 重新发送队列里的所有请求
-            requests.forEach(cb => cb(accessToken));
+            requests.forEach(cb => cb.resolve(accessToken));
             requests = [];
 
             return api(originalRequest);
           } catch (refreshError) {
             // 刷新 Token 也失败了（说明 RefreshToken 彻底过期），只能清空并跳转
+            // Batch R (2026-06-17, P1-1 fix): 显式 reject 所有 queued promise,
+            // 旧实现 requests=[] 清空让 queued promise 永远 pending → memory leak +
+            // SPA 不跳页时 loading 圈永远卡住. 现在 caller 的 await 会进 catch 跳出.
+            requests.forEach(cb =>
+              cb.reject(refreshError instanceof Error ? refreshError : new Error(String(refreshError)))
+            );
             requests = [];
             localStorage.removeItem('token');
             // Batch L (2026-06-17): 同时清掉 portfolio 选择, 否则换账户后还残留旧 user
@@ -93,10 +105,13 @@ api.interceptors.response.use(
           }
         } else {
           // 正在刷新中，把当前的请求存入队列等待
-          return new Promise(resolve => {
-            requests.push((token: string) => {
-              originalRequest.headers.Authorization = `Bearer ${token}`;
-              resolve(api(originalRequest));
+          return new Promise((resolve, reject) => {
+            requests.push({
+              resolve: (token: string) => {
+                originalRequest.headers.Authorization = `Bearer ${token}`;
+                resolve(api(originalRequest));
+              },
+              reject: (err: any) => reject(err),
             });
           });
         }

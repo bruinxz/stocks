@@ -323,7 +323,9 @@ export class RealtimeQuoteService {
       return { persisted_count: 0, updated_stock_count: 0, symbols: normalizedSymbols };
     }
 
-    await RealtimeQuote.bulkCreate(rows);
+    // Batch R (2026-06-17, P1-9 fix): ignoreDuplicates 配合 model 上的 UNIQUE
+    // (symbol, quote_time) 索引, 防 cron 高频重复 insert 让表膨胀.
+    await RealtimeQuote.bulkCreate(rows, { ignoreDuplicates: true });
     let updatedStockCount = 0;
     for (const row of rows) {
       const stock = stockBySymbol.get(row.symbol);
