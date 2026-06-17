@@ -85,6 +85,39 @@ export class StrategyRegistry {
     if (!strategy_keys?.length) return this.enabled();
     return strategy_keys.map(key => this.get(key)).filter(Boolean) as QuantStrategy[];
   }
+
+  /**
+   * Batch N (2026-06-17, B3 fix): 异步版 resolve, 用 DB `QuantStrategyModel.enabled`
+   * 作为 source of truth. 修复 kill-switch lever 真生效:
+   *
+   * 之前 `enabled()` / `resolve()` 用 in-memory `definition.enabled` (启动时静态常量),
+   * StrategyKillSwitchMonitor 把 DB 改 enabled=false 后, 下一轮 cron 仍跑该策略 →
+   * 整条 kill-switch 失灵. 现在 caller (SignalEngine / fusion) 调 resolveFromDb 拿
+   * DB 真实状态. 调用频率低 (per-pipeline 一次), 走 DB 不影响性能.
+   *
+   * fail-CLOSED: DB 失败时 throw 让 caller abort, 而不是 silent 返 in-memory 所有
+   * enabled (会绕过 kill-switch).
+   */
+  async resolveFromDb(strategy_keys?: string[]): Promise<QuantStrategy[]> {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { QuantStrategyModel } = require('../../models/QuantStrategyModel');
+    const records: Array<{ strategy_key: string; enabled: boolean }> =
+      await QuantStrategyModel.findAll({
+        attributes: ['strategy_key', 'enabled'],
+        raw: true,
+      });
+    const enabledKeys = new Set(
+      records.filter(r => r.enabled === true).map(r => r.strategy_key)
+    );
+    if (!strategy_keys?.length) {
+      return [...this.strategies.values()].filter(s =>
+        enabledKeys.has(s.definition.strategy_key)
+      );
+    }
+    return strategy_keys
+      .map(key => (enabledKeys.has(key) ? this.get(key) : undefined))
+      .filter(Boolean) as QuantStrategy[];
+  }
 }
 
 export const strategyRegistry = new StrategyRegistry();

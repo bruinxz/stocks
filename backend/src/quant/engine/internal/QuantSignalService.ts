@@ -190,7 +190,10 @@ export class QuantSignalService {
           ? options.include_realtime_quote
           : trade_date >= dateOnly(new Date()),
     });
-    const strategies = strategyRegistry.resolve(options.strategy_keys);
+    // Batch N (2026-06-17, B3 fix): 改用 resolveFromDb 让 DB enabled 字段成为
+    // source of truth, kill-switch monitor 改 enabled=false 立即对下一次 generate
+    // 生效, 不再依赖 in-memory definition.enabled.
+    const strategies = await strategyRegistry.resolveFromDb(options.strategy_keys);
     // Sprint 40 #2: 把 strategies 拆成 per-stock (evaluate loop) 与 composite-level
     // (单独跑 generateSignals) 两组.组合级策略的 evaluate() 退化为 hold,放进 per-stock
     // loop 会污染 signals 数组,所以这里就 skip 掉.

@@ -53,6 +53,12 @@ export interface AIPollingJobData {
   data_quality_score?: number;
   data_quality_bucket?: string;
   data_quality?: any;
+  /**
+   * Batch N (2026-06-17): 透传 dry_run_strategy_keys 让 worker 在 autoBuyFromSignals
+   * 时让 dry-run 策略真正只 plan 不下单. 之前 fusion → archive → submitAgentReview
+   * → aiPollingQueue 这条 cron 链路完全不传, dry-run lever 经此路径失效.
+   */
+  dry_run_strategy_keys?: string[];
 }
 
 const aiPollingQueue = new Bull<AIPollingJobData>('ai_polling', {

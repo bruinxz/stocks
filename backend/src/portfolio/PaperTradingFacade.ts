@@ -1000,21 +1000,24 @@ export class PaperTradingFacade {
     // with lifecycle_policy.dry_run === true → its signals get planned-only treatment
     // in autoBuyFromSignals (no createBuyTrade, just order_intent + QuantSignal row).
     // Lazy-require to avoid pulling the entire quant/engine subsystem into facade load.
-    // Fail-OPEN on DB issues (empty array) — same risk-bias as US-049/US-082.
+    //
+    // Batch N (2026-06-17): 改成 fail-CLOSED — DB 加载 dry-run 列表失败时, 直接 throw
+    // 让本次 applyAutomation 失败 + 告警, 而不是 silent 返空数组让所有 dry-run 策略
+    // 误真下单. 反向安全选择: 短暂 DB 故障 → 用户重试 / 等待 cron 下一轮 OK; silent
+    // 真下单 → 用户损失真金白银. 同款 fail-CLOSED in PositionLimitGuard.
     const resolveDryRunStrategyKeys = async (): Promise<string[]> => {
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const { strategyEngine } = require('../quant/engine/StrategyEngine');
-        const keys = await strategyEngine.getDryRunStrategyKeys();
-        return Array.isArray(keys) ? keys : [];
-      } catch (error: any) {
-        logger.warn(
-          `applyAutomation: 加载 dry-run 策略列表失败: ${
-            error?.message || error
-          }（fail-OPEN，按非 dry-run 处理）`
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { strategyEngine } = require('../quant/engine/StrategyEngine');
+      const keys = await strategyEngine.getDryRunStrategyKeys();
+      if (!Array.isArray(keys)) {
+        const err: any = new Error(
+          'applyAutomation: getDryRunStrategyKeys 返回非数组, fail-CLOSED 避免误下单'
         );
-        return [];
+        err.statusCode = 503;
+        err.code = 'DRY_RUN_KEYS_UNAVAILABLE';
+        throw err;
       }
+      return keys;
     };
 
     switch (action) {

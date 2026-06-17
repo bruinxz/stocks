@@ -258,20 +258,17 @@ export class QuantStrategyService {
    * `paperTradingAutomationService.autoBuyFromSignals({ dry_run_strategy_keys })`
    * 让这些策略的信号走 planned-only 路径（信号仍写 QuantSignal 表，不实际下单）。
    *
-   * 故障兜底：DB 查询失败时返回空数组（fail-OPEN —— 风控宁可让 dry-run 策略真实下单，
-   * 也不要因 DB 故障让全部策略都被误判为 dry-run）。同款 fail-OPEN 模式见 US-082
-   * MarketSentimentIndex / US-049 DrawdownCircuitBreaker.checkBuyAllowed。
+   * Batch N (2026-06-17): 改成 fail-CLOSED — DB 查询失败时 throw, 让 caller 决定
+   * 跳过本轮 / 走兜底 / 报警, 而不是静默"所有策略都真实下单"(用户最害怕的事).
+   * 旧 fail-OPEN 注释 "宁可让 dry-run 策略真实下单"违反用户 dry_run=true 语义,
+   * 是反向的安全选择. 同款 fail-CLOSED 在 PositionLimitGuard / 硬风控已是默认.
    *
    * 返回值是 string[]，调用方可以直接传给 `dry_run_strategy_keys` 参数。
    */
   async getDryRunStrategyKeys(): Promise<string[]> {
-    try {
-      await this.syncRegistry();
-      const records = await QuantStrategyModel.findAll({});
-      return pickDryRunStrategyKeysFromRecords(records);
-    } catch {
-      return [];
-    }
+    await this.syncRegistry();
+    const records = await QuantStrategyModel.findAll({});
+    return pickDryRunStrategyKeysFromRecords(records);
   }
 
   async getDefaultParamsByStrategy(strategy_keys?: string[] | string) {

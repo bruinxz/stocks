@@ -110,6 +110,14 @@ export interface QuantDailyPipelineOptions {
   refresh_realtime_quotes?: boolean;
   quote_sync_limit?: number;
   realtime_quote_source?: string;
+  /**
+   * Batch N (2026-06-17): runDailyPipeline 入口可接收 dry_run_strategy_keys, 透传到
+   * submitAgentReview → aiPollingQueue 让 worker 在 autoBuyFromSignals 时尊重
+   * dry-run lever. 之前完全未传, 此条 cron 链路 dry-run 失效.
+   * caller 若不传, runDailyPipeline 内会自己调 strategyEngine.getDryRunStrategyKeys()
+   * 作 fail-CLOSED 加载 (B1 同步修过).
+   */
+  dry_run_strategy_keys?: string[];
   sync_factors_before_scan?: boolean;
   factor_sync_scope?: 'market' | 'favorites' | 'custom';
   factor_sync_limit?: number;
@@ -486,6 +494,17 @@ function regimeBucketAdjustment(
 export class QuantFusionService {
   async runDailyPipeline(options: QuantDailyPipelineOptions = {}) {
     const trade_date = options.trade_date || getChinaDate();
+    // Batch N (2026-06-17): 解析 dry_run_strategy_keys 一次, 透传给 submitAgentReview /
+    // autoBuyFromSignals. caller (cron / 手动 endpoint) 没传时, 自己加载 (fail-CLOSED:
+    // 失败时整个 pipeline abort 而不是 silent 让 dry-run 策略真下单).
+    let resolvedDryRunStrategyKeys: string[];
+    if (Array.isArray(options.dry_run_strategy_keys)) {
+      resolvedDryRunStrategyKeys = options.dry_run_strategy_keys;
+    } else {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { strategyEngine } = require('../StrategyEngine');
+      resolvedDryRunStrategyKeys = await strategyEngine.getDryRunStrategyKeys();
+    }
     const archiveLimit = toPositiveInt(options.archive_limit, 30, 200);
     const agentMaxCount = toPositiveInt(options.agent_max_count, 5, 20);
     const agentMinScore = safeNumber(options.agent_min_score, 72);
@@ -848,6 +867,8 @@ export class QuantFusionService {
       target_date: options.target_date || trade_date,
       agent_max_count: agentMaxCount,
       agent_min_score: agentMinScore,
+      // Batch N (2026-06-17): 显式透传 dry_run_strategy_keys 让 agent path 尊重 dry-run.
+      dry_run_strategy_keys: resolvedDryRunStrategyKeys,
     });
 
     let paperTrading: any = null;
@@ -862,6 +883,8 @@ export class QuantFusionService {
         force_new_portfolio: options.force_new_portfolio,
         source_type: AISignalSourceType.QUANT_RECOMMENDATION,
         signal_ids: archive.signal_ids,
+        // Batch N: 直接 autoBuy path 同样尊重 dry-run lever
+        dry_run_strategy_keys: resolvedDryRunStrategyKeys,
         limit: toPositiveInt(options.paper_trade_limit, 3, 20),
         scan_limit: toPositiveInt(
           options.paper_trade_scan_limit,
@@ -2174,6 +2197,8 @@ export class QuantFusionService {
             auto_paper_trade: options.agent_auto_paper_trade !== false,
             paper_trade_username: options.username,
             paper_trade_portfolio_name: agentFusionPortfolioName,
+            // Batch N (2026-06-17): 透传 dry-run lever 到 worker → autoBuyFromSignals
+            dry_run_strategy_keys: options.dry_run_strategy_keys,
             paper_trade_initial_capital: options.initial_capital,
             paper_trade_force_new_portfolio: options.force_new_portfolio,
             paper_trade_min_score: safeNumber(

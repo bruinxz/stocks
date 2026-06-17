@@ -2212,13 +2212,17 @@ class SchedulerService {
       } else if (task.type === 'STRATEGY_KILL_SWITCH_CHECK') {
         // Phase 4+ 策略熔断监控 — 评估每个策略的 kill_switch_metric (定义在
         // edge_hypothesis 内)；低于 kill_switch_threshold 触发自动 enabled=false。
-        // `dry_run` 参数默认 true（保守），生产 cron 应配 dry_run=false 让熔断真正生效。
+        //
+        // Batch N (2026-06-17, B4 fix): 默认 dry_run=false 让 kill_switch 真生效.
+        // 旧默认 dry_run=true "保守" 实际上让整套 kill_switch lever 永远不触发 —
+        // 运维通常不会盯每个 task 配置, 反向更危险. 现在显式想"只评估" 的 task
+        // 需要在 parameters 里 set dry_run=true (staging cron / 开发环境).
         const dryRun =
           parameters.dry_run !== undefined
             ? Boolean(parameters.dry_run)
             : parameters.dryRun !== undefined
             ? Boolean(parameters.dryRun)
-            : true; // 默认 dry_run 避免运维误关
+            : false; // Batch N: 默认 false 让熔断真触发, "误关"由 evaluateAll 内部阈值/样本量门槛防止
         const { strategyKillSwitchMonitor } = require('../services/StrategyKillSwitchMonitor');
         const result = await strategyKillSwitchMonitor.evaluateAll({ dry_run: dryRun });
         await this.safeUpdateExecutionLog(executionLog, {

@@ -142,6 +142,7 @@ if (aiPollingWorkerDisabled) {
       strategy_max_single_trade_pct,
       strategy_budget_discipline,
       quant_agent_fusion,
+      dry_run_strategy_keys, // Batch N (2026-06-17): 透传到 autoBuyFromSignals 让 dry-run 真生效
     } = job.data;
 
     try {
@@ -357,6 +358,8 @@ if (aiPollingWorkerDisabled) {
               source_type: 'tradingagents',
               agent_session: agentSession,
               signal_ids: [archivedSignal.id],
+              // Batch N (2026-06-17): 让 dry-run 策略经此 cron 路径仍只 plan 不下单
+              dry_run_strategy_keys: dry_run_strategy_keys,
               limit: 1,
               scan_limit: 1,
               min_score: Number(paper_trade_min_score || 72),
@@ -417,6 +420,8 @@ if (aiPollingWorkerDisabled) {
               source_type: 'tradingagents',
               agent_session: agentSession,
               signal_ids: [archivedSignal.id],
+              // Batch N (2026-06-17): 透传 dry-run lever
+              dry_run_strategy_keys: dry_run_strategy_keys,
               limit: 1,
               scan_limit: 1,
               min_score: Number(agent_only_paper_trade_min_score || paper_trade_min_score || 72),
