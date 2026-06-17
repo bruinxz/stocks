@@ -236,6 +236,17 @@ function buildRealtimeQuoteSyncLogSummary(result: any, persistence: any, options
 
 class SchedulerService {
   private activeTasks: Map<number, CronScheduledTask> = new Map();
+  /**
+   * Batch O (2026-06-17, C-S1 fix): in-flight lock — 防 cron tick overlap.
+   * 上一次 task 没跑完下一次 tick 触发会 *同时跑两实例*, 配合 Batch J 真卖路径
+   * = 数量翻倍卖. node-cron 没有 noOverlap 原生支持, 自实现一个 task.id Set.
+   */
+  private inFlightTaskIds: Set<number> = new Set();
+  /**
+   * Batch O (2026-06-17, C-S5): 周期性 reconcile stale RUNNING task 的 timer.
+   * 旧实现只在 boot 跑一次 → IN_PROGRESS 永挂. 现在每 10 分钟扫一次.
+   */
+  private reconcileTimer: ReturnType<typeof setInterval> | null = null;
 
   /**
    * Batch M (2026-06-17): production 启动可观测性.
@@ -265,6 +276,19 @@ class SchedulerService {
         `[scheduler] initialize complete: active_count=${this.activeTasks.size}/${tasks.length} ` +
           `(${tasks.length - this.activeTasks.size} 个未 schedule, 通常是 cron expression 非法)`
       );
+
+      // Batch O (2026-06-17, C-S5): 启动周期性 reconcile timer.
+      // 旧实现只在 boot 跑一次, task 卡死后 RUNNING 状态永不清. 现在每 10 分钟扫一次
+      // 把 RUNNING 超 30min 的标 FAILED, 让 dashboard 能反映真实状态.
+      if (this.reconcileTimer) clearInterval(this.reconcileTimer);
+      this.reconcileTimer = setInterval(
+        () => {
+          this.reconcileStaleRunningTasks().catch(err =>
+            logger.warn(`[scheduler] periodic reconcileStaleRunningTasks failed: ${err?.message}`)
+          );
+        },
+        10 * 60 * 1000
+      ).unref();
     } catch (error) {
       logger.error('Failed to initialize scheduler:', error);
       // Batch M (2026-06-17): 旧实现 swallow error 让进程"健康"启动但 0 cron 在跑.
@@ -276,7 +300,21 @@ class SchedulerService {
 
   private scheduleTask(task: ScheduledTask) {
     if (this.activeTasks.has(task.id)) {
-      this.activeTasks.get(task.id)?.stop();
+      // Batch O (2026-06-17, C-S2 fix): 旧实现只 .stop() 不 .destroy(), node-cron
+      // registry 永久泄漏, 长期运行内存膨胀 + 已 stop 的 task 仍占资源. 现在显式
+      // destroy 释放 task object 内的 timer 引用.
+      const old = this.activeTasks.get(task.id);
+      try {
+        old?.stop();
+        // node-cron@3 类型 def 里没有 destroy, 但 runtime 上有这个方法; 用 any 兜底.
+        (old as any)?.destroy?.();
+      } catch (destroyErr: any) {
+        logger.warn(
+          `[scheduler] stop+destroy old task ${task.id} failed (continuing): ${
+            destroyErr?.message || destroyErr
+          }`
+        );
+      }
       this.activeTasks.delete(task.id);
     }
 
@@ -288,11 +326,23 @@ class SchedulerService {
     const scheduledJob = cron.schedule(
       task.cron_expression,
       async () => {
+        // Batch O (2026-06-17, C-S1 fix): in-flight lock 防 overlap. 上一次 task 还在
+        // 跑下一次 tick 触发 → 同 task_id 同时跑两实例 → 配合 Batch J guard sell
+        // executor 真卖路径 = 数量翻倍卖. 现在 skip + warn.
+        if (this.inFlightTaskIds.has(task.id)) {
+          logger.warn(
+            `[scheduler] task ${task.id} (${task.name}) 上一次 tick 仍在跑, skip 本次 tick 防 overlap`
+          );
+          return;
+        }
+        this.inFlightTaskIds.add(task.id);
         logger.info(`Executing scheduled task: ${task.name} (${task.type})`);
         try {
           await this._executeTaskLogic(task, false);
         } catch (error) {
           logger.error(`Scheduled task ${task.id} (${task.name}) execution failed:`, error);
+        } finally {
+          this.inFlightTaskIds.delete(task.id);
         }
       },
       {
@@ -503,8 +553,21 @@ class SchedulerService {
       const requireTradingDay = (parameters as any).require_trading_day !== false;
       if (!isManual && requireTradingDay) {
         const { isAShareTradeDay, explainNonTradeDay } = require('../utils/tradingCalendar');
-        const isWeekdayCron = /\* \* 1-5$/.test(task.cron_expression || '');
-        // 只对 1-5 (周一到周五) 类型 cron 加节假日 guard
+        // Batch O (2026-06-17, C-S7 fix): isWeekdayCron 正则扩展支持等价写法.
+        // 旧只匹配 `* * 1-5$` 字面, ops 改成 `* * 1,2,3,4,5` / `* * MON-FRI` / `0,15,30,45 9-15 * * 1-5`
+        // 都会绕过节假日 guard 在春节继续跑空请求. 新逻辑:
+        // (a) 默认仍判 DoW 字段含 1-5 / MON-FRI / 1,2,3,4,5 / 工作日列表;
+        // (b) parameters.require_trading_day=true (显式开启) → 强制走节假日 guard, 不依赖 cron pattern;
+        // (c) parameters.require_trading_day=false → 不查 (周末/跨日 cron).
+        const cronExpr = task.cron_expression || '';
+        const dowField = cronExpr.trim().split(/\s+/)[4] || '*';
+        const looksLikeWeekday =
+          /1-5/.test(dowField) ||
+          /MON-FRI/i.test(dowField) ||
+          /^1,2,3,4,5$/.test(dowField) ||
+          /\b1,2,3,4,5\b/.test(dowField);
+        const explicitlyRequired = (parameters as any).require_trading_day === true;
+        const isWeekdayCron = looksLikeWeekday || explicitlyRequired;
         if (isWeekdayCron && !isAShareTradeDay(timestamp)) {
           const reason = explainNonTradeDay(timestamp) || 'A 股节假日';
           logger.info(
@@ -5077,6 +5140,72 @@ class SchedulerService {
         cron_expression: '0 16 * * 1-5',
         is_active: true,
         parameters: {},
+      },
+      // Batch O (2026-06-17, C-S6 fix): 补 8 个之前完全没 seed 的 task type, ops 不
+      // 手动加 ScheduledTask 行就永不跑. 配合 Batch J 的 真卖路径 + cron 接入,
+      // 全部 risk guard 终于会自动跑.
+      {
+        name: '追踪止损 EOD 更新 (US-048)',
+        type: 'PAPER_TRADING_TRAILING_STOP_UPDATE',
+        cron_expression: '15 15 * * 1-5', // 收盘后 15:15
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      {
+        name: '追踪止损次日开盘前检查 + 真卖 (US-048 + Batch J)',
+        type: 'PAPER_TRADING_TRAILING_STOP_CHECK',
+        cron_expression: '20 9 * * 1-5', // 开盘前 09:20
+        is_active: true,
+        parameters: { dry_run: false, execute_sells: true },
+      },
+      {
+        name: '回撤熔断检查 + LEVEL_2/3 真卖 (US-049 + Batch J)',
+        type: 'PAPER_TRADING_DRAWDOWN_BREAKER_CHECK',
+        cron_expression: '20 15 * * 1-5',
+        is_active: true,
+        parameters: { dry_run: false, execute_sells: true },
+      },
+      {
+        name: '市场环境预警 (US-050)',
+        type: 'PAPER_TRADING_MARKET_REGIME_CHECK',
+        cron_expression: '5 9 * * 1-5', // 开盘前 09:05
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      {
+        name: '每股止损检查 + 真卖 (US-051 + Batch J)',
+        type: 'PAPER_TRADING_PER_STOCK_STOP_LOSS_CHECK',
+        cron_expression: '25 15 * * 1-5',
+        is_active: true,
+        parameters: { dry_run: false, execute_sells: true },
+      },
+      {
+        name: '早盘体检 (US-054 + Batch J)',
+        type: 'PAPER_TRADING_MORNING_CHECKUP',
+        cron_expression: '30 8 * * 1-5',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      {
+        name: '限售解禁前瞻预警 (US-089 + Batch J)',
+        type: 'PAPER_TRADING_RESTRICTED_SHARE_CHECK',
+        cron_expression: '0 9 * * 1-5',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      {
+        name: '行业集中度评估 (US-052 + Batch J)',
+        type: 'PAPER_TRADING_INDUSTRY_CONCENTRATION_CHECK',
+        cron_expression: '35 15 * * 1-5',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      {
+        name: '策略熔断监控 (Phase 4+ + Batch N)',
+        type: 'STRATEGY_KILL_SWITCH_CHECK',
+        cron_expression: '40 16 * * 1-5',
+        is_active: true,
+        parameters: { dry_run: false }, // Batch N: 默认 dry_run=false 让熔断真触发
       },
     ];
 
