@@ -1,8 +1,12 @@
 /**
  * 一次性维护脚本：清空 paper_trading 所有数据 + 确保 stock 用户和默认 portfolio 就绪
  *
+ * Batch W (2026-06-17): 加 ALLOW_DESTRUCTIVE_RESET guard + --i-know-what-im-doing flag.
+ * 之前任何人 node reset_paper_trading_to_stock.js 直接 DELETE 7 张表 + 覆盖 stock 密码.
+ *
  * 使用：
- *   NODE_PATH=/opt/stocks/current/backend/node_modules node scripts/maintenance/reset_paper_trading_to_stock666.js
+ *   ALLOW_DESTRUCTIVE_RESET=true NODE_PATH=/opt/stocks/current/backend/node_modules \
+ *     node scripts/maintenance/reset_paper_trading_to_stock.js --i-know-what-im-doing
  *
  * 历史上下文：US 之前各用户 (xz/lym) 模拟盘混杂 23 个 portfolio / 1360 条 order_intent，
  * 决定统一收敛到单 stock 系统观测账号。本脚本：
@@ -12,6 +16,18 @@
  *
  * 后续：从交易日 15:30 PAPER_TRADING_DAILY_DIGEST 开始自动跟单。
  */
+
+// Batch W: 双层 guard 防误跑
+if (process.env.ALLOW_DESTRUCTIVE_RESET !== 'true') {
+  console.error('[SAFE-GUARD] reset_paper_trading_to_stock.js 会清空 7 张 paper_trading 表 (全用户).');
+  console.error('[SAFE-GUARD] 如确认请: ALLOW_DESTRUCTIVE_RESET=true node ... --i-know-what-im-doing');
+  process.exit(1);
+}
+if (!process.argv.includes('--i-know-what-im-doing')) {
+  console.error('[SAFE-GUARD] 缺少 --i-know-what-im-doing flag. 这是 prod 数据销毁脚本.');
+  process.exit(1);
+}
+
 require('dotenv').config({ path: '/opt/stocks/current/backend/.env' });
 const { sequelize } = require('/opt/stocks/current/backend/dist/config/database');
 const bcrypt = require('/opt/stocks/current/backend/node_modules/bcrypt');

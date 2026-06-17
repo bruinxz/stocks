@@ -1,5 +1,9 @@
 version: '3.8'
 
+# Batch W (2026-06-17): POSTGRES_PASSWORD 改读 env var, 不再硬编码明文密码到 git.
+# 运维需在 .env (与 docker-compose.yml 同目录) 或 shell 显式 export:
+#   POSTGRES_PASSWORD=<rotate 后的强密码>
+# 启动前用 docker-compose config 验证替换正确.
 services:
   postgres:
     image: timescale/timescaledb:latest-pg14
@@ -7,7 +11,7 @@ services:
     environment:
       POSTGRES_DB: stock_backtest
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: "x8Vq$$9pL2#mK7@nW1cF5^jY3!bH4*gD"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?ERROR: POSTGRES_PASSWORD env not set; refusing to start with empty/default password}"
     ports:
       - "127.0.0.1:5432:5432"
     volumes:

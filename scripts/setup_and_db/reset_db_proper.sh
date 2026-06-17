@@ -1,4 +1,24 @@
 #!/bin/bash
+# Batch W (2026-06-17): 加 ALLOW_RESET_DB guard + --i-know-what-im-doing.
+set -euo pipefail
+
+if [ "${ALLOW_RESET_DB:-}" != "true" ]; then
+  echo "[SAFE-GUARD] reset_db_proper.sh 是 prod 数据销毁脚本. 如确认请: ALLOW_RESET_DB=true bash reset_db_proper.sh --i-know-what-im-doing" >&2
+  exit 1
+fi
+
+if [ "${1:-}" != "--i-know-what-im-doing" ]; then
+  echo "[SAFE-GUARD] 缺少 --i-know-what-im-doing flag." >&2
+  exit 1
+fi
+
+echo "[RESET-DB-PROPER] hostname=$(hostname), date=$(date)"
+read -r -p "[RESET-DB-PROPER] 输入 'RESET-PROD-DB' 确认: " CONFIRM
+if [ "$CONFIRM" != "RESET-PROD-DB" ]; then
+  echo "[SAFE-GUARD] abort." >&2
+  exit 1
+fi
+
 cd /opt/stocks
 
 echo "Resetting database completely..."
