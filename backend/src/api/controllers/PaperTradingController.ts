@@ -131,9 +131,14 @@ export class PaperTradingController {
   getTradeHistory = async (req: Request, res: Response, _next: NextFunction) => {
     try {
       const user = (req as any).user;
+      // 修复 (2026-06-17 串盘 续): controller 之前没透传 req.query.portfolio_id 给 facade,
+      // 即使前端传了 ?portfolio_id=X 后端仍走 facade fallback 路径返回任意盘的 trades.
+      const portfolioIdRaw = req.query?.portfolio_id;
+      const portfolio_id = portfolioIdRaw ? Number(portfolioIdRaw) : undefined;
       const data = await paperTradingFacade.getDailySnapshot({
         action: 'trades',
         user_id: user.id,
+        portfolio_id: Number.isFinite(portfolio_id as number) ? portfolio_id : undefined,
       });
       res.json({ success: true, data });
     } catch (error: any) {
@@ -145,9 +150,13 @@ export class PaperTradingController {
   getSnapshots = async (req: Request, res: Response, _next: NextFunction) => {
     try {
       const user = (req as any).user;
+      // 修复 (2026-06-17 串盘 续): 同款透传
+      const portfolioIdRaw = req.query?.portfolio_id;
+      const portfolio_id = portfolioIdRaw ? Number(portfolioIdRaw) : undefined;
       const data = await paperTradingFacade.getDailySnapshot({
         action: 'list',
         user_id: user.id,
+        portfolio_id: Number.isFinite(portfolio_id as number) ? portfolio_id : undefined,
       });
       res.json({ success: true, data });
     } catch (error: any) {
@@ -203,9 +212,12 @@ export class PaperTradingController {
   refreshSnapshot = async (req: Request, res: Response, _next: NextFunction) => {
     try {
       const user = (req as any).user;
+      const portfolioIdRaw = req.query?.portfolio_id;
+      const portfolio_id = portfolioIdRaw ? Number(portfolioIdRaw) : undefined;
       const snapshot = await paperTradingFacade.getDailySnapshot({
         action: 'refresh',
         user_id: user.id,
+        portfolio_id: Number.isFinite(portfolio_id as number) ? portfolio_id : undefined,
       });
       res.json({ success: true, data: snapshot, message: '模拟盘快照已刷新' });
     } catch (error: any) {
