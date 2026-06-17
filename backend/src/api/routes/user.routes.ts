@@ -3,6 +3,7 @@ import { body } from 'express-validator';
 import { UserController } from '../controllers/UserController';
 import { AuthController } from '../controllers/AuthController';
 import { validateRequest } from '../../middlewares/validateRequest';
+import { requireRole } from '../../middlewares/auth';
 
 const router = Router();
 const userController = new UserController();
@@ -10,6 +11,9 @@ const authController = new AuthController();
 
 // 所有用户管理接口都需要认证
 router.use(authController.authenticate);
+// Batch U (2026-06-17, CRITICAL): 旧版 swagger docs 写"管理员"但 router.use 只 authenticate
+// 没 requireRole. 普通登录用户可枚举/创建/改/删任意 user. 现在统一加 admin gate.
+router.use(requireRole('admin'));
 
 /**
  * @openapi

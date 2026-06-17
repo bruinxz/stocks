@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { taskController } from '../controllers/TaskController';
 import { AuthController } from '../controllers/AuthController';
 import { authenticateInternalApi } from '../../middlewares/internalAuth';
+import { requireRole } from '../../middlewares/auth';
 
 const router = Router();
 const authController = new AuthController();
@@ -117,6 +118,7 @@ router.post(
 router.post(
   '/risk-limit-suggestion/apply',
   authController.authenticate,
+  requireRole('admin'),
   taskController.applyRiskLimitSuggestion
 );
 
@@ -143,6 +145,7 @@ router.post(
 router.post(
   '/live-shadow-budget-suggestion/apply',
   authController.authenticate,
+  requireRole('admin'),
   taskController.applyLiveShadowBudgetSuggestion
 );
 
@@ -181,7 +184,9 @@ router.get('/:id/logs', authController.authenticate, taskController.getTaskLogs)
  *       400: { description: 参数错误 }
  *       401: { description: 未授权 }
  */
-router.post('/', authController.authenticate, taskController.createTask);
+// Batch U (2026-06-17): mutating endpoints (create/update/run/delete) 加 admin gate.
+// docs 写"管理员"但之前只 authenticate, 任何登录 user 可创建/改/跑/删 cron task.
+router.post('/', authController.authenticate, requireRole('admin'), taskController.createTask);
 
 /**
  * @openapi
@@ -204,7 +209,7 @@ router.post('/', authController.authenticate, taskController.createTask);
  *       401: { description: 未授权 }
  *       404: { description: 任务不存在 }
  */
-router.put('/:id', authController.authenticate, taskController.updateTask);
+router.put('/:id', authController.authenticate, requireRole('admin'), taskController.updateTask);
 
 /**
  * @openapi
@@ -221,7 +226,7 @@ router.put('/:id', authController.authenticate, taskController.updateTask);
  *       401: { description: 未授权 }
  *       404: { description: 任务不存在 }
  */
-router.post('/:id/run', authController.authenticate, taskController.executeTask);
+router.post('/:id/run', authController.authenticate, requireRole('admin'), taskController.executeTask);
 
 /**
  * @openapi
@@ -238,6 +243,6 @@ router.post('/:id/run', authController.authenticate, taskController.executeTask)
  *       401: { description: 未授权 }
  *       404: { description: 任务不存在 }
  */
-router.delete('/:id', authController.authenticate, taskController.deleteTask);
+router.delete('/:id', authController.authenticate, requireRole('admin'), taskController.deleteTask);
 
 export default router;

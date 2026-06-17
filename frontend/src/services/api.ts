@@ -91,12 +91,20 @@ api.interceptors.response.use(
               cb.reject(refreshError instanceof Error ? refreshError : new Error(String(refreshError)))
             );
             requests = [];
-            localStorage.removeItem('token');
-            // Batch L (2026-06-17): 同时清掉 portfolio 选择, 否则换账户后还残留旧 user
-            // 的 portfolio_id 导致后端 404 (Batch G 已加 owner check). 同步清掉其它残留.
-            localStorage.removeItem('pt_selected_portfolio_id');
-            localStorage.removeItem('refreshToken');
-            localStorage.removeItem('username');
+            // Batch U (2026-06-17, front-3 fix): 中央化清扫 user-scoped localStorage,
+            // 不再散弹式 removeItem. 避免漏清 aiAdvisor_*/user/stocks_pinned_symbols
+            // 等 key 让下次登录用户读到旧 user 数据. 改用 utils/sessionCleanup helper.
+            try {
+              // eslint-disable-next-line @typescript-eslint/no-var-requires
+              const { clearUserScopedStorage } = require('../utils/sessionCleanup');
+              clearUserScopedStorage();
+            } catch {
+              // fallback 旧逻辑兜底 (理论上 require 不会失败)
+              localStorage.removeItem('token');
+              localStorage.removeItem('pt_selected_portfolio_id');
+              localStorage.removeItem('refreshToken');
+              localStorage.removeItem('username');
+            }
             // 后端登出会清除cookie，或者如果刷新失败，需要重新登录获取新的cookie
             window.location.href = '/login';
             return Promise.reject(refreshError);

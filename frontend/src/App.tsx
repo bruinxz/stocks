@@ -15,6 +15,8 @@ import zhCN from 'antd/locale/zh_CN';
 import { useSelector, useDispatch } from 'react-redux';
 import { RootState } from './store/rootReducer';
 import { loginSuccess, logout } from './store/authSlice';
+import { clearUserScopedStorage } from './utils/sessionCleanup';
+import AdminGuard from './components/AdminGuard';
 import { authService } from './services/authService';
 import { API_DOMAIN_URL } from './services/api';
 import { PortfolioProvider } from './contexts/PortfolioContext';
@@ -184,8 +186,9 @@ const AppContent: React.FC = () => {
           if (res && res.success) {
             dispatch(loginSuccess({ user: res.data.user, token }));
           } else {
+            // Batch U (2026-06-17): profile fetch 失败时同样走中央化清扫.
             dispatch(logout());
-            localStorage.removeItem('token');
+            clearUserScopedStorage();
           }
         } catch (error) {
           console.error('Failed to fetch user profile on load', error);
@@ -204,9 +207,11 @@ const AppContent: React.FC = () => {
     : undefined;
 
   const handleLogout = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('refreshToken');
-    localStorage.removeItem('username');
+    // Batch U (2026-06-17, front-3 fix): 中央化清扫, 不再散弹式 removeItem.
+    // 之前漏清 aiAdvisor_* / pt_selected_portfolio_id / user / stocks_pinned_symbols,
+    // 共用浏览器场景下次登录用户读到旧 user 的 AI 研究 / 选盘 / 收藏.
+    clearUserScopedStorage();
+    dispatch(logout());
     navigate('/login');
   };
 
@@ -606,7 +611,9 @@ const AppContent: React.FC = () => {
                 path="/legacy/tasks"
                 element={
                   <ProtectedRoute>
-                    <TaskScheduler />
+                    <AdminGuard>
+                      <TaskScheduler />
+                    </AdminGuard>
                   </ProtectedRoute>
                 }
               />
@@ -614,7 +621,9 @@ const AppContent: React.FC = () => {
                 path="/legacy/logs"
                 element={
                   <ProtectedRoute>
-                    <SystemLogs />
+                    <AdminGuard>
+                      <SystemLogs />
+                    </AdminGuard>
                   </ProtectedRoute>
                 }
               />
@@ -646,7 +655,9 @@ const AppContent: React.FC = () => {
                 path="/legacy/users"
                 element={
                   <ProtectedRoute>
-                    <UserManagement />
+                    <AdminGuard>
+                      <UserManagement />
+                    </AdminGuard>
                   </ProtectedRoute>
                 }
               />

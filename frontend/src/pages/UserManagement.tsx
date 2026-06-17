@@ -43,7 +43,8 @@ interface User {
   email: string;
   role: string;
   is_active: boolean;
-  password?: string;
+  // Batch U (2026-06-17): 删 password 字段, 列表不展示密码 (即使后端返 hash 也不该
+  // 进前端 type system 诱导误用). 改密码走单独 reset 弹窗.
   created_at: string;
 }
 
@@ -198,12 +199,9 @@ const UserManagement: React.FC = () => {
         </Tag>
       ),
     },
-    {
-      title: '密码',
-      dataIndex: 'password',
-      key: 'password',
-      render: (pwd: string) => <Tag className="modern-tag tag-default">{pwd || '已加密'}</Tag>,
-    },
+    // Batch U (2026-06-17, front-1 fix): 删除"密码"列. 即使后端只返 'undefined' / hash,
+    // 表格列存在本身就是 schema 风险 — 哪天后端返 plaintext / hash 都会渲染到 UI.
+    // 用户改密码走 admin 重置密码弹窗 (line 146 之后), 列表不需要展示.
     {
       title: '状态',
       dataIndex: 'is_active',

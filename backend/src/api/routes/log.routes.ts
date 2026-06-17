@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { LogController } from '../controllers/LogController';
 import { AuthController } from '../controllers/AuthController';
+import { requireRole } from '../../middlewares/auth';
 
 const router = Router();
 const logController = new LogController();
@@ -23,7 +24,10 @@ const authController = new AuthController();
  *     security:
  *       - bearerAuth: []
  */
-router.get('/', authController.authenticate, logController.getLogs);
+// Batch U (2026-06-17, log-1 fix): 加 admin gate. combined.log 含其他用户的
+// validateRequest 失败 body (含 password), portfolio simulate body 等, 普通登录
+// 用户读到 = 跨用户数据泄露 + 密码泄露. 必须 admin only.
+router.get('/', authController.authenticate, requireRole('admin'), logController.getLogs);
 
 /**
  * @swagger
@@ -35,6 +39,6 @@ router.get('/', authController.authenticate, logController.getLogs);
  *     security:
  *       - bearerAuth: []
  */
-router.get('/stats', authController.authenticate, logController.getLogStats);
+router.get('/stats', authController.authenticate, requireRole('admin'), logController.getLogStats);
 
 export default router;
