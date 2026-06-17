@@ -929,8 +929,11 @@ export class PaperTradingFacade {
     }
 
     if (action === 'recommendation_outcomes') {
+      // 修复 (2026-06-17 串盘续): 之前硬注 portfolio_name: QUANT_ONLY_PORTFOLIO_NAME 把所有
+      // 用户都锁到 portfolio 33, 8 盘只看到 1 盘的 outcome. 现在 caller (controller) 应该
+      // 把 query.portfolio_id 传进来; 缺时 service.resolvePortfolio 走 user 名下 active
+      // id ASC 第一个 fallback. 不再硬锁 portfolio 名.
       return recommendationTradeOutcomeService.getDashboard({
-        portfolio_name: QUANT_ONLY_PORTFOLIO_NAME,
         ...(options.query || {}),
         user_id,
       });
@@ -938,24 +941,26 @@ export class PaperTradingFacade {
 
     if (action === 'recommendation_outcome_trace') {
       const id = options.params?.id;
+      // 修复 (2026-06-17 串盘续): trace 不应按 portfolio_name 锁定, 应直接按 outcome.id lookup,
+      // 跨 portfolio 也能查 (outcome 已自带 portfolio_id, getTrace 内部用)
       return recommendationTradeOutcomeService.getTrace(String(id), {
-        portfolio_name: QUANT_ONLY_PORTFOLIO_NAME,
         ...(options.query || {}),
         user_id,
       });
     }
 
     if (action === 'refresh_recommendation_outcomes') {
+      // 修复 (2026-06-17 串盘续): 缺 portfolio_id 时, service 已加 all_portfolios=true 默认
+      // 遍历所有 active portfolio (commit 1a6f2e8). 这里去掉硬锁让 caller 决定 scope.
       return recommendationTradeOutcomeService.refreshPortfolioOutcomes({
-        portfolio_name: QUANT_ONLY_PORTFOLIO_NAME,
         ...(options.body || {}),
         user_id,
       });
     }
 
     if (action === 'report_recommendation_outcomes') {
+      // 修复 (2026-06-17 串盘续): 同款去硬锁
       return recommendationTradeOutcomeService.getDashboard({
-        portfolio_name: QUANT_ONLY_PORTFOLIO_NAME,
         ...(options.body || {}),
         user_id,
         report_to_feishu: true,

@@ -46,6 +46,7 @@ import {
 } from 'recharts';
 import api from '../services/api';
 import TradePolicyExplainPanel from '../components/trading/TradePolicyExplainPanel';
+import { usePortfolio } from '../contexts/PortfolioContext';
 
 const { Text } = Typography;
 
@@ -291,6 +292,10 @@ const RecommendationTradeOutcomes: React.FC = () => {
   const [sourceType, setSourceType] = useState<string>('all');
   const [tradeStatus, setTradeStatus] = useState<string>('all');
   const [agentSession, setAgentSession] = useState<string>('');
+  // 修复 (2026-06-17 串盘续, CRITICAL #C4/C5/C6): 接入全局选盘. 之前 facade 硬注
+  // QUANT_ONLY_PORTFOLIO_NAME 锁 portfolio 33, 7 个盘的 outcome 不可见. 现在
+  // 透传 selectedPortfolioId, 后端按盘隔离.
+  const { selectedPortfolioId } = usePortfolio();
 
   const fetchDashboard = async (silent = false) => {
     setLoading(true);
@@ -303,6 +308,7 @@ const RecommendationTradeOutcomes: React.FC = () => {
           agent_session: agentSession || undefined,
           lookback_days: 365,
           limit: 2000,
+          portfolio_id: selectedPortfolioId,
         },
       });
       if (response.data.success) {
@@ -325,6 +331,7 @@ const RecommendationTradeOutcomes: React.FC = () => {
         source_type: sourceType,
         agent_session: agentSession || undefined,
         report_to_feishu: false,
+        portfolio_id: selectedPortfolioId,
       });
       if (response.data.success) {
         setDashboard(response.data.data.dashboard);
@@ -346,6 +353,7 @@ const RecommendationTradeOutcomes: React.FC = () => {
         trade_status: tradeStatus,
         agent_session: agentSession || undefined,
         lookback_days: 365,
+        portfolio_id: selectedPortfolioId,
       });
       if (response.data.success) {
         setDashboard(response.data.data);
@@ -361,7 +369,7 @@ const RecommendationTradeOutcomes: React.FC = () => {
   useEffect(() => {
     fetchDashboard(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sourceType, tradeStatus, agentSession]);
+  }, [sourceType, tradeStatus, agentSession, selectedPortfolioId]);
 
   const summary = dashboard?.summary;
   const feedback = dashboard?.feedback;

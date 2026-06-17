@@ -391,6 +391,7 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
         symbol: row.symbol,
         direction: 'SELL',
         quantity: row.quantity,
+        portfolio_id: selectedPortfolioId, // 修复 CRITICAL #C1 (2026-06-17): 显式传当前选盘, 防错卖
       });
       const pnl = result.realized_pnl ?? 0;
       message.success(

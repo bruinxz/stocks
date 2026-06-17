@@ -137,6 +137,8 @@ export interface PlaceTradePayload {
   symbol: string;
   direction: 'BUY' | 'SELL';
   quantity: number;
+  /** 多账户多盘必传 (2026-06-17 串盘修复). 不传 → 后端 fallback 到 active id ASC 第一个盘. */
+  portfolio_id?: number;
 }
 
 export interface PlaceTradeResponse {

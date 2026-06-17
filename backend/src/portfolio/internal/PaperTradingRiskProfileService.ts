@@ -34,6 +34,8 @@ interface PositionRiskItem {
 interface RiskProfileOptions {
   user_id: number;
   portfolio_name?: string;
+  /** 显式 portfolio_id (优先于 portfolio_name); 多账户多盘场景必传 (2026-06-17 串盘修) */
+  portfolio_id?: number;
   include_family?: boolean | string;
   min_cash_reserve_pct?: number;
   max_portfolio_drawdown_pct?: number;
@@ -216,8 +218,11 @@ export class PaperTradingRiskProfileService {
       return this.getFamilyRiskProfile({ ...options, include_family: false }, limits);
     }
 
+    // 修复 (2026-06-17 串盘续): 优先 portfolio_id 精确匹配, 缺则 portfolio_name, 都缺时
+    // 走 user_id active id ASC 第一个 fallback.
     const portfolioWhere: Record<string, any> = { user_id: options.user_id };
-    if (options.portfolio_name) portfolioWhere.name = options.portfolio_name;
+    if (options.portfolio_id) portfolioWhere.id = options.portfolio_id;
+    else if (options.portfolio_name) portfolioWhere.name = options.portfolio_name;
 
     const portfolio = await PaperTradingPortfolio.findOne({
       where: portfolioWhere,

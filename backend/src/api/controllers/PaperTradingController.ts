@@ -114,9 +114,16 @@ export class PaperTradingController {
   placeTrade = async (req: Request, res: Response, _next: NextFunction) => {
     try {
       const user = (req as any).user;
-      const { symbol, direction, quantity } = req.body;
+      // 修复 CRITICAL #C1 (2026-06-17): 透传 portfolio_id 防卖错盘.
+      // 之前 UI 点"一键平仓" body 只传 symbol/direction/quantity, controller 不读
+      // portfolio_id → facade fallback 到 user 名下 active id ASC 第一个 (portfolio 33),
+      // 实际卖 portfolio 33 → 如该盘没该股 throw 持仓不足; 更糟卖到错盘是真金白银事故.
+      const { symbol, direction, quantity, portfolio_id } = req.body;
+      const parsedPortfolioId =
+        portfolio_id !== undefined && portfolio_id !== null ? Number(portfolio_id) : undefined;
       const result = await paperTradingFacade.placeOrder({
         user_id: user.id,
+        portfolio_id: Number.isFinite(parsedPortfolioId as number) ? parsedPortfolioId : undefined,
         symbol,
         direction,
         quantity,

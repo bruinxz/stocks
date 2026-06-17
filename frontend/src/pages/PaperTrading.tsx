@@ -56,6 +56,7 @@ import {
 import api, { getPaperTradingSnapshots } from '../services/api';
 import { marketService, Stock } from '../services/marketService';
 import TradePolicyExplainPanel from '../components/trading/TradePolicyExplainPanel';
+import { usePortfolio } from '../contexts/PortfolioContext';
 
 const CANARY_PREVIEW_AUTORUN_STORAGE_KEY = 'today_canary_preview_autorun';
 
@@ -987,6 +988,8 @@ const formatChartNumber = (value: any, suffix = '') => {
 const CANARY_ROLLBACK_CONFIRM_TEXT = 'CONFIRM_CANARY_ROLLBACK';
 
 const PaperTrading: React.FC = () => {
+  // 修复 (2026-06-17 串盘续): 接入全局选盘 context. 所有 api 调用透传 portfolio_id 防串盘.
+  const { selectedPortfolioId } = usePortfolio();
   const [portfolio, setPortfolio] = useState<PortfolioInfo | null>(null);
   const [positions, setPositions] = useState<Position[]>([]);
   const [loading, setLoading] = useState(false);
@@ -1046,7 +1049,10 @@ const PaperTrading: React.FC = () => {
   const fetchPortfolio = async () => {
     setLoading(true);
     try {
-      const response = await api.get('/paper-trading');
+      // 修复 (2026-06-17 串盘续): 透传 selectedPortfolioId, 不传则后端 fallback 到 active id ASC
+      const response = await api.get('/paper-trading', {
+        params: { portfolio_id: selectedPortfolioId },
+      });
       if (response.data.success) {
         setPortfolio(response.data.data.portfolio);
         setPositions(response.data.data.positions);
@@ -1081,7 +1087,9 @@ const PaperTrading: React.FC = () => {
     } catch {
       // 浏览器隐私模式下 sessionStorage 可能不可用；忽略自动预览即可。
     }
-  }, []);
+    // 修复 (2026-06-17 串盘续): 切盘时重拉 portfolio + risk + attribution
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPortfolioId]);
 
   const fetchSnapshots = async () => {
     try {
@@ -1109,7 +1117,9 @@ const PaperTrading: React.FC = () => {
   const fetchRiskProfile = async (silent = false) => {
     setRiskProfileLoading(true);
     try {
-      const response = await api.get('/paper-trading/risk-profile');
+      const response = await api.get('/paper-trading/risk-profile', {
+        params: { portfolio_id: selectedPortfolioId }, // 修复 (2026-06-17 串盘续)
+      });
       if (response.data.success) {
         setRiskProfile(response.data.data);
         if (!silent) message.success('组合风险画像已刷新');
@@ -1128,6 +1138,7 @@ const PaperTrading: React.FC = () => {
         params: {
           lookback_days: 30,
           limit: 80,
+          portfolio_id: selectedPortfolioId, // 修复 (2026-06-17 串盘续)
         },
       });
       if (response.data.success) {
@@ -1159,7 +1170,11 @@ const PaperTrading: React.FC = () => {
     try {
       const values = await tradeForm.validateFields();
       setSubmittingTrade(true);
-      const response = await api.post('/paper-trading/trade', values);
+      // 修复 CRITICAL #C1 (2026-06-17): legacy PaperTrading page 透传 portfolio_id 防串盘
+      const response = await api.post('/paper-trading/trade', {
+        ...values,
+        portfolio_id: selectedPortfolioId,
+      });
       if (response.data.success) {
         message.success('交易成功');
         setIsTradeModalVisible(false);
@@ -1177,7 +1192,9 @@ const PaperTrading: React.FC = () => {
     setIsHistoryModalVisible(true);
     setLoadingHistory(true);
     try {
-      const response = await api.get('/paper-trading/history');
+      const response = await api.get('/paper-trading/history', {
+        params: { portfolio_id: selectedPortfolioId }, // 修复 (2026-06-17 串盘续)
+      });
       if (response.data.success) {
         setTradeHistory(response.data.data);
       }
@@ -1192,7 +1209,7 @@ const PaperTrading: React.FC = () => {
     setAttributionLoading(true);
     try {
       const response = await api.get('/paper-trading/attribution', {
-        params: { include_open: true },
+        params: { include_open: true, portfolio_id: selectedPortfolioId }, // 修复 (2026-06-17 串盘续)
       });
       if (response.data.success) {
         setAttribution(response.data.data);
