@@ -3619,7 +3619,34 @@ class PaperTradingAutomationService {
     const enableTakeProfit = toBoolean(options.enable_take_profit, true);
     const enableTrailingTakeProfit = toBoolean(options.enable_trailing_take_profit, true);
     const enableSellSignals = toBoolean(options.enable_sell_signals, true);
-    const defaultStopLossPct = Math.abs(toNumber(options.default_stop_loss_pct, 7));
+    // Batch J (2026-06-17 C-4 fix): defaultStopLossPct 优先级 = options.default_stop_loss_pct
+    // (cron 配置) → user.risk_config.per_stock_stop_loss.pct (用户在 /api/risk/per-stock-stop-loss
+    // 改的值) → hardcoded 7%. 之前 runRiskCheck 完全不读 user.risk_config, 用户改 5%
+    // UI 显示生效但 stop_loss 仍按 7% 触发. 现在与 PerStockStopLossGuard.pickEffectivePct
+    // 同源, 跨 cron 一致.
+    let resolvedDefaultStopLossPct = toNumber(options.default_stop_loss_pct, NaN);
+    if (!Number.isFinite(resolvedDefaultStopLossPct) || resolvedDefaultStopLossPct <= 0) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { perStockStopLossGuard } = require('../risk/PerStockStopLossGuard');
+        const userCfg = options.user_id
+          ? await perStockStopLossGuard.getConfig(Number(options.user_id))
+          : null;
+        const userPct = Number(userCfg?.pct);
+        // user.risk_config.per_stock_stop_loss.pct 是 0.07 (decimal); runRiskCheck 默认 7 (整数百分位)
+        // 需要 × 100 对齐
+        resolvedDefaultStopLossPct =
+          Number.isFinite(userPct) && userPct > 0 ? userPct * 100 : 7;
+      } catch (err: any) {
+        logger.warn(
+          `runRiskCheck: 读 user.risk_config.per_stock_stop_loss 失败 fail-open 默认 7%: ${
+            err?.message || err
+          }`
+        );
+        resolvedDefaultStopLossPct = 7;
+      }
+    }
+    const defaultStopLossPct = Math.abs(resolvedDefaultStopLossPct);
     const defaultTakeProfitPct = Math.abs(toNumber(options.default_take_profit_pct, 14));
     const trailingActivationPct = Math.abs(toNumber(options.trailing_activation_pct, 8));
     const trailingDrawdownPct = Math.abs(toNumber(options.trailing_drawdown_pct, 4));

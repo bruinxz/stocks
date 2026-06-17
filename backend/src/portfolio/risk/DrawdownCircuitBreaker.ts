@@ -58,6 +58,7 @@
  */
 
 import { Op } from 'sequelize';
+import { sequelize } from '../../config/database';
 import { PaperTradingPosition } from '../../models/PaperTradingPosition';
 import { PaperTradingPortfolio } from '../../models/PaperTradingPortfolio';
 import { PaperTradingSnapshot } from '../../models/PaperTradingSnapshot';
@@ -115,6 +116,8 @@ export interface PortfolioHeader {
 /** Position snapshot for LEVEL_2 trim selection. */
 export interface DrawdownPositionSnapshot {
   id: number;
+  /** Batch J (2026-06-17): 让 trigger 能 propagate portfolio_id 给 GuardSellExecutor. */
+  portfolio_id: number;
   symbol: string;
   name?: string | null;
   quantity: number;
@@ -133,6 +136,8 @@ export type DrawdownLevel = 'NONE' | 'LEVEL_1' | 'LEVEL_2' | 'LEVEL_3';
 export interface DrawdownSellTrigger {
   user_id: number;
   position_id: number;
+  /** Batch J (2026-06-17): 接 GuardSellExecutor 必须的 portfolio_id, 防多盘用户串盘. */
+  portfolio_id: number;
   symbol: string;
   name: string;
   quantity: number;
@@ -359,6 +364,19 @@ export interface DrawdownBreakerDataSource {
     asOfDate: Date,
     lookbackDays: number
   ): Promise<PortfolioSnapshotRow[]>;
+
+  /**
+   * Batch J (2026-06-17, H3 fix): cross-portfolio snapshot aggregation by date.
+   * 之前 loadRecentSnapshots 只取 portfolio[0].id 的 snapshot, user_id=4 有 9 个盘
+   * 但只看 portfolio 24 → peak_value 错估为 0 → drawdown 永远 ≈ 0 → LEVEL_1/2/3
+   * 永不触发. 现在 evaluateAfterClose 改调本方法, 把同 user 所有 active portfolio
+   * 的 snapshot 按 date GROUP 累加.
+   */
+  loadRecentSnapshotsByUser?(
+    user_id: number,
+    asOfDate: Date,
+    lookbackDays: number
+  ): Promise<PortfolioSnapshotRow[]>;
   /** Load open positions (quantity > 0) for the user. */
   loadOpenPositions(user_id: number): Promise<DrawdownPositionSnapshot[]>;
   /**
@@ -458,6 +476,46 @@ export class DefaultDrawdownBreakerDataSource implements DrawdownBreakerDataSour
     }));
   }
 
+  /**
+   * Batch J (2026-06-17, H3): cross-portfolio snapshot 聚合.
+   * 按 (user_id, date) GROUP, total_value = SUM(snapshot.total_value).
+   * Missing date in any portfolio → 该日 total 仅含其他盘 (Sequelize SUM 会自动忽略
+   * 缺行), 这是 ok 的近似 (snapshot 完整性已经由 syncLatestPricesAndSnapshot per-portfolio
+   * 保证, 极少出现某盘缺日的情况).
+   */
+  async loadRecentSnapshotsByUser(
+    user_id: number,
+    asOfDate: Date,
+    lookbackDays: number
+  ): Promise<PortfolioSnapshotRow[]> {
+    const portfolios = await PaperTradingPortfolio.findAll({
+      where: { user_id, is_active: true },
+      attributes: ['id'],
+    });
+    if (portfolios.length === 0) return [];
+    const portfolioIds = portfolios.map(p => p.id);
+    const startDate = new Date(asOfDate.getTime() - lookbackDays * 24 * 60 * 60 * 1000);
+    const startIso = startDate.toISOString().slice(0, 10);
+    const endIso = asOfDate.toISOString().slice(0, 10);
+    const rows = await PaperTradingSnapshot.findAll({
+      where: {
+        portfolio_id: { [Op.in]: portfolioIds },
+        date: { [Op.between]: [startIso, endIso] },
+      },
+      attributes: [
+        'date',
+        [sequelize.fn('SUM', sequelize.col('total_value')), 'total_value'],
+      ],
+      group: ['date'],
+      order: [['date', 'ASC']],
+      raw: true,
+    });
+    return rows.map(r => ({
+      date: String((r as any).date),
+      total_value: Number((r as any).total_value),
+    }));
+  }
+
   async loadOpenPositions(user_id: number): Promise<DrawdownPositionSnapshot[]> {
     // 修复 (HIGH H2 同款): 跨所有 portfolio 拉 positions, 不再只看 first portfolio.
     const portfolios = await PaperTradingPortfolio.findAll({
@@ -471,6 +529,7 @@ export class DefaultDrawdownBreakerDataSource implements DrawdownBreakerDataSour
     });
     return rows.map<DrawdownPositionSnapshot>(r => ({
       id: r.id,
+      portfolio_id: r.portfolio_id,
       symbol: r.symbol,
       name: r.name,
       quantity: Number(r.quantity),
@@ -675,7 +734,13 @@ export class DrawdownCircuitBreaker {
       };
     }
 
-    const snapshots = await this.source.loadRecentSnapshots(portfolio.id, asOfDate, lookbackDays);
+    // Batch J (2026-06-17, H3): 多盘 snapshot 聚合 — 之前 loadRecentSnapshots(portfolio.id)
+    // 只看 portfolio[0] (空仓系统观测盘) → peak 错估 → drawdown 永远 0 → LEVEL_1/2/3
+    // 永不触发. 现在按 user 聚合. fallback 到旧 API 让单测 / fake source 仍兼容.
+    const snapshots =
+      typeof (this.source as any).loadRecentSnapshotsByUser === 'function'
+        ? await (this.source as any).loadRecentSnapshotsByUser(user_id, asOfDate, lookbackDays)
+        : await this.source.loadRecentSnapshots(portfolio.id, asOfDate, lookbackDays);
     const peak_value = computePeakValue(snapshots, portfolio.total_value);
     const drawdown_pct = computeDrawdownPct(peak_value, portfolio.total_value);
     const level = pickDrawdownLevel(drawdown_pct, config);
@@ -725,6 +790,7 @@ export class DrawdownCircuitBreaker {
         triggers.push({
           user_id,
           position_id: pos.id,
+          portfolio_id: pos.portfolio_id,
           symbol: pos.symbol,
           name: pos.name || pos.symbol,
           quantity: pos.quantity,

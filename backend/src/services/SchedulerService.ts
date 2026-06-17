@@ -25,6 +25,10 @@ import { trailingStopGuard } from '../portfolio/risk/TrailingStopGuard';
 import { drawdownCircuitBreaker } from '../portfolio/risk/DrawdownCircuitBreaker';
 import { marketRegimeAlertService } from '../portfolio/risk/MarketRegimeAlertService';
 import { perStockStopLossGuard } from '../portfolio/risk/PerStockStopLossGuard';
+import { industryConcentrationGuard } from '../portfolio/risk/IndustryConcentrationGuard';
+import { morningRiskCheckupService } from '../portfolio/risk/MorningRiskCheckupService';
+import { restrictedShareWatchdog } from '../portfolio/risk/RestrictedShareWatchdog';
+import { executeGuardSells } from '../portfolio/risk/GuardSellExecutor';
 import { dailyTradingDigestService } from './DailyTradingDigestService';
 import { earningsForecastWatcher } from './EarningsForecastWatcher';
 import { weeklyReviewReportService } from './WeeklyReviewReportService';
@@ -1800,6 +1804,10 @@ class SchedulerService {
       } else if (task.type === 'PAPER_TRADING_TRAILING_STOP_CHECK') {
         // US-048 — 次日开盘前定时任务：检查 prev_close ≤ trailing_stop_price
         // 触发 SELL 信号，写 RiskAlert(level='HIGH')。
+        // Batch J (2026-06-17): 真卖路径接入 — 之前 trigger 只写 result_summary,
+        // 不卖. 现在调 executeGuardSells 通过 facade.placeOrder 真卖 (bypass T+1 +
+        // bypass trading_hours; EOD 评估天然满足 T+1). cron parameters.execute_sells
+        // 控制是否执行 (默认 true; ops 可临时 false 退化为告警).
         const targetUserId = parameters.user_id || parameters.userId;
         const dryRun =
           parameters.dry_run !== undefined
@@ -1807,10 +1815,30 @@ class SchedulerService {
             : parameters.dryRun !== undefined
             ? Boolean(parameters.dryRun)
             : false;
+        const executeSells = parameters.execute_sells !== false; // default true
         const result = await trailingStopGuard.evaluateNextDayTriggers({
           user_id: targetUserId ? Number(targetUserId) : undefined,
           dry_run: dryRun,
         });
+        let sellExecution: any = null;
+        if (executeSells && result.triggers.length > 0) {
+          sellExecution = await executeGuardSells(
+            result.triggers.map(t => ({
+              user_id: t.user_id,
+              symbol: t.symbol,
+              quantity: t.quantity,
+              portfolio_id: t.portfolio_id,
+              trigger_kind: 'trailing_stop',
+              detail: {
+                prev_close: t.prev_close,
+                highest_price: t.highest_price,
+                trailing_stop_price: t.trailing_stop_price,
+                effective_pct: t.effective_pct,
+              },
+            })),
+            { scenario: 'paper_trading_trailing_stop_check', dry_run: dryRun }
+          );
+        }
         await this.safeUpdateExecutionLog(executionLog, {
           total_items: result.total_positions,
           completed_items: result.triggered_positions,
@@ -1833,11 +1861,15 @@ class SchedulerService {
               trailing_stop_price: t.trailing_stop_price,
               effective_pct: t.effective_pct,
             })),
+            sell_execution: sellExecution,
           },
         });
         logger.info(
           `追踪止损检查完成。扫描用户 ${result.scanned_users}，` +
             `持仓 ${result.total_positions}，触发 ${result.triggered_positions}` +
+            (sellExecution
+              ? `, 执行 SELL: succeeded=${sellExecution.succeeded}, failed=${sellExecution.failed}, skipped=${sellExecution.skipped}`
+              : '') +
             (dryRun ? '（dry-run，未写 RiskAlert）' : '')
         );
       } else if (task.type === 'PAPER_TRADING_DRAWDOWN_BREAKER_CHECK') {
@@ -1864,6 +1896,23 @@ class SchedulerService {
           dry_run: dryRun,
           lookback_days: lookbackDays,
         });
+        // Batch J (2026-06-17): LEVEL_2 (减仓) / LEVEL_3 (清仓) triggers 真卖.
+        // LEVEL_1 不卖 (仅 pause 新开仓); breaker 自己已写 paused_until.
+        const executeSells = parameters.execute_sells !== false;
+        let sellExecution: any = null;
+        if (executeSells && result.triggers.length > 0) {
+          sellExecution = await executeGuardSells(
+            result.triggers.map(t => ({
+              user_id: t.user_id,
+              symbol: t.symbol,
+              quantity: t.quantity,
+              portfolio_id: t.portfolio_id,
+              trigger_kind: t.reason.includes('LEVEL_3') ? 'drawdown_level_3' : 'drawdown_level_2',
+              detail: { gain_ratio: t.gain_ratio, reason: t.reason },
+            })),
+            { scenario: 'paper_trading_drawdown_breaker_check', dry_run: dryRun }
+          );
+        }
         await this.safeUpdateExecutionLog(executionLog, {
           total_items: result.scanned_users,
           completed_items: result.triggered_users,
@@ -1892,11 +1941,15 @@ class SchedulerService {
               paused_until: u.paused_until,
               error: u.error,
             })),
+            sell_execution: sellExecution,
           },
         });
         logger.info(
           `组合回撤熔断评估完成。扫描用户 ${result.scanned_users}，` +
             `触发 ${result.triggered_users}` +
+            (sellExecution
+              ? `, 执行 SELL: succeeded=${sellExecution.succeeded}, failed=${sellExecution.failed}, skipped=${sellExecution.skipped}`
+              : '') +
             (dryRun ? '（dry-run，未写 RiskAlert）' : '')
         );
       } else if (task.type === 'PAPER_TRADING_MARKET_REGIME_CHECK') {
@@ -1976,6 +2029,28 @@ class SchedulerService {
           user_id: targetUserId ? Number(targetUserId) : undefined,
           dry_run: dryRun,
         });
+        // Batch J (2026-06-17): 每股止损 trigger 真卖, MASS 级也同款执行 (本质上同一批
+        // triggers, MASS 只是告警标记). 不触发 = 0 trigger, executeGuardSells 直接返 0.
+        const executeSells = parameters.execute_sells !== false;
+        let sellExecution: any = null;
+        if (executeSells && result.triggers.length > 0) {
+          sellExecution = await executeGuardSells(
+            result.triggers.map(t => ({
+              user_id: t.user_id,
+              symbol: t.symbol,
+              quantity: t.quantity,
+              portfolio_id: t.portfolio_id,
+              trigger_kind: 'per_stock_stop_loss',
+              detail: {
+                loss_ratio: t.loss_ratio,
+                effective_pct: t.effective_pct,
+                today_close: t.today_close,
+                avg_cost: t.avg_cost,
+              },
+            })),
+            { scenario: 'paper_trading_per_stock_stop_loss_check', dry_run: dryRun }
+          );
+        }
         await this.safeUpdateExecutionLog(executionLog, {
           total_items: result.scanned_users,
           completed_items: result.triggered_users,
@@ -2005,12 +2080,111 @@ class SchedulerService {
               mass_message: u.mass_message,
               error: u.error,
             })),
+            sell_execution: sellExecution,
           },
         });
         logger.info(
           `每股止损评估完成。扫描用户 ${result.scanned_users}，` +
             `触发用户 ${result.triggered_users}，` +
             `总 trigger ${result.triggers.length}` +
+            (sellExecution
+              ? `, 执行 SELL: succeeded=${sellExecution.succeeded}, failed=${sellExecution.failed}, skipped=${sellExecution.skipped}`
+              : '') +
+            (dryRun ? '（dry-run，未写 RiskAlert）' : '')
+        );
+      } else if (task.type === 'PAPER_TRADING_MORNING_CHECKUP') {
+        // Batch J (2026-06-17): US-054 MorningRiskCheckupService cron 接入
+        // (之前完全没注册, service 永远不跑). 推荐 cron: 30 8 * * 1-5 (08:30).
+        const targetUserId = parameters.user_id || parameters.userId;
+        const dryRun =
+          parameters.dry_run !== undefined ? Boolean(parameters.dry_run) : false;
+        const result = await morningRiskCheckupService.runMorningCheckup({
+          user_id: targetUserId ? Number(targetUserId) : undefined,
+          dry_run: dryRun,
+        });
+        const failedCount = (result.per_user || []).filter((u: any) => u.error).length;
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: result.scanned_users,
+          completed_items: result.checked_users,
+          failed_items: failedCount,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: null,
+          result_summary: {
+            scenario: 'paper_trading_morning_checkup',
+            scanned_users: result.scanned_users,
+            checked_users: result.checked_users,
+            dry_run: dryRun,
+            failed: failedCount,
+          },
+        });
+        logger.info(
+          `早盘体检完成。扫描 ${result.scanned_users} / 体检 ${result.checked_users}` +
+            (dryRun ? '（dry-run，未持久化）' : '')
+        );
+      } else if (task.type === 'PAPER_TRADING_RESTRICTED_SHARE_CHECK') {
+        // Batch J (2026-06-17): US-089 RestrictedShareWatchdog cron 接入
+        // (之前完全没注册). 推荐 cron: 0 9 * * 1-5 (开盘前提前预警).
+        const targetUserId = parameters.user_id || parameters.userId;
+        const dryRun =
+          parameters.dry_run !== undefined ? Boolean(parameters.dry_run) : false;
+        const result = await restrictedShareWatchdog.evaluateAfterOpen({
+          user_id: targetUserId ? Number(targetUserId) : undefined,
+          dry_run: dryRun,
+        });
+        const failedCount = (result.per_user || []).filter((u: any) => u.error).length;
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: result.scanned_users,
+          completed_items: result.triggered_users,
+          failed_items: failedCount,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: null,
+          result_summary: {
+            scenario: 'paper_trading_restricted_share_check',
+            scanned_users: result.scanned_users,
+            triggered_users: result.triggered_users,
+            dry_run: dryRun,
+            window_start: result.window_start,
+            window_end: result.window_end,
+            trigger_count: result.triggers.length,
+          },
+        });
+        logger.info(
+          `限售解禁前瞻预警完成。扫描 ${result.scanned_users}, ` +
+            `触发 ${result.triggered_users}, ${result.triggers.length} 个 trigger ` +
+            (dryRun ? '（dry-run）' : '')
+        );
+      } else if (task.type === 'PAPER_TRADING_INDUSTRY_CONCENTRATION_CHECK') {
+        // Batch J (2026-06-17): IndustryConcentrationGuard.evaluateAfterClose cron 接入
+        // (之前完全没注册, 行业集中度告警从来没自动跑过). 推荐 cron: 35 15 * * 1-5 (收盘后).
+        // 注: 这里只评估 + 写 MEDIUM RiskAlert, 不自动 rebalance — rebalance 是 user
+        // 手动一键 (POST /api/portfolio/rebalance-industry).
+        const targetUserId = parameters.user_id || parameters.userId;
+        const dryRun =
+          parameters.dry_run !== undefined ? Boolean(parameters.dry_run) : false;
+        const result = await industryConcentrationGuard.evaluateAfterClose({
+          user_id: targetUserId ? Number(targetUserId) : undefined,
+          dry_run: dryRun,
+        });
+        const failedCount = (result.per_user || []).filter((u: any) => u.error).length;
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: result.scanned_users,
+          completed_items: result.alerted_users,
+          failed_items: failedCount,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: null,
+          result_summary: {
+            scenario: 'paper_trading_industry_concentration_check',
+            scanned_users: result.scanned_users,
+            alerted_users: result.alerted_users,
+            dry_run: dryRun,
+          },
+        });
+        logger.info(
+          `行业集中度评估完成。扫描 ${result.scanned_users}, ` +
+            `告警 ${result.alerted_users}` +
             (dryRun ? '（dry-run，未写 RiskAlert）' : '')
         );
       } else if (task.type === 'STRATEGY_KILL_SWITCH_CHECK') {

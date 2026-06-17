@@ -126,6 +126,8 @@ export interface UpdateResult {
 export interface TrailingStopTrigger {
   user_id: number;
   position_id: number;
+  /** Batch J (2026-06-17): 接 GuardSellExecutor 必须的 portfolio_id, 防多盘用户串盘. */
+  portfolio_id: number;
   symbol: string;
   name: string;
   quantity: number;
@@ -616,6 +618,7 @@ export class TrailingStopGuard {
           const trigger: TrailingStopTrigger = {
             user_id,
             position_id: pos.id,
+            portfolio_id: pos.portfolio_id,
             symbol: pos.symbol,
             name: pos.name || pos.symbol,
             quantity: pos.quantity,
