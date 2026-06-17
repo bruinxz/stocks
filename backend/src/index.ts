@@ -167,6 +167,9 @@ app.get('/health/detail', async (_req, res) => {
       tradingAgentsUrl: process.env.TRADING_AGENTS_URL || 'http://47.93.224.109:8000',
     });
     const detail = await collectSystemHealthDetail(probes);
+    // Batch M (2026-06-17): 暴露 scheduler_active_tasks 让运维感知 silent scheduler failure.
+    // 启动时 initialize() 抛错被 swallow → 进程"健康"但 0 cron, 没这个指标完全看不到.
+    (detail as any).scheduler_active_tasks = schedulerService.getActiveTaskCount();
     res.json(detail);
   } catch (error: any) {
     // 保守兜底：collectSystemHealthDetail 内部不应抛出，但若构造 probes 时配置严重缺失
@@ -178,6 +181,7 @@ app.get('/health/detail', async (_req, res) => {
       akshare: 'fail',
       feishu: 'fail',
       uptime_seconds: Math.floor(process.uptime()),
+      scheduler_active_tasks: schedulerService.getActiveTaskCount(),
       probe_construction_error: String(error?.message || error),
     });
   }
@@ -290,6 +294,14 @@ import { LiveBrokerCommandDispatch } from './models/LiveBrokerCommandDispatch';
 import { LiveBrokerEvent } from './models/LiveBrokerEvent';
 import { LiveBrokerBridgeHeartbeat } from './models/LiveBrokerBridgeHeartbeat';
 import { LiveBridgeNonce } from './models/LiveBridgeNonce';
+// Batch M (2026-06-17): Sprint 1-3 6 张 advanced quant 表必须列入 production sync,
+// 否则 fresh prod 部署后 ResearchIntegrityAudit.create() 等会立刻 'relation does not exist'.
+import { ResearchIntegrityAudit } from './models/ResearchIntegrityAudit';
+import { ExecutionFeasibilityRecord } from './models/ExecutionFeasibilityRecord';
+import { MetaLabelDecision } from './models/MetaLabelDecision';
+import { PortfolioConstructionResult } from './models/PortfolioConstructionResult';
+import { EquityCurveGovernorState } from './models/EquityCurveGovernorState';
+import { StrategyTcaMultiplier } from './models/StrategyTcaMultiplier';
 import { killSwitchService } from './live-trading/services/KillSwitchService';
 import { bridgeCommandExpiryService } from './live-trading/services/BridgeCommandExpiryService';
 // main 上 QuantStrategyService 位于 quant/engine/internal/，dev_lym 旧路径 quant/services/ 已不存在
@@ -723,6 +735,13 @@ async function syncRecommendationRuntimeTables(): Promise<void> {
     { model: LiveBrokerEvent, label: 'LiveBrokerEvent' },
     { model: LiveBrokerBridgeHeartbeat, label: 'LiveBrokerBridgeHeartbeat' },
     { model: LiveBridgeNonce, label: 'LiveBridgeNonce' },
+    // Batch M (2026-06-17): Sprint 1-3 6 张 advanced quant 表
+    { model: ResearchIntegrityAudit, label: 'ResearchIntegrityAudit' },
+    { model: ExecutionFeasibilityRecord, label: 'ExecutionFeasibilityRecord' },
+    { model: MetaLabelDecision, label: 'MetaLabelDecision' },
+    { model: PortfolioConstructionResult, label: 'PortfolioConstructionResult' },
+    { model: EquityCurveGovernorState, label: 'EquityCurveGovernorState' },
+    { model: StrategyTcaMultiplier, label: 'StrategyTcaMultiplier' },
   ];
 
   const results = [];
@@ -889,7 +908,19 @@ async function initializeApp() {
     if (disableScheduler) {
       console.log('Scheduler initialization skipped by environment flag');
     } else {
-      await schedulerService.initialize();
+      try {
+        await schedulerService.initialize();
+      } catch (schedulerInitError: any) {
+        // Batch M (2026-06-17): scheduler init 失败让进程仍启动 (HTTP /metrics + /health 可工作),
+        // 但显式 console.error 让运维立刻看到 + /health/detail.scheduler_active_tasks=0.
+        // 不 process.exit, 因为只让 HTTP 业务可读 / 减少 cascade 故障.
+        console.error(
+          `[scheduler] initialize FAILED, 0 cron tasks scheduled. ` +
+            `运维请查 /health/detail.scheduler_active_tasks. error=${
+              schedulerInitError?.message || schedulerInitError
+            }`
+        );
+      }
     }
 
     // 实盘 kill switch 自动巡检：每 60 秒检查订单失败率/连败/订单数，命中阈值即触发熔断。

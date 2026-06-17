@@ -237,6 +237,18 @@ function buildRealtimeQuoteSyncLogSummary(result: any, persistence: any, options
 class SchedulerService {
   private activeTasks: Map<number, CronScheduledTask> = new Map();
 
+  /**
+   * Batch M (2026-06-17): production 启动可观测性.
+   * /health/detail 用此 getter 暴露 scheduler_active_tasks 计数,
+   * 让运维能感知"进程健康但 0 cron 在跑"这类 silent failure.
+   */
+  getActiveTaskCount(): number {
+    return this.activeTasks.size;
+  }
+  getActiveTaskIds(): number[] {
+    return [...this.activeTasks.keys()];
+  }
+
   async initialize() {
     try {
       await this.reconcileStaleRunningTasks();
@@ -247,8 +259,18 @@ class SchedulerService {
       for (const task of tasks) {
         this.scheduleTask(task);
       }
+      // Batch M (2026-06-17): 启动后立即 log 实际 schedule 成功的 task 数,
+      // 让运维 grep "scheduler initialized" 能秒看到 N vs 期望. 0 = 立即告警.
+      logger.info(
+        `[scheduler] initialize complete: active_count=${this.activeTasks.size}/${tasks.length} ` +
+          `(${tasks.length - this.activeTasks.size} 个未 schedule, 通常是 cron expression 非法)`
+      );
     } catch (error) {
       logger.error('Failed to initialize scheduler:', error);
+      // Batch M (2026-06-17): 旧实现 swallow error 让进程"健康"启动但 0 cron 在跑.
+      // 现在 re-throw 让 initializeApp 至少能记到 metric, 不强制 process.exit (主进程
+      // 自己决定是否 fatal — 见 index.ts catch).
+      throw error;
     }
   }
 

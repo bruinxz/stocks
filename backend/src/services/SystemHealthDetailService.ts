@@ -49,6 +49,12 @@ export interface SystemHealthDetail {
   akshare: DependencyStatus;
   feishu: DependencyStatus;
   uptime_seconds: number;
+  /**
+   * Batch M (2026-06-17): scheduler 健康度. 由 caller 在 collect 之后塞入
+   * (避免本 service 依赖 SchedulerService). 0 = silent scheduler failure,
+   * 运维 alert 触发. undefined = caller 未启用 scheduler.
+   */
+  scheduler_active_tasks?: number;
 }
 
 /**
