@@ -7,6 +7,7 @@ import {
   QUANT_ONLY_PORTFOLIO_NAME,
 } from '../../portfolio/PaperTradingFacade';
 import { PaperTradingPortfolio } from '../../models/PaperTradingPortfolio';
+import { PaperTradingPosition } from '../../models/PaperTradingPosition';
 import { PaperTradingOrderIntent } from '../../models/PaperTradingOrderIntent';
 import { logger } from '../../utils/logger';
 
@@ -54,14 +55,54 @@ export class PaperTradingController {
     return sanitized;
   }
 
+  // 修复 (2026-06-17 串盘): 列出当前 user 所有 active portfolio, 让前端展示选盘下拉.
+  // 之前 user 4 有 9 个 portfolio 但 UI 只调 GET / 拿一个 (随机), 用户看到的持仓
+  // 一会儿是这盘一会儿是那盘. 现在 UI 应该先调这个 endpoint 拿列表, 再用
+  // ?portfolio_id=X 拉具体盘.
+  listPortfolios = async (req: Request, res: Response, _next: NextFunction) => {
+    try {
+      const user = (req as any).user;
+      const rows = await PaperTradingPortfolio.findAll({
+        where: { user_id: user.id, is_active: true },
+        order: [['id', 'ASC']],
+        attributes: ['id', 'name', 'initial_capital', 'current_cash', 'total_value', 'created_at'],
+      });
+      const data = await Promise.all(
+        rows.map(async p => {
+          const posCount = await PaperTradingPosition.count({
+            where: { portfolio_id: p.id, quantity: { [Op.gt]: 0 } },
+          });
+          return {
+            id: p.id,
+            name: p.name,
+            initial_capital: Number(p.initial_capital),
+            current_cash: Number(p.current_cash),
+            total_value: Number(p.total_value),
+            positions_count: posCount,
+            created_at: p.created_at,
+          };
+        })
+      );
+      res.json({ success: true, data });
+    } catch (error: any) {
+      sendError(res, error, '获取 portfolio 列表失败');
+    }
+  };
+
   // 获取当前用户的模拟盘及持仓
   getPortfolio = async (req: Request, res: Response, _next: NextFunction) => {
     try {
       const user = (req as any).user;
+      // 修复 (2026-06-17): 透传 query.portfolio_id 给 facade 防 UI 串盘.
+      // 前端从 /api/paper-trading?portfolio_id=36 这样传; 不传则 facade fallback
+      // 到 user 名下 active id ASC 第一个 (稳定但仍是单盘).
+      const portfolioIdRaw = req.query?.portfolio_id;
+      const portfolio_id = portfolioIdRaw ? Number(portfolioIdRaw) : undefined;
       const data = await paperTradingFacade.getPortfolio({
         view: 'basic',
         user_id: user.id,
         username: user.nickname || user.username,
+        portfolio_id: Number.isFinite(portfolio_id as number) ? portfolio_id : undefined,
       });
       res.json({ success: true, data });
     } catch (error: any) {

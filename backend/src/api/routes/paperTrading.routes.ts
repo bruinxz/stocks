@@ -21,6 +21,20 @@ router.get('/', authController.authenticate, paperTradingController.getPortfolio
 
 /**
  * @openapi
+ * /api/paper-trading/portfolios:
+ *   get:
+ *     tags: [模拟交易 PaperTrading]
+ *     summary: 列出当前用户名下所有 active portfolio (供前端选盘下拉)
+ *     description: 多账户多盘场景下解决"每次刷新切到不同盘"的串盘问题. 前端拿到
+ *                  portfolio list 后展示选盘下拉, 选完用 ?portfolio_id=X 拉具体盘.
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: portfolio 列表 }
+ */
+router.get('/portfolios', authController.authenticate, paperTradingController.listPortfolios);
+
+/**
+ * @openapi
  * /api/paper-trading/trade:
  *   post:
  *     tags: [模拟交易 PaperTrading]

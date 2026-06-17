@@ -160,18 +160,42 @@ function unwrap<T>(
   return res.data.data as T;
 }
 
-export async function getPortfolio(): Promise<PortfolioWithPositions> {
-  const res = await api.get('/paper-trading');
+/** 修复 (2026-06-17 串盘): portfolio 列表条目, 供 PortfolioWorkspace 顶部选盘下拉 */
+export interface PortfolioListItem {
+  id: number;
+  name: string;
+  initial_capital: number;
+  current_cash: number;
+  total_value: number;
+  positions_count: number;
+  created_at: string;
+}
+
+export async function getPortfolio(portfolio_id?: number): Promise<PortfolioWithPositions> {
+  // portfolio_id 显式传防多账户多盘串盘. 不传时后端 fallback 到 user 名下 active id ASC 第一个.
+  const url = portfolio_id ? `/paper-trading?portfolio_id=${portfolio_id}` : '/paper-trading';
+  const res = await api.get(url);
   return unwrap<PortfolioWithPositions>(res, '获取模拟盘数据失败');
 }
 
-export async function getSnapshots(): Promise<SnapshotRow[]> {
-  const res = await api.get('/paper-trading/snapshots');
+export async function listPortfolios(): Promise<PortfolioListItem[]> {
+  const res = await api.get('/paper-trading/portfolios');
+  return unwrap<PortfolioListItem[]>(res, '获取模拟盘列表失败');
+}
+
+export async function getSnapshots(portfolio_id?: number): Promise<SnapshotRow[]> {
+  const url = portfolio_id
+    ? `/paper-trading/snapshots?portfolio_id=${portfolio_id}`
+    : '/paper-trading/snapshots';
+  const res = await api.get(url);
   return unwrap<SnapshotRow[]>(res, '获取资金曲线快照失败');
 }
 
-export async function getTradeHistory(): Promise<TradeRow[]> {
-  const res = await api.get('/paper-trading/history');
+export async function getTradeHistory(portfolio_id?: number): Promise<TradeRow[]> {
+  const url = portfolio_id
+    ? `/paper-trading/history?portfolio_id=${portfolio_id}`
+    : '/paper-trading/history';
+  const res = await api.get(url);
   return unwrap<TradeRow[]>(res, '获取交易流水失败');
 }
 
@@ -260,6 +284,7 @@ export async function fetchBenchmarkHistory(
 
 export const portfolioWorkspaceService = {
   getPortfolio,
+  listPortfolios,
   getSnapshots,
   getTradeHistory,
   placeTrade,

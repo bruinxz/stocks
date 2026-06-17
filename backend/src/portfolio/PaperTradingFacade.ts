@@ -77,6 +77,8 @@ export interface GetPortfolioOptions {
   user_id?: number;
   username?: string;
   query?: Record<string, any>;
+  /** 显式 portfolio_id, 多账户多盘场景必须传 (修复 2026-06-17 串盘 bug). */
+  portfolio_id?: number;
 }
 
 export interface PlaceOrderOptions {
@@ -110,6 +112,8 @@ export type GetDailySnapshotAction = 'list' | 'trades' | 'refresh';
 export interface GetDailySnapshotOptions {
   action?: GetDailySnapshotAction;
   user_id: number;
+  /** 显式 portfolio_id, 多账户多盘场景必须传 */
+  portfolio_id?: number;
 }
 
 export type AttributePnlAction =
@@ -255,7 +259,25 @@ export class PaperTradingFacade {
       throw new Error('getPortfolio: user_id is required for basic view');
     }
 
-    let portfolio = await PaperTradingPortfolio.findOne({ where: { user_id } });
+    // 修复 (2026-06-17): UI 串盘 bug. 之前 findOne({user_id}) 不带 order, user 4 有 9 个
+    // portfolio, Sequelize 任意返回 1 行 → 每次刷新展示不同的盘 (持仓数 / 浮盈一直变).
+    // 优先 portfolio_id; 缺则按 (user_id, is_active=true, id ASC) 取第一个并记 warn.
+    let portfolio: PaperTradingPortfolio | null;
+    if (options.portfolio_id) {
+      portfolio = await PaperTradingPortfolio.findOne({
+        where: { id: options.portfolio_id, user_id },
+      });
+    } else {
+      portfolio = await PaperTradingPortfolio.findOne({
+        where: { user_id, is_active: true },
+        order: [['id', 'ASC']],
+      });
+      if (portfolio) {
+        logger.warn(
+          `[facade.getPortfolio] user_id=${user_id} 未传 portfolio_id, 默认取 portfolio ${portfolio.id} (${portfolio.name}). 前端应该通过 ?portfolio_id=X 显式指定.`
+        );
+      }
+    }
     if (!portfolio) {
       const fallbackName = username || 'User';
       portfolio = await PaperTradingPortfolio.create({
@@ -806,7 +828,23 @@ export class PaperTradingFacade {
     const action = options.action || 'list';
     const user_id = options.user_id;
 
-    const portfolio = await PaperTradingPortfolio.findOne({ where: { user_id } });
+    // 修复 (2026-06-17): 同 getPortfolio, 防 UI 串盘
+    let portfolio: PaperTradingPortfolio | null;
+    if (options.portfolio_id) {
+      portfolio = await PaperTradingPortfolio.findOne({
+        where: { id: options.portfolio_id, user_id },
+      });
+    } else {
+      portfolio = await PaperTradingPortfolio.findOne({
+        where: { user_id, is_active: true },
+        order: [['id', 'ASC']],
+      });
+      if (portfolio) {
+        logger.warn(
+          `[facade.getDailySnapshot] user_id=${user_id} 未传 portfolio_id, 默认取 portfolio ${portfolio.id} (${portfolio.name})`
+        );
+      }
+    }
     if (!portfolio) {
       const err: any = new Error('未找到模拟盘');
       err.statusCode = 404;
@@ -1117,7 +1155,23 @@ export class PaperTradingFacade {
           err.statusCode = 400;
           throw err;
         }
-        const portfolio = await PaperTradingPortfolio.findOne({ where: { user_id } });
+        // 修复 (2026-06-17): 串盘 — 优先 body.portfolio_id, 缺则 active id ASC + warn
+        let portfolio: PaperTradingPortfolio | null;
+        if (body?.portfolio_id) {
+          portfolio = await PaperTradingPortfolio.findOne({
+            where: { id: Number(body.portfolio_id), user_id },
+          });
+        } else {
+          portfolio = await PaperTradingPortfolio.findOne({
+            where: { user_id, is_active: true },
+            order: [['id', 'ASC']],
+          });
+          if (portfolio) {
+            logger.warn(
+              `[facade.applyAutomation] set_*_price user_id=${user_id} 未传 portfolio_id, 默认 portfolio ${portfolio.id}`
+            );
+          }
+        }
         if (!portfolio) {
           const err: any = new Error('未找到模拟盘');
           err.statusCode = 404;
@@ -1163,7 +1217,23 @@ export class PaperTradingFacade {
           err.statusCode = 400;
           throw err;
         }
-        const portfolio = await PaperTradingPortfolio.findOne({ where: { user_id } });
+        // 修复 (2026-06-17): 串盘 — 优先 body.portfolio_id, 缺则 active id ASC + warn
+        let portfolio: PaperTradingPortfolio | null;
+        if (body?.portfolio_id) {
+          portfolio = await PaperTradingPortfolio.findOne({
+            where: { id: Number(body.portfolio_id), user_id },
+          });
+        } else {
+          portfolio = await PaperTradingPortfolio.findOne({
+            where: { user_id, is_active: true },
+            order: [['id', 'ASC']],
+          });
+          if (portfolio) {
+            logger.warn(
+              `[facade.applyAutomation] set_*_price user_id=${user_id} 未传 portfolio_id, 默认 portfolio ${portfolio.id}`
+            );
+          }
+        }
         if (!portfolio) {
           const err: any = new Error('未找到模拟盘');
           err.statusCode = 404;
