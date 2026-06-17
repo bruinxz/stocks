@@ -145,6 +145,14 @@ export class KillSwitchService extends EventEmitter {
       }
       const state = this.toActive(created);
       this.emit('kill_switch_triggered', state);
+      // Batch V (2026-06-17, lt-3+lt-4 fix): trigger 后立即扫 pending/dispatching
+      // LiveBrokerCommand 标 abort. 之前 trigger 只断 SSE / pull tick 不再派发,
+      // 但 **已派发到 wire 的 + 队列里 pending 的命令仍会被 bridge 执行真单**,
+      // kill switch 名义熔断实际无效. 现在显式 abort 让 bridge 下次 pull 看到
+      // status=aborted 不执行, 同时 reject 已 dispatched 但未 ack 的命令.
+      this.abortPendingCommands(params.reason_code, params.reason_detail).catch(err =>
+        logger.warn(`[kill-switch] abortPendingCommands failed: ${err?.message || err}`)
+      );
       sendLiveAuditAlert({
         event_type: LIVE_AUDIT_EVENT_TYPES.KILL_SWITCH_TRIGGERED,
         severity: 'critical',
@@ -193,6 +201,74 @@ export class KillSwitchService extends EventEmitter {
       } as any);
     } catch (error: any) {
       logger.error('写入 kill switch 重复触发审计日志失败:', error?.message || error);
+    }
+  }
+
+  /**
+   * Batch V (2026-06-17, lt-3+lt-4 fix): kill switch trigger 后扫 pending /
+   * dispatching LiveBrokerCommand 标 aborted, 防止已在 wire 上的命令仍被 bridge
+   * 真执行. 旧实现 trigger 只断 SSE / pull tick, 已 dispatched 但未 ack 的命令
+   * 在数据库里没有任何 abort 路径, bridge 重启或下次 pull 时仍会执行.
+   *
+   * fail-safe: 单条 command update 失败不阻塞其他; 已 dispatched 的不能强 reject
+   * (bridge 可能已经在执行), 只能标记 metadata.killed=true 让 bridge 接到 event
+   * 时识别. pending 的可以直接标 aborted.
+   */
+  private async abortPendingCommands(
+    reason_code: KillSwitchReasonCode | string,
+    reason_detail: string
+  ): Promise<void> {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { LiveBrokerCommand } = require('../../models/LiveBrokerCommand');
+    try {
+      // pending: 还没被 bridge 取走, 直接 abort
+      const pendingResult = await LiveBrokerCommand.update(
+        {
+          status: 'aborted',
+          metadata: sequelize.literal(
+            `COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('killed', true, 'kill_reason_code', ${LiveBrokerCommand.sequelize?.escape(String(reason_code))}, 'kill_reason_detail', ${LiveBrokerCommand.sequelize?.escape(reason_detail)})`
+          ) as any,
+        },
+        {
+          where: { status: 'pending' },
+        }
+      );
+      // dispatching / dispatched: 已被 bridge 取走, 不强改 status (避免 bridge ack 时 conflict),
+      // 只在 metadata 标记 killed=true 让 bridge 自己识别 + 写 audit.
+      const inflightResult = await LiveBrokerCommand.update(
+        {
+          metadata: sequelize.literal(
+            `COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('killed', true, 'kill_reason_code', ${LiveBrokerCommand.sequelize?.escape(String(reason_code))}, 'kill_reason_detail', ${LiveBrokerCommand.sequelize?.escape(reason_detail)})`
+          ) as any,
+        },
+        {
+          where: { status: { [Op.in]: ['dispatching', 'dispatched'] } },
+        }
+      );
+      const abortedCount = Array.isArray(pendingResult) ? pendingResult[0] : 0;
+      const markedCount = Array.isArray(inflightResult) ? inflightResult[0] : 0;
+      if (abortedCount + markedCount > 0) {
+        logger.warn(
+          `[kill-switch] abortPendingCommands: aborted=${abortedCount} pending + marked=${markedCount} in-flight (reason=${reason_code})`
+        );
+        try {
+          await LiveExecutionAuditLog.create({
+            event_type: LIVE_AUDIT_EVENT_TYPES.KILL_SWITCH_TRIGGERED,
+            severity: 'critical',
+            message:
+              `Kill switch 触发后批量标记 ${abortedCount} pending command aborted + ` +
+              `${markedCount} in-flight command 标记 killed=true (bridge 自行识别拒执行)`,
+            before_state: {},
+            after_state: { aborted_count: abortedCount, marked_count: markedCount, reason_code },
+            metadata: { reason_code, reason_detail },
+          } as any);
+        } catch (auditErr: any) {
+          logger.warn(`[kill-switch] abort audit log failed: ${auditErr?.message || auditErr}`);
+        }
+      }
+    } catch (error: any) {
+      logger.error(`[kill-switch] abortPendingCommands query failed: ${error?.message || error}`);
+      throw error;
     }
   }
 

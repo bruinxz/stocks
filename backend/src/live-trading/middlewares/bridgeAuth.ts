@@ -155,38 +155,42 @@ export async function bridgeAuthMiddleware(
     }
   }
 
+  // Batch V (2026-06-17, lt-7 fix): 所有 401 改成同一文案 + 详细原因只 log 不返客户端,
+  // 避免攻击者按 "bridge_key 未注册" / "签名校验失败" / "nonce 重复" / "账户未绑定"
+  // 文案差异化做 oracle 枚举 bridge_key / secret / nonce state.
+  // server-side log 仍保留 detail 让运维排障.
+  const GENERIC_401_MSG = 'bridge 鉴权失败';
+  const reject401 = (logReason: string) => {
+    logger.warn(`[bridge-auth] 401: ${logReason} ip=${req.ip} ua=${req.headers['user-agent']}`);
+    return res.status(401).json({ success: false, message: GENERIC_401_MSG });
+  };
+
   const bridgeKey = String(req.header('X-Live-Bridge-Key') || '').trim();
   const timestamp = String(req.header('X-Live-Bridge-Timestamp') || '').trim();
   const nonce = String(req.header('X-Live-Bridge-Nonce') || '').trim();
   const signature = String(req.header('X-Live-Bridge-Signature') || '').trim();
 
   if (!bridgeKey || !timestamp || !nonce || !signature) {
-    return res.status(401).json({
-      success: false,
-      message: '缺少 bridge 鉴权头：X-Live-Bridge-Key / Timestamp / Nonce / Signature',
-    });
+    return reject401('缺少 bridge 鉴权头');
   }
   if (nonce.length < 8 || nonce.length > 80) {
-    return res.status(401).json({ success: false, message: 'X-Live-Bridge-Nonce 长度非法（8-80）' });
+    return reject401('nonce 长度非法');
   }
 
   const tsMs = Number(timestamp);
   if (!Number.isFinite(tsMs)) {
-    return res.status(401).json({ success: false, message: 'X-Live-Bridge-Timestamp 不是合法毫秒数' });
+    return reject401('timestamp 非法');
   }
   const skewLimitSeconds = Number(process.env.LIVE_BRIDGE_MAX_CLOCK_SKEW_SECONDS || 60);
   const skewSeconds = Math.abs(Date.now() - tsMs) / 1000;
   if (skewSeconds > skewLimitSeconds) {
-    return res.status(401).json({
-      success: false,
-      message: `bridge 请求时钟偏差 ${skewSeconds.toFixed(1)}s 超过 ${skewLimitSeconds}s`,
-    });
+    return reject401(`时钟偏差 ${skewSeconds.toFixed(1)}s 超过 ${skewLimitSeconds}s`);
   }
 
   const secrets = loadSecrets();
   const secret = secrets[bridgeKey];
   if (!secret) {
-    return res.status(401).json({ success: false, message: 'bridge_key 未注册或缺少 secret' });
+    return reject401(`bridge_key 未注册: ${bridgeKey}`);
   }
 
   // 签名串：method + path + canonical_query + timestamp + nonce + body_hash
@@ -207,7 +211,7 @@ export async function bridgeAuthMiddleware(
   ].join('\n');
   const expected = computeSignature(secret, baseString);
   if (!safeEqual(signature, expected)) {
-    return res.status(401).json({ success: false, message: 'bridge 签名校验失败' });
+    return reject401(`签名校验失败 bridge_key=${bridgeKey}`);
   }
 
   // bridge_key 必须独占绑定一个活跃账户
@@ -215,10 +219,7 @@ export async function bridgeAuthMiddleware(
     where: { bridge_key: bridgeKey, is_active: true },
   });
   if (!account) {
-    return res.status(401).json({
-      success: false,
-      message: 'bridge_key 没有绑定到任何活跃账户；请运维先绑定 live_broker_accounts.bridge_key',
-    });
+    return reject401(`bridge_key 未绑定 active account: ${bridgeKey}`);
   }
 
   // 签名 + 账户都通过后，再 INSERT nonce 行：冲突=重放（DB PK 兜底，跨进程跨重启）
@@ -232,7 +233,7 @@ export async function bridgeAuthMiddleware(
   } catch (err: any) {
     const code = (err && (err.original?.code || err.parent?.code)) || '';
     if (String(err?.name || '') === 'SequelizeUniqueConstraintError' || code === '23505') {
-      return res.status(401).json({ success: false, message: '重复的 X-Live-Bridge-Nonce（重放被拒绝）' });
+      return reject401(`nonce 重放: ${nonce}`);
     }
     logger.error('bridge nonce 入库失败:', err?.message || err);
     return res.status(500).json({ success: false, message: 'bridge nonce 入库失败' });

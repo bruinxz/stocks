@@ -124,17 +124,46 @@ export class BridgeService {
   ): Promise<{ id: number; clock_skew_seconds: number }> {
     const now = new Date();
     const localTime = input.bridge_local_time ? toDate(input.bridge_local_time) : undefined;
+    // Batch V (2026-06-17, lt-5 fix): 字段值校验防恶意 fake heartbeat 绕过 stale guard.
+    // 1) bridge_local_time 必须在 [-1h, +5min] 范围内 (允许时钟漂移, 拒绝未来 N 小时)
+    // 2) broker_client_status 必须在枚举内, 其他值视为 unknown 不能给 'online'
+    // 3) clock_skew 异常时降级 status='degraded' 让 kill switch heartbeat 检查能感知
+    const MAX_SKEW_SEC = 3600; // 1h backward
+    const MAX_FUTURE_SKEW_SEC = -300; // 5min future
     const clockSkew = localTime ? Math.round((now.getTime() - localTime.getTime()) / 1000) : 0;
+    const skewSuspect = clockSkew > MAX_SKEW_SEC || clockSkew < MAX_FUTURE_SKEW_SEC;
+    const ALLOWED_BROKER_STATUS = new Set(['logged_in', 'logged_out', 'connecting', 'error', 'unknown']);
+    const rawBrokerStatus = String(input.broker_client_status || '').toLowerCase();
+    const validatedBrokerStatus = ALLOWED_BROKER_STATUS.has(rawBrokerStatus)
+      ? rawBrokerStatus
+      : 'unknown';
+    // Batch V (lt-5): 严格 status 派生 — 必须 broker logged_in **且** 时钟未异常才算 online.
+    // 旧实现只看 broker_client_status === 'logged_in', bridge 可任意 fake.
+    const status =
+      validatedBrokerStatus === 'logged_in' && !skewSuspect ? 'online' : 'degraded';
+    // metadata 大小上限防 DoS (lt-related, M9/H10)
+    let safeMetadata: Record<string, any> = {};
+    try {
+      const meta = input.metadata || {};
+      const serialized = JSON.stringify(meta);
+      if (serialized.length > 8192) {
+        safeMetadata = { truncated: true, original_size_bytes: serialized.length };
+      } else {
+        safeMetadata = meta;
+      }
+    } catch {
+      safeMetadata = { invalid: true };
+    }
     const row = await LiveBrokerBridgeHeartbeat.create({
       bridge_key: ctx.bridge_key,
       account_id: ctx.account_id,
-      status: input.broker_client_status === 'logged_in' ? 'online' : 'degraded',
+      status,
       bridge_version: input.bridge_version || null,
-      broker_client_status: input.broker_client_status || 'unknown',
+      broker_client_status: validatedBrokerStatus,
       received_at: now,
       bridge_local_time: localTime,
       clock_skew_seconds: clockSkew,
-      metadata: input.metadata || {},
+      metadata: safeMetadata,
     } as any);
     return { id: Number((row as any).id), clock_skew_seconds: clockSkew };
   }

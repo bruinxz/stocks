@@ -1625,109 +1625,128 @@ export class LiveTradingService {
   }
 
   async approveDraft(user_id: number, draft_id: number, input: any) {
-    // 鉴权前置（review 修订）：先查 draft 归属，避免攻击者用任意 draft_id 触发 audit 污染
-    const draft = await LiveOrderDraft.findOne({ where: { id: draft_id, user_id } });
-    if (!draft) throw new Error('订单草稿不存在或无权限');
-    const before = this.toPlain(draft);
-
-    if (input?.skip_confirmation === true || input?.unattended === true) {
-      await this.audit({
-        user_id,
-        account_id: (draft as any).account_id,
-        draft_id,
-        event_type: LIVE_AUDIT_EVENT_TYPES.ORDER_UNATTENDED_REAL_SUBMIT_BLOCKED,
-        severity: 'critical',
-        message: '拒绝无人确认真实下单请求；可改用影子执行闭环。',
-        // 不把完整 input 落进 metadata（input 可能含 confirm_text 等敏感字段）
-        metadata: {
-          skip_confirmation: Boolean(input?.skip_confirmation),
-          unattended: Boolean(input?.unattended),
-        },
+    // Batch V (2026-06-17, lt-1 fix): 整个 approveDraft 包 transaction + SELECT FOR UPDATE
+    // 防双击双下单. 旧实现 findOne → 三次 draft.update → submitApprovedDraft 之间任意
+    // 点都可被第二次 request 穿插, 两个 request 都看到 status='pending' 都通过, 各自
+    // 写一条独立 LiveBrokerCommand → 券商真下两次单 (双下单经典案例).
+    return await sequelize.transaction(async t => {
+      // 鉴权前置（review 修订）：先查 draft 归属，避免攻击者用任意 draft_id 触发 audit 污染
+      // Batch V: lock: t.LOCK.UPDATE 让并发第二个 request 等第一个 commit 才能拿锁,
+      // 第一个 commit 后第二个看到 status='approved' (line 1649 check) → 直接抛错.
+      const draft = await LiveOrderDraft.findOne({
+        where: { id: draft_id, user_id },
+        transaction: t,
+        lock: t.LOCK.UPDATE,
       });
-      throw new Error('真实券商委托不能跳过人工确认；如需无人闭环，请使用影子执行。');
-    }
-    if (!['pending', 'preview'].includes(String((draft as any).status))) {
-      throw new Error(`当前订单草稿状态为 ${(draft as any).status}，不可确认提交。`);
-    }
-    const riskAllowed = Boolean((draft as any).risk_check?.allowed);
-    if (!riskAllowed) throw new Error('订单草稿未通过基础风控，禁止确认提交。');
+      if (!draft) throw new Error('订单草稿不存在或无权限');
+      const before = this.toPlain(draft);
 
-    // confirm_text 校验也提前；避免 recheck IO 白做
-    if (input?.confirm_text !== LIVE_ORDER_CONFIRM_TEXT) {
-      throw new Error(`实盘下单必须输入强确认文本 ${LIVE_ORDER_CONFIRM_TEXT}`);
-    }
+      if (input?.skip_confirmation === true || input?.unattended === true) {
+        await this.audit({
+          user_id,
+          account_id: (draft as any).account_id,
+          draft_id,
+          event_type: LIVE_AUDIT_EVENT_TYPES.ORDER_UNATTENDED_REAL_SUBMIT_BLOCKED,
+          severity: 'critical',
+          message: '拒绝无人确认真实下单请求；可改用影子执行闭环。',
+          // 不把完整 input 落进 metadata（input 可能含 confirm_text 等敏感字段）
+          metadata: {
+            skip_confirmation: Boolean(input?.skip_confirmation),
+            unattended: Boolean(input?.unattended),
+          },
+        });
+        throw new Error('真实券商委托不能跳过人工确认；如需无人闭环，请使用影子执行。');
+      }
+      if (!['pending', 'preview'].includes(String((draft as any).status))) {
+        throw new Error(`当前订单草稿状态为 ${(draft as any).status}，不可确认提交。`);
+      }
+      const riskAllowed = Boolean((draft as any).risk_check?.allowed);
+      if (!riskAllowed) throw new Error('订单草稿未通过基础风控，禁止确认提交。');
 
-    const recheck = await this.recheckDraft(user_id, draft);
-    await draft.update({
-      risk_check: recheck.risk_check,
-      quote_snapshot: recheck.quote_snapshot || {},
-      estimated_amount: recheck.risk_check.estimated_amount,
-      metadata: {
-        ...((draft as any).metadata || {}),
-        pre_submit_recheck_at: new Date().toISOString(),
-        pre_submit_recheck_conclusion: recheck.risk_check.conclusion,
-      },
-    });
-    if (!recheck.risk_check.allowed) {
+      // confirm_text 校验也提前；避免 recheck IO 白做
+      if (input?.confirm_text !== LIVE_ORDER_CONFIRM_TEXT) {
+        throw new Error(`实盘下单必须输入强确认文本 ${LIVE_ORDER_CONFIRM_TEXT}`);
+      }
+
+      const recheck = await this.recheckDraft(user_id, draft);
+      await draft.update(
+        {
+          risk_check: recheck.risk_check,
+          quote_snapshot: recheck.quote_snapshot || {},
+          estimated_amount: recheck.risk_check.estimated_amount,
+          metadata: {
+            ...((draft as any).metadata || {}),
+            pre_submit_recheck_at: new Date().toISOString(),
+            pre_submit_recheck_conclusion: recheck.risk_check.conclusion,
+          },
+        },
+        { transaction: t }
+      );
+      if (!recheck.risk_check.allowed) {
+        await this.audit({
+          user_id,
+          account_id: (draft as any).account_id,
+          draft_id,
+          event_type: LIVE_AUDIT_EVENT_TYPES.ORDER_PRE_SUBMIT_RECHECK_BLOCKED,
+          severity: 'warning',
+          message: '实盘订单提交前二次行情/账户风控复核未通过。',
+          before_state: before,
+          after_state: this.toPlain(draft),
+          metadata: { risk_check: recheck.risk_check },
+        });
+        throw new Error(`提交前二次复核未通过：${recheck.risk_check.conclusion}`);
+      }
+
+      liveTradingSafetyService.assertOrderExecutionAllowed(
+        input.confirm_text,
+        this.brokerGateway.getCapabilities(),
+        await (async () => {
+          const ks = await killSwitchService.getActiveState();
+          return ks ? { active: true, ...ks } : undefined;
+        })()
+      );
+
+      await draft.update(
+        { status: 'approved', approved_by: user_id, approved_at: new Date() },
+        { transaction: t }
+      );
       await this.audit({
         user_id,
         account_id: (draft as any).account_id,
         draft_id,
-        event_type: LIVE_AUDIT_EVENT_TYPES.ORDER_PRE_SUBMIT_RECHECK_BLOCKED,
+        event_type: LIVE_AUDIT_EVENT_TYPES.ORDER_DRAFT_APPROVED,
         severity: 'warning',
-        message: '实盘订单提交前二次行情/账户风控复核未通过。',
+        message: '用户强确认实盘订单草稿，准备提交券商。',
         before_state: before,
         after_state: this.toPlain(draft),
-        metadata: { risk_check: recheck.risk_check },
+        metadata: { confirm_text_matched: input.confirm_text === LIVE_ORDER_CONFIRM_TEXT },
       });
-      throw new Error(`提交前二次复核未通过：${recheck.risk_check.conclusion}`);
-    }
 
-    liveTradingSafetyService.assertOrderExecutionAllowed(
-      input.confirm_text,
-      this.brokerGateway.getCapabilities(),
-      await (async () => {
-        const ks = await killSwitchService.getActiveState();
-        return ks ? { active: true, ...ks } : undefined;
-      })()
-    );
-
-    await draft.update({ status: 'approved', approved_by: user_id, approved_at: new Date() });
-    await this.audit({
-      user_id,
-      account_id: (draft as any).account_id,
-      draft_id,
-      event_type: LIVE_AUDIT_EVENT_TYPES.ORDER_DRAFT_APPROVED,
-      severity: 'warning',
-      message: '用户强确认实盘订单草稿，准备提交券商。',
-      before_state: before,
-      after_state: this.toPlain(draft),
-      metadata: { confirm_text_matched: input.confirm_text === LIVE_ORDER_CONFIRM_TEXT },
+      return this.submitApprovedDraft(user_id, draft, t);
     });
-
-    return this.submitApprovedDraft(user_id, draft);
   }
 
-  private async submitApprovedDraft(user_id: number, draft: LiveOrderDraft) {
-    // P0 重构（review 发现 §3.1-3.3）：审批后不再同步调 brokerGateway.placeOrder，
-    // 而是写一条 LiveBrokerCommand 等 bridge 拉取，避免：
-    //   1. 网关 mock/env_readonly/bridge_readonly 抛错让 draft 卡死 approved
-    //   2. requestOrderCancellation 找不到 parent_command_id 的孤儿撤单
-    //   3. 重提产生同 client_order_id 二次下单
-    //
-    // 进一步加固（review 新发现）：整段包事务，order/command/draft 三者必须同生同灭，
-    // 避免任何中间步骤失败留下"draft=approved 但 command 不存在"或"command 已下发但 draft 没 update"。
+  private async submitApprovedDraft(user_id: number, draft: LiveOrderDraft, parentTx?: any) {
+    // Batch V (2026-06-17, lt-1 fix): 接受 parentTx, 让 approveDraft 串成一个事务,
+    // 保证 client_order_id 唯一性 + 整条审批链 ACID. 旧 client_order_id 含 Date.now()
+    // 让 UNIQUE 索引失效, 现在改成稳定的 'live-draft-{id}' (不带 ts), 第二次审批必然撞 UNIQUE
+    // 被 DB 拒绝, 形成强幂等保护.
     const accountId = Number((draft as any).account_id || 0);
     if (!accountId) {
       throw new Error('草稿未绑定 account_id，无法生成 bridge 命令；请先做只读同步');
     }
-    const clientOrderId = `live-draft-${draft.id}-${Date.now().toString(36)}`;
+    // Batch V (lt-1): client_order_id 改成稳定 `live-draft-{id}` 不含 Date.now(),
+    // 让 LiveBrokerCommand 的 UNIQUE(account_id, client_order_id) 防双下单.
+    const clientOrderId = `live-draft-${draft.id}`;
     const ttlMs = Math.max(Number(process.env.LIVE_BRIDGE_COMMAND_TTL_SECONDS || 60), 5) * 1000;
 
     let order: LiveOrder;
     let command: LiveBrokerCommand;
     try {
-      const result = await sequelize.transaction(async t => {
+      // Batch V (2026-06-17, lt-1 fix): 如果有 parentTx (从 approveDraft 串过来) 复用,
+      // 否则起新 transaction (保留旧 caller 兼容). 整条 approveDraft 链路在同一个 tx
+      // 内保证 ACID + client_order_id UNIQUE 防双下单.
+      const runInTx = async (t: any) => {
         // 1) 先写 LiveOrder 占位（status=bridge_pending），便于前端列表显示与撤单引用
         const o = await LiveOrder.create(
           {
@@ -1778,7 +1797,11 @@ export class LiveTradingService {
         // 3) draft 状态推进到 submitted（事务内）
         await draft.update({ status: 'submitted' }, { transaction: t });
         return { order: o, command: c };
-      });
+      };
+      // Batch V (lt-1): 复用 parentTx 让 approveDraft 整链路单一事务
+      const result = parentTx
+        ? await runInTx(parentTx)
+        : await sequelize.transaction(async t => runInTx(t));
       order = result.order;
       command = result.command;
     } catch (err: any) {
@@ -2775,7 +2798,10 @@ export class LiveTradingService {
       Number(process.env.LIVE_BRIDGE_CANCEL_COMMAND_TTL_SECONDS || 180),
       30
     ) * 1000;
-    const clientOrderId = `cancel-${order_id}-${Date.now()}`;
+    // Batch V (2026-06-17, lt-2 fix): client_order_id 去掉 Date.now() 保证幂等.
+    // 之前每次调用拿不同时间戳, UNIQUE 索引失效, 并发两 cancel 请求各写一条 cancel_order
+    // command, bridge 重复发券商, 大概率触发 order_failure_streak 自动 kill switch.
+    const clientOrderId = `cancel-${order_id}`;
     if (!brokerOrderId) {
       throw new Error('订单尚未拿到券商委托号，bridge 暂未处理；请等待或直接联系运维');
     }

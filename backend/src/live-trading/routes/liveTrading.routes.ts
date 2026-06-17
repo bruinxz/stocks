@@ -175,7 +175,10 @@ router.get(
  *       400: { description: 参数错误 }
  *       401: { description: 未授权 }
  */
-router.post('/order-drafts', liveTradingController.createDraft.bind(liveTradingController));
+// Batch V (2026-06-17, lt-6 fix): 此处旧无 rate-limit 注册被删除. 真生效的注册
+// 在下面 line 290+, 带 LIVE_TRADING_RATE_LIMITS. 之前 Express 取最早注册, 让所有
+// rate limit 静默失效, 配合 approveDraft 双下单 bug 是真金白银帮凶.
+// (旧 router.post('/order-drafts', ...) 不带 rate limit 被移除)
 
 /**
  * @openapi
@@ -195,10 +198,7 @@ router.post('/order-drafts', liveTradingController.createDraft.bind(liveTradingC
  *       400: { description: 参数错误 }
  *       401: { description: 未授权 }
  */
-router.post(
-  '/order-drafts/from-candidate',
-  liveTradingController.createDraftFromCandidate.bind(liveTradingController)
-);
+// Batch V: 同上, 旧无 rate limit 注册被删, 真生效在 line 290+.
 
 /**
  * @openapi
@@ -218,10 +218,7 @@ router.post(
  *       400: { description: 参数错误 }
  *       401: { description: 未授权 }
  */
-router.post(
-  '/order-drafts/shadow-autopilot',
-  liveTradingController.runShadowAutopilot.bind(liveTradingController)
-);
+// Batch V: 同上.
 
 /**
  * @openapi
@@ -238,10 +235,7 @@ router.post(
  *       401: { description: 未授权 }
  *       404: { description: 草稿不存在 }
  */
-router.post(
-  '/order-drafts/:id/shadow-execute',
-  liveTradingController.runDraftShadowExecution.bind(liveTradingController)
-);
+// Batch V: 同上.
 
 /**
  * @openapi
@@ -258,10 +252,7 @@ router.post(
  *       401: { description: 未授权 }
  *       404: { description: 草稿不存在 }
  */
-router.post(
-  '/order-drafts/:id/approve',
-  liveTradingController.approveDraft.bind(liveTradingController)
-);
+// Batch V: 同上.
 
 /**
  * @openapi
@@ -331,10 +322,8 @@ router.post(
  *       400: { description: 参数错误 }
  *       401: { description: 未授权 }
  */
-router.post(
-  '/accounts/sync-readonly',
-  liveTradingController.syncReadonly.bind(liveTradingController)
-);
+// Batch V (2026-06-17, lt-6 fix): 同上, 旧 sync-readonly 无 rate limit 注册已删,
+// 真生效注册见下面 line 350+ 带 syncReadonly1m.
 
 /**
  * @openapi
