@@ -493,9 +493,20 @@ export class PaperTradingAttributionService {
       | 'force_new_portfolio'
     >
   ): Promise<PaperTradingPortfolio> {
+    // Batch G (2026-06-17): portfolio_id 必须带 user_id 校验. 不带 user_id 的
+    // findByPk(portfolio_id) 会让任何登录用户拿到他人 attribution. 现在:
+    //   传 portfolio_id + user_id → 必须命中且属主一致, 否则抛 404
+    //   不传 portfolio_id → fallback 到该 user 的 active 第一个盘
     if (options.portfolio_id) {
-      const portfolio = await PaperTradingPortfolio.findByPk(options.portfolio_id);
+      const user = await this.resolveUser(options.user_id, options.username);
+      const portfolio = await PaperTradingPortfolio.findOne({
+        where: { id: options.portfolio_id, user_id: user.id },
+      });
       if (portfolio) return portfolio;
+      const err: any = new Error('未找到模拟盘或无权访问');
+      err.statusCode = 404;
+      err.code = 'PORTFOLIO_NOT_FOUND_OR_FORBIDDEN';
+      throw err;
     }
 
     const user = await this.resolveUser(options.user_id, options.username);

@@ -512,9 +512,28 @@ export class PaperTradingDashboardService {
   }
 
   async getRecommendationTracking(options: PaperTradingDashboardOptions = {}) {
-    const portfolio = options.portfolio_id
-      ? await PaperTradingPortfolio.findByPk(options.portfolio_id)
-      : await this.ensureAutonomousPortfolio(options);
+    // Batch G (2026-06-17): portfolio_id 路径必须带 user_id 校验防越权.
+    // ensureAutonomousPortfolio 内部按 user_id 路由 (autonomous 盘按 user 命名), 安全.
+    let portfolio: PaperTradingPortfolio | null = null;
+    if (options.portfolio_id) {
+      const userId = Number(options.user_id);
+      if (!Number.isFinite(userId) || userId <= 0) {
+        const err: any = new Error('user_id required when passing portfolio_id');
+        err.statusCode = 400;
+        throw err;
+      }
+      portfolio = await PaperTradingPortfolio.findOne({
+        where: { id: options.portfolio_id, user_id: userId },
+      });
+      if (!portfolio) {
+        const err: any = new Error('未找到模拟盘或无权访问');
+        err.statusCode = 404;
+        err.code = 'PORTFOLIO_NOT_FOUND_OR_FORBIDDEN';
+        throw err;
+      }
+    } else {
+      portfolio = await this.ensureAutonomousPortfolio(options);
+    }
     if (!portfolio) throw new Error(`自主模拟盘不存在: ${options.portfolio_id}`);
     const limit = toPositiveInt(options.limit, 200, 1000);
     const lookbackDays = toPositiveInt(options.lookback_days, 60, 3650);

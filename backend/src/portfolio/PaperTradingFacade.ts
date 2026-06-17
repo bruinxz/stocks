@@ -262,11 +262,20 @@ export class PaperTradingFacade {
     // 修复 (2026-06-17): UI 串盘 bug. 之前 findOne({user_id}) 不带 order, user 4 有 9 个
     // portfolio, Sequelize 任意返回 1 行 → 每次刷新展示不同的盘 (持仓数 / 浮盈一直变).
     // 优先 portfolio_id; 缺则按 (user_id, is_active=true, id ASC) 取第一个并记 warn.
+    // Batch G (2026-06-17): 传了 portfolio_id 但不属于 user, 必须 404,
+    // 不能 fallback 到 create —— 否则攻击者循环 ?portfolio_id=随机大数 DoS
+    // 创建空 portfolio (C2 修复).
     let portfolio: PaperTradingPortfolio | null;
     if (options.portfolio_id) {
       portfolio = await PaperTradingPortfolio.findOne({
         where: { id: options.portfolio_id, user_id },
       });
+      if (!portfolio) {
+        const err: any = new Error('未找到模拟盘或无权访问');
+        err.statusCode = 404;
+        err.code = 'PORTFOLIO_NOT_FOUND_OR_FORBIDDEN';
+        throw err;
+      }
     } else {
       portfolio = await PaperTradingPortfolio.findOne({
         where: { user_id, is_active: true },
@@ -279,6 +288,7 @@ export class PaperTradingFacade {
       }
     }
     if (!portfolio) {
+      // 只在 caller 完全没传 portfolio_id 时才 first-time create
       const fallbackName = username || 'User';
       portfolio = await PaperTradingPortfolio.create({
         user_id,

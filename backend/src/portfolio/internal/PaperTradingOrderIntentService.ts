@@ -1521,9 +1521,18 @@ export class PaperTradingOrderIntentService {
   private async resolvePortfolio(
     options: PaperTradingOrderIntentDashboardOptions
   ): Promise<PaperTradingPortfolio | null> {
+    // Batch G (2026-06-17): portfolio_id 必须带 user_id 校验防越权.
+    // 之前 findByPk(portfolio_id) 让任意登录用户拿他人 order intent / hindsight.
     if (options.portfolio_id) {
-      const portfolio = await PaperTradingPortfolio.findByPk(options.portfolio_id);
+      const user = await this.resolveUser(options.user_id, options.username);
+      const portfolio = await PaperTradingPortfolio.findOne({
+        where: { id: options.portfolio_id, user_id: user.id },
+      });
       if (portfolio) return portfolio;
+      const err: any = new Error('未找到模拟盘或无权访问');
+      err.statusCode = 404;
+      err.code = 'PORTFOLIO_NOT_FOUND_OR_FORBIDDEN';
+      throw err;
     }
 
     const user = await this.resolveUser(options.user_id, options.username);
