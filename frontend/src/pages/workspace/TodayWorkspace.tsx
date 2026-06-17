@@ -101,16 +101,20 @@ const TodayWorkspace: React.FC = () => {
   const refresh = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
+    // Batch L (2026-06-17): 切盘 race 保护, 同 PortfolioWorkspace.
+    const callPortfolioId = selectedPortfolioId;
     try {
       const result = await todayWorkspaceService.getTodaySignals({
         portfolio_id: selectedPortfolioId,
       });
+      if (callPortfolioId !== selectedPortfolioId) return;
       setData(result);
     } catch (err: unknown) {
+      if (callPortfolioId !== selectedPortfolioId) return;
       const msg = err instanceof Error ? err.message : String(err);
       setLoadError(msg);
     } finally {
-      setLoading(false);
+      if (callPortfolioId === selectedPortfolioId) setLoading(false);
     }
   }, [selectedPortfolioId]);
 

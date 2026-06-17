@@ -57,6 +57,7 @@ import api, { getPaperTradingSnapshots } from '../services/api';
 import { marketService, Stock } from '../services/marketService';
 import TradePolicyExplainPanel from '../components/trading/TradePolicyExplainPanel';
 import { usePortfolio } from '../contexts/PortfolioContext';
+import { translateAxiosTradingError } from '../utils/tradingErrorMap';
 
 const CANARY_PREVIEW_AUTORUN_STORAGE_KEY = 'today_canary_preview_autorun';
 
@@ -998,6 +999,8 @@ const PaperTrading: React.FC = () => {
   const [isTradeModalVisible, setIsTradeModalVisible] = useState(false);
   const [tradeForm] = Form.useForm();
   const [submittingTrade, setSubmittingTrade] = useState(false);
+  // Batch L (2026-06-17): useRef 同步锁防双重提交. setState 异步, 快速双击会两次进 try.
+  const submitLockRef = useRef(false);
 
   // 股票搜索状态
   const [stocks, setStocks] = useState<Stock[]>([]);
@@ -1093,7 +1096,8 @@ const PaperTrading: React.FC = () => {
 
   const fetchSnapshots = async () => {
     try {
-      const response = await getPaperTradingSnapshots();
+      // Batch L (2026-06-17): 必须传 selectedPortfolioId 防资金曲线串盘.
+      const response = await getPaperTradingSnapshots(selectedPortfolioId || undefined);
       if (response.data.success) {
         setSnapshots(response.data.data);
       }
@@ -1167,6 +1171,13 @@ const PaperTrading: React.FC = () => {
   };
 
   const handleTradeSubmit = async () => {
+    // Batch L (2026-06-17): 双重提交防护 — useRef 同步锁, 避免 setState 缝隙让两次
+    // 点击都进 try (submittingTrade state 异步更新).
+    if (submitLockRef.current) {
+      message.warning('请勿重复提交');
+      return;
+    }
+    submitLockRef.current = true;
     try {
       const values = await tradeForm.validateFields();
       setSubmittingTrade(true);
@@ -1182,9 +1193,18 @@ const PaperTrading: React.FC = () => {
         fetchOrderIntents(true);
       }
     } catch (error: any) {
-      message.error(error.response?.data?.message || '交易失败');
+      // Batch L: 用 errorCodeMap 翻译后端 err.code → 可读 title + 行动建议
+      const info = translateAxiosTradingError(error);
+      message.error(info.title);
+      if (info.hint) {
+        // 用 console 让用户在 devtools 也能看到, 同时另弹一条 info 提示行动建议
+        console.warn(`[交易失败] ${info.code}: ${info.hint}`);
+        // 用更长 duration 让用户看清行动建议
+        setTimeout(() => message.info(info.hint!, 5), 150);
+      }
     } finally {
       setSubmittingTrade(false);
+      submitLockRef.current = false;
     }
   };
 
@@ -1262,6 +1282,9 @@ const PaperTrading: React.FC = () => {
     try {
       const response = await api.get('/paper-trading/plan', {
         params: {
+          // Batch L (2026-06-17): tuning + plan 系列原 8 处都漏 portfolio_id (Batch F
+          // "串盘续" 修复只覆盖 4 个). 现在补齐, 防 user 4 多盘场景下计划/调参跑错盘.
+          portfolio_id: selectedPortfolioId,
           include_entries: true,
           include_exits: true,
           include_monitor: true,
@@ -1303,6 +1326,7 @@ const PaperTrading: React.FC = () => {
     setTradingPlanReportLoading(true);
     try {
       const response = await api.post('/paper-trading/plan/report', {
+        portfolio_id: selectedPortfolioId, // Batch L (2026-06-17)
         include_entries: true,
         include_exits: true,
         include_monitor: true,
@@ -1343,6 +1367,7 @@ const PaperTrading: React.FC = () => {
     setTuningApplyLoading(true);
     try {
       const response = await api.post('/paper-trading/order-intent-tuning/apply', {
+        portfolio_id: selectedPortfolioId, // Batch L (2026-06-17)
         dry_run: true,
       });
       const result = response.data.data as OrderIntentTuningApplyResult;
@@ -1362,7 +1387,9 @@ const PaperTrading: React.FC = () => {
   const fetchOrderIntentTuningCanary = async (silent = false) => {
     setCanaryStatusLoading(true);
     try {
-      const response = await api.get('/paper-trading/order-intent-tuning/canary');
+      const response = await api.get('/paper-trading/order-intent-tuning/canary', {
+        params: { portfolio_id: selectedPortfolioId }, // Batch L (2026-06-17)
+      });
       if (response.data.success) {
         setCanaryStatus(response.data.data);
         if (!silent) message.success('Canary 状态已刷新');
@@ -1379,6 +1406,7 @@ const PaperTrading: React.FC = () => {
     try {
       const response = await api.get('/paper-trading/order-intent-tuning/candidates', {
         params: {
+          portfolio_id: selectedPortfolioId, // Batch L (2026-06-17)
           use_family_hindsight: true,
           family_hindsight_lookback_days: 45,
           family_hindsight_min_consensus: 2,
@@ -1401,7 +1429,7 @@ const PaperTrading: React.FC = () => {
     setCanarySnapshotsLoading(true);
     try {
       const response = await api.get('/paper-trading/order-intent-tuning/canary/snapshots', {
-        params: { limit: 8 },
+        params: { limit: 8, portfolio_id: selectedPortfolioId }, // Batch L (2026-06-17)
       });
       if (response.data.success) {
         setCanarySnapshots(response.data.data);
@@ -1418,6 +1446,7 @@ const PaperTrading: React.FC = () => {
     setCanaryPreviewLoading(true);
     try {
       const response = await api.post('/paper-trading/order-intent-tuning/apply', {
+        portfolio_id: selectedPortfolioId, // Batch L (2026-06-17)
         dry_run: true,
         canary: true,
         use_family_hindsight: true,
@@ -1463,6 +1492,7 @@ const PaperTrading: React.FC = () => {
         setCanaryApplyLoading(true);
         try {
           const response = await api.post('/paper-trading/order-intent-tuning/apply', {
+            portfolio_id: selectedPortfolioId, // Batch L (2026-06-17)
             dry_run: false,
             canary: true,
             use_family_hindsight: true,
@@ -1497,6 +1527,7 @@ const PaperTrading: React.FC = () => {
     setCanaryRollbackLoading(true);
     try {
       const response = await api.post('/paper-trading/order-intent-tuning/canary/rollback', {
+        portfolio_id: selectedPortfolioId, // Batch L (2026-06-17)
         dry_run: true,
       });
       const result = response.data.data as CanaryRollbackResult;
@@ -1541,6 +1572,7 @@ const PaperTrading: React.FC = () => {
     setCanaryRollbackLoading(true);
     try {
       const response = await api.post('/paper-trading/order-intent-tuning/canary/rollback', {
+        portfolio_id: selectedPortfolioId, // Batch L (2026-06-17)
         dry_run: false,
         confirm: true,
         confirm_text: expectedText,
@@ -1580,6 +1612,7 @@ const PaperTrading: React.FC = () => {
         setTuningApplyLoading(true);
         try {
           const response = await api.post('/paper-trading/order-intent-tuning/apply', {
+            portfolio_id: selectedPortfolioId, // Batch L (2026-06-17)
             dry_run: false,
             task_ids: tuningPreview.changes.map(item => item.id),
             parameter_keys: Array.from(

@@ -66,6 +66,7 @@ import {
   getCorrelationReport,
 } from '../../services/portfolioWorkspaceService';
 import { usePortfolio } from '../../contexts/PortfolioContext';
+import { translateAxiosTradingError, translateTradingError } from '../../utils/tradingErrorMap';
 
 const { Text, Paragraph } = Typography;
 const { RangePicker } = DatePicker;
@@ -116,6 +117,9 @@ const PortfolioWorkspace: React.FC = () => {
   const refresh = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
+    // Batch L (2026-06-17): 切盘 race 保护 — snapshot 当前调用的 portfolio_id;
+    // await 后比对, 若用户在 fetch 期间切了盘 → 静默丢响应不污染新盘 state.
+    const callPortfolioId = selectedPortfolioId;
     try {
       const [pf, snaps, trd, jrn] = await Promise.all([
         portfolioWorkspaceService.getPortfolio(selectedPortfolioId),
@@ -123,15 +127,17 @@ const PortfolioWorkspace: React.FC = () => {
         portfolioWorkspaceService.getTradeHistory(selectedPortfolioId),
         portfolioWorkspaceService.listJournals(),
       ]);
+      if (callPortfolioId !== selectedPortfolioId) return;
       setPortfolioData(pf);
       setSnapshots(snaps);
       setTrades(trd);
       setJournalList(jrn);
     } catch (err: unknown) {
+      if (callPortfolioId !== selectedPortfolioId) return;
       const messageStr = err instanceof Error ? err.message : String(err);
       setLoadError(messageStr);
     } finally {
-      setLoading(false);
+      if (callPortfolioId === selectedPortfolioId) setLoading(false);
     }
   }, [selectedPortfolioId]);
 
@@ -330,10 +336,17 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
 
   const handleSaveStopLoss = async (row: PositionRow) => {
     setSavingLimit(true);
+    // Batch L (2026-06-17): 切盘 race 保护 — 把调用时的 selectedPortfolioId snapshot
+    // 起来, await 后比对. 用户切到别盘则不回写当前盘 state (防止把别盘响应灌入当前盘).
+    const callPortfolioId = selectedPortfolioId;
     try {
       const result = await portfolioWorkspaceService.setPositionStopLoss(row.id, {
         stop_loss_price: editingValue,
       });
+      if (callPortfolioId !== selectedPortfolioId) {
+        // 用户已切盘, 静默丢弃响应不污染当前盘
+        return;
+      }
       if (data) {
         const next: PortfolioWithPositions = {
           ...data,
@@ -349,9 +362,10 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
           : `${row.name || row.symbol} 止损价 ¥${result.stop_loss_price}`
       );
       handleCancelEdit();
-    } catch (err: unknown) {
-      const messageStr = err instanceof Error ? err.message : String(err);
-      message.error(messageStr);
+    } catch (err: any) {
+      const info = err?.response ? translateAxiosTradingError(err) : translateTradingError({ message: err?.message || String(err) });
+      message.error(info.title);
+      if (info.hint) setTimeout(() => message.info(info.hint!, 5), 150);
     } finally {
       setSavingLimit(false);
     }
@@ -359,10 +373,12 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
 
   const handleSaveTakeProfit = async (row: PositionRow) => {
     setSavingLimit(true);
+    const callPortfolioId = selectedPortfolioId; // Batch L: 切盘 race 保护
     try {
       const result = await portfolioWorkspaceService.setPositionTakeProfit(row.id, {
         take_profit_price: editingValue,
       });
+      if (callPortfolioId !== selectedPortfolioId) return;
       if (data) {
         const next: PortfolioWithPositions = {
           ...data,
@@ -378,9 +394,10 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
           : `${row.name || row.symbol} 止盈价 ¥${result.take_profit_price}`
       );
       handleCancelEdit();
-    } catch (err: unknown) {
-      const messageStr = err instanceof Error ? err.message : String(err);
-      message.error(messageStr);
+    } catch (err: any) {
+      const info = err?.response ? translateAxiosTradingError(err) : translateTradingError({ message: err?.message || String(err) });
+      message.error(info.title);
+      if (info.hint) setTimeout(() => message.info(info.hint!, 5), 150);
     } finally {
       setSavingLimit(false);
     }
@@ -388,6 +405,7 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
 
   const handleClosePosition = async (row: PositionRow) => {
     setClosingSymbol(row.symbol);
+    const callPortfolioId = selectedPortfolioId; // Batch L: 切盘 race 保护
     try {
       const result = await portfolioWorkspaceService.placeTrade({
         symbol: row.symbol,
@@ -395,6 +413,11 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
         quantity: row.quantity,
         portfolio_id: selectedPortfolioId, // 修复 CRITICAL #C1 (2026-06-17): 显式传当前选盘, 防错卖
       });
+      if (callPortfolioId !== selectedPortfolioId) {
+        // 用户切盘后, 这条 SELL 已成交但前端不再属于当前盘 — 让 onAfterTrade 仍 fire 拉新盘数据
+        onAfterTrade();
+        return;
+      }
       const pnl = result.realized_pnl ?? 0;
       message.success(
         `已平仓 ${row.name || row.symbol}：成交价 ¥${result.execute_price.toFixed(2)}，实现盈亏 ${
@@ -402,9 +425,10 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
         }¥${pnl.toFixed(2)}`
       );
       onAfterTrade();
-    } catch (err: unknown) {
-      const messageStr = err instanceof Error ? err.message : String(err);
-      message.error(messageStr);
+    } catch (err: any) {
+      const info = err?.response ? translateAxiosTradingError(err) : translateTradingError({ message: err?.message || String(err) });
+      message.error(info.title);
+      if (info.hint) setTimeout(() => message.info(info.hint!, 5), 150);
     } finally {
       setClosingSymbol(null);
     }

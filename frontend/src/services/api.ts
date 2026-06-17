@@ -80,6 +80,11 @@ api.interceptors.response.use(
             // 刷新 Token 也失败了（说明 RefreshToken 彻底过期），只能清空并跳转
             requests = [];
             localStorage.removeItem('token');
+            // Batch L (2026-06-17): 同时清掉 portfolio 选择, 否则换账户后还残留旧 user
+            // 的 portfolio_id 导致后端 404 (Batch G 已加 owner check). 同步清掉其它残留.
+            localStorage.removeItem('pt_selected_portfolio_id');
+            localStorage.removeItem('refreshToken');
+            localStorage.removeItem('username');
             // 后端登出会清除cookie，或者如果刷新失败，需要重新登录获取新的cookie
             window.location.href = '/login';
             return Promise.reject(refreshError);
@@ -116,7 +121,11 @@ export const addFavorite = (symbol: string, data: any) =>
   api.post(`/market/favorites/${symbol}`, data);
 export const removeFavorite = (symbol: string) => api.delete(`/market/favorites/${symbol}`);
 export const checkFavorite = (symbol: string) => api.get(`/market/favorites/${symbol}`);
-export const getPaperTradingSnapshots = () => api.get('/paper-trading/snapshots');
+// Batch L (2026-06-17, CRITICAL): 资金曲线串盘根因 — 之前无参数, 后端 facade
+// fallback 到 user.active id ASC 第一个盘. user 4 有 9 个盘 → 顶部 KPI 是
+// portfolio A 但资金曲线显示 portfolio B 的历史.
+export const getPaperTradingSnapshots = (portfolio_id?: number) =>
+  api.get('/paper-trading/snapshots', { params: portfolio_id ? { portfolio_id } : undefined });
 export const updateFavorite = (symbol: string, data: any) =>
   api.patch(`/market/favorites/${symbol}`, data);
 
