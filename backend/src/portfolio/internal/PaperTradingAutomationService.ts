@@ -1019,6 +1019,46 @@ class PaperTradingAutomationService {
   private readonly stampTaxRate = 0.001;
   private readonly slippageRate = 0.001;
 
+  /**
+   * Batch Q (2026-06-17, F3 fix): 跨调用 in-process dedup, 防同 (portfolio_id, symbol,
+   * trade_date) 在两条信号源 (QUANT_RECOMMENDATION + TRADING_AGENTS) 短时间双跟单.
+   * 旧: existingSymbols 只在 entry-time 拍 snapshot, 两个 autoBuy 几乎同时跑时
+   * 都看到该 symbol 未持仓 → 都通过 dedup → race 下双买.
+   *
+   * 注: 这是 single-process 兜底; 多机部署需要 DB UNIQUE(portfolio_id,symbol,signal_date)
+   * 或 redisLock — 本批暂不引入 schema migration, 留 TODO. setInterval 60s 清掉
+   * 60s 前的 marker 防内存泄漏.
+   */
+  private inflightBuyMarkers: Map<string, number> = new Map();
+  private inflightBuyMarkerCleanupTimer: ReturnType<typeof setInterval> | null = null;
+
+  constructor() {
+    // 60s 清理一次 stale marker (超 5min 没成交说明已失败 / 已被覆盖)
+    this.inflightBuyMarkerCleanupTimer = setInterval(() => {
+      const cutoff = Date.now() - 5 * 60 * 1000;
+      for (const [k, ts] of this.inflightBuyMarkers.entries()) {
+        if (ts < cutoff) this.inflightBuyMarkers.delete(k);
+      }
+    }, 60 * 1000).unref();
+  }
+
+  /**
+   * Batch Q (F3): 标记 (portfolio_id, symbol, today) 正在下单. 返 true 表示成功
+   * 抢到锁; false 表示已有进行中的同 key buy, caller skip.
+   */
+  private tryReserveInflightBuy(portfolio_id: number, symbol: string): boolean {
+    const today = new Date().toISOString().slice(0, 10);
+    const key = `${portfolio_id}::${symbol}::${today}`;
+    if (this.inflightBuyMarkers.has(key)) return false;
+    this.inflightBuyMarkers.set(key, Date.now());
+    return true;
+  }
+
+  private releaseInflightBuy(portfolio_id: number, symbol: string): void {
+    const today = new Date().toISOString().slice(0, 10);
+    this.inflightBuyMarkers.delete(`${portfolio_id}::${symbol}::${today}`);
+  }
+
   async ensurePortfolio(
     options: {
       user_id?: number;
@@ -3118,18 +3158,33 @@ class PaperTradingAutomationService {
       // 处理 (per-signal isolation). 之前任一 throw 直接出 candidateSignals loop, 整批跳过.
       try {
       if (!signalDryRun) {
-        const trade = await this.createBuyTrade({
-          portfolio,
-          signal,
-          symbol,
-          name: signal.name || quote.name || symbol,
-          latest_price: quote.price,
-          execute_price,
-          quantity,
-          amount,
-          commission,
-          total_cost,
-        });
+        // Batch Q (2026-06-17, F3 fix): 跨调用 dedup 防同股双跟单 race.
+        // 同 (portfolio, symbol, today) 已有 inflight buy → skip 本笔. 配合 existingSymbols
+        // entry-time snapshot, 把 race window 从"两 autoBuy 并发" 收窄到"两 createBuyTrade
+        // 同 ms 同时进入此 reserve check"(P99 极不可能).
+        if (!this.tryReserveInflightBuy(portfolio.id, symbol)) {
+          await skip('同 (portfolio, symbol, 今日) 已有进行中的下单, 跳过避免双跟单');
+          continue;
+        }
+        let trade: PaperTradingTrade;
+        try {
+          trade = await this.createBuyTrade({
+            portfolio,
+            signal,
+            symbol,
+            name: signal.name || quote.name || symbol,
+            latest_price: quote.price,
+            execute_price,
+            quantity,
+            amount,
+            commission,
+            total_cost,
+          });
+        } finally {
+          // 不管 createBuyTrade 成功失败, 都释放 inflight marker.
+          // (失败后 retry 仍能走 — 是 caller 决定是否再 enqueue, 不是这里阻止)
+          this.releaseInflightBuy(portfolio.id, symbol);
+        }
         tradePayload.trade_id = trade.id;
         // Sprint 27: L8 复盘 — 真下单完成即视为走到 L8 (entry_trade_id 已落地,
         // 后续 outcome / DQS / wizard hook 都将基于此运行).

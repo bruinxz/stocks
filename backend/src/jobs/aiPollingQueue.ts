@@ -75,7 +75,13 @@ const aiPollingQueue = new Bull<AIPollingJobData>('ai_polling', {
       delay: 3 * 60 * 1000, // 3 minutes
     },
     removeOnComplete: 200,
-    removeOnFail: false,
+    // Batch Q (2026-06-17, F2 fix): 旧 removeOnFail: false → 失败 job 永留 Redis
+    // 一次 TradingAgents 抖动 100 个失败 job 全留 + attempts: 10 → Redis 永久膨胀.
+    // 现在保留最近 500 条失败 job (调试 + 飞书报警还能查), 老的自动清.
+    removeOnFail: 500,
+    // Batch Q (2026-06-17, F2): job-level timeout. 单 polling job 超 5min 算超时
+    // 让 Bull 标 failed + 进 retry 或最终 dead-letter, 不让单 hang job 卡死整队列.
+    timeout: 5 * 60 * 1000,
   },
 });
 

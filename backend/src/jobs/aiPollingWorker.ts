@@ -90,7 +90,13 @@ const updateLogProgress = async (
 if (aiPollingWorkerDisabled) {
   logger.info('AI 分析轮询队列处理器已按环境变量禁用');
 } else {
-  aiPollingQueue.process(async (job: Job<AIPollingJobData>) => {
+  // Batch Q (2026-06-17, F2 fix): worker concurrency 5 (默认 1, 单 hang job 卡死整 pipeline).
+  // 可通过 AI_POLLING_WORKER_CONCURRENCY env var override (ops 按 TradingAgents 容量调).
+  const concurrency = Math.max(
+    1,
+    Number(process.env.AI_POLLING_WORKER_CONCURRENCY) || 5
+  );
+  aiPollingQueue.process(concurrency, async (job: Job<AIPollingJobData>) => {
     const {
       taskId,
       symbol,
@@ -532,11 +538,26 @@ if (aiPollingWorkerDisabled) {
   });
 }
 
-// 处理最终失败的重试耗尽
+// 处理最终失败的重试耗尽 / job.discard() 路径
+// Batch Q (2026-06-17, F5 fix): 之前 `>= attempts` 守卫不覆盖 worker 内 job.discard()
+// 路径 (TradingAgents 远端返回 FAILED 时 attemptsMade 通常 1 远小于 10). discard
+// 触发的 failed 事件被这条守卫静默跳过, 飞书报警永不发. 现在两条路径都触发报警:
+//   (a) 重试耗尽: attemptsMade >= attempts → 'retries_exhausted'
+//   (b) job.discard() 主动跳过: attemptsMade < attempts → 'discarded_by_worker'
+//   (c) timeout 触发: Bull 自动 emit failed, 跟 (b) 等价 → 'job_timeout'
 aiPollingQueue.on('failed', async (job, err) => {
-  if (job && job.attemptsMade >= job.opts.attempts!) {
-    logger.error(`AI轮询任务最终失败(重试耗尽) ${job.id}: ${err.message}`);
-    await updateLogProgress(job.data.executionLogId, false, job.data.scheduler_task_type);
-    await feishuTaskReportService.reportAiPollingFailure(job.data, err, job.id);
+  if (!job) return;
+  let reason: 'retries_exhausted' | 'discarded_by_worker' | 'unknown' = 'unknown';
+  if (job.attemptsMade >= (job.opts.attempts || 1)) {
+    reason = 'retries_exhausted';
+  } else {
+    // attemptsMade < attempts 但 still failed → worker job.discard() 或 Bull timeout
+    reason = 'discarded_by_worker';
   }
+  logger.error(
+    `[ai-polling] job ${job.id} 失败 (${reason}, attemptsMade=${job.attemptsMade}/${job.opts.attempts}): ${err.message}`
+  );
+  await updateLogProgress(job.data.executionLogId, false, job.data.scheduler_task_type);
+  // 两类失败都报飞书 — 之前 discard 路径完全静默, 运维永远不知道远端 FAILED.
+  await feishuTaskReportService.reportAiPollingFailure(job.data, err, job.id);
 });

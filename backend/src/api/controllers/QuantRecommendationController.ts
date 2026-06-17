@@ -75,6 +75,13 @@ export class QuantRecommendationController {
         return res.status(400).json({ success: false, message: 'symbols 不能为空' });
       }
 
+      // Batch Q (2026-06-17, F4 fix): 显式从 req.user 取 caller 的 username,
+      // 让 worker 调 autoBuyFromSignals 时不再 fallback 到 env 'stock' 默认账户.
+      // 之前任意登录 user POST 这个 endpoint 就让 'stock' 账户下单 (无 caller 一致性).
+      // 同 Batch H runAutomatedLoop 的修复.
+      const reqUser = (req as any).user;
+      const callerUsername = reqUser?.username || 'stock';
+
       const limitedSymbols = symbols.slice(0, Math.min(Number(max_count) || 5, 10));
       const submitted: any[] = [];
       const failed: any[] = [];
@@ -93,6 +100,8 @@ export class QuantRecommendationController {
                 symbol,
                 name,
                 taskLabel: '多因子候选深度研报',
+                // Batch Q (2026-06-17, F4): paper_trade_username 锁到 caller 防越权.
+                paper_trade_username: callerUsername,
                 quant_score: typeof item === 'string' ? undefined : item.score,
                 quant_factors: typeof item === 'string' ? undefined : item.factors,
                 quant_reasons: typeof item === 'string' ? undefined : item.reasons,

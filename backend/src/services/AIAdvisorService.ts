@@ -530,12 +530,17 @@ class DefaultAIStockAnalysisDataSource implements AIStockAnalysisDataSource {
     isAsync = false
   ): Promise<RemoteAnalyzePayload> {
     try {
+      // Batch Q (2026-06-17, F1 fix): 加 60s timeout.
       const response = await timedAIRequest('analyze', () =>
-        axios.post(`${TRADING_AGENTS_URL}/api/analyze`, {
-          ticker,
-          target_date: targetDate,
-          is_async: isAsync,
-        })
+        axios.post(
+          `${TRADING_AGENTS_URL}/api/analyze`,
+          {
+            ticker,
+            target_date: targetDate,
+            is_async: isAsync,
+          },
+          { timeout: 60_000 }
+        )
       );
       return response.data;
     } catch (error: any) {
@@ -644,12 +649,18 @@ export class AIAdvisorService {
    */
   async analyzeStock(ticker: string, targetDate?: string, isAsync = false) {
     try {
+      // Batch Q (2026-06-17, F1 fix): 加 60s axios timeout. 之前无 timeout, TradingAgents
+      // hang 时单 axios 永不返回 → aiPollingWorker concurrency=1 整条 pipeline 永久封锁.
       const response = await timedAIRequest('analyze', () =>
-        axios.post(`${TRADING_AGENTS_URL}/api/analyze`, {
-          ticker,
-          target_date: targetDate,
-          is_async: isAsync,
-        })
+        axios.post(
+          `${TRADING_AGENTS_URL}/api/analyze`,
+          {
+            ticker,
+            target_date: targetDate,
+            is_async: isAsync,
+          },
+          { timeout: 60_000 }
+        )
       );
       return response.data;
     } catch (error: any) {
@@ -664,8 +675,10 @@ export class AIAdvisorService {
    */
   async getTaskStatus(taskId: string) {
     try {
+      // Batch Q (2026-06-17, F1 fix): 加 30s axios timeout. polling 调用频次高,
+      // timeout 短一些让 Bull retry 机制能更快推进.
       const response = await timedAIRequest('task_status', () =>
-        axios.get(`${TRADING_AGENTS_URL}/api/tasks/${taskId}`)
+        axios.get(`${TRADING_AGENTS_URL}/api/tasks/${taskId}`, { timeout: 30_000 })
       );
       return response.data;
     } catch (error: any) {
