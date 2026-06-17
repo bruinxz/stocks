@@ -151,6 +151,37 @@ if (aiPollingWorkerDisabled) {
       dry_run_strategy_keys, // Batch N (2026-06-17): 透传到 autoBuyFromSignals 让 dry-run 真生效
     } = job.data;
 
+    // Batch T (2026-06-17, P1-12 fix): worker 入口二次校验 paper_trade_username 存在.
+    // 之前 controller 层 (Batch H+Q) 已经校验, 但任意能往 Bull 队列 enqueue 的代码
+    // (内部 service / 手工脚本 / 历史污染 job) 都能 bypass controller. 这里再做一道
+    // 防线: username 必须命中真实 active User, 否则 skip 不下单 (避免 fallback 到
+    // 'stock' 默认账户). 不抛错, 让 polling job 自己完成 status 更新即可.
+    let validatedPaperTradeUsername: string | undefined = paper_trade_username;
+    if (paper_trade_username) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { User } = require('../models/User');
+        const userRow = await User.findOne({
+          where: { username: paper_trade_username, is_active: true },
+          attributes: ['id'],
+        });
+        if (!userRow) {
+          logger.warn(
+            `[ai-polling-worker] paper_trade_username='${paper_trade_username}' 不是有效 active user, 跳过自动跟单 (job=${job.id})`
+          );
+          validatedPaperTradeUsername = undefined;
+        }
+      } catch (validateErr: any) {
+        // DB 失败 fail-CLOSED: 不下单
+        logger.warn(
+          `[ai-polling-worker] 校验 paper_trade_username 失败 fail-CLOSED 跳过下单: ${
+            validateErr?.message || validateErr
+          }`
+        );
+        validatedPaperTradeUsername = undefined;
+      }
+    }
+
     try {
       const response = await aiAdvisorService.getTaskStatus(taskId);
       const status = response.status?.toUpperCase();
@@ -357,7 +388,9 @@ if (aiPollingWorkerDisabled) {
         ) {
           try {
             paperTradingResult = await paperTradingAutomationService.autoBuyFromSignals({
-              username: paper_trade_username,
+              // Batch T (2026-06-17, P1-12): 用 validated username 不让 invalid 值
+              // fallback 到 'stock' 默认账户.
+              username: validatedPaperTradeUsername,
               portfolio_name: paper_trade_portfolio_name,
               initial_capital: paper_trade_initial_capital,
               force_new_portfolio: paper_trade_force_new_portfolio,
@@ -419,7 +452,8 @@ if (aiPollingWorkerDisabled) {
         if (shouldMirrorToAgentOnly) {
           try {
             const agentOnlyResult = await paperTradingAutomationService.autoBuyFromSignals({
-              username: paper_trade_username,
+              // Batch T (2026-06-17, P1-12): 同主路径, 用 validated username.
+              username: validatedPaperTradeUsername,
               portfolio_name: agent_only_paper_trade_portfolio_name || AGENT_ONLY_PORTFOLIO_NAME,
               initial_capital: paper_trade_initial_capital,
               force_new_portfolio: paper_trade_force_new_portfolio,

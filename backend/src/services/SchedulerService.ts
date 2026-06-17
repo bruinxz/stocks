@@ -447,7 +447,58 @@ class SchedulerService {
     error?: any
   ) {
     const error_message = error?.message || (error ? String(error) : undefined);
-    await task.update({ last_run_status: status });
+    // Batch T (2026-06-17, C-S4): 连续失败 kill-switch.
+    // SUCCESS → consecutive_failure_count = 0
+    // FAILED → +1, ≥ FAILURE_KILL_THRESHOLD (5) 自动 is_active=false + 报警.
+    // 防告警淹没 + 防 task 一直 fail 仍 retry 浪费资源.
+    const FAILURE_KILL_THRESHOLD = Number(
+      process.env.SCHEDULER_FAILURE_KILL_THRESHOLD || 5
+    );
+    const updates: any = { last_run_status: status };
+    if (status === 'SUCCESS') {
+      if ((task.consecutive_failure_count || 0) > 0) {
+        updates.consecutive_failure_count = 0;
+      }
+    } else if (status === 'FAILED') {
+      const newCount = (task.consecutive_failure_count || 0) + 1;
+      updates.consecutive_failure_count = newCount;
+      if (newCount >= FAILURE_KILL_THRESHOLD && task.is_active) {
+        updates.is_active = false;
+        logger.error(
+          `[scheduler] task ${task.id} (${task.name}) 连续失败 ${newCount} 次 ≥ ${FAILURE_KILL_THRESHOLD}, 自动 is_active=false. 修复后运维需手动重置 consecutive_failure_count=0 + is_active=true.`
+        );
+        // 写 RiskAlert HIGH 让运维 dashboard 第一时间看到
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const { RiskAlert } = require('../models/RiskAlert');
+          await RiskAlert.create({
+            user_id: 1, // task 是系统级, 挂 admin 看; 后续如要按 owner 分发再扩
+            level: 'HIGH',
+            symbol: `SYSTEM:SCHEDULER_TASK_KILLED`,
+            name: `定时任务 ${task.name} 自动熔断`,
+            message:
+              `定时任务 "${task.name}" (type=${task.type}, id=${task.id}) 连续失败 ` +
+              `${newCount} 次, 已自动停用. 最近一次失败原因: ${error_message || '未知'}. ` +
+              `运维修复后需 UPDATE scheduled_tasks SET consecutive_failure_count=0, is_active=true ` +
+              `WHERE id=${task.id} 并重启 scheduler.`,
+            rule_id: 'scheduler_task_killed',
+            is_read: false,
+          });
+        } catch (alertErr: any) {
+          logger.warn(`[scheduler] 写 kill alert 失败 (吞错继续): ${alertErr?.message || alertErr}`);
+        }
+        // 立即 stop in-memory cron 防下一次 tick 又跑
+        try {
+          const old = this.activeTasks.get(task.id);
+          old?.stop();
+          (old as any)?.destroy?.();
+          this.activeTasks.delete(task.id);
+        } catch (stopErr: any) {
+          logger.warn(`[scheduler] stop killed task ${task.id} 失败: ${stopErr?.message}`);
+        }
+      }
+    }
+    await task.update(updates);
 
     if (!executionLog) return;
 

@@ -63,6 +63,20 @@ export class ScheduledTask extends Model {
   })
   declare last_run_status: string;
 
+  /**
+   * Batch T (2026-06-17, C-S4): 连续失败计数. markTaskFinished('FAILED') 时 +1,
+   * 成功时清零. ≥ FAILURE_KILL_THRESHOLD (默认 5) 时自动 is_active=false + 写
+   * RiskAlert HIGH 让运维感知. 防告警淹没 + 防"task 一直 fail 仍每 N 分钟 retry"
+   * 的资源浪费.
+   */
+  @Column({
+    type: DataType.INTEGER,
+    allowNull: false,
+    defaultValue: 0,
+    field: 'consecutive_failure_count',
+  })
+  declare consecutive_failure_count: number;
+
   @CreatedAt
   @Column({ field: 'created_at' })
   declare created_at: Date;

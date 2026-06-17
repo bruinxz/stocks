@@ -26,7 +26,26 @@ export class PythonMarketDataClient {
 
       const timeout = setTimeout(() => {
         logger.error(`${this.clientName} Python script timeout for command: ${command}`);
+        // Batch T (2026-06-17, P1-10 fix): 双段 kill - SIGTERM 后 1s 仍未退出再 SIGKILL.
+        // Python AKShare 内可能阻塞在 urllib.request.urlopen 同步调用忽略 SIGTERM,
+        // 不补 SIGKILL 会让 child 残留占 fd + 外部连接, 长期累积 EAGAIN/EMFILE.
+        // 抄 AKShareClient.callPythonScript 同款.
         child.kill('SIGTERM');
+        const killTimeout = setTimeout(() => {
+          if (!child.killed) {
+            logger.warn(
+              `${this.clientName} Python child 未响应 SIGTERM, 强制 SIGKILL: command=${command}`
+            );
+            try {
+              child.kill('SIGKILL');
+            } catch (killErr: any) {
+              logger.error(
+                `${this.clientName} SIGKILL 失败 (子进程可能已退): ${killErr?.message || killErr}`
+              );
+            }
+          }
+        }, 1000);
+        (killTimeout as any).unref?.();
         reject(new Error(`${this.clientName} Python script timeout (120s)`));
       }, 120000);
 
