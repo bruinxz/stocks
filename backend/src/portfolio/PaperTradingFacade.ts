@@ -510,14 +510,24 @@ export class PaperTradingFacade {
     const stockInfo = await Stock.findOne({ where: { symbol } });
     const stockName = stockInfo ? stockInfo.name : symbol;
 
+    // Batch S (2026-06-17, G1 fix): 与 AShareConstraintEngine 对齐, 补 transfer_fee
+    // (千 0.01 双边过户费) + min_commission (5 元地板). 之前漏算 transfer_fee 让
+    // realized_pnl 高估 0.13%; 漏 min_commission 让小额单 (< 16,666 元) 佣金低估.
+    // commission_rate / slippage 保留旧值 (0.0003 / 0.001) 避免改动历史 realized_pnl
+    // 系统性偏差; 未来如要切到 AShareConstraintEngine 默认 (0.00025 / 0.002) 需要
+    // 一次性全量 backfill realized_pnl 列.
     const commissionRate = 0.0003;
     const slippage = 0.001;
+    const transferFeeRate = 0.00001; // 千 0.01 双边
+    const minCommission = 5;
 
     if (direction === 'BUY') {
       const execute_price = current_price * (1 + slippage);
       const cost = execute_price * quantity;
-      const commission = cost * commissionRate;
-      const totalCost = cost + commission;
+      const rawCommission = cost * commissionRate;
+      const commission = Math.max(rawCommission, minCommission);
+      const transferFee = cost * transferFeeRate;
+      const totalCost = cost + commission + transferFee;
 
       // ---- US-049: Drawdown circuit breaker LEVEL_1 pause ----
       // If the portfolio is in an active LEVEL_1 pause window (peak-drawdown
@@ -693,11 +703,15 @@ export class PaperTradingFacade {
 
     const execute_price = current_price * (1 - slippage);
     const revenue = execute_price * quantity;
-    const baseCommission = revenue * commissionRate;
+    const rawCommission = revenue * commissionRate;
+    // Batch S (2026-06-17, G1 fix): min_commission 5 元地板 + transfer_fee 千 0.01.
     // 修复 (CRITICAL C4): A 股 SELL 印花税单边千 1 (BUY 不收). 漏算导致 realized_pnl
-    // 高估 0.1%, EV 反算 edge 偏乐观. SELL commission 包含 broker commission + stamp_tax.
+    // 高估 0.1%, EV 反算 edge 偏乐观. SELL commission 包含 broker commission +
+    // stamp_tax + transfer_fee + min_commission floor.
+    const brokerCommission = Math.max(rawCommission, minCommission);
     const stampTax = revenue * 0.001;
-    const commission = baseCommission + stampTax;
+    const transferFee = revenue * transferFeeRate;
+    const commission = brokerCommission + stampTax + transferFee;
     const netRevenue = revenue - commission;
     const avg_cost = position.avg_cost;
     const positionId = position.id;
@@ -737,9 +751,13 @@ export class PaperTradingFacade {
       // 修复 CRITICAL #2 (2026-06-16): realized_pnl 公式漏 BUY commission.
       // 实盘正确: pnl = (sell_revenue - sell_commission) - (buy_amount + buy_commission)
       // avg_cost 不含 BUY commission (createBuyTrade 写 execute_price 单纯成交价).
-      // 估算 buy_commission ≈ avg_cost × quantity × commissionRate.
-      const estimatedBuyCommission = avg_cost * quantity * commissionRate;
-      const realized_pnl = revenue - avg_cost * quantity - commission - estimatedBuyCommission;
+      // Batch S (2026-06-17, G1 fix): 估算 BUY commission 同款补 min_commission +
+      // transfer_fee 让 realized_pnl 跟 cash 流出口径一致.
+      const buyAmount = avg_cost * quantity;
+      const estimatedBuyBrokerComm = Math.max(buyAmount * commissionRate, minCommission);
+      const estimatedBuyTransferFee = buyAmount * transferFeeRate;
+      const estimatedBuyCommission = estimatedBuyBrokerComm + estimatedBuyTransferFee;
+      const realized_pnl = revenue - buyAmount - commission - estimatedBuyCommission;
       const trade = await PaperTradingTrade.create(
         {
           portfolio_id: portfolio.id,

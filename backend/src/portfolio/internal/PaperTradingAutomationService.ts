@@ -1018,6 +1018,11 @@ class PaperTradingAutomationService {
   // 与 facade._placeOrderInner SELL 用同 rate 保持口径一致.
   private readonly stampTaxRate = 0.001;
   private readonly slippageRate = 0.001;
+  // Batch S (2026-06-17, G1 fix): 与 AShareConstraintEngine + facade 对齐, 补
+  // transfer_fee (千 0.01 双边) + min_commission (5 元地板). 之前漏算让 realized_pnl
+  // 高估 0.13% (transfer_fee 双边 0.02% + min_commission 小额单 ~0.05%).
+  private readonly transferFeeRate = 0.00001;
+  private readonly minCommission = 5;
 
   /**
    * Batch Q (2026-06-17, F3 fix): 跨调用 in-process dedup, 防同 (portfolio_id, symbol,
@@ -2812,15 +2817,23 @@ class PaperTradingAutomationService {
       }
 
       // 修复 HIGH #13 (2026-06-16): 板块感知 quantize (主板 lot=100, 科创 min=200/lot=1, 北交所 min=100/lot=1)
+      // Batch S (2026-06-17, G1): commission 加 min_commission floor + transfer_fee.
       let quantity = quantizeBuyQuantity(targetAmount / execute_price, symbol);
       let amount = roundNumber(execute_price * quantity, 2);
-      let commission = roundNumber(amount * this.commissionRate, 2);
+      let commission = roundNumber(
+        Math.max(amount * this.commissionRate, this.minCommission) + amount * this.transferFeeRate,
+        2
+      );
       let total_cost = roundNumber(amount + commission, 2);
 
       while (quantity >= 100 && total_cost > availableCash) {
         quantity -= 100;
         amount = roundNumber(execute_price * quantity, 2);
-        commission = roundNumber(amount * this.commissionRate, 2);
+        commission = roundNumber(
+          Math.max(amount * this.commissionRate, this.minCommission) +
+            amount * this.transferFeeRate,
+          2
+        );
         total_cost = roundNumber(amount + commission, 2);
       }
 
@@ -4002,17 +4015,28 @@ class PaperTradingAutomationService {
       const amount = roundNumber(execute_price * quantity, 2);
       // 修复 CRITICAL #1 (2026-06-16): A 股 SELL 单边印花税. baseCommission = 千 0.3 broker,
       // stampTax = 千 1, total = 千 1.3. 之前漏算 stampTax 让 realized_pnl 高估 0.1%.
-      const baseCommission = roundNumber(amount * this.commissionRate, 2);
+      // Batch S (2026-06-17, G1): 补 min_commission 5 元地板 + transfer_fee 千 0.01.
+      const brokerCommission = roundNumber(
+        Math.max(amount * this.commissionRate, this.minCommission),
+        2
+      );
       const stampTax = roundNumber(amount * this.stampTaxRate, 2);
-      const commission = roundNumber(baseCommission + stampTax, 2);
+      const transferFee = roundNumber(amount * this.transferFeeRate, 2);
+      const commission = roundNumber(brokerCommission + stampTax + transferFee, 2);
       const net_revenue = roundNumber(amount - commission, 2);
       // 修复 CRITICAL #2 (2026-06-16): realized_pnl 公式漏 BUY commission.
       // 实盘正确: realized_pnl = (sell_revenue - sell_commission) - (buy_amount + buy_commission)
       // avgCost 不含 BUY commission (createBuyTrade 写 avg_cost = execute_price 单纯成交价).
-      // 估算 buy_commission ≈ avgCost × quantity × commissionRate.
-      const estimatedBuyCommission = roundNumber(avgCost * quantity * this.commissionRate, 2);
+      // Batch S (G1): BUY commission 估算同款补 min_commission + transfer_fee.
+      const buyAmount = avgCost * quantity;
+      const estBuyBroker = roundNumber(
+        Math.max(buyAmount * this.commissionRate, this.minCommission),
+        2
+      );
+      const estBuyTransfer = roundNumber(buyAmount * this.transferFeeRate, 2);
+      const estimatedBuyCommission = roundNumber(estBuyBroker + estBuyTransfer, 2);
       const realized_pnl = roundNumber(
-        amount - avgCost * quantity - commission - estimatedBuyCommission,
+        amount - buyAmount - commission - estimatedBuyCommission,
         2
       );
 
