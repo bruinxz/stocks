@@ -184,12 +184,20 @@ const toNumber = (value: any, fallback = 0): number => {
 
 const roundMoney = (value: any): number => Math.round(toNumber(value, 0) * 100) / 100;
 
-const withAutonomousPortfolio = (payload: Record<string, any> = {}) => ({
-  ...payload,
-  portfolio_name: AUTONOMOUS_PORTFOLIO_NAME,
-  initial_capital: DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
-  use_autonomous_portfolio: true,
-});
+const withAutonomousPortfolio = (payload: Record<string, any> = {}) => {
+  // Batch I (2026-06-17): 防 body 注入 portfolio_id/portfolio_name 劫持 autonomous 盘.
+  // 之前 spread payload 后只硬编码 portfolio_name; 但 portfolio_id 仍可被 body 注入 →
+  // autoBuyFromSignals 优先用 portfolio_id 路由到任意盘. 现在显式剥掉 portfolio_id.
+  const { portfolio_id: _stripPid, portfolio_name: _stripPname, ...rest } = payload;
+  void _stripPid;
+  void _stripPname;
+  return {
+    ...rest,
+    portfolio_name: AUTONOMOUS_PORTFOLIO_NAME,
+    initial_capital: DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
+    use_autonomous_portfolio: true,
+  };
+};
 
 /**
  * US-072: 把 legacy un-coded throw（`new Error('可用资金不足')` 等）归一化成稳定的
@@ -635,36 +643,28 @@ export class PaperTradingFacade {
     }
 
     // ============= T+1 拦截 (修复 CRITICAL C5) =============
-    // A 股当日 BUY 不可当日 SELL. 用 position.created_at 比当日 (Asia/Shanghai) 起始.
-    // 修复 CRITICAL #8 (2026-06-16): T+1 用 trade 表 FIFO 计算"可平仓数量", 不再
-     // 用 position.created_at (加仓后该字段不刷新, 旧仓位的今日加仓部分会被误放行).
-     // bypass_t_plus_1=true 时跳过 (回测/手动测试).
-     // 时区修复 HIGH H1: 用 moment.tz('Asia/Shanghai').startOf('day') 替代 toLocaleString 三明治
-     // 避免非 UTC server 上时区解析漂移.
-    if (!options.bypass_t_plus_1) {
-      const todayStartShanghaiIso = moment().tz('Asia/Shanghai').startOf('day').toDate();
-      // 今日 BUY 累计量
-      const todayBuyAgg = await PaperTradingTrade.findOne({
-        where: {
-          portfolio_id: portfolio.id,
-          symbol,
-          direction: 'BUY',
-          created_at: { [Op.gte]: todayStartShanghaiIso },
-        },
-        attributes: [[sequelize.fn('SUM', sequelize.col('quantity')), 'today_buy_qty']],
-        raw: true,
-      });
-      const todayBuyQty = Number((todayBuyAgg as any)?.today_buy_qty ?? 0);
-      const availableForSell = Math.max(0, Number(position.quantity) - todayBuyQty);
-      if (quantity > availableForSell) {
-        const err: any = new Error(
-          `T+1 violation: 当日 BUY ${todayBuyQty} 股不可卖. 持仓 ${position.quantity} 中可卖 ${availableForSell} 股, 拟卖 ${quantity} 股`
-        );
-        err.statusCode = 400;
-        err.code = 'T_PLUS_1_VIOLATION';
-        err.detail = { holding: position.quantity, today_buy: todayBuyQty, available: availableForSell, requested: quantity };
-        throw err;
-      }
+    // A 股当日 BUY 不可当日 SELL. Batch I (2026-06-17): 抽到 preTradeGuards.checkTPlus1
+    // 共享, automation createSellTrade 同款用. bypass_t_plus_1=true 时跳过.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { checkTPlus1 } = require('./internal/preTradeGuards');
+    const tPlus1 = await checkTPlus1({
+      portfolio_id: portfolio.id,
+      symbol,
+      held_quantity: Number(position.quantity) || 0,
+      sell_quantity: quantity,
+      bypass: options.bypass_t_plus_1 === true,
+    });
+    if (!tPlus1.ok) {
+      const err: any = new Error(tPlus1.reason || 'T+1 violation');
+      err.statusCode = 400;
+      err.code = 'T_PLUS_1_VIOLATION';
+      err.detail = {
+        holding: position.quantity,
+        today_buy: tPlus1.today_buy_qty,
+        available: tPlus1.available_for_sell,
+        requested: quantity,
+      };
+      throw err;
     }
 
     const execute_price = current_price * (1 - slippage);

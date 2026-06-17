@@ -171,6 +171,13 @@ export interface PaperTradingAutoOptions {
   user_id?: number;
   username?: string;
   portfolio_name?: string;
+  /**
+   * Batch I (2026-06-17): 显式 portfolio_id 路由. 多 portfolio 用户场景下 caller
+   * (facade.applyAutomation / automation cron / autonomous loop) 必须能锁定具体
+   * portfolio. 不传则 fallback 到 ensurePortfolio name + active 第一个的逻辑.
+   * 优先级高于 portfolio_name (后者 legacy 用).
+   */
+  portfolio_id?: number;
   initial_capital?: number;
   force_new_portfolio?: boolean;
   source_type?: string;
@@ -566,6 +573,8 @@ export interface PaperTradingRiskCheckOptions {
   user_id?: number;
   username?: string;
   portfolio_name?: string;
+  /** Batch I (2026-06-17): 显式 portfolio_id 路由, 同 PaperTradingAutoOptions. */
+  portfolio_id?: number;
   initial_capital?: number;
   force_new_portfolio?: boolean;
   dry_run?: boolean;
@@ -1017,12 +1026,34 @@ class PaperTradingAutomationService {
       name?: string;
       initial_capital?: number;
       force_new?: boolean;
+      /**
+       * Batch I (2026-06-17): 显式 portfolio_id 路由 — caller (autoBuyFromSignals /
+       * runAutoSync / runRiskCheck) 多盘场景下必须能锁定具体 portfolio. 之前完全忽略
+       * portfolio_id, 只靠 name 字符串匹配, 同 user 多盘容易串.
+       */
+      portfolio_id?: number;
     } = {}
   ): Promise<PaperTradingPortfolio> {
     const user = await this.resolveUser(options.user_id, options.username);
     const user_id = user.id;
 
     let portfolio: PaperTradingPortfolio | null = null;
+
+    // Batch I: portfolio_id 最高优先级, 必须属于 user 才接受.
+    if (options.portfolio_id) {
+      portfolio = await PaperTradingPortfolio.findOne({
+        where: { id: options.portfolio_id, user_id },
+      });
+      if (!portfolio) {
+        const err: any = new Error(
+          `ensurePortfolio: portfolio_id=${options.portfolio_id} 不属于 user_id=${user_id}`
+        );
+        err.statusCode = 404;
+        err.code = 'PORTFOLIO_NOT_FOUND_OR_FORBIDDEN';
+        throw err;
+      }
+      return portfolio;
+    }
 
     if (options.name) {
       portfolio = await PaperTradingPortfolio.findOne({
@@ -1275,6 +1306,8 @@ class PaperTradingAutomationService {
     const portfolio = await this.ensurePortfolio({
       user_id: options.user_id,
       username: options.username,
+      // Batch I (2026-06-17): portfolio_id 优先, 不传则 fallback 到 name + active
+      portfolio_id: (options as any).portfolio_id,
       name: options.portfolio_name,
       initial_capital: options.initial_capital,
       force_new: options.force_new_portfolio,
@@ -3405,6 +3438,8 @@ class PaperTradingAutomationService {
     const portfolio = await this.ensurePortfolio({
       user_id: options.user_id,
       username: options.username,
+      // Batch I (2026-06-17): portfolio_id 优先, 不传则 fallback 到 name + active
+      portfolio_id: (options as any).portfolio_id,
       name: options.portfolio_name,
       initial_capital: options.initial_capital,
       force_new: options.force_new_portfolio,
@@ -3595,6 +3630,8 @@ class PaperTradingAutomationService {
     const portfolio = await this.ensurePortfolio({
       user_id: options.user_id,
       username: options.username,
+      // Batch I (2026-06-17): portfolio_id 优先, 不传则 fallback 到 name + active
+      portfolio_id: (options as any).portfolio_id,
       name: options.portfolio_name,
       initial_capital: options.initial_capital,
       force_new: options.force_new_portfolio,
@@ -6537,6 +6574,24 @@ class PaperTradingAutomationService {
       total_cost,
     } = params;
 
+    // Batch I (2026-06-17, C2-pos-limit): pre-trade guards. 之前 automation BUY
+    // 完全跳过 PositionLimitGuard / DrawdownCircuitBreaker, 与 facade.placeOrder
+    // 双轨制 + 自动跟单失去组合级硬风控. 在 transaction 外先 check, 失败抛 err.code.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { checkPreBuyGuards } = require('./preTradeGuards');
+    const guardResult = await checkPreBuyGuards({
+      user_id: portfolio.user_id,
+      symbol,
+      proposed_value: amount, // = execute_price × quantity, ex-commission
+    });
+    if (!guardResult.ok) {
+      const err: any = new Error(guardResult.reason);
+      err.statusCode = 400;
+      err.code = guardResult.code;
+      err.detail = guardResult.detail;
+      throw err;
+    }
+
     // ============= 事务保护 + 锁 (修复 CRITICAL C1/C2/C3) =============
     // 之前 3 个 write (position.create + portfolio.update + trade.create) 没包 transaction,
     // 任一步崩溃就产生 "扣了钱没单 / 建了仓没单 / 单写了但 cash 漏更新" ghost state.
@@ -6619,6 +6674,7 @@ class PaperTradingAutomationService {
     commission: number;
     net_revenue: number;
     realized_pnl: number;
+    bypass_t_plus_1?: boolean;
   }): Promise<PaperTradingTrade> {
     const {
       portfolio,
@@ -6632,6 +6688,33 @@ class PaperTradingAutomationService {
       net_revenue,
       realized_pnl,
     } = params;
+
+    // Batch I (2026-06-17, C2-T+1): pre-trade T+1 check. 之前 runRiskCheck 触发 stop_loss /
+    // trailing_take_profit / take_profit / sell_signal 全走 createSellTrade 跳过 T+1 →
+    // 模拟盘可以当日 BUY → 当日 SELL, 违反 A 股实盘规则, EV 系统性高估短线策略.
+    // 现在显式 check; bypass_t_plus_1 仅在 EOD guard 接的真卖路径下由 caller 显式置 true
+    // (因为 EOD trigger 是 next-day open 前评估, 已天然 T+1 通过).
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { checkTPlus1 } = require('./preTradeGuards');
+    const tPlus1 = await checkTPlus1({
+      portfolio_id: portfolio.id,
+      symbol,
+      held_quantity: Number(position.quantity) || 0,
+      sell_quantity: quantity,
+      bypass: params.bypass_t_plus_1 === true,
+    });
+    if (!tPlus1.ok) {
+      const err: any = new Error(tPlus1.reason || 'T+1 violation');
+      err.statusCode = 400;
+      err.code = 'T_PLUS_1_VIOLATION';
+      err.detail = {
+        holding: position.quantity,
+        today_buy: tPlus1.today_buy_qty,
+        available: tPlus1.available_for_sell,
+        requested: quantity,
+      };
+      throw err;
+    }
 
     // ============= 事务保护 + 锁 (修复 CRITICAL C1/C2/C3) =============
     // SELL 路径写 3 表: position.destroy/update + portfolio.update + trade.create.
