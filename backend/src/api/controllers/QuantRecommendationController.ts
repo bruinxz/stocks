@@ -39,7 +39,7 @@ export class QuantRecommendationController {
       res.json({ success: true, data: result });
     } catch (error: any) {
       logger.error('获取量化候选推荐失败:', error);
-      res.status(500).json({ success: false, message: error.message });
+      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
     }
   };
 
@@ -64,7 +64,7 @@ export class QuantRecommendationController {
       res.json({ success: true, data: result });
     } catch (error: any) {
       logger.error('运行推荐策略实验失败:', error);
-      res.status(500).json({ success: false, message: error.message });
+      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
     }
   };
 
@@ -120,7 +120,7 @@ export class QuantRecommendationController {
       res.json({ success: true, data: { submitted, failed } });
     } catch (error: any) {
       logger.error('提交多因子候选至 TradingAgents 失败:', error);
-      res.status(500).json({ success: false, message: error.message });
+      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
     }
   };
 
@@ -199,7 +199,7 @@ export class QuantRecommendationController {
       });
     } catch (error: any) {
       logger.error('归档量化候选信号失败:', error);
-      res.status(500).json({ success: false, message: error.message });
+      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
     }
   };
 
@@ -219,7 +219,7 @@ export class QuantRecommendationController {
       res.json({ success: true, data: result });
     } catch (error: any) {
       logger.error('获取荐股闭环策略快照失败:', error);
-      res.status(500).json({ success: false, message: error.message });
+      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
     }
   };
 
@@ -243,14 +243,27 @@ export class QuantRecommendationController {
       });
     } catch (error: any) {
       logger.error('刷新荐股闭环策略快照收益失败:', error);
-      res.status(500).json({ success: false, message: error.message });
+      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
     }
   };
 
   runAutomatedLoop = async (req: Request, res: Response) => {
     try {
+      // Batch H (2026-06-17, C11): username 必须来自 req.user (jwt 解析的 caller),
+      // 不能信任 req.body.username — 之前任何登录 user POST {username:'admin'} 就能
+      // 让闭环在 admin 名下运行 + 下单到 admin portfolio. 仅 admin 可以代他人执行
+      // (传 body.username override). 同款修复 body.paper_trade_username 如有.
+      const reqUser = (req as any).user;
+      const isAdmin = reqUser?.role === 'admin';
+      const effectiveUsername =
+        isAdmin && req.body?.username ? String(req.body.username) : reqUser?.username || 'stock';
+      if (!isAdmin && req.body?.username && req.body.username !== reqUser?.username) {
+        logger.warn(
+          `[runAutomatedLoop] user=${reqUser?.id}(${reqUser?.username}) 非 admin 尝试以 username='${req.body.username}' 运行闭环, 已强制改回自己`
+        );
+      }
       const result = await automatedRecommendationLoopService.run({
-        username: req.body?.username || 'stock',
+        username: effectiveUsername,
         universe: req.body?.universe === 'favorites' ? 'favorites' : 'market',
         style: ['balanced', 'momentum', 'value', 'low_risk'].includes(req.body?.style)
           ? req.body.style
@@ -364,7 +377,7 @@ export class QuantRecommendationController {
       res.json({ success: true, data: result, message: '全市场荐股闭环已执行' });
     } catch (error: any) {
       logger.error('执行全市场荐股闭环失败:', error);
-      res.status(500).json({ success: false, message: error.message });
+      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
     }
   };
 }

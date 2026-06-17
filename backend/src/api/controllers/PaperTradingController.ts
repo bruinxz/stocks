@@ -28,8 +28,15 @@ export class PaperTradingController {
    * bypass_t_plus_1 / dry_run 等内部 flag 直接绕过 facade guard. 用户传的 body
    * 必须先经过这个 sanitizer 把 sensitive flag 剥掉 (除非是 admin).
    *
-   * 允许从 body 透传的字段白名单: signal_ids / source_type / agent_session / dry_run
-   * (dry_run 是用户合理需求, 比如"预览今天会买啥"). 其他 bypass_* / force_* 仅 admin 可传.
+   * Batch H (2026-06-17): 黑名单扩容. 普通 user 不应该能跨账户 / 跨盘 fan-out:
+   *   - all_portfolios=true: 跨用户全平台 risk_check / refresh outcome (C3/C5)
+   *   - scope='all': per_stock_stop_loss_check 跨用户扫描 (C4)
+   *   - username / user_id: 改归属盘 → 跨账户操纵 (M1, C11)
+   *   - portfolio_name: 绕过 portfolio_id 直接按名字路由到他人盘
+   *   - dry_run_strategy_keys: 影响策略 dry-run 范围, 用户不应直接控制
+   *
+   * 允许从 body 透传的字段保留 dry_run (用户合理"预览"需求) / source_type / signal_ids /
+   * agent_session / scope='self' (默认值).
    */
   private sanitizeAutomationBody(body: any, user: any): any {
     if (!body || typeof body !== 'object') return body || {};
@@ -40,16 +47,29 @@ export class PaperTradingController {
       'force_new_portfolio',
       'allow_low_data_quality_for_forced_signals',
       'ignore_profit_gate_for_forced_signals',
+      // Batch H 新增:
+      'all_portfolios',
+      'username',
+      'user_id',
+      'portfolio_name',
+      'dry_run_strategy_keys',
     ];
     const sanitized = { ...body };
     if (!isAdmin) {
       for (const flag of sensitiveFlags) {
         if (sanitized[flag] !== undefined) {
           logger.warn(
-            `[sanitizeAutomationBody] user=${user?.id} 非 admin 尝试传 ${flag}=${sanitized[flag]}, 已剥除`
+            `[sanitizeAutomationBody] user=${user?.id} 非 admin 尝试传 ${flag}=${JSON.stringify(sanitized[flag])}, 已剥除`
           );
           delete sanitized[flag];
         }
+      }
+      // scope 只允许 'self'; 'all' 必须 admin.
+      if (sanitized.scope !== undefined && sanitized.scope !== 'self') {
+        logger.warn(
+          `[sanitizeAutomationBody] user=${user?.id} 非 admin 尝试传 scope=${sanitized.scope}, 强制 self`
+        );
+        sanitized.scope = 'self';
       }
     }
     return sanitized;
@@ -118,15 +138,31 @@ export class PaperTradingController {
       // 之前 UI 点"一键平仓" body 只传 symbol/direction/quantity, controller 不读
       // portfolio_id → facade fallback 到 user 名下 active id ASC 第一个 (portfolio 33),
       // 实际卖 portfolio 33 → 如该盘没该股 throw 持仓不足; 更糟卖到错盘是真金白银事故.
-      const { symbol, direction, quantity, portfolio_id } = req.body;
+      const { symbol, direction: rawDirection, quantity, portfolio_id, action } = req.body;
+      // Batch H (H1+H2, 2026-06-17): 兼容 (a) controller 真用的 direction; (b) OpenAPI 文档写
+      // action='buy/sell'. 任一字段大写小写都接, 统一变 'BUY' / 'SELL'. 之前 'buy' 走到 facade
+      // 因 !== 'BUY' 抛 generic Error → sendError 500. 现在 400 + 明确 message.
+      const directionInput = String(rawDirection || action || '').toUpperCase();
+      if (directionInput !== 'BUY' && directionInput !== 'SELL') {
+        return res.status(400).json({
+          success: false,
+          message: '交易方向 direction 必须为 BUY 或 SELL (兼容 action=buy/sell)',
+        });
+      }
+      const parsedQuantity = Number(quantity);
+      if (!Number.isFinite(parsedQuantity) || parsedQuantity <= 0) {
+        return res
+          .status(400)
+          .json({ success: false, message: 'quantity 必须是正数 (建议 100 整数倍)' });
+      }
       const parsedPortfolioId =
         portfolio_id !== undefined && portfolio_id !== null ? Number(portfolio_id) : undefined;
       const result = await paperTradingFacade.placeOrder({
         user_id: user.id,
         portfolio_id: Number.isFinite(parsedPortfolioId as number) ? parsedPortfolioId : undefined,
         symbol,
-        direction,
-        quantity,
+        direction: directionInput as 'BUY' | 'SELL',
+        quantity: parsedQuantity,
       });
       res.json({ success: true, message: '交易成功', data: result });
     } catch (error: any) {
@@ -262,7 +298,7 @@ export class PaperTradingController {
         view: 'autonomous_dashboard',
         user_id: user.id,
         username: user.username || user.nickname,
-        query: req.query as Record<string, any>,
+        query: this.sanitizeAutomationBody(req.query as Record<string, any>, (req as any).user),
       });
       const familyOpenCount = Number(
         result.portfolio_family_summary?.summary?.open_position_count ||
@@ -287,7 +323,7 @@ export class PaperTradingController {
         view: 'recommendation_tracking',
         user_id: user.id,
         username: user.username || user.nickname,
-        query: req.query as Record<string, any>,
+        query: this.sanitizeAutomationBody(req.query as Record<string, any>, (req as any).user),
       });
       res.json({
         success: true,
@@ -307,7 +343,7 @@ export class PaperTradingController {
         action: 'autonomous_optimization',
         user_id: user.id,
         username: user.username || user.nickname,
-        query: req.query as Record<string, any>,
+        query: this.sanitizeAutomationBody(req.query as Record<string, any>, (req as any).user),
       });
       res.json({
         success: true,
@@ -372,7 +408,7 @@ export class PaperTradingController {
       const result: any = await paperTradingFacade.attributePnl({
         action: 'compute',
         user_id: user.id,
-        query: req.query as Record<string, any>,
+        query: this.sanitizeAutomationBody(req.query as Record<string, any>, (req as any).user),
       });
       res.json({
         success: true,
@@ -391,7 +427,7 @@ export class PaperTradingController {
       const result: any = await paperTradingFacade.getRiskProfile({
         view: 'profile',
         user_id: user.id,
-        query: req.query as Record<string, any>,
+        query: this.sanitizeAutomationBody(req.query as Record<string, any>, (req as any).user),
       });
       res.json({
         success: true,
@@ -411,7 +447,7 @@ export class PaperTradingController {
         view: 'intents',
         user_id: user.id,
         username: user.username || user.nickname,
-        query: req.query as Record<string, any>,
+        query: this.sanitizeAutomationBody(req.query as Record<string, any>, (req as any).user),
       });
       res.json({
         success: true,
@@ -431,7 +467,7 @@ export class PaperTradingController {
         view: 'intent_family_hindsight',
         user_id: user.id,
         username: user.username || user.nickname,
-        query: req.query as Record<string, any>,
+        query: this.sanitizeAutomationBody(req.query as Record<string, any>, (req as any).user),
       });
       res.json({
         success: true,
@@ -451,7 +487,7 @@ export class PaperTradingController {
         view: 'intent_trace',
         user_id: user.id,
         username: user.username || user.nickname,
-        query: req.query as Record<string, any>,
+        query: this.sanitizeAutomationBody(req.query as Record<string, any>, (req as any).user),
         params: { id: req.params.id },
       });
       if (!result) {
@@ -486,7 +522,7 @@ export class PaperTradingController {
       const result: any = await paperTradingFacade.attributePnl({
         action: 'recommendation_outcomes',
         user_id: user.id,
-        query: req.query as Record<string, any>,
+        query: this.sanitizeAutomationBody(req.query as Record<string, any>, (req as any).user),
       });
       res.json({
         success: true,
@@ -505,7 +541,7 @@ export class PaperTradingController {
       const result: any = await paperTradingFacade.attributePnl({
         action: 'recommendation_outcome_trace',
         user_id: user.id,
-        query: req.query as Record<string, any>,
+        query: this.sanitizeAutomationBody(req.query as Record<string, any>, (req as any).user),
         params: { id: req.params.id },
       });
       if (!result) {
@@ -582,7 +618,8 @@ export class PaperTradingController {
         action: 'plan',
         user_id: user.id,
         username: user.username || user.nickname,
-        body: req.query as Record<string, any>,
+        // M7 (Batch H): query 也要过 sanitizer, 否则 ?all_portfolios=true 走 query 仍能注入
+        body: this.sanitizeAutomationBody(req.query as Record<string, any>, user),
       });
       res.json({
         success: true,
@@ -618,6 +655,15 @@ export class PaperTradingController {
   applyOrderIntentTuning = async (req: Request, res: Response, _next: NextFunction) => {
     try {
       const user = (req as any).user;
+      // Batch H (2026-06-17, C6): tuning_apply 直接 update 全局 ScheduledTask
+      // (PaperTradingTuningApplyService.ts:375 task.update({parameters})) 影响 cron 配置,
+      // 必须 admin. 之前任何登录 user 可改 cron 全局参数.
+      if (user?.role !== 'admin') {
+        return res.status(403).json({
+          success: false,
+          message: '仅 admin 可应用订单意图调参 (会改全局 cron 参数)',
+        });
+      }
       const result: any = await paperTradingFacade.applyAutomation({
         action: 'tuning_apply',
         user_id: user.id,
@@ -638,7 +684,7 @@ export class PaperTradingController {
         view: 'tuning_canary',
         user_id: user.id,
         username: user.username || user.nickname,
-        query: req.query as Record<string, any>,
+        query: this.sanitizeAutomationBody(req.query as Record<string, any>, (req as any).user),
       });
       res.json({
         success: true,
@@ -658,7 +704,7 @@ export class PaperTradingController {
         view: 'tuning_candidates',
         user_id: user.id,
         username: user.username || user.nickname,
-        query: req.query as Record<string, any>,
+        query: this.sanitizeAutomationBody(req.query as Record<string, any>, (req as any).user),
       });
       res.json({
         success: true,
@@ -682,7 +728,7 @@ export class PaperTradingController {
         view: 'tuning_canary_snapshots',
         user_id: user.id,
         username: user.username || user.nickname,
-        query: req.query as Record<string, any>,
+        query: this.sanitizeAutomationBody(req.query as Record<string, any>, (req as any).user),
       });
       res.json({
         success: true,
@@ -698,6 +744,13 @@ export class PaperTradingController {
   rollbackOrderIntentTuningCanary = async (req: Request, res: Response, _next: NextFunction) => {
     try {
       const user = (req as any).user;
+      // Batch H (2026-06-17, C6): 同 applyOrderIntentTuning, admin gate.
+      if (user?.role !== 'admin') {
+        return res.status(403).json({
+          success: false,
+          message: '仅 admin 可回滚订单意图 Canary 调参',
+        });
+      }
       const result: any = await paperTradingFacade.applyAutomation({
         action: 'tuning_rollback',
         user_id: user.id,

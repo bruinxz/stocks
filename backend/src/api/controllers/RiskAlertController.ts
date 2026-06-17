@@ -131,7 +131,7 @@ export class RiskAlertController {
       });
     } catch (error: any) {
       logger.error('获取风控告警数据失败:', error);
-      res.status(500).json({ success: false, message: error.message });
+      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
     }
   }
 
@@ -250,7 +250,7 @@ export class RiskAlertController {
       });
     } catch (error: any) {
       logger.error('获取风控告警列表失败:', error);
-      res.status(500).json({ success: false, message: error.message });
+      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
     }
   }
 
@@ -282,6 +282,10 @@ export class RiskAlertController {
             : user.risk_config?.enableTechnicalAlert,
       };
 
+      // M8 (Batch H, 2026-06-17): JSONB 字段必须 changed() 标 dirty, 否则 Sequelize
+      // shallow-compare 看不到引用变化 (我们 spread 新对象但底层 model 仍是同一指针)
+      // → save 不写库, 配置静默丢. 与 US-017 risk_config 同款 lesson.
+      user.changed('risk_config', true);
       await user.save();
 
       res.json({
@@ -291,7 +295,7 @@ export class RiskAlertController {
       });
     } catch (error: any) {
       logger.error('更新风控配置失败:', error);
-      res.status(500).json({ success: false, message: error.message });
+      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
     }
   }
 
@@ -310,7 +314,7 @@ export class RiskAlertController {
       res.json({ success: true, message: '已标记为已读' });
     } catch (error: any) {
       logger.error('标记已读失败:', error);
-      res.status(500).json({ success: false, message: error.message });
+      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
     }
   }
 
@@ -324,7 +328,7 @@ export class RiskAlertController {
       res.json({ success: true, message: '所有告警已标记为已读' });
     } catch (error: any) {
       logger.error('一键标记已读失败:', error);
-      res.status(500).json({ success: false, message: error.message });
+      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
     }
   }
 
@@ -386,7 +390,7 @@ export class RiskAlertController {
       });
     } catch (error: any) {
       logger.error('批量标记已读失败:', error);
-      res.status(500).json({ success: false, message: error.message });
+      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
     }
   }
 }

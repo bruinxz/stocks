@@ -25,7 +25,7 @@ class ReviewController {
       });
     } catch (error: any) {
       logger.error('获取收益复盘中心失败:', error);
-      res.status(500).json({ success: false, message: error.message || '获取收益复盘中心失败' });
+      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message || '获取收益复盘中心失败' });
     }
   }
 }

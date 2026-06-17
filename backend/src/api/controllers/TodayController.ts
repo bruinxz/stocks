@@ -29,7 +29,7 @@ class TodayController {
       res.json({ success: true, data });
     } catch (error: any) {
       logger.error('获取今日作战台失败:', error);
-      res.status(500).json({ success: false, message: error.message || '获取今日作战台失败' });
+      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message || '获取今日作战台失败' });
     }
   }
 
@@ -47,7 +47,7 @@ class TodayController {
       res.json({ success: true, data, message: data.conclusion });
     } catch (error: any) {
       logger.error('获取开盘可信运行检查失败:', error);
-      res.status(500).json({
+      res.status((error as any)?.statusCode || 500).json({
         success: false,
         message: error.message || '获取开盘可信运行检查失败',
       });
@@ -75,7 +75,7 @@ class TodayController {
       res.json({ success: true, data });
     } catch (error: any) {
       logger.error('获取今日作战信号失败:', error);
-      res.status(500).json({
+      res.status((error as any)?.statusCode || 500).json({
         success: false,
         message: error.message || '获取今日作战信号失败',
       });
@@ -106,7 +106,7 @@ class TodayController {
       res.json({ success: true, data });
     } catch (error: any) {
       logger.error('一键应用今日信号失败:', error);
-      res.status(500).json({
+      res.status((error as any)?.statusCode || 500).json({
         success: false,
         message: error.message || '一键应用今日信号失败',
       });

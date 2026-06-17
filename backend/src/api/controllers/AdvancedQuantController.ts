@@ -704,6 +704,23 @@ export class AdvancedQuantController {
       if (!target_portfolio.length) {
         return res.status(400).json({ success: false, message: '缺少 target_portfolio' });
       }
+      // Batch H (2026-06-17, C12): owner gate — 之前 portfolio_id 直传, 任意 user
+      // 可对任意 portfolio_id 跑 rebalance + 真下单. 现在限定 portfolio.user_id 必须
+      // 等于 req.user.id (admin 可代他人执行).
+      /* eslint-disable @typescript-eslint/no-var-requires */
+      const { PaperTradingPortfolio } = require('../../models/PaperTradingPortfolio');
+      /* eslint-enable @typescript-eslint/no-var-requires */
+      const reqUser = (req as any).user;
+      const ownerCheck = await PaperTradingPortfolio.findByPk(portfolio_id);
+      if (!ownerCheck) {
+        return res.status(404).json({ success: false, message: '未找到 portfolio' });
+      }
+      if (ownerCheck.user_id !== reqUser?.id && reqUser?.role !== 'admin') {
+        logger.warn(
+          `[composite-rebalance] user=${reqUser?.id} 尝试 rebalance portfolio=${portfolio_id} (owner=${ownerCheck.user_id}), 拒绝`
+        );
+        return res.status(403).json({ success: false, message: '无权对该 portfolio 执行 rebalance' });
+      }
       const trade_date = body.trade_date || new Date().toISOString().slice(0, 10);
       const result = await compositeRebalanceService.rebalance({
         portfolio_id,
@@ -732,6 +749,13 @@ export class AdvancedQuantController {
    */
   async pauseCompositeRebalance(req: Request, res: Response) {
     try {
+      // Batch H (2026-06-17, C12): pause 影响所有 cron, 必须 admin.
+      const reqUser = (req as any).user;
+      if (reqUser?.role !== 'admin') {
+        return res
+          .status(403)
+          .json({ success: false, message: '仅 admin 可一键暂停 composite-rebalance cron' });
+      }
       const body = req.body || {};
       const paused = body.paused === true;
       /* eslint-disable @typescript-eslint/no-var-requires */
