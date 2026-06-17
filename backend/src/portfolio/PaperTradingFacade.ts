@@ -482,7 +482,31 @@ export class PaperTradingFacade {
     if (!bars || bars.length === 0) {
       throw new Error('无法获取该股票的当前价格');
     }
-    const current_price = bars[bars.length - 1].close;
+    const latestBar = bars[bars.length - 1];
+    const current_price = latestBar.close;
+    // Batch P (2026-06-17, D1 fix): staleness guard. 之前盘中下单 (UI / industry
+    // rebalance / closePosition) 可能拿到昨日 / 上周五 close 当成交价, 用户在
+    // 实时价 +5% 时按昨日 close 出货 = realized_pnl 严重失真. automation 路径已有
+    // 30 min guard, facade 这条独立 path 之前完全没有.
+    //
+    // 当前简化判定: latestBar.time 距 now 超 max_age_days (默认 3 天 — 覆盖周末/单日假) → throw.
+    // bypass_trading_hours=true (历史回填 / 单测) 时跳过此检查. 未来可接 RealtimeQuoteService
+    // 同款 30min 阈值, 这里先用 daily_bar 时间戳保底.
+    if (!(options as any).bypass_trading_hours && latestBar.time) {
+      const ageMs = Date.now() - new Date(latestBar.time as any).getTime();
+      const maxAgeMs = 3 * 24 * 60 * 60 * 1000;
+      if (Number.isFinite(ageMs) && ageMs > maxAgeMs) {
+        const ageDays = Math.round((ageMs / (24 * 60 * 60 * 1000)) * 10) / 10;
+        const err: any = new Error(
+          `行情数据陈旧 (最新 daily_bar ${ageDays} 天前), 拒绝按 stale 价撮合. ` +
+            `请等待数据同步或加 bypass_trading_hours=true 强制下单`
+        );
+        err.statusCode = 503;
+        err.code = 'STALE_DAILY_BAR';
+        err.detail = { symbol, latest_bar_time: latestBar.time, age_days: ageDays };
+        throw err;
+      }
+    }
     const stockInfo = await Stock.findOne({ where: { symbol } });
     const stockName = stockInfo ? stockInfo.name : symbol;
 

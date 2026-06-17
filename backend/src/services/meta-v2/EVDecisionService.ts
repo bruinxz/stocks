@@ -70,6 +70,13 @@ export interface EVDecisionInput {
   as_of_date: string;
   /** 可选 override cost (例如 Sprint 41-E ExecutionPolicyRouter 估算后传入) */
   cost_pct_override?: number;
+  /**
+   * Batch P (2026-06-17, E1 fix): 可选 portfolio_id, 让 EV 统计按 portfolio 分组.
+   * 之前所有 portfolio 共享一份 (strategy_key, regime) avg_win/avg_loss → 一个盘
+   * 差表现污染所有盘的 EV gate. 现在 caller (autoBuyFromSignals) 应传当前 portfolio_id,
+   * loadStrategyRegimeStats 优先按 portfolio_id 过滤, 数据不足时 fallback 到全平台.
+   */
+  portfolio_id?: number;
   options?: Partial<EVDecisionOptions>;
 }
 
@@ -174,20 +181,23 @@ export interface EVDecisionDataSource {
     strategy_key: string,
     regime: string,
     lookback_days: number,
-    as_of_date: string
+    as_of_date: string,
+    portfolio_id?: number
   ): Promise<StrategyRegimeStats | null>;
 
   /**
    * 全局 fallback: 不限 strategy / regime 的近期 outcome 统计.
+   * Batch P (2026-06-17, E1): 同款加 portfolio_id 过滤.
    */
   loadGlobalStats(
     lookback_days: number,
-    as_of_date: string
+    as_of_date: string,
+    portfolio_id?: number
   ): Promise<{ sample_count: number; avg_win_pct: number; avg_loss_pct: number } | null>;
 }
 
 export const PRODUCTION_EV_DECISION_DATA_SOURCE: EVDecisionDataSource = {
-  async loadStrategyRegimeStats(strategy_key, regime, lookback_days, as_of_date) {
+  async loadStrategyRegimeStats(strategy_key, regime, lookback_days, as_of_date, portfolio_id?) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { RecommendationTradeOutcome } = require('../../models/RecommendationTradeOutcome');
@@ -198,13 +208,20 @@ export const PRODUCTION_EV_DECISION_DATA_SOURCE: EVDecisionDataSource = {
       const lookbackStart = new Date(`${as_of_date}T00:00:00.000Z`);
       lookbackStart.setUTCDate(lookbackStart.getUTCDate() - lookback_days);
       const lookbackStartIso = lookbackStart.toISOString().slice(0, 10);
+      // Batch P (2026-06-17, E1 fix): portfolio_id 过滤. 旧实现全平台混算,
+      // 一个盘差表现污染所有盘 EV. 现在优先按 portfolio_id, 数据不足 (caller 自行判
+      // sample_count < min_samples) 时 fallback 到全平台.
+      const baseWhere: any = {
+        trade_status: 'closed',
+        exit_date: { [Op.gte]: lookbackStartIso },
+      };
+      if (Number.isFinite(portfolio_id) && (portfolio_id as number) > 0) {
+        baseWhere.portfolio_id = portfolio_id;
+      }
       // strategy_key 存在 metadata.strategy_key JSONB, 不能在 where 里精确等值过滤;
       // 改为先按 trade_status + exit_date 过滤, 再 in-memory filter metadata.strategy_key + regime.
       const rows = await RecommendationTradeOutcome.findAll({
-        where: {
-          trade_status: 'closed',
-          exit_date: { [Op.gte]: lookbackStartIso },
-        },
+        where: baseWhere,
         attributes: ['total_pnl_pct', 'metadata'],
         raw: true,
       });
@@ -249,7 +266,7 @@ export const PRODUCTION_EV_DECISION_DATA_SOURCE: EVDecisionDataSource = {
     }
   },
 
-  async loadGlobalStats(lookback_days, as_of_date) {
+  async loadGlobalStats(lookback_days, as_of_date, portfolio_id?) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { RecommendationTradeOutcome } = require('../../models/RecommendationTradeOutcome');
@@ -258,11 +275,16 @@ export const PRODUCTION_EV_DECISION_DATA_SOURCE: EVDecisionDataSource = {
       const lookbackStart = new Date(`${as_of_date}T00:00:00.000Z`);
       lookbackStart.setUTCDate(lookbackStart.getUTCDate() - lookback_days);
       const lookbackStartIso = lookbackStart.toISOString().slice(0, 10);
+      const where: any = {
+        trade_status: 'closed',
+        exit_date: { [Op.gte]: lookbackStartIso },
+      };
+      // Batch P (2026-06-17, E1): 同 loadStrategyRegimeStats, portfolio_id 优先过滤.
+      if (Number.isFinite(portfolio_id) && (portfolio_id as number) > 0) {
+        where.portfolio_id = portfolio_id;
+      }
       const rows = await RecommendationTradeOutcome.findAll({
-        where: {
-          trade_status: 'closed',
-          exit_date: { [Op.gte]: lookbackStartIso },
-        },
+        where,
         attributes: ['total_pnl_pct'],
         raw: true,
       });
@@ -338,7 +360,8 @@ export class EVDecisionService {
           input.strategy_key,
           input.regime,
           opts.lookback_days,
-          input.as_of_date
+          input.as_of_date,
+          input.portfolio_id // Batch P (2026-06-17, E1): portfolio_id 透传
         );
         if (stats && stats.sample_count >= opts.min_samples_for_stats) {
           avg_win_pct = stats.avg_win_pct > 0 ? stats.avg_win_pct : opts.fallback_avg_win_pct;
@@ -358,7 +381,13 @@ export class EVDecisionService {
     // 次源 (global)
     if (stats_source === 'default_fallback') {
       try {
-        const global = await this.dataSource.loadGlobalStats(opts.lookback_days, input.as_of_date);
+        // Batch P (2026-06-17, E1): 优先按 portfolio_id 查; 数据不足后续 fallback
+        // 路径 (default_fallback) 已天然自动应用.
+        const global = await this.dataSource.loadGlobalStats(
+          opts.lookback_days,
+          input.as_of_date,
+          input.portfolio_id
+        );
         if (global && global.sample_count >= opts.min_samples_for_stats) {
           avg_win_pct = global.avg_win_pct > 0 ? global.avg_win_pct : opts.fallback_avg_win_pct;
           avg_loss_pct = global.avg_loss_pct > 0 ? global.avg_loss_pct : opts.fallback_avg_loss_pct;

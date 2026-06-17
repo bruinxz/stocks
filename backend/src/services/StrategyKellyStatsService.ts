@@ -70,11 +70,23 @@ export class StrategyKellyStatsService {
    * @param lookbackDays 回看天数，默认 365；min=90
    * @returns null 当样本不足以计算（< 5 笔 closed trades）
    */
-  async getStats(strategy_key: string, lookbackDays = MIN_LOOKBACK_DAYS): Promise<StrategyKellyStats | null> {
+  async getStats(
+    strategy_key: string,
+    lookbackDays = MIN_LOOKBACK_DAYS,
+    portfolio_id?: number
+  ): Promise<StrategyKellyStats | null> {
     if (!strategy_key) return null;
 
+    // Batch P (2026-06-17, E1): cache key 加 portfolio_id, 让不同盘各自缓存自己的
+    // Kelly 系数. 之前所有盘共享一份 strategy_key cache, 一个盘差表现污染所有盘
+    // 的 sizing. 同款问题 EVDecisionService 已修.
+    const cacheKey =
+      Number.isFinite(portfolio_id) && (portfolio_id as number) > 0
+        ? `${strategy_key}::${portfolio_id}`
+        : strategy_key;
+
     // 缓存命中
-    const cached = this.cache.get(strategy_key);
+    const cached = this.cache.get(cacheKey);
     if (cached && Date.now() - cached.computed_at < CACHE_TTL_MS) {
       return cached.stats;
     }
@@ -84,12 +96,17 @@ export class StrategyKellyStatsService {
     const sinceStr = sinceDate.toISOString().slice(0, 10);
 
     try {
+      // Batch P (2026-06-17, E1): portfolio_id 优先过滤; 不传时回退全平台.
+      const where: any = {
+        trade_status: 'closed',
+        entry_date: { [Op.gte]: sinceStr },
+      };
+      if (Number.isFinite(portfolio_id) && (portfolio_id as number) > 0) {
+        where.portfolio_id = portfolio_id;
+      }
       // 读所有 closed trades 一次性聚合（避免 N 次查询）
       const rows = await RecommendationTradeOutcome.findAll({
-        where: {
-          trade_status: 'closed',
-          entry_date: { [Op.gte]: sinceStr },
-        },
+        where,
         attributes: ['total_pnl_pct', 'realized_pnl_pct', 'metadata'],
         limit: 5000, // 安全上限，5000 笔已远超 Kelly 所需
       });
@@ -104,12 +121,12 @@ export class StrategyKellyStatsService {
 
       if (matching.length < 5) {
         // 样本不足
-        this.cache.set(strategy_key, { stats: null, computed_at: Date.now() });
+        this.cache.set(cacheKey, { stats: null, computed_at: Date.now() });
         return null;
       }
 
       const stats = this.computeStats(strategy_key, matching);
-      this.cache.set(strategy_key, { stats, computed_at: Date.now() });
+      this.cache.set(cacheKey, { stats, computed_at: Date.now() });
       return stats;
     } catch (err: any) {
       logger.warn(`[KellyStats] getStats(${strategy_key}) failed: ${err?.message || err}`);

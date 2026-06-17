@@ -2045,6 +2045,9 @@ class PaperTradingAutomationService {
             regime: String(regimeForMeta),
             calibrated_win_prob: finalProb,
             as_of_date: new Date().toISOString().slice(0, 10),
+            // Batch P (2026-06-17, E1): 透传当前 portfolio_id, 让 EV 按盘统计
+            // 不再让一个盘差表现污染所有盘的 EV gate.
+            portfolio_id: portfolio.id,
           });
           const evDetail = {
             raw_confidence: rawConfidence,
@@ -2387,7 +2390,11 @@ class PaperTradingAutomationService {
               (signal as any)?.metadata?.signal_metadata?.strategy_key ||
               null;
             if (strategyKey) {
-              kellyStats = await strategyKellyStatsService.getStats(strategyKey).catch(() => null);
+              // Batch P (2026-06-17, E1): 透传 portfolio_id, Kelly 系数按盘统计
+              // 不再让一个盘差表现污染所有盘的 sizing.
+              kellyStats = await strategyKellyStatsService
+                .getStats(strategyKey, undefined, portfolio.id)
+                .catch(() => null);
             }
           }
 
