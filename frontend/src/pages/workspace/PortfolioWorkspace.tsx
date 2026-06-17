@@ -287,6 +287,8 @@ interface PositionsTabProps {
 const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfterTrade }) => {
   const isMobile = useIsMobile();
   const navigate = useNavigate();
+  // 修复 (2026-06-17): 子组件用 context 拿 selectedPortfolioId, 不再依赖 prop 透传
+  const { selectedPortfolioId } = usePortfolio();
   // US-076 — 编辑 state 扩展为 (positionId, field) tuple，止损与止盈复用同一套
   // 编辑 / 保存 / 取消机制，避免两个独立 state 各管一边导致同行同时进入两个编辑态。
   const [editingPositionId, setEditingPositionId] = useState<number | null>(null);
