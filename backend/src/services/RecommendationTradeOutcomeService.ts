@@ -3149,7 +3149,14 @@ export class RecommendationTradeOutcomeService {
           root_cause_label: rcResult.root_cause_label,
           symbol: normalizeSymbol(signal.symbol),
           total_pnl_pct: totalPnlPct,
-          holding_days: Number(holdingDays || 0),
+          // Batch K (2026-06-17, C3 1-line bug fix): 之前 `Number(holdingDays || 0)` 把
+          // 顶层 helper 函数引用转 Number → NaN → ||0 → 永远 0. 所有 closed trade
+          // 的 postmortem.holding_days 都是 0, root cause baseline 比对 / 分位识别全失真.
+          // 正确值就是上面 3111 行已算的 paperTrading.holding_days fallback to fn 调用.
+          holding_days: toNumber(
+            paperTrading.holding_days,
+            holdingDays(entryDate, exitDate || effectiveExitDate)
+          ),
           entry_price: Number(entryPrice) || undefined,
           exit_price: Number(exitPrice) || undefined,
           max_drawdown_during_hold_pct:

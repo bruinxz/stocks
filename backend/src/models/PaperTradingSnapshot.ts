@@ -7,12 +7,24 @@ import {
   UpdatedAt,
   ForeignKey,
   BelongsTo,
+  Index,
 } from 'sequelize-typescript';
 import { PaperTradingPortfolio } from './PaperTradingPortfolio';
 
 @Table({
   tableName: 'paper_trading_snapshots',
   timestamps: true,
+  indexes: [
+    {
+      // Batch K (2026-06-17): 防 syncLatestPricesAndSnapshot 并发 upsert 一天写
+      // 2 条 snapshot (equity 曲线翻倍点). dev `sync({alter:true})` 会自动创建.
+      // 修复后旧 dup row 需 ops 一次性 DELETE OLDER OF DUPLICATES — 见
+      // scripts/sql/dedupe_paper_trading_snapshots.sql (待创建).
+      name: 'uniq_paper_trading_snapshot_portfolio_date',
+      unique: true,
+      fields: ['portfolio_id', 'date'],
+    },
+  ],
 })
 export class PaperTradingSnapshot extends Model {
   @Column({
@@ -23,6 +35,7 @@ export class PaperTradingSnapshot extends Model {
   declare id: number;
 
   @ForeignKey(() => PaperTradingPortfolio)
+  @Index('uniq_paper_trading_snapshot_portfolio_date')
   @Column({
     type: DataType.INTEGER,
     allowNull: false,
@@ -33,6 +46,7 @@ export class PaperTradingSnapshot extends Model {
   @BelongsTo(() => PaperTradingPortfolio)
   declare portfolio: PaperTradingPortfolio;
 
+  @Index('uniq_paper_trading_snapshot_portfolio_date')
   @Column({
     type: DataType.DATEONLY,
     allowNull: false,

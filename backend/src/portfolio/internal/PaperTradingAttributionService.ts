@@ -325,6 +325,10 @@ export class PaperTradingAttributionService {
     const closedTrades: PaperTradingClosedAttributionItem[] = [];
     const openPositions: PaperTradingOpenAttributionItem[] = [];
     const linkedOpenSymbols = new Set<string>();
+    // Batch K (2026-06-17, H4 fix): 加仓 cycle 一次性全平仓时, 多个 signal 共享同一
+    // sell_trade_id (markSignalClosed 不去重). 之前 attribution 把同一 SELL 的
+    // realized_pnl 算 N 次 → dashboard 总 PnL 翻倍. 用 Set 去重 sell_trade_id.
+    const accountedSellTradeIds = new Set<number>();
 
     for (const signal of signals) {
       const metadata = asPlainObject(signal.metadata);
@@ -334,6 +338,15 @@ export class PaperTradingAttributionService {
       const exitTrade = paperTrading.sell_trade_id
         ? tradeMap.get(Number(paperTrading.sell_trade_id))
         : null;
+      // Batch K: 若 sell_trade_id 已被前一条 signal 算过, 跳过这条 (会重复加)
+      const sellTradeIdNum = paperTrading.sell_trade_id ? Number(paperTrading.sell_trade_id) : null;
+      if (sellTradeIdNum && Number.isFinite(sellTradeIdNum) && accountedSellTradeIds.has(sellTradeIdNum)) {
+        // skip — 已被 sibling signal 计入 closedTrades
+        continue;
+      }
+      if (sellTradeIdNum && Number.isFinite(sellTradeIdNum)) {
+        accountedSellTradeIds.add(sellTradeIdNum);
+      }
 
       if (paperTrading.status === 'closed') {
         const entryPrice = toNumber(

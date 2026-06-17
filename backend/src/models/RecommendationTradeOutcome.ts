@@ -338,8 +338,24 @@ export class RecommendationTradeOutcome extends Model {
 
       // === 4. 严重违规 → RiskAlert (fire-and-forget) ===
       if (complianceResult.should_alert) {
+        // Batch K (2026-06-17, H3 fix): 之前硬编码 user_id=1 → 所有用户的合规告警
+        // 都挂 user 1 名下, 真持仓人看不到. 现在按 portfolio_id 反查 user_id, fallback
+        // 到 1 仅在 portfolio 也查不到的边界场景 (db corruption / outcome 旧数据).
+        let resolvedUserId = 1;
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const { PaperTradingPortfolio } = require('./PaperTradingPortfolio');
+          const port = await PaperTradingPortfolio.findByPk(instance.portfolio_id, {
+            attributes: ['user_id'],
+          });
+          if (port?.user_id) resolvedUserId = Number(port.user_id);
+        } catch (lookupErr: any) {
+          logger.warn(
+            `[RecommendationTradeOutcome.afterUpdate] portfolio→user lookup failed (fallback user_id=1): ${lookupErr?.message || lookupErr}`
+          );
+        }
         await emitWizardAlert({
-          user_id: 1, // RTO 没有 user_id, 默认 1; 后续按 portfolio_id → user_id 查找
+          user_id: resolvedUserId,
           outcome_id: instance.id,
           symbol: instance.symbol,
           name: instance.symbol,

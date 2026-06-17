@@ -1149,16 +1149,13 @@ class PaperTradingAutomationService {
       current_cash,
       position_value: roundNumber(positionValue, 2),
     };
-    const existingSnapshot = await PaperTradingSnapshot.findOne({
-      where: { portfolio_id, date },
-      order: [['id', 'DESC']],
+    // Batch K (2026-06-17, H3 算账): 改用 Sequelize upsert (PG ON CONFLICT) +
+    // 配 PaperTradingSnapshot model 上的 UNIQUE(portfolio_id, date) 索引. 之前
+    // findOne + create 非原子, 并发 sync (cron + UI refresh 同时) 撞同日两次 →
+    // 写 2 行 same (portfolio_id, date) → equity curve 在那一天跳点.
+    await PaperTradingSnapshot.upsert(snapshotPayload, {
+      conflictFields: ['portfolio_id', 'date'],
     });
-
-    if (existingSnapshot) {
-      await existingSnapshot.update(snapshotPayload);
-    } else {
-      await PaperTradingSnapshot.create(snapshotPayload);
-    }
 
     return {
       ...snapshotPayload,
@@ -4091,6 +4088,18 @@ class PaperTradingAutomationService {
         });
 
         if (sourceSignal) {
+          // Batch K (2026-06-17, H4 fix): 写 exit_market_environment 让 outcome
+          // 的 market_regime_at_exit 真有数据 → root_cause classifier 的 wrong_regime
+          // 规则才能命中. 之前从未写入, 全局 0% wrong_regime 误判. fail-OPEN: 取不到
+          // 环境 fallback null, 不阻塞 SELL 主流程.
+          let exitMarketEnvironment: any = null;
+          try {
+            exitMarketEnvironment = await this.resolveEnvironmentForSignal(sourceSignal, asPlainObject(sourceSignal.metadata));
+          } catch (envErr: any) {
+            logger.warn(
+              `[runRiskCheck] 写 exit_market_environment 失败 fail-open: ${envErr?.message || envErr}`
+            );
+          }
           await this.markSignalClosed(sourceSignal, {
             portfolio_id: portfolio.id,
             sell_trade_id: trade.id,
@@ -4113,6 +4122,7 @@ class PaperTradingAutomationService {
             trailing_drawdown_pct: positionTrailingDrawdownPct,
             adaptive_risk_policy: adaptiveRiskPolicy,
             execution_reality_decision: executionRealityDecision,
+            exit_market_environment: exitMarketEnvironment,
           });
           await this.refreshRecommendationTradeOutcome(sourceSignal.id);
         }
@@ -4509,7 +4519,10 @@ class PaperTradingAutomationService {
       where: {
         portfolio_id,
         symbol,
-        trade_status: { [Op.in]: ['open', 'closing'] },
+        // Batch K (2026-06-17): outcome.trade_status 实际只写 'open' / 'closed' (见
+        // RTOService:3058 upsertFromExecutedSignal). 之前 [Op.in]: ['open','closing']
+        // 等价于纯 'open' (因 'closing' 没人写) — 死代码 + schema 漂移痕迹, 清掉.
+        trade_status: 'open',
       },
       order: [['updated_at', 'DESC']],
     }).catch(() => null);
