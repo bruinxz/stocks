@@ -39,6 +39,7 @@ import { useNavigate } from 'react-router-dom';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
 import AIStockAnalysisModal from '../../components/trading/AIStockAnalysisModal';
 import { useIsMobile } from '../../hooks/useIsMobile';
+import { usePortfolio } from '../../contexts/PortfolioContext';
 import dayjs, { Dayjs } from 'dayjs';
 import {
   todayWorkspaceService,
@@ -94,12 +95,16 @@ const TodayWorkspace: React.FC = () => {
 
   const [applying, setApplying] = useState(false);
   const [applyResult, setApplyResult] = useState<ApplySignalsData | null>(null);
+  // 2026-06-17: 全局选盘. KPI / MFA 差分基线 / 一键下单都跟随选盘.
+  const { selectedPortfolioId } = usePortfolio();
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
     try {
-      const result = await todayWorkspaceService.getTodaySignals();
+      const result = await todayWorkspaceService.getTodaySignals({
+        portfolio_id: selectedPortfolioId,
+      });
       setData(result);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -107,7 +112,7 @@ const TodayWorkspace: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedPortfolioId]);
 
   useEffect(() => {
     void refresh();
@@ -191,6 +196,7 @@ const TodayWorkspace: React.FC = () => {
     try {
       const result = await todayWorkspaceService.applyTodaySignals({
         trade_date: data.trade_date ?? undefined,
+        portfolio_id: selectedPortfolioId,
       });
       setApplyResult(result);
       message.success(

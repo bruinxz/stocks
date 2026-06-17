@@ -56,7 +56,6 @@ import { useIsMobile } from '../../hooks/useIsMobile';
 import {
   portfolioWorkspaceService,
   PortfolioWithPositions,
-  PortfolioListItem,
   PositionRow,
   SnapshotRow,
   TradeRow,
@@ -66,6 +65,7 @@ import {
   CorrelationReport,
   getCorrelationReport,
 } from '../../services/portfolioWorkspaceService';
+import { usePortfolio } from '../../contexts/PortfolioContext';
 
 const { Text, Paragraph } = Typography;
 const { RangePicker } = DatePicker;
@@ -107,38 +107,11 @@ const PortfolioWorkspace: React.FC = () => {
   const [trades, setTrades] = useState<TradeRow[]>([]);
   const [journalList, setJournalList] = useState<JournalSummary[]>([]);
 
-  // 修复 (2026-06-17 串盘): user 可能有多个 portfolio (8 个 Codex 模拟盘). 选盘下拉
-  // + localStorage 记忆上次选择. 之前后端任意返回 1 个, 用户看到的持仓一直变.
-  const [portfolioList, setPortfolioList] = useState<PortfolioListItem[]>([]);
-  const [selectedPortfolioId, setSelectedPortfolioId] = useState<number | undefined>(() => {
-    const stored = typeof window !== 'undefined' ? window.localStorage.getItem('pt_selected_portfolio_id') : null;
-    const parsed = stored ? Number(stored) : NaN;
-    return Number.isFinite(parsed) ? parsed : undefined;
-  });
+  // 2026-06-17: 改用全局 PortfolioContext (顶部 selector). 删除本地 portfolioList/setSelectedPortfolioId.
+  const { selectedPortfolioId } = usePortfolio();
 
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-
-  // 先加载 portfolio list, 让 selector 选盘
-  const loadPortfolioList = useCallback(async () => {
-    try {
-      const list = await portfolioWorkspaceService.listPortfolios();
-      setPortfolioList(list);
-      // 如果当前 selectedPortfolioId 不在 list 里 (重置 / 删除), 默认选第一个
-      if (list.length > 0) {
-        const exists = selectedPortfolioId && list.some(p => p.id === selectedPortfolioId);
-        if (!exists) {
-          setSelectedPortfolioId(list[0].id);
-          if (typeof window !== 'undefined') {
-            window.localStorage.setItem('pt_selected_portfolio_id', String(list[0].id));
-          }
-        }
-      }
-    } catch (err: unknown) {
-      const messageStr = err instanceof Error ? err.message : String(err);
-      setLoadError(messageStr);
-    }
-  }, [selectedPortfolioId]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -161,12 +134,6 @@ const PortfolioWorkspace: React.FC = () => {
       setLoading(false);
     }
   }, [selectedPortfolioId]);
-
-  // 先拉 portfolio list (mount 一次)
-  useEffect(() => {
-    void loadPortfolioList();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // selectedPortfolioId 变化时 refresh
   useEffect(() => {
@@ -241,22 +208,7 @@ const PortfolioWorkspace: React.FC = () => {
 
   const headerActions = (
     <Space wrap>
-      {portfolioList.length > 1 && (
-        <Select
-          style={{ minWidth: 280 }}
-          value={selectedPortfolioId}
-          onChange={value => {
-            setSelectedPortfolioId(value);
-            if (typeof window !== 'undefined') {
-              window.localStorage.setItem('pt_selected_portfolio_id', String(value));
-            }
-          }}
-          options={portfolioList.map(p => ({
-            value: p.id,
-            label: `${p.name} · ${p.positions_count} 持仓 · ¥${Number(p.total_value).toLocaleString()}`,
-          }))}
-        />
-      )}
+      {/* 2026-06-17: 选盘下拉已上移到全局 App Header (GlobalPortfolioSelector). */}
       <Button icon={<ReloadOutlined />} onClick={() => void refresh()} loading={loading}>
         刷新
       </Button>

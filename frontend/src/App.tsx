@@ -17,6 +17,8 @@ import { RootState } from './store/rootReducer';
 import { loginSuccess, logout } from './store/authSlice';
 import { authService } from './services/authService';
 import { API_DOMAIN_URL } from './services/api';
+import { PortfolioProvider } from './contexts/PortfolioContext';
+import GlobalPortfolioSelector from './components/layout/GlobalPortfolioSelector';
 
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const TodayCommandCenter = lazy(() => import('./pages/TodayCommandCenter'));
@@ -315,21 +317,25 @@ const AppContent: React.FC = () => {
             <strong>{currentPageTitle}</strong>
           </div>
           {token && (
-            <Dropdown menu={userMenuProps} placement="bottomRight" trigger={['click']}>
-              <div className="header-user-dropdown">
-                <Avatar
-                  size={36}
-                  style={{ backgroundColor: '#1f3a5f', fontSize: 14 }}
-                  icon={<UserOutlined />}
-                  src={avatarSrc}
-                />
-                <span className="header-user-copy">
-                  <strong>{displayUsername}</strong>
-                  <em>{user?.role === 'admin' ? '管理员' : '已登录'}</em>
-                </span>
-                <DownOutlined className="header-user-caret" />
-              </div>
-            </Dropdown>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+              {/* 2026-06-17 全局选盘下拉. 任何 workspace 通过 usePortfolio() 拿到 selected */}
+              <GlobalPortfolioSelector />
+              <Dropdown menu={userMenuProps} placement="bottomRight" trigger={['click']}>
+                <div className="header-user-dropdown">
+                  <Avatar
+                    size={36}
+                    style={{ backgroundColor: '#1f3a5f', fontSize: 14 }}
+                    icon={<UserOutlined />}
+                    src={avatarSrc}
+                  />
+                  <span className="header-user-copy">
+                    <strong>{displayUsername}</strong>
+                    <em>{user?.role === 'admin' ? '管理员' : '已登录'}</em>
+                  </span>
+                  <DownOutlined className="header-user-caret" />
+                </div>
+              </Dropdown>
+            </div>
           )}
         </Header>
         <Content className="modern-layout-content">
@@ -705,7 +711,9 @@ const App: React.FC = () => {
       }}
     >
       <Router>
-        <AppContent />
+        <PortfolioProvider>
+          <AppContent />
+        </PortfolioProvider>
       </Router>
     </ConfigProvider>
   );

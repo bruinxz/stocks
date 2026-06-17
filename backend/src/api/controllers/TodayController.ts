@@ -69,6 +69,8 @@ class TodayController {
         dragon_head_limit: optionalInt(req.query.dragon_head_limit),
         earnings_limit: optionalInt(req.query.earnings_limit),
         alerts_limit: optionalInt(req.query.alerts_limit),
+        // 修复 (2026-06-17 串盘): 透传 portfolio_id 决定 KPI / MFA 差分基线用哪个盘
+        portfolio_id: optionalInt(req.query.portfolio_id),
       });
       res.json({ success: true, data });
     } catch (error: any) {
@@ -98,6 +100,8 @@ class TodayController {
         trade_date: typeof body.trade_date === 'string' ? (body.trade_date as string) : undefined,
         per_order_amount: optionalInt(body.per_order_amount),
         max_orders: optionalInt(body.max_orders),
+        // 修复 (2026-06-17 串盘): 决定下单到哪个 portfolio
+        portfolio_id: optionalInt(body.portfolio_id),
       });
       res.json({ success: true, data });
     } catch (error: any) {

@@ -171,6 +171,8 @@ export interface TodaySignalsOptions {
   earnings_limit?: number;
   /** 未读告警 cap（默认 20） */
   alerts_limit?: number;
+  /** 显式 portfolio_id (多账户多盘场景必须传, 防串盘) */
+  portfolio_id?: number;
 }
 
 export interface ApplySignalsOptions {
@@ -182,6 +184,8 @@ export interface ApplySignalsOptions {
   per_order_amount?: number;
   /** 总下单数上限（防误触一次买入几十只）；默认 20 */
   max_orders?: number;
+  /** 显式 portfolio_id (多账户多盘场景必须传, 决定下到哪个盘) */
+  portfolio_id?: number;
 }
 
 export interface ApplySignalsResult {
@@ -236,7 +240,7 @@ export class TodaySignalsService {
 
     // 缓存命中检查 — 90s TTL；refresh=true 或显式 use_cache=false 跳过
     const useCache = (options as any).use_cache !== false && !(options as any).refresh;
-    const cacheKey = `${options.trade_date || 'auto'}|${options.user_id || 0}|${dragonHeadLimit}|${earningsLimit}|${alertsLimit}`;
+    const cacheKey = `${options.trade_date || 'auto'}|${options.user_id || 0}|${options.portfolio_id || 0}|${dragonHeadLimit}|${earningsLimit}|${alertsLimit}`;
     if (useCache) {
       const hit = this.cache.get(cacheKey);
       if (hit && hit.expiresAt > Date.now()) {
@@ -246,9 +250,19 @@ export class TodaySignalsService {
     }
 
     const userId = options.user_id;
-    const portfolio = userId
-      ? await PaperTradingPortfolio.findOne({ where: { user_id: userId } })
-      : null;
+    // 修复 (2026-06-17 串盘): 优先 portfolio_id 精确匹配, 缺则 user 名下 active id ASC 第一个.
+    // 之前 findOne({user_id}) 任意返回 1 行, user 4 有 8 盘 → 每次刷新 KPI 不同盘.
+    let portfolio: PaperTradingPortfolio | null = null;
+    if (options.portfolio_id) {
+      portfolio = await PaperTradingPortfolio.findOne({
+        where: { id: options.portfolio_id, ...(userId ? { user_id: userId } : {}) },
+      });
+    } else if (userId) {
+      portfolio = await PaperTradingPortfolio.findOne({
+        where: { user_id: userId, is_active: true },
+        order: [['id', 'ASC']],
+      });
+    }
     const positions = portfolio
       ? await PaperTradingPosition.findAll({ where: { portfolio_id: portfolio.id } })
       : [];
@@ -389,7 +403,18 @@ export class TodaySignalsService {
     let skipped = 0;
 
     // 已持有的股票（任何策略已建仓）→ 跳过避免重复 BUY
-    const portfolio = await PaperTradingPortfolio.findOne({ where: { user_id: options.user_id } });
+    // 修复 (2026-06-17 串盘): 优先 portfolio_id, 决定 dedup + apply target portfolio
+    let portfolio: PaperTradingPortfolio | null;
+    if (options.portfolio_id) {
+      portfolio = await PaperTradingPortfolio.findOne({
+        where: { id: options.portfolio_id, user_id: options.user_id },
+      });
+    } else {
+      portfolio = await PaperTradingPortfolio.findOne({
+        where: { user_id: options.user_id, is_active: true },
+        order: [['id', 'ASC']],
+      });
+    }
     const heldSymbols = new Set<string>();
     if (portfolio) {
       const positions = await PaperTradingPosition.findAll({
@@ -467,6 +492,7 @@ export class TodaySignalsService {
       try {
         const result = await paperTradingFacade.placeOrder({
           user_id: options.user_id,
+          portfolio_id: portfolio?.id, // 修复 (2026-06-17 串盘): 显式指定 target portfolio
           symbol: c.symbol,
           direction: 'BUY',
           quantity,
