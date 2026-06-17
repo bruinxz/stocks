@@ -771,29 +771,36 @@ export class RecommendationTradeOutcomeService {
     const signal = await AIInvestmentSignal.findByPk(signal_id);
     if (!signal) return null;
 
+    // 修复 CRITICAL #4 (2026-06-16): 同一 signal_id 可被 N 个 portfolio trade,
+    // 之前只 refresh latest portfolio, 其他 portfolio 的 outcome 永远 'open'.
+    // 改成遍历所有 paper_trading_by_portfolio entries 各自 upsert.
     const entries = paperTradingEntries(asPlainObject(signal.metadata));
-    const latestPaperTrading = entries
-      .filter(item => item.portfolio_id)
-      .sort((a, b) =>
-        String(b.executed_at || b.closed_at || '').localeCompare(
-          String(a.executed_at || a.closed_at || '')
-        )
-      )[0];
-    if (!latestPaperTrading?.portfolio_id) return null;
+    const portfolioEntries = entries.filter(item => item.portfolio_id);
+    if (portfolioEntries.length === 0) return null;
 
-    const outcome = await this.upsertFromExecutedSignal(signal, {
-      include_open: true,
-      portfolio_id: Number(latestPaperTrading.portfolio_id),
-    });
+    let latestOutcome: RecommendationTradeOutcome | null = null;
+    for (const entry of portfolioEntries) {
+      try {
+        const outcome = await this.upsertFromExecutedSignal(signal, {
+          include_open: true,
+          portfolio_id: Number(entry.portfolio_id),
+        });
+        if (outcome) latestOutcome = outcome;
+      } catch (err: any) {
+        logger.warn(
+          `refreshOutcomeBySignal: portfolio ${entry.portfolio_id} 失败: ${err?.message || err}`
+        );
+      }
+    }
 
-    if (outcome && options.report_to_feishu) {
+    if (latestOutcome && options.report_to_feishu) {
       await feishuTaskReportService.reportRecommendationTradeOutcomes(
-        await this.getDashboard({ portfolio_id: outcome.portfolio_id, include_open: true }),
+        await this.getDashboard({ portfolio_id: latestOutcome.portfolio_id, include_open: true }),
         { record_type: '推荐交易收益闭环刷新' }
       );
     }
 
-    return outcome;
+    return latestOutcome;
   }
 
   async refreshPortfolioOutcomes(options: RecommendationTradeOutcomeRefreshOptions = {}): Promise<{

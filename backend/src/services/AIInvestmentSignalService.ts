@@ -1073,7 +1073,15 @@ export class AIInvestmentSignalService {
       if (isCreated) {
         created++;
       } else {
-        await record.update(payload);
+        // 修复 CRITICAL #7 (2026-06-16): metadata 列覆写保护 paper_trading_by_portfolio
+        const preservedKeys = ['paper_trading', 'paper_trading_by_portfolio'];
+        const existingMeta = ((record as any).metadata || {}) as Record<string, any>;
+        const newMeta = ((payload as any).metadata || {}) as Record<string, any>;
+        const mergedMeta: Record<string, any> = { ...existingMeta, ...newMeta };
+        for (const key of preservedKeys) {
+          if (existingMeta[key]) mergedMeta[key] = existingMeta[key];
+        }
+        await record.update({ ...payload, metadata: mergedMeta });
         updated++;
       }
     }
@@ -1184,7 +1192,15 @@ export class AIInvestmentSignalService {
     });
 
     if (!created) {
-      await record.update(payload);
+      // 修复 CRITICAL #7 (2026-06-16): metadata 列覆写保护 paper_trading_by_portfolio
+      const preservedKeys = ['paper_trading', 'paper_trading_by_portfolio'];
+      const existingMeta = ((record as any).metadata || {}) as Record<string, any>;
+      const newMeta = ((payload as any).metadata || {}) as Record<string, any>;
+      const mergedMeta: Record<string, any> = { ...existingMeta, ...newMeta };
+      for (const key of preservedKeys) {
+        if (existingMeta[key]) mergedMeta[key] = existingMeta[key];
+      }
+      await record.update({ ...payload, metadata: mergedMeta });
     }
 
     return record;
@@ -1435,7 +1451,18 @@ export class AIInvestmentSignalService {
       if (isCreated) {
         created++;
       } else {
-        await record.update(payload);
+        // 修复 CRITICAL #7 (2026-06-16): record.update(payload) 把整个 metadata 列覆写,
+        // 抹掉 markSignalExecuted 之前写入的 paper_trading_by_portfolio. 改成 merge:
+        // payload.metadata 覆盖同名字段, 但保留 paper_trading_by_portfolio / paper_trading
+        // 之类的下游写入字段.
+        const preservedKeys = ['paper_trading', 'paper_trading_by_portfolio'];
+        const existingMeta = ((record as any).metadata || {}) as Record<string, any>;
+        const newMeta = (payload.metadata || {}) as Record<string, any>;
+        const mergedMeta: Record<string, any> = { ...existingMeta, ...newMeta };
+        for (const key of preservedKeys) {
+          if (existingMeta[key]) mergedMeta[key] = existingMeta[key];
+        }
+        await record.update({ ...payload, metadata: mergedMeta });
         updated++;
       }
       signal_ids.push(record.id);

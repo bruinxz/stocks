@@ -31,6 +31,8 @@ import { Stock } from '../models/Stock';
 import { DataService } from '../data/services/DataService';
 import { logger } from '../utils/logger';
 import { sequelize } from '../config/database';
+import { Op } from 'sequelize';
+import moment from 'moment-timezone';
 
 import {
   paperTradingAutomationService,
@@ -50,7 +52,7 @@ import { paperTradingTuningApplyService } from './internal/PaperTradingTuningApp
 import { recommendationTradeOutcomeService } from '../services/RecommendationTradeOutcomeService';
 import { positionLimitGuard } from './risk/PositionLimitGuard';
 import { drawdownCircuitBreaker } from './risk/DrawdownCircuitBreaker';
-import { perStockStopLossGuard } from './risk/PerStockStopLossGuard';
+import { perStockStopLossGuard, pickEffectivePct } from './risk/PerStockStopLossGuard';
 import { incrementOrderTotal } from '../metrics/PrometheusRegistry';
 
 // Re-export the small set of constants the controller still needs literal access
@@ -520,14 +522,27 @@ export class PaperTradingFacade {
           position.current_price = current_price;
           position.market_value = position.quantity * current_price;
           position.unrealized_pnl = position.market_value - position.avg_cost * position.quantity;
-          // 修复 (H1): 加仓后同步重算 stop_loss_price 让止损线跟随新 avg_cost.
+          // 修复 CRITICAL #3 (2026-06-16): 加仓后用 user.risk_config.per_stock_stop_loss.pct
+          // 重算 stop_loss_price, 不再硬编码 7%. 三级覆盖 (position.stop_loss_pct →
+          // user config → DEFAULT 7%) 与 PerStockStopLossGuard.pickEffectivePct 同源.
           // trailing high_price 不动 (历史最高不该回拉).
           const oldStop = position.stop_loss_price;
           if (oldStop !== null && oldStop !== undefined && position.avg_cost > 0) {
-            // 按"原 stop_loss 与原 avg_cost 的比例"复用: stop_pct = 1 - oldStop/old_avg_cost
-            // 这里没存 old_avg_cost (已 mutate), 用 7% 默认重算保守做法.
-            // 更精确做法在 PerStockStopLossGuard 后续 evaluate 重算.
-            position.stop_loss_price = Number((position.avg_cost * 0.93).toFixed(4));
+            // 取 user.risk_config.per_stock_stop_loss.pct (allow fail-open default 7%)
+            let userPct: number | null = null;
+            try {
+              const cfg = await perStockStopLossGuard.getConfig(user_id);
+              userPct = cfg?.pct ?? null;
+            } catch {
+              userPct = null;
+            }
+            const effectivePct = pickEffectivePct(
+              (position as any).stop_loss_pct ?? null,
+              userPct
+            );
+            position.stop_loss_price = Number(
+              (position.avg_cost * (1 - effectivePct)).toFixed(4)
+            );
           }
           await position.save({ transaction: t });
         } else {
@@ -548,7 +563,8 @@ export class PaperTradingFacade {
 
         lockedPortfolio.current_cash = realCash - totalCost;
         await lockedPortfolio.save({ transaction: t });
-        portfolio.current_cash = lockedPortfolio.current_cash;
+        // 修复 CRITICAL #9 (2026-06-16): 不在 tx 内 mutate caller's portfolio.current_cash —
+        // tx 若回滚, mutated 值会留在内存里造成 caller stale read. 移到 tx commit 之后.
 
         await PaperTradingTrade.create(
           {
@@ -563,9 +579,19 @@ export class PaperTradingFacade {
           },
           { transaction: t }
         );
-        return { direction: 'BUY' as const, symbol, quantity, execute_price, commission };
+        return {
+          direction: 'BUY' as const,
+          symbol,
+          quantity,
+          execute_price,
+          commission,
+          _newCash: lockedPortfolio.current_cash, // 让 tx 外 sync caller
+        };
       });
-      return result;
+      // 修复 CRITICAL #9: tx commit 成功后才 sync 到 caller 的内存对象
+      portfolio.current_cash = (result as any)._newCash;
+      const { _newCash: _, ...returnResult } = result as any;
+      return returnResult;
     }
 
     // SELL branch
@@ -578,17 +604,33 @@ export class PaperTradingFacade {
 
     // ============= T+1 拦截 (修复 CRITICAL C5) =============
     // A 股当日 BUY 不可当日 SELL. 用 position.created_at 比当日 (Asia/Shanghai) 起始.
-    // bypass_t_plus_1=true 时跳过 (回测/手动测试).
+    // 修复 CRITICAL #8 (2026-06-16): T+1 用 trade 表 FIFO 计算"可平仓数量", 不再
+     // 用 position.created_at (加仓后该字段不刷新, 旧仓位的今日加仓部分会被误放行).
+     // bypass_t_plus_1=true 时跳过 (回测/手动测试).
+     // 时区修复 HIGH H1: 用 moment.tz('Asia/Shanghai').startOf('day') 替代 toLocaleString 三明治
+     // 避免非 UTC server 上时区解析漂移.
     if (!options.bypass_t_plus_1) {
-      const todayStartShanghai = new Date(
-        new Date().toLocaleString('en-US', { timeZone: 'Asia/Shanghai' })
-      );
-      todayStartShanghai.setHours(0, 0, 0, 0);
-      const posCreatedAt = new Date(position.created_at as any);
-      if (posCreatedAt.getTime() >= todayStartShanghai.getTime()) {
-        const err: any = new Error('T+1 violation: 当日 BUY 不可当日 SELL');
+      const todayStartShanghaiIso = moment().tz('Asia/Shanghai').startOf('day').toDate();
+      // 今日 BUY 累计量
+      const todayBuyAgg = await PaperTradingTrade.findOne({
+        where: {
+          portfolio_id: portfolio.id,
+          symbol,
+          direction: 'BUY',
+          created_at: { [Op.gte]: todayStartShanghaiIso },
+        },
+        attributes: [[sequelize.fn('SUM', sequelize.col('quantity')), 'today_buy_qty']],
+        raw: true,
+      });
+      const todayBuyQty = Number((todayBuyAgg as any)?.today_buy_qty ?? 0);
+      const availableForSell = Math.max(0, Number(position.quantity) - todayBuyQty);
+      if (quantity > availableForSell) {
+        const err: any = new Error(
+          `T+1 violation: 当日 BUY ${todayBuyQty} 股不可卖. 持仓 ${position.quantity} 中可卖 ${availableForSell} 股, 拟卖 ${quantity} 股`
+        );
         err.statusCode = 400;
         err.code = 'T_PLUS_1_VIOLATION';
+        err.detail = { holding: position.quantity, today_buy: todayBuyQty, available: availableForSell, requested: quantity };
         throw err;
       }
     }
@@ -634,9 +676,14 @@ export class PaperTradingFacade {
 
       lockedPortfolio.current_cash = Number(lockedPortfolio.current_cash) + netRevenue;
       await lockedPortfolio.save({ transaction: t });
-      portfolio.current_cash = lockedPortfolio.current_cash;
+      // 修复 CRITICAL #9 (2026-06-16): tx 内不 mutate caller portfolio, 通过 result 返出
 
-      const realized_pnl = revenue - avg_cost * quantity - commission;
+      // 修复 CRITICAL #2 (2026-06-16): realized_pnl 公式漏 BUY commission.
+      // 实盘正确: pnl = (sell_revenue - sell_commission) - (buy_amount + buy_commission)
+      // avg_cost 不含 BUY commission (createBuyTrade 写 execute_price 单纯成交价).
+      // 估算 buy_commission ≈ avg_cost × quantity × commissionRate.
+      const estimatedBuyCommission = avg_cost * quantity * commissionRate;
+      const realized_pnl = revenue - avg_cost * quantity - commission - estimatedBuyCommission;
       const trade = await PaperTradingTrade.create(
         {
           portfolio_id: portfolio.id,
@@ -659,8 +706,12 @@ export class PaperTradingFacade {
         commission,
         realized_pnl,
         trade_id: trade.id,
+        _newCash: Number(lockedPortfolio.current_cash), // 让 tx 外 sync caller
       };
     });
+
+    // 修复 CRITICAL #9: tx commit 成功后再 sync caller portfolio
+    portfolio.current_cash = (result as any)._newCash;
 
     // ============= 修复 (CRITICAL C1): SELL 后触发 outcome 闭环刷新 =============
     // 之前 facade SELL 不调任何 outcome 更新, UI 手动卖 + 行业再平衡的 outcome 永远 'open'.
@@ -692,7 +743,9 @@ export class PaperTradingFacade {
     }
 
     void positionCreatedAtSnapshot; // (consumed by T+1 guard above)
-    return result;
+    // 修复 CRITICAL #9: 剥掉 internal _newCash 不返给 caller
+    const { _newCash: _, ...returnResult } = result as any;
+    return returnResult;
   }
 
   // -------------------------------------------------------------------------

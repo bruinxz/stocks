@@ -1004,6 +1004,10 @@ function riskReasonLabel(reason: RiskExitReason): string {
 
 class PaperTradingAutomationService {
   private readonly commissionRate = 0.0003;
+  // A 股 SELL 单边印花税千 1 (BUY 不收). 修复 (2026-06-16): 之前 createSellTrade 漏算
+  // 导致 realized_pnl 高估 0.1%, current_cash 多回流 0.1%, EV 反算 edge 偏乐观.
+  // 与 facade._placeOrderInner SELL 用同 rate 保持口径一致.
+  private readonly stampTaxRate = 0.001;
   private readonly slippageRate = 0.001;
 
   async ensurePortfolio(
@@ -1871,6 +1875,9 @@ class PaperTradingAutomationService {
       //     (有 ATR 服务前先用这个; 趋势方向相同, 信号判别力同等)
       //   - strategy_recent_winrate/payoff: KellyStats 已是真实, 改名 _90d 反映底层
       //     至少 90 天 lookback (StrategyKellyStatsService 强制 MIN_LOOKBACK_DAYS=90).
+      // 修复 CRITICAL #5 (2026-06-16): hoisted to outer signal-loop scope 让 markSignalExecuted
+      // 透传 ev_decision (内层 try block 的 metaDetail 在外层拿不到).
+      let capturedEvDecision: any = null;
       try {
         const strategyKeyForMeta =
           (signal as any)?.metadata?.strategy_key ||
@@ -1880,6 +1887,7 @@ class PaperTradingAutomationService {
           (signal as any).confidence_score ?? (signal as any).final_score ?? 75
         );
         const regimeForMeta = environmentPolicy.market_regime || 'range';
+        // capturedEvDecision 已在外层 hoisted (line 1878 之上), 这里不再 redeclare.
         let kellyForMeta: { win_rate?: number; payoff_ratio?: number } | null = null;
         if (strategyKeyForMeta && strategyKeyForMeta !== 'unknown') {
           kellyForMeta = await strategyKellyStatsService
@@ -2033,6 +2041,7 @@ class PaperTradingAutomationService {
           // 通过 → 写到 activation L3 detail 给 dashboard
           (metaDetail as any).ev_decision = evDetail;
           (metaDetail as any).event_filter = eventFilterResult;
+          capturedEvDecision = evDetail;
         } catch (evErr: any) {
           logger.warn(`[ev-gate] failed (fail-open): ${evErr?.message || evErr}`);
         }
@@ -3065,6 +3074,11 @@ class PaperTradingAutomationService {
       // US-083: signalDryRun replaces dry_run so per-strategy dry-run bypasses
       // createBuyTrade for this specific signal only.  QuantSignal row already
       // persisted upstream by SignalEngine — only the order-placement side effect skipped.
+      //
+      // 修复 CRITICAL #6 (2026-06-16): 整个 createBuyTrade + markSignalExecuted +
+      // recordBuyIntent + refreshOutcome 块包 try/catch. 一笔失败让本批剩余信号继续
+      // 处理 (per-signal isolation). 之前任一 throw 直接出 candidateSignals loop, 整批跳过.
+      try {
       if (!signalDryRun) {
         const trade = await this.createBuyTrade({
           portfolio,
@@ -3254,6 +3268,18 @@ class PaperTradingAutomationService {
           market_environment: environmentPolicy.market_environment || metadata.market_environment,
           entry_risk_guard: this.buildEntryRiskGuardPolicy(entryRiskGuard),
           entry_market_profile: marketProfileWithPortfolioRisk,
+          // 修复 CRITICAL #5 (2026-06-16): 5 个反馈层字段必须写进 signal.metadata.paper_trading_by_portfolio
+          // 让 outcome.metadata 投影 (RecommendationTradeOutcomeService.ts:3298) 真正读到值.
+          // 之前 100% NULL 导致 EV/TCA/MetaLabel/Playbook 反馈闭环全断 - "写"端从来没接.
+          ev_decision: capturedEvDecision || undefined,
+          execution_policy: (orderIntentMetadata as any).execution_policy || undefined,
+          playbook: (orderIntentMetadata as any).playbook || undefined,
+          playbook_id: (orderIntentMetadata as any).playbook?.id || undefined,
+          feasibility_score:
+            (orderIntentMetadata as any).pre_check_feasibility_score ||
+            (orderIntentMetadata as any).feasibility?.composite_score ||
+            undefined,
+          // reason_triplet / dqs 在 BUY 时还没产生 (closed 时才算), 留空, SELL closed 时再补.
         });
         await recordBuyIntent('executed', tradePayload.reason || '自动跟单已模拟买入', {
           trade_id: trade.id,
@@ -3285,6 +3311,20 @@ class PaperTradingAutomationService {
             commission,
           },
         });
+      }
+      } catch (createTradeErr: any) {
+        // 修复 CRITICAL #6: per-signal isolation. 单笔失败不阻塞剩余信号.
+        logger.error(
+          `[autoBuyFromSignals] signal ${signal.id} (${symbol}) createBuyTrade 失败: ${
+            createTradeErr?.message || createTradeErr
+          }`
+        );
+        try {
+          await skip(`下单失败 (per-signal isolation): ${createTradeErr?.message || createTradeErr}`);
+        } catch {
+          /* skip 自身失败也吞 */
+        }
+        continue; // 继续下一个 signal
       }
 
       availableCash = roundNumber(availableCash - total_cost, 2);
@@ -3586,6 +3626,9 @@ class PaperTradingAutomationService {
     const skippedItems: PaperTradingRiskExitItem[] = [];
 
     for (const position of positions) {
+      // 修复 CRITICAL #6 (2026-06-16): per-position isolation. 任一持仓的 SELL 失败
+      // (createSellTrade throw / quote 拉不到 / DB 抖动) 不影响本 portfolio 后续持仓评估.
+      try {
       const symbol = normalizeSymbol(position.symbol);
       const quantity = Math.floor(toNumber(position.quantity, 0));
       const avgCost = toNumber(position.avg_cost, 0);
@@ -3833,9 +3876,21 @@ class PaperTradingAutomationService {
 
       const execute_price = roundNumber(latestPrice * (1 - this.slippageRate), 3);
       const amount = roundNumber(execute_price * quantity, 2);
-      const commission = roundNumber(amount * this.commissionRate, 2);
+      // 修复 CRITICAL #1 (2026-06-16): A 股 SELL 单边印花税. baseCommission = 千 0.3 broker,
+      // stampTax = 千 1, total = 千 1.3. 之前漏算 stampTax 让 realized_pnl 高估 0.1%.
+      const baseCommission = roundNumber(amount * this.commissionRate, 2);
+      const stampTax = roundNumber(amount * this.stampTaxRate, 2);
+      const commission = roundNumber(baseCommission + stampTax, 2);
       const net_revenue = roundNumber(amount - commission, 2);
-      const realized_pnl = roundNumber(amount - avgCost * quantity - commission, 2);
+      // 修复 CRITICAL #2 (2026-06-16): realized_pnl 公式漏 BUY commission.
+      // 实盘正确: realized_pnl = (sell_revenue - sell_commission) - (buy_amount + buy_commission)
+      // avgCost 不含 BUY commission (createBuyTrade 写 avg_cost = execute_price 单纯成交价).
+      // 估算 buy_commission ≈ avgCost × quantity × commissionRate.
+      const estimatedBuyCommission = roundNumber(avgCost * quantity * this.commissionRate, 2);
+      const realized_pnl = roundNumber(
+        amount - avgCost * quantity - commission - estimatedBuyCommission,
+        2
+      );
 
       const exitItem: PaperTradingRiskExitItem = {
         ...baseItem,
@@ -4013,6 +4068,26 @@ class PaperTradingAutomationService {
       }
 
       exits.push(exitItem);
+      } catch (perPosErr: any) {
+        // 修复 CRITICAL #6: per-position isolation. position 处理失败仅记 log 继续下一个.
+        logger.error(
+          `[runRiskCheck] position ${position.id} (${position.symbol}) 处理失败: ${
+            perPosErr?.message || perPosErr
+          }`
+        );
+        skippedItems.push({
+          status: 'skipped',
+          symbol: position.symbol,
+          name: position.name,
+          quantity: toNumber(position.quantity, 0),
+          avg_cost: toNumber(position.avg_cost, 0),
+          latest_price: toNumber(position.current_price, 0),
+          pnl_pct: 0,
+          holding_days: 0,
+          message: `处理失败 (per-position isolation): ${perPosErr?.message || perPosErr}`,
+        });
+        continue;
+      }
     }
 
     const snapshot = dry_run
@@ -6520,8 +6595,14 @@ class PaperTradingAutomationService {
         },
         { transaction: t }
       );
-      // 同步内存里 portfolio 实例的 current_cash, caller 拿到的对象不至于过期
-      portfolio.current_cash = current_cash;
+      // 修复 CRITICAL #9 (2026-06-16): 不在 tx 内 mutate caller portfolio.current_cash —
+      // tx 若回滚 mutated 值留在内存 → caller stale read. 改为返回后 tx 外 sync.
+      (trade as any)._newCash = current_cash;
+      return trade;
+    }).then(trade => {
+      // tx commit 成功后再 sync caller
+      portfolio.current_cash = (trade as any)._newCash;
+      delete (trade as any)._newCash;
       return trade;
     });
   }
@@ -6615,7 +6696,12 @@ class PaperTradingAutomationService {
         },
         { transaction: t }
       );
-      portfolio.current_cash = newCash;
+      // 修复 CRITICAL #9: tx 内不 mutate caller
+      (trade as any)._newCash = newCash;
+      return trade;
+    }).then(trade => {
+      portfolio.current_cash = (trade as any)._newCash;
+      delete (trade as any)._newCash;
       return trade;
     });
   }
