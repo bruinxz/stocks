@@ -64,6 +64,8 @@ import {
   BenchmarkHistoryPoint,
   CorrelationReport,
   getCorrelationReport,
+  IndustryConcentrationSummary,
+  UNKNOWN_INDUSTRY_LABEL,
 } from '../../services/portfolioWorkspaceService';
 import { usePortfolio } from '../../contexts/PortfolioContext';
 import { translateAxiosTradingError, translateTradingError } from '../../utils/tradingErrorMap';
@@ -107,6 +109,8 @@ const PortfolioWorkspace: React.FC = () => {
   const [snapshots, setSnapshots] = useState<SnapshotRow[]>([]);
   const [trades, setTrades] = useState<TradeRow[]>([]);
   const [journalList, setJournalList] = useState<JournalSummary[]>([]);
+  // US-012: 行业集中度 KPI 快照 — 顶部 KPI 卡 + tooltip 用. null = 未加载完成 / 接口失败 (KPI 隐藏)
+  const [industryConc, setIndustryConc] = useState<IndustryConcentrationSummary | null>(null);
 
   // 2026-06-17: 改用全局 PortfolioContext (顶部 selector). 删除本地 portfolioList/setSelectedPortfolioId.
   const { selectedPortfolioId } = usePortfolio();
@@ -132,6 +136,18 @@ const PortfolioWorkspace: React.FC = () => {
       setSnapshots(snaps);
       setTrades(trd);
       setJournalList(jrn);
+      // US-012: 行业集中度 KPI — 独立 fire-and-forget, 不阻塞主面板. 接口失败仅 reset
+      // 不弹错误（其它面板已渲染，没必要因为 KPI 失败把整页变红）。
+      portfolioWorkspaceService
+        .getIndustryConcentrationSummary()
+        .then(summary => {
+          if (callPortfolioId !== selectedPortfolioId) return;
+          setIndustryConc(summary);
+        })
+        .catch(() => {
+          if (callPortfolioId !== selectedPortfolioId) return;
+          setIndustryConc(null);
+        });
     } catch (err: unknown) {
       if (callPortfolioId !== selectedPortfolioId) return;
       const messageStr = err instanceof Error ? err.message : String(err);
@@ -209,6 +225,7 @@ const PortfolioWorkspace: React.FC = () => {
         suffix="%"
         valueStyle={{ color: '#cf1322' }}
       />
+      <IndustryConcentrationKpi summary={industryConc} />
     </Space>
   );
 
@@ -280,6 +297,68 @@ const PortfolioWorkspace: React.FC = () => {
 };
 
 export default PortfolioWorkspace;
+
+// ===========================================================================
+//  US-012: 行业集中度 KPI（顶 KPI 卡）
+// ===========================================================================
+/**
+ * AC 关键点：
+ *   - 顶 KPI 显示最大行业集中度（按持仓市值聚合，分母 = 持仓市值之和，
+ *     **不含 cash** — 与后端 US-052 IndustryConcentrationGuard 同款分母，
+ *     保证 KPI / 告警 / 再平衡三处口径一致）；
+ *   - **> 25% 红色**（AC 显示阈值；与后端 alert_pct=35% 解耦：25% 是 *提示*
+ *     用户关注的早期 warning，35% 是 *写 RiskAlert* 的真正阈值）；
+ *   - 未分类持仓（`__UNKNOWN__`）展示为"未分类"，让用户补数据；
+ *   - 接口失败或 portfolio_id=null → KPI 隐藏（避免顶 KPI 卡掉链子）；
+ *   - 空持仓 → 显示 0.00% 灰色（max_industry_pct=null）。
+ */
+export const INDUSTRY_KPI_WARN_PCT = 0.25;
+export const INDUSTRY_KPI_WARN_COLOR = '#cf1322';
+const INDUSTRY_KPI_NEUTRAL_COLOR = '#1f1f1f';
+
+interface IndustryConcentrationKpiProps {
+  summary: IndustryConcentrationSummary | null;
+}
+
+const IndustryConcentrationKpi: React.FC<IndustryConcentrationKpiProps> = ({ summary }) => {
+  // 接口失败 / 还未加载 → 隐藏 KPI（避免显示 NaN 或撑空位）
+  if (!summary || summary.portfolio_id === null) {
+    return null;
+  }
+  const rawPct = summary.max_industry_pct ?? 0;
+  const pctNum = rawPct * 100;
+  const overWarn = rawPct > INDUSTRY_KPI_WARN_PCT;
+  const industryLabel =
+    summary.max_industry_name === UNKNOWN_INDUSTRY_LABEL
+      ? '未分类'
+      : summary.max_industry_name || '—';
+  // tooltip 把后端 alert_pct（35%）与 UI 提示阈值（25%）讲清楚，避免用户看到
+  // 红色误以为"立刻就要爆仓"。
+  const tooltip = (
+    <div style={{ minWidth: 220 }}>
+      <div>最大行业：{industryLabel}</div>
+      <div>当前占比：{pctNum.toFixed(2)}%</div>
+      <div>UI 提示阈值：{(INDUSTRY_KPI_WARN_PCT * 100).toFixed(0)}%（超出转红）</div>
+      <div>系统告警阈值：{(summary.alert_pct * 100).toFixed(0)}%（超出写 RiskAlert）</div>
+      {summary.over_alert && (
+        <div style={{ color: INDUSTRY_KPI_WARN_COLOR, marginTop: 4 }}>
+          ⚠ 当前已超系统告警阈值，建议一键再平衡。
+        </div>
+      )}
+    </div>
+  );
+  return (
+    <Tooltip title={tooltip} placement="bottom">
+      <Statistic
+        title="行业集中度"
+        value={pctNum}
+        precision={2}
+        suffix={industryLabel === '—' ? '%' : `% · ${industryLabel}`}
+        valueStyle={{ color: overWarn ? INDUSTRY_KPI_WARN_COLOR : INDUSTRY_KPI_NEUTRAL_COLOR }}
+      />
+    </Tooltip>
+  );
+};
 
 // ===========================================================================
 //  Tab 1: 当前持仓

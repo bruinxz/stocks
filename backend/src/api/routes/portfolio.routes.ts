@@ -174,6 +174,29 @@ router.get('/exposure', authController.authenticate, portfolioController.getExpo
 // IMPORTANT: /behavior-bias 同理
 router.get('/behavior-bias', authController.authenticate, portfolioController.getBehaviorBias);
 
+/**
+ * @openapi
+ * /api/portfolio/industry-concentration-summary:
+ *   get:
+ *     tags: [组合 Portfolio]
+ *     summary: 行业集中度 KPI 快照 (US-012)
+ *     description: |
+ *       PortfolioWorkspace 顶部 KPI 卡专用 — 返回当前 user 的最大行业占比、
+ *       是否超 alert_pct（默认 0.35）以及完整 industry breakdown。复用 US-052
+ *       IndustryConcentrationGuard.aggregateByIndustry（同款分母：持仓不含
+ *       cash），不写 RiskAlert，UI 可任意频率轮询。
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: KPI 快照 }
+ *       401: { description: 未授权 }
+ */
+// IMPORTANT: /industry-concentration-summary 必须在 /:id 之前注册（同上）
+router.get(
+  '/industry-concentration-summary',
+  authController.authenticate,
+  portfolioController.getIndustryConcentrationSummary
+);
+
 router.get('/:id', authController.authenticate, portfolioController.getSimulationDetail);
 
 /**

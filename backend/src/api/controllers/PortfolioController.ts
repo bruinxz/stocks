@@ -24,6 +24,7 @@ export class PortfolioController {
     this.getSimulationHistory = this.getSimulationHistory.bind(this);
     this.getSimulationDetail = this.getSimulationDetail.bind(this);
     this.rebalanceIndustry = this.rebalanceIndustry.bind(this);
+    this.getIndustryConcentrationSummary = this.getIndustryConcentrationSummary.bind(this);
   }
 
   /**
@@ -488,6 +489,34 @@ export class PortfolioController {
       res.status(500).json({
         success: false,
         message: error?.message || '获取持仓相关性失败',
+      });
+    }
+  }
+
+  /**
+   * GET /api/portfolio/industry-concentration-summary  (US-012)
+   *
+   * 行业集中度 KPI 快照 — PortfolioWorkspace 顶部 KPI 卡专用。
+   * 返回当前 user 的最大行业占比 + 是否超 alert_pct（默认 0.35）+ 完整
+   * breakdown（前端可选展开），所有计算复用 US-052 IndustryConcentrationGuard
+   * 的 `aggregateByIndustry`（同款分母 — 仅持仓不含 cash），保证 KPI / 告警 /
+   * 再平衡三处口径完全一致。
+   *
+   * 本接口为 *只读 dry-run* — 不写 RiskAlert，不下单，UI 可任意频率轮询。
+   */
+  async getIndustryConcentrationSummary(req: Request, res: Response) {
+    try {
+      const user_id = (req as any).user?.id;
+      if (!user_id) {
+        return res.status(401).json({ success: false, message: '未登录' });
+      }
+      const summary = await industryConcentrationGuard.getSummary(user_id);
+      res.json({ success: true, data: summary });
+    } catch (error: any) {
+      logger.error('获取行业集中度 KPI 失败:', error);
+      res.status(500).json({
+        success: false,
+        message: error?.message || '获取行业集中度 KPI 失败',
       });
     }
   }

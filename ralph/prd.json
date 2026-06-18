@@ -185,8 +185,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 12,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "(2026-06-19) IndustryConcentrationGuard.getSummary + GET /api/portfolio/industry-concentration-summary + 顶 KPI 卡 (> 25% 红); 复用 US-052 aggregateByIndustry 分母一致; 223 ok / 0 failed."
     },
     {
       "id": "US-013",

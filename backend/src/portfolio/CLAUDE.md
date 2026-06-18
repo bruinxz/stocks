@@ -531,6 +531,18 @@ should follow:
     "rebalance-industry" as the `:id` param).
   - `GET /api/risk/industry-concentration` (config read).
   - `PUT /api/risk/industry-concentration` (config write).
+  - `GET /api/portfolio/industry-concentration-summary` (US-012) — single-user
+    KPI snapshot for the PortfolioWorkspace top KPI card. Wraps
+    `IndustryConcentrationGuard.getSummary(user_id)`: dry-run, no RiskAlert
+    written, returns `{max_industry_pct, max_industry_name, over_alert,
+    alert_pct, rebalance_target_pct, industry_breakdown[]}`. Reuses
+    `aggregateByIndustry` so KPI / alert / rebalance share one denominator.
+    `enabled=false` still returns the real max_pct (so UI can show it) but
+    forces `over_alert=false`. UI red threshold (25%) is intentionally
+    lower than backend `alert_pct` (35%) — Tooltip in
+    `PortfolioWorkspace.tsx` discloses both so the user understands
+    "yellow card vs red card". MUST be registered BEFORE `/:id` (same
+    Express ordering rule as `/rebalance-industry`).
 
 ## `risk/BlackSwanWatchdog` — US-053 specifics
 

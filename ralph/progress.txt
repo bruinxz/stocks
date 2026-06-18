@@ -282,3 +282,27 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **meta-test 验"不再做 X" 用 ! 否定 regex**: 比起验"必须有 X", 验"不能 inline 写 RiskAlert.create({...SYSTEM:RISK_GUARD_UNAVAILABLE...})" 是项目第一次出现 — 因为本次重构的核心契约是"caller 不能再 inline duplicate, 必须走 helper". 否定 meta-guard 比正向更易守: 未来谁要把 30 行 inline 写回 facade.ts, 这个 test 立刻挂. 通用模式: `!/pattern/.test(src)`.
   - **wrap-helper 后 caller 的 try/catch 仍要保留**: 即便 guard 内 wrapFailClosed 已经 converge 所有 throw 都是 RiskGuardUnavailableError, caller 的 try/catch + `instanceof` 检查仍要保留 — 因为 caller 必须把 RiskGuardUnavailableError 转成业务态 (facade 把它 propagate throw / preTradeGuards 把它 map 成 {ok:false, code:'RISK_GUARD_UNAVAILABLE'} 返回). caller 的 catch 不只 log, 还要 emit RiskAlert + 决定下游协议. 不要因"看上去 guard 都包好了"就删 caller 的 try/catch.
 ---
+
+## 2026/06/19 07:55 - US-012
+- 实现 [PR-007] 行业集中度 KPI — PortfolioWorkspace 顶 KPI 卡显示最大行业集中度, > 25% 红
+- Files changed:
+  - backend/src/portfolio/risk/IndustryConcentrationGuard.ts: 新增 `IndustryConcentrationGuard.getSummary(user_id)` 单 user dry-run 快照 (复用 aggregateByIndustry 同款分母, 不写 RiskAlert, 不扫全表); 新增 export interface IndustryConcentrationSummary (max_industry_pct/max_industry_name/over_alert/alert_pct/rebalance_target_pct + breakdown); enabled=false 时强制 over_alert=false 但仍返回真实占比让 UI 决定
+  - backend/src/api/controllers/PortfolioController.ts: 新增 `getIndustryConcentrationSummary` handler + ctor 绑定; 401 / 500 fallback 与既有 rebalanceIndustry 同款
+  - backend/src/api/routes/portfolio.routes.ts: 注册 `GET /api/portfolio/industry-concentration-summary` (放在 /:id 之前, 避免 Express catchall 拦截 — 与 /correlation /exposure /behavior-bias 同款)
+  - backend/tests/risk/industry-concentration-guard.test.ts: 新增 8 个 getSummary 用例 + 驱动 — empty / no portfolio / single industry 100% over / boundary 0.65 over / 4-way 25% under / disabled forces over_alert false / custom alert_pct 0.55>0.5 over / __UNKNOWN__ bucket
+  - frontend/src/services/portfolioWorkspaceService.ts: 新增 IndustryConcentrationSummary + IndustryBreakdownEntry + UNKNOWN_INDUSTRY_LABEL + getIndustryConcentrationSummary() 拉取函数; bundled export 追加
+  - frontend/src/pages/workspace/PortfolioWorkspace.tsx: 新增 industryConc state; refresh() 内 fire-and-forget 拉 KPI (失败仅 reset 不弹错); kpiSlot 末位插入 <IndustryConcentrationKpi />; 新组件含 Tooltip 区分 25% UI 阈值 / 后端 35% alert 阈值 / 未分类→未分类显示
+  - ralph/prd.json: US-012 passes=true + notes
+- 验证:
+  - backend `npx tsc --noEmit` exit 0
+  - frontend `npx tsc --noEmit` exit 0
+  - `npm test -- --filter=industry-concentration-guard` exit 0, **223 ok / 0 failed** (从 207 → 223, 新增 16 个 assert)
+  - backend lint (3 改文件) exit 0 / 0 warn
+  - frontend lint (2 改文件) 0 err / 16 warn 全部 pre-existing (445/477/508 trade error handler + 1442/1999/2063 其它 tab + 378 getCorrelationReport)
+- **Learnings for future iterations:**
+  - KPI 卡的 *UI 阈值* 与 guard 的 *告警阈值* 可以不同 — 本 story AC 显示阈值 25% < 后端 alert_pct 35%. 这是合理设计: 25% 提早提示 (warning), 35% 写 RiskAlert (action). 用 Tooltip 把两个阈值同框讲清楚, 避免用户看到红色误以为"立刻就要爆仓". 任何未来"前端阈值与后端阈值不一致"的 KPI 都用同款 tooltip pattern.
+  - `evaluateAfterClose({user_id, dry_run:true})` 返回的是 `{scanned_users, alerted_users, per_user[]}` 批量结构, 给 KPI 调直接用要解嵌. 抽 `getSummary(user_id)` 单 user 投影更干净 — UI 一次 fetch 直接渲染, 不耦合 cron / 飞书 push 的多 user 聚合形态. **任何"一个全量批跑 + 单点查询"双场景的 guard 都应同时暴露这两套 API**, 别让 UI 去解嵌或自己 reduce.
+  - 顶 KPI fetch 必须独立 fire-and-forget (.then/.catch 链), 不能塞进主 Promise.all — 否则 KPI 接口 500 整页变红 (loadError 设置), 主面板看不见. 已有 portfolio race-protect snapshot 模式 (callPortfolioId !== selectedPortfolioId) 必须沿用, 切盘后丢响应.
+  - Express 顺序匹配: 任何新的固定字符串 GET route (如 /industry-concentration-summary) 必须注册在 `/:id` 之前, 否则被 catchall 拦. 看 portfolio.routes.ts 里 /correlation /exposure /behavior-bias 都有 `// IMPORTANT: ... 必须在 /:id 之前注册` 注释, 沿用此 pattern.
+  - frontend lint baseline: PortfolioWorkspace.tsx 自带 11 个 prettier/no-non-null-assertion warning (跨 5 处 trade error handler + journal 表), 都是 pre-existing. 加新代码时, 用同款 baseline-diff 模式 (eslint 输出按行号比对)确认"本次新增 0 warning", 而非误以为是新引入的 regression.
+---

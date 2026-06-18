@@ -297,9 +297,55 @@ export const portfolioWorkspaceService = {
   appendJournalNote,
   fetchBenchmarkHistory,
   getCorrelationReport,
+  getIndustryConcentrationSummary,
 };
 
 export default portfolioWorkspaceService;
+
+// ============================================================
+// US-012: Industry concentration KPI snapshot
+// ============================================================
+
+export interface IndustryBreakdownEntry {
+  industry: string;
+  total_value: number;
+  /** 0-1 */
+  pct: number;
+  position_count: number;
+  symbols: string[];
+}
+
+export interface IndustryConcentrationSummary {
+  user_id: number;
+  portfolio_id: number | null;
+  enabled: boolean;
+  /** 告警阈值 0-1，默认 0.35。 */
+  alert_pct: number;
+  rebalance_target_pct: number;
+  /** 当前最大行业占比 0-1；null = 空持仓 / 无 portfolio。 */
+  max_industry_pct: number | null;
+  /** 对应行业名（null = 同上；`__UNKNOWN__` = 未分类）。 */
+  max_industry_name: string | null;
+  /** 当前是否超 alert_pct（严格 `>`，禁用配置强制 false）。 */
+  over_alert: boolean;
+  open_positions_count: number;
+  total_position_value: number;
+  industry_breakdown: IndustryBreakdownEntry[];
+}
+
+/** 哨兵 industry 名（与后端 IndustryConcentrationGuard 同步）。 */
+export const UNKNOWN_INDUSTRY_LABEL = '__UNKNOWN__';
+
+/**
+ * 拉取行业集中度 KPI 快照（US-012）— 顶部 KPI 卡专用。
+ *
+ * 后端 `GET /api/portfolio/industry-concentration-summary` — dry-run，不写
+ * RiskAlert，UI 可任意频率轮询。
+ */
+export async function getIndustryConcentrationSummary(): Promise<IndustryConcentrationSummary> {
+  const res = await api.get('/portfolio/industry-concentration-summary');
+  return unwrap<IndustryConcentrationSummary>(res, '获取行业集中度 KPI 失败');
+}
 
 // ============================================================
 // Phase 6: Portfolio correlation matrix + cluster
