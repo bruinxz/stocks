@@ -373,16 +373,56 @@ function resolveRecommendationTier(params: {
 }
 
 function getStyleWeights(style: RecommendationStyle): Record<string, number> {
+  // Batch AD (2026-06-18): 加 today_burst + industry_regime 两个维度.
+  // 之前 trend/volume 看 5-60d 均量比和中期收益, 单日 +5~8% 完全不奖励;
+  // 加 today_burst (today change_pct + volume_ratio 当日爆发) + industry_regime
+  // (所在行业近 5 日是否 hot 板块) 让单日轮动板块的强势股能进 top N.
+  // 各 style 重平衡, sum 保持 1.0:
   switch (style) {
     case 'momentum':
-      return { trend: 0.34, volume: 0.24, quality: 0.14, valuation: 0.1, risk: 0.18 };
+      // 动量 style 最看重单日爆发 + 行业轮动
+      return {
+        trend: 0.26,
+        volume: 0.16,
+        quality: 0.1,
+        valuation: 0.08,
+        risk: 0.12,
+        today_burst: 0.18,
+        industry_regime: 0.1,
+      };
     case 'value':
-      return { trend: 0.2, volume: 0.14, quality: 0.24, valuation: 0.26, risk: 0.16 };
+      // 价值 style 仍以基本面 / 估值为主, 今日维度仅微调
+      return {
+        trend: 0.18,
+        volume: 0.1,
+        quality: 0.22,
+        valuation: 0.24,
+        risk: 0.14,
+        today_burst: 0.06,
+        industry_regime: 0.06,
+      };
     case 'low_risk':
-      return { trend: 0.2, volume: 0.12, quality: 0.22, valuation: 0.16, risk: 0.3 };
+      // 低风险 style 不奖励单日爆发
+      return {
+        trend: 0.18,
+        volume: 0.1,
+        quality: 0.2,
+        valuation: 0.14,
+        risk: 0.28,
+        today_burst: 0.04,
+        industry_regime: 0.06,
+      };
     case 'balanced':
     default:
-      return { trend: 0.28, volume: 0.2, quality: 0.2, valuation: 0.14, risk: 0.18 };
+      return {
+        trend: 0.22,
+        volume: 0.16,
+        quality: 0.16,
+        valuation: 0.12,
+        risk: 0.16,
+        today_burst: 0.1,
+        industry_regime: 0.08,
+      };
   }
 }
 
@@ -557,6 +597,53 @@ export class QuantRecommendationService {
     };
   }
 
+  /**
+   * Batch AD (2026-06-18): 一次性查近 5 个交易日 IndustryFlow, 算每行业的
+   * mean(change_pct) + mean(main_inflow_ratio × 100) 综合得分. 返回 Map<industry_name, score>.
+   *
+   * 一次 query 复用给所有 scoreStock, 让"今天该买哪个板块" 的判定单次 DB IO 完成.
+   * fail-safe: IndustryFlow 表空 (Batch AB cron 还没跑过) → 返回空 Map,
+   * scoreIndustryRegime 走 50 中性, 不阻塞主流程.
+   */
+  private async buildIndustryScoreMap(): Promise<Map<string, number>> {
+    const map = new Map<string, number>();
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { IndustryFlow } = require('../models/IndustryFlow');
+      const sevenDaysAgo = moment().tz('Asia/Shanghai').subtract(7, 'days').format('YYYY-MM-DD');
+      const rows = await IndustryFlow.findAll({
+        attributes: ['industry_name', 'change_pct', 'main_inflow_ratio'],
+        where: { trade_date: { [Op.gte]: sevenDaysAgo } },
+        raw: true,
+      });
+      if (!Array.isArray(rows) || rows.length === 0) return map;
+
+      const agg = new Map<string, { changes: number[]; ratios: number[] }>();
+      for (const r of rows as any[]) {
+        const name = String(r.industry_name || '').trim();
+        if (!name) continue;
+        if (!agg.has(name)) agg.set(name, { changes: [], ratios: [] });
+        const g = agg.get(name)!;
+        const ch = Number(r.change_pct);
+        const rt = Number(r.main_inflow_ratio);
+        if (Number.isFinite(ch)) g.changes.push(ch);
+        if (Number.isFinite(rt)) g.ratios.push(rt);
+      }
+      for (const [name, g] of agg.entries()) {
+        const meanCh = g.changes.length
+          ? g.changes.reduce((s, v) => s + v, 0) / g.changes.length
+          : 0;
+        const meanRt = g.ratios.length
+          ? g.ratios.reduce((s, v) => s + v, 0) / g.ratios.length
+          : 0;
+        map.set(name, meanCh + meanRt * 100);
+      }
+    } catch (err: any) {
+      logger.warn(`buildIndustryScoreMap 失败 (fail-safe 走空 Map): ${err?.message || err}`);
+    }
+    return map;
+  }
+
   async generateRecommendations(options: QuantRecommendationOptions = {}): Promise<{
     as_of: string;
     universe: RecommendationUniverse;
@@ -586,6 +673,10 @@ export class QuantRecommendationService {
     const feedbackMap = await this.getRecommendationFeedbackMap(
       stocks.map(stock => stock.symbol).filter(Boolean)
     );
+    // Batch AD (2026-06-18): 一次性 query 近 5 日 IndustryFlow, 算每行业的
+    // mean(change_pct + main_inflow_ratio×100) 得分, 传给所有 scoreStock 调用.
+    // 避免 N 只候选股各自 query → DB N+1.
+    const industryScoreMap = await this.buildIndustryScoreMap();
     const recommendations: QuantRecommendationItem[] = [];
 
     for (const stock of stocks) {
@@ -597,6 +688,7 @@ export class QuantRecommendationService {
           min_bars,
           include_trend: options.include_trend !== false,
           feedback: feedbackMap.get(normalizeSymbol(stock.symbol)) || buildEmptyFeedback(),
+          industryScoreMap,
         });
         if (item) recommendations.push(item);
       } catch (error: any) {
@@ -742,6 +834,13 @@ export class QuantRecommendationService {
       min_bars: number;
       include_trend: boolean;
       feedback: RecommendationFeedback;
+      /**
+       * Batch AD (2026-06-18): industry → today_score Map, 由 caller 在
+       * generateRecommendations 入口一次性 query IndustryFlow 后传入,
+       * 让 scoreStock 内的 scoreIndustryRegime 拿到该股所在行业当日热度.
+       * Map 缺失 / 行业未命中 → industry_regime score 退到 50 中性, 不阻塞.
+       */
+      industryScoreMap?: Map<string, number>;
     }
   ): Promise<QuantRecommendationItem | null> {
     const bars = await DailyBar.findAll({
@@ -895,6 +994,44 @@ export class QuantRecommendationService {
         riskScore >= 70
           ? `近60日最大回撤约 ${round(drawdown) ?? '--'}%，波动可控`
           : `近60日最大回撤约 ${round(drawdown) ?? '--'}%，短线风险偏高`,
+    });
+
+    // Batch AD (2026-06-18): today_burst — 今日单日爆发评分.
+    // 之前 trend/volume 看 5-60d 中期, +5~8% 单日不奖励. 现在显式给当日 change_pct
+    // + volume_ratio 加权: 涨 3-8% + 量比 1.5-3 给最高分, > 9% 反而扣分 (追涨停风险).
+    const burstScore = this.scoreTodayBurst({ changePercent, volumeRatio });
+    factors.push({
+      name: 'today_burst',
+      label: '今日爆发',
+      score: burstScore,
+      weight: weights.today_burst ?? 0,
+      value: round(changePercent, 2),
+      reason:
+        burstScore >= 70
+          ? `今日 ${round(changePercent, 2) ?? '--'}% + 量比 ${round(volumeRatio, 2) ?? '--'}，明显爆发`
+          : burstScore <= 35
+          ? `今日 ${round(changePercent, 2) ?? '--'}%，量价节奏未跟上`
+          : `今日 ${round(changePercent, 2) ?? '--'}%，温和`,
+    });
+
+    // Batch AD (2026-06-18): industry_regime — 所在行业近 5 日热度.
+    // industryScoreMap 由 caller 一次性 query IndustryFlow + 算 mean(change_pct +
+    // main_inflow_ratio×100) 后传入. 命中 hot 板块 (score > 5) → +20 ~ +40 分.
+    const industry = String(stock.industry || '').trim();
+    const industryScore = options.industryScoreMap?.get(industry);
+    const industryRegimeScore = this.scoreIndustryRegime(industryScore);
+    factors.push({
+      name: 'industry_regime',
+      label: '行业热度',
+      score: industryRegimeScore,
+      weight: weights.industry_regime ?? 0,
+      value: industryScore !== undefined ? round(industryScore, 2) : undefined,
+      reason:
+        industryRegimeScore >= 70
+          ? `所在行业 "${industry || '未分类'}" 近 5 日热度 ${round(industryScore, 2) ?? '--'}，板块向上`
+          : industryRegimeScore <= 40
+          ? `所在行业 "${industry || '未分类'}" 近 5 日偏弱`
+          : `所在行业 "${industry || '未分类'}" 近 5 日中性`,
     });
 
     if (feedback.signal_count > 0 || Number(feedback.trade_outcome_count || 0) > 0) {
@@ -1534,6 +1671,67 @@ export class QuantRecommendationService {
     }
     if (params.return5d !== undefined && params.return5d > 18) score -= 14;
     if (params.return5d !== undefined && params.return5d < -10) score -= 8;
+    return clamp(score);
+  }
+
+  /**
+   * Batch AD (2026-06-18): 今日单日爆发评分.
+   * 主张: 涨幅 3-8% + 量比 1.5-3 = "健康爆发" 给最高分;
+   *      涨幅 > 9% 接近涨停 = 追涨风险, 反扣;
+   *      涨幅 < 0 = 当日弱势, 给低分.
+   *
+   * 关键 calibration:
+   *   change=0, vol=1 → 50 中性
+   *   change=5%, vol=2 → ~85 (用户图里这种)
+   *   change=8%, vol=2.5 → ~92 (兆易创新的状态)
+   *   change=10%, vol=4 → ~70 (涨停/接近涨停, 追涨风险, 反扣)
+   *   change=-5% → ~30
+   */
+  private scoreTodayBurst(params: {
+    changePercent?: number;
+    volumeRatio?: number;
+  }): number {
+    let score = 50;
+    const ch = params.changePercent;
+    const vr = params.volumeRatio;
+    if (typeof ch === 'number' && Number.isFinite(ch)) {
+      if (ch >= 3 && ch <= 8) score += 25 + Math.min(15, (ch - 3) * 2); // 25~35 加分
+      else if (ch > 8 && ch < 9.5) score += 20; // 已经偏高
+      else if (ch >= 9.5) score -= 12; // 接近 / 已涨停, 追涨风险
+      else if (ch >= 1) score += 12;
+      else if (ch >= 0) score += 5;
+      else if (ch >= -3) score -= 8;
+      else if (ch >= -6) score -= 18;
+      else score -= 28;
+    }
+    if (typeof vr === 'number' && Number.isFinite(vr)) {
+      if (vr >= 1.5 && vr <= 3) score += 12; // 健康放量
+      else if (vr > 3 && vr <= 5) score += 6; // 异常放量
+      else if (vr > 5) score -= 8; // 过度放量, 接近天量
+      else if (vr >= 0.9) score += 2;
+      else score -= 4;
+    }
+    return clamp(score);
+  }
+
+  /**
+   * Batch AD (2026-06-18): 所在行业近 5 日热度评分.
+   * industryScore 来自 IndustryFlow mean(change_pct) + mean(main_inflow_ratio×100).
+   * 命中 hot 板块 (score > 5) → 高分; cold 板块 (score < -3) → 低分.
+   */
+  private scoreIndustryRegime(industryScore?: number): number {
+    if (industryScore === undefined || !Number.isFinite(industryScore)) {
+      return 50; // 未知行业 / 数据缺失 → 中性
+    }
+    let score = 55;
+    if (industryScore >= 8) score = 92;
+    else if (industryScore >= 5) score = 82;
+    else if (industryScore >= 3) score = 72;
+    else if (industryScore >= 1) score = 62;
+    else if (industryScore >= 0) score = 55;
+    else if (industryScore >= -2) score = 42;
+    else if (industryScore >= -5) score = 30;
+    else score = 20;
     return clamp(score);
   }
 }
