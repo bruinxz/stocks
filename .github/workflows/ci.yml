@@ -81,6 +81,41 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # US-001 (OPS-001) env 校验脚本：CI 跑一遍 check-env，确保 EnvValidator
+      # schema 与现有 .env / 部署文档同步。注入"production-grade 合法 env 子集"
+      # （DB+Redis+JWT+TRADING_AGENTS_URL）让脚本能完整跑到 exit=0；未来任何
+      # 新增 required 字段忘了同步 .env.example 时，CI 立刻 fail。
+      # 另跑一次 missing-env 子步骤验证 fail-fast 路径（exit=1），双向保证。
+      - name: Env validation (check-env, happy path)
+        id: env_check
+        env:
+          NODE_ENV: production
+          DB_HOST: ci-postgres
+          DB_NAME: ci_stocks
+          DB_USER: ci_user
+          DB_PASSWORD: ci_password
+          REDIS_HOST: ci-redis
+          JWT_SECRET: ci-only-jwt-secret-32chars-min-do-not-deploy-aaaaaaaaaaaaaaaa
+          TRADING_AGENTS_URL: http://trading-agents.internal:8000
+        run: npm run check-env 2>&1 | tee ../backend-envcheck.log
+        continue-on-error: false
+
+      - name: Env validation (check-env, fail-fast on missing env)
+        id: env_check_fail
+        # 反向用例：清掉关键 env 后必须 exit=1。任何回归（schema required 字段
+        # 漏标 .required(), 或 dotenv 把空串当合法值）此处会爆掉。
+        run: |
+          set +e
+          env -i PATH="$PATH" HOME="$HOME" NODE_ENV=production \
+            npx ts-node --transpile-only src/scripts/check-env.ts 2>&1 \
+            | tee ../backend-envcheck-fail.log
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 1 ]; then
+            echo "::error::check-env should exit=1 when required env is missing (got exit=$rc)"
+            exit 1
+          fi
+          echo "check-env correctly exited with 1 on missing env"
+
       - name: Typecheck (tsc --noEmit)
         id: typecheck
         run: npx tsc --noEmit 2>&1 | tee ../backend-typecheck.log
@@ -103,6 +138,8 @@ jobs:
         with:
           name: backend-logs
           path: |
+            backend-envcheck.log
+            backend-envcheck-fail.log
             backend-typecheck.log
             backend-lint.log
             backend-test.log
@@ -115,7 +152,7 @@ jobs:
           script: |
             const fs = require('fs');
             const path = require('path');
-            const logs = ['typecheck', 'lint', 'test'];
+            const logs = ['envcheck', 'envcheck-fail', 'typecheck', 'lint', 'test'];
             const sections = [];
             for (const name of logs) {
               const filePath = path.join(process.env.GITHUB_WORKSPACE, `backend-${name}.log`);

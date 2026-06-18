@@ -16,8 +16,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 1,
-      "passes": true,
-      "notes": "已实现 EnvValidator + check-env CLI + index.ts 启动校验。CI 在 backend-check job 新增两步：happy-path 走 npm run check-env (注入完整合法 env)；fail-fast 反向用例 env -i 清掉关键 env 应 exit=1。107 个 EnvValidator 单测全过。"
+      "passes": false,
+      "notes": ""
     },
     {
       "id": "US-002",
