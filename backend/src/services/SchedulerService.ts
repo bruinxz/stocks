@@ -2515,6 +2515,68 @@ class SchedulerService {
         logger.info(
           `[market-news-sync] 完成: fetched=${result.fetched} upserted=${result.upserted} skipped=${result.skipped} pruned=${pruneDeleted}`
         );
+      } else if (task.type === 'SOCIAL_SENTIMENT_SYNC') {
+        // Batch AH (2026-06-18): 社媒/舆情综合 (东财人气榜 + 综合评分) sync.
+        // 推荐 cron: '20 16 * * 1-5' (盘后, 错开北向 16:15 / 雪球 16:00).
+        // 可选 parameters.universe_limit (默认 200, top 流通市值).
+        // 可选 parameters.rank_lookback_days (默认 5, rank_breakout_delta 计算窗口).
+        const today = moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
+        const date = parameters.date || today;
+        const limit = parameters.universe_limit ? Number(parameters.universe_limit) : 200;
+        const lookback = parameters.rank_lookback_days
+          ? Number(parameters.rank_lookback_days)
+          : 5;
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { socialSentimentSyncService } = require('../data/services/SocialSentimentSyncService');
+        const result = await socialSentimentSyncService.syncDate(date, {
+          universeLimit: limit,
+          rankLookbackDays: lookback,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: result.universe_size || 0,
+          success_count: result.upserted || 0,
+          failed_count: result.error ? 1 : 0,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: result.error || null,
+          result_summary: {
+            scenario: 'social_sentiment_sync',
+            date,
+            universe_size: result.universe_size,
+            fetched: result.fetched,
+            upserted: result.upserted,
+            history_days_available: result.history_days_available,
+          },
+        });
+        logger.info(
+          `[social-sentiment-sync] ${date} 完成: universe=${result.universe_size} upserted=${result.upserted} history_days=${result.history_days_available}`
+        );
+      } else if (task.type === 'MARKET_HOT_SEARCH_SYNC') {
+        // Batch AH (2026-06-18): 百度 A 股搜索热度榜 sync.
+        // 推荐 cron: '40 16 * * 1-5' (盘后, 错开其它 16:xx sync).
+        const today = moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
+        const date = parameters.date || today;
+        const limit = parameters.limit ? Number(parameters.limit) : 50;
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { marketHotSearchSyncService } = require('../data/services/MarketHotSearchSyncService');
+        const result = await marketHotSearchSyncService.syncDate(date, { limit });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: result.fetched || 0,
+          success_count: result.upserted || 0,
+          failed_count: result.error ? 1 : 0,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: result.error || null,
+          result_summary: {
+            scenario: 'market_hot_search_sync',
+            date,
+            fetched: result.fetched,
+            upserted: result.upserted,
+          },
+        });
+        logger.info(
+          `[market-hot-search-sync] ${date} 完成: fetched=${result.fetched} upserted=${result.upserted}`
+        );
       } else if (task.type === 'STRATEGY_KILL_SWITCH_CHECK') {
         // Phase 4+ 策略熔断监控 — 评估每个策略的 kill_switch_metric (定义在
         // edge_hypothesis 内)；低于 kill_switch_threshold 触发自动 enabled=false。
@@ -5503,6 +5565,21 @@ class SchedulerService {
         cron_expression: '17 17 * * *',
         is_active: true,
         parameters: { limit: 80, prune_days: 30 },
+      },
+      // Batch AH (2026-06-18): 社媒/舆情综合数据 + 百度热搜
+      {
+        name: '社媒/舆情综合 sync (Batch AH)',
+        type: 'SOCIAL_SENTIMENT_SYNC',
+        cron_expression: '20 16 * * 1-5',
+        is_active: true,
+        parameters: { universe_limit: 200, rank_lookback_days: 5 },
+      },
+      {
+        name: '百度热搜榜 sync (Batch AH)',
+        type: 'MARKET_HOT_SEARCH_SYNC',
+        cron_expression: '40 16 * * 1-5',
+        is_active: true,
+        parameters: { limit: 50 },
       },
     ];
 

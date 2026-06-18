@@ -1688,6 +1688,32 @@ def _cell_str(row, col: Optional[str]) -> Optional[str]:
     return s or None
 
 
+# ===========================================================================
+# Per-source 子超时 helper (Batch AG hotfix + Batch AH 复用)
+# 给单个 AKShare 调用包 SIGALRM 上限, 避免单源响应慢拖垮整个 helper.
+# 仅 unix-like (生产 Linux 没问题). 不可重入: 不能在嵌套 with_timeout 内再用.
+# ===========================================================================
+
+import signal as _signal_mod
+
+
+class SourceTimeout(Exception):
+    pass
+
+
+def with_subsource_timeout(seconds: int, fn, *args, **kwargs):
+    """同步包装: fn(*args, **kwargs) 超过 seconds 秒 raise SourceTimeout."""
+    def _handler(signum, frame):
+        raise SourceTimeout(f'subsource timeout after {seconds}s')
+    old = _signal_mod.signal(_signal_mod.SIGALRM, _handler)
+    _signal_mod.alarm(seconds)
+    try:
+        return fn(*args, **kwargs)
+    finally:
+        _signal_mod.alarm(0)
+        _signal_mod.signal(_signal_mod.SIGALRM, old)
+
+
 def _cell_float(row, col: Optional[str]) -> Optional[float]:
     """安全读取一格并转 float；空 / nan 返回 None"""
     if not col:
@@ -4845,17 +4871,22 @@ def get_market_news(limit: int = 80) -> List[Dict[str, Any]]:
       - DailyEventDigestService 每日聚合; 入库 market_news 表
       - 前端 行业决策 tab 右侧 '今日要闻' 时间线
       - TradingAgents prompt 注入 recent_news[] 字段 (US-AE 已预留)
+
+    Batch AG hotfix (2026-06-18): 每个源独立 30s 子超时, 避免单源卡死把整个
+    helper (120s 总超时) 拖垮 — cls 频繁限速/响应慢, 不能让它阻塞 em / sina.
+    Batch AH: 复用模块级 with_subsource_timeout (原本是局部嵌套定义).
     """
     aggregated: List[Dict[str, Any]] = []
+    SUB_TIMEOUT = 25  # 25s/源 × 3 源 = 最坏 75s, 留给 helper 120s 主超时余量
 
     # Source 1: 财联社电报 (最优先, 全市场最具时效性)
     try:
         fn = getattr(ak, 'stock_info_global_cls', None)
         if fn is not None:
             try:
-                df = fn(symbol='全部')
+                df = with_subsource_timeout(SUB_TIMEOUT, lambda: fn(symbol='全部'))
             except TypeError:
-                df = fn()
+                df = with_subsource_timeout(SUB_TIMEOUT, fn)
             if df is not None and not df.empty:
                 for _, r in df.iterrows():
                     try:
@@ -4884,6 +4915,8 @@ def get_market_news(limit: int = 80) -> List[Dict[str, Any]]:
                     except Exception:
                         continue
                 print(f'cls news: parsed {len(aggregated)} rows', file=sys.stderr)
+    except SourceTimeout as e:
+        print(f'stock_info_global_cls timeout (skip): {e}', file=sys.stderr)
     except Exception as e:
         print(f'stock_info_global_cls failed: {e}', file=sys.stderr)
 
@@ -4892,7 +4925,7 @@ def get_market_news(limit: int = 80) -> List[Dict[str, Any]]:
         try:
             fn = getattr(ak, 'stock_info_global_em', None)
             if fn is not None:
-                df = fn()
+                df = with_subsource_timeout(SUB_TIMEOUT, fn)
                 if df is not None and not df.empty:
                     pre = len(aggregated)
                     for _, r in df.iterrows():
@@ -4914,6 +4947,8 @@ def get_market_news(limit: int = 80) -> List[Dict[str, Any]]:
                         except Exception:
                             continue
                     print(f'em news: parsed +{len(aggregated) - pre} rows', file=sys.stderr)
+        except SourceTimeout as e:
+            print(f'stock_info_global_em timeout (skip): {e}', file=sys.stderr)
         except Exception as e:
             print(f'stock_info_global_em failed: {e}', file=sys.stderr)
 
@@ -4922,7 +4957,7 @@ def get_market_news(limit: int = 80) -> List[Dict[str, Any]]:
         try:
             fn = getattr(ak, 'stock_info_global_sina', None)
             if fn is not None:
-                df = fn()
+                df = with_subsource_timeout(SUB_TIMEOUT, fn)
                 if df is not None and not df.empty:
                     pre = len(aggregated)
                     for _, r in df.iterrows():
@@ -4946,6 +4981,8 @@ def get_market_news(limit: int = 80) -> List[Dict[str, Any]]:
                         except Exception:
                             continue
                     print(f'sina news: parsed +{len(aggregated) - pre} rows', file=sys.stderr)
+        except SourceTimeout as e:
+            print(f'stock_info_global_sina timeout (skip): {e}', file=sys.stderr)
         except Exception as e:
             print(f'stock_info_global_sina failed: {e}', file=sys.stderr)
 
@@ -4965,6 +5002,279 @@ def get_market_news(limit: int = 80) -> List[Dict[str, Any]]:
     deduped.sort(key=_sort_key, reverse=True)
 
     return deduped[:limit]
+
+
+# ===========================================================================
+# Batch AH (2026-06-18): 社媒/舆情综合数据 — 给"舆情雷达" UI + 决策面板使用
+# 3 个新 endpoint:
+#   - get_social_sentiment_snapshot: 东财人气榜 + 综合评分 横截面 join
+#   - get_baidu_hot_search:          百度 A 股搜索热度榜
+#   - get_concept_hot_keywords_reverse: 概念→关联股 反向聚合 (v1 暂不使用,
+#     plumbed for future)
+# 所有 AKShare 调用都包 with_subsource_timeout 避免单源拖垮整体.
+# ===========================================================================
+
+def get_social_sentiment_snapshot(stock_codes_csv: Optional[str] = None) -> List[Dict[str, Any]]:
+    """
+    全市场社媒/舆情综合快照. 合并:
+      1. ak.stock_hot_rank_em()      — 东财个股人气榜 top 100 (实时 rank)
+      2. ak.stock_comment_em()       — 全市场每股一行: 综合评分 + 机构参与 + 散户意愿 + 关注指数
+
+    AC 偏差说明 (4 处文档同步范式, US-034 同款):
+      - stock_hot_rank_em 只覆盖 top 100, hot_rank_em 列 nullable (universe 之外的股没排名)
+      - stock_comment_em 覆盖 ~4000+ 股全市场, 各打分字段都有值
+      - 输出 universe = stock_codes_csv (caller 指定, 通常是流通市值 top 200)
+        ∩ comment_em 全集. hot_rank_em 用 left join 模式, 100 名外的填 None.
+
+    实时快照特性 (同 US-008 IndustryFlow): 接口无日期参数, trade_date 由 caller 服务层
+    在盘后调度时贴上.
+
+    Args:
+        stock_codes_csv: 逗号分隔的 6 位股票代码列表 (e.g. "600519,000001,..."). None
+                         = 不过滤, 返回全市场 comment_em 的 ~4000 行 (谨慎使用; 服务层
+                         默认会传 top 200).
+
+    Returns:
+        List[Dict], 每只股一行:
+          stock_code, stock_name, hot_rank_em (1-100 or None), comment_score (0-100),
+          institution_participation (%), retail_desire (%), focus_index, raw_payload
+    """
+    universe_filter: Optional[set] = None
+    if stock_codes_csv:
+        universe_filter = {
+            ''.join(ch for ch in c.strip() if ch.isdigit())[-6:]
+            for c in stock_codes_csv.split(',') if c.strip()
+        }
+        universe_filter.discard('')
+
+    # 1) hot_rank_em — 全市场 top 100 实时榜 (无 date 参数, 调用即得 "现在")
+    rank_by_code: Dict[str, Dict[str, Any]] = {}
+    try:
+        fn = getattr(ak, 'stock_hot_rank_em', None)
+        if fn is not None:
+            df = with_subsource_timeout(25, fn)
+            if df is not None and not df.empty:
+                # 字段 (柔性): 当前排名 / 代码 / 股票名称 / 最新价 / 涨跌额 / 涨跌幅
+                code_col = None
+                for cand in ('代码', '股票代码', 'code'):
+                    if cand in df.columns:
+                        code_col = cand
+                        break
+                rank_col = None
+                for cand in ('当前排名', '排名', 'rank'):
+                    if cand in df.columns:
+                        rank_col = cand
+                        break
+                name_col = None
+                for cand in ('股票名称', '名称', '简称'):
+                    if cand in df.columns:
+                        name_col = cand
+                        break
+                for _, r in df.iterrows():
+                    try:
+                        code_raw = _cell_str(r, code_col) if code_col else None
+                        if not code_raw:
+                            continue
+                        code = ''.join(ch for ch in code_raw if ch.isdigit())[-6:]
+                        if len(code) != 6:
+                            continue
+                        rank_by_code[code] = {
+                            'hot_rank_em': _cell_int(r, rank_col) if rank_col else None,
+                            'stock_name': _cell_str(r, name_col) if name_col else None,
+                        }
+                    except Exception:
+                        continue
+                print(f'hot_rank_em: parsed {len(rank_by_code)} rows', file=sys.stderr)
+    except SourceTimeout as e:
+        print(f'stock_hot_rank_em timeout (skip): {e}', file=sys.stderr)
+    except Exception as e:
+        print(f'stock_hot_rank_em failed: {e}', file=sys.stderr)
+
+    # 2) stock_comment_em — 全市场综合评分
+    comment_rows = []
+    try:
+        fn = getattr(ak, 'stock_comment_em', None)
+        if fn is not None:
+            df = with_subsource_timeout(25, fn)
+            if df is not None and not df.empty:
+                # 字段 (柔性): 代码 / 名称 / 最新价 / 涨跌幅 / 换手率 / 主力成本 /
+                # 机构参与度 / 综合得分 / 上升 / 目前排名 / 关注指数 / 交易日
+                code_col = None
+                for cand in ('代码', '股票代码'):
+                    if cand in df.columns: code_col = cand; break
+                name_col = None
+                for cand in ('名称', '简称', '股票名称'):
+                    if cand in df.columns: name_col = cand; break
+                comment_col = None
+                for cand in ('综合得分', '综合评分', '评分'):
+                    if cand in df.columns: comment_col = cand; break
+                instparti_col = None
+                for cand in ('机构参与度', '机构参与'):
+                    if cand in df.columns: instparti_col = cand; break
+                focus_col = None
+                for cand in ('关注指数', '关注度'):
+                    if cand in df.columns: focus_col = cand; break
+
+                for _, r in df.iterrows():
+                    try:
+                        code_raw = _cell_str(r, code_col) if code_col else None
+                        if not code_raw:
+                            continue
+                        code = ''.join(ch for ch in code_raw if ch.isdigit())[-6:]
+                        if len(code) != 6:
+                            continue
+                        if universe_filter is not None and code not in universe_filter:
+                            continue
+                        rank_info = rank_by_code.get(code, {})
+                        comment_rows.append({
+                            'stock_code': code,
+                            'stock_name': rank_info.get('stock_name') or (_cell_str(r, name_col) if name_col else None),
+                            'hot_rank_em': rank_info.get('hot_rank_em'),
+                            'comment_score': _cell_float(r, comment_col) if comment_col else None,
+                            'institution_participation': _cell_float(r, instparti_col) if instparti_col else None,
+                            # AKShare stock_comment_em 不直接 expose '散户意愿', 留作 future
+                            # (`stock_comment_detail_scrd_desire_em(symbol)` per-stock 单独接口太贵)
+                            'retail_desire': None,
+                            'focus_index': _cell_float(r, focus_col) if focus_col else None,
+                            'raw_payload': _row_to_jsonable(r, df.columns),
+                        })
+                    except Exception:
+                        continue
+                print(f'stock_comment_em: parsed {len(comment_rows)} rows (after universe filter)', file=sys.stderr)
+    except SourceTimeout as e:
+        print(f'stock_comment_em timeout (skip): {e}', file=sys.stderr)
+    except Exception as e:
+        print(f'stock_comment_em failed: {e}', file=sys.stderr)
+
+    # 兜底: 如果 stock_comment_em 都失败, 至少把 hot_rank_em 的行返回 (universe 过滤)
+    if not comment_rows:
+        for code, info in rank_by_code.items():
+            if universe_filter is not None and code not in universe_filter:
+                continue
+            comment_rows.append({
+                'stock_code': code,
+                'stock_name': info.get('stock_name'),
+                'hot_rank_em': info.get('hot_rank_em'),
+                'comment_score': None,
+                'institution_participation': None,
+                'retail_desire': None,
+                'focus_index': None,
+                'raw_payload': {'hot_rank_only': True},
+            })
+
+    return comment_rows
+
+
+def get_baidu_hot_search(limit: int = 50) -> List[Dict[str, Any]]:
+    """
+    百度 A 股搜索热度榜 top N — 跨平台搜索热度的"散户视角".
+
+    Endpoint: ak.stock_hot_search_baidu(symbol='A股', date='YYYYMMDD')
+        若不传 date 默认今日. AKShare 内部多次重命名字段, 用 col_map 兼容.
+
+    AC 偏差: AC 提"百度搜索股票榜", AKShare 提供的就是这个 endpoint, 无偏差.
+
+    Returns:
+        List[{rank, keyword, search_index, change_rate, raw_payload}], 按 rank ASC.
+        endpoint 失败 / 不存在时返回 [].
+    """
+    try:
+        fn = getattr(ak, 'stock_hot_search_baidu', None)
+        if fn is None:
+            print('AKShare missing stock_hot_search_baidu (endpoint not available)', file=sys.stderr)
+            return []
+        try:
+            df = with_subsource_timeout(25, lambda: fn(symbol='A股'))
+        except TypeError:
+            df = with_subsource_timeout(25, fn)
+        if df is None or df.empty:
+            return []
+
+        # 柔性字段
+        rank_col = next((c for c in df.columns if str(c) in ('排名', 'rank', '序号')), None)
+        keyword_col = next((c for c in df.columns if str(c) in ('股票名称', '名称', '关键词', '热搜词', '股票')), None)
+        index_col = next((c for c in df.columns if str(c) in ('搜索指数', '热度', '指数')), None)
+        chg_col = next((c for c in df.columns if str(c) in ('较前一日变化', '变化率', '环比')), None)
+
+        results = []
+        for idx, r in df.iterrows():
+            try:
+                kw = _cell_str(r, keyword_col) if keyword_col else None
+                if not kw:
+                    continue
+                rank_val = _cell_int(r, rank_col) if rank_col else (idx + 1)
+                results.append({
+                    'rank': int(rank_val) if rank_val is not None else (idx + 1),
+                    'keyword': kw,
+                    'search_index': _cell_int(r, index_col) if index_col else None,
+                    'change_rate': _cell_float(r, chg_col) if chg_col else None,
+                    'raw_payload': _row_to_jsonable(r, df.columns),
+                })
+                if len(results) >= limit:
+                    break
+            except Exception:
+                continue
+        # 排序由 rank ASC
+        results.sort(key=lambda x: x.get('rank') or 999)
+        print(f'baidu_hot_search: parsed {len(results)} rows', file=sys.stderr)
+        return results
+    except SourceTimeout as e:
+        print(f'stock_hot_search_baidu timeout: {e}', file=sys.stderr)
+        return []
+    except Exception as e:
+        print(f'stock_hot_search_baidu failed: {e}', file=sys.stderr)
+        return []
+
+
+def get_concept_hot_keywords_reverse(stock_codes_csv: str, per_stock_limit: int = 3) -> List[Dict[str, Any]]:
+    """
+    反向聚合: 给 N 只股 → 拉每股的 stock_hot_keyword_em (个股关联热门概念)
+    → 按 concept_name 分组 → 返回 [{concept_name, related_codes: [...], total_heat}].
+
+    v1 暂不在 sync 流程使用 (per-stock loop 风险高). plumbed for future
+    "概念热度反向" 数据维度.
+    """
+    codes = [''.join(ch for ch in c.strip() if ch.isdigit())[-6:]
+             for c in stock_codes_csv.split(',') if c.strip()]
+    codes = [c for c in codes if len(c) == 6][:50]  # 硬上限 50, 防 timeout
+
+    if not codes:
+        return []
+
+    concept_agg: Dict[str, Dict[str, Any]] = {}
+    fn = getattr(ak, 'stock_hot_keyword_em', None)
+    if fn is None:
+        return []
+
+    import time as _time_mod
+    for code in codes:
+        prefix = 'SH' if code.startswith('6') else 'SZ' if code[0] in ('0', '3') else 'BJ'
+        symbol = f'{prefix}{code}'
+        try:
+            df = with_subsource_timeout(8, lambda: fn(symbol=symbol))
+            if df is None or df.empty:
+                continue
+            for _, r in df.iterrows():
+                try:
+                    cname = _cell_str(r, '概念名称') or _cell_str(r, '关键词') or _cell_str(r, '概念')
+                    if not cname:
+                        continue
+                    heat = _cell_float(r, '热度') or _cell_float(r, '热度值') or 0.0
+                    if cname not in concept_agg:
+                        concept_agg[cname] = {'concept_name': cname, 'related_codes': [], 'total_heat': 0.0}
+                    concept_agg[cname]['related_codes'].append(code)
+                    concept_agg[cname]['total_heat'] += (heat or 0.0)
+                except Exception:
+                    continue
+        except SourceTimeout:
+            continue
+        except Exception:
+            continue
+        _time_mod.sleep(0.05)  # friendly throttle
+
+    out = list(concept_agg.values())
+    out.sort(key=lambda x: x['total_heat'], reverse=True)
+    return out
 
 
 def main():
@@ -5276,6 +5586,39 @@ def main():
                 except (ValueError, TypeError):
                     limit = 80
             result = get_market_news(limit=limit)
+
+        elif command == "get_social_sentiment_snapshot":
+            # Batch AH: 社媒/舆情综合 (东财人气榜 + 综合评分)
+            # Args: [stock_codes_csv]
+            codes_csv = None
+            if len(sys.argv) >= 3 and sys.argv[2] not in ('', '-', 'null'):
+                codes_csv = sys.argv[2]
+            result = get_social_sentiment_snapshot(stock_codes_csv=codes_csv)
+
+        elif command == "get_baidu_hot_search":
+            # Batch AH: 百度 A 股搜索热度榜
+            # Args: [limit]  (default 50)
+            limit = 50
+            if len(sys.argv) >= 3 and sys.argv[2] not in ('', '-', 'null'):
+                try:
+                    limit = int(sys.argv[2])
+                except (ValueError, TypeError):
+                    limit = 50
+            result = get_baidu_hot_search(limit=limit)
+
+        elif command == "get_concept_hot_keywords_reverse":
+            # Batch AH: 概念→关联股反向聚合 (v1 plumbed, 未在 sync 流程调用)
+            if len(sys.argv) < 3:
+                print(json.dumps({"error": "Missing stock_codes_csv"}), file=sys.stderr)
+                sys.exit(1)
+            codes_csv = sys.argv[2]
+            per_stock_limit = 3
+            if len(sys.argv) >= 4:
+                try:
+                    per_stock_limit = int(sys.argv[3])
+                except (ValueError, TypeError):
+                    per_stock_limit = 3
+            result = get_concept_hot_keywords_reverse(codes_csv, per_stock_limit=per_stock_limit)
 
         else:
             print(json.dumps({"error": f"Unknown command: {command}"}), file=sys.stderr)

@@ -78,6 +78,8 @@ export * from './ShareholderTradeRecord';
 export * from './MarginTradingBalance';
 export * from './ETFFlow';
 export * from './MarketNews';
+export * from './SocialSentimentSnapshot';
+export * from './MarketHotSearch';
 // 2026-06-11 新增数据维度
 export * from './MacroIndicator';
 export * from './FundTopHolding';

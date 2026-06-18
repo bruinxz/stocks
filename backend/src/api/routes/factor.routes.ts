@@ -12,13 +12,14 @@ const authController = new AuthController();
  * POST /api/factors/preview           → 自定义权重 / 参数 预览 top-N 选股
  * GET  /api/factors/industry-heatmap  → 行业 × 因子 z_score 平均值矩阵 (US-074)
  * GET  /api/factors/industry-board    → 行业资金决策面板 (Batch AF 2026-06-18)
+ * GET  /api/factors/sentiment-board   → 舆情雷达面板 (Batch AH 2026-06-18)
  * GET  /api/factors/:name/detail      → 单因子 IC 历史 + 5 等分组合净值 (US-094)
  *
  * 路由顺序约束（与 US-015 strategy.routes.ts 同款 lesson）：
- *   - `/overview`, `/preview`, `/industry-heatmap`, `/industry-board` 必须在
- *     `/:name/detail` 之前注册，否则 :name 通配会吞这些静态路径变成 404。本文
- *     件按 static-first / :param-last 物理顺序排列；新增静态路径必须保留在
- *     :name/detail 之上。
+ *   - `/overview`, `/preview`, `/industry-heatmap`, `/industry-board`,
+ *     `/sentiment-board` 必须在 `/:name/detail` 之前注册，否则 :name 通配会吞
+ *     这些静态路径变成 404。本文件按 static-first / :param-last 物理顺序排列；
+ *     新增静态路径必须保留在 :name/detail 之上。
  *
  * 注意：MFA 最新调仓结果 `GET /api/strategies/multi-factor/latest-picks` 是
  *      strategy.routes.ts 的路由（必须在 `/:strategyId` 通配之前注册），
@@ -119,6 +120,32 @@ router.get(
   '/industry-board',
   authController.authenticate,
   factorController.getIndustryBoard.bind(factorController)
+);
+
+/**
+ * @openapi
+ * /api/factors/sentiment-board:
+ *   get:
+ *     tags: [因子 Factors]
+ *     summary: 舆情雷达面板 (Batch AH 2026-06-18) — 东财人气 + 百度热搜 + 异动 + 散点 + 情绪新闻
+ *     description: |
+ *       基于 SocialSentimentSnapshot + MarketHotSearch + MarketNews 真实数据.
+ *       聚合 5 个 block 一次返回. 每个 block 独立 try/catch fallback.
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: query, name: date, required: false, schema: { type: string, format: date } }
+ *       - { in: query, name: top, required: false, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+ *       - { in: query, name: breakout_lookback, required: false, schema: { type: integer, minimum: 1, maximum: 20, default: 5 } }
+ *       - { in: query, name: news_keywords_csv, required: false, schema: { type: string }, description: "覆盖默认情绪关键词列表 (逗号分隔)" }
+ *     responses:
+ *       200: { description: 舆情雷达数据 }
+ *       400: { description: date 格式错误 }
+ *       401: { description: 未授权 }
+ */
+router.get(
+  '/sentiment-board',
+  authController.authenticate,
+  factorController.getSentimentBoard.bind(factorController)
 );
 
 /**

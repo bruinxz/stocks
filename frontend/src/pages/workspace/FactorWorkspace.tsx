@@ -36,9 +36,12 @@ import {
   LineChart,
   ReferenceLine,
   ResponsiveContainer,
+  Scatter,
+  ScatterChart,
   Tooltip,
   XAxis,
   YAxis,
+  ZAxis,
 } from 'recharts';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
 import AIStockAnalysisModal from '../../components/trading/AIStockAnalysisModal';
@@ -53,6 +56,7 @@ import {
   FactorPreviewResponse,
   FactorPreviewSignal,
   IndustryBoardResponse,
+  SentimentBoardResponse,
 } from '../../services/factorService';
 
 const { Text } = Typography;
@@ -110,6 +114,7 @@ const FactorWorkspace: React.FC = () => {
     { key: 'weights', label: '权重调参', icon: <SlidersOutlined /> },
     { key: 'picks', label: '今日选股清单', icon: <OrderedListOutlined /> },
     { key: 'board', label: '行业决策', icon: <ThunderboltOutlined /> },
+    { key: 'sentiment', label: '舆情雷达', icon: <RobotOutlined /> },
     { key: 'heatmap', label: '因子热力 (旧)', icon: <AppstoreOutlined /> },
     { key: 'macro', label: '宏观环境', icon: <FundOutlined /> },
     { key: 'block', label: '大宗交易', icon: <FundOutlined /> },
@@ -263,6 +268,32 @@ const FactorWorkspace: React.FC = () => {
     void loadBoard();
   }, [activeKey, board, boardLoading, boardError, loadBoard]);
 
+  // --- 舆情雷达 (Batch AH 2026-06-18) — lazy on first tab activation ---
+  // 同 board 三态判定范式: 仅当用户首次切到 'sentiment' tab 且无 data + 无 error 时才 fire.
+  const [sentiment, setSentiment] = useState<SentimentBoardResponse | null>(null);
+  const [sentimentLoading, setSentimentLoading] = useState(false);
+  const [sentimentError, setSentimentError] = useState<string | null>(null);
+
+  const loadSentiment = useCallback(async () => {
+    setSentimentLoading(true);
+    setSentimentError(null);
+    try {
+      const data = await factorService.getSentimentBoard({ top: 20 });
+      setSentiment(data);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setSentimentError(msg);
+    } finally {
+      setSentimentLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeKey !== 'sentiment') return;
+    if (sentiment || sentimentLoading || sentimentError) return;
+    void loadSentiment();
+  }, [activeKey, sentiment, sentimentLoading, sentimentError, loadSentiment]);
+
   // --- US-094 因子详情抽屉 ---
   // 点击因子卡片 → 弹出 Drawer 展示：因子描述 / IC 历史曲线 / 5 等分组合净值曲线。
   // detail 数据缓存为 (factor_name → response) 一次拉取后切换其它卡片再回来不重复 fetch；
@@ -392,6 +423,15 @@ const FactorWorkspace: React.FC = () => {
         loading={boardLoading}
         error={boardError}
         onReload={loadBoard}
+      />
+    );
+  } else if (activeKey === 'sentiment') {
+    body = (
+      <SentimentBoardTab
+        data={sentiment}
+        loading={sentimentLoading}
+        error={sentimentError}
+        onReload={loadSentiment}
       />
     );
   } else if (activeKey === 'macro') {
@@ -1263,6 +1303,551 @@ function formatNewsTime(raw: string | null | undefined): string {
   if (md) return `${md[2]}-${md[3]}`;
   return s.slice(0, 16);
 }
+
+/**
+ * SentimentBoardTab — Batch AH (2026-06-18) 舆情雷达面板.
+ *
+ * 5 个 Card 一站式展示:
+ *   - Card 1 (lg=12): 全市场人气榜 (东财) top 20 — Table 按 hot_rank_em ASC
+ *   - Card 2 (lg=12): 百度热搜榜 top 20 — Table 按 rank ASC
+ *   - Card 3 (lg=12): 异动股 — Rank 突变 top 10 (今日 rank 较 5 日均值跃升)
+ *   - Card 4 (lg=12): 情绪面散点 — 机构参与 vs 综合评分 (top-100 universe)
+ *   - Card 5 (lg=24): 情绪类要闻 (近 2 日)
+ *
+ * 每个 Card 单独检查 data 子集为空时显示 Empty (per-block fallback, 同
+ * TodayWorkspace 3-card 范式). block_errors 字段若存在则在对应 Card 上方
+ * 显示 Alert warning.
+ */
+const SentimentBoardTab: React.FC<{
+  data: SentimentBoardResponse | null;
+  loading: boolean;
+  error: string | null;
+  onReload: () => void;
+}> = ({ data, loading, error, onReload }) => {
+  if (loading && !data) {
+    return (
+      <Card>
+        <div style={{ display: 'flex', justifyContent: 'center', padding: 64 }}>
+          <Spin tip="加载舆情雷达…" />
+        </div>
+      </Card>
+    );
+  }
+  if (error && !data) {
+    return (
+      <Alert
+        type="error"
+        showIcon
+        message="加载舆情雷达失败"
+        description={error}
+        action={
+          <Button size="small" onClick={onReload}>
+            重试
+          </Button>
+        }
+      />
+    );
+  }
+  if (!data || (data.universe_size === 0 && data.note)) {
+    return (
+      <Card>
+        <Empty
+          description={
+            data?.note ||
+            'social_sentiment_snapshots 表为空 — 请在 SchedulerService 启用 SOCIAL_SENTIMENT_SYNC (Batch AH 已 seed) 或手动运行'
+          }
+        />
+      </Card>
+    );
+  }
+
+  const rankColor = (rank: number | null | undefined): string => {
+    if (rank == null) return '#999';
+    if (rank <= 10) return '#cf1322';
+    if (rank <= 20) return '#fa8c16';
+    if (rank <= 50) return '#faad14';
+    return '#666';
+  };
+  const fmtNum = (v: number | null): string =>
+    v == null || !Number.isFinite(v) ? '—' : v.toFixed(2);
+
+  return (
+    <Space direction="vertical" size={12} style={{ width: '100%' }}>
+      {error && (
+        <Alert
+          type="warning"
+          showIcon
+          message="数据刷新失败 (展示上次缓存)"
+          description={error}
+          action={
+            <Button size="small" onClick={onReload}>
+              重试
+            </Button>
+          }
+        />
+      )}
+
+      {/* KPI strip */}
+      <Card size="small">
+        <Space size={32} wrap>
+          <Statistic title="数据日期" value={data.trade_date ?? '—'} />
+          <Statistic title="覆盖股票" value={data.universe_size} suffix="只" />
+          <Statistic title="人气榜 top" value={data.today_hot_rank_top20.length} suffix="只" />
+          <Statistic title="百度热搜" value={data.today_baidu_top20.length} suffix="条" />
+          <Statistic title="今日异动" value={data.rank_breakouts.length} suffix="只" />
+          <Statistic title="情绪要闻" value={data.recent_sentiment_news.length} suffix="条" />
+          <Button icon={<ReloadOutlined />} loading={loading} onClick={onReload}>
+            刷新
+          </Button>
+        </Space>
+      </Card>
+
+      <Row gutter={[16, 16]}>
+        {/* Card 1 — 东财人气榜 */}
+        <Col xs={24} lg={12}>
+          <Card
+            title={
+              <Space>
+                <ThunderboltOutlined style={{ color: '#cf1322' }} />
+                全市场人气榜 (东财 top {data.today_hot_rank_top20.length})
+              </Space>
+            }
+            size="small"
+          >
+            {data.block_errors?.today_hot_rank_top20 && (
+              <Alert
+                type="warning"
+                showIcon
+                style={{ marginBottom: 8 }}
+                message={`人气榜加载失败: ${data.block_errors.today_hot_rank_top20}`}
+              />
+            )}
+            {data.today_hot_rank_top20.length === 0 ? (
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description="今日人气榜无数据"
+              />
+            ) : (
+              <Table
+                size="small"
+                rowKey="stock_code"
+                dataSource={data.today_hot_rank_top20}
+                pagination={false}
+                scroll={{ x: 'max-content', y: 360 }}
+                columns={[
+                  {
+                    title: '排名',
+                    dataIndex: 'hot_rank_em',
+                    width: 56,
+                    align: 'center',
+                    render: (v: number) => (
+                      <Tag color={rankColor(v) === '#999' ? 'default' : undefined} style={{ background: rankColor(v), color: 'white', border: 'none' }}>
+                        {v}
+                      </Tag>
+                    ),
+                  },
+                  {
+                    title: '股票',
+                    width: 140,
+                    render: (_v, row) => (
+                      <div>
+                        <div style={{ fontSize: 12, fontWeight: 500 }}>{row.stock_name || '—'}</div>
+                        <div style={{ fontSize: 11, color: '#999' }}>{row.stock_code}</div>
+                      </div>
+                    ),
+                  },
+                  {
+                    title: '综合评分',
+                    dataIndex: 'comment_score',
+                    width: 80,
+                    align: 'right',
+                    sorter: (a, b) => (a.comment_score ?? -1) - (b.comment_score ?? -1),
+                    render: (v: number | null) => <span style={{ fontSize: 12 }}>{fmtNum(v)}</span>,
+                  },
+                  {
+                    title: '机构参与',
+                    dataIndex: 'institution_participation',
+                    width: 80,
+                    align: 'right',
+                    render: (v: number | null) => (
+                      <span style={{ fontSize: 12 }}>{v == null ? '—' : `${v.toFixed(1)}%`}</span>
+                    ),
+                  },
+                  {
+                    title: '关注指数',
+                    dataIndex: 'focus_index',
+                    width: 80,
+                    align: 'right',
+                    render: (v: number | null) => <span style={{ fontSize: 12 }}>{fmtNum(v)}</span>,
+                  },
+                ]}
+              />
+            )}
+          </Card>
+        </Col>
+
+        {/* Card 2 — 百度热搜榜 */}
+        <Col xs={24} lg={12}>
+          <Card
+            title={
+              <Space>
+                <FundOutlined style={{ color: '#1890ff' }} />
+                百度搜索热度榜 top {data.today_baidu_top20.length}
+              </Space>
+            }
+            size="small"
+          >
+            {data.block_errors?.today_baidu_top20 && (
+              <Alert
+                type="warning"
+                showIcon
+                style={{ marginBottom: 8 }}
+                message={`百度热搜加载失败: ${data.block_errors.today_baidu_top20}`}
+              />
+            )}
+            {data.today_baidu_top20.length === 0 ? (
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description="今日百度热搜无数据 — endpoint 可能暂不可用"
+              />
+            ) : (
+              <Table
+                size="small"
+                rowKey={r => `${r.rank}-${r.keyword}`}
+                dataSource={data.today_baidu_top20}
+                pagination={false}
+                scroll={{ x: 'max-content', y: 360 }}
+                columns={[
+                  {
+                    title: '排名',
+                    dataIndex: 'rank',
+                    width: 56,
+                    align: 'center',
+                    render: (v: number) => (
+                      <Tag color={rankColor(v) === '#999' ? 'default' : undefined} style={{ background: rankColor(v), color: 'white', border: 'none' }}>
+                        {v}
+                      </Tag>
+                    ),
+                  },
+                  {
+                    title: '关键词',
+                    dataIndex: 'keyword',
+                    width: 130,
+                    render: (v: string, row) => (
+                      <div>
+                        <div style={{ fontSize: 12, fontWeight: 500 }}>{v}</div>
+                        {row.related_stock_code && (
+                          <div style={{ fontSize: 11, color: '#1890ff' }}>{row.related_stock_code}</div>
+                        )}
+                      </div>
+                    ),
+                  },
+                  {
+                    title: '搜索指数',
+                    dataIndex: 'search_index',
+                    width: 90,
+                    align: 'right',
+                    render: (v: number | null) => (
+                      <span style={{ fontSize: 12 }}>
+                        {v == null ? '—' : v.toLocaleString()}
+                      </span>
+                    ),
+                  },
+                  {
+                    title: '日环比',
+                    dataIndex: 'change_rate',
+                    width: 80,
+                    align: 'right',
+                    render: (v: number | null) => {
+                      if (v == null) return <span style={{ fontSize: 12, color: '#999' }}>—</span>;
+                      const color = v > 0 ? '#cf1322' : v < 0 ? '#389e0d' : '#666';
+                      const arrow = v > 0 ? '↑' : v < 0 ? '↓' : '';
+                      return (
+                        <span style={{ fontSize: 12, color }}>
+                          {arrow} {Math.abs(v).toFixed(2)}%
+                        </span>
+                      );
+                    },
+                  },
+                ]}
+              />
+            )}
+          </Card>
+        </Col>
+
+        {/* Card 3 — 异动股 (rank 突变) */}
+        <Col xs={24} lg={12}>
+          <Card
+            title={
+              <Space>
+                <RobotOutlined style={{ color: '#fa8c16' }} />
+                异动股 — Rank 突变 top 10
+              </Space>
+            }
+            size="small"
+            extra={
+              <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                今日 rank 较 5 日均值跃升越多 = 关注度突增
+              </Typography.Text>
+            }
+          >
+            {data.block_errors?.rank_breakouts && (
+              <Alert
+                type="warning"
+                showIcon
+                style={{ marginBottom: 8 }}
+                message={`异动榜加载失败: ${data.block_errors.rank_breakouts}`}
+              />
+            )}
+            {data.rank_breakouts.length === 0 ? (
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description="今日无 rank 突变股 (需要 ≥ 5 日历史)"
+              />
+            ) : (
+              <Table
+                size="small"
+                rowKey="stock_code"
+                dataSource={data.rank_breakouts}
+                pagination={false}
+                scroll={{ x: 'max-content', y: 360 }}
+                columns={[
+                  {
+                    title: '股票',
+                    width: 140,
+                    render: (_v, row) => (
+                      <div>
+                        <div style={{ fontSize: 12, fontWeight: 500 }}>{row.stock_name || '—'}</div>
+                        <div style={{ fontSize: 11, color: '#999' }}>{row.stock_code}</div>
+                      </div>
+                    ),
+                  },
+                  {
+                    title: '今日',
+                    dataIndex: 'hot_rank_em',
+                    width: 60,
+                    align: 'center',
+                    render: (v: number | null) => (
+                      <Tag color="red">{v ?? '—'}</Tag>
+                    ),
+                  },
+                  {
+                    title: '5日均',
+                    dataIndex: 'rank_5d_avg',
+                    width: 70,
+                    align: 'center',
+                    render: (v: number | null) => (
+                      <span style={{ fontSize: 12, color: '#999' }}>{fmtNum(v)}</span>
+                    ),
+                  },
+                  {
+                    title: 'Δ',
+                    dataIndex: 'rank_breakout_delta',
+                    width: 80,
+                    align: 'right',
+                    sorter: (a, b) =>
+                      (a.rank_breakout_delta ?? 0) - (b.rank_breakout_delta ?? 0),
+                    render: (v: number | null) => (
+                      <span style={{ fontSize: 12, fontWeight: 600, color: '#cf1322' }}>
+                        +{fmtNum(v)}
+                      </span>
+                    ),
+                  },
+                  {
+                    title: '综合评分',
+                    dataIndex: 'comment_score',
+                    width: 80,
+                    align: 'right',
+                    render: (v: number | null) => <span style={{ fontSize: 12 }}>{fmtNum(v)}</span>,
+                  },
+                ]}
+              />
+            )}
+          </Card>
+        </Col>
+
+        {/* Card 4 — 情绪散点 */}
+        <Col xs={24} lg={12}>
+          <Card
+            title={
+              <Space>
+                <FundOutlined style={{ color: '#722ed1' }} />
+                情绪散点 — 机构参与 vs 综合评分 (top 100)
+              </Space>
+            }
+            size="small"
+          >
+            {data.block_errors?.sentiment_scatter && (
+              <Alert
+                type="warning"
+                showIcon
+                style={{ marginBottom: 8 }}
+                message={`散点加载失败: ${data.block_errors.sentiment_scatter}`}
+              />
+            )}
+            {data.sentiment_scatter.length === 0 ? (
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description="今日散点无数据"
+              />
+            ) : (
+              <ResponsiveContainer width="100%" height={360}>
+                <ScatterChart margin={{ top: 16, right: 16, bottom: 32, left: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
+                  <XAxis
+                    dataKey="institution_participation"
+                    name="机构参与度"
+                    unit="%"
+                    domain={[0, 100]}
+                    label={{
+                      value: '机构参与度 (%)',
+                      position: 'insideBottom',
+                      offset: -16,
+                      style: { fontSize: 11, fill: '#666' },
+                    }}
+                    tick={{ fontSize: 11 }}
+                  />
+                  <YAxis
+                    dataKey="comment_score"
+                    name="综合评分"
+                    domain={[0, 100]}
+                    label={{
+                      value: '综合评分',
+                      angle: -90,
+                      position: 'insideLeft',
+                      style: { fontSize: 11, fill: '#666' },
+                    }}
+                    tick={{ fontSize: 11 }}
+                  />
+                  <ZAxis dataKey="hot_rank_em" range={[40, 200]} name="人气排名" />
+                  <Tooltip
+                    cursor={{ strokeDasharray: '3 3' }}
+                    content={({ active, payload }: any) => {
+                      if (!active || !payload?.[0]?.payload) return null;
+                      const p = payload[0].payload;
+                      return (
+                        <div
+                          style={{
+                            background: 'white',
+                            border: '1px solid #ddd',
+                            padding: 8,
+                            fontSize: 12,
+                            borderRadius: 4,
+                          }}
+                        >
+                          <div style={{ fontWeight: 500 }}>{p.stock_name || p.stock_code}</div>
+                          <div style={{ color: '#999' }}>{p.stock_code}</div>
+                          <div>综合评分: {fmtNum(p.comment_score)}</div>
+                          <div>机构参与: {fmtNum(p.institution_participation)}%</div>
+                          {p.hot_rank_em != null && (
+                            <div style={{ color: '#cf1322' }}>人气榜 #{p.hot_rank_em}</div>
+                          )}
+                        </div>
+                      );
+                    }}
+                  />
+                  <Scatter
+                    data={data.sentiment_scatter}
+                    fill="#722ed1"
+                    fillOpacity={0.5}
+                  />
+                </ScatterChart>
+              </ResponsiveContainer>
+            )}
+          </Card>
+        </Col>
+
+        {/* Card 5 — 情绪类要闻 */}
+        <Col xs={24}>
+          <Card
+            title={
+              <Space>
+                <FundOutlined style={{ color: '#1890ff' }} />
+                情绪类要闻 (近 2 日)
+              </Space>
+            }
+            size="small"
+            extra={
+              data.keywords_used && (
+                <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                  关键词: {data.keywords_used.join(' / ')}
+                </Typography.Text>
+              )
+            }
+          >
+            {data.block_errors?.recent_sentiment_news && (
+              <Alert
+                type="warning"
+                showIcon
+                style={{ marginBottom: 8 }}
+                message={`情绪新闻加载失败: ${data.block_errors.recent_sentiment_news}`}
+              />
+            )}
+            {data.recent_sentiment_news.length === 0 ? (
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description="近 2 日 market_news 无含情绪关键词的要闻"
+              />
+            ) : (
+              <div
+                style={{
+                  maxHeight: 320,
+                  overflowY: 'auto',
+                  borderLeft: '2px solid #f0f0f0',
+                  paddingLeft: 16,
+                }}
+              >
+                {data.recent_sentiment_news.map((n, i) => (
+                  <div
+                    key={`${n.publish_time}-${i}`}
+                    style={{
+                      borderLeft: '3px solid #722ed1',
+                      marginLeft: -18,
+                      paddingLeft: 14,
+                      marginBottom: 10,
+                      paddingBottom: 6,
+                      borderBottom: '1px dashed #eee',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                      <Text strong style={{ fontSize: 13 }} ellipsis={{ tooltip: n.title }}>
+                        {n.url ? (
+                          <a href={n.url} target="_blank" rel="noopener noreferrer">
+                            {n.title}
+                          </a>
+                        ) : (
+                          n.title
+                        )}
+                      </Text>
+                      <Tag color={n.source === 'cls' ? 'orange' : n.source === 'em' ? 'blue' : 'default'}>
+                        {n.source}
+                      </Tag>
+                    </div>
+                    <div style={{ fontSize: 11, color: '#999', marginTop: 2 }}>
+                      {formatNewsTime(n.publish_time)}
+                      {n.category && (
+                        <Tag style={{ marginLeft: 4 }}>{n.category}</Tag>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+        </Col>
+      </Row>
+
+      <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+        💡 舆情雷达: <Text strong>东财人气榜</Text> 告诉你「全市场散户在看哪只」,{' '}
+        <Text strong>百度搜索</Text> 是跨平台搜索热度的「散户视角」,{' '}
+        <Text strong>Rank 突变</Text> 找今日关注度突增的「异动股」,{' '}
+        <Text strong>散点</Text> 看机构参与 vs 综合评分的分布找洼地,{' '}
+        <Text strong>情绪要闻</Text> 提供宏观情绪上下文. 数据每日盘后由 SchedulerService
+        定时 sync (SOCIAL_SENTIMENT_SYNC 16:20 / MARKET_HOT_SEARCH_SYNC 16:40).
+      </Typography.Paragraph>
+    </Space>
+  );
+};
 
 /**
  * IndustryHeatmapTab — echarts heatmap：行业 × 因子的 z_score 平均值。
