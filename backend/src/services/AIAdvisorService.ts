@@ -593,6 +593,62 @@ export const PRODUCTION_AI_STOCK_ANALYSIS_DATA_SOURCE: AIStockAnalysisDataSource
 //  AIAdvisorService
 // ---------------------------------------------------------------------------
 
+/**
+ * Batch AE (2026-06-18): TradingAgents 调用前富化的结构化 context.
+ *
+ * 旧 prompt 只传 ticker + 日期, AI 完全靠自身从 0 抓数据 + 猜该股属什么主题.
+ * 现在把后端已有的"今日 ground truth"打包传给远端, 让 AI 推理质量显著提升.
+ *
+ * 每个字段都是可选; 缺数据时该字段 undefined (远端实现需 tolerate 字段缺失).
+ * 该接口字段命名跟 IndustryFlow / DailyBar / NorthboundHolding 列名一致, 让远端
+ * implementor 对照后端模型即可消费.
+ */
+export interface AnalyzeContext {
+  /** 个股基础: 中文名 + 申万行业 + 流通市值(亿元) */
+  stock_basic?: {
+    name?: string;
+    industry?: string;
+    circulating_market_cap_yi?: number;
+  };
+  /** 今日行情: 涨幅% + 量比 + 收盘价 + 5/10/20 日累计收益% */
+  today_market?: {
+    change_pct?: number;
+    volume_ratio?: number;
+    close?: number;
+    return_5d_pct?: number;
+    return_20d_pct?: number;
+  };
+  /** 所在行业近 5 日: 累计涨幅% + 主力净流入率% + 龙头股 */
+  industry_today?: {
+    industry_name?: string;
+    change_pct_5d_avg?: number;
+    main_inflow_ratio_5d_avg_pct?: number;
+    today_leader_stock_code?: string;
+    today_leader_stock_change_pct?: number;
+  };
+  /** 资金信号: 北向 5 日持股比例变化 / 主力近 10 日累计净流入 / 融资余额 5 日变化% */
+  capital_flow?: {
+    northbound_hold_ratio_change_5d?: number;
+    main_inflow_cumulative_10d_yi?: number;
+    margin_balance_change_5d_pct?: number;
+  };
+  /** 是否涨停 / 连板天数 / 龙虎榜 famous 净买入 */
+  event_signals?: {
+    is_limit_up_today?: boolean;
+    continuous_limit_up_days?: number;
+    dragon_tiger_famous_net_buy_yi?: number;
+    on_dragon_tiger_today?: boolean;
+  };
+  /** 关联热门话题: ["AI 算力", "国产替代", "存储芯片"] */
+  hot_concepts?: string[];
+  /** 近期重大新闻摘要 (top 3) */
+  recent_news?: Array<{
+    title: string;
+    date: string;
+    source?: string;
+  }>;
+}
+
 export class AIAdvisorService {
   private readonly dataSource: AIStockAnalysisDataSource;
 
@@ -645,12 +701,194 @@ export class AIAdvisorService {
   }
 
   /**
-   * 提交同步/异步分析任务
+   * Batch AE (2026-06-18): 富化 TradingAgents prompt 用的 context.
+   *
+   * 一次 query 拿全 5-6 类信号并归一化. 任何 query 失败 → 该字段 undefined,
+   * 不阻塞主分析 call. 串行 await (各 query 不依赖, 但量小不必 Promise.all).
+   *
+   * 用法: aiAdvisorService.analyzeStock(ticker, date, true, await aiAdvisorService.buildAnalyzeContext(ticker, date))
+   * 如果 caller 不显式传 context, analyzeStock 内部会自动 build (默认 enriched).
    */
-  async analyzeStock(ticker: string, targetDate?: string, isAsync = false) {
+  async buildAnalyzeContext(
+    ticker: string,
+    _targetDate?: string
+  ): Promise<AnalyzeContext> {
+    const ctx: AnalyzeContext = {};
+    const code = String(ticker || '').replace(/\.[A-Z]+$/, '').trim();
+    if (!code) return ctx;
+    // 1) Stock 基础
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { Stock } = require('../models/Stock');
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { Op } = require('sequelize');
+      const stock = await Stock.findOne({
+        where: {
+          [Op.or]: [
+            { symbol: code },
+            { symbol: `sh.${code}` },
+            { symbol: `sz.${code}` },
+            { symbol: `${code}.SH` },
+            { symbol: `${code}.SZ` },
+          ],
+        },
+        attributes: ['name', 'industry', 'circulating_market_cap', 'change_percent', 'id'],
+        raw: true,
+      });
+      if (stock) {
+        ctx.stock_basic = {
+          name: stock.name || undefined,
+          industry: stock.industry || undefined,
+          circulating_market_cap_yi: Number(stock.circulating_market_cap)
+            ? Math.round((Number(stock.circulating_market_cap) / 1e8) * 10) / 10
+            : undefined,
+        };
+        // 2) 今日 + 5/20 日 收益 (DailyBar)
+        if (stock.id) {
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const { DailyBar } = require('../models/DailyBar');
+            const bars = await DailyBar.findAll({
+              where: { stock_id: stock.id },
+              order: [['time', 'DESC']],
+              limit: 22,
+              attributes: ['close', 'volume', 'change_percent', 'time'],
+              raw: true,
+            });
+            if (bars.length >= 2) {
+              const today = bars[0];
+              const ret = (n: number) =>
+                bars.length > n
+                  ? ((Number(today.close) - Number(bars[n].close)) / Number(bars[n].close)) * 100
+                  : undefined;
+              const volSum = bars.slice(0, 5).reduce((s: number, b: any) => s + Number(b.volume || 0), 0);
+              const volAvg20 = bars.slice(0, 20).reduce((s: number, b: any) => s + Number(b.volume || 0), 0) / Math.max(1, Math.min(20, bars.length));
+              ctx.today_market = {
+                change_pct: Number(today.change_percent ?? stock.change_percent) || undefined,
+                close: Number(today.close) || undefined,
+                volume_ratio: volAvg20 > 0 ? Math.round((volSum / 5 / volAvg20) * 100) / 100 : undefined,
+                return_5d_pct: Number(ret(5)?.toFixed(2)) || undefined,
+                return_20d_pct: Number(ret(20)?.toFixed(2)) || undefined,
+              };
+            }
+          } catch (err: any) {
+            logger.warn(`buildAnalyzeContext DailyBar 失败: ${err?.message}`);
+          }
+        }
+      }
+      // 3) 行业今日 (IndustryFlow)
+      if (ctx.stock_basic?.industry) {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const { IndustryFlow } = require('../models/IndustryFlow');
+          const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+            .toISOString()
+            .slice(0, 10);
+          const flows = await IndustryFlow.findAll({
+            where: {
+              industry_name: ctx.stock_basic.industry,
+              trade_date: { [Op.gte]: sevenDaysAgo },
+            },
+            order: [['trade_date', 'DESC']],
+            limit: 5,
+            attributes: [
+              'industry_name',
+              'change_pct',
+              'main_inflow_ratio',
+              'leader_stock_code',
+              'leader_stock_change_pct',
+            ],
+            raw: true,
+          });
+          if (flows.length > 0) {
+            const mean = (arr: number[]) =>
+              arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : undefined;
+            const changes = flows.map((f: any) => Number(f.change_pct)).filter(Number.isFinite);
+            const ratios = flows.map((f: any) => Number(f.main_inflow_ratio)).filter(Number.isFinite);
+            ctx.industry_today = {
+              industry_name: ctx.stock_basic.industry,
+              change_pct_5d_avg: mean(changes),
+              main_inflow_ratio_5d_avg_pct: mean(ratios) ? Number((mean(ratios)! * 100).toFixed(2)) : undefined,
+              today_leader_stock_code: flows[0].leader_stock_code || undefined,
+              today_leader_stock_change_pct: Number(flows[0].leader_stock_change_pct) || undefined,
+            };
+          }
+        } catch (err: any) {
+          logger.warn(`buildAnalyzeContext IndustryFlow 失败: ${err?.message}`);
+        }
+      }
+      // 4) 事件信号: 今日是否在涨停股池 / 龙虎榜
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { LimitUpStock } = require('../models/LimitUpStock');
+        const today = new Date().toISOString().slice(0, 10);
+        const limitUp = await LimitUpStock.findOne({
+          where: { stock_code: code, trade_date: today },
+          attributes: ['continuous_days'],
+          raw: true,
+        });
+        if (limitUp) {
+          ctx.event_signals = {
+            is_limit_up_today: true,
+            continuous_limit_up_days: Number(limitUp.continuous_days) || undefined,
+          };
+        }
+      } catch (err: any) {
+        // LimitUpStock 表可能不存在或当日无数据, silent
+      }
+      // 5) 热门概念: SnowballHotKeyword 关联
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { SnowballHotKeyword } = require('../models/SnowballHotKeyword');
+        const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+          .toISOString()
+          .slice(0, 10);
+        const keywords = await SnowballHotKeyword.findAll({
+          where: { trade_date: { [Op.gte]: sevenDaysAgo } },
+          attributes: ['keyword', 'related_stocks_json'],
+          limit: 200,
+          raw: true,
+        });
+        const concepts: string[] = [];
+        for (const k of keywords as any[]) {
+          const related = Array.isArray(k.related_stocks_json) ? k.related_stocks_json : [];
+          if (related.some((r: any) => String(r?.stock_code || '').trim() === code)) {
+            if (!concepts.includes(k.keyword)) concepts.push(k.keyword);
+          }
+        }
+        if (concepts.length) ctx.hot_concepts = concepts.slice(0, 8);
+      } catch (err: any) {
+        logger.warn(`buildAnalyzeContext SnowballHotKeyword 失败: ${err?.message}`);
+      }
+    } catch (err: any) {
+      logger.warn(`buildAnalyzeContext 顶层失败: ${err?.message}`);
+    }
+    return ctx;
+  }
+
+  /**
+   * 提交同步/异步分析任务
+   *
+   * Batch AE (2026-06-18): 加可选 context 参数, 把后端已有的结构化信号 (今日 change/量比 /
+   * 行业 regime / 主力资金 / 北向 / 涨停 / 热门概念) 传给远端 TradingAgents,
+   * 让 AI 不必从 0 抓数据 + 推理更接地气. 旧 prompt 只有 ticker + 日期, AI 完全靠自身
+   * 猜该股属什么主题. 现在 hint 字段 = ground truth.
+   *
+   * context 任何字段都是可选; 远端 TradingAgents API 实现需要兼容 hint 字段缺失或字段名
+   * 不识别 (返回时忽略). 服务端这边 fail-safe: 任何 context 字段查询失败 → 跳过该字段
+   * 不阻塞 analyze 调用.
+   */
+  async analyzeStock(
+    ticker: string,
+    targetDate?: string,
+    isAsync = false,
+    context?: AnalyzeContext
+  ) {
     try {
       // Batch Q (2026-06-17, F1 fix): 加 60s axios timeout. 之前无 timeout, TradingAgents
       // hang 时单 axios 永不返回 → aiPollingWorker concurrency=1 整条 pipeline 永久封锁.
+      // Batch AE (2026-06-18): 若 caller 没主动传 context, 这里自动 fetch (使主路径默认 enriched).
+      const enrichedContext = context ?? (await this.buildAnalyzeContext(ticker, targetDate));
       const response = await timedAIRequest('analyze', () =>
         axios.post(
           `${TRADING_AGENTS_URL}/api/analyze`,
@@ -658,6 +896,8 @@ export class AIAdvisorService {
             ticker,
             target_date: targetDate,
             is_async: isAsync,
+            // Batch AE: hint 字段; 远端实现可消费可忽略
+            hint: enrichedContext,
           },
           { timeout: 60_000 }
         )
