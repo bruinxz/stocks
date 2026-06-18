@@ -29,6 +29,14 @@ import { industryConcentrationGuard } from '../portfolio/risk/IndustryConcentrat
 import { morningRiskCheckupService } from '../portfolio/risk/MorningRiskCheckupService';
 import { restrictedShareWatchdog } from '../portfolio/risk/RestrictedShareWatchdog';
 import { executeGuardSells } from '../portfolio/risk/GuardSellExecutor';
+// Batch AB (2026-06-18): 行业 / 题材 / 资金面数据 sync — 之前 cron 完全没注册
+// 让 industry_flows / limit_up_stocks / northbound_holdings / snowball_keywords /
+// stock_sentiments 表全部停在旧日期 → 下游因子 / 策略 / TradingAgents prompt 全失明.
+import { industrySyncService } from '../data/services/IndustrySyncService';
+import { limitUpSyncService } from '../data/services/LimitUpSyncService';
+import { northboundSyncService } from '../data/services/NorthboundSyncService';
+import { snowballHotKeywordSyncService } from '../data/services/SnowballHotKeywordSyncService';
+import { stockSentimentSyncService } from '../data/services/StockSentimentSyncService';
 import { dailyTradingDigestService } from './DailyTradingDigestService';
 import { earningsForecastWatcher } from './EarningsForecastWatcher';
 import { weeklyReviewReportService } from './WeeklyReviewReportService';
@@ -2322,6 +2330,157 @@ class SchedulerService {
           `行业集中度评估完成。扫描 ${result.scanned_users}, ` +
             `告警 ${result.alerted_users}` +
             (dryRun ? '（dry-run，未写 RiskAlert）' : '')
+        );
+      } else if (task.type === 'INDUSTRY_FLOW_SYNC') {
+        // Batch AB (2026-06-18): 行业资金流当日 sync (AKShare 实时快照 stock_sector_fund_flow_rank).
+        // 配合 limit_up 联表算每行业涨停数. 推荐 cron: '5 15 * * 1-5' (收盘后 5min).
+        const today = moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
+        const date = parameters.date || today;
+        const result = await industrySyncService.syncDate(date);
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: result.fetched || 0,
+          success_count: result.upserted || 0,
+          failed_count: result.error ? 1 : 0,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: result.error || null,
+          result_summary: {
+            scenario: 'industry_flow_sync',
+            date,
+            fetched: result.fetched,
+            upserted: result.upserted,
+            industries_with_limit_ups: result.industries_with_limit_ups,
+            industries_with_leader: result.industries_with_leader,
+          },
+        });
+        logger.info(
+          `[industry-flow-sync] ${date} 完成: fetched=${result.fetched} upserted=${result.upserted}`
+        );
+      } else if (task.type === 'LIMIT_UP_SYNC') {
+        // Batch AB (2026-06-18): 涨停股池当日 sync (zt_pool + strong_pool 合并).
+        // DragonHead / GameTraderRelay / LinkageStrategy 都依赖. 推荐 cron: '10 15 * * 1-5'.
+        const today = moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
+        const date = parameters.date || today;
+        const result = await limitUpSyncService.syncDate(date);
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: result.fetched || 0,
+          success_count: result.upserted || 0,
+          failed_count: result.error ? 1 : 0,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: result.error || null,
+          result_summary: {
+            scenario: 'limit_up_sync',
+            date,
+            fetched: result.fetched,
+            upserted: result.upserted,
+            recomputed_continuous_days: result.recomputed_continuous_days,
+          },
+        });
+        logger.info(
+          `[limit-up-sync] ${date} 完成: fetched=${result.fetched} upserted=${result.upserted}`
+        );
+      } else if (task.type === 'NORTHBOUND_SYNC') {
+        // Batch AB (2026-06-18): 北向持股当日 sync (沪股通/深股通).
+        // northbound 因子 + NorthboundFollowStrategy + EarningsSurpriseStrategy 依赖.
+        // 推荐 cron: '15 16 * * 1-5' (港股通收盘后 16:10 数据可用).
+        const today = moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
+        const date = parameters.date || today;
+        const result = await northboundSyncService.syncDate(date);
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: result.fetched || 0,
+          success_count: result.upserted || 0,
+          failed_count: result.error ? 1 : 0,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: result.error || null,
+          result_summary: {
+            scenario: 'northbound_sync',
+            date,
+            fetched: result.fetched,
+            upserted: result.upserted,
+          },
+        });
+        logger.info(
+          `[northbound-sync] ${date} 完成: fetched=${result.fetched} upserted=${result.upserted}`
+        );
+      } else if (task.type === 'SNOWBALL_HOT_KEYWORD_SYNC') {
+        // Batch AB (2026-06-18): 雪球热门话题 sync (AKShare stock_hot_follow_xq).
+        // 当日热点关键词 + 关联个股, UI / sentiment 模块用. 推荐 cron: '0 16 * * 1-5'.
+        const today = moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
+        const date = parameters.date || today;
+        const result = await snowballHotKeywordSyncService.syncDate(date);
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: result.fetched || 0,
+          success_count: result.upserted || 0,
+          failed_count: result.error ? 1 : 0,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: result.error || null,
+          result_summary: {
+            scenario: 'snowball_hot_keyword_sync',
+            date,
+            fetched: result.fetched,
+            upserted: result.upserted,
+            new_keywords_count: result.new_keywords_count,
+          },
+        });
+        logger.info(
+          `[snowball-keyword-sync] ${date} 完成: fetched=${result.fetched} 新进=${result.new_keywords_count}`
+        );
+      } else if (task.type === 'STOCK_SENTIMENT_SYNC') {
+        // Batch AB (2026-06-18): 个股关注度 (东财人气榜 rank 倒数代理 post_count).
+        // east_money_qa 因子依赖. 默认仅自选股 + 量化候选, 限 50-200 只防 AKShare 限频.
+        // 推荐 cron: '30 16 * * 1-5'.
+        const limit = parameters.limit ? Number(parameters.limit) : 100;
+        const universe = parameters.universe === 'market' ? 'market' : 'favorites';
+        // 取候选股: market 模式 = 流通市值 top N; favorites 模式 = 所有 user 的 FavoriteStock + 量化 top
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { Stock } = require('../models/Stock');
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { Op } = require('sequelize');
+        const candidates =
+          universe === 'market'
+            ? await Stock.findAll({
+                where: {
+                  is_listed: true,
+                  name: { [Op.notLike]: '%ST%' },
+                },
+                order: [['circulating_market_cap', 'DESC']],
+                limit,
+                attributes: ['symbol'],
+                raw: true,
+              })
+            : await Stock.findAll({
+                attributes: ['symbol'],
+                limit,
+                raw: true,
+              });
+        const codes = (candidates as any[])
+          .map(s => String(s.symbol || '').replace(/\.[A-Z]+$/, ''))
+          .filter(Boolean);
+        const result = await stockSentimentSyncService.syncStocks(codes, {
+          intervalMs: 250,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: codes.length,
+          success_count: result.succeeded || 0,
+          failed_count: result.failed || 0,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: null,
+          result_summary: {
+            scenario: 'stock_sentiment_sync',
+            universe,
+            limit,
+            total: result.total_stocks,
+            succeeded: result.succeeded,
+            failed: result.failed,
+            skipped: result.skipped,
+          },
+        });
+        logger.info(
+          `[stock-sentiment-sync] universe=${universe} limit=${limit} 完成: succeeded=${result.succeeded} failed=${result.failed}`
         );
       } else if (task.type === 'STRATEGY_KILL_SWITCH_CHECK') {
         // Phase 4+ 策略熔断监控 — 评估每个策略的 kill_switch_metric (定义在
@@ -5257,6 +5416,44 @@ class SchedulerService {
         cron_expression: '40 16 * * 1-5',
         is_active: true,
         parameters: { dry_run: false }, // Batch N: 默认 dry_run=false 让熔断真触发
+      },
+      // Batch AB (2026-06-18): 5 个核心行业 / 题材 / 资金面数据 sync, 之前完全没 cron
+      // 让 industry_flows / limit_up_stocks / northbound_holdings / snowball_keywords /
+      // stock_sentiments 表全部停在旧日期 → 下游因子 / 策略 / TradingAgents prompt 全失明.
+      {
+        name: '行业资金流当日 sync (Batch AB)',
+        type: 'INDUSTRY_FLOW_SYNC',
+        cron_expression: '5 15 * * 1-5', // 收盘后 5min
+        is_active: true,
+        parameters: {},
+      },
+      {
+        name: '涨停股池当日 sync (Batch AB)',
+        type: 'LIMIT_UP_SYNC',
+        cron_expression: '10 15 * * 1-5',
+        is_active: true,
+        parameters: {},
+      },
+      {
+        name: '北向持股当日 sync (Batch AB)',
+        type: 'NORTHBOUND_SYNC',
+        cron_expression: '15 16 * * 1-5', // 港股通收盘后 16:10 数据可用
+        is_active: true,
+        parameters: {},
+      },
+      {
+        name: '雪球热门话题当日 sync (Batch AB)',
+        type: 'SNOWBALL_HOT_KEYWORD_SYNC',
+        cron_expression: '0 16 * * 1-5',
+        is_active: true,
+        parameters: {},
+      },
+      {
+        name: '个股关注度当日 sync (Batch AB)',
+        type: 'STOCK_SENTIMENT_SYNC',
+        cron_expression: '30 16 * * 1-5',
+        is_active: true,
+        parameters: { universe: 'market', limit: 200 },
       },
     ];
 
