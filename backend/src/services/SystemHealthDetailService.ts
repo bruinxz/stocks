@@ -244,12 +244,31 @@ export function buildDefaultProbeFns(deps: DefaultProbeDeps): HealthProbeFns {
     probeAkshare: () =>
       deps.pythonProbeOverride
         ? deps.pythonProbeOverride(akshareTimeout)
-        : probeAkshareViaPython(akshareTimeout),
+        : probeAkshareViaPythonCached(akshareTimeout),
 
     probeFeishu: async () => determineFeishuStatus(env),
 
     getUptimeSeconds: deps.uptimeFn || (() => Math.floor(process.uptime())),
   };
+}
+
+/**
+ * Batch Z (2026-06-17, m-3 fix): probeAkshareViaPython 60s cache wrapper.
+ * 之前 prometheus 高频拉 /health/detail (默认 15s/次) 让 spawn python3 -c
+ * 'import akshare' 每次都跑, 内存堆积 + zombie 风险 + 5s timeout 概率叠加.
+ * akshare 版本不会 sub-minute 改, 60s cache 足够安全; cache miss 兜底仍走真 spawn.
+ */
+let akshareCache: { ts: number; status: DependencyStatus } | null = null;
+const AKSHARE_CACHE_TTL_MS = 60_000;
+
+export function probeAkshareViaPythonCached(timeoutMs: number): Promise<DependencyStatus> {
+  if (akshareCache && Date.now() - akshareCache.ts < AKSHARE_CACHE_TTL_MS) {
+    return Promise.resolve(akshareCache.status);
+  }
+  return probeAkshareViaPython(timeoutMs).then(status => {
+    akshareCache = { ts: Date.now(), status };
+    return status;
+  });
 }
 
 /**

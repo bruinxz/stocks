@@ -158,7 +158,22 @@ import {
   collectSystemHealthDetail,
 } from './services/SystemHealthDetailService';
 import { redisLock } from './utils/redisLock';
-app.get('/health/detail', async (_req, res) => {
+app.get('/health/detail', async (req, res) => {
+  // Batch Z (2026-06-17, m-2 fix): 同 /metrics, 加 token gate. 之前 open 暴露
+  // tradingAgents URL / db redis akshare feishu state / scheduler 内部计数,
+  // 攻击者侦察"哪个外部依赖挂了" 选最弱时机进攻.
+  const expectedToken = process.env.METRICS_ACCESS_TOKEN;
+  const ipRaw = req.ip || req.socket.remoteAddress || '';
+  const isLocalhost = ipRaw.endsWith('127.0.0.1') || ipRaw === '::1' || ipRaw === '::ffff:127.0.0.1';
+  if (expectedToken) {
+    const auth = req.headers.authorization || '';
+    const provided = auth.startsWith('Bearer ') ? auth.slice(7) : (req.query.token as string) || '';
+    if (provided !== expectedToken && !isLocalhost) {
+      return res.status(401).json({ error: '/health/detail 需要 bearer token' });
+    }
+  } else if (!isLocalhost) {
+    return res.status(401).json({ error: 'METRICS_ACCESS_TOKEN 未配置, 仅 localhost 可访问' });
+  }
   try {
     const probes = buildDefaultProbeFns({
       sequelize: { query: (sql: string) => sequelize.query(sql) },
@@ -188,9 +203,26 @@ app.get('/health/detail', async (_req, res) => {
 });
 
 // US-072 Prometheus /metrics endpoint —— 暴露 Prometheus 抓取端
-// 故意 *不加鉴权*：Prometheus scraper 通常在内网 + 通过 reverse proxy / firewall 控访问；
-// 任何 auth middleware 都会让 scraping 失败。Content-Type 必须按 prom-client 约定。
-app.get('/metrics', async (_req, res) => {
+// Batch Z (2026-06-17, m-1 fix): 加 token gate. 之前完全 open, 任何人 GET /metrics
+// 拿全量 route 模板 / 失败 code 枚举 / cron 频率 / 内部 timing → 攻击面侦察金矿.
+// 设计: METRICS_ACCESS_TOKEN env 配置一个 token, Prometheus 在 scrape_configs.bearer_token
+// 配同款; 缺 env 时 fail-CLOSED 拒所有外部访问 (走 localhost 仍允许方便本机调试).
+app.get('/metrics', async (req, res) => {
+  const expectedToken = process.env.METRICS_ACCESS_TOKEN;
+  const ipRaw = req.ip || req.socket.remoteAddress || '';
+  const isLocalhost = ipRaw.endsWith('127.0.0.1') || ipRaw === '::1' || ipRaw === '::ffff:127.0.0.1';
+  if (!expectedToken) {
+    // 缺 env: 只允许 localhost (dev / 本机 curl)
+    if (!isLocalhost) {
+      return res.status(401).send('# METRICS_ACCESS_TOKEN not configured; access denied');
+    }
+  } else {
+    const auth = req.headers.authorization || '';
+    const provided = auth.startsWith('Bearer ') ? auth.slice(7) : (req.query.token as string) || '';
+    if (provided !== expectedToken) {
+      return res.status(401).send('# metrics requires valid bearer token');
+    }
+  }
   try {
     res.setHeader('Content-Type', getMetricsContentType());
     res.send(await getMetricsContent());

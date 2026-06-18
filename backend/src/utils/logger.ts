@@ -54,14 +54,23 @@ const fileFormat = winston.format.combine(
 
 const transports = [
   new winston.transports.Console({ format: consoleFormat }),
+  // Batch Z (2026-06-17, m-4 fix): 加 maxsize (50MB/file) + maxFiles (10 = 总 500MB)
+  // 防 combined.log 无限增长 OOM LogController.getLogs 全文 read.
+  // winston 内置 rotation: 文件满 50MB 自动 rename + new file, 保留最近 10 个.
   new winston.transports.File({
     filename: path.join(logDir, 'error.log'),
     level: 'error',
     format: fileFormat,
+    maxsize: 50 * 1024 * 1024,
+    maxFiles: 10,
+    tailable: true,
   }),
   new winston.transports.File({
     filename: path.join(logDir, 'combined.log'),
     format: fileFormat,
+    maxsize: 50 * 1024 * 1024,
+    maxFiles: 10,
+    tailable: true,
   }),
 ];
 
