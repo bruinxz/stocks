@@ -148,6 +148,10 @@ function buildBaseSchema(): Joi.ObjectSchema {
     FEISHU_MESSAGE_MAX_LENGTH: Joi.number().integer().min(100).max(50000).default(12000),
     FEISHU_RECOMMENDATION_BOT_WEBHOOK: Joi.string().uri().allow('').optional(),
     FEISHU_BOT_WEBHOOK: Joi.string().uri().allow('').optional(),
+    // US-003 [OPS-003]: dry_run 巡检 / 其他 ops 系统告警的飞书 text-msg 通道.
+    // 与 FEISHU_BOT_WEBHOOK (业务推送 card) 分离，避免淹没在日常推送里。
+    OPS_ALERT_FEISHU_WEBHOOK: Joi.string().uri().allow('').optional(),
+    OPS_ALERT_FEISHU_TIMEOUT_MS: Joi.number().integer().min(500).max(60000).default(5000),
 
     // ----------- 可选: Email SMTP (US-065) -----------
     SMTP_HOST: Joi.string().allow('').optional(),

@@ -49,8 +49,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 3,
-      "passes": false,
-      "notes": "依赖: OPS-002"
+      "passes": true,
+      "notes": "依赖: OPS-002 | DONE 2026/06/19: 已挂 SchedulerService boot guard (line 322-339); 扩展 feishu_ops channel + OPS_ALERT_FEISHU_WEBHOOK env; 单测 tests/scripts/audit-task-parameters-dry-run.test.ts 62 ok / 0 failed (覆盖 shouldFlag / buildOpsAlertText / buildOpsAlertChannelPlan / DB fake + risk-alert fake + feishu poster fake 7 集成路径)."
     },
     {
       "id": "US-004",

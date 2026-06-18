@@ -42,3 +42,26 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - SchedulerService.initialize() 已积累 5 个 boot-time 旁路子任务 (reconcileStaleRunningTasks / catchUpMissedTasks / dry_run audit / dump cron registry / dump active task schedule)。每个都必须 try-catch 自吞或 .catch() 包裹,绝不能 throw 阻塞 boot——否则一个非核心子任务挂了整个 service 起不来,损失远大于。
   - 测试 [5] 用 fs.readFileSync + 正则扫源文件这种"meta-test"模式非常有用,可以用同样套路 guard 任何"枚举 A ↔ dispatch table B"的一致性问题 (例如 task type ↔ permission scope, route ↔ handler 表)。
 ---
+
+## 2026/06/19 03:55 - US-003
+- 实现 [OPS-003] dry_run 默认值巡检 boot guard（之前迭代已落 audit script + SchedulerService boot 接入 + feishu_ops channel 扩展; 本次补齐单测把整条链路 guard 上）
+- Files changed:
+  - backend/src/scripts/audit-task-parameters-dry-run.ts: prettier 收尾 (line 130 / 173 / 308 三处换行) —— 与 EnvValidator US-003 新增的 OPS_ALERT_FEISHU_WEBHOOK / OPS_ALERT_FEISHU_TIMEOUT_MS 两个 env 一起落 lint clean
+  - backend/src/config/EnvValidator.ts: OPS_ALERT_FEISHU_WEBHOOK + OPS_ALERT_FEISHU_TIMEOUT_MS (uri.allow('').optional + 500-60000ms default 5000)
+  - backend/tests/scripts/audit-task-parameters-dry-run.test.ts (新): 62 assertions, 4 模块:
+    [1] shouldFlagDryRunTask: 严格 === true / 字符串 'true'/数字 1/parameters=null/is_active=false/非白名单 type 全验
+    [2] buildOpsAlertText: 0 命中 / 1 命中无 "+N more" / 8 命中头 5 个 + "+3 more" + 总数标题 8/10
+    [3] buildOpsAlertChannelPlan: dry_run=true 总空 / 显式 [] 不跑 / 未传+无webhook=risk_alert / 未传+有webhook=risk_alert+feishu_ops / 空白 webhook 不追加 / 未知 channel 名静默丢弃 / 去重 / DRY_RUN_AUDIT_CHANNELS 被 freeze
+    [4] auditTaskParametersDryRun 集成 (7 路径): 0 matches 不写 / 默认 channel 走 risk_alert + alert_id 透传 / risk creator throw fail-OPEN / env 有 webhook 自动追加 feishu_ops 并验 payload msg_type=text 含 task name / poster fail 不污染 risk_alert / channels=[] 不跑任何 channel 但 matches 仍返回 / DB findAll throw 返 error 不 throw
+  - ralph/prd.json: US-003 passes=true + notes
+- 验证:
+  - `npx tsc --noEmit` exit 0
+  - `npm test -- --filter=audit-task-parameters-dry-run` exit 0, 62 ok / 0 failed
+  - `eslint src/scripts/audit-task-parameters-dry-run.ts src/config/EnvValidator.ts` exit 0 (1 项目通用 non-null assertion warn)
+- **Learnings for future iterations:**
+  - 测 logger-noisy 模块: 必须用 `const loggerModule = require('../../src/utils/logger'); loggerModule.logger.info = () => undefined;` (覆盖 method) 而非 import logger; 因为 ts-node 把 import hoist 到顶, 被测模块拿到的是同一个 singleton, 覆盖一次全测试静默. 同样套路适用 axios / FeishuBotWebhookService 等.
+  - 模型 stub 模式: `ScheduledTask.findAll = async () => fakeRows;` + 模块级可变 `let fakeRows = []; let findAllThrow: Error|null = null;` + `resetFakeDb()` helper, 让每个集成 case 独立投喂数据/异常. 这是 backend 无 jest 环境下"用 ts-node 自跑测"的标准 fixture 模式, 比 sinon / proxyquire 都轻.
+  - 异步集成 case 不能直接放在 top-level 后跟 process.exit — 需要 `setTimeout(() => { ...summary + exit; }, 200)` 兜底等 microtask flush; 或改写成顶层 await + 单 IIFE wrap. 当前文件选 setTimeout 200ms 跟其他 *.test.ts 风格统一.
+  - tsconfig 显式 `"exclude": [..., "**/*.test.ts"]` 是项目刻意的 —— 测试文件不走 tsc 编译流水线 (跑 prod tsc --noEmit 不会扫到), 只靠 run-tests.ts spawn 子进程 transpile-only. 副作用: ESLint w/ parserOptions.project 也读不到测试文件, 跑 lint 会报 "tsconfig does not include this file" parse error —— 这是项目所有 test 文件的统一表现 (cron-registry.test.ts 一样), 视为已知 baseline 不需要修.
+  - 双 channel 风格 (risk_alert DB + feishu_ops webhook): channel 之间 try-catch 互相隔离 + 每个 channel 都 fail-OPEN (返回 success=false 而非 throw); buildOpsAlertChannelPlan 是 env+opts 仲裁的"唯一事实源", 任何"加第三个通道"都先加这里. 此模式可复用到任何 boot guard / 巡检脚本 (例如未来 OPS-005 RiskAlert 标准 dispatcher).
+---
