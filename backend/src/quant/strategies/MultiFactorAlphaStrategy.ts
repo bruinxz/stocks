@@ -79,23 +79,30 @@ import {
  *   - analyst_consensus (US-030) = 0.07 — 分析师一致预期上修
  *   - east_money_qa (US-034) = 0.06 — 散户关注度变化
  *   - momentum_reversal (US-033) = 0.08 — 多期动量差值（趋势 vs 反转）
+ *   - Batch AC (2026-06-18): 新增 industry_momentum (0.10) + concept_heat (0.06) —
+ *     行业 / 题材热度信号. 之前 12 因子全是 per-stock, 完全无法区分"今天该买
+ *     半导体还是消费". 新增后 MFA 能感知板块轮动. 旧 12 因子权重等比例缩到
+ *     原来的 0.84, 让两个新因子腾出 16% 空间.
  *
- * sum = 0.40 + 0.32 + 0.07*2 + 0.06 + 0.08 = 1.00
+ * sum (Batch AC after) = 0.84 + 0.10 + 0.06 = 1.00
  */
 export const DEFAULT_MULTI_FACTOR_ALPHA_WEIGHTS: Readonly<Record<string, number>> = Object.freeze({
-  value: 0.1,
-  quality: 0.1,
-  growth: 0.1,
-  momentum: 0.1,
-  low_vol: 0.08,
-  northbound: 0.08,
-  money_flow: 0.08,
-  dragon_tiger: 0.08,
+  value: 0.084,
+  quality: 0.084,
+  growth: 0.084,
+  momentum: 0.084,
+  low_vol: 0.067,
+  northbound: 0.067,
+  money_flow: 0.067,
+  dragon_tiger: 0.067,
   // US-081 新增 4 个因子
-  quality_high: 0.07,
-  analyst_consensus: 0.07,
-  east_money_qa: 0.06,
-  momentum_reversal: 0.08,
+  quality_high: 0.059,
+  analyst_consensus: 0.059,
+  east_money_qa: 0.05,
+  momentum_reversal: 0.067,
+  // Batch AC (2026-06-18) 新增 2 个行业/题材因子 — 让"今天该买哪个行业"成为信号
+  industry_momentum: 0.1,
+  concept_heat: 0.06,
 });
 
 export type MultiFactorAlphaRebalancePeriod = 'daily' | 'weekly' | 'monthly';
