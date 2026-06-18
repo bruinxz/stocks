@@ -20,6 +20,8 @@ import {
   SizingPolicyConfig,
   normalizeSizingPolicyConfig,
 } from '../PositionSizingPolicy';
+import { assertConsistencyOnUpdate } from './SizingLimitConsistency';
+import { positionLimitGuard } from './PositionLimitGuard';
 
 export class SizingPolicyService {
   /**
@@ -57,6 +59,16 @@ export class SizingPolicyService {
       logger.error(`SizingPolicyService.updateConfig user=${user_id} failed:`, error);
       throw error;
     }
+    // PR-003 (US-008): persist 后做 sizing↔limit 阈值一致性检查。
+    // 内部 fail-open + logger.warn — 失败绝不阻塞 update 返回。
+    // sizing loader 直接用刚 normalize+保存的 config，不再回 DB；
+    // limit loader 走 positionLimitGuard.getConfig（同一 User.risk_config 同事务后已落库）。
+    await assertConsistencyOnUpdate({
+      user_id,
+      sizingLoader: async () => normalized,
+      limitLoader: uid => positionLimitGuard.getConfig(uid),
+      triggered_by: 'sizing_policy_update',
+    });
     return normalized;
   }
 

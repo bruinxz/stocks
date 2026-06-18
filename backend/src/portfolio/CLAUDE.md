@@ -936,3 +936,39 @@ loop. 设计为隔离层 — loop 主干只加 5 行调用即可"候选池 → �
   2. `loadUserPortfolioConstructionConfig` (PaperTradingAutomationService 末
      尾) 是 mode 仲裁的唯一事实源, 新增 config 字段 → 同步 adapter
      `normalizePortfolioConstructionConfig` + `DEFAULT_PORTFOLIO_CONSTRUCTION_CONFIG`.
+
+## `risk/SizingLimitConsistency.ts` — US-008 (PR-003)
+
+`SizingPolicyService.max_position_pct` (percent 1-50, 默认 12) 与
+`PositionLimitGuard.max_single_stock_pct` (fraction 0-1, 默认 0.10) 都管
+**单股最大仓位**, 但字段名 / 单位 / 默认值不同 — 用户在 UI 一边调一边不
+调时容易漂移 (sizing 25% 但 limit 还是 10% → 每笔 buy 都被 limit guard
+裁切). 这个模块在两个 service 的 `updateConfig` 之后做一致性检查:
+
+  - 纯函数 `compareSingleStockThresholds(sizing, limit)`: 单位换算到
+    fraction 后比较, 返 `ConsistencyReport { severity, message, ... }`.
+    三 severity: `info` (sizing ≤ limit), `warn` (sizing>limit ≤ 2pp 漂移),
+    `critical` (差 > 2pp 阈值, 用户意图未生效).
+  - 异步 hook `assertConsistencyOnUpdate({ user_id, sizingLoader,
+    limitLoader, triggered_by })`: **fail-open** — 任一 loader throw →
+    返 null + `logger.warn` 吞错, 调用方 PUT /api/risk/* 主流程绝不阻塞.
+  - 批量入口 `runDriftAudit({ user_ids, sizingLoader, limitLoader })`:
+    per-user try/catch 隔离, 单个失败不影响其余 (当前未注册 cron, 留给
+    运维 — 若要 cron 化按 SCHEDULER_TASK_TYPE + CRON_REGISTRY 三件套接).
+
+**两个调用站点必须接 hook** (META-TEST 守):
+  - `SizingPolicyService.updateConfig` → 直接 `import {
+    assertConsistencyOnUpdate }` + `import { positionLimitGuard }`, persist
+    后 await 一次, sizingLoader 用刚 normalize 的值不回 DB.
+  - `PositionLimitGuard.updateConfig` → 必须 **lazy require** 解循环 import
+    (SizingLimitConsistency 已 import PositionLimitGuard 的 normalize/Default/Type);
+    整段被 try/catch 包裹 + `logger.warn` 吞错.
+
+**设计取舍**: **只 log + report**, **不**做自动同步 — 两边语义不同
+(sizing 是 desired 上限, limit 是 hard wall), 自动同步会让用户的 UI 配置
+被悄悄改写. severity=warn 阈值 0.02 (2pp): 低于这个的差异通常是用户故意
+留 safety margin (sizing 12% + limit 10% = 2pp 缓冲), 不该报噪音.
+
+**比较只看 `max_position_pct` ↔ `max_single_stock_pct`** (单股), 因为
+limit guard 的 `max_positions` / `max_single_industry_pct` 在 sizing
+policy 没有对应字段.

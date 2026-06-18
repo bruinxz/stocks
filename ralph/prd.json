@@ -124,8 +124,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 8,
-      "passes": false,
-      "notes": "依赖: PR-002"
+      "passes": true,
+      "notes": "依赖: PR-002 | DONE 2026/06/19: 新增 backend/src/portfolio/risk/SizingLimitConsistency.ts (290 行 + 完整 jsdoc) — 纯函数 compareSingleStockThresholds 三 severity 分支 (info/warn/critical, warn 阈值 0.02 fraction) + sizingMaxPctToFraction 单位换算 (percent → fraction) + 异步 hook assertConsistencyOnUpdate (fail-open, 任一 loader throw 返 null+logger.warn) + 批量 runDriftAudit (per-user try/catch 隔离). SizingPolicyService.updateConfig 直接 import hook + positionLimitGuard, persist 后调一次; PositionLimitGuard.updateConfig lazy-require 解循环 import + try/catch 包裹 (fail-open). 单测 tests/risk/sizing-limit-consistency.test.ts 61 ok / 0 failed: [1] 常量 frozen / [2] sizingMaxPctToFraction 单位换算+NaN/Infinity 兜底 / [3] compareSingleStockThresholds 三 severity 边界 (in_sync 严格/sizing<limit/恰好2pp/2.001pp/15pp/sub-tolerance/limit NaN) / [4] compareRawInputs 直喂 raw 含 normalize / [5] assertConsistencyOnUpdate (in_sync, critical 落 warn log, sizing/limit loader throw fail-open 返 null, triggered_by 缺省) / [6] runDriftAudit 4-user 部分失败隔离 / [7] **META-TEST**: SizingPolicyService + PositionLimitGuard 双源文件正则扫 — 必须 import/require + 必须调 assertConsistencyOnUpdate + 必须有 triggered_by 标识 + PositionLimitGuard 必须 try/catch 包裹 (fail-open 守门) / [8] normalize+compare combo. 既有 position-limit-guard.test.ts 110 ok + position-sizing-policy.test.ts 77 ok + sizing-audit-service.test.ts 21 ok 无 regression. CLAUDE.md src/portfolio/ 新增 SizingLimitConsistency 章节 (含设计取舍 + 两站点必须接 hook 提示). tsc 0 err / lint 0 新增 err (1 baseline pre-existing)."
     },
     {
       "id": "US-009",

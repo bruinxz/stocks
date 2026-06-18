@@ -494,7 +494,31 @@ export class PositionLimitGuard {
   /** Persist a (normalized) updated config for the user. */
   async updateConfig(user_id: number, raw: any): Promise<PositionLimitsConfig> {
     const normalized = normalizePositionLimitsConfig(raw);
-    return this.source.saveConfig(user_id, normalized);
+    const saved = await this.source.saveConfig(user_id, normalized);
+    // PR-003 (US-008): persist 后做 sizing↔limit 阈值一致性检查。
+    // lazy-require 解循环 import（SizingLimitConsistency 自身已 import 本文件的
+    // normalizePositionLimitsConfig + DEFAULT_POSITION_LIMITS + PositionLimitsConfig）。
+    // 内部 fail-open — 任一 loader 失败返 null + logger.warn 吞错，主流程不阻塞。
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { assertConsistencyOnUpdate } = require('./SizingLimitConsistency');
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { sizingPolicyService } = require('./SizingPolicyService');
+      await assertConsistencyOnUpdate({
+        user_id,
+        sizingLoader: (uid: number) => sizingPolicyService.getConfig(uid),
+        // 直接用刚 normalize 的值，避免再回一次 DB。
+        limitLoader: async () => saved,
+        triggered_by: 'position_limit_update',
+      });
+    } catch (err: any) {
+      logger.warn(
+        `PositionLimitGuard.updateConfig consistency check failed user=${user_id}: ${
+          err?.message || err
+        }`
+      );
+    }
+    return saved;
   }
 }
 
