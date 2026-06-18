@@ -431,22 +431,44 @@ const QuantBacktestLab: React.FC = () => {
 
   useEffect(() => {
     if (!pollingTaskId) return undefined;
+    // Batch AA (2026-06-17, fe-3 fix): 加 max-attempts (60 次 × 3s = 3min) +
+    // race protection (切 task 时 cancel previous via flag). 之前 task 卡 RUNNING
+    // 永远 3s 一次直到 unmount, 多 tab 累积让 backend 风暴.
+    let cancelled = false;
+    let attempts = 0;
+    const MAX_ATTEMPTS = 60;
     const timer = window.setInterval(async () => {
-      const response = await api.get(`/quant/backtests/${pollingTaskId}`);
-      if (!response.data.success) return;
-      const nextDetail = response.data.data;
-      setDetail(nextDetail);
-      await fetchTasks();
-      await fetchGridSummary();
-      const status = nextDetail?.task?.status;
-      if (status === 'COMPLETED' || status === 'FAILED') {
+      if (cancelled) return;
+      attempts += 1;
+      if (attempts > MAX_ATTEMPTS) {
+        message.warning('跑分轮询超时 (3 分钟), 请手动刷新查看结果');
         setPollingTaskId(null);
-        message[status === 'COMPLETED' ? 'success' : 'error'](
-          status === 'COMPLETED' ? '跑分完成' : '跑分失败，请查看任务错误'
-        );
+        return;
+      }
+      try {
+        const response = await api.get(`/quant/backtests/${pollingTaskId}`);
+        if (cancelled) return;
+        if (!response.data.success) return;
+        const nextDetail = response.data.data;
+        setDetail(nextDetail);
+        await fetchTasks();
+        await fetchGridSummary();
+        const status = nextDetail?.task?.status;
+        if (status === 'COMPLETED' || status === 'FAILED') {
+          setPollingTaskId(null);
+          message[status === 'COMPLETED' ? 'success' : 'error'](
+            status === 'COMPLETED' ? '跑分完成' : '跑分失败，请查看任务错误'
+          );
+        }
+      } catch (err: any) {
+        // 单次失败不阻塞后续 tick, 但累计 attempts 计入上限
+        console.warn('[QuantBacktestLab] polling 单次失败:', err?.message || err);
       }
     }, 3000);
-    return () => window.clearInterval(timer);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pollingTaskId]);
 

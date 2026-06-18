@@ -290,26 +290,11 @@ const Market: React.FC = () => {
     }
   }, [activeTab, dataCompletenessStats, fetchDataCompletenessStats, statsLoading]);
 
-  // 数据更新检查（进入大盘页面时触发）
-  useEffect(() => {
-    const triggerDataUpdate = async () => {
-      try {
-        const response = await api.post('/market/update-data');
-        if (response.data.success) {
-          if (response.data.data.updatedToday) {
-            console.log('今日数据已更新，跳过');
-          } else {
-            console.log('数据更新任务已开始，logId:', response.data.data.logId);
-          }
-        }
-      } catch (error) {
-        console.error('触发数据更新失败:', error);
-        // 静默失败，不影响主功能
-      }
-    };
-
-    triggerDataUpdate();
-  }, []);
+  // Batch AA (2026-06-17, fe-2 fix): 删除"进入大盘页面自动触发数据更新"useEffect.
+  // 之前每次用户 mount Market 页就 POST /market/update-data 触发 data update job,
+  // 无 debounce → 多 tab / 多用户访问 = DoS amplifier (任务在 BullMQ 排队几十个).
+  // 现在改成: 数据更新走 cron / 用户在 DataUpdateStatus 页手动按钮触发.
+  // 如需保留页面自动行为, 在 AdminGuard 内做且 throttle 30 min/用户.
 
   // 股票表格列定义
   const stockColumns: ColumnsType<Stock> = [

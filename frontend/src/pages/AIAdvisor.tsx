@@ -187,7 +187,16 @@ const AIAdvisor: React.FC = () => {
   }, [analyzing]);
 
   useEffect(() => {
-    localStorage.setItem('aiAdvisor_events', JSON.stringify(events));
+    // Batch AA (2026-06-17, fe-1 fix): events 只持久化最近 50 条防 O(n²) +
+    // localStorage 5MB 配额爆. 完整 SSE 历史可能数千条 image_url base64 + analysis
+    // 文本, 每条 event 都 JSON.stringify(events) 让 setItem 频次 × payload 双重爆.
+    try {
+      const tail = events.slice(-50);
+      localStorage.setItem('aiAdvisor_events', JSON.stringify(tail));
+    } catch (err) {
+      // localStorage 配额满 / private mode — 静默, 不阻塞 UI render
+      console.warn('[AIAdvisor] persist events failed:', err);
+    }
   }, [events]);
 
   useEffect(() => {
