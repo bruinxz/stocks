@@ -225,12 +225,11 @@ export class SocialSentimentSyncService {
    * 退化为 ORDER BY id ASC (按 listing 顺序近似主板, 通常 top N 是大市值).
    */
   async loadUniverseByMarketCap(limit: number): Promise<string[]> {
-    // CRITICAL: 必须先 require 模型 index 让 Stock 注册到 sequelize 实例.
-    // 若仅 lazy-require Stock, 单独 cli 调用 (脱离 server 启动流程) 会
-    // "Model not initialized" 报错. 相对路径相对当前编译产物 (dist/data/services/),
-    // 走 ../../models/index.js 等价 dist/models/index.js.
+    // CRITICAL: 必须 require database.ts 让 sequelize 实例创建 + addModels
+    // 注册所有模型. 单独 cli 调用 (脱离 server 启动流程) 若仅 require Stock,
+    // sequelize 实例可能还没初始化 → Stock 报 "Model not initialized".
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    require('../../models/index');
+    require('../../config/database');
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { Stock } = require('../../models/Stock');
     try {
