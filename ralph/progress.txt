@@ -7,6 +7,7 @@ Started: Fri Jun 19 02:25:41 CST 2026
 - `backend/src/index.ts` 第 1 行 dotenv.config，第 18 行 validateEnv，再 productionPreflight。任何强制启动检查都加这里。
 - CI workflow (`.github/workflows/ci.yml`) `backend-check` job 顺序：install → env-check(happy) → env-check(fail) → typecheck → lint → test，失败上传日志并在 PR 评论。
 - 多通道 dispatcher (任何"fan-out 到飞书/邮件/短信/inbox"的 service) 复用同款模板: (1) DataSource interface + Production 实现 lazy-require model/service 单例; (2) 纯函数 helpers (normalizeXxx / buildChannelPlan / buildOpsAlertText / buildXxxSubject) 全 export 便于单测; (3) Promise.allSettled 并行 fan-out + 每个 channel adapter 内部 try-catch 返 {success,message} 而非 throw; (4) 顶层 try/catch 兜底 + logger.warn 吞错 — 主流程绝不被告警链路阻塞; (5) options.dry_run=true 强制空 plan 让 UI 预览不实际发. 参考 RealtimeAlertDispatcher / RiskAlertService / audit-task-parameters-dry-run.
+- Risk guard pre-trade fail-CLOSED 统一三件套 (US-011): (1) **guard-side** `wrapFailClosed('guard_name', async () => {...}, detail?)` 包整个 method body — RiskGuardUnavailableError re-throw, 任何其它 Error (含 programmer-error TypeError) 自动转 503; (2) **caller-side** `handleRiskGuardUnavailable({err, user_id, symbol, callerLabel, dataSource})` 写 HIGH RiskAlert + 返结构化 payload, alert write 失败仅 log 不 re-throw; (3) **back-compat re-export** RiskGuardUnavailableError 放在 RiskGuardFailClosed.ts 作单一事实源, 原文件 (DrawdownCircuitBreaker) `export {...} from './RiskGuardFailClosed'` 保住外部 import 路径. Caller 的 try/catch + `instanceof RiskGuardUnavailableError` 必须保留 (caller 需把异常 map 成业务态). 新接 guard 步骤: GUARD_LABELS 加 1 行 + method body 套 wrapFailClosed + caller catch 调 handleRiskGuardUnavailable. 参考 backend/src/portfolio/risk/RiskGuardFailClosed.ts.
 
 ## 2026/06/19 02:30 - US-001
 - 实现 [OPS-001] env 校验脚本（之前迭代已落 EnvValidator + check-env CLI + index.ts 启动接入；本次补齐 CI env-check 步骤完成验收）
@@ -225,4 +226,59 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **bypass_compliance 语义**: 强平 / closePosition / 强制 rebalance SELL 链 不能被 wizard 软规则拦, 必须显式传 bypass_compliance=true. 当前 checker 对 SELL 内部短路 ok, 所以 SELL 路径技术上不传也安全, 但显式传出于两点考虑: (1) 表达 "用户已决策, 跳过任何 pre-trade 检查" 语义; (2) 防御未来 SELL 规则加入后默默被拦. closePosition 用 `options.bypass_compliance !== false` 默认 true.
   - **fail-OPEN 一致性**: facade.placeOrder 的所有可选守门 (drawdown / position_limit / compliance) 都遵守 "block=true throw structured error / 任何 unexpected throw 走 logger.warn 不阻塞主流程". 这与 services/RiskAlertService US-005 多通道 dispatcher 同款 fail-OPEN 哲学, 区别只是: compliance 的 block=true 是"明示规则违规" → 必须 throw; unexpected 是"检查器自己挂了" → 不能误杀主流程.
   - **E2E test 在无 DB 环境跑**: checkPreTradeCompliance 内部 FREQUENT_TRADING/MIN_HOLDING_PERIOD 查询会 fail (无 stock_admin role), 但 checker 自身有 fail-OPEN, 所以测试照常跑通且断言"非 chase 路径不应误报 high". 这是 backend tests 无 DB / 无 jest 环境下测异步 wizard 的标准模式.
+---
+
+## 2026/06/19 07:35 - US-011
+- 实现 [PR-006] DrawdownCircuitBreaker fail-closed 巡检 — 把 BETA-7 在 DrawdownCircuitBreaker 写的 fail-CLOSED 模板抽成统一 helper, 把同样的契约扩到所有 pre-trade guard (现含 PositionLimitGuard, 未来如 BlackSwanWatchdog/IndustryConcentrationGuard 接入 BUY 时同样套用)
+- Files changed:
+  - backend/src/portfolio/risk/RiskGuardFailClosed.ts (新, ~280 行 + 完整 jsdoc):
+    * RiskGuardUnavailableError class (statusCode=503 / code='RISK_GUARD_UNAVAILABLE' / guardName / detail) — 单一事实源
+    * wrapFailClosed(guardName, fn, detail?) — guard-side helper, 抛 RiskGuardUnavailableError re-throw, 抛任何其它 Error (含 programmer-error TypeError) 自动包装为 503
+    * buildRiskGuardUnavailablePayload(input) + handleRiskGuardUnavailable({err, user_id, symbol, callerLabel, dataSource}) — caller-side helper, 写 HIGH RiskAlert + 返结构化 payload, alert write 失败仅 log 不 re-throw
+    * loadProductionRiskAlertCreator() — lazy require RiskAlert model (规避循环 import; 测试可注入 fake)
+    * GUARD_LABELS 表登记 9 guards 人类标签 (drawdown_breaker / position_limit / trailing_stop / per_stock_stop_loss / industry_concentration / black_swan / market_regime / morning_checkup / restricted_share)
+  - backend/src/portfolio/risk/DrawdownCircuitBreaker.ts:
+    * 删除内联 RiskGuardUnavailableError class declaration, 改为 export { RiskGuardUnavailableError } from './RiskGuardFailClosed' (back-compat: existing import 路径不变)
+    * checkBuyAllowed 改用 wrapFailClosed('drawdown_breaker', async () => {...}, {user_id, symbol}) 替换原 try/catch + new RiskGuardUnavailableError 块
+  - backend/src/portfolio/risk/PositionLimitGuard.ts:
+    * import { wrapFailClosed }
+    * **checkBuyOrder 现在也 wrapFailClosed('position_limit',...)** — 之前 raw Sequelize error 直接 500 propagate, 没有 RiskAlert, 用户体感"卡了 500"; 现在 DB 抖动 → 抛 RiskGuardUnavailableError → caller catch + 写 HIGH RiskAlert 503, 与 DrawdownCircuitBreaker 同款行为
+  - backend/src/portfolio/PaperTradingFacade.ts:
+    * import { handleRiskGuardUnavailable, loadProductionRiskAlertCreator } from './risk/RiskGuardFailClosed'
+    * drawdown breaker catch 块: 删 30 行 inline RiskAlert.create 写入, 改调 handleRiskGuardUnavailable({err, user_id, symbol, callerLabel:'facade.placeOrder', dataSource: loadProductionRiskAlertCreator()})
+    * position limit catch 块: 新增 try/catch (之前 checkBuyOrder 直接 await 不 wrap), 同样调 handleRiskGuardUnavailable
+  - backend/src/portfolio/internal/preTradeGuards.ts:
+    * import { handleRiskGuardUnavailable, loadProductionRiskAlertCreator }
+    * 双 guard catch 块同步重写, 删 30 行 inline RiskAlert.create 写入, 改调 handleRiskGuardUnavailable
+  - backend/tests/risk/risk-guard-fail-closed.test.ts (新, ~340 行 / 67 assert):
+    [1] RiskGuardUnavailableError class 形态 — instance / statusCode / code / guardName / detail / name
+    [2] wrapFailClosed 4 路径 — happy passes value / re-throw RiskGuardUnavailableError unchanged 保留 inner guardName / convert unexpected Error → RiskGuardUnavailableError 含 cause / non-Error throw 也能包装
+    [3] buildRiskGuardUnavailablePayload — 已知 guard 翻译人类标签 / 未知 guard fallback raw guardName / message 含 ⚠️ + caller + symbol + fail-CLOSED / metadata 合并 detail / 9 known guards 都映射成功
+    [4] handleRiskGuardUnavailable — RiskAlert.create 调一次 + 返结构化 payload / alert write throw 也不 re-throw / 空 guardName fallback unknown_guard
+    [5] **META-GUARD fs+regex** 扫 4 源文件 5 条边界 — (a) facade + preTradeGuards 必须 import handleRiskGuardUnavailable; (b) facade + preTradeGuards 不再 inline 写 SYSTEM:RISK_GUARD_UNAVAILABLE RiskAlert.create (杜绝未来 message/metadata 漂移); (c) PositionLimitGuard.checkBuyOrder body 必须含 wrapFailClosed('position_limit', ...); (d) DrawdownCircuitBreaker.checkBuyAllowed body 必须含 wrapFailClosed('drawdown_breaker', ...); (e) DrawdownCircuitBreaker 必须 re-export 不再 re-declare RiskGuardUnavailableError (单一事实源)
+  - backend/src/portfolio/CLAUDE.md: 末尾新增 "risk/RiskGuardFailClosed.ts — US-011 (PR-006)" 章节 — API 三件套 + 接入清单 + 为啥不基类 / 为啥 lazy require / 未来接入新 guard 三步指引
+  - ralph/prd.json: US-011 passes=true + notes
+  - ralph/progress.txt: 本 entry
+- 验证:
+  - `npx tsc --noEmit` exit 0
+  - `npx ts-node --transpile-only tests/risk/risk-guard-fail-closed.test.ts` exit 0, 67 ok / 0 failed
+  - 回归 (无 regression):
+    * tests/risk/position-limit-guard.test.ts 110 ok
+    * tests/risk/drawdown-circuit-breaker.test.ts 161 ok
+    * tests/portfolio/DrawdownCircuitBreaker.failClosed.test.ts 10 ok
+    * tests/portfolio/PaperTradingFacade.compliance.test.ts 39 ok
+    * tests/portfolio/paper_trading_limit_up_block.test.ts 15 ok
+    * tests/portfolio/PaperTradingFacade.quoteStale.test.ts 9 ok
+    * tests/risk/sizing-limit-consistency.test.ts 61 ok
+  - `eslint src/portfolio/risk/RiskGuardFailClosed.ts src/portfolio/risk/DrawdownCircuitBreaker.ts src/portfolio/risk/PositionLimitGuard.ts src/portfolio/internal/preTradeGuards.ts` 1 baseline err (PositionLimitGuard.ts:349 pre-existing lazy require Stock 与本次无关), 0 新增 err
+- 手动 smoke (无浏览器，纯后端纵切):
+  - 后端起来, 注入 DB outage 让 DefaultDrawdownBreakerDataSource.loadPausedUntil throw → 调 POST /api/paper-trading/place-order BUY → 期望 HTTP 503 + DB 里 risk_alerts 表写一行 symbol=SYSTEM:RISK_GUARD_UNAVAILABLE level=HIGH rule_id=drawdown_breaker name='风控不可用 — DrawdownCircuitBreaker' message 含 ⚠️ + caller=facade.placeOrder
+  - 同款验证 PositionLimitGuard: 注入 loadConfig throw → 期望 503 + RiskAlert rule_id=position_limit name='风控不可用 — PositionLimitGuard'
+  - UI AlertsBell polling (US-005 dispatcher) 应立刻显示 HIGH 告警
+- **Learnings for future iterations:**
+  - **"caller-side 5 行重复 → 抽成 handleRiskGuardUnavailable" 是项目"统一 helper"的标准时机**: BETA-7 落 DrawdownCircuitBreaker 时 inline 在 facade + preTradeGuards 写了 30 行 catch+RiskAlert.create+rethrow 块. 一旦第三处也复用 (PositionLimitGuard fail-CLOSED), 必须抽 helper — 否则 (a) message/metadata 漂移 (facade 一处先加 ⚠️ 另一处忘加); (b) 新 guard 接入时漏掉 try/catch 静默 fail-OPEN. 本次三件套 wrapFailClosed (guard-side) + handleRiskGuardUnavailable (caller-side) + GUARD_LABELS (人类标签表) 是"重复 3 次必须 DRY"原则的实例.
+  - **wrapFailClosed 把 programmer-error 也守住 503 是 fail-CLOSED 的关键放大**: 如果 wrap 只 re-throw RiskGuardUnavailableError + 让其它 Error propagate, 那么任何 TypeError ('Cannot read property of undefined' 之类 guard 自身 bug) 会跳过 caller 的 catch 块 (caller 只 catch RiskGuardUnavailableError instanceof) 直接 500 给用户. wrap 把 unexpected Error 也转 503 等于"guard 自身 bug 也走 fail-CLOSED" — 用户体验始终是"风控不可用"安全语义而非裸 stacktrace 泄露 + 技术上的 fail-OPEN.
+  - **back-compat re-export 是项目"单一事实源"模式的标配收尾**: DrawdownCircuitBreaker.ts 原 export class RiskGuardUnavailableError 被 5+ 外部文件 (preTradeGuards / PaperTradingFacade / 多 .test.ts) import. 直接删 class 会全断. 改成 `export { RiskGuardUnavailableError } from './RiskGuardFailClosed'` 让 existing import 路径不变, 但 single source of truth 在新文件. 任何"抽 helper 时遇到现有公开 API"都该用这套.
+  - **meta-test 验"不再做 X" 用 ! 否定 regex**: 比起验"必须有 X", 验"不能 inline 写 RiskAlert.create({...SYSTEM:RISK_GUARD_UNAVAILABLE...})" 是项目第一次出现 — 因为本次重构的核心契约是"caller 不能再 inline duplicate, 必须走 helper". 否定 meta-guard 比正向更易守: 未来谁要把 30 行 inline 写回 facade.ts, 这个 test 立刻挂. 通用模式: `!/pattern/.test(src)`.
+  - **wrap-helper 后 caller 的 try/catch 仍要保留**: 即便 guard 内 wrapFailClosed 已经 converge 所有 throw 都是 RiskGuardUnavailableError, caller 的 try/catch + `instanceof` 检查仍要保留 — 因为 caller 必须把 RiskGuardUnavailableError 转成业务态 (facade 把它 propagate throw / preTradeGuards 把它 map 成 {ok:false, code:'RISK_GUARD_UNAVAILABLE'} 返回). caller 的 catch 不只 log, 还要 emit RiskAlert + 决定下游协议. 不要因"看上去 guard 都包好了"就删 caller 的 try/catch.
 ---

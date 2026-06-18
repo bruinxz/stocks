@@ -48,6 +48,7 @@ import { Stock } from '../../models/Stock';
 import { RiskAlert } from '../../models/RiskAlert';
 import { User } from '../../models/User';
 import { logger } from '../../utils/logger';
+import { wrapFailClosed } from './RiskGuardFailClosed';
 
 // ---------------------------------------------------------------------------
 //  Config
@@ -440,50 +441,63 @@ export class PositionLimitGuard {
    *   - return `{ok:false, violation, config}`
    * Callers (PaperTradingFacade.placeOrder) should throw a user-facing
    * error using `violation.message`.
+   *
+   * US-011 (PR-006): wrapped in `wrapFailClosed('position_limit', ...)` —
+   * DB outage in `loadConfig` / `loadPortfolio` / `loadPositions` /
+   * `loadIndustryForSymbol` now throws `RiskGuardUnavailableError` instead
+   * of propagating raw Sequelize errors. PaperTradingFacade + preTradeGuards
+   * catch this and convert to a 503 + HIGH RiskAlert via
+   * `handleRiskGuardUnavailable`. Parity with DrawdownCircuitBreaker.
    */
   async checkBuyOrder(input: CheckOrderInput): Promise<CheckOrderResult> {
-    const config = await this.source.loadConfig(input.user_id);
-    const portfolio = await this.source.loadPortfolio(input.user_id);
-    if (!portfolio || portfolio.total_value <= 0) {
-      // Without a portfolio (or zero total value) we cannot evaluate
-      // percentages.  Pass through — the upstream `placeOrder` already
-      // rejects orders without a portfolio.
-      return { ok: true, config };
-    }
-    const positions = await this.source.loadPositions(input.user_id);
-    const industry = await this.source.loadIndustryForSymbol(input.symbol);
+    return wrapFailClosed(
+      'position_limit',
+      async () => {
+        const config = await this.source.loadConfig(input.user_id);
+        const portfolio = await this.source.loadPortfolio(input.user_id);
+        if (!portfolio || portfolio.total_value <= 0) {
+          // Without a portfolio (or zero total value) we cannot evaluate
+          // percentages.  Pass through — the upstream `placeOrder` already
+          // rejects orders without a portfolio.
+          return { ok: true, config };
+        }
+        const positions = await this.source.loadPositions(input.user_id);
+        const industry = await this.source.loadIndustryForSymbol(input.symbol);
 
-    const ctx: OrderContext = {
-      user_id: input.user_id,
-      symbol: input.symbol,
-      proposed_value: input.proposed_value,
-      total_value: portfolio.total_value,
-      positions,
-      industry,
-    };
+        const ctx: OrderContext = {
+          user_id: input.user_id,
+          symbol: input.symbol,
+          proposed_value: input.proposed_value,
+          total_value: portfolio.total_value,
+          positions,
+          industry,
+        };
 
-    const violation = pickSingleViolation(ctx, config);
-    if (!violation) {
-      return { ok: true, config };
-    }
+        const violation = pickSingleViolation(ctx, config);
+        if (!violation) {
+          return { ok: true, config };
+        }
 
-    // Persist alert — failures here MUST NOT mask the violation; we still
-    // want to reject the order.
-    try {
-      await this.source.writeAlert({
-        user_id: input.user_id,
-        symbol: input.symbol,
-        name: `仓位限制告警 - ${violation.rule}`,
-        message: violation.message,
-      });
-    } catch (err) {
-      logger.warn(
-        `PositionLimitGuard: writeAlert failed user=${input.user_id} symbol=${input.symbol} ` +
-          `rule=${violation.rule}: ${(err as Error).message}`
-      );
-    }
+        // Persist alert — failures here MUST NOT mask the violation; we still
+        // want to reject the order.
+        try {
+          await this.source.writeAlert({
+            user_id: input.user_id,
+            symbol: input.symbol,
+            name: `仓位限制告警 - ${violation.rule}`,
+            message: violation.message,
+          });
+        } catch (err) {
+          logger.warn(
+            `PositionLimitGuard: writeAlert failed user=${input.user_id} symbol=${input.symbol} ` +
+              `rule=${violation.rule}: ${(err as Error).message}`
+          );
+        }
 
-    return { ok: false, violation, config };
+        return { ok: false, violation, config };
+      },
+      { user_id: input.user_id, symbol: input.symbol }
+    );
   }
 
   /** Return the user's effective config (uses defaults if not customized). */

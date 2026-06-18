@@ -1033,3 +1033,46 @@ loop. 设计为隔离层 — loop 主干只加 5 行调用即可"候选池 → �
 **比较只看 `max_position_pct` ↔ `max_single_stock_pct`** (单股), 因为
 limit guard 的 `max_positions` / `max_single_industry_pct` 在 sizing
 policy 没有对应字段.
+
+## `risk/RiskGuardFailClosed.ts` — US-011 (PR-006)
+
+**统一 fail-CLOSED helper** — 把 BETA-7 在 DrawdownCircuitBreaker 写的
+"DB 抖动 → 抛 RiskGuardUnavailableError → caller catch + 写 HIGH RiskAlert"
+模式抽出成共享 module, 让任何 pre-trade guard (现已含 DrawdownCircuitBreaker
++ PositionLimitGuard, 未来如 BlackSwanWatchdog/IndustryConcentrationGuard
+接入 BUY 路径时) 用同款 3 行就能拿到完整的 fail-CLOSED 契约.
+
+API 三件套:
+  - **`RiskGuardUnavailableError`** — 单一事实源 (`DrawdownCircuitBreaker`
+    re-export 不再 declare). `statusCode=503` / `code='RISK_GUARD_UNAVAILABLE'`
+    / `guardName` (用作 RiskAlert.rule_id + 取人类标签) / `detail`.
+  - **guard-side: `wrapFailClosed(guardName, fn, detail?)`** — 任何 guard
+    的 pre-trade 检查方法 body 用它包一层就行: fn 抛 RiskGuardUnavailableError
+    re-throw, 抛其它 Error 自动包装. 副作用: 把 unexpected programmer-error
+    (TypeError 等) 也转 503 — 用户体验始终是"风控不可用 503"而非"500 cannot
+    read property of undefined".
+  - **caller-side: `handleRiskGuardUnavailable({err, user_id, symbol, callerLabel, dataSource})`**
+    — 写 HIGH RiskAlert + 返结构化 payload. RiskAlert 写失败仅 log 不
+    re-throw (拒单是主要语义, 告警是副产物).
+
+接入清单 (2026/06/19):
+  - `DrawdownCircuitBreaker.checkBuyAllowed` (`wrapFailClosed('drawdown_breaker', ...)`)
+  - `PositionLimitGuard.checkBuyOrder` (`wrapFailClosed('position_limit', ...)`)
+  - `PaperTradingFacade._placeOrderInner` (两 guard 后都接 `handleRiskGuardUnavailable`)
+  - `preTradeGuards.checkPreBuyGuards` (两 guard 后都接 `handleRiskGuardUnavailable`)
+
+**为啥不把 wrap 收到一个 base class?** 项目所有 guard 都是 export class +
+DataSource interface + singleton, 没有继承层级. 显式 `return wrapFailClosed
+(...)` 比"继承一个 BasePreTradeGuard 自动 wrap" 更易追读 — 在 method body
+里就能看出 "这个 guard 是 fail-CLOSED 不是 fail-OPEN".
+
+**为啥 RiskAlert.create 仍走 lazy require?** `PaperTradingFacade.ts` 自己
+已经 lazy-require RiskAlert (规避循环 import), `RiskGuardFailClosed.ts`
+也用 `loadProductionRiskAlertCreator()` 沿用同款模式 — 让本 module 在
+DB-less 单测里 import 也不挂. caller 传 `dataSource = loadProductionRiskAlertCreator()`
+是生产路径; 单测传 fake `{create: async (input) => {...}}`.
+
+**未来接入新 guard**: 在 `RiskGuardFailClosed.ts` 的 `GUARD_LABELS` 表里
+加一行映射 (`new_guard: 'NewGuardClassName'`), method body 套
+`wrapFailClosed('new_guard', ...)`, caller catch RiskGuardUnavailableError
+后调 `handleRiskGuardUnavailable({callerLabel: 'caller-X', ...})`. 三件套.

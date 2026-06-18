@@ -22,6 +22,10 @@ import { sequelize } from '../../config/database';
 import { PaperTradingTrade } from '../../models/PaperTradingTrade';
 import { positionLimitGuard } from '../risk/PositionLimitGuard';
 import { drawdownCircuitBreaker, RiskGuardUnavailableError } from '../risk/DrawdownCircuitBreaker';
+import {
+  handleRiskGuardUnavailable,
+  loadProductionRiskAlertCreator,
+} from '../risk/RiskGuardFailClosed';
 import { logger } from '../../utils/logger';
 
 /**
@@ -71,8 +75,10 @@ export async function checkTPlus1(input: {
  * Pre-trade BUY guard chain — DrawdownCircuitBreaker + PositionLimitGuard.
  * 任一失败抛 err.code 标识, caller skip 该 signal (不阻塞其他).
  *
- * fail-OPEN 在内部 guard 自己处理 (DB outage 不阻塞业务). 这层只 propagate guard
- * 的明确"拒绝"结论.
+ * US-011 (PR-006): RiskGuardUnavailable 处理走统一 `handleRiskGuardUnavailable`
+ * helper — 与 PaperTradingFacade._placeOrderInner 共享 RiskAlert 文案 + rule_id +
+ * caller 标识. PositionLimitGuard 现在也走同款 fail-CLOSED wrap (US-047 路径之前
+ * 只有 DrawdownCircuitBreaker 有, 现在两套 guard 行为对齐).
  */
 export async function checkPreBuyGuards(input: {
   user_id: number;
@@ -80,9 +86,6 @@ export async function checkPreBuyGuards(input: {
   proposed_value: number;
 }): Promise<{ ok: true } | { ok: false; code: string; reason: string; detail?: any }> {
   // DrawdownCircuitBreaker (LEVEL_1 pause)
-  // BETA-7 (2026-06-18, audit M-13): fail-CLOSED — DB 抖动时 drawdownCircuitBreaker
-  // 会抛 RiskGuardUnavailableError. 这里 catch 后写 HIGH RiskAlert + 转 ok=false 拒单,
-  // 让 automation BUY 路径与 facade 主路径口径一致 (硬风控不可用 = 不下单)。
   let drawdownResult: {
     ok: boolean;
     reason?: string;
@@ -96,25 +99,13 @@ export async function checkPreBuyGuards(input: {
     });
   } catch (guardErr: any) {
     if (guardErr instanceof RiskGuardUnavailableError) {
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const { RiskAlert } = require('../../models/RiskAlert');
-        await RiskAlert.create({
-          user_id: input.user_id,
-          symbol: 'SYSTEM:RISK_GUARD_UNAVAILABLE',
-          name: '风控不可用 — DrawdownCircuitBreaker',
-          level: 'HIGH',
-          rule_id: 'drawdown_breaker',
-          message: `⚠️ DrawdownCircuitBreaker DB 抖动: ${guardErr.message}. 拒绝 automation BUY ${input.symbol} (fail-CLOSED).`,
-          metadata: { guard: 'drawdown_breaker', symbol: input.symbol, detail: guardErr.detail },
-        });
-      } catch (alertErr: any) {
-        logger.warn(
-          `[preTradeGuards] RiskAlert.create RISK_GUARD_UNAVAILABLE failed: ${
-            alertErr?.message || alertErr
-          }`
-        );
-      }
+      await handleRiskGuardUnavailable({
+        err: guardErr,
+        user_id: input.user_id,
+        symbol: input.symbol,
+        callerLabel: 'automation.preTradeGuards',
+        dataSource: loadProductionRiskAlertCreator(),
+      });
       return {
         ok: false,
         code: 'RISK_GUARD_UNAVAILABLE',
@@ -122,7 +113,9 @@ export async function checkPreBuyGuards(input: {
         detail: guardErr.detail,
       };
     }
-    // 其它 unexpected 错误 fail-CLOSED 处理：拒单 + log
+    // 其它 unexpected 错误 fail-CLOSED 处理: 拒单 + log. wrapFailClosed
+    // 应该已经把 unexpected error 包成 RiskGuardUnavailableError; 这里只是
+    // 兜底防御 (例如非 async 同步 throw 在 await 前栈展开).
     logger.warn(
       `[preTradeGuards] drawdownCircuitBreaker.checkBuyAllowed unexpected err: ${
         guardErr?.message || guardErr
@@ -143,12 +136,42 @@ export async function checkPreBuyGuards(input: {
     };
   }
 
-  // PositionLimitGuard (单股 / 行业 / 总持仓上限)
-  const limitResult = await positionLimitGuard.checkBuyOrder({
-    user_id: input.user_id,
-    symbol: input.symbol,
-    proposed_value: input.proposed_value,
-  });
+  // PositionLimitGuard (单股 / 行业 / 总持仓上限) — US-011 (PR-006): 现在也
+  // 抛 RiskGuardUnavailableError 而非 raw Sequelize error.
+  let limitResult: { ok: boolean; violation?: any };
+  try {
+    limitResult = await positionLimitGuard.checkBuyOrder({
+      user_id: input.user_id,
+      symbol: input.symbol,
+      proposed_value: input.proposed_value,
+    });
+  } catch (guardErr: any) {
+    if (guardErr instanceof RiskGuardUnavailableError) {
+      await handleRiskGuardUnavailable({
+        err: guardErr,
+        user_id: input.user_id,
+        symbol: input.symbol,
+        callerLabel: 'automation.preTradeGuards',
+        dataSource: loadProductionRiskAlertCreator(),
+      });
+      return {
+        ok: false,
+        code: 'RISK_GUARD_UNAVAILABLE',
+        reason: `风控不可用: ${guardErr.message}`,
+        detail: guardErr.detail,
+      };
+    }
+    logger.warn(
+      `[preTradeGuards] positionLimitGuard.checkBuyOrder unexpected err: ${
+        guardErr?.message || guardErr
+      }`
+    );
+    return {
+      ok: false,
+      code: 'RISK_GUARD_UNAVAILABLE',
+      reason: `风控异常: ${guardErr?.message || guardErr}`,
+    };
+  }
   if (!limitResult.ok && limitResult.violation) {
     return {
       ok: false,

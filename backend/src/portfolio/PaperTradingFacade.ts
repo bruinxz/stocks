@@ -52,6 +52,10 @@ import { paperTradingTuningApplyService } from './internal/PaperTradingTuningApp
 import { recommendationTradeOutcomeService } from '../services/RecommendationTradeOutcomeService';
 import { positionLimitGuard } from './risk/PositionLimitGuard';
 import { drawdownCircuitBreaker, RiskGuardUnavailableError } from './risk/DrawdownCircuitBreaker';
+import {
+  handleRiskGuardUnavailable,
+  loadProductionRiskAlertCreator,
+} from './risk/RiskGuardFailClosed';
 import { perStockStopLossGuard, pickEffectivePct } from './risk/PerStockStopLossGuard';
 import { incrementOrderTotal } from '../metrics/PrometheusRegistry';
 import {
@@ -901,10 +905,10 @@ export class PaperTradingFacade {
       // ≥ 10% triggered by the EOD evaluator), block NEW openings.  Adding to
       // existing positions is allowed (covers策略 add-on without forcing
       // operators to manually clear the pause for every routine top-up).
-      // BETA-7 (2026-06-18, audit M-13): fail-CLOSED. DrawdownCircuitBreaker DB
-      // 抖动时抛 RiskGuardUnavailableError → 这里 catch 后 拒单 + 写 RiskAlert HIGH.
-      // 之前 fail-OPEN 让 DB 抖动悄悄放行大撤回保护, 与 memory sprint-27-28-29
-      // 的"fail-open 教训"冲突。
+      // US-011 (PR-006): fail-CLOSED handling extracted to the shared
+      // `handleRiskGuardUnavailable` helper (was BETA-7 inline catch-and-write
+      // duplicated in 3 places). Same alert shape, same statusCode=503 throw,
+      // but single source of truth for RiskAlert payload + rule_id.
       let breakerResult: { ok: boolean; reason?: string; paused_until?: any };
       try {
         breakerResult = await drawdownCircuitBreaker.checkBuyAllowed({
@@ -913,33 +917,18 @@ export class PaperTradingFacade {
         });
       } catch (guardErr: any) {
         if (guardErr instanceof RiskGuardUnavailableError) {
-          // 写 HIGH RiskAlert 让运维感知; 失败 swallow 不影响主流程拒单语义
-          try {
-            // eslint-disable-next-line @typescript-eslint/no-var-requires
-            const { RiskAlert } = require('../models/RiskAlert');
-            await RiskAlert.create({
-              user_id,
-              symbol: 'SYSTEM:RISK_GUARD_UNAVAILABLE',
-              name: '风控不可用 — DrawdownCircuitBreaker',
-              level: 'HIGH',
-              rule_id: 'drawdown_breaker',
-              message: `⚠️ DrawdownCircuitBreaker DB 抖动: ${guardErr.message}. 拒绝该 BUY 单 (fail-CLOSED).`,
-              metadata: {
-                guard: 'drawdown_breaker',
-                symbol,
-                detail: guardErr.detail,
-              },
-            });
-          } catch (alertErr: any) {
-            logger.warn(
-              `[facade.placeOrder] RiskAlert.create RISK_GUARD_UNAVAILABLE failed: ${
-                alertErr?.message || alertErr
-              }`
-            );
-          }
+          await handleRiskGuardUnavailable({
+            err: guardErr,
+            user_id,
+            symbol,
+            callerLabel: 'facade.placeOrder',
+            dataSource: loadProductionRiskAlertCreator(),
+          });
           throw guardErr;
         }
-        // 其它 unexpected 错误也按 fail-CLOSED 处理
+        // 其它 unexpected 错误也按 fail-CLOSED 处理 — `wrapFailClosed` 在 guard
+        // 层应该已经把 unexpected error 包成 RiskGuardUnavailableError, 这里
+        // 只是兜底防御性 re-throw.
         logger.warn(
           `[facade.placeOrder] drawdownCircuitBreaker.checkBuyAllowed unexpected err: ${
             guardErr?.message || guardErr
@@ -961,11 +950,29 @@ export class PaperTradingFacade {
       // `cost` (execute_price × quantity, ex-commission) is the right
       // notional to compare against `max_single_stock_pct` since commission
       // doesn't accrue to the position's market value.
-      const guardResult = await positionLimitGuard.checkBuyOrder({
-        user_id,
-        symbol,
-        proposed_value: cost,
-      });
+      // US-011 (PR-006): same fail-CLOSED wrap as drawdown breaker — DB
+      // outage in loadPortfolio/loadPositions now bubbles up as
+      // RiskGuardUnavailableError instead of raw Sequelize 500.
+      let guardResult: { ok: boolean; violation?: any; config: any };
+      try {
+        guardResult = await positionLimitGuard.checkBuyOrder({
+          user_id,
+          symbol,
+          proposed_value: cost,
+        });
+      } catch (guardErr: any) {
+        if (guardErr instanceof RiskGuardUnavailableError) {
+          await handleRiskGuardUnavailable({
+            err: guardErr,
+            user_id,
+            symbol,
+            callerLabel: 'facade.placeOrder',
+            dataSource: loadProductionRiskAlertCreator(),
+          });
+          throw guardErr;
+        }
+        throw guardErr;
+      }
       if (!guardResult.ok && guardResult.violation) {
         const err: any = new Error(guardResult.violation.message);
         err.statusCode = 400;

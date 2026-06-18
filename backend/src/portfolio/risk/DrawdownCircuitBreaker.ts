@@ -65,31 +65,16 @@ import { PaperTradingSnapshot } from '../../models/PaperTradingSnapshot';
 import { RiskAlert } from '../../models/RiskAlert';
 import { User } from '../../models/User';
 import { logger } from '../../utils/logger';
+import { RiskGuardUnavailableError, wrapFailClosed } from './RiskGuardFailClosed';
 
 // ---------------------------------------------------------------------------
-//  BETA-7 (2026-06-18, audit M-13): RiskGuardUnavailableError
+//  Back-compat re-export — US-011 (PR-006) moved the canonical declaration
+//  to RiskGuardFailClosed.ts. Existing imports of RiskGuardUnavailableError
+//  from DrawdownCircuitBreaker keep working (preTradeGuards / PaperTradingFacade
+//  / multiple .test.ts files), but new code should import from the new home.
 // ---------------------------------------------------------------------------
 
-/**
- * 风控不可用错误 — fail-CLOSED 时抛出。
- *
- * caller (PaperTradingFacade.placeOrder / preTradeGuards.checkPreBuyGuards) catch
- * 这个错误后必须 (a) 拒单 — err.statusCode=503, err.code='RISK_GUARD_UNAVAILABLE',
- * (b) 写 RiskAlert HIGH 让运维感知风控不可用。
- *
- * 让风控 DB 抖动不悄悄放行 — 风控就该 fail-CLOSED, 用户体验上做"罕见 503"
- * 优于"罕见但严重的资金风险敞口"。
- */
-export class RiskGuardUnavailableError extends Error {
-  readonly statusCode = 503;
-  readonly code = 'RISK_GUARD_UNAVAILABLE';
-  readonly detail?: Record<string, any>;
-  constructor(message: string, detail?: Record<string, any>) {
-    super(message);
-    this.name = 'RiskGuardUnavailableError';
-    this.detail = detail;
-  }
-}
+export { RiskGuardUnavailableError };
 
 // ---------------------------------------------------------------------------
 //  Config
@@ -869,51 +854,42 @@ export class DrawdownCircuitBreaker {
    *   避免误伤已开仓的策略加仓动作）；
    * - SELL 永远不需要走此 hook（评估器只暂停 BUY，平仓总是允许）。
    *
-   * BETA-7 (2026-06-18, audit M-13): 改为 **fail-CLOSED** — DB 抖动时抛
-   * `RiskGuardUnavailableError` 而非保守放行. 让 caller (PaperTradingFacade /
+   * BETA-7 (2026-06-18, audit M-13): **fail-CLOSED** — DB 抖动时抛
+   * `RiskGuardUnavailableError`。US-011 (PR-006): 统一走
+   * `RiskGuardFailClosed.wrapFailClosed`，让 caller (PaperTradingFacade /
    * preTradeGuards) catch 并按业务规则决定是阻塞 BUY (硬风控不可用 = 不下单)
-   * 或写 RiskAlert HIGH 告警. 避免"DB 抖动 → 风控失效 → 大撤回不暂停"的
-   * 风险传导 (与 memory sprint-27-28-29 fail-open 教训呼应).
+   * 或写 RiskAlert HIGH 告警。
    */
   async checkBuyAllowed(input: CheckBuyAllowedInput): Promise<CheckBuyAllowedResult> {
-    try {
-      const config = await this.source.loadConfig(input.user_id);
-      if (!config.enabled) return { ok: true };
+    return wrapFailClosed(
+      'drawdown_breaker',
+      async () => {
+        const config = await this.source.loadConfig(input.user_id);
+        if (!config.enabled) return { ok: true };
 
-      const paused_until = await this.source.loadPausedUntil(input.user_id);
-      const nowMs = Date.now();
-      if (!isPauseActive(paused_until, nowMs)) {
-        return { ok: true };
-      }
+        const paused_until = await this.source.loadPausedUntil(input.user_id);
+        const nowMs = Date.now();
+        if (!isPauseActive(paused_until, nowMs)) {
+          return { ok: true };
+        }
 
-      const isExisting = await this.source.hasExistingPosition(input.user_id, input.symbol);
-      if (isExisting) {
-        // Allow add-on to existing position even during pause.
-        return { ok: true, is_new_holding: false };
-      }
+        const isExisting = await this.source.hasExistingPosition(input.user_id, input.symbol);
+        if (isExisting) {
+          // Allow add-on to existing position even during pause.
+          return { ok: true, is_new_holding: false };
+        }
 
-      return {
-        ok: false,
-        is_new_holding: true,
-        paused_until: paused_until ?? undefined,
-        reason:
-          `组合处于回撤熔断暂停期（至 ${paused_until}），` +
-          `禁止新开仓 ${input.symbol}。可在期满后再交易，或平仓现有持仓。`,
-      };
-    } catch (err) {
-      logger.warn(
-        `DrawdownCircuitBreaker.checkBuyAllowed user=${input.user_id} ` +
-          `symbol=${input.symbol}: ${(err as Error).message}`
-      );
-      // BETA-7 (2026-06-18, audit M-13): fail-CLOSED — 抛 RiskGuardUnavailableError.
-      // caller 负责把它转成 "拒单 + 写 RiskAlert HIGH"。如果是已经是 RiskGuardUnavailableError
-      // (从 source 内部抛上来) 直接 re-throw，不二次包装。
-      if (err instanceof RiskGuardUnavailableError) throw err;
-      throw new RiskGuardUnavailableError(
-        `DrawdownCircuitBreaker 不可用: ${(err as Error).message}`,
-        { user_id: input.user_id, symbol: input.symbol, cause: (err as Error).message }
-      );
-    }
+        return {
+          ok: false,
+          is_new_holding: true,
+          paused_until: paused_until ?? undefined,
+          reason:
+            `组合处于回撤熔断暂停期（至 ${paused_until}），` +
+            `禁止新开仓 ${input.symbol}。可在期满后再交易，或平仓现有持仓。`,
+        };
+      },
+      { user_id: input.user_id, symbol: input.symbol }
+    );
   }
 
   /** Return the user's effective config (defaults if not customized). */
