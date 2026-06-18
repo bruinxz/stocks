@@ -103,6 +103,38 @@ export interface PlaceOrderOptions {
   bypass_trading_hours?: boolean;
   /** 跳过 T+1 拦截 (测试用) */
   bypass_t_plus_1?: boolean;
+  /**
+   * 跳过 pre-trade 合规检查 (US-010 / PR-005). 仅给系统级强制路径用:
+   *   - GuardSellExecutor 强平 (止损/止盈/集中度), 不该被 wizard 拦
+   *   - closePosition (用户已显式选择平仓)
+   *   - IndustryConcentrationGuard.rebalance 等再平衡 SELL 链
+   * 普通 UI BUY / TodaySignals shadow autopilot / RebalanceEngine BUY **不要**传.
+   */
+  bypass_compliance?: boolean;
+  /**
+   * 可选 pre-trade compliance 上下文 — 由 caller (策略层) 注入信号元数据,
+   * facade 内不再二次查 DB. 缺省时仅跑 wizard 子规则中不依赖元数据的分支
+   * (NEXT_DAY_CHASE / FREQUENT_TRADING / MIN_HOLDING_PERIOD 仍能命中).
+   */
+  compliance_context?: PreTradeComplianceContext;
+}
+
+/**
+ * caller 注入的策略/信号上下文，用于 PaperTradingFacade.placeOrder 调
+ * checkPreTradeCompliance. 全 optional — 缺什么 wizard 跳什么.
+ */
+export interface PreTradeComplianceContext {
+  conviction_level?: number;
+  strategy_key?: string;
+  stop_loss_distance_pct?: number;
+  market_trend?: 'up' | 'down' | 'sideways';
+  current_pe?: number;
+  historical_avg_pe?: number;
+  has_specific_catalyst?: boolean;
+  /** 当日已涨幅 (0-1 小数, 例如 0.07 = 7%) */
+  intraday_change_pct?: number;
+  /** 信号产生 timestamp (ms epoch) — 超 24h 算 STALE_SIGNAL */
+  signal_timestamp_ms?: number;
 }
 
 export interface ClosePositionOptions {
@@ -112,6 +144,7 @@ export interface ClosePositionOptions {
   portfolio_id?: number;
   bypass_trading_hours?: boolean;
   bypass_t_plus_1?: boolean;
+  bypass_compliance?: boolean;
 }
 
 export type GetDailySnapshotAction = 'list' | 'trades' | 'refresh';
@@ -414,6 +447,90 @@ export function evaluateLimitUpDownBlock(input: {
     }
   }
   return { ok: true };
+}
+
+/**
+ * Pure helper — 把 placeOrder 输入 + 已知盘口/组合信息映射成
+ * checkPreTradeCompliance 的 PreTradeComplianceDraft. 抽出做纯函数方便单测,
+ * 同时让 facade 的 BUY 主路径与 LiveTradingService.approveDraft /
+ * PaperTradingAutomationService.createBuyTrade 的 draft 构造逻辑保持口径一致.
+ *
+ * - position_size_pct: cost / (current_cash + cost) — 与 automation 同公式
+ * - intraday_change_pct: 接受 0.07 (小数) 或 7 (百分比), 自动 /100 归一
+ * - 缺什么字段 caller 传 undefined, 不要传 NaN, 让 wizard 子规则自然跳过
+ */
+export function buildPreTradeComplianceDraft(input: {
+  user_id: number;
+  portfolio_id?: number;
+  symbol: string;
+  side: 'BUY' | 'SELL';
+  price: number;
+  quantity: number;
+  current_cash?: number;
+  context?: PreTradeComplianceContext;
+  bypass?: boolean;
+}): {
+  user_id: number;
+  portfolio_id?: number;
+  symbol: string;
+  side: 'BUY' | 'SELL';
+  price: number;
+  quantity: number;
+  position_size_pct?: number;
+  conviction_level?: number;
+  strategy_key?: string;
+  stop_loss_distance_pct?: number;
+  market_trend?: 'up' | 'down' | 'sideways';
+  current_pe?: number;
+  historical_avg_pe?: number;
+  has_specific_catalyst?: boolean;
+  intraday_change_pct?: number;
+  signal_timestamp_ms?: number;
+  bypass?: boolean;
+} {
+  const ctx = input.context || {};
+  const cost = Number(input.price) * Number(input.quantity);
+  let positionSizePct: number | undefined;
+  if (
+    input.side === 'BUY' &&
+    Number.isFinite(input.current_cash as number) &&
+    Number.isFinite(cost)
+  ) {
+    const denom = Number(input.current_cash) + cost;
+    if (denom > 0 && cost > 0) positionSizePct = cost / denom;
+  }
+  const intradayChg = (() => {
+    const c = Number(ctx.intraday_change_pct);
+    if (!Number.isFinite(c)) return undefined;
+    return Math.abs(c) > 1 ? c / 100 : c;
+  })();
+  return {
+    user_id: input.user_id,
+    portfolio_id: input.portfolio_id,
+    symbol: input.symbol,
+    side: input.side,
+    price: Number(input.price),
+    quantity: Number(input.quantity),
+    position_size_pct: positionSizePct,
+    conviction_level: Number.isFinite(ctx.conviction_level as number)
+      ? Number(ctx.conviction_level)
+      : undefined,
+    strategy_key: ctx.strategy_key,
+    stop_loss_distance_pct: Number.isFinite(ctx.stop_loss_distance_pct as number)
+      ? Number(ctx.stop_loss_distance_pct)
+      : undefined,
+    market_trend: ctx.market_trend,
+    current_pe: Number.isFinite(ctx.current_pe as number) ? Number(ctx.current_pe) : undefined,
+    historical_avg_pe: Number.isFinite(ctx.historical_avg_pe as number)
+      ? Number(ctx.historical_avg_pe)
+      : undefined,
+    has_specific_catalyst: ctx.has_specific_catalyst === true ? true : undefined,
+    intraday_change_pct: intradayChg,
+    signal_timestamp_ms: Number.isFinite(ctx.signal_timestamp_ms as number)
+      ? Number(ctx.signal_timestamp_ms)
+      : undefined,
+    bypass: input.bypass === true ? true : undefined,
+  };
 }
 
 export class PaperTradingFacade {
@@ -858,6 +975,73 @@ export class PaperTradingFacade {
         throw err;
       }
 
+      // ============ pre-trade compliance (US-010 / PR-005, BETA-1 续) ============
+      // 复用 services/TradeComplianceChecker. 之前只接 LiveTradingService.approveDraft
+      // 与 PaperTradingAutomationService.createBuyTrade 两处; facade.placeOrder 是 UI
+      // 手动 BUY / TodaySignals shadow autopilot / RebalanceEngine 执行的统一入口,
+      // 这次补齐让"全 caller 验收"成立.
+      //
+      // 规则:
+      //   high 违规 → throw err.code=PRE_TRADE_COMPLIANCE_BLOCKED + emit MEDIUM RiskAlert
+      //   medium    → 放行, emit LOW RiskAlert
+      //   low       → 放行, 不写 RiskAlert (仅 log)
+      // bypass_compliance=true 时直接跳过 (强平 / closePosition / 强制 rebalance).
+      // fail-OPEN: 内部 unexpected throw 走 logger.warn, 不阻塞业务.
+      if (!(options as any).bypass_compliance) {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const complianceMod = require('../services/TradeComplianceChecker');
+          const { checkPreTradeCompliance, emitPreTradeComplianceAlert } = complianceMod;
+          const complianceDraft = buildPreTradeComplianceDraft({
+            user_id,
+            portfolio_id: portfolio.id,
+            symbol,
+            side: 'BUY',
+            price: execute_price,
+            quantity,
+            current_cash: Number(portfolio.current_cash) || 0,
+            context: (options as any).compliance_context,
+          });
+          const complianceResult = await checkPreTradeCompliance(complianceDraft);
+          if (complianceResult.block) {
+            await emitPreTradeComplianceAlert({
+              user_id,
+              symbol,
+              side: 'BUY',
+              level: 'MEDIUM',
+              draft: complianceDraft,
+              result: complianceResult,
+            });
+            const err: any = new Error(`pre-trade compliance 拒单: ${complianceResult.summary}`);
+            err.statusCode = 400;
+            err.code = 'PRE_TRADE_COMPLIANCE_BLOCKED';
+            err.detail = { violations: complianceResult.violations };
+            throw err;
+          }
+          if (complianceResult.violations.some((v: any) => v.severity === 'medium')) {
+            await emitPreTradeComplianceAlert({
+              user_id,
+              symbol,
+              side: 'BUY',
+              level: 'LOW',
+              draft: complianceDraft,
+              result: complianceResult,
+            });
+          } else if (complianceResult.violations.length > 0) {
+            logger.info(
+              `[facade.placeOrder] pre-trade compliance LOW-only for ${symbol}: ${complianceResult.summary}`
+            );
+          }
+        } catch (err: any) {
+          if (err?.code === 'PRE_TRADE_COMPLIANCE_BLOCKED') throw err;
+          logger.warn(
+            `[facade.placeOrder] pre-trade compliance check failed (fail-open): ${
+              err?.message || err
+            }`
+          );
+        }
+      }
+
       if (portfolio.current_cash < totalCost) {
         throw new Error('可用资金不足');
       }
@@ -1168,6 +1352,10 @@ export class PaperTradingFacade {
       quantity: position.quantity,
       bypass_trading_hours: options.bypass_trading_hours,
       bypass_t_plus_1: options.bypass_t_plus_1,
+      // closePosition 总是 SELL — 当前 checkPreTradeCompliance 对 SELL 直接 ok=true
+      // 跳过, 即便不传 bypass_compliance 也不会被拦. 但显式传 true 表达"用户已确认
+      // 平仓, 跳过任何 pre-trade 软合规", 与 GuardSellExecutor 强平语义一致.
+      bypass_compliance: options.bypass_compliance !== false,
     });
   }
 

@@ -123,6 +123,26 @@ strategy` and `factor diagnostic` patterns:
    未来给其它 guard 加"用户可调阈值"时按这套 5 点 meta-guard 模板抄到
    对应 test 文件 — 是项目"配置驱动" AC 的标准守卫姿势 (与
    cron-registry [5] 双向一致性 guard 同款 fs+regex 模式)。
+9. **Pre-trade compliance 接入 (PR-005 / US-010) — facade.placeOrder 入口**:
+   `services/TradeComplianceChecker` 的 `checkPreTradeCompliance` 在三处统一
+   入口拦截 BUY 草稿: (a) `LiveTradingService.approveDraft` (实盘审批);
+   (b) `PaperTradingAutomationService.createBuyTrade` (自动跟单);
+   (c) `PaperTradingFacade.placeOrder` (UI 手动 BUY + RebalanceEngine + 任何
+   composite caller). 三处用同款 **draft 构造 → checker → severity 分支** 模式:
+   - `block=true` → throw `code=PRE_TRADE_COMPLIANCE_BLOCKED` +
+     `emitPreTradeComplianceAlert(level='MEDIUM')`
+   - `block=false` 但含 medium → 放行 + `emit(level='LOW')`
+   - 仅 low → 放行 + 仅 logger.info
+   - 顶层 try/catch fail-OPEN (任何 checker 内部异常都不阻塞下单主流程)
+   draft 构造统一走 `buildPreTradeComplianceDraft(input)` 纯函数 (export 在
+   `PaperTradingFacade.ts`), 它复用 automation 同款 `cost / (current_cash + cost)`
+   公式算 `position_size_pct`, 并把 `intraday_change_pct` 7 (百分比) / 0.07
+   (小数) 两种约定归一. **强平 / 用户显式平仓 / 强制 rebalance SELL** 链路 (例
+   如 GuardSellExecutor / closePosition / IndustryConcentrationGuard) 必须传
+   `bypass_compliance: true` 跳过 — 这些路径已经是"强制执行"语义, 不该被
+   wizard 软规则再拦. closePosition 也已默认 `bypass_compliance = options.bypass_compliance !== false`
+   保持平仓体验. SELL 在 checker 内部直接 `ok=true` 短路, 即便没传 bypass
+   也不会被拦, bypass 主要是表达语义 + 避免误触发未来 SELL 规则.
 
 ## `risk/TrailingStopGuard` — US-048 specifics
 

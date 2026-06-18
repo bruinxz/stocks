@@ -197,3 +197,32 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **execute=true 不 override gate**: gate 触发就是为了不下单, 让 execute 越过 gate 等于"假装关 gate 但留个数据通道", 语义混乱. 真要强制下单的 caller 应该显式 `minDeviationPct=0` 关 gate. 这是"配置 vs 命令"分离原则的实践: 配置项 (gate threshold) 应在调用前决定, 命令字段 (execute) 只决定 "对当前配置的产物是否执行", 不应反向修改配置语义.
   - **fs+regex meta-guard 守"两处 return + 跨文件 opt out 站点"**: 已是项目的标准守卫姿势 (cron-registry [5] / position-limit-guard / portfolio-construction-adapter testAutoBuyFromSignalsWireIn / 本次 testRebalanceResultSchemaCompleteness). 任何"schema 必须出现在两处 return / caller A 必须显式 opt 出 caller B 的功能"的边界都该这么守; 单测 import fs+path 后用 readFileSync + 多个 .test(source) 验证模式串都在.
 ---
+
+## 2026/06/19 07:25 - US-010
+- 实现 [PR-005] TradeComplianceChecker pre-trade 全 caller 接入 (BETA-1 仅 2 处 → 现在 3 处覆盖所有 BUY 路径)
+- Files changed:
+  - backend/src/portfolio/PaperTradingFacade.ts:
+    * PlaceOrderOptions / ClosePositionOptions 新增 bypass_compliance?: boolean
+    * 新增 export interface PreTradeComplianceContext (conviction / strategy / stop_loss / market_trend / pe / catalyst / intraday / signal_ts)
+    * 新增 export function buildPreTradeComplianceDraft — 把 placeOrder 输入 + portfolio.current_cash 映射成 checkPreTradeCompliance 的 draft; position_size_pct = cost / (cash + cost) 与 automation 同公式; intraday_change_pct 自动归一 (0.07/7 两种约定)
+    * _placeOrderInner BUY 路径 (placeOrder line ~975-1042) 在 limit-up 守门 之后 / cash 校验 之前 插入 try-catch: checkPreTradeCompliance → block=true throw PRE_TRADE_COMPLIANCE_BLOCKED + emit MEDIUM / medium-only emit LOW / low-only logger.info / 顶层 fail-OPEN
+    * closePosition 默认透传 bypass_compliance = options.bypass_compliance !== false (强平/平仓语义)
+  - backend/tests/portfolio/PaperTradingFacade.compliance.test.ts (新, 397 行 / 39 assertions):
+    [1] buildPreTradeComplianceDraft 12 unit:
+        - minimal 透传 / position_size_pct (0.1 / cash=0 / SELL skipped) / intraday (0.08 / 8% / -5% / NaN) / context 全字段 / has_catalyst false 转 undefined / bypass true 透传 / bypass false 转 undefined
+    [2] checkPreTradeCompliance E2E 5 case (无 DB):
+        - clean BUY ok / NEXT_DAY_CHASE high blocks / bypass=true 即便涨 50% 也放行 / SELL 短路 ok / 默认 stop 不误触 Marcus risk per trade
+  - backend/src/portfolio/CLAUDE.md: risk/ 第 9 条新增 "Pre-trade compliance 接入" 段 (三入口清单 + draft 公式 + bypass 语义)
+  - ralph/prd.json: US-010 passes=true + notes
+- 验证:
+  - `npx tsc --noEmit` exit 0
+  - `npx ts-node --transpile-only tests/portfolio/PaperTradingFacade.compliance.test.ts` exit 0, 39 ok / 0 failed
+  - 回归: PaperTradingFacade.quoteStale 9 ok, paper_trading_limit_up_block 15 ok
+  - lint baseline-diff: PaperTradingFacade.ts pre-existing 1 err + 4 warn, post-change 1 err + 4 warn, 本次新增 0
+- **Learnings for future iterations:**
+  - **三入口 BUY 拦截清单**: 任何"全局拦 BUY"的横切关注点 (compliance / pre-trade risk / slippage cap / 心理学钩) 都要同时在 3 处植入: (a) LiveTradingService.approveDraft (实盘审批 — 用户确认按钮链路); (b) PaperTradingAutomationService.createBuyTrade (自动跟单 cron); (c) PaperTradingFacade._placeOrderInner BUY 段 (UI 手动 + Rebalance + composite 等所有 facade 调用方). 漏一处 = 漏一类 caller 全静默. CLAUDE.md src/portfolio/ 第 9 条已明示.
+  - **draft helper 共享**: 三入口都用同一个 buildPreTradeComplianceDraft 纯函数构造 draft, 而不是各处 inline 拼字段 — 避免 position_size_pct 公式 / intraday 单位约定 在三处漂移. 新加 wizard 字段时只改 helper + 复用 PreTradeComplianceContext type, 三入口自动同步.
+  - **bypass_compliance 语义**: 强平 / closePosition / 强制 rebalance SELL 链 不能被 wizard 软规则拦, 必须显式传 bypass_compliance=true. 当前 checker 对 SELL 内部短路 ok, 所以 SELL 路径技术上不传也安全, 但显式传出于两点考虑: (1) 表达 "用户已决策, 跳过任何 pre-trade 检查" 语义; (2) 防御未来 SELL 规则加入后默默被拦. closePosition 用 `options.bypass_compliance !== false` 默认 true.
+  - **fail-OPEN 一致性**: facade.placeOrder 的所有可选守门 (drawdown / position_limit / compliance) 都遵守 "block=true throw structured error / 任何 unexpected throw 走 logger.warn 不阻塞主流程". 这与 services/RiskAlertService US-005 多通道 dispatcher 同款 fail-OPEN 哲学, 区别只是: compliance 的 block=true 是"明示规则违规" → 必须 throw; unexpected 是"检查器自己挂了" → 不能误杀主流程.
+  - **E2E test 在无 DB 环境跑**: checkPreTradeCompliance 内部 FREQUENT_TRADING/MIN_HOLDING_PERIOD 查询会 fail (无 stock_admin role), 但 checker 自身有 fail-OPEN, 所以测试照常跑通且断言"非 chase 路径不应误报 high". 这是 backend tests 无 DB / 无 jest 环境下测异步 wizard 的标准模式.
+---

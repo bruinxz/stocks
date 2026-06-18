@@ -154,8 +154,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 10,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "DONE 2026/06/19: TradeComplianceChecker pre-trade 已全 caller 接入. (1) LiveTradingService.approveDraft (line 1776-1819, BETA-1 已落); (2) PaperTradingAutomationService.createBuyTrade (line 6743-6785, BETA-1 已落); (3) **本次新增** PaperTradingFacade._placeOrderInner (BUY 路径, line 975-1042) — 把 UI 手动 BUY / RebalanceEngine BUY / CompositeRebalanceService BUY / 任何 facade.placeOrder caller 全覆盖. 模式: block=true throw code=PRE_TRADE_COMPLIANCE_BLOCKED + emit MEDIUM RiskAlert / medium-only emit LOW / low-only logger.info / 顶层 try-catch fail-OPEN. 新增 export `buildPreTradeComplianceDraft` 纯函数统一三处 draft 构造 (位 PaperTradingFacade.ts 449-541, 含 position_size_pct 同公式 + intraday_change_pct 7/0.07 双约定归一). 新增 PlaceOrderOptions.bypass_compliance + PreTradeComplianceContext 类型, closePosition 默认 bypass=true (强平/强制 SELL 语义). 单测 tests/portfolio/PaperTradingFacade.compliance.test.ts 新建, 39 ok / 0 failed (12 helper 单元 + 5 端到端 — clean BUY / NEXT_DAY_CHASE high blocks / bypass=true / SELL short circuit / 默认 stop 不误触 Marcus). tsc 0 err, lint 0 新增 err (baseline 1 err 4 warn 未变), 其它 facade 测 (limit_up_block 15, quoteStale 9) 无 regression. CLAUDE.md src/portfolio/ 新增 [9] Pre-trade compliance 三入口约定 + bypass 语义. 依赖: PR-002/PR-003/PR-004 已就绪."
     },
     {
       "id": "US-011",
