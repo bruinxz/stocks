@@ -745,8 +745,23 @@ export class FactorController {
         };
       });
 
-      // 6) 今日涨停统计 (附加 KPI)
+      // 6) 今日涨停统计 (附加 KPI) — 注意 limit_up_today 是当前 trade_date (可能滞后) 的
       const limitUpToday = await LimitUpStock.count({ where: { trade_date: tradeDate } });
+
+      // 6b) 数据陈旧度检测 — trade_date vs 实际今日的差
+      const todayIso = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10); // 上海时区粗略
+      const lagDays = Math.max(
+        0,
+        Math.round((new Date(todayIso).getTime() - new Date(tradeDate).getTime()) / 86_400_000)
+      );
+      const dataStaleness =
+        lagDays === 0
+          ? 'fresh'
+          : lagDays <= 2
+            ? 'recent'
+            : lagDays <= 7
+              ? 'stale'
+              : 'very_stale';
 
       // 7) 近 2 日市场要闻 (Batch AG) — 同一 endpoint 给前端时间线用
       let recentNews: Array<{
@@ -790,6 +805,9 @@ export class FactorController {
 
       const payload = {
         trade_date: tradeDate,
+        today_iso: todayIso,
+        lag_days: lagDays,
+        data_staleness: dataStaleness,
         dates,
         industries,
         hot_concepts,
@@ -1090,8 +1108,25 @@ export class FactorController {
         where: { trade_date: tradeDate },
       });
 
+      const todayIso = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
+      const lagDays = Math.max(
+        0,
+        Math.round((new Date(todayIso).getTime() - new Date(tradeDate).getTime()) / 86_400_000)
+      );
+      const dataStaleness =
+        lagDays === 0
+          ? 'fresh'
+          : lagDays <= 2
+            ? 'recent'
+            : lagDays <= 7
+              ? 'stale'
+              : 'very_stale';
+
       const payload = {
         trade_date: tradeDate,
+        today_iso: todayIso,
+        lag_days: lagDays,
+        data_staleness: dataStaleness,
         today_hot_rank_top20,
         today_baidu_top20,
         rank_breakouts,

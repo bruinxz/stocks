@@ -297,6 +297,14 @@ class SchedulerService {
         },
         10 * 60 * 1000
       ).unref();
+
+      // Batch AH review (2026-06-18): catch-up — server 启动 (deploy 重启) 后,
+      // 找出 "今日 cron 窗口已过 + last_run_at 是空 / 早于今日凌晨" 的 sync task,
+      // 异步立即跑一次, 避免错过当日数据.
+      // 仅对白名单 sync task type catch-up, 不对策略/风险类 catch-up.
+      void this.catchUpMissedTasks(tasks).catch(err =>
+        logger.warn(`[scheduler] catchUpMissedTasks failed: ${err?.message}`)
+      );
     } catch (error) {
       logger.error('Failed to initialize scheduler:', error);
       // Batch M (2026-06-17): 旧实现 swallow error 让进程"健康"启动但 0 cron 在跑.
@@ -4570,6 +4578,69 @@ class SchedulerService {
     }
   }
 
+  /**
+   * Batch AH review (2026-06-18) — catch-up missed sync tasks on server boot.
+   *
+   * 启动时扫描白名单 sync task type, 若它们 cron 的"今日窗口"已过 + last_run_at
+   * 是 null 或早于今日 00:00 上海时区 → 立即异步触发一次 (走 normal handler).
+   *
+   * 白名单仅 sync 类 (数据同步), 不含策略/风控类 — 避免 deploy 时反复触发
+   * trade 操作.
+   *
+   * 限流: 任务之间 sleep 5s, 防 AKShare 限频.
+   */
+  private async catchUpMissedTasks(tasks: ScheduledTask[]) {
+    const CATCH_UP_WHITELIST = new Set([
+      'INDUSTRY_FLOW_SYNC',
+      'LIMIT_UP_SYNC',
+      'NORTHBOUND_SYNC',
+      'SNOWBALL_HOT_KEYWORD_SYNC',
+      'STOCK_SENTIMENT_SYNC',
+      'MARKET_NEWS_SYNC',
+      'SOCIAL_SENTIMENT_SYNC',
+      'MARKET_HOT_SEARCH_SYNC',
+    ]);
+
+    const todayStart = moment().tz('Asia/Shanghai').startOf('day').toDate();
+    const now = new Date();
+    const candidates = tasks.filter(t => {
+      if (!CATCH_UP_WHITELIST.has(t.type)) return false;
+      if (!t.is_active) return false;
+      // 已在今天跑过 → skip
+      if (t.last_run_at && new Date(t.last_run_at) >= todayStart) return false;
+      // cron 今日窗口还没到 → skip (今天会自然 trigger)
+      if (!t.cron_expression) return false;
+      const todayFireTime = nextTodayFireTimeForCron(t.cron_expression);
+      if (!todayFireTime || todayFireTime > now) return false;
+      return true;
+    });
+
+    if (candidates.length === 0) {
+      logger.info(`[catch-up] no missed sync tasks to recover`);
+      return;
+    }
+
+    logger.warn(
+      `[catch-up] found ${candidates.length} missed sync task(s): ${candidates
+        .map(t => t.type)
+        .join(', ')} — triggering async with 5s gap`
+    );
+
+    // 按 type 异步串行 (不并发, 防 AKShare 同步限频)
+    for (const t of candidates) {
+      try {
+        await new Promise<void>(resolve => setTimeout(resolve, 5_000));
+        logger.info(`[catch-up] firing missed task: ${t.type} (#${t.id} "${t.name}")`);
+        // 调 executeTask (执行真的 handler) — 但不阻塞 catch-up loop
+        void this.executeTask(t.id).catch(err =>
+          logger.warn(`[catch-up] task ${t.id} failed: ${err?.message}`)
+        );
+      } catch (err) {
+        logger.warn(`[catch-up] schedule failed for ${t.type}: ${(err as Error).message}`);
+      }
+    }
+  }
+
   async ensureDefaultTasks() {
     const defaultTasks = [
       {
@@ -6135,6 +6206,71 @@ class SchedulerService {
       await task.destroy();
     }
   }
+}
+
+/**
+ * Batch AH review (2026-06-18) — Given a cron expression, return today's most
+ * recent fire time (in Asia/Shanghai), or null if no firings today before now.
+ *
+ * 用于 catch-up: 检测某 task 今天本该 fire 但 missed 了.
+ *
+ * 简化逻辑: 解析标准 5-field cron 表达式 (minute hour DoM Month DoW), 找到
+ * "今日已过的最近一次 fire 时刻". 不支持复杂 cron 语法 (如步长 / 范围混用),
+ * 但能 cover 我们 8 个 sync task 都使用的 'MM HH * * 1-5' / 'MM,MM HH-HH * * 1-5' 模式.
+ */
+function nextTodayFireTimeForCron(cronExpr: string): Date | null {
+  const parts = cronExpr.trim().split(/\s+/);
+  if (parts.length !== 5) return null;
+  const [minutePart, hourPart, , , dowPart] = parts;
+
+  const nowSh = moment().tz('Asia/Shanghai');
+  // 周末过滤 (DoW 1-5 = Mon-Fri)
+  if (dowPart === '1-5') {
+    const dow = nowSh.day(); // 0=Sun, 6=Sat
+    if (dow === 0 || dow === 6) return null;
+  }
+
+  const minutes = expandCronField(minutePart, 0, 59);
+  const hours = expandCronField(hourPart, 0, 23);
+  if (!minutes.length || !hours.length) return null;
+
+  // 找今天最近一次 fire 时刻 (≤ now)
+  let lastFire: moment.Moment | null = null;
+  for (const h of hours) {
+    for (const m of minutes) {
+      const candidate = nowSh.clone().hour(h).minute(m).second(0).millisecond(0);
+      if (candidate.isSameOrBefore(nowSh)) {
+        if (!lastFire || candidate.isAfter(lastFire)) lastFire = candidate;
+      }
+    }
+  }
+  return lastFire ? lastFire.toDate() : null;
+}
+
+function expandCronField(part: string, min: number, max: number): number[] {
+  if (part === '*') {
+    return Array.from({ length: max - min + 1 }, (_, i) => min + i);
+  }
+  const out: number[] = [];
+  for (const seg of part.split(',')) {
+    const trimmed = seg.trim();
+    if (!trimmed) continue;
+    if (trimmed.includes('-')) {
+      const [a, b] = trimmed.split('-').map(Number);
+      if (Number.isFinite(a) && Number.isFinite(b)) {
+        for (let i = Math.max(min, a); i <= Math.min(max, b); i++) out.push(i);
+      }
+    } else if (trimmed.startsWith('*/')) {
+      const step = Number(trimmed.slice(2));
+      if (Number.isFinite(step) && step > 0) {
+        for (let i = min; i <= max; i += step) out.push(i);
+      }
+    } else {
+      const n = Number(trimmed);
+      if (Number.isFinite(n) && n >= min && n <= max) out.push(n);
+    }
+  }
+  return out;
 }
 
 export const schedulerService = new SchedulerService();

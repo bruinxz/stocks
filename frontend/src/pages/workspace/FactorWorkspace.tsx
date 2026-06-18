@@ -30,7 +30,10 @@ import {
 } from '@ant-design/icons';
 import ReactECharts from 'echarts-for-react';
 import {
+  Bar,
+  BarChart,
   CartesianGrid,
+  Cell,
   Legend,
   Line,
   LineChart,
@@ -115,7 +118,6 @@ const FactorWorkspace: React.FC = () => {
     { key: 'picks', label: '今日选股清单', icon: <OrderedListOutlined /> },
     { key: 'board', label: '行业决策', icon: <ThunderboltOutlined /> },
     { key: 'sentiment', label: '舆情雷达', icon: <RobotOutlined /> },
-    { key: 'heatmap', label: '因子热力 (旧)', icon: <AppstoreOutlined /> },
     { key: 'macro', label: '宏观环境', icon: <FundOutlined /> },
     { key: 'block', label: '大宗交易', icon: <FundOutlined /> },
   ];
@@ -945,12 +947,40 @@ const IndustryBoardTab: React.FC<{
         />
       )}
 
+      {/* 数据陈旧度告警 */}
+      {data.lag_days != null && data.lag_days > 2 && (
+        <Alert
+          type={data.data_staleness === 'very_stale' ? 'error' : 'warning'}
+          showIcon
+          message={`⚠ 数据滞后 ${data.lag_days} 天 (当前 ${data.today_iso ?? '?'}, 数据 ${data.trade_date})`}
+          description={
+            data.data_staleness === 'very_stale'
+              ? '行业资金流数据已超过 1 周未更新. 可能 AKShare 上游 endpoint 临时故障 (stock_sector_fund_flow_rank). 等待自动 cron 修复或手动 sync.'
+              : '部分数据未更新到最新交易日, 决策时请留意时间差.'
+          }
+          style={{ marginBottom: 8 }}
+        />
+      )}
+
       {/* KPI Strip */}
       <Card size="small">
         <Space size={32} wrap>
-          <Statistic title="交易日" value={data.trade_date ?? '—'} />
-          <Statistic title="今日板块数" value={data.universe_size} suffix="个" />
-          <Statistic title="今日涨停" value={data.limit_up_today ?? '—'} suffix="只" />
+          <Statistic
+            title="数据日期"
+            value={data.trade_date ?? '—'}
+            valueStyle={
+              data.lag_days != null && data.lag_days > 2 ? { color: '#fa8c16' } : undefined
+            }
+            suffix={
+              data.lag_days != null && data.lag_days > 0 ? (
+                <Tag color={data.data_staleness === 'very_stale' ? 'red' : 'orange'}>
+                  滞后 {data.lag_days}d
+                </Tag>
+              ) : null
+            }
+          />
+          <Statistic title="板块数" value={data.universe_size} suffix="个" />
+          <Statistic title="涨停" value={data.limit_up_today ?? '—'} suffix="只" />
           <Statistic title="热门概念" value={data.hot_concepts.length} suffix="条" />
           <Button icon={<ReloadOutlined />} loading={loading} onClick={onReload}>
             刷新
@@ -1388,9 +1418,33 @@ const SentimentBoardTab: React.FC<{
       )}
 
       {/* KPI strip */}
+      {/* 数据陈旧度告警 */}
+      {data.lag_days != null && data.lag_days > 2 && (
+        <Alert
+          type={data.data_staleness === 'very_stale' ? 'error' : 'warning'}
+          showIcon
+          message={`⚠ 数据滞后 ${data.lag_days} 天 (当前 ${data.today_iso ?? '?'}, 数据 ${data.trade_date})`}
+          description="社媒/舆情数据未更新到最新交易日, 决策时请留意时间差."
+          style={{ marginBottom: 8 }}
+        />
+      )}
+
       <Card size="small">
         <Space size={32} wrap>
-          <Statistic title="数据日期" value={data.trade_date ?? '—'} />
+          <Statistic
+            title="数据日期"
+            value={data.trade_date ?? '—'}
+            valueStyle={
+              data.lag_days != null && data.lag_days > 2 ? { color: '#fa8c16' } : undefined
+            }
+            suffix={
+              data.lag_days != null && data.lag_days > 0 ? (
+                <Tag color={data.data_staleness === 'very_stale' ? 'red' : 'orange'}>
+                  滞后 {data.lag_days}d
+                </Tag>
+              ) : null
+            }
+          />
           <Statistic title="覆盖股票" value={data.universe_size} suffix="只" />
           <Statistic title="人气榜 top" value={data.today_hot_rank_top20.length} suffix="只" />
           <Statistic title="百度热搜" value={data.today_baidu_top20.length} suffix="条" />
@@ -1666,93 +1720,114 @@ const SentimentBoardTab: React.FC<{
           </Card>
         </Col>
 
-        {/* Card 4 — 情绪散点 */}
-        <Col xs={24} lg={12}>
+        {/* Card 4 — 综合评分 top 30 横向柱状图 (替代散点, 更易读) */}
+        <Col xs={24} lg={24}>
           <Card
             title={
               <Space>
                 <FundOutlined style={{ color: '#722ed1' }} />
-                情绪散点 — 机构参与 vs 综合评分 (top 100)
+                综合评分 top 30 (东财综合得分 + 机构参与度叠层)
               </Space>
             }
             size="small"
+            extra={
+              <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                紫色 = 综合评分 (0-100), 橙色 = 机构参与度 (%)
+              </Typography.Text>
+            }
           >
             {data.block_errors?.sentiment_scatter && (
               <Alert
                 type="warning"
                 showIcon
                 style={{ marginBottom: 8 }}
-                message={`散点加载失败: ${data.block_errors.sentiment_scatter}`}
+                message={`数据加载失败: ${data.block_errors.sentiment_scatter}`}
               />
             )}
             {data.sentiment_scatter.length === 0 ? (
               <Empty
                 image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description="今日散点无数据"
+                description="今日无数据"
               />
             ) : (
-              <ResponsiveContainer width="100%" height={360}>
-                <ScatterChart margin={{ top: 16, right: 16, bottom: 32, left: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-                  <XAxis
-                    dataKey="institution_participation"
-                    name="机构参与度"
-                    unit="%"
-                    domain={[0, 100]}
-                    label={{
-                      value: '机构参与度 (%)',
-                      position: 'insideBottom',
-                      offset: -16,
-                      style: { fontSize: 11, fill: '#666' },
-                    }}
-                    tick={{ fontSize: 11 }}
-                  />
-                  <YAxis
-                    dataKey="comment_score"
-                    name="综合评分"
-                    domain={[0, 100]}
-                    label={{
-                      value: '综合评分',
-                      angle: -90,
-                      position: 'insideLeft',
-                      style: { fontSize: 11, fill: '#666' },
-                    }}
-                    tick={{ fontSize: 11 }}
-                  />
-                  <ZAxis dataKey="hot_rank_em" range={[40, 200]} name="人气排名" />
-                  <Tooltip
-                    cursor={{ strokeDasharray: '3 3' }}
-                    content={({ active, payload }: any) => {
-                      if (!active || !payload?.[0]?.payload) return null;
-                      const p = payload[0].payload;
-                      return (
-                        <div
-                          style={{
-                            background: 'white',
-                            border: '1px solid #ddd',
-                            padding: 8,
-                            fontSize: 12,
-                            borderRadius: 4,
-                          }}
-                        >
-                          <div style={{ fontWeight: 500 }}>{p.stock_name || p.stock_code}</div>
-                          <div style={{ color: '#999' }}>{p.stock_code}</div>
-                          <div>综合评分: {fmtNum(p.comment_score)}</div>
-                          <div>机构参与: {fmtNum(p.institution_participation)}%</div>
-                          {p.hot_rank_em != null && (
-                            <div style={{ color: '#cf1322' }}>人气榜 #{p.hot_rank_em}</div>
-                          )}
-                        </div>
-                      );
-                    }}
-                  />
-                  <Scatter
-                    data={data.sentiment_scatter}
-                    fill="#722ed1"
-                    fillOpacity={0.5}
-                  />
-                </ScatterChart>
-              </ResponsiveContainer>
+              (() => {
+                const top30 = [...data.sentiment_scatter]
+                  .sort((a, b) => (b.comment_score ?? 0) - (a.comment_score ?? 0))
+                  .slice(0, 30)
+                  .map(s => ({
+                    label: s.stock_name || s.stock_code,
+                    code: s.stock_code,
+                    comment_score: Number(s.comment_score?.toFixed(1) ?? 0),
+                    institution_participation: Number(
+                      ((s.institution_participation ?? 0) * 1).toFixed(1)
+                    ),
+                    hot_rank_em: s.hot_rank_em,
+                  }));
+                return (
+                  <ResponsiveContainer width="100%" height={Math.max(420, top30.length * 22)}>
+                    <BarChart
+                      data={top30}
+                      layout="vertical"
+                      margin={{ top: 8, right: 32, bottom: 8, left: 64 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
+                      <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 11 }} />
+                      <YAxis
+                        type="category"
+                        dataKey="label"
+                        tick={{ fontSize: 11 }}
+                        width={88}
+                        interval={0}
+                      />
+                      <Tooltip
+                        content={({ active, payload }: any) => {
+                          if (!active || !payload?.[0]?.payload) return null;
+                          const p = payload[0].payload;
+                          return (
+                            <div
+                              style={{
+                                background: 'white',
+                                border: '1px solid #ddd',
+                                padding: 8,
+                                fontSize: 12,
+                                borderRadius: 4,
+                              }}
+                            >
+                              <div style={{ fontWeight: 500 }}>
+                                {p.label} <span style={{ color: '#999' }}>{p.code}</span>
+                              </div>
+                              <div style={{ color: '#722ed1' }}>
+                                综合评分: {p.comment_score}
+                              </div>
+                              <div style={{ color: '#fa8c16' }}>
+                                机构参与: {p.institution_participation}%
+                              </div>
+                              {p.hot_rank_em != null && (
+                                <div style={{ color: '#cf1322' }}>人气榜 #{p.hot_rank_em}</div>
+                              )}
+                            </div>
+                          );
+                        }}
+                      />
+                      <Legend wrapperStyle={{ fontSize: 11 }} />
+                      <Bar
+                        dataKey="comment_score"
+                        name="综合评分"
+                        fill="#722ed1"
+                        fillOpacity={0.85}
+                        barSize={9}
+                      />
+                      <Bar
+                        dataKey="institution_participation"
+                        name="机构参与度 (%)"
+                        fill="#fa8c16"
+                        fillOpacity={0.85}
+                        barSize={9}
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                );
+              })()
             )}
           </Card>
         </Col>

@@ -184,6 +184,9 @@ export interface IndustryBoardNewsItem {
 
 export interface IndustryBoardResponse {
   trade_date: string | null;
+  today_iso?: string;
+  lag_days?: number;
+  data_staleness?: 'fresh' | 'recent' | 'stale' | 'very_stale';
   dates: string[];
   industries: IndustryBoardIndustry[];
   hot_concepts: IndustryBoardHotConcept[];
@@ -257,6 +260,9 @@ export interface SentimentBoardNewsItem {
 
 export interface SentimentBoardResponse {
   trade_date: string | null;
+  today_iso?: string;
+  lag_days?: number;
+  data_staleness?: 'fresh' | 'recent' | 'stale' | 'very_stale';
   today_hot_rank_top20: SentimentBoardHotRankRow[];
   today_baidu_top20: SentimentBoardBaiduRow[];
   rank_breakouts: SentimentBoardBreakoutRow[];
