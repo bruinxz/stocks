@@ -2457,8 +2457,12 @@ class SchedulerService {
                 raw: true,
               });
         const codes = (candidates as any[])
-          .map(s => String(s.symbol || '').replace(/\.[A-Z]+$/, ''))
-          .filter(Boolean);
+          .map(s => {
+            // 兼容 'sz.300085' / '300085.SZ' / 纯 6 位 — 提取最后 6 位数字
+            const digits = String(s.symbol || '').replace(/[^0-9]/g, '');
+            return digits.length >= 6 ? digits.slice(-6) : '';
+          })
+          .filter(c => /^\d{6}$/.test(c));
         const result = await stockSentimentSyncService.syncStocks(codes, {
           intervalMs: 250,
         });

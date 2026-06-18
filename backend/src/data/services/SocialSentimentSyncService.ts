@@ -214,24 +214,52 @@ export class SocialSentimentSyncService {
     }
   }
 
-  /** 流通市值 top N 6 位代码列表; 排除 ST. */
+  /**
+   * Universe: 流通市值 top N 的 6 位代码列表 (排除 ST).
+   *
+   * 兼容 stocks.symbol 两种格式:
+   *   - sz.300085 / sh.600519 / bj.920011  (prefix.code)
+   *   - 300085.SZ / 600519.SH / 920011.BJ  (code.suffix)
+   *
+   * Fallback: 若 circulating_market_cap 列全为 0 / null (生产历史问题),
+   * 退化为 ORDER BY id ASC (按 listing 顺序近似主板, 通常 top N 是大市值).
+   */
   async loadUniverseByMarketCap(limit: number): Promise<string[]> {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { Stock } = require('../../models/Stock');
     try {
+      // 探测: circulating_market_cap 是否真的有数据
+      const hasMcap = await Stock.count({
+        where: { circulating_market_cap: { [Op.gt]: 0 } },
+      });
+      const orderBy: any =
+        hasMcap > 0 ? [['circulating_market_cap', 'DESC']] : [['id', 'ASC']];
+
       const rows = (await Stock.findAll({
         attributes: ['symbol'],
         where: {
           is_listed: true,
           name: { [Op.notLike]: '%ST%' },
         },
-        order: [['circulating_market_cap', 'DESC']],
+        order: orderBy,
         limit,
         raw: true,
       })) as Array<{ symbol: string }>;
-      return rows
-        .map(r => String(r.symbol || '').replace(/\.[A-Z]+$/, ''))
-        .filter(c => /^\d{6}$/.test(c));
+
+      const codes: string[] = [];
+      for (const r of rows) {
+        const raw = String(r.symbol || '');
+        // 兼容 'sz.300085' / '300085.SZ' / 纯 6 位
+        const digits = raw.replace(/[^0-9]/g, '');
+        const code = digits.length >= 6 ? digits.slice(-6) : '';
+        if (/^\d{6}$/.test(code)) codes.push(code);
+      }
+      if (hasMcap === 0) {
+        logger.warn(
+          `loadUniverseByMarketCap: circulating_market_cap 全为 0/null, 退化为 ORDER BY id (返回 ${codes.length} 只)`
+        );
+      }
+      return codes;
     } catch (err) {
       logger.warn(`loadUniverseByMarketCap failed: ${(err as Error).message}`);
       return [];

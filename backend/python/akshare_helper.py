@@ -5017,14 +5017,19 @@ def get_market_news(limit: int = 80) -> List[Dict[str, Any]]:
 def get_social_sentiment_snapshot(stock_codes_csv: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     全市场社媒/舆情综合快照. 合并:
-      1. ak.stock_hot_rank_em()      — 东财个股人气榜 top 100 (实时 rank)
+      1. ak.stock_hot_rank_em()      — 东财个股人气榜 top 100 (实时 rank); 若上游
+         接口失败 (AKShare 端点偶发故障), 自动 fallback 到 ak.stock_hot_follow_xq
+         (雪球关注排行榜) — 5600 行全市场, 按关注人数排名当作 hot_rank_em.
       2. ak.stock_comment_em()       — 全市场每股一行: 综合评分 + 机构参与 + 散户意愿 + 关注指数
 
     AC 偏差说明 (4 处文档同步范式, US-034 同款):
-      - stock_hot_rank_em 只覆盖 top 100, hot_rank_em 列 nullable (universe 之外的股没排名)
-      - stock_comment_em 覆盖 ~4000+ 股全市场, 各打分字段都有值
+      - stock_hot_rank_em 只覆盖 top 100, hot_rank_em 列 nullable (universe 之外的股没排名).
+        AKShare 2026-06 该 endpoint 不稳定, 故 fallback 雪球 5600 行覆盖全市场 — 此时
+        hot_rank_em 的"排名"语义实际上是 "雪球关注人数 desc 的位次", 数值意义和东财
+        略有不同但单调性一致.
+      - stock_comment_em 覆盖 ~4000+ 股全市场, 各打分字段都有值.
       - 输出 universe = stock_codes_csv (caller 指定, 通常是流通市值 top 200)
-        ∩ comment_em 全集. hot_rank_em 用 left join 模式, 100 名外的填 None.
+        ∩ comment_em 全集. hot_rank_em 用 left join 模式, 排名外的填 None.
 
     实时快照特性 (同 US-008 IndustryFlow): 接口无日期参数, trade_date 由 caller 服务层
     在盘后调度时贴上.
@@ -5047,55 +5052,79 @@ def get_social_sentiment_snapshot(stock_codes_csv: Optional[str] = None) -> List
         }
         universe_filter.discard('')
 
-    # 1) hot_rank_em — 全市场 top 100 实时榜 (无 date 参数, 调用即得 "现在")
+    # 1) hot_rank_em — 优先东财 top 100, 失败 fallback 雪球关注度 5600 行 (按关注人数 desc 排名)
     rank_by_code: Dict[str, Dict[str, Any]] = {}
+    used_rank_source = 'none'
+    # 1a) 试东财
     try:
         fn = getattr(ak, 'stock_hot_rank_em', None)
         if fn is not None:
-            df = with_subsource_timeout(25, fn)
+            df = with_subsource_timeout(20, fn)
             if df is not None and not df.empty:
-                # 字段 (柔性): 当前排名 / 代码 / 股票名称 / 最新价 / 涨跌额 / 涨跌幅
-                code_col = None
-                for cand in ('代码', '股票代码', 'code'):
-                    if cand in df.columns:
-                        code_col = cand
-                        break
-                rank_col = None
-                for cand in ('当前排名', '排名', 'rank'):
-                    if cand in df.columns:
-                        rank_col = cand
-                        break
-                name_col = None
-                for cand in ('股票名称', '名称', '简称'):
-                    if cand in df.columns:
-                        name_col = cand
-                        break
+                code_col = next((c for c in df.columns if str(c) in ('代码', '股票代码', 'code')), None)
+                rank_col = next((c for c in df.columns if str(c) in ('当前排名', '排名', 'rank')), None)
+                name_col = next((c for c in df.columns if str(c) in ('股票名称', '名称', '简称')), None)
                 for _, r in df.iterrows():
                     try:
                         code_raw = _cell_str(r, code_col) if code_col else None
-                        if not code_raw:
-                            continue
+                        if not code_raw: continue
                         code = ''.join(ch for ch in code_raw if ch.isdigit())[-6:]
-                        if len(code) != 6:
-                            continue
+                        if len(code) != 6: continue
                         rank_by_code[code] = {
                             'hot_rank_em': _cell_int(r, rank_col) if rank_col else None,
                             'stock_name': _cell_str(r, name_col) if name_col else None,
                         }
                     except Exception:
                         continue
-                print(f'hot_rank_em: parsed {len(rank_by_code)} rows', file=sys.stderr)
+                if rank_by_code:
+                    used_rank_source = 'eastmoney'
+                    print(f'hot_rank_em (em): parsed {len(rank_by_code)} rows', file=sys.stderr)
     except SourceTimeout as e:
         print(f'stock_hot_rank_em timeout (skip): {e}', file=sys.stderr)
     except Exception as e:
         print(f'stock_hot_rank_em failed: {e}', file=sys.stderr)
+
+    # 1b) Fallback: 雪球关注度 (按关注人数 desc 编 rank)
+    if not rank_by_code:
+        try:
+            fn = getattr(ak, 'stock_hot_follow_xq', None)
+            if fn is not None:
+                df = with_subsource_timeout(25, lambda: fn(symbol='最热门'))
+                if df is not None and not df.empty:
+                    code_col = next((c for c in df.columns if str(c) in ('股票代码', '代码')), None)
+                    name_col = next((c for c in df.columns if str(c) in ('股票简称', '名称', '简称')), None)
+                    follow_col = next((c for c in df.columns if str(c) in ('关注', '关注人数', '关注度')), None)
+                    if code_col and follow_col:
+                        # 按 follow desc 排序
+                        df_sorted = df.sort_values(by=follow_col, ascending=False).reset_index(drop=True)
+                        for idx, r in df_sorted.iterrows():
+                            try:
+                                code_raw = _cell_str(r, code_col)
+                                if not code_raw: continue
+                                code = ''.join(ch for ch in code_raw if ch.isdigit())[-6:]
+                                if len(code) != 6: continue
+                                rank_by_code[code] = {
+                                    'hot_rank_em': int(idx) + 1,  # 1-based
+                                    'stock_name': _cell_str(r, name_col) if name_col else None,
+                                }
+                                if len(rank_by_code) >= 1000:  # top 1000 够 universe 用
+                                    break
+                            except Exception:
+                                continue
+                        if rank_by_code:
+                            used_rank_source = 'xueqiu_fallback'
+                            print(f'hot_rank_em (xq fallback): parsed {len(rank_by_code)} rows', file=sys.stderr)
+        except SourceTimeout as e:
+            print(f'xq fallback timeout (skip): {e}', file=sys.stderr)
+        except Exception as e:
+            print(f'xq fallback failed: {e}', file=sys.stderr)
 
     # 2) stock_comment_em — 全市场综合评分
     comment_rows = []
     try:
         fn = getattr(ak, 'stock_comment_em', None)
         if fn is not None:
-            df = with_subsource_timeout(25, fn)
+            df = with_subsource_timeout(60, fn)  # 5184 行 ~12s 在 prod
             if df is not None and not df.empty:
                 # 字段 (柔性): 代码 / 名称 / 最新价 / 涨跌幅 / 换手率 / 主力成本 /
                 # 机构参与度 / 综合得分 / 上升 / 目前排名 / 关注指数 / 交易日
@@ -5126,21 +5155,21 @@ def get_social_sentiment_snapshot(stock_codes_csv: Optional[str] = None) -> List
                         if universe_filter is not None and code not in universe_filter:
                             continue
                         rank_info = rank_by_code.get(code, {})
+                        payload = _row_to_jsonable(r, df.columns)
+                        payload['_rank_source'] = used_rank_source
                         comment_rows.append({
                             'stock_code': code,
                             'stock_name': rank_info.get('stock_name') or (_cell_str(r, name_col) if name_col else None),
                             'hot_rank_em': rank_info.get('hot_rank_em'),
                             'comment_score': _cell_float(r, comment_col) if comment_col else None,
                             'institution_participation': _cell_float(r, instparti_col) if instparti_col else None,
-                            # AKShare stock_comment_em 不直接 expose '散户意愿', 留作 future
-                            # (`stock_comment_detail_scrd_desire_em(symbol)` per-stock 单独接口太贵)
                             'retail_desire': None,
                             'focus_index': _cell_float(r, focus_col) if focus_col else None,
-                            'raw_payload': _row_to_jsonable(r, df.columns),
+                            'raw_payload': payload,
                         })
                     except Exception:
                         continue
-                print(f'stock_comment_em: parsed {len(comment_rows)} rows (after universe filter)', file=sys.stderr)
+                print(f'stock_comment_em: parsed {len(comment_rows)} rows (after universe filter); rank_source={used_rank_source}', file=sys.stderr)
     except SourceTimeout as e:
         print(f'stock_comment_em timeout (skip): {e}', file=sys.stderr)
     except Exception as e:
@@ -5159,7 +5188,7 @@ def get_social_sentiment_snapshot(stock_codes_csv: Optional[str] = None) -> List
                 'institution_participation': None,
                 'retail_desire': None,
                 'focus_index': None,
-                'raw_payload': {'hot_rank_only': True},
+                'raw_payload': {'hot_rank_only': True, '_rank_source': used_rank_source},
             })
 
     return comment_rows
