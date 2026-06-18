@@ -4,11 +4,16 @@
 
 **单例 Registry 在 `PrometheusRegistry.ts`** —— 整个进程一份 `prom-client.Registry`，避免不同模块各自注册同名 metric 导致 `Error: A metric with the name X has already been registered`。
 
-**4 个 AC 要求的核心 metric**：
+**当前注册的业务 metric (US-072 + audit S-1 + US-004)**：
 - `http_requests_total{method,route,status}` Counter
 - `backtest_total{strategy,result}` Counter
 - `ai_request_duration_seconds{provider,endpoint,status}` Histogram (buckets 50 ms - 30 s)
 - `order_total{direction,status,code}` Counter
+- `backtest_trade_count_total{strategy_key}` Counter (audit S-1: 检测组合策略 trade_count=0 退化)
+- `scheduler_task_runs_total{task_type,status}` Counter (US-004: 调度任务执行计数, status=success/failed/skipped)
+- `scheduler_task_duration_seconds{task_type,status}` Histogram (US-004: 调度任务耗时, buckets 100 ms - 600 s)
+
+**命名约定**: `<domain>_<verb>_<unit>` (e.g. `scheduler_task_runs_total` = domain=scheduler, verb=runs, unit=total → counter; `*_seconds` 后缀 → histogram). 新增 metric 必须遵循.
 
 **新加 metric 的 checklist**：
 1. 在 `createPrometheusRegistry()` 内注册（不要在外面 new Counter）
@@ -33,6 +38,7 @@
 - `src/services/AIAdvisorService.timedAIRequest()` — `observeAIRequestDuration()` axios 调用 wrapper
 - `src/quant/backtest/internal/QuantBacktestService.processBacktestTask` — `incrementBacktestTotal()` 成功路径
 - `src/quant/backtest/internal/QuantBacktestService.markTaskFailed` — `incrementBacktestTotal()` 失败路径
+- `src/services/SchedulerService._executeTaskLogic` — `recordSchedulerTaskRun()` 三出口 (success/failed/skipped). label 只取 `task.type` 不取 `task.name`/`task.id` (cardinality 控制在 54 cron type × 3 status = 162 series, 远低于 Prometheus per-job 10k 红线).
 - `src/index.ts` — `httpMetricsMiddleware()` 全局挂载 + `/metrics` endpoint
 
 **`/metrics` endpoint 不加鉴权**（Prometheus scraper 通常在内网通过反向代理访问；任何 auth middleware 都会让抓取失败）。

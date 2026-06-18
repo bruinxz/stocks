@@ -65,3 +65,23 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - tsconfig 显式 `"exclude": [..., "**/*.test.ts"]` 是项目刻意的 —— 测试文件不走 tsc 编译流水线 (跑 prod tsc --noEmit 不会扫到), 只靠 run-tests.ts spawn 子进程 transpile-only. 副作用: ESLint w/ parserOptions.project 也读不到测试文件, 跑 lint 会报 "tsconfig does not include this file" parse error —— 这是项目所有 test 文件的统一表现 (cron-registry.test.ts 一样), 视为已知 baseline 不需要修.
   - 双 channel 风格 (risk_alert DB + feishu_ops webhook): channel 之间 try-catch 互相隔离 + 每个 channel 都 fail-OPEN (返回 success=false 而非 throw); buildOpsAlertChannelPlan 是 env+opts 仲裁的"唯一事实源", 任何"加第三个通道"都先加这里. 此模式可复用到任何 boot guard / 巡检脚本 (例如未来 OPS-005 RiskAlert 标准 dispatcher).
 ---
+
+## 2026/06/19 04:50 - US-004
+- 实现 [OPS-004] Prometheus metric 标准化（之前迭代已落 metric 注册 + helper + SchedulerService 埋点; 本次补齐 ≥20 metric AC 验证 + helper test + CLAUDE.md 同步收尾）
+- Files changed:
+  - backend/src/metrics/PrometheusRegistry.ts: 新增 SchedulerTaskLabel type union + schedulerTaskRunsTotal counter + schedulerTaskDurationSeconds histogram (buckets 100ms~600s) + recordSchedulerTaskRun helper (无效 duration 仅 inc counter 不 observe histogram, fail-OPEN)
+  - backend/src/services/SchedulerService.ts: import recordSchedulerTaskRun + _executeTaskLogic 三出口 (success/failed/skipped/非交易日 skipped) 埋点 wall-clock duration; failed 出口 try-catch 自吞防 metric 异常影响主流程
+  - backend/tests/metrics/prometheus-registry.test.ts: 67 → 86 (新增 testRecordSchedulerTaskRun + testTwentyMetricsVisible, 覆盖 counter 维度隔离 / histogram sum 累加 / 无效 duration 守门 / 空 task_type → unknown / ≥20 metric AC 验证, 实测 26 默认 + 7 业务 = 33 metric helpLines)
+  - backend/src/metrics/CLAUDE.md: 业务 metric 清单从 4 个扩到 7 个; 新增"命名约定 <domain>_<verb>_<unit>"段; 业务埋点位置补 SchedulerService._executeTaskLogic 三出口 + cardinality 红线说明
+  - ralph/prd.json: US-004 passes=true + notes
+- 验证:
+  - `npx tsc --noEmit` exit 0
+  - `npm test -- --filter=prometheus-registry` exit 0, 86 ok / 0 failed
+  - `eslint src/metrics/PrometheusRegistry.ts` exit 0 (0 err 0 warn); SchedulerService.ts lint baseline 20 err (stash 验证均为 pre-existing, 本次新增 0)
+- **Learnings for future iterations:**
+  - prom-client Counter / Histogram 共享 labelNames union 时, 命名约定 `<domain>_<verb>_<unit>`: counter 用 `_total`, histogram 用 `_seconds`/`_bytes`/`_count`. 新加 metric 必须在 createPrometheusRegistry 内一次性 new 进 registry, 不要在外面 new (会触发 prom-client "metric with name X has already been registered" 防御抛出, 见 testCreateRegistry 第 158 行验证).
+  - 测 ≥N metric AC 的标准做法: `text.split('\n').filter(l => l.startsWith('# HELP ')).length` —— 因 counter 不 inc 不会 emit 样本行, 但 # HELP / # TYPE 行 createPrometheusRegistry 就会写, 用这两个就够; 不要数样本 line (会漏 0 值 counter). 这套数 metric 模式可复用到任何"metric registry 覆盖率"AC.
+  - prom-client histogram 的 sum / count 在 getMetricsAsJSON() 里是 `values[].metricName` 命名为 `<name>_sum` / `<name>_count`, 用 .find() 时**必须**同时匹配 metricName + labels (label 不同的桶共享同一个 values 数组). 见 testRecordSchedulerTaskRun 第 533 行模式.
+  - SchedulerService._executeTaskLogic 有 3 个语义出口 (success / failed / 节假日 skipped), 必须**全部**埋点而非只埋 success —— failed 不埋会造成 Grafana 看板"成功率虚高"假象 (分母被 failed 漏算). failed 出口的 metric.inc 必须套 try-catch (尽管 helper 内已 try-catch, belt-and-suspenders), 因为下一行就 throw err 给上层, 任何 metric 异常都会被淹没成主流程 error.
+  - SchedulerService 项目历史里 baseline ESLint 错误 20 个 (主要 require-style 动态 import + prettier formatting), 都是 pre-existing. 改这个文件时, 用 `git stash && eslint && git stash pop` 对比模式确认"本次新增 0 错误", 否则会被误判 regression. 这套 baseline-diff 模式适用所有有历史 lint 债务的文件.
+---

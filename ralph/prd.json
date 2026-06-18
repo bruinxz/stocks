@@ -64,8 +64,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 4,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "已落 scheduler_task_runs_total (counter) + scheduler_task_duration_seconds (histogram) 两个 metric, 命名遵循 <domain>_<verb>_<unit>; SchedulerService._executeTaskLogic 三出口 (success/failed/skipped) 全埋点; cardinality 控制在 task_type+status (54*3=162 series); 单测从 67 扩到 86 (新增 13 项: recordSchedulerTaskRun + AC ≥20 metric 在 /metrics 可见 — 实测 26 默认+7 业务=33). tsc 0 err / lint 0 new err / test 86 ok."
     },
     {
       "id": "US-005",

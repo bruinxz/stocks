@@ -47,6 +47,12 @@ export type AIRequestLabel = 'provider' | 'endpoint' | 'status';
 export type OrderLabel = 'direction' | 'status' | 'code';
 /** audit S-1 修复: 回测产生的 trade 数 — 区分组合级策略 trade_count=0 退化与正常运行 */
 export type BacktestTradeCountLabel = 'strategy_key';
+/**
+ * US-004 [OPS-004] 调度任务可观测: task_type=CRON_REGISTRY 的 type 字段, status=success/failed/skipped.
+ * 不含 task name / task id —— cardinality 受控 (54 个 cron type × 3 status = 162 series, 远低于
+ * Prometheus per-job 10k 红线).
+ */
+export type SchedulerTaskLabel = 'task_type' | 'status';
 
 export interface PrometheusMetricsBundle {
   registry: Registry;
@@ -56,6 +62,10 @@ export interface PrometheusMetricsBundle {
   orderTotal: Counter<OrderLabel>;
   /** audit S-1 修复: 单次回测累计 trade 笔数（按策略 key 分） */
   backtestTradeCountTotal: Counter<BacktestTradeCountLabel>;
+  /** US-004: 调度任务执行计数（按 task_type + status 分） */
+  schedulerTaskRunsTotal: Counter<SchedulerTaskLabel>;
+  /** US-004: 调度任务执行耗时（秒） */
+  schedulerTaskDurationSeconds: Histogram<SchedulerTaskLabel>;
 }
 
 // ---------------------------------------------------------------------------
@@ -114,6 +124,26 @@ export function createPrometheusRegistry(
     registers: [registry],
   });
 
+  // US-004 [OPS-004]: scheduler 域 — 54 个 cron type 的执行计数 / 耗时.
+  // 命名遵循 `<domain>_<verb>_<unit>` 约定:
+  //   scheduler_task_runs_total       (domain=scheduler, verb=runs, unit=total → counter)
+  //   scheduler_task_duration_seconds (domain=scheduler, verb=duration, unit=seconds → histogram)
+  const schedulerTaskRunsTotal = new Counter<SchedulerTaskLabel>({
+    name: 'scheduler_task_runs_total',
+    help: '调度任务执行次数（按 task_type + status=success/failed/skipped 分组）',
+    labelNames: ['task_type', 'status'],
+    registers: [registry],
+  });
+
+  const schedulerTaskDurationSeconds = new Histogram<SchedulerTaskLabel>({
+    name: 'scheduler_task_duration_seconds',
+    help: '调度任务执行耗时分布（秒；按 task_type + status 分组）',
+    labelNames: ['task_type', 'status'],
+    // buckets 覆盖 100ms ~ 600s：DAILY_UPDATE / SYNC_HISTORY 等批量任务典型 30s~5min
+    buckets: [0.1, 0.5, 1, 5, 10, 30, 60, 120, 300, 600],
+    registers: [registry],
+  });
+
   return {
     registry,
     httpRequestsTotal,
@@ -121,6 +151,8 @@ export function createPrometheusRegistry(
     aiRequestDurationSeconds,
     orderTotal,
     backtestTradeCountTotal,
+    schedulerTaskRunsTotal,
+    schedulerTaskDurationSeconds,
   };
 }
 
@@ -322,6 +354,36 @@ export function incrementBacktestTradeCount(
   if (!Number.isFinite(count) || count <= 0) return;
   try {
     bundle.backtestTradeCountTotal.inc({ strategy_key: strategy_key || 'unknown' }, count);
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * US-004 [OPS-004]: 记录一次 SchedulerService 任务执行的计数 + 耗时.
+ *
+ * 调用时机: SchedulerService._executeTaskLogic 的 success / failed / skipped 分支收尾.
+ * @param task_type CRON_REGISTRY 中的 type 字段（e.g. 'DAILY_UPDATE' / 'SYNC_HISTORY'）；未知传 'unknown'
+ * @param status 'success' | 'failed' | 'skipped'（skipped = 节假日跳过）
+ * @param durationSeconds 任务耗时（秒）；负数 / NaN 时仍 inc counter 但不 observe histogram
+ */
+export function recordSchedulerTaskRun(
+  task_type: string,
+  status: 'success' | 'failed' | 'skipped',
+  durationSeconds: number,
+  bundle: PrometheusMetricsBundle = getPrometheusBundle()
+): void {
+  const labels = { task_type: task_type || 'unknown', status };
+  try {
+    bundle.schedulerTaskRunsTotal.inc(labels);
+  } catch {
+    // ignore
+  }
+  if (!Number.isFinite(durationSeconds) || durationSeconds < 0) {
+    return;
+  }
+  try {
+    bundle.schedulerTaskDurationSeconds.observe(labels, durationSeconds);
   } catch {
     // ignore
   }

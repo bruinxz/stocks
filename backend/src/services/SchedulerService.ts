@@ -62,6 +62,10 @@ import {
 } from '../portfolio/internal/PaperTradingDashboardService';
 import moment from 'moment-timezone';
 import { Op } from 'sequelize';
+// US-004 [OPS-004]: scheduler 任务执行计数 / 耗时 metric — 由 _executeTaskLogic
+// 在 success / failed / skipped 三个出口收尾时调用. 不感知 task.id / task.name (避免
+// label cardinality 爆炸); 只按 CRON_REGISTRY 的 task_type 维度统计.
+import { recordSchedulerTaskRun } from '../metrics/PrometheusRegistry';
 
 type TaskRunStatus = 'SUCCESS' | 'FAILED' | 'RUNNING';
 type TaskExecutionLogLike = TaskExecutionLog | null;
@@ -720,6 +724,9 @@ class SchedulerService {
 
   private async _executeTaskLogic(task: ScheduledTask, isManual = false) {
     const timestamp = new Date();
+    // US-004 [OPS-004]: 记录 wall-clock 起点, 出口处 recordSchedulerTaskRun 落
+    // scheduler_task_runs_total + scheduler_task_duration_seconds.
+    const _metricStart = Date.now();
     await task.update({ last_run_at: timestamp, last_run_status: 'RUNNING' });
 
     const executionLog = await this.createExecutionLog(task, timestamp, isManual);
@@ -762,6 +769,12 @@ class SchedulerService {
             result_summary: { skipped: true, reason: reason, scenario: 'non_trading_day' },
           });
           await this.markTaskFinished(task, 'SUCCESS');
+          // US-004 [OPS-004]: 节假日跳过出口 — 走 status=skipped, 不算 success.
+          recordSchedulerTaskRun(
+            String(task.type || 'unknown'),
+            'skipped',
+            (Date.now() - _metricStart) / 1000
+          );
           return { success: true, message: `skipped: ${reason}` };
         }
       }
@@ -4575,10 +4588,26 @@ class SchedulerService {
       }
 
       await this.markTaskFinished(task, 'SUCCESS');
+      // US-004 [OPS-004]: 正常 success 出口.
+      recordSchedulerTaskRun(
+        String(task.type || 'unknown'),
+        'success',
+        (Date.now() - _metricStart) / 1000
+      );
       return { success: true, message: 'Task executed successfully' };
     } catch (error: any) {
       logger.error(`Error executing task ${task.name}:`, error);
       await this.markTaskFinished(task, 'FAILED', executionLog, error);
+      // US-004 [OPS-004]: failed 出口 — try-catch 自吞防 metric 异常影响主流程.
+      try {
+        recordSchedulerTaskRun(
+          String(task.type || 'unknown'),
+          'failed',
+          (Date.now() - _metricStart) / 1000
+        );
+      } catch {
+        // metric helper 本身已 try-catch, 此处 belt-and-suspenders.
+      }
       throw error;
     }
   }

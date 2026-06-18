@@ -31,6 +31,13 @@
  *     - getMetricsContent() 含 4 个 metric 的 # HELP / # TYPE 行
  *     - getMetricsContentType() 返回 'text/plain; version=0.0.4; charset=utf-8'
  *   - default metrics（process_cpu_user_seconds_total / nodejs_heap）启用时存在
+ *   - US-004 [OPS-004] 标准化:
+ *     - recordSchedulerTaskRun 三 status (success/failed/skipped) + counter/histogram 隔离
+ *     - 无效 duration (负/NaN) counter 仍 inc 但 histogram 不 observe (主流程鲁棒)
+ *     - 空 task_type → 'unknown' (cardinality 守门)
+ *     - AC: 启 enableDefaultMetrics 后 ≥20 metric 在 /metrics 可见 (26 默认 + 7 业务)
+ *     - 新增 scheduler_task_runs_total / scheduler_task_duration_seconds 遵循
+ *       `<domain>_<verb>_<unit>` 约定 (scheduler / runs+duration / total+seconds)
  *
  * 与既有 67 个 test (US-068+) 一样：assert / assertEqual / async main / process.exit code.
  */
@@ -46,6 +53,7 @@ import {
   normalizeMethodLabel,
   normalizeStatusLabel,
   observeAIRequestDuration,
+  recordSchedulerTaskRun,
   resolveRouteLabel,
 } from '../../src/metrics/PrometheusRegistry';
 
@@ -545,6 +553,145 @@ async function testContentType(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+//  US-004 [OPS-004]: 标准化 — 新增 scheduler 域 metric + AC "≥20 metric 可见"
+// ---------------------------------------------------------------------------
+
+async function testRecordSchedulerTaskRun(): Promise<void> {
+  const bundle = createPrometheusRegistry();
+  recordSchedulerTaskRun('DAILY_UPDATE', 'success', 1.2, bundle);
+  recordSchedulerTaskRun('DAILY_UPDATE', 'success', 0.8, bundle);
+  recordSchedulerTaskRun('DAILY_UPDATE', 'failed', 5.5, bundle);
+  recordSchedulerTaskRun('SYNC_HISTORY', 'skipped', 0.01, bundle);
+
+  // counter 计数维度: task_type + status 隔离
+  assertEqual(
+    'DAILY_UPDATE success count = 2',
+    await metricValue(bundle, 'scheduler_task_runs_total', {
+      task_type: 'DAILY_UPDATE',
+      status: 'success',
+    }),
+    2
+  );
+  assertEqual(
+    'DAILY_UPDATE failed count = 1',
+    await metricValue(bundle, 'scheduler_task_runs_total', {
+      task_type: 'DAILY_UPDATE',
+      status: 'failed',
+    }),
+    1
+  );
+  assertEqual(
+    'SYNC_HISTORY skipped count = 1',
+    await metricValue(bundle, 'scheduler_task_runs_total', {
+      task_type: 'SYNC_HISTORY',
+      status: 'skipped',
+    }),
+    1
+  );
+  assertEqual(
+    'DAILY_UPDATE skipped count = 0 (untouched)',
+    await metricValue(bundle, 'scheduler_task_runs_total', {
+      task_type: 'DAILY_UPDATE',
+      status: 'skipped',
+    }),
+    0
+  );
+
+  // histogram sum / count: success 维 2 次 → count=2, sum=2.0
+  const json = await bundle.registry.getMetricsAsJSON();
+  const hist = json.find(x => x.name === 'scheduler_task_duration_seconds');
+  assert('scheduler_task_duration_seconds exists', !!hist);
+  const successCount =
+    (hist as any).values?.find(
+      (v: any) =>
+        v.metricName === 'scheduler_task_duration_seconds_count' &&
+        v.labels?.task_type === 'DAILY_UPDATE' &&
+        v.labels?.status === 'success'
+    )?.value || 0;
+  const successSum =
+    (hist as any).values?.find(
+      (v: any) =>
+        v.metricName === 'scheduler_task_duration_seconds_sum' &&
+        v.labels?.task_type === 'DAILY_UPDATE' &&
+        v.labels?.status === 'success'
+    )?.value || 0;
+  assertEqual('DAILY_UPDATE success histogram count = 2', successCount, 2);
+  assert(
+    'DAILY_UPDATE success histogram sum ≈ 2.0',
+    Math.abs(successSum - 2.0) < 1e-6,
+    `actual=${successSum}`
+  );
+
+  // 负 duration / NaN: counter 仍 +1, histogram 不 observe (主流程不被 metric 拒绝)
+  recordSchedulerTaskRun('DAILY_UPDATE', 'failed', -1, bundle);
+  recordSchedulerTaskRun('DAILY_UPDATE', 'failed', NaN, bundle);
+  assertEqual(
+    'DAILY_UPDATE failed counter advances past invalid duration (was 1, +2 → 3)',
+    await metricValue(bundle, 'scheduler_task_runs_total', {
+      task_type: 'DAILY_UPDATE',
+      status: 'failed',
+    }),
+    3
+  );
+  const json2 = await bundle.registry.getMetricsAsJSON();
+  const hist2 = json2.find(x => x.name === 'scheduler_task_duration_seconds');
+  const failedCount =
+    (hist2 as any).values?.find(
+      (v: any) =>
+        v.metricName === 'scheduler_task_duration_seconds_count' &&
+        v.labels?.task_type === 'DAILY_UPDATE' &&
+        v.labels?.status === 'failed'
+    )?.value || 0;
+  assertEqual('histogram only observed valid duration (count=1, not 3)', failedCount, 1);
+
+  // 空 task_type 退回 'unknown'
+  recordSchedulerTaskRun('', 'success', 0.1, bundle);
+  assertEqual(
+    'empty task_type → unknown',
+    await metricValue(bundle, 'scheduler_task_runs_total', {
+      task_type: 'unknown',
+      status: 'success',
+    }),
+    1
+  );
+}
+
+async function testTwentyMetricsVisible(): Promise<void> {
+  // US-004 AC: "至少 20 个 metric 在 /metrics 可见".
+  // 单 createPrometheusRegistry({enableDefaultMetrics:true}) 已注册:
+  //   - 26 个 prom-client 默认 process_ / nodejs_ 系列 metric
+  //   - 7 个业务 metric (http_requests_total, backtest_total, ai_request_duration_seconds,
+  //     order_total, backtest_trade_count_total, scheduler_task_runs_total,
+  //     scheduler_task_duration_seconds)
+  // 触发各 metric 让 HELP / TYPE 都暴露 (counter 不 inc 不会 emit 行).
+  const bundle = createPrometheusRegistry({ enableDefaultMetrics: true });
+  bundle.httpRequestsTotal.inc({ method: 'GET', route: '/x', status: '200' });
+  incrementBacktestTotal('mfa', 'success', bundle);
+  observeAIRequestDuration('tg', 'analyze', 'success', 1, bundle);
+  incrementOrderTotal('BUY', 'success', 'ok', bundle);
+  bundle.backtestTradeCountTotal.inc({ strategy_key: 'mfa' }, 1);
+  recordSchedulerTaskRun('DAILY_UPDATE', 'success', 1.0, bundle);
+
+  const text = await getMetricsContent(bundle);
+  const helpLines = text.split('\n').filter(l => l.startsWith('# HELP '));
+  assert(
+    `≥20 metrics visible (got ${helpLines.length})`,
+    helpLines.length >= 20,
+    `metrics=${helpLines.map(l => l.split(' ')[2]).join(',')}`
+  );
+
+  // 各域命名遵循 `<domain>_<verb>_<unit>` 约定: scheduler_task_runs_total / scheduler_task_duration_seconds
+  assert(
+    'scheduler_task_runs_total exposed in /metrics text',
+    text.includes('# TYPE scheduler_task_runs_total counter')
+  );
+  assert(
+    'scheduler_task_duration_seconds exposed in /metrics text',
+    text.includes('# TYPE scheduler_task_duration_seconds histogram')
+  );
+}
+
+// ---------------------------------------------------------------------------
 //  Driver — async sequencing (per US-037 codebase pattern)
 // ---------------------------------------------------------------------------
 
@@ -560,6 +707,8 @@ async function main() {
   await testHttpMiddleware();
   await testMetricsTextFormat();
   await testContentType();
+  await testRecordSchedulerTaskRun();
+  await testTwentyMetricsVisible();
 
   console.log(`\n${passed} ok, ${failed} failed`);
   if (failed > 0) {
