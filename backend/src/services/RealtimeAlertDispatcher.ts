@@ -183,13 +183,33 @@ export interface RealtimeAlertCardPayload {
 // ---------------------------------------------------------------------------
 
 /**
- * dedup signature：`<rule_id>::<symbol>::<level>` — 30 min 内同签名只推一次。
- * 不含 alert_id（不同 alert id 但同 rule+symbol+level = 短时间内重复触发，需 dedup）。
+ * dedup signature：`<rule_id>::<symbol>::<level>::<message_hash>` — 30 min 内同签名只推一次。
+ * 不含 alert_id（不同 alert id 但同 rule+symbol+level+message = 短时间内重复触发，需 dedup）。
+ *
+ * Batch X (2026-06-17, notif-3 fix): signature 加入 message 内容 hash, 让"升级告警"
+ * (e.g. drawdown 10% LEVEL_1 → 15% LEVEL_2 同 rule_id=drawdown_breaker 但 message 不同)
+ * 能突破 dedup 窗口 + 真发出. 之前只看 rule+symbol+level → 同 rule_id 升级的第二条
+ * 30 min 内 silent drop, 用户错过关键升级.
+ *
+ * message hash 用前 32 字符 FNV-1a-like 兜底 (避免 npm crypto 依赖, sha-256 多余):
+ * 简单算法对 message 完全相同 → 完全相同 hash → 真重复仍 dedup; 文字微差 → 不同 hash → 不 dedup.
  */
+function hashMessage(message: string): string {
+  if (!message) return '0';
+  // 32-bit FNV-1a
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < message.length; i++) {
+    hash ^= message.charCodeAt(i);
+    hash = (hash * 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0');
+}
+
 export function buildAlertSignature(input: {
   rule_id?: string;
   symbol: string;
   level: string;
+  message?: string;
 }): string {
   const rule = String(input.rule_id || 'unknown').trim() || 'unknown';
   const sym = String(input.symbol || '').trim() || 'UNKNOWN_SYMBOL';
@@ -197,7 +217,8 @@ export function buildAlertSignature(input: {
     String(input.level || '')
       .trim()
       .toUpperCase() || 'UNKNOWN_LEVEL';
-  return `${rule}::${sym}::${lvl}`;
+  const msgHash = input.message ? hashMessage(input.message) : '0';
+  return `${rule}::${sym}::${lvl}::${msgHash}`;
 }
 
 /**
@@ -562,16 +583,41 @@ export interface RealtimeAlertDispatcherDataSource {
 // ---------------------------------------------------------------------------
 
 export class DefaultRealtimeAlertDispatcherDataSource implements RealtimeAlertDispatcherDataSource {
+  // Batch X (2026-06-17, notif-4 fix): loadUserConfig 60s cache 防 DB 风暴.
+  // 之前每条 HIGH alert 调 1 次 → 高频 alert (盘中暴跌时 N 条/min) 让 User 表
+  // findByPk 风暴. notification config 不会 sub-minute 改, 60s cache 安全.
+  // 同 user 并发 update notification config 后最坏延迟 60s 真生效, 可接受.
+  private userConfigCache = new Map<number, { ts: number; data: any }>();
+  private static USER_CONFIG_CACHE_TTL_MS = 60_000;
+
   async loadUserConfig(user_id: number) {
+    const cached = this.userConfigCache.get(user_id);
+    if (
+      cached &&
+      Date.now() - cached.ts <
+        DefaultRealtimeAlertDispatcherDataSource.USER_CONFIG_CACHE_TTL_MS
+    ) {
+      return cached.data;
+    }
     const user = await User.findByPk(user_id, {
       attributes: ['username', 'risk_config'],
       raw: true,
     });
-    if (!user) return null;
-    return {
+    if (!user) {
+      this.userConfigCache.set(user_id, { ts: Date.now(), data: null });
+      return null;
+    }
+    const data = {
       username: (user as any).username,
       config: normalizeNotificationConfig((user as any).risk_config),
     };
+    this.userConfigCache.set(user_id, { ts: Date.now(), data });
+    return data;
+  }
+
+  /** Batch X: 让 settings update 路径手动 invalidate */
+  invalidateUserConfigCache(user_id: number): void {
+    this.userConfigCache.delete(user_id);
   }
 
   async loadSeenRecords(user_id: number): Promise<RealtimeAlertSeenRecord[]> {
@@ -671,6 +717,8 @@ export class RealtimeAlertDispatcher {
       rule_id,
       symbol: input.symbol,
       level: input.level,
+      // Batch X (notif-3): 传 message 让升级告警 (drawdown 10% → 15%) 突破 dedup.
+      message: input.message,
     });
     const alert_id_dispatch = buildAlertId(input.user_id, triggered_at, randHex4());
     const baseUrl = options.frontend_base_url || process.env.FRONTEND_BASE_URL || undefined;

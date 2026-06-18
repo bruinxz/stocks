@@ -102,7 +102,23 @@ class FeishuBotWebhookService {
   constructor() {
     this.http = axios.create({
       timeout: Number(process.env.FEISHU_BOT_WEBHOOK_TIMEOUT_MS || 10000),
+      // Batch X (2026-06-17): SSRF guard 第二道防线 — maxRedirects: 0 防 302 跳
+      // 内网 + validateStatus 只接受 2xx 避免 redirect 体被当成功.
+      maxRedirects: 0,
+      validateStatus: status => status >= 200 && status < 300,
     });
+  }
+
+  /**
+   * Batch X (2026-06-17): safePost — 任何 webhook POST 前 validateWebhookUrl,
+   * 拒绝内网 / 非白名单 / 非 https URL. 失败 throw err.code='WEBHOOK_URL_INVALID'
+   * caller try/catch 转 {success:false, message}.
+   */
+  private async safePost(url: string, body: any) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { assertWebhookUrlAllowed } = require('../utils/webhookUrlGuard');
+    assertWebhookUrlAllowed(url, 'feishu webhook_url');
+    return this.safePost(url, body);
   }
 
   isEnabled(): boolean {
@@ -166,7 +182,7 @@ class FeishuBotWebhookService {
     }
 
     try {
-      const response = await this.http.post(targetUrl, cardBody);
+      const response = await this.safePost(targetUrl, cardBody);
       const body = response.data || {};
       const rawCode = body.code ?? body.StatusCode ?? body.status_code ?? 0;
       const code = Number(rawCode);
@@ -244,7 +260,7 @@ class FeishuBotWebhookService {
     }
 
     try {
-      const response = await this.http.post(targetUrl, cardBody);
+      const response = await this.safePost(targetUrl, cardBody);
       const body = response.data || {};
       const rawCode = body.code ?? body.StatusCode ?? body.status_code ?? 0;
       const code = Number(rawCode);
@@ -322,7 +338,7 @@ class FeishuBotWebhookService {
     }
 
     try {
-      const response = await this.http.post(targetUrl, cardBody);
+      const response = await this.safePost(targetUrl, cardBody);
       const body = response.data || {};
       const rawCode = body.code ?? body.StatusCode ?? body.status_code ?? 0;
       const code = Number(rawCode);
@@ -366,7 +382,7 @@ class FeishuBotWebhookService {
     }
 
     try {
-      const response = await this.http.post(webhook, card);
+      const response = await this.safePost(webhook, card);
       const body = response.data || {};
       const rawCode = body.code ?? body.StatusCode ?? body.status_code ?? 0;
       const code = Number(rawCode);

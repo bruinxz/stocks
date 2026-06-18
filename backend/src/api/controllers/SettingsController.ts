@@ -595,15 +595,18 @@ export class SettingsController {
     try {
       const user_id = (req as any).user.id;
       const body = req.body || {};
-      const dryRun = body.dry_run === true || body.dry_run === 'true';
+      // Batch X (2026-06-17, notif-2 fix): 强制 dry_run=true + 用 fixture payload
+      // 忽略 body.url / body.payload. 之前用户可塞任意 url + payload, 把"自家系统消息"
+      // 渲染钓鱼链接发到微信公众号 — 比飞书 phish 信任度更高.
+      const dryRun = true;
       const kind = String(body.template_kind || 'daily_digest').toLowerCase();
       let result;
       if (kind === 'earnings_alert' || kind === 'earnings_forecast') {
         result = await weChatOAService.sendEarningsForecast({
           user_id,
           dry_run: dryRun,
-          url: body.url,
-          payload: body.payload || {
+          // Batch X: 不接受 body.url / body.payload, 一律用 fixture.
+          payload: {
             symbol: '600519',
             name: '贵州茅台',
             forecast_type: '预增',
@@ -616,8 +619,7 @@ export class SettingsController {
         result = await weChatOAService.sendRiskAlert({
           user_id,
           dry_run: dryRun,
-          url: body.url,
-          payload: body.payload || {
+          payload: {
             level: 'HIGH',
             title: '测试风控告警',
             detail: '这是一条来自 wechat-test 端点的冒烟测试告警',
@@ -629,8 +631,7 @@ export class SettingsController {
         result = await weChatOAService.sendDailyDigest({
           user_id,
           dry_run: dryRun,
-          url: body.url,
-          payload: body.payload || {
+          payload: {
             user_id,
             username: 'test',
             trade_date: new Date().toISOString().slice(0, 10),
@@ -650,10 +651,10 @@ export class SettingsController {
           },
         });
       }
-      res.json({ success: true, data: result, message: '微信测试消息已派发' });
+      res.json({ success: true, data: result, message: '微信测试消息已派发 (dry_run 强制)' });
     } catch (error: any) {
       logger.error('发送测试微信消息失败:', error);
-      res.status(500).json({ success: false, message: error.message });
+      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
     }
   }
 
@@ -735,7 +736,12 @@ export class SettingsController {
     try {
       const user_id = (req as any).user.id;
       const body = req.body || {};
-      const dryRun = body.dry_run === undefined ? true : body.dry_run === true;
+      // Batch X (2026-06-17, notif-2 fix): 强制 dry_run=true, 用户不能改.
+      // 之前任意 login 用户可改 dry_run=false 让冒烟测试真发 SMS/邮件/飞书 +
+      // body.message 用户可控塞钓鱼链接 ("点这里激活账号 → evil.com"). 现在:
+      //  (a) dry_run 强制 true 永远不真发;
+      //  (b) message 用固定 fixture, 忽略 body.message.
+      const dryRun = true;
       const result = await realtimeAlertDispatcher.dispatch(
         {
           user_id,
@@ -743,10 +749,7 @@ export class SettingsController {
           symbol: '600519',
           name: '贵州茅台',
           level: 'HIGH',
-          message:
-            typeof body.message === 'string' && body.message.trim()
-              ? body.message.trim()
-              : '【冒烟测试】这是一条来自 settings/sms-test 端点的测试 HIGH 风控告警',
+          message: '【冒烟测试】这是一条来自 settings/sms-test 端点的测试 HIGH 风控告警',
           rule_id: 'smoke_test',
           triggered_at: new Date().toISOString(),
         },
@@ -755,11 +758,11 @@ export class SettingsController {
       res.json({
         success: true,
         data: result,
-        message: dryRun ? '已生成测试告警 payload（dry_run）' : '测试告警已派发',
+        message: '已生成测试告警 payload（dry_run，永远不真发；如需真发请联系 admin）',
       });
     } catch (error: any) {
       logger.error('发送测试 SMS / 实时告警失败:', error);
-      res.status(500).json({ success: false, message: error.message });
+      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
     }
   }
 }
