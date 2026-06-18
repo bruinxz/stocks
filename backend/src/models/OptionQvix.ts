@@ -1,4 +1,12 @@
-import { Table, Column, Model, DataType, PrimaryKey, CreatedAt, UpdatedAt } from 'sequelize-typescript';
+import {
+  Table,
+  Column,
+  Model,
+  DataType,
+  PrimaryKey,
+  CreatedAt,
+  UpdatedAt,
+} from 'sequelize-typescript';
 
 /**
  * 期权波动率指数 QVIX (类似 VIX) — 4 个标的 (2026-06-11 新增).
@@ -16,10 +24,7 @@ import { Table, Column, Model, DataType, PrimaryKey, CreatedAt, UpdatedAt } from
  */
 @Table({
   tableName: 'option_qvix',
-  indexes: [
-    { fields: ['underlying'] },
-    { fields: ['observation_date'] },
-  ],
+  indexes: [{ fields: ['underlying'] }, { fields: ['observation_date'] }],
   comment: '期权波动率指数 QVIX (50ETF/300ETF/500ETF/创业板)',
 })
 export class OptionQvix extends Model<OptionQvix> {

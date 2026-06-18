@@ -1,4 +1,12 @@
-import { Table, Column, Model, DataType, PrimaryKey, CreatedAt, UpdatedAt } from 'sequelize-typescript';
+import {
+  Table,
+  Column,
+  Model,
+  DataType,
+  PrimaryKey,
+  CreatedAt,
+  UpdatedAt,
+} from 'sequelize-typescript';
 
 /**
  * 宏观经济指标日度 / 月度数据 (2026-06-11 新增).
@@ -18,10 +26,7 @@ import { Table, Column, Model, DataType, PrimaryKey, CreatedAt, UpdatedAt } from
  */
 @Table({
   tableName: 'macro_indicators',
-  indexes: [
-    { fields: ['indicator_key'] },
-    { fields: ['observation_date'] },
-  ],
+  indexes: [{ fields: ['indicator_key'] }, { fields: ['observation_date'] }],
   comment: '宏观经济指标 (PMI/CPI/M2/SHIBOR/十年期国债/GDP)',
 })
 export class MacroIndicator extends Model<MacroIndicator> {

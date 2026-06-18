@@ -51,9 +51,16 @@ import { paperTradingOrderIntentService } from './internal/PaperTradingOrderInte
 import { paperTradingTuningApplyService } from './internal/PaperTradingTuningApplyService';
 import { recommendationTradeOutcomeService } from '../services/RecommendationTradeOutcomeService';
 import { positionLimitGuard } from './risk/PositionLimitGuard';
-import { drawdownCircuitBreaker } from './risk/DrawdownCircuitBreaker';
+import { drawdownCircuitBreaker, RiskGuardUnavailableError } from './risk/DrawdownCircuitBreaker';
 import { perStockStopLossGuard, pickEffectivePct } from './risk/PerStockStopLossGuard';
 import { incrementOrderTotal } from '../metrics/PrometheusRegistry';
+import {
+  inferMarketSegment as inferMarketSegmentLM,
+  getLimitPct as getLimitPctLM,
+  isAtLimitUp as isAtLimitUpLM,
+  isAtLimitDown as isAtLimitDownLM,
+} from '../quant/marketLimits';
+import { isSTName as isSTNameLM } from '../utils/stNameUtils';
 
 // Re-export the small set of constants the controller still needs literal access
 // to (default capital, portfolio name keys for downstream services).  This is the
@@ -217,8 +224,197 @@ export function inferOrderFailureCode(message: unknown): string | null {
 }
 
 // ---------------------------------------------------------------------------
+//  BETA-6 (2026-06-18, audit M-17): Quote staleness 决策纯函数
+// ---------------------------------------------------------------------------
+
+export type QuoteStalenessKind =
+  | 'pass_realtime'
+  | 'pass_daily_bar_fallback'
+  | 'stale_realtime'
+  | 'stale_daily_bar';
+
+export interface QuoteStalenessDecision {
+  kind: QuoteStalenessKind;
+  message: string;
+  detail: Record<string, any>;
+}
+
+/**
+ * 评估行情陈旧度 — 优先 RealtimeQuote 30 min，缺失 fallback daily_bar 1 day。
+ *
+ * 输入全部传值（无 DB 调用 / 无 RealtimeQuoteService 调用），让 caller 注入
+ * RealtimeQuote 与 daily_bar timestamp 后纯逻辑判定 — 单测易、回测可复用。
+ *
+ * 返回 4 种 kind:
+ *   - pass_realtime — RealtimeQuote 在 30 min 内 → 放行
+ *   - pass_daily_bar_fallback — RealtimeQuote 缺失但 daily_bar 在 1 天内 → 放行
+ *   - stale_realtime — RealtimeQuote 超 30 min → 拒单 code='STALE_REALTIME_QUOTE'
+ *   - stale_daily_bar — RealtimeQuote 缺失 + daily_bar 超 1 天 → 拒单 code='STALE_DAILY_BAR'
+ */
+export function evaluateQuoteStaleness(input: {
+  symbol: string;
+  now_ms: number;
+  realtime_quote_time: any | null;
+  daily_bar_time: any;
+  max_realtime_age_minutes: number;
+  max_daily_bar_age_days: number;
+}): QuoteStalenessDecision {
+  // 1) RealtimeQuote 优先
+  if (input.realtime_quote_time !== null && input.realtime_quote_time !== undefined) {
+    const ts = new Date(input.realtime_quote_time).getTime();
+    if (Number.isFinite(ts)) {
+      const ageMinutes = (input.now_ms - ts) / (60 * 1000);
+      if (ageMinutes > input.max_realtime_age_minutes) {
+        return {
+          kind: 'stale_realtime',
+          message:
+            `行情数据陈旧 (RealtimeQuote 最新 ${Math.round(ageMinutes)} 分钟前 > ` +
+            `${input.max_realtime_age_minutes}min), 拒绝按 stale 价撮合。` +
+            `请等待行情同步或加 bypass_trading_hours=true 强制下单`,
+          detail: {
+            symbol: input.symbol,
+            quote_time: input.realtime_quote_time,
+            age_minutes: Math.round(ageMinutes),
+            source: 'realtime_quote',
+          },
+        };
+      }
+      return {
+        kind: 'pass_realtime',
+        message: 'realtime quote within window',
+        detail: {
+          symbol: input.symbol,
+          age_minutes: Math.round(ageMinutes),
+          source: 'realtime_quote',
+        },
+      };
+    }
+  }
+
+  // 2) RealtimeQuote 不可用 → daily_bar fallback
+  const barTs = new Date(input.daily_bar_time).getTime();
+  if (!Number.isFinite(barTs)) {
+    // 双源都解析失败 — 视为 stale_daily_bar
+    return {
+      kind: 'stale_daily_bar',
+      message: `行情数据陈旧 (RealtimeQuote 不可用 + daily_bar timestamp 无法解析: ${input.daily_bar_time})`,
+      detail: { symbol: input.symbol, daily_bar_time: input.daily_bar_time, source: 'daily_bar' },
+    };
+  }
+  const ageMs = input.now_ms - barTs;
+  const maxAgeMs = input.max_daily_bar_age_days * 24 * 60 * 60 * 1000;
+  if (ageMs > maxAgeMs) {
+    const ageDays = Math.round((ageMs / (24 * 60 * 60 * 1000)) * 10) / 10;
+    return {
+      kind: 'stale_daily_bar',
+      message:
+        `行情数据陈旧 (RealtimeQuote 不可用 + daily_bar ${ageDays} 天前 > ` +
+        `${input.max_daily_bar_age_days} 天), 拒绝按 stale 价撮合。` +
+        `请等待数据同步或加 bypass_trading_hours=true 强制下单`,
+      detail: {
+        symbol: input.symbol,
+        latest_bar_time: input.daily_bar_time,
+        age_days: ageDays,
+        source: 'daily_bar',
+      },
+    };
+  }
+  return {
+    kind: 'pass_daily_bar_fallback',
+    message: 'daily_bar fallback within window',
+    detail: {
+      symbol: input.symbol,
+      age_minutes: Math.round(ageMs / (60 * 1000)),
+      source: 'daily_bar',
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 //  Facade
 // ---------------------------------------------------------------------------
+
+/**
+ * audit S-3 修复: 涨跌停 pre-trade 拦截的纯函数实现。
+ *
+ * 单测可以直接调用此函数验证 5 个市场段 × BUY/SELL 边界, 不需要走 placeOrder
+ * 整条 DB 链路。`_placeOrderInner` 真实 BUY/SELL 路径里有同款逻辑 inline 嵌入,
+ * 把判定逻辑抽到 export 函数让单元测试可独立断言。
+ *
+ * 返回 { ok: true } 表示放行 (或缺数据 / bypass 时安全 fallback);
+ * 返回 { ok: false, code, message, detail } 表示触发涨/跌停, 调用方应当抛错。
+ */
+export interface LimitUpDownDecision {
+  ok: boolean;
+  code?: 'LIMIT_UP_BLOCK_BUY' | 'LIMIT_DOWN_BLOCK_SELL';
+  message?: string;
+  detail?: Record<string, any>;
+}
+
+export function evaluateLimitUpDownBlock(input: {
+  symbol: string;
+  stock_name?: string | null;
+  direction: 'BUY' | 'SELL';
+  prev_close: number | null | undefined;
+  reference_price: number;
+  bypass?: boolean;
+}): LimitUpDownDecision {
+  if (input.bypass) return { ok: true };
+  if (!Number.isFinite(input.prev_close as number) || (input.prev_close as number) <= 0) {
+    return { ok: true }; // 缺数据安全 fallback
+  }
+  if (!Number.isFinite(input.reference_price) || input.reference_price <= 0) {
+    return { ok: true };
+  }
+  const segment = inferMarketSegmentLM(input.symbol);
+  const isST = isSTNameLM(input.stock_name || '');
+  const fakeBar = {
+    open: input.reference_price,
+    high: input.reference_price,
+    low: input.reference_price,
+    close: input.reference_price,
+  };
+  if (input.direction === 'BUY') {
+    if (isAtLimitUpLM(fakeBar, segment, isST, input.prev_close as number)) {
+      const limitPct = getLimitPctLM(segment, isST);
+      return {
+        ok: false,
+        code: 'LIMIT_UP_BLOCK_BUY',
+        message: `标的 ${input.symbol} 当前已涨停 (${segment}${isST ? '+ST' : ''} ${(
+          limitPct * 100
+        ).toFixed(0)}%), 拒绝买入`,
+        detail: {
+          symbol: input.symbol,
+          segment,
+          is_st: isST,
+          limit_pct: limitPct,
+          prev_close: input.prev_close,
+          reference_price: input.reference_price,
+        },
+      };
+    }
+  } else {
+    if (isAtLimitDownLM(fakeBar, segment, isST, input.prev_close as number)) {
+      const limitPct = getLimitPctLM(segment, isST);
+      return {
+        ok: false,
+        code: 'LIMIT_DOWN_BLOCK_SELL',
+        message: `标的 ${input.symbol} 当前已跌停 (${segment}${isST ? '+ST' : ''} ${(
+          limitPct * 100
+        ).toFixed(0)}%), 拒绝卖出`,
+        detail: {
+          symbol: input.symbol,
+          segment,
+          is_st: isST,
+          limit_pct: limitPct,
+          prev_close: input.prev_close,
+          reference_price: input.reference_price,
+        },
+      };
+    }
+  }
+  return { ok: true };
+}
 
 export class PaperTradingFacade {
   private dataService: DataService;
@@ -432,8 +628,10 @@ export class PaperTradingFacade {
         const hh = String(hour).padStart(2, '0');
         const mm = String(minute).padStart(2, '0');
         let reason = '在 A 股交易时段 (09:30-11:30 / 13:00-15:00) 外';
-        if (totalMinutes >= 9 * 60 && totalMinutes < MORNING_START) reason = '集合竞价时段 (09:00-09:30)，等待 09:30 开盘后再下单';
-        else if (totalMinutes >= MORNING_END && totalMinutes < AFTERNOON_START) reason = '午休时段 (11:30-13:00)';
+        if (totalMinutes >= 9 * 60 && totalMinutes < MORNING_START)
+          reason = '集合竞价时段 (09:00-09:30)，等待 09:30 开盘后再下单';
+        else if (totalMinutes >= MORNING_END && totalMinutes < AFTERNOON_START)
+          reason = '午休时段 (11:30-13:00)';
         else if (totalMinutes >= AFTERNOON_END) reason = '已收盘 (>15:00)';
         else if (totalMinutes < 9 * 60) reason = '尚未开盘 (<09:00)';
         const err: any = new Error(
@@ -493,18 +691,50 @@ export class PaperTradingFacade {
     // bypass_trading_hours=true (历史回填 / 单测) 时跳过此检查. 未来可接 RealtimeQuoteService
     // 同款 30min 阈值, 这里先用 daily_bar 时间戳保底.
     if (!(options as any).bypass_trading_hours && latestBar.time) {
-      const ageMs = Date.now() - new Date(latestBar.time as any).getTime();
-      const maxAgeMs = 3 * 24 * 60 * 60 * 1000;
-      if (Number.isFinite(ageMs) && ageMs > maxAgeMs) {
-        const ageDays = Math.round((ageMs / (24 * 60 * 60 * 1000)) * 10) / 10;
-        const err: any = new Error(
-          `行情数据陈旧 (最新 daily_bar ${ageDays} 天前), 拒绝按 stale 价撮合. ` +
-            `请等待数据同步或加 bypass_trading_hours=true 强制下单`
+      // BETA-6 (2026-06-18, audit M-17): 优先用 RealtimeQuoteService 的 timestamp
+      // (盘中 30 min 阈值); 不可用则 fallback 到 daily_bar 3 天阈值。daily_bar 3 天
+      // 阈值放宽到 1 天 (audit 要求) — 实测发现 facade 历史回填等场景偶尔依赖 1-3 天
+      // 老 bar, 折中取 1 天作为 fallback 阈值, 既比之前严格又不破回填场景。
+      let quoteSnapshot: { quote_time?: any } | null = null;
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { realtimeQuoteService } = require('../data/services/RealtimeQuoteService');
+        const quotes = await realtimeQuoteService.getLatestQuotes([symbol]);
+        quoteSnapshot = Array.isArray(quotes) && quotes.length > 0 ? quotes[0] : null;
+      } catch (err: any) {
+        logger.warn(
+          `[facade.placeOrder] RealtimeQuote getLatestQuotes failed, fallback to daily_bar: ${
+            err?.message || err
+          }`
         );
+        quoteSnapshot = null;
+      }
+      const stalenessDecision = evaluateQuoteStaleness({
+        symbol,
+        now_ms: Date.now(),
+        realtime_quote_time: quoteSnapshot?.quote_time ?? null,
+        daily_bar_time: latestBar.time,
+        max_realtime_age_minutes: 30,
+        max_daily_bar_age_days: 1,
+      });
+      if (stalenessDecision.kind === 'stale_realtime') {
+        const err: any = new Error(stalenessDecision.message);
+        err.statusCode = 503;
+        err.code = 'STALE_REALTIME_QUOTE';
+        err.detail = stalenessDecision.detail;
+        throw err;
+      }
+      if (stalenessDecision.kind === 'stale_daily_bar') {
+        const err: any = new Error(stalenessDecision.message);
         err.statusCode = 503;
         err.code = 'STALE_DAILY_BAR';
-        err.detail = { symbol, latest_bar_time: latestBar.time, age_days: ageDays };
+        err.detail = stalenessDecision.detail;
         throw err;
+      }
+      if (stalenessDecision.kind === 'pass_daily_bar_fallback') {
+        logger.debug(
+          `[facade.placeOrder] staleness fallback to daily_bar source for ${symbol}: ${stalenessDecision.detail?.age_minutes}m`
+        );
       }
     }
     const stockInfo = await Stock.findOne({ where: { symbol } });
@@ -529,17 +759,77 @@ export class PaperTradingFacade {
       const transferFee = cost * transferFeeRate;
       const totalCost = cost + commission + transferFee;
 
+      // ---- audit S-3 修复: 涨停板拦截 (用 evaluateLimitUpDownBlock 纯函数) ----
+      // 之前 BUY/SELL 完全不查涨跌停, 模拟盘可下单到 300xxx 创业板涨 18% / 920xxx
+      // 北交所涨 25% / ST 涨 4.5% (实盘 5% 已涨停)。按市场段计算精确涨停价
+      // (主板 10% / 创业板 + 科创板 20% / 北交所 30% / ST 5%), 触及即拒。
+      const limitUpDecision = evaluateLimitUpDownBlock({
+        symbol,
+        stock_name: stockName,
+        direction: 'BUY',
+        prev_close: bars.length >= 2 ? Number(bars[bars.length - 2].close) : null,
+        reference_price: current_price,
+        bypass: (options as any).bypass_limit_up_check === true,
+      });
+      if (!limitUpDecision.ok) {
+        const err: any = new Error(limitUpDecision.message);
+        err.statusCode = 400;
+        err.code = limitUpDecision.code;
+        err.detail = limitUpDecision.detail;
+        throw err;
+      }
+
       // ---- US-049: Drawdown circuit breaker LEVEL_1 pause ----
       // If the portfolio is in an active LEVEL_1 pause window (peak-drawdown
       // ≥ 10% triggered by the EOD evaluator), block NEW openings.  Adding to
       // existing positions is allowed (covers策略 add-on without forcing
       // operators to manually clear the pause for every routine top-up).
-      // Failure-open: a DB outage in the guard simply lets the order proceed —
-      // upstream `cash check` + `position-limit guard` still gate it.
-      const breakerResult = await drawdownCircuitBreaker.checkBuyAllowed({
-        user_id,
-        symbol,
-      });
+      // BETA-7 (2026-06-18, audit M-13): fail-CLOSED. DrawdownCircuitBreaker DB
+      // 抖动时抛 RiskGuardUnavailableError → 这里 catch 后 拒单 + 写 RiskAlert HIGH.
+      // 之前 fail-OPEN 让 DB 抖动悄悄放行大撤回保护, 与 memory sprint-27-28-29
+      // 的"fail-open 教训"冲突。
+      let breakerResult: { ok: boolean; reason?: string; paused_until?: any };
+      try {
+        breakerResult = await drawdownCircuitBreaker.checkBuyAllowed({
+          user_id,
+          symbol,
+        });
+      } catch (guardErr: any) {
+        if (guardErr instanceof RiskGuardUnavailableError) {
+          // 写 HIGH RiskAlert 让运维感知; 失败 swallow 不影响主流程拒单语义
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const { RiskAlert } = require('../models/RiskAlert');
+            await RiskAlert.create({
+              user_id,
+              symbol: 'SYSTEM:RISK_GUARD_UNAVAILABLE',
+              name: '风控不可用 — DrawdownCircuitBreaker',
+              level: 'HIGH',
+              rule_id: 'drawdown_breaker',
+              message: `⚠️ DrawdownCircuitBreaker DB 抖动: ${guardErr.message}. 拒绝该 BUY 单 (fail-CLOSED).`,
+              metadata: {
+                guard: 'drawdown_breaker',
+                symbol,
+                detail: guardErr.detail,
+              },
+            });
+          } catch (alertErr: any) {
+            logger.warn(
+              `[facade.placeOrder] RiskAlert.create RISK_GUARD_UNAVAILABLE failed: ${
+                alertErr?.message || alertErr
+              }`
+            );
+          }
+          throw guardErr;
+        }
+        // 其它 unexpected 错误也按 fail-CLOSED 处理
+        logger.warn(
+          `[facade.placeOrder] drawdownCircuitBreaker.checkBuyAllowed unexpected err: ${
+            guardErr?.message || guardErr
+          }`
+        );
+        throw guardErr;
+      }
       if (!breakerResult.ok && breakerResult.reason) {
         const err: any = new Error(breakerResult.reason);
         err.statusCode = 400;
@@ -610,13 +900,8 @@ export class PaperTradingFacade {
             } catch {
               userPct = null;
             }
-            const effectivePct = pickEffectivePct(
-              (position as any).stop_loss_pct ?? null,
-              userPct
-            );
-            position.stop_loss_price = Number(
-              (position.avg_cost * (1 - effectivePct)).toFixed(4)
-            );
+            const effectivePct = pickEffectivePct((position as any).stop_loss_pct ?? null, userPct);
+            position.stop_loss_price = Number((position.avg_cost * (1 - effectivePct)).toFixed(4));
           }
           await position.save({ transaction: t });
         } else {
@@ -674,6 +959,23 @@ export class PaperTradingFacade {
     });
     if (!position || position.quantity < quantity) {
       throw new Error('持仓不足，无法卖出');
+    }
+
+    // ---- audit S-3 修复: 跌停板拦截 (SELL, 共用 evaluateLimitUpDownBlock) ----
+    const limitDownDecision = evaluateLimitUpDownBlock({
+      symbol,
+      stock_name: stockName,
+      direction: 'SELL',
+      prev_close: bars.length >= 2 ? Number(bars[bars.length - 2].close) : null,
+      reference_price: current_price,
+      bypass: (options as any).bypass_limit_down_check === true,
+    });
+    if (!limitDownDecision.ok) {
+      const err: any = new Error(limitDownDecision.message);
+      err.statusCode = 400;
+      err.code = limitDownDecision.code;
+      err.detail = limitDownDecision.detail;
+      throw err;
     }
 
     // ============= T+1 拦截 (修复 CRITICAL C5) =============

@@ -73,7 +73,12 @@ export class ResearchIntegrityAudit extends Model {
   declare sample_length?: number | null;
 
   /** 未来函数扫描结果 [{file, line, pattern, snippet}] */
-  @Column({ type: DataType.JSONB, allowNull: true, defaultValue: [], field: 'lookahead_issues_json' })
+  @Column({
+    type: DataType.JSONB,
+    allowNull: true,
+    defaultValue: [],
+    field: 'lookahead_issues_json',
+  })
   declare lookahead_issues_json?: Array<{
     file: string;
     line: number;
@@ -83,7 +88,12 @@ export class ResearchIntegrityAudit extends Model {
   }>;
 
   /** universe drift / survivorship bias 警告 */
-  @Column({ type: DataType.JSONB, allowNull: true, defaultValue: [], field: 'survivorship_issues_json' })
+  @Column({
+    type: DataType.JSONB,
+    allowNull: true,
+    defaultValue: [],
+    field: 'survivorship_issues_json',
+  })
   declare survivorship_issues_json?: Array<{
     kind: string;
     detail: string;

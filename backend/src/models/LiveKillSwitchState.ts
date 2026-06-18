@@ -15,10 +15,7 @@ import { Table, Column, Model, DataType, CreatedAt, UpdatedAt } from 'sequelize-
   tableName: 'live_kill_switch_states',
   timestamps: true,
   underscored: true,
-  indexes: [
-    { fields: ['triggered_at'] },
-    { fields: ['reason_code'] },
-  ],
+  indexes: [{ fields: ['triggered_at'] }, { fields: ['reason_code'] }],
 })
 export class LiveKillSwitchState extends Model {
   @Column({ type: DataType.INTEGER, primaryKey: true, autoIncrement: true })

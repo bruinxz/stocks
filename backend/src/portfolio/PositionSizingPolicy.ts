@@ -370,7 +370,9 @@ export function decideSizing(policy: SizingPolicyConfig, ctx: SizingContext): Si
         policy.base_position_pct
       );
       reason = ctx.vol_annualized
-        ? `vol_target=${(policy.vol_target_pct * 100).toFixed(1)}% / sigma=${(ctx.vol_annualized * 100).toFixed(1)}% × conviction=${conviction.toFixed(2)}`
+        ? `vol_target=${(policy.vol_target_pct * 100).toFixed(1)}% / sigma=${(
+            ctx.vol_annualized * 100
+          ).toFixed(1)}% × conviction=${conviction.toFixed(2)}`
         : `vol 缺失，退化到 base ${policy.base_position_pct}%`;
       break;
     }
@@ -383,7 +385,9 @@ export function decideSizing(policy: SizingPolicyConfig, ctx: SizingContext): Si
         policy.base_position_pct
       );
       reason = ctx.atr
-        ? `atr_risk=${policy.atr_risk_pct}% / ATR=${ctx.atr.toFixed(3)} @ price=${ctx.current_price.toFixed(2)}`
+        ? `atr_risk=${policy.atr_risk_pct}% / ATR=${ctx.atr.toFixed(
+            3
+          )} @ price=${ctx.current_price.toFixed(2)}`
         : `ATR 缺失，退化到 base ${policy.base_position_pct}%`;
       break;
     }
@@ -406,7 +410,11 @@ export function decideSizing(policy: SizingPolicyConfig, ctx: SizingContext): Si
         reason = `Kelly 输入缺失 (winRate / payoff)，退化到 base ${policy.base_position_pct}%`;
       } else {
         const f = computeKellyFraction(wr as number, pr as number);
-        reason = `kelly p=${((wr as number) * 100).toFixed(1)}% b=${(pr as number).toFixed(2)} f*=${(f * 100).toFixed(2)}% × ${(policy.kelly_fraction_multiplier * 100).toFixed(0)}% Kelly`;
+        reason = `kelly p=${((wr as number) * 100).toFixed(1)}% b=${(pr as number).toFixed(
+          2
+        )} f*=${(f * 100).toFixed(2)}% × ${(policy.kelly_fraction_multiplier * 100).toFixed(
+          0
+        )}% Kelly`;
       }
       break;
     }
@@ -450,7 +458,10 @@ export function decideSizing(policy: SizingPolicyConfig, ctx: SizingContext): Si
     target_amount: rawAmount,
     position_pct: (rawAmount / ctx.equity) * 100,
     method: policy.method,
-    reason: reason + (cappedByMax ? ' | 触顶 max_position_pct' : '') + (cappedByCash ? ' | 触顶 available_cash' : ''),
+    reason:
+      reason +
+      (cappedByMax ? ' | 触顶 max_position_pct' : '') +
+      (cappedByCash ? ' | 触顶 available_cash' : ''),
     capped_by_max: cappedByMax,
     capped_by_cash: cappedByCash,
   };

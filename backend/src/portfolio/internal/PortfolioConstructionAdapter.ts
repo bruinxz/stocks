@@ -53,14 +53,15 @@ export interface PortfolioConstructionConfig {
   max_industry_weight?: number;
 }
 
-export const DEFAULT_PORTFOLIO_CONSTRUCTION_CONFIG: Readonly<PortfolioConstructionConfig> = Object.freeze({
-  mode: 'off' as ConstructionMode,
-  method: 'risk_parity' as ConstructionMethod,
-  lookback_days: 60,
-  max_candidates: 30,
-  max_weight: 0.15,
-  max_industry_weight: 0.40,
-});
+export const DEFAULT_PORTFOLIO_CONSTRUCTION_CONFIG: Readonly<PortfolioConstructionConfig> =
+  Object.freeze({
+    mode: 'off' as ConstructionMode,
+    method: 'risk_parity' as ConstructionMethod,
+    lookback_days: 60,
+    max_candidates: 30,
+    max_weight: 0.15,
+    max_industry_weight: 0.4,
+  });
 
 /** Adapter 单 candidate 入参 — 用 signal 的最小子集 */
 export interface AdapterCandidate {
@@ -85,9 +86,7 @@ export interface AdapterResult {
 }
 
 /** 归一化用户 config (lenient — invalid 字段退到 default) */
-export function normalizePortfolioConstructionConfig(
-  raw: any
-): PortfolioConstructionConfig {
+export function normalizePortfolioConstructionConfig(raw: any): PortfolioConstructionConfig {
   const obj = raw && typeof raw === 'object' ? raw : {};
   const validModes: ConstructionMode[] = ['off', 'shadow', 'hard'];
   const validMethods: ConstructionMethod[] = [
@@ -127,10 +126,7 @@ export function normalizePortfolioConstructionConfig(
  * 截断 candidate 列表 (按 alpha_score 降序, 同分按 symbol asc stable tie-break).
  * max=0 → 不截断.
  */
-export function pickTopCandidates(
-  candidates: AdapterCandidate[],
-  max: number
-): AdapterCandidate[] {
+export function pickTopCandidates(candidates: AdapterCandidate[], max: number): AdapterCandidate[] {
   if (max <= 0 || candidates.length <= max) {
     return candidates.slice();
   }
@@ -299,7 +295,9 @@ export async function buildPortfolioConstruction(input: {
     };
   } catch (err: any) {
     logger.warn(
-      `[portfolio-construction-adapter] user=${user_id} 构建失败 (fail-open): ${err?.message || err}`
+      `[portfolio-construction-adapter] user=${user_id} 构建失败 (fail-open): ${
+        err?.message || err
+      }`
     );
     return {
       mode: config.mode,

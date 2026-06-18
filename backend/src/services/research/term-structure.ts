@@ -52,7 +52,13 @@
  *   F1(τ, λ) = (1 - exp(-τ/λ)) / (τ/λ)
  *   F2(τ, λ) = F1(τ, λ) - exp(-τ/λ)
  */
-export function nelsonSiegelYield(tau: number, beta_0: number, beta_1: number, beta_2: number, lambda: number): number {
+export function nelsonSiegelYield(
+  tau: number,
+  beta_0: number,
+  beta_1: number,
+  beta_2: number,
+  lambda: number
+): number {
   if (tau <= 0 || lambda <= 0) return beta_0;
   const x = tau / lambda;
   const exp_minus_x = Math.exp(-x);
@@ -101,7 +107,11 @@ export function fitNelsonSiegel(
   return { ...best_result, lambda: best_lambda };
 }
 
-function fitFixedLambda(yields: number[], taus: number[], lambda: number): { beta_0: number; beta_1: number; beta_2: number; r_squared: number } {
+function fitFixedLambda(
+  yields: number[],
+  taus: number[],
+  lambda: number
+): { beta_0: number; beta_1: number; beta_2: number; r_squared: number } {
   const N = yields.length;
   // Design matrix
   const k = 3;
@@ -122,7 +132,8 @@ function fitFixedLambda(yields: number[], taus: number[], lambda: number): { bet
   for (let i = 0; i < k; i += 1) {
     let piv = i;
     for (let r = i + 1; r < k; r += 1) if (Math.abs(aug[r][i]) > Math.abs(aug[piv][i])) piv = r;
-    if (Math.abs(aug[piv][i]) < 1e-12) return { beta_0: NaN, beta_1: NaN, beta_2: NaN, r_squared: NaN };
+    if (Math.abs(aug[piv][i]) < 1e-12)
+      return { beta_0: NaN, beta_1: NaN, beta_2: NaN, r_squared: NaN };
     if (piv !== i) [aug[i], aug[piv]] = [aug[piv], aug[i]];
     const d = aug[i][i];
     for (let j = 0; j <= k; j += 1) aug[i][j] /= d;
@@ -135,7 +146,8 @@ function fitFixedLambda(yields: number[], taus: number[], lambda: number): { bet
   const beta = aug.map(row => row[k]);
   // R²
   const ymean = yields.reduce((s, v) => s + v, 0) / N;
-  let ss_tot = 0, ss_res = 0;
+  let ss_tot = 0,
+    ss_res = 0;
   for (let i = 0; i < N; i += 1) {
     const pred = nelsonSiegelYield(taus[i], beta[0], beta[1], beta[2], lambda);
     ss_res += (yields[i] - pred) ** 2;
@@ -170,7 +182,10 @@ export function vasicekBondPrice(tau: number, r: number, params: VasicekParams):
   const { kappa, theta, sigma } = params;
   if (kappa <= 0) return Math.exp(-r * tau); // degenerate
   const B = (1 - Math.exp(-kappa * tau)) / kappa;
-  const A = Math.exp((theta - sigma * sigma / (2 * kappa * kappa)) * (B - tau) - (sigma * sigma * B * B) / (4 * kappa));
+  const A = Math.exp(
+    (theta - (sigma * sigma) / (2 * kappa * kappa)) * (B - tau) -
+      (sigma * sigma * B * B) / (4 * kappa)
+  );
   return A * Math.exp(-B * r);
 }
 
@@ -211,7 +226,8 @@ export function fitVasicek(short_rates: number[], dt: number = 1 / 252): Vasicek
   const n = x.length;
   const mx = x.reduce((s, v) => s + v, 0) / n;
   const my = y.reduce((s, v) => s + v, 0) / n;
-  let num = 0, denom = 0;
+  let num = 0,
+    denom = 0;
   for (let i = 0; i < n; i += 1) {
     num += (x[i] - mx) * (y[i] - my);
     denom += (x[i] - mx) ** 2;

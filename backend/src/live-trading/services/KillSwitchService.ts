@@ -157,7 +157,11 @@ export class KillSwitchService extends EventEmitter {
         event_type: LIVE_AUDIT_EVENT_TYPES.KILL_SWITCH_TRIGGERED,
         severity: 'critical',
         message: `Kill switch 已触发 (${params.reason_code}): ${params.reason_detail}`,
-        metadata: { ...(params.metadata || {}), reason_code: params.reason_code, source: params.source },
+        metadata: {
+          ...(params.metadata || {}),
+          reason_code: params.reason_code,
+          source: params.source,
+        },
       });
       return { created: true, state };
     } catch (err: any) {
@@ -226,7 +230,9 @@ export class KillSwitchService extends EventEmitter {
         {
           status: 'aborted',
           metadata: sequelize.literal(
-            `COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('killed', true, 'kill_reason_code', ${LiveBrokerCommand.sequelize?.escape(String(reason_code))}, 'kill_reason_detail', ${LiveBrokerCommand.sequelize?.escape(reason_detail)})`
+            `COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('killed', true, 'kill_reason_code', ${LiveBrokerCommand.sequelize?.escape(
+              String(reason_code)
+            )}, 'kill_reason_detail', ${LiveBrokerCommand.sequelize?.escape(reason_detail)})`
           ) as any,
         },
         {
@@ -238,7 +244,9 @@ export class KillSwitchService extends EventEmitter {
       const inflightResult = await LiveBrokerCommand.update(
         {
           metadata: sequelize.literal(
-            `COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('killed', true, 'kill_reason_code', ${LiveBrokerCommand.sequelize?.escape(String(reason_code))}, 'kill_reason_detail', ${LiveBrokerCommand.sequelize?.escape(reason_detail)})`
+            `COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('killed', true, 'kill_reason_code', ${LiveBrokerCommand.sequelize?.escape(
+              String(reason_code)
+            )}, 'kill_reason_detail', ${LiveBrokerCommand.sequelize?.escape(reason_detail)})`
           ) as any,
         },
         {
@@ -290,7 +298,9 @@ export class KillSwitchService extends EventEmitter {
       await LiveExecutionAuditLog.create({
         event_type: LIVE_AUDIT_EVENT_TYPES.KILL_SWITCH_RESOLVED,
         severity: 'warning',
-        message: `Kill switch 已解除（resolved_by=${params.resolved_by}）${params.note ? ': ' + params.note : ''}`,
+        message: `Kill switch 已解除（resolved_by=${params.resolved_by}）${
+          params.note ? ': ' + params.note : ''
+        }`,
         before_state: before as any,
         after_state: this.toActive(active) as any,
         metadata: {},
@@ -303,7 +313,9 @@ export class KillSwitchService extends EventEmitter {
     sendLiveAuditAlert({
       event_type: LIVE_AUDIT_EVENT_TYPES.KILL_SWITCH_RESOLVED,
       severity: 'critical',
-      message: `Kill switch 已解除 by ${params.resolved_by}${params.note ? ': ' + params.note : ''}`,
+      message: `Kill switch 已解除 by ${params.resolved_by}${
+        params.note ? ': ' + params.note : ''
+      }`,
       metadata: { resolved_by: params.resolved_by, note: params.note || null },
     });
     return state;
@@ -349,10 +361,17 @@ export class KillSwitchService extends EventEmitter {
           reasons.push(`account=${accountId} order_failure_rate ${(rate * 100).toFixed(1)}%`);
           await this.trigger({
             reason_code: 'order_failure_rate',
-            reason_detail: `账户 ${accountId} 近 24 小时订单失败率 ${(rate * 100).toFixed(1)}% (${failed.length}/${recent.length})`,
+            reason_detail: `账户 ${accountId} 近 24 小时订单失败率 ${(rate * 100).toFixed(1)}% (${
+              failed.length
+            }/${recent.length})`,
             source: 'auto',
             triggered_by: 'kill_switch_auto_scan',
-            metadata: { account_id: accountId, failed: failed.length, total: recent.length, window: '24h' },
+            metadata: {
+              account_id: accountId,
+              failed: failed.length,
+              total: recent.length,
+              window: '24h',
+            },
           });
           triggered = true;
         }
@@ -383,7 +402,11 @@ export class KillSwitchService extends EventEmitter {
           reason_detail: `账户 ${accountId} 近 24 小时订单数 ${recent.length} ≥ ${orderCountKill}`,
           source: 'auto',
           triggered_by: 'kill_switch_auto_scan',
-          metadata: { account_id: accountId, recent_count: recent.length, threshold: orderCountKill },
+          metadata: {
+            account_id: accountId,
+            recent_count: recent.length,
+            threshold: orderCountKill,
+          },
         });
         triggered = true;
       }
@@ -404,7 +427,9 @@ export class KillSwitchService extends EventEmitter {
       });
       if (!lastHb || new Date(lastHb.received_at).getTime() < heartbeatCutoff.getTime()) {
         const detail = lastHb
-          ? `bridge ${bridgeKey} 上次心跳在 ${new Date(lastHb.received_at).toISOString()}，超过 ${heartbeatTimeoutMinutes} 分钟阈值`
+          ? `bridge ${bridgeKey} 上次心跳在 ${new Date(
+              lastHb.received_at
+            ).toISOString()}，超过 ${heartbeatTimeoutMinutes} 分钟阈值`
           : `bridge ${bridgeKey} 从未推送过心跳`;
         reasons.push(`bridge_heartbeat_lost bridge=${bridgeKey}`);
         await this.trigger({
@@ -412,7 +437,11 @@ export class KillSwitchService extends EventEmitter {
           reason_detail: detail,
           source: 'auto',
           triggered_by: 'kill_switch_auto_scan',
-          metadata: { account_id: accountId, bridge_key: bridgeKey, threshold_minutes: heartbeatTimeoutMinutes },
+          metadata: {
+            account_id: accountId,
+            bridge_key: bridgeKey,
+            threshold_minutes: heartbeatTimeoutMinutes,
+          },
         });
         triggered = true;
       }
@@ -434,10 +463,17 @@ export class KillSwitchService extends EventEmitter {
           reasons.push(`account=${accountId} daily_loss_breach ${lossPct.toFixed(2)}%`);
           await this.trigger({
             reason_code: 'daily_loss_breach',
-            reason_detail: `账户 ${accountId} 当日浮亏 ${lossPct.toFixed(2)}% ≥ 阈值 ${dailyLossKillPct}%`,
+            reason_detail: `账户 ${accountId} 当日浮亏 ${lossPct.toFixed(
+              2
+            )}% ≥ 阈值 ${dailyLossKillPct}%`,
             source: 'auto',
             triggered_by: 'kill_switch_auto_scan',
-            metadata: { account_id: accountId, day_pnl: dayPnl, total_asset: total, threshold_pct: dailyLossKillPct },
+            metadata: {
+              account_id: accountId,
+              day_pnl: dayPnl,
+              total_asset: total,
+              threshold_pct: dailyLossKillPct,
+            },
           });
           triggered = true;
         }
@@ -448,7 +484,9 @@ export class KillSwitchService extends EventEmitter {
     const staleSyncCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
     for (const account of accounts) {
       const status = String((account as any).connection_status || '').toLowerCase();
-      const lastSync = (account as any).last_sync_at ? new Date((account as any).last_sync_at) : null;
+      const lastSync = (account as any).last_sync_at
+        ? new Date((account as any).last_sync_at)
+        : null;
       const staleSync = lastSync && lastSync.getTime() < staleSyncCutoff.getTime();
       if (status === 'error' || status === 'disconnected') {
         reasons.push(`account=${(account as any).id} account_anomaly status=${status}`);
@@ -466,7 +504,9 @@ export class KillSwitchService extends EventEmitter {
         reasons.push(`account=${(account as any).id} account_anomaly stale_sync ${hoursStale}h`);
         await this.trigger({
           reason_code: 'account_anomaly',
-          reason_detail: `账户 ${(account as any).id} last_sync_at 已 ${hoursStale}h 未更新仍处 active`,
+          reason_detail: `账户 ${
+            (account as any).id
+          } last_sync_at 已 ${hoursStale}h 未更新仍处 active`,
           source: 'auto',
           triggered_by: 'kill_switch_auto_scan',
           metadata: {

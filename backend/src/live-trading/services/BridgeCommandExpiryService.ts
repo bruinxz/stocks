@@ -22,7 +22,11 @@ export class BridgeCommandExpiryService {
     return Math.max(ms, 5_000); // 至少 5 秒避免误判
   }
 
-  async runOnce(): Promise<{ orders_expired: number; commands_expired: number; nonces_cleaned: number }> {
+  async runOnce(): Promise<{
+    orders_expired: number;
+    commands_expired: number;
+    nonces_cleaned: number;
+  }> {
     const commandsExpired = await this.scanCommandsExpired();
     const ordersExpired = await this.scanOrdersExpired();
     const noncesCleaned = await this.cleanupNonces();
@@ -56,7 +60,9 @@ export class BridgeCommandExpiryService {
       const hasActiveCommand = await LiveBrokerCommand.count({
         where: {
           order_id: Number(r.id),
-          status: { [Op.in]: ['pending', 'dispatching', 'dispatched', 'submitted', 'partially_filled'] },
+          status: {
+            [Op.in]: ['pending', 'dispatching', 'dispatched', 'submitted', 'partially_filled'],
+          },
         },
       });
       if (hasActiveCommand > 0) continue;
@@ -71,7 +77,9 @@ export class BridgeCommandExpiryService {
             order_id: Number(r.id),
             event_type: LIVE_AUDIT_EVENT_TYPES.ORDER_BRIDGE_EXPIRED,
             severity: 'warning',
-            message: `LiveOrder 兜底过期：超 ${grace / 1000}s 未进入终态且无活跃命令，标 expired（前态：${previous}）。`,
+            message: `LiveOrder 兜底过期：超 ${
+              grace / 1000
+            }s 未进入终态且无活跃命令，标 expired（前态：${previous}）。`,
             before_state: { bridge_status: previous },
             after_state: { bridge_status: 'expired' },
             metadata: {
@@ -126,17 +134,14 @@ export class BridgeCommandExpiryService {
         const linkedOrderId = r.order_id ? Number(r.order_id) : null;
         if (linkedOrderId) {
           try {
-            await LiveOrder.update(
-              { bridge_status: 'expired' } as any,
-              {
-                where: {
-                  id: linkedOrderId,
-                  bridge_status: {
-                    [Op.notIn]: ['filled', 'cancelled', 'failed', 'expired'],
-                  },
-                } as any,
-              }
-            );
+            await LiveOrder.update({ bridge_status: 'expired' } as any, {
+              where: {
+                id: linkedOrderId,
+                bridge_status: {
+                  [Op.notIn]: ['filled', 'cancelled', 'failed', 'expired'],
+                },
+              } as any,
+            });
           } catch (err: any) {
             logger.warn(`failed to expire linked order ${linkedOrderId}: ${err?.message || err}`);
           }

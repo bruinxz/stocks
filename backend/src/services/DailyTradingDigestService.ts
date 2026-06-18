@@ -594,15 +594,32 @@ export function buildDigestCard(payload: DigestPayload): {
   if ((payload as any).macro_snapshot) {
     const snap = (payload as any).macro_snapshot;
     elements.push({ tag: 'hr' });
-    const regimeIcon = snap.market_regime === 'bull' ? '🟢' : snap.market_regime === 'bear' || snap.market_regime === 'stress' ? '🔴' : '🟡';
-    const macroLines: string[] = [`${regimeIcon} **市场环境: ${snap.market_regime_label || snap.market_regime}**`];
-    macroLines.push(`沪深300 20日: ${snap.benchmark_return_20d_pct?.toFixed?.(2) ?? snap.benchmark_return_20d_pct ?? '—'}% | 60日回撤: ${snap.benchmark_drawdown_60d_pct?.toFixed?.(2) ?? '—'}%`);
+    const regimeIcon =
+      snap.market_regime === 'bull'
+        ? '🟢'
+        : snap.market_regime === 'bear' || snap.market_regime === 'stress'
+        ? '🔴'
+        : '🟡';
+    const macroLines: string[] = [
+      `${regimeIcon} **市场环境: ${snap.market_regime_label || snap.market_regime}**`,
+    ];
+    macroLines.push(
+      `沪深300 20日: ${
+        snap.benchmark_return_20d_pct?.toFixed?.(2) ?? snap.benchmark_return_20d_pct ?? '—'
+      }% | 60日回撤: ${snap.benchmark_drawdown_60d_pct?.toFixed?.(2) ?? '—'}%`
+    );
     if (snap.macro) {
-      macroLines.push(`PMI: ${snap.macro.pmi_latest ?? '—'} | M2: ${snap.macro.m2_yoy ?? '—'}% | 10Y国债: ${snap.macro.treasury_10y ?? '—'}%`);
+      macroLines.push(
+        `PMI: ${snap.macro.pmi_latest ?? '—'} | M2: ${snap.macro.m2_yoy ?? '—'}% | 10Y国债: ${
+          snap.macro.treasury_10y ?? '—'
+        }%`
+      );
     }
     if (snap.qvix) {
       const panicTag = snap.qvix.is_panic ? ' ⚠️恐慌' : '';
-      macroLines.push(`QVIX(300ETF): ${snap.qvix.qvix_300etf_latest} (60d ${snap.qvix.qvix_300etf_percentile_60d}%分位)${panicTag}`);
+      macroLines.push(
+        `QVIX(300ETF): ${snap.qvix.qvix_300etf_latest} (60d ${snap.qvix.qvix_300etf_percentile_60d}%分位)${panicTag}`
+      );
     }
     elements.push({
       tag: 'div',

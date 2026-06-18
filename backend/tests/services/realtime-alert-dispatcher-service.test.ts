@@ -262,35 +262,37 @@ function makeInput(overrides: Partial<RealtimeAlertInput> = {}): RealtimeAlertIn
 
   // =========================================================================
   console.log('\n[2] buildAlertSignature 边界...');
+  // Batch X (2026-06-17, notif-3): signature 加 message hash 后缀，让"升级告警"突破 dedup
+  //   schema: `<rule_id>::<symbol>::<level>::<msgHash>` (msgHash='0' 当 message 缺失)
   assertEqual(
     'normal',
     buildAlertSignature({ rule_id: 'position_limit', symbol: '600519', level: 'HIGH' }),
-    'position_limit::600519::HIGH'
+    'position_limit::600519::HIGH::0'
   );
   assertEqual(
     'level 小写 normalize',
     buildAlertSignature({ rule_id: 'r', symbol: 's', level: 'high' }),
-    'r::s::HIGH'
+    'r::s::HIGH::0'
   );
   assertEqual(
     'rule_id 缺失 → unknown',
     buildAlertSignature({ symbol: '600519', level: 'HIGH' } as any),
-    'unknown::600519::HIGH'
+    'unknown::600519::HIGH::0'
   );
   assertEqual(
     'rule_id 空字符串 → unknown',
     buildAlertSignature({ rule_id: '   ', symbol: '600519', level: 'HIGH' }),
-    'unknown::600519::HIGH'
+    'unknown::600519::HIGH::0'
   );
   assertEqual(
     'symbol 缺失 → UNKNOWN_SYMBOL',
     buildAlertSignature({ rule_id: 'r', level: 'HIGH' } as any),
-    'r::UNKNOWN_SYMBOL::HIGH'
+    'r::UNKNOWN_SYMBOL::HIGH::0'
   );
   assertEqual(
     'level 缺失 → UNKNOWN_LEVEL',
     buildAlertSignature({ rule_id: 'r', symbol: 's' } as any),
-    'r::s::UNKNOWN_LEVEL'
+    'r::s::UNKNOWN_LEVEL::0'
   );
 
   // =========================================================================
@@ -735,7 +737,7 @@ function makeInput(overrides: Partial<RealtimeAlertInput> = {}): RealtimeAlertIn
   assertEqual(
     'dedup signature',
     ds12.saveSeenCalls[0].records[0].signature,
-    'position_limit::600519::HIGH'
+    'position_limit::600519::HIGH::d5e0cb68'
   );
   const channels12 = r12.channels.map(c => `${c.channel}:${c.status}`);
   assert(
@@ -770,7 +772,7 @@ function makeInput(overrides: Partial<RealtimeAlertInput> = {}): RealtimeAlertIn
   const seeded13 = new Map<number, RealtimeAlertSeenRecord[]>();
   const dedupNow = 1_000_000_000_000;
   seeded13.set(1, [
-    { signature: 'position_limit::600519::HIGH', pushed_at_ms: dedupNow - 5 * 60 * 1000 },
+    { signature: 'position_limit::600519::HIGH::d5e0cb68', pushed_at_ms: dedupNow - 5 * 60 * 1000 },
   ]);
   const ds13 = new FakeDataSource({
     users: new Map([[1, { username: 'u1', config: configFull() }]]),
@@ -790,7 +792,7 @@ function makeInput(overrides: Partial<RealtimeAlertInput> = {}): RealtimeAlertIn
   console.log('\n[14] dispatch e2e: 出 30 min 窗口 → 重新发...');
   const seeded14 = new Map<number, RealtimeAlertSeenRecord[]>();
   seeded14.set(1, [
-    { signature: 'position_limit::600519::HIGH', pushed_at_ms: dedupNow - 31 * 60 * 1000 },
+    { signature: 'position_limit::600519::HIGH::d5e0cb68', pushed_at_ms: dedupNow - 31 * 60 * 1000 },
   ]);
   const ds14 = new FakeDataSource({
     users: new Map([[1, { username: 'u1', config: configFull() }]]),
@@ -1012,7 +1014,7 @@ function makeInput(overrides: Partial<RealtimeAlertInput> = {}): RealtimeAlertIn
   assertEqual(
     'rule_id 缺失 signature unknown',
     r27.signature,
-    'unknown::600519::HIGH'
+    'unknown::600519::HIGH::d5e0cb68'
   );
   assertEqual('rule_id field unknown', r27.rule_id, 'unknown');
 
@@ -1026,7 +1028,7 @@ function makeInput(overrides: Partial<RealtimeAlertInput> = {}): RealtimeAlertIn
   // 仍然被识别为 HIGH（trigger gate uses toUpperCase）
   assertEqual('lowercase high → sent', r28.status, REALTIME_ALERT_STATUS.SENT);
   assertEqual('lowercase level normalize', r28.level, 'HIGH');
-  assertEqual('lowercase signature HIGH', r28.signature, 'position_limit::600519::HIGH');
+  assertEqual('lowercase signature HIGH', r28.signature, 'position_limit::600519::HIGH::d5e0cb68');
 
   // =========================================================================
   console.log('\n[29] fireAndForget 不 throw...');
@@ -1103,7 +1105,7 @@ function makeInput(overrides: Partial<RealtimeAlertInput> = {}): RealtimeAlertIn
   // 首条 signature 应该是 signature-1 (signature-0 被 drop)
   assertEqual('LRU first dropped', saved31[0].signature, 'signature-1');
   // 末条应该是新加的
-  assertEqual('LRU tail 新加', saved31[saved31.length - 1].signature, 'position_limit::600519::HIGH');
+  assertEqual('LRU tail 新加', saved31[saved31.length - 1].signature, 'position_limit::600519::HIGH::d5e0cb68');
 
   // =========================================================================
   console.log('\n[32] dispatch e2e: sendFeishu 返回 skipped=true → 当作 SKIPPED...');
@@ -1126,7 +1128,7 @@ function makeInput(overrides: Partial<RealtimeAlertInput> = {}): RealtimeAlertIn
   const svc33 = new RealtimeAlertDispatcher(ds33);
   const r33 = await svc33.dispatch(makeInput({ rule_id: '  position_limit  ' }));
   assertEqual('rule_id trim', r33.rule_id, 'position_limit');
-  assertEqual('signature trim', r33.signature, 'position_limit::600519::HIGH');
+  assertEqual('signature trim', r33.signature, 'position_limit::600519::HIGH::d5e0cb68');
 
   // =========================================================================
   console.log('\n[34] dispatch e2e: triggered_at 缺失 → 默认 ISO 当前时间...');

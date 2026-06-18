@@ -155,16 +155,18 @@ export function stockCarry(input: {
  *   FDM × IDM (Instrument Diversification Multiplier) 进一步缩放.
  */
 export function carverPositionSize(input: {
-  forecast: number;       // -20 to +20
+  forecast: number; // -20 to +20
   vol_target_annual: number; // e.g. 0.20
   instrument_vol_annual: number;
   capital: number;
   forecast_cap?: number;
-  idm?: number;            // instrument diversification multiplier
+  idm?: number; // instrument diversification multiplier
 }): number {
   const cap = input.forecast_cap ?? 20;
   const idm = input.idm ?? 1;
-  const base = (input.forecast * input.vol_target_annual) / (cap * Math.max(0.01, input.instrument_vol_annual));
+  const base =
+    (input.forecast * input.vol_target_annual) /
+    (cap * Math.max(0.01, input.instrument_vol_annual));
   return base * idm * input.capital;
 }
 
@@ -183,7 +185,8 @@ export function carverPositionSize(input: {
  */
 export function vwapSchedule(order_qty: number, historical_volume_curve: number[]): number[] {
   const total = historical_volume_curve.reduce((s, v) => s + v, 0);
-  if (total <= 0) return historical_volume_curve.map(() => order_qty / historical_volume_curve.length);
+  if (total <= 0)
+    return historical_volume_curve.map(() => order_qty / historical_volume_curve.length);
   return historical_volume_curve.map(v => (v / total) * order_qty);
 }
 
@@ -218,7 +221,12 @@ export function povSchedule(participation_rate: number, realized_volume_curve: n
  */
 export function smartOrderRouting(input: {
   order_qty: number;
-  venues: Array<{ name: string; cost_bps: number; available_liquidity: number; latency_ms: number }>;
+  venues: Array<{
+    name: string;
+    cost_bps: number;
+    available_liquidity: number;
+    latency_ms: number;
+  }>;
 }): Array<{ venue: string; shares: number; estimated_cost_bps: number }> {
   // Sort by cost
   const sorted = [...input.venues].sort((a, b) => a.cost_bps - b.cost_bps);
@@ -248,7 +256,10 @@ export function smartOrderRouting(input: {
  *
  *   Returns: { beta, alpha, adf_t_stat, is_cointegrated }
  */
-export function engleGrangerCointegration(y: number[], x: number[]): {
+export function engleGrangerCointegration(
+  y: number[],
+  x: number[]
+): {
   beta: number;
   alpha: number;
   residuals: number[];
@@ -262,12 +273,14 @@ export function engleGrangerCointegration(y: number[], x: number[]): {
   const N = y.length;
   const mx = x.reduce((s, v) => s + v, 0) / N;
   const my = y.reduce((s, v) => s + v, 0) / N;
-  let num = 0, denom = 0;
+  let num = 0,
+    denom = 0;
   for (let i = 0; i < N; i += 1) {
     num += (x[i] - mx) * (y[i] - my);
     denom += (x[i] - mx) ** 2;
   }
-  if (denom < 1e-12) return { beta: NaN, alpha: NaN, residuals: [], adf_t_stat: NaN, is_cointegrated: false };
+  if (denom < 1e-12)
+    return { beta: NaN, alpha: NaN, residuals: [], adf_t_stat: NaN, is_cointegrated: false };
   const beta = num / denom;
   const alpha = my - beta * mx;
   const residuals = y.map((v, i) => v - alpha - beta * x[i]);
@@ -278,7 +291,8 @@ export function engleGrangerCointegration(y: number[], x: number[]): {
   const r_lag = residuals.slice(0, -1);
   const mr = r_lag.reduce((s, v) => s + v, 0) / r_lag.length;
   const mdr = dr.reduce((s, v) => s + v, 0) / dr.length;
-  let numA = 0, denomA = 0;
+  let numA = 0,
+    denomA = 0;
   for (let i = 0; i < r_lag.length; i += 1) {
     numA += (r_lag[i] - mr) * (dr[i] - mdr);
     denomA += (r_lag[i] - mr) ** 2;
@@ -380,7 +394,8 @@ export function meanReversionHalfLife(prices: number[]): {
   const N = y_lag.length;
   const mx = y_lag.reduce((s, v) => s + v, 0) / N;
   const my = dy.reduce((s, v) => s + v, 0) / N;
-  let num = 0, denom = 0;
+  let num = 0,
+    denom = 0;
   for (let i = 0; i < N; i += 1) {
     num += (y_lag[i] - mx) * (dy[i] - my);
     denom += (y_lag[i] - mx) ** 2;

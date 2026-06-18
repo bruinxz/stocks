@@ -7,7 +7,9 @@
  *
  *   - 分子: 近 60 自然日内, 该股所有股东增减持公告的净买入金额 (元).
  *           增持 → +, 减持 → -.
- *   - 分母: 当前流通市值 (元) — 归一化, 避免大市值股票数值膨胀.
+ *   - 分母: **as_of_date 当时的流通市值** (元, audit M-8 修复 2026-06-18) —
+ *           走 `loadHistoricalCirculatingMarketCap` 选 `StockValuationFactor.factor_date ≤ as_of`
+ *           最新一条; 兜底 `Stock.circulating_market_cap` (最新 snapshot).
  *
  *   经济意义:
  *     - 大股东 / 高管 / 机构主动增持 → 信号 "内部人对未来基本面有信心",
@@ -22,7 +24,7 @@
  *     trade_direction, change_start_date)
  *   - 关键字段: trade_amount (元, **代理字段** = trade_shares × latest_price),
  *     trade_direction ('增持' | '减持'), announce_date (用于窗口过滤)
- * + Stock 表的 circulating_market_cap (最新流通市值)
+ * + StockValuationFactor 表 (audit M-8: as_of_date 当时的流通市值; 兜底 Stock.circulating_market_cap)
  *
  * **关于 trade_amount 代理性 (US-090 数据层代理范式)**:
  *   - ShareholderTradeRecord.trade_amount = trade_shares × latest_price (最新价),
@@ -40,7 +42,7 @@
  *   - 60 日窗口内该股一条增减持记录都没有 → 跳过
  *     (注: 大量股票 raw_value=0 会让横截面 zscore 退化成 "0 vs 正/负" 多模分布,
  *      中性补全 percentile=0.5 反而保留干净信号)
- *   - circulating_market_cap 为空 / ≤ 0 → 跳过 (防分母爆炸)
+ *   - circulating_market_cap 为空 / ≤ 0 → 跳过 (防分母爆炸; audit M-8 后由 loadHistoricalCirculatingMarketCap 保证 as_of 当时值)
  *   - announce_date > as_of_date → 剔除单行 (lookahead bias guard, US-030 范式)
  *
  * 关于 "因子不做归一化" 约束 #1 (factors/CLAUDE.md):
@@ -74,7 +76,8 @@ import { Op } from 'sequelize';
 import { Factor } from '../types';
 import { factorRegistry } from '../FactorRegistry';
 import { ShareholderTradeRecord } from '../../../models/ShareholderTradeRecord';
-import { loadStocksByCodes, isFiniteNumber, lookbackStartDate } from './_helpers';
+import { isFiniteNumber, lookbackStartDate } from './_helpers';
+import { loadHistoricalCirculatingMarketCap } from './_historicalMarketCap';
 
 /** 因子查询窗口 (自然日) — 60 日覆盖内部人公告 → 价格反应的中线窗口 */
 export const WINDOW_DAYS = 60;
@@ -149,20 +152,16 @@ export function computeNetInsiderInflow(
 
 export const insiderTradeFactor: Factor = {
   name: 'insider_trade',
-  description: '最近 60 日内部人 (股东增减持) 净买入金额 / 流通市值 (代理量, 见 jsdoc)',
+  description: '最近 60 日内部人 (股东增减持) 净买入金额 / 当时流通市值 (代理量, 见 jsdoc)',
   category: 'flow',
 
   async compute(ctx) {
     const out = new Map<string, number | null>();
     if (!ctx.universe.length) return out;
 
-    // 1) 拉 Stock 表的 circulating_market_cap
-    const stockByCode = await loadStocksByCodes(ctx.universe, [
-      'id',
-      'symbol',
-      'circulating_market_cap',
-    ]);
-    if (!stockByCode.size) return out;
+    // 1) audit M-8: 拉 as_of_date 当时的流通市值 (而非最新 snapshot)
+    const mcapByCode = await loadHistoricalCirculatingMarketCap(ctx.universe, ctx.as_of_date);
+    if (!mcapByCode.size) return out;
 
     // 2) 拉窗口内的 ShareholderTradeRecord (按 stock_code IN 过滤 universe)
     const startDate = lookbackStartDate(ctx.as_of_date, WINDOW_DAYS);
@@ -194,14 +193,12 @@ export const insiderTradeFactor: Factor = {
       byStock.set(r.stock_code, arr);
     }
 
-    // 4) per-stock 计算 净买入 / 流通市值
+    // 4) per-stock 计算 净买入 / 流通市值[as_of]
     for (const [code, trades] of byStock.entries()) {
       const breakdown = computeNetInsiderInflow(trades, ctx.as_of_date);
       if (breakdown === null) continue;
-      const stock = stockByCode.get(code);
-      if (!stock) continue;
-      const mcap = Number(stock.circulating_market_cap);
-      if (!isFiniteNumber(mcap) || mcap <= 0) continue;
+      const mcap = mcapByCode.get(code);
+      if (typeof mcap !== 'number' || !isFiniteNumber(mcap) || mcap <= 0) continue;
       out.set(code, breakdown.net_inflow / mcap);
     }
 

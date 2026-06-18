@@ -315,7 +315,9 @@ export function avgOffDiagonalCorrelation(matrix: Array<Array<number | null>>): 
 
 export interface PortfolioCorrelationDataSource {
   loadPortfolioHeader(portfolio_id: number): Promise<{ user_id: number } | null>;
-  loadPositionsWithMV(portfolio_id: number): Promise<
+  loadPositionsWithMV(
+    portfolio_id: number
+  ): Promise<
     Array<{ stock_code: string; name: string; market_value: number; industry?: string | null }>
   >;
   loadClosesSeries(
@@ -336,7 +338,10 @@ export const PRODUCTION_PORTFOLIO_CORRELATION_DATA_SOURCE: PortfolioCorrelationD
     });
     const codes = positions.map(p => p.symbol);
     const stocks = codes.length
-      ? await Stock.findAll({ where: { symbol: { [Op.in]: codes } }, attributes: ['symbol', 'industry'] })
+      ? await Stock.findAll({
+          where: { symbol: { [Op.in]: codes } },
+          attributes: ['symbol', 'industry'],
+        })
       : [];
     const indMap = new Map(stocks.map(s => [s.symbol, s.industry || null]));
     return positions.map(p => ({
@@ -388,7 +393,9 @@ export const PRODUCTION_PORTFOLIO_CORRELATION_DATA_SOURCE: PortfolioCorrelationD
 // ============================================================
 
 export class PortfolioCorrelationService {
-  constructor(private dataSource: PortfolioCorrelationDataSource = PRODUCTION_PORTFOLIO_CORRELATION_DATA_SOURCE) {}
+  constructor(
+    private dataSource: PortfolioCorrelationDataSource = PRODUCTION_PORTFOLIO_CORRELATION_DATA_SOURCE
+  ) {}
 
   /**
    * 计算某 portfolio 的相关性报告。
@@ -455,7 +462,10 @@ export class PortfolioCorrelationService {
         position_count: positions.length,
         insufficient_data_symbols: insufficientSymbols,
         lookback_days: lookback,
-        matrix: { symbols: validCodes, matrix: validCodes.map((_, i) => validCodes.map((__, j) => (i === j ? 1 : null))) },
+        matrix: {
+          symbols: validCodes,
+          matrix: validCodes.map((_, i) => validCodes.map((__, j) => (i === j ? 1 : null))),
+        },
         high_correlation_clusters: [],
         avg_off_diagonal_correlation: null,
         diversification_level: 'insufficient',

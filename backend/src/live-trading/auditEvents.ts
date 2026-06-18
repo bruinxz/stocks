@@ -64,7 +64,7 @@ export const LIVE_AUDIT_EVENT_TYPES = {
 } as const;
 
 export type LiveAuditEventType =
-  typeof LIVE_AUDIT_EVENT_TYPES[keyof typeof LIVE_AUDIT_EVENT_TYPES];
+  (typeof LIVE_AUDIT_EVENT_TYPES)[keyof typeof LIVE_AUDIT_EVENT_TYPES];
 
 /**
  * 返回所有已知 event_type 字面量。

@@ -32,7 +32,10 @@ function runBridgeReadonlyGuard() {
   });
 
   assert(!status.can_submit_orders, 'bridge_readonly must never allow live order submission');
-  assert(!status.broker_gateway_trading_allowed, 'bridge_readonly should not be in trading allowlist');
+  assert(
+    !status.broker_gateway_trading_allowed,
+    'bridge_readonly should not be in trading allowlist'
+  );
   assert(
     status.blockers.join('；').includes('不在真实交易允许列表'),
     'bridge_readonly should report allowlist blocker'
@@ -62,7 +65,10 @@ function runGatewayCapabilityGuard() {
     blocked.blockers.join('；').includes('能力声明不支持真实交易'),
     'qmt_bridge without capability should report capability blocker'
   );
-  assert(allowed.can_submit_orders, 'qmt_bridge with trading capability and open switches should be allowed');
+  assert(
+    allowed.can_submit_orders,
+    'qmt_bridge with trading capability and open switches should be allowed'
+  );
 }
 
 function runKillSwitchStillBlocksGuard() {
@@ -105,10 +111,7 @@ function runGatewayAllowlistAuditGuard() {
       !status.can_submit_orders,
       `${gateway} must never enter live trading path even when capability lies`
     );
-    assert(
-      !status.broker_gateway_trading_allowed,
-      `${gateway} must not be in trading allowlist`
-    );
+    assert(!status.broker_gateway_trading_allowed, `${gateway} must not be in trading allowlist`);
   }
 }
 
@@ -127,7 +130,10 @@ function runLicensedProviderGuard() {
   });
   assert(blocked.licensed_provider_required, 'licensed provider gate should default to required');
   assert(!blocked.licensed_provider_satisfied, 'default provider should not satisfy licensed gate');
-  assert(!blocked.can_submit_orders, 'live order must be blocked when non-licensed provider is used');
+  assert(
+    !blocked.can_submit_orders,
+    'live order must be blocked when non-licensed provider is used'
+  );
   assert(
     blocked.blockers.join('；').includes('持牌闸门阻断'),
     'licensed provider blocker should be reported'
@@ -170,7 +176,10 @@ function runDbKillSwitchInjectionGuard() {
   const capability = { broker_key: 'qmt_bridge', trading_supported: true } as const;
 
   const noKill = svc.getStatus(capability);
-  assert(noKill.can_submit_orders, 'baseline: env-only path should allow submit when all switches OK');
+  assert(
+    noKill.can_submit_orders,
+    'baseline: env-only path should allow submit when all switches OK'
+  );
   assert(!noKill.db_kill_switch, 'no DB kill switch by default');
 
   const withKill = svc.getStatus(capability, {

@@ -97,9 +97,19 @@ export class MarketNewsSyncService {
       }
 
       await MarketNews.bulkCreate(records as any, {
-        updateOnDuplicate: ['title', 'content', 'source', 'category', 'url', 'raw_payload', 'updated_at'],
+        updateOnDuplicate: [
+          'title',
+          'content',
+          'source',
+          'category',
+          'url',
+          'raw_payload',
+          'updated_at',
+        ],
       });
-      logger.info(`MarketNews syncOnce: fetched=${rows.length}, upserted=${records.length}, skipped=${skipped}`);
+      logger.info(
+        `MarketNews syncOnce: fetched=${rows.length}, upserted=${records.length}, skipped=${skipped}`
+      );
       return { fetched: rows.length, upserted: records.length, skipped };
     } catch (error) {
       const message = (error as Error).message;
@@ -161,14 +171,27 @@ function parsePublishTime(raw: string | null | undefined): Date | null {
   if (m) {
     const now = new Date();
     const yr = now.getFullYear();
-    const d = new Date(yr, Number(m[1]) - 1, Number(m[2]), Number(m[3]), Number(m[4]), Number(m[5] || '0'));
+    const d = new Date(
+      yr,
+      Number(m[1]) - 1,
+      Number(m[2]),
+      Number(m[3]),
+      Number(m[4]),
+      Number(m[5] || '0')
+    );
     return Number.isNaN(d.getTime()) ? null : d;
   }
   // Case 4: 'HH:mm' — 当日
   const hm = s.match(/^(\d{2}):(\d{2})$/);
   if (hm) {
     const now = new Date();
-    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate(), Number(hm[1]), Number(hm[2]));
+    const d = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+      Number(hm[1]),
+      Number(hm[2])
+    );
     return Number.isNaN(d.getTime()) ? null : d;
   }
   // 兜底: Date 直接 parse

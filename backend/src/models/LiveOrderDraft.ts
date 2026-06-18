@@ -55,7 +55,13 @@ export class LiveOrderDraft extends Model {
   })
   declare estimated_amount: number;
 
-  @Column({ type: DataType.STRING(30), allowNull: false, defaultValue: 'preview', comment: '草稿生命周期：preview/pending/approved/rejected/submitted/expired/blocked/shadow_executed；不要复用 bridge command 状态' })
+  @Column({
+    type: DataType.STRING(30),
+    allowNull: false,
+    defaultValue: 'preview',
+    comment:
+      '草稿生命周期：preview/pending/approved/rejected/submitted/expired/blocked/shadow_executed；不要复用 bridge command 状态',
+  })
   declare status: string;
 
   @Column({

@@ -137,7 +137,10 @@ export class StrategyKellyStatsService {
   /**
    * 纯计算函数 — 单测可独立调用。
    */
-  computeStats(strategy_key: string, rows: Array<{ total_pnl_pct?: number; realized_pnl_pct?: number }>): StrategyKellyStats {
+  computeStats(
+    strategy_key: string,
+    rows: Array<{ total_pnl_pct?: number; realized_pnl_pct?: number }>
+  ): StrategyKellyStats {
     const pnls = rows
       .map(r => Number(r.total_pnl_pct ?? r.realized_pnl_pct ?? NaN))
       .filter(v => Number.isFinite(v));
@@ -179,7 +182,10 @@ export class StrategyKellyStatsService {
    *
    * @returns adjusted win_rate (90% lower CI from posterior)
    */
-  async getThompsonSampledWinRate(strategy_key: string, percentile_lower: number = 0.1): Promise<number | null> {
+  async getThompsonSampledWinRate(
+    strategy_key: string,
+    percentile_lower = 0.1
+  ): Promise<number | null> {
     const stats = await this.getStats(strategy_key);
     if (!stats) return null;
     // eslint-disable-next-line @typescript-eslint/no-var-requires

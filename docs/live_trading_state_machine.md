@@ -38,7 +38,7 @@ stateDiagram-v2
 
 ## 2. 命令（`LiveBrokerCommand.status`）
 
-由 **bridge 长轮询 + 事件回传 + TTL 巡检** 推进；终态 = `filled / cancelled / failed / expired`。
+由 **bridge 长轮询 + 事件回传 + TTL 巡检 + KillSwitch** 推进；终态 = `filled / cancelled / failed / expired / aborted`。
 
 ```mermaid
 stateDiagram-v2
@@ -48,6 +48,7 @@ stateDiagram-v2
     dispatching --> dispatched: ackCommand (bridge 显式 ack)
     dispatching --> expired: TTL 巡检
     pending --> expired: TTL 巡检
+    pending --> aborted: KillSwitch 激活 (abortPendingCommands)
     dispatched --> expired: TTL 巡检 (兜底)
     dispatched --> submitted: bridge 推 event(submitted) 且非 dryrun
     dispatched --> failed: bridge 推 event(failed) 或 submitted 但 broker_order_id 缺
@@ -62,6 +63,7 @@ stateDiagram-v2
     cancelled --> [*]
     failed --> [*]
     expired --> [*]
+    aborted --> [*]
 ```
 
 关键转移说明：
@@ -71,10 +73,20 @@ stateDiagram-v2
 | `pending` → `dispatching` | bridge 长轮询拉取 | `BridgeService.pullPendingCommands` | （审计在事件路径上） |
 | `dispatching` → `dispatched` | bridge 显式 ack | `BridgeService.ackCommand` | （`BRIDGE_REQUEST`） |
 | `pending/dispatching/dispatched` → `expired` | TTL 巡检 | `BridgeCommandExpiryService.scanCommandsExpired` | `BROKER_COMMAND_EXPIRED` |
+| `pending` → `aborted` | KillSwitch 激活 | `KillSwitchService.abortPendingCommands` | `KILL_SWITCH_TRIGGERED` + `BROKER_COMMAND_ABORTED` |
 | `dispatched` → `submitted/failed` | bridge 推 `submitted` 事件 | `BridgeService.advanceCommandStatus` | `BRIDGE_STATUS_SUBMITTED / FAILED` |
 | `submitted/partially_filled` → `filled` | 累计成交达到 target | `advanceCommandStatus`（事务内 increment） | `BRIDGE_STATUS_FILLED` |
 | `submitted/partially_filled` → `cancelled` | 撤单回报 | `advanceCommandStatus` | `BRIDGE_STATUS_CANCELLED` |
 | 任意 → terminal | 任何 event 写入 | 用 `WHERE status NOT IN terminal` 防覆盖 | （同上） |
+
+**`aborted` 终态特别说明 (audit M-6)**:
+- 触发: 仅由 `KillSwitchService.abortPendingCommands` 写入; 把 KillSwitch 激活
+  时所有仍为 `pending` 的命令一次性置 aborted, 阻断 bridge 后续拉取.
+- 终态: **不再进入 TTL 巡检** (`BridgeCommandExpiryService.scanCommandsExpired`
+  的 `WHERE status IN ('pending','dispatching','dispatched')` 不覆盖 aborted), 与
+  cancelled / failed / expired 并列.
+- 不会回到 active: KillSwitch resolve 后已经 aborted 的命令不会自动复活, 需用户
+  手动 resubmit (设计意图: 熔断是高风险信号, 强制人工 review).
 
 ## 3. 委托（`LiveOrder.bridge_status`）
 

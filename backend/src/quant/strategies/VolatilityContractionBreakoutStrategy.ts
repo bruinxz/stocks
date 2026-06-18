@@ -41,8 +41,16 @@ export class VolatilityContractionBreakoutStrategy extends QuantStrategy {
       category: 'breakout',
       expected_edge_pct: 8.0,
       expected_holding_days: 16,
-      key_factors: ['vol10_vs_vol60_contraction', 'range_10d_pct', 'close_vs_high_20', 'volume_3_20_ratio', 'ma20_vs_ma60', 'drawdown_60d'],
-      evidence_link: 'Mark Minervini - VCP (Volatility Contraction Pattern) / Trade Like a Stock Market Wizard',
+      key_factors: [
+        'vol10_vs_vol60_contraction',
+        'range_10d_pct',
+        'close_vs_high_20',
+        'volume_3_20_ratio',
+        'ma20_vs_ma60',
+        'drawdown_60d',
+      ],
+      evidence_link:
+        'Mark Minervini - VCP (Volatility Contraction Pattern) / Trade Like a Stock Market Wizard',
       failure_modes: [
         '震荡市平台突破即假突破（false breakout）反向破位',
         '60 日回撤 > 24% 平台稳定性不足，突破后立刻回落',
@@ -124,7 +132,11 @@ export class VolatilityContractionBreakoutStrategy extends QuantStrategy {
     score = clamp(score * patternBoost.multiplier);
     if (patternBoost.detected_patterns.length > 0) {
       reasons.push(
-        `形态确认 (${regime}市): ${patternBoost.detected_patterns.join(', ')} × ${patternBoost.multiplier.toFixed(2)} → ${scoreBeforePattern.toFixed(0)}→${score.toFixed(0)}`,
+        `形态确认 (${regime}市): ${patternBoost.detected_patterns.join(
+          ', '
+        )} × ${patternBoost.multiplier.toFixed(2)} → ${scoreBeforePattern.toFixed(
+          0
+        )}→${score.toFixed(0)}`
       );
     }
 

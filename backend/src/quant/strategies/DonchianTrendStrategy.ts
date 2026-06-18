@@ -6,7 +6,10 @@ import {
   QuantStrategyRuntimeOptions,
 } from '../types/QuantTypes';
 import { atr, average, clamp, last, pct, round, sma, valueNDaysAgo } from '../engine/QuantMath';
-import { donchianBreakoutWithPatternAdjustment, inferLocalRegime } from '../../services/research/pattern-library';
+import {
+  donchianBreakoutWithPatternAdjustment,
+  inferLocalRegime,
+} from '../../services/research/pattern-library';
 
 export class DonchianTrendStrategy extends QuantStrategy {
   readonly definition: QuantStrategyDefinition = {
@@ -31,7 +34,13 @@ export class DonchianTrendStrategy extends QuantStrategy {
       category: 'breakout',
       expected_edge_pct: 7.0,
       expected_holding_days: 25,
-      key_factors: ['close_vs_donchian_55_high', 'ma50_vs_ma100', 'return_60d', 'atr_pct', 'volume_5_20_ratio'],
+      key_factors: [
+        'close_vs_donchian_55_high',
+        'ma50_vs_ma100',
+        'return_60d',
+        'atr_pct',
+        'volume_5_20_ratio',
+      ],
       evidence_link: 'Richard Donchian - 4-week rule (1960s) / Donchian Channel',
       failure_modes: [
         '震荡市频繁假突破，ATR 止损反复触发',
@@ -107,7 +116,11 @@ export class DonchianTrendStrategy extends QuantStrategy {
     const scoreBeforePattern = score;
     score = clamp(score * patternMul);
     if (patternMul > 1.0) {
-      reasons.push(`形态确认 (${regime}市): pattern mul ${patternMul.toFixed(2)} → ${scoreBeforePattern.toFixed(0)}→${score.toFixed(0)}`);
+      reasons.push(
+        `形态确认 (${regime}市): pattern mul ${patternMul.toFixed(
+          2
+        )} → ${scoreBeforePattern.toFixed(0)}→${score.toFixed(0)}`
+      );
     } else if (patternMul < 1.0) {
       risk_flags.push(`形态不利 (${regime}市): pattern mul ${patternMul.toFixed(2)} 降权`);
     }

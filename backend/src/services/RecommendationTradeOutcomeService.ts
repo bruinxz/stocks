@@ -26,10 +26,7 @@ import {
   recommendationStrategyKeyLabel,
 } from '../utils/recommendationStrategyVariant';
 // Phase 5: 自动归类 trade root_cause (10 级优先级链)
-import {
-  classifyTradeRootCause,
-  TradeRootCauseInput,
-} from './TradeRootCauseClassifier';
+import { classifyTradeRootCause, TradeRootCauseInput } from './TradeRootCauseClassifier';
 // Phase 5+: 自动生成事后复盘 (亏损/wrong_entry/wrong_regime 等触发)
 import { tradePostmortemService } from './TradePostmortemService';
 // Phase 2+: Kelly sizing 统计聚合（写新 outcome 后 invalidate 缓存）
@@ -3101,7 +3098,8 @@ export class RecommendationTradeOutcomeService {
       stock,
       entry_date: entryDate,
       exit_date: effectiveExitDate,
-      total_pnl_pct: totalPnlPct,    });
+      total_pnl_pct: totalPnlPct,
+    });
 
     // Phase 5: 自动归类 root_cause
     // 输入收集 (有什么用什么，全部 optional)
@@ -3126,9 +3124,7 @@ export class RecommendationTradeOutcomeService {
         asPlainObject(metadata.market_environment).market_regime ||
         null,
       signal_catalyst:
-        (metadata.signal_catalyst as string) ||
-        (signal.source_type as string) ||
-        null,
+        (metadata.signal_catalyst as string) || (signal.source_type as string) || null,
       max_drawdown_during_hold_pct:
         Math.abs(Number(mfeMae.max_adverse_excursion_pct) || 0) || undefined,
       // strategy_stop_loss_pct / strategy_max_holding_days / backtest_expected

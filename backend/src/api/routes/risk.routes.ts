@@ -414,11 +414,7 @@ router.get('/sizing-audit', authController.authenticate, riskController.getSizin
  *     responses:
  *       200: { description: 评估报告 + 触发策略列表 }
  */
-router.get(
-  '/kill-switch-status',
-  authController.authenticate,
-  riskController.getKillSwitchStatus
-);
+router.get('/kill-switch-status', authController.authenticate, riskController.getKillSwitchStatus);
 
 /**
  * @swagger
@@ -428,10 +424,6 @@ router.get(
  *     responses:
  *       200: { description: 5 维信号 + top_score + level }
  */
-router.get(
-  '/market-top-status',
-  authController.authenticate,
-  riskController.getMarketTopStatus
-);
+router.get('/market-top-status', authController.authenticate, riskController.getMarketTopStatus);
 
 export default router;

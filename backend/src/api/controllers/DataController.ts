@@ -123,9 +123,9 @@ export class DataController {
       };
 
       // ---- 各模块真实状态采集 ----
-      const [taskRows] = await sequelize.query(
-        "SELECT type, name, last_run_at, last_run_status FROM scheduled_tasks WHERE is_active=true"
-      ) as [any[], any];
+      const [taskRows] = (await sequelize.query(
+        'SELECT type, name, last_run_at, last_run_status FROM scheduled_tasks WHERE is_active=true'
+      )) as [any[], any];
 
       const taskStatus = (types: string[]) => {
         const matching = taskRows.filter((t: any) => types.includes(t.type));
@@ -133,7 +133,10 @@ export class DataController {
         const statuses = matching.map((t: any) => t.last_run_status || 'NEVER');
         const lastRun = matching
           .filter((t: any) => t.last_run_at)
-          .sort((a: any, b: any) => new Date(b.last_run_at).getTime() - new Date(a.last_run_at).getTime())[0];
+          .sort(
+            (a: any, b: any) =>
+              new Date(b.last_run_at).getTime() - new Date(a.last_run_at).getTime()
+          )[0];
         const hasFailure = statuses.some((s: string) => s === 'FAILED');
         const allNever = statuses.every((s: string) => s === 'NEVER');
         return {
@@ -153,35 +156,58 @@ export class DataController {
       const dataStatus = redCount > 0 ? 'red' : yellowCount > 0 ? 'yellow' : 'green';
 
       // 2. 因子引擎
-      const factorRow = await q("SELECT COUNT(DISTINCT factor_name)::int AS n, MAX(trade_date)::date AS d FROM factor_scores");
-      const factorLag = factorRow.d ? Math.floor((Date.now() - new Date(factorRow.d).getTime()) / 86400000) : 999;
+      const factorRow = await q(
+        'SELECT COUNT(DISTINCT factor_name)::int AS n, MAX(trade_date)::date AS d FROM factor_scores'
+      );
+      const factorLag = factorRow.d
+        ? Math.floor((Date.now() - new Date(factorRow.d).getTime()) / 86400000)
+        : 999;
       const factorStatus = factorLag > 3 ? 'red' : factorLag > 1 ? 'yellow' : 'green';
 
       // 3. 策略引擎
-      const sigRow = await q("SELECT COUNT(*)::int AS n FROM quant_signals WHERE trade_date::date = CURRENT_DATE");
-      const sigTotal = await q("SELECT COUNT(DISTINCT strategy_key)::int AS n FROM quant_signals WHERE trade_date >= (CURRENT_DATE - 7)");
+      const sigRow = await q(
+        'SELECT COUNT(*)::int AS n FROM quant_signals WHERE trade_date::date = CURRENT_DATE'
+      );
+      const sigTotal = await q(
+        'SELECT COUNT(DISTINCT strategy_key)::int AS n FROM quant_signals WHERE trade_date >= (CURRENT_DATE - 7)'
+      );
       const strategyStatus = sigRow.n > 0 ? 'green' : sigTotal.n > 0 ? 'yellow' : 'red';
 
       // 4. 宏观环境
-      const macroRow = await q("SELECT MAX(observation_date)::date AS d FROM macro_indicators");
-      const qvixRow = await q("SELECT MAX(observation_date)::date AS d FROM option_qvix");
-      const macroLag = macroRow.d ? Math.floor((Date.now() - new Date(macroRow.d).getTime()) / 86400000) : 999;
+      const macroRow = await q('SELECT MAX(observation_date)::date AS d FROM macro_indicators');
+      const qvixRow = await q('SELECT MAX(observation_date)::date AS d FROM option_qvix');
+      const macroLag = macroRow.d
+        ? Math.floor((Date.now() - new Date(macroRow.d).getTime()) / 86400000)
+        : 999;
       const macroStatus = macroLag > 7 ? 'red' : macroLag > 2 ? 'yellow' : 'green';
 
       // 5. 自主决策
       const autopilotTask = taskStatus(['PAPER_TRADING_AUTO_SYNC']);
 
       // 6. 风控
-      const riskTask = taskStatus(['PAPER_TRADING_RISK_CHECK', 'PAPER_TRADING_MARKET_REGIME_CHECK']);
-      const alertRow = await q("SELECT COUNT(*)::int AS n FROM risk_alerts WHERE user_id=4 AND created_at > NOW() - INTERVAL '24 hours'");
+      const riskTask = taskStatus([
+        'PAPER_TRADING_RISK_CHECK',
+        'PAPER_TRADING_MARKET_REGIME_CHECK',
+      ]);
+      const alertRow = await q(
+        "SELECT COUNT(*)::int AS n FROM risk_alerts WHERE user_id=4 AND created_at > NOW() - INTERVAL '24 hours'"
+      );
 
       // 7. 模拟盘
-      const pfRow = await q("SELECT current_cash, total_value FROM paper_trading_portfolios WHERE user_id=4 LIMIT 1");
-      const posRow = await q("SELECT COUNT(*)::int AS n FROM paper_trading_positions WHERE portfolio_id IN (SELECT id FROM paper_trading_portfolios WHERE user_id=4)");
-      const tradeRow = await q("SELECT symbol, name, direction, created_at FROM paper_trading_trades WHERE portfolio_id IN (SELECT id FROM paper_trading_portfolios WHERE user_id=4) ORDER BY created_at DESC LIMIT 1");
+      const pfRow = await q(
+        'SELECT current_cash, total_value FROM paper_trading_portfolios WHERE user_id=4 LIMIT 1'
+      );
+      const posRow = await q(
+        'SELECT COUNT(*)::int AS n FROM paper_trading_positions WHERE portfolio_id IN (SELECT id FROM paper_trading_portfolios WHERE user_id=4)'
+      );
+      const tradeRow = await q(
+        'SELECT symbol, name, direction, created_at FROM paper_trading_trades WHERE portfolio_id IN (SELECT id FROM paper_trading_portfolios WHERE user_id=4) ORDER BY created_at DESC LIMIT 1'
+      );
 
       // 8. 通知
-      const webhookOk = !!(process.env.FEISHU_RECOMMENDATION_BOT_WEBHOOK || process.env.FEISHU_BOT_WEBHOOK);
+      const webhookOk = !!(
+        process.env.FEISHU_RECOMMENDATION_BOT_WEBHOOK || process.env.FEISHU_BOT_WEBHOOK
+      );
       const webhookDisabled = String(process.env.DISABLE_FEISHU_BOT_WEBHOOK) === 'true';
 
       // 9. (Phase 2+) Sizing 决策审计 — 最近 7 天的 sizing_decision_audits + 主流方法
@@ -271,9 +297,14 @@ export class DataController {
       // ---- 构建节点 (Sprint 26: 8 层纵向) ----
       const nodes = [
         {
-          id: 'quant_system', label: '量化推荐系统', category: 'core',
-          status: [dataStatus, factorStatus, strategyStatus, autopilotTask.status].includes('red') ? 'red' :
-                  [dataStatus, factorStatus, strategyStatus, autopilotTask.status].includes('yellow') ? 'yellow' : 'green',
+          id: 'quant_system',
+          label: '量化推荐系统',
+          category: 'core',
+          status: [dataStatus, factorStatus, strategyStatus, autopilotTask.status].includes('red')
+            ? 'red'
+            : [dataStatus, factorStatus, strategyStatus, autopilotTask.status].includes('yellow')
+            ? 'yellow'
+            : 'green',
           stats: {
             // activeModules → 前端映射"活跃策略" 显示
             activeModules: sigTotal.n,
@@ -283,66 +314,90 @@ export class DataController {
             totalSources: cards.length,
             factorCount: factorRow.n,
           },
-          lastAction: `${cards.length} 数据源 / ${factorRow.n} 因子 / ${sigTotal.n} 策略 / ${killSwitchStats.total || 0} 策略带 EH`,
+          lastAction: `${cards.length} 数据源 / ${factorRow.n} 因子 / ${sigTotal.n} 策略 / ${
+            killSwitchStats.total || 0
+          } 策略带 EH`,
         },
         // ===== L1 — Data 数据接入 =====
         {
-          id: 'data_collection', label: '数据采集层', category: 'L1_data',
+          id: 'data_collection',
+          label: '数据采集层',
+          category: 'L1_data',
           status: dataStatus,
           stats: { sources: cards.length, green: greenCount, yellow: yellowCount, red: redCount },
           lastAction: `${greenCount}✅ ${yellowCount}⚠️ ${redCount}❌ (共${cards.length}源)`,
         },
         {
-          id: 'macro_env', label: '宏观环境', category: 'L1_data',
+          id: 'macro_env',
+          label: '宏观环境',
+          category: 'L1_data',
           status: macroStatus,
           stats: { macroLatest: macroRow.d, qvixLatest: qvixRow.d },
           lastAction: `macro=${macroRow.d || '—'} qvix=${qvixRow.d || '—'}`,
         },
         {
-          id: 'capacity_monitor', label: '容量+Alpha衰减监控', category: 'L1_data',
+          id: 'capacity_monitor',
+          label: '容量+Alpha衰减监控',
+          category: 'L1_data',
           status: 'green',
           stats: { signals_tracked: 6, half_life_method: 'observed/literature' },
           lastAction: 'A-share PIT + 容量阈值 + 半衰期 (Sprint 23/25)',
         },
         // ===== L2 — Signal 策略 + 因子 + 形态 =====
         {
-          id: 'factor_engine', label: '因子引擎', category: 'L2_signal',
+          id: 'factor_engine',
+          label: '因子引擎',
+          category: 'L2_signal',
           status: factorStatus,
           stats: { factorCount: factorRow.n, latest: factorRow.d, lag: factorLag },
           lastAction: `${factorRow.n} 因子 latest=${factorRow.d || '—'} lag=${factorLag}d`,
         },
         {
-          id: 'strategy_engine', label: '策略引擎', category: 'L2_signal',
+          id: 'strategy_engine',
+          label: '策略引擎',
+          category: 'L2_signal',
           status: strategyStatus,
           stats: {
             todaySignals: sigRow.n,
             activeStrategies: sigTotal.n,
             totalStrategies: killSwitchStats.total || 0,
           },
-          lastAction: `今日 ${sigRow.n} 信号 / ${sigTotal.n} 策略活跃 / ${killSwitchStats.total || 0} 总注册`,
+          lastAction: `今日 ${sigRow.n} 信号 / ${sigTotal.n} 策略活跃 / ${
+            killSwitchStats.total || 0
+          } 总注册`,
         },
         {
-          id: 'pattern_library', label: '形态库', category: 'L2_signal',
+          id: 'pattern_library',
+          label: '形态库',
+          category: 'L2_signal',
           status: 'green',
           stats: { patterns: 15, source: 'Bulkowski + Sprint13/21' },
           lastAction: '15 Bulkowski 形态 + inferLocalRegime',
         },
         // ===== L3 — Meta Decision 元决策 + 仓位 =====
         {
-          id: 'meta_label_filter', label: 'MetaLabel 信号过滤', category: 'L3_meta',
+          id: 'meta_label_filter',
+          label: 'MetaLabel 信号过滤',
+          category: 'L3_meta',
           status: 'green',
           stats: { layer: 'pre-feasibility', model: 'logistic-regression' },
           lastAction: '二层模型 confidence 判断是否下注',
         },
         {
-          id: 'autopilot', label: '自主决策', category: 'L3_meta',
+          id: 'autopilot',
+          label: '自主决策',
+          category: 'L3_meta',
           status: autopilotTask.status,
           stats: { lastRun: autopilotTask.lastRun, lastStatus: autopilotTask.lastStatus },
-          lastAction: autopilotTask.lastRun ? `${autopilotTask.lastStatus} @ ${autopilotTask.lastRun?.slice(11, 16)}` : '等待首次运行',
+          lastAction: autopilotTask.lastRun
+            ? `${autopilotTask.lastStatus} @ ${autopilotTask.lastRun?.slice(11, 16)}`
+            : '等待首次运行',
         },
         // Phase 2+ NEW: sizing 决策 + 决策审计
         {
-          id: 'sizing_decision', label: 'Sizing 决策', category: 'L3_meta',
+          id: 'sizing_decision',
+          label: 'Sizing 决策',
+          category: 'L3_meta',
           status: sizingStatus,
           stats: sizingStats,
           lastAction:
@@ -352,26 +407,34 @@ export class DataController {
         },
         // ===== L4 — Construction 组合权重 =====
         {
-          id: 'portfolio_construction', label: '风险预算组合', category: 'L4_construction',
+          id: 'portfolio_construction',
+          label: '风险预算组合',
+          category: 'L4_construction',
           status: 'green',
           stats: { methods: 4, default: 'risk_parity' },
           lastAction: 'ERC + 行业约束 + 总仓位约束输出权重',
         },
         {
-          id: 'bl_hrp_qp', label: 'B-L / HRP / QP 求解', category: 'L4_construction',
+          id: 'bl_hrp_qp',
+          label: 'B-L / HRP / QP 求解',
+          category: 'L4_construction',
           status: 'green',
           stats: { solvers: 'BL+HRP+NCO+QP+ThompsonSampling' },
           lastAction: 'Black-Litterman / Hierarchical Risk Parity / OSQP-style',
         },
         // ===== L5 — Execution Feasibility 执行可行性 =====
         {
-          id: 'execution_feasibility', label: '执行可行性评分', category: 'L5_feasibility',
+          id: 'execution_feasibility',
+          label: '执行可行性评分',
+          category: 'L5_feasibility',
           status: 'green',
           stats: { components: 4, weights: '30/30/20/20' },
           lastAction: '涨跌停 / 流动性 / spread / T+1 综合评分',
         },
         {
-          id: 'portfolio', label: '模拟盘', category: 'L5_feasibility',
+          id: 'portfolio',
+          label: '模拟盘',
+          category: 'L5_feasibility',
           status: pfRow ? 'green' : 'gray',
           stats: {
             totalValue: pfRow ? Number(pfRow.total_value) : 0,
@@ -382,25 +445,35 @@ export class DataController {
             ? `¥${Number(pfRow.total_value).toLocaleString()} / ${posRow.n}只持仓`
             : '未创建',
           lastTrade: tradeRow
-            ? `${tradeRow.direction} ${tradeRow.name || tradeRow.symbol} @ ${tradeRow.created_at?.toISOString?.()?.slice(11, 16) || ''}`
+            ? `${tradeRow.direction} ${tradeRow.name || tradeRow.symbol} @ ${
+                tradeRow.created_at?.toISOString?.()?.slice(11, 16) || ''
+              }`
             : null,
         },
         {
-          id: 'tca_microstructure', label: 'TCA + 微结构', category: 'L5_feasibility',
+          id: 'tca_microstructure',
+          label: 'TCA + 微结构',
+          category: 'L5_feasibility',
           status: 'green',
           stats: { models: 'AlmgrenChriss+Bouchaud+KyleLambda+GlostenMilgrom' },
           lastAction: '冲击成本 / Spread / PIN + RL execution',
         },
         // ===== L6 — Risk 风控守门 =====
         {
-          id: 'risk_control', label: '风控系统', category: 'L6_risk',
+          id: 'risk_control',
+          label: '风控系统',
+          category: 'L6_risk',
           status: riskTask.status === 'gray' && alertRow.n === 0 ? 'green' : riskTask.status,
           stats: { alerts24h: alertRow.n, lastRun: riskTask.lastRun },
-          lastAction: `${alertRow.n} 告警/24h` + (riskTask.lastRun ? ` 上次=${riskTask.lastRun?.slice(11, 16)}` : ''),
+          lastAction:
+            `${alertRow.n} 告警/24h` +
+            (riskTask.lastRun ? ` 上次=${riskTask.lastRun?.slice(11, 16)}` : ''),
         },
         // Phase 4+ NEW: kill switch 监控
         {
-          id: 'kill_switch', label: '策略熔断监控', category: 'L6_risk',
+          id: 'kill_switch',
+          label: '策略熔断监控',
+          category: 'L6_risk',
           status: killSwitchStatus,
           stats: killSwitchStats,
           lastAction:
@@ -410,7 +483,9 @@ export class DataController {
         },
         // ===== L7 — Governor 资金曲线治理 =====
         {
-          id: 'equity_curve_governor', label: '资金曲线 Governor', category: 'L7_governor',
+          id: 'equity_curve_governor',
+          label: '资金曲线 Governor',
+          category: 'L7_governor',
           status: 'green',
           stats: { tiers: 5, default_mult: 1.0 },
           lastAction: '5 档 Kelly 倍数 (healthy → observe_only)',
@@ -418,7 +493,9 @@ export class DataController {
         // ===== L8 — Reflection 复盘 + 归因 + 研究严谨性 + 通知输出 =====
         // Phase 5+ NEW: 闭环分析 (root_cause + postmortem)
         {
-          id: 'outcome_analysis', label: '闭环分析', category: 'L8_reflection',
+          id: 'outcome_analysis',
+          label: '闭环分析',
+          category: 'L8_reflection',
           status: outcomeStatus,
           stats: outcomeStats,
           lastAction:
@@ -427,19 +504,25 @@ export class DataController {
               : '尚无闭环 outcome',
         },
         {
-          id: 'attribution_brinson', label: 'Brinson 归因', category: 'L8_reflection',
+          id: 'attribution_brinson',
+          label: 'Brinson 归因',
+          category: 'L8_reflection',
           status: 'green',
           stats: { methods: 'Brinson+MCR+Style+Crowding' },
           lastAction: '行业/风格/拥挤度 归因分解 (Sprint 20/25)',
         },
         {
-          id: 'research_integrity', label: '研究严谨性审计', category: 'L8_reflection',
+          id: 'research_integrity',
+          label: '研究严谨性审计',
+          category: 'L8_reflection',
           status: 'green',
           stats: { detectors: 5, gates: 'wf+edge+ri' },
           lastAction: 'DSR / PBO / OOS decay / Lookahead / Survivorship',
         },
         {
-          id: 'notification', label: '通知推送', category: 'L8_reflection',
+          id: 'notification',
+          label: '通知推送',
+          category: 'L8_reflection',
           status: webhookOk && !webhookDisabled ? 'green' : webhookDisabled ? 'gray' : 'red',
           stats: { feishu: webhookOk, disabled: webhookDisabled },
           lastAction: webhookOk ? (webhookDisabled ? '已禁用' : '飞书 webhook 就绪') : '未配置',
@@ -477,7 +560,11 @@ export class DataController {
         { source: 'risk_control', target: 'portfolio', label: 'SELL 指令' },
         // L6 → L7 (风控 → Governor)
         { source: 'portfolio', target: 'equity_curve_governor', label: '健康度评估' },
-        { source: 'equity_curve_governor', target: 'sizing_decision', label: 'Kelly multiplier (反馈)' },
+        {
+          source: 'equity_curve_governor',
+          target: 'sizing_decision',
+          label: 'Kelly multiplier (反馈)',
+        },
         // L7/L5 → L8 (执行 → 复盘)
         { source: 'portfolio', target: 'outcome_analysis', label: '闭环 trades' },
         { source: 'portfolio', target: 'attribution_brinson', label: '收益序列' },
@@ -496,7 +583,10 @@ export class DataController {
         { source: 'quant_system', target: 'macro_env', label: '调度' },
       ];
 
-      return res.json({ success: true, data: { nodes, edges, generated_at: new Date().toISOString() } });
+      return res.json({
+        success: true,
+        data: { nodes, edges, generated_at: new Date().toISOString() },
+      });
     } catch (error: any) {
       logger.error(`DataController.getSystemTopology failed: ${error?.message ?? error}`);
       return res.status(500).json({ success: false, error: error?.message ?? '获取系统拓扑失败' });
@@ -759,16 +849,22 @@ export class DataController {
 
       // publish_date >= today-days+1 (含 today)
       const today = todayIso();
-      const startDate = new Date(Date.now() - (days - 1) * 86_400_000)
-        .toISOString()
-        .slice(0, 10);
+      const startDate = new Date(Date.now() - (days - 1) * 86_400_000).toISOString().slice(0, 10);
 
       const where: any = { publish_date: { [Op.gte]: startDate } };
       if (source) where.source = source;
 
       const rows = (await MarketNews.findAll({
         where,
-        attributes: ['title', 'content', 'publish_time', 'publish_date', 'source', 'category', 'url'],
+        attributes: [
+          'title',
+          'content',
+          'publish_time',
+          'publish_date',
+          'source',
+          'category',
+          'url',
+        ],
         order: [['publish_time', 'DESC']],
         limit,
         raw: true,
@@ -786,9 +882,7 @@ export class DataController {
         title: r.title,
         content: r.content,
         publish_time:
-          r.publish_time instanceof Date
-            ? r.publish_time.toISOString()
-            : String(r.publish_time),
+          r.publish_time instanceof Date ? r.publish_time.toISOString() : String(r.publish_time),
         publish_date:
           r.publish_date instanceof Date
             ? r.publish_date.toISOString().slice(0, 10)

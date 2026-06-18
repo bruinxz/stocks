@@ -218,8 +218,7 @@ export function bcaBootstrap<T>(
   const zAlphaHalf = standardNormalInverseCdf(alpha / 2);
   const zOneMinusAlphaHalf = standardNormalInverseCdf(1 - alpha / 2);
 
-  const adjustZ = (z: number): number =>
-    z0 + (z0 + z) / (1 - a * (z0 + z));
+  const adjustZ = (z: number): number => z0 + (z0 + z) / (1 - a * (z0 + z));
 
   const alpha1 = standardNormalCdf(adjustZ(zAlphaHalf));
   const alpha2 = standardNormalCdf(adjustZ(zOneMinusAlphaHalf));

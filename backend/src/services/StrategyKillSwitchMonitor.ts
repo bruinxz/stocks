@@ -131,7 +131,8 @@ export class StrategyKillSwitchMonitor {
    */
   async evaluateOne(strategy: QuantStrategyModel): Promise<KillSwitchEvaluation | null> {
     const hypo: any = strategy.edge_hypothesis || {};
-    const metric = typeof hypo.kill_switch_metric === 'string' ? hypo.kill_switch_metric.trim() : '';
+    const metric =
+      typeof hypo.kill_switch_metric === 'string' ? hypo.kill_switch_metric.trim() : '';
     const threshold =
       typeof hypo.kill_switch_threshold === 'number' && Number.isFinite(hypo.kill_switch_threshold)
         ? hypo.kill_switch_threshold
@@ -182,7 +183,9 @@ export class StrategyKillSwitchMonitor {
       const md: any = r.metadata || {};
       const sm: any = md.signal_metadata || {};
       const key =
-        md.strategy_key || sm.strategy_key || (Array.isArray(md.strategy_keys) ? md.strategy_keys[0] : null);
+        md.strategy_key ||
+        sm.strategy_key ||
+        (Array.isArray(md.strategy_keys) ? md.strategy_keys[0] : null);
       return key === strategy.strategy_key;
     });
 
@@ -345,8 +348,7 @@ export function computeMetric(
       // 没有亏损样本 — sortino 理论上为 +∞；返回大正数表示 "无下行风险"
       return mean > 0 ? 999 : null;
     }
-    const downsideVariance =
-      negatives.reduce((s, v) => s + v * v, 0) / pnls.length; // 用全体 n 而非 negatives.length (target=0)
+    const downsideVariance = negatives.reduce((s, v) => s + v * v, 0) / pnls.length; // 用全体 n 而非 negatives.length (target=0)
     const downsideStd = Math.sqrt(downsideVariance);
     if (downsideStd <= 1e-10) return null;
     const annualizationFactor = Math.sqrt(12);

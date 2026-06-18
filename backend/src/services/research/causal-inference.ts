@@ -89,7 +89,9 @@ function pearson(x: number[], y: number[]): number {
   if (valid.length < 2) return NaN;
   const mX = valid.reduce((s, p) => s + p[0], 0) / valid.length;
   const mY = valid.reduce((s, p) => s + p[1], 0) / valid.length;
-  let num = 0, dX = 0, dY = 0;
+  let num = 0,
+    dX = 0,
+    dY = 0;
   for (const [xi, yi] of valid) {
     num += (xi - mX) * (yi - mY);
     dX += (xi - mX) ** 2;
@@ -112,7 +114,7 @@ export function backdoorAdjustedCorrelation(
   X: number[],
   Y: number[],
   Z: number[],
-  k_bins: number = 5
+  k_bins = 5
 ): {
   naive_corr: number;
   adjusted_corr: number;
@@ -175,7 +177,7 @@ export function multiConfounderBackdoor(
   X: number[],
   Y: number[],
   Zs: number[][],
-  k_bins_per_dim: number = 3
+  k_bins_per_dim = 3
 ): {
   naive_corr: number;
   adjusted_corr: number;
@@ -246,7 +248,11 @@ export function multiConfounderBackdoor(
  *
  * @returns { f_statistic, granger_causality_score: 0-1, n_samples }
  */
-export function grangerCausalityTest(X: number[], Y: number[], lag: number = 1): {
+export function grangerCausalityTest(
+  X: number[],
+  Y: number[],
+  lag = 1
+): {
   f_statistic: number;
   granger_causality_score: number; // 0-1, higher = more evidence of causality
   n_samples: number;
@@ -256,7 +262,13 @@ export function grangerCausalityTest(X: number[], Y: number[], lag: number = 1):
   if (X.length !== Y.length) throw new Error('grangerCausalityTest: length mismatch');
   const N = X.length;
   if (N < lag * 4 + 5) {
-    return { f_statistic: NaN, granger_causality_score: NaN, n_samples: 0, rss_restricted: NaN, rss_unrestricted: NaN };
+    return {
+      f_statistic: NaN,
+      granger_causality_score: NaN,
+      n_samples: 0,
+      rss_restricted: NaN,
+      rss_unrestricted: NaN,
+    };
   }
 
   // Build feature matrix
@@ -273,7 +285,13 @@ export function grangerCausalityTest(X: number[], Y: number[], lag: number = 1):
   }
 
   if (ys.length < 5) {
-    return { f_statistic: NaN, granger_causality_score: NaN, n_samples: 0, rss_restricted: NaN, rss_unrestricted: NaN };
+    return {
+      f_statistic: NaN,
+      granger_causality_score: NaN,
+      n_samples: 0,
+      rss_restricted: NaN,
+      rss_unrestricted: NaN,
+    };
   }
 
   // Simple OLS via normal equation: β = (X^T X)^{-1} X^T y
@@ -325,14 +343,20 @@ export function grangerCausalityTest(X: number[], Y: number[], lag: number = 1):
   const RSS_U = olsRss(unrestrictedRows, ys);
 
   if (!Number.isFinite(RSS_R) || !Number.isFinite(RSS_U) || RSS_U <= 0) {
-    return { f_statistic: NaN, granger_causality_score: NaN, n_samples: ys.length, rss_restricted: RSS_R, rss_unrestricted: RSS_U };
+    return {
+      f_statistic: NaN,
+      granger_causality_score: NaN,
+      n_samples: ys.length,
+      rss_restricted: RSS_R,
+      rss_unrestricted: RSS_U,
+    };
   }
 
   const p = lag;
   const n = ys.length;
   const k_restricted = lag + 1;
   const k_unrestricted = 2 * lag + 1;
-  const f_stat = ((RSS_R - RSS_U) / p) / (RSS_U / Math.max(1, n - k_unrestricted));
+  const f_stat = (RSS_R - RSS_U) / p / (RSS_U / Math.max(1, n - k_unrestricted));
 
   // 简化的"score" 映射: F=0 → 0, F=5 → 0.5, F=20 → 0.9, F → ∞ → 1
   // 用 F / (F + 5) 单调映射

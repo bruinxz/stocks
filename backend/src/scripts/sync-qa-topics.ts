@@ -29,7 +29,7 @@
  *
  * 配套环境变量:
  *   STOCK_QA_TIMEOUT_MS        Python 子进程 timeout (默认 120_000)
- *   TRADING_AGENTS_URL         AI 远端 (默认 http://47.93.224.109:8000)
+ *   TRADING_AGENTS_URL         AI 远端 (默认见 config/externalServices.ts)
  *   PYTHON_PATH                python3 路径
  */
 

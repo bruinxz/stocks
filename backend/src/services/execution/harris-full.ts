@@ -172,7 +172,9 @@ export function callAuctionClearing(input: {
   reference_price: number; // 前收 for tie-break
 }): { clearing_price: number; matched_qty: number; unmatched_buy: number; unmatched_sell: number } {
   // Get candidate prices = all unique prices
-  const all_prices = [...new Set([...input.buy_orders.map(o => o.price), ...input.sell_orders.map(o => o.price)])].sort((a, b) => a - b);
+  const all_prices = [
+    ...new Set([...input.buy_orders.map(o => o.price), ...input.sell_orders.map(o => o.price)]),
+  ].sort((a, b) => a - b);
 
   let best_price = input.reference_price;
   let best_matched = 0;
@@ -195,8 +197,12 @@ export function callAuctionClearing(input: {
     }
   }
 
-  const buy_qty_at_p = input.buy_orders.filter(o => o.price >= best_price).reduce((s, o) => s + o.qty, 0);
-  const sell_qty_at_p = input.sell_orders.filter(o => o.price <= best_price).reduce((s, o) => s + o.qty, 0);
+  const buy_qty_at_p = input.buy_orders
+    .filter(o => o.price >= best_price)
+    .reduce((s, o) => s + o.qty, 0);
+  const sell_qty_at_p = input.sell_orders
+    .filter(o => o.price <= best_price)
+    .reduce((s, o) => s + o.qty, 0);
 
   return {
     clearing_price: best_price,
@@ -266,7 +272,10 @@ export function varianceSwapPnL(input: {
   vega_notional: number;
 }): number {
   if (input.fair_strike <= 0) return 0;
-  return (input.realized_variance - input.fair_strike) * input.vega_notional / (2 * Math.sqrt(input.fair_strike));
+  return (
+    ((input.realized_variance - input.fair_strike) * input.vega_notional) /
+    (2 * Math.sqrt(input.fair_strike))
+  );
 }
 
 // ============================================================
@@ -287,7 +296,8 @@ export function dealerProfitPerRoundTrip(input: {
   avg_price_drift_post_fill: number;
 }): { gross_spread_profit: number; adverse_selection_loss: number; net_profit: number } {
   const gross = input.spread * input.volume_per_round_trip;
-  const adverse = input.informed_trader_prob * input.avg_price_drift_post_fill * input.volume_per_round_trip;
+  const adverse =
+    input.informed_trader_prob * input.avg_price_drift_post_fill * input.volume_per_round_trip;
   return {
     gross_spread_profit: gross,
     adverse_selection_loss: adverse,

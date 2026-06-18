@@ -39,7 +39,9 @@ export class QuantRecommendationController {
       res.json({ success: true, data: result });
     } catch (error: any) {
       logger.error('获取量化候选推荐失败:', error);
-      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
+      res
+        .status((error as any)?.statusCode || 500)
+        .json({ success: false, message: error.message });
     }
   };
 
@@ -64,7 +66,9 @@ export class QuantRecommendationController {
       res.json({ success: true, data: result });
     } catch (error: any) {
       logger.error('运行推荐策略实验失败:', error);
-      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
+      res
+        .status((error as any)?.statusCode || 500)
+        .json({ success: false, message: error.message });
     }
   };
 
@@ -112,9 +116,12 @@ export class QuantRecommendationController {
                   typeof item === 'string' ? 'manual_recommendation' : item.source,
               },
               {
-                jobId: `ai-recommend-${result.task_id}`,
+                // BETA-3 (2026-06-18, audit M-15): 标准 jobId + dedup + bounded retention
+                jobId: `ai-poll-${result.task_id}`,
                 attempts: 10,
                 backoff: { type: 'fixed', delay: 3 * 60 * 1000 },
+                removeOnComplete: { count: 1000 },
+                removeOnFail: { count: 500 },
               }
             );
             submitted.push({ symbol, name, task_id: result.task_id, status: result.status });
@@ -129,7 +136,9 @@ export class QuantRecommendationController {
       res.json({ success: true, data: { submitted, failed } });
     } catch (error: any) {
       logger.error('提交多因子候选至 TradingAgents 失败:', error);
-      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
+      res
+        .status((error as any)?.statusCode || 500)
+        .json({ success: false, message: error.message });
     }
   };
 
@@ -208,7 +217,9 @@ export class QuantRecommendationController {
       });
     } catch (error: any) {
       logger.error('归档量化候选信号失败:', error);
-      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
+      res
+        .status((error as any)?.statusCode || 500)
+        .json({ success: false, message: error.message });
     }
   };
 
@@ -228,7 +239,9 @@ export class QuantRecommendationController {
       res.json({ success: true, data: result });
     } catch (error: any) {
       logger.error('获取荐股闭环策略快照失败:', error);
-      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
+      res
+        .status((error as any)?.statusCode || 500)
+        .json({ success: false, message: error.message });
     }
   };
 
@@ -252,7 +265,9 @@ export class QuantRecommendationController {
       });
     } catch (error: any) {
       logger.error('刷新荐股闭环策略快照收益失败:', error);
-      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
+      res
+        .status((error as any)?.statusCode || 500)
+        .json({ success: false, message: error.message });
     }
   };
 
@@ -386,7 +401,9 @@ export class QuantRecommendationController {
       res.json({ success: true, data: result, message: '全市场荐股闭环已执行' });
     } catch (error: any) {
       logger.error('执行全市场荐股闭环失败:', error);
-      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
+      res
+        .status((error as any)?.statusCode || 500)
+        .json({ success: false, message: error.message });
     }
   };
 }

@@ -146,13 +146,12 @@ export function detectOvertrading(outcomes: OutcomeRow[]): {
   total: number;
   avg_holding_days: number;
 } {
-  const closed = outcomes.filter(o => o.trade_status === 'closed' && Number.isFinite(Number(o.holding_days)));
+  const closed = outcomes.filter(
+    o => o.trade_status === 'closed' && Number.isFinite(Number(o.holding_days))
+  );
   const total = closed.length;
   const triggered = closed.filter(o => Number(o.holding_days) < 3).length;
-  const avgH =
-    total > 0
-      ? closed.reduce((s, o) => s + Number(o.holding_days || 0), 0) / total
-      : 0;
+  const avgH = total > 0 ? closed.reduce((s, o) => s + Number(o.holding_days || 0), 0) / total : 0;
   return { triggered, total, avg_holding_days: avgH };
 }
 
@@ -170,9 +169,7 @@ export function detectAnchoringLoss(outcomes: OutcomeRow[]): {
     const pnl = Number(o.total_pnl_pct ?? o.realized_pnl_pct ?? NaN);
     return Number.isFinite(pnl) && pnl < 0;
   });
-  const triggered = losses.filter(
-    o => Number(o.holding_days || 0) > 30
-  ).length;
+  const triggered = losses.filter(o => Number(o.holding_days || 0) > 30).length;
   return { triggered, total_losses: losses.length };
 }
 
@@ -197,7 +194,8 @@ export function detectLossAversionEarlyTake(outcomes: OutcomeRow[]): {
   }).length;
   const avgWin =
     wins.length > 0
-      ? wins.reduce((s, o) => s + Number(o.total_pnl_pct ?? o.realized_pnl_pct ?? 0), 0) / wins.length
+      ? wins.reduce((s, o) => s + Number(o.total_pnl_pct ?? o.realized_pnl_pct ?? 0), 0) /
+        wins.length
       : 0;
   return { triggered, total_wins: wins.length, avg_winner_return: avgWin };
 }
@@ -207,8 +205,7 @@ export function detectLossAversionEarlyTake(outcomes: OutcomeRow[]): {
  */
 export function computeOverallHealth(findings: BiasFinding[]): number {
   if (findings.length === 0) return 100;
-  const avgSeverity =
-    findings.reduce((s, f) => s + f.severity, 0) / findings.length;
+  const avgSeverity = findings.reduce((s, f) => s + f.severity, 0) / findings.length;
   return Math.max(0, Math.round(100 - avgSeverity));
 }
 
@@ -305,9 +302,7 @@ export const PRODUCTION_BEHAVIOR_BIAS_DATA_SOURCE: BehaviorBiasDataSource = {
 // ============================================================
 
 export class BehaviorBiasDetector {
-  constructor(
-    private dataSource: BehaviorBiasDataSource = PRODUCTION_BEHAVIOR_BIAS_DATA_SOURCE
-  ) {}
+  constructor(private dataSource: BehaviorBiasDataSource = PRODUCTION_BEHAVIOR_BIAS_DATA_SOURCE) {}
 
   /**
    * 跑全部 4 个 detector + 综合健康度。
@@ -333,7 +328,8 @@ export class BehaviorBiasDetector {
         total_count: chasing.total,
         threshold: { entry_ratio: 0.95, condition: '入场价 ≥ 5d high × 95% AND 最终 loss' },
         observed: {
-          triggered_pct: chasing.total > 0 ? Math.round((chasing.triggered / chasing.total) * 100) : 0,
+          triggered_pct:
+            chasing.total > 0 ? Math.round((chasing.triggered / chasing.total) * 100) : 0,
         },
         suggestions:
           sev >= 50
@@ -343,8 +339,8 @@ export class BehaviorBiasDetector {
                 '考虑加 catalyst 确认（不要因为价格涨就买，要因为基本面变好买）',
               ]
             : sev > 0
-              ? ['观察期 — 偶尔追高在可接受范围']
-              : [],
+            ? ['观察期 — 偶尔追高在可接受范围']
+            : [],
         detail: `${chasing.total} 笔有完整 entry_price 数据的 trade 中, ${chasing.triggered} 笔入场点在 5 日 high 95% 以上且最终亏损`,
       });
     }
@@ -367,14 +363,22 @@ export class BehaviorBiasDetector {
         suggestions:
           sev >= 50
             ? [
-                `平均持仓 ${overtrading.avg_holding_days.toFixed(1)} 天 — 缩短至 < 3 天的 trade 占比 ${Math.round((overtrading.triggered / overtrading.total) * 100)}%, 高换手摩擦成本`,
+                `平均持仓 ${overtrading.avg_holding_days.toFixed(
+                  1
+                )} 天 — 缩短至 < 3 天的 trade 占比 ${Math.round(
+                  (overtrading.triggered / overtrading.total) * 100
+                )}%, 高换手摩擦成本`,
                 '加最小持仓期 (如 5 个交易日) 限制；除非 stop_loss 触发',
                 '检查是不是被噪音吓出场, 用 ATR-based stop 而非固定 % stop',
               ]
             : sev > 0
-              ? ['平均持仓接近健康区间, 偶有短线无影响']
-              : [],
-        detail: `${overtrading.total} 笔 closed trade 平均持仓 ${overtrading.avg_holding_days.toFixed(1)} 天, ${overtrading.triggered} 笔 < 3 天`,
+            ? ['平均持仓接近健康区间, 偶有短线无影响']
+            : [],
+        detail: `${
+          overtrading.total
+        } 笔 closed trade 平均持仓 ${overtrading.avg_holding_days.toFixed(1)} 天, ${
+          overtrading.triggered
+        } 笔 < 3 天`,
       });
     }
 
@@ -400,8 +404,8 @@ export class BehaviorBiasDetector {
                 '复盘那些套牢 > 30 天的 trade — 多数最终不会回本, 早断更好',
               ]
             : sev > 0
-              ? ['偶尔有套牢长持, 但不是主导模式']
-              : [],
+            ? ['偶尔有套牢长持, 但不是主导模式']
+            : [],
         detail: `${anchoring.total_losses} 笔亏损中, ${anchoring.triggered} 笔持仓 > 30 天才止损`,
       });
     }
@@ -429,9 +433,11 @@ export class BehaviorBiasDetector {
                 '小幅获利就卖等价于支付摩擦成本; 让赢家变大才能 cover losses',
               ]
             : sev > 0
-              ? ['少量小赚, 大部分盈利能跑']
-              : [],
-        detail: `${lossAvert.total_wins} 笔盈利中, ${lossAvert.triggered} 笔回报 < 3%; 平均盈利 ${lossAvert.avg_winner_return.toFixed(2)}%`,
+            ? ['少量小赚, 大部分盈利能跑']
+            : [],
+        detail: `${lossAvert.total_wins} 笔盈利中, ${
+          lossAvert.triggered
+        } 笔回报 < 3%; 平均盈利 ${lossAvert.avg_winner_return.toFixed(2)}%`,
       });
     }
 

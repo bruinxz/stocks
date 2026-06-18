@@ -96,8 +96,8 @@ function conjugateGradient(
 ): number[] {
   const n = b.length;
   const x = options.initial?.slice() ?? new Array(n).fill(0);
-  let r = b.map((v, i) => v - matvec(x)[i]);
-  let p = r.slice();
+  const r = b.map((v, i) => v - matvec(x)[i]);
+  const p = r.slice();
   let rs_old = r.reduce((s, v) => s + v * v, 0);
   const max_iter = options.max_iter ?? Math.min(n, 50);
   const tol = options.tol ?? 1e-8;
@@ -185,11 +185,12 @@ export function solveQP(problem: QPProblem, options: QPOptions = {}): QPSolution
   const M = problem.A.length;
   if (problem.q.length !== N) throw new Error('solveQP: q length mismatch');
   if (M > 0 && problem.A[0].length !== N) throw new Error('solveQP: A cols mismatch');
-  if (problem.l.length !== M || problem.u.length !== M) throw new Error('solveQP: l/u length mismatch');
+  if (problem.l.length !== M || problem.u.length !== M)
+    throw new Error('solveQP: l/u length mismatch');
 
   let x = options.x0?.slice() ?? new Array(N).fill(0);
   let z = matVecMul(problem.A, x);
-  let y = options.y0?.slice() ?? new Array(M).fill(0);
+  const y = options.y0?.slice() ?? new Array(M).fill(0);
 
   // matvec for (P + ρ A^T A) v
   const Pmat = problem.P;
@@ -212,12 +213,20 @@ export function solveQP(problem: QPProblem, options: QPOptions = {}): QPSolution
     const z_minus_y_rho = z.map((v, i) => v - y[i] / rho);
     const Atrhs = matTransposeVecMul(Amat, z_minus_y_rho);
     const rhs = problem.q.map((qi, i) => -qi + rho * Atrhs[i]);
-    x = conjugateGradient(matvec_PrhoAtA, rhs, { initial: x, max_iter: Math.min(N, 100), tol: 1e-10 });
+    x = conjugateGradient(matvec_PrhoAtA, rhs, {
+      initial: x,
+      max_iter: Math.min(N, 100),
+      tol: 1e-10,
+    });
 
     // z-update: z = clip(A x + y/ρ, l, u)
     const Ax = matVecMul(Amat, x);
     z_prev = z.slice();
-    z = clip(Ax.map((v, i) => v + y[i] / rho), problem.l, problem.u);
+    z = clip(
+      Ax.map((v, i) => v + y[i] / rho),
+      problem.l,
+      problem.u
+    );
 
     // y-update: y = y + ρ (A x - z)
     for (let i = 0; i < M; i += 1) y[i] += rho * (Ax[i] - z[i]);
@@ -236,7 +245,8 @@ export function solveQP(problem: QPProblem, options: QPOptions = {}): QPSolution
 
   // objective
   const Px = matVecMul(Pmat, x);
-  const obj = 0.5 * x.reduce((s, v, i) => s + v * Px[i], 0) + problem.q.reduce((s, v, i) => s + v * x[i], 0);
+  const obj =
+    0.5 * x.reduce((s, v, i) => s + v * Px[i], 0) + problem.q.reduce((s, v, i) => s + v * x[i], 0);
 
   return {
     x,
@@ -254,7 +264,13 @@ export function solveQP(problem: QPProblem, options: QPOptions = {}): QPSolution
  *   min 0.5 x^T P x + q^T x
  *   s.t. lb ≤ x ≤ ub
  */
-export function solveBoxQP(P: number[][], q: number[], lb: number[], ub: number[], options: QPOptions = {}): QPSolution {
+export function solveBoxQP(
+  P: number[][],
+  q: number[],
+  lb: number[],
+  ub: number[],
+  options: QPOptions = {}
+): QPSolution {
   const N = P.length;
   // A = I (identity)
   const A: number[][] = Array.from({ length: N }, (_, i) =>
@@ -275,7 +291,7 @@ export function solveBoxSimplexQP(
   q: number[],
   lb: number[],
   ub: number[],
-  total: number = 1,
+  total = 1,
   options: QPOptions = {}
 ): QPSolution {
   const N = P.length;

@@ -58,7 +58,10 @@
  *
  * 用于 Kyle's lambda 估计.
  */
-export function olsRegression(x: number[], y: number[]): {
+export function olsRegression(
+  x: number[],
+  y: number[]
+): {
   slope: number;
   intercept: number;
   r_squared: number;
@@ -111,7 +114,10 @@ export function olsRegression(x: number[], y: number[]): {
  *
  * @returns lambda + R² 拟合度 + n_samples
  */
-export function kylesLambda(prices: number[], volumes: number[]): {
+export function kylesLambda(
+  prices: number[],
+  volumes: number[]
+): {
   lambda: number;
   r_squared: number;
   n_samples: number;
@@ -182,7 +188,12 @@ export function rollsEffectiveSpread(prices: number[]): {
     if (Number.isFinite(dp)) deltaP.push(dp);
   }
   if (deltaP.length < 2) {
-    return { effective_spread: NaN, serial_covariance: NaN, is_estimable: false, n_samples: deltaP.length };
+    return {
+      effective_spread: NaN,
+      serial_covariance: NaN,
+      is_estimable: false,
+      n_samples: deltaP.length,
+    };
   }
   // Cov(ΔP_t, ΔP_{t-1})
   const x = deltaP.slice(0, -1);
@@ -195,10 +206,20 @@ export function rollsEffectiveSpread(prices: number[]): {
 
   if (cov >= 0) {
     // trend 期 cov > 0, Roll's estimator 不适用
-    return { effective_spread: NaN, serial_covariance: cov, is_estimable: false, n_samples: x.length };
+    return {
+      effective_spread: NaN,
+      serial_covariance: cov,
+      is_estimable: false,
+      n_samples: x.length,
+    };
   }
   const spread = 2 * Math.sqrt(-cov);
-  return { effective_spread: spread, serial_covariance: cov, is_estimable: true, n_samples: x.length };
+  return {
+    effective_spread: spread,
+    serial_covariance: cov,
+    is_estimable: true,
+    n_samples: x.length,
+  };
 }
 
 /**
@@ -236,7 +257,10 @@ export function rollsEffectiveSpread(prices: number[]): {
  * @param prices price series
  * @param signs trade direction series (length == prices.length, e.g. tick rule)
  */
-export function mrrDecomposition(prices: number[], signs: number[]): {
+export function mrrDecomposition(
+  prices: number[],
+  signs: number[]
+): {
   total_spread: number;
   adverse_selection_share: number;
   transitory_share: number;
@@ -267,7 +291,13 @@ export function mrrDecomposition(prices: number[], signs: number[]): {
     qtm1.push(signs[t - 1]);
   }
   if (y.length < 3) {
-    return { total_spread: NaN, adverse_selection_share: NaN, transitory_share: NaN, is_estimable: false, n_samples: y.length };
+    return {
+      total_spread: NaN,
+      adverse_selection_share: NaN,
+      transitory_share: NaN,
+      is_estimable: false,
+      n_samples: y.length,
+    };
   }
 
   // 简化: 2 个独立 OLS (实际应 multi-variable regression)

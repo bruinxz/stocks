@@ -240,7 +240,9 @@ export class TodaySignalsService {
 
     // 缓存命中检查 — 90s TTL；refresh=true 或显式 use_cache=false 跳过
     const useCache = (options as any).use_cache !== false && !(options as any).refresh;
-    const cacheKey = `${options.trade_date || 'auto'}|${options.user_id || 0}|${options.portfolio_id || 0}|${dragonHeadLimit}|${earningsLimit}|${alertsLimit}`;
+    const cacheKey = `${options.trade_date || 'auto'}|${options.user_id || 0}|${
+      options.portfolio_id || 0
+    }|${dragonHeadLimit}|${earningsLimit}|${alertsLimit}`;
     if (useCache) {
       const hit = this.cache.get(cacheKey);
       if (hit && hit.expiresAt > Date.now()) {
@@ -464,8 +466,12 @@ export class TodaySignalsService {
       if (!priceHint || priceHint <= 0) {
         // 兜底跳过 — 不能用 10 元假设否则会下单 500 股 = 数万实际金额
         orders.push({
-          strategy: c.strategy, symbol: c.symbol, name: c.name,
-          quantity: 0, expected_amount: 0, status: 'skipped',
+          strategy: c.strategy,
+          symbol: c.symbol,
+          name: c.name,
+          quantity: 0,
+          expected_amount: 0,
+          status: 'skipped',
           reason: '无法获取真实价格，跳过避免超买',
         });
         skipped += 1;
@@ -478,9 +484,15 @@ export class TodaySignalsService {
       const MAX_OVER_RATIO = 3; // 100 股最大相比 perOrderAmount 的倍数（5000 × 3 = 15000，对应 7.5% 仓位 / 200k 总值）
       if (min100Cost > perOrderAmount * MAX_OVER_RATIO) {
         orders.push({
-          strategy: c.strategy, symbol: c.symbol, name: c.name,
-          quantity: 0, expected_amount: 0, status: 'skipped',
-          reason: `单价 ¥${priceHint.toFixed(2)} 过高 (100 股 ¥${min100Cost.toFixed(0)} > 3 × ¥${perOrderAmount}), 跳过避免仓位过大`,
+          strategy: c.strategy,
+          symbol: c.symbol,
+          name: c.name,
+          quantity: 0,
+          expected_amount: 0,
+          status: 'skipped',
+          reason: `单价 ¥${priceHint.toFixed(2)} 过高 (100 股 ¥${min100Cost.toFixed(
+            0
+          )} > 3 × ¥${perOrderAmount}), 跳过避免仓位过大`,
         });
         skipped += 1;
         continue;

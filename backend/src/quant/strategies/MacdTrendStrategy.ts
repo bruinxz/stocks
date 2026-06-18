@@ -24,7 +24,12 @@ export class MacdTrendStrategy extends QuantStrategy {
       category: 'trend',
       expected_edge_pct: 5.5,
       expected_holding_days: 18,
-      key_factors: ['macd_dif_vs_dea', 'macd_histogram', 'histogram_momentum', 'price_momentum_10d'],
+      key_factors: [
+        'macd_dif_vs_dea',
+        'macd_histogram',
+        'histogram_momentum',
+        'price_momentum_10d',
+      ],
       evidence_link: 'Gerald Appel - MACD (1970s)',
       failure_modes: [
         '震荡市中 DIF/DEA 反复交叉，MACD 信号噪音高',

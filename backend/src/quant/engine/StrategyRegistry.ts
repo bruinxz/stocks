@@ -106,13 +106,9 @@ export class StrategyRegistry {
         attributes: ['strategy_key', 'enabled'],
         raw: true,
       });
-    const enabledKeys = new Set(
-      records.filter(r => r.enabled === true).map(r => r.strategy_key)
-    );
+    const enabledKeys = new Set(records.filter(r => r.enabled === true).map(r => r.strategy_key));
     if (!strategy_keys?.length) {
-      return [...this.strategies.values()].filter(s =>
-        enabledKeys.has(s.definition.strategy_key)
-      );
+      return [...this.strategies.values()].filter(s => enabledKeys.has(s.definition.strategy_key));
     }
     return strategy_keys
       .map(key => (enabledKeys.has(key) ? this.get(key) : undefined))

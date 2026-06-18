@@ -1,9 +1,6 @@
 import { MarketHotSearch } from '../../models/MarketHotSearch';
 import { logger } from '../../utils/logger';
-import {
-  MarketHotSearchClient,
-  marketHotSearchClient,
-} from '../sources/MarketHotSearchClient';
+import { MarketHotSearchClient, marketHotSearchClient } from '../sources/MarketHotSearchClient';
 
 /**
  * MarketHotSearchSyncService — Batch AH (2026-06-18).
@@ -47,7 +44,7 @@ export class MarketHotSearchSyncService {
       }
 
       // best-effort keyword → stock_code 映射 (Stock 表 name 完全匹配)
-      let nameToCode = new Map<string, string>();
+      const nameToCode = new Map<string, string>();
       try {
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         const { Stock } = require('../../models/Stock');

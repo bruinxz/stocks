@@ -31,7 +31,10 @@ export class MacroController {
       const sinceDate = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
       const all = await MacroIndicator.findAll({
         where: { observation_date: { [Op.gte]: sinceDate } },
-        order: [['indicator_key', 'ASC'], ['observation_date', 'ASC']],
+        order: [
+          ['indicator_key', 'ASC'],
+          ['observation_date', 'ASC'],
+        ],
         raw: true,
       });
       // 按 indicator_key 分组
@@ -67,7 +70,10 @@ export class MacroController {
       const sinceDate = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
       const all = await OptionQvix.findAll({
         where: { observation_date: { [Op.gte]: sinceDate } },
-        order: [['underlying', 'ASC'], ['observation_date', 'ASC']],
+        order: [
+          ['underlying', 'ASC'],
+          ['observation_date', 'ASC'],
+        ],
         raw: true,
       });
       const grouped: Record<string, any[]> = {};
@@ -88,7 +94,9 @@ export class MacroController {
         const prev5 = list[list.length - 6];
         latest[k] = {
           ...last,
-          change_5d_pct: prev5 ? ((last.close - prev5.close) / prev5.close * 100).toFixed(2) : null,
+          change_5d_pct: prev5
+            ? (((last.close - prev5.close) / prev5.close) * 100).toFixed(2)
+            : null,
         };
       }
       res.json({ success: true, data: { latest, series: grouped, days } });
@@ -127,7 +135,10 @@ export class MacroController {
       const sinceDate = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
       const rows = await BlockTrade.findAll({
         where: { trade_date: { [Op.gte]: sinceDate } },
-        order: [['trade_date', 'DESC'], ['amount', 'DESC']],
+        order: [
+          ['trade_date', 'DESC'],
+          ['amount', 'DESC'],
+        ],
         limit,
         raw: true,
       });
@@ -150,7 +161,10 @@ export class MacroController {
       }
       const rows = await FundTopHolding.findAll({
         where: { stock_code: stockCode },
-        order: [['report_date', 'DESC'], ['ratio_pct', 'DESC']],
+        order: [
+          ['report_date', 'DESC'],
+          ['ratio_pct', 'DESC'],
+        ],
         limit: 30,
         raw: true,
       });

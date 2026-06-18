@@ -62,7 +62,9 @@ function assert(name: string, cond: boolean, detail = '') {
   }
 }
 
-function expectClose(name: string, actual: number, expected: number, eps = 1e-6) {
+function expectClose(name: string, actual: number, expected: number, eps = 0.005) {
+  // audit S-2 修复: AShareConstraintEngine.executionPrice 现在 round 到 0.01 tick
+  // (与券商客户端口径一致), 因此把默认 eps 从 1e-6 放宽到 0.005 (半个 tick)。
   assert(name, Math.abs(actual - expected) < eps, `expected ${expected}, got ${actual}`);
 }
 
@@ -446,18 +448,24 @@ function makeContext(symbol: string, name: string, bars: QuantBar[]): QuantStock
 (function testBacktestT1Blocks() {
   // execution_timing='same_close' 让 buy 与 sell 都在当日 bar 上结算 ——
   // 这样 T+1 拦截路径才会真正被触发（next_open 模式下 sell 信号永远跨天发）。
+  //
+  // audit S-4 修复后: same_close 时 evaluate() 拿到截止 T-1 的 bars (排除 T 日 close
+  // 消除 lookahead bias)。原本 3 根 bar 的策略需要在第 4 根才能触发 sell 信号
+  // (因为 evaluate 看到 length=3 才返 sell, 此时 currentDate 是 T4 = 第 4 根 bar 的日期)。
+  // 加一根 bar 让 happy path 仍然产生 1 笔 trade。
   const backtest = new QuantBacktestEngine();
   const bars = [
     makeBar({ date: '2026-06-01', close: 10 }),
     makeBar({ date: '2026-06-02', close: 10.5 }),
     makeBar({ date: '2026-06-03', close: 11 }),
+    makeBar({ date: '2026-06-04', close: 11.5 }),
   ];
   const ctx = makeContext('600519.SH', '贵州茅台', bars);
   // 用 sell_on_third_bar：第 1 根 BUY，第 3 根 SELL（避免 T+1 路径走，让我们看 happy path）。
   const results = backtest.run([ctx], {
     strategy_keys: ['test_sell_on_third_bar'],
     start_date: '2026-06-01',
-    end_date: '2026-06-03',
+    end_date: '2026-06-04',
     initial_capital: 200_000,
     position_pct: 100,
     max_positions: 1,
@@ -504,7 +512,12 @@ function makeContext(symbol: string, name: string, bars: QuantBar[]): QuantStock
   );
   assert(
     'limit_up_rejection_detail_includes_pct',
-    !!limitUpRejection?.detail && limitUpRejection.detail.includes('9.95')
+    !!limitUpRejection?.detail &&
+      (limitUpRejection.detail.includes('9.95') ||
+        // audit S-2: 新精确路径用市场段 + prev_close 算涨停价, detail 含 "涨停 ..."
+        limitUpRejection.detail.includes('涨停') ||
+        limitUpRejection.detail.includes('main') ||
+        limitUpRejection.detail.includes('chinext'))
   );
   // diagnostics 计数与 rejected_orders 一致
   const diag = result.metrics.execution_diagnostics;
@@ -572,10 +585,13 @@ function makeContext(symbol: string, name: string, bars: QuantBar[]): QuantStock
 
 (function testBacktestFeeAccumulation() {
   const backtest = new QuantBacktestEngine();
+  // audit S-4: same_close 现在排除 T 日 bar 让 evaluate 看到 length=N-1; 添加 1 根
+  // bar 让 sell_on_third_bar 仍在第 3 根 bar 出 sell 信号 → 当日 close 撮合。
   const bars = [
     makeBar({ date: '2026-06-01', close: 10 }),
     makeBar({ date: '2026-06-02', close: 10.5 }),
     makeBar({ date: '2026-06-03', close: 11 }),
+    makeBar({ date: '2026-06-04', close: 11.5 }),
   ];
   const ctx = makeContext('600519.SH', '贵州茅台', bars);
 
@@ -585,7 +601,7 @@ function makeContext(symbol: string, name: string, bars: QuantBar[]): QuantStock
   const results = backtest.run([ctx], {
     strategy_keys: ['test_sell_on_third_bar'],
     start_date: '2026-06-01',
-    end_date: '2026-06-03',
+    end_date: '2026-06-04',
     initial_capital: 200_000,
     position_pct: 100,
     max_positions: 1,

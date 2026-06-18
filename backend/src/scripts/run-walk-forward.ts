@@ -95,7 +95,10 @@ program
   .option('--purge-days <n>', 'purging label_horizon_days (默认 0=关闭；推荐 5)', '0')
   .option('--embargo-days <n>', 'embargo 天数 (默认 0=关闭；推荐 2)', '0')
   .option('--optimizer <type>', 'grid_search 或 bayesian (默认 grid_search)', 'grid_search')
-  .option('--bounds <json>', 'optimizer=bayesian 时的 param_bounds JSON e.g. \'{"topN":{"min":10,"max":50,"integer":true}}\'')
+  .option(
+    '--bounds <json>',
+    'optimizer=bayesian 时的 param_bounds JSON e.g. \'{"topN":{"min":10,"max":50,"integer":true}}\''
+  )
   .action(async opts => {
     try {
       await sequelize.authenticate();
@@ -195,7 +198,9 @@ program
       }
       const optimizerType = String(opts.optimizer || 'grid_search').toLowerCase();
       if (!['grid_search', 'bayesian'].includes(optimizerType)) {
-        logger.error(`[walk-forward] --optimizer 必须 grid_search 或 bayesian，收到 '${opts.optimizer}'`);
+        logger.error(
+          `[walk-forward] --optimizer 必须 grid_search 或 bayesian，收到 '${opts.optimizer}'`
+        );
         process.exit(2);
       }
 

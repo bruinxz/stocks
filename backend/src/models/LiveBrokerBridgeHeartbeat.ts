@@ -11,10 +11,7 @@ import { Table, Column, Model, DataType, CreatedAt, UpdatedAt } from 'sequelize-
   tableName: 'live_broker_bridge_heartbeats',
   timestamps: true,
   underscored: true,
-  indexes: [
-    { fields: ['bridge_key'] },
-    { fields: ['received_at'] },
-  ],
+  indexes: [{ fields: ['bridge_key'] }, { fields: ['received_at'] }],
 })
 export class LiveBrokerBridgeHeartbeat extends Model {
   @Column({ type: DataType.INTEGER, primaryKey: true, autoIncrement: true })

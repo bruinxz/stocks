@@ -28,8 +28,10 @@ import {
   buildConversationId,
 } from '../../services/StrategyCopilotService';
 import { marketBriefService } from '../../services/MarketBriefService';
+import { TRADING_AGENTS_BASE_URL } from '../../config/externalServices';
 
-const TRADING_AGENTS_URL = process.env.TRADING_AGENTS_URL || 'http://47.93.224.109:8000';
+// audit L-19: 集中常量, 不再硬编码 IP.
+const TRADING_AGENTS_URL = TRADING_AGENTS_BASE_URL;
 
 export class AIAdvisorController {
   constructor() {

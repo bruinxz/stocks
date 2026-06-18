@@ -226,7 +226,12 @@ router.put('/:id', authController.authenticate, requireRole('admin'), taskContro
  *       401: { description: 未授权 }
  *       404: { description: 任务不存在 }
  */
-router.post('/:id/run', authController.authenticate, requireRole('admin'), taskController.executeTask);
+router.post(
+  '/:id/run',
+  authController.authenticate,
+  requireRole('admin'),
+  taskController.executeTask
+);
 
 /**
  * @openapi

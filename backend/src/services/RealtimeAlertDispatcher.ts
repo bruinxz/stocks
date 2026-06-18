@@ -594,8 +594,7 @@ export class DefaultRealtimeAlertDispatcherDataSource implements RealtimeAlertDi
     const cached = this.userConfigCache.get(user_id);
     if (
       cached &&
-      Date.now() - cached.ts <
-        DefaultRealtimeAlertDispatcherDataSource.USER_CONFIG_CACHE_TTL_MS
+      Date.now() - cached.ts < DefaultRealtimeAlertDispatcherDataSource.USER_CONFIG_CACHE_TTL_MS
     ) {
       return cached.data;
     }

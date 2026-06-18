@@ -1,7 +1,7 @@
 {
   "model": {
     "version": "test_v1",
-    "trained_at": "2026-06-14T04:14:01.205Z",
+    "trained_at": "2026-06-18T16:49:05.738Z",
     "trained_samples": 100,
     "feature_means": {},
     "feature_stds": {},
@@ -10,5 +10,5 @@
     "insample_accuracy": 0.7,
     "baseline_accuracy": 0.5
   },
-  "persisted_at": "2026-06-14T04:14:01.205Z"
+  "persisted_at": "2026-06-18T16:49:05.738Z"
 }

@@ -30,7 +30,14 @@ export class TrendPullbackReentryStrategy extends QuantStrategy {
       category: 'mean_reversion',
       expected_edge_pct: 6.0,
       expected_holding_days: 14,
-      key_factors: ['ma20_ma60_ma120_stack', 'distance_to_ma20', 'rsi_14_rebound', 'return_5d', 'return_60d', 'volume_3_20_ratio'],
+      key_factors: [
+        'ma20_ma60_ma120_stack',
+        'distance_to_ma20',
+        'rsi_14_rebound',
+        'return_5d',
+        'return_60d',
+        'volume_3_20_ratio',
+      ],
       evidence_link: 'Buy The Dip in established trend / Stan Weinstein - Stage 2 Pullback',
       failure_modes: [
         '价格跌破 MA60 时回踩演变为趋势破坏',

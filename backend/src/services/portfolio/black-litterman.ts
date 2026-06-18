@@ -62,7 +62,10 @@ export interface BlackLittermanView {
 /**
  * Build pick matrix P (k × n) 和 view vector Q (k) 从 views list
  */
-export function buildPickMatrix(views: BlackLittermanView[], n: number): {
+export function buildPickMatrix(
+  views: BlackLittermanView[],
+  n: number
+): {
   P: number[][];
   Q: number[];
   Omega: number[][];
@@ -143,7 +146,8 @@ export function matMul(A: number[][], B: number[][]): number[][] {
 
 export function matVec(A: number[][], v: number[]): number[] {
   const m = A.length;
-  if (A[0].length !== v.length) throw new Error(`matVec: A cols ${A[0].length} != v length ${v.length}`);
+  if (A[0].length !== v.length)
+    throw new Error(`matVec: A cols ${A[0].length} != v length ${v.length}`);
   const out: number[] = new Array(m).fill(0);
   for (let i = 0; i < m; i += 1) {
     let s = 0;
@@ -230,8 +234,8 @@ export function computeBlackLittermanPosterior(
   const PT = matTranspose(P);
 
   // term1: (τΣ)^-1 + P^T Ω^-1 P  (N×N)
-  const PT_OmegaInv = matMul(PT, OmegaInv);                  // N×k
-  const PT_OmegaInv_P = matMul(PT_OmegaInv, P);              // N×N
+  const PT_OmegaInv = matMul(PT, OmegaInv); // N×k
+  const PT_OmegaInv_P = matMul(PT_OmegaInv, P); // N×N
   const M_left: number[][] = tauSigmaInv.map((row, i) =>
     row.map((v, j) => v + PT_OmegaInv_P[i][j])
   );

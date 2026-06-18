@@ -32,7 +32,9 @@ class BridgeController {
       res.json({ success: true, data: result });
     } catch (e: any) {
       logger.error('bridge accountSnapshot 失败:', e);
-      res.status(400).json({ success: false, message: e?.message || 'bridge accountSnapshot 失败' });
+      res
+        .status(400)
+        .json({ success: false, message: e?.message || 'bridge accountSnapshot 失败' });
     }
   }
 
@@ -222,7 +224,11 @@ class BridgeController {
           const r = await bridgeService.ingestOrderEvent(ctx, ev);
           results.push({ command_id: ev.command_id, ...r });
         } catch (e: any) {
-          results.push({ command_id: ev.command_id, accepted: false, reason: e?.message || 'error' });
+          results.push({
+            command_id: ev.command_id,
+            accepted: false,
+            reason: e?.message || 'error',
+          });
         }
       }
       res.json({ success: true, data: { results } });

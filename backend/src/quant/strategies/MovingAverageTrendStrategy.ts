@@ -24,7 +24,13 @@ export class MovingAverageTrendStrategy extends QuantStrategy {
       category: 'trend',
       expected_edge_pct: 5.0,
       expected_holding_days: 20,
-      key_factors: ['close_vs_ma_long', 'ma_short_vs_long', 'ma_long_slope', 'volume_ratio', 'price_momentum_20d'],
+      key_factors: [
+        'close_vs_ma_long',
+        'ma_short_vs_long',
+        'ma_long_slope',
+        'volume_ratio',
+        'price_momentum_20d',
+      ],
       evidence_link: '经典双均线系统 / Stan Weinstein - Secrets For Profiting (1988)',
       failure_modes: [
         '震荡市频繁金叉死叉，换手率爆炸 alpha 被费率吞噬',

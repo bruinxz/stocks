@@ -68,7 +68,9 @@ export function aggregateBySeverity(issues: QualityIssue[]): Record<QualitySever
  *   - high > 0 → warning
  *   - 其他 → clean (只 medium/low 也算 clean，可接受)
  */
-export function deriveOverallStatus(bySeverity: Record<QualitySeverity, number>): DataQualityReport['overall_status'] {
+export function deriveOverallStatus(
+  bySeverity: Record<QualitySeverity, number>
+): DataQualityReport['overall_status'] {
   if (bySeverity.critical > 0) return 'critical';
   if (bySeverity.high > 0) return 'warning';
   return 'clean';
@@ -131,7 +133,10 @@ export class DataQualityDeepCheckService {
           count: rows.length,
           sample: rows.slice(0, 5).map(r => ({
             stock_id: r.stock_id,
-            trade_date: typeof r.trade_date === 'string' ? r.trade_date : new Date(r.trade_date).toISOString().slice(0, 10),
+            trade_date:
+              typeof r.trade_date === 'string'
+                ? r.trade_date
+                : new Date(r.trade_date).toISOString().slice(0, 10),
             close: Number(r.close),
             prev_close: Number(r.prev_close),
             jump_pct: Math.round(Number(r.jump_pct) * 10000) / 100,
@@ -227,7 +232,10 @@ export class DataQualityDeepCheckService {
           count: rows.length,
           sample: rows.slice(0, 5).map(r => ({
             stock_id: r.stock_id,
-            resumed_date: typeof r.trade_date === 'string' ? r.trade_date : new Date(r.trade_date).toISOString().slice(0, 10),
+            resumed_date:
+              typeof r.trade_date === 'string'
+                ? r.trade_date
+                : new Date(r.trade_date).toISOString().slice(0, 10),
             gap_days: Number(r.gap_days),
             close: Number(r.close),
             prev_close: Number(r.prev_close),
@@ -237,7 +245,10 @@ export class DataQualityDeepCheckService {
         });
       }
     } catch (err: any) {
-      errors.push({ check_name: 'trading_gap_after_resumption', error: err?.message || String(err) });
+      errors.push({
+        check_name: 'trading_gap_after_resumption',
+        error: err?.message || String(err),
+      });
     }
 
     // ----- 5. stale_data -----

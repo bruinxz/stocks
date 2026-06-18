@@ -80,10 +80,7 @@ export function aicScore(log_likelihood: number, n_params: number): number {
  *
  *   uniform priors: simply exp(-BIC_k / 2) normalized
  */
-export function posteriorProbabilities(
-  bic_scores: number[],
-  prior_log_probs?: number[]
-): number[] {
+export function posteriorProbabilities(bic_scores: number[], prior_log_probs?: number[]): number[] {
   const K = bic_scores.length;
   const priors = prior_log_probs ?? new Array(K).fill(-Math.log(K)); // uniform prior
   if (priors.length !== K) throw new Error('posteriorProbabilities: priors length mismatch');
@@ -190,7 +187,9 @@ export function combineModelsBMA(models: BMAModel[]): BMAResult {
   const averaged = bayesianModelAverage(preds, posteriors);
 
   let averaged_variances: number[] | undefined;
-  if (models.every(m => Array.isArray(m.prediction_variances) && m.prediction_variances!.length === T)) {
+  if (
+    models.every(m => Array.isArray(m.prediction_variances) && m.prediction_variances!.length === T)
+  ) {
     averaged_variances = new Array(T).fill(0);
     for (let t = 0; t < T; t += 1) {
       const ps_t = models.map(m => m.predictions[t]);

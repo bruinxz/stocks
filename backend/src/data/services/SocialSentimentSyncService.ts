@@ -2,10 +2,7 @@ import { Op } from 'sequelize';
 import { SocialSentimentSnapshot } from '../../models/SocialSentimentSnapshot';
 import { MarketHotSearch } from '../../models/MarketHotSearch';
 import { logger } from '../../utils/logger';
-import {
-  SocialSentimentClient,
-  socialSentimentClient,
-} from '../sources/SocialSentimentClient';
+import { SocialSentimentClient, socialSentimentClient } from '../sources/SocialSentimentClient';
 
 /**
  * SocialSentimentSyncService — Batch AH (2026-06-18).
@@ -96,7 +93,7 @@ export class SocialSentimentSyncService {
       }
 
       // 3) 当日 MarketHotSearch left-join
-      let baiduRankByCode = new Map<string, number>();
+      const baiduRankByCode = new Map<string, number>();
       try {
         const hotSearchRows = (await MarketHotSearch.findAll({
           where: { trade_date: tradeDate },
@@ -121,7 +118,9 @@ export class SocialSentimentSyncService {
         }
       } catch (err) {
         logger.warn(
-          `SocialSentimentSync: MarketHotSearch left-join failed, baidu_search_rank 留空: ${(err as Error).message}`
+          `SocialSentimentSync: MarketHotSearch left-join failed, baidu_search_rank 留空: ${
+            (err as Error).message
+          }`
         );
       }
 
@@ -239,8 +238,7 @@ export class SocialSentimentSyncService {
       });
       // 退化策略: 没有市值数据时, 按 symbol 前缀过滤主板/创业板 (排除北交所
       // 920/430 等 stock_comment_em 不覆盖的小盘), 然后取 N
-      const orderBy: any =
-        hasMcap > 0 ? [['circulating_market_cap', 'DESC']] : [['id', 'ASC']];
+      const orderBy: any = hasMcap > 0 ? [['circulating_market_cap', 'DESC']] : [['id', 'ASC']];
 
       const where: any = {
         is_listed: true,

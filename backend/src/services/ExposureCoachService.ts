@@ -137,10 +137,7 @@ export function computeBetaExposure(
  */
 export const BETA_MIN_OBS = 30;
 
-export function computeBeta(
-  stockReturns: number[],
-  benchmarkReturns: number[]
-): number | null {
+export function computeBeta(stockReturns: number[], benchmarkReturns: number[]): number | null {
   if (stockReturns.length !== benchmarkReturns.length) return null;
   if (stockReturns.length < BETA_MIN_OBS) return null;
   const pairs: Array<[number, number]> = [];
@@ -192,8 +189,10 @@ export function buildWarnings(
   missingBeta: number
 ): string[] {
   const warnings: string[] = [];
-  if (leverage > 1.0) warnings.push(`⚠ 杠杆 ${(leverage * 100).toFixed(0)}% — 持仓总额超 equity，融资仓位较高`);
-  if (gross > 0.95) warnings.push(`⚠ gross_exposure ${(gross * 100).toFixed(0)}% — 近满仓，无应急 buffer`);
+  if (leverage > 1.0)
+    warnings.push(`⚠ 杠杆 ${(leverage * 100).toFixed(0)}% — 持仓总额超 equity，融资仓位较高`);
+  if (gross > 0.95)
+    warnings.push(`⚠ gross_exposure ${(gross * 100).toFixed(0)}% — 近满仓，无应急 buffer`);
   if (cashPct < 0.05 && gross > 0.9) warnings.push(`⚠ 现金 < 5% — 黑天鹅来临无加仓子弹`);
   if (beta > 1.3) warnings.push(`⚠ β=${beta.toFixed(2)} — 组合对大盘高敏感，下跌时跌幅 > 指数`);
   if (beta < 0.5) warnings.push(`ℹ β=${beta.toFixed(2)} — 低 β 防御组合（跑不过指数也跌得少）`);
@@ -211,9 +210,9 @@ export interface ExposureCoachDataSource {
     total_value: number;
     current_cash: number;
   } | null>;
-  loadPositionsWithMV(portfolio_id: number): Promise<
-    Array<{ symbol: string; market_value: number; quantity: number }>
-  >;
+  loadPositionsWithMV(
+    portfolio_id: number
+  ): Promise<Array<{ symbol: string; market_value: number; quantity: number }>>;
   loadStockBetas(symbols: string[]): Promise<Map<string, number | null>>;
 }
 
@@ -284,9 +283,10 @@ export const PRODUCTION_EXPOSURE_DATA_SOURCE: ExposureCoachDataSource = {
       const closesByStock = new Map<number, Array<{ date: string; close: number }>>();
       for (const b of bars) {
         if (!closesByStock.has(b.stock_id)) closesByStock.set(b.stock_id, []);
-        const dateKey = (b.time as any) instanceof Date
-          ? (b.time as Date).toISOString().slice(0, 10)
-          : String(b.time).slice(0, 10);
+        const dateKey =
+          (b.time as any) instanceof Date
+            ? (b.time as Date).toISOString().slice(0, 10)
+            : String(b.time).slice(0, 10);
         closesByStock.get(b.stock_id)!.push({ date: dateKey, close: Number(b.close) });
       }
       const hs300Series = closesByStock.get(hs300Id) || [];

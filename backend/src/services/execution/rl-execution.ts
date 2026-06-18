@@ -115,7 +115,12 @@ export function getQValues(qtable: QTable, state: ExecutionState): number[] {
  *   With prob ε: random action
  *   Else: argmax_a Q(s, a)
  */
-export function epsilonGreedyAction(qtable: QTable, state: ExecutionState, epsilon: number, rng: () => number = Math.random): Action {
+export function epsilonGreedyAction(
+  qtable: QTable,
+  state: ExecutionState,
+  epsilon: number,
+  rng: () => number = Math.random
+): Action {
   if (rng() < epsilon) {
     return Math.floor(rng() * STANDARD_PARTICIPATION_RATES.length);
   }
@@ -123,7 +128,10 @@ export function epsilonGreedyAction(qtable: QTable, state: ExecutionState, epsil
   let bestA = 0;
   let bestV = qs[0];
   for (let a = 1; a < qs.length; a += 1) {
-    if (qs[a] > bestV) { bestV = qs[a]; bestA = a; }
+    if (qs[a] > bestV) {
+      bestV = qs[a];
+      bestA = a;
+    }
   }
   return bestA;
 }
@@ -174,14 +182,15 @@ export function executionReward(input: {
   is_terminal: boolean;
   leftover_inventory_pct: number;
   decision_price?: number; // for opp cost
-  current_price?: number;  // for opp cost
+  current_price?: number; // for opp cost
 }): number {
   const impact_cost = input.shares_traded * input.impact_bps * 1e-4;
   let opp_cost = 0;
   if (input.is_terminal && input.leftover_inventory_pct > 0) {
     // 假设每股 leftover penalty = decision_price × |drift| × 10 bps (rough)
     if (input.decision_price !== undefined && input.current_price !== undefined) {
-      opp_cost = Math.abs(input.current_price - input.decision_price) * input.leftover_inventory_pct;
+      opp_cost =
+        Math.abs(input.current_price - input.decision_price) * input.leftover_inventory_pct;
     } else {
       // default penalty
       opp_cost = input.leftover_inventory_pct * 1000; // 1000 bps penalty
@@ -212,8 +221,17 @@ export interface EpisodeStep {
 export function runEpisode(
   initial_state: ExecutionState,
   qtable: QTable,
-  simulator: (state: ExecutionState, action: Action) => { reward: number; next_state: ExecutionState | null },
-  options: { epsilon?: number; alpha?: number; gamma?: number; rng?: () => number; max_steps?: number } = {}
+  simulator: (
+    state: ExecutionState,
+    action: Action
+  ) => { reward: number; next_state: ExecutionState | null },
+  options: {
+    epsilon?: number;
+    alpha?: number;
+    gamma?: number;
+    rng?: () => number;
+    max_steps?: number;
+  } = {}
 ): { total_reward: number; steps: EpisodeStep[]; final_state: ExecutionState | null } {
   const epsilon = options.epsilon ?? 0.1;
   const max_steps = options.max_steps ?? 30;
@@ -238,12 +256,18 @@ export function runEpisode(
 /**
  * Inference: get best action from trained Q-table (no exploration).
  */
-export function bestAction(qtable: QTable, state: ExecutionState): { action: Action; participation_rate: number; q_value: number } {
+export function bestAction(
+  qtable: QTable,
+  state: ExecutionState
+): { action: Action; participation_rate: number; q_value: number } {
   const qs = getQValues(qtable, state);
   let bestA = 0;
   let bestV = qs[0];
   for (let a = 1; a < qs.length; a += 1) {
-    if (qs[a] > bestV) { bestV = qs[a]; bestA = a; }
+    if (qs[a] > bestV) {
+      bestV = qs[a];
+      bestA = a;
+    }
   }
   return {
     action: bestA,
@@ -261,9 +285,19 @@ export function bestAction(qtable: QTable, state: ExecutionState): { action: Act
 export function trainQLearning(
   episodes: Array<{
     initial_state: ExecutionState;
-    simulator: (state: ExecutionState, action: Action) => { reward: number; next_state: ExecutionState | null };
+    simulator: (
+      state: ExecutionState,
+      action: Action
+    ) => { reward: number; next_state: ExecutionState | null };
   }>,
-  options: { n_iterations?: number; epsilon_initial?: number; epsilon_decay?: number; alpha?: number; gamma?: number; seed?: number } = {}
+  options: {
+    n_iterations?: number;
+    epsilon_initial?: number;
+    epsilon_decay?: number;
+    alpha?: number;
+    gamma?: number;
+    seed?: number;
+  } = {}
 ): { qtable: QTable; avg_rewards: number[] } {
   const n_iter = options.n_iterations ?? 100;
   const eps0 = options.epsilon_initial ?? 0.5;
@@ -281,11 +315,16 @@ export function trainQLearning(
   const avg_rewards: number[] = [];
 
   for (let iter = 0; iter < n_iter; iter += 1) {
-    let epsilon = eps0 * Math.pow(decay, iter);
+    const epsilon = eps0 * Math.pow(decay, iter);
     let totalRew = 0;
     let totalCount = 0;
     for (const ep of episodes) {
-      const r = runEpisode(ep.initial_state, qtable, ep.simulator, { epsilon, alpha: options.alpha, gamma: options.gamma, rng });
+      const r = runEpisode(ep.initial_state, qtable, ep.simulator, {
+        epsilon,
+        alpha: options.alpha,
+        gamma: options.gamma,
+        rng,
+      });
       totalRew += r.total_reward;
       totalCount += 1;
     }

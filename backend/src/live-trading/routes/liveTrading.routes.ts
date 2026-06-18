@@ -276,7 +276,10 @@ router.get(
  *       400: { description: 参数错误 }
  *       401: { description: 未授权 }
  *       404: { description: 草稿不存在 }
- */router.get('/shadow-budget-attribution', liveTradingController.getShadowBudgetAttribution.bind(liveTradingController));
+ */ router.get(
+  '/shadow-budget-attribution',
+  liveTradingController.getShadowBudgetAttribution.bind(liveTradingController)
+);
 
 // 写接口加 rate limit（灰度阶段；阈值见 liveTradingRateLimit.ts）
 router.post(
@@ -305,7 +308,8 @@ router.post(
   LIVE_TRADING_RATE_LIMITS.approveDraft1m,
   LIVE_TRADING_RATE_LIMITS.approveDraft1h,
   liveTradingController.approveDraft.bind(liveTradingController)
-);router.post(
+);
+router.post(
   '/order-drafts/:id/reject',
   liveTradingController.rejectDraft.bind(liveTradingController)
 );
@@ -336,11 +340,12 @@ router.post(
  *       200: { description: 审计日志, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessResponse' } } } }
  *       400: { description: 参数错误 }
  *       401: { description: 未授权 }
- */router.post(
+ */ router.post(
   '/accounts/sync-readonly',
   LIVE_TRADING_RATE_LIMITS.syncReadonly1m,
   liveTradingController.syncReadonly.bind(liveTradingController)
-);router.get('/audit-logs', liveTradingController.getAuditLogs.bind(liveTradingController));
+);
+router.get('/audit-logs', liveTradingController.getAuditLogs.bind(liveTradingController));
 
 // 服务端 kill switch：查询 / 手动触发 / 人工解除
 // review P1：触发/解除是进程全局影响（一个用户能熔断/恢复所有人的下单），

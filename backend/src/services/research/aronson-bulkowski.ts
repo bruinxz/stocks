@@ -70,7 +70,7 @@
  *
  *   Less conservative than pure Bonferroni (α / K).
  */
-export function bonferroniHolmCorrection(p_values: number[], alpha: number = 0.05): boolean[] {
+export function bonferroniHolmCorrection(p_values: number[], alpha = 0.05): boolean[] {
   const K = p_values.length;
   const indexed = p_values.map((p, i) => ({ p, i })).sort((a, b) => a.p - b.p);
   const reject = new Array(K).fill(false);
@@ -92,7 +92,7 @@ export function bonferroniHolmCorrection(p_values: number[], alpha: number = 0.0
  *   Less conservative than Bonferroni.
  *   Control E[V/R] = expected false discovery rate at level α.
  */
-export function benjaminiHochbergFDR(p_values: number[], alpha: number = 0.05): boolean[] {
+export function benjaminiHochbergFDR(p_values: number[], alpha = 0.05): boolean[] {
   const K = p_values.length;
   const indexed = p_values.map((p, i) => ({ p, i })).sort((a, b) => a.p - b.p);
   const reject = new Array(K).fill(false);
@@ -153,9 +153,7 @@ export function whitesRealityCheck(input: {
   const observed_best = Math.max(...observed_means);
 
   // Centered returns
-  const centered = input.rule_returns.map((rets, k) =>
-    rets.map(r => r - observed_means[k])
-  );
+  const centered = input.rule_returns.map((rets, k) => rets.map(r => r - observed_means[k]));
 
   // Seeded RNG
   let state = (input.seed ?? 42) % 2147483647;
@@ -202,12 +200,12 @@ export function whitesRealityCheck(input: {
 export interface PatternStat {
   pattern: string;
   category: 'top' | 'bottom' | 'continuation' | 'reversal';
-  success_rate: number;       // % reaches target (after breakout)
-  avg_rise_pct?: number;       // avg return to target
+  success_rate: number; // % reaches target (after breakout)
+  avg_rise_pct?: number; // avg return to target
   avg_fall_pct?: number;
   failure_rate: number;
   optimal_regime?: 'bull' | 'bear' | 'all';
-  reliability_rank: number;    // 1=most reliable
+  reliability_rank: number; // 1=most reliable
 }
 
 /**
@@ -216,21 +214,141 @@ export interface PatternStat {
  * Source: *Encyclopedia of Chart Patterns* 2nd ed., 2005 (bull/bear market data).
  */
 export const BULKOWSKI_PATTERN_TABLE: PatternStat[] = [
-  { pattern: 'Inverse Head and Shoulders (bottom)', category: 'bottom', success_rate: 0.83, avg_rise_pct: 0.38, failure_rate: 0.05, optimal_regime: 'bull', reliability_rank: 1 },
-  { pattern: 'Head and Shoulders Top', category: 'top', success_rate: 0.81, avg_fall_pct: 0.22, failure_rate: 0.04, optimal_regime: 'bear', reliability_rank: 2 },
-  { pattern: 'Triple Bottom', category: 'bottom', success_rate: 0.78, avg_rise_pct: 0.37, failure_rate: 0.06, optimal_regime: 'bull', reliability_rank: 3 },
-  { pattern: 'Double Bottom (Adam-Adam)', category: 'bottom', success_rate: 0.74, avg_rise_pct: 0.35, failure_rate: 0.07, optimal_regime: 'bull', reliability_rank: 4 },
-  { pattern: 'Cup with Handle', category: 'continuation', success_rate: 0.73, avg_rise_pct: 0.34, failure_rate: 0.07, optimal_regime: 'bull', reliability_rank: 5 },
-  { pattern: 'Rounding Bottom', category: 'bottom', success_rate: 0.72, avg_rise_pct: 0.36, failure_rate: 0.05, optimal_regime: 'bull', reliability_rank: 6 },
-  { pattern: 'Triple Top', category: 'top', success_rate: 0.71, avg_fall_pct: 0.19, failure_rate: 0.09, optimal_regime: 'bear', reliability_rank: 7 },
-  { pattern: 'Ascending Triangle', category: 'continuation', success_rate: 0.70, avg_rise_pct: 0.31, failure_rate: 0.10, optimal_regime: 'bull', reliability_rank: 8 },
-  { pattern: 'Double Top (Adam-Adam)', category: 'top', success_rate: 0.69, avg_fall_pct: 0.18, failure_rate: 0.09, optimal_regime: 'bear', reliability_rank: 9 },
-  { pattern: 'Falling Wedge', category: 'reversal', success_rate: 0.68, avg_rise_pct: 0.32, failure_rate: 0.11, optimal_regime: 'all', reliability_rank: 10 },
-  { pattern: 'Bullish Flag', category: 'continuation', success_rate: 0.67, avg_rise_pct: 0.13, failure_rate: 0.12, optimal_regime: 'bull', reliability_rank: 11 },
-  { pattern: 'Symmetrical Triangle (continuation)', category: 'continuation', success_rate: 0.65, avg_rise_pct: 0.30, failure_rate: 0.13, optimal_regime: 'all', reliability_rank: 12 },
-  { pattern: 'Descending Triangle', category: 'continuation', success_rate: 0.64, avg_fall_pct: 0.16, failure_rate: 0.14, optimal_regime: 'bear', reliability_rank: 13 },
-  { pattern: 'Bullish Pennant', category: 'continuation', success_rate: 0.60, avg_rise_pct: 0.12, failure_rate: 0.16, optimal_regime: 'bull', reliability_rank: 14 },
-  { pattern: 'Bearish Pennant', category: 'continuation', success_rate: 0.58, avg_fall_pct: 0.10, failure_rate: 0.17, optimal_regime: 'bear', reliability_rank: 15 },
+  {
+    pattern: 'Inverse Head and Shoulders (bottom)',
+    category: 'bottom',
+    success_rate: 0.83,
+    avg_rise_pct: 0.38,
+    failure_rate: 0.05,
+    optimal_regime: 'bull',
+    reliability_rank: 1,
+  },
+  {
+    pattern: 'Head and Shoulders Top',
+    category: 'top',
+    success_rate: 0.81,
+    avg_fall_pct: 0.22,
+    failure_rate: 0.04,
+    optimal_regime: 'bear',
+    reliability_rank: 2,
+  },
+  {
+    pattern: 'Triple Bottom',
+    category: 'bottom',
+    success_rate: 0.78,
+    avg_rise_pct: 0.37,
+    failure_rate: 0.06,
+    optimal_regime: 'bull',
+    reliability_rank: 3,
+  },
+  {
+    pattern: 'Double Bottom (Adam-Adam)',
+    category: 'bottom',
+    success_rate: 0.74,
+    avg_rise_pct: 0.35,
+    failure_rate: 0.07,
+    optimal_regime: 'bull',
+    reliability_rank: 4,
+  },
+  {
+    pattern: 'Cup with Handle',
+    category: 'continuation',
+    success_rate: 0.73,
+    avg_rise_pct: 0.34,
+    failure_rate: 0.07,
+    optimal_regime: 'bull',
+    reliability_rank: 5,
+  },
+  {
+    pattern: 'Rounding Bottom',
+    category: 'bottom',
+    success_rate: 0.72,
+    avg_rise_pct: 0.36,
+    failure_rate: 0.05,
+    optimal_regime: 'bull',
+    reliability_rank: 6,
+  },
+  {
+    pattern: 'Triple Top',
+    category: 'top',
+    success_rate: 0.71,
+    avg_fall_pct: 0.19,
+    failure_rate: 0.09,
+    optimal_regime: 'bear',
+    reliability_rank: 7,
+  },
+  {
+    pattern: 'Ascending Triangle',
+    category: 'continuation',
+    success_rate: 0.7,
+    avg_rise_pct: 0.31,
+    failure_rate: 0.1,
+    optimal_regime: 'bull',
+    reliability_rank: 8,
+  },
+  {
+    pattern: 'Double Top (Adam-Adam)',
+    category: 'top',
+    success_rate: 0.69,
+    avg_fall_pct: 0.18,
+    failure_rate: 0.09,
+    optimal_regime: 'bear',
+    reliability_rank: 9,
+  },
+  {
+    pattern: 'Falling Wedge',
+    category: 'reversal',
+    success_rate: 0.68,
+    avg_rise_pct: 0.32,
+    failure_rate: 0.11,
+    optimal_regime: 'all',
+    reliability_rank: 10,
+  },
+  {
+    pattern: 'Bullish Flag',
+    category: 'continuation',
+    success_rate: 0.67,
+    avg_rise_pct: 0.13,
+    failure_rate: 0.12,
+    optimal_regime: 'bull',
+    reliability_rank: 11,
+  },
+  {
+    pattern: 'Symmetrical Triangle (continuation)',
+    category: 'continuation',
+    success_rate: 0.65,
+    avg_rise_pct: 0.3,
+    failure_rate: 0.13,
+    optimal_regime: 'all',
+    reliability_rank: 12,
+  },
+  {
+    pattern: 'Descending Triangle',
+    category: 'continuation',
+    success_rate: 0.64,
+    avg_fall_pct: 0.16,
+    failure_rate: 0.14,
+    optimal_regime: 'bear',
+    reliability_rank: 13,
+  },
+  {
+    pattern: 'Bullish Pennant',
+    category: 'continuation',
+    success_rate: 0.6,
+    avg_rise_pct: 0.12,
+    failure_rate: 0.16,
+    optimal_regime: 'bull',
+    reliability_rank: 14,
+  },
+  {
+    pattern: 'Bearish Pennant',
+    category: 'continuation',
+    success_rate: 0.58,
+    avg_fall_pct: 0.1,
+    failure_rate: 0.17,
+    optimal_regime: 'bear',
+    reliability_rank: 15,
+  },
 ];
 
 /**
@@ -245,7 +363,7 @@ export function lookupPattern(name: string): PatternStat | undefined {
  *
  * Only return patterns with success_rate ≥ min_success.
  */
-export function reliablePatternsOnly(min_success: number = 0.7): PatternStat[] {
+export function reliablePatternsOnly(min_success = 0.7): PatternStat[] {
   return BULKOWSKI_PATTERN_TABLE.filter(p => p.success_rate >= min_success);
 }
 
@@ -257,12 +375,16 @@ export function reliablePatternsOnly(min_success: number = 0.7): PatternStat[] {
  *
  * Conditional success_rate boost: +5% if regime matches (实证 Bulkowski).
  */
-export function patternRegimeAdjusted(pattern: PatternStat, current_regime: 'bull' | 'bear' | 'range'): {
+export function patternRegimeAdjusted(
+  pattern: PatternStat,
+  current_regime: 'bull' | 'bear' | 'range'
+): {
   base_success: number;
   adjusted_success: number;
   regime_match: boolean;
 } {
-  const matched = pattern.optimal_regime === 'all' ||
+  const matched =
+    pattern.optimal_regime === 'all' ||
     (current_regime === 'bull' && pattern.optimal_regime === 'bull') ||
     (current_regime === 'bear' && pattern.optimal_regime === 'bear');
   const adj = matched ? Math.min(1, pattern.success_rate * 1.05) : pattern.success_rate * 0.85;
@@ -287,7 +409,10 @@ export function patternRegimeAdjusted(pattern: PatternStat, current_regime: 'bul
  *     - Neckline = line through 2 intermediate highs
  *     - Confirmation: breakout above neckline with volume
  */
-export function detectInverseHeadAndShoulders(prices: number[], lookback: number = 60): {
+export function detectInverseHeadAndShoulders(
+  prices: number[],
+  lookback = 60
+): {
   detected: boolean;
   confidence: number; // 0-1
   left_shoulder_idx?: number;
@@ -331,7 +456,8 @@ export function detectInverseHeadAndShoulders(prices: number[], lookback: number
         const avg_shoulder = (ls + rs) / 2;
         if ((avg_shoulder - h) / avg_shoulder < 0.05) continue;
         // Confidence based on closeness of shoulders + head depth
-        const confidence = (1 - shoulder_diff) * Math.min(1, (avg_shoulder - h) / avg_shoulder * 10);
+        const confidence =
+          (1 - shoulder_diff) * Math.min(1, ((avg_shoulder - h) / avg_shoulder) * 10);
         if (!best_match || confidence > best_match.confidence) {
           best_match = { confidence, ls: troughs[a].idx, h: troughs[b].idx, rs: troughs[c].idx };
         }
@@ -366,7 +492,10 @@ export function detectInverseHeadAndShoulders(prices: number[], lookback: number
  *
  *   3 approximately equal lows with intermediate rallies.
  */
-export function detectTripleBottom(prices: number[], lookback: number = 60): {
+export function detectTripleBottom(
+  prices: number[],
+  lookback = 60
+): {
   detected: boolean;
   confidence: number;
   bottom_indices?: [number, number, number];
@@ -380,7 +509,10 @@ export function detectTripleBottom(prices: number[], lookback: number = 60): {
   for (let i = 5; i < slice.length - 5; i += 1) {
     let is_min = true;
     for (let k = 1; k <= 3; k += 1) {
-      if (slice[i] >= slice[i - k] || slice[i] >= slice[i + k]) { is_min = false; break; }
+      if (slice[i] >= slice[i - k] || slice[i] >= slice[i + k]) {
+        is_min = false;
+        break;
+      }
     }
     if (is_min) troughs.push({ idx: i, price: slice[i] });
   }
@@ -421,7 +553,10 @@ export function detectTripleBottom(prices: number[], lookback: number = 60): {
  *
  *   Simplified detection: find rounded bottom + slight pullback.
  */
-export function detectCupAndHandle(prices: number[], min_cup_length: number = 30): {
+export function detectCupAndHandle(
+  prices: number[],
+  min_cup_length = 30
+): {
   detected: boolean;
   cup_left_rim?: number;
   cup_bottom?: number;
@@ -437,15 +572,18 @@ export function detectCupAndHandle(prices: number[], min_cup_length: number = 30
   const left_rim_price = cup_prices[0];
   const right_rim_price = cup_prices[cup_prices.length - 1];
   // Rims similar (within 10%)
-  if (Math.abs(left_rim_price - right_rim_price) / left_rim_price > 0.10) return { detected: false };
+  if (Math.abs(left_rim_price - right_rim_price) / left_rim_price > 0.1) return { detected: false };
 
   const cup_bottom = Math.min(...cup_prices);
   const cup_bottom_idx = cup_prices.indexOf(cup_bottom);
   // Bottom should be 12-50% below rims
-  const depth = (Math.min(left_rim_price, right_rim_price) - cup_bottom) / Math.min(left_rim_price, right_rim_price);
-  if (depth < 0.12 || depth > 0.50) return { detected: false };
+  const depth =
+    (Math.min(left_rim_price, right_rim_price) - cup_bottom) /
+    Math.min(left_rim_price, right_rim_price);
+  if (depth < 0.12 || depth > 0.5) return { detected: false };
   // Bottom in middle 50%
-  if (cup_bottom_idx < cup_prices.length * 0.25 || cup_bottom_idx > cup_prices.length * 0.75) return { detected: false };
+  if (cup_bottom_idx < cup_prices.length * 0.25 || cup_bottom_idx > cup_prices.length * 0.75)
+    return { detected: false };
 
   // Handle: last 5 days, small pullback
   const handle_prices = prices.slice(right_idx);

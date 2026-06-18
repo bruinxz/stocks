@@ -867,15 +867,27 @@ async function testCheckBuyAllowedDisabledUser() {
 }
 
 async function testCheckBuyAllowedFailOpen() {
-  // DB outage in loadPausedUntil → guard should fail open (ok=true)
+  // DB outage in loadPausedUntil → guard should fail CLOSED (throw RiskGuardUnavailableError)
+  // BETA-7 (2026-06-18, audit M-13): changed from fail-OPEN to fail-CLOSED.
+  // Risk-guard DB outage = 拒单 + 写 HIGH RiskAlert (caller responsibility), 不能
+  // 让风控故障悄悄放行 (与 memory sprint-27-28-29 fail-open 教训呼应)。
   const state = emptyState({
     userIds: [1],
     loadPausedUntilShouldThrow: true,
     portfolios: { 1: { id: 1, total_value: 100000 } },
   });
   const guard = new DrawdownCircuitBreaker(makeFakeSource(state));
-  const r = await guard.checkBuyAllowed({ user_id: 1, symbol: 'A' });
-  assertEqual('fail-open: ok=true (DB outage protects user from full block)', r.ok, true);
+  let caught: unknown = null;
+  try {
+    await guard.checkBuyAllowed({ user_id: 1, symbol: 'A' });
+  } catch (err) {
+    caught = err;
+  }
+  assertEqual(
+    'fail-CLOSED: throws RiskGuardUnavailableError (BETA-7, audit M-13)',
+    caught !== null && (caught as any)?.code === 'RISK_GUARD_UNAVAILABLE',
+    true
+  );
 }
 
 async function testCheckBuyAllowedInvalidPausedUntil() {

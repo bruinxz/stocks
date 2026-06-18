@@ -100,7 +100,12 @@ export function computeDecisionQualityScore(input: DecisionQualityInput): Decisi
     exit_discipline: Math.max(0, Math.min(10, input.exited_per_plan)) * 2,
     pre_trade_thesis: input.recorded_thesis_pre_trade ? 15 : 0,
   };
-  const dqs = components.entry_plan + components.stop_loss + components.sizing + components.exit_discipline + components.pre_trade_thesis;
+  const dqs =
+    components.entry_plan +
+    components.stop_loss +
+    components.sizing +
+    components.exit_discipline +
+    components.pre_trade_thesis;
   const category: 'excellent' | 'good' | 'fair' | 'poor' =
     dqs >= 80 ? 'excellent' : dqs >= 60 ? 'good' : dqs >= 40 ? 'fair' : 'poor';
   return { dqs, category, components };
@@ -115,7 +120,10 @@ export function computeDecisionQualityScore(input: DecisionQualityInput): Decisi
  *
  * 仅追求 PnL > 0 会强化"幸运型"行为, 长期破产.
  */
-export function decisionPnlMatrix(dqs: number, pnl: number): 'true_alpha' | 'variance_loss' | 'lucky_win' | 'bad_execution' {
+export function decisionPnlMatrix(
+  dqs: number,
+  pnl: number
+): 'true_alpha' | 'variance_loss' | 'lucky_win' | 'bad_execution' {
   const dqs_high = dqs >= 60;
   const pnl_positive = pnl > 0;
   if (dqs_high && pnl_positive) return 'true_alpha';
@@ -128,7 +136,14 @@ export function decisionPnlMatrix(dqs: number, pnl: number): 'true_alpha' | 'var
 // Freeman-Shor 7 Patterns
 // ============================================================
 
-export type TraderPattern = 'rabbit' | 'assassin' | 'hunter' | 'raider' | 'connoisseur' | 'inspector' | 'squirrel';
+export type TraderPattern =
+  | 'rabbit'
+  | 'assassin'
+  | 'hunter'
+  | 'raider'
+  | 'connoisseur'
+  | 'inspector'
+  | 'squirrel';
 
 export interface TradeOutcomeForPattern {
   /** Original buy date */
@@ -166,13 +181,27 @@ export function classifyTraderPattern(trades: TradeOutcomeForPattern[]): {
     return {
       pattern: 'inspector',
       confidence: 0,
-      pattern_scores: { rabbit: 0, assassin: 0, hunter: 0, raider: 0, connoisseur: 0, inspector: 0, squirrel: 0 },
+      pattern_scores: {
+        rabbit: 0,
+        assassin: 0,
+        hunter: 0,
+        raider: 0,
+        connoisseur: 0,
+        inspector: 0,
+        squirrel: 0,
+      },
       recommendation: '无数据',
     };
   }
 
   const scores: Record<TraderPattern, number> = {
-    rabbit: 0, assassin: 0, hunter: 0, raider: 0, connoisseur: 0, inspector: 0, squirrel: 0,
+    rabbit: 0,
+    assassin: 0,
+    hunter: 0,
+    raider: 0,
+    connoisseur: 0,
+    inspector: 0,
+    squirrel: 0,
   };
 
   for (const t of trades) {
@@ -186,13 +215,16 @@ export function classifyTraderPattern(trades: TradeOutcomeForPattern[]): {
     if (t.n_add_on_dips === 1 && (t.return_pct ?? 0) > 0) scores.hunter += 1; // 抄底成功
 
     // Raider: 小额获利就跑 (return 5-20%, days < 30)
-    if (t.return_pct !== null && t.return_pct > 0.05 && t.return_pct < 0.2 && t.days_held < 30) scores.raider += 1;
+    if (t.return_pct !== null && t.return_pct > 0.05 && t.return_pct < 0.2 && t.days_held < 30)
+      scores.raider += 1;
 
     // Connoisseur: 长期持有 winner, 多次加仓 rally
-    if (t.n_add_on_rallies >= 1 && t.days_held >= 180 && (t.return_pct ?? 0) > 0.2) scores.connoisseur += 1;
+    if (t.n_add_on_rallies >= 1 && t.days_held >= 180 && (t.return_pct ?? 0) > 0.2)
+      scores.connoisseur += 1;
 
     // Inspector: 谨慎, 不加仓不减仓
-    if (t.n_add_on_dips === 0 && t.n_add_on_rallies === 0 && t.days_held > 60) scores.inspector += 1;
+    if (t.n_add_on_dips === 0 && t.n_add_on_rallies === 0 && t.days_held > 60)
+      scores.inspector += 1;
 
     // Squirrel: 频繁开仓闭仓 (持仓 < 7 天)
     if (t.days_held < 7) scores.squirrel += 1;
@@ -278,7 +310,10 @@ export function scorePreMortem(input: PreMortemInput): PreMortemResult {
   else warnings.push('Exit conditions < 2 — 退出条件不足');
 
   if (input.worst_case_loss_pct >= 0.05 && input.worst_case_loss_pct <= 0.25) score += 10;
-  else if (input.worst_case_loss_pct > 0.25) warnings.push(`Worst-case loss ${(input.worst_case_loss_pct * 100).toFixed(0)}% 过大 — 考虑减仓`);
+  else if (input.worst_case_loss_pct > 0.25)
+    warnings.push(
+      `Worst-case loss ${(input.worst_case_loss_pct * 100).toFixed(0)}% 过大 — 考虑减仓`
+    );
 
   if (input.position_size_pct > 0.05 && input.expected_time_horizon_days > 180) {
     warnings.push('大仓位 + 长期 — high concentration risk');
@@ -342,9 +377,7 @@ export function narangArchitectureAudit(): NarangLayerCheck[] {
         'BlackSwanWatchdog, RestrictedShareWatchdog',
         'IndustryConcentrationGuard',
       ],
-      gaps: [
-        'Multi-factor risk model 部分 (v4 GK + v6 Fama-French/Barra 待 prod)',
-      ],
+      gaps: ['Multi-factor risk model 部分 (v4 GK + v6 Fama-French/Barra 待 prod)'],
     },
     {
       layer: 3,

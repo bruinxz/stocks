@@ -9,11 +9,7 @@
 import { quantBacktestService } from './internal/QuantBacktestService';
 import { quantStrategyService } from '../engine/internal/QuantStrategyService';
 import { costSensitivityAnalysis, CostSensitivityAnalyzeOptions } from './CostSensitivityAnalysis';
-import {
-  walkForwardValidator,
-  WalkForwardInput,
-  WalkForwardOptions,
-} from './WalkForwardValidator';
+import { walkForwardValidator, WalkForwardInput, WalkForwardOptions } from './WalkForwardValidator';
 
 async function withResolvedStrategyParams(input: any) {
   const strategy_keys = await quantStrategyService.resolveStrategyKeys(

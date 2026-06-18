@@ -654,7 +654,7 @@ export class EarningsSurpriseStrategy extends QuantStrategy {
         stock_code: f.stock_code,
         forecast: f,
         meta,
-        northbound_delta: delta ?? 0,  // 缺数据时用 0 占位
+        northbound_delta: delta ?? 0, // 缺数据时用 0 占位
         reference_price: ref,
       });
     }

@@ -86,7 +86,11 @@ export function geometricMeanReturn(trades: number[], f: number): number {
  *     2. Pick f with highest TWR
  *     3. Local refinement around max
  */
-export function optimalF(trades: number[]): { f: number; twr: number; geometric_mean_return: number } {
+export function optimalF(trades: number[]): {
+  f: number;
+  twr: number;
+  geometric_mean_return: number;
+} {
   if (trades.length === 0) return { f: 0, twr: 1, geometric_mean_return: 0 };
   let best_f = 0;
   let best_twr = -Infinity;
@@ -111,7 +115,8 @@ export function optimalF(trades: number[]): { f: number; twr: number; geometric_
   return {
     f: best_f,
     twr: best_twr,
-    geometric_mean_return: best_twr > 0 && trades.length > 0 ? Math.pow(best_twr, 1 / trades.length) - 1 : -1,
+    geometric_mean_return:
+      best_twr > 0 && trades.length > 0 ? Math.pow(best_twr, 1 / trades.length) - 1 : -1,
   };
 }
 
@@ -138,7 +143,9 @@ export function leverageSpaceModel(
   // For K=2, 2D grid
   if (K === 2) {
     const steps = options.grid_steps ?? 20;
-    let best_f1 = 0, best_f2 = 0, best_twr = -Infinity;
+    let best_f1 = 0,
+      best_f2 = 0,
+      best_twr = -Infinity;
     for (let i = 1; i < steps; i += 1) {
       for (let j = 1; j < steps; j += 1) {
         const f1 = i / steps;
@@ -157,7 +164,8 @@ export function leverageSpaceModel(
     return {
       f_vector: [best_f1, best_f2],
       combined_twr: best_twr,
-      combined_gmr: Math.pow(best_twr, 1 / Math.max(systems_trades[0].length, systems_trades[1].length)) - 1,
+      combined_gmr:
+        Math.pow(best_twr, 1 / Math.max(systems_trades[0].length, systems_trades[1].length)) - 1,
     };
   }
 
@@ -231,7 +239,8 @@ export function compareKellyVsOptimalF(trades: number[]): {
   const losses = trades.filter(t => t < 0);
   const win_rate = wins.length / Math.max(1, trades.length);
   const avg_win = wins.length > 0 ? wins.reduce((s, v) => s + v, 0) / wins.length : 0;
-  const avg_loss = losses.length > 0 ? Math.abs(losses.reduce((s, v) => s + v, 0) / losses.length) : 1;
+  const avg_loss =
+    losses.length > 0 ? Math.abs(losses.reduce((s, v) => s + v, 0) / losses.length) : 1;
   const payoff = avg_loss > 0 ? avg_win / avg_loss : 0;
   const kelly = kellyFraction(win_rate, payoff);
   const kelly_twr = terminalWealthRelative(trades, kelly);
