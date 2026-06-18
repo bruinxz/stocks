@@ -159,12 +159,14 @@ export function buildSummaryMessage(latest: BreadthSnapshot): string {
 // ============================================================
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
-let cache: { data: MarketBreadthReport; ts: number } | null = null;
+// Batch Y (2026-06-17, fact-2 fix): cache key 含 days, 之前全局 cache 不分 days
+// → 5min 内 days=30 调用拿到 days=7 的旧数据 (顶部预警 + UI dashboard 误报).
+let cache: Map<number, { data: MarketBreadthReport; ts: number }> = new Map();
 
 export class MarketBreadthService {
   /** 强制清缓存 */
   invalidateCache(): void {
-    cache = null;
+    cache.clear();
   }
 
   /**
@@ -176,8 +178,9 @@ export class MarketBreadthService {
     const lookback = Math.max(1, Math.min(30, Math.floor(days)));
 
     // 缓存命中
-    if (cache && Date.now() - cache.ts < CACHE_TTL_MS) {
-      return cache.data;
+    const cached = cache.get(lookback);
+    if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
+      return cached.data;
     }
 
     const since = new Date();
@@ -357,7 +360,7 @@ export class MarketBreadthService {
         summary_message: buildSummaryMessage(latest),
       };
 
-      cache = { data: report, ts: Date.now() };
+      cache.set(lookback, { data: report, ts: Date.now() });
       return report;
     } catch (err: any) {
       logger.error(`[MarketBreadth] getReport failed: ${err?.message || err}`);

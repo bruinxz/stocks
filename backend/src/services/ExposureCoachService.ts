@@ -278,14 +278,29 @@ export const PRODUCTION_EXPOSURE_DATA_SOURCE: ExposureCoachDataSource = {
         order: [['time', 'ASC']],
       });
 
-      // 3. 按 stock_id 分组
-      const closesByStock = new Map<number, number[]>();
+      // 3. 按 stock_id 分组. Batch Y (2026-06-17, fact-3 fix): 保留 date 让后面
+      // β 计算可以按日期对齐. 之前 closes 只是数组, 停牌/上市晚的股票 stockReturns[i]
+      // 与 hs300Returns[i] 不是同日 → cov() 错算 → β 系统性偏差.
+      const closesByStock = new Map<number, Array<{ date: string; close: number }>>();
       for (const b of bars) {
         if (!closesByStock.has(b.stock_id)) closesByStock.set(b.stock_id, []);
-        closesByStock.get(b.stock_id)!.push(Number(b.close));
+        const dateKey = (b.time as any) instanceof Date
+          ? (b.time as Date).toISOString().slice(0, 10)
+          : String(b.time).slice(0, 10);
+        closesByStock.get(b.stock_id)!.push({ date: dateKey, close: Number(b.close) });
       }
-      const hs300Closes = closesByStock.get(hs300Id) || [];
-      const hs300Returns = closeToReturns(hs300Closes);
+      const hs300Series = closesByStock.get(hs300Id) || [];
+      // 按 date asc 排序确保 closeToReturns 不错位
+      hs300Series.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+      // 计算 hs300 returns 同时保留 date (return 的 date 用后一天 = 该收益所属交易日)
+      const hs300ReturnsByDate = new Map<string, number>();
+      for (let i = 1; i < hs300Series.length; i++) {
+        const prev = hs300Series[i - 1].close;
+        const cur = hs300Series[i].close;
+        if (prev > 0 && Number.isFinite(prev) && Number.isFinite(cur)) {
+          hs300ReturnsByDate.set(hs300Series[i].date, cur / prev - 1);
+        }
+      }
 
       // 4. 算每个 stock 的 β
       for (const sym of symbols) {
@@ -294,15 +309,28 @@ export const PRODUCTION_EXPOSURE_DATA_SOURCE: ExposureCoachDataSource = {
           map.set(sym, null);
           continue;
         }
-        const stockCloses = closesByStock.get(sid) || [];
-        const stockReturns = closeToReturns(stockCloses);
-        // 对齐到最短
-        const len = Math.min(stockReturns.length, hs300Returns.length);
-        if (len < BETA_MIN_OBS) {
+        const stockSeries = closesByStock.get(sid) || [];
+        stockSeries.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+        // Batch Y (fact-3): 按 date 求交集对齐再算 β. 之前 slice(-len) 取尾部相同长度但
+        // 不保证同日, 停牌断点导致 stock[i] 与 hs300[i] 错日, cov 严重失真.
+        const alignedStockRet: number[] = [];
+        const alignedHs300Ret: number[] = [];
+        for (let i = 1; i < stockSeries.length; i++) {
+          const prev = stockSeries[i - 1].close;
+          const cur = stockSeries[i].close;
+          if (!(prev > 0) || !Number.isFinite(prev) || !Number.isFinite(cur)) continue;
+          const r = cur / prev - 1;
+          const date = stockSeries[i].date;
+          const hsRet = hs300ReturnsByDate.get(date);
+          if (hsRet === undefined) continue; // 该日 hs300 缺数据 → 跳过
+          alignedStockRet.push(r);
+          alignedHs300Ret.push(hsRet);
+        }
+        if (alignedStockRet.length < BETA_MIN_OBS) {
           map.set(sym, null);
           continue;
         }
-        const beta = computeBeta(stockReturns.slice(-len), hs300Returns.slice(-len));
+        const beta = computeBeta(alignedStockRet, alignedHs300Ret);
         map.set(sym, beta);
       }
       return map;

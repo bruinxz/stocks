@@ -189,6 +189,10 @@ export class FactorPipeline {
     }
 
     // 2) winsorize + zscore + percentile（横截面）
+    // Batch Y (2026-06-17, fact-1 fix): zscore + percentile 必须基于同一份数据
+    // (winsorized), 之前 zScore 用 winsorized 而 percentile 用 raw → 同一 stock 的
+    // z_score 排序 ≠ percentile 排序, 下游 MFA 用 z_score 选股 / FactorWorkspace 用
+    // percentile 排序时两套 top-30 不一致.
     let zScores: number[] = [];
     let percentiles: number[] = [];
     if (cleanedPairs.length >= 2) {
@@ -197,7 +201,7 @@ export class FactorPipeline {
         { lowerQuantile: 0.01, upperQuantile: 0.99 }
       );
       zScores = zscore(winsorized);
-      percentiles = percentileRanks(cleanedPairs.map(p => p.v));
+      percentiles = percentileRanks(winsorized);
     } else if (cleanedPairs.length === 1) {
       zScores = [0];
       percentiles = [0.5];

@@ -242,11 +242,24 @@ export const PRODUCTION_BEHAVIOR_BIAS_DATA_SOURCE: BehaviorBiasDataSource = {
     since.setDate(since.getDate() - lookback_days);
     const sinceStr = since.toISOString().slice(0, 10);
     try {
-      // 通过 portfolio_id 找该 user 的所有 outcomes
+      // Batch Y (2026-06-17, fact-4 fix): 先查 user 的 portfolio_id list, query
+      // WHERE 直接加 portfolio_id IN (...) 让 DB 层过滤. 之前先 findAll(limit:2000)
+      // 拉全市场 outcomes 再 JS filter, 跨用户大量产 outcome 时本用户 outcome
+      // 落 2000 之外 → filtered 为空 → BehaviorBias 全部假阴性 "无偏差".
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { PaperTradingPortfolio } = require('../models/PaperTradingPortfolio');
+      const userPortfolios = await PaperTradingPortfolio.findAll({
+        where: { user_id },
+        attributes: ['id'],
+        raw: true,
+      });
+      const pidList = userPortfolios.map((p: any) => p.id);
+      if (pidList.length === 0) return [];
+
       const rows = await RecommendationTradeOutcome.findAll({
         where: {
           entry_date: { [Op.gte]: sinceStr },
-          // portfolio_id IN (user 的 portfolios)
+          portfolio_id: { [Op.in]: pidList },
         },
         attributes: [
           'entry_date',
@@ -262,15 +275,8 @@ export const PRODUCTION_BEHAVIOR_BIAS_DATA_SOURCE: BehaviorBiasDataSource = {
         ],
         limit: 2000,
       });
-      // 过滤为 user 拥有的 portfolio 的 outcomes
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { PaperTradingPortfolio } = require('../models/PaperTradingPortfolio');
-      const userPortfolios = await PaperTradingPortfolio.findAll({
-        where: { user_id },
-        attributes: ['id'],
-      });
-      const pidSet = new Set(userPortfolios.map((p: any) => p.id));
-      const filtered = rows.filter(r => pidSet.has(r.portfolio_id));
+      // Batch Y: portfolio_id 已在 WHERE 限定, 不需要 JS filter.
+      const filtered = rows;
       return filtered.map(r => {
         const md: any = r.metadata || {};
         return {
