@@ -1033,7 +1033,11 @@ export class FactorController {
 
       // 2e) recent_sentiment_news — MarketNews 关键词过滤
       const newsKeywordsRaw = String(req.query.news_keywords_csv || '').trim();
-      const defaultKw = ['情绪', '关注', '抢筹', '炒作', '热度', '躁动', '人气', '风口', '逼空'];
+      const defaultKw = [
+        '情绪', '关注', '抢筹', '炒作', '热度', '躁动', '人气', '风口', '逼空',
+        '机构', '游资', '主力', '调研', '增持', '减持', '券商', '研报',
+        '热门', '板块', '题材', '概念', '龙头',
+      ];
       const newsKeywords = newsKeywordsRaw
         ? newsKeywordsRaw.split(',').map(s => s.trim()).filter(Boolean)
         : defaultKw;
@@ -1041,7 +1045,7 @@ export class FactorController {
       try {
         const twoDaysAgo = new Date(Date.now() - 2 * 86_400_000).toISOString().slice(0, 10);
         const orClauses = newsKeywords.map(kw => ({ title: { [Op.iLike]: `%${kw}%` } }));
-        const newsRows = (await MarketNews.findAll({
+        let newsRows = (await MarketNews.findAll({
           where: {
             publish_date: { [Op.gte]: twoDaysAgo },
             [Op.or]: orClauses,
@@ -1057,6 +1061,16 @@ export class FactorController {
           category: string | null;
           url: string | null;
         }>;
+        // Fallback: 关键词过滤命中 0 → 直接拿近 2 日 top 15 最新
+        if (newsRows.length === 0) {
+          newsRows = (await MarketNews.findAll({
+            where: { publish_date: { [Op.gte]: twoDaysAgo } },
+            attributes: ['title', 'publish_time', 'source', 'category', 'url'],
+            order: [['publish_time', 'DESC']],
+            limit: 15,
+            raw: true,
+          })) as any;
+        }
         recent_sentiment_news = newsRows.map(n => ({
           title: n.title,
           publish_time:
