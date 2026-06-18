@@ -1758,8 +1758,10 @@ const SentimentBoardTab: React.FC<{
                     label: s.stock_name || s.stock_code,
                     code: s.stock_code,
                     comment_score: Number(s.comment_score?.toFixed(1) ?? 0),
+                    // AKShare 返回 institution_participation 是 0-1 比例 (e.g. 0.48 = 48%)
+                    // ×100 转成 0-100 百分比, 跟 comment_score 同尺度才能在同一 X 轴可视
                     institution_participation: Number(
-                      ((s.institution_participation ?? 0) * 1).toFixed(1)
+                      ((s.institution_participation ?? 0) * 100).toFixed(1)
                     ),
                     hot_rank_em: s.hot_rank_em,
                   }));

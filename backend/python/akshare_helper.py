@@ -1511,8 +1511,44 @@ def get_industry_flow(date: str) -> List[Dict[str, Any]]:
             print(f"stock_sector_fund_flow_rank failed: {e}", file=sys.stderr)
             df_flow = None
 
+        # ----- 1a) FALLBACK: 同花顺行业资金流 (东财故障时启用) -----
+        # Batch AH review (2026-06-18): AKShare eastmoney push2 API 经常 502.
+        # 同花顺 endpoint 完全独立 (走 ths.10jqka), 字段不同需要 normalize.
+        used_fallback = False
         if df_flow is None or df_flow.empty:
-            print("AKShare returned empty industry fund-flow", file=sys.stderr)
+            print("[fallback] eastmoney 失败, 尝试同花顺 stock_board_industry_summary_ths", file=sys.stderr)
+            try:
+                fn_ths = getattr(ak, 'stock_board_industry_summary_ths', None)
+                if fn_ths is not None:
+                    df_ths = fn_ths()
+                    if df_ths is not None and not df_ths.empty:
+                        # 转换为东财兼容 schema: 名称 / 今日涨跌幅 / 今日主力净流入-净额 / 净占比
+                        # 同花顺字段: 序号 / 板块 / 涨跌幅 / 总成交量 / 总成交额 / 净流入 / 上涨家数 / 下跌家数 / 均价 / 领涨股 / 领涨股-最新价 / 领涨股-涨跌幅
+                        import pandas as pd
+                        rows = []
+                        for _, r in df_ths.iterrows():
+                            try:
+                                rows.append({
+                                    '名称': str(r.get('板块', '')).strip(),
+                                    '今日涨跌幅': safe_float_value(r.get('涨跌幅')),
+                                    '今日主力净流入-净额': safe_float_value(r.get('净流入')),
+                                    '今日主力净流入-净占比': None,  # 同花顺没这个字段
+                                    '今日主力净流入最大股': str(r.get('领涨股', '')).strip() or None,
+                                    '今日主力净流入最大股代码': None,
+                                    '_advancing_count': safe_float_value(r.get('上涨家数')),
+                                    '_declining_count': safe_float_value(r.get('下跌家数')),
+                                    '_leader_change_pct': safe_float_value(r.get('领涨股-涨跌幅')),
+                                })
+                            except Exception:
+                                continue
+                        df_flow = pd.DataFrame(rows)
+                        used_fallback = True
+                        print(f"[fallback] 同花顺: parsed {len(rows)} boards", file=sys.stderr)
+            except Exception as e:
+                print(f"[fallback] 同花顺也失败: {e}", file=sys.stderr)
+
+        if df_flow is None or df_flow.empty:
+            print("AKShare 两个数据源都返回空 industry fund-flow", file=sys.stderr)
             return []
 
         # ----- 2) 板块名称→板块代码 + 上涨/下跌家数 + 领涨股 -----
@@ -1567,7 +1603,21 @@ def get_industry_flow(date: str) -> List[Dict[str, Any]]:
 
             advancing_count: Optional[int] = None
             declining_count: Optional[int] = None
-            if board_row:
+            if used_fallback:
+                # THS 已经把 _advancing_count / _declining_count 塞进 frow
+                try:
+                    ac = frow.get('_advancing_count')
+                    if ac is not None and not pd.isna(ac):
+                        advancing_count = int(ac)
+                except Exception:
+                    pass
+                try:
+                    dc = frow.get('_declining_count')
+                    if dc is not None and not pd.isna(dc):
+                        declining_count = int(dc)
+                except Exception:
+                    pass
+            elif board_row:
                 advancing_count = (
                     int(board_row['上涨家数']) if board_row.get('上涨家数') is not None else None
                 )
@@ -1581,23 +1631,35 @@ def get_industry_flow(date: str) -> List[Dict[str, Any]]:
             leader_change_pct: Optional[float] = None
             leader_row_json: Optional[Dict[str, Any]] = None
 
-            try:
-                df_cons = ak.stock_board_industry_cons_em(symbol=industry_name)
-            except TypeError:
+            # FALLBACK 模式: 跳过 per-board cons fetch (东财都故障了, cons 也大概率挂),
+            # 直接用 THS 已经返回的领涨股信息 (frow 已包含 _leader_change_pct + 名称).
+            if used_fallback:
+                leader_name = _cell_str(frow, '今日主力净流入最大股')
+                # frow 还有 _leader_change_pct 字段 (THS 同花顺自带), 优先取它
                 try:
-                    df_cons = ak.stock_board_industry_cons_em(industry_name)
+                    leader_change_pct = float(frow.get('_leader_change_pct')) if frow.get('_leader_change_pct') is not None else None
+                except Exception:
+                    leader_change_pct = None
+                # THS 没给个股代码 (领涨股名 → 代码 反查太重), 留 None
+                df_cons = None
+            else:
+                try:
+                    df_cons = ak.stock_board_industry_cons_em(symbol=industry_name)
+                except TypeError:
+                    try:
+                        df_cons = ak.stock_board_industry_cons_em(industry_name)
+                    except Exception as e:
+                        print(
+                            f"stock_board_industry_cons_em({industry_name}) failed: {e}",
+                            file=sys.stderr,
+                        )
+                        df_cons = None
                 except Exception as e:
                     print(
                         f"stock_board_industry_cons_em({industry_name}) failed: {e}",
                         file=sys.stderr,
                     )
                     df_cons = None
-            except Exception as e:
-                print(
-                    f"stock_board_industry_cons_em({industry_name}) failed: {e}",
-                    file=sys.stderr,
-                )
-                df_cons = None
 
             if df_cons is not None and not df_cons.empty:
                 # 按 涨跌幅 desc 排序，挑第一个非一字板

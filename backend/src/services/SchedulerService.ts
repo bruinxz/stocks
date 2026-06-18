@@ -4599,7 +4599,15 @@ class SchedulerService {
       'MARKET_NEWS_SYNC',
       'SOCIAL_SENTIMENT_SYNC',
       'MARKET_HOT_SEARCH_SYNC',
+      // Batch AH review (2026-06-18): 把 factor 计算也加入 catch-up,
+      // 这样 deploy 重启或者 17:30 错过都会自动补跑. compute 比较重 (~30min),
+      // 但 deploy 重启发生频率低; 加 60min 最小间隔避免短时间内反复触发.
+      'FACTOR_SCORE_COMPUTE',
     ]);
+    // 重活儿不能短时间内反复触发: FACTOR_SCORE_COMPUTE 需要 60min cooldown
+    const COOLDOWN_MIN: Record<string, number> = {
+      FACTOR_SCORE_COMPUTE: 60,
+    };
 
     const todayStart = moment().tz('Asia/Shanghai').startOf('day').toDate();
     const now = new Date();
@@ -4608,6 +4616,12 @@ class SchedulerService {
       if (!t.is_active) return false;
       // 已在今天跑过 → skip
       if (t.last_run_at && new Date(t.last_run_at) >= todayStart) return false;
+      // 冷却时间检查: 重活儿在冷却内不能再 catch-up
+      const cooldownMin = COOLDOWN_MIN[t.type];
+      if (cooldownMin && t.last_run_at) {
+        const sinceLastRun = (now.getTime() - new Date(t.last_run_at).getTime()) / 60_000;
+        if (sinceLastRun < cooldownMin) return false;
+      }
       // cron 今日窗口还没到 → skip (今天会自然 trigger)
       if (!t.cron_expression) return false;
       const todayFireTime = nextTodayFireTimeForCron(t.cron_expression);
