@@ -3916,10 +3916,15 @@ class SchedulerService {
         // factor_scores 表已生成. 现在加这个 task, cron 配比 IC 早 30 分钟,
         // 确保 IC 跑时 factor_scores 已就位.
         //
-        // 调 compute-factors.ts CLI; date 默认今天, factors 空跑全部 20 个.
+        // 调 compute-factors CLI; date 默认今天, factors 空跑全部 20 个.
+        //
+        // Batch AH review pt.2 (2026-06-18): 之前用 ts-node 跑 .ts 源在 prod
+        // 报 'Cannot find module ./compute-factors.ts' — prod dist 模式 ts-node
+        // 是 dev dep 且 .ts 源不复制. 改用 /usr/bin/node 直接跑 dist/scripts/compute-factors.js.
         const { spawnSync } = require('child_process');
         const path = require('path');
-        const scriptPath = path.resolve(__dirname, '..', 'scripts', 'compute-factors.ts');
+        // __dirname in prod = dist/services, 上一级 = dist, scripts/compute-factors.js 就在 dist 内
+        const compiledScript = path.resolve(__dirname, '..', 'scripts', 'compute-factors.js');
         const date: string =
           parameters.date ||
           parameters.trade_date ||
@@ -3929,12 +3934,7 @@ class SchedulerService {
           : Array.isArray(parameters.factors)
           ? parameters.factors
           : [];
-        const args = [
-          'node_modules/.bin/ts-node',
-          '--transpile-only',
-          scriptPath,
-          `--date=${date}`,
-        ];
+        const args = [compiledScript, `--date=${date}`];
         if (factorNames.length) args.push(`--factors=${factorNames.join(',')}`);
         // 默认 skip 仅在数据缺失时拖整流程的几个事件因子 (用户可在 task params 里 override)
         const skipFactors: string[] = Array.isArray(parameters.skip) ? parameters.skip : [];
