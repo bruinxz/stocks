@@ -106,6 +106,23 @@ strategy` and `factor diagnostic` patterns:
    alongside `/api/risk-alerts`).  `RiskController` is intentionally
    separate from `RiskAlertController`: the former is *pre-trade policy*,
    the latter is *post-trade consumption*.
+8. **阈值持久化 (PR-002 / US-007) — 反 hardcode meta-guard**:
+   `PositionLimitGuard` 的所有阈值在生产路径上**必须**从
+   `User.risk_config.position_limits` 取，不允许直接引用
+   `DEFAULT_POSITION_LIMITS`（除了 `normalizePositionLimitsConfig` 自身的
+   fallback）。`tests/risk/position-limit-guard.test.ts` 末尾的
+   `testNoHardcodedThresholdsMetaGuard` 用 `fs.readFileSync` 正则扫源文件
+   守这条边界：(1) `async loadConfig` 必须含 `User.findByPk` +
+   `risk_config?.position_limits` + `normalizePositionLimitsConfig`；
+   (2) `async saveConfig` 必须含 `user.risk_config = …` +
+   `user.changed('risk_config', true)` + `await user.save()`（US-017 JSONB
+   pattern）；(3) `checkBuyOrder` 必须调 `this.source.loadConfig(input.user_id)`
+   且方法体**绝不**直接引用 `DEFAULT_POSITION_LIMITS`；
+   (4) `DEFAULT_POSITION_LIMITS` 必须 `Object.freeze`；
+   (5) `updateConfig` 必须先 `normalizePositionLimitsConfig` 再 `saveConfig`。
+   未来给其它 guard 加"用户可调阈值"时按这套 5 点 meta-guard 模板抄到
+   对应 test 文件 — 是项目"配置驱动" AC 的标准守卫姿势 (与
+   cron-registry [5] 双向一致性 guard 同款 fs+regex 模式)。
 
 ## `risk/TrailingStopGuard` — US-048 specifics
 

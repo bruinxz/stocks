@@ -109,8 +109,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 7,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "DONE 2026/06/19: PositionLimitGuard 阈值持久化已在 US-047 落地 (DefaultPositionLimitDataSource.loadConfig 读 User.risk_config.position_limits + saveConfig 用 JSONB changed() pattern 持久化 + RiskController GET/PUT /api/risk/position-limits 暴露). 本次补齐 PR-002 配置驱动 AC 的两类守卫: (1) testCustomizedConfigDrivesEnforcement (3 case): 用户收紧 single_stock 5% 让 baseline ok=true 的 8% 单卡掉 / 用户放宽 max_positions 50 让 baseline 卡掉的 21 只新股放行 / user_id 隔离 + alert user_id 透传; (2) testNoHardcodedThresholdsMetaGuard (15 assert): fs.readFileSync + 正则扫 PositionLimitGuard.ts 守 5 条边界 — async loadConfig 含 User.findByPk + risk_config.position_limits + normalize; async saveConfig 含 user.risk_config= + changed('risk_config',true) + await user.save(); checkBuyOrder 调 this.source.loadConfig 且不直接引用 DEFAULT_POSITION_LIMITS; DEFAULT_POSITION_LIMITS Object.freeze; updateConfig 先 normalize 再 save. CLAUDE.md 新增 risk/ 第 8 条规则 (反 hardcode meta-guard 模板). 110 ok / 0 failed (83 基线 + 27 新增) / tsc 0 err."
     },
     {
       "id": "US-008",

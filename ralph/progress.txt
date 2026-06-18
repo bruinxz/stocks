@@ -130,3 +130,24 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - tests/portfolio/*.test.ts 与 tests/services/portfolio-*.test.ts 是两个并行存在的命名空间 (一个挂 adapter / 一个挂 service), 改 adapter 时必须扫这两个目录; `npm test -- --filter=portfolio-construction` 一次性两边都跑.
   - 在 buildPortfolioConstruction 无 DB 环境下测试时, Stock/DailyBar 会抛 "Model not initialized" — 这是 sequelize-typescript 的预期行为, 不要去 mock; 直接证明 fail-open 链路顶住即可 (loop 主干不抛错才是核心契约). 这套"故意让真模型抛错来证 fail-open"模式比注入 stub 更可靠.
 ---
+
+## 2026/06/19 05:40 - US-007
+- 实现 [PR-002] PositionLimitGuard 阈值持久化 — 验收守卫补齐 (生产代码 US-047 已落 persistence path; 本 sprint 把"配置驱动" AC 真正变成 CI 守卫)
+- Files changed:
+  - backend/tests/risk/position-limit-guard.test.ts: 83 → 110 assertions, 新增 2 个 test group:
+    - testCustomizedConfigDrivesEnforcement (3 sub-block / ~12 assert): (a) 用户 updateConfig 收紧 single_stock 5% → baseline 8% 放行的单变成 ok=false 命中 max_single_stock_pct + alert 写入 1 次 + config.max_single_stock_pct=0.05 而非默认 0.10; (b) 用户放宽 max_positions=50 → baseline 卡 20/20 的新开单变 ok=true + config.max_positions=50; (c) updateConfig 后 alert 的 user_id 透传正确
+    - testNoHardcodedThresholdsMetaGuard (15 assert, META-TEST): fs.readFileSync + 正则扫 src/portfolio/risk/PositionLimitGuard.ts 守 5 条边界 — [1] `async loadConfig` 必须含 User.findByPk + risk_config?.position_limits + normalizePositionLimitsConfig; [2] `async saveConfig` 必须含 user.risk_config= + user.changed('risk_config', true) + await user.save() (US-017 JSONB pattern); [3] checkBuyOrder 必须调 this.source.loadConfig(input.user_id) 且方法体不直接引用 DEFAULT_POSITION_LIMITS (防止退回 hardcode); [4] DEFAULT_POSITION_LIMITS Object.freeze; [5] updateConfig 必须 normalize 在 saveConfig 前; [6] 源码注释含 US-047 标识
+  - backend/src/portfolio/CLAUDE.md: risk/ 第 8 条规则 — "阈值持久化 (PR-002 / US-007) — 反 hardcode meta-guard" 5 点模板, 供未来 guard "用户可调阈值" 类 story 抄
+  - ralph/prd.json: US-007 passes=true + notes
+  - ralph/progress.txt: 本 entry
+- 验证:
+  - `npx tsc --noEmit` exit 0
+  - `npx ts-node --transpile-only tests/risk/position-limit-guard.test.ts` 110 ok / 0 failed
+  - `npm test -- --filter=position-limit` exit 0, 1 file pass (1.0s)
+- **Learnings for future iterations:**
+  - 本仓 risk/ 下 guard 都是同一个 DataSource interface + Default + Sequelize impl + Object.freeze defaults + normalizeXxxConfig + getConfig/updateConfig 五件套模板. PR-002 / US-007 这种"持久化 wire-in 验收"的关键不是写新代码 — 而是把"未来 refactor 不会偷偷退回硬编码"做成 CI guard. 抄 testNoHardcodedThresholdsMetaGuard 这套 5 点模板就行, 改 6 个字符串字段名 (User.findByPk / risk_config?.<key> / normalize<Key>Config / DEFAULT_<KEY> / source.loadConfig / changed('risk_config',true)).
+  - 写 fs+regex meta-test 必读项目源文件结构: PositionLimitGuard.ts 的 PositionLimitDataSource interface **声明**的 `loadConfig(user_id: number): Promise<...>` 与 DefaultPositionLimitDataSource **实现**的 `async loadConfig(user_id: number) { ... }` 都会被 /loadConfig\s*\(/ 匹中, 必须用 `async loadConfig` 锚定 implementation, 避开 interface declaration. 这是 fs+regex meta-test 最常见的踩坑点, 第一次写时一定先 `node -e` 打印 match 内容确认锚的是不是预期那段.
+  - 用 fake DataSource 测"用户 updateConfig 后 checkBuyOrder 真用新阈值"的最简姿势: makeFakeSource 里 saveConfig 直接 mutate `state.config = config`, 后续 loadConfig 自动返新值 — 不需要模拟多 user 表. 真实生产是按 user_id 查 User.findByPk, 但 unit 层只验"adapter 调 loadConfig 而非用 hardcoded const" 这条契约就够.
+  - 此 fake 模式的局限: 多 user 隔离不能在 fake 里真测 (state.config 是全局共享, 不按 user_id key); 第 3 个 sub-block 就降级成"alert.user_id 透传正确" + 写 comment 说明真实隔离靠生产 DataSource 的 User.findByPk. 多 user 真隔离测试要么 fake 升级成 Map<user_id, config>, 要么走真实 DB 集成测 (项目无 jest, 全 DB-less unit). 当前选项 1 简洁实用即可.
+  - PaperTradingFacade.placeOrder 在 line 847 已 wire 到 positionLimitGuard.checkBuyOrder, error 带 code='POSITION_LIMIT_VIOLATION'/rule/detail/statusCode=400 — 改 guard 时不要破这个 error shape, 前端 AIStockAnalysisModal / DataMissingBanner 直接消费这几个字段渲染告警. controller 已在 RiskController.getPositionLimits / updatePositionLimits + risk.routes.ts 暴露 GET/PUT /api/risk/position-limits.
+---
