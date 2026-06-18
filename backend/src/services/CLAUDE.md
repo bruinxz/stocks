@@ -128,6 +128,43 @@ advanced quant 5 个 service 是 **soft decision layers**（MetaLabel 过滤 / F
 两者**串联**而非平行：每个 signal 先过 risk/ 硬 guard，再过 advanced quant 软
 gate，最后 facade.placeOrder。两层都 fail 都阻止下单。
 
+## RiskAlertService — 系统级风控告警统一入口 (OPS-005)
+
+**何时用**：server-side 任何模块想发一条 "系统级" 风控告警时（与 risk guards
+的 `RiskAlert.create` + model afterCreate hook 路径并存，本 service 提供
+**按 severity 路由 + 多通道 fan-out** 的高阶 API）。
+
+```ts
+import { riskAlertService, RISK_ALERT_SEVERITY } from './RiskAlertService';
+await riskAlertService.write({
+  user_id, symbol, name, message,
+  severity: RISK_ALERT_SEVERITY.CRITICAL, // 'critical' | 'high' | 'medium'
+  rule_id: 'drawdown_breaker',
+});
+```
+
+**路由规则（不可改，已强制测试）**：
+- `critical` → inbox(DB level=HIGH) + 飞书 OPS 群 + IM(email) + toast(metadata.toast=true)
+- `high`     → inbox(DB level=HIGH) + 飞书 OPS 群
+- `medium`   → inbox(DB level=MEDIUM)
+
+**与既有路径关系**：
+- 不取代 risk guards 里散落的 `RiskAlert.create({...})`（那些走 model
+  afterCreate hook → RealtimeAlertDispatcher 个性化推送，覆盖 level='HIGH'）
+- 不取代 `audit-task-parameters-dry-run.ts` 的 risk_alert + feishu_ops 双
+  通道（那是脚本专用 boot guard）
+- critical/high 写完后还会 fire `RealtimeAlertDispatcher`（在 model hook
+  之外补一道路径，hook 失效时 ops 仍能收到）
+
+**channel 控制**：
+- 默认按 severity 走 `SEVERITY_TO_CHANNELS` 表
+- `options.override_channels` 强制覆盖（inbox 自动 prepend 防 DB 漏写）
+- `options.dry_run=true` → 空 plan，所有通道不调
+- `options.feishu_webhook_url` / `options.im_address` → 覆盖 env / user 表
+
+**飞书 OPS 群 webhook env**：`OPS_ALERT_FEISHU_WEBHOOK`（与
+audit-task-parameters-dry-run.ts 共享同一 env，避免运维多配一份）
+
 ## 测试
 
 5 个 service 各有独立单测（188 tests）+ 1 个集成 smoke test:

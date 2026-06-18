@@ -79,8 +79,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 5,
-      "passes": false,
-      "notes": "依赖: OPS-004"
+      "passes": true,
+      "notes": "依赖: OPS-004 | DONE 2026/06/19: 新增 backend/src/services/RiskAlertService.ts (515 行 + 完整 jsdoc) 提供按 severity 路由的统一入口 — critical→inbox+feishu+im+toast, high→inbox+feishu, medium→inbox. 复用既有 RiskAlert.create + OPS_ALERT_FEISHU_WEBHOOK + EmailNotificationService + RealtimeAlertDispatcher singleton, 不破坏既有 8 个 risk guards 路径. DataSource DI seam + 4 个纯函数 helpers (normalizeSeverity / buildChannelPlan / buildOpsAlertText / buildImSubject) 全 export. 单测 tests/services/risk-alert-service.test.ts 123 ok / 0 failed 覆盖 10 大模块 (常量冻结 / normalize 兼容 LOW→medium / channel plan 含 override 含 dry_run / 3 级 severity AC 主验收 / inbox throw 降级 / feishu 缺 url skip / IM 缺地址 skip / realtime hook 仅 critical+high+alert_id 已知时触发 / metadata.toast 强制 true / rule_id 缺省). tsc 0 err / eslint 0 err / npm test --filter=alert: 3 files all pass (含 realtime-alert-dispatcher 187 ok 无 regression)."
     },
     {
       "id": "US-006",

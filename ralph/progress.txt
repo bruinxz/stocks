@@ -6,6 +6,7 @@ Started: Fri Jun 19 02:25:41 CST 2026
 - EnvValidator (`backend/src/config/EnvValidator.ts`) 是项目环境一致性校验的唯一事实源：`validateEnv()` 返回 `EnvValidationResult`，`shouldExitOnFailure()` 决定是否 exit。任何新增 required env 都加到 `buildBaseSchema()`，同步更新 `.env.example` 与 docs/deploy。
 - `backend/src/index.ts` 第 1 行 dotenv.config，第 18 行 validateEnv，再 productionPreflight。任何强制启动检查都加这里。
 - CI workflow (`.github/workflows/ci.yml`) `backend-check` job 顺序：install → env-check(happy) → env-check(fail) → typecheck → lint → test，失败上传日志并在 PR 评论。
+- 多通道 dispatcher (任何"fan-out 到飞书/邮件/短信/inbox"的 service) 复用同款模板: (1) DataSource interface + Production 实现 lazy-require model/service 单例; (2) 纯函数 helpers (normalizeXxx / buildChannelPlan / buildOpsAlertText / buildXxxSubject) 全 export 便于单测; (3) Promise.allSettled 并行 fan-out + 每个 channel adapter 内部 try-catch 返 {success,message} 而非 throw; (4) 顶层 try/catch 兜底 + logger.warn 吞错 — 主流程绝不被告警链路阻塞; (5) options.dry_run=true 强制空 plan 让 UI 预览不实际发. 参考 RealtimeAlertDispatcher / RiskAlertService / audit-task-parameters-dry-run.
 
 ## 2026/06/19 02:30 - US-001
 - 实现 [OPS-001] env 校验脚本（之前迭代已落 EnvValidator + check-env CLI + index.ts 启动接入；本次补齐 CI env-check 步骤完成验收）
@@ -84,4 +85,26 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - prom-client histogram 的 sum / count 在 getMetricsAsJSON() 里是 `values[].metricName` 命名为 `<name>_sum` / `<name>_count`, 用 .find() 时**必须**同时匹配 metricName + labels (label 不同的桶共享同一个 values 数组). 见 testRecordSchedulerTaskRun 第 533 行模式.
   - SchedulerService._executeTaskLogic 有 3 个语义出口 (success / failed / 节假日 skipped), 必须**全部**埋点而非只埋 success —— failed 不埋会造成 Grafana 看板"成功率虚高"假象 (分母被 failed 漏算). failed 出口的 metric.inc 必须套 try-catch (尽管 helper 内已 try-catch, belt-and-suspenders), 因为下一行就 throw err 给上层, 任何 metric 异常都会被淹没成主流程 error.
   - SchedulerService 项目历史里 baseline ESLint 错误 20 个 (主要 require-style 动态 import + prettier formatting), 都是 pre-existing. 改这个文件时, 用 `git stash && eslint && git stash pop` 对比模式确认"本次新增 0 错误", 否则会被误判 regression. 这套 baseline-diff 模式适用所有有历史 lint 债务的文件.
+---
+
+## 2026/06/19 05:00 - US-005
+- 实现 [OPS-005] RiskAlert 标准 dispatcher — 按 severity 路由的统一入口 (critical→4 通道, high→2 通道, medium→1 通道) + 复用既有飞书 ops webhook / email / realtime dispatcher singleton, 不破坏既有 8 个 risk guards 直写 RiskAlert.create 的路径
+- Files changed:
+  - backend/src/services/RiskAlertService.ts (新, 515 行): RISK_ALERT_SEVERITY (Object.freeze 3 级) + RISK_ALERT_CHANNELS (4 项) + SEVERITY_TO_LEVEL/SEVERITY_TO_CHANNELS 路由表; 4 个纯 helpers (normalizeSeverity 含 LOW→medium 兼容 / buildChannelPlan 含 inbox 自动 prepend / buildOpsAlertText / buildImSubject); RiskAlertServiceDataSource interface + DefaultRiskAlertServiceDataSource (lazy require RiskAlert / User / FeishuBotWebhookService / EmailNotificationService / RealtimeAlertDispatcher); write() 主入口先同步 inbox 拿 alert_id, 再 Promise.allSettled fan-out feishu/im/toast, 最后按 severity ∈ {critical,high} 且 alert_id 已知触发 realtimeAlertDispatcher.fireAndForget; singleton riskAlertService export
+  - backend/tests/services/risk-alert-service.test.ts (新, 480 行 / 123 assert): 10 大模块 — [1] 常量冻结 / [2] normalizeSeverity 边界 (含 null/undefined/non-string) / [3] buildChannelPlan (dry_run / override 含未知 channel / override=[] 空 plan) / [4] buildOpsAlertText/buildImSubject 格式 / [5] 3 级 severity AC 主验收 (critical 调 inbox+feishu+im+toast+realtime, high 调 inbox+feishu+realtime, medium 仅 inbox 不触发 realtime) / [6] error paths (非法 severity 全 noop / inbox throw 时 alert_id undefined + realtime 不触发 + feishu 仍尝试 / feishu webhook 缺 url skip / feishu 504 fail 不传染 / feishu 抛 sync error 兜底 / im 用户地址 null skip / im DB throw 仍返 channel result / im send fail) / [7] options (override 只跑 im 时 inbox 仍 prepend / dry_run 全空 / feishu_webhook_url 覆盖 env / im_address 覆盖 user.email 时不查 DB) / [8] realtime hook 路由 4 case / [9] metadata.toast 强制 true 覆盖 user false + metadata.severity 注入 + rule_id 缺省 / [10] override + toast 行为
+  - backend/src/services/CLAUDE.md: 新增 "RiskAlertService — 系统级风控告警统一入口 (OPS-005)" 段, 含 import 用法 / 路由规则 / 与既有路径关系 / channel 控制 / 共享 OPS_ALERT_FEISHU_WEBHOOK env
+  - ralph/prd.json: US-005 passes=true + notes
+  - ralph/progress.txt: 新增 Codebase Pattern "多通道 dispatcher 5 项约定" + 本 entry
+- 验证:
+  - `npx tsc --noEmit` exit 0
+  - `npx ts-node --transpile-only tests/services/risk-alert-service.test.ts` exit 0, 123 ok / 0 failed
+  - `npm test -- --filter=alert` exit 0, 3 files all pass (risk-alert-service + realtime-alert-dispatcher 187 ok + market-regime-alert-service — 无 regression)
+  - `npx eslint src/services/RiskAlertService.ts` exit 0 (0 err 0 warn, prettier --fix 后)
+- **Learnings for future iterations:**
+  - 写"多通道告警 service"时, 一定让 inbox 同步执行先于 fan-out — 因为 (a) DB 是事实源, 漏写 inbox = 漏掉这条告警; (b) toast 通道靠 inbox 写出的 alert_id + metadata.toast=true 让前端 AlertsBell polling 捕到; (c) realtimeAlertDispatcher 需要 alert_id 作为 dedup signature 输入. 顺序: inbox sync → fan-out external channels parallel → realtime hook (仅 alert_id 已知 + severity 触发条件满足时).
+  - severity ↔ channel ↔ DB level 三套枚举一定**分开**且通过 SEVERITY_TO_LEVEL / SEVERITY_TO_CHANNELS 两张表关联: (a) 上层 caller 只关心业务 severity (critical/high/medium); (b) channel plan 决定 fan-out 范围; (c) DB level (HIGH/MEDIUM) 是历史 schema 兼容字段, critical 也写 HIGH 让既有 RiskAlert.afterCreate hook 仍能识别. 这三个不耦合就能独立扩展 (新 severity 不挪 DB level 也不挪 channel 表都不会爆).
+  - "lazy require 重量级 model/service" 是 services/ 目录的 production DataSource 标准写法: 让 service 文件本身 import 链路只有 logger; 让单测注入 fake DataSource 时**完全**不会 hit Sequelize / nodemailer / axios — 任何 service 想真在 CI 中跑测试都靠这个模式 (见 RealtimeAlertDispatcher / RiskAlertService).
+  - 飞书 OPS 群 webhook env 名 `OPS_ALERT_FEISHU_WEBHOOK` 已在 OPS-003 引入 (audit-task-parameters-dry-run.ts), OPS-005 不要再新增第二个 env — 共享同一个就让运维少配一份且语义"ops 群=同一个" 统一; 用户个性化 feishu webhook (User.risk_config.feishu.webhook_url) 是另一回事, 走 RealtimeAlertDispatcher.
+  - prettier --fix 是项目里改 service 文件后**必须**跑的步骤 — 项目的 ESLint 跟 prettier 联动, 任何手写多行 callback / triple template 都会被踩成 prettier 错误. `npx eslint <file> --fix` 一次到位; 不要手改格式 (会反复 churn).
+  - 测试设计模式: 对"按 severity 路由"这类多分支 service, 用 "[5] 3 级 severity 各自一个 sub-block + 直接断言 fakeDataSource 的 calls.length" 比 "构造一个巨型 case 验所有 channel" 更可读 — 三个 sub-block 各自描述完整, 后续加新 severity (e.g. low) 只需要复制粘贴一个 block.
 ---
