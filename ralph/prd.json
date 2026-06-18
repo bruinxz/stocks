@@ -94,8 +94,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 6,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "PortfolioConstructionAdapter (services/portfolio/PortfolioConstructionService) 在 PaperTradingAutomationService.autoBuyFromSignals 已三段式 wire-in (Sprint 29 落地): (1) candidateSignals 收集后调 buildPortfolioConstruction 拿 weights_by_signal_id; (2) per-signal loop 内 hard mode 用 pcWeight×100 替换 effectiveTargetPct, shadow mode 仅 log+activation mark; (3) 整段 try/catch fail-open. mode 走 User.risk_config.portfolio_construction (off|shadow|hard, 默认 off 零开销). 本次扩 tests/portfolio/portfolio-construction-adapter.test.ts 39→57 assertions, 新增 3 大组: 异步主入口早返路径 (mode=off 零 DB / candidates=[] / hard+candidates=[]) / fail-open 契约 (无 DB 环境 loadCandidateReturns 失败仍返非 null skipped 结果不抛错) / **meta-test guard**(用源文件正则扫 PaperTradingAutomationService 必须 import + 调用 + 消费 weights_by_signal_id + try/catch + candidateSignals 先于 adapter, 与 cron-registry [5] 双向一致性 guard 同款模式). src/portfolio/CLAUDE.md 新增 PortfolioConstructionAdapter 章节. typecheck/test 全过."
     },
     {
       "id": "US-007",

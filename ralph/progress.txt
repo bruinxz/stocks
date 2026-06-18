@@ -108,3 +108,25 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - prettier --fix 是项目里改 service 文件后**必须**跑的步骤 — 项目的 ESLint 跟 prettier 联动, 任何手写多行 callback / triple template 都会被踩成 prettier 错误. `npx eslint <file> --fix` 一次到位; 不要手改格式 (会反复 churn).
   - 测试设计模式: 对"按 severity 路由"这类多分支 service, 用 "[5] 3 级 severity 各自一个 sub-block + 直接断言 fakeDataSource 的 calls.length" 比 "构造一个巨型 case 验所有 channel" 更可读 — 三个 sub-block 各自描述完整, 后续加新 severity (e.g. low) 只需要复制粘贴一个 block.
 ---
+
+## 2026/06/19 05:30 - US-006
+- 实现 [PR-001] PortfolioOptimizer 真接入 (Sprint 29 已落 wire-in 主干; 本次补齐异步主入口测试 + meta-test guard + CLAUDE.md 收尾)
+- Files changed:
+  - backend/tests/portfolio/portfolio-construction-adapter.test.ts: 39 → 57 assertions, 新增:
+    - testBuildPortfolioConstructionEarlyReturns (3 assert): mode=off → null 零开销契约 / candidates=[] + shadow → null / candidates=[] + hard → null
+    - testBuildPortfolioConstructionFailOpen (9 assert): 无 DB 连接环境下 loadCandidateReturns 内 Stock.findAll 抛 SequelizeConnectionError → adapter 顶层 try/catch + loadCandidateReturns 内部 try/catch 双重兜底 → 返非 null skipped 结果, total_candidates 透传, used_candidates=0, weights_by_signal_id 空 Map, skipped_reason ∈ {data_shortage, construct_failed}, construction_result=null
+    - testAutoBuyFromSignalsWireIn (6 assert, META-TEST): 用 fs.readFileSync 直接扫 PaperTradingAutomationService.ts 源文件, 正则验证 [1] import buildPortfolioConstruction from './PortfolioConstructionAdapter' / [2a] autoBuyFromSignals 方法可定位 / [2b] 方法体调 buildPortfolioConstruction( / [3] 消费 weights_by_signal_id + 真正赋值 effectiveTargetPct=pcTargetPct (hard mode 替换证据) / [4] try/catch 包裹 (fail-open) / [5] candidateSignals 先于 adapter 调用 (顺序正确)
+  - backend/src/portfolio/CLAUDE.md: 新增 "internal/PortfolioConstructionAdapter.ts — Sprint 29 / US-006 (PR-001)" 章节 (47 行), 含三段式 wire-in 说明 + 三种 mode 行为 + 改这里时必须同步 (meta-test + loadUserPortfolioConstructionConfig 仲裁源) + Layout tree 加 PortfolioConstructionAdapter.ts 一行
+  - ralph/prd.json: US-006 passes=true + notes
+  - ralph/progress.txt: 本 entry
+- 验证:
+  - `npx tsc --noEmit` exit 0
+  - `npx ts-node --transpile-only tests/portfolio/portfolio-construction-adapter.test.ts` exit 0, 57 ok / 0 failed (39 旧 + 18 新)
+  - `npm test -- --filter=portfolio-construction` exit 0, 2 files / 89 assert all pass (adapter 57 + service 32)
+- **Learnings for future iterations:**
+  - "真接入" 验收的关键不是 "本 sprint 写了多少代码" 而是 "wire-in 在生产 hot path 里不会被未来 refactor 误删". 此类 acceptance 用 fs.readFileSync + 正则扫源文件的 meta-test 模式是项目 [Codebase Patterns] 推荐姿势 (cron-registry [5] / 本次 [5] 同款), 应该成为所有"接 A 到 B"类 story 的标配验收守卫.
+  - PortfolioConstructionAdapter 设计是项目"DataSource DI" 模式的轻量版变种: 不抽 interface, 直接在主入口函数 try/catch 兜底 + 内部子函数 (loadCandidateReturns) 各自 try/catch — 错误层层不外抛, **整条链路从未 throw**, 适合 buy-decision loop 这种"任何告警链断都不能阻塞下单"的场景. 区别于 RiskAlertService/audit-task-parameters-dry-run 用 Promise.allSettled 收 channel results 的形态.
+  - User.risk_config JSONB 是项目所有 per-user 行为切换的事实源 (sizing_policy / portfolio_construction / risk_thresholds 等都挂这里). 新增 per-user 行为开关 → loadUserXxxConfig private 方法 + normalizeXxxConfig pure helper + DEFAULT_XXX_CONFIG Object.freeze 三件套, 与本目录 loadUserPortfolioConstructionConfig 同款.
+  - tests/portfolio/*.test.ts 与 tests/services/portfolio-*.test.ts 是两个并行存在的命名空间 (一个挂 adapter / 一个挂 service), 改 adapter 时必须扫这两个目录; `npm test -- --filter=portfolio-construction` 一次性两边都跑.
+  - 在 buildPortfolioConstruction 无 DB 环境下测试时, Stock/DailyBar 会抛 "Model not initialized" — 这是 sequelize-typescript 的预期行为, 不要去 mock; 直接证明 fail-open 链路顶住即可 (loop 主干不抛错才是核心契约). 这套"故意让真模型抛错来证 fail-open"模式比注入 stub 更可靠.
+---

@@ -29,7 +29,8 @@ portfolio/
     ├── PaperTradingPlanService.ts
     ├── PaperTradingPortfolioFamilies.ts   # constants module — re-exported by facade
     ├── PaperTradingRiskProfileService.ts
-    └── PaperTradingTuningApplyService.ts
+    ├── PaperTradingTuningApplyService.ts
+    └── PortfolioConstructionAdapter.ts    # Sprint 29 / US-006 — autoBuyFromSignals 接 PortfolioConstructionService
 ```
 
 ## Rules
@@ -890,3 +891,31 @@ portfolio/ 目录新增"engine"类模块的命名 / 放置规则：
 - **risk/ 限定**：pre-trade / post-trade guards（阻止订单 / 监控持仓 / 写
   RiskAlert）。
 - **internal/ 限定**：facade 私有实现（不能被外部 controller 直接 import）。
+
+## `internal/PortfolioConstructionAdapter.ts` — Sprint 29 / US-006 (PR-001)
+
+桥接 `services/portfolio/PortfolioConstructionService` (股票级风险预算组合
+构造) 到 `PaperTradingAutomationService.autoBuyFromSignals` 的 buy-decision
+loop. 设计为隔离层 — loop 主干只加 5 行调用即可"候选池 → 组合权重 → 调仓
+订单".
+
+**三段式 wire-in (PaperTradingAutomationService.autoBuyFromSignals)**:
+  1. **入口**: 收集 `candidateSignals` 后一次性调 `buildPortfolioConstruction({user_id, as_of_date, candidates, config})` → 拿 `weights_by_signal_id` Map
+  2. **per-signal 应用**: loop 内每个 signal 拿自己的 weight → `effectiveTargetPct = pcWeight × 100`
+  3. **fail-open**: 整段被 try/catch 包裹, 失败 logger.warn + adapter 也内部 fail-open 返 `skipped_reason`
+
+**三种 mode (User.risk_config.portfolio_construction.mode)**:
+  - `off` (默认): adapter 立即返 null, 零开销, loop 行为 100% 不变
+  - `shadow`: 计算 weights, 只 log + activation mark, **不**改 effectiveTargetPct
+  - `hard`: 用 pcWeight × 100 替换 effectiveTargetPct; weights 表里没有的
+    signal 被 skip ("pc_weight_zero_or_missing")
+
+**改这里时必须同步**:
+  1. `tests/portfolio/portfolio-construction-adapter.test.ts` 的 meta-test
+     `testAutoBuyFromSignalsWireIn` 用源文件正则扫 autoBuyFromSignals 方法体,
+     verify `buildPortfolioConstruction` import + 调用 + weights_by_signal_id 消费
+     + try/catch fail-open + candidateSignals 先于 adapter 调用. 任何 refactor
+     破坏其中一条 → CI 立刻挂.
+  2. `loadUserPortfolioConstructionConfig` (PaperTradingAutomationService 末
+     尾) 是 mode 仲裁的唯一事实源, 新增 config 字段 → 同步 adapter
+     `normalizePortfolioConstructionConfig` + `DEFAULT_PORTFOLIO_CONSTRUCTION_CONFIG`.

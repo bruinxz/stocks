@@ -6,14 +6,26 @@
  *   - pickTopCandidates: 按 alpha_score desc + symbol asc 稳定排序, 截 top-N
  *   - mapWeightsToSignalIds: 把 service 输出 (按 symbol 顺序) 映射回 signal_id map
  *   - DEFAULT_PORTFOLIO_CONSTRUCTION_CONFIG: 不变量 (mode=off 等)
+ *
+ * US-006 / PR-001 扩展 (2026-06-19):
+ *   - buildPortfolioConstruction 主入口的 mode='off' / 0 candidates / fail-open
+ *     早返路径 (不依赖 DB / 不依赖 service)
+ *   - **meta-test**: 用源文件正则扫 PaperTradingAutomationService.autoBuyFromSignals
+ *     必须 import buildPortfolioConstruction + 必须在 candidateSignals 收集之后
+ *     调用; 保护 PR-001 "真接入" 不被未来 refactor 误删 (与 cron-registry.test.ts
+ *     的 [5] 双向一致性 guard 同款模式)
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
 import {
   normalizePortfolioConstructionConfig,
   pickTopCandidates,
   mapWeightsToSignalIds,
+  buildPortfolioConstruction,
   DEFAULT_PORTFOLIO_CONSTRUCTION_CONFIG,
   type AdapterCandidate,
+  type PortfolioConstructionConfig,
 } from '../../src/portfolio/internal/PortfolioConstructionAdapter';
 
 let passed = 0;
@@ -180,10 +192,170 @@ function main() {
   testNormalizeConfig();
   testPickTopCandidates();
   testMapWeightsToSignalIds();
-  console.log(`\n========================================`);
-  console.log(`portfolio-construction-adapter tests: ${passed} pass / ${failed} fail`);
-  console.log(`========================================`);
-  process.exit(failed > 0 ? 1 : 0);
+  // US-006 / PR-001 扩展 — 异步主入口早返路径 + 主干 wire-in meta-guard
+  Promise.resolve()
+    .then(testBuildPortfolioConstructionEarlyReturns)
+    .then(testBuildPortfolioConstructionFailOpen)
+    .then(testAutoBuyFromSignalsWireIn)
+    .then(() => {
+      console.log(`\n========================================`);
+      console.log(`portfolio-construction-adapter tests: ${passed} pass / ${failed} fail`);
+      console.log(`========================================`);
+      process.exit(failed > 0 ? 1 : 0);
+    });
+}
+
+/**
+ * 异步主入口早返路径 — 不依赖 DB / 不依赖 PortfolioConstructionService
+ * 保护 "mode=off 时 buy-decision loop 零开销" 的承诺.
+ */
+async function testBuildPortfolioConstructionEarlyReturns() {
+  console.log('\n## buildPortfolioConstruction — early returns (US-006)');
+  const baseCfg: PortfolioConstructionConfig = {
+    mode: 'off',
+    method: 'risk_parity',
+    lookback_days: 60,
+    max_candidates: 30,
+    max_weight: 0.15,
+    max_industry_weight: 0.4,
+  };
+  const cands: AdapterCandidate[] = [
+    { signal_id: 1, symbol: 'sh.600000', alpha_score: 80 },
+    { signal_id: 2, symbol: 'sh.600001', alpha_score: 70 },
+  ];
+
+  // mode=off → null (零开销, 不查 DB / 不调 service)
+  const r1 = await buildPortfolioConstruction({
+    user_id: 1,
+    as_of_date: '2026-06-19',
+    candidates: cands,
+    config: baseCfg,
+  });
+  assert('mode=off → null (零开销契约)', r1 === null);
+
+  // candidates=[] → null (即使 mode=shadow)
+  const r2 = await buildPortfolioConstruction({
+    user_id: 1,
+    as_of_date: '2026-06-19',
+    candidates: [],
+    config: { ...baseCfg, mode: 'shadow' },
+  });
+  assert('candidates=[] + shadow → null', r2 === null);
+
+  // candidates=[] + hard → null
+  const r3 = await buildPortfolioConstruction({
+    user_id: 1,
+    as_of_date: '2026-06-19',
+    candidates: [],
+    config: { ...baseCfg, mode: 'hard' },
+  });
+  assert('candidates=[] + hard → null', r3 === null);
+}
+
+/**
+ * fail-open 契约 — loadCandidateReturns 内部 DB query 必失败 (无 DB 连接),
+ * 整个 returnsMap 空 → usableCandidates=0 → 返非 null 但 skipped_reason='data_shortage';
+ * loop 主干据此走原 per-signal 流程, 不抛错. 这是 PR-001 "真接入" 的关键安全网.
+ */
+async function testBuildPortfolioConstructionFailOpen() {
+  console.log('\n## buildPortfolioConstruction — fail-open (US-006)');
+  const cfg: PortfolioConstructionConfig = {
+    mode: 'shadow',
+    method: 'risk_parity',
+    lookback_days: 60,
+    max_candidates: 30,
+    max_weight: 0.15,
+    max_industry_weight: 0.4,
+  };
+  const cands: AdapterCandidate[] = [
+    { signal_id: 1, symbol: 'sh.600000', alpha_score: 80, industry: '银行' },
+    { signal_id: 2, symbol: 'sh.600001', alpha_score: 70, industry: '银行' },
+  ];
+
+  // 无 DB 连接环境下: Stock.findAll 抛 SequelizeConnectionError → loadCandidateReturns
+  // 内部 catch 后返回空 Map → usableCandidates=0 → 返 skipped 结果, 不抛错.
+  let threw: Error | null = null;
+  let result: any = null;
+  try {
+    result = await buildPortfolioConstruction({
+      user_id: 1,
+      as_of_date: '2026-06-19',
+      candidates: cands,
+      config: cfg,
+    });
+  } catch (e: any) {
+    threw = e;
+  }
+  assert('不抛错 (fail-open 契约)', threw === null, threw ? `threw: ${threw.message}` : '');
+  assert('返非 null 结果对象', result !== null);
+  if (result) {
+    assert('result.mode 透传', result.mode === 'shadow');
+    assert('result.method 透传', result.method === 'risk_parity');
+    assert('total_candidates = 2', result.total_candidates === 2);
+    assert('used_candidates = 0 (data shortage)', result.used_candidates === 0);
+    assert(
+      'weights_by_signal_id 空 Map',
+      result.weights_by_signal_id instanceof Map && result.weights_by_signal_id.size === 0
+    );
+    assert(
+      'skipped_reason ∈ {data_shortage, construct_failed}',
+      result.skipped_reason === 'data_shortage' || result.skipped_reason === 'construct_failed'
+    );
+    assert('construction_result = null', result.construction_result === null);
+  }
+}
+
+/**
+ * Meta-test guard — US-006 / PR-001 "PortfolioOptimizer 真接入" 验收主守卫.
+ *
+ * 直接扫源文件: PaperTradingAutomationService.ts 必须
+ *   1. import buildPortfolioConstruction (from PortfolioConstructionAdapter)
+ *   2. 在 autoBuyFromSignals 方法体内调用 buildPortfolioConstruction(...)
+ *   3. 在 buy-decision loop 内消费 portfolioConstructionResult.weights_by_signal_id
+ *      (即 hard mode 真正替换 effectiveTargetPct, 否则只是 shadow 装样子)
+ *
+ * 任何后续 refactor 把 wire-in 误删 → 此 test 立刻挂.
+ * 与 cron-registry.test.ts 的 [5] 双向一致性 guard 同款 meta-test 模式.
+ */
+async function testAutoBuyFromSignalsWireIn() {
+  console.log('\n## meta-guard: PaperTradingAutomationService.autoBuyFromSignals wire-in (US-006)');
+  const src = fs.readFileSync(
+    path.join(__dirname, '../../src/portfolio/internal/PaperTradingAutomationService.ts'),
+    'utf8'
+  );
+
+  // [1] import 路径必须在
+  const importRe =
+    /import\s*\{[\s\S]*?\bbuildPortfolioConstruction\b[\s\S]*?\}\s*from\s*['"]\.\/PortfolioConstructionAdapter['"]/;
+  assert('[1] import buildPortfolioConstruction from ./PortfolioConstructionAdapter', importRe.test(src));
+
+  // [2] autoBuyFromSignals 方法体内必须真正调用 buildPortfolioConstruction(...)
+  const methodMatch = src.match(/async\s+autoBuyFromSignals\s*\([\s\S]*?\n  \}/);
+  assert('[2a] autoBuyFromSignals 方法可定位', !!methodMatch);
+  if (methodMatch) {
+    const body = methodMatch[0];
+    assert(
+      '[2b] autoBuyFromSignals 方法体内调用 buildPortfolioConstruction(',
+      /\bbuildPortfolioConstruction\s*\(/.test(body)
+    );
+    // [3] 必须消费 weights_by_signal_id (否则只是装样子, 没有真正替换 sizing)
+    assert(
+      '[3] 方法体内消费 weights_by_signal_id (hard mode 替换 effectiveTargetPct)',
+      /weights_by_signal_id/.test(body) && /effectiveTargetPct\s*=\s*pcTargetPct/.test(body)
+    );
+    // [4] 必须 try/catch 包裹 — fail-open
+    assert(
+      '[4] adapter 调用被 try/catch 包裹 (fail-open 契约)',
+      /try\s*\{[\s\S]*?buildPortfolioConstruction[\s\S]*?\}\s*catch/.test(body)
+    );
+    // [5] candidateSignals 先于 adapter 调用
+    const idxCands = body.indexOf('candidateSignals');
+    const idxBuild = body.indexOf('buildPortfolioConstruction');
+    assert(
+      '[5] candidateSignals 先收集再调 adapter (顺序正确)',
+      idxCands > -1 && idxBuild > -1 && idxCands < idxBuild
+    );
+  }
 }
 
 main();
