@@ -14,7 +14,7 @@ import React from 'react';
 import { useSelector } from 'react-redux';
 import { Result, Button } from 'antd';
 import { useNavigate } from 'react-router-dom';
-import { RootState } from '../store/store';
+import { RootState } from '../store/rootReducer';
 
 interface Props {
   children: React.ReactNode;

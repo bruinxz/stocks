@@ -1130,16 +1130,16 @@ const IndustryBoardTab: React.FC<{
             )}
             <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 12 }}>
               数据源: 雪球关注榜 top {data.hot_concepts.length}. heat_score = 当下关注人数,
-              "新进" 标签表示前一交易日榜内无此关键词.
+              「新进」标签表示前一交易日榜内无此关键词.
             </Typography.Paragraph>
           </Card>
         </Col>
       </Row>
 
       <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
-        💡 本面板为决策导向: <Text strong>板块强度榜</Text> 告诉你"今天主力在哪个板块",{' '}
-        <Text strong>龙头股</Text> 告诉你"能跟谁", <Text strong>近 N 日序列</Text>{' '}
-        告诉你"是日内异动还是持续轮动", <Text strong>热门概念</Text> 告诉你"市场在炒哪个主题".
+        💡 本面板为决策导向: <Text strong>板块强度榜</Text> 告诉你「今天主力在哪个板块」,{' '}
+        <Text strong>龙头股</Text> 告诉你「能跟谁」, <Text strong>近 N 日序列</Text>{' '}
+        告诉你「是日内异动还是持续轮动」, <Text strong>热门概念</Text> 告诉你「市场在炒哪个主题」.
         数据每日盘后由 SchedulerService 定时 sync 入库 (INDUSTRY_FLOW_SYNC / LIMIT_UP_SYNC /
         SNOWBALL_HOT_KEYWORD_SYNC).
       </Typography.Paragraph>
