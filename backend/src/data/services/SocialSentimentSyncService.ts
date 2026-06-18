@@ -237,15 +237,34 @@ export class SocialSentimentSyncService {
       const hasMcap = await Stock.count({
         where: { circulating_market_cap: { [Op.gt]: 0 } },
       });
+      // 退化策略: 没有市值数据时, 按 symbol 前缀过滤主板/创业板 (排除北交所
+      // 920/430 等 stock_comment_em 不覆盖的小盘), 然后取 N
       const orderBy: any =
         hasMcap > 0 ? [['circulating_market_cap', 'DESC']] : [['id', 'ASC']];
 
+      const where: any = {
+        is_listed: true,
+        name: { [Op.notLike]: '%ST%' },
+      };
+      if (hasMcap === 0) {
+        // 主板 SH 600xxx, SH 601xxx, 深 000xxx, 创业板 300xxx, 科创 688xxx
+        // 排除 BJ 920xxx / 430xxx (东财 comment_em 不覆盖)
+        where.symbol = {
+          [Op.or]: [
+            { [Op.iLike]: 'sh.6%' },
+            { [Op.iLike]: 'sh.688%' },
+            { [Op.iLike]: 'sz.0%' },
+            { [Op.iLike]: 'sz.3%' },
+            { [Op.iLike]: '6%.SH' },
+            { [Op.iLike]: '0%.SZ' },
+            { [Op.iLike]: '3%.SZ' },
+          ],
+        };
+      }
+
       const rows = (await Stock.findAll({
         attributes: ['symbol'],
-        where: {
-          is_listed: true,
-          name: { [Op.notLike]: '%ST%' },
-        },
+        where,
         order: orderBy,
         limit,
         raw: true,
