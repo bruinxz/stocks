@@ -139,8 +139,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 9,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "已在 RebalanceEngine 落 portfolio-level minDeviationPct gate (默认 3%, US-009 PR-004 不日日动): DEFAULT_REBALANCE_OPTIONS + RebalanceOptions interface 新增 minDeviationPct (0-1 fraction); normalizeRebalanceOptions 容错 (NaN/Infinity/负数 fallback default, 0 显式接受=关 gate); computeTradePlan 在 max |diff_pct| < gate 时把全部 classifiable orders 转 HOLD reason=within_min_deviation_pct (missing_price 保留原 reason); RebalanceResult 新增 suppressed:boolean + max_deviation_pct:number 两字段; engine.rebalance 检测 suppressed → 跳过 executeOrder (即便 execute=true); CompositeRebalanceService 显式 minDeviationPct=0 opt out (已有 turnover_cap_pct). 212 unit tests pass (含 11 新单测 + meta-guard via fs+regex), typecheck/lint clean."
     },
     {
       "id": "US-010",

@@ -489,6 +489,12 @@ export class CompositeRebalanceService {
     try {
       const rebalanceOpts: Partial<RebalanceOptions> & { execute?: boolean } = {
         minTradePct: DEFAULT_REBALANCE_OPTIONS.minTradePct,
+        // US-009 / PR-004: 显式禁用 portfolio-level gate (minDeviationPct=0).
+        // CompositeRebalanceService 自己有 turnover cap + per-position cap,
+        // 上游已通过 maxDailyTurnoverPct 控"日日动" — 让 RebalanceEngine 出
+        // 完整 raw plan 给本 service 做 cap 决策, 否则 gate 会先把 plan 全
+        // 清空导致 turnover cap 永远碰不到 (双 gate 反向叠加).
+        minDeviationPct: 0,
         dryRun: true, // 强制 dry-run, 我们要先 cap 再决定是否真下单
       };
       rawPlan = await rebalanceEngine.rebalance(input.portfolio_id, targetWeights, rebalanceOpts);

@@ -176,3 +176,24 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **meta-test 已成项目验收标配**: 此次 [7] META-TEST 直接复用 PR-002 (cron-registry / PaperTradingAutomationService meta-test) 模式 — fs.readFileSync + 正则扫 SizingPolicyService.ts + PositionLimitGuard.ts 双源, 验证 (a) 必须 import/require / (b) 必须 call hook / (c) 必须有 triggered_by 标识 / (d) PositionLimitGuard 必须 try/catch 包裹 (fail-open 守门). 任何"持久化后必须接 hook"类 wire-in 都该用这套 meta-test 立守卫 — 未来 refactor 谁删掉 await 都立挂.
   - **测试 fail-open 不 mock DB 抛错最简姿势**: position-limit-guard.test.ts 跑时 User 模型未 init (DB-less unit), hook 内 positionLimitGuard.getConfig 走 DefaultPositionLimitDataSource.loadConfig → User.findByPk throw "Model not initialized" — 但 hook 内 try/catch 兜底返 null, updateConfig 主流程仍正常返 normalized config. 110 个 case 全过 (warn log 多几行是预期). 不用 sinon/proxyquire/mock — 直接让真实模型抛错来证 fail-open 反而最可靠. 此模式与 US-006 PortfolioConstructionAdapter 测试同款.
 ---
+
+## 2026/06/19 06:55 - US-009
+- 实现 [PR-004] RebalanceEngine 边界控制 — portfolio-level minDeviationPct gate "不日日动" (默认 3%), 与既有 per-symbol minTradePct 0.5% 互补; RebalanceResult schema 新增 suppressed + max_deviation_pct 两字段; CompositeRebalanceService 显式 opt out (它有 turnover_cap_pct 自管)
+- Files changed:
+  - backend/src/portfolio/RebalanceEngine.ts: (1) DEFAULT_REBALANCE_OPTIONS + RebalanceOptions interface 新增 minDeviationPct=0.03; (2) normalizeRebalanceOptions 容错 (NaN/Infinity/负数/超过 1 fallback default, 显式 0 = 关 gate); (3) RebalanceTradePlanInput.minDeviationPct?:number; (4) computeTradePlan 在 max |diff_pct| < gate 时把全部 classifiable orders 转 HOLD reason='within_min_deviation_pct' (missing_price 保留原 reason — fail-safe "未拿到价别下单"); (5) 新增 export computeMaxDeviationPct(orders) — gate 判定事实源 + caller/UI "离阈值还有多远" 可消费; (6) RebalanceResult 新增 suppressed:boolean + max_deviation_pct:number; (7) rebalance() 主路径检测 suppressed=true → 跳过 executeOrder 即便 execute=true (gate 触发就是为了不下单, execute override 不越过 gate); (8) message 三态 (suppressed: / dry-run: / executed:)
+  - backend/src/portfolio/internal/CompositeRebalanceService.ts: 调用 rebalanceEngine.rebalance 时显式传 minDeviationPct=0 关 gate — 它已有 turnover_cap_pct 控"日日动", 必须出完整 raw plan 给 cap 决策 (否则 gate 先把 plan 全清空 → cap 永远碰不到, 双 gate 反向叠加)
+  - backend/tests/portfolio/rebalance-engine.test.ts: 165 → 212 (新增 11 单测: testComputeMaxDeviationPct 7 case / Gate suppresses when all under / Gate allows at boundary 严格 < / Gate=0 disables / Gate all-missing-price 保留 reason / Engine end-to-end gate suppresses + skips execute / Engine large deviation 不 trip / Engine custom minDeviationPct=0.10 tight 触发 + =0.03 loose 不触发 / Engine gate disabled by 0 / Engine missing portfolio suppressed=false / **testRebalanceResultSchemaCompleteness — fs+regex meta-guard** 守 schema 两处 return 都含新字段 + CompositeRebalanceService 显式 opt out)
+  - backend/src/portfolio/CLAUDE.md: 新增 "US-009 (PR-004) — RebalanceEngine 边界控制 (minDeviationPct gate)" 段在 US-086 RebalanceEngine 段之后 (双 gate 矩阵表 + 5 项 future-proof patterns)
+  - ralph/prd.json: US-009 passes=true + notes
+- 验证:
+  - `npx tsc --noEmit` exit 0
+  - `npx ts-node --transpile-only tests/portfolio/rebalance-engine.test.ts` exit 0, 212 ok / 0 failed
+  - `npx ts-node --transpile-only tests/portfolio/composite-rebalance-service.test.ts` exit 0, 41 ok / 0 failed (回归确认 CompositeRebalanceService 改动不破坏既有)
+  - `eslint src/portfolio/RebalanceEngine.ts src/portfolio/internal/CompositeRebalanceService.ts` exit 0
+- **Learnings for future iterations:**
+  - **双 gate 反向叠加陷阱**: caller 自己有 turnover/risk cap 时**必须**显式传 `minDeviationPct=0` 关 RebalanceEngine 的 portfolio gate, 否则 gate 先把 plan 全清空 → caller 的 cap 永远碰不到, UI 看到的总是 0 单. 这是"上层 cap + 下层 gate"组合的通用陷阱: 任何"上层有自适应控制 + 下层有保守预设"的场景, 上层必须有显式 opt-out 通道. 适用未来任何 Engine→Service→Strategy 的 N 层堆叠.
+  - **suppressed 检测从 plan 反向推, 而非重算 max_dev**: 让 `computeTradePlan` 是 gate 决策的唯一事实源 (`orders.some(reason='within_min_deviation_pct') && every(side='HOLD')`). 避免双侧浮点比较不一致 (engine 算的 maxDev vs plan 内 diff_pct 浮点 0.00000001 误差) 导致 engine 与 plan 反相决策. 任何"两层都要判同一布尔结果"的地方都该让其中一层 derived from 另一层.
+  - **fail-safe 全 missing_price 保留原 reason**: gate 会因 max_dev=0 触发, 但 coercion 循环 `if (reason === 'missing_price') continue` 让原 reason 保留. 这两种 reason 在 UI 上意义完全不同 ("数据问题不能交易" vs "组合还很对齐不用交易"), 不能糊在一起. 任何"边界条件下多个原因都会指向同一 side" 的代码都该保留更具体的那个原因.
+  - **execute=true 不 override gate**: gate 触发就是为了不下单, 让 execute 越过 gate 等于"假装关 gate 但留个数据通道", 语义混乱. 真要强制下单的 caller 应该显式 `minDeviationPct=0` 关 gate. 这是"配置 vs 命令"分离原则的实践: 配置项 (gate threshold) 应在调用前决定, 命令字段 (execute) 只决定 "对当前配置的产物是否执行", 不应反向修改配置语义.
+  - **fs+regex meta-guard 守"两处 return + 跨文件 opt out 站点"**: 已是项目的标准守卫姿势 (cron-registry [5] / position-limit-guard / portfolio-construction-adapter testAutoBuyFromSignalsWireIn / 本次 testRebalanceResultSchemaCompleteness). 任何"schema 必须出现在两处 return / caller A 必须显式 opt 出 caller B 的功能"的边界都该这么守; 单测 import fs+path 后用 readFileSync + 多个 .test(source) 验证模式串都在.
+---

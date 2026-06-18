@@ -40,6 +40,7 @@ import {
   RebalanceOptions,
   RebalanceOrder,
   classifyOrderSide,
+  computeMaxDeviationPct,
   computeTradePlan,
   normalizeRebalanceOptions,
   normalizeTargetWeights,
@@ -150,6 +151,11 @@ function makeFakeDataSource(state: FakeState): RebalanceDataSource {
 function testConstants(): void {
   assertEqual('MIN_TRADE_LOT_SIZE = 100', MIN_TRADE_LOT_SIZE, 100);
   assertEqual('DEFAULT_REBALANCE_OPTIONS.minTradePct', DEFAULT_REBALANCE_OPTIONS.minTradePct, 0.005);
+  assertEqual(
+    'DEFAULT_REBALANCE_OPTIONS.minDeviationPct',
+    DEFAULT_REBALANCE_OPTIONS.minDeviationPct,
+    0.03
+  );
   assertEqual('DEFAULT_REBALANCE_OPTIONS.dryRun', DEFAULT_REBALANCE_OPTIONS.dryRun, true);
   // Object.freeze 防 mutation
   let mutated = false;
@@ -173,62 +179,98 @@ function testNormalizeRebalanceOptions(): void {
   assertEqual(
     'normalize empty → defaults',
     normalizeRebalanceOptions(undefined),
-    { minTradePct: 0.005, dryRun: true }
+    { minTradePct: 0.005, minDeviationPct: 0.03, dryRun: true }
   );
   assertEqual(
     'normalize {} → defaults',
     normalizeRebalanceOptions({}),
-    { minTradePct: 0.005, dryRun: true }
+    { minTradePct: 0.005, minDeviationPct: 0.03, dryRun: true }
   );
   assertEqual(
     'normalize { minTradePct: 0.01 } → uses 0.01',
     normalizeRebalanceOptions({ minTradePct: 0.01 }),
-    { minTradePct: 0.01, dryRun: true }
+    { minTradePct: 0.01, minDeviationPct: 0.03, dryRun: true }
   );
   assertEqual(
     'normalize { dryRun: false } → respects',
     normalizeRebalanceOptions({ dryRun: false }),
-    { minTradePct: 0.005, dryRun: false }
+    { minTradePct: 0.005, minDeviationPct: 0.03, dryRun: false }
   );
   // garbage handling
   assertEqual(
     'normalize negative minTradePct → default',
     normalizeRebalanceOptions({ minTradePct: -0.01 }),
-    { minTradePct: 0.005, dryRun: true }
+    { minTradePct: 0.005, minDeviationPct: 0.03, dryRun: true }
   );
   assertEqual(
     'normalize > 1 minTradePct → default',
     normalizeRebalanceOptions({ minTradePct: 1.5 }),
-    { minTradePct: 0.005, dryRun: true }
+    { minTradePct: 0.005, minDeviationPct: 0.03, dryRun: true }
   );
   assertEqual(
     'normalize NaN minTradePct → default',
     normalizeRebalanceOptions({ minTradePct: NaN }),
-    { minTradePct: 0.005, dryRun: true }
+    { minTradePct: 0.005, minDeviationPct: 0.03, dryRun: true }
   );
   assertEqual(
     'normalize Infinity minTradePct → default',
     normalizeRebalanceOptions({ minTradePct: Infinity }),
-    { minTradePct: 0.005, dryRun: true }
+    { minTradePct: 0.005, minDeviationPct: 0.03, dryRun: true }
   );
   // strict boolean dryRun coercion (per US-083 pattern)
   // 'true' string is NOT accepted by normalizeRebalanceOptions (only true boolean)
   assertEqual(
     'normalize dryRun=undefined → default',
     normalizeRebalanceOptions({ dryRun: undefined }),
-    { minTradePct: 0.005, dryRun: true }
+    { minTradePct: 0.005, minDeviationPct: 0.03, dryRun: true }
   );
   // boundary: minTradePct = 0 is accepted (0 ≤ x ≤ 1)
   assertEqual(
     'normalize minTradePct=0 → accepted',
     normalizeRebalanceOptions({ minTradePct: 0 }),
-    { minTradePct: 0, dryRun: true }
+    { minTradePct: 0, minDeviationPct: 0.03, dryRun: true }
   );
   // boundary: minTradePct = 1 is accepted (≤ 1)
   assertEqual(
     'normalize minTradePct=1 → accepted',
     normalizeRebalanceOptions({ minTradePct: 1 }),
-    { minTradePct: 1, dryRun: true }
+    { minTradePct: 1, minDeviationPct: 0.03, dryRun: true }
+  );
+  // --- US-009 / PR-004: minDeviationPct field coverage ---
+  assertEqual(
+    'normalize { minDeviationPct: 0.05 } → uses 0.05',
+    normalizeRebalanceOptions({ minDeviationPct: 0.05 }),
+    { minTradePct: 0.005, minDeviationPct: 0.05, dryRun: true }
+  );
+  assertEqual(
+    'normalize { minDeviationPct: 0 } → disables gate',
+    normalizeRebalanceOptions({ minDeviationPct: 0 }),
+    { minTradePct: 0.005, minDeviationPct: 0, dryRun: true }
+  );
+  assertEqual(
+    'normalize negative minDeviationPct → default',
+    normalizeRebalanceOptions({ minDeviationPct: -0.01 }),
+    { minTradePct: 0.005, minDeviationPct: 0.03, dryRun: true }
+  );
+  assertEqual(
+    'normalize > 1 minDeviationPct → default',
+    normalizeRebalanceOptions({ minDeviationPct: 1.5 }),
+    { minTradePct: 0.005, minDeviationPct: 0.03, dryRun: true }
+  );
+  assertEqual(
+    'normalize NaN minDeviationPct → default',
+    normalizeRebalanceOptions({ minDeviationPct: NaN }),
+    { minTradePct: 0.005, minDeviationPct: 0.03, dryRun: true }
+  );
+  assertEqual(
+    'normalize Infinity minDeviationPct → default',
+    normalizeRebalanceOptions({ minDeviationPct: Infinity }),
+    { minTradePct: 0.005, minDeviationPct: 0.03, dryRun: true }
+  );
+  assertEqual(
+    'normalize minDeviationPct=1 boundary → accepted',
+    normalizeRebalanceOptions({ minDeviationPct: 1 }),
+    { minTradePct: 0.005, minDeviationPct: 1, dryRun: true }
   );
 }
 
@@ -895,6 +937,362 @@ async function testEngineMessageReflectsDryRun(): Promise<void> {
 }
 
 // ===========================================================================
+//  US-009 / PR-004 — RebalanceEngine 边界控制 (minDeviationPct gate)
+// ===========================================================================
+
+function testComputeMaxDeviationPct(): void {
+  // Empty list → 0
+  assertEqual('maxDev: empty list', computeMaxDeviationPct([]), 0);
+  // Single order
+  const o1: RebalanceOrder = {
+    symbol: 'ABC',
+    side: 'BUY',
+    quantity: 100,
+    current_price: 10,
+    current_quantity: 0,
+    current_value: 0,
+    current_weight: 0,
+    target_weight: 0.1,
+    target_value: 1000,
+    diff_value: 1000,
+    diff_pct: 0.05,
+  };
+  assertEqual('maxDev: single order', computeMaxDeviationPct([o1]), 0.05);
+  // Multi orders → returns max
+  const o2: RebalanceOrder = { ...o1, symbol: 'XYZ', diff_pct: 0.12 };
+  const o3: RebalanceOrder = { ...o1, symbol: 'QRS', diff_pct: 0.02 };
+  assertEqual('maxDev: max across multi', computeMaxDeviationPct([o1, o2, o3]), 0.12);
+  // missing_price 跳过 (不参与 max 计算)
+  const oSkip: RebalanceOrder = {
+    ...o1,
+    symbol: 'MISS',
+    diff_pct: 999,
+    reason: 'missing_price',
+  };
+  assertEqual('maxDev: missing_price skipped', computeMaxDeviationPct([o1, oSkip]), 0.05);
+  // NaN / Infinity 跳过
+  const oNaN: RebalanceOrder = { ...o1, symbol: 'NAN', diff_pct: NaN };
+  const oInf: RebalanceOrder = { ...o1, symbol: 'INF', diff_pct: Infinity };
+  assertEqual('maxDev: NaN skipped', computeMaxDeviationPct([o1, oNaN]), 0.05);
+  assertEqual('maxDev: Infinity skipped', computeMaxDeviationPct([o1, oInf]), 0.05);
+  // 全 missing_price → 0
+  assertEqual('maxDev: all missing_price → 0', computeMaxDeviationPct([oSkip]), 0);
+}
+
+function testComputeTradePlanGateSuppressesWhenAllUnderThreshold(): void {
+  // Portfolio total=200000, holding 600519 100% (200000) but target 600519 49% + 000858 51% —
+  // 49% deviation each = 0.49 → gate at 0.03 should NOT suppress.
+  // Now opposite: tweak target = 50/50 split with very small drift relative to 99/1 hold.
+  // Use 100000 total, hold 600519 at exactly 50001 + 000858 at exactly 49999 (deviations 0.0001).
+  const total_value = 100000;
+  const positions: PositionSnapshot[] = [
+    { symbol: '600519', quantity: 100, current_price: 500, market_value: 50000 },
+    { symbol: '000858', quantity: 1000, current_price: 50, market_value: 50000 },
+  ];
+  const target = new Map([
+    ['600519', 0.51], // current 0.5 → diff 0.01 (1%)
+    ['000858', 0.49], // current 0.5 → diff 0.01 (1%)
+  ]);
+  const prices = new Map([['600519', 500], ['000858', 50]]);
+  // Gate=0.03 (3%); max dev = 1% → suppress.
+  const orders = computeTradePlan({
+    total_value,
+    positions,
+    targetWeights: target,
+    priceMap: prices,
+    minTradePct: 0.005,
+    minDeviationPct: 0.03,
+  });
+  assertEqual('gate-suppress: 2 orders returned', orders.length, 2);
+  assert(
+    'gate-suppress: all HOLD',
+    orders.every(o => o.side === 'HOLD' && o.quantity === 0)
+  );
+  assert(
+    'gate-suppress: all reason within_min_deviation_pct',
+    orders.every(o => o.reason === 'within_min_deviation_pct')
+  );
+}
+
+function testComputeTradePlanGateAllowsWhenAtOrAboveThreshold(): void {
+  // 同 portfolio 但 target 拉开到 53/47 → max diff = 3%, 恰好 == 3%, 严格 < 不抑制.
+  // Use 200000 total + 5 yuan price so 3% = 6000 yuan = 1200 shares = 12 lots
+  // (well above 1-lot floor — confirms real trade emitted, not micro-filter HOLD).
+  const total_value = 200000;
+  const positions: PositionSnapshot[] = [
+    { symbol: '600519', quantity: 20000, current_price: 5, market_value: 100000 },
+    { symbol: '000858', quantity: 10000, current_price: 10, market_value: 100000 },
+  ];
+  const target = new Map([
+    ['600519', 0.53], // diff +3% = +6000 / 5 = 1200 shares = 12 lots BUY
+    ['000858', 0.47], // diff −3% = −6000 / 10 = 600 shares = 6 lots SELL
+  ]);
+  const prices = new Map([['600519', 5], ['000858', 10]]);
+  const orders = computeTradePlan({
+    total_value,
+    positions,
+    targetWeights: target,
+    priceMap: prices,
+    minTradePct: 0.005,
+    minDeviationPct: 0.03,
+  });
+  // Boundary: 3% == 3% → NOT suppressed (gate uses strict <), real BUY + SELL emitted.
+  assertEqual('gate-boundary: 2 orders', orders.length, 2);
+  assert(
+    'gate-boundary: real trades emitted',
+    orders.some(o => o.side === 'BUY') && orders.some(o => o.side === 'SELL')
+  );
+  assert(
+    'gate-boundary: none have suppressed reason',
+    orders.every(o => o.reason !== 'within_min_deviation_pct')
+  );
+}
+
+function testComputeTradePlanGateZeroDisablesGate(): void {
+  // Same 1% drift, but minDeviationPct=0 → gate disabled, drift > minTradePct (0.5%) → trades.
+  const total_value = 100000;
+  const positions: PositionSnapshot[] = [
+    { symbol: '600519', quantity: 100, current_price: 500, market_value: 50000 },
+    { symbol: '000858', quantity: 1000, current_price: 50, market_value: 50000 },
+  ];
+  const target = new Map([
+    ['600519', 0.51],
+    ['000858', 0.49],
+  ]);
+  const prices = new Map([['600519', 500], ['000858', 50]]);
+  const orders = computeTradePlan({
+    total_value,
+    positions,
+    targetWeights: target,
+    priceMap: prices,
+    minTradePct: 0.005,
+    minDeviationPct: 0,
+  });
+  // Each side has 1% drift = 1000 currency. minTradePct=0.5% → per-symbol passes.
+  // BUY 600519 needs 1000/500 = 2 shares < 1 lot → HOLD reason 'below_one_lot'.
+  // SELL 000858 needs 1000/50 = 20 shares < 1 lot → HOLD reason 'below_one_lot'.
+  // So both still HOLD — but for the per-symbol micro-lot reason, NOT the gate.
+  // Important guard: reason must NOT be 'within_min_deviation_pct'.
+  assert(
+    'gate-disabled-0: no suppress reason',
+    orders.every(o => o.reason !== 'within_min_deviation_pct')
+  );
+}
+
+function testComputeTradePlanGateAllMissingPriceTrips(): void {
+  // Edge: every symbol missing price (priceMap empty) → maxDev=0 → < 3% → suppression.
+  // This is the **intentional fail-safe**: no prices = don't execute.
+  const total_value = 100000;
+  const positions: PositionSnapshot[] = [
+    { symbol: 'AAA', quantity: 1000, current_price: 0, market_value: 0 },
+  ];
+  const target = new Map([['AAA', 0.5]]);
+  const orders = computeTradePlan({
+    total_value,
+    positions,
+    targetWeights: target,
+    priceMap: new Map(),
+    minTradePct: 0.005,
+    minDeviationPct: 0.03,
+  });
+  // The single AAA order will have reason='missing_price' (from existing path),
+  // NOT 'within_min_deviation_pct' (gate skips missing_price entries from
+  // suppression coercion since they aren't classifiable trades anyway).
+  // But the gate trip needs at least one classifiable order to overwrite —
+  // empty maxDev (all-missing) leaves the missing_price reason intact.
+  assertEqual('gate-allmissing: 1 order', orders.length, 1);
+  // Should be HOLD with the original missing_price reason preserved
+  // (gate doesn't fire when there are no priced symbols to suppress).
+  assertEqual('gate-allmissing: still HOLD', orders[0].side, 'HOLD');
+  assertEqual('gate-allmissing: reason missing_price', orders[0].reason, 'missing_price');
+}
+
+async function testEngineGateSuppressesPlanAndSkipsExecute(): Promise<void> {
+  // End-to-end: gate fires → suppressed=true, no executeOrder calls even with execute=true.
+  const state: FakeState = {
+    portfolio: { id: 1, user_id: 42, total_value: 100000 },
+    positions: [
+      { symbol: '600519', quantity: 100, current_price: 500, market_value: 50000 },
+      { symbol: '000858', quantity: 1000, current_price: 50, market_value: 50000 },
+    ],
+    prices: new Map([['600519', 500], ['000858', 50]]),
+    executeCalls: [],
+  };
+  const engine = new RebalanceEngine(makeFakeDataSource(state));
+  const result = await engine.rebalance(
+    1,
+    new Map([['600519', 0.51], ['000858', 0.49]]),
+    { execute: true } // execute mode, but gate should still trip
+  );
+  assertEqual('engine-gate: suppressed=true', result.suppressed, true);
+  assertEqual('engine-gate: no executeOrder calls', state.executeCalls.length, 0);
+  assertEqual('engine-gate: buy_count=0', result.buy_count, 0);
+  assertEqual('engine-gate: sell_count=0', result.sell_count, 0);
+  assertEqual('engine-gate: hold_count=2', result.hold_count, 2);
+  assert('engine-gate: message says suppressed', result.message.startsWith('suppressed:'));
+  assert(
+    'engine-gate: message includes max_deviation_pct',
+    result.message.includes('max_deviation_pct')
+  );
+  assert(
+    'engine-gate: max_deviation_pct around 1%',
+    Math.abs(result.max_deviation_pct - 0.01) < 1e-6
+  );
+  assert(
+    'engine-gate: every order reason=within_min_deviation_pct',
+    result.orders.every(o => o.reason === 'within_min_deviation_pct')
+  );
+  // dry_run should still reflect what caller asked (execute=true → dry_run=false even though no orders ran)
+  assertEqual('engine-gate: dry_run reflects request', result.dry_run, false);
+}
+
+async function testEngineGateNotTrippedWhenDeviationLarge(): Promise<void> {
+  // 100/0 → target 30/70 = 70% deviation on 000858, way above 3% gate → real plan.
+  const state: FakeState = {
+    portfolio: { id: 1, user_id: 42, total_value: 200000 },
+    positions: [{ symbol: '600519', quantity: 1000, current_price: 100, market_value: 100000 }],
+    prices: new Map([['600519', 100], ['000858', 70]]),
+    executeCalls: [],
+  };
+  const engine = new RebalanceEngine(makeFakeDataSource(state));
+  const result = await engine.rebalance(
+    1,
+    new Map([['600519', 0.3], ['000858', 0.7]])
+  );
+  assertEqual('engine-gate-large: suppressed=false', result.suppressed, false);
+  assertEqual('engine-gate-large: buy_count=1', result.buy_count, 1);
+  assertEqual('engine-gate-large: sell_count=1', result.sell_count, 1);
+  // 600519 went from 50% → 30% = 0.20 ; 000858 went from 0% → 70% = 0.70
+  assert(
+    'engine-gate-large: max_deviation_pct around 0.7',
+    Math.abs(result.max_deviation_pct - 0.7) < 1e-6
+  );
+}
+
+async function testEngineGateCustomMinDeviationPct(): Promise<void> {
+  // Drift 5% (= 0.05). minDeviationPct=0.10 (10%) → trip; 0.03 (3%, default) → don't trip.
+  const buildState = (): FakeState => ({
+    portfolio: { id: 1, user_id: 42, total_value: 100000 },
+    positions: [
+      { symbol: '600519', quantity: 100, current_price: 500, market_value: 50000 },
+      { symbol: '000858', quantity: 1000, current_price: 50, market_value: 50000 },
+    ],
+    prices: new Map([['600519', 500], ['000858', 50]]),
+    executeCalls: [],
+  });
+  const tight = new RebalanceEngine(makeFakeDataSource(buildState()));
+  const r1 = await tight.rebalance(
+    1,
+    new Map([['600519', 0.55], ['000858', 0.45]]),
+    { minDeviationPct: 0.10 }
+  );
+  assertEqual('engine-gate-custom-tight: suppressed=true', r1.suppressed, true);
+  assertEqual('engine-gate-custom-tight: options.minDeviationPct', r1.options.minDeviationPct, 0.10);
+
+  const loose = new RebalanceEngine(makeFakeDataSource(buildState()));
+  const r2 = await loose.rebalance(
+    1,
+    new Map([['600519', 0.55], ['000858', 0.45]]),
+    { minDeviationPct: 0.03 }
+  );
+  assertEqual('engine-gate-custom-loose: suppressed=false', r2.suppressed, false);
+  assert(
+    'engine-gate-custom-loose: real trades emitted',
+    r2.orders.some(o => o.side !== 'HOLD')
+  );
+}
+
+async function testEngineGateDisabledByZero(): Promise<void> {
+  // minDeviationPct=0 → caller opted out. Same 1% drift now produces normal plan
+  // (but each will still HOLD because below_one_lot — the deviation is real but trades
+  // are too small for a 100-share lot). Key invariant: no `within_min_deviation_pct`
+  // reason and suppressed=false.
+  const state: FakeState = {
+    portfolio: { id: 1, user_id: 42, total_value: 100000 },
+    positions: [
+      { symbol: '600519', quantity: 100, current_price: 500, market_value: 50000 },
+      { symbol: '000858', quantity: 1000, current_price: 50, market_value: 50000 },
+    ],
+    prices: new Map([['600519', 500], ['000858', 50]]),
+    executeCalls: [],
+  };
+  const engine = new RebalanceEngine(makeFakeDataSource(state));
+  const result = await engine.rebalance(
+    1,
+    new Map([['600519', 0.51], ['000858', 0.49]]),
+    { minDeviationPct: 0 }
+  );
+  assertEqual('engine-gate-disabled: suppressed=false', result.suppressed, false);
+  assertEqual('engine-gate-disabled: options.minDeviationPct', result.options.minDeviationPct, 0);
+  assert(
+    'engine-gate-disabled: no within_min_deviation_pct reason',
+    result.orders.every(o => o.reason !== 'within_min_deviation_pct')
+  );
+}
+
+async function testEngineGateMissingPortfolioStillReportsSuppressedFalse(): Promise<void> {
+  // Defensive: missing portfolio → empty orders, suppressed must be `false` (no orders to suppress)
+  // and max_deviation_pct=0. Schema completeness.
+  const state: FakeState = {
+    portfolio: null,
+    positions: [],
+    prices: new Map(),
+    executeCalls: [],
+  };
+  const engine = new RebalanceEngine(makeFakeDataSource(state));
+  const result = await engine.rebalance(999, new Map([['600519', 0.5]]));
+  assertEqual('engine-gate-missing-portfolio: suppressed=false', result.suppressed, false);
+  assertEqual('engine-gate-missing-portfolio: max_dev=0', result.max_deviation_pct, 0);
+}
+
+function testRebalanceResultSchemaCompleteness(): void {
+  // Meta-guard: every RebalanceResult must carry the new US-009 fields
+  // (suppressed, max_deviation_pct). Source-file regex scan to lock the
+  // contract — any future "return { portfolio_id, ... }" without the new
+  // fields will be caught here, same pattern as the cron-registry meta-test.
+  const fs = require('fs');
+  const path = require('path');
+  const sourcePath = path.resolve(__dirname, '../../src/portfolio/RebalanceEngine.ts');
+  const source = fs.readFileSync(sourcePath, 'utf8');
+
+  // Required interface fields
+  assert(
+    'schema: RebalanceOptions has minDeviationPct',
+    /minDeviationPct\s*:\s*number/.test(source)
+  );
+  assert(
+    'schema: RebalanceResult has suppressed',
+    /suppressed\s*:\s*boolean/.test(source)
+  );
+  assert(
+    'schema: RebalanceResult has max_deviation_pct',
+    /max_deviation_pct\s*:\s*number/.test(source)
+  );
+  // Both rebalance() return paths (missing portfolio + main) must include the fields
+  const suppressedReturns = source.match(/suppressed:/g) || [];
+  assert(
+    'schema: at least 2 suppressed: lines (interface + 2 returns + helpers)',
+    suppressedReturns.length >= 3,
+    `count=${suppressedReturns.length}`
+  );
+  // Gate constant default value
+  assert(
+    'schema: DEFAULT_REBALANCE_OPTIONS includes minDeviationPct: 0.03',
+    /minDeviationPct:\s*0\.03/.test(source)
+  );
+  // Caller opt-out site present (CompositeRebalanceService)
+  const compositePath = path.resolve(
+    __dirname,
+    '../../src/portfolio/internal/CompositeRebalanceService.ts'
+  );
+  const compositeSource = fs.readFileSync(compositePath, 'utf8');
+  assert(
+    'schema: CompositeRebalanceService passes minDeviationPct: 0 to opt out',
+    /minDeviationPct:\s*0\b/.test(compositeSource)
+  );
+}
+
+// ===========================================================================
 //  Test runner
 // ===========================================================================
 
@@ -921,6 +1319,14 @@ async function main(): Promise<void> {
   testComputeTradePlanSumLessThanOneLeavesCash();
   testComputeTradePlanZeroTotalValue();
 
+  // US-009 / PR-004 gate tests
+  testComputeMaxDeviationPct();
+  testComputeTradePlanGateSuppressesWhenAllUnderThreshold();
+  testComputeTradePlanGateAllowsWhenAtOrAboveThreshold();
+  testComputeTradePlanGateZeroDisablesGate();
+  testComputeTradePlanGateAllMissingPriceTrips();
+  testRebalanceResultSchemaCompleteness();
+
   // Engine end-to-end
   await testEngineHappyPathDryRun();
   await testEngineMissingPortfolioGracefulReturn();
@@ -935,6 +1341,13 @@ async function main(): Promise<void> {
   await testEngineRejectsNegativeWeight();
   await testEngineMissingPriceSkipsButDoesntBlock();
   await testEngineMessageReflectsDryRun();
+
+  // US-009 / PR-004 gate engine-level
+  await testEngineGateSuppressesPlanAndSkipsExecute();
+  await testEngineGateNotTrippedWhenDeviationLarge();
+  await testEngineGateCustomMinDeviationPct();
+  await testEngineGateDisabledByZero();
+  await testEngineGateMissingPortfolioStillReportsSuppressedFalse();
 
   console.log(`\n${passed} ok, ${failed} failed`);
   if (failed > 0) {

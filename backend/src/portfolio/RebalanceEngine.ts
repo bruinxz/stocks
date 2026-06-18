@@ -95,12 +95,22 @@ export const MIN_TRADE_LOT_SIZE = 100;
 /**
  * Rebalance 默认配置（Object.freeze 防 mutation，per US-037 pattern）。
  *
- * - `minTradePct=0.005` (0.5%)：低于此偏差不交易，避免无意义微调；
+ * - `minTradePct=0.005` (0.5%)：**per-symbol** filter — 单只股票偏差 < 0.5%
+ *   不交易（避免无意义微调）。
+ * - `minDeviationPct=0.03` (3%)：**portfolio-level gate** (US-009 / PR-004
+ *   "不日日动") — 在所有 universe 内 stock 的 `|diff_pct|` 都 < 3% 时，
+ *   整次 rebalance 被抑制：全部订单转 HOLD（reason='within_min_deviation_pct'，
+ *   `suppressed=true`），不下单也不消耗换手率。与 `minTradePct` 互补:
+ *   - `minTradePct` 防"单只票微调"
+ *   - `minDeviationPct` 防"全组合微动"（避免触发但每只都才动一点）
+ *   设 `minDeviationPct=0` 即禁用 gate（caller 显式接管，例如
+ *   `CompositeRebalanceService` 自己有 turnover cap）。
  * - `dryRun=true`：默认只产 plan 不下单，强制 caller 显式 `execute=true`
  *   才触发真实下单。
  */
 export const DEFAULT_REBALANCE_OPTIONS: RebalanceOptions = Object.freeze({
   minTradePct: 0.005,
+  minDeviationPct: 0.03,
   dryRun: true,
 });
 
@@ -109,8 +119,15 @@ export const DEFAULT_REBALANCE_OPTIONS: RebalanceOptions = Object.freeze({
 // ---------------------------------------------------------------------------
 
 export interface RebalanceOptions {
-  /** 低于此目标偏差不交易（绝对值），默认 0.005 (0.5%)。 */
+  /** 低于此目标偏差不交易（绝对值），默认 0.005 (0.5%) — per-symbol filter. */
   minTradePct: number;
+  /**
+   * Portfolio-level rebalance gate (US-009 / PR-004 "不日日动").
+   * 当 universe 内**最大** `|diff_pct|` < minDeviationPct 时，整次 rebalance
+   * 被抑制，所有订单转 HOLD（reason='within_min_deviation_pct'），不下单。
+   * 默认 0.03 (3%)。设 0 即禁用 gate（caller 接管，例如有 turnover cap）。
+   */
+  minDeviationPct: number;
   /** 默认 true — 只产 plan 不下单；execute=true 时才走 facade.placeOrder。 */
   dryRun: boolean;
 }
@@ -153,6 +170,13 @@ export interface RebalanceTradePlanInput {
   targetWeights: Map<string, number>;
   priceMap: Map<string, number>;
   minTradePct: number;
+  /**
+   * Portfolio-level deviation gate (US-009 / PR-004). When set and the
+   * maximum `|diff_pct|` in the universe is below this value, every order is
+   * coerced to HOLD with reason='within_min_deviation_pct'. Default 0 = gate
+   * disabled (callers that want it must pass `minDeviationPct` explicitly).
+   */
+  minDeviationPct?: number;
 }
 
 export interface PositionSnapshot {
@@ -178,6 +202,22 @@ export interface RebalanceResult {
   hold_count: number;
   skipped_count: number;
   dry_run: boolean;
+  /**
+   * `true` when the portfolio-level `minDeviationPct` gate suppressed the
+   * entire rebalance (US-009 / PR-004 "不日日动"). All orders in this result
+   * will be HOLD with `reason='within_min_deviation_pct'`, and execute mode
+   * is a no-op (no `executeOrder` call). `false` for every other path
+   * (including normal "everything aligned → all HOLD" — distinguishable by
+   * `reason`).
+   */
+  suppressed: boolean;
+  /**
+   * 此次计算出的 universe 内**最大** `|diff_pct|`（gate 判定的依据值）。
+   * 0 表示没有任何 stock 进入 universe (空 portfolio + 空 target) 或所有
+   * `diff_pct` 都因 missing_price/total_value=0 被跳过；非 0 时给 caller /
+   * UI 直观看到"我们离 gate 阈值还有多远"。
+   */
+  max_deviation_pct: number;
   options: RebalanceOptions;
   message: string;
 }
@@ -189,7 +229,11 @@ export interface RebalanceResult {
 /**
  * Normalize a partial / record / Map of options into a fully-populated
  * `RebalanceOptions` with safe defaults.  Garbage (negative / NaN / > 1
- * minTradePct) silently falls back to default — caller-friendly.
+ * minTradePct / minDeviationPct) silently falls back to default — caller-friendly.
+ *
+ * `minDeviationPct=0` is **explicitly accepted** and means "disable gate"
+ * (US-009 / PR-004 — callers like `CompositeRebalanceService` that own their
+ * own turnover gate opt out by passing 0).
  */
 export function normalizeRebalanceOptions(input?: Partial<RebalanceOptions>): RebalanceOptions {
   const def = DEFAULT_REBALANCE_OPTIONS;
@@ -203,9 +247,19 @@ export function normalizeRebalanceOptions(input?: Partial<RebalanceOptions>): Re
   ) {
     minTradePct = minTradePctRaw;
   }
+  const minDeviationPctRaw = input?.minDeviationPct;
+  let minDeviationPct = def.minDeviationPct;
+  if (
+    typeof minDeviationPctRaw === 'number' &&
+    Number.isFinite(minDeviationPctRaw) &&
+    minDeviationPctRaw >= 0 &&
+    minDeviationPctRaw <= 1
+  ) {
+    minDeviationPct = minDeviationPctRaw;
+  }
   // 严格 boolean — 持久化兼容（US-083 dryRun 范式），非 boolean 入默认。
   const dryRun = input?.dryRun === false || input?.dryRun === true ? input.dryRun : def.dryRun;
-  return { minTradePct, dryRun };
+  return { minTradePct, minDeviationPct, dryRun };
 }
 
 /**
@@ -308,9 +362,22 @@ export function classifyOrderSide(
  * full RebalanceOrder list (BUY / SELL / HOLD) sorted SELL → BUY → HOLD.
  *
  * No DB / no facade access — fully unit-testable.
+ *
+ * When `minDeviationPct > 0` and the maximum `|diff_pct|` across the universe
+ * is **strictly below** `minDeviationPct`, the portfolio-level "不日日动" gate
+ * (US-009 / PR-004) trips: every order in the returned list is coerced to
+ * `side='HOLD'`, `quantity=0`, `reason='within_min_deviation_pct'` — same as
+ * the within_min_trade_pct micro-filter but applied to the whole portfolio.
+ * Edge: a universe with no priced symbols (every entry missing_price) trips
+ * the gate (max_deviation_pct=0 < minDeviationPct) — keeps callers from
+ * accidentally executing orders before price data lands.
  */
 export function computeTradePlan(input: RebalanceTradePlanInput): RebalanceOrder[] {
   const { total_value, positions, targetWeights, priceMap, minTradePct } = input;
+  const minDeviationPct =
+    typeof input.minDeviationPct === 'number' && Number.isFinite(input.minDeviationPct)
+      ? Math.max(0, input.minDeviationPct)
+      : 0;
   const orders: RebalanceOrder[] = [];
 
   // Build position map keyed by symbol for O(1) lookup.
@@ -391,7 +458,42 @@ export function computeTradePlan(input: RebalanceTradePlanInput): RebalanceOrder
     });
   }
 
+  // Portfolio-level "不日日动" gate (US-009 / PR-004). Compute max |diff_pct|
+  // across only orders we actually classified (skip missing_price entries —
+  // those didn't contribute a real deviation signal). When the max sits
+  // strictly below the gate, coerce **every classifiable** order to HOLD so
+  // caller doesn't burn turnover on a portfolio that's still well-aligned.
+  // missing_price orders are LEFT INTACT (still HOLD with that original reason)
+  // so callers can distinguish "no data" from "gate-suppressed".
+  if (minDeviationPct > 0) {
+    const maxDeviationPct = computeMaxDeviationPct(orders);
+    if (maxDeviationPct < minDeviationPct) {
+      for (const order of orders) {
+        if (order.reason === 'missing_price') continue;
+        order.side = 'HOLD';
+        order.quantity = 0;
+        order.reason = 'within_min_deviation_pct';
+      }
+    }
+  }
+
   return sortRebalanceOrders(orders);
+}
+
+/**
+ * Compute the maximum `|diff_pct|` across a freshly-classified order list,
+ * skipping orders that already carry `reason='missing_price'` (those didn't
+ * contribute a deviation signal — the engine couldn't price them). Exported
+ * for unit tests and for callers wanting to expose "you're N% away from the
+ * rebalance gate" in their UI.
+ */
+export function computeMaxDeviationPct(orders: RebalanceOrder[]): number {
+  let max = 0;
+  for (const o of orders) {
+    if (o.reason === 'missing_price') continue;
+    if (Number.isFinite(o.diff_pct) && o.diff_pct > max) max = o.diff_pct;
+  }
+  return max;
 }
 
 /**
@@ -582,6 +684,8 @@ export class RebalanceEngine {
         hold_count: 0,
         skipped_count: 0,
         dry_run: effectiveDryRun,
+        suppressed: false,
+        max_deviation_pct: 0,
         options: { ...normalizedOptions, dryRun: effectiveDryRun },
         message: `未找到 portfolio_id=${portfolio_id}，无可再平衡的持仓。`,
       };
@@ -599,9 +703,31 @@ export class RebalanceEngine {
       targetWeights,
       priceMap,
       minTradePct: normalizedOptions.minTradePct,
+      minDeviationPct: normalizedOptions.minDeviationPct,
     });
 
-    if (!effectiveDryRun) {
+    // Detect whether the portfolio-level "不日日动" gate (US-009 / PR-004)
+    // tripped: at least one classifiable order was coerced to HOLD with reason
+    // `within_min_deviation_pct`, and no non-HOLD orders survived. Detect from
+    // the plan rather than re-computing so we stay in lock-step with
+    // computeTradePlan's own decision. missing_price orders are allowed in the
+    // mix (they aren't classifiable trades) but no real BUY/SELL may remain.
+    const suppressed =
+      normalizedOptions.minDeviationPct > 0 &&
+      orders.some(o => o.reason === 'within_min_deviation_pct') &&
+      orders.every(o => o.side === 'HOLD');
+    const max_deviation_pct = computeMaxDeviationPct(orders);
+
+    if (suppressed) {
+      // Gate trip → skip execution entirely so we don't burn turnover.
+      // No executeOrder call regardless of execute=true.
+      logger.info(
+        `RebalanceEngine.rebalance suppressed portfolio=${portfolio_id} ` +
+          `max_deviation_pct=${max_deviation_pct.toFixed(4)} ` +
+          `min_deviation_pct=${normalizedOptions.minDeviationPct.toFixed(4)} ` +
+          `(US-009 / PR-004 不日日动 gate)`
+      );
+    } else if (!effectiveDryRun) {
       // Execute SELL first (sort already places SELLs at top).
       for (const order of orders) {
         if (order.side === 'HOLD' || order.quantity === 0) continue;
@@ -637,9 +763,17 @@ export class RebalanceEngine {
       o => o.side === 'HOLD' && (o.reason === 'missing_price' || o.reason === 'below_one_lot')
     ).length;
 
-    const message = effectiveDryRun
-      ? `dry-run: ${buy_count} BUY + ${sell_count} SELL + ${hold_count} HOLD.`
-      : `executed: ${buy_count} BUY + ${sell_count} SELL + ${hold_count} HOLD.`;
+    let message: string;
+    if (suppressed) {
+      message =
+        `suppressed: max_deviation_pct=${(max_deviation_pct * 100).toFixed(2)}% ` +
+        `< min_deviation_pct=${(normalizedOptions.minDeviationPct * 100).toFixed(2)}% ` +
+        `(${hold_count} HOLD).`;
+    } else if (effectiveDryRun) {
+      message = `dry-run: ${buy_count} BUY + ${sell_count} SELL + ${hold_count} HOLD.`;
+    } else {
+      message = `executed: ${buy_count} BUY + ${sell_count} SELL + ${hold_count} HOLD.`;
+    }
 
     return {
       portfolio_id,
@@ -651,6 +785,8 @@ export class RebalanceEngine {
       hold_count,
       skipped_count,
       dry_run: effectiveDryRun,
+      suppressed,
+      max_deviation_pct,
       options: { ...normalizedOptions, dryRun: effectiveDryRun },
       message,
     };

@@ -898,6 +898,47 @@ HTTP / facade integration: 目前 RebalanceEngine **不直接绑定 HTTP route**
 事后分析结果落地调用 这 3 种 caller 共享。caller 决定是否 audit log + 是否
 推送（webhook / 飞书），引擎只负责"算 + 下单"。
 
+### US-009 (PR-004) — RebalanceEngine 边界控制 (minDeviationPct gate "不日日动")
+
+为防"每天微调"换手率内耗,RebalanceEngine 引入**第二层 portfolio-level gate**
+`minDeviationPct`（默认 3%），与既有 per-symbol 的 `minTradePct`（0.5%）互补:
+
+| Gate                | 作用域       | 默认  | 边界  | 触发后行为                                   |
+|---------------------|--------------|-------|-------|---------------------------------------------|
+| `minTradePct`       | per-symbol   | 0.005 | 严格 < | 该 symbol → HOLD `within_min_trade_pct`     |
+| `minDeviationPct`   | portfolio    | 0.03  | 严格 < | 全部 classifiable → HOLD `within_min_deviation_pct`，`suppressed=true`，execute 跳过 |
+
+`computeMaxDeviationPct(orders)` 是 gate 判定的事实源（max `|diff_pct|`
+across non-missing-price orders）。`RebalanceResult` 新增 2 个字段:
+`suppressed: boolean` + `max_deviation_pct: number`（caller / UI 直观看
+"离 gate 阈值还有多远"）。
+
+设计要点 / future-proof patterns:
+
+- **fail-safe edge: 全 missing_price → gate 触发但不覆盖 reason**。`maxDev=0 <
+  0.03` 让 gate 抑制，但 missing_price 的 order 自带 reason 不被改写。"未拿到
+  价格就别下单"是更安全的兜底。同 US-049 `cap_ratio_unknown` skip 模式。
+- **`minDeviationPct=0` = caller opt-out**: `CompositeRebalanceService` 已有
+  `turnover_cap_pct` 控"日日动"，需要 RebalanceEngine 出**完整 raw plan** 给本
+  service 做 cap 决策，所以显式传 0 关闭 gate。**任何拥有自己 turnover cap
+  的 caller 都必须显式传 0**，否则会双重 gate 反向叠加（gate 先把 plan 全清
+  空 → turnover cap 永远碰不到，UI 看到的总是 0 单）。
+- **suppressed 检测从 plan 反向推**（而非重新算 maxDev 判断），让
+  `computeTradePlan` 是唯一事实源：`orders.some(o.reason === 'within_min_
+  deviation_pct') && orders.every(o.side === 'HOLD')`。避免双侧浮点比较不一
+  致导致 engine 与 plan 反相。
+- **`suppressed=true` 在 execute=true 时也 skip executeOrder**：gate 触发
+  就是为了不下单，execute 参数 override 不应越过 gate（caller 若真想强制
+  下单，要先用 `minDeviationPct=0` 关 gate）。
+- **boundary 严格 `<`**：max_dev == minDeviationPct **不**抑制，留给真交易；
+  与 US-082 `合格线用严格 <`、US-086 `minTradePct` 同款约定。
+- **meta-guard via fs+regex**（`testRebalanceResultSchemaCompleteness`）：
+  扫源文件 verify `suppressed:` / `max_deviation_pct:` 两个字段两处 return 都
+  出现 + CompositeRebalanceService 显式 `minDeviationPct: 0`。同 cron-registry
+  [5] / position-limit-guard meta-guard / portfolio-construction-adapter
+  testAutoBuyFromSignalsWireIn 同款 fs+regex meta-guard 模板。任何"两处 return
+  必须同步"或"caller A 必须显式 opt 出 caller B 的功能"边界用此模式守。
+
 ### Engine 类的命名约定 (US-086 引入)
 
 portfolio/ 目录新增"engine"类模块的命名 / 放置规则：
